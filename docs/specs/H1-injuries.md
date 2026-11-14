@@ -141,7 +141,7 @@ hurtEv?: number;                      // 마지막으로 다친 기록 — RESPO
 // Unit
 aboard?: { kind: 'mate' | 'suspect'; id: number; inc: number; t: number }[];   // 구조 대상이 아닌 환자 (대원 rid · 용의자 id). 정원은 patients 와 함께 센다
 // WorkKind 끝에
-  | 'treatMate'      // 다친 대원 처치, 자리가 있으면 자기 구급차·헬기에 태운다 (구급대원·헬기 대원만)
+  | 'treatMate'      // 다친 대원 처치, 자리가 있으면 자기 구급차·헬기에 태운다 (구급 분야, 또는 R1 의 의료 가방 bag·alsBag·doctorKit 을 든 대원)
   | 'treatSuspect'   // 쓰러진·다친 용의자 처치, 지시받았으면 구급차에 태운다
 // ProblemCode 끝에
   | 'RESPONDER_KILLED'   // 대원 순직
@@ -295,9 +295,9 @@ health ≤ 15 && a.status !== 'down' → 쓰러짐: 지금 그대로 + r.tDown =
 
 ### 3.4 쓰러진 동료 구조와 후송
 
-1. **구조(`rescueMate`, 지금)**: 쓰러진 줄 알면 0.97·2명. **숨진 줄 알면 0.55**(수습 — 산 사람의 일보다 뒤). `fitFor` 에 `fireRisk` 를 넣는다: 불·가스·붕괴 위험 구역 안이면 소방만 들어간다(구조하러 들어간 경찰이 다시 쓰러지는 연쇄를 막는다). 끌고 가는 동안 화면은 들것(§8). 도착 문구: 살아 있으면 지금 그대로, 숨졌으면 '순직한 ○○ 대원을 안전 구역으로 옮겼습니다.'. `executor` 의 `rescueMate` 는 대상이 `down` 이 아니면 끝나는데, 끝날 때 `learn(…, mateFact, true, true)` 로 강제 보고한다(낡은 믿음 함정).
+1. **구조(`rescueMate`, 지금)**: 쓰러진 줄 알면 0.97·2명. **숨진 줄 알면 0.55**(수습 — 산 사람의 일보다 뒤). `fitFor` 에 `fireRisk` 를 넣는다: 불·가스·붕괴 위험 구역 안이면 소방만(R1 이 합쳐져 있으면 R1 의 실내 진입 자격 — `scba` 를 든 대원만) 들어간다(구조하러 들어간 경찰이 다시 쓰러지는 연쇄를 막는다). 끌고 가는 동안 화면은 들것(§8). 도착 문구: 살아 있으면 지금 그대로, 숨졌으면 '순직한 ○○ 대원을 안전 구역으로 옮겼습니다.'. `executor` 의 `rescueMate` 는 대상이 `down` 이 아니면 끝나는데, 끝날 때 `learn(…, mateFact, true, true)` 로 강제 보고한다(낡은 믿음 함정).
 2. **처치·후송(`orders/injury.ts` + `executor` `treatMate`)** — `mate` 사실이 `hurt`·`safe` 이고 숨지지 않았고 처치가 필요하거나 병원이 필요한(`band ≥ 2 || bleeding || wasDown`) 대원:
-   - 현장에 구급대원(또는 헬기 대원)이 있으면 `k.want('treatMate', { mate: rid, prop: 태울 차 }, 0.8 + 0.06 × band, 1)`. `prop` = 정원이 남은 구급차·헬기 id(`canCarryPatients`), 없으면 −1(처치만).
+   - 현장에 구급대원(구급 분야, 또는 R1 의 의료 가방을 든 대원 — R1 없이: 구급 분야와 헬기 대원)이 있으면 `k.want('treatMate', { mate: rid, prop: 태울 차 }, 0.8 + 0.06 × band, 1)`. `prop` = 정원이 남은 구급차·헬기 id(`canCarryPatients`), 없으면 −1(처치만).
    - `treatMate` 실행: 대상 `b` 가 `left`·숨짐·`down`(아직 안전 구역에 없음)이면 `learn(…, true, true)` 후 끝. 곁으로 가서(1.3) 처치(§2.6). 끝나면 `r.treatQ`·`bleed` 갱신, '○○ 대원 응급 처치 완료.'(imp 1). `w.prop === a.unitId` 이고 자리가 있으면 이어서 함께 차로 간다(쓰러졌던 대원은 `carrying = -(rid+2)` 로 끌고, 아니면 곁에서 걷는다) → `b.status = 'left'; r.care = 'aboard'; u.aboard.push({ kind: 'mate', id: rid, inc: I.id, t: sim.t })`, mate 사실 `'evac'`, '○○ 대원 ${호출부호}에 탑승 — 병원 후송.'(imp 2).
    - 구급 부대가 없고 오는 것도 없으면(`k.countUnits('ems', 0.7) === 0`) `k.request('ems', '부상 대원 후송', true)`. 출혈이 있는 대원이 20초(`since` 기준) 넘게 기다리면 **그 대원의 부대**(`sim.units[sim.responders[rid].unitId]`)에 `boardOrder = 'transport'` + 기록 '${호출부호}, 부상 대원을 태우고 병원으로 이동하라.'(COMMANDER, imp 2). 구조정(`u.sea`)은 빼고 구급을 기다린다. 구급차에 자리가 없어 처치만 받은 대원도 병원이 필요하면(`needsHospital`) 처치 뒤 20초 안에 자리가 나지 않을 때 같은 지시로 자기 부대가 데려간다.
    - 지휘관 쪽 `cancel`: 믿음상 `evac`·숨짐·처치 끝(`tq` 가 충분)이면 `treatMate` 를 거둔다.
@@ -660,7 +660,7 @@ for (const [seed, d, f] of cases) { const sim = new Sim(seed, parseDifficulty(d)
 
 1. **세 부류 모두 다친다**: `new Sim('INJ' + k, NORMAL, 1200, { force: 'armed/shooter' })` 8교대에서 — 원인 gunshot 인 부상 기록이 있는 구조 대상, 부상 기록이 있는 용의자가 각각 한 교대 이상. 대원은 `{ ...NORMAL, threat: 5, severity: 5, equipment: 1 }` 8교대에서 부상 기록(band ≥ 1)이 있는 대원이 한 명 이상. 모든 사건이 끝난다.
 2. **원인별 기록**: 사건 하나를 `createIncident(sim, { type: 'fire', rng: sim.rng.fork('t') })` 로 일으키고 부대가 도착할 때까지 돌린 뒤, 원인마다 `hurtCas`·`hurtResponder`·`hurtHostile`(용의자는 무장 사건에서) 를 직접 불러 — 기록이 그 원인으로 한 줄씩 생기고, 같은 원인은 한 줄로 합쳐지고(`dmg` 가 더해짐), `sev` 가 `bandOf` 와 맞는다. `bandOf` 가 지금의 `band` 와 0~100 전 구간에서 같다.
-3. **방호가 피해를 줄인다**: 같은 피해량으로 `hurtResponder` — gunshot: 특공대 < 순찰 < 구급. burn·smoke: 소방 < 경찰. toxic: 화학 ≤ 소방 < 경찰. blast: 폭발물 처리반 < 순찰. 그리고 지금 모델이 있는 원인(총상·연기·불·폭발)은 지금 숫자와 같다(예: 순찰 총상 = `raw × (1 − armor × 0.6)`).
+3. **방호가 피해를 줄인다**: 같은 피해량으로 `hurtResponder` — gunshot: 특공대 < 순찰 < 구급. burn·smoke: 소방 < 경찰. toxic: 화학 ≤ 소방 < 경찰. blast: 폭발물 처리반 < 순찰. 그리고 지금 모델이 있는 원인(총상·연기·불·폭발)은 지금 숫자와 같다(예: 순찰 총상 = `raw × (1 − armor × 0.6)`, R1 이 합쳐져 있으면 `armor` 는 `armorOf`).
 4. **문턱**: 체력 100 인 대원에게 `hurtResponder(…, 200, 'gunshot')` → 숨지지 않고 체력 8, 출혈 ≤ 0.04, 다음 틱에 `down`. 체력 30 인 구급대원(총상 방호 0)에게 `hurtResponder(…, 60, 'gunshot')` → 다음 틱에 순직, `RESPONDER_KILLED` 기록, `r.status === 'down' && r.dead`.
 5. **대원 순직은 목표 빈도 이하**: 보통 24교대에서 순직 ≤ 1.
 6. **쓰러진 대원은 구조되거나 후송된다**: 응급 사건(구급 부대가 온다)에서 부대가 도착한 뒤 한 대원을 `hurtResponder` 로 쓰러뜨리고 끝까지 돌린다 → 그 대원은 `rescueMate` 완료 기록이 있고, `r.care === 'hospital'` 이거나(후송) 숨졌다면 `RESPONDER_KILLED` 가 있다. `a.status` 는 끝에 `left`.
@@ -701,7 +701,7 @@ for (const [seed, d, f] of cases) { const sim = new Sim(seed, parseDifficulty(d)
 | `field/agents.ts` | `staminaF` | `× hurtF(r)` | 4a |
 | | `casFact` 옆 | `mateFact` | 4a |
 | | `hosFact`, `significant`, `perceive` | 칸·문구, 보고 조건, `where` | 4a·5 |
-| | `workLabel`·`fitFor`·`canCarryPatients` | 새 임무 둘, `rescueMate` 의 `fireRisk`, `aboard` | 4a·4b·5 |
+| | `workLabel`·`fitFor`·`canCarryPatients` | 새 임무 둘, `rescueMate` 의 `fireRisk`(R1 이면 `scba` 자격), 자리 셈에 `aboard`(R1 의 `seatsOf` 그대로) | 4a·4b·5 |
 | `field/commander.ts` | `rescueMate` 를 내는 줄(340) | 숨진 동료 0.55 | 4a |
 | | `manageAmbulances` | `aboard`, 진실 읽기(544) 제거 | 4b |
 | | `outstanding` | `mates` | 4a |

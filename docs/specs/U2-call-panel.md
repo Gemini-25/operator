@@ -202,7 +202,14 @@ export function CallDock({ sim, truth, open, onToggle }: { sim: Sim; truth: bool
 ```
 
 - `CallBody`: 지금의 `CallPanel` JSX(`panels.tsx:457-477`)를 **그대로 옮기고** 다음만 바꾼다 — 클래스 `call active|ended|past`, 머리줄의 `past` 문구(`지난 통화`, `N 전 종료` / `통화 중단`), `.queue` 를 머리줄의 `대기 N` 알약으로, 머리줄 끝에 접기 단추 `<button className="call-toggle" onClick={onToggle} aria-expanded title="통화창 접기 (P)"><i className="chev up" /></button>`, `none` 상태의 머리줄 + 빈 칸 문구(받지 않은 전화만 있으면 지금의 '신고 전화 대기 N건 · ● 벨 울림').
-- `CallStrip`: 3.3 의 표대로. `<button key={s.call ? s.call.id : -1} className={`call-strip st-${s.mode} ${s.mode === 'active' ? 'flash' : ''}`} onClick={onToggle} aria-expanded={false} title="통화창 펼치기 (P)">`. 꺾쇠는 CSS 로 그린다(`<i className="chev" />`) — `view/icons.ts` 에 그림을 더하지 않는다.
+- `CallStrip`: 3.3 의 표대로. 띠 전체가 단추 하나이고, 새 통화마다 다시 그려지도록 보여 주는 통화의 번호를 `key` 로 준다(반짝임 한 번):
+
+  ```tsx
+  <button key={s.call ? s.call.id : -1} className={'call-strip st-' + s.mode + (s.mode === 'active' ? ' flash' : '')}
+    onClick={onToggle} aria-expanded={false} title="통화창 펼치기 (P)">…</button>
+  ```
+
+  꺾쇠는 CSS 로 그린다(`<i className="chev" />`) — `view/icons.ts` 에 그림을 더하지 않는다.
 - 진실 표시 규칙은 지금의 `CallPanel` 과 같다: `truth` 일 때만 칩의 '✕'·`note`, AI 시점에서 장난 전화의 화법은 '확인 중'. 띠의 한 줄은 신고자가 실제로 한 말이라 시점과 무관하다.
 
 ### 4.2 `src/ui/App.tsx`
@@ -215,7 +222,7 @@ export function CallDock({ sim, truth, open, onToggle }: { sim: Sim; truth: bool
 
 ### 4.3 `src/ui/panels.tsx` (공용 파일 — 이 두 곳만)
 
-- `:446-479` `// ── 중앙: 신고 통화창 ──` 머리 주석과 `CallPanel` 을 지운다(내용은 4.1 로 옮겼다). `personaName`·`topicName`·`fmtDur`·`pct` 는 다른 패널이 계속 쓰므로 가져오기는 그대로 둔다.
+- `:447-479` 의 `// ── 중앙: 신고 통화창 ──` 머리 주석과 `CallPanel` 을 지운다(내용은 4.1 로 옮겼다). `personaName`·`topicName`·`fmtDur`·`pct` 는 다른 패널이 계속 쓰므로 가져오기는 그대로 둔다.
 - `LogPanel`(`:155` 부터): 기록 칸의 높이가 바뀌어도(통화 칸을 접고 펼 때, 3.1 의 비율) 맨 아래에 붙어 있던 기록이 맨 아래를 계속 보이게 한다. 지금은 새 기록이 들어올 때만 맨 아래로 내린다.
 
 ```tsx
@@ -378,7 +385,7 @@ await page.evaluate(() => localStorage.removeItem('ar.call.v1'));      // 다른
 - 7절: `src/sim`·`src/view` 무변경, `sweep 12` 의 `outcomes`·`close reasons` 가 전과 같다, `npm run check` 통과.
 - 보고(마지막 응답): 브랜치와 마지막 커밋, 고치기 전 → 고친 뒤 스크린샷 경로를 짝지어(1600·1280 × 펼침·접힘·특보 띠·현장 화면·이어 보기), 6절의 수치, 고친 공용 파일(`panels.tsx` 의 `CallPanel` 삭제·`LogPanel` 몇 줄, `styles.css` 의 두 줄 삭제 — 파일·함수·이유), Q1 에 넣을 검사를 넣었는지.
 - 합치는 사람이 고칠 문서:
-  - `README.md` 조작 표(`:46-64`)에 한 줄: `` | `P` | 신고 통화창 접기 / 펼치기 (오른쪽 칸 맨 위). 표시 방식일 뿐이다 | ``
-  - `README.md` 화면 구성(`:104-109`): '가운데'의 "통화 중에는 신고 통화창이" 를 빼고, '오른쪽 위' 앞에 "**오른쪽 맨 위**: 신고 통화창(접으면 한 줄 띠, `P`)." 를 넣는다.
+  - `README.md` 조작 표(`:46-68`)에 한 줄: `` | `P` | 신고 통화창 접기 / 펼치기 (오른쪽 칸 맨 위). 표시 방식일 뿐이다 | ``
+  - `README.md` 화면 구성(`:103-109`): '가운데'의 "통화 중에는 신고 통화창이" 를 빼고, '오른쪽 위' 앞에 "**오른쪽 맨 위**: 신고 통화창(접으면 한 줄 띠, `P`)." 를 넣는다.
   - `docs/specs/N6-disaster.md:94` 의 메모 끝에 "U2 에서 통화창을 오른쪽 칸으로 옮겨 `.call-wrap` 줄은 지웠다" 를 덧붙인다.
   - `docs/specs/README.md` 표에 U2 줄, `docs/ROADMAP.md` 의 완료 목록.

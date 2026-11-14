@@ -117,6 +117,38 @@ function sendUnit(sim: Sim, I: Incident, key: keyof Needs, c: Cand, nearest: Can
   }
 }
 
+/**
+ * 중증 응급 환자의 선착 대응(동시 출동, '펌뷸런스'): 구급차가 모두 나가 있거나 멀면, 가장 가까운 소방 펌프차·구조대(없으면 순찰차)를 함께 보낸다.
+ * 대원 누구나 기본 처치(지혈·가슴 압박)를 할 수 있다(지휘관: 응급 환자는 누구든 먼저 손을 쓴다). 구급차는 따로 계속 찾고, 닿으면 넘긴다.
+ * 관제가 아는 것만 쓴다: 부대의 위치·상태와 신고된 위치(I.reportedNode). 다른 사건에서 빼 오지 않고, 그 분야의 마지막 가용 부대는 남겨 둔다.
+ */
+export const CO_RESPOND = {
+  sev: 1.7,      // 중증으로 본 환자에게만 (의식 없음·낙상 출혈·호흡 없음). 가벼운 실신에는 구급차를 기다린다
+  eta: 50,       // 가장 나은 구급차의 예상 도착이 이보다 늦으면(또는 가용 구급차가 없으면) 선착 대응을 붙인다 (초)
+  gain: 15,      // 선착 대응 부대가 구급차보다 적어도 이만큼 먼저 닿아야 보낸다 (초)
+  police: 8,     // 순찰차는 응급 처치 장비가 적어, 소방보다 이만큼 가까워야 고른다 (초)
+};
+function firstResponder(sim: Sim, I: Incident): void {
+  if (I.assessment!.severity < CO_RESPOND.sev) return;
+  const amb = pickUnit(sim, I, 'ems', MINCAP.ems).best;
+  if (amb && amb.eta <= CO_RESPOND.eta) return;
+  let best: Unit | null = null, be = 1e9, beta = 0;
+  for (const u of sim.units) {
+    if (u.kind !== 'engine' && u.kind !== 'ladder' && u.kind !== 'rescue' && u.kind !== 'patrol') continue;      // 특수 부대(특공·화학·폭발물·헬기·구조정)는 아껴 둔다
+    if (u.aid || (u.state !== 'available' && u.state !== 'returning') || crewReady(sim, u) === 0 || I.assigned.indexOf(u.id) >= 0) continue;
+    const spare = sim.units.some((q) => q.id !== u.id && q.dept === u.dept && !q.air && !q.sea && (q.state === 'available' || q.state === 'returning') && crewReady(sim, q) > 0);
+    if (!spare) continue;
+    const eta = etaFor(sim, u, I.reportedNode), e = eta + (u.dept === 'police' ? CO_RESPOND.police : 0);
+    if (e < be) { be = e; best = u; beta = eta; }
+  }
+  if (!best || (amb && beta > amb.eta - CO_RESPOND.gain)) return;
+  I.coResp = best.id;
+  emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: amb
+    ? `구급차가 멀어(가장 나은 ${amb.u.callsign} 예상 ${fmtSec(amb.eta)}) 가까운 ${josa(best.callsign, '을/를')} 선착 대응으로 함께 보냅니다. 기본 처치를 먼저 시작합니다.`
+    : `지금 보낼 수 있는 구급차가 없습니다. 가까운 ${josa(best.callsign, '을/를')} 선착 대응으로 먼저 보내고 구급차를 계속 찾습니다.` });
+  sendUnit(sim, I, 'search', { u: best, score: 0, eta: beta, fit: best.caps.search, divertFrom: null }, null);
+}
+
 export function tickDispatch(sim: Sim): void {
   if (sim.tick % 5 !== 2) return;
   const open = sim.incidents.filter((I) => I.phase !== 'closed' && I.assessment && I.locationKnown);
@@ -125,6 +157,7 @@ export function tickDispatch(sim: Sim): void {
   for (const I of open) {
     if (sim.t < I.unmetSince + 2) continue;      // 배정 판단에 걸리는 시간
     let progressed = false, blocked: (keyof Needs)[] = [];
+    if (I.assessment!.type === 'medical' && I.coResp === undefined && (I.unmet.ems ?? 0) > 0 && I.firstArrivalAt < 0 && !I.assigned.some((uid) => sim.units[uid].dept !== 'ems')) firstResponder(sim, I);
     for (const key of ORDER) {
       while ((I.unmet[key] ?? 0) > 0) {
         let { best, nearest } = pickUnit(sim, I, key, MINCAP[key]);

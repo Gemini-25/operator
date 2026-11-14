@@ -444,6 +444,7 @@ export interface Incident {
   fieldNeedsSeen: number;          // 처리한 현장 지원 요청 수
   dispatchLog: number[];           // 출동 지령 이벤트
   aidUnit?: number;                   // 이 사건에 요청한 인근 도시 지원 부대 (사건당 한 번)
+  coResp?: number;                    // 응급 환자: 구급차가 멀어 함께 보낸 선착 대응 부대 (사건당 한 번, dispatcher.firstResponder)
 }
 
 // ───────────────────────── 이벤트 로그 ─────────────────────────

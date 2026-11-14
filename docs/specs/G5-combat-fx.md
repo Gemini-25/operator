@@ -195,7 +195,7 @@ export function rayEnd(s: Scene, x0: number, y0: number, x1: number, y1: number,
 - `damage.ts` 의 지역 `fx()`: 지금은 `{ kind, t, x, y, x2, y2, ttl }` 이라 `pushFx` 와 이미 모양이 다르다. `{ kind, t, x, y, x2, y2, text: undefined, color: undefined, ttl, c: undefined }` 로.
 - `fxlog.recFx`: 같은 순서로 모든 칸을 채운다.
 
-**탄도와 그림의 차이에 대한 결정.** 빗나간 탄이 창을 깨는 선(`bulletPath`, 흔들지 않은 목표 쪽)은 그대로 두고, **그리는 선과 탄착점은 흔든 끝점 쪽**(`rayEnd`)으로 잡는다. 둘 사이는 목표 근처에서 0.8칸, 그 너머에서 1칸 남짓 벌어질 수 있다. `bulletPath` 의 목표를 흔든 끝점으로 바꾸면 그림과 탄도가 일치하지만, 그것은 "어느 창이 깨지는가"라는 상태를 바꾸는 일이다. 결과(해시·분포)에는 영향이 없다(`s.glass` 는 판단에서 읽히지 않는다). 그래도 이번 묶음의 허용 범위(기록만)를 넘으므로 하지 않는다. 바꾸고 싶으면 보고에 제안으로 적는다. [확인 필요: 사용자·합치는 사람의 판단]
+**탄도와 그림의 차이에 대한 결정.** 빗나간 탄이 창을 깨는 선(`bulletPath`, 흔들지 않은 목표 쪽)은 그대로 두고, **그리는 선과 탄착점은 흔든 끝점 쪽**(`rayEnd`)으로 잡는다. 둘 사이는 목표 근처에서 0.8칸, 그 너머에서 1칸 남짓 벌어질 수 있다. `bulletPath` 의 목표를 흔든 끝점으로 바꾸면 그림과 탄도가 일치하지만, 그것은 "어느 창이 깨지는가"라는 상태를 바꾸는 일이다. 결과(해시·분포)에는 영향이 없다(`s.glass` 는 판단에서 읽히지 않는다). 그래도 이번 묶음의 허용 범위(기록만)를 넘으므로 하지 않는다. 바꾸고 싶으면 보고에 제안으로 적는다. [확인 필요: 사용자·합치는 사람의 판단 — 머리의 "사용자에게 확인할 것" (c)]
 
 ### 2.4 채우는 자리
 
@@ -505,7 +505,7 @@ voice(GainNode) → [StereoPannerNode] → [lowpass: 먼 소리] → combatBus(0
 
 지도 화면의 먼 소리는 사격·폭발·섬광탄·진입만(탄착·피격·유리는 내지 않는다), 초당 4개까지. AI 시점의 거르기는 3.12절과 같다.
 
-**섬광탄 이명**: 관찰 중인 현장이고 터진 자리가 보이는 범위 안이면, 터짐 소리 뒤에 sine 4100Hz(0.025 → 0, 2.2초) + 주 버스 덕킹(-8dB 로 0.2초 만에 내려가 1.2초에 회복) + `combatBus` lowpass 1200Hz → 1.5초 동안 8000Hz 로 회복. 4초에 한 번까지. 8배속 이상이면 이명·덕킹 없음.
+**섬광탄 이명**: 관찰 중인 현장이고 터진 자리가 보이는 범위 안이면, 터짐 소리 뒤에 sine 4100Hz(0.025 → 0, 2.2초) + 주 버스 덕킹(-8dB 로 0.2초 만에 내려가 1.2초에 회복) + `combatBus` lowpass 1200Hz → 1.5초 동안 8000Hz 로 회복. 4초에 한 번까지. 실제 배속(`effSpeed`) 8 이상이면 이명·덕킹 없음(자동 감속 중이면 1배속이라 난다).
 
 ### 4.3 음색 표
 
@@ -530,8 +530,8 @@ voice(GainNode) → [StereoPannerNode] → [lowpass: 먼 소리] → combatBus(0
 | 진입 — 유압(`hydraulic`) | sawtooth 90Hz 0.35초(lowpass 400Hz, 펌프 소리) + 끝에 쇠 삐걱 triangle 700→500Hz 0.12초 | 0.05 / 0.05 |
 | 저격(`sniper`) | 소총 소리 +2dB, 꼬리 lowpass 500Hz 0.6초(멀리 울림) | |
 | 비살상탄(`beanbag`) | 잡음 lowpass 600Hz 0.08초 + sine 140→70Hz 0.08초(퉁) | 0.16 / 0.10 |
-| 강제 개방 타격(`a.ring` 0.2마다) | triangle 900→620Hz 0.05초 + 잡음 bandpass 2200Hz 0.04초 + triangle 120→70Hz 0.06초 | 0.06 / 0.05 / 0.08 |
-| 진입 신호 | 3·2·1: sine 880Hz 0.07초. 진입: sine 1320Hz 0.12초 + 지금의 무전 딸깍 | 0.05 / 0.06 |
+| 강제 개방 타격(합성 `'strike'`, 연출 시계 0.6초마다) | triangle 900→620Hz 0.05초 + 잡음 bandpass 2200Hz 0.04초 + triangle 120→70Hz 0.06초 | 0.06 / 0.05 / 0.08 |
+| 진입 신호 | 3·2·1(합성 `'tick'`): sine 880Hz 0.07초. 진입(`breach` 기록, `sync`): sine 1320Hz 0.12초 + 지금의 무전 딸깍 | 0.05 / 0.06 |
 | 테이저 | 발사: 잡음 bandpass 3000Hz 0.03초. 지직: 잡음 highpass 4500Hz 0.04초 조각 12번(1.0초) + square 52Hz 를 잡음으로 진폭 변조 | 0.08 / 0.07 |
 | 수갑 | sine 2600Hz 0.025초, 0.09초 뒤 sine 3200Hz 0.025초 | 0.05 |
 | 근접 | 휘두름: 잡음 bandpass 1800→600Hz 0.12초 + 맞으면 피격 | 0.06 |
@@ -544,11 +544,11 @@ voice(GainNode) → [StereoPannerNode] → [lowpass: 먼 소리] → combatBus(0
 **소리를 그림과 같은 시각에.** 그림은 늦게 시작하는 단계가 있다(진입 뒤 섬광탄 +0.12초·사격 +0.2초, 깡통이 날아가 터지기까지 0.34초, 탄착은 예광선 머리가 닿는 순간). `fresh` 를 받은 순간에 소리를 내면 진입 때 "쾅"이 그림보다 최대 0.46초 먼저 난다. 그래서 소리마다 시작 시각을 예약한다:
 
 ```
-when = max(0, e.born + e.delay + stage − clock) / rate + lag        // 초 뒤 → ctx.currentTime + when
+when = max(0, e.born + e.delay + stage − clock + L) / rate        // 초 뒤 → ctx.currentTime + when
 ```
 
 - `stage`(그 소리가 맞춰야 할 그림 단계의 연출 시각): 사격의 총성 0, 탄착(벽·문·가구) = 예광선 머리 도착 시각(3.2절의 날아가는 시간), 피격 0(딸린 `hit` 은 이미 `delay` 에 도착 시각이 들어 있다), 섬광탄 굴림 0.28·0.31 · 터짐 0.34(던짐 단계를 건너뛰는 옛 호출이면 터짐 0), 폭발·진입·근접·수갑·테이저 0, 합성 `'tick'`·`'strike'`·`'hail'`·`'reply'` 0.
-- `lag`: 한 프레임에 여러 틱이 돌아 그 프레임의 `fresh` 가운데 가장 이른 `born + delay` 가 `clock` 보다 앞서면, 그 차이(최대 0.25 연출 초)를 `rate` 로 나눈 만큼 그 프레임의 소리를 **모두** 늦춘다 — 순서와 간격을 지키고, 그림보다 최대 0.25초 늦을 뿐이다(지금 1배속 행의 "늦춰 낸다"를 이것으로 바꾼다).
+- `L`(그 프레임의 늦춤, 연출 초): 한 프레임에 여러 틱이 돌면 그 프레임의 `fresh` 가운데 가장 이른 `born + delay` 가 `clock` 보다 앞선다. `L = min(0.25, max(0, clock − 가장 이른 born + delay))` 로 두면 가장 이른 소리가 지금(0초 뒤) 나고 나머지는 시뮬레이션 간격대로 뒤따른다 — 순서와 간격을 지키고, 그림보다 많아야 0.25 연출 초 늦을 뿐이다(지금 1배속 행의 "늦춰 낸다"를 이것으로 바꾼다). 보통(한 프레임에 한 틱 이하)은 `L = 0` 이다.
 - `rate` 가 0(일시정지)이면 새 소리가 없다. 이미 예약했지만 아직 시작하지 않은 소리(많아야 0.5초 앞)는 그대로 둔다(10절).
 
 | 배속(`effSpeed`) | 사격 | 탄착·피격 | 유리·가구 | 섬광·폭발·진입 | 수갑·테이저 |
@@ -580,8 +580,8 @@ when = max(0, e.born + e.delay + stage − clock) / rate + lag        // 초 뒤
 
 ### 4.6 긴장음 · 확성기 (선택)
 
-- 긴장음: 관찰 중인 현장이 `armed` 이고 총을 든 용의자가 `hold`·`fight`(무력화 아님)이며 배속 ≤ 3, 일시정지 아님. sine 55Hz + 55.4Hz(맥놀이) + 잡음 lowpass 200Hz, 합쳐 0.012, 1.5초에 들어오고 나간다. 조건이 풀리면(검거·투항·제압) 2초에 빠진다.
-- 확성기: 협상 파동(3.6절)이 나갈 때마다 sawtooth 160Hz → bandpass 1100Hz Q4, 7Hz 진폭 변조 0.5초(0.03). 용의자 풍선이 뜰 때 sawtooth 120Hz → bandpass 900Hz 0.4초(0.025). 배속 ≤ 3 만.
+- 긴장음: 관찰 중인 현장이 `armed` 이고 총을 든 용의자가 `hold`·`fight`(무력화 아님)이며 배속(`effSpeed`) ≤ 3, 일시정지 아님. sine 55Hz + 55.4Hz(맥놀이) + 잡음 lowpass 200Hz, 합쳐 0.012, 1.5초에 들어오고 나간다. 조건이 풀리면(검거·투항·제압) 2초에 빠진다.
+- 확성기: 협상 파동(3.6절, 합성 `'hail'`)이 나갈 때마다 sawtooth 160Hz → bandpass 1100Hz Q4, 7Hz 진폭 변조 0.5초(0.03). 용의자 풍선이 뜰 때(합성 `'reply'`) sawtooth 120Hz → bandpass 900Hz 0.4초(0.025). 배속(`effSpeed`) ≤ 3 만.
 - 둘 다 거슬리면 끄고 보고에 적는다.
 
 ---
@@ -620,7 +620,7 @@ when = max(0, e.born + e.delay + stage − clock) / rate + lag        // 초 뒤
 
 - 대상 kind 에 `breach`(2.5)·`melee`(1.5)·`taser`(2.0)·`cuff`(1.0)를 더한다. `c.ox, c.oy` 가 있으면 무게 1.5 로 더한다(섬광탄의 던진 사람, 진입조 쪽). `c.ix, c.iy` 가 있으면 끝점(`x2, y2`) 대신 그것.
 - 진입 예고: `s.entryOrdered && !s.breachDone && s.breachAt - sim.t ≤ 4` 면 진입 출입구(`entryExit`, `entryExit2`)에 무게 2.5.
-- `nudge()`: `sceneRetargetAt = clock` — 결정적 기록을 찾았을 때 0.9초를 기다리지 않고 바로 다시 잡는다(`sceneManual` 이면 하지 않는다). `stepGuard`(5.1절)가 부르고, 자동 감속이 꺼져 있을 때는 Viewport 가 `book.fresh` 에서 관찰 현장의 `DECISIVE` 종류를 보면 부른다.
+- `nudge()`: `sceneRetargetAt = clock` — 결정적 기록을 찾았을 때 0.9초를 기다리지 않고 바로 다시 잡는다(`sceneManual` 이면 하지 않는다). `stepGuard`(5.1절)가 부르고, `stepGuard` 가 일찍 돌아가는 경우(자동 감속 꺼짐, 또는 설정 배속이 1)에는 Viewport 가 `book.fresh` 에서 관찰 현장의 `DECISIVE` 종류를 보면 부른다.
 - G4 의 `'collapse'`(2.5), X6 의 `'horn'`(2)은 이 목록에 한 단어씩 더한다.
 
 ### 5.3 주요 장면 이어 보기 (`App.reelMoments`)
@@ -668,14 +668,14 @@ out.push({ t: e.t, id: e.incidentId, text: e.text }); lastT = e.t; lastId = e.in
 | `sim/field/hazards.ts` | `pushFx`(인자 `c`), `flashbang`(인자 `by`), `panicShot`, `tickHostiles`(시한·총격범·대원 사격·흉기), 폭발 네 곳, `officersSeeing`(export) | 2.4절 4~10·15 | 기록 고리 |
 | `sim/field/executor.ts` | `shootAt`, `breach`, 방 진입, `unblock`, 섬광탄 세 호출, 검거 네 곳 | 2.4절 1~3·11~14·16 | 기록 고리 |
 | `sim/field/rules/crime.ts` | `detonate` | `noteBoom(…, 3.4, 'bomb')` | 폭발 반경 |
-| `view/scene/fxBook.ts`(새) | `FxBook` | 연출 시계, 받아들이기, 남는 그림, 흔들림·흰 막 | 3.1절 |
+| `view/scene/fxBook.ts`(새) | `FxBook`, `FX_RATE_MAX`·`FX_DRAWN`·`DECISIVE` | 연출 시계, 받아들이기(모든 종류 → `fresh`, 그리는 종류 → `live`), 합성 항목, 남는 그림, 흔들림(칸 단위)·화면 막(실제 시간 상한), `debugStep` | 3.1절 |
 | `view/scene/combat.ts`(새) | 그리는 함수 전부 | 3.2~3.9절 | 그림 |
 | `view/city/combatPin.ts`(새) | `drawCombatPin` | 5.4절 | 지도 |
 | `view/audioCombat.ts`(새) | `CombatVoice` | 4.1·4.3·4.4절 | 소리 |
 | `view/renderScene.ts` | `drawScene`(옵션 `book`, 흔들림, 남는 그림, 겨누는 선, 어둠·빛 구멍, 효과 단계, 3-2-1, 흰 막), `agentPose`(하위 작업 `force`, swat 소총, `defuse` 선택), `doorOpenness`(진입 연출), 사람 그리기의 자세 인자, `엄` 배지 | 호출 한 줄씩 | 그림 |
 | `view/scene/sprites.ts` | `ArmPose` 에 `'throw'`(R2 도 같은 이름을 쓴다), `Item` 에 `'ram'`(R1·R2 도 같은 이름), `PersonPose` 에 `recoil?`·`flinch?`·`crouch?`·`cuffed?`, `'back'` 자세에서 `cuffed` 면 막대 대신 고리 둘, `drawDoorLeaf` 의 흔적 호를 `min(open, 1)` 로, `drawLying` 의 `blood` 옵션과 붉은 타원 삭제 | 자세·수갑(인질과 구별)·문짝 튕김·피 빼기(H1 §8.2 와 같다) | 그림 |
 | `view/scene/fx.ts` | `chip` 을 export, 미리 그린 조각(`sprites()` 의 `puff`·`puffDark`·`glow`)을 돌려주는 `export function fxSprites()` 하나 | 엄폐 가구·문 조각, 먼지, 폭발 연기 | N7·연기와 같은 그림 |
-| `view/audio.ts` | `unlock`(소리 길·압축기), `update`(인자 `fresh`·`place`, 교전 소리를 `CombatVoice` 로, 지금의 `s.fx` 훑기를 `fresh` 훑기로 — 다루지 않는 종류는 기존·G4 분기로), `stats` | 4절 | 소리 |
+| `view/audio.ts` | `unlock`(소리 길·압축기), `update`(인자 `speed`=`effSpeed`·`fresh`·`place`·`clock`·`rate`, 교전 소리를 `CombatVoice` 로 시각 예약, 지금의 `s.fx` 훑기를 `fresh` 훑기로 — 음색을 정하지 않은 종류는 기존·G4·X6 분기로), `stats`(음소거로 일찍 돌아가기 전에 고친다) | 4절 | 소리 |
 | `view/runner.ts` | `stepGuard`, `frame` 의 while | 5.1절 | 첫 순간 감속 |
 | `view/camera.ts` | `frameAction`, `nudge()`, (선택) 사건 점수 | 5.2·5.5절 | 자동 확대 |
 | `view/renderCity.ts` | `drawCity` 옵션 `book`, 핀 반복문에 한 줄 | 5.4절 | 지도 |
@@ -689,7 +689,7 @@ out.push({ t: e.t, id: e.incidentId, text: e.text }); lastT = e.t; lastId = e.in
 
 1. `runner.frame(now)` — 그 안에서 틱마다 `stepGuard`(5.1절).
 2. `director.update(…)` (지금 자리).
-3. `effSpeed` 를 구하고 `book.frame(sim, dtReal, { paused, speed: effSpeed, seeks: runner.seeks })`. 자동 감속이 꺼져 있으면 여기서 `book.fresh` 의 관찰 현장 `DECISIVE` 로 `director.nudge()`.
+3. `effSpeed` 를 구하고 `book.frame(sim, dtReal, { paused, speed: effSpeed, seeks: runner.seeks })`. 자동 감속이 꺼져 있거나 설정 배속이 1 이면(`stepGuard` 가 일찍 돌아가는 경우) 여기서 `book.fresh` 의 관찰 현장 `DECISIVE` 로 `director.nudge()`.
 4. 중대한 기록(imp ≥ 3)으로 하는 감속(지금 그대로).
 5. `sound.update(sim, { paused, speed: effSpeed, focus, inScene, fresh: book.fresh, place, clock: book.clock, rate: book.rate })`.
 6. `drawScene`(본 화면, `book`) 또는 `drawCity`(본 화면, `book`).
@@ -698,6 +698,8 @@ out.push({ t: e.t, id: e.incidentId, text: e.text }); lastT = e.t; lastId = e.in
 **확인용 고리.** Q1 이 이미 `App.tsx` 에 개발 서버 전용 읽기 고리 `window.__ar = { snap }` 을 만들었다(값을 복사해 돌려줄 뿐 아무것도 바꾸지 않는다 — `CLAUDE.md` "구조"의 `ui-check` 줄). 같은 `useEffect` 안에서 그 객체에 둘을 더한다. `snap()` 의 필드 이름은 바꾸지 않는다(`scripts/ui-check.cjs` 가 읽는다).
 - `combat()`: 읽기만 — `{ clock, rate, live: 현장별 살아 있는 연출 수, drawMs, stats: { ...sound.stats } }` 를 복사해 돌려준다.
 - `fxStep(dt)`: `book.debugStep(dt)` — 연출 시계만 넘긴다. 시뮬레이션·실행기·카메라 상태는 건드리지 않는다(정확한 장면 찍기용, 8.3절).
+- 그 `useEffect` 의 의존 목록에 `sound`·`book` 을 더한다(지금 `[runner, director]`).
+
 시간·관찰 대상은 고리로 바꾸지 않는다. Q1·G4 처럼 사람이 쓰는 키(`1`~`4`·`Space`·`←`·`→`·`S`)와 사건 카드 누르기로 한다.
 
 ---
@@ -708,14 +710,14 @@ out.push({ t: e.t, id: e.incidentId, text: e.text }); lastT = e.t; lastId = e.in
 
 1. **기준 재기**: 시작 커밋에서 8.1절 스크립트로 해시 목록을 저장소 밖에 저장. `npx tsx scripts/sweep.ts 60` 출력도 저장. 지금 화면을 8.3절 장면으로 찍어 둔다("고치기 전").
 2. **기록 고리**: `types.ts` → `damage.rayEnd` → `fxlog.ts` → `hazards.ts`·`executor.ts`·`rules/crime.ts` 의 2.4절 자리. 확인: 해시 목록 0줄 차이, 2.6절 grep 0줄, 9절 시험 1·2.
-3. **FxBook 과 연출 시계**: 지금 그림을 그대로 FxBook 으로 옮긴다(새 그림 없이). 확인: 화면이 그대로이고 15배속에서도 사격선이 보인다. 되감기·새 교대 뒤 오류 없음.
+3. **FxBook 과 연출 시계**: `App` 의 `book`(`useMemo`)·`ViewportProps.book`·`effSpeed`·부르는 순서(6절 끝)를 먼저 잇고, 지금 그림을 그대로 FxBook 으로 옮긴다(새 그림 없이). 확인: 화면이 그대로이고 자동 감속을 끈 15배속에서도 사격선이 보인다. 되감기·새 교대 뒤 오류 없음.
 4. **사격**: 총구 섬광·예광선·탄착·피격(피 빼기 포함)·반동·움찔. 확인: 8.3절 ①.
 5. **섬광탄**: 던짐·터짐·방 채움·잔광·흰 막·무력화 표지. 확인: ②.
 6. **폭발**: 반경별 크기·충격파·연기·흔들림. 확인: ④.
 7. **진입**: 3-2-1·갈매기표·문짝·강제 개방 타격·`agentPose`. 확인: ③·⑥.
 8. **대치·근접·검거·테이저**: 겨누는 선·엄폐 자세·협상·끌기·휘두름·수갑·테이저(합성 기록). 확인: ②·⑤.
 9. **소리**: 소리 길·압축기·정위·원근·음색·묶음·상한·이명·지도 먼 소리. 확인: 8.4절 헤드리스 기준.
-10. **연출**: `stepGuard`·진입 예고 감속·`frameAction`·`reelMoments`·지도 핀·범례. 확인: ⑦·⑧·⑨.
+10. **연출**: `stepGuard`·진입 예고 감속·`frameAction`·`reelMoments`·지도 핀·범례. 확인: ⑦·⑧·⑨a·⑨b(⑨a 에서 1배속으로 바뀌는 순간이 첫 발·"3" 의 틱인지 — `stepGuard`).
 11. **마무리**: 9절 시험 전부, `scripts/combatshots.cjs` 로 "고친 뒤" 장면, 프레임 예산, `npm run check`, `sweep 60` 전후 비교, 사람이 들어 볼 체크리스트(8.4절)를 보고에 붙인다.
 
 작은 것부터 끝내 커밋한다(`wf/combat-fx` 브랜치, 한국어 메시지, 푸시하지 않는다).
@@ -876,5 +878,41 @@ NODE_PATH=$(npm root -g) node scripts/combatshots.cjs 5225 <시드> <force> <dif
   - `README.md` "알려진 문제": 교전 소리는 사람이 들어 봐야 한다(8.4절 체크리스트), 빗나간 탄의 그림 선과 깨지는 창의 어긋남, 진입 뒤 섬광탄의 연출 지연, 되감기 뒤 탄흔이 사라짐.
   - `CLAUDE.md` "절대 깨면 안 되는 것" 4의 "진실을 읽어도 되는 곳"에 `field/fxlog.ts`(기록 전용 — 그림·소리에 쓸 꼬리표만 남기고 판단하지 않는다)를 더한다(제안). `fxlog` 는 용의자·구조 대상의 실제 자리를 읽는다.
   - `CLAUDE.md` "구조"에 `src/view/scene/fxBook.ts`(연출 시계·받아들이기·합성 항목)·`combat.ts`(교전 그림)·`view/audioCombat.ts`(교전 소리)·`view/city/combatPin.ts`, 그리고 `ui-check` 줄의 `window.__ar` 에 `combat()`·`fxStep()` 이 더해졌다는 것.
-  - `CLAUDE.md` "겪은 함정"에 한 줄(제안): "**교전 연출 기록.** 사격·섬광탄·진입·폭발·검거·테이저를 새로 만들거나 옮기면 `field/fxlog.ts` 의 `note*`/`rec*` 한 줄을 그 자리에 둔다(기존 `pushFx` 줄 바로 다음, `bulletPath` 앞). 이 함수들은 `s.fx` 에만 쓰고 난수를 부르지 않는다 — 결과는 바뀌지 않는다." 그리고 "자주 하는 확장" 표의 새 효과 줄에 `view/scene/combat.ts`·`fxBook.ts`.
+  - `CLAUDE.md` "겪은 함정"에 한 줄(제안): "**교전 연출 기록.** 사격·섬광탄·진입·폭발·검거·테이저를 새로 만들거나 옮기면 `field/fxlog.ts` 의 `note*`/`rec*` 한 줄을 그 자리에 둔다(기존 `pushFx` 줄 바로 다음, `bulletPath` 앞). 이 함수들은 `s.fx` 에만 쓰고 난수를 부르지 않는다 — 결과는 바뀌지 않는다." 그리고 "**그림·소리의 배속은 실제 배속.** 자동 감속 중에는 `runner.settings.speed` 가 15여도 1배속으로 돈다. 연출 시계·소리 규칙은 Viewport 의 `effSpeed`(`paused ? 0 : slowed ? 1 : speed`)를 쓴다. 15배속 그대로를 확인할 때는 자동 감속(`S`)을 끄고 잰다." 그리고 "자주 하는 확장" 표의 새 효과 줄에 `view/scene/combat.ts`·`fxBook.ts`(새 효과 종류를 그리면 `FX_DRAWN`, 결정적 순간이면 `DECISIVE` 에 한 단어).
   - 11절의 "뒤 묶음이 할 일"을 R1·R2·G4(G5 보다 늦게 합친다면) 설계서에 한 줄씩.
+
+---
+
+## 검토 메모
+
+독립 검토(`80e796d` 의 이 문서 대상)의 지적과 처리. 다음 구현 세션은 위 본문만 따르면 된다 — 이 절은 왜 그렇게 바뀌었는지의 기록이다.
+
+**반영한 것**
+- 소리·연출 시계에 넘기는 배속을 실제 배속 `effSpeed` 로(3.1·4.2·4.4절). 자동 감속을 켠 15배속 확인과 끈 15배속 확인을 나눴다(3.11·8.3 ⑨a/⑨b·8.4절).
+- 소리를 그림 단계의 시각에 맞춰 예약(`when` 식, 한 프레임 여러 틱의 `lag`)(4.4절).
+- 검거 수갑을 `'back'` 자세가 아니라 `PersonPose.cuffed` 로 — 인질도 `'back'` 을 쓴다(3.8·6절).
+- 토큰 통 용량 6 → 4(1초 창 최대 14), cue 를 세는 단위와 `perSec`·`voices`·`made` 의 뜻, 음소거 때도 `stats` 갱신(4.4·4.5·8.4절).
+- `noteCollateral` 이 `res` 를 'miss' 로 바꿔 시험 2번과 맞췄다(2.2·2.3·9절).
+- 흔들림을 칸 단위로 맞추고 G4 와 각자 상한, 합은 자르지 않음(3.4·3.10·11절).
+- 진입 시험을 "진입조가 있던 출입구마다 하나"로 — 대체 기록은 만들지 않는다(2.4 표 12번·9절).
+- `FxBook` 의 주인(`App` 의 `useMemo`)·`ViewportProps.book`·한 프레임의 부르는 순서(6절).
+- 상태에서 나오는 순간(3-2-1·강제 개방 타격·확성기)을 합성 항목 `'tick'`·`'strike'`·`'hail'`·`'reply'` 로 만들어 그림과 소리가 같은 시각을 쓴다. 타격은 `a.ring` 등분 대신 연출 시계 0.6초 박자(3.1·3.5·3.6·4.3절).
+- 줄 번호: `d876c96`(B3·P1·Q1 합친 뒤) 기준으로 다시 적고, 2.4절에 "찾을 글귀"를 더했다. 검토가 적은 표(P1 기준)보다 B3 합침으로 `executor.ts` 가 5줄, `sceneManager.ts` 가 8줄 더 밀려 있었다(예: 검거 728·799·826·854, 정리 줄 249).
+- `stepGuard` 는 감속이 새로 걸린 틱에만 `true`, 진입 예고도 틱마다(5.1절).
+- "15배속 한 프레임 최대 40틱" → 실제 간격 0.1초 상한이라 약 8틱(2.5·10절).
+- G5 가 그리지 않는 종류의 처리: 모든 종류는 `fresh` 로, 그림은 `FX_DRAWN` 만. `spray`·`radio`·`text`·R1 `'drop'`·모르는 종류는 기존 반복문, `'collapse'`·`'horn'` 은 그리지 않음(3.1절, 11절 R1·X6 줄).
+- 2.6절 grep 을 `-P` 와 대입만 잡는 식으로, 문·용의자·창 쓰기까지.
+- 시험은 교대 끝까지 돌지 않고 정한 틱의 `sim.logHash` 로(9절 1·8번).
+- 사용자에게 확인할 것 (a) 폭파 진입, (b) 잠기지 않은 문의 공성추·발차기, (c) 빗나간 탄과 깨지는 창의 어긋남 — 머리에 따로 적었다.
+- `reelMoments` 의 25초 창을 묶음의 첫 기록에 고정(5.3절).
+- 더하면 좋은 것도 모두 반영: `Fx` 의 `c` 를 인터페이스 합치기로(2.2절), `debugStep`·`Shift` 로 소리 열기(3.1·4.5·8.3절), 화면 막 상한을 주황 막에도(3.1·3.4·10절), 엄폐 배지는 반쪽 벽 기호(3.6절), `recShot` 의 인질 인자(2.3·11절 R2 줄), 엄폐 가구 탄착의 차이(10절 15), `damage.ts` 의 객체 모양(2.3절), `drawDoorLeaf` 의 1 초과 열림(3.5절), `CLAUDE.md` 의 "진실을 읽어도 되는 곳"에 `fxlog.ts`(12절), AI 시점은 지금 동작 유지로 정리(3.12·10절 9), 기본 `chromium.launch()`(8.3절).
+
+**검토 밖에서 더 고친 것**
+- Q1 이 합쳐져 `window.__ar` 은 이미 읽기 전용 `snap()` 으로 있다. 원래 이 문서는 `__ar` 에 `runner`·`director`·`sound`·`book` 을 통째로 내놓고 고리로 되감기·고정·배속을 바꾸려 했는데, Q1 의 원칙(값을 복사해 돌려줄 뿐 아무것도 바꾸지 않는다)과 G4 §11 의 방식(키와 사건 카드)에 맞춰, 읽기 함수 `combat()` 과 연출 시계만 넘기는 `fxStep(dt)` 둘만 더하고 나머지는 키로 하게 바꿨다(6·8.3절). `[확인 필요: Q1 결과]` 는 지웠다.
+- 협상 연출의 조건 `a.ring > 0` 은 처음 사기가 0.8 이상인 용의자(공격성 0.56 이상)와 협상하는 동안 한참 거짓이다(`a.ring = clamp(1 − (morale − 0.2)/0.6, 0, 1)`). `a.task.phase >= 1` 로 바꿨다(3.6절). 협상이 끊긴 동안의 붉은 풍선은 상태로 그린다.
+- X6 설계서가 생겨 11절 X6 줄과 `FxInfo['src']`·`'horn'` 처리를 맞췄다. X6 는 이미 `noteBoom`·`DECISIVE` 이름으로 적었다.
+- R1 의 테이저 대기 시간이 `a.taserAt` 로 바뀐 것을 11절 R1 줄에 적었다(G5 의 기록과는 무관).
+- 사격 피격(`hit`)이 예광선 머리 도착만큼 `delay` 를 받는다는 것을 3.1절 "같은 틱의 순서"에 명시했다(3.2절에만 있었다).
+
+**반영하지 않은 것**
+- G4 설계서의 `hazards.ts:613`·`606` 참조도 낡았지만, 이 검토는 G5 만 고친다. 11절 G4 줄에 지금 줄(622)과 찾을 글귀를 적어 두었다 — G4 를 합치는 사람이 고친다.

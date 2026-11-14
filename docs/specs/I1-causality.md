@@ -257,7 +257,7 @@ export function checkMetrics(m: MetricsSummary): string[];                  // �
 | 갈래 | 신호 | 왜 재계획인가 |
 |---|---|---|
 | `field` | PATH_BLOCKED·WATER_OUT·EQUIP_FAIL 중 **복구된 것**(`recovered`) | 우회·강제 개방·소화전 연결·예비 장비로 계획을 바꿨다 |
-| `field` | COMM_FAIL · VICTIM_MISSED · RECOUNT · SCENE_MISMATCH · METHOD_FAIL(R2) (복구 여부와 무관) | 재배정·재수색·현장 평가 수정·방법 교체가 뒤따른다(`commander.ts:224, 261, 405-408, 493`) |
+| `field` | COMM_FAIL · VICTIM_MISSED · RECOUNT · SCENE_MISMATCH · METHOD_FAIL(R2) (복구 여부와 무관) | 재배정·재수색·현장 평가 수정·방법 교체가 뒤따른다(`commander.ts:246·283·453·540`, `field/agents.ts:122·240`) |
 | `dispatch` | MISJUDGE_TYPE 중 복구된 것(현장 보고로 유형 수정) | |
 | `dispatch` | 첫 출동 뒤 평가가 바뀜: `I.firstAssess && I.assessment && (유형이 다름 \|\| \|위험도 차\| ≥ 1)` | `Assessment.revision` 은 통화 중 재평가도 세므로 쓰지 않는다 |
 | `dispatch` | HOSPITAL_FULL(I1-b — 이송 목적지 변경) | |
@@ -281,7 +281,7 @@ export function checkMetrics(m: MetricsSummary): string[];                  // �
   - **재시도 성공 `retryOk`**: 1번이고 `w.status === 'done'`(같은 종류로 다시 해서 끝냈다).
   - **대체 성공 `altOk`**: 1번이고 끝내지 못했지만, 같은 현장에 `w2.kind ≠ w.kind`, `PURPOSE[w2.kind] === PURPOSE[w.kind]`(둘 다 있음), 대상 열쇠(`cas/hostile/prop/region/tile/mate`)가 같고, `w2.status === 'done'`, `w2.doneAt >= w.createdAt` 인 항목이 있다. 또는 2·3·4번이고 `recovered`(우회·강제 개방 / 예비 장비 / 소화전 — 모두 막힌 수단 대신 다른 수단).
   - **포기 `gaveUp`**: 나머지.
-- `PURPOSE`(같은 목적의 다른 작업): `negotiate`·`engage`·`arrest` → `subdue`(제압·검거), `carry`·`escort` → `move`(구조 대상을 빼낸다). 나머지 작업은 대체 수단이 없다 — 지금 값이 거의 0 인 것이 바로 "대응이 단조롭다"는 사용자 지적의 숫자다.
+- `PURPOSE`(같은 목적의 다른 작업): `negotiate`·`engage`·`arrest` → `subdue`(제압·검거), `carry`·`escort` → `move`(구조 대상을 빼낸다). 나머지 작업은 대체 수단이 없다 — 작업 항목 갈래의 대체 성공(`items` 의 둘째 값)이 지금 0 인 것이 바로 "대응이 단조롭다"는 사용자 지적의 숫자다(진입로·장비·용수 갈래는 지금도 대체 수단이 있어 거의 다 복구된다).
 - `altRate = altOk / F`, `retryRate = retryOk / F`, `gaveUpRate = gaveUp / F`. 갈래별 `[n, 대체 성공]` 도 낸다(`items`·`path`·`equip`·`water`).
 
 **R2 뒤**: 사건에 `I.methods`(R2 의 `MethodUse[]`)가 있으면 `alt.methods` 를 따로 낸다. 열쇠 `(work, cas, prop, hostile, region)` 로 묶어, `ok: false` 가 하나라도 있는 묶음 가운데 뒤에 **접은 방법이 아닌** 방법의 `ok: true` 가 있으면 대체 성공. `alt.methods = { groups, altOk, rate }`. R2 가 합쳐지면 이 값이 주 지표가 되고 근사 값은 비교용으로 남긴다.
@@ -332,7 +332,7 @@ export function checkMetrics(m: MetricsSummary): string[];                  // �
 | 용의자의 `state` | `s.hostiles` |
 | 배정 부대의 `state` | `I.assigned` |
 | 대원의 `status`, 임무 `kind`·`phase` | `s.agents` |
-| 대원의 진행도: `a.ring` 또는 `a.task.progress` 가 0.01 넘게 바뀜 | 구출처럼 진행도가 구조 대상 칸에만 쌓이는 일(`c.trapWork`)도 `ring` 에 드러난다(`executor.ts:489`) |
+| 대원의 진행도: `a.ring` 또는 `a.task.progress` 가 0.01 넘게 바뀜 | 구출처럼 진행도가 구조 대상 칸에만 쌓이는 일(`c.trapWork`)도 `ring` 에 드러난다(`executor.ts:494`) |
 | 대원 한 명이라도 1.5칸 넘게 움직임(직전 표본 대비) | `a.x`, `a.y` |
 
 시계가 `STALL_SEC`(60초)를 넘은 사건이 후보다. 사건마다 가장 긴 구간 하나만 남긴다: 시드, 사건 코드, 시나리오, 시작 시각(`fmtClock(startTod + t)` 과 `t`), 길이, active 대원 수, 열린 작업 요약, 마지막 `importance ≥ 1` 기록 문구, 종료 사유·결과.
@@ -340,7 +340,7 @@ export function checkMetrics(m: MetricsSummary): string[];                  // �
 **(나) 잊힌 사건 `forgotten`** — 출동 전에 아무도 맡지 않은 사건. `I.phase` 가 `pending`·`dispatched` 이고 `I.assigned` 가 비었고 `Σ I.unmet === 0` 인 채로 `FORGOT_SEC`(30초) 이상. 아무도 움직이지 않고 `noresponse`(330초)만 기다리는 상태다. 설계 시험에서 0건.
 
 **(다) 느슨한 대기(보고만)**:
-- `idleSecPerIncident` = active 대원이 모두 임무가 없거나 `standby`·`rehab` 인 표본 초의 사건당 평균(설계 시험 S0~S2: 사건 42건에 합 약 500초). 구급차를 기다리는 것처럼 정상적인 대기가 섞여 있다.
+- `idleSecPerIncident` = active 대원이 모두 임무가 없거나 `standby`·`rehab` 인 표본 초의 사건당 평균(설계 시험 S0~S2: 사건 42건에 합 약 380초). 구급차를 기다리는 것처럼 정상적인 대기가 섞여 있다.
 - `queueWaitSecPerIncident` = 위 1·2 를 만족하고 4 가 거짓(대기열)인 표본 초의 평균. 자원 부족의 크기다.
 - `repeatMax` = 사건 안에서 `importance ≥ 1` 인 같은 `(actor, text)` 기록의 최대 반복 수. `REPEAT_WARN`(6) 이상은 목록으로("무의미한 반복" 후보).
 
@@ -361,7 +361,7 @@ export function checkMetrics(m: MetricsSummary): string[];                  // �
 
 | 검사 | 내용 | 지금 | 관문 |
 |---|---|---|---|
-| C1 | 모든 `Problem.eventId ≥ 0` 이 그 사건(`incidentId === I.id`)의 기록을 가리킨다 | 0 (설계 시험 116개 중 위반 0) | 건다 |
+| C1 | 모든 `Problem.eventId ≥ 0` 이 그 사건(`incidentId === I.id`)의 기록을 가리킨다 | 0 (설계 시험 127개 중 위반 0) | 건다 |
 | C2 | 닫힌 사건마다 `kind 'resolve'`·`actor '사건 관리'` 기록이 정확히 하나, 열린 사건은 0 | 0 일 것 (확인 필요) | 건다 |
 | C3 | `tHospital ≥ 0` 인 구조 대상이 있는 사건마다 병원 인계 기록(`kind 'casualty'`, `role 'UNIT'`)이 하나 이상 | 0 일 것 (확인 필요) | 건다 |
 | C4 | DIVERTED 문제마다 같은 시각에 다른 사건의 출동 지령 기록(`kind 'dispatch'`, `role 'DISPATCH'`, 문제 기록 바로 뒤의 첫 것)이 있다 | 0 일 것 (확인 필요) | 건다 |
@@ -377,7 +377,7 @@ C2~C4 가 첫 측정에서 0 이 아니면 그 검사는 보고만 하고, 원�
 |---|---|
 | (없음) | 지표를 언제나 계산한다(표본 포함). 기존 줄 뒤에 아래 9줄 + 후보 줄 |
 | `--metrics` | 시나리오별 표(행동 다양성·결과 다양성·확산 최댓값)와 예시·후보를 모두(상한 없이) |
-| `--no-metrics` | 표본을 뜨지 않고 지표 줄을 내지 않는다(P1 속도 비교용 — 지표 계산 비용을 빼고 잴 때) |
+| `--no-metrics` | 표본을 뜨지 않고 지표 줄을 내지 않는다(속도 비교용 — 지표 계산 비용을 빼고 잴 때) |
 | `--log S7 --metrics` | 한 교대의 사건마다 가장 긴 원인 사슬과 확산 길을 기록 문구와 함께(사슬을 읽는 도구) |
 
 **글자 줄** — `problems (incidents affected):` 줄 다음, `--check` 의 결과 앞. 접두어는 고정(다른 도구가 grep 한다). 숫자는 설계 시험 S0~S2 의 어림(일부는 꾸민 값 — 모양만 본다):
@@ -567,6 +567,7 @@ tag?: WorldTag;
 cause?: number;              // 이 사건을 낳은 기록 (발생 기록의 causes 에 들어간다)
 csq?: string;                // 이 사건을 만든 규칙 또는 연쇄 ('blastSpread' · 'arson' · 'reoffend' …)
 blockedBy?: number[];        // 수요를 막은 사건들 (NO_UNIT 때 그 부대를 잡고 있던 사건)
+divertWait?: { unit: number; t: number; eta: number; ev: number }[];   // 빼앗긴 부대와 그 부대의 예정 도착 (C6 이 첫 도착 때 지연을 잰다)
 // Problem
 ref?: { inc?: number; unit?: number; edge?: number; fac?: number; lost?: number };    // 관련 사건·부대·구간·병원, 늘어난 초
 // Scene
@@ -693,7 +694,7 @@ chain: { at: number; opts: SpawnOpts; when?: (sim: Sim) => boolean; until?: numb
 
 #### C6 `divertRecord` — 전환·부족의 실제 영향 (기록 규칙)
 
-- **전환**(`dispatcher.sendUnit` 의 `c.divertFrom` 블록): DIVERTED 기록에 `causes: [I.lastEvent]`(받는 사건의 마지막 기록 — 사건 사이 원인 간선), `Problem.ref = { inc: I.id, unit: u.id }`. J 에 `{ unit, t, eta: u.estArrive }` 를 기억해 둔다(예: `Incident.divertWait?` 칸 하나 더 — 이름은 구현 때).
+- **전환**(`dispatcher.sendUnit` 의 `c.divertFrom` 블록): DIVERTED 기록에 `causes: [I.lastEvent]`(받는 사건의 마지막 기록 — 사건 사이 원인 간선), `Problem.ref = { inc: I.id, unit: u.id }`. J 의 `divertWait` 에 `{ unit, t, eta: u.estArrive, ev: DIVERTED 기록 }` 를 더한다(§3.3).
 - **지연 기록**: J 의 다음 첫 도착(`unitArrived` 의 `first`) 때, 기억해 둔 전환이 있으면 `lost = max(0, sim.t − eta)` 를 `ref.lost` 에 넣고, `lost ≥ 10` 이면 `emit({ inc: J.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 1, causes: [그 DIVERTED 기록], text: '사건 J: 전환 배정 뒤 첫 도착이 예정보다 약 N초 늦었습니다.' })`. 도착 없이 닫히면 `closeIncident` 에서 `lost = closedAt − eta`(기록은 남기지 않는다 — 보고서가 `ref.lost` 로 쓴다).
 - **부족의 귀속**(`tickDispatch` 의 NO_UNIT): 막힌 수요 `key` 를 채울 수 있는(`caps[key] ≥ MINCAP[key]`) 부대 가운데 다른 사건에 묶인 것의 사건 id 를 모아 `I.blockedBy`, 그 사건들의 마지막 출동 지령(`dispatchLog` 끝)을 NO_UNIT 기록의 `causes` 에 더한다. 결원으로 `oos` 인 부대는 `ref` 에 `unit` 으로(결원 → 부족의 사슬).
 - 난수 없음. 쿨다운·상한 없음(일이 있을 때마다).

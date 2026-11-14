@@ -8,6 +8,7 @@ import { addProp, baseScene, set } from '../src/sim/field/kit';
 import { blast, flashbang } from '../src/sim/field/hazards';
 import { DECOR, T } from '../src/sim/types';
 import type { Scene } from '../src/sim/types';
+import { staticSig } from '../src/view/scene/staticLayer';
 
 /**
  * 손으로 만든 방 하나: x 5~15, y 5~11 이 벽, 그 안이 바닥.
@@ -225,6 +226,20 @@ describe('현장 파손 — 규칙', () => {
     for (let k = 0; k < 20; k++) expect(dmgRng(c.sim, c.s).next()).toBe(dmgRng(d.sim, d.s).next());
   });
 
+  it('파손이 생길 때마다 현장 그림의 고정 층이 다시 그려진다 (서명이 달라진다)', () => {
+    const { sim, s, at } = room();
+    const desk = furn(s, 10, 6, DECOR.DESK);
+    const sigs = [staticSig(s)];
+    breakGlass(sim, s, at(8, 11)); sigs.push(staticSig(s));
+    breakGlass(sim, s, at(12, 11)); sigs.push(staticSig(s));
+    damageDecor(sim, s, desk, 1); sigs.push(staticSig(s));       // 닳았다
+    damageDecor(sim, s, desk, 1); sigs.push(staticSig(s));       // 부서졌다
+    expect(new Set(sigs).size).toBe(sigs.length);
+    // 아무 일도 없으면 그대로다
+    expect(breakGlass(sim, s, at(8, 11))).toBe(false);
+    expect(staticSig(s)).toBe(sigs[sigs.length - 1]);
+  });
+
   it('지휘관·대원의 판단부와 관제는 파손 규칙과 파손 자료를 읽지 않는다', () => {
     const files = ['field/commander.ts', 'field/brain.ts', ...readdirSync(new URL('../src/sim/dispatch/', import.meta.url)).map((f) => 'dispatch/' + f), ...readdirSync(new URL('../src/sim/field/orders/', import.meta.url)).map((f) => 'field/orders/' + f)];
     for (const f of files) {
@@ -254,7 +269,7 @@ describe('현장 파손 — 교대 안에서', () => {
     expect(glass).toBeGreaterThan(0);
   }, 240000);
 
-  it('총격전이 벌어지는 현장(총격범)을 정해서 일으키면 가구가 닳거나 부서지고, 부서진 자리를 포함한 모든 바닥에 닿는다', () => {
+  it('총격전이 벌어지는 현장(총격범)을 정해서 일으키면 창이 깨지고 가구가 닳거나 부서지며, 모든 사건이 끝난다', () => {
     let worn = 0, wrecked = 0, glass = 0, logs = 0;
     for (let k = 0; k < 10; k++) {
       const sim = new Sim('D' + k, { ...NORMAL, threat: 5 }, 1200, { force: 'armed/shooter' }); sim.runToEnd();
@@ -269,9 +284,33 @@ describe('현장 파손 — 교대 안에서', () => {
     }
     expect(glass).toBeGreaterThan(0);
     expect(worn + wrecked).toBeGreaterThan(0);
-    expect(wrecked).toBeGreaterThan(0);
     expect(logs).toBeLessThanOrEqual(wrecked);                 // 기록은 가구가 부서졌을 때만 남는다
   }, 240000);
+
+  it('어느 현장이든 가구를 남김없이 부숴도 닿지 못하는 바닥이 생기지 않는다 (부서진 자리 포함)', () => {
+    let scenes = 0, wrecked = 0, kept = 0;
+    for (let k = 0; k < 6; k++) {
+      const sim = new Sim('W' + k, { ...NORMAL, threat: 4 }); sim.run(3500);
+      for (const sc of sim.scenes) {
+        if (!sc || sc.kind === 'search' || sc.kind === 'traffic' || sc.kind === 'water') continue;
+        const label = `${sim.seed} 사건 ${sim.incidents[sc.incidentId].code} (${sc.kind})`;
+        expect(cutFloors(sc), label + ' — 부수기 전').toBe(0);
+        // 가구마다 내구를 넘는 피해를 준다. 둘러싸여 있던 가구는 이웃이 치워진 뒤의 다음 차례에 부서진다
+        for (let pass = 0, changed = true; changed && pass < 12; pass++) {
+          changed = false;
+          for (let i = 0; i < sc.tiles.length; i++) if (sc.tiles[i] === T.FURN && damageDecor(sim, sc, i, 9)) changed = true;
+        }
+        const t = tally(sc);
+        wrecked += t.wrecked; kept += t.worn; scenes++;
+        expect(cutFloors(sc), label + ' — 부순 뒤').toBe(0);
+        // 남은 가구는 모두 부서지기 직전에서 멈춘 것(사방이 막힌 자리)이다
+        for (let i = 0; i < sc.tiles.length; i++) if (sc.tiles[i] === T.FURN && sc.propAt[i] < 0) expect(sc.decorHp[i], label).toBe(200);
+      }
+    }
+    expect(scenes).toBeGreaterThan(10);
+    expect(wrecked).toBeGreaterThan(50);
+    expect(wrecked).toBeGreaterThan(kept * 5);                 // 멈춘 것은 드물다
+  }, 120000);
 
   it('재현성: 같은 시드는 파손까지 똑같이 되풀이된다', () => {
     const run = (): Sim => { const s = new Sim('D-REPLAY', { ...NORMAL, threat: 5 }, 1200, { force: 'armed/shooter' }); s.runToEnd(); return s; };

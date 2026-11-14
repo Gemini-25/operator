@@ -56,6 +56,9 @@ export function tickFire(sim: Sim, s: Scene, I: Incident): void {
       s.heat[j] += k;
       if (s.heat[j] >= 1) { s.fire[j] = 0.15; s.heat[j] = 0; }
     }
+    // 계단을 타고 다른 층으로 번진다
+    const st = s.stairTo[i];
+    if (st >= 0 && s.fire[st] <= 0 && s.fuel[st] > 0) { s.heat[st] += 0.06 * sim.tune.fireSpreadMul * f; if (s.heat[st] >= 1) { s.fire[st] = 0.15; s.heat[st] = 0; } }
   }
   // 연기 확산
   for (let i = 0; i < n; i++) {
@@ -72,6 +75,8 @@ export function tickFire(sim: Sim, s: Scene, I: Incident): void {
       const v = s.smoke[j] * (indoor ? 0.86 : 0.5);
       if (v > target) target = v;
     }
+    const sl = s.stairTo[i];
+    if (sl >= 0 && s.smoke[sl] * 0.9 > target) target = s.smoke[sl] * 0.9;      // 연기는 계단을 타고 오르내린다
     if (!indoor) target *= 0.5;
     const cur = s.smoke[i];
     s.smoke[i] = target > cur ? cur + (target - cur) * 0.3 : cur + (target - cur) * (indoor ? 0.07 : 0.3);
@@ -196,6 +201,11 @@ export function tickCasualties(sim: Sim, s: Scene, I: Incident): void {
       const ti = c.path[c.pathI];
       if (!truthWalkable(s, ti) || s.fire[ti] > 0.5) { c.walking = false; c.panic = true; c.path = null; continue; }
       const tx = ti % s.w, ty = (ti / s.w) | 0;
+      if (s.stairTo[tileOf(s, c.x, c.y)] === ti) {      // 계단을 내려간다
+        c.climb = (c.climb ?? 0) + dt;
+        if (c.climb >= 2.6) { c.climb = 0; c.x = tx; c.y = ty; c.px = tx; c.py = ty; c.pathI++; }
+        continue;
+      }
       const dd = dist(c.x, c.y, tx, ty), step = 1.35 * dt * (1 - s.smoke[tileOf(s, c.x, c.y)] * 0.4);
       if (dd <= step) { c.x = tx; c.y = ty; c.pathI++; const dr = doorAt(s, ti); if (dr) dr.open = true; } else { c.x += ((tx - c.x) / dd) * step; c.y += ((ty - c.y) / dd) * step; }
     }

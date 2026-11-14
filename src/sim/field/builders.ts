@@ -18,7 +18,7 @@ function baseScene(sim: Sim, I: Incident, rng: Rng): Scene {
     tiles: new Uint8Array(n).fill(T.GROUND), region: new Int16Array(n).fill(-1),
     fire: new Float32Array(n), heat: new Float32Array(n), fuel: new Float32Array(n), smoke: new Float32Array(n),
     burned: new Uint8Array(n), wet: new Float32Array(n), shadow: new Uint8Array(n), propAt: new Int16Array(n).fill(-1),
-    decor: new Uint8Array(n), floorMat: 0, damage: new Uint8Array(n), entryExit: -1,
+    decor: new Uint8Array(n), floorMat: 0, damage: new Uint8Array(n), entryExit: -1, stairTo: new Int16Array(n).fill(-1),
     regions: [], props: [], casualties: [], hostiles: [], agents: [],
     staging: { x: 3, y: 17 }, safe: { x: 4, y: 15 }, vantage: { x: 4, y: 12 }, exits: [], spots: [],
     controlPts: [], controlDone: [], laneRows: [], cars: [], nextCarAt: 0, trafficFlow: 0,
@@ -126,6 +126,7 @@ function freeTileIn(s: Scene, r: Region, rng: Rng, avoid: (i: number) => boolean
 
 // ───────────────────────── 건물 화재 ─────────────────────────
 function buildFire(sim: Sim, I: Incident, rng: Rng): Scene {
+  if (I.truth.variant !== 'false' && I.truth.severity >= 2 && rng.chance(0.5)) return buildFireTall(sim, I, rng);      // 큰 화재의 절반은 2층 건물
   const s = baseScene(sim, I, rng);
   const sev = I.truth.severity, dist = I.truth.district;
   for (let y = 17; y < SH; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
@@ -211,6 +212,87 @@ function buildFire(sim: Sim, I: Incident, rng: Rng): Scene {
     const mob: Mobility = roll < 0.4 ? 'mobile' : roll < 0.8 ? 'immobile' : 'trapped';
     addCas(s, i % SW, (i / SW) | 0, mob, mob === 'mobile' ? rng.range(78, 100) : rng.range(55, 85),
       mob === 'mobile' ? 0.03 : rng.range(0.07, 0.19), mob === 'trapped' ? rng.range(0.35, 0.55) : rng.range(0.1, 0.55));
+  }
+  s.leadDept = 'fire';
+  return s;
+}
+
+/**
+ * 2층 건물 화재. 1층과 2층 평면을 같은 격자 안에 나란히 놓고(오른쪽이 2층), 계단 칸끼리 이어 준다.
+ * 두 층 사이는 빈 공간(VOID)이라 시야·불·연기가 벽을 넘어가지 않고, 계단으로만 오간다.
+ */
+function buildFireTall(sim: Sim, I: Incident, rng: Rng): Scene {
+  const s = baseScene(sim, I, rng);
+  const sev = I.truth.severity, dist = I.truth.district;
+  for (let y = 17; y < SH; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
+  for (let y = 0; y <= 13; y++) for (let x = 16; x < SW; x++) set(s, x, y, T.VOID);
+  const prefix = dist === 'industrial' ? '작업실' : dist === 'commercial' ? '점포' : dist === 'outskirts' ? '객실' : '호실';
+  s.floorMat = dist === 'industrial' ? 2 : dist === 'commercial' ? 1 : 0;
+  const kinds = dist === 'industrial' ? [DECOR.MACHINE, DECOR.CRATE, DECOR.CRATE, DECOR.CABINET] : dist === 'commercial' ? [DECOR.COUNTER, DECOR.SHELF, DECOR.TABLE, DECOR.CRATE] : [DECOR.BED, DECOR.DESK, DECOR.SOFA, DECOR.CABINET, DECOR.PLANT];
+  const rooms: Region[] = [], corridors: Region[] = [];
+  let roomNo = 1;
+  const mkFloor = (ox: number, level: number): void => {
+    const x0 = ox, x1 = ox + 11, y0 = 2, y1 = 12;
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set(s, x, y, x === x0 || x === x1 || y === y0 || y === y1 ? T.WALL : T.FLOOR);
+    for (let x = x0 + 1; x < x1; x++) { set(s, x, 6, T.WALL); set(s, x, 8, T.WALL); }
+    for (const [ya, yb, doorY, winY] of [[3, 5, 6, y0], [9, 11, 8, y1]]) {
+      const px = ox + rng.int(5, 6);
+      for (let y = ya; y <= yb; y++) set(s, px, y, T.WALL);
+      for (const [xa, xb] of [[x0 + 1, px - 1], [px + 1, x1 - 1]]) {
+        const dx = rng.int(xa, xb);
+        set(s, dx, doorY, T.DOOR); addProp(s, 'door', dx, doorY, { open: false, locked: false });
+        set(s, Math.round((xa + xb) / 2), winY, T.WINDOW);
+        const r = addRegion(s, `${level}층 ${prefix} ${roomNo++}`, 'room', xa, ya, xb, yb, true, true);
+        s.region[tidx(s, dx, doorY)] = r.id; r.tiles.push(tidx(s, dx, doorY));
+        rooms.push(r);
+      }
+    }
+    corridors.push(addRegion(s, `${level}층 복도`, 'corridor', x0 + 1, 7, x1 - 1, 7, true, false));
+  };
+  mkFloor(3, 1); mkFloor(17, 2);
+  for (const r of rooms) furnish(s, rng, r, kinds, rng.int(1, 2), false);
+  // 계단: 각 층 복도의 동쪽 끝
+  const st1 = tidx(s, 13, 7), st2 = tidx(s, 27, 7);
+  s.tiles[st1] = T.STAIR; s.tiles[st2] = T.STAIR; s.stairTo[st1] = st2; s.stairTo[st2] = st1;
+  // 출입구 (1층)
+  set(s, 3, 7, T.DOOR); addProp(s, 'door', 3, 7, { open: false, locked: false });
+  set(s, 14, 7, T.DOOR);
+  const hz = (v: number): number => Math.min(0.95, v * sim.tune.hazardMul);
+  const eastLocked = rng.chance(hz(0.45));
+  addProp(s, 'door', 14, 7, { open: false, locked: eastLocked, blocking: eastLocked, hp: rng.range(7, 11) });
+  s.exits.push({ x: 2, y: 7 }, { x: 15, y: 7 });
+  s.staging = { x: 3, y: 17 }; s.safe = { x: 3, y: 14 }; s.vantage = { x: 1, y: 9 };
+  addProp(s, 'hydrant', 27, 16, {});
+  for (const r of rooms) for (const i of r.tiles) s.fuel[i] = s.tiles[i] === T.DOOR ? 0.3 : s.tiles[i] === T.FURN ? 1 : rng.range(0.55, 1.0) * (dist === 'industrial' ? 1.15 : 1);
+  for (const c of corridors) for (const i of c.tiles) if (s.fuel[i] === 0) s.fuel[i] = rng.range(0.4, 0.56);
+  for (let i = 0; i < s.fuel.length; i++) if (s.fuel[i] > 0) s.totalFuelTiles++;
+  // 발화
+  const origin = rng.pick(rooms);
+  const seeds = sev >= 3 ? 3 : 2;
+  for (let k = 0; k < seeds; k++) { const i = freeTileIn(s, origin, rng); s.fire[i] = rng.range(0.4, 0.6) + sev * 0.09; }
+  { const d = s.props.find((p) => p.kind === 'door' && s.region[tidx(s, p.x, p.y)] === origin.id); if (d) d.open = true; }
+  if (sev >= 3) {
+    const near = rooms.filter((q) => q !== origin).sort((a, b) => Math.hypot(a.cx - origin.cx, a.cy - origin.cy) - Math.hypot(b.cx - origin.cx, b.cy - origin.cy))[0];
+    const i2 = freeTileIn(s, near, rng); s.fire[i2] = rng.range(0.3, 0.5);
+  }
+  // 숨겨진 조건
+  if (rng.chance(hz(0.24))) { const lvl = rng.pick([3, 17]); const dx = lvl + rng.int(3, 8); addProp(s, 'debris', dx, 7, { blocking: true, hp: rng.range(9, 15) }); }
+  if (rng.chance(hz(0.2))) {
+    const r = rng.pick(rooms.filter((q) => q !== origin));
+    const d = s.props.find((p) => p.kind === 'door' && s.region[tidx(s, p.x, p.y)] === r.id);
+    if (d) { d.locked = true; d.blocking = true; d.hp = rng.range(5, 9); s.propAt[tidx(s, d.x, d.y)] = d.id; }
+  }
+  if (rng.chance(hz(dist === 'industrial' ? 0.42 : 0.13))) { const r = rng.pick(rooms.filter((q) => q !== origin)); const i = freeTileIn(s, r, rng); addProp(s, 'gas', i % SW, (i / SW) | 0, {}); }
+  if (rng.chance(hz(0.6))) { const r = rng.pick(rooms.filter((q) => q.cx > 16)); for (const i of r.tiles) s.shadow[i] = 1; }
+  // 구조 대상: 2층에 더 많이 남아 있다
+  const count = sev >= 3 ? rng.int(2, 4) : rng.int(1, 3);
+  for (let k = 0; k < count; k++) {
+    const pool = rooms.filter((q) => q !== origin && (rng.chance(0.65) ? q.cx > 16 : q.cx < 16));
+    const r = rng.chance(0.9) && pool.length ? rng.pick(pool) : origin;
+    const i = freeTileIn(s, r, rng, (q) => { for (let f = 0; f < s.fire.length; f++) if (s.fire[f] > 0 && Math.hypot((f % SW) - (q % SW), ((f / SW) | 0) - ((q / SW) | 0)) < 2.5) return true; return false; });
+    const roll = rng.next();
+    const mob: Mobility = roll < 0.4 ? 'mobile' : roll < 0.8 ? 'immobile' : 'trapped';
+    addCas(s, i % SW, (i / SW) | 0, mob, mob === 'mobile' ? rng.range(78, 100) : rng.range(55, 85), mob === 'mobile' ? 0.03 : rng.range(0.07, 0.19), mob === 'trapped' ? rng.range(0.35, 0.55) : rng.range(0.1, 0.55));
   }
   s.leadDept = 'fire';
   return s;

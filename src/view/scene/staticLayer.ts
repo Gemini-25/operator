@@ -17,7 +17,7 @@ export interface StaticLayer {
 const S = { VOID: 0, GRASS: 1, FOREST: 2, PAVER: 3, CONCRETE: 4, ASPHALT: 5, DIRT: 6, WATER: 7, WOOD: 8, TILE: 9, SLAB: 10, GRAVEL: 11, WALL: 255 } as const;
 
 const isWallish = (t: number): boolean => t === T.WALL || t === T.WINDOW;
-const isBuilding = (t: number): boolean => t === T.FLOOR || t === T.FURN || t === T.DOOR || t === T.WALL || t === T.WINDOW;
+const isBuilding = (t: number): boolean => t === T.FLOOR || t === T.FURN || t === T.DOOR || t === T.WALL || t === T.WINDOW || t === T.STAIR;
 
 /** 정적 층이 의존하는 값의 요약. 문이 열리는 정도로는 다시 그리지 않는다. */
 export function staticSig(s: Scene): number {
@@ -35,7 +35,7 @@ function surfaceMap(s: Scene, district: string): Uint8Array {
   for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) {
     const i = y * s.w + x, t = s.tiles[i];
     let v: number;
-    if (t === T.FLOOR || t === T.FURN || t === T.DOOR) v = floor;
+    if (t === T.FLOOR || t === T.FURN || t === T.DOOR || t === T.STAIR) v = floor;
     else if (isWallish(t)) v = s.decor[i] === DECOR.SHELF ? floor : S.WALL;
     else if (t === T.ROAD) v = S.ASPHALT;
     else if (t === T.VOID) v = S.VOID;
@@ -184,7 +184,10 @@ function paintTile(g: G, kind: number, tx: number, ty: number, R: number): void 
       }
       break;
     }
-    default: g.fillStyle = '#0a0e13'; g.fillRect(px, py, R + 0.6, R + 0.6);
+    default:
+      // 빈 공간: 다른 층의 평면을 올려놓는 도면 바탕
+      g.fillStyle = '#0c131b'; g.fillRect(px, py, R + 0.6, R + 0.6);
+      g.fillStyle = 'rgba(120,165,205,0.055)'; g.fillRect(px, py, R, Math.max(1, R * 0.02)); g.fillRect(px, py, Math.max(1, R * 0.02), R);
   }
 }
 
@@ -714,6 +717,44 @@ export function buildStatic(s: Scene, R: number, district: string): StaticLayer 
       g.fillStyle = 'rgba(0,0,0,0.2)'; g.fillRect(-0.4, -hw, 0.8, hw * 2);
       g.fillStyle = 'rgba(255,255,255,0.1)'; g.fillRect(-0.4, -hw, 0.8, 0.02); g.fillRect(-0.4, hw - 0.02, 0.8, 0.02);
       g.restore();
+    }
+  }
+  // 계단과 층 표시
+  const seen = new Set<number>();
+  for (let i = 0; i < s.stairTo.length; i++) {
+    const j = s.stairTo[i];
+    if (j < 0) continue;
+    const x = i % s.w, y = (i / s.w) | 0;
+    g.save(); g.translate((x + 0.5) * R, (y + 0.5) * R); g.scale(R, R);
+    rr(g, -0.46, -0.44, 0.92, 0.88, 0.03, '#2a3138'); rr(g, -0.42, -0.4, 0.84, 0.8, 0.02, '#8d969e');
+    for (let k = 0; k < 6; k++) { g.fillStyle = k % 2 ? '#a9b2ba' : '#7b848c'; g.fillRect(-0.42 + k * 0.14, -0.4, 0.14, 0.8); g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(-0.42 + k * 0.14, -0.4, 0.018, 0.8); }
+    g.fillStyle = '#2f3840'; g.fillRect(-0.42, -0.4, 0.84, 0.05); g.fillRect(-0.42, 0.35, 0.84, 0.05);
+    const up = j > i;      // 낮은 번호 쪽이 아래층
+    g.fillStyle = '#e8f3fb'; g.beginPath();
+    if (up) { g.moveTo(0.28, 0); g.lineTo(0.06, -0.17); g.lineTo(0.06, -0.06); g.lineTo(-0.26, -0.06); g.lineTo(-0.26, 0.06); g.lineTo(0.06, 0.06); g.lineTo(0.06, 0.17); }
+    else { g.moveTo(-0.28, 0); g.lineTo(-0.06, -0.17); g.lineTo(-0.06, -0.06); g.lineTo(0.26, -0.06); g.lineTo(0.26, 0.06); g.lineTo(-0.06, 0.06); g.lineTo(-0.06, 0.17); }
+    g.closePath(); g.fill();
+    g.restore();
+    if (seen.has(i)) continue;
+    seen.add(i); seen.add(j);
+    // 두 계단을 잇는 점선
+    const x2 = j % s.w, y2 = (j / s.w) | 0;
+    g.save(); g.strokeStyle = 'rgba(124,210,200,0.55)'; g.lineWidth = Math.max(1.5, R * 0.05); g.setLineDash([R * 0.22, R * 0.18]); g.lineCap = 'round';
+    g.beginPath(); g.moveTo((x + 0.5) * R, (y + 0.05) * R); g.bezierCurveTo((x + 0.5) * R, (y - 3.2) * R, (x2 + 0.5) * R, (y2 - 3.2) * R, (x2 + 0.5) * R, (y2 + 0.05) * R); g.stroke(); g.restore();
+    // 층 이름: 계단이 속한 건물 덩어리의 윗변에 적는다
+    for (const [start, name] of [[i, '1층'], [j, '2층']] as [number, string][]) {
+      const q = [start], vis = new Set<number>([start]);
+      let bx0 = s.w, bx1 = 0, by0 = s.h, by1 = 0;
+      while (q.length) {
+        const c = q.pop()!, cx = c % s.w, cy = (c / s.w) | 0;
+        bx0 = Math.min(bx0, cx); bx1 = Math.max(bx1, cx); by0 = Math.min(by0, cy); by1 = Math.max(by1, cy);
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = cx + dx, ny = cy + dy; if (nx < 0 || ny < 0 || nx >= s.w || ny >= s.h) continue; const n = ny * s.w + nx; if (!vis.has(n) && isBuilding(s.tiles[n])) { vis.add(n); q.push(n); } }
+      }
+      const lx = (bx0 + 0.3) * R, ly = (by0 - 0.42) * R;
+      g.font = `800 ${Math.round(R * 0.62)}px 'Pretendard', 'Noto Sans KR', system-ui, sans-serif`; g.textAlign = 'left'; g.textBaseline = 'middle';
+      const tw = g.measureText(name).width;
+      rr(g, lx - R * 0.2, ly - R * 0.44, tw + R * 0.4, R * 0.88, R * 0.2, 'rgba(8,13,18,0.78)');
+      g.fillStyle = '#9fe6dd'; g.fillText(name, lx, ly + R * 0.03);
     }
   }
   // 출입구 앞 디딤판

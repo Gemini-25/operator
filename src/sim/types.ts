@@ -85,7 +85,7 @@ export interface Fact {
 export interface CasBelief { x: number; y: number; mob: Mobility; band: number; where: CasWhere; treated: boolean; trappedDone: boolean; tq: number }   // tq: 0 미처치, 1 기본 처치, 2 전문 처치
 
 // ───────────────────────── 현장 ─────────────────────────
-export const T = { VOID: 0, GROUND: 1, ROAD: 2, FLOOR: 3, WALL: 4, WINDOW: 5, TREE: 6, WATER: 7, ROCK: 8, DOOR: 9, TRAIL: 10, FURN: 11 } as const;
+export const T = { VOID: 0, GROUND: 1, ROAD: 2, FLOOR: 3, WALL: 4, WINDOW: 5, TREE: 6, WATER: 7, ROCK: 8, DOOR: 9, TRAIL: 10, FURN: 11, STAIR: 12 } as const;
 /** 가구 종류 (Scene.decor). 가구는 지나갈 수 없지만 시야는 가리지 않고, 엄폐물이 되며, 불에 탄다. */
 export const DECOR = { NONE: 0, BED: 1, DESK: 2, TABLE: 3, SOFA: 4, CABINET: 5, CRATE: 6, MACHINE: 7, COUNTER: 8, PLANT: 9, KITCHEN: 10, SHELF: 11 } as const;
 
@@ -125,6 +125,7 @@ export interface Casualty {
   wander: boolean; wanderT: number;
   isTarget: boolean;        // 수색 대상
   hostage: boolean;
+  climb?: number;           // 계단을 오르내리는 데 쓴 시간 (스스로 대피 중)
   // 진실 기반 타임라인 (보고서용)
   tDiscovered: number; tFreed: number; tTreated: number; tSafe: number; tLoaded: number; tDead: number; tHospital: number;
   discoveredBy: number;
@@ -201,6 +202,7 @@ export interface FieldAgent {
   smokeT: number;
   pendingBlock: number;                       // 방금 발견한 장애물 타일 (우회/제거 결정 대기)
   underFireT: number;                         // 마지막으로 피격 위협을 받은 시각
+  climb: number;                              // 계단을 오르내리는 데 쓴 시간
   spot: number;                               // 점유 중인 엄폐 위치 인덱스
   quiet: Set<string>;                         // 이미 별도 이벤트로 알린 정보(무전 문구에서 생략)
   lastRetreatLog: number;
@@ -223,6 +225,7 @@ export interface Scene {
   shadow: Uint8Array;                 // 무전 음영 구역
   decor: Uint8Array;                  // 가구 종류 (DECOR)
   damage: Uint8Array;                 // 무너져 내린 자리 (붕괴 사건: 잔해가 깔린 바닥)
+  stairTo: Int16Array;                // 계단 칸 → 이어진 다른 층의 계단 칸 (-1 = 계단 아님). 층은 같은 격자 안에 나란히 놓인다
   entryExit: number;                  // 지휘관이 고른 진입 출입구 (s.exits 의 번호, -1 = 아직 정하지 않음)
   floorMat: number;                   // 실내 바닥 재질 (0 나무, 1 타일, 2 콘크리트)
   propAt: Int16Array;                 // 타일 → blocking prop id (-1)

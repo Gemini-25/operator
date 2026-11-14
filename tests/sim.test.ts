@@ -389,3 +389,34 @@ describe('지휘관의 진입 계획', () => {
     expect(stacked).toBe(plans);
   }, 120000);
 });
+
+describe('2층 건물', () => {
+  it('계단으로 이어진 2층 건물 화재가 나오고, 대원이 2층까지 올라가 사람을 구해 내려온다', () => {
+    let tall = 0, searched2F = 0, saved2F = 0, on2F = 0, timeouts = 0;
+    for (let k = 0; k < 30; k++) {
+      const s = new Sim('S' + k); s.runToEnd();
+      for (const sc of s.scenes) {
+        if (!sc || sc.kind !== 'fire' || !sc.stairTo.some((v) => v >= 0)) continue;
+        tall++;
+        const I = s.incidents[sc.incidentId];
+        if (I.closeReason === 'timeout') timeouts++;
+        // 계단은 서로를 가리킨다
+        sc.stairTo.forEach((j, i) => { if (j >= 0) expect(sc.stairTo[j]).toBe(i); });
+        const upper = sc.regions.filter((r) => r.name.startsWith('2층') && r.searchable);
+        if (upper.some((r) => sc.board.some((w) => w.kind === 'search' && w.region === r.id && w.status === 'done'))) searched2F++;
+        for (const c of sc.casualties) {
+          if (c.tDiscovered < 0) continue;
+          const ev = s.events.find((e) => e.incidentId === I.id && e.text.includes(`구조 대상 ${c.label} 발견`) && e.text.includes('2층'));
+          if (!ev) continue;
+          on2F++;
+          if (!c.dead && (c.where === 'safe' || c.where === 'loaded' || c.where === 'hospital')) saved2F++;
+        }
+      }
+    }
+    expect(tall).toBeGreaterThan(5);
+    expect(searched2F).toBeGreaterThan(tall * 0.6);
+    expect(on2F).toBeGreaterThan(3);
+    expect(saved2F).toBeGreaterThan(on2F * 0.5);
+    expect(timeouts).toBeLessThan(tall * 0.2);
+  }, 120000);
+});

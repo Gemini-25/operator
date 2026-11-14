@@ -14,9 +14,9 @@ export const tileOf = (s: Scene, x: number, y: number): number => {
 };
 
 export function staticPass(t: number): boolean {
-  return t === T.GROUND || t === T.ROAD || t === T.FLOOR || t === T.TREE || t === T.DOOR || t === T.TRAIL;
+  return t === T.GROUND || t === T.ROAD || t === T.FLOOR || t === T.TREE || t === T.DOOR || t === T.TRAIL || t === T.STAIR;
 }
-export function isIndoor(t: number): boolean { return t === T.FLOOR || t === T.DOOR || t === T.FURN; }
+export function isIndoor(t: number): boolean { return t === T.FLOOR || t === T.DOOR || t === T.FURN || t === T.STAIR; }
 
 /** 진실 기준: 지금 이 타일에 들어갈 수 있는가 (화재 제외) */
 export function truthWalkable(s: Scene, i: number): boolean {
@@ -38,7 +38,7 @@ export function los(s: Scene, x0: number, y0: number, x1: number, y1: number): b
     if (ax === bx && ay === by) break;
     const i = ay * s.w + ax;
     const t = s.tiles[i];
-    if (t === T.WALL || t === T.ROCK) return false;
+    if (t === T.WALL || t === T.ROCK || t === T.VOID) return false;
     if (t === T.DOOR) { const d = doorAt(s, i); if (d && !d.open) return false; }
   }
   return true;
@@ -57,7 +57,7 @@ export function losWalls(s: Scene, x0: number, y0: number, x1: number, y1: numbe
     if (e2 < dx) { err += dx; ay += sy; }
     if (ax === bx && ay === by) break;
     const t = s.tiles[ay * s.w + ax];
-    if (t === T.WALL || t === T.ROCK) return false;
+    if (t === T.WALL || t === T.ROCK || t === T.VOID) return false;
   }
   return true;
 }
@@ -99,6 +99,8 @@ function hpop(): number {
 const DX = [1, -1, 0, 0, 1, 1, -1, -1];
 const DY = [0, 0, 1, -1, 1, -1, 1, -1];
 
+/** 계단 한 번의 이동 비용 (칸 수 환산) */
+export const STAIR_COST = 3;
 export type CostFn = (i: number) => number;   // 추가 비용 (음수 = 통과 불가)
 
 /**
@@ -153,6 +155,12 @@ export function astar(s: Scene, sx: number, sy: number, tx: number, ty: number, 
       if (state[ni] === 0 || ng < gArr[ni]) {
         gArr[ni] = ng; fArr[ni] = ng + hfn(ni); came[ni] = cur; state[ni] = 1; hpush(ni);
       }
+    }
+    // 계단: 다른 층의 이어진 칸으로 건너간다
+    const st = s.stairTo[cur];
+    if (st >= 0 && state[st] !== 2) {
+      const c = cost(st);
+      if (c >= 0) { const ng = gArr[cur] + STAIR_COST + c; if (state[st] === 0 || ng < gArr[st]) { gArr[st] = ng; fArr[st] = ng + hfn(st); came[st] = cur; state[st] = 1; hpush(st); } }
     }
   }
   return null;

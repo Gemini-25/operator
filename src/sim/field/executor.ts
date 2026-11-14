@@ -127,6 +127,17 @@ function moveTo(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, range
     return t.fails > 3 ? 'nopath' : 'moving';
   }
   const nx = next % s.w, ny = (next / s.w) | 0;
+  if (s.stairTo[tileOf(s, a.x, a.y)] === next) {
+    // 계단: 잠깐 뒤 다른 층의 이어진 칸에 나타난다 (사람을 옮기는 중이면 더 오래 걸린다)
+    a.climb += sim.dt;
+    if (a.climb >= (a.carrying !== -1 ? 3.4 : 1.8)) {
+      a.climb = 0; a.x = nx; a.y = ny; a.px = nx; a.py = ny; a.pathI++;
+      if (a.carrying >= 0) { const c = s.casualties[a.carrying]; c.x = nx; c.y = ny; c.px = nx; c.py = ny; }
+    }
+    r.stamina = Math.max(0, r.stamina - (a.carrying !== -1 ? 1.1 : 0.3) * (1.35 - r.fitness) * sim.dt);
+    return 'moving';
+  }
+  a.climb = 0;
   const d = dist(a.x, a.y, nx, ny);
   const step = moveSpeed(sim, s, a) * sim.dt;
   if (d > 0.001) { a.fx = (nx - a.x) / d; a.fy = (ny - a.y) / d; }

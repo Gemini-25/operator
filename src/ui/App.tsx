@@ -6,6 +6,7 @@ import { SoundDirector } from '../view/audio';
 import { CameraDirector } from '../view/camera';
 import { Runner } from '../view/runner';
 import { Viewport } from './Viewport';
+import { MapLegend } from './MapLegend';
 import type { Difficulty } from '../sim/difficulty';
 import { AgentPanel, BottomBar, CallPanel, DecisionPanel, DifficultyPanel, Icon, IncidentList, LogPanel, ReportModal, Ticker, TopBar, UnitList } from './panels';
 
@@ -152,7 +153,15 @@ export function App() {
         <div className="overlay tl">
           <div className="cam-reason"><span className={`dot ${director.manual ? 'manual' : 'auto'}`} />{director.manual ? '수동 시점' : '자동 카메라'} · {director.reason}</div>
           {runner.slowed && <div className="cam-reason slow"><span className="dot slow" />결정적 순간 · 1배속으로 낮춤</div>}
-          {I && (
+          {reel && (
+            <div className="reel">
+              <b>주요 장면 {reel.idx + 1}/{reel.list.length}</b>
+              <span className="tx">사건 {sim.incidents[reel.list[reel.idx].id]?.code} · {reel.list[reel.idx].text}</span>
+              <button onClick={() => { reelUntil.current = 0; }}>다음 장면</button>
+              <button className="ghost" onClick={() => stopReel(reel.speed)}>그만 보기</button>
+            </div>
+          )}
+          {I && !reel && (
             <div className="scene-title">
               <Icon name={I.assessment ? I.assessment.type : 'unknown'} size={15} /> <b>사건 {I.code}</b> {I.assessment ? I.assessment.label ?? TYPE_NAME[I.assessment.type] : '유형 확인 중'} · {I.locationKnown || truth ? I.truth.label : '위치 확인 중'}
               {scene && scene.arrivedAt >= 0 && <span className="dim"> · 현장 경과 {fmtDur((I.phase === 'closed' ? I.closedAt : sim.t) - scene.arrivedAt)}</span>}
@@ -166,7 +175,9 @@ export function App() {
           {I && scene && <button onClick={() => { director.pin(I.id, inScene ? 'city' : 'scene'); force(); }}>{inScene ? '지도에서 보기' : '현장 확대'}</button>}
           <button className={truth ? 'on' : ''} onClick={() => { runner.settings.truthView = !truth; runner.saveSettings(); force(); }} title="관찰자 시점: AI 가 아직 모르는 사실도 표시 (T)">{truth ? '관찰자 시점' : 'AI 시점'}</button>
         </div>
-        <div className="overlay bl legend">
+        <div className="overlay bl">
+          {!inScene && <MapLegend />}
+          <div className="legend">
           {inScene ? (<>
             <span><i className="ring" style={{ borderColor: '#ff7a45' }} />소방</span><span><i className="ring" style={{ borderColor: '#2fd39a' }} />구급</span><span><i className="ring" style={{ borderColor: '#5aa9ff' }} />경찰</span>
             <span><i className="ring gold" />지휘관</span>
@@ -175,19 +186,12 @@ export function App() {
             <span><i className="ring" style={{ borderColor: '#e0486b', background: 'rgba(224,72,107,0.25)' }} />용의자</span>
             <span className="sep" />
             <span className="dim">휠 확대 · 끌어서 이동 · 두 번 눌러 전체 보기{truth ? ' · 흐린 표시 = AI 미확인' : ''}</span>
-          </>) : (<span className="dim">사건 표식을 누르면 현장을 확대합니다 · 건물이나 도로에 마우스를 올리면 이름과 종류가 보입니다 · 휠 확대/축소 · 끌어서 이동</span>)}
+          </>) : (<span className="dim">사건 표식을 누르면 현장 확대 · 휠 확대 · 끌어서 이동</span>)}
+          </div>
         </div>
         <div className="overlay call-wrap"><CallPanel sim={sim} truth={truth} /></div>
         <Ticker sim={sim} truth={truth} />
         {runner.paused && !sim.ended && <div className="paused">일시정지</div>}
-        {reel && (
-          <div className="reel">
-            <b>주요 장면 {reel.idx + 1}/{reel.list.length}</b>
-            <span className="tx">사건 {sim.incidents[reel.list[reel.idx].id]?.code} · {reel.list[reel.idx].text}</span>
-            <button onClick={() => { reelUntil.current = 0; }}>다음 장면</button>
-            <button className="ghost" onClick={() => stopReel(reel.speed)}>그만 보기</button>
-          </div>
-        )}
       </div>
       <div className="right">
         <div className="tabs">

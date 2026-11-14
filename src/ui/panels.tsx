@@ -13,14 +13,17 @@ import type { Incident, Role, SimEvent, Unit, UnitField } from '../sim/types';
 import { TrafficChip } from './TrafficChip';
 import { DEPT_NAME, OUTCOME_NAME, TYPE_NAME, WEATHER_NAME, fmtClock, fmtDur, fmtSec, pct } from '../sim/util';
 import type { CameraDirector } from '../view/camera';
+import { FIELD_TEXT } from '../view/city/tokens';
 import { ICON_PATH } from '../view/icons';
+import { UNIT_MARK } from '../view/marks';
 import { DEPT_COLOR, OUTCOME_COLOR, TYPE_COLOR } from '../view/renderCity';
 import type { Runner } from '../view/runner';
+import { Mark, Token } from './Mark';
 
 const PHASE: Record<string, string> = { unreported: '미신고', call: '신고 접수 중', pending: '배정 대기', dispatched: '출동 중', onscene: '현장 대응', closed: '종료' };
 const UNIT_STATE: Record<string, string> = { available: '대기', turnout: '출동 준비', enroute: '출동 중', onscene: '현장', transport: '병원 이송', hospital: '환자 인계', returning: '복귀 중', oos: '운용 중단' };
 const ROLE_NAME: Record<Role, string> = { SYSTEM: '시스템', CALLER: '신고자', CALL_TAKER: '접수 AI', ANALYST: '분석 AI', DISPATCH: '배정 AI', COMMANDER: '현장 지휘', RESPONDER: '대원', UNIT: '부대' };
-const ROLE_COLOR: Record<Role, string> = { SYSTEM: '#7d8b99', CALLER: '#a9b6c3', CALL_TAKER: '#4fd1c5', ANALYST: '#b98cff', DISPATCH: '#ffb454', COMMANDER: '#ffd166', RESPONDER: '#8fb8de', UNIT: '#7cc4ff' };
+const ROLE_COLOR: Record<Role, string> = { SYSTEM: '#6f7f8e', CALLER: '#d6e2ee', CALL_TAKER: '#86cfd6', ANALYST: '#c3b3f0', DISPATCH: '#f0c27a', COMMANDER: '#ffd166', RESPONDER: '#8fb8de', UNIT: '#9fb3c6' };
 const BAND = ['경상', '중상', '위중', '사망'];
 
 export function Icon({ name, size = 14, color = 'currentColor' }: { name: string; size?: number; color?: string }) {
@@ -80,7 +83,7 @@ function IncidentCard({ sim, I, director, truth }: { sim: Sim; I: Incident; dire
       )}
       {I.phase !== 'closed' && (I.assigned.length > 0 || Object.values(I.unmet).some((v) => (v ?? 0) > 0)) && (
         <div className="row small wrap">
-          {I.assigned.map((uid) => { const u = sim.units[uid]; return <span key={uid} className="chip" style={{ borderColor: DEPT_COLOR[u.dept], color: DEPT_COLOR[u.dept] }}>{u.callsign}{u.state === 'enroute' || u.state === 'turnout' ? ` ${Math.max(0, Math.round(u.estArrive - sim.t))}s` : ''}</span>; })}
+          {I.assigned.map((uid) => { const u = sim.units[uid]; return <span key={uid} className={`chip uchip st-${u.state}`} style={{ color: FIELD_TEXT[fieldOf(u)] }} title={`${UNIT_KIND_NAME[u.kind]} · ${UNIT_STATE[u.state]}`}><Mark d={UNIT_MARK[u.kind]} size={11} />{u.callsign}{u.state === 'enroute' || u.state === 'turnout' ? <b>{Math.max(0, Math.round(u.estArrive - sim.t))}초</b> : null}</span>; })}
           {Object.values(I.unmet).some((v) => (v ?? 0) > 0) && <span className="chip unmet">부족: {needsText(I.unmet)}</span>}
         </div>
       )}
@@ -93,7 +96,10 @@ function IncidentCard({ sim, I, director, truth }: { sim: Sim; I: Incident; dire
 }
 
 // ───────────────────────── 좌측: 부대 ─────────────────────────
-const FIELD_COLOR: Record<UnitField, string> = { police: '#5aa9ff', fire: '#ff7a45', rescue: '#2fd39a', special: '#c9a2ff' };
+const FIELD_COLOR: Record<UnitField, string> = FIELD_TEXT;
+/** 분야 묶음의 제목 옆에 두는 기호 (그 분야를 대표하는 종류) */
+const FIELD_MARK: Record<UnitField, string> = { police: UNIT_MARK.patrol, fire: UNIT_MARK.engine, rescue: UNIT_MARK.bls, special: UNIT_MARK.swat };
+function fieldOf(u: Unit): UnitField { return u.field ?? (u.dept === 'police' ? 'police' : u.dept === 'ems' ? 'rescue' : 'fire'); }
 export function UnitList({ sim, selectedRid, onSelectRid }: { sim: Sim; selectedRid: number; onSelectRid: (rid: number) => void }) {
   const fields: UnitField[] = ['police', 'fire', 'rescue', 'special'];
   const aid = sim.units.filter((u) => u.aid);
@@ -107,7 +113,7 @@ export function UnitList({ sim, selectedRid, onSelectRid }: { sim: Sim; selected
           if (!us.length) return null;
           return (
             <div key={f} className="ugroup">
-              <div className="ugroup-h" style={{ color: FIELD_COLOR[f] }}>{FIELD_NAME[f]} <span className="dim">{us.filter((u) => u.state === 'available').length}/{us.length}</span></div>
+              <div className="ugroup-h" style={{ color: FIELD_COLOR[f] }}><Mark d={FIELD_MARK[f]} size={12} />{FIELD_NAME[f]} <span className="dim">{us.filter((u) => u.state === 'available').length}/{us.length}</span></div>
               <div className="units">{us.map((u) => <UnitRow key={u.id} sim={sim} u={u} selectedRid={selectedRid} onSelectRid={onSelectRid} />)}</div>
             </div>
           );
@@ -124,13 +130,12 @@ export function UnitList({ sim, selectedRid, onSelectRid }: { sim: Sim; selected
 }
 function UnitRow({ sim, u, selectedRid, onSelectRid }: { sim: Sim; u: Unit; selectedRid: number; onSelectRid: (rid: number) => void }) {
   const inc = u.incidentId !== null ? sim.incidents[u.incidentId] : null;
+  const field = fieldOf(u);
+  // 한 줄: 지도와 같은 둥근 표식 · 호출부호(+용수) · 대원 · 상태(색 점 + 글자)
   return (
-    <div className={`unit st-${u.state} ${u.aid ? 'aid' : ''}`} style={{ ['--dc' as string]: DEPT_COLOR[u.dept] }} title={`${UNIT_KIND_NAME[u.kind]} · ${u.homeName}${u.aid ? ' (지원 부대)' : ''}${u.waterMax > 0 ? ` · 용수 ${Math.round((u.water / u.waterMax) * 100)}%${u.pumpFailed ? ' · 펌프 고장' : ''}` : ''}`}>
-      <div className="row">
-        <span className="callsign" style={{ color: DEPT_COLOR[u.dept] }}>{u.callsign}</span>
-        {u.waterMax > 0 && <Bar v={u.hydrant ? 1 : u.water / u.waterMax} color={u.pumpFailed ? '#ff5d5d' : u.hydrant ? '#5ad17a' : '#58b6ff'} w={16} />}
-        <span className="state">{u.aid && u.state === 'oos' ? '관할 복귀' : UNIT_STATE[u.state]}{inc ? ` ${inc.code}` : ''}</span>
-      </div>
+    <div className={`unit st-${u.state} ${u.aid ? 'aid' : ''}`} style={{ ['--dc' as string]: FIELD_TEXT[field] }} title={`${UNIT_KIND_NAME[u.kind]} · ${u.homeName}${u.aid ? ' (지원 부대)' : ''}${u.waterMax > 0 ? ` · 용수 ${Math.round((u.water / u.waterMax) * 100)}%${u.pumpFailed ? ' · 펌프 고장' : ''}` : ''}`}>
+      <Token field={field} kind={u.kind} size={22} state={u.state} no={+(u.callsign.match(/\d+$/) ?? ['0'])[0]} />
+      <span className="callsign">{u.callsign}{u.waterMax > 0 && <Bar v={u.hydrant ? 1 : u.water / u.waterMax} color={u.pumpFailed ? '#ff5d5d' : u.hydrant ? '#5ad17a' : '#58b6ff'} w={14} />}</span>
       <div className="crew2">
         {u.crew.map((rid) => {
           const r = sim.responders[rid];
@@ -141,6 +146,7 @@ function UnitRow({ sim, u, selectedRid, onSelectRid }: { sim: Sim; u: Unit; sele
           );
         })}
       </div>
+      <span className="state"><i className="sdot" />{u.aid && u.state === 'oos' ? '관할 복귀' : UNIT_STATE[u.state]}{inc ? <b>{inc.code}</b> : null}</span>
     </div>
   );
 }
@@ -162,6 +168,7 @@ export function LogPanel({ sim, director, truth, onJump }: { sim: Sim; director:
   }
   filtered.reverse();
   const lastId = filtered.length ? filtered[filtered.length - 1].id : -1;
+  const byCall = new Map(sim.units.map((u) => [u.callsign, u]));
   useEffect(() => { const el = box.current; if (el && stick.current) el.scrollTop = el.scrollHeight; }, [lastId]);
   return (
     <div className="panel-section grow">
@@ -174,13 +181,15 @@ export function LogPanel({ sim, director, truth, onJump }: { sim: Sim; director:
       <div className="scroll log" ref={box} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}>
         {filtered.map((e) => {
           const inc = e.incidentId >= 0 ? sim.incidents[e.incidentId] : null;
-          const col = e.role === 'RESPONDER' && e.rid >= 0 ? DEPT_COLOR[sim.responders[e.rid].dept] : ROLE_COLOR[e.role];
+          // 대원과 부대의 무전은 그 부대의 분야색 점 (지도·부대 목록의 표식과 같은 색)
+          const unit = e.role === 'RESPONDER' && e.rid >= 0 ? sim.units[sim.responders[e.rid].unitId] : e.role === 'UNIT' ? byCall.get(e.actor) : undefined;
+          const col = unit ? FIELD_TEXT[fieldOf(unit)] : ROLE_COLOR[e.role];
           return (
             <div key={e.id} className={`ev k-${e.kind} ${e.problem ? 'problem' : ''} ${e.truth ? 'truth' : ''} imp-${e.importance}`} onClick={() => { if (inc) director.pin(inc.id, inc.phase === 'onscene' || inc.phase === 'closed' ? 'scene' : 'city'); }}
               onDoubleClick={() => onJump && onJump(e.t, e.incidentId)} title="클릭: 이 사건 관찰 · 더블클릭: 이 순간으로 이동">
               <span className="t">{fmtClock(sim.startTod + e.t)}</span>
               {inc && <span className="inc">{inc.code}</span>}
-              <span className="role" style={{ color: col }}>{e.truth ? '관찰자' : ROLE_NAME[e.role]}{e.role !== 'SYSTEM' && e.role !== 'ANALYST' && e.role !== 'DISPATCH' && e.role !== 'CALL_TAKER' ? ` ${e.actor.replace('신고자 ', '')}` : ''}</span>
+              <span className="role"><i className={`rdot r-${e.role}`} style={{ ['--rc' as string]: e.truth ? '#b79fe0' : col }} />{e.truth ? '관찰자' : ROLE_NAME[e.role]}{e.role !== 'SYSTEM' && e.role !== 'ANALYST' && e.role !== 'DISPATCH' && e.role !== 'CALL_TAKER' ? ` ${e.actor.replace('신고자 ', '')}` : ''}</span>
               <span className="tx">{e.text}</span>
             </div>
           );
@@ -250,7 +259,7 @@ export function DecisionPanel({ sim, director, truth }: { sim: Sim; director: Ca
           </div>
           {s.kind === 'search' && s.zoneProb.length > 0 && (
             <div className="probs">
-              {s.regions.filter((r) => r.kind === 'zone').map((r) => <div key={r.id} className="prob"><span>{r.name}</span><Bar v={s.zoneProb[r.id]} color="#4fd1c5" w={120} /><span className="num">{pct(s.zoneProb[r.id])}</span></div>)}
+              {s.regions.filter((r) => r.kind === 'zone').map((r) => <div key={r.id} className="prob"><span>{r.name}</span><Bar v={s.zoneProb[r.id]} color="#8fb8de" w={120} /><span className="num">{pct(s.zoneProb[r.id])}</span></div>)}
             </div>
           )}
         </>)}
@@ -281,7 +290,7 @@ export function AgentPanel({ sim, rid }: { sim: Sim; rid: number }) {
       <h3>대원 정보</h3>
       <div className="scroll decision">
         <div className="agent-head">
-          <span className="avatar" style={{ background: DEPT_COLOR[r.dept] }}>{r.name[0]}</span>
+          <Token field={fieldOf(u)} kind={u.kind} size={32} state={u.state} title={UNIT_KIND_NAME[u.kind]} />
           <div><div className="nm">{r.name} {r.senior && <span className="dim">선임</span>}</div><div className="dim small">{DEPT_NAME[r.dept]} · {u.callsign} · {r.trait}</div></div>
         </div>
         <div className="stats">
@@ -294,7 +303,7 @@ export function AgentPanel({ sim, rid }: { sim: Sim; rid: number }) {
           <div className="kv"><span className="dim">상태</span><span>{agent.status === 'active' ? (agent.label || '판단 중') : agent.status === 'down' ? '쓰러짐' : agent.status === 'withdrawn' ? '부상 — 후송 대기' : '이동'}{agent.isCommander ? ' · 현장 지휘관' : ''}</span></div>
           <h4>행동 후보와 점수 (Utility)</h4>
           {agent.candidates.length === 0 && <div className="empty">아직 판단 기록이 없습니다.</div>}
-          {agent.candidates.map((c, k) => <div key={k} className={`cand ${c.chosen ? 'chosen' : ''}`}><Bar v={Math.max(0, Math.min(1, c.score / 1.3))} color={c.chosen ? '#4fd1c5' : '#52606d'} w={60} /><span className="num">{c.score.toFixed(2)}</span><span>{c.label}</span></div>)}
+          {agent.candidates.map((c, k) => <div key={k} className={`cand ${c.chosen ? 'chosen' : ''}`}><Bar v={Math.max(0, Math.min(1, c.score / 1.3))} color={c.chosen ? '#d6e2ee' : '#52606d'} w={60} /><span className="num">{c.score.toFixed(2)}</span><span>{c.label}</span></div>)}
           <h4>알고 있는 정보 ({agent.beliefs.facts.size})</h4>
           <table className="claims"><tbody>
             {facts.map((f) => <tr key={f.key}><td>{f.text}</td><td className="dim">{f.src}</td><td className="num">{pct(f.conf)}</td><td className={f.verified ? 'ok' : 'dim'}>{f.verified ? '확인' : '미확인'}</td></tr>)}
@@ -313,9 +322,9 @@ export function BottomBar({ runner, director, onTick, onSeek, sound }: { runner:
   return (
     <div className="bottom">
       <div className="controls">
-        <button className="ctl" onClick={() => onSeek(sim.t - 10)} title="10초 되감기 (←)">⏪</button>
-        <button className={`ctl ${runner.paused ? 'on' : ''}`} onClick={() => { runner.togglePause(); onTick(); }} title="일시정지 / 재개 (Space)">{runner.paused ? '▶ 재개' : '⏸ 정지'}</button>
-        <button className="ctl" onClick={() => onSeek(sim.t + 10)} title="10초 앞으로 (→)">⏩</button>
+        <button className="ctl ico" onClick={() => onSeek(sim.t - 10)} title="10초 되감기 (←)" aria-label="10초 되감기"><Icon name="rewind" size={13} /></button>
+        <button className={`ctl ${runner.paused ? 'on' : ''}`} onClick={() => { runner.togglePause(); onTick(); }} title="일시정지 / 재개 (Space)"><Icon name={runner.paused ? 'play' : 'pause'} size={12} />{runner.paused ? '재개' : '정지'}</button>
+        <button className="ctl ico" onClick={() => onSeek(sim.t + 10)} title="10초 앞으로 (→)" aria-label="10초 앞으로"><Icon name="forward" size={13} /></button>
         {speeds.map((v) => <button key={v} className={`ctl ${!runner.paused && runner.settings.speed === v ? 'on' : ''}`} onClick={() => { runner.setSpeed(v); onTick(); }}>{v}×</button>)}
         <button className={`ctl ${runner.settings.autoSlow ? 'on' : ''}`} onClick={() => { runner.settings.autoSlow = !runner.settings.autoSlow; runner.saveSettings(); onTick(); }} title="관찰 중인 현장에서 총격·폭발·진입 같은 결정적 순간이 오면 잠깐 1배속으로 낮춥니다 (S)">자동 감속</button>
         <button className={`ctl ${runner.settings.sceneAuto ? 'on' : ''}`} onClick={() => { runner.settings.sceneAuto = !runner.settings.sceneAuto; runner.saveSettings(); onTick(); }} title="현장에서 벌어지는 일을 따라 화면을 자동으로 확대합니다. 휠로 직접 확대하면 멈추고, 두 번 누르면 다시 따라갑니다 (Z)">자동 확대</button>
@@ -380,7 +389,7 @@ export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel 
       <div className="modal">
         <div className="modal-head">
           <div><h2>교대 종료 보고서</h2><div className="dim">시드 {r.seed} · 난이도 {r.difficultyLabel} · 날씨 {WEATHER_NAME[r.weather]} · 진행 시간 {fmtDur(r.duration)} · 기록 해시 {r.hash}</div></div>
-          <div className="btns">{reelCount > 0 && <button className="on" onClick={onReel} title="현장의 결정적 순간을 차례로 다시 봅니다">▶ 주요 장면 이어 보기 ({reelCount})</button>}<button onClick={() => onNew()}>새 교대 시작</button><button onClick={() => onNew(r.seed)}>같은 시드 재실행</button><button className="ghost" onClick={onClose}>닫고 마지막 상태 보기</button></div>
+          <div className="btns">{reelCount > 0 && <button className="on" onClick={onReel} title="현장의 결정적 순간을 차례로 다시 봅니다"><Icon name="play" size={11} />주요 장면 이어 보기 ({reelCount})</button>}<button onClick={() => onNew()}>새 교대 시작</button><button onClick={() => onNew(r.seed)}>같은 시드 재실행</button><button className="ghost" onClick={onClose}>닫고 마지막 상태 보기</button></div>
         </div>
         <div className="modal-body">
           <div className="summary">{r.summary.map((t, k) => <p key={k}>{t}</p>)}</div>
@@ -393,7 +402,7 @@ export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel 
             <div className="tile"><b>{r.avgResponse >= 0 ? fmtSec(r.avgResponse) : '-'}</b><span>평균 대응 시간</span></div>
             <div className="tile"><b>{pct(r.utilization)}</b><span>자원 활용률</span></div>
             <div className="tile"><b>{r.casSaved}/{r.casTotal}</b><span>구조 성과</span></div>
-            <div className="tile"><b style={{ color: r.casLost ? '#ff5d5d' : undefined }}>{r.casLost}{r.casUndiscovered ? ` (+미발견 ${r.casUndiscovered})` : ''}</b><span>시민 피해</span></div>
+            <div className="tile"><b style={{ color: r.casLost ? '#ff5d5d' : undefined }}>{r.casLost}{r.casUndiscovered ? <small> +미발견 {r.casUndiscovered}</small> : null}</b><span>시민 피해</span></div>
             <div className="tile"><b>{r.respondersHurt.length}</b><span>대원 부상</span></div>
             <div className="tile"><b>{r.equipFailures}</b><span>장비 고장</span></div>
           </div>

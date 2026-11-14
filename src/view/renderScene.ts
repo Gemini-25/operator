@@ -22,7 +22,9 @@ import type { ArmPose, Item, PersonLook } from './scene/sprites';
 import { buildStatic, doorHorizontal, staticSig } from './scene/staticLayer';
 import type { StaticLayer } from './scene/staticLayer';
 import { FX_DRAWN } from './scene/fxBook';
-import type { FxBook } from './scene/fxBook';
+import type { FxBook, FxView } from './scene/fxBook';
+import { agentFx, casualtyFlinch, drawAimLines, drawBreachGlow, drawCombatDecals, drawCombatFx, drawCombatHoles, drawCombatLights, drawCountdown, drawCoverBadge, drawCoverBand, drawCuffs, drawNegotiation, drawScreenVeil, drawStunStars, hostileFx, stunMark } from './scene/combat';
+import type { CombatView } from './scene/combat';
 
 /** 현장 화면의 시점: 중심(타일 좌표)과 배율(1 = 현장 전체가 보인다) */
 export interface SceneCam { x: number; y: number; zoom: number }
@@ -39,6 +41,12 @@ export function sceneLayout(s: Scene, w: number, h: number, cam?: SceneCam): Lay
 }
 
 const BAND_COLOR = ['#5ad17a', '#ffd166', '#ff5d5d', '#7d8791'];
+let reducedQ: { matches: boolean } | null | undefined;
+/** prefers-reduced-motion: 흔들림을 끄고 화면 막을 옅게 (시험 환경에는 matchMedia 가 없다) */
+function reducedMotion(): boolean {
+  if (reducedQ === undefined) reducedQ = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+  return !!reducedQ && reducedQ.matches;
+}
 const BG = '#070b10';
 
 // ───────────────────────── 정적 층 캐시 ─────────────────────────
@@ -77,11 +85,23 @@ function parkY(s: Scene): number {
 }
 
 const doorAnim = new WeakMap<Prop, { v: number; t: number }>();
-function doorOpenness(p: Prop, timeMs: number): number {
+/** (G5) 진입 연출의 문짝 열림: 방법마다 빠르기와 튕김(1 을 넘는다)이 다르다. age = 연출 시계로 연 지 얼마 */
+function kickOpen(how: string, age: number): number | null {
+  if (how === 'open' || age < 0) return null;
+  if (how === 'push') return age < 0.15 ? Math.min(1, age * 9) : null;
+  if (how === 'hydraulic') return age < 0.4 ? Math.min(1, age * 6) : null;
+  const peak = how === 'kick' ? 1.12 : 1.18, rise = peak / 22, end = how === 'kick' ? 0.3 : 0.35;
+  if (age < rise) return age * 22;
+  if (age < end) return peak - (peak - 1) * ((age - rise) / (end - rise));
+  return null;
+}
+function doorOpenness(p: Prop, timeMs: number, kick?: { age: number; how: string } | null): number {
   const target = p.open ? 1 : 0;
   let st = doorAnim.get(p);
+  if (kick) { const v = kickOpen(kick.how, kick.age); if (v !== null) { if (!st) { st = { v, t: timeMs }; doorAnim.set(p, st); } st.v = v; st.t = timeMs; return v; } }
   if (!st) { st = { v: target, t: timeMs }; doorAnim.set(p, st); return target; }
   const dt = Math.min(0.1, Math.max(0, (timeMs - st.t) / 1000)); st.t = timeMs;
+  if (st.v > 1) st.v = Math.max(1, st.v - dt * 2);
   st.v += Math.max(-dt * 4.5, Math.min(dt * 4.5, target - st.v));
   return st.v;
 }
@@ -104,15 +124,18 @@ function lookOf(key: string, make: () => PersonLook): PersonLook { let l = lookC
 
 function agentPose(a: FieldAgent, u: Unit, moving: boolean): { arms: ArmPose; item: Item } {
   const tk = a.task ? a.task.kind : 'standby';
-  const gun: Item = u.kind === 'tactical' ? 'rifle' : 'pistol';
+  const gun: Item = u.kind === 'tactical' || u.kind === 'swat' ? 'rifle' : 'pistol';
   if (a.carrying >= 0 || a.carrying <= -2) return { arms: 'drag', item: 'none' };
+  // (G5) 길 위의 잠긴 문을 강제로 여는 중(하위 작업): 도구를 든다 — 경찰은 공성추, 그 밖은 도끼
+  if (a.task && a.task.sub && a.task.sub.kind === 'force' && !moving) return { arms: 'work', item: u.dept === 'police' ? 'ram' : 'axe' };
   if (tk === 'engage' || tk === 'perimeter') return { arms: 'aim', item: gun };
   if (tk === 'suppress' || (tk === 'overhaul' && !moving)) return { arms: 'hose', item: 'none' };
   if (moving) return { arms: 'side', item: 'none' };
   const busy = a.ring > 0.01;
   switch (tk) {
     case 'treat': case 'rescueMate': case 'carry': case 'load': return { arms: busy ? 'kneel' : 'side', item: 'none' };
-    case 'force': case 'clear': case 'clearRoad': return { arms: busy ? 'work' : 'side', item: 'axe' };
+    case 'force': return { arms: busy ? 'work' : 'side', item: busy && u.dept === 'police' ? 'ram' : 'axe' };
+    case 'clear': case 'clearRoad': return { arms: busy ? 'work' : 'side', item: 'axe' };
     case 'extricate': return { arms: busy ? 'work' : 'side', item: 'spreader' };
     case 'traffic': return { arms: 'baton', item: 'none' };
     case 'negotiate': return { arms: 'megaphone', item: 'none' };
@@ -140,19 +163,18 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   const night = sim.weather === 'night';
   const tAt = (x: number, y: number): number => (x < 0 || y < 0 || x >= s.w || y >= s.h ? T.VOID : s.tiles[y * s.w + x]);
   const book = o.book;
-  /** 효과 기록과 그 나이: 연출 기억(book)이 있으면 G5 가 그리는 종류는 연출 시계의 나이로, 나머지는 지금처럼 시뮬레이션 나이로 */
-  const fxAges = (all = false): [Fx, number][] => {
-    const out: [Fx, number][] = [];
-    if (book) {
-      for (const e of book.live(s.id)) if (e.f) out.push([e.f, book.age(e)]);
-      if (all) for (const f of s.fx) if (!FX_DRAWN.has(f.kind)) out.push([f, sim.t - f.t]);
-    } else for (const f of s.fx) out.push([f, sim.t - f.t]);
-    return out;
-  };
+  // (G5) 교전 그림: 연출 기억(book)이 있으면 combat.ts 가 연출 시계로 그린다. 없으면(시험·옛 호출) 효과 기록을 시뮬레이션 나이로 그린다
+  const cv: CombatView | null = book ? { g: ctx, sim, s, book, ts, alpha: o.alpha, mini: MINI, truth: o.truth, reduced: reducedMotion(), H: h, time } : null;
+  const view: FxView = { cx: (w / 2 - L.ox) / ts - 0.5, cy: (h / 2 - L.oy) / ts - 0.5, hw: w / 2 / ts, hh: h / 2 / ts };
+  let cms = 0;
+  const timed = (fn: () => void): void => { if (MINI) { fn(); return; } const t0 = performance.now(); fn(); cms += performance.now() - t0; };
+  /** 효과 기록과 그 나이(시뮬레이션 초). 연출 기억이 있으면 G5 가 그리는 종류는 빼고(combat.ts 가 그린다) 나머지만 */
+  const fxAges = (): [Fx, number][] => { const out: [Fx, number][] = []; for (const f of s.fx) if (!book || !FX_DRAWN.has(f.kind)) out.push([f, sim.t - f.t]); return out; };
 
   ctx.save();
   ctx.fillStyle = BG; ctx.fillRect(0, 0, w, h);
   ctx.translate(L.ox, L.oy);
+  if (cv && !MINI && !cv.reduced) { const sh = cv.book.shake(s.id, ts, view); if (sh.x || sh.y) ctx.translate(sh.x * ts, sh.y * ts); }      // (G5) 폭발 흔들림 (칸 단위 → 화소)
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(layer.base, 0, 0, W, H);
 
@@ -164,6 +186,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     oval(ctx, x, y, ts * 0.66, ts * 0.56, `rgba(110,170,225,${Math.min(0.2, v * 0.2)})`, hash2(i, 3) * 3);
     if (!MINI) oval(ctx, x - ts * 0.12, y - ts * 0.1, ts * 0.2, ts * 0.07, `rgba(230,245,255,${Math.min(0.16, v * 0.14)})`, 0.5);
   }
+  if (cv) timed(() => drawCombatDecals(cv));      // (G5) 남는 그림: 탄흔·그을음·빈 깡통
   // 무전 음영 구역 (관찰자 시점)
   if (o.truth) {
     ctx.strokeStyle = 'rgba(185,140,255,0.22)'; ctx.lineWidth = 1;
@@ -195,6 +218,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     ctx.strokeStyle = `rgba(${c0},0.32)`; ctx.lineWidth = 1; ctx.stroke();
   }
 
+  if (cv) timed(() => drawAimLines(cv));      // (G5) 겨누는 선, 확성기 파동, 인질 끌기 화살
+
   // ── 소품 ──
   const unit = (fn: () => void, x: number, y: number, rot = 0): void => { ctx.save(); ctx.translate(x, y); if (rot) ctx.rotate(rot); ctx.scale(ts, ts); fn(); ctx.restore(); };
   for (const p of s.props) {
@@ -207,7 +232,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       const score = (x: number, y: number): number => { const t = tAt(x, y); if (t !== T.FLOOR && t !== T.FURN) return 0; const r = s.region[y * s.w + x]; return 2 + (r >= 0 && s.regions[r] && s.regions[r].kind === 'room' ? 1 : 0); };
       const side = hor ? (score(p.x, p.y + 1) >= score(p.x, p.y - 1) ? 1 : -1) : (score(p.x - 1, p.y) >= score(p.x + 1, p.y) ? 1 : -1);
       const lockKnown = !!p.locked && (o.truth || !!(cmd && cmd.beliefs.get('blk', idx)));
-      const open = doorOpenness(p, o.timeMs);
+      const open = doorOpenness(p, o.timeMs, book ? book.doorKick(s.id, p.id) : null);
       unit(() => drawDoorLeaf(ctx, open, side, !!s.burned[idx], lockKnown), cx(p.x), cy(p.y), hor ? 0 : Math.PI / 2);
     } else if (p.kind === 'debris') {
       unit(() => drawDebris(ctx, p.id), cx(p.x), cy(p.y));
@@ -333,11 +358,10 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     if (upright) {
       const mv = Math.abs(c.x - c.px) + Math.abs(c.y - c.py) > 0.005;
       const ang = mv ? Math.atan2(c.y - c.py, c.x - c.px) : hash2(c.id, s.id + 3) * 6.28;
-      drawPerson(ctx, x, y, ang, ts, lk, { step: time * 10 + c.id, moving: mv, arms: c.hostage && c.where === 'scene' ? 'back' : c.panic && mv ? 'up' : 'side', t: time, scale: c.hostage && c.where === 'scene' ? 0.9 : 0.96, ghost });
+      drawPerson(ctx, x, y, ang, ts, lk, { step: time * 10 + c.id, moving: mv, arms: c.hostage && c.where === 'scene' ? 'back' : c.panic && mv ? 'up' : 'side', t: time, scale: c.hostage && c.where === 'scene' ? 0.9 : 0.96, ghost, flinch: cv ? casualtyFlinch(cv, c.id, c.x, c.y) : undefined });
     } else {
       const ang = carrier ? Math.atan2(carrier.fy, carrier.fx) : hash2(c.id * 7, s.id) * 6.28;
-      const hurt = c.dead ? 0 : Math.max(0, (70 - c.health) / 70) * (c.treated ? 0.3 : 1);
-      drawLying(ctx, x, y, ang, ts, lk, { variant: hash2(c.id, 5), sheet: c.dead, stretcher: c.where === 'carried', bandage: c.treated && !c.dead, blood: c.where === 'scene' && s.kind !== 'fire' ? hurt * 0.8 : 0, ghost });
+      drawLying(ctx, x, y, ang, ts, lk, { variant: hash2(c.id, 5), sheet: c.dead, stretcher: c.where === 'carried', bandage: c.treated && !c.dead, ghost });
       if (c.mob === 'trapped' && !c.dead && c.where === 'scene') {
         // 깔려 있다: 다리 쪽에 잔해
         ctx.save(); ctx.translate(x - Math.cos(ang) * ts * 0.3, y - Math.sin(ang) * ts * 0.3); ctx.scale(ts * 0.62, ts * 0.62); ctx.globalAlpha = ghost; drawDebris(ctx, c.id + 50); ctx.restore();
@@ -362,15 +386,19 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     ctx.fillStyle = alpha(col, 0.16); ctx.strokeStyle = alpha(col, hst.state === 'fight' ? 0.5 + 0.4 * Math.abs(Math.sin(time * 6)) : 0.7); ctx.lineWidth = Math.max(1.5, ts * 0.05);
     ctx.beginPath(); ctx.arc(x, y, ts * (hst.state === 'fight' ? 0.47 + 0.05 * Math.abs(Math.sin(time * 6)) : 0.45), 0, 7); ctx.fill(); ctx.stroke();
     const lk = lookOf('h' + s.id + ':' + hst.id, () => hostileLook(s.id * 53 + hst.id * 7));
-    if (hst.state === 'down') drawLying(ctx, x, y, hash2(hst.id, s.id) * 6.28, ts, lk, { variant: hash2(hst.id, 9), blood: 0.5 });
+    if (hst.state === 'down') drawLying(ctx, x, y, hash2(hst.id, s.id) * 6.28, ts, lk, { variant: hash2(hst.id, 9) });
     else {
       const mv = Math.abs(hst.x - hst.px) + Math.abs(hst.y - hst.py) > 0.005;
       const ang = hst.state === 'flee' && mv ? Math.atan2(hst.y - hst.py, hst.x - hst.px) : hst.facing;
       const armed = hst.weapon !== 'none';
       const arms: ArmPose = hst.state === 'surrendered' ? 'up' : hst.state === 'arrested' ? 'back' : stunned ? 'side' : (hst.state === 'hold' || hst.state === 'fight') && armed ? 'aim' : 'side';
-      drawPerson(ctx, x, y, ang, ts, lk, { step: time * 12 + hst.id, moving: mv, arms, item: hst.weapon === 'gun' ? 'pistol' : hst.weapon === 'knife' ? 'knife' : 'none', t: time, scale: hst.state === 'arrested' ? 0.9 : 1 });
+      const hf = cv ? hostileFx(cv, hst) : null;
+      const off = hf ? { x: (hf.flinch?.x ?? 0) + (hf.lunge?.x ?? 0) + (hf.jitter?.x ?? 0), y: (hf.flinch?.y ?? 0) + (hf.lunge?.y ?? 0) + (hf.jitter?.y ?? 0) } : undefined;
+      drawPerson(ctx, x, y, ang, ts, lk, { step: time * 12 + hst.id, moving: mv, arms, item: hst.weapon === 'gun' ? 'pistol' : hst.weapon === 'knife' ? 'knife' : 'none', t: time, scale: hst.state === 'arrested' ? 0.9 : 1, cuffed: hst.state === 'arrested', recoil: hf?.recoil, flinch: off && (off.x || off.y) ? off : undefined });
     }
-    if (stunned) for (let k = 0; k < 4; k++) { const an = time * 5 + k * 1.57; ctx.fillStyle = '#fff3b0'; const sz = Math.max(2, ts * 0.08); ctx.fillRect(x + Math.cos(an) * ts * 0.34 - sz / 2, y - ts * 0.1 + Math.sin(an) * ts * 0.2 - sz / 2, sz, sz); }
+    const mark = stunned && cv ? stunMark(cv, hst) : 'dots';
+    if (stunned && mark === 'star') drawStunStars(ctx, x, y, ts, time, Math.min(1, (hst.stunUntil - sim.t) / 1.2 + 0.25));
+    else if (stunned && mark === 'dots') for (let k = 0; k < 4; k++) { const an = time * 5 + k * 1.57; ctx.fillStyle = '#fff3b0'; const sz = Math.max(2, ts * 0.08); ctx.fillRect(x + Math.cos(an) * ts * 0.34 - sz / 2, y - ts * 0.1 + Math.sin(an) * ts * 0.2 - sz / 2, sz, sz); }
     ctx.globalAlpha = 1;
   }
   const labels: { x: number; y: number; text: string; col: string }[] = [];
@@ -402,17 +430,23 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     // 발밑 표지: 소속 색
     const fl = Math.hypot(a.fx, a.fy) || 1, ang = Math.atan2(a.fy / fl, a.fx / fl);
     if (sim.t - a.underFireT < 1.2) disc(ctx, x, y, ts * 0.6, 'rgba(255,70,70,0.3)');
+    const af = cv && a.status !== 'down' ? agentFx(cv, a) : null;
+    if (af && af.glow) drawBreachGlow(ctx, x, y, ts, af.glow);
+    if (cv && a.inCover && s.kind === 'armed' && a.status === 'active') drawCoverBand(cv, a, x, y);
     ctx.fillStyle = alpha(col, 0.14); ctx.strokeStyle = sel ? '#ffffff' : alpha(col, 0.85); ctx.lineWidth = sel ? Math.max(2, ts * 0.08) : Math.max(1.5, ts * 0.05);
     ctx.beginPath(); ctx.arc(x, y, ts * 0.44, 0, 7); ctx.fill(); ctx.stroke();
     if (a.isCommander) { ctx.strokeStyle = '#ffd166'; ctx.lineWidth = Math.max(1.5, ts * 0.05); ctx.setLineDash([ts * 0.14, ts * 0.1]); ctx.beginPath(); ctx.arc(x, y, ts * 0.54, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
     const lk = lookOf('a' + a.rid + ':' + u.kind, () => responderLook(rsp.dept, u.kind, a.rid * 13 + 7));
     if (a.status === 'down') {
-      drawLying(ctx, x, y, hash2(a.rid, 77) * 6.28, ts, lk, { variant: hash2(a.rid, 5), blood: 0.3 });
+      drawLying(ctx, x, y, hash2(a.rid, 77) * 6.28, ts, lk, { variant: hash2(a.rid, 5) });
       ctx.strokeStyle = `rgba(255,93,93,${0.5 + 0.4 * Math.abs(Math.sin(time * 4))})`; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x, y, ts * 0.56, 0, 7); ctx.stroke();
     } else {
       const pose = agentPose(a, u, moving);
-      drawPerson(ctx, x, y, ang, ts, lk, { step: time * 11 + a.rid, moving, arms: pose.arms, item: pose.item, t: time + a.rid * 0.37 });
-      if (a.inCover && s.kind === 'armed') { rr(ctx, x + ts * 0.26, y + ts * 0.24, ts * 0.2, ts * 0.2, ts * 0.05, '#e8f0f7'); ctx.fillStyle = '#0b1219'; ctx.font = `800 ${Math.round(ts * 0.15)}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('엄', x + ts * 0.36, y + ts * 0.35); }
+      if (af && af.throwAct !== undefined) { pose.arms = 'throw'; pose.item = 'none'; }
+      else if (af && af.ram) { pose.arms = 'work'; pose.item = 'ram'; }
+      const off = af ? { x: (af.flinch?.x ?? 0) + (af.jitter?.x ?? 0), y: (af.flinch?.y ?? 0) + (af.jitter?.y ?? 0) } : undefined;
+      drawPerson(ctx, x, y, ang, ts, lk, { step: time * 11 + a.rid, moving, arms: pose.arms, item: pose.item, t: time + a.rid * 0.37, recoil: af?.recoil, act: af?.throwAct, crouch: a.inCover && s.kind === 'armed' && !moving && pose.arms === 'aim', flinch: off && (off.x || off.y) ? off : undefined });
+      if (a.inCover && s.kind === 'armed') drawCoverBadge(ctx, x + ts * 0.36, y + ts * 0.34, ts);      // (G5) 엄폐: 반쪽 벽 기호
       if (a.ring > 0.01) {
         ctx.strokeStyle = 'rgba(8,13,18,0.6)'; ctx.lineWidth = Math.max(3, ts * 0.11); ctx.beginPath(); ctx.arc(x, y, ts * 0.62, 0, 7); ctx.stroke();
         ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(2, ts * 0.07); ctx.lineCap = 'round'; ctx.beginPath(); ctx.arc(x, y, ts * 0.62, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, a.ring)); ctx.stroke();
@@ -494,7 +528,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     hole(dg, (s.safe.x + 0.45) * ts * k, (s.safe.y + 0.4) * ts * k, ts * 3 * k, 0.7);
     for (let i = 0; i < s.fire.length; i++) if (s.fire[i] > 0.2) hole(dg, cx(i % s.w) * k, cy((i / s.w) | 0) * k, ts * (1.9 + 2.5 * s.fire[i]) * k, 0.65);
     for (const c of s.cars) hole(dg, (c.x + 0.5 + c.dir * 2.2) * ts * k, cy(c.row) * k, ts * 2.8 * k, 0.75);
-    for (const [f, age] of fxAges()) {
+    if (cv) drawCombatHoles(cv, dg, k);
+    else for (const [f, age] of fxAges()) {
       if (f.kind === 'shot' && age >= 0 && age < 0.25) hole(dg, cx(f.x) * k, cy(f.y) * k, ts * 2.6 * k, 0.8);
       else if ((f.kind === 'flash' || f.kind === 'boom') && age >= 0 && age < f.ttl) hole(dg, cx(f.x) * k, cy(f.y) * k, ts * 6.5 * k, 1 - age / f.ttl);
     }
@@ -522,7 +557,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       if (sum < 0.3) continue;
       drawLight(ctx, cx(mx / sum), cy(my / sum), ts * (3 + Math.min(3.2, sum * 0.7)), '#ff8a3c', Math.min(0.5, 0.12 + sum * 0.06) * (night ? 1.5 : 0.8) * (0.92 + 0.08 * Math.sin(time * 9 + gx + gy)));
     }
-    for (const [f, age] of fxAges()) {
+    if (cv) timed(() => drawCombatLights(cv));
+    else for (const [f, age] of fxAges()) {
       if (f.kind === 'shot' && age >= 0 && age < 0.2) drawLight(ctx, cx(f.x), cy(f.y), ts * 1.9, '#ffe2a0', 0.7 * (1 - age / 0.2));
     }
   }
@@ -564,6 +600,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   if (!MINI && s.entryOrdered && !s.breachDone) for (const [k, label] of [[s.entryExit, s.entryExit2 >= 0 ? '1조 진입' : '진입 지점'], [s.entryExit2, '2조 진입']] as [number, string][]) {
     if (k < 0 || k >= s.exits.length) continue;
     const e = s.exits[k], x = cx(e.x), y = cy(e.y), pr = 0.5 + 0.5 * Math.sin(time * 5);
+    const left = s.breachAt - (sim.t + o.alpha * sim.dt);
+    if (cv && left <= 3) { drawCountdown(cv, e.x, e.y, left); continue; }      // (G5) 3-2-1, 신호 대기
     ctx.strokeStyle = `rgba(90,169,255,${0.5 + 0.4 * pr})`; ctx.lineWidth = Math.max(2, ts * 0.07); ctx.setLineDash([ts * 0.2, ts * 0.14]);
     ctx.beginPath(); ctx.arc(x, y, ts * (0.9 + 0.1 * pr), 0, 7); ctx.stroke(); ctx.setLineDash([]);
     pill(ctx, `${label} · ${Math.max(0, Math.ceil(s.breachAt - sim.t))}초`, x, y + ts * (e.y < s.h / 2 ? -1.25 : 1.25), ts * 0.3, '#9fd0ff');
@@ -606,7 +644,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   }
 
   // ── 효과 ──
-  for (const [f, age] of fxAges(true)) {
+  if (cv) timed(() => drawCombatFx(cv));
+  for (const [f, age] of fxAges()) {
     if (age < 0 || age > f.ttl) continue;
     const k = age / f.ttl;
     if (f.kind === 'shot') {
@@ -642,8 +681,9 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       for (let q = 0; q < 10; q++) { const a = hash2(q, (f.t * 10) | 0) * 6.28, d = ts * (0.5 + 3.2 * k) * (0.5 + hash2(q * 3, 7)); ctx.fillStyle = `rgba(40,34,30,${1 - k})`; const sz = Math.max(2, ts * 0.09); ctx.fillRect(x + Math.cos(a) * d, y + Math.sin(a) * d, sz, sz); }
     } else if (f.kind === 'hit') {
       const x = cx(f.x), y = cy(f.y);
-      for (let q = 0; q < 6; q++) { const a = hash2(q, (f.t * 10) | 0) * 6.28, d = ts * (0.15 + 0.5 * k); ctx.fillStyle = `rgba(230,50,50,${0.9 * (1 - k)})`; const sz = Math.max(2, ts * 0.07); ctx.fillRect(x + Math.cos(a) * d, y + Math.sin(a) * d, sz, sz); }
-      ctx.strokeStyle = `rgba(255,90,90,${0.8 * (1 - k)})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, ts * (0.25 + 0.4 * k), 0, 7); ctx.stroke();
+      // 피 없이: 짧게 퍼지는 흰 고리와 회색 먼지 몇 점 (G5)
+      for (let q = 0; q < 5; q++) { const a = hash2(q, (f.t * 10) | 0) * 6.28, d = ts * (0.15 + 0.4 * k); ctx.fillStyle = `rgba(175,175,170,${0.7 * (1 - k)})`; const sz = Math.max(2, ts * 0.06); ctx.fillRect(x + Math.cos(a) * d, y + Math.sin(a) * d, sz, sz); }
+      ctx.strokeStyle = `rgba(255,250,235,${0.8 * (1 - k)})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, ts * (0.2 + 0.4 * k), 0, 7); ctx.stroke();
     } else if (f.kind === 'glass') {
       if (!MINI) drawGlassFx(ctx, f, ts, k);
     } else if (f.kind === 'debris') {
@@ -654,6 +694,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     }
     ctx.globalAlpha = 1;
   }
+  if (cv) timed(() => { drawNegotiation(cv); drawCuffs(cv); });      // (G5) 말풍선, 수갑 기호
   for (const l of labels) pill(ctx, l.text, l.x, l.y, Math.max(10, ts * 0.28), l.col);
 
   // 지도 가장자리를 배경으로 녹인다
@@ -665,6 +706,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   }
   ctx.restore();
   if (!MINI) drawVignette(ctx, w, h);
+  if (cv && !MINI) { timed(() => drawScreenVeil(ctx, cv.book, s.id, w, h, view, cv.reduced)); cv.book.drawMs = cms; }      // (G5) 관찰자 흰 막·폭발 주황 막
   void seg;
 }
 

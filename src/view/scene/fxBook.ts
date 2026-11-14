@@ -84,6 +84,7 @@ export class FxBook {
   real = 0;                                          // 실제 시간 누적(화면 막 상한)
   fresh: FxEntry[] = [];
   drawMs = 0;                                        // 마지막 프레임의 교전 그림 시간(확인용)
+  lastDt = 1 / 60;                                   // 마지막 프레임의 실제 시간 간격(총구 섬광을 두 프레임 이상 보이게)
   private seen = new WeakSet<Fx>();
   private lives = new Map<number, FxEntry[]>();
   private decs = new Map<number, Decal[]>();
@@ -108,6 +109,7 @@ export class FxBook {
     this.rate = Math.min(eff, FX_RATE_MAX);
     this.clock += dtReal * this.rate;
     this.real += dtReal;
+    if (dtReal > 0) this.lastDt = dtReal;
     const fresh: FxEntry[] = [];
     // 시뮬레이션 시간 → 연출 시계: 한 프레임에 여러 틱이 돌았으면 틱 사이의 간격을 옮겨 순서를 지킨다. 멈춘 상태(되감기 직후)면 1배속으로 본다
     const k = this.rate > 0 ? this.rate / Math.max(1, eff) : 1;

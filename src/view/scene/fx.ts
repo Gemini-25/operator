@@ -58,6 +58,9 @@ function sprites() {
   return spr;
 }
 
+/** (G5) 미리 그린 조각: 연기(puff·puffDark)·빛(glow)·그을음(scorch). 교전 그림(combat.ts)이 같은 조각을 drawImage 로 쓴다 */
+export function fxSprites(): { puff: HTMLCanvasElement; puffDark: HTMLCanvasElement; glow: HTMLCanvasElement; scorch: HTMLCanvasElement; mist: HTMLCanvasElement } { const s = sprites(); return { puff: s.puff, puffDark: s.puffDark, glow: s.glow, scorch: s.scorch, mist: s.mist }; }
+
 const lightCache = new Map<string, HTMLCanvasElement>();
 /** 색깔 있는 빛 (가산 혼합으로 그린다) */
 export function lightSprite(col: string): HTMLCanvasElement {
@@ -173,7 +176,7 @@ export function drawSpray(g: G, x0: number, y0: number, x1: number, y1: number, 
 
 // ───────────────────────── 파손 ─────────────────────────
 /** 뾰족한 조각 하나를 (x, y) 에 그린다 */
-function chip(g: G, x: number, y: number, r: number, rot: number, col: string, sides = 3): void {
+export function chip(g: G, x: number, y: number, r: number, rot: number, col: string, sides = 3): void {
   g.fillStyle = col; g.beginPath();
   for (let q = 0; q < sides; q++) { const a = rot + (q / sides) * 6.2832, rad = r * (q % 2 ? 0.62 : 1); if (q) g.lineTo(x + Math.cos(a) * rad, y + Math.sin(a) * rad); else g.moveTo(x + Math.cos(a) * rad, y + Math.sin(a) * rad); }
   g.closePath(); g.fill();

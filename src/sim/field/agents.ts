@@ -29,9 +29,18 @@ export function detectRadius(sim: Sim, s: Scene, a: FieldAgent, concealment: num
 }
 
 export function regionNameAt(s: Scene, x: number, y: number): string {
-  const r = s.region[tileOf(s, x, y)];
+  const i = tileOf(s, x, y);
+  const r = s.region[i];
   if (r >= 0) return s.regions[r].name;
-  return isIndoor(s.tiles[tileOf(s, x, y)]) ? '건물 내부' : '외부';
+  if (s.tiles[i] === T.WATER) {      // 물 칸은 구역에 들지 않는다: 맞닿은 물가 구역의 이름으로 부른다
+    const cx = i % s.w, cy = (i / s.w) | 0;
+    for (let d = 1; d <= 2; d++) for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = cx + dx * d, ny = cy + dy * d;
+      if (nx >= 0 && ny >= 0 && nx < s.w && ny < s.h && s.region[ny * s.w + nx] >= 0) return `${s.regions[s.region[ny * s.w + nx]].name} 앞 물속`;
+    }
+    return '물속';
+  }
+  return isIndoor(s.tiles[i]) ? '건물 내부' : '외부';
 }
 
 export function casFact(sim: Sim, s: Scene, c: Casualty, src: string): Fact {
@@ -82,7 +91,7 @@ function discover(sim: Sim, s: Scene, I: Incident, a: FieldAgent, c: Casualty): 
     return;
   }
   const late = sim.t - s.arrivedAt > 150 && s.arrivedAt >= 0;
-  const mobT = c.mob === 'trapped' ? '고립되어 있음' : c.mob === 'immobile' ? '의식 저하, 거동 불가' : '거동 가능';
+  const mobT = c.inWater ? '물에 빠져 있음' : c.mob === 'trapped' ? '고립되어 있음' : c.mob === 'immobile' ? '의식 저하, 거동 불가' : '거동 가능';
   emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'casualty', imp: 2, text: `구조 대상 ${c.label} 발견! ${regionNameAt(s, c.x, c.y)}, ${mobT}, ${BAND_NAME[band(c.health)]}.` });
   pushFx(sim, s, 'text', c.x, c.y - 0.9, undefined, undefined, `${c.label} 발견`, '#7cf5a0', 2);
   if (late && !I.problems.some((p) => p.code === 'LATE_DISCOVERY')) {

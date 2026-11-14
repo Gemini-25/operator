@@ -5,6 +5,7 @@ import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import { T } from '../types';
 import type { Casualty, Hostile, Incident, Scene } from '../types';
+import type { Rng } from '../rng';
 import { clamp, dist, josa } from '../util';
 import { addProp } from './kit';
 import { casFact, exitName } from './agents';
@@ -667,6 +668,131 @@ export function tickGas(sim: Sim, s: Scene, I: Incident): void {
   const ev = raiseProblem(sim, I, 'HIDDEN_HAZARD', '누출된 가스에 불이 붙어 폭발', { role: 'SYSTEM', actor: '현장', text: '폭발! 고여 있던 가스에 불이 붙었습니다. 화재가 발생했습니다.', imp: 3, truth: s.arrivedAt < 0 }, false);
   blast(sim, s, I, p.x, p.y, 3.8, 32, ev);
   pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.6);
+}
+
+// ───────────────────────── 배회하는 실종자 ─────────────────────────
+// 길을 잃고 숲을 헤매는 사람(실종 · 배회)에게 찾기 전까지 일어날 수 있는 일. 진실만 바꾼다 — 대원은 보거나(perceive) 찾아야 안다.
+//   개울가를 걷다 미끄러져 물에 빠진다 → 물살에 떠밀려 내려가다 다리·바위에 걸린다. 찬물에서 빠르게 나빠진다(수난 구조가 필요하다)
+//   바위 비탈이나 덤불에서 넘어져 다친다 → 더는 걷지 못하고 악화가 빨라진다
+//   비·밤·안개 속에서 체온을 잃는다 → 주저앉아 움직이지 않고 악화가 빨라진다
+// 난수는 사건마다 따로 만든 흐름(wander:<사건>:<대상>)만 쓴다. 현장 흐름(s.rng)의 배회 이동 순서는 그대로다.
+
+/** 배회 실종자에게 일어나는 일의 확률·속도. 균형은 여기서 맞춘다 */
+export const WANDER = {
+  straight: 0.6, stride: 5,        // 새 걸음을 뗄 때 들어온 쪽(현장 입구)에서 멀어지는 쪽으로 곧장 걸을 확률과 거리(칸): 길 잃은 사람은 막힐 때까지 곧장 걷는다
+  slip: 0.06, slipBad: 0.12,     // 물가(개울과 맞닿은 칸)에서 1초에 미끄러져 빠질 확률: 맑음 / 비·밤·안개
+  fall: 0.006, fallBad: 0.012,     // 바위 곁이나 덤불 속에서 1초에 넘어질 확률
+  fallHit: [6, 14], fallMul: 2.6, brush: 0.1,  // 넘어질 때 잃는 체력, 악화 속도 배율, 덤불 속에 쓰러지면 더 가려지는 정도
+  dunk: [8, 18], cold: [0.45, 0.6], cling: 0.6,      // 물에 빠질 때 잃는 체력, 물살에 휩쓸리는 동안의 악화 속도(난이도의 악화 배율을 곱한다), 무언가를 붙잡고 버티는 동안의 배율
+  drift: [0.14, 0.3], snag: 0.08, slipGrip: 0.04, gripHp: 35,  // 떠내려가는 속도(칸/초, 하류 = +y), 1초에 물가 나무뿌리에 걸릴 확률, 지친 사람(체력 gripHp 아래)이 1초에 붙잡은 것을 놓칠 확률
+  under: 0.18, underHit: [8, 20],  // 떠내려가는 동안 1초에 물속으로 가라앉아 물을 먹을 확률과 그때 잃는 체력
+  chill: { clear: 0.25, fog: 0.6, rain: 1, night: 1 } as Record<string, number>,      // 1초에 쌓이는 추위
+  chillAt: [50, 170], chillBleed: 0.25, burrow: 0.2,   // 저체온으로 주저앉는 추위, 그때 더해지는 악화 속도, 덤불·바위 밑으로 기어드는 정도(저체온의 이상 행동)
+};
+interface WanderState { rng: Rng; phase: 'walk' | 'down' | 'water' | 'out'; chill: number; chillAt: number; col: number; speed: number; held: '' | 'root' | 'fixed'; path: number[] | null }
+const wanderStates = new WeakMap<Casualty, WanderState>();
+
+function nearTile(s: Scene, x: number, y: number, t: number, r: number): number {
+  const cx = Math.round(x), cy = Math.round(y);
+  let best = -1, bd = 1e9;
+  for (let yy = cy - r; yy <= cy + r; yy++) for (let xx = cx - r; xx <= cx + r; xx++) {
+    if (xx < 0 || yy < 0 || xx >= s.w || yy >= s.h || s.tiles[yy * s.w + xx] !== t) continue;
+    const d = dist(x, y, xx, yy);
+    if (d < bd) { bd = d; best = yy * s.w + xx; }
+  }
+  return best;
+}
+
+/** 배회 실종자 (매 틱, 실종 현장만) */
+export function tickWander(sim: Sim, s: Scene, I: Incident): void {
+  for (let ci = 0; ci < s.casualties.length; ci++) { const c = s.casualties[ci];
+    if (!c.isTarget || c.dead || c.where !== 'scene') continue;
+    let st = wanderStates.get(c);
+    if (!st) {
+      if (!c.wander) continue;
+      const rng = sim.rng.fork(`wander:${I.id}:${c.id}`);
+      st = { rng, phase: 'walk', chill: 0, chillAt: rng.range(WANDER.chillAt[0], WANDER.chillAt[1]), col: -1, speed: 0, held: '', path: null };
+      wanderStates.set(c, st);
+    }
+    if (st.phase === 'water') { if (c.inWater) creekDrift(sim, s, I, c, st); else st.phase = 'out'; continue; }
+    if (st.phase !== 'walk' || c.tDiscovered >= 0) continue;      // 찾기 전까지만
+    const rng = st.rng, bad = sim.weather !== 'clear';
+    // 새 걸음(배회 이동이 방금 고른 길): 현장 입구에서 멀어지는 쪽으로 곧장 걷는 길로 바꾸기도 한다
+    if (c.path && c.path !== st.path) {
+      st.path = c.path;
+      if (rng.chance(WANDER.straight)) {
+        const ang = Math.atan2(c.y - s.staging.y, c.x - s.staging.x) + rng.range(-0.7, 0.7);
+        const tx = clamp(Math.round(c.x + Math.cos(ang) * WANDER.stride), 0, s.w - 1), ty = clamp(Math.round(c.y + Math.sin(ang) * WANDER.stride), 0, s.h - 1);
+        const p = staticPass(s.tiles[ty * s.w + tx]) ? astar(s, c.x, c.y, tx, ty, 0, truthCost(s)) : null;
+        if (p) { c.path = p; c.pathI = 0; st.path = p; }
+      }
+    }
+    if ((sim.tick + s.id) % 5 !== 0) continue;      // 아래는 1초에 한 번
+    const i = tileOf(s, c.x, c.y);
+    // 개울가에서 미끄러짐
+    const wet = nearTile(s, c.x, c.y, T.WATER, 1);
+    if (wet >= 0 && rng.chance(bad ? WANDER.slipBad : WANDER.slip)) {
+      st.phase = 'water'; st.col = wet % s.w;
+      c.wander = false; c.path = null; c.inWater = true; c.mob = 'trapped'; c.trapWork = 0;
+      c.x = wet % s.w; c.y = (wet / s.w) | 0;
+      c.health = Math.max(5, c.health - rng.range(WANDER.dunk[0], WANDER.dunk[1]));
+      c.bleed = Math.max(c.bleed, rng.range(WANDER.cold[0], WANDER.cold[1]) * sim.tune.bleedMul); c.bleed0 = c.bleed;
+      c.drift = st.speed = rng.range(WANDER.drift[0], WANDER.drift[1]);
+      c.concealment = Math.min(c.concealment, 0.15);      // 물속에서 허우적거리는 사람은 덤불 속보다 눈에 띈다
+      c.causeEvent = raiseProblem(sim, I, 'HIDDEN_HAZARD', '배회하던 실종자가 개울에 빠짐', { role: 'SYSTEM', actor: '현장', imp: 3, truth: true, text: `(미발견) 배회하던 ${josa(c.label, '이/가')} 개울가에서 미끄러져 물에 빠졌습니다. 물살에 떠밀려 내려갑니다.` }, false);
+      continue;
+    }
+    // 바위 비탈·덤불에서 넘어짐
+    const rough = s.tiles[i] === T.TREE || nearTile(s, c.x, c.y, T.ROCK, 1) >= 0;
+    if (rough && rng.chance(bad ? WANDER.fallBad : WANDER.fall)) {
+      st.phase = 'down';
+      c.wander = false; c.path = null; c.mob = 'immobile';
+      c.health = Math.max(5, c.health - rng.range(WANDER.fallHit[0], WANDER.fallHit[1]));
+      c.bleed *= WANDER.fallMul; c.bleed0 = c.bleed;
+      if (s.tiles[i] === T.TREE) c.concealment = Math.min(0.9, c.concealment + WANDER.brush);
+      c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '배회하던 실종자가 넘어져 다침', { role: 'SYSTEM', actor: '현장', imp: 2, truth: true, text: `(미발견) 배회하던 ${josa(c.label, '이/가')} ${s.tiles[i] === T.TREE ? '덤불' : '바위 비탈'}에서 넘어져 다쳤습니다. 더는 걷지 못합니다.` }, false);
+      continue;
+    }
+    // 추위: 비·밤·안개 속에서 체온을 잃는다
+    st.chill += WANDER.chill[sim.weather] ?? 0.25;
+    if (st.chill >= st.chillAt) {
+      st.phase = 'down';
+      c.wander = false; c.path = null; c.mob = 'immobile';
+      c.bleed += WANDER.chillBleed * sim.tune.bleedMul; c.bleed0 = c.bleed;
+      c.concealment = Math.min(0.9, c.concealment + WANDER.burrow);      // 추위에 정신이 흐려진 사람은 몸을 숨길 곳으로 기어든다
+      const why = sim.weather === 'rain' ? '비에 젖어' : sim.weather === 'night' ? '밤 추위에' : sim.weather === 'fog' ? '차가운 안개 속에서' : '오래 헤매다';
+      c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '실종자 저체온', { role: 'SYSTEM', actor: '현장', imp: 2, truth: true, text: `(미발견) ${josa(c.label, '이/가')} ${why} 체온을 잃고 덤불 밑으로 기어들어 웅크렸습니다. 상태가 빠르게 나빠집니다.` }, false);
+    }
+  }
+}
+
+/** 개울에 빠진 사람이 하류(+y)로 떠내려간다. 다음 줄에 물이 없으면(다리·현장 끝) 그 자리에 걸리고, 물가의 뿌리·바위에 걸리기도 한다 */
+function creekDrift(sim: Sim, s: Scene, I: Incident, c: Casualty, st: WanderState): void {
+  const sec = (sim.tick + s.id) % 5 === 0;
+  if (!c.drift) {
+    // 붙잡고 버티던 사람이 지치면 손을 놓친다 (다리 기둥이나 현장 끝에 걸린 사람은 그대로 걸려 있다)
+    if (!sec || st.held !== 'root' || c.health >= WANDER.gripHp || !st.rng.chance(WANDER.slipGrip)) return;
+    st.held = ''; c.drift = st.speed; c.bleed /= WANDER.cling; c.bleed0 = c.bleed;
+    emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, truth: c.tDiscovered < 0, causes: [c.causeEvent], text: `${c.tDiscovered < 0 ? '(미발견) ' : ''}지친 ${josa(c.label, '이/가')} 붙잡고 있던 나무뿌리를 놓쳤습니다. 다시 떠내려갑니다.` });
+    return;
+  }
+  let snag = '';
+  if (sec && st.rng.chance(WANDER.under)) c.health = Math.max(1, c.health - st.rng.range(WANDER.underHit[0], WANDER.underHit[1]));      // 물살에 휩쓸려 물을 먹는다 (숨이 멎는 것은 구조 대상 악화 규칙이 판정한다)
+  if (sec && st.rng.chance(WANDER.snag)) snag = '물가의 나무뿌리';
+  const ny = c.y + c.drift * sim.dt, row = Math.round(ny);
+  if (!snag && row !== Math.round(c.y)) {
+    let col = -1;
+    if (row < s.h) for (const dx of [0, -1, 1]) { const x = st.col + dx; if (x >= 0 && x < s.w && s.tiles[row * s.w + x] === T.WATER) { col = x; break; } }
+    if (col < 0) snag = row >= s.h ? '하류 끝 바위' : '다리 기둥';
+    else { st.col = col; c.x = col; }      // 굽은 물길을 따라 옆 칸으로 (반올림한 자리가 늘 물 칸이게 줄을 넘는 순간 옮긴다)
+  }
+  if (snag) {
+    st.held = snag === '물가의 나무뿌리' ? 'root' : 'fixed';
+    c.drift = 0; c.x = st.col; c.bleed *= WANDER.cling; c.bleed0 = c.bleed;      // 머리를 물 밖에 두고 버틴다
+    emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, truth: c.tDiscovered < 0, causes: [c.causeEvent], text: `${c.tDiscovered < 0 ? '(미발견) ' : ''}물에 빠진 ${josa(c.label, '이/가')} 떠내려가다 ${snag}에 걸렸습니다.` });
+    return;
+  }
+  c.y = ny;
 }
 
 /** 수난 사고: 물에 빠진 사람은 하류로 떠내려간다. 다리나 물가에 걸리면 멈추고, 현장 밖으로 벗어나면 잃는다 (매 틱). */

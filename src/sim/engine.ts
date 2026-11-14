@@ -2,7 +2,9 @@
 // 고정 시간 간격(0.2초 = 5Hz)으로만 진행한다. 배속은 "실제 1초에 몇 틱을 돌리는가"만 바꾸므로
 // 어떤 배속으로 보든 같은 시드에서는 같은 결과가 나온다. 이 파일을 포함한 src/sim 은 DOM 에 의존하지 않는다.
 
-import { generateCity, initTraffic, tickTraffic } from './city';
+import { generateCity } from './city';
+import { initTraffic, tickTraffic } from './traffic';
+import type { TrafficState } from './traffic';
 import { buildReport } from './debrief';
 import { tickPursuits } from './pursuit';
 import { initDisaster, tickDisaster } from './disaster';
@@ -35,7 +37,7 @@ export class Sim {
   readonly weather: Weather;
   readonly startTod: number;
   readonly city: City;
-  traffic: ReturnType<typeof initTraffic>;
+  traffic: TrafficState;
   units: Unit[] = [];
   aidUsed = 0;                 // 이번 교대에 받은 인근 도시 지원 횟수
   responders: Responder[] = [];
@@ -74,7 +76,7 @@ export class Sim {
     this.weather = env.weighted<Weather>(['clear', 'rain', 'fog', 'night'], [0.5, 0.18, 0.12, 0.2]);
     this.startTod = this.weather === 'night' ? 22 * 3600 + env.int(0, 3000) : 9 * 3600 + env.int(0, 8 * 3600);
     this.city = generateCity(new Rng(CITY_SEED));
-    this.traffic = initTraffic(this.rngTraffic);
+    this.traffic = initTraffic(this);
     createRoster(this);
     this.gen = initGenerator(this.rngGen);
     this.gen.majorAt = this.rngMajor.chance(this.tune.majorProb) ? this.rngMajor.range(0.18, 0.7) * shiftLen : Infinity;

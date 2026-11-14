@@ -319,3 +319,10 @@ input:focus { border-color: var(--accent); }
 @keyframes dz-pulse { 50% { background: rgba(150, 30, 26, 0.95); } }
 .app:has(> .disaster-banner) .overlay.tl, .app:has(> .disaster-banner) .overlay.tr { top: 38px; }
 .app:has(> .disaster-banner) .overlay.call-wrap { top: 78px; }
+
+/* ── traffic ── */
+.traffic-chip { display: inline-flex; align-items: center; gap: 6px; padding: 1px 9px 1px 8px; border-radius: 999px; border: 1px solid var(--line); background: rgba(8, 13, 18, 0.5); font-variant-numeric: tabular-nums; white-space: nowrap; cursor: default; }
+.traffic-chip i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 5px var(--ok); }
+.traffic-chip.tf-ok { color: #a9d8b4; }
+.traffic-chip.tf-slow { color: #f2c94c; border-color: rgba(242, 201, 76, 0.4); } .traffic-chip.tf-slow i { background: #f2c94c; box-shadow: 0 0 5px #f2c94c; }
+.traffic-chip.tf-bad { color: #ff8f8f; border-color: rgba(255, 93, 93, 0.45); } .traffic-chip.tf-bad i { background: var(--bad); box-shadow: 0 0 5px var(--bad); }

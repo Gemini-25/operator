@@ -2,6 +2,7 @@
 // 지도(도로·건물)는 월드 좌표로, 표식(사건 핀·차량·라벨)은 화면 픽셀 크기로 그려 어떤 배율에서도 읽힌다.
 
 import { drawDisasterScreen, drawDisasterWorld } from './city/disasterLayer';
+import { describeTraffic, drawTrafficScreen, drawTrafficWorld, flowOf } from './city/trafficLayer';
 import type { Sim } from '../sim/engine';
 import { placeAt } from '../sim/city';
 import { KIND_NAME } from '../sim/cityPlan';
@@ -109,21 +110,8 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(staticLayer.c, 0, 0, city.w, city.h);
   ctx.lineCap = 'round';
-  // 도로 상태: 혼잡(주황·빨강), 통제(빨간 점선)
-  for (const e of city.edges) {
-    const A = city.nodes[e.a], B = city.nodes[e.b];
-    const load = e.cong + e.slow;
-    if (e.closed) {
-      ctx.strokeStyle = 'rgba(255,93,93,0.25)'; ctx.lineWidth = e.arterial ? 19 : 12.5;
-      ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
-      ctx.strokeStyle = '#ff5d5d'; ctx.lineWidth = 4.5; ctx.setLineDash([10, 9]);
-      ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke(); ctx.setLineDash([]);
-    } else if (load > 1.55) {
-      ctx.strokeStyle = load > 2.3 ? 'rgba(255,93,93,0.5)' : 'rgba(255,180,84,0.36)';
-      ctx.lineWidth = e.arterial ? 17 : 11;
-      ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
-    }
-  }
+  // 도로 상태: 혼잡 띠(노랑·주황·빨강), 통제(빨간 점선), 열차와 건널목 차단기 (view/city/trafficLayer.ts)
+  drawTrafficWorld(ctx, sim, { timeMs: o.timeMs, scale: xf.scale, truth: o.truth, alpha: o.alpha, mini });
   // 출동 경로
   for (const u of sim.units) {
     if (!u.route || (u.state !== 'enroute' && u.state !== 'transport' && u.state !== 'returning')) continue;
@@ -208,12 +196,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
       ctx.beginPath(); ctx.roundRect((-q.w / 2) * xf.scale - 3, (-q.h / 2) * xf.scale - 3, q.w * xf.scale + 6, q.h * xf.scale + 6, 4); ctx.stroke(); ctx.restore(); ctx.globalAlpha = 1;
     }
   }
-  for (const e of city.edges) {
-    if (!e.closed || mini) continue;
-    const A = city.nodes[e.a], B = city.nodes[e.b];
-    const mx = sx((A.x + B.x) / 2), my = sy((A.y + B.y) / 2);
-    ctx.fillStyle = '#ff5d5d'; ctx.beginPath(); ctx.arc(mx, my, 8, 0, 7); ctx.fill(); ctx.fillStyle = '#0b1219'; ctx.fillRect(mx - 5, my - 1.5, 10, 3);
-  }
+  drawTrafficScreen(ctx, sim, xf, { timeMs: o.timeMs, truth: o.truth, zs, mini });      // 장애물 표식, 통제 구간의 진입 금지 표시
   for (const f of city.facilities) {
     const col = f.kind === 'fireStation' ? DEPT_COLOR.fire : f.kind === 'police' ? DEPT_COLOR.police : f.kind === 'hospital' ? DEPT_COLOR.ems : '#9fb0c0';
     const lot = facilityLot(f);
@@ -318,7 +301,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
   // 마우스를 올린 건물·터·도로의 정보
   if (!mini && o.hover) {
     const wx = (o.hover.x - xf.ox) / xf.scale, wy = (o.hover.y - xf.oy) / xf.scale;
-    const info = describeAt(sim, wx, wy);
+    const info = describeAt(sim, wx, wy, o.truth, xf.scale);
     if (info) {
       if (info.place && info.place.kind !== 'riverside' && info.place.kind !== 'farmland' && info.place.kind !== 'forest' && info.place.kind !== 'reservoir' && info.place.kind !== 'beach') { const q = info.place; ctx.save(); ctx.translate(sx(q.x + q.w / 2), sy(q.y + q.h / 2)); ctx.rotate(q.rot ?? 0); ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.roundRect((-q.w / 2) * xf.scale - 2, (-q.h / 2) * xf.scale - 2, q.w * xf.scale + 4, q.h * xf.scale + 4, 3); ctx.stroke(); ctx.restore(); }
       ctx.font = `700 12.5px ${FONT}`; const w1 = ctx.measureText(info.title).width;
@@ -343,13 +326,15 @@ const PLACE_TINT: Partial<Record<string, string>> = {
 };
 
 export interface MapInfo { title: string; lines: string[]; color: string; place: Place | null; alert: boolean }
-/** 지도의 그 지점에 무엇이 있는가: 건물·터가 먼저, 없으면 도로와 골목 */
-export function describeAt(sim: Sim, wx: number, wy: number): MapInfo | null {
+/** 지도의 그 지점에 무엇이 있는가: 길 위의 장애물·건널목·열차가 먼저, 다음이 건물·터, 없으면 도로와 골목 */
+export function describeAt(sim: Sim, wx: number, wy: number, truth = true, scale = 1): MapInfo | null {
   const city = sim.city;
+  const tinfo = describeTraffic(sim, wx, wy, truth, Math.max(7, 11 / scale));
+  if (tinfo) return { ...tinfo, place: null };
   const q = placeAt(city, wx, wy);
   const distSeg = (x0: number, y0: number, x1: number, y1: number): number => { const dx = x1 - x0, dy = y1 - y0, t = Math.max(0, Math.min(1, ((wx - x0) * dx + (wy - y0) * dy) / (dx * dx + dy * dy))); return Math.hypot(wx - x0 - dx * t, wy - y0 - dy * t); };
   if (!q || q.open) {
-    for (const e of city.edges) { const A = city.nodes[e.a], B = city.nodes[e.b]; if (distSeg(A.x, A.y, B.x, B.y) < (e.arterial ? 11 : 8)) return { title: e.name, lines: [`${e.cls === 'highway' ? '고속화 도로' : e.cls === 'arterial' ? '간선 도로' : e.cls === 'local' ? '이면 도로' : '일반 도로'}${e.bridge ? ' · 다리' : ''}${e.closed ? ' · 통제 중' : e.cong + e.slow > 2.2 ? ' · 정체' : ''}`], color: '#e8d6a0', place: null, alert: e.closed }; }
+    for (const e of city.edges) { const A = city.nodes[e.a], B = city.nodes[e.b]; if (distSeg(A.x, A.y, B.x, B.y) < (e.arterial ? 11 : 8)) { const flow = flowOf(e, truth); return { title: e.name, lines: [`${e.cls === 'highway' ? '고속화 도로' : e.cls === 'arterial' ? '간선 도로' : e.cls === 'local' ? '이면 도로' : '일반 도로'}${e.bridge ? ' · 다리' : ''}${e.gateT !== undefined ? ' · 건널목' : ''}`, `지금: ${flow}${flow === '통제' ? ' 중' : ''}`], color: '#e8d6a0', place: null, alert: flow === '통제' || flow === '정체' }; } }
     for (const a of city.alleys) if (distSeg(a.x0, a.y0, a.x1, a.y1) < 4.5) return { title: a.name, lines: ['골목 — 차량은 큰길에 세우고 걸어 들어간다'], color: '#9fb0c0', place: null, alert: false };
   }
   if (!q) return null;

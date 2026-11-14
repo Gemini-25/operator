@@ -105,12 +105,9 @@ describe('대형 사고의 현장', () => {
       expect(I.tag).toBe('major'); expect(I.truth.variant).toBe(m.variant); expect(sc.variant).toBe(m.variant);
       expect(sc.casualties.length, tag).toBeGreaterThanOrEqual(m.cas[0]); expect(sc.casualties.length, tag).toBeLessThanOrEqual(m.cas[1]);
       const seen = reach(sc);
-      // 걸을 수 있는 바닥(물·가구·벽·고정 소품이 놓인 칸 제외)은 모두 대기 지점과 이어져 있다
+      // 걸을 수 있는 바닥(물·가구·벽·소품이 놓인 칸 제외)은 모두 대기 지점과 이어져 있다
       let cut = 0;
-      for (let i = 0; i < sc.tiles.length; i++) {
-        const p = sc.propAt[i];
-        if (walkable(sc.tiles[i]) && !seen[i] && (p < 0 || sc.props[p].kind === 'door' || sc.props[p].kind === 'debris')) cut++;
-      }
+      for (let i = 0; i < sc.tiles.length; i++) if (walkable(sc.tiles[i]) && !seen[i] && sc.propAt[i] < 0) cut++;
       expect(cut, `${tag}: 닿지 못하는 바닥`).toBe(0);
       // 대기 지점·안전 구역·관측 지점·출입구는 걸을 수 있는 땅이다
       for (const p of [sc.staging, sc.safe, sc.vantage, ...sc.exits, ...sc.spots]) expect(walkable(sc.tiles[p.y * sc.w + p.x]), `${tag}: (${p.x},${p.y})`).toBe(true);

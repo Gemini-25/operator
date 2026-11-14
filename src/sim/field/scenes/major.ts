@@ -208,13 +208,13 @@ registerScene('collapse', 'gasblast', (sim, I, rng) => {
   const kindling = (r: Region, d: number): number[] => rng.shuffle(r.tiles.filter((i) => s.tiles[i] === T.FURN && clear(i, d))).concat(rng.shuffle(r.tiles.filter((i) => s.tiles[i] === T.FLOOR && s.propAt[i] < 0 && clear(i, d))));
   const ordered = rooms.slice().sort(byZone);
   let fireRoom = ordered[0], burn: number[] = [];
-  for (const d of [4, 2.6]) {
+  for (const d of [5.5, 4, 2.6]) {
     for (const r of ordered) { const c = kindling(r, d); if (c.length >= 3) { fireRoom = r; burn = c; break; } }
     if (burn.length) break;
   }
   for (const i of burn.slice(0, rng.int(3, 5))) {
     if (s.fuel[i] <= 0) { s.fuel[i] = 0.5; s.totalFuelTiles++; }
-    s.fire[i] = rng.range(0.35, 0.55);
+    s.fire[i] = rng.range(0.3, 0.48);
   }
   // 2) 새는 배관: 벽에 붙은 가구 자리에 놓는다. 옆에 서서 잠글 수 있도록 바로 옆 칸 하나는 걸어서 닿는 빈 바닥이어야 한다
   const seen = reachable(s);
@@ -230,9 +230,21 @@ registerScene('collapse', 'gasblast', (sim, I, rng) => {
     const spots = r.tiles.filter((i) => s.tiles[i] === T.FURN && s.fire[i] <= 0 && standable(i));
     if (spots.length) { at = rng.pick(spots); break; }
   }
+  if (at < 0) {
+    // 가구가 없는 건물: 벽에 붙은 빈 바닥 가운데, 막아도 어느 바닥도 끊기지 않는 자리
+    const cut = (): number => { const v = reachable(s); let n = 0; for (let i = 0; i < v.length; i++) if (s.tiles[i] === T.FLOOR && !v[i]) n++; return n; };
+    const base = cut();
+    const bare = rng.shuffle(rooms.flatMap((r) => r.tiles).filter((i) => s.tiles[i] === T.FLOOR && s.propAt[i] < 0 && s.fire[i] <= 0 && s.stairTo[i] < 0 && (s.tiles[i - SW] === T.WALL || s.tiles[i + SW] === T.WALL) && clear(i, 1.5) && standable(i)));
+    for (const i of bare.slice(0, 16)) {
+      s.tiles[i] = T.WALL;
+      const ok = cut() === base;
+      s.tiles[i] = T.FLOOR;
+      if (ok) { at = i; break; }
+    }
+  }
   if (at >= 0) {
     s.tiles[at] = T.FLOOR; s.decor[at] = 0;
-    addProp(s, 'valve', at % SW, (at / SW) | 0, { blocking: true, leakRate: rng.range(0.55, 0.7) });
+    addProp(s, 'valve', at % SW, (at / SW) | 0, { blocking: true, leakRate: rng.range(0.5, 0.64) });
     // 폭발에 깨진 창
     for (let i = 0; i < s.tiles.length; i++) if (s.tiles[i] === T.WINDOW && Math.hypot((i % SW) - (at % SW), ((i / SW) | 0) - ((at / SW) | 0)) <= 6) s.glass[i] = 1;
   }
@@ -273,6 +285,7 @@ registerScene('collapse', 'crane', (sim, I, rng) => {
   for (let k = 0; k < 4; k++) {
     const x = rng.int(16, 23), y = rng.int(2, 5), i = tidx(s, x, y);
     if (s.tiles[i] !== T.GROUND || Math.abs(x - mast.x) + Math.abs(y - mast.y) < 3) continue;
+    if ([-SW - 1, -SW, -SW + 1, -1, 1, SW - 1, SW, SW + 1].some((d) => s.tiles[i + d] === T.FURN)) continue;      // 더미끼리 붙으면 사이에 닿지 못하는 틈이 생긴다
     s.tiles[i] = T.FURN; s.decor[i] = rng.pick([DECOR.CRATE, DECOR.CRATE, DECOR.MACHINE]);
   }
   const frame = addRegion(s, '짓다 만 골조', 'room', B.x0, B.y0, B.x1, B.y1, true, true);
@@ -340,8 +353,8 @@ registerScene('traffic', 'pileup', (sim, I, rng) => {
   }
   wrecks.forEach((w, q) => {
     for (let k = 0; k < seats[q]; k++) {
-      const roll = rng.next();
-      rider(s, rng, w, k, roll < 0.3 ? 'trapped' : roll < 0.65 ? 'immobile' : 'mobile', w.x + (k % 3) + rng.int(-1, 1), w.y === 9 ? 7 : 12, 0.88);
+      const roll = rng.next(), out = freeNear(s, w.x + (k % 3) + rng.int(-1, 1), w.y === 9 ? 7 : 12);      // 걸어 나온 사람은 길가에 서 있다
+      rider(s, rng, w, k, roll < 0.3 ? 'trapped' : roll < 0.65 ? 'immobile' : 'mobile', out.x, out.y, 0.88);
     }
   });
   // 두 대에서 연료가 샌다 (조치하지 않으면 불이 붙는다)
@@ -410,20 +423,24 @@ registerScene('fire', 'ship', (sim, I, rng) => {
   for (let k = 0; k < seeds; k++) { const i = freeTileIn(s, engine, rng); s.fire[i] = rng.range(0.45, 0.7); }
   // 선원 5~8명: 배 안에 3~4 (연기 속), 바다에 2~3, 부두로 빠져나온 사람이 있을 수도 있다
   const nIn = rng.int(3, 4), nW = rng.int(2, 3), nOut = rng.int(0, 1);
-  const nearFire = (q: number): boolean => { for (let f = 0; f < s.fire.length; f++) if (s.fire[f] > 0 && Math.hypot((f % SW) - (q % SW), ((f / SW) | 0) - ((q / SW) | 0)) < 2.5) return true; return false; };
+  const fireDist = (q: number): number => { let d = 99; for (let f = 0; f < s.fire.length; f++) if (s.fire[f] > 0) d = Math.min(d, Math.hypot((f % SW) - (q % SW), ((f / SW) | 0) - ((q / SW) | 0))); return d; };
   for (let k = 0; k < nIn; k++) {
-    const r = rng.chance(0.85) ? rng.pick(rooms.slice(1)) : engine;
-    const i = freeTileIn(s, r, rng, nearFire);
+    // 방이 좁아 빈자리가 얼마 없다: 불에서 2.5칸 넘게 떨어진 빈 바닥 가운데 고르고, 없으면 그 방에서 불과 가장 먼 자리
+    const first = rng.chance(0.85) ? rng.int(1, rooms.length - 1) : 0;      // 대개 기관실이 아닌 방
+    let free: number[] = [];
+    for (let q = 0; q < rooms.length && !free.length; q++) free = rooms[(first + q) % rooms.length].tiles.filter((i) => s.tiles[i] === T.FLOOR && s.propAt[i] < 0 && s.fire[i] <= 0 && !s.casualties.some((c) => tidx(s, c.x, c.y) === i));
+    const far = free.filter((i) => fireDist(i) >= 2.5);
+    const i = far.length ? rng.pick(far) : free.slice().sort((a, b) => fireDist(b) - fireDist(a) || a - b)[0];
     const roll = rng.next();
     const mob: Mobility = roll < 0.4 ? 'mobile' : roll < 0.8 ? 'immobile' : 'trapped';
     addCas(s, i % SW, (i / SW) | 0, mob, mob === 'mobile' ? rng.range(78, 100) : rng.range(55, 85), mob === 'mobile' ? 0.03 : rng.range(0.07, 0.19), mob === 'trapped' ? rng.range(0.35, 0.55) : rng.range(0.1, 0.5));
   }
-  const taken: number[] = [];
+  // 물에 빠진 사람은 부두와 배 사이의 물길에 있다 (건널판 바로 곁은 비운다). 동쪽으로 떠내려가다 건널판이나 꺾인 안벽에 걸린다
+  const slots: number[] = [];
+  for (let x = 2; x <= 17; x++) if (x <= gx - 2 || x >= gx + 3) slots.push(x);
+  rng.shuffle(slots);
   for (let k = 0; k < nW; k++) {
-    let x = rng.chance(0.5) ? rng.int(2, gx - 2) : rng.int(gx + 3, 17);
-    while (taken.indexOf(x) >= 0) x = x < gx ? Math.max(1, x - 1) : x + 1;
-    taken.push(x);
-    const c = addCas(s, x, 13, 'trapped', rng.range(62, 90), rng.range(0.17, 0.27) * (sim.weather === 'clear' ? 1 : 1.12), 0.1, { inWater: true, drift: rng.range(0.05, 0.12) });
+    const c = addCas(s, slots[k], 13, 'trapped', rng.range(62, 90), rng.range(0.17, 0.27) * (sim.weather === 'clear' ? 1 : 1.12), 0.1, { inWater: true, drift: rng.range(0.05, 0.12) });
     c.trapWork = 0;
   }
   for (let k = 0; k < nOut; k++) { const p = freeNear(s, gx + rng.int(-2, 3), 11); addCas(s, p.x, p.y, 'mobile', rng.range(76, 96), rng.range(0, 0.04), 0); }

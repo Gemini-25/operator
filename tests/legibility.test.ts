@@ -11,6 +11,8 @@ import { createIncident } from '../src/sim/incidents';
 import { T } from '../src/sim/types';
 import type { Incident, Scene } from '../src/sim/types';
 import { staticSig } from '../src/view/scene/staticLayer';
+import { BeliefStore, mkFact } from '../src/sim/field/beliefs';
+import { hazardChips, pinIcon, ruinInfo, ruinSeen } from '../src/view/hazardState';
 
 // ───────────────────────── 도우미 ─────────────────────────
 /** 강제 사건(15초에 생긴다)을 찾는다 */
@@ -161,5 +163,84 @@ describe('기록의 일관성', () => {
     expect(withWall).toBeGreaterThan(0);
     expect(floor / (floor + sealed)).toBeGreaterThanOrEqual(0.9);
     for (let k = 0; k < 3; k++) check(collapseScene('G4-REC', 'gasblast', k).s);      // 가스 폭발 현장도 buildCollapse 로 만든다
+  });
+});
+
+// ───────────────────────── 5. 시점 규칙 ─────────────────────────
+/** 관제의 평가를 손으로 붙인다 (그림 쪽만 읽는 값이다) */
+function assess(I: Incident, type: string, label?: string): void { I.assessment = { type, label, typeConf: 0.9, probs: {}, severity: 2, confidence: 0.8, needs: {}, risks: [], summary: '', t: 0, revision: 0 } as never; }
+/** 지휘관 한 명을 현장에 두고 믿음 저장소를 돌려준다 */
+function commander(s: Scene): BeliefStore { const b = new BeliefStore(); s.agents.push({ isCommander: true, beliefs: b, status: 'active' } as never); return b; }
+
+describe('시점 규칙', () => {
+  it('붕괴: 도착 전 AI 시점은 신고 위치가 맞아야 붕괴 신고, 도착 뒤 확인 · 관찰자 시점은 처음부터 확인', () => {
+    const { sim, s, I } = collapseScene('G4-VIEW', 'std', 1);
+    expect(ruinInfo(sim, I)).not.toBeNull();
+    expect(ruinSeen(sim, I, true)).toBe('confirmed');
+    expect(ruinSeen(sim, I, false)).toBe('none');
+    assess(I, 'collapse');
+    I.locationKnown = true; I.reportedNode = I.truth.nodeId === 0 ? 1 : 0;      // 신고 위치가 틀렸다
+    expect(ruinSeen(sim, I, false)).toBe('none');
+    I.reportedNode = I.truth.nodeId;
+    expect(ruinSeen(sim, I, false)).toBe('reported');
+    // 도착 전: 붕괴 칩은 '붕괴 신고'뿐, 균열 칩은 없다 (지휘관이 없다)
+    const pre = hazardChips(sim, I, false);
+    expect(pre.map((c) => c.text)).toEqual(['붕괴 신고']);
+    expect(hazardChips(sim, I, true).some((c) => c.key === 'ruin' && c.text !== '붕괴 신고')).toBe(true);
+    // 도착 뒤: 확인. 지휘관이 아는 균열만 센다
+    I.firstArrivalAt = sim.t;
+    expect(ruinSeen(sim, I, false)).toBe('confirmed');
+    const cracks = s.props.filter((p) => p.kind === 'unstable');
+    const b = commander(s);
+    const crackChip = (truth: boolean): string | undefined => hazardChips(sim, I, truth).find((c) => c.key === 'crack')?.text;
+    if (cracks.length) {
+      expect(crackChip(false)).toBeUndefined();      // 지휘관은 아직 아무 균열도 모른다
+      b.merge(mkFact('haz', cracks[0].id, { kind: 'leak', active: true, x: cracks[0].x, y: cracks[0].y }, 't', sim.t, 1, true, ''));
+      expect(crackChip(false)).toBe('균열 1 · 보강 0');
+      expect(crackChip(true)).toBe(`균열 ${cracks.length} · 보강 0`);
+    }
+  });
+  it('승강기 갇힘은 두 시점 모두 none, 산사태는 ruinInfo 가 null 이고 붕괴 칩이 없다', () => {
+    const el = collapseScene('G4-VIEW', 'elevator', 2);
+    expect(ruinSeen(el.sim, el.I, true)).toBe('none');
+    el.I.firstArrivalAt = el.sim.t; assess(el.I, 'collapse', '승강기 갇힘');
+    expect(ruinSeen(el.sim, el.I, false)).toBe('none');
+    const ls = collapseScene('G4-VIEW', 'landslide', 3);
+    expect(ls.I.truth.placeId).toBe(-1);
+    expect(ruinInfo(ls.sim, ls.I)).toBeNull();
+    ls.I.firstArrivalAt = ls.sim.t;
+    for (const truth of [true, false]) expect(hazardChips(ls.sim, ls.I, truth).some((c) => c.key === 'ruin' || c.key === 'secondary')).toBe(false);
+  });
+  it('pinIcon: 진실의 변형, 관제가 붙인 이름, 보이는 유형의 아이콘', () => {
+    const el = collapseScene('G4-ICON', 'elevator', 1);
+    expect(pinIcon(el.I, true)).toBe('elevator');
+    expect(pinIcon(el.I, false)).toBe('unknown');
+    assess(el.I, 'collapse', '승강기 갇힘');
+    expect(pinIcon(el.I, false)).toBe('elevator');
+    assess(el.I, 'collapse');
+    expect(pinIcon(el.I, false)).toBe('collapse');
+    const gb = collapseScene('G4-ICON', 'gasblast', 2);
+    assess(gb.I, 'hazmat');
+    expect(pinIcon(gb.I, true)).toBe('hazmat');      // 핀 색(보이는 유형)과 어긋나지 않는다
+    assess(gb.I, 'collapse');
+    expect(pinIcon(gb.I, true)).toBe('gasblast');
+  });
+  it('AI 시점의 인질 칩은 수 없는 인질 붙잡힘, 폭발물 칩은 해체와 폭발을 가른다', () => {
+    const sim = new Sim('G4-HOS');
+    const I = createIncident(sim, { type: 'armed', variant: 'hostage', rng: sim.rng.fork('g4') });
+    const s = sim.scenes[I.id]!;
+    const b = commander(s);
+    const h = s.hostiles.find((x) => x.hostageId >= 0)!;
+    b.merge(mkFact('hos', h.id, { x: h.x, y: h.y, weapon: h.weapon, state: 'hold', hostage: true, facing: 0 }, 't', sim.t, 1, true, ''));
+    const hc = hazardChips(sim, I, false).find((c) => c.key === 'hostage');
+    expect(hc?.text).toBe('인질 붙잡힘');
+    const truthChip = hazardChips(sim, I, true).find((c) => c.key === 'hostage');
+    expect(truthChip?.text).toMatch(/^인질 붙잡힘 \d+/);
+    // 폭발물: 하나는 해체, 하나는 폭발 — AI 시점의 믿음은 둘 다 active: false 다
+    const bomb = (x: number): ReturnType<typeof addProp> => addProp(s, 'bomb', x, 3, { blocking: false });
+    const p1 = bomb(2), p2 = bomb(4);
+    p1.mitigated = true; p2.exploded = true;
+    for (const p of [p1, p2]) b.merge(mkFact('haz', p.id, { kind: 'bomb', active: false, x: p.x, y: p.y }, 't', sim.t, 1, true, ''));
+    expect(hazardChips(sim, I, false).find((c) => c.key === 'bomb')?.text).toBe('폭발물 0 · 처리 1 · 터짐 1');
   });
 });

@@ -406,3 +406,12 @@ input:focus { border-color: var(--accent); }
   .app:has(> .disaster-banner) .overlay.tl { top: 74px; }
   .overlay.tl > .cam-reason:first-child { max-width: 100%; }
 }
+
+/* ── legibility ── (G4: 사건 카드의 현장 위험 칩) */
+.hz-strip { display: flex; gap: 4px; margin-top: 4px; overflow: hidden; white-space: nowrap; }
+.hz { display: inline-flex; align-items: center; gap: 3px; height: 18px; padding: 0 6px 0 4px; font-size: 11px; line-height: 16px; border: 1px solid; border-radius: 6px; flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+.hz .mark { flex: 0 0 auto; }
+.hz.tone-info { background: rgba(214, 168, 120, 0.08); }
+.hz.tone-warn { background: rgba(255, 209, 102, 0.08); }
+.hz.tone-bad { background: rgba(255, 93, 93, 0.1); }
+.hz.tone-ok { background: rgba(90, 209, 122, 0.08); }

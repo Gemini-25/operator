@@ -19,6 +19,8 @@ import { UNIT_MARK } from '../view/marks';
 import { DEPT_COLOR, OUTCOME_COLOR, TYPE_COLOR } from '../view/renderCity';
 import type { Runner } from '../view/runner';
 import { Mark, Token } from './Mark';
+import { HazardStrip } from './HazardStrip';
+import { pinIcon } from '../view/hazardState';
 
 const PHASE: Record<string, string> = { unreported: '미신고', call: '신고 접수 중', pending: '배정 대기', dispatched: '출동 중', onscene: '현장 대응', closed: '종료' };
 const UNIT_STATE: Record<string, string> = { available: '대기', turnout: '출동 준비', enroute: '출동 중', onscene: '현장', transport: '병원 이송', hospital: '환자 인계', returning: '복귀 중', oos: '운용 중단' };
@@ -63,7 +65,7 @@ function IncidentCard({ sim, I, director, truth }: { sim: Sim; I: Incident; dire
   return (
     <div className={`card incident ${focused ? 'focused' : ''} ${I.phase === 'closed' ? 'closed' : ''}`} style={{ ['--tc' as string]: TYPE_COLOR[type] }} onClick={() => director.pin(I.id, I.phase === 'onscene' || I.phase === 'closed' ? 'scene' : 'city')} title="클릭하면 이 사건을 관찰합니다">
       <div className="row">
-        <span className="code" style={{ background: TYPE_COLOR[type] }}><Icon name={I.phase === 'call' && !as ? 'phone' : type} size={12} color="#0b1219" />{I.code}</span>
+        <span className="code" style={{ background: TYPE_COLOR[type] }}><Icon name={I.phase === 'call' && !as ? 'phone' : pinIcon(I, truth)} size={12} color="#0b1219" />{I.code}</span>
         <span className="title">{as ? as.label ?? TYPE_NAME[as.type] : I.phase === 'unreported' ? '미신고 사건' : '유형 확인 중'}{as && as.typeConf < 0.6 && !I.fieldType ? ' ?' : ''}</span>
         {I.tag === 'major' && (truth || I.firstArrivalAt >= 0 || !!as?.label) && <span className="badge major" title="대형 사고">대형</span>}
         {I.phase === 'closed' && I.result
@@ -81,6 +83,7 @@ function IncidentCard({ sim, I, director, truth }: { sim: Sim; I: Incident; dire
           <span className="elapsed">{fmtDur(sim.t - Math.max(0, I.reportedAt))}</span>
         </div>
       )}
+      <HazardStrip sim={sim} I={I} truth={truth} />
       {I.phase !== 'closed' && (I.assigned.length > 0 || Object.values(I.unmet).some((v) => (v ?? 0) > 0)) && (
         <div className="row small wrap">
           {I.assigned.map((uid) => { const u = sim.units[uid]; return <span key={uid} className={`chip uchip st-${u.state}`} style={{ color: FIELD_TEXT[fieldOf(u)] }} title={`${UNIT_KIND_NAME[u.kind]} · ${UNIT_STATE[u.state]}`}><Mark d={UNIT_MARK[u.kind]} size={11} />{u.callsign}{u.state === 'enroute' || u.state === 'turnout' ? <b>{Math.max(0, Math.round(u.estArrive - sim.t))}초</b> : null}</span>; })}

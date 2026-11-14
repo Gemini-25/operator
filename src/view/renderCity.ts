@@ -19,6 +19,8 @@ import type { Box } from './city/tokens';
 import { facilityMarkKey } from './marks';
 import { combatPinJitter, drawCombatPin } from './city/combatPin';
 import type { FxBook } from './scene/fxBook';
+import { drawRuinBadge, drawRuinsWorld, ruinGlyphAt } from './city/ruinLayer';
+import { pinIcon, ruinLine } from './hazardState';
 
 export const DEPT_COLOR: Record<string, string> = { fire: '#ff7a45', ems: '#2fd39a', police: '#5aa9ff' };
 export const TYPE_COLOR: Record<string, string> = { fire: '#ff6b3d', traffic: '#ffc24a', search: '#58d68d', armed: '#b98cff', medical: '#ff7eb6', collapse: '#d6a878', hazmat: '#b6e04a', water: '#4fb8ff', unknown: '#9aa7b4' };
@@ -143,6 +145,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
   }
   drawDisasterWorld(ctx, sim, o.timeMs, xf.scale);
+  drawRuinsWorld(ctx, sim, { truth: o.truth, timeMs: o.timeMs, scale: xf.scale, mini });      // (G4) 무너진 건물의 지붕·쓰러진 크레인·무너질 때 피는 먼지
   ctx.restore();
 
   // ── 날씨 ──
@@ -254,6 +257,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     }
   }
   // 사건 핀
+  const ruinBadges: { I: Incident; x: number; y: number; r: number }[] = [];
   for (const I of sim.incidents) {
     const ip = incidentXY(sim, I, o.truth);
     const x = sx(ip.x), y = sy(ip.y);
@@ -266,8 +270,10 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     }
     if (I.phase === 'closed') {
       if (mini || !I.result) continue;
+      // (G4) 끝난 붕괴: 작게 보이면 무너진 건물 기호를 남기고 결과색 점은 비켜 그린다 (크게 보이면 지붕 덧그림이 이미 있다)
+      const rg = ruinGlyphAt(ctx, sim, I, x, y, zs, xf.scale, o.truth);
       ctx.globalAlpha = 0.55; ctx.fillStyle = OUTCOME_COLOR[I.result.outcome];
-      ctx.beginPath(); ctx.arc(x, y, 5, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
+      ctx.beginPath(); if (rg === 'glyph') ctx.arc(x + 8 * zs, y - 8 * zs, 3.5, 0, 7); else ctx.arc(x, y, 5, 0, 7); ctx.fill(); ctx.globalAlpha = 1;
       continue;
     }
     if (I.phase === 'unreported' && !o.truth) continue;
@@ -299,7 +305,8 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     pg.addColorStop(0, mix(col, '#0d151d', 0.72)); pg.addColorStop(1, '#0b1219');
     ctx.fillStyle = pg; ctx.strokeStyle = col; ctx.lineWidth = plw;
     ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); ctx.stroke();
-    drawIcon(ctx, I.phase === 'call' && !I.assessment ? 'phone' : type, x, y, r * 1.2, col);
+    drawIcon(ctx, I.phase === 'call' && !I.assessment ? 'phone' : pinIcon(I, o.truth), x, y, r * 1.2, col);      // (G4) 붕괴 변형(승강기·크레인·산사태·가스 폭발)은 제 아이콘
+    if (I.truth.type === 'collapse') ruinBadges.push({ I, x: x + (pj ? pj.x : 0), y: y + (pj ? pj.y : 0), r });      // (G4) 배지는 부대 표식 뒤에 그린다 (현장 부대의 돌이 핀 둘레를 덮는다)
     // 경과 링: 신고 후 첫 도착까지는 기준 시간 대비 진행도, 도착 후에는 초록
     if (I.reportedAt >= 0) {
       const arrived = I.firstArrivalAt >= 0;
@@ -328,6 +335,8 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
       label(ctx, u.callsign + eta, p.x, p.y - tr * 1.62 - 7, 10 * zs, FIELD_TEXT[u.field ?? (u.dept === 'police' ? 'police' : u.dept === 'ems' ? 'rescue' : 'fire')]);      // 분야가 없는 지원 부대도 돌과 같은 색
     }
   }
+  // (G4) 무너진 건물 배지 (확인 = 실선, 신고 = 점선) · 2차 붕괴 고리: 핀의 왼쪽 아래, 부대 표식 위
+  for (const b of ruinBadges) drawRuinBadge(ctx, sim, b.I, b.x, b.y, b.r, o.truth, o.timeMs);
   // 도주 차량: 관찰자 시점에서는 늘 보이고, AI 시점에서는 부대의 시야에 있을 때만 보인다
   for (const I of sim.incidents) {
     const p = I.pursuit;
@@ -386,6 +395,7 @@ export function describeAt(sim: Sim, wx: number, wy: number, truth = true, scale
   const here = sim.incidents.filter((I) => I.truth.placeId === q.id && I.phase !== 'unreported');
   const open = here.find((I) => I.phase !== 'closed');
   if (open) lines.push(`사건 ${open.code} 진행 중`); else if (here.length) lines.push(`이번 교대에 사건 ${here.map((I) => I.code).join(', ')} 발생`);
+  const rl = ruinLine(sim, q.id, truth); if (rl) lines.push(rl);      // (G4) 무너졌는지
   return { title: q.name, lines, color: open ? '#ffb454' : q.open ? '#58d68d' : '#7cc4ff', place: q, alert: !!open };
 }
 

@@ -7,7 +7,7 @@ import type { UnitField, UnitKind } from '../sim/types';
 import { FACILITY_COLOR, FIELD_COLOR, FIELD_TEXT } from '../view/city/tokens';
 import { OBSTACLE_ICON } from '../view/city/trafficLayer';
 import { ICON_PATH } from '../view/icons';
-import { STATE_MARK } from '../view/marks';
+import { RUIN_MARK, STATE_MARK } from '../view/marks';
 import { FacilityBadge, Token } from './Mark';
 
 const LS_LEGEND = 'ar.legend.v1';
@@ -66,6 +66,36 @@ function CombatPinSample({ size = 26 }: { size?: number }) {
   );
 }
 
+/** (G4) 무너진 건물: 핀의 왼쪽 아래 배지 (확인 = 실선 테, 신고만 = 점선 테와 흐린 기호) · 끝난 사건의 테 두른 실루엣 · 2차 붕괴의 퍼지는 흙빛 고리 */
+const RUIN_EDGE = '#d6a878';
+function RuinBadgeSample({ level, reported = false, size = 20 }: { level: 'partial' | 'major'; reported?: boolean; size?: number }) {
+  const c = size / 2, r = size / 2 - 1.5, g = r * 1.5;
+  return (
+    <svg className="token" width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+      <circle cx={c} cy={c} r={r} fill="#0b1219" stroke={RUIN_EDGE} strokeWidth={1.5} strokeDasharray={reported ? '2.4 1.8' : undefined} />
+      <svg x={c - g / 2} y={c - g / 2} width={g} height={g} viewBox="0 0 24 24" opacity={reported ? 0.6 : 1}><path d={RUIN_MARK[reported ? 'partial' : level]} fill={RUIN_EDGE} fillRule="evenodd" /></svg>
+    </svg>
+  );
+}
+function RuinGlyphSample({ size = 18 }: { size?: number }) {
+  return <svg className="token" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d={RUIN_MARK.major} fill={RUIN_EDGE} fillRule="evenodd" stroke="#0b1219" strokeWidth={3} strokeLinejoin="round" paintOrder="stroke" /></svg>;
+}
+function SecondaryRingSample({ size = 22 }: { size?: number }) {
+  const c = size / 2;
+  return (
+    <svg className="pin-sample" width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+      <circle cx={c} cy={c} r={size * 0.22} fill="#0d151d" stroke={RUIN_EDGE} strokeWidth={1.5} />
+      <circle cx={c} cy={c} r={size * 0.36} fill="none" stroke={RUIN_EDGE} strokeWidth={1.6} opacity={0.75} />
+      <circle cx={c} cy={c} r={size * 0.47} fill="none" stroke={RUIN_EDGE} strokeWidth={1.2} opacity={0.35} />
+    </svg>
+  );
+}
+/** (G4) 붕괴 사건의 변형 아이콘 (핀과 사건 카드) */
+const COLLAPSE_ICONS: [string, string][] = [['collapse', '건물 붕괴'], ['gasblast', '가스 폭발'], ['crane', '크레인 붕괴'], ['elevator', '승강기 갇힘'], ['landslide', '산사태']];
+function IconSample({ name, size = 18 }: { name: string; size?: number }) {
+  return <svg className="token" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d={ICON_PATH[name]} fill={RUIN_EDGE} fillRule="evenodd" /></svg>;
+}
+
 export function MapLegend() {
   const [open, setOpen] = useState<boolean>(() => { try { return localStorage.getItem(LS_LEGEND) === '1'; } catch { return false; } });
   const toggle = (): void => { const v = !open; setOpen(v); try { localStorage.setItem(LS_LEGEND, v ? '1' : '0'); } catch { /* 저장 실패는 무시 */ } };
@@ -103,6 +133,19 @@ export function MapLegend() {
             <span className="lg-item"><PinSample />고리 = 첫 도착까지 흐른 시간</span>
             <span className="lg-item" title="최근 몇 초 안에 총성이 난 현장"><CombatPinSample />교전 중</span>
             <span className="lg-item"><svg className="token" width={22} height={22} viewBox="0 0 22 22" aria-hidden="true"><circle cx={11} cy={11} r={9} fill="#c9362f" stroke="rgba(255,220,220,0.9)" strokeWidth={1.2} /><svg x={5} y={5} width={12} height={12} viewBox="0 0 24 24"><path d={STATE_MARK.fugitive} fill="#fff" fillRule="evenodd" /></svg></svg>달아나는 차량</span>
+          </div>
+          <div className="lg-row">
+            {COLLAPSE_ICONS.map(([k, name]) => <span key={k} className="lg-item"><IconSample name={k} />{name}</span>)}
+          </div>
+          <h5>건물 상태 <span className="dim">사건 핀의 왼쪽 아래</span></h5>
+          <div className="lg-row">
+            <span className="lg-item" title="부대가 도착해 확인했다 (관찰자 시점은 처음부터)"><RuinBadgeSample level="partial" />일부 무너짐</span>
+            <span className="lg-item" title="무너진 칸이 건물의 22% 이상이거나 2차 붕괴가 있었다"><RuinBadgeSample level="major" />크게 무너짐</span>
+            <span className="lg-item" title="붕괴 신고가 들어왔지만 아직 확인하지 않았다 (AI 시점)"><RuinBadgeSample level="partial" reported />붕괴 신고 (확인 전)</span>
+          </div>
+          <div className="lg-row">
+            <span className="lg-item" title="금이 간 구조물이 다시 무너졌다"><SecondaryRingSample />2차 붕괴 (퍼지는 흙빛 고리)</span>
+            <span className="lg-item" title="사건이 끝나도 교대 끝까지 남는다. 크게 보면 지붕이 내려앉은 모습"><RuinGlyphSample />끝난 붕괴</span>
           </div>
           <div className="lg-row">
             {ROADS.map(([name, col, dash]) => <span key={name} className="lg-item"><i className={`road ${dash ? 'dash' : ''}`} style={{ ['--rc' as string]: col }} />{name}</span>)}

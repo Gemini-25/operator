@@ -870,9 +870,11 @@ NODE_PATH=$(npm root -g) node scripts/combatshots.cjs 5225 <시드> <force> <dif
 
 - 2.6절 네 겹 증명이 모두 통과: grep 0줄, 스위치 시험 통과, 시작 커밋 대비 해시 목록 0줄 차이, `sweep 60` 의 `outcomes`·`close reasons` 가 같다. `npm run check` 통과.
 - `npx tsc --noEmit`, `npx vitest run tests/combatfx.test.ts tests/destruction.test.ts tests/ext.test.ts` 통과.
-- 8.3절 ①~⑨ 장면을 직접 보고 "고치기 전 → 고친 뒤" 짝으로 경로를 적는다. 콘솔 오류 0건. 프레임 예산(3.11절) 수치.
+- 8.3절 ①~⑨b 장면을 직접 보고 "고치기 전 → 고친 뒤" 짝으로 경로를 적는다. 콘솔 오류 0건. 프레임 예산(3.11절) 수치. `npm run ui-check` 한 번(화면을 고친 묶음 — `CLAUDE.md` 명령 표) 통과.
 - 8.4절 헤드리스 기준 수치와 사람이 들어 볼 체크리스트.
 - 보고(마지막 응답): 브랜치와 마지막 커밋, 구현한 것 / 못 한 것(선택 항목을 했는지), 고친 공용 파일(파일·함수·이유 — 특히 `types.ts` 의 `Fx` 한 줄을 고친 것), 해시 비교 결과, 알려진 문제, 그리고 합친 뒤 옮겨 적을 문장:
   - `README.md` "알려진 문제": 교전 소리는 사람이 들어 봐야 한다(8.4절 체크리스트), 빗나간 탄의 그림 선과 깨지는 창의 어긋남, 진입 뒤 섬광탄의 연출 지연, 되감기 뒤 탄흔이 사라짐.
+  - `CLAUDE.md` "절대 깨면 안 되는 것" 4의 "진실을 읽어도 되는 곳"에 `field/fxlog.ts`(기록 전용 — 그림·소리에 쓸 꼬리표만 남기고 판단하지 않는다)를 더한다(제안). `fxlog` 는 용의자·구조 대상의 실제 자리를 읽는다.
+  - `CLAUDE.md` "구조"에 `src/view/scene/fxBook.ts`(연출 시계·받아들이기·합성 항목)·`combat.ts`(교전 그림)·`view/audioCombat.ts`(교전 소리)·`view/city/combatPin.ts`, 그리고 `ui-check` 줄의 `window.__ar` 에 `combat()`·`fxStep()` 이 더해졌다는 것.
   - `CLAUDE.md` "겪은 함정"에 한 줄(제안): "**교전 연출 기록.** 사격·섬광탄·진입·폭발·검거·테이저를 새로 만들거나 옮기면 `field/fxlog.ts` 의 `note*`/`rec*` 한 줄을 그 자리에 둔다(기존 `pushFx` 줄 바로 다음, `bulletPath` 앞). 이 함수들은 `s.fx` 에만 쓰고 난수를 부르지 않는다 — 결과는 바뀌지 않는다." 그리고 "자주 하는 확장" 표의 새 효과 줄에 `view/scene/combat.ts`·`fxBook.ts`.
   - 11절의 "뒤 묶음이 할 일"을 R1·R2·G4(G5 보다 늦게 합친다면) 설계서에 한 줄씩.

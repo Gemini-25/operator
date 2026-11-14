@@ -187,7 +187,12 @@ export function buildReport(sim: Sim): ShiftReport {
   if (casTotal) summary.push(`요구조자 ${casTotal}명 중 ${casSaved}명을 구조했습니다 (구조율 ${pct(casSaved / casTotal)}).${casLost ? ` ${casLost}명은 구하지 못했습니다.` : ''}${casUnd ? ` ${casUnd}명은 발견하지 못했습니다.` : ''}`);
   if (delayCauses.length) summary.push(`가장 자주 발생한 문제: ${delayCauses.slice(0, 3).map((c) => `${c.label}(${c.count}건)`).join(', ')}.`);
   if (n && good === n) summary.push('모든 사건을 목표대로 해결한 교대였습니다.');
+  // 교통: 기록된 통계로만 쓴다 (traffic.ts)
+  const tf = { ...sim.traffic.stats };
+  if (tf.jams + tf.closures + tf.obstacles + tf.detours + tf.gateWaits === 0) summary.push('교통으로 인한 지연은 없었습니다.');
+  else summary.push(`교통: 정체 ${tf.jams}건·통제 ${tf.closures}건·장애물 ${tf.obstacles}건. ${tf.detours + tf.gateWaits === 0 ? '길이 막혀 되돌아가거나 건널목에서 기다린 출동은 없었습니다.' : `길이 막혀 되돌아간 출동 ${tf.detours}회, 건널목 대기 ${tf.gateWaits}회 (합쳐 약 ${Math.round(tf.delaySec)}초 지연).`}`);
   return {
+    traffic: tf,
     major: sim.incidents.filter((I) => I.tag === 'major').length, disaster: disasterSummary(sim),
     seed: sim.seed, duration: dur, weather: sim.weather, difficulty: { ...sim.difficulty }, difficultyLabel: difficultyLabel(sim.difficulty), totalCalls: sim.calls.length, totalIncidents: n, counts,
     avgResponse: rN ? rSum / rN : -1, avgDispatch: dN ? dSum / dN : -1, utilization, unitUtil,

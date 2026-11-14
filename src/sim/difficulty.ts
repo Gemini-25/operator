@@ -10,6 +10,7 @@ export interface Difficulty {
   equipment: number;   // 대원 장비 상태   1 불량 … 5 최상   (높을수록 쉬움)
   info: number;        // 신고 신뢰도      1 엉망 … 5 정확   (높을수록 쉬움)
   resources: number;   // 부대 규모        1 = 12팀 … 3 = 17팀 … 5 = 20팀  (높을수록 쉬움)
+  traffic?: number;    // 교통 상황        1 한산 … 5 극심  (없으면 3. 3 은 없는 것과 같다)
   disaster?: DisasterChoice;      // 재난: 없음(기본) · 무작위(심각도에 따라 드물게) · 종류를 정해서
 }
 
@@ -44,6 +45,7 @@ export const KNOBS: { key: keyof Difficulty; name: string; low: string; high: st
   { key: 'equipment', name: '대원 장비 상태', low: '불량', high: '최상', harderWhen: 'low', desc: '차량 주행 속도, 펌프 상태와 마모, 용수 탱크, 구조 장비, 의료 장비, 방호 장비, 출근 시 체력' },
   { key: 'info', name: '신고 신뢰도', low: '엉망', high: '정확', harderWhen: 'low', desc: '침착한 신고자 비율, 위치를 틀리게 말할 확률, 허위·오인 신고와 비긴급 전화의 빈도, 목격자 정확도' },
   { key: 'resources', name: '부대 규모', low: '12팀', high: '20팀', harderWhen: 'low', desc: '출동 부대 수 (12 · 15 · 17 · 19 · 20팀). 경찰·소방·구조·특수 네 분야에 3~5팀씩이고, 3 이 기본 편성이다. 인근 도시 지원 횟수도 함께 늘어난다 (2 · 2 · 3 · 4 · 5회).' },
+  { key: 'traffic', name: '교통 상황', low: '한산', high: '극심', harderWhen: 'high', desc: '도로의 교통량, 정체·공사·고장 차량·낙하물의 빈도, 골목의 불법 주차' },
 ];
 
 export interface Tuning {
@@ -63,12 +65,16 @@ export interface Tuning {
   // 큰일
   majorProb: number;           // 이번 교대에 대형 사고가 한 번 일어날 확률
   disasterProb: number;        // 재난을 '무작위'로 두었을 때 일어날 확률
+  // 교통
+  trafficMul: number;          // 도로의 교통량에 곱하는 값
+  trafficGap: number;          // 교통 사건(정체·공사·고장 차량·낙하물) 사이 간격에 곱하는 값
+  parkedCount: number;         // 교대가 시작될 때 불법 주차로 좁아진 골목의 수
 }
 
 const lv = (v: number): number => Math.max(0, Math.min(4, Math.round(v) - 1));
 
 export function tuningOf(d: Difficulty): Tuning {
-  const f = lv(d.frequency), s = lv(d.severity), t = lv(d.threat), e = lv(d.equipment), i = lv(d.info), r = lv(d.resources ?? 3);
+  const f = lv(d.frequency), s = lv(d.severity), t = lv(d.threat), e = lv(d.equipment), i = lv(d.info), r = lv(d.resources ?? 3), tr = lv(d.traffic ?? 3);
   return {
     gapMul: [1.55, 1.25, 1, 0.76, 0.58][f],
     maxIncidents: [9, 11, 15, 18, 22][f],
@@ -111,18 +117,23 @@ export function tuningOf(d: Difficulty): Tuning {
 
     majorProb: [0.15, 0.3, 0.45, 0.6, 0.8][s],
     disasterProb: [0, 0.05, 0.1, 0.18, 0.3][s],
+
+    trafficMul: [0.82, 0.92, 1, 1.12, 1.25][tr],
+    trafficGap: [1.6, 1.25, 1, 0.8, 0.62][tr],
+    parkedCount: [0, 1, 3, 5, 7][tr],
   };
 }
 
-const knobKey = (d: Difficulty): string => [d.frequency, d.severity, d.threat, d.equipment, d.info, d.resources ?? 3].join('-');
+/** 교통 손잡이는 3 이 아닐 때만 뒤에 붙는다 (예전의 키와 프리셋 판정이 바뀌지 않게) */
+const knobKey = (d: Difficulty): string => [d.frequency, d.severity, d.threat, d.equipment, d.info, d.resources ?? 3].join('-') + ((d.traffic ?? 3) !== 3 ? '-t' + d.traffic : '');
 export const difficultyKey = (d: Difficulty): string => knobKey(d) + (d.disaster && d.disaster !== 'none' ? '-' + d.disaster : '');
 /** 손잡이 값이 모두 1~5 인가 (저장된 설정을 믿기 전에 본다) */
 export function validDifficulty(d: Difficulty): boolean {
-  return ([d.frequency, d.severity, d.threat, d.equipment, d.info, d.resources ?? 3] as number[]).every((x) => x >= 1 && x <= 5) && (d.disaster === undefined || parseDisaster(d.disaster) !== null);
+  return ([d.frequency, d.severity, d.threat, d.equipment, d.info, d.resources ?? 3, d.traffic ?? 3] as number[]).every((x) => x >= 1 && x <= 5) && (d.disaster === undefined || parseDisaster(d.disaster) !== null);
 }
 
 export function presetOf(d: Difficulty): PresetId | null {
-  for (const id of Object.keys(PRESETS) as PresetId[]) if (knobKey(PRESETS[id].d) === knobKey(d)) return id;      // 재난 선택은 프리셋과 따로다
+  for (const id of Object.keys(PRESETS) as PresetId[]) if (knobKey(PRESETS[id].d) === knobKey(d)) return id;      // 재난 선택은 프리셋과 따로다. 교통은 3(또는 없음)일 때만 프리셋이다
   return null;
 }
 export function difficultyLabel(d: Difficulty): string {
@@ -131,17 +142,21 @@ export function difficultyLabel(d: Difficulty): string {
   return d.disaster && d.disaster !== 'none' ? `${base} · 재난 ${DISASTER_NAME[d.disaster]}` : base;
 }
 
-/** 'hard' 또는 '4,4,4,2,3,3' (빈도, 심각도, 용의자, 장비, 신고, 부대 규모 — 마지막은 생략하면 3) */
+/** 'hard' 또는 '4,4,4,2,3,3' (빈도, 심각도, 용의자, 장비, 신고, 부대 규모 — 마지막은 생략하면 3). 일곱째 숫자를 주면 교통 상황이다 */
 export function parseDifficulty(text: string | null | undefined): Difficulty | null {
   if (!text) return null;
   const k = text.trim().toLowerCase();
   if (k in PRESETS) return { ...PRESETS[k as PresetId].d };
   const n = k.split(/[,\-\s]+/).map((x) => parseInt(x, 10));
-  if ((n.length !== 5 && n.length !== 6) || n.some((x) => !(x >= 1 && x <= 5))) return null;
-  return { frequency: n[0], severity: n[1], threat: n[2], equipment: n[3], info: n[4], resources: n[5] ?? 3 };
+  if ((n.length < 5 || n.length > 7) || n.some((x) => !(x >= 1 && x <= 5))) return null;
+  const d: Difficulty = { frequency: n[0], severity: n[1], threat: n[2], equipment: n[3], info: n[4], resources: n[5] ?? 3 };
+  if (n.length === 7) d.traffic = n[6];
+  return d;
 }
 
 /** 대략적인 종합 난도 (1 쉬움 … 5 극한). 화면 표시용. */
 export function overallLevel(d: Difficulty): number {
-  return (d.frequency + d.severity + d.threat + (6 - d.equipment) + (6 - d.info) + (6 - (d.resources ?? 3))) / 6;
+  const base = d.frequency + d.severity + d.threat + (6 - d.equipment) + (6 - d.info) + (6 - (d.resources ?? 3));
+  const tr = d.traffic ?? 3;
+  return tr === 3 ? base / 6 : (base + tr) / 7;      // 교통은 기준(3)에서 벗어났을 때만 평균에 든다 (3 은 손잡이가 없는 것과 같다)
 }

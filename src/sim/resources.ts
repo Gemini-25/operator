@@ -5,8 +5,10 @@ import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
 import { unitArrived } from './field/sceneManager';
 import { Rng } from './rng';
-import type { Dept, Incident, Needs, Responder, Unit, UnitCaps, UnitField, UnitKind } from './types';
-import { clamp, fmtSec } from './util';
+import { gateWait, reportObstacle, stopAhead } from './traffic';
+import type { Obstacle } from './traffic';
+import type { Dept, Incident, Needs, Responder, RoadEdge, Unit, UnitCaps, UnitField, UnitKind } from './types';
+import { clamp, fmtSec, josa } from './util';
 
 const NAMES = ['김도윤', '이서준', '박하준', '최민재', '정지호', '강현우', '윤서연', '한지민', '오수아', '임채원', '신유나', '조은서',
   '배준영', '류시우', '문가은', '송태윤', '황보라', '안지후', '남궁민', '서예린', '권도현', '홍서진', '장하늘', '민지원', '차은우', '표나연', '석민호', '엄지안',
@@ -29,6 +31,8 @@ const KIND: Record<UnitKind, { dept: Dept; caps: UnitCaps; waterMax: number; too
   swat: { dept: 'police', caps: caps(0, 0.15, 0.2, 1.0, 1.4, 0.5, 0.3), waterMax: 0, tool: 0.2, med: 0.3, armor: 0.75 },
   eod: { dept: 'police', caps: caps(0, 0.2, 0.15, 0.6, 0.5, 0.4, 0.4, 1), waterMax: 0, tool: 0.3, med: 0.25, armor: 0.6 },
 };
+/** 큰 차: 불법 주차로 좁아진 골목을 지나지 못한다 (traffic.ts) */
+const HEAVY: Partial<Record<UnitKind, boolean>> = { engine: true, ladder: true, rescue: true, hazmat: true };
 const U = (callsign: string, kind: UnitKind, field: UnitField, facility: string, minLevel: number): UnitDef => ({ callsign, kind, field, facility, minLevel, ...KIND[kind] });
 // 편성표: 네 분야(경찰·소방·구조·특수)마다 3~5팀. minLevel 은 난이도의 "부대 규모"가 이 값 이상일 때 편성된다
 // (1 = 12팀, 2 = 15팀, 3 = 17팀, 4 = 19팀, 5 = 20팀). 줄의 순서를 바꾸면 대원 능력치가 바뀐다(이 순서로 뽑는다).
@@ -96,6 +100,7 @@ export function createRoster(sim: Sim): void {
       field: d.field, air: d.kind === 'heli', sea: d.kind === 'boat',
     };
     if (u.air || u.sea) { u.x = u.px = f.x + 30; u.y = u.py = u.sea ? coastY(f.x + 30) + SEA_OFF : f.y - 20; }
+    if (HEAVY[d.kind]) u.heavy = true;
     sim.units.push(u);
   });
 }
@@ -150,6 +155,7 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
     patients: [], patientsIncident: null,
     dispatchedAt: -1, estArrive: -1, diverted: false, busyTime: 0, runs: 0, boardOrder: null, aid: true,
   };
+  if (HEAVY[kind]) u.heavy = true;
   sim.units.push(u);
   return u;
 }
@@ -178,17 +184,38 @@ export function etaFor(sim: Sim, u: Unit, destNode: number): number {
   if (u.state === 'available') extra = 6;
   if (u.route && u.seg < u.route.edges.length && (u.state === 'enroute' || u.state === 'returning' || u.state === 'transport')) {
     const e = sim.city.edges[u.route.edges[u.seg]];
-    extra += (1 - u.segT) * edgeTime(e, wf);
+    extra += (1 - u.segT) * edgeTime(e, wf, u.heavy);
     from = u.route.nodes[u.seg + 1];
   }
   if (u.curb && !u.parking) extra += ((u.curbT ?? 0) * u.curb.len) / (CURB_SPEED * wf);
-  const r = findRoute(sim.city, from, destNode, wf);
+  const r = findRoute(sim.city, from, destNode, wf, -1, u.heavy);
   return r ? r.time + extra : 9999;
 }
 
 function setRoute(sim: Sim, u: Unit, to: number): void {
   u.destNode = to; u.seg = 0; u.segT = 0;
-  u.route = u.nodeId === to ? null : findRoute(sim.city, u.nodeId, to, weatherSpeedFactor(sim));
+  u.route = u.nodeId === to ? null : findRoute(sim.city, u.nodeId, to, weatherSpeedFactor(sim), -1, u.heavy);
+}
+
+/**
+ * 길을 막은 것(traffic.ts 의 장애물) 앞에서 되돌아 나온다: 들어온 교차로로 되짚어 가서 다른 길로 간다.
+ * 아직 알려지지 않은 것이면 이 부대가 무전으로 알린다(그 뒤로는 모든 경로 계산이 그 구간을 피한다).
+ */
+function turnBack(sim: Sim, u: Unit, e: RoadEdge, o: Obstacle, wf: number): void {
+  const city = sim.city, rt = u.route!, A = rt.nodes[u.seg], B = rt.nodes[u.seg + 1];
+  if (!o.known) reportObstacle(sim, o, u.callsign);
+  const et = Math.max(0.5, edgeTime(e, wf, u.heavy) - (e.wait ?? 0)), back = u.segT * et;
+  let remainT = (1 - u.segT) * et; for (let k = u.seg + 1; k < rt.edges.length; k++) remainT += edgeTime(city.edges[rt.edges[k]], wf, u.heavy);
+  const alt = findRoute(city, A, u.destNode!, wf, -1, u.heavy);
+  if (u.state === 'enroute' && u.incidentId !== null) {
+    raiseProblem(sim, sim.incidents[u.incidentId], 'ROUTE_BLOCKED', `${u.callsign} 이동 경로(${edgeName(city, e)}) 막힘 — ${o.label}`, {
+      role: 'UNIT', actor: u.callsign, text: `${u.callsign}: ${edgeName(city, e)} — ${josa(o.label, '으로/로')} 지나갈 수 없습니다. 되돌아 우회합니다.`, imp: 2,
+    }, false);
+  }
+  sim.traffic.stats.detours++; sim.traffic.stats.delaySec += Math.max(0, back + (alt ? alt.time : 0) - remainT);
+  // 경로가 없으면 들어온 교차로까지만 되돌아가 기다린다 (아래의 "경로가 끊겨 대기"가 다시 시도한다)
+  u.route = { nodes: [B, A, ...(alt ? alt.nodes.slice(1) : [])], edges: [e.id, ...(alt ? alt.edges : [])], time: back + (alt ? alt.time : 0) };
+  u.seg = 0; u.segT = 1 - u.segT; u.backing = true;
 }
 
 /** 목적지 설정. 구간 주행 중이면 다음 교차로까지는 그대로 달린 뒤 새 경로를 잡는다. */
@@ -365,19 +392,26 @@ export function tickUnits(sim: Sim): void {
     let guard = 0;
     while (budget > 0 && u.route && guard++ < 8) {
       const e = city.edges[u.route.edges[u.seg]];
-      const et = Math.max(0.5, edgeTime(e, wf));
+      const et = Math.max(0.5, edgeTime(e, wf, u.heavy) - (e.wait ?? 0));      // 달리는 시간만 (차단기 앞에서 기다리는 시간은 아래에서 실제로 선다)
+      // 교통: 내려온 건널목 차단기 앞에서는 기다리고, 길을 막은 것에 닿으면 되돌아 나온다
+      const stop = stopAhead(sim, u, e, u.route.nodes[u.seg]);
+      if (stop && u.segT + budget / et >= stop.at) {
+        budget -= Math.max(0, stop.at - u.segT) * et; u.segT = Math.max(u.segT, stop.at);
+        if (stop.o) { turnBack(sim, u, e, stop.o, wf); continue; }
+        gateWait(sim, u, e); break;
+      }
       const remain = (1 - u.segT) * et;
       if (budget < remain) { u.segT += budget / et; budget = 0; break; }
       budget -= remain;
       u.nodeId = u.route.nodes[u.seg + 1];
-      u.seg++; u.segT = 0;
+      u.seg++; u.segT = 0; u.backing = false;
       if (u.pendingDest !== null) { const d = u.pendingDest; u.pendingDest = null; setRoute(sim, u, d); if (!u.route) { if (u.nodeId === d) arrive(sim, u); break; } continue; }
-      if (u.seg >= u.route.edges.length) { arrive(sim, u); break; }
-      // 교차로 통과 시 경로 재검토: 다음 구간이 통제됐거나 훨씬 빠른 길이 생겼는가
+      if (u.seg >= u.route.edges.length) { if (u.nodeId !== u.destNode) { u.route = null; break; } arrive(sim, u); break; }      // 되돌아 나왔지만 다른 길이 없다: 여기서 기다린다
+      // 교차로 통과 시 경로 재검토: 다음 구간이 통제됐다고 알려졌거나 훨씬 빠른 길이 생겼는가 (모르는 통제는 가 보아야 안다)
       const next = city.edges[u.route.edges[u.seg]];
-      let remainT = 0; for (let k = u.seg; k < u.route.edges.length; k++) remainT += edgeTime(city.edges[u.route.edges[k]], wf);
-      const alt = findRoute(city, u.nodeId, u.destNode!, wf);
-      if (next.closed) {
+      let remainT = 0; for (let k = u.seg; k < u.route.edges.length; k++) remainT += edgeTime(city.edges[u.route.edges[k]], wf, u.heavy);
+      const alt = findRoute(city, u.nodeId, u.destNode!, wf, -1, u.heavy);
+      if ((next.closed && next.known !== false) || (u.heavy && next.noHeavy)) {
         if (alt) {
           const add = Math.max(0, alt.time - remainT);
           if (u.state === 'enroute' && u.incidentId !== null) {

@@ -3,7 +3,6 @@
 // 한 번 만든 지도는 다시 쓴다(도로의 혼잡·통제처럼 교대마다 바뀌는 값만 새로 복사한다).
 
 import type { Sim } from './engine';
-import { emit } from './events';
 import { Rng } from './rng';
 import { BANKS, CITY_H, CITY_W, COAST, CONVENIENCE, DISTRICTS, EXITS, FACTORIES, KIND_DISTRICT, LAKE, LANDMARKS, MOUNTAINS, NAME_PREFIX, NODES, PENSIONS, RAIL, RESTAURANTS, RIVER, RIVER_NAME, ROADS, SHOPS } from './cityPlan';
 import type { DistrictDef } from './cityPlan';
@@ -490,14 +489,17 @@ function buildPlaces(pr: Rng, nodes: RoadNode[], edges: RoadEdge[]): { places: P
   return { places, alleys };
 }
 
-/** 긴급 차량 기준 구간 통과 시간(초) */
-export function edgeTime(e: RoadEdge, weatherF = 1): number {
+/** 긴급 차량 기준 구간 통과 시간(초). 내려온 건널목 차단기 앞에서 기다리는 시간(wait)을 더한다. 큰 차(heavy)는 이면 도로에서 더디다. */
+export function edgeTime(e: RoadEdge, weatherF = 1, heavy = false): number {
   const congEff = 1 + (e.cong - 1) * 0.5 + e.slow;
-  return (e.len / (e.speed * weatherF)) * congEff;
+  return (e.len / (e.speed * weatherF)) * congEff * (heavy && e.cls === 'local' ? 1.15 : 1) + (e.wait ?? 0);
 }
 
-/** 다익스트라. 통제(closed)된 도로는 통과할 수 없다. */
-export function findRoute(city: City, from: number, to: number, weatherF = 1, avoidEdge = -1): Route | null {
+/**
+ * 다익스트라. **알려진** 통제(closed)만 피한다: 아직 아무도 모르는 장애물(known === false)은 가 보아야 안다(traffic.ts).
+ * 큰 차(heavy)는 불법 주차로 좁아졌다고 알려진 골목(noHeavy)도 피한다.
+ */
+export function findRoute(city: City, from: number, to: number, weatherF = 1, avoidEdge = -1, heavy = false): Route | null {
   const n = city.nodes.length;
   const distArr = new Float64Array(n).fill(Infinity);
   const prevEdge = new Int32Array(n).fill(-1);
@@ -510,9 +512,9 @@ export function findRoute(city: City, from: number, to: number, weatherF = 1, av
     done[u] = 1;
     for (const eid of city.nodes[u].edges) {
       const e = city.edges[eid];
-      if (e.closed || eid === avoidEdge) continue;
+      if ((e.closed && e.known !== false) || (heavy && e.noHeavy) || eid === avoidEdge) continue;
       const v = e.a === u ? e.b : e.a;
-      const nd = distArr[u] + edgeTime(e, weatherF);
+      const nd = distArr[u] + edgeTime(e, weatherF, heavy);
       if (nd < distArr[v]) { distArr[v] = nd; prevEdge[v] = eid; }
     }
   }
@@ -557,49 +559,4 @@ export function placeAt(city: City, x: number, y: number): Place | null {
     if (!best || (best.open && !q.open) || (best.open === q.open && q.w * q.h < best.w * best.h)) best = q;
   }
   return best;
-}
-
-interface TrafficState { nextDrift: number; nextEvent: number; jams: { edge: number; until: number }[]; closures: { edge: number; until: number }[] }
-export function initTraffic(rng: Rng): TrafficState {
-  return { nextDrift: 10, nextEvent: rng.range(70, 130), jams: [], closures: [] };
-}
-
-/** 교통량은 개별 차량이 아니라 도로별 수치와 간단한 이벤트로 표현한다. */
-export function tickTraffic(sim: Sim): void {
-  const tr = sim.traffic, city = sim.city, rng = sim.rngTraffic;
-  if (sim.t >= tr.nextDrift) {
-    tr.nextDrift = sim.t + 12;
-    for (const e of city.edges) {
-      const jam = tr.jams.some((j) => j.edge === e.id);
-      const target = (jam ? 2.8 : e.baseCong) + (e.bump ?? 0);
-      e.cong = clamp(e.cong + (target - e.cong) * 0.35 + rng.range(-0.1, 0.1), 1, 3);
-    }
-  }
-  for (let i = tr.jams.length - 1; i >= 0; i--) if (sim.t >= tr.jams[i].until) tr.jams.splice(i, 1);
-  for (let i = tr.closures.length - 1; i >= 0; i--) {
-    if (sim.t >= tr.closures[i].until) {
-      const e = city.edges[tr.closures[i].edge];
-      if (e.closedReason === 'roadwork') { e.closed = false; e.closedReason = null; emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(city, e)} 통제 해제.`, imp: 0 }); }
-      tr.closures.splice(i, 1);
-    }
-  }
-  if (sim.t >= tr.nextEvent && !sim.ended) {
-    tr.nextEvent = sim.t + rng.range(80, 150);
-    if (rng.chance(0.55)) {
-      const cands = city.edges.filter((e) => (e.arterial || e.baseCong >= 1.4) && !e.closed);
-      const e = rng.pick(cands);
-      tr.jams.push({ edge: e.id, until: sim.t + rng.range(70, 130) });
-      e.cong = Math.max(e.cong, 2.4);
-      emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(city, e)} 정체 발생.`, imp: 0 });
-    } else {
-      const cands = city.edges.filter((e) => !e.closed && !city.facilities.some((f) => f.nodeId === e.a || f.nodeId === e.b));
-      const e = rng.pick(cands);
-      e.closed = true;
-      const ok = findRoute(city, e.a, e.b) !== null;
-      if (!ok) { e.closed = false; return; }
-      e.closedReason = 'roadwork';
-      tr.closures.push({ edge: e.id, until: sim.t + rng.range(70, 120) });
-      emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(city, e)} 긴급 도로 공사로 통제.`, imp: 0 });
-    }
-  }
 }

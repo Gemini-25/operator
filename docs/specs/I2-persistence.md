@@ -202,6 +202,7 @@ export interface CarryState {
   places: Map<number, PlaceCarry>;               // 건물 겹침 표 (교대 내내 그대로 — 교대 안의 새 피해는 끝날 때 placeOutcome 이 읽는다)
   roads: RoadCarry[];                            // 이번 교대에 끝날 복구 공사 (left === 1, openAt 순)
   slowed: { edge: number; v: number }[];         // 이 파일이 더해 둔 slow (한 차로 공사, 출입 통제 건물 앞)
+  svc: number;                                   // 정비 중인 부대 수 (tickCarry 가 0 이면 정비 쪽을 건너뛴다)
   event: number;                                 // 이어받은 상태 요약 기록의 id (-1 = 없음). 원인으로 잇는다
   applied: CarryNote[];                          // ①·② 가 실제로 적용한 항목 (적용한 순서) — announceCarry 가 이것만 기록한다
   dropped: string[];                             // 적용하지 못한 것 (도시가 끊길 통제, 지도 지문 불일치, 조직 명부에 없는 열쇠, 상한을 넘은 항목) — announceCarry 가 적는다
@@ -483,24 +484,55 @@ export function placeUsable(sim: Sim, id: number, allowClosed = false): boolean 
 
 ### 3.7 기록 (`announceCarry`, `tickCarry`)
 
-`announceCarry(sim)` — '교대 시작' 바로 뒤, 이어받은 상태가 있을 때만. 모두 `role 'SYSTEM'`(부대 줄은 `'UNIT'`), 원인은 첫 줄:
+`announceCarry(sim)` — '교대 시작'(과 R1 의 헬기 운항 줄) 바로 뒤, 이어받은 상태가 있을 때만. **기록하는 것은 `carryState.applied` 의 항목과 `dropped` 뿐이다**(원칙 5 — 적용 함수가 바꾼 것만, 바꾼 순서대로 한 항목에 한 줄. 부대 단위로 묶는 결장 줄은 한 항목이 한 부대다). 모두 `role 'SYSTEM'`(부대 줄은 `'UNIT'`), 요약이 아닌 줄의 원인은 요약 줄(`causes: [cs.event]`). 요약이 아닌 줄에는 `tag: 'carry'` 를 단다(I1-b 의 `WorldTag` 에 더하는 값 — 측정 도구가 시스템 `carry` 로 센다, §7):
 
-1. 요약(`actor '상황실'`, `kind 'shift'`, `imp 2`) → `carryState.event`:
+1. 요약(`actor '상황실'`, `kind 'shift'`, `imp 2`, `tag` 없음 — 문구 규칙 T5 로 센다) → `carryState.event`:
    `지난 교대에서 이어받은 상태 — 조직의 ${shift}번째 교대 (지문 ${carryKey}). ${parts.join(' · ') || '남은 피해 없음'}.`
+   **첫머리 `지난 교대에서 이어받은 상태` 는 바꾸지 않는다** — I1-a 의 문구 규칙 T5 `/^지난 교대에서 이어받은 상태/` 가 이 줄을 시스템 `carry` 로 센다(I1 §2.3). 바꾸면 `tests/causality.test.ts` 의 T5 검사가 깨진다.
    `parts`: `결장 ${a}명` · `공석 ${f}자리` · `정비 중 ${s}대` · `출입 통제 건물 ${c}곳`(무너짐이 있으면 `(무너짐 ${r})`) · `복구 공사 도로 ${d}구간` · `숙련이 오른 대원 ${g}명`. 0 인 것은 뺀다.
 2. 결장(부대마다 한 줄, `actor` 호출부호, `kind 'unit'`, `imp 1`): `${josa(이름들, '이/가')} 결장합니다 (${원인 이름} · ${n}교대 남음).` 공석: `순직한 ${이름} 대원의 자리가 비어 있습니다 (신임 배치까지 ${n}교대).` 신임이 처음 오는 교대: `신임 ${이름} 대원이 ${자리 이름} 대원의 자리에 배치됐습니다.` 원인 이름은 H1 의 `CAUSE_NAME`(H1 전: '부상' · '중상').
 3. 조기 복귀: `결장 대원이 많아 ${이름} 대원이 경상으로 일찍 복귀합니다.`
-4. 예비 인력: `${호출부호} 대원 전원 결장 — 본부 예비 인력 ${이름} 대원이 대신 탑니다.` / `${호출부호} 결원으로 이번 교대 운용 중단 (예비 인력 없음).`
+4. 예비 인력: `${호출부호} 결원 — 본부 예비 인력 ${이름} 대원이 ${역할 이름} 자리에 대신 탑니다.`(R1 전에는 `… 대원이 대신 탑니다.`) / `${호출부호} 결원으로 이번 교대 운용 중단 (예비 인력 없음).`
 5. 정비: `${호출부호} 펌프 정비 중 — 약 ${분}분 뒤 운용.`
 6. 재고: `섬광탄 재고 부족 — ${호출부호} ${n}개만 지급 (정수 ${m}개).`
 7. 건물(`closed`·`ruin` 만, `repair` 가 큰 순으로 4줄, 넘으면 `외 n곳`): `${이름} — ${inc}로 ${ruin ? '무너져 출입할 수 없습니다' : '복구 공사 중이라 출입을 통제합니다'} (${repair}교대 남음).` 통제가 풀린 건물(`opened`): `${이름} 복구 완료 — 다시 문을 열었습니다.`
 8. 도로(`actor '교통정보'`, `kind 'traffic'`): `${edgeName} 복구 공사로 통제 — ${WHY_NAME[why]} (${left === 1 ? \`약 ${분}분 뒤 개통\` : '이번 교대 내내'}).` 한 차로: `${edgeName} 한 차로 복구 공사 — 서행.`
 9. `dropped` 의 문장들(`imp 0`).
 
-`tickCarry(sim)` — 매 틱, `on` 이 아니거나 남은 일(정비 중 부대·남은 복구 공사)이 없으면 첫 줄에서 돌아간다:
-- `u.state === 'oos' && u.readyAt !== undefined && sim.t ≥ u.readyAt`: `u.readyAt = undefined`. `crewReady(u) ≥ need` 면 `u.state = 'available'; u.oosWhy = undefined`, `emit({ role: 'UNIT', actor: 호출부호, kind: 'unit', imp: 1, causes: [cs.event], text: \`${호출부호} 정비 완료 — 운용 재개.\` })`, `stats.serviced++`. 아니면 `oosWhy = '결원'`.
-- `carryState.roads[0]` 의 `openAt ≤ sim.t` 이고 그 구간의 `closedReason === 'repair'` 면 `closed = false; closedReason = null`, `emit({ role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 1, causes: [cs.event], text: \`${edgeName} 복구 공사 완료 — 통행 재개.\` })`, `stats.reopened++`. 한 차로 공사는 `slow` 를 되돌린다(`slowed` 에서 빼고 `Math.max(0, e.slow − v)`).
-- 교대가 끝난 뒤(`sim.ended`)에도 돌지만 할 일은 `openAt ≤ 900` 이라 이미 끝나 있다.
+`tickCarry(sim)` — 매 틱(`step` 의 `tickTraffic` 다음). `on` 이 아니거나 남은 일(정비 중 부대 `carryState.svc` 수, 남은 복구 공사 `roads.length`)이 0 이면 첫 줄에서 돌아간다:
+
+```ts
+// 정비 — 부대 순서대로
+for (const u of sim.units) {
+  if (u.readyAt === undefined || sim.t < u.readyAt) continue;
+  u.readyAt = undefined; cs.svc--;
+  if (u.state !== 'oos') continue;                                   // (방어) 다른 코드가 이미 운용에 넣었다
+  if (operable(sim, u)) {                                            // crewReady ≥ need(u) 이고 내리지 않는 자리가 찼다 (§3.2 적용 6 과 같은 판정)
+    u.state = 'available'; u.oosWhy = undefined; cs.stats.serviced++;
+    emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, tag: 'carry', causes: [cs.event], text: `${u.callsign} 정비 완료 — 운용 재개.` });
+  } else {
+    u.oosWhy = '결원';
+    emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, tag: 'carry', causes: [cs.event], text: `${u.callsign} 정비를 마쳤지만 결원으로 운용하지 못합니다.` });
+  }
+}
+// 복구 공사 — openAt 이 된 것은 언제나 목록에서 꺼낸다 (조건이 맞지 않는 항목이 머리를 막지 않게). 한 틱에 여럿을 처리한다
+while (cs.roads.length && cs.roads[0].openAt <= sim.t) {
+  const rc = cs.roads.shift()!, e = sim.city.edges[rc.edge];
+  if (rc.lane) {                                                     // 한 차로: 닫혀 있지 않으므로 closedReason 을 보지 않는다
+    const k = cs.slowed.findIndex((q) => q.edge === rc.edge);
+    if (k < 0) continue;
+    e.slow = Math.max(0, e.slow - cs.slowed[k].v); cs.slowed.splice(k, 1);
+    emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 0, tag: 'carry', causes: [cs.event], text: `${edgeName(sim.city, e)} 한 차로 복구 공사 완료.` });
+  } else if (e.closed && e.closedReason === 'repair') {             // 전면: 이유가 바뀌었으면(다른 통제가 덮었으면) 건드리지 않는다
+    e.closed = false; e.closedReason = null; cs.stats.reopened++;
+    emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 1, tag: 'carry', causes: [cs.event], text: `${edgeName(sim.city, e)} 복구 공사 완료 — 통행 재개.` });
+  }
+}
+```
+
+- `cs.svc` 는 `applyCrewCarry` 가 정비 중으로 둔 부대 수로 채운다(§2.2).
+- `left 2` 공사(교대 내내)는 `roads` 에 넣지 않으므로 여기서 열리지 않는다. 출입 통제 건물 앞의 `slow 0.4` 도 교대 내내라 여기서 되돌리지 않는다.
+- `engine.ts` 의 `step` 은 `ended` 면 첫 줄에서 돌아가므로(`engine.ts:92`) 교대가 끝난 뒤에는 `tickCarry` 가 돌지 않는다. 그래서 `openAt`·`readyAt` 을 짧은 교대에서 `shiftLen × 0.75` 로 자른다(§3.5) — 교대 안에 끝나지 못한 공사가 생기지 않게.
 
 ---
 
@@ -529,7 +561,7 @@ export function placeUsable(sim: Sim, id: number, allowClosed = false): boolean 
 ### 4.3 되감기·새로고침 복원·같은 시드 재실행
 
 - 교대 **안**에서는 지금과 같다: 되감기는 같은 입력(시드·난이도·**이어받은 상태**)으로 처음부터 그 틱까지 다시 돌린다. 그래서 `Runner` 는 지금 교대의 입력 `carryIn` 을 들고 있고 `make()` 가 늘 그것을 넘긴다(§5.3).
-- 새로고침 복원은 `ar.current.v1` 에 저장된 입력(이어받은 상태 포함)으로 다시 돌린다.
+- 새로고침 복원은 `ar.input.v1` 에 저장된 입력(이어받은 상태 포함)과 `ar.current.v1` 의 틱으로 다시 돌린다(§5.3).
 - **"같은 시드 재실행"은 "같은 입력으로 다시 보기"다.** 방금 끝난 교대의 **입력**을 그대로 쓴다(출력을 이어받지 않는다). 조직 저장소를 고치지 않는다(§5.3). "다음 교대(이어서)"가 출력을 이어받는 버튼이다.
 
 ---
@@ -558,21 +590,28 @@ export function placeUsable(sim: Sim, id: number, allowClosed = false): boolean 
 | 키 | 내용 | 비고 |
 |---|---|---|
 | `ar.org.v1` (새로) | `{ id: string; carry: Carryover; savedAt: number }` | 저장된 조직. `id` 는 조직의 계보(새 조직을 시작할 때 `randomSeed()` 로 만든다 — 표현 계층이라 `Math.random` 허용) |
-| `ar.current.v1` (칸 추가) | `{ seed, tick, diff, carry?: Carryover \| null, org?: string, write?: boolean }` | 지금 교대의 **입력**. 새로고침 복원이 그대로 쓴다 |
+| `ar.input.v1` (새로) | `{ seed, diff, carry: Carryover \| null, org: string \| null, write: boolean, mode: 'continue' \| 'fresh' \| 'replay', baseShift: number }` | 지금 교대의 **입력**. 교대를 시작할 때(새 교대·복원·주소 실행) **한 번만** 쓴다. 이어받은 상태가 10~20KB 라 2.5초마다 다시 직렬화하지 않게 `ar.current.v1` 과 나눈다 |
+| `ar.current.v1` (그대로) | `{ seed, tick, diff }` | 지금처럼 2.5초마다 `tick` 만 갱신(`runner.ts:121`). 교대 끝의 덮어쓰기(`runner.ts:119`, `tick: 0`)도 그대로 — 입력은 `ar.input.v1` 에 있으므로 지워지지 않는다 |
 | `ar.history.v1` (칸 추가) | `HistoryItem` 에 `shift?: number` | 보고서의 "이전 교대 기록"에 `#8` |
 
-`Runner` 의 새 칸: `carryIn: Carryover | null`(지금 교대의 입력), `orgId: string | null`, `writeOrg: boolean`, `orgMem: { id; carry } | null`(저장소가 안 될 때 이 창이 열려 있는 동안만 쓰는 사본).
+`Runner` 의 새 칸: `carryIn: Carryover | null`(지금 교대의 입력), `orgId: string | null`, `writeOrg: boolean`, `startMode: 'continue' | 'fresh' | 'replay'`, `baseShift: number`(이 교대가 시작할 때의 조직 교대 번호 = `carryIn?.shift ?? 1`), `settled: boolean`(이 교대의 끝 처리를 했는가), `orgMem: { id; carry } | null`(저장소가 안 될 때 이 창이 열려 있는 동안만 쓰는 사본).
 
 - `make(seed, d)` 는 `new Sim(seed, d, 1200, { force: this.force, carry: this.carryIn })`. 되감기(`seek`)·복원·새 교대 모두 이 함수를 지난다.
-- `newShift(seed?, difficulty?, mode: 'continue' | 'fresh' | 'replay' = 설정값)`:
-  - `continue`: `saved = readOrg()`(`lsGet` → `readCarryover` 로 판·모양 검사. 실패면 `null`). `carryIn = saved?.carry ?? null`, `orgId = saved?.id ?? 새 id`, `writeOrg = true`.
+- `private begin(mode)` — 입력을 정하는 한 곳:
+  - `continue`: `saved = readOrg()`(`orgMem` 이 있으면 그것, 아니면 `lsGet` → `readCarryover` 로 판·모양 검사. 실패면 `null`). `carryIn = saved?.carry ?? null`, `orgId = saved?.id ?? 새 id`, `writeOrg = true`.
   - `fresh`: `carryIn = null`, `orgId = 새 id`, `writeOrg = true`.
   - `replay`: `carryIn`·`orgId` 는 지금 교대의 것 그대로, `writeOrg = false`.
-  - `ar.current.v1` 에 `{ seed, tick: 0, diff, carry: carryIn, org: orgId, write: writeOrg }`.
-- 교대가 끝나면(`frame` 의 `sim.ended` 분기, 지금 `pushHistory` 하는 곳): `writeOrg` 이면 `next = makeCarryover(sim)`, 그리고 — `fresh` 로 시작한 계보이거나, 저장된 조직의 `id === orgId` 이고 그 `carry.shift === (carryIn?.shift ?? 1)` 일 때만(다른 창이 그 사이에 조직을 앞으로 보냈으면 덮어쓰지 않는다) — `lsSet('ar.org.v1', { id: orgId, carry: next, savedAt: Date.now() })` 와 `orgMem` 갱신. 그 뒤 `writeOrg = false`(같은 교대가 두 번 저장하지 않게). 덮어쓰지 않았으면 보고서에 `다른 창에서 조직이 이미 앞으로 진행됐습니다 — 이 교대의 결과는 저장하지 않았습니다.`
+  - `startMode = mode`, `baseShift = carryIn?.shift ?? 1`, `settled = false`. 그리고 `ar.input.v1` 에 위의 모양으로 한 번 쓴다.
+- `newShift(seed?, difficulty?, mode = settings.org)` 는 `begin(mode)` 뒤에 지금처럼 `make`.
+- **생성자의 세 갈래**(`runner.ts:62-66`):
+  - 주소로 조건을 고정한 실행(`?seed=`·`?diff=`·`?force=`·`?disaster=`)은 화면 확인·자동 테스트가 재현돼야 하므로 **새 조직**으로 시작하고 저장하지 않는다(`carryIn = null`, `writeOrg = false`). `?org=continue` 를 주면 저장된 조직으로(저장은 하지 않는다).
+  - 새로고침 복원(`ar.current.v1` 에 `tick > 0`): `ar.input.v1` 의 `seed` 가 같으면 그 `carry`·`org`·`write`·`mode`·`baseShift` 로 되살린 뒤 지금처럼 그 틱까지 돌린다(`diff` 는 지금처럼 `{...NORMAL, ...cur.diff}`). 시드가 다르거나 입력이 없으면 이어받은 상태 없이 복원한다(`writeOrg = false` — 모르는 입력으로 돌린 교대를 조직에 저장하지 않는다).
+  - **그 밖(첫 화면 — 주소도 복원도 없음)**: `begin(settings.org)` 를 거친다. 기본값이 `'continue'` 이므로 저장된 조직이 있으면 이어서, 없으면 새 조직으로 시작해 끝나면 저장한다.
+- **끝 처리는 한 곳에서** — `private settle()`. `frame` 끝과 `seek` 끝에서 부른다(지금은 `frame` 의 `!sim.ended` 분기 안에서만 `pushHistory` 를 한다. 그런데 `App.tsx:89-91` 의 시각 이동은 끝나지 않은 교대를 `hardCap` 까지 앞으로 `seek` 하게 해 준다. 그러면 교대가 `seek` 안에서 끝나고 기록·저장이 빠진다). `settle` 은 `sim.ended && sim.report && !settled` 일 때만 한 번:
+  1. `pushHistory`, `ar.current.v1` 에 `{ seed, tick: 0, diff }`(지금 줄 그대로).
+  2. `writeOrg` 이면 `next = makeCarryover(sim)`(`from.hash = report.hash`), `saved = readOrg()`. **저장 조건**: `!saved`(저장된 조직이 없거나 읽지 못함) ‖ `startMode === 'fresh'` ‖ (`saved.id === orgId` && `saved.carry.shift === baseShift` — 다른 창이 그 사이에 조직을 앞으로 보내지 않았다). 맞으면 `lsSet('ar.org.v1', { id: orgId, carry: next, savedAt: Date.now() })` 와 `orgMem = { id: orgId, carry: next }`. 아니면 보고서에 `다른 창에서 조직이 이미 앞으로 진행됐습니다 — 이 교대의 결과는 저장하지 않았습니다.`
+  3. `settled = true`, `writeOrg = false`(같은 교대가 두 번 저장하지 않게). 되감기(`seek` 뒤로)로 끝나지 않은 상태가 되어도 `settled` 는 그대로 둔다 — 다시 끝까지 가도 같은 입력의 같은 결과라 저장할 것이 없다.
 - 저장 실패(사생활 보호 창, 용량, 막힌 저장소): `lsSet` 이 조용히 넘긴다(지금처럼). 다음 교대의 `continue` 는 `orgMem` 을 쓰므로 이 창이 열려 있는 동안은 이어진다. 난이도 창에 `저장소를 쓸 수 없어 새로고침하면 조직이 처음으로 돌아갑니다.`
-- **주소로 조건을 고정한 실행**(`?seed=`·`?diff=`·`?force=`·`?disaster=`)은 화면 확인·자동 테스트가 재현돼야 하므로 **새 조직**으로 시작하고 저장하지 않는다(`writeOrg = false`). `?org=continue` 를 주면 저장된 조직으로(저장은 하지 않는다).
-- 새로고침 복원(`ar.current.v1` 에 `tick > 0`): 저장된 `carry`·`org`·`write` 로 `carryIn`·`orgId`·`writeOrg` 를 되살린 뒤 지금처럼 그 틱까지 돌린다. `diff` 는 지금처럼 `{...NORMAL, ...cur.diff}`.
 
 ### 5.4 지도에 남은 흔적 (`view/city/carryLayer.ts`)
 
@@ -580,7 +619,7 @@ export function placeUsable(sim: Sim, id: number, allowClosed = false): boolean 
 
 | 상태 | 큰 배율 (`min(q.w, q.h) · scale ≥ 12` — G4 §5.2 와 같은 기준) | 작은 배율 |
 |---|---|---|
-| `marked` (그을음) | 지붕에 그을음 덩어리 — G4 §7.6 의 함수(넓이 `clamp(soot × 1.07, 0.25, 0.9)` = G4 의 `loss × 1.6` 과 같은 값, `rgba(14,10,8,0.55)` 에 `soot` 를 곱한 투명도). `dmg ≥ 0.2` 면 지붕을 가로지르는 금 하나(G4 §5.3 의 4번) | 그리지 않는다(작은 건물의 얼룩은 읽히지 않는다) |
+| `marked` (그을음) | 지붕에 그을음 덩어리 — G4 §7.6 의 함수(넓이 `clamp(soot × 1.07, 0.25, 0.9)`, `rgba(14,10,8,0.55)` 에 `soot` 를 곱한 투명도). 넓이 식은 G4 의 `loss × 1.6` 의 **근사**다 — 화재 `closed` 줄(`soot = loss × 1.5`)에서만 같은 값이고, `marked` 줄(`soot = loss × 2`)과 휴식으로 줄어든 그을음에서는 조금 다르다(지난 교대의 흔적이라 정확히 같을 까닭이 없다). `dmg ≥ 0.2` 면 지붕을 가로지르는 금 하나(G4 §5.3 의 4번). **열린 터**(`q.open`)는 지붕 대신 터 위에 탄 자리(불규칙한 어두운 얼룩 `rgba(30,22,16,0.5)` × `soot`, 가장자리 `hash2(q.id, k)`)만 — 울타리·`REPAIR_MARK` 없음 | 그리지 않는다(작은 건물의 얼룩은 읽히지 않는다) |
 | `closed` (복구 공사) | 위의 얼룩 + 건물 외곽을 따라 노란 점선 울타리(`#e0b83a`, 굵기 `max(1, 1.4 / scale)`, 대시 4·3) + 지붕 가운데 `REPAIR_MARK`(공사 고깔과 가로대, `marks.ts` 에 새로) | `REPAIR_MARK` 하나(크기 `10·zs`, 투명도 0.85), 어두운 테 |
 | `ruin` (무너짐) | G4 의 무너진 지붕 덧그림을 `level 'major'`(X6 뒤 `mark === 'collapsed'` 면 X6 가 더한 `'total'` — 건물 윤곽 전체가 잔해 더미), `u·v = spot`(없으면 0.5·0.5)으로 — 먼지는 그리지 않는다(지난 일이다). 그 위에 노란 점선 울타리 | G4 의 `RUIN_MARK.major`(X6 뒤 `total`, 크기 `11·zs`) |
 
@@ -589,7 +628,7 @@ X6 뒤에는 `mark` 로 그림을 고른다: `burnt` → X6 의 전소 지붕(�
 - 밤이면 G4 처럼 `shade(…, −0.35)`.
 - G4 가 아직 합쳐지지 않았으면: 무너짐은 지붕 가운데의 어두운 들쭉날쭉한 구멍(`rgba(16,12,9,0.62)`, 14각형, 가장자리 `hash2(q.id, k)`)과 `REPAIR_MARK`, 그을음은 같은 넓이의 둥근 얼룩.
 - 같은 건물에 이번 교대의 사건 핀이 있으면 핀이 위에 온다(지금 순서 그대로).
-- **도로**: 복구 공사 통제는 지금의 통제 점선(`trafficLayer.ts:70` 은 이유와 상관없이 알려진 통제를 그린다)에 더해, `drawTrafficScreen` 의 진입 금지 반복문(174-180)에서 `closedReason === 'repair'` 를 빼고 그 자리에 `drawObstacleMark(ctx, 'roadwork', mx, my, 6.5·zs, true)` 를 테 색 `#ffb454` 로(T1 의 공사 표식과 같은 고깔, 테 색만 다르다 — 이 한 덩어리만 고친다). 한 차로 공사는 혼잡 띠로 저절로 보인다.
+- **도로**: 복구 공사 통제는 지금의 통제 점선(`trafficLayer.ts:70` 은 이유와 상관없이 알려진 통제를 그린다)에 더해, `drawTrafficScreen` 의 진입 금지 반복문(174-180)에서 `closedReason === 'repair'` 를 빼고 그 자리에 `drawObstacleMark(ctx, 'roadwork', mx, my, 6.5·zs, true, '#ffb454')` 를 그린다(T1 의 공사 표식과 같은 고깔, 테 색만 다르다). `drawObstacleMark`(`trafficLayer.ts:155`)에는 지금 테 색을 받는 인자가 없으므로 **마지막에 선택 인자 `ring?: string` 하나**를 더한다 — 기본값이 지금 색이라 다른 호출은 그대로다. 한 차로 공사는 혼잡 띠로 저절로 보인다.
 - **마우스 정보** (`describeAt`, 378 의 `lines` 뒤): `const cl = carryLine(sim, q.id); if (cl) lines.push(cl);` — `그을림 · 구조 손상 30% (조직 3번째 교대 · 04 화재)` / `복구 공사 중 — 출입 통제 (2교대 남음)` / `무너짐 — 복구 전까지 출입 불가 (3교대 남음)`. 도로 정보에 `복구 공사 — 약 4분 뒤 개통`(`flowOf` 가 '통제' 라고 할 때 이유를 붙인다).
 - **범례** (`MapLegend.tsx`): 새 묶음 "지난 교대의 흔적" — 그을린 건물 · 복구 공사 중인 건물 · 무너진 건물 · 복구 공사 도로.
 - **부대 목록** (`UnitRow`, 131-150): `off` 대원의 칩은 흐리게 + 가로줄(`.cchip.off`), 마우스 정보 `${이름} — 결장 (총상 · 2교대 남음)` / `공석 — 순직 (신임 배치까지 1교대)`. 예비 인력 칩에는 작은 점 표지(`.cchip.relief`). `oos` 의 상태 글자는 `u.oosWhy` 가 있으면 그것(`정비 중 · 4분` — `readyAt − sim.t` 를 분으로).
@@ -599,11 +638,12 @@ X6 뒤에는 `mark` 로 그림을 고른다: `burnt` → X6 의 전소 지붕(�
 
 - `debrief.buildReport` 가 `carry`(이어받은 상태로 시작한 교대만)와 `carryNext`(언제나)를 채운다. 문장은 `persist.carryLines(sim)` — 기록과 상태로만:
   1. 요약 줄과 같은 문장(이어받은 것).
-  2. `결원 부대가 나간 사건 ${n}건 (${호출부호들}).` — 사건마다 `everAssigned` 에 `off` 대원이 있는 부대가 있으면 센다(`off` 는 교대 내내 바뀌지 않는다).
+  2. `결원 부대가 나간 사건 ${n}건 (${호출부호들}).` — 아래의 "결원 도착" 기록(그 사건의 `arrive` 기록 가운데 `causes` 에 `carryState.event` 가 있는 것)으로 센다(`off` 는 교대 내내 바뀌지 않는다).
+  - **결원 도착 기록**: `sceneManager.unitArrived` 의 도착 기록(`kind 'arrive'`)을 남기는 그 자리에서, 부대에 `off` 대원이 있으면 그 기록에 `causes: [cs.event]` 를 붙인다(문구는 그대로 — `causes` 는 해시에 들어가지 않는다. 이어받은 상태가 없으면 `off` 가 없어 아무것도 붙지 않는다). 상태(결원으로 내린 인원)를 정하는 바로 그 자리의 정당한 원인이고, I1-a 의 `worldLinks`·`spread` 가 "지난 교대의 결원 → 이번 사건"을 잡는다(교대를 넘는 '부대 부족이 다른 사건에 주는 영향').
   3. `본부 예비 인력 ${n}명이 결원 부대에 탔습니다.` · `정비를 마친 부대 ${n}대가 교대 중에 운용에 들어갔습니다.` · `복구 공사가 끝난 도로 ${n}구간이 교대 중에 열렸습니다.` · `지난 교대에 손상된 건물에서 사건 ${n}건 (${코드들}).` · `섬광탄 재고 부족으로 ${n}개 덜 지급했습니다.` — 0 인 줄은 뺀다.
 - 요약(`summary`)에 한 줄 더: 이어받은 상태가 있으면 `지난 교대의 영향: …`(위 2~3 가운데 0 이 아닌 것 둘까지), 그리고 언제나 `다음 교대로 넘기는 것: 결장 예상 2명 · 정비 1대 · 출입 통제 건물 3곳 · 복구 공사 도로 1구간.`(모두 0 이면 `다음 교대로 넘기는 피해는 없습니다.`).
 - 화면(`ReportModal`): 재난 요약 아래에 "조직" 칸 — 제목 `조직의 n번째 교대 · 지문 …`, `carry.lines`, 그리고 `carryNext` 의 작은 타일 다섯(결장 예상 · 공석 · 정비 · 출입 통제 건물 · 복구 도로). 대원 부상 목록에 H1 의 "결장 예상 n교대"가 이미 있으면 그대로 쓴다.
-- (선택) 사건 분석 문장(`evaluate`): 첫 출동 부대에 `off` 대원이 있었고 그 사건이 대응 지연이면 `첫 출동 부대(${호출부호})는 지난 교대의 결장으로 ${n}명만 출동했습니다.` 한 줄.
+- (선택) 사건 분석 문장(`evaluate`): 그 사건의 첫 도착 기록이 결원 도착 기록이고 그 사건이 대응 지연이면 `첫 출동 부대(${호출부호})는 지난 교대의 결장으로 ${n}명만 출동했습니다.` 한 줄(기록에서 만든다).
 
 ### 5.6 화면 확인
 
@@ -612,6 +652,9 @@ X6 뒤에는 `mark` 로 그림을 고른다: `burnt` → X6 의 전소 지붕(�
 2. 손으로 만든 상태(테스트 도우미 `scripts/chain.ts --dump` 로 지진 교대 뒤의 상태를 파일로 받아 `localStorage` 에 넣는다)로 `?org=continue` — 무너진 건물·복구 공사 울타리·복구 도로 고깔·범례를 큰 배율과 작은 배율에서 찍는다.
 3. 난이도 창의 조직 줄(저장된 조직 있음/없음/읽지 못함), 상단 칩.
 4. 저장소를 막은 창(`page.addInitScript` 로 `localStorage.setItem` 이 던지게)에서 교대를 끝내고 `이어서` 가 같은 창 안에서 이어지는지, 콘솔 오류 0건.
+5. **끝까지 `seek` 한 교대도 저장된다**: 시각 막대로 `hardCap` 까지 앞으로 옮겨 교대를 끝낸 뒤 `ar.org.v1` 의 `carry.shift` 가 하나 늘었고, 이전 교대 기록에 그 교대가 있다(§5.3 `settle`).
+6. 저장된 조직 없이 첫 화면을 연 창(`localStorage` 비움, 주소 조건 없음)에서 교대를 끝내면 `ar.org.v1` 이 생긴다(기본 `continue` 의 첫 교대).
+7. Q1 의 `npm run ui-check` 도 돌린다(기존 화면 검사가 그대로 지나는지). 조직 칩·결장 칩이 생겼으므로 `window.__ar.snap()`(`App.tsx:55`)에 `org`(조직 교대 번호, 새 조직이면 1)와 `off`(결장 대원 수) 두 필드를 더하고, `ui-check` 에 "이어받은 상태로 시작한 교대에서 `off` 가 칩 수와 같다"는 검사 하나를 더한다(Q1 의 파일 — 한 덩어리).
 찍은 그림과 임시 스크립트는 저장소 밖(scratchpad)에 둔다.
 
 ---
@@ -641,29 +684,45 @@ npx tsx scripts/chain.ts 12 8                       # 계보 12개 × 교대 8�
 npx tsx scripts/chain.ts 12 8 --diff hard
 npx tsx scripts/chain.ts 12 6 --disaster quake@1    # 첫 교대에만 지진, 그 뒤는 없음 — 회복을 본다
 npx tsx scripts/chain.ts 12 8 --json                # 한 줄 JSON
-npx tsx scripts/chain.ts 12 8 --check               # 기준을 어기면 종료 코드 1
+npx tsx scripts/chain.ts 24 8 --check               # 기준을 어기면 종료 코드 1 (--check 의 기본 계보 수는 24)
 npx tsx scripts/chain.ts 1 4 --dump <scratchpad 폴더>   # 계보 C0 의 교대마다 이어받은 상태를 JSON 파일로 (화면 확인용, 저장소 밖에)
 ```
 
 - 계보 L 의 k번째 교대: 시드 `C${L}.${k}`, 첫 교대는 `carry = null`, 그 뒤는 앞 교대의 `makeCarryover`. 매 교대 `readCarryover(JSON.parse(JSON.stringify(co)))` 의 지문이 원래와 같은지 확인한다(왕복 검사).
+- **I1-a 의 측정 도구를 쓴다**: `chain.ts` 는 `scripts/metrics.ts` 를 import 해서 교대마다 `runWithProbe(sim)` 으로 돌리고(`runToEnd` 와 결과가 같다 — I1 §6 의 1) `shiftMetrics(sim, probe)` 를 모은다. 교대 번호(k)마다 계보들의 `ShiftMetrics` 를 `summarize` 해서 아래 지표를 내고, 같은 요약으로 `checkMetrics` 를 돌린다(교착 M-G1·잊힌 사건 M-G2·연쇄 상한 M-G3·일치 M-G4 — "이어 돌린 교대에서도 교착·무한 연쇄·기록과 상태의 어긋남이 없다").
 - 교대 번호(k)마다 한 줄:
   ```
-  k  n   성공  성공+지연  실패+미해결  한계  대응  | 결장 공석 예비 정비 | 통제건물 무너짐 흔적 복구도로 | 경험+  결원출동 손상건물사건 이어진기록
+  k  n   성공 지연 부분 실패+미해결  한계  대응  | 결장 공석 예비 정비 | 통제건물 무너짐 흔적 복구도로 | 경험+  결원출동 손상건물사건 이어진기록(사건) | 확산3+ 세계연결 경쟁 멈춤 재계획 carry
   ```
-  `--json` 키: `{ lineages, shifts, diff, byShift: [{ k, n, success, good, bad, timeout, resp, absent, fallen, relief, service, closed, ruin, marked, roads, expMean, shortRuns, markedInc, links }], errors, open }`. `links` = 그 교대에서 `causes` 에 `carryState.event` 가 들어간 기록 수(지난 교대에서 이어진 영향의 수 — I1-a 의 시스템 간 영향과 같은 방식으로 센다).
-- I1-a 의 지표 함수가 있으면(인과 연쇄 깊이·재계획 비율·자원 경쟁 등) 교대 번호마다 그 값도 낸다 **(확인 필요: I1-a 가 지표 함수를 둔 곳 — `scripts/` 인지 `src/sim/` 인지)**.
+  `--json` 키: `{ lineages, shifts, diff, byShift: [{ k, n, success, delayed, partial, bad, good, timeoutShare, resp, absent, fallen, relief, service, closed, ruin, marked, roads, expMean, shortRuns, markedInc, links, linksInc, m: { spreadGe3, worldLinks, contention, stall, replan, carryShare, metricFails } }], errors, open }`.
+  - `good` = `success + delayed`, `bad` = `failed + unresolved`(비율), `timeoutShare` = `(timeout + noresponse + abandoned) / n` — `sweep.ts:86` 과 같은 식.
+  - `links` = 그 교대에서 `e.causes` 에 `carryState.event` 가 들어간 기록 수(요약 줄의 직접 자식). `linksInc` = 그 가운데 `incidentId ≥ 0` 인 것 — I1-a 의 `worldLinks` 가운데 T5 에서 나간 몫과 같다.
+  - `m` 은 그 교대 번호의 `summarize` 결과에서 꺼낸다: `spreadGe3` = `metrics.systems.spread.ge3`, `worldLinks` = `metrics.chain.worldLinks`, `contention` = `metrics.contention.share`, `stall` = `metrics.stall.candidates`, `replan` = `metrics.replan.share`, `carryShare` = `metrics.systems.share.carry`(I1 §2.13 의 키 이름), `metricFails` = `checkMetrics` 가 돌려준 문구 수.
 - `scripts/sweep.ts` 에는 `--carry <파일>` 하나만 더한다: 모든 시드에 같은 이어받은 상태를 넣어 돌린다("이 조직 상태로 시드 40개" — 이어받은 상태의 효과를 A/B 로 잴 때).
 
-### 6.3 기준 (`chain.ts --check`, 보통, 12 × 8)
+**사용자의 완료 기준과 지표 가운데 I2 가 맡는 몫**
+
+| 사용자 기준 / 지표 | I2 가 더하는 것 | 어디서 보나 |
+|---|---|---|
+| 하나의 사건에서 다른 시스템으로 3단계 이상 | 교대를 넘는 첫 단계(요약 → 결원 도착·손상 건물 사건 → …) | `byShift[k].m.spreadGe3`, `worldLinks` |
+| AI 가 새 정보로 계획을 바꾸는 사례 | 복구 공사가 열리며 바뀌는 경로, 정비를 마친 부대의 배정 | `m.replan` (I1-a 의 정의 그대로) |
+| 부대 부족이 다른 사건에 영향 | 결장·결원 oos·정비 중 부대(교대를 넘는 부족) | `결원출동`, `m.contention`, 결원 도착 기록 |
+| 결과가 기록·상태와 일치 | 적용 목록과 기록의 일대일(테스트 10), 요약 줄의 지문 | `m.metricFails`(M-G4), 테스트 10 |
+| 교착·무한 연쇄·무의미한 반복 없음 | 모든 상태의 회복 규칙·상한(§6.1), 이어 돌린 교대에서의 관문 | `--check` 의 1·2·7, `m.stall` |
+| 결과 다양성(실패도 결과다) | 나선 없음 기준은 "망가지지도 쉬워지지도 않는다"이지 성공률을 올리는 것이 아니다 | `--check` 의 3 |
+
+### 6.3 기준 (`chain.ts --check`, 보통, 24 × 8)
 
 1. 예외 0, 끝나지 않은 사건 0, 왕복 검사 실패 0.
 2. 모든 교대에서 결장 ≤ `ABSENT_CAP`, 출입 통제·무너짐 ≤ 12, 복구 도로 ≤ 6.
-3. **나선 없음**: 교대 6~8 의 (성공+지연) 평균이 교대 1~2 의 평균 −8%p 이상, +8%p 이하(망가지지도, 이어갈수록 쉬워지지도 않는다).
-4. 한계 시간 종료 비율 ≤ 4%(sweep 의 기준과 같다).
+3. **나선 없음**: 교대 6~8 의 (성공+지연) 평균과 교대 1~2 의 평균의 차이 `Δ` 와 그 표준오차 `SE`(두 묶음 각각 교대별 비율의 표준편차 / √교대 수, 제곱합의 제곱근)를 함께 찍는다. `|Δ| > max(8%p, 2.5 × SE)` 이면 실패(망가지지도, 이어갈수록 쉬워지지도 않는다). 12 × 8 에서는 `SE` 가 3%p 남짓이라 ±8%p 만으로는 가끔 거짓 실패가 난다 — 그래서 계보를 24 로 늘리고 `SE` 를 함께 본다.
+4. 한계 시간 종료 비율 `timeoutShare` ≤ 4%(sweep 의 기준과 같은 식).
 5. 교대 2 이후 모든 교대의 기록에 지문이 든 요약 줄이 정확히 하나.
-6. 회복(`--disaster quake@1`, 12 × 6): 교대 4 의 결장 평균 ≤ 교대 2 의 결장 평균, 교대 6 의 출입 통제·무너짐 평균 ≤ 교대 2 의 절반 **(확인 필요: 첫 측정 뒤 수치를 정한다)**.
+6. 회복(`--disaster quake@1`, 12 × 6): 교대 2 의 복구 도로 평균 ≥ 1(지진이 닫은 구간이 실제로 넘어온다 — §3.5 `d.damaged`), 교대 4 의 결장 평균 ≤ 교대 2 의 결장 평균, 교대 4 의 복구 도로 평균 ≤ 교대 2 의 절반, 교대 6 의 출입 통제·무너짐 평균 ≤ 교대 2 의 절반 **(확인 필요: 첫 측정 뒤 수치를 정한다)**.
+7. 모든 교대 번호에서 `metricFails === 0`(I1-a 의 `checkMetrics` — 교착·잊힌 사건·연쇄 상한·일치).
+8. (측정만, 기준 아님) **그을음의 방향**: `--soot` 를 주면 화재를 강제한 같은 시드 N개를 그을음 0 과 0.6 의 같은 건물에서 돌려 소실률 평균·`BURNOUT` 비율·X6 탄 비율을 나란히 찍는다(§3.6 `applyPlaceWear`). 의도는 "그을린 쪽이 늘지 않는다"이고, 늘면 `PRE_BURN` 을 손본다.
 
-`npm run check` 에는 넣지 않는다(교대 96번 — 다른 테스트와 함께 돌리면 느리다). 대신 `tests/persistence.test.ts` 의 짧은 연속(3 × 4)이 관문에 들어간다. 이 묶음을 끝낼 때와 균형을 바꿀 때 `chain.ts --check` 를 돌려 보고에 표를 적는다.
+`npm run check` 에는 넣지 않는다(교대 192번 — 다른 테스트와 함께 돌리면 느리다). 대신 `tests/persistence.test.ts` 의 짧은 연속(3 × 4)이 관문에 들어간다. 이 묶음을 끝낼 때와 균형을 바꿀 때 `chain.ts --check` 를 돌려 보고에 표를 적는다.
 
 ### 6.4 범위를 벗어나면 돌리는 손잡이 (이 순서로)
 

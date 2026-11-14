@@ -8,21 +8,21 @@
 
 | 부분 | 누가 | 결과가 바뀌는가 | 내용 |
 |---|---|---|---|
-| **I1-a 측정 도구** | **이번 세션**(주 작업 폴더) | **바뀌지 않는다** — `src/` 를 한 줄도 고치지 않는다 | 지표 여덟 가지와 기록·상태 일치 검사, `sweep` 의 새 줄과 `--json` 키, 관문 조건, `tests/causality.test.ts` |
+| **I1-a 측정 도구** | **이번 세션**(브랜치 `wf/i1a` — 고정한 기준 커밋에서 만든다, §2.15) | **바뀌지 않는다** — `src/` 를 한 줄도 고치지 않는다 | 지표 여덟 가지와 기록·상태 일치 검사, `sweep` 의 새 줄과 `--json` 키, 관문 조건, `tests/causality.test.ts` |
 | **I1-b 인과 규칙과 세계 상태 결합** | **다음 구현 세션**. R1 → H1 → X6 → R2 → R3 다음(§3.10 의 표시한 부분은 X6 와 함께) | 바뀐다(0단계만 해시 불변) | 세계 상태 자료, 인과 규칙의 틀(`registerConsequence`), 첫 규칙 11개, 조건으로 일어나는 연쇄, 무한 연쇄 막기, 보고서의 사슬 문장 |
 
 교대 사이에 남는 상태(대원·장비·건물·도로를 "이어받은 상태"로 다음 교대의 입력에 넣기)는 `I2-persistence.md` 의 몫이다. I1-b 는 I2 가 그대로 저장할 수 있는 모양(함수가 없는 순수 자료)으로 세계 상태를 만든다(§3.3).
 
 줄 번호는 2026-11-14 `a746b77`(B1 1차·B3·P1·Q1 을 합친 뒤) 기준이다. 앞 묶음(R1·H1·X6 …)이 합쳐지면 바뀌므로 **함수 이름으로 찾는다**. 확신하지 못한 곳은 **(확인 필요)** 로 표시했다. 측정 숫자 가운데 "설계 시험"이라고 적은 것은 이 문서를 쓰며 저장소 밖의 임시 스크립트로 `a746b77` 의 시드 S0~S2(보통, 멈춤은 S0~S7)만 잰 작은 표본이다.
 
-**I1-a 자기 파일**(새로): `scripts/metrics.ts`, `tests/causality.test.ts`. **고치는 파일**: `scripts/sweep.ts`. **건드리지 않는다**: `src/` 전부.
+**I1-a 자기 파일**(새로): `scripts/metrics.ts`, `tests/causality.test.ts`. **고치는 파일**: `scripts/sweep.ts`. **건드리지 않는다**: `src/` 전부. 브랜치 `wf/i1a`(같은 세션의 B1·G5 가 `src/` 를 고치므로 결과 불변 증명을 기준 커밋에 묶는다 — §2.15).
 **I1-b**: 브랜치 `wf/causality`, 개발 서버 포트 **5218**(보고서 화면 확인용). 자기 파일과 공용 파일 수정은 §7.
 
 ## 원칙
 
 - **사건 감독(director)을 두지 않는다.** "극적인 순간을 골라 사건을 넣는" 장치는 CLAUDE.md 의 "가짜 연출 금지"와 부딪힌다. 대신 **인과 규칙**의 묶음이다: "세계 상태가 조건 X 를 넘으면 Y 가 일어난다". 규칙은 상태를 바꾸는 그 자리에서 `emit()` 하고, 원인 이벤트를 `causes` 로 잇는다. 보고서는 그 사슬을 읽는다.
 - **고정된 순서로 연출하지 않는다.** 같은 규칙이라도 조건(거리·확률·자원·시간)에 따라 일어나기도 하고 일어나지 않기도 한다. 예약해 둔 후속 사건도 때가 되었을 때 조건이 맞지 않으면 버리고, 버린 것을 기록한다.
-- **재현성.** 규칙마다 새 난수 흐름 `sim.rng.fork('csq:<규칙>:<열쇠>:<n>')`. 기존 흐름에 호출을 끼워 넣지 않는다. 주기 판단은 `sim.t`·`sim.tick` 으로만 한다.
+- **재현성.** 규칙마다 새 난수 흐름 `sim.rng.fork('csq:<규칙>:<열쇠>:<시도 번호>')`(시도 번호는 그 규칙·열쇠로 `test` 를 부른 횟수 — 같은 이름의 `fork` 는 같은 수열이라, 번호가 없으면 되풀이하는 확률 판정이 매번 같은 첫 난수를 쓴다. §3.4). 기존 흐름에 호출을 끼워 넣지 않는다. 주기 판단은 `sim.t`·`sim.tick` 으로만 한다.
 - **정보 격리.** 세계 상태에는 진실과 "알려진 것(`known`)"이 따로 있다. 관제와 지휘관은 알려진 것만 읽는다(§3.8). T1 의 `RoadEdge.known` 과 같은 방식이다.
 - **도시 지도를 고치지 않는다.** `city.places`·`nodes` 는 모듈에 한 번 만들어 교대마다 다시 쓴다(`city.ts:208-212`). 새로 생기는 상태(구역의 기반 시설·연기·위험, 병원 수용)는 `sim.world` 라는 별도 자료에, 건물 상태는 X6 의 `Sim.placeMarks` 에 둔다.
 - **모든 사건은 끝난다.** 규칙이 만드는 사건도 `LIMIT`·`holdUntil`·`hardCap` 을 그대로 따른다. 연쇄에는 깊이·쿨다운·교대당 상한이 있다(§3.6).
@@ -32,14 +32,14 @@
 
 | 설계서 | 겹치는 곳 | 나누는 선 |
 |---|---|---|
-| R1 부대 편성·개인 장비·헬기 | 부대 수·결원(`minCrew`)·헬기 이송, 장비 고장(`EQUIP_FAIL`) | R1 이 부대와 장비를 만든다. I1-a 는 `EQUIP_FAIL`·결원 운용 중단을 "장비"·"대원 상태" 시스템으로 센다. I1-b 의 병원 규칙(C3)은 R1 의 `seatsOf`·의료 헬기 이송도 같은 "인계" 신호로 받는다 |
-| H1 부상과 사망 | 대원 부상·순직, `RESPONDER_KILLED`, `ShiftReport.roster` | H1 의 `hurt*` 가 남기는 `RESPONDER_HURT` 기록에 피해를 준 사건 기록을 `causes` 로 넣어 달라고 요청한다(없으면 I1-b 0단계에서 넣는다). I1-a 의 대응표는 `RESPONDER_KILLED` 를 미리 "대원 상태"로 넣어 둔다(문자열 집합이라 H1 전에도 컴파일된다) |
-| X6 위험의 현실화(붕괴·폭발·전소) | 실제 폭발·붕괴·전소, 건물 상태, 붕괴 뒤 도로 통제 | X6 은 현장 **안**의 사건(조짐 → 철수 판단 → `collapseRegion`·`collapseBuilding`·`explodeGas`·`ruptureVessel`·전소 판정)과 그 자리의 결과(문제 `STRUCT_COLLAPSE`·`EXPLOSION`·`BURNOUT`, 원인 `cat.causeEv`, 전체 붕괴 때 사건 교차로의 한 구간 통제, 교대 안의 건물 상태 `Sim.placeMarks`, `burnt`·`collapsed` 건물에서 새 사건을 내지 않음). I1-b 는 현장 **밖**으로 퍼지는 결과(옆 건물 화재, 사건이 끝난 뒤에도 남는 잔해, 기반 시설). X6 의 그 함수들에 신호 한 줄(`signal(sim, 'catastrophe', …)`)을 두면 I1-b 가 소비한다(§3.10). **건물 상태는 X6 의 `Sim.placeMarks` 를 그대로 쓴다** — X6 이 "I1-b 가 세계 상태를 두면 그 안으로 옮긴다"고 적었지만 옮기지 않는다(G4·I2 가 그 이름을 읽는다. 옮겨도 얻는 것이 없다) |
+| R1 부대 편성·개인 장비·헬기 | 부대 수·결원(`minCrew`)·헬기 이송, 장비 고장(`EQUIP_FAIL`), 이송 출발 문구 | R1 이 부대와 장비를 만든다. I1-a 는 `EQUIP_FAIL` 을 "장비"로, 결원 운용 중단 기록(문구 규칙 T6, `kind 'unit'`·사건 없음)을 "대원 상태"로 센다. I1-b 의 병원 규칙(C3)은 R1 의 `seatsOf`·의료 헬기 이송도 같은 "인계" 신호로 받는다. **이송 출발 문구의 "시립병원" 고정은 R1 단계 3 이 고친다**(`R1-crews.md` 단계 3 — `startTransport` 가 고른 병원을 돌려받아 5)번 블록의 출발 기록이 쓴다). 그래서 일치 검사 C5 는 R1 뒤 0 이어야 하고, I1-b 는 그 줄을 고치지 않는다(R1 이 하지 않았을 때만 b1 에서 고친다, §3.11) |
+| H1 부상과 사망 | 대원 부상·순직, `RESPONDER_KILLED`·`SUSPECT_DIED`, `ShiftReport.roster` | H1 의 `hurt*` 가 남기는 `RESPONDER_HURT` 기록에 피해를 준 사건 기록을 `causes` 로 넣어 달라고 요청한다(없으면 I1-b 0단계에서 넣는다). I1-a 의 대응표는 `RESPONDER_KILLED` 를 "대원 상태"로, `SUSPECT_DIED`(H1 5단계)를 "현장 위험"으로 미리 넣어 둔다(문자열 집합이라 H1 전에도 컴파일되고, H1 이 합쳐져도 테스트 3 이 깨지지 않는다) |
+| X6 위험의 현실화(붕괴·폭발·전소) | 실제 폭발·붕괴·전소, 건물 상태, 붕괴 뒤 도로 통제 | X6 은 현장 **안**의 사건(조짐 → 철수 판단 → `collapseRegion`·`collapseBuilding`·`explodeGas`·`ruptureVessel`·전소 판정)과 그 자리의 결과(문제 `STRUCT_COLLAPSE`·`EXPLOSION`·`BURNOUT`, 원인 `cat.causeEv`, 전체 붕괴 때 사건 교차로의 한 구간 통제, 교대 안의 건물 상태 `Sim.placeMarks`, `burnt`·`collapsed` 건물에서 새 사건을 내지 않음). I1-b 는 현장 **밖**으로 퍼지는 결과(옆 건물 화재, 사건이 끝난 뒤에도 남는 잔해, 기반 시설). X6 의 그 함수들에 신호 한 줄(`signal(sim, 'catastrophe', …)`)을 두면 I1-b 가 소비한다(§3.10 — X6 은 `world/consequence.ts` 가 없으면 빈 `signal` 과 `SignalKind` 만 담은 파일을 만든다고 적었다). **건물 상태는 X6 의 `Sim.placeMarks` 를 그대로 쓴다** — `sim.world` 로 옮기지 않는다(G4·I2 가 그 이름을 읽는다. X6 연관 표의 I1-b 줄도 같은 결정으로 고쳐졌다) |
 | R2 대응 방식 다양화 | `METHOD_FAIL`, `Incident.methods`, `sweep --methods` | I1-a 의 "대체 방법 성공률"은 R2 전에는 작업 항목으로 근사하고, `I.methods` 가 생기면 그것으로 센다(§2.7). `--methods` 옵션과 `methods` JSON 키는 R2 의 것이고, I1-a 는 `metrics` 키 하나 안에만 쓴다 |
 | R3 대응 교본 | 대원의 행동 선택 | I1-a 의 "행동 다양성"이 R3 의 효과를 잰다. 겹치는 코드는 없다 |
 | G4 현장 가독성 · G5 교전 연출 | 기록 전용 칸(`RUIN_LOG`·`s.falls`, `FXLOG`·`s.fx` 기록) | 두 묶음은 "켜고 꺼도 결과가 같다"를 테스트로 지킨다. 그래서 **I1-b 의 규칙은 그 기록 전용 칸을 읽지 않는다**(읽으면 끄는 순간 결과가 바뀐다). 붕괴·폭발은 `hazards.ts` 의 상태 변화 자리에서 직접 신호를 받는다 |
 | U2 통화창 | 없음 | I1-a 의 `sweep` 출력은 결정적이라 U2 의 결과 불변 비교에 그대로 쓸 수 있다 |
-| K1 · I2 교대 간 지속 | 대원 상태·장비·건물·도로 | I2 는 `new Sim(seed, d, len, { carry })` 로 지난 교대의 상태를 받고, 건물은 `sim.carryState.places`(겹침 표)·도로는 `closedReason 'repair'` 로 둔다. 이어받은 상태의 요약 기록(`carryState.event`, `kind 'shift'`)을 원인으로 잇는다. I1-b 는 교대 **안**의 구역·병원 상태(`sim.world`)와 초기화 함수(`initWorld(sim, carry?)`)의 자리만 만든다 — 병원·기반 시설의 교대 간 지속은 I2 가 "같은 틀로 더한다"(I2 §0). I1-a 는 그 요약 기록을 시스템 `carry` 로 센다(§2.3) |
+| K1 · I2 교대 간 지속 | 대원 상태·장비·건물·도로 | I2 는 `new Sim(seed, d, len, { carry })` 로 지난 교대의 상태를 받고, 건물은 `sim.carryState.places`(겹침 표)·도로는 `closedReason 'repair'` 로 둔다. 이어받은 상태의 요약 기록(`carryState.event`, `kind 'shift'`)을 원인으로 잇는다. I1-b 는 교대 **안**의 구역·병원 상태(`sim.world`)와 초기화 함수(`initWorld(sim, carry?)`)의 자리만 만든다 — 병원·기반 시설의 교대 간 지속은 I2 의 범위 밖이다(I2 연관 표의 I1 줄: `initWorld` 에 `carry` 를 넘기지 않는다). 나중에 넘길 수 있는 모양(순수 자료)으로만 둔다. I1-a 는 그 요약 기록(문구 규칙 T5)과 I2 의 나머지 기록(`tag: 'carry'` — I2 가 `WorldTag` 에 한 값을 더한다)을 시스템 `carry` 로 센다(§2.3). "쓸 수 있는 건물" 판정은 I2 의 `persist.placeUsable` 하나이고 I1-b 의 `placeState().usable` 은 그것을 부른다(I2 전에는 X6 의 표만 본다) |
 | B3 (합쳐짐) | 전환 배정, 관제 순위, 교착 | B3 이 전환 배정을 같은 사건에서 120초 안에 두 번 하지 않게 하고(`dispatcher.ts:69`), 관제 순위에 "굶은 시간"(최대 +1.5, `priorityOf`)을, 지휘관에 확인 무전(`rollCall`)과 맡을 사람 없는 작업의 지원 요청(`needFor`)을 넣었다. I1-a 의 기준선은 이것들이 들어간 뒤에 잰다 |
 
 ---
@@ -51,9 +51,9 @@
 | 무엇 | 지금 | 근거 |
 |---|---|---|
 | `SimEvent.causes` | `emit()` 이 음수·중복을 걸러 넣는다. 기록 해시(`logHash`)는 **틱과 문구만으로** 누적한다. 그래서 `causes` 만 바꾸면 해시가 그대로다(§3.11 의 0단계가 여기에 기댄다) | `events.ts:13-32` |
-| 읽는 곳 | `events.ts:16`(정리)과 `tests/sim.test.ts:110`("원인은 언제나 과거 이벤트")뿐. `debrief.ts`·`view`·`ui`·`sweep` 은 읽지 않는다 | grep `\.causes` |
+| 읽는 곳 | `events.ts:16`(정리)과 `tests/sim.test.ts:117`("원인은 언제나 과거 이벤트")뿐. `debrief.ts`·`view`·`ui`·`sweep` 은 읽지 않는다 | grep `\.causes` |
 | 문제 기록 | `raiseProblem` 은 기록 하나와 `Problem{code,t,eventId,detail,recovered,recoveryText}`. 호출 39곳 대부분 `dedupe=false` | `events.ts:35-41` |
-| 복구 | `markRecovered` 는 5곳만 쓴다(NO_UNIT, COMM_FAIL, PATH_BLOCKED ×2, WATER_OUT, EQUIP_FAIL). 기록은 남기지 않는다. `lastProblemEvent` 는 죽은 코드 | `events.ts:44-55` |
+| 복구 | `markRecovered` 는 6곳만 쓴다(NO_UNIT `dispatcher.ts:115`, COMM_FAIL `agents.ts:255`, PATH_BLOCKED ×2 `executor.ts:104·223`, WATER_OUT `:448`, EQUIP_FAIL `:941`). 기록은 남기지 않는다. `lastProblemEvent` 는 죽은 코드 | `events.ts:44-55` |
 | 사후 문제 | `evaluate` 가 닫을 때 CALL_MISINFO·MISJUDGE_TYPE·UNDER/OVERESTIMATE·UNDER_DISPATCH·TIMEOUT·FALSE_ALARM 을 더한다. `eventId` 는 신고·평가·요청 기록을 가리킨다(문제 기록이 아니다) | `debrief.ts:58-69` |
 | `LATE_DISCOVERY` | `raiseProblem` 을 거치지 않고 직접 넣는다(`eventId` = 바로 앞 기록) | `field/agents.ts:88-89` |
 | `Incident.rootEvent` | 값을 넣을 뿐 읽는 곳이 없다 | `incidents.ts:150` |
@@ -95,8 +95,8 @@
 2. **기반 시설**(전력·통신·수도)의 구역 상태가 없다. 정전은 도로 `bump` 뿐. 무전 실패는 현장 격자의 음영(`s.shadow`)뿐. 변전소·발전소·방송국 건물은 있지만(`cityPlan.ts:162-176`) 거기서 난 사건이 도시에 아무 영향을 주지 않는다.
 3. **건물 손상이 이어지지 않는다.** 파손은 사건별 `Scene` 에만 있고, 같은 건물에서 다시 사건이 나면 평면이 `scene:<사건 id>` 흐름으로 새로 만들어진다.
 4. **사건 사이 인과가 `causes` 로 이어지지 않는다**(§1.2). 도로 통제로 생긴 `ROUTE_BLOCKED`·`TRAFFIC_DELAY` 에 구간 id 도, 막은 주체도 남지 않는다(`resources.ts:213, 299, 420`).
-5. **기록과 상태가 어긋나는 곳**: 이송 출발 문구가 언제나 "시립병원"이다(`sceneManager.ts:211`). 실제 목적지는 `startTransport` 가 고르므로 가온대학교병원일 수 있다(설계 시험: 출발 48회 중 14회 불일치).
-6. **대원이 있는데 현장이 멈춘 상태**를 재는 칸이 없다. `Scene.idleSince` 는 현장에 대원이 한 명도 없을 때만 시각을 잡는다(`sceneManager.ts` 7) 블록, `:224-246`).
+5. **기록과 상태가 어긋나는 곳**: 이송 출발 문구가 언제나 "시립병원"이다(`sceneManager.ts:211`). 실제 목적지는 `startTransport` 가 고르므로 가온대학교병원일 수 있다(설계 시험: 출발 48회 중 14회 불일치). **R1 단계 3 이 고친다**(연관 표의 R1 줄).
+6. **대원이 있는데 현장이 멈춘 상태**를 재는 칸이 없다. `Scene.idleSince` 는 현장에 대원이 한 명도 없을 때만 시각을 잡는다(`sceneManager.ts` 7) 블록, `:224-246`). B3 의 `Scene.allIdleSince`(`commander.ts:625-627`)는 "모든 대원이 손을 놓은 시각"이지만 측정에 쓰지 않는다 — AI 내부 칸이라 지휘관이 계획할 때만 갱신되고, 지휘관 자신이 멈추면 함께 멈춘다(측정은 AI 의 판단과 따로 서야 한다).
 7. 날씨는 교대 내내 바뀌지 않고, 사건 생성·교통 모델은 날씨를 읽지 않는다.
 8. **측정할 수단이 없다.** `sweep` 은 `runToEnd()` 뒤 결과만 읽는다(틱 표본 없음). `--json` 에 문제 코드 분포가 없고, `recoveredShare` 는 재계획으로 쓰기 어렵다(허위 신고의 `FALSE_ALARM`, 요청이 다 채워진 `UNDER_DISPATCH` 가 "복구"로 들어가고, 실제로 계획을 바꾼 `SCENE_MISMATCH`·`VICTIM_MISSED`·`RECOUNT` 는 빠진다).
 
@@ -117,7 +117,7 @@
 
 ### 2.1 범위
 
-- **`src/` 를 고치지 않는다.** 시뮬레이션은 지금 있는 칸만 읽는다. 기록 칸을 더하는 일(사건 사이 `causes`, `Problem.ref`, 버린 예약의 기록)은 I1-b 0단계다(§3.11). 이렇게 하면 결과 불변이 `git diff --stat src` 한 줄로 증명되고, 이번 세션의 다른 작업(B1·U2·G5)과 파일이 겹치지 않는다.
+- **`src/` 를 고치지 않는다.** 시뮬레이션은 지금 있는 칸만 읽는다. 기록 칸을 더하는 일(사건 사이 `causes`, `Problem.ref`, 버린 예약의 기록)은 I1-b 0단계다(§3.11). 이렇게 하면 결과 불변이 `git diff --stat <기준>..wf/i1a -- src` 한 줄로 증명되고, 이번 세션의 다른 작업(B1·U2·G5)과 파일이 겹치지 않는다. 같은 세션에 B1(결과를 바꾼다)·G5(`src/sim/field/fxlog.ts` 와 갈고리)가 주 작업 폴더에 합쳐질 수 있으므로 **I1-a 는 고정한 기준 커밋에서 만든 자기 브랜치 `wf/i1a` 에서** 만들고 증명한다(§2.15).
 - 새 파일 `scripts/metrics.ts` 는 실행되지 않는 순수 모듈이다(`sweep.ts` 는 import 하면 실행되므로 따로 둔다). `tests/causality.test.ts` 가 이 파일을 import 한다(`tsconfig.json` 의 `include` 에 `scripts` 가 있다).
 - 시간·난수를 쓰지 않는다. 같은 시드면 지표도 같다(`msPerShift` 만 예외).
 
@@ -128,6 +128,8 @@ export const SAMPLE_EVERY = 5;          // 틱 (= 1초). 표본은 step() 뒤에
 export const STALL_SEC = 60, FORGOT_SEC = 30, REPEAT_WARN = 6, MIN_SCEN_N = 5;
 export const CHAIN_DEPTH_GATE = 4, CHAINED_SHIFT_GATE = 8;
 export const STALL_ALLOW = 0;            // 구현 때 40시드 기준선으로 확인한다. 0 이 아니면 그 수로 두고 래칫 (§2.14)
+export const FORGOT_ALLOW = 0;           // 같은 방식의 래칫 (잊힌 사건)
+export const REPEAT_MAX = Infinity;      // I1-a 기준선을 잰 뒤 정한다 (그 전에는 보고만 — I1-b 완료 조건 5 가 쓴다)
 
 export const SYSTEMS = ['call', 'dispatch', 'field', 'road', 'hospital', 'hazard', 'building', 'crew', 'equip', 'infra', 'other', 'aid', 'disaster', 'carry'] as const;
 export type SystemId = typeof SYSTEMS[number];
@@ -146,10 +148,14 @@ export function checkMetrics(m: MetricsSummary): string[];                  // �
 ```
 
 - `runWithProbe` 는 `while (!sim.ended && n++ < maxTicks) { sim.step(); if (sim.tick % SAMPLE_EVERY === 0) probe.sample(); }`. `runToEnd` 와 같은 순서로 `step()` 만 부른다.
+- **측정 도구의 오류는 시뮬레이션을 막지 않는다.** `probe.sample()` 은 `runWithProbe` 안에서 try/catch 로 감싼다: 한 번 던지면 `probe.failed = true`, 오류 수를 `probe.errors` 에 더하고 그 뒤로는 표본을 뜨지 않는다(시뮬레이션은 끝까지 돈다 — `sweep.ts` 의 기존 try 가 그 시드를 통째로 실패로 치면 측정 도구의 버그가 기존 집계를 바꾸게 된다). `sweep.ts` 는 `shiftMetrics(sim, probe)` 도 try/catch 로 감싼다: 던지면 그 교대의 지표는 `null`(`summarize` 가 건너뛴다)이고 오류 수에 1. 표본이 실패한 교대는 표본 항목만 `null` 로 두고 사후 지표는 낸다. 오류 수는 **새 칸 `metrics.errors`** 에만 넣는다 — 기존 최상위 `errors`(시뮬레이션 예외·보고서 없음, `sweep.ts:58·61`)는 건드리지 않는다.
 - `Probe` 는 `src/sim` 의 함수를 **하나도 부르지 않는다**(부르면 상태를 바꿀 수 있다 — 예: `commander.outstanding`. `findRoute`·`astar` 는 모듈 버퍼를 써서 재진입하면 안 된다 — CLAUDE.md "공유 버퍼"). 필드만 읽고, 비교할 값은 자기 배열에 복사해 둔다.
 - 구간·부대·소품·현장·구조 대상·사건 객체에 `Object.keys`·`in` 을 쓰지 않는다(P1 이후 선택 칸이 `undefined` 로 미리 들어 있다 — CLAUDE.md "자주 도는 객체의 모양"). 칸을 이름으로 읽고 `?? 0` 으로 비교한다(`I.unmet` 의 합도 `Needs` 의 여덟 열쇠 `suppression`·`rescue`·`ems`·`law`·`tactical`·`search`·`traffic`·`eod` 를 metrics.ts 안의 고정 배열로 돌며 구한다).
 - 교대 후 계산은 `sim.events`·`sim.incidents`·`sim.scenes`·`sim.units`·`sim.report` 를 읽는다. `sim.scenes` 는 교대 끝까지 남는다(지우는 코드가 없다).
-- "허위·오인"(`truth.variant` 가 `false`·`prank`, 또는 `FALSE_ALARM` 문제가 있는 사건)은 비율의 분모에서 뺀다(`benign`). `sweep` 의 지금 정의와 맞추되 폭파 협박의 `FALSE_ALARM` 도 뺀다.
+- "허위·오인"(`truth.variant` 가 `false`·`prank`, 또는 `FALSE_ALARM` 문제가 있는 사건)은 비율의 분모에서 뺀다(`benign`). `sweep` 의 지금 정의와 맞추되 폭파 협박의 `FALSE_ALARM` 도 뺀다. 지표마다:
+  - **허위·오인을 빼는 것**: `systems`(avg·extraAvg·share), `replan`, `alt`, `actions`, `variety`, `contention.share`·`byCode`, `stall.idleSecPerIncident`·`queueWaitSecPerIncident`.
+  - **모두 넣는 것**: `chain`(부모 깊이·원인 깊이·`crossIncidentLinks`·`worldLinks`), `systems.spread`(허위 신고에서도 지원 요청 같은 확산은 실제로 일어난다), `stall.candidates`·`forgotten`·`unlocated`·`repeatMax`(교착은 허위 신고에서도 교착이다), `consistency`, 교대 단위 값(`aidPerShift`·`peakOpenAvg`·`peakBusyAvg`)·`divert`·`erWaits`·`erCross`.
+- **여러 교대를 모으는 법**: 사건 단위 비율과 평균(`share`·`avg`·`…PerIncident`)은 모든 교대의 사건을 **한 묶음으로 합쳐** 낸다(교대별 비율의 평균이 아니다 — 사건이 적은 교대가 과하게 무거워지지 않게). 이름이 `PerShift`·`Avg`(교대 단위)로 끝나는 값은 교대별 값의 평균. 시나리오별 엔트로피·가짓수는 교대를 합친 시나리오 묶음에서 계산한다. 수(`n`·`candidates`·`ge3` 등)는 합.
 
 ### 2.3 시스템 목록과 대응표
 
@@ -174,7 +180,7 @@ export function checkMetrics(m: MetricsSummary): string[];                  // �
 
 **`sysOf(e)` 규칙 — 위에서부터 첫 번째로 맞는 것.**
 
-0. `e.tag` 가 있으면(I1-b 가 더하는 선택 칸, §3.3) `TAG_SYS[e.tag]`: `power`·`comms`·`water` → `infra`, `smoke`·`risk` → `hazard`, `hospital` → `hospital`. I1-a 코드는 `(e as { tag?: string }).tag` 로 읽어 칸이 없을 때도 컴파일된다.
+0. `e.tag` 가 있으면(I1-b 가 더하는 선택 칸, §3.3) `TAG_SYS[e.tag]`: `power`·`comms`·`water` → `infra`, `smoke`·`risk` → `hazard`, `hospital` → `hospital`, `carry` → `carry`(I2 가 `WorldTag` 에 더하는 값 — I2 의 `kind 'incident'` 손상 기록처럼 다른 규칙이면 `origin` 이 될 기록도 이 규칙이 먼저 잡는다). 표에 없는 태그는 이 규칙을 건너뛴다. I1-a 코드는 `(e as { tag?: string }).tag` 로 읽어 칸이 없을 때도 컴파일된다.
 1. `e.problem` 이 있으면 문제 코드 표(문자열 키 — 아직 없는 코드도 미리 넣는다):
 
 | 시스템 | 문제 코드 |
@@ -185,13 +191,15 @@ export function checkMetrics(m: MetricsSummary): string[];                  // �
 | `road` | ROUTE_BLOCKED · TRAFFIC_DELAY |
 | `crew` | RESPONDER_HURT · FATIGUE · RESPONDER_KILLED(H1) |
 | `equip` | EQUIP_FAIL · WATER_OUT |
-| `hazard` | ESCALATION · HIDDEN_HAZARD · SECONDARY_COLLISION · SUSPECT_FLED · EXPLOSION(X6) |
+| `hazard` | ESCALATION · HIDDEN_HAZARD · SECONDARY_COLLISION · SUSPECT_FLED · EXPLOSION(X6) · SUSPECT_DIED(H1 5단계) |
 | `building` | STRUCT_COLLAPSE(X6) · BURNOUT(X6) |
 | `hospital` | HOSPITAL_FULL(I1-b) |
 | `infra` | INFRA_FAIL(I1-b) |
 | `field` | PATH_BLOCKED · VICTIM_MISSED · COMM_FAIL · SCENE_MISMATCH · LATE_DISCOVERY · RECOUNT · TIMEOUT · METHOD_FAIL(R2) · DANGER_SIGN(X6) · WITHDRAWAL(X6) · 표에 없는 코드 |
 
-2. `kind` 로: `call` → call · `assess` → dispatch · `dispatch` → dispatch(단, 문구 규칙 T1 이면 aid) · `traffic` → road · `hazard` → 사건 없음(`incidentId < 0`)이면 disaster, 아니면 hazard · `casualty` → `role === 'UNIT'` 이면 hospital(병원 도착·인계 기록뿐이다, `resources.ts:354`), 아니면 field · `unit` → 문구 규칙 T2 이면 hospital, 아니면 field · `incident` → origin · `shift` → 문구 규칙 T5 이면 carry, 아니면 none · 나머지(`arrive`·`command`·`radio`·`action`·`resolve`·`recovery`) → field.
+지금 있는 29개는 표에 빠짐없이 들어 있다(검토 때 확인). 다른 설계서가 더하는 코드도 모두 미리 넣었다: RESPONDER_KILLED·SUSPECT_DIED(H1), METHOD_FAIL(R2), DANGER_SIGN·WITHDRAWAL·STRUCT_COLLAPSE·EXPLOSION·BURNOUT(X6), HOSPITAL_FULL·INFRA_FAIL(I1-b). 새 설계서가 코드를 더하면 이 표에 한 줄 — 테스트 3 이 빠진 것을 알려 준다.
+
+2. `kind` 로: `call` → call · `assess` → dispatch · `dispatch` → dispatch(단, 문구 규칙 T1 이면 aid) · `traffic` → road · `hazard` → 사건 없음(`incidentId < 0`)이면 disaster, 아니면 hazard · `casualty` → 문구 규칙 T4(병원 인계)에 맞으면 hospital, 아니면 field(지금은 `role 'UNIT'` 인 `casualty` 기록이 인계 한 곳뿐이지만 R1 이 호이스트 인양 같은 UNIT 기록을 더하므로 역할이 아니라 문구로 가린다) · `unit` → 문구 규칙 T2 이면 hospital, T6 이면 crew, 아니면 field · `incident` → origin · `shift` → 문구 규칙 T5 이면 carry, 아니면 none · 나머지(`arrive`·`command`·`radio`·`action`·`resolve`·`recovery`) → field.
 
 **문구 규칙** — 칸이 없어 문구로만 가릴 수 있는 곳. 표로 모아 두고 테스트가 "아직 맞는 기록이 있다"를 본다(문구가 바뀌면 테스트가 깨진다):
 
@@ -202,6 +210,8 @@ export function checkMetrics(m: MetricsSummary): string[];                  // �
 | T3 이송 출발(일치 검사 C5 용) | `/싣고 (.+?)(?:으로\|로) 출발/` | `sceneManager.ts:211` |
 | T4 병원 인계(C5 용) | `/^(\S+): (.+?) 도착, 환자/` | `resources.ts:354` |
 | T5 이어받은 상태(I2) | `/^지난 교대에서 이어받은 상태/` | I2 의 `announceCarry`(I2 §3.7). I2 전에는 맞는 기록이 없다 — 테스트는 I2 뒤에 켠다 |
+| T6 결원 운용 중단 | `/대원 전원 부상으로 운용 중단/` | `resources.ts:315`(`kind 'unit'`, 사건 없음). 맞는 기록은 대원이 다치는 교대에서만 나온다 — 테스트는 그런 시드를 찾아 고정하거나, 찾지 못하면 H1 뒤에 켠다 |
+| T7 출동 지령(C4·전환 영향 용) | `/^출동 지령: (\S+) → 사건/` | `dispatcher.ts` `sendUnit` 의 기록. 잡은 묶음은 호출부호(공백 없음 — `UNIT_DEFS`·지원 부대 이름) |
 
 **사건별 시스템 집합 `S(I)`** = 그 사건 기록(`incidentId === I.id`)의 `sysOf` 합집합 ∪ 상태로 본 것:
 

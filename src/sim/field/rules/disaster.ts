@@ -66,7 +66,13 @@ function swamp(sim: Sim, s: Scene, I: Incident): number {
     s.tiles[i] = T.WATER; s.decor[i] = 0; s.fuel[i] = 0; s.fire[i] = 0;
   }
   s.staticVersion++;
-  for (const r of s.regions) if (r.searchable && !r.tiles.some((i) => staticPass(s.tiles[i]))) r.searchable = false;      // 통째로 잠긴 구역은 더 살필 수 없다
+  // 구역은 물에 잠기지 않은 쪽만 남는다. 통째로 잠긴 구역은 더 살필 수 없다
+  for (const r of s.regions) {
+    if (r.y1 < half) continue;
+    r.tiles = r.tiles.filter((i) => staticPass(s.tiles[i]));
+    if (!r.tiles.length || r.y0 >= half) { r.searchable = false; continue; }
+    r.y1 = half - 1; r.cy = (r.y0 + r.y1) / 2;
+  }
   const dry = (x: number): { x: number; y: number } => {
     for (let y = half - 1; y >= top; y--) for (const dx of [0, 1, -1, 2, -2, 3, -3]) { const xx = Math.max(0, Math.min(s.w - 1, x + dx)); const i = tidx(s, xx, y); if (staticPass(s.tiles[i]) && s.propAt[i] < 0) return { x: xx, y }; }
     return { x: s.safe.x, y: s.safe.y };

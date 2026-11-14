@@ -92,3 +92,11 @@ function reopenEdges(sim, d, pred?): void                    // closedReason ===
 - **지진의 사건들**은 `d.queue` 에 넣고, 동시 진행 상한(`maxConcurrent + 4`)에 걸린 것은 버리지 않고 자리가 날 때까지 미룬다(여파가 끝날 때까지). 해일의 사건들도 같다.
 - `d.log` 에는 사건 하나하나가 아니라 단계 전환과 큰일(정전, 여진, 주불 진화 …)만 적는다. 보고서의 첫 줄은 `d.spawned` 의 결과로 만든다.
 - 특보 띠는 가운데 화면의 맨 위에 얹고(`grid-area: center`), 띠가 있는 동안 `.overlay.tl`·`.tr`·`.call-wrap` 을 띠 높이만큼 내린다(`styles.css` 의 disaster 블록, `:has`). U1 이 그 자리들을 옮기면 이 세 줄도 함께 봐야 한다.
+
+### 합칠 때 고쳐야 하는 한 줄 (`tests/sim.test.ts`, 이 묶음은 그 파일을 건드리지 않았다)
+
+`tests/sim.test.ts` 의 '생활 사건 시나리오' 시험 끝에 있는
+`for (const q of SCENARIOS) expect(seen[...] ?? 0, q.name).toBeGreaterThan(2);` 는 시나리오 표의 **모든** 줄이 재난 없는 40교대에서 세 번 넘게 나오기를 요구한다.
+재난에 딸린 시나리오(`tag: 'disaster'`, `share: 0`)는 평소 교대에 나오지 않으므로 이 한 줄에서 `npm run check` 가 멈춘다(`산불: expected 0 to be greater than 2`).
+평소에 추첨되는 시나리오만 보도록 고치면 된다: `for (const q of SCENARIOS) if (q.tag !== 'disaster' && q.share > 0) expect(…)`.
+그 줄을 빼면 그 시험의 나머지 검사(나무가 막은 구간, 이름표, 성공 비율, 한계 시간)는 그대로 통과하고, 재난 없는 교대의 기록 해시는 이 묶음 전과 같다.

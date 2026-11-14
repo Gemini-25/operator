@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { nodeName } from '../sim/city';
 import { PROBLEM_LABEL } from '../sim/debrief';
 import { KNOBS, PRESETS, difficultyLabel, overallLevel, presetOf } from '../sim/difficulty';
 import type { Difficulty, PresetId } from '../sim/difficulty';
@@ -63,7 +64,8 @@ function IncidentCard({ sim, I, director, truth }: { sim: Sim; I: Incident; dire
           ? <span className="badge" style={{ color: OUTCOME_COLOR[I.result.outcome], borderColor: OUTCOME_COLOR[I.result.outcome] }}>{OUTCOME_NAME[I.result.outcome]}</span>
           : <span className={`badge phase-${I.phase}`}>{PHASE[I.phase]}</span>}
       </div>
-      <div className="sub">{I.locationKnown || truth ? I.truth.label : '위치 확인 중…'}</div>
+      <div className="sub">{!I.locationKnown && !truth ? '위치 확인 중…' : I.reportedNode !== I.truth.nodeId && !truth ? `${nodeName(sim.city, I.reportedNode)} 부근 (신고 기준)` : I.truth.label}</div>
+      {truth && I.locationKnown && I.reportedNode !== I.truth.nodeId && I.phase !== 'closed' && <div className="sub warn">관찰자 정보: 신고된 위치({nodeName(sim.city, I.reportedNode)})가 틀렸습니다</div>}
       {truth && as && as.type !== I.truth.type && <div className="sub warn">관찰자 정보: 실제는 {TYPE_NAME[I.truth.type]}</div>}
       {I.phase !== 'closed' && as && (
         <div className="row small">
@@ -197,7 +199,7 @@ export function DecisionPanel({ sim, director, truth }: { sim: Sim; director: Ca
         <h4>② 상황 분석 AI</h4>
         {as ? (<>
           <div className="probs">
-            {(['fire', 'traffic', 'search', 'armed'] as const).map((t) => (
+            {(['fire', 'traffic', 'search', 'armed', 'medical'] as const).map((t) => (
               <div key={t} className="prob"><span>{TYPE_NAME[t]}</span><Bar v={I!.fieldType ? (I!.fieldType === t ? 1 : 0) : as.probs[t]} color={TYPE_COLOR[t]} w={120} /><span className="num">{pct(I!.fieldType ? (I!.fieldType === t ? 1 : 0) : as.probs[t])}</span></div>
             ))}
           </div>
@@ -409,22 +411,22 @@ export function CallPanel({ sim, truth }: { sim: Sim; truth: boolean }) {
   if (!call) for (let i = sim.calls.length - 1; i >= 0; i--) { const c = sim.calls[i]; if (c.state === 'done' && c.endedAt >= 0 && sim.t - c.endedAt < 6) { call = c; break; } }
   const ringing = sim.calls.filter((c) => c.state === 'ringing').length;
   if (!call) return ringing ? <div className="call"><div className="call-head"><Icon name="phone" size={15} /><b>신고 전화 대기 {ringing}건</b><span className="live">● 벨 울림</span></div></div> : null;
-  const I = sim.incidents[call.incidentId];
+  const I = call.incidentId >= 0 ? sim.incidents[call.incidentId] : null;
   const lines = call.transcript.slice(-5);
-  const claims = I.claims.filter((c) => c.callId === call!.id);
+  const claims = I ? I.claims.filter((c) => c.callId === call!.id) : [];
   const active = call.state === 'active';
   return (
     <div className={`call ${active ? 'active' : 'ended'}`}>
       <div className="call-head">
         <span className={`ring ${active ? 'on' : ''}`}><Icon name="phone" size={15} /></span>
-        <b>{call.isFollowup ? '추가 신고' : '신고 통화'}</b><span className="inc">{I.code}</span>
+        <b>{call.kind === 'nuisance' ? '비긴급 전화' : call.isFollowup ? '추가 신고' : '신고 통화'}</b>{I && <span className="inc">{I.code}</span>}
         <span className="dur">{fmtDur((active ? sim.t : call.endedAt) - call.answeredAt)}</span>
         {active ? <span className="live">● 통화 중</span> : <span className="dim">통화 종료</span>}
       </div>
-      <div className="call-sub">신고 접수 AI ↔ 신고자 {call.caller.name} <span className="dim">· 화법: {personaName(call.caller.persona)}</span></div>
+      <div className="call-sub">신고 접수 AI ↔ {call.kind === 'nuisance' ? '발신자' : '신고자'} {call.caller.name} {call.kind !== 'nuisance' && <span className="dim">· 화법: {call.caller.persona === 'prank' && !truth ? '확인 중' : personaName(call.caller.persona)}</span>}</div>
       <div className="bubbles">
         {lines.map((l, k) => <div key={call!.transcript.length - lines.length + k} className={`bub ${l.who === 'CALLER' ? 'caller' : 'ai'}`}>{l.text}</div>)}
-        {active && call.phase === 'wait' && <div className="bub caller typing"><i /><i /><i /></div>}
+        {active && call.kind !== 'nuisance' && call.phase === 'wait' && <div className="bub caller typing"><i /><i /><i /></div>}
       </div>
       {claims.length > 0 && (
         <div className="extracted">

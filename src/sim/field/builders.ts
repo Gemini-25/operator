@@ -59,7 +59,7 @@ function addCas(s: Scene, x: number, y: number, mob: Mobility, health: number, b
   const c: Casualty = {
     id: s.casualties.length, label: String.fromCharCode(65 + s.casualties.length),
     x, y, px: x, py: y, health, bleed, mob, trapWork: mob === 'trapped' ? 14 : 0, concealment, inVehicle: null,
-    where: 'scene', treated: false, treatProg: 0, dead: false, walking: false, path: null, pathI: 0, panic: false,
+    where: 'scene', treated: false, treatProg: 0, dead: false, treatQ: 0, bleed0: bleed, bystander: false, walking: false, path: null, pathI: 0, panic: false,
     wander: false, wanderT: 0, isTarget: false, hostage: false,
     tDiscovered: -1, tFreed: -1, tTreated: -1, tSafe: -1, tLoaded: -1, tDead: -1, tHospital: -1, discoveredBy: -1, causeEvent: -1,
     ...extra,
@@ -73,6 +73,7 @@ function addHostile(s: Scene, x: number, y: number, weapon: Hostile['weapon'], a
     id: s.hostiles.length, label: '용의자 ' + (s.hostiles.length + 1), x, y, px: x, py: y,
     health: 100, morale: 0.55 + aggression * 0.45, aggression, skill, weapon, state: 'hold', hidden, cooldown: 1, fleeAt,
     path: null, pathI: 0, negot: 0, seenOfficers: 0, targetRid: -1,
+    facing: Math.PI / 2, lookAt: 0, stunUntil: -1, hostageId: -1, deadline: Infinity, alertUntil: -1,
   };
   s.hostiles.push(h);
   return h;
@@ -134,7 +135,8 @@ function buildFire(sim: Sim, I: Incident, rng: Rng): Scene {
   for (let i = 0; i < s.fuel.length; i++) if (s.fuel[i] > 0) s.totalFuelTiles++;
   // 발화
   const origin = rng.pick(rooms);
-  const seeds = sev >= 3 ? 3 : sev >= 2 ? 2 : 1;
+  const falseAlarm = I.truth.variant === 'false';      // 오인 신고: 탄 냄새만 나고 불은 없다
+  const seeds = falseAlarm ? 0 : sev >= 3 ? 3 : sev >= 2 ? 2 : 1;
   for (let k = 0; k < seeds; k++) { const i = freeTileIn(s, origin, rng); s.fire[i] = rng.range(0.4, 0.6) + sev * 0.09; }
   // 규모가 큰 화재: 발화실 문이 열려 있고(연소 확대가 빠름), 가장 큰 화재는 인접 실에도 이미 불이 붙어 있다
   if (sev >= 2) { const d = s.props.find((p) => p.kind === 'door' && s.region[tidx(s, p.x, p.y)] === origin.id); if (d) d.open = true; }
@@ -152,7 +154,7 @@ function buildFire(sim: Sim, I: Incident, rng: Rng): Scene {
     const d = s.props.find((p) => p.kind === 'door' && s.region[tidx(s, p.x, p.y)] === r.id);
     if (d) { d.locked = true; d.blocking = true; d.hp = rng.range(5, 9); s.propAt[tidx(s, d.x, d.y)] = d.id; }
   }
-  if (rng.chance(hz(dist === 'industrial' ? 0.42 : 0.13))) {
+  if (!falseAlarm && rng.chance(hz(dist === 'industrial' ? 0.42 : 0.13))) {
     const r = rng.pick(rooms.filter((q) => q !== origin));
     const i = freeTileIn(s, r, rng);
     addProp(s, 'gas', i % SW, (i / SW) | 0, {});
@@ -163,7 +165,7 @@ function buildFire(sim: Sim, I: Incident, rng: Rng): Scene {
     for (const i of r.tiles) s.shadow[i] = 1;
   }
   // 구조 대상
-  const count = sev >= 3 ? rng.int(2, 4) : sev >= 2 ? rng.int(1, 3) : rng.int(0, 1);
+  const count = falseAlarm ? 0 : sev >= 3 ? rng.int(2, 4) : sev >= 2 ? rng.int(1, 3) : rng.int(0, 1);
   for (let k = 0; k < count; k++) {
     const r = rng.chance(0.9) ? rng.pick(rooms.filter((q) => q !== origin)) : origin;
     const i = freeTileIn(s, r, rng, (q) => { for (let f = 0; f < s.fire.length; f++) if (s.fire[f] > 0 && Math.hypot((f % SW) - (q % SW), ((f / SW) | 0) - ((q / SW) | 0)) < 2.5) return true; return false; });
@@ -329,6 +331,27 @@ function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {
   const sk = (v: number): number => Math.max(0.1, Math.min(0.95, v + tn.skillShift));
   const fleeBase = sim.t + rng.range(85, 150) + tn.fleeShift;
   const inShop = () => { const i = freeTileIn(s, shop, rng, (q) => ((q / SW) | 0) > 8); return { x: i % SW, y: (i / SW) | 0 }; };
+  if (variant === 'prank') {
+    // 장난 전화: 가게는 평소와 다름없다
+    s.leadDept = 'police';
+    return s;
+  }
+  if (variant === 'hostage') {
+    // 인질 사건: 용의자가 사무실에서 인질을 붙잡고 있다
+    const i = freeTileIn(s, office, rng);
+    const h = addHostile(s, i % SW, (i / SW) | 0, 'gun', ag(rng.range(0.5, 0.75)), sk(rng.range(0.4, 0.65)), false, Infinity);
+    h.facing = Math.PI / 2; h.deadline = sim.t + rng.range(190, 250) + tn.fleeShift * 2;
+    const nH = rng.int(1, 2);
+    for (let k = 0; k < nH; k++) {
+      const j = freeTileIn(s, office, rng, (q) => Math.hypot((q % SW) - h.x, ((q / SW) | 0) - h.y) > 1.6 || (q % SW === h.x && ((q / SW) | 0) === h.y));
+      const c = addCas(s, j % SW, (j / SW) | 0, 'mobile', rng.range(85, 100), 0, 0.05, { hostage: true });
+      if (k === 0) h.hostageId = c.id;
+    }
+    if (rng.chance(tn.accompliceProb * 0.7)) { const p = inShop(); const g = addHostile(s, p.x, p.y, 'gun', ag(rng.range(0.4, 0.65)), sk(rng.range(0.3, 0.55)), false, Infinity); g.facing = Math.PI / 2; }
+    if (rng.chance(0.4)) { const j = freeTileIn(s, storage, rng); addCas(s, j % SW, (j / SW) | 0, 'mobile', rng.range(85, 100), 0, rng.range(0.25, 0.45), { hostage: true }); }
+    s.leadDept = 'police';
+    return s;
+  }
   if (variant === 'dispute') {
     const p = inShop();
     addHostile(s, p.x, p.y, rng.chance(tn.knifeProb) ? 'knife' : 'none', ag(rng.range(0.12, 0.4)), sk(0.3), false, Infinity);
@@ -360,9 +383,39 @@ function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {
   return s;
 }
 
+// ───────────────────────── 응급 환자 ─────────────────────────
+function buildMedical(sim: Sim, I: Incident, rng: Rng): Scene {
+  const s = baseScene(sim, I, rng);
+  const variant = I.truth.variant;
+  for (let y = 17; y < SH; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
+  const bx0 = 9, bx1 = 20, by0 = 4, by1 = 12;
+  for (let y = by0; y <= by1; y++) for (let x = bx0; x <= bx1; x++) set(s, x, y, x === bx0 || x === bx1 || y === by0 || y === by1 ? T.WALL : T.FLOOR);
+  for (let y = by0 + 1; y < by1; y++) set(s, 15, y, T.WALL);
+  for (let x = bx0 + 1; x < 15; x++) set(s, x, 8, T.WALL);
+  set(s, 15, 10, T.DOOR); addProp(s, 'door', 15, 10, { open: true });
+  set(s, 12, 8, T.DOOR); addProp(s, 'door', 12, 8, { open: rng.chance(0.6) });
+  set(s, 12, by1, T.DOOR);
+  const locked = rng.chance(Math.min(0.9, 0.16 * sim.tune.hazardMul));       // 혼자 쓰러져 문을 열어 줄 사람이 없다
+  addProp(s, 'door', 12, by1, { open: false, locked, blocking: locked, hp: rng.range(5, 8) });
+  for (const [x, y] of [[11, by0], [18, by0], [bx0, 6], [bx1, 8], [17, by1]]) set(s, x, y, T.WINDOW);
+  const living = addRegion(s, '거실', 'room', 10, 9, 14, 11, true, true);
+  const bed = addRegion(s, '침실', 'room', 10, 5, 14, 7, true, true);
+  const kitchen = addRegion(s, '주방', 'room', 16, 5, 19, 11, true, true);
+  for (const [x, y, r] of [[15, 10, kitchen.id], [12, 8, bed.id], [12, by1, living.id]] as number[][]) { const i = tidx(s, x, y); s.region[i] = r; s.regions[r].tiles.push(i); }
+  s.exits.push({ x: 12, y: by1 + 1 });
+  s.staging = { x: 3, y: 17 }; s.safe = { x: 4, y: 14 }; s.vantage = { x: 12, y: 14 };
+  const room = rng.pick([living, bed, kitchen]);
+  const i = freeTileIn(s, room, rng);
+  if (variant === 'arrest') addCas(s, i % SW, (i / SW) | 0, 'immobile', rng.range(58, 70), rng.range(0.5, 0.66), 0.05);
+  else if (variant === 'trauma') addCas(s, i % SW, (i / SW) | 0, 'immobile', rng.range(60, 80), rng.range(0.15, 0.24), 0.05);
+  else addCas(s, i % SW, (i / SW) | 0, 'immobile', rng.range(70, 88), rng.range(0.05, 0.1), 0.05);
+  s.leadDept = 'ems';
+  return s;
+}
+
 export function buildScene(sim: Sim, I: Incident, rng: Rng): Scene {
-  const s = I.truth.type === 'fire' ? buildFire(sim, I, rng) : I.truth.type === 'traffic' ? buildTraffic(sim, I, rng) : I.truth.type === 'search' ? buildSearch(sim, I, rng) : buildArmed(sim, I, rng);
+  const s = I.truth.type === 'fire' ? buildFire(sim, I, rng) : I.truth.type === 'traffic' ? buildTraffic(sim, I, rng) : I.truth.type === 'search' ? buildSearch(sim, I, rng) : I.truth.type === 'medical' ? buildMedical(sim, I, rng) : buildArmed(sim, I, rng);
   // 심각도 설정: 부상 악화 속도
-  for (const c of s.casualties) c.bleed *= sim.tune.bleedMul;
+  for (const c of s.casualties) { c.bleed *= sim.tune.bleedMul; c.bleed0 = c.bleed; }
   return s;
 }

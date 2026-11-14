@@ -1,6 +1,6 @@
 // ResourceManager — 부대·대원 명부, 차량 상태와 도시 지도 위 이동.
 
-import { edgeName, edgeTime, findRoute, weatherSpeedFactor } from './city';
+import { edgeName, edgeTime, findRoute, nodeName, weatherSpeedFactor } from './city';
 import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
 import { unitArrived } from './field/sceneManager';
@@ -8,18 +8,25 @@ import { Rng } from './rng';
 import type { Dept, Incident, Responder, Unit, UnitCaps, UnitKind } from './types';
 import { clamp, fmtSec } from './util';
 
-const NAMES = ['김도윤', '이서준', '박하준', '최민재', '정지호', '강현우', '윤서연', '한지민', '오수아', '임채원', '신유나', '조은서'];
+const NAMES = ['김도윤', '이서준', '박하준', '최민재', '정지호', '강현우', '윤서연', '한지민', '오수아', '임채원', '신유나', '조은서',
+  '배준영', '류시우', '문가은', '송태윤', '황보라', '안지후', '남궁민', '서예린'];
 
-interface UnitDef { callsign: string; dept: Dept; kind: UnitKind; facility: number; caps: UnitCaps; waterMax: number; tool: number; med: number; armor: number }
+interface UnitDef { callsign: string; dept: Dept; kind: UnitKind; facility: number; caps: UnitCaps; waterMax: number; tool: number; med: number; armor: number; minLevel: number }
 const caps = (suppression: number, rescue: number, ems: number, law: number, tactical: number, search: number, traffic: number): UnitCaps =>
   ({ suppression, rescue, ems, law, tactical, search, traffic });
+// minLevel: 난이도의 "부대 규모"가 이 값 이상일 때 편성된다 (1 = 4대, 2 = 5대, 3 = 6대, 4 = 8대, 5 = 10대).
+// 앞의 여섯 줄(기본 편성)은 순서를 바꾸지 않는다 — 대원 능력치가 이 순서로 뽑힌다.
 const UNIT_DEFS: UnitDef[] = [
-  { callsign: '진압1', dept: 'fire', kind: 'engine', facility: 0, caps: caps(1.0, 0.55, 0.2, 0, 0, 0.5, 0.4), waterMax: 100, tool: 0.55, med: 0.35, armor: 0.1 },
-  { callsign: '구조1', dept: 'fire', kind: 'rescue', facility: 1, caps: caps(0.75, 1.0, 0.25, 0, 0, 0.8, 0.4), waterMax: 60, tool: 1.0, med: 0.4, armor: 0.1 },
-  { callsign: '구급1', dept: 'ems', kind: 'als', facility: 0, caps: caps(0, 0.15, 1.0, 0, 0, 0.3, 0.2), waterMax: 0, tool: 0.1, med: 1.0, armor: 0 },
-  { callsign: '구급2', dept: 'ems', kind: 'bls', facility: 2, caps: caps(0, 0.15, 0.8, 0, 0, 0.3, 0.2), waterMax: 0, tool: 0.1, med: 0.75, armor: 0 },
-  { callsign: '순찰1', dept: 'police', kind: 'patrol', facility: 3, caps: caps(0, 0.15, 0.15, 0.8, 0.5, 0.7, 1.0), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.2 },
-  { callsign: '기동1', dept: 'police', kind: 'tactical', facility: 4, caps: caps(0, 0.15, 0.15, 1.0, 1.0, 0.7, 0.7), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.5 },
+  { callsign: '진압1', dept: 'fire', kind: 'engine', facility: 0, caps: caps(1.0, 0.55, 0.2, 0, 0, 0.5, 0.4), waterMax: 100, tool: 0.55, med: 0.35, armor: 0.1, minLevel: 1 },
+  { callsign: '구조1', dept: 'fire', kind: 'rescue', facility: 1, caps: caps(0.75, 1.0, 0.25, 0, 0, 0.8, 0.4), waterMax: 60, tool: 1.0, med: 0.4, armor: 0.1, minLevel: 1 },
+  { callsign: '구급1', dept: 'ems', kind: 'als', facility: 0, caps: caps(0, 0.15, 1.0, 0, 0, 0.3, 0.2), waterMax: 0, tool: 0.1, med: 1.0, armor: 0, minLevel: 1 },
+  { callsign: '구급2', dept: 'ems', kind: 'bls', facility: 2, caps: caps(0, 0.15, 0.8, 0, 0, 0.3, 0.2), waterMax: 0, tool: 0.1, med: 0.75, armor: 0, minLevel: 3 },
+  { callsign: '순찰1', dept: 'police', kind: 'patrol', facility: 3, caps: caps(0, 0.15, 0.15, 0.8, 0.5, 0.7, 1.0), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.2, minLevel: 1 },
+  { callsign: '기동1', dept: 'police', kind: 'tactical', facility: 4, caps: caps(0, 0.15, 0.15, 1.0, 1.0, 0.7, 0.7), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.5, minLevel: 2 },
+  { callsign: '진압2', dept: 'fire', kind: 'engine', facility: 1, caps: caps(1.0, 0.55, 0.2, 0, 0, 0.5, 0.4), waterMax: 100, tool: 0.55, med: 0.35, armor: 0.1, minLevel: 4 },
+  { callsign: '구급3', dept: 'ems', kind: 'als', facility: 2, caps: caps(0, 0.15, 1.0, 0, 0, 0.3, 0.2), waterMax: 0, tool: 0.1, med: 1.0, armor: 0, minLevel: 4 },
+  { callsign: '순찰2', dept: 'police', kind: 'patrol', facility: 4, caps: caps(0, 0.15, 0.15, 0.8, 0.5, 0.7, 1.0), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.2, minLevel: 5 },
+  { callsign: '구조2', dept: 'fire', kind: 'rescue', facility: 0, caps: caps(0.75, 1.0, 0.25, 0, 0, 0.8, 0.4), waterMax: 60, tool: 1.0, med: 0.4, armor: 0.1, minLevel: 5 },
 ];
 
 export const UNIT_KIND_NAME: Record<UnitKind, string> = { engine: '진압 펌프차', rescue: '구조 공작차', als: '전문 구급차', bls: '일반 구급차', patrol: '순찰차', tactical: '기동 순찰차' };
@@ -37,18 +44,20 @@ export function createRoster(sim: Sim): void {
   const rosterRng = new Rng(0x51ab7e).fork('roster-v1');
   const equipRng = sim.rng.fork('equipment');
   const tn = sim.tune;
-  let rid = 0;
-  UNIT_DEFS.forEach((d, i) => {
+  UNIT_DEFS.forEach((d, di) => {
     const f = sim.city.facilities[d.facility];
     const home = sim.city.nodes[f.nodeId];
+    const include = d.minLevel <= tn.unitLevel;
+    const uid = sim.units.length;
     const crew: number[] = [];
     for (let k = 0; k < 2; k++) {
+      // 편성되지 않는 부대도 난수는 똑같이 뽑는다(부대 규모를 바꿔도 같은 대원은 같은 능력치를 갖도록)
       const senior = k === 0;
       const st = () => clamp(rosterRng.range(0.3, 0.95), 0, 1);
       const exp = senior ? rosterRng.range(0.6, 0.97) : rosterRng.range(0.12, 0.6);
       const skill = clamp(st() * 0.6 + exp * 0.4 + 0.05, 0.3, 0.98);
       const r: Responder = {
-        id: rid, name: NAMES[rid], dept: d.dept, unitId: i, senior,
+        id: sim.responders.length, name: NAMES[di * 2 + k], dept: d.dept, unitId: uid, senior,
         skill, judgment: clamp(st() * 0.65 + exp * 0.35, 0.2, 0.98), composure: st(), fitness: st(), teamwork: st(), experience: exp,
         skills: { fire: 0.05, rescue: 0.2, medical: 0.2, law: 0.05 },
         trait: '', health: 100, stamina: tn.startStamina, status: 'ok', xpGained: 0, incidentsWorked: 0,
@@ -57,16 +66,18 @@ export function createRoster(sim: Sim): void {
       else if (d.dept === 'ems') r.skills = { fire: 0.05, rescue: 0.25, medical: clamp(skill + (d.kind === 'als' ? 0.08 : 0), 0, 1), law: 0.05 };
       else r.skills = { fire: 0.05, rescue: 0.22, medical: 0.22, law: clamp(skill + (d.kind === 'tactical' ? 0.06 : 0), 0, 1) };
       r.trait = traitOf(r);
-      sim.responders.push(r);
-      crew.push(rid++);
+      if (include) { crew.push(r.id); sim.responders.push(r); }
     }
+    const pump = d.dept === 'fire' ? equipRng.range(tn.pumpMin, tn.pumpMax) : 1;
+    if (!include) return;
     const u: Unit = {
-      id: i, callsign: d.callsign, dept: d.dept, kind: d.kind, crew, homeNode: f.nodeId, homeName: f.name,
+      id: uid, callsign: d.callsign, dept: d.dept, kind: d.kind, crew, homeNode: f.nodeId, homeName: f.name,
       state: 'available', x: home.x, y: home.y, px: home.x, py: home.y, nodeId: f.nodeId,
       route: null, seg: 0, segT: 0, pendingDest: null, destNode: null, incidentId: null, timer: 0,
       caps: d.caps, water: d.waterMax * tn.waterMul, waterMax: d.waterMax * tn.waterMul, hydrant: false,
-      pumpCond: d.dept === 'fire' ? equipRng.range(tn.pumpMin, tn.pumpMax) : 1, pumpFailed: false,
+      pumpCond: pump, pumpFailed: false,
       tool: Math.min(1.15, d.tool * tn.toolMul), medLevel: Math.min(1.1, d.med * tn.medMul), armor: Math.min(0.8, d.armor * tn.armorMul),
+      flashbangs: d.kind === 'tactical' ? tn.flashbangs : 0,
       patients: [], patientsIncident: null,
       dispatchedAt: -1, estArrive: -1, diverted: false, busyTime: 0, runs: 0, boardOrder: null,
     };
@@ -107,8 +118,8 @@ export function dispatchUnit(sim: Sim, u: Unit, I: Incident, eta: number): void 
   const wasMoving = u.state === 'returning' || u.state === 'enroute';
   u.incidentId = I.id; u.dispatchedAt = sim.t; u.estArrive = sim.t + eta; u.runs++;
   u.boardOrder = null;
-  if (wasMoving) { u.state = 'enroute'; sendUnitTo(sim, u, I.truth.nodeId); }
-  else { u.state = 'turnout'; u.timer = 5 + (1 - sim.responders[u.crew[0]].experience) * 3; u.destNode = I.truth.nodeId; }
+  if (wasMoving) { u.state = 'enroute'; sendUnitTo(sim, u, I.reportedNode); }
+  else { u.state = 'turnout'; u.timer = 5 + (1 - sim.responders[u.crew[0]].experience) * 3; u.destNode = I.reportedNode; }
   if (I.assigned.indexOf(u.id) < 0) I.assigned.push(u.id);
   if (I.everAssigned.indexOf(u.id) < 0) I.everAssigned.push(u.id);
 }
@@ -139,6 +150,20 @@ function arrive(sim: Sim, u: Unit): void {
   if (u.state === 'enroute') {
     const I = u.incidentId !== null ? sim.incidents[u.incidentId] : null;
     if (!I || I.phase === 'closed') { releaseUnit(sim, u); return; }
+    if (u.nodeId !== I.truth.nodeId) {
+      // 신고된 위치에 와 보니 현장이 없다 → 관제가 신고자에게 다시 확인해 위치를 바로잡는다
+      if (!I.addressFixed) {
+        I.addressFixed = true;
+        const wrong = I.reportedNode; I.reportedNode = I.truth.nodeId;
+        const ev = raiseProblem(sim, I, 'WRONG_ADDRESS', `신고 위치(${nodeName(sim.city, wrong)})에 현장이 없음`, { role: 'UNIT', actor: u.callsign, imp: 3, causes: I.callEvents.slice(0, 2), text: `${u.callsign}: 신고 위치에 도착했지만 현장이 없습니다. 위치 재확인 바랍니다.` }, false);
+        emit(sim, { inc: I.id, role: 'CALL_TAKER', actor: '신고 접수 AI', kind: 'call', imp: 2, causes: [ev], text: `신고자에게 다시 확인했습니다. 실제 위치는 ${nodeName(sim.city, I.truth.nodeId)}입니다. 출동 부대에 정정 전달.` });
+        for (const uid of I.assigned) { const q = sim.units[uid]; if (q.id !== u.id && q.state === 'enroute') sendUnitTo(sim, q, I.reportedNode); else if (q.state === 'turnout') q.destNode = I.reportedNode; }
+      }
+      u.state = 'turnout'; u.timer = 7; u.destNode = I.truth.nodeId;
+      u.estArrive = sim.t + 7 + etaFor(sim, { ...u, state: 'available' } as Unit, I.truth.nodeId);
+      u.dispatchedAt = Math.min(u.dispatchedAt, sim.t);
+      return;
+    }
     const took = sim.t - u.dispatchedAt, est = u.estArrive - u.dispatchedAt;
     if (took > est * 1.35 + 6) {
       raiseProblem(sim, I, 'TRAFFIC_DELAY', `${u.callsign} 도착이 예상보다 ${fmtSec(took - est)} 지연`, {
@@ -171,7 +196,8 @@ export function tickUnits(sim: Sim): void {
       const sc = sim.scenes[u.patientsIncident];
       if (sc) for (const cid of u.patients) {
         const c = sc.casualties[cid];
-        if (!c.treated && !c.dead && sim.t - c.tLoaded > 6) { c.treated = true; c.tTreated = sim.t; c.bleed *= 1 - 0.9 * Math.min(1, u.medLevel * 0.95); }
+        const q = Math.min(1, u.medLevel * 0.95);
+        if (!c.dead && sim.t - c.tLoaded > 6 && q > c.treatQ + 0.05) { c.treated = true; if (c.tTreated < 0) c.tTreated = sim.t; c.treatQ = q; c.bleed = c.bleed0 * (1 - 0.9 * q); }
       }
     }
     if (u.state === 'available' || u.state === 'oos' || u.state === 'onscene') continue;

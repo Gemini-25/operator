@@ -8,13 +8,13 @@ import type { CityCam } from './camera';
 import { drawIcon, drawVehicle } from './icons';
 
 export const DEPT_COLOR: Record<string, string> = { fire: '#ff7a45', ems: '#2fd39a', police: '#5aa9ff' };
-export const TYPE_COLOR: Record<string, string> = { fire: '#ff6b3d', traffic: '#ffc24a', search: '#58d68d', armed: '#b98cff', unknown: '#9aa7b4' };
+export const TYPE_COLOR: Record<string, string> = { fire: '#ff6b3d', traffic: '#ffc24a', search: '#58d68d', armed: '#b98cff', medical: '#ff7eb6', unknown: '#9aa7b4' };
 export const OUTCOME_COLOR: Record<string, string> = { success: '#5ad17a', partial: '#ffd166', delayed: '#7cc4ff', unresolved: '#b3a0d6', failed: '#ff5d5d' };
 export const FONT = "'Pretendard', 'Noto Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif";
 
 const DISTRICT_TINT: Record<string, string> = { residential: 'rgba(90,140,200,0.075)', commercial: 'rgba(220,180,90,0.065)', industrial: 'rgba(190,120,100,0.075)', outskirts: 'rgba(70,150,100,0.055)' };
 const BUILD_COLOR: Record<string, [number, number, number]> = { residential: [46, 62, 82], commercial: [66, 66, 76], industrial: [72, 58, 54], outskirts: [48, 64, 56] };
-const RESP_LIMIT: Record<string, number> = { fire: 95, armed: 95, traffic: 105, search: 125, unknown: 100 };
+const RESP_LIMIT: Record<string, number> = { fire: 95, armed: 95, traffic: 105, search: 125, medical: 80, unknown: 100 };
 
 let staticLayer: HTMLCanvasElement | null = null;
 let staticFor: unknown = null;
@@ -65,6 +65,12 @@ export function cityXf(sim: Sim, cam: CityCam, w: number, h: number): Xf {
 }
 
 export interface CityOpts { focus: number; truth: boolean; timeMs: number; alpha: number; selectedUnit: number; mini?: boolean }
+
+/** 지도에 사건을 그릴 위치. AI 시점에서는 관제가 "알고 있는" 위치(틀릴 수 있다)에 그린다. */
+export function incidentXY(sim: Sim, I: Incident, truth: boolean): { x: number; y: number } {
+  if (!truth && I.locationKnown && I.reportedNode !== I.truth.nodeId) { const n = sim.city.nodes[I.reportedNode]; return { x: n.x, y: n.y }; }
+  return { x: I.truth.x, y: I.truth.y };
+}
 
 export function incidentShownType(I: Incident, truth: boolean): string {
   if (I.assessment) return I.assessment.type;
@@ -192,7 +198,15 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
   }
   // 사건 핀
   for (const I of sim.incidents) {
-    const x = sx(I.truth.x), y = sy(I.truth.y);
+    const ip = incidentXY(sim, I, o.truth);
+    const x = sx(ip.x), y = sy(ip.y);
+    if (o.truth && !mini && I.phase !== 'closed' && I.locationKnown && I.reportedNode !== I.truth.nodeId) {
+      // 관찰자 시점: 관제가 잘못 알고 있는 위치를 흐리게 표시
+      const n = city.nodes[I.reportedNode], gx = sx(n.x), gy = sy(n.y);
+      ctx.strokeStyle = 'rgba(255,93,93,0.75)'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 5]);
+      ctx.beginPath(); ctx.arc(gx, gy, 15 * zs, 0, 7); ctx.moveTo(gx, gy); ctx.lineTo(x, y); ctx.stroke(); ctx.setLineDash([]);
+      label(ctx, `신고된 위치 (오류) · ${I.code}`, gx, gy - 24 * zs, 10.5 * zs, '#ff9a9a', 'rgba(8,13,18,0.86)', 'rgba(255,93,93,0.6)');
+    }
     if (I.phase === 'closed') {
       if (mini || !I.result) continue;
       ctx.globalAlpha = 0.55; ctx.fillStyle = OUTCOME_COLOR[I.result.outcome];
@@ -244,13 +258,14 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
   }
 }
 
-export function hitCity(sim: Sim, cam: CityCam, w: number, h: number, px: number, py: number): { incident: number; unit: number; wx: number; wy: number } {
+export function hitCity(sim: Sim, cam: CityCam, w: number, h: number, px: number, py: number, truthView = true): { incident: number; unit: number; wx: number; wy: number } {
   const xf = cityXf(sim, cam, w, h);
   const wx = (px - xf.ox) / xf.scale, wy = (py - xf.oy) / xf.scale;
   let incident = -1, bd = 30;
   for (const I of sim.incidents) {
     if (I.phase === 'unreported') continue;
-    const d = Math.hypot(I.truth.x * xf.scale + xf.ox - px, I.truth.y * xf.scale + xf.oy - py);
+    const ip = incidentXY(sim, I, truthView);
+    const d = Math.hypot(ip.x * xf.scale + xf.ox - px, ip.y * xf.scale + xf.oy - py);
     if (d < bd) { bd = d; incident = I.id; }
   }
   let unit = -1, ud = 20;

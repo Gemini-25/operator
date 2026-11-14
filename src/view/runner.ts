@@ -42,7 +42,8 @@ export class Runner {
 
   constructor() {
     this.settings = { speed: 3, autoCam: true, truthView: true, difficulty: { ...NORMAL }, sound: true, volume: 0.5, ...lsGet<Partial<Settings>>(LS_SETTINGS, {}) };
-    if (!parseDifficulty(Object.values(this.settings.difficulty ?? {}).join(','))) this.settings.difficulty = { ...NORMAL };
+    this.settings.difficulty = { ...NORMAL, ...(this.settings.difficulty ?? {}) };
+    if (!parseDifficulty(Object.values(this.settings.difficulty).join(','))) this.settings.difficulty = { ...NORMAL };
     const url = new URL(window.location.href);
     const urlSeed = url.searchParams.get('seed');
     const urlDiff = parseDifficulty(url.searchParams.get('diff'));
@@ -51,7 +52,7 @@ export class Runner {
     if (urlSeed || urlDiff) { this.sim = new Sim(urlSeed || randomSeed(), this.settings.difficulty); }
     else if (cur && cur.seed && cur.tick > 0) {
       // 새로고침 복원: 같은 시드·같은 난이도로 같은 틱까지 다시 돌리면 정확히 같은 상태가 된다
-      this.sim = new Sim(cur.seed, cur.diff ?? NORMAL);
+      this.sim = new Sim(cur.seed, { ...NORMAL, ...(cur.diff ?? {}) });
       this.sim.run(cur.tick);
       this.restoredTicks = cur.tick;
     } else this.sim = new Sim(randomSeed(), this.settings.difficulty);

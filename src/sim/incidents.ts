@@ -3,7 +3,7 @@
 
 import { findRoute, nodeName } from './city';
 import { evaluate } from './debrief';
-import { startCall } from './dispatch/callSystem';
+import { startCall, startNuisanceCall } from './dispatch/callSystem';
 import type { Sim } from './engine';
 import { emit } from './events';
 import { createScene } from './field/sceneManager';
@@ -12,33 +12,43 @@ import type { Rng } from './rng';
 import type { District, Incident, IncidentType } from './types';
 import { OUTCOME_NAME, TYPE_NAME } from './util';
 
-export interface GenState { nextAt: number; lastType: IncidentType | null; count: number; lastCreated: number }
-export function initGenerator(rng: Rng): GenState { return { nextAt: rng.range(10, 22), lastType: null, count: 0, lastCreated: 0 }; }
+export interface GenState {
+  nextAt: number; lastType: IncidentType | null; count: number; lastCreated: number;
+  nextNuisanceAt: number;                                        // 다음 비긴급 전화
+  chain: { at: number; note: string }[];                         // 연쇄 사건 예약 (도주 용의자의 재범 등)
+}
+export function initGenerator(rng: Rng): GenState { return { nextAt: rng.range(10, 22), lastType: null, count: 0, lastCreated: 0, nextNuisanceAt: 40, chain: [] }; }
 
 const PLACE: Record<IncidentType, Record<District, string>> = {
   fire: { residential: '다세대 주택', commercial: '상가 건물', industrial: '공장 작업동', outskirts: '외곽 펜션' },
   traffic: { residential: '주택가 교차로', commercial: '도심 교차로', industrial: '공단 진입로', outskirts: '외곽 도로' },
   search: { residential: '근린공원', commercial: '도심 공원', industrial: '공단 뒤 야산', outskirts: '외곽 산책로' },
   armed: { residential: '주택가 편의점', commercial: '상점가 매장', industrial: '공단 매점', outskirts: '외곽 휴게소' },
+  medical: { residential: '단독 주택', commercial: '오피스텔', industrial: '기숙사', outskirts: '농가 주택' },
 };
 
-function createIncident(sim: Sim): Incident {
+function createIncident(sim: Sim, chainNote = ''): Incident {
   const rng = sim.rngGen, g = sim.gen, tn = sim.tune;
-  const types: IncidentType[] = ['fire', 'traffic', 'search', 'armed'];
-  const w = [0.3, 0.27, 0.2, tn.armedWeight].map((v, k) => (types[k] === g.lastType ? v * 0.3 : v));
-  const type = rng.weighted(types, w);
+  const types: IncidentType[] = ['fire', 'traffic', 'search', 'armed', 'medical'];
+  const w = [0.27, 0.24, 0.17, tn.armedWeight, 0.2].map((v, k) => (types[k] === g.lastType ? v * 0.3 : v));
+  const type = chainNote ? 'armed' : rng.weighted(types, w);
   g.lastType = type;
   let severity = rng.weighted([1, 2, 3], tn.sevWeights);
   let variant = 'std';
-  if (type === 'armed') {
-    variant = rng.weighted(['robbery', 'dispute', 'shooter'], [0.46, 0.32, tn.shooterWeight]);
-    if (variant === 'shooter') severity = 3; else if (variant === 'dispute') severity = Math.min(severity, 2);
+  if (chainNote) { variant = 'robbery'; severity = Math.max(2, severity); }
+  else if (type === 'armed') {
+    variant = rng.weighted(['robbery', 'dispute', 'shooter', 'hostage'], [0.4, 0.28, tn.shooterWeight, 0.16]);
+    if (variant === 'shooter' || variant === 'hostage') severity = 3; else if (variant === 'dispute') severity = Math.min(severity, 2);
     else severity = Math.max(2, severity);
+    // 장난 전화: 실제로는 아무 일도 없다
+    if (rng.chance(tn.falseAlarmProb * 0.8)) { variant = 'prank'; severity = 1; }
   } else if (type === 'search') variant = rng.chance(0.45) ? 'wander' : 'hiker';
+  else if (type === 'medical') variant = severity >= 3 ? 'arrest' : severity === 2 ? 'trauma' : 'faint';
+  else if (type === 'fire' && rng.chance(tn.falseAlarmProb)) { variant = 'false'; severity = 1; }      // 오인 신고: 탄 음식, 경보 오작동
   // 위치
   const busy = new Set(sim.incidents.filter((I) => I.phase !== 'closed').map((I) => I.truth.nodeId));
   const fac = new Set(sim.city.facilities.map((f) => f.nodeId));
-  const ok = (d: District): boolean => type === 'search' ? d === 'outskirts' : type === 'armed' ? d === 'commercial' || d === 'residential' : type === 'fire' ? d !== 'outskirts' || rng.chance(0.2) : true;
+  const ok = (d: District): boolean => type === 'search' ? d === 'outskirts' : type === 'armed' ? d === 'commercial' || d === 'residential' : type === 'fire' ? d !== 'outskirts' || rng.chance(0.2) : type === 'medical' ? d !== 'industrial' || rng.chance(0.3) : true;
   let cands = sim.city.nodes.filter((n) => !busy.has(n.id) && !fac.has(n.id) && ok(n.district) && (type !== 'traffic' || n.edges.length >= 3));
   if (!cands.length) cands = sim.city.nodes.filter((n) => !busy.has(n.id) && !fac.has(n.id));
   const node = rng.pick(cands);
@@ -52,12 +62,14 @@ function createIncident(sim: Sim): Incident {
     firstDispatchAt: -1, firstArrivalAt: -1, closedAt: -1, fieldVerified: false, fieldType: null, priority: 1,
     problems: [], result: null, lastEvent: -1, rootEvent: -1, callEvents: [], callsCount: 0, closeReason: '', interest: 0,
     blockedEdge: -1, followupAt: Infinity, firstCallAt: 0, firstAssess: null, fieldNeedsSeen: 0, dispatchLog: [],
+    reportedNode: node.id, addressFixed: false,
   };
   sim.incidents.push(I);
   createScene(sim, I);
-  const delay = type === 'fire' ? rng.range(6, 16) : type === 'traffic' ? rng.range(3, 8) : type === 'search' ? rng.range(1, 3) : rng.range(4, 11);
+  const delay = type === 'fire' ? rng.range(6, 16) : type === 'traffic' ? rng.range(3, 8) : type === 'search' ? rng.range(1, 3) : type === 'medical' ? rng.range(2, 6) : rng.range(4, 11);
   I.firstCallAt = sim.t + delay;
-  const pFollow = type === 'fire' ? 0.6 : type === 'traffic' ? 0.5 : type === 'armed' ? 0.42 : 0.12;
+  const benign = variant === 'false' || variant === 'prank';
+  const pFollow = benign ? 0 : type === 'fire' ? 0.6 : type === 'traffic' ? 0.5 : type === 'armed' ? 0.42 : 0.12;
   if (rng.chance(pFollow)) I.followupAt = I.firstCallAt + rng.range(24, 55);
   if (type === 'traffic') {
     // 사고 지점 도로는 느려지고, 통제가 끝나면 전면 차단된다(우회로가 있는 도로만)
@@ -65,7 +77,8 @@ function createIncident(sim: Sim): Incident {
     es.sort((a, b) => (b.arterial ? 1 : 0) - (a.arterial ? 1 : 0) || a.id - b.id);
     for (const e of es) { if (findRoute(sim.city, e.a, e.b, 1, e.id)) { I.blockedEdge = e.id; e.slow += 1.4; break; } }
   }
-  I.rootEvent = emit(sim, { inc: id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: 1, truth: true, text: `사건 발생 — ${I.truth.label} (${TYPE_NAME[type]}). 아직 신고되지 않았습니다.` });
+  const what = variant === 'false' ? '실제 화재는 없음 — 오인 신고가 들어올 예정' : variant === 'prank' ? '실제 사건은 없음 — 장난 전화가 걸려 올 예정' : `${TYPE_NAME[type]}`;
+  I.rootEvent = emit(sim, { inc: id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: 1, truth: true, text: chainNote ? `${chainNote} — ${I.truth.label}.` : `사건 발생 — ${I.truth.label} (${what}). 아직 신고되지 않았습니다.` });
   return I;
 }
 
@@ -79,8 +92,18 @@ export function tickIncidents(sim: Sim): void {
     if (sim.t >= I.followupAt && I.phase !== 'unreported') { I.followupAt = Infinity; startCall(sim, I, true); }
     if (I.firstArrivalAt < 0 && I.reportedAt >= 0 && sim.t - I.reportedAt > 330) closeIncident(sim, I, 'noresponse');
   }
-  // 생성: 진행 중인 사건 수와 가용 자원에 어느 정도 영향을 받는다
   const tn = sim.tune;
+  // 사건과 무관한 비긴급 전화: 접수 회선을 잠시 점유한다
+  if (sim.t >= g.nextNuisanceAt && sim.t < sim.shiftLen - 60) {
+    g.nextNuisanceAt = sim.t + tn.nuisanceGap * sim.rngNuisance.range(0.55, 1.5);
+    startNuisanceCall(sim);
+  }
+  // 연쇄 사건
+  if (g.chain.length && sim.t >= g.chain[0].at) {
+    const c = g.chain.shift()!;
+    if (sim.t < sim.shiftLen - 150 && open <= tn.maxConcurrent) createIncident(sim, c.note);
+  }
+  // 생성: 진행 중인 사건 수와 가용 자원에 어느 정도 영향을 받는다
   if (sim.t >= sim.shiftLen - 150 || g.count >= tn.maxIncidents) return;
   if (sim.t < g.nextAt) {
     if (open === 0 && g.count > 0 && sim.t - g.lastCreated > 75 && g.nextAt - sim.t > 25) g.nextAt = sim.t + sim.rngGen.range(8, 22);

@@ -404,8 +404,11 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     }
     case 'treat': {
       const c = s.casualties[t.cas];
-      if (c.dead || c.where === 'loaded' || c.where === 'hospital' || c.treated) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
+      const q = clamp(r.skills.medical * (0.5 + 0.5 * u.medLevel) * 1.15, 0.2, 1);
+      // 이미 처치를 받은 환자는 더 나은 처치를 할 수 있는 대원만 다시 본다
+      if (c.dead || c.where === 'loaded' || c.where === 'hospital' || (c.treated && q <= c.treatQ + 0.15)) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
       if (c.where === 'carried') return;
+      if (c.treated && t.phase === 0) { t.phase = 1; c.treatProg = 0; }
       const m = moveTo(sim, s, a, c.x, c.y, 1.3);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
@@ -413,10 +416,10 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       t.need = 4.5 + (c.health < 40 ? 4 : c.health < 70 ? 2 : 0);
       c.treatProg += rate * dt; a.ring = c.treatProg / t.need; drain(sim, a, 0.3);
       if (c.treatProg >= t.need) {
-        const q = clamp(r.skills.medical * (0.5 + 0.5 * u.medLevel) * 1.15, 0.2, 1);
-        c.treated = true; c.tTreated = sim.t; c.bleed *= 1 - 0.9 * q; c.health = Math.min(100, c.health + 8 * q);
+        if (!c.treated) c.health = Math.min(100, c.health + 8 * q);
+        c.treated = true; if (c.tTreated < 0) c.tTreated = sim.t; c.treatQ = q; c.bleed = c.bleed0 * (1 - 0.9 * q); c.bystander = false;
         learnQuiet(sim, a, casFact(sim, s, c, r.name));
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `구조 대상 ${c.label} 응급 처치 완료${q < 0.45 ? ' (기본 처치만 가능)' : ''}.` });
+        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: q < 0.6 ? `구조 대상 ${c.label} 기본 응급 처치 완료. 전문 처치가 필요합니다.` : `구조 대상 ${c.label} 전문 응급 처치 완료.` });
         r.xpGained += 0.003;
         finishTask(sim, s, a, true);
       }

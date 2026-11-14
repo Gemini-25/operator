@@ -59,7 +59,7 @@ code { font-family: ui-monospace, Menlo, Consolas, monospace; color: #c9fff8; }
 .chip.unmet { color: var(--bad); border-color: var(--bad); }
 .band { font-size: 11px; } .band-0 { color: #5ad17a; } .band-1 { color: #ffd166; } .band-2 { color: #ff5d5d; } .band-3 { color: #8a94a0; }
 
-.units { padding: 6px 8px 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.units { padding: 6px 8px 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; max-height: 46vh; overflow-y: auto; }
 .unit { background: #111b24; border: 1px solid var(--line); border-radius: 6px; padding: 6px 7px; display: flex; flex-direction: column; gap: 3px; }
 .unit.st-available { opacity: 0.78; } .unit.st-oos { opacity: 0.45; }
 .unit .callsign { font-weight: 800; white-space: nowrap; } .unit .state { margin-left: auto; font-size: 11px; color: #c8d4df; white-space: nowrap; }

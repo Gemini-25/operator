@@ -189,10 +189,11 @@ describe('난이도 (교대 시작 전 조건)', () => {
     expect(sev({ ...NORMAL, severity: 5 })).toBeGreaterThan(sev({ ...NORMAL, severity: 1 }) + 0.4);          // 사건 심각도
     const suspects = (d: typeof NORMAL): number => { let t = 0; for (let k = 0; k < 10; k++) { const s = new Sim('S' + k, d); s.runToEnd(); for (const sc of s.scenes) if (sc) t += sc.hostiles.length; } return t; };
     expect(suspects({ ...NORMAL, threat: 5 })).toBeGreaterThan(suspects({ ...NORMAL, threat: 1 }));          // 용의자 위협
-    expect(parseDifficulty('hard')).toEqual({ frequency: 4, severity: 4, threat: 4, equipment: 2, info: 2 });
-    expect(parseDifficulty('4,4,4,2,3')).toEqual({ frequency: 4, severity: 4, threat: 4, equipment: 2, info: 3 });
+    expect(parseDifficulty('hard')).toEqual({ frequency: 4, severity: 4, threat: 4, equipment: 2, info: 2, resources: 3 });
+    expect(parseDifficulty('4,4,4,2,3')).toEqual({ frequency: 4, severity: 4, threat: 4, equipment: 2, info: 3, resources: 3 });
+    expect(parseDifficulty('3,3,3,3,3,5')!.resources).toBe(5);
     expect(parseDifficulty('9,9,9,9,9')).toBeNull();
-    expect(difficultyLabel({ frequency: 5, severity: 5, threat: 5, equipment: 1, info: 1 })).toBe('극한');
+    expect(difficultyLabel({ frequency: 5, severity: 5, threat: 5, equipment: 1, info: 1, resources: 3 })).toBe('극한');
   }, 60000);
 });
 
@@ -212,4 +213,63 @@ describe('한 현장에 여러 팀', () => {
     expect(allThree).toBeGreaterThan(5);
     expect(most).toBeGreaterThanOrEqual(5);      // 예: 경찰 2 + 소방 2 + 구급 1
   });
+});
+
+describe('신고 접수 확장과 새 사건 유형', () => {
+  const sims = Array.from({ length: 14 }, (_, k) => { const s = new Sim('S' + k); s.runToEnd(); return s; });
+  it('응급 환자 사건이 발생하고, 기본 처치 뒤에 전문 처치가 이어진다', () => {
+    let medical = 0, upgraded = 0, any = 0;
+    for (const s of sims) for (const I of s.incidents) {
+      if (I.truth.type !== 'medical') continue;
+      medical++;
+      for (const c of s.scenes[I.id]!.casualties) { if (c.treatQ > 0) any++; if (c.treatQ >= 0.6) upgraded++; }
+    }
+    expect(medical).toBeGreaterThan(8);
+    expect(any).toBeGreaterThan(5);
+    expect(upgraded).toBeGreaterThan(3);
+  });
+  it('허위·오인 신고는 인명 피해 없이 확인 출동으로 끝난다', () => {
+    let n = 0;
+    for (const s of sims) for (const I of s.incidents) {
+      if (I.truth.variant !== 'false' && I.truth.variant !== 'prank') continue;
+      n++;
+      expect(s.scenes[I.id]!.casualties.length).toBe(0);
+      expect(I.problems.some((p) => p.code === 'FALSE_ALARM')).toBe(true);
+      expect(I.result!.outcome === 'success' || I.result!.outcome === 'delayed').toBe(true);
+    }
+    expect(n).toBeGreaterThan(2);
+  });
+  it('비긴급 전화는 사건을 만들지 않고 접수 회선만 점유한다', () => {
+    let nuisance = 0;
+    for (const s of sims) for (const c of s.calls) if (c.kind === 'nuisance') { nuisance++; expect(c.incidentId).toBe(-1); expect(c.state).toBe('done'); }
+    expect(nuisance).toBeGreaterThan(20);
+  });
+  it('신고자가 안내를 따르면 현장 상태가 실제로 달라진다', () => {
+    let instructed = 0, aided = 0;
+    for (const s of sims) {
+      for (const c of s.calls) if (c.instructed) instructed++;
+      for (const sc of s.scenes) if (sc) for (const c of sc.casualties) if (c.bystander || (c.walking === false && c.tSafe >= 0 && c.tDiscovered > c.tSafe)) aided++;
+    }
+    expect(instructed).toBeGreaterThan(10);
+    expect(aided).toBeGreaterThan(3);
+  });
+  it('위치를 틀리게 신고하면 부대가 엉뚱한 곳에 먼저 가고, 바로잡은 뒤 실제 위치에 도착한다', async () => {
+    const { NORMAL } = await import('../src/sim/difficulty');
+    let wrong = 0;
+    for (let k = 0; k < 10; k++) {
+      const s = new Sim('S' + k, { ...NORMAL, info: 1 }); s.runToEnd();
+      for (const I of s.incidents) if (I.problems.some((p) => p.code === 'WRONG_ADDRESS')) { wrong++; expect(I.reportedNode).toBe(I.truth.nodeId); }
+    }
+    expect(wrong).toBeGreaterThan(4);
+  }, 60000);
+  it('부대 규모 손잡이가 편성을 바꾸되 같은 대원의 능력치는 유지한다', async () => {
+    const { NORMAL } = await import('../src/sim/difficulty');
+    const small = new Sim('R', { ...NORMAL, resources: 1 }), base = new Sim('R'), big = new Sim('R', { ...NORMAL, resources: 5 });
+    expect(small.units.length).toBe(4); expect(base.units.length).toBe(6); expect(big.units.length).toBe(10);
+    expect(big.responders.length).toBe(20);
+    expect(new Set(big.responders.map((r) => r.name)).size).toBe(20);
+    for (const r of base.responders) { const q = big.responders.find((x) => x.name === r.name)!; expect(q.skill).toBe(r.skill); expect(q.judgment).toBe(r.judgment); }
+    big.runToEnd(); small.runToEnd();
+    expect(big.ended && small.ended).toBe(true);
+  }, 60000);
 });

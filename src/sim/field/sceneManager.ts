@@ -10,6 +10,7 @@ import type { Fact, FieldAgent, Incident, Scene, Unit } from '../types';
 import { TYPE_NAME } from '../util';
 import { BeliefStore, mkFact } from './beliefs';
 import { think } from './brain';
+import { outstanding } from './commander';
 import { buildScene } from './builders';
 import { act, finishTask } from './executor';
 import { tileOf } from './grid';
@@ -51,6 +52,7 @@ export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
   u.x = node.x + 16 * Math.cos(slot * 1.3); u.y = node.y + 16 * Math.sin(slot * 1.3); u.px = u.x; u.py = u.y;
   const brief = briefFacts(sim, I);
   const cmd = s.agents.find((a) => a.rid === s.commanderRid && a.status === 'active');
+  const prevCmd = s.agents.find((a) => a.rid === s.commanderRid);
   const crew = u.crew.filter((rid) => sim.responders[rid].status === 'ok');
   s.agents = s.agents.filter((a) => u.crew.indexOf(a.rid) < 0);      // 같은 대원이 다시 온 경우 이전 기록 정리
   crew.forEach((rid, k) => {
@@ -69,6 +71,7 @@ export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
     a.px = a.x; a.py = a.y;
     for (const f of brief) a.beliefs.merge(f);
     if (cmd) for (const f of cmd.beliefs.all()) a.beliefs.merge(BeliefStore.relay(f));
+    else if (prevCmd) for (const f of prevCmd.beliefs.all()) a.beliefs.merge(BeliefStore.relay(f));      // 관제가 이전 지휘관의 보고를 전달
     s.agents.push(a);
     r.incidentsWorked++;
   });
@@ -140,7 +143,7 @@ function agentHealth(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   }
 }
 
-const LIMIT: Record<string, number> = { fire: 430, traffic: 400, search: 470, armed: 400 };
+const LIMIT: Record<string, number> = { fire: 430, traffic: 400, search: 470, armed: 400, medical: 300 };
 
 export function tickScene(sim: Sim, s: Scene): void {
   if (s.archived) return;
@@ -206,8 +209,21 @@ export function tickScene(sim: Sim, s: Scene): void {
       emit(sim, { inc: I.id, role: 'COMMANDER', actor: s.commanderRid >= 0 ? sim.responders[s.commanderRid].name : '현장', kind: 'command', imp: 2, text: '대응 한계 시간을 넘겼습니다. 현 상태로 현장을 인계하고 철수합니다.' });
       closeIncident(sim, I, 'timeout');
     } else if (!anyActive && !I.assigned.some((uid) => sim.units[uid].state === 'enroute' || sim.units[uid].state === 'turnout')) {
-      if (s.idleSince < 0) s.idleSince = sim.t;
-      if (sim.t - s.idleSince > 45) closeIncident(sim, I, 'abandoned');
+      if (s.idleSince < 0) {
+        // 현장에 남은 대원이 없다(예: 구급차가 환자를 싣고 떠남). 마지막 지휘관이 알고 있던 상황으로 판단한다
+        s.idleSince = sim.t;
+        const last = s.agents.find((a) => a.rid === s.commanderRid);
+        const o = last ? outstanding(last) : null;
+        if (last && o && s.sizeupDone && o.patients === 0 && !o.fire && !o.hostile && !(s.kind === 'search' && o.search) && !(s.kind === 'armed' && s.secureAt < 0)) {
+          emit(sim, { inc: I.id, role: 'COMMANDER', actor: sim.responders[last.rid].name, rid: last.rid, kind: 'command', imp: 2, text: '현장에 남은 임무가 없습니다. 환자 이송과 함께 상황 종료를 선언합니다.' });
+          closeIncident(sim, I, 'resolved');
+        } else if (o && (o.patients > 0 || o.fire || o.hostile)) {
+          const need = o.hostile ? 'law' : o.fire ? 'suppression' : 'ems';
+          I.unmet[need] = Math.max(I.unmet[need] ?? 0, 1); I.unmetSince = sim.t; I.noUnitLogged = false;
+          emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: `사건 ${I.code}: 현장에 남은 부대가 없는데 아직 끝나지 않았습니다. 추가 부대를 찾습니다.` });
+        }
+      }
+      if ((I.phase as string) !== 'closed' && sim.t - s.idleSince > 60) closeIncident(sim, I, 'abandoned');
     } else s.idleSince = -1;
   }
   // 8) 정리

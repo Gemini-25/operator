@@ -8,7 +8,7 @@ import { TYPE_NAME, clamp } from '../util';
 import { NATURE_LIK } from './callSystem';
 import { recomputeUnmet } from './dispatcher';
 
-const TYPES: IncidentType[] = ['fire', 'traffic', 'search', 'armed'];
+const TYPES: IncidentType[] = ['fire', 'traffic', 'search', 'armed', 'medical'];
 export const sevName = (s: number): string => (s < 1.7 ? '보통' : s < 2.4 ? '높음' : '매우 높음');
 const NEED_NAME: Record<keyof Needs, string> = { suppression: '진압', rescue: '구조', ems: '구급', law: '경찰', tactical: '경찰 기동', search: '수색', traffic: '교통 통제' };
 export const needsText = (n: Partial<Needs>): string => {
@@ -40,16 +40,16 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
   const claims = I.claims;
   const prev = I.assessment;
   // ── 유형 추정 ──
-  const lp = [0, 0, 0, 0];
+  const lp = [0, 0, 0, 0, 0];
   let nNature = 0;
   for (const c of claims) {
-    if (c.topic === 'nature') { const lik = NATURE_LIK[c.value as string]; if (lik) { nNature++; for (let k = 0; k < 4; k++) lp[k] += Math.log(lik[k]) * (0.5 + c.conf); } }
+    if (c.topic === 'nature') { const lik = NATURE_LIK[c.value as string]; if (lik) { nNature++; for (let k = 0; k < 5; k++) lp[k] += Math.log(lik[k]) * (0.5 + c.conf); } }
     if (c.topic === 'weapon' && c.value !== 'none') lp[3] += 1.5 * c.conf;
     if (c.topic === 'detail' && c.value && c.value.ejected) lp[1] += 1.0;
   }
   let mx = Math.max(...lp), sum = 0;
   const probsArr = lp.map((v) => { const e = Math.exp(v - mx); sum += e; return e; });
-  const probs = { fire: probsArr[0] / sum, traffic: probsArr[1] / sum, search: probsArr[2] / sum, armed: probsArr[3] / sum } as Record<IncidentType, number>;
+  const probs = { fire: probsArr[0] / sum, traffic: probsArr[1] / sum, search: probsArr[2] / sum, armed: probsArr[3] / sum, medical: probsArr[4] / sum } as Record<IncidentType, number>;
   let type: IncidentType = 'fire', best = -1;
   for (const t of TYPES) if (probs[t] > best) { best = probs[t]; type = t; }
   let typeConf = nNature ? best : 0.25;
@@ -62,7 +62,8 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
   const risks: string[] = [];
   let sev = 1.3;
   const count = cnt.c && typeof cnt.c.value === 'number' ? cnt.c.value : -1;
-  const district = sim.city.nodes[I.truth.nodeId].district;     // 위치는 신고로 확인된 정보
+  const district = sim.city.nodes[I.reportedNode].district;     // 신고로 알게 된 위치
+  const prank = claims.some((c) => c.topic === 'hazard' && c.value === 'prank');
   if (type === 'fire') {
     sev = 1.4;
     if (nat.indexOf('flames') >= 0) { sev += 0.45; why.push('화염 목격'); }
@@ -88,12 +89,20 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
     if (count >= 2) { sev += 0.3; why.push(`${count}명`); }
     if (sim.weather === 'night') { sev += 0.35; why.push('야간'); risks.push('저체온·시야 불량'); }
     else if (sim.weather !== 'clear') { sev += 0.25; why.push('악천후'); risks.push('시야 불량'); }
+  } else if (type === 'medical') {
+    sev = 1.4;
+    const notBreathing = nat.indexOf('notbreathing') >= 0 || (det.c && det.c.value && det.c.value.breathing === false);
+    if (notBreathing) { sev += 1.1; why.push('호흡 없음'); risks.push('심정지 — 분 단위로 악화'); }
+    else if (nat.indexOf('fall') >= 0) { sev += 0.5; why.push('낙상·출혈'); }
+    if (inj.c && inj.c.value === true) { sev += 0.35; why.push('의식 없음'); }
   } else {
     sev = 1.2;
     if (wpn.c && wpn.c.value === 'gun') { sev += 0.9 * (0.5 + wpn.c.conf * 0.6); why.push('총기'); }
     else if (wpn.c && wpn.c.value === 'knife') { sev += 0.35; why.push('흉기'); }
     if (nat.indexOf('gunshots') >= 0) { sev += 0.6; why.push('총성'); }
     if (nat.indexOf('robbery') >= 0) { sev += 0.4; why.push('강도'); }
+    if (nat.indexOf('hostage') >= 0) { sev += 0.9; why.push('인질'); risks.push('인질 위험'); }
+    if (prank) { sev -= 0.9; why.push('허위 신고 의심'); risks.push('허위 신고 가능성 — 확인 출동'); }
     if (inj.c && inj.c.value === true) { sev += 0.45; why.push('부상자'); }
     if (trap.c && trap.c.value === true) { sev += 0.3; why.push('내부 시민'); risks.push('인질 위험'); }
     if (det.c && det.c.value && det.c.value.suspects >= 2) { sev += 0.3; why.push(`용의자 ${det.c.value.suspects}명`); }
@@ -120,11 +129,15 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
   } else if (type === 'search') {
     needs.search = sev >= 1.7 ? 2 : 1;
     if (sev >= 2.2) needs.ems = 1;
+  } else if (type === 'medical') {
+    needs.ems = 1;
+    if (sev >= 2.3) needs.search = 1;      // 가장 가까운 부대를 선착 대응으로 함께 보낸다 (누구든 가슴 압박은 할 수 있다)
   } else {
     needs.law = sev >= 1.7 ? 2 : 1;
     if (sev >= 2.4) { needs.law = 1; needs.tactical = 1; }
     if (sev >= 2.2 || (inj.c && inj.c.value === true)) needs.ems = 1;
   }
+  if (type === 'armed' && prank) { needs.law = 1; needs.tactical = 0; needs.ems = 0; }
   const rev = prev ? prev.revision + 1 : 0;
   const summary = `${TYPE_NAME[type]} (${Math.round(typeConf * 100)}%) · 위험도 ${sevName(sev)}`;
   const as: Assessment = { type, typeConf, probs, severity: sev, confidence, needs, risks, summary, t: sim.t, revision: rev };

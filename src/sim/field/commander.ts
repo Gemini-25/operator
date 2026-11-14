@@ -183,7 +183,8 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         if (evid || (!wrecksPending && expected > found)) { pendingSearch++; want(sim, s, 'search', { region: r.id }, 0.64, 1, sim.weather !== 'clear' || c >= 0); }
         continue;
       }
-      if (s.kind !== 'fire' && s.kind !== 'armed') continue;
+      if (s.kind !== 'fire' && s.kind !== 'armed' && s.kind !== 'medical') continue;
+      if (s.kind === 'medical' && found >= 1) continue;      // 환자를 찾았으면 더 수색하지 않는다
       if (c >= th) continue;
       const fl = B.val<number>('fire', r.id) ?? 0;
       pendingSearch++;
@@ -209,6 +210,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     }
   }
 
+  if (s.kind === 'medical' && found >= 1) cancel(s, (w) => w.kind === 'search');
   // 이미 충분히 확인된 구역에 대한 수색 지시는 거둔다
   for (const w of s.board) if (w.kind === 'search' && w.status === 'open') {
     const c = B.val<number>('srch', w.region) ?? -1;
@@ -216,6 +218,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   }
 
   // ── 구조 대상 ──
+  const hasMedicAny = s.agents.some((b) => b.status === 'active' && sim.responders[b.rid].dept === 'ems');
   const ambulances = unitsOnScene(sim, s).filter((uid) => sim.units[uid].dept === 'ems' && sim.units[uid].patients.length < 2 && !sim.units[uid].boardOrder);
   for (const f of cas) {
     const c = f.value as CasBelief;
@@ -232,10 +235,14 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       const rg = s.region[c.y * s.w + c.x];
       const indoorHazard = s.kind === 'fire' || (rg >= 0 && (B.val<number>('fire', rg) ?? 0) > 0.1);
       const hasMedic = s.agents.some((b) => b.status === 'active' && sim.responders[b.rid].dept === 'ems');
-      if (!indoorHazard && !c.treated && c.band >= 1 && hasMedic && !hotArmed) { want(sim, s, 'treat', { cas: f.id }, 0.8 + urg); want(sim, s, 'carry', { cas: f.id }, 0.5, 2); }
-      else want(sim, s, 'carry', { cas: f.id }, 0.84 + urg, 2);
+      // 처치가 필요한가: 아직 아무 처치도 못 받았거나, 기본 처치만 받았는데 구급대원이 와 있다
+      const needTreat = c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedic));
+      const treatHere = hasMedic || (s.kind === 'medical' && c.tq === 0);      // 응급 환자는 누구든 먼저 손을 쓴다
+      if (!indoorHazard && needTreat && treatHere && !hotArmed) { want(sim, s, 'treat', { cas: f.id }, 0.8 + urg); want(sim, s, 'carry', { cas: f.id }, 0.5, 2); }
+      else { cancel(s, (w) => w.kind === 'treat' && w.cas === f.id && w.status === 'open'); want(sim, s, 'carry', { cas: f.id }, 0.84 + urg, 2); }
     } else if (c.where === 'safe') {
-      if (!c.treated && c.band >= 1) want(sim, s, 'treat', { cas: f.id }, 0.72 + urg);
+      if (c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedicAny))) want(sim, s, 'treat', { cas: f.id }, 0.72 + urg);
+      else cancel(s, (w) => w.kind === 'treat' && w.cas === f.id && w.status === 'open');
       if (c.band >= 1 && ambulances.length) {
         const already = s.board.some((w) => w.kind === 'load' && w.cas === f.id && (w.status === 'open' || w.status === 'active'));
         if (!already) {
@@ -443,6 +450,23 @@ function manageAmbulances(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void 
       emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 1, text: `${u.callsign}, 환자 ${u.patients.length}명 병원 이송 출발하라.` });
     }
   }
+}
+
+/** 지휘관의 믿음 기준으로 아직 남은 일. 현장을 비우게 될 때(환자 이송 등) 종료할지 판단하는 데 쓴다. */
+export function outstanding(a: FieldAgent): { patients: number; fire: boolean; hostile: boolean; search: boolean } {
+  const B = a.beliefs;
+  let patients = 0;
+  for (const f of B.list('cas')) {
+    const c = f.value as CasBelief;
+    if (c.band === 3 || c.where === 'loaded' || c.where === 'hospital' || (c.where === 'safe' && c.band === 0) || c.mob === 'mobile') continue;
+    patients++;
+  }
+  return {
+    patients,
+    fire: B.list('fire').some((f) => f.value > 0.05),
+    hostile: B.list('hos').some((h) => h.value.state === 'hold' || h.value.state === 'fight' || h.value.state === 'flee' || h.value.state === 'surrendered'),
+    search: B.list('cas').length === 0,
+  };
 }
 
 export function commanderThink(sim: Sim, s: Scene, a: FieldAgent): void {

@@ -109,7 +109,7 @@ export function Viewport({ runner, director, sound, selectedRid, onSelectRid, on
         const hit = hitScene(sim, sim.scenes[director.focus]!, w, h, p.x, p.y);
         onSelectRid(hit.rid);
       } else {
-        const hit = hitCity(sim, director.cam, w, h, p.x, p.y);
+        const hit = hitCity(sim, director.cam, w, h, p.x, p.y, runner.settings.truthView);
         if (hit.incident >= 0) director.pin(hit.incident, 'scene');
         else if (hit.unit >= 0) onSelectUnit(hit.unit);
       }

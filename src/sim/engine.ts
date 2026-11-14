@@ -27,6 +27,7 @@ export class Sim {
   readonly rng: Rng;
   readonly rngTraffic: Rng;
   readonly rngGen: Rng;
+  readonly rngNuisance: Rng;
   readonly weather: Weather;
   readonly startTod: number;
   readonly city: City;
@@ -57,6 +58,7 @@ export class Sim {
     this.rng = new Rng(hashStr('AR:' + seed));
     this.rngTraffic = this.rng.fork('traffic');
     this.rngGen = this.rng.fork('incidents');
+    this.rngNuisance = this.rng.fork('nuisance');
     const env = this.rng.fork('environment');
     this.weather = env.weighted<Weather>(['clear', 'rain', 'fog', 'night'], [0.5, 0.18, 0.12, 0.2]);
     this.startTod = this.weather === 'night' ? 22 * 3600 + env.int(0, 3000) : 9 * 3600 + env.int(0, 8 * 3600);

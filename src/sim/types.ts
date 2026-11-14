@@ -6,7 +6,7 @@ import type { BeliefStore } from './field/beliefs';
 
 export interface Pt { x: number; y: number }
 export type Dept = 'fire' | 'ems' | 'police';
-export type IncidentType = 'fire' | 'traffic' | 'search' | 'armed';
+export type IncidentType = 'fire' | 'traffic' | 'search' | 'armed' | 'medical';
 export type District = 'residential' | 'commercial' | 'industrial' | 'outskirts';
 export type Weather = 'clear' | 'rain' | 'fog' | 'night';
 
@@ -61,7 +61,7 @@ export interface Unit {
   water: number; waterMax: number; hydrant: boolean;
   pumpCond: number; pumpFailed: boolean;
   tool: number;                       // 구조 장비 성능 (0..1)
-  medLevel: number; armor: number;
+  medLevel: number; armor: number; flashbangs: number;
   patients: number[];                 // 이송 중인 구조 대상 (casualty id)
   patientsIncident: number | null;
   // 통계
@@ -81,7 +81,7 @@ export interface Fact {
   verified: boolean;  // 직접 관찰로 확인되었는가
   text: string;       // 사람이 읽을 수 있는 내용
 }
-export interface CasBelief { x: number; y: number; mob: Mobility; band: number; where: CasWhere; treated: boolean; trappedDone: boolean }
+export interface CasBelief { x: number; y: number; mob: Mobility; band: number; where: CasWhere; treated: boolean; trappedDone: boolean; tq: number }   // tq: 0 미처치, 1 기본 처치, 2 전문 처치
 
 // ───────────────────────── 현장 ─────────────────────────
 export const T = { VOID: 0, GROUND: 1, ROAD: 2, FLOOR: 3, WALL: 4, WINDOW: 5, TREE: 6, WATER: 7, ROCK: 8, DOOR: 9, TRAIL: 10 } as const;
@@ -113,6 +113,9 @@ export interface Casualty {
   health: number; bleed: number; mob: Mobility; trapWork: number;
   concealment: number; inVehicle: number | null;
   where: CasWhere; treated: boolean; treatProg: number; dead: boolean;
+  treatQ: number;           // 받은 처치의 수준 (0 없음 … 1 전문 처치)
+  bleed0: number;           // 처치 전 악화 속도
+  bystander: boolean;       // 신고자가 안내에 따라 돌보고 있다 (도착 전 악화 완화)
   walking: boolean; path: number[] | null; pathI: number; panic: boolean;
   wander: boolean; wanderT: number;
   isTarget: boolean;        // 수색 대상
@@ -129,6 +132,12 @@ export interface Hostile {
   weapon: 'gun' | 'knife' | 'none';
   state: 'hold' | 'fight' | 'flee' | 'surrendered' | 'arrested' | 'down' | 'escaped';
   hidden: boolean; cooldown: number; fleeAt: number;
+  facing: number;           // 바라보는 방향(라디안). 시야각 밖은 보지 못한다
+  lookAt: number;           // 다음에 시선을 돌릴 시각
+  stunUntil: number;        // 섬광탄 등으로 무력화된 시각까지
+  hostageId: number;        // 붙잡고 있는 인질 (casualty id, -1 없음)
+  deadline: number;         // 인질 사건의 시한
+  alertUntil: number;       // 경계 상태(전방위 인지) 유지 시각
   path: number[] | null; pathI: number; negot: number; seenOfficers: number;
   targetRid: number;
 }
@@ -234,7 +243,7 @@ export interface Scene {
 }
 
 // ───────────────────────── 신고 / 관제 ─────────────────────────
-export type Persona = 'calm' | 'panicked' | 'confused' | 'partial' | 'wrong';
+export type Persona = 'calm' | 'panicked' | 'confused' | 'partial' | 'wrong' | 'prank';
 export type Topic = 'location' | 'nature' | 'injured' | 'count' | 'trapped' | 'hazard' | 'weapon' | 'detail';
 export interface Claim { topic: Topic; value: any; conf: number; text: string; truthful: boolean; callId: number; note: string }
 export interface Caller {
@@ -251,6 +260,9 @@ export interface Call {
   transcript: CallLine[];
   asked: Topic[]; pending: Topic | null; nextAt: number; phase: 'ask' | 'wait'; retries: number;
   linkedTo: number;   // 기존 사건에 병합된 추가 신고면 그 사건 id
+  kind: 'incident' | 'nuisance';      // nuisance = 사건과 무관한 비긴급 전화 (incidentId = -1)
+  instructed: boolean;                // 도착 전 안내를 했는가
+  script: string[]; scriptI: number;  // 비긴급 전화의 대사
   rng: Rng; isFollowup: boolean; eventId: number;
 }
 export interface Needs { suppression: number; rescue: number; ems: number; law: number; tactical: number; search: number; traffic: number }
@@ -266,7 +278,7 @@ export type ProblemCode =
   | 'NO_UNIT' | 'UNDER_DISPATCH' | 'DIVERTED' | 'ROUTE_BLOCKED' | 'TRAFFIC_DELAY'
   | 'PATH_BLOCKED' | 'VICTIM_MISSED' | 'EQUIP_FAIL' | 'WATER_OUT' | 'RESPONDER_HURT' | 'COMM_FAIL'
   | 'ESCALATION' | 'BACKUP_LATE' | 'SCENE_MISMATCH' | 'SUSPECT_FLED' | 'SECONDARY_COLLISION' | 'LATE_DISCOVERY'
-  | 'TIMEOUT' | 'FATIGUE' | 'HIDDEN_HAZARD' | 'RECOUNT';
+  | 'TIMEOUT' | 'FATIGUE' | 'HIDDEN_HAZARD' | 'RECOUNT' | 'WRONG_ADDRESS' | 'FALSE_ALARM';
 export interface Problem { code: ProblemCode; t: number; eventId: number; detail: string; recovered: boolean; recoveryText: string }
 
 export type IncidentPhase = 'unreported' | 'call' | 'pending' | 'dispatched' | 'onscene' | 'closed';
@@ -313,6 +325,8 @@ export interface Incident {
   interest: number;                // 카메라 연출용 흥미도 누적 (표현 계층에서만 읽음)
   blockedEdge: number;
   followupAt: number;
+  reportedNode: number;            // 관제가 알고 있는 위치 (신고자가 틀리게 말하면 실제와 다르다)
+  addressFixed: boolean;           // 위치 오류가 바로잡혔는가
   firstCallAt: number;             // (엔진) 첫 신고 전화가 걸려 올 시각
   firstAssess: { type: IncidentType; severity: number; t: number; eventId: number } | null;
   fieldNeedsSeen: number;          // 처리한 현장 지원 요청 수
@@ -333,7 +347,7 @@ export interface SimEvent {
 
 export interface ShiftReport {
   seed: string; duration: number; weather: Weather;
-  difficulty: { frequency: number; severity: number; threat: number; equipment: number; info: number }; difficultyLabel: string;
+  difficulty: { frequency: number; severity: number; threat: number; equipment: number; info: number; resources: number }; difficultyLabel: string;
   totalCalls: number; totalIncidents: number;
   counts: Record<Outcome, number>;
   avgResponse: number; avgDispatch: number;

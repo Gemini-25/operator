@@ -8,16 +8,21 @@ import { emit, raiseProblem } from '../events';
 import { josa } from '../util';
 import type { Rng } from '../rng';
 import type { Call, Caller, Claim, Incident, Persona, Scene, Topic } from '../types';
+import { applyCallerAid } from '../field/hazards';
 import { assess } from './analyst';
-import { briefUpdate } from './dispatcher';
+import { briefUpdate, redirectUnits } from './dispatcher';
 
 const SURNAMES = ['김', '이', '박', '최', '정', '강', '조', '윤', '장', '임', '한', '오', '서', '신'];
-const PERSONA_NAME: Record<Persona, string> = { calm: '침착함', panicked: '공황 상태', confused: '상황 파악 미흡', partial: '일부만 목격', wrong: '부정확한 확신' };
+const PERSONA_NAME: Record<Persona, string> = { calm: '침착함', panicked: '공황 상태', confused: '상황 파악 미흡', partial: '일부만 목격', wrong: '부정확한 확신', prank: '장난 전화' };
 export const personaName = (p: Persona): string => PERSONA_NAME[p];
 
-const ACC: Record<Persona, number> = { calm: 0.93, panicked: 0.75, confused: 0.55, partial: 0.88, wrong: 0.5 };
-const KNOW: Record<Persona, number> = { calm: 0.92, panicked: 0.82, confused: 0.6, partial: 0.42, wrong: 0.9 };
-const CONF: Record<Persona, number> = { calm: 0.85, panicked: 0.6, confused: 0.4, partial: 0.72, wrong: 0.82 };
+const ACC: Record<Persona, number> = { calm: 0.93, panicked: 0.75, confused: 0.55, partial: 0.88, wrong: 0.5, prank: 0 };
+const KNOW: Record<Persona, number> = { calm: 0.92, panicked: 0.82, confused: 0.6, partial: 0.42, wrong: 0.9, prank: 1 };
+const CONF: Record<Persona, number> = { calm: 0.85, panicked: 0.6, confused: 0.4, partial: 0.72, wrong: 0.82, prank: 0.8 };
+/** 접수 AI 의 안내를 신고자가 실제로 따를 확률 */
+const COMPLY: Record<Persona, number> = { calm: 0.9, panicked: 0.45, confused: 0.4, partial: 0.6, wrong: 0.55, prank: 0 };
+/** 위치를 틀리게 말할 가능성(난이도의 기본 확률에 곱한다) */
+const ADDR_ERR: Record<Persona, number> = { calm: 0.3, panicked: 1.2, confused: 1.7, partial: 1.0, wrong: 1.5, prank: 0 };
 
 const NATURE_TEXT: Record<string, string[]> = {
   flames: ['건물에서 불이 났어요! 불길이 보여요.', '불이야! 창문으로 불이 치솟고 있어요.'],
@@ -31,18 +36,31 @@ const NATURE_TEXT: Record<string, string[]> = {
   gunshots: ['총소리가 났어요! 가게 안에서요!', '누가 총을 쏘고 있어요!'],
   robbery: ['가게에 강도가 들었어요!', '강도예요. 가게 안에서 사람들을 위협하고 있어요.'],
   fight: ['가게에서 사람들이 심하게 싸우고 있어요.', '어떤 사람이 가게에서 난동을 부려요.'],
+  hostage: ['어떤 남자가 사람을 붙잡고 총으로 위협하고 있어요!', '가게 안에서 인질을 잡고 있어요!'],
+  notbreathing: ['사람이 쓰러졌는데 숨을 안 쉬어요!', '아버지가 갑자기 쓰러지셨어요. 숨을 안 쉬세요!'],
+  collapsed: ['사람이 갑자기 쓰러졌어요.', '가족이 쓰러져서 일어나질 못해요.'],
+  fall: ['사람이 계단에서 굴러서 크게 다쳤어요.', '높은 데서 떨어졌어요. 피가 많이 나요.'],
 };
 /** 신고 키워드 → 사건 유형 가능도 (분석 AI 가 사용) */
-export const NATURE_LIK: Record<string, [number, number, number, number]> = {
-  //            fire  traffic search armed
-  flames: [0.94, 0.03, 0.01, 0.02], smoke: [0.72, 0.18, 0.02, 0.08], smell: [0.7, 0.15, 0.05, 0.1], explosion: [0.46, 0.27, 0.02, 0.25],
-  crash: [0.03, 0.94, 0.01, 0.02], bang: [0.22, 0.46, 0.02, 0.3], missing: [0.01, 0.01, 0.97, 0.01], scream: [0.2, 0.2, 0.12, 0.48],
-  gunshots: [0.02, 0.02, 0.01, 0.95], robbery: [0.01, 0.01, 0.01, 0.97], fight: [0.03, 0.05, 0.02, 0.9],
+export const NATURE_LIK: Record<string, [number, number, number, number, number]> = {
+  //            fire  traffic search armed medical
+  flames: [0.94, 0.03, 0.01, 0.02, 0.01], smoke: [0.72, 0.18, 0.02, 0.07, 0.01], smell: [0.7, 0.15, 0.05, 0.08, 0.02], explosion: [0.46, 0.27, 0.02, 0.24, 0.01],
+  crash: [0.03, 0.93, 0.01, 0.02, 0.01], bang: [0.22, 0.46, 0.02, 0.28, 0.02], missing: [0.01, 0.01, 0.96, 0.01, 0.01], scream: [0.18, 0.18, 0.1, 0.42, 0.12],
+  gunshots: [0.02, 0.02, 0.01, 0.94, 0.01], robbery: [0.01, 0.01, 0.01, 0.96, 0.01], fight: [0.03, 0.05, 0.02, 0.86, 0.04], hostage: [0.01, 0.01, 0.01, 0.96, 0.01],
+  notbreathing: [0.02, 0.02, 0.01, 0.03, 0.92], collapsed: [0.03, 0.06, 0.04, 0.06, 0.81], fall: [0.02, 0.1, 0.03, 0.05, 0.8],
 };
 
 function natureFor(I: Incident, s: Scene, persona: Persona, rng: Rng): { v: string; truthful: boolean; note: string } {
   const t = I.truth.type, variant = I.truth.variant;
-  const exact = t === 'fire' ? 'flames' : t === 'traffic' ? 'crash' : t === 'search' ? 'missing' : variant === 'shooter' ? 'gunshots' : variant === 'robbery' ? 'robbery' : 'fight';
+  if (variant === 'prank') return { v: rng.pick(['gunshots', 'robbery']), truthful: false, note: '장난 전화 — 실제 사건 없음' };
+  if (variant === 'false') return { v: rng.chance(0.6) ? 'smell' : 'smoke', truthful: true, note: '' };      // 냄새·연기는 사실이지만 화재는 아니다
+  if (t === 'medical') {
+    const exactM = variant === 'arrest' ? 'notbreathing' : variant === 'trauma' ? 'fall' : 'collapsed';
+    if (persona === 'wrong' && variant === 'arrest') return { v: 'collapsed', truthful: false, note: '심정지를 단순 실신처럼 신고' };
+    if ((persona === 'confused' || persona === 'partial') && rng.chance(0.5)) return { v: 'collapsed', truthful: variant !== 'arrest', note: variant === 'arrest' ? '호흡이 없다는 사실을 말하지 못함' : '' };
+    return { v: exactM, truthful: true, note: '' };
+  }
+  const exact = t === 'fire' ? 'flames' : t === 'traffic' ? 'crash' : t === 'search' ? 'missing' : variant === 'shooter' ? 'gunshots' : variant === 'hostage' ? 'hostage' : variant === 'robbery' ? 'robbery' : 'fight';
   if (t === 'search') return { v: 'missing', truthful: true, note: '' };
   const vague = t === 'fire' ? 'smoke' : t === 'traffic' ? 'bang' : 'scream';
   if (persona === 'calm') return { v: exact, truthful: true, note: '' };
@@ -57,13 +75,47 @@ function natureFor(I: Incident, s: Scene, persona: Persona, rng: Rng): { v: stri
 
 /** 사건의 진실에서 신고자가 "알고 있다고 믿는" 내용을 만든다. */
 export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: boolean): Caller {
-  const persona: Persona = followup ? rng.weighted<Persona>(['calm', 'panicked', 'partial', 'confused'], [0.45, 0.2, 0.25, 0.1])
+  let persona: Persona = followup ? rng.weighted<Persona>(['calm', 'panicked', 'partial', 'confused'], [0.45, 0.2, 0.25, 0.1])
     : rng.weighted<Persona>(['calm', 'panicked', 'confused', 'partial', 'wrong'], sim.tune.personaWeights);
+  if (I.truth.variant === 'prank') persona = 'prank';
   const acc = ACC[persona], kn = KNOW[persona], cf = CONF[persona];
   const knows: Partial<Record<Topic, Claim>> = {};
   const put = (topic: Topic, value: any, text: string, truthful: boolean, note = '', conf = cf) => { knows[topic] = { topic, value, conf, text, truthful, callId: -1, note }; };
   const t = I.truth.type;
-  put('location', I.truth.nodeId, `${nodeName(sim.city, I.truth.nodeId)} 근처예요.`, true, '', 0.95);
+  // 위치: 당황하거나 상황 파악이 안 된 신고자는 옆 교차로를 대는 수가 있다
+  const here = sim.city.nodes[I.truth.nodeId];
+  if (!followup && rng.chance(sim.tune.wrongAddressProb * ADDR_ERR[persona])) {
+    const e = sim.city.edges[rng.pick(here.edges)];
+    const nb = e.a === here.id ? e.b : e.a;
+    put('location', nb, `${nodeName(sim.city, nb)} 근처예요.`, false, `실제 위치는 ${nodeName(sim.city, here.id)}인데 ${josa(nodeName(sim.city, nb), '으로/로')} 신고`, 0.5 + cf * 0.3);
+  } else put('location', I.truth.nodeId, `${nodeName(sim.city, I.truth.nodeId)} 근처예요.`, true, '', 0.95);
+  if (persona === 'prank') {
+    const nat0 = natureFor(I, s, persona, rng);
+    put('nature', nat0.v, rng.pick(NATURE_TEXT[nat0.v]), false, nat0.note);
+    put('weapon', 'gun', '총이요, 총! 엄청 큰 총이에요.', false, '장난 전화');
+    put('injured', true, '어… 네, 다친 사람 엄청 많아요.', false, '장난 전화');
+    put('detail', { suspects: 3 }, '세 명? 아니 다섯 명쯤 돼요.', false, '장난 전화');
+    return { name: rng.pick(SURNAMES) + '○○', persona, knows, patience: 3, answerTime: 2.2 };
+  }
+  if (t === 'medical') {
+    const pt = s.casualties[0];
+    const arrest = I.truth.variant === 'arrest';
+    const nat0 = natureFor(I, s, persona, rng);
+    put('nature', nat0.v, rng.pick(NATURE_TEXT[nat0.v]), nat0.truthful, nat0.note);
+    put('count', 1, '한 명이에요.', true, '', 0.9);
+    if (rng.chance(Math.max(kn, 0.7))) {
+      const ok = rng.chance(acc);
+      const uncon = pt.health < 75 || arrest;
+      const v = ok ? uncon : !uncon;
+      put('injured', v, v ? '아니요, 의식이 없어요. 불러도 대답을 안 해요.' : '네, 의식은 있어요.', ok, ok ? '' : '의식 상태를 반대로 신고');
+    }
+    if (rng.chance(Math.max(kn, 0.65))) {
+      const ok = rng.chance(acc) && nat0.truthful;
+      const breathing = ok ? !arrest : arrest;
+      put('detail', { breathing }, breathing ? '숨은 쉬는 것 같아요.' : '아니요, 숨을 안 쉬어요!', breathing === !arrest, breathing === !arrest ? '' : '호흡이 없는데 있다고 신고');
+    }
+    return { name: rng.pick(SURNAMES) + '○○', persona, knows, patience: persona === 'partial' ? 3 : 5, answerTime: persona === 'calm' ? 2.4 : persona === 'panicked' ? 3.4 : 3.2 };
+  }
   const nat = natureFor(I, s, persona, rng);
   put('nature', nat.v, rng.pick(NATURE_TEXT[nat.v]), nat.truthful, nat.note);
   const cas = s.casualties;
@@ -143,12 +195,12 @@ export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: 
 const QUESTION: Record<Topic, Record<string, string>> = {
   location: { any: '정확한 위치가 어디입니까?' },
   nature: { any: '정확히 무엇을 보셨습니까? 불, 사고, 사람 중 무엇입니까?' },
-  injured: { any: '다친 사람이 있습니까?' },
-  count: { fire: '건물 안에 몇 명이나 있습니까?', traffic: '다친 사람은 모두 몇 명입니까?', armed: '안에 있는 사람은 몇 명입니까?', search: '찾는 분은 몇 명입니까?', any: '사람은 몇 명입니까?' },
+  injured: { medical: '환자가 의식이 있습니까? 불러 보세요.', any: '다친 사람이 있습니까?' },
+  count: { fire: '건물 안에 몇 명이나 있습니까?', traffic: '다친 사람은 모두 몇 명입니까?', armed: '안에 있는 사람은 몇 명입니까?', search: '찾는 분은 몇 명입니까?', medical: '환자는 몇 명입니까?', any: '사람은 몇 명입니까?' },
   trapped: { fire: '건물 안에 아직 사람이 남아 있습니까?', traffic: '차 안에 갇힌 사람이 있습니까?', armed: '가게 안에 못 나온 사람이 있습니까?', any: '갇힌 사람이 있습니까?' },
   hazard: { fire: '불이 번지고 있습니까? 위험물이 있습니까?', traffic: '연료가 새거나 연기가 나는 차량이 있습니까?', any: '주변에 다른 위험한 것이 있습니까?' },
   weapon: { any: '무기를 가지고 있습니까? 어떤 무기입니까?' },
-  detail: { fire: '사람이 있는 위치를 아십니까?', search: '마지막으로 본 곳이 어디입니까?', traffic: '차 밖으로 튕겨 나간 사람이 있습니까?', armed: '용의자는 몇 명입니까?', any: '더 알려 주실 내용이 있습니까?' },
+  detail: { fire: '사람이 있는 위치를 아십니까?', search: '마지막으로 본 곳이 어디입니까?', traffic: '차 밖으로 튕겨 나간 사람이 있습니까?', armed: '용의자는 몇 명입니까?', medical: '환자가 숨을 쉬고 있습니까? 가슴이 오르내리는지 보세요.', any: '더 알려 주실 내용이 있습니까?' },
 };
 const DONT_KNOW = ['잘 모르겠어요.', '그건 못 봤어요.', '거기까지는 모르겠어요.'];
 const PANIC_NOISE = ['빨리 좀 와 주세요! 제발요!', '모르겠어요, 빨리요!', '아… 어떡해, 어떡해요!'];
@@ -158,7 +210,19 @@ const TOPIC_VALUE: Record<string, Partial<Record<Topic, number>>> = {
   traffic: { injured: 0.9, trapped: 0.84, count: 0.62, hazard: 0.6, detail: 0.5 },
   search: { detail: 0.92, injured: 0.6, count: 0.55 },
   armed: { weapon: 0.95, injured: 0.82, detail: 0.7, trapped: 0.64, count: 0.5 },
+  medical: { detail: 0.95, injured: 0.85, count: 0.3 },
 };
+
+/** 사건과 무관한 비긴급 전화. [신고자, 접수 AI, 신고자, 접수 AI …] */
+const NUISANCE: string[][] = [
+  ['옆집에서 밤새 음악을 틀어서 잠을 못 자겠어요.', '위급한 상황은 아닙니까?', '그건 아닌데 너무 시끄러워요.', '긴급 신고 전화입니다. 소음 민원은 민원 창구로 문의해 주세요. 종료하겠습니다.'],
+  ['고양이가 나무에 올라가서 못 내려와요.', '사람이 다치거나 위험한 상황입니까?', '아니요, 고양이만요.', '지금은 긴급 출동이 어렵습니다. 관할 동물 구조 창구를 안내해 드리겠습니다.'],
+  ['지갑을 잃어버렸는데 어떻게 해야 하죠?', '분실 신고는 긴급 신고가 아닙니다. 가까운 지구대나 온라인으로 접수해 주세요.'],
+  ['……', '여보세요? 긴급 신고 센터입니다. 말씀하세요.', '(주머니 속에서 잘못 걸린 전화)', '응답이 없어 오발신으로 판단하고 종료합니다.'],
+  ['거기 치킨집 아니에요?', '긴급 신고 센터입니다. 잘못 거셨습니다. 종료하겠습니다.'],
+  ['차를 누가 제 집 앞에 대 놨어요. 빼라고 해 주세요.', '통행이 완전히 막혀 위급한 상황입니까?', '그건 아니고 기분이 나빠서요.', '불법 주차 신고는 민원 창구에서 받습니다. 종료하겠습니다.'],
+  ['버스 막차가 몇 시인지 아세요?', '긴급 신고 전화입니다. 교통 정보는 안내 전화로 문의해 주세요.'],
+];
 
 export function startCall(sim: Sim, I: Incident, followup: boolean): void {
   const s = sim.scenes[I.id]!;
@@ -166,7 +230,7 @@ export function startCall(sim: Sim, I: Incident, followup: boolean): void {
   const call: Call = {
     id: sim.calls.length, incidentId: I.id, caller: makeCaller(sim, I, s, rng, followup), state: 'ringing',
     ringAt: sim.t, answeredAt: -1, endedAt: -1, transcript: [], asked: [], pending: null, nextAt: 0, phase: 'ask', retries: 0,
-    linkedTo: -1, rng, isFollowup: followup, eventId: -1,
+    linkedTo: -1, rng, isFollowup: followup, eventId: -1, kind: 'incident', instructed: false, script: [], scriptI: 0,
   };
   I.callsCount++;
   sim.calls.push(call);
@@ -184,7 +248,38 @@ function recordClaim(sim: Sim, call: Call, I: Incident, c: Claim): void {
   const claim: Claim = { ...c, callId: call.id };
   // 서로 다른 신고자의 진술이 충돌하면 표시해 둔다(분석 AI 가 신뢰도를 낮춘다)
   I.claims.push(claim);
-  if (claim.topic === 'location') I.locationKnown = true;
+  if (claim.topic !== 'location') return;
+  if (!I.locationKnown) { I.locationKnown = true; I.reportedNode = claim.value; return; }
+  if (claim.value === I.reportedNode) return;
+  // 두 신고자가 말한 위치가 다르다 → 더 확실하게 말한 쪽을 채택하고 출동 부대에 정정한다
+  const first = I.claims.find((q) => q.topic === 'location')!;
+  const adopt = claim.conf >= first.conf ? claim : first;
+  emit(sim, { inc: I.id, role: 'CALL_TAKER', actor: '신고 접수 AI', kind: 'call', imp: 2, causes: [call.eventId], text: `위치 불일치: 첫 신고는 ${nodeName(sim.city, first.value)}, 추가 신고는 ${nodeName(sim.city, claim.value)}. 더 확실한 진술(${nodeName(sim.city, adopt.value)})을 채택합니다.` });
+  if (adopt.value !== I.reportedNode) { I.reportedNode = adopt.value; redirectUnits(sim, I); }
+}
+
+const INSTRUCT: Record<string, { say: string; yes: string; no: string }> = {
+  fire: { say: '안에 있는 분들에게 문을 닫고 낮은 자세로 나오라고 크게 외쳐 주세요. 직접 들어가지는 마세요.', yes: '네, 소리쳐 볼게요!', no: '무서워서 가까이 못 가겠어요…' },
+  traffic: { say: '깨끗한 천으로 피 나는 곳을 세게 눌러 주세요. 환자를 옮기지는 마세요.', yes: '네, 누르고 있을게요.', no: '피를 못 보겠어요, 못 하겠어요…' },
+  medical: { say: '제가 알려 드릴게요. 환자를 바로 눕히고 가슴 한가운데를 강하고 빠르게 계속 눌러 주세요.', yes: '네, 하고 있어요. 하나, 둘, 셋…', no: '못 하겠어요, 손이 떨려요…' },
+  care: { say: '환자를 편하게 눕히고, 피가 나면 깨끗한 천으로 세게 눌러 주세요. 곁을 지키며 상태를 계속 봐 주세요.', yes: '네, 옆에서 보고 있을게요.', no: '어떻게 해야 할지 모르겠어요…' },
+  search: { say: '지금 계신 곳에서 움직이지 말고 대원들을 기다려 주세요. 도착하면 본 것을 그대로 알려 주세요.', yes: '네, 여기서 기다릴게요.', no: '저도 찾으러 가 봐야겠어요.' },
+};
+
+/** 도착 전 안내: 접수 AI 가 신고자에게 할 일을 알려 준다. 따를지는 신고자에게 달렸고, 따르면 현장 상태가 실제로 바뀐다. */
+function maybeInstruct(sim: Sim, call: Call, I: Incident): boolean {
+  const as = I.assessment;
+  if (call.instructed || call.isFollowup || !as || as.typeConf < 0.6 || call.caller.persona === 'prank') return false;
+  const has = (topic: Topic, v: unknown): boolean => I.claims.some((c) => c.callId === call.id && c.topic === topic && c.value === v);
+  const noBreath = I.claims.some((c) => (c.topic === 'nature' && c.value === 'notbreathing') || (c.topic === 'detail' && c.value && c.value.breathing === false));
+  const kind = as.type === 'fire' && has('trapped', true) ? 'fire' : as.type === 'traffic' && has('injured', true) ? 'traffic' : as.type === 'medical' && call.asked.length >= 2 ? (noBreath ? 'medical' : 'care') : as.type === 'search' && call.asked.length >= 2 ? 'search' : '';
+  if (!kind) return false;
+  call.instructed = true;
+  const complied = call.rng.chance(COMPLY[call.caller.persona]);
+  const ev = say(sim, call, I, 'CALL_TAKER', INSTRUCT[kind].say, 1);
+  say(sim, call, I, 'CALLER', complied ? INSTRUCT[kind].yes : INSTRUCT[kind].no);
+  if (complied) applyCallerAid(sim, I, kind, ev);
+  return true;
 }
 
 function nextTopic(sim: Sim, call: Call, I: Incident): Topic | null {
@@ -195,6 +290,7 @@ function nextTopic(sim: Sim, call: Call, I: Incident): Topic | null {
   const table = TOPIC_VALUE[hyp];
   let best: Topic | null = null, bs = 0;
   const elapsed = sim.t - call.answeredAt;
+  if (!table) return null;
   for (const k of Object.keys(table) as Topic[]) {
     if (call.asked.indexOf(k) >= 0) continue;
     // 이미 다른 신고자에게서 확실한 답을 들었으면 가치가 낮다
@@ -217,11 +313,42 @@ function endCall(sim: Sim, call: Call, I: Incident, text: string): void {
   sim.activeCall = -1;
 }
 
+export function startNuisanceCall(sim: Sim): void {
+  const rng = sim.rngNuisance;
+  const script = rng.pick(NUISANCE);
+  sim.calls.push({
+    id: sim.calls.length, incidentId: -1, caller: { name: rng.pick(SURNAMES) + '○○', persona: 'calm', knows: {}, patience: 0, answerTime: 2.6 }, state: 'ringing',
+    ringAt: sim.t, answeredAt: -1, endedAt: -1, transcript: [], asked: [], pending: null, nextAt: 0, phase: 'ask', retries: 0,
+    linkedTo: -1, rng: rng.fork('n' + sim.calls.length), isFollowup: false, eventId: -1, kind: 'nuisance', instructed: false, script, scriptI: 0,
+  });
+}
+
+/** 비긴급 전화: 사건은 아니지만 응대하는 동안 다른 신고가 기다린다. */
+function tickNuisance(sim: Sim, call: Call): void {
+  if (sim.t < call.nextAt) return;
+  if (call.scriptI >= call.script.length) {
+    call.state = 'done'; call.endedAt = sim.t; sim.activeCall = -1;
+    const waiting = sim.calls.filter((c) => c.state === 'ringing').length;
+    emit(sim, { role: 'CALL_TAKER', actor: '신고 접수 AI', kind: 'call', imp: 1, causes: [call.eventId], text: `비긴급 전화로 분류, 출동 없이 종결 (${Math.round(sim.t - call.answeredAt)}초 소요${waiting ? `, 그동안 신고 ${waiting}건 대기` : ''}).` });
+    return;
+  }
+  const who = call.scriptI % 2 === 0 ? 'CALLER' : 'CALL_TAKER';
+  const text = call.script[call.scriptI++];
+  call.transcript.push({ t: sim.t, who, text });
+  emit(sim, { role: who, actor: who === 'CALLER' ? `신고자 ${call.caller.name}` : '신고 접수 AI', kind: 'call', imp: 0, causes: [call.eventId], text });
+  call.nextAt = sim.t + (who === 'CALLER' ? 2.4 : 3.2);
+}
+
 export function tickCalls(sim: Sim): void {
   // 벨이 울리는 전화 받기 (접수 AI 는 한 번에 한 통화만 처리한다)
   if (sim.activeCall < 0) {
     const ringing = sim.calls.find((c) => c.state === 'ringing');
-    if (ringing) {
+    if (ringing && ringing.kind === 'nuisance') {
+      ringing.state = 'active'; ringing.answeredAt = sim.t; sim.activeCall = ringing.id;
+      ringing.eventId = emit(sim, { role: 'CALL_TAKER', actor: '신고 접수 AI', kind: 'call', imp: 1, text: '전화 수신. 긴급 신고 센터입니다. 어떤 상황입니까?' });
+      ringing.transcript.push({ t: sim.t, who: 'CALL_TAKER', text: '긴급 신고 센터입니다. 어떤 상황입니까?' });
+      ringing.nextAt = sim.t + 2;
+    } else if (ringing) {
       const I = sim.incidents[ringing.incidentId];
       if (I.phase === 'closed') { ringing.state = 'done'; }
       else {
@@ -238,6 +365,7 @@ export function tickCalls(sim: Sim): void {
   }
   if (sim.activeCall < 0) return;
   const call = sim.calls[sim.activeCall];
+  if (call.kind === 'nuisance') { tickNuisance(sim, call); return; }
   const I = sim.incidents[call.incidentId];
   if (I.phase === 'closed') { call.state = 'done'; sim.activeCall = -1; return; }
   if (sim.t < call.nextAt) return;
@@ -260,9 +388,15 @@ export function tickCalls(sim: Sim): void {
       // 추가 신고: 위치가 기존 사건과 같으면 같은 사건으로 묶는다
       if (topic === 'location' && call.isFollowup) {
         call.linkedTo = I.id;
-        emit(sim, { inc: I.id, role: 'CALL_TAKER', actor: '신고 접수 AI', kind: 'call', imp: 1, causes: [call.eventId], text: `위치가 사건 ${I.code}과 일치합니다. 동일 사건의 추가 신고로 연결합니다.` });
+        emit(sim, { inc: I.id, role: 'CALL_TAKER', actor: '신고 접수 AI', kind: 'call', imp: 1, causes: [call.eventId], text: `사건 ${I.code}과 같은 건으로 판단합니다. 동일 사건의 추가 신고로 연결합니다.` });
+      }
+      // 장난 전화의 낌새: 진술이 오락가락하고 웃음소리가 섞인다. 알아챌 수도, 놓칠 수도 있다
+      if (cl.persona === 'prank' && call.asked.length === 2 && call.rng.chance(0.65)) {
+        recordClaim(sim, call, I, { topic: 'hazard', value: 'prank', conf: 0.7, text: '(수화기 너머로 웃음소리가 들리고 진술이 오락가락함)', truthful: true, callId: call.id, note: '' });
+        emit(sim, { inc: I.id, role: 'CALL_TAKER', actor: '신고 접수 AI', kind: 'call', imp: 2, causes: [call.eventId], text: '진술이 오락가락하고 웃음소리가 들립니다. 허위 신고 가능성을 표시합니다. 다만 확인 출동은 필요합니다.' });
       }
       assess(sim, I, `신고자 진술(${topicName(topic)})`);
+      if (maybeInstruct(sim, call, I)) { call.phase = 'ask'; call.nextAt = sim.t + 4.5; return; }
       if (I.phase === 'onscene' || I.phase === 'dispatched') briefUpdate(sim, I, claim);
     } else {
       say(sim, call, I, 'CALLER', (cl.persona === 'confused' ? '음… ' : '') + call.rng.pick(DONT_KNOW));
@@ -274,8 +408,8 @@ export function tickCalls(sim: Sim): void {
   // 다음 질문 선택
   const topic = nextTopic(sim, call, I);
   if (!topic) {
-    const early = call.asked.length >= cl.patience && cl.persona === 'partial';
-    if (early) say(sim, call, I, 'CALLER', '저는 지나가다 본 거라 더는 몰라요. 끊을게요.');
+    const early = call.asked.length >= cl.patience && (cl.persona === 'partial' || cl.persona === 'prank');
+    if (early) say(sim, call, I, 'CALLER', cl.persona === 'prank' ? '아 몰라요, 빨리 오기나 해요. (뚝)' : '저는 지나가다 본 거라 더는 몰라요. 끊을게요.');
     endCall(sim, call, I, call.isFollowup ? '추가 정보 감사합니다. 출동 부대에 전달하겠습니다.' : I.firstDispatchAt >= 0 ? '부대가 출동했습니다. 안전한 곳에서 기다려 주세요.' : '접수했습니다. 곧 부대를 보내겠습니다. 안전한 곳에서 기다려 주세요.');
     return;
   }

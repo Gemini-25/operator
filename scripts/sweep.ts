@@ -40,6 +40,7 @@ const out: Record<string, number> = { success: 0, partial: 0, delayed: 0, unreso
 const byType: Record<string, Record<string, number>> = {};
 const prob: Record<string, number> = {};
 const closeReasons: Record<string, number> = {};
+let benignN = 0, realGood = 0, realRespSum = 0, realRespN = 0;
 let incN = 0, respSum = 0, respN = 0, durSum = 0, ms = 0, errors = 0, casT = 0, casS = 0, casL = 0, casU = 0, hurt = 0, replan = 0, unitSum = 0, maxUnits = 0, open = 0;
 for (let k = 0; k < n; k++) {
   const seed = 'S' + k;
@@ -60,6 +61,9 @@ for (let k = 0; k < n; k++) {
     durSum += inc.result.duration;
     casT += inc.result.casTotal; casS += inc.result.casSaved; casL += inc.result.casLost; casU += inc.result.casUndiscovered;
     const I = sim.incidents[inc.id];
+    // 허위·오인 신고는 본질적으로 쉬운 사건이라 따로 센다
+    if (I.truth.variant === 'false' || I.truth.variant === 'prank') benignN++;
+    else { if (inc.result.outcome === 'success' || inc.result.outcome === 'delayed') realGood++; if (inc.result.responseTime >= 0) { realRespSum += inc.result.responseTime; realRespN++; } }
     unitSum += I.everAssigned.length; maxUnits = Math.max(maxUnits, I.everAssigned.length);
     closeReasons[I.closeReason] = (closeReasons[I.closeReason] ?? 0) + 1;
     const seen = new Set<string>();
@@ -76,6 +80,7 @@ const summary = {
   outcomes: out, good: +(share('success') + share('delayed')).toFixed(3), bad: +(share('failed') + share('unresolved')).toFixed(3),
   closeReasons, timeoutShare: +timeoutShare.toFixed(3), avgResponse: Math.round(respSum / Math.max(1, respN)), avgDuration: Math.round(durSum / Math.max(1, incN)),
   casualties: { total: casT, saved: casS, lost: casL, undiscovered: casU, savedRate: +(casS / Math.max(1, casT)).toFixed(3) },
+  falseAlarms: benignN, realGood: +(realGood / Math.max(1, incN - benignN)).toFixed(3), realAvgResponse: Math.round(realRespSum / Math.max(1, realRespN)),
   unitsPerIncident: +(unitSum / Math.max(1, incN)).toFixed(2), maxUnitsOnOneIncident: maxUnits, respondersHurtPerShift: +(hurt / n).toFixed(2), recoveredShare: +(replan / Math.max(1, incN)).toFixed(3),
 };
 if (flag('--json')) console.log(JSON.stringify(summary));
@@ -85,6 +90,7 @@ else {
   for (const t of Object.keys(byType)) console.log(`  ${t}:`, JSON.stringify(byType[t]));
   console.log('close reasons:', JSON.stringify(closeReasons));
   console.log(`avg response ${summary.avgResponse}s, avg duration ${summary.avgDuration}s, units/incident ${summary.unitsPerIncident} (max ${maxUnits})`);
+  console.log(`false alarms ${benignN} (${Math.round((benignN / Math.max(1, incN)) * 100)}%); real incidents only: good ${Math.round(summary.realGood * 100)}%, avg response ${summary.realAvgResponse}s`);
   console.log(`casualties total ${casT}, saved ${casS} (${Math.round(summary.casualties.savedRate * 100)}%), lost ${casL}, undiscovered ${casU}; responders hurt/shift ${summary.respondersHurtPerShift}`);
   console.log(`incidents with a recovered problem: ${Math.round(summary.recoveredShare * 100)}%`);
   console.log('problems (incidents affected):', Object.entries(prob).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', '));

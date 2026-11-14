@@ -5,7 +5,8 @@ import type { Sim } from '../engine';
 import { emit, markRecovered, raiseProblem } from '../events';
 import { transmit } from '../field/agents';
 import { mkFact } from '../field/beliefs';
-import { crewReady, dispatchUnit, etaFor } from '../resources';
+import { nodeName } from '../city';
+import { crewReady, dispatchUnit, etaFor, sendUnitTo } from '../resources';
 import type { Claim, Incident, Needs, RadioMsg, Scene, Unit } from '../types';
 import { TYPE_NAME, fmtSec, josa } from '../util';
 import { assess, emptyNeeds, needsText, sevName } from './analyst';
@@ -56,7 +57,7 @@ function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { be
       if (gap < (J.assigned.length > 1 ? 0.9 : 1.4)) continue;
       divertFrom = J;
     } else if (u.state !== 'available' && u.state !== 'returning') continue;
-    const eta = etaFor(sim, u, I.truth.nodeId);
+    const eta = etaFor(sim, u, I.reportedNode);
     let stamina = 0; for (const rid of u.crew) stamina += sim.responders[rid].stamina; stamina /= u.crew.length;
     let score = fit * 100 - eta * (0.45 + 0.22 * sev) - (100 - stamina) * 0.22;
     if (key === 'suppression' && u.pumpCond < 0.4) score -= 10;
@@ -84,7 +85,7 @@ function sendUnit(sim: Sim, I: Incident, key: keyof Needs, c: Cand, nearest: Can
   }
   const first = I.firstDispatchAt < 0;
   dispatchUnit(sim, u, I, c.eta);
-  let why = `${NEED_LABEL[key]} 수요, 적합도 ${Math.round(c.fit * 100)}%, 예상 도착 ${fmtSec(c.eta)}`;
+  let why = `${I.assessment!.type === 'medical' && key === 'search' ? '선착 대응' : NEED_LABEL[key]} 수요, 적합도 ${Math.round(c.fit * 100)}%, 예상 도착 ${fmtSec(c.eta)}`;
   if (nearest && nearest.u.id !== u.id && nearest.eta < c.eta - 5) why += `. 더 가까운 ${nearest.u.callsign}(${fmtSec(nearest.eta)})보다 ${c.fit > nearest.fit ? '전문성이 높아' : '상태가 좋아'} 선택`;
   const ev = emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: `출동 지령: ${u.callsign} → 사건 ${I.code} (${TYPE_NAME[I.assessment!.type]}, 위험도 ${sevName(I.assessment!.severity)}). ${why}.` });
   I.dispatchLog.push(ev);
@@ -130,6 +131,17 @@ export function tickDispatch(sim: Sim): void {
     }
     if (!blocked.length && progressed) I.noUnitLogged = false;
   }
+}
+
+/** 관제가 아는 위치가 바뀌었다: 그 사건으로 가는 부대의 목적지를 고친다. */
+export function redirectUnits(sim: Sim, I: Incident): void {
+  const names: string[] = [];
+  for (const uid of I.assigned) {
+    const u = sim.units[uid];
+    if (u.state === 'enroute') { sendUnitTo(sim, u, I.reportedNode); names.push(u.callsign); }
+    else if (u.state === 'turnout') { u.destNode = I.reportedNode; names.push(u.callsign); }
+  }
+  if (names.length) emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: `위치 정정: ${names.join(', ')} 목적지를 ${josa(nodeName(sim.city, I.reportedNode), '으로/로')} 변경.` });
 }
 
 /** 현장 지휘관의 무전(상황 보고·지원 요청)을 관제가 수신했다. */

@@ -35,7 +35,7 @@ export function regionNameAt(s: Scene, x: number, y: number): string {
 export function casFact(sim: Sim, s: Scene, c: Casualty, src: string): Fact {
   const mob = c.mob === 'trapped' ? 'trapped' : c.walking ? 'mobile' : 'immobile';
   const b = band(c.health);
-  const v: CasBelief = { x: Math.round(c.x), y: Math.round(c.y), mob, band: b, where: c.where, treated: c.treated, trappedDone: c.mob !== 'trapped' };
+  const v: CasBelief = { x: Math.round(c.x), y: Math.round(c.y), mob, band: b, where: c.where, treated: c.treated, trappedDone: c.mob !== 'trapped', tq: c.treatQ >= 0.6 ? 2 : c.treated ? 1 : 0 };
   const mobT = c.dead ? '' : mob === 'trapped' ? ' · 고립' : mob === 'mobile' ? ' · 자력 대피 중' : c.where === 'scene' ? ' · 거동 불가' : '';
   const whereT = c.where === 'safe' ? '안전 구역' : c.where === 'loaded' ? '구급차 탑승' : c.where === 'carried' ? '이송 중' : regionNameAt(s, c.x, c.y);
   return mkFact('cas', c.id, v, src, sim.t, 1, true, `구조 대상 ${c.label}: ${whereT}${mobT} · ${BAND_NAME[b]}`);
@@ -49,7 +49,7 @@ export function hosFact(sim: Sim, s: Scene, h: Hostile, src: string): Fact {
 /** 보고할 가치가 있는 변화인가 (위치만 바뀐 것은 조용히 갱신) */
 function significant(f: Fact, old: any): boolean {
   const v = f.value;
-  if (f.type === 'cas') return v.where !== 'carried' && (old.mob !== v.mob || old.band !== v.band || old.where !== v.where || old.treated !== v.treated);
+  if (f.type === 'cas') return v.where !== 'carried' && (old.mob !== v.mob || old.band !== v.band || old.where !== v.where || old.treated !== v.treated || old.tq !== v.tq);
   if (f.type === 'hos') return old.state !== v.state || old.weapon !== v.weapon;
   if (f.type === 'mate') return old.status !== v.status;
   return true;
@@ -311,12 +311,17 @@ export function fitFor(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number {
     case 'search':
       if (hot && r.dept !== 'police') return 0;
       if (s.regions[w.region].indoor && fireRisk(w.region) && r.dept !== 'fire') return 0;
-      return 0.45 + 0.3 * r.experience + 0.25 * r.judgment + (r.dept === 'police' && s.kind !== 'fire' ? 0.1 : 0);
+      return 0.45 + 0.3 * r.experience + 0.25 * r.judgment + (r.dept === 'police' && s.kind !== 'fire' && s.kind !== 'medical' ? 0.1 : 0) + (r.dept === 'ems' && s.kind === 'medical' ? 0.15 : 0);
     case 'suppress': return r.skills.fire >= 0.35 && !u.pumpFailed && (u.water > 0 || u.hydrant) ? r.skills.fire : 0;
     case 'hookup': return r.dept === 'fire' && a.unitId === w.prop ? 0.8 : 0;
     case 'clear': case 'force': return 0.3 + r.skills.rescue * 0.5 + u.tool * 0.3;
     case 'extricate': { const f = r.skills.rescue * (0.35 + 0.65 * u.tool); return f >= 0.2 || sim.t - w.createdAt > 25 ? Math.max(0.05, f) : 0; }
-    case 'treat': return hot && r.dept !== 'police' ? 0 : Math.max(0.08, r.skills.medical * (0.5 + 0.5 * u.medLevel));
+    case 'treat': {
+      if (hot && r.dept !== 'police') return 0;
+      const cb = a.beliefs.val<CasBelief>('cas', w.cas);
+      if (cb && cb.tq >= 1 && r.dept !== 'ems') return 0;      // 기본 처치가 끝난 환자는 구급대원만 더 손볼 수 있다
+      return Math.max(0.08, r.skills.medical * (0.5 + 0.5 * u.medLevel));
+    }
     case 'carry': case 'escort': {
       if (hot && r.dept !== 'police') return 0;
       const cb = a.beliefs.val<CasBelief>('cas', w.cas);

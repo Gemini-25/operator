@@ -5,7 +5,7 @@ import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import { T } from '../types';
 import type { Casualty, Hostile, Incident, Scene } from '../types';
-import { clamp, dist } from '../util';
+import { clamp, dist, josa } from '../util';
 import { addProp } from './builders';
 import { casFact } from './agents';
 import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, truthWalkable } from './grid';
@@ -156,7 +156,8 @@ export function tickCasualties(sim: Sim, s: Scene, I: Incident): void {
   for (const c of s.casualties) {
     c.px = c.x; c.py = c.y;
     if (c.dead || c.where === 'hospital') continue;
-    let d = c.bleed * (c.treated ? 1 : 1);
+    let d = c.bleed;
+    if (c.bystander && c.treatQ <= 0 && c.where === 'scene') d *= 0.5;      // 신고자가 안내대로 돌보는 중
     if (c.where === 'scene' || c.where === 'carried') {
       const i = tileOf(s, c.x, c.y);
       d += s.smoke[i] * 0.42;
@@ -212,6 +213,29 @@ export function tickCasualties(sim: Sim, s: Scene, I: Incident): void {
         const dd = dist(c.x, c.y, tx, ty), step = 0.42 * dt;
         if (dd <= step) { c.x = tx; c.y = ty; c.pathI++; } else { c.x += ((tx - c.x) / dd) * step; c.y += ((ty - c.y) / dd) * step; }
       }
+    }
+  }
+}
+
+/** 신고자가 접수 AI 의 안내를 따랐을 때 현장에 생기는 변화 (부대 도착 전에만 의미가 있다). */
+export function applyCallerAid(sim: Sim, I: Incident, kind: string, ev: number): void {
+  const s = sim.scenes[I.id];
+  if (!s || s.arrivedAt >= 0) return;
+  const note = (text: string) => emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'action', imp: 1, truth: true, causes: [ev], text });
+  if (kind === 'fire') {
+    const c = s.casualties.find((q) => q.mob === 'mobile' && !q.walking && !q.dead && q.where === 'scene');
+    if (c) { c.walking = true; c.path = null; c.concealment = 0; note(`신고자의 외침을 듣고 구조 대상 ${josa(c.label, '이/가')} 스스로 대피를 시작했습니다.`); }
+  } else if (kind === 'traffic' || kind === 'medical' || kind === 'care') {
+    let best: Casualty | null = null;
+    for (const c of s.casualties) if (!c.dead && c.where === 'scene' && c.mob !== 'mobile' && (!best || c.bleed > best.bleed)) best = c;
+    if (best) { best.bystander = true; note(kind === 'medical' ? `신고자가 안내에 따라 가슴 압박을 하고 있습니다. 환자의 악화가 늦춰집니다.` : kind === 'care' ? `신고자가 안내에 따라 환자를 돌보고 있습니다. 악화가 늦춰집니다.` : `신고자가 구조 대상 ${best.label}의 출혈 부위를 누르고 있습니다. 악화가 늦춰집니다.`); }
+  } else if (kind === 'search') {
+    if (!s.props.some((p) => p.kind === 'witness')) {
+      const tgt = s.casualties.find((c) => c.isTarget);
+      const reg = tgt ? s.region[Math.round(tgt.y) * s.w + Math.round(tgt.x)] : 0;
+      addProp(s, 'witness', 2, 11, { lastSeenRegion: Math.max(0, reg), accurate: true, interviewed: false });
+      s.staticVersion++;
+      note('신고자가 현장 입구에서 대원을 기다립니다. 도착하면 직접 본 것을 알려 줄 수 있습니다.');
     }
   }
 }
@@ -307,6 +331,8 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
       if (!h.path || h.pathI >= h.path.length) {
         h.state = 'escaped';
         raiseProblem(sim, I, 'SUSPECT_FLED', `${h.label} 도주`, { role: 'SYSTEM', actor: '현장', text: `${h.label}가 현장을 벗어나 도주했습니다.`, imp: 3, truth: s.arrivedAt < 0 }, false);
+        // 연쇄: 총기를 든 채 달아난 용의자는 다른 곳에서 다시 범행할 수 있다
+        if (h.weapon === 'gun' && s.rng.chance(0.45)) sim.gen.chain.push({ at: sim.t + s.rng.range(45, 100), note: '도주한 용의자가 다른 곳에서 다시 범행을 벌입니다' });
         continue;
       }
       const ti = h.path[h.pathI];

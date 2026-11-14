@@ -1,6 +1,8 @@
 // 시뮬레이션 실행기 (표현 계층).
 // 실제 시간 → 시뮬레이션 틱 변환만 담당한다. 배속은 "1초에 몇 틱"만 바꾸고, 시뮬레이션 결과에는 영향을 주지 않는다.
 
+import { NORMAL, difficultyLabel, parseDifficulty } from '../sim/difficulty';
+import type { Difficulty } from '../sim/difficulty';
 import { Sim } from '../sim/engine';
 import type { ShiftReport } from '../sim/types';
 
@@ -8,8 +10,8 @@ const LS_SETTINGS = 'ar.settings.v1';
 const LS_CURRENT = 'ar.current.v1';
 const LS_HISTORY = 'ar.history.v1';
 
-export interface Settings { speed: number; autoCam: boolean; truthView: boolean }
-export interface HistoryItem { seed: string; when: number; summary: string; counts: Record<string, number>; incidents: number; hash: string }
+export interface Settings { speed: number; autoCam: boolean; truthView: boolean; difficulty: Difficulty }
+export interface HistoryItem { seed: string; when: number; summary: string; counts: Record<string, number>; incidents: number; hash: string; difficulty?: string }
 
 function lsGet<T>(key: string, fallback: T): T {
   try { const v = localStorage.getItem(key); return v ? (JSON.parse(v) as T) : fallback; } catch { return fallback; }
@@ -38,23 +40,28 @@ export class Runner {
   simMs = 0;
 
   constructor() {
-    this.settings = { speed: 3, autoCam: true, truthView: true, ...lsGet<Partial<Settings>>(LS_SETTINGS, {}) };
+    this.settings = { speed: 3, autoCam: true, truthView: true, difficulty: { ...NORMAL }, ...lsGet<Partial<Settings>>(LS_SETTINGS, {}) };
+    if (!parseDifficulty(Object.values(this.settings.difficulty ?? {}).join(','))) this.settings.difficulty = { ...NORMAL };
     const url = new URL(window.location.href);
     const urlSeed = url.searchParams.get('seed');
-    const cur = lsGet<{ seed: string; tick: number } | null>(LS_CURRENT, null);
-    if (urlSeed) { this.sim = new Sim(urlSeed); }
+    const urlDiff = parseDifficulty(url.searchParams.get('diff'));
+    if (urlDiff) this.settings.difficulty = urlDiff;
+    const cur = lsGet<{ seed: string; tick: number; diff?: Difficulty } | null>(LS_CURRENT, null);
+    if (urlSeed || urlDiff) { this.sim = new Sim(urlSeed || randomSeed(), this.settings.difficulty); }
     else if (cur && cur.seed && cur.tick > 0) {
-      // 새로고침 복원: 같은 시드로 같은 틱까지 다시 돌리면 정확히 같은 상태가 된다
-      this.sim = new Sim(cur.seed);
+      // 새로고침 복원: 같은 시드·같은 난이도로 같은 틱까지 다시 돌리면 정확히 같은 상태가 된다
+      this.sim = new Sim(cur.seed, cur.diff ?? NORMAL);
       this.sim.run(cur.tick);
       this.restoredTicks = cur.tick;
-    } else this.sim = new Sim(randomSeed());
+    } else this.sim = new Sim(randomSeed(), this.settings.difficulty);
   }
 
-  newShift(seed?: string): void {
-    this.sim = new Sim(seed && seed.trim() ? seed.trim() : randomSeed());
+  /** 새 교대. 난이도를 넘기면 그 조건으로 시작하고 다음 교대의 기본값으로도 저장한다. */
+  newShift(seed?: string, difficulty?: Difficulty): void {
+    if (difficulty) { this.settings.difficulty = { ...difficulty }; this.saveSettings(); }
+    this.sim = new Sim(seed && seed.trim() ? seed.trim() : randomSeed(), this.settings.difficulty);
     this.acc = 0; this.alpha = 0; this.paused = false; this.version++; this.restoredTicks = 0;
-    lsSet(LS_CURRENT, { seed: this.sim.seed, tick: 0 });
+    lsSet(LS_CURRENT, { seed: this.sim.seed, tick: 0, diff: this.sim.difficulty });
   }
 
   setSpeed(v: number): void { this.settings.speed = v; this.paused = false; this.saveSettings(); }
@@ -65,7 +72,7 @@ export class Runner {
   private pushHistory(r: ShiftReport): void {
     const h = this.history();
     if (h.length && h[0].seed === r.seed && h[0].hash === r.hash) return;
-    h.unshift({ seed: r.seed, when: Date.now(), summary: r.summary[0] ?? '', counts: r.counts, incidents: r.totalIncidents, hash: r.hash });
+    h.unshift({ seed: r.seed, when: Date.now(), summary: r.summary[0] ?? '', counts: r.counts, incidents: r.totalIncidents, hash: r.hash, difficulty: difficultyLabel(r.difficulty) });
     lsSet(LS_HISTORY, h.slice(0, 12));
   }
 
@@ -84,8 +91,8 @@ export class Runner {
       if (steps >= 40) this.acc = 0;
       if (steps) this.simMs = this.simMs * 0.9 + (performance.now() - t0) * 0.1;
       this.alpha = Math.min(1, this.acc / sim.dt);
-      if (sim.ended && sim.report) { this.pushHistory(sim.report); lsSet(LS_CURRENT, { seed: sim.seed, tick: 0 }); }
+      if (sim.ended && sim.report) { this.pushHistory(sim.report); lsSet(LS_CURRENT, { seed: sim.seed, tick: 0, diff: sim.difficulty }); }
     }
-    if (nowMs - this.lastSave > 2500 && !sim.ended) { this.lastSave = nowMs; lsSet(LS_CURRENT, { seed: sim.seed, tick: sim.tick }); }
+    if (nowMs - this.lastSave > 2500 && !sim.ended) { this.lastSave = nowMs; lsSet(LS_CURRENT, { seed: sim.seed, tick: sim.tick, diff: sim.difficulty }); }
   }
 }

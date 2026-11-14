@@ -23,15 +23,15 @@ const PLACE: Record<IncidentType, Record<District, string>> = {
 };
 
 function createIncident(sim: Sim): Incident {
-  const rng = sim.rngGen, g = sim.gen;
+  const rng = sim.rngGen, g = sim.gen, tn = sim.tune;
   const types: IncidentType[] = ['fire', 'traffic', 'search', 'armed'];
-  const w = [0.3, 0.27, 0.2, 0.23].map((v, k) => (types[k] === g.lastType ? v * 0.3 : v));
+  const w = [0.3, 0.27, 0.2, tn.armedWeight].map((v, k) => (types[k] === g.lastType ? v * 0.3 : v));
   const type = rng.weighted(types, w);
   g.lastType = type;
-  let severity = rng.weighted([1, 2, 3], [0.28, 0.45, 0.27]);
+  let severity = rng.weighted([1, 2, 3], tn.sevWeights);
   let variant = 'std';
   if (type === 'armed') {
-    variant = rng.weighted(['robbery', 'dispute', 'shooter'], [0.46, 0.32, 0.22]);
+    variant = rng.weighted(['robbery', 'dispute', 'shooter'], [0.46, 0.32, tn.shooterWeight]);
     if (variant === 'shooter') severity = 3; else if (variant === 'dispute') severity = Math.min(severity, 2);
     else severity = Math.max(2, severity);
   } else if (type === 'search') variant = rng.chance(0.45) ? 'wander' : 'hiker';
@@ -80,17 +80,18 @@ export function tickIncidents(sim: Sim): void {
     if (I.firstArrivalAt < 0 && I.reportedAt >= 0 && sim.t - I.reportedAt > 330) closeIncident(sim, I, 'noresponse');
   }
   // 생성: 진행 중인 사건 수와 가용 자원에 어느 정도 영향을 받는다
-  if (sim.t >= sim.shiftLen - 150 || g.count >= 7) return;
+  const tn = sim.tune;
+  if (sim.t >= sim.shiftLen - 150 || g.count >= tn.maxIncidents) return;
   if (sim.t < g.nextAt) {
     if (open === 0 && g.count > 0 && sim.t - g.lastCreated > 75 && g.nextAt - sim.t > 25) g.nextAt = sim.t + sim.rngGen.range(8, 22);
     return;
   }
-  if (open >= 3) { g.nextAt = sim.t + 18; return; }
+  if (open >= tn.maxConcurrent) { g.nextAt = sim.t + 18; return; }
   const avail = sim.units.filter((u) => u.state === 'available').length;
-  if (open >= 2 && avail <= 1) { g.nextAt = sim.t + 22; return; }
+  if (open >= tn.maxConcurrent - 1 && avail <= 1) { g.nextAt = sim.t + 22; return; }
   createIncident(sim);
   g.count++; g.lastCreated = sim.t;
-  g.nextAt = sim.t + sim.rngGen.range(105, 215) * (avail <= 2 ? 1.2 : 1);
+  g.nextAt = sim.t + sim.rngGen.range(105, 215) * tn.gapMul * (avail <= 2 ? 1.2 : 1);
 }
 
 export function closeIncident(sim: Sim, I: Incident, reason: 'resolved' | 'timeout' | 'noresponse' | 'abandoned' | 'shiftend'): void {

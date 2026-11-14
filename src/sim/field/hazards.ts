@@ -51,7 +51,7 @@ export function tickFire(sim: Sim, s: Scene, I: Incident): void {
         j = by * w + bx; through = 0.3;
       }
       if (s.fire[j] > 0 || s.fuel[j] <= 0) continue;
-      let k = 0.085 * through * f * clamp(s.fuel[j] * 1.5, 0.45, 1) * (1 - s.wet[j]);
+      let k = 0.085 * sim.tune.fireSpreadMul * through * f * clamp(s.fuel[j] * 1.5, 0.45, 1) * (1 - s.wet[j]);
       if (s.tiles[j] === T.DOOR || s.tiles[i] === T.DOOR) { const dr = doorAt(s, s.tiles[j] === T.DOOR ? j : i); if (dr && !dr.open) k *= 0.55; }
       s.heat[j] += k;
       if (s.heat[j] >= 1) { s.fire[j] = 0.15; s.heat[j] = 0; }

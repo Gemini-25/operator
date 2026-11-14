@@ -6,6 +6,8 @@ import { generateCity, initTraffic, tickTraffic } from './city';
 import { buildReport } from './debrief';
 import { tickCalls } from './dispatch/callSystem';
 import { tickDispatch } from './dispatch/dispatcher';
+import { NORMAL, difficultyLabel, tuningOf } from './difficulty';
+import type { Difficulty, Tuning } from './difficulty';
 import { emit } from './events';
 import { tickScene } from './field/sceneManager';
 import { closeIncident, initGenerator, tickIncidents } from './incidents';
@@ -42,9 +44,14 @@ export class Sim {
   ended = false;
   report: ShiftReport | null = null;
   gen: GenState;
+  /** 교대 조건: 난이도 손잡이와 거기서 나온 수치 */
+  readonly difficulty: Difficulty;
+  readonly tune: Tuning;
 
-  constructor(seed: string, shiftLen = 1200) {
+  constructor(seed: string, difficulty: Difficulty = NORMAL, shiftLen = 1200) {
     this.seed = seed;
+    this.difficulty = { ...difficulty };
+    this.tune = tuningOf(this.difficulty);
     this.shiftLen = shiftLen;
     this.hardCap = shiftLen + 420;
     this.rng = new Rng(hashStr('AR:' + seed));
@@ -57,7 +64,7 @@ export class Sim {
     this.traffic = initTraffic(this.rngTraffic);
     createRoster(this);
     this.gen = initGenerator(this.rngGen);
-    emit(this, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 2, text: `교대 시작. 날씨: ${WEATHER_NAME[this.weather]}. 가용 부대 ${this.units.length}대, 대원 ${this.responders.length}명. 시드 ${seed}.` });
+    emit(this, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 2, text: `교대 시작. 날씨: ${WEATHER_NAME[this.weather]}. 난이도: ${difficultyLabel(this.difficulty)}. 가용 부대 ${this.units.length}대, 대원 ${this.responders.length}명. 시드 ${seed}.` });
   }
 
   /** 화면에 표시하는 시각 (하루 기준 초) */

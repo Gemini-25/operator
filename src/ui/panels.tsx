@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { PROBLEM_LABEL } from '../sim/debrief';
+import { KNOBS, PRESETS, difficultyLabel, overallLevel, presetOf } from '../sim/difficulty';
+import type { Difficulty, PresetId } from '../sim/difficulty';
 import { needsText, sevName } from '../sim/dispatch/analyst';
 import { personaName, topicName } from '../sim/dispatch/callSystem';
 import type { Sim } from '../sim/engine';
@@ -312,14 +314,16 @@ export function BottomBar({ runner, director, onTick }: { runner: Runner; direct
 }
 
 // ───────────────────────── 상단 ─────────────────────────
-export function TopBar({ runner, onNew }: { runner: Runner; onNew: (seed?: string) => void }) {
+export function TopBar({ runner, onNew, onDifficulty }: { runner: Runner; onNew: (seed?: string) => void; onDifficulty: () => void }) {
   const sim = runner.sim;
   const [seed, setSeed] = useState('');
+  const lvl = Math.round(overallLevel(sim.difficulty));
   return (
     <div className="top">
       <div className="brand"><b>AUTONOMOUS RESPONSE</b><span>자율형 긴급구조 조직 시뮬레이션 · 관찰 전용</span></div>
       <div className="clock">{fmtClock(sim.clock)}</div>
       <div className="meta"><span>날씨 {WEATHER_NAME[sim.weather]}</span><span>시드 <code>{sim.seed}</code></span><span className="dim">{Math.round(runner.fps)} FPS · 틱 {sim.tick}</span></div>
+      <button className={`diff-chip lv${lvl}`} onClick={onDifficulty} title="난이도 설정 — 다음 교대의 조건을 정합니다">난이도 <b>{difficultyLabel(sim.difficulty)}</b> <span className="pips">{[1, 2, 3, 4, 5].map((k) => <i key={k} className={k <= lvl ? 'on' : ''} />)}</span></button>
       <div className="seed">
         <input value={seed} onChange={(e) => setSeed(e.target.value)} placeholder="시드 입력" maxLength={16} onKeyDown={(e) => { if (e.key === 'Enter') { onNew(seed); setSeed(''); } }} />
         <button onClick={() => { onNew(seed); setSeed(''); }}>{seed.trim() ? '이 시드로 시작' : '새 교대'}</button>
@@ -337,7 +341,7 @@ export function ReportModal({ runner, onNew, onClose }: { runner: Runner; onNew:
     <div className="modal-back">
       <div className="modal">
         <div className="modal-head">
-          <div><h2>교대 종료 보고서</h2><div className="dim">시드 {r.seed} · 날씨 {WEATHER_NAME[r.weather]} · 진행 시간 {fmtDur(r.duration)} · 기록 해시 {r.hash}</div></div>
+          <div><h2>교대 종료 보고서</h2><div className="dim">시드 {r.seed} · 난이도 {r.difficultyLabel} · 날씨 {WEATHER_NAME[r.weather]} · 진행 시간 {fmtDur(r.duration)} · 기록 해시 {r.hash}</div></div>
           <div className="btns"><button onClick={() => onNew()}>새 교대 시작</button><button onClick={() => onNew(r.seed)}>같은 시드 재실행</button><button className="ghost" onClick={onClose}>닫고 마지막 상태 보기</button></div>
         </div>
         <div className="modal-body">
@@ -373,7 +377,7 @@ export function ReportModal({ runner, onNew, onClose }: { runner: Runner; onNew:
               {r.unitUtil.map((u) => <div key={u.callsign} className="prob"><span>{u.callsign}</span><Bar v={u.util} color="#7cc4ff" w={90} /><span className="num">{pct(u.util)} · {u.runs}회</span></div>)}
               <h4>대원 부상</h4>
               {r.respondersHurt.length === 0 ? <div className="empty">없음</div> : r.respondersHurt.map((x) => <div key={x.name} className="kv"><span>{x.name} ({x.callsign})</span><span className="warn">{x.status}</span></div>)}
-              {hist.length > 0 && (<><h4>이전 교대 기록</h4>{hist.map((x, k) => <div key={k} className="kv small"><span className="dim">시드 {x.seed}</span><span>{x.incidents}건 · 성공 {x.counts.success ?? 0} · 실패 {x.counts.failed ?? 0}</span></div>)}</>)}
+              {hist.length > 0 && (<><h4>이전 교대 기록</h4>{hist.map((x, k) => <div key={k} className="kv small"><span className="dim">시드 {x.seed}</span><span>{x.difficulty ? `${x.difficulty} · ` : ''}{x.incidents}건 · 성공 {x.counts.success ?? 0} · 실패 {x.counts.failed ?? 0}</span></div>)}</>)}
             </div>
           </div>
         </div>
@@ -428,4 +432,52 @@ export function Ticker({ sim, truth }: { sim: Sim; truth: boolean }) {
   const inc = ev.incidentId >= 0 ? sim.incidents[ev.incidentId] : null;
   const cls = ev.problem ? 'bad' : ev.kind === 'resolve' || ev.kind === 'recovery' ? 'good' : ev.kind === 'arrive' ? 'info' : 'note';
   return <div key={ev.id} className={`ticker ${cls}`}>{inc && <b>사건 {inc.code}</b>}<span>{ev.text}</span></div>;
+}
+
+// ───────────────────────── 난이도 설정 (교대 시작 전 조건) ─────────────────────────
+export function DifficultyPanel({ runner, onStart, onClose }: { runner: Runner; onStart: (seed: string | undefined, d: Difficulty) => void; onClose: () => void }) {
+  const [d, setD] = useState<Difficulty>({ ...runner.settings.difficulty });
+  const preset = presetOf(d);
+  const lvl = overallLevel(d);
+  const running = !runner.sim.ended && runner.sim.tick > 0;
+  return (
+    <div className="modal-back" onClick={onClose}>
+      <div className="modal diff" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head">
+          <div><h2>난이도 설정</h2><div className="dim">교대가 시작될 때 정해지는 조건입니다. 진행 중인 교대에는 적용되지 않으며, 사건이 벌어진 뒤에는 무엇도 바꿀 수 없습니다.</div></div>
+          <div className="btns"><button className="ghost" onClick={onClose}>닫기</button></div>
+        </div>
+        <div className="modal-body">
+          <div className="presets">
+            {(Object.keys(PRESETS) as PresetId[]).map((id) => (
+              <button key={id} className={`preset ${preset === id ? 'on' : ''}`} onClick={() => setD({ ...PRESETS[id].d })}>
+                <b>{PRESETS[id].name}</b><span>{PRESETS[id].desc}</span>
+              </button>
+            ))}
+          </div>
+          <div className="knobs">
+            {KNOBS.map((k) => (
+              <div key={k.key} className="knob">
+                <div className="knob-head"><b>{k.name}</b><span className="val">{d[k.key]}</span>{k.harderWhen === 'low' && <span className="dim small">높을수록 쉬움</span>}</div>
+                <div className="slider">
+                  <span className="dim">{k.low}</span>
+                  <input type="range" min={1} max={5} step={1} value={d[k.key]} onChange={(e) => setD({ ...d, [k.key]: parseInt(e.target.value, 10) })} />
+                  <span className="dim">{k.high}</span>
+                </div>
+                <div className="dim small">{k.desc}</div>
+              </div>
+            ))}
+          </div>
+          <div className="diff-foot">
+            <div>종합 난도 <b>{difficultyLabel(d)}</b> <span className="pips big">{[1, 2, 3, 4, 5].map((n) => <i key={n} className={n <= Math.round(lvl) ? 'on' : ''} />)}</span></div>
+            <div className="btns">
+              <button onClick={() => onStart(undefined, d)}>이 조건으로 새 교대 시작</button>
+              <button onClick={() => onStart(runner.sim.seed, d)} title="사건 배치의 난수는 그대로 두고 조건만 바꿔 비교합니다">같은 시드({runner.sim.seed})로 시작</button>
+            </div>
+          </div>
+          {running && <div className="warn small">지금 진행 중인 교대는 끝내고 새로 시작합니다.</div>}
+        </div>
+      </div>
+    </div>
+  );
 }

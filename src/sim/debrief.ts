@@ -4,6 +4,7 @@
 
 import { personaName } from './dispatch/callSystem';
 import { sevName } from './dispatch/analyst';
+import { difficultyLabel } from './difficulty';
 import type { Sim } from './engine';
 import type { Incident, IncidentResult, Outcome, Problem, ProblemCode, ShiftReport } from './types';
 import { TYPE_NAME, fmtSec, josa, pct } from './util';
@@ -178,7 +179,7 @@ export function buildReport(sim: Sim): ShiftReport {
   if (delayCauses.length) summary.push(`가장 자주 발생한 문제: ${delayCauses.slice(0, 3).map((c) => `${c.label}(${c.count}건)`).join(', ')}.`);
   if (n && good === n) summary.push('모든 사건을 목표대로 해결한 교대였습니다.');
   return {
-    seed: sim.seed, duration: dur, weather: sim.weather, totalCalls: sim.calls.length, totalIncidents: n, counts,
+    seed: sim.seed, duration: dur, weather: sim.weather, difficulty: { ...sim.difficulty }, difficultyLabel: difficultyLabel(sim.difficulty), totalCalls: sim.calls.length, totalIncidents: n, counts,
     avgResponse: rN ? rSum / rN : -1, avgDispatch: dN ? dSum / dN : -1, utilization, unitUtil,
     casTotal, casSaved, casLost, casUndiscovered: casUnd, respondersHurt: hurt, equipFailures: equip, delayCauses, incidents, summary,
     hash: sim.logHash.toString(16),

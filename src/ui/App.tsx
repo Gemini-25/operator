@@ -3,7 +3,8 @@ import { TYPE_NAME, fmtDur } from '../sim/util';
 import { CameraDirector } from '../view/camera';
 import { Runner } from '../view/runner';
 import { Viewport } from './Viewport';
-import { AgentPanel, BottomBar, CallPanel, DecisionPanel, Icon, IncidentList, LogPanel, ReportModal, Ticker, TopBar, UnitList } from './panels';
+import type { Difficulty } from '../sim/difficulty';
+import { AgentPanel, BottomBar, CallPanel, DecisionPanel, DifficultyPanel, Icon, IncidentList, LogPanel, ReportModal, Ticker, TopBar, UnitList } from './panels';
 
 /**
  * Observation UI.
@@ -18,6 +19,7 @@ export function App() {
   const [selectedRid, setSelectedRid] = useState(-1);
   const [tab, setTab] = useState<'decision' | 'agent'>('decision');
   const [reportClosed, setReportClosed] = useState(-1);
+  const [diffOpen, setDiffOpen] = useState(false);
 
   // 패널은 초당 6회 정도만 다시 그린다(캔버스는 별도로 매 프레임 그린다)
   useEffect(() => { const id = window.setInterval(force, 160); return () => window.clearInterval(id); }, [force]);
@@ -31,7 +33,7 @@ export function App() {
   }, [runner, director]);
   const selectUnit = useCallback((uid: number) => { selectRid(runner.sim.units[uid].crew[0]); }, [runner, selectRid]);
 
-  const onNew = useCallback((seed?: string) => { runner.newShift(seed); director.reset(); setSelectedRid(-1); setReportClosed(-1); setTab('decision'); force(); }, [runner, director, force]);
+  const onNew = useCallback((seed?: string, d?: Difficulty) => { runner.newShift(seed, d); director.reset(); setSelectedRid(-1); setReportClosed(-1); setTab('decision'); setDiffOpen(false); force(); }, [runner, director, force]);
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -60,7 +62,7 @@ export function App() {
 
   return (
     <div className="app">
-      <TopBar runner={runner} onNew={onNew} />
+      <TopBar runner={runner} onNew={onNew} onDifficulty={() => setDiffOpen(true)} />
       <div className="left">
         <IncidentList sim={sim} director={director} truth={truth} />
         <UnitList sim={sim} selectedRid={selectedRid} onSelectRid={selectRid} />
@@ -103,7 +105,8 @@ export function App() {
         <div className="right-bottom"><LogPanel sim={sim} director={director} truth={truth} /></div>
       </div>
       <BottomBar runner={runner} director={director} onTick={force} />
-      {showReport && <ReportModal runner={runner} onNew={onNew} onClose={() => setReportClosed(runner.version)} />}
+      {showReport && !diffOpen && <ReportModal runner={runner} onNew={onNew} onClose={() => setReportClosed(runner.version)} />}
+      {diffOpen && <DifficultyPanel runner={runner} onStart={onNew} onClose={() => setDiffOpen(false)} />}
       {sim.ended && !showReport && <button className="reopen" onClick={() => setReportClosed(-1)}>보고서 다시 보기</button>}
     </div>
   );

@@ -151,3 +151,65 @@ describe('도시·경로', () => {
     expect(a.next()).not.toBe(c.next());
   });
 });
+
+describe('난이도 (교대 시작 전 조건)', () => {
+  it('보통은 기본값과 같고, 같은 시드 + 같은 난이도는 재현된다', async () => {
+    const { NORMAL, PRESETS } = await import('../src/sim/difficulty');
+    const a = new Sim('D-1'); a.runToEnd();
+    const b = new Sim('D-1', NORMAL); b.runToEnd();
+    expect(a.logHash).toBe(b.logHash);
+    const h1 = new Sim('D-1', PRESETS.hard.d); h1.runToEnd();
+    const h2 = new Sim('D-1', PRESETS.hard.d); h2.runToEnd();
+    expect(h1.logHash).toBe(h2.logHash);
+    expect(h1.logHash).not.toBe(a.logHash);
+    expect(h1.report!.difficultyLabel).toBe('어려움');
+  });
+  it('프리셋이 어려워질수록 좋은 결과의 비율이 내려간다', async () => {
+    const { PRESETS } = await import('../src/sim/difficulty');
+    const good = (id: 'easy' | 'normal' | 'hard' | 'extreme'): number => {
+      let ok = 0, n = 0;
+      for (let k = 0; k < 14; k++) { const s = new Sim('S' + k, PRESETS[id].d); s.runToEnd(); for (const I of s.incidents) { n++; if (I.result!.outcome === 'success' || I.result!.outcome === 'delayed') ok++; } }
+      return ok / n;
+    };
+    const e = good('easy'), m = good('normal'), h = good('hard'), x = good('extreme');
+    expect(e).toBeGreaterThan(m + 0.05);
+    expect(m).toBeGreaterThan(h + 0.05);
+    expect(h).toBeGreaterThan(x + 0.05);
+  }, 60000);
+  it('손잡이가 해당 조건을 실제로 바꾼다', async () => {
+    const { NORMAL, parseDifficulty, difficultyLabel } = await import('../src/sim/difficulty');
+    const count = (d: typeof NORMAL): number => { let n = 0; for (let k = 0; k < 6; k++) { const s = new Sim('S' + k, d); s.runToEnd(); n += s.incidents.length; } return n; };
+    expect(count({ ...NORMAL, frequency: 5 })).toBeGreaterThan(count(NORMAL) + 8);          // 사건 빈도
+    expect(count({ ...NORMAL, frequency: 1 })).toBeLessThan(count(NORMAL));
+    const bad = new Sim('E', { ...NORMAL, equipment: 1 }), best = new Sim('E', { ...NORMAL, equipment: 5 });  // 장비 상태
+    for (const u of bad.units.filter((q) => q.dept === 'fire')) expect(u.pumpCond).toBeLessThanOrEqual(0.55);
+    for (const u of best.units.filter((q) => q.dept === 'fire')) expect(u.pumpCond).toBeGreaterThanOrEqual(0.75);
+    expect(best.units[0].waterMax).toBeGreaterThan(bad.units[0].waterMax);
+    const sev = (d: typeof NORMAL): number => { let t = 0, n = 0; for (let k = 0; k < 8; k++) { const s = new Sim('S' + k, d); s.runToEnd(); for (const I of s.incidents) { t += I.truth.severity; n++; } } return t / n; };
+    expect(sev({ ...NORMAL, severity: 5 })).toBeGreaterThan(sev({ ...NORMAL, severity: 1 }) + 0.4);          // 사건 심각도
+    const suspects = (d: typeof NORMAL): number => { let t = 0; for (let k = 0; k < 10; k++) { const s = new Sim('S' + k, d); s.runToEnd(); for (const sc of s.scenes) if (sc) t += sc.hostiles.length; } return t; };
+    expect(suspects({ ...NORMAL, threat: 5 })).toBeGreaterThan(suspects({ ...NORMAL, threat: 1 }));          // 용의자 위협
+    expect(parseDifficulty('hard')).toEqual({ frequency: 4, severity: 4, threat: 4, equipment: 2, info: 2 });
+    expect(parseDifficulty('4,4,4,2,3')).toEqual({ frequency: 4, severity: 4, threat: 4, equipment: 2, info: 3 });
+    expect(parseDifficulty('9,9,9,9,9')).toBeNull();
+    expect(difficultyLabel({ frequency: 5, severity: 5, threat: 5, equipment: 1, info: 1 })).toBe('극한');
+  }, 60000);
+});
+
+describe('한 현장에 여러 팀', () => {
+  it('같은 부서의 부대 둘 이상, 세 부서가 함께 들어가는 사건이 나온다', () => {
+    let sameDeptTwice = 0, allThree = 0, most = 0;
+    for (let k = 0; k < 12; k++) {
+      const s = new Sim('S' + k); s.runToEnd();
+      for (const I of s.incidents) {
+        const depts = I.everAssigned.map((uid) => s.units[uid].dept);
+        most = Math.max(most, depts.length);
+        if (depts.some((d, i) => depts.indexOf(d) !== i)) sameDeptTwice++;
+        if (new Set(depts).size === 3) allThree++;
+      }
+    }
+    expect(sameDeptTwice).toBeGreaterThan(5);
+    expect(allThree).toBeGreaterThan(5);
+    expect(most).toBeGreaterThanOrEqual(5);      // 예: 경찰 2 + 소방 2 + 구급 1
+  });
+});

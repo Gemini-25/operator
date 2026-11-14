@@ -228,7 +228,7 @@ function spray(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number): boole
   if (u.water <= 0 && !u.hydrant) { a.equipIssue = 'water'; return false; }
   applyWater(s, tx, ty, 0.15 * (0.6 + 0.8 * r.skills.fire) * staminaF(r) * sim.dt);
   if (!u.hydrant) u.water = Math.max(0, u.water - 1.5 * sim.dt);
-  u.pumpCond -= 0.0042 * sim.dt;
+  u.pumpCond -= 0.0042 * sim.tune.pumpWearMul * sim.dt;
   drain(sim, a, 0.55);
   if (sim.tick % 2 === 0) pushFx(sim, s, 'spray', a.x, a.y, tx + s.rng.range(-0.4, 0.4), ty + s.rng.range(-0.4, 0.4), undefined, undefined, 0.3);
   if (u.pumpCond < 0.2 && !u.pumpFailed) {

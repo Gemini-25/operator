@@ -36,6 +36,7 @@ function traitOf(r: Responder): string {
 export function createRoster(sim: Sim): void {
   const rosterRng = new Rng(0x51ab7e).fork('roster-v1');
   const equipRng = sim.rng.fork('equipment');
+  const tn = sim.tune;
   let rid = 0;
   UNIT_DEFS.forEach((d, i) => {
     const f = sim.city.facilities[d.facility];
@@ -50,7 +51,7 @@ export function createRoster(sim: Sim): void {
         id: rid, name: NAMES[rid], dept: d.dept, unitId: i, senior,
         skill, judgment: clamp(st() * 0.65 + exp * 0.35, 0.2, 0.98), composure: st(), fitness: st(), teamwork: st(), experience: exp,
         skills: { fire: 0.05, rescue: 0.2, medical: 0.2, law: 0.05 },
-        trait: '', health: 100, stamina: 100, status: 'ok', xpGained: 0, incidentsWorked: 0,
+        trait: '', health: 100, stamina: tn.startStamina, status: 'ok', xpGained: 0, incidentsWorked: 0,
       };
       if (d.dept === 'fire') r.skills = d.kind === 'rescue' ? { fire: skill * 0.75, rescue: skill, medical: 0.35, law: 0.05 } : { fire: skill, rescue: skill * 0.6, medical: 0.3, law: 0.05 };
       else if (d.dept === 'ems') r.skills = { fire: 0.05, rescue: 0.25, medical: clamp(skill + (d.kind === 'als' ? 0.08 : 0), 0, 1), law: 0.05 };
@@ -63,9 +64,9 @@ export function createRoster(sim: Sim): void {
       id: i, callsign: d.callsign, dept: d.dept, kind: d.kind, crew, homeNode: f.nodeId, homeName: f.name,
       state: 'available', x: home.x, y: home.y, px: home.x, py: home.y, nodeId: f.nodeId,
       route: null, seg: 0, segT: 0, pendingDest: null, destNode: null, incidentId: null, timer: 0,
-      caps: d.caps, water: d.waterMax, waterMax: d.waterMax, hydrant: false,
-      pumpCond: d.dept === 'fire' ? equipRng.range(0.3, 1.0) : 1, pumpFailed: false,
-      tool: d.tool, medLevel: d.med, armor: d.armor,
+      caps: d.caps, water: d.waterMax * tn.waterMul, waterMax: d.waterMax * tn.waterMul, hydrant: false,
+      pumpCond: d.dept === 'fire' ? equipRng.range(tn.pumpMin, tn.pumpMax) : 1, pumpFailed: false,
+      tool: Math.min(1.15, d.tool * tn.toolMul), medLevel: Math.min(1.1, d.med * tn.medMul), armor: Math.min(0.8, d.armor * tn.armorMul),
       patients: [], patientsIncident: null,
       dispatchedAt: -1, estArrive: -1, diverted: false, busyTime: 0, runs: 0, boardOrder: null,
     };

@@ -58,7 +58,7 @@ function natureFor(I: Incident, s: Scene, persona: Persona, rng: Rng): { v: stri
 /** 사건의 진실에서 신고자가 "알고 있다고 믿는" 내용을 만든다. */
 export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: boolean): Caller {
   const persona: Persona = followup ? rng.weighted<Persona>(['calm', 'panicked', 'partial', 'confused'], [0.45, 0.2, 0.25, 0.1])
-    : rng.weighted<Persona>(['calm', 'panicked', 'confused', 'partial', 'wrong'], [0.3, 0.24, 0.15, 0.17, 0.14]);
+    : rng.weighted<Persona>(['calm', 'panicked', 'confused', 'partial', 'wrong'], sim.tune.personaWeights);
   const acc = ACC[persona], kn = KNOW[persona], cf = CONF[persona];
   const knows: Partial<Record<Topic, Claim>> = {};
   const put = (topic: Topic, value: any, text: string, truthful: boolean, note = '', conf = cf) => { knows[topic] = { topic, value, conf, text, truthful, callId: -1, note }; };

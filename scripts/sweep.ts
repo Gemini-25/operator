@@ -1,17 +1,26 @@
 // 헤드리스 실행기: 화면 없이 여러 시드를 돌려 결과 분포·교착·재현성을 확인한다.
-//   npm run sweep -- 100          → 시드 100개 요약
-//   npm run sweep -- 1 --log S7   → 시드 S7 의 전체 이벤트 로그 출력
+//   npm run sweep -- 100                 시드 S0~S99 요약 (난이도 보통)
+//   npm run sweep -- 60 --diff hard      프리셋(easy|normal|hard|extreme) 또는 "4,4,4,2,3"(빈도,심각도,용의자,장비,신고)
+//   npm run sweep -- 40 -v               사건별 한 줄 출력
+//   npm run sweep -- 40 --json           요약을 JSON 한 줄로 출력 (자동화용)
+//   npm run sweep -- 40 --check          불변 조건을 어기면 종료 코드 1 (커밋 전 관문)
+//   npm run sweep -- 1 --log S7          시드 S7 의 전체 이벤트 기록과 보고서
+import { NORMAL, difficultyKey, difficultyLabel, parseDifficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
-import { fmtClock, OUTCOME_NAME, TYPE_NAME } from '../src/sim/util';
+import { OUTCOME_NAME, TYPE_NAME, fmtClock } from '../src/sim/util';
 
 const args = process.argv.slice(2);
 const n = parseInt(args[0] ?? '20', 10);
-const logIdx = args.indexOf('--log');
-const logSeed = logIdx >= 0 ? args[logIdx + 1] : null;
-const verbose = args.indexOf('-v') >= 0;
+const opt = (name: string): string | null => { const k = args.indexOf(name); return k >= 0 ? args[k + 1] ?? null : null; };
+const flag = (name: string): boolean => args.indexOf(name) >= 0;
+const logSeed = opt('--log');
+const verbose = flag('-v');
+const diffArg = opt('--diff');
+const diff = diffArg ? parseDifficulty(diffArg) : NORMAL;
+if (!diff) { console.error(`알 수 없는 난이도: ${diffArg}`); process.exit(2); }
 
 if (logSeed) {
-  const sim = new Sim(logSeed);
+  const sim = new Sim(logSeed, diff);
   sim.runToEnd();
   for (const e of sim.events) {
     if (e.importance < 1 && !verbose) continue;
@@ -27,48 +36,70 @@ if (logSeed) {
   process.exit(0);
 }
 
-const out: Record<string, number> = {};
+const out: Record<string, number> = { success: 0, partial: 0, delayed: 0, unresolved: 0, failed: 0 };
 const byType: Record<string, Record<string, number>> = {};
 const prob: Record<string, number> = {};
-let incN = 0, respSum = 0, respN = 0, durSum = 0, ms = 0, errors = 0, casT = 0, casS = 0, casL = 0, casU = 0, hurt = 0, replan = 0;
 const closeReasons: Record<string, number> = {};
+let incN = 0, respSum = 0, respN = 0, durSum = 0, ms = 0, errors = 0, casT = 0, casS = 0, casL = 0, casU = 0, hurt = 0, replan = 0, unitSum = 0, maxUnits = 0, open = 0;
 for (let k = 0; k < n; k++) {
   const seed = 'S' + k;
   const t0 = performance.now();
   let sim: Sim;
-  try {
-    sim = new Sim(seed);
-    sim.runToEnd();
-  } catch (e) {
-    errors++;
-    console.log(`seed ${seed} ERROR:`, (e as Error).stack);
-    continue;
-  }
+  try { sim = new Sim(seed, diff); sim.runToEnd(); }
+  catch (e) { errors++; console.log(`seed ${seed} ERROR:`, (e as Error).stack); continue; }
   ms += performance.now() - t0;
-  const r = sim.report!;
-  if (!r) { console.log(`seed ${seed}: no report (t=${sim.t})`); errors++; continue; }
+  const r = sim.report;
+  if (!r) { console.log(`seed ${seed}: 보고서 없음 (t=${sim.t})`); errors++; continue; }
+  for (const I of sim.incidents) if (I.phase !== 'closed' || !I.result) open++;
   for (const inc of r.incidents) {
     incN++;
-    out[inc.result.outcome] = (out[inc.result.outcome] ?? 0) + 1;
+    out[inc.result.outcome]++;
     byType[inc.type] = byType[inc.type] ?? {};
     byType[inc.type][inc.result.outcome] = (byType[inc.type][inc.result.outcome] ?? 0) + 1;
     if (inc.result.responseTime >= 0) { respSum += inc.result.responseTime; respN++; }
     durSum += inc.result.duration;
     casT += inc.result.casTotal; casS += inc.result.casSaved; casL += inc.result.casLost; casU += inc.result.casUndiscovered;
     const I = sim.incidents[inc.id];
+    unitSum += I.everAssigned.length; maxUnits = Math.max(maxUnits, I.everAssigned.length);
     closeReasons[I.closeReason] = (closeReasons[I.closeReason] ?? 0) + 1;
     const seen = new Set<string>();
     for (const p of I.problems) { if (!seen.has(p.code)) { seen.add(p.code); prob[p.code] = (prob[p.code] ?? 0) + 1; } }
     if (I.problems.some((p) => p.recovered && p.recoveryText)) replan++;
-    if (verbose) console.log(`${seed} [${inc.code}] ${inc.type}/${I.truth.variant} sev${I.truth.severity} → ${inc.result.outcome} (${I.closeReason}) rt=${Math.round(inc.result.responseTime)} dur=${Math.round(inc.result.duration)} | ${inc.result.headline}`);
+    if (verbose) console.log(`${seed} [${inc.code}] ${inc.type}/${I.truth.variant} sev${I.truth.severity} → ${inc.result.outcome} (${I.closeReason}) rt=${Math.round(inc.result.responseTime)} dur=${Math.round(inc.result.duration)} units=${I.everAssigned.length} | ${inc.result.headline}`);
   }
   hurt += r.respondersHurt.length;
 }
-console.log(`\nseeds=${n} errors=${errors} incidents=${incN} (${(incN / n).toFixed(1)}/shift) avg ${Math.round(ms / n)}ms/shift`);
-console.log('outcomes:', Object.entries(out).map(([k, v]) => `${k} ${v} (${Math.round((v / incN) * 100)}%)`).join(', '));
-for (const t of Object.keys(byType)) console.log(`  ${t}:`, JSON.stringify(byType[t]));
-console.log('close reasons:', JSON.stringify(closeReasons));
-console.log(`avg response ${Math.round(respSum / respN)}s, avg duration ${Math.round(durSum / incN)}s`);
-console.log(`casualties total ${casT}, saved ${casS} (${Math.round((casS / casT) * 100)}%), lost ${casL}, undiscovered ${casU}; responders hurt/shift ${(hurt / n).toFixed(2)}`);
-console.log(`incidents with a recovered problem: ${Math.round((replan / incN) * 100)}%`);
-console.log('problems (incidents affected):', Object.entries(prob).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', '));
+const share = (k: string): number => (incN ? out[k] / incN : 0);
+const timeoutShare = incN ? ((closeReasons.timeout ?? 0) + (closeReasons.noresponse ?? 0) + (closeReasons.abandoned ?? 0)) / incN : 0;
+const summary = {
+  difficulty: difficultyKey(diff), label: difficultyLabel(diff), seeds: n, errors, incidents: incN, perShift: +(incN / n).toFixed(2), msPerShift: Math.round(ms / n),
+  outcomes: out, good: +(share('success') + share('delayed')).toFixed(3), bad: +(share('failed') + share('unresolved')).toFixed(3),
+  closeReasons, timeoutShare: +timeoutShare.toFixed(3), avgResponse: Math.round(respSum / Math.max(1, respN)), avgDuration: Math.round(durSum / Math.max(1, incN)),
+  casualties: { total: casT, saved: casS, lost: casL, undiscovered: casU, savedRate: +(casS / Math.max(1, casT)).toFixed(3) },
+  unitsPerIncident: +(unitSum / Math.max(1, incN)).toFixed(2), maxUnitsOnOneIncident: maxUnits, respondersHurtPerShift: +(hurt / n).toFixed(2), recoveredShare: +(replan / Math.max(1, incN)).toFixed(3),
+};
+if (flag('--json')) console.log(JSON.stringify(summary));
+else {
+  console.log(`\n난이도 ${summary.label} (${summary.difficulty}) · seeds=${n} errors=${errors} incidents=${incN} (${summary.perShift}/shift) avg ${summary.msPerShift}ms/shift`);
+  console.log('outcomes:', Object.entries(out).map(([k, v]) => `${k} ${v} (${Math.round((v / Math.max(1, incN)) * 100)}%)`).join(', '));
+  for (const t of Object.keys(byType)) console.log(`  ${t}:`, JSON.stringify(byType[t]));
+  console.log('close reasons:', JSON.stringify(closeReasons));
+  console.log(`avg response ${summary.avgResponse}s, avg duration ${summary.avgDuration}s, units/incident ${summary.unitsPerIncident} (max ${maxUnits})`);
+  console.log(`casualties total ${casT}, saved ${casS} (${Math.round(summary.casualties.savedRate * 100)}%), lost ${casL}, undiscovered ${casU}; responders hurt/shift ${summary.respondersHurtPerShift}`);
+  console.log(`incidents with a recovered problem: ${Math.round(summary.recoveredShare * 100)}%`);
+  console.log('problems (incidents affected):', Object.entries(prob).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', '));
+}
+if (flag('--check')) {
+  const fail: string[] = [];
+  if (errors > 0) fail.push(`예외 ${errors}건`);
+  if (open > 0) fail.push(`끝나지 않은 사건 ${open}건`);
+  if (!diffArg) {
+    if (timeoutShare > 0.06) fail.push(`한계 시간·무대응 종료 비율 ${(timeoutShare * 100).toFixed(1)}% > 6%`);
+    // 난이도 보통의 기준 범위. 균형을 의도적으로 바꿨다면 이 범위와 docs/ROADMAP.md 의 기준 수치를 함께 고친다.
+    if (summary.good < 0.55 || summary.good > 0.85) fail.push(`성공+대응 지연 ${(summary.good * 100).toFixed(0)}% 가 55~85% 를 벗어남`);
+    if (summary.bad < 0.04 || summary.bad > 0.3) fail.push(`실패+미해결 ${(summary.bad * 100).toFixed(0)}% 가 4~30% 를 벗어남`);
+    if (summary.avgResponse > 90) fail.push(`평균 대응 시간 ${summary.avgResponse}초 > 90초`);
+  }
+  if (fail.length) { console.error('\n검증 실패:\n - ' + fail.join('\n - ')); process.exit(1); }
+  console.log('\n검증 통과');
+}

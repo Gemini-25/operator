@@ -333,6 +333,7 @@ export interface SimEvent {
 
 export interface ShiftReport {
   seed: string; duration: number; weather: Weather;
+  difficulty: { frequency: number; severity: number; threat: number; equipment: number; info: number }; difficultyLabel: string;
   totalCalls: number; totalIncidents: number;
   counts: Record<Outcome, number>;
   avgResponse: number; avgDispatch: number;

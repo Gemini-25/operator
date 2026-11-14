@@ -121,7 +121,8 @@ function buildFire(sim: Sim, I: Incident, rng: Rng): Scene {
   const wy = rng.pick([7, 8]), ey = rng.pick([7, 8]);
   set(s, bx0, wy, T.DOOR); addProp(s, 'door', bx0, wy, { open: false, locked: false });
   set(s, bx1, ey, T.DOOR);
-  const eastLocked = rng.chance(0.45);
+  const hz = (v: number): number => Math.min(0.95, v * sim.tune.hazardMul);
+  const eastLocked = rng.chance(hz(0.45));
   addProp(s, 'door', bx1, ey, { open: false, locked: eastLocked, blocking: eastLocked, hp: rng.range(7, 11) });
   const corridor = addRegion(s, '복도', 'corridor', bx0, 7, bx1, 8, true, false);
   s.exits.push({ x: bx0 - 1, y: wy }, { x: bx1 + 1, y: ey });
@@ -142,21 +143,21 @@ function buildFire(sim: Sim, I: Incident, rng: Rng): Scene {
     const i2 = freeTileIn(s, near, rng); s.fire[i2] = rng.range(0.3, 0.5);
   }
   // 숨겨진 조건
-  if (rng.chance(0.24)) {
+  if (rng.chance(hz(0.24))) {
     const dxm = rng.int(11, 20);
     for (const yy of [7, 8]) addProp(s, 'debris', dxm, yy, { blocking: true, hp: rng.range(9, 15) });
   }
-  if (rng.chance(0.2)) {
+  if (rng.chance(hz(0.2))) {
     const r = rng.pick(rooms.filter((q) => q !== origin));
     const d = s.props.find((p) => p.kind === 'door' && s.region[tidx(s, p.x, p.y)] === r.id);
     if (d) { d.locked = true; d.blocking = true; d.hp = rng.range(5, 9); s.propAt[tidx(s, d.x, d.y)] = d.id; }
   }
-  if (rng.chance(dist === 'industrial' ? 0.42 : 0.13)) {
+  if (rng.chance(hz(dist === 'industrial' ? 0.42 : 0.13))) {
     const r = rng.pick(rooms.filter((q) => q !== origin));
     const i = freeTileIn(s, r, rng);
     addProp(s, 'gas', i % SW, (i / SW) | 0, {});
   }
-  if (rng.chance(0.6)) {
+  if (rng.chance(hz(0.6))) {
     const far = rooms.filter((r) => r.cx > 17);
     const r = rng.pick(far);
     for (const i of r.tiles) s.shadow[i] = 1;
@@ -215,14 +216,15 @@ function buildTraffic(sim: Sim, I: Incident, rng: Rng): Scene {
       }
     }
   }
-  if (sev >= 2 && rng.chance(0.3)) {
+  const hz = (v: number): number => Math.min(0.95, v * sim.tune.hazardMul);
+  if (sev >= 2 && rng.chance(hz(0.3))) {
     const w = rng.pick(wrecks); w.emptySeat = true;
     const v = rng.chance(0.5) ? vN : vS;
     const i = freeTileIn(s, v, rng, (q) => Math.abs((q % SW) - w.x) > 6);
     set(s, i % SW, (i / SW) | 0, T.TREE);
     addCas(s, i % SW, (i / SW) | 0, 'immobile', rng.range(42, 66), rng.range(0.16, 0.27), rng.range(0.55, 0.7));
   }
-  if (rng.chance(0.2 + sev * 0.07)) { const w = rng.pick(wrecks); w.leak = 0.12; w.leakRate = rng.range(0.0052, 0.0085); }
+  if (rng.chance(hz(0.2 + sev * 0.07))) { const w = rng.pick(wrecks); w.leak = 0.12; w.leakRate = rng.range(0.0052, 0.0085); }
   const nd = rng.int(2, 4);
   for (let k = 0; k < nd; k++) addProp(s, 'roadDebris', rng.int(9, 21), rng.int(8, 11), { hp: 4 });
   s.controlPts = [{ x: 2, y: 10 }, { x: 27, y: 9 }]; s.controlDone = [false, false];
@@ -276,7 +278,7 @@ function buildSearch(sim: Sim, I: Incident, rng: Rng): Scene {
   }
   // 목격자 / 단서
   if (rng.chance(0.65)) {
-    const accurate = rng.chance(0.58);
+    const accurate = rng.chance(sim.tune.witnessAcc);
     let seen = tz.id;
     if (!accurate) { const adj = zones.filter((z) => z.id !== tz.id && Math.abs(z.cx - tz.cx) + Math.abs(z.cy - tz.cy) <= 10.5); seen = rng.pick(adj.length ? adj : zones).id; }
     addProp(s, 'witness', 2, 11, { lastSeenRegion: seen, accurate, interviewed: false });
@@ -288,7 +290,7 @@ function buildSearch(sim: Sim, I: Incident, rng: Rng): Scene {
     if (x < 1 || y < 0 || x >= SW || y >= SH || !staticPass(get(s, x, y))) continue;
     addProp(s, 'clue', x, y, { found: false, dirRegion: tz.id });
   }
-  if (rng.chance(0.4)) { const z = rng.pick(zones.filter((q) => q.cx > 18)); for (const i of z.tiles) if (s.tiles[i] === T.TREE || rng.chance(0.5)) s.shadow[i] = 1; }
+  if (rng.chance(Math.min(0.95, 0.4 * sim.tune.hazardMul))) { const z = rng.pick(zones.filter((q) => q.cx > 18)); for (const i of z.tiles) if (s.tiles[i] === T.TREE || rng.chance(0.5)) s.shadow[i] = 1; }
   s.outdoorVision = sim.weather === 'clear' ? 3.8 : sim.weather === 'rain' ? 3.2 : sim.weather === 'fog' ? 2.5 : 2.7;
   s.leadDept = 'police';
   return s;
@@ -322,18 +324,24 @@ function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {
     { x: 11, y: 14, exit: -1, taken: -1 },
   ];
   s.staging = { x: 1, y: 18 }; s.safe = { x: 2, y: 14 }; s.vantage = { x: 10, y: 14 };
-  const fleeBase = sim.t + rng.range(85, 150);
+  const tn = sim.tune;
+  const ag = (v: number): number => Math.max(0.05, Math.min(0.98, v + tn.aggroShift));
+  const sk = (v: number): number => Math.max(0.1, Math.min(0.95, v + tn.skillShift));
+  const fleeBase = sim.t + rng.range(85, 150) + tn.fleeShift;
   const inShop = () => { const i = freeTileIn(s, shop, rng, (q) => ((q / SW) | 0) > 8); return { x: i % SW, y: (i / SW) | 0 }; };
   if (variant === 'dispute') {
     const p = inShop();
-    addHostile(s, p.x, p.y, rng.chance(0.6) ? 'knife' : 'none', rng.range(0.12, 0.4), 0.3, false, Infinity);
+    addHostile(s, p.x, p.y, rng.chance(tn.knifeProb) ? 'knife' : 'none', ag(rng.range(0.12, 0.4)), sk(0.3), false, Infinity);
   } else if (variant === 'shooter') {
     const p = inShop();
-    addHostile(s, p.x, p.y, 'gun', rng.range(0.78, 0.95), rng.range(0.4, 0.7), false, Infinity);
+    addHostile(s, p.x, p.y, 'gun', ag(rng.range(0.78, 0.95)), sk(rng.range(0.4, 0.7)), false, Infinity);
+    // 위협 수준이 높으면 총격범에게 공범이 있을 수 있다
+    if (tn.extraSuspectProb > 0 && rng.chance(tn.extraSuspectProb * 0.6)) { const q = inShop(); addHostile(s, q.x, q.y, 'gun', ag(rng.range(0.6, 0.85)), sk(rng.range(0.35, 0.6)), false, Infinity); }
   } else {
-    const n = sev >= 3 ? 2 : 1;
-    for (let k = 0; k < n; k++) { const p = inShop(); addHostile(s, p.x, p.y, 'gun', rng.range(0.35, 0.7), rng.range(0.3, 0.6), false, fleeBase + k * 4); }
-    if (sev >= 2 && rng.chance(0.35)) { const i = freeTileIn(s, storage, rng); addHostile(s, i % SW, (i / SW) | 0, 'gun', rng.range(0.4, 0.7), rng.range(0.3, 0.55), true, fleeBase + 20); }
+    let n = sev >= 3 ? 2 : 1;
+    if (tn.extraSuspectProb > 0 && rng.chance(tn.extraSuspectProb)) n++;
+    for (let k = 0; k < n; k++) { const p = inShop(); addHostile(s, p.x, p.y, 'gun', ag(rng.range(0.35, 0.7)), sk(rng.range(0.3, 0.6)), false, fleeBase + k * 4); }
+    if (sev >= 2 && rng.chance(tn.accompliceProb)) { const i = freeTileIn(s, storage, rng); addHostile(s, i % SW, (i / SW) | 0, 'gun', ag(rng.range(0.4, 0.7)), sk(rng.range(0.3, 0.55)), true, fleeBase + 20); }
   }
   // 시민
   const nCiv = variant === 'dispute' ? rng.int(0, 1) : rng.int(1, 3);
@@ -353,10 +361,8 @@ function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {
 }
 
 export function buildScene(sim: Sim, I: Incident, rng: Rng): Scene {
-  switch (I.truth.type) {
-    case 'fire': return buildFire(sim, I, rng);
-    case 'traffic': return buildTraffic(sim, I, rng);
-    case 'search': return buildSearch(sim, I, rng);
-    default: return buildArmed(sim, I, rng);
-  }
+  const s = I.truth.type === 'fire' ? buildFire(sim, I, rng) : I.truth.type === 'traffic' ? buildTraffic(sim, I, rng) : I.truth.type === 'search' ? buildSearch(sim, I, rng) : buildArmed(sim, I, rng);
+  // 심각도 설정: 부상 악화 속도
+  for (const c of s.casualties) c.bleed *= sim.tune.bleedMul;
+  return s;
 }

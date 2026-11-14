@@ -283,7 +283,7 @@ input:focus { border-color: var(--accent); }
 .unit.st-onscene .sdot { background: #ffd166; } .unit.st-onscene .state { color: #ffe6a8; }
 .unit.st-transport .sdot, .unit.st-hospital .sdot { background: #5ad17a; }
 .unit.st-returning .sdot { background: transparent; box-shadow: inset 0 0 0 1.5px #8496a6; }
-.unit.st-oos .sdot { background: var(--bad); }
+.unit.st-oos .sdot { background: var(--bad); } .unit.aid.st-oos .sdot { background: #5b6b7b; }
 .unit.st-available .state { color: var(--dim); }
 /* 사건 카드: 유형 아이콘은 둥근 바탕 위에, 왼쪽 띠는 위험도, 상태는 알약 */
 .incident .code { background: transparent !important; color: var(--text2); padding: 0; gap: 6px; }
@@ -306,7 +306,7 @@ input:focus { border-color: var(--accent); }
 .maplegend-wrap { position: relative; flex: none; }
 .legend-btn { background: var(--glass); border-color: var(--hair); border-radius: 14px; padding: 5px 12px; min-height: 28px; white-space: nowrap; }
 .legend-btn.on { background: rgba(16, 53, 52, 0.92); border-color: var(--accent); }
-.maplegend { position: absolute; left: 0; bottom: calc(100% + 8px); width: 392px; max-height: min(72vh, 600px); overflow-y: auto; z-index: 5; background: rgba(11, 17, 23, 0.96); border: 1px solid #243240; border-radius: var(--r2); padding: 12px 14px; box-shadow: var(--shadow); font-size: 12px; animation: rise 0.18s ease-out; }
+.maplegend { position: absolute; left: 0; bottom: calc(100% + 8px); width: 392px; max-width: max(300px, calc(100cqw - 360px)); max-height: min(72vh, 600px); overflow-y: auto; z-index: 5; background: rgba(11, 17, 23, 0.96); border: 1px solid #243240; border-radius: var(--r2); padding: 12px 14px; box-shadow: var(--shadow); font-size: 12px; animation: rise 0.18s ease-out; }
 .maplegend h5 { margin: 12px 0 6px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: var(--text2); }
 .maplegend h5:first-child { margin-top: 0; padding-top: 0; border-top: none; }
 .maplegend h5 .dim { font-weight: 400; letter-spacing: 0; margin-left: 4px; }

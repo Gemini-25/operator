@@ -33,8 +33,8 @@ const TOKEN_R = 10;
 /** 표식 크기 보정: 가까이 볼수록 조금 커진다 */
 function markScale(zoom: number): number { return Math.min(1.35, 0.9 + 0.14 * zoom); }
 let labelLayer: { c: HTMLCanvasElement; key: string; ready: boolean } | null = null;
-/** 부대가 소속된 시설의 이름 (이름표에 대기 부대 수를 붙일 곳) */
-let hostFor: unknown = null, hostNames = new Set<string>();
+/** 부대가 소속된 시설의 이름 (이름표에 대기 부대 수를 붙일 곳). hostSig 는 그 목록의 지문: 편성(난이도의 부대 규모)이 다르면 이름표의 폭과 자리도 달라진다 */
+let hostFor: unknown = null, hostNames = new Set<string>(), hostSig = '';
 interface FacLabel { f: Facility; x: number; y: number; key: string; col: string; hosts: boolean; tw: number; box: Box }
 const widths = new Map<string, number>();
 /** 글자 폭 (같은 글자·크기는 한 번만 잰다) */
@@ -174,7 +174,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
   const facs: FacLabel[] = [];
   let facBoxes: Box[] = [];
   if (!mini) {
-    if (hostFor !== sim) { hostFor = sim; hostNames = new Set(sim.units.map((u) => u.homeName)); }
+    if (hostFor !== sim) { hostFor = sim; hostNames = new Set(sim.units.map((u) => u.homeName)); hostSig = [...hostNames].sort().join(','); }
     const bs = 20 * zs, fs = Math.round(11 * zs), lh = fs * 1.55, boxes: Box[] = [];
     for (const f of city.facilities) {
       const lot = facilityLot(f), x = sx(lot.x) - bs * 0.1, y = sy(lot.y) - bs * 0.1;
@@ -226,7 +226,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     }
   };
   if (!mini) {
-    const dpr = ctx.getTransform().a || 1, key = `${cam.x.toFixed(1)}|${cam.y.toFixed(1)}|${cam.zoom.toFixed(3)}|${w}|${h}|${dpr}`;
+    const dpr = ctx.getTransform().a || 1, key = `${cam.x.toFixed(1)}|${cam.y.toFixed(1)}|${cam.zoom.toFixed(3)}|${w}|${h}|${dpr}|${hostSig}`;      // 시설 이름표의 자리(hostSig)가 달라지면 건물 이름 층도 다시 그린다
     if (!labelLayer || labelLayer.key !== key) { labelLayer = { c: labelLayer ? labelLayer.c : document.createElement('canvas'), key, ready: false }; drawLabels(ctx, false); }
     else {
       if (!labelLayer.ready) { const lc = labelLayer.c; lc.width = Math.round(w * dpr); lc.height = Math.round(h * dpr); const lg = lc.getContext('2d')!; lg.setTransform(dpr, 0, 0, dpr, 0, 0); drawLabels(lg, true); labelLayer.ready = true; }
@@ -248,8 +248,9 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     const mx = sx((A.x + B.x) / 2), my = sy((A.y + B.y) / 2);
     ctx.fillStyle = '#ff5d5d'; ctx.beginPath(); ctx.arc(mx, my, 8, 0, 7); ctx.fill(); ctx.fillStyle = '#0b1219'; ctx.fillRect(mx - 5, my - 1.5, 10, 3);
   }
-  // 시설: 축소 창에서는 색 네모, 지도에서는 기호가 든 네모 배지 + 이름표(+ 대기 중인 부대 수)
-  if (mini) for (const f of city.facilities) {
+  for (const f of city.facilities) {
+    // 시설: 축소 창에서는 색 네모, 지도에서는 기호가 든 네모 배지 + 이름표(+ 대기 중인 부대 수)
+    if (!mini) break;
     const lot = facilityLot(f);
     ctx.fillStyle = FACILITY_COLOR[f.kind] ?? FACILITY_COLOR.public; ctx.beginPath(); ctx.roundRect(sx(lot.x) - 3.5, sy(lot.y) - 3.5, 7, 7, 2); ctx.fill();
   }

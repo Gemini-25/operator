@@ -16,7 +16,7 @@ export const tileOf = (s: Scene, x: number, y: number): number => {
 export function staticPass(t: number): boolean {
   return t === T.GROUND || t === T.ROAD || t === T.FLOOR || t === T.TREE || t === T.DOOR || t === T.TRAIL;
 }
-export function isIndoor(t: number): boolean { return t === T.FLOOR || t === T.DOOR; }
+export function isIndoor(t: number): boolean { return t === T.FLOOR || t === T.DOOR || t === T.FURN; }
 
 /** 진실 기준: 지금 이 타일에 들어갈 수 있는가 (화재 제외) */
 export function truthWalkable(s: Scene, i: number): boolean {

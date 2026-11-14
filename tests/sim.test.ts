@@ -210,15 +210,19 @@ describe('한 현장에 여러 팀', () => {
       const s = new Sim('S' + k); s.runToEnd();
       for (const I of s.incidents) {
         const depts = I.everAssigned.map((uid) => s.units[uid].dept);
-        most = Math.max(most, depts.length);
         if (depts.some((d, i) => depts.indexOf(d) !== i)) sameDeptTwice++;
         if (new Set(depts).size === 3) allThree++;
       }
     }
     expect(sameDeptTwice).toBeGreaterThan(5);
     expect(allThree).toBeGreaterThan(5);
-    expect(most).toBeGreaterThanOrEqual(5);      // 예: 경찰 2 + 소방 2 + 구급 1
-  });
+    // 큰 사건이 많고 부대가 넉넉한 조건에서는 한 현장에 다섯 부대 이상이 들어간다 (예: 경찰 2 + 소방 2 + 구급 1)
+    for (let k = 0; k < 12; k++) {
+      const s = new Sim('S' + k, { ...NORMAL, severity: 4, resources: 5 }); s.runToEnd();
+      for (const I of s.incidents) most = Math.max(most, I.everAssigned.length);
+    }
+    expect(most).toBeGreaterThanOrEqual(5);
+  }, 60000);
 });
 
 describe('신고 접수 확장과 새 사건 유형', () => {

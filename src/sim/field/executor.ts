@@ -771,7 +771,7 @@ function isCoverTile(s: Scene, x: number, y: number): boolean {
   if (x < 0 || y < 0 || x >= s.w || y >= s.h) return false;
   const i = y * s.w + x;
   const t = s.tiles[i];
-  if (t === T.WALL || t === T.WINDOW || t === T.ROCK) return true;
+  if (t === T.WALL || t === T.WINDOW || t === T.ROCK || t === T.FURN) return true;
   return s.propAt[i] >= 0;
 }
 

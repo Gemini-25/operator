@@ -84,7 +84,9 @@ export interface Fact {
 export interface CasBelief { x: number; y: number; mob: Mobility; band: number; where: CasWhere; treated: boolean; trappedDone: boolean; tq: number }   // tq: 0 미처치, 1 기본 처치, 2 전문 처치
 
 // ───────────────────────── 현장 ─────────────────────────
-export const T = { VOID: 0, GROUND: 1, ROAD: 2, FLOOR: 3, WALL: 4, WINDOW: 5, TREE: 6, WATER: 7, ROCK: 8, DOOR: 9, TRAIL: 10 } as const;
+export const T = { VOID: 0, GROUND: 1, ROAD: 2, FLOOR: 3, WALL: 4, WINDOW: 5, TREE: 6, WATER: 7, ROCK: 8, DOOR: 9, TRAIL: 10, FURN: 11 } as const;
+/** 가구 종류 (Scene.decor). 가구는 지나갈 수 없지만 시야는 가리지 않고, 엄폐물이 되며, 불에 탄다. */
+export const DECOR = { NONE: 0, BED: 1, DESK: 2, TABLE: 3, SOFA: 4, CABINET: 5, CRATE: 6, MACHINE: 7, COUNTER: 8, PLANT: 9, KITCHEN: 10, SHELF: 11 } as const;
 
 export interface Region {
   id: number; name: string; kind: 'room' | 'corridor' | 'zone' | 'wreck' | 'verge';
@@ -216,6 +218,8 @@ export interface Scene {
   tiles: Uint8Array; region: Int16Array;
   fire: Float32Array; heat: Float32Array; fuel: Float32Array; smoke: Float32Array; burned: Uint8Array; wet: Float32Array;
   shadow: Uint8Array;                 // 무전 음영 구역
+  decor: Uint8Array;                  // 가구 종류 (DECOR)
+  floorMat: number;                   // 실내 바닥 재질 (0 나무, 1 타일, 2 콘크리트)
   propAt: Int16Array;                 // 타일 → blocking prop id (-1)
   regions: Region[]; props: Prop[]; casualties: Casualty[]; hostiles: Hostile[];
   agents: FieldAgent[];

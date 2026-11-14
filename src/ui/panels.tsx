@@ -61,7 +61,7 @@ function IncidentCard({ sim, I, director, truth }: { sim: Sim; I: Incident; dire
       <div className="row">
         <span className="code" style={{ background: TYPE_COLOR[type] }}><Icon name={I.phase === 'call' && !as ? 'phone' : type} size={12} color="#0b1219" />{I.code}</span>
         <span className="title">{as ? as.label ?? TYPE_NAME[as.type] : I.phase === 'unreported' ? '미신고 사건' : '유형 확인 중'}{as && as.typeConf < 0.6 && !I.fieldType ? ' ?' : ''}</span>
-        {I.tag === 'major' && <span className="badge major" title="대형 사고">대형</span>}
+        {I.tag === 'major' && (truth || I.firstArrivalAt >= 0 || !!as?.label) && <span className="badge major" title="대형 사고">대형</span>}
         {I.phase === 'closed' && I.result
           ? <span className="badge" style={{ color: OUTCOME_COLOR[I.result.outcome], borderColor: OUTCOME_COLOR[I.result.outcome] }}>{OUTCOME_NAME[I.result.outcome]}</span>
           : <span className={`badge phase-${I.phase}`}>{PHASE[I.phase]}</span>}

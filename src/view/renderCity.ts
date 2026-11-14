@@ -260,7 +260,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
       ctx.strokeStyle = col; ctx.globalAlpha = (1 - ph) * (I.phase === 'unreported' ? 0.3 : 0.7); ctx.lineWidth = mini ? 1 : 2;
       ctx.beginPath(); ctx.arc(x, y, r + 2 + ph * (mini ? 9 : 30 * zs), 0, 7); ctx.stroke();
     }
-    if (I.tag === 'major') {      // 대형 사고: 바깥으로 천천히 퍼지는 주황 고리를 하나 더 두른다
+    if (I.tag === 'major' && (o.truth || I.firstArrivalAt >= 0 || !!I.assessment?.label)) {      // 대형 사고: 바깥으로 천천히 퍼지는 주황 고리를 하나 더 두른다 (AI 시점에서는 관제가 알아본 뒤부터)
       const ph = (o.timeMs / 2600) % 1;
       ctx.strokeStyle = '#ff8a3c'; ctx.globalAlpha = 0.85 * (1 - ph); ctx.lineWidth = mini ? 1.5 : 3;
       ctx.beginPath(); ctx.arc(x, y, r + (mini ? 4 : 10 * zs) + ph * (mini ? 12 : 44 * zs), 0, 7); ctx.stroke();

@@ -380,7 +380,7 @@ export const FOE  = { core: '#fff0d8', glow: '#ff6a3d', flash: '#fff2c8', flashO
 | 연기 | 0.3 ~ 2.8 | 어두운 연기 조각(`fx.ts` 의 `puffDark`) 8개(알파 0.6→0), 1.3r 까지 퍼지며 화면 위쪽으로 0.6칸 |
 | 파편 | 0 ~ 0.7 | 조각 12개(`fx.ts` 의 `chip`, 그림자 포함), 1.1r 까지 들렸다 떨어진다 |
 | 그을음 | 남는 그림 | 바닥에 반경 0.7r 어두운 방사형(현장당 6개, 연출 120초). 구현은 모든 `boom` 에 조건 없이 넣는다(구현 메모). G4 가 터진 폭발물 자리에 상태로 그리는 자국(`drawBlastScar`)을 만들면 **G4 가** `fxBook.ts` 의 boom → scorch 줄에 `c?.src !== 'bomb'` 조건을 단다(G4 §7.3·§8) |
-| 흔들림 | 0 ~ 0.6 | 관찰 중인 현장의 그림 전체를 화소 진폭 `A = min(6, 2 + r)px · 가까움`(가까움 = `max(0, 1 - d/(2hw))`)으로 28Hz 진동, `exp(-t/0.18)` 감쇠. 겹친 폭발은 진폭을 더하되 G5 몫의 합을 6px 로 자른다. `book.shake(sid, ts)` 는 이것을 `ts` 로 나눈 **칸 단위**로 돌려준다 — G4 의 무너짐 흔들림(`fallShake`, 칸 단위, 자기 상한 0.16칸)과 단위를 맞추기 위해서다. 두 값은 칸 단위로 **더하기만** 하고(각자 상한, 합은 자르지 않는다) `ctx.translate((g5.x + g4.x)·ts, (g5.y + g4.y)·ts)` 한 번으로 민다(3.10절). `prefers-reduced-motion` 이면 없음(`typeof matchMedia === 'function'` 으로 감싼다 — 시험 환경에는 없다). 작은 창은 흔들지 않는다 |
+| 흔들림 | 0 ~ 0.6 | 관찰 중인 현장의 그림 전체를 화소 진폭 `A = min(6, 2 + r)px · 가까움`(가까움 = `max(0, 1 - d/(2hw))`)으로 28Hz 진동, `exp(-t/0.18)` 감쇠. 겹친 폭발은 진폭을 더하되 G5 몫의 합을 6px 로 자른다. `book.shake(sid, ts, v)`(`v` 는 보는 화면 `FxView` — 가까움의 `d`·`hw`)는 이것을 `ts` 로 나눈 **칸 단위**로 돌려준다 — G4 의 무너짐 흔들림(`fallShake`, 칸 단위, 자기 상한 0.16칸)과 단위를 맞추기 위해서다. 두 값은 칸 단위로 **더하기만** 하고(각자 상한, 합은 자르지 않는다 — G4 의 `sceneShake(sim, s, mini, extra, reduced)` 가 G5 몫을 `extra` 로 받아 더한다, G4 §4.3) `ctx.translate((g5.x + g4.x)·ts, (g5.y + g4.y)·ts)` 한 번으로 민다(3.10절). `prefers-reduced-motion` 이면 없음(`typeof matchMedia === 'function'` 으로 감싼다 — 시험 환경에는 없다). 작은 창은 흔들지 않는다 |
 | 빛 | 0 ~ 0.8 | 어둠 구멍 2r칸, 색 빛 `#ff9a3c` |
 
 ### 3.5 진입(브리칭)

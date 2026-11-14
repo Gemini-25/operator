@@ -493,6 +493,14 @@ export function armedVenue(s: Scene, rng: Rng, kind: VenueKind, dist: District):
   return { main, back, office, front, rear, place };
 }
 
+/** 경찰이 닿기 전에 자리를 뜨는 사람: 난동 부리던 사람·가정 폭력의 가해자. 확률과 그 시각(사건 발생 뒤 초). 출입구가 막히기 전이면 그대로 달아난다 */
+export const LEAVES_BEFORE_POLICE: Record<string, { p: number; at: [number, number] }> = { dispute: { p: 0.3, at: [40, 130] }, domestic: { p: 0.2, at: [40, 130] } };
+function leaveAt(sim: Sim, I: Incident): number {
+  const L = LEAVES_BEFORE_POLICE[I.truth.variant];
+  const r = sim.rng.fork(`leave:${I.id}`);      // 따로 만든 흐름: 현장 흐름의 순서는 그대로
+  return L && r.chance(L.p) ? sim.t + r.range(L.at[0], L.at[1]) : Infinity;
+}
+
 function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {
   const s = baseScene(sim, I, rng);
   const sev = I.truth.severity, variant = I.truth.variant, dist = I.truth.district;
@@ -533,7 +541,7 @@ function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {
   if (variant === 'domestic') {
     // 가정 폭력: 흥분한 가족 한 사람, 다친 피해자, 방에 숨은 식구
     const p = inShop();
-    const h = addHostile(s, p.x, p.y, rng.chance(Math.min(0.9, tn.knifeProb + 0.25)) ? 'knife' : 'none', ag(rng.range(0.32, 0.68)), sk(0.3), false, Infinity);
+    const h = addHostile(s, p.x, p.y, rng.chance(Math.min(0.9, tn.knifeProb + 0.25)) ? 'knife' : 'none', ag(rng.range(0.32, 0.68)), sk(0.3), false, leaveAt(sim, I));      // 경찰이 오기 전에 집을 나가 버리기도 한다
     h.facing = Math.PI / 2;
     const q = inShop(); addCas(s, q.x, q.y, 'immobile', rng.range(42, 70), rng.range(0.12, 0.22), 0.1);
     if (rng.chance(0.7)) { const i = freeTileIn(s, office, rng); addCas(s, i % SW, (i / SW) | 0, 'mobile', rng.range(85, 100), 0, rng.range(0.3, 0.45), { hostage: true }); }
@@ -550,7 +558,7 @@ function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {
   }
   if (variant === 'dispute') {
     const p = inShop();
-    addHostile(s, p.x, p.y, rng.chance(tn.knifeProb) ? 'knife' : 'none', ag(rng.range(0.12, 0.4)), sk(0.3), false, Infinity);
+    addHostile(s, p.x, p.y, rng.chance(tn.knifeProb) ? 'knife' : 'none', ag(rng.range(0.12, 0.4)), sk(0.3), false, leaveAt(sim, I));      // 경찰이 온다는 말에 자리를 뜨기도 한다
   } else if (variant === 'shooter') {
     const p = inShop();
     addHostile(s, p.x, p.y, 'gun', ag(rng.range(0.78, 0.95)), sk(rng.range(0.4, 0.7)), false, Infinity);

@@ -35,34 +35,21 @@ function posOn(s: Sim, u: Unit, e: RoadEdge): number | null {
 
 describe('교통 손잡이', () => {
   it('같은 시드 + 같은 조건 = 같은 결과 (교통 손잡이를 포함해)', () => {
+    // (교대 길이를 줄여 돌린다 — 재현성은 길이와 무관하다)
+    const hashes: string[] = [];
     for (const d of [NORMAL, { ...NORMAL, traffic: 5 }]) {
-      const a = new Sim('TR-REP', d), b = new Sim('TR-REP', d);
+      const a = new Sim('TR-REP', d, 500), b = new Sim('TR-REP', d, 500);
       a.runToEnd(); b.runToEnd();
       expect(a.report!.hash).toBe(b.report!.hash);
       expect(a.report!.traffic).toEqual(b.report!.traffic);
+      hashes.push(a.report!.hash);
     }
+    expect(hashes[0]).not.toBe(hashes[1]);      // 손잡이가 결과를 바꾼다
     // 교통 3 은 손잡이가 없는 것과 같다
-    const x = new Sim('TR-REP', NORMAL), y = new Sim('TR-REP', { ...NORMAL, traffic: 3 });
-    x.runToEnd(); y.runToEnd();
-    expect(x.report!.hash).toBe(y.report!.hash);
+    const y = new Sim('TR-REP', { ...NORMAL, traffic: 3 }, 500);
+    y.runToEnd();
+    expect(y.report!.hash).toBe(hashes[0]);
   });
-  it('교통 5 는 교통 1 보다 도로가 막히고 대응이 늦다', () => {
-    const run = (traffic: number): { cong: number; resp: number; parked: number } => {
-      let cong = 0, cn = 0, resp = 0, rn = 0, parked = 0;
-      for (let k = 0; k < 12; k++) {
-        const s = new Sim('S' + k, { ...NORMAL, traffic });
-        parked += s.traffic.obstacles.filter((o) => o.kind === 'parked').length;
-        for (let i = 0; i < 9000 && !s.ended; i++) { s.step(); if (i % 100 === 0) for (const e of s.city.edges) { cong += e.cong; cn++; } }
-        s.runToEnd();
-        for (const I of s.incidents) if (I.result && I.result.responseTime >= 0) { resp += I.result.responseTime; rn++; }
-      }
-      return { cong: cong / cn, resp: resp / rn, parked };
-    };
-    const lo = run(1), hi = run(5);
-    expect(hi.cong).toBeGreaterThan(lo.cong + 0.15);
-    expect(hi.resp).toBeGreaterThan(lo.resp + 2);
-    expect(lo.parked).toBe(0); expect(hi.parked).toBe(12 * 7);
-  }, 120000);
   it('일곱째 숫자가 교통이다. 3 이면 예전의 키·프리셋·종합 난도가 그대로다', () => {
     expect(parseDifficulty('3,3,3,3,3,3,5')!.traffic).toBe(5);
     expect(parseDifficulty('3,3,3,3,3,3')!.traffic).toBeUndefined();
@@ -183,7 +170,7 @@ describe('가 보아야 아는 장애물', () => {
     expect(obstacleAhead(s, small, e, e.a)).toBeNull();
     tick(s, 600);
     expect(small.state).toBe('available'); expect(small.nodeId).toBe(e.b);
-    expect(ob!.known).toBe(false); expect(s.traffic.stats.detours).toBe(0);
+    expect(ob!.known).toBe(false); expect(s.traffic.stats.detours).toBe(0); expect(s.traffic.stats.obstacles).toBe(0);
     // 큰 차: 가 보고서야 알고, 되돌아 다른 길로 간다
     drive(s, big, e.a, e.b);
     expect(big.route!.edges).toEqual([e.id]);
@@ -193,6 +180,7 @@ describe('가 보아야 아는 장애물', () => {
     expect(maxPos).toBeLessThan(0.5);
     expect(big.state).toBe('available'); expect(big.nodeId).toBe(e.b);
     expect(ob!.known).toBe(true); expect(e.noHeavy).toBe(true); expect(s.traffic.stats.detours).toBe(1);
+    expect(s.traffic.stats.obstacles).toBe(1);      // 발견됐을 때 한 번 센다
     expect(findRoute(s.city, e.a, e.b, wf, -1, true)!.edges).not.toContain(e.id);      // 큰 차의 경로는 피한다
     expect(findRoute(s.city, e.a, e.b, wf, -1, false)!.edges).toEqual([e.id]);         // 작은 차의 경로는 그대로다
     expect(passable(e, true, s)).toBe(false); expect(passable(e, false, s)).toBe(true);
@@ -294,20 +282,26 @@ describe('정체의 밀림', () => {
 });
 
 describe('도시는 끊기지 않는다', () => {
-  it('40교대 내내 시설 사이에 (알려진 상태로) 길이 있고, 교대가 끝날 때 남은 차단에는 끝나는 시각이 있다', () => {
-    let obstacles = 0, unknownSeen = 0, detours = 0;
-    for (let k = 0; k < 40; k++) {
-      const s = new Sim('S' + k, k % 2 ? { ...NORMAL, traffic: 5 } : NORMAL);
+  it('42교대(교통 1·3·5) 내내 시설 사이에 알려진 상태로 길이 있고, 교통 5 는 교통 1 보다 막히고 대응이 늦다', () => {
+    const N = 14;
+    const sum = [1, 3, 5].map(() => ({ cong: 0, cn: 0, resp: 0, rn: 0, parked: 0, obstacles: 0, detours: 0, unknown: 0 }));
+    for (let k = 0; k < N * 3; k++) {
+      const lv = k % 3, traffic = [1, 3, 5][lv], m = sum[lv];
+      const s = new Sim('S' + Math.floor(k / 3), traffic === 3 ? NORMAL : { ...NORMAL, traffic });
       const F = s.city.facilities;
+      m.parked += s.traffic.obstacles.filter((o) => o.kind === 'parked').length;
       for (let i = 0; i < 9000 && !s.ended; i++) {
         s.step();
         if (i % 100) continue;
+        // 아무 두 시설 사이에, 관제가 아는 상태로, 작은 차와 큰 차 모두 길이 있다
         const a = F[(i / 100) % F.length], b = F[((i / 100) * 7 + 3) % F.length];
         expect(findRoute(s.city, a.nodeId, b.nodeId), `${s.seed} t=${s.t} ${a.name}→${b.name}`).not.toBeNull();
         expect(findRoute(s.city, a.nodeId, b.nodeId, 1, -1, true), `${s.seed} t=${s.t} ${a.name}→${b.name} (큰 차)`).not.toBeNull();
-        for (const e of s.city.edges) if (e.closed && e.known === false) unknownSeen++;
-        // 구간의 표시와 장애물 목록이 어긋나지 않는다
         for (const e of s.city.edges) {
+          m.cong += e.cong; m.cn++;
+          if (e.closed && e.known === false) m.unknown++;
+          // 구간의 표시와 장애물 목록이 어긋나지 않는다
+          if (!e.closedReason && e.known === undefined && !e.noHeavy) continue;
           const o = s.traffic.obstacles.find((q) => q.edge === e.id);
           if (e.closedReason === 'obstacle' || e.closedReason === 'roadwork') { expect(o && o.full).toBeTruthy(); expect(e.closed).toBe(true); }
           if (e.known === false) expect(o && o.full && !o.known).toBeTruthy();
@@ -316,18 +310,28 @@ describe('도시는 끊기지 않는다', () => {
       }
       s.runToEnd();
       expect(s.ended).toBe(true);
+      // 교대가 끝났을 때 장애물로 막힌 채 남은 구간에는 치워지는 시각이 있다
       for (const e of s.city.edges) {
         if (e.closedReason !== 'obstacle') continue;
         const o = s.traffic.obstacles.find((q) => q.edge === e.id)!;
         expect(o).toBeTruthy(); expect(isFinite(o.until)).toBe(true);
       }
-      // 부대는 모두 어딘가에 닿았거나 가는 중이다 (막힌 길 앞에 서 있지 않다): 보고서가 기록된 통계로 쓰였다
+      // 보고서는 기록된 통계 그대로다
       const r = s.report!;
       expect(r.traffic).toEqual(s.traffic.stats);
       expect(r.summary.some((l) => l.startsWith('교통'))).toBe(true);
-      obstacles += r.traffic!.obstacles; detours += r.traffic!.detours;
+      m.obstacles += r.traffic!.obstacles; m.detours += r.traffic!.detours;
+      for (const I of s.incidents) if (I.result && I.result.responseTime >= 0) { m.resp += I.result.responseTime; m.rn++; }
     }
-    expect(obstacles).toBeGreaterThan(40); expect(unknownSeen).toBeGreaterThan(0); expect(detours).toBeGreaterThan(0);
+    const [lo, mid, hi] = sum;
+    expect(lo.parked).toBe(0); expect(mid.parked).toBe(N * 3); expect(hi.parked).toBe(N * 7);
+    expect(hi.cong / hi.cn).toBeGreaterThan(lo.cong / lo.cn + 0.15);
+    expect(mid.cong / mid.cn).toBeGreaterThan(lo.cong / lo.cn);
+    expect(hi.resp / hi.rn).toBeGreaterThan(lo.resp / lo.rn + 2);
+    expect(hi.obstacles).toBeGreaterThan(lo.obstacles);
+    expect(lo.obstacles + mid.obstacles + hi.obstacles).toBeGreaterThan(40);
+    expect(lo.unknown + mid.unknown + hi.unknown).toBeGreaterThan(0);
+    expect(lo.detours + mid.detours + hi.detours).toBeGreaterThan(0);
   }, 240000);
 });
 

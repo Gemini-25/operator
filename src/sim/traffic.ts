@@ -190,8 +190,8 @@ function announce(sim: Sim, o: Obstacle): void {
 export function addObstacle(sim: Sim, o: ObstacleOpts): Obstacle | null {
   const ob = place(sim, sim.traffic, o);
   if (!ob) return null;
-  if (ob.full) sim.traffic.stats.closures += ob.kind === 'roadwork' ? 1 : 0;
-  if (!(ob.full && ob.kind === 'roadwork')) sim.traffic.stats.obstacles++;
+  if (ob.full && ob.kind === 'roadwork') sim.traffic.stats.closures++;
+  else if (!ob.heavyOnly || ob.known) sim.traffic.stats.obstacles++;      // 아직 모르는 불법 주차는 발견됐을 때 센다 (reportObstacle)
   announce(sim, ob);
   return ob;
 }

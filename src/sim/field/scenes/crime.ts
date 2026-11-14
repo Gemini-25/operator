@@ -7,7 +7,7 @@ import { emit } from '../../events';
 import type { Rng } from '../../rng';
 import { T } from '../../types';
 import type { Incident, Region, Scene } from '../../types';
-import { armedVenue, floorMatOf, pickArch, planOpts } from '../builders';
+import { armedVenue, buildStop, floorMatOf, pickArch, planOpts } from '../builders';
 import type { VenueKind } from '../builders';
 import { staticPass, tidx } from '../grid';
 import { SW, addCas, addHostile, addProp, baseScene, freeTileIn, get, set } from '../kit';
@@ -158,3 +158,7 @@ function buildSiege(sim: Sim, I: Incident, rng: Rng): Scene {
   return s;
 }
 registerScene('armed', 'siege', buildSiege);
+
+// ───────────────────────── 도주 차량 ─────────────────────────
+// 추격 끝에 선 차의 현장은 납치·난폭 운전과 같은 틀(builders.buildStop)이다: 총을 든 용의자 1~2명이 차 옆에서 버틴다
+registerScene('armed', 'getaway', buildStop);

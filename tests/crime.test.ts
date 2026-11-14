@@ -110,6 +110,80 @@ describe('대형 인질극', () => {
   });
 });
 
+describe('도주 차량과 은신처', () => {
+  it('총을 든 용의자가 현장을 빠져나가면 열에 서넛은 차를 몰고 달아나는 사건이 이어진다', () => {
+    let getaways = 0, repeats = 0;
+    for (let k = 0; k < 24; k++) {
+      const sim = new Sim('GETAWAY' + k);
+      sim.run(50);
+      const I = createIncident(sim, { type: 'armed', variant: 'robbery', rng: sim.rng.fork('t') });
+      const s = sim.scenes[I.id]!;
+      expect(s.hostiles.length).toBeGreaterThan(0);
+      for (const h of s.hostiles) { h.state = 'flee'; h.path = []; h.pathI = 0; }      // 곧바로 현장을 벗어난다
+      sim.run(40);
+      for (const h of s.hostiles) expect(h.state).toBe('escaped');
+      const next = sim.incidents.filter((q) => q.parent === I.id);
+      const G = next.filter((q) => q.truth.variant === 'getaway');
+      expect(G.length, `${sim.seed}: 한 사건에서 도주 차량은 하나만`).toBeLessThanOrEqual(1);
+      repeats += next.length - G.length + sim.gen.chain.filter((c) => c.opts.parent === I.id).length;
+      for (const g of G) {
+        getaways++;
+        expect(g.truth.type).toBe('armed'); expect(g.tag).toBe('crime');
+        expect(g.pursuit, '추격전이 시작돼 있다').toBeTruthy();
+        expect(g.pursuit!.kind).toBe('getaway');
+        const n = sim.city.nodes[I.truth.nodeId];
+        expect(g.pursuit!.trail[0]).toEqual([n.x, n.y]);      // 달아난 그 자리에서 출발한다
+        expect(sim.scenes[g.id]!.hostiles.every((h) => h.weapon === 'gun')).toBe(true);
+        expect(sim.scenes[g.id]!.casualties.length).toBe(0);      // 인질은 없다
+        sim.runToEnd();
+        expect(g.phase).toBe('closed');
+        if (g.pursuit!.state === 'escaped') expect(g.result!.outcome).toBe('unresolved');      // 놓치면 미해결
+      }
+    }
+    expect(getaways).toBeGreaterThanOrEqual(3);
+    expect(repeats).toBeGreaterThanOrEqual(1);      // 나머지 일부는 예전처럼 다른 곳에서 다시 범행한다
+  });
+
+  it('위협 4 의 평소 교대 40번: 이어진 사건마다 낳은 사건이 적혀 있고, 은신처에서 이어진 인질 사건은 바로 그 건물에서 일어난다', () => {
+    const HIDE = ['warehouse', 'workshop', 'farmhouse', 'pension', 'storage', 'greenhouse'];
+    let chained = 0, dens = 0, hidden = 0, followed = 0;
+    for (let k = 0; k < 40; k++) {
+      const sim = new Sim('T4-' + k, { ...NORMAL, threat: 4 });
+      sim.runToEnd();
+      expect(sim.ended).toBe(true);
+      for (const I of sim.incidents) {
+        expect(I.phase).toBe('closed');
+        if (I.truth.variant === 'getaway') { expect(I.parent, `${sim.seed} ${I.code}: 도주 차량에는 낳은 사건이 있다`).toBeDefined(); expect(I.pursuit!.kind).toBe('getaway'); chained++; }
+        const p = I.pursuit;
+        if (p && p.hideout !== undefined) {
+          dens++;
+          expect(p.kind).toBe('kidnap');
+          const den = sim.city.places[p.hideout];
+          expect(HIDE).toContain(den.kind); expect(den.open).toBe(false);
+          if (p.how === 'hideout') {
+            hidden++;
+            expect(p.state).toBe('escaped'); expect(I.closeReason).toBe('abandoned');
+            expect(I.result!.outcome, '숨어든 납치 사건은 실패가 아니라 미해결').toBe('unresolved');
+          }
+        }
+        if (I.parent !== undefined) {
+          const P = sim.incidents[I.parent];
+          expect(P.id).toBeLessThan(I.id);
+          if (P.pursuit && P.pursuit.how === 'hideout') {
+            followed++;
+            expect(I.truth.variant).toBe('hostage');
+            expect(I.truth.placeId).toBe(P.pursuit.hideout);
+            expect(sim.scenes[I.id]!.hostiles.length).toBeGreaterThan(0);      // 창고·농가에서도 인질 사건의 현장이 만들어진다
+          }
+        }
+      }
+    }
+    expect(dens, '은신처로 향한 납치').toBeGreaterThanOrEqual(1);
+    expect(chained + followed, '도주 차량 또는 은신처에서 이어진 사건').toBeGreaterThanOrEqual(1);
+    expect(followed).toBeLessThanOrEqual(hidden);
+  });
+});
+
 describe('재현성', () => {
   it('같은 시드와 같은 강제 발생이면 기록이 같다', () => {
     for (const force of ['armed/bomb', 'armed/package']) {

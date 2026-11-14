@@ -1,4 +1,26 @@
 // 대형 사고 (docs/specs/N5-major.md) 의 지휘 규칙. 지휘관의 믿음(a.beliefs)만 읽는다 — s.props·s.casualties·s.hostiles·I.truth 를 읽지 않는다.
 // registerOrders((sim, s, I, a, k) => { ... }), registerBlocker((sim, s, a) => boolean) 로 등록한다.
 
-export {};
+import { registerOrders } from '../sceneRegistry';
+
+// 비행기 추락: 동체 토막을 다 살핀 뒤에는 들판 가장자리도 수색한다 (튕겨 나간 사람이 있다고 본다).
+// 기본 규칙은 신고된 인원이 모자랄 때만 가장자리를 본다. 한 번 보고도 확인율이 낮으면 간격을 좁혀 다시 본다.
+registerOrders((_sim, s, _I, a, k) => {
+  if (s.variant !== 'plane' || s.kind !== 'fire' || !s.sizeupDone) return;
+  const seen = (id: number): number => a.beliefs.val<number>('srch', id) ?? -1;
+  if (s.regions.some((r) => r.kind === 'wreck' && seen(r.id) < 0.6)) return;
+  for (const r of s.regions) if (r.kind === 'verge' && r.searchable && seen(r.id) < 0.72) k.want('search', { region: r.id }, 0.6, 1, seen(r.id) >= 0);
+});
+
+// 사람이 많을 때: 기본 규칙은 구급 부대를 두 대까지만 더 부른다. 기다리는 부상자와 갇힌 사람의 수에 맞춰 더 부른다.
+// 믿음만 보므로 대형 사고가 아니어도(버스 사고 등) 사람이 많으면 똑같이 적용된다.
+registerOrders((sim, _s, _I, a, k) => {
+  const cas = a.beliefs.list('cas');
+  // "옮기는 중"이라고만 알고 있는 사람의 소식이 한참 끊겼다: 무전 음영에서 도착·탑승 보고를 놓쳤을 수 있다. 가서 확인하게 한다
+  // (확인하러 간 대원이 지금 상태를 다시 보고한다. 이 믿음이 낡은 채로 남으면 지휘관은 상황을 끝내지 못한다)
+  for (const f of cas) if (f.value.where === 'carried' && f.value.band < 3 && sim.t - f.t > 40) k.want('escort', { cas: f.id }, 0.6);
+  const waiting = cas.filter((f) => f.value.band >= 1 && f.value.band < 3 && (f.value.where === 'scene' || f.value.where === 'carried' || f.value.where === 'safe')).length;
+  if (waiting >= 5 && k.countUnits('ems', 0.7) < Math.min(5, Math.ceil(waiting / 2))) k.request('ems', `부상자 ${waiting}명 — 구급 부대가 더 필요`, true);
+  const trapped = cas.filter((f) => f.value.mob === 'trapped' && f.value.band < 3 && f.value.where === 'scene').length;
+  if (trapped >= 3 && k.countUnits('rescue', 0.5) < 2) k.request('rescue', `고립 ${trapped}명 — 구조 부대 추가`, true);
+});

@@ -302,3 +302,8 @@ input:focus { border-color: var(--accent); }
 .disaster-report { margin: 10px 0 4px; padding: 10px 12px; border: 1px solid #7a4a2c; border-radius: 8px; background: rgba(180, 85, 46, 0.1); }
 .disaster-report h3 { margin: 0 0 6px; font-size: 14px; }
 .disaster-report p { margin: 2px 0; font-size: 13px; }
+
+/* ── major ── */
+.badge.major { color: #ffb37a; border-color: #ff8a3c; background: rgba(255, 138, 60, 0.14); font-weight: 800; letter-spacing: 0.04em; }
+.tile.major { border-color: #a65a2a; background: linear-gradient(180deg, rgba(255, 138, 60, 0.16), #101922); }
+.tile.major b { color: #ffb37a; }

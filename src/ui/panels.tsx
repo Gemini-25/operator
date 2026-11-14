@@ -61,6 +61,7 @@ function IncidentCard({ sim, I, director, truth }: { sim: Sim; I: Incident; dire
       <div className="row">
         <span className="code" style={{ background: TYPE_COLOR[type] }}><Icon name={I.phase === 'call' && !as ? 'phone' : type} size={12} color="#0b1219" />{I.code}</span>
         <span className="title">{as ? as.label ?? TYPE_NAME[as.type] : I.phase === 'unreported' ? '미신고 사건' : '유형 확인 중'}{as && as.typeConf < 0.6 && !I.fieldType ? ' ?' : ''}</span>
+        {I.tag === 'major' && <span className="badge major" title="대형 사고">대형</span>}
         {I.phase === 'closed' && I.result
           ? <span className="badge" style={{ color: OUTCOME_COLOR[I.result.outcome], borderColor: OUTCOME_COLOR[I.result.outcome] }}>{OUTCOME_NAME[I.result.outcome]}</span>
           : <span className={`badge phase-${I.phase}`}>{PHASE[I.phase]}</span>}
@@ -386,6 +387,7 @@ export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel 
           <div className="tiles">
             <div className="tile"><b>{r.totalCalls}</b><span>전체 신고 전화</span></div>
             <div className="tile"><b>{r.totalIncidents}</b><span>처리 사건</span></div>
+            {(r.major ?? 0) >= 1 && <div className="tile major"><b>{r.major}</b><span>대형 사고</span></div>}
             {(['success', 'partial', 'delayed', 'unresolved', 'failed'] as const).map((k) => <div key={k} className="tile"><b style={{ color: OUTCOME_COLOR[k] }}>{r.counts[k]}</b><span>{OUTCOME_NAME[k]}</span></div>)}
             <div className="tile"><b>{r.avgResponse >= 0 ? fmtSec(r.avgResponse) : '-'}</b><span>평균 대응 시간</span></div>
             <div className="tile"><b>{pct(r.utilization)}</b><span>자원 활용률</span></div>

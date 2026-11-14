@@ -278,13 +278,13 @@ registerScene('collapse', 'crane', (sim, I, rng) => {
   const frame = addRegion(s, '짓다 만 골조', 'room', B.x0, B.y0, B.x1, B.y1, true, true);
   const yard = addRegion(s, '자재 마당', 'zone', F.x0 + 1, F.y0 + 1, F.x1 - 1, F.y1 - 1, false, true);
   yard.tiles = yard.tiles.filter((i) => s.tiles[i] !== T.FLOOR);      // 골조 안은 마당 수색에 넣지 않는다 (무너질 수 있는 곳은 소방만 들어간다)
-  addRegion(s, '공사장 앞 길', 'zone', 0, 14, SW - 1, 16, false, false);
+  addRegion(s, '공사장 앞 길', 'zone', 0, 14, SW - 1, 16, false, true);      // 팔 끝이 떨어진 길 쪽도 살핀다
   const boom: Prop[] = [];
   for (let k = 1; k <= n; k++) {
     const x = mast.x + k, y = mast.y + k, i = tidx(s, x, y);
     if (s.tiles[i] === T.WALL) s.tiles[i] = T.GROUND;      // 팔에 눌려 넘어간 울타리
     s.damage[i] = 1;
-    boom.push(addProp(s, 'debris', x, y, { blocking: true, hp: rng.range(12, 21), skin: 'craneBoom', angle: Math.PI / 4 }));
+    boom.push(addProp(s, 'debris', x, y, { blocking: true, hp: rng.range(12, 21), skin: 'craneBoom', angle: Math.PI / 4, color: k === n ? 99 : k }));      // color: 기초에서 몇 번째 토막인가 (99 = 끝)
   }
   // 작업자 3~5명: 둘은 팔에 깔렸고, 나머지는 골조에서 떨어지거나 마당·길에서 다쳤다
   const total = rng.int(3, 5);
@@ -298,8 +298,8 @@ registerScene('collapse', 'crane', (sim, I, rng) => {
   for (let k = 0; k < 2 && k < under.length; k++) {
     const i = under[k];
     s.damage[i] = 1;
-    const c = addCas(s, i % SW, (i / SW) | 0, 'trapped', rng.range(46, 80), rng.range(0.08, 0.19), rng.range(0.3, 0.5));
-    c.trapWork = rng.range(14, 22);
+    const c = addCas(s, i % SW, (i / SW) | 0, 'trapped', rng.range(42, 74), rng.range(0.13, 0.25), rng.range(0.3, 0.5));
+    c.trapWork = rng.range(20, 30);      // 쇠 트러스에 깔렸다: 잔해보다 오래 걸린다
   }
   if (total >= 3) { const i = freeTileIn(s, frame, rng); addCas(s, i % SW, (i / SW) | 0, 'immobile', rng.range(48, 80), rng.range(0.07, 0.16), rng.range(0.2, 0.4)); }
   if (total >= 4) { const p = freeNear(s, mast.x - 1, mast.y - 1); addCas(s, p.x, p.y, rng.chance(0.6) ? 'immobile' : 'mobile', rng.range(55, 88), rng.range(0.04, 0.13), rng.range(0.1, 0.3)); }

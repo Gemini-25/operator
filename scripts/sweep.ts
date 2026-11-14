@@ -8,9 +8,14 @@
 //   npm run sweep -- 30 --scen           시나리오(유형/변형)별 결과 표
 //   npm run sweep -- 20 --force armed/bomb --scen    교대마다 그 시나리오를 초반에 한 번 일으킨다 (새 시나리오 확인용)
 //   npm run sweep -- 20 --disaster typhoon           재난을 정해서 (none|random|typhoon|flood|quake|wildfire|tsunami)
+//   npm run sweep -- 40 --metrics        측정 지표(scripts/metrics.ts)의 시나리오별 표와 모든 후보 줄
+//   npm run sweep -- 10 --no-metrics     표본을 뜨지 않고 지표 줄을 내지 않는다 (속도 비교용)
+//   npm run sweep -- 1 --log S7 --metrics            한 교대의 사건마다 가장 긴 원인 사슬과 확산 길
 import { NORMAL, difficultyKey, difficultyLabel, parseDifficulty, parseDisaster } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
 import { OUTCOME_NAME, TYPE_NAME, fmtClock } from '../src/sim/util';
+import { chainReport, checkMetrics, formatLines, metricsJson, runWithProbe, shiftMetrics, summarize } from './metrics';
+import type { Probe, ShiftMetrics } from './metrics';
 
 const args = process.argv.slice(2);
 const n = parseInt(args[0] ?? '20', 10);
@@ -25,11 +30,15 @@ const disArg = opt('--disaster');
 if (disArg) { const dz = parseDisaster(disArg); if (!dz) { console.error(`알 수 없는 재난: ${disArg}`); process.exit(2); } diff = { ...diff, disaster: dz }; }
 const force = opt('--force');
 const mk = (seed: string): Sim => new Sim(seed, diff!, 1200, { force });
+// 측정 지표: 기본으로 켠다(표본 포함). 표본은 상태를 읽기만 하므로 결과가 바뀌지 않는다
+const metricsOn = !flag('--no-metrics');
+const metricsAll = flag('--metrics');
 const byScen: Record<string, Record<string, number>> = {};
 
 if (logSeed) {
   const sim = mk(logSeed);
-  sim.runToEnd();
+  const probe = metricsAll ? runWithProbe(sim) : null;
+  if (!probe) sim.runToEnd();
   for (const e of sim.events) {
     if (e.importance < 1 && !verbose) continue;
     console.log(`${fmtClock(sim.startTod + e.t)} [${e.incidentId >= 0 ? sim.incidents[e.incidentId].code : '--'}] ${e.truth ? '(진실) ' : ''}${e.role}/${e.actor}: ${e.text}`);
@@ -41,6 +50,12 @@ if (logSeed) {
     console.log(`\n[${inc.code}] ${TYPE_NAME[inc.type]} · ${inc.label} → ${OUTCOME_NAME[inc.result.outcome]} | ${inc.result.headline}`);
     for (const a of inc.result.analysis) console.log('   - ' + a);
   }
+  if (probe) {
+    console.log('\n===== 인과 사슬 (사건마다 가장 긴 원인 사슬과 확산 길) =====');
+    for (const line of chainReport(sim)) console.log(line);
+    console.log('');
+    for (const line of formatLines(summarize([shiftMetrics(sim, probe, { texts: true })]), true)) console.log(line);
+  }
   process.exit(0);
 }
 
@@ -50,11 +65,14 @@ const prob: Record<string, number> = {};
 const closeReasons: Record<string, number> = {};
 let benignN = 0, realGood = 0, realRespSum = 0, realRespN = 0;
 let incN = 0, respSum = 0, respN = 0, durSum = 0, ms = 0, errors = 0, casT = 0, casS = 0, casL = 0, casU = 0, hurt = 0, replan = 0, unitSum = 0, maxUnits = 0, open = 0;
+const shiftList: (ShiftMetrics | null)[] = [];
+const reportHashes: string[] = [];
 for (let k = 0; k < n; k++) {
   const seed = 'S' + k;
   const t0 = performance.now();
   let sim: Sim;
-  try { sim = mk(seed); sim.runToEnd(); }
+  let probe: Probe | null = null;
+  try { sim = mk(seed); if (metricsOn) probe = runWithProbe(sim); else sim.runToEnd(); }
   catch (e) { errors++; console.log(`seed ${seed} ERROR:`, (e as Error).stack); continue; }
   ms += performance.now() - t0;
   const r = sim.report;
@@ -81,6 +99,12 @@ for (let k = 0; k < n; k++) {
     if (verbose) console.log(`${seed} [${inc.code}] ${inc.type}/${I.truth.variant} sev${I.truth.severity} → ${inc.result.outcome} (${I.closeReason}) rt=${Math.round(inc.result.responseTime)} dur=${Math.round(inc.result.duration)} units=${I.everAssigned.length} | ${inc.result.headline}`);
   }
   hurt += r.respondersHurt.length;
+  reportHashes.push(r.hash);
+  // 측정 도구의 오류는 기존 집계를 바꾸지 않는다: 그 교대의 지표만 null 로 두고 metrics.errors 에 센다
+  if (metricsOn) {
+    try { shiftList.push(shiftMetrics(sim, probe, { texts: verbose })); }
+    catch (e) { shiftList.push(null); console.error(`seed ${seed} 지표 계산 오류:`, (e as Error).stack); }
+  }
 }
 const share = (k: string): number => (incN ? out[k] / incN : 0);
 const timeoutShare = incN ? ((closeReasons.timeout ?? 0) + (closeReasons.noresponse ?? 0) + (closeReasons.abandoned ?? 0)) / incN : 0;
@@ -92,7 +116,10 @@ const summary = {
   falseAlarms: benignN, realGood: +(realGood / Math.max(1, incN - benignN)).toFixed(3), realAvgResponse: Math.round(realRespSum / Math.max(1, realRespN)),
   unitsPerIncident: +(unitSum / Math.max(1, incN)).toFixed(2), maxUnitsOnOneIncident: maxUnits, respondersHurtPerShift: +(hurt / n).toFixed(2), recoveredShare: +(replan / Math.max(1, incN)).toFixed(3),
 };
-if (flag('--json')) console.log(JSON.stringify(summary));
+const metrics = metricsOn ? summarize(shiftList) : null;
+/** 시드별 report.hash 를 쉼표로 이어 붙여 FNV-1a (결과 불변 비교용) */
+const reportHash = ((): string => { let h = 0x811c9dc5; const s = reportHashes.join(','); for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return (h >>> 0).toString(16); })();
+if (flag('--json')) console.log(JSON.stringify({ ...summary, problems: prob, reportHash, metrics: metrics ? metricsJson(metrics) : null }));
 else {
   console.log(`\n난이도 ${summary.label} (${summary.difficulty}) · seeds=${n} errors=${errors} incidents=${incN} (${summary.perShift}/shift) avg ${summary.msPerShift}ms/shift`);
   console.log('outcomes:', Object.entries(out).map(([k, v]) => `${k} ${v} (${Math.round((v / Math.max(1, incN)) * 100)}%)`).join(', '));
@@ -107,6 +134,7 @@ else {
     for (const k of Object.keys(byScen).sort()) { const b = byScen[k]; console.log(`  ${k.padEnd(20)} ${String(b.n).padStart(4)} · ${b.success ?? 0} · ${b.partial ?? 0} · ${b.delayed ?? 0} · ${b.unresolved ?? 0} · ${b.failed ?? 0} | ${b.timeout ?? 0}·${b.noresponse ?? 0}·${b.abandoned ?? 0} | ${Math.round(b.dur / b.n)}s · ${(b.units / b.n).toFixed(1)}`); }
   }
   console.log('problems (incidents affected):', Object.entries(prob).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', '));
+  if (metrics) for (const line of formatLines(metrics, metricsAll)) console.log(line);
 }
 if (flag('--check')) {
   const fail: string[] = [];
@@ -119,6 +147,10 @@ if (flag('--check')) {
     if (summary.bad < 0.03 || summary.bad > 0.25) fail.push(`실패+미해결 ${(summary.bad * 100).toFixed(0)}% 가 3~25% 를 벗어남`);
     if (summary.avgResponse > 90) fail.push(`평균 대응 시간 ${summary.avgResponse}초 > 90초`);
   }
+  // 측정 지표의 관문 (scripts/metrics.ts checkMetrics): 구조의 불변 조건은 언제나, 교착 래칫은 보통 기본 조건에서만
+  if (metrics) fail.push(...checkMetrics(metrics, { baseline: !diffArg && !disArg && !force }));
+  else console.error('지표 관문 건너뜀 (--no-metrics)');
   if (fail.length) { console.error('\n검증 실패:\n - ' + fail.join('\n - ')); process.exit(1); }
-  console.log('\n검증 통과');
+  // --json 과 함께면 JSON 한 줄이 깨지지 않게 stderr 로
+  if (flag('--json')) console.error('\n검증 통과'); else console.log('\n검증 통과');
 }

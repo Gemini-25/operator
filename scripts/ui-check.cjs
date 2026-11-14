@@ -42,9 +42,12 @@ function portBusy() {
 }
 async function startServer() {
   if (await portBusy()) throw new Error(`포트 ${PORT} 를 이미 다른 프로그램이 쓰고 있습니다.`);
-  const child = spawn('npx', ['vite', '--port', String(PORT), '--strictPort'], { cwd: ROOT, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, FORCE_COLOR: '0' } });
+  // 자기 전용 의존성 캐시 (vite.config.ts 의 cacheDir): 다른 작업 폴더의 개발 서버가 같은 node_modules/.vite 를 다시 만들어도 이 페이지가 새로고침되지 않게
+  const cacheDir = require('node:path').join(require('node:os').tmpdir(), `ar-ui-check-vite-${PORT}`);
+  const child = spawn('npx', ['vite', '--port', String(PORT), '--strictPort'], { cwd: ROOT, detached: true, stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, FORCE_COLOR: '0', AR_VITE_CACHE: cacheDir } });
   let out = '', exited = null;
-  child.stdout.on('data', (d) => { out += d; }); child.stderr.on('data', (d) => { out += d; });
+  const watchOut = (d) => { out += d; if (/reload/i.test(String(d))) serverReloads.push(String(d).trim().split('\n')[0]); };      // 개발 서버가 페이지를 다시 읽게 한 일 — 검사가 도중에 깨진 까닭을 남긴다
+  child.stdout.on('data', watchOut); child.stderr.on('data', watchOut);
   child.on('exit', (code) => { exited = code ?? -1; });
   const t0 = Date.now();
   for (;;) {
@@ -64,6 +67,7 @@ async function stopServer(child) {
 }
 
 // ───────────── 검사 ─────────────
+const serverReloads = [];  // 검사 도중 개발 서버가 페이지를 다시 읽게 한 기록
 const results = {};        // 번호 → { ok: true | false | null(정보), line, details }
 const result = (n, ok, line, details = []) => { results[n] = { ok, line, details }; };
 const marks = [];          // 헤드리스와 비교할 (틱, 해시) 표본
@@ -84,7 +88,7 @@ async function main() {
 }
 
 async function run(page) {
-  const snap = () => page.evaluate(() => window.__ar.snap());
+  const snap = async () => { await waitAr(); return page.evaluate(() => window.__ar.snap()); };      // 페이지가 다시 읽히는 중이면 고리가 다시 생길 때까지 기다린다
   const waitAr = () => page.waitForFunction(() => !!(window.__ar && window.__ar.snap), null, { timeout: 30000 });
   const load = async (url) => { await page.goto(BASE + url, { waitUntil: 'load' }); await waitAr(); loads++; };
   const reload = async () => { await page.reload({ waitUntil: 'load' }); await waitAr(); loads++; };

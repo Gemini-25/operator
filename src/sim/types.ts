@@ -216,7 +216,38 @@ export interface Hostile {
   targetRid: number;
 }
 export interface PassingCar { x: number; px: number; row: number; dir: number; speed: number; distracted: boolean; stopped: boolean; hit: boolean }
-export interface Fx { kind: 'shot' | 'spray' | 'radio' | 'text' | 'boom' | 'hit' | 'flash' | 'glass' | 'debris'; t: number; x: number; y: number; x2?: number; y2?: number; text?: string; color?: string; ttl: number }
+// ── 교전 연출 기록 (G5) ── 시뮬레이션은 이 칸들을 읽지 않는다. 그림(view/scene/fxBook.ts)과 소리(view/audioCombat.ts)만 읽는다.
+export type FxWeapon = 'pistol' | 'rifle' | 'hgun' | 'knife' | 'blunt'     // hgun = 용의자의 총
+  | 'sniper' | 'taser'                   // R1 의 개인 장비 이름(KitId)과 같다
+  | 'beanbag';                           // R2 의 비살상탄
+export type FxResult = 'hit' | 'miss' | 'cover';
+export type FxStop = 'body' | 'wall' | 'door' | 'furn' | 'far'
+  | 'shield';                            // R1 의 방패에 맞음
+export type BreachHow = 'open' | 'push' | 'kick' | 'ram' | 'irons' | 'hydraulic'   // 문 방법 이름은 R2 의 MethodId 와 같다(irons = 할리건·도끼)
+  | 'charge';                            // 폭파 진입: 시뮬레이션이 실제 폭발 효과를 적용할 때만. 지금은 부르는 곳이 없다
+export type ArrestHow = 'chase' | 'stunned' | 'tackle' | 'surrender';
+export interface FxInfo {
+  side?: 0 | 1;                          // 0 = 대원 쪽, 1 = 용의자 쪽
+  by?: number;                           // 쏜·던진·진입한·검거한 사람: side 0 이면 대원 rid, 1 이면 용의자 id
+  wpn?: FxWeapon;
+  res?: FxResult;                        // 사격·근접·테이저의 결과
+  ix?: number; iy?: number;              // 사격: 그려지는 탄이 멈춘 자리(칸 좌표, 소수)
+  stop?: FxStop;                         // 사격: 무엇에 멈췄나
+  tk?: 0 | 1 | 2; target?: number;       // 맞은 사람: 0 대원(rid) · 1 용의자(id) · 2 구조 대상(id)
+  arm?: number;                          // 맞은 대원 부대의 방호(Unit.armor, 0..1)
+  ox?: number; oy?: number;              // 힘이 온 곳: 피격은 쏜 자리, 섬광탄은 던진 사람, 진입은 진입조 쪽, 검거는 대원
+  r?: number;                            // 반경(칸): 섬광탄 효과 반경, 폭발 피해 반경
+  n?: number;                            // 섬광탄: 무력화한 용의자 수 · 진입: 함께 들어간 인원
+  src?: 'bomb' | 'gas' | 'tank' | 'collapse' | 'fuel';
+  door?: number;                         // 진입·강제 개방한 문(소품 id, 문 없는 출입구는 -1)
+  how?: BreachHow;
+  sync?: boolean;                        // 진입: 지휘관의 동시 진입 신호에 맞춘 진입(breach)
+  forced?: boolean;                      // 진입: 잠긴 문을 부숴 열었다
+  arrest?: ArrestHow;
+}
+/** (G5) 인터페이스 합치기: 아래 한 줄짜리 Fx 에 꼬리표 칸을 더한다 */
+export interface Fx { c?: FxInfo }
+export interface Fx { kind: 'shot' | 'spray' | 'radio' | 'text' | 'boom' | 'hit' | 'flash' | 'glass' | 'debris' | 'melee' | 'breach' | 'cuff' | 'taser'; t: number; x: number; y: number; x2?: number; y2?: number; text?: string; color?: string; ttl: number }
 
 export type WorkKind =
   | 'sizeup' | 'search' | 'suppress' | 'hookup' | 'clear' | 'force' | 'extricate' | 'treat' | 'carry' | 'load'

@@ -47,7 +47,7 @@ export function dmgRng(sim: Sim, s: Scene): Rng { return stateOf(sim, s).rng; }
 
 // hazards.pushFx 와 같은 내용이다. hazards.ts 가 이 파일을 부르므로 서로를 import 하지 않게 따로 둔다
 function fx(sim: Sim, s: Scene, kind: Fx['kind'], x: number, y: number, x2: number | undefined, y2: number | undefined, ttl: number): void {
-  s.fx.push({ kind, t: sim.t, x, y, x2, y2, ttl });
+  s.fx.push({ kind, t: sim.t, x, y, x2, y2, text: undefined, color: undefined, ttl, c: undefined });      // 모든 기록이 같은 모양 (hazards.pushFx·fxlog.recFx 와 같은 칸, 같은 순서)
   if (s.fx.length > 60) s.fx.splice(0, s.fx.length - 60);
 }
 
@@ -136,6 +136,30 @@ export function bulletPath(sim: Sim, s: Scene, x0: number, y0: number, x1: numbe
   const d = Math.hypot(x1 - x0, y1 - y0);
   if (d < 0.01) return;
   walk(s, bx, by, Math.round(x1 + ((x1 - x0) / d) * over), Math.round(y1 + ((y1 - y0) / d) * over), visit);
+}
+
+/**
+ * (G5) 그림용 탄착점: bulletPath 와 같은 걷기(walk)로 (x0,y0) → (x1,y1) → over 칸 너머까지 간다. 아무것도 바꾸지 않는다.
+ * 벽·바위·빈 공간이면 'wall', 닫힌 문이면 'door' — 자리는 마지막으로 지나간 칸과 막은 칸의 가운데(벽면).
+ * 끝까지 가거나 현장 밖으로 나가면 'far' — 자리는 마지막 칸.
+ */
+export function rayEnd(s: Scene, x0: number, y0: number, x1: number, y1: number, over: number): { x: number; y: number; stop: 'wall' | 'door' | 'far' } {
+  const ax = Math.round(x0), ay = Math.round(y0), bx = Math.round(x1), by = Math.round(y1);
+  let lx = ax, ly = ay, hx = ax, hy = ay;
+  let stop: 'wall' | 'door' | 'far' = 'far';
+  const visit = (i: number, t: number): boolean => {
+    const cx = i % s.w, cy = (i / s.w) | 0;
+    if (t === T.WALL || t === T.ROCK || t === T.VOID) { stop = 'wall'; hx = cx; hy = cy; return false; }
+    if (t === T.DOOR) { const d = doorAt(s, i); if (d && !d.open) { stop = 'door'; hx = cx; hy = cy; return false; } }
+    lx = cx; ly = cy;
+    return true;
+  };
+  if (walk(s, ax, ay, bx, by, visit) && over > 0) {
+    const d = Math.hypot(x1 - x0, y1 - y0);
+    if (d >= 0.01) walk(s, bx, by, Math.round(x1 + ((x1 - x0) / d) * over), Math.round(y1 + ((y1 - y0) / d) * over), visit);
+  }
+  if (stop === 'far') return { x: lx, y: ly, stop };
+  return { x: (lx + hx) / 2, y: (ly + hy) / 2, stop };
 }
 
 /**

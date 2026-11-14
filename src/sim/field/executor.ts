@@ -12,6 +12,7 @@ import { mkFact } from './beliefs';
 import { astar, doorAt, isIndoor, los, staticPass, tileOf, walkableCount } from './grid';
 import { applyWater, flashbang, hostageNear, hostileActive, isHeld, placeAtSafe, pushFx, panicShot } from './hazards';
 import { bulletPath, hitCover } from './damage';
+import { breachHowFor, lastFx, noteCollateral, noteHit, noteShot, recBreach, recCuff, weaponOf } from './fxlog';
 import { detonate } from './rules/crime';
 
 export function makeTask(kind: TaskKind, label: string, w: WorkItem | null = null): Task {
@@ -218,6 +219,7 @@ function unblock(sim: Sim, s: Scene, a: FieldAgent, tile: number): void {
   const p = s.props[s.propAt[tile]];
   s.propAt[tile] = -1; p.blocking = false;
   if (p.kind === 'door') { p.locked = false; p.open = true; } else p.removed = true;
+  if (p.kind === 'door') recBreach(sim, s, p.x, p.y, a.x, a.y, { door: p.id, how: r.dept === 'police' ? 'ram' : r.dept === 'fire' ? 'irons' : 'kick', n: 1, sync: false, by: a.rid, forced: true });
   s.staticVersion++;
   learnQuiet(sim, a, mkFact('blk', tile, 'none', r.name, sim.t, 1, true, p.kind === 'door' ? '문 개방 완료' : '잔해 제거, 통로 확보'));
   const pe = markRecovered(I, 'PATH_BLOCKED', `${josa(r.name, '이/가')} ${p.kind === 'door' ? '문을 강제 개방' : '잔해를 제거'}해 통로 확보`);
@@ -292,6 +294,7 @@ function shootAt(sim: Sim, s: Scene, a: FieldAgent, hid: number): void {
   const hit = s.rng.chance(p);
   h.shotAt = sim.t;
   pushFx(sim, s, 'shot', a.x, a.y, h.x + (hit ? 0 : s.rng.range(-0.8, 0.8)), h.y + (hit ? 0 : s.rng.range(-0.8, 0.8)), undefined, '#ffe08a', 0.25);
+  const shot = lastFx(sim, s, 'shot'); noteShot(sim, s, shot, { side: 0, by: a.rid, wpn: weaponOf(sim, a), hit, cover: covered, tx: h.x, ty: h.y, tk: 1, target: h.id });
   bulletPath(sim, s, a.x, a.y, h.x, h.y, hit ? 0 : 3);      // 탄이 지나간 창이 깨진다 (빗나간 탄은 용의자를 지나쳐 더 나아간다)
   if (!hit && covered) hitCover(sim, s, h.x, h.y, a.x, a.y);      // 빗나간 탄에 용의자의 엄폐 가구가 닳는다
   h.morale -= 0.015;
@@ -301,6 +304,7 @@ function shootAt(sim: Sim, s: Scene, a: FieldAgent, hid: number): void {
     // 인질 곁의 용의자를 향해 쏜 빗나간 탄
     hc.health -= s.rng.range(22, 34); hc.mob = 'immobile'; hc.bleed = Math.max(hc.bleed, 0.15); hc.bleed0 = hc.bleed; hc.walking = false;
     hc.causeEvent = raiseProblem(sim, I, 'ESCALATION', '교전 중 인질 피격', { role: 'SYSTEM', actor: '현장', rid: r.id, imp: 3, text: `교전 중 빗나간 탄에 인질(구조 대상 ${hc.label})이 다쳤습니다!` }, false);
+    noteCollateral(sim, s, shot, hc, a.x, a.y);
   }
   if (!I.problems.some((q) => q.detail === '교전 발생')) {
     I.problems.push({ code: 'ESCALATION', t: sim.t, eventId: emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 3, text: '교전 발생! 대응 사격합니다.' }), detail: '교전 발생', recovered: true, recoveryText: '' });
@@ -308,6 +312,7 @@ function shootAt(sim: Sim, s: Scene, a: FieldAgent, hid: number): void {
   if (hit) {
     h.health -= s.rng.range(30, 48); h.morale -= 0.12;
     pushFx(sim, s, 'hit', h.x, h.y);
+    noteHit(lastFx(sim, s, 'hit'), { side: 0, ox: a.x, oy: a.y, tk: 1, target: h.id });
     if (h.health <= 0) r.xpGained += 0.004;
   }
 }
@@ -337,17 +342,21 @@ function breach(sim: Sim, s: Scene, a: FieldAgent): void {
     if (!team.length) return;
     // 출입구 바로 안쪽의 문
     let inX = e.x, inY = e.y + (e.y > s.h / 2 ? -3 : 3);
+    let doorSeen = false;
     for (const p of s.props) {
       if (p.kind !== 'door' || Math.abs(p.x - e.x) + Math.abs(p.y - e.y) > 1.5) continue;
+      const wasLocked = p.blocking, wasOpen = !!p.open;
       if (p.blocking) { s.propAt[p.y * s.w + p.x] = -1; p.blocking = false; p.locked = false; }
       if (!p.open) { p.open = true; s.staticVersion++; }
       inX = e.x + (p.x - e.x) * 3; inY = e.y + (p.y - e.y) * 3;      // 문을 지나 세 칸 안쪽
+      recBreach(sim, s, p.x, p.y, e.x, e.y, { door: p.id, how: breachHowFor(sim, team, wasLocked, wasOpen), n: team.length, sync: true, by: team[0].rid, forced: wasLocked }); doorSeen = true;
     }
+    if (!doorSeen) recBreach(sim, s, e.x, e.y, e.x, e.y, { door: -1, how: 'open', n: team.length, sync: true, by: team[0].rid, forced: false });
     // 문 바로 안쪽에 용의자가 있다고 알고 있을 때만 섬광탄을 쓴다(없으면 방 진입 때를 위해 아낀다)
     const thrower = team.find((b) => sim.units[b.unitId].flashbangs > 0 && b.beliefs.list('hos').some((f) => (f.value.state === 'hold' || f.value.state === 'fight') && dist(f.value.x, f.value.y, inX, inY) <= 5));
     if (thrower && sim.t - s.bangAt > 2) {
       sim.units[thrower.unitId].flashbangs--; s.bangAt = sim.t;
-      bangs += flashbang(sim, s, inX, inY);
+      bangs += flashbang(sim, s, inX, inY, thrower);
     }
     for (const b of team) { b.path = null; b.pathGoal = -1; }
     // 문이 열리는 소리: 무력화되지 않은 용의자는 그쪽을 돌아본다
@@ -725,9 +734,11 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         if (dist(a.x, a.y, h.x, h.y) <= 1.6) {
           t.progress += dt; a.ring = t.progress / 1.6;
           if (t.progress >= 1.6) {
+            const was = h.state;
             h.state = 'arrested'; h.path = null;
             learnQuiet(sim, a, hosFact(sim, s, h, r.name));
             emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${h.label} 검거!` });
+            recCuff(sim, s, h, a, was === 'flee' ? 'chase' : 'tackle');
             r.xpGained += 0.006;
             finishTask(sim, s, a, true);
           }
@@ -763,13 +774,15 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
           t.ptI++;
           const mates = s.agents.filter((b) => b !== a && b.status === 'active' && b.task && b.task.kind === 'engage' && dist(b.x, b.y, rd.x, rd.y) <= 2.6);
           if (mates.length >= 1 || t.ptI > 20) {
+            const wasLocked = rd.blocking;
             rd.entered = true; rd.open = true; s.staticVersion++;
             if (rd.blocking) { s.propAt[rd.y * s.w + rd.x] = -1; rd.blocking = false; rd.locked = false; }
+            recBreach(sim, s, rd.x, rd.y, a.x, a.y, { door: rd.id, how: breachHowFor(sim, [a, ...mates], wasLocked, false), n: mates.length + 1, sync: false, by: a.rid, forced: wasLocked });
             const thrower = [a, ...mates].find((b) => sim.units[b.unitId].flashbangs > 0);
             let n = -1;
             if (thrower && sim.t - s.bangAt > 2 && dist(h.x, h.y, rd.x, rd.y) <= 8) {
               sim.units[thrower.unitId].flashbangs--; s.bangAt = sim.t;
-              n = flashbang(sim, s, rd.x + (h.x - rd.x) * 0.6, rd.y + (h.y - rd.y) * 0.6);
+              n = flashbang(sim, s, rd.x + (h.x - rd.x) * 0.6, rd.y + (h.y - rd.y) * 0.6, thrower);
             } else if (sim.t >= h.alertUntil) { h.facing = Math.atan2(rd.y - h.y, rd.x - h.x); h.alertUntil = sim.t + 5; }
             panicShot(sim, s, I, rd.x, rd.y);
             const room = s.region[tileOf(s, h.x, h.y)] >= 0 ? s.regions[s.region[tileOf(s, h.x, h.y)]].name : '방';
@@ -784,7 +797,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       // ② 섬광탄: 용의자 가까이 다가갔을 때 던져 넣는다
       if (!stunned && u.flashbangs > 0 && d <= 5 && sim.t - s.bangAt > 7 && los(s, a.x, a.y, h.x, h.y)) {
         u.flashbangs--; s.bangAt = sim.t;
-        const n = flashbang(sim, s, a.x + (h.x - a.x) * 0.7, a.y + (h.y - a.y) * 0.7);
+        const n = flashbang(sim, s, a.x + (h.x - a.x) * 0.7, a.y + (h.y - a.y) * 0.7, a);
         emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 3, text: `섬광탄 투척! ${n ? `용의자 ${n}명 무력화.` : '효과 없음.'}` });
       }
       // ③ 무력화된 용의자는 달려들어 제압한다
@@ -799,6 +812,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
             h.state = 'arrested'; h.path = null;
             learnQuiet(sim, a, hosFact(sim, s, h, r.name));
             emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `무력화된 ${h.label} 제압·검거!` });
+            recCuff(sim, s, h, a, 'stunned');
             r.xpGained += 0.006;
             finishTask(sim, s, a, true);
           }
@@ -826,6 +840,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
             h.state = 'arrested'; h.path = null;
             learnQuiet(sim, a, hosFact(sim, s, h, r.name));
             emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${h.label}를 곁에서 덮쳐 제압·검거!` });
+            recCuff(sim, s, h, a, 'tackle');
             r.xpGained += 0.006;
             finishTask(sim, s, a, true);
           }
@@ -851,9 +866,11 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (m !== 'arrived') return;
       t.need = h.state === 'surrendered' ? 2.5 : 5; t.progress += dt; a.ring = t.progress / t.need;
       if (t.progress >= t.need) {
+        const was = h.state;
         h.state = 'arrested';
         learnQuiet(sim, a, hosFact(sim, s, h, r.name));
         emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${h.label} 검거 완료.` });
+        recCuff(sim, s, h, a, was === 'surrendered' ? 'surrender' : 'tackle');
         r.xpGained += 0.005;
         finishTask(sim, s, a, true);
       }

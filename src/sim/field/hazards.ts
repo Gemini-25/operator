@@ -4,15 +4,16 @@
 import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import { T } from '../types';
-import type { Casualty, Hostile, Incident, Scene } from '../types';
+import type { Casualty, FieldAgent, FxInfo, Hostile, Incident, Scene } from '../types';
 import { clamp, dist, josa } from '../util';
 import { addProp } from './kit';
 import { casFact, exitName } from './agents';
 import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, truthWalkable } from './grid';
 import { bulletPath, heatGlass, hitCover, shatter } from './damage';
+import { lastFx, noteBoom, noteFlash, noteHit, noteShot, recHarm, recMelee } from './fxlog';
 
-export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2): void {
-  s.fx.push({ kind, t: sim.t, x, y, x2, y2, text, color, ttl });
+export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2, c?: FxInfo): void {
+  s.fx.push({ kind, t: sim.t, x, y, x2, y2, text, color, ttl, c });
   if (s.fx.length > 60) s.fx.splice(0, s.fx.length - 60);
 }
 
@@ -80,6 +81,7 @@ export function tickFire(sim: Sim, s: Scene, I: Incident): void {
     const ev = raiseProblem(sim, I, 'HIDDEN_HAZARD', '보관 중이던 가스 용기 폭발', { role: 'SYSTEM', actor: '현장', text: '폭발! 건물 내부에 보관되어 있던 가스 용기가 화염에 노출되어 폭발했습니다.', imp: 3, truth: s.arrivedAt < 0 }, false);
     blast(sim, s, I, p.x, p.y, 3.6, 34, ev);
     pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.6);
+    noteBoom(lastFx(sim, s, 'boom'), 3.6, 'tank');
   }
   // 붕괴
   for (const r of s.regions) {
@@ -293,7 +295,7 @@ export function isHeld(sim: Sim, s: Scene, cid: number): boolean {
 }
 
 /** 섬광탄: 반경 안의 용의자를 잠시 무력화한다. */
-export function flashbang(sim: Sim, s: Scene, x: number, y: number): number {
+export function flashbang(sim: Sim, s: Scene, x: number, y: number, by?: FieldAgent): number {
   let n = 0;
   for (const h of s.hostiles) {
     if (h.state !== 'hold' && h.state !== 'fight') continue;
@@ -301,6 +303,7 @@ export function flashbang(sim: Sim, s: Scene, x: number, y: number): number {
     h.stunUntil = sim.t + 3.8; h.morale -= 0.15; n++;
   }
   pushFx(sim, s, 'flash', x, y, undefined, undefined, undefined, undefined, 0.7);
+  noteFlash(lastFx(sim, s, 'flash'), by, n);
   shatter(sim, s, x, y, 2.2, 0, 0);      // 가까운 창이 깨진다
   return n;
 }
@@ -319,12 +322,13 @@ export function panicShot(sim: Sim, s: Scene, I: Incident, x: number, y: number)
     c.health -= s.rng.range(26, 40); c.mob = 'immobile'; c.bleed = Math.max(c.bleed, 0.18); c.bleed0 = c.bleed; c.walking = false;
     h.state = 'fight'; h.cooldown = 1;
     pushFx(sim, s, 'shot', h.x, h.y, c.x, c.y, undefined, '#ff8a5c', 0.25); pushFx(sim, s, 'hit', c.x, c.y);
+    noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit: true, cover: false, tx: c.x, ty: c.y, tk: 2, target: c.id }); noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 2, target: c.id });
     bulletPath(sim, s, h.x, h.y, c.x, c.y, 0);
     c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '진입 순간 인질 피격', { role: 'SYSTEM', actor: '현장', imp: 3, text: `진입에 놀란 ${h.label}가 인질(구조 대상 ${c.label})을 쐈습니다!` }, false);
   }
 }
 
-function officersSeeing(sim: Sim, s: Scene, h: Hostile, range: number): { n: number; nearest: number; nearestD: number } {
+export function officersSeeing(sim: Sim, s: Scene, h: Hostile, range: number): { n: number; nearest: number; nearestD: number } {
   let n = 0, nearest = -1, nd = 99;
   for (const a of s.agents) {
     if (a.status !== 'active') continue;
@@ -384,6 +388,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
         h.deadline = sim.t + 70; h.state = 'fight'; h.cooldown = 1; h.alertUntil = sim.t + 20;
         c.health -= s.rng.range(28, 42); c.mob = 'immobile'; c.bleed = Math.max(c.bleed, 0.18); c.bleed0 = c.bleed; c.walking = false;
         c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '시한이 지나 인질이 다침', { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `${h.label}가 요구가 받아들여지지 않자 인질을 다치게 했습니다!` }, false);
+        recHarm(sim, s, h, c);
       }
     }
     // 사기 변화: 포위될수록, 부상당할수록 떨어진다
@@ -432,6 +437,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
         if (td <= 6.5 && los(s, h.x, h.y, target.x, target.y)) {
           h.facing = Math.atan2(target.y - h.y, target.x - h.x); h.moveAt = sim.t + s.rng.range(24, 38);
           pushFx(sim, s, 'shot', h.x, h.y, target.x, target.y, undefined, '#ff8a5c', 0.25); pushFx(sim, s, 'hit', target.x, target.y);
+          noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit: true, cover: false, tx: target.x, ty: target.y, tk: 2, target: target.id }); noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 2, target: target.id });
           bulletPath(sim, s, h.x, h.y, target.x, target.y, 0);
           target.health -= s.rng.range(20, 32); target.mob = 'immobile'; target.bleed = Math.max(target.bleed, 0.13); target.bleed0 = target.bleed; target.walking = false; target.path = null;
           target.causeEvent = raiseProblem(sim, I, 'ESCALATION', `총격범의 추가 범행 (구조 대상 ${target.label})`, { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `총성! ${h.label}가 건물 안의 시민을 쐈습니다.` }, false);
@@ -487,6 +493,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
           const hit = s.rng.chance(p);
           ta.underFireT = sim.t;
           pushFx(sim, s, 'shot', h.x, h.y, ta.x + (hit ? 0 : s.rng.range(-0.8, 0.8)), ta.y + (hit ? 0 : s.rng.range(-0.8, 0.8)), undefined, '#ff8a5c', 0.25);
+          noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit, cover: ta.inCover, tx: ta.x, ty: ta.y, tk: 0, target: ta.rid, arm: u.armor });
           bulletPath(sim, s, h.x, h.y, ta.x, ta.y, hit ? 0 : 3);      // 탄이 지나간 창이 깨진다
           if (!hit && ta.inCover) hitCover(sim, s, ta.x, ta.y, h.x, h.y);      // 빗나간 탄에 대원의 엄폐 가구가 닳는다
           if (!I.problems.some((q) => q.code === 'ESCALATION' && q.detail === '용의자 발포')) {
@@ -496,11 +503,13 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
             const dmg = s.rng.range(25, 41) * (1 - u.armor * 0.6);
             r.health -= dmg; h.morale = Math.min(1, h.morale + 0.05);
             pushFx(sim, s, 'hit', ta.x, ta.y);
+            noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 0, target: ta.rid, arm: u.armor });
             ta.lastBlockEvent = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'hazard', text: `${r.name} 피격${ta.inCover ? ' (엄폐 중)' : ' (엄폐 없이 노출)'}.`, imp: 2, causes: [I.lastEvent] });
           }
         } else {
           h.cooldown = 1.8;
           if (see.nearestD < 1.8) { r.health -= s.rng.range(8, 16) * (h.weapon === 'knife' ? 1.4 : 0.6); pushFx(sim, s, 'hit', ta.x, ta.y); }
+          if (see.nearestD < 1.8) { noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 0, target: ta.rid }); recMelee(sim, s, h, ta); }      // (G5) 위 줄과 같은 조건: 기존 줄을 바꾸지 않으려고 따로 둔다
         }
         h.targetRid = ta.rid;
       }
@@ -593,6 +602,7 @@ export function tickLeaks(sim: Sim, s: Scene, I: Incident): void {
       const ev = raiseProblem(sim, I, 'HIDDEN_HAZARD', '누출된 연료에 불이 붙어 차량 화재 발생', { role: 'SYSTEM', actor: '현장', text: '차량에서 누출된 연료에 불이 붙었습니다! 차량 화재 발생.', imp: 3, truth: s.arrivedAt < 0 }, false);
       for (const cid of p.occupants ?? []) { const c = s.casualties[cid]; if (c.inVehicle === p.id) c.causeEvent = ev; }
       pushFx(sim, s, 'boom', p.x + 0.5, p.y, undefined, undefined, undefined, undefined, 1.2);
+      noteBoom(lastFx(sim, s, 'boom'), 1.5, 'fuel');
     }
   }
 }
@@ -620,6 +630,7 @@ export function tickCollapse(sim: Sim, s: Scene, I: Incident): void {
     const ev = raiseProblem(sim, I, 'ESCALATION', `${where} 2차 붕괴`, { role: 'SYSTEM', actor: '현장', text: `2차 붕괴! ${where}의 금이 간 구조물이 다시 무너졌습니다.`, imp: 3, truth: s.arrivedAt < 0 }, false);
     blast(sim, s, I, p.x, p.y, 2.6, 28, ev);
     pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.1);
+    noteBoom(lastFx(sim, s, 'boom'), 2.6, 'collapse');      // (G5) G4 가 이 줄을 'collapse' 기록으로 바꾸면 이 꼬리표도 함께 지운다
   }
 }
 
@@ -667,6 +678,7 @@ export function tickGas(sim: Sim, s: Scene, I: Incident): void {
   const ev = raiseProblem(sim, I, 'HIDDEN_HAZARD', '누출된 가스에 불이 붙어 폭발', { role: 'SYSTEM', actor: '현장', text: '폭발! 고여 있던 가스에 불이 붙었습니다. 화재가 발생했습니다.', imp: 3, truth: s.arrivedAt < 0 }, false);
   blast(sim, s, I, p.x, p.y, 3.8, 32, ev);
   pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.6);
+  noteBoom(lastFx(sim, s, 'boom'), 3.8, 'gas');
 }
 
 /** 수난 사고: 물에 빠진 사람은 하류로 떠내려간다. 다리나 물가에 걸리면 멈추고, 현장 밖으로 벗어나면 잃는다 (매 틱). */

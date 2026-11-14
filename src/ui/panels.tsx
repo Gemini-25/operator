@@ -10,6 +10,7 @@ import { workLabel } from '../sim/field/agents';
 import { FIELD_NAME, UNIT_KIND_NAME } from '../sim/resources';
 import { scenarioName } from '../sim/scenarios';
 import type { Incident, Role, SimEvent, Unit, UnitField } from '../sim/types';
+import { TrafficChip } from './TrafficChip';
 import { DEPT_NAME, OUTCOME_NAME, TYPE_NAME, WEATHER_NAME, fmtClock, fmtDur, fmtSec, pct } from '../sim/util';
 import type { CameraDirector } from '../view/camera';
 import { ICON_PATH } from '../view/icons';
@@ -357,7 +358,7 @@ export function TopBar({ runner, onNew, onDifficulty }: { runner: Runner; onNew:
       </svg>
       <div className="brand"><b>AUTONOMOUS RESPONSE</b><span>자율형 긴급구조 조직 시뮬레이션 · 관찰 전용</span></div>
       <div className="clock">{fmtClock(sim.clock)}</div>
-      <div className="meta"><span className={`wx wx-${sim.weather}`}>{WEATHER_NAME[sim.weather]}</span><span>시드 <code>{sim.seed}</code></span><span className="dim">{Math.round(runner.fps)} FPS · 틱 {sim.tick}</span></div>
+      <div className="meta"><span className={`wx wx-${sim.weather}`}>{WEATHER_NAME[sim.weather]}</span><TrafficChip sim={sim} /><span>시드 <code>{sim.seed}</code></span><span className="dim">{Math.round(runner.fps)} FPS · 틱 {sim.tick}</span></div>
       <button className={`diff-chip lv${lvl}`} onClick={onDifficulty} title="난이도 설정 — 다음 교대의 조건을 정합니다">난이도 <b>{difficultyLabel(sim.difficulty)}</b> <span className="pips">{[1, 2, 3, 4, 5].map((k) => <i key={k} className={k <= lvl ? 'on' : ''} />)}</span></button>
       <div className="seed">
         <input value={seed} onChange={(e) => setSeed(e.target.value)} placeholder="시드 입력" maxLength={16} onKeyDown={(e) => { if (e.key === 'Enter') { onNew(seed); setSeed(''); } }} />
@@ -504,10 +505,10 @@ export function DifficultyPanel({ runner, onStart, onClose }: { runner: Runner; 
           <div className="knobs">
             {KNOBS.map((k) => (
               <div key={k.key} className="knob">
-                <div className="knob-head"><b>{k.name}</b><span className="val">{d[k.key]}</span>{k.harderWhen === 'low' && <span className="dim small">높을수록 쉬움</span>}</div>
+                <div className="knob-head"><b>{k.name}</b><span className="val">{d[k.key] ?? 3}</span>{k.harderWhen === 'low' && <span className="dim small">높을수록 쉬움</span>}</div>
                 <div className="slider">
                   <span className="dim">{k.low}</span>
-                  <input type="range" min={1} max={5} step={1} value={d[k.key]} onChange={(e) => setD({ ...d, [k.key]: parseInt(e.target.value, 10) })} />
+                  <input type="range" min={1} max={5} step={1} value={d[k.key] ?? 3} onChange={(e) => setD({ ...d, [k.key]: parseInt(e.target.value, 10) })} />
                   <span className="dim">{k.high}</span>
                 </div>
                 <div className="dim small">{k.desc}</div>

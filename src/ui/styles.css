@@ -302,3 +302,10 @@ input:focus { border-color: var(--accent); }
 .disaster-report { margin: 10px 0 4px; padding: 10px 12px; border: 1px solid #7a4a2c; border-radius: 8px; background: rgba(180, 85, 46, 0.1); }
 .disaster-report h3 { margin: 0 0 6px; font-size: 14px; }
 .disaster-report p { margin: 2px 0; font-size: 13px; }
+
+/* ── traffic ── */
+.traffic-chip { display: inline-flex; align-items: center; gap: 6px; padding: 1px 9px 1px 8px; border-radius: 999px; border: 1px solid var(--line); background: rgba(8, 13, 18, 0.5); font-variant-numeric: tabular-nums; white-space: nowrap; cursor: default; }
+.traffic-chip i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 5px var(--ok); }
+.traffic-chip.tf-ok { color: #a9d8b4; }
+.traffic-chip.tf-slow { color: #f2c94c; border-color: rgba(242, 201, 76, 0.4); } .traffic-chip.tf-slow i { background: #f2c94c; box-shadow: 0 0 5px #f2c94c; }
+.traffic-chip.tf-bad { color: #ff8f8f; border-color: rgba(255, 93, 93, 0.45); } .traffic-chip.tf-bad i { background: var(--bad); box-shadow: 0 0 5px var(--bad); }

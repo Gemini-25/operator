@@ -112,6 +112,36 @@ function linked(sim: Sim, tr: TrafficState, a: number, b: number, skip: number):
   return false;
 }
 
+const flowCache = new WeakMap<object, Float32Array>();
+/**
+ * 구간별 통행량의 어림: 모든 교차로 쌍 사이의 가장 빠른 길이 그 구간을 지나는 횟수 (0..1 로 맞춘다).
+ * 차가 많이 다니는 길일수록 짐이 떨어지고 차가 고장 나며, 지름길로 쓰이는 골목일수록 불법 주차가 문제가 된다.
+ * 지도는 고정이므로 한 번만 센다(평소의 기준 혼잡으로 — 그 교대의 상태와 무관하다).
+ */
+function throughFlow(sim: Sim): Float32Array {
+  const city = sim.city;
+  let flow = flowCache.get(city.nodes);
+  if (flow) return flow;
+  const n = city.nodes.length, cost = city.edges.map((e) => (e.len / e.speed) * (1 + (e.baseCong - 1) * 0.5));
+  flow = new Float32Array(city.edges.length);
+  const dist = new Float64Array(n), prev = new Int32Array(n), done = new Uint8Array(n);
+  for (let src = 0; src < n; src++) {
+    dist.fill(Infinity); prev.fill(-1); done.fill(0); dist[src] = 0;
+    for (let it = 0; it < n; it++) {
+      let u = -1, best = Infinity;
+      for (let i = 0; i < n; i++) if (!done[i] && dist[i] < best) { best = dist[i]; u = i; }
+      if (u < 0) break;
+      done[u] = 1;
+      for (const id of city.nodes[u].edges) { const e = city.edges[id], v = e.a === u ? e.b : e.a, nd = dist[u] + cost[id]; if (nd < dist[v]) { dist[v] = nd; prev[v] = id; } }
+    }
+    for (let to = 0; to < n; to++) { let cur = to, guard = 0; while (cur !== src && prev[cur] >= 0 && guard++ < n) { const e = city.edges[prev[cur]]; flow[e.id]++; cur = e.a === cur ? e.b : e.a; } }
+  }
+  let max = 1; for (const v of flow) if (v > max) max = v;
+  for (let i = 0; i < flow.length; i++) flow[i] /= max;
+  flowCache.set(city.nodes, flow);
+  return flow;
+}
+
 /** 경로를 짤 때: 알려진 상태로 이 구간을 지나갈 수 있는가 (city.findRoute 가 같은 조건을 쓴다) */
 export function passable(e: RoadEdge, heavy: boolean, _sim?: Sim): boolean {
   return !(e.closed && e.known !== false) && !(heavy && !!e.noHeavy);
@@ -193,6 +223,8 @@ export function reportObstacle(sim: Sim, o: Obstacle, by: string): void {
 export function stopAhead(sim: Sim, u: Unit, e: RoadEdge, from: number): { at: number; o: Obstacle | null } | null {
   let at = 2, ob: Obstacle | null = null;
   const fwd = from === e.a;
+  // 한 차로를 막은 것(고장 차량 등) 곁을 지나가는 부대는 본 것을 알린다 (길을 막지는 않으므로 그대로 간다)
+  for (const o of sim.traffic.obstacles) if (o.edge === e.id && !o.known && !o.full && !o.heavyOnly && Math.abs(u.segT - (fwd ? o.t : 1 - o.t)) <= OBSTACLE_STOP / e.len) reportObstacle(sim, o, u.callsign);
   if (e.gateT !== undefined && (e.wait ?? 0) > 0) {
     const g = fwd ? e.gateT : 1 - e.gateT;
     if (u.segT < g) at = Math.max(u.segT, g - GATE_STOP / e.len);      // 이미 건널목을 지났으면 그대로 간다
@@ -260,10 +292,12 @@ export function initTraffic(sim: Sim): TrafficState {
     const facEdge = new Set<number>(); for (const q of city.places) if (q.facility >= 0 && q.edgeId !== undefined) facEdge.add(q.edgeId);
     // 끝이 막다른 곳이거나 꺾이는 점(길이 둘뿐인 교차로)인 구간은 뺀다: 그 교차로가 다른 통제 하나로 큰 차에게서 끊길 수 있다
     const cands = city.edges.filter((e) => e.cls === 'local' && e.gateT === undefined && !fac.has(e.a) && !fac.has(e.b) && !facEdge.has(e.id) && city.nodes[e.a].edges.length >= 3 && city.nodes[e.b].edges.length >= 3);
-    pr.shuffle(cands);
+    // 지름길로 많이 쓰이는 골목일수록 차가 서 있기 쉽다
+    const flow = throughFlow(sim);
     let n = 0;
-    for (const e of cands) {
-      if (n >= sim.tune.parkedCount) break;
+    while (n < sim.tune.parkedCount && cands.length) {
+      const e = pr.weighted(cands, cands.map((q) => 0.02 + flow[q.id]));
+      cands.splice(cands.indexOf(e), 1);
       if (place(sim, tr, { edge: e.id, t: pr.range(0.3, 0.7), kind: 'parked', full: false, heavyOnly: true, dur: Infinity, known: false })) n++;
     }
   }
@@ -315,8 +349,10 @@ function spawn(sim: Sim): void {
   const free = (e: RoadEdge): boolean => !e.closed && !obstacleOn(tr, e.id);
   const away = (e: RoadEdge): boolean => !fac.has(e.a) && !fac.has(e.b) && e.gateT === undefined;
   /** 후보 가운데 놓을 수 있는 곳을 찾아 놓는다 (몇 번 해 보고 안 되면 이번에는 아무 일도 없다) */
-  const put = (cands: RoadEdge[], o: Omit<ObstacleOpts, 'edge' | 't'>): Obstacle | null => {
-    for (let k = 0; k < 8 && cands.length; k++) { const ob = place(sim, tr, { ...o, edge: rng.pick(cands).id, t: rng.range(0.25, 0.75) }); if (ob) return ob; }
+  const put = (cands: RoadEdge[], o: Omit<ObstacleOpts, 'edge' | 't'>, busy = false): Obstacle | null => {
+    // busy: 차가 많이 다니는 길일수록 일어나기 쉽다 (떨어진 짐, 고장 난 차)
+    const w = busy ? cands.map((e) => 0.03 + throughFlow(sim)[e.id]) : null;
+    for (let k = 0; k < 8 && cands.length; k++) { const ob = place(sim, tr, { ...o, edge: (w ? rng.weighted(cands, w) : rng.pick(cands)).id, t: rng.range(0.25, 0.75) }); if (ob) return ob; }
     return null;
   };
   const what = rng.weighted(['jam', 'workFull', 'workLane', 'breakdown', 'debris', 'crowd'] as const, [35, 15, 12, 14, 14, 10]);
@@ -334,10 +370,10 @@ function spawn(sim: Sim): void {
     const ob = put(city.edges.filter((e) => free(e) && (e.cls === 'arterial' || e.cls === 'street')), { kind: 'roadwork', full: false, dur: rng.range(150, 300), known: true });
     if (ob) { tr.stats.obstacles++; announce(sim, ob); }
   } else if (what === 'breakdown') {
-    const ob = put(city.edges.filter((e) => free(e) && (e.cls === 'arterial' || e.cls === 'street')), { kind: 'breakdown', full: false, dur: rng.range(60, 150), known: false });
+    const ob = put(city.edges.filter((e) => free(e) && (e.cls === 'arterial' || e.cls === 'street')), { kind: 'breakdown', full: false, dur: rng.range(60, 150), known: false }, true);
     if (ob) { ob.tipAt = sim.t + rng.range(20, 40); tr.stats.obstacles++; announce(sim, ob); }
   } else if (what === 'debris') {
-    const ob = put(city.edges.filter((e) => free(e) && away(e) && (e.cls === 'street' || e.cls === 'local')), { kind: 'debris', full: true, dur: rng.range(70, 160), known: false });
+    const ob = put(city.edges.filter((e) => free(e) && away(e) && (e.cls === 'street' || e.cls === 'local')), { kind: 'debris', full: true, dur: rng.range(70, 160), known: false }, true);
     if (ob) { ob.tipAt = sim.t + rng.range(35, 70); tr.stats.obstacles++; announce(sim, ob); }
   } else {
     const cands = city.places.filter((q) => VENUES[q.kind] && q.edgeId !== undefined && !tr.crowds.some((c) => c.place === q.id));

@@ -71,7 +71,7 @@ export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
       nextThink: sim.t + 0.4 + k * 0.4, nextPerceive: 0, carrying: -1, inCover: false, cooldown: 1,
       status: 'active', candidates: [], label: '도착', ring: 0, arrivedAt: sim.t, lastBlockEvent: -1, idleSince: sim.t,
       stuckT: 0, lastX: 0, lastY: 0, rng: sim.rng.fork(`agent:${I.id}:${rid}`), planT: 0, equipIssue: 'none', smokeT: 0, climb: 0, rehabLogAt: -99,
-      pendingBlock: -1, underFireT: -99, spot: -1, quiet: new Set(), lastRetreatLog: -99,
+      pendingBlock: -1, underFireT: -99, spot: -1, quiet: new Set(), lastRetreatLog: -99, equipRetryAt: -99,
     };
     a.px = a.x; a.py = a.y;
     for (const f of brief) a.beliefs.merge(f);

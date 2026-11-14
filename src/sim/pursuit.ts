@@ -2,6 +2,7 @@
 // 관제는 목격 신고와, 따라붙은 순찰차·헬기의 시야로만 위치를 안다(I.reportedNode). 출동한 부대는 그 위치로 계속 방향을 바꾼다.
 // 순찰차가 바짝 붙어 버티거나 앞질러 교차로를 막으면 차가 서고, 그 자리에 현장이 열린다. 놓치면 도시 밖으로 빠져나간다.
 
+import { canChain } from './chain';
 import { edgeName, nodeName, weatherSpeedFactor } from './city';
 import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
@@ -136,7 +137,9 @@ export function tickPursuits(sim: Sim): void {
       emit(sim, { inc: I.id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: 1, truth: true, text: `납치범이 붙잡은 사람을 데리고 ${den.name}에 숨어들었습니다.` });
       raiseProblem(sim, I, 'SUSPECT_FLED', '납치 차량을 놓침', { role: 'SYSTEM', actor: '교통정보', imp: 3, causes: [I.lastEvent], text: `${josa(WHO[p.kind], '이/가')} ${nodeName(city, B.id)} 부근에서 자취를 감췄습니다. 추격 실패.` }, false);
       closeIncident(sim, I, 'abandoned');
-      sim.gen.chain.push({ at: sim.t + rng.range(40, 90), opts: { type: 'armed', variant: 'hostage', placeId: p.hideout, parent: I.id, note: '납치범이 숨어든 곳에서 제보가 들어옵니다', rng: sim.rng.fork('hideout-call:' + I.id) } });
+      // 은신처 제보: 연쇄 상한(chain.ts) 안에서만 잇는다 (난수는 상한과 상관없이 똑같이 뽑는다)
+      const at = sim.t + rng.range(40, 90);
+      if (canChain(sim, I)) sim.gen.chain.push({ at, opts: { type: 'armed', variant: 'hostage', placeId: p.hideout, parent: I.id, note: '납치범이 숨어든 곳에서 제보가 들어옵니다', rng: sim.rng.fork('hideout-call:' + I.id) } });
       continue;
     }
     if ((B.exit && B.id === p.goal) || sim.t >= p.giveUpAt) {

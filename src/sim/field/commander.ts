@@ -8,7 +8,7 @@ import { closeIncident } from '../incidents';
 import { T } from '../types';
 import type { CasBelief, FieldAgent, Incident, Scene, UnitCaps, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, dist, josa } from '../util';
-import { canCarryPatients, exitName, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
+import { HURT_HEALTH, canCarryPatients, exitName, failedRecently, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { losWalls } from './grid';
 import { BAND_NAME, HOSTILE_FOV } from './hazards';
@@ -28,7 +28,7 @@ function want(sim: Sim, s: Scene, kind: WorkKind, tg: Target, priority: number, 
   }
   const w: WorkItem = {
     id: s.nextWorkId++, kind, region, cas, prop, hostile, tile, mate, priority, status: 'open', assignees: [], max,
-    createdAt: sim.t, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough, orderSentAt: {}, cause,
+    createdAt: sim.t, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough, orderSentAt: {}, cause, failedAt: {},
   };
   s.board.push(w);
   return w;
@@ -326,6 +326,9 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   const hasMedicAny = s.agents.some((b) => b.status === 'active' && sim.responders[b.rid].dept === 'ems');
   // 환자를 싣고 병원으로 갈 수 있는 부대: 구급차(2명)와 구조 헬기(1명)
   const ambulances = unitsOnScene(sim, s).filter((uid) => canCarryPatients(sim.units[uid]) && !sim.units[uid].boardOrder);
+  // 처치를 두 번 마쳤는데(기본 처치 + 구급대원이 다시 봄) 아직 기본 처치로 보고된다: 현장의 구급대원이 더 해 줄 수 있는 처치가 없다.
+  // (구급대원은 자기가 더 낫게 할 수 없으면 손대지 않고 상태만 다시 보고한다 — 그대로 두면 같은 처치 지시와 같은 보고를 끝없이 주고받는다)
+  const treatsDone = (cid: number): number => { let n = 0; for (const w of s.board) if (w.kind === 'treat' && w.cas === cid && w.status === 'done') n++; return n; };
   for (const f of cas) {
     const c = f.value as CasBelief;
     const dead = c.band === 3;
@@ -345,12 +348,12 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       const indoorHazard = s.kind === 'fire' || s.kind === 'hazmat' || s.kind === 'collapse' || (rg >= 0 && (B.val<number>('fire', rg) ?? 0) > 0.1);
       const hasMedic = s.agents.some((b) => b.status === 'active' && sim.responders[b.rid].dept === 'ems');
       // 처치가 필요한가: 아직 아무 처치도 못 받았거나, 기본 처치만 받았는데 구급대원이 와 있다
-      const needTreat = c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedic));
+      const needTreat = c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedic && treatsDone(f.id) < 2));
       const treatHere = hasMedic || (s.kind === 'medical' && c.tq === 0);      // 응급 환자는 누구든 먼저 손을 쓴다
       if (!indoorHazard && needTreat && treatHere && !hotArmed) { want(sim, s, 'treat', { cas: f.id }, 0.8 + urg); want(sim, s, 'carry', { cas: f.id }, 0.5, 2); }
       else { cancel(s, (w) => w.kind === 'treat' && w.cas === f.id && w.status === 'open'); want(sim, s, 'carry', { cas: f.id }, 0.84 + urg, 2); }
     } else if (c.where === 'safe') {
-      if (c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedicAny))) want(sim, s, 'treat', { cas: f.id }, 0.72 + urg);
+      if (c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedicAny && treatsDone(f.id) < 2))) want(sim, s, 'treat', { cas: f.id }, 0.72 + urg);
       else cancel(s, (w) => w.kind === 'treat' && w.cas === f.id && w.status === 'open');
       if (c.band >= 1 && ambulances.length) {
         const already = s.board.some((w) => w.kind === 'load' && w.cas === f.id && (w.status === 'open' || w.status === 'active'));
@@ -413,7 +416,8 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     if (w.status !== 'open' || w.assignees.length || sim.t - w.createdAt < 20 || sim.t < w.holdUntil) continue;
     const need = needFor(s, w, hotArmed);
     if (!need) continue;
-    if (s.agents.some((b) => b.status === 'active' && !sim.units[b.unitId].boardOrder && fitFor(sim, s, b, w) > 0)) continue;
+    // (방금 이 작업에 닿지 못한 대원은 맡을 수 있는 사람으로 치지 않는다: 소화전에 갇혀 닿지 못하는 진압 대원 → 진압 부대 지원 요청)
+    if (s.agents.some((b) => b.status === 'active' && !sim.units[b.unitId].boardOrder && fitFor(sim, s, b, w) > 0 && !failedRecently(sim, w, b.rid))) continue;
     if (I.assigned.some((uid) => { const u = sim.units[uid]; return (u.state === 'enroute' || u.state === 'turnout') && u.caps[need] >= NEED_MIN[need]; })) continue;
     request(sim, s, I, a, need, `${josa(workLabel(s, w), '을/를')} 맡을 대원이 없음`, w.priority >= 0.85);
     break;
@@ -468,6 +472,9 @@ function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         if (b.status !== 'active' || taken.has(b.rid) || w.assignees.indexOf(b.rid) >= 0) continue;
         if (sim.units[b.unitId].boardOrder) continue;
         if (b.task && b.task.kind === 'rehab' && sim.responders[b.rid].stamina < 40) continue;      // 지친 대원은 어느 정도 회복할 때까지 지시를 받지 않는다 (brain.ts 의 휴식 붙잡기)
+        if (b.task && b.task.kind === 'resupply') continue;      // 예비 장비로 바꾸는 중(11초 남짓): 끝날 때까지 기다린다. 지시로 빼 오면 교체를 처음부터 다시 시작하며 같은 말을 되풀이한다
+        if (sim.responders[b.rid].health < HURT_HEALTH) continue;      // 부상을 알린 대원은 후퇴 중이다 (brain.ts 의 부상 후퇴 붙잡기) — 지시해도 받지 못하고 재지시만 되풀이된다
+        if (failedRecently(sim, w, b.rid)) continue;      // 이 작업에 닿지 못했거나 위험해서 물러난 대원: 한동안 다른 대원에게 맡기거나 기다린다
         const fit = fitFor(sim, s, b, w);
         if (fit <= 0) continue;
         // 이미 일하는 중이면 우선순위 차이가 클 때만 빼 온다

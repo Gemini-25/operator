@@ -28,6 +28,9 @@ export function detectRadius(sim: Sim, s: Scene, a: FieldAgent, concealment: num
   return visionOf(sim, s, a) * (1 - 0.72 * concealment) * (0.72 + 0.3 * r.judgment + 0.25 * r.experience);
 }
 
+/** 잔해 보고 문구. 구역 이름이 이미 '…통로'면 '통로'를 겹쳐 붙이지 않는다 */
+export function debrisText(where: string): string { return `${where}${where.endsWith('통로') ? '가' : ' 통로가'} 잔해로 막혀 있음`; }
+
 export function regionNameAt(s: Scene, x: number, y: number): string {
   const i = tileOf(s, x, y);
   const r = s.region[i];
@@ -168,14 +171,17 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
     if (p.kind === 'debris') {
       const i = p.y * s.w + p.x;
       if (!a.beliefs.get('blk', i) && d <= v && los(s, a.x, a.y, p.x, p.y)) {
-        const f = mkFact('blk', i, 'debris', me, sim.t, 1, true, `${regionNameAt(s, p.x, p.y)} 통로가 잔해로 막혀 있음`);
+        const f = mkFact('blk', i, 'debris', me, sim.t, 1, true, debrisText(regionNameAt(s, p.x, p.y)));
+        // 같은 곳(같은 문구)의 잔해를 이미 알고 있다(스스로 알렸거나 무전으로 들었다): 믿음과 무전 자료로만 보내고 같은 말을 되풀이하지 않는다
+        const told = a.beliefs.list('blk').some((g) => g.text === f.text);
         if (a.path && a.path.indexOf(i, a.pathI) >= 0) {
           // 가려던 길이 막힌 것을 눈으로 확인 → 우회할지 치울지 다시 계획한다
           learnQuiet(sim, a, f);
           a.pendingBlock = i; a.path = null; a.pathGoal = -1;
           a.lastBlockEvent = raiseProblem(sim, I, 'PATH_BLOCKED', f.text, { role: 'RESPONDER', actor: me, rid: r.id, imp: 2, text: `기존 접근 경로가 차단되어 있습니다 — ${f.text}.` }, false);
           pushFx(sim, s, 'text', a.x, a.y - 1, undefined, undefined, '경로 차단!', '#ff6b6b', 1.8);
-        } else learn(sim, a, f);
+        } else if (told) learnQuiet(sim, a, f);
+        else learn(sim, a, f);
       }
     } else if (p.kind === 'gas') {
       if (!p.exploded && d <= 3.5 && !a.beliefs.get('haz', p.id) && los(s, a.x, a.y, p.x, p.y)) learn(sim, a, mkFact('haz', p.id, { kind: 'gas', active: true, x: p.x, y: p.y }, me, sim.t, 1, true, `${regionNameAt(s, p.x, p.y)}에 가스 용기 확인 — 폭발 위험`));
@@ -316,14 +322,24 @@ export function agentCost(sim: Sim, s: Scene, a: FieldAgent, allowBlockers = tru
 
 export function hasWork(a: FieldAgent): boolean { return a.task !== null && a.task.kind !== 'standby'; }
 
+/**
+ * 실패를 기억하는 시간(초). 닿지 못했거나(경로 없음·화염) 위험해서 내려놓은 작업은 이 시간 동안 같은 대원에게 다시 맡기지 않고,
+ * 그 대원도 스스로 다시 고르지 않는다. 기억이 없으면 "시도 → 실패 → 재지시"를 1초 간격으로 되풀이한다.
+ */
+export const RETRY_AFTER = 25;
+export function failedRecently(sim: Sim, w: WorkItem, rid: number): boolean { const t = w.failedAt[rid]; return t !== undefined && sim.t - t < RETRY_AFTER; }
+/** 부상으로 더는 임무를 맡을 수 없는 대원 (brain.dangerScore 의 후퇴 기준과 같다) */
+export const HURT_HEALTH = 40;
+
 export function workLabel(s: Scene, w: WorkItem): string {
   const reg = w.region >= 0 ? s.regions[w.region].name : '';
   const cas = w.cas >= 0 ? `구조 대상 ${s.casualties[w.cas].label}` : '';
+  const hos = w.hostile >= 0 && s.hostiles[w.hostile] ? s.hostiles[w.hostile].label : '용의자';      // 용의자가 여럿인 현장에서 지시가 누구를 가리키는지 (구조 대상의 이름표와 같이)
   const names: Record<WorkKind, string> = {
     sizeup: '현장 평가', search: `${reg} ${w.thorough ? '정밀 ' : ''}수색`, suppress: `${reg} 화재 진압`, hookup: '소화전 연결', clear: '잔해 제거', force: '문 강제 개방',
     extricate: `${cas} 구출`, treat: `${cas} 응급 처치`, carry: `${cas} 이송`, load: `${cas} 구급차 탑승`, traffic: '교통 통제',
     mitigate: w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? '균열부 보강' : w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'valve' ? '가스 밸브 차단' : '연료 누출 조치',
-    perimeter: s.kind === 'hazmat' ? `${w.tile === 0 ? '앞쪽' : '뒤쪽'} 출입구 통제` : `${exitName(s, w.tile)} 봉쇄`, negotiate: '협상', engage: '용의자 대응', arrest: '용의자 검거', interview: '목격자 면담', clearRoad: '도로 정리', rescueMate: '동료 구조', waterRescue: `${cas} 수난 구조`, escort: `${cas} 동행`,
+    perimeter: s.kind === 'hazmat' ? `${w.tile === 0 ? '앞쪽' : '뒤쪽'} 출입구 통제` : `${exitName(s, w.tile)} 봉쇄`, negotiate: `${hos} 협상`, engage: `${hos} 대응`, arrest: `${hos} 검거`, interview: '목격자 면담', clearRoad: '도로 정리', rescueMate: '동료 구조', waterRescue: `${cas} 수난 구조`, escort: `${cas} 동행`,
     defuse: '폭발물 해체', overhaul: `${reg} 잔불 정리`,
   };
   return names[w.kind];

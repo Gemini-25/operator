@@ -56,7 +56,7 @@ export function farRooms(s: Scene, P: Plan): Region[] {
 }
 
 // ───────────────────────── 건물 화재 ─────────────────────────
-function buildFire(sim: Sim, I: Incident, rng: Rng): Scene {
+export function buildFire(sim: Sim, I: Incident, rng: Rng): Scene {
   const s = baseScene(sim, I, rng);
   const sev = I.truth.severity, dist = I.truth.district, pk = I.truth.placeKind;
   const falseAlarm = I.truth.variant === 'false';      // 오인 신고: 탄 냄새만 나고 불은 없다

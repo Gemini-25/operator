@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { NORMAL } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
 import { createIncident } from '../src/sim/incidents';
+import { arsonDepth } from '../src/sim/scenarios/crime';
 import type { Incident, Scene } from '../src/sim/types';
 
 /** 그 시나리오를 교대 초반에 한 번 일으켜 끝까지 돌린다. 도는 동안 매 초 watch 를 부른다. */
@@ -212,9 +213,50 @@ describe('폭동', () => {
   });
 });
 
+describe('연쇄 방화', () => {
+  it('현장 밖에 목격자가 있고, 이어지는 불은 낳은 사건을 따라 세 번을 넘지 않으며, 방화범이 잡히면 더 나지 않는다', () => {
+    let chained = 0, caught = 0, fires = 0;
+    for (let k = 0; k < 10; k++) {
+      const sim = runForced('ARSON' + k, 'fire/arson');
+      forced(sim, 'arson');
+      const kids = new Map<number, number>();
+      for (const I of sim.incidents) {
+        if (I.truth.variant !== 'arson') continue;
+        fires++;
+        expect(I.truth.type).toBe('fire'); expect(I.phase).toBe('closed'); expect(I.tag).toBe('crime');
+        const s = sim.scenes[I.id]!;
+        const w = s.props.filter((p) => p.kind === 'witness');
+        expect(w.length, `${sim.seed} ${I.code}: 목격자`).toBe(1);
+        expect(s.region[w[0].y * s.w + w[0].x] < 0 || !s.regions[s.region[w[0].y * s.w + w[0].x]].indoor).toBe(true);      // 건물 밖에 서 있다
+        expect(s.regions[w[0].lastSeenRegion!].name).toBe('골목');
+        expect(arsonDepth(sim, I), `${sim.seed} ${I.code}: 연쇄의 깊이`).toBeLessThanOrEqual(3);
+        if (I.parent !== undefined) {
+          chained++;
+          const P = sim.incidents[I.parent];
+          expect(P.truth.variant).toBe('arson'); expect(P.phase).toBe('closed');
+          expect(I.createdAt).toBeGreaterThanOrEqual(P.closedAt + 59);      // 앞의 불이 끝나고 1~2분 뒤
+          expect(I.truth.placeId).not.toBe(P.truth.placeId);
+          expect(arsonDepth(sim, I)).toBe(arsonDepth(sim, P) + 1);
+          kids.set(P.id, (kids.get(P.id) ?? 0) + 1);
+        }
+      }
+      for (const n of kids.values()) expect(n).toBe(1);
+      // 방화범이 잡힌 사건에서는 불이 더 이어지지 않는다
+      for (const e of sim.events) if (e.text.startsWith('방화 용의자 검거')) {
+        caught++;
+        expect(kids.has(e.incidentId), `${sim.seed}: 잡힌 뒤에도 불이 이어졌다`).toBe(false);
+        expect(sim.scenes[e.incidentId]!.props.some((p) => p.kind === 'witness' && p.interviewed)).toBe(true);
+      }
+    }
+    expect(fires).toBeGreaterThanOrEqual(10);
+    expect(chained, '이어진 불').toBeGreaterThanOrEqual(1);
+    expect(caught, '잡힌 방화범').toBeGreaterThanOrEqual(1);
+  });
+});
+
 describe('재현성', () => {
   it('같은 시드와 같은 강제 발생이면 기록이 같다', () => {
-    for (const force of ['armed/bomb', 'armed/package']) {
+    for (const force of ['armed/bomb', 'armed/package', 'armed/siege', 'armed/riot', 'armed/getaway', 'fire/arson']) {
       const a = runForced('REP-1', force), b = runForced('REP-1', force);
       expect(a.report!.hash, force).toBe(b.report!.hash);
       expect(a.events.length).toBe(b.events.length);

@@ -7,10 +7,10 @@ import { emit } from '../../events';
 import type { Rng } from '../../rng';
 import { T } from '../../types';
 import type { Incident, Region, Scene } from '../../types';
-import { armedVenue, buildStop, floorMatOf, pickArch, planOpts } from '../builders';
+import { armedVenue, buildFire, buildStop, floorMatOf, pickArch, planOpts } from '../builders';
 import type { VenueKind } from '../builders';
 import { staticPass, tidx } from '../grid';
-import { SW, addCas, addHostile, addProp, baseScene, freeTileIn, get, set } from '../kit';
+import { SW, addCas, addHostile, addProp, addRegion, baseScene, freeTileIn, get, set } from '../kit';
 import { planBuilding } from '../plans';
 import { registerScene } from '../sceneRegistry';
 
@@ -205,3 +205,14 @@ function buildRiot(sim: Sim, I: Incident, rng: Rng): Scene {
   return s;
 }
 registerScene('armed', 'riot', buildRiot);
+
+// ───────────────────────── 연쇄 방화 ─────────────────────────
+// 현장은 여느 건물 화재와 같다. 불을 지르고 달아나는 것을 본 사람이 건물 밖에서 기다린다:
+// 대원이 이야기를 들으면(면담) 방화범이 잡힐 수 있고, 못 들으면 가까운 곳에서 불이 또 난다 (scenarios/crime.ts 의 onClose)
+registerScene('fire', 'arson', (sim, I, rng) => {
+  const s = buildFire(sim, I, rng);
+  const alley = addRegion(s, '골목', 'verge', 21, 14, 26, 15, false, false);      // 방화범이 달아난 쪽 (목격자의 진술에 나온다)
+  const at = [[6, 15], [7, 15], [8, 15], [5, 15], [9, 15], [1, 15]].find(([x, y]) => get(s, x, y) === T.GROUND && s.propAt[tidx(s, x, y)] < 0 && !(x === s.safe.x && y === s.safe.y));
+  if (at) addProp(s, 'witness', at[0], at[1], { lastSeenRegion: alley.id, accurate: true, interviewed: false });
+  return s;
+});

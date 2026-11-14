@@ -2,7 +2,7 @@
 //   npm run ui-check                         기본: 시드 S3, 스크린샷은 shots/ui-check/
 //   npm run ui-check -- --out <폴더> --seed S3 --end-limit 420
 // 스스로 개발 서버(npx vite --port 5191 --strictPort)를 띄우고 끝나면 끈다. 1600×900 브라우저로 /?seed=S3 을 열어
-// 아래 일곱 가지를 본다. 항목마다 [통과]/[실패]/[정보] 를 한 줄씩 찍고, 하나라도 실패하면 종료 코드 1.
+// 아래 여덟 가지를 본다. 항목마다 [통과]/[실패]/[정보] 를 한 줄씩 찍고, 하나라도 실패하면 종료 코드 1.
 //   1. 콘솔 오류·페이지 오류 0건 (전 과정 내내)
 //   2. 일시정지 중에는 틱이 늘지 않는다 · 1배와 최고 배속에서 같은 실제 시간에 진행한 틱의 비율
 //   3. 되감기(되감기 버튼·타임라인 클릭) 뒤 다시 진행해도 같은 틱의 기록 해시가 헤드리스 Sim 과 같다
@@ -10,6 +10,7 @@
 //   5. 최고 배속으로 교대를 끝까지 돌리면 종료 보고서가 뜬다 (보고서의 기록 해시 = 헤드리스)
 //   6. 난이도 설정·재난 선택이 열리고 닫힌다, 사건 카드를 누르면 현장 화면이 열린다 (스크린샷)
 //   7. 화면의 조작 목록 (판정은 사람이: CLAUDE.md 절대 규칙 1 "AI 에게 명령하는 입력을 만들지 않는다")
+//   8. 통화창이 가운데 화면을 가리지 않고, P 로 접히며 접힘을 기억한다 (1280×800)
 // 화면 상태는 개발 서버에서만 생기는 읽기 전용 고리 window.__ar.snap() (src/ui/App.tsx) 으로 읽는다.
 // 조작은 모두 사람이 쓰는 버튼·키·타임라인으로 한다. 헤드리스 기준값은 scripts/ui-check-ref.ts 를 tsx 로 따로 돌려 얻는다.
 'use strict';
@@ -297,6 +298,33 @@ async function run(page) {
     log(`6 끝: ${results[6].line}`);
   } catch (e) { result(6, false, `예외: ${e.message.split('\n')[0]}`); }
 
+  // ── 8. 통화창(U2): 가운데 화면을 가리지 않는다 · P 로 접히고 새로고침해도 기억한다 · 가운데 캔버스 폭은 그대로 (1280×800) ──
+  try {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await speedBtn(3).click(); await blur();
+    await page.waitForSelector('.call-dock .call.active', { timeout: 90000 });
+    const r = await page.evaluate(() => {
+      const b = (s) => document.querySelector(s).getBoundingClientRect();
+      const c = b('.center'), d = b('.call-dock');
+      const ix = Math.max(0, Math.min(c.right, d.right) - Math.max(c.left, d.left)), iy = Math.max(0, Math.min(c.bottom, d.bottom) - Math.max(c.top, d.top));
+      return { overlap: ix * iy, inCenter: document.querySelectorAll('.center .call, .center .call-strip').length };
+    });
+    const cw = () => page.evaluate(() => document.querySelector('.center canvas').getBoundingClientRect().width);
+    const dockH = () => page.evaluate(() => document.querySelector('.call-dock').getBoundingClientRect().height);
+    const w0 = await cw();
+    await blur(); await page.keyboard.press('p'); await sleep(300);      // 시드 입력칸에 포커스가 남아 있으면 App.tsx 의 키 처리기가 P 를 무시한다
+    const h = await dockH(), w1 = await cw();
+    const closed = !!(await page.$('.call-dock.closed')) && h <= 36 && w1 === w0;
+    await reload(); await sleep(600);
+    const remembered = !!(await page.$('.call-dock.closed'));
+    await blur(); await page.keyboard.press('p'); await sleep(300);
+    const reopened = !!(await page.$('.call-dock.open'));
+    await page.evaluate(() => localStorage.removeItem('ar.call.v1'));      // 다른 검사는 기본값(펼침)에서 시작
+    result(8, r.overlap === 0 && r.inCenter === 0 && closed && remembered && reopened,
+      `가운데와 겹친 넓이 ${r.overlap} · 가운데 안의 통화창 ${r.inCenter}개 · P 로 접힘 ${closed ? `맞음(${Math.round(h)}px, 캔버스 ${w0}→${w1})` : '틀림'} · 새로고침 뒤 접힘 ${remembered ? '맞음' : '틀림'} · 다시 펼침 ${reopened ? '맞음' : '틀림'}`);
+  } catch (e) { result(8, false, `예외: ${e.message.split('\n')[0]}`); }
+  await page.setViewportSize({ width: 1600, height: 900 });      // 뒤의 검사는 1600×900 그대로
+
   // ── 5. 최고 배속으로 교대 끝까지 ──
   let s5 = null;
   try {
@@ -411,9 +439,9 @@ async function run(page) {
   } catch (e) { fatal = e; }
   await stop();
   console.log('');
-  const names = { 1: '콘솔·페이지 오류', 2: '일시정지·배속', 3: '되감기 재현성', 4: '새로고침 복원', 5: '교대 끝까지', 6: '난이도·재난·현장 화면', 7: '조작 목록' };
+  const names = { 1: '콘솔·페이지 오류', 2: '일시정지·배속', 3: '되감기 재현성', 4: '새로고침 복원', 5: '교대 끝까지', 6: '난이도·재난·현장 화면', 7: '조작 목록', 8: '통화창 자리' };
   let fail = 0;
-  for (let n = 1; n <= 7; n++) {
+  for (let n = 1; n <= 8; n++) {
     const r = results[n] || { ok: false, line: fatal ? '중단되어 판정하지 못함' : '실행되지 않음', details: [] };
     if (r.ok === false) fail++;
     console.log(`[${r.ok === null ? '정보' : r.ok ? '통과' : '실패'}] ${n}. ${names[n]}: ${r.line}`);

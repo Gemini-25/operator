@@ -2,6 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { NORMAL } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
+import { createIncident } from '../src/sim/incidents';
 import type { Incident, Scene } from '../src/sim/types';
 
 /** 그 시나리오를 교대 초반에 한 번 일으켜 끝까지 돌린다. 도는 동안 매 초 watch 를 부른다. */
@@ -77,6 +78,35 @@ describe('폭발물', () => {
     }
     expect(fake).toBeGreaterThan(0);
     expect(fake + real).toBe(8);
+  });
+});
+
+describe('대형 인질극', () => {
+  it('총을 든 용의자 둘 이상이 인질 넷 이상을 방 둘에 나눠 붙잡고 있고, 끝까지 간다', () => {
+    for (let k = 0; k < 6; k++) {
+      const sim = new Sim('SIEGE' + k);
+      sim.run(60);
+      const I = createIncident(sim, { type: 'armed', variant: 'siege', rng: sim.rng.fork('t') });
+      const s = sim.scenes[I.id]!;
+      expect(I.tag).toBe('crime'); expect(I.truth.severity).toBe(3);
+      const hostages = s.casualties.filter((c) => c.hostage);
+      expect(hostages.length, `${sim.seed}: 인질 수`).toBeGreaterThanOrEqual(4); expect(hostages.length).toBeLessThanOrEqual(6);
+      expect(s.hostiles.length, `${sim.seed}: 용의자 수`).toBeGreaterThanOrEqual(2); expect(s.hostiles.length).toBeLessThanOrEqual(3);
+      const rooms = new Set<number>(), held = new Set<number>();
+      for (const h of s.hostiles) {
+        expect(h.weapon).toBe('gun');
+        expect(h.hostageId, `${sim.seed}: ${h.label} 가 붙든 인질`).toBeGreaterThanOrEqual(0);
+        expect(held.has(h.hostageId)).toBe(false); held.add(h.hostageId);
+        const c = s.casualties[h.hostageId];
+        expect(Math.hypot(c.x - h.x, c.y - h.y)).toBeLessThanOrEqual(3.2);      // 곁에 붙들려 있다 (hazards.isHeld 의 거리 안)
+        expect(isFinite(h.deadline)).toBe(true);
+        rooms.add(s.region[Math.round(h.y) * s.w + Math.round(h.x)]);
+      }
+      expect(rooms.size, `${sim.seed}: 용의자가 있는 방의 수`).toBe(2);
+      sim.runToEnd();
+      expect(I.phase).toBe('closed'); expect(I.result).not.toBeNull();
+      expect(I.result!.suspectsTotal).toBe(s.hostiles.length);
+    }
   });
 });
 

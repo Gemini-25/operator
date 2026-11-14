@@ -13,4 +13,9 @@ export const CRIME: Scenario[] = [
   { type: 'armed', variant: 'bombthreat', name: '폭파 협박', share: 0.04, nature: 'bombthreat', vague: 'bang', severity: [2, 3], tag: 'crime', places: BOMB_PLACES, label: '폭발물 의심', limit: 120 },      // 문구·가능도·필요 자원은 위의 줄과 같은 키다
   { type: 'armed', variant: 'package', name: '수상한 물건', share: 0.04, nature: 'package', vague: 'bang', severity: [2, 3], tag: 'crime', places: BOMB_PLACES, label: '폭발물 의심', limit: 120,
     texts: ['주인 없는 가방이 한참째 놓여 있어요.', '수상한 상자에서 소리가 나요.'], lik: [0.02, 0.01, 0.01, 0.88, 0.02, 0.02, 0.035, 0.005], needs: bombNeeds },
+  // ── 대형 인질극: 총을 든 여럿이 여러 사람을 붙잡고 있다. 기동대 둘과 구급 둘을 처음부터 보낸다 ──
+  { type: 'armed', variant: 'siege', name: '대형 인질극', share: 0.04, nature: 'siege', vague: 'scream', severity: [3, 3], tag: 'crime', label: '인질극(다수)', limit: 120,
+    places: { terminal: 2, deptStore: 2, bank: 3, broadcast: 1.5, university: 1.5, busTerminal: 1.5, office: 2 },
+    texts: ['무장한 사람들이 사람들을 붙잡고 있어요! 여러 명이에요!', '총 든 사람들이 건물을 점거했어요. 안에 사람들이 갇혀 있어요.'], lik: [0.01, 0.01, 0.01, 0.96, 0.01, 0.01, 0.01, 0.01],
+    needs: (n) => { n.law = 2; n.tactical = 2; n.ems = 2; } },
 ];

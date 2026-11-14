@@ -1,14 +1,16 @@
 // 강력 범죄의 현장 (docs/specs/N4b-crime.md)
 // registerScene('유형', '변형', (sim, I, rng) => Scene) 으로 등록한다. 만드는 도구는 ../kit, ../plans, ../builders 에서 가져온다.
 
+import { KIND_SCENE } from '../../cityPlan';
 import type { Sim } from '../../engine';
 import { emit } from '../../events';
 import type { Rng } from '../../rng';
 import { T } from '../../types';
 import type { Incident, Region, Scene } from '../../types';
-import { floorMatOf, pickArch, planOpts } from '../builders';
+import { armedVenue, floorMatOf, pickArch, planOpts } from '../builders';
+import type { VenueKind } from '../builders';
 import { staticPass, tidx } from '../grid';
-import { SW, addCas, addProp, baseScene, freeTileIn, get } from '../kit';
+import { SW, addCas, addHostile, addProp, baseScene, freeTileIn, get, set } from '../kit';
 import { planBuilding } from '../plans';
 import { registerScene } from '../sceneRegistry';
 
@@ -112,3 +114,47 @@ registerScene('armed', 'bomb', buildBombScene);
 registerScene('armed', 'bombthreat', buildBombScene);
 registerScene('armed', 'package', buildBombScene);
 
+// ───────────────────────── 대형 인질극 ─────────────────────────
+/**
+ * 총을 든 용의자 2~3명이 인질 4~6명을 방 둘에 나눠 붙잡고 있다: 안쪽 방에 한 명, 넓은 곳에 나머지.
+ * 용의자마다 인질을 한 사람씩 곁에 붙들고 있고(hostageId), 남은 인질도 같은 방에 있다.
+ * 지휘 규칙은 기존의 인질 사건과 같다 (협상 → 섬광탄을 가진 기동대 → 동시 진입).
+ */
+function buildSiege(sim: Sim, I: Incident, rng: Rng): Scene {
+  const s = baseScene(sim, I, rng);
+  const dist = I.truth.district, tn = sim.tune;
+  for (let y = 16; y <= 18; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
+  const ks = I.truth.placeKind ? KIND_SCENE[I.truth.placeKind] : undefined;
+  const V = armedVenue(s, rng, ks && ks.venue ? ks.venue : rng.weighted<VenueKind>(['bank', 'office', 'shop'], [0.4, 0.35, 0.25]), dist);
+  const ag = (v: number): number => Math.max(0.05, Math.min(0.98, v + tn.aggroShift));
+  const sk = (v: number): number => Math.max(0.1, Math.min(0.95, v + tn.skillShift));
+  const nG = rng.chance(Math.min(0.9, 0.35 + tn.extraSuspectProb)) ? 3 : 2;
+  const nH = rng.int(4, 6);
+  const deadline = sim.t + rng.range(225, 330) + tn.fleeShift * 2;      // 여럿을 붙잡고 있어 요구를 내걸고 버티는 시간이 길다
+  const freeIn = (r: Region): number => r.tiles.filter((i) => s.tiles[i] === T.FLOOR && s.propAt[i] < 0).length;
+  const inner = freeIn(V.office) >= 5 ? 2 : 1;      // 안쪽 방이 좁으면 인질은 한 사람만
+  const taken = (q: number): boolean => s.hostiles.some((h) => tidx(s, h.x, h.y) === q);
+  const near = (h: { x: number; y: number }, d: number) => (q: number): boolean => taken(q) || Math.hypot((q % SW) - h.x, ((q / SW) | 0) - h.y) > d;
+  /** 한 방에 용의자 guns 명과 인질 hostages 명을 놓는다. 인질은 용의자 곁(붙들린 사람은 바로 옆)에 둔다 */
+  const group = (room: Region, guns: number, hostages: number, back: boolean): void => {
+    const hs = [];
+    for (let k = 0; k < guns; k++) {
+      // 넓은 곳에서는 정문에서 떨어진 안쪽에 선다
+      const i = freeTileIn(s, room, rng, (q) => taken(q) || (back && ((q / SW) | 0) > 8));
+      const h = addHostile(s, i % SW, (i / SW) | 0, 'gun', ag(rng.range(0.5, 0.75) - k * 0.06), sk(rng.range(0.4, 0.65)), false, Infinity);
+      h.facing = Math.PI / 2; h.deadline = deadline + (s.hostiles.length - 1) * rng.range(12, 26);
+      hs.push(h);
+    }
+    for (let k = 0; k < hostages; k++) {
+      const h = hs[k % hs.length], held = k < hs.length;
+      const j = freeTileIn(s, room, rng, near(h, held ? 1.6 : 2.6));
+      const c = addCas(s, j % SW, (j / SW) | 0, 'mobile', rng.range(85, 100), 0, 0.05, { hostage: true });
+      if (held) h.hostageId = c.id;
+    }
+  };
+  group(V.office, 1, inner, false);
+  group(V.main, nG - 1, Math.max(nG - 1, nH - inner), true);
+  s.leadDept = 'police';
+  return s;
+}
+registerScene('armed', 'siege', buildSiege);

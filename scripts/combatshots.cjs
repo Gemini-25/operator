@@ -15,6 +15,7 @@
 //   --noslow            자동 감속 끔(S)
 //   --mute              재기 전에 음소거(M)
 //   --rewind            재는 중간에 되감기(←) 한 번
+//   --approach 1|3|8|15 장면 시각까지 다가가는 배속 (기본 1)
 //   --zoom N --at x,y   현장 화면을 칸 (x,y) 를 가리킨 채 휠로 N 번 확대한다 (사람이 쓰는 시점 조작)
 //   --clean             찍을 때 가운데를 가리는 '일시정지' 글자와 통화창을 숨긴다 (CSS 만, 상태는 그대로)
 // 조작은 사람이 쓰는 키(1~4·Space·←·→·S·T·M·Shift)와 사건 카드 누르기로만 한다. 읽기는 개발 서버 전용 고리 window.__ar 로.
@@ -90,8 +91,10 @@ async function main() {
       await sleep(900);
     }
     await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
-    // 1배속으로 재생하다 장면 시각에 정확히 멈춘다 (같은 화면 갱신 안에서 Space)
-    await key('1');
+    // 1배속으로 재생하다 장면 시각에 정확히 멈춘다 (같은 화면 갱신 안에서 Space). --approach 15 면 15배속으로 다가간다(⑨b: --noslow 와 함께)
+    const APPROACH = Number(opt('approach', '1'));
+    if (APPROACH > 1 && flag('noslow') && (await snap()).autoSlow) await key('s');
+    await key(String({ 1: 1, 3: 2, 8: 3, 15: 4 }[APPROACH] || 1));
     const tPause = await page.evaluate((target) => new Promise((res) => {
       const f = () => { const s = window.__ar.snap(); if (s.t >= target - 1e-6 || s.ended) { window.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true })); res(s.t); } else requestAnimationFrame(f); };
       f();

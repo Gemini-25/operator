@@ -96,30 +96,38 @@ async function run(page) {
   const collect = async (label) => {
     // React 가 단 이벤트 처리기(on*)가 있는 요소와 button·input·select·textarea·a 를 모은다. 보이지 않는 요소는 뺀다
     const items = await page.evaluate(() => {
+      const REGIONS = [['.modal.diff', '난이도 창'], ['.modal', '보고서 창'], ['.top', '상단'], ['.left', '왼쪽'], ['.right', '오른쪽'], ['.bottom', '하단'], ['.center', '가운데']];
       const out = [];
       for (const el of document.querySelectorAll('body *')) {
         const pk = Object.keys(el).find((k) => k.startsWith('__reactProps$'));
         const props = pk ? el[pk] : null;
         const handlers = props ? Object.keys(props).filter((k) => /^on[A-Z]/.test(k) && typeof props[k] === 'function') : [];
         const tag = el.tagName.toLowerCase();
-        if (!['button', 'input', 'select', 'textarea', 'a'].includes(tag) && !handlers.length) continue;
+        const control = ['button', 'input', 'select', 'textarea', 'a'].includes(tag);
+        if (!control && !handlers.length) continue;
         const r = el.getBoundingClientRect();
         if (r.width === 0 || r.height === 0) continue;
+        const region = (REGIONS.find(([sel]) => el.closest(sel)) || [null, '기타'])[1];
         const cls = typeof el.className === 'string' ? el.className.trim().split(/\s+/)[0] || '' : '';
-        const text = (tag === 'input' ? `${el.type}${el.placeholder ? ' "' + el.placeholder + '"' : ''}` : (el.innerText || '')).replace(/\s+/g, ' ').trim().slice(0, 30);
-        out.push({ tag, cls, text, title: (el.getAttribute('aria-label') || el.title || '').slice(0, 40), handlers: handlers.join(',') });
+        const label = tag === 'input' ? `${el.type}${el.placeholder ? ' "' + el.placeholder + '"' : ''}${el.title ? ' (' + el.title + ')' : ''}` : (el.innerText || '').replace(/\s+/g, ' ').trim() || el.getAttribute('aria-label') || el.title || '(글자 없음)';
+        out.push({ region, control, key: control ? tag : `${tag}${cls ? '.' + cls : ''}`, handlers: handlers.join(','), text: label.slice(0, control ? 34 : 22) });
       }
       return out;
     });
-    // 문서·창·캔버스에 직접 단 처리기(키보드·휠·끌기)는 개발자 도구 규약으로 종류만 읽는다
+    // 창·문서·캔버스에 직접 단 처리기(키보드·휠·끌기)는 개발자 도구 규약으로 읽는다. Playwright 가 스스로 단 처리기는 빼고, 앱 파일 이름을 붙인다
     const cdp = await page.context().newCDPSession(page);
+    const urls = new Map();
+    cdp.on('Debugger.scriptParsed', (e) => urls.set(e.scriptId, e.url));
+    await cdp.send('Debugger.enable');
     const native = {};
     for (const [name, expr] of [['window', 'window'], ['document', 'document'], ['canvas', 'document.querySelector(".viewport canvas")']]) {
       const { result: obj } = await cdp.send('Runtime.evaluate', { expression: expr });
       if (!obj.objectId) continue;
       const { listeners } = await cdp.send('DOMDebugger.getEventListeners', { objectId: obj.objectId });
-      native[name] = [...new Set(listeners.map((l) => l.type))].sort();
+      const mine = listeners.map((l) => ({ type: l.type, url: urls.get(l.scriptId) || '' })).filter((l) => l.url.startsWith(BASE));
+      native[name] = [...new Set(mine.map((l) => `${l.type}(${l.url.slice(BASE.length + 1).split('?')[0]})`))].sort();
     }
+    await cdp.send('Debugger.disable');
     await cdp.detach();
     inventory.push({ label, items, native });
   };
@@ -358,21 +366,32 @@ async function run(page) {
   }
 
   // ── 7. 조작 목록 ──
+  // 첫 상태는 전부, 다음 상태부터는 새로 나타난 것만 적는다. 버튼·입력은 글자마다, 그 밖의 누를 수 있는 요소(카드·기록 줄 등)는 종류마다 한 번
   const lines = [];
-  for (const st of inventory) {
+  const seen = new Set();
+  let lastNative = '';
+  for (const [si, st] of inventory.entries()) {
+    const nat = Object.entries(st.native).map(([k, v]) => `${k}: ${v.join(', ') || '-'}`).join(' · ');
+    lines.push(`[${st.label}]${nat !== lastNative ? ` 직접 단 처리기 — ${nat}` : ''}`);
+    lastNative = nat;
     const groups = new Map();
     for (const it of st.items) {
-      const key = `${it.tag}${it.cls ? '.' + it.cls : ''}${it.handlers ? ' [' + it.handlers + ']' : ''}`;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(it.text || it.title || '(글자 없음)');
+      const gk = `${it.region} ${it.key}${it.handlers ? ' [' + it.handlers + ']' : ''}`;
+      const id = it.control ? `${gk}|${it.text}` : gk;
+      if (!groups.has(gk)) groups.set(gk, { control: it.control, texts: [], fresh: [] });
+      const g = groups.get(gk);
+      g.texts.push(it.text);
+      if (!seen.has(id)) { g.fresh.push(it.text); if (it.control) seen.add(id); }
     }
-    lines.push(`[${st.label}] 직접 단 처리기: ${Object.entries(st.native).map(([k, v]) => `${k}(${v.join(',') || '-'})`).join(' ')}`);
-    for (const [key, texts] of groups) {
-      const uniq = [...new Set(texts)];
-      lines.push(`  ${key} ×${texts.length}: ${uniq.slice(0, 14).map((t) => `"${t}"`).join(', ')}${uniq.length > 14 ? ` 외 ${uniq.length - 14}종` : ''}`);
+    for (const [gk, g] of groups) {
+      if (!g.fresh.length) continue;
+      if (!g.control) seen.add(gk);
+      const uniq = [...new Set(g.control ? g.fresh : g.texts)];
+      const cap = g.control ? 20 : 3;
+      lines.push(`  ${gk} ×${g.texts.length}${si && g.control ? ', 새로' : ''}: ${uniq.slice(0, cap).map((t) => `"${t}"`).join(', ')}${uniq.length > cap ? ` 외 ${uniq.length - cap}종` : ''}`);
     }
   }
-  result(7, null, `조작 목록 (상태 ${inventory.length}개: ${inventory.map((s) => s.label).join('·')}) — AI 에게 명령하는 조작이 없는지는 사람이 판정`, lines);
+  result(7, null, `조작 목록 (상태 ${inventory.length}개: ${inventory.map((s) => s.label).join('·')}, 다음 상태부터는 새로 나타난 것만) — AI 에게 명령하는 조작이 없는지는 사람이 판정`, lines);
 
   // ── 1. 오류 ──
   result(1, errors.length === 0, `콘솔 오류·페이지 오류 ${errors.length}건 (페이지 열기·새로고침 ${loads}회 동안)`, errors.slice(0, 8));

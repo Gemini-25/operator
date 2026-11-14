@@ -18,11 +18,11 @@ TypeScript + React + Vite, 그림은 Canvas 2D. 서버·외부 API·LLM 호출 �
 |---|---|
 | `npm run dev` | 개발 서버 (`http://localhost:5173`, `?seed=S7&diff=hard` 로 조건 고정) |
 | `npm run check` | **커밋 전 관문**: 타입 검사 + 테스트 + 시드 40개 헤드리스 검증 |
-| `npm test` | Vitest (재현성, 교대 완주, 상태 변화, 정보 격리) |
+| `npm test` | Vitest 34개 (재현성, 교대 완주, 상태 변화, 정보 격리, 난이도, 전술, 새 유형, 지원, 2층 건물) |
 | `npm run sweep -- 100` | 시드 100개 결과 분포. `--diff hard`, `--diff 4,4,4,2,3,3`(빈도·심각도·용의자·장비·신고·부대), `-v`, `--json`, `--check` |
 | `npm run sweep -- 1 --log S7` | 한 교대의 전체 이벤트 기록과 종료 보고서 (동작 확인에 가장 유용) |
 | `npm run build` | 타입 검사 + 정적 빌드 |
-| `node scripts/screenshot.cjs S7 화재` | (선택, Playwright 필요) 해당 유형 현장이 열렸을 때 화면 캡처 |
+| `node scripts/screenshot.cjs S7 화재` | (선택, Playwright 필요) 해당 유형 현장이 열렸을 때 화면 캡처. 유형 이름 일부: 화재·교통사고·실종·무장·응급·붕괴·가스 |
 
 ## 절대 깨면 안 되는 것
 
@@ -48,20 +48,20 @@ src/sim/types.ts             모든 공유 타입
 src/sim/rng.ts               시드 난수, fork
 src/sim/events.ts            emit / raiseProblem / markRecovered
 src/sim/city.ts              도시 생성, 도로 그래프, 다익스트라, 교통량
-src/sim/resources.ts         부대·대원 명부, 차량 이동·우회·병원 이송
+src/sim/resources.ts         부대·대원 명부, 차량 이동·우회·병원 이송, 인근 도시 지원 부대 생성(createAidUnit)
 src/sim/incidents.ts         사건 생성(유형·규모·위치), 종료 처리
 src/sim/debrief.ts           사건 판정, 원인 문장, 교대 보고서
 src/sim/dispatch/callSystem.ts   신고자 모델, 접수 AI 질문 선택, 통화
 src/sim/dispatch/analyst.ts      유형 확률·위험도·필요 자원
-src/sim/dispatch/dispatcher.ts   부대 선택, 대기열, 전환 배정, 현장 요청 수신
-src/sim/field/builders.ts    현장 4종 생성(진실)
-src/sim/field/hazards.ts     화재·연기, 구조 대상 악화, 용의자, 통과 차량, 누출
-src/sim/field/grid.ts        격자, 시야선, A*
+src/sim/dispatch/dispatcher.ts   부대 선택, 대기열, 전환 배정, 현장 요청 수신, 인근 도시 지원 요청
+src/sim/field/builders.ts    현장 생성(진실): 화재(단층·2층), 교통사고, 수색, 무장, 응급, 붕괴, 가스 누출. furnish(가구), shellBuilding(공통 건물 뼈대)
+src/sim/field/hazards.ts     화재·연기, 구조 대상 악화, 용의자, 통과 차량, 누출, 2차 붕괴(tickCollapse), 가스 확산·폭발(tickGas)
+src/sim/field/grid.ts        격자, 시야선(los, 벽만 보는 losWalls), A*(계단 칸은 다른 층으로 건너간다)
 src/sim/field/beliefs.ts     Fact / BeliefStore (병합 규칙)
 src/sim/field/agents.ts      perceive, learn, 무전(transmit/flushOutbox), fitFor, workLabel
 src/sim/field/brain.ts       대원 목표 선택(Utility)
 src/sim/field/executor.ts    임무별 실행(case 문), 이동, 장애물 발견·재계획
-src/sim/field/commander.ts   지휘관: 믿음 → 작업 목록(want), 배정, 지원 요청, 종료 판단
+src/sim/field/commander.ts   지휘관: 믿음 → 작업 목록(want), 배정, 지원 요청, 진입 계획(planEntry), 종료 판단
 src/sim/field/sceneManager.ts 현장 틱, 부대 도착·철수, 지휘권 이양
 src/view/                    runner(틱·되감기·저장), camera(자동 카메라·현장 확대), renderCity, renderScene(그리는 순서 조립), icons, audio(합성음)
 src/view/city/staticCity.ts   도시 지도의 고정된 부분: 땅, 도로·차선·횡단보도, 지붕, 공원, 시설 건물, 야간 불빛
@@ -83,7 +83,8 @@ tests/sim.test.ts            자동 테스트
 | 균형 조정 | `difficulty.ts` 의 표. 그 밖의 상수는 `builders.ts`(현장 내용), `hazards.ts`(확산·악화), `executor.ts`(작업 속도) |
 | 새 임무 종류 | `types.ts` `WorkKind` → `agents.ts` `workLabel`·`fitFor` → `executor.ts` case → `commander.ts` 에서 `want()` |
 | 새 문제 코드 | `types.ts` `ProblemCode` → `debrief.ts` `PROBLEM_LABEL`·`order`·문장 템플릿 |
-| 새 사건 유형 | `builders.ts`, `incidents.ts`(가중치·장소명·신고 지연), `callSystem.ts`(키워드·질문·`TOPIC_VALUE`), `analyst.ts`(위험도·필요 자원), `commander.ts`(규칙), `sceneManager.ts` `LIMIT`, `debrief.ts` `RESP_LIMIT`, `util.ts` `TYPE_NAME`, `view/renderCity.ts` `TYPE_COLOR`, `view/icons.ts` |
+| 새 사건 유형 | `types.ts` `IncidentType` → `builders.ts`(+`buildScene`), `incidents.ts`(가중치·`PLACE`·구역 조건·신고 지연), `callSystem.ts`(`NATURE_TEXT`·`NATURE_LIK` 에 열 추가·`natureFor`·질문·`TOPIC_VALUE`), `analyst.ts`(`TYPES` 순서·위험도·필요 자원), `commander.ts`(수색 대상 유형 목록·규칙), `agents.ts` `fitFor`(건물 안에 누가 들어가는가), `sceneManager.ts` `LIMIT`, `debrief.ts` `RESP_LIMIT`, `util.ts` `TYPE_NAME`, `view/renderCity.ts` `TYPE_COLOR`·`RESP_LIMIT`, `view/icons.ts`, `ui/panels.tsx` 확률 목록. 가장 최근 예: `collapse`, `hazmat` (커밋 78ad889) |
+| 새 타일·가구·소품 | `types.ts` `T`·`DECOR`·`PropKind` → `grid.ts`(`staticPass`·`isIndoor`·`los`) → 그림은 `view/scene/staticLayer.ts`(고정된 것) 또는 `view/renderScene.ts` 의 소품 분기 + `view/scene/sprites.ts`(움직이거나 상태가 바뀌는 것) |
 | 새 난이도 손잡이 | `difficulty.ts`(타입·표·프리셋) → 쓰는 곳에서 `sim.tune.*` → `ui/panels.tsx` `DifficultyPanel` |
 
 ## 겪은 함정
@@ -94,7 +95,10 @@ tests/sim.test.ts            자동 테스트
 - **로그 중복.** 별도 이벤트로 이미 알린 사실은 `learnQuiet` 를 써서 무전 문구에서 뺀다.
 - **현장에 대원이 한 명도 남지 않는 경우.** 구급차가 환자를 싣고 떠나면 지휘관도 떠난다. `sceneManager.ts` 7)번 블록이 마지막 지휘관의 믿음(`commander.outstanding`)으로 종료하거나 추가 부대를 요청한다. 새 유형을 만들면 이 경로로 끝나는지 확인한다.
 - **인질.** 총을 든 용의자 곁의 인질은 데리고 나올 수 없다(`hazards.isHeld`). 지휘관·실행기 양쪽에서 막아야 한다.
-- **신고 키워드 표.** `callSystem.NATURE_LIK` 의 열 수는 사건 유형 수와 같아야 하고 `analyst.ts` 의 `lp`·`TYPES`·`probs` 와 맞아야 한다.
+- **신고 키워드 표.** `callSystem.NATURE_LIK` 의 열 수(지금 7)는 사건 유형 수와 같아야 하고 열 순서는 `analyst.ts` 의 `TYPES` 와 같아야 한다(테스트가 열 수를 검사한다).
+- **위험한 건물 안에는 소방만 들어간다.** `agents.ts` `fitFor` 의 `fireRisk` 가 화재·가스 누출·붕괴 현장의 실내 임무(수색·구출·이송)를 소방으로 제한한다. 소방 부대가 하나도 없으면 지휘관이 지원을 요청한다. 새 유형을 만들면 이 목록에 넣을지 정한다.
+- **계단.** 2층 건물은 두 층을 같은 격자에 나란히 놓고 `Scene.stairTo` 로 잇는다. 경로의 다음 칸이 이웃이 아닐 수 있으므로, 경로를 따라 걷는 코드(`executor.moveTo`, `hazards.tickCasualties`)는 계단 건너뛰기를 따로 처리한다. 경로를 걷는 개체를 새로 만들면 똑같이 처리한다. 거리(`dist`)로 "가깝다"를 판단하는 코드는 두 층이 벽과 빈 공간(`T.VOID`)으로 4칸 이상 떨어져 있다는 데 기대고 있다.
+- **교대 중에 부대가 늘어난다.** 인근 도시 지원 부대(`u.aid`)는 `sim.units`·`sim.responders` 끝에 붙는다. 소속 시설이 없으므로 `facilities.find(...)` 결과가 없을 수 있다. 임무 뒤에는 `oos` 가 되어 다시 쓰이지 않는다.
 - **한국어 조사.** 이름·호출부호 뒤 조사는 `josa(word, '이/가')` 로 붙인다.
 - **브라우저 확인 없이 UI 를 끝났다고 하지 않는다.** 헤드리스 브라우저로 화면을 찍어 보고, 콘솔 오류 0건을 확인한다.
 - **현장 그림의 고정 층.** `staticLayer.ts` 는 타일·가구가 바뀔 때만 다시 그린다(`staticSig`). 매 프레임 바뀌는 것(문짝, 불, 사람)을 여기에 넣지 않는다. 새 타일 종류·가구를 만들면 `surfaceMap`·`paintTile`·`furniture` 에 그림을 추가한다.

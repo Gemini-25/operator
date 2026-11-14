@@ -165,7 +165,7 @@ export function tickCasualties(sim: Sim, s: Scene, I: Incident): void {
     if (c.bystander && c.treatQ <= 0 && c.where === 'scene') d *= 0.5;      // 신고자가 안내대로 돌보는 중
     if (c.where === 'scene' || c.where === 'carried') {
       const i = tileOf(s, c.x, c.y);
-      d += s.smoke[i] * 0.36;
+      d += s.smoke[i] * (s.kind === 'hazmat' ? 0.62 : 0.36);      // 새어 나온 가스는 연기보다 빨리 사람을 쓰러뜨린다
       if (s.fire[i] > 0.3) d += 2.6 * s.fire[i];
       if (!isIndoor(s.tiles[i]) && (c.isTarget || s.kind === 'search')) d += s.exposure;
     } else if (c.where === 'loaded') d *= 0.5;
@@ -528,7 +528,7 @@ export function tickGas(sim: Sim, s: Scene, I: Incident): void {
   if (!leaking) return;
   let dense = 0;
   for (let i = 0; i < s.smoke.length; i++) if (s.smoke[i] > 0.6 && isIndoor(s.tiles[i])) dense++;
-  if (dense < 10 || !s.rng.chance(Math.min(0.006, 0.00011 * dense * sim.tune.hazardMul))) return;
+  if (dense < 10 || !s.rng.chance(Math.min(0.007, 0.00015 * dense * sim.tune.hazardMul))) return;
   const p = s.props.find((q) => q.kind === 'valve' && !q.mitigated && !q.ignited)!;
   p.ignited = true;
   for (let y = Math.max(0, p.y - 2); y <= Math.min(s.h - 1, p.y + 2); y++) for (let x = Math.max(0, p.x - 2); x <= Math.min(s.w - 1, p.x + 2); x++) {

@@ -100,10 +100,10 @@ if (flag('--check')) {
   if (errors > 0) fail.push(`예외 ${errors}건`);
   if (open > 0) fail.push(`끝나지 않은 사건 ${open}건`);
   if (!diffArg) {
-    if (timeoutShare > 0.06) fail.push(`한계 시간·무대응 종료 비율 ${(timeoutShare * 100).toFixed(1)}% > 6%`);
+    if (timeoutShare > 0.04) fail.push(`한계 시간·무대응 종료 비율 ${(timeoutShare * 100).toFixed(1)}% > 4%`);
     // 난이도 보통의 기준 범위. 균형을 의도적으로 바꿨다면 이 범위와 docs/ROADMAP.md 의 기준 수치를 함께 고친다.
-    if (summary.good < 0.55 || summary.good > 0.85) fail.push(`성공+대응 지연 ${(summary.good * 100).toFixed(0)}% 가 55~85% 를 벗어남`);
-    if (summary.bad < 0.04 || summary.bad > 0.3) fail.push(`실패+미해결 ${(summary.bad * 100).toFixed(0)}% 가 4~30% 를 벗어남`);
+    if (summary.good < 0.65 || summary.good > 0.9) fail.push(`성공+대응 지연 ${(summary.good * 100).toFixed(0)}% 가 65~90% 를 벗어남`);
+    if (summary.bad < 0.03 || summary.bad > 0.25) fail.push(`실패+미해결 ${(summary.bad * 100).toFixed(0)}% 가 3~25% 를 벗어남`);
     if (summary.avgResponse > 90) fail.push(`평균 대응 시간 ${summary.avgResponse}초 > 90초`);
   }
   if (fail.length) { console.error('\n검증 실패:\n - ' + fail.join('\n - ')); process.exit(1); }

@@ -318,12 +318,12 @@ function arrive(sim: Sim, u: Unit): void {
 
 export function tickUnits(sim: Sim): void {
   const city = sim.city, dt = sim.dt, wf = weatherSpeedFactor(sim);
-  for (const u of sim.units) {
+  for (let ui = 0; ui < sim.units.length; ui++) { const u = sim.units[ui];      // 색인 순회: 최적화 전 단계에서 반복자 객체를 만들지 않는다 (순서는 같다)
     u.px = u.x; u.py = u.y;
     if (u.state !== 'available' && u.state !== 'oos') u.busyTime += dt;
     if (u.state === 'available' || u.state === 'returning') {
       const rate = u.state === 'available' ? 0.55 : 0.2;
-      for (const rid of u.crew) { const r = sim.responders[rid]; if (r.status === 'ok') r.stamina = Math.min(100, r.stamina + rate * dt); }
+      for (let ci = 0; ci < u.crew.length; ci++) { const r = sim.responders[u.crew[ci]]; if (r.status === 'ok') r.stamina = Math.min(100, r.stamina + rate * dt); }
     }
     if (u.state === 'transport' && u.patientsIncident !== null) {
       // 이송 중 처치: 탑승 후 몇 초 뒤 구급대원이 차 안에서 응급 처치를 마친다

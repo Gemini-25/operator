@@ -99,7 +99,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
   const r = resp(sim, a);
   const v = visionOf(sim, s, a) * boost;
   const me = r.name;
-  for (const c of s.casualties) {
+  for (let ci = 0; ci < s.casualties.length; ci++) { const c = s.casualties[ci];      // 색인 순회: 최적화 전 단계에서 반복자 객체를 만들지 않는다 (순서는 같다)
     if (c.where === 'hospital' || c.where === 'loaded') continue;
     const d = dist(a.x, a.y, c.x, c.y);
     if (d > v) continue;
@@ -111,7 +111,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
     if (known && c.hostage && c.mob === 'mobile' && !c.walking && !c.dead && c.where === 'scene' && !isHeld(sim, s, c.id) && !s.hostiles.some((h) => h.state === 'hold' || h.state === 'fight')) { c.walking = true; c.path = null; }
     if (c.tDiscovered >= 0) { if (fresh) learnQuiet(sim, a, casFact(sim, s, c, me)); else learn(sim, a, casFact(sim, s, c, me)); }
   }
-  for (const h of s.hostiles) {
+  for (let hi = 0; hi < s.hostiles.length; hi++) { const h = s.hostiles[hi];
     const d = dist(a.x, a.y, h.x, h.y);
     const range = h.hidden ? 4.2 : 13;
     const cur = a.beliefs.get('hos', h.id);
@@ -152,7 +152,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
       }
     }
   }
-  for (const p of s.props) {
+  for (let pi = 0; pi < s.props.length; pi++) { const p = s.props[pi];
     if (p.removed) continue;
     const d = dist(a.x, a.y, p.x, p.y);
     if (d > v + 1) continue;

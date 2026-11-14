@@ -546,7 +546,9 @@ export function findRoute(city: City, from: number, to: number, weatherF = 1, av
     if (done[u] || du !== distArr[u]) continue;
     if (u === to) break;
     done[u] = 1;
-    for (const eid of city.nodes[u].edges) {
+    const ue = city.nodes[u].edges;
+    for (let q = 0; q < ue.length; q++) {
+      const eid = ue[q];
       const e = city.edges[eid];
       if ((e.closed && e.known !== false) || (heavy && e.noHeavy) || eid === avoidEdge) continue;
       const v = e.a === u ? e.b : e.a;

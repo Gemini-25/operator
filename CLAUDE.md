@@ -18,10 +18,10 @@ TypeScript + React + Vite, 그림은 Canvas 2D. 서버·외부 API·LLM 호출 �
 |---|---|
 | `npm run dev` | 개발 서버 (`http://localhost:5173`, `?seed=S7&diff=hard` 로 조건 고정) |
 | `npm run check` | **커밋 전 관문**: 타입 검사 + 테스트 + 시드 40개 헤드리스 검증 |
-| `npm test` | Vitest 47개 (재현성, 교대 완주, 상태 변화, 정보 격리, 난이도, 전술, 새 유형, 지원, 2층 건물, 배치 다양성, 교전과 진입, 수난·다수 사상자, 건물마다 정해진 도시, 생활 사건 시나리오, 추격전, 확장 지점) |
-| `npm run sweep -- 100` | 시드 100개 결과 분포. `--diff hard`, `--diff 4,4,4,2,3,3`(빈도·심각도·용의자·장비·신고·부대), `-v`, `--json`, `--check` |
+| `npm test` | Vitest 115개, 파일 7개: `sim`(재현성, 교대 완주, 정보 격리, 난이도, 전술, 유형별 현장, 지도, 생활 사건, 추격전) · `ext`(확장 지점) · `crime` · `major` · `disaster` · `destruction` · `traffic`. 한 묶음만 볼 때는 `npx vitest run tests/crime.test.ts` |
+| `npm run sweep -- 100` | 시드 100개 결과 분포. `--diff hard`, `--diff 4,4,4,2,3,3`(빈도·심각도·용의자·장비·신고·부대, 일곱째 숫자를 붙이면 교통), `-v`, `--json`, `--check` |
 | `npm run sweep -- 1 --log S7` | 한 교대의 전체 이벤트 기록과 종료 보고서 (동작 확인에 가장 유용) |
-| `npm run sweep -- 20 --force armed/kidnap --scen` | 그 시나리오를 교대마다 초반에 한 번 일으키고, 시나리오별 결과 표를 낸다 (새 시나리오 확인용). `--disaster typhoon` 은 재난을 정해서 |
+| `npm run sweep -- 20 --force armed/kidnap --scen` | 그 시나리오를 교대마다 초반에 한 번 일으키고, 시나리오별 결과 표를 낸다 (새 시나리오 확인용). `--disaster typhoon`(flood·quake·wildfire·tsunami)은 재난을 정해서 |
 | `npm run build` | 타입 검사 + 정적 빌드 |
 | `node scripts/screenshot.cjs S7 화재` | (선택, Playwright 필요) 해당 유형 현장이 열렸을 때 화면 캡처. 유형 이름 일부: 화재·교통사고·실종·무장·응급·붕괴·가스·수난 |
 
@@ -49,10 +49,11 @@ src/sim/types.ts             모든 공유 타입
 src/sim/rng.ts               시드 난수, fork
 src/sim/events.ts            emit / raiseProblem / markRecovered
 src/sim/cityPlan.ts          도시 설계도: 교차로 자리(NODES), 도로가 지나는 순서(ROADS), 해안선·강·철길·산, 동네의 성격(DISTRICTS), 손으로 놓은 건물(LANDMARKS), 유형별 사건 장소(INCIDENT_PLACES), 건물 종류별 현장 틀(KIND_SCENE)
-src/sim/city.ts              도시 생성(설계도 → 도로 그래프, buildPlaces: 길가에 건물 채우기·골목·진입 지점·주소), 지형 함수(coastY·riverDist·mountainAt·districtAt), 다익스트라, 교통량, placeAt. 만든 지도는 다시 쓴다
+src/sim/city.ts              도시 생성(설계도 → 도로 그래프, addLocalStreets: 블록 안의 이면 도로, buildPlaces: 길가에 건물 채우기·골목·진입 지점·주소), 지형 함수(coastY·riverDist·mountainAt·districtAt), 다익스트라(findRoute: 알려진 통제만 피한다)·edgeTime, placeAt. 만든 지도는 다시 쓴다
+src/sim/traffic.ts           교통: 구간별 혼잡(시간대·뒤로 밀림·병목·bump), 교통 사건(정체·공사·고장 차량·낙하물·행사 인파), 가 보아야 아는 장애물(known)과 불법 주차(큰 차만 못 지남), 건널목과 열차(wait)
 src/sim/resources.ts         편성표(UNIT_DEFS: 네 분야 20팀), 대원 명부, 차량 이동·우회, 헬기·구조정의 길 밖 이동, 병원 이송(가까운 병원, 응급실 인계 대기), 인근 도시 지원 부대 생성(createAidUnit)
 src/sim/scenarios.ts         시나리오의 틀(Scenario)과 모음. 내용은 묶음별 파일 scenarios/{life,chase,crime,major,disaster}.ts 에 있다: 몫·신고 문구·필요 자원·장소·한계 시간·이어지는 사건
-src/sim/disaster.ts          재난: 선택(없음·무작위·종류), 단계(예고→충격→여파), 사건을 한꺼번에 일으키고 도로를 통제한다
+src/sim/disaster.ts          재난 다섯 종류(태풍·홍수·지진·산불·해일): 선택(없음·무작위·종류), 단계(예고→충격→여파), 사건을 한꺼번에 일으키고 도로를 통제한다(closeEdge: 우회로가 있을 때만)
 src/sim/field/sceneRegistry.ts  묶음별 파일이 끼워 넣는 자리: 현장 생성(scenes/), 세계 규칙(rules/), 지휘 규칙(orders/, 믿음만 읽는다)
 src/sim/incidents.ts         사건 생성(유형·시나리오·규모, pickPlace 로 건물 고르기), 종료 처리
 src/sim/pursuit.ts           추격전: 도주 차량의 주행·길 고르기, 목격 신고와 부대의 시야, 세우기(따라붙음·앞을 막음·사고)와 놓침
@@ -63,7 +64,8 @@ src/sim/dispatch/dispatcher.ts   부대 선택, 대기열, 전환 배정, 현장
 src/sim/field/kit.ts         현장 생성 도구: 빈 현장(baseScene), 타일·구역·소품·사람 놓기, furnish(가구)
 src/sim/field/plans.ts       건물 평면 생성기: 복도형·방 연결형(이분할)·홀형·2층. 화재·붕괴·가스 누출이 함께 쓴다
 src/sim/field/builders.ts    유형별 현장 생성(진실): 화재, 교통사고(버스 변형), 수색, 무장(장소 4종 armedVenue), 응급(주택 2종), 붕괴, 가스 누출, 수난(하천)
-src/sim/field/hazards.ts     화재·연기, 구조 대상 악화, 용의자, 통과 차량, 누출, 2차 붕괴(tickCollapse), 가스 확산·폭발·주변 시민 노출(tickGas), 표류(tickWater)
+src/sim/field/hazards.ts     화재·연기, 구조 대상 악화, 용의자, 통과 차량, 누출, 2차 붕괴(tickCollapse), 가스 확산·폭발·주변 시민 노출(tickGas), 표류(tickWater), 폭발(blast)
+src/sim/field/damage.ts      현장 파손: 총격·폭발·열에 창이 깨지고(s.glass) 엄폐 가구가 닳아 부서진다(s.decorHp, 부서지면 T.FLOOR). 난수는 dmg:<현장 id> 흐름만
 src/sim/field/grid.ts        격자, 시야선(los, 벽만 보는 losWalls), A*(계단 칸은 다른 층으로 건너간다)
 src/sim/field/beliefs.ts     Fact / BeliefStore (병합 규칙)
 src/sim/field/agents.ts      perceive, learn, 무전(transmit/flushOutbox), fitFor, workLabel
@@ -72,15 +74,20 @@ src/sim/field/executor.ts    임무별 실행(case 문), 이동, 장애물 발�
 src/sim/field/commander.ts   지휘관: 믿음 → 작업 목록(want), 배정, 지원 요청, 진입 계획(planEntry), 종료 판단
 src/sim/field/sceneManager.ts 현장 틱, 부대 도착·철수, 지휘권 이양
 src/view/                    runner(틱·되감기·저장), camera(자동 카메라·현장 확대), renderCity, renderScene(그리는 순서 조립), icons, audio(합성음)
+src/view/marks.ts            부대 열두 종류·시설·상태의 그림 기호(24×24 경로 문자열). 지도(캔버스 Path2D)와 패널(SVG)이 같은 것을 쓴다. 지도와 목록에 글자 표식을 쓰지 않는다
+src/view/city/tokens.ts       지도의 둥근 부대 표식(분야색 바탕 + 기호 + 번호 점 + 상태 테), 시설 배지(둥근 네모), 이름표 자리 고르기
+src/view/city/trafficLayer.ts 혼잡 띠(노랑 서행·주황 정체·빨강 극심), 통제 점선, 장애물 표식, 열차와 차단기, 마우스 설명
+src/view/city/disasterLayer.ts 재난의 지도·화면·현장 그림(불어난 강, 산불의 탄 자리, 물마루, 비바람, 정전)
 src/view/city/staticCity.ts   도시 지도의 고정된 부분: 땅과 바다, 산, 강, 철길, 골목, 등급별 도로·차선·횡단보도·다리, 시설 건물, 야간 불빛
 src/view/city/places.ts       건물 종류별 지붕(paintRoof)과 터(paintOpen: 공원·숲·저수지·활주로·주차장)
 src/view/scene/staticLayer.ts 현장의 고정된 부분을 한 번만 그려 두는 층: 바닥 재질, 벽·창·문틀, 가구, 나무, 개울
 src/view/scene/sprites.ts    사람(대원·시민·용의자), 쓰러진 사람, 차량, 소품의 벡터 그림
 src/view/scene/fx.ts         화염, 연기(저해상도 층), 물줄기, 어둠과 빛, 날씨
 src/view/scene/common.ts     색 계산, 해시, 벽에 가려지는 시야 다각형
-src/ui/                      App, Viewport(캔버스·입력), panels(모든 패널), styles.css
+src/view/scene/skins/        묶음별 소품 그림(crime·major·disaster). skins.ts 가 모아서 renderScene 에 넘긴다
+src/ui/                      App, Viewport(캔버스·입력), panels(모든 패널), Mark(<Mark>·<Token>·<FacilityBadge>), MapLegend(지도 범례), TrafficChip(상단 교통 요약), DisasterBanner(특보 띠), styles.css
 scripts/sweep.ts             헤드리스 실행기 (균형·교착 확인의 기본 도구)
-tests/sim.test.ts            자동 테스트
+tests/                       sim.test.ts(기본) + 묶음별 ext·crime·major·disaster·destruction·traffic
 ```
 
 한 사건의 흐름: `incidents.ts` 가 현장을 만든다 → `callSystem` 통화 → `analyst` 평가 → `dispatcher` 출동 → `resources` 이동 → `sceneManager.unitArrived` → 지휘관 `commander.ts` 가 작업 목록 생성 → 대원 `brain.ts` 가 목표 선택 → `executor.ts` 가 실행하며 현장 상태 변경 → `closeIncident` → `debrief.evaluate`.
@@ -95,8 +102,9 @@ tests/sim.test.ts            자동 테스트
 | 새 사건 유형 | `types.ts` `IncidentType` → `builders.ts`(+`buildScene`), `cityPlan.ts` `INCIDENT_PLACES`(어떤 건물에서 나는가), `incidents.ts`(가중치·신고 지연), `callSystem.ts`(`NATURE_TEXT`·`NATURE_LIK` 에 열 추가·`natureFor`·질문·`TOPIC_VALUE`), `analyst.ts`(`TYPES` 순서·위험도·필요 자원), `commander.ts`(수색 대상 유형 목록·규칙), `agents.ts` `fitFor`(건물 안에 누가 들어가는가), `sceneManager.ts` `LIMIT`, `debrief.ts` `RESP_LIMIT`, `util.ts` `TYPE_NAME`, `view/renderCity.ts` `TYPE_COLOR`·`RESP_LIMIT`, `view/icons.ts`, `ui/panels.tsx` 확률 목록. 가장 최근 예: `water` (`git log --grep F1` 의 커밋), 그 전은 `collapse`, `hazmat` (커밋 78ad889). 유형을 늘리지 않고 변형만 더할 때는 `truth.variant`·`Scene.variant` 를 쓴다(예: 교통사고의 `bus`) |
 | 새 타일·가구·소품 | `types.ts` `T`·`DECOR`·`PropKind` → `grid.ts`(`staticPass`·`isIndoor`·`los`) → 그림은 `view/scene/staticLayer.ts`(고정된 것) 또는 `view/renderScene.ts` 의 소품 분기 + `view/scene/sprites.ts`(움직이거나 상태가 바뀌는 것) |
 | 지도 바꾸기 | 전부 `cityPlan.ts` 에서 한다. 교차로를 옮기려면 `NODES`, 길을 내거나 없애려면 `ROADS`(이웃한 두 교차로 사이가 한 구간이 된다), 동네의 건물 구성은 `DISTRICTS` 의 `mix`·`density`, 하나뿐인 건물은 `LANDMARKS`(가운데 좌표·크기·각도), 사건이 나는 곳은 `INCIDENT_PLACES`(건물 종류 전체의 몫). 새 건물 종류는 `types.ts` `PlaceKind` → `cityPlan.ts` `KIND_NAME`·`KIND_DISTRICT`·`KIND_SCENE` → 길가에 채울 종류면 `city.ts` `DIM`(크기) → `view/city/places.ts` `paintRoof`(없으면 평지붕). 도로를 고친 뒤에는 테스트(`건물마다 정해진 도시`)가 교차·단절·건물 겹침을 잡는다. 지도를 바꾸면 모든 결과가 바뀌므로 `sweep` 으로 다시 잰다 |
-| 새 부대 종류 | `types.ts` `UnitKind` → `resources.ts` `KIND`(부서·능력·장비)·`UNIT_DEFS`(분야·소속 시설·편성 단계)·`UNIT_KIND_NAME` → `view/scene/sprites.ts` `VEH_SIZE`·`drawEmergency`·`responderLook`. 소속 시설이 새로 필요하면 `cityPlan.ts` `LANDMARKS` 에 `facility` 를 붙여 넣는다 |
+| 새 부대 종류 | `types.ts` `UnitKind` → `resources.ts` `KIND`(부서·능력·장비)·`UNIT_DEFS`(분야·소속 시설·편성 단계)·`UNIT_KIND_NAME`·큰 차면 `HEAVY` → `view/marks.ts` `UNIT_MARK`(지도·목록의 그림 기호)·`ui/MapLegend.tsx` → `view/scene/sprites.ts` `VEH_SIZE`·`drawEmergency`·`responderLook`. 소속 시설이 새로 필요하면 `cityPlan.ts` `LANDMARKS` 에 `facility` 를 붙여 넣는다 |
 | 새 시나리오 (유형은 그대로, 모습만 다르게) | 묶음별 파일에만 쓴다: `scenarios/<묶음>.ts` 에 한 줄(몫·신고 문구 `texts`·가능도 `lik` 8열·필요 자원 `needs`·장소 `places`·한계 시간 `limit`·`onCreate`/`onClose`) → `field/scenes/<묶음>.ts` 에서 `registerScene(유형, 변형, 만드는 함수)` → 세계 규칙이 필요하면 `field/rules/<묶음>.ts` `registerRule`, 지휘관이 달리 움직여야 하면 `field/orders/<묶음>.ts` `registerOrders`·`registerBlocker`(믿음만 읽는다) → 소품에 다른 모습은 `Prop.skin` + `view/scene/skins/<묶음>.ts`. 확인은 `npm run sweep -- 20 --force 유형/변형 --scen`. 자세한 규칙은 `docs/specs/README.md` |
+| 새 교통 사건·장애물 | `traffic.ts` 의 `ObstacleKind`·`OBSTACLE_LABEL`·교통 사건 추첨(`spawn`) → 길을 막는 것은 반드시 `addObstacle`(큰 차 기준 우회로를 확인한다) → 그림은 `view/city/trafficLayer.ts` `OBSTACLE_ICON` → `ui/MapLegend.tsx`. 다른 시스템이 길을 닫을 때는 `closedReason` 을 'incident'·'disaster' 로 두고 `known` 은 건드리지 않는다 |
 | 새 난이도 손잡이 | `difficulty.ts`(타입·표·프리셋) → 쓰는 곳에서 `sim.tune.*` → `ui/panels.tsx` `DifficultyPanel` |
 
 ## 겪은 함정
@@ -132,6 +140,15 @@ tests/sim.test.ts            자동 테스트
 - **한 팀뿐인 경찰.** 한 사람이 말을 걸고 한 사람이 길목을 지키면 붙잡을 손이 없다. 지휘관은 22초 뒤 경찰을 한 팀 더 부른다(`commander.ts`). 경찰이 한 팀만 가는 시나리오를 만들면 이 경로로 끝나는지 본다.
 - **환자를 태운 채 철수하는 부대.** 철수 지시(`boardOrder = 'release'`) 뒤에 탑승 임무가 끝나 환자가 실릴 수 있다. 부대가 떠날 때는 지시가 아니라 `u.patients.length` 를 보고 병원으로 보낸다(`sceneManager.ts` 5)번 블록). 그러지 않으면 환자를 태운 채 다음 사건에 나가 예외가 난다(실제로 겪었다).
 - **시나리오의 순서가 추첨 결과를 바꾼다.** 한 유형 안에서 `SCENARIOS` 의 순서대로 몫을 깎아 고른다. 묶음 파일의 순서를 바꾸거나 시나리오를 더하면 그 유형의 사건이 전부 달라진다(균형은 같지만 시드별 결과는 바뀐다).
+- **닫힌 길이라고 다 피하지 않는다.** `e.closed` 인데 `e.known === false` 면 아직 아무도 모르는 통제다(낙하물). `findRoute`·`etaFor`·`dispatch/*` 는 알려진 통제만 피하고, 부대는 그 앞에 가서야 멈춰 알리고(`traffic.reportObstacle`) 들어온 교차로로 되짚어 나온다. 그동안(`u.backing`) `route.nodes[0]` 은 `u.nodeId` 가 아니다. 관제 쪽 코드에서 `e.closed` 만 보고 판단하면 정보 격리가 깨진다.
+- **혼잡은 교통 모델의 것이다.** `e.cong` 은 12초마다 `traffic.ts` 가 다시 끌어당긴다. 밖에서 오래 가는 혼잡을 얹으려면 `e.bump` 에 더하고 끝날 때 뺀다(정전·행사 인파가 그렇게 한다. 덮어쓰지 않는다). `edgeTime` 은 차단기 대기(`e.wait`)를 포함하지만 실제 주행은 그 시간을 빼고 달리다 차단기 앞에서 선다.
+- **길을 막는 것은 우회로를 확인하고 놓는다.** 불법 주차는 다른 구간 하나가 더 막혀도 큰 차(`Unit.heavy`)가 양 끝을 오갈 수 있는 골목에만 놓이고, 하나 남은 길을 막게 된 장애물은 교통 모델이 바로 치운다. 재난은 `disaster.closeEdge`(우회로가 있을 때만), 사건은 기존의 통제 규칙을 쓴다. 새로 길을 닫는 코드를 만들면 "모든 시설에서 모든 교차로로 간다"가 깨지지 않는지 본다(`tests/traffic.test.ts`).
+- **가구는 부서진다.** 총격·폭발로 `s.decorHp` 가 255 가 된 가구 칸은 `T.FLOOR` 로 바뀐다(엄폐가 사라지고 길이 열린다). 가구가 있던 자리를 기억해 두고 쓰는 코드를 만들지 않는다. 고정 층은 `staticSig` 에 깨진 창의 수와 피해의 합이 들어 있어 스스로 다시 그린다. 파손의 난수는 `dmg:<현장 id>` 흐름만 쓴다(사격 판정의 흐름을 건드리면 모든 교전 결과가 바뀐다).
+- **해체가 끝난 장치는 길을 비운다.** 폭발물(`PropKind 'bomb'`)은 소품이라 길을 막는다. 해체·확인·폭발 뒤에는 `s.propAt` 을 비워야 그 방의 수색이 끝난다. 살아 있는 장치가 있는 동안에는 지휘관이 종료를 선언하지 않는다(`registerBlocker`).
+- **대형 사고·재난의 시나리오는 평소 추첨에 없다.** `tag: 'major'` 는 교대마다 많아야 한 번(`sim.rngMajor`), `tag: 'disaster'` 와 `share: 0` 은 직접 일으킬 때만 나온다. 테스트에서 "평소 교대 40번에 몇 번 나온다"에 기대지 말고 `createIncident(sim, { type, variant })` 나 `new Sim(seed, d, len, { force })` 로 직접 일으킨다.
+- **시나리오 표는 추격전을 import 하지 않는다.** `scenarios/*.ts` 가 `pursuit.ts` 를 import 하면 순환이 생겨 `callSystem.ts` 가 초기화 전의 `SCENARIOS` 를 읽는다. 달리는 차로 시작하는 시나리오는 `incidents.createIncident` 의 `startPursuit` 줄에 변형 이름을 더한다.
+- **다수 사상자 규칙은 모든 사건에 걸린다.** 부상자 5명 이상이면 구급을, 고립 3명 이상이면 구조를 더 부른다(`orders/major.ts`). 구급차는 세 대뿐이라 한가한 교대에서도 인근 도시 지원이 불릴 수 있다.
+- **지도와 목록에 글자 표식을 쓰지 않는다.** 부대·시설·장애물은 `view/marks.ts`·`trafficLayer.OBSTACLE_ICON` 의 그림 기호로 그린다. 같은 종류 안의 번호는 숫자가 아니라 돌 아래의 점이다. 새 표식을 만들면 범례(`ui/MapLegend.tsx`)에도 넣는다.
 - **한국어 조사.** 이름·호출부호 뒤 조사는 `josa(word, '이/가')` 로 붙인다.
 - **브라우저 확인 없이 UI 를 끝났다고 하지 않는다.** 헤드리스 브라우저로 화면을 찍어 보고, 콘솔 오류 0건을 확인한다.
 - **현장 그림의 고정 층.** `staticLayer.ts` 는 타일·가구가 바뀔 때만 다시 그린다(`staticSig`). 매 프레임 바뀌는 것(문짝, 불, 사람)을 여기에 넣지 않는다. 새 타일 종류·가구를 만들면 `surfaceMap`·`paintTile`·`furniture` 에 그림을 추가한다.
@@ -142,5 +159,6 @@ tests/sim.test.ts            자동 테스트
 
 - 한 번에 한 작업 묶음. 끝나면 `npm run check` → 커밋 → 푸시 → `docs/ROADMAP.md` 갱신.
 - 여러 에이전트가 동시에 작업할 때는 `docs/ROADMAP.md` 의 "트랙"별 파일 소유 규칙을 따른다. `types.ts` 는 추가만 하고, 기존 필드의 의미를 바꾸지 않는다.
+- 여러 묶음을 따로 만들어 합칠 때는 `docs/specs/README.md` 의 파일 소유 규칙과 합치는 순서를 따른다(묶음마다 `wf/<묶음>` 브랜치, 구현 → 독립 검토 → 합치기).
 - 시뮬레이션을 고친 뒤에는 `npm run sweep -- 60` 의 결과 분포와 `close reasons` 의 `timeout` 건수를 전후로 비교한다. 화면만 고쳤다면 분포가 한 건도 달라지면 안 된다.
 - 특정 게임의 아트·명칭·배치를 그대로 옮기지 않는다. 장르의 방식(지도 중심 관제, 통화창, 사건 핀, 차량 아이콘)은 자유롭게 쓴다.

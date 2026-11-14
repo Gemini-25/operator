@@ -17,10 +17,10 @@ const LANE_W: Record<string, number> = { local: 9.5, street: 12.5, arterial: 19,
 const YELLOW = '#f2c94c', ORANGE = '#ff9f43', RED = '#ff5d5d';
 
 /** 그 구간의 지금 속도 느낌 (알려진 상태로) */
-export function flowOf(e: RoadEdge, truth: boolean): '원활' | '서행' | '정체' | '통제' {
+export function flowOf(e: RoadEdge, truth: boolean): '원활' | '서행' | '정체' | '극심' | '통제' {
   if (e.closed && (truth || e.known !== false)) return '통제';
   const load = e.cong + e.slow;
-  return load >= 2.3 ? '정체' : load >= 1.8 ? '서행' : '원활';
+  return load >= 2.3 ? '극심' : load >= 1.8 ? '정체' : load >= 1.4 ? '서행' : '원활';      // 띠의 색(노랑·주황·빨강), 범례의 말과 같다
 }
 
 // 띠의 색이 12초마다 뚝뚝 바뀌지 않도록, 화면에 보이는 값은 실제 값을 천천히 따라간다 (표현 계층의 상태)

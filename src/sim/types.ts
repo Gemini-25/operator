@@ -290,7 +290,7 @@ export interface Scene {
   outdoor?: boolean;        // 건물이 아니라 길 위의 현장 (출입구 대신 길목)
   rules?: ('collapse' | 'gas' | 'water')[];      // 유형의 규칙에 더해 돌릴 세계 규칙 (예: 가스 폭발 현장 = 붕괴 + 가스, 선박 화재 = 화재 + 표류)
   glass: Uint8Array;                  // 깨진 창 (1 = 깨짐). 창 칸에만 뜻이 있다
-  decorHp: Uint8Array;                // 가구의 남은 내구 (0 = 기본값을 아직 매기지 않았거나 가구가 아님)
+  decorHp: Uint8Array;                // 가구가 받은 피해 (0 = 멀쩡하거나 가구가 아님 · 1…200 = 닳음 · 255 = 부서져 바닥이 됨). field/damage.ts
   id: number; incidentId: number; kind: IncidentType; variant: string;
   w: number; h: number;
   tiles: Uint8Array; region: Int16Array;

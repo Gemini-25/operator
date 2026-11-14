@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { FIELD_NAME, UNIT_KIND_NAME } from '../sim/resources';
 import type { UnitField, UnitKind } from '../sim/types';
 import { FACILITY_COLOR, FIELD_COLOR, FIELD_TEXT } from '../view/city/tokens';
+import { OBSTACLE_ICON } from '../view/city/trafficLayer';
 import { ICON_PATH } from '../view/icons';
 import { STATE_MARK } from '../view/marks';
 import { FacilityBadge, Token } from './Mark';
@@ -26,6 +27,19 @@ const STATES: [string, string, string][] = [
 const FACILITIES: [string, string][] = [['fireStation', '소방서'], ['police', '경찰서'], ['hospital', '병원'], ['public', '공공 기관'], ['heliport', '항공대'], ['harbor', '해양구조대']];
 /** 도로 상태의 색 (교통 묶음이 지도에 그리는 색과 같다) */
 const ROADS: [string, string, boolean][] = [['서행', '#f2c94c', false], ['정체', '#ff9f43', false], ['극심', '#ff5d5d', false], ['통제', '#ff5d5d', true]];
+
+/** 길 위의 장애물 (교통 묶음이 지도에 그리는 표식과 같다: 어두운 바탕 + 노란 테 + 그림 기호) */
+const OBSTACLES: [keyof typeof OBSTACLE_ICON, string][] = [['roadwork', '공사'], ['breakdown', '고장 차량'], ['debris', '낙하물'], ['parked', '불법 주차']];
+function ObstacleSample({ kind, unknown = false, size = 20 }: { kind: keyof typeof OBSTACLE_ICON; unknown?: boolean; size?: number }) {
+  const c = size / 2, r = size / 2 - 1.5, g = r * 1.36;
+  return (
+    <svg className="token" width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true" opacity={unknown ? 0.8 : 1}>
+      <circle cx={c} cy={c} r={r} fill="#161d24" stroke="#f2c94c" strokeWidth={1.4} strokeDasharray={unknown ? '2.4 2.2' : undefined} />
+      <svg x={c - g / 2} y={c - g / 2} width={g} height={g} viewBox="0 0 24 24"><path d={OBSTACLE_ICON[kind]} fill={kind === 'parked' ? '#d9e1e8' : '#f2c94c'} fillRule="evenodd" /></svg>
+      {kind === 'parked' && <line x1={c - g * 0.4} y1={c + g * 0.4} x2={c + g * 0.4} y2={c - g * 0.4} stroke="#ff5d5d" strokeWidth={g * 0.14} strokeLinecap="round" />}
+    </svg>
+  );
+}
 
 /** 사건 핀의 견본: 어두운 바탕 + 유형색 테 + 유형 아이콘 + 경과 고리 */
 function PinSample({ size = 22 }: { size?: number }) {
@@ -78,6 +92,10 @@ export function MapLegend() {
           </div>
           <div className="lg-row">
             {ROADS.map(([name, col, dash]) => <span key={name} className="lg-item"><i className={`road ${dash ? 'dash' : ''}`} style={{ ['--rc' as string]: col }} />{name}</span>)}
+          </div>
+          <div className="lg-row">
+            {OBSTACLES.map(([k, name]) => <span key={k} className="lg-item"><ObstacleSample kind={k} />{name}</span>)}
+            <span className="lg-item" title="관찰자 시점에서만 보입니다. 부대가 가서 보거나 시민이 제보하면 실선이 됩니다"><ObstacleSample kind="debris" unknown />점선 = 관제가 아직 모름</span>
           </div>
           <p className="lg-help">사건 표식을 누르면 현장을 확대합니다. 건물이나 도로에 마우스를 올리면 이름과 종류가 보입니다. 휠로 확대·축소하고 끌어서 옮깁니다.</p>
         </div>

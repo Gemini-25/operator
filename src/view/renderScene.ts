@@ -568,7 +568,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     ctx.beginPath(); ctx.roundRect(x - r, y - r, r * 2, r * 2, r * 0.45); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle = '#0b1219'; ctx.font = `800 ${Math.round(ts * 0.27)}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(q.known ? c.label : '?', x, y + 1);
-    if (c.mob === 'trapped' && !c.dead && c.where === 'scene') pill(ctx, c.inWater ? (c.drift ? '표류 중' : '물속 — 걸려 있음') : c.inVehicle !== null ? '차량에 갇힘' : '매몰', q.x, q.y + ts * 0.62, ts * 0.25, c.inWater ? '#9fd8ff' : '#e8f0f7');
+    if (c.mob === 'trapped' && !c.dead && c.where === 'scene') pill(ctx, c.inWater ? (c.drift ? '표류 중' : '물속 — 걸려 있음') : c.inVehicle !== null ? (s.variant === 'plane' ? '동체에 갇힘' : s.variant === 'train' ? '객차에 갇힘' : '차량에 갇힘') : '매몰', q.x, q.y + ts * 0.62, ts * 0.25, c.inWater ? '#9fd8ff' : '#e8f0f7');
     if (c.treated && !c.dead) { ctx.fillStyle = '#ffffff'; ctx.fillRect(x + r - ts * 0.02, y - r - ts * 0.11, ts * 0.05, ts * 0.17); ctx.fillRect(x + r - ts * 0.08, y - r - ts * 0.05, ts * 0.17, ts * 0.05); }
     if (!c.dead && (c.where === 'scene' || c.where === 'safe')) {
       const bw = ts * 0.56, bx = q.x - bw / 2, by = q.y + ts * 0.36, bh = Math.max(3, ts * 0.085);

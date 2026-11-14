@@ -371,7 +371,7 @@ export function describeAt(sim: Sim, wx: number, wy: number, truth = true, scale
   const q = placeAt(city, wx, wy);
   const distSeg = (x0: number, y0: number, x1: number, y1: number): number => { const dx = x1 - x0, dy = y1 - y0, t = Math.max(0, Math.min(1, ((wx - x0) * dx + (wy - y0) * dy) / (dx * dx + dy * dy))); return Math.hypot(wx - x0 - dx * t, wy - y0 - dy * t); };
   if (!q || q.open) {
-    for (const e of city.edges) { const A = city.nodes[e.a], B = city.nodes[e.b]; if (distSeg(A.x, A.y, B.x, B.y) < (e.arterial ? 11 : 8)) { const flow = flowOf(e, truth); return { title: e.name, lines: [`${e.cls === 'highway' ? '고속화 도로' : e.cls === 'arterial' ? '간선 도로' : e.cls === 'local' ? '이면 도로' : '일반 도로'}${e.bridge ? ' · 다리' : ''}${e.gateT !== undefined ? ' · 건널목' : ''}`, `지금: ${flow}${flow === '통제' ? ' 중' : ''}`], color: '#e8d6a0', place: null, alert: flow === '통제' || flow === '정체' }; } }
+    for (const e of city.edges) { const A = city.nodes[e.a], B = city.nodes[e.b]; if (distSeg(A.x, A.y, B.x, B.y) < (e.arterial ? 11 : 8)) { const flow = flowOf(e, truth); return { title: e.name, lines: [`${e.cls === 'highway' ? '고속화 도로' : e.cls === 'arterial' ? '간선 도로' : e.cls === 'local' ? '이면 도로' : '일반 도로'}${e.bridge ? ' · 다리' : ''}${e.gateT !== undefined ? ' · 건널목' : ''}`, `지금: ${flow === '극심' ? '극심한 정체' : flow}${flow === '통제' ? ' 중' : ''}`], color: '#e8d6a0', place: null, alert: flow === '통제' || flow === '극심' }; } }
     for (const a of city.alleys) if (distSeg(a.x0, a.y0, a.x1, a.y1) < 4.5) return { title: a.name, lines: ['골목 — 차량은 큰길에 세우고 걸어 들어간다'], color: '#9fb0c0', place: null, alert: false };
   }
   if (!q) return null;

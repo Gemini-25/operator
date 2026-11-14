@@ -350,5 +350,15 @@ input:focus { border-color: var(--accent); }
 .traffic-chip { display: inline-flex; align-items: center; gap: 6px; padding: 1px 9px 1px 8px; border-radius: 999px; border: 1px solid var(--line); background: rgba(8, 13, 18, 0.5); font-variant-numeric: tabular-nums; white-space: nowrap; cursor: default; }
 .traffic-chip i { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); box-shadow: 0 0 5px var(--ok); }
 .traffic-chip.tf-ok { color: #a9d8b4; }
-.traffic-chip.tf-slow { color: #f2c94c; border-color: rgba(242, 201, 76, 0.4); } .traffic-chip.tf-slow i { background: #f2c94c; box-shadow: 0 0 5px #f2c94c; }
+.traffic-chip.tf-slow { color: #ffb469; border-color: rgba(255, 159, 67, 0.42); } .traffic-chip.tf-slow i { background: #ff9f43; box-shadow: 0 0 5px #ff9f43; }      /* 정체 = 주황 (지도의 띠·범례와 같은 색) */
 .traffic-chip.tf-bad { color: #ff8f8f; border-color: rgba(255, 93, 93, 0.45); } .traffic-chip.tf-bad i { background: var(--bad); box-shadow: 0 0 5px var(--bad); }
+
+/* ── 합친 뒤 손질: 상단 띠가 좁은 창에서 접히지 않게 ── */
+.top > * { flex: none; }
+.top .brand b, .top .brand span, .top button, .top .seed { white-space: nowrap; }
+.top .meta { flex: 1 1 0; min-width: 0; overflow: hidden; }
+.top .seed input { min-width: 0; }
+@media (max-width: 1560px) { .top .brand span { display: none; } }
+@media (max-width: 1400px) { .top .meta .dim { display: none; } .top .seed input { width: 96px; } }
+@media (max-width: 1240px) { .top .brand { display: none; } .top .seed input { display: none; } }
+@media (max-width: 1240px) { .overlay.bl .legend { display: none; } .overlay.tl .cam-reason { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; } }

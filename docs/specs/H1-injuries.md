@@ -405,17 +405,18 @@ health ≤ 15 && a.status !== 'down' → 쓰러짐: 지금 그대로 + `r.tDown 
 ### 3.6 인원이 줄어든 부대
 
 - 현장: 남은 active 대원이 하던 일을 계속한다(지금).
-- 배정: 다친 대원은 다음 현장에 내리지 않고(`unitArrived` 의 `status === 'ok'`), 결원 부대는 배정 점수 −18(지금, `dispatcher.ts:66`). 관제 코드(`dispatch/*`)는 고치지 않는다.
-- **운용 중단은 `resources.ts` 의 `crewReady` 안에서 막는다.** 관제는 복귀 중(`returning`)인 부대도 다시 배정하고(`dispatcher.ts:61`) `crewReady === 0` 인 부대만 건너뛴다(`dispatcher.ts:50`). 그래서 `arrive` 의 `returning`(기지에 닿을 때)에서만 `oos` 를 정하면, 순직 대원이 있고 멀쩡한 대원이 하나 이상인 부대가 기지에 닿기 전에 다음 사건에 나갈 수 있다(R1 의 `minCrew > 1` 도 같은 문제). 이렇게 바꾼다:
+- 배정: 다친 대원은 다음 현장에 내리지 않고(`unitArrived` 의 `status === 'ok'`), 결원 부대는 배정 점수 −18(지금, `dispatcher.pickUnit` 의 `crewReady(sim, u) < u.crew.length` 감점 — R1 뒤에는 `< fieldCrew(sim, u).length`, R1 §7.2). 관제 코드(`dispatch/*`)는 고치지 않는다.
+- **운용 중단은 `resources.ts` 의 `crewReady` 안에서 막는다.** 관제는 복귀 중(`returning`)인 부대도 다시 배정하고(`dispatcher.ts:61`) `crewReady === 0` 인 부대만 건너뛴다(`dispatcher.ts:50`). 그래서 `arrive` 의 `returning`(기지에 닿을 때)에서만 `oos` 를 정하면, 순직 대원이 있고 멀쩡한 대원이 하나 이상인 부대가 기지에 닿기 전에 다음 사건에 나갈 수 있다(R1 의 `minField > 1` 도 같은 문제). 이렇게 바꾼다:
   ```ts
   export function crewOk(sim: Sim, u: Unit): number { /* 지금의 crewReady 본문 (R1 이면 fieldCrew 가운데 status === 'ok') */ }
   export function crewReady(sim: Sim, u: Unit): number {
     if (u.crew.some((rid) => sim.responders[rid].dead)) return 0;            // 순직 대원이 있는 부대는 그 교대 동안 쓰지 않는다
     const n = crewOk(sim, u);
-    return n < minCrew(u.kind) ? 0 : n;                                       // R1 없이 minCrew 는 1 — 지금과 같다
+    return n < minField(u.kind) ? 0 : n;                                      // 내리는 자리의 최소 수 (R1 §4). R1 없이 1 — 지금과 같다
   }
   ```
-  관제의 세 줄(`=== 0` 건너뛰기, `< u.crew.length` 감점, 같은 분야의 남은 부대 수)이 모두 이 값을 보므로 관제 코드를 고치지 않고 지켜진다. `arrive` 의 `returning` 은 `crewReady === 0` 이면 지금처럼 `oos` 이고, 문구만 까닭에 따라 고른다: 순직 대원이 있으면 '${호출부호} 순직 대원 발생 — 운용 중단.', `crewOk > 0` 이면 '${호출부호} 결원으로 운용 중단.', 그 밖은 지금 문구('대원 전원 부상으로 운용 중단.'). 순직은 드물어 균형에 거의 영향이 없다. 시험 11-12 가 "순직 뒤 그 부대가 다시 배정되지 않는다"를 본다.
+  관제의 세 줄(`=== 0` 건너뛰기, `< u.crew.length` 감점 — R1 뒤 `< fieldCrew.length`, 같은 분야의 남은 부대 수)이 모두 이 값을 보므로 관제 코드를 고치지 않고 지켜진다. `arrive` 의 `returning` 은 `crewReady === 0` 이면 지금처럼 `oos` 이고, 문구만 까닭에 따라 고른다: 순직 대원이 있으면 '${호출부호} 순직 대원 발생 — 운용 중단.', `crewOk > 0` 이면 '${호출부호} 결원으로 운용 중단.', 그 밖은 지금 문구('대원 전원 부상으로 운용 중단.'). 문구를 바꾸므로 `scripts/metrics.ts` 의 `PHRASE.T6` 를 `/(?:대원 전원 부상으로|결원으로|순직 대원 발생 —) 운용 중단/` 으로 넓히고(I1 §2.3 표도 같이) `tests/causality.test.ts` 를 통과시킨다 — 그러지 않으면 결원·순직 운용 중단 기록을 crew 가 아니라 field 로 센다. 운용 중단 기록의 `causes` 에는 그 부대의 마지막 `RESPONDER_HURT`·`RESPONDER_KILLED` 기록 id 를 넣고, 그 id 를 부대 칸 `u.oosEv`(선택 칸 — 위 "객체 모양" 규칙대로 부대 리터럴에 `undefined`)에 둔다(I1-b C6 이 `sim.events` 를 거슬러 찾지 않게 — I1 §3.11 0단계 7번).
+  - **결정 — 최소 편성 부대는 부상 한 명으로 운용 중단된다.** R1 뒤에는 이 규칙이 순직만이 아니라 모든 부상(`injured`·`down`)에 걸린다: 부대 규모 1·2 의 모든 부대, 모든 인근 도시 지원 부대(최소 편성), 표준 편성에서도 최소 = 표준인 순찰차·일반 구급차는 대원 한 명만 다쳐도 `crewReady` 0 → 배정 제외·복귀 때 `oos` 다(지금은 한 명 다친 순찰차가 −18 감점으로 계속 나간다). 2인 순찰차가 한 사람으로 나가지 않는 것이 맞는 모습이라 이 규칙을 둔다. 대원 부상 목표가 교대당 0.15~0.5(§9.1)이므로 균형에 영향이 **있다** — §9.1 의 '결원 운용 중단 부대' 줄로 잰다. 그 값이 목표를 넘으면 §9.3 의 6번 손잡이(0 을 돌려주는 조건을 "순직 대원이 있음 ‖ `crewOk === 0`" 으로 좁히고 부상은 −18 감점만)로 바꾼다. 시험 11-12 가 "순직 뒤 그 부대가 다시 배정되지 않는다"와 "부상 한 명인 최소 편성 순찰차"를 본다.
 - 인근 도시 지원 대원(`u.aid`)도 같은 규칙을 따른다. 명부 출력(§3.7)에서는 뺀다.
 
 ### 3.7 교대가 끝난 뒤 (I2 · K1)
@@ -424,9 +425,11 @@ health ≤ 15 && a.status !== 'down' → 쓰러짐: 지금 그대로 + `r.tDown 
 
 | 교대 끝의 상태 | `out` (다음에 빠지는 교대 수, 제안) |
 |---|---|
-| 순직 | −1 (명부에서 빠진다. 채우는 규칙 — 신임 배치 — 은 I2) |
+| 순직 | −1 (현장·가용 인원에서 빠진다. rid 를 지키려고 `sim.responders` 에는 I2 의 `status 'off'`·공석으로 남는다. 채우는 규칙 — 신임 배치 — 은 I2) |
 | 병원 인계 + 쓰러진 적 있음 | 3 |
 | 병원 인계 | 2 |
+| 교대 끝에 후송 중(`care === 'aboard'`) — 쓰러진 적 있음 / 없음 | 3 / 2 (I2 §3.2 의 값) |
+| 쓰러진 채 병원·후송 아님(`tDown !== undefined && care === undefined`) | 3 (I2 §3.2 의 값) |
 | `injured`(병원 안 감) | 1 |
 | `ok` | 0 (체력이 70 이하로 남은 대원의 회복량은 I2 가 정한다) |
 
@@ -523,6 +526,17 @@ CLAUDE.md "새 임무 종류" 절차대로: `types.ts` `WorkKind` → `agents.ts
 
 `tickCasualties` 의 악화 식은 **한 글자도 바꾸지 않는다**(1단계에서 기록만 더한다). 바뀌는 것은 ① 사건이 끝난 뒤 악화와 사망 판정을 멈춤 — `loaded` 만이 아니라 모든 구조 대상(§2.6. 대피 이동은 남는다), ② 숨진 틱의 가장 큰 항으로 `deathCause` 를 정함(이미 있으면 그대로), ③ 사망 문구에 원인을 붙임: '구조 대상 ${이름표}: 생체 반응 소실 (${원인}). 구조에 실패했습니다.' — 미발견 문구('(미발견) …')도 같다.
 
+**B1 나머지(`f7ba1c7`)가 더한 구조 대상의 체력·출혈·사망 변경 네 곳**도 "피해는 한 길로만" 원칙에 넣는다(이 문서를 쓸 때는 없었다). 직접 바꾸는 체력·출혈을 `hurtCas` 와 `bleedCause` 로 옮기되 **난수는 지금 흐름(`crush:<사건>:<사람>`·`lift:…`·`medical:…`·`wander:…`) 그대로, 같은 자리·같은 순서로** 뽑고 뽑은 값만 넘긴다(`s.rng` 와 `injuryRng` 를 쓰지 않는다):
+
+| 자리 (`hazards.ts`) | 지금 | 바꾸는 것 | 단계 |
+|---|---|---|---|
+| `tickCrush`(압궤 증후군) | `c.health = Math.max(1, c.health - …)` | `hurtCas(…, c.health − Math.max(1, c.health − x), 'crush')` — 하한 1 을 지키는 양 | 1(기록)·3 |
+| `tickLift`(승강기 안 발작) | `c.health = Math.min(c.health, e.hp)` | `hurtCas(…, max(0, c.health − e.hp), 'illness')`, `bleedCause = 'illness'` | 1·3 |
+| `tickMedical`(중증 응급의 급변) | `c.health = Math.min(…)`, `c.bleed0`·`c.bleed` 직접 설정 | 체력은 `hurtCas(…, 'illness')`, 출혈은 지금 식 그대로 두고 `bleedCause = 'illness'` | 1·3 |
+| `tickWander`(배회 실종자) | 개울에 빠짐·넘어짐·물살(`c.health = Math.max(5, …)`·`Math.max(1, …)`, `c.bleed`·`c.bleed0` 직접 설정), 표류 사망(`c.dead = true; c.health = 0`) | 빠짐·물살 → `hurtCas(…, 하한을 지키는 양, 'drown')`, 넘어짐 → `'fall'`, 추위로 늘어난 출혈은 `bleedCause = 'exposure'`. 표류 사망은 `deathCause = 'drown'` 을 먼저 적고 지금 줄 그대로(사망은 지금처럼 그 자리에서). 기록 문구는 지금 그대로 | 1·3 |
+
+1단계에서는 지금 식 옆에 `noteInjury` 만 더한다(해시 불변). `hurtCas` 로 옮기는 것은 3단계이고 해시 변화에 포함한다. Z1·B1 이 이 함수들을 더 고쳤으면 함수 이름으로 찾는다.
+
 ### 5.4 사망 판정 시점과 보고
 
 - 숨지는 때: 체력 ≤ 0 인 틱(지금). 떠내려가 현장 밖으로 나간 때(지금).
@@ -569,7 +583,7 @@ CLAUDE.md "새 임무 종류" 절차대로: `types.ts` `WorkKind` → `agents.ts
 
 ### 6.4 관제
 
-`dispatch/*` 는 고치지 않는다. 다친 대원은 `crewReady` 로 이미 빠진다(순직 대원도 `status === 'down'` 이라 빠진다). 순직 대원이 있거나 최소 인원보다 적은 부대는 `resources.ts` 의 `crewReady` 가 0 을 돌려주므로(§3.6) 관제의 지금 검사(`crewReady === 0` 건너뛰기)만으로 배정에서 빠진다 — 복귀 중인 부대도 마찬가지다. '대원 부상'·'부상 대원 후송' 요청은 지금의 지원 요청 경로로 간다.
+`dispatch/*` 는 고치지 않는다. 다친 대원은 `crewReady` 로 이미 빠진다(순직 대원도 `status === 'down'` 이라 빠진다). 순직 대원이 있거나 멀쩡한 내리는 대원이 최소 수(`minField` — R1 §4)보다 적은 부대는 `resources.ts` 의 `crewReady` 가 0 을 돌려주므로(§3.6) 관제의 지금 검사(`crewReady === 0` 건너뛰기)만으로 배정에서 빠진다 — 복귀 중인 부대도 마찬가지다. '대원 부상'·'부상 대원 후송' 요청은 지금의 지원 요청 경로로 간다.
 
 ---
 
@@ -629,7 +643,7 @@ export const TRIAGE_TEXT = ['#0b1219', '#0b1219', '#0b1219', '#e8f0f7'];
 
 ### 8.2 사람 그림
 
-**피 표현과 'hit' 효과는 G5 가 먼저 바꾼다**(G5 §3.9 — 로드맵상 G5 가 이번 세션에 먼저 구현된다): `drawLying` 의 `blood` 옵션과 붉은 타원(`sprites.ts:169`), `renderScene.ts` 의 세 `blood:` 인자(구조 대상 328·용의자 353·대원 398줄), 'hit' 의 붉은 사각 조각·붉은 고리(`renderScene.ts:634-637`의 `rgba(230,50,50,…)`·`rgba(255,90,90,…)`)가 지워지고, 'hit' 은 흰 고리 + 회색 먼지 + 피격 불꽃이 된다. H1 은 'hit' 을 다시 그리지 않고 **남은 붉은 표현이 없는지만 확인한다**(시험 11-10 — G5 의 시험 9 와 같은 문자열 검사). G5 가 아직 없으면 H1 이 같은 일을 한다: 위 셋을 지우고 'hit' 은 붉은 조각 대신 짧게 퍼지는 흰 고리와 회색 먼지 몇 점으로(맞았다는 것만 전한다).
+**피 표현과 'hit' 효과는 G5 가 먼저 바꾼다**(G5 §3.9 — 로드맵상 G5 가 이번 세션에 먼저 구현된다): `drawLying` 의 `blood` 옵션과 붉은 타원(`sprites.ts:169`), `renderScene.ts` 의 세 `blood:` 인자(구조 대상 328·용의자 353·대원 398줄), 'hit' 의 붉은 사각 조각·붉은 고리(`renderScene.ts:634-637`의 `rgba(230,50,50,…)`·`rgba(255,90,90,…)`)가 지워지고, 'hit' 은 흰 고리 + 회색 먼지 + 피격 불꽃이 된다. H1 은 'hit' 을 다시 그리지 않고 **남은 붉은 표현이 없는지만 확인한다**(시험 11-10 — G5 의 시험 9 와 같은 문자열 검사). G5 는 이미 합쳐져(`9ab7fdb`) 이 셋을 지웠다 — 확인만 한다.
 
 | 상태 | 구조 대상 | 대원 | 용의자 |
 |---|---|---|---|
@@ -642,7 +656,7 @@ export const TRIAGE_TEXT = ['#0b1219', '#0b1219', '#0b1219', '#e8f0f7'];
 | 차에 탐 | 그리지 않음(지금) | 그리지 않음(`left`) | 그리지 않음(`where !== 'scene'`) |
 | 떠내려가 현장 밖 | **그리지 않음**(`c.lost` — `dead && drift > 0` 으로 가리면 물속에서 출혈로 숨진, 아직 현장 안에 있는 사람까지 지워진다) | | |
 
-딱지: 구조 대상의 딱지(지금)에 더해, **다친 대원(band ≥ 1)과 쓰러진·다친 용의자** 위에도 같은 중증도 색 딱지(글자 없이 색과 흰 십자)를 단다. 용의자 알약의 상태 글자: `down` = '쓰러짐', 숨졌으면 '사망'(지금 '제압'). G4 의 표지 함수가 먼저 있으면 그것을 쓴다.
+딱지: 구조 대상의 딱지(지금)에 더해, **다친 대원(band ≥ 1)과 쓰러진·다친 용의자** 위에도 같은 중증도 색 딱지(글자 없이 색과 흰 십자)를 단다. 용의자 알약의 상태 글자: `down` = '쓰러짐', 숨졌으면 '사망'(지금 '제압'). 딱지 그림 함수는 H1 이 만든다(G4 는 사람 딱지를 만들지 않는다).
 
 ### 8.3 다친 대원의 자세·속도
 
@@ -653,7 +667,7 @@ export const TRIAGE_TEXT = ['#0b1219', '#0b1219', '#0b1219', '#e8f0f7'];
 
 - **대원 칩**(`panels.tsx:131-152`): 칩의 class 를 `band-k`(교대 끝 체력 기준)와 `dead` 로. `.cchip.injured` 와 `.cchip.down` 이 같은 색인 것을 중증도 색으로 나눈다. title 에 원인('총상 · 출혈').
 - **대원 정보창**(`panels.tsx:280-315`): '건강' 막대 색을 중증도 색으로(지금 두 가지뿐). '부상' 줄: 원인별 피해("총상 32 · 연기 흡입 8"), 출혈 여부, 처치(기본/전문), 후송('구급1 탑승' / '병원 인계'). 상태 문구: `down` → '쓰러짐', 순직 → '순직', `withdrawn` → '부상 — 후송 대기' / '처치 받음 — 후송 대기'. 현장에 없는 대원도 `Responder` 의 상태('병원 인계', '순직', '부상 — 다음 교대 결장 예상 n')를 보인다.
-- **구조 대상·용의자 정보창**(새 `PersonCard.tsx`): `Viewport` 가 버리던 `hit.cas` 를 쓰고 `hitScene` 이 용의자도 돌려주게 한다(`{ rid, cas, hostile }`). 보이는 것: 이름표, 중증도(색), 거동, 위치(현장·안전 구역·이송 중·병원), 원인별 부상, 처치, 타임라인(발견·구출·처치·안전 구역·탑승·병원·사망). 용의자는 상태·무기·부상·처치·이송. **AI 시점에서는 지휘관의 믿음(`cas`·`hos` 사실)만**, 관찰자 시점에서는 진실을 보인다. G4 가 같은 창을 먼저 만들었으면 거기에 칸을 더한다.
+- **구조 대상·용의자 정보창**(새 `PersonCard.tsx`): `Viewport` 가 버리던 `hit.cas` 를 쓰고 `hitScene` 이 용의자도 돌려주게 한다(`{ rid, cas, hostile }`). 보이는 것: 이름표, 중증도(색), 거동, 위치(현장·안전 구역·이송 중·병원), 원인별 부상, 처치, 타임라인(발견·구출·처치·안전 구역·탑승·병원·사망). 용의자는 상태·무기·부상·처치·이송. **AI 시점에서는 지휘관의 믿음(`cas`·`hos` 사실)만**, 관찰자 시점에서는 진실을 보인다. 이 창은 H1 이 만든다(G4 는 사람 정보창을 만들지 않는다).
 - **사건 카드**(`panels.tsx:54-96`): 중증도 칩은 지금처럼 지휘관 믿음으로 센다. 사망 칩 색만 바뀐다.
 - **보고서**(`panels.tsx:383-445`): 타일 '대원 부상'(순직 제외 수), **'대원 순직'**(1 이상일 때만, 차분한 어두운 색 — 빨강을 쓰지 않는다), **'용의자 사상'**("다침 n · 사망 m", 1 이상일 때만). 대원 목록: "이서준 (순찰2) — 위중 · 총상 · 병원 이송 · 결장 예상 2", 순직은 "김도윤 (진압1) — 순직 · 화상 · F-03".
 - **속보·무전 기록**: 사망·순직 기록(`casualty` imp 3, `RESPONDER_KILLED`, `SUSPECT_DIED`)에 `loss` class — 차분한 회청색 테두리(`.ticker.loss`, `.k-casualty`). 빨강 '경고'로 보이지 않게.
@@ -697,6 +711,7 @@ export const TRIAGE_TEXT = ['#0b1219', '#0b1219', '#0b1219', '#e8f0f7'];
 | 대원 부상(`respondersHurt`, 순직 포함) | 교대당 **0.15~0.5** (지금 ≈ 0) **(확인 필요: 첫 측정 뒤 정한다)** | 극한 ≤ 2 |
 | 대원 쓰러짐 | 교대당 ≤ 0.1 | |
 | 대원 순직 | 교대당 **≤ 0.02** (60교대에 0~1건) | 어려움 ≤ 0.05, 극한 ≤ 0.15 |
+| 결원 운용 중단 부대(§3.6 결정 — 순직 아닌 부상으로 `crewReady` 0 이 된 부대) | 교대당 **≤ 0.3** **(확인 필요: 첫 측정 뒤 정한다)**. 넘으면 §9.3 의 6번 | 부대 규모 1(`--diff 3,3,3,3,3,1`) 30교대에서 같은 값을 따로 보고한다 |
 | 용의자 사망 | 교대당 ≤ 0.3. **총에 맞아 쓰러진 용의자 가운데 25~60% 가 숨진다**(총격전의 일부). 그 가운데 **쓰러지는 순간 숨진 비율(즉사)은 0** 이어야 한다 — 용의자 문턱(§2.6)이 지켜지는지 보는 값. 사망은 모두 쓰러진 뒤에 생긴다 | `--force armed/shooter` 20교대에서 같은 비율 |
 | 무장 사건 성공률 | 지금(82%) − 8%p 이상 | |
 
@@ -710,7 +725,7 @@ for f in armed/shooter armed/hostage armed/siege armed/bomb fire/arson; do npx t
 # 시뮬레이션을 고친 단계마다 같은 명령으로 after-*.json 을 만들어 견준다. 한 교대를 읽을 때는 --log 시드
 ```
 
-`scripts/sweep.ts` 에 집계를 더한다(결과는 바뀌지 않는다): `respondersKilledPerShift`, `respondersDownPerShift`, `suspectsHurt`, `suspectsDead`, `suspectsDownByGunDiedShare`(총상으로 쓰러진 용의자 가운데 숨진 비율), `suspectsInstantDeathShare`(그 가운데 `tDead === tDown` 인 비율 — 0 이어야 한다), `debrisFallsPerCollapse`(붕괴 현장 사건당 잔해 바닥 추락), `deathCauses`(숨진 구조 대상의 원인 분포). 출력 줄 하나: `injuries: responders hurt/shift … down/shift … killed/shift … · suspects hurt … dead … (shot-down died …%, instant …%) · falls/collapse … · causes …`.
+`scripts/sweep.ts` 에 집계를 더한다(결과는 바뀌지 않는다): `respondersKilledPerShift`, `respondersDownPerShift`, `suspectsHurt`, `suspectsDead`, `suspectsDownByGunDiedShare`(총상으로 쓰러진 용의자 가운데 숨진 비율), `suspectsInstantDeathShare`(그 가운데 `tDead === tDown` 인 비율 — 0 이어야 한다), `debrisFallsPerCollapse`(붕괴 현장 사건당 잔해 바닥 추락), `deathCauses`(숨진 구조 대상의 원인 분포), `crewOutPerShift`(결원으로 운용 중단된 부대 수 — '결원으로 운용 중단' 기록을 센다). 출력 줄 하나: `injuries: responders hurt/shift … down/shift … killed/shift … · suspects hurt … dead … (shot-down died …%, instant …%) · falls/collapse … · causes …`.
 
 ### 9.3 범위를 벗어나면 돌리는 손잡이 (이 순서로)
 
@@ -719,6 +734,7 @@ for f in armed/shooter armed/hostage armed/siege armed/bomb fire/arson; do npx t
 3. 용의자 사망 비율 → **먼저 용의자 문턱의 남는 체력 `HOSTILE_LEFT`([4, 15])** — 이것이 쓰러진 뒤 숨지기까지의 시간을 정한다(출혈 0.09/s 안팎에서 체력 9.5 면 100초 남짓). 그다음 `HOSTILE_BLEED`(0.35)와 상한 0.15, 처치 우선도(0.74). 경찰 기본 처치의 `q` 는 하한 0.2 에 머물러 출혈을 18%만 줄이므로 손잡이로 쓰지 않는다(R1 의 경찰 역할에 의료 가방이 없다).
 4. 붕괴 현장이 너무 어려워진다 → 2차 붕괴 갇힘 반경(1.6), 구출 중 사고 확률(0.06).
 5. 새 세계 규칙(열 탈진 0.5/s, 잔해 바닥 추락 0.002·사건당 한 번)은 부상 빈도를 맞추는 마지막 손잡이다.
+6. 결원 운용 중단이 많다(§9.1) → `crewReady` 가 0 을 돌려주는 조건을 "순직 대원이 있음 ‖ `crewOk === 0`" 으로 좁힌다(부상은 지금처럼 −18 감점만, §3.6 결정의 대안). 바꾸면 시험 11-12 의 최소 편성 순찰차 기대도 함께 고친다.
 
 `npm run check` 의 기준 범위 자체는 고치지 않는다(README §4). 범위 안이지만 위 목표를 벗어나면 보고에 수치를 적는다.
 
@@ -734,7 +750,7 @@ for f in armed/shooter armed/hostage armed/siege armed/bomb fire/arson; do npx t
 | **1. 기록만** | `types.ts` 의 새 자료형과 선택 칸(**합집합 멤버는 넣지 않는다** — §2.1), `injury.ts`(`noteInjury`·`bandOf`·`CAUSE_NAME`·`injuryRng`·`initInjuries`), `createScene` 의 `initInjuries` 한 줄(처음 상태 원인), 피해를 주는 모든 자리에 **기존 식 그대로 두고** `noteInjury` 한 줄씩(§12 의 "1단계" 열), `tickWater` 의 `c.lost`. `deathCause` 기록. `rules/injury.ts`·`orders/injury.ts` 는 빈 등록으로 만들고 `scenes/index.ts` 에 import 두 줄 | **아니다 — 해시 목록이 한 글자도 같아야 한다** |
 | **2. 화면** | `triage.ts`, 피 웅덩이·붉은 조각이 남지 않았는지(G5 가 먼저 지웠으면 확인만), 사람 그림(§8.2), 다친 자세, 딱지, 범례, 패널·정보창(기록을 읽어 원인을 보인다), 속보 class, 카메라 무게 | 아니다(해시 같음). 스크린샷 확인 — 덮개·들것·후송은 5단계 뒤에 다시(§8 첫머리) |
 | **3. 구조 대상** | `blast` 를 고르게(구조 대상 `immobile`·`bleed`), 2차 붕괴 갇힘(+ `carry` 의 강제 보고), 천장 붕괴 원인 crush, 구출 중 사고, 걷던 사람이 멈춤, `outstanding(a, now)` 의 오래된 `mobile`, **사건이 끝나면 구조 대상의 악화·사망 판정을 멈춤**(§2.6), 사망 문구에 원인, `waterRescue` 의 `bleedCause = 'exposure'`, 해일의 `hurtCas`, 박힌 조사 `josa()` | 그렇다 — sweep 비교 |
-| **4a-1. 대원 — 모델** (이 커밋에서는 `withdrawn` 대원의 출혈을 멈춰 둔다 — 후송이 4b 에서 생기므로, 안 그러면 안전 구역에서 기다리다 숨진다. 4b 에서 §2.6 대로 푼다) | `'RESPONDER_KILLED'` 와 `PROBLEM_LABEL`·`order`, `hurtResponder`(방호는 §2.4 "지금" 열, `a.hpTick` 문턱, 출혈·상한), `tickScene` 의 `hpTick` 적기, `agentHealth` 개편(종료 뒤 멈춤, 순직, `tDown ??=`, 부상 조건, 자기 보고), `hurtF`, `dangerScore`·`retreat` 의 출혈 조건, 흉기·맨손 기록, `blast`·`tickLane` 의 숨진 대원 제외, `rescueMate`(숨진 동료 0.55, `hot`·`fireRisk`, 강제 보고, 물 칸 대기), `mateFact`·`significant`·`perceive`, 4번 블록 문구, `outstanding` 의 `mates`, `difficulty.ts` 의 `injuryMul` | 그렇다 |
+| **4a-1. 대원 — 모델** (이 커밋에서는 `withdrawn` 대원의 출혈을 멈춰 둔다 — 후송이 4b 에서 생기므로, 안 그러면 안전 구역에서 기다리다 숨진다. 4b 에서 §2.6 대로 푼다) | `'RESPONDER_KILLED'` 와 `PROBLEM_LABEL`·`order`, `hurtResponder`(방호는 §2.4 "지금" 열 — **R1 이 합쳐져 있으면 "R1 이 있으면" 열**(그것이 그때의 지금 식이다. 부서 계수로 되돌리지 않는다), `a.hpTick` 문턱, 출혈·상한), `tickScene` 의 `hpTick` 적기, `agentHealth` 개편(종료 뒤 멈춤, 순직, `tDown ??=`, 부상 조건, 자기 보고), `hurtF`, `dangerScore`·`retreat` 의 출혈 조건, 흉기·맨손 기록, `blast`·`tickLane` 의 숨진 대원 제외, `rescueMate`(숨진 동료 0.55, `hot`·`fireRisk`, 강제 보고, 물 칸 대기), `mateFact`·`significant`·`perceive`, 4번 블록 문구, `outstanding` 의 `mates`, `difficulty.ts` 의 `injuryMul` | 그렇다 |
 | **4a-2. 대원 — 새 방호값** | §2.4 "새로" 열(화학의 toxic, 폭발물 처리반·경찰의 blast, 자상, crush 의 경찰). 이 커밋만으로 sweep 을 따로 잰다 | 그렇다 |
 | **4b. 대원 — 후송** | `'treatMate'` 와 `workLabel`·`fitFor`, `executor` case, `orders/injury.ts` 의 처치·후송·20초 규칙(대상당 한 항목, 맡을 사람 없으면 거둠), `Unit.aboard`·`firstLoadAt`, 자리 셈, `canCarryPatients`·`manageAmbulances`(진실 읽기 둘 제거, `aboard` 만 태운 차의 출발), 5번 블록(병원행, 종료 시 `boardOrder`, 고아 부대 안전장치), 병원 인계(`patientsIncident` 블록 밖), `crewReady`·`crewOk`·`arrive` 문구(결원·순직 `oos`) | 그렇다 |
 | **4c. 대원 — 새 규칙** | 열 탈진, 잔해 바닥 추락(`lastTile`·`fellOnce`), 덮쳐 제압할 때의 몸싸움 | 그렇다 |
@@ -773,7 +789,7 @@ for (const [seed, d, f] of cases) { const sim = new Sim(seed, parseDifficulty(d)
 
 1. **세 부류 모두 다친다**: `new Sim('INJ' + k, NORMAL, 1200, { force: 'armed/shooter' })` 8교대에서 — 원인 gunshot 인 부상 기록이 있는 구조 대상, 부상 기록이 있는 용의자가 각각 한 교대 이상. 대원은 `{ ...NORMAL, threat: 5, severity: 5, equipment: 1 }` 8교대에서 부상 기록(band ≥ 1)이 있는 대원이 한 명 이상. 모든 사건이 끝난다.
 2. **원인별 기록**: 사건 하나를 `createIncident(sim, { type: 'fire', rng: sim.rng.fork('t') })` 로 일으키고 부대가 도착할 때까지 돌린 뒤, 원인마다 `hurtCas`·`hurtResponder`·`hurtHostile`(용의자는 무장 사건에서) 를 직접 불러 — 기록이 그 원인으로 한 줄씩 생기고, 같은 원인은 한 줄로 합쳐지고(`dmg` 가 더해짐), `sev` 가 `bandOf` 와 맞는다. `bandOf` 가 지금의 `band` 와 0~100 전 구간에서 같다.
-3. **방호가 피해를 줄인다**: 같은 피해량으로 `hurtResponder` — (4a-1 뒤) gunshot: 특공대 < 순찰 < 구급, burn·smoke: 소방 < 경찰, 그리고 §2.4 "지금" 열의 값이 지금 식과 같다 — 상대 오차 1e-9 안(예: 순찰 총상 = `raw × (1 − u.armor × 0.6)`, 소방 부대 총상도 `u.armor` 0.1 로 줄어든다, 소방 연기 = `0.1 × smoke`. R1 이 합쳐져 있으면 `armor` 는 `armorOf`). (4a-2 뒤에 더하는 검사) toxic: 화학 ≤ 소방 < 경찰, blast: 폭발물 처리반 < 순찰 < 구급, stab: 기동 < 구급.
+3. **방호가 피해를 줄인다**: 같은 피해량으로 `hurtResponder` — (4a-1 뒤) gunshot: 특공대 < 순찰 < 구급, burn·smoke: 소방 < 경찰, 그리고 §2.4 "지금" 열의 값이 지금 식과 같다 — 상대 오차 1e-9 안(예: 순찰 총상 = `raw × (1 − u.armor × 0.6)`, 소방 부대 총상도 `u.armor` 0.1 로 줄어든다, 소방 연기 = `0.1 × smoke`. R1 이 합쳐져 있으면 "R1 이 있으면" 열(그것이 그때의 지금 식)과 견준다 — `armor` 는 `armorOf`, 연기·불은 `scba`·`turnout`). (4a-2 뒤에 더하는 검사) toxic: 화학 ≤ 소방 < 경찰, blast: 폭발물 처리반 < 순찰 < 구급, stab: 기동 < 구급.
 4. **문턱**: ① 체력 100 인 대원(`a.hpTick = 100`)에게 `hurtResponder(…, 200, 'gunshot')` → 숨지지 않고 체력 8, 출혈 ≤ 0.04, 다음 틱에 `down` 과 RESPONDER_HURT. ② **같은 틱 두 번 피격**: 체력 60(`a.hpTick = 60`)인 대원에게 방호 0 인 피해 35 를 두 번 → 체력 8, 다음 틱에 `down`(순직 아님), RESPONDER_HURT 하나. ③ 체력 30(`a.hpTick = 30`)인 구급대원(총상 방호 0)에게 `hurtResponder(…, 60, 'gunshot')` → 다음 틱에 순직, `RESPONDER_KILLED` 기록, `r.status === 'down' && r.dead`, 그 사건의 `IncidentResult.respondersKilled === 1`(RESPONDER_HURT 가 없어도 센다 — §7.1). ④ 용의자: 체력 100 인 용의자에게 `hurtHostile(…, 200, 'gunshot')` → 숨지지 않고 체력이 `HOSTILE_LEFT` 범위, 같은 호출 안에서 `state === 'down'`·`tDown === sim.t`. 체력 10 인 쓰러진 용의자에게 `hurtHostile(…, 30, 'blast')` → `dead`, `SUSPECT_DIED` 기록.
 5. **대원 순직은 목표 빈도 이하**: 보통 24교대에서 순직 ≤ 1.
 6. **쓰러진 대원은 구조되거나 후송된다**: 응급 사건(구급 부대가 온다)에서 부대가 도착한 뒤 한 대원을 `hurtResponder` 로 쓰러뜨리고 끝까지 돌린다 → 그 대원은 `rescueMate` 완료 기록이 있고, `r.care === 'hospital'` 이거나(후송) 숨졌다면 `RESPONDER_KILLED` 가 있다. `a.status` 는 끝에 `left`.
@@ -787,7 +803,8 @@ for (const [seed, d, f] of cases) { const sim = new Sim(seed, parseDifficulty(d)
 9. **가짜 연출 없음**: 모든 교대에서 `r.dead` 인 대원마다 그 rid 의 `RESPONDER_KILLED` 기록이 정확히 하나, `h.dead` 인 용의자마다 `SUSPECT_DIED` 가 하나. 숨진 구조 대상은 모두 `deathCause` 가 있다. **모든 사망 기록(`RESPONDER_KILLED`·`SUSPECT_DIED`·구조 대상의 '생체 반응 소실'·'떠내려갔습니다')의 시각 ≤ 그 사건의 `closedAt`**(§2.6). `SECONDARY_COLLISION` 의 `rid` 는 그 시각에 숨지지 않은 대원이다(§2.7).
 10. **잔혹한 묘사 없음**(G5 의 시험 9 와 같은 문자열 검사 — G5 가 먼저 합쳐졌으면 이미 참이다): `src/view/renderScene.ts` 에 `blood:` 가 없고, `src/view/scene/sprites.ts` 에 `rgba(110,18,22`·`rgba(140,24,28` 가 없고, `src/view` 의 모든 파일에 `rgba(230,50,50`·`rgba(255,90,90` 이 없다(지금 'hit' 의 붉은 조각·고리). 파일을 글자로 읽어 본다. 'hit' 을 그리는 함수가 G5 에서 새 파일로 옮겨졌으면 그 파일도 `src/view` 안이므로 함께 걸린다.
 11. **재현성**: 같은 시드·같은 강제 시나리오 두 번의 `report.hash` 가 같다(부상·사망이 일어나는 교대 하나 이상 포함). `injuryRng` 를 쓰는 규칙이 있는 교대도 같다. `injuryRng(sim, s, 'trap')` 과 `injuryRng(sim, s, 'fall')` 이 서로 다른 흐름이다(한쪽을 몇 번 뽑아도 다른 쪽의 첫 값이 같다).
-12. **순직·결원 부대는 다시 나가지 않는다**: 대원 하나를 `hurtResponder` 로 순직시킨 교대를 끝까지 돌린다 → 그 순직 기록 뒤에 만들어진 사건의 `everAssigned` 에 그 부대가 없고, 교대 끝에 그 부대는 `oos` 다(기지에 닿았다면). `crewReady` 는 그 부대에 0 을 돌려준다.
+12. **순직·결원 부대는 다시 나가지 않는다**: 대원 하나를 `hurtResponder` 로 순직시킨 교대를 끝까지 돌린다 → 그 순직 기록 뒤에 만들어진 사건의 `everAssigned` 에 그 부대가 없고, 교대 끝에 그 부대는 `oos` 다(기지에 닿았다면). `crewReady` 는 그 부대에 0 을 돌려준다. **부상 한 명인 최소 편성 순찰차**(R1 뒤 `minField('patrol') === 2`): 대원 하나를 `injured` 로 만들면 `crewReady` 0 — 그 뒤 만들어진 사건의 `everAssigned` 에 없고, 기지에 닿으면 `oos` 와 '${호출부호} 결원으로 운용 중단.' 기록(§3.6 결정). 소방 헬기·구조정은 다친 사람이 없으면 `crewReady === minField`(2)라 배정된다(내리지 않는 자리를 세지 않는다). (§9.3 의 6번으로 바꿨으면 이 순찰차는 `crewReady` 1 로 −18 감점만 받는다.)
+14. **R1 의 시험 ⑨ 가 바뀐다**: 4b 부터 자리 셈이 `seatsUsed` 이므로 R1 `tests/crews.test.ts` ⑨(매 틱 `patients.length ≤ seatsOf`)를 `seatsUsed(sim, u) ≤ seatsOf(u)` 로 고친다(이 묶음이 고치는 남의 시험 — 보고에 적는다).
 13. **고아 부대 없음**: 4교대(`armed/shooter` 둘, 보통 둘) 끝에 이미 닫힌 사건 소속으로 `onscene` 인 부대가 없다.
 
 ---
@@ -824,6 +841,7 @@ for (const [seed, d, f] of cases) { const sim = new Sim(seed, parseDifficulty(d)
 | | `engage`(① 분기)·`arrest` | 덮쳐 제압할 때의 몸싸움(`injuryRng(…, 'fight')`) | 4c |
 | | 새 case `treatMate`·`treatSuspect` | §3.4·§4.3 (대상 좌표 끌기, 고아 부대 `release`, `firstLoadAt`) | 4b·5 |
 | `field/agents.ts` | `staminaF` | `× hurtF(r)` | 4a |
+| | 새 `seatsUsed`(R1 `seatsOf` 옆) | 쓰인 자리 = `patients` + 다른 부대 대원·용의자의 `aboard`(§3.4-5). R1 의 비교 자리 넷이 이것을 본다 | 4b |
 | | `casFact` 옆 | `mateFact(sim, s, b, status, src, d)` | 4a |
 | | `hosFact`, `significant`, `perceive` | `mate`: 보고 조건(`status`·`dead`·`band`·`tq`), 보는 대상(`down` + 2칸 안의 `withdrawn`), 배우는 조건 `significant`(4a). `hos`: 필수 인자 `d`, 칸·문구, `where`(5) | 4a·5 |
 | | `workLabel`·`fitFor`·`canCarryPatients` | `rescueMate` 의 `hot`·`fireRisk`(R1 이면 `scba` 자격)(4a), `treatMate`(`a.rid !== w.mate`, hot 이면 safe 만)(4b), `treatSuspect`(hot 술어, `fireRisk`)(5), 자리 셈에 다른 부대·용의자의 `aboard`(R1 의 `seatsOf` 그대로)(4b) | 4a·4b·5 |
@@ -833,9 +851,10 @@ for (const [seed, d, f] of cases) { const sim = new Sim(seed, parseDifficulty(d)
 | `field/brain.ts` | `dangerScore` | `health < 40 \|\| (bleed ≥ 0.06 && health < 70)` 이면 물러남(자기 몸) | 4a |
 | `field/rules/disaster.ts` | 해일 | drown 기록(1) → `hurtCas`(하한 8 을 지키는 양)·`hurtResponder`(3·4a) | 1·3·4a |
 | `field/scenes/index.ts` | import | `../rules/injury`, `../orders/injury` | 1 |
-| `sim/resources.ts` | `crewReady`·새 `crewOk` | 순직 대원이 있거나 `minCrew` 미만이면 0 | 4b |
+| `sim/resources.ts` | `crewReady`·새 `crewOk` | 순직 대원이 있거나 `minField` 미만이면 0(§3.6 결정) | 4b |
 | | `tickUnits` 의 `hospital` | `aboard` 인계와 `u.aboard = []`·`firstLoadAt` 지우기 — `patientsIncident` 블록 **밖에서** | 4b |
-| | `arrive` 의 `returning` | `oos` 문구를 까닭(순직·결원·전원 부상)에 따라 | 4b |
+| | `arrive` 의 `returning` | `oos` 문구를 까닭(순직·결원·전원 부상)에 따라, `causes`·`u.oosEv` | 4b |
+| `scripts/metrics.ts` | `PHRASE.T4`·`PHRASE.T6` | 새 인계·운용 중단 문구를 잡게 넓힌다(§3.4-4·§3.6). `tests/causality.test.ts` 통과 | 4b |
 | `sim/debrief.ts` | `PROBLEM_LABEL`·`order`·`T`, `evaluate`, `buildReport` | §7 (순직은 `RESPONDER_KILLED` 기록으로 따로 셈) | 4a·5·6 |
 | `view/renderScene.ts` | `BAND_COLOR`, 사람 그리기(302-412), 딱지(562-596), `hitScene`. 'hit'(634-637)은 G5 가 이미 고쳤으면 손대지 않는다 | §8 | 2 |
 | `view/scene/sprites.ts` | `drawLying`(blood 제거 — G5 가 했으면 확인만), `PersonPose`·`ArmPose` | §8.2·8.3 | 2 |
@@ -855,11 +874,11 @@ for (const [seed, d, f] of cases) { const sim = new Sim(seed, parseDifficulty(d)
 2. **물러나는 대원이 늘면** 교전에서 경찰 수가 줄어 대치가 길어진다 → 무장 사건의 한계 시간. `--force armed/shooter`·`armed/riot` 로 재고, 늘면 `MATE_RETREAT_BLEED` 를 올리거나 `MATE_RETREAT_HP` 를 내린다. **고칠 수 없는 기존 시험 둘이 여기에 걸린다**: `tests/sim.test.ts` 의 생활 사건 성공률(`armed/domestic` 순수 성공 > 0.6 — 칼 든 가정 폭력)과 `tests/crime.test.ts` 의 폭동(6번 가운데 한계 시간·방치 ≤ 1). `sim.test.ts` 는 고치지 않으므로, 깨지면 시험이 아니라 손잡이(자상 계수 0.0015, 물러남 문턱, 몸싸움 피해 3~8)를 고친다.
 3. **구급차 정원 다툼**: 다친 대원·용의자가 구조 대상과 자리를 나눈다. 용의자는 더 무겁거나 같은 사람이 기다리지 않을 때만 태운다. 버스·대형 사고에서 구조 대상 이송이 늦어지지 않는지 `--force` 로 본다.
 4. **숨진 동료를 수습하지 못해 종료가 막힘**: `canClose` 는 쓰러진 동료가 남아 있으면 끝내지 않는다(지금). 닿을 수 없는 자리면 `LIMIT` 으로 끝난다 — 한계 시간 건수를 본다.
-5. **R1 이전에 구현하게 되면**(순서가 바뀌면) 방호는 §2.4 의 "지금"·"새로" 열, 결원은 최소 인원 1, 자리는 구급차 2·헬기 1 로 동작한다. R1 이 합쳐질 때 `protection()`·`treatEffect()`·자리 셈만 바꾼다. R1 은 대원 수를 크게 늘리므로(보통 34 → 63명) §9 의 목표는 R1 을 합친 뒤에 다시 잰 기준값과 견준다.
+5. **R1 이전에 구현하게 되면**(순서가 바뀌면) 방호는 §2.4 의 "지금"·"새로" 열, 결원은 `minField` 대신 1, 자리는 구급차 2·헬기 1 로 동작한다. R1 이 합쳐질 때 `protection()`·`treatEffect()`·자리 셈만 바꾼다. R1 은 대원 수를 크게 늘리므로(보통 34 → 63명) §9 의 목표는 R1 을 합친 뒤에 다시 잰 기준값과 견준다.
 6. **정보 격리 예외**: `commander.ts:544` 를 고치면 결과가 조금 바뀐다(4b 단계 안에서 함께 잰다). README "알려진 문제"의 예외 3건은 늘리지 않는다.
 7. **속도(P1)**: `rules/injury.ts` 는 매 틱 모든 현장에서 돈다. 다친 사람이 없는 현장은 첫 줄에서 돌아가게 하고, 배열을 새로 만들지 않는다(기록은 원인마다 한 줄을 고쳐 쓴다).
 8. **자해** 같은 민감한 장면은 사용자 요청에 없었다. 경로만 만들고 `SELF_HARM = 0` 으로 둔다(§4.5). 켜려면 사용자에게 먼저 묻고, 켜더라도 0.08 안팎에서 한 줄의 담담한 기록으로만.
-9. **G4·G5 와의 화면 충돌**: 딱지·'hit' 효과를 함께 고칠 수 있다. G5 는 H1 보다 먼저 구현되므로 'hit'·피 제거는 G5 의 것을 그대로 두고, 딱지는 먼저 합쳐진 쪽(G4 또는 H1)의 그림 함수를 쓰며, 원칙(피·붉은 조각 없음, 중증도 색은 `triage.ts`)만 지킨다. `hazards.ts`·`executor.ts` 의 피해 줄에는 G5 의 꼬리표 줄이 끼어 있다 — `hurt*` 로 바꿀 때 지우지 않는다.
+9. **G4·G5 와의 화면 충돌**: 딱지·'hit' 효과를 함께 고칠 수 있다. G5 는 이미 합쳐졌으므로 'hit'·피 제거는 G5 의 것을 그대로 두고, 딱지 그림 함수는 H1 이 만든다(G4 는 사람 딱지를 만들지 않는다). 원칙(피·붉은 조각 없음, 중증도 색은 `triage.ts`)을 지킨다. `hazards.ts`·`executor.ts` 의 피해 줄에는 G5 의 꼬리표 줄이 끼어 있다 — `hurt*` 로 바꿀 때 지우지 않는다.
 10. **종료 뒤 악화를 멈추면 교대 보고서의 숫자가 조금 바뀐다**(§2.6): 지금은 사건이 닫힌 뒤 대원이 떠나기 전까지 현장의 구조 대상이 숨질 수 있고, 그 사망이 교대 요약에는 들어간다. 3단계의 sweep 비교에서 구조율과 함께 본다.
 11. **목적별 난수 흐름**: `injuryRng(sim, s, purpose)` 의 이름은 한 번 정하면 바꾸지 않는다(이름이 곧 흐름이다). 새 소비자는 새 이름을 쓴다.
 
@@ -868,7 +887,7 @@ for (const [seed, d, f] of cases) { const sim = new Sim(seed, parseDifficulty(d)
 | 질문 | 결정 | 이유 |
 |---|---|---|
 | 원인을 새 칸에 저장하나 | `Injury[]`(원인마다 한 줄) + `bleedCause`·`deathCause` | `causeEvent` 는 이벤트 id 하나라 원인 종류를 말하지 못한다 |
-| 추락·감전·익수·탈진 규칙 | 탈진·잔해 바닥 추락은 새로. 감전은 공식만. 대원 익수·사다리 추락은 R2 | 지금 그런 일이 생기는 현장이 없는 것은 억지로 만들지 않는다 |
+| 추락·감전·익수·탈진 규칙 | 탈진·잔해 바닥 추락은 새로. 감전은 공식만. 대원 익수는 R2. 사다리·창문 추락은 어느 묶음도 만들지 않는다(R2 §10, ROADMAP C4) | 지금 그런 일이 생기는 현장이 없는 것은 억지로 만들지 않는다 |
 | 대원 순직 | 허용. 출혈이 있는 쓰러짐 + 문턱(이 틱 시작 때 41 이상이면 그 틱 안에서 0 불가, 쓰러진 대원의 출혈 상한 0.04) | "드물게, 설명할 수 있게" |
 | 용의자 즉사 | 없다 — 쓰러지지 않은 용의자는 한 번 피해로 0 아래로 가지 않는다(`HOSTILE_LEFT`). 쓰러짐은 `hurtHostile` 안에서 바로 | 지금 식으로는 총에 맞아 쓰러진 용의자의 78% 가 그 순간 숨져 사망 비율을 맞출 손잡이가 없다 |
 | 출혈로 물러나는 조건 | `bleed ≥ 0.06` 이고 `health < 70` | 0.03 하나면 총알 한 발에 모든 대원이 물러난다(§2.2) |
@@ -880,7 +899,7 @@ for (const [seed, d, f] of cases) { const sim = new Sim(seed, parseDifficulty(d)
 | 경찰 호송 | 기계적으로 모델하지 않는다 | §4.3 |
 | 판정 뒤 숨짐·병원 뒤 결과 | 사건이 끝나면 세 부류 모두 악화·사망 판정을 멈추고 `hurt*` 도 아무것도 하지 않는다. 병원 뒤 결과 없음 | 판정과 기록이 어긋나지 않게. `loaded` 만 멈추면 현장·안전 구역의 구조 대상, 출혈하는 용의자, 안전 구역의 대원이 판정 뒤에 숨질 수 있다 |
 | 자해 | 경로만 만들고 `SELF_HARM = 0` — 켤지는 사용자에게 묻는다 | 요청에 없던 민감한 장면 |
-| 순직·결원 부대의 운용 중단 | `resources.crewReady` 가 0 을 돌려준다 | 관제는 복귀 중인 부대도 배정하므로 기지 도착 때의 `oos` 만으로는 막지 못한다. `dispatch/*` 는 고치지 않는다 |
+| 순직·결원 부대의 운용 중단 | `resources.crewReady` 가 0 을 돌려준다(결원 기준은 R1 의 `minField` — 최소 편성 부대는 부상 한 명으로 중단, §3.6 결정·§9.3 의 6번이 대안) | 관제는 복귀 중인 부대도 배정하므로 기지 도착 때의 `oos` 만으로는 막지 못한다. `dispatch/*` 는 고치지 않는다 |
 | 경상(초록)의 처치·이송 | 지금 그대로 없음 | START 의 "지연" 묶음 |
 | 사망색 | 검정 + 밝은 테두리·흰 글씨 | 요청(검정), 어두운 배경에서 보이게 |
 | 피 웅덩이·붉은 'hit' | 없앤다 | 표현 원칙 |
@@ -889,7 +908,7 @@ for (const [seed, d, f] of cases) { const sim = new Sim(seed, parseDifficulty(d)
 | I2·K1 | 출력(`roster`·`outShifts`)만. 저장·입력은 I2(I2 가 K1 을 함께 끝낸다) | 묶음의 경계. 로드맵에서 대원 상태를 다음 교대로 넘기는 것은 I2 다 |
 | 폭발이 고르지 않음 | `blast` 가 세 부류를 같은 규칙으로 | 요청의 "고르지 않은 것을 채운다" |
 | `commander.ts` 의 진실 읽기(`manageAmbulances` 의 `firstLoad`·`redAboard`) | 이번에 부대 기록(`u.firstLoadAt`)과 믿음으로 바꾼다 | `manageAmbulances` 를 어차피 고친다. 고치면 `commander.ts` 에 `s.casualties`·`s.hostiles` 가 남지 않는다 |
-| 대원의 익수(물 위의 쓰러짐·사망) | R2 의 규칙을 받아들인다: H1 이 있으면 R2 는 체력 하한 18 을 두지 않고, 헤엄 중 30 아래면 뭍으로, 그래도 물 칸에서 쓰러지거나 숨지면 `rules/methods.ts` 가 뭍으로 옮긴다. H1 의 `rescueMate` 는 대상이 물 칸이면 기다린다 | R2 설계서(§3.5, §10 의 H1 줄)와 같은 문장. 물 칸에 쓰러진 대원을 건지는 길이 없어도 R2 의 안전장치가 뭍으로 옮기므로 사건이 끝난다. 두 번 옮기지 않는다(R2 는 물 칸에서만, H1 은 뭍에서만) |
+| 대원의 익수(물 위의 쓰러짐·사망) | R2 의 규칙을 받아들인다(정본 R2 §3.5): R2 는 H1 이 있든 없든 물 위 피해를 `hurtResponder` 를 부르기 전에 `raw = min(raw, r.health − 18)` 로 자르고, 30 아래면 '위기' 사고로 `ashore`, 다른 피해로 물 칸에서 쓰러지거나 숨지면 `rules/methods.ts` 가 뭍으로 옮긴다. H1 의 `rescueMate` 는 대상이 물 칸이면 기다린다 | R2 설계서(§3.5, §10 의 H1 줄)와 같은 문장. 물 칸에 쓰러진 대원을 건지는 길이 없어도 R2 의 안전장치가 뭍으로 옮기므로 사건이 끝난다. 두 번 옮기지 않는다(R2 는 물 칸에서만, H1 은 뭍에서만) |
 | 방호의 이름 | R1 의 `armorOf`·`blastFactor`·`scba`·`turnout` 을 읽는다 | R1 이 먼저 합쳐진다 |
 | 'hit' 효과와 피 표현 | G5 의 것을 쓴다. H1 은 확인만 | G5 가 H1 보다 먼저 구현된다(로드맵) |
 
@@ -908,6 +927,7 @@ for (const [seed, d, f] of cases) { const sim = new Sim(seed, parseDifficulty(d)
 - **시험 11-10 을 "`src/view` 의 'hit' 그림에서 붉은 채움색 전부"로 넓히는 안** — 일반적인 "붉은색" 판정은 글자 검사로 믿을 만하게 할 수 없다. 대신 지금 쓰이는 붉은 값 넷(`rgba(110,18,22`·`rgba(140,24,28`·`rgba(230,50,50`·`rgba(255,90,90`)을 `src/view` 전체에서 찾는 검사로 넓혔다(G5 의 시험 9 와 같은 방식).
 - **`tests/ext.test.ts` 의 금지어 전부를 `commander.ts` 에도 거는 안** — `s.casualties`·`s.hostiles` 둘만 건다. `commander.ts` 는 소화전·차량 정리처럼 `s.props` 를 지금 읽는 곳이 있어 그 금지어까지 걸면 이 묶음과 무관하게 깨진다.
 - **R1 의 순찰 팀장에게 `bag` 을 더하는 안** — 더하지 않았다(R1 의 역할 표는 R1 의 것이다). 경찰의 용의자 처치는 하한 `q` 0.2 로 두고, 처치 손잡이에서 뺐다(§9.3).
-- **R2 와의 물 위 대원 결정에서 "H1 이 `drown` 한 번 피해의 하한을 맡는다"(검토의 (a)안)** — 쓰지 않고 R2 가 이미 적어 둔 규칙(30 아래에서 뭍으로, 물 칸에서 쓰러지면 뭍으로 옮김)을 받아들였다(검토의 (b)안). R2 설계서를 고치지 않고 두 문서가 같은 문장이 된다.
+- **R2 와의 물 위 대원 결정에서 "H1 이 `drown` 한 번 피해의 하한을 맡는다"(검토의 (a)안)** — 쓰지 않고 R2 가 이미 적어 둔 규칙(R2 피해의 하한 18, 30 아래에서 뭍으로, 다른 피해로 물 칸에서 쓰러지면 뭍으로 옮김)을 받아들였다(검토의 (b)안). 하한 18 은 H1 이 있든 없든 R2 가 둔다(정합성 점검에서 연관 표·결정 표의 옛 문장 "H1 이 있으면 하한 18 을 두지 않고"를 R2 §3.5 에 맞춰 고쳤다).
+- **정합성 점검(설계서 열 개를 맞춘 뒤)에서 고친 것**: 결원 기준 `minCrew` → R1 의 `minField`(내리는 자리 단위)와 최소 편성 부대의 결원 결정(§3.6·§9.1·§9.3-6·시험 12), `protection`·`treatEffect` 의 인자, `hurtCas` 의 `causeEvent`, 객체 모양 문단(§2.1), 출발 문구의 병원 이름·`PHRASE.T4`·`T6`·`u.oosEv`, `seatsUsed`, §3.7 의 두 줄(I2 값), B1 나머지의 네 피해 자리(§5.3), X6·G4·G5·R2·R3 와의 경계 문장.
 - **수치의 출처** — "대원 피격 2건·RESPONDER_HURT 0건"(보통·`armed/shooter` 각 3교대)은 검토의 작은 측정을 옮겼다. 이번 수정에서는 다른 작업이 CPU 를 쓰고 있어 sweep 을 다시 돌리지 않았다. "쓰러질 때 이미 0 이하 78%(48~78 에서 시작하면 69%)"는 몬테카를로로 다시 계산해 확인했다.
 

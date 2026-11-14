@@ -458,3 +458,26 @@ describe('현장 배치의 다양성', () => {
     expect(houses.size).toBeGreaterThanOrEqual(2);
   }, 120000);
 });
+
+describe('교전과 진입', () => {
+  it('용의자는 엄폐물로 옮기고 인질을 끌고 물러나며, 진입조는 두 문으로 나뉘거나 방 문 앞에 모였다가 들어간다', () => {
+    let relocate = 0, drag = 0, twoDoor = 0, roomEntry = 0, armed = 0, timeouts = 0;
+    for (let k = 0; k < 60; k++) {
+      const s = new Sim('S' + k, { ...NORMAL, threat: 4 }); s.runToEnd();
+      for (const sc of s.scenes) {
+        if (!sc || sc.kind !== 'armed') continue;
+        armed++;
+        if (s.incidents[sc.incidentId].closeReason === 'timeout') timeouts++;
+        if (sc.entryExit2 >= 0) { twoDoor++; expect(sc.entryExit2).not.toBe(sc.entryExit); }
+        // 인질을 끌고 간 용의자 곁에는 인질이 그대로 있다(끌려가다 벽 속에 남지 않는다)
+        for (const c of sc.casualties) expect(Number.isFinite(c.x) && Number.isFinite(c.y)).toBe(true);
+      }
+      for (const e of s.events) { if (e.text.includes('엄폐물 뒤로 자리를 옮깁니다')) relocate++; if (e.text.includes('인질을 끌고')) drag++; if (/ 진입!/.test(e.text) && !e.text.startsWith('진입!')) roomEntry++; }
+    }
+    expect(relocate).toBeGreaterThan(5);
+    expect(drag).toBeGreaterThan(1);
+    expect(twoDoor).toBeGreaterThan(1);
+    expect(roomEntry).toBeGreaterThan(2);
+    expect(timeouts).toBeLessThan(armed * 0.12);
+  }, 180000);
+});

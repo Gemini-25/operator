@@ -528,11 +528,12 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   if (!MINI) { ctx.font = `700 ${Math.round(ts * 0.3)}px ${FONT}`; ctx.fillStyle = 'rgba(190,255,215,0.75)'; ctx.fillText('안전 구역', (s.safe.x + 0.45) * ts, (s.safe.y - 0.84) * ts); }
 
   // 지휘관이 정한 진입 지점
-  if (!MINI && s.entryOrdered && !s.breachDone && s.entryExit >= 0 && s.entryExit < s.exits.length) {
-    const e = s.exits[s.entryExit], x = cx(e.x), y = cy(e.y), pr = 0.5 + 0.5 * Math.sin(time * 5);
+  if (!MINI && s.entryOrdered && !s.breachDone) for (const [k, label] of [[s.entryExit, s.entryExit2 >= 0 ? '1조 진입' : '진입 지점'], [s.entryExit2, '2조 진입']] as [number, string][]) {
+    if (k < 0 || k >= s.exits.length) continue;
+    const e = s.exits[k], x = cx(e.x), y = cy(e.y), pr = 0.5 + 0.5 * Math.sin(time * 5);
     ctx.strokeStyle = `rgba(90,169,255,${0.5 + 0.4 * pr})`; ctx.lineWidth = Math.max(2, ts * 0.07); ctx.setLineDash([ts * 0.2, ts * 0.14]);
     ctx.beginPath(); ctx.arc(x, y, ts * (0.9 + 0.1 * pr), 0, 7); ctx.stroke(); ctx.setLineDash([]);
-    pill(ctx, `진입 지점 · ${Math.max(0, Math.ceil(s.breachAt - sim.t))}초`, x, y + ts * 1.25, ts * 0.3, '#9fd0ff');
+    pill(ctx, `${label} · ${Math.max(0, Math.ceil(s.breachAt - sim.t))}초`, x, y + ts * (e.y < s.h / 2 ? -1.25 : 1.25), ts * 0.3, '#9fd0ff');
   }
 
   // ── 구조 대상 표지: 중증도 색 딱지, 상태 막대 ──

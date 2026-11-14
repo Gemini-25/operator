@@ -104,6 +104,8 @@ function planEntry(s: Scene, hv: { x: number; y: number; facing?: number }): { e
   return { exit: best, text: ` 진입 지점은 ${name(best)} — ${why}.` };
 }
 
+const josaLocal = (w: string): string => `${w}으로`;
+
 /** 믿음 → 작업 목록 */
 function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   const B = a.beliefs;
@@ -160,6 +162,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         else if (waited > 125 && police.length >= 3) why = '협상이 길어져 시한이 임박';
         if (!I.assigned.some((uid) => sim.units[uid].caps.tactical >= 0.9)) request(sim, s, I, a, 'tactical', '인질 사건 — 섬광탄을 가진 기동대 필요', true);
       } else if (crit && police.length >= 2 && waited > 12) why = '내부에 위중한 부상자가 있어 더 기다릴 수 없음';
+      else if (fighting && police.length >= 2 && waited > 8 && cas.some((c) => c.value.where === 'scene' && c.value.band >= 1 && c.value.band < 3)) why = '총격이 이어지고 내부에 부상자가 있음';
       else if (fighting && police.length >= 3 && waited > 22) why = '용의자가 계속 발포하고 협상에 응하지 않음';
       else if (waited > 60 && police.length >= 3) why = '협상에 진전이 없고 진입 인원이 확보됨';
       else if (waited > 100 && police.length >= 2) why = '장시간 대치로 더 이상의 지연은 위험';
@@ -167,7 +170,12 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         s.entryOrdered = true; s.breachAt = sim.t + 9; s.breachDone = false;
         const plan = planEntry(s, h.value);
         s.entryExit = plan.exit;
-        emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 3, causes: [I.lastEvent], text: `진입 결정. ${why}.${plan.text} 진입조는 그 앞에 모였다가 신호에 맞춰 동시에 진입하라.` });
+        // 인원이 넉넉하면 두 문으로 나눠 동시에 들어간다 (용의자는 한쪽만 볼 수 있다)
+        const two = police.length >= 4 && s.exits.length >= 2;
+        s.entryExit2 = two ? (plan.exit === 0 ? 1 : 0) : -1;
+        if (two) s.breachAt = sim.t + 15;
+        const name = (k: number): string => (k === 0 ? '정문' : '후문');
+        emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 3, causes: [I.lastEvent], text: `진입 결정. ${why}.${plan.text}${two ? ` 2조는 ${josaLocal(name(s.entryExit2))} 돌아가 같은 신호에 들어간다.` : ''} 진입조는 문 앞에 모였다가 신호에 맞춰 동시에 진입하라.` });
       }
     }
     if (s.entryOrdered) { want(sim, s, 'engage', { hostile: h.id }, 0.9, 3); cancel(s, (w) => w.kind === 'negotiate' && w.hostile === h.id); }

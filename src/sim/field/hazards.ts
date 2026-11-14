@@ -285,11 +285,29 @@ export function flashbang(sim: Sim, s: Scene, x: number, y: number): number {
   let n = 0;
   for (const h of s.hostiles) {
     if (h.state !== 'hold' && h.state !== 'fight') continue;
-    if (dist(h.x, h.y, x, y) > 5.2) continue;
+    if (dist(h.x, h.y, x, y) > 5.2 || !los(s, x, y, h.x, h.y)) continue;      // 벽 너머까지는 미치지 않는다
     h.stunUntil = sim.t + 3.8; h.morale -= 0.15; n++;
   }
   pushFx(sim, s, 'flash', x, y, undefined, undefined, undefined, undefined, 0.7);
   return n;
+}
+
+/**
+ * 무력화되지 않은 채로 진입을 맞은 인질범은 놀라서 인질을 쏠 수 있다 (공격적일수록 위험하다).
+ * 섬광탄으로 먼저 무력화하면 일어나지 않는다.
+ */
+export function panicShot(sim: Sim, s: Scene, I: Incident, x: number, y: number): void {
+  for (const h of s.hostiles) {
+    if (h.hostageId < 0 || (h.state !== 'hold' && h.state !== 'fight') || sim.t < h.stunUntil) continue;
+    if (dist(h.x, h.y, x, y) > 8) continue;
+    const c = s.casualties[h.hostageId];
+    if (c.dead || c.where !== 'scene' || dist(c.x, c.y, h.x, h.y) > 2.2) continue;
+    if (!s.rng.chance(0.18 + 0.42 * h.aggression)) continue;
+    c.health -= s.rng.range(26, 40); c.mob = 'immobile'; c.bleed = Math.max(c.bleed, 0.18); c.bleed0 = c.bleed; c.walking = false;
+    h.state = 'fight'; h.cooldown = 1;
+    pushFx(sim, s, 'shot', h.x, h.y, c.x, c.y, undefined, '#ff8a5c', 0.25); pushFx(sim, s, 'hit', c.x, c.y);
+    c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '진입 순간 인질 피격', { role: 'SYSTEM', actor: '현장', imp: 3, text: `진입에 놀란 ${h.label}가 인질(구조 대상 ${c.label})을 쐈습니다!` }, false);
+  }
 }
 
 function officersSeeing(sim: Sim, s: Scene, h: Hostile, range: number): { n: number; nearest: number; nearestD: number } {
@@ -361,6 +379,77 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
       emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', text: `${h.label}가 무기를 내려놓고 투항 의사를 보입니다.`, imp: 2, truth: see.n === 0 });
       continue;
     }
+    // 자리를 옮기는 중 (엄폐 이동, 인질을 끌고 물러나기): 옮기는 동안에는 쏘지 않는다
+    if ((h.state === 'hold' || h.state === 'fight') && h.path) {
+      const ti = h.pathI < h.path.length ? h.path[h.pathI] : -1;
+      if (ti < 0 || !truthWalkable(s, ti)) { h.path = null; h.dragging = false; }
+      else {
+        const tx = ti % s.w, ty = (ti / s.w) | 0;
+        const dd = dist(h.x, h.y, tx, ty), step = (h.dragging ? 1.3 : 2.3) * dt * (h.health < 60 ? 0.75 : 1);
+        if (dd <= step) { h.x = tx; h.y = ty; h.pathI++; const dr = doorAt(s, ti); if (dr && !dr.locked) dr.open = true; } else { h.x += ((tx - h.x) / dd) * step; h.y += ((ty - h.y) / dd) * step; }
+        if (h.dragging && h.hostageId >= 0) { const c = s.casualties[h.hostageId]; c.x = h.px; c.y = h.py; }      // 인질은 한 걸음 뒤에서 끌려온다
+        if (h.pathI >= h.path.length) { h.path = null; h.dragging = false; }
+        continue;
+      }
+    }
+    // 인질을 붙잡은 용의자: 진입이 시작되거나 대원이 가까이 보이면 한 번, 가장 먼 방으로 인질을 끌고 물러난다
+    if (h.hostageId >= 0 && !h.retreated && (h.state === 'hold' || h.state === 'fight') && (s.breachDone || (see.nearest >= 0 && see.nearestD < 7))) {
+      h.retreated = true;
+      const ref = see.nearest >= 0 ? s.agents.find((a) => a.rid === see.nearest)! : s.exits[Math.max(0, s.entryExit)] ?? s.staging;
+      const here = s.region[tileOf(s, h.x, h.y)];
+      let room = -1, bd = 0;
+      for (const r of s.regions) { if (r.kind !== 'room' || r.id === here) continue; const d = dist(r.cx, r.cy, ref.x, ref.y); if (d > bd) { bd = d; room = r.id; } }
+      if (room >= 0) {
+        let best = -1, bt = -1;
+        for (const i of s.regions[room].tiles) { if (s.tiles[i] !== T.FLOOR || s.propAt[i] >= 0) continue; const d = dist(i % s.w, (i / s.w) | 0, ref.x, ref.y); if (d > bt) { bt = d; best = i; } }
+        const path = best >= 0 ? astar(s, h.x, h.y, best % s.w, (best / s.w) | 0, 0, truthCost(s)) : null;
+        if (path && path.length > 2 && path.length <= 34) {
+          h.path = path; h.pathI = 0; h.dragging = true; h.state = 'hold';
+          emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, truth: see.n === 0, text: `${h.label}가 인질을 끌고 ${josa(s.regions[room].name, '으로/로')} 물러납니다.` });
+          continue;
+        }
+      }
+    }
+    // 총격범: 대원이 보이지 않는 동안에는 건물 안의 다른 사람을 찾아다니며 쏜다 (진입이 늦을수록 피해가 는다)
+    if (s.variant === 'shooter' && h.weapon === 'gun' && see.nearest < 0 && (h.state === 'hold' || h.state === 'fight') && sim.t >= h.moveAt && sim.t - s.startedAt > 40) {
+      let target: Casualty | null = null, td = 1e9;
+      for (const c of s.casualties) { if (c.dead || c.where !== 'scene' || c.health < 72) continue; const d = dist(c.x, c.y, h.x, h.y); if (d < td) { td = d; target = c; } }      // 이미 쓰러진 사람은 다시 쏘지 않는다
+      if (target) {
+        if (td <= 6.5 && los(s, h.x, h.y, target.x, target.y)) {
+          h.facing = Math.atan2(target.y - h.y, target.x - h.x); h.moveAt = sim.t + s.rng.range(24, 38);
+          pushFx(sim, s, 'shot', h.x, h.y, target.x, target.y, undefined, '#ff8a5c', 0.25); pushFx(sim, s, 'hit', target.x, target.y);
+          target.health -= s.rng.range(20, 32); target.mob = 'immobile'; target.bleed = Math.max(target.bleed, 0.13); target.bleed0 = target.bleed; target.walking = false; target.path = null;
+          target.causeEvent = raiseProblem(sim, I, 'ESCALATION', `총격범의 추가 범행 (구조 대상 ${target.label})`, { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `총성! ${h.label}가 건물 안의 시민을 쐈습니다.` }, false);
+          continue;
+        }
+        const path = astar(s, h.x, h.y, Math.round(target.x), Math.round(target.y), 4.5, truthCost(s), true);
+        h.moveAt = sim.t + 5;
+        if (path && path.length >= 1 && path.length <= 40) { h.path = path; h.pathI = 0; continue; }
+      } else h.moveAt = sim.t + 20;
+    }
+    // 총격전 중 사격을 받았거나 다쳤으면 대원에게 보이지 않는 엄폐 위치로 자리를 옮긴다
+    if (h.state === 'fight' && h.weapon === 'gun' && h.hostageId < 0 && see.nearest >= 0 && sim.t >= h.moveAt && (sim.t - h.shotAt < 2.5 || h.health < 100)) {
+      const ta = s.agents.find((a) => a.rid === see.nearest)!;
+      const hx = Math.round(h.x), hy = Math.round(h.y);
+      let best = -1, bs = -1e9;
+      for (let y = Math.max(0, hy - 5); y <= Math.min(s.h - 1, hy + 5); y++) for (let x = Math.max(0, hx - 5); x <= Math.min(s.w - 1, hx + 5); x++) {
+        const i = y * s.w + x;
+        if (s.tiles[i] !== T.FLOOR || s.propAt[i] >= 0 || (x === hx && y === hy)) continue;
+        if (los(s, x, y, ta.x, ta.y)) continue;
+        let near = false; for (const a of s.agents) if (a.status === 'active' && dist(a.x, a.y, x, y) < 2.6) { near = true; break; }
+        if (near) continue;
+        let cover = 0; for (const d of [1, -1, s.w, -s.w]) { const t2 = s.tiles[i + d]; if (t2 === T.FURN || t2 === T.WALL) { cover = 1; break; } }
+        const sc = -dist(hx, hy, x, y) + cover * 0.6 + s.rng.next() * 0.5;
+        if (sc > bs) { bs = sc; best = i; }
+      }
+      const path = best >= 0 ? astar(s, h.x, h.y, best % s.w, (best / s.w) | 0, 0, truthCost(s)) : null;
+      if (path && path.length >= 1 && path.length <= 9) {
+        h.path = path; h.pathI = 0; h.moveAt = sim.t + s.rng.range(8, 13);
+        emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, text: `${h.label}가 엄폐물 뒤로 자리를 옮깁니다.` });
+        continue;
+      }
+      h.moveAt = sim.t + 4;
+    }
     if (h.state === 'hold') {
       const uncovered = s.exits.findIndex((_, k) => !exitCovered(sim, s, k));
       if (sim.t >= h.fleeAt && uncovered >= 0 && see.nearestD > 3) { startFlee(sim, s, h, uncovered); continue; }
@@ -378,7 +467,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
         if (h.weapon === 'gun') {
           const u = sim.units[ta.unitId];
           const moving = Math.abs(ta.x - ta.px) + Math.abs(ta.y - ta.py) > 0.05;
-          const p = 0.28 * (0.6 + h.skill * 0.6) * (ta.inCover ? 0.3 : moving ? 0.5 : 1) * clamp(1.25 - see.nearestD / 16, 0.4, 1.1);
+          const p = 0.32 * (0.6 + h.skill * 0.6) * (ta.inCover ? 0.3 : moving ? 0.6 : 1) * clamp(1.25 - see.nearestD / 16, 0.4, 1.1);
           h.cooldown = s.rng.range(1.5, 2.6);
           const hit = s.rng.chance(p);
           ta.underFireT = sim.t;
@@ -387,7 +476,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
             raiseProblem(sim, I, 'ESCALATION', '용의자 발포', { role: 'SYSTEM', actor: '현장', text: `${h.label}가 대원을 향해 발포했습니다!`, imp: 3 }, false);
           }
           if (hit) {
-            const dmg = s.rng.range(18, 32) * (1 - u.armor * 0.6);
+            const dmg = s.rng.range(25, 41) * (1 - u.armor * 0.6);
             r.health -= dmg; h.morale = Math.min(1, h.morale + 0.05);
             pushFx(sim, s, 'hit', ta.x, ta.y);
             ta.lastBlockEvent = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'hazard', text: `${r.name} 피격${ta.inCover ? ' (엄폐 중)' : ' (엄폐 없이 노출)'}.`, imp: 2, causes: [I.lastEvent] });

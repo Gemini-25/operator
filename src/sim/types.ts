@@ -109,6 +109,7 @@ export interface Prop {
   found?: boolean; dirRegion?: number;       // clue
   interviewed?: boolean; lastSeenRegion?: number; accurate?: boolean;  // witness
   removed?: boolean;
+  entered?: boolean;                         // door: 진입조가 이 방 문으로 이미 진입했다
 }
 export type Mobility = 'mobile' | 'immobile' | 'trapped';
 export type CasWhere = 'scene' | 'carried' | 'safe' | 'loaded' | 'hospital';
@@ -144,6 +145,10 @@ export interface Hostile {
   hostageId: number;        // 붙잡고 있는 인질 (casualty id, -1 없음)
   deadline: number;         // 인질 사건의 시한
   alertUntil: number;       // 경계 상태(전방위 인지) 유지 시각
+  moveAt: number;           // 다음에 자리를 옮길 수 있는 시각 (엄폐 이동)
+  shotAt: number;           // 마지막으로 사격을 받은 시각
+  retreated: boolean;       // 인질을 끌고 이미 한 번 물러났다
+  dragging: boolean;        // 지금 인질을 끌고 옮기는 중
   path: number[] | null; pathI: number; negot: number; seenOfficers: number;
   targetRid: number;
 }
@@ -228,6 +233,7 @@ export interface Scene {
   placeName?: string;                 // 현장을 만들면서 정해진 장소 이름 (사건 이름표에 쓴다)
   stairTo: Int16Array;                // 계단 칸 → 이어진 다른 층의 계단 칸 (-1 = 계단 아님). 층은 같은 격자 안에 나란히 놓인다
   entryExit: number;                  // 지휘관이 고른 진입 출입구 (s.exits 의 번호, -1 = 아직 정하지 않음)
+  entryExit2: number;                 // 두 문 동시 진입일 때 2조의 출입구 (-1 = 한 문으로만 진입)
   floorMat: number;                   // 실내 바닥 재질 (0 나무, 1 타일, 2 콘크리트)
   propAt: Int16Array;                 // 타일 → blocking prop id (-1)
   regions: Region[]; props: Prop[]; casualties: Casualty[]; hostiles: Hostile[];

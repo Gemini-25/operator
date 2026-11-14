@@ -324,7 +324,7 @@ function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {
     // 인질 사건: 용의자가 사무실에서 인질을 붙잡고 있다
     const i = freeTileIn(s, office, rng);
     const h = addHostile(s, i % SW, (i / SW) | 0, 'gun', ag(rng.range(0.5, 0.75)), sk(rng.range(0.4, 0.65)), false, Infinity);
-    h.facing = Math.PI / 2; h.deadline = sim.t + rng.range(270, 350) + tn.fleeShift * 2;
+    h.facing = Math.PI / 2; h.deadline = sim.t + rng.range(185, 290) + tn.fleeShift * 2;
     const nH = rng.int(1, 2);
     for (let k = 0; k < nH; k++) {
       const j = freeTileIn(s, office, rng, (q) => Math.hypot((q % SW) - h.x, ((q / SW) | 0) - h.y) > 1.6 || (q % SW === h.x && ((q / SW) | 0) === h.y));

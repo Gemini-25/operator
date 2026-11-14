@@ -5,12 +5,12 @@
 import type { Sim } from '../engine';
 import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
-import type { Fact, FieldAgent, Incident, Scene, Task, TaskKind, WorkItem } from '../types';
+import type { Fact, FieldAgent, Hostile, Incident, Prop, Scene, Task, TaskKind, WorkItem } from '../types';
 import { clamp, dist, josa, pct } from '../util';
 import { agentCost, casFact, detectRadius, hosFact, learn, learnQuiet, perceive, regionNameAt, resp, staminaF, visionOf, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { astar, doorAt, isIndoor, los, staticPass, tileOf, walkableCount } from './grid';
-import { applyWater, flashbang, hostageNear, hostileActive, isHeld, placeAtSafe, pushFx } from './hazards';
+import { applyWater, flashbang, hostageNear, hostileActive, isHeld, placeAtSafe, pushFx, panicShot } from './hazards';
 
 export function makeTask(kind: TaskKind, label: string, w: WorkItem | null = null): Task {
   return {
@@ -276,8 +276,14 @@ function shootAt(sim: Sim, s: Scene, a: FieldAgent, hid: number): void {
   const r = resp(sim, a), h = s.hostiles[hid];
   a.cooldown = s.rng.range(1.4, 2.2);
   const d = dist(a.x, a.y, h.x, h.y);
-  const p = 0.36 * (0.55 + 0.7 * r.skills.law) * (0.7 + 0.5 * r.composure) * clamp(1.3 - d / 14, 0.4, 1.1) * staminaF(r);
+  // 용의자가 가구나 벽 모서리를 끼고 있거나 움직이는 중이면 맞히기 어렵다
+  const sx = Math.round(h.x) + Math.sign(Math.round(a.x - h.x)), sy = Math.round(h.y) + Math.sign(Math.round(a.y - h.y));
+  const tileAt = (x: number, y: number): number => (x < 0 || y < 0 || x >= s.w || y >= s.h ? T.VOID : s.tiles[y * s.w + x]);
+  const covered = tileAt(sx, Math.round(h.y)) === T.FURN || tileAt(Math.round(h.x), sy) === T.FURN;
+  const moving = Math.abs(h.x - h.px) + Math.abs(h.y - h.py) > 0.05;
+  const p = 0.36 * (0.55 + 0.7 * r.skills.law) * (0.7 + 0.5 * r.composure) * clamp(1.3 - d / 14, 0.4, 1.1) * staminaF(r) * (covered ? 0.55 : 1) * (moving ? 0.6 : 1);
   const hit = s.rng.chance(p);
+  h.shotAt = sim.t;
   pushFx(sim, s, 'shot', a.x, a.y, h.x + (hit ? 0 : s.rng.range(-0.8, 0.8)), h.y + (hit ? 0 : s.rng.range(-0.8, 0.8)), undefined, '#ffe08a', 0.25);
   h.morale -= 0.015;
   if (sim.t >= h.stunUntil) { h.alertUntil = sim.t + 6; h.facing = Math.atan2(a.y - h.y, a.x - h.x); }
@@ -298,6 +304,21 @@ function shootAt(sim: Sim, s: Scene, a: FieldAgent, hid: number): void {
 }
 
 /** 동시 진입: 대기하던 출입문을 열고(잠겼으면 부수고), 섬광탄이 있으면 먼저 던져 넣는다. */
+/** 용의자가 있는 방으로 들어가는, 아직 닫혀 있는 가장 가까운 문 (용의자가 이미 보이거나 같은 방이면 없음) */
+function roomDoorFor(s: Scene, a: FieldAgent, h: Hostile): Prop | null {
+  const hr = s.region[tileOf(s, h.x, h.y)], ar = s.region[tileOf(s, a.x, a.y)];
+  if (hr < 0 || hr === ar || s.regions[hr].kind !== 'room' || los(s, a.x, a.y, h.x, h.y)) return null;
+  let best: Prop | null = null, bd = 14;
+  for (const p of s.props) {
+    if (p.kind !== 'door' || p.open || p.entered) continue;
+    const i = p.y * s.w + p.x;
+    if (s.region[i] !== hr && s.region[i - 1] !== hr && s.region[i + 1] !== hr && s.region[i - s.w] !== hr && s.region[i + s.w] !== hr) continue;
+    const d = dist(a.x, a.y, p.x, p.y);
+    if (d < bd) { bd = d; best = p; }
+  }
+  return best;
+}
+
 function breach(sim: Sim, s: Scene, a: FieldAgent): void {
   const I = sim.incidents[s.incidentId];
   s.breachDone = true;
@@ -320,6 +341,8 @@ function breach(sim: Sim, s: Scene, a: FieldAgent): void {
       bangs += flashbang(sim, s, inX, inY);
     }
     for (const b of team) { b.path = null; b.pathGoal = -1; }
+    // 문이 열리는 소리: 무력화되지 않은 용의자는 그쪽을 돌아본다
+    for (const h of s.hostiles) if ((h.state === 'hold' || h.state === 'fight') && sim.t >= h.stunUntil && dist(h.x, h.y, e.x, e.y) <= 13 && sim.t >= h.alertUntil) { h.facing = Math.atan2(e.y - h.y, e.x - h.x); h.alertUntil = sim.t + 5; }
   });
   emit(sim, { inc: I.id, role: 'RESPONDER', actor: resp(sim, a).name, rid: a.rid, kind: 'action', imp: 3, text: s.bangAt === sim.t ? `진입! 섬광탄을 던져 넣고 들어갑니다${bangs ? ` (용의자 ${bangs}명 무력화)` : ''}.` : '진입! 출입문을 열고 들어갑니다.' });
 }
@@ -614,7 +637,17 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       }
       // ① 진입조는 가까운 출입구 앞에 모였다가 정해진 시각에 함께 들어간다
       if (s.breachAt >= 0 && !s.breachDone && s.exits.length) {
-        if (t.tile < 0) { if (s.entryExit >= 0 && s.entryExit < s.exits.length) t.tile = s.entryExit; else { let bd = 1e9; s.exits.forEach((e, k) => { const d0 = dist(a.x, a.y, e.x, e.y); if (d0 < bd) { bd = d0; t.tile = k; } }); } }      // 지휘관이 정한 진입 지점
+        if (t.tile < 0) {
+          if (s.entryExit >= 0 && s.entryExit < s.exits.length) {
+            t.tile = s.entryExit;
+            if (s.entryExit2 >= 0 && s.entryExit2 < s.exits.length) {
+              // 두 문 동시 진입: 1조가 둘 채워지면 그다음 둘은 2조로 돈다
+              let n1 = 0, n2 = 0;
+              for (const b of s.agents) if (b !== a && b.status === 'active' && b.task && b.task.kind === 'engage' && b.task.tile >= 0) { if (b.task.tile === s.entryExit) n1++; else if (b.task.tile === s.entryExit2) n2++; }
+              if (n1 >= 2 && n2 < 2) t.tile = s.entryExit2;
+            }
+          } else { let bd = 1e9; s.exits.forEach((e, k) => { const d0 = dist(a.x, a.y, e.x, e.y); if (d0 < bd) { bd = d0; t.tile = k; } }); }
+        }
         const e = s.exits[t.tile];
         const m0 = moveTo(sim, s, a, e.x, e.y, 1.4);
         a.label = '진입 대기';
@@ -622,10 +655,35 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         if ((ready && sim.t >= s.breachAt) || sim.t >= s.breachAt + 8) breach(sim, s, a);
         return;
       }
+      // ①-2 방 진입: 용의자가 닫힌 문 뒤의 방에 있으면, 문 앞에 모였다가 (섬광탄이 있으면 던져 넣고) 함께 들어간다
+      const rd = sim.t < h.stunUntil ? null : roomDoorFor(s, a, h);
+      if (rd) {
+        a.label = '방 진입 대기';
+        const m0 = moveTo(sim, s, a, rd.x, rd.y, 1.5);
+        if (m0 === 'arrived') {
+          t.ptI++;
+          const mates = s.agents.filter((b) => b !== a && b.status === 'active' && b.task && b.task.kind === 'engage' && dist(b.x, b.y, rd.x, rd.y) <= 2.6);
+          if (mates.length >= 1 || t.ptI > 20) {
+            rd.entered = true; rd.open = true; s.staticVersion++;
+            if (rd.blocking) { s.propAt[rd.y * s.w + rd.x] = -1; rd.blocking = false; rd.locked = false; }
+            const thrower = [a, ...mates].find((b) => sim.units[b.unitId].flashbangs > 0);
+            let n = -1;
+            if (thrower && sim.t - s.bangAt > 2 && dist(h.x, h.y, rd.x, rd.y) <= 8) {
+              sim.units[thrower.unitId].flashbangs--; s.bangAt = sim.t;
+              n = flashbang(sim, s, rd.x + (h.x - rd.x) * 0.6, rd.y + (h.y - rd.y) * 0.6);
+            } else if (sim.t >= h.alertUntil) { h.facing = Math.atan2(rd.y - h.y, rd.x - h.x); h.alertUntil = sim.t + 5; }
+            panicShot(sim, s, I, rd.x, rd.y);
+            const room = s.region[tileOf(s, h.x, h.y)] >= 0 ? s.regions[s.region[tileOf(s, h.x, h.y)]].name : '방';
+            emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 3, text: n >= 0 ? `${room} 진입! 섬광탄을 던져 넣고 들어갑니다${n ? ` (용의자 ${n}명 무력화)` : ''}.` : `${room} 진입!` });
+            for (const b of [a, ...mates]) { b.path = null; b.pathGoal = -1; if (b.task) b.task.ptI = 0; }
+          }
+        } else if (m0 === 'nopath') { rd.entered = true; }
+        return;
+      }
       const stunned = sim.t < h.stunUntil;
       const d = dist(a.x, a.y, h.x, h.y);
       // ② 섬광탄: 용의자 가까이 다가갔을 때 던져 넣는다
-      if (!stunned && u.flashbangs > 0 && d <= 5 && sim.t - s.bangAt > 7) {
+      if (!stunned && u.flashbangs > 0 && d <= 5 && sim.t - s.bangAt > 7 && los(s, a.x, a.y, h.x, h.y)) {
         u.flashbangs--; s.bangAt = sim.t;
         const n = flashbang(sim, s, a.x + (h.x - a.x) * 0.7, a.y + (h.y - a.y) * 0.7);
         emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 3, text: `섬광탄 투척! ${n ? `용의자 ${n}명 무력화.` : '효과 없음.'}` });
@@ -648,14 +706,38 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         }
         return;
       }
+      // ④ 인질이 곁에 있고 용의자가 쏘지 않는 동안에는 사격하지 않는다
+      const bangComing = s.agents.some((b) => b !== a && b.status === 'active' && b.task && b.task.kind === 'engage' && b.task.hostile === h.id && sim.units[b.unitId].flashbangs > 0);
+      if (hostageNear(s, h) && (h.state !== 'fight' || bangComing || u.flashbangs > 0)) {
+        a.fx = h.x - a.x; a.fy = h.y - a.y;
+        if (u.flashbangs > 0) {
+          // 벽 너머로는 던질 수 없다: 용의자가 보이는 자리까지 다가간다
+          a.label = '섬광탄 투척 위치로 접근';
+          if (d > 4.6 || !los(s, a.x, a.y, h.x, h.y)) { a.pathGoal = sim.t >= t.repathAt - 4.4 ? -1 : a.pathGoal; if (moveTo(sim, s, a, h.x, h.y, 4.2, true) === 'nopath') finishTask(sim, s, a, false, 'nopath'); }
+          return;
+        }
+        if (bangComing) { a.label = '사격 보류 — 인질 근접'; if (moveTo(sim, s, a, h.x, h.y, 7.5, true) === 'nopath') finishTask(sim, s, a, false, 'nopath'); return; }
+        // 섬광탄이 없다: 쏘지 않고 거리를 좁힌다. 용의자가 눈치채지 못하면 곁에서 덮치고(기습), 눈치채면 교전이 된다
+        a.label = '사격 보류 — 접근해 제압';
+        a.pathGoal = sim.t >= t.repathAt - 4.4 ? -1 : a.pathGoal;
+        if (moveTo(sim, s, a, h.x, h.y, 1.3) === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+        if (dist(a.x, a.y, h.x, h.y) <= 1.7) {
+          t.progress += dt; a.ring = t.progress / 2.2;
+          if (t.progress >= 2.2) {
+            h.state = 'arrested'; h.path = null;
+            learnQuiet(sim, a, hosFact(sim, s, h, r.name));
+            emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${h.label}를 곁에서 덮쳐 제압·검거!` });
+            r.xpGained += 0.006;
+            finishTask(sim, s, a, true);
+          }
+        } else t.progress = 0;
+        return;
+      }
       t.progress = 0;
       const m = moveTo(sim, s, a, h.x, h.y, 7.5, true);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') { a.label = '진입'; return; }
       a.fx = h.x - a.x; a.fy = h.y - a.y;
-      // ④ 인질이 곁에 있고 용의자가 쏘지 않는 동안에는 사격하지 않는다
-      const bangComing = s.agents.some((b) => b !== a && b.status === 'active' && b.task && b.task.kind === 'engage' && b.task.hostile === h.id && sim.units[b.unitId].flashbangs > 0);
-      if (hostageNear(s, h) && (h.state !== 'fight' || bangComing || u.flashbangs > 0)) { a.label = u.flashbangs > 0 ? '섬광탄 투척 위치로 접근' : '사격 보류 — 인질 근접'; if (u.flashbangs > 0 && d > 4.6) { a.pathGoal = sim.t >= t.repathAt - 4.4 ? -1 : a.pathGoal; moveTo(sim, s, a, h.x, h.y, 4.2); } return; }
       a.label = '교전';
       if (a.cooldown <= 0 && los(s, a.x, a.y, h.x, h.y)) shootAt(sim, s, a, h.id);
       else if (!los(s, a.x, a.y, h.x, h.y)) a.pathGoal = -1;

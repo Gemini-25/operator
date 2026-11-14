@@ -18,7 +18,7 @@ export function baseScene(sim: Sim, I: Incident, rng: Rng): Scene {
     tiles: new Uint8Array(n).fill(T.GROUND), region: new Int16Array(n).fill(-1),
     fire: new Float32Array(n), heat: new Float32Array(n), fuel: new Float32Array(n), smoke: new Float32Array(n),
     burned: new Uint8Array(n), wet: new Float32Array(n), shadow: new Uint8Array(n), propAt: new Int16Array(n).fill(-1),
-    decor: new Uint8Array(n), floorMat: 0, damage: new Uint8Array(n), entryExit: -1, stairTo: new Int16Array(n).fill(-1),
+    decor: new Uint8Array(n), floorMat: 0, damage: new Uint8Array(n), entryExit: -1, entryExit2: -1, stairTo: new Int16Array(n).fill(-1),
     regions: [], props: [], casualties: [], hostiles: [], agents: [],
     staging: { x: 3, y: 17 }, safe: { x: 4, y: 15 }, vantage: { x: 4, y: 12 }, exits: [], spots: [],
     controlPts: [], controlDone: [], laneRows: [], cars: [], nextCarAt: 0, trafficFlow: 0,
@@ -74,7 +74,7 @@ export function addHostile(s: Scene, x: number, y: number, weapon: Hostile['weap
     id: s.hostiles.length, label: '용의자 ' + (s.hostiles.length + 1), x, y, px: x, py: y,
     health: 100, morale: 0.55 + aggression * 0.45, aggression, skill, weapon, state: 'hold', hidden, cooldown: 1, fleeAt,
     path: null, pathI: 0, negot: 0, seenOfficers: 0, targetRid: -1,
-    facing: Math.PI / 2, lookAt: 0, stunUntil: -1, hostageId: -1, deadline: Infinity, alertUntil: -1,
+    facing: Math.PI / 2, lookAt: 0, stunUntil: -1, hostageId: -1, deadline: Infinity, alertUntil: -1, moveAt: 0, shotAt: -99, retreated: false, dragging: false,
   };
   s.hostiles.push(h);
   return h;

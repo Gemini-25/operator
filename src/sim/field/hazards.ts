@@ -4,7 +4,7 @@
 import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import { T } from '../types';
-import type { Casualty, Hostile, Incident, Scene } from '../types';
+import type { Casualty, Hostile, Incident, Prop, Scene } from '../types';
 import type { Rng } from '../rng';
 import { clamp, dist, josa } from '../util';
 import { addProp } from './kit';
@@ -796,6 +796,67 @@ function creekDrift(sim: Sim, s: Scene, I: Incident, c: Casualty, st: WanderStat
   c.y = ny;
 }
 
+// ───────────────────────── 잔해에 눌려 있던 사람 ─────────────────────────
+// 무너진 잔해에 오래 눌려 있던 몸은 풀려나는 순간 오히려 나빠질 수 있다(압궤 증후군). 오래 걸린 구출일수록 위험하다.
+// 대원이 바로 곁에서 구출하므로 보고 안다. 흐름 crush:<사건>:<사람>.
+
+/** 붕괴 현장의 압궤 증후군: 눌려 있던 시간(사건 발생부터 초)이 이보다 길면, 풀려날 때 이 확률로 체력을 잃고 악화가 빨라진다(난이도의 악화 배율을 곱한다) */
+export const CRUSH = { after: 70, p: 0.4, hit: [8, 16], bleed: [0.26, 0.4] };
+interface CrushState { rng: Rng; since: number; done: boolean }
+const crushStates = new WeakMap<Casualty, CrushState>();
+
+/** 건물 붕괴 (매 틱, 승강기 갇힘을 뺀 붕괴 현장) */
+export function tickCrush(sim: Sim, s: Scene, I: Incident): void {
+  for (let ci = 0; ci < s.casualties.length; ci++) { const c = s.casualties[ci];
+    if (c.dead || c.inWater) continue;
+    let st = crushStates.get(c);
+    if (!st) { if (c.mob !== 'trapped') continue; st = { rng: sim.rng.fork(`crush:${I.id}:${c.id}`), since: sim.t, done: false }; crushStates.set(c, st); }
+    if (st.done || c.mob === 'trapped') continue;
+    st.done = true;      // 방금 풀려났다
+    if (sim.t - st.since < CRUSH.after || !st.rng.chance(CRUSH.p)) continue;
+    c.health = Math.max(1, c.health - st.rng.range(CRUSH.hit[0], CRUSH.hit[1]));
+    c.bleed0 = Math.max(c.bleed0, st.rng.range(CRUSH.bleed[0], CRUSH.bleed[1]) * sim.tune.bleedMul);
+    c.bleed = c.treated ? c.bleed0 * (1 - 0.9 * c.treatQ) : c.bleed0;
+    c.causeEvent = raiseProblem(sim, I, 'ESCALATION', `구출된 사람의 압궤 증후군 (구조 대상 ${c.label})`, { role: 'SYSTEM', actor: '현장', imp: 3, text: `구출된 ${c.label}의 상태가 급격히 나빠집니다 — 잔해에 ${Math.round(sim.t - st.since)}초 넘게 눌려 있던 몸이 풀리며 압궤 증후군이 왔습니다. 서둘러 처치·이송해야 합니다.` }, false);
+  }
+}
+
+// ───────────────────────── 승강기에 갇힌 사람 ─────────────────────────
+// 오래 갇혀 있으면 숨이 막히고 겁에 질린다. 지병(심장)이 있는 사람은 문이 열리기 전에 쓰러지기도 한다.
+// 문이 잠겨 있으니 아무도 보지 못한다(진실 기록) — 문을 열고 들어간 대원이 보고 안다. 흐름 lift:<사건>:<사람>.
+
+/** 승강기에 갇힌 사람이 쓰러질 확률, 시각(사건 발생 뒤 초), 그때 남는 체력의 상한, 악화 속도(난이도의 악화 배율을 곱한다) */
+export const LIFT = { attack: 0.3, at: [25, 120], hp: [42, 58], bleed: [0.32, 0.46] };
+interface LiftState { door: Prop | null; due: { id: number; t: number; hp: number; bleed: number }[] }
+const liftStates = new WeakMap<Scene, LiftState>();
+
+/** 승강기 갇힘 (매 틱, 승강기 현장만) */
+export function tickLift(sim: Sim, s: Scene, I: Incident): void {
+  let st = liftStates.get(s);
+  if (!st) {
+    const car = s.regions.find((r) => r.name === '승강기');
+    st = { door: car ? s.props.find((p) => p.kind === 'door' && s.region[tidx(s, p.x, p.y)] === car.id) ?? null : null, due: [] };
+    for (const c of s.casualties) {
+      if (c.mob !== 'mobile') continue;
+      const r = sim.rng.fork(`lift:${I.id}:${c.id}`);
+      if (r.chance(LIFT.attack)) st.due.push({ id: c.id, t: sim.t + r.range(LIFT.at[0], LIFT.at[1]), hp: r.range(LIFT.hp[0], LIFT.hp[1]), bleed: r.range(LIFT.bleed[0], LIFT.bleed[1]) });
+    }
+    liftStates.set(s, st);
+  }
+  if (!st.due.length || !st.door || !st.door.locked) return;      // 문이 열렸으면 다들 걸어 나온다
+  for (let k = st.due.length - 1; k >= 0; k--) {
+    const e = st.due[k];
+    if (sim.t < e.t) continue;
+    st.due.splice(k, 1);
+    const c = s.casualties[e.id];
+    if (c.dead || c.where !== 'scene' || c.mob !== 'mobile') continue;
+    c.mob = 'immobile'; c.walking = false; c.path = null;
+    c.health = Math.min(c.health, e.hp);
+    c.bleed = Math.max(c.bleed, e.bleed * sim.tune.bleedMul); c.bleed0 = c.bleed;
+    c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '승강기에 갇힌 사람이 쓰러짐', { role: 'SYSTEM', actor: '현장', imp: 3, truth: true, text: `(문 안쪽) 승강기에 오래 갇혀 있던 ${josa(c.label, '이/가')} 숨이 가빠지더니 쓰러졌습니다 — 지병(심장)이 도졌습니다.` }, false);
+  }
+}
+
 // ───────────────────────── 응급 환자의 급변 ─────────────────────────
 // 신고만으로는 알 수 없는 환자의 속사정. 진실만 바꾼다 — 대원은 환자 곁에서 보고(perceive) 안다.
 //   실신: 원인이 부정맥이면 어느 순간 심정지로 넘어간다 → 받은 처치가 더는 듣지 않는다. 가슴 압박(처치)을 다시 해야 한다
@@ -838,7 +899,7 @@ export function tickMedical(sim: Sim, s: Scene, I: Incident): void {
       if (st.kind === 'arrest') {
         c.health = Math.min(c.health, st.rng.range(MEDICAL.arrestHp[0], MEDICAL.arrestHp[1]));
         c.bleed0 = st.rng.range(MEDICAL.arrestBleed[0], MEDICAL.arrestBleed[1]) * sim.tune.bleedMul; c.bleed = c.bleed0;
-        c.treated = false; c.treatQ = 0; c.treatProg = 0;      // 실신에 맞춘 처치는 심정지에 듣지 않는다
+        c.treated = false; c.treatQ = 0; c.treatProg = 0; c.bystander = false;      // 실신에 맞춘 처치도, 곁을 지키던 신고자의 돌봄도 심정지에는 듣지 않는다 (가슴 압박이 필요하다)
         c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '실신 환자가 심정지로 넘어감', { role: 'SYSTEM', actor: '현장', imp: 3, truth: !seen, text: `${seen ? '' : '(현장 도착 전) '}환자 ${c.label}의 상태가 급변했습니다 — 심정지. 실신의 원인은 부정맥이었습니다.` }, false);
       } else {
         c.bleed0 *= st.rng.range(MEDICAL.internalMul[0], MEDICAL.internalMul[1]);

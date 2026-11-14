@@ -18,7 +18,7 @@ import { outstanding } from './commander';
 import { buildScene } from './builders';
 import { act, finishTask } from './executor';
 import { tileOf } from './grid';
-import { tickCasualties, tickCollapse, tickFire, tickGas, tickHostiles, tickLane, tickLeaks, tickMedical, tickWander, tickWater } from './hazards';
+import { tickCasualties, tickCollapse, tickCrush, tickFire, tickGas, tickHostiles, tickLane, tickLeaks, tickLift, tickMedical, tickWander, tickWater } from './hazards';
 
 export function createScene(sim: Sim, I: Incident): Scene {
   const s = buildScene(sim, I, sim.rng.fork('scene:' + I.id));
@@ -173,6 +173,7 @@ export function tickScene(sim: Sim, s: Scene): void {
     if (s.kind === 'water' || (also && also.indexOf('water') >= 0)) tickWater(sim, s, I);
     if (s.kind === 'search') tickWander(sim, s, I);
     if (s.kind === 'medical') tickMedical(sim, s, I);
+    if (s.kind === 'collapse') { if (s.variant === 'elevator') tickLift(sim, s, I); else tickCrush(sim, s, I); }
     if ((sim.tick + s.id) % 5 === 0) { tickFire(sim, s, I); if (s.kind === 'hazmat' || (also && also.indexOf('gas') >= 0)) tickGas(sim, s, I); }
     for (let ri = 0; ri < SCENE_RULES.length; ri++) { const rule = SCENE_RULES[ri]; rule(sim, s, I); }      // 묶음별 세계 규칙 (field/rules/*)
   }

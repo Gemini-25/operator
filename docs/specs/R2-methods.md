@@ -581,7 +581,7 @@ if (onWater(s, a) || a.afloat) {
 2. **평소와 다른 방법으로 끝낸 것** → `I.methods` 의 `ok: true` 이고 그 방법의 `plain: false` 인 줄(같은 대상에 앞선 실패가 없는 것). 기록 전용 방법은 4.6 표의 `plain` 값을 따른다 — `hoist`·`airlift`·`bang`·`taser`·`shield` 는 싣고, `chase`·`breach`·`tackle`·`cover` 는 싣지 않는다(거의 모든 무장 사건의 평소 분기라 "다르게 한 것"을 밀어낸다). 사망·미발견 문장 다음, 맺음말 앞에 **최대 2문장**, `A.length < 12` 일 때만:
    - 수난 구조: "구조 대상 A는 이서준 대원이 헤엄쳐 들어가 구했습니다 (구명줄이 없었음)." / 호이스트: "구조 대상 B는 헬기1이 호이스트로 끌어올려 구했습니다."
    - 그 밖: `${이름} 대원이 ${noun} ${WORK_DONE[work]}` — `WORK_DONE = { force: '문을 열었습니다', clear: '잔해를 치웠습니다', extricate: '구출했습니다', suppress: '불길을 잡았습니다', engage: '제압했습니다', mitigate: '누출을 막았습니다', search: '찾아냈습니다', treat: '처치했습니다', perimeter: '주변에 대피를 알렸습니다', load: '환자를 이송했습니다', hoist: '끌어올려 구했습니다' }`.
-   - 까닭 말: `WHY_TEXT = { noGear: \`${kitName(missing)}이/가 없었음\`, weak: '줄을 잡을 힘이 없었음', fast: '물살이 빨랐음', tooFar: '던져서 닿지 않는 거리였음', danger: '추가 위험이 있었음', quiet: '용의자에게 들키지 않으려', team: '동료와 짝을 이뤄' }`, `usual`·`near` 는 붙이지 않는다. R3 가 합쳐지면 여섯을 더한다(R3 §7.3 `WHY_DOC` 의 말): `hurt: '다쳐서'`, `alone: '혼자라'`, `lowAir: '공기가 부족해'`, `lowAmmo: '탄약이 떨어져'`, `shaken: '동요해'`, `tired: '지쳐서'`. `missing` 이 없으면(대체 등) `noGear` 말도 붙이지 않는다.
+   - 까닭 말: `WHY_TEXT = { noGear: \`${kitName(missing)}이/가 없었음\`, weak: '줄을 잡을 힘이 없었음', fast: '물살이 빨랐음', tooFar: '던져서 닿지 않는 거리였음', danger: '추가 위험이 있었음', quiet: '용의자에게 들키지 않으려', team: '동료와 짝을 이뤄' }`, `usual`·`near` 는 붙이지 않는다. R3 가 합쳐지면 여섯을 더한다(R3 §7.3 `WHY_DOC` 의 말): `hurt: '다쳐서'`, `alone: '혼자였음'`, `lowAir: '공기가 부족해'`, `lowAmmo: '탄약이 떨어져'`, `shaken: '동요해'`, `tired: '지쳐서'`. `missing` 이 없으면(대체 등) `noGear` 말도 붙이지 않는다.
 3. `buildReport`: `methods`(성공한 방법별 횟수 — 평소 방법 포함, `sweep --methods` 가 쓴다)를 채우고, 요약에 한 줄 — "대응 방법: 헤엄 2 · 구명환 3 · 호이스트 1 · 소화기 1 …"(`short` 이름. **`plain: false` 인 방법만** 센다 — 평소 방법 수십 건이 섞이면 줄이 읽히지 않는다. 하나도 없으면 줄을 넣지 않는다).
 
 ---
@@ -614,7 +614,7 @@ if (onWater(s, a) || a.afloat) {
 - 멀리 던지는 즉석 부력물(improvise 이고 reach > 2.4): ×0.6 — 줄이 없는 대원이 헤엄을 칠 수 있으면 헤엄이, 못 치면 즉석 부력물이 남는다(사용자 예시의 갈래).
 - 안벽(`s.quay`): swim ×0.8(높은 곳에서 뛰어내려 들어가고 오를 곳이 마땅치 않다).
 - 밤·비·안개(`sim.weather !== 'clear'`): rope·ring·improvise ×0.9.
-- 상공에 호이스트 헬기가 있다(R1 — 이 사건 상공의 `hoist` 부대, 조직이 아는 것): swim ×0.7(헬기가 곧 건질 수 있으니 위험을 덜 진다).
+- 상공에 호이스트 헬기가 있다(R1 — 이 사건 상공의 `hoist` 부대, 조직이 아는 것): swim ×0.7(헬기가 곧 건질 수 있으니 위험을 덜 진다). R3 를 합칠 때 이 줄을 지운다 — R3 S15(헤엄 ×0.5)가 대신한다(12절).
 
 **동료와의 조건**(`can` — 배율이 아니라 빼기): 같은 대상에게 헤엄치는 동료가 있으면 던지는 방법(rope·ring·improvise)은 고르지 않는다(동료에게 걸린다). 이미 던지는 중이던 대원은 3초 뒤 조건 상실(`team`)로 바꾼다 — 줄이 있으면 `tend`, 없으면 물가에서 기다리는 `hand`·`pole` 만 남는다.
 
@@ -1111,7 +1111,7 @@ npm run check                                           # 단계를 끝낼 때 �
 
 **G4(현장 가독성)** — G4 는 "구조 줄 블록과 `sprites.ts` 는 R2 몫"이라 적고 건드리지 않는다. R2 의 그림은 `methodsLayer.ts` 에 모으고 `renderScene` 은 9절의 세 자리만 고친다. G4 가 먼저 합쳐졌으면 그 표지 규칙(크기·색)을 따른다. G4 도 R2 의 비살상탄이 `stunUntil` 로 무력화한다는 것을 전제로 적었다(맞다).
 
-**R3(분야별 대응 교본)** — R3 는 `METHOD` 표의 행을 늘리고(R3 §3.7), 교본 배율을 점수에 곱한다: `chooseMethod` 의 마지막 인자 `dc: DocCtx | null`(3.2) — 실행부는 `docCtx(…, 'self')`, `methodFit` 은 안에서 `docCtx(…, 'report', w)` 를 만든다(인자는 그대로라 `fitFor`·B3 `anyCapable` 은 고치지 않는다). `chooseMethod` 는 `{ ...dc, m: { reach, flow, weak } }` 사본으로 `docMethodMul` 을 부르고(받은 `dc` 는 고치지 않는다), 공기·탄약·짝·부상 같은 '상태'는 `MethodCtx.dc` 로 읽는다. 동요는 `caution` 에 +0.2(R3 G02b, 상한 1.1). 까닭 여섯(`hurt`·`alone`·`lowAir`·`lowAmmo`·`shaken`·`tired`)은 3.4 의 순서·3.8 의 `WHY_TEXT` 에 더한다. 이송·교통 통제·해체의 방법도 R3 몫이다(실행은 R3 의 `doctrineRun.ts` — 2절). 상공 호이스트가 있을 때의 헤엄 감점은 R3 S15 와 곱해진다(12절).
+**R3(분야별 대응 교본)** — R3 는 `METHOD` 표의 행을 늘리고(R3 §3.7), 교본 배율을 점수에 곱한다: `chooseMethod` 의 마지막 인자 `dc: DocCtx | null`(3.2) — 실행부는 `docCtx(…, 'self')`, `methodFit` 은 안에서 `docCtx(…, 'report', w)` 를 만든다(인자는 그대로라 `fitFor`·B3 `anyCapable` 은 고치지 않는다). `chooseMethod` 는 `{ ...dc, m: { reach, flow, weak } }` 사본으로 `docMethodMul` 을 부르고(받은 `dc` 는 고치지 않는다), 공기·탄약·짝·부상 같은 '상태'는 `MethodCtx.dc` 로 읽는다. 동요는 `caution` 에 +0.2(R3 G02b, 상한 1.1). 까닭 여섯(`hurt`·`alone`·`lowAir`·`lowAmmo`·`shaken`·`tired`)은 3.4 의 순서·3.8 의 `WHY_TEXT` 에 더한다. 이송·교통 통제·해체의 방법도 R3 몫이다(실행은 R3 의 `doctrineRun.ts` — 2절). 상공 호이스트가 있을 때의 헤엄 감점은 R3 를 합칠 때 4.1 의 ×0.7 을 지우고 R3 S15(×0.5) 하나로 한다(12절, R3 §3.7 — 정본 R3 S15).
 
 ## 11. `CLAUDE.md` 에 들어갈 줄 (합친 뒤에 고친다)
 

@@ -104,7 +104,7 @@ export interface FxInfo {
 export interface Fx { c?: FxInfo }
 ```
 
-`FxInfo['src']` 합집합은 X6 가 끝에 새 줄로 `| 'drum' | 'cng' | 'jet' | 'dust'` 를 더한다(X6 §7.4). 그림은 `src` 를 폭발물 그을음(3.4절) 하나에만 쓰고 크기는 `r` 로 정하므로, 모르는 `src` 가 와도 그대로 그린다.
+`FxInfo['src']` 합집합은 X6 가 끝에 새 줄로 `| 'drum' | 'cng' | 'jet' | 'dust'` 를 더한다(X6 §7.4). 구현된 그림은 `src` 를 읽지 않고 크기를 `r` 로 정하므로(구현 메모), 모르는 `src` 가 와도 그대로 그린다. `src` 를 처음 읽는 곳은 G4 가 그을음 줄에 다는 `c?.src !== 'bomb'` 조건이다(3.4절·G4 §7.3).
 
 종류별로 쓰는 칸:
 
@@ -569,7 +569,7 @@ when = max(0, e.born + e.delay + stage − clock + L) / rate        // 초 뒤 �
   - **음소거로 일찍 돌아가기 전에** 고친다(그래야 `perSec` 가 직전 값으로 남지 않고 1초 뒤 0 이 된다).
   - 기준: 15배속(**자동 감속 끔**) 교전에서 `maxPerSec ≤ 14`, `voices ≤ 18`.
 - 이벤트(기록) 소리: 교전 소리는 **효과 기록에서만** 낸다. `action`(교전 발생·진입·섬광탄 투척)과 대원의 `resolve`(검거)에는 이벤트 소리를 더하지 않는다(같은 틱의 효과 기록이 소리를 낸다 — 두 번 울리지 않게). 문제 경보음(`problem`, imp ≥ 2)은 지금처럼 둔다.
-- `audio.ts` 는 G4 가 "맡는 파일"로 적었고, G4 는 효과 반복문에 `'collapse'`(무너짐) 소리 한 분기를 더한다(G4 §4.3). X6 도 `'horn'`(철수 신호) 한 분기를 더한다(X6 §7.4). G5 가 그 반복문을 `fresh` 처리로 바꾸므로, `'collapse'`·`'horn'` 을 비롯해 G5 가 음색을 정하지 않은 종류(`spray`, R1 `'drop'`, 앞으로 생길 종류)는 `fresh` 를 훑는 자리에서 **지금(또는 G4·X6)의 소리 분기로 그대로 넘긴다**(관찰 중인 현장만, 지금처럼 `ok()` 간격). 먼저 합친 쪽이 이 자리를 만들고 나중 쪽이 분기 하나를 더한다.
+- `audio.ts` 는 G4 가 "맡는 파일"로 적었고, G4 는 효과 반복문에 `'collapse'`(무너짐) 소리 한 분기를 더한다(G4 §4.3). X6 도 `'horn'`(철수 신호) 한 분기를 더한다(X6 §7.4). G5 가 그 반복문을 `fresh` 처리로 바꾸므로, `'collapse'`·`'horn'` 을 비롯해 G5 가 음색을 정하지 않은 종류(`spray`, R1 `'drop'`, 앞으로 생길 종류)는 `fresh` 를 훑는 자리에서 **지금(또는 G4·X6)의 소리 분기로 그대로 넘긴다**(관찰 중인 현장만, 지금처럼 `ok()` 간격). 먼저 합친 쪽이 이 자리를 만들고 나중 쪽이 분기 하나를 더한다(G5 가 먼저 합쳐져 이 자리는 `audio.ts` 의 `legacy(f, fast)` 다 — 구현 메모).
 
 ### 4.5 음소거 · 음량 · 일시정지 · 되감기
 
@@ -620,10 +620,10 @@ when = max(0, e.born + e.delay + stage − clock + L) / rate        // 초 뒤 �
 
 ### 5.2 현장 자동 확대 (`camera.frameAction`)
 
-- 대상 kind 에 `breach`(2.5)·`melee`(1.5)·`taser`(2.0)·`cuff`(1.0)를 더한다. `c.ox, c.oy` 가 있으면 무게 1.5 로 더한다(섬광탄의 던진 사람, 진입조 쪽). `c.ix, c.iy` 가 있으면 끝점(`x2, y2`) 대신 그것.
+- 대상 kind 에 `breach`(2.5)·`melee`(1.5)·`taser`(2.0)·`cuff`(1.0)를 더한다(구현: `camera.ts` 맨 위의 `ACTION_W` 레코드 — 구현 메모). `c.ox, c.oy` 가 있으면 무게 1.5 로 더한다(섬광탄의 던진 사람, 진입조 쪽). `c.ix, c.iy` 가 있으면 끝점(`x2, y2`) 대신 그것.
 - 진입 예고: `s.entryOrdered && !s.breachDone && s.breachAt - sim.t ≤ 4` 면 진입 출입구(`entryExit`, `entryExit2`)에 무게 2.5.
 - `nudge()`: `sceneRetargetAt = clock` — 결정적 기록을 찾았을 때 0.9초를 기다리지 않고 바로 다시 잡는다(`sceneManual` 이면 하지 않는다). `stepGuard`(5.1절)가 부르고, `stepGuard` 가 일찍 돌아가는 경우(자동 감속 꺼짐, 또는 설정 배속이 1)에는 Viewport 가 `book.fresh` 에서 관찰 현장의 `DECISIVE` 종류를 보면 부른다.
-- G4 의 `'collapse'`(2.5), X6 의 `'horn'`(2)은 이 목록에 한 단어씩 더한다.
+- G4 의 `'collapse'`(2.5), X6 의 `'horn'`(2)은 `ACTION_W` 에 한 줄씩 더한다.
 
 ### 5.3 주요 장면 이어 보기 (`App.reelMoments`)
 
@@ -857,16 +857,16 @@ NODE_PATH=$(npm root -g) node scripts/combatshots.cjs 5225 <시드> <force> <dif
 
 ## 11. 다른 설계서와 맞출 것
 
-(G5 는 합쳐졌다 — 아래 "뒤 묶음이 할 일"은 정합성 점검에서 각 설계서에 옮겨 적었다: G4 §4.3·§8·§14·§16, X6 §7.4·§7.5·§11.2, R2 §4.6·§10, H1 연관 표.) 조사를 시작할 때는 없었고 이 문서를 쓰는 동안 `R1-crews.md`·`R2-methods.md`·`H1-injuries.md`·`G4-scene-legibility.md`·`U2-call-panel.md` 초안이 들어왔다(커밋 `404e4c6`). 검토 때(`d876c96`) `X6-catastrophe.md` 도 들어와 있어 함께 읽고 맞췄다. H1·X6 는 이미 G5 의 이름(`noteHit`·`recMelee`·`noteBoom`·`DECISIVE`·`FxInfo['src']`)을 따라 적었다. 로드맵의 나눔대로 G5 가 R1·H1·X6·R2 보다 먼저 구현되면, 뒤 묶음은 아래 "뒤 묶음이 할 일"을 따른다 — 그 묶음의 설계서에는 아직 적혀 있지 않으므로, **합치는 사람이 그 설계서에 한 줄씩 옮겨 적는다.** [확인 필요: 합치는 사람]
+조사를 시작할 때는 없었고 이 문서를 쓰는 동안 `R1-crews.md`·`R2-methods.md`·`H1-injuries.md`·`G4-scene-legibility.md`·`U2-call-panel.md` 초안이 들어왔다(커밋 `404e4c6`). 검토 때(`d876c96`) `X6-catastrophe.md` 도 들어와 있어 함께 읽고 맞췄다. H1·X6 는 이미 G5 의 이름(`noteHit`·`recMelee`·`noteBoom`·`DECISIVE`·`FxInfo['src']`)을 따라 적었다. **G5 는 R1·H1·X6·R2·G4 보다 먼저 구현되어 합쳐졌다(`9ab7fdb`)** — 뒤 묶음은 아래 "뒤 묶음이 할 일"을 따른다. 이 열은 정합성 점검에서 각 설계서에 옮겨 적었다: G4 §4.3·§8·§14·§16, X6 §7.4·§7.5·§11.2, R2 §4.6·§10, H1 연관 표. R1 줄(테이저 기록·`weaponOf`·`armorOf`·`breachHowFor`·물 투하 소리)은 R1 설계서에 옮기지 않았으므로 R1 을 구현하는 사람이 이 표를 직접 본다. 이름은 문서 끝 "구현 메모"가 정본이다(카메라 무게는 `camera.ts` 의 `ACTION_W`, 소리는 `audio.ts` 의 `legacy(f, fast)`).
 
 | 문서 | 겹치는 것 | G5 가 맞춘 것 | 뒤 묶음이 할 일 |
 |---|---|---|---|
-| R1 부대 편성·개인 장비(§4·§6.3·§10) | 대원별 무기(`pistol`·`rifle`·`sniper`), 테이저, 방패, 섬광탄을 사람 몫으로, 방호(`armorOf`), 공성추·할리건(`breachKit`·`irons`), 손에 든 것(`Item`) | `FxWeapon` 의 이름을 R1 의 `KitId` 와 같게(`pistol`·`rifle`·`sniper`·`taser`), `FxStop 'shield'`, `Item 'ram'` 은 R1 과 같은 이름. 섬광탄 세 호출의 던진 사람 인자는 R1 이 `useKit` 으로 바꿔도 그대로 맞는다 | ① 테이저(R1 §6.3)는 `pushFx(… 'shot' …, 노란색)` 대신 `recTaser(…)` 한 줄(R1 의 대기 시간 `a.taserAt` 은 그대로 — 그림은 기록으로 그린다). ⑥ 물 투하 `Fx 'drop'` 은 G5 가 그리지 않는다 — `FX_DRAWN` 밖이라 기존 반복문이 시뮬레이션 나이로 그리고, 소리는 `fresh` 훑기의 기존 분기 자리에 R1 이 분기 하나를 더한다(3.1·4.4절). ② `weaponOf` 를 장비로(`sniper` > `rifle` > `pistol`). ③ `noteShot`·`noteHit` 의 `arm` 을 `u.armor` 대신 `armorOf(sim, rid, true)`. ④ `breachHowFor` 가 `breachKit`·`irons` 를 본다. ⑤ R1 이 `Item` 에 `'halligan'` 을 더하면 `irons` 진입·강제 개방 자세에 그것을 쓴다(R2 는 같은 것을 `'irons'` 라 부른다 — 둘 가운데 먼저 합친 이름) |
+| R1 부대 편성·개인 장비(§4·§6.3·§10) | 대원별 무기(`pistol`·`rifle`·`sniper`), 테이저, 방패, 섬광탄을 사람 몫으로, 방호(`armorOf`), 공성추·할리건(`breachKit`·`irons`), 손에 든 것(`Item`) | `FxWeapon` 의 이름을 R1 의 `KitId` 와 같게(`pistol`·`rifle`·`sniper`·`taser`), `FxStop 'shield'`, `Item 'ram'` 은 R1 과 같은 이름. 섬광탄 세 호출의 던진 사람 인자는 R1 이 `useKit` 으로 바꿔도 그대로 맞는다 | ① 테이저(R1 §6.3)는 `pushFx(… 'shot' …, 노란색)` 대신 `recTaser(…)` 한 줄(R1 의 대기 시간 `a.taserAt` 은 그대로 — 그림은 기록으로 그린다). ⑥ 물 투하 `Fx 'drop'` 은 G5 가 그리지 않는다 — `FX_DRAWN` 밖이라 기존 반복문이 시뮬레이션 나이로 그리고, 소리는 `audio.ts` 의 `legacy(f, fast)`(`COMBAT_KINDS` 밖의 종류가 넘어오는 자리 — 구현 메모)에 R1 이 분기 하나를 더한다(3.1·4.4절). ② `weaponOf` 를 장비로(`sniper` > `rifle` > `pistol`). ③ `noteShot`·`noteHit` 의 `arm` 을 `u.armor` 대신 `armorOf(sim, rid, true)`. ④ `breachHowFor` 가 `breachKit`·`irons` 를 본다. ⑤ R1 이 `Item` 에 `'halligan'` 을 더하면 `irons` 진입·강제 개방 자세에 그것을 쓴다(R2 는 같은 것을 `'irons'` 라 부른다 — 둘 가운데 먼저 합친 이름) |
 | R2 대응 방식(§3.1·§3.7·§4.2·§4.6) | 문 방법(`kick`·`irons`·`ram`·`hydraulic`), 비살상탄·저격, `agentPose` 의 방법 분기, 저격 조준선, `ArmPose 'throw'`, `Item 'ram'` | `BreachHow` 의 문 방법 이름을 R2 의 `MethodId` 와 같게, `FxWeapon 'beanbag'`, 새 사격 코드용 `recShot`, 저격 대원의 겨누는 선은 그리지 않음, `ArmPose 'throw'`·`Item 'ram'` 은 같은 이름 | ① `unblock(…, method)` 가 되면 2.4절 14번의 `how` 에 그 방법을 넘긴다. ② 비살상탄·저격의 판정 직후 `recShot(sim, s, a, 'beanbag' / 'sniper', h.x, h.y, hit, 1, h.id, hc)` 한 줄 — 저격이 빗나가 인질이 다쳤으면(R2 §4.6 `mrng.chance(0.2)`) 마지막 인자로 그 인질을 넘겨 `noteCollateral` 까지 남긴다. 소화기 분말(흰 `spray`)은 G5 와 무관하다(기존 반복문). ③ `agentPose` 의 방법 분기를 G5 의 하위 작업 분기 앞에 둔다. ④ R2 의 `sprites.ts` 추가에서 `'throw'`·`'ram'` 은 이미 있으므로 빼고 나머지만 |
 | H1 부상과 사망(§8.2, 시험 10번) | 피 표현, `hit` 효과, 쓰러짐·사망 모습, 원인(`gunshot`·`stab`·`blunt`) | `blood` 옵션과 붉은 타원을 지우고 `hit` 을 흰 고리 + 회색 먼지 + 불꽃으로 — H1 이 적은 그대로라 H1 시험 10번이 G5 뒤에 이미 참이다 | ① H1 의 `hurt*` 가 부르는 자리에 G5 의 꼬리표 줄이 함께 있으면 둘 다 살린다(꼬리표는 피해 식과 무관하다 — H1:35 가 이미 그렇게 적었다). ② 부상 정도를 기록에 더하고 싶으면 `FxInfo` 끝에 칸을 더하고 피격 불꽃 크기를 맞춘다. ③ 쓰러짐·사망·들것·덮개는 H1 이 그린다. ④ H1 의 `PersonPose.hurt?`·`ArmPose 'clutch'` 는 G5 의 `recoil?`·`flinch?`·`crouch?`·`cuffed?` 옆에 더한다(H1 §8.3) |
-| G4 현장 상태 가독성(§3.1·§4.3·§4.6·§7.3·§7.4) | `Fx` 줄의 kind(`'collapse'`), 2차 붕괴 자리(`tickCollapse` 의 `pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.1);` 와 그다음 G5 `noteBoom(…, 2.6, 'collapse')` 줄 — 줄 번호가 아니라 이 글귀로 찾는다), 흔들림(`fallShake`, 칸 단위), 자동 감속·카메라·소리의 효과 종류 목록, 터진 폭발물 자국, 인질 선, `audio.ts`·`fx.ts`·`MapLegend.tsx` | 2차 붕괴의 꼬리표는 G4 가 없을 때만, `'collapse'` 는 그리지 않음, 흔들림은 둘 다 칸 단위로 더함(각자 상한, 합은 자르지 않음 — 3.4절), `DECISIVE` 집합 하나, 폭발물 그을음은 G4 가 이 조건을 단다(G4 §7.3 — 구현은 조건 없이 넣었다), 인질 선은 건드리지 않음 | G5 가 먼저면: G4 는 `'collapse'` 를 `DECISIVE` 와 `frameAction` 목록에 한 단어씩, 소리는 `fresh` 훑기의 분기 하나로 더하고, `tickCollapse` 의 G5 꼬리표 줄을 그 `pushFx` 줄과 함께 지운다. `fallShake` 는 `book.shake` 와 같은 `translate` 에서 칸 단위로 더한다. G4 가 먼저면 G5 가 그렇게 맞춘다. G4 는 엄폐 배지를 정하지 않았다(G5 는 반쪽 벽 기호). 무력화 표지(흰 별 고리)·`defuse` 자세가 G4 의 표지 체계와 다르면 G4 쪽을 따른다 |
+| G4 현장 상태 가독성(§3.1·§4.3·§4.6·§7.3·§7.4) | `Fx` 줄의 kind(`'collapse'`), 2차 붕괴 자리(`tickCollapse` 의 `pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.1);` 와 그다음 G5 `noteBoom(…, 2.6, 'collapse')` 줄 — 줄 번호가 아니라 이 글귀로 찾는다), 흔들림(`fallShake`, 칸 단위), 자동 감속·카메라·소리의 효과 종류 목록, 터진 폭발물 자국, 인질 선, `audio.ts`·`fx.ts`·`MapLegend.tsx` | 2차 붕괴의 꼬리표는 G4 가 없을 때만, `'collapse'` 는 그리지 않음, 흔들림은 둘 다 칸 단위로 더함(각자 상한, 합은 자르지 않음 — 3.4절), `DECISIVE` 집합 하나, 폭발물 그을음은 G4 가 이 조건을 단다(G4 §7.3 — 구현은 조건 없이 넣었다), 인질 선은 건드리지 않음 | G5 가 먼저 합쳐졌으므로 G4 가 맞춘다(G4 §4.3·§16): `'collapse'` 를 `fxBook.ts` 의 `DECISIVE` 에 한 단어, `camera.ts` 의 `ACTION_W` 에 `collapse: 2.5` 한 줄, 소리는 `audio.ts` 의 `legacy(f, fast)` 에 분기 하나로 더하고, `tickCollapse` 의 G5 꼬리표 줄을 그 `pushFx` 줄과 함께 지운다. 흔들림은 `sceneShake(sim, s, mini, extra, reduced)` 가 `book.shake(s.id, ts, view)` 를 `extra` 로 받아 칸 단위로 더한다(`translate` 한 번). 그을음은 `fxBook.ts` 의 boom → scorch 줄에 `c?.src !== 'bomb'` 조건(G4 §7.3). G4 는 엄폐 배지를 정하지 않았다(G5 는 반쪽 벽 기호). 무력화 표지(흰 별 고리)·`defuse` 자세가 G4 의 표지 체계와 다르면 G4 쪽을 따른다 |
 | U2 통화창 배치 | `App.tsx` | 겹치지 않는다(G5 는 `book` 의 `useMemo` 한 줄·`<Viewport>` 의 `book` 인자, `reelMoments`, Q1 의 `__ar` 에 더하는 두 함수뿐) | — |
-| X6 위험의 현실화(§7.4·§7.5) | 큰 폭발·붕괴, 철수 신호 | X6 가 이미 G5 의 이름으로 적었다: 폭발마다 `noteBoom(lastFx(sim, s, 'boom'), r, src)`, `FxInfo['src']` 끝에 `'drum' \| 'cng' \| 'jet' \| 'dust'`, `Fx` 의 kind 끝에 `'horn'`. G5 는 모르는 `src` 도 `r` 로 그리고, `'horn'` 은 그리지 않는다(`FX_DRAWN` 밖) | ① `tickFire`·`tickGas` 의 폭발 덩어리를 `ruptureVessel`·`explodeGas` 로 옮길 때 G5 꼬리표(3.6 'tank'·3.8 'gas')를 옮긴 자리에 다시 단다. ② `'horn'` 을 `DECISIVE`(길이 3200)와 `frameAction` 목록(무게 2)에 한 단어씩, 소리는 `fresh` 훑기의 분기 하나. ③ 무너짐은 G4 의 `'collapse'` |
+| X6 위험의 현실화(§7.4·§7.5) | 큰 폭발·붕괴, 철수 신호 | X6 가 이미 G5 의 이름으로 적었다: 폭발마다 `noteBoom(lastFx(sim, s, 'boom'), r, src)`, `FxInfo['src']` 끝에 `'drum' \| 'cng' \| 'jet' \| 'dust'`, `Fx` 의 kind 끝에 `'horn'`. G5 는 모르는 `src` 도 `r` 로 그리고, `'horn'` 은 그리지 않는다(`FX_DRAWN` 밖) | ① `tickFire`·`tickGas` 의 폭발 덩어리를 `ruptureVessel`·`explodeGas` 로 옮길 때 G5 꼬리표(3.6 'tank'·3.8 'gas')를 옮긴 자리에 다시 단다. ② `'horn'` 을 `fxBook.ts` 의 `DECISIVE` 에 한 단어(감속 길이는 `Viewport` 의 `dramaMs`, 기본 3200), `camera.ts` 의 `ACTION_W` 에 `horn: 2`, 소리는 `audio.ts` 의 `legacy(f, fast)` 에 분기 하나(X6 §7.4). ③ 무너짐은 G4 의 `'collapse'` |
 
 ---
 

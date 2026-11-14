@@ -22,4 +22,9 @@ export const CRIME: Scenario[] = [
   { type: 'armed', variant: 'getaway', name: '도주 차량', share: 0, nature: 'getaway', vague: 'scream', severity: [2, 3], tag: 'crime', label: '도주 차량', delay: [1, 3],
     texts: ['총을 든 사람이 차를 타고 달아나고 있어요!', '방금 강도가 차로 도망쳤어요. 엄청 빨리 달려요!'], lik: [0.005, 0.07, 0.03, 0.86, 0.015, 0.005, 0.005, 0.01],
     needs: (n) => { n.law = 2; n.tactical = 1; n.search = 1; n.ems = 0; } },      // 쫓을 순찰차 둘, 기동대, 하늘에서 볼 헬기
+  // ── 폭동: 여럿이 몰려 부수고 싸운다. 주동자 둘만 흉기를 들었고 나머지는 맨손이다 ──
+  { type: 'armed', variant: 'riot', name: '폭동', share: 0.04, nature: 'riot', vague: 'scream', severity: [2, 3], tag: 'crime', label: '집단 난동', limit: 120,
+    places: { stadium: 4, market: 3, busTerminal: 1.5, university: 1.5, station: 1.5, mart: 1 },
+    texts: ['사람들이 떼로 몰려 부수고 싸우고 있어요!', '난동이 커졌어요. 불도 붙였어요!'], lik: [0.06, 0.01, 0.005, 0.86, 0.04, 0.01, 0.01, 0.005],
+    needs: (n) => { n.law = 3; n.tactical = 1; n.ems = 1; n.suppression = 1; } },
 ];

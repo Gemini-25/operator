@@ -162,3 +162,46 @@ registerScene('armed', 'siege', buildSiege);
 // ───────────────────────── 도주 차량 ─────────────────────────
 // 추격 끝에 선 차의 현장은 납치·난폭 운전과 같은 틀(builders.buildStop)이다: 총을 든 용의자 1~2명이 차 옆에서 버틴다
 registerScene('armed', 'getaway', buildStop);
+
+// ───────────────────────── 폭동 (집단 난동) ─────────────────────────
+/**
+ * 넓은 홀에서 여럿이 부수고 싸운다. 흉기를 든 주동자 둘과, 맨손으로 휩쓸린 나머지(경찰이 말을 걸면 곧 손을 든다).
+ * 다친 시민 2~4명이 쓰러져 있고, 뒷방의 가구 한두 칸에 불이 붙어 있다.
+ * 지휘 규칙은 기존 그대로다 (출입구 봉쇄 · 협상 · 검거). 용의자가 많아 말을 걸 자리를 넉넉히 둔다.
+ */
+function buildRiot(sim: Sim, I: Incident, rng: Rng): Scene {
+  const s = baseScene(sim, I, rng);
+  const dist = I.truth.district, sev = I.truth.severity, tn = sim.tune;
+  for (let y = 16; y <= 18; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
+  const V = armedVenue(s, rng, rng.chance(0.5) ? 'warehouse' : 'shop', dist);
+  const ag = (v: number): number => Math.max(0.05, Math.min(0.98, v + tn.aggroShift));
+  const taken = (q: number): boolean => s.hostiles.some((h) => tidx(s, h.x, h.y) === q);
+  // 흉기를 든 주동자 한 사람은 홀의 동쪽 끝에 버티고 서 있고, 다른 한 사람은 무리 속에 섞여 있다. 나머지와 다친 사람들은 서쪽에 있다
+  // (무리 속의 주동자 곁을 지나는 대원은 다칠 수 있다. 둘 다 무리 속에 두면 대원이 줄줄이 다친다)
+  const spot = (side: number): number => freeTileIn(s, V.main, rng, (q) => taken(q) || (side > 0 && q % SW < 18) || (side < 0 && q % SW > 15));
+  const n = rng.int(5, 7) + (sev >= 3 ? 1 : 0);
+  for (let k = 0; k < n; k++) {
+    const lead = k < 2, i = spot(k === 0 ? 1 : -1);
+    const h = addHostile(s, i % SW, (i / SW) | 0, lead ? 'knife' : 'none', ag(lead ? rng.range(0.6, 0.8) : rng.range(0.15, 0.35)), 0.3, false, Infinity);
+    h.label = lead ? `주동자 ${k + 1}` : `가담자 ${k - 1}`;
+    h.facing = rng.range(0, Math.PI * 2);
+    // 주동자는 드세지만 한패가 무너지면 오래 버티지 못하고(rules/crime.ts), 휩쓸린 사람들은 경찰이 여럿 보이거나 말을 걸면 곧 손을 든다
+    h.morale = lead ? rng.range(0.66, 0.82) : rng.range(0.3, 0.42);
+  }
+  // 싸움에 휘말려 다친 시민
+  const nW = rng.int(2, 3) + (sev >= 3 && rng.chance(0.6) ? 1 : 0);
+  for (let k = 0; k < nW; k++) { const i = spot(-1); addCas(s, i % SW, (i / SW) | 0, 'immobile', rng.range(48, 74), rng.range(0.08, 0.16), 0.1); }
+  // 누군가 불을 붙였다: 뒷방(없으면 홀)의 가구 한두 칸. 둘레에 탈 것이 없어 크게 번지지는 않는다
+  const furn = (r: Region): number[] => r.tiles.filter((i) => s.tiles[i] === T.FURN);
+  const pool = furn(V.back).length ? furn(V.back) : furn(V.main);
+  const nF = Math.min(pool.length, rng.int(1, 2));
+  for (let k = 0; k < nF; k++) { const i = pool.splice(rng.int(0, pool.length - 1), 1)[0]; s.fuel[i] = 0.9; s.fire[i] = rng.range(0.3, 0.42); }
+  // 말을 걸 자리: 정문 앞에 여럿이 설 수 있게 (기본은 한 자리뿐이라 용의자가 많으면 모자란다)
+  for (const [dx, dy] of [[-6, 14], [-3, 14], [-2, 15], [3, 15], [4, 14], [7, 14]]) {
+    const x = V.front + dx;
+    if (x >= 1 && x < SW - 1 && staticPass(get(s, x, dy)) && s.propAt[tidx(s, x, dy)] < 0 && !s.spots.some((q) => q.x === x && q.y === dy)) s.spots.push({ x, y: dy, exit: -1, taken: -1 });
+  }
+  s.leadDept = 'police';
+  return s;
+}
+registerScene('armed', 'riot', buildRiot);

@@ -45,7 +45,20 @@ export function detonate(sim: Sim, s: Scene, I: Incident, p: Prop): void {
   s.radio.push({ id: s.nextMsgId++, t: sim.t, deliverAt: sim.t + 0.6, from: -1, to: -1, kind: 'report', facts: [mkFact('haz', p.id, { kind: 'bomb', active: false, x: p.x, y: p.y }, '현장', sim.t, 1, true, '폭발물 폭발')], workId: -1, text: '', eventId: ev });
 }
 
+// 시한이 된 진짜 장치는 터진다 (해체하는 동안에도 시한은 흐른다)
 registerRule((sim, s, I) => {
   if (I.phase === 'closed') return;
   for (const p of s.props) if (p.kind === 'bomb' && p.real && !p.mitigated && !p.exploded && p.fuse !== undefined && sim.t >= p.fuse) detonate(sim, s, I, p);
+});
+
+// ───────────────────────── 폭동 ─────────────────────────
+// 한패가 붙잡히거나 손을 들수록 흉기를 든 주동자의 기세가 꺾인다. 혼자 남으면 몇 초 안에 손을 든다
+// (없으면 마지막 주동자가 멀리 선 대원만 노려보며 끝없이 버틴다: 협상은 싸우는 동안 멈추고, 붙잡으러 갈 손이 남지 않는다)
+registerRule((sim, s, I) => {
+  if (s.variant !== 'riot' || s.kind !== 'armed' || I.phase === 'closed') return;
+  let total = 0, up = 0;
+  for (const h of s.hostiles) { total++; if (h.state === 'hold' || h.state === 'fight' || h.state === 'flee') up++; }
+  if (!total || up === total) return;
+  const drain = 0.03 * (1 - up / total) * sim.dt;
+  for (const h of s.hostiles) if (h.weapon !== 'none' && (h.state === 'hold' || h.state === 'fight')) h.morale -= drain;
 });

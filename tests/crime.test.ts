@@ -184,6 +184,34 @@ describe('도주 차량과 은신처', () => {
   });
 });
 
+describe('폭동', () => {
+  it('흉기를 든 주동자 둘과 맨손의 가담자들, 다친 시민, 작은 불이 있고, 끝까지 간다', () => {
+    let timeouts = 0;
+    for (let k = 0; k < 6; k++) {
+      const sim = new Sim('RIOT' + k);
+      sim.run(60);
+      const I = createIncident(sim, { type: 'armed', variant: 'riot', rng: sim.rng.fork('t') });
+      const s = sim.scenes[I.id]!;
+      expect(['stadium', 'market', 'busTerminal', 'university', 'station', 'mart']).toContain(I.truth.placeKind);
+      expect(s.hostiles.length).toBeGreaterThanOrEqual(5); expect(s.hostiles.length).toBeLessThanOrEqual(8);
+      const leaders = s.hostiles.filter((h) => h.weapon === 'knife'), rest = s.hostiles.filter((h) => h.weapon === 'none');
+      expect(leaders.length).toBe(2); expect(leaders.length + rest.length).toBe(s.hostiles.length);
+      for (const h of leaders) expect(h.aggression).toBeGreaterThanOrEqual(0.55);
+      for (const h of rest) { expect(h.aggression).toBeLessThanOrEqual(0.4); expect(h.morale).toBeLessThan(0.45); }      // 말을 걸면 곧 손을 든다
+      const hurt = s.casualties.filter((c) => c.mob === 'immobile' && c.bleed > 0);
+      expect(hurt.length).toBeGreaterThanOrEqual(2); expect(hurt.length).toBeLessThanOrEqual(4);
+      let burning = 0; for (let i = 0; i < s.fire.length; i++) if (s.fire[i] > 0) burning++;
+      expect(burning).toBeGreaterThanOrEqual(1); expect(burning).toBeLessThanOrEqual(2);
+      expect(s.spots.filter((q) => q.exit === -1).length).toBeGreaterThanOrEqual(4);      // 여럿에게 말을 걸 자리
+      sim.runToEnd();
+      expect(I.phase).toBe('closed');
+      if (I.closeReason !== 'resolved') timeouts++;
+      else expect(I.result!.suspectsCaught, `${sim.seed}: 붙잡은 수`).toBe(s.hostiles.length);
+    }
+    expect(timeouts).toBeLessThanOrEqual(1);
+  });
+});
+
 describe('재현성', () => {
   it('같은 시드와 같은 강제 발생이면 기록이 같다', () => {
     for (const force of ['armed/bomb', 'armed/package']) {

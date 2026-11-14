@@ -36,7 +36,7 @@ TypeScript + React + Vite, 그림은 Canvas 2D. 서버·외부 API·LLM 호출 �
    - 시간은 고정 틱 0.2초. 주기 판단은 `sim.t` 나 `sim.tick` 으로만 한다. 배속은 `src/view/runner.ts` 가 "프레임당 몇 틱"만 바꾼다.
 3. **시뮬레이션과 표현의 분리.** `src/sim` 은 `src/view`, `src/ui` 를 import 하지 않는다. 표현 계층은 상태를 읽기만 한다. 카메라의 체류 시간은 실제 시간 기준이다.
 4. **정보 격리.** AI 는 자기 믿음(`BeliefStore`)만으로 판단한다.
-   - 진실을 읽어도 되는 곳: `field/hazards.ts`(세계 규칙), `field/executor.ts`(행동의 효과 적용), `field/agents.ts` 의 `perceive`(시야 안 관찰), `debrief.ts`(판정), `incidents.ts`.
+   - 진실을 읽어도 되는 곳: `field/hazards.ts`(세계 규칙), `field/executor.ts`(행동의 효과 적용), `field/agents.ts` 의 `perceive`(시야 안 관찰), `debrief.ts`(판정), `incidents.ts`, `field/fxlog.ts`(기록 전용 — 그림·소리에 쓸 꼬리표만 남기고 판단하지 않는다).
    - 진실을 읽으면 안 되는 곳: `field/commander.ts`, `field/brain.ts` 의 판단부, `dispatch/*`.
    - 현재 남아 있는 예외 3건은 `README.md` "알려진 문제"에 적혀 있다. 늘리지 않는다.
 5. **가짜 연출 금지.** 로그는 상태를 바꾸는 바로 그 코드에서 `emit()` 으로만 남긴다. 문제는 `raiseProblem()`, 복구는 `markRecovered()`. 보고서 문장은 기록된 문제와 타임라인에서만 만든다.
@@ -76,6 +76,11 @@ src/sim/field/executor.ts    임무별 실행(case 문), 이동, 장애물 발�
 src/sim/field/commander.ts   지휘관: 믿음 → 작업 목록(want), 배정, 지원 요청, 진입 계획(planEntry), 종료 판단
 src/sim/field/sceneManager.ts 현장 틱, 부대 도착·철수, 지휘권 이양
 src/view/                    runner(틱·되감기·저장), camera(자동 카메라·현장 확대), renderCity, renderScene(그리는 순서 조립), icons, audio(합성음)
+src/sim/field/fxlog.ts       교전 연출 기록(사격·섬광탄·진입·폭발·검거·근접): s.fx 의 꼬리표(Fx.c)에만 쓰고 난수를 부르지 않는다 — 결과는 바뀌지 않는다
+src/view/scene/fxBook.ts     연출 시계(최대 2배, 일시정지면 멈춤), 처음 보는 기록 받아들이기, 같은 틱 안의 순서 지연, 합성 항목, 남는 그림, 흔들림, 화면 막
+src/view/scene/combat.ts     교전 그림(총구 섬광·예광선·탄착, 섬광탄, 폭발, 진입 3-2-1·문짝, 겨누는 선·말풍선, 수갑). 새 효과 종류를 그리면 FX_DRAWN, 결정적 순간이면 DECISIVE 에 더한다
+src/view/audioCombat.ts      교전 소리(planCues 는 순수 함수: 배속별 묶음, 토큰 통, 동시 발음 상한 / CombatVoice 음색)
+src/view/city/combatPin.ts   지도의 교전 핀(사격 별·폭발 고리·교전 중 점선 테)
 src/view/marks.ts            부대 열두 종류·시설·상태의 그림 기호(24×24 경로 문자열). 지도(캔버스 Path2D)와 패널(SVG)이 같은 것을 쓴다. 지도와 목록에 글자 표식을 쓰지 않는다
 src/view/city/tokens.ts       지도의 둥근 부대 표식(분야색 바탕 + 기호 + 번호 점 + 상태 테), 시설 배지(둥근 네모), 이름표 자리 고르기
 src/view/city/trafficLayer.ts 혼잡 띠(노랑 서행·주황 정체·빨강 극심), 통제 점선, 장애물 표식, 열차와 차단기, 마우스 설명
@@ -89,7 +94,8 @@ src/view/scene/common.ts     색 계산, 해시, 벽에 가려지는 시야 다�
 src/view/scene/skins/        묶음별 소품 그림(crime·major·disaster). skins.ts 가 모아서 renderScene 에 넘긴다
 src/ui/                      App, Viewport(캔버스·입력), panels(모든 패널), CallDock(오른쪽 칸 맨 위의 접히는 통화창, P 키, 접힘 기억 ar.call.v1), Mark(<Mark>·<Token>·<FacilityBadge>), MapLegend(지도 범례), TrafficChip(상단 교통 요약), DisasterBanner(특보 띠), styles.css
 scripts/sweep.ts             헤드리스 실행기 (균형·교착 확인의 기본 도구)
-scripts/ui-check.cjs         화면 자동 검사 (+ ui-check-ref.ts: 같은 시드·난이도의 헤드리스 기록 해시). 화면 쪽 관찰 고리는 App.tsx 의 window.__ar.snap() (개발 서버에서만, 읽기 전용)
+scripts/ui-check.cjs         화면 자동 검사 (+ ui-check-ref.ts: 같은 시드·난이도의 헤드리스 기록 해시). 화면 쪽 관찰 고리는 App.tsx 의 window.__ar.snap()·combat()·fxStep() (개발 서버에서만, 읽기 전용)
+scripts/combatshots.cjs      교전 장면 찍기(장면 틱에 멈추고 연출 시계만 넘기며 찍는다)
 tests/                       sim.test.ts(기본) + 묶음별 ext·crime·major·disaster·destruction·traffic
 ```
 
@@ -171,6 +177,8 @@ tests/                       sim.test.ts(기본) + 묶음별 ext·crime·major·
 - **사건 하나에 걸리는 세계 규칙의 상태는 WeakMap 에.** `tickWander`·`tickMedical`·`tickCrush`·`tickLift` 는 상태를 WeakMap(대상·현장 → 상태)에 둔다. 현장·구조 대상 객체의 모양을 바꾸지 않기 위해서이고, 되감기는 Sim 을 새로 만들어 다시 돌리므로 안전하다.
 - **작업 폴더 여럿이 node_modules 를 함께 쓸 때.** worktree 마다 `node_modules` 를 링크로 쓰면 의존성 캐시(`node_modules/.vite`)도 함께 쓴다. 다른 개발 서버가 캐시를 다시 만들면 이쪽 페이지가 새로고침된다. `npm run ui-check` 는 자기 캐시(`AR_VITE_CACHE`, `vite.config.ts` 의 `cacheDir`)를 쓴다.
 - **측정 도구의 문구 규칙.** `scripts/metrics.ts` 는 기록 문구(지원 요청·응급실 대기·이송 출발·병원 인계·결원 운용 중단·출동 지령)와 문제 코드로 시스템을 가른다. 이 문구를 바꾸거나 새 문제 코드를 만들면 `PHRASE`·`PROBLEM_SYS` 표를 함께 고친다(`tests/causality.test.ts` 가 잡는다). 측정은 상태를 읽기만 한다 — 표본에서 src/sim 함수를 부르지 않는다.
+- **교전 연출 기록.** 사격·섬광탄·진입·폭발·검거·테이저를 새로 만들거나 옮기면 `field/fxlog.ts` 의 `note*`/`rec*` 한 줄을 그 자리에 둔다(기존 `pushFx` 줄 바로 다음, `bulletPath` 앞). 이 함수들은 `s.fx` 에만 쓰고 난수를 부르지 않는다. 폭발을 다른 곳으로 옮기면 `noteBoom` 도 옮긴다.
+- **그림·소리의 배속은 실제 배속.** 자동 감속 중에는 `runner.settings.speed` 가 15여도 1배속으로 돈다. 연출 시계·소리 규칙은 `effSpeed`(paused ? 0 : slowed ? 1 : speed)를 쓴다. 15배속 그대로를 확인할 때는 자동 감속(S)을 끄고 잰다. 첫 발·진입 예고(남은 3.4초)의 그 틱부터 1배속이 되는 것은 `runner.stepGuard` 다(결과는 바뀌지 않는다).
 - **현장 그림의 고정 층.** `staticLayer.ts` 는 타일·가구가 바뀔 때만 다시 그린다(`staticSig`). 매 프레임 바뀌는 것(문짝, 불, 사람)을 여기에 넣지 않는다. 새 타일 종류·가구를 만들면 `surfaceMap`·`paintTile`·`furniture` 에 그림을 추가한다.
 - **건물 배치는 고정이 아니다.** 방의 수·위치·출입구가 사건마다 다르다. 좌표를 직접 쓰지 말고 `Plan`(`rooms`·`corridors`·`exitDoors`·`floors`)과 `s.exits`·`s.regions` 로 찾는다. 복도가 없는 건물(`corridors` 가 빈 배열)도 있다. 새 틀을 만들면 "모든 바닥에 걸어서 닿는다"는 테스트(`현장 배치의 다양성`)를 통과해야 한다.
 - **가구는 실제 장애물이다(`T.FURN`).** 지나갈 수 없고, 시야는 통과하며, 엄폐물이 된다. 방을 새로 만들 때는 `builders.ts` 의 `furnish()` 를 쓴다(문 주변을 비우고 방이 끊기지 않는지 검사한다).

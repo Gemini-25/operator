@@ -11,7 +11,7 @@ import { edgeName, segCross } from './city';
 import type { Sim } from './engine';
 import { emit } from './events';
 import type { Rng } from './rng';
-import type { PlaceKind, RoadEdge, Unit } from './types';
+import type { City, PlaceKind, RoadEdge, Unit } from './types';
 import { clamp, josa } from './util';
 
 export type ObstacleKind = 'roadwork' | 'breakdown' | 'debris' | 'parked';
@@ -341,6 +341,23 @@ export function initTraffic(sim: Sim): TrafficState {
 
 // ───────────────────────── 매 틱 ─────────────────────────
 
+const nbCache = new WeakMap<object, { start: Int32Array; ids: Int32Array }>();
+/** 구간마다 이웃 구간(양 끝 교차로에 붙은 다른 구간) 목록. 교차로와 구간의 연결은 지도에 고정이다 (교대마다 바뀌는 것은 구간의 상태뿐) */
+function edgeNeighbors(city: City): { start: Int32Array; ids: Int32Array } {
+  let nb = nbCache.get(city.nodes);
+  if (nb && nb.start.length === city.edges.length + 1) return nb;
+  const start = new Int32Array(city.edges.length + 1), ids: number[] = [];
+  for (const e of city.edges) {
+    start[e.id] = ids.length;
+    for (const id of city.nodes[e.a].edges) if (id !== e.id) ids.push(id);
+    for (const id of city.nodes[e.b].edges) if (id !== e.id) ids.push(id);
+  }
+  start[city.edges.length] = ids.length;
+  nb = { start, ids: Int32Array.from(ids) };
+  nbCache.set(city.nodes, nb);
+  return nb;
+}
+
 /** 혼잡과 밀림 (12초마다) */
 function drift(sim: Sim): void {
   const tr = sim.traffic, city = sim.city, rng = sim.rngTraffic, n = city.edges.length;
@@ -355,15 +372,14 @@ function drift(sim: Sim): void {
     // 밀림의 뿌리: 막힌 구간, 사고 현장(slow), 그 자체로 꽉 찬 구간. 밀려서 찬 구간은 뿌리가 아니다(서로를 붙잡아 풀리지 않는 정체를 막는다)
     src[e.id] = e.closed || e.slow >= 1 || p >= 2.4 ? 1 : 0;
   }
-  // 이웃 구간(양 끝 교차로에 붙은 다른 구간) 가운데 조건에 맞는 것이 있는가. 구간마다 함수를 새로 만들지 않도록 조건별로 따로 쓴다
+  // 이웃 구간(양 끝 교차로에 붙은 다른 구간) 가운데 조건에 맞는 것이 있는가. 이웃 목록은 지도가 같으면 같으므로 한 번만 만든다
+  const nb = edgeNeighbors(city);
   const nearSrc = (e: RoadEdge): boolean => {
-    for (const id of city.nodes[e.a].edges) if (id !== e.id && src[id] === 1) return true;
-    for (const id of city.nodes[e.b].edges) if (id !== e.id && src[id] === 1) return true;
+    for (let k = nb.start[e.id], end = nb.start[e.id + 1]; k < end; k++) if (src[nb.ids[k]] === 1) return true;
     return false;
   };
   const nearBacked = (e: RoadEdge): boolean => {
-    for (const id of city.nodes[e.a].edges) if (id !== e.id && ring1[id] === 1 && q0[id] >= 0.6) return true;
-    for (const id of city.nodes[e.b].edges) if (id !== e.id && ring1[id] === 1 && q0[id] >= 0.6) return true;
+    for (let k = nb.start[e.id], end = nb.start[e.id + 1]; k < end; k++) { const id = nb.ids[k]; if (ring1[id] === 1 && q0[id] >= 0.6) return true; }
     return false;
   };
   const ring1 = new Uint8Array(n);

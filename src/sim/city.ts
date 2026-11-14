@@ -207,7 +207,8 @@ let cached: City | null = null;
 /** 도시를 만든다. 지도 자체는 고정이므로 한 번만 만들고, 교대마다 바뀌는 도로 상태만 새로 복사해 돌려준다. */
 export function generateCity(rng: Rng): City {
   if (!cached) cached = buildCity(rng);
-  return { ...cached, edges: cached.edges.map((e) => ({ ...e })) };
+  // 교대 중에 붙는 칸(교통·재난)을 처음부터 같은 순서로 비워 둔다: 모든 구간이 같은 모양의 객체가 되어 경로 계산이 빨라진다 (값은 없는 것과 같다)
+  return { ...cached, edges: cached.edges.map((e) => ({ ...e, known: undefined, bump: undefined, wait: undefined, gateT: undefined, noHeavy: undefined })) };
 }
 
 function buildCity(rng: Rng): City {

@@ -120,6 +120,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
     problems: [], result: null, lastEvent: -1, rootEvent: -1, callEvents: [], callsCount: 0, closeReason: '', interest: 0,
     blockedEdge: -1, followupAt: Infinity, firstCallAt: 0, firstAssess: null, fieldNeedsSeen: 0, dispatchLog: [],
     reportedNode: node.id, addressFixed: false,
+    pursuit: undefined, tag: undefined, parent: undefined, aidUnit: undefined,      // 나중에 붙는 칸을 미리 비워 둔다 (모든 사건이 같은 모양)
   };
   { const tag = opts.tag ?? special?.tag; if (tag) I.tag = tag; if (opts.parent !== undefined) I.parent = opts.parent; }
   sim.incidents.push(I);

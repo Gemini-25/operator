@@ -48,7 +48,18 @@ const VARIANT_NAME: Record<string, string> = {
   'fire/false': '화재 오인 신고', 'search/wander': '실종', 'search/hiker': '조난', 'medical/arrest': '심정지', 'medical/trauma': '낙상·외상', 'medical/faint': '실신',
 };
 
-export function scenarioOf(type: IncidentType, variant: string): Scenario | undefined { return SCENARIOS.find((q) => q.type === type && q.variant === variant); }
+// 현장마다 매 틱 묻는다(한계 시간). 표는 모듈을 읽을 때 정해지므로 찾은 답을 기억해 둔다 (표의 길이가 바뀌면 다시 찾는다)
+const scenCache = new Map<string, Map<string, Scenario | undefined>>();
+let scenCacheLen = -1;
+export function scenarioOf(type: IncidentType, variant: string): Scenario | undefined {
+  if (scenCacheLen !== SCENARIOS.length) { scenCache.clear(); scenCacheLen = SCENARIOS.length; }
+  let m = scenCache.get(type);
+  if (!m) { m = new Map(); scenCache.set(type, m); }
+  if (m.has(variant)) return m.get(variant);
+  const sc = SCENARIOS.find((q) => q.type === type && q.variant === variant);
+  m.set(variant, sc);
+  return sc;
+}
 /** 사건의 실제 모습을 가리키는 이름 (관찰자 정보와 보고서에 쓴다) */
 export function scenarioName(type: IncidentType, variant: string): string { return scenarioOf(type, variant)?.name ?? VARIANT_NAME[`${type}/${variant}`] ?? TYPE_NAME[type]; }
 

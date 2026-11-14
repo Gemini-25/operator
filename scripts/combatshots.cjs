@@ -67,7 +67,9 @@ async function main() {
     if (ID !== null) {
       const code = String(Number(ID) + 1).padStart(2, '0');
       const card = page.locator('.card.incident').filter({ has: page.locator('.code', { hasText: new RegExp('^' + code + '$') }) }).first();
-      await card.click();
+      // 목록은 0.16초마다 다시 그려지며 순서가 바뀔 수 있다: 누른 뒤 관찰 대상이 맞는지 보고, 아니면 다시 누른다
+      for (let k = 0; k < 5; k++) { await sleep(350); await card.click(); await sleep(150); if ((await snap()).camFocus === Number(ID)) break; }
+      report.focus = (await snap()).camFocus;
     }
     if (flag('ai')) await key('t');
     if (flag('city')) { const b = page.getByRole('button', { name: '지도에서 보기' }); if (await b.count()) await b.click(); }
@@ -114,6 +116,8 @@ async function main() {
     if (MEASURE > 0) {
       if (flag('noslow') && (await snap()).autoSlow) await key('s');
       if (flag('mute')) await key('m');
+      // 1배속으로 바뀌는 첫 화면 갱신의 시뮬레이션 시각 (자동 감속 확인 ⑨a)
+      await page.evaluate(() => { window.__firstSlow = null; const f = () => { const s = window.__ar.snap(); if (s.slowed && !window.__firstSlow) window.__firstSlow = { t: s.t, tick: s.tick }; if (!window.__firstSlow) requestAnimationFrame(f); }; requestAnimationFrame(f); });
       await key(String({ 1: 1, 3: 2, 8: 3, 15: 4 }[SPEED] || 1));
       const comb0 = await page.evaluate(() => (window.__ar.combat ? window.__ar.combat() : null));
       const samples = [];
@@ -139,6 +143,7 @@ async function main() {
         fps: avg((s) => s.snap.fps), drawMs: last.comb ? avg((s) => s.comb.drawMs) : null, drawMsMax: last.comb ? Math.max(...samples.map((s) => s.comb.drawMs)) : null,
         madeDelta: last.comb && comb0 ? last.comb.stats.made - comb0.stats.made : null,
         stats: last.comb ? last.comb.stats : null, live: last.comb ? last.comb.live : null, tFrom: samples[0].snap.t, tTo: last.snap.t,
+        firstSlow: await page.evaluate(() => window.__firstSlow),
         maxVoices: last.comb ? Math.max(...samples.map((s) => s.comb.stats.voices)) : null,
         maxPerSecSampled: last.comb ? Math.max(...samples.map((s) => s.comb.stats.perSec)) : null,
       };

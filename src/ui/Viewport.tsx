@@ -4,7 +4,9 @@ import type { SoundDirector } from '../view/audio';
 import type { CameraDirector } from '../view/camera';
 import { FONT, TYPE_COLOR, drawCity, hitCity, cityXf } from '../view/renderCity';
 import { drawScene, hitScene, sceneLayout } from '../view/renderScene';
+import { DECISIVE } from '../view/scene/fxBook';
 import type { FxBook } from '../view/scene/fxBook';
+import type { Fx, Scene } from '../sim/types';
 import type { Runner } from '../view/runner';
 
 export interface ViewportProps {
@@ -28,7 +30,26 @@ export function Viewport({ runner, director, sound, book, selectedRid, onSelectR
     const canvas = ref.current!, box = wrap.current!;
     const ctx = canvas.getContext('2d')!;
     let w = 0, h = 0, raf = 0, last = 0;
-    let fxScene: unknown = null, fxT = 0, evSeen = 0, evSim: unknown = null;      // 자동 감속: 관찰 중인 현장에서 새로 벌어진 일을 찾는다
+    let evSeen = 0, evSim: unknown = null;      // 자동 감속: 관찰 중인 사건의 중대한 기록
+    // (G5) 결정적 순간의 자동 감속: 틱마다 본다(runner.stepGuard). 감속이 새로 걸린 틱에서 그 프레임의 남은 틱을 버려 첫 발부터 1배속이 된다
+    const preSlowFor = new WeakMap<Scene, number>();
+    const lastShotT = new WeakMap<Scene, number>();
+    const dramaMs = (s: Scene, f: Fx): number => {
+      if (f.kind === 'shot') { const prev = lastShotT.get(s); lastShotT.set(s, f.t); return prev === undefined || f.t - prev >= 10 ? 4000 : 3200; }
+      return f.kind === 'boom' ? 3600 : 3200;
+    };
+    runner.stepGuard = (sim) => {
+      if (!runner.settings.autoSlow || runner.settings.speed <= 1) return false;
+      const s = director.mode === 'scene' && director.focus >= 0 ? sim.scenes[director.focus] : null;
+      if (!s) return false;
+      let ms = 0;
+      for (let i = s.fx.length - 1; i >= 0 && s.fx[i].t === sim.t; i--) if (DECISIVE.has(s.fx[i].kind)) ms = Math.max(ms, dramaMs(s, s.fx[i]));      // 이 틱에 생긴 기록만
+      if (s.entryOrdered && !s.breachDone && s.breachAt - sim.t > 0 && s.breachAt - sim.t <= 3.4 && preSlowFor.get(s) !== s.breachAt) { preSlowFor.set(s, s.breachAt); ms = Math.max(ms, 5000); }      // 진입 예고
+      if (!ms) return false;
+      const was = runner.slowed;
+      runner.drama(ms); director.nudge();
+      return !was;          // 감속이 "새로" 걸린 틱에만 남은 틱을 버린다
+    };
     let pips: Pip[] = [];
     let hoverAt: { x: number; y: number } | null = null;      // 지도 위의 마우스 위치
     const resize = () => {
@@ -59,16 +80,12 @@ export function Viewport({ runner, director, sound, book, selectedRid, onSelectR
       // 실제 배속: 자동 감속 중이면 설정이 15여도 1배속이다. 연출 시계와 소리 규칙은 이 값을 쓴다
       const effSpeed = runner.paused ? 0 : runner.slowed ? 1 : runner.settings.speed;
       book.frame(sim, dtReal, { paused: runner.paused || sim.ended, speed: effSpeed, seeks: runner.seeks });
+      // 자동 감속이 꺼져 있거나 설정 배속이 1 이면 stepGuard 가 일찍 돌아가므로, 결정적 순간의 현장 확대는 여기서 바로 다시 잡는다
+      if ((!runner.settings.autoSlow || runner.settings.speed <= 1) && director.mode === 'scene' && director.focus >= 0 && book.fresh.some((e) => e.sid === director.focus && DECISIVE.has(e.kind))) director.nudge();
       {
-        // 결정적 순간(관찰 중인 현장의 총격·폭발·섬광, 그 사건의 중대한 기록)에는 잠깐 1배속으로 낮춘다
+        // 결정적 순간: 효과 기록은 runner.stepGuard 가 틱마다 본다. 여기서는 그 사건의 중대한 기록(imp ≥ 3)으로 잠깐 1배속으로 낮춘다
         const sc = director.mode === 'scene' && director.focus >= 0 ? sim.scenes[director.focus] : null;
-        if (sc !== fxScene) { fxScene = sc; fxT = sim.t; }
         if (evSim !== sim) { evSim = sim; evSeen = sim.events.length; }
-        if (sc) {
-          let newest = fxT;
-          for (const f of sc.fx) { if (f.t <= fxT) continue; if (f.t > newest) newest = f.t; if (f.kind === 'shot' || f.kind === 'boom' || f.kind === 'flash') runner.drama(3200); }
-          fxT = newest;
-        }
         for (; evSeen < sim.events.length; evSeen++) { const e = sim.events[evSeen]; if (sc && e.incidentId === director.focus && e.importance >= 3 && !e.truth && e.kind !== 'resolve') runner.drama(2600); }
       }
       const truth = runner.settings.truthView;
@@ -97,7 +114,7 @@ export function Viewport({ runner, director, sound, book, selectedRid, onSelectR
       if (scene) drawScene(ctx, sim, scene, w, h, { truth, alpha: runner.alpha, timeMs: now, selectedRid: sel.current, cam: director.sceneCam, book });
       else {
         const selUnit = sel.current >= 0 ? sim.responders[sel.current].unitId : -1;
-        drawCity(ctx, sim, director.cam, w, h, { focus: director.focus, truth, timeMs: now, alpha: runner.alpha, selectedUnit: selUnit, hover: hoverAt });
+        drawCity(ctx, sim, director.cam, w, h, { focus: director.focus, truth, timeMs: now, alpha: runner.alpha, selectedUnit: selUnit, hover: hoverAt, book });
       }
       // 작은 창: (현장 화면일 때) 도시 지도 + 진행 중인 다른 현장들
       pips = [];
@@ -106,7 +123,7 @@ export function Viewport({ runner, director, sound, book, selectedRid, onSelectR
       if (scene) {
         const p = place(-1);
         ctx.save(); ctx.translate(p.x, p.y); ctx.beginPath(); ctx.rect(0, 0, PIP_W, PIP_H); ctx.clip();
-        drawCity(ctx, sim, { x: sim.city.w / 2, y: sim.city.h / 2, zoom: 1 }, PIP_W, PIP_H, { focus: director.focus, truth, timeMs: now, alpha: runner.alpha, selectedUnit: -1, mini: true });
+        drawCity(ctx, sim, { x: sim.city.w / 2, y: sim.city.h / 2, zoom: 1 }, PIP_W, PIP_H, { focus: director.focus, truth, timeMs: now, alpha: runner.alpha, selectedUnit: -1, mini: true, book });
         ctx.restore();
         frameBox(p.x, p.y, '도시', 'rgba(124,196,255,0.7)');
       }
@@ -176,6 +193,7 @@ export function Viewport({ runner, director, sound, book, selectedRid, onSelectR
     const dbl = () => { if (director.mode === 'scene') director.sceneReset(); };
     canvas.addEventListener('dblclick', dbl);
     return () => {
+      runner.stepGuard = null;
       canvas.removeEventListener('dblclick', dbl);
       cancelAnimationFrame(raf); ro.disconnect();
       canvas.removeEventListener('mousedown', down); window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);

@@ -96,11 +96,12 @@ export class FxBook {
   private strikeAt = new Map<number, number>();       // 대원 rid → 다음 타격 시각(연출 시계)
   private talkAt = new Map<number, number>();         // 대원 rid → 지난 프레임의 협상 주기 위치
   private veilReal = -99;                             // 마지막 화면 막의 실제 시각
+  private shotAt = new Map<number, { at: number; t: number }>();      // 현장 → 마지막 사격(연출 시계·시뮬레이션 시각): 지도의 '교전 중' 테
 
   /** 모두 비운다(새 교대·되감기). 다음 받아들이기는 fresh 에 넣지 않는다 */
   reset(): void {
     this.seen = new WeakSet(); this.lives.clear(); this.decs.clear(); this.kicks.clear();
-    this.tickN.clear(); this.strikeAt.clear(); this.talkAt.clear(); this.fresh = []; this.skip = true;
+    this.tickN.clear(); this.strikeAt.clear(); this.talkAt.clear(); this.shotAt.clear(); this.fresh = []; this.skip = true;
   }
 
   frame(sim: Sim, dtReal: number, o: { paused: boolean; speed: number; seeks: number }): void {
@@ -140,7 +141,7 @@ export class FxBook {
     for (const f of news) {
       const e: FxEntry = { kind: f.kind, f, sid: s.id, x: f.x, y: f.y, born: bornAt(f.t), delay: 0, dur: fxDur(f), seed: hashFx(f) };
       if (breachT.has(f.t)) { if (f.kind === 'flash') e.delay = 0.12; else if (f.kind === 'shot') e.delay = 0.2; }
-      if (f.kind === 'shot') { e.fly = flightOf(f); shots.push(e); }
+      if (f.kind === 'shot') { e.fly = flightOf(f); shots.push(e); this.shotAt.set(s.id, { at: e.born + e.delay, t: f.t }); }
       else if (f.kind === 'hit' && f.c && f.c.target !== undefined) {
         const sh = shots.find((q) => q.f!.t === f.t && q.f!.c && q.f!.c.target === f.c!.target && q.f!.c.tk === f.c!.tk);
         if (sh) e.delay = sh.delay + (sh.fly ?? 0);
@@ -254,6 +255,8 @@ export class FxBook {
     if (age > 2) { if (age > 10) this.kicks.delete(sid + ':' + propId); return null; }
     return { age, how: k.how };
   }
+  /** 그 현장의 마지막 사격 (연출 시계 at, 시뮬레이션 시각 t) */
+  lastShot(sid: number): { at: number; t: number } | null { return this.shotAt.get(sid) ?? null; }
   /** 가장 최근 3-2-1 합성 항목 (숫자 튕김) */
   lastTick(sid: number): FxEntry | null { const l = this.lives.get(sid); if (!l) return null; for (let i = l.length - 1; i >= 0; i--) if (l[i].kind === 'tick') return l[i]; return null; }
 

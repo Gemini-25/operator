@@ -15,13 +15,18 @@ export interface Moment { t: number; id: number; text: string }
 /** 다시 볼 만한 장면: 현장에서 벌어진 중대한 일. 같은 사건의 가까운 장면은 하나로 묶고, 많으면 고르게 여덟 개만 남긴다. */
 export function reelMoments(sim: Sim): Moment[] {
   const out: Moment[] = [];
-  let lastT = -99, lastId = -1;
+  let lastT = -99, lastId = -1, curRank = 0;
+  // (G5) 묶음 안에서 순위가 높은 장면을 남긴다: 행동·문제·위험 > 해결 > 지시 (같으면 이른 것). 25초 창은 묶음의 첫 기록에 고정한다
+  const rank = (k: string): number => (k === 'action' || k === 'problem' || k === 'hazard' ? 2 : k === 'resolve' ? 1 : 0);
   for (const e of sim.events) {
     if (e.importance < 3 || e.truth || e.incidentId < 0 || e.kind === 'shift' || (e.kind === 'resolve' && e.role === 'SYSTEM')) continue;
     const sc = sim.scenes[e.incidentId];
     if (!sc || sc.arrivedAt < 0 || e.t < sc.arrivedAt) continue;
-    if (e.incidentId === lastId && e.t - lastT < 25) continue;
-    out.push({ t: e.t, id: e.incidentId, text: e.text }); lastT = e.t; lastId = e.incidentId;
+    if (e.incidentId === lastId && e.t - lastT < 25) {
+      if (rank(e.kind) > curRank) { out[out.length - 1] = { t: e.t, id: e.incidentId, text: e.text }; curRank = rank(e.kind); }      // lastT 는 그대로
+      continue;
+    }
+    out.push({ t: e.t, id: e.incidentId, text: e.text }); lastT = e.t; lastId = e.incidentId; curRank = rank(e.kind);
   }
   if (out.length <= 8) return out;
   const pick: Moment[] = [];

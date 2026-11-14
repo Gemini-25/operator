@@ -42,6 +42,8 @@ export class Runner {
   slowUntil = 0;              // 이 시각(실제 시간, ms)까지는 1배속으로 낮춘다 (결정적 순간 자동 감속)
   nowMs = 0;
   force: string | null = null;
+  /** (G5) 틱마다 불리는 감속 검사: 참이면 이 프레임의 남은 틱을 버린다(결정적 순간의 첫 틱부터 1배속). 한 프레임에 도는 틱 수만 바뀌므로 결과는 같다 */
+  stepGuard: ((sim: Sim) => boolean) | null = null;
   private make(seed: string, d: Difficulty): Sim { return new Sim(seed, d, 1200, { force: this.force }); }
 
   constructor() {
@@ -112,7 +114,7 @@ export class Runner {
       this.acc += dtReal * (this.slowed ? 1 : this.settings.speed);
       const t0 = performance.now();
       let steps = 0;
-      while (this.acc >= sim.dt && steps < 40 && !sim.ended) { sim.step(); this.acc -= sim.dt; steps++; }
+      while (this.acc >= sim.dt && steps < 40 && !sim.ended) { sim.step(); this.acc -= sim.dt; steps++; if (this.stepGuard && this.stepGuard(sim)) { this.acc = 0; break; } }
       if (steps >= 40) this.acc = 0;
       if (steps) this.simMs = this.simMs * 0.9 + (performance.now() - t0) * 0.1;
       this.alpha = Math.min(1, this.acc / sim.dt);

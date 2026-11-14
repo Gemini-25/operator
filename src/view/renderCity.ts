@@ -17,6 +17,8 @@ import { drawLight } from './scene/fx';
 import { FACILITY_COLOR, FIELD_COLOR, FIELD_TEXT, drawFacilityBadge, drawFugitive, drawToken, placeLabel } from './city/tokens';
 import type { Box } from './city/tokens';
 import { facilityMarkKey } from './marks';
+import { combatPinJitter, drawCombatPin } from './city/combatPin';
+import type { FxBook } from './scene/fxBook';
 
 export const DEPT_COLOR: Record<string, string> = { fire: '#ff7a45', ems: '#2fd39a', police: '#5aa9ff' };
 export const TYPE_COLOR: Record<string, string> = { fire: '#ff6b3d', traffic: '#ffc24a', search: '#58d68d', armed: '#b98cff', medical: '#ff7eb6', collapse: '#d6a878', hazmat: '#b6e04a', water: '#4fb8ff', unknown: '#9aa7b4' };
@@ -55,7 +57,7 @@ export function cityXf(sim: Sim, cam: CityCam, w: number, h: number): Xf {
   return { scale, ox: w / 2 - cam.x * scale, oy: h / 2 - cam.y * scale };
 }
 
-export interface CityOpts { focus: number; truth: boolean; timeMs: number; alpha: number; selectedUnit: number; mini?: boolean; hover?: { x: number; y: number } | null }
+export interface CityOpts { focus: number; truth: boolean; timeMs: number; alpha: number; selectedUnit: number; mini?: boolean; hover?: { x: number; y: number } | null; book?: FxBook }
 
 /** 지도에 사건을 그릴 위치. AI 시점에서는 관제가 "알고 있는" 위치(틀릴 수 있다)에 그린다. */
 export function incidentXY(sim: Sim, I: Incident, truth: boolean): { x: number; y: number } {
@@ -285,7 +287,10 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
       ctx.beginPath(); ctx.arc(x, y, r + (mini ? 4 : 10 * zs) + ph * (mini ? 12 : 44 * zs), 0, 7); ctx.stroke();
     }
     ctx.globalAlpha = 1;
+    if (o.book) drawCombatPin(ctx, o.book, sim, I, x, y, r, zs, { truth: o.truth, mini, timeMs: o.timeMs });      // (G5) 교전 표시
     if (mini) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); if (focused) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(x, y, r + 2.5, 0, 7); ctx.stroke(); } continue; }
+    const pj = o.book ? combatPinJitter(o.book, sim, I, o.truth) : null;
+    if (pj) { ctx.save(); ctx.translate(pj.x, pj.y); }
     if (I.phase !== 'unreported') { ctx.globalCompositeOperation = 'lighter'; drawLight(ctx, x, y, r * 3.4, col, 0.3 + 0.12 * Math.sin(o.timeMs / 300)); ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; }
     // 핀: 어두운 바탕 + 유형색 테 + 유형 아이콘. 그림자와 테의 굵기는 부대 표식과 같은 비례다
     const plw = Math.max(2, r * 0.17);
@@ -306,6 +311,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     label(ctx, I.phase === 'unreported' ? '미신고' : I.code, x + r * 0.95, y - r * 0.95, 10.5 * zs, '#0b1219', col);
     const st = I.pursuit && I.pursuit.state === 'driving' && I.phase !== 'unreported' ? `추격 중 · ${I.assigned.length}팀${I.pursuit.tracked ? ' · 시야 확보' : ''}` : I.phase === 'unreported' ? '아직 신고되지 않음' : I.phase === 'call' ? '신고 통화 중' : I.phase === 'onscene' ? `현장 대응 ${fmtDur(sim.t - I.firstArrivalAt)}` : I.assigned.length ? `출동 ${I.assigned.length}대 · ${fmtDur(sim.t - I.reportedAt)}` : `배정 대기 ${fmtDur(sim.t - I.reportedAt)}`;
     label(ctx, st, x, y + r + 16 * zs, 11 * zs, I.phase === 'unreported' ? '#9aa7b4' : '#e8f0f7', 'rgba(8,13,18,0.86)', I.phase === 'unreported' ? undefined : col);
+    if (pj) ctx.restore();
   }
   // 부대: 둥근 표식 (색 = 분야, 기호 = 종류, 아래의 점 = 번호, 테 = 상태). 대기 중인 부대는 가까이 볼 때만 하나씩 그린다
   const tr = mini ? 3.2 : TOKEN_R * zs, len = tr * 2 + 3;

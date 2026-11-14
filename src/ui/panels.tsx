@@ -170,6 +170,12 @@ export function LogPanel({ sim, director, truth, onJump }: { sim: Sim; director:
   const lastId = filtered.length ? filtered[filtered.length - 1].id : -1;
   const byCall = new Map(sim.units.map((u) => [u.callsign, u]));
   useEffect(() => { const el = box.current; if (el && stick.current) el.scrollTop = el.scrollHeight; }, [lastId]);
+  // 칸의 높이가 바뀌어도(통화 칸을 접고 펼 때) 맨 아래에 붙어 있던 기록은 맨 아래를 계속 보여 준다
+  useEffect(() => {
+    const el = box.current; if (!el) return;
+    const ro = new ResizeObserver(() => { if (stick.current) el.scrollTop = el.scrollHeight; });
+    ro.observe(el); return () => ro.disconnect();
+  }, []);
   return (
     <div className="panel-section grow">
       <h3>AI 관제 · 무전 기록

@@ -9,7 +9,7 @@ import { Viewport } from './Viewport';
 import { MapLegend } from './MapLegend';
 import type { Difficulty } from '../sim/difficulty';
 import { AgentPanel, BottomBar, DecisionPanel, DifficultyPanel, Icon, IncidentList, LogPanel, ReportModal, Ticker, TopBar, UnitList } from './panels';
-import { CallDock } from './CallDock';
+import { CallDock, loadCallOpen, saveCallOpen } from './CallDock';
 
 export interface Moment { t: number; id: number; text: string }
 /** 다시 볼 만한 장면: 현장에서 벌어진 중대한 일. 같은 사건의 가까운 장면은 하나로 묶고, 많으면 고르게 여덟 개만 남긴다. */
@@ -46,6 +46,9 @@ export function App() {
   const [diffOpen, setDiffOpen] = useState(false);
   const [reel, setReel] = useState<{ list: Moment[]; idx: number; speed: number } | null>(null);
   const reelUntil = useRef(0);
+  const [callOpen, setCallOpen] = useState<boolean>(loadCallOpen);
+  const toggleCall = useCallback(() => setCallOpen((v) => !v), []);
+  useEffect(() => { saveCallOpen(callOpen); }, [callOpen]);
 
   // 패널은 초당 6회 정도만 다시 그린다(캔버스는 별도로 매 프레임 그린다)
   useEffect(() => { const id = window.setInterval(force, 160); return () => window.clearInterval(id); }, [force]);
@@ -125,6 +128,7 @@ export function App() {
       else if (e.key === 'm' || e.key === 'M') soundCtl.setEnabled(!sound.enabled);
       else if (e.key === 's' || e.key === 'S') { runner.settings.autoSlow = !runner.settings.autoSlow; runner.saveSettings(); }
       else if (e.key === 'z' || e.key === 'Z') { runner.settings.sceneAuto = !runner.settings.sceneAuto; runner.saveSettings(); }
+      else if ((e.key === 'p' || e.key === 'P' || e.code === 'KeyP') && !e.ctrlKey && !e.metaKey && !e.altKey) toggleCall();
       else if (e.key === 'ArrowLeft') seekTo(runner.sim.t - 10);
       else if (e.key === 'ArrowRight') seekTo(runner.sim.t + 10);
       else return;
@@ -132,7 +136,7 @@ export function App() {
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [runner, director, force, seekTo, soundCtl, sound]);
+  }, [runner, director, force, seekTo, soundCtl, sound, toggleCall]);
 
   const sim = runner.sim;
   const truth = runner.settings.truthView;
@@ -194,7 +198,7 @@ export function App() {
         {runner.paused && !sim.ended && <div className="paused">일시정지</div>}
       </div>
       <div className="right">
-        <CallDock sim={sim} truth={truth} />
+        <CallDock sim={sim} truth={truth} open={callOpen} onToggle={toggleCall} />
         <div className="tabs">
           <button className={tab === 'decision' ? 'on' : ''} onClick={() => setTab('decision')}>판단 요약</button>
           <button className={tab === 'agent' ? 'on' : ''} onClick={() => setTab('agent')}>대원 정보</button>

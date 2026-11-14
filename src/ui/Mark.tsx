@@ -2,8 +2,9 @@
 // 경로 문자열은 `view/marks.ts` 것을 그대로 쓴다(캔버스와 같은 그림).
 
 import type { UnitField, UnitKind } from '../sim/types';
-import { FIELD_COLOR, STATE_RING } from '../view/city/tokens';
+import { FIELD_COLOR, MARK_RATIO, STATE_RING } from '../view/city/tokens';
 import { FACILITY_MARK, STATE_MARK, UNIT_MARK } from '../view/marks';
+import { mix } from '../view/scene/common';
 
 export function Mark({ d, size = 14, color = 'currentColor', title }: { d: string; size?: number; color?: string; title?: string }) {
   return <svg className="mark" width={size} height={size} viewBox="0 0 24 24" aria-hidden={title ? undefined : true} role={title ? 'img' : undefined}>{title && <title>{title}</title>}<path d={d} fill={color} fillRule="evenodd" /></svg>;
@@ -16,9 +17,10 @@ export function Mark({ d, size = 14, color = 'currentColor', title }: { d: strin
 export function Token({ field, kind, size = 22, state = 'available', no = 0, title }: { field: UnitField; kind: UnitKind; size?: number; state?: string; no?: number; title?: string }) {
   const pad = 3, box = size + pad * 2, c = box / 2, r = size / 2;
   const col = FIELD_COLOR[field];
-  const ring = state === 'onscene' ? STATE_RING.onscene : state === 'transport' || state === 'hospital' ? STATE_RING.transport : state === 'enroute' || state === 'turnout' ? STATE_RING.enroute : null;
+  // 테: 출동(준비) = 분야색을 밝힌 점선, 현장 = 노란 실선, 이송 = 초록 실선 + 십자 (지도의 drawToken 과 같다)
+  const ring = state === 'onscene' ? STATE_RING.onscene : state === 'transport' || state === 'hospital' ? STATE_RING.transport : state === 'enroute' || state === 'turnout' ? mix(col, '#ffffff', 0.5) : null;
   const dim = state === 'oos' ? 0.4 : state === 'returning' ? 0.6 : 1;
-  const ms = size * 0.62, n = Math.max(0, Math.min(5, no));
+  const ms = size * MARK_RATIO, n = Math.max(0, Math.min(5, no));
   return (
     <svg className={`token st-${state}`} width={box} height={box} viewBox={`0 0 ${box} ${box}`} aria-hidden={title ? undefined : true} role={title ? 'img' : undefined}>
       {title && <title>{title}</title>}

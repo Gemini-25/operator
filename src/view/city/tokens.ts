@@ -11,8 +11,8 @@ import { mix, shade } from '../scene/common';
 export const FIELD_COLOR: Record<UnitField, string> = { police: '#3f7fd0', fire: '#d8503a', rescue: '#23996b', special: '#8f6fd0' };
 /** 어두운 바탕 위에 글자·선으로 쓸 때의 밝은 분야색 */
 export const FIELD_TEXT: Record<UnitField, string> = { police: '#7db9ff', fire: '#ff8f66', rescue: '#4fd9a6', special: '#c9a2ff' };
-/** 상태 테의 색 (출동은 분야색을 밝힌 색으로 그리므로 여기 값은 목록·범례용이다) */
-export const STATE_RING = { enroute: '#cfe0f2', onscene: '#ffd166', transport: '#5ad17a' };
+/** 상태 테의 색 (출동은 분야색을 밝힌 점선이라 여기에 없다) */
+export const STATE_RING = { onscene: '#ffd166', transport: '#5ad17a' };
 /** 시설 배지의 색 */
 export const FACILITY_COLOR: Record<string, string> = { fireStation: '#ff7a45', police: '#5aa9ff', hospital: '#2fd39a', public: '#9fb0c0', heliport: '#ff7a45', harbor: '#ff7a45' };
 /** 돌의 지름에 대한 기호의 크기 */

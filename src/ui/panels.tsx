@@ -166,6 +166,7 @@ export function LogPanel({ sim, director, truth, onJump }: { sim: Sim; director:
   }
   filtered.reverse();
   const lastId = filtered.length ? filtered[filtered.length - 1].id : -1;
+  const byCall = new Map(sim.units.map((u) => [u.callsign, u]));
   useEffect(() => { const el = box.current; if (el && stick.current) el.scrollTop = el.scrollHeight; }, [lastId]);
   return (
     <div className="panel-section grow">
@@ -178,7 +179,9 @@ export function LogPanel({ sim, director, truth, onJump }: { sim: Sim; director:
       <div className="scroll log" ref={box} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}>
         {filtered.map((e) => {
           const inc = e.incidentId >= 0 ? sim.incidents[e.incidentId] : null;
-          const col = e.role === 'RESPONDER' && e.rid >= 0 ? DEPT_COLOR[sim.responders[e.rid].dept] : ROLE_COLOR[e.role];
+          // 대원과 부대의 무전은 그 부대의 분야색 점 (지도·부대 목록의 표식과 같은 색)
+          const unit = e.role === 'RESPONDER' && e.rid >= 0 ? sim.units[sim.responders[e.rid].unitId] : e.role === 'UNIT' ? byCall.get(e.actor) : undefined;
+          const col = unit ? FIELD_TEXT[fieldOf(unit)] : ROLE_COLOR[e.role];
           return (
             <div key={e.id} className={`ev k-${e.kind} ${e.problem ? 'problem' : ''} ${e.truth ? 'truth' : ''} imp-${e.importance}`} onClick={() => { if (inc) director.pin(inc.id, inc.phase === 'onscene' || inc.phase === 'closed' ? 'scene' : 'city'); }}
               onDoubleClick={() => onJump && onJump(e.t, e.incidentId)} title="클릭: 이 사건 관찰 · 더블클릭: 이 순간으로 이동">

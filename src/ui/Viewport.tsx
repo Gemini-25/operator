@@ -73,7 +73,27 @@ export function Viewport({ runner, director, sound, book, selectedRid, onSelectR
       }
       const truth = runner.settings.truthView;
       const scene = director.mode === 'scene' && director.focus >= 0 ? sim.scenes[director.focus] : null;
-      sound.update(sim, { paused: runner.paused, speed: effSpeed, focus: director.focus, inScene: !!scene });
+      // 소리: 연출 기억이 받아들인 새 항목을 원근(화면 위치)에 맞춰 낸다. AI 시점에서는 부대 도착 전의 기록을 빼고 듣는다
+      const fresh = truth ? book.fresh : book.fresh.filter((e) => { const s2 = sim.scenes[e.sid]; return !e.f || (!!s2 && s2.arrivedAt >= 0 && e.f.t >= s2.arrivedAt); });
+      const shownPip = new Set(pips.map((p) => p.target));
+      const placeSound = (sid: number, x: number, y: number): { gain: number; pan: number; far: number } | null => {
+        if (scene) {
+          if (sid === scene.id) {
+            const L = sceneLayout(scene, w, h, director.sceneCam), hw = w / 2 / L.ts, camX = (w / 2 - L.ox) / L.ts - 0.5, camY = (h / 2 - L.oy) / L.ts - 0.5;
+            const d = Math.hypot(x - camX, y - camY);
+            return { gain: d <= hw ? 1 : Math.max(0.35, 1 / (1 + ((d - hw) / hw) ** 2)), pan: Math.max(-1, Math.min(1, (x - camX) / hw)) * 0.7, far: 0 };
+          }
+          return shownPip.has(sid) ? { gain: 0.14, pan: 0.6, far: 1200 } : { gain: 0.05, pan: 0, far: 900 };
+        }
+        const I = sim.incidents[sid]; if (!I) return null;
+        const xf = cityXf(sim, director.cam, w, h), sx = xf.ox + I.truth.x * xf.scale, sy = xf.oy + I.truth.y * xf.scale;
+        const out = Math.max(0, -sx, sx - w, -sy, sy - h);
+        const g0 = 0.22 * Math.sqrt(director.cam.zoom / 6.5);
+        const gain = out <= 0 ? g0 : Math.max(0, g0 * (1 - out / (1.5 * w)));
+        return gain > 0 ? { gain, pan: Math.max(-1, Math.min(1, (sx - w / 2) / (w / 2))) * 0.7, far: 900 } : null;
+      };
+      const tension = !!scene && scene.kind === 'armed' && scene.hostiles.some((x) => x.weapon === 'gun' && (x.state === 'hold' || x.state === 'fight') && sim.t >= x.stunUntil);
+      sound.update(sim, { paused: runner.paused, speed: effSpeed, focus: director.focus, inScene: !!scene, fresh, place: placeSound, clock: book.clock, rate: book.rate, tension });
       if (scene) drawScene(ctx, sim, scene, w, h, { truth, alpha: runner.alpha, timeMs: now, selectedRid: sel.current, cam: director.sceneCam, book });
       else {
         const selUnit = sel.current >= 0 ? sim.responders[sel.current].unitId : -1;

@@ -139,6 +139,8 @@ async function main() {
         fps: avg((s) => s.snap.fps), drawMs: last.comb ? avg((s) => s.comb.drawMs) : null, drawMsMax: last.comb ? Math.max(...samples.map((s) => s.comb.drawMs)) : null,
         madeDelta: last.comb && comb0 ? last.comb.stats.made - comb0.stats.made : null,
         stats: last.comb ? last.comb.stats : null, live: last.comb ? last.comb.live : null, tFrom: samples[0].snap.t, tTo: last.snap.t,
+        maxVoices: last.comb ? Math.max(...samples.map((s) => s.comb.stats.voices)) : null,
+        maxPerSecSampled: last.comb ? Math.max(...samples.map((s) => s.comb.stats.perSec)) : null,
       };
       await shoot('measure-end');
     }

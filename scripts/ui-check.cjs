@@ -328,9 +328,11 @@ async function run(page) {
   if (base) {
     const t0 = Date.now();
     const req = { seed: base.seed, difficulty: base.difficulty, ticks: marks.map((m) => m.tick), end: true, shiftLen: 1200, force: null };
-    const out = execFileSync('npx', ['tsx', 'scripts/ui-check-ref.ts', JSON.stringify(req)], { cwd: ROOT, encoding: 'utf8', timeout: 600000 });
-    ref = JSON.parse(out.trim().split('\n').pop());
-    log(`헤드리스 기준값: 표본 ${marks.length}개, 끝 틱 ${ref.final.tick}, 해시 ${ref.final.reportHash} (${((Date.now() - t0) / 1000).toFixed(1)}초)`);
+    try {
+      const out = execFileSync('npx', ['tsx', 'scripts/ui-check-ref.ts', JSON.stringify(req)], { cwd: ROOT, encoding: 'utf8', timeout: 600000 });
+      ref = JSON.parse(out.trim().split('\n').pop());
+      log(`헤드리스 기준값: 표본 ${marks.length}개, 끝 틱 ${ref.final.tick}, 해시 ${ref.final.reportHash} (${((Date.now() - t0) / 1000).toFixed(1)}초)`);
+    } catch (e) { log(`헤드리스 기준값을 얻지 못함 (3·4·5번은 실패로 판정): ${e.message.split('\n')[0]}`); }
   }
   const cmp = (group) => {
     const ms = marks.filter((m) => m.group === group);
@@ -412,7 +414,7 @@ async function run(page) {
   const names = { 1: '콘솔·페이지 오류', 2: '일시정지·배속', 3: '되감기 재현성', 4: '새로고침 복원', 5: '교대 끝까지', 6: '난이도·재난·현장 화면', 7: '조작 목록' };
   let fail = 0;
   for (let n = 1; n <= 7; n++) {
-    const r = results[n] || { ok: false, line: fatal ? '검사 전에 중단됨' : '실행되지 않음', details: [] };
+    const r = results[n] || { ok: false, line: fatal ? '중단되어 판정하지 못함' : '실행되지 않음', details: [] };
     if (r.ok === false) fail++;
     console.log(`[${r.ok === null ? '정보' : r.ok ? '통과' : '실패'}] ${n}. ${names[n]}: ${r.line}`);
     for (const d of r.details) console.log(`      ${d}`);

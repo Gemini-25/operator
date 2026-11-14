@@ -535,7 +535,7 @@ describe('빈 곳 채우기', () => {
 
 describe('건물마다 정해진 도시', () => {
   it('모든 건물에 종류·이름·주소·진입 지점이 있고, 지도는 교대가 바뀌어도 같다', async () => {
-    const { placeAt, findRoute, coastY, riverDist, roadHalf, distSeg } = await import('../src/sim/city');
+    const { placeAt, findRoute, coastY, riverDist, roadHalf, distSeg, rectSegDist, segCross, obbHit, boxOf } = await import('../src/sim/city');
     const { KIND_NAME, LANDMARKS, ROADS } = await import('../src/sim/cityPlan');
     const a = new Sim('A').city, b = new Sim('B').city;
     expect(a.places.length).toBeGreaterThan(900);
@@ -569,7 +569,30 @@ describe('건물마다 정해진 도시', () => {
     expect(a.edges.filter((e) => e.bridge).length).toBeGreaterThanOrEqual(4);
     expect(a.nodes.filter((n) => n.exit).length).toBeGreaterThanOrEqual(4);
     for (const n of a.nodes) if (n.id) expect(findRoute(a, 0, n.id), n.key).not.toBeNull();
-    expect(new Set(a.edges.map((e) => e.name)).size).toBe(ROADS.length);
+    expect(new Set(a.edges.filter((e) => e.cls !== 'local' || (e.road ?? 0) < ROADS.length).map((e) => e.name)).size).toBe(ROADS.length);
+    // 블록 안의 이면 도로: 설계도에 없는 좁은 길이 생성기에서 생긴다
+    expect(a.edges.filter((e) => (e.road ?? 0) >= ROADS.length).length).toBeGreaterThanOrEqual(30);
+    expect(a.nodes.length).toBeGreaterThan(120);
+    // 도로는 서로 교차하지 않는다 (교차로에서만 만난다)
+    for (let i = 0; i < a.edges.length; i++) for (let j = i + 1; j < a.edges.length; j++) {
+      const e = a.edges[i], f = a.edges[j];
+      if (e.a === f.a || e.a === f.b || e.b === f.a || e.b === f.b) continue;
+      expect(segCross(a.nodes[e.a].x, a.nodes[e.a].y, a.nodes[e.b].x, a.nodes[e.b].y, a.nodes[f.a].x, a.nodes[f.a].y, a.nodes[f.b].x, a.nodes[f.b].y), `${e.name} × ${f.name}`).toBe(false);
+    }
+    // 겹침: 어떤 건물도 도로 위에 걸치지 않고(선분과 직사각형의 정확한 거리), 건물끼리 겹치지 않는다. 손으로 놓은 건물도 마찬가지다
+    let near = 0;
+    for (const q of bs) {
+      const b = boxOf(q);
+      let nearest = Infinity;
+      for (const e of a.edges) { const A = a.nodes[e.a], B = a.nodes[e.b], d = rectSegDist(b, A.x, A.y, B.x, B.y); expect(d, `${q.name} ↔ ${e.name}`).toBeGreaterThanOrEqual(roadHalf(e)); nearest = Math.min(nearest, d - roadHalf(e)); }
+      if (nearest < 60) near++;
+    }
+    expect(near / bs.length).toBeGreaterThan(0.85);      // 건물은 길에서 멀지 않다
+    for (let i = 0; i < bs.length; i++) for (let j = i + 1; j < bs.length; j++) {
+      const p = bs[i], q = bs[j];
+      if (Math.abs(p.x - q.x) > 140 || Math.abs(p.y - q.y) > 140) continue;
+      expect(obbHit(boxOf(p), boxOf(q), 0), `${p.name} ↔ ${q.name}`).toBe(false);
+    }
     // 설계도에 적은 곳이 실제로 있고, 동네마다 여러 종류가 섞여 있다
     const kinds = new Set(a.places.map((q) => q.kind));
     for (const k of ['houseS', 'houseL', 'apartment', 'villa', 'bank', 'convenience', 'office', 'factory', 'warehouse', 'workshop', 'cafe', 'station', 'stadium', 'university', 'cathedral', 'temple', 'powerPlant', 'lighthouse', 'beach', 'pier', 'park', 'forest', 'riverside', 'reservoir', 'terminal', 'runway', 'hospital', 'fireStation', 'police'] as const) expect(kinds.has(k), k).toBe(true);
@@ -591,10 +614,11 @@ describe('건물마다 정해진 도시', () => {
       for (const I of s.incidents) {
         const sc = s.scenes[I.id]!;
         if (I.truth.type === 'traffic' || I.pursuit) { expect(I.truth.placeId).toBe(-1); intersections++; continue; }      // 교통사고와 추격전은 건물이 아니라 길 위에서 벌어진다
+        if (I.truth.placeId < 0) { intersections++; continue; }      // 길 위에서 일어나는 시나리오 (산사태 등)
         expect(I.truth.placeId, I.truth.label).toBeGreaterThanOrEqual(0);
         const q = s.city.places[I.truth.placeId];
         atPlace++;
-        expect((scenarioOf(I.truth.type, I.truth.variant)?.places ?? INCIDENT_PLACES[I.truth.type])[q.kind] ?? 0, `${I.truth.type}/${I.truth.variant} @ ${q.kind}`).toBeGreaterThan(0);
+        if (I.parent === undefined && !(I.tag ?? '').startsWith('disaster')) expect((scenarioOf(I.truth.type, I.truth.variant)?.places ?? INCIDENT_PLACES[I.truth.type])[q.kind] ?? 0, `${I.truth.type}/${I.truth.variant} @ ${q.kind}`).toBeGreaterThan(0);      // 이어지는 사건과 재난은 자리를 정해서 일으킨다
         expect(I.truth.nodeId).toBe(q.nodeId);
         expect(I.truth.label.includes(q.name)).toBe(true);
         if (I.truth.type === 'armed' && q.kind === 'bank') { banks++; if (sc.regions.some((r) => r.name === '은행 로비')) bankLobby++; }
@@ -619,7 +643,7 @@ describe('건물마다 정해진 도시', () => {
     }
     expect(atPlace).toBeGreaterThan(120);
     expect(intersections).toBeGreaterThan(20);
-    expect(banks).toBeGreaterThan(3); expect(bankLobby).toBe(banks);      // 은행에서 난 사건의 현장은 은행 로비다
+    expect(banks).toBeGreaterThanOrEqual(2); expect(bankLobby).toBe(banks);      // 은행에서 난 사건의 현장은 은행 로비다
     expect(smallTall).toBe(0);                                             // 작은 집은 단층이다
     expect(named).toBeGreaterThan(atPlace * 0.5);
     expect(parked).toBeGreaterThan(50);

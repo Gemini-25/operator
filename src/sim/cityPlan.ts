@@ -138,7 +138,7 @@ export interface LandmarkDef { kind: PlaceKind; name: string; x: number; y: numb
 const L = (kind: PlaceKind, name: string, x: number, y: number, w: number, h: number, o: Partial<LandmarkDef> = {}): LandmarkDef => ({ kind, name, x, y, w, h, ...o });
 export const LANDMARKS: LandmarkDef[] = [
   // 출동 시설 (순서는 부대 편성표의 시설 번호와 같다)
-  L('fireStation', '중앙소방서', 1350, 1385, 78, 62, { facility: 'fireStation', rank: 3 }),
+  L('fireStation', '중앙소방서', 1350, 1380, 78, 62, { facility: 'fireStation', rank: 3 }),
   L('fireStation', '공단119안전센터', 2235, 1525, 78, 62, { facility: 'fireStation', rank: 3 }),
   L('hospital', '시립병원', 1985, 1015, 78, 62, { facility: 'hospital', rank: 3 }),
   L('police', '중부경찰서', 1455, 735, 78, 62, { facility: 'police', rank: 3 }),
@@ -162,7 +162,7 @@ export const LANDMARKS: LandmarkDef[] = [
   L('powerPlant', '가온화력발전소', 2680, 1700, 120, 84, { rot: -3, floors: 3, rank: 3 }),
   L('broadcast', '가온방송국', 2010, 415, 66, 54, { rot: -14, floors: 6, rank: 3 }),
   L('prison', '가온교도소', 3030, 470, 124, 100, { rot: 12, floors: 2, rank: 3 }),
-  L('museum', '시립박물관', 1235, 945, 72, 52, { rot: 62, floors: 2, rank: 3 }),
+  L('museum', '시립박물관', 1233, 950, 72, 52, { rot: 62, floors: 2, rank: 3 }),
   L('library', '시립도서관', 1245, 765, 56, 44, { rot: -32, floors: 3, rank: 2 }),
   L('busTerminal', '시외버스터미널', 1850, 1375, 104, 56, { rot: 28, floors: 2, rank: 3 }),
   L('ferry', '여객선 터미널', 1850, 1880, 100, 40, { rot: -4, floors: 2, rank: 3 }),
@@ -172,10 +172,10 @@ export const LANDMARKS: LandmarkDef[] = [
   L('amusement', '해변 놀이공원', 985, 1855, 132, 96, { rot: -6, open: true, rank: 3 }),
   L('lighthouse', '곶 등대', 3050, 2020, 22, 22, { floors: 6, rank: 3 }),
   L('dam', '가온댐', 722, 322, 96, 20, { rot: 14, floors: 2, rank: 3 }),
-  L('lookout', '산성 전망대', 1000, 322, 40, 34, { floors: 2, rank: 2 }),
+  L('lookout', '산성 전망대', 986, 322, 40, 34, { floors: 2, rank: 2 }),
   L('substation', '동부 변전소', 2575, 1055, 62, 50, { rot: 15, rank: 2 }),
-  L('chemical', '가온화학', 2500, 1490, 96, 60, { rot: 36, floors: 2, rank: 3 }),
-  L('storage', '공단 저장소', 2590, 1385, 56, 48, { rot: 15, rank: 2 }),
+  L('chemical', '가온화학', 2521, 1461, 96, 60, { rot: 36, floors: 2, rank: 3 }),
+  L('storage', '공단 저장소', 2580, 1385, 56, 48, { rot: 15, rank: 2 }),
   L('construction', '동문 재개발 공사장', 2235, 1275, 110, 84, { rot: 10, floors: 3, rank: 3 }),
   L('school', '한솔중학교', 2440, 690, 72, 54, { rot: 15, floors: 3, rank: 2 }),
   L('school', '동문고등학교', 1945, 1215, 70, 52, { rot: -24, floors: 3, rank: 2 }),

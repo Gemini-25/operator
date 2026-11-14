@@ -53,6 +53,157 @@ export function districtAt(x: number, y: number, pick?: number): DistrictDef | n
   return best;
 }
 
+export interface Box { cx: number; cy: number; w: number; h: number; rot: number }
+/** 선분과 돌려 놓인 직사각형 사이의 최소 거리 (겹치면 0) */
+export function rectSegDist(b: Box, ax: number, ay: number, bx: number, by: number): number {
+  const c = Math.cos(-b.rot), s = Math.sin(-b.rot), hw = b.w / 2, hh = b.h / 2;
+  const x0 = (ax - b.cx) * c - (ay - b.cy) * s, y0 = (ax - b.cx) * s + (ay - b.cy) * c;
+  const x1 = (bx - b.cx) * c - (by - b.cy) * s, y1 = (bx - b.cx) * s + (by - b.cy) * c;
+  // 선분이 직사각형을 지나는가 (잘라 보기)
+  const dx = x1 - x0, dy = y1 - y0;
+  let t0 = 0, t1 = 1, hit = true;
+  for (const [pp, qq] of [[-dx, x0 + hw], [dx, hw - x0], [-dy, y0 + hh], [dy, hh - y0]]) {
+    if (pp === 0) { if (qq < 0) { hit = false; break; } continue; }
+    const r = qq / pp;
+    if (pp < 0) { if (r > t1) { hit = false; break; } if (r > t0) t0 = r; } else { if (r < t0) { hit = false; break; } if (r < t1) t1 = r; }
+  }
+  if (hit) return 0;
+  const ptRect = (x: number, y: number): number => Math.hypot(Math.max(Math.abs(x) - hw, 0), Math.max(Math.abs(y) - hh, 0));
+  let d = Math.min(ptRect(x0, y0), ptRect(x1, y1));
+  for (const [qx, qy] of [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]]) d = Math.min(d, distSeg(qx, qy, x0, y0, x1, y1));
+  return d;
+}
+/** 두 선분이 (끝점이 아닌 곳에서) 만나는가 */
+export function segCross(ax: number, ay: number, bx: number, by: number, cx: number, cy: number, dx: number, dy: number): boolean {
+  const o = (px: number, py: number, qx: number, qy: number, rx: number, ry: number): number => (qx - px) * (ry - py) - (qy - py) * (rx - px);
+  const d1 = o(cx, cy, dx, dy, ax, ay), d2 = o(cx, cy, dx, dy, bx, by), d3 = o(ax, ay, bx, by, cx, cy), d4 = o(ax, ay, bx, by, dx, dy);
+  return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+}
+
+/** 도로로 둘러싸인 칸(블록)을 찾는다: 반변을 따라 돌며 면을 구한다. 가장 큰 것(바깥)은 뺀다. */
+export function cityFaces(nodes: RoadNode[], edges: RoadEdge[]): { ns: number[]; es: number[]; area: number; cx: number; cy: number }[] {
+  const order = nodes.map((n) => n.edges.map((id) => { const e = edges[id], o = nodes[e.a === n.id ? e.b : e.a]; return { id, ang: Math.atan2(o.y - n.y, o.x - n.x) }; }).sort((p, q) => p.ang - q.ang || p.id - q.id).map((p) => p.id));
+  const used = new Set<number>();
+  const out: { ns: number[]; es: number[]; area: number; cx: number; cy: number }[] = [];
+  for (const e of edges) for (const dir of [0, 1]) {
+    if (used.has(e.id * 2 + dir)) continue;
+    const ns: number[] = [], es: number[] = [];
+    let ce = e.id, cd = dir, guard = 0;
+    while (!used.has(ce * 2 + cd) && guard++ < 600) {
+      used.add(ce * 2 + cd);
+      const E = edges[ce], from = cd === 0 ? E.a : E.b, to = cd === 0 ? E.b : E.a;
+      ns.push(from); es.push(ce);
+      const lst = order[to], nx = lst[(lst.indexOf(ce) + lst.length - 1) % lst.length];      // 온 길 바로 옆(시계 방향)의 길로 꺾는다
+      cd = edges[nx].a === to ? 0 : 1; ce = nx;
+    }
+    let area = 0, cx = 0, cy = 0;
+    for (let i = 0; i < ns.length; i++) { const P = nodes[ns[i]], Q = nodes[ns[(i + 1) % ns.length]], cr = P.x * Q.y - Q.x * P.y; area += cr; cx += (P.x + Q.x) * cr; cy += (P.y + Q.y) * cr; }
+    area /= 2;
+    out.push({ ns, es, area, cx: area ? cx / (6 * area) : 0, cy: area ? cy / (6 * area) : 0 });
+  }
+  out.sort((p, q) => Math.abs(q.area) - Math.abs(p.area));
+  return out.slice(1);
+}
+
+/**
+ * 이면 도로: 큰 블록의 가장 긴 변에서 맞은편 변까지 좁은 길을 낸다. 설계도(cityPlan)는 큰 뼈대만 갖고, 블록 안의 작은 길은 여기서 생긴다.
+ * 기존 교차로·구간의 번호는 바뀌지 않는다(새 교차로와 구간은 끝에 붙는다. 쪼갠 구간의 앞 토막이 원래 번호를 물려받는다).
+ */
+function addLocalStreets(rng: Rng, nodes: RoadNode[], edges: RoadEdge[]): void {
+  const span = new Map<number, number>();      // 쪼개는 동안 seq 를 실수로 다룬다 (도로 위의 순서를 지키기 위해)
+  const lm: Box[] = LANDMARKS.map((l) => ({ cx: l.x, cy: l.y, w: l.w, h: l.h, rot: ((l.rot ?? 0) * Math.PI) / 180 }));
+  const count = new Map<string, number>();
+  let roadNo = ROADS.length, localNode = 0;
+  const landOk = (x: number, y: number): boolean => x > 30 && y > 30 && x < CITY_W - 30 && y < CITY_H - 30 && y < coastY(x) - 16 && riverDist(x, y) > 14 && mountainAt(x, y) < 0.3 && ((x - LAKE.x) / (LAKE.rx + 20)) ** 2 + ((y - LAKE.y) / (LAKE.ry + 20)) ** 2 > 1;
+  /** 새 길의 한 토막이 놓일 수 있는가 (ig = 닿아도 되는 구간들) */
+  const segOk = (ax: number, ay: number, bx: number, by: number, ig: number[]): boolean => {
+    for (let k = 1; k < 8; k++) if (!landOk(ax + ((bx - ax) * k) / 8, ay + ((by - ay) * k) / 8)) return false;
+    for (let i = 0; i < RAIL.length - 1; i++) if (segCross(ax, ay, bx, by, RAIL[i][0], RAIL[i][1], RAIL[i + 1][0], RAIL[i + 1][1])) return false;
+    for (const b of lm) if (rectSegDist(b, ax, ay, bx, by) < 20) return false;
+    for (const e of edges) {
+      if (ig.indexOf(e.id) >= 0) continue;
+      const A = nodes[e.a], B = nodes[e.b];
+      if (segCross(ax, ay, bx, by, A.x, A.y, B.x, B.y)) return false;
+      if (distSeg(A.x, A.y, ax, ay, bx, by) < 34 || distSeg(B.x, B.y, ax, ay, bx, by) < 34) return false;      // 다른 길의 끝에 너무 붙지 않는다
+    }
+    return true;
+  };
+  const split = (ei: number, t: number): number => {
+    const E = edges[ei], A = nodes[E.a], B = nodes[E.b], x = A.x + (B.x - A.x) * t, y = A.y + (B.y - A.y) * t;
+    const N: RoadNode = { id: nodes.length, x, y, c: 0, r: 0, district: districtAt(x, y)?.district ?? 'outskirts', edges: [], key: `L${localNode++}` };
+    nodes.push(N);
+    const sp = span.get(ei) ?? 1;
+    const E2: RoadEdge = { ...E, id: edges.length, a: N.id, b: E.b, len: Math.hypot(B.x - x, B.y - y), seq: (E.seq ?? 0) + sp / 2 };
+    edges.push(E2); span.set(ei, sp / 2); span.set(E2.id, sp / 2);
+    B.edges[B.edges.indexOf(ei)] = E2.id;
+    E.b = N.id; E.len = Math.hypot(A.x - x, A.y - y);
+    N.edges.push(ei, E2.id);
+    return N.id;
+  };
+  const link = (a: number, b: number, name: string, road: number, seq: number): void => {
+    const A = nodes[a], B = nodes[b], d = districtAt((A.x + B.x) / 2, (A.y + B.y) / 2)?.district ?? 'outskirts';
+    const baseCong = d === 'commercial' ? 1.5 : d === 'residential' ? 1.2 : d === 'industrial' ? 1.25 : 1.0;
+    const e: RoadEdge = { id: edges.length, a, b, len: Math.hypot(A.x - B.x, A.y - B.y), speed: SPEED.local, arterial: false, cong: baseCong, baseCong, closed: false, closedReason: null, slow: 0, name, cls: 'local', road, seq, bridge: false };
+    edges.push(e); A.edges.push(e.id); B.edges.push(e.id);
+  };
+  const failed = new Set<string>();
+  let made = 0;
+  while (made < 66) {
+    const fs = cityFaces(nodes, edges).filter((f) => Math.abs(f.area) > 46000 && !failed.has([...f.ns].sort((p, q) => p - q).join(',')));
+    let done = false;
+    for (const f of fs) {
+      const fk = [...f.ns].sort((p, q) => p - q).join(',');
+      const D = districtAt(f.cx, f.cy);
+      if (!D || D.density < 0.5 || !landOk(f.cx, f.cy)) { failed.add(fk); continue; }
+      const poly = f.ns.map((id) => nodes[id]);
+      const inside = (x: number, y: number): boolean => { let c = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) { const P = poly[i], Q = poly[j]; if ((P.y > y) !== (Q.y > y) && x < ((Q.x - P.x) * (y - P.y)) / (Q.y - P.y) + P.x) c = !c; } return c; };
+      const sides = [...new Set(f.es)].filter((id) => f.es.indexOf(id) === f.es.lastIndexOf(id)).sort((p, q) => edges[q].len - edges[p].len || p - q);
+      for (const [ei, t1] of sides.flatMap((id) => [[id, rng.range(0.4, 0.6)], [id, 0.33], [id, 0.67]])) {
+        const E = edges[ei];
+        if (E.cls === 'highway' || E.bridge || E.len < 120) continue;
+        const A = nodes[E.a], B = nodes[E.b], px = A.x + (B.x - A.x) * t1, py = A.y + (B.y - A.y) * t1;
+        let nx = -(B.y - A.y) / E.len, ny = (B.x - A.x) / E.len;
+        if (!inside(px + nx * 12, py + ny * 12)) { nx = -nx; ny = -ny; if (!inside(px + nx * 12, py + ny * 12)) continue; }
+        // 맞은편 변: 안쪽 법선 방향으로 쏜 반직선이 처음 만나는 변
+        let be = -1, bs = Infinity, bu = 0;
+        for (const ej of sides) {
+          if (ej === ei) continue;
+          const C = nodes[edges[ej].a], Dd = nodes[edges[ej].b], rx = Dd.x - C.x, ry = Dd.y - C.y, den = nx * ry - ny * rx;
+          if (Math.abs(den) < 1e-6) continue;
+          const sdist = ((C.x - px) * ry - (C.y - py) * rx) / den, u = ((C.x - px) * ny - (C.y - py) * nx) / den;
+          if (sdist > 1 && u >= 0 && u <= 1 && sdist < bs) { bs = sdist; be = ej; bu = u; }
+        }
+        if (be < 0 || bs < 76 || bs > 520) continue;
+        const E2 = edges[be];
+        if (E2.cls === 'highway' || E2.bridge || E2.len < 120) continue;
+        const um = 48 / E2.len, u2 = clamp(bu + rng.range(-0.07, 0.07), um, 1 - um), C = nodes[E2.a], Dd = nodes[E2.b];
+        const qx = C.x + (Dd.x - C.x) * u2, qy = C.y + (Dd.y - C.y) * u2, L = Math.hypot(qx - px, qy - py);
+        if (L < 76 || ((qx - px) * nx + (qy - py) * ny) / L < 0.72) continue;      // 너무 비스듬하면 내지 않는다
+        if (Math.min(t1, 1 - t1) * E.len < 48) continue;
+        // 긴 길은 가운데에서 살짝 꺾는다
+        const bend = L > 250, k = bend ? (rng.chance(0.5) ? 1 : -1) * rng.range(12, 20) : 0, mx = (px + qx) / 2 - ((qy - py) / L) * k, my = (py + qy) / 2 + ((qx - px) / L) * k;
+        const ok = bend ? segOk(px, py, mx, my, [ei, be]) && segOk(mx, my, qx, qy, [ei, be]) && landOk(mx, my) : segOk(px, py, qx, qy, [ei, be]);
+        if (!ok) continue;
+        const c = (count.get(E.name) ?? 0) + 1; count.set(E.name, c);
+        const name = `${E.name} ${c * 2}길`, n1 = split(ei, t1), n2 = split(be, u2);
+        if (bend) {
+          const M: RoadNode = { id: nodes.length, x: mx, y: my, c: 0, r: 0, district: districtAt(mx, my)?.district ?? 'outskirts', edges: [], key: `L${localNode++}` };
+          nodes.push(M); link(n1, M.id, name, roadNo, 0); link(M.id, n2, name, roadNo, 1);
+        } else link(n1, n2, name, roadNo, 0);
+        roadNo++; made++; done = true;
+        break;
+      }
+      if (done) break;
+      failed.add(fk);
+    }
+    if (!done) break;
+  }
+  // 도로마다 구간 번호를 다시 매긴다 (쪼갠 순서와 상관없이 도로를 따라 0, 1, 2 …)
+  const byRoad = new Map<number, RoadEdge[]>();
+  for (const e of edges) { let l = byRoad.get(e.road!); if (!l) byRoad.set(e.road!, (l = [])); l.push(e); }
+  for (const l of byRoad.values()) { l.sort((p, q) => (p.seq ?? 0) - (q.seq ?? 0) || p.id - q.id); l.forEach((e, i) => { e.seq = i; }); }
+}
+
 let cached: City | null = null;
 /** 도시를 만든다. 지도 자체는 고정이므로 한 번만 만들고, 교대마다 바뀌는 도로 상태만 새로 복사해 돌려준다. */
 export function generateCity(rng: Rng): City {
@@ -79,6 +230,7 @@ function buildCity(rng: Rng): City {
     }
   });
   for (const e of edges) { nodes[e.a].edges.push(e.id); nodes[e.b].edges.push(e.id); }
+  addLocalStreets(rng.fork('local-streets'), nodes, edges);
   const built = buildPlaces(rng.fork('places-v2'), nodes, edges);
   // 출동 시설: 설계도에 적힌 순서대로 번호를 붙인다. 차량은 시설 앞마당에 선다.
   const facilities: Facility[] = [];
@@ -112,8 +264,8 @@ const DIM: Partial<Record<PlaceKind, number[]>> = {
 /** 블록 안쪽(길에서 떨어진 곳)에 들어설 수 있는 종류 */
 const INNER_OK: Partial<Record<PlaceKind, boolean>> = { houseS: true, houseL: true, villa: true, apartment: true, dorm: true, factory: true, warehouse: true, workshop: true, storage: true, farmhouse: true, greenhouse: true, pension: true, parking: true, office: true, officetel: true };
 
-interface Box { cx: number; cy: number; w: number; h: number; rot: number }
-function obbHit(a: Box, b: Box, m: number): boolean {
+/** 돌려 놓인 두 직사각형이 (여유 m 안으로) 겹치는가 */
+export function obbHit(a: Box, b: Box, m: number): boolean {
   const ax = Math.cos(a.rot), ay = Math.sin(a.rot), bx = Math.cos(b.rot), by = Math.sin(b.rot), dx = b.cx - a.cx, dy = b.cy - a.cy;
   for (const [ux, uy] of [[ax, ay], [-ay, ax], [bx, by], [-by, bx]]) {
     const ra = (a.w / 2 + m) * Math.abs(ux * ax + uy * ay) + (a.h / 2 + m) * Math.abs(-ux * ay + uy * ax);
@@ -122,7 +274,7 @@ function obbHit(a: Box, b: Box, m: number): boolean {
   }
   return true;
 }
-const boxOf = (q: Place): Box => ({ cx: q.x + q.w / 2, cy: q.y + q.h / 2, w: q.w, h: q.h, rot: q.rot ?? 0 });
+export const boxOf = (q: Place): Box => ({ cx: q.x + q.w / 2, cy: q.y + q.h / 2, w: q.w, h: q.h, rot: q.rot ?? 0 });
 
 function buildPlaces(pr: Rng, nodes: RoadNode[], edges: RoadEdge[]): { places: Place[]; alleys: Alley[] } {
   const places: Place[] = [], alleys: Alley[] = [];
@@ -200,18 +352,43 @@ function buildPlaces(pr: Rng, nodes: RoadNode[], edges: RoadEdge[]): { places: P
     for (let i = 0; i < alleys.length; i++) { if (-2 - i === skip) continue; const a = alleys[i]; if (distSeg(x, y, a.x0, a.y0, a.x1, a.y1) < 6) return false; }
     return true;
   };
+  /** 물·지도 밖이 아닌가 (한 점) */
+  const dryOk = (x: number, y: number): boolean => x >= 14 && y >= 14 && x <= CITY_W - 14 && y <= CITY_H - 14 && y <= coastY(x) - 9 && riverDist(x, y) >= 8 && ((x - LAKE.x) / (LAKE.rx + 10)) ** 2 + ((y - LAKE.y) / (LAKE.ry + 10)) ** 2 >= 1;
+  /** 상자가 도로·골목·철길에 닿지 않는가 (선분과 직사각형의 정확한 거리). gap = 도로 가장자리에서 띄울 거리 */
+  const clearOfRoads = (b: Box, skip: number, gap: number, rail = true): string | null => {
+    const br = Math.hypot(b.w, b.h) / 2;
+    if (rail) for (let i = 0; i < RAIL.length - 1; i++) if (rectSegDist(b, RAIL[i][0], RAIL[i][1], RAIL[i + 1][0], RAIL[i + 1][1]) < 8) return '철길';
+    for (const e of edges) {
+      if (e.id === skip) continue;
+      const A = nodes[e.a], B = nodes[e.b], lim = roadHalf(e) + gap;
+      if (distSeg(b.cx, b.cy, A.x, A.y, B.x, B.y) > br + lim) continue;
+      if (rectSegDist(b, A.x, A.y, B.x, B.y) < lim) return e.name;
+    }
+    for (let i = 0; i < alleys.length; i++) { if (-2 - i === skip) continue; const a = alleys[i]; if (rectSegDist(b, a.x0, a.y0, a.x1, a.y1) < 5.5) return a.name; }
+    return null;
+  };
   const boxOk = (b: Box, skip: number, margin: number): boolean => {
     const c = Math.cos(b.rot), s = Math.sin(b.rot);
-    for (const [u, v] of [[0, 0], [-1, -1], [1, -1], [1, 1], [-1, 1], [0, -1], [0, 1], [-1, 0], [1, 0]]) {
-      const lx = (u * b.w) / 2, ly = (v * b.h) / 2;
-      if (!pointOk(b.cx + lx * c - ly * s, b.cy + lx * s + ly * c, skip)) return false;
-    }
+    // 둘레를 6 간격으로 훑어 물과 지도 밖을 본다
+    const nx = Math.max(2, Math.ceil(b.w / 6)), ny = Math.max(2, Math.ceil(b.h / 6));
+    const at = (lx: number, ly: number): boolean => dryOk(b.cx + lx * c - ly * s, b.cy + lx * s + ly * c);
+    if (!at(0, 0)) return false;
+    for (let k = 0; k <= nx; k++) { const lx = -b.w / 2 + (b.w * k) / nx; if (!at(lx, -b.h / 2) || !at(lx, b.h / 2)) return false; }
+    for (let k = 1; k < ny; k++) { const ly = -b.h / 2 + (b.h * k) / ny; if (!at(-b.w / 2, ly) || !at(b.w / 2, ly)) return false; }
+    if (clearOfRoads(b, skip, 2.4)) return false;
     const r = Math.hypot(b.w, b.h) / 2 + margin, done = new Set<number>();
     for (let gx = b.cx - r; gx <= b.cx + r + CELL; gx += CELL) for (let gy = b.cy - r; gy <= b.cy + r + CELL; gy += CELL) {
       for (const id of grid.get(gk(gx, gy)) ?? []) { if (done.has(id)) continue; done.add(id); const q = places[id]; if (q.open && reserved.indexOf(id) < 0) continue; if (obbHit(b, boxOf(q), q.open || q.facility >= 0 ? 6 : margin)) return false; }
     }
     return true;
   };
+  // 손으로 놓은 건물도 도로·철길에 닿으면 안 된다 (터는 물가나 길에 걸칠 수 있다). 걸리면 cityPlan.ts 의 좌표를 고친다
+  {
+    const bad: string[] = [];
+    for (const q of places) { if (q.open || !LANDMARKS.some((l) => l.name === q.name)) continue; const hit = clearOfRoads(boxOf(q), -1, 1, q.kind !== 'station'); if (hit) bad.push(`${q.name} ↔ ${hit}`); }
+    for (let i = 0; i < places.length; i++) for (let j = i + 1; j < places.length; j++) { const a = places[i], b = places[j]; if (a.open || b.open) continue; if (obbHit(boxOf(a), boxOf(b), 1)) bad.push(`${a.name} ↔ ${b.name}`); }
+    if (bad.length) throw new Error('설계도의 건물이 도로나 다른 건물과 겹친다: ' + bad.join(', '));
+  }
   const pickKind = (D: DistrictDef, inner: boolean, maxW: number): PlaceKind | null => {
     const ks = (Object.keys(D.mix) as PlaceKind[]).filter((k) => DIM[k] && (!inner || INNER_OK[k]) && DIM[k]![0] <= maxW);
     return ks.length ? pr.weighted(ks, ks.map((k) => D.mix[k]!)) : null;
@@ -272,13 +449,13 @@ function buildPlaces(pr: Rng, nodes: RoadNode[], edges: RoadEdge[]): { places: P
   }
   alleys.forEach((a, i) => frontage(a.x0, a.y0, a.x1, a.y1, 3.5, -2 - i, 3, 3, 32));
   // 4) 블록 안쪽: 길에서 떨어진 자리에 뒷집, 아파트 동, 공장을 놓는다
-  for (let gy = 30; gy < CITY_H - 30; gy += 31) for (let gx = 30; gx < CITY_W - 30; gx += 31) {
+  for (let gy = 30; gy < CITY_H - 30; gy += 27) for (let gx = 30; gx < CITY_W - 30; gx += 27) {
     const x = gx + pr.range(-9, 9), y = gy + pr.range(-9, 9);
     const D = districtAt(x, y, pr.next());
-    if (!D || !pr.chance(D.density * 0.62 * (1 - Math.min(1, mountainAt(x, y) * 2.5)))) continue;
+    if (!D || !pr.chance(D.density * 0.8 * (1 - Math.min(1, mountainAt(x, y) * 2.5)))) continue;
     let be: RoadEdge | null = null, bd = Infinity;
     for (const e of edges) { if (e.cls === 'highway') continue; const A = nodes[e.a], B = nodes[e.b], d = distSeg(x, y, A.x, A.y, B.x, B.y) - roadHalf(e); if (d < bd) { bd = d; be = e; } }
-    if (!be || bd < 44 || bd > 175) continue;
+    if (!be || bd < 36 || bd > 175) continue;
     const kind = pickKind(D, true, 999);
     if (!kind) continue;
     const dm = DIM[kind]!, A = nodes[be.a], B = nodes[be.b], w = pr.range(dm[0], dm[1]), d = pr.range(dm[2], dm[3]);
@@ -290,8 +467,8 @@ function buildPlaces(pr: Rng, nodes: RoadNode[], edges: RoadEdge[]): { places: P
   }
 
   // 5) 진입 지점과 주소: 가장 가까운 길가 (고속도로에는 차를 댈 수 없다)
-  const roadLen: number[][] = ROADS.map(() => []);
-  for (const e of edges) roadLen[e.road!][e.seq!] = e.len;
+  const roadLen = new Map<number, number[]>();
+  for (const e of edges) { let l = roadLen.get(e.road!); if (!l) roadLen.set(e.road!, (l = [])); l[e.seq!] = e.len; }
   const usedAddr = new Set<string>();
   const alleyNo = new Map<number, number>();
   for (const q of places) {
@@ -303,7 +480,7 @@ function buildPlaces(pr: Rng, nodes: RoadNode[], edges: RoadEdge[]): { places: P
     q.edgeId = e.id; q.nodeId = t < 0.5 ? e.a : e.b; q.cx = A.x + dx * t; q.cy = A.y + dy * t;
     if (q.open) { q.addr = `${q.dong} ${e.name}`; continue; }
     if (f !== undefined && f <= -2) { const n = (alleyNo.get(f) ?? 0) + 1; alleyNo.set(f, n); q.addr = `${alleys[-2 - f].name} ${n}`; continue; }
-    let along = t * e.len; for (let k = 0; k < e.seq!; k++) along += roadLen[e.road!][k] ?? 0;
+    let along = t * e.len; for (let k = 0; k < e.seq!; k++) along += roadLen.get(e.road!)![k] ?? 0;
     const side = (b.cx - A.x) * dy - (b.cy - A.y) * dx > 0 ? 1 : 0;
     let no = Math.floor(along / 11) * 2 + side + 1;
     while (usedAddr.has(`${e.name} ${no}`)) no += 2;

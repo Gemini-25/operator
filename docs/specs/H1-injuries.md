@@ -282,23 +282,40 @@ R1 의 공기호흡기 공기(`uses`)가 떨어진 동안 smoke·toxic 몫은 0 
 
 ```ts
 export const CAUSE_NAME: Record<InjuryCause, string> = { gunshot: '총상', stab: '자상', blunt: '타박상', burn: '화상', smoke: '연기 흡입', toxic: '유독 가스 흡입', fall: '추락', crush: '잔해 깔림', blast: '폭발', drown: '익수', electric: '감전', exhaustion: '열 탈진', vehicle: '차량 충격', exposure: '실외 노출', illness: '급성 질환' };
-export const bandOf = (h: number): number => (h <= 0 ? 3 : h > 70 ? 0 : h > 40 ? 1 : 2);
-export function injuryRng(sim: Sim, s: Scene): Rng;                              // WeakMap, sim.rng.fork('injury:' + s.id)
+export function bandOf(h: number): number { return h <= 0 ? 3 : h > 70 ? 0 : h > 40 ? 1 : 2; }     // 함수 선언 (§2.2 — 순환 import 에서도 안전)
+/** 목적별 흐름: WeakMap<Scene, Map<string, Rng>> 에 sim.rng.fork('injury:' + s.id + ':' + purpose).
+ *  purpose = 'trap'(2차 붕괴 갇힘) · 'extricate'(구출 중 사고) · 'fall'(잔해 바닥) · 'fight'(몸싸움) · 'down'(용의자 문턱의 남는 체력) · 'self'(자해) · 'electric'.
+ *  한 흐름을 여럿이 나눠 쓰면 뒤 단계에서 소비자가 늘 때마다 앞 단계의 결과가 밀린다 (CLAUDE.md "새 기능은 새 흐름") */
+export function injuryRng(sim: Sim, s: Scene, purpose: string): Rng;
 /** 기록만 한다 (체력은 건드리지 않는다). 1단계는 이것만 쓴다 */
 export function noteInjury(list: Injury[] | undefined, cause: InjuryCause, dmg: number, t: number, sevAfter: number, by = -1, byKind: Injury['byKind'] = 'world', ev = -1): Injury[];
-interface HurtOpts { by?: number; byKind?: Injury['byKind']; ev?: number; tick?: boolean; bleed?: number; immobile?: boolean }
-//  tick: 매 틱 피해 (문턱 없음, 기록 문구 없음) · bleed: 구조 대상의 bleed 를 이 값 이상으로 올린다 · immobile: 구조 대상을 걷지 못하게 한다
+/** 현장이 만들어진 직후 처음 상태의 원인을 붙인다 (§2.3). createScene 이 부른다 */
+export function initInjuries(sim: Sim, s: Scene, I: Incident): void;
+interface HurtOpts { by?: number; byKind?: Injury['byKind']; ev?: number; tick?: boolean; bleed?: number; immobile?: boolean; down?: boolean }
+//  tick: 매 틱 피해 (문턱 없음) · bleed: 구조 대상의 bleed 를 이 값 이상으로 올린다 · immobile: 구조 대상을 걷지 못하게 한다
+//  down: 한 번에 쓰러뜨린다 — 대원·용의자의 체력을 min(after, DOWN_AT) 로 (감전 30%, R2 의 저격). 문턱 때문에 0 아래로는 가지 않는다
+//  ev: 피해를 준 자리가 이미 남긴 기록 id — Injury.ev 와 a.hurtEv 에 넣는다
 export function hurtCas(sim: Sim, s: Scene, I: Incident, c: Casualty, amount: number, cause: InjuryCause, o?: HurtOpts): void;
 export function hurtResponder(sim: Sim, s: Scene, I: Incident, a: FieldAgent, raw: number, cause: InjuryCause, o?: HurtOpts): number;   // 방호·문턱·출혈·기록. 깎인 양을 돌려준다. 상태 전이는 하지 않는다(agentHealth 가 한다)
-export function hurtHostile(sim: Sim, s: Scene, I: Incident, h: Hostile, amount: number, cause: InjuryCause, o?: HurtOpts): void;
+export function hurtHostile(sim: Sim, s: Scene, I: Incident, h: Hostile, amount: number, cause: InjuryCause, o?: HurtOpts): void;   // 문턱·출혈·기록 + 쓰러짐·사망 전이와 그 문구 (§4.6)
 export function protection(sim: Sim, r: Responder, u: Unit, cause: InjuryCause): number;
 export function hurtF(r: Responder): number;
 export function treatEffect(sim: Sim, rid: number, health: number): { q: number; heal: number; bleedK: number };   // 처치 질과 효과 (treat 에서 꺼낸 것 — R1 의 medLevelOf·aed·doctorKit 포함)
-export function needsHospital(r: Responder): boolean;     // !dead && care !== 'hospital' && (tDown 있음 || bleed ≥ 0.01 || health ≤ 40)
+/** 진실 — sceneManager 5번 블록·buildReport·화면만 쓴다. 지휘 쪽(commander.ts·orders/*)은 쓰지 않는다 */
+export function needsHospital(r: Responder): boolean;     // !r.dead && r.care === undefined && (r.tDown !== undefined || (r.bleed ?? 0) >= 0.01 || r.health <= 40)
+/** 믿음 — 지휘 쪽이 쓰는 같은 판단. mate 사실의 값만 본다 */
+export function mateNeedsHospital(v: MateBelief): boolean;   // !v.dead && v.status !== 'evac' && (v.band >= 2 || v.bleeding || v.wasDown)
+/** 위협이 끝난 시각: 무장 현장은 s.secureAt (지휘관이 선언), 그 밖의 현장은 첫 도착 s.arrivedAt. 없으면 -1. §4.4 의 벌점과 화면이 쓴다 */
+export function threatOverAt(s: Scene): number;
 export function mainCause(list: Injury[] | undefined): InjuryCause | null;      // dmg 가 가장 큰 원인
 ```
 
-`hurtCas` 는 체력이 0 이하가 되면 그 자리에서 `deathCause` 를 정한다(`dead` 는 지금처럼 `tickCasualties` 가 다음 틱에 세운다. `deathCause` 가 이미 있으면 그쪽이 덮어쓰지 않는다).
+공통 규칙:
+
+- **세 함수 모두 첫 줄에서 돌아간다**: 대상이 이미 숨졌거나(`c.dead`·`r.dead`·`h.dead`) 사건이 끝났으면(`I.phase === 'closed'`, §2.6). 숨진 사람은 더 다치지 않는다 — 그래서 `tickLane`(지금 `active`·`down` 대원을 친다)과 `blast`(`left` 가 아니면 모두 맞힌다)의 대상 고르기에서도 `r.dead` 를 뺀다. 안 그러면 시신을 친 차가 "작업 중인 ○○ 대원을 충격했습니다" 라는 SECONDARY_COLLISION 을 남긴다(가짜 연출). 숨진 대원은 4a 부터만 있으므로 이 조건이 기존 `s.rng` 소비를 바꾸지 않는다.
+- **`hurt*` 는 피해 자체의 문구를 남기지 않는다.** 지금 피해 자리들은 이미 문구를 남긴다: 대원 피격 '○○ 피격'(`tickHostiles`), 2차 사고·인질 피격·시한·총격범의 `raiseProblem`, 빗나간 탄. `hurt*` 가 또 남기면 CLAUDE.md 의 "로그 중복" 함정이다. `hurt*` 는 부른 쪽이 넘긴 `o.ev` 를 `Injury.ev`·`a.hurtEv` 에 넣기만 한다. 새 문구는 이 문서가 정한 자리에서만, 상태를 바꾸는 그 코드가 남긴다: 흉기·맨손 피습(§3.1), 몸싸움(§4.2), 잔해 추락(§2.3), 구출 중 사고(§5.1), 대피하다 쓰러짐(§5.2), 순직(§3.2), 그리고 `hurtHostile` 이 하는 용의자 쓰러짐·사망 전이(§4.6 — 상태를 바꾸는 바로 그 코드다).
+- `hurtCas` 는 체력이 0 이하가 되면 그 자리에서 `deathCause` 를 정한다(`dead` 는 지금처럼 `tickCasualties` 가 다음 틱에 세운다. `deathCause` 가 이미 있으면 그쪽이 덮어쓰지 않는다).
+- 지금 코드가 하한을 두고 깎는 자리는 그 하한을 지키는 양을 넘긴다. 해일은 `c.health = Math.max(8, c.health − x)`(`rules/disaster.ts`) 이므로 `hurtCas(…, c.health − Math.max(8, c.health − x), 'drown')`.
 
 ---
 
@@ -306,7 +323,7 @@ export function mainCause(list: Injury[] | undefined): InjuryCause | null;      
 
 ### 3.1 다치는 경로 (정리)
 
-연기·가스(`agentHealth`), 불(`agentHealth`), **열 탈진**(새로, `rules/injury.ts`), 폭발·천장 붕괴·2차 붕괴(`blast`), 용의자의 총격(`tickHostiles`), 흉기·맨손(**방호·기록·`hurtEv` 새로**, 기록 문구 '○○ 피습 (흉기)' imp 2), **덮쳐 제압할 때의 몸싸움**(새로, `executor` `engage`), 2차 사고(`tickLane`), 해일(`rules/disaster.ts`), **붕괴 현장의 잔해 바닥 추락**(새로), R2 의 익수·추락. 모두 `hurtResponder` 를 거친다.
+연기·가스(`agentHealth`), 불(`agentHealth`), **열 탈진**(새로, `rules/injury.ts`), 폭발·천장 붕괴·2차 붕괴(`blast`), 용의자의 총격(`tickHostiles`), 흉기·맨손(**방호·기록·`hurtEv` 새로**, 기록 문구 '○○ 피습 (흉기)'/'○○ 피습 (맨손)' imp 2 — 이 문구를 남기는 `emit` 의 id 가 `hurtEv`), **덮쳐 제압할 때의 몸싸움**(새로, `executor` `engage`·`arrest`), 2차 사고(`tickLane`), 해일(`rules/disaster.ts`), **붕괴 현장의 잔해 바닥 추락**(새로), R2 의 익수·추락, X6 의 붕괴·폭발·전소. 모두 `hurtResponder` 를 거친다. G5 가 피해 줄에 끼운 `noteHit`·`recMelee` 는 그대로 둔다(연관 표). 숨진 대원은 어떤 경로로도 맞지 않는다(§2.7).
 
 ### 3.2 상태 전이 — `sceneManager.agentHealth` 한 곳에서, 이 순서로
 

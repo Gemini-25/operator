@@ -96,7 +96,10 @@ export interface CatState {
   foot: Uint8Array;             // 칸별: 0 바깥 · 1 건물 안(실내 칸과 안쪽 벽) · 2 바깥벽·창(바깥과 맞닿은 벽)
   integ: Float32Array;          // 구획(s.regions 번호)별 구조 건전도 1(멀쩡) … 0. 실내 구획만 뜻이 있다
   loss: Float32Array;           // 구획 × 6 원인(LOSS_FIRE · BURN · CREEP · IMPACT · BLAST · QUAKE)의 누적 손실 — 보고서의 원인 문장
+  hotT: Float32Array;           // 구획별 '불에 휩싸인'(칸의 30% 이상이 불 0.3 이상) 누적 초 — 원인 문장
   l3Since: Float32Array;        // 구획별 '붕괴 임박'(integ < L3)이 시작된 시각 (-1)
+  damage0: Uint8Array;          // 처음(현장 생성 때)의 s.damage 사본 — 사건 중에 무너진 칸만 재산 피해로 센다
+  hits: { t: number; x: number; y: number }[];   // 최근 1초의 충격(blast·붕괴) 자리 — 가스 점화(§2.5)용, 매초 비운다
   fallen: Uint8Array;           // 구획별 무너짐 (1)
   bldg: number;                 // 건물 전체 건전도 (서 있는 구획의 칸 수 가중 평균, 무너진 구획은 0 으로 센다)
   bldgL3Since: number;
@@ -373,7 +376,7 @@ heat = clamp(heat, 0, 1)
 | bldg | 5000 |
 | event | 6000 + `c.events` |
 
-- `agents.ts` `IMPORTANT` 에 `sign: true` — 단계 2 이상은 묶음 보고(5초)를 기다리지 않는다. 단계 1(삐걱임·냄새)은 `flushOutbox` 의 `prompt` 조건에서 빼서 묶음으로 보낸다(붕괴 현장은 처음부터 삐걱이므로 무전이 넘치지 않게): `prompt = … || a.outbox.some(f => f.type === 'sign' && f.value.level >= 2)`, 그리고 `important` 계산에서 단계 1 `sign` 은 빼다.
+- 단계 2 이상은 묶음 보고(5초)를 기다리지 않고, 단계 1(삐걱임·냄새)은 묶음으로 보낸다(붕괴 현장은 처음부터 삐걱이므로 무전이 넘치지 않게). `agents.ts` 의 `IMPORTANT` 표에는 넣지 않고, `flushOutbox` 의 `important` 계산에 `|| (f.type === 'sign' && f.value.level >= 2)` 를 더한다(`prompt` 는 `important` 를 따른다).
 - `significant()` 에 `if (f.type === 'sign') return old.level !== v.level;` — 측정값(`lel`)만 바뀐 것은 믿음에 합치되 보고하지 않는다.
 - `ops` 사실: id 0 = `{ mode, zones: [{ key, kind, level, regions, x, y, r }], t }`(지휘관이 보낸다, §5.4), id 100 + rid = `{ par: true, t }`(철수를 마친 대원이 조용히 보낸다).
 
@@ -569,7 +572,7 @@ R1 의 장비 표에서 가스 측정기는 화학대 역할(`hazLead`·`decon`)
 | 단계 | 뜻 | 지휘 |
 |---|---|---|
 | 1 | 조짐 | 막는 조치를 먼저(§5.8). 그 구역에 동시에 들어가는 인원을 2명으로(진압·수색의 `max` 를 1 로 낮춘다). 필요한 부대를 부른다(§5.9) |
-| 2 | 위험 — **새 진입 금지** | `NoGoZone level 2`. 그 구역을 대상으로 하는 일 가운데 **허락된 것만** 나간다: `mitigate`, `suppress`, 아는 구조 대상의 `carry`·`extricate`·`waterRescue`(소방 대원만, 체력 ≥ 60), `rescueMate`. 거두는 것: `search`·`treat`(그 자리 처치)·`clear`·`force`·`overhaul`·`escort`·`hookup` 이 아닌 그 밖. 가스 용기 원 안의 냉각 대원은 원 4칸 규칙에서 예외 |
+| 2 | 위험 — **새 진입 금지** | `NoGoZone level 2`. 그 구역을 대상으로 하는 일 가운데 **허락된 것만** 나간다: `mitigate`, `suppress`, 아는 구조 대상의 `carry`·`extricate`·`waterRescue`(소방 대원만, 체력 ≥ 60), `rescueMate`. 그 밖의 일(`search`·그 자리 `treat`·`clear`·`force`·`overhaul`·`escort` 등)은 거둔다. `hookup`·`traffic`·`perimeter` 는 구역 밖의 일이라 상관없다. 가스 용기 원 안의 냉각 대원은 원 4칸 규칙에서 예외 |
 | 3 | 임박 — **전원 철수** | `NoGoZone level 3`. 그 안의 모든 일을 거두고(진압은 외부 방수로 바뀐다 §5.5), 안에 있는 대원에게 철수를 명령한다(§5.4). 건물 단위면 `mode = 'defensive'`(외부 방어) |
 
 **구역을 만들고 바꾸는 법**: 계획 주기마다 `dangerMap` 으로 구역 목록을 새로 만들고 지금의 `ops.zones` 와 키로 견준다 — 새로 생긴 키·단계가 오른 키는 그 자리에서 처리(기록·명령), 사라진 키는 §5.7 의 재진입 조건을 통과해야 지운다(조짐이 한 번 안 보인다고 바로 풀지 않는다). 구역이 바뀌면 `ops` 사실을 다시 보낸다.
@@ -585,7 +588,7 @@ R1 의 장비 표에서 가스 측정기는 화학대 역할(`hazLead`·`decon`)
 ### 5.4 전원 철수와 인원 점검
 
 1. **결정**: 단계 3 구역이 새로 생겼거나 단계가 올랐고, 그 안에 대원이 있다(지휘관은 대원의 위치를 안다 — 지금의 `assign` 도 쓴다).
-2. **명령**: `transmit(sim, s, a, -1, 'order', [ops 사실], '전원 철수! ${구역 이름} — ${까닭}. 즉시 밖으로 나와 인원 점검.', -1, 3, [조짐 기록])`. `pushFx('horn', 지휘관 자리)`. `raiseProblem(I, 'WITHDRAWAL', '${까닭}으로 ${구역 이름} 전원 철수', { role: 'COMMANDER', imp: 3, causes: [조짐 기록] }, false)` — 구역 키마다 하나. `ops.mode = 'withdraw'`(건물 단위면 바로 `defensive` 로 이어진다), `ops.parAsked = 그 안의 대원`, `ops.parAt = sim.t`.
+2. **명령**: `transmit(sim, s, a, -1, 'order', [ops 사실], '전원 철수! ${구역 이름} — ${까닭}. 즉시 밖으로 나와 인원 점검.', -1, 3, [그 구역의 DANGER_SIGN 기록])`. `pushFx('horn', 지휘관 자리)`. `raiseProblem(I, 'WITHDRAWAL', '${까닭}으로 ${구역 이름} 전원 철수', { role: 'COMMANDER', imp: 3, causes: [그 구역의 DANGER_SIGN 기록] }, false)` — 구역 키마다 하나. `ops.mode = 'withdraw'`(건물 단위면 바로 `defensive` 로 이어진다), `ops.parAsked = 그 안의 대원`, `ops.parAt = sim.t`.
 3. **대원**: `ops` 사실을 받은 대원이 `evacuate`(§5.1). 음영 구역의 대원은 받지 못한다 — 곁의 대원이 나누는 사실(`shareNearby`)로 알거나, 스스로 조짐을 보고 물러나거나, 남는다(그 결과가 그대로 나온다).
 4. **인원 점검**: 25초 뒤 `parAsked` 가운데 `ops 100 + rid` 응답이 없는 대원 → `인원 점검: ${n}명 미확인 — ${이름들}. 응답하라.`(COMMANDER, imp 2) + 명령을 다시 보낸다(10초 간격, 3번까지). 모두 응답하면 `인원 점검 완료 — 철수 대원 ${n}명 전원 확인.`(imp 1). 미확인인데 그 대원이 쓰러졌다고 알면 지금의 `rescueMate` 가 나간다(구역이 풀릴 때까지는 문이 막는다 — §5.3).
 5. 점검이 끝나면 `mode` 는 건물 단위 구역이 있으면 `defensive`, 없으면 `interior`(구역은 진입 금지로 남는다).
@@ -633,7 +636,7 @@ R1 의 장비 표에서 가스 측정기는 화학대 역할(`hazLead`·`decon`)
 
 `mitigate` 의 냉각 실행(`executor` `case 'mitigate'` 에 갈래 하나): 대상이 `'gas'` 소품이면 — 터졌으면 강제 보고(`learn(…, haz {kind:'gas', active:false}, true, true)`) 후 끝. 아니면 시야선이 닿는 3.2칸 안으로 가서(외부 모드면 §5.5 의 자리에서 5.5칸) `spray(sim, s, a, p.x, p.y)`. `heatLoad < 0.15` 이고 2.5칸 안에 불 ≥ 0.3 이 없으면 끝: `learnQuiet(sign vessel 단계 0)`, 기록 `가스 용기 냉각 완료. 폭발 위험을 낮췄습니다.`(recovery, imp 2). 냉각은 영구 조치가 아니다(`mitigated` 를 세우지 않는다 — 불이 다시 닿으면 다시 데워진다). `workLabel`: `'gas'` 소품이면 `가스 용기 냉각`(드럼 `드럼통 냉각`). `fitFor`: `'gas'` 소품이면 `suppress` 와 같은 조건(물·펌프가 있는 소방 대원, R1 이 있으면 `hose`).
 
-**막은 위험의 기록(`DANGER_SIGN`)**: 지휘관이 단계 2 이상을 (구역·종류 키마다) 처음 알면 `raiseProblem(I, 'DANGER_SIGN', '${종류 이름} — ${구역}', { role: 'COMMANDER', imp: 2, causes: [조짐 사실이 실려 온 기록] }, false)`(detail 이 같으면 다시 만들지 않는다). 그 위험이 사건 없이 가라앉으면(보강·차단·냉각·진압으로 조짐이 1 이하가 되고 20초, 또는 원천 차단을 앎) `markRecoveredBy(I, 'DANGER_SIGN', detail, '${조치} — 막음')`. 붕괴·폭발이 일어나면 미복구로 남는다 — 보고서가 "조짐 → 결과" 사슬을 쓴다(§6.6).
+**막은 위험의 기록(`DANGER_SIGN`)**: 지휘관이 단계 2 이상을 (구역·종류 키마다) 처음 알면 `raiseProblem(I, 'DANGER_SIGN', '${종류 이름} — ${구역}', { role: 'COMMANDER', imp: 2, causes: [I.lastEvent] }, false)`(detail 이 같으면 다시 만들지 않는다). 그 위험이 사건 없이 가라앉으면(보강·차단·냉각·진압으로 조짐이 1 이하가 되고 20초, 또는 원천 차단을 앎) `markRecoveredBy(I, 'DANGER_SIGN', detail, '${조치} — 막음')`. 붕괴·폭발이 일어나면 미복구로 남는다 — 보고서가 "조짐 → 결과" 사슬을 쓴다(§6.6).
 
 ### 5.9 관제
 

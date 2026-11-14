@@ -112,6 +112,45 @@ describe('가 보아야 아는 장애물', () => {
     expect(s.events.some((ev) => ev.kind === 'traffic' && ev.actor === u.callsign && ev.text.includes('통행 불가'))).toBe(true);
     expect(s.events.some((ev) => ev.kind === 'traffic' && ev.truth && ev.text.includes('아직 아무도 신고하지'))).toBe(true);
   });
+  it('길가에서 빠져나오는 사이에 첫 구간이 통제되면, 그 구간에 들어서지 않고 다른 길로 간다', () => {
+    // 경로는 현장을 떠날 때 잡지만 길가에서 교차로로 나오는 데 몇 초가 걸린다. 그 사이에 재난·사건·공사가 첫 구간을 막을 수 있다
+    // (홍수로 잠긴 다리에 순찰차가 그대로 올라선 일이 있었다)
+    const s = bare('TR-CURB');
+    const u = s.units.find((q) => q.kind === 'patrol')!, wf = weatherSpeedFactor(s);
+    let dest = -1;
+    for (const n of s.city.nodes) {
+      const r = findRoute(s.city, u.homeNode, n.id, wf);
+      if (r && r.edges.length >= 4 && r.edges.length <= 9 && s.city.edges[r.edges[0]].gateT === undefined && findRoute(s.city, u.homeNode, n.id, wf, r.edges[0])) { dest = n.id; break; }
+    }
+    expect(dest).toBeGreaterThanOrEqual(0);
+    drive(s, u, u.homeNode, dest);
+    const e0 = s.city.edges[u.route!.edges[0]], home = s.city.nodes[u.homeNode];
+    u.curb = { x: home.x + 30, y: home.y + 40, len: 50 }; u.curbT = 1; u.parking = false;      // 건물 앞 길가에 서 있었다
+    tick(s, 3);
+    expect(u.curb).toBeTruthy(); expect(u.segT).toBe(0);      // 아직 길가에서 나오는 중
+    e0.closed = true; e0.closedReason = 'disaster';      // 그 사이에 통제됐다 (모두가 아는 통제)
+    let entered = false;
+    tick(s, 3000, () => { if (posOn(s, u, e0) !== null && u.segT > 0) entered = true; });
+    expect(entered).toBe(false);
+    expect(u.state).toBe('available'); expect(u.nodeId).toBe(dest);      // 다른 길로 도착했다
+    // 큰 차: 좁아졌다고 알려진 골목도 마찬가지다
+    const h = s.units.find((q) => q.heavy)!;
+    let hd = -1;
+    for (const n of s.city.nodes) {
+      const r = findRoute(s.city, h.homeNode, n.id, wf, -1, true);
+      if (r && r.edges.length >= 4 && r.edges.length <= 9 && !s.city.edges[r.edges[0]].closed && s.city.edges[r.edges[0]].gateT === undefined && findRoute(s.city, h.homeNode, n.id, wf, r.edges[0], true)) { hd = n.id; break; }
+    }
+    expect(hd).toBeGreaterThanOrEqual(0);
+    drive(s, h, h.homeNode, hd);
+    const h0 = s.city.edges[h.route!.edges[0]], hh = s.city.nodes[h.homeNode];
+    h.curb = { x: hh.x + 30, y: hh.y + 40, len: 50 }; h.curbT = 1; h.parking = false;
+    tick(s, 3);
+    h0.noHeavy = true;
+    let hin = false;
+    tick(s, 3000, () => { if (posOn(s, h, h0) !== null && h.segT > 0) hin = true; });
+    expect(hin).toBe(false);
+    expect(h.state).toBe('available'); expect(h.nodeId).toBe(hd);
+  });
   it('시민 제보로도 알려지고, 치워지면 길이 다시 열린다', () => {
     const s = bare('TR-TIP');
     let e!: RoadEdge, ob!: NonNullable<ReturnType<typeof addObstacle>>;

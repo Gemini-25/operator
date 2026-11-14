@@ -98,10 +98,18 @@ const obstacleOn = (tr: TrafficState, edge: number): Obstacle | null => { for (c
 function linked(sim: Sim, tr: TrafficState, a: number, b: number, skip: number): boolean {
   return heavyPath(sim, tr, a, b, skip) !== null;
 }
-/** 실제 상태에서 큰 차가 a 에서 b 로 가는 길 하나 (지나는 구간들, 없으면 null). skip·skip2 구간은 없는 것으로 본다 */
-function heavyPath(sim: Sim, tr: TrafficState, a: number, b: number, skip: number, skip2 = -1): number[] | null {
+/**
+ * 실제 상태(아직 아무도 모르는 통제까지 막힌 것으로)에서 a 에서 b 로 갈 수 있는가. skip 구간은 없는 것으로 본다.
+ * 재난과 사건이 길을 닫기 전에 본다: 경로 계산(city.findRoute)은 모르는 낙하물을 지나갈 수 있는 길로 보므로,
+ * 그것으로 우회로를 확인하면 낙하물이 놓인 길을 돌아갈 길로 믿고 닫게 된다. heavy = 큰 차도 (불법 주차로 좁아진 골목은 못 지난다)
+ */
+export function reallyLinked(sim: Sim, a: number, b: number, skip: number, heavy = false): boolean {
+  return heavyPath(sim, sim.traffic, a, b, skip, -1, !heavy) !== null;
+}
+/** 실제 상태에서 큰 차가 a 에서 b 로 가는 길 하나 (지나는 구간들, 없으면 null). skip·skip2 구간은 없는 것으로 본다. light = 작은 차 기준(좁아진 골목도 지난다) */
+function heavyPath(sim: Sim, tr: TrafficState, a: number, b: number, skip: number, skip2 = -1, light = false): number[] | null {
   const city = sim.city, via = new Int32Array(city.nodes.length).fill(-2), stack = [a];
-  const narrow = new Set<number>(); for (const o of tr.obstacles) if (o.heavyOnly) narrow.add(o.edge);
+  const narrow = new Set<number>(); if (!light) for (const o of tr.obstacles) if (o.heavyOnly) narrow.add(o.edge);
   via[a] = -1;
   while (stack.length) {
     const n = stack.pop()!;

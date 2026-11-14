@@ -8,7 +8,7 @@
 // 단계: calm →(tWarn) warning →(tImpact) impact →(tEnd) aftermath →(tEnd + 120) over.
 // 재난은 "세계"다. 도로를 막고(closeEdge), 사건을 일으키고(spawn), 현장을 흔든다(여진). 관제와 현장의 AI 는 그 결과만 본다.
 
-import { coastY, distSeg, edgeName, findRoute, mountainAt, nodeName, riverDist } from './city';
+import { coastY, distSeg, edgeName, mountainAt, nodeName, riverDist } from './city';
 import { INCIDENT_PLACES } from './cityPlan';
 import { DISASTER_KINDS, DISASTER_NAME } from './difficulty';
 import type { DisasterKind } from './difficulty';
@@ -18,6 +18,7 @@ import { createIncident } from './incidents';
 import type { SpawnOpts } from './incidents';
 import type { Rng } from './rng';
 import { scenarioOf } from './scenarios';
+import { reallyLinked } from './traffic';
 import type { Incident, IncidentType, Place, PlaceKind, RoadEdge, RoadNode } from './types';
 import { clamp, fmtClock, josa } from './util';
 
@@ -158,13 +159,14 @@ function raise(sim: Sim, d: DisasterState, what: What): Incident | null {
 
 /**
  * 이 구간을 막아도 양 끝이 다른 길로 이어지는가. 진행 중인 사건이 곧 막을 구간도 막힌 것으로 본다.
+ * 재난은 세계이므로 **실제 상태**로 본다: 아직 아무도 모르는 낙하물이 놓인 길(경로 계산은 지나갈 수 있다고 본다)은 돌아갈 길이 아니다.
  * dry = 다리를 건너지 않고도 이어져야 한다 (강가의 길을 닫을 때: 다리 하나에만 매달린 교차로를 만들지 않는다)
  */
 function detour(sim: Sim, e: RoadEdge, dry = false): boolean {
   const c = sim.city, held: RoadEdge[] = [];
   for (const I of sim.incidents) { if (I.phase === 'closed' || I.blockedEdge < 0 || I.blockedEdge === e.id) continue; const b = c.edges[I.blockedEdge]; if (!b.closed) { b.closed = true; held.push(b); } }
   if (dry) for (const b of c.edges) if (b.bridge && !b.closed && b.id !== e.id) { b.closed = true; held.push(b); }
-  const ok = findRoute(c, e.a, e.b, 1, e.id) !== null;
+  const ok = reallyLinked(sim, e.a, e.b, e.id);
   for (const b of held) b.closed = false;
   return ok;
 }

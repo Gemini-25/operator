@@ -96,20 +96,39 @@ const obstacleOn = (tr: TrafficState, edge: number): Obstacle | null => { for (c
  * 새 통제·불법 주차를 놓기 전에 본다: 이것이 참이면 도시의 어느 교차로도 어느 부대에게서도 끊기지 않는다.
  */
 function linked(sim: Sim, tr: TrafficState, a: number, b: number, skip: number): boolean {
-  const city = sim.city, seen = new Uint8Array(city.nodes.length), stack = [a];
+  return heavyPath(sim, tr, a, b, skip) !== null;
+}
+/** 실제 상태에서 큰 차가 a 에서 b 로 가는 길 하나 (지나는 구간들, 없으면 null). skip·skip2 구간은 없는 것으로 본다 */
+function heavyPath(sim: Sim, tr: TrafficState, a: number, b: number, skip: number, skip2 = -1): number[] | null {
+  const city = sim.city, via = new Int32Array(city.nodes.length).fill(-2), stack = [a];
   const narrow = new Set<number>(); for (const o of tr.obstacles) if (o.heavyOnly) narrow.add(o.edge);
-  seen[a] = 1;
+  via[a] = -1;
   while (stack.length) {
     const n = stack.pop()!;
-    if (n === b) return true;
+    if (n === b) {
+      const path: number[] = [];
+      for (let cur = b; via[cur] >= 0;) { const e = city.edges[via[cur]]; path.push(e.id); cur = e.a === cur ? e.b : e.a; }
+      return path;
+    }
     for (const id of city.nodes[n].edges) {
       const e = city.edges[id];
-      if (id === skip || e.closed || narrow.has(id)) continue;
+      if (id === skip || id === skip2 || e.closed || narrow.has(id)) continue;
       const v = e.a === n ? e.b : e.a;
-      if (!seen[v]) { seen[v] = 1; stack.push(v); }
+      if (via[v] === -2) { via[v] = id; stack.push(v); }
     }
   }
-  return false;
+  return null;
+}
+/**
+ * linked 보다 엄한 조건: 다른 구간 **하나가 더 막혀도** 큰 차가 a 에서 b 로 갈 수 있는가 (길이 두 갈래다).
+ * 교대 내내 남는 불법 주차는 이 조건으로 놓는다. 사건이 길 하나를 막을 때(incidents.ts·sceneManager.ts)는 큰 차의 사정을 보지 않으므로,
+ * 돌아갈 길이 그 길 하나뿐인 골목에 차를 세워 두면 사건이 끝날 때까지 큰 차가 그 동네에 — 바로 그 사건 현장에도 — 닿지 못한다.
+ */
+function linkedTwice(sim: Sim, tr: TrafficState, a: number, b: number, skip: number): boolean {
+  const path = heavyPath(sim, tr, a, b, skip);
+  if (!path) return false;
+  for (const x of path) if (!heavyPath(sim, tr, a, b, skip, x)) return false;      // 그 길의 어느 구간이 막혀도 다른 길이 있다
+  return true;
 }
 
 const flowCache = new WeakMap<object, Float32Array>();
@@ -151,13 +170,14 @@ export function passable(e: RoadEdge, heavy: boolean, _sim?: Sim): boolean {
 
 interface ObstacleOpts { edge: number; t?: number; kind: ObstacleKind; full: boolean; heavyOnly?: boolean; dur: number; known: boolean }
 
-/** 장애물을 놓는다 (기록은 남기지 않는다). 놓을 수 없으면 null: 이미 장애물이 있는 구간, 이미 막힌 구간, 막으면 도시가 끊기는 구간 */
+/** 장애물을 놓는다 (기록은 남기지 않는다). 놓을 수 없으면 null: 이미 장애물이 있는 구간, 이미 막힌 구간, 막으면 도시가 끊기는 구간 (불법 주차는 우회로가 두 갈래인 골목에만) */
 function place(sim: Sim, tr: TrafficState, o: ObstacleOpts): Obstacle | null {
   const e = sim.city.edges[o.edge];
   if (!e || obstacleOn(tr, e.id)) return null;
   const heavyOnly = !!o.heavyOnly && !o.full;
   if (o.full && e.closed) return null;
-  if ((o.full || heavyOnly) && !linked(sim, tr, e.a, e.b, e.id)) return null;
+  if (o.full && !linked(sim, tr, e.a, e.b, e.id)) return null;
+  if (heavyOnly && !linkedTwice(sim, tr, e.a, e.b, e.id)) return null;
   const ob: Obstacle = {
     id: tr.nextObstacleId++, edge: e.id, t: clamp(o.t ?? 0.5, 0.08, 0.92), kind: o.kind, full: o.full, heavyOnly,
     since: sim.t, until: sim.t + o.dur, known: o.known, knownAt: o.known ? sim.t : -1, tipAt: Infinity, label: OBSTACLE_LABEL[o.kind],
@@ -444,7 +464,11 @@ export function tickTraffic(sim: Sim): void {
   }
   for (let i = tr.obstacles.length - 1; i >= 0; i--) {
     const o = tr.obstacles[i], e = city.edges[o.edge];
-    if (sim.t >= o.until) {
+    // 놓을 때는 돌아갈 길이 있었지만, 그 뒤에 다른 일(사건의 통제 — 이 파일 밖에서 닫는 길)이 그 길을 막아 이것이 큰 차에게 하나 남은 길을 막게 됐다.
+    // 더 두면 그 동네에 부대가 닿지 못하므로 바로 치운다 (1초마다 본다). 이 파일이 놓은 것 때문에 도시가 끊긴 채 남지 않는다.
+    const last = sim.tick % 5 === 0 && sim.t < o.until && (o.full || o.heavyOnly) && !linked(sim, tr, e.a, e.b, e.id);
+    if (last) emit(sim, { role: 'SYSTEM', actor: o.known ? '교통정보' : '도시', kind: 'traffic', imp: 1, truth: !o.known, text: `${edgeName(city, e)}: 주변 도로가 막혀 ${o.heavyOnly ? '큰 차가 지날 길이 이 골목뿐입니다 — 불법 주차 차량을 견인합니다.' : `이 길이 하나 남은 길이 됐습니다 — ${o.kind === 'roadwork' ? '공사를 멈추고 길을 엽니다.' : `${josa(o.label, '을/를')} 서둘러 치웁니다.`}`}` });
+    if (sim.t >= o.until || last) {
       // 치워졌다
       if (o.full && (e.closedReason === 'roadwork' || e.closedReason === 'obstacle')) { e.closed = false; e.closedReason = null; e.known = undefined; }
       if (o.heavyOnly) e.noHeavy = undefined;

@@ -6,7 +6,7 @@ import { NORMAL, difficultyKey, difficultyLabel, overallLevel, parseDifficulty, 
 import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
 import { sendUnitTo, tickUnits } from '../src/sim/resources';
-import { addObstacle, obstacleAhead, passable, tickTraffic, timeOfDay } from '../src/sim/traffic';
+import { addObstacle, obstacleAhead, passable, reportObstacle, tickTraffic, timeOfDay } from '../src/sim/traffic';
 import type { RoadEdge, Unit } from '../src/sim/types';
 
 const QUIET: Difficulty = { ...NORMAL, traffic: 1 };      // 불법 주차가 없는 조건 (장애물을 직접 놓아 보는 시험용)
@@ -282,6 +282,59 @@ describe('정체의 밀림', () => {
 });
 
 describe('도시는 끊기지 않는다', () => {
+  it('불법 주차는 다른 길 하나가 사건으로 막혀도 큰 차가 돌아갈 수 있는 골목에만 놓인다', () => {
+    // 사건이 길을 막을 때(쓰러진 나무, 사고 구간 통제)는 작은 차 기준의 우회로만 확인한다(incidents.ts).
+    // 그 우회로가 불법 주차된 골목 하나뿐이면 큰 차는 사건이 끝날 때까지 그 현장에 닿지 못한다 — 그런 골목에는 차를 세워 두지 않는다.
+    let placed = 0;
+    for (let k = 0; k < 8; k++) {
+      const s = new Sim('TR-CUT' + k, { ...NORMAL, traffic: 5 });
+      const city = s.city, parked = s.traffic.obstacles.filter((o) => o.kind === 'parked');
+      expect(parked.length).toBe(7); placed += parked.length;
+      for (const o of parked) reportObstacle(s, o, '교통정보');      // 모두 알려진 뒤라고 치고 본다 (큰 차의 경로가 그 골목들을 피한다)
+      for (const x of city.edges) {
+        if (x.cls === 'highway' || !findRoute(city, x.a, x.b, 1, x.id)) continue;      // 사건이 막지 않는 길
+        x.closed = true; x.closedReason = 'incident';
+        expect(findRoute(city, x.a, x.b, 1, -1, true), `${s.seed}: ${x.name}#${x.id} 가 막히면 큰 차가 그 양 끝을 오갈 수 없다`).not.toBeNull();
+        x.closed = false; x.closedReason = null;
+      }
+    }
+    expect(placed).toBe(56);
+  });
+  it('다른 일로 길이 더 막혀 이것이 하나 남은 길을 막게 되면, 낙하물·불법 주차를 바로 치운다', () => {
+    const s = bare('TR-LAST');
+    const city = s.city, wf = weatherSpeedFactor(s);
+    /** 그 교차로에 닿는 다른 길을 모두 사건이 막은 것처럼 닫는다 (이 구간만 남긴다) */
+    const isolate = (node: number, keep: number): void => { for (const id of city.nodes[node].edges) if (id !== keep) { city.edges[id].closed = true; city.edges[id].closedReason = 'incident'; } };
+    const fac = new Set<number>(); for (const f of city.facilities) fac.add(f.nodeId);
+    // 1) 불법 주차된 골목이 큰 차에게 하나 남은 길이 된다 → 견인
+    let e!: RoadEdge, ob = null as ReturnType<typeof addObstacle>;
+    for (const q of city.edges) {
+      if (q.cls !== 'local' || q.gateT !== undefined || fac.has(q.a) || fac.has(q.b) || city.nodes[q.a].edges.length < 3) continue;
+      ob = addObstacle(s, { edge: q.id, kind: 'parked', full: false, heavyOnly: true, dur: Infinity, known: true });
+      if (ob) { e = q; break; }
+    }
+    expect(ob).not.toBeNull(); expect(e.noHeavy).toBe(true);
+    tick(s, 10); expect(s.traffic.obstacles).toContain(ob);      // 돌아갈 길이 있는 동안에는 그대로 있다
+    isolate(e.a, e.id);
+    expect(findRoute(city, e.b, e.a, wf, -1, true)).toBeNull(); expect(findRoute(city, e.b, e.a, wf)).not.toBeNull();      // 큰 차만 닿지 못한다
+    tick(s, 5);
+    expect(s.traffic.obstacles).not.toContain(ob); expect(e.noHeavy).toBeUndefined();
+    expect(findRoute(city, e.b, e.a, wf, -1, true)).not.toBeNull();
+    expect(s.events.some((ev) => ev.kind === 'traffic' && ev.text.includes('견인'))).toBe(true);
+    // 2) 아직 아무도 모르는 낙하물이 하나 남은 길을 막고 있다 → 치워진다
+    let d!: RoadEdge, ob2 = null as ReturnType<typeof addObstacle>;
+    for (const q of city.edges) {
+      if (q.cls !== 'street' || q.gateT !== undefined || q.closed || fac.has(q.a) || fac.has(q.b) || q.a === e.a || q.b === e.a || city.nodes[q.a].edges.some((id) => city.edges[id].closed)) continue;
+      ob2 = addObstacle(s, { edge: q.id, kind: 'debris', full: true, dur: 5000, known: false });
+      if (ob2) { d = q; break; }
+    }
+    expect(ob2).not.toBeNull(); expect(d.closed).toBe(true);
+    tick(s, 10); expect(d.closed).toBe(true);
+    isolate(d.a, d.id);
+    tick(s, 5);
+    expect(d.closed).toBe(false); expect(d.closedReason).toBeNull(); expect(d.known).toBeUndefined(); expect(s.traffic.obstacles).not.toContain(ob2);
+    expect(findRoute(city, d.b, d.a, wf)).not.toBeNull();
+  });
   it('42교대(교통 1·3·5) 내내 시설 사이에 알려진 상태로 길이 있고, 교통 5 는 교통 1 보다 막히고 대응이 늦다', () => {
     const N = 14;
     const sum = [1, 3, 5].map(() => ({ cong: 0, cn: 0, resp: 0, rn: 0, parked: 0, obstacles: 0, detours: 0, unknown: 0 }));

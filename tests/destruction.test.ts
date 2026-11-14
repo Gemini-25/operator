@@ -5,6 +5,7 @@ import { NORMAL } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
 import { DECOR_HP, bulletPath, breakGlass, coverTile, damageDecor, dmgRng, heatGlass, hitCover, shatter } from '../src/sim/field/damage';
 import { addProp, baseScene, set } from '../src/sim/field/kit';
+import { staticPass } from '../src/sim/field/grid';
 import { blast, flashbang } from '../src/sim/field/hazards';
 import { DECOR, T } from '../src/sim/types';
 import type { Scene } from '../src/sim/types';
@@ -35,6 +36,32 @@ function cutFloors(sc: Scene): number {
   }
   let cut = 0; for (let i = 0; i < seen.length; i++) if (sc.tiles[i] === T.FLOOR && !seen[i]) cut++;
   return cut;
+}
+/**
+ * 부서진 가구 칸 가운데, 원래 있던 바닥과 이어지지 않는(잔해끼리만 이어진) 칸의 수.
+ * 가구가 부서져 생긴 바닥은 반드시 이미 있던 바닥에 붙어 있어야 한다 — 현장의 생김새와 상관없이 성립해야 하는 파손 규칙의 불변 조건이다.
+ */
+function strandedWrecks(sc: Scene): number {
+  const w = sc.w, seen = new Uint8Array(sc.w * sc.h);
+  let stranded = 0;
+  for (let i0 = 0; i0 < sc.tiles.length; i0++) {
+    if (sc.decorHp[i0] !== 255 || seen[i0]) continue;
+    const st = [i0]; seen[i0] = 1;
+    let wrecks = 0, old = false;
+    while (st.length) {
+      const c = st.pop()!, x = c % w, y = (c / w) | 0;
+      if (sc.decorHp[c] === 255) wrecks++; else old = true;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= w || ny >= sc.h) continue; const j = ny * w + nx; if (!seen[j] && staticPass(sc.tiles[j])) { seen[j] = 1; st.push(j); } }
+      const sl = sc.stairTo[c]; if (sl >= 0 && !seen[sl]) { seen[sl] = 1; st.push(sl); }
+    }
+    if (!old) stranded += wrecks;
+  }
+  return stranded;
+}
+/** 건물 안의 모든 바닥에 닿는지까지 따질 현장: 예전부터 있던 건물 현장 (수색·교통·수난과 다른 묶음의 특수한 현장은 생김새가 달라 여기서 따지지 않는다) */
+function building(sim: Sim, sc: Scene): boolean {
+  const tag = sim.incidents[sc.incidentId].tag;
+  return sc.kind !== 'search' && sc.kind !== 'traffic' && sc.kind !== 'water' && !sc.outdoor && (!tag || tag === 'life' || tag === 'chase');
 }
 /** 파손 자료의 불변 조건: 깨진 창은 창 칸에만, 닳은 가구는 가구 칸에만, 부서진 가구는 (무엇의 잔해인지 남은) 바닥 칸에만 */
 function tally(sc: Scene): { glass: number; worn: number; wrecked: number } {
@@ -260,8 +287,10 @@ describe('현장 파손 — 교대 안에서', () => {
         glass += t.glass;
         // 총격 = 문제 기록의 '교전 발생' (효과 목록이 아니라 기록으로 판단한다)
         if (sim.incidents[sc.incidentId].problems.some((p) => p.detail === '교전 발생')) { fought++; if (t.glass > 0) foughtWithGlass++; }
-        // 파손이 일어난 뒤에도 모든 바닥에 닿는다
-        if ((t.glass || t.worn || t.wrecked) && sc.kind !== 'search' && sc.kind !== 'traffic') expect(cutFloors(sc), `${sim.seed} 사건 ${sim.incidents[sc.incidentId].code} (${sc.kind})`).toBe(0);
+        // 파손이 일어난 뒤에도 모든 바닥에 닿는다 (부서진 가구 자리 포함)
+        const label = `${sim.seed} 사건 ${sim.incidents[sc.incidentId].code} (${sc.kind})`;
+        expect(strandedWrecks(sc), label).toBe(0);
+        if ((t.glass || t.worn || t.wrecked) && building(sim, sc)) expect(cutFloors(sc), label).toBe(0);
       }
     }
     expect(fought).toBeGreaterThan(0);
@@ -277,7 +306,9 @@ describe('현장 파손 — 교대 안에서', () => {
         if (!sc) continue;
         const t = tally(sc);
         worn += t.worn; wrecked += t.wrecked; glass += t.glass;
-        if (sc.kind !== 'search' && sc.kind !== 'traffic') expect(cutFloors(sc), `${sim.seed} 사건 ${sim.incidents[sc.incidentId].code} (${sc.kind})`).toBe(0);
+        const label = `${sim.seed} 사건 ${sim.incidents[sc.incidentId].code} (${sc.kind})`;
+        expect(strandedWrecks(sc), label).toBe(0);
+        if (building(sim, sc)) expect(cutFloors(sc), label).toBe(0);
       }
       for (const e of sim.events) if (e.text.includes('부서져 엄폐물이 사라졌습니다')) logs++;
       for (const I of sim.incidents) expect(I.phase).toBe('closed');
@@ -292,17 +323,18 @@ describe('현장 파손 — 교대 안에서', () => {
     for (let k = 0; k < 6; k++) {
       const sim = new Sim('W' + k, { ...NORMAL, threat: 4 }); sim.run(3500);
       for (const sc of sim.scenes) {
-        if (!sc || sc.kind === 'search' || sc.kind === 'traffic' || sc.kind === 'water') continue;
+        if (!sc) continue;
         const label = `${sim.seed} 사건 ${sim.incidents[sc.incidentId].code} (${sc.kind})`;
-        expect(cutFloors(sc), label + ' — 부수기 전').toBe(0);
+        const whole = building(sim, sc) && cutFloors(sc) === 0;      // 부수기 전에 모든 바닥에 닿던 건물
         // 가구마다 내구를 넘는 피해를 준다. 둘러싸여 있던 가구는 이웃이 치워진 뒤의 다음 차례에 부서진다
         for (let pass = 0, changed = true; changed && pass < 12; pass++) {
           changed = false;
           for (let i = 0; i < sc.tiles.length; i++) if (sc.tiles[i] === T.FURN && damageDecor(sim, sc, i, 9)) changed = true;
         }
         const t = tally(sc);
-        wrecked += t.wrecked; kept += t.worn; scenes++;
-        expect(cutFloors(sc), label + ' — 부순 뒤').toBe(0);
+        wrecked += t.wrecked; kept += t.worn;
+        expect(strandedWrecks(sc), label).toBe(0);
+        if (whole) { scenes++; expect(cutFloors(sc), label + ' — 부순 뒤').toBe(0); }
         // 남은 가구는 모두 부서지기 직전에서 멈춘 것(사방이 막힌 자리)이다
         for (let i = 0; i < sc.tiles.length; i++) if (sc.tiles[i] === T.FURN && sc.propAt[i] < 0) expect(sc.decorHp[i], label).toBe(200);
       }

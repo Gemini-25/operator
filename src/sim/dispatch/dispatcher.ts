@@ -36,7 +36,9 @@ export function recomputeUnmet(sim: Sim, I: Incident): void {
 
 function priorityOf(sim: Sim, I: Incident): number {
   const s = sim.scenes[I.id];
-  const urgent = s ? s.requests.some((q) => q.urgent && q.fulfilled < q.count) : false;
+  // 현장의 급한 요청은 부대가 배정된 순간이 아니라 닿을 때까지 급하다 (배정되자마자 순위가 떨어져 전환 배정에 빼앗기지 않도록)
+  const coming = I.assigned.some((uid) => sim.units[uid].state === 'enroute' || sim.units[uid].state === 'turnout');
+  const urgent = s ? s.requests.some((q) => q.urgent && (q.fulfilled < q.count || (coming && sim.t - q.t < 240))) : false;
   // 오래 굶은 수요: 부대가 모자란 교대에서는 새로 들어온 위험한 사건이 늘 앞에 서서, 먼저 기다리던 사건이 끝내 부대를 받지 못한다.
   // 채워지지 않은 수요가 오래 밀릴수록 앞으로 당긴다. 아직 아무 부대도 닿지 않은 사건은 신고 전화가 울린 때부터 센다
   // (접수 대기열에서 기다린 시간도 신고자에게는 똑같이 흘렀다). 부대가 가는 중에도 그대로 두어, 오래 기다린 사건으로 가는 부대가
@@ -63,6 +65,8 @@ function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { be
     if (u.state === 'enroute' || u.state === 'turnout') {
       const J = u.incidentId !== null ? sim.incidents[u.incidentId] : null;
       if (!J || u.diverted || sev < 2.3) continue;
+      // 방금 부대를 빼앗긴 사건에서는 다시 빼 오지 않는다 (번갈아 빼앗기면 그 사건에는 끝내 아무도 닿지 못한다)
+      if (J.problems.some((p) => p.code === 'DIVERTED' && sim.t - p.t < 120)) continue;
       const gap = I.priority - J.priority;
       if (gap < (J.assigned.length > 1 ? 0.9 : 1.4)) continue;
       divertFrom = J;

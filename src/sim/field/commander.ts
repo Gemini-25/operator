@@ -7,7 +7,7 @@ import { emit, raiseProblem } from '../events';
 import { closeIncident } from '../incidents';
 import { T } from '../types';
 import type { CasBelief, FieldAgent, Incident, Scene, UnitCaps, WorkItem, WorkKind } from '../types';
-import { TYPE_NAME, dist } from '../util';
+import { TYPE_NAME, dist, josa } from '../util';
 import { canCarryPatients, exitName, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { losWalls } from './grid';
@@ -108,6 +108,24 @@ function planEntry(s: Scene, hv: { x: number; y: number; facing?: number }): { e
 }
 
 const josaLocal = (w: string): string => `${w}으로`;
+
+/** 관제가 그 능력의 부대로 치는 최소 적합도 (dispatcher.ts 의 MINCAP 과 같다) */
+const NEED_MIN: Record<keyof UnitCaps, number> = { suppression: 0.7, rescue: 0.5, ems: 0.7, law: 0.5, tactical: 0.9, search: 0.3, traffic: 0.4, eod: 0.9 };
+
+/** 이 작업을 할 수 있는 대원을 보내 줄 부대의 능력. 아무나 할 수 있는 일이면 null */
+function needFor(s: Scene, w: WorkItem, hotArmed: boolean): keyof UnitCaps | null {
+  switch (w.kind) {
+    case 'suppress': case 'hookup': case 'overhaul': return 'suppression';
+    case 'mitigate': return w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? 'rescue' : 'suppression';
+    case 'extricate': case 'waterRescue': case 'clear': case 'force': return 'rescue';
+    case 'treat': case 'load': return 'ems';
+    case 'carry': case 'escort': return hotArmed ? 'law' : 'rescue';      // 위험한 건물 안은 소방만, 안전 확보 전의 무장 현장은 경찰만
+    case 'search': return hotArmed ? 'law' : 'rescue';
+    case 'perimeter': case 'engage': case 'arrest': case 'negotiate': return 'law';
+    case 'defuse': return 'eod';
+    default: return null;
+  }
+}
 
 /** 믿음 → 작업 목록 */
 function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
@@ -389,6 +407,17 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   if (hotArmed && pendingSearch > 0 && lawUnits === 0 && s.sizeupDone) request(sim, s, I, a, 'law', '건물 안을 수색해 안전을 확보할 경찰이 없음', true);
   if (s.laneRows.length && lawUnits === 0 && !s.controlDone.every(Boolean) && cas.length > 0 && s.sizeupDone) request(sim, s, I, a, 'traffic', '차량 통행이 계속되는데 교통 통제 인력이 없음', false);
   if (s.kind === 'search' && cas.length === 0 && s.arrivedAt >= 0 && sim.t - s.arrivedAt > 75 && countUnits(sim, s, I, 'search', 0.3) < 3) request(sim, s, I, a, 'search', '수색 범위에 비해 인력 부족', false);
+  // 맡을 사람이 없는 작업: 한참 열려 있는데 현장의 누구도 맡을 수 없고, 그 일을 할 부대도 오고 있지 않으면 그 능력의 부대를 부른다
+  // (예: 헬기 대원만 있는 가스 누출 현장의 밸브 차단, 경찰이 모두 떠난 무장 현장의 수색)
+  for (const w of s.board) {
+    if (w.status !== 'open' || w.assignees.length || sim.t - w.createdAt < 20 || sim.t < w.holdUntil) continue;
+    const need = needFor(s, w, hotArmed);
+    if (!need) continue;
+    if (s.agents.some((b) => b.status === 'active' && !sim.units[b.unitId].boardOrder && fitFor(sim, s, b, w) > 0)) continue;
+    if (I.assigned.some((uid) => { const u = sim.units[uid]; return (u.state === 'enroute' || u.state === 'turnout') && u.caps[need] >= NEED_MIN[need]; })) continue;
+    request(sim, s, I, a, need, `${josa(workLabel(s, w), '을/를')} 맡을 대원이 없음`, w.priority >= 0.85);
+    break;
+  }
   // ── 묶음별 지휘 규칙 (field/orders/*) ──
   if (ORDER_RULES.length) {
     const kit: CommandKit = {
@@ -595,7 +624,7 @@ function rollCall(sim: Sim, s: Scene, a: FieldAgent, closable: boolean): void {
   const idle = !closable && s.sizeupDone && crew.length >= 2 && crew.every((b) => !b.task || b.task.kind === 'standby' || b.task.kind === 'rehab');
   if (!idle) { s.allIdleSince = -1; return; }
   if (s.allIdleSince === undefined || s.allIdleSince < 0) s.allIdleSince = sim.t;
-  if (sim.t - s.allIdleSince < 12 || sim.t - (s.rollCallAt ?? -1e9) < 45) return;
+  if (sim.t - s.allIdleSince < 12 || (s.rollCallAt ?? -1e9) >= s.allIdleSince) return;      // 손을 놓은 동안 한 번만 묻는다
   const ev = transmit(sim, s, a, -1, 'rollcall', [], '전 대원, 지금까지 확인한 구조 대상과 위험 요소를 다시 보고하라.', -1, 1);
   if (ev >= 0) s.rollCallAt = sim.t;
 }

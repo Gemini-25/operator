@@ -4,8 +4,13 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { NORMAL } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
-import { RUIN_LOG } from '../src/sim/field/ruins';
+import { RUIN_LOG, RUIN_WALL, markRuin } from '../src/sim/field/ruins';
+import { addProp, baseScene, set } from '../src/sim/field/kit';
+import { tickCollapse } from '../src/sim/field/hazards';
+import { createIncident } from '../src/sim/incidents';
+import { T } from '../src/sim/types';
 import type { Incident, Scene } from '../src/sim/types';
+import { staticSig } from '../src/view/scene/staticLayer';
 
 // ───────────────────────── 도우미 ─────────────────────────
 /** 강제 사건(15초에 생긴다)을 찾는다 */
@@ -75,5 +80,86 @@ describe('기록 — 그림용 기록은 결과를 바꾸지 않는다', () => {
       }
     }
     expect(calls).toBeGreaterThanOrEqual(7);      // builders 셋, hazards 넷
+  });
+});
+
+// ───────────────────────── 3. 고정 층 서명 ─────────────────────────
+/** 손으로 만든 방 하나 (tests/destruction.test.ts 의 room() 과 같은 모양): x 5~15, y 5~11 이 벽, 그 안이 바닥 */
+function room(seed = 'G4'): { sim: Sim; s: Scene; at: (x: number, y: number) => number } {
+  const sim = new Sim(seed);
+  const s = baseScene(sim, { id: 0, truth: { type: 'collapse', variant: 'test' } } as never, sim.rng.fork('room'));
+  for (let y = 5; y <= 11; y++) for (let x = 5; x <= 15; x++) set(s, x, y, x === 5 || x === 15 || y === 5 || y === 11 ? T.WALL : T.FLOOR);
+  return { sim, s, at: (x, y) => y * s.w + x };
+}
+/** 붕괴 사건 현장을 바로 만든다 (평소 추첨과 무관한 난수 흐름) */
+function collapseScene(seed: string, variant = 'std', k = 0): { sim: Sim; s: Scene; I: Incident } {
+  const sim = new Sim(seed);
+  const I = createIncident(sim, { type: 'collapse', variant, rng: sim.rng.fork('g4:' + k) });
+  return { sim, s: sim.scenes[I.id]!, I };
+}
+
+describe('고정 층 서명', () => {
+  it('무너진 자리의 기록·치운 잔해에는 바뀌고, 균열 보강에는 그대로다', () => {
+    const { s, at } = room();
+    const s0 = staticSig(s);
+    markRuin(s, at(8, 8), RUIN_WALL);
+    const s1 = staticSig(s);
+    expect(s1).not.toBe(s0);
+    const crack = addProp(s, 'unstable', 10, 8, { leak: 0.2, leakRate: 0.005 });
+    const s2 = staticSig(s);
+    crack.mitigated = true;
+    expect(staticSig(s)).toBe(s2);      // 지지대는 매 프레임 그린다
+    const deb = addProp(s, 'debris', 12, 8, { blocking: true, hp: 10 });
+    const s3 = staticSig(s);
+    deb.removed = true;
+    expect(staticSig(s)).not.toBe(s3);
+  });
+  it('2차 붕괴: tickCollapse 한 번에 서명이 바뀌고, 새 잔해 칸은 ruin 8, falls 끝은 secondary, fx 끝은 collapse', () => {
+    let checked = 0;
+    for (let k = 0; k < 12 && checked < 2; k++) {
+      const { sim, s, I } = collapseScene('G4-SEC', 'std', k);
+      const crack = s.props.find((p) => p.kind === 'unstable');
+      if (!crack) continue;
+      const before = staticSig(s), props0 = s.props.length, ruin0 = s.ruin!.slice();
+      crack.leak = 1;
+      tickCollapse(sim, s, I);
+      const fresh = s.props.slice(props0).filter((p) => p.kind === 'debris');
+      if (!fresh.length) continue;
+      expect(staticSig(s)).not.toBe(before);
+      // 처음 모습(넘어간 벽 1·깔린 가구 16+)은 덮어쓰지 않는다 — 처음엔 0 이었던 칸만 8 이 된다
+      for (const p of fresh) { const i = p.y * s.w + p.x; expect(s.ruin![i]).toBe(ruin0[i] === 0 ? 8 : ruin0[i]); }
+      expect(fresh.some((p) => s.ruin![p.y * s.w + p.x] === 8)).toBe(true);
+      expect(s.falls![s.falls!.length - 1].cause).toBe('secondary');
+      expect(s.fx[s.fx.length - 1].kind).toBe('collapse');
+      expect(s.fx.some((f) => f.kind === 'boom')).toBe(false);      // 2차 붕괴는 더는 폭발 효과를 남기지 않는다
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+});
+
+// ───────────────────────── 6. 기록의 일관성 ─────────────────────────
+describe('기록의 일관성', () => {
+  it('넘어간 벽·깔린 가구 칸은 무너진 자리이고, 바닥이거나 sealPockets 가 메운 벽이다', () => {
+    const walk = (s: Scene, i: number): boolean => { const t = s.tiles[i]; return t === T.FLOOR || t === T.DOOR || t === T.GROUND || t === T.ROAD || t === T.STAIR; };
+    let floor = 0, sealed = 0, withWall = 0;
+    const check = (s: Scene): void => {
+      expect(s.ruin).toBeDefined();
+      expect(s.falls?.[0]?.cause).toBe('zone');
+      for (let i = 0; i < s.ruin!.length; i++) {
+        const v = s.ruin![i];
+        if (v !== 1 && v < 16) continue;
+        expect(s.damage[i]).toBe(1);
+        if (s.tiles[i] === T.FLOOR) { floor++; continue; }
+        expect(s.tiles[i]).toBe(T.WALL);
+        for (const d of [1, -1, s.w, -s.w]) expect(walk(s, i + d)).toBe(false);
+        sealed++;
+      }
+      if (s.ruin!.some((v) => v === 1)) withWall++;
+    };
+    for (let k = 0; k < 10; k++) check(collapseScene('G4-REC', 'std', k).s);
+    expect(withWall).toBeGreaterThan(0);
+    expect(floor / (floor + sealed)).toBeGreaterThanOrEqual(0.9);
+    for (let k = 0; k < 3; k++) check(collapseScene('G4-REC', 'gasblast', k).s);      // 가스 폭발 현장도 buildCollapse 로 만든다
   });
 });

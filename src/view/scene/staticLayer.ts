@@ -6,6 +6,7 @@ import { DECOR, T } from '../../sim/types';
 import type { Scene } from '../../sim/types';
 import { disc, hash2, mix, oval, rr, seg, shade } from './common';
 import type { G } from './common';
+import { paintRuinFloor, paintRuinWalls } from './ruins';
 
 export interface StaticLayer {
   base: HTMLCanvasElement;
@@ -22,8 +23,10 @@ const isBuilding = (t: number): boolean => t === T.FLOOR || t === T.FURN || t ==
 /** 정적 층이 의존하는 값의 요약. 문이 열리는 정도로는 다시 그리지 않는다. */
 export function staticSig(s: Scene): number {
   let h = 2166136261 ^ s.floorMat;
-  for (let i = 0; i < s.tiles.length; i++) h = Math.imul(h ^ (s.tiles[i] + s.decor[i] * 16 + s.damage[i] * 512), 16777619);
-  for (const p of s.props) if (p.kind === 'unstable' && p.mitigated) h = Math.imul(h ^ (p.id + 77), 16777619);
+  const ruin = s.ruin;      // (G4) 무너진 자리의 원래 모습 (field/ruins.ts)
+  for (let i = 0; i < s.tiles.length; i++) h = Math.imul(h ^ (s.tiles[i] + s.decor[i] * 16 + s.damage[i] * 512 + (ruin ? ruin[i] * 1024 : 0)), 16777619);
+  for (const p of s.props) if (p.kind === 'debris' && p.removed) h = Math.imul(h ^ (p.id + 77), 16777619);      // (G4) 치운 자리 (scene/ruins.ts 8)
+  // 보강된 균열은 서명에 넣지 않는다: 지지대는 매 프레임 그리므로 고정 층과 무관하다
   // 파손: 깨진 창의 수와 가구가 받은 피해의 합 (둘 다 늘기만 하므로 무엇이든 바뀌면 값이 달라진다)
   let glass = 0, worn = 0;
   for (let i = 0; i < s.glass.length; i++) { glass += s.glass[i]; worn += s.decorHp[i]; }
@@ -402,7 +405,7 @@ function wear(g: G, kind: number, taken: number, h: number, cols: string[]): voi
   for (let k = 0; k < 3; k++) shard(g, cxn + sgn * cut * (0.2 + 0.9 * hv(50 + k)), Math.min(0.46, cyn + 0.03 + 0.08 * hv(53 + k)), 0.026 + 0.022 * hv(56 + k), hv(59 + k) * 6.28, hv(62 + k), cols[k % cols.length]);
 }
 /** 부서진 가구: 바닥에 낮게 깔린 조각 더미 (지나갈 수 있어 보이게 그림자 없이 납작하게) */
-function rubble(g: G, h: number, cols: string[]): void {
+export function rubble(g: G, h: number, cols: string[]): void {
   const hv = (k: number): number => hash2((h * 1e6) | 0, 900 + k);
   // 먼지 앉은 바닥: 가장자리가 드러나지 않게 번지듯 칠한다
   const ox = (hv(1) - 0.5) * 0.1, oy = -0.07 + (hv(2) - 0.5) * 0.08;
@@ -786,22 +789,8 @@ export function buildStatic(s: Scene, R: number, district: string): StaticLayer 
     disc(g, cx, cy, R * 0.12, '#3a2a1b'); disc(g, cx - R * 0.02, cy - R * 0.02, R * 0.07, '#5a4129');
   }
 
-  // 무너진 자리: 먼지 앉은 바닥, 금, 잔 부스러기
-  for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) {
-    const i = y * s.w + x;
-    if (!s.damage[i]) continue;
-    const cx = (x + 0.5) * R, cy = (y + 0.5) * R, hv = (k: number): number => hash2(x * 17 + k, y * 31 + 5);
-    oval(g, cx + (hv(1) - 0.5) * R * 0.3, cy + (hv(2) - 0.5) * R * 0.3, R * (0.62 + 0.2 * hv(3)), R * (0.55 + 0.2 * hv(4)), 'rgba(132,128,120,0.42)', hv(5) * 3);
-    g.strokeStyle = 'rgba(24,22,20,0.55)'; g.lineWidth = Math.max(1, R * 0.03); g.lineCap = 'round'; g.lineJoin = 'round';
-    g.beginPath(); let px = cx + (hv(6) - 0.5) * R * 0.8, py = cy + (hv(7) - 0.5) * R * 0.8; g.moveTo(px, py);
-    for (let k = 0; k < 4; k++) { px += (hv(10 + k) - 0.5) * R * 0.5; py += (hv(20 + k) - 0.5) * R * 0.5; g.lineTo(px, py); }
-    g.stroke();
-    for (let k = 0; k < 7; k++) {
-      const rx = cx + (hv(30 + k) - 0.5) * R * 0.95, ry = cy + (hv(40 + k) - 0.5) * R * 0.95, rad = R * (0.03 + 0.06 * hv(50 + k));
-      g.fillStyle = ['#8d867a', '#6a645b', '#a59d90', '#57524b'][k % 4];
-      g.beginPath(); g.moveTo(rx - rad, ry); g.lineTo(rx - rad * 0.2, ry - rad); g.lineTo(rx + rad, ry - rad * 0.3); g.lineTo(rx + rad * 0.5, ry + rad); g.closePath(); g.fill();
-    }
-  }
+  // 무너진 자리 (G4): 내려앉은 구획, 잔해 더미, 넘어간 벽, 깔린 가구, 천장이 내려앉은 자리, 치운 자리, 구역 경계 (scene/ruins.ts)
+  paintRuinFloor(g, s, R, tAt, { rubble, rubbleColors });
 
   // 7) 건물: 벽 그림자 → 가구 → 벽 → 창 → 문턱
   const geo = wallGeo(s);
@@ -855,6 +844,7 @@ export function buildStatic(s: Scene, R: number, district: string): StaticLayer 
       g.restore();
     }
   }
+  paintRuinWalls(g, s, R, geo.hw);      // (G4) 부러진 벽 끝·철근, 금 간 벽, 바깥 벽의 금
   // 계단과 층 표시
   const seen = new Set<number>();
   for (let i = 0; i < s.stairTo.length; i++) {

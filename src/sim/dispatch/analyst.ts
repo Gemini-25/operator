@@ -3,7 +3,8 @@
 
 import type { Sim } from '../engine';
 import { emit } from '../events';
-import type { Assessment, Claim, Incident, IncidentType, Needs, Topic } from '../types';
+import { INCIDENT_PLACES } from '../cityPlan';
+import type { Assessment, Claim, Incident, IncidentType, Needs, PlaceKind, Topic } from '../types';
 import { TYPE_NAME, clamp } from '../util';
 import { NATURE_LIK } from './callSystem';
 import { recomputeUnmet } from './dispatcher';
@@ -36,15 +37,24 @@ function pick(claims: Claim[], topic: Topic): { c: Claim | null; conflict: boole
   return { c: best, conflict };
 }
 
+/** 그 종류의 건물에서 그 유형의 사건이 날 법한 정도 (지도에서 누구나 알 수 있는 사실만 쓴다) */
+function placePrior(kind: PlaceKind | 'intersection', type: IncidentType): number {
+  if (kind === 'intersection') return type === 'traffic' ? 1.5 : 0.75;
+  if (type === 'traffic') return 0.6;
+  return (INCIDENT_PLACES[type][kind] ?? 0) > 0 ? 1.2 : 0.5;
+}
+
 export function assess(sim: Sim, I: Incident, trigger: string): void {
   const claims = I.claims;
   const prev = I.assessment;
   // ── 유형 추정 ──
   const lp = TYPES.map(() => 0);
-  let nNature = 0;
+  let nNature = 0, placeUsed = false;
   for (const c of claims) {
     if (c.topic === 'nature') { const lik = NATURE_LIK[c.value as string]; if (lik) { nNature++; for (let k = 0; k < TYPES.length; k++) lp[k] += Math.log(lik[k]) * (0.5 + c.conf); } }
     if (c.topic === 'weapon' && c.value !== 'none') lp[3] += 1.5 * c.conf;
+    // 지도 정보: 신고된 곳이 어떤 건물인지에 따라 있을 법한 유형이 달라진다 (하천이면 수난, 교차로면 교통사고)
+    if (c.topic === 'location' && c.placeKind && !placeUsed) { placeUsed = true; for (let k = 0; k < TYPES.length; k++) lp[k] += Math.log(placePrior(c.placeKind, TYPES[k])) * 0.6; }
     if (c.topic === 'detail' && c.value && c.value.ejected) lp[1] += 1.0;
   }
   let mx = Math.max(...lp), sum = 0;

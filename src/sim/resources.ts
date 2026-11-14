@@ -152,6 +152,7 @@ export function etaFor(sim: Sim, u: Unit, destNode: number): number {
     extra += (1 - u.segT) * edgeTime(e, wf);
     from = u.route.nodes[u.seg + 1];
   }
+  if (u.curb && !u.parking) extra += ((u.curbT ?? 0) * u.curb.len) / (CURB_SPEED * wf);
   const r = findRoute(sim.city, from, destNode, wf);
   return r ? r.time + extra : 9999;
 }
@@ -197,10 +198,17 @@ export function startTransport(sim: Sim, u: Unit): void {
   sendUnitTo(sim, u, hosp.nodeId);
 }
 
+const CURB_SPEED = 42;      // 길가로 붙을 때의 속도 (지도 단위/초)
+function curbPos(sim: Sim, u: Unit): void {
+  const n = sim.city.nodes[u.nodeId], k = u.curbT ?? 0;
+  u.x = n.x + (u.curb!.x - n.x) * k; u.y = n.y + (u.curb!.y - n.y) * k;
+}
+
 function arrive(sim: Sim, u: Unit): void {
   u.route = null; u.seg = 0; u.segT = 0;
   const n = sim.city.nodes[u.nodeId];
-  u.x = n.x; u.y = n.y;
+  const parked = !!u.curb && (u.curbT ?? 0) >= 1;
+  if (!parked) { u.x = n.x; u.y = n.y; }
   if (u.state === 'enroute') {
     const I = u.incidentId !== null ? sim.incidents[u.incidentId] : null;
     if (!I || I.phase === 'closed') { releaseUnit(sim, u); return; }
@@ -217,6 +225,12 @@ function arrive(sim: Sim, u: Unit): void {
       u.estArrive = sim.t + 7 + etaFor(sim, { ...u, state: 'available' } as Unit, I.truth.nodeId);
       u.dispatchedAt = Math.min(u.dispatchedAt, sim.t);
       return;
+    }
+    // 교차로에 닿았으면 그 건물 앞 길가까지 마저 간다
+    const pl = I.truth.placeId >= 0 ? sim.city.places[I.truth.placeId] : null;
+    if (pl && !u.curb) {
+      const len = Math.hypot(pl.cx - n.x, pl.cy - n.y);
+      if (len > 8) { u.curb = { x: pl.cx, y: pl.cy, len }; u.curbT = 0; u.parking = true; return; }
     }
     const took = sim.t - u.dispatchedAt, est = u.estArrive - u.dispatchedAt;
     if (took > est * 1.35 + 6) {
@@ -280,6 +294,20 @@ export function tickUnits(sim: Sim): void {
         u.patients = []; u.patientsIncident = null;
         releaseUnit(sim, u);
       }
+      continue;
+    }
+    if (u.curb) {
+      const step = (dt * CURB_SPEED * wf) / u.curb.len;
+      if (u.parking && u.state === 'enroute' && u.destNode === u.nodeId) {
+        // 건물 앞 길가로 붙는다
+        u.curbT = Math.min(1, (u.curbT ?? 0) + step); curbPos(sim, u);
+        if (u.curbT >= 1) { u.parking = false; arrive(sim, u); }
+        continue;
+      }
+      // 떠날 때는 길가에서 교차로로 돌아 나온 뒤 경로를 따른다
+      u.parking = false;
+      u.curbT = Math.max(0, (u.curbT ?? 0) - step); curbPos(sim, u);
+      if (u.curbT <= 0) u.curb = null;
       continue;
     }
     // 이동 (enroute / transport / returning)

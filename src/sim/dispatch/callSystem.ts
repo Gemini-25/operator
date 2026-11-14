@@ -99,7 +99,13 @@ export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: 
     const e = sim.city.edges[rng.pick(here.edges)];
     const nb = e.a === here.id ? e.b : e.a;
     put('location', nb, `${nodeName(sim.city, nb)} 근처예요.`, false, `실제 위치는 ${nodeName(sim.city, here.id)}인데 ${josa(nodeName(sim.city, nb), '으로/로')} 신고`, 0.5 + cf * 0.3);
-  } else put('location', I.truth.nodeId, `${nodeName(sim.city, I.truth.nodeId)} 근처예요.`, true, '', 0.95);
+  } else {
+    // 제대로 아는 신고자는 건물 이름까지 말한다 (지도에 있는 그 건물)
+    const pl = I.truth.placeId >= 0 ? sim.city.places[I.truth.placeId] : null;
+    const where = pl ? (pl.open ? pl.name : `${pl.addr} ${pl.name}`) : `${nodeName(sim.city, I.truth.nodeId)} 교차로`;
+    put('location', I.truth.nodeId, `${josa(where, '이에요/예요')}.`, true, '', 0.95);
+    knows.location!.placeKind = pl ? pl.kind : 'intersection';
+  }
   if (persona === 'prank') {
     const nat0 = natureFor(I, s, persona, rng);
     put('nature', nat0.v, rng.pick(NATURE_TEXT[nat0.v]), false, nat0.note);

@@ -9,7 +9,8 @@ import { emit } from './events';
 import { createScene } from './field/sceneManager';
 import { releaseUnit } from './resources';
 import type { Rng } from './rng';
-import type { District, Incident, IncidentType } from './types';
+import { INCIDENT_PLACES } from './cityPlan';
+import type { Incident, IncidentType, Place, PlaceKind } from './types';
 import { OUTCOME_NAME, TYPE_NAME } from './util';
 
 export interface GenState {
@@ -19,16 +20,31 @@ export interface GenState {
 }
 export function initGenerator(rng: Rng): GenState { return { nextAt: rng.range(10, 22), lastType: null, count: 0, lastCreated: 0, nextNuisanceAt: 40, chain: [] }; }
 
-const PLACE: Record<IncidentType, Record<District, string>> = {
-  fire: { residential: '다세대 주택', commercial: '상가 건물', industrial: '공장 작업동', outskirts: '외곽 펜션' },
-  traffic: { residential: '주택가 교차로', commercial: '도심 교차로', industrial: '공단 진입로', outskirts: '외곽 도로' },
-  search: { residential: '근린공원', commercial: '도심 공원', industrial: '공단 뒤 야산', outskirts: '외곽 산책로' },
-  armed: { residential: '주택가 편의점', commercial: '상점가 매장', industrial: '공단 매점', outskirts: '외곽 휴게소' },
-  medical: { residential: '단독 주택', commercial: '오피스텔', industrial: '기숙사', outskirts: '농가 주택' },
-  collapse: { residential: '노후 연립 주택', commercial: '공사 중인 상가', industrial: '노후 창고', outskirts: '외곽 가건물' },
-  water: { residential: '하천 산책로', commercial: '도심 하천변', industrial: '공단 배수로', outskirts: '외곽 저수지' },
-  hazmat: { residential: '주택가 도시가스 정압실', commercial: '상가 지하 기계실', industrial: '화학 공장 배관동', outskirts: '외곽 저장 시설' },
+/** 무장 사건의 변형에 따라 잘 일어나는 곳이 다르다 */
+const ARMED_BIAS: Record<string, Partial<Record<PlaceKind, number>>> = {
+  robbery: { bank: 2.2, convenience: 1.8, gasStation: 1.6, shop: 1.4 },
+  dispute: { restaurant: 3, market: 2, hotel: 1.5, bank: 0.2 },
+  shooter: { mart: 2.5, market: 2, office: 2, terminal: 2, convenience: 0.4 },
+  hostage: { bank: 2, office: 1.6, hotel: 1.5 },
 };
+
+/** 사건이 일어날 건물이나 터를 고른다. 교통사고는 교차로에서 일어나므로 null. */
+function pickPlace(sim: Sim, rng: Rng, type: IncidentType, variant: string, busy: Set<number>): Place | null {
+  const table = INCIDENT_PLACES[type];
+  const used = new Set(sim.incidents.map((I) => I.truth.placeId));
+  const weigh = (q: Place, strict: boolean): number => {
+    let w = table[q.kind] ?? 0;
+    if (w <= 0 || q.facility >= 0) return 0;
+    if (strict && (busy.has(q.nodeId) || used.has(q.id))) return 0;
+    if (type === 'armed') w *= ARMED_BIAS[variant]?.[q.kind] ?? 1;
+    if (type === 'search' && variant === 'hiker' && q.kind !== 'forest') return 0;
+    return w;
+  };
+  let ws = sim.city.places.map((q) => weigh(q, true));
+  if (!ws.some((v) => v > 0)) ws = sim.city.places.map((q) => weigh(q, false));
+  if (!ws.some((v) => v > 0)) return null;
+  return rng.weighted(sim.city.places, ws);
+}
 
 function createIncident(sim: Sim, chainNote = ''): Incident {
   const rng = sim.rngGen, g = sim.gen, tn = sim.tune;
@@ -49,18 +65,22 @@ function createIncident(sim: Sim, chainNote = ''): Incident {
   else if (type === 'traffic' && severity >= 2 && rng.chance(severity >= 3 ? 0.28 : 0.06)) { variant = 'bus'; severity = 3; }      // 버스가 낀 다수 사상자 사고
   else if (type === 'medical') variant = severity >= 3 ? 'arrest' : severity === 2 ? 'trauma' : 'faint';
   else if (type === 'fire' && rng.chance(tn.falseAlarmProb)) { variant = 'false'; severity = 1; }      // 오인 신고: 탄 음식, 경보 오작동
-  // 위치
+  // 위치: 유형에 맞는 건물이나 터를 고른다 (교통사고는 교차로)
   const busy = new Set(sim.incidents.filter((I) => I.phase !== 'closed').map((I) => I.truth.nodeId));
-  const fac = new Set(sim.city.facilities.map((f) => f.nodeId));
-  const ok = (d: District): boolean => type === 'search' ? d === 'outskirts' : type === 'armed' ? d === 'commercial' || d === 'residential' : type === 'fire' ? d !== 'outskirts' || rng.chance(0.2) : type === 'medical' ? d !== 'industrial' || rng.chance(0.3) : type === 'hazmat' ? d === 'industrial' || d === 'commercial' || rng.chance(0.25) : type === 'collapse' ? d !== 'outskirts' || rng.chance(0.3) : type === 'water' ? d !== 'commercial' || rng.chance(0.4) : true;
-  let cands = sim.city.nodes.filter((n) => !busy.has(n.id) && !fac.has(n.id) && ok(n.district) && (type !== 'traffic' || n.edges.length >= 3));
-  if (!cands.length) cands = sim.city.nodes.filter((n) => !busy.has(n.id) && !fac.has(n.id));
-  const node = rng.pick(cands);
+  const place = type === 'traffic' ? null : pickPlace(sim, rng, type, variant, busy);
+  let node = place ? sim.city.nodes[place.nodeId] : null;
+  if (!node) {
+    const fac = new Set(sim.city.facilities.map((f) => f.nodeId));
+    let cands = sim.city.nodes.filter((n) => !busy.has(n.id) && !fac.has(n.id) && n.edges.length >= 3);
+    if (!cands.length) cands = sim.city.nodes.filter((n) => !busy.has(n.id));
+    node = rng.pick(cands);
+  }
+  const label = place ? (place.open ? `${place.name} (${place.addr})` : `${place.addr} ${place.name}`) : `${nodeName(sim.city, node.id)} 교차로`;
   const id = sim.incidents.length;
   const code = (id + 1 < 10 ? '0' : '') + (id + 1);
   const I: Incident = {
     id, code,
-    truth: { type, variant, severity, nodeId: node.id, x: node.x, y: node.y, district: node.district, label: `${nodeName(sim.city, node.id)} ${PLACE[type][node.district]}` },
+    truth: { type, variant, severity, nodeId: node.id, x: place ? place.x + place.w / 2 : node.x, y: place ? place.y + place.h / 2 : node.y, district: place ? place.district : node.district, label, placeId: place ? place.id : -1, placeKind: place ? place.kind : null },
     createdAt: sim.t, phase: 'unreported', reportedAt: -1, answeredAt: -1, claims: [], locationKnown: false, assessment: null,
     assigned: [], everAssigned: [], unmet: {}, unmetSince: 0, noUnitLogged: false,
     firstDispatchAt: -1, firstArrivalAt: -1, closedAt: -1, fieldVerified: false, fieldType: null, priority: 1,
@@ -70,7 +90,7 @@ function createIncident(sim: Sim, chainNote = ''): Incident {
   };
   sim.incidents.push(I);
   createScene(sim, I);
-  { const sc = sim.scenes[I.id]; if (sc && sc.placeName) I.truth.label = `${nodeName(sim.city, node.id)} ${sc.placeName}`; }      // 현장을 만들면서 정해진 장소 이름
+  { const sc = sim.scenes[I.id]; if (sc && sc.placeName && !place) I.truth.label = `${nodeName(sim.city, node.id)} ${sc.placeName}`; }      // 교차로 사고: 현장을 만들면서 정해진 이름
   const delay = type === 'fire' ? rng.range(6, 16) : type === 'traffic' ? rng.range(3, 8) : type === 'search' ? rng.range(1, 3) : type === 'medical' ? rng.range(2, 6) : type === 'collapse' ? rng.range(3, 8) : type === 'water' ? rng.range(2, 6) : type === 'hazmat' ? rng.range(8, 20) : rng.range(4, 11);
   I.firstCallAt = sim.t + delay;
   const benign = variant === 'false' || variant === 'prank';

@@ -18,14 +18,41 @@ export interface RoadEdge {
   baseCong: number;
   closed: boolean; closedReason: string | null;
   slow: number;        // 사건(사고 현장 등)으로 인한 추가 지연 계수
+  name: string;        // 도로 이름
 }
 export interface Building { x: number; y: number; w: number; h: number; district: District; tone: number }
+/** 지도 위의 건물·장소 종류 */
+export type PlaceKind =
+  | 'houseS' | 'houseL' | 'villa' | 'apartment' | 'officetel' | 'dorm'
+  | 'shop' | 'convenience' | 'restaurant' | 'market' | 'mart' | 'bank' | 'office' | 'hotel' | 'church' | 'gasStation'
+  | 'factory' | 'warehouse' | 'chemical' | 'utility' | 'construction' | 'storage'
+  | 'farmhouse' | 'pension' | 'restStop' | 'greenhouse'
+  | 'terminal' | 'hangar' | 'tower'
+  | 'fireStation' | 'police' | 'hospital' | 'cityHall' | 'school' | 'logistics'
+  | 'park' | 'forest' | 'riverside' | 'reservoir' | 'parking' | 'playground' | 'runway' | 'farmland';
+/** 지도 위의 건물 한 채 또는 터 하나. 모든 건물에 종류·이름·주소가 있고, 사건은 이 중 한 곳에서 일어난다. */
+export interface Place extends Building {
+  id: number; kind: PlaceKind; name: string; addr: string;
+  block: number;            // 블록 번호 (행 * 8 + 열)
+  dong: string;             // 동 이름
+  nodeId: number;           // 차량이 닿는 교차로
+  cx: number; cy: number;   // 차를 대는 길가 지점
+  open: boolean;            // 건물이 아닌 터(공원·숲·하천·주차장 등)
+  floors: number;           // 층수 (지도의 그림자 길이)
+  facility: number;         // 출동 시설이면 그 번호, 아니면 -1
+}
+export interface Alley { x0: number; y0: number; x1: number; y1: number; name: string }
+export interface CityBlock { c: number; r: number; use: string; dong: string; name: string; x0: number; y0: number; x1: number; y1: number }
 export interface Facility { id: number; kind: 'fireStation' | 'police' | 'hospital' | 'public'; name: string; nodeId: number; x: number; y: number }
 export interface Park { x: number; y: number; r: number }
 export interface City {
   w: number; h: number;
   nodes: RoadNode[]; edges: RoadEdge[]; buildings: Building[]; facilities: Facility[]; parks: Park[];
   districts: { district: District; name: string; x: number; y: number; w: number; h: number }[];
+  places: Place[];                    // 모든 건물과 터
+  alleys: Alley[];                    // 블록 안의 골목 (차량이 다니는 도로망에는 들어가지 않는다)
+  blocks: CityBlock[];                // 도로 사이의 칸과 그 쓰임새
+  river: { pts: number[][]; w: number; name: string };      // 하천의 중심선
 }
 export interface Route { nodes: number[]; edges: number[]; time: number }
 
@@ -66,6 +93,8 @@ export interface Unit {
   patientsIncident: number | null;
   // 통계
   dispatchedAt: number; estArrive: number; diverted: boolean;
+  // 교차로에서 건물 앞 길가까지의 마지막 구간 (curbT: 0 = 교차로, 1 = 길가)
+  curb?: { x: number; y: number; len: number } | null; curbT?: number; parking?: boolean;
   busyTime: number; runs: number;
   boardOrder: 'release' | 'transport' | null;
   aid?: boolean;                      // 인근 도시에서 지원 온 부대 (임무를 마치면 관할로 돌아간다)
@@ -272,7 +301,7 @@ export interface Scene {
 // ───────────────────────── 신고 / 관제 ─────────────────────────
 export type Persona = 'calm' | 'panicked' | 'confused' | 'partial' | 'wrong' | 'prank';
 export type Topic = 'location' | 'nature' | 'injured' | 'count' | 'trapped' | 'hazard' | 'weapon' | 'detail';
-export interface Claim { topic: Topic; value: any; conf: number; text: string; truthful: boolean; callId: number; note: string }
+export interface Claim { topic: Topic; value: any; conf: number; text: string; truthful: boolean; callId: number; note: string; placeKind?: PlaceKind | 'intersection' }
 export interface Caller {
   name: string; persona: Persona;
   knows: Partial<Record<Topic, Claim>>;      // 신고자가 (정확하든 아니든) 믿고 있는 내용
@@ -325,7 +354,7 @@ export interface IncidentResult {
 export interface Incident {
   id: number; code: string;
   // ── 진실 (엔진만 사용. AI 는 접근 금지) ──
-  truth: { type: IncidentType; variant: string; severity: number; nodeId: number; x: number; y: number; district: District; label: string };
+  truth: { type: IncidentType; variant: string; severity: number; nodeId: number; x: number; y: number; district: District; label: string; placeId: number; placeKind: PlaceKind | null };
   createdAt: number;
   // ── 관제가 아는 내용 ──
   phase: IncidentPhase;

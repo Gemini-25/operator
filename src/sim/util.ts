@@ -30,7 +30,7 @@ export const WEATHER_NAME: Record<string, string> = { clear: '맑음', rain: '�
 const LATIN_BATCHIM = 'LMNR';
 const DIGIT_BATCHIM = '013678';
 /** 한국어 조사 선택. josa('구조1', '이/가') → '구조1이' */
-export function josa(word: string, pair: '은/는' | '이/가' | '을/를' | '으로/로' | '과/와'): string {
+export function josa(word: string, pair: '은/는' | '이/가' | '을/를' | '으로/로' | '과/와' | '이에요/예요'): string {
   const [withB, without] = pair.split('/');
   const ch = word.trim().slice(-1);
   const code = ch.charCodeAt(0);

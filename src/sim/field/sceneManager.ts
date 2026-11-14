@@ -49,7 +49,7 @@ export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
   if (first) { s.arrivedAt = sim.t; I.firstArrivalAt = sim.t; I.phase = 'onscene'; }
   const node = sim.city.nodes[I.truth.nodeId];
   const slot = I.everAssigned.indexOf(u.id);
-  u.x = node.x + 16 * Math.cos(slot * 1.3); u.y = node.y + 16 * Math.sin(slot * 1.3); u.px = u.x; u.py = u.y;
+  if (!u.curb) { u.x = node.x + 16 * Math.cos(slot * 1.3); u.y = node.y + 16 * Math.sin(slot * 1.3); u.px = u.x; u.py = u.y; }      // 건물 앞 길가에 세운 차량은 그 자리에 둔다
   const brief = briefFacts(sim, I);
   const cmd = s.agents.find((a) => a.rid === s.commanderRid && a.status === 'active');
   const prevCmd = s.agents.find((a) => a.rid === s.commanderRid);

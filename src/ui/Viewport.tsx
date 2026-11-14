@@ -29,6 +29,7 @@ export function Viewport({ runner, director, sound, selectedRid, onSelectRid, on
     let w = 0, h = 0, raf = 0, last = 0;
     let fxScene: unknown = null, fxT = 0, evSeen = 0, evSim: unknown = null;      // 자동 감속: 관찰 중인 현장에서 새로 벌어진 일을 찾는다
     let pips: Pip[] = [];
+    let hoverAt: { x: number; y: number } | null = null;      // 지도 위의 마우스 위치
     const resize = () => {
       const r = box.getBoundingClientRect();
       const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -72,7 +73,7 @@ export function Viewport({ runner, director, sound, selectedRid, onSelectRid, on
       if (scene) drawScene(ctx, sim, scene, w, h, { truth, alpha: runner.alpha, timeMs: now, selectedRid: sel.current, cam: director.sceneCam });
       else {
         const selUnit = sel.current >= 0 ? sim.responders[sel.current].unitId : -1;
-        drawCity(ctx, sim, director.cam, w, h, { focus: director.focus, truth, timeMs: now, alpha: runner.alpha, selectedUnit: selUnit });
+        drawCity(ctx, sim, director.cam, w, h, { focus: director.focus, truth, timeMs: now, alpha: runner.alpha, selectedUnit: selUnit, hover: hoverAt });
       }
       // 작은 창: (현장 화면일 때) 도시 지도 + 진행 중인 다른 현장들
       pips = [];
@@ -103,9 +104,12 @@ export function Viewport({ runner, director, sound, selectedRid, onSelectRid, on
 
     // ── 입력: 시점 조작과 관찰 대상 선택만 가능하다 (AI 에게 명령을 내리는 입력은 없다) ──
     let dragging = false, moved = 0, lx = 0, ly = 0;
+    const leave = () => { hoverAt = null; };
     const pos = (e: MouseEvent) => { const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; };
     const down = (e: MouseEvent) => { dragging = true; moved = 0; lx = e.clientX; ly = e.clientY; };
     const move = (e: MouseEvent) => {
+      // 지도 위에 마우스를 올리면 그 건물·도로의 정보를 보여 준다 (보기만 한다)
+      if (e.target === canvas && !dragging) { const q = pos(e); hoverAt = q.x >= 0 && q.y >= 0 && q.x <= w && q.y <= h ? q : null; } else hoverAt = null;
       if (!dragging) return;
       const dx = e.clientX - lx, dy = e.clientY - ly; lx = e.clientX; ly = e.clientY; moved += Math.abs(dx) + Math.abs(dy);
       if (moved <= 6) return;
@@ -144,6 +148,7 @@ export function Viewport({ runner, director, sound, selectedRid, onSelectRid, on
     };
     canvas.addEventListener('mousedown', down); window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
     canvas.addEventListener('wheel', wheel, { passive: false });
+    canvas.addEventListener('mouseleave', leave);
     const dbl = () => { if (director.mode === 'scene') director.sceneReset(); };
     canvas.addEventListener('dblclick', dbl);
     return () => {
@@ -151,6 +156,7 @@ export function Viewport({ runner, director, sound, selectedRid, onSelectRid, on
       cancelAnimationFrame(raf); ro.disconnect();
       canvas.removeEventListener('mousedown', down); window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
       canvas.removeEventListener('wheel', wheel);
+      canvas.removeEventListener('mouseleave', leave);
     };
   }, [runner, director, sound, onSelectRid, onSelectUnit]);
 

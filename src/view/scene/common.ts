@@ -15,7 +15,9 @@ const rgbCache = new Map<string, [number, number, number]>();
 export function rgb(hex: string): [number, number, number] {
   let c = rgbCache.get(hex);
   if (!c) {
-    const v = hex.length === 4 ? hex.slice(1).split('').map((d) => parseInt(d + d, 16)) : [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+    // '#rgb', '#rrggbb' 와 mix()·shade() 가 돌려준 'rgb(r,g,b)' 를 모두 읽는다
+    const v = hex[0] !== '#' ? (hex.match(/[\d.]+/g) ?? ['0', '0', '0']).slice(0, 3).map(Number)
+      : hex.length === 4 ? hex.slice(1).split('').map((d) => parseInt(d + d, 16)) : [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
     c = [v[0], v[1], v[2]]; rgbCache.set(hex, c);
   }
   return c;

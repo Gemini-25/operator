@@ -173,7 +173,7 @@ export function App() {
             <span><i className="ring" style={{ borderColor: '#e0486b', background: 'rgba(224,72,107,0.25)' }} />용의자</span>
             <span className="sep" />
             <span className="dim">휠 확대 · 끌어서 이동 · 두 번 눌러 전체 보기{truth ? ' · 흐린 표시 = AI 미확인' : ''}</span>
-          </>) : (<span className="dim">사건 표식을 누르면 현장을 확대합니다 · 휠 확대/축소 · 끌어서 이동</span>)}
+          </>) : (<span className="dim">사건 표식을 누르면 현장을 확대합니다 · 건물이나 도로에 마우스를 올리면 이름과 종류가 보입니다 · 휠 확대/축소 · 끌어서 이동</span>)}
         </div>
         <div className="overlay call-wrap"><CallPanel sim={sim} truth={truth} /></div>
         <Ticker sim={sim} truth={truth} />

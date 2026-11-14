@@ -2,8 +2,10 @@
 // 한 번만 그려 두고 매 프레임 크기를 바꿔 붙인다. 밤에는 가로등과 창 불빛을 함께 그려 둔다.
 
 import { COLS, ROWS } from '../../sim/city';
+import { RIVER_COL } from '../../sim/cityPlan';
 import type { Sim } from '../../sim/engine';
-import type { Building, District, Facility, RoadNode } from '../../sim/types';
+import type { District, Facility, RoadNode } from '../../sim/types';
+import { canopy, paintOpen, paintRoof, paintShadow, poly } from './places';
 import { disc, hash2, mix, oval, rr, seg, shade } from '../scene/common';
 import type { G } from '../scene/common';
 
@@ -17,77 +19,6 @@ const ROOFS: Record<District, string[]> = {
   industrial: ['#6a655c', '#5d6468', '#74614f', '#59605a', '#6d6a70'],
   outskirts: ['#7b5343', '#5f6a5a', '#6a5f4a'],
 };
-
-function poly(g: G, pts: number[][], col: string): void {
-  g.fillStyle = col; g.beginPath(); g.moveTo(pts[0][0], pts[0][1]);
-  for (let i = 1; i < pts.length; i++) g.lineTo(pts[i][0], pts[i][1]);
-  g.closePath(); g.fill();
-}
-
-function canopy(g: G, x: number, y: number, r: number, h: number, night: boolean): void {
-  const tones = h > 0.6 ? ['#1c4a2c', '#2b6a3a', '#3f8a4a'] : h > 0.3 ? ['#234b27', '#356b30', '#4c8a3e'] : ['#1f4433', '#2e6044', '#3f7c58'];
-  oval(g, x + r * 0.35, y + r * 0.45, r * 1.05, r * 0.95, 'rgba(0,0,0,0.3)');
-  for (let l = 0; l < 3; l++) {
-    const rad = r * (1 - l * 0.26), off = -l * r * 0.16;
-    for (let k = 0; k < 5; k++) {
-      const a = (k / 5) * 6.2832 + h * 6, d = rad * 0.42;
-      disc(g, x + Math.cos(a) * d + off, y + Math.sin(a) * d + off, rad * 0.62, night ? shade(tones[l], -0.45) : tones[l]);
-    }
-  }
-}
-
-function hipRoof(g: G, x: number, y: number, w: number, h: number, col: string): void {
-  const m = Math.min(w, h) / 2, horiz = w >= h;
-  const A = [x, y], B = [x + w, y], C = [x + w, y + h], D = [x, y + h];
-  const R1 = horiz ? [x + m, y + h / 2] : [x + w / 2, y + m], R2 = horiz ? [x + w - m, y + h / 2] : [x + w / 2, y + h - m];
-  poly(g, horiz ? [A, B, R2, R1] : [A, B, R1], shade(col, 0.14));
-  poly(g, horiz ? [B, C, R2] : [B, C, R2, R1], shade(col, -0.14));
-  poly(g, horiz ? [C, D, R1, R2] : [C, D, R2], shade(col, -0.26));
-  poly(g, horiz ? [D, A, R1] : [D, A, R1, R2], shade(col, 0.03));
-  g.strokeStyle = shade(col, 0.3); g.lineWidth = 0.8; g.beginPath(); g.moveTo(R1[0], R1[1]); g.lineTo(R2[0], R2[1]); g.stroke();
-  g.strokeStyle = 'rgba(0,0,0,0.35)'; g.lineWidth = 0.6; g.strokeRect(x, y, w, h);
-}
-
-function flatRoof(g: G, b: Building, col: string, seed: number): void {
-  const { x, y, w, h } = b;
-  g.fillStyle = shade(col, -0.25); g.fillRect(x, y, w, h);
-  g.fillStyle = col; g.fillRect(x + 1.6, y + 1.6, w - 3.2, h - 3.2);
-  g.fillStyle = 'rgba(255,255,255,0.09)'; g.fillRect(x + 1.6, y + 1.6, w - 3.2, 1.2); g.fillRect(x + 1.6, y + 1.6, 1.2, h - 3.2);
-  const hv = (k: number): number => hash2(seed, k);
-  const v = hv(1);
-  if (v < 0.22 && w > 26 && h > 22) {
-    // 옥상 정원
-    g.fillStyle = '#35553a'; g.fillRect(x + 5, y + 5, w * 0.45, h - 10);
-    for (let k = 0; k < 3; k++) disc(g, x + 8 + hv(10 + k) * (w * 0.45 - 6), y + 8 + hv(20 + k) * (h - 16), 2.6, '#4b7a4c');
-  } else if (v < 0.4 && w > 30 && h > 30) {
-    // 채광창
-    const n = Math.max(1, Math.floor((w - 12) / 9));
-    for (let k = 0; k < n; k++) { g.fillStyle = '#2f4a60'; g.fillRect(x + 6 + k * 9, y + h * 0.3, 6, h * 0.4); g.fillStyle = 'rgba(160,210,240,0.35)'; g.fillRect(x + 6 + k * 9, y + h * 0.3, 6, 1.5); }
-  }
-  // 공조 설비
-  const units = 1 + ((hv(2) * 3) | 0);
-  for (let k = 0; k < units; k++) {
-    const ux = x + 5 + hv(30 + k) * Math.max(1, w - 18), uy = y + 5 + hv(40 + k) * Math.max(1, h - 16);
-    g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(ux + 1.2, uy + 1.6, 8, 6);
-    g.fillStyle = '#9aa3ac'; g.fillRect(ux, uy, 8, 6);
-    disc(g, ux + 2.4, uy + 3, 1.6, '#4c555e'); disc(g, ux + 5.8, uy + 3, 1.6, '#4c555e');
-  }
-  if (hv(3) > 0.6 && w > 24) { g.fillStyle = shade(col, 0.2); g.fillRect(x + w - 11, y + 4, 7, 7); g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(x + w - 11, y + 10, 7, 1); }
-}
-
-function shedRoof(g: G, b: Building, col: string, seed: number): void {
-  const { x, y, w, h } = b, horiz = w >= h;
-  g.fillStyle = col; g.fillRect(x, y, w, h);
-  g.fillStyle = 'rgba(0,0,0,0.14)';
-  if (horiz) for (let k = 0; k * 4 < w; k += 2) g.fillRect(x + k * 4, y, 4, h); else for (let k = 0; k * 4 < h; k += 2) g.fillRect(x, y + k * 4, w, 4);
-  g.fillStyle = shade(col, 0.28);
-  if (horiz) g.fillRect(x, y + h / 2 - 0.8, w, 1.6); else g.fillRect(x + w / 2 - 0.8, y, 1.6, h);
-  g.fillStyle = 'rgba(0,0,0,0.2)'; if (horiz) g.fillRect(x, y + h / 2 + 0.8, w, h / 2 - 0.8); else g.fillRect(x + w / 2 + 0.8, y, w / 2 - 0.8, h);
-  g.strokeStyle = 'rgba(0,0,0,0.4)'; g.lineWidth = 0.7; g.strokeRect(x, y, w, h);
-  const n = 1 + ((hash2(seed, 5) * 3) | 0);
-  for (let k = 0; k < n; k++) { const vx = x + 6 + hash2(seed, 6 + k) * Math.max(1, w - 12), vy = y + 6 + hash2(seed, 9 + k) * Math.max(1, h - 12); disc(g, vx + 0.8, vy + 1, 2.4, 'rgba(0,0,0,0.3)'); disc(g, vx, vy, 2.2, '#aab2b9'); disc(g, vx, vy, 1, '#59626b'); }
-  if (hash2(seed, 15) > 0.55 && w > 30 && h > 30) { const cx = x + w * 0.8, cy = y + h * 0.25; oval(g, cx + 5, cy + 7, 3.4, 9, 'rgba(0,0,0,0.3)', -0.6); disc(g, cx, cy, 3.6, '#7d6a5e'); disc(g, cx, cy, 2, '#2a2420'); }
-}
 
 export interface FacilityLot { x: number; y: number; w: number; h: number }
 /** 시설이 차지하는 부지 (이 안의 일반 건물은 그리지 않는다) */
@@ -176,43 +107,61 @@ export function buildCityStatic(sim: Sim): { c: HTMLCanvasElement; lamps: CityLa
     g.strokeStyle = 'rgba(0,0,0,0.3)'; g.lineWidth = 1; g.strokeRect(-fw / 2, -fh / 2, fw, fh);
     g.restore();
   }
-  // 2) 구역별 땅 (도로 사이의 블록)
-  const blocks: { d: District; pts: number[][] }[] = [];
-  for (let r = 0; r < ROWS - 1; r++) for (let cc = 0; cc < COLS - 1; cc++) {
-    const n00 = nid(cc, r), n10 = nid(cc + 1, r), n01 = nid(cc, r + 1), n11 = nid(cc + 1, r + 1);
-    const ds = [n00.district, n10.district, n01.district, n11.district];
-    const d: District = ds.filter((q) => q === 'outskirts').length >= 2 ? 'outskirts' : ds.find((q) => q !== 'outskirts')!;
-    blocks.push({ d, pts: [[n00.x, n00.y], [n10.x, n10.y], [n11.x, n11.y], [n01.x, n01.y]] });
+  // 2) 블록의 땅: 쓰임새마다 바닥색이 다르다 (도로가 없는 경계는 이웃 블록과 그대로 이어진다)
+  const USE_GROUND: Record<string, string> = {
+    houses: '#23332b', bigHouses: '#24382d', villas: '#27312c', apt: '#27352e', park: '#24382d',
+    office: '#272e37', shops: '#2a2f36', market: '#2c2f33', mart: '#2a2f36',
+    factory: '#2c2a26', logistics: '#2d2c29', chemical: '#2b2b28', redevelop: '#3a3429', airport: '#26382b',
+  };
+  const useKind = (u: string): District => (u === 'office' || u === 'shops' || u === 'market' || u === 'mart' ? 'commercial' : u === 'factory' || u === 'logistics' || u === 'chemical' ? 'industrial' : USE_GROUND[u] && u !== 'airport' ? 'residential' : 'outskirts');
+  for (const b of city.blocks) {
+    const col = USE_GROUND[b.use]; if (!col) continue;
+    const n00 = nid(b.c, b.r), n10 = nid(b.c + 1, b.r), n01 = nid(b.c, b.r + 1), n11 = nid(b.c + 1, b.r + 1);
+    poly(g, [[n00.x, n00.y], [n10.x, n10.y], [n11.x, n11.y], [n01.x, n01.y]], dim(col, 0.25));
   }
-  for (const b of blocks) if (b.d !== 'outskirts') poly(g, b.pts, dim(GROUND[b.d], 0.25));
   // 블록 안의 잔디·포장 무늬
-  for (const b of blocks) {
-    if (b.d === 'outskirts') continue;
-    const x0 = Math.max(b.pts[0][0], b.pts[3][0]) + 14, x1 = Math.min(b.pts[1][0], b.pts[2][0]) - 14, y0 = Math.max(b.pts[0][1], b.pts[1][1]) + 14, y1 = Math.min(b.pts[2][1], b.pts[3][1]) - 14;
+  for (const b of city.blocks) {
+    const d = useKind(b.use); if (d === 'outskirts' || b.use === 'park') continue;
+    const x0 = b.x0 - 8, x1 = b.x1 + 8, y0 = b.y0 - 8, y1 = b.y1 + 8;
     const seed = Math.round(x0 * 3 + y0 * 7);
-    if (b.d === 'residential') for (let k = 0; k < 16; k++) rr(g, x0 + hash2(seed, k) * (x1 - x0 - 30), y0 + hash2(seed, k + 40) * (y1 - y0 - 24), 18 + hash2(seed, k + 80) * 22, 14 + hash2(seed, k + 120) * 16, 3, dim(hash2(seed, k + 160) > 0.5 ? '#2a4030' : '#263a2d', 0.35));
-    else if (b.d === 'commercial') { g.strokeStyle = 'rgba(255,255,255,0.045)'; g.lineWidth = 0.7; for (let q = x0; q < x1; q += 9) { g.beginPath(); g.moveTo(q, y0); g.lineTo(q, y1); g.stroke(); } }
+    if (d === 'residential') for (let k = 0; k < 16; k++) rr(g, x0 + hash2(seed, k) * (x1 - x0 - 30), y0 + hash2(seed, k + 40) * (y1 - y0 - 24), 18 + hash2(seed, k + 80) * 22, 14 + hash2(seed, k + 120) * 16, 3, dim(hash2(seed, k + 160) > 0.5 ? '#2a4030' : '#263a2d', 0.35));
+    else if (d === 'commercial') { g.strokeStyle = 'rgba(255,255,255,0.045)'; g.lineWidth = 0.7; for (let q = x0; q < x1; q += 9) { g.beginPath(); g.moveTo(q, y0); g.lineTo(q, y1); g.stroke(); } }
     else for (let k = 0; k < 8; k++) rr(g, x0 + hash2(seed, k) * (x1 - x0 - 40), y0 + hash2(seed, k + 40) * (y1 - y0 - 30), 24 + hash2(seed, k + 80) * 30, 16 + hash2(seed, k + 120) * 22, 2, dim(hash2(seed, k + 160) > 0.5 ? '#35322c' : '#28261f', 0.3));
   }
-  // 3) 공원: 풀밭, 연못, 산책로, 나무
-  for (const p of city.parks) {
-    const gr = g.createRadialGradient(p.x, p.y, p.r * 0.3, p.x, p.y, p.r);
-    gr.addColorStop(0, dim('#3d6a3f', 0.4)); gr.addColorStop(0.8, dim('#335a37', 0.4)); gr.addColorStop(1, 'rgba(40,80,50,0)');
-    g.fillStyle = gr; g.beginPath(); g.arc(p.x, p.y, p.r, 0, 6.2832); g.fill();
-    const sd = Math.round(p.x * 3 + p.y);
-    if (hash2(sd, 1) > 0.5) { oval(g, p.x + p.r * 0.2, p.y + p.r * 0.1, p.r * 0.3, p.r * 0.2, dim('#1c3a2a', 0.3), hash2(sd, 2) * 3); oval(g, p.x + p.r * 0.2, p.y + p.r * 0.1, p.r * 0.26, p.r * 0.16, dim('#2f6f8f', 0.4), hash2(sd, 2) * 3); }
-    g.strokeStyle = dim('#8a7a5c', 0.4); g.lineWidth = 1.6; g.setLineDash([4, 3]); g.beginPath(); g.arc(p.x, p.y, p.r * 0.62, hash2(sd, 3) * 6, hash2(sd, 3) * 6 + 4.2); g.stroke(); g.setLineDash([]);
-    const n = 6 + ((p.r / 9) | 0);
-    for (let k = 0; k < n; k++) { const a = hash2(sd, 10 + k) * 6.2832, d = (0.35 + 0.6 * hash2(sd, 40 + k)) * p.r; canopy(g, p.x + Math.cos(a) * d, p.y + Math.sin(a) * d, 6 + 5 * hash2(sd, 70 + k), hash2(sd, 90 + k), night); }
+  // 3) 터: 숲, 공원, 저수지, 활주로, 주차장, 놀이터 (넓은 것부터)
+  const opens = city.places.filter((q) => q.open).sort((a, b) => b.w * b.h - a.w * a.h);
+  for (const q of opens) paintOpen(g, q, dim, night);
+  // 하천: 둔치 풀밭 → 자갈 → 물, 양쪽에 산책로와 나무
+  const RV = city.river, rp = new Path2D();
+  RV.pts.forEach(([x, y], i) => (i ? rp.lineTo(x, y) : rp.moveTo(x, y)));
+  const riverAt = (y: number): number => { const i = Math.max(0, Math.min(RV.pts.length - 2, Math.floor((y - RV.pts[0][1]) / 20))); const A = RV.pts[i], B = RV.pts[i + 1]; return A[0] + ((B[0] - A[0]) * (y - A[1])) / 20; };
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  g.strokeStyle = dim('#2c4d35', 0.3); g.lineWidth = RV.w + 36; g.stroke(rp);
+  g.strokeStyle = dim('#6a6448', 0.35); g.lineWidth = RV.w + 7; g.stroke(rp);
+  g.strokeStyle = dim('#1f5874', 0.35); g.lineWidth = RV.w; g.stroke(rp);
+  g.strokeStyle = dim('#2a6f8f', 0.35); g.lineWidth = RV.w * 0.62; g.stroke(rp);
+  g.strokeStyle = 'rgba(160,215,236,0.26)'; g.lineWidth = 0.8;
+  for (let k = 0; k < 150; k++) { const y = hash2(k, 71) * city.h, x = riverAt(y) + (hash2(k, 72) - 0.5) * RV.w * 0.7; g.beginPath(); g.moveTo(x, y); g.quadraticCurveTo(x + 1.5, y + 4, x, y + 8); g.stroke(); }
+  for (const side of [-1, 1]) {
+    g.strokeStyle = dim('#b3a07a', 0.35); g.lineWidth = 1.5; g.setLineDash([5, 3]); g.beginPath();
+    RV.pts.forEach(([x, y], i) => (i ? g.lineTo(x + side * (RV.w / 2 + 11), y) : g.moveTo(x + side * (RV.w / 2 + 11), y)));
+    g.stroke(); g.setLineDash([]);
+    for (let y = 8; y < city.h; y += 21) { if (hash2(y, 73 + side) < 0.35) continue; canopy(g, riverAt(y) + side * (RV.w / 2 + 16.5 + hash2(y, 75) * 2), y + hash2(y, 76) * 6, 3.4 + hash2(y, 77) * 1.6, hash2(y, 78), night); }
   }
-  // 외곽에 흩어진 나무
+  g.lineCap = 'butt';
+  // 외곽에 흩어진 나무 (건물·활주로·물 위는 피한다)
+  const keepOut = city.places.filter((q) => q.kind !== 'forest' && q.kind !== 'riverside' && !(q.kind === 'farmland' && !q.name.includes('공항')));
   for (let k = 0; k < 260; k++) {
     const tx = hash2(k, 31) * city.w, ty = hash2(k, 32) * city.h;
     const col = Math.round((tx - 170) / 257), row = Math.round((ty - 150) / 268);
     const inner = col >= 1 && col <= COLS - 2 && row >= 0 && row <= ROWS - 2 && tx > 300 && tx < city.w - 300 && ty < 150 + 268 * 4.3;
-    if (inner) continue;
+    if (inner || Math.abs(tx - riverAt(ty)) < RV.w / 2 + 8) continue;
+    if (keepOut.some((q) => tx > q.x - 8 && tx < q.x + q.w + 8 && ty > q.y - 8 && ty < q.y + q.h + 8)) continue;
     canopy(g, tx, ty, 5 + 6 * hash2(k, 33), hash2(k, 34), night);
   }
+  // 골목: 블록 안을 가로지르는 좁은 길
+  for (const a of city.alleys) { seg(g, a.x0, a.y0, a.x1, a.y1, 8.6, 'rgba(0,0,0,0.3)'); seg(g, a.x0, a.y0, a.x1, a.y1, 7, dim('#343b43', 0.15)); }
+  for (const a of city.alleys) { g.strokeStyle = 'rgba(235,238,240,0.12)'; g.lineWidth = 0.5; g.setLineDash([3, 5]); g.beginPath(); g.moveTo(a.x0, a.y0); g.lineTo(a.x1, a.y1); g.stroke(); g.setLineDash([]); }
 
   // 4) 도로
   const line = (test: (arterial: boolean) => boolean): Path2D => { const p = new Path2D(); for (const e of city.edges) { if (!test(e.arterial)) continue; const A = city.nodes[e.a], B = city.nodes[e.b]; p.moveTo(A.x, A.y); p.lineTo(B.x, B.y); } return p; };
@@ -245,25 +194,23 @@ export function buildCityStatic(sim: Sim): { c: HTMLCanvasElement; lamps: CityLa
       }
     }
   }
-  // 5) 건물 (시설 부지와 겹치는 것은 뺀다)
-  const lots = city.facilities.map(facilityLot);
-  const hit = (b: Building): boolean => lots.some((l) => b.x < l.x + l.w + 2 && b.x + b.w > l.x - 2 && b.y < l.y + l.h + 2 && b.y + b.h > l.y - 2);
-  const bs = city.buildings.filter((b) => !hit(b));
-  for (const b of bs) {
-    const d = b.district === 'commercial' ? 8 : b.district === 'industrial' ? 5.5 : 4.5;
-    g.fillStyle = 'rgba(0,0,0,0.42)'; g.beginPath(); g.moveTo(b.x, b.y + b.h); g.lineTo(b.x + d, b.y + b.h + d * 1.2); g.lineTo(b.x + b.w + d, b.y + b.h + d * 1.2); g.lineTo(b.x + b.w + d, b.y + d * 1.2); g.lineTo(b.x + b.w, b.y); g.closePath(); g.fill();
+  // 다리: 하천을 건너는 도로에 난간을 단다
+  for (const e of city.edges) {
+    const A = city.nodes[e.a], B = city.nodes[e.b];
+    if (A.r !== B.r || Math.min(A.c, B.c) !== RIVER_COL) continue;
+    const L = A.x < B.x ? A : B, Rn = A.x < B.x ? B : A, my = (L.y + Rn.y) / 2, rx = riverAt(my), half = e.arterial ? 12.5 : 9.2;
+    const t = (rx - L.x) / (Rn.x - L.x), cy = L.y + (Rn.y - L.y) * t, span = RV.w / 2 + 9;
+    for (const sd of [-1, 1]) {
+      seg(g, rx - span, cy + sd * half + 1.2, rx + span, cy + sd * half + 1.2, 2.4, 'rgba(0,0,0,0.35)');
+      seg(g, rx - span, cy + sd * half, rx + span, cy + sd * half, 2, dim('#c2c9cf', 0.35));
+      for (let q = -span; q <= span; q += span / 3) disc(g, rx + q, cy + sd * half, 1.5, dim('#8a9299', 0.35));
+    }
   }
-  bs.forEach((b, i) => {
-    const pal = ROOFS[b.district], seed = i * 31 + 7;
-    const col = dim(mix(pal[(b.tone * pal.length) | 0], '#ffffff', (hash2(seed, 2) - 0.5) * 0.12 + 0.02), 0.5);
-    if (b.district === 'residential') {
-      // 주택: 큰 필지는 두 채로 나눈다
-      if (b.w > 34 && hash2(seed, 3) > 0.35) { const gap = 3, w1 = (b.w - gap) * (0.42 + 0.16 * hash2(seed, 4)); hipRoof(g, b.x, b.y, w1, b.h * (0.8 + 0.2 * hash2(seed, 5)), col); hipRoof(g, b.x + w1 + gap, b.y + b.h * 0.1 * hash2(seed, 6), b.w - w1 - gap, b.h * (0.78 + 0.2 * hash2(seed, 7)), dim(pal[(hash2(seed, 8) * pal.length) | 0], 0.5)); }
-      else hipRoof(g, b.x, b.y, b.w, b.h, col);
-    } else if (b.district === 'commercial') flatRoof(g, b, col, seed);
-    else if (b.district === 'industrial') shedRoof(g, b, col, seed);
-    else hipRoof(g, b.x, b.y, b.w, b.h, col);
-  });
+  // 5) 건물: 그림자를 먼저 깔고 종류별 지붕을 올린다
+  const lots = city.facilities.map(facilityLot);
+  const bs = city.places.filter((q) => !q.open && q.facility < 0);
+  for (const b of bs) if (b.kind !== 'greenhouse' && b.kind !== 'utility' && b.kind !== 'storage' && b.kind !== 'construction' && b.kind !== 'gasStation') paintShadow(g, b);
+  for (const b of bs) paintRoof(g, b, dim, night);
   // 주거 구역의 가로수
   for (const e of city.edges) {
     const A = city.nodes[e.a], B = city.nodes[e.b];
@@ -290,6 +237,7 @@ export function buildCityStatic(sim: Sim): { c: HTMLCanvasElement; lamps: CityLa
     g.globalCompositeOperation = 'lighter';
     for (const l of lamps) { const gr = g.createRadialGradient(l.x, l.y, 0, l.x, l.y, 30); gr.addColorStop(0, 'rgba(255,214,150,0.5)'); gr.addColorStop(0.35, 'rgba(255,190,110,0.16)'); gr.addColorStop(1, 'rgba(255,170,90,0)'); g.fillStyle = gr; g.fillRect(l.x - 30, l.y - 30, 60, 60); }
     bs.forEach((b, i) => {
+      if (b.kind === 'greenhouse' || b.kind === 'storage' || b.kind === 'construction') return;
       const n = b.district === 'commercial' ? 4 : b.district === 'residential' ? 2 : 1;
       for (let k = 0; k < n; k++) {
         if (hash2(i * 7 + k, 51) > (b.district === 'industrial' ? 0.4 : 0.72)) continue;

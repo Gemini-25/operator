@@ -4,19 +4,37 @@
 import type { Sim } from '../engine';
 import type { Rng } from '../rng';
 import { DECOR, T } from '../types';
-import type { District, Incident, Mobility, Prop, Region, Scene } from '../types';
+import type { District, Incident, Mobility, PlaceKind, Prop, Region, Scene } from '../types';
 import { staticPass, tidx } from './grid';
 import { SH, SW, addCas, addHostile, addProp, addRegion, baseScene, freeTileIn, furnish, get, set } from './kit';
+import { KIND_SCENE } from '../cityPlan';
 import { blockPassage, lockDoor, planBuilding, suiteRooms, tallPlan } from './plans';
 import type { Arch, Plan, PlanOpts } from './plans';
 
 // ───────────────────────── 건물 (화재 · 붕괴 · 가스 누출 공통) ─────────────────────────
-function pickArch(rng: Rng, dist: District): Arch {
+/** 건물 종류가 정해져 있으면 그 종류의 틀 비중을, 아니면 구역의 비중을 쓴다 */
+function pickArch(rng: Rng, dist: District, kind: PlaceKind | null = null): Arch {
+  const ks = kind ? KIND_SCENE[kind] : undefined;
+  if (ks) return rng.weighted<Arch>(['corridor', 'suite', 'hall'], ks.arch);
   if (dist === 'industrial') return rng.weighted<Arch>(['hall', 'corridor'], [0.6, 0.4]);
   if (dist === 'commercial') return rng.weighted<Arch>(['hall', 'corridor', 'suite'], [0.4, 0.35, 0.25]);
   return rng.weighted<Arch>(['corridor', 'suite'], [0.45, 0.55]);
 }
-function planOpts(dist: District): PlanOpts {
+const KIND_ROOMS: Partial<Record<PlaceKind, [string, string]>> = {
+  houseS: ['방', '거실'], houseL: ['방', '거실'], farmhouse: ['방', '마루'], villa: ['호실', '현관 홀'], apartment: ['호', '복도 홀'], officetel: ['호', '로비'], dorm: ['호실', '휴게실'],
+  pension: ['객실', '거실'], hotel: ['객실', '로비'], office: ['사무실', '로비'], bank: ['상담실', '로비'], terminal: ['사무실', '대합실'], restaurant: ['룸', '홀'], church: ['교육실', '예배당'],
+  market: ['점포', '시장 통로'], mart: ['창고', '매장'], warehouse: ['보관실', '적재장'], hangar: ['정비실', '격납고'], construction: ['작업 구획', '골조 층'],
+};
+function planOpts(dist: District, kind: PlaceKind | null = null): PlanOpts {
+  const o = planOptsOf(dist), names = kind ? KIND_ROOMS[kind] : undefined;
+  if (names) { o.prefix = names[0]; o.hallName = names[1]; }
+  if (kind === 'office' || kind === 'bank' || kind === 'terminal') { o.kinds = [DECOR.DESK, DECOR.CABINET, DECOR.TABLE, DECOR.PLANT]; o.hallKinds = [DECOR.COUNTER, DECOR.SOFA, DECOR.PLANT, DECOR.DESK]; }
+  if (kind === 'restaurant') { o.kinds = [DECOR.TABLE, DECOR.TABLE, DECOR.COUNTER, DECOR.CRATE]; o.hallKinds = [DECOR.TABLE, DECOR.TABLE, DECOR.COUNTER, DECOR.PLANT]; o.racks = false; }
+  return o;
+}
+/** 2층 건물일 확률: 건물 종류가 정해져 있으면 그 종류를 따른다 */
+const tallP = (kind: PlaceKind | null, base: number): number => { const ks = kind ? KIND_SCENE[kind] : undefined; return ks ? ks.tall : base; };
+function planOptsOf(dist: District): PlanOpts {
   if (dist === 'industrial') return { prefix: '작업실', hallName: '작업장', kinds: [DECOR.MACHINE, DECOR.CRATE, DECOR.CRATE, DECOR.CABINET], hallKinds: [DECOR.MACHINE, DECOR.MACHINE, DECOR.CRATE, DECOR.CRATE], racks: true };
   if (dist === 'commercial') return { prefix: '점포', hallName: '매장', kinds: [DECOR.COUNTER, DECOR.SHELF, DECOR.TABLE, DECOR.CRATE], hallKinds: [DECOR.COUNTER, DECOR.SHELF, DECOR.SHELF, DECOR.PLANT], racks: true };
   return { prefix: dist === 'outskirts' ? '객실' : '호실', hallName: '거실', kinds: [DECOR.BED, DECOR.DESK, DECOR.SOFA, DECOR.CABINET, DECOR.PLANT] };
@@ -39,10 +57,10 @@ function farRooms(s: Scene, P: Plan): Region[] {
 // ───────────────────────── 건물 화재 ─────────────────────────
 function buildFire(sim: Sim, I: Incident, rng: Rng): Scene {
   const s = baseScene(sim, I, rng);
-  const sev = I.truth.severity, dist = I.truth.district;
+  const sev = I.truth.severity, dist = I.truth.district, pk = I.truth.placeKind;
   const falseAlarm = I.truth.variant === 'false';      // 오인 신고: 탄 냄새만 나고 불은 없다
-  const tall = !falseAlarm && sev >= 2 && rng.chance(0.5);      // 큰 화재의 절반은 2층 건물
-  const P = tall ? tallPlan(s, rng, planOpts(dist)) : planBuilding(s, rng, pickArch(rng, dist), planOpts(dist));
+  const tall = !falseAlarm && sev >= 2 && rng.chance(tallP(pk, 0.5));      // 2층 여부는 건물 종류가 정한다 (작은 집은 단층, 아파트는 대개 2층 이상)
+  const P = tall ? tallPlan(s, rng, planOpts(dist, pk)) : planBuilding(s, rng, pickArch(rng, dist, pk), planOpts(dist, pk));
   s.floorMat = floorMatOf(dist);
   const rooms = P.rooms;
   const hz = (v: number): number => Math.min(0.95, v * sim.tune.hazardMul);
@@ -311,7 +329,8 @@ function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {
   const kind: VenueKind = dist === 'commercial' ? rng.weighted<VenueKind>(['shop', 'bank', 'office'], [0.35, 0.35, 0.3])
     : dist === 'industrial' ? rng.weighted<VenueKind>(['warehouse', 'shop', 'office'], [0.55, 0.25, 0.2])
       : dist === 'outskirts' ? rng.weighted<VenueKind>(['shop', 'warehouse'], [0.6, 0.4]) : rng.weighted<VenueKind>(['shop', 'office'], [0.65, 0.35]);
-  const V = armedVenue(s, rng, kind, dist);
+  const ks = I.truth.placeKind ? KIND_SCENE[I.truth.placeKind] : undefined;
+  const V = armedVenue(s, rng, ks && ks.venue ? ks.venue : kind, dist);      // 지도의 건물 종류가 장소를 정한다 (은행이면 은행 로비)
   const shop = V.main, storage = V.back, office = V.office;
   const tn = sim.tune;
   const ag = (v: number): number => Math.max(0.05, Math.min(0.98, v + tn.aggroShift));
@@ -379,8 +398,9 @@ function buildMedical(sim: Sim, I: Incident, rng: Rng): Scene {
   const rooms: Region[] = [];
   let fx = 12;
   const by1 = 12;
-  if (rng.chance(0.5)) {
-    // 거실·침실·주방이 나뉜 단독 주택
+  const coin = rng.chance(0.5), home = I.truth.placeKind ? KIND_SCENE[I.truth.placeKind]?.home : undefined;
+  if (home ? home === 'small' : coin) {
+    // 거실·침실·주방이 나뉜 작은 집
     const bx0 = 9, bx1 = 20, by0 = 4;
     for (let y = by0; y <= by1; y++) for (let x = bx0; x <= bx1; x++) set(s, x, y, x === bx0 || x === bx1 || y === by0 || y === by1 ? T.WALL : T.FLOOR);
     for (let y = by0 + 1; y < by1; y++) set(s, 15, y, T.WALL);
@@ -430,9 +450,9 @@ function buildCollapse(sim: Sim, I: Incident, rng: Rng): Scene {
   const s = baseScene(sim, I, rng);
   const sev = I.truth.severity, dist = I.truth.district;
   s.floorMat = floorMatOf(dist);
-  const o = planOpts(dist);
-  if (dist === 'industrial') o.prefix = '창고';
-  const P = rng.chance(0.3) ? tallPlan(s, rng, o) : planBuilding(s, rng, pickArch(rng, dist), o);
+  const o = planOpts(dist, I.truth.placeKind);
+  if (dist === 'industrial' && !I.truth.placeKind) o.prefix = '창고';
+  const P = rng.chance(Math.min(0.5, tallP(I.truth.placeKind, 0.5) * 0.6)) ? tallPlan(s, rng, o) : planBuilding(s, rng, pickArch(rng, dist, I.truth.placeKind), o);
   fuelUp(s, P, rng, 0.35, 0.7, 0.25, 0.4, 0.25);
   const hz = (v: number): number => Math.min(0.95, v * sim.tune.hazardMul);
   // 무너진 구역: 한 층의 한쪽에서 안쪽 벽이 넘어가고 잔해가 깔린다
@@ -482,7 +502,8 @@ function buildHazmat(sim: Sim, I: Incident, rng: Rng): Scene {
   const sev = I.truth.severity, dist = I.truth.district;
   s.floorMat = dist === 'residential' ? 1 : 2;
   const o: PlanOpts = { prefix: dist === 'industrial' ? '공정실' : '기계실', hallName: dist === 'industrial' ? '배관동' : '기계실 홀', kinds: [DECOR.MACHINE, DECOR.CABINET, DECOR.CRATE, DECOR.MACHINE], hallKinds: [DECOR.MACHINE, DECOR.MACHINE, DECOR.CRATE, DECOR.CABINET], racks: false };
-  const arch: Arch = dist === 'industrial' ? rng.weighted<Arch>(['hall', 'corridor'], [0.55, 0.45]) : rng.weighted<Arch>(['corridor', 'suite', 'hall'], [0.45, 0.3, 0.25]);
+  const arch0: Arch = dist === 'industrial' ? rng.weighted<Arch>(['hall', 'corridor'], [0.55, 0.45]) : rng.weighted<Arch>(['corridor', 'suite', 'hall'], [0.45, 0.3, 0.25]);
+  const arch: Arch = I.truth.placeKind && KIND_SCENE[I.truth.placeKind] ? pickArch(rng, dist, I.truth.placeKind) : arch0;
   const P = rng.chance(0.3) ? tallPlan(s, rng, o) : planBuilding(s, rng, arch, o);
   fuelUp(s, P, rng, 0.35, 0.7, 0.25, 0.4, 0.25);
   const hz = (v: number): number => Math.min(0.95, v * sim.tune.hazardMul);
@@ -492,7 +513,8 @@ function buildHazmat(sim: Sim, I: Incident, rng: Rng): Scene {
   for (let k = 0; k < nValve; k++) {
     const r = rng.pick(P.rooms.filter((q) => leakRooms.indexOf(q) < 0));
     // 가구가 놓였던 자리(방이 끊기지 않는다는 것이 이미 확인된 자리)를 배관 자리로 쓴다
-    const spots = r.tiles.filter((i) => s.tiles[i] === T.FURN && (s.tiles[i - SW] === T.WALL || s.tiles[i + SW] === T.WALL));
+    // 옆에 서서 잠글 수 있도록 바로 옆 칸 하나는 빈 바닥이어야 한다 (가구에 둘러싸인 구석은 쓰지 않는다)
+    const spots = r.tiles.filter((i) => s.tiles[i] === T.FURN && (s.tiles[i - SW] === T.WALL || s.tiles[i + SW] === T.WALL) && [1, -1, SW, -SW].some((d) => s.tiles[i + d] === T.FLOOR));
     let i: number;
     if (spots.length) { i = rng.pick(spots); s.tiles[i] = T.FLOOR; s.decor[i] = 0; }
     else {
@@ -549,7 +571,7 @@ function buildWater(sim: Sim, I: Incident, rng: Rng): Scene {
   const count = sev >= 3 ? rng.int(2, 3) : sev >= 2 ? rng.int(1, 2) : 1;
   for (let k = 0; k < count; k++) {
     const x = rng.int(5, bx - 4), y = tops[x] + rng.int(1, 3);
-    const c = addCas(s, x, y, 'trapped', rng.range(62, 90), (rng.range(0.17, 0.27) + sev * 0.02) * (sim.weather === 'clear' ? 1 : 1.12), 0.1, { inWater: true, drift: rng.range(0.012, 0.035) * (1 + 0.25 * sev) });
+    const c = addCas(s, x, y, 'trapped', rng.range(62, 90), (rng.range(0.17, 0.27) + sev * 0.02) * (sim.weather === 'clear' ? 1 : 1.12), 0.1, { inWater: true, drift: rng.range(0.01, 0.029) * (1 + 0.25 * sev) });
     c.trapWork = 0;
   }
   s.leadDept = 'fire';

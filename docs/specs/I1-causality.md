@@ -24,7 +24,7 @@
 - **고정된 순서로 연출하지 않는다.** 같은 규칙이라도 조건(거리·확률·자원·시간)에 따라 일어나기도 하고 일어나지 않기도 한다. 예약해 둔 후속 사건도 때가 되었을 때 조건이 맞지 않으면 버리고, 버린 것을 기록한다.
 - **재현성.** 규칙마다 새 난수 흐름 `sim.rng.fork('csq:<규칙>:<열쇠>:<n>')`. 기존 흐름에 호출을 끼워 넣지 않는다. 주기 판단은 `sim.t`·`sim.tick` 으로만 한다.
 - **정보 격리.** 세계 상태에는 진실과 "알려진 것(`known`)"이 따로 있다. 관제와 지휘관은 알려진 것만 읽는다(§3.8). T1 의 `RoadEdge.known` 과 같은 방식이다.
-- **도시 지도를 고치지 않는다.** `city.places`·`nodes` 는 모듈에 한 번 만들어 교대마다 다시 쓴다(`city.ts:205-210`). 건물 손상 같은 지속 상태는 `sim.world` 라는 별도 자료에 둔다.
+- **도시 지도를 고치지 않는다.** `city.places`·`nodes` 는 모듈에 한 번 만들어 교대마다 다시 쓴다(`city.ts:208-212`). 새로 생기는 상태(구역의 기반 시설·연기·위험, 병원 수용)는 `sim.world` 라는 별도 자료에, 건물 상태는 X6 의 `Sim.placeMarks` 에 둔다.
 - **모든 사건은 끝난다.** 규칙이 만드는 사건도 `LIMIT`·`holdUntil`·`hardCap` 을 그대로 따른다. 연쇄에는 깊이·쿨다운·교대당 상한이 있다(§3.6).
 - **측정이 먼저다.** I1-a 로 기준선을 잡은 뒤, I1-b 의 규칙을 하나 넣을 때마다 같은 지표로 전후를 잰다.
 
@@ -117,7 +117,7 @@
 
 ### 2.1 범위
 
-- **`src/` 를 고치지 않는다.** 시뮬레이션은 지금 있는 칸만 읽는다. 기록 칸을 더하는 일(사건 사이 `causes`, `Problem.ref`, 버린 예약의 기록)은 I1-b 0단계다(§3.11). 이렇게 하면 결과 불변이 `git diff --stat src` 한 줄로 증명되고, 이번 세션의 다른 작업(B3·P1·U2·G5)과 파일이 겹치지 않는다.
+- **`src/` 를 고치지 않는다.** 시뮬레이션은 지금 있는 칸만 읽는다. 기록 칸을 더하는 일(사건 사이 `causes`, `Problem.ref`, 버린 예약의 기록)은 I1-b 0단계다(§3.11). 이렇게 하면 결과 불변이 `git diff --stat src` 한 줄로 증명되고, 이번 세션의 다른 작업(B1·U2·G5)과 파일이 겹치지 않는다.
 - 새 파일 `scripts/metrics.ts` 는 실행되지 않는 순수 모듈이다(`sweep.ts` 는 import 하면 실행되므로 따로 둔다). `tests/causality.test.ts` 가 이 파일을 import 한다(`tsconfig.json` 의 `include` 에 `scripts` 가 있다).
 - 시간·난수를 쓰지 않는다. 같은 시드면 지표도 같다(`msPerShift` 만 예외).
 
@@ -161,7 +161,7 @@ export function checkMetrics(m: MetricsSummary): string[];                  // �
 | `road` | 도로·교통 | 통제·장애물·혼잡·우회·교통 지연 |
 | `hospital` | 병원 | 응급실 인계·대기·(I1-b) 포화 |
 | `hazard` | 현장 위험 | 세계 규칙이 만든 현장의 변화(번짐·2차 붕괴·도주) |
-| `building` | 건물 | 건물 손상(깨진 창·부서진 가구·탄 자리·(I1-b) 사용 불가) |
+| `building` | 건물 | 건물 손상(깨진 창·부서진 가구·탄 자리·(X6) 구조물 붕괴·전소) |
 | `crew` | 대원 상태 | 부상·쓰러짐·순직·탈진·결원 |
 | `equip` | 장비 | 장비 고장·용수 소진·(R1) 개인 장비 |
 | `infra` | 기반 시설 | (I1-b) 전력·통신·수도. 지금은 0 |
@@ -193,7 +193,7 @@ export function checkMetrics(m: MetricsSummary): string[];                  // �
 
 2. `kind` 로: `call` → call · `assess` → dispatch · `dispatch` → dispatch(단, 문구 규칙 T1 이면 aid) · `traffic` → road · `hazard` → 사건 없음(`incidentId < 0`)이면 disaster, 아니면 hazard · `casualty` → `role === 'UNIT'` 이면 hospital(병원 도착·인계 기록뿐이다, `resources.ts:354`), 아니면 field · `unit` → 문구 규칙 T2 이면 hospital, 아니면 field · `incident` → origin · `shift` → 문구 규칙 T5 이면 carry, 아니면 none · 나머지(`arrive`·`command`·`radio`·`action`·`resolve`·`recovery`) → field.
 
-**문구 규칙** — 칸이 없어 문구로만 가릴 수 있는 두 곳. 표로 모아 두고 테스트가 "아직 맞는 기록이 있다"를 본다(문구가 바뀌면 테스트가 깨진다):
+**문구 규칙** — 칸이 없어 문구로만 가릴 수 있는 곳. 표로 모아 두고 테스트가 "아직 맞는 기록이 있다"를 본다(문구가 바뀌면 테스트가 깨진다):
 
 | 규칙 | 정규식 | 기록하는 곳 |
 |---|---|---|

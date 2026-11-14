@@ -247,7 +247,9 @@ export interface FxInfo {
 }
 /** (G5) 인터페이스 합치기: 아래 한 줄짜리 Fx 에 꼬리표 칸을 더한다 */
 export interface Fx { c?: FxInfo }
-export interface Fx { kind: 'shot' | 'spray' | 'radio' | 'text' | 'boom' | 'hit' | 'flash' | 'glass' | 'debris' | 'melee' | 'breach' | 'cuff' | 'taser'; t: number; x: number; y: number; x2?: number; y2?: number; text?: string; color?: string; ttl: number }
+export interface Fx { kind: 'shot' | 'spray' | 'radio' | 'text' | 'boom' | 'hit' | 'flash' | 'glass' | 'debris' | 'melee' | 'breach' | 'cuff' | 'taser'
+  | 'collapse';      // (G4) 무너짐: field/ruins.ts 의 recordFall 만 남긴다. 그림은 Scene.falls 로 그리고, 이 효과는 카메라·자동 감속·소리만 본다
+  t: number; x: number; y: number; x2?: number; y2?: number; text?: string; color?: string; ttl: number }
 
 export type WorkKind =
   | 'sizeup' | 'search' | 'suppress' | 'hookup' | 'clear' | 'force' | 'extricate' | 'treat' | 'carry' | 'load'
@@ -368,6 +370,9 @@ export interface Scene {
   idleSince: number;
   allIdleSince?: number;              // (지휘관) 현장의 모든 대원이 손을 놓고 있기 시작한 시각 (-1 = 누군가 일하는 중)
   rollCallAt?: number;                // (지휘관) 마지막 확인 무전 시각
+  ruin?: Uint8Array;        // (G4) 그림용 기록 — 무너진 자리의 원래 모습(field/ruins.ts). 시뮬레이션은 읽지 않는다.
+                            // 0 없음 · 1 넘어간 벽 · 8 2차 붕괴로 잔해가 쏟아진 칸 · 9 천장이 내려앉은 칸 · 16+DECOR 깔린 가구(키 큰 진열대 포함)
+  falls?: FallRecord[];     // (G4) 그림용 기록 — 무너진 순간들(시각 순, 많아야 32). 시뮬레이션은 읽지 않는다
 }
 
 // ───────────────────────── 신고 / 관제 ─────────────────────────
@@ -509,4 +514,10 @@ export interface ShiftReport {
   traffic?: { jams: number; closures: number; obstacles: number; detours: number; delaySec: number; gateWaits: number };      // 교통 통계 (traffic.ts)
   disaster?: { name: string; lines: string[] };      // 재난이 있었던 교대의 요약 (disaster.ts)
   hash: string;
+}
+
+/** (G4) 그림용 기록: 무너진 순간 하나. field/ruins.ts 의 recordFall 만 만든다 */
+export interface FallRecord {
+  t: number; x: number; y: number; r: number; region: number;
+  cause: 'zone' | 'secondary' | 'ceiling'      // 마지막 줄에 둔다 — X6 가 끝에 새 줄로 | 'partial' | 'total' 을 덧붙인다
 }

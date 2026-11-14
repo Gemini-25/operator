@@ -13,6 +13,7 @@ import { casFact, exitName } from './agents';
 import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, truthWalkable } from './grid';
 import { bulletPath, heatGlass, hitCover, shatter } from './damage';
 import { lastFx, noteBoom, noteFlash, noteHit, noteShot, recHarm, recMelee } from './fxlog';
+import { RUIN_CEILING, RUIN_SECONDARY, markRuin, recordFall } from './ruins';
 
 export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2, c?: FxInfo): void {
   s.fx.push({ kind, t: sim.t, x, y, x2, y2, text, color, ttl, c });
@@ -95,10 +96,11 @@ export function tickFire(sim: Sim, s: Scene, I: Incident): void {
     const cands = r.tiles.filter((i) => s.propAt[i] < 0 && s.tiles[i] !== T.DOOR);
     if (!cands.length) continue;
     const k = Math.min(cands.length, s.rng.int(1, 2));
-    for (let q = 0; q < k; q++) { const i = s.rng.pick(cands); if (s.propAt[i] < 0) addProp(s, 'debris', i % w, (i / w) | 0, { blocking: true, hp: s.rng.range(9, 14) }); }
+    for (let q = 0; q < k; q++) { const i = s.rng.pick(cands); if (s.propAt[i] < 0) { addProp(s, 'debris', i % w, (i / w) | 0, { blocking: true, hp: s.rng.range(9, 14) }); markRuin(s, i, RUIN_CEILING); } }
     s.staticVersion++;
     const ev = raiseProblem(sim, I, 'ESCALATION', `${r.name} 천장 일부 붕괴`, { role: 'SYSTEM', actor: '현장', text: `${r.name} 천장 일부가 무너졌습니다.`, imp: 2, truth: s.arrivedAt < 0 }, false);
     blast(sim, s, I, r.cx, r.cy, 2.2, 22, ev);
+    recordFall(sim, s, r.cx, r.cy, 2.2, 'ceiling');      // (G4) 그림용 기록
   }
   s.burning = burning;
   if (burning === 0 && s.fireOutAt < 0 && s.kind === 'fire' && sim.t - s.startedAt > 5) s.fireOutAt = sim.t;
@@ -626,15 +628,14 @@ export function tickCollapse(sim: Sim, s: Scene, I: Incident): void {
       if (s.tiles[i] !== T.FLOOR || s.propAt[i] >= 0 || (x === p.x && y === p.y)) continue;
       if (s.agents.some((a) => a.status !== 'left' && tileOf(s, a.x, a.y) === i)) continue;      // 사람이 선 칸을 막아 가두지 않는다(피해는 아래에서 따로 입는다)
       addProp(s, 'debris', x, y, { blocking: true, hp: s.rng.range(8, 13) });
-      s.damage[i] = 1; made++;
+      s.damage[i] = 1; made++; markRuin(s, i, RUIN_SECONDARY);
     }
     for (let y = Math.max(0, p.y - 3); y <= Math.min(s.h - 1, p.y + 3); y++) for (let x = Math.max(0, p.x - 3); x <= Math.min(s.w - 1, p.x + 3); x++) { const i = tidx(s, x, y); if (isIndoor(s.tiles[i])) s.smoke[i] = Math.max(s.smoke[i], 0.5); }
     s.staticVersion++;
     const where = s.region[tidx(s, p.x, p.y)] >= 0 ? s.regions[s.region[tidx(s, p.x, p.y)]].name : '건물';
     const ev = raiseProblem(sim, I, 'ESCALATION', `${where} 2차 붕괴`, { role: 'SYSTEM', actor: '현장', text: `2차 붕괴! ${where}의 금이 간 구조물이 다시 무너졌습니다.`, imp: 3, truth: s.arrivedAt < 0 }, false);
     blast(sim, s, I, p.x, p.y, 2.6, 28, ev);
-    pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.1);
-    noteBoom(lastFx(sim, s, 'boom'), 2.6, 'collapse');      // (G5) G4 가 이 줄을 'collapse' 기록으로 바꾸면 이 꼬리표도 함께 지운다
+    recordFall(sim, s, p.x, p.y, 2.6, 'secondary');      // (G4) 예전의 pushFx(…'boom'…) 자리: 무너짐은 폭발 그림이 아니라 'collapse' 로 그린다
   }
 }
 

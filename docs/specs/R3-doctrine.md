@@ -24,17 +24,17 @@
 | 파일 | 하는 일 | 진실을 읽어도 되는가 |
 |---|---|---|
 | `src/sim/field/doctrine/registry.ts` | 교본 줄의 틀(`DoctrineRule`·`DocEffect`·`DocCtx`)과 등록(`registerDoctrine`), 줄 목록 `DOCTRINE`, 지휘·관제 줄의 이름표 `CMD_ROWS` — **잎 모듈**(타입과 배열뿐) | 해당 없음 |
-| `src/sim/field/doctrine.ts` | **판단부 엔진**: 분야 판정 `docDeptOf`, 판단 입력 `docState`·`docSit`·`docCtx`, 걸리는 자리 `docFit`·`docFitRules`·`docDuty`·`docAct`·`docMethodMul`·`docGate`, 바탕 `coverSpot`·`buddyOf`·`outsideWatch`·`ammoOf`, 상수 표 `DOC` | **안 된다** — 테스트가 금지어를 검사한다(2.4) |
+| `src/sim/field/doctrine.ts` | **판단부 엔진**: 분야 판정 `docDeptOf`, 판단 입력 `stateSelf`·`stateReported`·`docSit`·`docCtx`, 걸리는 자리 `docFit`·`docFitRules`·`docDuty`·`docAct`·`docRetreat`·`docDrop`·`docMethodMul`·`docGate`, 바탕 `coverSpot`·`buddyOf`·`outsideWatch`, 짝 표 `PAIRS`·`SOLO_OK`, 상수 표 `DOC` | **안 된다** — 테스트가 금지어와 행동을 검사한다(2.4·10절 1·3) |
 | `src/sim/field/doctrine/{common,police,fire,ems,special}.ts` | 분야별 교본 줄(3절). `registerDoctrine` 만 부른다 | **안 된다**(줄은 `DocCtx` 만 받는다) |
 | `src/sim/field/doctrine/index.ts` | 다섯 파일을 이 순서로 import(등록 순서 = 같은 순위의 줄끼리 이기는 순서) | — |
-| `src/sim/field/doctrineRun.ts` | **실행부**: 새 임무(`cover`·`rearm`·`airOut`·`pairOut`·`pair`·`triage`)의 실행, 탄약 소모·재장전(`fireRound`·`reloadTick`), 자기 신고(`selfReport`), 짝 다시 맺기(`rebuddy`), 기록(`recordDoc`) | 된다(`executor.ts` 와 같은 자격) |
+| `src/sim/field/doctrineRun.ts` | **실행부**: 새 임무(`cover`·`rearm`·`airOut`·`pairOut`·`pair`·`triage`)의 실행, 탄약 소모·재장전(`fireRound`·`reloadTick`), 자기 신고(`selfReport`), 짝 맺기(`pairUp` — 부대가 내린 뒤 한 번)·다시 맺기(`rebuddy`), 출입구 하나의 진입(`breachExit` — `executor.breach` 에서 꺼낸 몸), 해체 방법 셋(`runDefuse`), 기록(`recordDoc`) | 된다(`executor.ts` 와 같은 자격) |
 | `src/sim/field/orders/doctrine.ts` | 지휘 교본(6.1의 새 줄): `registerOrders` | 안 된다(`tests/ext.test.ts` 가 이미 검사한다) |
 | `src/sim/dispatch/doctrine.ts` | 관제 교본(6.2): 부대 고르기 가산 `dispatchPref`, 수요 보정 `docNeeds`, 추격 역할 `chaseRoles` | 안 된다(관제 — 평가·조직 정보만) |
 | `tests/doctrine.test.ts` | 10절 | — |
 
 **공용 파일 수정**: 11.1 의 표에 함수와 이유를 모두 적었다. 그 밖의 곳을 고쳐야 하면 고치되 끝낼 때 보고에 파일·함수·이유를 적는다.
 
-**건드리지 않는다**: `city.ts`·`cityPlan.ts`, `builders.ts`·`field/scenes/{crime,major,disaster}.ts`(현장 생성은 그대로), `field/injury.ts`(H1 — 부르기만), X6 의 `catastrophe.ts`·`ops.ts`(읽기만 — `orders/catastrophe.ts` 의 `DANGER_RULES` 에 줄 두 개를 더하는 것만 예외, 6.1), R1 의 `field/rules/air.ts`·`field/airDecide.ts`, `tests/sim.test.ts`, `README.md`·`CLAUDE.md`·`docs/ROADMAP.md`(합친 뒤에 한꺼번에).
+**건드리지 않는다**: `city.ts`·`cityPlan.ts`, `builders.ts`·`field/scenes/{crime,major,disaster}.ts`(현장 생성은 그대로), `field/injury.ts`(H1 — 부르기만), X6 의 `catastrophe.ts`·`ops.ts`(읽기만 — `orders/catastrophe.ts` 의 `DANGER_RULES` 에 줄 두 개를 더하는 것만 예외, 6.1), R1 의 `field/rules/air.ts`·`field/airDecide.ts`, `tests/sim.test.ts`·`tests/crime.test.ts`(깨지면 교본 쪽을 고친다 — 11.2-12), `README.md`·`CLAUDE.md`·`docs/ROADMAP.md`(합친 뒤에 한꺼번에). R2 의 `gear.ts` 에는 판단용 감싼 함수 다섯을 **더하기만** 한다(2.4, 11.1).
 
 ---
 
@@ -44,7 +44,7 @@
 
 | 분야 | 지금 상황·장비·상태로 갈리는 것 | 갈리지 않는 것 | R1·H1·X6·R2 뒤 |
 |---|---|---|---|
-| 경찰 | 섬광탄 유무(던질 자리로 / 동료를 7.5칸에서 기다림 / 쏘지 않고 덮침 — `executor` `case 'engage'`), 인질 1.7칸 안 사격 보류, 무기(총 / 흉기·맨손)로 협상·진입 문턱, 용의자 상태로 검거 시간, 머릿수 문턱(≥2·≥3·≥4 — `commander.syncBoard`), 체력 < 40 후퇴, 피격 3초 안 · 엄폐 아님 · 체력 < 70 이면 침착함만큼 후퇴(`brain.dangerScore`) | 순찰·기동·특공·폭발물이 같은 코드(부대 수치만 다르다). **탄약이 없다**(사격 무제한). **엄폐를 찾지 않는다**(교전은 아무 7.5칸 자리, 후퇴는 대기 지점까지). **혼자인가를 보지 않는다**(방 진입은 4초 뒤 혼자, 동시 진입은 +8초 뒤 혼자, 흉기 상대 검거는 25초 대치 뒤 혼자도). 짝이 없다. 다친 대원도 같은 일(`fitFor`·`assign` 이 체력을 보지 않는다). 흉기 상대는 늘 곧장 덮친다. 협상자는 용의자가 교전해도 서 있다. 추격 차량은 모두 같은 알려진 위치로 간다 | R1: 테이저·방패·저격 거리·역할 선호, 인원 문턱(총기 && 역할 묶음 `bomb` 제외), 섬광탄 사람 몫. R2: 비살상탄·결정적 저격·irons/ram·대피 방송, 교전 분기의 기록 이름. H1: `hurtF`, 출혈 후퇴, 몸싸움. X6: 출입 통제 |
+| 경찰 | 섬광탄 유무(던질 자리로 / 동료를 7.5칸에서 기다림 / 쏘지 않고 덮침 — `executor` `case 'engage'`), 인질 1.7칸 안 사격 보류, 무기(총 / 흉기·맨손)로 협상·진입 문턱, 용의자 상태로 검거 시간, 머릿수 문턱(≥2·≥3·≥4 — `commander.syncBoard`), 체력 < 40 후퇴, 피격 3초 안 · 엄폐 아님 · 체력 < 70 이면 침착함만큼 후퇴(`brain.dangerScore`) | 순찰·기동·특공·폭발물이 같은 코드(부대 수치만 다르다). **탄약이 없다**(사격 무제한). **엄폐를 찾지 않는다**(교전은 아무 7.5칸 자리, 후퇴는 대기 지점까지). **혼자인가를 보지 않는다**(방 진입은 4초 뒤 혼자, 동시 진입은 +8초 뒤 혼자, 흉기 상대 검거는 경찰이 하나면 25초 대치 뒤 혼자도). 짝이 없다. 다친 대원도 같은 일(`fitFor` 가 체력을 보지 않는다 — `assign` 은 지구력만 본다). 흉기·맨손 상대는 `arrest` 로 다룬다 — 지휘관은 `fight` 이고 경찰이 둘 이상이면 `arrest`(max 2), 아니면 25초 뒤 `arrest` 를 낸다(`commander.syncBoard`). 실행기 `case 'arrest'` 는 1.3칸까지 곧장 다가가 5초 제압한다(`engage` 의 첫 갈래는 도주 용의자 추격에만 쓰인다 — `engage` 는 도주 때와 총기 진입 결정 뒤에만 생긴다). 협상자는 용의자가 교전해도 서 있다. 추격 차량은 모두 같은 알려진 위치로 간다 | R1: 테이저·방패·저격 거리·역할 선호, 인원 문턱(총기 && 역할 묶음 `bomb` 제외), 섬광탄 사람 몫. R2: 비살상탄·결정적 저격·irons/ram·대피 방송, 교전 분기의 기록 이름. H1: `hurtF`, 출혈 후퇴, 몸싸움. X6: 출입 통제 |
 | 소방 | 경로 위 불(진압하며 지나감 / 우회), 펌프 고장 → 예비 펌프, 물 소진 → 소화전, 지구력 < 22 휴식(40 까지 붙잡음), 체력 후퇴, 침착함 배율, 운반 중이면 버팀 | **공기 개념이 없다**(연기 속에 무한정). **2인 진입·밖 대기조가 없다**(수색 작업 `max 1` — 혼자 실내로). 후퇴 뒤 곧바로 같은 곳으로(재진입 기억 없음). 다친 대원에게 가벼운 일이 없다. 예비 펌프 무제한. 소화전 없는 현장의 대체 행동 없음. 펌프 고장도 '용수가 떨어짐' 요청. 신입·베테랑은 속도만 다르다. 지원이 오는 중인지가 개인 행동을 바꾸지 않는다 | R1: 공기(`scba` 의 `uses`)·`swapAir`(60초)·`uses < 45` 면 위험 실내 0·열화상·유압 장비·펌프 조작. R2: 외부 방어·고가 방수·소화기·배연, 문·구출·수난의 갈래. H1: 화상·열 탈진·추락. X6: 조짐·위험 단계·철수·외부 방어·`a.avoid` |
 | 의료 | 현장 처치 / 먼저 옮기기(위험 현장·안전 확보 전·구급 유무), 응급 현장의 "누구든 먼저 처치", 기본 처치 뒤 재처치는 구급만, 탑승 우선도·출발 조건, 구급 요청 문턱 | 처치가 하나뿐(심정지·외상·실신이 같은 "응급 처치"). **분류(트리아지)가 없다.** **처치와 이송이 겨룬다**(처치 중인 환자를 다른 대원이 들어 간다 — S3 사건 01·02). 처치를 넘겨받지 않는다. 안전 확보 전에는 **안전 구역의 환자도** 구급이 못 본다. 차로 위 처치의 위험을 기다리지 않는다. 다친 구급대원의 행동이 같다. 구급 지휘관이 타고 떠나면 '지휘 불능' | R1: 가방·제세동기·들것·척추 고정판·의료 헬기·환자 자리. R2: 현장 안정(`stay`)·즉시 이송(`rush`)·헬기 이송 기록. H1: `treatMate`, `manageAmbulances` 의 믿음화, `treatEffect` |
 | 특수 | 섬광탄(특공 +2), 방호 수치, 해체는 처리반만, 피해 배율 | 특공·기동·순찰·폭발물이 같은 경로(폭발물 처리반이 인질극 진입을 이끈다 — S7). 폭발물 처리가 한 가지(로봇·방호복·대피 반경 없음). 화학 구조차가 가스 누출 수요로 오지 않는다(20교대 출동 49건 모두 구조 수요). 헬기는 늘 내려앉는다. 구조정은 배로 쓰이지 않는다. 사다리차는 펌프차와 같다 | R1: 특공 다섯 역할·로봇·방호복·헬기 세 종류·호이스트·물 투하. R2: 보트·고가 방수·배연·저격·비살상탄. X6: 측정기로 읽는 가스 조짐 |
@@ -74,12 +74,12 @@
 
 | 설계서 | 겹치는 곳 | R3 가 새로 정하는 것 | 가리키기만 하는 것 |
 |---|---|---|---|
-| R1 편성·개인 장비·헬기 | 역할 36·장비 35(`KITS`), 공기·섬광탄·테이저, 헬기 세 종류, 인원 문턱 | ① 탄약(`KitDef.mag`·`reload`·`perShot`, 총기 `uses`, `KitItem.mag`, `Unit.ammoBox`) ② 공기 탈출 문턱(`AIR_OUT`·`AIR_IN`)과 `swapAir` 후보의 문턱 하나 ③ 짝 묶음 표(`PAIRS` — 자리 순서) ④ 인원 문턱을 "쓸 수 있는 경찰"로(6.1 CP1) ⑤ 예비 펌프 수(`Unit.sparePump`) | 역할·기본 장비·장비 효과, `hasKit`·`kitUses`·`toolFor`·`crewHasKit`·`capableOf`(판단용)과 `kitWorks`·`useKit`·`toolUse`(효과용)의 나눔, `swapAir` 의 실행, 헬기의 상공 판단(`airDecide.ts`) |
+| R1 편성·개인 장비·헬기 | 역할 36·장비 35(`KITS`), 공기·섬광탄·테이저, 헬기 세 종류, 인원 문턱 | ① 탄약(`KitDef.mag`·`reload`·`perShot`, 총기 `uses`, `KitItem.mag`, `Unit.ammoBox`) ② 공기 탈출 문턱(`AIR_OUT`·`AIR_IN`)과 `swapAir` 후보의 문턱 하나 ③ 짝 묶음 표(`PAIRS` — 역할 쌍, 5.1) ④ 진입 문턱을 "쓸 수 있는 경찰"로(6.1 CP1) ⑤ 예비 펌프 수(`Unit.sparePump`) ⑥ 척추 고정판 효과의 조건을 "가졌는가"에서 "고정했는가"로(E13) ⑦ `defuse` 자격에 작동하는 로봇(S06) | 역할·기본 장비·장비 효과, `hasKit`·`kitUses`·`toolFor`·`crewHasKit`·`capableOf`(판단용)과 `kitWorks`·`useKit`·`toolUse`(효과용)의 나눔, `swapAir` 의 실행, 헬기의 상공 판단(`airDecide.ts`) |
 | R2 대응 방법 | 방법 틀(`METHOD`·`chooseMethod`·`MethodWhy`), 실패 기억 `a.mfail`, 선택 임무 | ① `MethodCtx` 에 교본 입력 칸(`dc: DocCtx`) ② 점수에 교본 배율(`docMethodMul`)을 곱한다 ③ `MethodWhy` 에 다섯(`hurt`·`alone`·`lowAir`·`lowAmmo`·`shaken`) ④ 방법 행 열 개(위) — R2 가 "R3 몫"으로 넘긴 이송·교통 통제의 방법, 그리고 수색·진압·해체 몇 갈래 | 방법을 바꾸는 세 때, 도착 재선택, 기록 문구 `SAY`, `recordMethod`, `mrng` 흐름, `gear.ts` 의 판단용 `kitCount` |
 | H1 부상과 사망 | 다친 대원의 행동, 동료 처치, 트리아지 순서 | ① 체력 41~70(중상) 대원의 **일 바꾸기**(가벼운 일 — 공통 G01) ② 자기 신고 사실 `crew`(지휘관이 남의 체력을 직접 읽지 않게 — 2.4) ③ 동요(`a.shaken`) ④ 의료의 분류 임무 `triage`(H1 §6.2 의 우선도 표는 그대로, 분류는 그 앞 단계) | `bandOf`·`hurtF`·`r.bleed`(자기 몸), 믿음 술어 `mateNeedsHospital`, 출혈 후퇴 조건, `rescueMate`·`treatMate` 의 자격 |
-| X6 위험의 현실화 | 철수 판단, 위험 구역, 외부 방어 | `DANGER_RULES` 에 **장비 조건이 붙은 줄 둘**(표의 모양은 그대로 — 6.1 CF5·CF6), 교본의 의무(`airOut`)를 X6 의 `evacuate` 의무 **뒤**에 둔다(2.6) | 조짐·`signDanger`·`selfDanger`·`evacuate`·`a.avoid`·`registerGate`·제한적 구조 진입(`w.risky`), 외부 방수 자리 |
+| X6 위험의 현실화 | 철수 판단, 위험 구역, 외부 방어 | `DANGER_RULES` 에 **장비 조건이 붙은 줄 둘**(X6 줄보다 이르거나 높은 단계를 내는 것만 — 표의 모양은 그대로, 6.1 CF5·CF6), 교본의 의무(`airOut`)를 X6 의 `evacuate` 의무 **뒤**에 둔다(2.6) | 조짐·`signDanger`·`selfDanger`·`evacuate`·`a.avoid`·`registerGate`·제한적 구조 진입(`w.risky`), 외부 방수 자리 |
 | G4 현장 가독성 | 현장 그림 | 없음(R3 는 현장 고정 층·위험 표지를 건드리지 않는다) | — |
-| G5 교전 연출 | 사격·엄폐·진입 그림 | ① `cover` 임무의 자세(G5 의 겨눔 자세를 그대로 쓴다) ② 재장전 중에는 사격 기록(`recShot`)이 나지 않는 것뿐 | 사격·섬광탄·진입의 그림과 소리 전부 |
+| G5 교전 연출 | 사격·엄폐·진입 그림 | ① `cover` 임무의 자세(G5 의 엄폐 자세 `PersonPose.crouch` 를 그대로 쓴다) ② 재장전 중에는 사격 기록(`recShot`)이 나지 않는 것 ③ 협상 중단 표시의 조건 한 조각(7.2) | 사격·섬광탄·진입의 그림과 소리 전부, 쏘는 총 고르기(`weaponOf` — `sniper` > `rifle` > `pistol`) |
 | I1 인과·측정 | 행동 다양성 | `sweep --doctrine` 의 `doctrine` 칸(8절) — I1-a 의 `metrics` 와 이름이 겹치지 않게 | `actions.entropy`·`actions.methodEntropy`·`stall.candidates`·`replan.share`·`alt.methods.rate` 를 그대로 읽는다 |
 | I2 교대 간 지속 | 다음 교대의 상태 | 없음 | 탄약 상자·예비 펌프·동요를 이어받을지는 I2 가 정한다(11.4 확인 필요) |
 
@@ -139,7 +139,7 @@ mag?: number;                               // 총기: 지금 탄창에 남은 �
 // FieldAgent
 buddy?: number;                             // 짝의 rid (-1 = 짝 없음). makeAgent 가 PAIRS 로 정하고 rebuddy 가 다시 맺는다 (5절)
 doc?: { rule: string; act: DocActId; since: number } | null;   // 지금 따르는 교본 행동 (패널·계속 점수)
-docMem?: { rule: string; key: string; until: number }[];       // 접은 교본 줄의 기억 (그 시각까지 같은 대상에 다시 걸지 않는다)
+docMem?: { rule: string; key: string; until: number }[];       // 교본 기억 두 가지 (4.4 끝): key 'w:<workId>' = 그 작업을 그 시각까지 맡지 않는다(fit 0) · 그 밖의 key(대상 열쇠) = 그 행동 줄을 그 대상에 다시 걸지 않는다
 shaken?: number;                            // 동요가 끝나는 시각 (없거나 지났으면 동요 아님)
 shakenOff?: number;                         // 동요가 끝난 시각 — 10초 동안 다시 동요하지 않는다
 reloadUntil?: number;                       // 재장전이 끝나는 시각 (그 전에는 쏘지 않는다)
@@ -147,7 +147,10 @@ crewSig?: string;                           // 마지막으로 신고한 몸 상
 // Task
 docRule?: string;                           // 이 임무를 연(또는 막고 있는) 교본 줄
 gateAt?: number;                            // 판단 지점에서 막히기 시작한 시각 (-1 = 막히지 않음)
+gateId?: DocGateId;                         // 막고 있는 판단 지점 (breach 는 s.breachDone 뒤에도 이것으로 문 앞에 남는다 — 3.1 P07)
 gateSaid?: boolean;                         // 막힘을 이미 알렸다 (한 번만)
+cvX?: number; cvY?: number;                 // 고른 엄폐 자리 (P05·cover — 2.10. 한 번 정하면 다시 고르는 조건이 될 때까지 그대로)
+cvTx?: number; cvTy?: number; cvLost?: number;   // 고를 때의 위협 믿음 위치, 시야를 잃은 시각 (-1)
 // Unit
 ammoBox?: number; ammoBoxMax?: number;      // 차에 실은 탄약 상자 (한 상자 = 한 사람의 총기를 가득 채움)
 sparePump?: number;                         // 남은 예비 펌프 (지금은 무제한 — 3절 F10)
@@ -160,6 +163,7 @@ trackBy?: 'air' | 'ground' | null;          // 추격전: 지금 차를 보고 �
 reportedPrev?: number;                      // 그 전에 알려진 교차로 (진행 방향을 아는 데 쓴다)
 // ShiftReport
 doctrine?: Record<string, number>;          // 이 교대에 교본 줄이 쓰인 횟수 (sweep --doctrine 이 쓴다)
+docSplit?: Record<string, Record<string, number>>;   // '분야|국면|임무' → (고른 것 → 횟수). 고른 것 = 방법 id · 교본 행동 · 'none' (8.2 split)
 // Tuning (difficulty.ts)
 ammoBox: number;                            // 장비 손잡이: [1, 1, 2, 2, 3]
 sparePump: number;                          // 장비 손잡이: [0, 1, 1, 1, 2]
@@ -167,7 +171,7 @@ sparePump: number;                          // 장비 손잡이: [0, 1, 1, 1, 2]
 
 R1 의 `crews.ts` `KitDef` 에 세 칸: `mag?: number`(탄창 크기), `reload?: number`(재장전 초), `perShot?: number`(한 번 쏠 때 쓰는 탄). 그리고 R2 가 더한 `uses?`(처음 수량)를 총기 셋에 채운다(2.9).
 
-**객체 모양**(CLAUDE.md 함정 "자주 도는 객체의 모양" — 속도만의 문제): 새 선택 칸은 생성 리터럴에도 같은 순서로 넣는다 — `FieldAgent` 는 R1 의 `agents.makeAgent`(`buddy: -1, doc: null, docMem: undefined, shaken: undefined, shakenOff: undefined, reloadUntil: undefined, crewSig: undefined`), `Task` 는 `executor.makeTask`(`docRule: undefined, gateAt: -1, gateSaid: false`), `Unit` 은 편성표·지원 두 리터럴, `Scene` 은 `kit.ts` `baseScene`(`triageAt: -1, laneShield: null`), `Incident` 는 `incidents.createIncident`.
+**객체 모양**(CLAUDE.md 함정 "자주 도는 객체의 모양" — 속도만의 문제): 새 선택 칸은 생성 리터럴에도 같은 순서로 넣는다 — `FieldAgent` 는 R1 의 `agents.makeAgent`(`buddy: -1, doc: null, docMem: undefined, shaken: undefined, shakenOff: undefined, reloadUntil: undefined, crewSig: undefined`), `Task` 는 `executor.makeTask`(`docRule: undefined, gateAt: -1, gateId: undefined, gateSaid: false, cvX: undefined, cvY: undefined, cvTx: undefined, cvTy: undefined, cvLost: -1`), `Unit` 은 편성표·지원 두 리터럴, `Scene` 은 `kit.ts` `baseScene`(`triageAt: -1, laneShield: null`), `Incident` 는 `incidents.createIncident`.
 
 ### 2.2 교본 분야와 "누구"
 
@@ -180,8 +184,8 @@ R1 의 `crews.ts` `KitDef` 에 세 칸: `mag?: number`(탄창 크기), `reload?:
 | `ems` | `paramedic`·`emt`·`emsDriver`·`doctor`·`flightNurse` | 구급차·의료 헬기 |
 | `special` | `swatLead`·`shield`·`breacher`·`assaulter`·`marksman` · `bombTech`·`robotOp`·`eodGuard` · `hazLead`·`hazTech`·`decon` · `airRescuer` · `boatRescuer` · `ladderLead`·`ladderOp` | 특공·폭발물·화학·소방 헬기·구조정·사다리차 |
 
-- 표의 분야는 **줄을 어느 파일에 두는가**일 뿐이다. 줄이 누구에게 걸리는지는 줄의 `who`(R1 부서 `Dept`·역할·역할 묶음·부대 종류)와 장비 조건(`kits`)으로 정한다. 예: 경찰 표의 흉기 대응 줄은 `who: { dept: ['police'] }` 라 특공·폭발물 대원에게도 걸린다. 소방 표의 공기 탈출 줄은 `kits: ['scba']` 라 화학대·사다리차·소방 헬기 대원에게도 걸린다.
-- 사다리차(`ladderLead`·`ladderOp`)를 특수 표에 두는 까닭: 사용자가 든 특수의 예에 "사다리차(고층 구조·고가 방수)"가 있다. 부대 분야(`UnitField 'fire'`)·편성은 R1 그대로다.
+- 표의 분야는 **줄을 어느 파일에 두는가**일 뿐이다. 줄이 누구에게 걸리는지는 줄의 `who`(R1 부서 `Dept`·교본 분야 `DocDept`·역할·역할 묶음·부대 종류)와 장비 조건(`kits`)으로 정한다. 예: 경찰 표의 흉기 대응 줄은 `who: { dept: ['police'] }` 라 특공·폭발물 대원에게도 걸린다. 소방 표의 공기 탈출 줄은 `kits: ['scba']` 라 화학대·사다리차·소방 헬기 대원에게도 걸린다. 부상 줄처럼 "분야마다 한 줄씩, 겹치지 않게"가 필요한 줄은 `who.doc`(교본 분야)로 가른다(3.5 G01).
+- 사다리차(`ladderLead`·`ladderOp`)를 특수 표에 두는 까닭: `docs/ROADMAP.md` 첫머리의 조직 목록이 특수를 "특공대·구조 헬기·화학 구조대·구조정·폭발물 처리반·사다리차"로 묶는다. 부대 분야(`UnitField 'fire'`)·편성은 R1 그대로다.
 - 내리지 않는 자리(조종사·정장)는 현장 대원이 아니므로 교본이 걸리지 않는다. 경찰 헬기의 관측자(`AirOp.eye`, `aloft`)는 R1 의 `airDecide` 가 판단한다 — 교본의 `act`·`duty`·`gate` 를 부르지 않는다(관측자는 걷지 않는다).
 
 ### 2.3 고르는 자리 — 판단 전용 파일의 순수 함수를 네 자리에서 (결정)
@@ -196,30 +200,31 @@ R1 의 `crews.ts` `KitDef` 에 세 칸: `mag?: number`(탄창 크기), `reload?:
 
 | 자리 | 묻는 것 | 부르는 곳 | 줄이 내는 것 | 이 자리를 고른 까닭 |
 |---|---|---|---|---|
-| ① `fit` — 누가 맡는가 | "이 대원이 이 일을 맡아도 되는가, 얼마나 먼저인가" | `agents.fitFor` 의 **맨 끝**(R1 의 역할 선호 다음): `fit = docFit(sim, s, a, w, fit)` | 배율(`fitMul`, 0 = 금지)·가산(`fitAdd`) | 지휘관의 배정(`commander.assign`)과 대원의 자체 판단(`brain` 7번)이 **둘 다** `fitFor` 를 쓴다. 한 곳에 걸면 "다친 대원은 가벼운 일로", "짝 없이 위험 실내 금지"가 지휘관 지시에도 자체 판단에도 똑같이 걸린다. 맡을 사람이 없으면 B3 의 "맡을 사람이 없는 작업" 블록(R1 `anyCapable`)이 그대로 지원을 부른다 |
-| ② `duty`·`act` — 지금 무엇을 하는가 | "작업판의 일 말고, 내 상태 때문에 지금 해야 할 행동이 있는가" | `brain.think`: 의무(`docDuty`)는 X6 의 `evacuate` 의무 바로 뒤, 점수 후보(`docAct`)는 R1 의 공기통 교체 후보 다음 | 상태 행동 하나(`DocActId`)와 점수 | 지금도 상태 행동(후퇴·휴식·예비 펌프·공기통 교체)은 모두 `brain` 의 후보다. 같은 틀에 넣어야 판단 오차·계속 점수·지시와 같은 저울에 오른다 |
-| ③ `method` — 어떻게 하는가 | "이 임무를 어떤 방법으로" | R2 의 `chooseMethod` 점수에 `× docMethodMul(dc, m)` | 방법별 배율(0 = 후보에서 뺀다) | R2 가 "R3 는 METHOD 행과 situ 조건을 늘린다, 상태는 `MethodCtx` 에 칸을 더한다"고 정했다. 방법을 바꾸는 때(실패·고장·조건 상실)·기억·기록은 R2 의 것을 그대로 쓴다 |
-| ④ `gate` — 실행 중의 판단 지점 | "지금 이 한 걸음(혼자 방에 들어가기, 흉기 상대에게 붙기, 처치 중인 환자 들기)을 해도 되는가" | 실행기의 그 분기에서 `docGate(sim, s, a, gate, sense)` | `{ ok, rule, wait }` — 막히면 실행기가 정해진 대체 행동(그 자리에서 기다림·거리 유지)을 한다 | 이 결정들은 지금 실행기의 분기 안에 있다(`executor` `case 'engage'` 의 "4초 뒤 혼자 진입"). 분기를 판단부로 옮기면 실행 코드가 둘로 갈라진다. 대신 **판단(믿음)은 교본 함수가, 효과(이동·기다림)는 실행기가** 한다 — R2 의 `chooseMethod`/`methodRun` 나눔과 같다 |
+| ① `fit` — 누가 맡는가 | "이 대원이 이 일을 맡아도 되는가, 얼마나 먼저인가" | `agents.fitFor` 의 **맨 끝**(R1 의 역할 선호 다음): `fit = docFit(sim, s, a, w, fit)`. **늘 보고 모드**(2.4 — `fitFor` 는 남에게도 불린다) | 배율(`fitMul`, 0 = 금지)·가산(`fitAdd`). `drop` 표시가 있는 금지는 하던 임무도 놓게 한다(`docDrop`, 2.6) | 지휘관의 배정(`commander.assign`)과 대원의 자체 판단(`brain` 7번)이 **둘 다** `fitFor` 를 쓴다. 한 곳에 걸면 "다친 대원은 가벼운 일로", "짝 없이 위험 실내 금지"가 지휘관 지시에도 자체 판단에도 똑같이 걸린다. 맡을 사람이 없으면 B3 의 "맡을 사람이 없는 작업" 블록(R1 `anyCapable`)이 그대로 지원을 부른다 |
+| ② `duty`·`act` — 지금 무엇을 하는가 | "작업판의 일 말고, 내 상태 때문에 지금 해야 할 행동이 있는가" | `brain.think`: 의무(`docDuty`)는 X6 의 `evacuate` 의무 바로 뒤, 점수 후보(`docAct`)는 R1 의 공기통 교체 후보 다음, 후퇴 후보의 바꿔 끼우기(`docRetreat` — P11)는 후퇴 후보를 만드는 자리. **자기 모드** | 상태 행동 하나(`DocActId`)와 점수 | 지금도 상태 행동(후퇴·휴식·예비 펌프·공기통 교체)은 모두 `brain` 의 후보다. 같은 틀에 넣어야 판단 오차·계속 점수·지시와 같은 저울에 오른다 |
+| ③ `method` — 어떻게 하는가 | "이 임무를 어떤 방법으로" | R2 의 `chooseMethod` 점수에 `× docMethodMul(dc, m)`. `dc` 는 **부르는 쪽이 만들어 넘긴다**: 실행부의 `startMethod`·`recheckOnArrive`·`switchMethod`(t ≠ null)는 자기 모드, `methodFit`(t = null — `fitFor(waterRescue)` 등 남에게도 불린다)은 보고 모드 | 방법별 배율(0 = 후보에서 뺀다) | R2 가 "R3 는 METHOD 행과 situ 조건을 늘린다, 상태는 `MethodCtx` 에 칸을 더한다"고 정했다. 방법을 바꾸는 때(실패·고장·조건 상실)·기억·기록은 R2 의 것을 그대로 쓴다 |
+| ④ `gate` — 실행 중의 판단 지점 | "지금 이 한 걸음(혼자 방에 들어가기, 흉기 상대에게 붙기, 처치 중인 환자 들기)을 해도 되는가" | 실행기의 그 분기에서 `docGate(sim, s, a, gate, sense)`. **자기 모드** | `{ ok, rule, wait, opt }` — 막히면 실행기가 정해진 대체 행동(그 자리에서 기다림·거리 유지)을 한다 | 이 결정들은 지금 실행기의 분기 안에 있다(`executor` `case 'engage'` 의 "4초 뒤 혼자 진입", `case 'arrest'` 의 "곧장 다가가 제압"). 분기를 판단부로 옮기면 실행 코드가 둘로 갈라진다. 대신 **판단(믿음)은 교본 함수가, 효과(이동·기다림)는 실행기가** 한다 — R2 의 `chooseMethod`/`methodRun` 나눔과 같다 |
 | ⑤ `cmd` — 지휘관 | 무엇을 요청하고 무엇을 거두는가 | `orders/doctrine.ts`(`registerOrders`) + `commander.ts` 의 작은 조각 몇 곳(6.1 끝) | 요청·작업·배정 가산 | 지휘 규칙 파일은 이미 "믿음만"이 테스트로 걸려 있다 |
 | ⑥ `dispatch`·`chase` — 관제 | 어느 부대를 보내고 추격에서 누가 무엇을 하는가 | `dispatch/doctrine.ts` 를 `dispatcher.pickUnit`·`analyst` 수요·`pursuit.tickPursuits` 의 "알려진 위치로 방향을 바꾼다" 줄이 부른다 | 점수 가산·수요 보정·역할 | 관제 코드(`dispatch/*`)는 이미 진실 금지 구역이다 |
 
 **네 자리가 서로 대신하지 않는 까닭**: ①만으로는 "이미 맡은 일을 하다가 공기가 떨어졌다"를 다룰 수 없다(②). ②만으로는 지휘관이 다친 대원에게 진입을 지시하는 것을 막을 수 없다(①). ③은 일 안의 갈래다. ④는 한 임무 안의 한 걸음이다 — `fit` 을 0 으로 만들면 대원이 일을 놓고 지휘관이 다시 배정하는 왕복이 생기지만, 판단 지점에서 기다리게 하면 임무를 쥔 채 멈춘다.
 
-### 2.4 판단 입력 `DocCtx` — 읽어도 되는 것과 안 되는 것
+### 2.4 판단 입력 `DocCtx` — 두 모드, 읽어도 되는 것과 안 되는 것
 
 ```ts
 // doctrine/registry.ts (타입만)
-export interface DocState {          // 대원 자신
-  hp: number; band: number; bleeding: boolean;   // ①fit 에서는 자기 신고(crew 사실)의 값, ②~④에서는 자기 몸 (아래)
+export interface DocState {          // 대상 대원 (자기 모드 = 자기 몸, 보고 모드 = 남이 아는 만큼 — 아래 표)
+  hp: number; band: number; bleeding: boolean;
   stamina: number; fitness: number; composure: number; experience: number; judgment: number; teamwork: number;
   rookie: boolean; veteran: boolean;             // experience < 0.3 · ≥ 0.7
-  air: number;                                   // 공기 비율 0..1 (scba 의 uses / tn.airFull). scba 가 없으면 1
+  hasScba: boolean;                              // scba 를 들었다 (알려진 고장 제외 — gear.kitHas). 공기 잔량과 따로다
+  air: number;                                   // 공기 비율 0..1 = gear.kitQty(scba) / sim.tune.airFull. scba 가 없으면 1
   spareAir: number;                              // 자기 부대의 예비 공기통
-  ammo: number; mag: number; magSize: number; perShot: number;   // 가진 총의 탄 (총이 없으면 ammo = -1)
+  gun: KitId | null;                             // 가진 총 (gear.gunOf — sniper > rifle > pistol, G5 weaponOf 와 같은 순서)
+  ammo: number; mag: number; magSize: number; perShot: number;   // 그 총의 탄 (총이 없으면 ammo = -1)
   ammoLow: boolean; ammoCrit: boolean;           // 마지막 탄창 / 발사 2회 이하
   reloading: boolean; ammoBox: number;           // 재장전 중 / 자기 부대의 탄약 상자
   shaken: boolean; underFire: boolean; inCover: boolean; carrying: boolean;
-  dng: number;                                   // brain 의 위험 점수 (자기 감각 — ② 자리에서 brain 이 넘긴다. 다른 자리에서는 0)
   buddy: FieldAgent | null; buddyNear: boolean;  // 짝 (5절 — 쓸 수 있는 짝만), 짝이 2.5칸 안
   mates: number;                                 // 같은 Dept 의 다른 활동 대원 가운데 6칸 안의 수
   alone: boolean;                                // buddy === null && mates === 0
@@ -234,19 +239,25 @@ export interface DocSit {            // 상황 (믿음·생김새·공개 지휘
   inHazard: boolean;                             // 자기 자리가 위험 건물 실내 (fitFor 의 fireRisk 와 같은 믿음 판정)
   victimInside: boolean;                         // 믿음: 위험 건물 안에 살아 있는 구조 대상, 또는 신고 인원(occ) > 찾은 수
   danger: number;                                // X6: 믿음 ops 사실의 자기 구역 단계 (X6 가 없으면 0)
-  smoke: number; heat: number;                   // Sense — 자기 칸의 감각 (부르는 쪽이 잰다. ①fit 에서는 0)
+  wDanger: number;                               // X6: 대상 작업 w 의 구역 단계 (w 가 없거나 구역이 없으면 danger 와 같다) — F13
   ctlDone: boolean[];                            // 통제 지점별 교통 통제 끝 (ctl 사실)
   liveBomb: { x: number; y: number; d: number } | null;   // 믿음 haz bomb active
+  defusing: boolean;                             // 동료의 겉: 누군가의 defuse 임무가 장치 곁(2칸)에서 진행 중 — S08·CS1
   patients: number;                              // 믿음: 처치·탑승을 기다리는 band ≥ 1 구조 대상 수
   seatsLeft: number;                             // 현장 부대의 남은 환자 자리 합 (R2 gear.seatsLeft — 조직 정보)
   negotSec: number; entryOrdered: boolean;       // s.negotStart 부터, s.entryOrdered (공개 지휘 상태)
+  lanes2nd: boolean;                             // 이 현장 기록에 2차 사고가 있었다 (I.problems 의 SECONDARY_COLLISION — 지휘관 코드가 인질 부상을 I.problems 로 아는 것과 같은 자격) — P20
 }
 export type DocPhase = 'arrive' | 'sizeup' | 'standoff' | 'entry' | 'assault' | 'interior' | 'care' | 'transport' | 'traffic' | 'withdraw' | 'idle';
 export interface DocCtx {
   sim: Sim; s: Scene; a: FieldAgent; u: Unit; dept: DocDept; role: RoleId | null; group: RoleGroup | null;
+  mode: 'self' | 'report';                       // 자기 모드(대원 자신의 판단 ②·④·③의 실행부) / 보고 모드(① fit · ③의 methodFit — 남에게도 불린다)
   w: WorkItem | null;                            // ①·④ 의 대상 작업 (없으면 null)
   st: DocState; sit: DocSit;
-  kit: (id: KitId) => number;                    // gear.kitCount — 알려진 고장만 반영 (숨은 고장은 모른다)
+  sense: Sense;                                  // R2 의 Sense — 대원이 선 칸의 연기·열 (부르는 쪽이 잰다. 보고 모드에서는 0)
+  dng: number;                                   // brain 의 위험 점수 (② 자리에서 brain 이 넘긴다. 다른 자리에서는 0)
+  has: (id: KitId) => boolean;                   // gear.kitHas — 들었는가 (알려진 고장 제외, 수량 무관). kits·noKits 가 이것으로 본다
+  kit: (id: KitId) => number;                    // gear.kitCount (R2 — scba 는 0/1, 수량 장비는 남은 수). 수량을 보는 when 이 쓴다
   m?: { reach: number; flow: number; weak: boolean };      // ③ 방법 자리: R2 MethodCtx 의 그 값
 }
 ```
@@ -254,60 +265,88 @@ export interface DocCtx {
 | `DocPhase` | 정하는 법 (`phaseOf(s, a)` — 자기 임무와 공개 지휘 상태) |
 |---|---|
 | `arrive`·`sizeup` | 도착 뒤 첫 판단 전 / `sizeup` 임무 |
-| `standoff` | `negotiate`·`perimeter` 임무, 또는 `engage` 인데 `!s.entryOrdered` |
-| `entry` · `assault` | `engage` 이고 `s.entryOrdered` 이며 출입구 앞 / 출입구를 지난 뒤 |
-| `interior` | 위험 건물 실내의 `search`·`suppress`·`extricate`·`carry`·`escort`·`mitigate`·`overhaul` |
+| `standoff` | `negotiate`·`perimeter` 임무, 또는 흉기·맨손 용의자의 `arrest`(`fight` 상대 — 투항한 사람의 검거는 `idle` 과 같게 본다) |
+| `entry` · `assault` | `engage` 이고 `s.entryOrdered` 이며 출입구 앞 / 출입구를 지난 뒤. (도주 용의자 추격의 `engage` 는 `assault`) |
+| `interior` | 위험 건물 실내의 `search`·`suppress`·`extricate`·`carry`·`escort`·`mitigate`·`overhaul`, 그리고 `pair` |
 | `care` · `transport` | `treat`·`treatMate`·`triage` / `load`·`board(transport)` |
 | `traffic` | `traffic`·`clearRoad` |
 | `withdraw` | `retreat`·`evacuate`·`airOut`·`pairOut`·`board` |
-| `idle` | 임무 없음·`standby` |
+| `idle` | 임무 없음·`standby`·`cover`·`rearm` |
+
+`arrive`·`sizeup`·`transport`·`idle` 을 조건으로 쓰는 줄은 없다 — 이 넷은 `split`(8.2)의 열쇠에만 쓰인다.
+
+**두 모드 — 같은 대원의 상태를 누가 묻는가(결정)**. `fitFor(sim, s, b, w)` 는 지휘관이 **다른 대원** `b` 에게도 부른다(`commander.assign`). R2 의 `methodFit` 도 `fitFor(waterRescue)` 를 거쳐 남에게 불린다. 여기서 `b` 의 체력을 읽으면 H1 이 막은 "함수 호출 안에 숨은 진실 읽기"가 된다. 그래서 `DocState` 를 만드는 함수를 둘로 나눈다:
+
+| 칸 | 자기 모드 `stateSelf(sim, s, a)` | 보고 모드 `stateReported(sim, s, b)` |
+|---|---|---|
+| `band`·`shaken` | 자기 몸: `bandHyst(r.health, 지난 값)`, `a.shaken > sim.t` | **`b` 의 `crew` 사실**(`b.beliefs.val('crew', b.rid)` — 자기 신고, 4.1). 없으면 0·false |
+| `hp`·`bleeding` | 자기 몸(`r.health`·`r.bleed ≥ 0.06`) | `-1`·`false` — **보고 모드에서 쓰지 않는다**(fit·methodFit 자리의 줄은 이 둘을 읽지 않는다. 시험 3) |
+| `stamina` | 자기 몸 | **조직 정보** — 지금 `commander.assign`(점수·휴식 중 건너뛰기)과 `dispatcher.pickUnit`(평균 지구력)이 이미 읽는 값과 같은 자격이라고 명시한다. G03 이 이 값을 쓴다 |
+| `air`·`hasScba`·`spareAir`·총·탄·`ammoBox` | `gear.kitHas`·`kitQty`·`gunOf`, 부대 칸 | 같다 — R1 이 공기·섬광탄 잔량을 조직 정보로 정한 것과 같다 |
+| `underFire`·`inCover`·`reloading` | `a.underFireT`(3초)·`a.inCover`·`a.reloadUntil > sim.t` | `false` — 남의 몸이 지금 맞고 있는지는 모른다 |
+| `carrying` | `a.carrying !== -1` | 같다 — 동료의 겉(업고 있는 것은 보인다) |
+| 능력치(`composure`·`experience`…) | 명부 | 명부 |
+| `buddy`·`mates`·`alone`·`backup` | 동료의 겉·조직 정보 | 같다 |
+
+- 자기 신고를 쓰는 까닭: 대원은 자기 몸이 문턱을 넘을 때 그 사실을 자기 믿음에 넣고 무전으로 보낸다(`selfReport`, 4.1). 지금 `fitFor` 가 이미 `b.beliefs` 의 구조 대상 위치를 읽는 것과 같은 길이고, 판단 주기만큼의 지연이 생긴다(의도 — 지휘관이 알게 되는 데 걸리는 시간). 대원 자신이 자기 일을 고를 때(`brain` 7번 자체 판단·지시 수행)도 `fitFor` 를 거치므로 보고 모드다 — 자기 신고는 판단마다 갱신되므로 차이는 한 판단 주기뿐이다.
+- `mate` 사실(H1)을 쓰지 않고 새 사실 종류를 두는 까닭: H1 의 `orders/injury.ts` 는 `mate` 사실이 `hurt` 이고 `band ≥ 1` 이면 `treatMate` 를 낸다. 아직 일하고 있는 중상 대원을 `mate` 로 신고하면 구급대원이 움직이는 대원을 쫓아다니게 된다.
 
 **판단부(`doctrine.ts`·`doctrine/*.ts`)가 읽어도 되는 것**:
 - 그 대원의 믿음 `a.beliefs`(구조 대상·용의자·불·위험 사실, 동료의 `crew`·`mate` 사실, X6 의 `ops` 사실, `occ`·`ctl`·`secure` 사실).
-- 현장의 생김새: `s.tiles`·`s.region`·`s.regions`·`s.exits`·`s.spots`·`s.staging`·`s.safe`·`s.kind`·`s.rules`·`s.outdoor`·`s.controlPts`·`s.stairTo`(R2 와 같은 자격).
-- 공개 지휘 상태: `s.secureAt`·`s.entryOrdered`·`s.negotStart`·`s.entryExit`·`s.entryExit2`·`s.triageAt`, `sim.t`, `sim.weather`, `sim.disaster` 의 `kind`·`phase`.
-- 조직 정보: 부대 상태 `sim.units`(장비 수치·`spareAir`·`ammoBox`·`sparePump`·`state`·`patients`), `I.assigned`, 명부의 이름·부서·역할·능력치(`skills`·`composure`·`experience`…), 동료의 장비(`kitCount` — 조직이 안다), 남의 공기·탄 잔량(`kitUses` — R1 이 섬광탄·공기를 조직 정보로 정한 것과 같다).
-- 동료의 겉: `s.agents` 의 `status`·`task.kind`·`task.workId`·`task.cas`·`x`·`y`·`buddy`(같은 무전망 — R2 와 같은 자격).
-- **자기 몸**: `sim.responders[a.rid]` 의 `health`·`bleed`·`stamina`(H1 의 `hurtF`·`bandOf` 도 자기 몸에만), `a.underFireT`·`a.inCover`·`a.shaken`·`a.reloadUntil`·`a.carrying`·`a.task`·`a.docMem`.
+- 현장의 생김새: `s.tiles`·`s.region`·`s.regions`·`s.exits`·`s.spots`·`s.staging`·`s.safe`·`s.kind`·`s.rules`·`s.outdoor`·`s.controlPts`·`s.laneRows`·`s.stairTo`(R2 와 같은 자격).
+- 공개 지휘 상태: `s.secureAt`·`s.entryOrdered`·`s.negotStart`·`s.entryExit`·`s.entryExit2`·`s.breachAt`·`s.breachDone`·`s.triageAt`, `sim.t`, `sim.weather`, `sim.disaster` 의 `kind`·`phase`, 현장 기록의 문제 코드(`I.problems` 의 `code` — 지휘관 코드가 이미 읽는다).
+- 조직 정보: 부대 상태 `sim.units`(장비 수치·`spareAir`·`ammoBox`·`sparePump`·`state`·`patients`·`boardOrder`·`estArrive`), `I.assigned`, 명부(감싼 함수 `gear.roleIdOf`·`groupOf` 와 `sim.responders[rid]` 의 `name`·`dept`·`unitId`·능력치·`stamina`), 동료의 장비(`gear.kitHas`·`kitCount`·`kitQty`·`gunOf`).
+- 동료의 겉: `s.agents` 의 `status`·`task.kind`·`task.workId`·`task.cas`·`task.gateAt`·`x`·`y`·`buddy`·`carrying`(같은 무전망 — R2 와 같은 자격).
+- **자기 몸**(자기 모드에서만, `stateSelf` 안에서만): `sim.responders[a.rid]` 의 `health`·`bleed`(H1 의 `hurtF`·`bandOf` 도 자기 몸에만), `a.underFireT`·`a.inCover`·`a.shaken`·`a.reloadUntil`·`a.task`·`a.docMem`.
 - 감각 `Sense`: 부르는 쪽이 **대원이 선 칸에서** 잰 연기·열(`brain.dangerScore` 가 자기 둘레의 `s.fire` 를 읽는 것과 같은 자격 — R2·X6 와 같은 판단).
 
-**읽으면 안 되는 것**(테스트가 글자로 검사한다 — 10절 1): `s.props`, `s.casualties`, `s.hostiles`, `.truth`, `s.fire[`, `s.smoke[`, `sim.scenes`, `s.variant`, `.fault`, `kitWorks`, `useKit`, `toolUse`, `needsHospital`, 그리고 **남의 몸** — `sim.responders[` 는 `sim.responders[a.rid]` 꼴로만 쓴다(정규식 `/sim\.responders\[(?!a\.rid\])/` 이 0건). `doctrine.ts` 는 `agents.ts`·`executor.ts`·`hazards.ts`·`methods.ts`·`methodRun.ts`·`doctrineRun.ts`·`crews.ts` 를 import 하지 않는다(`agents.fitFor` 와 R2 `methods.chooseMethod` 가 `doctrine.ts` 를 부르므로 순환을 만들지 않는다). import 해도 되는 것: 타입, `grid.ts`(`staticPass`·`losWalls`·`tileOf`), `util.ts`, `gear.ts`(판단용 `kitCount`·`kitName`·`seatsLeft`), H1 `injury.ts` 의 `bandOf`·`hurtF`(잎 모듈), `doctrine/registry.ts`.
+**읽으면 안 되는 것**(테스트가 글자와 행동으로 검사한다 — 10절 1·3): `s.props`, `s.propAt`, `s.casualties`, `s.hostiles`, `.truth`, `.pursuit`, `s.fire[`, `s.smoke[`, `sim.scenes`, `s.variant`, `.fault`, `kitWorks`, `useKit`, `toolUse`, `needsHospital`. 그리고 **남의 몸** — `.health`·`.bleed`·`.injuries` 는 `stateSelf` 한 함수 안에만 나온다(글자 시험), 그리고 `b` 의 체력·출혈을 바꿔도 새 `crew` 사실이 없으면 `docFit`·`fitFor` 가 그대로다(행동 시험). 명부·짝의 역할·장비를 `sim.responders[b.rid]`·감싼 함수로 읽는 것은 허용한다(그래서 "`sim.responders[` 는 `a.rid` 꼴만" 같은 글자 규칙은 두지 않는다).
 
-**중상의 간격**: `st.band` 는 어느 자리에서든 같은 함수 `bandHyst(hp, prev)`(체력 ≤ 70 이면 1, 이미 1 이면 75 이상에서만 0, 40 미만이면 2 — 4.2)로 만든다. ① 자리의 `prev` 는 자기 신고의 값, ②~④ 자리는 자기 몸의 지난 값(`a.crewSig`).
+**import**: `doctrine.ts` 는 `agents.ts`·`executor.ts`·`hazards.ts`·`methods.ts`·`methodRun.ts`·`doctrineRun.ts`·`crews.ts` 를 **값으로** import 하지 않는다(`agents.fitFor` 와 R2 `methods.chooseMethod` 가 `doctrine.ts` 를 부르므로 순환을 만들지 않는다). `import type`(예: R2 `methods.ts` 의 `Sense`·`MethodCtx`)은 된다 — 컴파일 뒤 지워지므로 순환이 아니다. import 해도 되는 값: `grid.ts`(`staticPass`·`losWalls`·`tileOf`), `util.ts`, `gear.ts`(판단용 — R2 의 `kitCount`·`kitName`·`seatsLeft` 와 R3 가 더하는 `kitHas`·`kitQty`·`gunOf`·`roleIdOf`·`groupOf`), H1 `injury.ts` 의 `bandOf`·`hurtF`(잎 모듈), `doctrine/registry.ts`.
 
-**①`fit` 에서 남의 몸을 읽지 않는 법 — 자기 신고 `crew` 사실(결정)**. `fitFor(sim, s, b, w)` 는 지휘관이 **다른 대원** `b` 에게도 부른다. 여기서 `b` 의 체력을 읽으면 H1 이 막은 "함수 호출 안에 숨은 진실 읽기"가 된다. 그래서 ① 자리의 `st.band`·`st.shaken` 은 **`b` 자신이 신고한 `crew` 사실**(`b.beliefs.val('crew', b.rid)`)에서 채운다. 대원은 자기 몸이 문턱을 넘을 때 그 사실을 자기 믿음에 넣고 무전으로 보낸다(`selfReport`, 4.1). 지금 `fitFor` 가 이미 `b.beliefs` 의 구조 대상 위치를 읽는 것과 같은 길이고, 판단 주기만큼의 지연이 생긴다(의도 — 지휘관이 알게 되는 데 걸리는 시간). 공기·탄은 R1 의 원칙대로 조직 정보(`kitUses`)로 직접 읽는다. ②~④ 자리는 대원 자신의 판단이므로 자기 몸을 직접 읽는다.
+**R3 가 `gear.ts` 에 더하는 판단용 감싼 함수**(R1 `crews.ts` 를 감싼다 — `doctrine.ts` 가 `crews.ts` 를 직접 부르지 않게. R2 의 `kitCount('scba')` 는 60초를 넘는지만 0/1 로 돌려주므로 공기 비율·짝의 공기·총의 탄을 구할 수 없다):
 
-`mate` 사실(H1)을 쓰지 않고 새 사실 종류를 두는 까닭: H1 의 `orders/injury.ts` 는 `mate` 사실이 `hurt` 이고 `band ≥ 1` 이면 `treatMate` 를 낸다. 아직 일하고 있는 중상 대원을 `mate` 로 신고하면 구급대원이 움직이는 대원을 쫓아다니게 된다.
+| 함수 | 몸 | 쓰는 곳 |
+|---|---|---|
+| `kitHas(sim, rid, id): boolean` | R1 `hasKit`(알려진 고장이면 false, 수량 무관) | `DocCtx.has` — 줄의 `kits`·`noKits`, `st.hasScba` |
+| `kitQty(sim, rid, id): number` | `kitHas ? kitUses : 0` (scba 는 남은 초, 총기는 가진 탄) | `st.air`, 짝의 공기(`buddyOf`), CF2 |
+| `gunOf(sim, rid): { id: KitId; ammo: number; mag: number; magSize: number; perShot: number; reload: number } \| null` | 가진 총 가운데 `sniper` > `rifle` > `pistol` 첫째(G5 `weaponOf` 와 같은 순서), `KITS[id]` 의 `mag`·`perShot`·`reload`, 항목의 `uses`·`mag` | `st.ammo…`, CP1·CP3 |
+| `roleIdOf(sim, rid): RoleId \| null` · `groupOf(sim, rid): RoleGroup \| null` | R1 `roleOf(sim, rid).id` / `.group` | `docDeptOf`·줄의 `who`·`SOLO_OK`·`PAIRS` |
 
-**성능**: `fitFor` 는 배정 반복(대원 × 작업)과 판단 주기마다 불린다. `docState` 는 `WeakMap<FieldAgent, { tick, fromReport, st }>` 에 틱마다 한 번 계산해 담고, 줄 목록은 처음 쓸 때 `(hook, work)` 별로 나눈 표(`Map`)로 만든다. `coverSpot` 은 대원·틱마다 한 번.
+**중상의 간격**: `st.band` 는 자기 모드에서 `bandHyst(hp, prev)` 로 만든다: `const b = bandOf(hp); return b === 0 && prev >= 1 && hp < 75 ? 1 : b;` — H1 의 `bandOf` 경계(`> 70` 이면 0, `> 40` 이면 1, `≤ 40` 이면 2)를 그대로 두고, 0 으로 내려오는 쪽에만 75 의 간격을 얹는다(4.2). `prev` 는 지난 자기 신고의 값(`a.crewSig` 에서 읽는다). 보고 모드는 신고된 값을 그대로 쓴다.
+
+**성능**: `fitFor` 는 배정 반복(대원 × 작업)과 판단 주기마다 불린다. `DocState`·`DocSit` 은 `WeakMap<FieldAgent, { tick: number; self: DocState | null; rep: DocState | null; sit: DocSit | null }>` 에 **모드별로 따로** 틱마다 한 번 계산해 담는다(같은 틱에 지휘관이 보고 모드로, 본인이 자기 모드로 부를 때 서로 덮어쓰지 않게). 담는 것에는 `sense`·`dng`·`w` 처럼 부르는 쪽이 넘기는 값을 넣지 않는다 — 그것은 `DocCtx` 의 칸이다(넣으면 `fitFor` 가 먼저 0 으로 채운 값을 brain 이 읽어 P11 이 틀린다). 줄 목록은 처음 쓸 때 `(hook, work)` 별로 나눈 표(`Map`)로 만든다. `coverSpot` 은 임무에 담아 두고 다시 고르는 조건에서만 부른다(2.10).
 
 ### 2.5 등록 — `registerDoctrine`
 
 ```ts
 // doctrine/registry.ts — 잎 모듈 (타입과 배열뿐. doctrine.ts 가 이것을 import 하고, 줄 파일도 이것만 import 한다 —
 //   줄 파일이 doctrine.ts 를 import 하면 doctrine.ts → 줄 → doctrine.ts 순환에서 배열이 초기화되기 전에 불린다)
+/** 효과 하나. fit·method 효과는 자기 works·methods·when 을 더 가질 수 있다 (한 줄이 일마다 다른 배율을 줄 때 — 예: P12 "engage ×0.35, perimeter +0.15") */
 export type DocEffect =
-  | { kind: 'fitMul'; mul: number }                                  // 곱한다. 0 = 그 일을 맡지 않는다
-  | { kind: 'fitAdd'; add: number }                                  // 0 이 아닐 때만 더한다 (선호가 자격을 만들지 않는다 — R1 6.2 끝과 같다)
+  | { kind: 'fitMul'; mul: number; works?: WorkKind[]; when?: (c: DocCtx) => boolean; drop?: boolean }   // 곱한다. 0 = 그 일을 맡지 않는다. drop = 하던 그 임무도 놓는다 (2.6 docDrop). mul 1 = 기록 전용
+  | { kind: 'fitAdd'; add: number; works?: WorkKind[]; when?: (c: DocCtx) => boolean }                   // 0 이 아닐 때만 더한다 (선호가 자격을 만들지 않는다 — R1 6.2 끝과 같다)
   | { kind: 'duty'; act: DocActId }                                  // 의무 — 점수 없이 그 자리에서 바꾼다
   | { kind: 'act'; act: DocActId; score: number | ((c: DocCtx) => number) }
-  | { kind: 'methodMul'; mul: number }                               // R2 방법 점수에 곱한다. 0 = 후보에서 뺀다
+  | { kind: 'methodMul'; mul: number; methods?: MethodId[]; when?: (c: DocCtx) => boolean }              // R2 방법 점수에 곱한다. 0 = 후보에서 뺀다
   | { kind: 'block'; maxWait: number | ((c: DocCtx) => number) }    // 판단 지점에서 막는다. maxWait 초가 지나면 timeout 갈래 (4.4)
   | { kind: 'choose'; opt: 'cover' | 'save' | 'stack' | 'immobilize' };   // 판단 지점에서 막지 않고 갈래만 고른다 (엄폐 사격 자리 · 섬광탄 아끼기 · 줄 서기 · 척추 고정)
 export interface DoctrineRule {
-  id: string;            // 'P07' — 표 글자 + 번호. 기록·보고서·측정이 이 이름으로 센다
+  id: string;            // 'P07' — 표 글자 + 번호. 한 줄이 두 자리에 걸리면 같은 번호에 글자를 붙여 따로 등록한다('F04'·'F04b'·'F04c'). 측정·보고서는 번호(앞 세 글자)로 묶어 센다
   dept: DocDept;         // 어느 표의 줄인가
   name: string;          // 패널 이름 ('혼자 방 진입 금지')
   short: string;         // 요약 줄의 짧은 이름 ('단독 진입 보류')
-  who?: { dept?: Dept[]; roles?: RoleId[]; groups?: RoleGroup[]; units?: UnitKind[] };   // 없으면 누구나
+  who?: { dept?: Dept[]; doc?: DocDept[]; roles?: RoleId[]; groups?: RoleGroup[]; units?: UnitKind[] };   // 없으면 누구나. 칸끼리는 그리고(AND)
   hook: DocHook;
-  works?: WorkKind[];    // fit·method·gate: 이 임무만 (없으면 모두)
-  gate?: DocGateId;      // gate 줄의 판단 지점
-  methods?: MethodId[];  // method 줄이 배율을 주는 방법
-  kits?: KitId[];        // 이 가운데 하나라도 있어야 걸린다 (kitCount > 0)
-  noKits?: KitId[];      // 이 가운데 아무것도 없어야 걸린다 — 장비 조건을 when 과 따로 두어 '장비 때문에'를 센다 (7.3 의 noKit 까닭)
+  swap?: 'retreat';      // act 줄 가운데 docAct 후보가 아니라 후퇴 후보를 바꿔 끼우는 줄 (P11 — docRetreat 가 본다)
+  works?: WorkKind[];    // fit·method·gate: 이 임무만 (없으면 모두). 효과의 works 는 그 안에서 더 좁힌다
+  gate?: DocGateId | DocGateId[];   // gate 줄의 판단 지점 (P07 은 roomEntry·breach 둘)
+  methods?: MethodId[];  // method 줄이 배율을 주는 방법 (효과의 methods 가 있으면 그것)
+  kits?: KitId[];        // 이 가운데 하나라도 쓸 수 있어야 걸린다 — usable(id) = c.has(id) && (scba 이거나 수량이 없는 장비 || c.kit(id) > 0).
+                         //   scba 는 들었는지만 본다(남은 공기는 when 이 st.air 로 — R2 의 kitCount('scba') 는 60초에서 0 이 되므로 쓰지 않는다)
+  noKits?: KitId[];      // 이 가운데 아무것도 쓸 수 없어야 걸린다(같은 usable) — 장비 조건을 when 과 따로 두어 '장비 때문에'를 센다 (7.3 의 noKit 까닭). 다 쓴 테이저도 '없음'이다
   when: (c: DocCtx) => boolean;      // 상황·상태 술어. DocCtx 만 읽는다. 예외는 여기에 넣는다 (2.6)
-  effect: DocEffect;
+  effect: DocEffect | DocEffect[];   // 같은 자리의 효과 여럿 (fitMul·fitAdd 를 함께, methodMul 을 방법마다)
   th?: Record<string, number>;       // 문턱 상수 (when 이 읽는 수를 여기에 두어 표·패널·테스트가 같은 값을 본다)
   rank: 0 | 1 | 2 | 3;               // 0 생명 · 1 보호 · 2 짝·지원·절차 · 3 장비·효율 (2.6)
   why: DocWhy;
@@ -316,12 +355,13 @@ export interface DoctrineRule {
 }
 export const DOCTRINE: DoctrineRule[] = [];
 export function registerDoctrine(...rules: DoctrineRule[]): void { for (const r of rules) DOCTRINE.push(r); }
-/** 지휘·관제·추격 줄의 이름표 (코드는 orders/doctrine.ts · dispatch/doctrine.ts 에 있다. 기록·측정만 이 표로 이름을 찾는다) */
+/** 지휘·관제·추격 줄의 이름표 (코드는 orders/doctrine.ts · dispatch/doctrine.ts · orders/catastrophe.ts 에 있다. 기록·측정만 이 표로 이름을 찾는다) */
 export const CMD_ROWS: { id: string; dept: DocDept; hook: 'cmd' | 'dispatch' | 'chase'; name: string; short: string; why: DocWhy }[] = [];
 ```
 
+- `docGate(sim, s, a, gate, sense, see?)` 의 `see` 는 실행부가 시야 안에서 잰 것(`{ stunned?: boolean }` — 용의자가 무력화되어 있는 것이 보인다. `perceive` 와 같은 자격)이고, 돌려주는 값은 `{ ok: boolean; rule: string | null; wait: number; opt: string | null }`(`wait` = 막힌 줄들의 `maxWait` 가운데 가장 긴 값).
 - 줄 파일 다섯은 `field/doctrine/index.ts` 가 `common → police → fire → ems → special` 순서로 import 하고, `field/scenes/index.ts` 끝에 `import '../doctrine/index';`·`import '../orders/doctrine';` 두 줄(R1 의 `rules/air`·X6 의 `rules/catastrophe`·R2 의 `rules/methods`·`orders/methods` 다음)을 더한다. `sceneManager` 가 `scenes/index` 를 import 하므로 첫 현장 전에 등록이 끝난다.
-- **등록 순서가 결과를 바꾼다**(같은 순위의 줄끼리 먼저 등록된 줄이 이긴다 — 2.6). 그래서 CLAUDE.md 의 "시나리오의 순서" 함정처럼, 줄 파일의 순서를 바꾸지 않는다. 새 줄은 파일 끝에 붙인다.
+- **등록 순서가 결과를 바꾼다**(같은 순위의 줄끼리 먼저 등록된 줄이 이긴다 — 2.6). 그래서 CLAUDE.md 의 "시나리오의 순서" 함정처럼, 줄 파일의 순서를 바꾸지 않는다. 새 줄은 파일 끝에 붙인다. 각 파일 안의 순서는 3.6 표의 순서(번호 순)다.
 - 테스트 하나가 모든 줄을 훑어 본다: `id` 가 겹치지 않고, `hook` 에 맞는 `effect`·`gate`·`works` 칸이 있고, `note` 의 자리표시자가 알려진 것뿐이다(10절 8).
 
 ### 2.6 우선순위와 충돌
@@ -329,24 +369,29 @@ export const CMD_ROWS: { id: string; dept: DocDept; hook: 'cmd' | 'dispatch' | '
 **판단 순서**(`brain.think` — 앞이 이긴다. R1·H1·X6·R2 가 정한 자리에 R3 를 끼운다):
 
 ```
-perceive → shareNearby → flushOutbox → (지휘관이면 commanderThink)
-0) R3 selfReport (몸 상태가 문턱을 넘었으면 crew 사실 — 판단과 무관한 신고. 4.1)
+perceive → R3 selfReport (몸 상태가 문턱을 넘었으면 crew 사실 — flushOutbox 보다 먼저 두어 같은 판단에 무전이 나간다. 4.1)
+→ shareNearby → flushOutbox → (지휘관이면 commanderThink)
+0) R3 rebuddy (짝을 잃었으면 다시 맺는다 — 5.3)
 1) 철수·이송 지시 boardOrder                         (지금)
 2) R2 물 위 가드                                       (R2 §3.5)
 3) X6: if (cur.kind === 'evacuate') return; 철수 명령·자기 조짐 3 의무 → evacuate      (X6 §5.1)
 4) R3 의무: if (cur.kind === 'airOut' || cur.kind === 'pairOut') return; docDuty → airOut / pairOut
-5) 점수 후보: 후퇴(dangerScore — R3 P11 이 엄폐로 바꿀 수 있다) · 현재 임무 계속 · 지휘관 지시 · 장비 문제 ·
+   R3 놓기: docDrop — 지금 임무에 drop 표시 금지가 걸리면 finishTask(…, false, 'doctrine') 하고 아래로 (아래 끝)
+5) 점수 후보: 후퇴(dangerScore — 후보를 만들 때 docRetreat 가 P11 이면 엄폐로 바꿔 끼운다) · 현재 임무 계속 · 지휘관 지시 · 장비 문제 ·
    R1 공기통 교체(R3 가 문턱 하나를 더한다 — F03) · **R3 교본 행동 하나(docAct)** · 휴식 · 무전 · 자체 판단 · 대기
 6) 판단 오차 → 가장 높은 것
 ```
 
-- **의무끼리**: 철수·이송 > 물 위 > X6 철수 > R3 공기 탈출 > R3 짝 따라 나가기. 업고 있는 대원(`a.carrying !== -1`)에게는 R3 의 의무가 걸리지 않는다 — 그 운반이 곧 밖으로 나가는 길이다(X6 와 같은 판단).
+- **의무끼리**: 철수·이송 > 물 위 > X6 철수 > R3 공기 탈출 > R3 짝 따라 나가기. 업고 있는 대원(`a.carrying !== -1`)에게는 R3 의 의무가 걸리지 않는다 — 그 운반이 곧 밖으로 나가는 길이다(X6 와 같은 판단, G07).
 - **같은 자리의 줄끼리**:
-  - `fit`: 걸리는 모든 `fitMul` 을 곱하고(하나라도 0 이면 0 — **금지가 선호를 이긴다**), 그 값이 0 보다 크면 `fitAdd` 를 모두 더하고 `max(0.02, …)` 로 자른다(R1 의 역할 선호와 같은 규칙). 예외(구조 대상이 있으면 2인 대기조 없이 진입 등)는 따로 "허락" 줄을 두지 않고 **금지 줄의 `when` 안에** 넣는다 — 허락이 금지를 덮는 규칙을 두면 순서에 따라 결과가 갈린다.
-  - `duty`·`act`: 걸리는 줄 가운데 `rank` 가 가장 작은 것 하나, 같으면 등록 순서. **한 판단에 교본 후보는 하나만** 낸다(여럿을 내면 판단 오차 한 번이 교본끼리의 순서를 뒤집는다).
+  - `fit`: 걸리는 모든 `fitMul` 을 곱하고(하나라도 0 이면 0 — **금지가 선호를 이긴다**), 그 값이 0 보다 크면 `fitAdd` 를 모두 더하고 `max(0.02, …)` 로 자른다(R1 의 역할 선호와 같은 규칙). 예외(구조 대상이 있으면 2인 대기조 없이 진입 등)는 따로 "허락" 줄을 두지 않고 **금지 줄의 `when` 안에** 넣는다 — 허락이 금지를 덮는 규칙을 두면 순서에 따라 결과가 갈린다. 같은 뜻의 줄이 분야마다 있을 때(부상 — P12·F14·E11·G01)는 `who.doc` 로 겹치지 않게 가른다(한 대원에게 둘이 걸리지 않는다).
+  - `fitMul` 이 0 보다 크게 키우지 못하고 `fitAdd` 가 0 에서 자격을 만들지 못하므로, **교본은 기본 자격을 열지 못한다**. 기본 자격 자체를 바꾸는 것(E05 의 경계 밖 처치, S06 의 로봇 해체)은 `fitFor` 의 그 `case` 를 고치는 것으로 하고(11.1), 교본 줄은 기록·까닭만 맡는다(`fitMul 1` — 기록 전용 줄).
+  - `duty`·`act`: 걸리는 줄 가운데 `rank` 가 가장 작은 것 하나, 같으면 등록 순서. **한 판단에 교본 후보는 하나만** 낸다(여럿을 내면 판단 오차 한 번이 교본끼리의 순서를 뒤집는다). 경찰의 행동 줄끼리의 순서는 3.6 표 끝에 따로 적었다.
   - `method`: 걸리는 `methodMul` 을 모두 곱한다(0 = 후보에서 뺀다). R2 의 `noGear` 까닭 계산(장비를 빼고 다시 셈)에도 교본 배율은 그대로 곱한다.
-  - `gate`: 막는 줄이 하나라도 있으면 막힌다. 알리는 문구는 `rank` 가 가장 작은 줄의 것.
-- **지휘관 지시와 교본**: 교본은 지시를 "거절"하지 않는다. 지휘관이 맡길 수 없게(`fit` 0) 하거나, 맡은 대원이 판단 지점에서 기다리게(`gate`) 할 뿐이다. 기다림은 상한이 있고(4.4) 상한이 지나면 임무를 놓는다 — 지휘관은 작업의 `status` 변화를 보고 다시 배정한다.
+  - `gate`: 막는 줄이 하나라도 있으면 막힌다. 알리는 문구는 `rank` 가 가장 작은 줄의 것. `choose` 줄은 막지 않고 `opt` 만 돌려준다.
+- **지휘관 지시와 교본**: 교본은 지시를 "거절"하지 않는다. 지휘관이 맡길 수 없게(`fit` 0) 하거나, 맡은 대원이 판단 지점에서 기다리게(`gate`) 할 뿐이다. 기다림은 상한이 있고(4.4) 상한이 지나면 지금 동작으로 가거나 임무를 놓는다 — 지휘관은 작업의 `status` 변화를 보고 다시 배정한다.
+- **교본 임무 중인 대원을 지휘관이 빼 가지 않는다**: `commander.assign` 의 후보 반복에 지금의 휴식 건너뛰기(`b.task.kind === 'rehab' && stamina < 40`) 옆에 한 줄 — `cover`·`rearm`·`airOut`·`pairOut` 중인 대원, 그리고 짝이 위험 실내에 있는 동안의 `pair` 대원은 건너뛴다. 이 임무들은 짧고(엄폐 12초 상한, 보급·탈출은 대기 지점까지) 스스로 끝나며, 지금 `hasWork → curPr 0.6` 으로 보면 우선도 0.82 이상의 지시가 엄폐 중인 대원을 빼 와 엄폐 → 교전 → 엄폐로 왕복한다. 짝 동행을 빼 가면 2인 진입이 안에서 깨진다.
+- **놓기 `docDrop`**: `fit` 0 은 새로 맡는 것만 막는다 — 지금의 계속 점수(`0.5 + 0.4p + 0.08`)는 `fitFor` 를 보지 않는다. 그래서 하던 임무를 놓아야 하는 금지(`drop: true` — P09·P22 의 총기 상대 `engage`·`perimeter`)는 판단마다 지금 임무의 작업에 대해 보고 모드의 그 줄만 다시 보고, 0 이면 `finishTask(sim, s, a, false, 'doctrine')`(실패 기록·`w.fails`·`holdUntil` 없음 — 11.1 의 사유 표) 후 `recordDoc`. 기록 문구는 그 줄의 `note`(한 번).
 - **X6 와 교본**: X6 의 위험 구역 문(`registerGate`)·`fitFor` 안전망·`agentCost` 가 먼저 막는다. 교본은 그 안에서 더 좁히기만 한다(교본이 X6 의 금지를 푸는 길은 없다).
 - **R2 의 실패 기억과 교본의 기억**: 따로 둔다. `a.mfail` 은 방법, `a.docMem` 은 교본 줄. 교본이 방법을 막아(`methodMul 0`) 고를 것이 없으면 R2 의 넓히기 규칙(② `mfail` 무시)은 교본 배율을 무시하지 않는다 — 선택 임무는 방법 없이 지금 코드로, `waterRescue` 는 `methodFit` 0 → 맡지 않는다.
 
@@ -354,15 +399,16 @@ perceive → shareNearby → flushOutbox → (지휘관이면 commanderThink)
 
 | 언제 | 어디서 | 무엇을 | 예 |
 |---|---|---|---|
-| 몸 상태가 문턱을 넘었다 | `doctrineRun.selfReport`(자기 믿음에 `crew` 사실을 넣는 그 자리) | `learn` — 무전 문구는 그 사실의 글(`flushOutbox` 가 보낸다). 공기 위급·탄 위급·중상은 즉시 보낸다(4.1) | "이서준: 공기 30% 미만." · "김도윤: 부상 — 가벼운 임무로 돌리겠습니다." |
+| 몸 상태가 문턱을 넘었다 | `doctrineRun.selfReport`(자기 믿음에 `crew` 사실을 넣는 그 자리) | `learn` — 무전 문구는 그 사실의 글(`flushOutbox` 가 보낸다). 공기 위급·탄 위급·중상은 즉시·중요로 보낸다(4.1). **글은 사실만 쓴다** — 하지 않을 수도 있는 행동("돌리겠습니다", "빠집니다")을 말하지 않는다(fit 은 지금 임무를 놓게 하지 않는다. R1 §9 가 '교체하러 나갑니다'를 피한 것과 같은 까닭, 규칙 5) | "이서준: 공기 30% 미만." · "김도윤: 부상 — 체력 저하." · "박하준: 탄약 소진." |
 | 의무·교본 행동을 정했다 | `brain` 의 의무 자리 / 후보의 `apply` | `emit(role 'RESPONDER', kind 'action', imp 1)` 줄의 `note`, `recordDoc` | "공기 30% 미만 — 박서윤, 같이 나간다." |
 | 판단 지점에서 처음 막혔다 | 실행기의 그 분기(`t.gateAt` 을 정하는 그 줄) | `!t.gateSaid` 일 때 한 번 `emit(imp 1)`, `recordDoc`(t1 은 풀릴 때 고친다) | "혼자 들어가지 않습니다. 동료를 기다립니다." |
 | 예외로 막지 않았다 | 같은 자리 | 예외가 처음 결정을 바꾼 때 한 번 `emit(imp 2)` | "총격이 계속됩니다 — 단독 진입!" |
 | 기다림이 상한에 닿았다 | 같은 자리 | timeout 갈래의 문구(4.4) | "지원이 오지 않습니다 — 진입합니다." |
 | 방법을 골랐다 | R2 `startMethod` | R2 의 `SAY` 표에 R3 의 까닭 다섯을 더한 문구 | "부상으로 헤엄은 못 합니다. 구명환을 던지겠습니다." |
-| `fit` 이 배정을 바꿨다 | `commander.assign`·`brain.takeWork`(배정이 정해진 그 자리) | 기록 문구는 따로 내지 않는다. 지시 무전 끝에 까닭 말 하나를 붙이고(`(부상 — 가벼운 임무)`), `recordDoc(eventId = 그 지시 기록)` | "김도윤, 출입구 봉쇄 맡아라 (부상 — 가벼운 임무)." |
-| 지휘·관제 줄 | `orders/doctrine.ts`·`dispatch/doctrine.ts` 의 요청·지령 자리 | 지금의 `request`·`emit` 그대로, `recordDoc` | "흉기 난동 — 2인 제압 인력이 없습니다. 경찰 지원 바랍니다." |
+| `fit` 이 배정을 바꿨다 | `commander.assign`(배정이 정해진 그 자리) | 기록 문구는 따로 내지 않는다. **교본이 없었다면 다른 대원이 뽑혔을 때만**(아래) 지시 무전 끝에 까닭 말 하나를 붙이고(`(부상 — 가벼운 임무)`), `recordDoc(eventId = 그 지시 기록)`. '돌리겠다'는 말은 배정이 실제로 바뀐 이 자리에만 쓴다 | "김도윤, 출입구 봉쇄 맡아라 (부상 — 가벼운 임무)." |
+| 지휘·관제 줄 | `orders/doctrine.ts`·`dispatch/doctrine.ts` 의 요청·지령 자리 | 지금의 `request`·`emit` 그대로, `recordDoc` — 요청은 `request` 가 돌려준 기록 id 가 0 이상일 때만(버려진 요청은 세지 않는다 — 6.1 끝) | "흉기 난동 — 2인 제압 인력이 없습니다. 경찰 지원 바랍니다." |
 
+- **`fit` 이 배정을 바꿨는가**(까닭 말과 '쓰였다' 측정의 정의): `assign` 의 후보 반복은 한 작업마다 1등을 둘 센다 — 교본을 넣은 `fit` 으로 센 1등과, `docFitRules` 가 함께 돌려주는 교본 전의 값(`base`)으로 센 1등. 둘이 다르면 그 작업에서 교본이 배정을 바꾼 것이고, 뽑힌 대원에게 걸린 중립 아닌 줄(`fitMul ≠ 1` 또는 `fitAdd ≠ 0`)과 밀려난 대원에게 걸린 금지·감점 줄을 `recordDoc(hook 'fit', eventId = 그 지시 기록)` 으로 센다. 까닭 말은 뽑힌 대원 쪽의 `rank` 가 가장 작은 줄의 `why`. 둘이 같으면 아무것도 남기지 않는다. 대원의 자체 판단(`brain` 7번)은 비교할 1등이 없으므로 `fit` 줄을 세지 않는다.
 - `recordDoc(sim, I, a, rule, hook, extra, eventId, say)` 는 `I.docs` 에 한 줄을 넣는다. 같은 `(rule, rid, tgt)` 의 줄이 30초 안에 있으면 새 줄 대신 그 줄의 `t1` 을 늘린다(같은 기다림이 판단 주기마다 줄을 만들지 않게).
 - **같은 말을 되풀이하지 않는다**: 교본 행동 문구는 같은 대원·같은 줄에 20초에 한 번(지금 후퇴 문구와 같다). 판단 지점 문구는 임무마다 한 번(`t.gateSaid`).
 - 기록 문구가 바뀌고 무전이 늘므로 교대 해시(`sim.logHash`)가 바뀐다. 기존 테스트는 같은 시드 두 번의 해시가 같은지만 본다.
@@ -385,11 +431,12 @@ R1 은 "탄약 수는 넣지 않는다(총은 무제한)"고 정했다. R3 는 �
 | `sniper` 저격 소총 | 15 | 5 | 1 | 3.0 | 15 |
 
 - **명부**(R2 의 수량 복사 규칙을 그대로): `{ id, uses: KITS[id].uses, mag: KITS[id].mag }`. 인근 도시 지원 부대도 같다.
-- **소모**(`executor.shootAt` 첫머리 — 실행부): 쏘는 대원이 가진 총(R1 의 `hasFirearm` 이 고르는 것 — 저격 > 소총 > 권총 가운데 가진 것)의 `mag ≤ 0` 이면 쏘지 않는다. 쏘면 `useKit(sim, rid, w, perShot)` 과 `it.mag −= perShot`. `mag` 가 0 이 되고 `uses > 0` 이면 `a.reloadUntil = sim.t + reload`, 그 시각에 `mag = min(magSize, uses)`(`doctrineRun.reloadTick`, `act` 첫머리에서 한 줄). 재장전 중에는 `shootAt` 이 **난수를 부르기 전에** 돌아간다(그래야 `s.rng` 소비가 "쏘지 않았다"와 같다). 비살상탄·저격(R2)은 자기 장비의 수량을 쓰므로 이 규칙과 따로다(저격의 한 발은 `sniper` 의 탄 1).
+- **소모**(`executor.shootAt` 첫머리 — 실행부): 쏘는 대원이 가진 총(G5 의 `weaponOf(sim, a)` 와 같은 순서 — 저격 > 소총 > 권총 가운데 가진 것. R1 의 `hasFirearm` 은 참/거짓만 돌려준다. 판단부는 같은 순서의 `gear.gunOf` 를 쓴다)의 `mag ≤ 0` 이면 쏘지 않는다. 쏘면 `useKit(sim, rid, w, perShot)` 과 `it.mag −= perShot`. `mag` 가 0 이 되고 `uses > 0` 이면 `a.reloadUntil = sim.t + reload`, 그 시각에 `mag = min(magSize, uses)`(`doctrineRun.reloadTick`, `act` 첫머리에서 한 줄). 재장전 중에는 `shootAt` 이 **난수를 부르기 전에** 돌아간다(그래야 `s.rng` 소비가 "쏘지 않았다"와 같다). 비살상탄(R2)은 자기 장비(`beanbag`)의 수량을 쓰므로 이 규칙과 따로다. 저격(R2 `sniper` 방법)의 한 발은 `sniper` 의 탄 1 — R2 의 `methodRun` 저격 실행부가 판정 직후 `useKit(sim, rid, 'sniper', 1)`·`it.mag −= 1` 을 하게 고친다(11.1). 탄이 0 이면 R2 의 조건 상실로 그 방법을 놓는다.
+- 총기 셋에 `uses` 를 채우면 R2 의 `gear.kitCount` 가 총기를 수량 장비로 보아 남은 탄을 돌려준다(R2 §3.3 의 `isQty`). 그래서 총기를 `kits` 로 거는 R2 방법은 탄 0 에서 후보가 아니게 된다 — 의도한 것이다(쏠 탄이 없는 사람이 저격을 고르지 않는다). R1 의 `perimeter`·`engage` 자격(`hasFirearm`)은 수량을 보지 않으므로 탄 0 의 금지는 교본(P09·P22)이 맡는다.
 - **문턱**: `ammoLow` = `uses ≤ magSize`(마지막 탄창), `ammoCrit` = `uses ≤ 2 × perShot`(발사 2회 이하). 둘 다 `CrewBelief.ammo` 로 신고한다.
 - **재보급**(`TaskKind 'rearm'`, 라벨 '탄약 보급'): 대기 지점까지 가서(3칸) 6초 → 자기 부대 `ammoBox > 0` 이면 가진 총기를 모두 처음 값으로(`uses`·`mag`), `ammoBox −= 1`, `emit(imp 0, '탄약 보급 완료.')`. 상자가 없으면 `emit(imp 1, '보급할 탄약이 없습니다.')`(이 대원·이 사건에 한 번), `a.docMem` 에 그 줄을 이 사건 끝까지.
 - **탄약 상자**(`Unit.ammoBox`): 순찰 `tn.ammoBox`, 기동 +1, 특공 +2, 폭발물 처리반 `tn.ammoBox`, 경찰 헬기 0(내리는 사람이 없다). 집에 닿으면(`resources.arrive` 의 `returning`) 가득 — R1 의 `spareAir` 와 같은 자리. `tn.ammoBox = [1, 1, 2, 2, 3][장비]`.
-- 탄이 0 이면 총기 상대 `engage`·`perimeter` 는 교본이 막는다(P09·P22). `arrest`(R1: 총기 ‖ 테이저)는 그대로 — 흉기·맨손 상대는 테이저·몸으로 검거한다.
+- 탄이 위급(`ammoCrit`)이거나 0 이면 총기 상대 `engage`·`perimeter` 는 교본이 막고 하던 것도 놓게 한다(P09·P22 — `drop`). 교전 중에 탄창이 비어 쏘지 못한 채 서 있는 대원이 생기지 않게 한다(`shootAt` 이 바로 돌아가므로 그 상태로는 아무것도 하지 않는다). `arrest`(R1: 총기 ‖ 테이저)는 그대로 — 흉기·맨손 상대는 테이저·몸으로 검거한다.
 - 대부분의 사건에서 탄은 바닥나지 않는다(교전이 짧다). 긴 총격·대형 인질극에서만 드러난다 — 드물지만 보이게(8절의 "쓰인 줄" 목표가 이 줄을 장면 테스트로 잰다).
 
 ### 2.10 엄폐 자리 (바탕 — 2단계)
@@ -399,16 +446,18 @@ R1 은 "탄약 수는 넣지 않는다(총은 무제한)"고 정했다. R3 는 �
 ```ts
 // doctrine.ts
 export function coverTileAt(s: Scene, x: number, y: number): boolean;    // 벽·창·바위·가구 칸 (s.tiles 만 — 소품은 보지 않는다. executor.isCoverTile 과 같은 칸 종류)
-export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: number, wantLos: boolean, rMax = 4, dMax = 7.5): { x: number; y: number } | null;
+export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: number, wantLos: boolean): { x: number; y: number } | null;
 ```
 
-- 후보: 대원 둘레 `rMax` 칸 안의 칸 `p` — `staticPass`, 물·`VOID` 아님, 위협(믿음 위치 `t`)에서 1.8칸 넘게 떨어짐.
-- 엄폐: `p` 에서 위협 쪽 방향(`sign(tx − px)`, `sign(ty − py)`)의 이웃 세 칸 가운데 하나가 `coverTileAt`.
-- `wantLos`(엄폐 사격): `losWalls(p, t)` 이고 `dist(p, t) ≤ dMax`. `!wantLos`(숨기 — 재장전·탄 위급·중상·협상자): `losWalls(p, t)` 가 거짓(벽에 가려 서로 보이지 않는다).
-- 점수: 대원에게 가까운 순, 같으면 칸 번호가 작은 쪽. 없으면 `null` → 부르는 쪽이 지금 동작(엄폐 사격은 지금의 7.5칸 접근, 숨기는 지금의 후퇴)으로 간다.
+- **후보 칸** `p`: `staticPass`, 물·`VOID` 아님, 위협(믿음 위치 `t`)에서 1.8칸 넘게 떨어짐, 그리고
+  - `wantLos`(엄폐 사격): **위협 둘레의 고리** — `3 ≤ dist(p, t) ≤ 7.5`, `losWalls(p, t)`, 대원에게서 12칸 안(멀리 있는 대원도 자리를 얻는다. 대원 둘레에서만 찾으면 7.5칸 밖의 대원은 늘 `null` 이 된다).
+  - `!wantLos`(숨기 — 재장전·탄 위급·중상·협상자): **대원 둘레 4칸** — `losWalls(p, t)` 가 거짓(벽에 가려 서로 보이지 않는다).
+- **엄폐**: `p` 에서 위협 쪽 방향(`sign(tx − px)`, `sign(ty − py)`)의 이웃 세 칸 가운데 하나가 `coverTileAt`.
+- **점수**: 대원에게 가까운 순, 같으면 칸 번호가 작은 쪽. 없으면 `null` → 부르는 쪽이 지금 동작(엄폐 사격은 지금의 7.5칸 접근, 숨기는 지금의 후퇴)으로 간다.
 - 소품 칸을 보지 않는 까닭: `s.propAt` 은 차량·밸브 같은 물건이 어디 있는지 드러낸다 — 판단부가 소품을 읽지 않는다는 R2 의 금지를 그대로 둔다. 가구 칸(`T.FURN`)은 부서지면 바닥이 되므로(`damage.ts`) 그때부터 엄폐가 아니다 — 지금의 `inCover` 규칙과 같다.
-- **쓰는 곳**: ① `engage` 의 마지막 분기(총기 용의자와 교전 — 지금은 7.5칸·시야 아무 자리)가 `coverSpot(…, wantLos = true)` 로 간다(P05 — R2 가 이미 이 분기를 기록 이름 `cover` 로 부른다. R3 가 그 이름을 실제 행동으로 만든다). ② `TaskKind 'cover'`(숨기)가 `wantLos = false` 로 간다.
-- **`cover` 임무**(라벨 '엄폐'): `t.tx/ty` 를 처음 한 번 정하고 `moveTo(…, 0.4)`(한 틱에 `moveTo` 하나 — 목표를 매 틱 다시 고르지 않는다). 닿으면 기다린다. 끝나는 조건: 재장전이 끝났고 4초 동안 피격 위협이 없음 / 탄 위급이면 `rearm` 으로 넘길 수 있게 끝냄 / 믿음 속 위협이 활동하지 않음 / 12초. 끝나면 `a.docMem` 에 그 줄을 20초(같은 위협에 엄폐 ↔ 교전 왕복을 늦춘다).
+- **자리는 임무에 담고, 정해진 때에만 다시 고른다**(CLAUDE.md 함정 "한 임무 안에서 이동 목표를 둘 두지 않는다"): 고른 자리와 그때의 위협 위치를 `t.cvX/cvY`·`t.cvTx/cvTy` 에 담는다. 다시 고르는 때는 셋뿐이다 — ① 아직 고른 적이 없다(`t.cvX === undefined`), ② 믿음 속 위협이 고를 때의 자리에서 2칸 넘게 움직였다, ③ 그 자리에 닿은 뒤 위협이 2초 넘게 보이지 않는다(`t.cvLost`, 엄폐 사격만). `null` 이 나오면 `t.cvX = NaN` 으로 두어 ②·③ 이 될 때까지 다시 부르지 않는다(그동안 지금 동작). 한 틱에 `moveTo` 는 그 자리 하나로만 부른다.
+- **쓰는 곳**: ① `engage` 의 마지막 분기(총기 용의자와 교전 — 지금은 7.5칸·시야 아무 자리)가 `coverSpot(…, wantLos = true)` 로 간다(P05 — R2 가 이미 이 분기를 기록 이름 `cover` 로 부른다. R3 가 그 이름을 실제 행동으로 만든다). ② `TaskKind 'cover'`(숨기)가 `wantLos = false` 로 간다. ③ P14 의 대기 자리(`wantLos = true` — 쏘지는 않지만 용의자가 돌아서는 것을 보아야 한다).
+- **`cover` 임무**(라벨 '엄폐'): 위 규칙으로 자리를 정하고 `moveTo(…, 0.4)`. 닿으면 기다린다(G5 의 엄폐 자세). 끝나는 조건: 재장전이 끝났고 4초 동안 피격이 없음 / 탄 위급인데 4초 동안 피격이 없음(그다음 판단에 P08 이 `rearm` 을 낸다) / 믿음 속 위협이 활동하지 않거나 `fight` 가 아님(P16 은 이때 협상 자리로 돌아간다 — 작업판의 `negotiate` 는 `setTask` 의 `preempt` 로 열린 채 남아 있어 지휘관이 다시 준다) / 12초. 끝나면 `a.docMem` 에 그 줄·그 위협을 20초(같은 위협에 엄폐 ↔ 교전 왕복을 늦춘다). 계속 점수는 4.4 끝.
 
 ---
 

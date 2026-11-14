@@ -18,9 +18,10 @@ TypeScript + React + Vite, 그림은 Canvas 2D. 서버·외부 API·LLM 호출 �
 |---|---|
 | `npm run dev` | 개발 서버 (`http://localhost:5173`, `?seed=S7&diff=hard` 로 조건 고정) |
 | `npm run check` | **커밋 전 관문**: 타입 검사 + 테스트 + 시드 40개 헤드리스 검증 (3분쯤) |
-| `npm test` | Vitest 117개, 파일 7개: `sim`(재현성, 교대 완주, 정보 격리, 난이도, 전술, 유형별 현장, 지도, 생활 사건, 추격전) · `ext`(확장 지점) · `crime` · `major` · `disaster` · `destruction` · `traffic`. 한 묶음만 볼 때는 `npx vitest run tests/crime.test.ts` |
+| `npm test` | Vitest 137개(+건너뜀 1), 파일 8개: `sim`(재현성, 교대 완주, 정보 격리, 난이도, 전술, 유형별 현장, 지도, 생활 사건, 추격전) · `ext`(확장 지점) · `crime` · `major` · `disaster` · `destruction` · `traffic` · `causality`(측정 도구: 결과 불변·손 계산·문구 규칙·멈춤 감지기). 한 묶음만 볼 때는 `npx vitest run tests/crime.test.ts` |
 | `npm run sweep -- 100` | 시드 100개 결과 분포. `--diff hard`, `--diff 4,4,4,2,3,3`(빈도·심각도·용의자·장비·신고·부대, 일곱째 숫자를 붙이면 교통), `-v`, `--json`, `--check` |
-| `npm run sweep -- 1 --log S7` | 한 교대의 전체 이벤트 기록과 종료 보고서 (동작 확인에 가장 유용) |
+| `npm run sweep -- 1 --log S7` | 한 교대의 전체 이벤트 기록과 종료 보고서 (동작 확인에 가장 유용). `--metrics` 를 붙이면 사건마다 가장 긴 원인 사슬과 확산 길 |
+| `npm run sweep -- 40 --metrics` | 측정 도구(I1-a, `scripts/metrics.ts`): 기본 출력의 지표 아홉 줄(`chain` 연쇄 깊이 · `systems` 시스템 간 영향 · `replan` 재계획 · `alt` 대체 방법 · `actions` 행동 다양성 · `contention` 자원 경쟁 · `stall` 멈춘 시간 · `variety` 결과 다양성 · `consistency` 기록 일치)에 더해 시나리오별 표와 모든 후보(`STALL`·`FORGOT`·`REPEAT`·`SPREAD`·`UNLOC`). `--no-metrics` 는 표본을 끈다(속도 비교용). 관문(`--check`)은 연쇄 깊이 ≤ 4·교대당 연쇄 ≤ 8·기록 일치 C1~C4 = 0·계산 오류 0 을 늘, 교착 후보·잊힌 사건 0 을 보통 기본 조건에서 건다 |
 | `npm run sweep -- 20 --force armed/kidnap --scen` | 그 시나리오를 교대마다 초반에 한 번 일으키고, 시나리오별 결과 표를 낸다 (새 시나리오 확인용). `--disaster typhoon`(flood·quake·wildfire·tsunami)은 재난을 정해서 |
 | `npm run ui-check` | (선택, Playwright 필요) 화면 자동 검사. 개발 서버(5191)를 스스로 띄워 콘솔 오류·배속·되감기 뒤 기록 해시(헤드리스와 비교)·새로고침 복원·종료 보고서·패널을 본다(2분쯤). `-- --out <폴더> --seed S7`. 화면을 고친 묶음은 끝낼 때 한 번 돌린다 |
 | `npm run build` | 타입 검사 + 정적 빌드 |
@@ -169,6 +170,7 @@ tests/                       sim.test.ts(기본) + 묶음별 ext·crime·major·
 - **숨는 정도의 상한.** 사람을 더 숨게 만드는 규칙(`concealment` 증가)은 수색 체계가 찾을 수 있는 상한(0.84)을 넘기지 않는다. 넘기면 밤에 탐지 거리가 1칸 아래로 떨어져 3차 재수색까지 못 찾고 한계 시간으로 끝난다(실제로 겪었다). 현장의 맨 가장자리로 걸어가게 하는 것도 피한다.
 - **사건 하나에 걸리는 세계 규칙의 상태는 WeakMap 에.** `tickWander`·`tickMedical`·`tickCrush`·`tickLift` 는 상태를 WeakMap(대상·현장 → 상태)에 둔다. 현장·구조 대상 객체의 모양을 바꾸지 않기 위해서이고, 되감기는 Sim 을 새로 만들어 다시 돌리므로 안전하다.
 - **작업 폴더 여럿이 node_modules 를 함께 쓸 때.** worktree 마다 `node_modules` 를 링크로 쓰면 의존성 캐시(`node_modules/.vite`)도 함께 쓴다. 다른 개발 서버가 캐시를 다시 만들면 이쪽 페이지가 새로고침된다. `npm run ui-check` 는 자기 캐시(`AR_VITE_CACHE`, `vite.config.ts` 의 `cacheDir`)를 쓴다.
+- **측정 도구의 문구 규칙.** `scripts/metrics.ts` 는 기록 문구(지원 요청·응급실 대기·이송 출발·병원 인계·결원 운용 중단·출동 지령)와 문제 코드로 시스템을 가른다. 이 문구를 바꾸거나 새 문제 코드를 만들면 `PHRASE`·`PROBLEM_SYS` 표를 함께 고친다(`tests/causality.test.ts` 가 잡는다). 측정은 상태를 읽기만 한다 — 표본에서 src/sim 함수를 부르지 않는다.
 - **현장 그림의 고정 층.** `staticLayer.ts` 는 타일·가구가 바뀔 때만 다시 그린다(`staticSig`). 매 프레임 바뀌는 것(문짝, 불, 사람)을 여기에 넣지 않는다. 새 타일 종류·가구를 만들면 `surfaceMap`·`paintTile`·`furniture` 에 그림을 추가한다.
 - **건물 배치는 고정이 아니다.** 방의 수·위치·출입구가 사건마다 다르다. 좌표를 직접 쓰지 말고 `Plan`(`rooms`·`corridors`·`exitDoors`·`floors`)과 `s.exits`·`s.regions` 로 찾는다. 복도가 없는 건물(`corridors` 가 빈 배열)도 있다. 새 틀을 만들면 "모든 바닥에 걸어서 닿는다"는 테스트(`현장 배치의 다양성`)를 통과해야 한다.
 - **가구는 실제 장애물이다(`T.FURN`).** 지나갈 수 없고, 시야는 통과하며, 엄폐물이 된다. 방을 새로 만들 때는 `builders.ts` 의 `furnish()` 를 쓴다(문 주변을 비우고 방이 끊기지 않는지 검사한다).

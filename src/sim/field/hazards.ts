@@ -500,7 +500,12 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
         h.state = 'escaped';
         raiseProblem(sim, I, 'SUSPECT_FLED', `${h.label} 도주`, { role: 'SYSTEM', actor: '현장', text: `${h.label}가 현장을 벗어나 도주했습니다.`, imp: 3, truth: s.arrivedAt < 0 }, false);
         // 연쇄: 총기를 든 채 달아난 용의자는 다른 곳에서 다시 범행할 수 있다
-        if (h.weapon === 'gun' && s.rng.chance(0.45)) sim.gen.chain.push({ at: sim.t + s.rng.range(45, 100), opts: { note: '도주한 용의자가 다른 곳에서 다시 범행을 벌입니다', type: 'armed', variant: 'robbery', parent: I.id } });
+        if (h.weapon === 'gun') {
+          const r = s.rng.next();
+          // 차를 몰고 달아나면 추격전이 이어지고(도주 차량), 아니면 다른 곳에서 다시 범행한다
+          if (r < 0.35 && !I.pursuit && !sim.gen.chain.some((c) => c.opts.parent === I.id && c.opts.variant === 'getaway') && !sim.incidents.some((J) => J.parent === I.id && J.truth.variant === 'getaway')) sim.gen.chain.push({ at: sim.t + 2, opts: { type: 'armed', variant: 'getaway', nodeId: I.truth.nodeId, parent: I.id, note: '달아난 용의자가 차를 몰고 도주합니다', rng: sim.rng.fork('getaway:' + I.id + ':' + h.id) } });
+          else if (r < 0.65) sim.gen.chain.push({ at: sim.t + s.rng.range(45, 100), opts: { note: '도주한 용의자가 다른 곳에서 다시 범행을 벌입니다', type: 'armed', variant: 'robbery', parent: I.id } });
+        }
         continue;
       }
       const ti = h.path[h.pathI];

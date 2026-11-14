@@ -13,23 +13,38 @@ import type { Incident, Unit } from './types';
 import { josa } from './util';
 
 const rngOf = new WeakMap<Incident, Rng>();
-const WHO: Record<string, string> = { kidnap: '납치 차량', drunk: '난폭 운전 차량' };
+const WHO: Record<string, string> = { kidnap: '납치 차량', drunk: '난폭 운전 차량', getaway: '도주 차량' };
+/**
+ * 납치범이 숨어들 만한 곳: 외진 창고와 작업장.
+ * 설계서(N4b ④)에는 농가·펜션·보관소·비닐하우스도 있지만, 숨어든 곳에서 이어지는 인질 사건은 무장 사건이 날 수 있는 건물(cityPlan.INCIDENT_PLACES.armed)이어야 한다
+ * (tests/sim.test.ts '건물마다 정해진 도시'가 검사한다). 그 표에 넣으면 여기에도 넣을 수 있다.
+ */
+const HIDEOUT_KINDS = ['warehouse', 'workshop'];
 
 /** 추격전으로 시작하는 사건을 준비한다 (사건 생성 직후). 차는 신고 전화가 걸려 올 즈음 달리기 시작한다. */
-export function startPursuit(sim: Sim, I: Incident, kind: 'kidnap' | 'drunk'): void {
+export function startPursuit(sim: Sim, I: Incident, kind: 'kidnap' | 'drunk' | 'getaway'): void {
   const rng = sim.rng.fork('pursuit:' + I.id);
   rngOf.set(I, rng);
   const city = sim.city, n = city.nodes[I.truth.nodeId];
   const exits = city.nodes.filter((q) => q.exit);
-  // 납치범은 도시 밖으로 나가는 길 가운데 먼 쪽을 고른다. 난폭 운전자는 정처 없이 달린다
+  // 납치범과 달아나는 무장 용의자는 도시 밖으로 나가는 길 가운데 먼 쪽을 고른다. 난폭 운전자는 정처 없이 달린다
   const far = [...exits].sort((a, b) => Math.hypot(b.x - n.x, b.y - n.y) - Math.hypot(a.x - n.x, a.y - n.y));
-  const goal = kind === 'kidnap' ? far[rng.int(0, Math.min(2, far.length - 1))].id : rng.pick(city.nodes.filter((q) => q.edges.length >= 3)).id;
+  let goal = kind === 'kidnap' || kind === 'getaway' ? far[rng.int(0, Math.min(2, far.length - 1))].id : rng.pick(city.nodes.filter((q) => q.edges.length >= 3)).id;
   const first = n.edges.map((id) => city.edges[id]).filter((e) => !e.closed)[0] ?? city.edges[n.edges[0]];
+  // 납치범 열에 넷은 도시를 빠져나가지 않고 은신처로 간다 (따로 뽑는 난수: 나머지 납치 사건의 흐름을 흔들지 않는다)
+  let hideout: number | undefined;
+  if (kind === 'kidnap') {
+    const hr = sim.rng.fork('hideout:' + I.id);
+    const cands = city.places.filter((q) => HIDEOUT_KINDS.indexOf(q.kind) >= 0 && !q.open && q.facility < 0 && q.nodeId !== n.id && Math.hypot(q.x + q.w / 2 - n.x, q.y + q.h / 2 - n.y) >= 500);
+    if (hr.chance(0.4) && cands.length) { const pl = hr.pick(cands); hideout = pl.id; goal = pl.nodeId; }
+  }
   I.pursuit = {
     state: 'driving', kind, from: n.id, to: first.a === n.id ? first.b : first.a, edge: first.id, t: 0, x: n.x, y: n.y, angle: 0, goal,
     startAt: I.firstCallAt + (kind === 'kidnap' ? 2 : 0), nextSight: 0, seenAt: -1, pressure: 0, tracked: false, how: '',
-    crashAt: kind === 'drunk' ? I.firstCallAt + rng.range(30, 130) : Infinity, giveUpAt: I.firstCallAt + (kind === 'kidnap' ? 300 : 260), trail: [[n.x, n.y]],
+    crashAt: kind === 'drunk' ? I.firstCallAt + rng.range(30, 130) : Infinity, giveUpAt: I.firstCallAt + (kind === 'kidnap' ? 300 : kind === 'getaway' ? 240 : 260), trail: [[n.x, n.y]],
   };
+  if (hideout !== undefined) I.pursuit.hideout = hideout;
+  if (kind === 'getaway' && rng.chance(0.3)) I.pursuit.crashAt = I.firstCallAt + rng.range(45, 160);      // 서두르다 사고를 내기도 한다
   pickNext(sim, I, rng, -1);
 }
 
@@ -112,6 +127,18 @@ export function tickPursuits(sim: Sim): void {
     const blocker = I.assigned.map((uid) => sim.units[uid]).find((u) => ground(u) && u.state === 'enroute' && Math.hypot(u.x - B.x, u.y - B.y) < 24);
     if (blocker) { stop(sim, I, B.id, 'block', blocker); continue; }
     if (sim.t >= p.crashAt) { stop(sim, I, B.id, 'crash', null); continue; }
+    if (p.hideout !== undefined && B.id === p.goal) {
+      // 은신처 앞에 닿았다: 부대가 보고 있으면 그 자리에 세우고, 아무도 보지 못했으면 숨어든다 (나중에 그곳에서 제보가 들어온다)
+      const watcher = closest && cd < 175 ? closest : I.assigned.map((uid) => sim.units[uid]).find((u) => u.state === 'enroute' && u.air && Math.hypot(u.x - p.x, u.y - p.y) < 430) ?? null;
+      if (p.tracked && watcher) { stop(sim, I, B.id, 'caught', watcher); continue; }
+      const den = city.places[p.hideout];
+      p.state = 'escaped'; p.how = 'hideout';
+      emit(sim, { inc: I.id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: 1, truth: true, text: `납치범이 붙잡은 사람을 데리고 ${den.name}에 숨어들었습니다.` });
+      raiseProblem(sim, I, 'SUSPECT_FLED', '납치 차량을 놓침', { role: 'SYSTEM', actor: '교통정보', imp: 3, causes: [I.lastEvent], text: `${josa(WHO[p.kind], '이/가')} ${nodeName(city, B.id)} 부근에서 자취를 감췄습니다. 추격 실패.` }, false);
+      closeIncident(sim, I, 'abandoned');
+      sim.gen.chain.push({ at: sim.t + rng.range(40, 90), opts: { type: 'armed', variant: 'hostage', placeId: p.hideout, parent: I.id, note: '납치범이 숨어든 곳에서 제보가 들어옵니다', rng: sim.rng.fork('hideout-call:' + I.id) } });
+      continue;
+    }
     if ((B.exit && B.id === p.goal) || sim.t >= p.giveUpAt) {
       // 놓쳤다
       p.state = 'escaped';

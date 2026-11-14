@@ -56,7 +56,7 @@ export function farRooms(s: Scene, P: Plan): Region[] {
 }
 
 // ───────────────────────── 건물 화재 ─────────────────────────
-function buildFire(sim: Sim, I: Incident, rng: Rng): Scene {
+export function buildFire(sim: Sim, I: Incident, rng: Rng): Scene {
   const s = baseScene(sim, I, rng);
   const sev = I.truth.severity, dist = I.truth.district, pk = I.truth.placeKind;
   const falseAlarm = I.truth.variant === 'false';      // 오인 신고: 탄 냄새만 나고 불은 없다
@@ -220,9 +220,9 @@ function buildRoadIncident(sim: Sim, I: Incident, rng: Rng): Scene {
 
 // ───────────────────────── 추격 끝에 멈춘 차량: 납치범 검거, 난폭 운전 ─────────────────────────
 // 사건이 생길 때 한 번(신고자가 본 내용을 정하기 위해), 차가 멈춘 뒤 한 번 더 만든다. 같은 난수 흐름을 쓰므로 탄 사람은 같다.
-function buildStop(sim: Sim, I: Incident, rng: Rng): Scene {
+export function buildStop(sim: Sim, I: Incident, rng: Rng): Scene {
   const s = baseScene(sim, I, rng);
-  const kidnap = I.truth.variant === 'kidnap', crash = !!I.pursuit && I.pursuit.how === 'crash', tn = sim.tune;
+  const kidnap = I.truth.variant === 'kidnap', getaway = I.truth.variant === 'getaway', crash = !!I.pursuit && I.pursuit.how === 'crash', tn = sim.tune;
   for (let y = 8; y <= 11; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
   const tree = (x: number, y: number) => { if (get(s, x, y) === T.GROUND) set(s, x, y, T.TREE); };
   for (let k = 0; k < 14; k++) { const cx = rng.int(1, SW - 2), cy = rng.chance(0.5) ? rng.int(0, 5) : rng.int(14, SH - 1); tree(cx, cy); if (rng.chance(0.6)) tree(Math.min(SW - 1, cx + 1), cy); }
@@ -232,7 +232,7 @@ function buildStop(sim: Sim, I: Incident, rng: Rng): Scene {
   addRegion(s, '남측 수풀', 'verge', 8, 13, 24, 17, false, true);
   const x = rng.int(13, 17), y = rng.pick([9, 10]);
   const car = addProp(s, 'vehicle', x, y, { w: 2, h: 1, blocking: true, hp: 10, leak: 0, leakRate: 0, occupants: [], angle: crash ? rng.range(-0.7, 0.7) : rng.range(-0.15, 0.15), color: rng.int(0, 4) });
-  addRegion(s, kidnap ? '납치 차량' : '난폭 운전 차량', 'wreck', x - 1, y - 1, x + 2, y + 1, false, true);
+  addRegion(s, kidnap ? '납치 차량' : getaway ? '도주 차량' : '난폭 운전 차량', 'wreck', x - 1, y - 1, x + 2, y + 1, false, true);
   const ag = (v: number): number => Math.max(0.05, Math.min(0.98, v + tn.aggroShift));
   const side = y === 9 ? 7 : 12;
   s.exits = [{ x: 1, y: 9 }, { x: SW - 2, y: 10 }];      // 차에서 내려 달아날 수 있는 길의 양 끝
@@ -248,6 +248,15 @@ function buildStop(sim: Sim, I: Incident, rng: Rng): Scene {
     const v = addCas(s, x + 1, y, 'immobile', rng.range(70, 94), rng.range(0, 0.04), 0.25, { hostage: true, inVehicle: car.id });
     car.occupants!.push(v.id);
     if (crash) { v.health -= rng.range(10, 25); v.bleed = rng.range(0.08, 0.16); }
+  } else if (getaway) {
+    // 달아나던 무장 용의자: 총을 든 채 차 옆에서 버틴다. 인질은 없다. 사고로 섰으면 다친 채다
+    const n = rng.chance(Math.min(0.8, 0.3 + tn.extraSuspectProb)) ? 2 : 1;
+    for (let k = 0; k < n; k++) {
+      const h = addHostile(s, x + k * 2 - 1, side, 'gun', ag(rng.range(0.3, 0.56)), Math.max(0.1, Math.min(0.95, rng.range(0.3, 0.55) + tn.skillShift)), false, sim.t + rng.range(45, 110) + tn.fleeShift * 0.5);
+      h.facing = y === 9 ? -Math.PI / 2 : Math.PI / 2;
+      if (crash) { h.health = rng.range(48, 78); h.morale -= 0.15; }
+    }
+    if (crash) for (let k = 0; k < 3; k++) addProp(s, 'roadDebris', rng.int(x - 4, x + 5), rng.int(8, 11), { hp: 4 });
   } else if (crash) {
     // 난폭 운전 끝에 사고: 운전자와, 들이받힌 차의 사람들이 다쳤다
     const d = addCas(s, x, y, rng.chance(0.5) ? 'trapped' : 'immobile', rng.range(45, 75), rng.range(0.12, 0.24), 0.3, { inVehicle: car.id });
@@ -267,7 +276,7 @@ function buildStop(sim: Sim, I: Incident, rng: Rng): Scene {
     const h = addHostile(s, x, side, 'none', ag(rng.range(0.08, 0.34)), 0.2, false, sim.t + rng.range(18, 50));
     h.facing = y === 9 ? -Math.PI / 2 : Math.PI / 2;
   }
-  s.placeName = kidnap ? '납치 차량 검거 현장' : crash ? '난폭 운전 사고 현장' : '난폭 운전 차량 검거 현장';
+  s.placeName = kidnap ? '납치 차량 검거 현장' : getaway ? (crash ? '도주 차량 사고 현장' : '도주 차량 검거 현장') : crash ? '난폭 운전 사고 현장' : '난폭 운전 차량 검거 현장';
   s.controlPts = [{ x: 2, y: 10 }, { x: 27, y: 9 }]; s.controlDone = [false, false];
   s.laneRows = [8, 11];
   const node = sim.city.nodes[I.truth.nodeId];

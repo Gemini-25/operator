@@ -184,7 +184,8 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     if (s.entryOrdered) { want(sim, s, 'engage', { hostile: h.id }, 0.9, 3); cancel(s, (w) => w.kind === 'negotiate' && w.hostile === h.id); }
   }
   // 가스 누출: 새는 동안에는 경찰이 출입구를 지켜 주변 시민의 접근을 막는다
-  const cordon = s.kind === 'hazmat' && B.list('haz').some((f) => f.value.kind === 'leak' && f.value.active);
+  const liveBomb = B.list('haz').some((f) => f.value.kind === 'bomb' && f.value.active);      // 폭발물로 보이는 물건이 아직 처리되지 않았다
+  const cordon = (s.kind === 'hazmat' && B.list('haz').some((f) => f.value.kind === 'leak' && f.value.active)) || liveBomb;
   if (cordon) s.exits.forEach((_, k) => want(sim, s, 'perimeter', { tile: k }, 0.62 - k * 0.04));
   if (!threat && !cordon) cancel(s, (w) => w.kind === 'perimeter' || w.kind === 'negotiate' || w.kind === 'engage');
   else if (!threat) cancel(s, (w) => w.kind === 'negotiate' || w.kind === 'engage');
@@ -252,7 +253,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       if (redo.length) transmit(sim, s, a, -1, 'report', redo, '', -1, 0, [], true);
       raiseProblem(sim, I, 'RECOUNT', `신고 인원 ${expected}명, 확인 ${found}명`, { role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, imp: 2, text: `인원 불일치: 신고된 인원은 ${expected}명인데 ${found}명만 확인했습니다. 놓친 사람이 있을 수 있습니다 — 전 구역 정밀 재수색.` }, false);
     }
-    if (s.kind === 'armed' && !activeThreat && pendingSearch === 0 && s.secureAt < 0 && s.sizeupDone) {
+    if (s.kind === 'armed' && !activeThreat && pendingSearch === 0 && s.secureAt < 0 && s.sizeupDone && !liveBomb) {
       s.secureAt = sim.t;
       learn(sim, a, mkFact('secure', 0, true, resp(sim, a).name, sim.t, 1, true, '현장 안전 확보 — 구급·구조 인력 진입 가능'));
       emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 2, text: '건물 내부 수색 완료. 현장 안전 확보를 선언합니다. 구급대 진입하라.' });

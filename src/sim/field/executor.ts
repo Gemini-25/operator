@@ -12,6 +12,7 @@ import { mkFact } from './beliefs';
 import { astar, doorAt, isIndoor, los, staticPass, tileOf, walkableCount } from './grid';
 import { applyWater, flashbang, hostageNear, hostileActive, isHeld, placeAtSafe, pushFx, panicShot } from './hazards';
 import { bulletPath, hitCover } from './damage';
+import { detonate } from './rules/crime';
 
 export function makeTask(kind: TaskKind, label: string, w: WorkItem | null = null): Task {
   return {
@@ -606,6 +607,30 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: p.kind === 'unstable' ? '균열부에 지지대를 세웠습니다. 추가 붕괴 위험을 줄였습니다.' : p.kind === 'valve' ? '가스 밸브 차단 완료. 누출이 멈췄습니다.' : '연료 누출 차단 완료. 발화 위험을 제거했습니다.' });
         if (p.kind === 'unstable') s.staticVersion++;
         r.xpGained += 0.003;
+        finishTask(sim, s, a, true);
+      }
+      return;
+    }
+    case 'defuse': {
+      // 폭발물 해체 (처리반만 맡는다). 가짜 장치도 다가가 확인해야 끝난다. 시한은 해체하는 동안에도 흐른다 (rules/crime.ts)
+      const p = s.props[t.prop];
+      const gone = (text: string): Fact => mkFact('haz', p.id, { kind: 'bomb', active: false, x: p.x, y: p.y }, r.name, sim.t, 1, true, text);
+      if (p.mitigated || p.exploded) { learn(sim, a, gone(p.exploded ? '장치가 이미 터졌습니다 — 해체할 것이 남아 있지 않음' : '폭발물 위험 해소'), true, true); finishTask(sim, s, a, true); return; }
+      const m = moveTo(sim, s, a, p.x, p.y, 1.6);
+      if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+      if (m !== 'arrived') return;
+      a.fx = p.x - a.x; a.fy = p.y - a.y;
+      t.need = (p.real ? 26 : 10) / (0.5 + r.skill);
+      t.progress += dt; a.ring = t.progress / t.need;
+      if (p.real && a.rng.chance(0.004 * (1 - r.skill) * dt)) {      // 실수: 숙련도가 낮을수록 잦다
+        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'hazard', imp: 2, text: '해체 중 장치가 반응했습니다!' });
+        detonate(sim, s, I, p); finishTask(sim, s, a, true); return;
+      }
+      if (t.progress >= t.need) {
+        p.mitigated = true; p.blocking = false; s.propAt[p.y * s.w + p.x] = -1; s.staticVersion++;      // 처리된 물건은 더 이상 길을 막지 않는다
+        learnQuiet(sim, a, gone('폭발물 위험 해소'));
+        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 3, text: p.real ? '폭발물 해체 완료. 위험이 사라졌습니다.' : '확인 결과 폭발물이 아닙니다.' });
+        r.xpGained += p.real ? 0.006 : 0.002;
         finishTask(sim, s, a, true);
       }
       return;

@@ -8,7 +8,7 @@ import { fmtDur, pct } from '../sim/util';
 import { Icon } from './panels';
 
 const LS_CALL = 'ar.call.v1';
-const LINGER = 6;      // 끝난 통화를 '통화 종료'로 남겨 두는 시간(시뮬레이션 초). 지금의 CallPanel 과 같다
+const LINGER = 6;      // 끝난 통화를 '통화 종료'로 남겨 두는 시간(시뮬레이션 초). 예전 CallPanel(가운데 통화창)과 같다
 
 export function loadCallOpen(): boolean { try { return localStorage.getItem(LS_CALL) !== '0'; } catch { return true; } }
 export function saveCallOpen(open: boolean): void { try { localStorage.setItem(LS_CALL, open ? '1' : '0'); } catch { /* 저장 실패는 무시 */ } }

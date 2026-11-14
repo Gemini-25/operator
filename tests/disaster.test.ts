@@ -178,7 +178,7 @@ describe('재난: 종류별 규칙', () => {
       while (s.t < d.tWarn + 12) s.step();
       const evac = s.incidents.filter((I) => I.truth.variant === 'evac');
       expect(evac.length).toBeGreaterThanOrEqual(2); expect(evac.length).toBeLessThanOrEqual(3);
-      expect(new Set(evac.map((I) => I.truth.nodeId)).size).toBe(evac.length);      // 서로 다른 곳
+      expect(new Set(evac.map((I) => I.truth.placeId)).size).toBe(evac.length);      // 서로 다른 곳
       while (s.t < d.tImpact + 2) s.step();
       for (const I of evac) {
         const sc = s.scenes[I.id]!;

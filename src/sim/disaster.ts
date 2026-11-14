@@ -105,13 +105,21 @@ function plan(sim: Sim, kind: DisasterKind, rng: Rng): DisasterState {
     d.tWarn = d.tImpact = L * rng.range(0.1, 0.2); d.tEnd = d.tImpact + 640;
     // 산 하나의 중턱에서 시작해 가장 가까운 동네(외곽이 아닌 교차로) 쪽으로 번진다
     const c = sim.city, ms = c.mountains ?? [];
-    const m = ms.length ? rng.pick(ms) : { name: '야산', x: c.w * 0.2, y: c.h * 0.2, rx: 200, ry: 150 };
-    let tn: RoadNode = c.nodes[0], bd = Infinity;
-    for (const n of c.nodes) { if (n.district === 'outskirts') continue; const dd = Math.hypot(n.x - m.x, n.y - m.y); if (dd < bd) { bd = dd; tn = n; } }
+    const townOf = (q: { x: number; y: number }): { n: RoadNode; d: number } => {
+      let n: RoadNode = c.nodes[0], best = Infinity;
+      for (const v of c.nodes) { if (v.district === 'outskirts') continue; const dd = Math.hypot(v.x - q.x, v.y - q.y); if (dd < best) { best = dd; n = v; } }
+      return { n, d: best };
+    };
+    // 동네에서 먼 산일수록 잘 뽑힌다 (불이 오래 번져야 막아 낼 틈이 있다)
+    const m = ms.length ? rng.weighted(ms, ms.map((q) => townOf(q).d ** 2)) : { name: '야산', x: c.w * 0.2, y: c.h * 0.2, rx: 200, ry: 150 };
+    const town = townOf(m), tn = town.n, bd = town.d;
     const dx = (tn.x - m.x) / (bd || 1), dy = (tn.y - m.y) / (bd || 1);
     const foot = Math.min(bd * 0.3, 0.3 * Math.sqrt(1 / ((dx / m.rx) ** 2 + (dy / m.ry) ** 2)));      // 산 가운데에서 조금 내려온 중턱에서 난다
     d.from = { x: m.x, y: m.y, name: m.name };
-    d.to = { x: tn.x, y: tn.y, name: nodeName(c, tn.id) };
+    // 동네 이름: 그 교차로에서 가장 가까운(반지름에 견주어) 동
+    let dong = nodeName(c, tn.id), dd = Infinity;
+    for (const q of c.districts) { const v = Math.hypot(q.x + q.w / 2 - tn.x, q.y + q.h / 2 - tn.y) / Math.max(1, q.w / 2); if (v < dd) { dd = v; dong = q.name; } }
+    d.to = { x: tn.x, y: tn.y, name: dong };
     d.front = { x: m.x + dx * foot, y: m.y + dy * foot, r: 60, dx, dy };
     d.speed = rng.range(1.1, 1.5); d.run = 0; d.span = Math.max(60, bd - foot);
     d.scar = [[d.front.x, d.front.y, 60]];
@@ -240,11 +248,11 @@ function intensityOf(sim: Sim, d: DisasterState): number {
 }
 
 function onWarn(sim: Sim, d: DisasterState): void {
-  const eta = josa(fmtEta(d.tImpact - sim.t), '이/가');
-  if (d.kind === 'typhoon') { d.speedMul = 0.92; tell(sim, d, `태풍 특보 발령. 강한 비바람이 ${eta} 지나면 도시에 닿습니다. 긴급 차량의 주행이 느려집니다.`, '기상청'); }
-  else if (d.kind === 'flood') tell(sim, d, `홍수 경보 발령. ${sim.city.river.name}의 수위가 빠르게 오르고 있습니다. ${eta} 지나면 강가의 도로가 잠기기 시작합니다.`, '기상청');
+  const eta = fmtEta(d.tImpact - sim.t);
+  if (d.kind === 'typhoon') { d.speedMul = 0.92; tell(sim, d, `태풍 특보 발령. 약 ${eta} 뒤 강한 비바람이 도시에 닿습니다. 긴급 차량의 주행이 느려집니다.`, '기상청'); }
+  else if (d.kind === 'flood') tell(sim, d, `홍수 경보 발령. ${sim.city.river.name}의 수위가 빠르게 오르고 있습니다. 약 ${eta} 뒤부터 강가의 도로가 잠기기 시작합니다.`, '기상청');
   else if (d.kind === 'tsunami') {
-    tell(sim, d, `해일 경보 발령. ${eta} 지나면 해안에 닿습니다. 바닷가에 남은 사람들을 뭍으로 옮겨야 합니다.`, '기상청');
+    tell(sim, d, `해일 경보 발령. 약 ${eta} 뒤 해안에 닿습니다. 바닷가에 남은 사람들을 뭍으로 옮겨야 합니다.`, '기상청');
     const n = has('water', 'evac') ? d.rng.int(2, 3) : 0;
     for (let k = 0; k < n; k++) d.queue.push({ at: sim.t + 1 + k * 3, what: 'evac' });
   }
@@ -309,13 +317,14 @@ function onEnd(sim: Sim, d: DisasterState): void {
 /** 재난을 끝낸다: 남은 통제·혼잡·감속을 모두 되돌린다. cut = 교대가 먼저 끝났다 */
 function finish(sim: Sim, d: DisasterState, cut: boolean): void {
   d.timed.length = 0; d.queue.length = 0;
+  const stillCut = d.closedEdges.length > 0;
   reopenEdges(sim, d);
   lightsOn(sim, d, true);
   if (d.slowed) { for (const id of d.slowed) { const e = sim.city.edges[id]; e.slow = Math.max(0, e.slow - FLOOD_SLOW); } d.slowed = []; }
   if (d.level !== undefined) d.level = 0;
   d.speedMul = undefined;
   d.phase = 'over'; d.intensity = 0;
-  if (!cut) emit(sim, { role: 'SYSTEM', actor: '재난안전본부', kind: 'hazard', imp: 2, text: `${d.name} 대응 단계를 마칩니다. 통제했던 도로를 모두 엽니다.` });
+  if (!cut) emit(sim, { role: 'SYSTEM', actor: '재난안전본부', kind: 'hazard', imp: 2, text: `${d.name} 대응 단계를 마칩니다.${stillCut ? ' 통제했던 도로를 모두 엽니다.' : ''}` });
 }
 
 const fmtEta = (sec: number): string => { const s = Math.max(0, Math.round(sec)); return s >= 60 ? `${Math.floor(s / 60)}분${s % 60 ? ` ${s % 60}초` : ''}` : `${s}초`; };
@@ -438,7 +447,7 @@ function resolve(sim: Sim, d: DisasterState, what: What): SpawnOpts | null {
     case 'houseFire': {
       const t = d.to!, by = (table: W, lim: number) => (p: Place): number => { const dd = Math.hypot(cx(p) - t.x, cy(p) - t.y); return dd <= lim ? (table[p.kind] ?? 0) / (1 + dd / 80) : 0; };
       const q = pickPlace(sim, d, by({ ...HOMES, pension: 2 }, 260)) ?? pickPlace(sim, d, by(INCIDENT_PLACES.fire, 420));
-      return atPlace(q, { type: 'fire', variant: 'std', severity: 2, note: '산불이 주택가로 옮겨붙었습니다' });
+      return atPlace(q, { type: 'fire', variant: 'std', severity: 2, note: '산불이 건물로 옮겨붙었습니다' });
     }
     case 'evac':
       return atPlace(pickPlace(sim, d, per(EVAC_KINDS)), { type: 'water', variant: 'evac', severity: rng.int(2, 3), note: '해일 경보가 났는데 바닷가에 사람들이 남아 있습니다' });
@@ -535,7 +544,7 @@ function tickWildfire(sim: Sim, d: DisasterState): void {
   }
   if (d.run! >= d.span!) {
     d.stopped = 'reached'; d.tEnd = sim.t;
-    tell(sim, d, `산불이 ${d.to!.name} 주택가에 닿았습니다. 집으로 불이 옮겨붙고 있습니다.`);
+    tell(sim, d, `산불이 ${d.to!.name}까지 내려왔습니다. 건물로 불이 옮겨붙고 있습니다.`);
     d.queue.push({ at: sim.t + 1, what: 'houseFire' }, { at: sim.t + 5, what: 'houseFire' });
     return;
   }

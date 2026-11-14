@@ -395,6 +395,9 @@ input:focus { border-color: var(--accent); }
 /* 남은 높이는 판단 요약 : 기록 = 46 : 54 (지금은 판단 요약이 칸 전체의 46% 고정) */
 .right-top { flex: 46 1 0; }
 .right-bottom { flex: 54 1 0; min-height: 120px; }
+/* 맨 아래에 붙은 기록은 스크롤 앵커링을 끈다: 140줄 상한에서 맨 위 줄이 빠질 때의 보정이 scrollTop 을 줄여 '위로 올림'으로 읽히지 않게.
+   위로 올려 읽는 동안에는 LogPanel 이 auto 로 되돌려 읽던 줄이 제자리에 있다 */
+.scroll.log { overflow-anchor: none; }
 /* 왼쪽 위 덧글: 통화창 자리(366px)를 비울 까닭이 없어졌다. 첫 줄만 오른쪽 위 단추 줄을 비키고, 가운데가 좁으면 단추 줄 아래로 내린다 */
 .overlay.tl { max-width: min(560px, calc(100% - 24px)); }
 .overlay.tl > .cam-reason:first-child { max-width: calc(100cqw - 440px); }

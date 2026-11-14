@@ -153,7 +153,15 @@ export function App() {
         <div className="overlay tl">
           <div className="cam-reason"><span className={`dot ${director.manual ? 'manual' : 'auto'}`} />{director.manual ? '수동 시점' : '자동 카메라'} · {director.reason}</div>
           {runner.slowed && <div className="cam-reason slow"><span className="dot slow" />결정적 순간 · 1배속으로 낮춤</div>}
-          {I && (
+          {reel && (
+            <div className="reel">
+              <b>주요 장면 {reel.idx + 1}/{reel.list.length}</b>
+              <span className="tx">사건 {sim.incidents[reel.list[reel.idx].id]?.code} · {reel.list[reel.idx].text}</span>
+              <button onClick={() => { reelUntil.current = 0; }}>다음 장면</button>
+              <button className="ghost" onClick={() => stopReel(reel.speed)}>그만 보기</button>
+            </div>
+          )}
+          {I && !reel && (
             <div className="scene-title">
               <Icon name={I.assessment ? I.assessment.type : 'unknown'} size={15} /> <b>사건 {I.code}</b> {I.assessment ? I.assessment.label ?? TYPE_NAME[I.assessment.type] : '유형 확인 중'} · {I.locationKnown || truth ? I.truth.label : '위치 확인 중'}
               {scene && scene.arrivedAt >= 0 && <span className="dim"> · 현장 경과 {fmtDur((I.phase === 'closed' ? I.closedAt : sim.t) - scene.arrivedAt)}</span>}
@@ -178,20 +186,12 @@ export function App() {
             <span><i className="ring" style={{ borderColor: '#e0486b', background: 'rgba(224,72,107,0.25)' }} />용의자</span>
             <span className="sep" />
             <span className="dim">휠 확대 · 끌어서 이동 · 두 번 눌러 전체 보기{truth ? ' · 흐린 표시 = AI 미확인' : ''}</span>
-          </>) : (<span className="dim">표식을 누르면 현장 확대 · 건물·도로에 마우스를 올리면 이름 · 휠 확대 · 끌어서 이동</span>)}
+          </>) : (<span className="dim">사건 표식을 누르면 현장 확대 · 휠 확대 · 끌어서 이동</span>)}
           </div>
         </div>
         <div className="overlay call-wrap"><CallPanel sim={sim} truth={truth} /></div>
         <Ticker sim={sim} truth={truth} />
         {runner.paused && !sim.ended && <div className="paused">일시정지</div>}
-        {reel && (
-          <div className="reel">
-            <b>주요 장면 {reel.idx + 1}/{reel.list.length}</b>
-            <span className="tx">사건 {sim.incidents[reel.list[reel.idx].id]?.code} · {reel.list[reel.idx].text}</span>
-            <button onClick={() => { reelUntil.current = 0; }}>다음 장면</button>
-            <button className="ghost" onClick={() => stopReel(reel.speed)}>그만 보기</button>
-          </div>
-        )}
       </div>
       <div className="right">
         <div className="tabs">

@@ -20,7 +20,10 @@ export class CameraDirector {
   reason = '도시 전체 관찰';
   sceneCam: SceneView = { x: SCENE_W / 2, y: SCENE_H / 2, zoom: 1 };
   sceneTarget: SceneView = { x: SCENE_W / 2, y: SCENE_H / 2, zoom: 1 };
+  sceneAuto = true;           // 벌어지는 일을 따라 자동으로 확대한다
+  sceneManual = false;        // 사용자가 현장 화면을 직접 확대·이동했다 (두 번 누르면 풀린다)
   private sceneFor = -1;
+  private sceneRetargetAt = 0;
   private interest = new Map<number, number>();
   private processed = 0;
   private lastSwitch = -99;
@@ -115,8 +118,14 @@ export class CameraDirector {
       } else this.target = { x: sim.city.w / 2, y: sim.city.h / 2, zoom: 1 };
     }
     // 현장 시점: 관찰 대상이 바뀌면 전체 보기로 되돌린다
-    if (this.sceneFor !== this.focus || this.mode !== 'scene') { this.sceneFor = this.focus; this.sceneReset(true); }
-    const es = 1 - Math.exp(-dtReal * 9);
+    if (this.sceneFor !== this.focus || this.mode !== 'scene') { this.sceneFor = this.focus; this.sceneReset(true); this.sceneRetargetAt = this.clock + 1.2; }
+    else if (this.sceneAuto && !this.sceneManual && this.clock >= this.sceneRetargetAt) {
+      this.sceneRetargetAt = this.clock + 0.9;
+      const t = this.frameAction(sim), c = this.sceneTarget;
+      // 조금 달라진 정도로는 움직이지 않는다 (화면이 떨리지 않게)
+      if (Math.abs(t.zoom - c.zoom) > 0.14 || Math.hypot(t.x - c.x, t.y - c.y) > 1.6 / Math.max(1, t.zoom) + 0.6) this.sceneTarget = t;
+    }
+    const es = 1 - Math.exp(-dtReal * (this.sceneManual ? 9 : 1.7));
     this.sceneCam.x += (this.sceneTarget.x - this.sceneCam.x) * es;
     this.sceneCam.y += (this.sceneTarget.y - this.sceneCam.y) * es;
     this.sceneCam.zoom += (this.sceneTarget.zoom - this.sceneCam.zoom) * es;
@@ -134,20 +143,58 @@ export class CameraDirector {
     this.target = { x: wx + (this.target.x - wx) * r, y: wy + (this.target.y - wy) * r, zoom: z };
     this.reason = '지도 직접 조작';
   }
+  /**
+   * 지금 벌어지는 일(총격·폭발·방수, 움직이는 용의자, 임무 중인 대원, 현장에 남은 구조 대상)이 화면에 차도록 잡는다.
+   * 가운데와 퍼진 정도로 잡으므로 멀리 떨어진 한두 명 때문에 화면이 넓어지지 않는다. 일이 현장 전체에 퍼져 있으면 전체 보기.
+   */
+  private frameAction(sim: Sim): SceneView {
+    const full: SceneView = { x: SCENE_W / 2, y: SCENE_H / 2, zoom: 1 };
+    const s = sim.scenes[this.focus];
+    if (!s || s.arrivedAt < 0) return full;
+    const pts: number[] = [];
+    const add = (x: number, y: number, w: number): void => { pts.push(x, y, w); };
+    for (const f of s.fx) {
+      const age = sim.t - f.t;
+      if (age < 0 || age > 4 || (f.kind !== 'shot' && f.kind !== 'boom' && f.kind !== 'flash' && f.kind !== 'hit' && f.kind !== 'spray')) continue;
+      add(f.x, f.y, f.kind === 'spray' ? 0.6 : 2.5);
+      if (f.x2 !== undefined && f.y2 !== undefined) add(f.x2, f.y2, f.kind === 'spray' ? 0.6 : 1.5);
+    }
+    for (const h of s.hostiles) if ((h.state === 'hold' || h.state === 'fight' || h.state === 'flee') && !h.hidden) add(h.x, h.y, 2.5);
+    for (const a of s.agents) {
+      if (a.status === 'left') continue;
+      const tk = a.task ? a.task.kind : 'standby';
+      if (tk === 'standby' || tk === 'board' || tk === 'rehab' || tk === 'resupply') continue;
+      add(a.x, a.y, tk === 'perimeter' || tk === 'traffic' ? 0.5 : 1.2);
+    }
+    for (const c of s.casualties) if (c.tDiscovered >= 0 && c.where === 'scene' && !c.dead) add(c.x, c.y, 0.8);
+    for (let i = 0; i < s.fire.length; i += 3) if (s.fire[i] > 0.3) add(i % s.w, (i / s.w) | 0, 0.25);
+    let ws = 0, mx = 0, my = 0;
+    for (let i = 0; i < pts.length; i += 3) { ws += pts[i + 2]; mx += pts[i] * pts[i + 2]; my += pts[i + 1] * pts[i + 2]; }
+    if (ws < 2.4) return full;
+    mx /= ws; my /= ws;
+    let vx = 0, vy = 0;
+    for (let i = 0; i < pts.length; i += 3) { vx += (pts[i] - mx) ** 2 * pts[i + 2]; vy += (pts[i + 1] - my) ** 2 * pts[i + 2]; }
+    const hx = Math.max(6, 2.1 * Math.sqrt(vx / ws) + 3), hy = Math.max(4, 2.1 * Math.sqrt(vy / ws) + 2.4);
+    const zoom = Math.max(1, Math.min(2.3, Math.min(SCENE_W / 2 / hx, SCENE_H / 2 / hy)));
+    if (zoom < 1.15) return full;
+    return this.clampScene({ x: mx + 0.5, y: my + 0.5, zoom });
+  }
+
   /** 현장 화면 확대·축소 (tx, ty: 고정할 지점의 타일 좌표). 관찰 대상은 그대로 고정된다. */
   sceneZoom(factor: number, tx: number, ty: number): void {
-    this.manual = true;
+    this.manual = true; this.sceneManual = true;
     const z = Math.max(1, Math.min(3.4, this.sceneTarget.zoom * factor));
     const r = this.sceneTarget.zoom / z;
     this.sceneTarget = this.clampScene({ x: tx + (this.sceneTarget.x - tx) * r, y: ty + (this.sceneTarget.y - ty) * r, zoom: z });
   }
   scenePan(dx: number, dy: number): void {
     if (this.sceneTarget.zoom <= 1.001) return;
-    this.manual = true;
+    this.manual = true; this.sceneManual = true;
     this.sceneTarget = this.clampScene({ ...this.sceneTarget, x: this.sceneTarget.x - dx, y: this.sceneTarget.y - dy });
     this.sceneCam.x = this.sceneTarget.x; this.sceneCam.y = this.sceneTarget.y;
   }
   sceneReset(snap = false): void {
+    this.sceneManual = false;
     this.sceneTarget = { x: SCENE_W / 2, y: SCENE_H / 2, zoom: 1 };
     if (snap) this.sceneCam = { ...this.sceneTarget };
   }

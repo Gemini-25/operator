@@ -295,6 +295,8 @@ export function BottomBar({ runner, director, onTick, onSeek, sound }: { runner:
         <button className={`ctl ${runner.paused ? 'on' : ''}`} onClick={() => { runner.togglePause(); onTick(); }} title="일시정지 / 재개 (Space)">{runner.paused ? '▶ 재개' : '⏸ 정지'}</button>
         <button className="ctl" onClick={() => onSeek(sim.t + 10)} title="10초 앞으로 (→)">⏩</button>
         {speeds.map((v) => <button key={v} className={`ctl ${!runner.paused && runner.settings.speed === v ? 'on' : ''}`} onClick={() => { runner.setSpeed(v); onTick(); }}>{v}×</button>)}
+        <button className={`ctl ${runner.settings.autoSlow ? 'on' : ''}`} onClick={() => { runner.settings.autoSlow = !runner.settings.autoSlow; runner.saveSettings(); onTick(); }} title="관찰 중인 현장에서 총격·폭발·진입 같은 결정적 순간이 오면 잠깐 1배속으로 낮춥니다 (S)">자동 감속</button>
+        <button className={`ctl ${runner.settings.sceneAuto ? 'on' : ''}`} onClick={() => { runner.settings.sceneAuto = !runner.settings.sceneAuto; runner.saveSettings(); onTick(); }} title="현장에서 벌어지는 일을 따라 화면을 자동으로 확대합니다. 휠로 직접 확대하면 멈추고, 두 번 누르면 다시 따라갑니다 (Z)">자동 확대</button>
         <span className="shift-time">{fmtDur(sim.t)} <span className="dim">/ {fmtDur(sim.shiftLen)}{sim.t > sim.shiftLen ? ' · 연장' : ''}</span></span>
       </div>
       <div className="timeline">
@@ -347,7 +349,7 @@ export function TopBar({ runner, onNew, onDifficulty }: { runner: Runner; onNew:
 }
 
 // ───────────────────────── 종료 보고서 ─────────────────────────
-export function ReportModal({ runner, onNew, onClose, onJump }: { runner: Runner; onNew: (seed?: string) => void; onClose: () => void; onJump: (t: number, incidentId: number) => void }) {
+export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel }: { runner: Runner; onNew: (seed?: string) => void; onClose: () => void; onJump: (t: number, incidentId: number) => void; reelCount: number; onReel: () => void }) {
   const sim = runner.sim, r = sim.report!;
   const moments = sim.events.filter((e) => e.importance >= 3 && e.kind !== 'shift' && e.incidentId >= 0 && !(e.kind === 'resolve' && e.role === 'SYSTEM')).slice(0, 60);
   const hist = runner.history().filter((h) => !(h.seed === r.seed && h.hash === r.hash)).slice(0, 5);
@@ -356,7 +358,7 @@ export function ReportModal({ runner, onNew, onClose, onJump }: { runner: Runner
       <div className="modal">
         <div className="modal-head">
           <div><h2>교대 종료 보고서</h2><div className="dim">시드 {r.seed} · 난이도 {r.difficultyLabel} · 날씨 {WEATHER_NAME[r.weather]} · 진행 시간 {fmtDur(r.duration)} · 기록 해시 {r.hash}</div></div>
-          <div className="btns"><button onClick={() => onNew()}>새 교대 시작</button><button onClick={() => onNew(r.seed)}>같은 시드 재실행</button><button className="ghost" onClick={onClose}>닫고 마지막 상태 보기</button></div>
+          <div className="btns">{reelCount > 0 && <button className="on" onClick={onReel} title="현장의 결정적 순간을 차례로 다시 봅니다">▶ 주요 장면 이어 보기 ({reelCount})</button>}<button onClick={() => onNew()}>새 교대 시작</button><button onClick={() => onNew(r.seed)}>같은 시드 재실행</button><button className="ghost" onClick={onClose}>닫고 마지막 상태 보기</button></div>
         </div>
         <div className="modal-body">
           <div className="summary">{r.summary.map((t, k) => <p key={k}>{t}</p>)}</div>

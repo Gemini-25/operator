@@ -10,7 +10,7 @@ const LS_SETTINGS = 'ar.settings.v1';
 const LS_CURRENT = 'ar.current.v1';
 const LS_HISTORY = 'ar.history.v1';
 
-export interface Settings { speed: number; autoCam: boolean; truthView: boolean; difficulty: Difficulty; sound: boolean; volume: number }
+export interface Settings { speed: number; autoCam: boolean; truthView: boolean; difficulty: Difficulty; sound: boolean; volume: number; autoSlow: boolean; sceneAuto: boolean }
 export interface HistoryItem { seed: string; when: number; summary: string; counts: Record<string, number>; incidents: number; hash: string; difficulty?: string }
 
 function lsGet<T>(key: string, fallback: T): T {
@@ -39,9 +39,11 @@ export class Runner {
   seeks = 0;                  // 되감기 횟수 (표현 계층이 다시 맞추는 데 쓴다)
   fps = 60;
   simMs = 0;
+  slowUntil = 0;              // 이 시각(실제 시간, ms)까지는 1배속으로 낮춘다 (결정적 순간 자동 감속)
+  nowMs = 0;
 
   constructor() {
-    this.settings = { speed: 3, autoCam: true, truthView: true, difficulty: { ...NORMAL }, sound: true, volume: 0.5, ...lsGet<Partial<Settings>>(LS_SETTINGS, {}) };
+    this.settings = { speed: 3, autoCam: true, truthView: true, difficulty: { ...NORMAL }, sound: true, volume: 0.5, autoSlow: true, sceneAuto: true, ...lsGet<Partial<Settings>>(LS_SETTINGS, {}) };
     this.settings.difficulty = { ...NORMAL, ...(this.settings.difficulty ?? {}) };
     if (!parseDifficulty(Object.values(this.settings.difficulty).join(','))) this.settings.difficulty = { ...NORMAL };
     const url = new URL(window.location.href);
@@ -77,6 +79,9 @@ export class Runner {
     this.acc = 0; this.alpha = 0; this.seeks++;
   }
 
+  /** 결정적 순간: 잠깐 1배속으로 낮춘다. 배속만 바꾸므로 시뮬레이션 결과에는 영향이 없다. */
+  drama(ms = 3400): void { if (this.settings.autoSlow && this.settings.speed > 1) this.slowUntil = Math.max(this.slowUntil, this.nowMs + ms); }
+  get slowed(): boolean { return this.settings.autoSlow && this.settings.speed > 1 && !this.paused && this.nowMs < this.slowUntil; }
   setSpeed(v: number): void { this.settings.speed = v; this.paused = false; this.saveSettings(); }
   togglePause(): void { this.paused = !this.paused; }
   saveSettings(): void { lsSet(LS_SETTINGS, this.settings); }
@@ -95,9 +100,10 @@ export class Runner {
     const dtReal = Math.min(0.1, (nowMs - this.last) / 1000);
     this.last = nowMs;
     if (dtReal > 0) this.fps = this.fps * 0.95 + (1 / dtReal) * 0.05;
+    this.nowMs = nowMs;
     const sim = this.sim;
     if (!this.paused && !sim.ended) {
-      this.acc += dtReal * this.settings.speed;
+      this.acc += dtReal * (this.slowed ? 1 : this.settings.speed);
       const t0 = performance.now();
       let steps = 0;
       while (this.acc >= sim.dt && steps < 40 && !sim.ended) { sim.step(); this.acc -= sim.dt; steps++; }

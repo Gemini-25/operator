@@ -27,6 +27,7 @@ export function Viewport({ runner, director, sound, selectedRid, onSelectRid, on
     const canvas = ref.current!, box = wrap.current!;
     const ctx = canvas.getContext('2d')!;
     let w = 0, h = 0, raf = 0, last = 0;
+    let fxScene: unknown = null, fxT = 0, evSeen = 0, evSim: unknown = null;      // 자동 감속: 관찰 중인 현장에서 새로 벌어진 일을 찾는다
     let pips: Pip[] = [];
     const resize = () => {
       const r = box.getBoundingClientRect();
@@ -51,7 +52,20 @@ export function Viewport({ runner, director, sound, selectedRid, onSelectRid, on
       const dtReal = last ? Math.min(0.1, (now - last) / 1000) : 0; last = now;
       runner.frame(now);
       const sim = runner.sim;
+      director.sceneAuto = runner.settings.sceneAuto;
       director.update(sim, dtReal, (I) => !!sim.scenes[I.id] && (sim.scenes[I.id]!.arrivedAt >= 0 || director.manual));
+      {
+        // 결정적 순간(관찰 중인 현장의 총격·폭발·섬광, 그 사건의 중대한 기록)에는 잠깐 1배속으로 낮춘다
+        const sc = director.mode === 'scene' && director.focus >= 0 ? sim.scenes[director.focus] : null;
+        if (sc !== fxScene) { fxScene = sc; fxT = sim.t; }
+        if (evSim !== sim) { evSim = sim; evSeen = sim.events.length; }
+        if (sc) {
+          let newest = fxT;
+          for (const f of sc.fx) { if (f.t <= fxT) continue; if (f.t > newest) newest = f.t; if (f.kind === 'shot' || f.kind === 'boom' || f.kind === 'flash') runner.drama(3200); }
+          fxT = newest;
+        }
+        for (; evSeen < sim.events.length; evSeen++) { const e = sim.events[evSeen]; if (sc && e.incidentId === director.focus && e.importance >= 3 && !e.truth && e.kind !== 'resolve') runner.drama(2600); }
+      }
       const truth = runner.settings.truthView;
       const scene = director.mode === 'scene' && director.focus >= 0 ? sim.scenes[director.focus] : null;
       sound.update(sim, { paused: runner.paused, speed: runner.settings.speed, focus: director.focus, inScene: !!scene });

@@ -273,3 +273,10 @@ input:focus { border-color: var(--accent); }
 
 /* 인근 도시 지원 부대 */
 .unit.aid { border-style: dashed; }
+
+/* ── 보는 연출: 자동 감속 표시, 주요 장면 이어 보기 ── */
+.cam-reason.slow { border-color: rgba(255, 209, 102, 0.55); color: #ffe6a8; }
+.cam-reason .dot.slow { background: #ffd166; box-shadow: 0 0 8px #ffd166; animation: blink 0.8s steps(2) infinite; }
+.reel { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); max-width: 76%; display: flex; gap: 10px; align-items: center; background: var(--glass); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid rgba(79, 209, 197, 0.5); border-radius: 10px; padding: 7px 12px; box-shadow: var(--shadow); z-index: 6; }
+.reel b { color: #9fe6dd; white-space: nowrap; } .reel .tx { font-size: 12.5px; color: #e2ebf3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reel button { white-space: nowrap; padding: 3px 9px; }

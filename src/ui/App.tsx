@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { Sim } from '../sim/engine';
 import { TYPE_NAME, fmtDur } from '../sim/util';
 import { SoundDirector } from '../view/audio';
 import { CameraDirector } from '../view/camera';
@@ -6,6 +7,24 @@ import { Runner } from '../view/runner';
 import { Viewport } from './Viewport';
 import type { Difficulty } from '../sim/difficulty';
 import { AgentPanel, BottomBar, CallPanel, DecisionPanel, DifficultyPanel, Icon, IncidentList, LogPanel, ReportModal, Ticker, TopBar, UnitList } from './panels';
+
+export interface Moment { t: number; id: number; text: string }
+/** 다시 볼 만한 장면: 현장에서 벌어진 중대한 일. 같은 사건의 가까운 장면은 하나로 묶고, 많으면 고르게 여덟 개만 남긴다. */
+export function reelMoments(sim: Sim): Moment[] {
+  const out: Moment[] = [];
+  let lastT = -99, lastId = -1;
+  for (const e of sim.events) {
+    if (e.importance < 3 || e.truth || e.incidentId < 0 || e.kind === 'shift' || (e.kind === 'resolve' && e.role === 'SYSTEM')) continue;
+    const sc = sim.scenes[e.incidentId];
+    if (!sc || sc.arrivedAt < 0 || e.t < sc.arrivedAt) continue;
+    if (e.incidentId === lastId && e.t - lastT < 25) continue;
+    out.push({ t: e.t, id: e.incidentId, text: e.text }); lastT = e.t; lastId = e.incidentId;
+  }
+  if (out.length <= 8) return out;
+  const pick: Moment[] = [];
+  for (let k = 0; k < 8; k++) pick.push(out[Math.round((k * (out.length - 1)) / 7)]);
+  return pick;
+}
 
 /**
  * Observation UI.
@@ -22,6 +41,8 @@ export function App() {
   const [tab, setTab] = useState<'decision' | 'agent'>('decision');
   const [reportClosed, setReportClosed] = useState(-1);
   const [diffOpen, setDiffOpen] = useState(false);
+  const [reel, setReel] = useState<{ list: Moment[]; idx: number; speed: number } | null>(null);
+  const reelUntil = useRef(0);
 
   // 패널은 초당 6회 정도만 다시 그린다(캔버스는 별도로 매 프레임 그린다)
   useEffect(() => { const id = window.setInterval(force, 160); return () => window.clearInterval(id); }, [force]);
@@ -60,13 +81,32 @@ export function App() {
     runner.setSpeed(1); runner.paused = false;
     force();
   }, [runner, director, seekTo, force]);
+  // 주요 장면 이어 보기: 장면마다 4초 전으로 돌아가 1배속으로 9초쯤 보고 다음 장면으로 넘어간다
+  const playMoment = useCallback((m: Moment) => { setReportClosed(runner.version); jumpTo(m.t, m.id); reelUntil.current = performance.now() + 9500; }, [runner, jumpTo]);
+  const stopReel = useCallback((speed: number) => { setReel(null); seekTo(1e9); runner.setSpeed(speed); setReportClosed(-1); force(); }, [runner, seekTo, force]);
+  const startReel = useCallback(() => {
+    const list = reelMoments(runner.sim);
+    if (!list.length) return;
+    setReel({ list, idx: 0, speed: runner.settings.speed });
+    playMoment(list[0]);
+  }, [runner, playMoment]);
+  useEffect(() => {
+    if (!reel) return;
+    const id = window.setInterval(() => {
+      if (performance.now() < reelUntil.current) return;
+      const next = reel.idx + 1;
+      if (next >= reel.list.length) stopReel(reel.speed);
+      else { setReel({ ...reel, idx: next }); playMoment(reel.list[next]); }
+    }, 250);
+    return () => window.clearInterval(id);
+  }, [reel, playMoment, stopReel]);
   const soundCtl = useMemo(() => ({
     get enabled() { return sound.enabled; }, get volume() { return sound.volume; },
     setEnabled: (on: boolean) => { sound.unlock(); sound.setEnabled(on); runner.settings.sound = on; runner.saveSettings(); },
     setVolume: (v: number) => { sound.setVolume(v); runner.settings.volume = v; runner.saveSettings(); },
   }), [sound, runner]);
 
-  const onNew = useCallback((seed?: string, d?: Difficulty) => { runner.newShift(seed, d); director.reset(); setSelectedRid(-1); setReportClosed(-1); setTab('decision'); setDiffOpen(false); force(); }, [runner, director, force]);
+  const onNew = useCallback((seed?: string, d?: Difficulty) => { setReel(null); runner.newShift(seed, d); director.reset(); setSelectedRid(-1); setReportClosed(-1); setTab('decision'); setDiffOpen(false); force(); }, [runner, director, force]);
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -80,6 +120,8 @@ export function App() {
       else if (e.key === 'c' || e.key === 'C') director.overview();
       else if (e.key === 't' || e.key === 'T') { runner.settings.truthView = !runner.settings.truthView; runner.saveSettings(); }
       else if (e.key === 'm' || e.key === 'M') soundCtl.setEnabled(!sound.enabled);
+      else if (e.key === 's' || e.key === 'S') { runner.settings.autoSlow = !runner.settings.autoSlow; runner.saveSettings(); }
+      else if (e.key === 'z' || e.key === 'Z') { runner.settings.sceneAuto = !runner.settings.sceneAuto; runner.saveSettings(); }
       else if (e.key === 'ArrowLeft') seekTo(runner.sim.t - 10);
       else if (e.key === 'ArrowRight') seekTo(runner.sim.t + 10);
       else return;
@@ -107,6 +149,7 @@ export function App() {
         <Viewport runner={runner} director={director} sound={sound} selectedRid={selectedRid} onSelectRid={selectRid} onSelectUnit={selectUnit} />
         <div className="overlay tl">
           <div className="cam-reason"><span className={`dot ${director.manual ? 'manual' : 'auto'}`} />{director.manual ? '수동 시점' : '자동 카메라'} · {director.reason}</div>
+          {runner.slowed && <div className="cam-reason slow"><span className="dot slow" />결정적 순간 · 1배속으로 낮춤</div>}
           {I && (
             <div className="scene-title">
               <Icon name={I.assessment ? I.assessment.type : 'unknown'} size={15} /> <b>사건 {I.code}</b> {I.assessment ? TYPE_NAME[I.assessment.type] : '유형 확인 중'} · {I.locationKnown || truth ? I.truth.label : '위치 확인 중'}
@@ -135,6 +178,14 @@ export function App() {
         <div className="overlay call-wrap"><CallPanel sim={sim} truth={truth} /></div>
         <Ticker sim={sim} truth={truth} />
         {runner.paused && !sim.ended && <div className="paused">일시정지</div>}
+        {reel && (
+          <div className="reel">
+            <b>주요 장면 {reel.idx + 1}/{reel.list.length}</b>
+            <span className="tx">사건 {sim.incidents[reel.list[reel.idx].id]?.code} · {reel.list[reel.idx].text}</span>
+            <button onClick={() => { reelUntil.current = 0; }}>다음 장면</button>
+            <button className="ghost" onClick={() => stopReel(reel.speed)}>그만 보기</button>
+          </div>
+        )}
       </div>
       <div className="right">
         <div className="tabs">
@@ -145,9 +196,9 @@ export function App() {
         <div className="right-bottom"><LogPanel sim={sim} director={director} truth={truth} onJump={jumpTo} /></div>
       </div>
       <BottomBar runner={runner} director={director} onTick={force} onSeek={seekTo} sound={soundCtl} />
-      {showReport && !diffOpen && <ReportModal runner={runner} onNew={onNew} onClose={() => setReportClosed(runner.version)} onJump={(t, id) => { setReportClosed(runner.version); jumpTo(t, id); }} />}
+      {showReport && !diffOpen && !reel && <ReportModal runner={runner} onNew={onNew} onClose={() => setReportClosed(runner.version)} onJump={(t, id) => { setReportClosed(runner.version); jumpTo(t, id); }} reelCount={reelMoments(sim).length} onReel={startReel} />}
       {diffOpen && <DifficultyPanel runner={runner} onStart={onNew} onClose={() => setDiffOpen(false)} />}
-      {sim.ended && !showReport && <button className="reopen" onClick={() => setReportClosed(-1)}>보고서 다시 보기</button>}
+      {sim.ended && !showReport && !reel && <button className="reopen" onClick={() => setReportClosed(-1)}>보고서 다시 보기</button>}
     </div>
   );
 }

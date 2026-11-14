@@ -615,6 +615,23 @@ export function tickGas(sim: Sim, s: Scene, I: Incident): void {
     }
   }
   if (!leaking) return;
+  // 통제되지 않은 출입구로 다가온 주변 시민이 가스를 마신다 (경찰이 출입구를 지키면 일어나지 않는다)
+  if (s.arrivedAt >= 0 && s.casualties.filter((c) => c.bystander2).length < 3) {
+    s.exits.forEach((e, k) => {
+      if (s.smoke[tidx(s, Math.max(0, Math.min(s.w - 1, e.x)), Math.max(0, Math.min(s.h - 1, e.y)))] < 0.12 || exitCovered(sim, s, k)) return;
+      if (!s.rng.chance(Math.min(0.03, 0.011 * sim.tune.hazardMul))) return;
+      const id = s.casualties.length;
+      const c: Casualty = {
+        id, label: String.fromCharCode(65 + id), x: e.x, y: e.y, px: e.x, py: e.y, health: s.rng.range(60, 80), bleed: s.rng.range(0.05, 0.09), mob: 'immobile', trapWork: 0, concealment: 0.05, inVehicle: null,
+        where: 'scene', treated: false, treatProg: 0, dead: false, treatQ: 0, bleed0: 0.07, bystander: false, walking: false, path: null, pathI: 0, panic: false,
+        wander: false, wanderT: 0, isTarget: false, hostage: false, bystander2: true,
+        tDiscovered: -1, tFreed: -1, tTreated: -1, tSafe: -1, tLoaded: -1, tDead: -1, tHospital: -1, discoveredBy: -1, causeEvent: -1,
+      };
+      c.bleed0 = c.bleed;
+      s.casualties.push(c);
+      c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '통제되지 않은 출입구에서 시민이 가스에 노출', { role: 'SYSTEM', actor: '현장', imp: 2, text: `건물 ${k === 0 ? '앞' : '뒤'}쪽으로 다가온 시민이 새어 나온 가스를 마시고 쓰러졌습니다 (출입구 통제 없음).` }, false);
+    });
+  }
   let dense = 0;
   for (let i = 0; i < s.smoke.length; i++) if (s.smoke[i] > 0.6 && isIndoor(s.tiles[i])) dense++;
   if (dense < 10 || !s.rng.chance(Math.min(0.007, 0.00015 * dense * sim.tune.hazardMul))) return;
@@ -628,4 +645,20 @@ export function tickGas(sim: Sim, s: Scene, I: Incident): void {
   const ev = raiseProblem(sim, I, 'HIDDEN_HAZARD', '누출된 가스에 불이 붙어 폭발', { role: 'SYSTEM', actor: '현장', text: '폭발! 고여 있던 가스에 불이 붙었습니다. 화재가 발생했습니다.', imp: 3, truth: s.arrivedAt < 0 }, false);
   blast(sim, s, I, p.x, p.y, 3.8, 32, ev);
   pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.6);
+}
+
+/** 수난 사고: 물에 빠진 사람은 하류로 떠내려간다. 다리나 물가에 걸리면 멈추고, 현장 밖으로 벗어나면 잃는다 (매 틱). */
+export function tickWater(sim: Sim, s: Scene, I: Incident): void {
+  for (const c of s.casualties) {
+    if (!c.inWater || c.dead || c.where !== 'scene' || !c.drift) continue;
+    const nx = c.x + c.drift * sim.dt;
+    if (nx >= s.w - 1.2) {
+      c.dead = true; c.health = 0; c.tDead = sim.t; c.inWater = false;
+      const known = c.tDiscovered >= 0;
+      c.causeEvent = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'casualty', imp: 3, truth: !known, causes: [I.lastEvent], text: known ? `구조 대상 ${c.label}: 물살에 휩쓸려 현장 밖으로 떠내려갔습니다. 구조에 실패했습니다.` : `(미발견) 구조 대상 ${c.label}가 물살에 휩쓸려 떠내려갔습니다.` });
+      continue;
+    }
+    if (s.tiles[tidx(s, Math.round(nx + 0.4), Math.round(c.y))] !== T.WATER) { c.drift = 0; continue; }      // 다리 기둥이나 물가에 걸렸다
+    c.x = nx;
+  }
 }

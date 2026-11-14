@@ -429,3 +429,38 @@ export function drawValve(g: G, state: number): void {
   g.lineWidth = 0.04; for (let k = 0; k < 3; k++) { const a = (k / 3) * Math.PI; g.beginPath(); g.moveTo(Math.cos(a) * 0.2, Math.sin(a) * 0.2); g.lineTo(-Math.cos(a) * 0.2, -Math.sin(a) * 0.2); g.stroke(); }
   disc(g, 0, 0, 0.055, '#e8edf2');
 }
+
+/** 버스 (다수 사상자 사고). len 은 타일 단위 길이, 앞이 +x. */
+export function drawBus(g: G, x: number, y: number, ang: number, ts: number, len: number, color: string, seed: number): void {
+  const L = len, W = 0.98;
+  g.save(); g.translate(x, y); g.scale(ts, ts);
+  g.save(); g.translate(0.08, 0.12); g.rotate(ang); rr(g, -L / 2, -W / 2, L, W, 0.12, 'rgba(0,0,0,0.38)'); g.restore();
+  g.rotate(ang);
+  for (const wx of [-L * 0.32, L * 0.3]) { rr(g, wx - 0.2, -W / 2 - 0.04, 0.4, 0.1, 0.03, '#0e1114'); rr(g, wx - 0.2, W / 2 - 0.06, 0.4, 0.1, 0.03, '#0e1114'); }
+  rr(g, -L / 2, -W / 2, L, W, 0.12, shade(color, -0.4)); rr(g, -L / 2 + 0.03, -W / 2 + 0.03, L - 0.06, W - 0.06, 0.1, color);
+  rr(g, -L / 2 + 0.1, -W / 2 + 0.07, L - 0.5, 0.11, 0.03, '#17232e'); rr(g, -L / 2 + 0.1, W / 2 - 0.18, L - 0.5, 0.11, 0.03, '#17232e');      // 옆 유리
+  for (let k = 1; k < 6; k++) { g.fillStyle = color; g.fillRect(-L / 2 + 0.1 + ((L - 0.5) * k) / 6 - 0.012, -W / 2 + 0.07, 0.024, 0.11); g.fillRect(-L / 2 + 0.1 + ((L - 0.5) * k) / 6 - 0.012, W / 2 - 0.18, 0.024, 0.11); }
+  rr(g, -L / 2 + 0.16, -W / 2 + 0.22, L - 0.62, W - 0.44, 0.06, shade(color, 0.22));      // 지붕
+  rr(g, -L * 0.22, -0.16, 0.34, 0.32, 0.04, shade(color, 0.05)); rr(g, L * 0.08, -0.16, 0.34, 0.32, 0.04, shade(color, 0.05));
+  rr(g, -L / 2 + 0.26, -0.2, 0.3, 0.4, 0.04, '#aab2b9');
+  rr(g, L / 2 - 0.34, -W / 2 + 0.1, 0.2, W - 0.2, 0.05, '#17232e'); rr(g, L / 2 - 0.32, -W / 2 + 0.12, 0.05, W - 0.24, 0.03, 'rgba(170,215,240,0.35)');
+  rr(g, -L / 2, -W / 2 + 0.1, 0.045, 0.16, 0.015, '#c9362f'); rr(g, -L / 2, W / 2 - 0.26, 0.045, 0.16, 0.015, '#c9362f');
+  // 찌그러진 앞부분
+  const h = (k: number): number => hash2(seed * 13 + k, 7);
+  g.fillStyle = 'rgba(14,16,19,0.82)'; g.beginPath(); g.moveTo(L / 2 + 0.02, -W / 2 - 0.02);
+  for (let k = 0; k <= 6; k++) g.lineTo(L / 2 - 0.14 - h(k) * 0.26, -W / 2 + (W * k) / 6);
+  g.lineTo(L / 2 + 0.02, W / 2 + 0.02); g.closePath(); g.fill();
+  for (let k = 0; k < 10; k++) { g.fillStyle = k % 3 ? 'rgba(200,235,245,0.8)' : 'rgba(30,34,38,0.8)'; g.fillRect(L / 2 - 0.1 + h(30 + k) * 0.6, (h(40 + k) - 0.5) * (W + 0.6), 0.04, 0.03); }
+  g.restore();
+}
+/** 물에 빠져 허우적거리는 사람: 머리와 팔, 번지는 물결 */
+export function drawSwimmer(g: G, x: number, y: number, ts: number, k: PersonLook, t: number, ghost: number): void {
+  g.save(); g.translate(x, y); g.scale(ts, ts); g.globalAlpha *= ghost;
+  for (let q = 0; q < 2; q++) { const ph = (t * 0.7 + q * 0.5) % 1; g.strokeStyle = `rgba(210,240,250,${0.55 * (1 - ph)})`; g.lineWidth = 0.03; g.beginPath(); g.ellipse(0, 0.03, 0.2 + ph * 0.34, 0.14 + ph * 0.22, 0, 0, 6.2832); g.stroke(); }
+  oval(g, 0, 0.06, 0.2, 0.13, 'rgba(12,40,56,0.5)');
+  const w = Math.sin(t * 7);
+  seg(g, -0.1, 0.02, -0.26, -0.12 - w * 0.08, 0.075, k.arm); disc(g, -0.27, -0.13 - w * 0.08, 0.045, k.hand);
+  seg(g, 0.1, 0.02, 0.26, -0.12 + w * 0.08, 0.075, k.arm); disc(g, 0.27, -0.13 + w * 0.08, 0.045, k.hand);
+  disc(g, 0, 0, 0.12, k.headCol); oval(g, 0, 0.045, 0.07, 0.05, k.skin);
+  g.restore();
+}

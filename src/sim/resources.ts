@@ -227,7 +227,10 @@ function arrive(sim: Sim, u: Unit): void {
     u.state = 'onscene';
     unitArrived(sim, I, u);
   } else if (u.state === 'transport') {
-    u.state = 'hospital'; u.timer = 8;
+    // 응급실이 붐비면(먼저 온 구급차가 인계 중이면) 인계가 늦어진다
+    const waiting = sim.units.filter((q) => q.id !== u.id && q.state === 'hospital').length;
+    u.state = 'hospital'; u.timer = 8 + waiting * 9 + Math.max(0, u.patients.length - 1) * 3;
+    if (waiting > 0) emit(sim, { inc: u.patientsIncident ?? -1, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign}: 응급실이 붐벼 환자 인계가 늦어집니다 (앞에 ${waiting}대).` });
   } else if (u.state === 'returning') {
     u.water = u.waterMax; u.hydrant = false;
     if (u.pumpFailed) { u.pumpFailed = false; u.pumpCond = 0.55; }

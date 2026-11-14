@@ -97,31 +97,34 @@ function buildTraffic(sim: Sim, I: Incident, rng: Rng): Scene {
   }
   s.staging = { x: 3, y: 13 }; s.safe = { x: 6, y: 14 }; s.vantage = { x: 8, y: 12 };
   set(s, 3, 13, T.GROUND); set(s, 6, 14, T.GROUND);
+  const busCrash = I.truth.variant === 'bus';
   const nW = sev >= 3 ? 3 : 2;
   const wrecks: Prop[] = [];
   for (let k = 0; k < nW; k++) {
     const x = 11 + k * 4 + rng.int(-1, 1), y = rng.pick([9, 10]);
-    const p = addProp(s, 'vehicle', x, y, { w: 2, h: 1, blocking: true, hp: 10, leak: 0, leakRate: 0, occupants: [], angle: rng.range(-0.35, 0.35), color: rng.int(0, 4) });
+    const isBus = busCrash && k === 0;      // 다수 사상자 사고: 첫 차량이 버스다
+    const p = addProp(s, 'vehicle', isBus ? x - 2 : x, y, { w: isBus ? 3 : 2, h: 1, blocking: true, hp: 10, leak: 0, leakRate: 0, occupants: [], angle: isBus ? rng.range(-0.1, 0.1) : rng.range(-0.35, 0.35), color: rng.int(0, 4), bus: isBus });
     wrecks.push(p);
-    addRegion(s, `차량 ${k + 1}`, 'wreck', x - 1, y - 1, x + 2, y + 1, false, true);
+    addRegion(s, isBus ? '버스' : `차량 ${k + 1}`, 'wreck', p.x - 1, y - 1, p.x + p.w, y + 1, false, true);
   }
+  if (busCrash) s.placeName = '버스 추돌 사고 현장';
   const vN = addRegion(s, '북측 수풀', 'verge', 6, 2, 24, 6, false, true);
   const vS = addRegion(s, '남측 수풀', 'verge', 8, 13, 24, 17, false, true);
   // 탑승자
   for (const w of wrecks) {
-    const n = sev >= 2 && s.casualties.length < 4 ? rng.int(1, 2) : 1;
+    const n = w.bus ? rng.int(6, 8) : sev >= 2 && s.casualties.length < 4 ? rng.int(1, 2) : 1;
     for (let k = 0; k < n; k++) {
       const roll = rng.next();
-      const pTrap = sev >= 3 ? 0.4 : sev >= 2 ? 0.28 : 0.08;
+      const pTrap = w.bus ? 0.2 : sev >= 3 ? 0.4 : sev >= 2 ? 0.28 : 0.08;
       if (roll < pTrap) {
-        const c = addCas(s, w.x + k, w.y, 'trapped', rng.range(45, 75), rng.range(0.16, 0.31), 0.3, { inVehicle: w.id });
+        const c = addCas(s, w.x + (k % w.w), w.y, 'trapped', rng.range(45, 75), rng.range(0.16, 0.31) * (w.bus ? 0.7 : 1), 0.3, { inVehicle: w.id });
         c.trapWork = rng.range(12, 20); w.occupants!.push(c.id);
       } else if (roll < pTrap + 0.3) {
-        const c = addCas(s, w.x + k, w.y, 'immobile', rng.range(50, 80), rng.range(0.12, 0.25), 0.3, { inVehicle: w.id });
+        const c = addCas(s, w.x + (k % w.w), w.y, 'immobile', rng.range(50, 80), rng.range(0.12, 0.25) * (w.bus ? 0.7 : 1), 0.3, { inVehicle: w.id });
         w.occupants!.push(c.id);
       } else {
         const sy = w.y === 9 ? 7 : 12;
-        addCas(s, w.x + k + rng.int(-1, 1), sy, 'mobile', rng.range(72, 96), rng.range(0.0, 0.05), 0);
+        addCas(s, Math.max(1, Math.min(SW - 2, w.x + (k % 4) + rng.int(-1, 1))), sy, 'mobile', rng.range(72, 96), rng.range(0.0, 0.05), 0);
       }
     }
   }
@@ -488,8 +491,14 @@ function buildHazmat(sim: Sim, I: Incident, rng: Rng): Scene {
   const leakRooms: Region[] = [];
   for (let k = 0; k < nValve; k++) {
     const r = rng.pick(P.rooms.filter((q) => leakRooms.indexOf(q) < 0));
-    const wallAdj = r.tiles.filter((i) => s.tiles[i] === T.FLOOR && s.propAt[i] < 0 && (s.tiles[i - SW] === T.WALL || s.tiles[i + SW] === T.WALL) && s.tiles[i - 1] !== T.DOOR && s.tiles[i + 1] !== T.DOOR && s.tiles[i - SW] !== T.DOOR && s.tiles[i + SW] !== T.DOOR && s.stairTo[i - 1] < 0 && s.stairTo[i + 1] < 0);
-    const i = wallAdj.length ? rng.pick(wallAdj) : freeTileIn(s, r, rng);
+    // 가구가 놓였던 자리(방이 끊기지 않는다는 것이 이미 확인된 자리)를 배관 자리로 쓴다
+    const spots = r.tiles.filter((i) => s.tiles[i] === T.FURN && (s.tiles[i - SW] === T.WALL || s.tiles[i + SW] === T.WALL));
+    let i: number;
+    if (spots.length) { i = rng.pick(spots); s.tiles[i] = T.FLOOR; s.decor[i] = 0; }
+    else {
+      const wallAdj = r.tiles.filter((q) => s.tiles[q] === T.FLOOR && s.propAt[q] < 0 && (s.tiles[q - SW] === T.WALL || s.tiles[q + SW] === T.WALL) && [1, -1, SW, -SW, SW + 1, SW - 1, -SW + 1, -SW - 1].every((d) => s.tiles[q + d] !== T.DOOR && s.stairTo[q + d] < 0));
+      i = wallAdj.length ? rng.pick(wallAdj) : freeTileIn(s, r, rng);
+    }
     addProp(s, 'valve', i % SW, (i / SW) | 0, { blocking: true, leakRate: Math.min(1, 0.5 + 0.14 * sev + rng.range(0, 0.1)) });
     leakRooms.push(r);
   }
@@ -504,11 +513,51 @@ function buildHazmat(sim: Sim, I: Incident, rng: Rng): Scene {
   }
   if (rng.chance(hz(0.2))) { const d = doorOf(s, rng.pick(P.rooms)); if (d && P.exitDoors.indexOf(d) < 0) lockDoor(s, d, rng.range(5, 9)); }
   if (rng.chance(hz(0.5))) for (const i of rng.pick(farRooms(s, P)).tiles) s.shadow[i] = 1;
+  // 출입구마다 통제 위치: 문에서 두 칸 떨어진 바깥
+  s.spots = s.exits.map((e, k) => {
+    const d = P.exitDoors[k], dx = e.x - d.x, dy = e.y - d.y;
+    const x = Math.max(0, Math.min(SW - 1, e.x + dx * 2)), y = Math.max(0, Math.min(16, e.y + dy * 2));
+    return { x: staticPass(get(s, x, y)) ? x : e.x, y: staticPass(get(s, x, y)) ? y : e.y, exit: k, taken: -1 };
+  });
+  return s;
+}
+
+// ───────────────────────── 수난 사고 ─────────────────────────
+/** 하천에 빠진 사람들. 물은 지나갈 수 없고, 사람은 하류(+x)로 떠내려간다. 다리 하나가 두 물가를 잇는다. */
+function buildWater(sim: Sim, I: Incident, rng: Rng): Scene {
+  const s = baseScene(sim, I, rng);
+  const sev = I.truth.severity;
+  for (let y = 17; y < SH; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
+  // 하천: 가로로 흐르고 조금씩 굽는다
+  let top = rng.int(4, 6);
+  const tops: number[] = [];
+  for (let x = 0; x < SW; x++) {
+    if (x > 0 && x % 4 === 0) top = Math.max(3, Math.min(6, top + rng.pick([-1, 0, 0, 1])));
+    tops.push(top);
+    for (let y = top; y < top + 5; y++) set(s, x, y, T.WATER);
+  }
+  // 다리
+  const bx = rng.int(21, 26);
+  for (let y = tops[bx] - 1; y <= tops[bx] + 5; y++) set(s, bx, y, T.TRAIL);
+  // 둔치의 나무
+  for (let k = 0; k < 14; k++) { const x = rng.int(0, SW - 1), y = rng.chance(0.4) ? rng.int(0, 2) : rng.int(12, 15); if (get(s, x, y) === T.GROUND && !(x <= 6 && y >= 12)) set(s, x, y, T.TREE); }
+  s.staging = { x: 3, y: 17 }; s.safe = { x: 3, y: 14 }; s.vantage = { x: 6, y: 12 };
+  addRegion(s, '상류 둔치', 'zone', 0, 11, 14, 16, false, true);
+  addRegion(s, '하류 둔치', 'zone', 15, 11, SW - 1, 16, false, true);
+  addRegion(s, '건너편 둔치', 'zone', 0, 0, SW - 1, 2, false, false);
+  // 물에 빠진 사람들
+  const count = sev >= 3 ? rng.int(2, 3) : sev >= 2 ? rng.int(1, 2) : 1;
+  for (let k = 0; k < count; k++) {
+    const x = rng.int(5, bx - 4), y = tops[x] + rng.int(1, 3);
+    const c = addCas(s, x, y, 'trapped', rng.range(62, 90), (rng.range(0.17, 0.27) + sev * 0.02) * (sim.weather === 'clear' ? 1 : 1.12), 0.1, { inWater: true, drift: rng.range(0.012, 0.035) * (1 + 0.25 * sev) });
+    c.trapWork = 0;
+  }
+  s.leadDept = 'fire';
   return s;
 }
 
 export function buildScene(sim: Sim, I: Incident, rng: Rng): Scene {
-  const s = I.truth.type === 'collapse' ? buildCollapse(sim, I, rng) : I.truth.type === 'hazmat' ? buildHazmat(sim, I, rng) : I.truth.type === 'fire' ? buildFire(sim, I, rng) : I.truth.type === 'traffic' ? buildTraffic(sim, I, rng) : I.truth.type === 'search' ? buildSearch(sim, I, rng) : I.truth.type === 'medical' ? buildMedical(sim, I, rng) : buildArmed(sim, I, rng);
+  const s = I.truth.type === 'water' ? buildWater(sim, I, rng) : I.truth.type === 'collapse' ? buildCollapse(sim, I, rng) : I.truth.type === 'hazmat' ? buildHazmat(sim, I, rng) : I.truth.type === 'fire' ? buildFire(sim, I, rng) : I.truth.type === 'traffic' ? buildTraffic(sim, I, rng) : I.truth.type === 'search' ? buildSearch(sim, I, rng) : I.truth.type === 'medical' ? buildMedical(sim, I, rng) : buildArmed(sim, I, rng);
   // 심각도 설정: 부상 악화 속도
   for (const c of s.casualties) { c.bleed *= sim.tune.bleedMul; c.bleed0 = c.bleed; }
   return s;

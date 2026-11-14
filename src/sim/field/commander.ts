@@ -5,6 +5,7 @@
 import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import { closeIncident } from '../incidents';
+import { T } from '../types';
 import type { CasBelief, FieldAgent, Incident, Scene, UnitCaps, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, dist } from '../util';
 import { fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
@@ -180,7 +181,11 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     }
     if (s.entryOrdered) { want(sim, s, 'engage', { hostile: h.id }, 0.9, 3); cancel(s, (w) => w.kind === 'negotiate' && w.hostile === h.id); }
   }
-  if (!threat) cancel(s, (w) => w.kind === 'perimeter' || w.kind === 'negotiate' || w.kind === 'engage');
+  // 가스 누출: 새는 동안에는 경찰이 출입구를 지켜 주변 시민의 접근을 막는다
+  const cordon = s.kind === 'hazmat' && B.list('haz').some((f) => f.value.kind === 'leak' && f.value.active);
+  if (cordon) s.exits.forEach((_, k) => want(sim, s, 'perimeter', { tile: k }, 0.62 - k * 0.04));
+  if (!threat && !cordon) cancel(s, (w) => w.kind === 'perimeter' || w.kind === 'negotiate' || w.kind === 'engage');
+  else if (!threat) cancel(s, (w) => w.kind === 'negotiate' || w.kind === 'engage');
 
   // ── 수색 ──
   const expected = expectedPersons(a);
@@ -224,7 +229,8 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         if (evid || (!wrecksPending && expected > found)) { pendingSearch++; want(sim, s, 'search', { region: r.id }, 0.64, 1, sim.weather !== 'clear' || c >= 0); }
         continue;
       }
-      if (s.kind !== 'fire' && s.kind !== 'armed' && s.kind !== 'medical' && s.kind !== 'collapse' && s.kind !== 'hazmat') continue;
+      if (s.kind !== 'fire' && s.kind !== 'armed' && s.kind !== 'medical' && s.kind !== 'collapse' && s.kind !== 'hazmat' && s.kind !== 'water') continue;
+      if (s.kind === 'water' && found >= Math.max(1, expected)) continue;      // 신고된 인원을 모두 찾았으면 물가 수색을 멈춘다
       if (s.kind === 'medical' && found >= 1) continue;      // 환자를 찾았으면 더 수색하지 않는다
       if (c >= th) continue;
       const fl = B.val<number>('fire', r.id) ?? 0;
@@ -270,6 +276,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     // 총을 든 용의자 바로 곁에 있는 사람(인질)은 위협이 사라지기 전에는 손댈 수 없다
     if (c.where === 'scene' && active.some((h) => h.value.weapon === 'gun' && Math.hypot(h.value.x - c.x, h.value.y - c.y) <= 3.6)) { clear(['treat', 'carry', 'extricate']); continue; }
     if (c.where === 'scene') {
+      if (c.mob === 'trapped' && s.tiles[c.y * s.w + c.x] === T.WATER) { want(sim, s, 'waterRescue', { cas: f.id }, 0.9 + urg, 2); continue; }      // 물속: 물가에서 줄을 던져 끌어낸다
       if (c.mob === 'trapped') { want(sim, s, 'extricate', { cas: f.id }, 0.82 + urg, 2); continue; }
       if (c.mob === 'mobile') {                // 스스로 대피 중 — 한참 지나도 도착 보고가 없으면 확인하러 보낸다
         if (sim.t - f.t > 32) want(sim, s, 'escort', { cas: f.id }, 0.62 + urg);
@@ -332,6 +339,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   const lawUnits = countUnits(sim, s, I, 'law', 0.5);
   if (gunActive && lawUnits < 2) request(sim, s, I, a, lawUnits === 0 ? 'law' : 'tactical', '총기를 소지한 용의자와 대치 중, 인원 부족', true);
   else if (active.length > 0 && lawUnits === 0) request(sim, s, I, a, 'law', '용의자 대응 인력 없음', true);
+  if (cordon && lawUnits === 0 && s.sizeupDone) request(sim, s, I, a, 'law', '가스가 새는 건물 주변을 통제할 인력이 없음', false);
   if (s.laneRows.length && lawUnits === 0 && !s.controlDone.every(Boolean) && cas.length > 0 && s.sizeupDone) request(sim, s, I, a, 'traffic', '차량 통행이 계속되는데 교통 통제 인력이 없음', false);
   if (s.kind === 'search' && cas.length === 0 && s.arrivedAt >= 0 && sim.t - s.arrivedAt > 75 && countUnits(sim, s, I, 'search', 0.3) < 3) request(sim, s, I, a, 'search', '수색 범위에 비해 인력 부족', false);
 }

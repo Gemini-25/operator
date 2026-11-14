@@ -86,7 +86,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
     const w = cur.workId >= 0 ? s.board[cur.workId] : null;
     if (w) sc = 0.5 + 0.4 * w.priority + 0.08;
     else if (cur.kind === 'retreat') sc = 0.95;
-    else if (cur.kind === 'rehab') sc = 0.62;
+    else if (cur.kind === 'rehab') sc = r.stamina < 40 ? 0.96 : 0.62;      // 어느 정도 회복할 때까지는 다른 지시에 끌려 나가지 않는다
     else if (cur.kind === 'resupply') sc = 0.85;
     else if (cur.kind === 'moveSignal') sc = 0.66;
     if (a.carrying !== -1) sc += 0.35;
@@ -118,7 +118,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
   // 5) 휴식
   if (r.stamina < 22 && (!cur || cur.kind !== 'rehab') && a.carrying === -1) opts.push({ label: '체력 고갈 — 교대 휴식', score: 0.55 + ((22 - r.stamina) / 22) * 0.4, apply: () => {
     setTask(sim, s, a, 'rehab', '휴식');
-    raiseProblem(sim, I, 'FATIGUE', `${r.name} 체력 고갈로 작업 중단`, { role: 'RESPONDER', actor: r.name, rid: r.id, imp: 1, text: '체력이 한계입니다. 잠시 물러나 회복하겠습니다.' });
+    if (sim.t - a.rehabLogAt > 45) { a.rehabLogAt = sim.t; raiseProblem(sim, I, 'FATIGUE', `${r.name} 체력 고갈로 작업 중단`, { role: 'RESPONDER', actor: r.name, rid: r.id, imp: 1, text: '체력이 한계입니다. 잠시 물러나 회복하겠습니다.' }); }
   } });
   // 6) 무전 음영: 중요한 보고가 막혀 있으면 신호가 닿는 곳으로 이동
   if (a.commFailLogged && a.outbox.length && (!cur || cur.kind !== 'moveSignal') && a.carrying === -1) {

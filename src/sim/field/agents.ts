@@ -23,6 +23,8 @@ export function visionOf(sim: Sim, s: Scene, a: FieldAgent): number {
 /** 숨겨진 대상을 알아볼 수 있는 거리. 연기·은폐·날씨가 줄이고, 판단력·경험이 늘린다. */
 export function detectRadius(sim: Sim, s: Scene, a: FieldAgent, concealment: number): number {
   const r = resp(sim, a);
+  // 붕괴 현장의 구조 공작차 대원은 탐지 장비(청음·영상)를 써서 잔해에 가려진 사람을 더 멀리서 찾는다
+  if (s.kind === 'collapse' && sim.units[a.unitId].kind === 'rescue') concealment *= 0.45;
   return visionOf(sim, s, a) * (1 - 0.72 * concealment) * (0.72 + 0.3 * r.judgment + 0.25 * r.experience);
 }
 
@@ -285,7 +287,7 @@ export function agentCost(sim: Sim, s: Scene, a: FieldAgent, allowBlockers = tru
       if (b.value === 'debris') c += clearCost; else if (b.value === 'locked') c += forceCost; else return -1;
     } else if (s.propAt[i] >= 0) {
       const p = s.props[s.propAt[i]];
-      if (p.kind === 'vehicle' || p.kind === 'cover') return -1;      // 눈에 보이는 고정 장애물
+      if (p.kind !== 'door' && p.kind !== 'debris') return -1;      // 눈에 보이는 고정 장애물 (차량, 배관 등). 문과 잔해만 "가 봐야 아는" 장애물이다
     }
     const x = i % s.w, y = (i / s.w) | 0;
     const dx = x - ax, dy = y - ay;
@@ -307,7 +309,7 @@ export function workLabel(s: Scene, w: WorkItem): string {
     sizeup: '현장 평가', search: `${reg} ${w.thorough ? '정밀 ' : ''}수색`, suppress: `${reg} 화재 진압`, hookup: '소화전 연결', clear: '잔해 제거', force: '문 강제 개방',
     extricate: `${cas} 구출`, treat: `${cas} 응급 처치`, carry: `${cas} 이송`, load: `${cas} 구급차 탑승`, traffic: '교통 통제',
     mitigate: w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? '균열부 보강' : w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'valve' ? '가스 밸브 차단' : '연료 누출 조치',
-    perimeter: `${w.tile === 0 ? '정문' : '후문'} 봉쇄`, negotiate: '협상', engage: '용의자 대응', arrest: '용의자 검거', interview: '목격자 면담', clearRoad: '도로 정리', rescueMate: '동료 구조', escort: `${cas} 동행`,
+    perimeter: s.kind === 'hazmat' ? `${w.tile === 0 ? '앞쪽' : '뒤쪽'} 출입구 통제` : `${w.tile === 0 ? '정문' : '후문'} 봉쇄`, negotiate: '협상', engage: '용의자 대응', arrest: '용의자 검거', interview: '목격자 면담', clearRoad: '도로 정리', rescueMate: '동료 구조', waterRescue: `${cas} 수난 구조`, escort: `${cas} 동행`,
   };
   return names[w.kind];
 }
@@ -348,6 +350,7 @@ export function fitFor(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number {
     case 'interview': return r.dept === 'police' ? 1 : 0.6;
     case 'clearRoad': return r.dept === 'ems' ? 0 : 0.4 + r.skills.rescue * 0.4;
     case 'rescueMate': return 0.5 + r.fitness * 0.3 + r.teamwork * 0.2;
+    case 'waterRescue': return 0.22 + r.skills.rescue * 0.5 + u.tool * 0.28;
   }
 }
 

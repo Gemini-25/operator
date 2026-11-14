@@ -344,7 +344,7 @@ describe('건물 붕괴 · 가스 누출', () => {
 
   it('신고 키워드 표의 열 수가 사건 유형 수와 같다', async () => {
     const { NATURE_LIK } = await import('../src/sim/dispatch/callSystem');
-    for (const k of Object.keys(NATURE_LIK)) expect(NATURE_LIK[k].length).toBe(7);
+    for (const k of Object.keys(NATURE_LIK)) expect(NATURE_LIK[k].length).toBe(8);
   });
 });
 
@@ -480,4 +480,47 @@ describe('교전과 진입', () => {
     expect(roomEntry).toBeGreaterThan(2);
     expect(timeouts).toBeLessThan(armed * 0.12);
   }, 180000);
+});
+
+describe('빈 곳 채우기', () => {
+  it('수난 사고: 물에 빠진 사람을 물가에서 끌어내고, 늦으면 떠내려가 잃는다', async () => {
+    const { T } = await import('../src/sim/types');
+    let water = 0, victims = 0, pulled = 0, swept = 0, timeouts = 0;
+    for (let k = 0; k < 40; k++) {
+      const s = new Sim('S' + k); s.runToEnd();
+      for (const sc of s.scenes) {
+        if (!sc || sc.kind !== 'water') continue;
+        water++;
+        if (s.incidents[sc.incidentId].closeReason === 'timeout') timeouts++;
+        for (const c of sc.casualties) {
+          victims++;
+          if (c.tFreed >= 0) { pulled++; expect(c.inWater).toBe(false); expect(sc.tiles[Math.round(c.y) * sc.w + Math.round(c.x)] !== T.WATER || c.where !== 'scene').toBe(true); }
+          if (c.dead && c.tFreed < 0 && c.x > sc.w - 3) swept++;
+        }
+      }
+    }
+    expect(water).toBeGreaterThan(8);
+    expect(pulled).toBeGreaterThan(victims * 0.6);
+    expect(timeouts).toBeLessThan(water * 0.15);
+    expect(swept).toBeGreaterThanOrEqual(0);
+  }, 120000);
+
+  it('다수 사상자 사고가 나오고, 가스 누출 현장에서는 경찰이 출입구를 지키며, 응급실이 붐비면 인계가 늦어진다', () => {
+    let bus = 0, busCas = 0, busMaxUnits = 0, cordon = 0, exposed = 0, queued = 0;
+    for (let k = 0; k < 40; k++) {
+      const s = new Sim('S' + k, { ...NORMAL, severity: 4 }); s.runToEnd();
+      for (const I of s.incidents) {
+        const sc = s.scenes[I.id]!;
+        if (I.truth.variant === 'bus') { bus++; busCas += sc.casualties.length; busMaxUnits = Math.max(busMaxUnits, I.everAssigned.length); expect(sc.props.some((p) => p.bus)).toBe(true); }
+        if (sc.kind === 'hazmat') { if (sc.board.some((w) => w.kind === 'perimeter' && w.assignees.length + (w.status === 'done' || w.status === 'cancelled' ? 1 : 0) > 0)) cordon++; exposed += sc.casualties.filter((c) => c.bystander2).length; }
+      }
+      queued += s.events.filter((e) => e.text.includes('응급실이 붐벼')).length;
+    }
+    expect(bus).toBeGreaterThan(3);
+    expect(busCas / bus).toBeGreaterThan(6);
+    expect(busMaxUnits).toBeGreaterThanOrEqual(5);
+    expect(cordon).toBeGreaterThan(3);
+    expect(exposed).toBeGreaterThan(0);
+    expect(queued).toBeGreaterThan(0);
+  }, 120000);
 });

@@ -450,6 +450,29 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (m === 'arrived' && workOnBlocker(sim, s, a, t.tile, t.kind)) finishTask(sim, s, a, true);
       return;
     }
+    case 'waterRescue': {
+      const c = s.casualties[t.cas];
+      if (c.dead || !c.inWater) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
+      // 물가에서 구조 대상이 보이는 가장 가까운 자리로 간다 (떠내려가면 따라 옮긴다). 네 칸 안이면 줄을 던질 수 있다
+      const m = moveTo(sim, s, a, c.x, c.y, 3.6, true);
+      if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+      a.label = m === 'arrived' ? '구조 줄 투척' : '물가로 이동';
+      if (m !== 'arrived') { t.progress = Math.max(0, t.progress - dt * 0.5); return; }
+      a.fx = c.x - a.x; a.fy = c.y - a.y;
+      t.need = 9 / (0.4 + r.skills.rescue * 0.8 + u.tool * 0.5);
+      t.progress += dt * staminaF(r); a.ring = t.progress / t.need;
+      drain(sim, a, 0.5);
+      if (t.progress >= t.need) {
+        c.inWater = false; c.drift = 0; c.mob = 'immobile'; c.trapWork = 0; c.tFreed = sim.t;
+        c.x = Math.round(a.x); c.y = Math.round(a.y); c.px = c.x; c.py = c.y;
+        c.bleed *= 0.35; c.bleed0 = c.bleed;      // 물 밖으로 나오면 악화가 느려진다 (저체온은 남는다)
+        learnQuiet(sim, a, casFact(sim, s, c, r.name));
+        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: `구조 대상 ${c.label}를 물에서 끌어냈습니다. 처치와 이송이 필요합니다.` });
+        r.xpGained += 0.005;
+        finishTask(sim, s, a, true);
+      }
+      return;
+    }
     case 'extricate': {
       const c = s.casualties[t.cas];
       if (c.dead) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
@@ -611,7 +634,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         if (t.phase === 0) { t.phase = 1; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${h.label}와 협상을 시도합니다.` }); }
         else if (t.phase === 1 && h.morale < 0.42) { t.phase = 2; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${h.label}가 동요하고 있습니다. 협상을 계속합니다.` }); }
         else if (t.phase === 1 && t.progress > 30 && h.aggression > 0.6) { t.phase = 3; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'radio', imp: 1, text: `${h.label}가 협상에 응하지 않습니다.` }); }
-      } else a.label = `${t.tile === 0 ? '정문' : '후문'} 봉쇄`;
+      } else a.label = s.kind === 'hazmat' ? '출입구 통제' : `${t.tile === 0 ? '정문' : '후문'} 봉쇄`;
       return;
     }
     case 'engage': {

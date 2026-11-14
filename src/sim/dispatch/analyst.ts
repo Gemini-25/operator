@@ -8,7 +8,7 @@ import { TYPE_NAME, clamp } from '../util';
 import { NATURE_LIK } from './callSystem';
 import { recomputeUnmet } from './dispatcher';
 
-const TYPES: IncidentType[] = ['fire', 'traffic', 'search', 'armed', 'medical', 'collapse', 'hazmat'];      // NATURE_LIK 의 열 순서와 같아야 한다
+const TYPES: IncidentType[] = ['fire', 'traffic', 'search', 'armed', 'medical', 'collapse', 'hazmat', 'water'];      // NATURE_LIK 의 열 순서와 같아야 한다
 export const sevName = (s: number): string => (s < 1.7 ? '보통' : s < 2.4 ? '높음' : '매우 높음');
 const NEED_NAME: Record<keyof Needs, string> = { suppression: '진압', rescue: '구조', ems: '구급', law: '경찰', tactical: '경찰 기동', search: '수색', traffic: '교통 통제' };
 export const needsText = (n: Partial<Needs>): string => {
@@ -80,6 +80,7 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
     if (inj.c && inj.c.value === true) { sev += 0.5; why.push('부상자'); }
     if (trap.c && trap.c.value === true) { sev += 0.7; why.push('차량 내 고립'); }
     if (count >= 3) { sev += 0.4; why.push(`부상 ${count}명`); }
+    if (count >= 6) { sev += 0.4; why.push('다수 사상자'); }
     if (haz.c && haz.c.value === 'leak') { sev += 0.4; why.push('연료 누출'); risks.push('차량 화재 위험'); }
     if (haz.c && haz.c.value === 'lanes') { risks.push('2차 사고 위험'); }
     if (det.c && det.c.value && det.c.value.ejected) { sev += 0.3; why.push('차외 방출'); }
@@ -90,6 +91,13 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
     if (count >= 2) { sev += 0.3; why.push(`${count}명`); }
     if (sim.weather === 'night') { sev += 0.35; why.push('야간'); risks.push('저체온·시야 불량'); }
     else if (sim.weather !== 'clear') { sev += 0.25; why.push('악천후'); risks.push('시야 불량'); }
+  } else if (type === 'water') {
+    sev = 1.7;
+    if (nat.indexOf('drowning') >= 0) { sev += 0.35; why.push('익수 목격'); }
+    if (trap.c && trap.c.value === true) { sev += 0.45 * (0.5 + trap.c.conf * 0.6); why.push('아직 물속'); }
+    if (count >= 2) { sev += 0.3; why.push(`${count}명`); }
+    if (haz.c && haz.c.value === 'current') { sev += 0.25; why.push('센 물살'); risks.push('떠내려가 시야에서 벗어날 위험'); }
+    if (sim.weather === 'night' || sim.weather === 'rain') { sev += 0.2; why.push(sim.weather === 'night' ? '야간' : '우천'); }
   } else if (type === 'collapse') {
     sev = 1.6;
     if (nat.indexOf('collapse') >= 0) { sev += 0.4; why.push('붕괴 목격'); }
@@ -136,15 +144,18 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
   if (type === 'fire') {
     needs.suppression = sev >= 2.4 ? 2 : 1;
     if (sev < 2.4 && trap.c && trap.c.value === true) needs.rescue = 1;
-    if (sev >= 1.7 && hurt) needs.ems = 1;
-    if (sev >= 2.75) needs.ems = Math.max(needs.ems, 1);
+    if ((sev >= 1.7 && hurt) || sev >= 2.1) needs.ems = 1;
   } else if (type === 'traffic') {
     needs.traffic = 1;
-    if (sev >= 1.7 || hurt) needs.ems = sev >= 2.5 ? 2 : 1;
-    if ((trap.c && trap.c.value === true) || sev >= 2.4 || (haz.c && haz.c.value === 'leak')) needs.rescue = 1;
+    needs.ems = sev >= 2.4 || count >= 3 ? 2 : 1;      // 충돌 사고에는 부상자가 있다고 보고 구급을 먼저 보낸다
+    if (count >= 6) { needs.ems = 3; needs.rescue = 1; risks.push('다수 사상자 — 구급 부대가 여러 대 필요'); }
+    if ((trap.c && trap.c.value === true) || sev >= 2.0 || (haz.c && haz.c.value === 'leak')) needs.rescue = 1;
   } else if (type === 'search') {
-    needs.search = sev >= 1.7 ? 2 : 1;
-    if (sev >= 2.2) needs.ems = 1;
+    needs.search = 2;
+    if (sev >= 1.6 || (inj.c && inj.c.value === true)) needs.ems = 1;      // 찾은 뒤에는 대개 처치와 이송이 필요하다
+  } else if (type === 'water') {
+    needs.rescue = 1; needs.ems = 1;
+    if (sev >= 2.1) needs.search = 1;      // 물가를 따라 살필 일손
   } else if (type === 'collapse') {
     needs.rescue = 1;
     if (sev >= 2.0) needs.suppression = 1;      // 잔해를 치우고 사람을 옮길 일손
@@ -153,13 +164,14 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
     needs.suppression = 1;
     if (sev >= 2.1 || (trap.c && trap.c.value === true)) needs.rescue = 1;
     if (sev >= 1.9 || hurt) needs.ems = 1;
+    if (sev >= 1.8) needs.law = 1;      // 주변 통제
   } else if (type === 'medical') {
     needs.ems = 1;
     if (sev >= 2.3) needs.search = 1;      // 가장 가까운 부대를 선착 대응으로 함께 보낸다 (누구든 가슴 압박은 할 수 있다)
   } else {
     needs.law = sev >= 1.7 ? 2 : 1;
     if (sev >= 2.4) { needs.law = 1; needs.tactical = 1; }
-    if (sev >= 2.2 || (inj.c && inj.c.value === true)) needs.ems = 1;
+    if (sev >= 1.9 || (inj.c && inj.c.value === true) || nat.indexOf('gunshots') >= 0) needs.ems = 1;
   }
   if (type === 'armed' && prank) { needs.law = 1; needs.tactical = 0; needs.ems = 0; }
   const rev = prev ? prev.revision + 1 : 0;

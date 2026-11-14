@@ -14,7 +14,7 @@ import { DEPT_COLOR, FONT } from './renderCity';
 import { alpha, disc, hash2, oval, rr, seg, visPoly } from './scene/common';
 import type { G } from './scene/common';
 import { beginDark, drawFire, drawFog, drawLight, drawRain, drawScorch, drawSmoke, drawSpray, drawVignette, hole, holePoly, smokeLayer } from './scene/fx';
-import { CAR_COLORS, VEH_SIZE, beaconColors, civilianLook, drawCar, drawClue, drawCone, drawDebris, drawDoorLeaf, drawEmergency, drawGasTank, drawHydrant, drawLying, drawPerson, drawRoadDebris, drawUnstable, drawValve, hostileLook, responderLook } from './scene/sprites';
+import { CAR_COLORS, VEH_SIZE, beaconColors, civilianLook, drawCar, drawClue, drawCone, drawDebris, drawDoorLeaf, drawEmergency, drawGasTank, drawHydrant, drawLying, drawPerson, drawRoadDebris, drawBus, drawSwimmer, drawUnstable, drawValve, hostileLook, responderLook } from './scene/sprites';
 import type { ArmPose, Item, PersonLook } from './scene/sprites';
 import { buildStatic, doorHorizontal, staticSig } from './scene/staticLayer';
 import type { StaticLayer } from './scene/staticLayer';
@@ -205,7 +205,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
         pill(ctx, known ? `연료 누출 ${Math.round(lk * 100)}%` : `(미확인) 누출 ${Math.round(lk * 100)}%`, vx, vy + ts * 1.15, ts * 0.3, '#ffd166');
         ctx.globalAlpha = 1;
       }
-      drawCar(ctx, vx, vy, p.angle ?? 0, ts, Math.max(1.7, p.w * 0.98), CAR_COLORS[(p.color ?? 0) % CAR_COLORS.length], { wreck: p.kind === 'vehicle', dim: !!p.cleared, seed: p.id });
+      if (p.bus) drawBus(ctx, vx, vy, p.angle ?? 0, ts, p.w * 1.04, ['#3f8a5c', '#3f69a8', '#c9a23a', '#b5564a', '#5f9a82'][(p.color ?? 0) % 5], p.id);
+      else drawCar(ctx, vx, vy, p.angle ?? 0, ts, Math.max(1.7, p.w * 0.98), CAR_COLORS[(p.color ?? 0) % CAR_COLORS.length], { wreck: p.kind === 'vehicle', dim: !!p.cleared, seed: p.id });
     } else if (p.kind === 'hydrant') {
       unit(() => drawHydrant(ctx), cx(p.x), cy(p.y));
       pill(ctx, '소화전', cx(p.x), cy(p.y) + ts * 0.66, ts * 0.28, '#ffb4a8');
@@ -310,6 +311,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     const ghost = known ? 1 : 0.45;
     const carrier = carrierOf.get(c.id);
     if (b === 2 && !c.dead) { ctx.strokeStyle = `rgba(255,93,93,${0.25 + 0.3 * Math.abs(Math.sin(time * 4))})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, ts * (0.46 + 0.08 * Math.abs(Math.sin(time * 4))), 0, 7); ctx.stroke(); }
+    if (c.inWater && !c.dead) { drawSwimmer(ctx, x, y, ts, lk, time + c.id, ghost); continue; }
     const upright = !c.dead && c.mob === 'mobile' && c.where !== 'carried' && c.health > 40;
     if (upright) {
       const mv = Math.abs(c.x - c.px) + Math.abs(c.y - c.py) > 0.005;
@@ -402,6 +404,21 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     ctx.globalAlpha = 1;
     if (a.label) labels.push({ x, y: y - ts * 0.82, text: (a.isCommander ? '★ ' : '') + (sel ? rsp.name + ' · ' : '') + (a.label.length > 13 ? a.label.slice(0, 12) + '…' : a.label), col: a.status === 'down' ? '#ff5d5d' : col });
     else if (sel) labels.push({ x, y: y - ts * 0.82, text: rsp.name, col });
+  }
+
+  // 구조 줄: 물가의 대원에서 물속의 사람까지
+  if (!MINI) for (const a of s.agents) {
+    if (a.status !== 'active' || !a.task || a.task.kind !== 'waterRescue' || a.ring <= 0.01) continue;
+    const c = s.casualties[a.task.cas];
+    if (!c || !c.inWater) continue;
+    const p = ipos(a, o.alpha), q = ipos(c, o.alpha);
+    const x0 = cx(p.x), y0 = cy(p.y), x1 = cx(q.x), y1 = cy(q.y), k = Math.min(1, a.ring * 2.2);
+    const ex = x0 + (x1 - x0) * k, ey = y0 + (y1 - y0) * k;
+    ctx.lineCap = 'round'; ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = Math.max(2, ts * 0.07);
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.quadraticCurveTo((x0 + ex) / 2 + ts * 0.3, (y0 + ey) / 2 + ts * 0.2, ex, ey); ctx.stroke();
+    ctx.strokeStyle = '#f2e6c0'; ctx.lineWidth = Math.max(1.5, ts * 0.04); ctx.stroke();
+    ctx.strokeStyle = '#e8532f'; ctx.lineWidth = Math.max(2, ts * 0.08); ctx.beginPath(); ctx.arc(ex, ey, ts * 0.16, 0, 7); ctx.stroke();
+    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(1, ts * 0.03); ctx.setLineDash([ts * 0.08, ts * 0.17]); ctx.beginPath(); ctx.arc(ex, ey, ts * 0.16, 0, 7); ctx.stroke(); ctx.setLineDash([]);
   }
 
   // ── 불 ──
@@ -545,7 +562,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     ctx.beginPath(); ctx.roundRect(x - r, y - r, r * 2, r * 2, r * 0.45); ctx.fill(); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle = '#0b1219'; ctx.font = `800 ${Math.round(ts * 0.27)}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(q.known ? c.label : '?', x, y + 1);
-    if (c.mob === 'trapped' && !c.dead && c.where === 'scene') pill(ctx, c.inVehicle !== null ? '차량에 갇힘' : '매몰', q.x, q.y + ts * 0.62, ts * 0.25, '#e8f0f7');
+    if (c.mob === 'trapped' && !c.dead && c.where === 'scene') pill(ctx, c.inWater ? (c.drift ? '표류 중' : '물속 — 걸려 있음') : c.inVehicle !== null ? '차량에 갇힘' : '매몰', q.x, q.y + ts * 0.62, ts * 0.25, c.inWater ? '#9fd8ff' : '#e8f0f7');
     if (c.treated && !c.dead) { ctx.fillStyle = '#ffffff'; ctx.fillRect(x + r - ts * 0.02, y - r - ts * 0.11, ts * 0.05, ts * 0.17); ctx.fillRect(x + r - ts * 0.08, y - r - ts * 0.05, ts * 0.17, ts * 0.05); }
     if (!c.dead && (c.where === 'scene' || c.where === 'safe')) {
       const bw = ts * 0.56, bx = q.x - bw / 2, by = q.y + ts * 0.36, bh = Math.max(3, ts * 0.085);

@@ -30,7 +30,7 @@ export function staticSig(s: Scene): number {
 function surfaceMap(s: Scene, district: string): Uint8Array {
   const n = s.w * s.h, out = new Uint8Array(n);
   const floor = s.floorMat === 1 ? S.TILE : s.floorMat === 2 ? S.SLAB : S.WOOD;
-  const ground = s.kind === 'search' ? S.FOREST : s.kind === 'traffic' ? S.GRASS : district === 'commercial' ? S.PAVER : district === 'industrial' ? S.CONCRETE : S.GRASS;
+  const ground = s.kind === 'search' ? S.FOREST : s.kind === 'traffic' || s.kind === 'water' ? S.GRASS : district === 'commercial' ? S.PAVER : district === 'industrial' ? S.CONCRETE : S.GRASS;
   const at = (x: number, y: number): number => (x < 0 || y < 0 || x >= s.w || y >= s.h ? T.VOID : s.tiles[y * s.w + x]);
   for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) {
     const i = y * s.w + x, t = s.tiles[i];
@@ -495,9 +495,22 @@ export function buildStatic(s: Scene, R: number, district: string): StaticLayer 
       }
     }
     g.strokeStyle = 'rgba(22,32,24,0.55)'; g.lineWidth = R * 1.08; g.stroke(water);
+    // 넓은 물(강)은 칸 사이에 틈이 보이지 않게 먼저 통째로 칠한다
+    const wet = (x: number, y: number): boolean => x < 0 || x >= s.w || isWater(x, y);          // 화면 밖으로는 물이 이어진다고 본다
+    const wide = (x: number, y: number): boolean => isWater(x, y) && (wet(x + 1, y) ? 1 : 0) + (wet(x - 1, y) ? 1 : 0) + (wet(x, y + 1) ? 1 : 0) + (wet(x, y - 1) ? 1 : 0) >= 3;
+    g.fillStyle = '#1f5874';
+    for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) if (wide(x, y)) g.fillRect(x * R - 1, y * R - 1, R + 2, R + 2);
     g.strokeStyle = 'rgba(176,214,222,0.55)'; g.lineWidth = R * 0.94; g.stroke(water);
     g.strokeStyle = '#1f5874'; g.lineWidth = R * 0.86; g.stroke(water);
     g.strokeStyle = '#2a6f8f'; g.lineWidth = R * 0.5; g.stroke(water);
+    // 넓은 물의 밝은 가운데: 물가 쪽으로만 띠(0.25칸)를 남기고 칸을 채운다
+    g.fillStyle = '#2a6f8f';
+    for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) {
+      if (!wide(x, y)) continue;
+      const x0 = wet(x - 1, y) ? x * R - 1 : (x + 0.25) * R, x1 = wet(x + 1, y) ? (x + 1) * R + 1 : (x + 0.75) * R;
+      const y0 = wet(x, y - 1) ? y * R - 1 : (y + 0.25) * R, y1 = wet(x, y + 1) ? (y + 1) * R + 1 : (y + 0.75) * R;
+      g.fillRect(x0, y0, x1 - x0, y1 - y0);
+    }
     g.strokeStyle = 'rgba(150,212,236,0.32)'; g.lineWidth = Math.max(1, R * 0.035);
     for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) {
       if (!isWater(x, y)) continue;

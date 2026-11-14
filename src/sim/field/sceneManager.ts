@@ -14,7 +14,7 @@ import { outstanding } from './commander';
 import { buildScene } from './builders';
 import { act, finishTask } from './executor';
 import { tileOf } from './grid';
-import { tickCasualties, tickCollapse, tickFire, tickGas, tickHostiles, tickLane, tickLeaks } from './hazards';
+import { tickCasualties, tickCollapse, tickFire, tickGas, tickHostiles, tickLane, tickLeaks, tickWater } from './hazards';
 
 export function createScene(sim: Sim, I: Incident): Scene {
   const s = buildScene(sim, I, sim.rng.fork('scene:' + I.id));
@@ -65,7 +65,7 @@ export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
       beliefs: new BeliefStore(), outbox: [], outboxSince: 0, shadowSince: -1, commFailLogged: false,
       nextThink: sim.t + 0.4 + k * 0.4, nextPerceive: 0, carrying: -1, inCover: false, cooldown: 1,
       status: 'active', candidates: [], label: '도착', ring: 0, arrivedAt: sim.t, lastBlockEvent: -1, idleSince: sim.t,
-      stuckT: 0, lastX: 0, lastY: 0, rng: sim.rng.fork(`agent:${I.id}:${rid}`), planT: 0, equipIssue: 'none', smokeT: 0, climb: 0,
+      stuckT: 0, lastX: 0, lastY: 0, rng: sim.rng.fork(`agent:${I.id}:${rid}`), planT: 0, equipIssue: 'none', smokeT: 0, climb: 0, rehabLogAt: -99,
       pendingBlock: -1, underFireT: -99, spot: -1, quiet: new Set(), lastRetreatLog: -99,
     };
     a.px = a.x; a.py = a.y;
@@ -145,7 +145,7 @@ function agentHealth(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   }
 }
 
-const LIMIT: Record<string, number> = { fire: 430, traffic: 400, search: 470, armed: 400, medical: 300, collapse: 470, hazmat: 430 };
+const LIMIT: Record<string, number> = { fire: 430, traffic: 400, search: 470, armed: 400, medical: 300, collapse: 470, hazmat: 430, water: 380 };
 
 export function tickScene(sim: Sim, s: Scene): void {
   if (s.archived) return;
@@ -157,6 +157,7 @@ export function tickScene(sim: Sim, s: Scene): void {
     tickLane(sim, s, I);
     tickLeaks(sim, s, I);
     if (s.kind === 'collapse') tickCollapse(sim, s, I);
+    if (s.kind === 'water') tickWater(sim, s, I);
     if ((sim.tick + s.id) % 5 === 0) { tickFire(sim, s, I); if (s.kind === 'hazmat') tickGas(sim, s, I); }
   }
   // 2) 무전
@@ -208,7 +209,7 @@ export function tickScene(sim: Sim, s: Scene): void {
   // 7) 한계 시간 / 방치
   if (I.phase !== 'closed' && s.arrivedAt >= 0) {
     const anyActive = s.agents.some((a) => a.status === 'active');
-    if (sim.t - s.arrivedAt > LIMIT[s.kind]) {
+    if (sim.t - s.arrivedAt > LIMIT[s.kind] + (s.variant === 'bus' ? 170 : 0)) {      // 다수 사상자 사고는 이송에 시간이 더 걸린다
       emit(sim, { inc: I.id, role: 'COMMANDER', actor: s.commanderRid >= 0 ? sim.responders[s.commanderRid].name : '현장', kind: 'command', imp: 2, text: '대응 한계 시간을 넘겼습니다. 현 상태로 현장을 인계하고 철수합니다.' });
       closeIncident(sim, I, 'timeout');
     } else if (!anyActive && !I.assigned.some((uid) => sim.units[uid].state === 'enroute' || sim.units[uid].state === 'turnout')) {

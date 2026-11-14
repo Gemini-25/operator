@@ -6,7 +6,7 @@ import type { BeliefStore } from './field/beliefs';
 
 export interface Pt { x: number; y: number }
 export type Dept = 'fire' | 'ems' | 'police';
-export type IncidentType = 'fire' | 'traffic' | 'search' | 'armed' | 'medical' | 'collapse' | 'hazmat';
+export type IncidentType = 'fire' | 'traffic' | 'search' | 'armed' | 'medical' | 'collapse' | 'hazmat' | 'water';
 export type District = 'residential' | 'commercial' | 'industrial' | 'outskirts';
 export type Weather = 'clear' | 'rain' | 'fog' | 'night';
 
@@ -110,6 +110,7 @@ export interface Prop {
   interviewed?: boolean; lastSeenRegion?: number; accurate?: boolean;  // witness
   removed?: boolean;
   entered?: boolean;                         // door: 진입조가 이 방 문으로 이미 진입했다
+  bus?: boolean;                             // vehicle: 버스 (다수 사상자 사고)
 }
 export type Mobility = 'mobile' | 'immobile' | 'trapped';
 export type CasWhere = 'scene' | 'carried' | 'safe' | 'loaded' | 'hospital';
@@ -127,6 +128,9 @@ export interface Casualty {
   isTarget: boolean;        // 수색 대상
   hostage: boolean;
   climb?: number;           // 계단을 오르내리는 데 쓴 시간 (스스로 대피 중)
+  bystander2?: boolean;     // 사건 도중 현장 밖에서 다가와 피해를 입은 주변 시민
+  inWater?: boolean;        // 물에 빠져 있다 (수난 사고): 물가에서 줄을 던져 끌어내야 한다
+  drift?: number;           // 떠내려가는 속도 (칸/초, +x 방향)
   // 진실 기반 타임라인 (보고서용)
   tDiscovered: number; tFreed: number; tTreated: number; tSafe: number; tLoaded: number; tDead: number; tHospital: number;
   discoveredBy: number;
@@ -157,7 +161,7 @@ export interface Fx { kind: 'shot' | 'spray' | 'radio' | 'text' | 'boom' | 'hit'
 
 export type WorkKind =
   | 'sizeup' | 'search' | 'suppress' | 'hookup' | 'clear' | 'force' | 'extricate' | 'treat' | 'carry' | 'load'
-  | 'traffic' | 'mitigate' | 'perimeter' | 'negotiate' | 'engage' | 'arrest' | 'interview' | 'clearRoad' | 'rescueMate' | 'escort';
+  | 'traffic' | 'mitigate' | 'perimeter' | 'negotiate' | 'engage' | 'arrest' | 'interview' | 'clearRoad' | 'rescueMate' | 'escort' | 'waterRescue';
 export type TaskKind = WorkKind | 'retreat' | 'rehab' | 'resupply' | 'board' | 'standby' | 'moveSignal';
 
 export interface WorkItem {
@@ -208,6 +212,7 @@ export interface FieldAgent {
   pendingBlock: number;                       // 방금 발견한 장애물 타일 (우회/제거 결정 대기)
   underFireT: number;                         // 마지막으로 피격 위협을 받은 시각
   climb: number;                              // 계단을 오르내리는 데 쓴 시간
+  rehabLogAt: number;                         // 마지막으로 "체력 고갈"을 알린 시각 (같은 말을 되풀이하지 않는다)
   spot: number;                               // 점유 중인 엄폐 위치 인덱스
   quiet: Set<string>;                         // 이미 별도 이벤트로 알린 정보(무전 문구에서 생략)
   lastRetreatLog: number;

@@ -2,6 +2,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { Sim } from '../src/sim/engine';
+import { NORMAL } from '../src/sim/difficulty';
 import { findRoute } from '../src/sim/city';
 import { BeliefStore, mkFact } from '../src/sim/field/beliefs';
 import { Rng } from '../src/sim/rng';
@@ -154,7 +155,7 @@ describe('도시·경로', () => {
 
 describe('난이도 (교대 시작 전 조건)', () => {
   it('보통은 기본값과 같고, 같은 시드 + 같은 난이도는 재현된다', async () => {
-    const { NORMAL, PRESETS } = await import('../src/sim/difficulty');
+    const { PRESETS } = await import('../src/sim/difficulty');
     const a = new Sim('D-1'); a.runToEnd();
     const b = new Sim('D-1', NORMAL); b.runToEnd();
     expect(a.logHash).toBe(b.logHash);
@@ -183,7 +184,7 @@ describe('난이도 (교대 시작 전 조건)', () => {
     expect(h).toBeGreaterThan(x + 0.05);
   }, 60000);
   it('손잡이가 해당 조건을 실제로 바꾼다', async () => {
-    const { NORMAL, parseDifficulty, difficultyLabel } = await import('../src/sim/difficulty');
+    const { parseDifficulty, difficultyLabel } = await import('../src/sim/difficulty');
     const count = (d: typeof NORMAL): number => { let n = 0; for (let k = 0; k < 6; k++) { const s = new Sim('S' + k, d); s.runToEnd(); n += s.incidents.length; } return n; };
     expect(count({ ...NORMAL, frequency: 5 })).toBeGreaterThan(count(NORMAL) + 8);          // 사건 빈도
     expect(count({ ...NORMAL, frequency: 1 })).toBeLessThan(count(NORMAL));

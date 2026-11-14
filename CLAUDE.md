@@ -17,11 +17,12 @@ TypeScript + React + Vite, 그림은 Canvas 2D. 서버·외부 API·LLM 호출 �
 | 명령 | 용도 |
 |---|---|
 | `npm run dev` | 개발 서버 (`http://localhost:5173`, `?seed=S7&diff=hard` 로 조건 고정) |
-| `npm run check` | **커밋 전 관문**: 타입 검사 + 테스트 + 시드 40개 헤드리스 검증 |
+| `npm run check` | **커밋 전 관문**: 타입 검사 + 테스트 + 시드 40개 헤드리스 검증 (3분쯤) |
 | `npm test` | Vitest 115개, 파일 7개: `sim`(재현성, 교대 완주, 정보 격리, 난이도, 전술, 유형별 현장, 지도, 생활 사건, 추격전) · `ext`(확장 지점) · `crime` · `major` · `disaster` · `destruction` · `traffic`. 한 묶음만 볼 때는 `npx vitest run tests/crime.test.ts` |
 | `npm run sweep -- 100` | 시드 100개 결과 분포. `--diff hard`, `--diff 4,4,4,2,3,3`(빈도·심각도·용의자·장비·신고·부대, 일곱째 숫자를 붙이면 교통), `-v`, `--json`, `--check` |
 | `npm run sweep -- 1 --log S7` | 한 교대의 전체 이벤트 기록과 종료 보고서 (동작 확인에 가장 유용) |
 | `npm run sweep -- 20 --force armed/kidnap --scen` | 그 시나리오를 교대마다 초반에 한 번 일으키고, 시나리오별 결과 표를 낸다 (새 시나리오 확인용). `--disaster typhoon`(flood·quake·wildfire·tsunami)은 재난을 정해서 |
+| `npm run ui-check` | (선택, Playwright 필요) 화면 자동 검사. 개발 서버(5191)를 스스로 띄워 콘솔 오류·배속·되감기 뒤 기록 해시(헤드리스와 비교)·새로고침 복원·종료 보고서·패널을 본다(2분쯤). `-- --out <폴더> --seed S7`. 화면을 고친 묶음은 끝낼 때 한 번 돌린다 |
 | `npm run build` | 타입 검사 + 정적 빌드 |
 | `node scripts/screenshot.cjs S7 화재` | (선택, Playwright 필요) 해당 유형 현장이 열렸을 때 화면 캡처. 유형 이름 일부: 화재·교통사고·실종·무장·응급·붕괴·가스·수난 |
 
@@ -87,6 +88,7 @@ src/view/scene/common.ts     색 계산, 해시, 벽에 가려지는 시야 다�
 src/view/scene/skins/        묶음별 소품 그림(crime·major·disaster). skins.ts 가 모아서 renderScene 에 넘긴다
 src/ui/                      App, Viewport(캔버스·입력), panels(모든 패널), Mark(<Mark>·<Token>·<FacilityBadge>), MapLegend(지도 범례), TrafficChip(상단 교통 요약), DisasterBanner(특보 띠), styles.css
 scripts/sweep.ts             헤드리스 실행기 (균형·교착 확인의 기본 도구)
+scripts/ui-check.cjs         화면 자동 검사 (+ ui-check-ref.ts: 같은 시드·난이도의 헤드리스 기록 해시). 화면 쪽 관찰 고리는 App.tsx 의 window.__ar.snap() (개발 서버에서만, 읽기 전용)
 tests/                       sim.test.ts(기본) + 묶음별 ext·crime·major·disaster·destruction·traffic
 ```
 
@@ -150,7 +152,18 @@ tests/                       sim.test.ts(기본) + 묶음별 ext·crime·major·
 - **다수 사상자 규칙은 모든 사건에 걸린다.** 부상자 5명 이상이면 구급을, 고립 3명 이상이면 구조를 더 부른다(`orders/major.ts`). 구급차는 세 대뿐이라 한가한 교대에서도 인근 도시 지원이 불릴 수 있다.
 - **지도와 목록에 글자 표식을 쓰지 않는다.** 부대·시설·장애물은 `view/marks.ts`·`trafficLayer.OBSTACLE_ICON` 의 그림 기호로 그린다. 같은 종류 안의 번호는 숫자가 아니라 돌 아래의 점이다. 새 표식을 만들면 범례(`ui/MapLegend.tsx`)에도 넣는다.
 - **한국어 조사.** 이름·호출부호 뒤 조사는 `josa(word, '이/가')` 로 붙인다.
-- **브라우저 확인 없이 UI 를 끝났다고 하지 않는다.** 헤드리스 브라우저로 화면을 찍어 보고, 콘솔 오류 0건을 확인한다.
+- **브라우저 확인 없이 UI 를 끝났다고 하지 않는다.** 헤드리스 브라우저로 화면을 찍어 보고, 콘솔 오류 0건을 확인한다. `npm run ui-check` 가 기본 검사를 해 준다. `window.__ar.snap()` 의 필드 이름이나 버튼 글자·클래스(정지/재개, N×, 자동 감속, .card.incident 등)를 바꾸면 `scripts/ui-check.cjs` 도 고친다. 새로고침 복원은 주소에 seed·diff·disaster·force 가 없을 때만 일어난다.
+- **이미 끝나 있던 일은 조용히 + 강제로 보고한다.** `learnQuiet` 로만 기록하면 같은 값이라 보고가 나가지 않아 지휘관이 같은 일을 끝없이 다시 지시한다(목격자 면담에서 겪었다). `executor.reportDone` 을 쓴다.
+- **음영 구역에 묻힌 보고.** 지휘관이 음영 구역에 있을 때 배달된 무전은 다시 오지 않는다. 대원이 모두 손을 놓았는데 끝낼 수 없으면 `commander.rollCall` 이 확인 무전(`RadioMsg.kind 'rollcall'`)을 한 번 보내고, 대원은 아는 사실을 소리 없이 다시 보고한다.
+- **쉬는 대원에게 묶인 작업.** 휴식·장비 교체 중인 대원에게 묶인 작업은 `assign` 이 8초 뒤 넘기고, 체력 40 미만으로 쉬는 대원에게는 지시하지 않는다.
+- **우선순위 차이 0.22 규칙.** 하던 일보다 0.22 이상 높아야 빼 온다. 그래서 봉쇄(0.76)에 묶인 경찰은 진입(0.9)으로 빼 올 수 없다 — 진입이 정해지면 진입조 둘을 먼저 채우고 남는 경찰만 봉쇄한다. 지휘관 본인의 현장 평가는 예외로 먼저 한다. 새 임무의 우선순위를 정할 때 이 규칙으로 교착이 생기지 않는지 본다(흉기 대치에서도 겪었다: 흉기를 휘두르는 상대에게는 협상을 접고 검거 0.86).
+- **맡을 사람이 없는 작업.** 20초 넘게 열린 작업을 현장의 누구도 맡을 수 없고 그 능력의 부대도 오지 않으면 `commander.needFor` 의 표로 그 능력의 부대를 요청한다. 새 임무 종류를 만들면 `needFor` 에도 넣는다. 진압 부대가 모두 물이 떨어졌고 오는 부대도 없을 때도 진압 지원을 부른다.
+- **관제의 사건 순위에는 굶은 시간이 있다**(`dispatcher.priorityOf`, 최대 +1.5). 아직 아무도 닿지 않은 사건은 벨이 울린 때부터 센다. 전환 배정은 같은 사건에서 120초 안에 두 번 하지 않는다.
+- **잔불 정리.** 불이 꺼졌다고 믿은 뒤 지휘관은 불났던 구역과 가까운 실내 구역에 잔불 정리(`overhaul`, 믿음 `ovh`)를 낸다. 진압 확인은 방의 85% 이상을 보았을 때만 난다(`perceive`). 되살아난 불은 잔불 정리 대원이 직접 끈다 — 보고만 하고 돌아가면 진압조가 방 일부만 보고 확인을 내 같은 일이 되풀이된다.
+- **자주 도는 객체의 모양.** 구간·부대·소품·현장·구조 대상·사건은 만들 때 선택 칸을 모두 같은 순서로 `undefined` 로 비워 둔다(V8 의 숨은 클래스가 갈라지면 눈에 띄게 느려진다). 새 선택 칸은 생성 리터럴에도 넣는다: `kit.ts` 의 `PROP_BLANK`·`addCas`·`baseScene`, `hazards.ts` 의 주변 시민 리터럴, `resources.ts` 의 두 부대 리터럴, `incidents.ts`, `city.ts` 의 `generateCity`, 교대 중에 생기는 현장 칸은 `createScene`. 이 객체들에 `Object.keys`·`in` 을 쓰지 않는다. 정확성과는 무관하고 속도만의 문제다.
+- **공유 버퍼와 색인.** `findRoute`·`astar` 는 모듈 버퍼를 쓰므로 재진입하면 안 되고, `astar` 의 비용 함수는 순수해야 한다(칸마다 한 번만 부른다). `BeliefStore.facts` 는 `merge` 로만 고친다(종류별 색인). `traffic.linked` 는 길 상태(`e.closed`·큰 차 불가)를 비교해 답을 다시 쓴다 — `heavyPath` 가 다른 상태를 보게 되면 비교에도 넣는다. `burned[]` 는 `tickFire` 에서만 쓰고 그때 `burnedTiles` 를 함께 센다. 연기 확산(`smokeSpread`)은 불도 연기도 없으면 건너뛴다 — 다른 연기 원천을 더하면 그 조건을 같이 본다. 매 틱 도는 배열 순회는 색인 순회로 쓴다.
+- **테스트의 교대 재사용.** `tests/sim.test.ts` 의 `shiftOf(seed, d)` 는 끝난 교대를 파일 안에서 다시 쓴다. 그 Sim 을 고치는 테스트에는 쓰지 않는다.
+- **속도 측정.** 공유 기계에서는 sweep 의 avg ms/shift(벽시계)가 많이 흔들린다. 전후를 번갈아 돌리고 사용자 CPU(`time`)를 함께 본다. 결과를 바꾸지 않는 변경은 시드 묶음의 `report.hash` 가 전후로 같은지로 증명한다.
 - **현장 그림의 고정 층.** `staticLayer.ts` 는 타일·가구가 바뀔 때만 다시 그린다(`staticSig`). 매 프레임 바뀌는 것(문짝, 불, 사람)을 여기에 넣지 않는다. 새 타일 종류·가구를 만들면 `surfaceMap`·`paintTile`·`furniture` 에 그림을 추가한다.
 - **건물 배치는 고정이 아니다.** 방의 수·위치·출입구가 사건마다 다르다. 좌표를 직접 쓰지 말고 `Plan`(`rooms`·`corridors`·`exitDoors`·`floors`)과 `s.exits`·`s.regions` 로 찾는다. 복도가 없는 건물(`corridors` 가 빈 배열)도 있다. 새 틀을 만들면 "모든 바닥에 걸어서 닿는다"는 테스트(`현장 배치의 다양성`)를 통과해야 한다.
 - **가구는 실제 장애물이다(`T.FURN`).** 지나갈 수 없고, 시야는 통과하며, 엄폐물이 된다. 방을 새로 만들 때는 `builders.ts` 의 `furnish()` 를 쓴다(문 주변을 비우고 방이 끊기지 않는지 검사한다).

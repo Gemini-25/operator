@@ -103,7 +103,7 @@ function setCommander(sim: Sim, s: Scene, I: Incident, a: FieldAgent, text: stri
   emit(sim, { inc: I.id, role: 'COMMANDER', actor: sim.responders[a.rid].name, rid: a.rid, kind: 'command', imp: 2, text });
 }
 
-const ROLL_CALL: Record<string, boolean> = { cas: true, hos: true, haz: true, mate: true, fire: true, srch: true, ovh: true, ctl: true };
+const ROLL_CALL: Record<string, boolean> = { cas: true, hos: true, haz: true, mate: true, fire: true, srch: true, ovh: true, ctl: true, evid: true };
 
 function deliverRadio(sim: Sim, s: Scene, I: Incident): void {
   if (!s.radio.length) return;

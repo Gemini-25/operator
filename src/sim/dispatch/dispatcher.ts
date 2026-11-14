@@ -38,12 +38,13 @@ function priorityOf(sim: Sim, I: Incident): number {
   const s = sim.scenes[I.id];
   const urgent = s ? s.requests.some((q) => q.urgent && q.fulfilled < q.count) : false;
   // 오래 굶은 수요: 부대가 모자란 교대에서는 새로 들어온 위험한 사건이 늘 앞에 서서, 먼저 기다리던 사건이 끝내 부대를 받지 못한다.
-  // 채워지지 않은 수요가 오래 밀릴수록 앞으로 당긴다. 아직 아무 부대도 가지 않은 사건은 신고 전화가 울린 때부터 센다
-  // (접수 대기열에서 기다린 시간도 신고자에게는 똑같이 흘렀다)
+  // 채워지지 않은 수요가 오래 밀릴수록 앞으로 당긴다. 아직 아무 부대도 닿지 않은 사건은 신고 전화가 울린 때부터 센다
+  // (접수 대기열에서 기다린 시간도 신고자에게는 똑같이 흘렀다). 부대가 가는 중에도 그대로 두어, 오래 기다린 사건으로 가는 부대가
+  // 더 급해 보이는 새 사건으로 전환 배정되지 않게 한다
   const unmet = ORDER.some((k) => (I.unmet[k] ?? 0) > 0);
-  const never = I.firstArrivalAt < 0 && !I.assigned.length;
-  const starved = !unmet ? 0 : never ? Math.max(sim.t - I.unmetSince, sim.t - Math.max(0, I.reportedAt) - 60) : sim.t - I.unmetSince - 40;
-  const starve = Math.min(1.5, Math.max(0, starved) / (never ? 60 : 160));
+  const unserved = I.firstArrivalAt < 0;
+  const starved = unserved ? Math.max(unmet ? sim.t - I.unmetSince : 0, sim.t - Math.max(0, I.reportedAt) - 60) : unmet ? sim.t - I.unmetSince - 40 : 0;
+  const starve = Math.min(1.5, Math.max(0, starved) / (unserved ? 60 : 160));
   return (I.assessment ? I.assessment.severity : 1) + (urgent ? 0.6 : 0) + Math.min(0.5, (sim.t - Math.max(0, I.reportedAt)) / 240) + starve;
 }
 
@@ -56,7 +57,7 @@ function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { be
     const fit = u.caps[key];
     if (fit < minCap || crewReady(sim, u) === 0 || u.state === 'oos') continue;
     if (u.sea && !((I.assessment!.type === 'water' || I.assessment!.label === '선박 화재') && coastal(sim, I.reportedNode))) continue;      // 구조정은 바닷가의 수난 사고와 선박 화재에만 나간다
-    if (u.air && key !== 'search' && sev < 2.3) continue;                                             // 헬기는 수색이나 큰 사건에만 뜬다
+    if (u.air && key !== 'search' && sev < 2.3 && !(key === 'ems' && sim.t - I.unmetSince > 60)) continue;      // 헬기는 수색이나 큰 사건에만 뜬다 (구급차를 한참 기다리는 환자에게는 뜬다)
     if (I.assigned.indexOf(u.id) >= 0) continue;
     let divertFrom: Incident | null = null;
     if (u.state === 'enroute' || u.state === 'turnout') {

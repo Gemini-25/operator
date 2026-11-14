@@ -278,6 +278,10 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     if (c >= (s.regions[w.region].kind === 'wreck' ? 0.6 : th)) w.status = 'cancelled';
   }
 
+  const allDry = fireRegions > 0 && countUnits(sim, s, I, 'suppression', 0.7) > 0
+    && !I.assigned.some((uid) => { const u = sim.units[uid]; return u.caps.suppression >= 0.7 && (u.state === 'enroute' || u.state === 'turnout' || (!u.pumpFailed && (u.water > 0 || u.hydrant))); });
+  const checks = new Set<number>();
+  if (allDry) for (const f of fires) if (f.value > 0.05 && sim.t - f.t > 20) checks.add(f.id);
   // ── 잔불 정리 ──
   // 알려진 불이 모두 꺼지고 수색이 끝나면, 불이 났던 구역과 그 가까운 실내 구역을 한 번 더 돌며 남은 불씨를 끈다.
   // 진압을 확인할 때 구역의 일부만 보기 때문에, 보지 못한 구석의 불씨가 되살아날 수 있다.
@@ -295,7 +299,10 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       if (skip) { cancel(s, (w) => w.kind === 'overhaul' && w.region === r.id); continue; }
       want(sim, s, 'overhaul', { region: r.id }, 0.5);
     }
-  } else cancel(s, (w) => w.kind === 'overhaul' && w.status === 'open');
+  } else cancel(s, (w) => w.kind === 'overhaul' && w.status === 'open' && !checks.has(w.region));
+  // 불 확인: 현장의 진압 부대가 모두 물이 떨어졌고 오는 부대도 없다. 진압 임무는 물이 있어야 맡을 수 있으므로,
+  // 불이 저절로 사그라들어도 아무도 가서 보지 않아 "불이 났다"는 믿음이 낡은 채 남는다. 한동안 소식이 없는 구역에 소방대원을 보내 확인한다
+  for (const r of checks) want(sim, s, 'overhaul', { region: r }, 0.55);
 
   // ── 구조 대상 ──
   const hasMedicAny = s.agents.some((b) => b.status === 'active' && sim.responders[b.rid].dept === 'ems');
@@ -440,7 +447,7 @@ function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         if (curW && (curW.status === 'active' || curW.status === 'open')) curPr = curW.priority;
         else if (hasWork(b) && b.task!.kind !== 'rehab') curPr = 0.6;
         if (b.carrying !== -1) continue;
-        if (curPr >= 0 && (pass === 1 || w.priority < curPr + 0.22)) continue;
+        if (curPr >= 0 && (pass === 1 || w.priority < curPr + 0.22) && !(b === a && w.kind === 'sizeup')) continue;      // 지휘를 넘겨받은 지휘관은 하던 일(봉쇄 등)을 두고 현장 평가부터 다시 한다
         if (b === a && w.kind !== 'sizeup') { if (pass === 1) continue; }
         const r = sim.responders[b.rid];
         const d = dist(b.x, b.y, targetX(s, w, a), targetY(s, w, a));

@@ -178,6 +178,11 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
         const text = p.kind === 'valve' ? (active ? `${where} 배관에서 가스 누출 확인 — 밸브 차단 필요` : p.ignited ? '누출 가스 발화' : '가스 밸브 차단 확인') : active ? `${where} 구조물 균열 확인 — 추가 붕괴 위험, 보강 필요` : '균열부 보강 확인';
         if (!cur || cur.value.active !== active) learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active, x: p.x, y: p.y }, me, sim.t, 1, true, text));
       }
+    } else if (p.kind === 'bomb') {
+      // 폭발물로 보이는 물건: 가까이에서 직접 봐야 알아본다
+      const active = !p.mitigated && !p.exploded;
+      const cur = a.beliefs.get('haz', p.id);
+      if (d <= 3.0 && los(s, a.x, a.y, p.x, p.y) && (!cur || cur.value.active !== active)) { p.found = true; learn(sim, a, mkFact('haz', p.id, { kind: 'bomb', active, x: p.x, y: p.y }, me, sim.t, 1, true, active ? `${regionNameAt(s, p.x, p.y)}에서 폭발물로 보이는 물건 발견 — 접근 금지` : '폭발물 위험 해소')); }
     } else if (p.kind === 'vehicle') {
       if (p.leakRate && d <= (r.judgment >= 0.45 ? 2.8 : 1.7)) {
         const active = !p.mitigated && !p.ignited;

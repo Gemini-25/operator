@@ -45,7 +45,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   const caught = s.hostiles.filter((h) => h.state === 'arrested' || h.state === 'down').length;
   const escaped = suspectsTotal - caught;
   let flames = 0; for (let i = 0; i < s.fire.length; i++) if (s.fire[i] > 0.2) flames++;      // 꺼져 가는 잔불은 제외
-  const hazardActive = flames > 0 || s.hostiles.some((h) => h.state === 'hold' || h.state === 'fight') || s.props.some((p) => p.kind === 'valve' && !p.mitigated && !p.ignited);
+  const hazardActive = flames > 0 || s.hostiles.some((h) => h.state === 'hold' || h.state === 'fight') || s.props.some((p) => p.kind === 'valve' && !p.mitigated && !p.ignited)
+    || s.props.some((p) => p.kind === 'bomb' && p.real && !p.mitigated && !p.exploded);      // 처리되지 않은 진짜 폭발물
   const responseTime = I.firstArrivalAt >= 0 && I.reportedAt >= 0 ? I.firstArrivalAt - I.reportedAt : -1;
   const dispatchTime = I.firstDispatchAt >= 0 && I.reportedAt >= 0 ? I.firstDispatchAt - I.reportedAt : -1;
   const truth = I.truth;
@@ -63,6 +64,9 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   if (reason === 'timeout') addProblem(I, 'TIMEOUT', sim.t, -1, '대응 한계 시간 안에 상황을 끝내지 못함');
   const benign = truth.variant === 'false' || truth.variant === 'prank';
   if (benign) addProblem(I, 'FALSE_ALARM', I.reportedAt, I.callEvents[0] ?? -1, truth.variant === 'prank' ? '장난 전화였고 실제 사건은 없었음' : '냄새·연기만 있었고 실제 화재는 없었음', true, `확인에 부대 ${I.everAssigned.length}대가 ${fmtSec(Math.max(0, sim.t - Math.max(0, I.firstDispatchAt)))} 동안 묶임`);
+  // 폭파 협박·수상한 물건: 진짜 장치가 없었다면 허위 신고다 (확인하기 전에는 아무도 알 수 없었다)
+  const noBomb = (truth.variant === 'bombthreat' || truth.variant === 'package') && !s.props.some((p) => p.kind === 'bomb' && p.real);
+  if (noBomb) addProblem(I, 'FALSE_ALARM', I.reportedAt, I.callEvents[0] ?? -1, truth.variant === 'bombthreat' ? '협박 전화였고 폭발물은 없었음' : '수상한 물건은 폭발물이 아니었음', true, `확인에 부대 ${I.everAssigned.length}대가 ${fmtSec(Math.max(0, sim.t - Math.max(0, I.firstDispatchAt)))} 동안 묶임`);
 
   // ── 판정 ──
   let bad = 0;
@@ -141,6 +145,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   }
   // 한 줄 요약
   const hl: string[] = [];
+  { const b = s.props.find((p) => p.kind === 'bomb'); if (noBomb) hl.push(truth.variant === 'bombthreat' ? '허위 협박 — 폭발물 없음' : b && !b.mitigated ? '폭발물은 아니었으나 확인하지 못함' : '확인 결과 폭발물 아님'); else if (b && b.real) hl.push(b.mitigated ? '폭발물 해체' : b.exploded ? '폭발물 폭발' : '폭발물 미처리'); }
   if (benign) hl.push(truth.variant === 'prank' ? '장난 전화 — 실제 사건 없음' : '오인 신고 — 실제 화재 없음');
   else if (cas.length) hl.push(`요구조자 ${cas.length}명 중 ${saved}명 구조${lost ? `, ${lost}명 사망` : ''}${undiscovered ? `, ${undiscovered}명 미발견` : ''}${left ? `, ${left}명 구조 미완료` : ''}`);
   else hl.push('인명 피해 없음');

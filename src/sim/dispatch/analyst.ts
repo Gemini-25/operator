@@ -4,6 +4,7 @@
 import type { Sim } from '../engine';
 import { emit } from '../events';
 import { INCIDENT_PLACES } from '../cityPlan';
+import { NATURE_LABEL } from '../scenarios';
 import type { Assessment, Claim, Incident, IncidentType, Needs, PlaceKind, Topic } from '../types';
 import { TYPE_NAME, clamp } from '../util';
 import { NATURE_LIK } from './callSystem';
@@ -142,6 +143,7 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
     if (det.c && det.c.value && det.c.value.suspects >= 2) { sev += 0.3; why.push(`용의자 ${det.c.value.suspects}명`); }
   }
   sev = clamp(sev, 1, 3);
+  if (type === 'collapse' && nat.indexOf('elevator') >= 0 && nat.indexOf('collapse') < 0) sev = Math.min(sev, 1.8);      // 승강기가 멈춘 것이지 건물이 무너진 것은 아니다
   const conflicts = [inj, cnt, trap, haz, wpn].filter((x) => x.conflict).length;
   let confSum = 0; for (const c of claims) confSum += c.conf;
   const callers = new Set(claims.map((c) => c.callId)).size;
@@ -184,9 +186,18 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
     if (sev >= 1.9 || (inj.c && inj.c.value === true) || nat.indexOf('gunshots') >= 0) needs.ems = 1;
   }
   if (type === 'armed' && prank) { needs.law = 1; needs.tactical = 0; needs.ems = 0; }
+  // 신고 내용이 구체적이면 그에 맞춰 보낸다
+  const hurtSaid = !!(inj.c && inj.c.value === true), trapSaid = !!(trap.c && trap.c.value === true);
+  if (type === 'collapse' && nat.indexOf('elevator') >= 0) { needs.suppression = 0; needs.rescue = 1; needs.ems = 1; }
+  if (type === 'armed' && nat.indexOf('domestic') >= 0) { needs.law = sev >= 2.2 ? 2 : 1; needs.tactical = 0; needs.ems = 1; }
+  if (type === 'armed' && nat.indexOf('burglar') >= 0 && nat.indexOf('gunshots') < 0) { needs.law = sev >= 1.7 ? 2 : 1; needs.tactical = 0; needs.ems = hurtSaid ? 1 : 0; }
+  if (type === 'traffic' && nat.indexOf('treefall') >= 0) { needs.rescue = 1; needs.traffic = 1; needs.ems = hurtSaid || trapSaid ? 1 : 0; }
+  if (type === 'traffic' && nat.indexOf('manhole') >= 0) { needs.rescue = 1; needs.ems = 1; needs.traffic = 1; }
+  let label: string | undefined;
+  for (const c of claims) { if (c.topic !== 'nature') continue; const l = NATURE_LABEL[c.value as string]; if (l && l[0] === type) label = l[1]; }
   const rev = prev ? prev.revision + 1 : 0;
   const summary = `${TYPE_NAME[type]} (${Math.round(typeConf * 100)}%) · 위험도 ${sevName(sev)}`;
-  const as: Assessment = { type, typeConf, probs, severity: sev, confidence, needs, risks, summary, t: sim.t, revision: rev };
+  const as: Assessment = { type, typeConf, probs, severity: sev, confidence, needs, risks, summary, t: sim.t, revision: rev, label };
   I.assessment = as;
 
   // ── 기록: 처음이거나 실질적으로 달라졌을 때만 ──

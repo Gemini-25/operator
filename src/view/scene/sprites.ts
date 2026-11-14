@@ -514,3 +514,18 @@ export function drawBoat(g: G, x: number, y: number, ang: number, ts: number, li
   disc(g, -0.2, 0, 0.09, on ? '#ff8a5a' : '#7a3a22'); if (on) disc(g, -0.2, 0, 0.34, 'rgba(255,138,90,0.25)');
   g.restore();
 }
+
+/** 길을 가로질러 쓰러진 나무의 한 토막 (칸 가운데 기준, 줄기는 위아래로 이어진다) */
+export function drawFallenTree(g: G, seed: number, row: number): void {
+  rr(g, -0.2, -0.56, 0.5, 1.12, 0.1, 'rgba(0,0,0,0.3)');
+  rr(g, -0.26, -0.56, 0.5, 1.12, 0.12, '#5a4028'); rr(g, -0.2, -0.56, 0.2, 1.12, 0.08, '#77583a');
+  g.fillStyle = 'rgba(0,0,0,0.2)'; for (let k = 0; k < 4; k++) g.fillRect(-0.26, -0.5 + k * 0.28 + hash2(seed, k) * 0.08, 0.5, 0.03);
+  for (let k = 0; k < 5; k++) { const a = hash2(seed, 10 + k) * 6.28, d = 0.3 + hash2(seed, 20 + k) * 0.35; disc(g, Math.cos(a) * d + 0.05, Math.sin(a) * d * 0.9, 0.2 + hash2(seed, 30 + k) * 0.14, ['#2b6a3a', '#3f8a4a', '#1f4f2c'][k % 3]); }
+  if (row % 2) { seg(g, 0.2, 0, 0.62, -0.18, 0.07, '#5a4028'); disc(g, 0.66, -0.2, 0.16, '#3f8a4a'); }
+}
+/** 뚜껑이 열린 맨홀 */
+export function drawManhole(g: G): void {
+  disc(g, 0, 0, 0.36, '#3a4046'); disc(g, 0, 0, 0.3, '#0c0f12'); disc(g, -0.05, -0.05, 0.3, '#07090b');
+  disc(g, 0.5, 0.26, 0.31, 'rgba(0,0,0,0.3)'); disc(g, 0.46, 0.2, 0.3, '#59626b'); disc(g, 0.46, 0.2, 0.22, '#4a525b');
+  g.strokeStyle = '#6b747d'; g.lineWidth = 0.03; for (let k = -1; k <= 1; k++) { g.beginPath(); g.moveTo(0.28, 0.2 + k * 0.1); g.lineTo(0.64, 0.2 + k * 0.1); g.stroke(); }
+}

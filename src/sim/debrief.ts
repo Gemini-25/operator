@@ -2,6 +2,7 @@
 // 판정은 AI 가 믿는 내용이 아니라 엔진의 진실 상태로 내린다(지휘관이 놓친 구조 대상도 여기서 드러난다).
 // 원인 설명 문장은 시뮬레이션 중 실제로 기록된 문제(Problem)와 타임라인에서만 만든다.
 
+import { scenarioName } from './scenarios';
 import { personaName } from './dispatch/callSystem';
 import { sevName } from './dispatch/analyst';
 import { difficultyLabel } from './difficulty';
@@ -169,7 +170,7 @@ export function buildReport(sim: Sim): ShiftReport {
     casTotal += r.casTotal; casSaved += r.casSaved; casLost += r.casLost; casUnd += r.casUndiscovered;
     const seen = new Set<ProblemCode>();
     for (const p of I.problems) { if (seen.has(p.code)) continue; seen.add(p.code); causeCount.set(p.code, (causeCount.get(p.code) ?? 0) + 1); }
-    incidents.push({ id: I.id, code: I.code, type: I.truth.type, reportedType: I.firstAssess ? I.firstAssess.type : null, label: I.truth.label, result: r, start: I.createdAt, end: I.closedAt });
+    incidents.push({ id: I.id, code: I.code, type: I.truth.type, name: scenarioName(I.truth.type, I.truth.variant), reportedType: I.firstAssess ? I.firstAssess.type : null, label: I.truth.label, result: r, start: I.createdAt, end: I.closedAt });
   }
   const dur = sim.t;
   const unitUtil = sim.units.map((u) => ({ callsign: u.callsign, util: u.busyTime / Math.max(1, dur), runs: u.runs }));

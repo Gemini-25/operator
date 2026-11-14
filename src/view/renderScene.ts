@@ -14,7 +14,7 @@ import { DEPT_COLOR, FONT } from './renderCity';
 import { alpha, disc, hash2, oval, rr, seg, visPoly } from './scene/common';
 import type { G } from './scene/common';
 import { beginDark, drawFire, drawFog, drawLight, drawRain, drawScorch, drawSmoke, drawSpray, drawVignette, hole, holePoly, smokeLayer } from './scene/fx';
-import { CAR_COLORS, VEH_SIZE, beaconColors, civilianLook, drawCar, drawClue, drawCone, drawDebris, drawDoorLeaf, drawEmergency, drawGasTank, drawHydrant, drawLying, drawPerson, drawRoadDebris, drawBus, drawSwimmer, drawUnstable, drawValve, hostileLook, responderLook } from './scene/sprites';
+import { CAR_COLORS, VEH_SIZE, beaconColors, civilianLook, drawCar, drawClue, drawCone, drawDebris, drawDoorLeaf, drawEmergency, drawGasTank, drawHydrant, drawLying, drawPerson, drawRoadDebris, drawBus, drawFallenTree, drawManhole, drawSwimmer, drawUnstable, drawValve, hostileLook, responderLook } from './scene/sprites';
 import type { ArmPose, Item, PersonLook } from './scene/sprites';
 import { buildStatic, doorHorizontal, staticSig } from './scene/staticLayer';
 import type { StaticLayer } from './scene/staticLayer';
@@ -234,7 +234,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       else drawPerson(ctx, cx(p.x), cy(p.y), hash2(p.id, s.id) * 6.28, ts, lk, { step: 0, moving: false, arms: p.interviewed ? 'side' : 'up', t: time, ghost: p.interviewed ? 0.6 : 1 });
       pill(ctx, p.interviewed ? '목격자 (청취 완료)' : '목격자', cx(p.x), cy(p.y) + ts * 0.66, ts * 0.27, '#c8d4df');
     } else if (p.kind === 'roadDebris') {
-      unit(() => drawRoadDebris(ctx, p.id), cx(p.x), cy(p.y));
+      unit(() => (p.skin === 'tree' ? drawFallenTree(ctx, p.id, p.y) : p.skin === 'manhole' ? drawManhole(ctx) : drawRoadDebris(ctx, p.id)), cx(p.x), cy(p.y));
     } else if (p.kind === 'unstable') {
       // 금이 간 구조물: 지휘관이 알게 되기 전에는 관찰자 시점에서만 보인다
       const known = !!(cmd && cmd.beliefs.get('haz', p.id));

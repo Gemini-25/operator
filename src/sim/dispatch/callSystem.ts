@@ -3,6 +3,7 @@
 // 충분한 정보가 모이면 통화를 끝낸다. 대화는 템플릿·데이터 기반이며 외부 LLM 을 쓰지 않는다.
 
 import { nodeName } from '../city';
+import { scenarioOf } from '../scenarios';
 import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import { josa } from '../util';
@@ -45,6 +46,11 @@ const NATURE_TEXT: Record<string, string[]> = {
   drowning: ['사람이 물에 빠졌어요! 떠내려가고 있어요!', '물에 빠진 사람이 허우적거리고 있어요. 빨리요!'],
   gasleak: ['가스 냄새가 심하게 나요! 어디서 새는 것 같아요.', '배관에서 쉬익 소리가 나고 가스 냄새가 지독해요.'],
   fumes: ['이상한 냄새가 나고 머리가 아파요.', '사람들이 기침하면서 건물에서 나오고 있어요.'],
+  treefall: ['큰 나무가 쓰러져서 도로를 완전히 막았어요!', '가로수가 넘어졌어요. 차가 밑에 깔린 것 같아요!'],
+  manhole: ['사람이 맨홀에 빠졌어요! 아래에서 소리가 나요.', '뚜껑이 열린 맨홀에 사람이 떨어졌어요.'],
+  elevator: ['승강기가 멈췄어요. 안에 사람들이 갇혔어요!', '엘리베이터가 층 사이에 서서 문이 안 열려요. 안에서 살려 달래요.'],
+  domestic: ['옆집에서 심하게 싸우는 소리가 나요. 비명도 들려요!', '가족이 흉기를 들고 식구들을 위협하고 있어요.'],
+  burglar: ['집에 누가 들어온 것 같아요. 안에서 뒤지는 소리가 나요.', '문이 부서져 있고 안에 모르는 사람이 있어요.'],
 };
 /** 신고 키워드 → 사건 유형 가능도 (분석 AI 가 사용) */
 export const NATURE_LIK: Record<string, number[]> = {
@@ -56,12 +62,23 @@ export const NATURE_LIK: Record<string, number[]> = {
   collapse: [0.03, 0.03, 0.01, 0.01, 0.01, 0.92, 0.01, 0.01], rumble: [0.1, 0.2, 0.02, 0.1, 0.02, 0.5, 0.06, 0.01],
   drowning: [0.01, 0.02, 0.03, 0.01, 0.03, 0.01, 0.01, 0.93],
   gasleak: [0.06, 0.01, 0.01, 0.01, 0.02, 0.01, 0.9, 0.01], fumes: [0.2, 0.02, 0.02, 0.03, 0.18, 0.02, 0.5, 0.01],
+  treefall: [0.02, 0.8, 0.02, 0.01, 0.05, 0.08, 0.01, 0.01],
+  manhole: [0.01, 0.55, 0.05, 0.01, 0.25, 0.11, 0.01, 0.01],
+  elevator: [0.03, 0.01, 0.01, 0.01, 0.12, 0.8, 0.01, 0.01],
+  domestic: [0.01, 0.01, 0.01, 0.86, 0.09, 0.01, 0.005, 0.005],
+  burglar: [0.02, 0.01, 0.03, 0.9, 0.02, 0.01, 0.005, 0.005],
 };
 
 function natureFor(I: Incident, s: Scene, persona: Persona, rng: Rng): { v: string; truthful: boolean; note: string } {
   const t = I.truth.type, variant = I.truth.variant;
   if (variant === 'prank') return { v: rng.pick(['gunshots', 'robbery']), truthful: false, note: '장난 전화 — 실제 사건 없음' };
   if (variant === 'false') return { v: rng.chance(0.6) ? 'smell' : 'smoke', truthful: true, note: '' };      // 냄새·연기는 사실이지만 화재는 아니다
+  const sc = scenarioOf(t, variant);
+  if (sc) {
+    // 시나리오가 정해진 사건: 제대로 본 사람은 그대로 말하고, 당황했거나 일부만 본 사람은 소리나 비명만 전한다
+    const pExact = persona === 'calm' ? 1 : persona === 'panicked' ? 0.7 : persona === 'wrong' ? 0.15 : 0.35;
+    return rng.chance(pExact) ? { v: sc.nature, truthful: true, note: '' } : { v: sc.vague, truthful: true, note: persona === 'wrong' ? `${sc.name} 상황을 제대로 전하지 못함` : '' };
+  }
   if (t === 'medical') {
     const exactM = variant === 'arrest' ? 'notbreathing' : variant === 'trauma' ? 'fall' : 'collapsed';
     if (persona === 'wrong' && variant === 'arrest') return { v: 'collapsed', truthful: false, note: '심정지를 단순 실신처럼 신고' };

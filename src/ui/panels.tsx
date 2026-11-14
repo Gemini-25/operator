@@ -8,6 +8,7 @@ import { personaName, topicName } from '../sim/dispatch/callSystem';
 import type { Sim } from '../sim/engine';
 import { workLabel } from '../sim/field/agents';
 import { FIELD_NAME, UNIT_KIND_NAME } from '../sim/resources';
+import { scenarioName } from '../sim/scenarios';
 import type { Incident, Role, SimEvent, Unit, UnitField } from '../sim/types';
 import { DEPT_NAME, OUTCOME_NAME, TYPE_NAME, WEATHER_NAME, fmtClock, fmtDur, fmtSec, pct } from '../sim/util';
 import type { CameraDirector } from '../view/camera';
@@ -59,14 +60,14 @@ function IncidentCard({ sim, I, director, truth }: { sim: Sim; I: Incident; dire
     <div className={`card incident ${focused ? 'focused' : ''} ${I.phase === 'closed' ? 'closed' : ''}`} style={{ ['--tc' as string]: TYPE_COLOR[type] }} onClick={() => director.pin(I.id, I.phase === 'onscene' || I.phase === 'closed' ? 'scene' : 'city')} title="클릭하면 이 사건을 관찰합니다">
       <div className="row">
         <span className="code" style={{ background: TYPE_COLOR[type] }}><Icon name={I.phase === 'call' && !as ? 'phone' : type} size={12} color="#0b1219" />{I.code}</span>
-        <span className="title">{as ? TYPE_NAME[as.type] : I.phase === 'unreported' ? '미신고 사건' : '유형 확인 중'}{as && as.typeConf < 0.6 && !I.fieldType ? ' ?' : ''}</span>
+        <span className="title">{as ? as.label ?? TYPE_NAME[as.type] : I.phase === 'unreported' ? '미신고 사건' : '유형 확인 중'}{as && as.typeConf < 0.6 && !I.fieldType ? ' ?' : ''}</span>
         {I.phase === 'closed' && I.result
           ? <span className="badge" style={{ color: OUTCOME_COLOR[I.result.outcome], borderColor: OUTCOME_COLOR[I.result.outcome] }}>{OUTCOME_NAME[I.result.outcome]}</span>
           : <span className={`badge phase-${I.phase}`}>{PHASE[I.phase]}</span>}
       </div>
       <div className="sub">{!I.locationKnown && !truth ? '위치 확인 중…' : I.reportedNode !== I.truth.nodeId && !truth ? `${nodeName(sim.city, I.reportedNode)} 부근 (신고 기준)` : I.truth.label}</div>
       {truth && I.locationKnown && I.reportedNode !== I.truth.nodeId && I.phase !== 'closed' && <div className="sub warn">관찰자 정보: 신고된 위치({nodeName(sim.city, I.reportedNode)})가 틀렸습니다</div>}
-      {truth && as && as.type !== I.truth.type && <div className="sub warn">관찰자 정보: 실제는 {TYPE_NAME[I.truth.type]}</div>}
+      {truth && as && as.type !== I.truth.type && <div className="sub warn">관찰자 정보: 실제는 {scenarioName(I.truth.type, I.truth.variant)}</div>}
       {I.phase !== 'closed' && as && (
         <div className="row small">
           <span className={`sev sev-${sevName(as.severity) === '보통' ? 1 : sevName(as.severity) === '높음' ? 2 : 3}`}>위험도 {sevName(as.severity)}</span>
@@ -225,7 +226,7 @@ export function DecisionPanel({ sim, director, truth }: { sim: Sim; director: Ca
           <div className="kv"><span className="dim">위험도</span><span>{sevName(as.severity)} ({as.severity.toFixed(1)}) · 정보 신뢰도 {pct(as.confidence)} · 수정 {as.revision}회{I.fieldVerified ? ' · 현장 확인됨' : ''}</span></div>
           <div className="kv"><span className="dim">필요 자원</span><span>{needsText(as.needs)}</span></div>
           {as.risks.length > 0 && <div className="kv"><span className="dim">예측 위험</span><span>{as.risks.join(', ')}</span></div>}
-          {truth && <div className="kv"><span className="dim">관찰자 정보</span><span className={as.type === I.truth.type ? 'ok' : 'bad'}>실제 유형 {TYPE_NAME[I.truth.type]} · 실제 규모 {['', '소', '중', '대'][I.truth.severity]}</span></div>}
+          {truth && <div className="kv"><span className="dim">관찰자 정보</span><span className={as.type === I.truth.type ? 'ok' : 'bad'}>실제 유형 {TYPE_NAME[I.truth.type]}{scenarioName(I.truth.type, I.truth.variant) !== TYPE_NAME[I.truth.type] ? ` (${scenarioName(I.truth.type, I.truth.variant)})` : ''} · 실제 규모 {['', '소', '중', '대'][I.truth.severity]}</span></div>}
         </>) : <div className="empty">평가 전</div>}
         <h4>③ 배정 AI</h4>
         <div className="kv"><span className="dim">배정 부대</span><span>{I.everAssigned.length ? I.everAssigned.map((uid) => { const u = sim.units[uid]; const here = I!.assigned.indexOf(uid) >= 0; return `${u.callsign}(${here ? UNIT_STATE[u.state] : '이탈'})`; }).join(', ') : '없음'}</span></div>
@@ -397,7 +398,7 @@ export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel 
               <h4>사건별 결과와 원인</h4>
               {r.incidents.map((x) => (
                 <div key={x.id} className="rep-inc" style={{ borderLeftColor: OUTCOME_COLOR[x.result.outcome] }}>
-                  <div className="row"><span className="code" style={{ background: TYPE_COLOR[x.type] }}>{x.code}</span><b>{TYPE_NAME[x.type]}</b><span className="dim">{x.label}</span>
+                  <div className="row"><span className="code" style={{ background: TYPE_COLOR[x.type] }}>{x.code}</span><b>{x.name ?? TYPE_NAME[x.type]}</b><span className="dim">{x.label}</span>
                     <span className="badge" style={{ color: OUTCOME_COLOR[x.result.outcome], borderColor: OUTCOME_COLOR[x.result.outcome] }}>{OUTCOME_NAME[x.result.outcome]}</span></div>
                   <div className="small dim">{x.result.headline} 대응 {x.result.responseTime >= 0 ? fmtSec(x.result.responseTime) : '도착 못함'} · 소요 {fmtSec(x.result.duration)}{x.reportedType && x.reportedType !== x.type ? ` · 관제 사전 판단: ${TYPE_NAME[x.reportedType]}` : ''}</div>
                   <ul className="analysis">{x.result.analysis.map((a, k) => <li key={k}>{a}</li>)}</ul>

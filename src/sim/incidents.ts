@@ -1,7 +1,7 @@
 // IncidentGenerator + IncidentManager
 // 사건 템플릿에 위치·규모·숨은 위험·신고 정확도 등을 조합해 매번 다른 사건을 만든다.
 
-import { findRoute, nodeName } from './city';
+import { edgeName, findRoute, nodeName } from './city';
 import { evaluate } from './debrief';
 import { startCall, startNuisanceCall } from './dispatch/callSystem';
 import type { Sim } from './engine';
@@ -10,6 +10,8 @@ import { createScene } from './field/sceneManager';
 import { releaseUnit } from './resources';
 import type { Rng } from './rng';
 import { INCIDENT_PLACES } from './cityPlan';
+import { SCENARIOS, scenarioName, scenarioOf } from './scenarios';
+import type { Scenario } from './scenarios';
 import type { Incident, IncidentType, Place, PlaceKind } from './types';
 import { OUTCOME_NAME, TYPE_NAME } from './util';
 
@@ -31,7 +33,7 @@ const ARMED_BIAS: Record<string, Partial<Record<PlaceKind, number>>> = {
 const kindCount = new WeakMap<object, Map<string, number>>();
 /** 사건이 일어날 건물이나 터를 고른다. 교통사고는 교차로에서 일어나므로 null. */
 function pickPlace(sim: Sim, rng: Rng, type: IncidentType, variant: string, busy: Set<number>): Place | null {
-  const table = INCIDENT_PLACES[type];
+  const table = scenarioOf(type, variant)?.places ?? INCIDENT_PLACES[type];
   const used = new Set(sim.incidents.map((I) => I.truth.placeId));
   // 표의 값은 건물 종류 전체의 몫이므로, 그 종류의 건물 수로 나눠 한 채의 비중을 구한다
   if (!kindCount.has(sim.city.places)) { const m = new Map<string, number>(); for (const q of sim.city.places) if (q.facility < 0) m.set(q.kind, (m.get(q.kind) ?? 0) + 1); kindCount.set(sim.city.places, m); }
@@ -58,7 +60,11 @@ function createIncident(sim: Sim, chainNote = ''): Incident {
   g.lastType = type;
   let severity = rng.weighted([1, 2, 3], tn.sevWeights);
   let variant = 'std';
-  if (chainNote) { variant = 'robbery'; severity = Math.max(2, severity); }
+  // 시나리오: 유형 안에서 정해진 몫만큼 다른 모습의 사건이 된다 (scenarios.ts)
+  let special: Scenario | null = null;
+  { const cs = SCENARIOS.filter((q) => q.type === type); if (cs.length && !chainNote) { let r = rng.next(); for (const q of cs) { r -= q.share; if (r < 0) { special = q; break; } } } }
+  if (special) { variant = special.variant; severity = rng.int(special.severity[0], special.severity[1]); }
+  else if (chainNote) { variant = 'robbery'; severity = Math.max(2, severity); }
   else if (type === 'armed') {
     variant = rng.weighted(['robbery', 'dispute', 'shooter', 'hostage'], [0.4, 0.28, tn.shooterWeight, 0.16]);
     if (variant === 'shooter' || variant === 'hostage') severity = 3; else if (variant === 'dispute') severity = Math.min(severity, 2);
@@ -102,11 +108,18 @@ function createIncident(sim: Sim, chainNote = ''): Incident {
   if (rng.chance(pFollow)) I.followupAt = I.firstCallAt + rng.range(24, 55);
   if (type === 'traffic') {
     // 사고 지점 도로는 느려지고, 통제가 끝나면 전면 차단된다(우회로가 있는 도로만)
-    const es = node.edges.map((e) => sim.city.edges[e]).filter((e) => !e.closed);
+    const es = node.edges.map((e) => sim.city.edges[e]).filter((e) => !e.closed && e.cls !== 'highway');
     es.sort((a, b) => (b.arterial ? 1 : 0) - (a.arterial ? 1 : 0) || a.id - b.id);
     for (const e of es) { if (findRoute(sim.city, e.a, e.b, 1, e.id)) { I.blockedEdge = e.id; e.slow += 1.4; break; } }
+    if (variant === 'tree' && I.blockedEdge >= 0) {
+      // 쓰러진 나무가 길을 막았다: 치울 때까지 그 구간은 지나갈 수 없고, 이웃한 길이 밀린다
+      const e = sim.city.edges[I.blockedEdge];
+      e.closed = true; e.closedReason = 'incident';
+      for (const k of node.edges) if (k !== e.id) sim.city.edges[k].cong = Math.min(3, sim.city.edges[k].cong + 0.7);
+      emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(sim.city, e)} 통행 불가 — 쓰러진 나무가 길을 막았습니다.`, imp: 1, truth: true });
+    }
   }
-  const what = variant === 'false' ? '실제 화재는 없음 — 오인 신고가 들어올 예정' : variant === 'prank' ? '실제 사건은 없음 — 장난 전화가 걸려 올 예정' : `${TYPE_NAME[type]}`;
+  const what = variant === 'false' ? '실제 화재는 없음 — 오인 신고가 들어올 예정' : variant === 'prank' ? '실제 사건은 없음 — 장난 전화가 걸려 올 예정' : scenarioName(type, variant) === TYPE_NAME[type] ? TYPE_NAME[type] : `${TYPE_NAME[type]} · ${scenarioName(type, variant)}`;
   I.rootEvent = emit(sim, { inc: id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: 1, truth: true, text: chainNote ? `${chainNote} — ${I.truth.label}.` : `사건 발생 — ${I.truth.label} (${what}). 아직 신고되지 않았습니다.` });
   return I;
 }

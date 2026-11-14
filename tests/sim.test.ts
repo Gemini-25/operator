@@ -584,6 +584,7 @@ describe('건물마다 정해진 도시', () => {
 
   it('사건은 유형에 맞는 건물에서 일어나고, 현장은 그 건물을 따르며, 차량은 그 건물 앞 길가에 선다', async () => {
     const { INCIDENT_PLACES } = await import('../src/sim/cityPlan');
+    const { scenarioOf } = await import('../src/sim/scenarios');
     let atPlace = 0, bankLobby = 0, banks = 0, smallTall = 0, parked = 0, named = 0, intersections = 0;
     for (let k = 0; k < 30; k++) {
       const s = new Sim('S' + k); s.runToEnd();
@@ -593,7 +594,7 @@ describe('건물마다 정해진 도시', () => {
         expect(I.truth.placeId, I.truth.label).toBeGreaterThanOrEqual(0);
         const q = s.city.places[I.truth.placeId];
         atPlace++;
-        expect(INCIDENT_PLACES[I.truth.type][q.kind] ?? 0, `${I.truth.type} @ ${q.kind}`).toBeGreaterThan(0);
+        expect((scenarioOf(I.truth.type, I.truth.variant)?.places ?? INCIDENT_PLACES[I.truth.type])[q.kind] ?? 0, `${I.truth.type}/${I.truth.variant} @ ${q.kind}`).toBeGreaterThan(0);
         expect(I.truth.nodeId).toBe(q.nodeId);
         expect(I.truth.label.includes(q.name)).toBe(true);
         if (I.truth.type === 'armed' && q.kind === 'bank') { banks++; if (sc.regions.some((r) => r.name === '은행 로비')) bankLobby++; }
@@ -623,4 +624,55 @@ describe('건물마다 정해진 도시', () => {
     expect(named).toBeGreaterThan(atPlace * 0.5);
     expect(parked).toBeGreaterThan(50);
   }, 240000);
+});
+
+describe('생활 사건 시나리오', () => {
+  it('쓰러진 나무·맨홀 추락·승강기 갇힘·가정 폭력·침입 절도가 나오고, 저마다 맞는 곳에서 맞는 모습으로 벌어진다', async () => {
+    const { SCENARIOS, scenarioName } = await import('../src/sim/scenarios');
+    const { T } = await import('../src/sim/types');
+    const seen: Record<string, number> = {}, good: Record<string, number> = {};
+    let labelled = 0, treeClosed = 0, timeouts = 0, total = 0;
+    for (let k = 0; k < 40; k++) {
+      const s = new Sim('S' + k);
+      // 쓰러진 나무: 사건이 열려 있는 동안 그 도로 구간은 지나갈 수 없다
+      for (let i = 0; i < 6200 && !s.ended; i++) {
+        s.step();
+        if (i % 40) continue;
+        for (const I of s.incidents) if (I.truth.variant === 'tree' && I.phase !== 'closed' && I.blockedEdge >= 0) { expect(s.city.edges[I.blockedEdge].closed).toBe(true); treeClosed++; }
+      }
+      s.runToEnd();
+      for (const I of s.incidents) {
+        const sc = s.scenes[I.id]!, key = `${I.truth.type}/${I.truth.variant}`;
+        total++; if (I.closeReason === 'timeout') timeouts++;
+        if (!SCENARIOS.some((q) => q.type === I.truth.type && q.variant === I.truth.variant)) continue;
+        seen[key] = (seen[key] ?? 0) + 1; if (I.result!.outcome === 'success') good[key] = (good[key] ?? 0) + 1;
+        expect(scenarioName(I.truth.type, I.truth.variant)).not.toBe('');
+        if (I.assessment && I.assessment.label) labelled++;
+        if (I.truth.variant === 'tree') {
+          expect(sc.props.filter((p) => p.skin === 'tree').length).toBeGreaterThanOrEqual(4);
+          if (I.blockedEdge >= 0) expect(s.city.edges[I.blockedEdge].closed).toBe(false);      // 끝나면 길이 다시 열린다
+          if (I.closeReason === 'resolved') expect(sc.props.filter((p) => p.skin === 'tree' && !p.removed).length).toBe(0);
+        }
+        if (I.truth.variant === 'manhole') { expect(sc.props.some((p) => p.skin === 'manhole')).toBe(true); expect(I.truth.placeId).toBe(-1); }
+        if (I.truth.variant === 'elevator') {
+          const r = sc.regions.find((q) => q.name === '승강기')!;
+          expect(r).toBeTruthy(); expect(r.tiles.filter((i) => sc.tiles[i] === T.FLOOR).length).toBeLessThanOrEqual(2);
+          expect(['apartment', 'office', 'officetel', 'hotel', 'deptStore', 'university', 'clinic', 'station']).toContain(I.truth.placeKind);
+          expect(sc.props.some((p) => p.kind === 'unstable')).toBe(false);
+        }
+        if (I.truth.variant === 'domestic') {
+          expect(['houseS', 'houseL', 'villa', 'apartment', 'officetel', 'farmhouse']).toContain(I.truth.placeKind);
+          expect(sc.regions.some((q) => q.name === '거실')).toBe(true);
+          expect(sc.hostiles.length).toBe(1); expect(sc.hostiles[0].weapon).not.toBe('gun');
+        }
+        if (I.truth.variant === 'burglary') for (const h of sc.hostiles) expect(h.weapon).not.toBe('gun');
+      }
+    }
+    for (const q of SCENARIOS) expect(seen[`${q.type}/${q.variant}`] ?? 0, q.name).toBeGreaterThan(2);
+    expect(treeClosed).toBeGreaterThan(10);
+    expect(labelled).toBeGreaterThan(20);
+    // 생활 사건은 대체로 수습되지만, 침입 절도는 달아나는 일이 적지 않다
+    for (const k of ['traffic/tree', 'traffic/manhole', 'collapse/elevator', 'armed/domestic']) expect((good[k] ?? 0) / seen[k], k).toBeGreaterThan(0.6);
+    expect(timeouts).toBeLessThan(total * 0.03);
+  }, 300000);
 });

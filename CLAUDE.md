@@ -18,7 +18,7 @@ TypeScript + React + Vite, 그림은 Canvas 2D. 서버·외부 API·LLM 호출 �
 |---|---|
 | `npm run dev` | 개발 서버 (`http://localhost:5173`, `?seed=S7&diff=hard` 로 조건 고정) |
 | `npm run check` | **커밋 전 관문**: 타입 검사 + 테스트 + 시드 40개 헤드리스 검증 |
-| `npm test` | Vitest 40개 (재현성, 교대 완주, 상태 변화, 정보 격리, 난이도, 전술, 새 유형, 지원, 2층 건물, 배치 다양성, 교전과 진입, 수난·다수 사상자, 건물마다 정해진 도시) |
+| `npm test` | Vitest 41개 (재현성, 교대 완주, 상태 변화, 정보 격리, 난이도, 전술, 새 유형, 지원, 2층 건물, 배치 다양성, 교전과 진입, 수난·다수 사상자, 건물마다 정해진 도시, 생활 사건 시나리오) |
 | `npm run sweep -- 100` | 시드 100개 결과 분포. `--diff hard`, `--diff 4,4,4,2,3,3`(빈도·심각도·용의자·장비·신고·부대), `-v`, `--json`, `--check` |
 | `npm run sweep -- 1 --log S7` | 한 교대의 전체 이벤트 기록과 종료 보고서 (동작 확인에 가장 유용) |
 | `npm run build` | 타입 검사 + 정적 빌드 |
@@ -50,7 +50,8 @@ src/sim/events.ts            emit / raiseProblem / markRecovered
 src/sim/cityPlan.ts          도시 설계도: 교차로 자리(NODES), 도로가 지나는 순서(ROADS), 해안선·강·철길·산, 동네의 성격(DISTRICTS), 손으로 놓은 건물(LANDMARKS), 유형별 사건 장소(INCIDENT_PLACES), 건물 종류별 현장 틀(KIND_SCENE)
 src/sim/city.ts              도시 생성(설계도 → 도로 그래프, buildPlaces: 길가에 건물 채우기·골목·진입 지점·주소), 지형 함수(coastY·riverDist·mountainAt·districtAt), 다익스트라, 교통량, placeAt. 만든 지도는 다시 쓴다
 src/sim/resources.ts         편성표(UNIT_DEFS: 네 분야 20팀), 대원 명부, 차량 이동·우회, 헬기·구조정의 길 밖 이동, 병원 이송(가까운 병원, 응급실 인계 대기), 인근 도시 지원 부대 생성(createAidUnit)
-src/sim/incidents.ts         사건 생성(유형·규모, pickPlace 로 건물 고르기), 종료 처리
+src/sim/scenarios.ts         시나리오 표: 유형 안에서 갈리는 사건의 모습(몫·신고 내용·일어나는 곳), 화면에 보이는 이름, 신고 내용으로 붙이는 이름(NATURE_LABEL)
+src/sim/incidents.ts         사건 생성(유형·시나리오·규모, pickPlace 로 건물 고르기), 종료 처리
 src/sim/debrief.ts           사건 판정, 원인 문장, 교대 보고서
 src/sim/dispatch/callSystem.ts   신고자 모델, 접수 AI 질문 선택, 통화
 src/sim/dispatch/analyst.ts      유형 확률·위험도·필요 자원
@@ -91,6 +92,7 @@ tests/sim.test.ts            자동 테스트
 | 새 타일·가구·소품 | `types.ts` `T`·`DECOR`·`PropKind` → `grid.ts`(`staticPass`·`isIndoor`·`los`) → 그림은 `view/scene/staticLayer.ts`(고정된 것) 또는 `view/renderScene.ts` 의 소품 분기 + `view/scene/sprites.ts`(움직이거나 상태가 바뀌는 것) |
 | 지도 바꾸기 | 전부 `cityPlan.ts` 에서 한다. 교차로를 옮기려면 `NODES`, 길을 내거나 없애려면 `ROADS`(이웃한 두 교차로 사이가 한 구간이 된다), 동네의 건물 구성은 `DISTRICTS` 의 `mix`·`density`, 하나뿐인 건물은 `LANDMARKS`(가운데 좌표·크기·각도), 사건이 나는 곳은 `INCIDENT_PLACES`(건물 종류 전체의 몫). 새 건물 종류는 `types.ts` `PlaceKind` → `cityPlan.ts` `KIND_NAME`·`KIND_DISTRICT`·`KIND_SCENE` → 길가에 채울 종류면 `city.ts` `DIM`(크기) → `view/city/places.ts` `paintRoof`(없으면 평지붕). 도로를 고친 뒤에는 테스트(`건물마다 정해진 도시`)가 교차·단절·건물 겹침을 잡는다. 지도를 바꾸면 모든 결과가 바뀌므로 `sweep` 으로 다시 잰다 |
 | 새 부대 종류 | `types.ts` `UnitKind` → `resources.ts` `KIND`(부서·능력·장비)·`UNIT_DEFS`(분야·소속 시설·편성 단계)·`UNIT_KIND_NAME` → `view/scene/sprites.ts` `VEH_SIZE`·`drawEmergency`·`responderLook`. 소속 시설이 새로 필요하면 `cityPlan.ts` `LANDMARKS` 에 `facility` 를 붙여 넣는다 |
+| 새 시나리오 (유형은 그대로, 모습만 다르게) | `scenarios.ts` `SCENARIOS` 에 한 줄(몫·신고 내용 키·장소) → `callSystem.ts` `NATURE_TEXT`·`NATURE_LIK` 에 신고 내용 키(8열) → `scenarios.ts` `NATURE_LABEL` → `builders.ts` 에 현장의 모습(`buildScene` 이 변형으로 갈라 부른다) → 필요하면 `analyst.ts` 의 시나리오별 필요 자원. 기존 소품에 다른 모습만 입힐 때는 `Prop.skin` 을 쓴다(쓰러진 나무와 맨홀은 `roadDebris` 다). 가장 최근 예: `tree`·`manhole`·`elevator`·`domestic`·`burglary` |
 | 새 난이도 손잡이 | `difficulty.ts`(타입·표·프리셋) → 쓰는 곳에서 `sim.tune.*` → `ui/panels.tsx` `DifficultyPanel` |
 
 ## 겪은 함정

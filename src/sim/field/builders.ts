@@ -167,6 +167,89 @@ function buildTraffic(sim: Sim, I: Incident, rng: Rng): Scene {
   return s;
 }
 
+// ───────────────────────── 도로 위의 생활 사건: 쓰러진 나무, 맨홀 추락 ─────────────────────────
+function buildRoadIncident(sim: Sim, I: Incident, rng: Rng): Scene {
+  const s = baseScene(sim, I, rng);
+  const sev = I.truth.severity, v = I.truth.variant;
+  for (let y = 8; y <= 11; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
+  const tree = (x: number, y: number) => { if (get(s, x, y) === T.GROUND) set(s, x, y, T.TREE); };
+  for (let k = 0; k < 18; k++) { const cx = rng.int(1, SW - 2), cy = rng.chance(0.5) ? rng.int(0, 5) : rng.int(14, SH - 1); tree(cx, cy); if (rng.chance(0.6)) tree(Math.min(SW - 1, cx + 1), cy); }
+  s.staging = { x: 3, y: 13 }; s.safe = { x: 6, y: 14 }; s.vantage = { x: 8, y: 12 };
+  set(s, 3, 13, T.GROUND); set(s, 6, 14, T.GROUND);
+  addRegion(s, '북측 수풀', 'verge', 6, 2, 24, 6, false, true);
+  addRegion(s, '남측 수풀', 'verge', 8, 13, 24, 17, false, true);
+  if (v === 'tree') {
+    // 큰 나무가 길을 가로질러 쓰러졌다. 줄기를 토막 내 치워야 길이 열린다
+    const X = rng.int(13, 18);
+    set(s, X, 6, T.TREE); set(s, X + 1, 6, T.TREE);
+    for (let y = 7; y <= 12; y++) { if (y === 7 || y === 12) set(s, X, y, T.GROUND); addProp(s, 'roadDebris', X, y, { hp: 9, skin: 'tree' }); }
+    if (rng.chance(0.6)) {
+      // 줄기에 깔린 차
+      const y = rng.pick([9, 10]);
+      const p = addProp(s, 'vehicle', X - 2, y, { w: 2, h: 1, blocking: true, hp: 10, leak: 0, leakRate: 0, occupants: [], angle: rng.range(-0.2, 0.2), color: rng.int(0, 4) });
+      addRegion(s, '깔린 차량', 'wreck', p.x - 1, y - 1, p.x + p.w, y + 1, false, true);
+      const n = sev >= 2 && rng.chance(0.4) ? 2 : 1;
+      for (let k = 0; k < n; k++) {
+        const trapped = rng.chance(0.65);
+        const c = addCas(s, p.x + (k % 2), y, trapped ? 'trapped' : 'immobile', rng.range(46, 76), rng.range(0.13, 0.25), 0.3, { inVehicle: p.id });
+        if (trapped) c.trapWork = rng.range(14, 22);
+        p.occupants!.push(c.id);
+      }
+    }
+    if (rng.chance(0.3)) addCas(s, X + rng.pick([-3, 3]), rng.pick([7, 12]), 'immobile', rng.range(58, 80), rng.range(0.07, 0.15), 0.15);      // 가지에 맞은 행인
+    s.placeName = '쓰러진 나무 현장';
+    s.trafficFlow = 0; s.nextCarAt = Infinity;      // 길이 막혀 차가 지나가지 못한다
+  } else {
+    // 뚜껑이 열린 맨홀에 사람이 떨어졌다. 줄을 내려 끌어 올려야 한다
+    const x = rng.int(11, 19), y = rng.pick([9, 10]);
+    addProp(s, 'roadDebris', x, y, { hp: 3, skin: 'manhole' });
+    const c = addCas(s, x, y, 'trapped', rng.range(48, 76), rng.range(0.14, 0.26), 0.42);      // 아래에 고인 가스 때문에 오래 버티지 못한다
+    c.trapWork = rng.range(16, 24);
+    if (rng.chance(0.55)) addCas(s, x + rng.pick([-2, 2]), y === 9 ? 7 : 12, 'mobile', rng.range(80, 96), rng.range(0, 0.02), 0);      // 함께 있던 사람
+    s.placeName = '맨홀 추락 현장';
+    const node = sim.city.nodes[I.truth.nodeId];
+    let cong = 1.2; for (const eid of node.edges) cong = Math.max(cong, sim.city.edges[eid].cong);
+    s.trafficFlow = cong / 2.6; s.nextCarAt = sim.t + 6;
+  }
+  s.controlPts = [{ x: 2, y: 10 }, { x: 27, y: 9 }]; s.controlDone = [false, false];
+  s.laneRows = [8, 11];
+  s.leadDept = 'fire';
+  return s;
+}
+
+// ───────────────────────── 승강기 갇힘 ─────────────────────────
+function buildElevator(sim: Sim, I: Incident, rng: Rng): Scene {
+  const s = baseScene(sim, I, rng);
+  const dist = I.truth.district, pk = I.truth.placeKind;
+  s.floorMat = floorMatOf(dist);
+  const P = planBuilding(s, rng, 'corridor', planOpts(dist, pk));
+  fuelUp(s, P, rng, 0.35, 0.7, 0.25, 0.4, 0.25);
+  // 문이 하나뿐인 가장 작은 방을 승강기로 쓴다: 문 바로 안쪽 두 칸만 남기고 나머지는 벽(승강로)이 된다
+  const rooms = [...P.rooms].sort((a, b) => a.tiles.length - b.tiles.length);
+  const r = rooms.find((q) => s.props.filter((p) => p.kind === 'door' && s.region[tidx(s, p.x, p.y)] === q.id).length === 1) ?? rooms[0];
+  const d = doorOf(s, r)!;
+  const inside = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => tidx(s, d.x + dx, d.y + dy)).find((i) => s.region[i] === r.id && (s.tiles[i] === T.FLOOR || s.tiles[i] === T.FURN))!;
+  const dx = (inside % SW) - d.x, dy = ((inside / SW) | 0) - d.y;
+  const second = [inside + dx + dy * SW, inside + (dy !== 0 ? 1 : SW), inside - (dy !== 0 ? 1 : SW)].find((i) => s.region[i] === r.id && s.tiles[i] !== T.WALL && s.tiles[i] !== T.DOOR);
+  const car = second !== undefined ? [inside, second] : [inside];
+  for (const i of r.tiles) {
+    if (s.tiles[i] === T.DOOR) continue;
+    if (car.indexOf(i) >= 0) { s.tiles[i] = T.FLOOR; s.decor[i] = 0; continue; }
+    s.tiles[i] = T.WALL; s.decor[i] = 0; s.fuel[i] = 0; s.region[i] = -1;
+  }
+  r.tiles = r.tiles.filter((i) => car.indexOf(i) >= 0 || s.tiles[i] === T.DOOR);
+  r.name = '승강기'; r.cx = inside % SW; r.cy = (inside / SW) | 0;
+  lockDoor(s, d, 17);      // 문이 열리지 않는다: 강제로 벌려야 한다
+  const n = rng.int(2, 3) + (I.truth.severity >= 2 ? 1 : 0);
+  for (let k = 0; k < n; k++) {
+    const i = car[k % car.length];
+    if (k === 0 && rng.chance(0.75)) addCas(s, i % SW, (i / SW) | 0, 'immobile', rng.range(50, 72), rng.range(0.12, 0.2), 0.3);      // 갇힌 채 쓰러진 사람
+    else addCas(s, i % SW, (i / SW) | 0, 'mobile', rng.range(80, 96), rng.range(0.012, 0.03), 0.3);
+  }
+  s.leadDept = 'fire';
+  return s;
+}
+
 // ───────────────────────── 실종·조난 ─────────────────────────
 function buildSearch(sim: Sim, I: Incident, rng: Rng): Scene {
   const s = baseScene(sim, I, rng);
@@ -227,7 +310,7 @@ function buildSearch(sim: Sim, I: Incident, rng: Rng): Scene {
 }
 
 // ───────────────────────── 무장 사건 ─────────────────────────
-type VenueKind = 'shop' | 'bank' | 'office' | 'warehouse';
+type VenueKind = 'shop' | 'bank' | 'office' | 'warehouse' | 'home';
 interface Venue { main: Region; back: Region; office: Region; front: number; rear: number; place: string }
 
 /**
@@ -276,6 +359,25 @@ function armedVenue(s: Scene, rng: Rng, kind: VenueKind, dist: District): Venue 
     furnish(s, rng, meeting, [DECOR.TABLE, DECOR.PLANT], 1, false);
     furnish(s, rng, office, [DECOR.DESK, DECOR.SOFA, DECOR.CABINET], 2, false);
     s.floorMat = 0; place = dist === 'industrial' ? '공단 사무동' : '사무실';
+  } else if (kind === 'home') {
+    // 주택: 거실과 주방, 방 두 개
+    for (let x = 9; x <= 21; x++) wall(x, 5);
+    for (const x of [13, 18]) for (let y = 3; y <= 4; y++) wall(x, y);
+    main = addRegion(s, '거실', 'room', 9, 6, 21, 9, true, true);
+    back = addRegion(s, '주방', 'room', 9, 3, 12, 4, true, true);
+    const small = addRegion(s, '작은방', 'room', 14, 3, 17, 4, true, true);
+    office = addRegion(s, '안방', 'room', 19, 3, 21, 4, true, true);
+    fixture(12, 7, DECOR.SOFA); fixture(13, 7, DECOR.SOFA); fixture(17, 8, DECOR.TABLE);
+    door(11, 5, back, true); door(16, 5, small); door(20, 5, office);
+    front = 15; rear = 10;
+    for (const x of [10, 11, 19, 20]) set(s, x, by1, T.WINDOW);
+    for (const x of [16, 20]) set(s, x, by0, T.WINDOW);
+    door(front, by1, main, false); door(rear, by0, back);
+    furnish(s, rng, main, [DECOR.PLANT, DECOR.CABINET, DECOR.TABLE], 3, false);
+    furnish(s, rng, back, [DECOR.COUNTER, DECOR.CABINET], 2, false);
+    furnish(s, rng, small, [DECOR.BED, DECOR.DESK], 1, false);
+    furnish(s, rng, office, [DECOR.BED, DECOR.CABINET], 2, false);
+    s.floorMat = 0; place = '주택';
   } else if (kind === 'warehouse') {
     for (let y = 3; y <= 5; y++) { wall(13, y); wall(17, y); }
     for (let x = 9; x <= 13; x++) wall(x, 6);
@@ -330,7 +432,8 @@ function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {
     : dist === 'industrial' ? rng.weighted<VenueKind>(['warehouse', 'shop', 'office'], [0.55, 0.25, 0.2])
       : dist === 'outskirts' ? rng.weighted<VenueKind>(['shop', 'warehouse'], [0.6, 0.4]) : rng.weighted<VenueKind>(['shop', 'office'], [0.65, 0.35]);
   const ks = I.truth.placeKind ? KIND_SCENE[I.truth.placeKind] : undefined;
-  const V = armedVenue(s, rng, ks && ks.venue ? ks.venue : kind, dist);      // 지도의 건물 종류가 장소를 정한다 (은행이면 은행 로비)
+  const homeLike = !!(ks && ks.home) && (variant === 'domestic' || variant === 'burglary');
+  const V = armedVenue(s, rng, homeLike ? 'home' : ks && ks.venue ? ks.venue : kind, dist);      // 지도의 건물 종류가 장소를 정한다 (은행이면 은행 로비, 집이면 거실과 방)
   const shop = V.main, storage = V.back, office = V.office;
   const tn = sim.tune;
   const ag = (v: number): number => Math.max(0.05, Math.min(0.98, v + tn.aggroShift));
@@ -355,6 +458,24 @@ function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {
     }
     if (rng.chance(tn.accompliceProb * 0.7)) { const p = inShop(); const g = addHostile(s, p.x, p.y, 'gun', ag(rng.range(0.4, 0.65)), sk(rng.range(0.3, 0.55)), false, Infinity); g.facing = Math.PI / 2; }
     if (rng.chance(0.4)) { const j = freeTileIn(s, storage, rng); addCas(s, j % SW, (j / SW) | 0, 'mobile', rng.range(85, 100), 0, rng.range(0.25, 0.45), { hostage: true }); }
+    s.leadDept = 'police';
+    return s;
+  }
+  if (variant === 'domestic') {
+    // 가정 폭력: 흥분한 가족 한 사람, 다친 피해자, 방에 숨은 식구
+    const p = inShop();
+    const h = addHostile(s, p.x, p.y, rng.chance(Math.min(0.9, tn.knifeProb + 0.25)) ? 'knife' : 'none', ag(rng.range(0.32, 0.68)), sk(0.3), false, Infinity);
+    h.facing = Math.PI / 2;
+    const q = inShop(); addCas(s, q.x, q.y, 'immobile', rng.range(42, 70), rng.range(0.12, 0.22), 0.1);
+    if (rng.chance(0.7)) { const i = freeTileIn(s, office, rng); addCas(s, i % SW, (i / SW) | 0, 'mobile', rng.range(85, 100), 0, rng.range(0.3, 0.45), { hostage: true }); }
+    s.leadDept = 'police';
+    return s;
+  }
+  if (variant === 'burglary') {
+    // 침입 절도: 안쪽에 숨어 있다가 빈틈이 보이면 달아난다. 집주인이 방에 숨어 신고한 경우도 있다
+    const n = sev >= 2 && rng.chance(0.4) ? 2 : 1;
+    for (let k = 0; k < n; k++) { const i = freeTileIn(s, k === 0 ? storage : shop, rng); addHostile(s, i % SW, (i / SW) | 0, rng.chance(tn.knifeProb * 0.6) ? 'knife' : 'none', ag(rng.range(0.06, 0.3)), sk(0.25), k === 0, sim.t + rng.range(88, 158) + tn.fleeShift); }
+    if (rng.chance(0.5)) { const i = freeTileIn(s, office, rng); addCas(s, i % SW, (i / SW) | 0, 'mobile', rng.range(88, 100), 0, rng.range(0.3, 0.45), { hostage: true }); }
     s.leadDept = 'police';
     return s;
   }
@@ -579,7 +700,8 @@ function buildWater(sim: Sim, I: Incident, rng: Rng): Scene {
 }
 
 export function buildScene(sim: Sim, I: Incident, rng: Rng): Scene {
-  const s = I.truth.type === 'water' ? buildWater(sim, I, rng) : I.truth.type === 'collapse' ? buildCollapse(sim, I, rng) : I.truth.type === 'hazmat' ? buildHazmat(sim, I, rng) : I.truth.type === 'fire' ? buildFire(sim, I, rng) : I.truth.type === 'traffic' ? buildTraffic(sim, I, rng) : I.truth.type === 'search' ? buildSearch(sim, I, rng) : I.truth.type === 'medical' ? buildMedical(sim, I, rng) : buildArmed(sim, I, rng);
+  const v = I.truth.variant;
+  const s = I.truth.type === 'traffic' && (v === 'tree' || v === 'manhole') ? buildRoadIncident(sim, I, rng) : I.truth.type === 'collapse' && v === 'elevator' ? buildElevator(sim, I, rng) : I.truth.type === 'water' ? buildWater(sim, I, rng) : I.truth.type === 'collapse' ? buildCollapse(sim, I, rng) : I.truth.type === 'hazmat' ? buildHazmat(sim, I, rng) : I.truth.type === 'fire' ? buildFire(sim, I, rng) : I.truth.type === 'traffic' ? buildTraffic(sim, I, rng) : I.truth.type === 'search' ? buildSearch(sim, I, rng) : I.truth.type === 'medical' ? buildMedical(sim, I, rng) : buildArmed(sim, I, rng);
   // 심각도 설정: 부상 악화 속도
   for (const c of s.casualties) { c.bleed *= sim.tune.bleedMul; c.bleed0 = c.bleed; }
   sealPockets(s);

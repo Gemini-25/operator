@@ -149,6 +149,7 @@ export interface Prop {
   id: number; kind: PropKind; x: number; y: number; w: number; h: number;
   blocking: boolean;
   locked?: boolean; open?: boolean;          // door
+  skin?: string;                             // 같은 규칙에 다른 모습: 'tree'(쓰러진 나무 줄기), 'manhole'(열린 맨홀)
   hp: number;                                // 제거/개방에 필요한 작업량 (남은 양)
   leak?: number; leakRate?: number; mitigated?: boolean; ignited?: boolean;   // vehicle
   occupants?: number[]; emptySeat?: boolean; cleared?: boolean; angle?: number; color?: number;
@@ -345,6 +346,7 @@ export interface Assessment {
   severity: number;          // 1..3
   confidence: number;
   needs: Needs; risks: string[]; summary: string; t: number; revision: number;
+  label?: string;            // 신고 내용으로 붙인 이름 (예: 승강기 갇힘). 없으면 유형 이름을 쓴다
 }
 
 export type ProblemCode =
@@ -431,7 +433,7 @@ export interface ShiftReport {
   respondersHurt: { name: string; callsign: string; status: string }[];
   equipFailures: number;
   delayCauses: { code: ProblemCode; label: string; count: number }[];
-  incidents: { id: number; code: string; type: IncidentType; reportedType: IncidentType | null; label: string; result: IncidentResult; start: number; end: number }[];
+  incidents: { id: number; code: string; type: IncidentType; name?: string; reportedType: IncidentType | null; label: string; result: IncidentResult; start: number; end: number }[];
   summary: string[];
   hash: string;
 }

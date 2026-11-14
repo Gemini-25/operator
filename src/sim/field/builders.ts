@@ -26,7 +26,7 @@ function baseScene(sim: Sim, I: Incident, rng: Rng): Scene {
     board: [], nextWorkId: 0, radio: [], nextMsgId: 0, requests: [], zoneProb: [], fx: [], rng,
     totalFuelTiles: 0, burnedTiles: 0, burning: 0, secureAt: -1, fireOutAt: -1, lastSitrep: -99, sizeupDone: false, closing: false,
     entryOrdered: false, negotStart: -1, researchRound: 0, lastSpreadEvent: -99, collapseDone: new Set(), mismatchLogged: false, closedCheckAt: 0,
-    staticVersion: 0, archived: false, idleSince: -1,
+    staticVersion: 0, archived: false, idleSince: -1, breachAt: -1, breachDone: false, bangAt: -99,
   };
 }
 
@@ -207,10 +207,10 @@ function buildTraffic(sim: Sim, I: Incident, rng: Rng): Scene {
       const roll = rng.next();
       const pTrap = sev >= 3 ? 0.4 : sev >= 2 ? 0.28 : 0.08;
       if (roll < pTrap) {
-        const c = addCas(s, w.x + k, w.y, 'trapped', rng.range(45, 75), rng.range(0.13, 0.28), 0.3, { inVehicle: w.id });
+        const c = addCas(s, w.x + k, w.y, 'trapped', rng.range(45, 75), rng.range(0.16, 0.31), 0.3, { inVehicle: w.id });
         c.trapWork = rng.range(12, 20); w.occupants!.push(c.id);
       } else if (roll < pTrap + 0.3) {
-        const c = addCas(s, w.x + k, w.y, 'immobile', rng.range(50, 80), rng.range(0.09, 0.22), 0.3, { inVehicle: w.id });
+        const c = addCas(s, w.x + k, w.y, 'immobile', rng.range(50, 80), rng.range(0.12, 0.25), 0.3, { inVehicle: w.id });
         w.occupants!.push(c.id);
       } else {
         const sy = w.y === 9 ? 7 : 12;
@@ -271,9 +271,9 @@ function buildSearch(sim: Sim, I: Incident, rng: Rng): Scene {
   const wander = I.truth.variant === 'wander';
   const ti = freeTileIn(s, tz, rng, (q) => s.tiles[q] === T.TRAIL || Math.hypot((q % SW) - 1, ((q / SW) | 0) - 10) < 9);
   const tx = ti % SW, tyy = (ti / SW) | 0;
-  const conc = rng.range(0.42, 0.68) + (s.tiles[ti] === T.TREE ? 0.12 : 0);
+  const conc = rng.range(0.46, 0.72) + (s.tiles[ti] === T.TREE ? 0.12 : 0);
   addCas(s, tx, tyy, wander ? 'mobile' : 'immobile', wander ? rng.range(70, 90) : rng.range(52, 80) - sev * 4,
-    wander ? rng.range(0.03, 0.07) + sev * 0.015 : rng.range(0.08, 0.14) + sev * 0.03, conc, { isTarget: true, wander, wanderT: sim.t + 10 });
+    wander ? rng.range(0.07, 0.13) + sev * 0.025 : rng.range(0.13, 0.21) + sev * 0.04, conc, { isTarget: true, wander, wanderT: sim.t + 10 });
   if (sev >= 3 && !wander) {
     const i2 = freeTileIn(s, tz, rng, (q) => Math.hypot((q % SW) - tx, ((q / SW) | 0) - tyy) > 3.5 || s.tiles[q] === T.TRAIL);
     addCas(s, i2 % SW, (i2 / SW) | 0, 'immobile', rng.range(55, 80), rng.range(0.04, 0.09), conc * 0.8, { isTarget: true });
@@ -340,7 +340,7 @@ function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {
     // 인질 사건: 용의자가 사무실에서 인질을 붙잡고 있다
     const i = freeTileIn(s, office, rng);
     const h = addHostile(s, i % SW, (i / SW) | 0, 'gun', ag(rng.range(0.5, 0.75)), sk(rng.range(0.4, 0.65)), false, Infinity);
-    h.facing = Math.PI / 2; h.deadline = sim.t + rng.range(190, 250) + tn.fleeShift * 2;
+    h.facing = Math.PI / 2; h.deadline = sim.t + rng.range(270, 350) + tn.fleeShift * 2;
     const nH = rng.int(1, 2);
     for (let k = 0; k < nH; k++) {
       const j = freeTileIn(s, office, rng, (q) => Math.hypot((q % SW) - h.x, ((q / SW) | 0) - h.y) > 1.6 || (q % SW === h.x && ((q / SW) | 0) === h.y));

@@ -105,6 +105,7 @@ export class SoundDirector {
           if (f.t <= since) continue;
           if (f.t > newest) newest = f.t;
           if (f.kind === 'shot') { if (this.ok('shot', 0.07)) { this.burst(0.09, 0.26, 1400, 0.7, 'lowpass'); this.tone(150, 0.06, 0.12, 'square', 0, 60); } }
+          else if (f.kind === 'flash') { if (this.ok('flash', 0.3)) { this.burst(0.35, 0.3, 2600, 0.4, 'highpass'); this.tone(1900, 0.5, 0.06, 'sine', 0.05, 1500); } }
           else if (f.kind === 'boom') { if (this.ok('boom', 0.4)) { this.tone(70, 0.6, 0.3, 'sine', 0, 32); this.burst(0.5, 0.25, 500, 0.5, 'lowpass'); } }
           else if (f.kind === 'hit') { if (this.ok('hit', 0.2)) this.tone(110, 0.1, 0.12, 'triangle', 0, 70); }
           else if (f.kind === 'spray') { if (!fast && this.ok('spray', 0.28)) this.burst(0.22, 0.03, 5200, 0.6, 'highpass'); }

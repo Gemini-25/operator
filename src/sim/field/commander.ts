@@ -127,14 +127,22 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       want(sim, s, 'negotiate', { hostile: h.id }, 0.73);
       const crit = cas.some((c) => c.value.where === 'scene' && c.value.band === 2);
       const fighting = h.value.state === 'fight';
+      const hostage = !!h.value.hostage;
+      const hasBang = unitsOnScene(sim, s).some((uid) => sim.units[uid].flashbangs > 0);
       let why = '';
-      if (crit && police.length >= 2 && waited > 12) why = '내부에 위중한 부상자가 있어 더 기다릴 수 없음';
+      if (hostage) {
+        // 인질 사건: 섣불리 들어가지 않는다. 섬광탄을 가진 부대가 오거나, 인질이 다쳤거나, 협상이 한계에 이르렀을 때만
+        if (I.problems.some((p) => p.detail === '시한이 지나 인질이 다침') && police.length >= 2) why = '인질이 다쳐 더 기다릴 수 없음';
+        else if (hasBang && police.length >= 3 && waited > 18) why = '섬광탄을 가진 기동대가 도착해 진입 조건이 갖춰짐';
+        else if (waited > 125 && police.length >= 3) why = '협상이 길어져 시한이 임박';
+        if (!I.assigned.some((uid) => sim.units[uid].caps.tactical >= 0.9)) request(sim, s, I, a, 'tactical', '인질 사건 — 섬광탄을 가진 기동대 필요', true);
+      } else if (crit && police.length >= 2 && waited > 12) why = '내부에 위중한 부상자가 있어 더 기다릴 수 없음';
       else if (fighting && police.length >= 3 && waited > 22) why = '용의자가 계속 발포하고 협상에 응하지 않음';
       else if (waited > 60 && police.length >= 3) why = '협상에 진전이 없고 진입 인원이 확보됨';
       else if (waited > 100 && police.length >= 2) why = '장시간 대치로 더 이상의 지연은 위험';
       if (why) {
-        s.entryOrdered = true;
-        emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 3, causes: [I.lastEvent], text: `진입 결정. ${why}. 진입조는 엄호 아래 진입하라.` });
+        s.entryOrdered = true; s.breachAt = sim.t + 9; s.breachDone = false;
+        emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 3, causes: [I.lastEvent], text: `진입 결정. ${why}. 진입조는 출입구 앞에 모였다가 신호에 맞춰 동시에 진입하라.` });
       }
     }
     if (s.entryOrdered) { want(sim, s, 'engage', { hostile: h.id }, 0.9, 3); cancel(s, (w) => w.kind === 'negotiate' && w.hostile === h.id); }
@@ -223,9 +231,11 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   for (const f of cas) {
     const c = f.value as CasBelief;
     const dead = c.band === 3;
-    const clear = (kinds: WorkKind[]) => cancel(s, (w) => w.cas === f.id && kinds.indexOf(w.kind) >= 0 && !(w.kind === 'carry' && w.status === 'active'));
+    const clear = (kinds: WorkKind[]) => cancel(s, (w) => w.cas === f.id && kinds.indexOf(w.kind) >= 0 && !(w.kind === 'carry' && w.status === 'active' && s.agents.some((b) => b.carrying === f.id)));
     if (dead || c.where === 'loaded' || c.where === 'hospital') { clear(['extricate', 'treat', 'carry', 'load']); continue; }
     const urg = c.band * 0.06;
+    // 총을 든 용의자 바로 곁에 있는 사람(인질)은 위협이 사라지기 전에는 손댈 수 없다
+    if (c.where === 'scene' && active.some((h) => h.value.weapon === 'gun' && Math.hypot(h.value.x - c.x, h.value.y - c.y) <= 3.6)) { clear(['treat', 'carry', 'extricate']); continue; }
     if (c.where === 'scene') {
       if (c.mob === 'trapped') { want(sim, s, 'extricate', { cas: f.id }, 0.82 + urg, 2); continue; }
       if (c.mob === 'mobile') {                // 스스로 대피 중 — 한참 지나도 도착 보고가 없으면 확인하러 보낸다

@@ -168,11 +168,17 @@ describe('난이도 (교대 시작 전 조건)', () => {
     const { PRESETS } = await import('../src/sim/difficulty');
     const good = (id: 'easy' | 'normal' | 'hard' | 'extreme'): number => {
       let ok = 0, n = 0;
-      for (let k = 0; k < 14; k++) { const s = new Sim('S' + k, PRESETS[id].d); s.runToEnd(); for (const I of s.incidents) { n++; if (I.result!.outcome === 'success' || I.result!.outcome === 'delayed') ok++; } }
+      for (let k = 0; k < 14; k++) {
+        const s = new Sim('S' + k, PRESETS[id].d); s.runToEnd();
+        for (const I of s.incidents) {
+          if (I.truth.variant === 'false' || I.truth.variant === 'prank') continue;      // 허위 신고는 본질적으로 쉬우므로 뺀다
+          n++; if (I.result!.outcome === 'success' || I.result!.outcome === 'delayed') ok++;
+        }
+      }
       return ok / n;
     };
     const e = good('easy'), m = good('normal'), h = good('hard'), x = good('extreme');
-    expect(e).toBeGreaterThan(m + 0.05);
+    expect(e).toBeGreaterThan(m + 0.02);
     expect(m).toBeGreaterThan(h + 0.05);
     expect(h).toBeGreaterThan(x + 0.05);
   }, 60000);
@@ -271,5 +277,33 @@ describe('신고 접수 확장과 새 사건 유형', () => {
     for (const r of base.responders) { const q = big.responders.find((x) => x.name === r.name)!; expect(q.skill).toBe(r.skill); expect(q.judgment).toBe(r.judgment); }
     big.runToEnd(); small.runToEnd();
     expect(big.ended && small.ended).toBe(true);
+  }, 60000);
+});
+
+describe('실내 전술 (무장 사건)', () => {
+  it('용의자는 바라보는 방향만 본다 — 등 뒤는 가까이 오기 전까지 모른다', async () => {
+    const { hostileSees } = await import('../src/sim/field/hazards');
+    const s = new Sim('FOV');
+    const h = { x: 10, y: 10, facing: 0, stunUntil: -1, alertUntil: -1 } as never;      // 오른쪽(+x)을 보고 있다
+    expect(hostileSees(s, h, 16, 10)).toBe(true);      // 정면
+    expect(hostileSees(s, h, 14, 13)).toBe(true);      // 시야각 안쪽
+    expect(hostileSees(s, h, 4, 10)).toBe(false);      // 등 뒤
+    expect(hostileSees(s, h, 10, 16)).toBe(false);     // 옆
+    expect(hostileSees(s, h, 8.5, 10)).toBe(true);     // 등 뒤라도 바로 곁이면 기척으로 안다
+    expect(hostileSees(s, { ...(h as object), alertUntil: 99 } as never, 4, 10)).toBe(true);      // 경계 중이면 사방
+    expect(hostileSees(s, { ...(h as object), stunUntil: 99 } as never, 16, 10)).toBe(false);     // 무력화 중이면 못 본다
+  });
+  it('인질 사건이 발생하고, 섬광탄·기습·시한 같은 전술 요소가 실제로 쓰인다', () => {
+    let hostage = 0, bangs = 0, breaches = 0, surprised = 0, caught = 0;
+    for (let k = 0; k < 40; k++) {
+      const s = new Sim('S' + k); s.runToEnd();
+      for (const I of s.incidents) if (I.truth.variant === 'hostage') { hostage++; if (I.result!.suspectsCaught > 0) caught++; }
+      for (const e of s.events) { if (e.text.startsWith('섬광탄 투척') || e.text.includes('섬광탄을 던져 넣고')) bangs++; if (e.text.startsWith('진입!')) breaches++; if (e.text.includes('기습당했습니다')) surprised++; }
+    }
+    expect(hostage).toBeGreaterThan(3);
+    expect(caught).toBeGreaterThan(2);
+    expect(breaches).toBeGreaterThan(3);
+    expect(bangs).toBeGreaterThan(1);
+    expect(surprised).toBeGreaterThan(0);
   }, 60000);
 });

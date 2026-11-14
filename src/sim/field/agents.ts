@@ -9,7 +9,7 @@ import { clamp, dist, josa, pct } from '../util';
 import { BeliefStore, mkFact } from './beliefs';
 import type { CostFn } from './grid';
 import { doorAt, isIndoor, los, staticPass, tileOf } from './grid';
-import { BAND_NAME, band, pushFx } from './hazards';
+import { BAND_NAME, band, isHeld, pushFx } from './hazards';
 
 export const resp = (sim: Sim, a: FieldAgent): Responder => sim.responders[a.rid];
 export const staminaF = (r: Responder): number => 0.55 + 0.45 * clamp(r.stamina / 60, 0, 1);
@@ -43,14 +43,15 @@ export function casFact(sim: Sim, s: Scene, c: Casualty, src: string): Fact {
 export function hosFact(sim: Sim, s: Scene, h: Hostile, src: string): Fact {
   const wt = h.weapon === 'gun' ? '총기 소지' : h.weapon === 'knife' ? '흉기 소지' : '비무장';
   const st = h.state === 'hold' ? '대치 중' : h.state === 'fight' ? '교전 중' : h.state === 'flee' ? '도주 중' : h.state === 'surrendered' ? '투항' : h.state === 'arrested' ? '검거' : h.state === 'down' ? '제압' : '도주';
-  return mkFact('hos', h.id, { x: Math.round(h.x), y: Math.round(h.y), weapon: h.weapon, state: h.state }, src, sim.t, 1, true, `${h.label}: ${wt} · ${st} (${regionNameAt(s, h.x, h.y)})`);
+  const hold = h.hostageId >= 0 && (h.state === 'hold' || h.state === 'fight');
+  return mkFact('hos', h.id, { x: Math.round(h.x), y: Math.round(h.y), weapon: h.weapon, state: h.state, hostage: hold }, src, sim.t, 1, true, `${h.label}: ${wt}${hold ? ' · 인질을 붙잡고 있음' : ''} · ${st} (${regionNameAt(s, h.x, h.y)})`);
 }
 
 /** 보고할 가치가 있는 변화인가 (위치만 바뀐 것은 조용히 갱신) */
 function significant(f: Fact, old: any): boolean {
   const v = f.value;
   if (f.type === 'cas') return v.where !== 'carried' && (old.mob !== v.mob || old.band !== v.band || old.where !== v.where || old.treated !== v.treated || old.tq !== v.tq);
-  if (f.type === 'hos') return old.state !== v.state || old.weapon !== v.weapon;
+  if (f.type === 'hos') return old.state !== v.state || old.weapon !== v.weapon || old.hostage !== v.hostage;
   if (f.type === 'mate') return old.status !== v.status;
   return true;
 }
@@ -86,7 +87,7 @@ function discover(sim: Sim, s: Scene, I: Incident, a: FieldAgent, c: Casualty): 
     I.problems.push({ code: 'LATE_DISCOVERY', t: sim.t, eventId: sim.events.length - 1, detail: `구조 대상 ${c.label} 발견까지 도착 후 ${Math.round(sim.t - s.arrivedAt)}초 소요`, recovered: true, recoveryText: '' });
   }
   // 거동 가능한 대상은 대피를 안내한다 (배회하던 실종자는 동행이 필요)
-  if (c.mob === 'mobile' && !c.wander && !c.isTarget) { c.walking = true; c.path = null; }
+  if (c.mob === 'mobile' && !c.wander && !c.isTarget && !isHeld(sim, s, c.id)) { c.walking = true; c.path = null; }
   r.xpGained += 0.004;
 }
 
@@ -105,6 +106,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
     if (d > dr || !los(s, a.x, a.y, c.x, c.y)) continue;
     let fresh = sim.t - c.tDiscovered < 2.5;      // 방금 누군가 발견을 알렸다면 같은 내용을 되풀이하지 않는다
     if (!known) { discover(sim, s, I, a, c); fresh = true; }
+    if (known && c.hostage && c.mob === 'mobile' && !c.walking && !c.dead && c.where === 'scene' && !isHeld(sim, s, c.id) && !s.hostiles.some((h) => h.state === 'hold' || h.state === 'fight')) { c.walking = true; c.path = null; }
     if (c.tDiscovered >= 0) { if (fresh) learnQuiet(sim, a, casFact(sim, s, c, me)); else learn(sim, a, casFact(sim, s, c, me)); }
   }
   for (const h of s.hostiles) {

@@ -160,7 +160,7 @@ export function tickCasualties(sim: Sim, s: Scene, I: Incident): void {
     if (c.bystander && c.treatQ <= 0 && c.where === 'scene') d *= 0.5;      // 신고자가 안내대로 돌보는 중
     if (c.where === 'scene' || c.where === 'carried') {
       const i = tileOf(s, c.x, c.y);
-      d += s.smoke[i] * 0.42;
+      d += s.smoke[i] * 0.36;
       if (s.fire[i] > 0.3) d += 2.6 * s.fire[i];
       if (!isIndoor(s.tiles[i]) && (c.isTarget || s.kind === 'search')) d += s.exposure;
     } else if (c.where === 'loaded') d *= 0.5;
@@ -247,12 +247,47 @@ export function placeAtSafe(s: Scene, c: Casualty): void {
 }
 
 // ───────────────────────── 용의자 ─────────────────────────
+export const HOSTILE_FOV = 1.15;      // 시야각의 절반(라디안). 약 ±66°
+
+/** 용의자가 그 지점을 보고 있는가: 가까우면 기척으로, 경계 중이면 사방을, 아니면 바라보는 방향만 */
+export function hostileSees(sim: Sim, h: Hostile, x: number, y: number): boolean {
+  if (sim.t < h.stunUntil) return false;
+  if (dist(x, y, h.x, h.y) < 2.6 || sim.t < h.alertUntil) return true;
+  let diff = Math.abs(Math.atan2(y - h.y, x - h.x) - h.facing);
+  if (diff > Math.PI) diff = 2 * Math.PI - diff;
+  return diff <= HOSTILE_FOV;
+}
+
+/** 살아 있는 인질이 용의자 바로 곁에 있는가 (대원은 이때 사격을 삼간다) */
+export function hostageNear(s: Scene, h: Hostile): Casualty | null {
+  for (const c of s.casualties) if (c.hostage && !c.dead && c.where === 'scene' && dist(c.x, c.y, h.x, h.y) <= 1.7) return c;
+  return null;
+}
+/** 이 사람이 지금 총을 든 용의자 곁에 붙잡혀 있어 빠져나올 수 없는가 (용의자가 무력화된 동안에는 풀려난다) */
+export function isHeld(sim: Sim, s: Scene, cid: number): boolean {
+  const c = s.casualties[cid];
+  if (!c.hostage || c.dead || c.where !== 'scene') return false;
+  return s.hostiles.some((h) => (h.state === 'hold' || h.state === 'fight') && h.weapon === 'gun' && sim.t >= h.stunUntil && dist(h.x, h.y, c.x, c.y) <= 3.2);
+}
+
+/** 섬광탄: 반경 안의 용의자를 잠시 무력화한다. */
+export function flashbang(sim: Sim, s: Scene, x: number, y: number): number {
+  let n = 0;
+  for (const h of s.hostiles) {
+    if (h.state !== 'hold' && h.state !== 'fight') continue;
+    if (dist(h.x, h.y, x, y) > 5.2) continue;
+    h.stunUntil = sim.t + 3.8; h.morale -= 0.15; n++;
+  }
+  pushFx(sim, s, 'flash', x, y, undefined, undefined, undefined, undefined, 0.7);
+  return n;
+}
+
 function officersSeeing(sim: Sim, s: Scene, h: Hostile, range: number): { n: number; nearest: number; nearestD: number } {
   let n = 0, nearest = -1, nd = 99;
   for (const a of s.agents) {
     if (a.status !== 'active') continue;
     const d = dist(a.x, a.y, h.x, h.y);
-    if (d > range || !los(s, h.x, h.y, a.x, a.y)) continue;
+    if (d > range || !los(s, h.x, h.y, a.x, a.y) || !hostileSees(sim, h, a.x, a.y)) continue;
     if (sim.responders[a.rid].dept === 'police') n++;
     if (d < nd) { nd = d; nearest = a.rid; }
   }
@@ -280,9 +315,35 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
       emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'resolve', text: `${h.label} 제압됨.`, imp: 2 });
       continue;
     }
+    if (sim.t < h.stunUntil) continue;       // 무력화된 동안에는 아무것도 못 한다
+    const wasAlert = sim.t < h.alertUntil;
     const see = officersSeeing(sim, s, h, 11);
     h.seenOfficers = see.n;
     if (h.state === 'surrendered') continue;
+    if (see.nearest >= 0) {
+      const ta = s.agents.find((a) => a.rid === see.nearest)!;
+      // 시야 밖에서 바로 곁까지 다가온 대원에게 기습당하면 잠시 얼어붙는다
+      if (!wasAlert && see.nearestD < 2.6 && sim.t - s.startedAt > 5 && (h.state === 'hold')) {
+        h.stunUntil = sim.t + 1.6; h.morale -= 0.25;
+        emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, text: `${h.label}가 시야 밖에서 접근한 ${sim.responders[ta.rid].name}에게 기습당했습니다.` });
+      }
+      h.facing = Math.atan2(ta.y - h.y, ta.x - h.x); h.alertUntil = sim.t + 5;
+    } else if (sim.t >= h.lookAt && h.state === 'hold') {
+      // 평소에는 출입구 쪽을 번갈아 살핀다
+      h.lookAt = sim.t + s.rng.range(4.5, 9);
+      const e = s.exits.length ? s.rng.pick(s.exits) : { x: h.x, y: h.y + 4 };
+      h.facing = Math.atan2(e.y - h.y, e.x - h.x) + s.rng.range(-0.5, 0.5);
+    }
+    // 인질
+    if (h.hostageId >= 0) {
+      const c = s.casualties[h.hostageId];
+      if (c.dead || c.where !== 'scene') h.hostageId = -1;
+      else if (sim.t >= h.deadline) {
+        h.deadline = sim.t + 70; h.state = 'fight'; h.cooldown = 1; h.alertUntil = sim.t + 20;
+        c.health -= s.rng.range(28, 42); c.mob = 'immobile'; c.bleed = Math.max(c.bleed, 0.18); c.bleed0 = c.bleed; c.walking = false;
+        c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '시한이 지나 인질이 다침', { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `${h.label}가 요구가 받아들여지지 않자 인질을 다치게 했습니다!` }, false);
+      }
+    }
     // 사기 변화: 포위될수록, 부상당할수록 떨어진다
     h.morale -= (0.006 * Math.max(0, see.n - 1) + (h.health < 60 ? 0.012 : 0)) * dt;
     if (h.morale < 0.2 && h.state !== 'flee') {

@@ -4,6 +4,7 @@
 
 import type { Sim } from '../sim/engine';
 import { visionOf } from '../sim/field/agents';
+import { HOSTILE_FOV } from '../sim/field/hazards';
 import { T } from '../sim/types';
 import type { FieldAgent, Scene } from '../sim/types';
 import { drawVehicle } from './icons';
@@ -290,13 +291,30 @@ export function drawScene(ctx: CanvasRenderingContext2D, sim: Sim, s: Scene, w: 
     const p = ipos(hst, o.alpha);
     const x = cx(p.x), y = cy(p.y), r = ts * 0.33;
     const col = hst.state === 'fight' ? '#ff3355' : hst.state === 'flee' ? '#ff9f43' : hst.state === 'surrendered' ? '#ffd166' : hst.state === 'arrested' ? '#7d8b99' : hst.state === 'down' ? '#454d57' : '#e0486b';
+    const stunned = sim.t < hst.stunUntil;
+    if ((hst.state === 'hold' || hst.state === 'fight') && !stunned && !MINI) {
+      // 시야: 평소에는 바라보는 방향의 부채꼴, 경계 중에는 사방
+      const alert = sim.t < hst.alertUntil;
+      ctx.fillStyle = alert ? 'rgba(255,90,90,0.07)' : 'rgba(255,200,90,0.09)';
+      ctx.strokeStyle = alert ? 'rgba(255,90,90,0.3)' : 'rgba(255,200,90,0.35)'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      if (alert) ctx.arc(x, y, ts * 6, 0, 7);
+      else { ctx.moveTo(x, y); ctx.arc(x, y, ts * 7, hst.facing - HOSTILE_FOV, hst.facing + HOSTILE_FOV); ctx.closePath(); }
+      ctx.fill(); ctx.stroke();
+    }
+    if (hst.hostageId >= 0 && (hst.state === 'hold' || hst.state === 'fight')) {
+      const hc = s.casualties[hst.hostageId];
+      ctx.strokeStyle = 'rgba(255,93,93,0.8)'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(cx(hc.x), cy(hc.y)); ctx.stroke(); ctx.setLineDash([]);
+    }
     ctx.globalAlpha = hst.hidden ? 0.45 : 1;
+    if (stunned) { for (let k = 0; k < 3; k++) { const an = time * 5 + k * 2.1; ctx.fillStyle = '#fff3b0'; ctx.fillRect(x + Math.cos(an) * r * 1.2 - 1.5, y - r * 1.1 + Math.sin(an) * r * 0.4 - 1.5, 3, 3); } }
     if (hst.state === 'fight') { ctx.strokeStyle = 'rgba(255,51,85,0.55)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, r + 4 + 3 * Math.abs(Math.sin(time * 6)), 0, 7); ctx.stroke(); }
     ctx.fillStyle = col; ctx.strokeStyle = '#0b1219'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x + r, y + r * 0.8); ctx.lineTo(x - r, y + r * 0.8); ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.fillStyle = '#0b1219'; ctx.font = `800 ${Math.round(ts * 0.3)}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(hst.weapon === 'gun' ? '총' : hst.weapon === 'knife' ? '칼' : '·', x, y + r * 0.2);
-    const stt = hst.hidden ? '(숨음)' : hst.state === 'hold' ? '대치' : hst.state === 'fight' ? '교전' : hst.state === 'flee' ? '도주' : hst.state === 'surrendered' ? '투항' : hst.state === 'arrested' ? '검거' : '제압';
+    const stt = stunned ? '무력화' : hst.hidden ? '(숨음)' : hst.state === 'hold' ? (hst.hostageId >= 0 ? '인질 대치' : '대치') : hst.state === 'fight' ? '교전' : hst.state === 'flee' ? '도주' : hst.state === 'surrendered' ? '투항' : hst.state === 'arrested' ? '검거' : '제압';
     pill(ctx, `${hst.label} · ${stt}`, x, y - r - ts * 0.3, ts * 0.28, col);
     if (hst.state === 'hold' || hst.state === 'fight') { ctx.fillStyle = 'rgba(8,13,18,0.8)'; ctx.fillRect(x - r, y + r + 2, r * 2, 3); ctx.fillStyle = '#ffb454'; ctx.fillRect(x - r, y + r + 2, r * 2 * Math.max(0, Math.min(1, hst.morale)), 3); }
     ctx.globalAlpha = 1;
@@ -344,12 +362,13 @@ export function drawScene(ctx: CanvasRenderingContext2D, sim: Sim, s: Scene, w: 
     if (a.label) labels.push({ x, y: y - r - ts * 0.34, text: (a.isCommander ? '★ ' : '') + (a.label.length > 13 ? a.label.slice(0, 12) + '…' : a.label), col: a.status === 'down' ? '#ff5d5d' : col });
   }
   // 날씨와 야간 조명: 밤에는 대원의 시야(손전등), 불빛, 차량 주변만 밝다
+  const fog = !o.truth && s.kind === 'armed' && s.agents.some((a) => a.status !== 'left');      // AI 시점: 대원이 지금 보고 있는 곳만 밝다
   if (sim.weather === 'night' && MINI) { ctx.fillStyle = 'rgba(3,6,18,0.3)'; ctx.fillRect(0, 0, s.w * ts, s.h * ts); }
-  else if (sim.weather === 'night') {
+  else if ((sim.weather === 'night' || fog) && !MINI) {
     if (!dark || dark.width !== s.w * ts || dark.height !== s.h * ts) { dark = document.createElement('canvas'); dark.width = s.w * ts; dark.height = s.h * ts; }
     const dg = dark.getContext('2d')!;
     dg.globalCompositeOperation = 'source-over'; dg.clearRect(0, 0, dark.width, dark.height);
-    dg.fillStyle = 'rgba(3,6,18,0.6)'; dg.fillRect(0, 0, dark.width, dark.height);
+    dg.fillStyle = sim.weather === 'night' ? 'rgba(3,6,18,0.6)' : 'rgba(6,10,16,0.55)'; dg.fillRect(0, 0, dark.width, dark.height);
     dg.globalCompositeOperation = 'destination-out';
     const hole = (x: number, y: number, r: number, k = 1) => { const gr = dg.createRadialGradient(x, y, r * 0.15, x, y, r); gr.addColorStop(0, `rgba(0,0,0,${k})`); gr.addColorStop(1, 'rgba(0,0,0,0)'); dg.fillStyle = gr; dg.beginPath(); dg.arc(x, y, r, 0, 7); dg.fill(); };
     for (const a of s.agents) { if (a.status === 'left') continue; const p = ipos(a, o.alpha); hole(cx(p.x), cy(p.y), visionOf(sim, s, a) * ts * 1.15 + ts); }
@@ -382,6 +401,9 @@ export function drawScene(ctx: CanvasRenderingContext2D, sim: Sim, s: Scene, w: 
     } else if (f.kind === 'radio') {
       ctx.strokeStyle = 'rgba(124,196,255,0.8)'; ctx.globalAlpha = 1 - k; ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.arc(cx(f.x), cy(f.y), ts * (0.4 + 0.9 * k), 0, 7); ctx.stroke();
+    } else if (f.kind === 'flash') {
+      ctx.fillStyle = `rgba(255,255,240,${0.85 * (1 - k)})`; ctx.beginPath(); ctx.arc(cx(f.x), cy(f.y), ts * (1 + 4.6 * k), 0, 7); ctx.fill();
+      ctx.strokeStyle = `rgba(255,255,255,${1 - k})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx(f.x), cy(f.y), ts * 5.2 * k, 0, 7); ctx.stroke();
     } else if (f.kind === 'boom') {
       ctx.fillStyle = `rgba(255,${Math.round(200 - 120 * k)},60,${0.7 * (1 - k)})`; ctx.beginPath(); ctx.arc(cx(f.x), cy(f.y), ts * (0.8 + 3.2 * k), 0, 7); ctx.fill();
     } else if (f.kind === 'hit') {

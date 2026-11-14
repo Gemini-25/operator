@@ -142,7 +142,7 @@ export interface Hostile {
   targetRid: number;
 }
 export interface PassingCar { x: number; px: number; row: number; dir: number; speed: number; distracted: boolean; stopped: boolean; hit: boolean }
-export interface Fx { kind: 'shot' | 'spray' | 'radio' | 'text' | 'boom' | 'hit'; t: number; x: number; y: number; x2?: number; y2?: number; text?: string; color?: string; ttl: number }
+export interface Fx { kind: 'shot' | 'spray' | 'radio' | 'text' | 'boom' | 'hit' | 'flash'; t: number; x: number; y: number; x2?: number; y2?: number; text?: string; color?: string; ttl: number }
 
 export type WorkKind =
   | 'sizeup' | 'search' | 'suppress' | 'hookup' | 'clear' | 'force' | 'extricate' | 'treat' | 'carry' | 'load'
@@ -238,6 +238,9 @@ export interface Scene {
   collapseDone: Set<number>;
   mismatchLogged: boolean; closedCheckAt: number;
   staticVersion: number;              // 렌더 캐시 무효화용
+  breachAt: number;                   // 진입조가 문 앞에 모여 동시에 들어가기로 한 시각 (-1 없음)
+  breachDone: boolean;
+  bangAt: number;                     // 마지막 섬광탄 사용 시각
   archived: boolean;                  // 사건 종료 후 모든 부대가 떠남 → 더 이상 갱신하지 않음
   idleSince: number;
 }

@@ -85,6 +85,8 @@ export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
   } else if (sim.responders[cmd.rid].dept !== s.leadDept && u.dept === s.leadDept) {
     for (const f of cmd.beliefs.all()) senior.beliefs.merge(BeliefStore.relay(f));
     cmd.isCommander = false;
+    // 주관 부서가 아닌 대원이 멀리서 한 현장 평가는 다시 한다
+    if (s.sizeupDone) { s.sizeupDone = false; s.mismatchLogged = false; }
     setCommander(sim, s, I, senior, `${sim.responders[cmd.rid].name}에게서 지휘권을 인수합니다. 현재까지의 상황을 인계받았습니다.`);
   }
 }

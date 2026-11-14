@@ -59,7 +59,8 @@ export const CRIME: Scenario[] = [
     places: { terminal: 2, deptStore: 2, bank: 3, broadcast: 1.5, university: 1.5, busTerminal: 1.5, office: 2 },
     texts: ['무장한 사람들이 사람들을 붙잡고 있어요! 여러 명이에요!', '총 든 사람들이 건물을 점거했어요. 안에 사람들이 갇혀 있어요.'], lik: [0.01, 0.01, 0.01, 0.96, 0.01, 0.01, 0.01, 0.01],
     needs: (n) => { n.law = 2; n.tactical = 2; n.ems = 2; } },
-  // ── 도주 차량: 총을 든 용의자가 현장을 빠져나가 차로 달아난다 (hazards.tickHostiles 가 예약한다). 추격전은 pursuit.ts, 시작은 incidents.createIncident ──
+  // ── 도주 차량: 총을 든 용의자가 현장을 빠져나가 차로 달아난다. 몫이 0 이라 평소 추첨에는 나오지 않고 hazards.tickHostiles 의 예약으로만 일어난다 ──
+  // (추격전은 pursuit.ts, 시작은 incidents.createIncident. places 는 확인용으로 강제로 일으킬 때(--force armed/getaway) 달아나기 시작하는 곳이다)
   { type: 'armed', variant: 'getaway', name: '도주 차량', share: 0, nature: 'getaway', vague: 'scream', severity: [2, 3], tag: 'crime', label: '도주 차량', delay: [1, 3],
     places: { bank: 3, convenience: 3, gasStation: 2, shop: 2, mart: 1, cafe: 0.5 },
     texts: ['총을 든 사람이 차를 타고 달아나고 있어요!', '방금 강도가 차로 도망쳤어요. 엄청 빨리 달려요!'], lik: [0.005, 0.07, 0.03, 0.86, 0.015, 0.005, 0.005, 0.01],

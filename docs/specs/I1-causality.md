@@ -213,7 +213,7 @@ export function checkMetrics(m: MetricsSummary): string[];                  // �
 | T6 결원 운용 중단 | `/대원 전원 부상으로 운용 중단/` | `resources.ts:315`(`kind 'unit'`, 사건 없음). 맞는 기록은 대원이 다치는 교대에서만 나온다 — 테스트는 그런 시드를 찾아 고정하거나, 찾지 못하면 H1 뒤에 켠다 |
 | T7 출동 지령(C4·전환 영향 용) | `/^출동 지령: (\S+) → 사건/` | `dispatcher.ts` `sendUnit` 의 기록. 잡은 묶음은 호출부호(공백 없음 — `UNIT_DEFS`·지원 부대 이름) |
 
-**사건별 시스템 집합 `S(I)`** = 그 사건 기록(`incidentId === I.id`)의 `sysOf` 합집합 ∪ 상태로 본 것:
+**사건별 시스템 집합 `S(I)`** = 그 사건 기록(`incidentId === I.id`)의 `sysOf` 합집합 ∪ **그 사건 기록이 `causes` 로 가리키는 사건 없는 기록**(`c.incidentId < 0` 이고 `sysOf(c) ∉ {origin, none}`)의 `sysOf` — 재난 알림(`disaster.tell`), 결원 운용 중단(T6), I2 의 요약(T5), I1-b 의 구역·병원 알림처럼 사건이 없는 기록이 여기서 들어온다(`worldLinks` 가 세는 간선과 같다) ∪ 상태로 본 것:
 
 | 더하는 시스템 | 상태 조건 (교대 끝에 읽는다, 표본 항목은 `Probe`) |
 |---|---|
@@ -223,6 +223,7 @@ export function checkMetrics(m: MetricsSummary): string[];                  // �
 | `other` | `I.parent !== undefined` · 어떤 J 의 `parent === I.id` · I 에 DIVERTED 가 있다(빼앗긴 쪽) · I 가 전환 배정으로 부대를 받았다(§2.9 의 연결) · I 의 기록이 다른 사건 기록을 `causes` 로 가리킨다 · (표본) I 의 응급실 대기가 다른 사건의 구급차 때문 · (표본) I 로 가는 부대의 남은 경로에 다른 열린 사건 J 의 `blockedEdge`(그 구간 `slow > 0`)가 있다 |
 | `aid` | `I.aidUnit !== undefined` |
 | `disaster` | `I.tag` 가 `'disaster:'` 로 시작 |
+| `carry` | (I2 뒤) 그 건물이 I2 의 `carryState.places` 에 있다(`(sim as { carryState?: … }).carryState` 로 읽어 칸이 없을 때도 컴파일되게. 모양은 I2 를 따른다) · (표본) I 로 가는 부대의 남은 경로에 `closedReason === 'repair'` 인 구간이 있다(지금 길이 막혀 있지는 않으니 실제로는 한 차로 공사의 `slow`) |
 
 ### 2.4 지표 1 — 인과 연쇄 깊이 (두 가지)
 
@@ -230,8 +231,9 @@ export function checkMetrics(m: MetricsSummary): string[];                  // �
 
 - `parentDepth(I)`: `I.parent` 가 없으면 0, 있으면 `1 + parentDepth(부모)`(50단계에서 끊는다 — 순환 방지).
 - `rootedDepth(I)`: `parentDepth` 에 사슬의 뿌리가 재난 사건(`tag` 가 `disaster:`)이면 +1. 재난 사건 자체는 1. 대형 사고(`tag: 'major'`)는 저절로 일어난 것이라 0.
-- 버린 예약 `dropped`(표본): 표본마다 `sim.gen.chain` 의 항목을 객체 참조로 기억한다. 직전 표본에 있던 항목이 사라졌는데, 그 사이에 만들어진 사건 중 `parent`·`type`·`variant` 가 같은 것이 없으면 버린 것으로 센다. 재난 큐(`sim.disaster.queue`)도 같은 방식으로 `disasterSkipped`(그 사이 `disaster:` 사건이 하나도 안 생겼는데 항목이 사라짐).
-- 출력: 깊이 분포(0·1·2·3+), `maxParentDepth`, `chained`(부모 있는 사건 수)·`chainedPerShift`·`maxChainedInShift`, `rooted` 분포, `dropped`, `disasterSkipped`.
+- 버린 예약 `dropped`(표본, **근사**): 표본마다 `sim.gen.chain` 의 항목을 객체 참조로 기억한다. 직전 표본에 있던 항목 가운데 사라진 것들을 `(parent, type, variant)` 다중집합으로 만들고, 그 사이에 새로 만들어진 사건(`sim.incidents` 의 늘어난 끝)도 같은 열쇠의 다중집합으로 만들어 짝짓는다. 열쇠마다 `max(0, 사라진 수 − 새로 생긴 수)` 의 합이 버린 수다(같은 틱에 둘이 사라지고 하나만 생겨도 하나를 센다).
+- 재난 큐 `disasterSkipped`(표본, **근사**): `sim.disaster.queue` 는 틱마다 하나씩 꺼내고, 늦거나 상한에 닿으면 `d.queue.length = 0` 으로 한꺼번에 비운다(`disaster.ts:230`, 끝날 때 `:319`). 또 큐를 거치지 않고 바로 만드는 재난 사건(여진·산불의 `houseFire` 등)이 있다. 그래서 "사건이 하나도 안 생겼는데 사라짐"으로 세지 않고, 표본마다 `max(0, 사라진 항목 수 − 그 사이 d.spawned 가 늘어난 수)` 를 더한다. 큐를 통째로 비운 경우(사라진 수 ≥ 3 이고 길이가 0 이 됨)는 그 수를 `disasterSkipped` 에 넣지 않고 **`disasterCleared`** 에 따로 더한다(늦어서 남은 예고를 거둔 것 — 버림과 다른 일이다).
+- 출력: 깊이 분포(0·1·2·3+), `maxParentDepth`, `chained`(부모 있는 사건 수)·`chainedPerShift`·`maxChainedInShift`, `rooted` 분포, `dropped`, `disasterSkipped`, `disasterCleared`. I1-b 0단계 5번(`gen.dropped`)이 들어오면 `dropped` 는 그 배열의 길이로 바꾸고 근사 값은 비교용으로만 남긴다.
 
 **(나) 원인 사슬 `causes`** — 기록이 기록을 낳은 길이.
 

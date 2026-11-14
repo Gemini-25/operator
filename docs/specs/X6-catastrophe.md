@@ -6,7 +6,7 @@
 
 풀어 쓰면: 위험이 숫자나 문구로만 있지 않다. 높은 채로 두면 **실제로 일어난다** — 건물이 일부 또는 전부 무너지고, 가스·화학 물질·연료가 터지고, 불이 건물을 다 태운다(다 탄 건물은 버티지 못해 무너진다). 그 전에는 **조짐**이 있다(삐걱임·균열·바닥 처짐·불꽃 역류·가스 측정값·안전밸브 소리). AI 지휘관은 조짐을 보고 **막는 조치**(보강·냉각·밸브 차단·도시가스 차단·진압)를 하고, 늦었으면 **전원 철수·외부 방어**로 바꾼다. 막지 못하면 사상자(대원 포함)·재산 피해·지도의 건물 상태·보고서에 그대로 남는다.
 
-이 문서는 다음 구현 세션이 이 문서와 `CLAUDE.md` 만 보고 끝까지 만들 수 있게 쓴다. 줄 번호는 `1ca465d`(2026-11-14. 그 뒤 `db8cba0` 까지 `src`·`tests` 변경 없음) 기준이다. 먼저 합쳐지는 묶음(R1·H1·B1·B3·P1·G4·G5)이 있으면 줄이 바뀌므로 **함수 이름으로 찾는다**. 확신하지 못한 곳은 **(확인 필요)** 로 표시했다.
+이 문서는 다음 구현 세션이 이 문서와 `CLAUDE.md` 만 보고 끝까지 만들 수 있게 쓴다. 줄 번호는 `1ca465d`(2026-11-14) 기준이다. 그 뒤 B3·P1·Q1 이 합쳐져(`1c78402`) `hazards.ts`(연기 확산을 `smokeSpread` 로 꺼냄 — `tickFire` 뒷부분이 약 18줄 밀렸다)·`commander.ts`(`needFor`·`rollCall`·0.22 규칙)·`executor.ts`(`reportDone`)·`kit.ts`(`PROP_BLANK`) 등이 바뀌었고, 앞으로 R1·H1·B1·G4·G5 가 먼저 합쳐지면 더 바뀐다. **줄 번호가 아니라 함수 이름과 주석으로 찾는다**(§11.2 에 찾을 글귀를 적었다). 확신하지 못한 곳은 **(확인 필요)** 로 표시했다.
 
 구현 순서에서의 자리: R1 → H1 → **X6** → R2 → R3 → I1-b → I2 (`docs/ROADMAP.md`). 이 문서는 **R1·H1 이 먼저 합쳐져 있다고 가정**하고, 아니면 쓸 대체를 §12.1 에 적는다.
 
@@ -29,13 +29,14 @@
 
 | 설계서 | 겹치는 곳 | 나누는 선 |
 |---|---|---|
-| H1 부상과 사망 | 붕괴·폭발이 사람에게 주는 피해, 대원 순직 | 피해는 H1 의 `hurtCas`·`hurtResponder`·`hurtHostile`(원인 `crush`·`blast`·`burn`)로만 준다. **멀쩡한 대원은 한 번에 숨지지 않는다**(H1 §2.6 문턱)는 규칙을 따른다. X6 가 더하는 것은 **깔린 대원**(`FieldAgent.trapped`)과 그 구출(§4.8). H1 의 `blast` 원인 인자를 X6 의 구조 충격(§2.4)이 읽는다 |
+| H1 부상과 사망 | 붕괴·폭발이 사람에게 주는 피해, 대원 순직 | 피해는 H1 의 `hurtCas`·`hurtResponder`·`hurtHostile`(원인 `crush`·`blast`·`burn`)로만 준다. **멀쩡한 대원은 한 번에 숨지지 않는다**(H1 §2.6 문턱)는 규칙을 따른다. X6 가 더하는 것은 **깔린 대원**(`FieldAgent.trapped`)과 그 구출(§4.8). H1 의 `blast` 원인 인자를 X6 의 구조 충격(§2.4)이 읽는다. H1 연관 표의 X6 줄("무너진 자리 곁의 구조 대상 갇힘은 H1 §5.1 의 규칙 — 반경·`injuryRng(…, 'trap')`")을 옮겨 적으면: **무너진 구획 안**의 사람 결과(숨짐·갇힘·못 걷게 됨)는 X6 가 `cat:` 흐름으로 정하고(§4.1·4.2 — 구획이 통째로 내려앉는 일은 2차 붕괴의 곁보다 무겁다), **구획 밖 경계 1칸 안**의 사람과 2차 붕괴(`tickCollapse`)는 H1 §5.1 의 갇힘 규칙을 그대로 쓴다 |
 | R1 부대 편성·장비 | 가스 측정기(`gasMeter`)·열화상(`tic`)·공기호흡기 | 조짐을 읽는 능력은 R1 의 `hasKit`·`kitWorks` 로 본다(§3.4). R1 의 장비 표는 고치지 않는다(추천만 §12.3) |
 | R2 대응 방식 | 내부 공격 ↔ 외부 방어(`suppress` 의 `defensive`), 지지대(`shore`), 환기 후 차단(`ventFirst`) | **현장 단위의 전술 모드와 진입 금지 구역은 X6**(`Scene.ops`). R2 의 방법 선택은 대원 개인의 갈래다. X6 가 먼저 만드는 외부 방수 자리 찾기(`exteriorSpot`)와 `spray` 의 효과·물 배율 인자를 R2 의 `defensive` 가 그대로 쓴다. 지휘관이 외부 방어를 정한 구역에서는 R2 의 선택과 관계없이 외부 방수만 한다. R2 의 `shore` 가 끝나면 X6 의 구획 건전도도 보강 보너스를 받는다(§2.4) |
 | R3 대응 교본 | 철수 판단 | R3 는 X6 의 위험 단계 표(`orders/catastrophe.ts` 의 `DANGER_RULES`, §5.2)를 "상황" 입력으로 읽고 분야·장비·상태에 따라 줄을 늘린다. 표의 모양은 바꾸지 않는다 |
 | G4 현장 가독성 | 무너진 모습, 무너지는 순간, 지도의 무너진 건물 | 상태를 바꾸는 자리에서 G4 의 `markRuin`·`recordFall` 을 부른다(G4 §16). `FallRecord.cause` 에 `'partial'`·`'total'` 을, `ruin` 값에 10(전체 붕괴 잔해)을 **추가만** 한다. 지도의 덧그림은 G4 의 `ruinLayer` 가 `Sim.placeMarks` 를 읽도록 넓힌다(§7.2). G4 가 아직이면 그 호출 자리에 주석만 남긴다 |
-| G5 교전 연출 | 폭발 그림·소리 | 폭발은 지금처럼 `'boom'` 효과를 남긴다. G5 가 폭발 크기를 받는 효과 함수를 두었으면 그것에 반경을 넘긴다(확인 필요: G5 문서가 아직 없다) |
-| I1-b 인과 규칙 · I2 교대 간 지속 | 원인 사슬, 다음 교대의 건물 상태 | X6 의 구획별 손실 장부(`cat.loss`)와 원인 기록이 I1-b 의 인과 사슬 재료가 된다. `ShiftReport.placeMarks` 는 내놓기만 하고, 다음 교대에 이어받는 것은 I2 가 정한다 |
+| G5 교전 연출 (이번 세션에 먼저 구현) | 폭발 그림·소리·자동 감속 | X6 의 폭발은 모두 `pushFx('boom', …)` 바로 뒤에 G5 의 `noteBoom(lastFx(sim, s, 'boom'), r, src)` 한 줄(G5 §2 표 15번, §11 의 X6 줄). `src` 는 G5 의 `FxInfo['src']` 합집합 끝에 새 줄로 `'drum' \| 'cng' \| 'jet' \| 'dust'` 를 더한다(가스 용기 `'tank'`, 가스 구름 `'gas'` 는 있는 값). 무너짐은 폭발 그림이 아니다 — G4 의 `'collapse'`. X6 의 철수 신호 `'horn'` 은 G5 의 `DECISIVE` 집합(`fxBook.ts`)과 카메라 목록에 한 단어씩 더한다(§7.4) |
+| I2 교대 간 지속 | 다음 교대의 건물 상태 | I2 는 X6 가 사건에 남긴 결과를 끝 상태의 원천으로 먼저 읽는다(I2 연관 표: 붕괴 → `ruin`, 전소 → `closed`, 폭발 → `closed`). I2 가 가칭으로 적은 `s.catastrophe` 는 **`Scene.cat` 의 `totalAt`·`burntAt`·`fallen` 과 `Sim.placeMarks`** 다(이 문서의 이름이 기준 — I2 를 구현할 때 그쪽 이름을 바꾼다). X6 는 `ShiftReport.placeMarks` 를 내놓기만 한다. I2 가 이어받은 손상(`s.wear.dmg`)을 X6 의 구조 건전도 처음 값에 한 항 더하는 것(I2 §7)은 I2 가 `catOf` 의 처음 값 계산에 한 줄 넣는다 |
+| I1-b 인과 규칙 | 원인 사슬 | X6 의 구획별 손실 장부(`cat.loss`)·원인 기록(`causeEv`)과 사슬 문구(§4.6·§6.6)가 I1-b 의 재료가 된다. I1-b 가 세계 상태(가칭 `sim.world`)를 두면 `Sim.placeMarks` 를 그 안으로 옮긴다(확인 필요: I1 설계서가 아직 없다) |
 | M2 지도의 다음 단계 (1) | 끝난 사건의 건물 흔적 | 전소·붕괴·폭발 흔적은 X6 가 자료를 만들고 G4(또는 X6 의 대체 층)가 그린다. 합치면 ROADMAP M2 (1)에서 이 몫을 지운다 |
 | B1 화재 균형 | 화재 성공률 | X6 는 천장 붕괴와 가스 용기 규칙을 대체하므로 화재 결과가 바뀐다. **B1 이 합쳐진 뒤의 수치를 기준선**으로 잰다(§8) |
 
@@ -188,6 +189,8 @@ export interface PlaceMark { placeId: number; state: 'scorched' | 'blasted' | 'p
 
 `engine.ts` 의 `Sim` 에 `placeMarks = new Map<number, PlaceMark>();` 한 줄(교대마다 새 `Sim` 이므로 이어지지 않는다). 새 난이도 손잡이는 만들지 않는다 — 심각도의 `tune.hazardMul` 을 쓴다(§8.2).
 
+**객체 모양**(CLAUDE.md 함정 "자주 도는 객체의 모양"): 새 선택 칸은 생성 리터럴에도 같은 순서로 `undefined` 로 넣는다 — `Prop` 의 `vessel`·`heatLoad`·`heatK` 는 `kit.ts` 의 `PROP_BLANK`, `Scene` 의 `cat`·`ops` 는 `kit.ts` 의 `baseScene`(교대 중에 생기는 현장은 `createScene` 이 같은 리터럴을 쓰는지 확인), `FieldAgent` 의 `trapped`·`avoid`·`opsSeen` 은 `sceneManager.unitArrived` 의 대원 리터럴(R1 이 `makeAgent` 로 꺼냈으면 그 함수), `WorkItem` 의 `risky` 는 `commander.want` 의 리터럴. 정확성과는 무관하고 속도만의 문제다.
+
 ### 2.3 갱신하는 자리와 순서
 
 세계 규칙은 `rules/catastrophe.ts` 에서 `registerRule` 로 등록하고, 몸통은 `catastrophe.ts` 에 둔다(`damage.ts` 처럼 `hazards.ts` 와 같은 자격). `scenes/index.ts` 의 import 순서에서 **맨 끝**(crime → major → disaster → (H1 의 injury) → catastrophe)에 둔다 — 규칙의 실행 순서가 결과를 정한다.
@@ -195,7 +198,8 @@ export interface PlaceMark { placeId: number; state: 'scorched' | 'blasted' | 'p
 ```ts
 // rules/catastrophe.ts
 registerRule((sim, s, I) => {
-  const c = catOf(sim, s);                      // 대상이 아니면 null (처음 부를 때 만든다 — catinit 흐름으로 용기 열 배율·분진·드럼통)
+  const c = catOf(sim, s);                      // 대상이 아니면 null (처음 부를 때 만든다 — catinit 흐름으로 용기 열 배율·분진·드럼통.
+                                                //  실내 구획도 용기도 밸브도 없는 현장은 WeakSet 에 적어 두고 다음부터 바로 null — 매 틱 모든 현장에서 돈다)
   if (!c || (sim.tick + s.id) % 5 !== 0) return;  // 1초에 한 번: tickFire·tickGas 와 같은 틱, 그 뒤
   catTick(sim, s, I, c);
 });
@@ -213,7 +217,7 @@ registerRule((sim, s, I) => {
 8. **(선택) 플래시오버**(§4.7).
 9. **지도 기록** — `Sim.placeMarks` 의 탄 비율·잔해 비율 갱신(§7.1).
 
-`hazards.ts` 에서 바뀌는 곳(§11.2): `tickFire` 의 가스 용기 덩어리(87~101줄)와 천장 붕괴 덩어리(102~116줄)를 **지운다**(X6 의 용기 열·구획 붕괴가 대신한다). `tickGas` 의 폭발 덩어리(648~660줄)를 **지운다**(X6 의 가스 구름이 대신한다 — 연기 격자에 가스를 쓰는 앞부분과 주변 시민 노출은 그대로). `blast` 끝에 `catOnBlast(…)` 한 줄과 층(VOID) 너머 사람 건너뛰기를 더한다. `tickCollapse`·`tickLeaks` 는 고치지 않는다.
+`hazards.ts` 에서 바뀌는 곳(§11.2): `tickFire` 의 `// 가스 용기 폭발 (숨겨진 추가 위험)` 덩어리와 `// 붕괴` 덩어리(1ca465d 의 87~116줄)를 **지운다**(X6 의 용기 열·구획 붕괴가 대신한다). `tickGas` 의 `let dense = 0` 부터 끝까지의 폭발 덩어리를 **지운다**(X6 의 가스 구름이 대신한다 — 연기 격자에 가스를 쓰는 앞부분과 주변 시민 노출은 그대로). `blast` 끝에 `catOnBlast(…)` 한 줄과 층(VOID) 너머 사람 건너뛰기를 더한다. `tickCollapse`·`tickLeaks`·`smokeSpread` 는 고치지 않는다. X6 가 연기 격자에 직접 쓰는 것(붕괴 먼지·드럼통의 유독 연기)은 `tickFire` 의 "타는 칸도 연기도 없으면 연기 확산을 건너뛴다" 검사가 연기 칸을 훑어 알아채므로 따로 고칠 것이 없다(CLAUDE.md 함정 "공유 버퍼와 색인"). `burned[]` 는 X6 가 쓰지 않는다(`tickFire` 만 쓴다).
 
 ### 2.4 구조 건전도 (붕괴 위험)
 
@@ -431,7 +435,7 @@ R1 의 장비 표에서 가스 측정기는 화학대 역할(`hazLead`·`decon`)
 | 잔해 | 구획의 빈 바닥(`propAt < 0`, 문 아님, **사람이 선 칸 아님**) 가운데 `catRng.chance(0.25)` 인 칸에 `debris`(`blocking`, `hp = catRng.range(9, 15)`) |
 | 구조 대상 (`where 'scene'`, 살아 있음, 물속 아님, 그 구획 안) | `catRng` 한 번: 12% → 숨짐(`hurtCas(…, c.health + 5, 'crush')`), 55% → 갇힘(`mob = 'trapped'`, `trapWork = range(12, 22)`, `walking = false`, `hurtCas(range(12, 30), 'crush')`), 나머지 → 못 걷게 됨(`immobile`, `hurtCas(range(15, 35), 'crush', { immobile: true })`). 업혀 있던(`carried`) 사람은 업은 대원과 함께 `hurtCas(range(8, 20))` |
 | 대원 (그 구획 안, `left` 아님) | `hurtResponder(raw = range(30, 60), 'crush')`. 35% 는 깔린다: `a.trapped = range(6, 12)`(§4.8) |
-| 이웃 구획에서 경계 1칸 안 | 구조 대상 `hurtCas(range(5, 12))`, 대원 `hurtResponder(range(8, 18))` |
+| 이웃 구획에서 경계 1칸 안 | 구조 대상 `hurtCas(range(5, 12), 'crush')` + H1 §5.1 의 갇힘 규칙(반경·`injuryRng(…, 'trap')`), 대원 `hurtResponder(range(8, 18), 'crush')` |
 | 용의자 | `hurtHostile(range(25, 55), 'crush')` (H1) |
 | 상태 | `fallen[r] = 1`, 이웃 구획 −0.12(§2.4), `l3Since[r] = -1`, `c.lastFall`, `c.limitBonus += 60`(합 330 까지), 모든 대원 `a.path = null`(지형이 바뀌었다 — 해일 규칙의 선례) |
 | 기록 | `raiseProblem(I, 'STRUCT_COLLAPSE', '${r.name} 천장·바닥 붕괴 — ${원인 문구}', { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, causes: [c.causeEv[r]], text: '굉음! ${r.name}의 천장과 바닥이 무너져 내렸습니다.' }, false)` |
@@ -466,7 +470,7 @@ R1 의 장비 표에서 가스 측정기는 화학대 역할(`hazLead`·`decon`)
 - 크기: 덩어리 칸 수 N. `r = clamp(2.0 + 0.55 × √N, 2.6, 6.0)`, `dmg = clamp(18 + 4.5 × √N, 24, 55)` (N = 10 → 3.7 / 32 — 지금의 3.8 / 32 와 맞춘다. N = 40 → 5.5 / 46).
 - 중심: 점화된 칸(불·충격이면 그 칸, 스파크면 덩어리의 무게중심에 가장 가까운 덩어리 칸).
 - 효과: `blast(cx, cy, r, dmg, ev, 'blast')`(→ 창·가구 파손, 구조 충격). 덩어리 칸 가운데 연료가 있으면 `fire = max(fire, 0.6)`, 없으면 `fuel = 0.4; fire = 0.5`(바닥·벽지). `gas` 는 덩어리 칸 0, 나머지 × 0.4. `r` 안의 문 소품은 날아간다(`open = true`, `locked = false`, 잠긴 문이면 `blocking = false`·`propAt` 비움). 덩어리와 가장 가까운 살아 있는 밸브를 `ignited = true`(지금과 같은 뜻 — 원천이 불타며 누출이 멈춘다).
-- 기록: 지휘관이 그 위험을 알았는가로 코드를 가른다 — 지휘관 믿음에 그 밸브의 `haz` 나 그 구역의 `gas` 조짐이 있었으면 `EXPLOSION`, 없었으면 `HIDDEN_HAZARD`(신고에 없던 위험). detail `누출된 가스 폭발 — ${점화원}`(점화원: `불길이 가스에 닿음` · `무너지며 튄 불꽃` · `원인 모를 불꽃(전기·정전기)`), text `폭발! ${구역}에 고여 있던 가스에 불이 붙었습니다.`, imp 3. `pushFx('boom', …, ttl 1.6)`.
+- 기록: 지휘관이 그 위험을 알았는가로 코드를 가른다 — 지휘관 믿음에 그 밸브의 `haz` 나 그 구역의 `gas` 조짐이 있었으면 `EXPLOSION`, 없었으면 `HIDDEN_HAZARD`(신고에 없던 위험). detail `누출된 가스 폭발 — ${점화원}`(점화원: `불길이 가스에 닿음` · `무너지며 튄 불꽃` · `원인 모를 불꽃(전기·정전기)`), text `폭발! ${구역}에 고여 있던 가스에 불이 붙었습니다.`, imp 3. `pushFx('boom', …, ttl 1.6)` + (G5) `noteBoom(lastFx(sim, s, 'boom'), r, 'gas')`.
 
 ### 4.4 용기 폭발 — `ruptureVessel(sim, s, I, p)`
 
@@ -477,7 +481,7 @@ R1 의 장비 표에서 가스 측정기는 화학대 역할(`hazLead`·`decon`)
 | `cng` CNG 버스 | `blast(3.0, 30)` | 차체 둘레 0.8 | 탑승자(`inVehicle`) `hurtCas(range(20, 40), 'blast')` |
 | `jet` 항공유(비행기 동체) | `blast(3.4, 32)` | 동체·날개 쪽 연료 칸 0.9, 3칸 안 연료 없는 땅에 `fuel 0.5; fire 0.6` | 같은 동체의 탑승자 `hurtCas(range(20, 40))` |
 
-공통: `p.exploded = true`(차량은 `ignited = true` 도), 용기 칸 `propAt` 비움(가스 용기·드럼은 막지 않으므로 해당 없음), 문 날아감(§4.3 과 같이 반경 안), 기록은 §4.3 과 같은 규칙으로 `EXPLOSION`/`HIDDEN_HAZARD` — detail `보관 중이던 가스 용기 폭발`(지금 문구 그대로) · `화학 드럼 파열` · `CNG 버스 가스 용기 폭발` · `항공유 폭발`, text `폭발! 불길에 달궈진 ${이름}이(가) 터졌습니다.`(조사는 `josa`).
+공통: `p.exploded = true`(차량은 `ignited = true` 도), 용기 칸 `propAt` 비움(가스 용기·드럼은 막지 않으므로 해당 없음), 문 날아감(§4.3 과 같이 반경 안), `pushFx('boom')` + (G5) `noteBoom(…, 반경, 'tank' | 'drum' | 'cng' | 'jet')`, 기록은 §4.3 과 같은 규칙으로 `EXPLOSION`/`HIDDEN_HAZARD` — detail `보관 중이던 가스 용기 폭발`(지금 문구 그대로) · `화학 드럼 파열` · `CNG 버스 가스 용기 폭발` · `항공유 폭발`, text `폭발! 불길에 달궈진 ${이름}이(가) 터졌습니다.`(조사는 `josa`).
 
 **드럼통 놓기**(`catOf` 처음, `catinit` 흐름): 화재 유형이고 `I.truth.placeKind` 가 `chemical`(확률 0.9) · `factory`·`storage`(0.35) · `warehouse`·`workshop`(0.2) — 각각 `× hazardMul`, 상한 0.95 — 이면 1~3개를 발화실이 아닌 방(불이 없는 방)의 빈 바닥에 `addProp(s, 'gas', x, y, { vessel: 'drum', skin: 'drum' })`. 가스 용기처럼 길을 막지 않는다(`blocking: false`). 지금 현장 생성기(`buildFire`)의 난수를 건드리지 않는다.
 
@@ -582,6 +586,8 @@ R1 의 장비 표에서 가스 측정기는 화학대 역할(`hazLead`·`decon`)
 - `commander.ts`: `syncBoard` 첫 줄에서 모듈 변수 `gateCmd = a`, `want()` 가 **새 작업을 만들기 직전**에 `if (gateCmd && WORK_GATES.some((g) => g(sim, s, gateCmd, kind, tg))) return GHOST;`(작업판에 넣지 않는 빈 작업. `want` 의 돌려준 값은 지금 아무도 쓰지 않는다 — 확인 필요). 이미 있는 작업은 지휘 규칙이 구역을 만들 때 한 번 거둔다.
 - 문의 판정(`ops.ts` `gateBlocks`)은 `s.ops`(지휘 상태)·`s.region`(생김새)·`a.beliefs`(구조 대상의 믿음 위치)만 읽는다.
 - 같은 판정을 `agents.fitFor` 가 안전망으로 쓴다(이미 맡은 일이 구역 안이 되면 0 → 판단 주기에 놓는다. 단계 2 의 허락된 일은 예외).
+- B3 의 "맡을 사람이 없는 작업"(`commander.needFor` — 20초 넘게 아무도 맡지 못한 열린 작업이 있으면 그 능력의 부대를 부른다)이 구역 때문에 헛요청을 내지 않게: 구역이 생길 때 그 안의 열린 작업은 거두고 문이 새로 만들지 않으므로 열린 채 남는 것은 단계 2 의 허락된 일뿐이다. 그 일을 맡을 사람이 없어 부대를 부르는 것은 맞는 동작이다.
+- B3 의 확인 무전(`rollCall`)은 "모두 손을 놓았는데 끝낼 수 없을 때" 한 번 나간다. 외부 방어 중 종료를 막는 동안(§6.2) 한 번 나가는 것은 해가 없다.
 
 **출입구 통제**: `commander.ts` 의 `cordon` 식에 `|| opsCordon(s)`(`ops.ts`: 건물·가스·용기 구역 가운데 단계 3 이 있거나 `mode === 'defensive'`) 한 조각 — 경찰이 출입구에서 사람을 막는다(지금의 `perimeter` 그대로).
 
@@ -634,13 +640,15 @@ R1 의 장비 표에서 가스 측정기는 화학대 역할(`hazLead`·`decon`)
 | 가스 단계 3 구역이 밸브를 덮어 차단하러 갈 수 없음, 또는 밸브 위치를 모르는데 가스 조짐 ≥ 2 | **도시가스 공급 차단 요청**: `ops.utilityAsked = sim.t`, 기록 `관제, 도시가스 공급 차단 요청 — ${까닭}.`(COMMANDER → 관제, imp 2). 세계 규칙이 90~150초 뒤 모든 살아 있는 밸브를 `mitigated` 로 하고 `도시가스사: 공급 차단 완료 — 누출이 멈춥니다.`(SYSTEM, imp 2) | 한 사건에 한 번. 밸브의 `mitigated` 는 지금의 "차단"과 같은 뜻으로 센다 |
 | 단계 2 이상 가스 + 불 | 그 불을 먼저 끈다: 그 구역 `suppress` 에 +0.12 (점화원 제거) — 단계 3 이면 밖에서(§5.5) | |
 
-`mitigate` 의 냉각 실행(`executor` `case 'mitigate'` 에 갈래 하나): 대상이 `'gas'` 소품이면 — 터졌으면 강제 보고(`learn(…, haz {kind:'gas', active:false}, true, true)`) 후 끝. 아니면 시야선이 닿는 3.2칸 안으로 가서(외부 모드면 §5.5 의 자리에서 5.5칸) `spray(sim, s, a, p.x, p.y)`. `heatLoad < 0.15` 이고 2.5칸 안에 불 ≥ 0.3 이 없으면 끝: `learnQuiet(sign vessel 단계 0)`, 기록 `가스 용기 냉각 완료. 폭발 위험을 낮췄습니다.`(recovery, imp 2). 냉각은 영구 조치가 아니다(`mitigated` 를 세우지 않는다 — 불이 다시 닿으면 다시 데워진다). `workLabel`: `'gas'` 소품이면 `가스 용기 냉각`(드럼 `드럼통 냉각`). `fitFor`: `'gas'` 소품이면 `suppress` 와 같은 조건(물·펌프가 있는 소방 대원, R1 이 있으면 `hose`).
+**우선순위 0.22 규칙**(CLAUDE.md 함정): 하던 일보다 0.22 이상 높아야 대원을 빼 온다. 진압(0.56~0.94) 중인 소방 대원은 냉각(0.9~0.99)으로 빠지지 않을 수 있다. 그래서 냉각을 따로 내는 것과 함께 **용기가 있는 구역의 진압 우선순위를 0.9 이상으로 올린다**(그 구역의 불을 끄는 것이 곧 용기를 식히는 것이다 — 진압은 가장 가까운 불 칸부터 끈다). 손이 빈 대원은 냉각 작업을 맡는다. 맡을 사람이 없으면 B3 의 `needFor` 가 이미 `mitigate`(균열이 아니면) → `suppression` 으로 진압 부대를 부른다.
+
+`mitigate` 의 냉각 실행(`executor` `case 'mitigate'` 에 갈래 하나): 대상이 `'gas'` 소품이면 — 터졌으면 `reportDone(sim, a, haz {kind:'gas', active:false})`(이미 끝나 있던 일은 조용히 + 강제로 — CLAUDE.md 함정) 후 끝. 아니면 시야선이 닿는 3.2칸 안으로 가서(외부 모드면 §5.5 의 자리에서 5.5칸) `spray(sim, s, a, p.x, p.y)`. `heatLoad < 0.15` 이고 2.5칸 안에 불 ≥ 0.3 이 없으면 끝: `learnQuiet(sign vessel 단계 0)`, 기록 `가스 용기 냉각 완료. 폭발 위험을 낮췄습니다.`(recovery, imp 2). 냉각은 영구 조치가 아니다(`mitigated` 를 세우지 않는다 — 불이 다시 닿으면 다시 데워진다). `workLabel`: `'gas'` 소품이면 `가스 용기 냉각`(드럼 `드럼통 냉각`). `fitFor`: `'gas'` 소품이면 `suppress` 와 같은 조건(물·펌프가 있는 소방 대원, R1 이 있으면 `hose`).
 
 **막은 위험의 기록(`DANGER_SIGN`)**: 지휘관이 단계 2 이상을 (구역·종류 키마다) 처음 알면 `raiseProblem(I, 'DANGER_SIGN', '${종류 이름} — ${구역}', { role: 'COMMANDER', imp: 2, causes: [I.lastEvent] }, false)`(detail 이 같으면 다시 만들지 않는다). 그 위험이 사건 없이 가라앉으면(보강·차단·냉각·진압으로 조짐이 1 이하가 되고 20초, 또는 원천 차단을 앎) `markRecoveredBy(I, 'DANGER_SIGN', detail, '${조치} — 막음')`. 붕괴·폭발이 일어나면 미복구로 남는다 — 보고서가 "조짐 → 결과" 사슬을 쓴다(§6.6).
 
 ### 5.9 관제
 
-- **위험도 재평가**: 지휘관은 모드가 바뀌거나 붕괴·폭발·전소가 일어나면 관제에 상황 보고(`sitrep`, `to -2`)를 보낸다 — `관제, ${무슨 일}. ${외부 방어로 전환|전원 철수 중|잔해 수색 시작}, 매몰 추정 ${n}명.`, 사실에 `event`/`ops` 를 싣는다. `dispatcher.fieldReport` 에 갈래 하나: `m.kind === 'sitrep'` 이고 사실에 `sign event` 가 있으면 `I.assessment.risks` 에 `건물 붕괴`·`폭발 발생`·`건물 전소` 를 더하고(이미 있으면 그대로), 위험도(`severity`)를 한 단계 올리고(상한 3), `analyst` 의 우선순위 계산을 다시 부른 뒤 `현장 보고 반영: ${무슨 일} — 위험도 ${이전} → ${새}.`(ANALYST, imp 2). 관제는 지휘관이 보낸 것만 읽는다(진실 아님).
+- **위험도 재평가**: 지휘관은 모드가 바뀌거나 붕괴·폭발·전소가 일어나면 관제에 상황 보고(`sitrep`, `to -2`)를 보낸다 — `관제, ${무슨 일}. ${외부 방어로 전환|전원 철수 중|잔해 수색 시작}, 매몰 추정 ${n}명.`, 사실에 `event`/`ops` 를 싣는다. `dispatcher.fieldReport` 에 갈래 하나: `m.kind === 'sitrep'` 이고 사실에 `sign event` 가 있으면 `I.assessment.risks` 에 `건물 붕괴`·`폭발 발생`·`건물 전소` 를 더하고(이미 있으면 그대로), 위험도(`severity`)를 한 단계 올리고(상한 3 — 사건 순위 `dispatcher.priorityOf` 가 위험도를 읽으므로 배정 순서가 따라 바뀐다, 확인 필요: B3 뒤의 식), 그 뒤 `현장 보고 반영: ${무슨 일} — 위험도 ${이전} → ${새}.`(ANALYST, imp 2). 관제는 지휘관이 보낸 것만 읽는다(진실 아님).
 - **추가 부대**(지금의 `request` 길): 구획·전체 붕괴 뒤 `rescue`(구조 부대가 둘 미만이면 `'건물 붕괴 — 매몰자 구조'`), 폭발 뒤 `ems`(`'폭발 — 부상자 다수 예상'`), 외부 방어 `suppression`, 건물 단위 철수·가스 단계 3 에 경찰이 없으면 `law`(`'붕괴·폭발 위험 반경 통제'`). 70초 안의 같은 요청은 지금처럼 한 번만 나간다.
 - **주변 통제**: 전체 붕괴의 도로 통제(§4.2). 가스 단계 3 에서 경찰은 출입구 통제(§5.3). 주변 건물 대피는 모델하지 않는다(C4 몫).
 
@@ -665,7 +673,7 @@ R1 의 장비 표에서 가스 측정기는 화학대 역할(`hazLead`·`decon`)
 ### 6.1 무너진 현장 — 잔해 수색 국면
 
 - 전체 붕괴 30초 뒤(또는 구획 붕괴 25초 뒤 그 구획) 지휘 규칙이: `ops.mode = 'rubble'`(전체) / `ops.rubble.push(구역)`(구획), 기록 `붕괴가 멎었습니다. 잔해 수색을 시작한다 — 소방·구조 대원만 진입.`(COMMANDER, imp 3).
-- **믿음을 고친다**(낡은 믿음 함정): 그 구역들의 `srch` 믿음을 `min(지금, 0.3)`·신뢰도 0.5 '붕괴 후 재수색' 으로 합치고(지금의 재수색 `researchRound` 와 같은 방식) 대원들에게 조용히 보낸다. 그 안에 있던 것으로 아는 구조 대상(`cas`, `where 'scene'`, `band < 3`)은 `mob = 'trapped'`, `trappedDone = false`, 신뢰도 0.5 '붕괴 후 매몰 추정' 으로 합친다 — 실제로 갇히지 않았으면 `extricate` 가 시작할 때 강제 보고로 바로잡힌다(지금 `extricate` 의 `c.mob !== 'trapped'` 분기). **`carry` 의 `c.mob === 'trapped'` 분기도 강제 보고를 하게 고친다**(지금은 보고 없이 끝나 낡은 믿음이 남는다 — `executor.ts` 의 `carry` 한 줄).
+- **믿음을 고친다**(낡은 믿음 함정): 그 구역들의 `srch` 믿음을 `min(지금, 0.3)`·신뢰도 0.5 '붕괴 후 재수색' 으로 합치고(지금의 재수색 `researchRound` 와 같은 방식) 대원들에게 조용히 보낸다. 그 안에 있던 것으로 아는 구조 대상(`cas`, `where 'scene'`, `band < 3`)은 `mob = 'trapped'`, `trappedDone = false`, 신뢰도 0.5 '붕괴 후 매몰 추정' 으로 합친다 — 실제로 갇히지 않았으면 `extricate` 가 시작할 때 강제 보고로 바로잡힌다(지금 `extricate` 의 `c.mob !== 'trapped'` 분기). **`carry` 의 `c.mob === 'trapped'` 분기도 보고하게 고친다** — `learn(sim, a, casFact(…), true, true)` 뒤 `finishTask(…, false, 'gone')`(지금은 보고 없이 끝나, 붕괴로 갇힌 사람을 지휘관이 계속 '운반'으로 지시한다 — `executor.ts` 의 `carry` 한 줄).
 - 수색·구출은 소방·구조만: `fitFor` 의 `fireRisk` 에 `|| inRubble(s, region)`(`ops.ts`) 한 조각. 붕괴 현장의 구조대 탐지 보정(`agents.detectRadius` 의 `s.kind === 'collapse'`)에 `|| isRubbleMode(s)` 한 조각.
 - 잔해 소품은 지금의 치우기(`clear`)로 뚫는다. 수색 확인율은 시야로 세므로 잔해가 길을 막아도 볼 수는 있다.
 - 남은 균열(`unstable`)은 그대로 2차 붕괴를 낼 수 있다(무너진 구획 안이면 `tickCollapse` 의 잔해만 더 쌓인다).
@@ -712,7 +720,7 @@ R1 의 장비 표에서 가스 측정기는 화학대 역할(`hazLead`·`decon`)
 | `WITHDRAWAL` | `${detail} — ${복구면 recoveryText, 아니면 '끝까지 밖에서 대응했습니다'}.` (여럿이면 `전원 철수가 ${n}번 있었습니다: …`) |
 | `BURNOUT` | `${detail}.` (detail 에 사슬 문구가 있다 — §4.6) |
 | `STRUCT_COLLAPSE` | `구조물이 무너졌습니다: ${detail} (앞의 셋).` 같은 구역의 미복구 `DANGER_SIGN` 이 있으면 ` 붕괴 조짐이 확인된 지 ${fmtSec(붕괴 시각 − 조짐 시각)} 뒤였습니다.` 를 붙인다 |
-| `EXPLOSION` | `폭발이 일어났습니다: ${detail} (앞의 셋).` 같은 위험의 미복구 `DANGER_SIGN` 이 있으면 ` 위험을 알고 있었지만 ${용기면 '냉각' | 가스면 '차단·환기'}이(가) 끝나기 전이었습니다.` |
+| `EXPLOSION` | `폭발이 일어났습니다: ${detail} (앞의 셋).` 같은 위험의 미복구 `DANGER_SIGN` 이 있으면 ` 위험을 알고 있었지만 ${용기면 '냉각', 가스면 '차단·환기'}이(가) 끝나기 전이었습니다.` |
 
 - 사망 문장(H1 이 원인을 붙인다)은 원인이 `crush`·`blast` 면 그 붕괴·폭발 기록의 detail 을 짧게 붙인다: `구조 대상 C는 2층 호실 3 붕괴로 숨졌습니다.`(그 사람의 `causeEvent` 가 그 붕괴의 기록이다).
 - **한 줄 요약**: `건물 전소` / `건물 붕괴` / `폭발 ${n}회` 를 덧붙이고, 소실률은 화재가 아니어도 재산 피해가 0 보다 크면 붙인다(`소실률 ${pct}`).
@@ -758,14 +766,15 @@ R1 의 장비 표에서 가스 측정기는 화학대 역할(`hazLead`·`decon`)
 
 ### 7.4 소리와 카메라
 
-- `audio.ts`: `'horn'` — 길고 낮은 공기 경적 세 번(1초 · 0.4초 쉼). 지금의 `this.ok(…)` 빈도 제한.
-- `camera.ts` 의 효과 종류 목록에 `'horn'`(무게 2), `Viewport.tsx` 자동 감속 조건에 `'horn'`. G4 의 `'collapse'` 와 지금의 `'boom'` 은 그대로.
+- `audio.ts`: `'horn'` — 길고 낮은 공기 경적 세 번(1초 · 0.4초 쉼). G5 가 소리를 효과 기록 훑기(`fresh`)로 바꿨으면 그 훑기에 분기 하나, 아니면 지금의 `this.ok(…)` 빈도 제한 방식.
+- `camera.ts` 의 효과 종류 목록(`frameAction`)에 `'horn'`(무게 2), 자동 감속은 G5 의 `DECISIVE` 집합(`fxBook.ts`)에 `'horn'` 한 단어(G5 가 없으면 `Viewport.tsx` 의 조건). G4 의 `'collapse'` 와 지금의 `'boom'` 은 그대로.
+- 폭발마다 G5 의 `noteBoom(…, r, src)`(§4.3·§4.4 의 반경, `src` = `'gas'`·`'tank'`·`'drum'`·`'cng'`·`'jet'`·`'dust'`) — G5 가 반경으로 화염구·충격파·흔들림의 크기를 정한다.
 
 ### 7.5 G4·G5 와의 맞물림
 
 - **G4 가 먼저**: `collapseRegion` 에서 가구·벽을 바꾸는 줄마다 `markRuin`, 끝에 `recordFall(sim, s, r.cx, r.cy, max(폭, 높이)/2, 'partial')`. `collapseBuilding` 은 `markRuin(…, RUIN_TOTAL = 10)`(새 값 — G4 §16 "추가만")과 `recordFall(…, 건물 가운데, 건물 반지름, 'total')`. `FallRecord.cause` 에 `'partial' | 'total'` 을 새 줄로 더한다. G4 의 `drawFallMoments` 가 반경을 그대로 쓴다.
 - **X6 가 먼저**: 같은 자리에 `// G4: markRuin(s, i, RUIN_FURN + d)` 같은 주석을 남기고, G4 가 합쳐질 때 채운다.
-- **G5**: 폭발은 지금처럼 `pushFx('boom', x, y, …, ttl)`. G5 가 크기 있는 폭발 효과를 만들었으면 반경을 넘긴다(확인 필요). G5 의 폭발 소리·화면 흔들림이 `'boom'` 을 보면 따로 할 일이 없다.
+- **G5**: 폭발은 `pushFx('boom', x, y, …, ttl)` 바로 뒤에 `noteBoom(lastFx(sim, s, 'boom'), r, src)`(G5 의 `fxlog.ts`). G5 가 지운 줄(`tickFire` 의 가스 용기 `noteBoom(…, 3.6, 'tank')`, `tickGas` 의 `noteBoom(…, 3.8, 'gas')`)은 X6 가 그 덩어리를 지울 때 함께 사라지므로 `ruptureVessel`·`explodeGas` 에 같은 꼬리표를 다시 단다. `tickCollapse` 의 `noteBoom(…, 2.6, 'collapse')` 는 G5·G4 의 규칙대로 둔다(X6 는 그 함수를 고치지 않는다). G5 가 없으면 `pushFx` 만.
 
 ---
 
@@ -864,7 +873,7 @@ for f in fire/std fire/arson fire/ship fire/plane collapse/std collapse/gasblast
 5. **일어난 뒤 사건이 끝난다**: 강제 시나리오(`fire/std`·`collapse/std`·`hazmat/std`·`collapse/gasblast`) 각 4교대에서 첫 도착 뒤 `collapseBuilding` 을 직접 부르거나(화재·붕괴) 가스 폭발을 일으키면 — 그 사건이 `hardCap` 안에 닫히고, `timeout` 은 16교대 가운데 2건 이하, `abandoned` 0건. 전체 붕괴 뒤 그 현장의 모든 바닥 칸(잔해 소품은 지나갈 수 있는 것으로 본다)에 대기 지점에서 닿는다. 외부 방어로 60초 넘게 있어도 `abandoned` 로 닫히지 않는다.
 6. **재현성**: 같은 시드·`{ ...NORMAL, severity: 5 }`·`force: 'fire/std'` 두 번의 `report.hash` 가 같다(전소나 붕괴가 일어나는 교대 하나 이상 포함 — 없으면 시드를 바꿔 찾아 고정한다).
 7. **정보 격리**: `field/commander.ts`·`field/brain.ts`·`field/orders/*`·`field/ops.ts`·`dispatch/*` 의 원본(주석 줄 제외)에 `.cat`, `heatLoad`, `integ`, `cat.gas` 가 없다. `orders/catastrophe.ts` 는 기존 검사(`tests/ext.test.ts`)도 통과한다.
-8. **가짜 연출 없음**: 모든 교대에서 `STRUCT_COLLAPSE` 기록 수 = 무너진 구획 수 + 전체 붕괴 수, `BURNOUT` 은 `cat.burntAt ≥ 0` 인 현장에 정확히 하나, 폭발 기록(`EXPLOSION` + X6 가 남긴 `HIDDEN_HAZARD`) 수 = `exploded`·`ignited` 로 바뀐 용기·밸브 수 + 분진.
+8. **가짜 연출 없음**: 모든 교대에서 `STRUCT_COLLAPSE` 기록 수 = 무너진 구획 수(전체 붕괴가 한꺼번에 무너뜨린 것은 빼고) + 전체 붕괴 수, `BURNOUT` 은 `cat.burntAt ≥ 0` 인 현장에 정확히 하나, X6 가 남긴 폭발 기록(`EXPLOSION` 전부 + detail 이 §4.3·§4.4 의 문구인 `HIDDEN_HAZARD`) 수 = X6 가 터뜨린 용기(`exploded`)·밸브(`ignited`) 수 + 분진 폭발 수. 차량 연료 발화(`tickLeaks`)·폭발물은 세지 않는다.
 9. **도시 지도는 그대로**: 붕괴가 일어난 교대 전후로 `sim.city.places` 의 수와 각 건물의 `x, y, w, h, kind` 가 같다. 같은 시드의 새 `Sim` 은 `placeMarks` 가 비어 있다. `collapsed`·`burnt` 인 건물에서는 그 교대에 새 사건이 나지 않는다.
 10. **층 너머**: 2층 건물의 1층에서 반경 6 의 폭발을 일으켜도 2층(빈 공간 너머)의 대원·구조 대상은 다치지 않는다.
 
@@ -893,15 +902,17 @@ for f in fire/std fire/arson fire/ship fire/plane collapse/std collapse/gasblast
 | `sim/engine.ts` | `Sim` 필드 | `placeMarks` | 1 |
 | `field/scenes/index.ts` | import | `../rules/catastrophe`, `../orders/catastrophe` (맨 끝) | 1·5 |
 | `field/sceneRegistry.ts` | 끝에 추가 | `WORK_GATES`, `registerGate` | 5 |
-| `field/hazards.ts` | `tickFire` | 가스 용기 덩어리(87~101줄)·천장 붕괴 덩어리(102~116줄) 지우기 | 3·4 |
-| | `tickGas` | 폭발 덩어리(648~660줄) 지우기 (`leaking` 계산·연기 쓰기·주변 시민은 그대로) | 4 |
+| `field/kit.ts` | `PROP_BLANK`, `baseScene` | 새 선택 칸을 `undefined` 로 (객체 모양 — §2.2) | 1 |
+| `field/hazards.ts` | `tickFire` | `// 가스 용기 폭발 (숨겨진 추가 위험)` 덩어리(4단계)와 `// 붕괴` 덩어리(3단계) 지우기 | 3·4 |
+| | `tickGas` | `let dense = 0` 부터 함수 끝까지의 폭발 덩어리 지우기 (`leaking` 계산·연기 쓰기·주변 시민은 그대로) | 4 |
 | | `blast` | 사람 반복문에서 빈 공간(VOID) 너머 건너뛰기(`damage.ts` 의 `shatter` 가 쓰는 검사를 export 해서 쓴다), 끝에 `catOnBlast(sim, s, x, y, radius, dmg, cause)` | 3 |
+| `field/damage.ts` | `shatter` 의 빈 공간 검사 | 함수로 꺼내 export (`acrossVoid(s, x0, y0, x1, y1)`) — 동작은 그대로 | 3 |
 | `field/agents.ts` | `perceive` | 소품 반복문 뒤 `perceiveSigns(…)` 한 줄, 가스 용기 `active:false` | 2 |
 | | `IMPORTANT`·`significant`·`flushOutbox` | `sign` (단계 2 이상만 바로) | 2 |
 | | `agentCost` | 지휘 상태 단계 3 구역·`a.avoid` 칸 +20 | 5 |
 | | `fitFor` | 구역 문 안전망, `avoid`, `risky`, `'gas'` 소품의 냉각, 깔린 동료 `rescueMate`, `fireRisk` 에 `inRubble` | 5·6 |
 | | `workLabel` | `mitigate` 의 `'gas'` 소품 → `가스 용기 냉각` | 5 |
-| | `detectRadius` | `|| isRubbleMode(s)` | 6 |
+| | `detectRadius` | `\|\| isRubbleMode(s)` | 6 |
 | | (H1 의) `mateFact` | `trapped` 칸 | 3 |
 | `field/brain.ts` | `dangerScore` | `+ signDanger(a)` (믿음만), 물러날 때 `avoid` | 5 |
 | | `think` | `boardOrder` 블록 뒤 철수 명령 → `evacuate` | 5 |
@@ -910,10 +921,12 @@ for f in fire/std fire/arson fire/ship fire/plane collapse/std collapse/gasblast
 | | `spray` | 인자 `eff = 1, wmul = 1` (applyWater 양 × eff, 물 소모 × wmul) | 5 |
 | | `case 'mitigate'` | `'gas'` 소품의 냉각 갈래 | 5 |
 | | `case 'rescueMate'` | 깔린 동료 먼저 빼내기 | 3 |
-| | `case 'carry'` | `c.mob === 'trapped'` 분기에 강제 보고 | 6 |
-| `field/commander.ts` | `want`, `syncBoard` 첫 줄 | 문(`gateCmd`, `WORK_GATES`) | 5 |
-| | `cordon` 식 | `|| opsCordon(s)` | 5 |
+| | `case 'carry'` | `c.mob === 'trapped'` 분기에 강제 보고 (`learn(…, true, true)`) | 6 |
+| | `case 'mitigate'` 의 이미 끝난 경우 | 냉각 대상 용기가 터졌으면 `reportDone` | 5 |
+| `field/commander.ts` | `want`, `syncBoard` 첫 줄 | 문(`gateCmd`, `WORK_GATES`), 작업 리터럴에 `risky: undefined` | 5 |
+| | `cordon` 식 | `\|\| opsCordon(s)` | 5 |
 | `field/sceneManager.ts` | 7번 블록의 한계 시간 식 | `+ (s.cat?.limitBonus ?? 0)` | 6 |
+| | `unitArrived` 의 대원 리터럴 | `trapped`·`avoid`·`opsSeen` 을 `undefined` 로 (객체 모양) | 1 |
 | | `briefFacts` | `hazard` 주장 → `sign` 사실 | 5 |
 | `sim/events.ts` | 끝에 추가 | `markRecoveredBy(I, code, detail, text)` | 5 |
 | `sim/incidents.ts` | `closeIncident` 끝 | `noteClosedPlace(sim, I)` | 7 |
@@ -927,7 +940,8 @@ for f in fire/std fire/arson fire/ship fire/plane collapse/std collapse/gasblast
 | `view/scene/skins.ts` | `SKINS` | `...CAT_SKINS` | 4 |
 | `view/renderCity.ts` | 월드 층 | (G4 없을 때) `drawPlaceMarks` 한 줄 | 7 |
 | `view/hazardState.ts`·`view/city/ruinLayer.ts`·`view/marks.ts`·`ui/MapLegend.tsx` | (G4 가 있을 때) | §7.2 | 7 |
-| `view/audio.ts`·`view/camera.ts`·`ui/Viewport.tsx` | 효과 종류 | `'horn'` | 7 |
+| `view/audio.ts`·`view/camera.ts`·(G5) `fxBook.ts` 의 `DECISIVE` 또는 (G5 없으면) `ui/Viewport.tsx` | 효과 종류 | `'horn'` | 7 |
+| (G5) `fxlog.ts` 의 `FxInfo['src']` (실제로는 `types.ts` 일 수 있다 — G5 구현을 따른다) | 합집합 끝 | `'drum' \| 'cng' \| 'jet' \| 'dust'` 새 줄 | 4 |
 | `ui/panels.tsx` | `ReportModal` 의 타일 줄 | 전소·붕괴·폭발·철수 | 7 |
 | `scripts/sweep.ts` | 집계·출력 | §8.3 | 1·7 |
 
@@ -995,7 +1009,8 @@ for f in fire/std fire/arson fire/ship fire/plane collapse/std collapse/gasblast
 - B1 이 합쳐진 뒤의 `syncBoard` 에 잔불 정리(`overhaul`)를 내는 자리 — 문(`registerGate`)이 그것도 막는지.
 - R1 의 장비 표에 펌프차 팀장(`fireLead`)의 가스 측정기를 더할지 — 더하면 가스 누출 현장의 조짐이 빨라진다(§3.4). R1 문서의 역할 표는 X6 가 고치지 않고, 합칠 때 R1 담당과 정한다.
 - G4 의 `FallRecord`·`ruin` 값 이름(`RUIN_WALL` 등)과 `recordFall` 의 인자 — G4 문서의 이름을 그대로 썼다.
-- G5 의 폭발 효과 함수(문서가 아직 없다).
+- G5 가 실제로 구현한 `FxInfo['src']` 의 합집합과 `noteBoom`·`DECISIVE` 의 이름(설계서 `G5-combat-fx.md` 의 이름을 따랐다).
+- I2 가 가칭으로 적은 `s.catastrophe`·`s.wear` 와 이 문서의 이름(`Scene.cat`·`Sim.placeMarks`) — I2 를 구현할 때 이 문서 쪽 이름에 맞춘다.
 - 가스 상수(`GAS_SRC`·`D`)와 구조 상수는 방치 시험으로 정하는 시작값이다(§2.4·§2.5 의 "맞출 값").
 - 손으로 만든 현장(`scenes/crime.ts` 의 무장 장소, `scenes/major.ts`)에서 대기 지점·안전 구역이 건물 칸에서 2칸 넘게 떨어져 있는가 — 평면 생성기(`plans.ts`)의 건물은 대기 지점 (3, 17)·안전 구역 (3, 14) 과 충분히 떨어져 있다(바닥 `y1 ≤ 13`, 단층 건물 `x0 ≥ 6`). 손으로 만든 현장은 `evacPoint` 가 도로 줄로 물러나게 되어 있지만 확인한다.
 

@@ -24,6 +24,9 @@ export function makeTask(kind: TaskKind, label: string, w: WorkItem | null = nul
 
 function releaseSpot(s: Scene, a: FieldAgent): void { if (a.spot >= 0) { if (s.spots[a.spot].taken === a.rid) s.spots[a.spot].taken = -1; a.spot = -1; } }
 
+/** 이미 끝나 있던 일: 지휘관의 믿음이 낡아 다시 지시한 것이므로, 같은 내용이라도 다시 보고한다 (무전 문구는 남기지 않는다) */
+function reportDone(sim: Sim, a: FieldAgent, f: Fact): void { a.quiet.add(f.key); learn(sim, a, f, true, true); }
+
 /** 임무 종료. 실패하면 지휘관이 알 수 있도록 작업 항목에 기록하고 무전으로 알린다. */
 export function finishTask(sim: Sim, s: Scene, a: FieldAgent, ok: boolean, reason = ''): void {
   const t = a.task;
@@ -171,6 +174,8 @@ function sweepPoints(sim: Sim, s: Scene, a: FieldAgent, t: Task): number[] {
   const rr = base * (1 - 0.78 * s.smoke[ci]) * (1 - 0.72 * 0.45) * (0.72 + 0.3 * r.judgment + 0.25 * r.experience);
   let spacing = t.thorough ? Math.max(1.6, rr * 1.1) : Math.max(2.6, rr * 1.85);
   if (r.experience < 0.4 && !t.thorough) spacing *= 1.25;
+  // 정밀 재수색을 거듭할수록 간격을 더 좁힌다 (잘 숨겨진 대상은 "다 보았다"고 여긴 거리보다 가까이 가야 보인다)
+  if (t.thorough && s.kind === 'search' && s.researchRound >= 2) spacing = Math.max(1.0, rr * (1.1 - 0.25 * (s.researchRound - 1)));
   const pts: number[] = [];
   const inReg = new Set(reg.tiles);
   const snap = (x: number, y: number): number => {
@@ -579,7 +584,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     }
     case 'traffic': {
       const k = t.tile, cp = s.controlPts[k];
-      if (s.controlDone[k]) { learnQuiet(sim, a, mkFact('ctl', k, true, r.name, sim.t, 1, true, '차로 통제 완료')); finishTask(sim, s, a, true); return; }
+      if (s.controlDone[k]) { reportDone(sim, a, mkFact('ctl', k, true, r.name, sim.t, 1, true, '차로 통제 완료')); finishTask(sim, s, a, true); return; }
       const m = moveTo(sim, s, a, cp.x, cp.y, 0.8);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
@@ -648,7 +653,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         t.tile = hot;
         return;
       }
-      if (t.phase === 1) learn(sim, a, mkFact('fire', reg.id, 0, r.name, sim.t, 1, true, `${reg.name} 화재 진압 확인`), true, true);
+      if (t.phase === 1 || (a.beliefs.val<number>('fire', reg.id) ?? 0) > 0) learn(sim, a, mkFact('fire', reg.id, 0, r.name, sim.t, 1, true, `${reg.name} 화재 진압 확인`), true, true);      // 불이 났다고 알던 구역이 꺼져 있다 (불 확인)
       learn(sim, a, mkFact('ovh', reg.id, 1, r.name, sim.t, 1, true, `${reg.name} 잔불 정리 완료`), true, true);
       r.xpGained += 0.001;
       finishTask(sim, s, a, true);
@@ -856,7 +861,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     }
     case 'interview': {
       const p = s.props[t.prop];
-      if (p.interviewed) { learnQuiet(sim, a, mkFact('evid', p.id, { kind: 'witness', done: true }, r.name, sim.t, 1, true, '목격자 면담 완료')); finishTask(sim, s, a, true); return; }
+      if (p.interviewed) { reportDone(sim, a, mkFact('evid', p.id, { kind: 'witness', done: true }, r.name, sim.t, 1, true, '목격자 면담 완료')); finishTask(sim, s, a, true); return; }
       const m = moveTo(sim, s, a, p.x, p.y, 1.5);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;

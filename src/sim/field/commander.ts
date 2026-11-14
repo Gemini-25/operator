@@ -7,7 +7,7 @@ import { emit, raiseProblem } from '../events';
 import { closeIncident } from '../incidents';
 import { T } from '../types';
 import type { CasBelief, FieldAgent, Incident, Scene, UnitCaps, WorkItem, WorkKind } from '../types';
-import { TYPE_NAME, dist } from '../util';
+import { TYPE_NAME, dist, josa } from '../util';
 import { canCarryPatients, exitName, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { losWalls } from './grid';
@@ -109,6 +109,24 @@ function planEntry(s: Scene, hv: { x: number; y: number; facing?: number }): { e
 
 const josaLocal = (w: string): string => `${w}으로`;
 
+/** 관제가 그 능력의 부대로 치는 최소 적합도 (dispatcher.ts 의 MINCAP 과 같다) */
+const NEED_MIN: Record<keyof UnitCaps, number> = { suppression: 0.7, rescue: 0.5, ems: 0.7, law: 0.5, tactical: 0.9, search: 0.3, traffic: 0.4, eod: 0.9 };
+
+/** 이 작업을 할 수 있는 대원을 보내 줄 부대의 능력. 아무나 할 수 있는 일이면 null */
+function needFor(s: Scene, w: WorkItem, hotArmed: boolean): keyof UnitCaps | null {
+  switch (w.kind) {
+    case 'suppress': case 'hookup': case 'overhaul': return 'suppression';
+    case 'mitigate': return w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? 'rescue' : 'suppression';
+    case 'extricate': case 'waterRescue': case 'clear': case 'force': return 'rescue';
+    case 'treat': case 'load': return 'ems';
+    case 'carry': case 'escort': return hotArmed ? 'law' : 'rescue';      // 위험한 건물 안은 소방만, 안전 확보 전의 무장 현장은 경찰만
+    case 'search': return hotArmed ? 'law' : 'rescue';
+    case 'perimeter': case 'engage': case 'arrest': case 'negotiate': return 'law';
+    case 'defuse': return 'eod';
+    default: return null;
+  }
+}
+
 /** 믿음 → 작업 목록 */
 function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   const B = a.beliefs;
@@ -142,7 +160,11 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   for (const h of surrendered) want(sim, s, 'arrest', { hostile: h.id }, 0.93);
   for (const h of active) {
     if (h.value.state === 'flee') { want(sim, s, 'engage', { hostile: h.id }, 0.95, 2); continue; }
-    s.exits.forEach((_, k) => want(sim, s, 'perimeter', { tile: k }, 0.76 - k * 0.05));
+    // 진입이 결정되면 진입조 둘을 먼저 채우고, 남는 경찰만 출입구를 지킨다
+    // (봉쇄에 묶인 대원은 진입 지시보다 봉쇄를 계속하므로, 경찰이 둘뿐이면 아무도 들어가지 않는다)
+    const posts = s.entryOrdered ? Math.min(s.exits.length, Math.max(0, police.length - 2)) : s.exits.length;
+    s.exits.forEach((_, k) => { if (k < posts) want(sim, s, 'perimeter', { tile: k }, 0.76 - k * 0.05); });
+    if (posts < s.exits.length) cancel(s, (w) => w.kind === 'perimeter' && w.tile >= posts);
     const gun = h.value.weapon === 'gun';
     if (s.negotStart < 0) s.negotStart = sim.t;
     const waited = sim.t - s.negotStart;
@@ -274,6 +296,10 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     if (c >= (s.regions[w.region].kind === 'wreck' ? 0.6 : th)) w.status = 'cancelled';
   }
 
+  const allDry = fireRegions > 0 && countUnits(sim, s, I, 'suppression', 0.7) > 0
+    && !I.assigned.some((uid) => { const u = sim.units[uid]; return u.caps.suppression >= 0.7 && (u.state === 'enroute' || u.state === 'turnout' || (!u.pumpFailed && (u.water > 0 || u.hydrant))); });
+  const checks = new Set<number>();
+  if (allDry) for (const f of fires) if (f.value > 0.05 && sim.t - f.t > 20) checks.add(f.id);
   // ── 잔불 정리 ──
   // 알려진 불이 모두 꺼지고 수색이 끝나면, 불이 났던 구역과 그 가까운 실내 구역을 한 번 더 돌며 남은 불씨를 끈다.
   // 진압을 확인할 때 구역의 일부만 보기 때문에, 보지 못한 구석의 불씨가 되살아날 수 있다.
@@ -291,7 +317,10 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       if (skip) { cancel(s, (w) => w.kind === 'overhaul' && w.region === r.id); continue; }
       want(sim, s, 'overhaul', { region: r.id }, 0.5);
     }
-  } else cancel(s, (w) => w.kind === 'overhaul' && w.status === 'open');
+  } else cancel(s, (w) => w.kind === 'overhaul' && w.status === 'open' && !checks.has(w.region));
+  // 불 확인: 현장의 진압 부대가 모두 물이 떨어졌고 오는 부대도 없다. 진압 임무는 물이 있어야 맡을 수 있으므로,
+  // 불이 저절로 사그라들어도 아무도 가서 보지 않아 "불이 났다"는 믿음이 낡은 채 남는다. 한동안 소식이 없는 구역에 소방대원을 보내 확인한다
+  for (const r of checks) want(sim, s, 'overhaul', { region: r }, 0.55);
 
   // ── 구조 대상 ──
   const hasMedicAny = s.agents.some((b) => b.status === 'active' && sim.responders[b.rid].dept === 'ems');
@@ -374,8 +403,21 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   else if (active.length > 0 && lawUnits === 0) request(sim, s, I, a, 'law', '용의자 대응 인력 없음', true);
   else if (active.length > 0 && lawUnits === 1 && s.negotStart >= 0 && sim.t - s.negotStart > 22) request(sim, s, I, a, 'law', '한 팀으로는 말을 걸면서 붙잡을 수 없음', false);      // 한 사람은 말을 걸고 한 사람은 길목을 지키면 붙잡을 손이 없다
   if (cordon && lawUnits === 0 && s.sizeupDone) request(sim, s, I, a, 'law', '가스가 새는 건물 주변을 통제할 인력이 없음', false);
+  // 무장 사건 현장은 안전을 확보하기 전까지 경찰만 수색할 수 있다
+  if (hotArmed && pendingSearch > 0 && lawUnits === 0 && s.sizeupDone) request(sim, s, I, a, 'law', '건물 안을 수색해 안전을 확보할 경찰이 없음', true);
   if (s.laneRows.length && lawUnits === 0 && !s.controlDone.every(Boolean) && cas.length > 0 && s.sizeupDone) request(sim, s, I, a, 'traffic', '차량 통행이 계속되는데 교통 통제 인력이 없음', false);
   if (s.kind === 'search' && cas.length === 0 && s.arrivedAt >= 0 && sim.t - s.arrivedAt > 75 && countUnits(sim, s, I, 'search', 0.3) < 3) request(sim, s, I, a, 'search', '수색 범위에 비해 인력 부족', false);
+  // 맡을 사람이 없는 작업: 한참 열려 있는데 현장의 누구도 맡을 수 없고, 그 일을 할 부대도 오고 있지 않으면 그 능력의 부대를 부른다
+  // (예: 헬기 대원만 있는 가스 누출 현장의 밸브 차단, 경찰이 모두 떠난 무장 현장의 수색)
+  for (const w of s.board) {
+    if (w.status !== 'open' || w.assignees.length || sim.t - w.createdAt < 20 || sim.t < w.holdUntil) continue;
+    const need = needFor(s, w, hotArmed);
+    if (!need) continue;
+    if (s.agents.some((b) => b.status === 'active' && !sim.units[b.unitId].boardOrder && fitFor(sim, s, b, w) > 0)) continue;
+    if (I.assigned.some((uid) => { const u = sim.units[uid]; return (u.state === 'enroute' || u.state === 'turnout') && u.caps[need] >= NEED_MIN[need]; })) continue;
+    request(sim, s, I, a, need, `${josa(workLabel(s, w), '을/를')} 맡을 대원이 없음`, w.priority >= 0.85);
+    break;
+  }
   // ── 묶음별 지휘 규칙 (field/orders/*) ──
   if (ORDER_RULES.length) {
     const kit: CommandKit = {
@@ -399,10 +441,14 @@ function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       const rid = w.assignees[k];
       const b = s.agents.find((q) => q.rid === rid);
       if (!b || b.status !== 'active') { w.assignees.splice(k, 1); continue; }
-      if ((b.task && b.task.workId === w.id) || b.orderWork === w.id) continue;
+      // 지시는 받았지만 휴식·장비 교체 같은 제 몸 추스르기에 매여 손을 못 대고 있다: 한참 지나면 다른 대원에게 넘긴다
+      // (그대로 두면 작업이 "맡은 사람 있음"으로 남아, 쉬는 대원 곁에서 손이 빈 대원들이 기다리기만 한다)
+      const busyElse = b.orderWork === w.id && b.task !== null && b.task.workId < 0 && b.task.kind !== 'standby';
+      if ((b.task && b.task.workId === w.id) || (b.orderWork === w.id && !busyElse)) continue;
       const sent = w.orderSentAt[rid] ?? sim.t;
-      if (sim.t - sent < 4.5) continue;
+      if (sim.t - sent < (busyElse ? 8 : 4.5)) continue;
       w.assignees.splice(k, 1);
+      if (busyElse) b.orderWork = -1;
       if (rid !== a.rid && !b.task) {
         raiseProblem(sim, I, 'COMM_FAIL', `${sim.responders[rid].name}에게 보낸 지시 미수신`, { role: 'COMMANDER', actor: me.name, rid: a.rid, imp: 1, text: `${sim.responders[rid].name}, 응답 없음. 지시가 전달되지 않은 것으로 판단하고 임무를 재배정합니다.` }, false);
         w.holdUntil = sim.t + 2;
@@ -421,6 +467,7 @@ function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       for (const b of s.agents) {
         if (b.status !== 'active' || taken.has(b.rid) || w.assignees.indexOf(b.rid) >= 0) continue;
         if (sim.units[b.unitId].boardOrder) continue;
+        if (b.task && b.task.kind === 'rehab' && sim.responders[b.rid].stamina < 40) continue;      // 지친 대원은 어느 정도 회복할 때까지 지시를 받지 않는다 (brain.ts 의 휴식 붙잡기)
         const fit = fitFor(sim, s, b, w);
         if (fit <= 0) continue;
         // 이미 일하는 중이면 우선순위 차이가 클 때만 빼 온다
@@ -429,7 +476,7 @@ function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         if (curW && (curW.status === 'active' || curW.status === 'open')) curPr = curW.priority;
         else if (hasWork(b) && b.task!.kind !== 'rehab') curPr = 0.6;
         if (b.carrying !== -1) continue;
-        if (curPr >= 0 && (pass === 1 || w.priority < curPr + 0.22)) continue;
+        if (curPr >= 0 && (pass === 1 || w.priority < curPr + 0.22) && !(b === a && w.kind === 'sizeup')) continue;      // 지휘를 넘겨받은 지휘관은 하던 일(봉쇄 등)을 두고 현장 평가부터 다시 한다
         if (b === a && w.kind !== 'sizeup') { if (pass === 1) continue; }
         const r = sim.responders[b.rid];
         const d = dist(b.x, b.y, targetX(s, w, a), targetY(s, w, a));
@@ -568,6 +615,20 @@ export function outstanding(a: FieldAgent): { patients: number; fire: boolean; h
   };
 }
 
+/**
+ * 확인 무전: 현장의 대원이 모두 손을 놓고 있는데 지휘관이 보기에는 아직 끝낼 수 없다.
+ * 음영 구역에 있던 지휘관이 보고를 놓쳤을 수 있으므로(발견한 사람, 꺼진 불), 전 대원에게 아는 상황을 다시 보고하게 한다.
+ */
+function rollCall(sim: Sim, s: Scene, a: FieldAgent, closable: boolean): void {
+  const crew = s.agents.filter((b) => b.status === 'active');
+  const idle = !closable && s.sizeupDone && crew.length >= 2 && crew.every((b) => !b.task || b.task.kind === 'standby' || b.task.kind === 'rehab');
+  if (!idle) { s.allIdleSince = -1; return; }
+  if (s.allIdleSince === undefined || s.allIdleSince < 0) s.allIdleSince = sim.t;
+  if (sim.t - s.allIdleSince < 12 || (s.rollCallAt ?? -1e9) >= s.allIdleSince) return;      // 손을 놓은 동안 한 번만 묻는다
+  const ev = transmit(sim, s, a, -1, 'rollcall', [], '전 대원, 지금까지 확인한 구조 대상과 위험 요소를 다시 보고하라.', -1, 1);
+  if (ev >= 0) s.rollCallAt = sim.t;
+}
+
 export function commanderThink(sim: Sim, s: Scene, a: FieldAgent): void {
   const I = sim.incidents[s.incidentId];
   if (I.phase === 'closed' || s.closing) return;
@@ -576,8 +637,10 @@ export function commanderThink(sim: Sim, s: Scene, a: FieldAgent): void {
   manageAmbulances(sim, s, I, a);
   assign(sim, s, I, a);
   if (s.sizeupDone) sitrep(sim, s, I, a);
+  const closable = canClose(sim, s, a);
+  rollCall(sim, s, a, closable);
   // 종료 판단: 두 번 연속으로 조건이 충족돼야 한다
-  if (canClose(sim, s, a)) {
+  if (closable) {
     if (s.closedCheckAt > 0 && sim.t - s.closedCheckAt >= 3) {
       emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 2, text: '확인된 위험과 구조 대상 처리가 끝났습니다. 상황 종료를 선언합니다. 전 부대 철수.' });
       closeIncident(sim, I, 'resolved');

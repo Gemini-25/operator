@@ -282,7 +282,8 @@ export interface FieldAgent {
 export interface RadioMsg {
   id: number; t: number; deliverAt: number; from: number;   // from rid (-1 = 관제)
   to: number;                                               // rid, -1 = 현장 전체, -2 = 관제
-  kind: 'report' | 'order' | 'request' | 'sitrep' | 'brief';
+  kind: 'report' | 'order' | 'request' | 'sitrep' | 'brief'
+    | 'rollcall';      // 지휘관의 확인 무전: 받은 대원은 자기가 아는 상황을 다시 보고한다
   facts: Fact[]; workId: number; text: string; eventId: number;
 }
 
@@ -332,6 +333,8 @@ export interface Scene {
   bangAt: number;                     // 마지막 섬광탄 사용 시각
   archived: boolean;                  // 사건 종료 후 모든 부대가 떠남 → 더 이상 갱신하지 않음
   idleSince: number;
+  allIdleSince?: number;              // (지휘관) 현장의 모든 대원이 손을 놓고 있기 시작한 시각 (-1 = 누군가 일하는 중)
+  rollCallAt?: number;                // (지휘관) 마지막 확인 무전 시각
 }
 
 // ───────────────────────── 신고 / 관제 ─────────────────────────

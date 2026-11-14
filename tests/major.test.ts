@@ -1,4 +1,5 @@
 // 대형 사고 (docs/specs/N5-major.md): 여섯 시나리오의 현장, 교대당 많아야 한 번이라는 틀, 시나리오별 고유한 규칙, 재현성
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { NORMAL } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
@@ -260,4 +261,12 @@ describe('재현성', () => {
       expect(scenarioOf(force.split('/')[0] as IncidentType, force.split('/')[1])!.tag).toBe('major');
     }
   }, 120000);
+});
+
+describe('정보 격리', () => {
+  it('대형 사고의 지휘 규칙은 시나리오의 정체(변형·건물 종류)를 읽지 않는다', () => {
+    // tests/ext.test.ts 가 s.props·s.casualties·.truth 를 잡는다. 여기서는 그 검사에 걸리지 않는 진실의 사본(Scene.variant 등)을 잡는다
+    const src = readFileSync(new URL('../src/sim/field/orders/major.ts', import.meta.url), 'utf8').split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+    for (const bad of ['.variant', 'placeKind', 'placeName']) expect(src.includes(bad), bad).toBe(false);
+  });
 });

@@ -38,7 +38,7 @@ function puffSprite(r: number, gC: number, b: number): HTMLCanvasElement {
   return c;
 }
 
-let spr: { glow: HTMLCanvasElement; flameA: HTMLCanvasElement; flameB: HTMLCanvasElement; puff: HTMLCanvasElement; puffDark: HTMLCanvasElement; mist: HTMLCanvasElement; scorch: HTMLCanvasElement } | null = null;
+let spr: { glow: HTMLCanvasElement; flameA: HTMLCanvasElement; flameB: HTMLCanvasElement; puff: HTMLCanvasElement; puffDark: HTMLCanvasElement; mist: HTMLCanvasElement; scorch: HTMLCanvasElement; dust: HTMLCanvasElement; gas: HTMLCanvasElement; gasDark: HTMLCanvasElement } | null = null;
 function sprites() {
   if (!spr) {
     const [sc, sg] = canvas(96, 96);
@@ -53,11 +53,15 @@ function sprites() {
       flameA: flame('rgba(255,150,50,1)', 'rgba(255,70,20,0.6)'),
       flameB: flame('rgba(255,250,215,1)', 'rgba(255,205,90,0.7)'),
       puff: puffSprite(176, 180, 186), puffDark: puffSprite(58, 58, 62), mist: puffSprite(200, 230, 250), scorch: sc,
+      // (G4) 무너짐의 먼지, 가스(옅은 것·짙은 것 — 예전의 연두 물들이기를 미리 섞은 색)
+      dust: puffSprite(196, 178, 146), gas: puffSprite(190, 208, 128), gasDark: puffSprite(145, 162, 80),
     };
   }
   return spr;
 }
 
+/** (G4) 미리 그린 조각: 무너짐의 먼지, 가스 덩어리 (fxSprites() 의 반환은 그대로 둔다) */
+export function g4Sprites(): { dust: HTMLCanvasElement; gas: HTMLCanvasElement; gasDark: HTMLCanvasElement } { const s = sprites(); return { dust: s.dust, gas: s.gas, gasDark: s.gasDark }; }
 /** (G5) 미리 그린 조각: 연기(puff·puffDark)·빛(glow)·그을음(scorch). 교전 그림(combat.ts)이 같은 조각을 drawImage 로 쓴다 */
 export function fxSprites(): { puff: HTMLCanvasElement; puffDark: HTMLCanvasElement; glow: HTMLCanvasElement; scorch: HTMLCanvasElement; mist: HTMLCanvasElement } { const s = sprites(); return { puff: s.puff, puffDark: s.puffDark, glow: s.glow, scorch: s.scorch, mist: s.mist }; }
 

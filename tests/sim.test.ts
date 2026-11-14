@@ -177,7 +177,8 @@ describe('난이도 (교대 시작 전 조건)', () => {
     const { PRESETS } = await import('../src/sim/difficulty');
     const good = (id: 'easy' | 'normal' | 'hard' | 'extreme'): number => {
       let ok = 0, n = 0;
-      for (let k = 0; k < 14; k++) {
+      // 시드 20개: 14개일 때는 쉬움과 보통의 차이(+0.02 기준)가 0.5%p 남짓이라 사건 하나의 결과만 바뀌어도 깨졌다 (Z1, 보통 S1 의 성공 하나)
+      for (let k = 0; k < 20; k++) {
         const s = shiftOf('S' + k, PRESETS[id].d);
         for (const I of s.incidents) {
           if (I.truth.variant === 'false' || I.truth.variant === 'prank') continue;      // 허위 신고는 본질적으로 쉬우므로 뺀다

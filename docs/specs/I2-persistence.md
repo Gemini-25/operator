@@ -18,25 +18,25 @@
 - 교대 사이의 날짜·시각 흐름(교대 시각과 날씨는 지금처럼 그 교대의 시드가 정한다 — §3.1 결정).
 - 지구력·피로의 누적(교대 사이 휴식으로 회복된다고 본다). 차량 자체의 손상(지금도, X6 초안에도 차량이 다치는 모델이 없다 — 생기면 `UnitCarry.service` 의 `'vehicle'` 로 받는다).
 - AI 의 조직 기억(오판에서 배우기 — ROADMAP K2). 같은 방식(생성자 입력)으로 나중에 `Carryover` 에 칸을 더할 수 있게만 둔다.
-- 병원 수용 여력, 기반시설(전력·통신·수도)의 교대 간 지속 — I1-b 의 세계 상태가 생긴 뒤 같은 틀로 더한다.
+- 병원 수용 여력, 기반시설(전력·통신·수도)의 교대 간 지속. I1-b 의 `sim.world` 는 교대 **안**의 상태만 둔다(I1 §3.3). 그래서 이 묶음은 I1-b 의 `initWorld(sim, carry?)` 에 `carry` 를 넘기지 않는다(§3.4). 교대를 넘기는 일은 8단계에서 ROADMAP 에 새 항목("세계 상태의 교대 간 지속 — 병원 체류 환자·구역 위험의 감쇠")으로 올리고, 같은 틀(`Carryover` 에 선택 칸 + `initWorld` 에 넘기기)로 더한다.
 - 이어받은 상태를 손으로 고치는 편집 화면(관찰 전용 원칙 — §5.1).
 
-**자기 파일**(새로): `src/sim/persist.ts`(만들기·적용·검사·요약), `src/view/city/carryLayer.ts`(지도의 남은 흔적), `scripts/chain.ts`(연속 교대 측정), `tests/persistence.test.ts`.
+**자기 파일**(새로): `src/sim/persist.ts`(만들기·적용·검사·요약), `src/view/city/carryLayer.ts`(지도의 남은 흔적), `scripts/chain.ts`(연속 교대 측정 — I1-a 의 `scripts/metrics.ts` 를 import 한다), `tests/persistence.test.ts`.
 **공용 파일 수정**: §10 의 표에 적힌 함수만, 가장 작은 조각으로(README §2).
-**이 설계서가 따로 허락하는 것**: 마지막 단계의 `README.md`·`CLAUDE.md`·`docs/ROADMAP.md`(K1 을 끝난 것으로 옮긴다). `scripts/sweep.ts` 에 `--carry` 옵션 하나.
-**건드리지 않는다**: `city.ts`, `cityPlan.ts`, `view/city/staticCity.ts`, `view/city/places.ts`, `tests/sim.test.ts`, `dispatch/*`(배정은 지금의 `crewReady`·`oos` 로 충분하다 — §3.4), `traffic.ts`(새 통제 이유 `'repair'` 는 이 묶음이 주인이다).
+**이 설계서가 따로 허락하는 것**: 마지막 단계의 `README.md`·`CLAUDE.md`·`docs/ROADMAP.md`(K1 을 끝난 것으로 옮기고, 위의 새 항목을 올린다). `scripts/sweep.ts` 에 `--carry` 옵션 하나. `tests/causality.test.ts` 에서 문구 규칙 T5 의 검사를 켜는 한 줄(I1 §6 의 3번이 "T5 는 I2 뒤에 켠다"고 미뤄 둔 것 — §8 완료 조건 3).
+**건드리지 않는다**: `city.ts`, `cityPlan.ts`, `view/city/staticCity.ts`, `view/city/places.ts`, `tests/sim.test.ts`, `dispatch/*`(배정은 지금의 `crewReady`·`oos` 로 충분하다 — §3.2 끝), `traffic.ts`(맨 위 주석 한 낱말 외에는 — §10.2. 새 통제 이유 `'repair'` 는 이 묶음이 주인이다).
 
-시작하기 전에: 구현 순서는 **R1 → H1 → X6 → R2 → R3 → I1-b → I2**(`docs/ROADMAP.md` "진행 중"). 이 묶음은 맨 끝이다. 아래 줄 번호는 2026-11-14 `a746b77`(B1·B3·P1·Q1 을 합친 뒤) 기준이고 앞 묶음들이 합쳐지면 바뀐다 — **함수 이름으로 찾는다**. 확신하지 못한 곳은 **(확인 필요)** 로 표시했다. I1 설계서는 이 문서를 쓸 때 아직 없어서 이름을 가정으로 적었다. X6 는 초안(`X6-catastrophe.md`, 작성 중)의 이름에 맞췄다 — X6 §0 의 I2 줄이 "X6 의 이름이 기준"이라고 정했다. H1 은 설계서(`H1-injuries.md`)의 이름이다.
+시작하기 전에: 구현 순서는 **R1 → H1 → X6 → R2 → R3 → I1-b → I2**(`docs/ROADMAP.md` "진행 중"). 이 묶음은 맨 끝이다. 아래 줄 번호는 2026-11-14 `a746b77`(B1·B3·P1·Q1 을 합친 뒤) 기준이고 앞 묶음들이 합쳐지면 바뀐다 — **함수 이름으로 찾는다**. 확신하지 못한 곳은 **(확인 필요)** 로 표시했다. 다른 묶음의 이름은 그 설계서를 따른다: R1(`R1-crews.md` — `fieldCrew`·`stays`·`minCrew`·`STAFF`·`ROLES`·`EXTRA_NAMES`·`kit`), H1(`H1-injuries.md` — `outShifts(r)`·`mainCause`·`CAUSE_NAME`·`RosterOut`), X6(`X6-catastrophe.md` — `Sim.placeMarks`·`PlaceMark`·`Scene.cat`·`catOf`·`STRUCT_COLLAPSE`. X6 §0 의 I2 줄이 "X6 의 이름이 기준"이라고 정했다), I1(`I1-causality.md` — I1-a 의 `scripts/metrics.ts`(`runWithProbe`·`shiftMetrics`·`summarize`·`checkMetrics`, 시스템 `carry`, 문구 규칙 T5), I1-b 의 `placeState`·`knownBuilding`·`initWorld`·`WorldTag`·`ObstacleKind 'rubble'`). 앞 묶음이 구현하면서 이름을 바꿨으면 구현 메모에 적고 이 문서를 따라 고친다.
 
 ## 원칙
 
 1. **이어받은 상태는 입력이다.** `new Sim(seed, d, len, { carry })`. 시뮬레이션은 이 입력을 고치지 않는다(받을 때 검사하며 깊이 복사한다). 같은 입력이면 같은 결과.
-2. **없으면 지금과 같다.** `carry` 가 없거나 `null` 이면 이 묶음의 모든 함수가 첫 줄에서 돌아가고, 난수도 기록도 더하지 않는다. 0단계의 해시 목록(§8)이 모든 단계 뒤에 그대로여야 한다.
-3. **도시 지도는 고치지 않는다.** `generateCity` 는 한 번 만든 지도를 모든 `Sim` 이 함께 쓴다(`city.ts:206-211`). 건물 상태는 `placeId` 를 열쇠로 한 **겹침 표**(`sim.carryState.places`)에, 도로 상태는 교대마다 복사되는 `city.edges` 의 칸에 둔다.
+2. **없으면 지금과 같다.** `carry` 가 없거나 `null` 이면 이 묶음의 모든 함수가 첫 줄에서 돌아가고, 난수도 기록도 더하지 않는다. 0단계의 해시 목록(§8)이 모든 단계 뒤에 그대로여야 한다. 하나의 예외는 `placeUsable` 이다. 이어받은 상태가 없을 때는 X6 의 교대 안 제외(`collapsed`·`burnt`)만 본다. 그 검사는 지금 X6 가 `pickPlace` 에 두는 조건과 같으므로 결과가 같다(§3.6).
+3. **도시 지도는 고치지 않는다.** `generateCity` 는 한 번 만든 지도를 모든 `Sim` 이 함께 쓴다(`city.ts:206-212`). 건물 상태는 `placeId` 를 열쇠로 한 **겹침 표**(`sim.carryState.places`)에, 도로 상태는 교대마다 복사되는 `city.edges` 의 칸에 둔다.
 4. **난수는 새 흐름만.** `carry`(만들기), `recruit:<자리>`, `relief:<호출부호>`. 기존 흐름의 호출 수와 순서를 바꾸지 않는다 — 펌프 상태도 지금처럼 `equipment` 흐름에서 뽑은 **뒤에** 값만 바꾼다(`rng.fork` 는 부모 시드에서 갈라지므로 새 이름을 더해도 다른 흐름은 그대로다 — `rng.ts:44`).
-5. **가짜 연출 금지.** 이어받은 상태가 바꾼 것은 그 상태를 적용하는 코드에서 `emit()` 한다(결장, 정비, 출입 통제, 복구 공사, 개통). 원인은 이어받은 상태 요약 기록(`carryState.event`)으로 `causes` 를 잇는다. 보고서 문장은 이 기록과 상태로만 쓴다.
+5. **가짜 연출 금지.** 이어받은 상태가 바꾼 것(결장, 정비, 출입 통제, 복구 공사)은 교대가 시작되기 전에 적용한다(§3.4 ①·②). 첫 기록은 언제나 '교대 시작'이어야 하므로, 적용 함수는 **적용한 항목의 목록**(`carryState.applied`)을 돌려주고, ③ `announceCarry` 가 그 목록만 기록한다. "상태를 바꾸는 바로 그 코드에서 `emit`" 규칙과 글자 그대로는 다르다. 대신 목록에 없는 것은 기록하지 않고, 목록의 항목은 모두 기록한다. 이 일대일 관계를 테스트 10 이 지킨다. 교대 중에 바뀌는 것(정비 완료, 개통)은 바꾸는 그 자리(`tickCarry`)에서 기록한다. 원인은 이어받은 상태 요약 기록(`carryState.event`)으로 `causes` 를 잇는다. 보고서 문장은 이 기록과 상태로만 쓴다.
 6. **관찰만 한다.** 화면이 고르는 것은 "새 조직으로 / 이어서 / 저장된 조직 지우기" 셋뿐이다 — 교대 시작 전 조건(CLAUDE.md 1번 규칙). 누가 다쳤는지, 어느 건물이 막혔는지를 화면에서 고치지 않는다.
-7. **정보 격리.** 이어받은 상태는 "앞 교대가 끝난 뒤의 점검으로 조직이 아는 기록"이다. 관제·지휘관이 읽어도 된다(진실 읽기가 아니다). 단 끝 상태를 **만들 때** 현장의 진실(`s.burnedTiles`·`s.damage`·소품)을 읽는 곳은 `persist.ts` 의 `placeOutcome` 하나뿐이다(`debrief.ts` 와 같은 자격 — CLAUDE.md 4번 규칙의 "진실을 읽어도 되는 곳"에 더한다).
+7. **정보 격리.** 이어받은 상태는 "앞 교대가 끝난 뒤의 점검으로 조직이 아는 기록"이다. 그래도 **관제·지휘 코드(`dispatch/*`·`field/commander.ts`·`field/brain.ts`·`field/orders/*`)는 `carryState`·`.wear` 를 직접 읽지 않는다.** 그 코드가 이어받은 상태를 아는 길은 정해 둔 것뿐이다: 결원은 `crewReady`·`u.state`(`oos`), 복구 통제는 "알려진 통제"(`e.closed`·`known` 없음), 건물은 I1-b 의 `knownBuilding`(I1 §3.4 — 관제가 아는 건물 상태. 지난 교대에서 이어받은 것도 이 함수로 나온다)이다. 끝 상태를 **만들 때** 현장의 진실(`s.burnedTiles`·`s.damage`·소품)을 읽는 곳은 `persist.ts` 의 `placeOutcome` 하나뿐이다(`debrief.ts` 와 같은 자격 — CLAUDE.md 4번 규칙의 "진실을 읽어도 되는 곳"에 더한다).
 8. **저장은 표현 계층에서만.** `src/sim` 에 `localStorage`·`sessionStorage`·`indexedDB` 가 없다(테스트가 잡는다 — §9). 저장 실패는 조용히 넘기고 새 조직으로 시작할 수 있다.
 9. **이어갈수록 망가지지 않는다.** 결장·정비·출입 통제·도로 통제에 모두 회복 규칙과 상한이 있다(§6). 반대로 경험 성장이 쌓여 이어갈수록 쉬워지는 것도 상한으로 막는다.
 10. **모든 사건은 끝난다.** 이어받은 통제가 도시를 끊지 않게 교대 시작 때 우회로를 확인한다(§3.5). `LIMIT`·`holdUntil`·`hardCap` 은 그대로.
@@ -46,13 +46,13 @@
 | 설계서 | 겹치는 곳 | 나누는 선 |
 |---|---|---|
 | K1 대원 성장·교대 간 저장 (ROADMAP) | 경험 성장, 부상자 결장, 저장, 생성자 입력 | **I2 가 K1 을 함께 끝낸다.** K1 의 완료 조건("재현성 테스트에 명부 입력 추가, 저장된 명부로 재실행 시 해시 일치")은 §9 의 1·5번이 맡는다. 다 하면 ROADMAP 의 K1 을 "완료한 작업 묶음"으로 옮긴다 |
-| H1 부상과 사망 | 다음 교대 결장, 순직, `RosterOut` | H1 은 교대 끝 상태(`r.dead`·`r.care`·`r.tDown`·`injuries`)와 화면용 `ShiftReport.roster` 를 **내놓는다**. I2 는 `sim.responders` 를 직접 읽어 `CrewCarry.out` 을 정한다 — 표는 H1 §3.7 그대로(§3.2). H1 의 `RosterOut` 은 열쇠가 `rid` 인데 `rid` 는 부대 규모 손잡이에 따라 바뀌므로(`resources.ts:66,75,86`) **I2 는 이름을 열쇠로 쓴다**. H1 의 `roster` 칸은 지우지 않고, `status 'off'` 인 대원의 `out` 만 I2 의 값으로 채운다(§10) |
-| R1 부대 편성·개인 장비 | 자리·이름, 최소 인원, 소모품, 장비 고장 | R1 뒤에도 이름은 모두 다르다(`EXTRA_NAMES`, R1 테스트 ⑦). 결원 판정은 R1 의 `minCrew(kind)`(R1 없이 1). 소모품 재고(`Carryover.stock`)에 R1 의 테이저 카트리지를 더할 수 있고, 공기통·헬기 연료·물은 서(署)에서 채운다고 보아 이어받지 않는다. 장비 고장은 점검에서 드러나지 않은 것만 이어받는다(§3.3) |
-| X6 위험의 현실화 | 실제 붕괴·폭발·전소, 건물 상태, 구조 건전도 | X6 는 교대 안의 건물 상태를 `Sim.placeMarks`(`Map<placeId, PlaceMark>` — `state` 는 `scorched`·`blasted`·`partial`·`burnt`·`collapsed`, `burnFrac`·`ruinFrac`)와 `Scene.cat`(`burntAt`·`totalAt`·`fallen`)에 남기고 `ShiftReport.placeMarks` 로 내놓기만 한다. **I2 는 `Sim.placeMarks` 를 끝 상태의 원천으로 먼저 읽는다**(§3.6): 전체 붕괴 → `ruin`, 전소 → `closed`(오래), 구획 붕괴·폭발 → `closed`, 그을림 → `marked`. 이어받은 손상(`s.wear.dmg`)은 X6 의 `catOf` 가 정하는 구획 건전도 처음 값에 한 항으로 들어간다(§7 — I2 가 그 한 줄을 넣는다). 같은 교대 안의 재발 막기(`pickPlace` 에서 `collapsed`·`burnt` 제외)는 X6 의 것이고 I2 는 그 옆에 이어받은 상태의 제외를 더한다 |
-| I1 인과관계·세계 상태 | 세계 상태, 원인 사슬, 측정 | I1-b 가 건물·도로의 세계 상태(가칭 `sim.world`)를 두었으면 I2 의 겹침 표는 그 안의 칸으로 둔다(이름을 새로 만들지 않는다). I1-a 의 측정 지표가 "지난 교대 → 이번 교대" 의 영향을 시스템 간 영향으로 세도록 `carryState.event` 를 원인으로 잇는다(§7). **(확인 필요: I1 설계서가 아직 없다)** |
+| H1 부상과 사망 | 다음 교대 결장, 순직, `RosterOut` | H1 은 교대 끝 상태(`r.dead`·`r.care`·`r.tDown`·`injuries`)와 화면용 `ShiftReport.roster`, 결장 표 함수 `outShifts(r)`(`injury.ts`, H1 §3.7)를 **내놓는다**. I2 는 `sim.responders` 를 직접 읽고 **`outShifts(r)` 를 불러** `CrewCarry.out` 을 정한다(§3.2 — 표는 그 함수 하나에만 있다). H1 표에 없는 두 경우(교대 끝에 후송 중, 쓰러진 채 병원에 가지 못함)는 `outShifts` 안에 더한다(§3.2). H1 의 `RosterOut` 은 열쇠가 `rid` 인데 `rid` 는 부대 규모 손잡이에 따라 바뀌므로(`resources.ts:66,75,86`) **I2 는 이름을 열쇠로 쓴다**. H1 의 `roster` 칸은 지우지 않고, `status 'off'` 인 대원의 `out` 만 I2 의 값으로 채운다(§10). H1 이 순직을 "명부에서 빠진다"고 적은 것은 "현장·가용 인원에서 빠진다"는 뜻으로 읽는다. `sim.responders` 에는 rid 를 지키려고 `status 'off'`·공석으로 남는다(§11.2) |
+| R1 부대 편성·개인 장비 | 자리·이름·역할, 최소 인원, 소모품, 장비 고장 | R1 뒤에도 이름은 모두 다르다(`EXTRA_NAMES`, R1 테스트 ⑦). R1 의 `crewReady` 는 내리는 자리(`fieldCrew`)만 센다(R1 §5). 그래서 결원 판정도 같은 단위로 센다: **내리는 자리의 최소 수 `minField(kind)`**와 내리지 않는 자리(`stays` — 조종사·정장)의 운용 여부를 따로 본다(§3.2 적용 6). R1 의 `minCrew(kind)` 는 내리지 않는 자리까지 세므로 그대로 쓰지 않는다. 신임 대원·예비 인력은 그 자리의 `role` 과 기본 `kit` 을 받고, `skills` 는 R1 의 역할 식으로 정한다. 소모품 재고(`Carryover.stock`)에 R1 의 테이저 카트리지를 더할 수 있고, 공기통·헬기 연료·물은 서(署)에서 채운다고 보아 이어받지 않는다. 장비 고장은 점검에서 드러나지 않은 것만 이어받는다(§3.3) |
+| X6 위험의 현실화 | 실제 붕괴·폭발·전소, 건물 상태, 구조 건전도 | X6 는 교대 안의 건물 상태를 `Sim.placeMarks`(`Map<placeId, PlaceMark>` — `state` 는 `scorched`·`blasted`·`partial`·`burnt`·`collapsed`, `burnFrac`·`ruinFrac`)와 `Scene.cat`(`burntAt`·`totalAt`·`fallen`)에 남기고 `ShiftReport.placeMarks` 로 내놓기만 한다. **I2 는 `Sim.placeMarks` 를 끝 상태의 원천으로 먼저 읽는다**(§3.6): 전체 붕괴 → `ruin`, 전소 → `closed`(오래), 구획 붕괴·폭발 → `closed`, 그을림 → `marked`. 이어받은 손상(`s.wear.dmg`)은 X6 의 `catOf` 가 정하는 구획 건전도 처음 값에 한 항으로 들어간다(§7 — I2 가 그 한 줄을 넣는다). 같은 교대 안의 재발 막기(`pickPlace` 에서 `collapsed`·`burnt` 제외)는 X6 의 규칙이다. I2 는 그 조건을 `placeUsable` 하나로 옮기고, 이어받은 상태의 제외를 같은 함수에 더한다(결과 같음 — §3.6). 전체 붕괴 때 X6 가 막는 사건 교차로 구간(X6 §4.2, `I.blockedEdge`)은 다음 교대의 `debris` 복구 공사의 원천이 된다(§3.5) |
+| I1 인과관계·세계 상태 | 세계 상태, 원인 사슬, 측정 | **건물 상태는 옮기지 않는다**(I1 §3.2·§11.2의 결정): 교대 안은 X6 의 `Sim.placeMarks`, 교대 사이는 I2 의 `carryState.places` 다. I1-b 는 둘을 읽는 `placeState(sim, id)`(X6 → I2 순서)·`knownBuilding(sim, id)` 만 둔다. **"쓸 수 있는 건물" 판정은 `persist.placeUsable` 하나**다. `placeState().usable` 은 이 함수를 부르고, X6 의 `pickPlace` 제외도 이 함수로 바꾼다(§3.6). I1-b 의 `initWorld(sim, carry?)` 에는 `carry` 를 넘기지 않는다(병원·기반 시설의 교대 간 지속은 범위 밖이다 — 머리말). 측정: I1-a 는 요약 기록을 문구 규칙 T5 `/^지난 교대에서 이어받은 상태/` 로 시스템 `carry` 로 센다. 그래서 **요약 문장의 첫머리는 바꾸지 않는다**. I2 의 나머지 기록은 `tag: 'carry'`(I1-b 의 `WorldTag` 에 한 값 추가)로 `carry` 로 세게 한다(§7). I1-b C2 의 `rubble` 장애물 가운데 교대 끝에 남은 것은 `debris` 복구 공사로 이어받는다(§3.5) |
 | G4 현장 상태 가독성 | 지도의 무너진 건물 그림 | G4 는 **이번 교대에** 무너진 건물을 현장 기록(`s.damage`·`s.falls`)으로 그린다(G4 §5.3). I2 는 **지난 교대에** 무너진 건물을 겹침 표로 그리며 G4 의 그림 함수와 기호(`RUIN_MARK`)를 쓴다. 그을린 지붕은 G4 §7.6 과 같은 넓이 식. G4 가 합쳐지지 않았으면 §5.4 의 단순한 그림 |
 | T1 교통 | 도로 통제의 주인 | 새 통제 이유 `'repair'`(복구 공사)의 주인은 `persist.ts`. 교통 모델은 `'incident'`·`'disaster'` 처럼 건드리지 않는다(`traffic.ts:8` 규칙에 한 낱말 더한다 — 주석만). 놓기 전 우회로 검사는 T1 의 `linked` 와 같은 뜻(§3.5) |
-| N6 재난 | 교대 끝의 통제 해제 | 재난은 지금처럼 교대가 끝나면 통제를 모두 연다(`disaster.ts:210,318-327`). 열기 **전에** 남은 통제를 기록만 한다(`d.leftover`) — 결과·기록 불변. 다음 교대가 그 구간을 "복구 공사"로 다시 막는다 |
+| N6 재난 | 재난이 통제한 도로 | 재난은 지금처럼 자기 통제를 모두 연다(`disaster.ts:210,318-327`). 교대 길이 1200초에서는 다섯 재난 모두 교대가 끝나기 **전에** 스스로 끝난다(지진은 늦어도 600 + 420 + 여파 120 = 1140초). 그래서 "교대 끝에 남은 통제"로는 아무것도 넘어오지 않는다. 대신 `closeEdge` 가 통제한 구간을 **기록만** 한다(`d.damaged` — 난수·`emit` 없음, 결과 불변). 다음 교대는 그 교대에 지진·해일·홍수·산불이 닫았던 구간을 "복구 공사"로 넘겨받는다(§3.5) |
 | U2 통화창 · G5 교전 연출 | 화면 자리 | 겹치지 않는다. 상단 띠의 칩 하나(§5.2)는 U2 가 상단을 고쳤으면 그 배치를 따른다 |
 | ROADMAP M2 (1) | 사건이 끝난 건물의 흔적 | 교대 **안**의 흔적은 G4, 교대를 **넘는** 흔적은 I2. 같은 건물의 재발은 I2 의 가중치(§3.6)가 일부 맡는다 |
 
@@ -66,8 +66,8 @@
 
 | 무엇 | 어떻게 | 근거 |
 |---|---|---|
-| 대원의 이름과 기본 능력 | 고정 조직 시드 `new Rng(0x51ab7e).fork('roster-v1')` 에서 `UNIT_DEFS` 순서로 한 명당 6번. 편성되지 않는 부대도 뽑으므로 부대 규모가 바뀌어도 같은 이름 = 같은 능력 | `resources.ts:58-86`, `tests/sim.test.ts:284-293`(부대 규모 손잡이 테스트) |
-| 도시 지도 | `generateCity` 가 모듈 변수에 한 번 만들고, 교대마다 `edges` 만 복사해 준다 | `city.ts:206-211` |
+| 대원의 이름과 기본 능력 | 고정 조직 시드 `new Rng(0x51ab7e).fork('roster-v1')` 에서 `UNIT_DEFS` 순서로 한 명당 6번. 편성되지 않는 부대도 뽑으므로 부대 규모가 바뀌어도 같은 이름 = 같은 능력. R1 뒤에는 셋째 자리부터 `roster-v2:<호출부호>:<자리>` 흐름과 `EXTRA_NAMES`(R1 §5) — 역시 부대 규모와 상관없다 | `resources.ts:58-86`, `tests/sim.test.ts:284-293`(부대 규모 손잡이 테스트) |
+| 도시 지도 | `generateCity` 가 모듈 변수에 한 번 만들고, 교대마다 `edges` 만 복사해 준다 | `city.ts:206-212` |
 
 ### 1.2 교대가 끝나면 사라지는 것
 
@@ -81,7 +81,7 @@
 | 물·공구·처치 장비·방호 | 물은 서에서 가득. 나머지는 만든 뒤 바뀌지 않는다 | 다음 교대에 손잡이 값으로 | `resources.ts:94-96` |
 | 건물 피해 | 그 사건의 `Scene` 에만: `burned`/`burnedTiles`(화재), `damage`(붕괴 잔해), `glass`, `decorHp`, 소품의 `ignited`·`exploded`. `Place` 에는 상태 칸이 없다 | 다음 교대에는 흔적 없음. 같은 교대 안에서도 다른 사건이 그 건물 상태를 보지 않는다(`pickPlace` 의 `used` 는 "이번 교대에 사건이 났던 곳"을 뺄 뿐) | `types.ts:46-58,292-330`, `incidents.ts:49-67` |
 | 현장 평면 | 건물이 아니라 사건 번호와 교대 시드에 묶인 흐름(`scene:<사건>`)으로 만든다 | 같은 건물이라도 교대마다 평면이 다르다 — 칸 단위 피해는 옮길 수 없다 | `sceneManager.ts:23-27` |
-| 도로 통제 | 사건(`'incident'`)은 `closeIncident` 가 풀고, 재난(`'disaster'`)은 교대가 끝나면 `finish(cut)` 이 모두 연다. 지진 균열은 200~400초, 해일은 200초 뒤에 연다 | 다음 교대는 모두 열린 도로 | `incidents.ts:211-215`, `disaster.ts:210,283-305,318-327` |
+| 도로 통제 | 사건(`'incident'`)은 `closeIncident` 가 풀고, 재난(`'disaster'`)은 재난이 끝날 때 `finish` 가 모두 연다(1200초 교대에서는 늘 여파 120초 뒤의 `finish(…, false)` — 교대 끝의 `finish(…, true)` 에는 닿지 않는다). 지진 균열은 200~400초, 해일은 200초 뒤에 연다 | 다음 교대는 모두 열린 도로 | `incidents.ts:211-215`, `disaster.ts:68,90-126,210,283-305,318-327` |
 | 교통 장애물·불법 주차 | 교대마다 `traffic` 흐름에서 새로 | 사라짐(의도대로 — 교통은 이어받지 않는다) | `traffic.ts:290-331` |
 | 저장 | `ar.settings.v1`·`ar.current.v1 {seed, tick, diff}`·`ar.history.v1`(요약 12개). 명부·장비·건물·도로의 끝 상태는 저장하지 않는다 | — | `runner.ts:9-19,96-101,119-121` |
 | 보고서 | `respondersHurt`(지원 대원 포함), `equipFailures`, 부대 활용률. 끝 상태는 없다 | — | `debrief.ts:166-206` |
@@ -90,7 +90,7 @@
 
 ### 1.3 이어받기를 넣을 자리가 이미 있는 곳
 
-- 생성자의 넷째 인자 `extra`(`engine.ts:63`)가 선택 인자 묶음이다. 지금은 `force` 하나. 부르는 곳: `runner.ts:45`, `scripts/sweep.ts:27`, 테스트 77곳(모두 그대로 둔다 — 새 칸은 선택).
+- 생성자의 넷째 인자 `extra`(`engine.ts:63`)가 선택 인자 묶음이다. 지금은 `force` 하나. 부르는 곳: `runner.ts:45`, `scripts/sweep.ts:27`, 테스트 73곳(모두 그대로 둔다 — 새 칸은 선택).
 - `rng.fork` 는 부모 시드에서 갈라진다(`rng.ts:44`) — 새 흐름 이름을 더해도 기존 결과가 바뀌지 않는다. `sim.rng` 를 직접 뽑는 코드는 `src/sim` 에 없다.
 - `logHash` 는 기록 **문장**과 틱만 섞는다(`events.ts:22-26`). 이어받은 상태가 결과를 바꿨는지는 문장으로만 드러난다 → 요약 한 줄에 지문을 넣는다(§4.2).
 - 도시 지도의 고정 층은 `Sim` 이 바뀔 때마다 다시 만든다(`renderCity.ts:115`) — 교대 내내 그대로인 흔적은 교대 시작 때 정해진다.
@@ -180,14 +180,19 @@ carryCause?: string | null;              // status 'off' 일 때 결장 이유
 // Unit
 readyAt?: number;                        // 정비 중인 부대가 운용에 들어가는 시각 (persist.tickCarry 가 본다)
 oosWhy?: string;                         // 'oos' 의 이유 (화면용: '정비 중' · '결원')
+pumpFails?: number;                      // 이번 교대에 펌프가 고장 난 횟수 (executor 의 펌프 고장 자리가 센다 — §3.3. 결과에 쓰지 않는다)
 // Scene
-wear?: { dmg: number; soot: number; cause: string; inc: string };      // 이어받은 건물 상태 (persist.applyPlaceWear 가 현장을 만든 직후 채운다)
+wear?: { dmg: number; soot: number; cause: string; inc: string; pre: number };      // 이어받은 건물 상태 (persist.applyPlaceWear 가 현장을 만든 직후 채운다. pre = 처음부터 탄 칸으로 둔 수 — §3.6)
 // ShiftReport
 carry?: { shift: number; key: string; lines: string[] };   // 이어받은 상태와 그 영향 — 이어받은 상태로 시작한 교대만
 carryNext?: CarrySummary;                                  // 다음 교대로 넘기는 것
 ```
 
 `RoadEdge.closedReason` 은 `string | null` 이라 타입을 고치지 않고 값 `'repair'` 를 쓴다. `Sim`(`engine.ts`)에 `readonly carry: Carryover | null` 과 `carryState: CarryState`(아래, `persist.ts` 에 정의 — `TrafficState` 가 `traffic.ts` 에 있는 것과 같은 꼴) 두 칸.
+
+**객체 모양(P1 이후의 규칙 — CLAUDE.md "자주 도는 객체의 모양", R1 §3 끝)**: 새 칸은 이어받은 상태가 있을 때만 붙이지 않고, **만드는 객체 글자에 처음부터 적는다**(해시는 바뀌지 않는다). `Responder` 의 `seat`·`relief`·`carryOut`·`carryCause` 는 `createRoster`·`createAidUnit` 의 대원 객체 글자에 `undefined` 로, `Unit` 의 `readyAt`·`oosWhy` 는 두 부대 객체 글자(편성표·지원)의 "나중에 붙는 칸" 줄에 같은 순서로 `undefined`, `pumpFails` 는 `0` 으로, `Scene.wear` 는 `createScene` 의 칸 채우기 줄에 `undefined` 로 적는다. 예비 인력(§3.2)은 대원 객체 글자를 같은 순서로 만든다.
+
+`types.ts` 의 I1-b 칸에 하나 더한다: `WorldTag` 합집합 끝에 `| 'carry'`(이 묶음의 기록을 측정 도구가 시스템 `carry` 로 세게 한다 — §3.7·§7).
 
 ### 2.2 `persist.ts` 의 실행 중 상태
 
@@ -198,10 +203,26 @@ export interface CarryState {
   roads: RoadCarry[];                            // 이번 교대에 끝날 복구 공사 (left === 1, openAt 순)
   slowed: { edge: number; v: number }[];         // 이 파일이 더해 둔 slow (한 차로 공사, 출입 통제 건물 앞)
   event: number;                                 // 이어받은 상태 요약 기록의 id (-1 = 없음). 원인으로 잇는다
-  dropped: string[];                             // 적용하지 못한 것 (도시가 끊길 통제, 지도 지문 불일치, 명부에 없는 이름) — announceCarry 가 적는다
+  applied: CarryNote[];                          // ①·② 가 실제로 적용한 항목 (적용한 순서) — announceCarry 가 이것만 기록한다
+  dropped: string[];                             // 적용하지 못한 것 (도시가 끊길 통제, 지도 지문 불일치, 조직 명부에 없는 열쇠, 상한을 넘은 항목) — announceCarry 가 적는다
   stats: { relief: number; serviced: number; reopened: number; markedInc: string[]; fbShort: number; early: number };
 }
+/** 적용한 항목 하나 (기록 한 줄의 재료). 상태를 바꾼 함수가 그 자리에서 push 한다 */
+export type CarryNote =
+  | { what: 'absent'; unit: string; names: string[]; cause: string | null; left: number }
+  | { what: 'vacant'; unit: string; name: string; left: number }
+  | { what: 'recruit'; unit: string; name: string; seat: string }
+  | { what: 'early'; name: string }
+  | { what: 'relief'; unit: string; name: string; role?: string }
+  | { what: 'short'; unit: string }                                  // 예비 인력이 모자라 oos '결원'
+  | { what: 'service'; unit: string; readyAt: number }
+  | { what: 'rushed'; unit: string }                                 // SERVICE_CAP 을 넘어 '급히 정비 완료'
+  | { what: 'stock'; unit: string; got: number; want: number }
+  | { what: 'place'; id: number }                                    // closed·ruin 건물 (opened 도 이 항목으로)
+  | { what: 'road'; edge: number; lane: boolean; left: number; openAt: number };
 ```
+
+- `carryState.places` 의 항목은 `sim.carry.places` 의 **사본**이다(`initCarry` 가 깊이 복사해 넣는다). 교대 내내 바뀌지 않는다.
 
 ### 2.3 열쇠와 판
 
@@ -220,10 +241,14 @@ export interface CarryState {
 
 입력(저장소에서 읽은 것, 테스트가 만든 것)을 검사하며 **새 객체로** 만든다. 시뮬레이션은 이 결과만 쓰고 원래 입력은 건드리지 않는다.
 
-- 객체가 아니거나 `v` 가 1 이 아니고 옮기는 함수도 없으면 `null`.
-- 숫자는 유한한지 보고 범위로 자른다: `out ∈ [-1, 3]`, `health ∈ [1, 100]`, `dExp ∈ [0, EXP_CAP]`, `dSkill ∈ [0, SKILL_CAP]`, `pump ∈ [0, 1]`, `readyAt ∈ [0, 900]`, `dmg·soot ∈ [0, 1]`, `repair ∈ [0, 6]`, `left ∈ [1, 2]`, `openAt ∈ [60, 900]`, 재고 `[0, STOCK_CAP]`.
+- 객체가 아니거나 `v` 가 1 이 아니고 옮기는 함수도 없으면 `null`. `crew`·`units`·`places`·`roads` 가 배열이 아니거나 `stock` 이 객체가 아니면 `null`.
+- 숫자는 유한한지 보고 범위로 자른다: `shift` 는 1 이상의 정수(아니면 `null`), `out ∈ [-1, 3]`, `replaceIn ∈ [0, REPLACE_AFTER]`, `health ∈ [1, 100]`, `dExp ∈ [0, EXP_CAP]`, `dSkill ∈ [0, SKILL_CAP]`, `shifts·incidents` 0 이상의 정수, `pump ∈ [0, 1]`, `readyAt ∈ [0, 900]`, `dmg·soot ∈ [0, 1]`, `repair ∈ [0, 6]`, `left ∈ [1, 2]`, `openAt ∈ [60, 900]`, `since ∈ [1, shift]`, 재고 `[0, STOCK_CAP]`. `recruit` 의 능력치는 `createRoster` 의 범위로 자른다(`skill` 0.3~0.98, `judgment` 0.2~0.98, 나머지 0~1, `experience` 0~0.97).
+- 열거값(`state`·`cause`·`why`·`mark`·`service.why`)이 모르는 값이면 그 항목을 버린다. `kitFault` 는 R1 의 `KitId` 인 것만 남긴다. 모르는 `stock` 열쇠는 버린다.
+- `closed`·`ruin` 인데 `repair` 가 0 이면 `marked` 로 읽는다(복구가 끝난 것으로 본다).
 - `city` 가 `cityKey(city)` 와 다르면 `places`·`roads` 를 비우고 `dropped` 에 '도시 지도가 바뀌어 건물·도로 상태는 이어받지 않습니다.'
-- 범위를 벗어난 건물·구간 id, 출동 시설(`facility ≥ 0`)인 건물, 같은 열쇠가 둘인 항목은 버린다(뒤의 것). 명부에 없는 이름은 적용할 때 버린다(§3.4 — 판단에 명부가 필요하다).
+- 범위를 벗어난 건물·구간 id, 출동 시설(`facility ≥ 0`)인 건물, 같은 열쇠가 둘인 항목은 버린다(뒤의 것).
+- **조직 명부에 없는 열쇠는 여기서 버린다.** `sim.responders`·`sim.units` 에는 편성된 사람·부대만 있으므로(`resources.ts:86` 의 `if (include)`) "이번에 편성되지 않은 사람"과 "조직에 없는 이름"을 가를 수 없다. 그래서 편성과 상관없이 조직 전체의 열쇠를 돌려주는 `resources.rosterKeys()`(§10.2)로 판정한다. 그 목록에 없는 대원 열쇠(`seat ?? name`), `UNIT_DEFS` 에 없는 호출부호는 버리고 `dropped` 에 '조직 명부에 없는 대원 n명의 기록은 버립니다.' 편성되지 않은 사람·부대의 항목은 **남는다** — 적용 단계는 그 항목을 건너뛰고, `makeCarryover` 가 `sim.carry` 에서 이어 간다(§3.1).
+- **상한도 읽을 때 건다**(§6.1과 같은 값): 건물 `PLACE_CAP`, 그 가운데 `closed`·`ruin` `CLOSED_CAP`, 도로 `ROAD_CAP`. 넘는 것은 `repair`(도로는 `left`)가 큰 순, 같으면 id 순으로 남기고 나머지를 버린다(`dropped` 에 한 줄). 정비의 `SERVICE_CAP` 은 적용할 때 건다(§3.3 — 넘는 부대는 '급히 정비 완료'라 버리는 것이 아니다).
 
 ---
 
@@ -242,26 +267,25 @@ export interface CarryState {
 - **교대 사이의 시간은 "휴식 한 번"으로 고정한다.** 남은 결장·수리·복구는 모두 교대 수로 센다. 교대 시각(`startTod`)과 날씨는 지금처럼 그 교대의 `environment` 흐름이 정한다 — 앞 교대가 밤이었는지에 따라 회복이 달라지지 않는다(결정 — 날씨와 시각을 이어 붙이려면 `environment` 흐름의 뽑기를 바꿔야 하고, 그러면 이어받은 상태가 없는 교대도 결과가 바뀐다).
 - `Carryover` 는 **휴식을 이미 반영한** 상태다. 그래서 화면은 저장된 상태만 보고 "다음 교대 결장 2명"을 말할 수 있고, 적용은 그대로 옮기기만 하면 된다.
 - **끝난 교대만** 상태를 만든다. 진행 중인 교대를 버리고 새로 시작하면 그 교대는 조직에 남지 않는다(저장된 상태 그대로 다시 시작).
-- **이번 교대에 나오지 않은 사람·부대도 휴식은 한다.** 부대 규모 손잡이가 낮아 편성되지 않은 부대, 결장한 대원의 항목은 앞 상태(`sim.carry`)에서 그대로 가져와 휴식만 적용한다. 손잡이를 내렸다 올려도 그 사이의 기록이 사라지지 않는다.
+- **이번 교대에 나오지 않은 사람·부대도 휴식은 한다.** 부대 규모 손잡이가 낮아 편성되지 않은 부대, 결장한 대원의 항목은 앞 상태(`sim.carry`)에서 그대로 가져와 휴식만 적용한다. 손잡이를 내렸다 올려도 그 사이의 기록이 사라지지 않는다. 어떤 열쇠가 "조직의 사람"인지는 `resources.rosterKeys()` 로 본다(§2.4).
 
-`makeCarryover(sim)` 은 `sim.ended` 일 때만 부른다(아니면 예외). 난수는 `sim.rng.fork('carry')` 하나(복구 시각·정비 시각)와 신임 대원의 `sim.rng.fork('recruit:' + 자리)` 뿐이다 — 부모 시드에서 갈라지므로 몇 번 불러도 같은 결과다. `buildReport` 도 같은 계산을 쓴다(`carryNext` — `from.hash` 만 비워 둔 채).
+`makeCarryover(sim)` 은 `sim.ended` 일 때만 부른다(아니면 예외). 난수는 `sim.rng.fork('carry')` 하나(복구 시각·정비 시각)와 신임 대원의 `sim.rng.fork('recruit:' + 자리)` 뿐이다 — 부모 시드에서 갈라지므로 몇 번 불러도 같은 결과다. `buildReport` 도 같은 계산을 쓴다(`carryNext` — `from.hash` 만 비워 둔 채). `buildReport` 는 마지막 기록('교대 종료')과 해시를 정하기 **전에** 불리므로(`engine.ts` `checkShiftEnd`), **`makeCarryover` 는 순수 함수다**: `sim`·`sim.carry`·`carryState`·현장·기록을 고치지 않고, `emit` 하지 않으며, 돌려주는 객체는 모두 새로 만든다(앞 상태의 항목을 그대로 넣지 않고 복사한다). 테스트 1 이 `makeCarryover` 를 두 번 불러 같은 결과인지, 부른 뒤 `report.hash` 가 그대로인지 본다.
 
 ### 3.2 대원
 
-**끝 상태에서 다음 교대로** (`crewNext`, 지원 대원·예비 인력은 넣지 않는다):
+**끝 상태에서 다음 교대로** (`crewNext`, 지원 대원·예비 인력은 넣지 않는다). 대상은 `resources.rosterKeys()` 의 모든 열쇠다(편성되지 않은 사람 포함). 열쇠마다 **위에서부터 첫 번째로 맞는 행**을 쓴다:
 
-| 이번 교대의 그 사람 | `out` (다음에 빠지는 교대 수) | `health` | 성장 |
-|---|---|---|---|
-| H1 의 순직(`r.dead`) | −1, `replaceIn = REPLACE_AFTER`(2) | — | 없음 |
-| H1 의 병원 인계 + 쓰러진 적 있음(`r.care === 'hospital' && r.tDown ≥ 0`) | 3 | `BACK_HEALTH` 85 | 있음 |
-| H1 의 병원 인계 | 2 | 85 | 있음 |
-| `injured`, 또는 `down` 인데 병원에 가지 않음 | 1 (`down` 은 2) | 85 | 있음 |
-| `ok` | 0 | `min(100, 끝 체력 + REST_HEAL 40)` | 있음 |
-| `off`(이번 교대 결장) | 앞 값 − 1 (0 이 되면 나온다) | 앞 값 | 없음 |
-| `off`(공석: −1) | −1, `replaceIn` − 1. 0 이 되면 신임 대원(아래) | — | — |
-| 이번 교대에 편성되지 않음 | 앞 값 − 1 (최소 0) | 앞 값 | 없음 |
+| 순서 | 그 사람 | `out` (다음에 빠지는 교대 수) | `health` | 성장 |
+|---|---|---|---|---|
+| 1 | 앞 상태가 공석(`out === −1`) — 편성 여부·이번 교대의 `off` 와 상관없이 언제나 | −1, `replaceIn − 1`. 0 이 되면 신임 대원(아래) | — | — |
+| 2 | 이번 교대에 편성되었고 `status 'off'`(결장) | 앞 값 − 1 (0 이 되면 나온다) | 앞 값 | 없음 |
+| 3 | 이번 교대에 편성되지 않음(앞 값 0 이상) | `max(0, 앞 값 − 1)` | 앞 값이 0 이면 `min(100, 앞 값 + REST_HEAL)`, 아니면 앞 값 | 없음 |
+| 4 | 편성되어 나온 사람 — H1 의 `outShifts(r)` 가 −1(순직) | −1, `replaceIn = REPLACE_AFTER`(2) | — | 없음 |
+| 5 | 〃 `outShifts(r) > 0` | `outShifts(r)` (3·2·1) | `BACK_HEALTH` 85 | 있음 |
+| 6 | 〃 `outShifts(r) === 0` | 0 | `min(100, 끝 체력 + REST_HEAL 40)` | 있음 |
 
-- H1 이 아직 합쳐지지 않았으면 `status` 만 본다: `down` 2, `injured` 1, `ok` 0(순직·병원 없음). 이 표는 H1 §3.7 의 표와 같다 — H1 이 표를 함수로 두었으면(가칭 `outShifts(sim, r)`) 그것을 부르고, 없으면 `persist.ts` 의 `outAfter(sim, r)` 하나로 두고 H1 의 `buildReport` 가 이것을 부르게 바꾼다(같은 표가 두 곳에 있지 않게).
+- **결장 표는 H1 의 `outShifts(r)`(`injury.ts`) 하나에만 있다**(H1 §3.7). I2 는 이 함수를 부르고, 같은 표를 `persist.ts` 에 두지 않는다. 쓰러짐은 H1 의 식대로 `r.tDown !== undefined` 로 본다. H1 표에는 교대가 끝날 때 아직 병원에 닿지 않은 두 경우가 없다. **교대 끝에 후송 중(`r.care === 'aboard'`)**, 그리고 **쓰러진 채 병원도 후송도 아님**(`r.tDown !== undefined && r.care === undefined` — 현장이나 안전 구역에서 교대가 끝남)이다. 둘 다 교대 뒤에 병원에 인계된다고 보고, H1 의 병원 줄과 같게 센다(쓰러졌으면 3, 아니면 2). H1 구현이 이 두 줄을 넣지 않았으면, I2 1단계가 `outShifts` **안에** 더한다(§10.2 — 표가 두 곳에 생기지 않게. H1 의 보고서 `out` 도 함께 바뀐다).
+- H1 이 아직 합쳐지지 않았으면(대체) `status` 만 본다: `down` 2, `injured` 1, `ok` 0(순직·병원 없음). 구현 순서상 H1 이 먼저이므로 대체는 쓰이지 않을 것이다.
 - `cause`: H1 의 `mainCause(r.injuries)`(피해가 가장 큰 원인), H1 전에는 `status` 문자열.
 - **성장** (K1): 이번 교대의 `xpGained` 으로
   ```
@@ -271,33 +295,40 @@ export interface CarryState {
   shifts += 1, incidents += r.incidentsWorked
   ```
   측정(§1.2)으로 보면 활발한 대원이 교대당 0.01~0.02 쯤, 열 교대에 0.05~0.15 쯤 는다. **(확인 필요: R1·H1 뒤 `xpGained` 의 분포를 다시 재고 `GAIN_K` 를 정한다. 목표는 "열 교대 뒤 가장 많이 큰 대원의 경험 +0.15 안팎")**
-- **신임 대원**: 공석의 `replaceIn` 이 0 이 되는 휴식에서, 그 항목을 신임 대원으로 바꾼다: `name` = `RECRUIT_NAMES` 에서 아직 쓰지 않은 첫 이름(모두 쓰면 이름 뒤에 숫자), `seat` = 원래 자리 이름, `recruit` = `sim.rng.fork('recruit:' + 자리)` 에서 `createRoster` 와 같은 식(경험 0.1~0.3, `st()` 범위 0.3~0.85)으로, `out 0`, `health 100`, `dExp·dSkill·shifts·incidents 0`. `RECRUIT_NAMES` 는 `NAMES`·`EXTRA_NAMES`(R1)·`AID_NAMES`·`RELIEF_NAMES` 와 겹치지 않는 가상의 이름 24개(`persist.ts` 안).
+- **신임 대원**: 공석의 `replaceIn` 이 0 이 되는 휴식에서, 그 항목을 신임 대원으로 바꾼다: `name` = `RECRUIT_NAMES` 에서 아직 쓰지 않은 첫 이름(모두 쓰면 이름 뒤에 숫자), `seat` = 원래 자리 이름, `recruit` = `sim.rng.fork('recruit:' + 자리)` 에서 `createRoster` 와 같은 식(경험 0.1~0.3, `st()` 범위 0.3~0.85)으로, `out 0`, `health 100`, `dExp·dSkill·shifts·incidents 0`. `RECRUIT_NAMES` 는 `NAMES`·`EXTRA_NAMES`(R1)·`AID_NAMES`·`RELIEF_NAMES` 와 겹치지 않는 가상의 이름 24개(`persist.ts` 안). **한 휴식에서 여러 자리가 신임으로 바뀌면** `rosterKeys()` 의 순서(`UNIT_DEFS` 순 × 자리 순)대로 이름을 나눠 준다. "아직 쓰지 않은" 이름은 새 상태의 `crew` 에 이미 있는 이름(앞에서 배치된 신임 포함)을 뺀 것이다. 그래서 같은 입력이면 같은 이름이 같은 자리에 간다.
 - (R1 뒤) `kitFault`: 이번 교대에 고장이었던 개인 장비 가운데 **드러난 것**(`faultKnown`)은 점검에서 고친다(넣지 않는다). 드러나지 않은 것은 점검에서 절반을 찾는다 — `hashStr(seat + ':' + kitId + ':' + shift) % 2 === 0` 이면 고치고, 아니면 `kitFault` 에 남긴다(난수 흐름을 쓰지 않는다).
 
 **다음 교대에 적용** (`applyCrewCarry`, `createRoster` 가 모든 난수를 뽑고 대원·부대를 만든 **뒤**):
 
 1. 대원마다 열쇠(`r.seat ?? r.name`)로 항목을 찾는다. 없으면 그대로(새 사람).
-2. 신임 대원 항목(`recruit` 가 있다)이면 그 자리(`seat` 이름의 대원)를 **같은 rid 그대로** 신임 대원으로 바꾼다: `name`, `seat`, 기본 능력 여섯 개, `skills = skillsFor(def, skill)`, `trait = traitOf(r)`. 같은 rid 를 쓰므로 `sim.responders` 의 순서와 현장 개체 흐름(`agent:<사건>:<rid>`)의 이름이 그대로다.
-3. 성장: `experience = min(0.97, 기본 + dExp)`, `skill = clamp(기본 skill + dSkill, 0.3, 0.98)`, `judgment = clamp(기본 + 0.35 × dExp, 0.2, 0.98)`(`createRoster` 의 식에서 경험의 몫), `skills = skillsFor(def, skill)`, `trait = traitOf(r)`. `createRoster` 의 분야별 숙련 식(`resources.ts:80-84`)을 함수 `skillsFor(kind, dept, skill)` 로 꺼낸다(결과 그대로 — 0단계 해시 목록으로 확인).
-4. `out > 0` 또는 `out === −1` 이면 `status = 'off'`, `carryOut = out`, `carryCause = cause`, `stamina = tn.startStamina`(배정의 평균 지구력 감점이 결장자 때문에 두 번 깎이지 않게 — `dispatcher.ts:75` 는 고치지 않는다). 아니면 `health = 항목의 health`.
-5. **결장 상한**(§6): 편성된 대원 가운데 `off`(공석 제외)가 `ABSENT_CAP` 을 넘으면, 남은 결장이 짧은 사람부터(같으면 이름 순) 넘는 만큼 `status 'ok'`, `health EARLY_BACK_HEALTH 70` 으로 되돌린다('조기 복귀', `stats.early++`).
-6. **예비 인력**: 부대 순서(`sim.units`)대로, 정비 중이 아니고 `crewReady(u) < need`(R1 의 `minCrew(u.kind)`, R1 없이 1)인 부대에 `RELIEF_MAX`(4명) 안에서 예비 인력을 한 명씩 붙인다: `sim.rng.fork('relief:' + u.callsign)` 에서 `createAidUnit` 의 식(경험 0.15~0.4)으로, 이름은 `RELIEF_NAMES`(가상의 이름 8개) 차례로, `relief: true`, `sim.responders` 와 `u.crew` 끝에 넣는다(지원 부대처럼 — 기존 rid 는 그대로). 채우지 못하면 `u.state = 'oos'`, `u.oosWhy = '결원'`(이번 교대 내내).
+2. 신임 대원 항목(`recruit` 가 있다)이면 그 자리(`seat` 이름의 대원)를 **같은 rid 그대로** 신임 대원으로 바꾼다: `name`, `seat`, 기본 능력 여섯 개, `skills`(R1 의 역할 식 — 아래), `trait = traitOf(r)`. **`role`·`kit` 은 그 자리의 것을 그대로 받는다**(R1 이 자리에 맞춰 채운 값 — `kit` 은 기본 장비 사본이고 고장 추첨도 이미 끝나 있다. 앞 사람의 `kitFault` 는 넘기지 않는다). 같은 rid 를 쓰므로 `sim.responders` 의 순서와 현장 개체 흐름(`agent:<사건>:<rid>`)의 이름이 그대로다.
+3. 성장: `experience = min(0.97, 기본 + dExp)`, `skill = clamp(기본 skill + dSkill, 0.3, 0.98)`, `judgment = clamp(기본 + 0.35 × dExp, 0.2, 0.98)`(`createRoster` 의 식에서 경험의 몫), `skills` = R1 의 역할 식(`ROLES[r.role]` 의 skills 식에 새 `skill` 을 넣은 값), `trait = traitOf(r)`. **R1 뒤에는 `skills` 를 역할로 정한다**(R1 §2·§5 — `resources.ts:80-84` 의 부대 종류·부서 식은 R1 을 합치면 없어진다). R1 이 그 식을 함수로 export 했으면(예: `skillsOf(role, skill)`) 그 이름을 쓰고, 없으면 `crews.ts` 에 `ROLES` 의 식을 감싸는 함수 하나를 export 한다(표는 만지지 않는다 — 결과 그대로). R1 이 아직 없으면(대체) `resources.ts:80-84` 를 `skillsFor(kind, dept, skill)` 로 꺼낸다.
+4. `out > 0` 또는 `out === −1` 이면 `status = 'off'`, `carryOut = out`, `carryCause = cause`, **`stamina = 100`**. 지구력은 `ok` 인 사람만 회복하는데(`resources.ts:326`), 배정의 평균 지구력(`dispatcher.ts:75-76`, R1 뒤에는 `fieldCrew` 기준 — 결장자도 자리가 있으므로 들어간다)은 결장자를 뺄 수 없다(`dispatch/*` 는 고치지 않는다). 장비 손잡이 1·2 의 `startStamina`(65·82, `difficulty.ts:104`)로 두면 결장자가 교대 내내 감점을 남긴다. 100 으로 두면, 다른 대원이 서에서 1분 남짓이면 100 으로 차므로 교대 첫머리에만 평균을 조금 올린다(알려진 한계 — §11.1). 아니면 `health = 항목의 health`.
+5. **결장 상한**(§6): 편성된 대원 가운데 `off`(공석 제외)가 `ABSENT_CAP` 을 넘으면, 남은 결장이 짧은 사람부터(같으면 이름 순) 넘는 만큼 `status 'ok'`, `health EARLY_BACK_HEALTH 70` 으로 되돌린다('조기 복귀', `stats.early++`, `applied` 에 `early`).
+6. **예비 인력** — 결원은 R1 의 `crewReady` 와 **같은 단위**로 센다. R1 의 `crewReady` 는 내리는 자리(`fieldCrew`)만 센다(R1 §5). 그래서 기준도 내리는 자리로 잡는다:
+   - `need(u)` = `minField(u.kind)` = 최소 편성(`STAFF[kind].std` 에서 `minDrop` 자리를 뺀 것) 가운데 `stays` 가 아닌 역할의 수. 최소 편성의 모든 자리가 `stays` 면(경찰 헬기 — R1 의 `fieldCrew` 가 그때 전원을 돌려주는 것과 같은 규칙) 최소 편성의 자리 수. R1 이 `minField` 를 export 하지 않으면 `persist.ts` 가 `STAFF`·`ROLES` 로 계산한다(`crews.ts` 는 `resources.ts` 를 import 하지 않으므로 순환이 없다 — §3.4 끝). R1 없이 1.
+   - 보기(R1 표): 진압 펌프차 3(내리는 자리뿐), 소방 헬기 2(항공 구조대원 둘 — 기장은 내리지 않는다), 구조정 2, 의료 헬기 2, 경찰 헬기 2(전원 내리지 않음 → 최소 편성 전원).
+   - **내리지 않는 자리의 운용**: 내리는 자리와 내리지 않는 자리가 섞인 부대(소방·의료 헬기, 구조정)는, `stays` 역할 가운데 `status !== 'off'` 인 사람이 최소 편성의 `stays` 자리 수보다 적으면 운용하지 못한다(헬기가 조종사 없이 뜨지 않게 — 그 사람은 `crewReady` 에 세지 않으므로 따로 본다).
+   - 부대 순서(`sim.units`)대로, 정비 중이 아니고 ⓐ `crewReady(sim, u) < need(u)` 이거나 ⓑ 내리지 않는 자리가 모자란 부대에 `RELIEF_MAX`(4명) 안에서 예비 인력을 한 명씩 붙인다. 붙이는 자리는 `off` 인 자리 가운데 모자란 쪽(ⓑ 가 먼저 — 조종사)의 자리 순서로 첫 번째 것이다. 예비 인력은 그 자리의 `role` 을 받고, 기본 `kit`(R1 `ROLES[role]` 의 기본 장비를 `{ id }` 로 복사. 섬광탄 `uses 0`, 테이저 `uses 2` — R1 §5 의 규칙)과 역할 식의 `skills`, `senior: false`, `dept = u.dept` 를 받는다. 능력치는 `sim.rng.fork('relief:' + u.callsign)` 에서 `createAidUnit` 의 후임 식(경험 0.15~0.55 — R1 §5 의 지원 부대 "그 밖의 자리" 범위), 이름은 `RELIEF_NAMES`(가상의 이름 8개) 차례로, `relief: true`. `sim.responders` 와 `u.crew` 끝에 넣는다(지원 부대처럼 — 기존 rid 는 그대로). 자리 번호는 없다 — R1 의 `stays`·`fieldCrew` 는 역할로 보므로 그대로 맞다. 채우지 못하면 `u.state = 'oos'`, `u.oosWhy = '결원'`(이번 교대 내내, `applied` 에 `short`).
+   - **결장이 없으면 아무 일도 없다**: 헬기·구조정의 표준 편성에서 아무도 `off` 가 아니면 ⓐ(`crewReady` 2 ≥ 2)도 ⓑ도 거짓이다(테스트 8).
 7. (R1 뒤) `kitFault` 의 장비는 R1 의 `kit` 고장 추첨(`kit` 흐름 — 그대로 다 뽑는다) **뒤에** `fault = true` 로 더한다.
 
-**`status 'off'` 가 지나가는 곳** — 이미 `status === 'ok'` 를 보는 곳은 저절로 뺀다: `crewReady`(`resources.ts:166`), `unitArrived` 의 내리는 사람(`sceneManager.ts:61`), 지구력 회복(`resources.ts:326`). 고쳐야 하는 곳은 셋뿐이다:
+**`status 'off'` 가 지나가는 곳** — 이미 `status === 'ok'` 를 보는 곳은 저절로 뺀다: `crewReady`(`resources.ts:166`), `unitArrived` 의 내리는 사람(`sceneManager.ts:61`), 지구력 회복(`resources.ts:326`). 고쳐야 하는 곳:
 - `debrief.buildReport` 의 `respondersHurt`(`debrief.ts:185`): `status !== 'ok' && status !== 'off'`.
-- `resources.dispatchUnit` 의 출동 준비 시간(`resources.ts:236`)이 `u.crew[0]` 의 경험을 본다 → `u.crew.find((rid) => sim.responders[rid].status !== 'off') ?? u.crew[0]`. 이어받은 상태가 없으면 `off` 가 없으므로 결과가 같다(`injured` 를 거르지 않는 것은 일부러다 — 지금 결과를 지킨다).
+- `resources.dispatchUnit` 의 출동 준비 시간(`resources.ts:236`)이 `u.crew[0]` 의 경험을 본다 → R1 뒤 `fieldCrew(sim, u).find((rid) => sim.responders[rid].status !== 'off') ?? u.crew[0]`(R1 없이는 `u.crew.find(…)`). 이어받은 상태가 없으면 `off` 가 없으므로 결과가 같다(`injured` 를 거르지 않는 것은 일부러다 — 지금 결과를 지킨다).
+- `resources.arrive` 의 복귀 기록(`resources.ts:313-315`): `crewReady === 0` 이라 `oos` 가 될 때 부대에 `off` 대원이 있으면 문구를 `${호출부호} 결원으로 운용 중단.` 으로, `u.oosWhy = '결원'`. `off` 가 없으면 지금 문구 그대로(이어받은 상태가 없으면 결과·기록 불변).
 - H1 의 명부 출력(`ShiftReport.roster`)에서 `off` 인 대원의 `out` 은 `crewNext` 의 값.
+- 구현을 시작할 때 `grep -n "\.status" src/sim src/ui` 로 `Responder.status` 를 보는 곳을 모두 다시 확인한다(§11.1 의 2).
 
-결원 부대는 지금 규칙 그대로 배정에서 −18(`crewReady < crew.length`, `dispatcher.ts:78`), 모두 `off` 면 `crewReady` 0 이라 배정에서 빠진다(`dispatcher.ts:60`) — 관제 코드는 고치지 않는다. 결원은 조직이 아는 사실이라 정보 격리에도 맞다.
+결원 부대는 지금 규칙 그대로 배정에서 −18(`crewReady < crew.length`, R1 뒤 `crewReady < fieldCrew.length` — `dispatcher.ts:78`, R1 §6), 모두 `off` 면 `crewReady` 0 이라 배정에서 빠진다(`dispatcher.ts:60`) — 관제 코드는 고치지 않는다. 결원은 조직이 아는 사실이라 정보 격리에도 맞다.
 
 ### 3.3 장비
 
 | 무엇 | 끝 상태 → 다음 교대 (휴식 한 번) | 적용 |
 |---|---|---|
-| 펌프 (`pumpCond`) | 이번 교대에 펌프가 고장 난 적이 있으면 `service = { readyAt: carry 흐름 range(300, 720), why: 'pump' }`, `pump = 0.7`(정밀 정비). 아니면 `pump = min(1, 끝 값 + PUMP_REST 0.12)`(점검). 고장 여부는 끝의 `pumpFailed` 로 알 수 없다 — 서로 돌아오면 0.55, 현장 보급이면 0.62 로 고친 채 `false` 가 된다(`resources.ts:312`, `executor.ts` `case 'resupply'`). 그래서 기록에서 센다: `problem === 'EQUIP_FAIL'` 이고 `text` 가 `${u.callsign} 펌프` 로 시작하는 기록(지금 `executor.ts:254` 하나뿐 — R1 이 고장 문구를 바꾸면 따라 고친다). 끝에 `pumpFailed` 인 채면(돌아오지 못하고 끝남) 그것도 고장으로 친다 | `createRoster` 가 `equipment` 흐름에서 지금처럼 뽑은 **뒤에** `u.pumpCond = clamp(pump, tn.pumpMin, tn.pumpMax)` — 장비 손잡이는 범위를, 이어받은 상태는 그 안의 위치를 정한다. 항목이 없으면 뽑은 값 그대로 |
-| 정비 (`service`) | 정비 중인 채로 끝난 부대(교대 내내 편성되지 않아 정비하지 못한 경우 포함)는 휴식에서 정비를 마친다(넣지 않는다) | `u.state = 'oos'`, `u.readyAt`, `u.oosWhy = '정비 중'`. 한꺼번에 `SERVICE_CAP`(2대)까지 — 넘는 것은 `readyAt` 이 이른 순으로 남기고 나머지는 '급히 정비 완료'(`pump 0.6`, 바로 운용). `tickCarry` 가 `readyAt` 에 운용으로 돌린다(§3.7) |
-| 섬광탄 (`stock.flashbang`) | `창고 = min(STOCK_CAP 10, 교대 시작 때 지급하고 남은 창고 + 부대에 남은 섬광탄 + RESUPPLY 3)` | 기동·특공 부대에 편성표 순서대로 정수(기동 `tn.flashbangs`, 특공 `+2`)만큼 창고에서 지급한다. 창고가 모자라면 있는 만큼, 단 정수가 1 이상인 부대는 적어도 1개(비상 지급 — 창고에서 빼지 않는다). 모자란 수는 `stats.fbShort`. 이어받은 상태가 없으면 지금처럼 정수 그대로 |
+| 펌프 (`pumpCond`) | 이번 교대에 펌프가 고장 난 적이 있으면 `service = { readyAt: carry 흐름 range(300, 720), why: 'pump' }`, `pump = 0.7`(정밀 정비). 아니면 `pump = min(1, 끝 값 + PUMP_REST 0.12)`(점검). 고장 여부는 끝의 `pumpFailed` 로 알 수 없다 — 서로 돌아오면 0.55, 현장 보급이면 0.62 로 고친 채 `false` 가 된다(`resources.ts:312`, `executor.ts` `case 'resupply'`). 기록 문구로 세면 R1 이 문구를 바꿀 때 조용히 깨진다. 그래서 **부대의 고장 횟수 칸 `u.pumpFails`** 로 센다: 펌프 고장을 세우는 자리(지금 `executor.ts:252-254` 의 `u.pumpFailed = true` 줄 — R1 이 옮기면 그 자리)에 `u.pumpFails = (u.pumpFails ?? 0) + 1` 한 줄. 결과에 쓰지 않으므로 해시가 같다. `pumpFails > 0` 이거나 끝에 `pumpFailed` 인 채면(돌아오지 못하고 끝남) 고장으로 친다 | `createRoster` 가 `equipment` 흐름에서 지금처럼 뽑은 **뒤에** `u.pumpCond = clamp(pump, tn.pumpMin, tn.pumpMax)` — 장비 손잡이는 범위를, 이어받은 상태는 그 안의 위치를 정한다. 항목이 없으면 뽑은 값 그대로 |
+| 정비 (`service`) | 정비 중인 채로 끝난 부대(교대 내내 편성되지 않아 정비하지 못한 경우 포함)는 휴식에서 정비를 마친다(넣지 않는다) | `u.state = 'oos'`, `u.readyAt = min(readyAt, shiftLen × 0.75)`(짧은 교대 — §3.5 끝), `u.oosWhy = '정비 중'`. 한꺼번에 `SERVICE_CAP`(2대)까지 — 넘는 것은 `readyAt` 이 이른 순으로 남기고 나머지는 '급히 정비 완료'(`pump 0.6`, 바로 운용, `applied` 에 `rushed`). `tickCarry` 가 `readyAt` 에 운용으로 돌린다(§3.7) |
+| 섬광탄 (`stock.flashbang`) | `창고 = min(STOCK_CAP 10, 교대 시작 때 지급하고 남은 창고 + 부대에 남은 섬광탄 + RESUPPLY 3)` | 기동·특공 부대에 편성표 순서(`sim.units`)대로 정수(기동 `tn.flashbangs`, 특공 `+2`)만큼 창고에서 지급한다. 창고가 모자라면 있는 만큼, 단 정수가 1 이상인 부대는 적어도 1개(비상 지급 — 창고에서 빼지 않는다). 모자란 수는 `stats.fbShort`. 이어받은 상태가 없으면 지금처럼 정수 그대로. 보기: 보통(기동1 정수 2, 특공1 정수 4 — 기동2 는 규모 4부터)에서 창고 1 이면 편성표 순서상 먼저인 기동1 이 창고에서 1개를 받고(창고 0), 특공1 은 비상 지급 1개를 받는다. `fbShort` = 1 + 3 = 4 |
 | 물·공기·헬기 연료·공구·처치 장비·방호 | 이어받지 않는다(서에서 채운다 / 손잡이 값) | — |
 | (R1 뒤) 개인 장비 고장 | §3.2 의 `kitFault` | §3.2 의 7 |
 | 차량 손상 | 지금도 X6 초안에도 없다. 나중에 차량이 다치는 모델이 생기면 `service = { readyAt: …, why: 'vehicle' }` 로 받는다 | 펌프 정비와 같다 |
@@ -319,17 +350,20 @@ constructor(seed, difficulty = NORMAL, shiftLen = 1200, extra: { force?: string 
   this.gen = initGenerator(this.rngGen);
   this.gen.majorAt = …;                                      // 그대로
   this.disaster = initDisaster(this);
-  emit(this, { … '교대 시작. …' });                          // 문구 그대로
+  this.world = initWorld(this);                              // (I1-b) I1-b 가 둔 자리 그대로. I2 는 옮기지 않고 carry 를 넘기지 않는다
+  emit(this, { … '교대 시작. … 가용 부대 …' });              // 이어받은 상태가 없으면 문구 그대로 (있을 때만 아래처럼)
+  // (R1) 안개·야간 헬기 운항 기록 — R1 이 '교대 시작' 바로 뒤에 둔 줄 그대로
   announceCarry(this);                                       // ③ 이어받은 상태의 기록 — carry 가 있을 때만
 }
-step(): … tickTraffic(this); tickCarry(this); tickDisaster(this); …   // tickCarry 는 할 일이 없으면 첫 줄에서 돌아간다
+step(): … tickTraffic(this); tickCarry(this); tickDisaster(this); (I1-b) tickWorld(this); …   // tickCarry 는 할 일이 없으면 첫 줄에서 돌아간다
 ```
 
 - **①이 `initTraffic` 앞인 이유**: 불법 주차를 놓을 때 큰 차의 우회로를 실제 상태로 본다(`traffic.ts:98-140` 의 `linked`·`heavyPath` 는 이유와 상관없이 `e.closed` 를 막힌 것으로 본다). 복구 통제가 먼저 있어야 그것을 피해 놓는다. 처음 혼잡(`cong`)은 기준값으로만 정하므로(`traffic.ts:302`) 영향이 없고, 밀림(`queue`)은 첫 주기부터 통제를 본다.
-- **②가 `createRoster` 뒤인 이유**: `roster-v1`(고정)·`equipment`(교대) 흐름의 뽑기 횟수를 그대로 두고 값만 바꾼다. 예비 인력은 맨 끝에 붙으므로 기존 rid 가 그대로다.
-- **③이 '교대 시작' 기록 뒤인 이유**: 첫 기록은 언제나 '교대 시작'이고, 그 문구는 그대로다(부대 수·대원 수에는 결장·예비가 들어간 수가 그대로 찍힌다 — 다음 줄이 내역을 말한다).
-- `initGenerator`·`majorAt`·`initDisaster` 는 이어받은 상태를 읽지 않는다. 재난 무작위 추첨도 그대로.
-- `persist.ts` 는 맨 위에서 다른 모듈의 표(상수)를 읽지 않는다. `resources.ts` 의 함수(`crewReady`·`skillsFor`·`traitOf`)는 부를 때만 쓴다 — `resources → sceneManager → … → persist → resources` 순환이 생겨도 함수 호출은 괜찮지만, 맨 위의 표 읽기는 초기화 전의 값을 읽는다(CLAUDE.md 의 시나리오·추격전 함정과 같은 꼴). 섬광탄 정수는 `u.kind` 와 `tn.flashbangs` 로 계산한다(표를 import 하지 않는다).
+- **②가 `createRoster` 뒤인 이유**: `roster-v1`·`roster-v2:*`(고정)·`equipment`·`kit`(교대) 흐름의 뽑기 횟수를 그대로 두고 값만 바꾼다. 예비 인력은 맨 끝에 붙으므로 기존 rid 가 그대로다.
+- **③이 '교대 시작' 기록 뒤인 이유**: 첫 기록은 언제나 '교대 시작'이다. ①·② 는 그보다 먼저 상태를 바꾸므로, 바꾼 항목을 `carryState.applied` 에 모아 두었다가 ③ 이 기록한다(원칙 5). R1 의 헬기 운항 줄이 있으면 그 뒤에 둔다(교대 시작의 공지가 먼저, 지난 교대의 내역이 다음).
+- **'교대 시작' 문구** (`engine.ts:84`): 지금은 `가용 부대 ${units.length}대, 대원 ${responders.length}명` 이다. 이어받은 상태가 있으면 정비·결원으로 `oos` 인 부대와 `off` 인 대원이 '가용'으로 세어져 기록이 상태와 어긋난다. 그래서 **이어받은 상태가 있을 때만**(그때는 요약 줄의 지문 때문에 해시가 어차피 바뀐다) `가용 부대 ${a}대(정비·결원 ${b}대 제외), 대원 ${c}명(결장 ${d}명 제외)` 로 쓴다 — `a` = `oos` 가 아닌 부대, `b` = `oos` 인 부대, `c` = `status !== 'off'` 인 대원(예비 인력 포함), `d` = `off` 인 대원. 괄호 속 수가 0 이면 그 괄호를 뺀다. 문구는 `persist.ts` 의 `shiftStartCounts(sim)` 이 만들고 `engine.ts` 는 `this.carryState.on ? shiftStartCounts(this) : 지금 문구` 로 고른다. **이어받은 상태가 없을 때의 문구는 한 글자도 바꾸지 않는다.**
+- `initGenerator`·`majorAt`·`initDisaster`·`initWorld` 는 이어받은 상태를 읽지 않는다. 재난 무작위 추첨도 그대로.
+- `persist.ts` 는 맨 위에서 다른 모듈의 표(상수)를 읽지 않는다. `resources.ts` 의 함수(`crewReady`·`traitOf`·`rosterKeys`)는 부를 때만 쓴다 — `resources → sceneManager → … → persist → resources` 순환이 생겨도 함수 호출은 괜찮지만, 맨 위의 표 읽기는 초기화 전의 값을 읽는다(CLAUDE.md 의 시나리오·추격전 함정과 같은 꼴). 섬광탄 정수는 `u.kind` 와 `tn.flashbangs` 로 계산한다(표를 import 하지 않는다). R1 의 `crews.ts`(`STAFF`·`ROLES`·`stays`·`fieldCrew`)는 import 해도 된다 — `crews.ts` 는 `types`·`util`·`events` 만 import 하므로(R1 §11) 순환이 생기지 않는다.
 
 ### 3.5 도로
 
@@ -338,27 +372,33 @@ step(): … tickTraffic(this); tickCarry(this); tickDisaster(this); …   // tic
 | 원천 | 조건 | `why` | `lane` | `left` | `openAt` |
 |---|---|---|---|---|---|
 | 앞에서 이어받은 것 | `left === 2` | 그대로 | 그대로 | 1 | carry 흐름 range(120, 600) |
-| 재난이 교대 끝까지 막고 있던 구간 (`d.leftover`, 아래) | 지진 균열(`timed` 에 남은 것) | `crack` | 전면 | 1 | `clamp(남은 초, 120, 600)` |
-| 〃 | 해일이 덮친 해안 구간 | `washout` | 전면 | 1 | range(240, 600) |
-| 〃 | 홍수로 잠긴 구간 | `flood` | 전면 | 1 | range(120, 300) |
-| 〃 | 산불이 번진 구간 | `fire` | 전면 | 1 | range(120, 300) |
-| 〃 | 태풍 | — | — | — | (지금 태풍은 도로를 닫지 않는다 — 생기면 `debris`) |
+| 그 교대에 재난이 통제했던 구간 (`d.damaged`, 아래) | 지진 — 통제한 순서로 앞의 `DIS_FULL`(2)구간 | `crack` | 전면 | 1 | range(240, 600) |
+| 〃 | 지진 — 나머지 | `crack` | 한 차로 | 1 | range(300, 900) |
+| 〃 | 해일 — 앞의 `DIS_FULL` 구간 | `washout` | 전면 | 1 | range(240, 600) |
+| 〃 | 해일 — 나머지 | `washout` | 한 차로 | 1 | range(300, 900) |
+| 〃 | 홍수로 잠겼던 구간 | `flood` | 한 차로(진흙·쓰레기 치우기) | 1 | range(120, 420) |
+| 〃 | 산불이 번졌던 구간 | `fire` | 한 차로(불탄 가로수·방음벽 정리) | 1 | range(120, 420) |
+| 〃 | 태풍 | — | — | — | (지금 태풍은 도로를 닫지 않는다 — 생기면 `debris` 한 차로) |
 | 산사태 흙더미 (`variant 'landslide'`) | 사건이 `resolved` 가 아닌 이유로 닫힘(흙더미를 다 치우지 못함) | `mud` | 전면 | 1 | range(300, 600) |
 | 쓰러진 나무 (`variant 'tree'`) | 〃 | `tree` | 전면 | 1 | range(60, 240) |
 | 다중 추돌 (`variant 'pileup'`) | 끝난 이유와 상관없이 — 노면·방호벽 보수 | `surface` | 한 차로 | 1 | range(300, 900) |
-| 무너진 건물의 잔해가 길을 덮음 | X6 초안에는 없다(무너짐은 현장 안의 일). 나중에 생기면 이 줄로 받는다 | `debris` | 전면 | 2 | — |
+| 무너진 건물의 잔해 (가) X6 전체 붕괴 | `sim.placeMarks.get(I.truth.placeId)?.state === 'collapsed'` 이고 `I.blockedEdge ≥ 0`(X6 §4.2 가 막았던 사건 교차로 구간 — `closeIncident` 가 연 뒤에도 `I.blockedEdge` 는 남는다) | `debris` | 전면 | 2(다음 교대 내내) | — |
+| 〃 (나) 교대 끝에 남은 잔해 장애물 | I1-b C2 의 `traffic.obstacles` 가운데 `kind 'rubble'` 이 교대 끝까지 남은 것 | `debris` | 장애물이 `full` 이면 전면, 아니면 한 차로 | 1 | range(300, 900) |
 
 - 사건의 구간은 `I.blockedEdge` 로 찾는다 — `closeIncident` 는 통제를 풀어도 `I.blockedEdge` 를 지우지 않는다(`incidents.ts:211-215`). 끝난 이유는 `I.closeReason`.
-- **재난의 남은 통제 기록**: `disaster.ts` `finish(sim, d, cut)` 의 맨 앞, `cut` 일 때만 `d.leftover = d.closedEdges.map((id) => ({ edge: id, why: …, remain: (d.timed.find((q) => q.edge === id)?.until ?? sim.t) − sim.t }))` 한 줄(`DisasterState` 에 선택 칸 `leftover?`). 기록만 한다 — 난수·`emit` 없음, 결과 불변. `why` 는 `d.kind`(quake → crack, tsunami → washout, flood → flood, wildfire → fire).
-- 같은 구간이 둘이면 `left`·전면 쪽이 큰 것을 남긴다. 상한 `ROAD_CAP`(6구간) — 넘으면 `openAt` 이 이른 것부터 남긴다.
+- **재난이 통제한 구간의 기록 `d.damaged`**: 1200초 교대에서는 재난이 교대 끝 전에 스스로 끝나므로(§0 N6 줄) "교대 끝에 남은 통제"는 늘 비어 있다. 그래서 통제가 언제 풀렸는지와 상관없이 **그 교대에 통제한 적이 있는 구간**을 넘긴다. `disaster.ts` `closeEdge` 가 통제에 성공한 자리(`d.closedEdges.push` 줄)에 `if (d.damaged.indexOf(e.id) < 0) d.damaged.push(e.id)` 한 줄, `DisasterState` 에 `damaged: number[]`(`plan` 의 객체 글자에 `damaged: []` — 같은 구간이 다시 잠겨도 한 번만, 통제한 순서). 기록만 한다 — 난수·`emit` 없음, 결과 불변. 재난 종류는 `d.kind` 로 정한다(quake → crack, tsunami → washout, flood → flood, wildfire → fire). 지진의 "앞의 2구간"은 먼저 갈라진 곳(진원에 가까운 곳)이다. 처음 안의 `d.leftover`(`finish(…, cut)` 에서 교대 끝에 남은 통제만 기록)는 버렸다 — 1200초에서는 늘 비어 있다.
+- **(가)와 (나)가 같은 구간**이면 (가). 다른 줄과 같은 구간이 겹치면 `left` 가 큰 것, 같으면 전면, 같으면 `openAt` 이 늦은 것을 남긴다.
+- 상한 `ROAD_CAP`(6구간) — 넘으면 `left` 가 큰 것, 전면, `openAt` 이 이른 것 순으로 남긴다(재난 뒤 수십 구간이 모두 공사가 되지 않게).
+- **짧은 교대**: 테스트에는 `shiftLen` 420·500 인 교대가 있다. 적용할 때 `openAt` 과 정비의 `readyAt` 은 `min(값, shiftLen × 0.75)` 로 자른다(저장된 상태는 1200초 기준 그대로 — 자르는 것은 적용 단계만). 그래서 `left 1` 인 공사는 어떤 길이의 교대에서도 그 교대 안에 끝난다.
 
 **다음 교대에 적용** (`initCarry` 의 도로 부분, `initTraffic` 앞):
 
 1. `openAt` 순으로(같으면 구간 id 순) 하나씩:
    - 전면 통제: **실제 상태에서** 큰 차가 그 구간 없이 양 끝을 오갈 수 있을 때만(`persist.ts` 의 `linkedHeavy(sim, a, b, skip)` — 그 구간과 이미 닫힌 구간을 빼고 너비 우선. T1 의 `linked` 와 같은 뜻이고 불법 주차는 아직 없다) `e.closed = true; e.closedReason = 'repair'`(`known` 은 두지 않는다 — 알려진 통제). 끊기면 놓지 않고 `dropped` 에 '…: 통제하면 길이 끊겨 복구 공사를 미룹니다.' 그 항목은 이번 교대에는 없는 것으로 보고, 끝날 때 만들어지는 상태에도 넣지 않는다(공사를 미루다 끝냈다고 본다 — 끊긴 채 남는 길이 없다).
    - 한 차로: `e.slow += LANE_SLOW 0.6`, `slowed` 에 적는다.
-2. `left === 1` 인 것은 `carryState.roads` 에 둔다(`tickCarry` 가 `openAt` 에 연다).
-3. **출입 통제 건물 앞**: `closed`·`ruin` 인 건물의 `edgeId` 가 있으면 그 구간에 `slow += 0.4`('복구 공사 차량') — 교대 내내. 같은 구간에 여럿이면 한 번만.
+   - 놓은 것마다 `applied` 에 `road` 항목(`openAt` 은 짧은 교대면 자른 값 — §3.5 위).
+2. `left === 1` 인 것은 `carryState.roads` 에 둔다(`openAt` 순 — `tickCarry` 가 `openAt` 에 연다). 전면·한 차로 모두 넣는다.
+3. **출입 통제 건물 앞**: `closed`·`ruin` 인 건물의 `edgeId` 가 있으면 그 구간에 `slow += 0.4`('복구 공사 차량') — 교대 내내. 같은 구간에 여럿이면 한 번만. 열린 터(`q.open`)는 `closed`·`ruin` 이 되지 않으므로(§3.6) 해당이 없다.
 
 이렇게 놓은 통제는 모두 "알려진 통제"라 `findRoute`·`etaFor`·관제가 처음부터 피하고, 사건의 통제(`incidents.ts:137-141`, `sceneManager.ts:220-222`, 대형·재난 시나리오의 `onCreate`)·재난의 통제(`closeEdge` 의 `detour`)·교통의 장애물(`place` 의 `linked`)은 모두 이미 닫힌 구간을 막힌 것으로 보고 우회로를 확인한다 — 새로 끊기는 길이 생기지 않는다(T1 구현 메모의 "사건의 통제끼리만 겹쳐 생기는 끊김"은 지금처럼 남는다).
 
@@ -376,17 +416,20 @@ step(): … tickTraffic(this); tickCarry(this); tickDisaster(this); …   // tic
 | 화재 (`s.kind === 'fire'`) | 소실률 `loss = s.burnedTiles / max(1, s.totalFuelTiles)`(판정의 `propertyLoss` 와 같은 식, `debrief.ts:39`) ≥ 0.6 | closed | `0.4 + 0.5 × loss` | `min(1, loss × 1.5)` | 3 | fire |
 | 〃 | 0.25 ≤ loss < 0.6 | closed | `0.5 × loss` | `loss × 1.5` | 1 | fire |
 | 〃 | 0.05 ≤ loss < 0.25 | marked | `0.5 × loss` | `loss × 2` | 0 | fire |
-| 붕괴 (`s.kind === 'collapse'`, 승강기 갇힘 제외) | 2차 붕괴가 있었다(`I.problems` 에 `ESCALATION`) 또는 `frac ≥ 0.22` | ruin | 1 | 0 | 4 | collapse |
+| 붕괴 (`s.kind === 'collapse'`, 승강기 갇힘 제외) | 2차 붕괴가 있었다(`I.problems` 에 `p.code === 'ESCALATION' && p.detail.endsWith('2차 붕괴')` — `hazards.ts:620` 의 detail `${where} 2차 붕괴`) 또는 `frac ≥ 0.22` | ruin | 1 | 0 | 4 | collapse |
 | 〃 | 그 밖에 잔해 칸이 있다 | closed | `min(1, frac × 2)` | 0 | 2 | collapse |
+| 천장 일부 붕괴 (X6 전 — 어느 유형이든) | `p.code === 'ESCALATION' && p.detail.endsWith('천장 일부 붕괴')`(`hazards.ts:96`, 화재 현장) — 구획 붕괴로 본다. X6 는 이 덩어리를 지우고 `STRUCT_COLLAPSE`·`partial` 로 바꾼다 | closed | 0.3 | `loss × 1.5`(화재가 아니면 0) | 2 | collapse |
 | 폭발 | 터진 가스 용기·폭발물(`p.exploded`) 또는 불붙은 배관(`kind 'valve' && p.ignited`) | closed | 0.35 | 0.3 | 1 | blast |
 | 가스 폭발 대형 사고 (`variant 'gasblast'`) | 언제나 | closed | 0.6 | 0.4 | 3 | blast |
 | 그 밖의 불붙은 소품 (`ignited` — 판정이 재산 피해 0.4 로 세는 것) | | marked | 0.2 | 0.4 | 0 | fire |
 
-- `frac` = `s.damage` 가 1 인 칸 수 / 건물 칸 수(`FLOOR·FURN·DOOR·STAIR·WALL·WINDOW`). G4 §5.3 의 `ruinInfo.frac` 와 같은 식, 0.22 도 G4 의 `'major'` 기준과 같다. G4 의 기록(`s.ruin`·`s.falls`)은 "시뮬레이션이 읽지 않는다"는 G4 의 원칙 때문에 읽지 않는다 — 2차 붕괴는 `ESCALATION` 문제로 안다.
+- `frac` = `s.damage` 가 1 인 칸 수 / 건물 칸 수(`FLOOR·FURN·DOOR·STAIR·WALL·WINDOW`). G4 §5.3 의 `ruinInfo.frac` 와 같은 식, 0.22 도 G4 의 `'major'` 기준과 같다. G4 의 기록(`s.ruin`·`s.falls`)은 "시뮬레이션이 읽지 않는다"는 G4 의 원칙 때문에 읽지 않는다 — 2차 붕괴는 문제 기록으로 안다.
+- **`ESCALATION` 을 통째로 세지 않는다.** 붕괴 유형 현장의 `ESCALATION` 은 2차 붕괴만이 아니다. 가스 폭발 대형 사고의 주변 시민 가스 노출(`hazards.ts:654` — 그 현장에는 새는 밸브가 있다, `scenes/major.ts:51`)도 같은 코드다. 그래서 detail 의 끝말로 가른다. X6 뒤에는 위의 X6 다섯 줄(`placeMarks`)이 먼저이므로 이 줄들은 X6 가 표시하지 않은 건물에만 쓰인다.
 - `spot` = 잔해 칸 무게중심의 건물 칸 경계 상자 안 상대 위치(소수 둘째 자리). 무너진 것만.
-- 한 사건에 여러 행이 맞으면 `state` 가 무거운 것(ruin > closed > marked), `dmg`·`soot`·`repair` 는 각각 큰 값.
+- **한 사건에 여러 행이 맞으면**(X6 의 줄과 아래 줄이 함께 맞는 경우를 포함해) `state` 가 무거운 것(ruin > closed > marked), `dmg`·`soot`·`repair` 는 각각 큰 값. 보기: X6 의 `scorched`(탄 비율 0.3)와 화재 `closed`(0.25 ≤ loss < 0.6) 줄이 함께 맞으면 `closed`, `repair` 1.
+- **열린 터**(`q.open` — 숲·공원·저수지·활주로·주차장. 산불 시나리오의 장소가 숲이다, `scenarios/disaster.ts:9`)는 `marked` 만 남긴다: `state 'marked'`, `dmg 0`, `soot` 는 위 표의 값, `repair 0`. 출입 통제·무너짐이 되지 않는다(숲에 "복구 공사로 출입 통제"는 어색하고 장소 추첨에서 빠질 까닭도 없다). 지도는 지붕 그을음 대신 탄 자리로 그린다(§5.4).
 - `inc` = `조직 ${shift}번째 교대 · ${I.code} ${scenarioName}`.
-- X6 가 있으면: `placeMarks` 에 있는 건물은 위 다섯 줄로 정하고, 없는 건물(X6 가 표시하지 않은 작은 피해)만 아래 줄들로 본다. 화재의 `closed` 두 줄(소실률 0.25 이상)은 X6 뒤에도 쓴다 — X6 의 `scorched`·`burnt` 사이(0.25~0.7)를 받는다. `PlaceCarry.mark` 에 X6 의 상태를 남겨 지도가 X6·G4 의 그림을 고르게 한다(§5.4).
+- X6 가 있으면: `placeMarks` 에 있는 건물은 위 다섯 줄과 화재의 `closed` 두 줄(소실률 0.25 이상 — X6 의 `scorched`·`burnt` 사이 0.25~0.7 을 받는다)을 함께 보고 "여러 행" 규칙으로 정한다. `placeMarks` 에 없는 건물(X6 가 표시하지 않은 작은 피해)은 아래 줄들로 본다. 화재 소실률 `loss` 는 X6 뒤에도 `s.burnedTiles / max(1, s.totalFuelTiles)`(이어받은 그을음으로 처음부터 탄 칸은 분자·분모 모두에 없다 — `applyPlaceWear`). `PlaceCarry.mark` 에 X6 의 상태를 남겨 지도가 X6·G4 의 그림을 고르게 한다(§5.4).
 - X6 가 없으면(대체): 아래 줄들만.
 
 **휴식 한 번** (앞에서 이어받은 건물과 이번 교대의 새 피해를 합친 뒤):
@@ -396,21 +439,47 @@ step(): … tickTraffic(this); tickCarry(this); tickDisaster(this); …   // tic
 - 이번 교대에 생긴 것은 깎지 않는다("화재 다음 교대에 출입 통제 1교대"가 그 교대 동안 정확히 1이 되게 — `repair` 는 "남은 교대, 이번 교대 포함").
 - 상한(§6): 항목 `PLACE_CAP` 24, 그 가운데 `closed`·`ruin` 은 `CLOSED_CAP` 12.
 
-**다음 교대에 겹쳐 읽기** — `city.places` 는 고치지 않는다. 모든 곳이 `placeCond(sim, id)`(`carryState.places.get(id) ?? null`)와 `placeUsable(sim, id, allowClosed = false)` 를 부른다:
+**다음 교대에 겹쳐 읽기** — `city.places` 는 고치지 않는다. 모든 곳이 `placeCond(sim, id)`(`carryState.places.get(id) ?? null`)와 `placeUsable(sim, id, allowClosed = false)` 를 부른다.
+
+**"쓸 수 있는 건물" 판정은 `placeUsable` 하나다.** 판정이 셋(I2 의 겹침 표, X6 의 `pickPlace` 제외, I1-b 의 `placeState().usable`)으로 갈라지지 않게 이 함수에 모은다:
+
+```ts
+export function placeUsable(sim: Sim, id: number, allowClosed = false): boolean {
+  const m = sim.placeMarks?.get(id);                       // (X6) 교대 안 — 전소·전체 붕괴는 그 교대에 다시 쓰지 않는다 (X6 §7.1 의 규칙)
+  if (m && (m.state === 'collapsed' || m.state === 'burnt')) return false;
+  if (!sim.carryState.on) return true;                     // 이어받은 상태가 없으면 X6 의 검사만 (지금 X6 의 조건과 같다 — 결과 불변)
+  const pc = sim.carryState.places.get(id);
+  if (!pc) return true;
+  return pc.state === 'marked' || (pc.state === 'closed' && allowClosed);
+}
+```
+
+- X6 의 `pickPlace` 제외(`collapsed`·`burnt`)는 이 함수를 한 번 부르는 것으로 바꾼다. 이어받은 상태가 없으면 같은 조건이라 결과가 같다(0단계 해시 목록으로 확인).
+- I1-b 의 `placeState(sim, id)` 는 `usable` 칸을 `placeUsable(sim, id)` 로 채운다. 이어받은 항목을 읽을 때는 `mark = pc.mark ?? null`, `burnFrac = pc.soot`, `ruinFrac = pc.state === 'ruin' ? 1 : 0`. `placeState` 에 칸을 더하지 않는다 — 출입 통제 건물을 허용하는 셋째 단계는 장소 추첨 안의 일이라, 장소 추첨이 `placeUsable(sim, id, true)` 를 직접 부른다.
+- I1-b 의 `knownBuilding(sim, id)` 는 "관제가 아는 건물 상태"로 이어받은 항목도 돌려준다(I1 §3.4·§3.10). **이것은 정보 격리에 맞다** — 이어받은 상태는 조직이 아는 기록이고(원칙 7), 관제가 이어받은 상태를 아는 정해진 길이 이 함수다.
 
 | 곳 | 무엇을 | 고칠 자리 |
 |---|---|---|
 | 사건 장소 고르기 | `weigh` 에서 `!placeUsable(sim, q.id)` 이면 0 — 엄격·느슨 두 단계 모두. 둘 다 고를 곳이 없으면 **셋째 단계**: 느슨한 조건에 `allowClosed = true`(출입 통제 중인 건물은 허용, 무너진 건물은 끝까지 안 된다). 손상된 건물(`marked`)의 가중치: 붕괴 `× (1 + 3 × dmg)`, 가스 누출 `× (1 + dmg)`, 그 밖 그대로 | `incidents.ts` `pickPlace`(49-67) |
-| 정해 준 건물 | `opts.placeId` 가 무너졌거나 출입 통제 중이면 그 건물을 버리고 `pickPlace` 로 고른다(같은 `rng`) — 연쇄 방화의 다음 대상, 은신처 제보, 재난, 시험 모두 이 한 곳으로 막힌다 | `incidents.ts` `createIncident` 의 `place` 줄(103) |
+| 정해 준 건물 | `opts.placeId` 가 `!placeUsable` 이면 그 건물을 버리고 `pickPlace` 로 고른다(같은 `rng`). **마지막 안전장치로만 쓴다** — 건물 이름을 먼저 기록하는 연쇄(은신처)와 장소를 고르는 곳(연쇄 방화·재난)은 아래처럼 고를 때 거른다. 이어받은 상태는 교대 내내 바뀌지 않으므로 고를 때 거르면 이 되돌림에 닿지 않는다. 닿는 것은 시험이 정해 준 건물, 그리고 고른 뒤 사건이 나기 전(수십 초)에 X6 가 그 건물을 전소·붕괴로 만든 드문 경우뿐이다(§11.1) | `incidents.ts` `createIncident` 의 `place` 줄(103) |
 | 재난의 장소 고르기 | `ws` 에서 `!placeUsable` 이면 0 (재난이 무너진 건물을 다시 고르지 않게 — 위의 되돌림보다 먼저, 재난의 가중치로) | `disaster.ts` `pickPlace`(355-362) |
 | 연쇄 방화의 다음 대상 | `pool` 에서 `placeUsable` 인 것만 | `scenarios/crime.ts` `arsonNext`(43-44) |
+| 납치범의 은신처 | `cands` 에서 `placeUsable` 인 것만. 은신처는 고른 뒤 `납치범이 … ${den.name}에 숨어들었습니다` 로 이름을 먼저 기록하고(`pursuit.ts:136`) 그 건물에 인질극을 예약하므로(139), 되돌림에 맡기면 기록과 사건 장소가 어긋난다. 고르는 흐름은 따로 있는 `hideout:<사건>` 이라(`pursuit.ts:37`) 거르기가 다른 흐름의 뽑기를 바꾸지 않는다 | `pursuit.ts` 은신처 후보(37-39) |
 | 현장 생성 | `createScene` 끝에서 `applyPlaceWear(sim, s, I)` — 아래 | `field/sceneManager.ts` `createScene`(23-27) |
 | 사건 발생 기록 | `I.rootEvent` 기록 바로 뒤 `noteWearIncident(sim, I)` — 아래 | `incidents.ts` `createIncident`(150 뒤) |
 | 지도 그림·마우스 정보 | §5.4 | `view/city/carryLayer.ts`, `renderCity.ts` |
 
-`applyPlaceWear(sim, s, I)`: 그 건물의 `placeCond` 가 있으면 `s.wear = { dmg, soot, cause, inc }`. 그을음이 있으면(`soot > 0`) 실내 바닥 칸의 `s.fuel *= 1 − 0.4 × soot`(이미 탄 것은 덜 탄다 — 난수 없음, `totalFuelTiles` 는 그대로). 그 밖의 현장 내용은 바꾸지 않는다 — 평면은 사건마다 다르므로(§1.2) 칸 단위 피해를 옮기지 않고 요약값만 쓴다. 그을음은 그림(`staticLayer` 의 바닥·벽 얼룩, `staticSig` 에 `s.wear?.soot` 를 넣는다)으로 보이고, 손상은 X6 의 구획 건전도 처음 값을 낮춘다(§7).
+`applyPlaceWear(sim, s, I)`: 그 건물의 `placeCond` 가 있으면 `s.wear = { dmg, soot, cause, inc, pre: 0 }`. 그을음은 **"이미 탄 칸"으로** 옮긴다 — 연료를 줄이지 않는다:
 
-`noteWearIncident(sim, I)`: `dmg ≥ 0.1` 또는 `soot ≥ 0.2` 이면 `emit({ inc: I.id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: 1, truth: true, causes: [cs.event], text: \`이 건물은 ${inc}로 ${soot ≥ 0.2 ? '그을리고 ' : ''}손상된 상태였습니다 (구조 손상 ${pct(dmg)}).\` })`, `stats.markedInc.push(I.code)`. 관제는 신고 위치가 맞으면 이 사실을 안다고 본다 — 출동 브리핑(`briefFacts`)에 사실 하나를 더하는 것은 X6·R3 와 함께 정한다(§7).
+- 연료를 줄이면(처음 안의 `s.fuel *= 1 − 0.4 × soot`) 거꾸로 된다. 불은 칸마다 `fuel −= 0.0105·f` 로 깎고, 0 이 되면 `burned` 로 표시하며 `burnedTiles++` 한다(`hazards.ts:33-36`). 번지는 계수는 아래가 0.45 로 막혀 있어 조금만 줄어든다(`hazards.ts:56`). 그래서 연료가 적은 칸일수록 더 빨리 '다 탄 칸'이 된다. 재산 피해(`burnedTiles / totalFuelTiles`, `debrief.ts:39`)와 X6 의 전소 판정(같은 비율 ≥ 0.7, X6 §2.7)이 더 빨리 오르고, "그을린 건물 → 전소 → 출입 통제 5교대 → 다시 그을림"의 교대 간 악순환을 키운다.
+- **대신**: 실내 연료 칸(`s.regions` 가운데 `indoor` 인 구획의 칸이고 `s.fuel > 0` — `field/*` 를 import 하지 않으려고 구획으로 본다) 가운데, 불이 붙은 칸(`s.fire > 0`)과 그 이웃 8칸을 뺀 것에서 `round(PRE_BURN 0.35 × soot × 개수)` 칸을 고른다. 고르는 순서는 `hashStr(I.id + ':' + i)` 의 오름차순이다(난수 흐름을 쓰지 않는다). 고른 칸은 `s.fuel[i] = 0; s.burned[i] = 1`, `s.totalFuelTiles −= 개수`, `s.burnedTiles` 는 그대로, `s.wear.pre = 개수`.
+- 효과: 그 칸은 다시 타지 않고 불이 건너가지 않는다(`tickFire` 는 `fuel ≤ 0` 인 칸으로 번지지 않는다, `hazards.ts:55`). 그래서 "이미 탄 것은 덜 탄다"가 의도대로다. 재산 피해 비율은 분자·분모에서 함께 빠지므로, 남은 연료가 탄 몫만 센다. X6 의 전소 분모 `fuel0` 는 `catOf` 때 `s.fuel > 0` 인 칸이므로 저절로 빠진다. X6 구현이 분자를 `fuel0` 칸 안에서만 세는지 확인하고, 아니면 분자에서 `s.wear.pre` 칸을 빼도록 그 한 줄을 맞춘다(§10.2 X6 줄). 그림으로는 탄 바닥이 처음부터 보인다(`fx.ts` 가 `s.burned` 를 그린다 — 화면만).
+- 화재가 아닌 현장(가스 누출·붕괴)에도 같은 규칙을 쓴다. 연료가 있는 실내 칸이 없으면 아무것도 하지 않는다.
+- 측정(§6.3 의 7): 같은 건물·같은 사건 시드에서 그을음 0 과 0.6 의 화재를 N 시드로 강제해 소실률·`BURNOUT` 비율·X6 의 탄 비율을 비교한다. 의도한 방향은 "그을린 건물은 덜 탄다 — 소실률·전소 비율이 늘지 않는다"다. 시험 3 이 방향 하나를 건다.
+
+그 밖의 현장 내용은 바꾸지 않는다 — 평면은 사건마다 다르므로(§1.2) 칸 단위 피해를 옮기지 않고 요약값만 쓴다. 그을음은 그림(`staticLayer` 의 바닥·벽 얼룩, `staticSig` 에 `s.wear?.soot` 를 넣는다)으로 보이고, 손상은 X6 의 구획 건전도 처음 값을 낮춘다(§7).
+
+`noteWearIncident(sim, I)`: `dmg ≥ 0.1` 또는 `soot ≥ 0.2` 이면 `emit({ inc: I.id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: 1, truth: true, tag: 'carry', causes: [cs.event], text: \`이 건물은 ${inc}로 ${soot ≥ 0.2 ? '그을리고 ' : ''}손상된 상태였습니다 (구조 손상 ${pct(dmg)}).\` })`, `stats.markedInc.push(I.code)`. 열린 터는 `이 터에는 ${inc}로 탄 자리가 남아 있습니다.`. **관제·지휘관이 이 손상을 아는 길**: 관제(분석 AI)는 I1-b 의 `knownBuilding` 으로 안다(원칙 7 — I1-b 가 이미 그 길을 만든다). 지휘관의 출동 브리핑에는 I2 가 따로 사실을 넣지 않는다. 현장의 손상은 X6 의 구조 조짐(`struct` — 외부 관찰)으로 안다(결정 — §11.2).
 
 ### 3.7 기록 (`announceCarry`, `tickCarry`)
 

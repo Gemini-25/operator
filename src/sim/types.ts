@@ -23,6 +23,12 @@ export interface RoadEdge {
   road?: number;       // 도로 번호 (cityPlan.ROADS)
   seq?: number;        // 그 도로에서 몇 번째 구간인가
   bridge?: boolean;    // 강을 건넌다
+  // ── 교통 (traffic.ts) ──
+  known?: boolean;     // false = 막혀 있지만(closed) 관제와 부대가 아직 모른다. 없으면 아는 것으로 본다
+  bump?: number;       // 밖에서 더하는 혼잡 (재난의 정전, 행사 인파). 교통 모델이 cong 의 목표값에 더한다
+  wait?: number;       // 이 구간에서 기다려야 하는 초 (내려온 건널목 차단기)
+  gateT?: number;      // 건널목이 있는 구간이면 그 위치 (a→b 로 0..1)
+  noHeavy?: boolean;   // 큰 차가 지나지 못한다고 알려진 구간 (불법 주차로 좁아진 골목)
 }
 export interface Building { x: number; y: number; w: number; h: number; district: District; tone: number }
 /** 지도 위의 건물·장소 종류 */
@@ -116,6 +122,8 @@ export interface Unit {
   busyTime: number; runs: number;
   boardOrder: 'release' | 'transport' | null;
   aid?: boolean;                      // 인근 도시에서 지원 온 부대 (임무를 마치면 관할로 돌아간다)
+  heavy?: boolean;                    // 큰 차 (펌프차·사다리차·구조 공작차·화학차): 좁아진 골목을 지나지 못한다
+  backing?: boolean;                  // 막힌 길에서 되돌아 나오는 중
 }
 
 // ───────────────────────── 정보(Belief) ─────────────────────────
@@ -459,6 +467,7 @@ export interface ShiftReport {
   incidents: { id: number; code: string; type: IncidentType; name?: string; reportedType: IncidentType | null; label: string; result: IncidentResult; start: number; end: number }[];
   summary: string[];
   major?: number;                  // 대형 사고 건수
+  traffic?: { jams: number; closures: number; obstacles: number; detours: number; delaySec: number; gateWaits: number };      // 교통 통계 (traffic.ts)
   disaster?: { name: string; lines: string[] };      // 재난이 있었던 교대의 요약 (disaster.ts)
   hash: string;
 }

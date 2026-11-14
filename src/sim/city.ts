@@ -571,7 +571,7 @@ export function tickTraffic(sim: Sim): void {
     tr.nextDrift = sim.t + 12;
     for (const e of city.edges) {
       const jam = tr.jams.some((j) => j.edge === e.id);
-      const target = jam ? 2.8 : e.baseCong;
+      const target = (jam ? 2.8 : e.baseCong) + (e.bump ?? 0);
       e.cong = clamp(e.cong + (target - e.cong) * 0.35 + rng.range(-0.1, 0.1), 1, 3);
     }
   }

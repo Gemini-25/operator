@@ -10,8 +10,10 @@
 | `N5-major.md` | 대형 사고 | `wf/major` | 비행기 추락, 열차 탈선, 다중 추돌, 가스 폭발, 크레인 붕괴, 선박 화재 |
 | `N6-disaster.md` | 재난 | `wf/disaster` | 태풍, 홍수, 지진, 산불, 해일 (+ 산사태) |
 | `N7-destruction.md` | 현장 파손 | `wf/destruction` | 총격·폭발에 창문과 가구가 부서진다 |
+| `T1-traffic.md` | 교통 | `wf/traffic` | 정체가 뒤로 밀림, 가 보아야 아는 장애물(낙하물·불법 주차), 건널목과 열차, 교통 손잡이 |
+| `U1-ui.md` | 화면 | `wf/ui` | 부대·시설 표식을 글자 대신 그림 기호로, 범례, 화면 전체 다듬기 |
 
-합치는 순서: M1 → N7 → N4b → N5 → N6. (N6 은 다른 묶음의 시나리오가 있으면 쓰고, 없으면 예전 시나리오로 대신한다.)
+합치는 순서: M1(끝남) → N7 → N4b → N5 → N6 → T1 → U1. (N6 은 다른 묶음의 시나리오가 있으면 쓰고, 없으면 예전 시나리오로 대신한다.)
 
 ## 1. 끼워 넣는 자리 (확장 지점)
 
@@ -58,7 +60,7 @@ sim.gen.chain.push({ at: sim.t + 60, opts: { type: 'fire', variant: 'arson', pla
 
 **현장에 유형 밖의 규칙 얹기**: `s.rules = ['gas']`(가스 확산·폭발), `['water']`(표류), `['collapse']`(2차 붕괴). 유형의 규칙에 더해 돈다.
 
-**이미 들어가 있는 공용 자료형** (`types.ts` — 다시 추가하지 않는다): `WorkKind 'defuse'`(+ `workLabel`, `fitFor`: 폭발물 처리반만), `PropKind 'bomb'`(`real`, `fuse`), `Needs.eod`·`UnitCaps.eod`(관제·배정·인근 도시 지원까지 연결됨), `Scene.rules`·`glass`·`decorHp`, `Fx 'glass' | 'debris'`, `Pursuit.kind 'getaway'`·`hideout`, `Incident.tag`·`parent`, `ShiftReport.major`·`disaster`, `Difficulty.disaster`, `Tuning.majorProb`·`disasterProb`, `hazards.blast`(export).
+**이미 들어가 있는 공용 자료형** (`types.ts` — 다시 추가하지 않는다): 교통용 `RoadEdge.known`·`bump`·`wait`·`gateT`·`noHeavy`, `Unit.heavy`·`backing`, `ShiftReport.traffic`, `WorkKind 'defuse'`(+ `workLabel`, `fitFor`: 폭발물 처리반만), `PropKind 'bomb'`(`real`, `fuse`), `Needs.eod`·`UnitCaps.eod`(관제·배정·인근 도시 지원까지 연결됨), `Scene.rules`·`glass`·`decorHp`, `Fx 'glass' | 'debris'`, `Pursuit.kind 'getaway'`·`hideout`, `Incident.tag`·`parent`, `ShiftReport.major`·`disaster`, `Difficulty.disaster`, `Tuning.majorProb`·`disasterProb`, `hazards.blast`(export).
 
 ## 2. 파일 소유 — 남의 파일을 고쳐야 할 때
 
@@ -68,7 +70,7 @@ sim.gen.chain.push({ at: sim.t + 60, opts: { type: 'fire', variant: 'arson', pla
   - `types.ts` 는 추가만. 합집합 타입(`A | B`)의 끝에 붙일 때는 **새 줄**로(`  | 'x';` 를 한 줄 더) 붙인다.
   - `styles.css` 는 파일 끝에 `/* ── <묶음> ── */` 블록으로만.
   - 문서에 없는 곳을 고쳐야 하면 고치되, 끝낼 때 보고에 **파일·함수·이유**를 적는다.
-- **절대 건드리지 않는 것**: `src/sim/city.ts`, `src/sim/cityPlan.ts`, `src/view/city/staticCity.ts`, `src/view/city/places.ts`, `tests/sim.test.ts`(M1 이 고치는 중), `README.md`, `CLAUDE.md`, `docs/ROADMAP.md`, `docs/DESIGN.md`(합친 뒤에 한꺼번에 고친다).
+- **절대 건드리지 않는 것**(각 설계서가 따로 허락한 경우 제외): `src/sim/city.ts`, `src/sim/cityPlan.ts`, `src/view/city/staticCity.ts`, `src/view/city/places.ts`, `tests/sim.test.ts`, `README.md`, `CLAUDE.md`, `docs/ROADMAP.md`, `docs/DESIGN.md`(합친 뒤에 한꺼번에 고친다).
 
 ## 3. 일하는 순서
 

@@ -6,7 +6,7 @@ import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import type { Candidate, CasBelief, FieldAgent, Scene, WorkItem } from '../types';
 import { dist } from '../util';
-import { fitFor, flushOutbox, perceive, resp, shareNearby, workLabel } from './agents';
+import { HURT_HEALTH, failedRecently, fitFor, flushOutbox, perceive, resp, shareNearby, workLabel } from './agents';
 import { commanderThink } from './commander';
 import { finishTask, makeTask } from './executor';
 import { tileOf } from './grid';
@@ -71,14 +71,22 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
     return;
   }
 
+  // 부상: 한번 후퇴를 시작하면 대기 지점에 닿을 때까지 다른 일(지시·자체 판단)에 끌려 나가지 않는다.
+  // 끌려 나가면 다시 위험 점수가 이겨 후퇴 → 다른 일 → 후퇴를 되풀이하며 같은 무전을 반복한다
+  const hurt = r.health < HURT_HEALTH;
+  if (hurt && cur && cur.kind === 'retreat') { a.candidates = [{ label: '계속: 후퇴 (부상)', score: 1.4, chosen: true }]; return; }
+
   const opts: Option[] = [];
   // 1) 위험 회피
   const dng = dangerScore(sim, s, a);
-  if (dng > 0.3 && (!cur || cur.kind !== 'retreat')) opts.push({ label: r.health < 40 ? '부상 — 후퇴' : '위험 회피 — 후퇴 후 재평가', score: dng, apply: () => {
+  if (dng > 0.3 && (!cur || cur.kind !== 'retreat')) opts.push({ label: hurt ? '부상 — 후퇴' : '위험 회피 — 후퇴 후 재평가', score: dng, apply: () => {
+    // 맡고 있던 작업은 위험해서 내려놓은 것으로 기록한다: 지휘관이 곧바로 같은 대원에게 다시 맡기지 않는다
+    if (cur && cur.workId >= 0) finishTask(sim, s, a, false, 'danger');
     setTask(sim, s, a, 'retreat', '후퇴');
-    if (sim.t - a.lastRetreatLog < 20 && r.health >= 40) return;
+    // 부상 후퇴는 상태가 바뀌는 이 한 번만 알린다(위의 붙잡기로 다시 고르지 않는다), 위험 회피는 20초에 한 번
+    if (!hurt && sim.t - a.lastRetreatLog < 20) return;
     a.lastRetreatLog = sim.t;
-    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: r.health < 40 ? 2 : 1, causes: [a.lastBlockEvent], text: r.health < 40 ? '부상으로 더 이상 임무 수행 불가. 후퇴합니다.' : '위험 수준이 너무 높습니다. 일단 물러나 재평가합니다.' });
+    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: hurt ? 2 : 1, causes: [a.lastBlockEvent], text: hurt ? '부상으로 더 이상 임무 수행 불가. 후퇴합니다.' : '위험 수준이 너무 높습니다. 일단 물러나 재평가합니다.' });
   } });
   // 2) 현재 임무 계속
   if (cur && cur.kind !== 'standby') {
@@ -107,10 +115,11 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
       emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 1, causes: [a.lastBlockEvent], text: '차량으로 돌아가 예비 펌프로 교체하겠습니다.' });
     } });
   }
-  if (a.equipIssue === 'water' && (!cur || cur.kind !== 'hookup') && !u.hydrant && s.props.some((p) => p.kind === 'hydrant')) {
+  // (소화전에 닿지 못해 실패했으면 한동안 다시 고르지 않는다: equipRetryAt · 그 작업의 실패 기억)
+  if (a.equipIssue === 'water' && (!cur || cur.kind !== 'hookup') && !u.hydrant && sim.t >= a.equipRetryAt && s.props.some((p) => p.kind === 'hydrant')) {
     const someone = s.agents.some((b) => b !== a && b.unitId === a.unitId && b.task && b.task.kind === 'hookup');
-    if (!someone) opts.push({ label: '소화전 급수 연결', score: 0.83, apply: () => {
-      const w = s.board.find((q) => q.kind === 'hookup' && q.prop === a.unitId && (q.status === 'open' || q.status === 'active'));
+    const w = s.board.find((q) => q.kind === 'hookup' && q.prop === a.unitId && (q.status === 'open' || q.status === 'active'));
+    if (!someone && !(w && failedRecently(sim, w, a.rid))) opts.push({ label: '소화전 급수 연결', score: 0.83, apply: () => {
       if (w) takeWork(sim, s, a, w, true); else { setTask(sim, s, a, 'hookup', '소화전 연결'); }
       emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 1, causes: [a.lastBlockEvent], text: '소화전에 급수 라인을 연결하겠습니다.' });
     } });
@@ -130,7 +139,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
   let bestW: WorkItem | null = null, bestS = 0;
   for (const w of s.board) {
     if (w.status !== 'open' && !(w.status === 'active' && w.assignees.length < w.max && w.kind === 'carry')) continue;
-    if (sim.t < w.holdUntil || w.assignees.indexOf(a.rid) >= 0 || w.kind === 'sizeup') continue;
+    if (sim.t < w.holdUntil || w.assignees.indexOf(a.rid) >= 0 || w.kind === 'sizeup' || failedRecently(sim, w, a.rid)) continue;
     const fit = fitFor(sim, s, a, w);
     if (fit <= 0) continue;
     let near = 0;

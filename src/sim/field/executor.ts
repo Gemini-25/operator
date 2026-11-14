@@ -7,7 +7,7 @@ import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
 import type { Fact, FieldAgent, Hostile, Incident, Prop, Scene, Task, TaskKind, WorkItem } from '../types';
 import { clamp, dist, josa, pct } from '../util';
-import { agentCost, casFact, detectRadius, exitName, hosFact, learn, learnQuiet, perceive, regionNameAt, resp, staminaF, visionOf, workLabel } from './agents';
+import { RETRY_AFTER, agentCost, casFact, debrisText, detectRadius, exitName, hosFact, learn, learnQuiet, perceive, regionNameAt, resp, staminaF, visionOf, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { astar, doorAt, isIndoor, los, staticPass, tileOf, walkableCount } from './grid';
 import { applyWater, flashbang, hostageNear, hostileActive, isHeld, placeAtSafe, pushFx, panicShot } from './hazards';
@@ -39,9 +39,14 @@ export function finishTask(sim: Sim, s: Scene, a: FieldAgent, ok: boolean, reaso
     const w = s.board[t.workId];
     const k = w.assignees.indexOf(a.rid); if (k >= 0) w.assignees.splice(k, 1);
     if (ok) { if (w.status === 'active' || w.status === 'open') { w.status = 'done'; w.doneAt = sim.t; } }
-    else if (reason === 'preempt') { if ((w.status === 'active' || w.status === 'open') && !w.assignees.length) w.status = 'open'; }
+    else if (reason === 'preempt' || reason === 'danger') {
+      if ((w.status === 'active' || w.status === 'open') && !w.assignees.length) w.status = 'open';
+      // 위험해서 내려놓았다(후퇴): 작업은 다른 대원이 맡을 수 있게 열어 두고, 이 대원에게는 한동안 다시 맡기지 않는다 (무전은 후퇴 보고가 대신한다)
+      if (reason === 'danger') w.failedAt[a.rid] = sim.t;
+    }
     else if (w.status === 'active' || w.status === 'open') {
       w.fails++; w.holdUntil = sim.t + (reason === 'fire' ? 14 : 8);
+      if (reason === 'nopath' || reason === 'fire') w.failedAt[a.rid] = sim.t;      // 닿지 못한 대원은 한동안 같은 시도를 하지 않는다 (agents.failedRecently)
       if (!w.assignees.length) w.status = 'open';
       if (reason && reason !== 'preempt') {
         const r = resp(sim, a);
@@ -58,7 +63,7 @@ export function finishTask(sim: Sim, s: Scene, a: FieldAgent, ok: boolean, reaso
 function discoverBlock(sim: Sim, s: Scene, I: Incident, a: FieldAgent, tile: number, kind: 'debris' | 'locked'): void {
   const r = resp(sim, a);
   const where = regionNameAt(s, tile % s.w, (tile / s.w) | 0);
-  const txt = kind === 'debris' ? `${where} 통로가 잔해로 막혀 있음` : `${where} 문이 잠겨 있음`;
+  const txt = kind === 'debris' ? debrisText(where) : `${where} 문이 잠겨 있음`;
   learnQuiet(sim, a, mkFact('blk', tile, kind, r.name, sim.t, 1, true, txt));
   a.pendingBlock = tile;
   a.lastBlockEvent = raiseProblem(sim, I, 'PATH_BLOCKED', txt, {
@@ -440,7 +445,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const hy = s.props.find((p) => p.kind === 'hydrant');
       if (!hy || u.hydrant) { finishTask(sim, s, a, true); return; }
       const m = moveTo(sim, s, a, hy.x, hy.y, 1.5);
-      if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+      // 소화전에 닿을 수 없다(물 없이 불길에 갇힘 등): 한동안 스스로 다시 시도하지 않는다. 급수는 지휘관이 다른 대원이나 지원 부대로 푼다
+      if (m === 'nopath') { a.equipRetryAt = sim.t + RETRY_AFTER; finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
       t.need = 9; t.progress += dt * staminaF(r); a.ring = t.progress / t.need; drain(sim, a, 0.5);
       if (t.progress >= t.need) {

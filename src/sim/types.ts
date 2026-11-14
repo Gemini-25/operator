@@ -236,6 +236,7 @@ export interface WorkItem {
   thorough: boolean;
   orderSentAt: Record<number, number>;   // rid → 지시 송신 시각 (수신 확인용)
   cause: number;                 // 이 작업을 만든 이벤트
+  failedAt: Record<number, number>;      // rid → 그 대원이 이 작업을 마지막으로 실패하거나 위험해서 내려놓은 시각 (한동안 같은 대원에게 다시 맡기지 않는다 — agents.failedRecently)
 }
 
 export interface Task {
@@ -277,6 +278,7 @@ export interface FieldAgent {
   spot: number;                               // 점유 중인 엄폐 위치 인덱스
   quiet: Set<string>;                         // 이미 별도 이벤트로 알린 정보(무전 문구에서 생략)
   lastRetreatLog: number;
+  equipRetryAt: number;                       // 이 시각 전에는 장비 문제(소화전 연결)를 스스로 다시 시도하지 않는다 (닿지 못해 실패한 뒤)
 }
 
 export interface RadioMsg {

@@ -22,6 +22,7 @@ import { tickCasualties, tickCollapse, tickFire, tickGas, tickHostiles, tickLane
 
 export function createScene(sim: Sim, I: Incident): Scene {
   const s = buildScene(sim, I, sim.rng.fork('scene:' + I.id));
+  s.allIdleSince = -1; s.rollCallAt = -1e9;      // 지휘관이 쓰는 칸은 만들 때 채워 둔다 (도중에 속성이 생기면 현장 객체의 모양이 바뀌어 매 틱 도는 코드가 느려진다)
   sim.scenes[I.id] = s;
   return s;
 }

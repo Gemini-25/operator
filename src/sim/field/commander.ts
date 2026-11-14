@@ -12,6 +12,8 @@ import { canCarryPatients, exitName, fitFor, hasWork, learn, resp, transmit, wor
 import { mkFact } from './beliefs';
 import { losWalls } from './grid';
 import { BAND_NAME, HOSTILE_FOV } from './hazards';
+import { CLOSE_BLOCKERS, ORDER_RULES } from './sceneRegistry';
+import type { CommandKit } from './sceneRegistry';
 
 interface Target { region?: number; cas?: number; prop?: number; hostile?: number; tile?: number; mate?: number }
 
@@ -58,7 +60,7 @@ function countUnits(sim: Sim, s: Scene, I: Incident, need: keyof UnitCaps, min: 
 
 function request(sim: Sim, s: Scene, I: Incident, a: FieldAgent, need: keyof UnitCaps, reason: string, urgent: boolean): void {
   if (s.requests.some((q) => q.need === need && (q.fulfilled < q.count || sim.t - q.t < 70))) return;
-  const label: Record<string, string> = { suppression: '진압 부대', rescue: '구조 장비 부대', ems: '구급 부대', law: '경찰 부대', tactical: '경찰 기동 부대', search: '수색 인력', traffic: '교통 통제 인력' };
+  const label: Record<string, string> = { suppression: '진압 부대', rescue: '구조 장비 부대', ems: '구급 부대', law: '경찰 부대', tactical: '경찰 기동 부대', search: '수색 인력', traffic: '교통 통제 인력', eod: '폭발물 처리반' };
   const ev = transmit(sim, s, a, -2, 'request', [], `관제, ${label[need]} 추가 지원 요청. 사유: ${reason}.`, -1, 2, [I.lastEvent]);
   if (ev < 0) return;     // 음영 구역 — 다음 계획 주기에 재시도
   s.requests.push({ t: sim.t, need, count: 1, reason, eventId: ev, fulfilled: 0, urgent });
@@ -344,6 +346,17 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   if (cordon && lawUnits === 0 && s.sizeupDone) request(sim, s, I, a, 'law', '가스가 새는 건물 주변을 통제할 인력이 없음', false);
   if (s.laneRows.length && lawUnits === 0 && !s.controlDone.every(Boolean) && cas.length > 0 && s.sizeupDone) request(sim, s, I, a, 'traffic', '차량 통행이 계속되는데 교통 통제 인력이 없음', false);
   if (s.kind === 'search' && cas.length === 0 && s.arrivedAt >= 0 && sim.t - s.arrivedAt > 75 && countUnits(sim, s, I, 'search', 0.3) < 3) request(sim, s, I, a, 'search', '수색 범위에 비해 인력 부족', false);
+  // ── 묶음별 지휘 규칙 (field/orders/*) ──
+  if (ORDER_RULES.length) {
+    const kit: CommandKit = {
+      want: (kind, tg, priority, max = 1, thorough = false) => want(sim, s, kind, tg, priority, max, thorough),
+      cancel: (pred) => cancel(s, pred),
+      request: (need, reason, urgent) => request(sim, s, I, a, need, reason, urgent),
+      countUnits: (need, min) => countUnits(sim, s, I, need, min),
+      unitsOnScene: () => unitsOnScene(sim, s),
+    };
+    for (const rule of ORDER_RULES) rule(sim, s, I, a, kit);
+  }
 }
 
 /** 작업 배정 */
@@ -485,6 +498,7 @@ function canClose(sim: Sim, s: Scene, a: FieldAgent): boolean {
   if (s.kind === 'armed' && s.secureAt < 0) return false;
   if (s.kind === 'search' && B.list('cas').length < 1) return false;
   if (B.list('mate').some((f) => f.value.status === 'down')) return false;
+  for (const blocked of CLOSE_BLOCKERS) if (blocked(sim, s, a)) return false;
   return true;
 }
 

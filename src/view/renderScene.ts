@@ -5,6 +5,8 @@
 // 그리는 순서: 정적 층(바닥·벽·가구) → 바닥 흔적 → 소품·차량 → 연기(아래) → 사람 → 불 → 나무 수관 → 연기(위)
 //             → 어둠과 빛 → 날씨 → 효과·표지·글자.
 
+import { drawDisasterScene } from './city/disasterLayer';
+import { SKINS } from './scene/skins';
 import type { Sim } from '../sim/engine';
 import { visionOf } from '../sim/field/agents';
 import { HOSTILE_FOV } from '../sim/field/hazards';
@@ -14,7 +16,7 @@ import { DEPT_COLOR, FONT } from './renderCity';
 import { alpha, disc, hash2, oval, rr, seg, visPoly } from './scene/common';
 import type { G } from './scene/common';
 import { beginDark, drawFire, drawFog, drawLight, drawRain, drawScorch, drawSmoke, drawSpray, drawVignette, hole, holePoly, smokeLayer } from './scene/fx';
-import { CAR_COLORS, VEH_SIZE, beaconColors, civilianLook, drawCar, drawClue, drawCone, drawDebris, drawDoorLeaf, drawEmergency, drawGasTank, drawHydrant, drawLying, drawPerson, drawRoadDebris, drawBus, drawFallenTree, drawManhole, drawSwimmer, drawUnstable, drawValve, hostileLook, responderLook } from './scene/sprites';
+import { CAR_COLORS, VEH_SIZE, beaconColors, civilianLook, drawCar, drawClue, drawCone, drawDebris, drawDoorLeaf, drawEmergency, drawGasTank, drawHydrant, drawLying, drawPerson, drawRoadDebris, drawBus, drawSwimmer, drawUnstable, drawValve, hostileLook, responderLook } from './scene/sprites';
 import type { ArmPose, Item, PersonLook } from './scene/sprites';
 import { buildStatic, doorHorizontal, staticSig } from './scene/staticLayer';
 import type { StaticLayer } from './scene/staticLayer';
@@ -185,6 +187,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   for (const p of s.props) {
     if (p.removed) continue;
     const idx = p.y * s.w + p.x;
+    // 다른 모습을 입힌 소품: 등록된 그림으로 그린다 (view/scene/skins.ts)
+    if (p.skin && SKINS[p.skin]) { const paint = SKINS[p.skin]; unit(() => paint(ctx, p, o.timeMs, o.truth, sim.t), cx(p.x + (p.w - 1) / 2), cy(p.y + (p.h - 1) / 2), p.angle ?? 0); continue; }
     if (p.kind === 'door') {
       const hor = doorHorizontal(s, p.x, p.y);
       const score = (x: number, y: number): number => { const t = tAt(x, y); if (t !== T.FLOOR && t !== T.FURN) return 0; const r = s.region[y * s.w + x]; return 2 + (r >= 0 && s.regions[r] && s.regions[r].kind === 'room' ? 1 : 0); };
@@ -234,7 +238,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       else drawPerson(ctx, cx(p.x), cy(p.y), hash2(p.id, s.id) * 6.28, ts, lk, { step: 0, moving: false, arms: p.interviewed ? 'side' : 'up', t: time, ghost: p.interviewed ? 0.6 : 1 });
       pill(ctx, p.interviewed ? '목격자 (청취 완료)' : '목격자', cx(p.x), cy(p.y) + ts * 0.66, ts * 0.27, '#c8d4df');
     } else if (p.kind === 'roadDebris') {
-      unit(() => (p.skin === 'tree' ? drawFallenTree(ctx, p.id, p.y) : p.skin === 'manhole' ? drawManhole(ctx) : drawRoadDebris(ctx, p.id)), cx(p.x), cy(p.y));
+      unit(() => drawRoadDebris(ctx, p.id), cx(p.x), cy(p.y));
     } else if (p.kind === 'unstable') {
       // 금이 간 구조물: 지휘관이 알게 되기 전에는 관찰자 시점에서만 보인다
       const known = !!(cmd && cmd.beliefs.get('haz', p.id));
@@ -516,6 +520,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   // ── 날씨 ──
   if (sim.weather === 'fog') drawFog(ctx, W, H, o.timeMs, MINI);
   else if (sim.weather === 'rain') { ctx.save(); ctx.beginPath(); ctx.rect(0, 0, W, H); ctx.clip(); drawRain(ctx, W, H, o.timeMs, MINI); ctx.restore(); }
+  drawDisasterScene(ctx, sim, s, W, H, o.timeMs, MINI);
 
   // ── 지휘관의 판단: 수색 확률, 수색 확인율 ──
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';

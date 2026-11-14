@@ -4,7 +4,7 @@
 import type { Sim } from '../engine';
 import { emit } from '../events';
 import { INCIDENT_PLACES } from '../cityPlan';
-import { NATURE_LABEL } from '../scenarios';
+import { SCENARIOS, natureLabel } from '../scenarios';
 import type { Assessment, Claim, Incident, IncidentType, Needs, PlaceKind, Topic } from '../types';
 import { TYPE_NAME, clamp } from '../util';
 import { NATURE_LIK } from './callSystem';
@@ -12,13 +12,13 @@ import { recomputeUnmet } from './dispatcher';
 
 const TYPES: IncidentType[] = ['fire', 'traffic', 'search', 'armed', 'medical', 'collapse', 'hazmat', 'water'];      // NATURE_LIK 의 열 순서와 같아야 한다
 export const sevName = (s: number): string => (s < 1.7 ? '보통' : s < 2.4 ? '높음' : '매우 높음');
-const NEED_NAME: Record<keyof Needs, string> = { suppression: '진압', rescue: '구조', ems: '구급', law: '경찰', tactical: '경찰 기동', search: '수색', traffic: '교통 통제' };
+const NEED_NAME: Record<keyof Needs, string> = { suppression: '진압', rescue: '구조', ems: '구급', law: '경찰', tactical: '경찰 기동', search: '수색', traffic: '교통 통제', eod: '폭발물 처리' };
 export const needsText = (n: Partial<Needs>): string => {
   const out: string[] = [];
   for (const k of Object.keys(NEED_NAME) as (keyof Needs)[]) if ((n[k] ?? 0) > 0) out.push(`${NEED_NAME[k]} ${n[k]}`);
   return out.length ? out.join(', ') : '없음';
 };
-export const emptyNeeds = (): Needs => ({ suppression: 0, rescue: 0, ems: 0, law: 0, tactical: 0, search: 0, traffic: 0 });
+export const emptyNeeds = (): Needs => ({ suppression: 0, rescue: 0, ems: 0, law: 0, tactical: 0, search: 0, traffic: 0, eod: 0 });
 
 /** 주제별로 가장 "안전한 쪽(더 심각한 쪽)"의 진술을 고른다. 충돌 여부도 돌려준다. */
 function pick(claims: Claim[], topic: Topic): { c: Claim | null; conflict: boolean } {
@@ -186,18 +186,11 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
     if (sev >= 1.9 || (inj.c && inj.c.value === true) || nat.indexOf('gunshots') >= 0) needs.ems = 1;
   }
   if (type === 'armed' && prank) { needs.law = 1; needs.tactical = 0; needs.ems = 0; }
-  // 신고 내용이 구체적이면 그에 맞춰 보낸다
-  const hurtSaid = !!(inj.c && inj.c.value === true), trapSaid = !!(trap.c && trap.c.value === true);
-  if (type === 'collapse' && nat.indexOf('elevator') >= 0) { needs.suppression = 0; needs.rescue = 1; needs.ems = 1; }
-  if (type === 'armed' && nat.indexOf('domestic') >= 0) { needs.law = sev >= 2.2 ? 2 : 1; needs.tactical = 0; needs.ems = 1; }
-  if (type === 'armed' && nat.indexOf('burglar') >= 0 && nat.indexOf('gunshots') < 0) { needs.law = sev >= 1.7 ? 2 : 1; needs.tactical = 0; needs.ems = hurtSaid ? 1 : 0; }
-  if (type === 'traffic' && nat.indexOf('treefall') >= 0) { needs.rescue = 1; needs.traffic = 1; needs.ems = hurtSaid || trapSaid ? 1 : 0; }
-  if (type === 'traffic' && nat.indexOf('manhole') >= 0) { needs.rescue = 1; needs.ems = 1; needs.traffic = 1; }
-  // 달아나는 차: 쫓을 순찰차와, 하늘에서 볼 헬기
-  if (type === 'armed' && nat.indexOf('kidnap') >= 0) { needs.law = 2; needs.tactical = sev >= 2.5 ? 1 : 0; needs.search = 1; needs.ems = 0; }
-  if (type === 'traffic' && nat.indexOf('reckless') >= 0 && nat.indexOf('crash') < 0) { needs.traffic = 0; needs.law = 2; needs.ems = 0; needs.rescue = 0; }      // 한 대는 쫓고 한 대는 앞을 막는다
+  // 신고 내용이 시나리오를 가리키면 그에 맞춰 보낸다 (scenarios/*.ts 의 needs)
+  const ctx = { sev, hurt: !!(inj.c && inj.c.value === true), trapped: !!(trap.c && trap.c.value === true), nat };
+  for (const sc of SCENARIOS) if (sc.needs && sc.type === type && nat.indexOf(sc.nature) >= 0) sc.needs(needs, ctx);
   let label: string | undefined;
-  for (const c of claims) { if (c.topic !== 'nature') continue; const l = NATURE_LABEL[c.value as string]; if (l && l[0] === type) label = l[1]; }
+  for (const c of claims) { if (c.topic !== 'nature') continue; const l = natureLabel(c.value as string, type); if (l) label = l; }
   const rev = prev ? prev.revision + 1 : 0;
   const summary = `${TYPE_NAME[type]} (${Math.round(typeConf * 100)}%) · 위험도 ${sevName(sev)}`;
   const as: Assessment = { type, typeConf, probs, severity: sev, confidence, needs, risks, summary, t: sim.t, revision: rev, label };

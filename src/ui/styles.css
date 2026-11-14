@@ -292,3 +292,13 @@ input:focus { border-color: var(--accent); }
 .cchip i { position: absolute; left: 0; bottom: 0; height: 2px; }
 .cchip:hover { background: #1a2733; } .cchip.sel { background: #123a3a; color: #eafaf6; }
 .cchip.injured, .cchip.down { color: var(--warn); }
+
+/* 난이도 화면의 재난 선택 줄, 보고서의 재난 요약 */
+.disaster-row { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.disaster-row .knob-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.disaster-row .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.disaster-row .chip { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; font-size: 13px; }
+.disaster-row .chip.on { background: #b4552e; border-color: #e08a5c; color: #fff; }
+.disaster-report { margin: 10px 0 4px; padding: 10px 12px; border: 1px solid #7a4a2c; border-radius: 8px; background: rgba(180, 85, 46, 0.1); }
+.disaster-report h3 { margin: 0 0 6px; font-size: 14px; }
+.disaster-report p { margin: 2px 0; font-size: 13px; }

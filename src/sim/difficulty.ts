@@ -10,6 +10,23 @@ export interface Difficulty {
   equipment: number;   // 대원 장비 상태   1 불량 … 5 최상   (높을수록 쉬움)
   info: number;        // 신고 신뢰도      1 엉망 … 5 정확   (높을수록 쉬움)
   resources: number;   // 부대 규모        1 = 12팀 … 3 = 17팀 … 5 = 20팀  (높을수록 쉬움)
+  disaster?: DisasterChoice;      // 재난: 없음(기본) · 무작위(심각도에 따라 드물게) · 종류를 정해서
+}
+
+export type DisasterKind = 'typhoon' | 'flood' | 'quake' | 'wildfire' | 'tsunami';
+export type DisasterChoice = 'none' | 'random' | DisasterKind;
+export const DISASTER_KINDS: DisasterKind[] = ['typhoon', 'flood', 'quake', 'wildfire', 'tsunami'];
+export const DISASTER_NAME: Record<DisasterChoice, string> = { none: '없음', random: '무작위', typhoon: '태풍', flood: '홍수', quake: '지진', wildfire: '산불', tsunami: '해일' };
+export const DISASTER_DESC: Record<DisasterChoice, string> = {
+  none: '재난 없이 평소의 교대.', random: '심각도에 따라 드물게(0~30%) 한 가지가 일어난다.',
+  typhoon: '비바람에 나무와 간판이 쓰러지고 강변이 잠긴다.', flood: '강물이 불어 강가의 길이 차례로 막히고 사람들이 고립된다.',
+  quake: '예고 없이 여러 곳이 한꺼번에 무너지고 불이 난다. 여진이 온다.', wildfire: '산에서 난 불이 바람을 타고 동네로 내려온다.', tsunami: '경보 뒤 바닷가를 덮친다. 그 전에 사람들을 뭍으로 옮겨야 한다.',
+};
+/** 주소·명령줄의 글자를 재난 선택으로 (모르는 값은 null) */
+export function parseDisaster(text: string | null | undefined): DisasterChoice | null {
+  if (!text) return null;
+  const k = text.trim().toLowerCase();
+  return k === 'none' || k === 'random' || (DISASTER_KINDS as string[]).indexOf(k) >= 0 ? (k as DisasterChoice) : null;
 }
 
 export type PresetId = 'easy' | 'normal' | 'hard' | 'extreme';
@@ -43,6 +60,9 @@ export interface Tuning {
   // 부대
   unitLevel: number; flashbangs: number;
   aidUnits: number;            // 한 교대에 받을 수 있는 인근 도시 지원 횟수
+  // 큰일
+  majorProb: number;           // 이번 교대에 대형 사고가 한 번 일어날 확률
+  disasterProb: number;        // 재난을 '무작위'로 두었을 때 일어날 확률
 }
 
 const lv = (v: number): number => Math.max(0, Math.min(4, Math.round(v) - 1));
@@ -88,18 +108,27 @@ export function tuningOf(d: Difficulty): Tuning {
     unitLevel: r + 1,
     aidUnits: [2, 2, 3, 4, 5][r],
     flashbangs: [0, 1, 2, 3, 4][e],
+
+    majorProb: [0.15, 0.3, 0.45, 0.6, 0.8][s],
+    disasterProb: [0, 0.05, 0.1, 0.18, 0.3][s],
   };
 }
 
-export const difficultyKey = (d: Difficulty): string => [d.frequency, d.severity, d.threat, d.equipment, d.info, d.resources ?? 3].join('-');
+const knobKey = (d: Difficulty): string => [d.frequency, d.severity, d.threat, d.equipment, d.info, d.resources ?? 3].join('-');
+export const difficultyKey = (d: Difficulty): string => knobKey(d) + (d.disaster && d.disaster !== 'none' ? '-' + d.disaster : '');
+/** 손잡이 값이 모두 1~5 인가 (저장된 설정을 믿기 전에 본다) */
+export function validDifficulty(d: Difficulty): boolean {
+  return ([d.frequency, d.severity, d.threat, d.equipment, d.info, d.resources ?? 3] as number[]).every((x) => x >= 1 && x <= 5) && (d.disaster === undefined || parseDisaster(d.disaster) !== null);
+}
 
 export function presetOf(d: Difficulty): PresetId | null {
-  for (const id of Object.keys(PRESETS) as PresetId[]) if (difficultyKey(PRESETS[id].d) === difficultyKey(d)) return id;
+  for (const id of Object.keys(PRESETS) as PresetId[]) if (knobKey(PRESETS[id].d) === knobKey(d)) return id;      // 재난 선택은 프리셋과 따로다
   return null;
 }
 export function difficultyLabel(d: Difficulty): string {
   const p = presetOf(d);
-  return p ? PRESETS[p].name : `사용자 설정 ${difficultyKey(d)}`;
+  const base = p ? PRESETS[p].name : `사용자 설정 ${knobKey(d)}`;
+  return d.disaster && d.disaster !== 'none' ? `${base} · 재난 ${DISASTER_NAME[d.disaster]}` : base;
 }
 
 /** 'hard' 또는 '4,4,4,2,3,3' (빈도, 심각도, 용의자, 장비, 신고, 부대 규모 — 마지막은 생략하면 3) */

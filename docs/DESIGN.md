@@ -238,3 +238,14 @@ view/*       지도(renderCity + city/staticCity + city/places), 현장(renderSc
 5. 기록은 상태를 바꾸는 코드에서만 남긴다.
 6. 모든 사건은 반드시 끝난다. 새 시나리오마다 한계 시간 종료 건수를 센다.
 7. 특정 게임의 아트·이름·지도·배치를 그대로 옮기지 않는다.
+
+## 10. 병렬 작업과 확장 지점 (2026-11-14 추가)
+
+남은 묶음(M1, N4b, N5, N6, N7)은 **묶음별 구현 설계서** `docs/specs/*.md` 를 따라 동시에 진행한다. 이 문서의 5장과 설계서가 다르면 설계서가 최신이다.
+
+- 공통 규칙·끼워 넣는 자리·파일 소유·끝내는 조건: `docs/specs/README.md`
+- 묶음마다 자기 파일이 있다: `scenarios/<묶음>.ts`(시나리오 표) · `field/scenes/<묶음>.ts`(현장 생성) · `field/rules/<묶음>.ts`(세계 규칙) · `field/orders/<묶음>.ts`(지휘 규칙, 믿음만) · `view/scene/skins/<묶음>.ts`(소품 그림) · `tests/<묶음>.test.ts`.
+- 사건을 정해서 일으키기: `createIncident(sim, { type, variant, placeId | nodeId, parent, tag, rng })`, 나중에 일으키기: `sim.gen.chain.push({ at, opts })`.
+- 대형 사고는 `tag: 'major'` — 교대마다 `tune.majorProb` 로 많아야 한 번. 재난은 `Difficulty.disaster` + `sim/disaster.ts`.
+- 확인 도구: `sweep --force 유형/변형 --scen`(그 시나리오를 교대마다 한 번), `--disaster 종류`, 주소의 `?force=`·`?disaster=`.
+

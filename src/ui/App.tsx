@@ -1,3 +1,4 @@
+import { DisasterBanner } from './DisasterBanner';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Sim } from '../sim/engine';
 import { TYPE_NAME, fmtDur } from '../sim/util';
@@ -141,6 +142,7 @@ export function App() {
   return (
     <div className="app">
       <TopBar runner={runner} onNew={onNew} onDifficulty={() => setDiffOpen(true)} />
+      <DisasterBanner runner={runner} />
       <div className="left">
         <IncidentList sim={sim} director={director} truth={truth} />
         <UnitList sim={sim} selectedRid={selectedRid} onSelectRid={selectRid} />

@@ -11,9 +11,9 @@ import type { Claim, Incident, Needs, RadioMsg, Scene, Unit } from '../types';
 import { TYPE_NAME, fmtSec, josa } from '../util';
 import { assess, emptyNeeds, needsText, sevName } from './analyst';
 
-const ORDER: (keyof Needs)[] = ['tactical', 'law', 'suppression', 'rescue', 'ems', 'traffic', 'search'];
-const MINCAP: Record<keyof Needs, number> = { suppression: 0.7, rescue: 0.5, ems: 0.7, law: 0.5, tactical: 0.9, search: 0.3, traffic: 0.4 };
-const NEED_LABEL: Record<keyof Needs, string> = { suppression: '진압', rescue: '구조', ems: '구급', law: '경찰', tactical: '경찰 기동', search: '수색', traffic: '교통 통제' };
+const ORDER: (keyof Needs)[] = ['eod', 'tactical', 'law', 'suppression', 'rescue', 'ems', 'traffic', 'search'];
+const MINCAP: Record<keyof Needs, number> = { suppression: 0.7, rescue: 0.5, ems: 0.7, law: 0.5, tactical: 0.9, search: 0.3, traffic: 0.4, eod: 0.9 };
+const NEED_LABEL: Record<keyof Needs, string> = { suppression: '진압', rescue: '구조', ems: '구급', law: '경찰', tactical: '경찰 기동', search: '수색', traffic: '교통 통제', eod: '폭발물 처리' };
 
 /** 평가된 수요에서 이미 배정된 부대가 덮는 부분을 빼고 남은 수요를 계산한다. */
 export function recomputeUnmet(sim: Sim, I: Incident): void {

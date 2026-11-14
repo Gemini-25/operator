@@ -354,7 +354,7 @@ export function findRoute(city: City, from: number, to: number, weatherF = 1, av
 
 /** 긴급 차량 주행 속도 계수: 날씨 × 차량 상태(난이도의 장비 손잡이) */
 export function weatherSpeedFactor(sim: Sim): number {
-  return (sim.weather === 'rain' ? 0.88 : sim.weather === 'fog' ? 0.84 : 1) * sim.tune.vehicleSpeedMul;
+  return (sim.weather === 'rain' ? 0.88 : sim.weather === 'fog' ? 0.84 : 1) * sim.tune.vehicleSpeedMul * (sim.disaster?.speedMul ?? 1);
 }
 
 export function edgeName(city: City, e: RoadEdge): string {

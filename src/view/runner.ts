@@ -1,7 +1,7 @@
 // 시뮬레이션 실행기 (표현 계층).
 // 실제 시간 → 시뮬레이션 틱 변환만 담당한다. 배속은 "1초에 몇 틱"만 바꾸고, 시뮬레이션 결과에는 영향을 주지 않는다.
 
-import { NORMAL, difficultyLabel, parseDifficulty } from '../sim/difficulty';
+import { NORMAL, difficultyLabel, parseDifficulty, parseDisaster, validDifficulty } from '../sim/difficulty';
 import type { Difficulty } from '../sim/difficulty';
 import { Sim } from '../sim/engine';
 import type { ShiftReport } from '../sim/types';
@@ -41,29 +41,35 @@ export class Runner {
   simMs = 0;
   slowUntil = 0;              // 이 시각(실제 시간, ms)까지는 1배속으로 낮춘다 (결정적 순간 자동 감속)
   nowMs = 0;
+  force: string | null = null;
+  private make(seed: string, d: Difficulty): Sim { return new Sim(seed, d, 1200, { force: this.force }); }
 
   constructor() {
     this.settings = { speed: 3, autoCam: true, truthView: true, difficulty: { ...NORMAL }, sound: true, volume: 0.5, autoSlow: true, sceneAuto: true, ...lsGet<Partial<Settings>>(LS_SETTINGS, {}) };
-    this.settings.difficulty = { ...NORMAL, ...(this.settings.difficulty ?? {}) };
-    if (!parseDifficulty(Object.values(this.settings.difficulty).join(','))) this.settings.difficulty = { ...NORMAL };
+    // 화면에서는 재난의 기본값이 '무작위'(드물게)다. 헤드리스 실행(sweep·테스트)의 기본값은 '없음'
+    this.settings.difficulty = { ...NORMAL, disaster: 'random', ...(this.settings.difficulty ?? {}) };
+    if (!validDifficulty(this.settings.difficulty)) this.settings.difficulty = { ...NORMAL, disaster: 'random' };
     const url = new URL(window.location.href);
     const urlSeed = url.searchParams.get('seed');
     const urlDiff = parseDifficulty(url.searchParams.get('diff'));
-    if (urlDiff) this.settings.difficulty = urlDiff;
+    const urlDisaster = parseDisaster(url.searchParams.get('disaster'));
+    this.force = url.searchParams.get('force');      // 확인용: ?force=armed/bomb — 그 시나리오를 교대 초반에 한 번 일으킨다
+    if (urlDiff) this.settings.difficulty = { ...urlDiff, disaster: urlDisaster ?? 'none' };      // 주소로 조건을 고정하면 재난도 주소대로(없으면 없음)
+    else if (urlDisaster) this.settings.difficulty = { ...this.settings.difficulty, disaster: urlDisaster };
     const cur = lsGet<{ seed: string; tick: number; diff?: Difficulty } | null>(LS_CURRENT, null);
-    if (urlSeed || urlDiff) { this.sim = new Sim(urlSeed || randomSeed(), this.settings.difficulty); }
+    if (urlSeed || urlDiff || urlDisaster || this.force) { this.sim = this.make(urlSeed || randomSeed(), this.settings.difficulty); }
     else if (cur && cur.seed && cur.tick > 0) {
       // 새로고침 복원: 같은 시드·같은 난이도로 같은 틱까지 다시 돌리면 정확히 같은 상태가 된다
-      this.sim = new Sim(cur.seed, { ...NORMAL, ...(cur.diff ?? {}) });
+      this.sim = this.make(cur.seed, { ...NORMAL, ...(cur.diff ?? {}) });
       this.sim.run(cur.tick);
       this.restoredTicks = cur.tick;
-    } else this.sim = new Sim(randomSeed(), this.settings.difficulty);
+    } else this.sim = this.make(randomSeed(), this.settings.difficulty);
   }
 
   /** 새 교대. 난이도를 넘기면 그 조건으로 시작하고 다음 교대의 기본값으로도 저장한다. */
   newShift(seed?: string, difficulty?: Difficulty): void {
     if (difficulty) { this.settings.difficulty = { ...difficulty }; this.saveSettings(); }
-    this.sim = new Sim(seed && seed.trim() ? seed.trim() : randomSeed(), this.settings.difficulty);
+    this.sim = this.make(seed && seed.trim() ? seed.trim() : randomSeed(), this.settings.difficulty);
     this.acc = 0; this.alpha = 0; this.paused = false; this.version++; this.restoredTicks = 0;
     lsSet(LS_CURRENT, { seed: this.sim.seed, tick: 0, diff: this.sim.difficulty });
   }
@@ -75,7 +81,7 @@ export class Runner {
   seek(tick: number): void {
     const target = Math.max(0, Math.round(tick));
     if (target >= this.sim.tick) this.sim.run(target - this.sim.tick);
-    else { const s = new Sim(this.sim.seed, this.sim.difficulty); s.run(target); this.sim = s; }
+    else { const s = this.make(this.sim.seed, this.sim.difficulty); s.run(target); this.sim = s; }
     this.acc = 0; this.alpha = 0; this.seeks++;
   }
 

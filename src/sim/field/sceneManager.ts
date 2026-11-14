@@ -6,6 +6,9 @@ import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import { closeIncident } from '../incidents';
 import { releaseUnit, startTransport } from '../resources';
+import { scenarioOf } from '../scenarios';
+import './scenes';
+import { SCENE_RULES } from './sceneRegistry';
 import type { Fact, FieldAgent, Incident, Scene, Unit } from '../types';
 import { TYPE_NAME } from '../util';
 import { BeliefStore, mkFact } from './beliefs';
@@ -157,9 +160,11 @@ export function tickScene(sim: Sim, s: Scene): void {
     tickHostiles(sim, s, I);
     tickLane(sim, s, I);
     tickLeaks(sim, s, I);
-    if (s.kind === 'collapse') tickCollapse(sim, s, I);
-    if (s.kind === 'water') tickWater(sim, s, I);
-    if ((sim.tick + s.id) % 5 === 0) { tickFire(sim, s, I); if (s.kind === 'hazmat') tickGas(sim, s, I); }
+    const also = s.rules;
+    if (s.kind === 'collapse' || (also && also.indexOf('collapse') >= 0)) tickCollapse(sim, s, I);
+    if (s.kind === 'water' || (also && also.indexOf('water') >= 0)) tickWater(sim, s, I);
+    if ((sim.tick + s.id) % 5 === 0) { tickFire(sim, s, I); if (s.kind === 'hazmat' || (also && also.indexOf('gas') >= 0)) tickGas(sim, s, I); }
+    for (const rule of SCENE_RULES) rule(sim, s, I);      // 묶음별 세계 규칙 (field/rules/*)
   }
   // 2) 무전
   deliverRadio(sim, s, I);
@@ -192,7 +197,7 @@ export function tickScene(sim: Sim, s: Scene): void {
     const mates = s.agents.filter((b) => b.unitId === u.id && b.status !== 'left');
     if (mates.some((b) => b.status === 'active')) continue;
     for (const b of mates) { b.status = 'left'; b.task = null; b.label = ''; }
-    if (u.boardOrder === 'transport') {
+    if (u.boardOrder === 'transport' || u.patients.length > 0) {      // 철수 지시 뒤에 환자를 태웠어도 병원부터 간다
       const k = I.assigned.indexOf(u.id); if (k >= 0) I.assigned.splice(k, 1);
       emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign} 환자 ${u.patients.length}명 싣고 시립병원으로 출발.` });
       u.boardOrder = null; u.incidentId = null;
@@ -210,7 +215,7 @@ export function tickScene(sim: Sim, s: Scene): void {
   // 7) 한계 시간 / 방치
   if (I.phase !== 'closed' && s.arrivedAt >= 0) {
     const anyActive = s.agents.some((a) => a.status === 'active');
-    if (sim.t - s.arrivedAt > LIMIT[s.kind] + (s.variant === 'bus' ? 170 : 0)) {      // 다수 사상자 사고는 이송에 시간이 더 걸린다
+    if (sim.t - s.arrivedAt > LIMIT[s.kind] + (s.variant === 'bus' ? 170 : 0) + (scenarioOf(I.truth.type, I.truth.variant)?.limit ?? 0)) {      // 다수 사상자 사고는 이송에 시간이 더 걸린다
       emit(sim, { inc: I.id, role: 'COMMANDER', actor: s.commanderRid >= 0 ? sim.responders[s.commanderRid].name : '현장', kind: 'command', imp: 2, text: '대응 한계 시간을 넘겼습니다. 현 상태로 현장을 인계하고 철수합니다.' });
       closeIncident(sim, I, 'timeout');
     } else if (!anyActive && !I.assigned.some((uid) => sim.units[uid].state === 'enroute' || sim.units[uid].state === 'turnout')) {

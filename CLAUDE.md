@@ -18,9 +18,10 @@ TypeScript + React + Vite, 그림은 Canvas 2D. 서버·외부 API·LLM 호출 �
 |---|---|
 | `npm run dev` | 개발 서버 (`http://localhost:5173`, `?seed=S7&diff=hard` 로 조건 고정) |
 | `npm run check` | **커밋 전 관문**: 타입 검사 + 테스트 + 시드 40개 헤드리스 검증 |
-| `npm test` | Vitest 42개 (재현성, 교대 완주, 상태 변화, 정보 격리, 난이도, 전술, 새 유형, 지원, 2층 건물, 배치 다양성, 교전과 진입, 수난·다수 사상자, 건물마다 정해진 도시, 생활 사건 시나리오, 추격전) |
+| `npm test` | Vitest 47개 (재현성, 교대 완주, 상태 변화, 정보 격리, 난이도, 전술, 새 유형, 지원, 2층 건물, 배치 다양성, 교전과 진입, 수난·다수 사상자, 건물마다 정해진 도시, 생활 사건 시나리오, 추격전, 확장 지점) |
 | `npm run sweep -- 100` | 시드 100개 결과 분포. `--diff hard`, `--diff 4,4,4,2,3,3`(빈도·심각도·용의자·장비·신고·부대), `-v`, `--json`, `--check` |
 | `npm run sweep -- 1 --log S7` | 한 교대의 전체 이벤트 기록과 종료 보고서 (동작 확인에 가장 유용) |
+| `npm run sweep -- 20 --force armed/kidnap --scen` | 그 시나리오를 교대마다 초반에 한 번 일으키고, 시나리오별 결과 표를 낸다 (새 시나리오 확인용). `--disaster typhoon` 은 재난을 정해서 |
 | `npm run build` | 타입 검사 + 정적 빌드 |
 | `node scripts/screenshot.cjs S7 화재` | (선택, Playwright 필요) 해당 유형 현장이 열렸을 때 화면 캡처. 유형 이름 일부: 화재·교통사고·실종·무장·응급·붕괴·가스·수난 |
 
@@ -50,7 +51,9 @@ src/sim/events.ts            emit / raiseProblem / markRecovered
 src/sim/cityPlan.ts          도시 설계도: 교차로 자리(NODES), 도로가 지나는 순서(ROADS), 해안선·강·철길·산, 동네의 성격(DISTRICTS), 손으로 놓은 건물(LANDMARKS), 유형별 사건 장소(INCIDENT_PLACES), 건물 종류별 현장 틀(KIND_SCENE)
 src/sim/city.ts              도시 생성(설계도 → 도로 그래프, buildPlaces: 길가에 건물 채우기·골목·진입 지점·주소), 지형 함수(coastY·riverDist·mountainAt·districtAt), 다익스트라, 교통량, placeAt. 만든 지도는 다시 쓴다
 src/sim/resources.ts         편성표(UNIT_DEFS: 네 분야 20팀), 대원 명부, 차량 이동·우회, 헬기·구조정의 길 밖 이동, 병원 이송(가까운 병원, 응급실 인계 대기), 인근 도시 지원 부대 생성(createAidUnit)
-src/sim/scenarios.ts         시나리오 표: 유형 안에서 갈리는 사건의 모습(몫·신고 내용·일어나는 곳), 화면에 보이는 이름, 신고 내용으로 붙이는 이름(NATURE_LABEL)
+src/sim/scenarios.ts         시나리오의 틀(Scenario)과 모음. 내용은 묶음별 파일 scenarios/{life,chase,crime,major,disaster}.ts 에 있다: 몫·신고 문구·필요 자원·장소·한계 시간·이어지는 사건
+src/sim/disaster.ts          재난: 선택(없음·무작위·종류), 단계(예고→충격→여파), 사건을 한꺼번에 일으키고 도로를 통제한다
+src/sim/field/sceneRegistry.ts  묶음별 파일이 끼워 넣는 자리: 현장 생성(scenes/), 세계 규칙(rules/), 지휘 규칙(orders/, 믿음만 읽는다)
 src/sim/incidents.ts         사건 생성(유형·시나리오·규모, pickPlace 로 건물 고르기), 종료 처리
 src/sim/pursuit.ts           추격전: 도주 차량의 주행·길 고르기, 목격 신고와 부대의 시야, 세우기(따라붙음·앞을 막음·사고)와 놓침
 src/sim/debrief.ts           사건 판정, 원인 문장, 교대 보고서
@@ -93,7 +96,7 @@ tests/sim.test.ts            자동 테스트
 | 새 타일·가구·소품 | `types.ts` `T`·`DECOR`·`PropKind` → `grid.ts`(`staticPass`·`isIndoor`·`los`) → 그림은 `view/scene/staticLayer.ts`(고정된 것) 또는 `view/renderScene.ts` 의 소품 분기 + `view/scene/sprites.ts`(움직이거나 상태가 바뀌는 것) |
 | 지도 바꾸기 | 전부 `cityPlan.ts` 에서 한다. 교차로를 옮기려면 `NODES`, 길을 내거나 없애려면 `ROADS`(이웃한 두 교차로 사이가 한 구간이 된다), 동네의 건물 구성은 `DISTRICTS` 의 `mix`·`density`, 하나뿐인 건물은 `LANDMARKS`(가운데 좌표·크기·각도), 사건이 나는 곳은 `INCIDENT_PLACES`(건물 종류 전체의 몫). 새 건물 종류는 `types.ts` `PlaceKind` → `cityPlan.ts` `KIND_NAME`·`KIND_DISTRICT`·`KIND_SCENE` → 길가에 채울 종류면 `city.ts` `DIM`(크기) → `view/city/places.ts` `paintRoof`(없으면 평지붕). 도로를 고친 뒤에는 테스트(`건물마다 정해진 도시`)가 교차·단절·건물 겹침을 잡는다. 지도를 바꾸면 모든 결과가 바뀌므로 `sweep` 으로 다시 잰다 |
 | 새 부대 종류 | `types.ts` `UnitKind` → `resources.ts` `KIND`(부서·능력·장비)·`UNIT_DEFS`(분야·소속 시설·편성 단계)·`UNIT_KIND_NAME` → `view/scene/sprites.ts` `VEH_SIZE`·`drawEmergency`·`responderLook`. 소속 시설이 새로 필요하면 `cityPlan.ts` `LANDMARKS` 에 `facility` 를 붙여 넣는다 |
-| 새 시나리오 (유형은 그대로, 모습만 다르게) | `scenarios.ts` `SCENARIOS` 에 한 줄(몫·신고 내용 키·장소) → `callSystem.ts` `NATURE_TEXT`·`NATURE_LIK` 에 신고 내용 키(8열) → `scenarios.ts` `NATURE_LABEL` → `builders.ts` 에 현장의 모습(`buildScene` 이 변형으로 갈라 부른다) → 필요하면 `analyst.ts` 의 시나리오별 필요 자원. 기존 소품에 다른 모습만 입힐 때는 `Prop.skin` 을 쓴다(쓰러진 나무와 맨홀은 `roadDebris` 다). 가장 최근 예: `tree`·`manhole`·`elevator`·`domestic`·`burglary` |
+| 새 시나리오 (유형은 그대로, 모습만 다르게) | 묶음별 파일에만 쓴다: `scenarios/<묶음>.ts` 에 한 줄(몫·신고 문구 `texts`·가능도 `lik` 8열·필요 자원 `needs`·장소 `places`·한계 시간 `limit`·`onCreate`/`onClose`) → `field/scenes/<묶음>.ts` 에서 `registerScene(유형, 변형, 만드는 함수)` → 세계 규칙이 필요하면 `field/rules/<묶음>.ts` `registerRule`, 지휘관이 달리 움직여야 하면 `field/orders/<묶음>.ts` `registerOrders`·`registerBlocker`(믿음만 읽는다) → 소품에 다른 모습은 `Prop.skin` + `view/scene/skins/<묶음>.ts`. 확인은 `npm run sweep -- 20 --force 유형/변형 --scen`. 자세한 규칙은 `docs/specs/README.md` |
 | 새 난이도 손잡이 | `difficulty.ts`(타입·표·프리셋) → 쓰는 곳에서 `sim.tune.*` → `ui/panels.tsx` `DifficultyPanel` |
 
 ## 겪은 함정
@@ -127,6 +130,8 @@ tests/sim.test.ts            자동 테스트
 - **추격전의 사건은 자리가 움직인다.** `I.pursuit.state === 'driving'` 인 동안 `I.truth.x/y/nodeId` 는 달리는 차를 따라 바뀌고, 현장(`sim.scenes[I.id]`)은 틱을 돌지 않는 임시 현장이다(신고자가 본 내용을 정하는 데만 쓴다). 차가 서면 `pursuit.stop` 이 그 교차로에 현장을 다시 만든다. 부대는 알려진 위치(`I.reportedNode`)에 닿아도 현장에 들어가지 않고 기다린다(`resources.arrive`). 사건의 위치가 고정이라고 가정하는 코드를 새로 쓰지 않는다.
 - **길 위의 현장에도 자리가 필요하다.** 봉쇄와 협상은 `s.spots`(출입구별 자리)를 쓴다. 건물이 없는 현장(`s.outdoor`)을 만들 때도 `s.exits`·`s.spots` 를 채우고, 용의자가 서는 칸이 나무가 아닌지 확인한다(없으면 "진입 경로를 찾지 못했습니다"만 되풀이한다).
 - **한 팀뿐인 경찰.** 한 사람이 말을 걸고 한 사람이 길목을 지키면 붙잡을 손이 없다. 지휘관은 22초 뒤 경찰을 한 팀 더 부른다(`commander.ts`). 경찰이 한 팀만 가는 시나리오를 만들면 이 경로로 끝나는지 본다.
+- **환자를 태운 채 철수하는 부대.** 철수 지시(`boardOrder = 'release'`) 뒤에 탑승 임무가 끝나 환자가 실릴 수 있다. 부대가 떠날 때는 지시가 아니라 `u.patients.length` 를 보고 병원으로 보낸다(`sceneManager.ts` 5)번 블록). 그러지 않으면 환자를 태운 채 다음 사건에 나가 예외가 난다(실제로 겪었다).
+- **시나리오의 순서가 추첨 결과를 바꾼다.** 한 유형 안에서 `SCENARIOS` 의 순서대로 몫을 깎아 고른다. 묶음 파일의 순서를 바꾸거나 시나리오를 더하면 그 유형의 사건이 전부 달라진다(균형은 같지만 시드별 결과는 바뀐다).
 - **한국어 조사.** 이름·호출부호 뒤 조사는 `josa(word, '이/가')` 로 붙인다.
 - **브라우저 확인 없이 UI 를 끝났다고 하지 않는다.** 헤드리스 브라우저로 화면을 찍어 보고, 콘솔 오류 0건을 확인한다.
 - **현장 그림의 고정 층.** `staticLayer.ts` 는 타일·가구가 바뀔 때만 다시 그린다(`staticSig`). 매 프레임 바뀌는 것(문짝, 불, 사람)을 여기에 넣지 않는다. 새 타일 종류·가구를 만들면 `surfaceMap`·`paintTile`·`furniture` 에 그림을 추가한다.

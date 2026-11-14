@@ -5,6 +5,8 @@
 import { generateCity, initTraffic, tickTraffic } from './city';
 import { buildReport } from './debrief';
 import { tickPursuits } from './pursuit';
+import { initDisaster, tickDisaster } from './disaster';
+import type { DisasterState } from './disaster';
 import { tickCalls } from './dispatch/callSystem';
 import { tickDispatch } from './dispatch/dispatcher';
 import { NORMAL, difficultyLabel, tuningOf } from './difficulty';
@@ -29,6 +31,7 @@ export class Sim {
   readonly rngTraffic: Rng;
   readonly rngGen: Rng;
   readonly rngNuisance: Rng;
+  readonly rngMajor: Rng;      // 대형 사고: 일어나는가, 언제, 무엇이
   readonly weather: Weather;
   readonly startTod: number;
   readonly city: City;
@@ -47,11 +50,16 @@ export class Sim {
   ended = false;
   report: ShiftReport | null = null;
   gen: GenState;
+  /** 재난 (없으면 null). disaster.ts 가 만들고 굴린다 */
+  disaster: DisasterState | null = null;
+  /** 시험·확인용: 이 시나리오('유형/변형')를 교대 초반에 한 번 일으킨다 */
+  readonly force: string | null;
   /** 교대 조건: 난이도 손잡이와 거기서 나온 수치 */
   readonly difficulty: Difficulty;
   readonly tune: Tuning;
 
-  constructor(seed: string, difficulty: Difficulty = NORMAL, shiftLen = 1200) {
+  constructor(seed: string, difficulty: Difficulty = NORMAL, shiftLen = 1200, extra: { force?: string | null } = {}) {
+    this.force = extra.force ?? null;
     this.seed = seed;
     this.difficulty = { ...difficulty };
     this.tune = tuningOf(this.difficulty);
@@ -61,6 +69,7 @@ export class Sim {
     this.rngTraffic = this.rng.fork('traffic');
     this.rngGen = this.rng.fork('incidents');
     this.rngNuisance = this.rng.fork('nuisance');
+    this.rngMajor = this.rng.fork('major');
     const env = this.rng.fork('environment');
     this.weather = env.weighted<Weather>(['clear', 'rain', 'fog', 'night'], [0.5, 0.18, 0.12, 0.2]);
     this.startTod = this.weather === 'night' ? 22 * 3600 + env.int(0, 3000) : 9 * 3600 + env.int(0, 8 * 3600);
@@ -68,6 +77,8 @@ export class Sim {
     this.traffic = initTraffic(this.rngTraffic);
     createRoster(this);
     this.gen = initGenerator(this.rngGen);
+    this.gen.majorAt = this.rngMajor.chance(this.tune.majorProb) ? this.rngMajor.range(0.18, 0.7) * shiftLen : Infinity;
+    this.disaster = initDisaster(this);
     emit(this, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 2, text: `교대 시작. 날씨: ${WEATHER_NAME[this.weather]}. 난이도: ${difficultyLabel(this.difficulty)}. 가용 부대 ${this.units.length}대, 대원 ${this.responders.length}명. 시드 ${seed}.` });
   }
 
@@ -80,6 +91,7 @@ export class Sim {
     this.tick++;
     this.t = this.tick * this.dt;
     tickTraffic(this);
+    tickDisaster(this);
     tickIncidents(this);
     tickCalls(this);
     tickDispatch(this);

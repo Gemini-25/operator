@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { nodeName } from '../sim/city';
 import { PROBLEM_LABEL } from '../sim/debrief';
-import { KNOBS, PRESETS, difficultyLabel, overallLevel, presetOf } from '../sim/difficulty';
+import { DISASTER_DESC, DISASTER_KINDS, DISASTER_NAME, KNOBS, PRESETS, difficultyLabel, overallLevel, presetOf } from '../sim/difficulty';
 import type { Difficulty, PresetId } from '../sim/difficulty';
 import { needsText, sevName } from '../sim/dispatch/analyst';
 import { personaName, topicName } from '../sim/dispatch/callSystem';
@@ -382,6 +382,7 @@ export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel 
         </div>
         <div className="modal-body">
           <div className="summary">{r.summary.map((t, k) => <p key={k}>{t}</p>)}</div>
+          {r.disaster && <div className="disaster-report"><h3>재난 대응 — {r.disaster.name}</h3>{r.disaster.lines.map((t, k) => <p key={k}>{t}</p>)}</div>}
           <div className="tiles">
             <div className="tile"><b>{r.totalCalls}</b><span>전체 신고 전화</span></div>
             <div className="tile"><b>{r.totalIncidents}</b><span>처리 사건</span></div>
@@ -495,7 +496,7 @@ export function DifficultyPanel({ runner, onStart, onClose }: { runner: Runner; 
         <div className="modal-body">
           <div className="presets">
             {(Object.keys(PRESETS) as PresetId[]).map((id) => (
-              <button key={id} className={`preset ${preset === id ? 'on' : ''}`} onClick={() => setD({ ...PRESETS[id].d })}>
+              <button key={id} className={`preset ${preset === id ? 'on' : ''}`} onClick={() => setD({ ...PRESETS[id].d, disaster: d.disaster })}>
                 <b>{PRESETS[id].name}</b><span>{PRESETS[id].desc}</span>
               </button>
             ))}
@@ -512,6 +513,14 @@ export function DifficultyPanel({ runner, onStart, onClose }: { runner: Runner; 
                 <div className="dim small">{k.desc}</div>
               </div>
             ))}
+          </div>
+          <div className="disaster-row">
+            <div className="knob-head"><b>재난</b><span className="dim small">{DISASTER_DESC[d.disaster ?? 'none']}</span></div>
+            <div className="chips">
+              {(['none', 'random', ...DISASTER_KINDS] as const).map((k) => (
+                <button key={k} className={`chip ${(d.disaster ?? 'none') === k ? 'on' : ''}`} onClick={() => setD({ ...d, disaster: k })}>{DISASTER_NAME[k]}</button>
+              ))}
+            </div>
           </div>
           <div className="diff-foot">
             <div>종합 난도 <b>{difficultyLabel(d)}</b> <span className="pips big">{[1, 2, 3, 4, 5].map((n) => <i key={n} className={n <= Math.round(lvl) ? 'on' : ''} />)}</span></div>

@@ -1,6 +1,7 @@
 // 도시 관제 화면 렌더러 (Canvas 2D). 시뮬레이션 상태를 읽어 그리기만 한다.
 // 지도(도로·건물)는 월드 좌표로, 표식(사건 핀·차량·라벨)은 화면 픽셀 크기로 그려 어떤 배율에서도 읽힌다.
 
+import { drawDisasterScreen, drawDisasterWorld } from './city/disasterLayer';
 import type { Sim } from '../sim/engine';
 import { placeAt } from '../sim/city';
 import { KIND_NAME } from '../sim/cityPlan';
@@ -134,6 +135,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     for (let k = u.seg + 1; k < u.route.nodes.length; k++) { const n = city.nodes[u.route.nodes[k]]; ctx.lineTo(n.x, n.y); }
     ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
   }
+  drawDisasterWorld(ctx, sim, o.timeMs, xf.scale);
   ctx.restore();
 
   // ── 날씨 ──
@@ -146,6 +148,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
       ctx.stroke();
     }
   }
+  drawDisasterScreen(ctx, sim, w, h, o.timeMs, mini);
 
   // ── 화면 레이어: 도로 이름, 건물 이름, 시설, 사건, 차량 ──
   const onScreen = (q: { x: number; y: number; w: number; h: number }): boolean => sx(q.x + q.w) > 0 && sx(q.x) < w && sy(q.y + q.h) > 0 && sy(q.y) < h;

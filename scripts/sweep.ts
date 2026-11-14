@@ -5,7 +5,10 @@
 //   npm run sweep -- 40 --json           요약을 JSON 한 줄로 출력 (자동화용)
 //   npm run sweep -- 40 --check          불변 조건을 어기면 종료 코드 1 (커밋 전 관문)
 //   npm run sweep -- 1 --log S7          시드 S7 의 전체 이벤트 기록과 보고서
-import { NORMAL, difficultyKey, difficultyLabel, parseDifficulty } from '../src/sim/difficulty';
+//   npm run sweep -- 30 --scen           시나리오(유형/변형)별 결과 표
+//   npm run sweep -- 20 --force armed/bomb --scen    교대마다 그 시나리오를 초반에 한 번 일으킨다 (새 시나리오 확인용)
+//   npm run sweep -- 20 --disaster typhoon           재난을 정해서 (none|random|typhoon|flood|quake|wildfire|tsunami)
+import { NORMAL, difficultyKey, difficultyLabel, parseDifficulty, parseDisaster } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
 import { OUTCOME_NAME, TYPE_NAME, fmtClock } from '../src/sim/util';
 
@@ -16,11 +19,16 @@ const flag = (name: string): boolean => args.indexOf(name) >= 0;
 const logSeed = opt('--log');
 const verbose = flag('-v');
 const diffArg = opt('--diff');
-const diff = diffArg ? parseDifficulty(diffArg) : NORMAL;
+let diff = diffArg ? parseDifficulty(diffArg) : { ...NORMAL };
 if (!diff) { console.error(`알 수 없는 난이도: ${diffArg}`); process.exit(2); }
+const disArg = opt('--disaster');
+if (disArg) { const dz = parseDisaster(disArg); if (!dz) { console.error(`알 수 없는 재난: ${disArg}`); process.exit(2); } diff = { ...diff, disaster: dz }; }
+const force = opt('--force');
+const mk = (seed: string): Sim => new Sim(seed, diff!, 1200, { force });
+const byScen: Record<string, Record<string, number>> = {};
 
 if (logSeed) {
-  const sim = new Sim(logSeed, diff);
+  const sim = mk(logSeed);
   sim.runToEnd();
   for (const e of sim.events) {
     if (e.importance < 1 && !verbose) continue;
@@ -46,7 +54,7 @@ for (let k = 0; k < n; k++) {
   const seed = 'S' + k;
   const t0 = performance.now();
   let sim: Sim;
-  try { sim = new Sim(seed, diff); sim.runToEnd(); }
+  try { sim = mk(seed); sim.runToEnd(); }
   catch (e) { errors++; console.log(`seed ${seed} ERROR:`, (e as Error).stack); continue; }
   ms += performance.now() - t0;
   const r = sim.report;
@@ -66,6 +74,7 @@ for (let k = 0; k < n; k++) {
     else { if (inc.result.outcome === 'success' || inc.result.outcome === 'delayed') realGood++; if (inc.result.responseTime >= 0) { realRespSum += inc.result.responseTime; realRespN++; } }
     unitSum += I.everAssigned.length; maxUnits = Math.max(maxUnits, I.everAssigned.length);
     closeReasons[I.closeReason] = (closeReasons[I.closeReason] ?? 0) + 1;
+    { const key = `${I.truth.type}/${I.truth.variant}`, b = (byScen[key] = byScen[key] ?? {}); b.n = (b.n ?? 0) + 1; b[inc.result.outcome] = (b[inc.result.outcome] ?? 0) + 1; if (I.closeReason !== 'resolved') b[I.closeReason] = (b[I.closeReason] ?? 0) + 1; b.dur = (b.dur ?? 0) + inc.result.duration; b.units = (b.units ?? 0) + I.everAssigned.length; }
     const seen = new Set<string>();
     for (const p of I.problems) { if (!seen.has(p.code)) { seen.add(p.code); prob[p.code] = (prob[p.code] ?? 0) + 1; } }
     if (I.problems.some((p) => p.recovered && p.recoveryText)) replan++;
@@ -93,13 +102,17 @@ else {
   console.log(`false alarms ${benignN} (${Math.round((benignN / Math.max(1, incN)) * 100)}%); real incidents only: good ${Math.round(summary.realGood * 100)}%, avg response ${summary.realAvgResponse}s`);
   console.log(`casualties total ${casT}, saved ${casS} (${Math.round(summary.casualties.savedRate * 100)}%), lost ${casL}, undiscovered ${casU}; responders hurt/shift ${summary.respondersHurtPerShift}`);
   console.log(`incidents with a recovered problem: ${Math.round(summary.recoveredShare * 100)}%`);
+  if (flag('--scen')) {
+    console.log('scenarios (n · 성공 · 부분 · 지연 · 미해결 · 실패 | 한계시간·무대응·방치 | 평균 시간 · 평균 부대):');
+    for (const k of Object.keys(byScen).sort()) { const b = byScen[k]; console.log(`  ${k.padEnd(20)} ${String(b.n).padStart(4)} · ${b.success ?? 0} · ${b.partial ?? 0} · ${b.delayed ?? 0} · ${b.unresolved ?? 0} · ${b.failed ?? 0} | ${b.timeout ?? 0}·${b.noresponse ?? 0}·${b.abandoned ?? 0} | ${Math.round(b.dur / b.n)}s · ${(b.units / b.n).toFixed(1)}`); }
+  }
   console.log('problems (incidents affected):', Object.entries(prob).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', '));
 }
 if (flag('--check')) {
   const fail: string[] = [];
   if (errors > 0) fail.push(`예외 ${errors}건`);
   if (open > 0) fail.push(`끝나지 않은 사건 ${open}건`);
-  if (!diffArg) {
+  if (!diffArg && !disArg && !force) {
     if (timeoutShare > 0.04) fail.push(`한계 시간·무대응 종료 비율 ${(timeoutShare * 100).toFixed(1)}% > 4%`);
     // 난이도 보통의 기준 범위. 균형을 의도적으로 바꿨다면 이 범위와 docs/ROADMAP.md 의 기준 수치를 함께 고친다.
     if (summary.good < 0.65 || summary.good > 0.9) fail.push(`성공+대응 지연 ${(summary.good * 100).toFixed(0)}% 가 65~90% 를 벗어남`);

@@ -86,7 +86,7 @@ export type UnitKind = 'engine' | 'rescue' | 'als' | 'bls' | 'patrol' | 'tactica
 /** 부대의 분야 (편성표와 화면의 묶음) */
 export type UnitField = 'police' | 'fire' | 'rescue' | 'special';
 export type UnitState = 'available' | 'turnout' | 'enroute' | 'onscene' | 'transport' | 'hospital' | 'returning' | 'oos';
-export interface UnitCaps { suppression: number; rescue: number; ems: number; law: number; tactical: number; search: number; traffic: number }
+export interface UnitCaps { suppression: number; rescue: number; ems: number; law: number; tactical: number; search: number; traffic: number; eod: number }
 export interface Unit {
   id: number; callsign: string; dept: Dept; kind: UnitKind; crew: number[];
   homeNode: number; homeName: string;
@@ -144,7 +144,8 @@ export interface Region {
 }
 export type PropKind = 'debris' | 'door' | 'vehicle' | 'hydrant' | 'gas' | 'cover' | 'clue' | 'witness' | 'roadDebris'
   | 'unstable'      // 금이 간 구조물: 보강(mitigate)하지 않으면 leak 가 1 에 이를 때마다 2차 붕괴가 난다
-  | 'valve';        // 가스가 새는 배관: 차단(mitigate)할 때까지 leakRate 세기로 가스를 내뿜는다
+  | 'valve'         // 가스가 새는 배관: 차단(mitigate)할 때까지 leakRate 세기로 가스를 내뿜는다
+  | 'bomb';         // 폭발물로 보이는 물건: real 이면 fuse 시각에 터진다. 해체(defuse)하면 mitigated
 export interface Prop {
   id: number; kind: PropKind; x: number; y: number; w: number; h: number;
   blocking: boolean;
@@ -159,6 +160,7 @@ export interface Prop {
   removed?: boolean;
   entered?: boolean;                         // door: 진입조가 이 방 문으로 이미 진입했다
   bus?: boolean;                             // vehicle: 버스 (다수 사상자 사고)
+  real?: boolean; fuse?: number;             // bomb: 진짜 장치인가, 터지는 시각(sim.t)
 }
 export type Mobility = 'mobile' | 'immobile' | 'trapped';
 export type CasWhere = 'scene' | 'carried' | 'safe' | 'loaded' | 'hospital';
@@ -205,11 +207,12 @@ export interface Hostile {
   targetRid: number;
 }
 export interface PassingCar { x: number; px: number; row: number; dir: number; speed: number; distracted: boolean; stopped: boolean; hit: boolean }
-export interface Fx { kind: 'shot' | 'spray' | 'radio' | 'text' | 'boom' | 'hit' | 'flash'; t: number; x: number; y: number; x2?: number; y2?: number; text?: string; color?: string; ttl: number }
+export interface Fx { kind: 'shot' | 'spray' | 'radio' | 'text' | 'boom' | 'hit' | 'flash' | 'glass' | 'debris'; t: number; x: number; y: number; x2?: number; y2?: number; text?: string; color?: string; ttl: number }
 
 export type WorkKind =
   | 'sizeup' | 'search' | 'suppress' | 'hookup' | 'clear' | 'force' | 'extricate' | 'treat' | 'carry' | 'load'
-  | 'traffic' | 'mitigate' | 'perimeter' | 'negotiate' | 'engage' | 'arrest' | 'interview' | 'clearRoad' | 'rescueMate' | 'escort' | 'waterRescue';
+  | 'traffic' | 'mitigate' | 'perimeter' | 'negotiate' | 'engage' | 'arrest' | 'interview' | 'clearRoad' | 'rescueMate' | 'escort' | 'waterRescue'
+  | 'defuse';       // 폭발물 해체 (폭발물 처리반만)
 export type TaskKind = WorkKind | 'retreat' | 'rehab' | 'resupply' | 'board' | 'standby' | 'moveSignal';
 
 export interface WorkItem {
@@ -277,6 +280,9 @@ export interface ResourceRequest { t: number; need: keyof UnitCaps; count: numbe
 
 export interface Scene {
   outdoor?: boolean;        // 건물이 아니라 길 위의 현장 (출입구 대신 길목)
+  rules?: ('collapse' | 'gas' | 'water')[];      // 유형의 규칙에 더해 돌릴 세계 규칙 (예: 가스 폭발 현장 = 붕괴 + 가스, 선박 화재 = 화재 + 표류)
+  glass: Uint8Array;                  // 깨진 창 (1 = 깨짐). 창 칸에만 뜻이 있다
+  decorHp: Uint8Array;                // 가구의 남은 내구 (0 = 기본값을 아직 매기지 않았거나 가구가 아님)
   id: number; incidentId: number; kind: IncidentType; variant: string;
   w: number; h: number;
   tiles: Uint8Array; region: Int16Array;
@@ -341,7 +347,7 @@ export interface Call {
   script: string[]; scriptI: number;  // 비긴급 전화의 대사
   rng: Rng; isFollowup: boolean; eventId: number;
 }
-export interface Needs { suppression: number; rescue: number; ems: number; law: number; tactical: number; search: number; traffic: number }
+export interface Needs { suppression: number; rescue: number; ems: number; law: number; tactical: number; search: number; traffic: number; eod: number }
 export interface Assessment {
   type: IncidentType; typeConf: number; probs: Record<IncidentType, number>;
   severity: number;          // 1..3
@@ -374,7 +380,8 @@ export interface IncidentResult {
 }
 /** 추격전: 도주 차량이 도로망을 달리는 동안의 상태 (pursuit.ts) */
 export interface Pursuit {
-  state: 'driving' | 'stopped' | 'escaped'; kind: 'kidnap' | 'drunk';
+  state: 'driving' | 'stopped' | 'escaped'; kind: 'kidnap' | 'drunk' | 'getaway';
+  hideout?: number;            // 납치범이 향하는 은신처 (건물 id). 없으면 도시 밖으로 달아난다
   from: number; to: number; edge: number; t: number;      // 지금 달리는 구간(교차로 → 교차로)과 그 위의 위치 0..1
   x: number; y: number; angle: number;
   goal: number;                // 향하는 교차로
@@ -386,6 +393,8 @@ export interface Pursuit {
 }
 export interface Incident {
   pursuit?: Pursuit;
+  tag?: string;              // 묶음: life · chase · crime · major(대형 사고) · 'disaster:typhoon' 처럼 재난에 딸린 사건. 없으면 예전부터 있던 사건
+  parent?: number;           // 이 사건을 낳은 사건 (도주한 용의자의 재범, 연쇄 방화, 은신처)
   id: number; code: string;
   // ── 진실 (엔진만 사용. AI 는 접근 금지) ──
   truth: { type: IncidentType; variant: string; severity: number; nodeId: number; x: number; y: number; district: District; label: string; placeId: number; placeKind: PlaceKind | null };
@@ -449,5 +458,7 @@ export interface ShiftReport {
   delayCauses: { code: ProblemCode; label: string; count: number }[];
   incidents: { id: number; code: string; type: IncidentType; name?: string; reportedType: IncidentType | null; label: string; result: IncidentResult; start: number; end: number }[];
   summary: string[];
+  major?: number;                  // 대형 사고 건수
+  disaster?: { name: string; lines: string[] };      // 재난이 있었던 교대의 요약 (disaster.ts)
   hash: string;
 }

@@ -8,12 +8,13 @@ import type { District, Incident, Mobility, PlaceKind, Prop, Region, Scene } fro
 import { staticPass, tidx } from './grid';
 import { SH, SW, addCas, addHostile, addProp, addRegion, baseScene, freeTileIn, furnish, get, set } from './kit';
 import { KIND_SCENE } from '../cityPlan';
+import { SCENE_BUILDERS } from './sceneRegistry';
 import { blockPassage, lockDoor, planBuilding, suiteRooms, tallPlan } from './plans';
 import type { Arch, Plan, PlanOpts } from './plans';
 
 // ───────────────────────── 건물 (화재 · 붕괴 · 가스 누출 공통) ─────────────────────────
 /** 건물 종류가 정해져 있으면 그 종류의 틀 비중을, 아니면 구역의 비중을 쓴다 */
-function pickArch(rng: Rng, dist: District, kind: PlaceKind | null = null): Arch {
+export function pickArch(rng: Rng, dist: District, kind: PlaceKind | null = null): Arch {
   const ks = kind ? KIND_SCENE[kind] : undefined;
   if (ks) return rng.weighted<Arch>(['corridor', 'suite', 'hall'], ks.arch);
   if (dist === 'industrial') return rng.weighted<Arch>(['hall', 'corridor'], [0.6, 0.4]);
@@ -25,7 +26,7 @@ const KIND_ROOMS: Partial<Record<PlaceKind, [string, string]>> = {
   pension: ['객실', '거실'], hotel: ['객실', '로비'], office: ['사무실', '로비'], bank: ['상담실', '로비'], terminal: ['사무실', '대합실'], restaurant: ['룸', '홀'], church: ['교육실', '예배당'],
   market: ['점포', '시장 통로'], mart: ['창고', '매장'], warehouse: ['보관실', '적재장'], hangar: ['정비실', '격납고'], construction: ['작업 구획', '골조 층'],
 };
-function planOpts(dist: District, kind: PlaceKind | null = null): PlanOpts {
+export function planOpts(dist: District, kind: PlaceKind | null = null): PlanOpts {
   const o = planOptsOf(dist), names = kind ? KIND_ROOMS[kind] : undefined;
   if (names) { o.prefix = names[0]; o.hallName = names[1]; }
   if (kind === 'office' || kind === 'bank' || kind === 'terminal') { o.kinds = [DECOR.DESK, DECOR.CABINET, DECOR.TABLE, DECOR.PLANT]; o.hallKinds = [DECOR.COUNTER, DECOR.SOFA, DECOR.PLANT, DECOR.DESK]; }
@@ -33,22 +34,22 @@ function planOpts(dist: District, kind: PlaceKind | null = null): PlanOpts {
   return o;
 }
 /** 2층 건물일 확률: 건물 종류가 정해져 있으면 그 종류를 따른다 */
-const tallP = (kind: PlaceKind | null, base: number): number => { const ks = kind ? KIND_SCENE[kind] : undefined; return ks ? ks.tall : base; };
+export const tallP = (kind: PlaceKind | null, base: number): number => { const ks = kind ? KIND_SCENE[kind] : undefined; return ks ? ks.tall : base; };
 function planOptsOf(dist: District): PlanOpts {
   if (dist === 'industrial') return { prefix: '작업실', hallName: '작업장', kinds: [DECOR.MACHINE, DECOR.CRATE, DECOR.CRATE, DECOR.CABINET], hallKinds: [DECOR.MACHINE, DECOR.MACHINE, DECOR.CRATE, DECOR.CRATE], racks: true };
   if (dist === 'commercial') return { prefix: '점포', hallName: '매장', kinds: [DECOR.COUNTER, DECOR.SHELF, DECOR.TABLE, DECOR.CRATE], hallKinds: [DECOR.COUNTER, DECOR.SHELF, DECOR.SHELF, DECOR.PLANT], racks: true };
   return { prefix: dist === 'outskirts' ? '객실' : '호실', hallName: '거실', kinds: [DECOR.BED, DECOR.DESK, DECOR.SOFA, DECOR.CABINET, DECOR.PLANT] };
 }
-const floorMatOf = (dist: District): number => (dist === 'industrial' ? 2 : dist === 'commercial' ? 1 : 0);
-function fuelUp(s: Scene, P: Plan, rng: Rng, lo: number, hi: number, corLo: number, corHi: number, doorFuel: number): void {
+export const floorMatOf = (dist: District): number => (dist === 'industrial' ? 2 : dist === 'commercial' ? 1 : 0);
+export function fuelUp(s: Scene, P: Plan, rng: Rng, lo: number, hi: number, corLo: number, corHi: number, doorFuel: number): void {
   for (const r of P.rooms) for (const i of r.tiles) if (s.fuel[i] === 0) s.fuel[i] = s.tiles[i] === T.DOOR ? doorFuel : rng.range(lo, hi);
   for (const c of P.corridors) for (const i of c.tiles) if (s.fuel[i] === 0) s.fuel[i] = rng.range(corLo, corHi);
   for (let i = 0; i < s.tiles.length; i++) if (s.tiles[i] === T.FURN) s.fuel[i] = 1;
   for (let i = 0; i < s.fuel.length; i++) if (s.fuel[i] > 0) s.totalFuelTiles++;
 }
-const doorOf = (s: Scene, r: Region): Prop | undefined => s.props.find((p) => p.kind === 'door' && s.region[tidx(s, p.x, p.y)] === r.id);
+export const doorOf = (s: Scene, r: Region): Prop | undefined => s.props.find((p) => p.kind === 'door' && s.region[tidx(s, p.x, p.y)] === r.id);
 /** 무전이 잘 닿지 않을 만한 방: 2층이거나, 대기 지점에서 먼 쪽 절반 */
-function farRooms(s: Scene, P: Plan): Region[] {
+export function farRooms(s: Scene, P: Plan): Region[] {
   if (P.floors.length > 1) return P.rooms.filter((r) => r.cx > 16);
   const sorted = [...P.rooms].sort((a, b) => Math.hypot(b.cx - s.staging.x, b.cy - s.staging.y) - Math.hypot(a.cx - s.staging.x, a.cy - s.staging.y));
   return sorted.slice(0, Math.max(1, sorted.length >> 1));
@@ -369,14 +370,14 @@ function buildSearch(sim: Sim, I: Incident, rng: Rng): Scene {
 }
 
 // ───────────────────────── 무장 사건 ─────────────────────────
-type VenueKind = 'shop' | 'bank' | 'office' | 'warehouse' | 'home';
-interface Venue { main: Region; back: Region; office: Region; front: number; rear: number; place: string }
+export type VenueKind = 'shop' | 'bank' | 'office' | 'warehouse' | 'home';
+export interface Venue { main: Region; back: Region; office: Region; front: number; rear: number; place: string }
 
 /**
  * 무장 사건의 장소. 어느 장소든 용의자가 있는 넓은 곳(main), 숨을 수 있는 뒷방(back), 인질이 잡히는 방(office)이 있고,
  * 남쪽 정문(exits[0])과 북쪽 후문(exits[1])이 있다. 건물 범위는 x 8~22, y 2~10 으로 같다.
  */
-function armedVenue(s: Scene, rng: Rng, kind: VenueKind, dist: District): Venue {
+export function armedVenue(s: Scene, rng: Rng, kind: VenueKind, dist: District): Venue {
   const bx0 = 8, bx1 = 22, by0 = 2, by1 = 10;
   for (let y = by0; y <= by1; y++) for (let x = bx0; x <= bx1; x++) set(s, x, y, x === bx0 || x === bx1 || y === by0 || y === by1 ? T.WALL : T.FLOOR);
   const wall = (x: number, y: number): void => set(s, x, y, T.WALL);
@@ -760,7 +761,8 @@ function buildWater(sim: Sim, I: Incident, rng: Rng): Scene {
 
 export function buildScene(sim: Sim, I: Incident, rng: Rng): Scene {
   const v = I.truth.variant;
-  const s = v === 'kidnap' || v === 'drunk' ? buildStop(sim, I, rng) : I.truth.type === 'traffic' && (v === 'tree' || v === 'manhole') ? buildRoadIncident(sim, I, rng) : I.truth.type === 'collapse' && v === 'elevator' ? buildElevator(sim, I, rng) : I.truth.type === 'water' ? buildWater(sim, I, rng) : I.truth.type === 'collapse' ? buildCollapse(sim, I, rng) : I.truth.type === 'hazmat' ? buildHazmat(sim, I, rng) : I.truth.type === 'fire' ? buildFire(sim, I, rng) : I.truth.type === 'traffic' ? buildTraffic(sim, I, rng) : I.truth.type === 'search' ? buildSearch(sim, I, rng) : I.truth.type === 'medical' ? buildMedical(sim, I, rng) : buildArmed(sim, I, rng);
+  const custom = SCENE_BUILDERS[`${I.truth.type}/${v}`];      // 묶음별 파일(field/scenes/*)이 등록한 시나리오
+  const s = custom ? custom(sim, I, rng) : v === 'kidnap' || v === 'drunk' ? buildStop(sim, I, rng) : I.truth.type === 'traffic' && (v === 'tree' || v === 'manhole') ? buildRoadIncident(sim, I, rng) : I.truth.type === 'collapse' && v === 'elevator' ? buildElevator(sim, I, rng) : I.truth.type === 'water' ? buildWater(sim, I, rng) : I.truth.type === 'collapse' ? buildCollapse(sim, I, rng) : I.truth.type === 'hazmat' ? buildHazmat(sim, I, rng) : I.truth.type === 'fire' ? buildFire(sim, I, rng) : I.truth.type === 'traffic' ? buildTraffic(sim, I, rng) : I.truth.type === 'search' ? buildSearch(sim, I, rng) : I.truth.type === 'medical' ? buildMedical(sim, I, rng) : buildArmed(sim, I, rng);
   // 심각도 설정: 부상 악화 속도
   for (const c of s.casualties) { c.bleed *= sim.tune.bleedMul; c.bleed0 = c.bleed; }
   sealPockets(s);

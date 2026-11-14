@@ -117,7 +117,7 @@ export function tickFire(sim: Sim, s: Scene, I: Incident): void {
   if (burning > 0) s.fireOutAt = -1;
 }
 
-function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, radius: number, dmg: number, ev: number): void {
+export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, radius: number, dmg: number, ev: number): void {
   for (const a of s.agents) {
     if (a.status === 'left') continue;
     const d = dist(a.x, a.y, x, y);
@@ -492,7 +492,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
         h.state = 'escaped';
         raiseProblem(sim, I, 'SUSPECT_FLED', `${h.label} 도주`, { role: 'SYSTEM', actor: '현장', text: `${h.label}가 현장을 벗어나 도주했습니다.`, imp: 3, truth: s.arrivedAt < 0 }, false);
         // 연쇄: 총기를 든 채 달아난 용의자는 다른 곳에서 다시 범행할 수 있다
-        if (h.weapon === 'gun' && s.rng.chance(0.45)) sim.gen.chain.push({ at: sim.t + s.rng.range(45, 100), note: '도주한 용의자가 다른 곳에서 다시 범행을 벌입니다' });
+        if (h.weapon === 'gun' && s.rng.chance(0.45)) sim.gen.chain.push({ at: sim.t + s.rng.range(45, 100), opts: { note: '도주한 용의자가 다른 곳에서 다시 범행을 벌입니다', type: 'armed', variant: 'robbery', parent: I.id } });
         continue;
       }
       const ti = h.path[h.pathI];

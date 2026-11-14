@@ -19,7 +19,7 @@
 - 같은 일을 장비에 따라 다른 방법으로 하기(구명줄이 없으면 헤엄쳐 구조 등) — `R2-methods.md`. R1 은 그 바탕(`toolFor`·`hasKit`·`KitId`)만 만든다.
 - 대원·용의자·요구조자의 부상과 사망 모델 — `H1-injuries.md`. R1 은 피해 식의 "방호" 부분만 사람 장비로 바꾼다.
 - 상황 × 장비 × 상태별 행동 표(둘이 들어가고 둘이 밖에서 대기하는 짝 규칙 같은 교본) — `R3-doctrine.md`.
-- 탄약 수(총은 무제한으로 둔다), 사다리차의 창문 구조(`ROADMAP` C4), 구조정의 바다 쪽 현장 그림과 보트 구조, 이륙 준비 시간 늘리기, 헬기 소리.
+- 탄약 수(총은 무제한으로 둔다 — 탄창·재장전은 R3 §2.9), 사다리차의 창문 구조(`ROADMAP` C4), 구조정의 바다 쪽 현장 그림과 보트 구조, 이륙 준비 시간 늘리기, 헬기 소리.
 - 관제 수요(`Needs`)를 사람 단위로 바꾸기. 수요는 지금처럼 **부대 수** 단위로 둔다(17절 결정 4).
 - 새 시설·지도 변경. 헬기는 이미 있는 시설에 둔다(지도가 그대로다).
 
@@ -282,7 +282,9 @@ export function stays(sim: Sim, rid: number): boolean;                   // 현�
 export function fieldCrew(sim: Sim, u: Unit): number[];                  // 내리는 자리만 (전원이 내리지 않으면 전원)
 export function crewHasKit(sim: Sim, u: Unit, id: KitId, okOnly = true): boolean;
 export function seatsOf(u: Unit): number;                                // u.seats ?? 0
-export function minCrew(kind: UnitKind): number;                         // 최소 인원 표의 인원 (H1 의 결원 처리가 쓸 수 있다)
+export function minCrew(kind: UnitKind): number;                         // 최소 인원 표의 인원 (내리지 않는 자리까지 센다 — 편성 인원의 설명·테스트용. H1·I2 의 결원 판정은 minField 를 쓴다)
+export function minField(kind: UnitKind): number;                        // 내리는 자리의 최소 수: 최소 편성(std 에서 minDrop 을 뺀 것) 가운데 stays 가 아닌 역할의 수. 모두 stays 면(경찰 헬기) 최소 편성의 자리 수 — fieldCrew 와 같은 규칙. H1 의 crewReady·I2 의 결원 기준이 이것과 견준다
+export function skillsOf(role: RoleId, skill: number): Skills;            // 역할의 skills 식(2절 표)에 skill 을 넣은 값(0..1 로 자른다). createRoster 와 I2 의 성장(persist.ts)이 함께 쓴다
 export function isHovering(u: Unit, s: Scene): boolean;                  // 7.3 (종류와 현장만 본다 — 상태는 부르는 쪽이 따로 본다)
 export function capableOf(sim: Sim, rid: number, kind: WorkKind): boolean;   // 6.4. 장비·부서와 알려진 공기 상태만
 export const AIR_KIND: Set<UnitKind>;                                    // new Set(['heli', 'policeHeli', 'medHeli']). createRoster 와 view(marks·tokens)가 함께 쓴다
@@ -440,7 +442,7 @@ export function anyCapable(sim: Sim, s: Scene, I: Incident, w: WorkItem, need: k
 ```
 
 - `anyCapable` 은 `commander.ts` 에 두고 export 한다(테스트 ⑧ 이 부른다). 요청 문구·`break`·20초·`holdUntil` 은 B3 의 것 그대로.
-- `capableOf(sim, rid, kind)`(`crews.ts`)는 장비·부서와 **알려진 장비 상태**만 본다: `suppress`·`overhaul` → `hose` 이고 공기가 된다(`scba` 가 없거나, `uses` 가 없거나 45 이상이거나, 그 부대의 `spareAir > 0`), `defuse` → `eodKit`, `engage`·`perimeter` → 총기, `arrest` → 총기·테이저. 표에 없는 일은 `true`(위험 건물 실내 일은 현장 쪽 `fitFor` 와 불변 조건 ③ 이 맡는다). 모두 `hasKit` 으로 본다(숨은 고장은 모른다). 공기 잔량과 예비 공기통은 자기 조직의 장비 상태라 정보 격리 안이다.
+- `capableOf(sim, rid, kind)`(`crews.ts`)는 장비·부서와 **알려진 장비 상태**만 본다: `suppress`·`overhaul` → `hose` 이고 공기가 된다(`scba` 가 없거나, `uses` 가 없거나 45 이상이거나, 그 부대의 `spareAir > 0`), `defuse` → `eodKit`, `engage`·`perimeter` → 총기, `arrest` → 총기·테이저. 표에 없는 일은 `true`(위험 건물 실내 일은 현장 쪽 `fitFor` 와 불변 조건 ③ 이 맡는다). `mitigate` 는 종류만으로 갈래(밸브 차단·냉각·재측정)를 가릴 수 없어 `true` 다 — 측정기만 할 수 있는 재측정은 X6 가 `commander.needFor` 에서 뺀다(X6 §5.7·§11.2). 모두 `hasKit` 으로 본다(숨은 고장은 모른다). 공기 잔량과 예비 공기통은 자기 조직의 장비 상태라 정보 격리 안이다.
 - 요청은 지금의 `request()` 를 그대로 쓴다(70초 안의 같은 요청은 막힌다). 관제는 부대 수로 보내고, 능력 불변 조건 덕에 그 부대는 장비를 가졌다.
 
 - 지금의 "가스·붕괴 건물에 진입할 소방 부대가 없음" 요청 조건(`countUnits(rescue) + fireUnits === 0`)은 "`scba` 를 가진 대원이 있는 부대가 현장·오는 중에 없음"(`crewHasKit`)으로 바꾼다.
@@ -616,6 +618,7 @@ diff /scratch/hash-before.txt /scratch/hash-after.txt      # 출력이 없어야
   - `brain`: `uses < 60` 이고 자기 부대 `spareAir > 0` 이면 후보 `공기통 교체`(0.9, 연기 칸에 있으면 0.95). 교체 중에는 0.93 으로 붙잡는다. 이 후보를 **실제로 고를 때**(`apply`) 기록 `공기통을 교체하러 대기 지점으로 갑니다.`(imp 1) — 지금의 예비 펌프 교체 후보와 같은 꼴이다.
   - `executor` `case 'swapAir'`: 대기 지점으로 가서 8초 → `uses = tn.airFull`, `u.spareAir--`(imp 0 기록 한 줄). 예비가 없으면 교체하지 않는다.
   - `fitFor`: `uses < 45` 인 대원에게 위험 건물 실내 일(수색·구출·이송)과 진압은 0. 공기가 없어 일을 못 하면 현장 쪽은 `fitFor` 가 0 이 되므로 6.4 의 블록(B3 의 "맡을 사람이 없는 작업", 현장 쪽은 `fitFor > 0` 으로 본다)이 그 일을 할 부대를 부른다. 오는 부대 쪽은 `capableOf` 가 알려진 공기 상태(`uses ≥ 45` 이거나 `spareAir > 0`)를 본다 — 공기가 바닥난 채 다른 사건에서 넘어오는 펌프차를 "할 수 있는 부대"로 세지 않는다.
+    - 뒤 묶음이 이 줄을 바꾼다: R2 4단계는 진압을 이 줄에서 빼고 `methodFit(suppress)` 로 넘긴다(바깥 방수는 공기가 필요 없다 — R2 §4.5), R3 는 위험 실내 일의 문턱 45초를 `AIR_IN × airFull` 비율로 넓히고 `capableOf` 의 공기 문턱도 같은 값으로 맞춘다(R3 §3.2 F03·§11.1).
   - 부대가 집에 닿으면(`arrive` `returning`) `spareAir` 를 가득, 대원의 공기를 가득.
 - **섬광탄·테이저**: 수량이 사람 몫이다. 다시 채우지 않는다(지금 섬광탄과 같다).
 - **고장**: `tn.kitFault` = `[0.12, 0.07, 0.03, 0.015, 0.005][equipment]`. 고장 추첨을 받는 장비: `tic`·`spreader`·`searchKit`·`aed`·`taser`·`robot`·`searchlight`. 고장 난 장비는 효과가 없고(`kitLive`), 처음 효과를 주려 할 때 드러난다(`kitWorks`·`toolUse` — 드러나는 자리는 4절의 목록 하나뿐이다). 드러난 뒤에는 `hasKit` 이 false 라 배정·관제가 그 장비가 없는 것으로 본다(예: 유압 구조기가 고장 난 구조대원은 구출 적합도가 맨손 값). 보통 난이도에서 교대당 1건 안팎.
@@ -705,7 +708,7 @@ diff /scratch/hash-before.txt /scratch/hash-after.txt      # 출력이 없어야
   - 성공률(`outcomes.success / incidents` — `good` 은 성공+대응 지연이라 다른 값이다) 73% ± 5%p, 실패+미해결(`bad`) 12% 이하, 한계 시간+방치(`closeReasons.timeout + closeReasons.abandoned`) 4건 이하(지금 3), 평균 대응(`avgResponse`) 55초 이하(지금 50).
   - 유형별 성공률이 50% 아래로 떨어지는 유형이 없다(지금 가장 낮은 화재 54%). 무장은 지금 82% ± 8%p.
   - 프리셋 순서(쉬움 > 보통 > 어려움 > 극한)와 간격(테스트 `프리셋`이 본다) 유지.
-  - 부대 규모 1(최소 인원) 이 3 보다 어렵다(성공률이 낮다).
+  - 부대 규모 1(최소 인원) 이 3 보다 어렵다(성공률이 낮다). 이 비교는 **H1 을 합친 뒤 다시 잰다** — H1 의 결원 규칙(H1 §3.6, `crewOk < minField`)이 최소 편성 부대에 걸리는 방식에 따라 부대 규모 1·2 의 결과가 다시 바뀐다.
   - 각 `--force` 20교대에서 한계 시간·방치 2건 이하.
   - 교대당 시간: 지금(P1 이후, 단계 0 에서 잰 값)의 1.8배를 넘으면 원인(대개 대원 수 × `perceive`·A*)을 재서 보고에 적는다. 테스트가 시간 초과로 깨지면 원인을 먼저 재고, 그래도 넘는 테스트만 제한 시간을 늘리고 보고에 적는다.
 - **기준을 벗어나면 고치는 차례**:
@@ -726,7 +729,7 @@ diff /scratch/hash-before.txt /scratch/hash-after.txt      # 출력이 없어야
 | 1 | **편성표와 명부**: `types.ts`(역할·장비 자료형, `Responder.role/kit`, `Unit`·`FieldAgent`·`Scene`·`Incident` 의 새 칸), `crews.ts`(`ROLES`·`STAFF`·`KITS`·`EXTRA_NAMES`·`AIR_KIND`·`stays`·`fieldCrew`·`hasKit`·`kitUses`·`useKit`), `createRoster`·`createAidUnit`(5절, `AID_NAMES` 20개 이상), `crewReady`·`crewNames`, `unitArrived` 의 내리는 사람·자리·기록·첫 판단 간격(6.1, 상공 처리는 아직 — `first` 를 둘로 가르는 것까지는 이 단계에 해도 결과가 같다), `pickUnit` 의 감점·평균 체력, `KNOBS` 설명문의 **인원 한 문장만**(팀 수는 단계 4), 섬광탄 나눔(이 단계에서는 실행기가 아직 `u.flashbangs` 를 써도 합이 같다), `tests/sim.test.ts` 의 **총원(`responders.length === 40` → 표에서 계산)과 이름 수만** — 팀 수(`12/17/20`)와 "3~5팀"은 이 단계에서 그대로 맞으므로 고치지 않는다 | `tests/crews.test.ts` ①②③⑦⑮(기본 능력 불변 포함 — ① 의 총원은 표에서 계산하므로 단계마다 맞는다), `npm run check` |
 | 2a | **부서 → 장비**: 6.2 표의 자격과 `toolFor`·`toolUse`·`kitLive`·`medLevelOf`·`armorOf`·`blastFactor`, 6.3 표의 자리(방호·이동·경로·시야·탐지·피해·이송 중 처치·이송 보조의 실내 제한), 섬광탄을 사람 몫으로, `police` 문턱(역할 묶음 `bomb` 제외), 두 문 나누기, 역할 선호, 기관원의 급수 연결·예비 펌프 후보(`brain`) | ④⑤⑥, 12절 기준 |
 | 2b | **장비의 특색**: 열화상·탐지·측정기·누출 차단·펌프 조작·들것·고정판·제세동기·의사 장비·테이저(`taserAt`)·저격·방패·로봇·확성기·경광봉, `kitBonus`, B3 블록을 `anyCapable`·`capableOf` 로(6.4), 가스·붕괴 진입 요청과 구급 자리 수 요청 | ⑧, 12절 기준 |
-| 3 | **환자 자리**: `seatsOf` 를 `canCarryPatients`·지휘관 탑승 대기열·출발 조건·`manageAmbulances` 대상·실행기 `load`(실을 때 자리를 다시 보고 차 있으면 `finishTask(…, false, 'full')`)에. 위중 환자는 헬기 먼저. 부대 출발 기록의 병원 이름(지금 `'시립병원으로'` 고정 — `startTransport` 가 고른 병원을 돌려받아 쓴다). 헬기의 첫 출동 경로(7.4 끝 — **해시가 같은지 따로 먼저**) | ⑨(매 틱 `patients.length ≤ seatsOf`), 시드 20개의 기록에서 헬기(`heli` 계열)가 환자 2명을 태운 출발 기록이 0건. (단계 1 에서 대원 수가 바뀌어 모든 시드의 결과가 달라졌으므로 "S7 사건 13" 은 더 이상 같은 사건이 아니다) |
+| 3 | **환자 자리**: `seatsOf` 를 `canCarryPatients`·지휘관 탑승 대기열·출발 조건·`manageAmbulances` 대상·실행기 `load`(실을 때 자리를 다시 보고 차 있으면 `finishTask(…, false, 'full')`)에. 위중 환자는 헬기 먼저. 부대 출발 기록의 병원 이름(지금 `'시립병원으로'` 고정 — `startTransport` 가 고른 병원을 돌려받아 쓴다). 헬기의 첫 출동 경로(7.4 끝 — **해시가 같은지 따로 먼저**) | ⑨(매 틱 `patients.length ≤ seatsOf`), 시드 20개의 기록에서 헬기(`heli` 계열)가 환자 2명을 태운 출발 기록이 0건. `npx tsx scripts/sweep.ts 20 --json` 의 `metrics.consistency.C5 === 0`(출발 문구의 병원 = 다음 인계의 병원 — I1 §2.12)이고, 0 이면 `scripts/metrics.ts` 의 관문 M-G4 에 C5 를 더한다(I1 §3.11 1단계 — R1 이 켜면 I1-b b1 은 확인만 한다). (단계 1 에서 대원 수가 바뀌어 모든 시드의 결과가 달라졌으므로 "S7 사건 13" 은 더 이상 같은 사건이 아니다) |
 | 4 | **헬기 세 종류**: `UnitKind` 두 줄, `UNIT_DEFS` 끝 두 줄, `KIND`, `heliPad`, 소방 헬기 `caps`, `airFit`(경찰 헬기는 추격전만 — 7.2), `u.airNeed`, `grounded`, 연료와 `airRtb`, `airStats`·출동 횟수·`pursuit.ts` 의 `tracked` 한 줄, 상공 부대 처리 네 곳(5)·8)번 블록, 7)번 블록과 `onAt`, `countUnits`, 무대응 종료), `unitArrived` 의 상공 분기와 `s.airAt`, `disaster.ts` 산불 ×0.7 을 바구니 헬기로, 팀 수가 바뀐 곳(`tests/sim.test.ts` 의 `12/17/20 → 12/19/22`·"3~5팀 → 3~6팀", `KNOBS` 의 팀 수와 `high: '22팀'`, 주석 두 곳), 컴파일에 필요한 최소한의 화면 표(`UNIT_MARK`·`VEH_SIZE`·`UNIT_KIND_NAME`·범례 `FIELDS`, `tokens.ts` 의 `AIR_KIND`) | ⑩(관제 규칙), ⑪(대원 없는 부대가 끝내 떠난다), 12절 기준 |
 | 5 | **상공의 일**: `field/rules/air.ts`·`field/airDecide.ts`(`AirView`), `makeAgent` 꺼내기, 공중 관측(`perceive`·`visionOf`·`detectRadius` 의 `aloft` 갈래, 용의자 인지 거리, 사람을 움직이지 않기), 탐조등(`Scene.light`·`Scene.clearVision`), 호이스트·물 투하, 지휘관의 `hoist`·`airDrop` 작업과 취소, `I.airDone`, `airFit` 의 경찰 헬기 무장·실종 줄 열기, `Fx 'drop'`, 보고서 한 줄과 헬기만 왔던 사건의 문장 | ⑫(세 헬기가 각자의 일을 한 교대), ⑬(판단 파일의 정보 격리·순수 함수), 각 `--force` 20교대의 한계 시간 ≤ 2 |
 | 6 | **소모와 고장**: 공기호흡기(`airFull`, `swapAir`, `spareAir`, `capableOf` 의 공기 상태), 고장 추첨(`kit` 흐름, `kitWorks`, 4절의 드러나는 자리), `KNOBS` 장비 설명문 | ⑭, 12절 기준(특히 화재) |
@@ -776,7 +779,7 @@ diff /scratch/hash-before.txt /scratch/hash-after.txt      # 출력이 없어야
 ## 15. 고칠 파일 목록
 
 **자기 파일(새로)**
-- `src/sim/crews.ts` — `ROLES`·`STAFF`·`KITS`·`EXTRA_NAMES`·`AIR_KIND`, 3·4절의 도움 함수(`kitLive`·`toolFor`·`toolUse` 포함), `capableOf`, `isHovering`, `heliPad`, `minCrew`. import 하는 것은 `types.ts`·`util.ts`(`josa`)·`events.ts`(`raiseProblem`)와 타입뿐이다 — `resources.ts`·`field/*`·`dispatch/*` 를 import 하지 않는다(`resources.ts` 가 이 파일을 import 하므로 거꾸로 import 하면 순환이 생겨 초기화 전의 표를 읽는다. `CLAUDE.md` 의 시나리오·추격전 함정과 같은 꼴). `etaFor` 가 필요한 `airFit`·`kitBonus` 는 그래서 `dispatcher.ts` 안에 둔다.
+- `src/sim/crews.ts` — `ROLES`·`STAFF`·`KITS`·`EXTRA_NAMES`·`AIR_KIND`, 3·4절의 도움 함수(`kitLive`·`toolFor`·`toolUse` 포함), `capableOf`, `isHovering`, `heliPad`, `minCrew`, `minField`, `skillsOf`. import 하는 것은 `types.ts`·`util.ts`(`josa`)·`events.ts`(`raiseProblem`)와 타입뿐이다 — `resources.ts`·`field/*`·`dispatch/*` 를 import 하지 않는다(`resources.ts` 가 이 파일을 import 하므로 거꾸로 import 하면 순환이 생겨 초기화 전의 표를 읽는다. `CLAUDE.md` 의 시나리오·추격전 함정과 같은 꼴). `etaFor` 가 필요한 `airFit`·`kitBonus` 는 그래서 `dispatcher.ts` 안에 둔다.
 - `src/sim/field/rules/air.ts` — 상공의 실행(관측·탐조등·호이스트·물 투하·떠남·통계).
 - `src/sim/field/airDecide.ts` — 상공의 판단(믿음만, `AirView` 로 좁힌 입력). 감시에 할 일이 있는지 보려고 `commander.outstanding` 을 import 한다(믿음만 읽는 함수, 함수 안에서만 부른다).
 - `tests/crews.test.ts`.
@@ -814,6 +817,7 @@ diff /scratch/hash-before.txt /scratch/hash-after.txt      # 출력이 없어야
 | `ui/MapLegend.tsx` | `FIELDS`, 대원 역할 칸 | 10절 |
 | `ui/styles.css` | 끝의 `/* ── crews ── */` 블록 | 10절 |
 | `tests/sim.test.ts` | 편성 테스트 숫자(총원·이름 수는 단계 1, 팀 수는 단계 4) | 14절 |
+| `scripts/metrics.ts` | 관문 M-G4 의 조건에 `C5` 를 더한다(단계 3 끝, C5 가 0 일 때만). 문구 규칙(`PHRASE`)은 고치지 않는다 | I1 §2.12 — 출발 문구를 고친 묶음이 관문을 켠다 |
 
 **건드리지 않는다**: `sim/city.ts`, `sim/cityPlan.ts`, `sim/pursuit.ts`(위의 한 곳 말고), `sim/dispatch/analyst.ts`, `sim/scenarios/*`, `sim/traffic.ts`, `scripts/sweep.ts`(기준 범위도, 출력도 — 해시는 7.4 끝의 방법으로 잰다).
 
@@ -866,11 +870,12 @@ diff /scratch/hash-before.txt /scratch/hash-after.txt      # 출력이 없어야
 8. **새 시설을 만들지 않는다.** 경찰 헬기는 중부경찰서, 의료 헬기는 가온대학교병원에 둔다. 지도가 그대로라 사건 장소·경로가 이 묶음 때문에 바뀌지 않는다.
 9. **소방 헬기는 특수 분야에 남는다.** 경찰·의료 헬기는 각자 부서 분야(경찰·구조·구급)로 간다. 소방 헬기를 소방으로 옮기면 부대 규모 1 의 특수 분야가 2팀이 되어 "분야마다 3팀 이상"이 깨진다. 지도에서는 세 헬기가 바탕색으로 갈린다.
 10. **상공 도착은 대응 시간에 넣지 않는다.** 헬기가 빠르게 떠 있기만 해도 평균 대응 시간이 좋아 보이는 것을 막는다. 그래서 `s.arrivedAt`·`I.firstArrivalAt` 은 지상 기준으로 남기고 상공 도착은 새 칸 `s.airAt` 에 둔다(6.1) — `s.arrivedAt` 을 보는 다른 곳(신고자 안내, 가스 주변 시민 노출, `truth` 표시, `LATE_DISCOVERY`, 보고서 문장)의 뜻도 바뀌지 않는다. 한계 시간과 무대응 종료만 `s.airAt` 을 함께 본다.
-11. **탄약은 무제한**, 둘이 들어가고 둘이 남는 짝 규칙은 R3, 헤엄쳐 구조 같은 방법 갈래는 R2, 대원의 장기 부상·사망은 H1.
+11. **탄약은 무제한**(R1 에서. R3 §2.9 가 탄창·재장전·탄약 상자를 더한다), 둘이 들어가고 둘이 남는 짝 규칙은 R3, 헤엄쳐 구조 같은 방법 갈래는 R2, 대원의 장기 부상·사망은 H1.
 12. **이륙 준비 시간은 그대로**(`etaFor` 의 대기 중 +10초). 늘리면 헬기의 쓸모가 줄어 균형을 따로 맞춰야 한다.
 13. **장비를 읽는 방법은 네 가지로 가른다**(4절 표): 계획(`hasKit`·`toolFor`), 화면도 부르는 물리(`kitLive`), 효과(`kitWorks`·`toolUse`), 수량(`kitUses`·`useKit`). 하나로 묶으면 숨은 고장이 배정에 새거나, 끝내 드러나지 않거나, 그림이 시뮬레이션을 바꾼다.
 14. **테이저의 대기 시간은 따로 둔다**(`FieldAgent.taserAt`). `a.cooldown` 을 `arrest` 에서도 줄이게 하면 사격 결과는 그대로지만 대기 시간의 뜻이 섞이고, 그림이 쏜 뒤의 남은 값에 매인다.
 15. **B3 의 "맡을 사람이 없는 작업" 블록을 고쳐 쓴다**(6.4). 같은 일을 하는 블록을 하나 더 두지 않는다.
+16. **펌프차 팀장(`fireLead`)에게 가스 측정기를 주지 않는다**(X6 §3.4·§12.3 의 질문). R1 은 역할 표대로 측정기를 화학대(`hazLead`·`decon`)에만 둔다 — 가스 누출 현장의 조짐을 화학 구조대가 올 때까지 냄새로만 아는 것이 X6 가 드러내려는 결과다. X6 의 균형(X6 §8)에서 가스 단계를 너무 늦게 알아 결과가 기준을 벗어나면 X6 구현자가 `ROLES.fireLead` 기본 장비 **끝에** `gasMeter` 를 붙이는 손잡이로 쓴다(장비 순서가 고장 추첨 순서이므로 끝에만 붙이고, 14절 ③ 을 다시 돌린다).
 
 **알려진 위험**
 
@@ -882,8 +887,8 @@ diff /scratch/hash-before.txt /scratch/hash-after.txt      # 출력이 없어야
 - **소방 헬기의 구급 대기 예외가 의료 헬기로 옮겨 간다**(7.2). 부대 규모 1·2(의료 헬기 없음)에서 구급차를 오래 기다리는 환자에게 하늘의 지원이 없어진다. 12절 기준에서 응급(`medical`)·교통사고의 대응 지연이 늘면 그 단계에서만 소방 헬기의 `ems` 를 0.7 로 올려 보는 것을 검토한다.
 - **부대 규모 1·2 의 추격전.** 경찰 헬기가 없고 소방 헬기는 무장 사건에 가지 않으므로 하늘의 눈이 없다. 놓침이 늘면 `airFit` 에서 경찰 헬기가 없을 때만 소방 헬기의 무장 `search` 를 0.5 로 허용한다.
 - **의료 헬기의 쏠림.** 적합도 1.2·빠른 직선 비행이라 낮의 위험도 높은 구급 수요를 거의 다 가져갈 수 있다. 교대당 출동 수를 본다(12절).
-- **같은 파일을 고치는 다른 설계서.** H1(부상·사망)은 `agentHealth`·`hazards` 의 피해 식을, R2(대응 방식)는 `waterRescue`·`toolFor` 를 고친다. 순서는 R1 → H1 → R2 이므로 R1 은 식의 "방호·장비" 부분만 함수(`armorOf`·`blastFactor`·`toolFor`)로 꺼내 두어 뒤의 묶음이 그 함수만 고치게 한다.
-- **다른 설계서와 이름 맞추기**(같은 날 따로 쓴 `H1-injuries.md`·`R2-methods.md` 는 R1 의 이름을 가정으로 적었다 — R1 이 먼저 합쳐지므로 R1 의 이름이 기준이다): 개인 장비 칸은 `Responder.kit: KitItem[]`, 판정은 `hasKit`(배정)·`kitWorks`(효과)·`kitUses`/`useKit`(수량)·`toolFor`(성능). R2 의 `gearOf`·`hasGear` 는 이 함수들과 부대 칸(`Unit.hoist`·`bucketMax`·`seats`)을 감싸면 되고, R2 의 장비 이름이 R1 에 없으면 `KitId` 에 **추가**한다(예: 구명조끼·드론). H1 의 `protection()` 은 `armorOf`·`blastFactor` 와 `scba`·`turnout` 판정을 읽고, H1 이 말한 최소 인원은 `crews.ts` 의 최소 인원 표(`STAFF[kind].std.length − minDrop.length`, 함수 `minCrew(kind)` 로 export)다. 기본 응급 가방은 `bag`, 테이저 무력화 시간(R1 3.2초)은 H1 이 바꿀 수 있다. R2 가 말한 "몸과 다른 곳에서 보는 눈"(드론)은 R1 의 공중 관측자(`aloft` 인 `FieldAgent`, `s.agents` 밖)와 같은 방식으로 만들 수 있다.
+- **같은 파일을 고치는 다른 설계서.** H1(부상·사망)은 `agentHealth`·`hazards` 의 피해 식을, X6(위험의 현실화)는 `blast` 의 구조 충격·층 너머, `agentHealth` 의 깔림 조각, 장비 판정(`fitFor`·`agentCost`·`detectRadius`·`rescueMate`·`spray`)을, R2(대응 방식)는 `waterRescue`·`toolFor` 를 고친다. 순서는 R1 → H1 → X6 → R2(`docs/specs/README.md` "구현 순서")이므로 R1 은 식의 "방호·장비" 부분만 함수(`armorOf`·`blastFactor`·`toolFor`)로 꺼내 두어 H1(피해 식)과 X6 가 그 함수만 고치게 한다.
+- **다른 설계서와 이름 맞추기**(같은 날 따로 쓴 `H1-injuries.md`·`R2-methods.md` 는 R1 의 이름을 가정으로 적었다 — R1 이 먼저 합쳐지므로 R1 의 이름이 기준이다): 개인 장비 칸은 `Responder.kit: KitItem[]`, 판정은 `hasKit`(배정)·`kitWorks`(효과)·`kitUses`/`useKit`(수량)·`toolFor`(성능). R2 의 `gearOf`·`hasGear` 는 이 함수들과 부대 칸(`Unit.hoist`·`bucketMax`·`seats`)을 감싸면 되고, R2 의 장비 이름이 R1 에 없으면 `KitId` 에 **추가**한다(예: 구명조끼·드론). H1 의 `protection()` 은 `armorOf`·`blastFactor` 와 `scba`·`turnout` 판정을 읽고, H1(결원 운용 중단)·I2(결원 기준)가 말한 최소 인원은 **내리는 자리 단위의 `minField(kind)`** 다(4절). `crewReady` 가 내리는 자리(`fieldCrew`)만 세므로 내리지 않는 자리까지 센 `minCrew(kind)`(`STAFF[kind].std.length − minDrop.length`)와 견주면 소방 헬기·의료 헬기·구조정이 늘 결원이 된다. 기본 응급 가방은 `bag`, 테이저 무력화 시간(R1 3.2초)은 H1 이 바꿀 수 있다. R2 가 말한 "몸과 다른 곳에서 보는 눈"(드론)은 R1 의 공중 관측자(`aloft` 인 `FieldAgent`, `s.agents` 밖)와 같은 방식으로 만들 수 있다.
 - **확인한 것**(검토에서 코드로 확인): `perceive`·`discover`·`learn`·`flushOutbox`·`transmit` 은 `s.agents` 밖의 개체로 불러도 동작한다. `assign()` 은 담당자 없는 작업을 예외 없이 `open` 으로 되돌리고 `fitFor` 0 인 작업은 건너뛴다. 병원 착륙장은 `(f.x − 5, f.y − 3)`(7.1). 산불 현장의 A~E 구역은 모두 `indoor = false`(`field/scenes/disaster.ts` 의 `addRegion(…, false, true)`) — 물 투하 대상이다.
 - **확인하지 못한 것** (구현하며 확인할 것): 내리는 자리 15칸이 벽에 걸리는 현장이 있는지(걸리면 `staging` 그대로라 겹칠 뿐 막히지는 않는다).
 

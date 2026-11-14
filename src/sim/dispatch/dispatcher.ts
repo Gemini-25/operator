@@ -44,7 +44,8 @@ function priorityOf(sim: Sim, I: Incident): number {
   // (접수 대기열에서 기다린 시간도 신고자에게는 똑같이 흘렀다). 부대가 가는 중에도 그대로 두어, 오래 기다린 사건으로 가는 부대가
   // 더 급해 보이는 새 사건으로 전환 배정되지 않게 한다
   const unmet = ORDER.some((k) => (I.unmet[k] ?? 0) > 0);
-  const unserved = I.firstArrivalAt < 0;
+  // 선착 대응 부대만 닿은 응급 환자는 아직 구급차를 기다리는 사건이다 (구급대원이 닿기 전까지는 아무도 닿지 않은 사건처럼 센다)
+  const unserved = I.firstArrivalAt < 0 || (I.coResp !== undefined && !!s && !s.agents.some((a) => sim.units[a.unitId].dept === 'ems'));
   const starved = unserved ? Math.max(unmet ? sim.t - I.unmetSince : 0, sim.t - Math.max(0, I.reportedAt) - 60) : unmet ? sim.t - I.unmetSince - 40 : 0;
   const starve = Math.min(1.5, Math.max(0, starved) / (unserved ? 60 : 160));
   return (I.assessment ? I.assessment.severity : 1) + (urgent ? 0.6 : 0) + Math.min(0.5, (sim.t - Math.max(0, I.reportedAt)) / 240) + starve;
@@ -68,7 +69,7 @@ function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { be
       // 방금 부대를 빼앗긴 사건에서는 다시 빼 오지 않는다 (번갈아 빼앗기면 그 사건에는 끝내 아무도 닿지 못한다)
       if (J.problems.some((p) => p.code === 'DIVERTED' && sim.t - p.t < 120)) continue;
       const gap = I.priority - J.priority;
-      if (gap < (J.assigned.length > 1 ? 0.9 : 1.4)) continue;
+      if (gap < (J.assigned.filter((uid) => uid !== J.coResp).length > 1 ? 0.9 : 1.4)) continue;      // 선착 대응으로 함께 간 소방차는 세지 않는다 (그 사건의 하나뿐인 구급차를 쉽게 빼앗지 않게)
       divertFrom = J;
     } else if (u.state !== 'available' && u.state !== 'returning') continue;
     const eta = etaFor(sim, u, I.reportedNode);

@@ -11,6 +11,7 @@ import { agentCost, casFact, detectRadius, exitName, hosFact, learn, learnQuiet,
 import { mkFact } from './beliefs';
 import { astar, doorAt, isIndoor, los, staticPass, tileOf, walkableCount } from './grid';
 import { applyWater, flashbang, hostageNear, hostileActive, isHeld, placeAtSafe, pushFx, panicShot } from './hazards';
+import { bulletPath, hitCover } from './damage';
 
 export function makeTask(kind: TaskKind, label: string, w: WorkItem | null = null): Task {
   return {
@@ -285,6 +286,8 @@ function shootAt(sim: Sim, s: Scene, a: FieldAgent, hid: number): void {
   const hit = s.rng.chance(p);
   h.shotAt = sim.t;
   pushFx(sim, s, 'shot', a.x, a.y, h.x + (hit ? 0 : s.rng.range(-0.8, 0.8)), h.y + (hit ? 0 : s.rng.range(-0.8, 0.8)), undefined, '#ffe08a', 0.25);
+  bulletPath(sim, s, a.x, a.y, h.x, h.y, hit ? 0 : 3);      // 탄이 지나간 창이 깨진다 (빗나간 탄은 용의자를 지나쳐 더 나아간다)
+  if (!hit && covered) hitCover(sim, s, h.x, h.y, a.x, a.y);      // 빗나간 탄에 용의자의 엄폐 가구가 닳는다
   h.morale -= 0.015;
   if (sim.t >= h.stunUntil) { h.alertUntil = sim.t + 6; h.facing = Math.atan2(a.y - h.y, a.x - h.x); }
   const hc = hostageNear(s, h);

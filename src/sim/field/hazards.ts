@@ -9,6 +9,7 @@ import { clamp, dist, josa } from '../util';
 import { addProp } from './kit';
 import { casFact, exitName } from './agents';
 import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, truthWalkable } from './grid';
+import { bulletPath, heatGlass, hitCover, shatter } from './damage';
 
 export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2): void {
   s.fx.push({ kind, t: sim.t, x, y, x2, y2, text, color, ttl });
@@ -43,6 +44,7 @@ export function tickFire(sim: Sim, s: Scene, I: Incident): void {
       const nx = x + NB[d * 2], ny = y + NB[d * 2 + 1];
       if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
       let j = ny * w + nx;
+      if (f >= 0.7 && s.tiles[j] === T.WINDOW) heatGlass(sim, s, j, x, y);      // 센 불길 곁의 창은 열에 깨진다
       let through = 1;
       if (s.tiles[j] === T.WALL) {
         // 내부 칸막이는 천천히 뚫고 번진다
@@ -131,6 +133,7 @@ export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, rad
     const d = dist(c.x, c.y, x, y);
     if (d <= radius) { c.health -= dmg * 0.8 * (1 - d / (radius + 1)); c.causeEvent = ev; }
   }
+  shatter(sim, s, x, y, radius + 1.5, Math.min(2.5, radius), 3);      // 반경 안의 창과 가구가 부서진다
 }
 
 /** 물(또는 소화 약제)을 뿌린다. 대원의 진압 행동이 호출한다. */
@@ -289,6 +292,7 @@ export function flashbang(sim: Sim, s: Scene, x: number, y: number): number {
     h.stunUntil = sim.t + 3.8; h.morale -= 0.15; n++;
   }
   pushFx(sim, s, 'flash', x, y, undefined, undefined, undefined, undefined, 0.7);
+  shatter(sim, s, x, y, 2.2, 0, 0);      // 가까운 창이 깨진다
   return n;
 }
 
@@ -306,6 +310,7 @@ export function panicShot(sim: Sim, s: Scene, I: Incident, x: number, y: number)
     c.health -= s.rng.range(26, 40); c.mob = 'immobile'; c.bleed = Math.max(c.bleed, 0.18); c.bleed0 = c.bleed; c.walking = false;
     h.state = 'fight'; h.cooldown = 1;
     pushFx(sim, s, 'shot', h.x, h.y, c.x, c.y, undefined, '#ff8a5c', 0.25); pushFx(sim, s, 'hit', c.x, c.y);
+    bulletPath(sim, s, h.x, h.y, c.x, c.y, 0);
     c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '진입 순간 인질 피격', { role: 'SYSTEM', actor: '현장', imp: 3, text: `진입에 놀란 ${h.label}가 인질(구조 대상 ${c.label})을 쐈습니다!` }, false);
   }
 }
@@ -418,6 +423,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
         if (td <= 6.5 && los(s, h.x, h.y, target.x, target.y)) {
           h.facing = Math.atan2(target.y - h.y, target.x - h.x); h.moveAt = sim.t + s.rng.range(24, 38);
           pushFx(sim, s, 'shot', h.x, h.y, target.x, target.y, undefined, '#ff8a5c', 0.25); pushFx(sim, s, 'hit', target.x, target.y);
+          bulletPath(sim, s, h.x, h.y, target.x, target.y, 0);
           target.health -= s.rng.range(20, 32); target.mob = 'immobile'; target.bleed = Math.max(target.bleed, 0.13); target.bleed0 = target.bleed; target.walking = false; target.path = null;
           target.causeEvent = raiseProblem(sim, I, 'ESCALATION', `총격범의 추가 범행 (구조 대상 ${target.label})`, { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `총성! ${h.label}가 건물 안의 시민을 쐈습니다.` }, false);
           continue;
@@ -472,6 +478,8 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
           const hit = s.rng.chance(p);
           ta.underFireT = sim.t;
           pushFx(sim, s, 'shot', h.x, h.y, ta.x + (hit ? 0 : s.rng.range(-0.8, 0.8)), ta.y + (hit ? 0 : s.rng.range(-0.8, 0.8)), undefined, '#ff8a5c', 0.25);
+          bulletPath(sim, s, h.x, h.y, ta.x, ta.y, hit ? 0 : 3);      // 탄이 지나간 창이 깨진다
+          if (!hit && ta.inCover) hitCover(sim, s, ta.x, ta.y, h.x, h.y);      // 빗나간 탄에 대원의 엄폐 가구가 닳는다
           if (!I.problems.some((q) => q.code === 'ESCALATION' && q.detail === '용의자 발포')) {
             raiseProblem(sim, I, 'ESCALATION', '용의자 발포', { role: 'SYSTEM', actor: '현장', text: `${h.label}가 대원을 향해 발포했습니다!`, imp: 3 }, false);
           }

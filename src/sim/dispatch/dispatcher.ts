@@ -44,7 +44,8 @@ function priorityOf(sim: Sim, I: Incident): number {
   // (접수 대기열에서 기다린 시간도 신고자에게는 똑같이 흘렀다). 부대가 가는 중에도 그대로 두어, 오래 기다린 사건으로 가는 부대가
   // 더 급해 보이는 새 사건으로 전환 배정되지 않게 한다
   const unmet = ORDER.some((k) => (I.unmet[k] ?? 0) > 0);
-  const unserved = I.firstArrivalAt < 0;
+  // 선착 대응 부대만 닿은 응급 환자는 아직 구급차를 기다리는 사건이다 (구급대원이 닿기 전까지는 아무도 닿지 않은 사건처럼 센다)
+  const unserved = I.firstArrivalAt < 0 || (I.coResp !== undefined && !!s && !s.agents.some((a) => sim.units[a.unitId].dept === 'ems'));
   const starved = unserved ? Math.max(unmet ? sim.t - I.unmetSince : 0, sim.t - Math.max(0, I.reportedAt) - 60) : unmet ? sim.t - I.unmetSince - 40 : 0;
   const starve = Math.min(1.5, Math.max(0, starved) / (unserved ? 60 : 160));
   return (I.assessment ? I.assessment.severity : 1) + (urgent ? 0.6 : 0) + Math.min(0.5, (sim.t - Math.max(0, I.reportedAt)) / 240) + starve;
@@ -68,7 +69,7 @@ function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { be
       // 방금 부대를 빼앗긴 사건에서는 다시 빼 오지 않는다 (번갈아 빼앗기면 그 사건에는 끝내 아무도 닿지 못한다)
       if (J.problems.some((p) => p.code === 'DIVERTED' && sim.t - p.t < 120)) continue;
       const gap = I.priority - J.priority;
-      if (gap < (J.assigned.length > 1 ? 0.9 : 1.4)) continue;
+      if (gap < (J.assigned.filter((uid) => uid !== J.coResp).length > 1 ? 0.9 : 1.4)) continue;      // 선착 대응으로 함께 간 소방차는 세지 않는다 (그 사건의 하나뿐인 구급차를 쉽게 빼앗지 않게)
       divertFrom = J;
     } else if (u.state !== 'available' && u.state !== 'returning') continue;
     const eta = etaFor(sim, u, I.reportedNode);
@@ -117,6 +118,38 @@ function sendUnit(sim: Sim, I: Incident, key: keyof Needs, c: Cand, nearest: Can
   }
 }
 
+/**
+ * 중증 응급 환자의 선착 대응(동시 출동, '펌뷸런스'): 구급차가 모두 나가 있거나 멀면, 가장 가까운 소방 펌프차·사다리차·구조대를 함께 보낸다.
+ * 소방대원은 기본 처치(지혈·가슴 압박)를 할 수 있다(지휘관: 응급 환자는 누구든 먼저 손을 쓴다). 구급차는 따로 계속 찾고, 닿으면 넘긴다.
+ * 순찰차는 보내지 않는다 (호흡이 없는 환자에게는 analyst 가 선착 대응 수요로 가장 가까운 부대를 이미 함께 보낸다).
+ * 관제가 아는 것만 쓴다: 부대의 위치·상태와 신고된 위치(I.reportedNode). 다른 사건에서 빼 오지 않고, 그 분야의 마지막 가용 부대는 남겨 둔다.
+ */
+export const CO_RESPOND = {
+  sev: 1.7,      // 중증으로 본 환자에게만 (의식 없음·낙상 출혈·호흡 없음). 가벼운 실신에는 구급차를 기다린다
+  eta: 50,       // 가장 나은 구급차의 예상 도착이 이보다 늦으면(또는 가용 구급차가 없으면) 선착 대응을 붙인다 (초)
+  gain: 15,      // 선착 대응 부대가 구급차보다 적어도 이만큼 먼저 닿아야 보낸다 (초)
+};
+function firstResponder(sim: Sim, I: Incident): void {
+  if (I.assessment!.severity < CO_RESPOND.sev) return;
+  const amb = pickUnit(sim, I, 'ems', MINCAP.ems).best;
+  if (amb && amb.eta <= CO_RESPOND.eta) return;
+  let best: Unit | null = null, be = 1e9, beta = 0;
+  for (const u of sim.units) {
+    if (u.kind !== 'engine' && u.kind !== 'ladder' && u.kind !== 'rescue') continue;      // 소방의 지상 부대만 (특수 부대 — 화학·헬기·구조정 — 는 아껴 둔다)
+    if (u.aid || (u.state !== 'available' && u.state !== 'returning') || crewReady(sim, u) === 0 || I.assigned.indexOf(u.id) >= 0) continue;
+    const spare = sim.units.some((q) => q.id !== u.id && q.dept === u.dept && !q.air && !q.sea && (q.state === 'available' || q.state === 'returning') && crewReady(sim, q) > 0);
+    if (!spare) continue;
+    const eta = etaFor(sim, u, I.reportedNode);
+    if (eta < be) { be = eta; best = u; beta = eta; }
+  }
+  if (!best || (amb && beta > amb.eta - CO_RESPOND.gain)) return;
+  I.coResp = best.id;
+  emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: amb
+    ? `구급차가 멀어(가장 나은 ${amb.u.callsign} 예상 ${fmtSec(amb.eta)}) 가까운 ${josa(best.callsign, '을/를')} 선착 대응으로 함께 보냅니다. 기본 처치를 먼저 시작합니다.`
+    : `지금 보낼 수 있는 구급차가 없습니다. 가까운 ${josa(best.callsign, '을/를')} 선착 대응으로 먼저 보내고 구급차를 계속 찾습니다.` });
+  sendUnit(sim, I, 'search', { u: best, score: 0, eta: beta, fit: best.caps.search, divertFrom: null }, null);
+}
+
 export function tickDispatch(sim: Sim): void {
   if (sim.tick % 5 !== 2) return;
   const open = sim.incidents.filter((I) => I.phase !== 'closed' && I.assessment && I.locationKnown);
@@ -125,6 +158,7 @@ export function tickDispatch(sim: Sim): void {
   for (const I of open) {
     if (sim.t < I.unmetSince + 2) continue;      // 배정 판단에 걸리는 시간
     let progressed = false, blocked: (keyof Needs)[] = [];
+    if (I.assessment!.type === 'medical' && I.coResp === undefined && (I.unmet.ems ?? 0) > 0 && I.firstArrivalAt < 0 && !I.assigned.some((uid) => sim.units[uid].dept !== 'ems')) firstResponder(sim, I);
     for (const key of ORDER) {
       while ((I.unmet[key] ?? 0) > 0) {
         let { best, nearest } = pickUnit(sim, I, key, MINCAP[key]);

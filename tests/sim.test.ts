@@ -762,3 +762,53 @@ describe('추격전', () => {
     expect(timeouts).toBeLessThanOrEqual(1);
   }, 300000);
 });
+
+describe('현장에서 생길 수 있는 일 (B1)', () => {
+  it('배회 실종자: 개울에 빠지면 떠내려가다 걸리고, 대원이 물에서 끌어내거나 늦으면 잃는다. 넘어짐·저체온도 일어나며 한계 시간까지 가지 않는다', async () => {
+    const { T } = await import('../src/sim/types');
+    let wander = 0, fell = 0, down = 0, pulled = 0, lost = 0, timeouts = 0;
+    for (let k = 0; k < 12; k++) {
+      const s = new Sim('W' + k, NORMAL, 1200, { force: 'search/wander' });
+      s.runToEnd();
+      for (const I of s.incidents) {
+        if (I.truth.type !== 'search' || I.truth.variant !== 'wander') continue;
+        wander++;
+        if (I.closeReason === 'timeout') timeouts++;
+        const sc = s.scenes[I.id]!, c = sc.casualties.find((q) => q.isTarget)!;
+        if (c.dead) lost++;
+        if (I.problems.some((p) => p.detail === '배회하던 실종자가 개울에 빠짐')) {
+          fell++;
+          expect(c.wander).toBe(false);
+          if (c.tFreed >= 0) { pulled++; expect(c.inWater).toBe(false); }
+          else if (!c.dead && c.where === 'scene') expect(sc.tiles[Math.round(c.y) * sc.w + Math.round(c.x)]).toBe(T.WATER);      // 아직 물속이면 물 칸에 있다
+        }
+        if (I.problems.some((p) => p.detail === '배회하던 실종자가 넘어져 다침' || p.detail === '실종자 저체온')) { down++; expect(c.wander).toBe(false); }
+      }
+    }
+    expect(wander).toBeGreaterThan(15);
+    expect(fell).toBeGreaterThan(1); expect(pulled).toBeGreaterThan(0); expect(down).toBeGreaterThan(1);
+    expect(lost).toBeGreaterThan(0);      // 실패도 나온다
+    expect(timeouts).toBe(0);
+  }, 120000);
+
+  it('중증 응급 환자에게 구급차가 멀면 소방 부대가 선착 대응으로 먼저 가고, 환자의 급변·압궤 증후군·자리를 뜨는 사람이 실제로 일어난다', () => {
+    let co = 0, coFirst = 0, internal = 0, crush = 0, fled = 0;
+    for (let k = 0; k < 40; k++) {
+      const s = shiftOf('S' + k);
+      for (const I of s.incidents) {
+        if (I.coResp !== undefined) {
+          co++;
+          const u = s.units[I.coResp];
+          expect(u.dept).toBe('fire'); expect(I.truth.type === 'medical' || I.assessment!.type === 'medical').toBe(true);
+          expect(I.everAssigned).toContain(u.id);
+          if (s.events.some((e) => e.incidentId === I.id && e.kind === 'arrive' && e.actor === u.callsign && e.importance === 3)) coFirst++;      // 첫 도착
+        }
+        if (I.problems.some((p) => p.detail === '외상 환자의 내부 출혈' || p.detail === '실신 환자가 심정지로 넘어감')) { internal++; expect(I.truth.type).toBe('medical'); }
+        for (const p of I.problems) if (p.detail.startsWith('구출된 사람의 압궤 증후군')) { crush++; expect(I.truth.type).toBe('collapse'); }
+        if ((I.truth.variant === 'dispute' || I.truth.variant === 'domestic') && I.problems.some((p) => p.code === 'SUSPECT_FLED')) fled++;
+      }
+    }
+    expect(co).toBeGreaterThan(5); expect(coFirst).toBeGreaterThan(2);
+    expect(internal).toBeGreaterThan(3); expect(crush).toBeGreaterThan(3); expect(fled).toBeGreaterThan(1);
+  }, 120000);
+});

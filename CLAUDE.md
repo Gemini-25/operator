@@ -18,7 +18,7 @@ TypeScript + React + Vite, 그림은 Canvas 2D. 서버·외부 API·LLM 호출 �
 |---|---|
 | `npm run dev` | 개발 서버 (`http://localhost:5173`, `?seed=S7&diff=hard` 로 조건 고정) |
 | `npm run check` | **커밋 전 관문**: 타입 검사 + 테스트 + 시드 40개 헤드리스 검증 (3분쯤) |
-| `npm test` | Vitest 154개(+건너뜀 1), 파일 9개: `sim`(재현성, 교대 완주, 정보 격리, 난이도, 전술, 유형별 현장, 지도, 생활 사건, 추격전) · `ext`(확장 지점) · `crime` · `major` · `disaster` · `destruction` · `traffic` · `causality`(측정 도구: 결과 불변·손 계산·문구 규칙·멈춤 감지기) · `combatfx`(교전 연출: 기록 꼬리표·소리 상한·결과 불변). 한 묶음만 볼 때는 `npx vitest run tests/crime.test.ts` |
+| `npm test` | Vitest 161개(+건너뜀 1), 파일 10개: `sim`(재현성, 교대 완주, 정보 격리, 난이도, 전술, 유형별 현장, 지도, 생활 사건, 추격전) · `ext`(확장 지점) · `crime` · `major` · `disaster` · `destruction` · `traffic` · `causality`(측정 도구: 결과 불변·손 계산·문구 규칙·멈춤 감지기) · `combatfx`(교전 연출: 기록 꼬리표·소리 상한·결과 불변) · `loops`(반복 고리·실패 기억·연쇄 상한). 한 묶음만 볼 때는 `npx vitest run tests/crime.test.ts` |
 | `npm run sweep -- 100` | 시드 100개 결과 분포. `--diff hard`, `--diff 4,4,4,2,3,3`(빈도·심각도·용의자·장비·신고·부대, 일곱째 숫자를 붙이면 교통), `-v`, `--json`, `--check` |
 | `npm run sweep -- 1 --log S7` | 한 교대의 전체 이벤트 기록과 종료 보고서 (동작 확인에 가장 유용). `--metrics` 를 붙이면 사건마다 가장 긴 원인 사슬과 확산 길 |
 | `npm run sweep -- 40 --metrics` | 측정 도구(I1-a, `scripts/metrics.ts`): 기본 출력의 지표 아홉 줄(`chain` 연쇄 깊이 · `systems` 시스템 간 영향 · `replan` 재계획 · `alt` 대체 방법 · `actions` 행동 다양성 · `contention` 자원 경쟁 · `stall` 멈춘 시간 · `variety` 결과 다양성 · `consistency` 기록 일치)에 더해 시나리오별 표와 모든 후보(`STALL`·`FORGOT`·`REPEAT`·`SPREAD`·`UNLOC`). `--no-metrics` 는 표본을 끈다(속도 비교용). 관문(`--check`)은 연쇄 깊이 ≤ 4·교대당 연쇄 ≤ 8·기록 일치 C1~C4 = 0·계산 오류 0 을 늘, 교착 후보·잊힌 사건 0 을 보통 기본 조건에서 건다 |
@@ -58,6 +58,7 @@ src/sim/scenarios.ts         시나리오의 틀(Scenario)과 모음. 내용은 
 src/sim/disaster.ts          재난 다섯 종류(태풍·홍수·지진·산불·해일): 선택(없음·무작위·종류), 단계(예고→충격→여파), 사건을 한꺼번에 일으키고 도로를 통제한다(closeEdge: 우회로가 있을 때만)
 src/sim/field/sceneRegistry.ts  묶음별 파일이 끼워 넣는 자리: 현장 생성(scenes/), 세계 규칙(rules/), 지휘 규칙(orders/, 믿음만 읽는다)
 src/sim/incidents.ts         사건 생성(유형·시나리오·규모, pickPlace 로 건물 고르기), 종료 처리
+src/sim/chain.ts             연쇄 상한: canChain(sim, 부모) — 한 사슬 3건, 한 교대 6건(예약 대기 포함). 재범·은신처·연쇄 방화를 예약하는 곳에서 본다
 src/sim/pursuit.ts           추격전: 도주 차량의 주행·길 고르기, 목격 신고와 부대의 시야, 세우기(따라붙음·앞을 막음·사고)와 놓침
 src/sim/debrief.ts           사건 판정, 원인 문장, 교대 보고서
 src/sim/dispatch/callSystem.ts   신고자 모델, 접수 AI 질문 선택, 통화
@@ -179,6 +180,11 @@ tests/                       sim.test.ts(기본) + 묶음별 ext·crime·major·
 - **측정 도구의 문구 규칙.** `scripts/metrics.ts` 는 기록 문구(지원 요청·응급실 대기·이송 출발·병원 인계·결원 운용 중단·출동 지령)와 문제 코드로 시스템을 가른다. 이 문구를 바꾸거나 새 문제 코드를 만들면 `PHRASE`·`PROBLEM_SYS` 표를 함께 고친다(`tests/causality.test.ts` 가 잡는다). 측정은 상태를 읽기만 한다 — 표본에서 src/sim 함수를 부르지 않는다.
 - **교전 연출 기록.** 사격·섬광탄·진입·폭발·검거·테이저를 새로 만들거나 옮기면 `field/fxlog.ts` 의 `note*`/`rec*` 한 줄을 그 자리에 둔다(기존 `pushFx` 줄 바로 다음, `bulletPath` 앞). 이 함수들은 `s.fx` 에만 쓰고 난수를 부르지 않는다. 폭발을 다른 곳으로 옮기면 `noteBoom` 도 옮긴다.
 - **그림·소리의 배속은 실제 배속.** 자동 감속 중에는 `runner.settings.speed` 가 15여도 1배속으로 돈다. 연출 시계·소리 규칙은 `effSpeed`(paused ? 0 : slowed ? 1 : speed)를 쓴다. 15배속 그대로를 확인할 때는 자동 감속(S)을 끄고 잰다. 첫 발·진입 예고(남은 3.4초)의 그 틱부터 1배속이 되는 것은 `runner.stepGuard` 다(결과는 바뀌지 않는다).
+- **실패 기억.** 닿을 수 없어서(길 없음·불) 실패했거나 위험해서 놓은 작업은 `WorkItem.failedAt[rid]` 에 남는다. 25초(`RETRY_AFTER`) 동안 지휘관은 그 작업을 같은 대원에게 주지 않고, 그 대원도 스스로 다시 잡지 않는다(`agents.failedRecently`). 없으면 "시도 → 실패 → 재지시" 가 1초마다 되풀이된다(물이 떨어져 불에 갇힌 소방대원이 소화전으로 가려던 일, 42회). 스스로 고르는 새 행동에도 같은 기억을 둔다(예: `equipRetryAt`). 위험해서 물러날 때는 하던 작업을 `finishTask(…, 'danger')` 로 놓는다 — 그냥 preempt 하면 아무것도 남지 않아 지휘관이 3초마다 같은 지시를 냈다.
+- **다친 대원의 후퇴는 끝까지.** 체력 40(`HURT_HEALTH`) 아래로 다친 대원은 대기 지점에 닿을 때까지 후퇴를 이어 가고, 무전은 상태가 바뀔 때 한 번만 남기며, 지휘관은 지시를 주지 않는다(지휘관이 자기 대원의 체력을 읽는 것은 지구력을 읽던 것과 같은 자격이다). 장비 교체(`resupply`) 중인 대원에게도 지시하지 않는다.
+- **처치 왕복.** 처치를 두 번 마쳤는데도 기본 처치(tq 1)로만 보고되는 환자에게는 지휘관이 처치를 다시 내지 않는다(더 나아지게 할 수 없는 구급대원이 같은 상태 보고만 되돌려 보냈다).
+- **연쇄 상한.** 연쇄 사건은 `chain.canChain(sim, 부모)` 가 참일 때만 예약한다. 막히면 아무것도 예약하지 않고 기록도 남기지 않는다. 난수는 상한과 상관없이 늘 그대로 뽑는다(상한에 걸리지 않는 교대의 결과가 바뀌지 않게).
+- **기록에 남지 않는 왕복.** 대원이 같은 종류의 두 작업(탑승 D↔F, 처치 B↔D) 사이를 기록 없이 수십 번 오가는 일이 있다(극한 S49 #18 탑승 89회). 측정 도구의 REPEAT 는 기록 줄만 세서 이것을 보지 못한다.
 - **현장 그림의 고정 층.** `staticLayer.ts` 는 타일·가구가 바뀔 때만 다시 그린다(`staticSig`). 매 프레임 바뀌는 것(문짝, 불, 사람)을 여기에 넣지 않는다. 새 타일 종류·가구를 만들면 `surfaceMap`·`paintTile`·`furniture` 에 그림을 추가한다.
 - **건물 배치는 고정이 아니다.** 방의 수·위치·출입구가 사건마다 다르다. 좌표를 직접 쓰지 말고 `Plan`(`rooms`·`corridors`·`exitDoors`·`floors`)과 `s.exits`·`s.regions` 로 찾는다. 복도가 없는 건물(`corridors` 가 빈 배열)도 있다. 새 틀을 만들면 "모든 바닥에 걸어서 닿는다"는 테스트(`현장 배치의 다양성`)를 통과해야 한다.
 - **가구는 실제 장애물이다(`T.FURN`).** 지나갈 수 없고, 시야는 통과하며, 엄폐물이 된다. 방을 새로 만들 때는 `builders.ts` 의 `furnish()` 를 쓴다(문 주변을 비우고 방이 끊기지 않는지 검사한다).

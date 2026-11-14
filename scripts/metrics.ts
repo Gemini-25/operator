@@ -18,7 +18,7 @@ export const CHAIN_DEPTH_GATE = 4, CHAINED_SHIFT_GATE = 8;
 // 후보가 생기면 그 수로 두고 고칠 일로 올린다(고쳐서 줄면 낮춘다, 늘면 실패)
 export const STALL_ALLOW = 0;
 export const FORGOT_ALLOW = 0;
-export const REPEAT_MAX = Infinity;      // 보고만 (기준선 반복 최대: 보통 8 · 어려움 21 · 극한 42 — I1-b 완료 조건이 정한다)
+export const REPEAT_MAX = Infinity;      // 보고만 (기준선 반복 최대: Z1 뒤 보통 5 · 어려움 5 · 극한 6, Z1 전 8 · 21 · 42 — I1-b 완료 조건이 정한다)
 const LIST_CAP = 20;                     // --json 의 목록 상한
 
 export const SYSTEMS = ['call', 'dispatch', 'field', 'road', 'hospital', 'hazard', 'building', 'crew', 'equip', 'infra', 'other', 'aid', 'disaster', 'carry'] as const;

@@ -1,6 +1,7 @@
 // 현장 환경 규칙: 화재 확산, 연기, 구조 대상 상태 악화, 용의자 행동, 통과 차량.
 // 이 파일은 "세계"의 규칙이다. 대원의 행동은 이 상태를 바꾸고, 이 상태는 대원의 다음 판단을 바꾼다.
 
+import { canChain } from '../chain';
 import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import { T } from '../types';
@@ -512,9 +513,11 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
         // 연쇄: 총기를 든 채 달아난 용의자는 다른 곳에서 다시 범행할 수 있다
         if (h.weapon === 'gun') {
           const r = s.rng.next();
+          // 연쇄 상한(chain.ts): 넘으면 예약하지 않는다. 난수는 상한과 상관없이 똑같이 뽑는다(상한에 걸리지 않는 교대의 결과를 바꾸지 않는다)
+          const room = canChain(sim, I);
           // 차를 몰고 달아나면 추격전이 이어지고(도주 차량), 아니면 다른 곳에서 다시 범행한다
-          if (r < 0.35 && !I.pursuit && !sim.gen.chain.some((c) => c.opts.parent === I.id && c.opts.variant === 'getaway') && !sim.incidents.some((J) => J.parent === I.id && J.truth.variant === 'getaway')) sim.gen.chain.push({ at: sim.t + 2, opts: { type: 'armed', variant: 'getaway', nodeId: I.truth.nodeId, parent: I.id, note: '달아난 용의자가 차를 몰고 도주합니다', rng: sim.rng.fork('getaway:' + I.id + ':' + h.id) } });
-          else if (r < 0.65) sim.gen.chain.push({ at: sim.t + s.rng.range(45, 100), opts: { note: '도주한 용의자가 다른 곳에서 다시 범행을 벌입니다', type: 'armed', variant: 'robbery', parent: I.id } });
+          if (r < 0.35 && !I.pursuit && !sim.gen.chain.some((c) => c.opts.parent === I.id && c.opts.variant === 'getaway') && !sim.incidents.some((J) => J.parent === I.id && J.truth.variant === 'getaway')) { if (room) sim.gen.chain.push({ at: sim.t + 2, opts: { type: 'armed', variant: 'getaway', nodeId: I.truth.nodeId, parent: I.id, note: '달아난 용의자가 차를 몰고 도주합니다', rng: sim.rng.fork('getaway:' + I.id + ':' + h.id) } }); }
+          else if (r < 0.65) { const at = sim.t + s.rng.range(45, 100); if (room) sim.gen.chain.push({ at, opts: { note: '도주한 용의자가 다른 곳에서 다시 범행을 벌입니다', type: 'armed', variant: 'robbery', parent: I.id } }); }
         }
         continue;
       }

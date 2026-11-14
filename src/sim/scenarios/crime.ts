@@ -1,6 +1,7 @@
 // 강력 범죄: 폭발물, 대형 인질극, 폭동, 연쇄 방화 (docs/specs/N4b-crime.md)
 // 이 파일은 scenarios.ts 가 맨 먼저 불러온다. 신고·사건·추격(callSystem · incidents · pursuit)을 여기서 불러오면 가져오기가 돌아 표가 만들어지기 전에 쓰이므로,
 // 형(type)과 events 만 가져온다.
+import { canChain } from '../chain';
 import type { Sim } from '../engine';
 import { emit } from '../events';
 import type { Scenario } from '../scenarios';
@@ -37,6 +38,7 @@ function arsonNext(sim: Sim, I: Incident, reason: string): void {
     emit(sim, { inc: I.id, role: 'SYSTEM', actor: '상황실', kind: 'incident', imp: 1, text: `방화범은 끝내 잡히지 않았습니다. ${depth}번째 불을 끝으로 자취를 감췄습니다.` });
     return;
   }
+  if (!canChain(sim, I)) return;      // 이번 교대의 연쇄 상한(chain.ts): 다음 불을 예약하지 않는다 (기록도 남기지 않는다)
   // 다음 불: 600 안의 같은 종류 건물 (없으면 가장 가까운 것). 이미 사건이 났던 건물은 피한다
   const used = new Set(sim.incidents.map((J) => J.truth.placeId));
   const kind = I.truth.placeKind, d = (q: Place): number => Math.hypot(q.x + q.w / 2 - I.truth.x, q.y + q.h / 2 - I.truth.y);

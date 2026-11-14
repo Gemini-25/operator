@@ -1,10 +1,12 @@
-// Z1: 측정 도구(scripts/metrics.ts 의 REPEAT 후보)가 찾은 반복 고리.
+// Z1: 측정 도구(scripts/metrics.ts 의 REPEAT 후보)가 찾은 반복 고리와 재범 연쇄의 상한.
 // 반복의 셈은 metrics.ts 와 같다: 한 사건 안에서 같은 사람이 같은 문구를 남긴 횟수(중요도 1 이상).
 import { describe, expect, it } from 'vitest';
+import { CHAIN_MAX, CHAIN_SHIFT_MAX, canChain, chainLen, chainedInShift } from '../src/sim/chain';
 import { NORMAL, PRESETS, parseDisaster } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
 import { RETRY_AFTER, failedRecently } from '../src/sim/field/agents';
+import { createIncident } from '../src/sim/incidents';
 import type { Incident, WorkItem } from '../src/sim/types';
 
 const HARD = PRESETS.hard.d, EXTREME = PRESETS.extreme.d;
@@ -77,6 +79,43 @@ describe('반복 고리 (Z1)', () => {
       const s = shiftOf(seed, d), I = incident(s, code);
       const r = maxRepeat(s, I);
       expect(r.n, `${seed} #${code} ${r.what}`).toBeLessThanOrEqual(5);
+    }
+  }, 60000);
+});
+
+describe('재범 연쇄의 상한 (Z1)', () => {
+  it('한 연쇄는 많아야 세 사건, 한 교대에 이어진 사건은 상한 안 (예약할 때 확인한다)', () => {
+    const s = new Sim('T-CHAIN', EXTREME);
+    s.run(100);
+    const a = createIncident(s, { type: 'armed', variant: 'robbery', rng: s.rng.fork('t1') });
+    const b = createIncident(s, { type: 'armed', variant: 'robbery', parent: a.id, rng: s.rng.fork('t2') });
+    const c = createIncident(s, { type: 'armed', variant: 'robbery', parent: b.id, rng: s.rng.fork('t3') });
+    expect(chainLen(s, a)).toBe(1); expect(chainLen(s, c)).toBe(3);
+    expect(canChain(s, a)).toBe(true); expect(canChain(s, b)).toBe(true);
+    expect(canChain(s, c)).toBe(false);      // 세 번째 사건에서는 더 잇지 않는다
+    // 예약해 둔 것도 센다: 교대의 상한에 닿으면 처음 사건에서도 잇지 않는다
+    const base = chainedInShift(s);
+    for (let k = base; k < CHAIN_SHIFT_MAX; k++) s.gen.chain.push({ at: 1e9, opts: { type: 'armed', variant: 'robbery', parent: a.id } });
+    expect(chainedInShift(s)).toBe(Math.max(base, CHAIN_SHIFT_MAX));
+    expect(canChain(s, a)).toBe(false);
+  });
+
+  it('극한에서 강도 ↔ 도주 차량이 서로를 끝없이 낳지 않는다 (기준선: S1 에서 연쇄 16건·깊이 5), 상한에 걸려도 지어낸 기록이 없다', () => {
+    for (const seed of ['S1', 'S5', 'S40']) {
+      const s = shiftOf(seed, EXTREME);
+      let chained = 0;
+      for (const I of s.incidents) {
+        if (I.parent === undefined) continue;
+        chained++;
+        expect(chainLen(s, I), `${seed} #${I.code}`).toBeLessThanOrEqual(CHAIN_MAX);
+        expect(s.incidents[I.parent].createdAt).toBeLessThan(I.createdAt);
+      }
+      expect(chained, seed).toBeLessThanOrEqual(CHAIN_SHIFT_MAX);
+      expect(chained, seed).toBeGreaterThan(0);      // 연쇄 자체는 남아 있다
+      // 연쇄의 첫머리 기록은 실제로 만들어진 사건에만 있다 (예약하지 않은 연쇄에 대한 기록을 남기지 않는다)
+      const notes = s.events.filter((e) => e.text.startsWith('도주한 용의자가 다른 곳에서') || e.text.startsWith('달아난 용의자가 차를 몰고'));
+      for (const e of notes) expect(s.incidents[e.incidentId].parent, e.text).toBeDefined();
+      expect(notes.length).toBeLessThanOrEqual(chained);
     }
   }, 60000);
 });

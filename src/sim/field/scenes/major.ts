@@ -6,6 +6,7 @@ import type { Sim } from '../../engine';
 import type { Rng } from '../../rng';
 import { T } from '../../types';
 import type { Incident, Prop, Scene } from '../../types';
+import { tidx } from '../grid';
 import { SH, SW, addCas, addProp, addRegion, baseScene, get, set } from '../kit';
 import { registerScene } from '../sceneRegistry';
 
@@ -40,6 +41,62 @@ function rider(s: Scene, rng: Rng, w: Prop, k: number, kind: 'trapped' | 'immobi
     w.occupants!.push(c.id);
   } else addCas(s, Math.max(1, Math.min(SW - 2, outX)), outY, 'mobile', rng.range(72, 96), rng.range(0, 0.05), 0);
 }
+
+/** (x, y) 에서 가장 가까운, 걸을 수 있고 소품이 없고 사람이 서 있지 않은 칸 */
+function freeNear(s: Scene, x: number, y: number): { x: number; y: number } {
+  const ok = (xx: number, yy: number): boolean => xx >= 1 && yy >= 0 && xx < SW - 1 && yy < SH && (get(s, xx, yy) === T.GROUND || get(s, xx, yy) === T.ROAD || get(s, xx, yy) === T.FLOOR) && s.propAt[tidx(s, xx, yy)] < 0 && !s.casualties.some((c) => Math.round(c.x) === xx && Math.round(c.y) === yy);
+  for (let r = 0; r < 8; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+    if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+    if (ok(x + dx, y + dy)) return { x: x + dx, y: y + dy };
+  }
+  return { x, y };
+}
+
+// ───────────────────────── 열차 탈선 ─────────────────────────
+// 건널목에서 승용차를 들이받은 열차가 선로를 벗어났다. 철길은 위아래로, 도로는 좌우로 지난다.
+// 맨 뒤 객차는 선로 위에 서 있고, 가운데 객차는 건널목 위에서 틀어졌고, 선두 객차는 길을 지나 옆으로 누웠다.
+registerScene('traffic', 'train', (sim, I, rng) => {
+  const s = roadFrame(sim, I, rng, 12);
+  const X = rng.int(14, 17);      // 철길이 지나는 열
+  for (let y = 0; y < SH; y++) for (let x = X - 1; x <= X + 1; x++) if (get(s, x, y) === T.TREE) set(s, x, y, T.GROUND);      // 선로 둘레는 자갈밭이다
+  const cars: Prop[] = [];
+  // 객차는 손으로 치울 수 없다: 처음부터 도로 정리 대상에서 빼 둔다(cleared). color 는 객차 번호이고 0 번이 레일을 함께 그린다
+  const car = (x: number, y: number, w: number, h: number, angle: number, name: string): Prop => {
+    const p = addProp(s, 'vehicle', x, y, { w, h, blocking: true, hp: 10, leak: 0, leakRate: 0, occupants: [], angle, color: cars.length, bus: true, skin: 'trainCar', cleared: true });
+    cars.push(p);
+    addRegion(s, name, 'wreck', x - 1, y - 1, x + w, y + h, false, true);
+    return p;
+  };
+  const three = rng.chance(0.6), east = rng.chance(0.5);
+  car(X, 2, 1, 3, Math.PI / 2 + rng.range(-0.02, 0.02), three ? '객차 3호' : '객차 2호');
+  if (three) car(X, 8, 1, 3, Math.PI / 2 + rng.range(0.14, 0.3) * (east ? -1 : 1), '객차 2호');
+  const lead = car(east ? X + 1 : X - 3, 13, 3, 1, rng.range(0.12, 0.38) * (east ? 1 : -1), '객차 1호');
+  for (let x = lead.x - 1; x <= lead.x + 3; x++) for (let y = 12; y <= 14; y++) if (get(s, x, y) === T.TREE) set(s, x, y, T.GROUND);
+  // 건널목에서 받힌 승용차: 열차에 밀려 길 위에 멈췄다
+  const ax = east ? X + 2 : X - 3, ay = rng.pick([9, 10]);
+  const auto = addProp(s, 'vehicle', ax, ay, { w: 2, h: 1, blocking: true, hp: 10, leak: 0, leakRate: 0, occupants: [], angle: rng.range(0.5, 1.1) * (east ? 1 : -1), color: rng.int(0, 7) });
+  addRegion(s, '건널목 승용차', 'wreck', ax - 1, ay - 1, ax + 2, ay + 1, false, true);
+  addRegion(s, '북측 수풀', 'verge', 6, 2, 24, 6, false, true);
+  addRegion(s, '남측 수풀', 'verge', 8, 13, 24, 17, false, true);
+  // 사람: 모두 10~14명. 승용차에 1~2명, 나머지는 객차에 (갇힘 3~4, 중상 4~5, 경상은 스스로 빠져나와 선로 가에 있다)
+  const total = rng.int(10, 14), inAuto = rng.int(1, 2), riders = total - inAuto;
+  for (let k = 0; k < inAuto; k++) rider(s, rng, auto, k, rng.chance(0.5) ? 'trapped' : 'immobile', 0, 0, 0.8);
+  const nT = rng.int(3, 4), nI = Math.min(rng.int(4, 5), riders - nT);
+  const kinds: ('trapped' | 'immobile' | 'mobile')[] = [];
+  for (let k = 0; k < riders; k++) kinds.push(k < nT ? 'trapped' : k < nT + nI ? 'immobile' : 'mobile');
+  const seat = cars.map(() => 0), weight = cars.map((c) => (c === lead ? 2.2 : 1));      // 넘어진 선두 객차에 사람이 가장 많다
+  for (const kind of kinds) {
+    const q = rng.weighted(cars.map((_, i) => i), weight), w = cars[q], k = seat[q]++;
+    const out = w.w >= w.h ? freeNear(s, w.x + (k % 3), w.y + rng.pick([-1, 1])) : freeNear(s, w.x + rng.pick([-2, 2]), w.y + (k % 3));
+    rider(s, rng, w, k, kind, out.x, out.y, 0.7);
+  }
+  const nd = rng.int(3, 5);
+  for (let k = 0; k < nd; k++) { const p = freeNear(s, rng.int(X - 4, X + 5), rng.int(8, 11)); addProp(s, 'roadDebris', p.x, p.y, { hp: 4 }); }
+  s.placeName = '열차 탈선 사고 현장';
+  // 건널목이 막혀 지나가는 차가 없다: 차로 통제 임무는 생기지 않는다
+  s.controlPts = []; s.controlDone = []; s.laneRows = []; s.trafficFlow = 0; s.nextCarAt = Infinity;
+  return s;
+});
 
 // ───────────────────────── 다중 추돌 ─────────────────────────
 // 고속도로에서 차 5~7대가 연달아 부딪쳤다. 두 대에서 기름이 새고, 옆 차로로는 차가 계속 지나간다 (교통 통제가 급하다).

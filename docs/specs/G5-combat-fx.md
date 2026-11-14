@@ -10,34 +10,39 @@
 **공용 파일 수정**(6절의 표에 적힌 곳만, 가장 작은 조각으로): `src/sim/types.ts`(추가만), `src/sim/field/damage.ts`, `src/sim/field/hazards.ts`, `src/sim/field/executor.ts`, `src/sim/field/rules/crime.ts`, `src/view/renderScene.ts`, `src/view/scene/sprites.ts`, `src/view/scene/fx.ts`, `src/view/audio.ts`, `src/view/runner.ts`, `src/view/camera.ts`, `src/view/renderCity.ts`, `src/ui/Viewport.tsx`, `src/ui/App.tsx`, `src/ui/MapLegend.tsx`.
 **건드리지 않는다**: README 공통 규칙의 목록, `src/sim` 의 다른 파일 전부(특히 판단부 `commander.ts`·`brain.ts`·`dispatch/*`), `scripts/screenshot.cjs`(Q1 화면 자동 테스트가 고칠 수 있다), `ui/panels.tsx`·`styles.css`(새 설정 화면을 만들지 않는다).
 
-시작 조건: B3·P1(`wf/b3`·`wf/p1`)이 합쳐진 뒤의 커밋에서 브랜치를 딴다. 두 묶음이 `executor.ts`·`hazards.ts`·`kit.ts`·`types.ts` 를 고치므로, 기준 해시(2.6절)도 **이 묶음을 시작하는 커밋에서** 잰다.
+시작 조건: B3·P1·Q1 은 이미 합쳐졌다(`23059fa`·`7626032`·`035a83f`, 이 문서의 줄 번호는 그 뒤인 `d876c96` 기준). 그 뒤의 커밋(B1 이 먼저 합쳐지면 그 뒤)에서 브랜치를 딴다. 앞 묶음들이 `executor.ts`·`hazards.ts`·`kit.ts`·`types.ts` 를 고치므로, 기준 해시(2.6절)는 **이 묶음을 시작하는 커밋에서** 잰다.
 
-순서: `docs/ROADMAP.md` 의 나눔대로라면 G5 는 R1·H1·X6·R2 보다 **먼저** 구현된다. 그래서 G5 가 만드는 기록 함수(`fxlog.ts`)와 그림 이름을 뒤의 묶음이 쓴다. 이름은 이미 쓰인 R1·R2·H1·G4 설계서의 이름에 맞췄다(11절). G4 와는 순서가 정해지지 않았다 — 먼저 합친 쪽이 그대로이고 나중 쪽이 맞춘다(11절의 G4 줄).
+순서: `docs/ROADMAP.md` 의 나눔대로라면 G5 는 R1·H1·X6·R2 보다 **먼저** 구현된다. 그래서 G5 가 만드는 기록 함수(`fxlog.ts`)와 그림 이름을 뒤의 묶음이 쓴다. 이름은 이미 쓰인 R1·R2·H1·G4·X6 설계서의 이름에 맞췄다(11절). G4 와는 순서가 정해지지 않았다 — 먼저 합친 쪽이 그대로이고 나중 쪽이 맞춘다(11절의 G4 줄).
+
+**사용자에게 확인할 것**(구현을 막지 않는다 — 아래 기본값으로 만들고, 보고에 다시 적어 묻는다):
+- (a) 요청의 "폭탄을 쓴다"가 **대원의 폭파 진입**(문을 폭약으로 여는 것)이라면, 그것은 지금 시뮬레이션에 없는 행동이다. 이 묶음은 결과를 바꿀 수 없으므로 `BreachHow 'charge'` 를 이름만 예약하고 그리지 않는다(3.5절). 원하면 R2(대응 방식)에 결과가 바뀌는 실제 방법으로 넣어야 한다. 지금 그리는 "폭탄"은 용의자의 폭발물·가스 폭발 같은 **이미 일어나는 폭발**과 대원의 섬광탄이다.
+- (b) 잠기지 않은 닫힌 문에도 진입조 구성에 따라 공성추·발차기 그림을 쓴다(`breachHowFor`, 10.5절). 시뮬레이션은 문을 여는 방법을 다루지 않으므로 이것은 그림의 해석이다. 싫으면 잠기지 않은 문은 `push`(밀어 엶)로만 그린다.
+- (c) 빗나간 탄의 그림 선과 실제로 창이 깨지는 선이 1칸 남짓 어긋날 수 있다(2.3절 끝). 맞추려면 "어느 창이 깨지는가"라는 상태를 바꿔야 해서 이번에는 하지 않는다.
 
 ---
 
 ## 1. 지금 상태 — 무엇이 보이고 들리며, 무엇이 드러나지 않는가
 
-조사한 커밋: `0636387`. 줄 번호는 그때 기준이다(합친 뒤 조금 밀릴 수 있다).
+조사한 커밋은 `0636387` 이고, 줄 번호는 `d876c96`(B3·P1·Q1 합친 뒤)에 맞춰 다시 적었다. B1·G4 등이 먼저 합쳐지면 또 밀리므로 **줄 번호가 아니라 함수 이름과 2.4절의 "찾을 글귀"(코드 조각)로 찾는다.**
 
 | 장면 | 지금 보이는 것 | 지금 들리는 것 | 드러나지 않는 것 | 근거 |
 |---|---|---|---|---|
-| 대원 사격 | 옅은 직선 + 탄두 구간 + 총구 화염. 총구 화염이 총구가 아니라 몸 가운데에 겹친다 | lowpass 잡음 0.09초 + square 150→60Hz | 누가 무엇으로 쐈는지(효과 기록에 쏜 사람·무기가 없고 색만 `#ffe08a`/`#ff8a5c`), 반동 | `executor.ts:276-308`, `renderScene.ts:603-622`, `sprites.ts:141-142` |
-| 용의자 사격 | 위와 같은 그림(주황) | **대원과 같은 소리** + 첫 발에 문제 경보음(톱니파 220/196Hz) | 조준, 발사 직전 예고(hold→fight 첫 쿨다운 `0.6+(1-aggression)`, `h.targetRid`) | `hazards.ts:463-491`, `audio.ts:86` |
+| 대원 사격 | 옅은 직선 + 탄두 구간 + 총구 화염. 총구 화염이 총구가 아니라 몸 가운데에 겹친다 | lowpass 잡음 0.09초 + square 150→60Hz | 누가 무엇으로 쐈는지(효과 기록에 쏜 사람·무기가 없고 색만 `#ffe08a`/`#ff8a5c`), 반동 | `executor.ts:281-313`, `renderScene.ts:603-622`, `sprites.ts:141-142` |
+| 용의자 사격 | 위와 같은 그림(주황) | **대원과 같은 소리** + 첫 발에 문제 경보음(톱니파 220/196Hz) | 조준, 발사 직전 예고(hold→fight 첫 쿨다운 `0.6+(1-aggression)`, `h.targetRid`) | `hazards.ts:472-500`, `audio.ts:86` |
 | 사격선의 시간 | 효과 나이를 `sim.t - f.t` 로 재고 보간하지 않는다. ttl 0.25 라 두 틱(k=0, 0.8)만 그려진다 | — | 1배속 0.4초, 8배속 약 0.05초, 15배속 약 0.027초(60fps 한두 프레임) | `renderScene.ts:600`, `engine.ts:93-94` |
-| 빗나감 | 사격선 끝이 목표 ±0.8칸(현장 주 난수 `s.rng` 로 흔든다) | — | 벽·문에 맞은 자리(먼지·불똥·탄흔). `bulletPath` 는 멈춘 칸을 돌려주지 않는다. 그림 선은 벽을 무시하고, 창을 깨는 실제 탄도는 흔들지 않은 목표 쪽으로 3칸 더 간다 | `damage.ts:107-139`, `executor.ts:289-290`, `hazards.ts:480-481` |
+| 빗나감 | 사격선 끝이 목표 ±0.8칸(현장 주 난수 `s.rng` 로 흔든다) | — | 벽·문에 맞은 자리(먼지·불똥·탄흔). `bulletPath` 는 멈춘 칸을 돌려주지 않는다. 그림 선은 벽을 무시하고, 창을 깨는 실제 탄도는 흔들지 않은 목표 쪽으로 3칸 더 간다 | `damage.ts:107-139`, `executor.ts:294-295`, `hazards.ts:489-490` |
 | 엄폐물 피격 | 가구가 부서질 때만 `debris` 효과. 닳을 때는 고정 층의 흔적만 | 부서질 때만 | 맞는 순간 | `damage.ts:90-105,145-169` |
-| 피격 | 붉은 사각 조각 6개 + 붉은 고리(1.2초). 쓰러진 사람 밑 검붉은 타원(구조 대상 다친 정도×0.8, 용의자 0.5, 대원 0.3) | triangle 110→70Hz | 방탄(`Unit.armor`)으로 줄어든 피해와 실제 부상의 구분. **붉은 표현은 "피 없이" 요청과 부딪친다** | `renderScene.ts:634-637,328,353,398`, `sprites.ts:170` |
-| 섬광탄 | 터진 자리 흰 원(4.6배까지) + 흰 고리 0.7초 | highpass 잡음 + sine 1900→1500Hz | 던진 사람·궤적·떨어진 자리(`flashbang()` 이 받지 않는다), 시야가 하얘지는 느낌, 남은 수(`u.flashbangs`) | `hazards.ts:286-297`, `executor.ts:342-346,763-767,780-784` |
-| 폭발 | 크기가 고정된 주황 빛·고리·조각 10개 | sine 70→32Hz + lowpass 잡음 | 반경(연료 1.5, 2차 붕괴 2.6, 폭발물 3.4, 가스 용기 3.6, 가스 3.8)이 기록에 없다. 흔들림 없음 | `renderScene.ts:626-633`, `hazards.ts:100,122-137,586,613,660`, `rules/crime.ts:43` |
-| 동시 진입 | 진입 전 파란 점선 고리 + `진입 지점 · N초` 알약, 진입하면 사라진다. 문짝은 평소처럼 0.22초에 돌아 열린다 | 없음(`진입!` 은 kind `action` 이라 소리가 없다) | 문을 부수는 순간, 파편·먼지, 3-2-1 신호 | `executor.ts:326-352`, `renderScene.ts:553-560`, `audio.ts:83-96` |
-| 방 진입 | `방 진입 대기` 이름표, 문짝 열림 | 없음 | 위와 같다 | `executor.ts:752-776` |
-| 잠긴 문 강제 개방 | 이름표 + 진행 고리. 길 위의 하위 작업(`a.task.sub`)이라 도구 자세가 나오지 않는다 | 완료 기록의 상승음뿐 | 타격, 문이 부서지는 순간. **무장 현장에는 잠긴 문이 없어 일어나지 않는다**(화재·승강기·가스만 `lockDoor`) | `executor.ts:110-119,210-234`, `renderScene.ts:103-121`, `builders.ts:68,84,311,726` |
-| 대치·협상 | 용의자 시야 부채꼴, 발밑 맥동 원, 확성기 자세, 사기 막대, 대원의 `엄` 글자 배지 | 없음 | 서로 겨누는 선, 협상이 진행되는 모습 | `renderScene.ts:171-184,335-363,403`, `executor.ts:698-708` |
-| 칼·맨손 공격 | `hit` 효과만 | `hit` 소리 | 휘두르는 동작 | `hazards.ts:492-495` |
-| 검거 | 팔을 뒤로 한 자세 + 회색 막대 | 없음(`resolve` 는 SYSTEM 일 때만 소리) | 수갑을 채우는 순간 | `executor.ts:725,796,823,851`, `audio.ts:90` |
-| 시한이 지나 인질이 다침 | 없음 | 문제 경보음 | 무슨 일이 있었는지(효과·탄도 없음) | `hazards.ts:374-378` |
-| 기습 무력화 | 섬광탄 무력화와 같은 노란 점 넷 | — | 둘의 구별 | `hazards.ts:359-361`, `renderScene.ts:361` |
+| 피격 | 붉은 사각 조각 6개 + 붉은 고리(1.2초). 쓰러진 사람 밑 검붉은 타원(구조 대상 다친 정도×0.8, 용의자 0.5, 대원 0.3) | triangle 110→70Hz | 방탄(`Unit.armor`)으로 줄어든 피해와 실제 부상의 구분. **붉은 표현은 "피 없이" 요청과 부딪친다** | `renderScene.ts:634-637,328,353,398`, `sprites.ts:169` |
+| 섬광탄 | 터진 자리 흰 원(4.6배까지) + 흰 고리 0.7초 | highpass 잡음 + sine 1900→1500Hz | 던진 사람·궤적·떨어진 자리(`flashbang()` 이 받지 않는다), 시야가 하얘지는 느낌, 남은 수(`u.flashbangs`) | `hazards.ts:295-306`, `executor.ts:347-351,768-772,785-789` |
+| 폭발 | 크기가 고정된 주황 빛·고리·조각 10개 | sine 70→32Hz + lowpass 잡음 | 반경(연료 1.5, 2차 붕괴 2.6, 폭발물 3.4, 가스 용기 3.6, 가스 3.8)이 기록에 없다. 흔들림 없음 | `renderScene.ts:626-633`, `hazards.ts:82,131-146,595,622,669`, `rules/crime.ts:43` |
+| 동시 진입 | 진입 전 파란 점선 고리 + `진입 지점 · N초` 알약, 진입하면 사라진다. 문짝은 평소처럼 0.22초에 돌아 열린다 | 없음(`진입!` 은 kind `action` 이라 소리가 없다) | 문을 부수는 순간, 파편·먼지, 3-2-1 신호 | `executor.ts:331-357`, `renderScene.ts:553-560`, `audio.ts:83-96` |
+| 방 진입 | `방 진입 대기` 이름표, 문짝 열림 | 없음 | 위와 같다 | `executor.ts:756-781` |
+| 잠긴 문 강제 개방 | 이름표 + 진행 고리. 길 위의 하위 작업(`a.task.sub`)이라 도구 자세가 나오지 않는다 | 완료 기록의 상승음뿐 | 타격, 문이 부서지는 순간. **무장 현장에는 잠긴 문이 없어 일어나지 않는다**(화재·승강기·가스만 `lockDoor`) | `executor.ts:112-124,215-238`, `renderScene.ts:103-121`, `builders.ts:68,84,311,726` |
+| 대치·협상 | 용의자 시야 부채꼴, 발밑 맥동 원, 확성기 자세, 사기 막대, 대원의 `엄` 글자 배지 | 없음 | 서로 겨누는 선, 협상이 진행되는 모습 | `renderScene.ts:171-184,335-363,403`, `executor.ts:703-713` |
+| 칼·맨손 공격 | `hit` 효과만 | `hit` 소리 | 휘두르는 동작 | `hazards.ts:501-504` |
+| 검거 | 팔을 뒤로 한 자세 + 회색 막대 | 없음(`resolve` 는 SYSTEM 일 때만 소리) | 수갑을 채우는 순간 | `executor.ts:728,799,826,854`, `audio.ts:90` |
+| 시한이 지나 인질이 다침 | 없음 | 문제 경보음 | 무슨 일이 있었는지(효과·탄도 없음) | `hazards.ts:383-387` |
+| 기습 무력화 | 섬광탄 무력화와 같은 노란 점 넷 | — | 둘의 구별 | `hazards.ts:367-370`, `renderScene.ts:361` |
 | 지도 화면 | 교전 중인 무장 사건이 조용한 무장 사건과 똑같다 | 사이렌만 | 교전 중이라는 것 | `renderCity.ts:254-312`, `audio.ts:119` |
 | 높은 배속 | 첫 효과가 감속 전에 지나간다(틱을 다 돌린 뒤 감속을 검사한다) | 종류별 실제 시간 최소 간격뿐, 거리·좌우·압축기·동시 발음 상한 없음 | — | `runner.ts:115`, `Viewport.tsx:59-68`, `audio.ts:45-51` |
 
@@ -46,7 +51,7 @@
 2. 그림의 시간이 시뮬레이션 틱에 묶여 있다: 0.2초 단위로 끊기고 배속이 오르면 사라진다.
 3. 소리에 원근·무기 구분·상한이 없고, 관찰 중인 현장에서만 난다.
 
-**바꿔도 결과가 그대로인 근거.** `src/sim` 안에서 `s.fx` 를 읽는 곳은 정리 한 줄(`sceneManager.ts:240`, 맨 앞 기록이 4초 넘었으면 `shift`)뿐이다. 나머지는 모두 쓰기(`hazards.pushFx`, `damage.ts` 의 지역 `fx`)다. 재현성 해시(`sim.logHash`)는 `emit` 때의 틱과 문구로만 쌓인다(`events.ts:22-26`). `s.glass` 도 시뮬레이션 판단에서 읽지 않는다(grep: `damage.ts` 와 `scenes/major.ts:249` 의 쓰기뿐).
+**바꿔도 결과가 그대로인 근거.** `src/sim` 안에서 `s.fx` 를 읽는 곳은 정리 한 줄(`sceneManager.ts:249`, 맨 앞 기록이 4초 넘었으면 `shift`)뿐이다. 나머지는 모두 쓰기(`hazards.pushFx`, `damage.ts` 의 지역 `fx`)다. 재현성 해시(`sim.logHash`)는 `emit` 때의 틱과 문구로만 쌓인다(`events.ts:22-26`). `s.glass` 도 시뮬레이션 판단에서 읽지 않는다(grep: `damage.ts` 와 `scenes/major.ts:249` 의 쓰기뿐).
 
 ---
 
@@ -55,13 +60,13 @@
 ### 2.1 허용 범위
 
 - 허용: `s.fx` 에 기록을 넣는 것, 방금 넣은 기록 객체에 꼬리표 `c` 를 붙이는 것, 그것을 위해 **이미 있는 값을 읽는 것**(지역 변수에 담는 것 포함).
-- 금지: 난수 호출(어떤 흐름이든 — 파손용 `dmg:` 흐름도), `emit`·`raiseProblem`·`markRecovered`, `s.fx` 밖의 상태 쓰기(문·사람·창·가구·부대·무전), `bulletPath`·`shatter`·`breakGlass` 의 추가 호출, **기존 줄의 식과 인자 순서 변경**. 특히 `executor.ts:289`·`hazards.ts:480`·`executor.ts:246` 은 효과 인자 안에서 `s.rng` 를 부른다. 이 줄들은 한 글자도 바꾸지 않는다.
+- 금지: 난수 호출(어떤 흐름이든 — 파손용 `dmg:` 흐름도), `emit`·`raiseProblem`·`markRecovered`, `s.fx` 밖의 상태 쓰기(문·사람·창·가구·부대·무전), `bulletPath`·`shatter`·`breakGlass` 의 추가 호출, **기존 줄의 식과 인자 순서 변경**. 특히 `executor.ts:294`(대원 사격)·`hazards.ts:489`(용의자 사격)·`executor.ts:251`(물줄기) 은 효과 인자 안에서 `s.rng` 를 부른다. 이 줄들은 한 글자도 바꾸지 않는다.
 - 기존 `pushFx(…)` 줄은 그대로 두고 **그 다음 줄에** 꼬리표를 붙인다. `bulletPath` 가 `glass` 기록을 넣을 수 있으므로, 꼬리표를 붙일 기록은 `lastFx(sim, s, kind)`(같은 틱에 넣은 그 종류의 가장 최근 기록)로 찾는다.
 - 기록 수는 거의 늘지 않는다: 사격 한 발에 새 기록을 더하지 않고 있던 `shot` 에 꼬리표만 붙인다. 새 기록은 진입·근접·검거·시한 초과·인질 피격처럼 드문 순간에만 생긴다. 그래서 60개 상한(`hazards.ts:16`, `damage.ts:51`)은 그대로 둔다.
 
 ### 2.2 자료형 (`src/sim/types.ts` — 추가만)
 
-`Fx` 는 한 줄짜리 인터페이스다. 그 줄에서 **두 군데에만 덧붙인다**: kind 합집합의 끝에 `| 'melee' | 'breach' | 'cuff' | 'taser'`, 닫는 괄호 앞에 `; c?: FxInfo`. 그 밖의 글자는 바꾸지 않는다(한 줄 인터페이스라 새 줄로 붙일 수 없다 — 보고에 적는다). 그리고 `Fx` 바로 위에 아래 블록을 더한다.
+`Fx` 는 한 줄짜리 인터페이스다(`types.ts:219`). 그 줄은 **한 군데만** 고친다: kind 합집합의 끝에 `| 'melee' | 'breach' | 'cuff' | 'taser'`. 그 밖의 글자는 바꾸지 않는다(한 줄 인터페이스라 새 줄로 붙일 수 없다 — 보고에 적는다). 같은 줄을 G4(`'collapse'`)·R1(`'drop'`)·X6(`'horn'`)도 끝에 덧붙이므로, 합칠 때는 모두 살린다. 꼬리표 칸 `c` 는 그 줄에 넣지 않고 **인터페이스 합치기**로 더한다 — `Fx` 바로 위에 아래 블록(마지막 줄의 `export interface Fx { c?: FxInfo }` 포함)을 더하면 TypeScript 가 두 선언을 하나로 합친다.
 
 ```ts
 // ── 교전 연출 기록 (G5) ── 시뮬레이션은 이 칸들을 읽지 않는다. 그림(view/scene/fxBook.ts)과 소리(view/audioCombat.ts)만 읽는다.
@@ -93,13 +98,17 @@ export interface FxInfo {
   forced?: boolean;                      // 진입: 잠긴 문을 부숴 열었다
   arrest?: ArrestHow;
 }
+/** (G5) 인터페이스 합치기: 아래 한 줄짜리 Fx 에 꼬리표 칸을 더한다 */
+export interface Fx { c?: FxInfo }
 ```
+
+`FxInfo['src']` 합집합은 X6 가 끝에 새 줄로 `| 'drum' | 'cng' | 'jet' | 'dust'` 를 더한다(X6 §7.4). 그림은 `src` 를 폭발물 그을음(3.4절) 하나에만 쓰고 크기는 `r` 로 정하므로, 모르는 `src` 가 와도 그대로 그린다.
 
 종류별로 쓰는 칸:
 
 | kind | x, y | x2, y2 | c |
 |---|---|---|---|
-| `shot`(있음) | 쏜 사람 | 그려지는 끝점(맞으면 목표, 빗나가면 ±0.8 흔든 자리 — 지금 그대로) | side, by, wpn, res, ix, iy, stop, tk, target, arm |
+| `shot`(있음) | 쏜 사람 | 그려지는 끝점(맞으면 목표, 빗나가면 ±0.8 흔든 자리 — 지금 그대로) | side, by, wpn, res, ix, iy, stop, tk, target, arm. 빗나간 탄이 인질을 맞히면(`noteCollateral`) res 'miss', stop 'body', tk 2 |
 | `hit`(있음) | 맞은 사람 | — | side, ox, oy, tk, target, arm |
 | `flash`(있음) | 터진 자리 | — | side 0, by, ox, oy(던진 사람), r 5.2, n |
 | `boom`(있음) | 폭발 중심 | — | r, src |
@@ -131,8 +140,9 @@ export function weaponOf(sim: Sim, a: FieldAgent): FxWeapon;
 /**
  * 기존 사격 줄이 없는 새 사격 코드(R2 의 비살상탄·저격, R1 의 저격 소총이 따로 쏘는 경우)를 위한 한 줄짜리 기록:
  * 'shot'(색은 side 로) + noteShot + 맞았으면 'hit' + noteHit. 판정(hit)은 부른 쪽이 이미 정한 값을 넘긴다 — 여기서 난수를 쓰지 않고, bulletPath 도 부르지 않는다.
+ * hostage: 빗나간 탄이 인질을 다치게 했으면(R2 의 저격이 빗나가 인질이 다치는 경우 — 부른 쪽이 이미 판정했다) 그 인질. 주면 noteCollateral 까지 한다.
  */
-export function recShot(sim: Sim, s: Scene, a: FieldAgent, wpn: FxWeapon, tx: number, ty: number, hit: boolean, tk: 0 | 1 | 2, target: number): void;
+export function recShot(sim: Sim, s: Scene, a: FieldAgent, wpn: FxWeapon, tx: number, ty: number, hit: boolean, tk: 0 | 1 | 2, target: number, hostage?: Casualty | null): void;
 /**
  * 사격 기록에 꼬리표. tx,ty = 사격을 받은 사람의 자리(흔들기 전).
  *  맞음        → res 'hit',   ix,iy = f.x2,f.y2,  stop 'body'
@@ -140,7 +150,10 @@ export function recShot(sim: Sim, s: Scene, a: FieldAgent, wpn: FxWeapon, tx: nu
  *  빗나감      → res 'miss',  rayEnd(s, f.x, f.y, f.x2, f.y2, 3) 의 자리와 stop ('wall' | 'door' | 'far')
  */
 export function noteShot(sim: Sim, s: Scene, f: Fx | null, o: { side: 0 | 1; by: number; wpn: FxWeapon; hit: boolean; cover: boolean; tx: number; ty: number; tk: 0 | 1 | 2; target: number; arm?: number }): void;
-/** 빗나간 탄이 인질을 맞혔다(executor 의 인질 피격 분기): shot.c 의 ix,iy·stop·tk·target 을 인질로 고치고 인질 자리에 'hit' 기록을 더한다 */
+/**
+ * 빗나간 탄이 인질을 맞혔다(executor 의 인질 피격 분기): shot.c 를 res 'miss'(탄은 용의자를 빗나갔다 — 엄폐로 'cover' 였어도 'miss' 로 바꾼다),
+ * stop 'body', tk 2, target = 인질 id, ix,iy = 인질 자리로 고치고, 인질 자리에 'hit' 기록(c: side, ox,oy = 쏜 자리, tk 2, target)을 더한다
+ */
 export function noteCollateral(sim: Sim, s: Scene, shot: Fx | null, hc: Casualty, sx: number, sy: number): void;
 export function noteHit(f: Fx | null, o: { side: 0 | 1; ox: number; oy: number; tk: 0 | 1 | 2; target: number; arm?: number }): void;
 /** 섬광탄: c = { side 0, by: 던진 사람 rid, ox, oy: 던진 사람 자리, r: 5.2, n }. by 가 없으면(옛 호출) ox,oy 를 비운다 */
@@ -177,30 +190,35 @@ export function recTaser(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: numb
 export function rayEnd(s: Scene, x0: number, y0: number, x1: number, y1: number, over: number): { x: number; y: number; stop: 'wall' | 'door' | 'far' };
 ```
 
-그리고 `damage.ts` 의 지역 `fx()` 가 만드는 객체에 `c: undefined` 를, `hazards.pushFx` 에 마지막 인자 `c?: FxInfo` 와 객체의 `c` 칸을 더한다(모든 기록이 같은 모양이 되게 — P1 이 객체 모양을 맞춰 둔 것과 같은 이유).
+그리고 모든 기록이 **같은 모양**(같은 칸을 같은 순서로)이 되게 한다 — `CLAUDE.md` 함정 "자주 도는 객체의 모양"과 같은 이유다.
+- `hazards.pushFx`: 마지막 인자 `c?: FxInfo` 를 더하고 객체를 `{ kind, t, x, y, x2, y2, text, color, ttl, c }` 로.
+- `damage.ts` 의 지역 `fx()`: 지금은 `{ kind, t, x, y, x2, y2, ttl }` 이라 `pushFx` 와 이미 모양이 다르다. `{ kind, t, x, y, x2, y2, text: undefined, color: undefined, ttl, c: undefined }` 로.
+- `fxlog.recFx`: 같은 순서로 모든 칸을 채운다.
 
 **탄도와 그림의 차이에 대한 결정.** 빗나간 탄이 창을 깨는 선(`bulletPath`, 흔들지 않은 목표 쪽)은 그대로 두고, **그리는 선과 탄착점은 흔든 끝점 쪽**(`rayEnd`)으로 잡는다. 둘 사이는 목표 근처에서 0.8칸, 그 너머에서 1칸 남짓 벌어질 수 있다. `bulletPath` 의 목표를 흔든 끝점으로 바꾸면 그림과 탄도가 일치하지만, 그것은 "어느 창이 깨지는가"라는 상태를 바꾸는 일이다. 결과(해시·분포)에는 영향이 없다(`s.glass` 는 판단에서 읽히지 않는다). 그래도 이번 묶음의 허용 범위(기록만)를 넘으므로 하지 않는다. 바꾸고 싶으면 보고에 제안으로 적는다. [확인 필요: 사용자·합치는 사람의 판단]
 
 ### 2.4 채우는 자리
 
-| # | 파일 · 함수 | 자리(지금 줄 근처) | 넣는 것 |
-|---|---|---|---|
-| 1 | `executor.ts` `shootAt` | `pushFx(… 'shot' …)`(289) 바로 다음, `bulletPath` 앞 | `const shot = lastFx(sim, s, 'shot'); noteShot(sim, s, shot, { side: 0, by: a.rid, wpn: weaponOf(sim, a), hit, cover: covered, tx: h.x, ty: h.y, tk: 1, target: h.id });` |
-| 2 | 〃 인질 피격 분기(294-299) | `raiseProblem` 줄 다음 | `noteCollateral(sim, s, shot, hc, a.x, a.y);` |
-| 3 | 〃 `if (hit)`(303-305) | `pushFx(… 'hit' …)` 다음 | `noteHit(lastFx(sim, s, 'hit'), { side: 0, ox: a.x, oy: a.y, tk: 1, target: h.id });` |
-| 4 | `hazards.ts` `tickHostiles` 대원을 향한 사격(480) | `pushFx(… 'shot' …)` 다음, `bulletPath` 앞 | `noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit, cover: ta.inCover, tx: ta.x, ty: ta.y, tk: 0, target: ta.rid, arm: u.armor });` |
-| 5 | 〃 `if (hit)`(486-491) | `pushFx(… 'hit' …)` 다음 | `noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 0, target: ta.rid, arm: u.armor });` |
-| 6 | 〃 흉기·맨손(494) | 같은 중괄호 안, `pushFx(… 'hit' …)` 다음 | `noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 0, target: ta.rid }); recMelee(sim, s, h, ta);` |
-| 7 | 〃 총격범의 시민 사격(425) | `pushFx` 두 개가 있는 줄 다음 | `noteShot(… { side: 1, by: h.id, wpn: 'hgun', hit: true, cover: false, tx: target.x, ty: target.y, tk: 2, target: target.id }); noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 2, target: target.id });` |
-| 8 | 〃 `panicShot`(312) | 같은 방식 | 7과 같다(`c` 가 인질) |
-| 9 | 〃 시한 초과(377) | `raiseProblem` 줄 다음 | `recHarm(sim, s, h, c);` (탄도·창은 건드리지 않는다) |
-| 10 | 〃 `flashbang`(287) | 인자 끝에 `by?: FieldAgent`, `pushFx(… 'flash' …)` 다음 | `noteFlash(lastFx(sim, s, 'flash'), by, n);` |
-| 11 | `executor.ts` 섬광탄 세 곳(345·767·782) | `flashbang(…)` 호출 | 마지막 인자로 `thrower` · `thrower` · `a` |
-| 12 | 〃 `breach` 의 문 반복문(333-339) | 문을 바꾸기 **전에** `const wasLocked = p.blocking, wasOpen = !!p.open;`, `inX` 계산 다음 | `recBreach(sim, s, p.x, p.y, e.x, e.y, { door: p.id, how: breachHowFor(sim, team, wasLocked, wasOpen), n: team.length, sync: true, by: team[0].rid, forced: wasLocked });` + 반복문 밖에 지역 변수 `doorSeen`. 반복문 뒤 문이 없었다면 `recBreach(sim, s, e.x, e.y, e.x, e.y, { door: -1, how: 'open', n: team.length, sync: true, by: team[0].rid, forced: false })`. 섬광탄 호출보다 **앞**에 둔다 |
-| 13 | 〃 방 진입(760-762) | `rd.entered = true` 앞에 `const wasLocked = rd.blocking;`, 762 다음 | `recBreach(sim, s, rd.x, rd.y, a.x, a.y, { door: rd.id, how: breachHowFor(sim, [a, ...mates], wasLocked, false), n: mates.length + 1, sync: false, by: a.rid, forced: wasLocked });` (섬광탄 앞) |
-| 14 | 〃 `unblock`(214) | `if (p.kind === 'door') {…}` 다음 | `if (p.kind === 'door') recBreach(sim, s, p.x, p.y, a.x, a.y, { door: p.id, how: r.dept === 'police' ? 'ram' : r.dept === 'fire' ? 'irons' : 'kick', n: 1, sync: false, by: a.rid, forced: true });` — R2 가 `unblock(…, method)` 로 방법을 넘기게 되면 `how` 는 그 방법(`kick`·`irons`·`ram`·`hydraulic`)을 그대로 쓴다 |
-| 15 | 폭발 자리 | `pushFx(… 'boom' …)` 다음 | `noteBoom(lastFx(sim, s, 'boom'), R, src)` — `hazards.ts:100` (3.6, 'tank'), `:586` (1.5, 'fuel'), `:660` (3.8, 'gas'), `rules/crime.ts:43` (3.4, 'bomb'), 그리고 `:613` (2.6, 'collapse') 는 **G4 가 아직 합쳐지지 않았을 때만**(G4 는 그 줄을 'collapse' 기록으로 바꾼다 — 무너짐은 폭발 그림이 아니다. G4 가 나중에 오면 그 줄과 함께 이 꼬리표를 지운다). 반경은 그 자리의 `blast` 인자와 같은 수(연료는 `blast` 가 없어 1.5) |
-| 16 | `executor.ts` 검거 네 곳 | `h.state = 'arrested'` 앞에서 `const was = h.state;`, `emit` 줄 다음 | `recCuff(sim, s, h, a, how)` — 725: `was === 'flee' ? 'chase' : 'tackle'` · 796: `'stunned'` · 823: `'tackle'` · 851: `was === 'surrendered' ? 'surrender' : 'tackle'` |
+줄 번호는 `d876c96` 기준이고 밀릴 수 있다. **찾을 글귀**(그 줄에 있는 코드 조각)로 자리를 찾는다.
+
+| # | 파일 · 함수 | 찾을 글귀 (`d876c96` 의 줄) | 넣는 자리 | 넣는 것 |
+|---|---|---|---|---|
+| 1 | `executor.ts` `shootAt` | `pushFx(sim, s, 'shot', a.x, a.y,` (294) | 그 줄 바로 다음, `bulletPath` 앞 | `const shot = lastFx(sim, s, 'shot'); noteShot(sim, s, shot, { side: 0, by: a.rid, wpn: weaponOf(sim, a), hit, cover: covered, tx: h.x, ty: h.y, tk: 1, target: h.id });` |
+| 2 | 〃 인질 피격 분기 | `'교전 중 인질 피격'` (303) | 그 `raiseProblem` 줄 다음 | `noteCollateral(sim, s, shot, hc, a.x, a.y);` |
+| 3 | 〃 `if (hit)` | `h.health -= s.rng.range(30, 48)` 다음 줄의 `pushFx(sim, s, 'hit', h.x, h.y)` (310) | 그 줄 다음 | `noteHit(lastFx(sim, s, 'hit'), { side: 0, ox: a.x, oy: a.y, tk: 1, target: h.id });` |
+| 4 | `hazards.ts` `tickHostiles` 대원을 향한 사격 | `pushFx(sim, s, 'shot', h.x, h.y, ta.x +` (489) | 그 줄 다음, `bulletPath` 앞 | `noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit, cover: ta.inCover, tx: ta.x, ty: ta.y, tk: 0, target: ta.rid, arm: u.armor });` |
+| 5 | 〃 `if (hit)` | `pushFx(sim, s, 'hit', ta.x, ta.y);` 가 홀로 있는 줄 (498) | 그 줄 다음 | `noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 0, target: ta.rid, arm: u.armor });` |
+| 6 | 〃 흉기·맨손 | `h.weapon === 'knife' ? 1.4 : 0.6` (503) | 같은 중괄호 안, `pushFx(… 'hit' …)` 다음 | `noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 0, target: ta.rid }); recMelee(sim, s, h, ta);` |
+| 7 | 〃 총격범의 시민 사격 | `pushFx(sim, s, 'shot', h.x, h.y, target.x, target.y` (434) | `pushFx` 두 개가 있는 그 줄 다음 | `noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit: true, cover: false, tx: target.x, ty: target.y, tk: 2, target: target.id }); noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 2, target: target.id });` |
+| 8 | 〃 `panicShot` | `pushFx(sim, s, 'shot', h.x, h.y, c.x, c.y` (321) | 같은 방식 | 7과 같다(`c` 가 인질) |
+| 9 | 〃 시한 초과 | `'시한이 지나 인질이 다침'` (386) | 그 `raiseProblem` 줄 다음 | `recHarm(sim, s, h, c);` (탄도·창은 건드리지 않는다) |
+| 10 | 〃 `flashbang` | `export function flashbang(` (296), `pushFx(sim, s, 'flash'` (303) | 인자 끝에 `by?: FieldAgent`, `pushFx(… 'flash' …)` 다음 | `noteFlash(lastFx(sim, s, 'flash'), by, n);` |
+| 11 | `executor.ts` 섬광탄 세 곳 | `bangs += flashbang(` (350) · `n = flashbang(sim, s, rd.x` (772) · `const n = flashbang(sim, s, a.x` (787) | `flashbang(…)` 호출 | 마지막 인자로 `thrower` · `thrower` · `a` |
+| 12 | 〃 `breach` 의 문 반복문 | `// 출입구 바로 안쪽의 문` 아래 `for (const p of s.props)` (339-344) | 문을 바꾸기 **전에** `const wasLocked = p.blocking, wasOpen = !!p.open;` | 반복문 안, `inX` 계산 다음: `recBreach(sim, s, p.x, p.y, e.x, e.y, { door: p.id, how: breachHowFor(sim, team, wasLocked, wasOpen), n: team.length, sync: true, by: team[0].rid, forced: wasLocked }); doorSeen = true;` (`let doorSeen = false` 는 반복문 앞). 반복문 뒤 `if (!doorSeen) recBreach(sim, s, e.x, e.y, e.x, e.y, { door: -1, how: 'open', n: team.length, sync: true, by: team[0].rid, forced: false })`. 모두 섬광탄 호출보다 **앞**. 진입조가 없는 출입구(`if (!team.length) return;`)에는 기록이 없다 — 대체 기록을 만들지 않는다 |
+| 13 | 〃 방 진입 | `rd.entered = true; rd.open = true;` (764) | 그 줄 앞에 `const wasLocked = rd.blocking;`, 다음 줄(`if (rd.blocking)` 765) 다음에 | `recBreach(sim, s, rd.x, rd.y, a.x, a.y, { door: rd.id, how: breachHowFor(sim, [a, ...mates], wasLocked, false), n: mates.length + 1, sync: false, by: a.rid, forced: wasLocked });` (섬광탄 앞) |
+| 14 | 〃 `unblock` | `if (p.kind === 'door') { p.locked = false; p.open = true; }` (220) | 그 줄 다음 | `if (p.kind === 'door') recBreach(sim, s, p.x, p.y, a.x, a.y, { door: p.id, how: r.dept === 'police' ? 'ram' : r.dept === 'fire' ? 'irons' : 'kick', n: 1, sync: false, by: a.rid, forced: true });` — R2 가 `unblock(…, method)` 로 방법을 넘기게 되면 `how` 는 그 방법(`kick`·`irons`·`ram`·`hydraulic`)을 그대로 쓴다 |
+| 15 | 폭발 자리 | `pushFx(sim, s, 'boom'` | 그 줄 다음 | `noteBoom(lastFx(sim, s, 'boom'), R, src)` — `tickFire` 의 가스 용기 `hazards.ts:82` (3.6, 'tank'), `tickLane` 의 연료 `:595` (1.5, 'fuel'), `tickGas` 의 가스 `:669` (3.8, 'gas'), `rules/crime.ts:43` `detonate` (3.4, 'bomb'), 그리고 `tickCollapse` 의 `:622` (2.6, 'collapse') 는 **G4 가 아직 합쳐지지 않았을 때만**(G4 는 그 줄을 'collapse' 기록으로 바꾼다 — 무너짐은 폭발 그림이 아니다. G4 가 나중에 오면 그 줄과 함께 이 꼬리표를 지운다). 반경은 그 자리의 `blast` 인자와 같은 수(연료는 `blast` 가 없어 1.5). X6 가 이 덩어리들을 함수로 옮기면 옮긴 자리에 같은 꼬리표를 다시 단다(X6 §7.5) |
+| 16 | `executor.ts` 검거 네 곳 | `h.state = 'arrested'` (728 · 799 · 826 · 854) | 그 줄 앞에서 `const was = h.state;`, 그 뒤 `emit` 줄 다음 | `recCuff(sim, s, h, a, how)` — 728(추격·접근): `was === 'flee' ? 'chase' : 'tackle'` · 799(무력화된 용의자 제압): `'stunned'` · 826(곁에서 덮침): `'tackle'` · 854(`case 'arrest'`): `was === 'surrendered' ? 'surrender' : 'tackle'` |
 
 `hazards.ts` 에서 `officersSeeing`(지금 내보내지 않는 순수 함수)을 `export` 로 바꾼다 — 그림이 "용의자가 지금 누구를 겨누는가"를 시뮬레이션과 같은 판정으로 그리기 위해서다(3.6절). 동작은 그대로다.
 
@@ -220,7 +238,7 @@ X6(위험의 현실화)이 새 폭발·붕괴를 만들면 그 `pushFx('boom')` 
 | `taser` | 1.2(새) | 1.5 |
 | `glass`·`debris` | 0.5·0.6 | 0.5·0.6 |
 
-`s.fx` 의 기록은 60개를 넘거나 4초가 지나면 잘려 나간다(틱마다 하나). 그림·소리는 기록을 처음 본 프레임에 **객체 참조를 받아 두고**(3.1절 FxBook) 자기 시계로 그리므로, 그 뒤에 `s.fx` 에서 잘려도 상관없다. 15배속에 프레임이 느려 한 프레임에 60개가 넘게 쌓이면 일부는 보지 못한다(10절).
+`s.fx` 의 기록은 60개를 넘거나 4초가 지나면 잘려 나간다(틱마다 하나). 그림·소리는 기록을 처음 본 프레임에 **객체 참조를 받아 두고**(3.1절 FxBook) 자기 시계로 그리므로, 그 뒤에 `s.fx` 에서 잘려도 상관없다. `runner.frame` 은 실제 시간 간격을 0.1초로 자르므로(`runner.ts:106`) 15배속에서도 한 프레임은 많아야 1.5초(약 8틱)다. 그 사이에 한 현장에 60개가 넘게 쌓일 일은 거의 없다(10절). 되감기·새로고침 복원처럼 한꺼번에 많은 틱을 도는 경우는 FxBook 이 비우고 다시 시작한다(3.1절).
 
 ### 2.6 해시 불변 증명
 

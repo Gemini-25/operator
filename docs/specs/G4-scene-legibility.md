@@ -8,7 +8,7 @@
 
 **자기 파일(새로 만든다)**: `src/sim/field/ruins.ts`, `src/view/hazardState.ts`, `src/view/scene/ruins.ts`, `src/view/scene/hazardFx.ts`, `src/view/city/ruinLayer.ts`, `src/ui/HazardStrip.tsx`, `tests/legibility.test.ts`.
 **자기 파일(이 묶음이 맡는 기존 화면 파일)**: `src/view/scene/staticLayer.ts`, `src/view/scene/fx.ts`, `src/view/icons.ts`, `src/view/marks.ts`, `src/view/audio.ts`, `src/ui/MapLegend.tsx`.
-**공용 파일 수정(§8 에 적힌 자리만, 가장 작게)**: `src/sim/types.ts`, `src/sim/field/builders.ts`(`buildCollapse` 세 줄), `src/sim/field/hazards.ts`(`tickFire` 의 천장 붕괴, `tickCollapse`), `src/view/renderScene.ts`, `src/view/renderCity.ts`, `src/view/camera.ts`(효과 종류 한 곳), `src/view/scene/skins/crime.ts`(터진 장치), `src/ui/panels.tsx`(`IncidentCard` 두 곳), `src/ui/Viewport.tsx`(자동 감속 조건 한 곳), `src/ui/styles.css` 끝 블록. 선택 항목을 하면 `src/view/city/trafficLayer.ts` 한 덩어리.
+**공용 파일 수정(§8 에 적힌 자리만, 가장 작게)**: `src/sim/types.ts`, `src/sim/field/builders.ts`(`buildCollapse` 세 줄), `src/sim/field/hazards.ts`(`tickFire` 의 천장 붕괴, `tickCollapse`), `src/view/renderScene.ts`, `src/view/renderCity.ts`, `src/view/camera.ts`(효과 종류 한 곳), `src/ui/panels.tsx`(`IncidentCard` 두 곳), `src/ui/Viewport.tsx`(자동 감속 조건 한 곳), `src/ui/styles.css` 끝 블록. 선택 항목을 하면 `src/view/city/trafficLayer.ts` 한 덩어리.
 **건드리지 않는다**: 그 밖의 `src/sim/*` 전부(판단·규칙·난수·현장 생성), `src/view/city/staticCity.ts`·`places.ts`, `src/sim/city.ts`·`cityPlan.ts`, `tests/sim.test.ts`, `README.md`·`CLAUDE.md`·`docs/ROADMAP.md`·`docs/specs/README.md`(합친 뒤에 한꺼번에 고친다).
 
 ---
@@ -16,6 +16,7 @@
 ## 1. 지금 상태 — 무엇이 왜 안 보이는가
 
 조사한 코드: 커밋 1ca465d. 줄 번호는 그때 기준이다(옮겨졌으면 함수 이름으로 찾는다).
+검토 때(커밋 035a83f) 다시 확인했다. 그 사이 P1·B3·Q1 이 합쳐져 시뮬레이션 쪽 줄이 옮겨졌다: `hazards.ts` 의 `tickFire` 천장 붕괴는 지금 94·97줄, `tickCollapse` 의 쓰기는 615·620줄, `isHeld` 는 289~293줄. `executor.ts` 는 3~5줄 밀렸다(잔해 치우기 `unblock` 220·221, 보강 613, 잔불 보고 650·651, 잔해 치우기 임무 890·891). `types.ts` 의 `Scene` 끝에는 `allIdleSince?`·`rollCallAt?` 가 붙었다. 화면 파일(`src/view`, `src/ui` 의 `App.tsx` 를 뺀 것)과 `builders.ts` 는 그대로라 아래의 줄 번호가 맞다. §11 의 장면 시각은 035a83f 에서 다시 쟀다. B3 이 결과를 바꿔 S6 의 첫 도착은 89.6초에서 82.6초가 되었다. Q1 이 개발 서버 전용 읽기 고리 `window.__ar.snap()`(`App.tsx`)과 헤드리스 기준값 도구 `scripts/ui-check-ref.ts` 를 두었다. §11 이 이 둘을 쓴다.
 
 ### 1.1 붕괴
 
@@ -24,7 +25,7 @@
 | 현장: 무너진 구역 | `s.damage` 칸마다 같은 회색 타원(투명도 0.42) 하나, 금 한 줄, 조각 7개 | 바닥보다 조금 밝은 얼룩이 칸마다 반복될 뿐이다. 높낮이·경계·"내려앉음"이 없다 | `staticLayer.ts:789-804` |
 | 현장: 넘어간 벽 | 없다. 구역 안의 벽 칸 75%가 기록 없이 `T.FLOOR` 가 된다 | 무너진 벽 자리가 처음부터 빈 바닥처럼 보인다. 남은 25%의 벽은 멀쩡한 벽과 똑같이 그려진다(벽은 지금의 `tiles` 로만 그린다) | `builders.ts:657`, `staticLayer.ts:806-838` |
 | 현장: 깔린 가구 | 없다(`decor = 0`) | 총격으로 부서진 가구(`rubble()`)와 달리 흔적이 남지 않는다 | `builders.ts:658`, `staticLayer.ts:812-833` |
-| 현장: 바깥 벽 | 늘 멀쩡하다 | 무너진 구역은 층의 벽 안쪽(`F.x0+1..F.x1-1`, `Plan.floors` 는 벽 포함 범위)에만 잡힌다. 건물 외곽선은 그대로라 "멀쩡한 건물"로 읽힌다 | `builders.ts:650-652`, `plans.ts:21` |
+| 현장: 바깥 벽 | 늘 멀쩡하다 | 무너진 구역은 층의 벽 안쪽(`F.x0+1..F.x1-1`, `Plan.floors` 는 벽 포함 범위)에만 잡힌다. 건물 외곽선은 그대로라 "멀쩡한 건물"로 읽힌다. 시뮬레이션이 바깥 벽을 무너뜨리지 않으므로 그림도 금까지만 그린다(§4.1 `paintRuinWalls` 3) | `builders.ts:650-652`, `plans.ts:21` |
 | 현장: 2차 붕괴 | 폭발과 같은 `'boom'`(주황·흰 빛, 고리, 검은 조각, 1.1초) | 무너짐이 아니라 폭발로 읽힌다. 흔들림·먼지·내려앉는 움직임이 없다 | `hazards.ts:613`, `renderScene.ts:626-633` |
 | 현장: 불탄 방의 천장 붕괴 | 잔해 소품이 갑자기 생긴다 | 효과도 바닥 흔적도 없다(`s.damage` 도 쓰지 않는다) | `hazards.ts:102-116` |
 | 현장: 2차 붕괴 위험 | 보강 전 균열: 빨라지고 붉어지는 고리 + '균열 — 붕괴 위험' | 언제 무너질지(진행), 무너지면 어디까지 다치는지(`blast` 반경 2.6칸)가 보이지 않는다 | `renderScene.ts:243-254`, `hazards.ts:612` |
@@ -50,9 +51,10 @@
 | 균열·보강 | 고리와 글자 / 나무 지지대 | 진행과 다치는 범위가 없다 | `renderScene.ts:243-254` | §4.2 |
 | 폭발 뒤 현장 | 터진 폭발물 자리에 아무것도 그리지 않는다. 그을음은 연료가 다 탄 칸(`s.burned`)에만 | 불을 빨리 끄면 폭발 흔적이 거의 남지 않는다. 불붙은 밸브 둘레도 같다 | `skins/crime.ts:45,69`, `fx.ts:74-81`, `rules/crime.ts:20-48` | 고친다 (§7.3) |
 | 해체된 폭발물 | 열린 가방·상자 + 초록 점 + '해체 완료' | 충분하다 | `skins/crime.ts` | 그대로 둔다 |
-| 붙잡힌 인질 | 손을 뒤로 + 용의자→인질 빨간 점선 | `c.hostage` 는 풀려나도 지워지지 않아 풀려나 걸어 나오는 인질도 같은 모습이다. 섬광탄으로 용의자가 무력화된 동안(구출 기회)에도 점선이 그대로다 | `renderScene.ts:324, 344-348`, `hazards.ts:280-284` | 고친다 (§7.4) |
+| 붙잡힌 인질 | 손을 뒤로 + 용의자→인질 빨간 점선 | `c.hostage` 는 풀려나도 지워지지 않아 풀려나 걸어 나오는 인질도 같은 모습이다. 숨은 시민(가정 폭력·침입 절도·그 밖의 무장 현장, `builders.ts:539·547·570`)과 인질 사건의 창고에 있는 사람(529)도 같은 표시라 모두 같은 모습이다. 시뮬레이션이 "데리고 나올 수 없다"고 보는 사람(`isHeld`: 3.2칸 안에 대치·교전 중인 총기 용의자가 있으면 누구든, `hostageId` 와 무관 — `executor.ts:532`)과 점선(`hostageId` 짝 하나만, `builders.ts:524-526`)이 다르다. 섬광탄으로 용의자가 무력화된 동안(구출 기회)에도 점선이 그대로다 | `renderScene.ts:324, 344-348`, `hazards.ts:289-293` | 고친다 (§7.4) |
 | 통제된 도로 | 사건 통제와 재난 통제가 같은 붉은 점선 + 진입 금지 원 | 무엇이 막았는지 모른다 | `trafficLayer.ts:69-82, 171-186` | 선택 (§7.5) |
 | 끝난 화재 건물 | 결과색 점만 | 탄 건물이 지도에서 사라진다(`docs/ROADMAP.md` M2 (1)과 겹친다) | `renderCity.ts:265-269` | 선택 (§7.6) |
+| 해일에 잠긴 대피 현장 | `swamp` 가 대피 현장의 아래쪽 칸을 한꺼번에 `T.WATER` 로 바꾸고 `staticVersion++` 한다 | 확인함 — 고정 층이 다시 그려져 물이 보인다. 잠기는 순간의 전환 연출은 없다 | `rules/disaster.ts:56-68` | 그대로 둔다 |
 | 침수(홍수) | 지도는 강이 수위만큼 굵어진다. 현장(`floodCar`)은 보통 교통사고 현장 | 현장 상태에 물이 없다(대원은 보통 걸음으로 다닌다) | `disaster.ts:412-414`, `disasterLayer.ts:59-67` | **그리지 않는다** — 상태에 없는 물을 그리면 가짜 연출이다 |
 
 ---
@@ -60,12 +62,13 @@
 ## 2. 원칙
 
 1. **결과 불변.** `src/sim` 에서 바꾸는 것은 §3 의 기록용 쓰기뿐이다. 난수를 부르지 않고, `emit`·`raiseProblem`·`markRecovered` 를 더하지 않고, 기존 호출의 순서를 바꾸지 않고, 시뮬레이션의 어떤 판단도 그 기록을 읽지 않는다. 증명은 §3.4.
-2. **상태를 그린다.** 그림은 상태(관찰자 시점은 진실, AI 시점은 관제·지휘관의 믿음)에서만 나온다. 상태에 없는 것은 그리지 않는다. 멀리서 보이게 과장하는 것은 허용하되, 무엇을 얼마나 과장했는지 이 문서에 적는다(지도의 지붕 구멍 — §5.3).
+2. **상태를 그린다.** 그림은 상태(관찰자 시점은 진실, AI 시점은 관제·지휘관의 믿음)에서만 나온다. 상태에 없는 것은 그리지 않는다. 멀리서 보이게 과장하는 것은 허용하되, 무엇을 얼마나 과장했는지 이 문서에 적는다. 과장 목록: 지도의 지붕 구멍 넓이(§5.3-1), `'major'` 의 외곽 틈(§5.3-6), 현장의 바깥 벽 금(§4.1 `paintRuinWalls` 3).
 3. **시점 규칙.** AI 시점: 부대가 도착한 뒤의 건물 겉모습은 모두가 본다고 친다. 수치(균열의 진행, 가스 폭발 판정 칸 수, 지휘관이 모르는 것)는 관찰자 시점에서만 보인다. 표: §4.7, §5.1, §6.
 4. **모양으로 구별한다.** 지도와 목록에는 글자 표식 대신 그림 기호(24×24 경로, `marks.ts`·`icons.ts` 방식). 새 기호는 범례에 넣는다. 현장 화면의 글자 표지(`pill`)는 지금처럼 쓴다.
-5. **무너짐은 폭발과 달라 보여야 한다.** 무너짐 = 흙빛 먼지·내려앉는 그림자·흔들림·둔탁한 소리, **빛 없음**. 폭발 = 지금의 주황·흰 빛.
+5. **무너짐은 폭발과 달라 보여야 한다.** 무너짐 = 흙빛 먼지·내려앉는 그림자·흔들림·둔탁한 소리, **빛 없음**(가산 혼합·주황·흰 빛을 쓰지 않는다. 밤에는 무너진 자리의 어둠만 몇 초 옅게 걷는다 — §4.3). 폭발 = 지금의 주황·흰 빛.
 6. **고정 층 규칙**(`CLAUDE.md` 함정 "현장 그림의 고정 층"). 고정 층에 그리는 상태는 `staticSig` 에 넣는다. 매 프레임 바뀌는 것(먼지, 깜박임, 흔들림, 진행 고리)은 고정 층에 넣지 않는다.
 7. **프레임 예산**은 §9.
+8. **정보 표지는 어둠 위에.** 밤(교대의 20%, `engine.ts:76`)의 어둠 층 `rgba(4,8,24,0.72)`(`renderScene.ts:453-490`)과 날씨 층은 그 앞에 그린 것을 모두 덮는다. 위험 범위·진행 고리·먼지 충격 고리·짙은 가스 경계·되살아난 불의 테두리처럼 "알려 주려고" 그리는 것은 구역 이름·수색% 와 같은 단계(어둠·날씨 뒤)에 그린다(§4.6). 잔해·먼지 기둥처럼 "거기 있는 것"은 지금처럼 어둠 아래에 둔다.
 
 ---
 
@@ -77,7 +80,7 @@
 // Fx.kind: N7 이 'glass' | 'debris' 를 붙인 자리(같은 줄)의 끝에
 ... | 'glass' | 'debris' | 'collapse';
 
-// Scene 의 마지막 칸(idleSince) 뒤에
+// Scene 의 끝에 (035a83f 에서는 rollCallAt? 뒤)
   ruin?: Uint8Array;        // 그림용 기록 — 무너진 자리의 원래 모습(field/ruins.ts). 시뮬레이션은 읽지 않는다.
                             // 0 없음 · 1 넘어간 벽 · 8 2차 붕괴로 잔해가 쏟아진 칸 · 9 천장이 내려앉은 칸 · 16+DECOR 깔린 가구(키 큰 진열대 포함)
   falls?: FallRecord[];     // 그림용 기록 — 무너진 순간들(시각 순, 많아야 32). 시뮬레이션은 읽지 않는다
@@ -136,7 +139,9 @@ else if (t === T.FURN && rng.chance(0.6)) { markRuin(s, i, RUIN_FURN + s.decor[i
 `recordFall(sim, s, (zx0 + zx1) / 2, (zy0 + zy1) / 2, Math.max(zw, zh) / 2, 'zone', false);`
 (`buildCollapse` 는 가스 폭발 현장도 만든다 — `scenes/major.ts:198`. 둘 다 같은 기록을 얻는다.)
 
-**`hazards.ts` `tickCollapse`** (지금 606, 613줄):
+**`sealPockets` 와의 관계.** `buildScene` 은 현장을 만든 뒤 `sealPockets`(`builders.ts:777`, 785~806)를 부른다. 이 함수는 어디서도 닿지 못하는 1~2칸짜리 `T.FLOOR` 틈을 다시 `T.WALL` 로 메운다(`CLAUDE.md` 함정 "닿지 못하는 한두 칸"). 벽이 넘어간 칸이나 가구가 깔린 칸이 바로 그런 틈이 될 수 있다. 그러면 `ruin` 이 1 이거나 16 이상이고 `damage === 1` 인데 칸은 `T.WALL` 이다. 기록은 고치지 않는다(`sealPockets` 는 이 묶음의 자리가 아니다). 그림 쪽이 "지금 칸이 `T.FLOOR` 인 `ruin` 칸만 넘어간 벽·깔린 가구로 그린다"로 견딘다(§4.1).
+
+**`hazards.ts` `tickCollapse`** (1ca465d 의 606·613줄, 035a83f 의 615·620줄):
 
 ```ts
 s.damage[i] = 1; made++; markRuin(s, i, RUIN_SECONDARY);
@@ -145,7 +150,7 @@ blast(sim, s, I, p.x, p.y, 2.6, 28, ev);
 recordFall(sim, s, p.x, p.y, 2.6, 'secondary');      // 예전의 pushFx(…'boom'…) 자리: 무너짐은 폭발 그림이 아니라 'collapse' 로 그린다
 ```
 
-**`hazards.ts` `tickFire` 의 천장 붕괴** (지금 112, 115줄). `s.rng.range(9, 14)` 는 지금처럼 `propAt[i] < 0` 일 때만 불려야 한다(괄호를 옮기다 바꾸지 않는다):
+**`hazards.ts` `tickFire` 의 천장 붕괴** (1ca465d 의 112·115줄, 035a83f 의 94·97줄). `s.rng.range(9, 14)` 는 지금처럼 `propAt[i] < 0` 일 때만 불려야 한다(괄호를 옮기다 바꾸지 않는다):
 
 ```ts
 for (let q = 0; q < k; q++) { const i = s.rng.pick(cands); if (s.propAt[i] < 0) { addProp(s, 'debris', i % w, (i / w) | 0, { blocking: true, hp: s.rng.range(9, 14) }); markRuin(s, i, RUIN_CEILING); } }
@@ -187,6 +192,10 @@ recordFall(sim, s, r.cx, r.cy, 2.2, 'ceiling');
 
 `staticLayer.ts` 의 "무너진 자리" 블록(지금 789~804줄)을 `paintRuinFloor(g, s, R, tAt, { rubble, rubbleColors })` 한 줄로 바꾸고, 7단계에서 창·문턱을 그린 반복문 뒤에 `paintRuinWalls(g, s, R, geo.hw)` 한 줄을 더한다. `rubble`·`rubbleColors` 는 인자로 넘긴다(`scene/ruins.ts` 가 `staticLayer.ts` 를 import 하면 서로 부르게 된다). 재질: `s.variant === 'landslide'` 면 흙, `'crane'` 이면 긁힌 땅(밝은 먼지 + 긁힌 자국), 그 밖은 콘크리트.
 
+**구역**: `damage` 칸을 4이웃으로 이은 덩어리 하나가 구역 하나다. `ruinZones(s)`(`scene/ruins.ts`)가 덩어리마다 칸 목록·경계 상자·경계까지의 칸 거리·경계 선분을 만들어 둔다. 캐시는 `WeakMap<Scene, …>` 이고 `s.staticVersion` 이 바뀔 때만 다시 센다. 처음 무너진 구역, 2차 붕괴 칸, 크레인 팔 밑은 서로 떨어져 있을 수 있다(`tickCollapse` 는 균열 ±2칸 안에 잔해를 쏟는다 — `hazards.ts` 의 `tickCollapse`). 그래서 아래의 "구역 경계 상자"·"구역 경계까지의 거리"·기울기는 모두 **구역마다 따로** 정한다. 칸이 4개 미만인 구역에는 기울기와 그림자 띠(1)를 그리지 않고 잔해(3·6)만 그린다.
+
+**그리는 조건**: `ruin` 값으로 그리는 넘어간 벽(4)과 깔린 가구(5)는 **지금 칸이 `T.FLOOR` 일 때만** 그린다. `sealPockets` 가 다시 벽으로 메운 칸(§3.3)은 `paintRuinWalls` 2 의 "금 간 벽"으로만 그린다. 서 있는 벽 아래에 쓰러진 벽 판이 겹쳐 그려지지 않게 하려는 것이다.
+
 `paintRuinFloor` — 아래에서 위 순서:
 
 1. **내려앉은 구획의 음영**: `damage` 칸 전체에 `rgba(18,14,10,0.18)`. 그 위에 기울기 — 구역 가장자리에서 서 있는 벽(`T.WALL`)에 더 많이 닿은 쪽을 "받쳐진 높은 쪽", 반대쪽을 "낮은 쪽"으로 보고, 구역 경계 상자에 높은 쪽 0.06 → 낮은 쪽 0.36 의 선형 그러데이션을 `damage` 칸에만 칠한다(칸마다 `fillRect`). 북·서쪽 경계(빛은 왼쪽 위 — 벽 그림자가 +x·+y 로 진다)에는 구역 안쪽으로 0.35칸 폭의 그림자 띠 `rgba(0,0,0,0.35→0)`, 높은 쪽 경계에는 깨진 바닥 끝의 밝은 선 `rgba(220,210,190,0.35)` 한 줄. 위에서 내려다보는 그림에서 "한 단 내려앉아 기울었다"로 읽히게 하는 장치다.
@@ -197,18 +206,19 @@ recordFall(sim, s, r.cx, r.cy, 2.2, 'ceiling');
 6. **2차 붕괴로 쏟아진 칸**(`ruin === 8`): 3 과 같되 색을 한 단 밝게(`#a59d90` 쪽), 밝은 가루 점 6개 — 새로 쏟아진 잔해.
 7. **천장이 내려앉은 칸**(`ruin === 9`, 불난 방): 숯빛 잔해(`#2b2118`·`#3a2c20`)와 탄 서까래 둘(가늘고 긴 막대, 끝에 불씨 점 `#ff9a4a` 하나). 그을음(`drawScorch`)은 그 위에 매 프레임 얹힌다.
 8. **치운 자리**: `kind === 'debris' && removed` 인 소품의 칸 — 조각을 칸의 두 변으로 밀어 두고 가운데에 밝은 띠 `rgba(220,210,190,0.12)`(치워서 길을 냈다). 흙이면 흙 얼룩, 크레인 팔이면 긁힌 자국이 남는다.
-9. **붕괴 구역 경계**: `damage` 칸과 아닌 칸 사이의 변을 모아 한 경로로, `#d6a878`·투명도 0.55·굵기 `max(1.5, R·0.05)`·점선 `[R·0.28, R·0.18]`. 벽 밑으로 지나는 곳은 그 위에 벽이 그려져 자연히 끊긴다.
+9. **붕괴 구역 경계**: `damage` 칸과 아닌 칸 사이의 변(`ruinZones` 의 경계 선분)을 모아 한 경로로, `#d6a878`·투명도 0.55·굵기 `max(1.5, R·0.05)`·점선 `[R·0.28, R·0.18]`. 벽 밑으로 지나는 곳은 그 위에 벽이 그려져 자연히 끊긴다.
 
 `paintRuinWalls` — 벽과 창을 그린 뒤:
 
 1. **부러진 벽 끝**: 남은 벽 칸(`T.WALL`) 가운데 상하좌우 이웃이 `ruin === 1` 인 쪽마다, 벽 가운데에서 그 칸 경계까지 벽 두께(`hw`)의 들쭉날쭉한 끝(지그재그 4~5점)을 벽색으로 잇고, 끝에서 철근 2~3가닥(`#9a5a3a`, 굵기 0.025칸, 길이 0.15~0.25칸, 조금씩 휜다)을 뻗는다. 지금은 남은 벽이 칸 가운데에서 깔끔하게 끝나 "원래 그렇게 생긴 벽"으로 보인다.
-2. **금 간 벽**: `damage === 1` 인데 남아 있는 벽 칸 — 윗면에 길이 방향 금(짙은 지그재그 `rgba(20,18,16,0.7)`), 가장자리의 떨어져 나간 홈 두어 개, 윗면에 먼지 `rgba(165,157,144,0.35)`.
+2. **금 간 벽**: `damage === 1` 인데 남아 있는 벽 칸(`sealPockets` 가 메운 칸 포함) — 윗면에 길이 방향 금(짙은 지그재그 `rgba(20,18,16,0.7)`), 가장자리의 떨어져 나간 홈 두어 개, 윗면에 먼지 `rgba(165,157,144,0.35)`.
+3. **바깥 벽의 금**(과장 — §2.2): `damage` 칸과 4이웃으로 맞닿은 벽 칸 가운데 건물 밖(`isBuilding` 이 아닌 칸, `T.VOID` 포함)과도 맞닿은 칸, 곧 바깥 벽. 짧은 금 한두 줄(`rgba(20,18,16,0.6)`, 벽 두께 안에서)과 벽 밑 안쪽에 회반죽 가루 점 몇 개(`rgba(165,157,144,0.35)`)만 그린다. 벽을 끊거나 뚫지 않는다. 시뮬레이션은 바깥 벽을 무너뜨리지 않으므로(`builders.ts:650-652`) 그 이상은 상태에 없는 그림이다. 건물 전체 붕괴처럼 바깥 벽을 실제로 무너뜨리는 규칙은 다른 묶음(X6)의 몫이다(§16).
 
-`R < 12`(작은 창·축소 보기)이면 조각 수를 1/3 로 줄이고 철근과 금은 그리지 않는다.
+`R < 12`(작은 창·축소 보기)이면 조각 수를 1/3 로 줄이고 철근과 금(2·3 포함)은 그리지 않는다.
 
 ### 4.2 무너지기 전 — 2차 붕괴 위험 (매 프레임, `scene/hazardFx.ts` `drawDangerZones`)
 
-보강하지 않은 균열(`unstable`, `!mitigated`)마다:
+그리는 자리는 어둠·날씨 뒤의 정보 표지 단계다(§2.8, §4.6). 밤에도 보인다. 보강하지 않은 균열(`unstable`, `!mitigated`)마다:
 
 - **위험 범위**: 반지름 2.6칸 원(= `tickCollapse` 의 `blast` 반경, 무너지면 다치는 범위). 바깥 `rgba(8,13,18,0.55)` 굵기 0.16칸 위에 `#ffd166` 굵기 0.09칸 점선 `[0.32, 0.22]`칸, 점선이 천천히 돈다(`lineDashOffset = −timeMs / 80`) — 통제선 테이프. 투명도는 관찰자 시점 `0.5 + 0.4·leak`, AI 시점 0.7.
 - **진행 고리**(관찰자 시점만): 반지름 0.66칸, 위(−90°)에서 시계 방향으로 `leak × 360°`, §4.0 진행 고리 색, 굵기 0.08칸, 밑에 어두운 고리. 지금의 맥박 고리(반지름 0.52)는 AI 시점에서만 남긴다.
@@ -217,7 +227,7 @@ recordFall(sim, s, r.cx, r.cy, 2.2, 'ceiling');
 - 보이는 균열은 지금 규칙 그대로: AI 시점은 지휘관이 아는 것(`cmd.beliefs.get('haz', p.id)`)만, 관찰자 시점에서 지휘관이 모르는 것은 투명도 0.55.
 - (선택, 관찰자 시점) 불난 방의 천장 붕괴 위험: 탄 칸이 45% 이상이고 아직 판정하지 않은(`!s.collapseDone.has(r.id)`) 방의 경계 상자에 `rgba(214,168,120,0.5)` 점선. 규칙은 55%에서 판정한다(`hazards.ts:106`).
 
-### 4.3 무너지는 순간 (매 프레임, `s.falls` 를 읽는다 — `drawFallMoments`)
+### 4.3 무너지는 순간 (매 프레임, `s.falls` 를 읽는다 — `drawFallMoments`·`drawFallRing`)
 
 `s.falls` 가운데 `age = (sim.t + alpha·sim.dt) − f.t` 가 0~25초인 것마다. 효과 목록(`s.fx`)은 물줄기가 많은 현장에서 60개 상한에 밀려 사라질 수 있으므로 쓰지 않는다. `sim.t` 기준이라 일시정지하면 그 순간에서 멈추고, 스크린샷이 재현된다.
 
@@ -232,9 +242,13 @@ recordFall(sim, s, r.cx, r.cy, 2.2, 'ceiling');
 
 (`k` = 그 줄의 경과 비율, `e = 1 − (1−k)²`.) 처음 무너진 구역('zone')도 사건이 생긴 순간에 관찰자가 보고 있으면 같은 연출을 받는다.
 
-- 가산 혼합(`'lighter'`)을 쓰지 않는다. 밤의 어둠 층에 구멍도 내지 않는다(`renderScene.ts:488` 은 `flash`·`boom` 만 — 그대로).
-- **흔들림**(`fallShake`): 가장 최근의 무너짐이 0.6초 안이면 현장 그림 전체를 `A·(1 − age/0.6)²·(sin(age·97), cos(age·83))` 칸만큼 민다. `A` = 2차 붕괴 0.16칸, 천장 0.1칸, 처음 구역 0.12칸. 지진이 흔들린 직후(`sim.disaster.shakes` 의 마지막에서 0.9초 안)에도 붕괴 현장 0.14칸, 다른 현장 0.08칸. `drawScene` 의 `ctx.translate(L.ox, L.oy)` 바로 뒤에서 한 번 `translate`. 작은 창(`MINI`)은 흔들지 않는다. `matchMedia('(prefers-reduced-motion: reduce)')` 가 참이면 흔들지 않는다(`typeof matchMedia === 'function'` 으로 감싼다 — 테스트 환경에는 없다). 지도는 흔들지 않는다(지금의 지진 규칙 그대로).
-- 'collapse' 효과는 그림에 쓰지 않고, 다음 셋이 본다. **카메라** `camera.ts:159` 의 종류 목록에 `'collapse'`(무게는 `boom` 과 같은 2.5). **자동 감속** `Viewport.tsx:65` 의 조건에 `'collapse'`. **소리** `audio.ts`: `else if (f.kind === 'collapse') { if (this.ok('collapse', 0.5)) { this.burst(0.9, 0.3, 220, 0.8, 'lowpass'); this.tone(48, 0.9, 0.25, 'sine', 0, 30); this.burst(0.07, 0.18, 2400, 1.2, 'bandpass', 0.02); } }` — 낮게 우르르 + 짧게 쩍.
+**두 단계로 나눠 그린다.** 먼지 충격 고리는 "다치는 범위"를 알려 주는 표지다. 그래서 `drawFallRing` 이 어둠·날씨 뒤의 정보 표지 단계에서 그린다(§2.8). 나머지(그림자·덩어리·먼지 기둥·가라앉는 먼지·불티)는 `drawFallMoments` 가 불 뒤, 나무 수관 앞에서 그린다(§4.6). 0~0.5초에 몰린 연출(그림자·덩어리·고리 앞부분)은 한 틱(0.2초) 차이로 놓친다. 스크린샷은 §11 의 틱을 정확히 지킨다.
+
+- 가산 혼합(`'lighter'`)을 쓰지 않는다. 주황·흰 빛도 없다.
+- **밤**: 2차 붕괴가 더는 `'boom'` 을 남기지 않으므로(§3.3), 지금 어둠에 구멍을 내던 장치(`renderScene.ts:488`, `flash`·`boom` 만)가 무너짐에는 걸리지 않는다. 대신 어둠 블록의 효과 반복문 바로 뒤에 한 줄을 둔다: `for (const f of s.falls ?? []) { const age = (sim.t + o.alpha * sim.dt) - f.t; if (age >= 0 && age < 4) hole(dg, cx(f.x) * k, cy(f.y) * k, ts * f.r * 1.3 * k, 0.3 * (1 - age / 4)); }`. 빛이 아니라 어둠을 옅게 걷는 것이다(투명도 0.3 이하). 먼지 기둥이 밤에도 보이게 하려는 것이다. 무장 사건의 AI 시점 어둠(`fog`)에도 같은 줄이 걸린다(붕괴가 나는 무장 현장은 지금 없다).
+- **흔들림**(`sceneShake` 의 무너짐 몫 — G5 설계서가 `fallShake` 라 부르는 것): 가장 최근의 무너짐이 0.6초 안이면 현장 그림 전체를 `A·(1 − age/0.6)²·(sin(age·97), cos(age·83))` 칸만큼 민다. `A` = 2차 붕괴 0.16칸, 천장 0.1칸, 처음 구역 0.12칸. 지진이 흔들린 직후(`sim.disaster.shakes` 의 마지막에서 0.9초 안)에도 붕괴 현장 0.14칸, 다른 현장 0.08칸. `drawScene` 의 `ctx.translate(L.ox, L.oy)` 바로 뒤에서 한 번 `translate`. 작은 창(`MINI`)은 흔들지 않는다. `matchMedia('(prefers-reduced-motion: reduce)')` 가 참이면 흔들지 않는다(`typeof matchMedia === 'function'` 으로 감싼다 — 테스트 환경에는 없다). 지도는 흔들지 않는다(지금의 지진 규칙 그대로).
+  흔들림 계산은 `hazardFx.ts` 의 `sceneShake(sim, s, ts, mini, extra?)` 한 함수에 모은다. 이 함수가 화소 이동량 `{ x, y }` 를 돌려주고 `renderScene.ts` 는 `translate` 를 한 번만 한다. G5(교전 연출)가 먼저 합쳐져 `book.shake(s.id)` 를 더하는 줄이 있으면 그 값을 `extra` 로 넘겨 더한다. G5 의 6px 상한은 교전 흔들림에만 먼저 걸고, 합의 길이는 `max(6, 0.16·ts)` 화소로 자른다(§16).
+- 'collapse' 효과는 그림에 쓰지 않고, 다음 셋이 본다(G5 가 먼저 합쳐졌으면 세 자리가 바뀐다 — §16). **카메라** `camera.ts:159` 의 종류 목록에 `'collapse'`(무게는 `boom` 과 같은 2.5). **자동 감속** `Viewport.tsx:65` 의 조건에 `'collapse'`. **소리** `audio.ts`: `else if (f.kind === 'collapse') { if (this.ok('collapse', 0.5)) { this.burst(0.9, 0.3, 220, 0.8, 'lowpass'); this.tone(48, 0.9, 0.25, 'sine', 0, 30); this.burst(0.07, 0.18, 2400, 1.2, 'bandpass', 0.02); } }` — 낮게 우르르 + 짧게 쩍.
 
 ### 4.4 무너진 뒤
 
@@ -251,7 +265,10 @@ recordFall(sim, s, r.cx, r.cy, 2.2, 'ceiling');
 
 ### 4.6 그리는 순서 (`renderScene.ts`, 새 것은 굵게)
 
-**흔들림 `translate`** → 고정 층 → 그을음 → **폭발 자리(§7.3)** → 젖은 바닥 → 무전 음영 → 통제 지점 → 용의자 시야 → 소품 → **2차 붕괴 위험 범위·진행 고리** → 출동 차량 → 통과 차량 → 연기 아래층(**가스는 연두**, §7.1) → **짙은 가스 경계** → 사람(**인질 상태**, §7.4) → 구조 줄 → 불 → **무너지는 순간·가라앉는 먼지** → 나무 수관 → 연기 위층 → 어둠과 빛 → 날씨 → 재난 → 구역 이름·수색% → **되살아난 불(§7.2)** → 진입 지점 → 구조 대상 딱지 → 용의자 표지 → 효과 → **새 글자 표지(가스 고임·되살아난 불)** → 대원 이름표 → 가장자리.
+**흔들림 `translate`(`sceneShake`)** → 고정 층 → 그을음 → **폭발 자리(§7.3: 터진 폭발물·불붙은 밸브의 자국)** → 젖은 바닥 → 무전 음영 → 통제 지점 → 용의자 시야 → 소품 → 출동 차량 → 통과 차량 → 연기 아래층(**가스는 연두**, §7.1) → 사람(**인질 상태**, §7.4) → 구조 줄 → 불 → **무너지는 순간의 몸통(`drawFallMoments`: 그림자·덩어리·먼지 기둥·가라앉는 먼지·불티)** → 나무 수관 → 연기 위층 → 어둠과 빛(**밤: 무너진 자리의 어둠을 옅게 걷는 한 줄**, §4.3) → 날씨 → 재난 → 구역 이름·수색% → **정보 표지(§2.8): 붕괴 구역 경계 다시 긋기(밤에만), 2차 붕괴 위험 범위·진행 고리·곧 무너짐(`drawDangerZones`), 먼지 충격 고리(`drawFallRing`), 짙은 가스 경계(`drawGasEdge`), 되살아난 불의 테두리(`drawRekindle`)** → 진입 지점 → 구조 대상 딱지 → 용의자 표지 → 효과 → **새 글자 표지(가스 고임·되살아난 불)** → 대원 이름표 → 가장자리.
+
+- **붕괴 구역 경계 다시 긋기**: 밤(`sim.weather === 'night'`)에는 고정 층의 경계 점선(§4.1-9)이 어둠에 묻힌다. 같은 선분(`ruinZones` 의 경계 선분 — 고정 층과 같은 캐시)을 여기서 한 번 더 긋는다. 색·굵기·점선은 같고 투명도는 0.45. 낮에는 긋지 않는다(두 번 그으면 진해진다).
+- 정보 표지 단계는 연기 위층·나무 수관·안개 위에 그려지므로 사람 위를 지나간다. 선은 가늘고 반투명이라 사람을 가리지 않는다. 스크린샷을 보고 어지러우면 투명도를 내린다(§15-4).
 
 `scene/hazardFx.ts` 의 함수는 글자 표지가 필요하면 `{ x, y, text, color }[]` 를 돌려주고 `renderScene.ts` 가 자기 `pill()` 로 그린다(`renderScene.ts` 를 import 하면 서로 부르게 된다).
 
@@ -267,6 +284,23 @@ recordFall(sim, s, r.cx, r.cy, 2.2, 'ceiling');
 | 되살아난 불 | 진실과 믿음이 어긋난 방 | 지휘관이 보고받은 뒤 15초 동안 |
 | 인질 상태 | 보인다 | 용의자가 보이는 동안(지금 규칙) |
 | 천장 붕괴 위험(선택) | 보인다 | 없다 |
+
+### 4.8 작은 창 (`mini` — 화면 구석의 현장·지도 작은 창, `Viewport.tsx:84-97`)
+
+작은 창은 232×158 화소라 세부가 보이지 않는다. 지금도 글자와 세부를 뺀다(`renderScene.ts` 의 `MINI`). 새 그림도 그 규칙을 따른다.
+
+| 그림 | 작은 현장 창(`drawScene` 의 `mini`) |
+|---|---|
+| 고정 층(잔해·넘어간 벽·경계) | `R < 12` 규칙(§4.1 끝)대로 줄여서 그린다 |
+| 2차 붕괴 위험 범위 | 원 하나만(굵기 1화소, 점선·바깥 띠 없음). 진행 고리·곧 무너짐 알갱이는 없다 |
+| 무너지는 순간 | 먼지 충격 고리와 가라앉는 먼지만. 그림자·덩어리·먼지 기둥·불티는 없다. 흔들림 없음 |
+| 밤의 어둠 걷기(§4.3) | 없다(작은 창의 밤은 지금도 한 겹 칠뿐이다 — `renderScene.ts` 의 `MINI` 분기) |
+| 짙은 가스 경계·글자 표지 | 없다(연두 연기는 그린다) |
+| 되살아난 불의 테두리·표지 | 없다 |
+| 폭발 자리(§7.3) | 검은 자국만(금·조각 없음) |
+| 인질 상태(§7.4) | 지금 규칙 그대로(용의자는 삼각형, 선 없음). 사람 자세만 §7.4 를 따른다 |
+
+작은 지도 창(`drawCity` 의 `mini`)에는 지금도 핀이 색 점뿐이고 끝난 사건을 그리지 않는다(`renderCity.ts:266, 288`). 그래서 덧그림·배지·기호·무너질 때의 먼지를 모두 그리지 않는다.
 
 ---
 
@@ -292,7 +326,7 @@ recordFall(sim, s, r.cx, r.cy, 2.2, 'ceiling');
 
 `renderCity.ts` 월드 층의 `drawDisasterWorld(…)` 바로 뒤(같은 변환 안)에서 `drawRuinsWorld(ctx, sim, { truth: o.truth, timeMs: o.timeMs, scale: xf.scale, mini })` 한 번. 축소 창(`mini`)에서는 그리지 않는다. 건물 회전은 테두리 깜박임 코드(`renderCity.ts:223-231`)처럼 `translate(가운데) → rotate(q.rot)` 뒤 `(−w/2, −h/2)` 좌표로 그린다. `staticCity.ts` 의 `local()` 은 export 되어 있지 않으므로 같은 세 줄을 이 파일에 둔다(`staticCity.ts` 는 고치지 않는다). 색표가 필요하면 이 파일 안에 복사한다(`renderCity.ts` 를 import 하면 서로 부르게 된다).
 
-`ruinInfo(sim, I)` (`hazardState.ts`, 진실. `s.staticVersion` 이 바뀔 때만 다시 계산 — `WeakMap<Scene, …>`):
+`ruinInfo(sim, I)` (`hazardState.ts`, 진실. `s.staticVersion` 이 바뀔 때만 다시 계산 — `WeakMap<Scene, …>`). **건물 칸이 0 이거나 `damage` 칸이 0 이면 `null`** 을 돌려준다. 산사태 현장(`scenes/disaster.ts:106-150`)에는 건물 칸이 없고(길·땅·나무·바위) `damage` 칸만 73~106개라, 나누면 무한대가 된다. 이 함수를 부르는 곳(덧그림·배지·기호·마우스 정보·카드 칩)은 모두 `null` 이면 아무것도 그리지 않는다.
 
 - `frac` = `damage` 칸 수 / 건물 칸 수(`FLOOR·FURN·DOOR·STAIR·WALL·WINDOW` 칸).
 - `u, v` = 무너진 구역 무게중심의 건물 안 상대 위치 0~1. 기준 상자는 무게중심에서 가장 가까운 건물 칸에서 시작해 건물 칸을 따라 넓혀 간 덩어리의 경계 상자(2층 건물은 두 층이 격자에 나란히 놓이므로 한 층만 잡힌다).
@@ -301,13 +335,13 @@ recordFall(sim, s, r.cx, r.cy, 2.2, 'ceiling');
 
 그림(`'confirmed'` 일 때만):
 
-1. **내려앉은 지붕**: 구멍의 넓이 = 지붕의 `clamp(frac × 2.2, 0.3, 0.85)` — **과장**: 실제 몫의 약 두 배(멀리서도 보이게). 가운데는 `((u − 0.5)·w, (v − 0.5)·h)` 를 지붕 밖으로 나가지 않게 당긴 자리. 모양은 14각형(가장자리를 `hash2(q.id, k)` 로 들쭉날쭉하게), 채움 `rgba(16,12,9,0.62)`.
-2. **구멍 속 잔해**: 조각 10~18개(§4.0 잔해 색), 구멍 가장자리에 기울어진 지붕 판 3~4개(`rgba(120,116,108,0.9)`, 밝은 윗변).
+1. **내려앉은 지붕**: 구멍의 넓이 = 지붕의 `clamp(frac × 2.2, 0.3, 0.85)` — **과장**: 실제 몫의 약 두 배(멀리서도 보이게). 가운데는 `((u − 0.5)·w, (v − 0.5)·h)` 를 지붕 밖으로 나가지 않게 당긴 자리. 모양은 14각형(가장자리를 `hash2(q.id, k)` 로 들쭉날쭉하게), 채움 `#100c09` 투명도 0.62.
+2. **구멍 속 잔해**: 조각 10~18개(§4.0 잔해 색), 구멍 가장자리에 기울어진 지붕 판 3~4개(`#78746c` 투명도 0.9, 밝은 윗변).
 3. **쏟아진 잔해**: 건물 가운데에서 구멍 쪽 방향으로, 외벽 밖 `0.25·max(w, h)` 안에 조각 5~8개 — 무너진 것이 건물 윤곽 밖까지 넘친다.
-4. **지붕의 금**: 구멍에서 지붕을 가로지르는 꺾은선 둘, `rgba(10,8,6,0.55)`, 굵기 `max(0.8, 1.2 / scale)`.
-5. **먼지**: 마지막 무너짐 뒤 90초 동안 반지름 `0.9·max(w, h)` 의 흐린 원 `rgba(196,178,146, 0.3 → 0.08)`, 그 뒤 0.08 로 남는다.
+4. **지붕의 금**: 구멍에서 지붕을 가로지르는 꺾은선 둘, `#0a0806` 투명도 0.55, 굵기 `max(0.8, 1.2 / scale)`.
+5. **먼지**: 마지막 무너짐 뒤 90초 동안 반지름 `0.9·max(w, h)` 의 흐린 원 `#c4b292`, 투명도 0.3 → 0.08, 그 뒤 0.08 로 남는다.
 6. `'major'` 는 구멍이 커지고(위 식) 구멍에 가장 가까운 외곽선 한 변을 따라 어두운 틈(외곽이 무너졌다).
-7. 밤(`sim.weather === 'night'`)에는 색을 `shade(…, −0.35)`. 정전(`d.dark`) 중에도 그대로 보인다.
+7. 밤(`sim.weather === 'night'`)에는 색을 `shade(…, −0.35)`. 정전(`d.dark`) 중에도 그대로 보인다. **덧그림의 색은 모두 `#rrggbb`(또는 `rgb()`)와 투명도로 나눠 적는다** — `shade()`·`mix()` 에는 `rgba` 를 넣을 수 없다(`CLAUDE.md` 함정 "색 계산"). 투명도는 `globalAlpha` 로 건다. 이 절의 색: 구멍 `#100c09` 0.62, 지붕 판 `#78746c` 0.9, 금 `#0a0806` 0.55, 먼지 `#c4b292` 0.08~0.45, 외곽 틈 `#100c09` 0.7, 크레인 팔 `#e0b83a` 1.
 8. 크레인: 구멍 대신 공사장을 가로지르는 쓰러진 팔(노랑 `#e0b83a` 굵은 선에 격자 눈금, 끝에 갈고리 점)과 먼지.
 
 **무너지는 순간(지도)**: 무너짐(`falls`)마다 6초 동안 건물 위에 먼지가 피어오른다(반지름 `max(w, h)·(0.6 + 0.4k)`, 투명도 `0.45·(1 − k)`). 관찰자 시점은 모든 무너짐(지진이 일으킨 처음 구역 포함 — 진앙 고리와 함께 도시 곳곳에서 먼지가 핀다), AI 시점은 첫 도착 뒤의 무너짐만. 이 먼지는 건물 크기와 무관하게(배율 1 에서도) 그린다.
@@ -326,7 +360,7 @@ recordFall(sim, s, r.cx, r.cy, 2.2, 'ceiling');
 - **진행 중인 사건의 핀 배지**: 핀 몸통을 그린 뒤(`renderCity.ts:297` 의 `drawIcon` 바로 뒤) `drawRuinBadge(ctx, sim, I, x, y, r, o.truth, o.timeMs)` 한 줄. 핀의 왼쪽 아래 `(x − 0.78r, y + 0.78r)` 에 반지름 `0.46r` 의 어두운 원(`#0b1219`), 테 `#d6a878`(굵기 `max(1.5, 0.1r)`), 안에 `RUIN_MARK[level]`(크기 `0.72r`, `#d6a878`). `'reported'` 는 테를 점선으로 하고 기호는 `partial` 을 투명도 0.6 으로(규모를 아직 모른다). 왼쪽 아래는 지금 비어 있다(코드 이름표는 오른쪽 위, 상태 글자는 아래).
 - **2차 붕괴 알림**: 마지막 2차 붕괴 뒤 2초 동안 핀에서 흙빛 고리가 퍼지고(`r → r + 28·zs`, `#d6a878`, 투명도 `1 − age/2`, 굵기 3), 배지가 0.6초 동안 1.25배에서 1배로 줄어든다. AI 시점은 첫 도착 뒤의 것만.
 - **끝난 사건**: `renderCity.ts:265` 의 분기에서 결과색 점보다 먼저 `const rg = ruinGlyphAt(ctx, sim, I, x, y, zs, xf.scale, o.truth)` 를 부른다. 작은 배율이면 건물 가운데에 `RUIN_MARK[level]`(크기 `11·zs`, 투명도 0.85)을 그리고 `'glyph'` — 그때 결과색 점은 `(x + 6·zs, y − 6·zs)`, 반지름 3.5 로 비켜 그린다. 큰 배율이면 덧그림이 이미 있으므로 `'overlay'`(점은 제자리), 대상이 아니면 `null`.
-- **핀 아이콘의 변형**: `pinIcon(I, truth)` — 관찰자 시점은 진실의 변형, AI 시점은 `I.assessment.label` 에 맞는 시나리오(`SCENARIOS` 에서 유형이 같고 `(label ?? name) === as.label` 인 것)의 변형. `elevator`·`crane`·`landslide`·`gasblast` 는 새 아이콘, 그 밖은 지금처럼 유형 아이콘. 신고 통화 중의 전화 아이콘은 그대로. 핀(`renderCity.ts:297`)과 사건 카드의 코드 칩(`panels.tsx:66`)이 같은 함수를 쓴다. `icons.ts` `ICON_PATH` 에 더할 초안:
+- **핀 아이콘의 변형**: `pinIcon(I, truth)`. 먼저 보이는 유형 `shown = incidentShownType(I, truth)`(`renderCity.ts:66-69` — 관찰자 시점에서도 분석이 있으면 분석 유형이다. 핀의 색과 사건 카드의 코드 칩 색도 이것을 쓴다)을 정한다. 관찰자 시점은 `shown === I.truth.type` 일 때만 진실의 변형 아이콘을 쓰고, 다르면 `shown` 의 유형 아이콘을 쓴다(예: 가스 폭발을 가스 누출로 판단했으면 가스 누출 색의 핀에 가스 누출 아이콘 — 색과 아이콘이 어긋나지 않는다. 진실은 카드의 "관찰자 정보: 실제는 …" 줄이 이미 알린다). AI 시점은 `shown` 이 붕괴일 때 `I.assessment.label` 에 맞는 시나리오(`SCENARIOS` 에서 유형이 같고 `(label ?? name) === as.label` 인 것)의 변형, 맞는 것이 없으면 유형 아이콘. `elevator`·`crane`·`landslide`·`gasblast` 는 새 아이콘, 그 밖은 지금처럼 유형 아이콘. 신고 통화 중의 전화 아이콘은 그대로. 핀(`renderCity.ts:297`)과 사건 카드의 코드 칩(`panels.tsx:66`)이 같은 함수를 쓴다. `icons.ts` `ICON_PATH` 에 더할 초안:
   ```ts
   elevator: 'M4.5 2H19.5V22H4.5ZM6.5 4V20H17.5V4ZM12 5.8L15.4 10.2H8.6ZM12 18.2L8.6 13.8H15.4Z',
   crane: 'M5 22V7.6H7.6V22ZM2.6 5H21.6V7.6H2.6ZM5.4 2.2H7.2V5H5.4ZM18 7.6H19V13.4H18ZM16.8 13.4H20.2V15.4H16.8ZM2.6 22V20.4H10V22ZM2.6 7.6H5V9.6H2.6Z',
@@ -354,15 +388,15 @@ recordFall(sim, s, r.cx, r.cy, 2.2, 'ceiling');
 
 | 칩 | 관찰자 시점 | AI 시점 | 기호 | 색 |
 |---|---|---|---|---|
-| 붕괴 | `일부 붕괴` / `크게 붕괴` (`ruinInfo`) | 첫 도착 뒤 같은 말 | `RUIN_MARK` | `#d6a878` |
-| 2차 붕괴 | `2차 붕괴 n회` | 첫 도착 뒤에 난 것만 | `RUIN_MARK.major` | `#ff5d5d` |
+| 붕괴 | `일부 붕괴` / `크게 붕괴` (`ruinInfo`). `ruinSeen` 이 `'none'` 이 아니고 `ruinInfo` 가 `null` 이 아닐 때만 | 같은 조건(`ruinSeen` 이 `'confirmed'` = 첫 도착 뒤). `'reported'` 면 `붕괴 신고` | `RUIN_MARK` | `#d6a878` |
+| 2차 붕괴 | `2차 붕괴 n회`. 붕괴 칩과 같은 조건 | 첫 도착 뒤에 난 것만 | `RUIN_MARK.major` | `#ff5d5d` |
 | 균열 | `균열 n · 보강 m` (진실의 `unstable`) | 지휘관 `haz` 믿음 가운데 `s.props[f.id].kind === 'unstable'` 인 것: `value.active` 수 · 보강 수 | `crack` | 남은 균열이 있으면 `#ffd166`, 다 보강했으면 `#5ad17a` |
 | 가스 | `가스 누출`, 짙은 칸이 10개 이상이면 `가스 고임 — 폭발 위험` | 지휘관이 아는 새는 밸브가 있으면 `가스 누출` | `gas` | `#d6f06a` / `#ff5d5d` |
-| 불 | `불 n곳`(불이 있는 방 수), 되살아난 방이 있으면 `· 되살아남` | 지휘관 믿음 `fire > 0.05` 인 방 수 | `ICON_PATH.fire` | `#ff6b3d` |
-| 폭발물 | `폭발물 n · 해체 m · 터짐 k` | 지휘관 `haz` 믿음의 폭발물 | `bombHazard` | `#ff5d5d` / `#5ad17a` |
-| 인질 | `인질 붙잡힘 n` / `인질 구출 m` | 지휘관 `hos` 믿음의 `value.hostage` | `hostage` | `#ff5d5d` / `#5ad17a` |
+| 불 | `불 n곳`(불이 있는 방 수), 되살아난 방(§7.2 관찰자 조건)이 있으면 `· 되살아남` | 지휘관 믿음 `fire > 0.05` 인 방 수, 되살아남 무전(§7.2 AI 조건)이 15초 안이면 `· 되살아남` | `ICON_PATH.fire` | `#ff6b3d` |
+| 폭발물 | `폭발물 n · 처리 m · 터짐 k` (처리 = `mitigated`, 가짜로 확인된 것 포함) | 지휘관 `haz` 믿음 가운데 `value.kind === 'bomb'`: `active` 인 것이 n. `active: false` 는 해체·확인과 폭발이 같은 값이라(`rules/crime.ts:46`, `executor.ts:665`) 믿음으로는 가를 수 없다 — 터진 자리는 겉모습이므로(§2.3, 폭발음은 현장 어디서나 들린다) 진실의 `s.props[f.id].exploded` 로 터짐 k 와 처리 m 을 가른다 | `bombHazard` | 남은 것이 있거나 터진 것이 있으면 `#ff5d5d`, 모두 처리했으면 `#5ad17a` |
+| 인질 | `인질 붙잡힘 n`(n = §7.4 의 상태가 `held`·`window` 인 사람 수, `window` 가 있으면 `· 구출 기회`). n = 0 이고 인질 변형(`HOSTAGE_VARIANTS = ['hostage', 'siege']`, `hazardState.ts` 의 상수)에서 살아서 `where` 가 `safe`·`loaded`·`hospital` 인 `c.hostage` 가 m 명이면 `인질 구출 m` | 지휘관 `hos` 믿음 가운데 `value.hostage` 가 참이고 `value.state` 가 `hold`·`fight` 인 것이 있으면 `인질 붙잡힘`(수 없이). `value.hostage` 는 용의자마다 붙는 참·거짓이라(`agents.ts:48`) 인질 수를 셀 수 없고, `cas` 믿음에는 인질 표시가 없다. 구출 칩은 AI 시점에 없다 | `hostage` | `#ff5d5d` / `#5ad17a` |
 
-넷을 넘으면 뒤를 뺀다. 우선순위: 2차 붕괴 > 가스 고임 > 인질 > 폭발물 > 붕괴 > 균열 > 불 > 가스 누출. 계산은 `hazardChips(sim, I, truth): HazardChip[]`(`hazardState.ts`, DOM 없음 — 테스트한다, 캐시된 값만 읽는다). `src/ui/HazardStrip.tsx` 는 그 목록을 `<Mark>` 와 글자로 그리기만 한다. `marks.ts` 에 더할 `HAZARD_MARK` 초안(견본표로 다듬는다. `bombHazard` 는 폭발물 처리반 부대 기호(둥근 폭탄)와 헷갈리지 않게 가방 모양):
+넷을 넘으면 뒤를 뺀다. 우선순위: 2차 붕괴 > 가스 고임 > 인질 > 폭발물 > 붕괴 > 균열 > 불 > 가스 누출. 산사태(`collapse/landslide`)에는 붕괴·2차 붕괴 칩을 붙이지 않는다(`ruinSeen` 이 `'none'` — 핀 아이콘이 이미 산사태다). 균열 칩은 산사태에도 균열이 있으면 붙는다. 계산은 `hazardChips(sim, I, truth): HazardChip[]`(`hazardState.ts`, DOM 없음 — 테스트한다, 캐시된 값만 읽는다). `src/ui/HazardStrip.tsx` 는 그 목록을 `<Mark>` 와 글자로 그리기만 한다. `marks.ts` 에 더할 `HAZARD_MARK` 초안(견본표로 다듬는다. `bombHazard` 는 폭발물 처리반 부대 기호(둥근 폭탄)와 헷갈리지 않게 가방 모양):
 
 ```ts
 export const HAZARD_MARK = {
@@ -390,33 +424,43 @@ export const HAZARD_MARK = {
 그림:
 
 - `fx.ts` 의 `smokeLayer`·`drawSmoke` 가 `tint` 대신 `gas: Uint8Array | null` 을 받아 칸마다 가스면 연두 덩어리, 아니면 지금의 회색 덩어리를 쓴다. 연두 덩어리는 지금의 물들이기(`rgba(198,226,92,0.62)` 를 `source-atop`)를 미리 섞은 색 — 옅은 것 `puffSprite(190, 208, 128)`, 짙은 것 `puffSprite(145, 162, 80)`. `source-atop` 물들이기는 지운다. **가스 누출 현장은 지금과 거의 같게 보여야 한다**(전후 스크린샷 F1).
-- 짙은 가스 경계(관찰자 시점, 새는 밸브가 있을 때만): `denseMask` 칸과 아닌 칸 사이의 변(틱마다 한 번 선분 목록으로 만들어 둔다)을 `#d6f06a` 점선(굵기 `max(1.5, ts·0.05)`, `lineDashOffset` 이 천천히 흐른다)으로. `dense ≥ 10` 이면 그 무게중심 위에 `'가스 고임 — 폭발 위험'` 표지(빨강 `#ff5d5d`).
+- 짙은 가스 경계(관찰자 시점, 새는 밸브가 있을 때만, 정보 표지 단계 — §4.6. 밤과 안개에도 보인다. 작은 창에서는 없다): `denseMask` 칸과 아닌 칸 사이의 변(틱마다 한 번 선분 목록으로 만들어 둔다)을 `#d6f06a` 점선(굵기 `max(1.5, ts·0.05)`, `lineDashOffset` 이 천천히 흐른다)으로. `dense ≥ 10` 이면 그 무게중심 위에 `'가스 고임 — 폭발 위험'` 표지(빨강 `#ff5d5d`).
 
 ### 7.2 되살아난 불 (필수, 작다)
 
-`rekindledRegions(s, cmd)` (틱마다 한 번):
+`rekindledRegions(sim, s, truth)` (`hazardState.ts`, `sim.tick` 이 바뀔 때만 다시 계산):
 
-- 관찰자 시점: 실내 방마다 지휘관의 믿음 `cmd.beliefs.val('fire', r.id)` 가 있고 0.05 이하인데 그 방 진실의 `fire` 최대가 0.1 이상이면, 그 방 경계 상자에 `#ff6b3d` 점선 둥근 사각형 + 방 이름 아래 `'다시 붙은 불 — 지휘관은 모름'` 표지(`#ff9a6a`).
-- AI 시점: 지휘관의 `fire` 믿음 가운데 글에 '되살아남' 이 든 것(`executor.ts:645` 의 보고)이 15초 안이면 그 방에 같은 점선과 `'잔불 되살아남'` 표지.
+- 관찰자 시점: 실내 방마다 지휘관의 믿음 `cmd.beliefs.val('fire', r.id)` 가 있고 0.05 이하인데 그 방 진실의 `fire` 최대가 0.1 이상이면, 그 방 경계 상자에 `#ff6b3d` 점선 둥근 사각형 + 방 이름 아래 `'다시 붙은 불 — 지휘관은 모름'` 표지(`#ff9a6a`). (035a83f 의 S2 `fire/std` 에서 방 4 가 틱 670~901 동안 이 조건에 든다.)
+- AI 시점: 지휘관의 `fire` 믿음 가운데 글에 '되살아남' 이 든 것(`executor.ts:650`)은 1초도 안 되어 다음 보고에 덮인다(S2 `fire/std`: 틱 945 에 생기고, 949 에 '화재 (강도 60%)', 959 에 '진압 확인'). 그래서 믿음을 보지 않고 **무전 기록**을 본다. 그 사건의 `sim.events` 가운데 `kind === 'radio'` 이고 글에 `'꺼진 줄 알았던 불이 다시'` 가 든 것이 대상이다(`executor.ts:651` 의 무전, AI 조직이 들은 말). 글은 `${방 이름}에서 꺼진 줄 …` 로 시작한다. 그래서 `s.regions` 가운데 `text.startsWith(r.name + '에서')` 인 방을 고른다(여럿이면 이름이 가장 긴 것). 그 무전의 시각에서 15초 동안 그 방에 같은 점선과 `'잔불 되살아남'` 표지를 그린다.
+  - 캐시: `WeakMap<Sim, { next: number; last: Map<number /* incidentId */, Map<number /* regionId */, number /* t */>> }>`. `next` 는 다음에 훑을 기록 번호다. 기록(`sim.events`)은 뒤에 붙기만 하므로 새 기록만 훑는다. 프레임 속도·배속과 무관하게 놓치지 않는다. 되감기는 새 `Sim` 을 만들므로 캐시가 저절로 비워진다.
+- 그리는 자리는 정보 표지 단계(§4.6)다. 작은 창에서는 그리지 않는다(§4.8).
 
 ### 7.3 폭발 자리 (필수, 작다)
 
-- 터진 폭발물: `skins/crime.ts` 의 `drawBombBag`·`drawBombBox` 가 `p.exploded` 면 지금처럼 `return` 하는 대신 `drawBlastScar(g, p.id, 1)` 을 그리고 끝낸다 — 반지름 0.9칸의 들쭉날쭉한 검은 자국(`rgba(6,5,5,0.75)`), 1.6칸까지 뻗는 방사형 금 6~8줄(`rgba(20,18,16,0.7)`), 찢어진 가방·상자 조각 3~4개. 소품 층(사람 아래)이고 매 프레임이지만 한두 개뿐이다. `drawBlastScar(g, seed, scale)` 는 `scene/hazardFx.ts` 에 두고 `skins/crime.ts` 가 가져다 쓴다.
-- 불붙은 밸브(`valve`, `ignited`): `renderScene.ts` 의 밸브 분기에서 밸브를 그리기 전에 같은 자국을 0.6 크기로.
+**바닥 흔적으로 그린다.** `renderScene.ts` 의 그을음(`drawScorch(ctx, s, ts)`, 148줄) 바로 뒤에 `drawBlastScars(ctx, s, ts, MINI)`(`hazardFx.ts`) 한 줄을 둔다. 이 함수는 소품을 한 번 돈다. `kind === 'bomb' && exploded` 는 크기 1, `kind === 'valve' && ignited` 는 0.6 으로 `drawBlastScar(g, p.id, scale)` 를 그린다. 자국의 모양: 반지름 0.9칸의 들쭉날쭉한 검은 자국(`rgba(6,5,5,0.75)`), 1.6칸까지 뻗는 방사형 금 6~8줄(`rgba(20,18,16,0.7)`), 찢어진 가방·상자 조각 3~4개(폭발물만). 모양은 `p.id` 해시로 정해 다시 그려도 같다.
+
+- 소품(밸브·가스 용기)은 그 위에 소품 단계에서 지금처럼 그려진다. 터진 가방·상자는 `skins/crime.ts` 가 지금처럼 `return` 한다 — **`skins/crime.ts` 는 고치지 않는다**.
+- 소품 수만큼 도는 반복이라 매 프레임이어도 가볍다. 고정 층에 넣지 않는다(`exploded`·`ignited` 는 `staticSig` 에 없다).
+- 겉모습이므로 두 시점 모두 그린다(§2.3). 작은 창에서는 검은 자국만(§4.8).
 - 가스 용기는 이미 별 모양 자국이 있다(그대로). 2차 붕괴 자리는 고정 층의 새 잔해로 남는다(§4.4).
 
 ### 7.4 붙잡힌 인질 (필수, 작다)
 
-`hostageState(sim, s, c)` (`hazardState.ts`). `c.hostage` 이고 그 인질을 붙잡은 용의자(`h.hostageId === c.id`)가:
+`hostageState(sim, s, c)` (`hazardState.ts`). 시뮬레이션의 규칙 `hazards.isHeld`(`hazards.ts:289-293`)는 `hostageId` 를 보지 않는다. 3.2칸 안에 대치·교전 중인(무력화되지 않은) 총기 용의자가 있으면 어떤 `c.hostage` 든 붙잡힌 것으로 본다. 인질 사건은 인질 여럿을 총기 용의자 1.6칸 안에 두면서 `hostageId` 는 한 명에게만 준다(`builders.ts:524-526`). 숨은 시민도 `c.hostage` 다(`builders.ts:529·539·547·570`). 그래서 상태는 `isHeld` 와 같은 판정으로, **어느 용의자든** 본다. `c.hostage` 인 사람마다 위에서부터 처음 맞는 줄:
 
 | 상태 | 조건 | 그림 |
 |---|---|---|
-| `'held'` | `hold`·`fight` 이고 `hazards.isHeld(sim, s, c.id)` (총, 3.2칸 안, 무력화 아님 — 데리고 나올 수 없다, `executor.ts:527` 과 같은 규칙) | 손을 뒤로(지금) + 빨간 점선(지금) + 인질 발밑에 붉은 고리 하나 |
-| `'window'` | `hold`·`fight` 인데 무력화 중(`sim.t < h.stunUntil`) — 구출 기회 | 손을 뒤로 + 점선을 노랑 `#ffd166` 점점선으로, 깜박임 |
-| `'guarded'` | `hold`·`fight` 인데 `isHeld` 가 아님(흉기이거나 3.2칸 밖 — 데리고 나올 수 있다) | 손을 뒤로 + 주황 `#ff9f43` 점선 |
-| `'freed'` | 그 밖(용의자가 투항·검거·제압·도주, 또는 인질이 걷고 있음) | 보통 자세(`'side'`, 크기 0.96), 선 없음 |
+| `'freed'` | `c.dead` 이거나 `c.where !== 'scene'` | 지금 규칙대로(누운 사람·안전 구역·실려 감) |
+| `'held'` | `isHeld(sim, s, c.id)` — 데리고 나올 수 없다(`executor.ts:532` 와 같은 규칙). `c.walking` 이어도 이것이 먼저다(끌려가는 인질은 `walking` 이 참일 수 있다 — 035a83f 의 S3 `armed/hostage` 틱 700 에서 확인) | 손을 뒤로(지금) + 인질 발밑에 붉은 고리 하나 |
+| `'window'` | 3.2칸 안에 `hold`·`fight` 인 총기 용의자가 있는데 모두 무력화 중(`sim.t < h.stunUntil`) — 구출 기회 | 손을 뒤로 + 발밑 고리를 노랑 `#ffd166` 으로, 깜박임 |
+| `'freed'` | `c.walking` — 스스로 걸어 나가는 중 | 보통 자세(`'side'`, 크기 0.96), 선·고리 없음 |
+| `'guarded'` | 5칸 안에 `hold`·`fight` 이고 무력화되지 않은 용의자가 있다(흉기·맨손이거나, 총기인데 3.2칸 밖 — 데리고 나올 수 있다) | 손을 뒤로, 고리 없음 |
+| `'confined'` | 그 밖 — 곁에 잡은 이는 없지만 아직 그 자리에 갇혀 있다(숨은 시민, 투항 직후 아직 걷지 않은 인질) | 손을 뒤로(지금과 같다), 선·고리 없음 |
 
-`renderScene.ts:324` 의 `c.hostage && c.where === 'scene'` 두 곳을 `hs !== 'freed'`(`hs` = 그 인질의 상태)로, 344~348줄의 점선을 상태별 색으로 바꾼다. `hazardState.ts` 가 `hazards.isHeld` 를 가져다 쓴다(상태를 바꾸지 않는 읽기 함수다 — 화면 계층이 불러도 된다).
+- **점선**은 지금처럼 `hostageId` 가 가리키는 짝(용의자 → 그 인질)에만 긋는다(`renderScene.ts:344-348`). 색은 그 인질의 상태로 정한다: `held` 빨강(지금), `window` 노랑 `#ffd166` 점점선 + 깜박임, `guarded` 주황 `#ff9f43`. `freed`·`confined` 면 긋지 않는다. G5 는 인질 선을 건드리지 않는다(G5 §11).
+- `renderScene.ts:324` 의 `c.hostage && c.where === 'scene'` 두 곳(자세와 크기)을 `hs !== 'freed'`(`hs` = 그 사람의 상태)로 바꾼다. 결과적으로 지금 그림과 달라지는 것은 걸어 나가는 사람의 자세, 발밑 고리, 점선의 색이다.
+- AI 시점은 그 상태를 만든 용의자가 숨어 있지 않을 때(`!h.hidden`)만 점선과 고리를 그린다(지금 용의자 그림의 `hst.hidden && !o.truth` 규칙과 같다). `hostageState` 가 상태와 함께 그 용의자 번호를 돌려준다. 자세는 겉모습이라 늘 따른다.
+- `hazardState.ts` 가 `hazards.isHeld` 를 가져다 쓴다(상태를 바꾸지 않는 읽기 함수다 — 화면 계층이 불러도 된다). `'window'`·`'guarded'` 의 거리 판정은 `isHeld` 와 같은 `dist`(`../sim/util`)로 한다.
 
 ### 7.5 통제된 도로의 원인 (선택)
 
@@ -436,13 +480,12 @@ export const HAZARD_MARK = {
 | `src/sim/field/ruins.ts` | 새 파일 | §3.2 |
 | `src/sim/field/builders.ts` | import 한 줄, `buildCollapse` 657~658줄과 구역 반복문 뒤 한 줄 | §3.3 |
 | `src/sim/field/hazards.ts` | import 한 줄, `tickFire` 112·115줄, `tickCollapse` 606·613줄 | §3.3 |
-| `src/view/hazardState.ts` | 새 파일 | `ruinInfo`, `ruinSeen`, `ruinLine`, `shownVariant`, `pinIcon`, `gasView`, `rekindledRegions`, `hostageState`, `hazardChips` — 전부 DOM 없는 순수 함수(캐시는 `WeakMap<Scene, …>`) |
-| `src/view/scene/ruins.ts` | 새 파일 | `paintRuinFloor`, `paintRuinWalls` (§4.1) |
-| `src/view/scene/hazardFx.ts` | 새 파일 | `fallShake`, `drawDangerZones`, `drawFallMoments`, `drawGasEdge`, `drawRekindle`, `drawBlastScar` (§4.2~4.3, §7) |
+| `src/view/hazardState.ts` | 새 파일 | `ruinInfo`, `ruinSeen`, `ruinLine`, `shownVariant`, `pinIcon`, `gasView`, `rekindledRegions`, `hostageState`, `hazardChips`, 상수 `HOSTAGE_VARIANTS` — 전부 DOM 없는 순수 함수(캐시는 `WeakMap<Scene, …>`, 무전 기록 캐시는 `WeakMap<Sim, …>`) |
+| `src/view/scene/ruins.ts` | 새 파일 | `ruinZones`(구역·경계 선분 캐시), `paintRuinFloor`, `paintRuinWalls` (§4.1) |
+| `src/view/scene/hazardFx.ts` | 새 파일 | `sceneShake`, `drawDangerZones`, `drawFallMoments`, `drawFallRing`, `drawGasEdge`, `drawRekindle`, `drawBlastScars`·`drawBlastScar` (§4.2~4.3, §4.8, §7) |
 | `src/view/scene/staticLayer.ts` | `staticSig`, 789~804줄, 7단계 창 반복문 뒤, `rubble` export | §4.1, §9 |
 | `src/view/scene/fx.ts` | `sprites()`(먼지·가스 덩어리 셋), `drawSmoke`·`smokeLayer` 의 인자 | §4.3, §7.1 |
-| `src/view/renderScene.ts` | 143줄 뒤(흔들림), 148줄 뒤(폭발 자리), 소품 반복문의 균열·밸브 분기, 소품 반복문 뒤(위험 범위), 297~299줄(가스), 연기 뒤(가스 경계), 324·344~348줄(인질), 430줄 뒤(무너지는 순간), 구역 이름 블록 뒤(되살아난 불), 효과 반복문(`'collapse'` 는 그리지 않는다는 주석 한 줄), 이름표 앞(새 글자 표지) | §4.6 의 순서 |
-| `src/view/scene/skins/crime.ts` | `drawBombBag`·`drawBombBox` 의 `exploded` 분기 | §7.3 |
+| `src/view/renderScene.ts` | 143줄 뒤(흔들림 — `sceneShake`), 148줄 뒤(폭발 자리 — `drawBlastScars`), 소품 반복문의 균열 분기(맥박 고리는 AI 시점만), 297~299줄(가스), 324·344~348줄(인질), 430줄 뒤(무너지는 순간의 몸통), 어둠 블록의 효과 반복문 뒤(밤의 어둠 걷기 한 줄, 488줄 근처), 구역 이름 블록 뒤(정보 표지: 경계 다시 긋기·위험 범위·충격 고리·가스 경계·되살아난 불), 효과 반복문(`'collapse'` 는 그리지 않는다는 주석 한 줄), 이름표 앞(새 글자 표지) | §4.6 의 순서 |
 | `src/view/city/ruinLayer.ts` | 새 파일 | `drawRuinsWorld`, `drawRuinBadge`, `ruinGlyphAt` (§5.3~5.5) |
 | `src/view/renderCity.ts` | 143줄 뒤, 265~269줄, 297줄(아이콘 + 배지), 382줄 뒤 | §5 |
 | `src/view/icons.ts` | `ICON_PATH` 넷 | §5.4 |
@@ -482,9 +525,13 @@ for (const p of s.props) if (p.kind === 'debris' && p.removed) h = Math.imul(h ^
 // 보강된 균열 항은 뺀다: 지지대는 매 프레임 그려 고정 층과 무관하다. 지금은 보강할 때마다(executor.ts:608 의 staticVersion++) 쓸데없이 통째로 다시 그린다
 ```
 
-**다시 그리는 때**: 처음 볼 때, 2차 붕괴·천장 붕괴(이미 `staticVersion++`), 잔해를 치울 때(`executor.ts:216, 886` — 이미 `staticVersion++`), 창·가구 파손(N7). 문이 열리거나 균열을 보강할 때는 서명이 같아 다시 그리지 않는다.
+**다시 그리는 때**: 처음 볼 때, 2차 붕괴·천장 붕괴(이미 `staticVersion++`), 잔해를 치울 때, 창·가구 파손(N7). 문이 열리거나 균열을 보강할 때는 서명이 같아 다시 그리지 않는다.
+
+**잔해를 치울 때는 새로 다시 그리게 된다.** 잔해를 치우는 곳(`executor.ts` 의 `unblock` 220·221줄, 잔해 치우기 임무 890·891줄 — 035a83f)은 이미 `staticVersion++` 를 하지만, 지금은 서명이 같아 다시 그리지 않는다. 서명에 치운 자리가 들어가면 치울 때마다 고정 층을 통째로 다시 그린다. 붕괴 현장 한 건에 10~20번이다. 아래 재는 법의 둘째 줄로 확인한다.
 
 **다시 그리는 비용**: 가장 크게 확대했을 때(칸당 96화소, 2880×1920) `buildStatic` 이 60ms 이하(N7 이 잰 지금 값 16~40ms). 재는 법: 작업 중에만 `renderScene.ts` `getStatic` 의 `buildStatic` 호출을 `performance.now()` 로 감싸 콘솔에 찍고(경고·정보 수준 — 오류로 찍지 않는다), 확인한 뒤 지운다. 넘으면 `R ≥ 64` 에서 조각 수를 줄인다.
+
+재는 법 2 — **잔해를 치우는 동안의 끊김**: §11 의 A 장면 현장을 가장 크게 확대(칸당 96화소)하고 1배속으로 30초 동안 대원이 잔해를 치우는 것을 본다. 콘솔에 찍힌 `buildStatic` 시간과 상단 FPS 를 적는다. 한 번이 60ms 를 넘거나 치울 때마다 눈에 띄게 끊기면 대체안을 쓴다. 치운 자리(§4.1-8)를 고정 층에서 빼고, 그을음 뒤에서 매 프레임 그린다(치운 잔해 소품 수만큼, 10~20개 — `drawBlastScars` 와 같은 자리). 그때는 서명에서도 치운 자리 항을 뺀다. 어느 쪽을 골랐는지 구현 메모에 적는다.
 
 ---
 
@@ -652,7 +699,7 @@ for (const seed of seeds.split(',')) {
 | `tests/legibility.test.ts` | 새로 |
 | `src/view/scene/staticLayer.ts`, `src/view/scene/fx.ts`, `src/view/icons.ts`, `src/view/marks.ts`, `src/view/audio.ts`, `src/ui/MapLegend.tsx` | 이 묶음이 맡는다 |
 | `src/sim/types.ts`, `src/sim/field/builders.ts`, `src/sim/field/hazards.ts` | 공용 — §3 의 자리만 (결과 불변) |
-| `src/view/renderScene.ts`, `src/view/renderCity.ts`, `src/view/camera.ts`, `src/view/scene/skins/crime.ts`, `src/ui/panels.tsx`, `src/ui/Viewport.tsx`, `src/ui/styles.css` | 공용 — §8 의 자리만 |
+| `src/view/renderScene.ts`, `src/view/renderCity.ts`, `src/view/camera.ts`, `src/ui/panels.tsx`, `src/ui/Viewport.tsx`, `src/ui/styles.css` | 공용 — §8 의 자리만 |
 | `src/view/city/trafficLayer.ts` | 선택(§7.5) |
 
 ---

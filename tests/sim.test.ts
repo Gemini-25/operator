@@ -368,3 +368,24 @@ describe('인근 도시 지원', () => {
     expect(calm.aidUsed).toBe(0);      // 여유가 있을 때는 부르지 않는다
   }, 120000);
 });
+
+describe('지휘관의 진입 계획', () => {
+  it('진입을 결정하면 용의자의 시야 밖 출입구를 골라 진입조를 그곳에 모은다', () => {
+    let plans = 0, unseen = 0, stacked = 0;
+    for (let k = 0; k < 60; k++) {
+      const s = new Sim('S' + k, { ...NORMAL, threat: 4 }); s.runToEnd();
+      for (const sc of s.scenes) {
+        if (!sc || sc.kind !== 'armed' || !sc.entryOrdered) continue;
+        plans++;
+        expect(sc.entryExit).toBeGreaterThanOrEqual(0);
+        expect(sc.entryExit).toBeLessThan(sc.exits.length);
+        const ev = s.events.find((e) => e.incidentId === sc.incidentId && e.text.startsWith('진입 결정'))!;
+        if (ev.text.includes('등지고') || ev.text.includes('벽에 가려')) unseen++;
+        if (sc.board.some((w) => w.kind === 'engage')) stacked++;
+      }
+    }
+    expect(plans).toBeGreaterThan(4);
+    expect(unseen).toBeGreaterThan(plans * 0.5);
+    expect(stacked).toBe(plans);
+  }, 120000);
+});

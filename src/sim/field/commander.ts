@@ -9,7 +9,8 @@ import type { CasBelief, FieldAgent, Incident, Scene, UnitCaps, WorkItem, WorkKi
 import { TYPE_NAME, dist } from '../util';
 import { fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
 import { mkFact } from './beliefs';
-import { BAND_NAME } from './hazards';
+import { losWalls } from './grid';
+import { BAND_NAME, HOSTILE_FOV } from './hazards';
 
 interface Target { region?: number; cas?: number; prop?: number; hostile?: number; tile?: number; mate?: number }
 
@@ -81,6 +82,28 @@ function updateZoneProb(sim: Sim, s: Scene, a: FieldAgent): void {
   zones.forEach((z, k) => { s.zoneProb[z.id] = p[k] / sum; });
 }
 
+/**
+ * 진입 계획: 지휘관이 알고 있는 용의자의 위치와 바라보는 방향으로, 들키지 않고 들어갈 출입구를 고른다.
+ * 용의자가 등지고 있는 쪽 > 벽에 가려 보이지 않는 쪽 > 가까운 쪽.
+ */
+function planEntry(s: Scene, hv: { x: number; y: number; facing?: number }): { exit: number; text: string } {
+  const name = (k: number): string => (k === 0 ? '정문' : '후문');
+  if (s.exits.length < 2) return { exit: 0, text: '' };
+  let best = 0, bs = -1e9, why = '';
+  s.exits.forEach((e, k) => {
+    let behind = false;
+    if (typeof hv.facing === 'number') {
+      let d = Math.abs(Math.atan2(e.y - hv.y, e.x - hv.x) - hv.facing) % (Math.PI * 2);
+      if (d > Math.PI) d = Math.PI * 2 - d;
+      behind = d > HOSTILE_FOV;
+    }
+    const hiddenByWall = !losWalls(s, hv.x, hv.y, e.x, e.y);
+    const sc = (behind ? 2 : 0) + (hiddenByWall ? 1 : 0) - dist(e.x, e.y, hv.x, hv.y) * 0.04;
+    if (sc > bs) { bs = sc; best = k; why = behind ? '용의자가 등지고 있는 쪽이다' : hiddenByWall ? '용의자 위치에서 벽에 가려 보이지 않는 쪽이다' : '용의자와 가장 가깝다'; }
+  });
+  return { exit: best, text: ` 진입 지점은 ${name(best)} — ${why}.` };
+}
+
 /** 믿음 → 작업 목록 */
 function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   const B = a.beliefs;
@@ -142,7 +165,9 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       else if (waited > 100 && police.length >= 2) why = '장시간 대치로 더 이상의 지연은 위험';
       if (why) {
         s.entryOrdered = true; s.breachAt = sim.t + 9; s.breachDone = false;
-        emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 3, causes: [I.lastEvent], text: `진입 결정. ${why}. 진입조는 출입구 앞에 모였다가 신호에 맞춰 동시에 진입하라.` });
+        const plan = planEntry(s, h.value);
+        s.entryExit = plan.exit;
+        emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 3, causes: [I.lastEvent], text: `진입 결정. ${why}.${plan.text} 진입조는 그 앞에 모였다가 신호에 맞춰 동시에 진입하라.` });
       }
     }
     if (s.entryOrdered) { want(sim, s, 'engage', { hostile: h.id }, 0.9, 3); cancel(s, (w) => w.kind === 'negotiate' && w.hostile === h.id); }

@@ -44,6 +44,24 @@ export function los(s: Scene, x0: number, y0: number, x1: number, y1: number): b
   return true;
 }
 
+/** 벽과 바위만 따지는 시야선 (문은 열려 있다고 본다). 건물 구조만 아는 사람의 판단에 쓴다. */
+export function losWalls(s: Scene, x0: number, y0: number, x1: number, y1: number): boolean {
+  let ax = Math.round(x0), ay = Math.round(y0);
+  const bx = Math.round(x1), by = Math.round(y1);
+  const dx = Math.abs(bx - ax), dy = Math.abs(by - ay);
+  const sx = ax < bx ? 1 : -1, sy = ay < by ? 1 : -1;
+  let err = dx - dy, guard = 0;
+  while ((ax !== bx || ay !== by) && guard++ < 80) {
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; ax += sx; }
+    if (e2 < dx) { err += dx; ay += sy; }
+    if (ax === bx && ay === by) break;
+    const t = s.tiles[ay * s.w + ax];
+    if (t === T.WALL || t === T.ROCK) return false;
+  }
+  return true;
+}
+
 const doorCache = new WeakMap<Scene, Map<number, number>>();
 export function doorAt(s: Scene, i: number) {
   let m = doorCache.get(s);

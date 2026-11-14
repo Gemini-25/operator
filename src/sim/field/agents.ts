@@ -44,7 +44,7 @@ export function hosFact(sim: Sim, s: Scene, h: Hostile, src: string): Fact {
   const wt = h.weapon === 'gun' ? '총기 소지' : h.weapon === 'knife' ? '흉기 소지' : '비무장';
   const st = h.state === 'hold' ? '대치 중' : h.state === 'fight' ? '교전 중' : h.state === 'flee' ? '도주 중' : h.state === 'surrendered' ? '투항' : h.state === 'arrested' ? '검거' : h.state === 'down' ? '제압' : '도주';
   const hold = h.hostageId >= 0 && (h.state === 'hold' || h.state === 'fight');
-  return mkFact('hos', h.id, { x: Math.round(h.x), y: Math.round(h.y), weapon: h.weapon, state: h.state, hostage: hold }, src, sim.t, 1, true, `${h.label}: ${wt}${hold ? ' · 인질을 붙잡고 있음' : ''} · ${st} (${regionNameAt(s, h.x, h.y)})`);
+  return mkFact('hos', h.id, { x: Math.round(h.x), y: Math.round(h.y), weapon: h.weapon, state: h.state, hostage: hold, facing: Math.round(h.facing * 4) / 4 }, src, sim.t, 1, true, `${h.label}: ${wt}${hold ? ' · 인질을 붙잡고 있음' : ''} · ${st} (${regionNameAt(s, h.x, h.y)})`);
 }
 
 /** 보고할 가치가 있는 변화인가 (위치만 바뀐 것은 조용히 갱신) */

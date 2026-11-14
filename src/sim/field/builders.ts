@@ -18,7 +18,7 @@ function baseScene(sim: Sim, I: Incident, rng: Rng): Scene {
     tiles: new Uint8Array(n).fill(T.GROUND), region: new Int16Array(n).fill(-1),
     fire: new Float32Array(n), heat: new Float32Array(n), fuel: new Float32Array(n), smoke: new Float32Array(n),
     burned: new Uint8Array(n), wet: new Float32Array(n), shadow: new Uint8Array(n), propAt: new Int16Array(n).fill(-1),
-    decor: new Uint8Array(n), floorMat: 0, damage: new Uint8Array(n),
+    decor: new Uint8Array(n), floorMat: 0, damage: new Uint8Array(n), entryExit: -1,
     regions: [], props: [], casualties: [], hostiles: [], agents: [],
     staging: { x: 3, y: 17 }, safe: { x: 4, y: 15 }, vantage: { x: 4, y: 12 }, exits: [], spots: [],
     controlPts: [], controlDone: [], laneRows: [], cars: [], nextCarAt: 0, trafficFlow: 0,

@@ -223,6 +223,7 @@ export interface Scene {
   shadow: Uint8Array;                 // 무전 음영 구역
   decor: Uint8Array;                  // 가구 종류 (DECOR)
   damage: Uint8Array;                 // 무너져 내린 자리 (붕괴 사건: 잔해가 깔린 바닥)
+  entryExit: number;                  // 지휘관이 고른 진입 출입구 (s.exits 의 번호, -1 = 아직 정하지 않음)
   floorMat: number;                   // 실내 바닥 재질 (0 나무, 1 타일, 2 콘크리트)
   propAt: Int16Array;                 // 타일 → blocking prop id (-1)
   regions: Region[]; props: Prop[]; casualties: Casualty[]; hostiles: Hostile[];

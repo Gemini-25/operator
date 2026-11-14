@@ -602,7 +602,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       }
       // ① 진입조는 가까운 출입구 앞에 모였다가 정해진 시각에 함께 들어간다
       if (s.breachAt >= 0 && !s.breachDone && s.exits.length) {
-        if (t.tile < 0) { let bd = 1e9; s.exits.forEach((e, k) => { const d0 = dist(a.x, a.y, e.x, e.y); if (d0 < bd) { bd = d0; t.tile = k; } }); }
+        if (t.tile < 0) { if (s.entryExit >= 0 && s.entryExit < s.exits.length) t.tile = s.entryExit; else { let bd = 1e9; s.exits.forEach((e, k) => { const d0 = dist(a.x, a.y, e.x, e.y); if (d0 < bd) { bd = d0; t.tile = k; } }); } }      // 지휘관이 정한 진입 지점
         const e = s.exits[t.tile];
         const m0 = moveTo(sim, s, a, e.x, e.y, 1.4);
         a.label = '진입 대기';

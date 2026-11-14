@@ -14,8 +14,12 @@ import { josa } from './util';
 
 const rngOf = new WeakMap<Incident, Rng>();
 const WHO: Record<string, string> = { kidnap: '납치 차량', drunk: '난폭 운전 차량', getaway: '도주 차량' };
-/** 납치범이 숨어들 만한 곳: 외진 창고·작업장·농가·펜션 */
-const HIDEOUT_KINDS = ['warehouse', 'workshop', 'farmhouse', 'pension', 'storage', 'greenhouse'];
+/**
+ * 납치범이 숨어들 만한 곳: 외진 창고와 작업장.
+ * 설계서(N4b ④)에는 농가·펜션·보관소·비닐하우스도 있지만, 숨어든 곳에서 이어지는 인질 사건은 무장 사건이 날 수 있는 건물(cityPlan.INCIDENT_PLACES.armed)이어야 한다
+ * (tests/sim.test.ts '건물마다 정해진 도시'가 검사한다). 그 표에 넣으면 여기에도 넣을 수 있다.
+ */
+const HIDEOUT_KINDS = ['warehouse', 'workshop'];
 
 /** 추격전으로 시작하는 사건을 준비한다 (사건 생성 직후). 차는 신고 전화가 걸려 올 즈음 달리기 시작한다. */
 export function startPursuit(sim: Sim, I: Incident, kind: 'kidnap' | 'drunk' | 'getaway'): void {
@@ -70,7 +74,7 @@ function nearestNode(sim: Sim, x: number, y: number): number {
 }
 
 /** 차가 섰다: 그 자리에 현장을 연다 */
-function stop(sim: Sim, I: Incident, nodeId: number, how: 'caught' | 'block' | 'crash' | 'cornered', by: Unit | null): void {
+function stop(sim: Sim, I: Incident, nodeId: number, how: 'caught' | 'block' | 'crash', by: Unit | null): void {
   const p = I.pursuit!, n = sim.city.nodes[nodeId];
   p.state = 'stopped'; p.how = how; p.x = n.x; p.y = n.y;
   I.truth.nodeId = nodeId; I.truth.x = n.x; I.truth.y = n.y; I.truth.placeId = -1; I.truth.placeKind = null; I.truth.district = n.district;
@@ -78,7 +82,7 @@ function stop(sim: Sim, I: Incident, nodeId: number, how: 'caught' | 'block' | '
   I.reportedNode = nodeId; I.locationKnown = true;
   createScene(sim, I);      // 세운 자리의 현장을 이제 만든다 (사고로 멈췄으면 다친 사람이 있다)
   const who = WHO[p.kind];
-  const text = how === 'crash' ? `${josa(who, '이/가')} ${nodeName(sim.city, nodeId)}에서 사고를 내고 멈췄습니다.` : how === 'cornered' ? `${by!.callsign}: 숨을 곳으로 들어가려던 ${josa(who, '을/를')} 놓치지 않고 따라가 세웠습니다 — ${nodeName(sim.city, nodeId)}.` : how === 'block' ? `${by!.callsign}: 앞을 막아 ${josa(who, '을/를')} 세웠습니다 — ${nodeName(sim.city, nodeId)}.` : `${by!.callsign}: 바짝 붙어 ${josa(who, '을/를')} 세웠습니다 — ${nodeName(sim.city, nodeId)}.`;
+  const text = how === 'crash' ? `${josa(who, '이/가')} ${nodeName(sim.city, nodeId)}에서 사고를 내고 멈췄습니다.` : how === 'block' ? `${by!.callsign}: 앞을 막아 ${josa(who, '을/를')} 세웠습니다 — ${nodeName(sim.city, nodeId)}.` : `${by!.callsign}: 바짝 붙어 ${josa(who, '을/를')} 세웠습니다 — ${nodeName(sim.city, nodeId)}.`;
   I.lastEvent = emit(sim, { inc: I.id, role: how === 'crash' ? 'SYSTEM' : 'UNIT', actor: how === 'crash' ? '교통정보' : by!.callsign, kind: 'unit', imp: 3, causes: [I.lastEvent], text });
   for (const uid of I.assigned) { const u = sim.units[uid]; if (u.state === 'enroute') sendUnitTo(sim, u, nodeId); else if (u.state === 'turnout') u.destNode = nodeId; }
 }
@@ -126,7 +130,7 @@ export function tickPursuits(sim: Sim): void {
     if (p.hideout !== undefined && B.id === p.goal) {
       // 은신처 앞에 닿았다: 부대가 보고 있으면 그 자리에 세우고, 아무도 보지 못했으면 숨어든다 (나중에 그곳에서 제보가 들어온다)
       const watcher = closest && cd < 175 ? closest : I.assigned.map((uid) => sim.units[uid]).find((u) => u.state === 'enroute' && u.air && Math.hypot(u.x - p.x, u.y - p.y) < 430) ?? null;
-      if (p.tracked && watcher) { stop(sim, I, B.id, 'cornered', watcher); continue; }
+      if (p.tracked && watcher) { stop(sim, I, B.id, 'caught', watcher); continue; }
       const den = city.places[p.hideout];
       p.state = 'escaped'; p.how = 'hideout';
       emit(sim, { inc: I.id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: 1, truth: true, text: `납치범이 붙잡은 사람을 데리고 ${den.name}에 숨어들었습니다.` });

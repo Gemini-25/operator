@@ -6,9 +6,10 @@ import { raiseProblem } from '../../events';
 import { T } from '../../types';
 import type { Incident, Prop, Scene } from '../../types';
 import { dist } from '../../util';
+import { learn, regionNameAt } from '../agents';
 import { mkFact } from '../beliefs';
 import { los, tidx } from '../grid';
-import { blast, pushFx } from '../hazards';
+import { blast, isHeld, pushFx } from '../hazards';
 import { registerRule } from '../sceneRegistry';
 
 // ───────────────────────── 폭발물 ─────────────────────────
@@ -61,4 +62,24 @@ registerRule((sim, s, I) => {
   if (!total || up === total) return;
   const drain = 0.03 * (1 - up / total) * sim.dt;
   for (const h of s.hostiles) if (h.weapon !== 'none' && (h.state === 'hold' || h.state === 'fight')) h.morale -= drain;
+});
+
+// ───────────────────────── 대형 인질극 ─────────────────────────
+// 풀려난 인질은 곁에 온 경찰에게 안에 남은 용의자가 어디 있는지 알려 준다 (대원이 직접 본 것이 아니므로 확인되지 않은 정보다).
+// 이 말이 없으면 홀의 무리를 제압한 지휘관이 위협이 사라졌다고 보고 수색을 시키고, 수색하던 대원이 안쪽 방 문을 열다가 용의자와 마주친다.
+registerRule((sim, s, I) => {
+  if (s.variant !== 'siege' || s.kind !== 'armed' || I.phase === 'closed' || (sim.tick + s.id) % 5 !== 0) return;
+  const left = s.hostiles.filter((h) => h.state === 'hold' || h.state === 'fight');
+  if (!left.length) return;
+  for (const c of s.casualties) {
+    if (!c.hostage || c.dead || c.tDiscovered < 0 || c.where === 'loaded' || c.where === 'hospital' || isHeld(sim, s, c.id)) continue;
+    const a = s.agents.find((b) => b.status === 'active' && sim.responders[b.rid].dept === 'police' && dist(b.x, b.y, c.x, c.y) <= 3 && los(s, b.x, b.y, c.x, c.y));
+    if (!a) continue;
+    for (const h of left) {
+      if (a.beliefs.get('hos', h.id)) continue;      // 이미 알고 있는 용의자
+      learn(sim, a, mkFact('hos', h.id, { x: Math.round(h.x), y: Math.round(h.y), weapon: h.weapon, state: 'hold', hostage: h.hostageId >= 0, facing: Math.round(h.facing * 4) / 4 }, '풀려난 인질', sim.t, 0.8, false,
+        `풀려난 인질의 말: ${regionNameAt(s, h.x, h.y)}에 총을 든 사람이 더 있음${h.hostageId >= 0 ? ' · 인질을 붙잡고 있음' : ''}`));
+    }
+    return;
+  }
 });

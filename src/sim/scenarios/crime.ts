@@ -61,6 +61,7 @@ export const CRIME: Scenario[] = [
     needs: (n) => { n.law = 2; n.tactical = 2; n.ems = 2; } },
   // ── 도주 차량: 총을 든 용의자가 현장을 빠져나가 차로 달아난다 (hazards.tickHostiles 가 예약한다). 추격전은 pursuit.ts, 시작은 incidents.createIncident ──
   { type: 'armed', variant: 'getaway', name: '도주 차량', share: 0, nature: 'getaway', vague: 'scream', severity: [2, 3], tag: 'crime', label: '도주 차량', delay: [1, 3],
+    places: { bank: 3, convenience: 3, gasStation: 2, shop: 2, mart: 1, cafe: 0.5 },
     texts: ['총을 든 사람이 차를 타고 달아나고 있어요!', '방금 강도가 차로 도망쳤어요. 엄청 빨리 달려요!'], lik: [0.005, 0.07, 0.03, 0.86, 0.015, 0.005, 0.005, 0.01],
     needs: (n) => { n.law = 2; n.tactical = 1; n.search = 1; n.ems = 0; } },      // 쫓을 순찰차 둘, 기동대, 하늘에서 볼 헬기
   // ── 폭동: 여럿이 몰려 부수고 싸운다. 주동자 둘만 흉기를 들었고 나머지는 맨손이다 ──

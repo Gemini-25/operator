@@ -307,8 +307,8 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
       p.trail.forEach((q, i) => (i ? ctx.lineTo(sx(q[0]), sy(q[1])) : ctx.moveTo(sx(q[0]), sy(q[1])))); ctx.lineTo(x, y); ctx.stroke(); ctx.setLineDash([]);
     }
     if (mini) { ctx.fillStyle = '#ff5d5d'; ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 7); ctx.fill(); continue; }
-    drawFugitive(ctx, x, y, tr, p.kind === 'kidnap' ? '납' : '난', o.timeMs, FONT);
-    label(ctx, `${p.kind === 'kidnap' ? '납치 차량' : '난폭 운전 차량'} · ${I.code}`, x, y - wid - 10, 10.5 * zs, '#ffd0d0', 'rgba(60,12,12,0.9)', 'rgba(255,93,93,0.8)');
+    drawFugitive(ctx, x, y, tr, p.kind === 'kidnap' ? '납' : p.kind === 'getaway' ? '도' : '난', o.timeMs, FONT);
+    label(ctx, `${p.kind === 'kidnap' ? '납치 차량' : p.kind === 'getaway' ? '도주 차량' : '난폭 운전 차량'} · ${I.code}`, x, y - wid - 10, 10.5 * zs, '#ffd0d0', 'rgba(60,12,12,0.9)', 'rgba(255,93,93,0.8)');
   }
   // 마우스를 올린 건물·터·도로의 정보
   if (!mini && o.hover) {

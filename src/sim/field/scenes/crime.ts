@@ -51,6 +51,12 @@ function buildBombScene(sim: Sim, I: Incident, rng: Rng): Scene {
   const sev = I.truth.severity, dist = I.truth.district, pk = I.truth.placeKind, v = I.truth.variant;
   const P = planBuilding(s, rng, pickArch(rng, dist, pk), planOpts(dist, pk));
   s.floorMat = floorMatOf(dist);
+  if (pk === 'bank') {
+    // 은행에서 난 사건의 현장에는 은행 로비가 있다: 홀이 있으면 홀, 없으면 복도나 정문으로 들어서는 방이 로비다
+    const fd = P.exitDoors[0], rg = s.region[tidx(s, fd.x, fd.y)];
+    const lobby = P.hall ?? P.corridors[0] ?? (rg >= 0 ? s.regions[rg] : P.rooms[0]);
+    lobby.name = '은행 로비';
+  }
   // 출입구마다 통제 위치: 문에서 두 칸 떨어진 바깥 (장치가 확인되면 경찰이 여기서 출입을 막는다)
   s.spots = s.exits.map((e, k) => {
     const d = P.exitDoors[k], dx = e.x - d.x, dy = e.y - d.y;
@@ -116,9 +122,10 @@ registerScene('armed', 'package', buildBombScene);
 
 // ───────────────────────── 대형 인질극 ─────────────────────────
 /**
- * 총을 든 용의자 2~3명이 인질 4~6명을 방 둘에 나눠 붙잡고 있다: 안쪽 방에 한 명, 넓은 곳에 나머지.
- * 용의자마다 인질을 한 사람씩 곁에 붙들고 있고(hostageId), 남은 인질도 같은 방에 있다.
- * 지휘 규칙은 기존의 인질 사건과 같다 (협상 → 섬광탄을 가진 기동대 → 동시 진입).
+ * 총을 든 용의자 2~3명이 인질 4~6명을 두 곳에 나눠 붙잡고 있다: 넓은 홀에 한 무리, 문을 닫은 안쪽 방에 한 무리.
+ * 용의자마다 인질을 한 사람씩 곁에 붙들고 있고(hostageId), 남은 인질도 그 곁에 있다.
+ * 홀의 무리는 밖에서 보이므로 도착한 경찰은 섣불리 들어가지 않고 봉쇄·협상부터 한다. 건물에 진입한 뒤에도
+ * 안쪽 방은 따로 문 앞에 모였다가 들어가야 한다. 지휘 규칙은 기존의 인질 사건 그대로다 (협상 → 섬광탄을 가진 기동대 → 동시 진입 → 방 진입).
  */
 function buildSiege(sim: Sim, I: Incident, rng: Rng): Scene {
   const s = baseScene(sim, I, rng);
@@ -131,29 +138,33 @@ function buildSiege(sim: Sim, I: Incident, rng: Rng): Scene {
   const nG = rng.chance(Math.min(0.9, 0.35 + tn.extraSuspectProb)) ? 3 : 2;
   const nH = rng.int(4, 6);
   const deadline = sim.t + rng.range(225, 330) + tn.fleeShift * 2;      // 여럿을 붙잡고 있어 요구를 내걸고 버티는 시간이 길다
-  const freeIn = (r: Region): number => r.tiles.filter((i) => s.tiles[i] === T.FLOOR && s.propAt[i] < 0).length;
-  const inner = freeIn(V.office) >= 5 ? 2 : 1;      // 안쪽 방이 좁으면 인질은 한 사람만
+  // 안쪽 방: 후문이 바로 닿지 않는 방 (은행은 금고, 그 밖에는 사무실). 건물 안으로 들어와야만 문 앞에 설 수 있다
+  const rearRoom = s.region[tidx(s, V.rear, 3)];
+  const inner = V.office.id !== rearRoom ? V.office : V.back;
+  // 안쪽 방에 들일 수 있는 인질 수: 용의자가 설 자리와 빈 칸 하나를 남긴다
+  const nA = Math.min(2, Math.max(1, inner.tiles.filter((i) => s.tiles[i] === T.FLOOR && s.propAt[i] < 0).length - 2));
   const taken = (q: number): boolean => s.hostiles.some((h) => tidx(s, h.x, h.y) === q);
   const near = (h: { x: number; y: number }, d: number) => (q: number): boolean => taken(q) || Math.hypot((q % SW) - h.x, ((q / SW) | 0) - h.y) > d;
-  /** 한 방에 용의자 guns 명과 인질 hostages 명을 놓는다. 인질은 용의자 곁(붙들린 사람은 바로 옆)에 둔다 */
-  const group = (room: Region, guns: number, hostages: number, back: boolean): void => {
+  /** 한 곳에 용의자 guns 명과 인질 hostages 명을 놓는다. 인질은 용의자 곁(붙들린 사람은 바로 옆)에 둔다 */
+  const group = (r: Region, guns: number, hostages: number, hall: boolean): void => {
     const hs = [];
     for (let k = 0; k < guns; k++) {
-      // 넓은 곳에서는 정문에서 떨어진 안쪽에 선다
-      const i = freeTileIn(s, room, rng, (q) => taken(q) || (back && ((q / SW) | 0) > 8));
+      // 홀에서는 정문에서 떨어진 안쪽에 선다
+      const i = freeTileIn(s, r, rng, (q) => taken(q) || (hall && ((q / SW) | 0) > 8));
       const h = addHostile(s, i % SW, (i / SW) | 0, 'gun', ag(rng.range(0.5, 0.75) - k * 0.06), sk(rng.range(0.4, 0.65)), false, Infinity);
       h.facing = Math.PI / 2; h.deadline = deadline + (s.hostiles.length - 1) * rng.range(12, 26);
+      h.retreated = true;      // 자리를 지킨다: 진입이 시작돼도 인질을 끌고 다른 방으로 옮기지 않는다 (옮기면 안쪽 방의 문이 열려 버린다)
       hs.push(h);
     }
     for (let k = 0; k < hostages; k++) {
       const h = hs[k % hs.length], held = k < hs.length;
-      const j = freeTileIn(s, room, rng, near(h, held ? 1.6 : 2.6));
+      const j = freeTileIn(s, r, rng, near(h, held ? 1.6 : 2.6));
       const c = addCas(s, j % SW, (j / SW) | 0, 'mobile', rng.range(85, 100), 0, 0.05, { hostage: true });
       if (held) h.hostageId = c.id;
     }
   };
-  group(V.office, 1, inner, false);
-  group(V.main, nG - 1, Math.max(nG - 1, nH - inner), true);
+  group(inner, 1, nA, false);
+  group(V.main, nG - 1, nH - nA, true);
   s.leadDept = 'police';
   return s;
 }

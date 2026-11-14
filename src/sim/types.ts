@@ -276,6 +276,7 @@ export interface RadioMsg {
 export interface ResourceRequest { t: number; need: keyof UnitCaps; count: number; reason: string; eventId: number; fulfilled: number; urgent: boolean }
 
 export interface Scene {
+  outdoor?: boolean;        // 건물이 아니라 길 위의 현장 (출입구 대신 길목)
   id: number; incidentId: number; kind: IncidentType; variant: string;
   w: number; h: number;
   tiles: Uint8Array; region: Int16Array;
@@ -371,7 +372,20 @@ export interface IncidentResult {
   analysis: string[];              // 원인·경과 설명 문장
   headline: string;
 }
+/** 추격전: 도주 차량이 도로망을 달리는 동안의 상태 (pursuit.ts) */
+export interface Pursuit {
+  state: 'driving' | 'stopped' | 'escaped'; kind: 'kidnap' | 'drunk';
+  from: number; to: number; edge: number; t: number;      // 지금 달리는 구간(교차로 → 교차로)과 그 위의 위치 0..1
+  x: number; y: number; angle: number;
+  goal: number;                // 향하는 교차로
+  startAt: number; nextSight: number; seenAt: number;      // 달리기 시작한 시각, 다음 목격 신고, 부대가 마지막으로 본 시각
+  pressure: number; tracked: boolean;                      // 바짝 붙은 순찰차가 쌓은 압박, 지금 부대의 시야 안에 있는가
+  crashAt: number; giveUpAt: number;                       // 스스로 사고를 내는 시각(난폭 운전), 이때까지 못 잡으면 놓친다
+  how: string;                 // 어떻게 섰는가: caught(따라붙음) · block(앞을 막음) · crash(사고)
+  trail: number[][];           // 지나온 교차로 (그림용)
+}
 export interface Incident {
+  pursuit?: Pursuit;
   id: number; code: string;
   // ── 진실 (엔진만 사용. AI 는 접근 금지) ──
   truth: { type: IncidentType; variant: string; severity: number; nodeId: number; x: number; y: number; district: District; label: string; placeId: number; placeKind: PlaceKind | null };

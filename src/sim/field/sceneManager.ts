@@ -150,6 +150,7 @@ const LIMIT: Record<string, number> = { fire: 430, traffic: 400, search: 470, ar
 export function tickScene(sim: Sim, s: Scene): void {
   if (s.archived) return;
   const I = sim.incidents[s.incidentId];
+  if (I.pursuit && I.pursuit.state === 'driving') return;      // 차가 아직 달리고 있다: 현장은 차가 선 뒤에 열린다
   // 1) 환경
   if (I.phase !== 'closed' || s.agents.some((a) => a.status !== 'left')) {
     tickCasualties(sim, s, I);

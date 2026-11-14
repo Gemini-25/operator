@@ -8,7 +8,7 @@ import { closeIncident } from '../incidents';
 import { T } from '../types';
 import type { CasBelief, FieldAgent, Incident, Scene, UnitCaps, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, dist } from '../util';
-import { canCarryPatients, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
+import { canCarryPatients, exitName, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { losWalls } from './grid';
 import { BAND_NAME, HOSTILE_FOV } from './hazards';
@@ -88,7 +88,7 @@ function updateZoneProb(sim: Sim, s: Scene, a: FieldAgent): void {
  * 용의자가 등지고 있는 쪽 > 벽에 가려 보이지 않는 쪽 > 가까운 쪽.
  */
 function planEntry(s: Scene, hv: { x: number; y: number; facing?: number }): { exit: number; text: string } {
-  const name = (k: number): string => (k === 0 ? '정문' : '후문');
+  const name = (k: number): string => exitName(s, k);
   if (s.exits.length < 2) return { exit: 0, text: '' };
   let best = 0, bs = -1e9, why = '';
   s.exits.forEach((e, k) => {
@@ -175,7 +175,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         const two = police.length >= 4 && s.exits.length >= 2;
         s.entryExit2 = two ? (plan.exit === 0 ? 1 : 0) : -1;
         if (two) s.breachAt = sim.t + 15;
-        const name = (k: number): string => (k === 0 ? '정문' : '후문');
+        const name = (k: number): string => exitName(s, k);
         emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 3, causes: [I.lastEvent], text: `진입 결정. ${why}.${plan.text}${two ? ` 2조는 ${josaLocal(name(s.entryExit2))} 돌아가 같은 신호에 들어간다.` : ''} 진입조는 문 앞에 모였다가 신호에 맞춰 동시에 진입하라.` });
       }
     }
@@ -340,6 +340,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   const lawUnits = countUnits(sim, s, I, 'law', 0.5);
   if (gunActive && lawUnits < 2) request(sim, s, I, a, lawUnits === 0 ? 'law' : 'tactical', '총기를 소지한 용의자와 대치 중, 인원 부족', true);
   else if (active.length > 0 && lawUnits === 0) request(sim, s, I, a, 'law', '용의자 대응 인력 없음', true);
+  else if (active.length > 0 && lawUnits === 1 && s.negotStart >= 0 && sim.t - s.negotStart > 22) request(sim, s, I, a, 'law', '한 팀으로는 말을 걸면서 붙잡을 수 없음', false);      // 한 사람은 말을 걸고 한 사람은 길목을 지키면 붙잡을 손이 없다
   if (cordon && lawUnits === 0 && s.sizeupDone) request(sim, s, I, a, 'law', '가스가 새는 건물 주변을 통제할 인력이 없음', false);
   if (s.laneRows.length && lawUnits === 0 && !s.controlDone.every(Boolean) && cas.length > 0 && s.sizeupDone) request(sim, s, I, a, 'traffic', '차량 통행이 계속되는데 교통 통제 인력이 없음', false);
   if (s.kind === 'search' && cas.length === 0 && s.arrivedAt >= 0 && sim.t - s.arrivedAt > 75 && countUnits(sim, s, I, 'search', 0.3) < 3) request(sim, s, I, a, 'search', '수색 범위에 비해 인력 부족', false);

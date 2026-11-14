@@ -10,6 +10,7 @@ import { createScene } from './field/sceneManager';
 import { releaseUnit } from './resources';
 import type { Rng } from './rng';
 import { INCIDENT_PLACES } from './cityPlan';
+import { startPursuit } from './pursuit';
 import { SCENARIOS, scenarioName, scenarioOf } from './scenarios';
 import type { Scenario } from './scenarios';
 import type { Incident, IncidentType, Place, PlaceKind } from './types';
@@ -120,6 +121,7 @@ function createIncident(sim: Sim, chainNote = ''): Incident {
     }
   }
   const what = variant === 'false' ? '실제 화재는 없음 — 오인 신고가 들어올 예정' : variant === 'prank' ? '실제 사건은 없음 — 장난 전화가 걸려 올 예정' : scenarioName(type, variant) === TYPE_NAME[type] ? TYPE_NAME[type] : `${TYPE_NAME[type]} · ${scenarioName(type, variant)}`;
+  if (variant === 'kidnap' || variant === 'drunk') startPursuit(sim, I, variant);
   I.rootEvent = emit(sim, { inc: id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: 1, truth: true, text: chainNote ? `${chainNote} — ${I.truth.label}.` : `사건 발생 — ${I.truth.label} (${what}). 아직 신고되지 않았습니다.` });
   return I;
 }

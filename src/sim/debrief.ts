@@ -79,8 +79,9 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   else if (s.kind === 'armed' && suspectsTotal > 0 && caught === 0 && lost === 0) grade = 'unresolved';
   else if (bad > 0.01) grade = 'partial';
   else grade = 'success';
+  if (I.pursuit && I.pursuit.state === 'escaped') grade = I.pursuit.kind === 'kidnap' ? 'failed' : 'unresolved';      // 납치된 사람을 되찾지 못했다 / 난폭 운전자를 놓쳤다
   const limit = RESP_LIMIT[truth.type];
-  const delayed = responseTime < 0 || responseTime > limit || I.problems.some((p) => p.code === 'BACKUP_LATE');
+  const delayed = !I.pursuit && (responseTime < 0 || responseTime > limit || I.problems.some((p) => p.code === 'BACKUP_LATE'));      // 추격전은 차를 세운 뒤에야 현장이 생긴다
   const outcome: Outcome = grade === 'success' && delayed ? 'delayed' : grade;
 
   // ── 설명 ──

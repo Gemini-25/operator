@@ -16,6 +16,8 @@ export interface Scenario {
 export const SCENARIOS: Scenario[] = [
   { type: 'traffic', variant: 'tree', name: '쓰러진 나무', share: 0.14, nature: 'treefall', vague: 'bang', severity: [1, 2] },
   { type: 'traffic', variant: 'manhole', name: '맨홀 추락', share: 0.07, nature: 'manhole', vague: 'scream', severity: [2, 2] },
+  { type: 'traffic', variant: 'drunk', name: '난폭 운전', share: 0.09, nature: 'reckless', vague: 'bang', severity: [1, 2] },
+  { type: 'armed', variant: 'kidnap', name: '납치', share: 0.08, nature: 'kidnap', vague: 'scream', severity: [3, 3], places: { houseS: 3, villa: 3, apartment: 3, park: 2, cafe: 1, shop: 1, convenience: 1, station: 1, busTerminal: 1, university: 1.5, mart: 1, beach: 0.6 } },
   { type: 'collapse', variant: 'elevator', name: '승강기 갇힘', share: 0.32, nature: 'elevator', vague: 'scream', severity: [1, 2], places: { apartment: 6, office: 5, officetel: 4, hotel: 2, deptStore: 1.5, university: 0.8, clinic: 0.4, station: 0.6 } },
   { type: 'armed', variant: 'domestic', name: '가정 폭력', share: 0.16, nature: 'domestic', vague: 'scream', severity: [2, 2], places: { houseS: 5, houseL: 2.5, villa: 5, apartment: 5, officetel: 1.5, farmhouse: 0.8 } },
   { type: 'armed', variant: 'burglary', name: '침입 절도', share: 0.14, nature: 'burglar', vague: 'bang', severity: [1, 2], places: { houseS: 4, houseL: 4, villa: 2, shop: 3, cafe: 1, convenience: 1, office: 2, workshop: 1.5, clinic: 0.8, museum: 0.8 } },
@@ -34,5 +36,6 @@ export function scenarioName(type: IncidentType, variant: string): string { retu
 /** 신고 내용으로 관제가 사건에 붙이는 이름. 그 내용이 가리키는 유형과 관제의 판단이 같을 때만 쓴다. */
 export const NATURE_LABEL: Record<string, [IncidentType, string]> = {
   treefall: ['traffic', '쓰러진 나무'], manhole: ['traffic', '맨홀 추락'], elevator: ['collapse', '승강기 갇힘'], domestic: ['armed', '가정 폭력'], burglar: ['armed', '침입 절도'],
+  kidnap: ['armed', '납치'], reckless: ['traffic', '난폭 운전'],
   robbery: ['armed', '강도'], hostage: ['armed', '인질극'], gunshots: ['armed', '총격'], notbreathing: ['medical', '심정지'],
 };

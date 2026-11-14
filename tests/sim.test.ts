@@ -590,7 +590,7 @@ describe('건물마다 정해진 도시', () => {
       const s = new Sim('S' + k); s.runToEnd();
       for (const I of s.incidents) {
         const sc = s.scenes[I.id]!;
-        if (I.truth.type === 'traffic') { expect(I.truth.placeId).toBe(-1); intersections++; continue; }
+        if (I.truth.type === 'traffic' || I.pursuit) { expect(I.truth.placeId).toBe(-1); intersections++; continue; }      // 교통사고와 추격전은 건물이 아니라 길 위에서 벌어진다
         expect(I.truth.placeId, I.truth.label).toBeGreaterThanOrEqual(0);
         const q = s.city.places[I.truth.placeId];
         atPlace++;
@@ -674,5 +674,51 @@ describe('생활 사건 시나리오', () => {
     // 생활 사건은 대체로 수습되지만, 침입 절도는 달아나는 일이 적지 않다
     for (const k of ['traffic/tree', 'traffic/manhole', 'collapse/elevator', 'armed/domestic']) expect((good[k] ?? 0) / seen[k], k).toBeGreaterThan(0.6);
     expect(timeouts).toBeLessThan(total * 0.03);
+  }, 300000);
+});
+
+describe('추격전', () => {
+  it('도주 차량은 도로를 따라 달리고, 따라붙거나 앞을 막으면 그 자리에 현장이 열리며, 놓치면 도시를 빠져나간다', () => {
+    let n = 0, stopped = 0, escaped = 0, kidnap = 0, drunk = 0, sight = 0, timeouts = 0;
+    for (let k = 0; k < 50; k++) {
+      const s = new Sim('S' + k);
+      while (!s.ended) {
+        s.step();
+        if (s.tick % 10) continue;
+        for (const I of s.incidents) {
+          const p = I.pursuit;
+          if (!p || p.state !== 'driving' || I.phase === 'closed') continue;
+          // 달리는 동안: 지금 구간은 실제로 이어진 도로이고, 차는 그 위에 있으며, 아직 현장에 들어간 부대는 없다
+          const e = s.city.edges[p.edge];
+          expect((e.a === p.from && e.b === p.to) || (e.a === p.to && e.b === p.from)).toBe(true);
+          if (s.t >= p.startAt) { const A = s.city.nodes[p.from], B = s.city.nodes[p.to]; expect(Math.abs(Math.hypot(p.x - A.x, p.y - A.y) + Math.hypot(p.x - B.x, p.y - B.y) - e.len)).toBeLessThan(1.5); }
+          for (const uid of I.assigned) expect(s.units[uid].state).not.toBe('onscene');
+          expect(s.scenes[I.id]!.agents.length).toBe(0);
+        }
+      }
+      for (const I of s.incidents) {
+        const p = I.pursuit; if (!p) continue;
+        n++; if (p.kind === 'kidnap') kidnap++; else drunk++;
+        if (I.closeReason === 'timeout') timeouts++;
+        sight += s.events.filter((e) => e.incidentId === I.id && e.text.startsWith('목격 신고')).length;
+        if (p.state === 'stopped') {
+          stopped++;
+          expect(['caught', 'block', 'crash']).toContain(p.how);
+          expect(I.truth.placeId).toBe(-1); expect(I.reportedNode).toBe(I.truth.nodeId);
+          expect(s.events.some((e) => e.incidentId === I.id && (e.text.includes('세웠습니다') || e.text.includes('사고를 내고')))).toBe(true);
+          if (p.how !== 'crash') expect(I.firstArrivalAt).toBeGreaterThanOrEqual(0);      // 세운 순찰차가 곧 현장에 들어간다
+          expect(s.scenes[I.id]!.outdoor).toBe(true);
+        } else {
+          escaped++;
+          expect(p.state).toBe('escaped'); expect(I.closeReason).toBe('abandoned');
+          expect(I.problems.some((q) => q.code === 'SUSPECT_FLED')).toBe(true);
+          expect(I.result!.outcome).toBe(p.kind === 'kidnap' ? 'failed' : 'unresolved');
+        }
+      }
+    }
+    expect(kidnap).toBeGreaterThan(4); expect(drunk).toBeGreaterThan(4);
+    expect(stopped).toBeGreaterThan(n * 0.5); expect(escaped).toBeGreaterThan(0);
+    expect(sight).toBeGreaterThan(5);
+    expect(timeouts).toBeLessThanOrEqual(1);
   }, 300000);
 });

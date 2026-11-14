@@ -309,12 +309,15 @@ export function workLabel(s: Scene, w: WorkItem): string {
     sizeup: '현장 평가', search: `${reg} ${w.thorough ? '정밀 ' : ''}수색`, suppress: `${reg} 화재 진압`, hookup: '소화전 연결', clear: '잔해 제거', force: '문 강제 개방',
     extricate: `${cas} 구출`, treat: `${cas} 응급 처치`, carry: `${cas} 이송`, load: `${cas} 구급차 탑승`, traffic: '교통 통제',
     mitigate: w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? '균열부 보강' : w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'valve' ? '가스 밸브 차단' : '연료 누출 조치',
-    perimeter: s.kind === 'hazmat' ? `${w.tile === 0 ? '앞쪽' : '뒤쪽'} 출입구 통제` : `${w.tile === 0 ? '정문' : '후문'} 봉쇄`, negotiate: '협상', engage: '용의자 대응', arrest: '용의자 검거', interview: '목격자 면담', clearRoad: '도로 정리', rescueMate: '동료 구조', waterRescue: `${cas} 수난 구조`, escort: `${cas} 동행`,
+    perimeter: s.kind === 'hazmat' ? `${w.tile === 0 ? '앞쪽' : '뒤쪽'} 출입구 통제` : `${exitName(s, w.tile)} 봉쇄`, negotiate: '협상', engage: '용의자 대응', arrest: '용의자 검거', interview: '목격자 면담', clearRoad: '도로 정리', rescueMate: '동료 구조', waterRescue: `${cas} 수난 구조`, escort: `${cas} 동행`,
   };
   return names[w.kind];
 }
 
 /** 이 대원이 이 작업을 맡을 수 있는가, 맡는다면 얼마나 적합한가 (0 = 불가). */
+/** 출입구의 이름. 길 위의 현장에서는 길의 양 끝이다. */
+export function exitName(s: Scene, k: number): string { return s.outdoor ? (k === 0 ? '서쪽 길목' : '동쪽 길목') : k === 0 ? '정문' : '후문'; }
+
 /** 환자를 싣고 병원으로 갈 수 있는가: 구급차는 2명, 구조 헬기는 1명 */
 export function canCarryPatients(u: Unit): boolean { return u.kind === 'heli' ? u.patients.length < 1 : u.dept === 'ems' && u.patients.length < 2; }
 

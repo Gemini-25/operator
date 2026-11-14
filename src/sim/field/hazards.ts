@@ -7,7 +7,7 @@ import { T } from '../types';
 import type { Casualty, Hostile, Incident, Scene } from '../types';
 import { clamp, dist, josa } from '../util';
 import { addProp } from './kit';
-import { casFact } from './agents';
+import { casFact, exitName } from './agents';
 import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, truthWalkable } from './grid';
 
 export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2): void {
@@ -514,7 +514,7 @@ function startFlee(sim: Sim, s: Scene, h: Hostile, exitK: number): void {
   const toSide = Math.abs(e.x - edgeX) < Math.abs(e.y - edgeY) + 4;
   const p2 = astar(s, e.x, e.y, toSide ? edgeX : e.x + (exitK === 0 ? 9 : -6), toSide ? e.y : edgeY, 0, cost) ?? [];
   h.path = p1.concat(p2); h.pathI = 0; h.state = 'flee'; h.hidden = false;
-  emit(sim, { inc: sim.incidents[s.incidentId].id, role: 'SYSTEM', actor: '현장', kind: 'hazard', text: `${h.label}가 ${exitK === 0 ? '정문' : '후문'}으로 도주를 시도합니다.`, imp: 2, truth: s.arrivedAt < 0 });
+  emit(sim, { inc: sim.incidents[s.incidentId].id, role: 'SYSTEM', actor: '현장', kind: 'hazard', text: `${josa(h.label, '이/가')} ${exitName(s, exitK)}으로 도주를 시도합니다.`, imp: 2, truth: s.arrivedAt < 0 });
 }
 
 // ───────────────────────── 통과 차량 (2차 사고 위험) ─────────────────────────

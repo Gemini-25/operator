@@ -12,7 +12,7 @@ import type { CityLamp } from './city/staticCity';
 import { drawIcon } from './icons';
 import { hash2, mix } from './scene/common';
 import { drawLight } from './scene/fx';
-import { CAR_COLORS, VEH_SIZE, beaconColors, drawEmergency } from './scene/sprites';
+import { FIELD_COLOR, drawFugitive, drawToken } from './city/tokens';
 
 export const DEPT_COLOR: Record<string, string> = { fire: '#ff7a45', ems: '#2fd39a', police: '#5aa9ff' };
 export const TYPE_COLOR: Record<string, string> = { fire: '#ff6b3d', traffic: '#ffc24a', search: '#58d68d', armed: '#b98cff', medical: '#ff7eb6', collapse: '#d6a878', hazmat: '#b6e04a', water: '#4fb8ff', unknown: '#9aa7b4' };
@@ -23,6 +23,8 @@ const RESP_LIMIT: Record<string, number> = { fire: 95, armed: 95, traffic: 105, 
 
 let staticLayer: { c: HTMLCanvasElement; lamps: CityLamp[] } | null = null;
 let staticFor: unknown = null;
+/** 이 배율부터 대기 중인 부대를 시설 옆에 하나씩 그린다. 그보다 멀면 시설 이름 옆의 숫자로만 보인다. */
+const IDLE_ZOOM = 2;
 let labelLayer: { c: HTMLCanvasElement; key: string; ready: boolean } | null = null;
 
 function h2(x: number, y: number): number { return hash2(x, y); }
@@ -121,41 +123,13 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
       ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(B.x, B.y); ctx.stroke();
     }
   }
-  // 일반 차량: 도로별 교통량(혼잡도)을 차량의 밀도와 속도로 보여 준다
-  if (!mini) {
-    const t = sim.t + o.alpha * 0.2;
-    for (const e of city.edges) {
-      if (e.closed) continue;
-      const A = city.nodes[e.a], B = city.nodes[e.b], len = e.len;
-      if (len < 70) continue;
-      const dx = (B.x - A.x) / len, dy = (B.y - A.y) / len, ang = Math.atan2(dy, dx);
-      const load = e.cong + e.slow;
-      const n = Math.max(1, Math.min(8, Math.round((len / 100) * (0.4 + (load - 1) * 1.7))));
-      const v = (e.arterial ? 27 : 20) / (1 + (load - 1) * 1.2);
-      const off = e.arterial ? 5.4 : 3.1;
-      for (let k = 0; k < n; k++) for (let dir = -1; dir <= 1; dir += 2) {
-        const hk = h2(e.id * 13 + k, dir + 7);
-        const p = (hk + ((t * v) / len) * (0.8 + 0.4 * h2(k, e.id + dir))) % 1;
-        const along = 22 + p * (len - 44), d = dir > 0 ? along : len - along;
-        const x = A.x + dx * d - dy * off * dir, y = A.y + dy * d + dx * off * dir;
-        ctx.globalAlpha = Math.min(1, p / 0.07, (1 - p) / 0.07);
-        ctx.save(); ctx.translate(x, y); ctx.rotate(dir > 0 ? ang : ang + Math.PI);
-        ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(-4.2, -1.6, 9, 4.4);
-        ctx.fillStyle = night ? mix(CAR_COLORS[(hk * CAR_COLORS.length) | 0], '#000000', 0.45) : CAR_COLORS[(hk * CAR_COLORS.length) | 0];
-        ctx.beginPath(); ctx.roundRect(-4.6, -2.2, 9.2, 4.4, 1.3); ctx.fill();
-        ctx.fillStyle = '#17232e'; ctx.fillRect(-1.8, -1.7, 4.2, 3.4);
-        if (night) { ctx.fillStyle = 'rgba(255,240,190,0.5)'; ctx.beginPath(); ctx.moveTo(4.6, -1.8); ctx.lineTo(15, -4.5); ctx.lineTo(15, 4.5); ctx.lineTo(4.6, 1.8); ctx.closePath(); ctx.fill(); ctx.fillStyle = '#ff5544'; ctx.fillRect(-4.9, -1.9, 0.9, 3.8); }
-        ctx.restore();
-      }
-    }
-    ctx.globalAlpha = 1;
-  }
   // 출동 경로
   for (const u of sim.units) {
     if (!u.route || (u.state !== 'enroute' && u.state !== 'transport' && u.state !== 'returning')) continue;
     const px = u.px + (u.x - u.px) * o.alpha, py = u.py + (u.y - u.py) * o.alpha;
-    ctx.strokeStyle = DEPT_COLOR[u.dept]; ctx.globalAlpha = u.state === 'returning' ? 0.2 : 0.85;
-    ctx.lineWidth = (u.state === 'returning' ? 2 : 3.5) / Math.max(0.6, xf.scale * 1.4); ctx.setLineDash([10, 9]); ctx.lineDashOffset = -(o.timeMs / 35) % 19;
+    const mine = u.incidentId !== null && u.incidentId === o.focus && u.state !== 'returning';
+    ctx.strokeStyle = FIELD_COLOR[u.field ?? 'police']; ctx.globalAlpha = u.state === 'returning' ? 0.12 : mine ? 0.9 : 0.3;
+    ctx.lineWidth = (mine ? 3.4 : 2) / Math.max(0.6, xf.scale * 1.4); ctx.setLineDash([10, 9]); ctx.lineDashOffset = -(o.timeMs / 35) % 19;
     ctx.beginPath(); ctx.moveTo(px, py);
     for (let k = u.seg + 1; k < u.route.nodes.length; k++) { const n = city.nodes[u.route.nodes[k]]; ctx.lineTo(n.x, n.y); }
     ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
@@ -252,6 +226,8 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     const tw = ctx.measureText(f.name).width;
     ctx.fillStyle = 'rgba(8,13,18,0.72)'; ctx.beginPath(); ctx.roundRect(x + s / 2 + 3, y - 8 * zs, tw + 10, 16 * zs, 5); ctx.fill();
     ctx.fillStyle = 'rgba(226,236,246,0.92)'; ctx.fillText(f.name, x + s / 2 + 8, y + 0.5);
+    const waiting = sim.units.filter((u) => u.homeName === f.name && u.state === 'available').length;
+    if (waiting > 0) { const bx = x + s / 2 + tw + 22 * zs, br = 7.5 * zs; ctx.fillStyle = '#0d151d'; ctx.beginPath(); ctx.arc(bx, y, br, 0, 6.2832); ctx.fill(); ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.stroke(); ctx.fillStyle = '#e8f0f7'; ctx.font = `800 ${Math.round(10 * zs)}px ${FONT}`; ctx.textAlign = 'center'; ctx.fillText(String(waiting), bx, y + 0.5); }
   }
   // 사건 핀
   for (const I of sim.incidents) {
@@ -262,7 +238,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
       const n = city.nodes[I.reportedNode], gx = sx(n.x), gy = sy(n.y);
       ctx.strokeStyle = 'rgba(255,93,93,0.75)'; ctx.lineWidth = 1.5; ctx.setLineDash([5, 5]);
       ctx.beginPath(); ctx.arc(gx, gy, 15 * zs, 0, 7); ctx.moveTo(gx, gy); ctx.lineTo(x, y); ctx.stroke(); ctx.setLineDash([]);
-      label(ctx, `신고된 위치 (오류) · ${I.code}`, gx, gy - 24 * zs, 10.5 * zs, '#ff9a9a', 'rgba(8,13,18,0.86)', 'rgba(255,93,93,0.6)');
+      label(ctx, `${I.pursuit ? '마지막으로 알려진 위치' : '신고된 위치 (오류)'} · ${I.code}`, gx, gy - 24 * zs, 10.5 * zs, '#ff9a9a', 'rgba(8,13,18,0.86)', 'rgba(255,93,93,0.6)');
     }
     if (I.phase === 'closed') {
       if (mini || !I.result) continue;
@@ -300,35 +276,36 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     }
     if (focused) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]); ctx.lineDashOffset = -o.timeMs / 60; ctx.beginPath(); ctx.arc(x, y, r + 10, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
     label(ctx, I.phase === 'unreported' ? '미신고' : I.code, x + r * 0.95, y - r * 0.95, 10.5 * zs, '#0b1219', col);
-    const st = I.phase === 'unreported' ? '아직 신고되지 않음' : I.phase === 'call' ? '신고 통화 중' : I.phase === 'onscene' ? `현장 대응 ${fmtDur(sim.t - I.firstArrivalAt)}` : I.assigned.length ? `출동 ${I.assigned.length}대 · ${fmtDur(sim.t - I.reportedAt)}` : `배정 대기 ${fmtDur(sim.t - I.reportedAt)}`;
+    const st = I.pursuit && I.pursuit.state === 'driving' && I.phase !== 'unreported' ? `추격 중 · ${I.assigned.length}팀${I.pursuit.tracked ? ' · 시야 확보' : ''}` : I.phase === 'unreported' ? '아직 신고되지 않음' : I.phase === 'call' ? '신고 통화 중' : I.phase === 'onscene' ? `현장 대응 ${fmtDur(sim.t - I.firstArrivalAt)}` : I.assigned.length ? `출동 ${I.assigned.length}대 · ${fmtDur(sim.t - I.reportedAt)}` : `배정 대기 ${fmtDur(sim.t - I.reportedAt)}`;
     label(ctx, st, x, y + r + 16 * zs, 11 * zs, I.phase === 'unreported' ? '#9aa7b4' : '#e8f0f7', 'rgba(8,13,18,0.86)', I.phase === 'unreported' ? undefined : col);
   }
-  // 차량
-  const len = mini ? 9 : 27 * zs, wid = mini ? 5 : 13 * zs;
+  // 부대: 둥근 표식 (색 = 분야, 글자 = 종류, 테 = 상태). 대기 중인 부대는 가까이 볼 때만 하나씩 그린다
+  const tr = mini ? 3.2 : 9 * zs, len = tr * 2 + 3, wid = tr;
   for (const u of sim.units) {
     if (u.aid && u.state === 'oos') continue;      // 관할로 돌아간 지원 부대
-    if (mini && (u.state === 'available' || u.state === 'onscene' || u.state === 'oos')) continue;
+    const idle = u.state === 'available' || u.state === 'oos';
+    if (mini && (idle || u.state === 'onscene')) continue;
+    if (idle && cam.zoom < IDLE_ZOOM && !u.air && !u.sea && u.id !== o.selectedUnit) continue;
     const p = unitScreen(sim, u, xf, o.alpha, len);
-    const moving = u.state === 'enroute' || u.state === 'transport';
-    if (mini) { ctx.fillStyle = DEPT_COLOR[u.dept]; ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, 7); ctx.fill(); continue; }
-    let lights = moving || u.state === 'onscene';
-    if (lights) {
-      const [ca, cb] = beaconColors(u.dept), ph = o.timeMs / 140 + u.id;
-      ctx.globalCompositeOperation = 'lighter';
-      drawLight(ctx, p.x, p.y, len * 1.25, Math.sin(ph) > 0 ? ca : cb, (night ? 0.6 : 0.34) * (0.6 + 0.4 * Math.abs(Math.sin(ph))));
-      if (night && moving) drawLight(ctx, p.x + Math.cos(p.angle) * len * 0.9, p.y + Math.sin(p.angle) * len * 0.9, len * 0.9, '#fff1c8', 0.3);
-      ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
-    }
-    const idle = u.state === 'available' || u.state === 'oos' || u.state === 'returning';
-    if (u.air) lights = u.state !== 'available' && u.state !== 'oos';      // 떠 있는 동안 회전 날개가 돈다
-    if (idle) ctx.globalAlpha = 0.78;
-    drawEmergency(ctx, p.x, p.y, p.angle, len / VEH_SIZE[u.kind][0], u.kind, u.dept, lights, o.timeMs);
-    ctx.globalAlpha = 1;
-    if (u.id === o.selectedUnit) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(p.x, p.y, len * 0.75, 0, 7); ctx.stroke(); }
-    if (u.state !== 'available' && u.state !== 'onscene') {
+    drawToken(ctx, p.x, p.y, tr, { field: u.field ?? (u.dept === 'police' ? 'police' : u.dept === 'ems' ? 'rescue' : 'fire'), kind: u.kind, state: u.state, no: (u.callsign.match(/\d+$/) ?? [''])[0], timeMs: o.timeMs, font: FONT, angle: p.angle, selected: u.id === o.selectedUnit, mini });
+    if (mini || idle || u.state === 'onscene') continue;
+    if (cam.zoom >= 1.8 || (u.incidentId !== null && u.incidentId === o.focus) || u.id === o.selectedUnit) {
       const eta = u.state === 'enroute' ? ` ${Math.max(0, Math.round(u.estArrive - sim.t))}초` : u.state === 'transport' ? ' 이송' : u.state === 'returning' ? ' 복귀' : '';
-      label(ctx, u.callsign + eta, p.x, p.y - wid - 9, 10.5 * zs, DEPT_COLOR[u.dept]);
+      label(ctx, u.callsign + eta, p.x, p.y - tr - 11, 10 * zs, FIELD_COLOR[u.field ?? 'police']);
     }
+  }
+  // 도주 차량: 관찰자 시점에서는 늘 보이고, AI 시점에서는 부대의 시야에 있을 때만 보인다
+  for (const I of sim.incidents) {
+    const p = I.pursuit;
+    if (!p || p.state !== 'driving' || I.phase === 'closed' || sim.t < p.startAt || (!o.truth && !p.tracked)) continue;
+    const x = sx(p.x), y = sy(p.y);
+    if (!mini && p.trail.length) {
+      ctx.strokeStyle = 'rgba(255,93,93,0.4)'; ctx.lineWidth = 2.5; ctx.setLineDash([3, 6]); ctx.beginPath();
+      p.trail.forEach((q, i) => (i ? ctx.lineTo(sx(q[0]), sy(q[1])) : ctx.moveTo(sx(q[0]), sy(q[1])))); ctx.lineTo(x, y); ctx.stroke(); ctx.setLineDash([]);
+    }
+    if (mini) { ctx.fillStyle = '#ff5d5d'; ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 7); ctx.fill(); continue; }
+    drawFugitive(ctx, x, y, tr, p.kind === 'kidnap' ? '납' : '난', o.timeMs, FONT);
+    label(ctx, `${p.kind === 'kidnap' ? '납치 차량' : '난폭 운전 차량'} · ${I.code}`, x, y - wid - 10, 10.5 * zs, '#ffd0d0', 'rgba(60,12,12,0.9)', 'rgba(255,93,93,0.8)');
   }
   // 마우스를 올린 건물·터·도로의 정보
   if (!mini && o.hover) {
@@ -387,6 +364,6 @@ export function hitCity(sim: Sim, cam: CityCam, w: number, h: number, px: number
     if (d < bd) { bd = d; incident = I.id; }
   }
   let unit = -1, ud = 20;
-  for (const u of sim.units) { if (u.aid && u.state === 'oos') continue; const p = unitScreen(sim, u, xf, 1, 27); const d = Math.hypot(p.x - px, p.y - py); if (d < ud) { ud = d; unit = u.id; } }
+  for (const u of sim.units) { if (u.aid && u.state === 'oos') continue; if ((u.state === 'available' || u.state === 'oos') && cam.zoom < IDLE_ZOOM && !u.air && !u.sea) continue; const p = unitScreen(sim, u, xf, 1, 21); const d = Math.hypot(p.x - px, p.y - py); if (d < ud) { ud = d; unit = u.id; } }
   return { incident, unit, wx, wy };
 }

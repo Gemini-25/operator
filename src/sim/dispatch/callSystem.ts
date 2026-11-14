@@ -51,6 +51,8 @@ const NATURE_TEXT: Record<string, string[]> = {
   elevator: ['승강기가 멈췄어요. 안에 사람들이 갇혔어요!', '엘리베이터가 층 사이에 서서 문이 안 열려요. 안에서 살려 달래요.'],
   domestic: ['옆집에서 심하게 싸우는 소리가 나요. 비명도 들려요!', '가족이 흉기를 들고 식구들을 위협하고 있어요.'],
   burglar: ['집에 누가 들어온 것 같아요. 안에서 뒤지는 소리가 나요.', '문이 부서져 있고 안에 모르는 사람이 있어요.'],
+  kidnap: ['어떤 사람들이 사람을 차에 억지로 태우고 달아났어요!', '납치예요! 사람을 차에 밀어 넣고 그대로 출발했어요!'],
+  reckless: ['차 한 대가 비틀거리면서 미친 듯이 달리고 있어요. 곧 사고 날 것 같아요.', '음주 운전 같아요. 중앙선을 넘나들면서 달려요!'],
 };
 /** 신고 키워드 → 사건 유형 가능도 (분석 AI 가 사용) */
 export const NATURE_LIK: Record<string, number[]> = {
@@ -67,6 +69,8 @@ export const NATURE_LIK: Record<string, number[]> = {
   elevator: [0.03, 0.01, 0.01, 0.01, 0.12, 0.8, 0.01, 0.01],
   domestic: [0.01, 0.01, 0.01, 0.86, 0.09, 0.01, 0.005, 0.005],
   burglar: [0.02, 0.01, 0.03, 0.9, 0.02, 0.01, 0.005, 0.005],
+  kidnap: [0.005, 0.03, 0.08, 0.86, 0.01, 0.005, 0.005, 0.005],
+  reckless: [0.005, 0.86, 0.01, 0.09, 0.02, 0.005, 0.005, 0.005],
 };
 
 function natureFor(I: Incident, s: Scene, persona: Persona, rng: Rng): { v: string; truthful: boolean; note: string } {

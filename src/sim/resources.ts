@@ -244,6 +244,7 @@ function arrive(sim: Sim, u: Unit): void {
   if (u.state === 'enroute') {
     const I = u.incidentId !== null ? sim.incidents[u.incidentId] : null;
     if (!I || I.phase === 'closed') { releaseUnit(sim, u); return; }
+    if (I.pursuit && I.pursuit.state === 'driving') return;      // 추격 중: 알려진 위치에 닿았지만 차는 이미 지나갔다. 다음 위치가 전해질 때까지 그 자리에서 기다린다
     if (u.nodeId !== I.truth.nodeId) {
       // 신고된 위치에 와 보니 현장이 없다 → 관제가 신고자에게 다시 확인해 위치를 바로잡는다
       if (!I.addressFixed) {
@@ -265,7 +266,7 @@ function arrive(sim: Sim, u: Unit): void {
       if (len > 8) { u.curb = { x: pl.cx, y: pl.cy, len }; u.curbT = 0; u.parking = true; return; }
     }
     const took = sim.t - u.dispatchedAt, est = u.estArrive - u.dispatchedAt;
-    if (took > est * 1.35 + 6) {
+    if (took > est * 1.35 + 6 && !I.pursuit) {
       raiseProblem(sim, I, 'TRAFFIC_DELAY', `${u.callsign} 도착이 예상보다 ${fmtSec(took - est)} 지연`, {
         role: 'UNIT', actor: u.callsign, text: `${u.callsign}: 교통 상황으로 예상보다 ${fmtSec(took - est)} 늦게 도착.`, imp: 1,
       });

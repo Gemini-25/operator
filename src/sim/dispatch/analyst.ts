@@ -193,6 +193,9 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
   if (type === 'armed' && nat.indexOf('burglar') >= 0 && nat.indexOf('gunshots') < 0) { needs.law = sev >= 1.7 ? 2 : 1; needs.tactical = 0; needs.ems = hurtSaid ? 1 : 0; }
   if (type === 'traffic' && nat.indexOf('treefall') >= 0) { needs.rescue = 1; needs.traffic = 1; needs.ems = hurtSaid || trapSaid ? 1 : 0; }
   if (type === 'traffic' && nat.indexOf('manhole') >= 0) { needs.rescue = 1; needs.ems = 1; needs.traffic = 1; }
+  // 달아나는 차: 쫓을 순찰차와, 하늘에서 볼 헬기
+  if (type === 'armed' && nat.indexOf('kidnap') >= 0) { needs.law = 2; needs.tactical = sev >= 2.5 ? 1 : 0; needs.search = 1; needs.ems = 0; }
+  if (type === 'traffic' && nat.indexOf('reckless') >= 0 && nat.indexOf('crash') < 0) { needs.traffic = 0; needs.law = 2; needs.ems = 0; needs.rescue = 0; }      // 한 대는 쫓고 한 대는 앞을 막는다
   let label: string | undefined;
   for (const c of claims) { if (c.topic !== 'nature') continue; const l = NATURE_LABEL[c.value as string]; if (l && l[0] === type) label = l[1]; }
   const rev = prev ? prev.revision + 1 : 0;

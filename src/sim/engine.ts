@@ -4,6 +4,7 @@
 
 import { generateCity, initTraffic, tickTraffic } from './city';
 import { buildReport } from './debrief';
+import { tickPursuits } from './pursuit';
 import { tickCalls } from './dispatch/callSystem';
 import { tickDispatch } from './dispatch/dispatcher';
 import { NORMAL, difficultyLabel, tuningOf } from './difficulty';
@@ -83,6 +84,7 @@ export class Sim {
     tickCalls(this);
     tickDispatch(this);
     tickUnits(this);
+    tickPursuits(this);
     for (let i = 0; i < this.scenes.length; i++) { const s = this.scenes[i]; if (s) tickScene(this, s); }
     this.checkShiftEnd();
   }

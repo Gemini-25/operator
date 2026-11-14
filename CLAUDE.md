@@ -18,7 +18,7 @@ TypeScript + React + Vite, 그림은 Canvas 2D. 서버·외부 API·LLM 호출 �
 |---|---|
 | `npm run dev` | 개발 서버 (`http://localhost:5173`, `?seed=S7&diff=hard` 로 조건 고정) |
 | `npm run check` | **커밋 전 관문**: 타입 검사 + 테스트 + 시드 40개 헤드리스 검증 (3분쯤) |
-| `npm test` | Vitest 115개, 파일 7개: `sim`(재현성, 교대 완주, 정보 격리, 난이도, 전술, 유형별 현장, 지도, 생활 사건, 추격전) · `ext`(확장 지점) · `crime` · `major` · `disaster` · `destruction` · `traffic`. 한 묶음만 볼 때는 `npx vitest run tests/crime.test.ts` |
+| `npm test` | Vitest 117개, 파일 7개: `sim`(재현성, 교대 완주, 정보 격리, 난이도, 전술, 유형별 현장, 지도, 생활 사건, 추격전) · `ext`(확장 지점) · `crime` · `major` · `disaster` · `destruction` · `traffic`. 한 묶음만 볼 때는 `npx vitest run tests/crime.test.ts` |
 | `npm run sweep -- 100` | 시드 100개 결과 분포. `--diff hard`, `--diff 4,4,4,2,3,3`(빈도·심각도·용의자·장비·신고·부대, 일곱째 숫자를 붙이면 교통), `-v`, `--json`, `--check` |
 | `npm run sweep -- 1 --log S7` | 한 교대의 전체 이벤트 기록과 종료 보고서 (동작 확인에 가장 유용) |
 | `npm run sweep -- 20 --force armed/kidnap --scen` | 그 시나리오를 교대마다 초반에 한 번 일으키고, 시나리오별 결과 표를 낸다 (새 시나리오 확인용). `--disaster typhoon`(flood·quake·wildfire·tsunami)은 재난을 정해서 |
@@ -65,7 +65,7 @@ src/sim/dispatch/dispatcher.ts   부대 선택, 대기열, 전환 배정, 현장
 src/sim/field/kit.ts         현장 생성 도구: 빈 현장(baseScene), 타일·구역·소품·사람 놓기, furnish(가구)
 src/sim/field/plans.ts       건물 평면 생성기: 복도형·방 연결형(이분할)·홀형·2층. 화재·붕괴·가스 누출이 함께 쓴다
 src/sim/field/builders.ts    유형별 현장 생성(진실): 화재, 교통사고(버스 변형), 수색, 무장(장소 4종 armedVenue), 응급(주택 2종), 붕괴, 가스 누출, 수난(하천)
-src/sim/field/hazards.ts     화재·연기, 구조 대상 악화, 용의자, 통과 차량, 누출, 2차 붕괴(tickCollapse), 가스 확산·폭발·주변 시민 노출(tickGas), 표류(tickWater), 폭발(blast)
+src/sim/field/hazards.ts     화재·연기, 구조 대상 악화, 용의자, 통과 차량, 누출, 2차 붕괴(tickCollapse), 가스 확산·폭발·주변 시민 노출(tickGas), 표류(tickWater), 폭발(blast), 배회 실종자(tickWander), 응급 환자 급변(tickMedical), 압궤 증후군(tickCrush), 승강기 안 발작(tickLift). 균형 상수 WANDER·MEDICAL·CRUSH·LIFT (+ builders.LEAVES_BEFORE_POLICE, dispatcher.CO_RESPOND)
 src/sim/field/damage.ts      현장 파손: 총격·폭발·열에 창이 깨지고(s.glass) 엄폐 가구가 닳아 부서진다(s.decorHp, 부서지면 T.FLOOR). 난수는 dmg:<현장 id> 흐름만
 src/sim/field/grid.ts        격자, 시야선(los, 벽만 보는 losWalls), A*(계단 칸은 다른 층으로 건너간다)
 src/sim/field/beliefs.ts     Fact / BeliefStore (병합 규칙)
@@ -86,7 +86,7 @@ src/view/scene/sprites.ts    사람(대원·시민·용의자), 쓰러진 사람
 src/view/scene/fx.ts         화염, 연기(저해상도 층), 물줄기, 어둠과 빛, 날씨
 src/view/scene/common.ts     색 계산, 해시, 벽에 가려지는 시야 다각형
 src/view/scene/skins/        묶음별 소품 그림(crime·major·disaster). skins.ts 가 모아서 renderScene 에 넘긴다
-src/ui/                      App, Viewport(캔버스·입력), panels(모든 패널), Mark(<Mark>·<Token>·<FacilityBadge>), MapLegend(지도 범례), TrafficChip(상단 교통 요약), DisasterBanner(특보 띠), styles.css
+src/ui/                      App, Viewport(캔버스·입력), panels(모든 패널), CallDock(오른쪽 칸 맨 위의 접히는 통화창, P 키, 접힘 기억 ar.call.v1), Mark(<Mark>·<Token>·<FacilityBadge>), MapLegend(지도 범례), TrafficChip(상단 교통 요약), DisasterBanner(특보 띠), styles.css
 scripts/sweep.ts             헤드리스 실행기 (균형·교착 확인의 기본 도구)
 scripts/ui-check.cjs         화면 자동 검사 (+ ui-check-ref.ts: 같은 시드·난이도의 헤드리스 기록 해시). 화면 쪽 관찰 고리는 App.tsx 의 window.__ar.snap() (개발 서버에서만, 읽기 전용)
 tests/                       sim.test.ts(기본) + 묶음별 ext·crime·major·disaster·destruction·traffic
@@ -164,6 +164,11 @@ tests/                       sim.test.ts(기본) + 묶음별 ext·crime·major·
 - **공유 버퍼와 색인.** `findRoute`·`astar` 는 모듈 버퍼를 쓰므로 재진입하면 안 되고, `astar` 의 비용 함수는 순수해야 한다(칸마다 한 번만 부른다). `BeliefStore.facts` 는 `merge` 로만 고친다(종류별 색인). `traffic.linked` 는 길 상태(`e.closed`·큰 차 불가)를 비교해 답을 다시 쓴다 — `heavyPath` 가 다른 상태를 보게 되면 비교에도 넣는다. `burned[]` 는 `tickFire` 에서만 쓰고 그때 `burnedTiles` 를 함께 센다. 연기 확산(`smokeSpread`)은 불도 연기도 없으면 건너뛴다 — 다른 연기 원천을 더하면 그 조건을 같이 본다. 매 틱 도는 배열 순회는 색인 순회로 쓴다.
 - **테스트의 교대 재사용.** `tests/sim.test.ts` 의 `shiftOf(seed, d)` 는 끝난 교대를 파일 안에서 다시 쓴다. 그 Sim 을 고치는 테스트에는 쓰지 않는다.
 - **속도 측정.** 공유 기계에서는 sweep 의 avg ms/shift(벽시계)가 많이 흔들린다. 전후를 번갈아 돌리고 사용자 CPU(`time`)를 함께 본다. 결과를 바꾸지 않는 변경은 시드 묶음의 `report.hash` 가 전후로 같은지로 증명한다.
+- **물 칸은 어느 구역에도 들지 않는다**(`s.region = -1`). 물에 빠진 사람의 구역을 `s.regions[s.region[i]]` 로 읽으면 예외가 난다. `agents.regionNameAt`·`callSystem` 의 실종 분기처럼 맞닿은 구역으로 찾는다(극한 S28 에서 겪었다).
+- **선착 대응 부대.** 구급차가 멀어 소방차가 먼저 닿으면 현장 한계 시간의 시계가 그때 시작된다. `dispatcher.priorityOf` 는 구급대원이 닿기 전까지 그 사건을 '닿지 않은 사건'으로 세고, 전환 배정 문턱에서도 그 소방차를 세지 않는다. 한 사건에 부대를 더 붙이는 규칙을 만들면 우선순위와 전환 배정이 어떻게 바뀌는지 본다.
+- **숨는 정도의 상한.** 사람을 더 숨게 만드는 규칙(`concealment` 증가)은 수색 체계가 찾을 수 있는 상한(0.84)을 넘기지 않는다. 넘기면 밤에 탐지 거리가 1칸 아래로 떨어져 3차 재수색까지 못 찾고 한계 시간으로 끝난다(실제로 겪었다). 현장의 맨 가장자리로 걸어가게 하는 것도 피한다.
+- **사건 하나에 걸리는 세계 규칙의 상태는 WeakMap 에.** `tickWander`·`tickMedical`·`tickCrush`·`tickLift` 는 상태를 WeakMap(대상·현장 → 상태)에 둔다. 현장·구조 대상 객체의 모양을 바꾸지 않기 위해서이고, 되감기는 Sim 을 새로 만들어 다시 돌리므로 안전하다.
+- **작업 폴더 여럿이 node_modules 를 함께 쓸 때.** worktree 마다 `node_modules` 를 링크로 쓰면 의존성 캐시(`node_modules/.vite`)도 함께 쓴다. 다른 개발 서버가 캐시를 다시 만들면 이쪽 페이지가 새로고침된다. `npm run ui-check` 는 자기 캐시(`AR_VITE_CACHE`, `vite.config.ts` 의 `cacheDir`)를 쓴다.
 - **현장 그림의 고정 층.** `staticLayer.ts` 는 타일·가구가 바뀔 때만 다시 그린다(`staticSig`). 매 프레임 바뀌는 것(문짝, 불, 사람)을 여기에 넣지 않는다. 새 타일 종류·가구를 만들면 `surfaceMap`·`paintTile`·`furniture` 에 그림을 추가한다.
 - **건물 배치는 고정이 아니다.** 방의 수·위치·출입구가 사건마다 다르다. 좌표를 직접 쓰지 말고 `Plan`(`rooms`·`corridors`·`exitDoors`·`floors`)과 `s.exits`·`s.regions` 로 찾는다. 복도가 없는 건물(`corridors` 가 빈 배열)도 있다. 새 틀을 만들면 "모든 바닥에 걸어서 닿는다"는 테스트(`현장 배치의 다양성`)를 통과해야 한다.
 - **가구는 실제 장애물이다(`T.FURN`).** 지나갈 수 없고, 시야는 통과하며, 엄폐물이 된다. 방을 새로 만들 때는 `builders.ts` 의 `furnish()` 를 쓴다(문 주변을 비우고 방이 끊기지 않는지 검사한다).

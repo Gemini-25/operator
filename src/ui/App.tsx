@@ -4,6 +4,7 @@ import type { Sim } from '../sim/engine';
 import { TYPE_NAME, fmtDur } from '../sim/util';
 import { SoundDirector } from '../view/audio';
 import { CameraDirector } from '../view/camera';
+import { FxBook } from '../view/scene/fxBook';
 import { Runner } from '../view/runner';
 import { Viewport } from './Viewport';
 import { MapLegend } from './MapLegend';
@@ -37,6 +38,7 @@ export function App() {
   const runner = useMemo(() => new Runner(), []);
   const director = useMemo(() => new CameraDirector(), []);
   const sound = useMemo(() => { const s = new SoundDirector(); s.enabled = runner.settings.sound; s.volume = runner.settings.volume; return s; }, [runner]);
+  const book = useMemo(() => new FxBook(), []);      // 교전 연출 기억 (연출 시계·받아들이기·남는 그림)
   const [, setTick] = useState(0);
   const force = useCallback(() => setTick((t) => (t + 1) % 1e9), []);
   const [selectedRid, setSelectedRid] = useState(-1);
@@ -52,7 +54,7 @@ export function App() {
   // 화면 자동 검사(scripts/ui-check.cjs)가 읽는 관찰 고리. 개발 서버에서만 만들고, 값을 복사해 돌려줄 뿐 아무것도 바꾸지 않는다.
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    const w = window as unknown as { __ar?: { snap: () => Record<string, unknown> } };
+    const w = window as unknown as { __ar?: { snap: () => Record<string, unknown>; combat: () => Record<string, unknown>; fxStep: (dt: number) => void } };
     w.__ar = {
       snap: () => {
         const sim = runner.sim;
@@ -64,9 +66,17 @@ export function App() {
           camMode: director.mode, camFocus: director.focus, camManual: director.manual, now: performance.now(),
         };
       },
+      // (G5) 교전 연출 읽기: 연출 시계, 현장별 살아 있는 연출 수, 교전 그림 시간, 소리 통계 (복사해 돌려줄 뿐이다)
+      combat: () => {
+        const live: Record<string, number> = {};
+        for (const s of runner.sim.scenes) if (s && !s.archived) { const n = book.live(s.id).length; if (n) live[s.id] = n; }
+        return { clock: book.clock, rate: book.rate, live, drawMs: book.drawMs, stats: { ...sound.stats } };
+      },
+      // (G5, 개발용) 연출 시계만 넘긴다: 시뮬레이션·카메라는 그대로 (정확한 장면 찍기)
+      fxStep: (dt: number) => book.debugStep(dt),
     };
     return () => { delete w.__ar; };
-  }, [runner, director]);
+  }, [runner, director, sound, book]);
 
   const selectRid = useCallback((rid: number) => {
     setSelectedRid(rid);
@@ -168,7 +178,7 @@ export function App() {
         <UnitList sim={sim} selectedRid={selectedRid} onSelectRid={selectRid} />
       </div>
       <div className="center">
-        <Viewport runner={runner} director={director} sound={sound} selectedRid={selectedRid} onSelectRid={selectRid} onSelectUnit={selectUnit} />
+        <Viewport runner={runner} director={director} sound={sound} book={book} selectedRid={selectedRid} onSelectRid={selectRid} onSelectUnit={selectUnit} />
         <div className="overlay tl">
           <div className="cam-reason"><span className={`dot ${director.manual ? 'manual' : 'auto'}`} />{director.manual ? '수동 시점' : '자동 카메라'} · {director.reason}</div>
           {runner.slowed && <div className="cam-reason slow"><span className="dot slow" />결정적 순간 · 1배속으로 낮춤</div>}

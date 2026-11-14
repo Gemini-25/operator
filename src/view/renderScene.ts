@@ -11,7 +11,7 @@ import type { Sim } from '../sim/engine';
 import { visionOf } from '../sim/field/agents';
 import { HOSTILE_FOV } from '../sim/field/hazards';
 import { T } from '../sim/types';
-import type { Casualty, FieldAgent, Hostile, Prop, Scene, Unit } from '../sim/types';
+import type { Casualty, FieldAgent, Fx, Hostile, Prop, Scene, Unit } from '../sim/types';
 import { DEPT_COLOR, FONT } from './renderCity';
 import { alpha, disc, hash2, oval, rr, seg, visPoly } from './scene/common';
 import type { G } from './scene/common';
@@ -21,10 +21,12 @@ import { CAR_COLORS, VEH_SIZE, beaconColors, civilianLook, drawCar, drawClue, dr
 import type { ArmPose, Item, PersonLook } from './scene/sprites';
 import { buildStatic, doorHorizontal, staticSig } from './scene/staticLayer';
 import type { StaticLayer } from './scene/staticLayer';
+import { FX_DRAWN } from './scene/fxBook';
+import type { FxBook } from './scene/fxBook';
 
 /** 현장 화면의 시점: 중심(타일 좌표)과 배율(1 = 현장 전체가 보인다) */
 export interface SceneCam { x: number; y: number; zoom: number }
-export interface SceneOpts { truth: boolean; alpha: number; timeMs: number; selectedRid: number; mini?: boolean; cam?: SceneCam }
+export interface SceneOpts { truth: boolean; alpha: number; timeMs: number; selectedRid: number; mini?: boolean; cam?: SceneCam; book?: FxBook }
 let MINI = false;      // 작은 창으로 그리는 중이면 글자와 세부 묘사를 생략한다
 let CLIP_L = -1e9, CLIP_R = 1e9;   // 글자 표지가 화면 밖으로 나가지 않게 하는 한계 (현장 좌표, 화소)
 export interface Layout { ts: number; ox: number; oy: number }
@@ -137,6 +139,16 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   const cmd = s.agents.find((a) => a.isCommander);
   const night = sim.weather === 'night';
   const tAt = (x: number, y: number): number => (x < 0 || y < 0 || x >= s.w || y >= s.h ? T.VOID : s.tiles[y * s.w + x]);
+  const book = o.book;
+  /** 효과 기록과 그 나이: 연출 기억(book)이 있으면 G5 가 그리는 종류는 연출 시계의 나이로, 나머지는 지금처럼 시뮬레이션 나이로 */
+  const fxAges = (all = false): [Fx, number][] => {
+    const out: [Fx, number][] = [];
+    if (book) {
+      for (const e of book.live(s.id)) if (e.f) out.push([e.f, book.age(e)]);
+      if (all) for (const f of s.fx) if (!FX_DRAWN.has(f.kind)) out.push([f, sim.t - f.t]);
+    } else for (const f of s.fx) out.push([f, sim.t - f.t]);
+    return out;
+  };
 
   ctx.save();
   ctx.fillStyle = BG; ctx.fillRect(0, 0, w, h);
@@ -482,8 +494,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     hole(dg, (s.safe.x + 0.45) * ts * k, (s.safe.y + 0.4) * ts * k, ts * 3 * k, 0.7);
     for (let i = 0; i < s.fire.length; i++) if (s.fire[i] > 0.2) hole(dg, cx(i % s.w) * k, cy((i / s.w) | 0) * k, ts * (1.9 + 2.5 * s.fire[i]) * k, 0.65);
     for (const c of s.cars) hole(dg, (c.x + 0.5 + c.dir * 2.2) * ts * k, cy(c.row) * k, ts * 2.8 * k, 0.75);
-    for (const f of s.fx) {
-      const age = sim.t - f.t;
+    for (const [f, age] of fxAges()) {
       if (f.kind === 'shot' && age >= 0 && age < 0.25) hole(dg, cx(f.x) * k, cy(f.y) * k, ts * 2.6 * k, 0.8);
       else if ((f.kind === 'flash' || f.kind === 'boom') && age >= 0 && age < f.ttl) hole(dg, cx(f.x) * k, cy(f.y) * k, ts * 6.5 * k, 1 - age / f.ttl);
     }
@@ -511,8 +522,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       if (sum < 0.3) continue;
       drawLight(ctx, cx(mx / sum), cy(my / sum), ts * (3 + Math.min(3.2, sum * 0.7)), '#ff8a3c', Math.min(0.5, 0.12 + sum * 0.06) * (night ? 1.5 : 0.8) * (0.92 + 0.08 * Math.sin(time * 9 + gx + gy)));
     }
-    for (const f of s.fx) {
-      const age = sim.t - f.t;
+    for (const [f, age] of fxAges()) {
       if (f.kind === 'shot' && age >= 0 && age < 0.2) drawLight(ctx, cx(f.x), cy(f.y), ts * 1.9, '#ffe2a0', 0.7 * (1 - age / 0.2));
     }
   }
@@ -596,8 +606,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   }
 
   // ── 효과 ──
-  for (const f of s.fx) {
-    const age = sim.t - f.t;
+  for (const [f, age] of fxAges(true)) {
     if (age < 0 || age > f.ttl) continue;
     const k = age / f.ttl;
     if (f.kind === 'shot') {

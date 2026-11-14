@@ -15,6 +15,8 @@ export class SoundDirector {
   private fxT = new Map<number, number>();
   private last: Record<string, number> = {};
   private siren: { o: OscillatorNode; lfo: OscillatorNode; g: GainNode } | null = null;
+  /** (G5) 교전 소리 통계 (확인용) */
+  stats = { perSec: 0, maxPerSec: 0, voices: 0, dropped: 0, made: 0 };
 
   /** 브라우저 정책상 첫 사용자 입력 뒤에만 소리를 낼 수 있다. */
   unlock(): void {

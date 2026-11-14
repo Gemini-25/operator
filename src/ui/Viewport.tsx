@@ -4,10 +4,11 @@ import type { SoundDirector } from '../view/audio';
 import type { CameraDirector } from '../view/camera';
 import { FONT, TYPE_COLOR, drawCity, hitCity, cityXf } from '../view/renderCity';
 import { drawScene, hitScene, sceneLayout } from '../view/renderScene';
+import type { FxBook } from '../view/scene/fxBook';
 import type { Runner } from '../view/runner';
 
 export interface ViewportProps {
-  runner: Runner; director: CameraDirector; sound: SoundDirector;
+  runner: Runner; director: CameraDirector; sound: SoundDirector; book: FxBook;
   selectedRid: number;
   onSelectRid: (rid: number) => void;
   onSelectUnit: (uid: number) => void;
@@ -17,7 +18,7 @@ const PIP_W = 232, PIP_H = 158, PAD = 12, GAP = 8;
 interface Pip { x: number; y: number; target: number }     // target: 사건 id, -1 = 도시 지도
 
 /** 중앙 화면: 도시 관제 지도 또는 현장 확대 화면. 렌더링은 requestAnimationFrame, 시뮬레이션은 고정 틱. */
-export function Viewport({ runner, director, sound, selectedRid, onSelectRid, onSelectUnit }: ViewportProps) {
+export function Viewport({ runner, director, sound, book, selectedRid, onSelectRid, onSelectUnit }: ViewportProps) {
   const ref = useRef<HTMLCanvasElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef(selectedRid);
@@ -55,6 +56,9 @@ export function Viewport({ runner, director, sound, selectedRid, onSelectRid, on
       const sim = runner.sim;
       director.sceneAuto = runner.settings.sceneAuto;
       director.update(sim, dtReal, (I) => !!sim.scenes[I.id] && (sim.scenes[I.id]!.arrivedAt >= 0 || director.manual));
+      // 실제 배속: 자동 감속 중이면 설정이 15여도 1배속이다. 연출 시계와 소리 규칙은 이 값을 쓴다
+      const effSpeed = runner.paused ? 0 : runner.slowed ? 1 : runner.settings.speed;
+      book.frame(sim, dtReal, { paused: runner.paused || sim.ended, speed: effSpeed, seeks: runner.seeks });
       {
         // 결정적 순간(관찰 중인 현장의 총격·폭발·섬광, 그 사건의 중대한 기록)에는 잠깐 1배속으로 낮춘다
         const sc = director.mode === 'scene' && director.focus >= 0 ? sim.scenes[director.focus] : null;
@@ -69,8 +73,8 @@ export function Viewport({ runner, director, sound, selectedRid, onSelectRid, on
       }
       const truth = runner.settings.truthView;
       const scene = director.mode === 'scene' && director.focus >= 0 ? sim.scenes[director.focus] : null;
-      sound.update(sim, { paused: runner.paused, speed: runner.settings.speed, focus: director.focus, inScene: !!scene });
-      if (scene) drawScene(ctx, sim, scene, w, h, { truth, alpha: runner.alpha, timeMs: now, selectedRid: sel.current, cam: director.sceneCam });
+      sound.update(sim, { paused: runner.paused, speed: effSpeed, focus: director.focus, inScene: !!scene });
+      if (scene) drawScene(ctx, sim, scene, w, h, { truth, alpha: runner.alpha, timeMs: now, selectedRid: sel.current, cam: director.sceneCam, book });
       else {
         const selUnit = sel.current >= 0 ? sim.responders[sel.current].unitId : -1;
         drawCity(ctx, sim, director.cam, w, h, { focus: director.focus, truth, timeMs: now, alpha: runner.alpha, selectedUnit: selUnit, hover: hoverAt });
@@ -94,7 +98,7 @@ export function Viewport({ runner, director, sound, selectedRid, onSelectRid, on
         if (!sc || I.phase !== 'onscene' || (scene && I.id === director.focus)) continue;
         const p = place(I.id); shown++;
         ctx.save(); ctx.translate(p.x, p.y); ctx.beginPath(); ctx.rect(0, 0, PIP_W, PIP_H); ctx.clip();
-        drawScene(ctx, sim, sc, PIP_W, PIP_H, { truth, alpha: runner.alpha, timeMs: now, selectedRid: -1, mini: true });
+        drawScene(ctx, sim, sc, PIP_W, PIP_H, { truth, alpha: runner.alpha, timeMs: now, selectedRid: -1, mini: true, book });
         ctx.restore();
         const type = I.assessment ? I.assessment.type : 'unknown';
         frameBox(p.x, p.y, `사건 ${I.code} · ${I.assessment ? TYPE_NAME[type] : '확인 중'}`, TYPE_COLOR[type]);
@@ -158,7 +162,7 @@ export function Viewport({ runner, director, sound, selectedRid, onSelectRid, on
       canvas.removeEventListener('wheel', wheel);
       canvas.removeEventListener('mouseleave', leave);
     };
-  }, [runner, director, sound, onSelectRid, onSelectUnit]);
+  }, [runner, director, sound, book, onSelectRid, onSelectUnit]);
 
   return <div className="viewport" ref={wrap}><canvas ref={ref} /></div>;
 }

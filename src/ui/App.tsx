@@ -49,6 +49,25 @@ export function App() {
   // 패널은 초당 6회 정도만 다시 그린다(캔버스는 별도로 매 프레임 그린다)
   useEffect(() => { const id = window.setInterval(force, 160); return () => window.clearInterval(id); }, [force]);
 
+  // 화면 자동 검사(scripts/ui-check.cjs)가 읽는 관찰 고리. 개발 서버에서만 만들고, 값을 복사해 돌려줄 뿐 아무것도 바꾸지 않는다.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    const w = window as unknown as { __ar?: { snap: () => Record<string, unknown> } };
+    w.__ar = {
+      snap: () => {
+        const sim = runner.sim;
+        return {
+          seed: sim.seed, difficulty: JSON.parse(JSON.stringify(sim.difficulty)), tick: sim.tick, t: sim.t, hash: sim.logHash.toString(16),
+          ended: sim.ended, reportHash: sim.report ? sim.report.hash : null, shiftLen: sim.shiftLen, hardCap: sim.hardCap,
+          incidents: sim.incidents.length, paused: runner.paused, speed: runner.settings.speed, slowed: runner.slowed, autoSlow: runner.settings.autoSlow,
+          fps: runner.fps, seeks: runner.seeks, restoredTicks: runner.restoredTicks, version: runner.version,
+          camMode: director.mode, camFocus: director.focus, camManual: director.manual, now: performance.now(),
+        };
+      },
+    };
+    return () => { delete w.__ar; };
+  }, [runner, director]);
+
   const selectRid = useCallback((rid: number) => {
     setSelectedRid(rid);
     if (rid < 0) return;

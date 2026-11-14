@@ -11,6 +11,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "sweep": "tsx scripts/sweep.ts",
+    "ui-check": "node scripts/ui-check.cjs",
     "check": "tsc --noEmit && vitest run && tsx scripts/sweep.ts 40 --check"
   },
   "dependencies": {

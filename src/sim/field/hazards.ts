@@ -62,28 +62,10 @@ export function tickFire(sim: Sim, s: Scene, I: Incident): void {
     const st = s.stairTo[i];
     if (st >= 0 && s.fire[st] <= 0 && s.fuel[st] > 0) { s.heat[st] += 0.06 * sim.tune.fireSpreadMul * f; if (s.heat[st] >= 1) { s.fire[st] = 0.15; s.heat[st] = 0; } }
   }
-  // 연기 확산
-  for (let i = 0; i < n; i++) {
-    const t = s.tiles[i];
-    if (t === T.WALL || t === T.VOID) continue;
-    const indoor = isIndoor(t);
-    let target = s.fire[i];
-    const x = i % w, y = (i / w) | 0;
-    for (let d = 0; d < 4; d++) {
-      const nx = x + NB[d * 2], ny = y + NB[d * 2 + 1];
-      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
-      const j = ny * w + nx;
-      if (s.tiles[j] === T.WALL) continue;
-      const v = s.smoke[j] * (indoor ? 0.86 : 0.5);
-      if (v > target) target = v;
-    }
-    const sl = s.stairTo[i];
-    if (sl >= 0 && s.smoke[sl] * 0.9 > target) target = s.smoke[sl] * 0.9;      // 연기는 계단을 타고 오르내린다
-    if (!indoor) target *= 0.5;
-    const cur = s.smoke[i];
-    s.smoke[i] = target > cur ? cur + (target - cur) * 0.3 : cur + (target - cur) * (indoor ? 0.07 : 0.3);
-    if (s.smoke[i] < 0.01) s.smoke[i] = 0;
-  }
+  // 연기 확산. 타는 칸도 연기도 없으면 아래 순회는 아무것도 바꾸지 않으므로 건너뛴다(대부분의 현장이 그렇다)
+  let smoky = burning > 0;
+  if (!smoky) { const sm = s.smoke; for (let i = 0; i < n; i++) if (sm[i] !== 0) { smoky = true; break; } }
+  if (smoky) smokeSpread(s, w, h);
   // 가스 용기 폭발 (숨겨진 추가 위험)
   for (const p of s.props) {
     if (p.kind !== 'gas' || p.exploded) continue;
@@ -102,7 +84,7 @@ export function tickFire(sim: Sim, s: Scene, I: Incident): void {
   // 붕괴
   for (const r of s.regions) {
     if (!r.indoor || r.kind !== 'room' || s.collapseDone.has(r.id)) continue;
-    let b = 0; for (const i of r.tiles) if (s.burned[i]) b++;
+    let b = 0; if (s.burnedTiles > 0) for (const i of r.tiles) if (s.burned[i]) b++;      // 탄 칸이 하나도 없으면 셀 것도 없다
     if (b / r.tiles.length < 0.55) continue;
     s.collapseDone.add(r.id);
     if (!s.rng.chance(0.55)) continue;
@@ -117,6 +99,33 @@ export function tickFire(sim: Sim, s: Scene, I: Incident): void {
   s.burning = burning;
   if (burning === 0 && s.fireOutAt < 0 && s.kind === 'fire' && sim.t - s.startedAt > 5) s.fireOutAt = sim.t;
   if (burning > 0) s.fireOutAt = -1;
+}
+
+/**
+ * 연기 한 번 퍼지기 (tickFire 의 일부). 칸을 행 우선으로 차례로 고쳐 쓰고(앞 칸의 새 값을 뒤 칸이 읽는다),
+ * 이웃은 NB 순서(+x, -x, +y, -y)로 본다. 칸마다 하는 계산은 예전 한 줄짜리 순회와 똑같다.
+ */
+function smokeSpread(s: Scene, w: number, h: number): void {
+  const tiles = s.tiles, smoke = s.smoke, fire = s.fire, stairTo = s.stairTo;
+  for (let y = 0, i = 0; y < h; y++) {
+    for (let x = 0; x < w; x++, i++) {
+      const t = tiles[i];
+      if (t === T.WALL || t === T.VOID) continue;
+      const indoor = isIndoor(t);
+      const k = indoor ? 0.86 : 0.5;
+      let target = fire[i];
+      if (x + 1 < w && tiles[i + 1] !== T.WALL) { const v = smoke[i + 1] * k; if (v > target) target = v; }
+      if (x > 0 && tiles[i - 1] !== T.WALL) { const v = smoke[i - 1] * k; if (v > target) target = v; }
+      if (y + 1 < h && tiles[i + w] !== T.WALL) { const v = smoke[i + w] * k; if (v > target) target = v; }
+      if (y > 0 && tiles[i - w] !== T.WALL) { const v = smoke[i - w] * k; if (v > target) target = v; }
+      const sl = stairTo[i];
+      if (sl >= 0 && smoke[sl] * 0.9 > target) target = smoke[sl] * 0.9;      // 연기는 계단을 타고 오르내린다
+      if (!indoor) target *= 0.5;
+      const cur = smoke[i];
+      smoke[i] = target > cur ? cur + (target - cur) * 0.3 : cur + (target - cur) * (indoor ? 0.07 : 0.3);
+      if (smoke[i] < 0.01) smoke[i] = 0;
+    }
+  }
 }
 
 export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, radius: number, dmg: number, ev: number): void {

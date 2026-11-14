@@ -16,6 +16,7 @@ import { DEPT_COLOR, FONT } from './renderCity';
 import { alpha, disc, hash2, oval, rr, seg, visPoly } from './scene/common';
 import type { G } from './scene/common';
 import { beginDark, drawFire, drawFog, drawLight, drawRain, drawScorch, drawSmoke, drawSpray, drawVignette, hole, holePoly, smokeLayer } from './scene/fx';
+import { drawDebrisFx, drawGlassFx } from './scene/fx';
 import { CAR_COLORS, VEH_SIZE, beaconColors, civilianLook, drawCar, drawClue, drawCone, drawDebris, drawDoorLeaf, drawEmergency, drawGasTank, drawHydrant, drawLying, drawPerson, drawRoadDebris, drawBus, drawSwimmer, drawUnstable, drawValve, hostileLook, responderLook } from './scene/sprites';
 import type { ArmPose, Item, PersonLook } from './scene/sprites';
 import { buildStatic, doorHorizontal, staticSig } from './scene/staticLayer';
@@ -634,6 +635,10 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       const x = cx(f.x), y = cy(f.y);
       for (let q = 0; q < 6; q++) { const a = hash2(q, (f.t * 10) | 0) * 6.28, d = ts * (0.15 + 0.5 * k); ctx.fillStyle = `rgba(230,50,50,${0.9 * (1 - k)})`; const sz = Math.max(2, ts * 0.07); ctx.fillRect(x + Math.cos(a) * d, y + Math.sin(a) * d, sz, sz); }
       ctx.strokeStyle = `rgba(255,90,90,${0.8 * (1 - k)})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, ts * (0.25 + 0.4 * k), 0, 7); ctx.stroke();
+    } else if (f.kind === 'glass') {
+      if (!MINI) drawGlassFx(ctx, f, ts, k);
+    } else if (f.kind === 'debris') {
+      if (!MINI) drawDebrisFx(ctx, s, f, ts, k);
     } else if (f.kind === 'text') {
       ctx.globalAlpha = Math.min(1, (1 - k) * 2);
       pill(ctx, f.text ?? '', cx(f.x), cy(f.y) - ts * (0.5 + 0.9 * k), ts * 0.34, f.color ?? '#ffffff', 'rgba(8,13,18,0.9)');

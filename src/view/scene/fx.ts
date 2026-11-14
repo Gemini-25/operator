@@ -1,8 +1,9 @@
 // 현장 효과: 화염, 연기, 물줄기, 빛, 날씨. 모두 시뮬레이션 상태(불·연기 격자, 효과 목록)를 읽어 그릴 뿐이다.
 
-import type { Scene } from '../../sim/types';
+import type { Fx, Scene } from '../../sim/types';
 import { hash2 } from './common';
 import type { G } from './common';
+import { rubbleColors } from './staticLayer';
 
 function canvas(w: number, h: number): [HTMLCanvasElement, G] { const c = document.createElement('canvas'); c.width = w; c.height = h; return [c, c.getContext('2d')!]; }
 
@@ -168,6 +169,57 @@ export function drawSpray(g: G, x0: number, y0: number, x1: number, y1: number, 
   }
   const d = ts * (1.1 + 0.7 * k);
   g.globalAlpha = 0.55 * a; g.drawImage(sp.mist, x1 - d / 2, y1 - d / 2, d, d); g.globalAlpha = 1;
+}
+
+// ───────────────────────── 파손 ─────────────────────────
+/** 뾰족한 조각 하나를 (x, y) 에 그린다 */
+function chip(g: G, x: number, y: number, r: number, rot: number, col: string, sides = 3): void {
+  g.fillStyle = col; g.beginPath();
+  for (let q = 0; q < sides; q++) { const a = rot + (q / sides) * 6.2832, rad = r * (q % 2 ? 0.62 : 1); if (q) g.lineTo(x + Math.cos(a) * rad, y + Math.sin(a) * rad); else g.moveTo(x + Math.cos(a) * rad, y + Math.sin(a) * rad); }
+  g.closePath(); g.fill();
+}
+const GLASS_COLS = ['#ffffff', '#c6ecfb', '#8fd2ee', '#e9f8ff'];
+/**
+ * 유리 파편(0.5초): 흰·하늘색 조각이 창에서 튀어 나가 바닥에 떨어진다. k 는 효과의 경과 비율(0..1).
+ * 힘이 온 방향을 알면(f.x2, f.y2) 대부분 그 반대쪽으로, 모르면 창의 양쪽으로 흩어진다.
+ */
+export function drawGlassFx(g: G, f: Fx, ts: number, k: number): void {
+  const x = (f.x + 0.5) * ts, y = (f.y + 0.5) * ts, seed = ((f.t * 5) | 0) * 31 + f.x * 7 + f.y * 13;
+  const dir = f.x2 !== undefined && f.y2 !== undefined ? Math.atan2(f.y2 - f.y, f.x2 - f.x) : null;
+  const e = 1 - (1 - k) * (1 - k);                         // 빠르게 튀어 나가 느려진다
+  if (k < 0.3) {
+    // 깨지는 순간의 반짝임
+    const a = 1 - k / 0.3;
+    g.strokeStyle = `rgba(255,255,255,${0.8 * a})`; g.lineWidth = Math.max(1, ts * 0.04); g.lineCap = 'round';
+    for (let q = 0; q < 6; q++) { const an = (q / 6) * 6.2832 + hash2(seed, 3) * 3, r0 = ts * 0.1, r1 = ts * (0.28 + 0.5 * k); g.beginPath(); g.moveTo(x + Math.cos(an) * r0, y + Math.sin(an) * r0); g.lineTo(x + Math.cos(an) * r1, y + Math.sin(an) * r1); g.stroke(); }
+  }
+  for (let q = 0; q < 8; q++) {
+    const h1 = hash2(seed + q * 7, 31), h2 = hash2(seed + 5, q * 13 + 1), h3 = hash2(q + 3, seed + 17);
+    const an = dir === null ? h1 * 6.2832 : dir + (h1 - 0.5) * 1.9 + (q === 5 || q === 7 ? Math.PI : 0);      // 두 조각은 안쪽으로 떨어진다
+    const d = ts * (0.22 + 0.95 * h2) * e, lift = Math.sin(k * Math.PI) * ts * 0.16 * h3;      // 살짝 떠올랐다가 떨어진다
+    g.globalAlpha = k < 0.65 ? 1 : (1 - k) / 0.35;
+    chip(g, x + Math.cos(an) * d, y + Math.sin(an) * d - lift, ts * (0.05 + 0.075 * h3) * (1 - 0.3 * k), h1 * 6.28 + k * (5 + 9 * h2), GLASS_COLS[q % GLASS_COLS.length], q % 2 ? 3 : 4);
+  }
+  g.globalAlpha = 1;
+}
+/** 가구 파편(0.6초): 그 가구 색의 조각이 사방으로 튀고 먼지가 인다 */
+export function drawDebrisFx(g: G, s: Scene, f: Fx, ts: number, k: number): void {
+  const sp = sprites();
+  const x = (f.x + 0.5) * ts, y = (f.y + 0.5) * ts, seed = ((f.t * 5) | 0) * 17 + f.x * 11 + f.y * 5;
+  const tx = Math.round(f.x), ty = Math.round(f.y), cols = rubbleColors(s.decor[ty * s.w + tx], tx, ty);      // 바닥에 남는 더미(staticLayer)와 같은 색
+  const e = 1 - (1 - k) * (1 - k);
+  // 먼지
+  const d0 = ts * (0.9 + 1.5 * e);
+  g.globalAlpha = 0.5 * (1 - k); g.drawImage(sp.puff, x - d0 / 2, y - d0 / 2, d0, d0);
+  for (let q = 0; q < 10; q++) {
+    const h1 = hash2(seed + q * 5, 41), h2 = hash2(seed + 9, q * 7 + 2), h3 = hash2(q + 1, seed + 23);
+    const an = h1 * 6.2832, d = ts * (0.18 + 0.85 * h2) * e, lift = Math.sin(k * Math.PI) * ts * 0.22 * h3;
+    g.globalAlpha = k < 0.7 ? 1 : (1 - k) / 0.3;
+    const px = x + Math.cos(an) * d, py = y + Math.sin(an) * d - lift, r = ts * (0.05 + 0.08 * h3);
+    chip(g, px + ts * 0.02, py + lift + ts * 0.03, r * 0.9, h1 * 6.28, 'rgba(0,0,0,0.25)', 4);      // 바닥에 드리운 그림자
+    chip(g, px, py, r, h1 * 6.28 + k * (3 + 7 * h2), cols[q % cols.length], q % 3 ? 4 : 3);
+  }
+  g.globalAlpha = 1;
 }
 
 // ───────────────────────── 어둠과 빛 ─────────────────────────

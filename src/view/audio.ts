@@ -95,7 +95,7 @@ export class SoundDirector {
         }
       } else if (e.kind === 'shift' && sim.ended) { [392, 523, 659, 784].forEach((f, k) => this.tone(f, 0.4, 0.09, 'triangle', k * 0.16)); }
     }
-    // 관찰 중인 현장의 효과: 총성, 폭발, 방수
+    // 관찰 중인 현장의 효과: 총성, 폭발, 방수, 깨지는 유리와 부서지는 가구
     if (o.inScene && o.focus >= 0 && !o.paused) {
       const s = sim.scenes[o.focus];
       if (s) {
@@ -109,6 +109,8 @@ export class SoundDirector {
           else if (f.kind === 'boom') { if (this.ok('boom', 0.4)) { this.tone(70, 0.6, 0.3, 'sine', 0, 32); this.burst(0.5, 0.25, 500, 0.5, 'lowpass'); } }
           else if (f.kind === 'hit') { if (this.ok('hit', 0.2)) this.tone(110, 0.1, 0.12, 'triangle', 0, 70); }
           else if (f.kind === 'spray') { if (!fast && this.ok('spray', 0.28)) this.burst(0.22, 0.03, 5200, 0.6, 'highpass'); }
+          else if (f.kind === 'glass') { if (this.ok('glass', 0.12)) { this.burst(0.13, 0.17, 5600, 0.7, 'highpass'); this.tone(3300, 0.1, 0.045, 'sine', 0.015); this.tone(4700, 0.14, 0.035, 'sine', 0.06); } }      // 짧고 높은 잡음 + 맑은 고음 둘
+          else if (f.kind === 'debris') { if (this.ok('debris', 0.25)) { this.burst(0.24, 0.22, 300, 0.6, 'lowpass'); this.tone(95, 0.13, 0.1, 'triangle', 0, 55); } }      // 낮고 둔탁한 잡음
         }
         this.fxT.set(s.id, newest);
       }

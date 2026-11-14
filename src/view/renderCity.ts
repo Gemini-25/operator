@@ -5,7 +5,7 @@ import { drawDisasterScreen, drawDisasterWorld } from './city/disasterLayer';
 import type { Sim } from '../sim/engine';
 import { placeAt } from '../sim/city';
 import { KIND_NAME } from '../sim/cityPlan';
-import type { Incident, Place, Unit } from '../sim/types';
+import type { Facility, Incident, Place, Unit } from '../sim/types';
 import { fmtDur } from '../sim/util';
 import type { CityCam } from './camera';
 import { buildCityStatic, facilityLot } from './city/staticCity';
@@ -13,7 +13,9 @@ import type { CityLamp } from './city/staticCity';
 import { drawIcon } from './icons';
 import { hash2, mix } from './scene/common';
 import { drawLight } from './scene/fx';
-import { FIELD_COLOR, drawFugitive, drawToken } from './city/tokens';
+import { FACILITY_COLOR, FIELD_COLOR, FIELD_TEXT, drawFacilityBadge, drawFugitive, drawToken, placeLabel } from './city/tokens';
+import type { Box } from './city/tokens';
+import { facilityMarkKey } from './marks';
 
 export const DEPT_COLOR: Record<string, string> = { fire: '#ff7a45', ems: '#2fd39a', police: '#5aa9ff' };
 export const TYPE_COLOR: Record<string, string> = { fire: '#ff6b3d', traffic: '#ffc24a', search: '#58d68d', armed: '#b98cff', medical: '#ff7eb6', collapse: '#d6a878', hazmat: '#b6e04a', water: '#4fb8ff', unknown: '#9aa7b4' };
@@ -26,7 +28,22 @@ let staticLayer: { c: HTMLCanvasElement; lamps: CityLamp[] } | null = null;
 let staticFor: unknown = null;
 /** 이 배율부터 대기 중인 부대를 시설 옆에 하나씩 그린다. 그보다 멀면 시설 이름 옆의 숫자로만 보인다. */
 const IDLE_ZOOM = 2;
+/** 부대 표식(돌)의 기본 반지름 (화면 화소). 배율에 따라 markScale 만큼 커진다 */
+const TOKEN_R = 10;
+/** 표식 크기 보정: 가까이 볼수록 조금 커진다 */
+function markScale(zoom: number): number { return Math.min(1.35, 0.9 + 0.14 * zoom); }
 let labelLayer: { c: HTMLCanvasElement; key: string; ready: boolean } | null = null;
+/** 부대가 소속된 시설의 이름 (이름표에 대기 부대 수를 붙일 곳) */
+let hostFor: unknown = null, hostNames = new Set<string>();
+interface FacLabel { f: Facility; x: number; y: number; key: string; col: string; hosts: boolean; tw: number; box: Box }
+const widths = new Map<string, number>();
+/** 글자 폭 (같은 글자·크기는 한 번만 잰다) */
+function textWidth(ctx: CanvasRenderingContext2D, text: string, fs: number): number {
+  const k = fs + '|' + text;
+  let v = widths.get(k);
+  if (v === undefined) { ctx.font = `600 ${fs}px ${FONT}`; v = ctx.measureText(text).width; widths.set(k, v); }
+  return v;
+}
 
 function h2(x: number, y: number): number { return hash2(x, y); }
 
@@ -63,7 +80,7 @@ export function unitScreen(sim: Sim, u: Unit, xf: Xf, alpha: number, len: number
     const f = city.facilities.find((q) => q.name === u.homeName);
     if (!f) { const n = city.nodes[u.homeNode]; return { x: n.x * xf.scale + xf.ox, y: n.y * xf.scale + xf.oy, angle: 0 }; }      // 인근 도시 지원 부대: 도시 가장자리
     let k = 0; for (const q of sim.units) { if (q.id === u.id) break; if (q.homeName === u.homeName && !q.air && !q.sea && (q.state === 'available' || q.state === 'oos')) k++; }
-    return { x: f.x * xf.scale + xf.ox + 16 + len * 0.62 + (k >> 1) * (len + 5), y: f.y * xf.scale + xf.oy + (k & 1) * (len * 0.56), angle: 0 };      // 두 줄로 세운다
+    return { x: f.x * xf.scale + xf.ox + 16 + len * 0.62 + (k >> 1) * (len + 3), y: f.y * xf.scale + xf.oy + (k & 1) * (len - 1), angle: 0 };      // 두 줄로 세운다 (둥근 돌이 서로 겹치지 않게)
   }
   if (u.state === 'onscene' && u.incidentId !== null) {
     const I = sim.incidents[u.incidentId];
@@ -99,7 +116,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
   const xf = cityXf(sim, cam, w, h);
   const city = sim.city;
   const mini = !!o.mini;
-  const zs = mini ? 1 : Math.min(1.35, 0.9 + 0.14 * cam.zoom);     // 표식 크기 보정
+  const zs = mini ? 1 : markScale(cam.zoom);     // 표식 크기 보정
   const sx = (wx: number) => wx * xf.scale + xf.ox, sy = (wy: number) => wy * xf.scale + xf.oy;
 
   // ── 월드 레이어 ──
@@ -152,6 +169,23 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
 
   // ── 화면 레이어: 도로 이름, 건물 이름, 시설, 사건, 차량 ──
   const onScreen = (q: { x: number; y: number; w: number; h: number }): boolean => sx(q.x + q.w) > 0 && sx(q.x) < w && sy(q.y + q.h) > 0 && sy(q.y) < h;
+  // 시설 배지와 이름표의 자리. 이름표는 배지의 오른쪽·왼쪽·아래·위 가운데 다른 배지·이름표와 겹치지 않는 첫 자리에 둔다.
+  // 시점이 같으면 자리도 같다(대기 부대 수와 무관) — 한 번 그려 두는 건물 이름 층이 이 자리를 피해 그려도 어긋나지 않는다.
+  const facs: FacLabel[] = [];
+  let facBoxes: Box[] = [];
+  if (!mini) {
+    if (hostFor !== sim) { hostFor = sim; hostNames = new Set(sim.units.map((u) => u.homeName)); }
+    const bs = 20 * zs, fs = Math.round(11 * zs), lh = fs * 1.55, boxes: Box[] = [];
+    for (const f of city.facilities) {
+      const lot = facilityLot(f), x = sx(lot.x) - bs * 0.1, y = sy(lot.y) - bs * 0.1;
+      if (x < -200 || x > w + 200 || y < -60 || y > h + 60) continue;
+      const key = facilityMarkKey(f.kind, f.name), hosts = hostNames.has(f.name);
+      facs.push({ f, x, y, key, col: FACILITY_COLOR[key], hosts, tw: textWidth(ctx, f.name, fs), box: { x0: 0, y0: 0, x1: 0, y1: 0 } });
+      boxes.push({ x0: x - bs / 2 - 1, y0: y - bs / 2 - 1, x1: x + bs / 2 + 1, y1: y + bs / 2 + 1 });
+    }
+    for (const L of facs) { L.box = placeLabel(boxes, L.x, L.y, bs / 2, L.tw + fs * 0.9 + (L.hosts ? lh * 0.95 : 0), lh); boxes.push(L.box); }
+    facBoxes = boxes;
+  }
   // 이름표는 글자 테두리를 그리는 비용이 크다. 시점이 멈춰 있으면 한 번 그려 둔 층을 다시 쓰고, 움직이는 동안에는 중요한 이름만 그린다.
   const drawLabels = (lg: CanvasRenderingContext2D, full: boolean): void => {
     const halo = (text: string, x: number, y: number, fs: number, fg: string, weight = 600): void => {
@@ -180,7 +214,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
       const cands: Place[] = [];
       for (const q of city.places) { if (q.facility >= 0 || (q.rank ?? 0) < need || q.kind === 'riverside') continue; if (onScreen(q)) cands.push(q); }
       cands.sort((a, b2) => (b2.rank ?? 0) - (a.rank ?? 0) || b2.w * b2.h - a.w * a.h);
-      const taken: number[][] = [];
+      const taken: number[][] = facBoxes.map((b) => [b.x0 - 2, b.y0 - 1, b.x1 + 2, b.y1 + 1]);      // 시설 배지와 이름표가 놓인 자리는 비워 둔다
       for (const q of cands) {
         const big = (q.rank ?? 0) >= 3, text = q.kind === 'apartment' ? q.name.split(' ').pop()! : q.name.replace(/^가온공항 /, big ? '가온공항 ' : ''), fs = big ? 11.5 * zs : q.kind === 'apartment' ? 9.5 : 10;
         lg.font = `${big ? 700 : 600} ${fs}px ${FONT}`;
@@ -214,23 +248,24 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     const mx = sx((A.x + B.x) / 2), my = sy((A.y + B.y) / 2);
     ctx.fillStyle = '#ff5d5d'; ctx.beginPath(); ctx.arc(mx, my, 8, 0, 7); ctx.fill(); ctx.fillStyle = '#0b1219'; ctx.fillRect(mx - 5, my - 1.5, 10, 3);
   }
-  for (const f of city.facilities) {
-    const col = f.kind === 'fireStation' ? DEPT_COLOR.fire : f.kind === 'police' ? DEPT_COLOR.police : f.kind === 'hospital' ? DEPT_COLOR.ems : '#9fb0c0';
+  // 시설: 축소 창에서는 색 네모, 지도에서는 기호가 든 네모 배지 + 이름표(+ 대기 중인 부대 수)
+  if (mini) for (const f of city.facilities) {
     const lot = facilityLot(f);
-    const s = mini ? 7 : 18 * zs, x = sx(lot.x) - (mini ? 0 : s * 0.1), y = sy(lot.y) - (mini ? 0 : s * 0.1);
-    if (mini) { ctx.fillStyle = col; ctx.beginPath(); ctx.roundRect(x - s / 2, y - s / 2, s, s, 2); ctx.fill(); continue; }
-    ctx.save(); ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = 8; ctx.shadowOffsetY = 2;
-    ctx.fillStyle = '#0d151d'; ctx.beginPath(); ctx.roundRect(x - s / 2, y - s / 2, s, s, s * 0.28); ctx.fill(); ctx.restore();
-    ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath(); ctx.roundRect(x - s / 2, y - s / 2, s, s, s * 0.28); ctx.stroke();
-    ctx.fillStyle = col; ctx.font = `800 ${Math.round(10 * zs)}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    if (f.kind === 'hospital') { ctx.fillRect(x - s * 0.28, y - s * 0.08, s * 0.56, s * 0.16); ctx.fillRect(x - s * 0.08, y - s * 0.28, s * 0.16, s * 0.56); }
-    else ctx.fillText(f.kind === 'fireStation' ? '119' : f.kind === 'police' ? '112' : f.name[0], x, y + 0.5);
-    ctx.font = `600 ${Math.round(11 * zs)}px ${FONT}`; ctx.textAlign = 'left';
-    const tw = ctx.measureText(f.name).width;
-    ctx.fillStyle = 'rgba(8,13,18,0.72)'; ctx.beginPath(); ctx.roundRect(x + s / 2 + 3, y - 8 * zs, tw + 10, 16 * zs, 5); ctx.fill();
-    ctx.fillStyle = 'rgba(226,236,246,0.92)'; ctx.fillText(f.name, x + s / 2 + 8, y + 0.5);
-    const waiting = sim.units.filter((u) => u.homeName === f.name && u.state === 'available').length;
-    if (waiting > 0) { const bx = x + s / 2 + tw + 22 * zs, br = 7.5 * zs; ctx.fillStyle = '#0d151d'; ctx.beginPath(); ctx.arc(bx, y, br, 0, 6.2832); ctx.fill(); ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.stroke(); ctx.fillStyle = '#e8f0f7'; ctx.font = `800 ${Math.round(10 * zs)}px ${FONT}`; ctx.textAlign = 'center'; ctx.fillText(String(waiting), bx, y + 0.5); }
+    ctx.fillStyle = FACILITY_COLOR[f.kind] ?? FACILITY_COLOR.public; ctx.beginPath(); ctx.roundRect(sx(lot.x) - 3.5, sy(lot.y) - 3.5, 7, 7, 2); ctx.fill();
+  }
+  for (const L of facs) {
+    const bs = 20 * zs, fs = Math.round(11 * zs), b = L.box, lh = b.y1 - b.y0, cy = (b.y0 + b.y1) / 2;
+    drawFacilityBadge(ctx, L.x, L.y, bs, L.key, L.col);
+    ctx.fillStyle = 'rgba(8,13,18,0.8)'; ctx.beginPath(); ctx.roundRect(b.x0, b.y0, b.x1 - b.x0, lh, lh * 0.32); ctx.fill();
+    ctx.font = `600 ${fs}px ${FONT}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(226,236,246,0.94)'; ctx.fillText(L.f.name, b.x0 + fs * 0.45, cy + 0.5);
+    if (L.hosts) {
+      // 대기 중인 부대 수 (수량이므로 숫자 그대로)
+      const waiting = sim.units.filter((u) => u.homeName === L.f.name && u.state === 'available').length;
+      const br = lh * 0.36, bx = b.x1 - lh * 0.5;
+      ctx.fillStyle = waiting ? L.col : 'rgba(120,138,156,0.3)'; ctx.beginPath(); ctx.arc(bx, cy, br, 0, 6.2832); ctx.fill();
+      ctx.fillStyle = waiting ? '#0b1219' : 'rgba(200,212,223,0.75)'; ctx.font = `800 ${Math.round(fs * 0.9)}px ${FONT}`; ctx.textAlign = 'center'; ctx.fillText(String(waiting), bx, cy + 0.5);
+    }
   }
   // 사건 핀
   for (const I of sim.incidents) {
@@ -263,38 +298,39 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     ctx.globalAlpha = 1;
     if (mini) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); if (focused) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.2; ctx.beginPath(); ctx.arc(x, y, r + 2.5, 0, 7); ctx.stroke(); } continue; }
     if (I.phase !== 'unreported') { ctx.globalCompositeOperation = 'lighter'; drawLight(ctx, x, y, r * 3.4, col, 0.3 + 0.12 * Math.sin(o.timeMs / 300)); ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1; }
-    ctx.save(); ctx.shadowColor = 'rgba(0,0,0,0.65)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 3;
-    ctx.fillStyle = '#0d151d'; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); ctx.restore();
+    // 핀: 어두운 바탕 + 유형색 테 + 유형 아이콘. 그림자와 테의 굵기는 부대 표식과 같은 비례다
+    const plw = Math.max(2, r * 0.17);
+    ctx.fillStyle = 'rgba(0,0,0,0.5)'; ctx.beginPath(); ctx.arc(x + r * 0.1, y + r * 0.18, r + plw * 0.5, 0, 7); ctx.fill();
     const pg = ctx.createRadialGradient(x - r * 0.3, y - r * 0.4, 1, x, y, r);
-    pg.addColorStop(0, mix(col, '#0d151d', 0.7)); pg.addColorStop(1, '#0b1219');
-    ctx.fillStyle = pg; ctx.strokeStyle = col; ctx.lineWidth = 3;
+    pg.addColorStop(0, mix(col, '#0d151d', 0.72)); pg.addColorStop(1, '#0b1219');
+    ctx.fillStyle = pg; ctx.strokeStyle = col; ctx.lineWidth = plw;
     ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); ctx.stroke();
-    drawIcon(ctx, I.phase === 'call' && !I.assessment ? 'phone' : type, x, y, r * 1.25, col);
+    drawIcon(ctx, I.phase === 'call' && !I.assessment ? 'phone' : type, x, y, r * 1.2, col);
     // 경과 링: 신고 후 첫 도착까지는 기준 시간 대비 진행도, 도착 후에는 초록
     if (I.reportedAt >= 0) {
       const arrived = I.firstArrivalAt >= 0;
       const frac = arrived ? 1 : Math.min(1, (sim.t - I.reportedAt) / RESP_LIMIT[type]);
-      ctx.strokeStyle = arrived ? '#5ad17a' : frac >= 1 ? '#ff5d5d' : frac > 0.7 ? '#ffb454' : '#e8f0f7'; ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.arc(x, y, r + 5, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac); ctx.stroke();
+      ctx.strokeStyle = arrived ? '#5ad17a' : frac >= 1 ? '#ff5d5d' : frac > 0.7 ? '#ffb454' : '#e8f0f7'; ctx.lineWidth = Math.max(2, r * 0.14);
+      ctx.beginPath(); ctx.arc(x, y, r + plw * 0.5 + r * 0.2, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac); ctx.stroke();
     }
-    if (focused) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]); ctx.lineDashOffset = -o.timeMs / 60; ctx.beginPath(); ctx.arc(x, y, r + 10, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
+    if (focused) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]); ctx.lineDashOffset = -o.timeMs / 60; ctx.beginPath(); ctx.arc(x, y, r + plw + r * 0.46, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
     label(ctx, I.phase === 'unreported' ? '미신고' : I.code, x + r * 0.95, y - r * 0.95, 10.5 * zs, '#0b1219', col);
     const st = I.pursuit && I.pursuit.state === 'driving' && I.phase !== 'unreported' ? `추격 중 · ${I.assigned.length}팀${I.pursuit.tracked ? ' · 시야 확보' : ''}` : I.phase === 'unreported' ? '아직 신고되지 않음' : I.phase === 'call' ? '신고 통화 중' : I.phase === 'onscene' ? `현장 대응 ${fmtDur(sim.t - I.firstArrivalAt)}` : I.assigned.length ? `출동 ${I.assigned.length}대 · ${fmtDur(sim.t - I.reportedAt)}` : `배정 대기 ${fmtDur(sim.t - I.reportedAt)}`;
     label(ctx, st, x, y + r + 16 * zs, 11 * zs, I.phase === 'unreported' ? '#9aa7b4' : '#e8f0f7', 'rgba(8,13,18,0.86)', I.phase === 'unreported' ? undefined : col);
   }
-  // 부대: 둥근 표식 (색 = 분야, 글자 = 종류, 테 = 상태). 대기 중인 부대는 가까이 볼 때만 하나씩 그린다
-  const tr = mini ? 3.2 : 9 * zs, len = tr * 2 + 3, wid = tr;
+  // 부대: 둥근 표식 (색 = 분야, 기호 = 종류, 아래의 점 = 번호, 테 = 상태). 대기 중인 부대는 가까이 볼 때만 하나씩 그린다
+  const tr = mini ? 3.2 : TOKEN_R * zs, len = tr * 2 + 3;
   for (const u of sim.units) {
     if (u.aid && u.state === 'oos') continue;      // 관할로 돌아간 지원 부대
     const idle = u.state === 'available' || u.state === 'oos';
     if (mini && (idle || u.state === 'onscene')) continue;
     if (idle && cam.zoom < IDLE_ZOOM && !u.air && !u.sea && u.id !== o.selectedUnit) continue;
     const p = unitScreen(sim, u, xf, o.alpha, len);
-    drawToken(ctx, p.x, p.y, tr, { field: u.field ?? (u.dept === 'police' ? 'police' : u.dept === 'ems' ? 'rescue' : 'fire'), kind: u.kind, state: u.state, no: (u.callsign.match(/\d+$/) ?? [''])[0], timeMs: o.timeMs, font: FONT, angle: p.angle, selected: u.id === o.selectedUnit, mini });
+    drawToken(ctx, p.x, p.y, tr, { field: u.field ?? (u.dept === 'police' ? 'police' : u.dept === 'ems' ? 'rescue' : 'fire'), kind: u.kind, state: u.state, no: +(u.callsign.match(/\d+$/) ?? ['0'])[0], timeMs: o.timeMs, angle: p.angle, selected: u.id === o.selectedUnit, mini });
     if (mini || idle || u.state === 'onscene') continue;
     if (cam.zoom >= 1.8 || (u.incidentId !== null && u.incidentId === o.focus) || u.id === o.selectedUnit) {
       const eta = u.state === 'enroute' ? ` ${Math.max(0, Math.round(u.estArrive - sim.t))}초` : u.state === 'transport' ? ' 이송' : u.state === 'returning' ? ' 복귀' : '';
-      label(ctx, u.callsign + eta, p.x, p.y - tr - 11, 10 * zs, FIELD_COLOR[u.field ?? 'police']);
+      label(ctx, u.callsign + eta, p.x, p.y - tr * 1.62 - 7, 10 * zs, FIELD_TEXT[u.field ?? 'police']);
     }
   }
   // 도주 차량: 관찰자 시점에서는 늘 보이고, AI 시점에서는 부대의 시야에 있을 때만 보인다
@@ -307,8 +343,8 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
       p.trail.forEach((q, i) => (i ? ctx.lineTo(sx(q[0]), sy(q[1])) : ctx.moveTo(sx(q[0]), sy(q[1])))); ctx.lineTo(x, y); ctx.stroke(); ctx.setLineDash([]);
     }
     if (mini) { ctx.fillStyle = '#ff5d5d'; ctx.beginPath(); ctx.arc(x, y, 3.5, 0, 7); ctx.fill(); continue; }
-    drawFugitive(ctx, x, y, tr, p.kind === 'kidnap' ? '납' : '난', o.timeMs, FONT);
-    label(ctx, `${p.kind === 'kidnap' ? '납치 차량' : '난폭 운전 차량'} · ${I.code}`, x, y - wid - 10, 10.5 * zs, '#ffd0d0', 'rgba(60,12,12,0.9)', 'rgba(255,93,93,0.8)');
+    drawFugitive(ctx, x, y, tr * 1.1, o.timeMs);
+    label(ctx, `${p.kind === 'kidnap' ? '납치 차량' : '난폭 운전 차량'} · ${I.code}`, x, y - tr * 1.1 - 13, 10.5 * zs, '#ffd0d0', 'rgba(60,12,12,0.9)', 'rgba(255,93,93,0.8)');
   }
   // 마우스를 올린 건물·터·도로의 정보
   if (!mini && o.hover) {
@@ -366,7 +402,9 @@ export function hitCity(sim: Sim, cam: CityCam, w: number, h: number, px: number
     const d = Math.hypot(ip.x * xf.scale + xf.ox - px, ip.y * xf.scale + xf.oy - py);
     if (d < bd) { bd = d; incident = I.id; }
   }
-  let unit = -1, ud = 20;
-  for (const u of sim.units) { if (u.aid && u.state === 'oos') continue; if ((u.state === 'available' || u.state === 'oos') && cam.zoom < IDLE_ZOOM && !u.air && !u.sea) continue; const p = unitScreen(sim, u, xf, 1, 21); const d = Math.hypot(p.x - px, p.y - py); if (d < ud) { ud = d; unit = u.id; } }
+  // 부대: 그릴 때와 같은 크기·같은 자리로 잰다 (돌의 반지름 + 상태 테의 여유)
+  const tr = TOKEN_R * markScale(cam.zoom);
+  let unit = -1, ud = tr + 7;
+  for (const u of sim.units) { if (u.aid && u.state === 'oos') continue; if ((u.state === 'available' || u.state === 'oos') && cam.zoom < IDLE_ZOOM && !u.air && !u.sea) continue; const p = unitScreen(sim, u, xf, 1, tr * 2 + 3); const d = Math.hypot(p.x - px, p.y - py); if (d < ud) { ud = d; unit = u.id; } }
   return { incident, unit, wx, wy };
 }

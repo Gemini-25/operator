@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { nodeName } from '../sim/city';
 import { PROBLEM_LABEL } from '../sim/debrief';
 import { DISASTER_DESC, DISASTER_KINDS, DISASTER_NAME, KNOBS, PRESETS, difficultyLabel, overallLevel, presetOf } from '../sim/difficulty';
@@ -157,6 +157,7 @@ export function LogPanel({ sim, director, truth, onJump }: { sim: Sim; director:
   const [major, setMajor] = useState(false);
   const box = useRef<HTMLDivElement>(null);
   const stick = useRef(true);
+  const lastTop = useRef(0);
   const filtered: SimEvent[] = [];
   for (let i = sim.events.length - 1; i >= 0 && filtered.length < 140; i--) {
     const e = sim.events[i];
@@ -169,7 +170,24 @@ export function LogPanel({ sim, director, truth, onJump }: { sim: Sim; director:
   filtered.reverse();
   const lastId = filtered.length ? filtered[filtered.length - 1].id : -1;
   const byCall = new Map(sim.units.map((u) => [u.callsign, u]));
-  useEffect(() => { const el = box.current; if (el && stick.current) el.scrollTop = el.scrollHeight; }, [lastId]);
+  // 그리기 전에 내린다: 새 줄이 가려진 채 한 번 그려지지 않는다
+  useLayoutEffect(() => { const el = box.current; if (el && stick.current) el.scrollTop = el.scrollHeight; }, [lastId]);
+  // 칸의 높이가 바뀌어도(통화 칸을 접고 펼 때) 맨 아래에 붙어 있던 기록은 맨 아래를 계속 보여 준다
+  useEffect(() => {
+    const el = box.current; if (!el) return;
+    const ro = new ResizeObserver(() => { if (stick.current) el.scrollTop = el.scrollHeight; });
+    ro.observe(el); return () => ro.disconnect();
+  }, []);
+  // 붙음을 푸는 것은 사용자가 위로 올렸을 때(scrollTop 이 줄었을 때)뿐이다. 칸이 줄거나(통화 칸이 펼쳐지는 0.18초)
+  // 새 줄이 붙어 맨 아래와 틈이 벌어진 것은 위로 올린 것이 아니다 — 틈만 보고 풀면 펼친 뒤 새 기록이 가려진 채 남는다.
+  // 스크롤 앵커링은 위로 올려 읽는 동안만 켠다: 140줄 상한에서 맨 위 줄이 빠질 때 읽던 줄을 제자리에 두고,
+  // 붙어 있는 동안에는 그 보정이 scrollTop 을 줄여 위로 올린 것으로 읽히지 않게 한다(styles.css 의 .scroll.log).
+  const onScroll = (el: HTMLDivElement) => {
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) stick.current = true;
+    else if (el.scrollTop < lastTop.current - 1) stick.current = false;
+    lastTop.current = el.scrollTop;
+    el.style.overflowAnchor = stick.current ? '' : 'auto';
+  };
   return (
     <div className="panel-section grow">
       <h3>AI 관제 · 무전 기록
@@ -178,7 +196,7 @@ export function LogPanel({ sim, director, truth, onJump }: { sim: Sim; director:
           <button className={major ? 'on' : ''} onClick={() => setMajor(!major)}>주요만</button>
         </span>
       </h3>
-      <div className="scroll log" ref={box} onScroll={(e) => { const el = e.currentTarget; stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40; }}>
+      <div className="scroll log" ref={box} onScroll={(e) => onScroll(e.currentTarget)}>
         {filtered.map((e) => {
           const inc = e.incidentId >= 0 ? sim.incidents[e.incidentId] : null;
           // 대원과 부대의 무전은 그 부대의 분야색 점 (지도·부대 목록의 표식과 같은 색)
@@ -440,40 +458,6 @@ export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel 
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-// ───────────────────────── 중앙: 신고 통화창 ─────────────────────────
-export function CallPanel({ sim, truth }: { sim: Sim; truth: boolean }) {
-  let call = sim.activeCall >= 0 ? sim.calls[sim.activeCall] : null;
-  if (!call) for (let i = sim.calls.length - 1; i >= 0; i--) { const c = sim.calls[i]; if (c.state === 'done' && c.endedAt >= 0 && sim.t - c.endedAt < 6) { call = c; break; } }
-  const ringing = sim.calls.filter((c) => c.state === 'ringing').length;
-  if (!call) return ringing ? <div className="call"><div className="call-head"><Icon name="phone" size={15} /><b>신고 전화 대기 {ringing}건</b><span className="live">● 벨 울림</span></div></div> : null;
-  const I = call.incidentId >= 0 ? sim.incidents[call.incidentId] : null;
-  const lines = call.transcript.slice(-5);
-  const claims = I ? I.claims.filter((c) => c.callId === call!.id) : [];
-  const active = call.state === 'active';
-  return (
-    <div className={`call ${active ? 'active' : 'ended'}`}>
-      <div className="call-head">
-        <span className={`ring ${active ? 'on' : ''}`}><Icon name="phone" size={15} /></span>
-        <b>{call.kind === 'nuisance' ? '비긴급 전화' : call.isFollowup ? '추가 신고' : '신고 통화'}</b>{I && <span className="inc">{I.code}</span>}
-        <span className="dur">{fmtDur((active ? sim.t : call.endedAt) - call.answeredAt)}</span>
-        {active ? <span className="live">● 통화 중</span> : <span className="dim">통화 종료</span>}
-      </div>
-      <div className="call-sub">신고 접수 AI ↔ {call.kind === 'nuisance' ? '발신자' : '신고자'} {call.caller.name} {call.kind !== 'nuisance' && <span className="dim">· 화법: {call.caller.persona === 'prank' && !truth ? '확인 중' : personaName(call.caller.persona)}</span>}</div>
-      <div className="bubbles">
-        {lines.map((l, k) => <div key={call!.transcript.length - lines.length + k} className={`bub ${l.who === 'CALLER' ? 'caller' : 'ai'}`}>{l.text}</div>)}
-        {active && call.kind !== 'nuisance' && call.phase === 'wait' && <div className="bub caller typing"><i /><i /><i /></div>}
-      </div>
-      {claims.length > 0 && (
-        <div className="extracted">
-          <span className="dim">AI가 정리한 정보</span>
-          {claims.map((c, k) => <span key={k} className={`chip2 ${c.conf < 0.5 ? 'unsure' : ''} ${truth && !c.truthful ? 'wrong' : ''}`} title={truth && c.note ? c.note : c.text}>{topicName(c.topic)} {pct(c.conf)}{truth && !c.truthful ? ' ✕' : ''}</span>)}
-        </div>
-      )}
-      {ringing > 0 && <div className="queue">다른 신고 {ringing}건이 대기 중입니다</div>}
     </div>
   );
 }

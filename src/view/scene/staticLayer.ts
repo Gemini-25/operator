@@ -24,6 +24,10 @@ export function staticSig(s: Scene): number {
   let h = 2166136261 ^ s.floorMat;
   for (let i = 0; i < s.tiles.length; i++) h = Math.imul(h ^ (s.tiles[i] + s.decor[i] * 16 + s.damage[i] * 512), 16777619);
   for (const p of s.props) if (p.kind === 'unstable' && p.mitigated) h = Math.imul(h ^ (p.id + 77), 16777619);
+  // 파손: 깨진 창의 수와 가구가 받은 피해의 합 (둘 다 늘기만 하므로 무엇이든 바뀌면 값이 달라진다)
+  let glass = 0, worn = 0;
+  for (let i = 0; i < s.glass.length; i++) { glass += s.glass[i]; worn += s.decorHp[i]; }
+  h = Math.imul(h ^ (glass + worn * 64), 16777619);
   return h >>> 0;
 }
 
@@ -204,7 +208,7 @@ function furniture(g: G, kind: number, h: number, woodFloor: boolean): void {
   const wood = woodFloor ? '#5d442e' : '#8b6b47', woodTop = woodFloor ? '#6f5339' : '#a07d55';
   switch (kind) {
     case DECOR.BED: {
-      const bl = ['#4d6a90', '#7c4b55', '#4e7b63', '#8d7c4a', '#646c7a'][(hv(1) * 5) | 0];
+      const bl = BLANKET[(hv(1) * BLANKET.length) | 0];
       body(() => rr(g, -0.44, -0.49, 0.88, 0.96, 0.05, '#4a3524'));
       rr(g, -0.4, -0.42, 0.8, 0.87, 0.06, '#ebe6da');
       rr(g, -0.27, -0.38, 0.54, 0.2, 0.07, '#ffffff');
@@ -340,6 +344,118 @@ function furniture(g: G, kind: number, h: number, woodFloor: boolean): void {
   }
 }
 let SHADOW_R = 32;
+
+// ───────────────────────── 파손 ─────────────────────────
+/** 가구가 부서졌을 때 남는 조각의 색 (DECOR 값 → 색 몇 가지). 칸마다 다른 색은 rubbleColors 가 고른다 */
+const RUBBLE: Record<number, string[]> = {
+  [DECOR.BED]: ['#4a3524', '#ebe6da', '#4d6a90', '#d9d3c5'],
+  [DECOR.DESK]: ['#8b6b47', '#a07d55', '#5d442e', '#f1efe8'],
+  [DECOR.TABLE]: ['#8b6b47', '#a07d55', '#f2efe8', '#56616d'],
+  [DECOR.SOFA]: ['#5f7088', '#44536a', '#d8d2c4', '#3a4658'],
+  [DECOR.CABINET]: ['#7f8993', '#5f6871', '#d6d0c2', '#6b5237'],
+  [DECOR.CRATE]: ['#a37d4c', '#b48d58', '#72562f', '#c9a877'],
+  [DECOR.MACHINE]: ['#5c6972', '#3f4a52', '#6f7d86', '#e8b93a'],
+  [DECOR.COUNTER]: ['#c2bcb0', '#77716a', '#e9e4d5', '#9a948a'],
+  [DECOR.PLANT]: ['#b56b45', '#8f5334', '#3f8a50', '#33241a'],
+  [DECOR.KITCHEN]: ['#cdc8bd', '#8f969c', '#eceff1', '#7c8790'],
+  [DECOR.SHELF]: ['#59636e', '#3d454e', '#d9694f', '#e8c15a'],
+};
+const RUBBLE_DEFAULT = ['#8b6b47', '#a07d55', '#5d442e', '#c9b89a'];
+const BLANKET = ['#4d6a90', '#7c4b55', '#4e7b63', '#8d7c4a', '#646c7a'];
+/** (x, y) 칸에 있던 가구의 조각 색. 소파의 천과 침대의 이불은 칸마다 색이 다르므로 멀쩡할 때와 같은 색을 고른다 */
+export function rubbleColors(kind: number, x: number, y: number): string[] {
+  const seed = (hash2(x * 91, y * 53) * 1e6) | 0;      // furniture() 가 쓰는 것과 같은 값
+  if (kind === DECOR.SOFA) { const f = FABRIC[(hash2(seed, 2) * FABRIC.length) | 0]; return [f, shade(f, -0.25), '#d8d2c4', shade(f, -0.4)]; }
+  if (kind === DECOR.BED) return ['#4a3524', '#ebe6da', BLANKET[(hash2(seed, 1) * BLANKET.length) | 0], '#d9d3c5'];
+  return RUBBLE[kind] ?? RUBBLE_DEFAULT;
+}
+/** 가구 몸통이 칸 안에서 차지하는 자리 [x, y, w, h] (단위 좌표, 벽 쪽이 -y). 탄흔과 깨진 모서리를 이 안에 그린다 */
+const BODY: Record<number, [number, number, number, number]> = {
+  [DECOR.BED]: [-0.4, -0.42, 0.8, 0.87], [DECOR.DESK]: [-0.45, -0.45, 0.9, 0.44], [DECOR.TABLE]: [-0.21, -0.27, 0.42, 0.42], [DECOR.SOFA]: [-0.46, -0.44, 0.92, 0.76],
+  [DECOR.CABINET]: [-0.45, -0.47, 0.9, 0.4], [DECOR.CRATE]: [-0.42, -0.44, 0.8, 0.8], [DECOR.MACHINE]: [-0.44, -0.44, 0.88, 0.84], [DECOR.COUNTER]: [-0.5, -0.47, 1.0, 0.48],
+  [DECOR.PLANT]: [-0.14, -0.14, 0.28, 0.28], [DECOR.KITCHEN]: [-0.48, -0.47, 0.96, 0.52], [DECOR.SHELF]: [-0.47, -0.45, 0.94, 0.36],
+};
+/** 들쭉날쭉한 조각 하나 (가운데 cx, cy, 크기 r) */
+function shard(g: G, cx: number, cy: number, r: number, rot: number, h: number, col: string): void {
+  g.fillStyle = col; g.beginPath();
+  const n = 3 + ((h * 3) | 0);
+  for (let q = 0; q < n; q++) { const a = rot + (q / n) * 6.2832, rad = r * (0.55 + 0.6 * hash2((h * 9973) | 0, q + 3)); if (q) g.lineTo(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad * 0.8); else g.moveTo(cx + Math.cos(a) * rad, cy + Math.sin(a) * rad * 0.8); }
+  g.closePath(); g.fill();
+}
+/** 닳은 가구: 탄흔 2~4개와 깨진 모서리. taken = 지금까지 받은 피해량 (가구 그림 위에 같은 좌표계로 덧그린다) */
+function wear(g: G, kind: number, taken: number, h: number, cols: string[]): void {
+  const hv = (k: number): number => hash2((h * 1e6) | 0, 700 + k);
+  const [bx, by, bw, bh] = BODY[kind] ?? [-0.4, -0.4, 0.8, 0.8];
+  const holes = Math.min(4, 1 + taken);
+  for (let k = 0; k < holes; k++) {
+    const x = bx + bw * (0.14 + 0.72 * hv(k * 3)), y = by + bh * (0.16 + 0.68 * hv(k * 3 + 1));
+    // 찢겨 일어난 가장자리 → 구멍
+    g.strokeStyle = 'rgba(255,238,205,0.42)'; g.lineWidth = 0.014; g.lineCap = 'round';
+    for (let q = 0; q < 4; q++) { const a = hv(k * 11 + q) * 6.2832, r0 = 0.028, r1 = 0.05 + 0.03 * hv(k * 7 + q); g.beginPath(); g.moveTo(x + Math.cos(a) * r0, y + Math.sin(a) * r0); g.lineTo(x + Math.cos(a) * r1, y + Math.sin(a) * r1); g.stroke(); }
+    disc(g, x, y, 0.036, 'rgba(22,16,10,0.55)'); disc(g, x, y, 0.022, '#0d0a07');
+  }
+  // 깨진 모서리: 벽 반대쪽(앞) 모서리 하나가 떨어져 나가고, 조각이 앞바닥에 흩어진다
+  const right = hv(40) > 0.5, cxn = right ? bx + bw : bx, cyn = by + bh, sgn = right ? -1 : 1;
+  const cut = Math.min(bw, bh) * (0.22 + 0.1 * hv(41));
+  g.fillStyle = 'rgba(16,12,8,0.78)'; g.beginPath();
+  g.moveTo(cxn, cyn); g.lineTo(cxn + sgn * cut, cyn); g.lineTo(cxn + sgn * cut * 0.55, cyn - cut * 0.35); g.lineTo(cxn + sgn * cut * 0.3, cyn - cut * 0.8); g.lineTo(cxn, cyn - cut); g.closePath(); g.fill();
+  for (let k = 0; k < 3; k++) shard(g, cxn + sgn * cut * (0.2 + 0.9 * hv(50 + k)), Math.min(0.46, cyn + 0.03 + 0.08 * hv(53 + k)), 0.026 + 0.022 * hv(56 + k), hv(59 + k) * 6.28, hv(62 + k), cols[k % cols.length]);
+}
+/** 부서진 가구: 바닥에 낮게 깔린 조각 더미 (지나갈 수 있어 보이게 그림자 없이 납작하게) */
+function rubble(g: G, h: number, cols: string[]): void {
+  const hv = (k: number): number => hash2((h * 1e6) | 0, 900 + k);
+  // 먼지 앉은 바닥: 가장자리가 드러나지 않게 번지듯 칠한다
+  const ox = (hv(1) - 0.5) * 0.1, oy = -0.07 + (hv(2) - 0.5) * 0.08;
+  const stain = g.createRadialGradient(ox, oy, 0.04, ox, oy, 0.52);
+  stain.addColorStop(0, 'rgba(24,18,12,0.3)'); stain.addColorStop(0.55, 'rgba(24,18,12,0.15)'); stain.addColorStop(1, 'rgba(24,18,12,0)');
+  g.fillStyle = stain; g.beginPath(); g.arc(ox, oy, 0.52, 0, 6.2832); g.fill();
+  oval(g, (hv(4) - 0.5) * 0.16, -0.06, 0.3, 0.22, 'rgba(196,186,170,0.12)', hv(5) * 3);
+  // 넓적한 판 조각 몇 개 (넘어진 상판·문짝)
+  for (let k = 0; k < 4; k++) {
+    g.save(); g.translate((hv(10 + k) - 0.5) * 0.52, -0.08 + (hv(14 + k) - 0.5) * 0.5); g.rotate((hv(18 + k) - 0.5) * 2.6);
+    const w = 0.24 + 0.2 * hv(22 + k), hh = 0.09 + 0.08 * hv(26 + k);
+    g.fillStyle = 'rgba(0,0,0,0.22)'; g.fillRect(-w / 2 + 0.012, -hh / 2 + 0.016, w, hh);
+    g.fillStyle = shade(cols[k % cols.length], -0.12); g.fillRect(-w / 2, -hh / 2, w, hh);
+    g.fillStyle = 'rgba(255,255,255,0.1)'; g.fillRect(-w / 2, -hh / 2, w, hh * 0.3);
+    g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(-w / 2 + w * (0.3 + 0.4 * hv(110 + k)), -hh / 2, 0.012, hh);      // 부러진 금
+    g.restore();
+  }
+  // 잔 조각
+  for (let k = 0; k < 12; k++) {
+    const a = hv(30 + k) * 6.2832, d = 0.1 + 0.34 * hv(42 + k);
+    shard(g, Math.cos(a) * d, -0.06 + Math.sin(a) * d * 0.9, 0.028 + 0.042 * hv(54 + k), hv(66 + k) * 6.28, hv(78 + k), k % 4 === 3 ? shade(cols[k % cols.length], -0.3) : cols[k % cols.length]);
+  }
+  // 가느다란 부스러기
+  g.lineCap = 'round';
+  for (let k = 0; k < 5; k++) { const x = (hv(90 + k) - 0.5) * 0.8, y = -0.06 + (hv(95 + k) - 0.5) * 0.76, a = hv(100 + k) * 6.28, l = 0.04 + 0.06 * hv(105 + k); seg(g, x, y, x + Math.cos(a) * l, y + Math.sin(a) * l, 0.012, shade(cols[0], -0.25)); }
+}
+/** 깨진 창: 창틀은 남고, 유리 대신 틀에 박힌 조각 두세 개와 안팎 바닥의 반짝이는 파편 (단위 좌표, 창은 가로로 놓였다고 본다) */
+function brokenWindow(g: G, hw: number, h: number): void {
+  const hv = (k: number): number => hash2((h * 1e6) | 0, 500 + k);
+  // 안팎 바닥의 파편 (벽의 양쪽으로 0.7칸쯤까지, 창에 가까울수록 많다)
+  for (let k = 0; k < 14; k++) {
+    const side = k % 2 ? 1 : -1, x = (hv(k) - 0.5) * 1.0, y = side * (hw + 0.1 + 0.56 * hv(20 + k) * hv(60 + k));
+    shard(g, x, y, 0.016 + 0.03 * hv(40 + k), hv(80 + k) * 6.28, hv(100 + k), k % 3 === 0 ? 'rgba(255,255,255,0.85)' : k % 3 === 1 ? 'rgba(170,222,244,0.75)' : 'rgba(120,190,220,0.6)');
+  }
+  for (let k = 0; k < 6; k++) { const side = k % 2 ? 1 : -1; g.fillStyle = 'rgba(255,255,255,0.9)'; g.fillRect((hv(120 + k) - 0.5) * 0.9, side * (hw + 0.06 + 0.4 * hv(130 + k)), 0.016, 0.016); }
+  // 빈 창틀
+  rr(g, -0.46, -hw, 0.92, hw * 2, 0.02, '#20303c');
+  rr(g, -0.44, -hw * 0.72, 0.88, hw * 1.44, 0.015, '#0b1218');
+  // 틀에 남은 유리: 창 한 짝의 바깥 끝마다 안쪽 경계가 들쭉날쭉한 조각, 가끔 가운데 살 옆에도
+  const gh = hw * 0.72;
+  const remnant = (x0: number, dir: number, k: number, col: string): void => {
+    g.fillStyle = col; g.beginPath(); g.moveTo(x0, -gh);
+    for (let q = 0; q <= 4; q++) {
+      const spike = (q + (hv(k) > 0.5 ? 1 : 0)) % 2 === 0;      // 뾰족한 끝과 움푹한 자리가 번갈아 온다
+      g.lineTo(x0 + dir * (spike ? 0.08 + 0.15 * hv(k + 1 + q) : 0.02 + 0.04 * hv(k + 7 + q)), -gh + (2 * gh * q) / 4 + (q > 0 && q < 4 ? (hv(k + 13 + q) - 0.5) * gh * 0.3 : 0));
+    }
+    g.lineTo(x0, gh); g.closePath(); g.fill();
+    g.fillStyle = 'rgba(255,255,255,0.45)'; g.fillRect(dir > 0 ? x0 : x0 - 0.05, -gh, 0.05, gh * 0.35);      // 남은 유리의 반사
+  };
+  remnant(-0.44, 1, 150, '#86d3ee'); remnant(0.44, -1, 170, '#9fdcf2');
+  if (hv(190) > 0.45) { const right = hv(191) > 0.5; remnant(right ? 0.012 : -0.012, right ? 1 : -1, 200, 'rgba(176,226,246,0.92)'); }
+  g.fillStyle = '#20303c'; g.fillRect(-0.012, -hw, 0.024, hw * 2);
+}
 
 /** 키 큰 진열대 (시야를 가리는 벽 칸). 세로로 이어진 줄을 기준으로 양쪽에 상품이 놓인다. */
 function tallShelf(g: G, h: number): void {
@@ -706,6 +822,12 @@ export function buildStatic(s: Scene, R: number, district: string): StaticLayer 
       const ang = wl(x, y - 1) ? 0 : wl(x + 1, y) ? Math.PI / 2 : wl(x, y + 1) ? Math.PI : wl(x - 1, y) ? -Math.PI / 2 : 0;
       g.rotate(ang);
       furniture(g, d, hash2(x * 91, y * 53), woodFloor);
+      if (s.decorHp[i] > 0) wear(g, d, s.decorHp[i], hash2(x * 91, y * 53), rubbleColors(d, x, y));
+    } else if (s.decorHp[i] === 255) {
+      // 부서진 가구: 벽에 붙어 있던 쪽으로 조각이 몰려 있다
+      const wl = (xx: number, yy: number): boolean => isWallish(tAt(xx, yy)) && s.decor[yy * s.w + xx] !== DECOR.SHELF;
+      g.rotate(wl(x, y - 1) ? 0 : wl(x + 1, y) ? Math.PI / 2 : wl(x, y + 1) ? Math.PI : wl(x - 1, y) ? -Math.PI / 2 : 0);
+      rubble(g, hash2(x * 91, y * 53), rubbleColors(d, x, y));
     }
     g.restore();
   }
@@ -719,6 +841,7 @@ export function buildStatic(s: Scene, R: number, district: string): StaticLayer 
     if (t === T.WINDOW) {
       const hw = geo.hw[i] * 0.62, hor = doorHorizontal(s, x, y) || !(geo.connected(x, y - 1) || geo.connected(x, y + 1));
       g.save(); g.translate((x + 0.5) * R, (y + 0.5) * R); if (!hor) g.rotate(Math.PI / 2); g.scale(R, R);
+      if (s.glass[i]) { brokenWindow(g, hw, hash2(x * 67 + 5, y * 29 + 11)); g.restore(); continue; }
       rr(g, -0.46, -hw, 0.92, hw * 2, 0.02, '#20303c');
       rr(g, -0.44, -hw * 0.72, 0.88, hw * 1.44, 0.015, '#86d3ee');
       g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(-0.44, -hw * 0.72, 0.88, hw * 0.4);

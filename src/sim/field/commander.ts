@@ -344,7 +344,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   if (gunActive && lawUnits < 2) request(sim, s, I, a, lawUnits === 0 ? 'law' : 'tactical', '총기를 소지한 용의자와 대치 중, 인원 부족', true);
   else if (active.length > 0 && lawUnits === 0) request(sim, s, I, a, 'law', '용의자 대응 인력 없음', true);
   else if (active.length > 0 && lawUnits === 1 && s.negotStart >= 0 && sim.t - s.negotStart > 22) request(sim, s, I, a, 'law', '한 팀으로는 말을 걸면서 붙잡을 수 없음', false);      // 한 사람은 말을 걸고 한 사람은 길목을 지키면 붙잡을 손이 없다
-  if (cordon && lawUnits === 0 && s.sizeupDone) request(sim, s, I, a, 'law', '가스가 새는 건물 주변을 통제할 인력이 없음', false);
+  if (cordon && lawUnits === 0 && s.sizeupDone) request(sim, s, I, a, 'law', liveBomb ? '폭발물로 보이는 물건이 있는 건물 주변을 통제할 인력이 없음' : '가스가 새는 건물 주변을 통제할 인력이 없음', false);
   if (s.laneRows.length && lawUnits === 0 && !s.controlDone.every(Boolean) && cas.length > 0 && s.sizeupDone) request(sim, s, I, a, 'traffic', '차량 통행이 계속되는데 교통 통제 인력이 없음', false);
   if (s.kind === 'search' && cas.length === 0 && s.arrivedAt >= 0 && sim.t - s.arrivedAt > 75 && countUnits(sim, s, I, 'search', 0.3) < 3) request(sim, s, I, a, 'search', '수색 범위에 비해 인력 부족', false);
   // ── 묶음별 지휘 규칙 (field/orders/*) ──

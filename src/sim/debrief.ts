@@ -76,7 +76,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   bad += propertyLoss > 0.6 ? 1 : propertyLoss > 0.35 ? 0.5 : 0;
   if (hazardActive) bad += 1.5;
   let grade: IncidentResult['grade'];
-  const objectiveOpen = hazardActive || undiscovered > 0 || left > 0 || (s.kind === 'search' && cas.every((c) => c.tDiscovered < 0));
+  const objectiveOpen = hazardActive || undiscovered > 0 || left > 0 || (s.kind === 'search' && cas.every((c) => c.tDiscovered < 0))
+    || s.props.some((p) => p.kind === 'bomb' && !p.mitigated && !p.exploded);      // 수상한 물건을 끝내 확인하지 못했다 (가짜였더라도 아무도 그것을 알지 못한 채 끝났다)
   if (reason === 'noresponse') grade = lost > 0 ? 'failed' : 'unresolved';
   else if (cas.length > 0 && lost >= Math.max(1, Math.ceil(cas.length / 2))) grade = 'failed';
   else if (bad >= 4.5) grade = 'failed';
@@ -84,7 +85,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   else if (s.kind === 'armed' && suspectsTotal > 0 && caught === 0 && lost === 0) grade = 'unresolved';
   else if (bad > 0.01) grade = 'partial';
   else grade = 'success';
-  if (I.pursuit && I.pursuit.state === 'escaped') grade = I.pursuit.kind === 'kidnap' ? 'failed' : 'unresolved';      // 납치된 사람을 되찾지 못했다 / 난폭 운전자를 놓쳤다
+  if (I.pursuit && I.pursuit.state === 'escaped') grade = I.pursuit.kind === 'kidnap' && I.pursuit.how !== 'hideout' ? 'failed' : 'unresolved';      // 납치된 사람을 되찾지 못했다 / 난폭 운전자를 놓쳤다 / 은신처에 숨어든 납치는 이어지는 인질 사건이 결말을 낸다
   const limit = RESP_LIMIT[truth.type];
   const delayed = !I.pursuit && (responseTime < 0 || responseTime > limit || I.problems.some((p) => p.code === 'BACKUP_LATE'));      // 추격전은 차를 세운 뒤에야 현장이 생긴다
   const outcome: Outcome = grade === 'success' && delayed ? 'delayed' : grade;

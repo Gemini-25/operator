@@ -514,7 +514,7 @@ export function findRoute(city: City, from: number, to: number, weatherF = 1, av
       const e = city.edges[eid];
       if ((e.closed && e.known !== false) || (heavy && e.noHeavy) || eid === avoidEdge) continue;
       const v = e.a === u ? e.b : e.a;
-      const nd = distArr[u] + edgeTime(e, weatherF, heavy);
+      const nd = distArr[u] + edgeTime(e, weatherF, heavy) - Math.min(e.wait ?? 0, distArr[u]);      // 차단기는 거기 닿을 즈음이면 그만큼 덜 기다린다
       if (nd < distArr[v]) { distArr[v] = nd; prevEdge[v] = eid; }
     }
   }

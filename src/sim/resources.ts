@@ -193,7 +193,7 @@ export function etaFor(sim: Sim, u: Unit, destNode: number): number {
 }
 
 function setRoute(sim: Sim, u: Unit, to: number): void {
-  u.destNode = to; u.seg = 0; u.segT = 0;
+  u.destNode = to; u.seg = 0; u.segT = 0; u.backing = false;
   u.route = u.nodeId === to ? null : findRoute(sim.city, u.nodeId, to, weatherSpeedFactor(sim), -1, u.heavy);
 }
 
@@ -409,7 +409,7 @@ export function tickUnits(sim: Sim): void {
       if (u.seg >= u.route.edges.length) { if (u.nodeId !== u.destNode) { u.route = null; break; } arrive(sim, u); break; }      // 되돌아 나왔지만 다른 길이 없다: 여기서 기다린다
       // 교차로 통과 시 경로 재검토: 다음 구간이 통제됐다고 알려졌거나 훨씬 빠른 길이 생겼는가 (모르는 통제는 가 보아야 안다)
       const next = city.edges[u.route.edges[u.seg]];
-      let remainT = 0; for (let k = u.seg; k < u.route.edges.length; k++) remainT += edgeTime(city.edges[u.route.edges[k]], wf, u.heavy);
+      let remainT = 0; for (let k = u.seg; k < u.route.edges.length; k++) { const q = city.edges[u.route.edges[k]]; remainT += edgeTime(q, wf, u.heavy) - Math.min(q.wait ?? 0, remainT); }      // findRoute 와 같은 셈법
       const alt = findRoute(city, u.nodeId, u.destNode!, wf, -1, u.heavy);
       if ((next.closed && next.known !== false) || (u.heavy && next.noHeavy)) {
         if (alt) {

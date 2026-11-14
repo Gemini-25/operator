@@ -118,7 +118,7 @@ export function tuningOf(d: Difficulty): Tuning {
     majorProb: [0.15, 0.3, 0.45, 0.6, 0.8][s],
     disasterProb: [0, 0.05, 0.1, 0.18, 0.3][s],
 
-    trafficMul: [0.82, 0.92, 1, 1.12, 1.25][tr],
+    trafficMul: [0.82, 0.92, 1, 1.15, 1.35][tr],
     trafficGap: [1.6, 1.25, 1, 0.8, 0.62][tr],
     parkedCount: [0, 1, 3, 5, 7][tr],
   };

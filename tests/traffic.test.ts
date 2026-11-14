@@ -144,6 +144,23 @@ describe('가 보아야 아는 장애물', () => {
     expect(s.traffic.obstacles.length).toBe(0);
     expect(s.events.some((ev) => ev.text.includes('통행 재개'))).toBe(true);
   });
+  it('한 차로를 막은 고장 차량: 곁을 지나는 부대가 알리고, 그대로 지나간다', () => {
+    const s = bare('TR-LANE');
+    const wf = weatherSpeedFactor(s), u = s.units.find((q) => q.kind === 'patrol')!;
+    let e!: RoadEdge;
+    for (const q of s.city.edges) { if (q.cls !== 'arterial') continue; const r = findRoute(s.city, q.a, q.b, wf); if (r && r.edges.length === 1 && r.edges[0] === q.id) { e = q; break; } }
+    const ob = addObstacle(s, { edge: e.id, t: 0.5, kind: 'breakdown', full: false, dur: 400, known: false })!;
+    expect(ob).not.toBeNull(); expect(e.closed).toBe(false);
+    const c0 = e.cong;
+    tick(s, 300);      // 병목: 그 구간이 느려진다
+    expect(e.cong).toBeGreaterThan(c0 + 0.4); expect(ob.known).toBe(false);
+    drive(s, u, e.a, e.b);
+    expect(obstacleAhead(s, u, e, e.a)).toBeNull();      // 길을 막지는 않는다
+    tick(s, 600);
+    expect(u.nodeId).toBe(e.b); expect(u.state).toBe('available');
+    expect(ob.known).toBe(true); expect(s.traffic.stats.detours).toBe(0);
+    expect(s.events.some((ev) => ev.kind === 'traffic' && ev.actor === u.callsign && ev.text.includes('한 차로가 막혔습니다'))).toBe(true);
+  });
   it('불법 주차: 큰 차는 되돌아가고 작은 차는 지나간다. 알려진 뒤에는 큰 차의 경로만 그 골목을 피한다', () => {
     const s = bare('TR-PARK');
     const wf = weatherSpeedFactor(s);
@@ -220,6 +237,18 @@ describe('건널목과 열차', () => {
       expect(s.traffic.stats.gateWaits).toBeGreaterThan(w0);
     }
     expect(checked).toBeGreaterThanOrEqual(4);
+    // 경로 계산: 기다리는 시간은 그 건널목에 닿을 즈음까지 남은 만큼만 더한다 (통제가 아니므로 길에서 빼지는 않는다)
+    {
+      const e = s.city.edges[tr.crossings[0].edge], wf = weatherSpeedFactor(s);
+      const near0 = findRoute(s.city, e.a, e.b, wf, e.id)!;      // 이 구간을 빼고 돌아가는 길
+      e.wait = 0; const free = findRoute(s.city, e.a, e.b, wf)!;
+      e.wait = 12; const held = findRoute(s.city, e.a, e.b, wf)!;
+      expect(free.edges).toEqual([e.id]);
+      if (near0.time > free.time + 12) { expect(held.edges).toEqual([e.id]); expect(held.time).toBeCloseTo(free.time + 12, 5); }
+      let far = -1; for (const n of s.city.nodes) { const r = findRoute(s.city, n.id, e.b, wf); if (r && r.edges.length >= 4 && r.edges[r.edges.length - 1] === e.id && r.time - free.time > 30) { far = n.id; break; } }
+      if (far >= 0) { const r1 = findRoute(s.city, far, e.b, wf)!; e.wait = 0; const r0 = findRoute(s.city, far, e.b, wf)!; expect(r1.time).toBeCloseTo(r0.time, 5); }      // 멀리서는 닿기 전에 차단기가 올라간다
+      e.wait = 0;
+    }
     expect(s.traffic.stats.delaySec).toBeGreaterThan(0);
     expect(s.events.some((ev) => ev.kind === 'traffic' && ev.text.includes('건널목 차단기 대기'))).toBe(true);
   });

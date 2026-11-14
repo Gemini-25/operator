@@ -10,6 +10,8 @@ export interface CityCam { x: number; y: number; zoom: number }
 /** 현장 화면의 시점 (타일 좌표, 배율 1 = 현장 전체) */
 export interface SceneView { x: number; y: number; zoom: number }
 const SCENE_W = 30, SCENE_H = 20;
+/** 현장 자동 확대가 따라가는 효과 기록과 무게. G4 는 'collapse'(2.5), X6 는 'horn'(2)을 한 단어씩 더한다 */
+const ACTION_W: Record<string, number> = { shot: 2.5, boom: 2.5, flash: 2.5, hit: 2.5, spray: 0.6, breach: 2.5, melee: 1.5, taser: 2.0, cuff: 1.0 };
 
 export class CameraDirector {
   mode: 'city' | 'scene' = 'city';
@@ -52,6 +54,8 @@ export class CameraDirector {
     this.lastSwitch = this.clock;
   }
   auto(): void { this.manual = false; this.freeLook = false; }
+  /** (G5) 결정적 순간: 0.9초를 기다리지 않고 현장 확대를 바로 다시 잡는다 (사용자가 직접 확대했으면 하지 않는다) */
+  nudge(): void { if (!this.sceneManual) this.sceneRetargetAt = this.clock; }
   overview(): void { this.manual = true; this.freeLook = false; this.focus = -1; this.mode = 'city'; this.target = { x: CITY_W / 2, y: CITY_H / 2, zoom: 1 }; this.reason = '도시 전체 보기'; }
 
   private weight(e: SimEvent): number {
@@ -84,6 +88,8 @@ export class CameraDirector {
       const base = I.phase === 'closed' ? 26 : I.phase === 'onscene' ? 46 : I.phase === 'call' ? 34 : 22;
       const sev = I.assessment ? I.assessment.severity * 4 : 0;
       let sc = base + sev + Math.min(120, this.interest.get(I.id) ?? 0);
+      const sc0 = sim.scenes[I.id];
+      if (sc0 && I.phase === 'onscene') for (let i = sc0.fx.length - 1; i >= 0 && sim.t - sc0.fx[i].t < 3; i--) if (sc0.fx[i].kind === 'shot') { sc += 30; break; }      // (G5) 최근 3초 안에 총성이 난 사건
       if (I.id === this.focus) { sc += 24; focusScore = sc; }
       if (sc > bestScore) { bestScore = sc; best = I.id; }
     }
@@ -156,10 +162,16 @@ export class CameraDirector {
     const add = (x: number, y: number, w: number): void => { pts.push(x, y, w); };
     for (const f of s.fx) {
       const age = sim.t - f.t;
-      if (age < 0 || age > 4 || (f.kind !== 'shot' && f.kind !== 'boom' && f.kind !== 'flash' && f.kind !== 'hit' && f.kind !== 'spray')) continue;
-      add(f.x, f.y, f.kind === 'spray' ? 0.6 : 2.5);
-      if (f.x2 !== undefined && f.y2 !== undefined) add(f.x2, f.y2, f.kind === 'spray' ? 0.6 : 1.5);
+      const w = ACTION_W[f.kind];
+      if (age < 0 || age > 4 || w === undefined) continue;
+      add(f.x, f.y, w);
+      const c = f.c;
+      if (c && c.ix !== undefined && c.iy !== undefined) add(c.ix, c.iy, 1.5);      // (G5) 탄착점
+      else if (f.x2 !== undefined && f.y2 !== undefined) add(f.x2, f.y2, f.kind === 'spray' ? 0.6 : 1.5);
+      if (c && c.ox !== undefined && c.oy !== undefined) add(c.ox, c.oy, 1.5);      // (G5) 던진 사람, 진입조 쪽
     }
+    // (G5) 진입 예고: 4초 안에 들어갈 출입구
+    if (s.entryOrdered && !s.breachDone && s.breachAt - sim.t <= 4) for (const k of [s.entryExit, s.entryExit2]) if (k >= 0 && k < s.exits.length) add(s.exits[k].x, s.exits[k].y, 2.5);
     for (const h of s.hostiles) if ((h.state === 'hold' || h.state === 'fight' || h.state === 'flee') && !h.hidden) add(h.x, h.y, 2.5);
     for (const a of s.agents) {
       if (a.status === 'left') continue;

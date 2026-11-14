@@ -4,6 +4,7 @@ import type { Sim } from '../sim/engine';
 import { TYPE_NAME, fmtDur } from '../sim/util';
 import { SoundDirector } from '../view/audio';
 import { CameraDirector } from '../view/camera';
+import { FxBook } from '../view/scene/fxBook';
 import { Runner } from '../view/runner';
 import { Viewport } from './Viewport';
 import { MapLegend } from './MapLegend';
@@ -15,13 +16,18 @@ export interface Moment { t: number; id: number; text: string }
 /** 다시 볼 만한 장면: 현장에서 벌어진 중대한 일. 같은 사건의 가까운 장면은 하나로 묶고, 많으면 고르게 여덟 개만 남긴다. */
 export function reelMoments(sim: Sim): Moment[] {
   const out: Moment[] = [];
-  let lastT = -99, lastId = -1;
+  let lastT = -99, lastId = -1, curRank = 0;
+  // (G5) 묶음 안에서 순위가 높은 장면을 남긴다: 행동·문제·위험 > 해결 > 지시 (같으면 이른 것). 25초 창은 묶음의 첫 기록에 고정한다
+  const rank = (k: string): number => (k === 'action' || k === 'problem' || k === 'hazard' ? 2 : k === 'resolve' ? 1 : 0);
   for (const e of sim.events) {
     if (e.importance < 3 || e.truth || e.incidentId < 0 || e.kind === 'shift' || (e.kind === 'resolve' && e.role === 'SYSTEM')) continue;
     const sc = sim.scenes[e.incidentId];
     if (!sc || sc.arrivedAt < 0 || e.t < sc.arrivedAt) continue;
-    if (e.incidentId === lastId && e.t - lastT < 25) continue;
-    out.push({ t: e.t, id: e.incidentId, text: e.text }); lastT = e.t; lastId = e.incidentId;
+    if (e.incidentId === lastId && e.t - lastT < 25) {
+      if (rank(e.kind) > curRank) { out[out.length - 1] = { t: e.t, id: e.incidentId, text: e.text }; curRank = rank(e.kind); }      // lastT 는 그대로
+      continue;
+    }
+    out.push({ t: e.t, id: e.incidentId, text: e.text }); lastT = e.t; lastId = e.incidentId; curRank = rank(e.kind);
   }
   if (out.length <= 8) return out;
   const pick: Moment[] = [];
@@ -38,6 +44,7 @@ export function App() {
   const runner = useMemo(() => new Runner(), []);
   const director = useMemo(() => new CameraDirector(), []);
   const sound = useMemo(() => { const s = new SoundDirector(); s.enabled = runner.settings.sound; s.volume = runner.settings.volume; return s; }, [runner]);
+  const book = useMemo(() => new FxBook(), []);      // 교전 연출 기억 (연출 시계·받아들이기·남는 그림)
   const [, setTick] = useState(0);
   const force = useCallback(() => setTick((t) => (t + 1) % 1e9), []);
   const [selectedRid, setSelectedRid] = useState(-1);
@@ -56,7 +63,7 @@ export function App() {
   // 화면 자동 검사(scripts/ui-check.cjs)가 읽는 관찰 고리. 개발 서버에서만 만들고, 값을 복사해 돌려줄 뿐 아무것도 바꾸지 않는다.
   useEffect(() => {
     if (!import.meta.env.DEV) return;
-    const w = window as unknown as { __ar?: { snap: () => Record<string, unknown> } };
+    const w = window as unknown as { __ar?: { snap: () => Record<string, unknown>; combat: () => Record<string, unknown>; fxStep: (dt: number) => void } };
     w.__ar = {
       snap: () => {
         const sim = runner.sim;
@@ -68,9 +75,17 @@ export function App() {
           camMode: director.mode, camFocus: director.focus, camManual: director.manual, now: performance.now(),
         };
       },
+      // (G5) 교전 연출 읽기: 연출 시계, 현장별 살아 있는 연출 수, 교전 그림 시간, 소리 통계 (복사해 돌려줄 뿐이다)
+      combat: () => {
+        const live: Record<string, number> = {};
+        for (const s of runner.sim.scenes) if (s && !s.archived) { const n = book.live(s.id).length; if (n) live[s.id] = n; }
+        return { clock: book.clock, rate: book.rate, live, drawMs: book.drawMs, stats: { ...sound.stats } };
+      },
+      // (G5, 개발용) 연출 시계만 넘긴다: 시뮬레이션·카메라는 그대로 (정확한 장면 찍기)
+      fxStep: (dt: number) => book.debugStep(dt),
     };
     return () => { delete w.__ar; };
-  }, [runner, director]);
+  }, [runner, director, sound, book]);
 
   const selectRid = useCallback((rid: number) => {
     setSelectedRid(rid);
@@ -173,7 +188,7 @@ export function App() {
         <UnitList sim={sim} selectedRid={selectedRid} onSelectRid={selectRid} />
       </div>
       <div className="center">
-        <Viewport runner={runner} director={director} sound={sound} selectedRid={selectedRid} onSelectRid={selectRid} onSelectUnit={selectUnit} />
+        <Viewport runner={runner} director={director} sound={sound} book={book} selectedRid={selectedRid} onSelectRid={selectRid} onSelectUnit={selectUnit} />
         <div className="overlay tl">
           <div className="cam-reason"><span className={`dot ${director.manual ? 'manual' : 'auto'}`} />{director.manual ? '수동 시점' : '자동 카메라'} · {director.reason}</div>
           {runner.slowed && <div className="cam-reason slow"><span className="dot slow" />결정적 순간 · 1배속으로 낮춤</div>}

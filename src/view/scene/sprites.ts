@@ -13,9 +13,18 @@ export interface PersonLook {
   head: HeadKind; headCol: string; headCol2?: string; skin: string;
   pack?: 'scba' | 'bag' | 'none'; packCol?: string;
 }
-export type ArmPose = 'side' | 'aim' | 'hose' | 'work' | 'kneel' | 'up' | 'back' | 'drag' | 'carry' | 'baton' | 'megaphone';
-export type Item = 'rifle' | 'pistol' | 'knife' | 'axe' | 'spreader' | 'none';
-export interface PersonPose { step: number; moving: boolean; arms: ArmPose; t: number; item?: Item; scale?: number; ghost?: number }
+export type ArmPose = 'side' | 'aim' | 'hose' | 'work' | 'kneel' | 'up' | 'back' | 'drag' | 'carry' | 'baton' | 'megaphone'
+  | 'throw';                              // (G5) 섬광탄 던지기: act 0→1 동안 한 팔을 뒤로 젖혔다 앞으로
+export type Item = 'rifle' | 'pistol' | 'knife' | 'axe' | 'spreader' | 'none'
+  | 'ram';                                // (G5) 공성추
+export interface PersonPose {
+  step: number; moving: boolean; arms: ArmPose; t: number; item?: Item; scale?: number; ghost?: number;
+  recoil?: number;                        // (G5) 반동 0..1: 겨눈 반대쪽으로 0.06칸, 총을 0.04칸 더
+  flinch?: { x: number; y: number };      // (G5) 움찔: 몸 전체를 이만큼(칸, 화면 방향) 민다
+  crouch?: boolean;                       // (G5) 엄폐 자세: 몸 0.9배, 다리를 접는다
+  cuffed?: boolean;                       // (G5) 'back' 자세에서 막대 대신 수갑 고리 둘 (검거된 용의자만 — 인질의 묶인 손은 막대 그대로)
+  act?: number;                           // (G5) 'throw' 의 진행 0..1
+}
 
 const SKIN = ['#e8c4a0', '#d9ad86', '#f0d0b0', '#c99872'];
 const HAIR = ['#211a14', '#3b2a1c', '#5a4028', '#2c2c30', '#8a8d92'];
@@ -84,14 +93,16 @@ function head(g: G, k: PersonLook): void {
 /** 서 있는(걷는) 사람. (x, y) 화면 좌표, ang 바라보는 방향, ts 타일 한 칸의 크기. */
 export function drawPerson(g: G, x: number, y: number, ang: number, ts: number, k: PersonLook, p: PersonPose): void {
   g.save(); g.translate(x, y); g.scale(ts, ts);
+  if (p.flinch) g.translate(p.flinch.x, p.flinch.y);
   if (p.ghost !== undefined) g.globalAlpha *= p.ghost;
   oval(g, 0.06, 0.09, 0.32, 0.3, 'rgba(0,0,0,0.3)');
   g.rotate(ang);
-  const sc = (p.scale ?? 1) * BODY; g.scale(sc, sc);
+  if (p.recoil) g.translate(-0.06 * p.recoil, 0);
+  const sc = (p.scale ?? 1) * BODY * (p.crouch ? 0.9 : 1); g.scale(sc, sc);
   const sw = p.moving ? Math.sin(p.step) : 0;
   const AW = 0.1;
   // 다리·발
-  if (p.arms === 'kneel') { oval(g, -0.15, -0.1, 0.14, 0.07, k.leg); oval(g, -0.15, 0.1, 0.14, 0.07, k.leg); oval(g, -0.27, -0.1, 0.06, 0.055, k.shoe); oval(g, -0.27, 0.1, 0.06, 0.055, k.shoe); }
+  if (p.arms === 'kneel' || p.crouch) { oval(g, -0.15, -0.1, 0.14, 0.07, k.leg); oval(g, -0.15, 0.1, 0.14, 0.07, k.leg); oval(g, -0.27, -0.1, 0.06, 0.055, k.shoe); oval(g, -0.27, 0.1, 0.06, 0.055, k.shoe); }
   else { oval(g, 0.02 + sw * 0.13, -0.105, 0.105, 0.062, k.shoe); oval(g, 0.02 - sw * 0.13, 0.105, 0.105, 0.062, k.shoe); }
   // 등짐
   if (k.pack === 'scba') { rr(g, -0.27, -0.08, 0.19, 0.16, 0.07, k.packCol ?? '#e9c53c'); rr(g, -0.25, -0.05, 0.15, 0.05, 0.02, 'rgba(255,255,255,0.35)'); disc(g, -0.27, 0, 0.035, '#555d66'); }
@@ -109,7 +120,19 @@ export function drawPerson(g: G, x: number, y: number, ang: number, ts: number, 
     case 'work': arm(0.02, -0.24, 0.27 + o, -0.07); arm(0.02, 0.24, 0.27 - o, 0.07); break;
     case 'kneel': arm(0.02, -0.24, 0.3 + o, -0.09); arm(0.02, 0.24, 0.3 - o, 0.09); break;
     case 'up': arm(0, -0.25, 0.08, -0.4); arm(0, 0.25, 0.08, 0.4); break;
-    case 'back': arm(0, -0.25, -0.15, -0.05); arm(0, 0.25, -0.15, 0.05); seg(g, -0.16, -0.045, -0.16, 0.045, 0.03, '#c9d0d6'); break;
+    case 'back':
+      arm(0, -0.25, -0.15, -0.05); arm(0, 0.25, -0.15, 0.05);
+      if (p.cuffed) { g.strokeStyle = '#dfe6ec'; g.lineWidth = 0.022; g.beginPath(); g.arc(-0.16, -0.05, 0.035, 0, 6.2832); g.stroke(); g.beginPath(); g.arc(-0.16, 0.05, 0.035, 0, 6.2832); g.stroke(); seg(g, -0.16, -0.015, -0.16, 0.015, 0.012, '#dfe6ec'); }
+      else seg(g, -0.16, -0.045, -0.16, 0.045, 0.03, '#c9d0d6');
+      break;
+    case 'throw': {
+      const a = p.act ?? 0, back = a < 0.45, q = back ? a / 0.45 : (a - 0.45) / 0.55;
+      arm(0.02, -0.24, 0.26, -0.1);
+      if (back) arm(0, 0.25, 0.02 - 0.24 * q, 0.3 + 0.06 * q); else arm(0, 0.25, -0.22 + 0.58 * q, 0.36 - 0.26 * q);
+      hx = back ? 0.02 - 0.24 * q : -0.22 + 0.58 * q; hy = back ? 0.3 + 0.06 * q : 0.36 - 0.26 * q;
+      if (back) { rr(g, hx - 0.05, hy - 0.03, 0.1, 0.06, 0.02, '#2a2f35'); g.fillStyle = '#c9cfd4'; g.fillRect(hx - 0.01, hy - 0.03, 0.02, 0.06); }
+      break;
+    }
     case 'drag': arm(0, -0.25, -0.2, -0.17); arm(0, 0.25, -0.2, 0.17); break;
     case 'carry': arm(0.02, -0.24, 0.25, -0.2); arm(0.02, 0.24, 0.25, 0.2); break;
     case 'baton': {
@@ -138,7 +161,11 @@ export function drawPerson(g: G, x: number, y: number, ang: number, ts: number, 
   }
   if (k.pack === 'scba') { seg(g, -0.1, -0.11, 0.09, -0.15, 0.03, '#23272c'); seg(g, -0.1, 0.11, 0.09, 0.15, 0.03, '#23272c'); }
   // 손에 든 것
-  if (p.arms === 'aim' && p.item === 'rifle') { rr(g, 0.04, 0.035, 0.16, 0.06, 0.015, '#1c2026'); rr(g, 0.18, 0.02, 0.26, 0.075, 0.015, '#14171b'); rr(g, 0.42, 0.04, 0.24, 0.032, 0.01, '#0f1114'); rr(g, 0.26, 0.085, 0.05, 0.07, 0.01, '#1c2026'); }
+  if (p.recoil && p.arms === 'aim') g.translate(-0.04 * p.recoil, 0);
+  if (p.arms === 'work' && p.item === 'ram') {
+    rr(g, 0.14, -0.08, 0.5, 0.16, 0.04, '#1d2329'); rr(g, 0.6, -0.095, 0.08, 0.19, 0.03, '#3a434c'); rr(g, 0.16, -0.06, 0.46, 0.04, 0.02, 'rgba(255,255,255,0.12)');
+    seg(g, 0.24, -0.1, 0.24, 0.1, 0.03, '#c84a2c'); seg(g, 0.46, -0.1, 0.46, 0.1, 0.03, '#c84a2c');
+  } else if (p.arms === 'aim' && p.item === 'rifle') { rr(g, 0.04, 0.035, 0.16, 0.06, 0.015, '#1c2026'); rr(g, 0.18, 0.02, 0.26, 0.075, 0.015, '#14171b'); rr(g, 0.42, 0.04, 0.24, 0.032, 0.01, '#0f1114'); rr(g, 0.26, 0.085, 0.05, 0.07, 0.01, '#1c2026'); }
   else if (p.arms === 'aim' && p.item === 'pistol') { rr(g, 0.3, -0.024, 0.17, 0.048, 0.01, '#14171b'); }
   else if (p.arms === 'aim' && p.item === 'knife') { g.fillStyle = '#d7dde2'; g.beginPath(); g.moveTo(0.33, -0.02); g.lineTo(0.52, 0); g.lineTo(0.33, 0.025); g.closePath(); g.fill(); }
   else if (p.arms === 'hose') {
@@ -160,13 +187,12 @@ export function drawPerson(g: G, x: number, y: number, ang: number, ts: number, 
 
 /** 사람 크기 배율 (타일 한 칸 대비) */
 const BODY = 1.22;
-export interface LyingOpts { sheet?: boolean; stretcher?: boolean; bandage?: boolean; variant: number; blood?: number; ghost?: number }
+export interface LyingOpts { sheet?: boolean; stretcher?: boolean; bandage?: boolean; variant: number; ghost?: number }      // (G5) 피 웅덩이를 그리지 않는다 — 다친 정도는 딱지·체력 막대·붕대로
 /** 쓰러져 누운 사람. 머리가 +x 쪽. */
 export function drawLying(g: G, x: number, y: number, ang: number, ts: number, k: PersonLook, o: LyingOpts): void {
   g.save(); g.translate(x, y); g.scale(ts, ts);
   if (o.ghost !== undefined) g.globalAlpha *= o.ghost;
   g.rotate(ang); g.scale(BODY * 0.94, BODY * 0.94);
-  if (o.blood && o.blood > 0.05 && !o.stretcher) { oval(g, 0.02, 0.08, 0.2 + o.blood * 0.25, 0.14 + o.blood * 0.16, 'rgba(110,18,22,0.5)', 0.4); oval(g, 0.1, 0.02, 0.1 + o.blood * 0.1, 0.08 + o.blood * 0.08, 'rgba(140,24,28,0.5)'); }
   if (o.stretcher) {
     seg(g, -0.68, -0.2, 0.6, -0.2, 0.04, '#353c44'); seg(g, -0.68, 0.2, 0.6, 0.2, 0.04, '#353c44');
     rr(g, -0.56, -0.215, 1.04, 0.43, 0.05, '#d9742a'); rr(g, -0.53, -0.185, 0.98, 0.37, 0.04, '#ef9548');
@@ -402,7 +428,8 @@ export function drawDoorLeaf(g: G, open: number, side: number, burned: boolean, 
   const hx = -0.4, len = 0.8;
   if (open > 0.02) {
     g.strokeStyle = 'rgba(230,236,242,0.2)'; g.lineWidth = 0.014; g.setLineDash([0.05, 0.05]);
-    g.beginPath(); if (side > 0) g.arc(hx, 0, len, 0, (Math.PI / 2) * open); else g.arc(hx, 0, len, -(Math.PI / 2) * open, 0); g.stroke(); g.setLineDash([]);
+    const oc = Math.min(open, 1);      // (G5) 진입 연출에서 문짝이 1 을 넘게 튕겨도 바닥의 흔적 호는 열림까지만
+    g.beginPath(); if (side > 0) g.arc(hx, 0, len, 0, (Math.PI / 2) * oc); else g.arc(hx, 0, len, -(Math.PI / 2) * oc, 0); g.stroke(); g.setLineDash([]);
   }
   g.save(); g.translate(hx, 0); g.rotate(side * open * 1.62);
   rr(g, 0, -0.06, len, 0.12, 0.02, 'rgba(0,0,0,0.3)');

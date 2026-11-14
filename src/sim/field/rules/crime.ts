@@ -10,6 +10,7 @@ import { learn, regionNameAt } from '../agents';
 import { mkFact } from '../beliefs';
 import { los, tidx } from '../grid';
 import { blast, isHeld, pushFx } from '../hazards';
+import { lastFx, noteBoom } from '../fxlog';
 import { registerRule } from '../sceneRegistry';
 
 // ───────────────────────── 폭발물 ─────────────────────────
@@ -41,6 +42,7 @@ export function detonate(sim: Sim, s: Scene, I: Incident, p: Prop): void {
     s.fire[j] = Math.max(s.fire[j], 0.55);
   }
   pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.6);
+  noteBoom(lastFx(sim, s, 'boom'), 3.4, 'bomb');
   s.staticVersion++;
   // 폭발음은 현장 어디서나 들린다: 더는 해체할 것이 없다는 사실이 무전망으로 곧 퍼진다
   s.radio.push({ id: s.nextMsgId++, t: sim.t, deliverAt: sim.t + 0.6, from: -1, to: -1, kind: 'report', facts: [mkFact('haz', p.id, { kind: 'bomb', active: false, x: p.x, y: p.y }, '현장', sim.t, 1, true, '폭발물 폭발')], workId: -1, text: '', eventId: ev });

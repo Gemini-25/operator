@@ -53,6 +53,19 @@ function PinSample({ size = 22 }: { size?: number }) {
   );
 }
 
+/** (G5) 교전 중인 사건 핀: 붉은·흰 두 색이 번갈아 도는 점선 테 */
+function CombatPinSample({ size = 26 }: { size?: number }) {
+  const c = size / 2, r = size * 0.27, R = r + 4.2, col = '#e0486b';
+  return (
+    <svg className="pin-sample" width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+      <circle cx={c} cy={c} r={r} fill="#0d151d" stroke={col} strokeWidth={1.6} />
+      <svg x={c - r * 0.62} y={c - r * 0.62} width={r * 1.24} height={r * 1.24} viewBox="0 0 24 24"><path d={ICON_PATH.armed} fill={col} fillRule="evenodd" /></svg>
+      <circle cx={c} cy={c} r={R} fill="none" stroke="#ff4d4d" strokeWidth={1.6} strokeDasharray="3 3" />
+      <circle cx={c} cy={c} r={R} fill="none" stroke="#ffffff" strokeWidth={1.6} strokeDasharray="3 3" strokeDashoffset={3} />
+    </svg>
+  );
+}
+
 export function MapLegend() {
   const [open, setOpen] = useState<boolean>(() => { try { return localStorage.getItem(LS_LEGEND) === '1'; } catch { return false; } });
   const toggle = (): void => { const v = !open; setOpen(v); try { localStorage.setItem(LS_LEGEND, v ? '1' : '0'); } catch { /* 저장 실패는 무시 */ } };
@@ -88,6 +101,7 @@ export function MapLegend() {
           <h5>사건과 도로</h5>
           <div className="lg-row">
             <span className="lg-item"><PinSample />고리 = 첫 도착까지 흐른 시간</span>
+            <span className="lg-item" title="최근 몇 초 안에 총성이 난 현장"><CombatPinSample />교전 중</span>
             <span className="lg-item"><svg className="token" width={22} height={22} viewBox="0 0 22 22" aria-hidden="true"><circle cx={11} cy={11} r={9} fill="#c9362f" stroke="rgba(255,220,220,0.9)" strokeWidth={1.2} /><svg x={5} y={5} width={12} height={12} viewBox="0 0 24 24"><path d={STATE_MARK.fugitive} fill="#fff" fillRule="evenodd" /></svg></svg>달아나는 차량</span>
           </div>
           <div className="lg-row">

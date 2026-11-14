@@ -64,6 +64,7 @@ src/sim/field/executor.ts    임무별 실행(case 문), 이동, 장애물 발�
 src/sim/field/commander.ts   지휘관: 믿음 → 작업 목록(want), 배정, 지원 요청, 종료 판단
 src/sim/field/sceneManager.ts 현장 틱, 부대 도착·철수, 지휘권 이양
 src/view/                    runner(틱·되감기·저장), camera(자동 카메라·현장 확대), renderCity, renderScene(그리는 순서 조립), icons, audio(합성음)
+src/view/city/staticCity.ts   도시 지도의 고정된 부분: 땅, 도로·차선·횡단보도, 지붕, 공원, 시설 건물, 야간 불빛
 src/view/scene/staticLayer.ts 현장의 고정된 부분을 한 번만 그려 두는 층: 바닥 재질, 벽·창·문틀, 가구, 나무, 개울
 src/view/scene/sprites.ts    사람(대원·시민·용의자), 쓰러진 사람, 차량, 소품의 벡터 그림
 src/view/scene/fx.ts         화염, 연기(저해상도 층), 물줄기, 어둠과 빛, 날씨

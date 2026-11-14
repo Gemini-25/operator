@@ -54,7 +54,9 @@ src/sim/debrief.ts           사건 판정, 원인 문장, 교대 보고서
 src/sim/dispatch/callSystem.ts   신고자 모델, 접수 AI 질문 선택, 통화
 src/sim/dispatch/analyst.ts      유형 확률·위험도·필요 자원
 src/sim/dispatch/dispatcher.ts   부대 선택, 대기열, 전환 배정, 현장 요청 수신, 인근 도시 지원 요청
-src/sim/field/builders.ts    현장 생성(진실): 화재(단층·2층), 교통사고, 수색, 무장, 응급, 붕괴, 가스 누출. furnish(가구), shellBuilding(공통 건물 뼈대)
+src/sim/field/kit.ts         현장 생성 도구: 빈 현장(baseScene), 타일·구역·소품·사람 놓기, furnish(가구)
+src/sim/field/plans.ts       건물 평면 생성기: 복도형·방 연결형(이분할)·홀형·2층. 화재·붕괴·가스 누출이 함께 쓴다
+src/sim/field/builders.ts    유형별 현장 생성(진실): 화재, 교통사고, 수색, 무장(장소 4종 armedVenue), 응급(주택 2종), 붕괴, 가스 누출
 src/sim/field/hazards.ts     화재·연기, 구조 대상 악화, 용의자, 통과 차량, 누출, 2차 붕괴(tickCollapse), 가스 확산·폭발(tickGas)
 src/sim/field/grid.ts        격자, 시야선(los, 벽만 보는 losWalls), A*(계단 칸은 다른 층으로 건너간다)
 src/sim/field/beliefs.ts     Fact / BeliefStore (병합 규칙)
@@ -102,6 +104,7 @@ tests/sim.test.ts            자동 테스트
 - **한국어 조사.** 이름·호출부호 뒤 조사는 `josa(word, '이/가')` 로 붙인다.
 - **브라우저 확인 없이 UI 를 끝났다고 하지 않는다.** 헤드리스 브라우저로 화면을 찍어 보고, 콘솔 오류 0건을 확인한다.
 - **현장 그림의 고정 층.** `staticLayer.ts` 는 타일·가구가 바뀔 때만 다시 그린다(`staticSig`). 매 프레임 바뀌는 것(문짝, 불, 사람)을 여기에 넣지 않는다. 새 타일 종류·가구를 만들면 `surfaceMap`·`paintTile`·`furniture` 에 그림을 추가한다.
+- **건물 배치는 고정이 아니다.** 방의 수·위치·출입구가 사건마다 다르다. 좌표를 직접 쓰지 말고 `Plan`(`rooms`·`corridors`·`exitDoors`·`floors`)과 `s.exits`·`s.regions` 로 찾는다. 복도가 없는 건물(`corridors` 가 빈 배열)도 있다. 새 틀을 만들면 "모든 바닥에 걸어서 닿는다"는 테스트(`현장 배치의 다양성`)를 통과해야 한다.
 - **가구는 실제 장애물이다(`T.FURN`).** 지나갈 수 없고, 시야는 통과하며, 엄폐물이 된다. 방을 새로 만들 때는 `builders.ts` 의 `furnish()` 를 쓴다(문 주변을 비우고 방이 끊기지 않는지 검사한다).
 
 ## 작업 방식

@@ -6,7 +6,7 @@ import { emit, raiseProblem } from '../events';
 import { T } from '../types';
 import type { Casualty, Hostile, Incident, Scene } from '../types';
 import { clamp, dist, josa } from '../util';
-import { addProp } from './builders';
+import { addProp } from './kit';
 import { casFact } from './agents';
 import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, truthWalkable } from './grid';
 

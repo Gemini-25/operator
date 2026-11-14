@@ -4,295 +4,82 @@
 import type { Sim } from '../engine';
 import type { Rng } from '../rng';
 import { DECOR, T } from '../types';
-import type { Casualty, Hostile, Incident, Mobility, Prop, PropKind, Region, Scene } from '../types';
+import type { District, Incident, Mobility, Prop, Region, Scene } from '../types';
 import { staticPass, tidx } from './grid';
+import { SH, SW, addCas, addHostile, addProp, addRegion, baseScene, freeTileIn, furnish, get, set } from './kit';
+import { blockPassage, lockDoor, planBuilding, suiteRooms, tallPlan } from './plans';
+import type { Arch, Plan, PlanOpts } from './plans';
 
-export const SW = 30;
-export const SH = 20;
-
-function baseScene(sim: Sim, I: Incident, rng: Rng): Scene {
-  const n = SW * SH;
-  const vis = sim.weather === 'clear' ? 7.5 : sim.weather === 'rain' ? 5.8 : sim.weather === 'fog' ? 4.0 : 4.6;
-  return {
-    id: I.id, incidentId: I.id, kind: I.truth.type, variant: I.truth.variant, w: SW, h: SH,
-    tiles: new Uint8Array(n).fill(T.GROUND), region: new Int16Array(n).fill(-1),
-    fire: new Float32Array(n), heat: new Float32Array(n), fuel: new Float32Array(n), smoke: new Float32Array(n),
-    burned: new Uint8Array(n), wet: new Float32Array(n), shadow: new Uint8Array(n), propAt: new Int16Array(n).fill(-1),
-    decor: new Uint8Array(n), floorMat: 0, damage: new Uint8Array(n), entryExit: -1, stairTo: new Int16Array(n).fill(-1),
-    regions: [], props: [], casualties: [], hostiles: [], agents: [],
-    staging: { x: 3, y: 17 }, safe: { x: 4, y: 15 }, vantage: { x: 4, y: 12 }, exits: [], spots: [],
-    controlPts: [], controlDone: [], laneRows: [], cars: [], nextCarAt: 0, trafficFlow: 0,
-    indoorVision: 7, outdoorVision: vis, exposure: sim.weather === 'rain' || sim.weather === 'night' ? 0.06 : 0.02,
-    startedAt: sim.t, arrivedAt: -1, commanderRid: -1, leadDept: 'fire',
-    board: [], nextWorkId: 0, radio: [], nextMsgId: 0, requests: [], zoneProb: [], fx: [], rng,
-    totalFuelTiles: 0, burnedTiles: 0, burning: 0, secureAt: -1, fireOutAt: -1, lastSitrep: -99, sizeupDone: false, closing: false,
-    entryOrdered: false, negotStart: -1, researchRound: 0, lastSpreadEvent: -99, collapseDone: new Set(), mismatchLogged: false, closedCheckAt: 0,
-    staticVersion: 0, archived: false, idleSince: -1, breachAt: -1, breachDone: false, bangAt: -99,
-  };
+// ───────────────────────── 건물 (화재 · 붕괴 · 가스 누출 공통) ─────────────────────────
+function pickArch(rng: Rng, dist: District): Arch {
+  if (dist === 'industrial') return rng.weighted<Arch>(['hall', 'corridor'], [0.6, 0.4]);
+  if (dist === 'commercial') return rng.weighted<Arch>(['hall', 'corridor', 'suite'], [0.4, 0.35, 0.25]);
+  return rng.weighted<Arch>(['corridor', 'suite'], [0.45, 0.55]);
 }
-
-const set = (s: Scene, x: number, y: number, t: number): void => { s.tiles[tidx(s, x, y)] = t; };
-const get = (s: Scene, x: number, y: number): number => s.tiles[tidx(s, x, y)];
-
-function addRegion(s: Scene, name: string, kind: Region['kind'], x0: number, y0: number, x1: number, y1: number, indoor: boolean, searchable: boolean): Region {
-  const tiles: number[] = [];
-  const id = s.regions.length;
-  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
-    const i = tidx(s, x, y);
-    if (!staticPass(s.tiles[i])) continue;
-    if (indoor !== (s.tiles[i] === T.FLOOR || s.tiles[i] === T.DOOR)) { if (indoor) continue; }
-    tiles.push(i);
-    if (s.region[i] < 0) s.region[i] = id;
-  }
-  const r: Region = { id, name, kind, tiles, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, x0, y0, x1, y1, indoor, searchable };
-  s.regions.push(r);
-  return r;
+function planOpts(dist: District): PlanOpts {
+  if (dist === 'industrial') return { prefix: '작업실', hallName: '작업장', kinds: [DECOR.MACHINE, DECOR.CRATE, DECOR.CRATE, DECOR.CABINET], hallKinds: [DECOR.MACHINE, DECOR.MACHINE, DECOR.CRATE, DECOR.CRATE], racks: true };
+  if (dist === 'commercial') return { prefix: '점포', hallName: '매장', kinds: [DECOR.COUNTER, DECOR.SHELF, DECOR.TABLE, DECOR.CRATE], hallKinds: [DECOR.COUNTER, DECOR.SHELF, DECOR.SHELF, DECOR.PLANT], racks: true };
+  return { prefix: dist === 'outskirts' ? '객실' : '호실', hallName: '거실', kinds: [DECOR.BED, DECOR.DESK, DECOR.SOFA, DECOR.CABINET, DECOR.PLANT] };
 }
-
-export function addProp(s: Scene, kind: PropKind, x: number, y: number, extra: Partial<Prop> = {}): Prop {
-  const p: Prop = { id: s.props.length, kind, x, y, w: 1, h: 1, blocking: false, hp: 0, ...extra };
-  s.props.push(p);
-  if (p.blocking) for (let yy = y; yy < y + p.h; yy++) for (let xx = x; xx < x + p.w; xx++) s.propAt[tidx(s, xx, yy)] = p.id;
-  return p;
+const floorMatOf = (dist: District): number => (dist === 'industrial' ? 2 : dist === 'commercial' ? 1 : 0);
+function fuelUp(s: Scene, P: Plan, rng: Rng, lo: number, hi: number, corLo: number, corHi: number, doorFuel: number): void {
+  for (const r of P.rooms) for (const i of r.tiles) if (s.fuel[i] === 0) s.fuel[i] = s.tiles[i] === T.DOOR ? doorFuel : rng.range(lo, hi);
+  for (const c of P.corridors) for (const i of c.tiles) if (s.fuel[i] === 0) s.fuel[i] = rng.range(corLo, corHi);
+  for (let i = 0; i < s.tiles.length; i++) if (s.tiles[i] === T.FURN) s.fuel[i] = 1;
+  for (let i = 0; i < s.fuel.length; i++) if (s.fuel[i] > 0) s.totalFuelTiles++;
 }
-
-function addCas(s: Scene, x: number, y: number, mob: Mobility, health: number, bleed: number, concealment: number, extra: Partial<Casualty> = {}): Casualty {
-  const c: Casualty = {
-    id: s.casualties.length, label: String.fromCharCode(65 + s.casualties.length),
-    x, y, px: x, py: y, health, bleed, mob, trapWork: mob === 'trapped' ? 14 : 0, concealment, inVehicle: null,
-    where: 'scene', treated: false, treatProg: 0, dead: false, treatQ: 0, bleed0: bleed, bystander: false, walking: false, path: null, pathI: 0, panic: false,
-    wander: false, wanderT: 0, isTarget: false, hostage: false,
-    tDiscovered: -1, tFreed: -1, tTreated: -1, tSafe: -1, tLoaded: -1, tDead: -1, tHospital: -1, discoveredBy: -1, causeEvent: -1,
-    ...extra,
-  };
-  s.casualties.push(c);
-  return c;
-}
-
-function addHostile(s: Scene, x: number, y: number, weapon: Hostile['weapon'], aggression: number, skill: number, hidden: boolean, fleeAt: number): Hostile {
-  const h: Hostile = {
-    id: s.hostiles.length, label: '용의자 ' + (s.hostiles.length + 1), x, y, px: x, py: y,
-    health: 100, morale: 0.55 + aggression * 0.45, aggression, skill, weapon, state: 'hold', hidden, cooldown: 1, fleeAt,
-    path: null, pathI: 0, negot: 0, seenOfficers: 0, targetRid: -1,
-    facing: Math.PI / 2, lookAt: 0, stunUntil: -1, hostageId: -1, deadline: Infinity, alertUntil: -1,
-  };
-  s.hostiles.push(h);
-  return h;
-}
-
-/**
- * 방에 가구를 놓는다. 벽에 붙은 칸에만, 문 주변은 비우고, 놓은 뒤에도 방 안의 모든 칸이 문과 이어져 있을 때만 확정한다.
- * 가구 칸은 T.FURN(통행 불가, 시야는 통과, 엄폐물)이며 불에 잘 탄다.
- */
-function furnish(s: Scene, rng: Rng, r: Region, kinds: number[], count: number, flammable = true): void {
-  const w = s.w;
-  const isWall = (i: number): boolean => s.tiles[i] === T.WALL || s.tiles[i] === T.WINDOW;
-  const doors = r.tiles.filter((i) => s.tiles[i] === T.DOOR);
-  const nearDoor = (i: number): boolean => {
-    const x = i % w, y = (i / w) | 0;
-    for (let yy = y - 1; yy <= y + 1; yy++) for (let xx = x - 1; xx <= x + 1; xx++) { if (xx < 0 || yy < 0 || xx >= s.w || yy >= s.h) continue; if (s.tiles[yy * w + xx] === T.DOOR) return true; }
-    return false;
-  };
-  const connected = (): boolean => {
-    const walk = r.tiles.filter((i) => s.tiles[i] === T.FLOOR || s.tiles[i] === T.DOOR);
-    if (!walk.length) return false;
-    const inR = new Set(walk), seen = new Set<number>([doors.length ? doors[0] : walk[0]]), st = [doors.length ? doors[0] : walk[0]];
-    while (st.length) { const c = st.pop()!; for (const d of [1, -1, w, -w]) { const j = c + d; if (inR.has(j) && !seen.has(j) && !(Math.abs(d) === 1 && ((j / w) | 0) !== ((c / w) | 0))) { seen.add(j); st.push(j); } } }
-    return seen.size === walk.length;
-  };
-  let placed = 0;
-  for (let tries = 0; tries < count * 6 && placed < count; tries++) {
-    const i = rng.pick(r.tiles);
-    if (s.tiles[i] !== T.FLOOR || nearDoor(i) || s.fire[i] > 0) continue;
-    const x = i % w;
-    if (!(isWall(i - w) || isWall(i + w) || (x > 0 && isWall(i - 1)) || (x < w - 1 && isWall(i + 1)))) continue;
-    s.tiles[i] = T.FURN;
-    if (!connected()) { s.tiles[i] = T.FLOOR; continue; }
-    s.decor[i] = rng.pick(kinds);
-    if (flammable) s.fuel[i] = 1;
-    placed++;
-  }
-}
-
-function freeTileIn(s: Scene, r: Region, rng: Rng, avoid: (i: number) => boolean = () => false): number {
-  for (let k = 0; k < 40; k++) {
-    const i = rng.pick(r.tiles);
-    if (s.tiles[i] !== T.FLOOR || s.propAt[i] >= 0 || avoid(i)) continue;
-    if (s.casualties.some((c) => tidx(s, Math.round(c.x), Math.round(c.y)) === i)) continue;
-    return i;
-  }
-  return r.tiles.find((i) => s.tiles[i] === T.FLOOR && s.propAt[i] < 0) ?? r.tiles[0];
+const doorOf = (s: Scene, r: Region): Prop | undefined => s.props.find((p) => p.kind === 'door' && s.region[tidx(s, p.x, p.y)] === r.id);
+/** 무전이 잘 닿지 않을 만한 방: 2층이거나, 대기 지점에서 먼 쪽 절반 */
+function farRooms(s: Scene, P: Plan): Region[] {
+  if (P.floors.length > 1) return P.rooms.filter((r) => r.cx > 16);
+  const sorted = [...P.rooms].sort((a, b) => Math.hypot(b.cx - s.staging.x, b.cy - s.staging.y) - Math.hypot(a.cx - s.staging.x, a.cy - s.staging.y));
+  return sorted.slice(0, Math.max(1, sorted.length >> 1));
 }
 
 // ───────────────────────── 건물 화재 ─────────────────────────
 function buildFire(sim: Sim, I: Incident, rng: Rng): Scene {
-  if (I.truth.variant !== 'false' && I.truth.severity >= 2 && rng.chance(0.5)) return buildFireTall(sim, I, rng);      // 큰 화재의 절반은 2층 건물
   const s = baseScene(sim, I, rng);
   const sev = I.truth.severity, dist = I.truth.district;
-  for (let y = 17; y < SH; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
-  const bx0 = 6, bx1 = 25, by0 = 2, by1 = 13;
-  for (let y = by0; y <= by1; y++) for (let x = bx0; x <= bx1; x++) set(s, x, y, x === bx0 || x === bx1 || y === by0 || y === by1 ? T.WALL : T.FLOOR);
-  for (let x = bx0 + 1; x < bx1; x++) { set(s, x, 6, T.WALL); set(s, x, 9, T.WALL); }
-  const prefix = dist === 'industrial' ? '작업실' : dist === 'commercial' ? '점포' : dist === 'outskirts' ? '객실' : '호실';
-  let roomNo = 1;
-  const rooms: Region[] = [];
-  const mkSide = (y0: number, y1: number, doorY: number, winY: number) => {
-    const parts = rng.chance(0.55) ? [11, 16, 20] : [13, 19];
-    for (const px of parts) for (let y = y0; y <= y1; y++) set(s, px, y, T.WALL);
-    const bounds = [bx0, ...parts, bx1];
-    for (let k = 0; k < bounds.length - 1; k++) {
-      const x0 = bounds[k] + 1, x1 = bounds[k + 1] - 1;
-      const dx = rng.int(x0, x1);
-      set(s, dx, doorY, T.DOOR);
-      addProp(s, 'door', dx, doorY, { open: false, locked: false });
-      const wx = Math.round((x0 + x1) / 2);
-      set(s, wx, winY, T.WINDOW);
-      const r = addRegion(s, `${prefix} ${roomNo++}`, 'room', x0, y0, x1, y1, true, true);
-      s.region[tidx(s, dx, doorY)] = r.id; r.tiles.push(tidx(s, dx, doorY));
-      rooms.push(r);
-    }
-  };
-  mkSide(3, 5, 6, 2);
-  mkSide(10, 12, 9, 13);
-  s.floorMat = dist === 'industrial' ? 2 : dist === 'commercial' ? 1 : 0;
-  const kinds = dist === 'industrial' ? [DECOR.MACHINE, DECOR.CRATE, DECOR.CRATE, DECOR.CABINET] : dist === 'commercial' ? [DECOR.COUNTER, DECOR.SHELF, DECOR.TABLE, DECOR.CRATE] : [DECOR.BED, DECOR.DESK, DECOR.SOFA, DECOR.CABINET, DECOR.PLANT];
-  for (const r of rooms) furnish(s, rng, r, kinds, rng.int(2, 3), false);
-  // 출입구
-  const wy = rng.pick([7, 8]), ey = rng.pick([7, 8]);
-  set(s, bx0, wy, T.DOOR); addProp(s, 'door', bx0, wy, { open: false, locked: false });
-  set(s, bx1, ey, T.DOOR);
+  const falseAlarm = I.truth.variant === 'false';      // 오인 신고: 탄 냄새만 나고 불은 없다
+  const tall = !falseAlarm && sev >= 2 && rng.chance(0.5);      // 큰 화재의 절반은 2층 건물
+  const P = tall ? tallPlan(s, rng, planOpts(dist)) : planBuilding(s, rng, pickArch(rng, dist), planOpts(dist));
+  s.floorMat = floorMatOf(dist);
+  const rooms = P.rooms;
   const hz = (v: number): number => Math.min(0.95, v * sim.tune.hazardMul);
-  const eastLocked = rng.chance(hz(0.45));
-  addProp(s, 'door', bx1, ey, { open: false, locked: eastLocked, blocking: eastLocked, hp: rng.range(7, 11) });
-  const corridor = addRegion(s, '복도', 'corridor', bx0, 7, bx1, 8, true, false);
-  s.exits.push({ x: bx0 - 1, y: wy }, { x: bx1 + 1, y: ey });
-  s.staging = { x: 3, y: 17 }; s.safe = { x: 3, y: 14 }; s.vantage = { x: 4, y: wy + 2 };
-  addProp(s, 'hydrant', 27, 16, {});
-  // 가연물
-  for (const r of rooms) for (const i of r.tiles) s.fuel[i] = s.tiles[i] === T.DOOR ? 0.3 : s.tiles[i] === T.FURN ? 1 : rng.range(0.55, 1.0) * (dist === 'industrial' ? 1.15 : 1);
-  for (const i of corridor.tiles) if (s.fuel[i] === 0) s.fuel[i] = rng.range(0.4, 0.56);
-  for (let i = 0; i < s.fuel.length; i++) if (s.fuel[i] > 0) s.totalFuelTiles++;
+  if (rng.chance(hz(0.45))) lockDoor(s, P.exitDoors[1], rng.range(7, 11));
+  fuelUp(s, P, rng, 0.55 * (dist === 'industrial' ? 1.15 : 1), 1.0 * (dist === 'industrial' ? 1.15 : 1), 0.4, 0.56, 0.3);
   // 발화
   const origin = rng.pick(rooms);
-  const falseAlarm = I.truth.variant === 'false';      // 오인 신고: 탄 냄새만 나고 불은 없다
   const seeds = falseAlarm ? 0 : sev >= 3 ? 3 : sev >= 2 ? 2 : 1;
   for (let k = 0; k < seeds; k++) { const i = freeTileIn(s, origin, rng); s.fire[i] = rng.range(0.4, 0.6) + sev * 0.09; }
   // 규모가 큰 화재: 발화실 문이 열려 있고(연소 확대가 빠름), 가장 큰 화재는 인접 실에도 이미 불이 붙어 있다
-  if (sev >= 2) { const d = s.props.find((p) => p.kind === 'door' && s.region[tidx(s, p.x, p.y)] === origin.id); if (d) d.open = true; }
+  if (sev >= 2) { const d = doorOf(s, origin); if (d && !d.locked) d.open = true; }
   if (sev >= 3) {
     const near = rooms.filter((q) => q !== origin).sort((a, b) => Math.hypot(a.cx - origin.cx, a.cy - origin.cy) - Math.hypot(b.cx - origin.cx, b.cy - origin.cy))[0];
     const i2 = freeTileIn(s, near, rng); s.fire[i2] = rng.range(0.3, 0.5);
   }
   // 숨겨진 조건
-  if (rng.chance(hz(0.24))) {
-    const dxm = rng.int(11, 20);
-    for (const yy of [7, 8]) addProp(s, 'debris', dxm, yy, { blocking: true, hp: rng.range(9, 15) });
-  }
+  if (rng.chance(hz(0.24))) blockPassage(s, rng, P, [9, 15]);
   if (rng.chance(hz(0.2))) {
-    const r = rng.pick(rooms.filter((q) => q !== origin));
-    const d = s.props.find((p) => p.kind === 'door' && s.region[tidx(s, p.x, p.y)] === r.id);
-    if (d) { d.locked = true; d.blocking = true; d.hp = rng.range(5, 9); s.propAt[tidx(s, d.x, d.y)] = d.id; }
+    const d = doorOf(s, rng.pick(rooms.filter((q) => q !== origin)));
+    if (d && P.exitDoors.indexOf(d) < 0) lockDoor(s, d, rng.range(5, 9));
   }
   if (!falseAlarm && rng.chance(hz(dist === 'industrial' ? 0.42 : 0.13))) {
-    const r = rng.pick(rooms.filter((q) => q !== origin));
-    const i = freeTileIn(s, r, rng);
+    const i = freeTileIn(s, rng.pick(rooms.filter((q) => q !== origin)), rng);
     addProp(s, 'gas', i % SW, (i / SW) | 0, {});
   }
-  if (rng.chance(hz(0.6))) {
-    const far = rooms.filter((r) => r.cx > 17);
-    const r = rng.pick(far);
-    for (const i of r.tiles) s.shadow[i] = 1;
-  }
-  // 구조 대상
+  if (rng.chance(hz(0.6))) for (const i of rng.pick(farRooms(s, P)).tiles) s.shadow[i] = 1;
+  // 구조 대상 (2층 건물은 위층에 더 많이 남아 있다)
   const count = falseAlarm ? 0 : sev >= 3 ? rng.int(2, 4) : sev >= 2 ? rng.int(1, 3) : rng.int(0, 1);
   for (let k = 0; k < count; k++) {
-    const r = rng.chance(0.9) ? rng.pick(rooms.filter((q) => q !== origin)) : origin;
+    let pool = rooms.filter((q) => q !== origin);
+    if (tall) { const up = rng.chance(0.65); const lv = pool.filter((q) => (q.cx > 16) === up); if (lv.length) pool = lv; }
+    const r = rng.chance(0.9) && pool.length ? rng.pick(pool) : origin;
     const i = freeTileIn(s, r, rng, (q) => { for (let f = 0; f < s.fire.length; f++) if (s.fire[f] > 0 && Math.hypot((f % SW) - (q % SW), ((f / SW) | 0) - ((q / SW) | 0)) < 2.5) return true; return false; });
     const roll = rng.next();
     const mob: Mobility = roll < 0.4 ? 'mobile' : roll < 0.8 ? 'immobile' : 'trapped';
     addCas(s, i % SW, (i / SW) | 0, mob, mob === 'mobile' ? rng.range(78, 100) : rng.range(55, 85),
       mob === 'mobile' ? 0.03 : rng.range(0.07, 0.19), mob === 'trapped' ? rng.range(0.35, 0.55) : rng.range(0.1, 0.55));
-  }
-  s.leadDept = 'fire';
-  return s;
-}
-
-/**
- * 2층 건물 화재. 1층과 2층 평면을 같은 격자 안에 나란히 놓고(오른쪽이 2층), 계단 칸끼리 이어 준다.
- * 두 층 사이는 빈 공간(VOID)이라 시야·불·연기가 벽을 넘어가지 않고, 계단으로만 오간다.
- */
-function buildFireTall(sim: Sim, I: Incident, rng: Rng): Scene {
-  const s = baseScene(sim, I, rng);
-  const sev = I.truth.severity, dist = I.truth.district;
-  for (let y = 17; y < SH; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
-  for (let y = 0; y <= 13; y++) for (let x = 16; x < SW; x++) set(s, x, y, T.VOID);
-  const prefix = dist === 'industrial' ? '작업실' : dist === 'commercial' ? '점포' : dist === 'outskirts' ? '객실' : '호실';
-  s.floorMat = dist === 'industrial' ? 2 : dist === 'commercial' ? 1 : 0;
-  const kinds = dist === 'industrial' ? [DECOR.MACHINE, DECOR.CRATE, DECOR.CRATE, DECOR.CABINET] : dist === 'commercial' ? [DECOR.COUNTER, DECOR.SHELF, DECOR.TABLE, DECOR.CRATE] : [DECOR.BED, DECOR.DESK, DECOR.SOFA, DECOR.CABINET, DECOR.PLANT];
-  const rooms: Region[] = [], corridors: Region[] = [];
-  let roomNo = 1;
-  const mkFloor = (ox: number, level: number): void => {
-    const x0 = ox, x1 = ox + 11, y0 = 2, y1 = 12;
-    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set(s, x, y, x === x0 || x === x1 || y === y0 || y === y1 ? T.WALL : T.FLOOR);
-    for (let x = x0 + 1; x < x1; x++) { set(s, x, 6, T.WALL); set(s, x, 8, T.WALL); }
-    for (const [ya, yb, doorY, winY] of [[3, 5, 6, y0], [9, 11, 8, y1]]) {
-      const px = ox + rng.int(5, 6);
-      for (let y = ya; y <= yb; y++) set(s, px, y, T.WALL);
-      for (const [xa, xb] of [[x0 + 1, px - 1], [px + 1, x1 - 1]]) {
-        const dx = rng.int(xa, xb);
-        set(s, dx, doorY, T.DOOR); addProp(s, 'door', dx, doorY, { open: false, locked: false });
-        set(s, Math.round((xa + xb) / 2), winY, T.WINDOW);
-        const r = addRegion(s, `${level}층 ${prefix} ${roomNo++}`, 'room', xa, ya, xb, yb, true, true);
-        s.region[tidx(s, dx, doorY)] = r.id; r.tiles.push(tidx(s, dx, doorY));
-        rooms.push(r);
-      }
-    }
-    corridors.push(addRegion(s, `${level}층 복도`, 'corridor', x0 + 1, 7, x1 - 1, 7, true, false));
-  };
-  mkFloor(3, 1); mkFloor(17, 2);
-  for (const r of rooms) furnish(s, rng, r, kinds, rng.int(1, 2), false);
-  // 계단: 각 층 복도의 동쪽 끝
-  const st1 = tidx(s, 13, 7), st2 = tidx(s, 27, 7);
-  s.tiles[st1] = T.STAIR; s.tiles[st2] = T.STAIR; s.stairTo[st1] = st2; s.stairTo[st2] = st1;
-  // 출입구 (1층)
-  set(s, 3, 7, T.DOOR); addProp(s, 'door', 3, 7, { open: false, locked: false });
-  set(s, 14, 7, T.DOOR);
-  const hz = (v: number): number => Math.min(0.95, v * sim.tune.hazardMul);
-  const eastLocked = rng.chance(hz(0.45));
-  addProp(s, 'door', 14, 7, { open: false, locked: eastLocked, blocking: eastLocked, hp: rng.range(7, 11) });
-  s.exits.push({ x: 2, y: 7 }, { x: 15, y: 7 });
-  s.staging = { x: 3, y: 17 }; s.safe = { x: 3, y: 14 }; s.vantage = { x: 1, y: 9 };
-  addProp(s, 'hydrant', 27, 16, {});
-  for (const r of rooms) for (const i of r.tiles) s.fuel[i] = s.tiles[i] === T.DOOR ? 0.3 : s.tiles[i] === T.FURN ? 1 : rng.range(0.55, 1.0) * (dist === 'industrial' ? 1.15 : 1);
-  for (const c of corridors) for (const i of c.tiles) if (s.fuel[i] === 0) s.fuel[i] = rng.range(0.4, 0.56);
-  for (let i = 0; i < s.fuel.length; i++) if (s.fuel[i] > 0) s.totalFuelTiles++;
-  // 발화
-  const origin = rng.pick(rooms);
-  const seeds = sev >= 3 ? 3 : 2;
-  for (let k = 0; k < seeds; k++) { const i = freeTileIn(s, origin, rng); s.fire[i] = rng.range(0.4, 0.6) + sev * 0.09; }
-  { const d = s.props.find((p) => p.kind === 'door' && s.region[tidx(s, p.x, p.y)] === origin.id); if (d) d.open = true; }
-  if (sev >= 3) {
-    const near = rooms.filter((q) => q !== origin).sort((a, b) => Math.hypot(a.cx - origin.cx, a.cy - origin.cy) - Math.hypot(b.cx - origin.cx, b.cy - origin.cy))[0];
-    const i2 = freeTileIn(s, near, rng); s.fire[i2] = rng.range(0.3, 0.5);
-  }
-  // 숨겨진 조건
-  if (rng.chance(hz(0.24))) { const lvl = rng.pick([3, 17]); const dx = lvl + rng.int(3, 8); addProp(s, 'debris', dx, 7, { blocking: true, hp: rng.range(9, 15) }); }
-  if (rng.chance(hz(0.2))) {
-    const r = rng.pick(rooms.filter((q) => q !== origin));
-    const d = s.props.find((p) => p.kind === 'door' && s.region[tidx(s, p.x, p.y)] === r.id);
-    if (d) { d.locked = true; d.blocking = true; d.hp = rng.range(5, 9); s.propAt[tidx(s, d.x, d.y)] = d.id; }
-  }
-  if (rng.chance(hz(dist === 'industrial' ? 0.42 : 0.13))) { const r = rng.pick(rooms.filter((q) => q !== origin)); const i = freeTileIn(s, r, rng); addProp(s, 'gas', i % SW, (i / SW) | 0, {}); }
-  if (rng.chance(hz(0.6))) { const r = rng.pick(rooms.filter((q) => q.cx > 16)); for (const i of r.tiles) s.shadow[i] = 1; }
-  // 구조 대상: 2층에 더 많이 남아 있다
-  const count = sev >= 3 ? rng.int(2, 4) : rng.int(1, 3);
-  for (let k = 0; k < count; k++) {
-    const pool = rooms.filter((q) => q !== origin && (rng.chance(0.65) ? q.cx > 16 : q.cx < 16));
-    const r = rng.chance(0.9) && pool.length ? rng.pick(pool) : origin;
-    const i = freeTileIn(s, r, rng, (q) => { for (let f = 0; f < s.fire.length; f++) if (s.fire[f] > 0 && Math.hypot((f % SW) - (q % SW), ((f / SW) | 0) - ((q / SW) | 0)) < 2.5) return true; return false; });
-    const roll = rng.next();
-    const mob: Mobility = roll < 0.4 ? 'mobile' : roll < 0.8 ? 'immobile' : 'trapped';
-    addCas(s, i % SW, (i / SW) | 0, mob, mob === 'mobile' ? rng.range(78, 100) : rng.range(55, 85), mob === 'mobile' ? 0.03 : rng.range(0.07, 0.19), mob === 'trapped' ? rng.range(0.35, 0.55) : rng.range(0.1, 0.55));
   }
   s.leadDept = 'fire';
   return s;
@@ -419,37 +206,110 @@ function buildSearch(sim: Sim, I: Incident, rng: Rng): Scene {
 }
 
 // ───────────────────────── 무장 사건 ─────────────────────────
-function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {
-  const s = baseScene(sim, I, rng);
-  const sev = I.truth.severity, variant = I.truth.variant;
-  for (let y = 16; y <= 18; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
+type VenueKind = 'shop' | 'bank' | 'office' | 'warehouse';
+interface Venue { main: Region; back: Region; office: Region; front: number; rear: number; place: string }
+
+/**
+ * 무장 사건의 장소. 어느 장소든 용의자가 있는 넓은 곳(main), 숨을 수 있는 뒷방(back), 인질이 잡히는 방(office)이 있고,
+ * 남쪽 정문(exits[0])과 북쪽 후문(exits[1])이 있다. 건물 범위는 x 8~22, y 2~10 으로 같다.
+ */
+function armedVenue(s: Scene, rng: Rng, kind: VenueKind, dist: District): Venue {
   const bx0 = 8, bx1 = 22, by0 = 2, by1 = 10;
   for (let y = by0; y <= by1; y++) for (let x = bx0; x <= bx1; x++) set(s, x, y, x === bx0 || x === bx1 || y === by0 || y === by1 ? T.WALL : T.FLOOR);
-  for (let x = bx0 + 1; x < bx1; x++) set(s, x, 5, T.WALL);
-  for (let y = 3; y <= 4; y++) set(s, 15, y, T.WALL);
-  set(s, 12, 5, T.DOOR); addProp(s, 'door', 12, 5, { open: false });
-  set(s, 18, 5, T.DOOR); addProp(s, 'door', 18, 5, { open: false });
-  for (const [x, y] of [[12, 7], [12, 8], [18, 7], [18, 8]]) { set(s, x, y, T.WALL); s.decor[tidx(s, x, y)] = DECOR.SHELF; }       // 키 큰 진열대(시야를 가린다)
-  s.floorMat = 1;
-  set(s, 15, by1, T.DOOR); addProp(s, 'door', 15, by1, { open: true });
-  for (const x of [10, 11, 19, 20]) set(s, x, by1, T.WINDOW);
-  set(s, 11, by0, T.DOOR); addProp(s, 'door', 11, by0, { open: false });
-  const shop = addRegion(s, '매장', 'room', 9, 6, 21, 9, true, true);
-  const storage = addRegion(s, '창고', 'room', 9, 3, 14, 4, true, true);
-  const office = addRegion(s, '사무실', 'room', 16, 3, 21, 4, true, true);
-  for (const [x, y, r] of [[12, 5, storage.id], [18, 5, office.id], [15, by1, shop.id], [11, by0, storage.id]] as number[][]) { const i = tidx(s, x, y); s.region[i] = r; s.regions[r].tiles.push(i); }
-  s.exits.push({ x: 15, y: 11 }, { x: 11, y: 1 });
-  furnish(s, rng, shop, [DECOR.COUNTER, DECOR.COUNTER, DECOR.SHELF, DECOR.PLANT], 4, false);
-  furnish(s, rng, storage, [DECOR.CRATE, DECOR.CRATE, DECOR.CABINET], 3, false);
-  furnish(s, rng, office, [DECOR.DESK, DECOR.CABINET, DECOR.SOFA], 2, false);
-  // 엄폐물(주차 차량)
-  for (const [x, y] of [[10, 13], [15, 14], [20, 13]]) addProp(s, 'cover', x, y, { w: 2, h: 1, blocking: true, color: rng.int(0, 4) });
+  const wall = (x: number, y: number): void => set(s, x, y, T.WALL);
+  const rack = (x: number, y: number): void => { set(s, x, y, T.WALL); s.decor[tidx(s, x, y)] = DECOR.SHELF; };      // 키 큰 진열대(시야를 가린다)
+  const fixture = (x: number, y: number, d: number): void => { set(s, x, y, T.FURN); s.decor[tidx(s, x, y)] = d; };
+  const door = (x: number, y: number, r: Region, open = false): void => { set(s, x, y, T.DOOR); addProp(s, 'door', x, y, { open }); const i = tidx(s, x, y); s.region[i] = r.id; r.tiles.push(i); };
+  let main: Region, back: Region, office: Region, front = 15, rear = 11, place = '';
+  if (kind === 'bank') {
+    for (let y = 3; y <= 9; y++) wall(17, y);
+    for (let x = 18; x <= 21; x++) wall(x, 6);
+    main = addRegion(s, '은행 로비', 'room', 9, 3, 16, 9, true, true);
+    office = addRegion(s, '지점장실', 'room', 18, 3, 21, 5, true, true);
+    back = addRegion(s, '금고', 'room', 18, 7, 21, 9, true, true);
+    for (let x = 9; x <= 13; x++) fixture(x, 5, DECOR.COUNTER);      // 창구
+    door(17, 4, office); door(17, 8, back);
+    front = 12; rear = 20;
+    for (const x of [10, 14, 15]) set(s, x, by1, T.WINDOW);
+    for (const x of [11, 14]) set(s, x, by0, T.WINDOW);
+    door(front, by1, main, true); door(rear, by0, office);
+    furnish(s, rng, main, [DECOR.PLANT, DECOR.SOFA, DECOR.PLANT], 3, false);
+    furnish(s, rng, office, [DECOR.DESK, DECOR.CABINET, DECOR.SOFA], 2, false);
+    furnish(s, rng, back, [DECOR.CABINET, DECOR.CRATE, DECOR.CABINET], 3, false);
+    s.floorMat = 1; place = '은행 지점';
+  } else if (kind === 'office') {
+    for (let x = 9; x <= 21; x++) wall(x, 5);
+    for (const x of [13, 18]) for (let y = 3; y <= 4; y++) wall(x, y);
+    main = addRegion(s, '사무 공간', 'room', 9, 6, 21, 9, true, true);
+    back = addRegion(s, '서류 창고', 'room', 9, 3, 12, 4, true, true);
+    const meeting = addRegion(s, '회의실', 'room', 14, 3, 17, 4, true, true);
+    office = addRegion(s, '대표실', 'room', 19, 3, 21, 4, true, true);
+    for (const [x, y] of [[11, 7], [12, 7], [17, 8], [18, 8]]) fixture(x, y, DECOR.DESK);      // 책상 섬
+    door(11, 5, back); door(16, 5, meeting); door(20, 5, office);
+    front = 15; rear = 10;
+    for (const x of [10, 11, 19, 20]) set(s, x, by1, T.WINDOW);
+    for (const x of [16, 20]) set(s, x, by0, T.WINDOW);
+    door(front, by1, main, true); door(rear, by0, back);
+    furnish(s, rng, main, [DECOR.PLANT, DECOR.CABINET, DECOR.SOFA], 3, false);
+    furnish(s, rng, back, [DECOR.CABINET, DECOR.CRATE], 2, false);
+    furnish(s, rng, meeting, [DECOR.TABLE, DECOR.PLANT], 1, false);
+    furnish(s, rng, office, [DECOR.DESK, DECOR.SOFA, DECOR.CABINET], 2, false);
+    s.floorMat = 0; place = dist === 'industrial' ? '공단 사무동' : '사무실';
+  } else if (kind === 'warehouse') {
+    for (let y = 3; y <= 5; y++) { wall(13, y); wall(17, y); }
+    for (let x = 9; x <= 13; x++) wall(x, 6);
+    for (let x = 17; x <= 21; x++) wall(x, 6);
+    main = addRegion(s, '창고 홀', 'room', 9, 7, 21, 9, true, true);
+    for (let y = 3; y <= 6; y++) for (let x = 14; x <= 16; x++) { const i = tidx(s, x, y); s.region[i] = main.id; main.tiles.push(i); }      // 가운데 통로도 홀에 속한다
+    back = addRegion(s, '자재실', 'room', 9, 3, 12, 5, true, true);
+    office = addRegion(s, '관리실', 'room', 18, 3, 21, 5, true, true);
+    for (const [x, y] of [[12, 8], [18, 8]]) rack(x, y);
+    door(11, 6, back); door(19, 6, office);
+    front = 15; rear = 15;
+    for (const x of [10, 20]) { set(s, x, by1, T.WINDOW); set(s, x, by0, T.WINDOW); }
+    door(front, by1, main, true); door(rear, by0, main);
+    furnish(s, rng, main, [DECOR.CRATE, DECOR.CRATE, DECOR.MACHINE, DECOR.CRATE], 5, false);
+    furnish(s, rng, back, [DECOR.CRATE, DECOR.CABINET], 2, false);
+    furnish(s, rng, office, [DECOR.DESK, DECOR.CABINET], 2, false);
+    s.floorMat = 2; place = dist === 'outskirts' ? '외곽 창고' : '물류 창고';
+  } else {
+    for (let x = bx0 + 1; x < bx1; x++) wall(x, 5);
+    for (let y = 3; y <= 4; y++) wall(15, y);
+    for (const [x, y] of [[12, 7], [12, 8], [18, 7], [18, 8]]) rack(x, y);
+    main = addRegion(s, '매장', 'room', 9, 6, 21, 9, true, true);
+    back = addRegion(s, '창고', 'room', 9, 3, 14, 4, true, true);
+    office = addRegion(s, '사무실', 'room', 16, 3, 21, 4, true, true);
+    door(12, 5, back); door(18, 5, office);
+    front = 15; rear = 11;
+    for (const x of [10, 11, 19, 20]) set(s, x, by1, T.WINDOW);
+    door(front, by1, main, true); door(rear, by0, back);
+    furnish(s, rng, main, [DECOR.COUNTER, DECOR.COUNTER, DECOR.SHELF, DECOR.PLANT], 4, false);
+    furnish(s, rng, back, [DECOR.CRATE, DECOR.CRATE, DECOR.CABINET], 3, false);
+    furnish(s, rng, office, [DECOR.DESK, DECOR.CABINET, DECOR.SOFA], 2, false);
+    s.floorMat = 1;
+  }
+  s.exits.push({ x: front, y: by1 + 1 }, { x: rear, y: by0 - 1 });
+  // 엄폐물(주차 차량)과 엄폐 위치: 정문 앞, 후문 옆, 협상 위치
+  for (const [x, y] of [[front - 5, 13], [front, 14], [front + 5, 13]]) addProp(s, 'cover', x, y, { w: 2, h: 1, blocking: true, color: rng.int(0, 4) });
   s.spots = [
-    { x: 15, y: 15, exit: 0, taken: -1 }, { x: 16, y: 15, exit: 0, taken: -1 }, { x: 10, y: 14, exit: 0, taken: -1 }, { x: 21, y: 14, exit: 0, taken: -1 },
-    { x: 7, y: 1, exit: 1, taken: -1 }, { x: 14, y: 1, exit: 1, taken: -1 },
-    { x: 11, y: 14, exit: -1, taken: -1 },
+    { x: front, y: 15, exit: 0, taken: -1 }, { x: front + 1, y: 15, exit: 0, taken: -1 }, { x: front - 5, y: 14, exit: 0, taken: -1 }, { x: front + 6, y: 14, exit: 0, taken: -1 },
+    { x: rear - 4, y: 1, exit: 1, taken: -1 }, { x: rear + 3, y: 1, exit: 1, taken: -1 },
+    { x: front - 4, y: 14, exit: -1, taken: -1 },
   ];
-  s.staging = { x: 1, y: 18 }; s.safe = { x: 2, y: 14 }; s.vantage = { x: 10, y: 14 };
+  s.staging = { x: 1, y: 18 }; s.safe = { x: 2, y: 14 }; s.vantage = { x: front - 5, y: 14 };
+  if (place) s.placeName = place;
+  return { main, back, office, front, rear, place };
+}
+
+function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {
+  const s = baseScene(sim, I, rng);
+  const sev = I.truth.severity, variant = I.truth.variant, dist = I.truth.district;
+  for (let y = 16; y <= 18; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
+  const kind: VenueKind = dist === 'commercial' ? rng.weighted<VenueKind>(['shop', 'bank', 'office'], [0.35, 0.35, 0.3])
+    : dist === 'industrial' ? rng.weighted<VenueKind>(['warehouse', 'shop', 'office'], [0.55, 0.25, 0.2])
+      : dist === 'outskirts' ? rng.weighted<VenueKind>(['shop', 'warehouse'], [0.6, 0.4]) : rng.weighted<VenueKind>(['shop', 'office'], [0.65, 0.35]);
+  const V = armedVenue(s, rng, kind, dist);
+  const shop = V.main, storage = V.back, office = V.office;
   const tn = sim.tune;
   const ag = (v: number): number => Math.max(0.05, Math.min(0.98, v + tn.aggroShift));
   const sk = (v: number): number => Math.max(0.1, Math.min(0.95, v + tn.skillShift));
@@ -512,26 +372,48 @@ function buildMedical(sim: Sim, I: Incident, rng: Rng): Scene {
   const s = baseScene(sim, I, rng);
   const variant = I.truth.variant;
   for (let y = 17; y < SH; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
-  const bx0 = 9, bx1 = 20, by0 = 4, by1 = 12;
-  for (let y = by0; y <= by1; y++) for (let x = bx0; x <= bx1; x++) set(s, x, y, x === bx0 || x === bx1 || y === by0 || y === by1 ? T.WALL : T.FLOOR);
-  for (let y = by0 + 1; y < by1; y++) set(s, 15, y, T.WALL);
-  for (let x = bx0 + 1; x < 15; x++) set(s, x, 8, T.WALL);
-  set(s, 15, 10, T.DOOR); addProp(s, 'door', 15, 10, { open: true });
-  set(s, 12, 8, T.DOOR); addProp(s, 'door', 12, 8, { open: rng.chance(0.6) });
-  set(s, 12, by1, T.DOOR);
-  const locked = rng.chance(Math.min(0.9, 0.16 * sim.tune.hazardMul));       // 혼자 쓰러져 문을 열어 줄 사람이 없다
-  addProp(s, 'door', 12, by1, { open: false, locked, blocking: locked, hp: rng.range(5, 8) });
-  for (const [x, y] of [[11, by0], [18, by0], [bx0, 6], [bx1, 8], [17, by1]]) set(s, x, y, T.WINDOW);
-  const living = addRegion(s, '거실', 'room', 10, 9, 14, 11, true, true);
-  const bed = addRegion(s, '침실', 'room', 10, 5, 14, 7, true, true);
-  const kitchen = addRegion(s, '주방', 'room', 16, 5, 19, 11, true, true);
-  for (const [x, y, r] of [[15, 10, kitchen.id], [12, 8, bed.id], [12, by1, living.id]] as number[][]) { const i = tidx(s, x, y); s.region[i] = r; s.regions[r].tiles.push(i); }
-  s.exits.push({ x: 12, y: by1 + 1 });
-  s.staging = { x: 3, y: 17 }; s.safe = { x: 4, y: 14 }; s.vantage = { x: 12, y: 14 };
-  furnish(s, rng, living, [DECOR.SOFA, DECOR.TABLE, DECOR.PLANT, DECOR.CABINET], 3, false);
-  furnish(s, rng, bed, [DECOR.BED, DECOR.CABINET, DECOR.DESK], 2, false);
-  furnish(s, rng, kitchen, [DECOR.KITCHEN, DECOR.KITCHEN, DECOR.TABLE, DECOR.CABINET], 4, false);
-  const room = rng.pick([living, bed, kitchen]);
+  const lockedP = Math.min(0.9, 0.16 * sim.tune.hazardMul);       // 혼자 쓰러져 문을 열어 줄 사람이 없다
+  const rooms: Region[] = [];
+  let fx = 12;
+  const by1 = 12;
+  if (rng.chance(0.5)) {
+    // 거실·침실·주방이 나뉜 단독 주택
+    const bx0 = 9, bx1 = 20, by0 = 4;
+    for (let y = by0; y <= by1; y++) for (let x = bx0; x <= bx1; x++) set(s, x, y, x === bx0 || x === bx1 || y === by0 || y === by1 ? T.WALL : T.FLOOR);
+    for (let y = by0 + 1; y < by1; y++) set(s, 15, y, T.WALL);
+    for (let x = bx0 + 1; x < 15; x++) set(s, x, 8, T.WALL);
+    set(s, 15, 10, T.DOOR); addProp(s, 'door', 15, 10, { open: true });
+    set(s, 12, 8, T.DOOR); addProp(s, 'door', 12, 8, { open: rng.chance(0.6) });
+    for (const [x, y] of [[11, by0], [18, by0], [bx0, 6], [bx1, 8], [17, by1]]) set(s, x, y, T.WINDOW);
+    const living = addRegion(s, '거실', 'room', 10, 9, 14, 11, true, true);
+    const bed = addRegion(s, '침실', 'room', 10, 5, 14, 7, true, true);
+    const kitchen = addRegion(s, '주방', 'room', 16, 5, 19, 11, true, true);
+    for (const [x, y, r] of [[15, 10, kitchen.id], [12, 8, bed.id]] as number[][]) { const i = tidx(s, x, y); s.region[i] = r; s.regions[r].tiles.push(i); }
+    rooms.push(living, bed, kitchen);
+  } else {
+    // 방이 여러 개 이어진 집 (크기와 방 구성이 매번 다르다)
+    const f = { x0: rng.int(8, 10), y0: rng.int(3, 5), x1: rng.int(19, 22), y1: by1 };
+    for (let y = f.y0; y <= f.y1; y++) for (let x = f.x0; x <= f.x1; x++) set(s, x, y, x === f.x0 || x === f.x1 || y === f.y0 || y === f.y1 ? T.WALL : T.FLOOR);
+    const made = suiteRooms(s, rng, f, '방', ['거실', '침실', '주방', '작은방', '서재', '욕실', '다용도실', '옷방']);
+    rooms.push(...made.rooms);
+    const cands: number[] = [];
+    for (let x = f.x0 + 2; x <= f.x1 - 2; x++) if (get(s, x, by1 - 1) === T.FLOOR && get(s, x - 1, by1) === T.WALL && get(s, x + 1, by1) === T.WALL) cands.push(x);
+    fx = cands.length ? rng.pick(cands) : Math.round((f.x0 + f.x1) / 2);
+    for (const r of rooms) {
+      const wx = Math.round((r.x0 + r.x1) / 2);
+      if (r.y0 - 1 === f.y0 && get(s, wx, f.y0) === T.WALL) set(s, wx, f.y0, T.WINDOW);
+      else if (r.y1 + 1 === f.y1 && get(s, wx, f.y1) === T.WALL && Math.abs(wx - fx) > 1) set(s, wx, f.y1, T.WINDOW);
+    }
+  }
+  set(s, fx, by1, T.DOOR);
+  const locked = rng.chance(lockedP);
+  addProp(s, 'door', fx, by1, { open: false, locked, blocking: locked, hp: rng.range(5, 8) });
+  { const inId = s.region[tidx(s, fx, by1 - 1)]; if (inId >= 0) { const i = tidx(s, fx, by1); s.region[i] = inId; s.regions[inId].tiles.push(i); } }
+  s.exits.push({ x: fx, y: by1 + 1 });
+  s.staging = { x: 3, y: 17 }; s.safe = { x: 4, y: 14 }; s.vantage = { x: fx, y: 14 };
+  const KINDS: Record<string, number[]> = { 거실: [DECOR.SOFA, DECOR.TABLE, DECOR.PLANT, DECOR.CABINET], 침실: [DECOR.BED, DECOR.CABINET, DECOR.DESK], 주방: [DECOR.KITCHEN, DECOR.KITCHEN, DECOR.TABLE, DECOR.CABINET], 작은방: [DECOR.BED, DECOR.DESK], 서재: [DECOR.DESK, DECOR.CABINET, DECOR.SOFA], 욕실: [DECOR.CABINET], 다용도실: [DECOR.CRATE, DECOR.CABINET], 옷방: [DECOR.CABINET, DECOR.CABINET] };
+  for (const r of rooms) furnish(s, rng, r, KINDS[r.name] ?? [DECOR.CABINET], r.name === '주방' ? 4 : r.name === '거실' ? 3 : 2, false);
+  const room = rng.pick(rooms);
   const i = freeTileIn(s, room, rng);
   if (variant === 'arrest') addCas(s, i % SW, (i / SW) | 0, 'immobile', rng.range(58, 70), rng.range(0.5, 0.66), 0.05);
   else if (variant === 'trauma') addCas(s, i % SW, (i / SW) | 0, 'immobile', rng.range(60, 80), rng.range(0.15, 0.24), 0.05);
@@ -540,72 +422,36 @@ function buildMedical(sim: Sim, I: Incident, rng: Rng): Scene {
   return s;
 }
 
-// ───────────────────────── 건물 붕괴 · 가스 누출 (공통 건물 뼈대) ─────────────────────────
-interface Shell { rooms: Region[]; corridor: Region; bx0: number; bx1: number; by0: number; by1: number }
-/** 가운데 복도 양쪽으로 방이 늘어선 건물. 서쪽·동쪽 끝에 출입구가 있다. */
-function shellBuilding(s: Scene, rng: Rng, prefix: string, kinds: number[]): Shell {
-  for (let y = 17; y < SH; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
-  const bx0 = 6, bx1 = 25, by0 = 2, by1 = 13;
-  for (let y = by0; y <= by1; y++) for (let x = bx0; x <= bx1; x++) set(s, x, y, x === bx0 || x === bx1 || y === by0 || y === by1 ? T.WALL : T.FLOOR);
-  for (let x = bx0 + 1; x < bx1; x++) { set(s, x, 6, T.WALL); set(s, x, 9, T.WALL); }
-  let roomNo = 1;
-  const rooms: Region[] = [];
-  const mkSide = (y0: number, y1: number, doorY: number, winY: number): void => {
-    const parts = rng.chance(0.5) ? [12, 19] : [11, 16, 20];
-    for (const px of parts) for (let y = y0; y <= y1; y++) set(s, px, y, T.WALL);
-    const bounds = [bx0, ...parts, bx1];
-    for (let k = 0; k < bounds.length - 1; k++) {
-      const x0 = bounds[k] + 1, x1 = bounds[k + 1] - 1;
-      const dx = rng.int(x0, x1);
-      set(s, dx, doorY, T.DOOR);
-      addProp(s, 'door', dx, doorY, { open: rng.chance(0.5), locked: false });
-      set(s, Math.round((x0 + x1) / 2), winY, T.WINDOW);
-      const r = addRegion(s, `${prefix} ${roomNo++}`, 'room', x0, y0, x1, y1, true, true);
-      s.region[tidx(s, dx, doorY)] = r.id; r.tiles.push(tidx(s, dx, doorY));
-      rooms.push(r);
-    }
-  };
-  mkSide(3, 5, 6, 2);
-  mkSide(10, 12, 9, 13);
-  for (const r of rooms) furnish(s, rng, r, kinds, rng.int(2, 3), false);
-  const wy = rng.pick([7, 8]), ey = rng.pick([7, 8]);
-  set(s, bx0, wy, T.DOOR); addProp(s, 'door', bx0, wy, { open: false, locked: false });
-  set(s, bx1, ey, T.DOOR); addProp(s, 'door', bx1, ey, { open: false, locked: false });
-  const corridor = addRegion(s, '복도', 'corridor', bx0, 7, bx1, 8, true, false);
-  s.exits.push({ x: bx0 - 1, y: wy }, { x: bx1 + 1, y: ey });
-  s.staging = { x: 3, y: 17 }; s.safe = { x: 3, y: 14 }; s.vantage = { x: 4, y: wy + 2 };
-  addProp(s, 'hydrant', 27, 16, {});
-  for (const r of rooms) for (const i of r.tiles) s.fuel[i] = s.tiles[i] === T.DOOR ? 0.25 : rng.range(0.35, 0.7);
-  for (const i of corridor.tiles) if (s.fuel[i] === 0) s.fuel[i] = rng.range(0.25, 0.4);
-  for (let i = 0; i < s.fuel.length; i++) if (s.fuel[i] > 0) s.totalFuelTiles++;
-  s.leadDept = 'fire';
-  return { rooms, corridor, bx0, bx1, by0, by1 };
-}
-
+// ───────────────────────── 건물 붕괴 ─────────────────────────
 function buildCollapse(sim: Sim, I: Incident, rng: Rng): Scene {
   const s = baseScene(sim, I, rng);
   const sev = I.truth.severity, dist = I.truth.district;
-  s.floorMat = dist === 'industrial' ? 2 : dist === 'commercial' ? 1 : 0;
-  const kinds = dist === 'industrial' ? [DECOR.CRATE, DECOR.CRATE, DECOR.CABINET, DECOR.MACHINE] : dist === 'commercial' ? [DECOR.COUNTER, DECOR.TABLE, DECOR.CRATE, DECOR.SHELF] : [DECOR.BED, DECOR.DESK, DECOR.SOFA, DECOR.CABINET];
-  const B = shellBuilding(s, rng, dist === 'industrial' ? '창고' : dist === 'commercial' ? '점포' : '호실', kinds);
+  s.floorMat = floorMatOf(dist);
+  const o = planOpts(dist);
+  if (dist === 'industrial') o.prefix = '창고';
+  const P = rng.chance(0.3) ? tallPlan(s, rng, o) : planBuilding(s, rng, pickArch(rng, dist), o);
+  fuelUp(s, P, rng, 0.35, 0.7, 0.25, 0.4, 0.25);
   const hz = (v: number): number => Math.min(0.95, v * sim.tune.hazardMul);
-  // 무너진 구역: 건물 한쪽의 안쪽 벽이 넘어가고 잔해가 깔린다
-  const zw = rng.int(5, 6 + sev), zh = rng.int(4, 5 + sev);
-  const zx0 = rng.int(B.bx0 + 1, B.bx1 - zw), zy0 = rng.int(B.by0 + 1, B.by1 - zh);
+  // 무너진 구역: 한 층의 한쪽에서 안쪽 벽이 넘어가고 잔해가 깔린다
+  const F = rng.pick(P.floors);
+  const zw = Math.min(F.x1 - F.x0 - 1, rng.int(5, 6 + sev)), zh = Math.min(F.y1 - F.y0 - 1, rng.int(4, 5 + sev));
+  const zx0 = rng.int(F.x0 + 1, F.x1 - zw), zy0 = rng.int(F.y0 + 1, F.y1 - zh);
   const zx1 = zx0 + zw - 1, zy1 = zy0 + zh - 1;
   const zone: number[] = [];
   for (let y = zy0; y <= zy1; y++) for (let x = zx0; x <= zx1; x++) {
     const i = tidx(s, x, y), t = s.tiles[i];
-    if (t === T.WALL && rng.chance(0.75)) s.tiles[i] = T.FLOOR;
+    if (t === T.STAIR) continue;
+    if (t === T.WALL && rng.chance(0.75)) { s.tiles[i] = T.FLOOR; s.decor[i] = 0; }
     else if (t === T.FURN && rng.chance(0.6)) { s.tiles[i] = T.FLOOR; s.decor[i] = 0; }
-    if (s.tiles[i] === T.DOOR) { const d = s.props.find((p) => p.kind === 'door' && p.x === x && p.y === y); if (d) d.open = true; }
+    if (s.tiles[i] === T.DOOR) { const d = s.props.find((p) => p.kind === 'door' && p.x === x && p.y === y); if (d && !d.locked) d.open = true; }
     s.damage[i] = 1;
     if (s.tiles[i] === T.FLOOR) { zone.push(i); if (s.fuel[i] === 0) s.fuel[i] = 0.3; }
     s.smoke[i] = 0.55;
   }
-  for (const i of zone) if (s.region[i] < 0) s.region[i] = B.corridor.id;
+  // 넘어간 벽 자리는 이웃한 방에 속한 것으로 본다
+  for (const i of zone) if (s.region[i] < 0) { for (const d of [1, -1, SW, -SW]) { const j = i + d; if (j >= 0 && j < s.region.length && s.region[j] >= 0) { s.region[i] = s.region[j]; break; } } }
   for (const i of zone) if (rng.chance(0.17 + 0.03 * sev)) addProp(s, 'debris', i % SW, (i / SW) | 0, { blocking: true, hp: rng.range(8, 14) });
-  if (rng.chance(hz(0.3))) for (const yy of [7, 8]) { const dx = rng.int(9, 22); if (s.propAt[tidx(s, dx, yy)] < 0) addProp(s, 'debris', dx, yy, { blocking: true, hp: rng.range(8, 13) }); }
+  if (rng.chance(hz(0.3))) blockPassage(s, rng, P, [8, 13]);
   const free = (): number => { for (let k = 0; k < 60; k++) { const i = rng.pick(zone); if (s.propAt[i] < 0 && s.tiles[i] === T.FLOOR) return i; } return -1; };
   // 금이 간 구조물 (보강하지 않으면 다시 무너진다)
   const nUnstable = sev >= 3 ? 2 : rng.chance(hz(0.7)) ? 1 + (sev >= 2 && rng.chance(0.4) ? 1 : 0) : 0;
@@ -614,32 +460,35 @@ function buildCollapse(sim: Sim, I: Incident, rng: Rng): Scene {
   const count = sev >= 3 ? rng.int(4, 6) : sev >= 2 ? rng.int(2, 4) : rng.int(1, 2);
   for (let k = 0; k < count; k++) {
     const used = (q: number): boolean => s.casualties.some((c) => c.x === q % SW && c.y === ((q / SW) | 0)) || s.props.some((p) => p.kind === 'unstable' && p.x === q % SW && p.y === ((q / SW) | 0));
-    let i = rng.chance(0.75) ? free() : freeTileIn(s, rng.pick(B.rooms), rng);
-    if (i < 0 || used(i)) i = freeTileIn(s, rng.pick(B.rooms), rng, used);
+    let i = rng.chance(0.75) ? free() : freeTileIn(s, rng.pick(P.rooms), rng);
+    if (i < 0 || used(i)) i = freeTileIn(s, rng.pick(P.rooms), rng, used);
     const roll = rng.next(), inZone = s.damage[i] === 1;
     const mob: Mobility = inZone ? (roll < 0.62 ? 'trapped' : roll < 0.88 ? 'immobile' : 'mobile') : roll < 0.3 ? 'immobile' : 'mobile';
     const c = addCas(s, i % SW, (i / SW) | 0, mob, mob === 'mobile' ? rng.range(76, 100) : rng.range(46, 84), mob === 'mobile' ? 0.02 : rng.range(0.07, 0.19), mob === 'trapped' ? rng.range(0.4, 0.7) : rng.range(0.12, 0.45));
     if (mob === 'trapped') c.trapWork = rng.range(14, 22);
   }
   // 끊어진 배선에서 불이 붙는 경우
-  if (rng.chance(hz(0.22))) { const r = rng.pick(B.rooms); const i = freeTileIn(s, r, rng); s.fire[i] = rng.range(0.35, 0.5); }
+  if (rng.chance(hz(0.22))) { const i = freeTileIn(s, rng.pick(P.rooms), rng); s.fire[i] = rng.range(0.35, 0.5); }
   if (rng.chance(hz(0.35))) for (const i of zone) if (i % SW >= (zx0 + zx1) / 2) s.shadow[i] = 1;
   return s;
 }
 
+// ───────────────────────── 가스 누출 ─────────────────────────
 function buildHazmat(sim: Sim, I: Incident, rng: Rng): Scene {
   const s = baseScene(sim, I, rng);
   const sev = I.truth.severity, dist = I.truth.district;
   s.floorMat = dist === 'residential' ? 1 : 2;
-  const kinds = dist === 'commercial' || dist === 'residential' ? [DECOR.MACHINE, DECOR.CABINET, DECOR.CRATE, DECOR.COUNTER] : [DECOR.MACHINE, DECOR.MACHINE, DECOR.CRATE, DECOR.CABINET];
-  const B = shellBuilding(s, rng, dist === 'industrial' ? '공정실' : '기계실', kinds);
+  const o: PlanOpts = { prefix: dist === 'industrial' ? '공정실' : '기계실', hallName: dist === 'industrial' ? '배관동' : '기계실 홀', kinds: [DECOR.MACHINE, DECOR.CABINET, DECOR.CRATE, DECOR.MACHINE], hallKinds: [DECOR.MACHINE, DECOR.MACHINE, DECOR.CRATE, DECOR.CABINET], racks: false };
+  const arch: Arch = dist === 'industrial' ? rng.weighted<Arch>(['hall', 'corridor'], [0.55, 0.45]) : rng.weighted<Arch>(['corridor', 'suite', 'hall'], [0.45, 0.3, 0.25]);
+  const P = rng.chance(0.3) ? tallPlan(s, rng, o) : planBuilding(s, rng, arch, o);
+  fuelUp(s, P, rng, 0.35, 0.7, 0.25, 0.4, 0.25);
   const hz = (v: number): number => Math.min(0.95, v * sim.tune.hazardMul);
   // 새는 배관: 벽에 붙은 자리에 놓는다
   const nValve = sev >= 3 && rng.chance(hz(0.5)) ? 2 : 1;
   const leakRooms: Region[] = [];
   for (let k = 0; k < nValve; k++) {
-    const r = rng.pick(B.rooms.filter((q) => leakRooms.indexOf(q) < 0));
-    const wallAdj = r.tiles.filter((i) => s.tiles[i] === T.FLOOR && s.propAt[i] < 0 && (s.tiles[i - SW] === T.WALL || s.tiles[i + SW] === T.WALL) && s.tiles[i - 1] !== T.DOOR && s.tiles[i + 1] !== T.DOOR && s.tiles[i - SW] !== T.DOOR && s.tiles[i + SW] !== T.DOOR);
+    const r = rng.pick(P.rooms.filter((q) => leakRooms.indexOf(q) < 0));
+    const wallAdj = r.tiles.filter((i) => s.tiles[i] === T.FLOOR && s.propAt[i] < 0 && (s.tiles[i - SW] === T.WALL || s.tiles[i + SW] === T.WALL) && s.tiles[i - 1] !== T.DOOR && s.tiles[i + 1] !== T.DOOR && s.tiles[i - SW] !== T.DOOR && s.tiles[i + SW] !== T.DOOR && s.stairTo[i - 1] < 0 && s.stairTo[i + 1] < 0);
     const i = wallAdj.length ? rng.pick(wallAdj) : freeTileIn(s, r, rng);
     addProp(s, 'valve', i % SW, (i / SW) | 0, { blocking: true, leakRate: Math.min(1, 0.5 + 0.14 * sev + rng.range(0, 0.1)) });
     leakRooms.push(r);
@@ -647,14 +496,14 @@ function buildHazmat(sim: Sim, I: Incident, rng: Rng): Scene {
   // 안에 있던 사람들: 누출 지점에 가까울수록 쓰러져 있다
   const count = sev >= 3 ? rng.int(3, 5) : sev >= 2 ? rng.int(1, 3) : rng.int(0, 2);
   for (let k = 0; k < count; k++) {
-    const r = rng.chance(0.5) ? rng.pick(leakRooms) : rng.pick(B.rooms);
+    const r = rng.chance(0.5) ? rng.pick(leakRooms) : rng.pick(P.rooms);
     const i = freeTileIn(s, r, rng, (q) => s.casualties.some((c) => c.x === q % SW && c.y === ((q / SW) | 0)));
     const near = leakRooms.indexOf(r) >= 0;
     const mob: Mobility = rng.chance(near ? 0.7 : 0.3) ? 'immobile' : 'mobile';
     addCas(s, i % SW, (i / SW) | 0, mob, mob === 'mobile' ? rng.range(78, 100) : rng.range(52, 82), mob === 'mobile' ? 0.02 : rng.range(0.05, 0.12), rng.range(0.1, 0.4));
   }
-  if (rng.chance(hz(0.2))) { const r = rng.pick(B.rooms); const d = s.props.find((p) => p.kind === 'door' && s.region[tidx(s, p.x, p.y)] === r.id); if (d) { d.open = false; d.locked = true; d.blocking = true; d.hp = rng.range(5, 9); s.propAt[tidx(s, d.x, d.y)] = d.id; } }
-  if (rng.chance(hz(0.5))) { const r = rng.pick(B.rooms.filter((q) => q.cx > 15)); for (const i of r.tiles) s.shadow[i] = 1; }
+  if (rng.chance(hz(0.2))) { const d = doorOf(s, rng.pick(P.rooms)); if (d && P.exitDoors.indexOf(d) < 0) lockDoor(s, d, rng.range(5, 9)); }
+  if (rng.chance(hz(0.5))) for (const i of rng.pick(farRooms(s, P)).tiles) s.shadow[i] = 1;
   return s;
 }
 

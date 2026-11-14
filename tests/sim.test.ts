@@ -420,3 +420,41 @@ describe('2층 건물', () => {
     expect(timeouts).toBeLessThan(tall * 0.2);
   }, 120000);
 });
+
+describe('현장 배치의 다양성', () => {
+  it('건물 틀과 무장 사건 장소가 여러 종 나오고, 어느 건물이든 모든 바닥에 걸어서 닿을 수 있다', async () => {
+    const { T } = await import('../src/sim/types');
+    const kinds = new Set<string>(), venues = new Set<string>(), houses = new Set<number>();
+    for (let k = 0; k < 30; k++) {
+      const s = new Sim('S' + k);
+      s.run(6000);
+      for (const sc of s.scenes) {
+        if (!sc) continue;
+        const I = s.incidents[sc.incidentId];
+        if (sc.kind === 'armed') venues.add(sc.placeName ?? '상점');
+        if (sc.kind === 'medical') houses.add(sc.regions.length);
+        if (sc.kind === 'fire' || sc.kind === 'collapse' || sc.kind === 'hazmat') {
+          const tall = sc.stairTo.some((v) => v >= 0), cor = sc.regions.some((r) => r.kind === 'corridor'), big = sc.regions.some((r) => r.kind === 'room' && r.tiles.length > 45);
+          kinds.add(tall ? 'tall' : cor ? 'corridor' : big ? 'hall' : 'suite');
+        }
+        if (sc.kind === 'search' || sc.kind === 'traffic') continue;
+        // 대기 지점에서 출발해 문·계단을 지나 모든 바닥 칸에 닿는가 (잔해와 잠긴 문은 치우거나 열 수 있다)
+        const w = sc.w, seen = new Uint8Array(sc.w * sc.h);
+        const pass = (i: number): boolean => { const t = sc.tiles[i]; return t === T.FLOOR || t === T.DOOR || t === T.GROUND || t === T.ROAD || t === T.STAIR; };
+        const st = [sc.staging.y * w + sc.staging.x]; seen[st[0]] = 1;
+        while (st.length) {
+          const c = st.pop()!, x = c % w, y = (c / w) | 0;
+          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= w || ny >= sc.h) continue; const j = ny * w + nx; if (!seen[j] && pass(j)) { seen[j] = 1; st.push(j); } }
+          const sl = sc.stairTo[c]; if (sl >= 0 && !seen[sl]) { seen[sl] = 1; st.push(sl); }
+        }
+        let cut = 0; for (let i = 0; i < seen.length; i++) if (sc.tiles[i] === T.FLOOR && !seen[i]) cut++;
+        expect(cut, `${s.seed} 사건 ${I.code} (${sc.kind})`).toBe(0);
+        // 출입구 바깥 칸은 걸을 수 있는 땅이다
+        for (const e of sc.exits) expect(pass(e.y * w + e.x)).toBe(true);
+      }
+    }
+    expect(kinds.size).toBe(4);
+    expect(venues.size).toBeGreaterThanOrEqual(3);
+    expect(houses.size).toBeGreaterThanOrEqual(2);
+  }, 120000);
+});

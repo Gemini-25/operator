@@ -225,6 +225,7 @@ export interface Scene {
   shadow: Uint8Array;                 // 무전 음영 구역
   decor: Uint8Array;                  // 가구 종류 (DECOR)
   damage: Uint8Array;                 // 무너져 내린 자리 (붕괴 사건: 잔해가 깔린 바닥)
+  placeName?: string;                 // 현장을 만들면서 정해진 장소 이름 (사건 이름표에 쓴다)
   stairTo: Int16Array;                // 계단 칸 → 이어진 다른 층의 계단 칸 (-1 = 계단 아님). 층은 같은 격자 안에 나란히 놓인다
   entryExit: number;                  // 지휘관이 고른 진입 출입구 (s.exits 의 번호, -1 = 아직 정하지 않음)
   floorMat: number;                   // 실내 바닥 재질 (0 나무, 1 타일, 2 콘크리트)

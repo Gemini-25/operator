@@ -68,6 +68,7 @@ function createIncident(sim: Sim, chainNote = ''): Incident {
   };
   sim.incidents.push(I);
   createScene(sim, I);
+  { const sc = sim.scenes[I.id]; if (sc && sc.placeName) I.truth.label = `${nodeName(sim.city, node.id)} ${sc.placeName}`; }      // 현장을 만들면서 정해진 장소 이름
   const delay = type === 'fire' ? rng.range(6, 16) : type === 'traffic' ? rng.range(3, 8) : type === 'search' ? rng.range(1, 3) : type === 'medical' ? rng.range(2, 6) : type === 'collapse' ? rng.range(3, 8) : type === 'hazmat' ? rng.range(8, 20) : rng.range(4, 11);
   I.firstCallAt = sim.t + delay;
   const benign = variant === 'false' || variant === 'prank';

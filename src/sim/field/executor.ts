@@ -306,13 +306,14 @@ function breach(sim: Sim, s: Scene, a: FieldAgent): void {
     const team = s.agents.filter((b) => b.status === 'active' && b.task && b.task.kind === 'engage' && dist(b.x, b.y, e.x, e.y) <= 2.6);
     if (!team.length) return;
     // 출입구 바로 안쪽의 문
+    let inX = e.x, inY = e.y + (e.y > s.h / 2 ? -3 : 3);
     for (const p of s.props) {
       if (p.kind !== 'door' || Math.abs(p.x - e.x) + Math.abs(p.y - e.y) > 1.5) continue;
       if (p.blocking) { s.propAt[p.y * s.w + p.x] = -1; p.blocking = false; p.locked = false; }
       if (!p.open) { p.open = true; s.staticVersion++; }
+      inX = e.x + (p.x - e.x) * 3; inY = e.y + (p.y - e.y) * 3;      // 문을 지나 세 칸 안쪽
     }
     // 문 바로 안쪽에 용의자가 있다고 알고 있을 때만 섬광탄을 쓴다(없으면 방 진입 때를 위해 아낀다)
-    const inX = e.x, inY = e.y + (e.y > s.h / 2 ? -3 : 3);
     const thrower = team.find((b) => sim.units[b.unitId].flashbangs > 0 && b.beliefs.list('hos').some((f) => (f.value.state === 'hold' || f.value.state === 'fight') && dist(f.value.x, f.value.y, inX, inY) <= 5));
     if (thrower && sim.t - s.bangAt > 2) {
       sim.units[thrower.unitId].flashbangs--; s.bangAt = sim.t;

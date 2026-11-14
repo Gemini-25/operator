@@ -355,19 +355,25 @@ function drift(sim: Sim): void {
     // 밀림의 뿌리: 막힌 구간, 사고 현장(slow), 그 자체로 꽉 찬 구간. 밀려서 찬 구간은 뿌리가 아니다(서로를 붙잡아 풀리지 않는 정체를 막는다)
     src[e.id] = e.closed || e.slow >= 1 || p >= 2.4 ? 1 : 0;
   }
-  const near = (e: RoadEdge, f: (id: number) => boolean): boolean => {
-    for (const id of city.nodes[e.a].edges) if (id !== e.id && f(id)) return true;
-    for (const id of city.nodes[e.b].edges) if (id !== e.id && f(id)) return true;
+  // 이웃 구간(양 끝 교차로에 붙은 다른 구간) 가운데 조건에 맞는 것이 있는가. 구간마다 함수를 새로 만들지 않도록 조건별로 따로 쓴다
+  const nearSrc = (e: RoadEdge): boolean => {
+    for (const id of city.nodes[e.a].edges) if (id !== e.id && src[id] === 1) return true;
+    for (const id of city.nodes[e.b].edges) if (id !== e.id && src[id] === 1) return true;
+    return false;
+  };
+  const nearBacked = (e: RoadEdge): boolean => {
+    for (const id of city.nodes[e.a].edges) if (id !== e.id && ring1[id] === 1 && q0[id] >= 0.6) return true;
+    for (const id of city.nodes[e.b].edges) if (id !== e.id && ring1[id] === 1 && q0[id] >= 0.6) return true;
     return false;
   };
   const ring1 = new Uint8Array(n);
-  for (const e of city.edges) if (near(e, (id) => src[id] === 1)) ring1[e.id] = 1;
+  for (const e of city.edges) if (nearSrc(e)) ring1[e.id] = 1;
   const q0 = tr.queue.slice();
   for (const e of city.edges) {
     const half = e.cls === 'highway' ? 0.5 : 1;
     let q = q0[e.id];
     if (ring1[e.id]) q = Math.min(1, q + 0.14 * half);                                                   // 막힌 곳에 닿아 있다
-    else if (q < 0.5 && near(e, (id) => ring1[id] === 1 && q0[id] >= 0.6)) q = Math.min(0.5, q + 0.07 * half);      // 한 다리 건너: 많이 밀린 구간의 뒤
+    else if (q < 0.5 && nearBacked(e)) q = Math.min(0.5, q + 0.07 * half);      // 한 다리 건너: 많이 밀린 구간의 뒤
     else q *= 0.75;
     tr.queue[e.id] = q < 0.01 ? 0 : q;
   }

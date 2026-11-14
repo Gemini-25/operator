@@ -580,62 +580,74 @@ for (const seed of ['S1', 'S2', 'S3', 'S4']) for (const force of forces) {
 
 ## 11. 화면 확인 절차
 
-준비: `npx vite --port 5212 --strictPort` 를 띄운다. 찍는 스크립트(`<scratchpad>/g4-shots.cjs`)와 그림은 저장소 밖에 둔다. 이 환경에서는 `require('playwright')` 가 풀리고 `chromium.launch()` 가 된다(브라우저는 `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers` — 확인함). `scripts/screenshot.cjs` 는 `?force=`·특정 틱·지도 확대를 못 하므로 쓰지 않고 고치지도 않는다.
+준비: `npx vite --port 5212 --strictPort` 를 띄운다. 찍는 스크립트(`<scratchpad>/g4-shots.cjs`)와 그림은 저장소 밖에 둔다. 이 환경에서는 `require('playwright')` 가 풀리고 `chromium.launch()` 가 된다(브라우저는 `PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers` — 확인함). `scripts/screenshot.cjs` 는 `?force=`·특정 틱·지도 확대를 못 하므로 쓰지 않고 고치지도 않는다. Q1 의 `scripts/ui-check.cjs` 도 고치지 않는다. 다만 짜임새(개발 서버 띄우기, `window.__ar.snap()` 읽기)는 본떠도 된다.
+
+**먼저 같은 교대인지 맞춘다.** 화면과 헤드리스가 같은 조건이어야 아래 틱이 맞는다.
+
+- 화면의 난이도 기본값은 `{ ...NORMAL, disaster: 'random' }` 이다(`runner.ts:50`). 주소에 `disaster` 가 없으면 재난을 무작위로 뽑는다(S1 은 지진을 뽑는다 — 확인함). 그래서 **재난 없는 장면의 주소에는 모두 `&disaster=none` 을 붙인다**(`parseDisaster` 가 받는다). 그러면 난이도가 `{ ...NORMAL, disaster: 'none' }` 이 되어 헤드리스의 `find.ts` 와 같은 교대가 된다.
+- 설정(배속·관찰자 시점 `truthView`·현장 자동 확대 `sceneAuto`·난이도)은 키를 누를 때마다 `localStorage` 에 저장된다(`runner.ts:91`, `App.tsx:142·145`). 같은 브라우저 컨텍스트에서 다음 주소로 넘어가면 설정이 그대로 따라간다. 예를 들어 C 장면의 지진을 뒤의 재난 없는 주소가 물려받고, A2 에서 누른 `t` 때문에 다음 장면이 AI 시점으로 찍힌다. 그래서 **장면마다 `browser.newContext({ viewport: { width: 1600, height: 900 }, deviceScaleFactor })` 를 새로 열고, 찍은 뒤 닫는다.** 한 컨텍스트 안에서 `t`·`z` 를 누른 장면이 있으면 그 뒤로 그 컨텍스트를 다시 쓰지 않는다. 덧붙여 `context.addInitScript(() => { try { localStorage.clear(); } catch {} })` 로 열 때마다 비운다.
+- 장면마다 `window.__ar.snap()` 의 `tick`·`hash`·`difficulty` 를 읽는다. `npx tsx scripts/ui-check-ref.ts '{"seed":"S20","difficulty":<snap 의 difficulty>,"force":"collapse/std","ticks":[<tick>]}'` 가 내는 해시와 같은지 본다. 다르면 같은 교대가 아니다(주소와 설정을 다시 본다).
 
 스크립트가 할 일:
 
 - 창 1600×900(`deviceScaleFactor` 1, 확대 장면은 2 로 한 번 더). 콘솔 `error` 와 `pageerror` 를 모두 모은다 — **장면마다 0건**.
-- 틱 읽기: 상단 `.meta .dim` 글자의 `/틱 (\d+)/`.
-- `runTo(T)`: `4`(15배속) → 40ms 마다 틱을 읽다가 `T − 40` 에서 `1`(1배속) → `T` 에서 `Space`(일시정지) → 300ms 기다려 찍는다. 그림은 `sim.t` 기준이라 일시정지하면 그 순간이 그대로 남는다.
-- 현장 보기: `page.locator('.card.incident', { hasText: <글자> }).filter({ hasText: '현장 대응' }).first().click()`. 현장의 자동 확대를 끄려면 `z` 를 누르고 캔버스를 두 번 눌러(`dblclick`) 전체 보기로, 확대는 캔버스 위 `page.mouse.wheel(0, −120)`.
-- 지도에서 한 사건: 아직 현장 대응이 아닐 때 그 카드를 누르면 지도 모드로 그 사건에 고정된다 → 캔버스(`page.locator('canvas').first()`) 가운데에서 휠. 고정은 사건이 끝난 뒤에도 남으므로 그대로 시간을 보내 끝난 뒤를 찍는다. 지도 전체는 `c`. AI 시점은 `t`.
-- 가스 폭발 카드의 제목은 '가스 폭발'(시나리오 이름)이라 '붕괴' 글자가 없을 수 있다 — 글자 대신 사건 코드나 '가스 폭발' 로 찾는다.
+- 틱 읽기: `page.evaluate(() => window.__ar.snap().tick)`. Q1 이 둔 개발 서버 전용 읽기 고리다. 상단 `.meta .dim` 의 글자는 160ms 마다만 바뀌므로(`App.tsx:50`) 쓰지 않는다.
+- `runTo(T)`: `4`(15배속)를 누르고 40ms 마다 틱을 읽는다. `T − 40` 이상이 되면 `1`(1배속)로 바꾸고 10ms 마다 읽는다. `T` 가 되면 `Space`(일시정지)를 누르고 다시 읽는다. 1배속은 틱당 200ms 라 대개 맞는다. **목표를 지나쳤으면** `ArrowLeft`(10초 = 50틱 되감기, 일시정지는 그대로)를 누르고, `Space` 로 1배속을 다시 시작해 같은 방법으로 다시 노린다. 세 번까지 해 본다.
+- **경과 시간 맞추기**: 멈춘 순간의 보간값(`runner.alpha`)이 남아 그림의 경과 시간이 0~0.2초 흔들린다(`age = sim.t + alpha·dt − f.t`). 목표 틱에서 멈춘 뒤 `ArrowLeft` → `ArrowRight` 를 누르면 같은 틱으로 돌아오면서 보간값이 0 이 된다(`runner.seek` 가 `alpha = 0`). 그 뒤 `snap().tick === T` 를 한 번 더 확인하고 300ms 기다려 찍는다. 0~0.5초에 몰린 연출(그림자·덩어리·충격 고리의 앞부분)은 한 틱 차이로 놓친다. 그래서 A4·A5·A9·B2 는 이 단계를 빼지 않는다.
+- 현장 보기: `page.locator('.card.incident', { hasText: <글자> }).filter({ hasText: '현장 대응' }).first().click()`. 현장의 자동 확대를 끄려면 `z` 를 누르고 캔버스를 두 번 눌러(`dblclick`) 전체 보기로 둔다. 확대는 캔버스 위 `page.mouse.wheel(0, −120)`.
+- 사건 카드를 코드로 찾기: `page.locator('.card.incident').filter({ has: page.locator('.code', { hasText: /^15$/ }) })`(코드 칩의 글자는 `I.code`).
+- 지도에서 한 사건 보기: 아직 현장 대응이 아닐 때 그 카드를 누르면 지도 모드로 그 사건에 고정된다. 그다음 캔버스(`page.locator('canvas').first()`) 가운데에서 휠을 돌린다. 고정은 사건이 끝난 뒤에도 남으므로, 그대로 시간을 보내 끝난 뒤를 찍는다. 지도 전체는 `c`, AI 시점은 `t`.
+- 가스 폭발 카드의 제목은 '가스 폭발'(시나리오 이름)이라 '붕괴' 글자가 없을 수 있다. 사건 코드나 '가스 폭발' 로 찾는다.
 
-장면(시각은 **지금 코드 1ca465d 에서 잰 것**. 다른 묶음이 시뮬레이션을 바꿨으면 아래 `find.ts` 로 다시 찾는다):
+장면(시각은 **035a83f 에서 잰 것**. 다른 묶음이 시뮬레이션을 바꿨으면 아래 `find.ts` 로 다시 찾는다). A 장면은 낮(맑음) 시드다. 밤의 어둠 층이 그 앞의 그림을 덮으므로(§2.8) 밤 장면(A8·A9)을 따로 둔다.
 
 | ID | 주소 | 틱 (시각) | 보는 것 |
 |---|---|---|---|
-| A1 | `?seed=S6&force=collapse/std` | 500 (100초) — 강제 사건(I1, 심각도 3, 단독주택)에 첫 도착 90초 | 현장 전체: 붕괴 구역 경계(흙빛 점선), 내려앉은 음영과 기울기, 넘어간 벽 판과 자국, 부러진 벽 끝·철근, 잔해 높낮이, 깔린 가구, 위험 범위 원 둘, 진행 고리 |
+| A1 | `?seed=S20&force=collapse/std&disaster=none` (맑음) | 500 (100초). 강제 사건(I0, 심각도 2, 창고)에 첫 도착 75.4초. 균열 둘, 모두 보강 전(진행 0.62·0.72) | 현장 전체: 붕괴 구역 경계(흙빛 점선), 내려앉은 음영과 기울기, 넘어간 벽 판과 자국, 부러진 벽 끝·철근, 잔해 높낮이, 깔린 가구(창고의 진열대), 바깥 벽의 금, 위험 범위 원 둘, 진행 고리 |
 | A2 | 같은 | 500, `t` | AI 시점: 진행 고리 없음, 지휘관이 모르는 균열의 범위 없음 |
 | A3 | 같은 | 500, 구역 위에서 휠 4번(×2 배율로도) | 고해상도 층에서 철근·금·조각이 깨끗한가, 칸 이음새가 보이지 않는가 |
-| A4~A6 | 같은 | 661 · 663 · 667 (132.2 · 132.6 · 133.4초) — 2차 붕괴 132초 | 그림자 → 덩어리·고리 → 먼지 기둥. 주황 빛 없음 |
-| A7 | 같은 | 700 (140초) | 밝은 새 잔해, 가라앉는 먼지, 진행 고리가 처음부터 |
-| B1 | `?seed=S3&force=collapse/gasblast` | 550 (110초) — 첫 도착 68초 | 밸브 둘레만 연두, 불 연기는 회색, 짙은 가스 경계 |
-| B2 | 같은 | 576 (115.2초) — 천장 붕괴 115초 | 숯빛 잔해·불티·먼지 |
-| B3 | 같은 | 642 (128.4초) — 2차 붕괴 128·156초. 일시정지 5초 뒤 | 2차 붕괴 + **FPS 읽기**(§9, 고치기 전과 비교) |
-| C1 | `?seed=S3&disaster=quake` | 2700 (540초) — 지진 532초 | 지도 전체: 진앙 고리, 붕괴 핀의 배지, 건물 위 먼지 |
+| A4~A6 | 같은 | 775 · 776 · 781 (2차 붕괴 뒤 0.2 · 0.4 · 1.4초). 2차 붕괴는 틱 774(154.8초, 보관실 2) | 그림자·떨어지는 덩어리 → 덩어리 착지 직전·충격 고리 → 먼지 기둥. 주황 빛 없음 |
+| A7 | 같은 | 814 (2차 붕괴 뒤 8초) | 밝은 새 잔해(`ruin === 8`), 가라앉는 먼지, 그 균열의 진행 고리가 처음부터 |
+| A8 | `?seed=S6&force=collapse/std&disaster=none` (**밤**) | 500 (100초). 첫 도착 82.6초 | 밤에도 붕괴 구역 경계(다시 긋기)·위험 범위·진행 고리가 보인다 |
+| A9 | 같은 (밤) | 660 (2차 붕괴 틱 658 뒤 0.4초) | 밤의 무너지는 순간: 어둠이 옅게 걷힌 자리에 먼지 기둥의 앞부분, 충격 고리(정보 표지). 주황 빛 없음 |
+| B1 | `?seed=S3&force=collapse/gasblast&disaster=none` (안개) | 550 (110초). 첫 도착 68초 | 밸브 둘레만 연두, 불 연기는 회색, 짙은 가스 경계(안개 위에서도 보이는가) |
+| B2 | 같은 | 576 (천장 붕괴 틱 575 뒤 0.2초) | 숯빛 잔해·불티·먼지 |
+| B3 | 같은 | 642 (2차 붕괴 틱 639 뒤 0.6초. 다음 2차 붕괴는 781). 일시정지 5초 뒤 | 2차 붕괴 + **FPS 읽기**(§9, 고치기 전과 비교) |
+| C1 | `?seed=S3&disaster=quake` | 2700 (540초). 지진은 틱 2662(532.4초) | 지도 전체: 진앙 고리, 붕괴 핀의 배지, 건물 위 먼지 |
 | C2 | 같은 | 2700, `t` | AI 시점: 점선 배지(신고)와 채운 배지(도착)가 갈린다 |
-| C3 | 같은 | 지진 직후 붕괴 카드 하나를 눌러 지도에 고정 → 휠 6번 → 3400 (680초) — 여진 672초 | 확대: 지붕 구멍·쏟아진 잔해·금·먼지, 2차 붕괴 고리 |
+| C3 | 같은 | 3100(620초)에 사건 코드 **15**(가스 폭발, 빌라 — 608.6초에 생기고 첫 도착 710.2초)의 카드를 눌러 지도에 고정 → 휠 6번 → 3400 | 확대: 지붕 구멍·쏟아진 잔해·금·먼지, 2차 붕괴 고리. 그 사건의 2차 붕괴는 틱 3398·3401(679.6·680.2초)이라 3400 은 첫 고리 뒤 0.4초다(2초짜리 고리가 화면에 있다). 여진은 틱 3360 |
 | C4 | 같은 | 5750 (1150초) | 지도 전체: 끝난 붕괴의 기호가 남고 결과색 점이 비켜 있다 |
 | C5 | 같은 | 5750, C3 의 확대 그대로 | 끝난 건물의 덧그림 |
 | D1 | A1·C1 때 | — | `.card.incident` 를 하나씩 찍는다(`locator.screenshot()`): 붕괴·균열·2차 붕괴 칩 |
-| E1 | `?seed=S3&force=armed/hostage` | 700 (140초) / 900 (180초) — 인질을 끌고 물러남 128초, 투항 173초 | 붙잡힘(빨간 점선, 손 뒤) → 투항 뒤 풀려남(보통 자세, 선 없음) |
-| E2 | `?seed=S2&force=fire/std` | 880~945 (176~189초) — '다시 번지고 있습니다' 189초 | 관찰자 시점의 '다시 붙은 불' 점선·표지, 보고 뒤 AI 시점 표지 |
-| E3 | `?seed=S1&force=armed/bomb` | 760 (152초) — '해체 완료' 약 146초 | 해체된 장치(지금 그대로인지만 본다). 터진 장치는 시드 넷에서 한 번도 나오지 않아 그림 함수 테스트(§12-4)로 대신한다 |
-| F1 | `?seed=S2&force=hazmat/std` | 400 (80초) — 시각은 재지 않았다. 가스가 퍼져 있는 때로 | 가스 누출 현장이 고치기 전과 거의 같다 |
+| E1 | `?seed=S3&force=armed/hostage&disaster=none` | 700 (140초) / 900 (180초). 인질을 끌고 물러남 틱 643, 투항 틱 866 | 700: 짝인 인질은 `held`(빨간 점선·붉은 발밑 고리. 끌려가는 중이라 `walking` 이 참인데도 `held` 다), 다른 인질은 5.8칸 떨어져 걸어 나가는 중이라 `freed`(보통 자세). 900: 투항 뒤 두 사람 모두 안전 구역(보통 자세, 선 없음) |
+| E2 | `?seed=S2&force=fire/std&disaster=none` | 800 (160초) / 950 (190초) 에서 `t` | 800: 관찰자 시점의 '다시 붙은 불' 점선·표지(방 4, 틱 670~901 동안 조건에 든다). 950: AI 시점의 '잔불 되살아남'(무전 틱 945, 15초 동안) |
+| E3 | `?seed=S1&force=armed/bomb&disaster=none` | 760 (152초). '해체 완료' 틱 733 | 해체된 장치(지금 그대로인지만 본다). 터진 장치는 시드 넷에서 한 번도 나오지 않아 그림 함수 테스트(§12-4)로 대신한다 |
+| F1 | `?seed=S2&force=hazmat/std&disaster=none` | 450 (90초). 첫 도착 81.8초 | 가스 누출 현장이 고치기 전과 거의 같다 |
 
-그리고 **교대 하나를 끝까지**: `?seed=S3&disaster=quake` 를 15배속으로 끝날 때까지(보고서 창이 뜰 때까지) 돌리며 중간에 붕괴 현장 두 곳을 열어 본다 — 콘솔 오류 0건.
+그리고 **교대 하나를 끝까지**: 새 컨텍스트에서 `?seed=S3&disaster=quake` 를 15배속으로 끝날 때까지(보고서 창이 뜰 때까지) 돌리며 중간에 붕괴 현장 두 곳을 열어 본다 — 콘솔 오류 0건.
 
 **견본표**: `RUIN_MARK` 둘, `HAZARD_MARK` 넷, 새 `ICON_PATH` 넷을 지름 10·12·16·24 화소로, 지도 바탕 `#1a222b` 와 카드 바탕 위에 늘어놓은 독립 HTML 한 장(`deviceScaleFactor: 2`). 12 화소에서 헷갈리는 쌍이 없을 때까지 고친다 — 특히 `RUIN_MARK.partial` ↔ 지금의 붕괴 아이콘, `crack` ↔ `hazmat`(마름모), `bombHazard` ↔ 폭발물 처리반 기호, `landslide` ↔ `RUIN_MARK.major`.
 
 **시각 다시 찾기** — `<scratchpad>/find.ts`:
 
 ```ts
-// npx tsx find.ts collapse/std S1,S2,S3 400 '2차 붕괴|천장 일부|현장 도착'
+// npx tsx find.ts collapse/std S20,S6 300 '2차 붕괴|천장 일부|현장 도착'
 import { Sim } from '<작업 폴더>/src/sim/engine';
 import { NORMAL } from '<작업 폴더>/src/sim/difficulty';
 const [force, seeds, until, pat] = process.argv.slice(2);
 for (const seed of seeds.split(',')) {
-  const sim = new Sim(seed, NORMAL, 1200, { force });
+  const sim = new Sim(seed, { ...NORMAL, disaster: 'none' }, 1200, { force });      // 화면의 &disaster=none 과 같은 조건
   while (sim.t < +until && !sim.ended) sim.step();
-  const I = sim.incidents.find((q) => Math.abs(q.createdAt - 15) < 0.5);      // 강제 사건은 15초에 생긴다
+  const I = sim.incidents.find((q) => Math.abs(q.createdAt - 15) < 0.5 && q.truth.type === force.split('/')[0]);      // 강제 사건은 15초에 생긴다
   if (!I) { console.log(seed, '없음'); continue; }
   const ev = sim.events.filter((e) => e.incidentId === I.id && new RegExp(pat).test(e.text));
-  console.log(seed, `I${I.id} ${I.truth.variant} 심각도${I.truth.severity} ${I.truth.placeKind}`, ev.map((e) => `틱${Math.round(e.t / 0.2)}:${e.text.slice(0, 20)}`).join(' | '));
+  console.log(seed, sim.weather, `I${I.id} ${I.truth.variant} 심각도${I.truth.severity} ${I.truth.placeKind} 첫도착${I.firstArrivalAt.toFixed(1)}`, ev.map((e) => `틱${Math.round(e.t / 0.2)}:${e.text.slice(0, 20)}`).join(' | '));
 }
 ```
 
-지진·재난의 시각은 `npx tsx scripts/sweep.ts 1 --disaster quake --log S3 | grep -E '지진 발생|여진|무너졌습니다'`(기록의 시계 − 교대 시작 시계 = 초, 틱 = 초 × 5). 브라우저도 교대 길이 1200 이므로 같은 시드·같은 조건이면 기록과 화면의 시각이 같다(재난은 `?disaster=` 만 주면 난이도는 보통).
+기록의 `e.t` 는 그 틱의 `sim.t` 다(`engine.ts` 의 `step` 이 처음에 `tick++`, `t = tick·dt`). 그래서 틱 N 에 난 무너짐은 화면이 틱 N 일 때 경과 0초, N+1 일 때 0.2초다. 날씨는 `sim.weather`(`'night'` 이면 밤)로 본다. 2차 붕괴는 드물다(035a83f 에서 맑은 시드 S17~S40 가운데 300초 안에 난 것은 S20·S21·S24 셋).
+
+지진은 `new Sim('S3', { ...NORMAL, disaster: 'quake' }, 1200)` 을 돌려 `sim.events` 에서 `/지진 발생|여진|2차 붕괴/` 를 찾는다(사건 코드는 `sim.incidents[e.incidentId].code`, 첫 도착은 `firstArrivalAt`). `npx tsx scripts/sweep.ts 1 --disaster quake --log S3` 로도 볼 수 있다(기록의 시계 − 교대 시작 시계 = 초, 틱 = 초 × 5). 위의 주소 규칙(`&disaster=none` 또는 `&disaster=quake`)과 새 컨텍스트를 지키면 기록과 화면의 시각이 같다. `snap().hash` 와 `ui-check-ref.ts` 의 해시로 확인한다.
 
 보고에 "고치기 전 → 고친 뒤" 그림 경로를 짝지어 적는다.
 

@@ -244,12 +244,13 @@ X6(위험의 현실화)이 새 폭발·붕괴를 만들면 그 `pushFx('boom')` 
 
 네 겹으로 증명하고 보고에 결과를 적는다.
 
-1. **코드 근거(정적).** 시작 커밋 대비 `src/sim` 의 추가 줄에 난수·기록 호출이 없다.
+1. **코드 근거(정적).** 시작 커밋 대비 `src/sim` 의 추가 줄에 난수·기록 호출과 상태 쓰기가 없다.
    ```bash
-   git diff <시작 커밋> -- src/sim | grep '^+' | grep -v '^+++' | grep -nE 'rng|Math\.random|emit\(|raiseProblem|markRecovered|\.state *=|\.open *=|\.health'
+   git diff <시작 커밋> -- src/sim | grep '^+' | grep -v '^+++' \
+     | grep -nP 'rng|Math\.random|emit\(|raiseProblem|markRecovered|\.(state|open|locked|blocking|entered|removed|health|stunUntil|morale|cooldown|facing|alertUntil|hp)\s*[-+*/]?=(?!=)|propAt\[|staticVersion|glass\[|decorHp\['
    ```
-   결과가 0줄이어야 한다(그래서 주석에도 `rng` 라는 글자를 쓰지 않는다). 손으로 검토: 새 함수가 쓰는 곳은 `s.fx` 와 그 기록 객체뿐이다.
-2. **스위치 시험(동적).** `tests/combatfx.test.ts` 가 같은 시드를 `FXLOG.on = true`·`false` 로 돌려 `report.hash` 와 상태 요약(아래)이 같은지 본다.
+   결과가 0줄이어야 한다(그래서 주석에도 `rng` 라는 글자를 쓰지 않는다). `-P`(펄 정규식)라야 `(?!=)` 로 `===` 비교를 빼고 대입만 잡는다. 문 쓰기(`locked`·`blocking`·`entered`·`propAt`·`staticVersion`)와 용의자 상태(`stunUntil`·`morale`), 창(`glass`)까지 잡는다. `const wasLocked = p.blocking` 처럼 읽기만 하는 줄은 잡히지 않는다. 손으로 검토: 새 함수가 쓰는 곳은 `s.fx` 와 그 기록 객체(`f.c`)뿐이다.
+2. **스위치 시험(동적).** `tests/combatfx.test.ts` 가 같은 시드를 `FXLOG.on = true`·`false` 로 돌려, 정한 틱(9절 1번)에서 `sim.logHash`(교대 끝의 `report.hash` 와 같은 누적값)와 상태 요약(아래)이 같은지 본다.
 3. **시작 커밋 대비 해시 목록(동적).** 저장소 밖 임시 스크립트(8.1절)로, 시작 커밋과 끝 커밋에서 같은 실행 목록의 `report.hash`·상태 요약을 뽑아 `diff` 한다. 0줄이어야 한다. `flashbang` 인자 추가처럼 기존 줄을 건드린 변화는 2번 스위치로는 잡히지 않으므로 이것이 필요하다.
 4. **분포.** `npx tsx scripts/sweep.ts 60` 의 `outcomes`·`close reasons` 가 전후 한 글자도 같다(CLAUDE.md: "화면만 고쳤다면 분포가 한 건도 달라지면 안 된다"). `npm run check` 통과.
 

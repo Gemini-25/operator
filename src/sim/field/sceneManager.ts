@@ -12,6 +12,7 @@ import { SCENE_RULES } from './sceneRegistry';
 import type { Fact, FieldAgent, Incident, Scene, Unit } from '../types';
 import { TYPE_NAME } from '../util';
 import { BeliefStore, mkFact } from './beliefs';
+import { learn } from './agents';
 import { think } from './brain';
 import { outstanding } from './commander';
 import { buildScene } from './builders';
@@ -102,6 +103,8 @@ function setCommander(sim: Sim, s: Scene, I: Incident, a: FieldAgent, text: stri
   emit(sim, { inc: I.id, role: 'COMMANDER', actor: sim.responders[a.rid].name, rid: a.rid, kind: 'command', imp: 2, text });
 }
 
+const ROLL_CALL: Record<string, boolean> = { cas: true, hos: true, haz: true, mate: true, fire: true, srch: true, ovh: true, ctl: true };
+
 function deliverRadio(sim: Sim, s: Scene, I: Incident): void {
   if (!s.radio.length) return;
   for (let k = 0; k < s.radio.length; k++) {
@@ -115,6 +118,10 @@ function deliverRadio(sim: Sim, s: Scene, I: Incident): void {
       if (m.to >= 0 && b.rid !== m.to) continue;
       if (s.shadow[tileOf(s, b.x, b.y)]) continue;      // 음영 구역의 대원은 듣지 못한다
       for (const f of m.facts) b.beliefs.merge(BeliefStore.relay(f));
+      if (m.kind === 'rollcall' && b.status === 'active') {
+        // 확인 무전: 자기가 알고 있는 상황을 다시 보고한다 (음영 구역에서 지휘관이 놓친 보고를 되살린다). 무전 문구는 남기지 않는다
+        for (const f of b.beliefs.all()) if (ROLL_CALL[f.type]) { b.quiet.add(f.key); learn(sim, b, f, true, true); }
+      }
       if (m.kind === 'order' && m.to === b.rid) {
         const w = s.board[m.workId];
         if (w && (w.status === 'open' || w.status === 'active')) b.orderWork = m.workId;

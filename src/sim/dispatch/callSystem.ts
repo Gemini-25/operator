@@ -336,7 +336,9 @@ function nextTopic(sim: Sim, call: Call, I: Incident): Topic | null {
     if (v > bs) { bs = v; best = k; }
   }
   // 질문을 더 하는 것의 가치 < 시간 비용이면 통화를 마친다
-  const threshold = 0.46 + 0.035 * call.asked.length + (elapsed > 40 ? 0.25 : 0) + (call.isFollowup ? 0.12 : 0);
+  // 벨이 울린 채 기다리는 신고가 여럿이면 핵심만 묻고 다음 전화를 받는다 (대기열이 길수록 질문을 줄인다)
+  let waiting = 0; for (const c of sim.calls) if (c.state === 'ringing') waiting++;
+  const threshold = 0.46 + 0.035 * call.asked.length + (elapsed > 40 ? 0.25 : 0) + (call.isFollowup ? 0.12 : 0) + 0.07 * Math.max(0, waiting - 1);
   if (!best || bs < threshold) return null;
   if (call.asked.length >= call.caller.patience) return null;
   return best;

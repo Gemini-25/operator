@@ -4,7 +4,7 @@
 import type { Sim } from '../engine';
 import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
-import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Incident, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
+import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Incident, RadioMsg, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
 import { clamp, dist, josa, pct } from '../util';
 import { BeliefStore, mkFact } from './beliefs';
 import type { CostFn } from './grid';
@@ -213,7 +213,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
 const IMPORTANT: Record<string, boolean> = { cas: true, blk: true, hos: true, haz: true, mate: true, evid: true, clue: true, seen: true, secure: true };
 
 /** 무전 송신. 음영 구역에서는 실패한다. */
-export function transmit(sim: Sim, s: Scene, a: FieldAgent | null, to: number, kind: 'report' | 'order' | 'request' | 'sitrep' | 'brief', facts: Fact[], text: string, workId = -1, imp = 1, causes: number[] = [], silent = false): number {
+export function transmit(sim: Sim, s: Scene, a: FieldAgent | null, to: number, kind: RadioMsg['kind'], facts: Fact[], text: string, workId = -1, imp = 1, causes: number[] = [], silent = false): number {
   if (a && s.shadow[tileOf(s, a.x, a.y)]) return -1;
   const I = sim.incidents[s.incidentId];
   let ev = -1;

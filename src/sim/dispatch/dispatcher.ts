@@ -37,7 +37,14 @@ export function recomputeUnmet(sim: Sim, I: Incident): void {
 function priorityOf(sim: Sim, I: Incident): number {
   const s = sim.scenes[I.id];
   const urgent = s ? s.requests.some((q) => q.urgent && q.fulfilled < q.count) : false;
-  return (I.assessment ? I.assessment.severity : 1) + (urgent ? 0.6 : 0) + Math.min(0.5, (sim.t - Math.max(0, I.reportedAt)) / 240);
+  // 오래 굶은 수요: 부대가 모자란 교대에서는 새로 들어온 위험한 사건이 늘 앞에 서서, 먼저 기다리던 사건이 끝내 부대를 받지 못한다.
+  // 채워지지 않은 수요가 오래 밀릴수록 앞으로 당긴다. 아직 아무 부대도 가지 않은 사건은 신고 전화가 울린 때부터 센다
+  // (접수 대기열에서 기다린 시간도 신고자에게는 똑같이 흘렀다)
+  const unmet = ORDER.some((k) => (I.unmet[k] ?? 0) > 0);
+  const never = I.firstArrivalAt < 0 && !I.assigned.length;
+  const starved = !unmet ? 0 : never ? Math.max(sim.t - I.unmetSince, sim.t - Math.max(0, I.reportedAt) - 60) : sim.t - I.unmetSince - 40;
+  const starve = Math.min(1.5, Math.max(0, starved) / (never ? 60 : 160));
+  return (I.assessment ? I.assessment.severity : 1) + (urgent ? 0.6 : 0) + Math.min(0.5, (sim.t - Math.max(0, I.reportedAt)) / 240) + starve;
 }
 
 interface Cand { u: Unit; score: number; eta: number; fit: number; divertFrom: Incident | null }

@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "sweep": "tsx scripts/sweep.ts"
+    "sweep": "tsx scripts/sweep.ts",
+    "check": "tsc --noEmit && vitest run && tsx scripts/sweep.ts 40 --check"
   },
   "dependencies": {
     "react": "^19.3.1",

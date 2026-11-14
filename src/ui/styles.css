@@ -22,7 +22,7 @@ input { font-family: inherit; font-size: 12px; background: #0a1016; color: var(-
 code { font-family: var(--mono); color: var(--text); }
 .dim { color: var(--dim); } .warn { color: var(--warn); } .bad { color: var(--bad); } .ok { color: var(--ok); } .small { font-size: 11px; } .num { font-variant-numeric: tabular-nums; text-align: right; }
 
-.app { display: grid; height: 100vh; grid-template-columns: 300px minmax(0, 1fr) 400px; grid-template-rows: 46px minmax(0, 1fr) 84px; grid-template-areas: 'top top top' 'left center right' 'bottom bottom bottom'; }
+.app { display: grid; height: 100vh; grid-template-columns: 316px minmax(0, 1fr) 400px; grid-template-rows: 46px minmax(0, 1fr) 84px; grid-template-areas: 'top top top' 'left center right' 'bottom bottom bottom'; }
 .top { grid-area: top; display: flex; align-items: center; gap: 18px; padding: 0 14px; background: var(--panel2); border-bottom: 1px solid var(--line); }
 .brand { display: flex; flex-direction: column; line-height: 1.2; }
 .brand b { letter-spacing: 0.14em; font-size: 13px; color: var(--text); }
@@ -306,7 +306,7 @@ input:focus { border-color: var(--accent); }
 .maplegend-wrap { position: relative; flex: none; }
 .legend-btn { background: var(--glass); border-color: var(--hair); border-radius: 14px; padding: 5px 12px; min-height: 28px; white-space: nowrap; }
 .legend-btn.on { background: rgba(16, 53, 52, 0.92); border-color: var(--accent); }
-.maplegend { position: absolute; left: 0; bottom: calc(100% + 8px); width: 392px; max-width: max(300px, calc(100cqw - 360px)); max-height: min(72vh, 600px); overflow-y: auto; z-index: 5; background: rgba(11, 17, 23, 0.96); border: 1px solid #243240; border-radius: var(--r2); padding: 12px 14px; box-shadow: var(--shadow); font-size: 12px; animation: rise 0.18s ease-out; }
+.maplegend { position: absolute; left: 0; bottom: calc(100% + 8px); width: 392px; max-width: max(300px, calc(100cqw - 360px)); max-height: min(calc(100vh - 222px), 680px); overflow-y: auto; z-index: 5; background: rgba(11, 17, 23, 0.96); border: 1px solid #243240; border-radius: var(--r2); padding: 12px 14px; box-shadow: var(--shadow); font-size: 12px; animation: rise 0.18s ease-out; }
 .maplegend h5 { margin: 12px 0 6px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: var(--text2); }
 .maplegend h5:first-child { margin-top: 0; padding-top: 0; border-top: none; }
 .maplegend h5 .dim { font-weight: 400; letter-spacing: 0; margin-left: 4px; }

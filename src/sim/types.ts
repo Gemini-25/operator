@@ -11,7 +11,7 @@ export type District = 'residential' | 'commercial' | 'industrial' | 'outskirts'
 export type Weather = 'clear' | 'rain' | 'fog' | 'night';
 
 // ───────────────────────── 도시 ─────────────────────────
-export interface RoadNode { id: number; x: number; y: number; c: number; r: number; district: District; edges: number[] }
+export interface RoadNode { id: number; x: number; y: number; c: number; r: number; district: District; edges: number[]; key?: string; exit?: boolean }
 export interface RoadEdge {
   id: number; a: number; b: number; len: number; speed: number; arterial: boolean;
   cong: number;        // 현재 혼잡 계수 (1 = 원활, 3 = 극심)
@@ -19,6 +19,10 @@ export interface RoadEdge {
   closed: boolean; closedReason: string | null;
   slow: number;        // 사건(사고 현장 등)으로 인한 추가 지연 계수
   name: string;        // 도로 이름
+  cls?: 'highway' | 'arterial' | 'street' | 'local';      // 도로 등급
+  road?: number;       // 도로 번호 (cityPlan.ROADS)
+  seq?: number;        // 그 도로에서 몇 번째 구간인가
+  bridge?: boolean;    // 강을 건넌다
 }
 export interface Building { x: number; y: number; w: number; h: number; district: District; tone: number }
 /** 지도 위의 건물·장소 종류 */
@@ -29,7 +33,9 @@ export type PlaceKind =
   | 'farmhouse' | 'pension' | 'restStop' | 'greenhouse'
   | 'terminal' | 'hangar' | 'tower'
   | 'fireStation' | 'police' | 'hospital' | 'cityHall' | 'school' | 'logistics'
-  | 'park' | 'forest' | 'riverside' | 'reservoir' | 'parking' | 'playground' | 'runway' | 'farmland';
+  | 'park' | 'forest' | 'riverside' | 'reservoir' | 'parking' | 'playground' | 'runway' | 'farmland'
+  | 'station' | 'stadium' | 'university' | 'deptStore' | 'cathedral' | 'temple' | 'powerPlant' | 'broadcast' | 'prison' | 'museum' | 'library' | 'busTerminal' | 'ferry' | 'fishMarket'
+  | 'lighthouse' | 'amusement' | 'dam' | 'substation' | 'beach' | 'pier' | 'containerYard' | 'campsite' | 'lookout' | 'workshop' | 'clinic' | 'cafe';
 /** 지도 위의 건물 한 채 또는 터 하나. 모든 건물에 종류·이름·주소가 있고, 사건은 이 중 한 곳에서 일어난다. */
 export interface Place extends Building {
   id: number; kind: PlaceKind; name: string; addr: string;
@@ -40,6 +46,9 @@ export interface Place extends Building {
   open: boolean;            // 건물이 아닌 터(공원·숲·하천·주차장 등)
   floors: number;           // 층수 (지도의 그림자 길이)
   facility: number;         // 출동 시설이면 그 번호, 아니면 -1
+  rot?: number;             // 가운데를 축으로 돌린 각도(라디안). 도로를 따라 비스듬히 놓인 건물
+  rank?: number;            // 눈에 띄는 정도: 3 = 멀리서도 이름이 보인다, 0 = 마우스를 올려야 보인다
+  edgeId?: number;          // 면한 도로 구간
 }
 export interface Alley { x0: number; y0: number; x1: number; y1: number; name: string }
 export interface CityBlock { c: number; r: number; use: string; dong: string; name: string; x0: number; y0: number; x1: number; y1: number }
@@ -52,7 +61,11 @@ export interface City {
   places: Place[];                    // 모든 건물과 터
   alleys: Alley[];                    // 블록 안의 골목 (차량이 다니는 도로망에는 들어가지 않는다)
   blocks: CityBlock[];                // 도로 사이의 칸과 그 쓰임새
-  river: { pts: number[][]; w: number; name: string };      // 하천의 중심선
+  river: { pts: number[][]; w: number; name: string };      // 하천의 중심선 (pts 의 세 번째 값은 그 지점의 폭)
+  coast?: number[][];                 // 해안선 (이 선보다 남쪽이 바다)
+  rail?: number[][];                  // 철길
+  mountains?: { name: string; x: number; y: number; rx: number; ry: number }[];
+  lake?: { x: number; y: number; rx: number; ry: number; name: string };
 }
 export interface Route { nodes: number[]; edges: number[]; time: number }
 
@@ -69,7 +82,9 @@ export interface Responder {
   xpGained: number; incidentsWorked: number;
 }
 
-export type UnitKind = 'engine' | 'rescue' | 'als' | 'bls' | 'patrol' | 'tactical';
+export type UnitKind = 'engine' | 'rescue' | 'als' | 'bls' | 'patrol' | 'tactical' | 'ladder' | 'hazmat' | 'swat' | 'eod' | 'heli' | 'boat';
+/** 부대의 분야 (편성표와 화면의 묶음) */
+export type UnitField = 'police' | 'fire' | 'rescue' | 'special';
 export type UnitState = 'available' | 'turnout' | 'enroute' | 'onscene' | 'transport' | 'hospital' | 'returning' | 'oos';
 export interface UnitCaps { suppression: number; rescue: number; ems: number; law: number; tactical: number; search: number; traffic: number }
 export interface Unit {
@@ -95,6 +110,9 @@ export interface Unit {
   dispatchedAt: number; estArrive: number; diverted: boolean;
   // 교차로에서 건물 앞 길가까지의 마지막 구간 (curbT: 0 = 교차로, 1 = 길가)
   curb?: { x: number; y: number; len: number } | null; curbT?: number; parking?: boolean;
+  field?: UnitField;
+  air?: boolean;       // 헬기: 도로와 상관없이 곧장 날아간다
+  sea?: boolean;       // 구조정: 해안을 따라 바다로 간다 (바닷가의 수난 사고에만 나간다)
   busyTime: number; runs: number;
   boardOrder: 'release' | 'transport' | null;
   aid?: boolean;                      // 인근 도시에서 지원 온 부대 (임무를 마치면 관할로 돌아간다)

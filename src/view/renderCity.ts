@@ -23,6 +23,7 @@ const RESP_LIMIT: Record<string, number> = { fire: 95, armed: 95, traffic: 105, 
 
 let staticLayer: { c: HTMLCanvasElement; lamps: CityLamp[] } | null = null;
 let staticFor: unknown = null;
+let labelLayer: { c: HTMLCanvasElement; key: string; ready: boolean } | null = null;
 
 function h2(x: number, y: number): number { return hash2(x, y); }
 
@@ -49,11 +50,17 @@ export function incidentShownType(I: Incident, truth: boolean): string {
 /** 차량이 화면에 그려지는 위치와 방향 (대기 중인 차량은 소속 시설 옆에 나란히 세운다) */
 export function unitScreen(sim: Sim, u: Unit, xf: Xf, alpha: number, len: number): { x: number; y: number; angle: number } {
   const city = sim.city;
+  if (u.air || u.sea) {
+    // 헬기와 구조정은 길 위에 서지 않는다: 실제 위치에, 가는 방향을 보고 그린다
+    const x = (u.px + (u.x - u.px) * alpha) * xf.scale + xf.ox, y = (u.py + (u.y - u.py) * alpha) * xf.scale + xf.oy;
+    const moving = Math.abs(u.x - u.px) + Math.abs(u.y - u.py) > 0.01;
+    return { x, y, angle: moving ? Math.atan2(u.y - u.py, u.x - u.px) : u.sea ? 0 : -0.5 };
+  }
   if (u.state === 'available' || u.state === 'oos') {
-    const f = city.facilities.find((q) => q.nodeId === u.homeNode);
+    const f = city.facilities.find((q) => q.name === u.homeName);
     if (!f) { const n = city.nodes[u.homeNode]; return { x: n.x * xf.scale + xf.ox, y: n.y * xf.scale + xf.oy, angle: 0 }; }      // 인근 도시 지원 부대: 도시 가장자리
-    let k = 0; for (const q of sim.units) { if (q.id === u.id) break; if (q.homeNode === u.homeNode) k++; }
-    return { x: f.x * xf.scale + xf.ox + 16 + len * 0.62 + k * (len + 5), y: f.y * xf.scale + xf.oy, angle: 0 };
+    let k = 0; for (const q of sim.units) { if (q.id === u.id) break; if (q.homeName === u.homeName && !q.air && !q.sea && (q.state === 'available' || q.state === 'oos')) k++; }
+    return { x: f.x * xf.scale + xf.ox + 16 + len * 0.62 + (k >> 1) * (len + 5), y: f.y * xf.scale + xf.oy + (k & 1) * (len * 0.56), angle: 0 };      // 두 줄로 세운다
   }
   if (u.state === 'onscene' && u.incidentId !== null) {
     const I = sim.incidents[u.incidentId];
@@ -167,53 +174,52 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
   }
 
   // ── 화면 레이어: 도로 이름, 건물 이름, 시설, 사건, 차량 ──
-  const halo = (text: string, x: number, y: number, fs: number, fg: string, weight = 600): void => {
-    ctx.font = `${weight} ${fs}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.lineJoin = 'round'; ctx.strokeStyle = 'rgba(6,10,14,0.85)'; ctx.lineWidth = Math.max(2.5, fs * 0.3); ctx.strokeText(text, x, y); ctx.fillStyle = fg; ctx.fillText(text, x, y);
-  };
   const onScreen = (q: { x: number; y: number; w: number; h: number }): boolean => sx(q.x + q.w) > 0 && sx(q.x) < w && sy(q.y + q.h) > 0 && sy(q.y) < h;
-  if (!mini) {
+  // 이름표는 글자 테두리를 그리는 비용이 크다. 시점이 멈춰 있으면 한 번 그려 둔 층을 다시 쓰고, 움직이는 동안에는 중요한 이름만 그린다.
+  const drawLabels = (lg: CanvasRenderingContext2D, full: boolean): void => {
+    const halo = (text: string, x: number, y: number, fs: number, fg: string, weight = 600): void => {
+    lg.font = `${weight} ${fs}px ${FONT}`; lg.textAlign = 'center'; lg.textBaseline = 'middle';
+    lg.lineJoin = 'round'; lg.strokeStyle = 'rgba(6,10,14,0.85)'; lg.lineWidth = Math.max(2.5, fs * 0.3); lg.strokeText(text, x, y); lg.fillStyle = fg; lg.fillText(text, x, y);
+    };
     // 도로 이름: 길을 따라 기울여 쓴다 (멀리서는 큰길만)
-    for (const e of city.edges) {
-      if (cam.zoom < 1.3 && !(e.arterial && e.id % 3 === 0)) continue;
-      if (cam.zoom < 2.2 && !e.arterial && e.id % 2) continue;
+    for (const e of full ? city.edges : []) {
+      if (cam.zoom < 1.6 && !(e.arterial && (e.seq ?? 0) % 3 === 1)) continue;
+      if (cam.zoom < 2.6 && (!e.arterial || (e.seq ?? 0) % 2)) continue;
+      if (cam.zoom < 3.6 && e.cls === 'local') continue;
       const A = city.nodes[e.a], B = city.nodes[e.b];
       const mx = sx((A.x + B.x) / 2), my = sy((A.y + B.y) / 2);
       if (mx < -40 || mx > w + 40 || my < -40 || my > h + 40) continue;
       let ang = Math.atan2(B.y - A.y, B.x - A.x); if (ang > Math.PI / 2) ang -= Math.PI; else if (ang < -Math.PI / 2) ang += Math.PI;
       const off = ((e.arterial ? 13 : 9.5) * xf.scale + 7);
-      ctx.save(); ctx.translate(mx, my); ctx.rotate(ang); halo(e.name, 0, -off, Math.min(13, 9.5 + cam.zoom), e.arterial ? 'rgba(232,214,160,0.8)' : 'rgba(190,205,220,0.66)'); ctx.restore();
+      lg.save(); lg.translate(mx, my); lg.rotate(ang); halo(e.name, 0, -off, Math.min(13, 9.5 + cam.zoom), e.arterial ? 'rgba(232,214,160,0.8)' : 'rgba(190,205,220,0.66)'); lg.restore();
     }
-    if (cam.zoom >= 2.6) for (const a of city.alleys) { const mx = sx((a.x0 + a.x1) / 2), my = sy(a.y0); if (mx > 0 && mx < w && my > 0 && my < h) halo(a.name, mx, my, 9.5, 'rgba(170,185,198,0.6)', 500); }
-    // 이름 붙은 구역(공원·공항·시장·숲 등)과 하천
-    const seen = new Set<string>();
-    for (const b of city.blocks) {
-      const named = b.name !== b.dong;
-      if (!named && (cam.zoom < 1.5 || cam.zoom > 3)) continue;
-      const key = named ? b.name : `${b.dong}:${b.c}:${b.r}`; if (seen.has(key)) continue; seen.add(key);
-      const cx = sx((b.x0 + b.x1) / 2), cy = sy(named && cam.zoom >= 2.4 ? b.y0 - 2 : (b.y0 + b.y1) / 2);
-      if (cx < 0 || cx > w || cy < 0 || cy > h) continue;
-      if (named) halo(b.name, cx, cy, 12.5 * zs, 'rgba(226,240,232,0.92)', 700); else halo(b.dong, cx, cy, 11 * zs, 'rgba(190,205,220,0.34)', 600);
-    }
-    { const RV = city.river, mid = RV.pts[Math.floor(RV.pts.length * 0.42)]; ctx.save(); ctx.translate(sx(mid[0]), sy(mid[1])); ctx.rotate(Math.PI / 2); halo(RV.name, 0, 0, 11.5 * zs, 'rgba(160,215,240,0.85)', 700); ctx.restore(); }
-    // 건물 이름: 가까이 볼 때만 (주택은 마우스를 올려야 보인다). 서로 겹치면 눈에 띄는 건물부터 쓴다
-    if (cam.zoom >= 2.4) {
+    if (full && cam.zoom >= 4) for (const a of city.alleys) { const mx = sx((a.x0 + a.x1) / 2), my = sy(a.y0); if (mx > 0 && mx < w && my > 0 && my < h) halo(a.name, mx, my, 9.5, 'rgba(170,185,198,0.6)', 500); }
+    // 동네 이름(흐리게)과 강 이름
+    if (full && cam.zoom >= 1.15 && cam.zoom <= 3.4) for (const d of city.districts) { const cx = sx(d.x + d.w / 2), cy = sy(d.y + d.h * 0.2); if (cx > 0 && cx < w && cy > 0 && cy < h) halo(d.name, cx, cy, 11.5 * zs, 'rgba(190,205,220,0.36)', 700); }
+    { const RV = city.river.pts, mid = RV[Math.floor(RV.length * 0.55)], nx = RV[Math.floor(RV.length * 0.55) + 1]; lg.save(); lg.translate(sx(mid[0]), sy(mid[1])); lg.rotate(Math.atan2(nx[1] - mid[1], nx[0] - mid[0])); halo(city.river.name, 30, 0, 11.5 * zs, 'rgba(160,215,240,0.85)', 700); lg.restore(); }
+    // 건물과 터의 이름: 멀리서는 도시에 하나뿐인 곳만, 가까이 갈수록 더 많이 (주택은 마우스를 올려야 보인다)
+    {
+      const need = !full ? 3 : cam.zoom >= 3.6 ? 1 : cam.zoom >= 2.1 ? 2 : 3;
       const cands: Place[] = [];
-      for (const q of city.places) {
-        if (q.facility >= 0 || q.kind === 'houseS' || q.kind === 'houseL' || q.kind === 'farmhouse' || q.kind === 'greenhouse' || q.kind === 'farmland' || q.kind === 'forest' || q.kind === 'riverside' || q.kind === 'park' || q.kind === 'reservoir' || q.kind === 'runway' || q.kind === 'playground') continue;
-        if (cam.zoom < 3.1 && (q.kind === 'villa' || q.kind === 'parking' || q.kind === 'utility' || q.kind === 'tower')) continue;
-        if (onScreen(q)) cands.push(q);
-      }
-      cands.sort((a, b2) => (PLACE_TINT[b2.kind] ? 1 : 0) - (PLACE_TINT[a.kind] ? 1 : 0) || b2.w * b2.h - a.w * a.h);
+      for (const q of city.places) { if (q.facility >= 0 || (q.rank ?? 0) < need || q.kind === 'riverside') continue; if (onScreen(q)) cands.push(q); }
+      cands.sort((a, b2) => (b2.rank ?? 0) - (a.rank ?? 0) || b2.w * b2.h - a.w * a.h);
       const taken: number[][] = [];
       for (const q of cands) {
-        const text = q.kind === 'apartment' ? q.name.split(' ').pop()! : q.name, fs = q.kind === 'apartment' ? 9.5 : 10;
-        ctx.font = `600 ${fs}px ${FONT}`;
-        const cx = sx(q.x + q.w / 2), cy = sy(q.y + q.h / 2), tw = ctx.measureText(text).width / 2 + 4, th = fs * 0.75;
+        const big = (q.rank ?? 0) >= 3, text = q.kind === 'apartment' ? q.name.split(' ').pop()! : q.name.replace(/^가온공항 /, big ? '가온공항 ' : ''), fs = big ? 11.5 * zs : q.kind === 'apartment' ? 9.5 : 10;
+        lg.font = `${big ? 700 : 600} ${fs}px ${FONT}`;
+        const cx = sx(q.x + q.w / 2), cy = sy(q.y + q.h / 2), tw = lg.measureText(text).width / 2 + 4, th = fs * 0.75;
         if (taken.some((r) => cx - tw < r[2] && cx + tw > r[0] && cy - th < r[3] && cy + th > r[1])) continue;
         taken.push([cx - tw, cy - th, cx + tw, cy + th]);
-        halo(text, cx, cy, fs, PLACE_TINT[q.kind] ?? 'rgba(214,224,234,0.86)', 600);
+        halo(text, cx, cy, fs, big ? (q.open ? 'rgba(200,236,210,0.95)' : 'rgba(240,244,248,0.95)') : PLACE_TINT[q.kind] ?? 'rgba(214,224,234,0.86)', big ? 700 : 600);
       }
+    }
+  };
+  if (!mini) {
+    const dpr = ctx.getTransform().a || 1, key = `${cam.x.toFixed(1)}|${cam.y.toFixed(1)}|${cam.zoom.toFixed(3)}|${w}|${h}|${dpr}`;
+    if (!labelLayer || labelLayer.key !== key) { labelLayer = { c: labelLayer ? labelLayer.c : document.createElement('canvas'), key, ready: false }; drawLabels(ctx, false); }
+    else {
+      if (!labelLayer.ready) { const lc = labelLayer.c; lc.width = Math.round(w * dpr); lc.height = Math.round(h * dpr); const lg = lc.getContext('2d')!; lg.setTransform(dpr, 0, 0, dpr, 0, 0); drawLabels(lg, true); labelLayer.ready = true; }
+      ctx.drawImage(labelLayer.c, 0, 0, w, h);
     }
     // 사건이 난 건물: 테두리가 깜박인다
     for (const I of sim.incidents) {
@@ -221,7 +227,8 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
       if (!o.truth && (!I.locationKnown || I.reportedNode !== I.truth.nodeId)) continue;
       const q = city.places[I.truth.placeId], pulse = 0.5 + 0.5 * Math.sin(o.timeMs / 260);
       ctx.strokeStyle = TYPE_COLOR[incidentShownType(I, o.truth)]; ctx.globalAlpha = 0.45 + 0.5 * pulse; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.roundRect(sx(q.x) - 3, sy(q.y) - 3, q.w * xf.scale + 6, q.h * xf.scale + 6, 4); ctx.stroke(); ctx.globalAlpha = 1;
+      ctx.save(); ctx.translate(sx(q.x + q.w / 2), sy(q.y + q.h / 2)); ctx.rotate(q.rot ?? 0);
+      ctx.beginPath(); ctx.roundRect((-q.w / 2) * xf.scale - 3, (-q.h / 2) * xf.scale - 3, q.w * xf.scale + 6, q.h * xf.scale + 6, 4); ctx.stroke(); ctx.restore(); ctx.globalAlpha = 1;
     }
   }
   for (const e of city.edges) {
@@ -304,7 +311,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     const p = unitScreen(sim, u, xf, o.alpha, len);
     const moving = u.state === 'enroute' || u.state === 'transport';
     if (mini) { ctx.fillStyle = DEPT_COLOR[u.dept]; ctx.beginPath(); ctx.arc(p.x, p.y, 3, 0, 7); ctx.fill(); continue; }
-    const lights = moving || u.state === 'onscene';
+    let lights = moving || u.state === 'onscene';
     if (lights) {
       const [ca, cb] = beaconColors(u.dept), ph = o.timeMs / 140 + u.id;
       ctx.globalCompositeOperation = 'lighter';
@@ -313,6 +320,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
       ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
     }
     const idle = u.state === 'available' || u.state === 'oos' || u.state === 'returning';
+    if (u.air) lights = u.state !== 'available' && u.state !== 'oos';      // 떠 있는 동안 회전 날개가 돈다
     if (idle) ctx.globalAlpha = 0.78;
     drawEmergency(ctx, p.x, p.y, p.angle, len / VEH_SIZE[u.kind][0], u.kind, u.dept, lights, o.timeMs);
     ctx.globalAlpha = 1;
@@ -327,7 +335,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     const wx = (o.hover.x - xf.ox) / xf.scale, wy = (o.hover.y - xf.oy) / xf.scale;
     const info = describeAt(sim, wx, wy);
     if (info) {
-      if (info.place && info.place.kind !== 'riverside' && info.place.kind !== 'farmland' && info.place.kind !== 'forest') { const q = info.place; ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.roundRect(sx(q.x) - 2, sy(q.y) - 2, q.w * xf.scale + 4, q.h * xf.scale + 4, 3); ctx.stroke(); }
+      if (info.place && info.place.kind !== 'riverside' && info.place.kind !== 'farmland' && info.place.kind !== 'forest' && info.place.kind !== 'reservoir' && info.place.kind !== 'beach') { const q = info.place; ctx.save(); ctx.translate(sx(q.x + q.w / 2), sy(q.y + q.h / 2)); ctx.rotate(q.rot ?? 0); ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.roundRect((-q.w / 2) * xf.scale - 2, (-q.h / 2) * xf.scale - 2, q.w * xf.scale + 4, q.h * xf.scale + 4, 3); ctx.stroke(); ctx.restore(); }
       ctx.font = `700 12.5px ${FONT}`; const w1 = ctx.measureText(info.title).width;
       ctx.font = `500 11px ${FONT}`; const w2 = Math.max(...info.lines.map((t) => ctx.measureText(t).width), 0);
       const bw = Math.max(w1, w2) + 20, bh = 26 + info.lines.length * 15;
@@ -356,7 +364,7 @@ export function describeAt(sim: Sim, wx: number, wy: number): MapInfo | null {
   const q = placeAt(city, wx, wy);
   const distSeg = (x0: number, y0: number, x1: number, y1: number): number => { const dx = x1 - x0, dy = y1 - y0, t = Math.max(0, Math.min(1, ((wx - x0) * dx + (wy - y0) * dy) / (dx * dx + dy * dy))); return Math.hypot(wx - x0 - dx * t, wy - y0 - dy * t); };
   if (!q || q.open) {
-    for (const e of city.edges) { const A = city.nodes[e.a], B = city.nodes[e.b]; if (distSeg(A.x, A.y, B.x, B.y) < (e.arterial ? 11 : 8)) return { title: e.name, lines: [`${e.arterial ? '간선 도로' : '일반 도로'}${e.closed ? ' · 통제 중' : e.cong + e.slow > 2.2 ? ' · 정체' : ''}`], color: '#e8d6a0', place: null, alert: e.closed }; }
+    for (const e of city.edges) { const A = city.nodes[e.a], B = city.nodes[e.b]; if (distSeg(A.x, A.y, B.x, B.y) < (e.arterial ? 11 : 8)) return { title: e.name, lines: [`${e.cls === 'highway' ? '고속화 도로' : e.cls === 'arterial' ? '간선 도로' : e.cls === 'local' ? '이면 도로' : '일반 도로'}${e.bridge ? ' · 다리' : ''}${e.closed ? ' · 통제 중' : e.cong + e.slow > 2.2 ? ' · 정체' : ''}`], color: '#e8d6a0', place: null, alert: e.closed }; }
     for (const a of city.alleys) if (distSeg(a.x0, a.y0, a.x1, a.y1) < 4.5) return { title: a.name, lines: ['골목 — 차량은 큰길에 세우고 걸어 들어간다'], color: '#9fb0c0', place: null, alert: false };
   }
   if (!q) return null;

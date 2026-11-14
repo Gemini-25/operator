@@ -582,5 +582,33 @@ export function buildScene(sim: Sim, I: Incident, rng: Rng): Scene {
   const s = I.truth.type === 'water' ? buildWater(sim, I, rng) : I.truth.type === 'collapse' ? buildCollapse(sim, I, rng) : I.truth.type === 'hazmat' ? buildHazmat(sim, I, rng) : I.truth.type === 'fire' ? buildFire(sim, I, rng) : I.truth.type === 'traffic' ? buildTraffic(sim, I, rng) : I.truth.type === 'search' ? buildSearch(sim, I, rng) : I.truth.type === 'medical' ? buildMedical(sim, I, rng) : buildArmed(sim, I, rng);
   // 심각도 설정: 부상 악화 속도
   for (const c of s.casualties) { c.bleed *= sim.tune.bleedMul; c.bleed0 = c.bleed; }
+  sealPockets(s);
   return s;
+}
+
+/**
+ * 벽이 무너지거나 가구가 놓이면서 생긴, 어디서도 닿지 못하는 한두 칸짜리 빈 틈을 벽으로 메운다.
+ * 사람이나 소품이 있는 칸, 세 칸 이상 이어진 곳은 건드리지 않는다(그런 곳이 끊겨 있다면 평면 생성의 잘못이므로 테스트가 잡는다).
+ */
+function sealPockets(s: Scene): void {
+  if (s.kind === 'search' || s.kind === 'traffic' || s.kind === 'water') return;
+  const walk = (i: number): boolean => { const t = s.tiles[i]; return t === T.FLOOR || t === T.DOOR || t === T.GROUND || t === T.ROAD || t === T.STAIR; };
+  const seen = new Uint8Array(s.w * s.h), st = [tidx(s, s.staging.x, s.staging.y)];
+  seen[st[0]] = 1;
+  const grow = (stack: number[], mark: Uint8Array, out?: number[]): void => {
+    while (stack.length) {
+      const c = stack.pop()!, x = c % s.w, y = (c / s.w) | 0;
+      if (out) out.push(c);
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= s.w || ny >= s.h) continue; const j = ny * s.w + nx; if (!mark[j] && walk(j)) { mark[j] = 1; stack.push(j); } }
+      const sl = s.stairTo[c]; if (sl >= 0 && !mark[sl]) { mark[sl] = 1; stack.push(sl); }
+    }
+  };
+  grow(st, seen);
+  for (let i = 0; i < s.tiles.length; i++) {
+    if (seen[i] || s.tiles[i] !== T.FLOOR) continue;
+    const pocket: number[] = []; seen[i] = 1; grow([i], seen, pocket);
+    if (pocket.length > 2) continue;
+    if (pocket.some((q) => s.propAt[q] >= 0 || s.casualties.some((c) => tidx(s, Math.round(c.x), Math.round(c.y)) === q) || s.hostiles.some((h) => tidx(s, Math.round(h.x), Math.round(h.y)) === q))) continue;
+    for (const q of pocket) { s.tiles[q] = T.WALL; s.fuel[q] = 0; if (s.region[q] >= 0) { const r = s.regions[s.region[q]]; r.tiles = r.tiles.filter((v) => v !== q); s.region[q] = -1; } }
+  }
 }

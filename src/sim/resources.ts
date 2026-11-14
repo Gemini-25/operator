@@ -1,35 +1,46 @@
 // ResourceManager — 부대·대원 명부, 차량 상태와 도시 지도 위 이동.
 
-import { COLS, ROWS, edgeName, edgeTime, findRoute, nodeName, weatherSpeedFactor } from './city';
+import { coastY, edgeName, edgeTime, findRoute, nodeName, weatherSpeedFactor } from './city';
 import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
 import { unitArrived } from './field/sceneManager';
 import { Rng } from './rng';
-import type { Dept, Incident, Needs, Responder, Unit, UnitCaps, UnitKind } from './types';
+import type { Dept, Incident, Needs, Responder, Unit, UnitCaps, UnitField, UnitKind } from './types';
 import { clamp, fmtSec } from './util';
 
 const NAMES = ['김도윤', '이서준', '박하준', '최민재', '정지호', '강현우', '윤서연', '한지민', '오수아', '임채원', '신유나', '조은서',
-  '배준영', '류시우', '문가은', '송태윤', '황보라', '안지후', '남궁민', '서예린'];
+  '배준영', '류시우', '문가은', '송태윤', '황보라', '안지후', '남궁민', '서예린', '권도현', '홍서진', '장하늘', '민지원', '차은우', '표나연', '석민호', '엄지안',
+  '여준서', '길하은', '변우진', '탁서윤', '함도경', '채아린', '옥진우', '소유진', '봉재현', '추다은', '공시현', '금나래'];
 
-interface UnitDef { callsign: string; dept: Dept; kind: UnitKind; facility: number; caps: UnitCaps; waterMax: number; tool: number; med: number; armor: number; minLevel: number }
+interface UnitDef { callsign: string; dept: Dept; kind: UnitKind; field: UnitField; facility: string; caps: UnitCaps; waterMax: number; tool: number; med: number; armor: number; minLevel: number }
 const caps = (suppression: number, rescue: number, ems: number, law: number, tactical: number, search: number, traffic: number): UnitCaps =>
   ({ suppression, rescue, ems, law, tactical, search, traffic });
-// minLevel: 난이도의 "부대 규모"가 이 값 이상일 때 편성된다 (1 = 4대, 2 = 5대, 3 = 6대, 4 = 8대, 5 = 10대).
-// 앞의 여섯 줄(기본 편성)은 순서를 바꾸지 않는다 — 대원 능력치가 이 순서로 뽑힌다.
+const KIND: Record<UnitKind, { dept: Dept; caps: UnitCaps; waterMax: number; tool: number; med: number; armor: number }> = {
+  engine: { dept: 'fire', caps: caps(1.0, 0.55, 0.2, 0, 0, 0.5, 0.4), waterMax: 100, tool: 0.55, med: 0.35, armor: 0.1 },
+  ladder: { dept: 'fire', caps: caps(1.0, 0.7, 0.2, 0, 0, 0.5, 0.3), waterMax: 140, tool: 0.7, med: 0.35, armor: 0.1 },
+  rescue: { dept: 'fire', caps: caps(0.75, 1.0, 0.25, 0, 0, 0.8, 0.4), waterMax: 60, tool: 1.0, med: 0.4, armor: 0.1 },
+  hazmat: { dept: 'fire', caps: caps(0.6, 0.9, 0.3, 0, 0, 0.5, 0.3), waterMax: 40, tool: 0.9, med: 0.45, armor: 0.15 },
+  heli: { dept: 'fire', caps: caps(0, 0.8, 0.7, 0, 0, 1.5, 0), waterMax: 0, tool: 0.6, med: 0.8, armor: 0.05 },
+  boat: { dept: 'fire', caps: caps(0, 0.9, 0.5, 0, 0, 0.8, 0), waterMax: 0, tool: 0.8, med: 0.5, armor: 0.05 },
+  als: { dept: 'ems', caps: caps(0, 0.15, 1.0, 0, 0, 0.3, 0.2), waterMax: 0, tool: 0.1, med: 1.0, armor: 0 },
+  bls: { dept: 'ems', caps: caps(0, 0.15, 0.8, 0, 0, 0.3, 0.2), waterMax: 0, tool: 0.1, med: 0.75, armor: 0 },
+  patrol: { dept: 'police', caps: caps(0, 0.15, 0.15, 0.8, 0.5, 0.7, 1.0), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.2 },
+  tactical: { dept: 'police', caps: caps(0, 0.15, 0.15, 1.0, 1.0, 0.7, 0.7), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.5 },
+  swat: { dept: 'police', caps: caps(0, 0.15, 0.2, 1.0, 1.4, 0.5, 0.3), waterMax: 0, tool: 0.2, med: 0.3, armor: 0.75 },
+  eod: { dept: 'police', caps: caps(0, 0.2, 0.15, 0.6, 0.5, 0.4, 0.4), waterMax: 0, tool: 0.3, med: 0.25, armor: 0.6 },
+};
+const U = (callsign: string, kind: UnitKind, field: UnitField, facility: string, minLevel: number): UnitDef => ({ callsign, kind, field, facility, minLevel, ...KIND[kind] });
+// 편성표: 네 분야(경찰·소방·구조·특수)마다 3~5팀. minLevel 은 난이도의 "부대 규모"가 이 값 이상일 때 편성된다
+// (1 = 12팀, 2 = 15팀, 3 = 17팀, 4 = 19팀, 5 = 20팀). 줄의 순서를 바꾸면 대원 능력치가 바뀐다(이 순서로 뽑는다).
 const UNIT_DEFS: UnitDef[] = [
-  { callsign: '진압1', dept: 'fire', kind: 'engine', facility: 0, caps: caps(1.0, 0.55, 0.2, 0, 0, 0.5, 0.4), waterMax: 100, tool: 0.55, med: 0.35, armor: 0.1, minLevel: 1 },
-  { callsign: '구조1', dept: 'fire', kind: 'rescue', facility: 1, caps: caps(0.75, 1.0, 0.25, 0, 0, 0.8, 0.4), waterMax: 60, tool: 1.0, med: 0.4, armor: 0.1, minLevel: 1 },
-  { callsign: '구급1', dept: 'ems', kind: 'als', facility: 0, caps: caps(0, 0.15, 1.0, 0, 0, 0.3, 0.2), waterMax: 0, tool: 0.1, med: 1.0, armor: 0, minLevel: 1 },
-  { callsign: '구급2', dept: 'ems', kind: 'bls', facility: 2, caps: caps(0, 0.15, 0.8, 0, 0, 0.3, 0.2), waterMax: 0, tool: 0.1, med: 0.75, armor: 0, minLevel: 3 },
-  { callsign: '순찰1', dept: 'police', kind: 'patrol', facility: 3, caps: caps(0, 0.15, 0.15, 0.8, 0.5, 0.7, 1.0), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.2, minLevel: 1 },
-  { callsign: '기동1', dept: 'police', kind: 'tactical', facility: 4, caps: caps(0, 0.15, 0.15, 1.0, 1.0, 0.7, 0.7), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.5, minLevel: 2 },
-  { callsign: '진압2', dept: 'fire', kind: 'engine', facility: 1, caps: caps(1.0, 0.55, 0.2, 0, 0, 0.5, 0.4), waterMax: 100, tool: 0.55, med: 0.35, armor: 0.1, minLevel: 4 },
-  { callsign: '구급3', dept: 'ems', kind: 'als', facility: 2, caps: caps(0, 0.15, 1.0, 0, 0, 0.3, 0.2), waterMax: 0, tool: 0.1, med: 1.0, armor: 0, minLevel: 4 },
-  { callsign: '순찰2', dept: 'police', kind: 'patrol', facility: 4, caps: caps(0, 0.15, 0.15, 0.8, 0.5, 0.7, 1.0), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.2, minLevel: 5 },
-  { callsign: '구조2', dept: 'fire', kind: 'rescue', facility: 0, caps: caps(0.75, 1.0, 0.25, 0, 0, 0.8, 0.4), waterMax: 60, tool: 1.0, med: 0.4, armor: 0.1, minLevel: 5 },
+  U('순찰1', 'patrol', 'police', '중부경찰서', 1), U('순찰2', 'patrol', 'police', '서부지구대', 1), U('기동1', 'tactical', 'police', '동부지구대', 1), U('순찰3', 'patrol', 'police', '동부지구대', 2), U('기동2', 'tactical', 'police', '중부경찰서', 4),
+  U('진압1', 'engine', 'fire', '중앙소방서', 1), U('진압2', 'engine', 'fire', '서부119안전센터', 1), U('사다리1', 'ladder', 'fire', '공단119안전센터', 1), U('진압3', 'engine', 'fire', '한솔119안전센터', 3), U('진압4', 'engine', 'fire', '공단119안전센터', 5),
+  U('구조1', 'rescue', 'rescue', '중앙소방서', 1), U('구급1', 'als', 'rescue', '중앙소방서', 1), U('구급2', 'bls', 'rescue', '서부119안전센터', 1), U('구급3', 'als', 'rescue', '공단119안전센터', 2), U('구조2', 'rescue', 'rescue', '한솔119안전센터', 4),
+  U('특공1', 'swat', 'special', '중부경찰서', 1), U('헬기1', 'heli', 'special', '소방항공대', 1), U('화학1', 'hazmat', 'special', '공단119안전센터', 1), U('구조정1', 'boat', 'special', '해양구조대', 2), U('폭발물1', 'eod', 'special', '중부경찰서', 3),
 ];
 
-export const UNIT_KIND_NAME: Record<UnitKind, string> = { engine: '진압 펌프차', rescue: '구조 공작차', als: '전문 구급차', bls: '일반 구급차', patrol: '순찰차', tactical: '기동 순찰차' };
+export const UNIT_KIND_NAME: Record<UnitKind, string> = { engine: '진압 펌프차', rescue: '구조 공작차', als: '전문 구급차', bls: '일반 구급차', patrol: '순찰차', tactical: '기동 순찰차', ladder: '사다리차', hazmat: '화학 구조차', swat: '특공대 장갑차', eod: '폭발물 처리 차량', heli: '구조 헬기', boat: '구조정' };
+export const FIELD_NAME: Record<UnitField, string> = { police: '경찰', fire: '소방', rescue: '구조·구급', special: '특수' };
 
 function traitOf(r: Responder): string {
   const stats: [string, number][] = [['침착함', r.composure], ['판단 빠름', r.judgment], ['체력 좋음', r.fitness], ['협동적', r.teamwork], ['베테랑', r.experience], ['기술 숙련', r.skill]];
@@ -45,7 +56,7 @@ export function createRoster(sim: Sim): void {
   const equipRng = sim.rng.fork('equipment');
   const tn = sim.tune;
   UNIT_DEFS.forEach((d, di) => {
-    const f = sim.city.facilities[d.facility];
+    const f = sim.city.facilities.find((q) => q.name === d.facility)!;
     const home = sim.city.nodes[f.nodeId];
     const include = d.minLevel <= tn.unitLevel;
     const uid = sim.units.length;
@@ -62,9 +73,11 @@ export function createRoster(sim: Sim): void {
         skills: { fire: 0.05, rescue: 0.2, medical: 0.2, law: 0.05 },
         trait: '', health: 100, stamina: tn.startStamina, status: 'ok', xpGained: 0, incidentsWorked: 0,
       };
-      if (d.dept === 'fire') r.skills = d.kind === 'rescue' ? { fire: skill * 0.75, rescue: skill, medical: 0.35, law: 0.05 } : { fire: skill, rescue: skill * 0.6, medical: 0.3, law: 0.05 };
+      if (d.kind === 'heli' || d.kind === 'boat') r.skills = { fire: 0.15, rescue: skill, medical: d.kind === 'heli' ? 0.55 : 0.45, law: 0.05 };
+      else if (d.kind === 'hazmat') r.skills = { fire: skill * 0.7, rescue: skill * 0.92, medical: 0.4, law: 0.05 };
+      else if (d.dept === 'fire') r.skills = d.kind === 'rescue' ? { fire: skill * 0.75, rescue: skill, medical: 0.35, law: 0.05 } : { fire: skill, rescue: skill * 0.6, medical: 0.3, law: 0.05 };
       else if (d.dept === 'ems') r.skills = { fire: 0.05, rescue: 0.25, medical: clamp(skill + (d.kind === 'als' ? 0.08 : 0), 0, 1), law: 0.05 };
-      else r.skills = { fire: 0.05, rescue: 0.22, medical: 0.22, law: clamp(skill + (d.kind === 'tactical' ? 0.06 : 0), 0, 1) };
+      else r.skills = { fire: 0.05, rescue: 0.22, medical: 0.22, law: clamp(skill + (d.kind === 'swat' ? 0.12 : d.kind === 'tactical' ? 0.06 : d.kind === 'eod' ? -0.08 : 0), 0, 1) };
       r.trait = traitOf(r);
       if (include) { crew.push(r.id); sim.responders.push(r); }
     }
@@ -77,17 +90,19 @@ export function createRoster(sim: Sim): void {
       caps: d.caps, water: d.waterMax * tn.waterMul, waterMax: d.waterMax * tn.waterMul, hydrant: false,
       pumpCond: pump, pumpFailed: false,
       tool: Math.min(1.15, d.tool * tn.toolMul), medLevel: Math.min(1.1, d.med * tn.medMul), armor: Math.min(0.8, d.armor * tn.armorMul),
-      flashbangs: d.kind === 'tactical' ? tn.flashbangs : 0,
+      flashbangs: d.kind === 'tactical' ? tn.flashbangs : d.kind === 'swat' ? tn.flashbangs + 2 : 0,
       patients: [], patientsIncident: null,
       dispatchedAt: -1, estArrive: -1, diverted: false, busyTime: 0, runs: 0, boardOrder: null,
+      field: d.field, air: d.kind === 'heli', sea: d.kind === 'boat',
     };
+    if (u.air || u.sea) { u.x = u.px = f.x + 30; u.y = u.py = u.sea ? coastY(f.x + 30) + SEA_OFF : f.y - 20; }
     sim.units.push(u);
   });
 }
 
 const AID_NAMES = ['한도현', '서지우', '문태윤', '양서아', '고준혁', '배하린', '남건우', '유채원', '심재민', '노은서', '하승우', '전소율', '곽민석', '우다인', '진현수', '방예린'];
 const AID_KIND: Record<keyof Needs, UnitKind> = { suppression: 'engine', rescue: 'rescue', ems: 'bls', law: 'patrol', tactical: 'tactical', search: 'patrol', traffic: 'patrol' };
-const AID_CALL: Record<UnitKind, string> = { engine: '지원진압', rescue: '지원구조', als: '지원구급', bls: '지원구급', patrol: '지원순찰', tactical: '지원기동' };
+const AID_CALL: Partial<Record<UnitKind, string>> = { engine: '지원진압', rescue: '지원구조', als: '지원구급', bls: '지원구급', patrol: '지원순찰', tactical: '지원기동' };
 
 /**
  * 인근 도시 지원 부대를 만든다. 도시 가장자리의 교차로 가운데 사건 현장에 가장 빨리 닿는 곳에서 출발한다.
@@ -98,7 +113,7 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
   const wf = weatherSpeedFactor(sim);
   let home = -1, bt = Infinity;
   for (const n of sim.city.nodes) {
-    if (n.c !== 0 && n.c !== COLS - 1 && n.r !== 0 && n.r !== ROWS - 1) continue;
+    if (!n.exit) continue;      // 도시 밖으로 이어지는 길의 끝에서 들어온다
     const rt = findRoute(sim.city, n.id, I.reportedNode, wf);
     if (rt && rt.time < bt) { bt = rt.time; home = n.id; }
   }
@@ -125,7 +140,7 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
   const n = sim.city.nodes[home];
   const same = sim.units.filter((q) => q.aid && q.kind === kind).length;
   const u: Unit = {
-    id: uid, callsign: AID_CALL[kind] + (same + 1), dept: d.dept, kind, crew, homeNode: home, homeName: '인근 도시',
+    id: uid, callsign: (AID_CALL[kind] ?? '지원') + (same + 1), dept: d.dept, kind, crew, homeNode: home, homeName: '인근 도시',
     state: 'available', x: n.x, y: n.y, px: n.x, py: n.y, nodeId: home,
     route: null, seg: 0, segT: 0, pendingDest: null, destNode: null, incidentId: null, timer: 0,
     caps: d.caps, water: d.waterMax * tn.waterMul, waterMax: d.waterMax * tn.waterMul, hydrant: false,
@@ -142,9 +157,23 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
 export function crewNames(sim: Sim, u: Unit): string { return u.crew.map((r) => sim.responders[r].name).join('·'); }
 export function crewReady(sim: Sim, u: Unit): number { return u.crew.filter((r) => sim.responders[r].status === 'ok').length; }
 
+const AIR_SPEED = 66, SEA_SPEED = 30, SEA_OFF = 46;
+/** 바닷가의 교차로인가 (구조정이 닿을 수 있다) */
+export function coastal(sim: Sim, nodeId: number): boolean { const n = sim.city.nodes[nodeId]; return coastY(n.x) - n.y < 280; }
+/** 헬기·구조정이 향하는 지점. 사건 현장이면 그 건물 앞, 아니면 교차로(구조정은 그 앞바다). */
+function offroadTarget(sim: Sim, u: Unit, destNode: number): [number, number] {
+  const n = sim.city.nodes[destNode];
+  let tx = n.x, ty = n.y;
+  if (u.state === 'enroute' && u.incidentId !== null) { const I = sim.incidents[u.incidentId]; if (I.truth.nodeId === destNode && I.truth.placeId >= 0) { const pl = sim.city.places[I.truth.placeId]; tx = pl.x + pl.w / 2; ty = pl.y + pl.h / 2; } }
+  else if (destNode === u.homeNode) { const f = sim.city.facilities.find((q) => q.name === u.homeName); if (f) { tx = f.x + 30; ty = f.y - 20; } }
+  if (u.sea) ty = coastY(tx) + SEA_OFF;
+  return [tx, ty];
+}
+
 /** 현재 상태에서 목적지까지 예상 소요 시간(초). 관제 AI 가 배정 판단에 사용한다. */
 export function etaFor(sim: Sim, u: Unit, destNode: number): number {
   const wf = weatherSpeedFactor(sim);
+  if (u.air || u.sea) { const n = sim.city.nodes[destNode], d = u.sea ? Math.abs(n.x - u.x) * 1.04 : Math.hypot(n.x - u.x, n.y - u.y); return d / ((u.air ? AIR_SPEED : SEA_SPEED) * wf) + (u.state === 'available' ? 10 : 0); }
   let from = u.nodeId, extra = 0;
   if (u.state === 'available') extra = 6;
   if (u.route && u.seg < u.route.edges.length && (u.state === 'enroute' || u.state === 'returning' || u.state === 'transport')) {
@@ -164,6 +193,7 @@ function setRoute(sim: Sim, u: Unit, to: number): void {
 
 /** 목적지 설정. 구간 주행 중이면 다음 교차로까지는 그대로 달린 뒤 새 경로를 잡는다. */
 export function sendUnitTo(sim: Sim, u: Unit, destNode: number): void {
+  if (u.air || u.sea) { u.pendingDest = null; u.destNode = destNode; u.route = null; u.seg = 0; u.segT = 0; return; }
   if (u.route && u.seg < u.route.edges.length && u.segT > 0) { u.pendingDest = destNode; u.destNode = destNode; return; }
   u.pendingDest = null;
   setRoute(sim, u, destNode);
@@ -193,7 +223,9 @@ export function releaseUnit(sim: Sim, u: Unit): void {
 }
 
 export function startTransport(sim: Sim, u: Unit): void {
-  const hosp = sim.city.facilities.find((f) => f.kind === 'hospital')!;
+  // 가장 빨리 닿는 병원으로 간다
+  let hosp = sim.city.facilities.find((f) => f.kind === 'hospital')!, bt = Infinity;
+  for (const f of sim.city.facilities) { if (f.kind !== 'hospital') continue; const t = etaFor(sim, u, f.nodeId); if (t < bt) { bt = t; hosp = f; } }
   u.state = 'transport';
   sendUnitTo(sim, u, hosp.nodeId);
 }
@@ -208,7 +240,7 @@ function arrive(sim: Sim, u: Unit): void {
   u.route = null; u.seg = 0; u.segT = 0;
   const n = sim.city.nodes[u.nodeId];
   const parked = !!u.curb && (u.curbT ?? 0) >= 1;
-  if (!parked) { u.x = n.x; u.y = n.y; }
+  if (!parked && !u.air && !u.sea) { u.x = n.x; u.y = n.y; }
   if (u.state === 'enroute') {
     const I = u.incidentId !== null ? sim.incidents[u.incidentId] : null;
     if (!I || I.phase === 'closed') { releaseUnit(sim, u); return; }
@@ -228,7 +260,7 @@ function arrive(sim: Sim, u: Unit): void {
     }
     // 교차로에 닿았으면 그 건물 앞 길가까지 마저 간다
     const pl = I.truth.placeId >= 0 ? sim.city.places[I.truth.placeId] : null;
-    if (pl && !u.curb) {
+    if (pl && !u.curb && !u.air && !u.sea) {
       const len = Math.hypot(pl.cx - n.x, pl.cy - n.y);
       if (len > 8) { u.curb = { x: pl.cx, y: pl.cy, len }; u.curbT = 0; u.parking = true; return; }
     }
@@ -242,7 +274,7 @@ function arrive(sim: Sim, u: Unit): void {
     unitArrived(sim, I, u);
   } else if (u.state === 'transport') {
     // 응급실이 붐비면(먼저 온 구급차가 인계 중이면) 인계가 늦어진다
-    const waiting = sim.units.filter((q) => q.id !== u.id && q.state === 'hospital').length;
+    const waiting = sim.units.filter((q) => q.id !== u.id && q.state === 'hospital' && q.nodeId === u.nodeId).length;
     u.state = 'hospital'; u.timer = 8 + waiting * 9 + Math.max(0, u.patients.length - 1) * 3;
     if (waiting > 0) emit(sim, { inc: u.patientsIncident ?? -1, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign}: 응급실이 붐벼 환자 인계가 늦어집니다 (앞에 ${waiting}대).` });
   } else if (u.state === 'returning') {
@@ -289,10 +321,22 @@ export function tickUnits(sim: Sim): void {
             if (!c.dead) { c.where = 'hospital'; c.tHospital = sim.t; }
           }
           const alive = u.patients.filter((cid) => !scene.casualties[cid].dead).length;
-          emit(sim, { inc: I!.id, role: 'UNIT', actor: u.callsign, kind: 'casualty', text: `${u.callsign}: 시립병원 도착, 환자 ${alive}명 인계 완료.`, imp: 1 });
+          emit(sim, { inc: I!.id, role: 'UNIT', actor: u.callsign, kind: 'casualty', text: `${u.callsign}: ${sim.city.facilities.find((f) => f.kind === 'hospital' && f.nodeId === u.nodeId)?.name ?? '병원'} 도착, 환자 ${alive}명 인계 완료.`, imp: 1 });
         }
         u.patients = []; u.patientsIncident = null;
         releaseUnit(sim, u);
+      }
+      continue;
+    }
+    if (u.air || u.sea) {
+      // 헬기는 곧장 날고, 구조정은 해안을 따라 간다
+      const dest = u.destNode ?? u.homeNode, [tx, ty] = offroadTarget(sim, u, dest);
+      if (u.air) {
+        const d = Math.hypot(tx - u.x, ty - u.y), step = AIR_SPEED * wf * dt;
+        if (d <= step) { u.x = tx; u.y = ty; u.nodeId = dest; arrive(sim, u); } else { u.x += ((tx - u.x) / d) * step; u.y += ((ty - u.y) / d) * step; }
+      } else {
+        const d = Math.abs(tx - u.x), step = SEA_SPEED * wf * dt;
+        if (d <= step) { u.x = tx; u.y = ty; u.nodeId = dest; arrive(sim, u); } else { u.x += Math.sign(tx - u.x) * step; u.y = coastY(u.x) + SEA_OFF; }
       }
       continue;
     }

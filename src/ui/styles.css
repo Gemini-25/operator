@@ -280,3 +280,15 @@ input:focus { border-color: var(--accent); }
 .reel { position: absolute; left: 50%; top: 52px; transform: translateX(-50%); max-width: 76%; display: flex; gap: 10px; align-items: center; background: var(--glass); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border: 1px solid rgba(79, 209, 197, 0.5); border-radius: 10px; padding: 7px 12px; box-shadow: var(--shadow); z-index: 6; }
 .reel b { color: #9fe6dd; white-space: nowrap; } .reel .tx { font-size: 12.5px; color: #e2ebf3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reel button { white-space: nowrap; padding: 3px 9px; }
+
+/* 부대 목록: 네 분야로 묶은 촘촘한 카드 */
+.units-wrap { max-height: 52vh; overflow-y: auto; padding: 2px 8px 8px; }
+.ugroup-h { font-size: 11px; font-weight: 800; letter-spacing: 0.05em; margin: 7px 2px 4px; display: flex; gap: 6px; align-items: baseline; }
+.units-wrap .units { padding: 0; max-height: none; overflow: visible; gap: 4px; }
+.units-wrap .unit { padding: 4px 6px 5px 10px; gap: 3px; }
+.units-wrap .unit .state { font-size: 10.5px; }
+.crew2 { display: flex; gap: 4px; }
+.cchip { flex: 1; min-width: 0; position: relative; font-size: 10.5px; line-height: 1.5; padding: 0 4px 2px; border-radius: 4px; background: #0d151c; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #c8d4df; }
+.cchip i { position: absolute; left: 0; bottom: 0; height: 2px; }
+.cchip:hover { background: #1a2733; } .cchip.sel { background: #123a3a; color: #eafaf6; }
+.cchip.injured, .cchip.down { color: var(--warn); }

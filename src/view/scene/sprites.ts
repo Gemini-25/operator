@@ -25,13 +25,15 @@ const PANTS = ['#2f3a4f', '#3a3f47', '#4a4238', '#28303c'];
 export function responderLook(dept: Dept, kind: UnitKind, seed: number): PersonLook {
   const skin = SKIN[(hash2(seed, 1) * SKIN.length) | 0];
   if (dept === 'fire') {
-    const rescue = kind === 'rescue';
+    const rescue = kind === 'rescue' || kind === 'heli' || kind === 'boat';
+    if (kind === 'hazmat') return { ...responderLook('fire', 'engine', seed), top: '#cfc23a', arm: '#c2b534', leg: '#b3a72e', trimCol: '#3a3f45' };
     return { top: rescue ? '#d9742a' : '#b08f3e', trim: 'stripes', trimCol: '#e6f04a', arm: rescue ? '#c96824' : '#a2833a', hand: '#2a2d31', leg: rescue ? '#b85e20' : '#8f7434', shoe: '#1c1e21', head: 'helmet', headCol: rescue ? '#f2f2ee' : '#d63a2c', headCol2: '#f4d24a', skin, pack: 'scba', packCol: '#e9c53c' };
   }
   if (dept === 'ems') {
     return { top: '#27a583', trim: 'cross', trimCol: '#ffffff', arm: '#e9eef2', hand: '#7fc0ee', leg: '#28353f', shoe: '#1c1e21', head: 'hair', headCol: HAIR[(hash2(seed, 2) * HAIR.length) | 0], skin, pack: 'bag', packCol: '#d8423a' };
   }
-  if (kind === 'tactical') {
+  if (kind === 'eod') return { ...responderLook('police', 'tactical', seed), top: '#4a5540', arm: '#4a5540', leg: '#3f4936', headCol: '#3a4433', headCol2: '#e0b83a' };
+  if (kind === 'tactical' || kind === 'swat') {
     return { top: '#2c323b', trim: 'vest', trimCol: '#191d23', arm: '#2c323b', hand: '#15181c', leg: '#262b33', shoe: '#121416', head: 'tac', headCol: '#1f242b', headCol2: '#5aa9ff', skin, pack: 'none' };
   }
   return { top: '#7ea4d6', trim: 'vest', trimCol: '#22355c', arm: '#7ea4d6', hand: skin, leg: '#1f2d4c', shoe: '#14161a', head: 'cap', headCol: '#1f2f55', headCol2: '#e8edf2', skin, pack: 'none' };
@@ -189,7 +191,7 @@ export function drawLying(g: G, x: number, y: number, ang: number, ts: number, k
 }
 
 // ───────────────────────── 차량 ─────────────────────────
-export const VEH_SIZE: Record<UnitKind, [number, number]> = { engine: [3.1, 1.14], rescue: [2.9, 1.14], als: [2.5, 1.06], bls: [2.4, 1.04], patrol: [2.05, 0.96], tactical: [2.6, 1.08] };
+export const VEH_SIZE: Record<UnitKind, [number, number]> = { engine: [3.1, 1.14], rescue: [2.9, 1.14], als: [2.5, 1.06], bls: [2.4, 1.04], patrol: [2.05, 0.96], tactical: [2.6, 1.08], ladder: [3.7, 1.16], hazmat: [3.0, 1.14], swat: [2.85, 1.16], eod: [2.7, 1.12], heli: [3.0, 1.0], boat: [2.7, 0.96] };
 
 function wheels(g: G, L: number, W: number): void {
   for (const wx of [-L * 0.3, L * 0.3]) { rr(g, wx - 0.17, -W / 2 - 0.035, 0.34, 0.1, 0.03, '#0e1114'); rr(g, wx - 0.17, W / 2 - 0.065, 0.34, 0.1, 0.03, '#0e1114'); }
@@ -206,13 +208,15 @@ export function beaconColors(dept: Dept): [string, string] { return BEACON[dept]
 /** 위에서 본 긴급 차량. 앞이 +x. */
 export function drawEmergency(g: G, x: number, y: number, ang: number, ts: number, kind: UnitKind, dept: Dept, lights: boolean, timeMs: number): void {
   const [L, W] = VEH_SIZE[kind];
+  if (kind === 'heli') { drawHeli(g, x, y, ang, ts, lights, timeMs); return; }
+  if (kind === 'boat') { drawBoat(g, x, y, ang, ts, lights, timeMs); return; }
   g.save(); g.translate(x, y); g.scale(ts, ts);
   g.save(); g.translate(0.08, 0.12); g.rotate(ang); rr(g, -L / 2, -W / 2, L, W, 0.14, 'rgba(0,0,0,0.38)'); g.restore();
   g.rotate(ang);
   wheels(g, L, W);
   const [ca, cb] = BEACON[dept];
   const glass = '#182734', glassHi = 'rgba(160,210,240,0.35)';
-  if (kind === 'engine' || kind === 'rescue') {
+  if (kind === 'engine' || kind === 'rescue' || kind === 'ladder' || kind === 'hazmat') {
     const red = '#c0392b', redHi = '#d64b3a';
     rr(g, -L / 2, -W / 2, L, W, 0.1, shade(red, -0.35)); rr(g, -L / 2 + 0.03, -W / 2 + 0.03, L - 0.06, W - 0.06, 0.08, red);
     // 측면 흰 띠
@@ -232,6 +236,17 @@ export function drawEmergency(g: G, x: number, y: number, ang: number, ts: numbe
       for (const gy of [-0.22, 0, 0.22]) { disc(g, cx0 - 0.14, gy, 0.05, '#cdd3d8'); disc(g, cx0 - 0.14, gy, 0.03, '#39424a'); }
       g.fillStyle = '#c9cfd4'; g.fillRect(-L / 2 + 0.2, W / 2 - 0.32, L - 1.75, 0.025); g.fillRect(-L / 2 + 0.2, W / 2 - 0.21, L - 1.75, 0.025);
       for (let k = 0; k < 9; k++) g.fillRect(-L / 2 + 0.24 + k * ((L - 1.85) / 8), W / 2 - 0.32, 0.022, 0.13);
+    } else if (kind === 'ladder') {
+      // 사다리차: 지붕에 접어 둔 긴 사다리와 회전대
+      rr(g, -L / 2 + 0.14, -W / 2 + 0.2, L - 1.42, W - 0.4, 0.04, '#4c555e');
+      rr(g, -L / 2 + 0.05, -0.17, L - 0.75, 0.34, 0.03, '#aab2b9'); g.fillStyle = '#6b747d'; for (let k = 0; k < 16; k++) g.fillRect(-L / 2 + 0.12 + k * ((L - 0.95) / 15), -0.17, 0.03, 0.34);
+      g.fillStyle = '#d8dde1'; g.fillRect(-L / 2 + 0.05, -0.17, L - 0.75, 0.035); g.fillRect(-L / 2 + 0.05, 0.135, L - 0.75, 0.035);
+      disc(g, -L / 2 + 0.62, 0, 0.26, '#39424a'); disc(g, -L / 2 + 0.62, 0, 0.16, '#cdd3d8'); rr(g, L / 2 - 1.5, -0.22, 0.34, 0.44, 0.04, '#e9e4d8');
+    } else if (kind === 'hazmat') {
+      // 화학 구조차: 노란 띠와 밀폐 장비함, 제독 장비
+      rr(g, -L / 2 + 0.12, -W / 2 + 0.16, L - 1.3, W - 0.32, 0.04, '#e3d74a'); g.fillStyle = '#2a2d31';
+      for (let k = 0; k < 6; k++) { g.beginPath(); g.moveTo(-L / 2 + 0.16 + k * 0.28, -W / 2 + 0.16); g.lineTo(-L / 2 + 0.3 + k * 0.28, -W / 2 + 0.16); g.lineTo(-L / 2 + 0.2 + k * 0.28, -W / 2 + 0.3); g.lineTo(-L / 2 + 0.06 + k * 0.28 + 0.1, -W / 2 + 0.3); g.closePath(); g.fill(); }
+      rr(g, -L / 2 + 0.3, -0.1, 0.9, 0.34, 0.04, '#b7ae3a'); disc(g, -L / 2 + 0.5, 0.07, 0.11, '#39424a'); disc(g, -L / 2 + 0.85, 0.07, 0.11, '#39424a'); disc(g, -L / 2 + 0.5, 0.07, 0.06, '#8fd04a'); disc(g, -L / 2 + 0.85, 0.07, 0.06, '#8fd04a');
     } else {
       // 구조 공작차: 장비함 지붕과 조명탑
       rr(g, -L / 2 + 0.12, -W / 2 + 0.16, L - 1.3, W - 0.32, 0.04, '#e6e1d6');
@@ -277,10 +292,12 @@ export function drawEmergency(g: G, x: number, y: number, ang: number, ts: numbe
     rr(g, -L / 2, -W / 2 + 0.1, 0.045, 0.16, 0.015, '#d8423a'); rr(g, -L / 2, W / 2 - 0.26, 0.045, 0.16, 0.015, '#d8423a');
     rr(g, 0.26, -W / 2 - 0.04, 0.09, 0.06, 0.02, '#27477c'); rr(g, 0.26, W / 2 - 0.02, 0.09, 0.06, 0.02, '#27477c');
   } else {
-    const navy = '#1f2c44';
+    const navy = kind === 'swat' ? '#1b1e24' : kind === 'eod' ? '#2c3a2a' : '#1f2c44';
     rr(g, -L / 2, -W / 2, L, W, 0.12, '#0d1320'); rr(g, -L / 2 + 0.03, -W / 2 + 0.03, L - 0.06, W - 0.06, 0.1, navy);
     rr(g, -L / 2 + 0.1, -W / 2 + 0.12, L - 0.95, W - 0.24, 0.06, shade(navy, 0.12));
-    g.fillStyle = '#e8edf2'; g.fillRect(-L / 2 + 0.2, -0.05, L - 1.2, 0.1);
+    g.fillStyle = kind === 'swat' ? '#5aa9ff' : kind === 'eod' ? '#e0872a' : '#e8edf2'; g.fillRect(-L / 2 + 0.2, -0.05, L - 1.2, 0.1);
+    if (kind === 'swat') { rr(g, -0.2, -W / 2 + 0.16, 0.5, W - 0.32, 0.05, '#2a2f38'); disc(g, 0.05, 0, 0.13, '#12151a'); }
+    if (kind === 'eod') { rr(g, -L / 2 + 0.12, -0.26, 0.5, 0.52, 0.06, '#1e271c'); disc(g, -L / 2 + 0.37, 0, 0.17, '#e0872a'); disc(g, -L / 2 + 0.37, 0, 0.1, '#1e271c'); }
     disc(g, -L / 2 + 0.6, 0, 0.2, '#141c2c'); disc(g, -L / 2 + 0.6, 0, 0.14, shade(navy, 0.2));
     rr(g, L / 2 - 0.5, -W / 2 + 0.12, 0.2, W - 0.24, 0.05, glass); rr(g, L / 2 - 0.48, -W / 2 + 0.14, 0.05, W - 0.28, 0.03, glassHi);
     rr(g, L / 2 - 0.26, -W / 2 + 0.08, 0.22, W - 0.16, 0.08, shade(navy, 0.06));
@@ -462,5 +479,38 @@ export function drawSwimmer(g: G, x: number, y: number, ts: number, k: PersonLoo
   seg(g, -0.1, 0.02, -0.26, -0.12 - w * 0.08, 0.075, k.arm); disc(g, -0.27, -0.13 - w * 0.08, 0.045, k.hand);
   seg(g, 0.1, 0.02, 0.26, -0.12 + w * 0.08, 0.075, k.arm); disc(g, 0.27, -0.13 + w * 0.08, 0.045, k.hand);
   disc(g, 0, 0, 0.12, k.headCol); oval(g, 0, 0.045, 0.07, 0.05, k.skin);
+  g.restore();
+}
+
+/** 위에서 본 구조 헬기. 앞이 +x. 떠 있으므로 그림자가 멀리 떨어진다. */
+export function drawHeli(g: G, x: number, y: number, ang: number, ts: number, lights: boolean, timeMs: number): void {
+  g.save(); g.translate(x, y); g.scale(ts, ts);
+  const lift = lights ? 0.55 : 0.12;
+  g.save(); g.translate(lift, lift * 1.2); g.rotate(ang); oval(g, -0.1, 0, 0.95, 0.42, 'rgba(0,0,0,0.3)'); rr(g, -1.6, -0.07, 1.1, 0.14, 0.05, 'rgba(0,0,0,0.3)'); if (lights) disc(g, 0.05, 0, 1.5, 'rgba(0,0,0,0.07)'); g.restore();
+  g.rotate(ang);
+  rr(g, -0.7, -0.52, 1.3, 0.06, 0.02, '#3a4046'); rr(g, -0.7, 0.46, 1.3, 0.06, 0.02, '#3a4046');      // 착륙 스키드
+  rr(g, -1.75, -0.06, 1.25, 0.12, 0.05, '#c0392b'); rr(g, -1.8, -0.3, 0.1, 0.6, 0.03, '#c0392b'); rr(g, -1.86, -0.2, 0.05, 0.4, 0.02, '#e9e4d8');      // 꼬리
+  oval(g, 0, 0, 0.95, 0.44, '#8f2a20'); oval(g, 0, 0, 0.9, 0.4, '#d64b3a'); oval(g, -0.2, 0, 0.5, 0.36, '#f1ede2');
+  g.fillStyle = '#d64b3a'; g.fillRect(-0.24, -0.4, 0.14, 0.8);
+  oval(g, 0.52, 0, 0.36, 0.3, '#182734'); oval(g, 0.6, -0.08, 0.16, 0.1, 'rgba(160,210,240,0.4)');
+  disc(g, -0.05, 0, 0.13, '#39424a');
+  const a = (timeMs / (lights ? 26 : 600)) % 6.2832;
+  if (lights) disc(g, -0.05, 0, 1.5, 'rgba(210,225,235,0.1)');
+  g.save(); g.translate(-0.05, 0); g.rotate(a); g.fillStyle = lights ? 'rgba(40,46,52,0.55)' : '#2a2f36';
+  for (let k = 0; k < 3; k++) { g.rotate(2.0944); g.fillRect(0, -0.045, 1.5, 0.09); }
+  g.restore(); disc(g, -0.05, 0, 0.07, '#cdd3d8');
+  if (lights) { const on = Math.floor(timeMs / 300) % 2 === 0; disc(g, -1.75, 0, 0.07, on ? '#ff5d5d' : '#5a1f1c'); disc(g, 0.2, 0.42, 0.05, on ? '#7dffb0' : '#1c4a30'); }
+  g.restore();
+}
+/** 위에서 본 구조정. 앞이 +x. */
+export function drawBoat(g: G, x: number, y: number, ang: number, ts: number, lights: boolean, timeMs: number): void {
+  g.save(); g.translate(x, y); g.scale(ts, ts); g.rotate(ang);
+  if (lights) { g.fillStyle = 'rgba(235,245,248,0.28)'; g.beginPath(); g.moveTo(-1.0, 0); g.lineTo(-2.9, -0.62); g.lineTo(-2.5, 0); g.lineTo(-2.9, 0.62); g.closePath(); g.fill(); }
+  const hull = (k: number, col: string): void => { g.fillStyle = col; g.beginPath(); g.moveTo(1.35 * k, 0); g.quadraticCurveTo(0.9 * k, -0.5 * k, -0.2, -0.48 * k); g.lineTo(-1.3 * k, -0.44 * k); g.lineTo(-1.3 * k, 0.44 * k); g.lineTo(-0.2, 0.48 * k); g.quadraticCurveTo(0.9 * k, 0.5 * k, 1.35 * k, 0); g.closePath(); g.fill(); };
+  hull(1.04, 'rgba(0,0,0,0.3)'); hull(1, '#e0712a'); hull(0.8, '#3a4650');
+  rr(g, -0.5, -0.24, 0.8, 0.48, 0.08, '#eef1f4'); rr(g, 0.08, -0.2, 0.18, 0.4, 0.04, '#182734');
+  rr(g, -1.28, -0.2, 0.2, 0.4, 0.04, '#2a2f36');
+  const on = lights && Math.floor(timeMs / 220) % 2 === 0;
+  disc(g, -0.2, 0, 0.09, on ? '#ff8a5a' : '#7a3a22'); if (on) disc(g, -0.2, 0, 0.34, 'rgba(255,138,90,0.25)');
   g.restore();
 }

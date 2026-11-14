@@ -6,7 +6,7 @@ import { emit, markRecovered, raiseProblem } from '../events';
 import { transmit } from '../field/agents';
 import { mkFact } from '../field/beliefs';
 import { nodeName } from '../city';
-import { createAidUnit, crewReady, dispatchUnit, etaFor, sendUnitTo } from '../resources';
+import { coastal, createAidUnit, crewReady, dispatchUnit, etaFor, sendUnitTo } from '../resources';
 import type { Claim, Incident, Needs, RadioMsg, Scene, Unit } from '../types';
 import { TYPE_NAME, fmtSec, josa } from '../util';
 import { assess, emptyNeeds, needsText, sevName } from './analyst';
@@ -48,6 +48,8 @@ function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { be
   for (const u of sim.units) {
     const fit = u.caps[key];
     if (fit < minCap || crewReady(sim, u) === 0 || u.state === 'oos') continue;
+    if (u.sea && !(I.assessment!.type === 'water' && coastal(sim, I.reportedNode))) continue;      // 구조정은 바닷가의 수난 사고에만 나간다
+    if (u.air && key !== 'search' && sev < 2.3) continue;                                             // 헬기는 수색이나 큰 사건에만 뜬다
     if (I.assigned.indexOf(u.id) >= 0) continue;
     let divertFrom: Incident | null = null;
     if (u.state === 'enroute' || u.state === 'turnout') {

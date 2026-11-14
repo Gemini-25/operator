@@ -7,8 +7,8 @@ import { needsText, sevName } from '../sim/dispatch/analyst';
 import { personaName, topicName } from '../sim/dispatch/callSystem';
 import type { Sim } from '../sim/engine';
 import { workLabel } from '../sim/field/agents';
-import { UNIT_KIND_NAME } from '../sim/resources';
-import type { Incident, Role, SimEvent, Unit } from '../sim/types';
+import { FIELD_NAME, UNIT_KIND_NAME } from '../sim/resources';
+import type { Incident, Role, SimEvent, Unit, UnitField } from '../sim/types';
 import { DEPT_NAME, OUTCOME_NAME, TYPE_NAME, WEATHER_NAME, fmtClock, fmtDur, fmtSec, pct } from '../sim/util';
 import type { CameraDirector } from '../view/camera';
 import { ICON_PATH } from '../view/icons';
@@ -90,12 +90,31 @@ function IncidentCard({ sim, I, director, truth }: { sim: Sim; I: Incident; dire
 }
 
 // ───────────────────────── 좌측: 부대 ─────────────────────────
+const FIELD_COLOR: Record<UnitField, string> = { police: '#5aa9ff', fire: '#ff7a45', rescue: '#2fd39a', special: '#c9a2ff' };
 export function UnitList({ sim, selectedRid, onSelectRid }: { sim: Sim; selectedRid: number; onSelectRid: (rid: number) => void }) {
+  const fields: UnitField[] = ['police', 'fire', 'rescue', 'special'];
+  const aid = sim.units.filter((u) => u.aid);
+  const own = sim.units.filter((u) => !u.aid);
   return (
     <div className="panel-section">
-      <h3>출동 부대 <span className="dim">가용 {sim.units.filter((u) => u.state === 'available').length}/{sim.units.filter((u) => !u.aid).length}{sim.aidUsed ? ` · 인근 도시 지원 ${sim.aidUsed}/${sim.tune.aidUnits}` : ''}</span></h3>
-      <div className="units">
-        {sim.units.map((u) => <UnitRow key={u.id} sim={sim} u={u} selectedRid={selectedRid} onSelectRid={onSelectRid} />)}
+      <h3>출동 부대 <span className="dim">가용 {own.filter((u) => u.state === 'available').length}/{own.length}{sim.aidUsed ? ` · 인근 도시 지원 ${sim.aidUsed}/${sim.tune.aidUnits}` : ''}</span></h3>
+      <div className="units-wrap">
+        {fields.map((f) => {
+          const us = own.filter((u) => u.field === f);
+          if (!us.length) return null;
+          return (
+            <div key={f} className="ugroup">
+              <div className="ugroup-h" style={{ color: FIELD_COLOR[f] }}>{FIELD_NAME[f]} <span className="dim">{us.filter((u) => u.state === 'available').length}/{us.length}</span></div>
+              <div className="units">{us.map((u) => <UnitRow key={u.id} sim={sim} u={u} selectedRid={selectedRid} onSelectRid={onSelectRid} />)}</div>
+            </div>
+          );
+        })}
+        {aid.length > 0 && (
+          <div className="ugroup">
+            <div className="ugroup-h">인근 도시 지원</div>
+            <div className="units">{aid.map((u) => <UnitRow key={u.id} sim={sim} u={u} selectedRid={selectedRid} onSelectRid={onSelectRid} />)}</div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -103,22 +122,22 @@ export function UnitList({ sim, selectedRid, onSelectRid }: { sim: Sim; selected
 function UnitRow({ sim, u, selectedRid, onSelectRid }: { sim: Sim; u: Unit; selectedRid: number; onSelectRid: (rid: number) => void }) {
   const inc = u.incidentId !== null ? sim.incidents[u.incidentId] : null;
   return (
-    <div className={`unit st-${u.state} ${u.aid ? 'aid' : ''}`} style={{ ['--dc' as string]: DEPT_COLOR[u.dept] }} title={`${UNIT_KIND_NAME[u.kind]} · ${u.homeName}${u.aid ? ' (지원 부대)' : ''}`}>
+    <div className={`unit st-${u.state} ${u.aid ? 'aid' : ''}`} style={{ ['--dc' as string]: DEPT_COLOR[u.dept] }} title={`${UNIT_KIND_NAME[u.kind]} · ${u.homeName}${u.aid ? ' (지원 부대)' : ''}${u.waterMax > 0 ? ` · 용수 ${Math.round((u.water / u.waterMax) * 100)}%${u.pumpFailed ? ' · 펌프 고장' : ''}` : ''}`}>
       <div className="row">
         <span className="callsign" style={{ color: DEPT_COLOR[u.dept] }}>{u.callsign}</span>
+        {u.waterMax > 0 && <Bar v={u.hydrant ? 1 : u.water / u.waterMax} color={u.pumpFailed ? '#ff5d5d' : u.hydrant ? '#5ad17a' : '#58b6ff'} w={16} />}
         <span className="state">{u.aid && u.state === 'oos' ? '관할 복귀' : UNIT_STATE[u.state]}{inc ? ` ${inc.code}` : ''}</span>
       </div>
-      {u.dept === 'fire' && <div className="row small equip"><span className="dim">{u.hydrant ? '급수' : '용수'}</span><Bar v={u.hydrant ? 1 : u.water / u.waterMax} color={u.hydrant ? '#5ad17a' : '#58b6ff'} w={34} /><span className="dim">펌프</span><Bar v={u.pumpFailed ? 0 : u.pumpCond} color={u.pumpFailed ? '#ff5d5d' : u.pumpCond < 0.45 ? '#ffb454' : '#5ad17a'} w={34} /></div>}
-      {u.crew.map((rid) => {
-        const r = sim.responders[rid];
-        return (
-          <div key={rid} className={`crew ${selectedRid === rid ? 'sel' : ''} ${r.status}`} onClick={() => onSelectRid(rid)} title="클릭하면 이 대원의 판단과 정보를 봅니다">
-            <span className="name">{r.name}{r.status !== 'ok' ? (r.status === 'down' ? ' 중상' : ' 부상') : ''}</span>
-            <Bar v={r.health / 100} color={r.health < 40 ? '#ff5d5d' : r.health < 70 ? '#ffd166' : '#5ad17a'} w={30} />
-            <Bar v={r.stamina / 100} color="#7cc4ff" w={30} />
-          </div>
-        );
-      })}
+      <div className="crew2">
+        {u.crew.map((rid) => {
+          const r = sim.responders[rid];
+          return (
+            <span key={rid} className={`cchip ${selectedRid === rid ? 'sel' : ''} ${r.status}`} onClick={() => onSelectRid(rid)} title={`${r.name} · 체력 ${Math.round(r.health)} · 지구력 ${Math.round(r.stamina)} — 클릭하면 이 대원의 판단과 정보를 봅니다`}>
+              {r.name}<i style={{ width: `${r.health}%`, background: r.health < 40 ? '#ff5d5d' : r.health < 70 ? '#ffd166' : '#5ad17a' }} />
+            </span>
+          );
+        })}
+      </div>
     </div>
   );
 }

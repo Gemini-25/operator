@@ -2,6 +2,7 @@
 // 플레이어 대신 "지금 가장 볼 만한 사건"을 골라 보여준다. 체류 시간은 실제 시간 기준이라
 // 15배속에서도 화면이 정신없이 바뀌지 않는다. 시뮬레이션 상태를 읽기만 하고 절대 바꾸지 않는다.
 
+import { CITY_H, CITY_W } from '../sim/cityPlan';
 import type { Sim } from '../sim/engine';
 import type { Incident, SimEvent } from '../sim/types';
 
@@ -15,8 +16,8 @@ export class CameraDirector {
   focus = -1;                 // 관찰 중인 사건 id
   manual = false;             // 사용자가 관찰 대상을 고정했는가
   freeLook = false;           // 사용자가 도시 지도를 직접 움직이는 중
-  cam: CityCam = { x: 1200, y: 820, zoom: 1 };
-  target: CityCam = { x: 1200, y: 820, zoom: 1 };
+  cam: CityCam = { x: CITY_W / 2, y: CITY_H / 2, zoom: 1 };
+  target: CityCam = { x: CITY_W / 2, y: CITY_H / 2, zoom: 1 };
   reason = '도시 전체 관찰';
   sceneCam: SceneView = { x: SCENE_W / 2, y: SCENE_H / 2, zoom: 1 };
   sceneTarget: SceneView = { x: SCENE_W / 2, y: SCENE_H / 2, zoom: 1 };
@@ -34,7 +35,7 @@ export class CameraDirector {
   reset(): void {
     this.mode = 'city'; this.focus = -1; this.manual = false; this.freeLook = false;
     this.interest.clear(); this.processed = 0; this.lastSwitch = -99; this.closedLinger.clear();
-    this.cam = { x: 1200, y: 820, zoom: 1 }; this.target = { ...this.cam }; this.reason = '도시 전체 관찰';
+    this.cam = { x: CITY_W / 2, y: CITY_H / 2, zoom: 1 }; this.target = { ...this.cam }; this.reason = '도시 전체 관찰';
   }
 
   /** 되감기 뒤: 지나간 이벤트는 건너뛰고, 관찰 대상은 (그 시점에 존재하면) 유지한다. */
@@ -51,7 +52,7 @@ export class CameraDirector {
     this.lastSwitch = this.clock;
   }
   auto(): void { this.manual = false; this.freeLook = false; }
-  overview(): void { this.manual = true; this.freeLook = false; this.focus = -1; this.mode = 'city'; this.target = { x: 1200, y: 820, zoom: 1 }; this.reason = '도시 전체 보기'; }
+  overview(): void { this.manual = true; this.freeLook = false; this.focus = -1; this.mode = 'city'; this.target = { x: CITY_W / 2, y: CITY_H / 2, zoom: 1 }; this.reason = '도시 전체 보기'; }
 
   private weight(e: SimEvent): number {
     let w = e.importance === 3 ? 42 : e.importance === 2 ? 18 : e.importance === 1 ? 5 : 1;
@@ -138,7 +139,7 @@ export class CameraDirector {
   /** 사용자의 지도 조작 (확대/축소·이동) */
   userZoom(factor: number, wx: number, wy: number): void {
     this.manual = true; this.freeLook = true; this.mode = 'city';
-    const z = Math.max(1, Math.min(4, this.target.zoom * factor));
+    const z = Math.max(1, Math.min(6.5, this.target.zoom * factor));
     const r = this.target.zoom / z;
     this.target = { x: wx + (this.target.x - wx) * r, y: wy + (this.target.y - wy) * r, zoom: z };
     this.reason = '지도 직접 조작';

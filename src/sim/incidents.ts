@@ -28,12 +28,16 @@ const ARMED_BIAS: Record<string, Partial<Record<PlaceKind, number>>> = {
   hostage: { bank: 2, office: 1.6, hotel: 1.5 },
 };
 
+const kindCount = new WeakMap<object, Map<string, number>>();
 /** 사건이 일어날 건물이나 터를 고른다. 교통사고는 교차로에서 일어나므로 null. */
 function pickPlace(sim: Sim, rng: Rng, type: IncidentType, variant: string, busy: Set<number>): Place | null {
   const table = INCIDENT_PLACES[type];
   const used = new Set(sim.incidents.map((I) => I.truth.placeId));
+  // 표의 값은 건물 종류 전체의 몫이므로, 그 종류의 건물 수로 나눠 한 채의 비중을 구한다
+  if (!kindCount.has(sim.city.places)) { const m = new Map<string, number>(); for (const q of sim.city.places) if (q.facility < 0) m.set(q.kind, (m.get(q.kind) ?? 0) + 1); kindCount.set(sim.city.places, m); }
+  const counts = kindCount.get(sim.city.places)!;
   const weigh = (q: Place, strict: boolean): number => {
-    let w = table[q.kind] ?? 0;
+    let w = (table[q.kind] ?? 0) / (counts.get(q.kind) ?? 1);
     if (w <= 0 || q.facility >= 0) return 0;
     if (strict && (busy.has(q.nodeId) || used.has(q.id))) return 0;
     if (type === 'armed') w *= ARMED_BIAS[variant]?.[q.kind] ?? 1;
@@ -136,10 +140,10 @@ export function tickIncidents(sim: Sim): void {
   }
   if (open >= tn.maxConcurrent) { g.nextAt = sim.t + 18; return; }
   const avail = sim.units.filter((u) => u.state === 'available').length;
-  if (open >= tn.maxConcurrent - 1 && avail <= 1) { g.nextAt = sim.t + 22; return; }
+  if (open >= tn.maxConcurrent - 1 && avail <= 3) { g.nextAt = sim.t + 22; return; }
   createIncident(sim);
   g.count++; g.lastCreated = sim.t;
-  g.nextAt = sim.t + sim.rngGen.range(105, 215) * tn.gapMul * (avail <= 2 ? 1.2 : 1);
+  g.nextAt = sim.t + sim.rngGen.range(50, 108) * tn.gapMul * (avail <= 5 ? 1.2 : 1);      // 조직이 커진 만큼 사건도 잦다 (보통에서 교대당 12건쯤)
 }
 
 export function closeIncident(sim: Sim, I: Incident, reason: 'resolved' | 'timeout' | 'noresponse' | 'abandoned' | 'shiftend'): void {

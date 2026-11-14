@@ -47,9 +47,9 @@ src/sim/difficulty.ts        난이도 손잡이 → 수치(Tuning). 균형 조�
 src/sim/types.ts             모든 공유 타입
 src/sim/rng.ts               시드 난수, fork
 src/sim/events.ts            emit / raiseProblem / markRecovered
-src/sim/cityPlan.ts          도시 설정표: 블록 배치(BLOCKS), 도로 이름, 건물 종류 이름, 유형별 사건 장소(INCIDENT_PLACES), 건물 종류별 현장 틀(KIND_SCENE)
-src/sim/city.ts              도시 생성(도로 그래프 + buildPlaces: 블록마다 필지·건물·골목·하천), 다익스트라, 교통량, placeAt
-src/sim/resources.ts         부대·대원 명부, 차량 이동·우회·병원 이송(응급실 인계 대기), 인근 도시 지원 부대 생성(createAidUnit)
+src/sim/cityPlan.ts          도시 설계도: 교차로 자리(NODES), 도로가 지나는 순서(ROADS), 해안선·강·철길·산, 동네의 성격(DISTRICTS), 손으로 놓은 건물(LANDMARKS), 유형별 사건 장소(INCIDENT_PLACES), 건물 종류별 현장 틀(KIND_SCENE)
+src/sim/city.ts              도시 생성(설계도 → 도로 그래프, buildPlaces: 길가에 건물 채우기·골목·진입 지점·주소), 지형 함수(coastY·riverDist·mountainAt·districtAt), 다익스트라, 교통량, placeAt. 만든 지도는 다시 쓴다
+src/sim/resources.ts         편성표(UNIT_DEFS: 네 분야 20팀), 대원 명부, 차량 이동·우회, 헬기·구조정의 길 밖 이동, 병원 이송(가까운 병원, 응급실 인계 대기), 인근 도시 지원 부대 생성(createAidUnit)
 src/sim/incidents.ts         사건 생성(유형·규모, pickPlace 로 건물 고르기), 종료 처리
 src/sim/debrief.ts           사건 판정, 원인 문장, 교대 보고서
 src/sim/dispatch/callSystem.ts   신고자 모델, 접수 AI 질문 선택, 통화
@@ -67,7 +67,7 @@ src/sim/field/executor.ts    임무별 실행(case 문), 이동, 장애물 발�
 src/sim/field/commander.ts   지휘관: 믿음 → 작업 목록(want), 배정, 지원 요청, 진입 계획(planEntry), 종료 판단
 src/sim/field/sceneManager.ts 현장 틱, 부대 도착·철수, 지휘권 이양
 src/view/                    runner(틱·되감기·저장), camera(자동 카메라·현장 확대), renderCity, renderScene(그리는 순서 조립), icons, audio(합성음)
-src/view/city/staticCity.ts   도시 지도의 고정된 부분: 블록의 땅, 하천과 다리, 골목, 도로·차선·횡단보도, 시설 건물, 야간 불빛
+src/view/city/staticCity.ts   도시 지도의 고정된 부분: 땅과 바다, 산, 강, 철길, 골목, 등급별 도로·차선·횡단보도·다리, 시설 건물, 야간 불빛
 src/view/city/places.ts       건물 종류별 지붕(paintRoof)과 터(paintOpen: 공원·숲·저수지·활주로·주차장)
 src/view/scene/staticLayer.ts 현장의 고정된 부분을 한 번만 그려 두는 층: 바닥 재질, 벽·창·문틀, 가구, 나무, 개울
 src/view/scene/sprites.ts    사람(대원·시민·용의자), 쓰러진 사람, 차량, 소품의 벡터 그림
@@ -89,7 +89,8 @@ tests/sim.test.ts            자동 테스트
 | 새 문제 코드 | `types.ts` `ProblemCode` → `debrief.ts` `PROBLEM_LABEL`·`order`·문장 템플릿 |
 | 새 사건 유형 | `types.ts` `IncidentType` → `builders.ts`(+`buildScene`), `cityPlan.ts` `INCIDENT_PLACES`(어떤 건물에서 나는가), `incidents.ts`(가중치·신고 지연), `callSystem.ts`(`NATURE_TEXT`·`NATURE_LIK` 에 열 추가·`natureFor`·질문·`TOPIC_VALUE`), `analyst.ts`(`TYPES` 순서·위험도·필요 자원), `commander.ts`(수색 대상 유형 목록·규칙), `agents.ts` `fitFor`(건물 안에 누가 들어가는가), `sceneManager.ts` `LIMIT`, `debrief.ts` `RESP_LIMIT`, `util.ts` `TYPE_NAME`, `view/renderCity.ts` `TYPE_COLOR`·`RESP_LIMIT`, `view/icons.ts`, `ui/panels.tsx` 확률 목록. 가장 최근 예: `water` (`git log --grep F1` 의 커밋), 그 전은 `collapse`, `hazmat` (커밋 78ad889). 유형을 늘리지 않고 변형만 더할 때는 `truth.variant`·`Scene.variant` 를 쓴다(예: 교통사고의 `bus`) |
 | 새 타일·가구·소품 | `types.ts` `T`·`DECOR`·`PropKind` → `grid.ts`(`staticPass`·`isIndoor`·`los`) → 그림은 `view/scene/staticLayer.ts`(고정된 것) 또는 `view/renderScene.ts` 의 소품 분기 + `view/scene/sprites.ts`(움직이거나 상태가 바뀌는 것) |
-| 지도 바꾸기 | 블록의 쓰임새·도로 이름·사건이 나는 곳은 `cityPlan.ts` 의 표만 고친다. 새 쓰임새는 `cityPlan.ts` `BlockUse`·`USE_DISTRICT` → `city.ts` `fill()` 에 필지 나누기 → `view/city/staticCity.ts` `USE_GROUND`. 새 건물 종류는 `types.ts` `PlaceKind` → `cityPlan.ts` `KIND_NAME`·`KIND_DISTRICT`·`INCIDENT_PLACES`·`KIND_SCENE` → `view/city/places.ts` `paintRoof`(없으면 평지붕으로 그린다). 지도를 바꾸면 사건 위치가 달라져 모든 결과가 바뀌므로 `sweep` 으로 다시 잰다 |
+| 지도 바꾸기 | 전부 `cityPlan.ts` 에서 한다. 교차로를 옮기려면 `NODES`, 길을 내거나 없애려면 `ROADS`(이웃한 두 교차로 사이가 한 구간이 된다), 동네의 건물 구성은 `DISTRICTS` 의 `mix`·`density`, 하나뿐인 건물은 `LANDMARKS`(가운데 좌표·크기·각도), 사건이 나는 곳은 `INCIDENT_PLACES`(건물 종류 전체의 몫). 새 건물 종류는 `types.ts` `PlaceKind` → `cityPlan.ts` `KIND_NAME`·`KIND_DISTRICT`·`KIND_SCENE` → 길가에 채울 종류면 `city.ts` `DIM`(크기) → `view/city/places.ts` `paintRoof`(없으면 평지붕). 도로를 고친 뒤에는 테스트(`건물마다 정해진 도시`)가 교차·단절·건물 겹침을 잡는다. 지도를 바꾸면 모든 결과가 바뀌므로 `sweep` 으로 다시 잰다 |
+| 새 부대 종류 | `types.ts` `UnitKind` → `resources.ts` `KIND`(부서·능력·장비)·`UNIT_DEFS`(분야·소속 시설·편성 단계)·`UNIT_KIND_NAME` → `view/scene/sprites.ts` `VEH_SIZE`·`drawEmergency`·`responderLook`. 소속 시설이 새로 필요하면 `cityPlan.ts` `LANDMARKS` 에 `facility` 를 붙여 넣는다 |
 | 새 난이도 손잡이 | `difficulty.ts`(타입·표·프리셋) → 쓰는 곳에서 `sim.tune.*` → `ui/panels.tsx` `DifficultyPanel` |
 
 ## 겪은 함정
@@ -111,7 +112,11 @@ tests/sim.test.ts            자동 테스트
 - **사건 도중 구조 대상이 늘어난다.** 가스 누출 현장의 주변 시민(`bystander2`)은 `s.casualties` 끝에 붙는다. 구조 대상 수를 처음에 세어 두고 쓰는 코드를 만들지 않는다.
 - **쉬는 대원의 왕복.** 휴식 점수가 다른 임무 점수와 비슷하면 쉬다 일하다를 되풀이한다. `brain.ts` 는 체력 40까지 휴식을 붙잡아 두고, 탈진 기록은 45초에 한 번만 남긴다.
 - **변형별 한계 시간.** 다수 사상자 사고(`variant === 'bus'`)는 `LIMIT` 에 170초를 더한다. 사람이 많은 변형을 새로 만들면 한계 시간도 함께 본다.
-- **도시는 고정이다.** `generateCity` 는 `CITY_SEED` 로만 만든다. 도로 그래프를 만드는 난수 호출 순서는 건드리지 않는다(건물은 `fork('places-v1')` 로 따로 만든다). 도로가 빠진 경계에서는 이웃 블록과 한 덩어리가 된다(아파트 단지, 공항).
+- **도시는 고정이고 한 번만 만든다.** `generateCity` 는 설계도로 만든 지도를 모듈에 넣어 두고, 교대마다 도로 상태(`edges`)만 복사해 준다. `city.places`·`nodes` 를 시뮬레이션 중에 고치면 다음 교대에도 남는다. 고치지 않는다.
+- **격자가 아니다.** 교차로에는 행·열이 없다(`RoadNode.c`·`r` 은 0). 교차로는 `key`(설계도의 이름표)로, 도로는 `e.name`·`e.cls`·`e.seq` 로 다룬다. 건물은 돌려 놓여 있으므로(`Place.rot`) 가운데는 `x + w/2, y + h/2` 이고, 점이 안에 있는지는 `placeAt` 처럼 돌려서 본다.
+- **헬기와 구조정.** `u.air`·`u.sea` 는 도로 경로(`route`)가 없다. 위치는 `tickUnits` 의 길 밖 이동이 직접 옮긴다. 길가 주차(`curb`)·교차로 스냅을 적용하지 않는다. 구조정은 바닷가(`resources.coastal`)의 수난 사고에만, 헬기는 수색이나 위험도 높은 사건에만 배정된다(`dispatcher.pickUnit`).
+- **환자를 싣는 부대.** 구급차만이 아니다. `agents.canCarryPatients`(구급차 2명, 헬기 1명)로 본다. `dept === 'ems'` 로만 가리면 헬기가 구조한 사람이 구급차를 기다리다 한계 시간까지 간다(실제로 겪었다).
+- **닿지 못하는 한두 칸.** 벽이 무너지거나 가구가 놓이며 생긴 작은 틈은 `builders.sealPockets` 가 벽으로 메운다. 세 칸 이상이 끊기면 평면 생성의 잘못이므로 테스트가 잡는다.
 - **사건의 위치는 건물이다.** `I.truth.placeId`(교통사고는 -1)·`placeKind`·`district`(건물 종류로 본 구역)를 쓴다. `I.truth.nodeId` 는 차량이 닿는 교차로이고 `I.truth.x/y` 는 건물 가운데다. 현장 생성기는 `KIND_SCENE[placeKind]` 로 틀·2층 여부·무장 사건 장소를 정한다.
 - **차량의 마지막 구간.** 교차로에 닿은 차량은 `Unit.curb` 로 건물 앞 길가까지 가고(`parking`), 떠날 때는 되돌아 나온 뒤 경로를 따른다(`resources.tickUnits`). 차량 위치(`u.x`,`u.y`)를 다른 곳에서 덮어쓰지 않는다(`unitArrived` 가 그랬다가 길가에 선 차량이 교차로로 튀었다).
 - **가구 자리에 소품을 놓을 때.** 가구에 둘러싸인 구석은 사람이 닿지 못한다. 바로 옆 칸 하나가 빈 바닥인 자리만 쓴다(가스 밸브에서 겪었다).

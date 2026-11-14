@@ -4,7 +4,7 @@
 import type { Sim } from '../engine';
 import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
-import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Incident, Responder, Scene, WorkItem, WorkKind } from '../types';
+import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Incident, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
 import { clamp, dist, josa, pct } from '../util';
 import { BeliefStore, mkFact } from './beliefs';
 import type { CostFn } from './grid';
@@ -315,6 +315,9 @@ export function workLabel(s: Scene, w: WorkItem): string {
 }
 
 /** 이 대원이 이 작업을 맡을 수 있는가, 맡는다면 얼마나 적합한가 (0 = 불가). */
+/** 환자를 싣고 병원으로 갈 수 있는가: 구급차는 2명, 구조 헬기는 1명 */
+export function canCarryPatients(u: Unit): boolean { return u.kind === 'heli' ? u.patients.length < 1 : u.dept === 'ems' && u.patients.length < 2; }
+
 export function fitFor(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number {
   const r = resp(sim, a), u = sim.units[a.unitId];
   const hot = s.kind === 'armed' && s.secureAt < 0;
@@ -342,7 +345,7 @@ export function fitFor(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number {
       if (cb && cb.where === 'scene') { const rg = s.region[cb.y * s.w + cb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg) && r.dept !== 'fire') return 0; }
       return 0.4 + 0.4 * r.fitness + (r.dept === 'ems' ? 0.1 : 0);
     }
-    case 'load': return r.dept === 'ems' && u.patients.length < 2 && a.unitId === w.prop ? 1 : 0;
+    case 'load': return canCarryPatients(u) && a.unitId === w.prop ? 1 : 0;
     case 'traffic': return r.dept === 'police' ? 1 : 0.45;
     case 'mitigate': { const k = w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? r.skills.rescue : r.skills.fire; return k >= 0.3 ? k : 0; }
     case 'perimeter': case 'engage': case 'arrest': return r.dept === 'police' ? 0.5 + r.skills.law * 0.5 : 0;

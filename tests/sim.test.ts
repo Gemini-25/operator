@@ -191,7 +191,7 @@ describe('난이도 (교대 시작 전 조건)', () => {
     const bad = new Sim('E', { ...NORMAL, equipment: 1 }), best = new Sim('E', { ...NORMAL, equipment: 5 });  // 장비 상태
     for (const u of bad.units.filter((q) => q.dept === 'fire')) expect(u.pumpCond).toBeLessThanOrEqual(0.55);
     for (const u of best.units.filter((q) => q.dept === 'fire')) expect(u.pumpCond).toBeGreaterThanOrEqual(0.75);
-    expect(best.units[0].waterMax).toBeGreaterThan(bad.units[0].waterMax);
+    expect(best.units.find((q) => q.kind === 'engine')!.waterMax).toBeGreaterThan(bad.units.find((q) => q.kind === 'engine')!.waterMax);
     const sev = (d: typeof NORMAL): number => { let t = 0, n = 0; for (let k = 0; k < 8; k++) { const s = new Sim('S' + k, d); s.runToEnd(); for (const I of s.incidents) { t += I.truth.severity; n++; } } return t / n; };
     expect(sev({ ...NORMAL, severity: 5 })).toBeGreaterThan(sev({ ...NORMAL, severity: 1 }) + 0.4);          // 사건 심각도
     const suspects = (d: typeof NORMAL): number => { let t = 0; for (let k = 0; k < 10; k++) { const s = new Sim('S' + k, d); s.runToEnd(); for (const sc of s.scenes) if (sc) t += sc.hostiles.length; } return t; };
@@ -276,9 +276,12 @@ describe('신고 접수 확장과 새 사건 유형', () => {
   it('부대 규모 손잡이가 편성을 바꾸되 같은 대원의 능력치는 유지한다', async () => {
     const { NORMAL } = await import('../src/sim/difficulty');
     const small = new Sim('R', { ...NORMAL, resources: 1 }), base = new Sim('R'), big = new Sim('R', { ...NORMAL, resources: 5 });
-    expect(small.units.length).toBe(4); expect(base.units.length).toBe(6); expect(big.units.length).toBe(10);
-    expect(big.responders.length).toBe(20);
-    expect(new Set(big.responders.map((r) => r.name)).size).toBe(20);
+    expect(small.units.length).toBe(12); expect(base.units.length).toBe(17); expect(big.units.length).toBe(20);
+    expect(big.responders.length).toBe(40);
+    expect(new Set(big.responders.map((r) => r.name)).size).toBe(40);
+    // 네 분야마다 3~5팀
+    for (const sim of [small, base, big]) for (const f of ['police', 'fire', 'rescue', 'special']) { const n = sim.units.filter((u) => u.field === f).length; expect(n).toBeGreaterThanOrEqual(3); expect(n).toBeLessThanOrEqual(5); }
+    expect(base.units.filter((u) => u.kind === 'heli' || u.kind === 'swat' || u.kind === 'hazmat' || u.kind === 'eod' || u.kind === 'boat' || u.kind === 'ladder').length).toBe(6);
     for (const r of base.responders) { const q = big.responders.find((x) => x.name === r.name)!; expect(q.skill).toBe(r.skill); expect(q.judgment).toBe(r.judgment); }
     big.runToEnd(); small.runToEnd();
     expect(big.ended && small.ended).toBe(true);
@@ -532,35 +535,51 @@ describe('빈 곳 채우기', () => {
 
 describe('건물마다 정해진 도시', () => {
   it('모든 건물에 종류·이름·주소·진입 지점이 있고, 지도는 교대가 바뀌어도 같다', async () => {
-    const { placeAt } = await import('../src/sim/city');
-    const { KIND_NAME, BLOCKS } = await import('../src/sim/cityPlan');
+    const { placeAt, findRoute, coastY, riverDist, roadHalf, distSeg } = await import('../src/sim/city');
+    const { KIND_NAME, LANDMARKS, ROADS } = await import('../src/sim/cityPlan');
     const a = new Sim('A').city, b = new Sim('B').city;
-    expect(a.places.length).toBeGreaterThan(280);
+    expect(a.places.length).toBeGreaterThan(900);
     expect(a.places.map((q) => `${q.kind}:${q.name}:${q.addr}:${Math.round(q.x)}`).join('|')).toBe(b.places.map((q) => `${q.kind}:${q.name}:${q.addr}:${Math.round(q.x)}`).join('|'));
     const addr = new Set<string>();
     for (const q of a.places) {
       expect(KIND_NAME[q.kind], q.kind).toBeTruthy();
       expect(q.name.length).toBeGreaterThan(0); expect(q.addr.length).toBeGreaterThan(0);
       expect(q.nodeId).toBeGreaterThanOrEqual(0);
-      expect(q.x).toBeGreaterThanOrEqual(0); expect(q.x + q.w).toBeLessThanOrEqual(a.w); expect(q.y + q.h).toBeLessThanOrEqual(a.h);
-      // 길가 지점은 진입 교차로에서 도로 한 구간을 넘지 않는다
-      const n = a.nodes[q.nodeId]; expect(Math.hypot(q.cx - n.x, q.cy - n.y)).toBeLessThan(175);
+      // 길가 지점은 진입 교차로에서 도로 한 구간의 절반을 넘지 않고, 고속도로가 아니다
+      const n = a.nodes[q.nodeId], e = a.edges[q.edgeId!];
+      expect(Math.hypot(q.cx - n.x, q.cy - n.y)).toBeLessThanOrEqual(e.len * 0.5 + 1);
+      expect(e.cls).not.toBe('highway');
       if (!q.open) { expect(addr.has(q.addr), q.addr).toBe(false); addr.add(q.addr); }
     }
-    // 건물끼리 겹치지 않는다
+    // 길가에 채운 건물은 물·도로 위에 서지 않고, 다른 건물의 한가운데를 덮지 않는다
+    const hand = new Set(LANDMARKS.map((l) => l.name));
     const bs = a.places.filter((q) => !q.open);
-    for (let i = 0; i < bs.length; i++) for (let j = i + 1; j < bs.length; j++) {
-      const p = bs[i], q = bs[j];
-      expect(p.x < q.x + q.w - 0.5 && p.x + p.w > q.x + 0.5 && p.y < q.y + q.h - 0.5 && p.y + p.h > q.y + 0.5, `${p.name} / ${q.name}`).toBe(false);
+    for (const q of bs) {
+      const cx = q.x + q.w / 2, cy = q.y + q.h / 2;
+      if (!hand.has(q.name)) {
+        expect(cy, q.name).toBeLessThan(coastY(cx)); expect(riverDist(cx, cy), q.name).toBeGreaterThan(0);
+        for (const e of a.edges) { const A = a.nodes[e.a], B = a.nodes[e.b]; expect(distSeg(cx, cy, A.x, A.y, B.x, B.y), `${q.name} @ ${e.name}`).toBeGreaterThan(roadHalf(e)); }
+      }
+      expect(placeAt(a, cx, cy)!.id, q.name).toBe(q.id);
     }
-    // 배치표에 적은 곳이 실제로 있다
+    // 도로망: 격자가 아니다(등급이 네 가지이고 막다른 길과 다리가 있다). 모든 교차로에 닿는다
+    expect(new Set(a.edges.map((e) => e.cls)).size).toBe(4);
+    expect(a.nodes.filter((n) => n.edges.length === 1).length).toBeGreaterThan(6);
+    expect(a.nodes.filter((n) => n.edges.length >= 5).length).toBeGreaterThan(3);
+    expect(a.edges.filter((e) => e.bridge).length).toBeGreaterThanOrEqual(4);
+    expect(a.nodes.filter((n) => n.exit).length).toBeGreaterThanOrEqual(4);
+    for (const n of a.nodes) if (n.id) expect(findRoute(a, 0, n.id), n.key).not.toBeNull();
+    expect(new Set(a.edges.map((e) => e.name)).size).toBe(ROADS.length);
+    // 설계도에 적은 곳이 실제로 있고, 동네마다 여러 종류가 섞여 있다
     const kinds = new Set(a.places.map((q) => q.kind));
-    for (const k of ['houseS', 'houseL', 'apartment', 'villa', 'bank', 'convenience', 'office', 'mart', 'market', 'factory', 'warehouse', 'chemical', 'construction', 'park', 'forest', 'riverside', 'reservoir', 'terminal', 'runway', 'hospital', 'fireStation', 'police'] as const) expect(kinds.has(k), k).toBe(true);
-    expect(BLOCKS.length).toBe(5); expect(BLOCKS[0].length).toBe(8);
-    expect(a.alleys.length).toBeGreaterThan(10);
-    for (const e of a.edges) expect(e.name.length).toBeGreaterThan(1);
-    const bank = a.places.find((q) => q.kind === 'bank')!;
-    expect(placeAt(a, bank.x + bank.w / 2, bank.y + bank.h / 2)!.id).toBe(bank.id);
+    for (const k of ['houseS', 'houseL', 'apartment', 'villa', 'bank', 'convenience', 'office', 'factory', 'warehouse', 'workshop', 'cafe', 'station', 'stadium', 'university', 'cathedral', 'temple', 'powerPlant', 'lighthouse', 'beach', 'pier', 'park', 'forest', 'riverside', 'reservoir', 'terminal', 'runway', 'hospital', 'fireStation', 'police'] as const) expect(kinds.has(k), k).toBe(true);
+    const byDong = new Map<string, Set<string>>();
+    for (const q of bs) { if (!byDong.has(q.dong)) byDong.set(q.dong, new Set()); byDong.get(q.dong)!.add(q.kind); }
+    for (const d of ['중앙동', '서림동', '한솔동', '공단동', '항구동']) expect(byDong.get(d)!.size, d).toBeGreaterThanOrEqual(6);
+    expect(a.alleys.length).toBeGreaterThan(20);
+    expect(a.places.filter((q) => (q.rank ?? 0) >= 3).length).toBeGreaterThan(20);
+    expect(a.facilities.length).toBeGreaterThanOrEqual(8);
+    for (const f of a.facilities) expect(a.nodes[f.nodeId].edges.length).toBeGreaterThan(0);
   });
 
   it('사건은 유형에 맞는 건물에서 일어나고, 현장은 그 건물을 따르며, 차량은 그 건물 앞 길가에 선다', async () => {
@@ -589,7 +608,7 @@ describe('건물마다 정해진 도시', () => {
         t.step();
         if (i % 50) continue;
         for (const u of t.units) {
-          if (u.state !== 'onscene' || u.incidentId === null) continue;
+          if (u.state !== 'onscene' || u.incidentId === null || u.air || u.sea) continue;      // 헬기와 구조정은 길가에 서지 않는다
           const I = t.incidents[u.incidentId]; if (I.truth.placeId < 0) continue;
           const q = t.city.places[I.truth.placeId], n = t.city.nodes[q.nodeId];
           if (Math.hypot(q.cx - n.x, q.cy - n.y) <= 8) continue;

@@ -9,7 +9,7 @@ export interface Difficulty {
   threat: number;      // 용의자 위협      1 약함 … 5 중무장·공격적
   equipment: number;   // 대원 장비 상태   1 불량 … 5 최상   (높을수록 쉬움)
   info: number;        // 신고 신뢰도      1 엉망 … 5 정확   (높을수록 쉬움)
-  resources: number;   // 부대 규모        1 = 4대 … 3 = 6대 … 5 = 10대   (높을수록 쉬움)
+  resources: number;   // 부대 규모        1 = 12팀 … 3 = 17팀 … 5 = 20팀  (높을수록 쉬움)
 }
 
 export type PresetId = 'easy' | 'normal' | 'hard' | 'extreme';
@@ -26,7 +26,7 @@ export const KNOBS: { key: keyof Difficulty; name: string; low: string; high: st
   { key: 'threat', name: '용의자 위협', low: '약함', high: '중무장', harderWhen: 'high', desc: '무장 사건 비중, 총격범 비중, 용의자 수·공격성·사격 실력, 숨은 공범, 도주 시점' },
   { key: 'equipment', name: '대원 장비 상태', low: '불량', high: '최상', harderWhen: 'low', desc: '차량 주행 속도, 펌프 상태와 마모, 용수 탱크, 구조 장비, 의료 장비, 방호 장비, 출근 시 체력' },
   { key: 'info', name: '신고 신뢰도', low: '엉망', high: '정확', harderWhen: 'low', desc: '침착한 신고자 비율, 위치를 틀리게 말할 확률, 허위·오인 신고와 비긴급 전화의 빈도, 목격자 정확도' },
-  { key: 'resources', name: '부대 규모', low: '4대', high: '10대', harderWhen: 'low', desc: '출동 부대 수 (4 · 5 · 6 · 8 · 10대). 3 이 기본 편성(소방 2, 구급 2, 경찰 2)' },
+  { key: 'resources', name: '부대 규모', low: '12팀', high: '20팀', harderWhen: 'low', desc: '출동 부대 수 (12 · 15 · 17 · 19 · 20팀). 경찰·소방·구조·특수 네 분야에 3~5팀씩이고, 3 이 기본 편성이다. 인근 도시 지원 횟수도 함께 늘어난다 (2 · 2 · 3 · 4 · 5회).' },
 ];
 
 export interface Tuning {
@@ -51,8 +51,8 @@ export function tuningOf(d: Difficulty): Tuning {
   const f = lv(d.frequency), s = lv(d.severity), t = lv(d.threat), e = lv(d.equipment), i = lv(d.info), r = lv(d.resources ?? 3);
   return {
     gapMul: [1.55, 1.25, 1, 0.76, 0.58][f],
-    maxIncidents: [5, 6, 7, 9, 11][f],
-    maxConcurrent: [2, 3, 3, 4, 5][f],
+    maxIncidents: [9, 11, 15, 18, 22][f],
+    maxConcurrent: [3, 4, 5, 6, 8][f],
 
     sevWeights: ([[0.5, 0.4, 0.1], [0.38, 0.44, 0.18], [0.28, 0.45, 0.27], [0.17, 0.43, 0.4], [0.08, 0.37, 0.55]] as [number, number, number][])[s],
     hazardMul: [0.55, 0.78, 1, 1.25, 1.5][s],

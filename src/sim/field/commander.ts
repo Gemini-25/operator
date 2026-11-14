@@ -8,7 +8,7 @@ import { closeIncident } from '../incidents';
 import { T } from '../types';
 import type { CasBelief, FieldAgent, Incident, Scene, UnitCaps, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, dist } from '../util';
-import { fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
+import { canCarryPatients, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { losWalls } from './grid';
 import { BAND_NAME, HOSTILE_FOV } from './hazards';
@@ -266,7 +266,8 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
 
   // ── 구조 대상 ──
   const hasMedicAny = s.agents.some((b) => b.status === 'active' && sim.responders[b.rid].dept === 'ems');
-  const ambulances = unitsOnScene(sim, s).filter((uid) => sim.units[uid].dept === 'ems' && sim.units[uid].patients.length < 2 && !sim.units[uid].boardOrder);
+  // 환자를 싣고 병원으로 갈 수 있는 부대: 구급차(2명)와 구조 헬기(1명)
+  const ambulances = unitsOnScene(sim, s).filter((uid) => canCarryPatients(sim.units[uid]) && !sim.units[uid].boardOrder);
   for (const f of cas) {
     const c = f.value as CasBelief;
     const dead = c.band === 3;
@@ -490,7 +491,7 @@ function manageAmbulances(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void 
   const cas = a.beliefs.list('cas');
   for (const uid of unitsOnScene(sim, s)) {
     const u = sim.units[uid];
-    if (u.dept !== 'ems' || !u.patients.length || u.boardOrder) continue;
+    if (!(u.dept === 'ems' || u.kind === 'heli') || !u.patients.length || u.boardOrder) continue;
     const waiting = cas.filter((f) => f.value.band >= 1 && f.value.band < 3 && (f.value.where === 'scene' || f.value.where === 'carried' || f.value.where === 'safe'));
     const loading = s.board.some((w) => w.kind === 'load' && w.prop === uid && (w.status === 'open' || w.status === 'active'));
     const firstLoad = Math.min(...u.patients.map((cid) => s.casualties[cid].tLoaded));

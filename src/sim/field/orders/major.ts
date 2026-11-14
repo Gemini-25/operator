@@ -3,6 +3,15 @@
 
 import { registerOrders } from '../sceneRegistry';
 
+// 비행기 추락: 동체 토막을 다 살핀 뒤에는 들판 가장자리도 수색한다 (튕겨 나간 사람이 있다고 본다).
+// 기본 규칙은 신고된 인원이 모자랄 때만 가장자리를 본다. 한 번 보고도 확인율이 낮으면 간격을 좁혀 다시 본다.
+registerOrders((_sim, s, _I, a, k) => {
+  if (s.variant !== 'plane' || s.kind !== 'fire' || !s.sizeupDone) return;
+  const seen = (id: number): number => a.beliefs.val<number>('srch', id) ?? -1;
+  if (s.regions.some((r) => r.kind === 'wreck' && seen(r.id) < 0.6)) return;
+  for (const r of s.regions) if (r.kind === 'verge' && r.searchable && seen(r.id) < 0.72) k.want('search', { region: r.id }, 0.6, 1, seen(r.id) >= 0);
+});
+
 // 사람이 많을 때: 기본 규칙은 구급 부대를 두 대까지만 더 부른다. 기다리는 부상자와 갇힌 사람의 수에 맞춰 더 부른다.
 // 믿음만 보므로 대형 사고가 아니어도(버스 사고 등) 사람이 많으면 똑같이 적용된다.
 registerOrders((sim, _s, _I, a, k) => {

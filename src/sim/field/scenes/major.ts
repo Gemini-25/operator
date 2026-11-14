@@ -53,6 +53,73 @@ function freeNear(s: Scene, x: number, y: number): { x: number; y: number } {
   return { x, y };
 }
 
+// ───────────────────────── 비행기 추락 ─────────────────────────
+// 건물 없는 들판. 동체는 세 토막(꼬리·가운데·기수)으로 끊겨 있고, 찢겨 나간 날개에서 샌 연료가 타고 있다.
+// 가운데 토막에서는 연료가 계속 새어, 조치하지 않으면 동체에도 불이 붙는다. 한두 명은 들판 가장자리까지 튕겨 나갔다.
+registerScene('fire', 'plane', (sim, I, rng) => {
+  const s = baseScene(sim, I, rng);
+  for (let y = 17; y < SH; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
+  // 들판 가장자리의 나무: 북쪽 끝과 동쪽 끝
+  for (let k = 0; k < 26; k++) {
+    const north = rng.chance(0.55), x = north ? rng.int(2, SW - 1) : rng.int(26, SW - 1), y = north ? rng.int(0, 2) : rng.int(2, 15);
+    set(s, x, y, T.TREE);
+  }
+  s.staging = { x: 3, y: 17 }; s.safe = { x: 3, y: 14 }; s.vantage = { x: 7, y: 12 };
+  addProp(s, 'hydrant', 27, 16, {});
+  // 동체 세 토막: 서쪽에서 미끄러져 들어와 꼬리부터 떨어져 나갔다
+  const Y0 = rng.int(6, 9);
+  const part = (x: number, y: number, w: number, skin: string, name: string, angle: number): Prop => {
+    const p = addProp(s, 'vehicle', x, y, { w, h: 1, blocking: true, hp: 10, leak: 0, leakRate: 0, occupants: [], angle, color: 5, bus: true, skin });
+    addRegion(s, name, 'wreck', x - 1, y - 1, x + w, y + 1, false, true);
+    return p;
+  };
+  const tail = part(rng.int(5, 6), Y0 + rng.int(-1, 1), 3, 'fuselageTail', '동체 꼬리', rng.range(-0.45, 0.45));
+  const mid = part(rng.int(11, 13), Y0 + rng.int(-1, 1), 3, 'fuselageMid', '동체 가운데', rng.range(-0.18, 0.18));
+  const nose = part(rng.int(18, 20), Y0 + rng.int(-2, 2), 2, 'fuselageNose', '동체 기수', rng.range(-0.5, 0.5));
+  const parts = [tail, mid, nose];
+  // 날개에서 샌 연료가 타는 자리: 가운데 토막에서 두 칸 떨어진 두 줄
+  const side = mid.y < 7 ? 1 : rng.pick([-1, 1]);
+  const wy0 = Math.min(mid.y + side * 3, mid.y + side * 4), wy1 = Math.max(mid.y + side * 3, mid.y + side * 4);
+  // (신고자가 "어느 쪽에 사람이 있다"고 말할 때 방 종류의 구역을 고르므로, 화재 유형의 현장에는 방 종류가 하나는 있어야 한다)
+  const wing = addRegion(s, '불붙은 날개', 'room', mid.x - 1, wy0, mid.x + 3, wy1, false, false);
+  const pool = rng.shuffle(wing.tiles.slice()).slice(0, rng.int(6, 10));
+  for (const i of pool) { s.tiles[i] = T.GROUND; s.fuel[i] = 1; s.fire[i] = rng.range(0.5, 0.8); }
+  mid.leak = 0.05; mid.leakRate = rng.range(0.004, 0.006);
+  const vN = addRegion(s, '북쪽 풀숲', 'verge', 2, 0, SW - 1, 2, false, true);
+  const vE = addRegion(s, '동쪽 풀숲', 'verge', 25, 3, SW - 1, 15, false, true);
+  // 탑승자 10~14명: 안에 갇힌 4~5, 안팎의 중상 4~5(그중 한두 명은 가장자리로 튕겨 나갔다), 걸어 나온 경상 2~4
+  const nT = rng.int(4, 5), nI = rng.int(4, 5), nM = rng.int(2, 4), nE = rng.int(1, 2);
+  const seat = [0, 0, 0];
+  const off = rng.int(0, 2);
+  for (let k = 0; k < nT; k++) { const q = (k + off) % 3; rider(s, rng, parts[q], seat[q]++, 'trapped', 0, 0, 1); }
+  for (let k = 0; k < nI; k++) {
+    const q = (k + off + 1) % 3, w = parts[q];
+    if (k < nE) {
+      // 튕겨 나간 사람: 풀숲에 가려 잘 보이지 않는다
+      const v = k % 2 ? vE : vN;
+      const i = freeTileInGround(s, v, rng);
+      set(s, i % SW, (i / SW) | 0, T.TREE);
+      addCas(s, i % SW, (i / SW) | 0, 'immobile', rng.range(44, 68), rng.range(0.1, 0.19), rng.range(0.55, 0.7));
+    } else if (k % 2) rider(s, rng, w, seat[q]++, 'immobile', 0, 0, 0.9);
+    else { const p = freeNear(s, w.x + rng.int(0, w.w - 1), w.y + rng.pick([-1, 1])); addCas(s, p.x, p.y, 'immobile', rng.range(50, 80), rng.range(0.08, 0.17), 0.1); }
+  }
+  for (let k = 0; k < nM; k++) { const w = parts[(k + off + 2) % 3]; const p = freeNear(s, w.x + rng.int(-1, w.w), w.y - side * 2); rider(s, rng, w, 0, 'mobile', p.x, p.y, 1); }
+  // 길 쪽으로 흩어진 잔해
+  const nd = rng.int(3, 5);
+  for (let k = 0; k < nd; k++) { const p = freeNear(s, rng.int(9, 26), rng.int(13, 17)); addProp(s, 'roadDebris', p.x, p.y, { hp: 4, skin: 'planeDebris', angle: rng.range(0, 6.28), color: k }); }
+  // 탈 수 있는 것: 불붙은 연료와 동체 둘레 (재산 피해의 분모)
+  s.totalFuelTiles = pool.length;
+  for (const r of s.regions) if (r.kind === 'wreck') s.totalFuelTiles += r.tiles.length;
+  s.leadDept = 'fire';
+  return s;
+});
+
+/** 구역 안의 빈 땅 한 칸 (소품과 사람이 없는 곳) */
+function freeTileInGround(s: Scene, r: Region, rng: Rng): number {
+  const c = r.tiles.filter((i) => (s.tiles[i] === T.GROUND || s.tiles[i] === T.TREE) && s.propAt[i] < 0 && !s.casualties.some((q) => tidx(s, Math.round(q.x), Math.round(q.y)) === i));
+  return c.length ? rng.pick(c) : r.tiles[0];
+}
+
 // ───────────────────────── 열차 탈선 ─────────────────────────
 // 건널목에서 승용차를 들이받은 열차가 선로를 벗어났다. 철길은 위아래로, 도로는 좌우로 지난다.
 // 맨 뒤 객차는 선로 위에 서 있고, 가운데 객차는 건널목 위에서 틀어졌고, 선두 객차는 길을 지나 옆으로 누웠다.
@@ -81,7 +148,7 @@ registerScene('traffic', 'train', (sim, I, rng) => {
   addRegion(s, '남측 수풀', 'verge', 8, 13, 24, 17, false, true);
   // 사람: 모두 10~14명. 승용차에 1~2명, 나머지는 객차에 (갇힘 3~4, 중상 4~5, 경상은 스스로 빠져나와 선로 가에 있다)
   const total = rng.int(10, 14), inAuto = rng.int(1, 2), riders = total - inAuto;
-  for (let k = 0; k < inAuto; k++) rider(s, rng, auto, k, rng.chance(0.5) ? 'trapped' : 'immobile', 0, 0, 0.8);
+  for (let k = 0; k < inAuto; k++) rider(s, rng, auto, k, rng.chance(0.5) ? 'trapped' : 'immobile', 0, 0, 0.9);
   const nT = rng.int(3, 4), nI = Math.min(rng.int(4, 5), riders - nT);
   const kinds: ('trapped' | 'immobile' | 'mobile')[] = [];
   for (let k = 0; k < riders; k++) kinds.push(k < nT ? 'trapped' : k < nT + nI ? 'immobile' : 'mobile');
@@ -89,7 +156,7 @@ registerScene('traffic', 'train', (sim, I, rng) => {
   for (const kind of kinds) {
     const q = rng.weighted(cars.map((_, i) => i), weight), w = cars[q], k = seat[q]++;
     const out = w.w >= w.h ? freeNear(s, w.x + (k % 3), w.y + rng.pick([-1, 1])) : freeNear(s, w.x + rng.pick([-2, 2]), w.y + (k % 3));
-    rider(s, rng, w, k, kind, out.x, out.y, 0.7);
+    rider(s, rng, w, k, kind, out.x, out.y, 0.88);
   }
   const nd = rng.int(3, 5);
   for (let k = 0; k < nd; k++) { const p = freeNear(s, rng.int(X - 4, X + 5), rng.int(8, 11)); addProp(s, 'roadDebris', p.x, p.y, { hp: 4 }); }
@@ -274,7 +341,7 @@ registerScene('traffic', 'pileup', (sim, I, rng) => {
   wrecks.forEach((w, q) => {
     for (let k = 0; k < seats[q]; k++) {
       const roll = rng.next();
-      rider(s, rng, w, k, roll < 0.3 ? 'trapped' : roll < 0.65 ? 'immobile' : 'mobile', w.x + (k % 3) + rng.int(-1, 1), w.y === 9 ? 7 : 12, 0.7);
+      rider(s, rng, w, k, roll < 0.3 ? 'trapped' : roll < 0.65 ? 'immobile' : 'mobile', w.x + (k % 3) + rng.int(-1, 1), w.y === 9 ? 7 : 12, 0.88);
     }
   });
   // 두 대에서 연료가 샌다 (조치하지 않으면 불이 붙는다)

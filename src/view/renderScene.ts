@@ -324,8 +324,31 @@ export function drawScene(ctx: CanvasRenderingContext2D, sim: Sim, s: Scene, w: 
   for (const a of s.agents) {
     if (a.status === 'left') continue;
     const p = ipos(a, o.alpha);
-    const x = cx(p.x), y = cy(p.y), r = ts * 0.34;
+    const moving = Math.abs(a.x - a.px) + Math.abs(a.y - a.py) > 0.01 && a.status === 'active';
+    const stepPh = time * 11 + a.rid;
+    const x = cx(p.x), y = cy(p.y) + (moving ? Math.sin(stepPh * 2) * ts * 0.025 : 0), r = ts * 0.34;
     const rsp = sim.responders[a.rid];
+    if (moving && !MINI) {
+      // 발걸음: 진행 방향의 좌우로 번갈아 디딘다
+      const fl0 = Math.hypot(a.fx, a.fy) || 1, nx = -a.fy / fl0, ny = a.fx / fl0, sw = Math.sin(stepPh);
+      ctx.fillStyle = 'rgba(10,16,22,0.75)';
+      for (const side of [-1, 1]) { const off = side * sw * ts * 0.14; ctx.beginPath(); ctx.ellipse(x + nx * side * r * 0.45 + (a.fx / fl0) * off, y + ny * side * r * 0.45 + (a.fy / fl0) * off + r * 0.55, r * 0.26, r * 0.17, 0, 0, 7); ctx.fill(); }
+    }
+    if (a.carrying >= 0 && !MINI) {
+      // 들것: 옮기는 대원과 구조 대상을 잇는다
+      const cc = s.casualties[a.carrying], cp = ipos(cc, o.alpha);
+      ctx.strokeStyle = 'rgba(232,240,247,0.7)'; ctx.lineWidth = Math.max(2, ts * 0.1);
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(cx(cp.x), cy(cp.y)); ctx.stroke();
+    }
+    if (!moving && a.ring > 0.01 && a.status === 'active' && !MINI) {
+      // 작업 중: 손 쓰는 쪽에 작은 불티가 튄다
+      const fl1 = Math.hypot(a.fx, a.fy) || 1;
+      for (let k = 0; k < 3; k++) {
+        const ph = (time * 2.2 + k / 3 + a.rid * 0.37) % 1;
+        ctx.fillStyle = `rgba(255,236,170,${1 - ph})`;
+        ctx.fillRect(x + (a.fx / fl1) * r * 1.25 + Math.cos(k * 2.1 + a.rid) * ph * ts * 0.3, y + (a.fy / fl1) * r * 1.25 + Math.sin(k * 2.1 + a.rid) * ph * ts * 0.3, 2, 2);
+      }
+    }
     const col = DEPT_COLOR[rsp.dept];
     if (a.rid === o.selectedRid && a.path && a.pathI < a.path.length) {
       ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]);

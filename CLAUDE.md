@@ -19,7 +19,7 @@ TypeScript + React + Vite, 그림은 Canvas 2D. 서버·외부 API·LLM 호출 �
 | `npm run dev` | 개발 서버 (`http://localhost:5173`, `?seed=S7&diff=hard` 로 조건 고정) |
 | `npm run check` | **커밋 전 관문**: 타입 검사 + 테스트 + 시드 40개 헤드리스 검증 |
 | `npm test` | Vitest (재현성, 교대 완주, 상태 변화, 정보 격리) |
-| `npm run sweep -- 100` | 시드 100개 결과 분포. `--diff hard`, `--diff 4,4,4,2,3`, `-v`, `--json`, `--check` |
+| `npm run sweep -- 100` | 시드 100개 결과 분포. `--diff hard`, `--diff 4,4,4,2,3,3`(빈도·심각도·용의자·장비·신고·부대), `-v`, `--json`, `--check` |
 | `npm run sweep -- 1 --log S7` | 한 교대의 전체 이벤트 기록과 종료 보고서 (동작 확인에 가장 유용) |
 | `npm run build` | 타입 검사 + 정적 빌드 |
 | `node scripts/screenshot.cjs S7 화재` | (선택, Playwright 필요) 해당 유형 현장이 열렸을 때 화면 캡처 |
@@ -63,7 +63,7 @@ src/sim/field/brain.ts       대원 목표 선택(Utility)
 src/sim/field/executor.ts    임무별 실행(case 문), 이동, 장애물 발견·재계획
 src/sim/field/commander.ts   지휘관: 믿음 → 작업 목록(want), 배정, 지원 요청, 종료 판단
 src/sim/field/sceneManager.ts 현장 틱, 부대 도착·철수, 지휘권 이양
-src/view/                    runner(틱·저장), camera(자동 카메라), renderCity, renderScene, icons
+src/view/                    runner(틱·되감기·저장), camera(자동 카메라), renderCity, renderScene, icons, audio(합성음)
 src/ui/                      App, Viewport(캔버스·입력), panels(모든 패널), styles.css
 scripts/sweep.ts             헤드리스 실행기 (균형·교착 확인의 기본 도구)
 tests/sim.test.ts            자동 테스트
@@ -87,6 +87,9 @@ tests/sim.test.ts            자동 테스트
 - **보고 지연 사이의 중복 지시.** 수색 결과처럼 지휘관이 기다리는 정보는 묶음 보고(5초)에서 빼고 즉시 보낸다(`flushOutbox` 의 `prompt`).
 - **부대 철수 판정.** 대원이 모두 `left` 가 된 뒤에도 부대가 떠나는지 `sceneManager.ts` 5)번 블록에서 확인한다.
 - **로그 중복.** 별도 이벤트로 이미 알린 사실은 `learnQuiet` 를 써서 무전 문구에서 뺀다.
+- **현장에 대원이 한 명도 남지 않는 경우.** 구급차가 환자를 싣고 떠나면 지휘관도 떠난다. `sceneManager.ts` 7)번 블록이 마지막 지휘관의 믿음(`commander.outstanding`)으로 종료하거나 추가 부대를 요청한다. 새 유형을 만들면 이 경로로 끝나는지 확인한다.
+- **인질.** 총을 든 용의자 곁의 인질은 데리고 나올 수 없다(`hazards.isHeld`). 지휘관·실행기 양쪽에서 막아야 한다.
+- **신고 키워드 표.** `callSystem.NATURE_LIK` 의 열 수는 사건 유형 수와 같아야 하고 `analyst.ts` 의 `lp`·`TYPES`·`probs` 와 맞아야 한다.
 - **한국어 조사.** 이름·호출부호 뒤 조사는 `josa(word, '이/가')` 로 붙인다.
 - **브라우저 확인 없이 UI 를 끝났다고 하지 않는다.** 헤드리스 브라우저로 화면을 찍어 보고, 콘솔 오류 0건을 확인한다.
 

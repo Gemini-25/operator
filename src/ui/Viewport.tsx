@@ -71,7 +71,7 @@ export function Viewport({ runner, director, sound, selectedRid, onSelectRid, on
         ctx.restore();
         frameBox(p.x, p.y, '도시', 'rgba(124,196,255,0.7)');
       }
-      const maxScenes = Math.max(1, Math.min(3, Math.floor((w - 2 * PAD - 420) / (PIP_W + GAP)))) - (scene ? 1 : 0);
+      const maxScenes = Math.max(1, Math.min(3, Math.floor((w - 2 * PAD - 330) / (PIP_W + GAP)))) - (scene ? 1 : 0);
       let shown = 0;
       for (const I of sim.incidents) {
         if (shown >= maxScenes) break;

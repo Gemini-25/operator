@@ -20,6 +20,10 @@ export const MAJOR: Scenario[] = [
     places: { runway: 5, farmland: 2, park: 1, riverside: 1 },
     texts: ['비행기가 떨어졌어요! 불이 났어요!', '경비행기가 활주로 옆에 추락했어요. 사람들이 안에 있어요!'], lik: [0.85, 0.04, 0.005, 0.01, 0.01, 0.06, 0.01, 0.01],
     needs: (n) => atLeast(n, { suppression: 3, rescue: 2, ems: 4, law: 1, search: 1 }) },      // 수색 수요에는 대개 헬기가 뜬다
+  { type: 'fire', variant: 'ship', name: '선박 화재', share: 1.0, nature: 'shipfire', vague: 'bang', severity: [3, 3], tag: 'major', delay: [2, 6], limit: 200,
+    places: { pier: 4, ferry: 3, containerYard: 2, fishMarket: 1 },
+    texts: ['배에 불이 났어요! 사람들이 바다로 뛰어내려요!', '부두에 댄 배에서 연기가 엄청 나요!'], lik: [0.85, 0.01, 0.005, 0.005, 0.01, 0.01, 0.02, 0.09],
+    needs: (n) => atLeast(n, { suppression: 2, rescue: 2, ems: 2 }) },      // 관제가 '선박 화재'로 이름 붙이면 구조정도 나간다 (dispatcher.pickUnit)
   { type: 'traffic', variant: 'train', name: '열차 탈선', share: 1.2, nature: 'derail', vague: 'bang', severity: [3, 3], tag: 'major', delay: [2, 6], limit: 240,
     texts: ['기차가 탈선했어요! 객차가 넘어졌어요!', '건널목에서 열차가 차를 들이받고 선로를 벗어났어요!'], lik: [0.03, 0.85, 0.005, 0.005, 0.01, 0.08, 0.01, 0.01],
     needs: (n) => atLeast(n, { rescue: 2, ems: 4, law: 1, traffic: 1 }),

@@ -48,7 +48,7 @@ function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { be
   for (const u of sim.units) {
     const fit = u.caps[key];
     if (fit < minCap || crewReady(sim, u) === 0 || u.state === 'oos') continue;
-    if (u.sea && !(I.assessment!.type === 'water' && coastal(sim, I.reportedNode))) continue;      // 구조정은 바닷가의 수난 사고에만 나간다
+    if (u.sea && !((I.assessment!.type === 'water' || I.assessment!.label === '선박 화재') && coastal(sim, I.reportedNode))) continue;      // 구조정은 바닷가의 수난 사고와 선박 화재에만 나간다
     if (u.air && key !== 'search' && sev < 2.3) continue;                                             // 헬기는 수색이나 큰 사건에만 뜬다
     if (I.assigned.indexOf(u.id) >= 0) continue;
     let divertFrom: Incident | null = null;

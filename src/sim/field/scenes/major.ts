@@ -5,10 +5,10 @@
 import type { Sim } from '../../engine';
 import type { Rng } from '../../rng';
 import { DECOR, T } from '../../types';
-import type { Incident, Prop, Region, Scene } from '../../types';
+import type { Incident, Mobility, Prop, Region, Scene } from '../../types';
 import { buildCollapse } from '../builders';
 import { tidx } from '../grid';
-import { SH, SW, addCas, addProp, addRegion, baseScene, freeTileIn, get, set } from '../kit';
+import { SH, SW, addCas, addProp, addRegion, baseScene, freeTileIn, furnish, get, set } from '../kit';
 import { registerScene } from '../sceneRegistry';
 
 /** 길가에 나무를 흩뿌린다 (도로 8~11줄의 위아래 수풀) */
@@ -357,5 +357,81 @@ registerScene('traffic', 'pileup', (sim, I, rng) => {
   let cong = 1.2; for (const eid of node.edges) cong = Math.max(cong, sim.city.edges[eid].cong);
   s.trafficFlow = cong / 2;
   s.nextCarAt = sim.t + 4;
+  return s;
+});
+
+// ───────────────────────── 선박 화재 ─────────────────────────
+// 위쪽은 부두, 아래 일곱 줄은 바다. 배는 벽과 바닥으로 된 건물이고(기관실·선실·조타실) 두 칸 폭의 건널판으로 부두와 이어진다.
+// 기관실에서 불이 났고, 바다로 뛰어든 선원들은 부두와 배 사이의 물에 떠 있다 (표류 규칙이 함께 돈다. 부두에서 줄을 던져 끌어낸다).
+registerScene('fire', 'ship', (sim, I, rng) => {
+  const s = baseScene(sim, I, rng);
+  for (let y = 0; y <= 2; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
+  for (let y = 13; y < SH; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.WATER);
+  for (let y = 13; y <= 15; y++) for (let x = 26; x < SW; x++) set(s, x, y, T.GROUND);      // 꺾인 안벽: 떠내려가던 사람이 여기에 걸린다
+  s.floorMat = 2;
+  s.staging = { x: 3, y: 2 }; s.safe = { x: 3, y: 5 };
+  const H = { x0: 4, y0: 14, x1: 21, y1: 18 };      // 선체 (벽 포함)
+  const four = rng.chance(0.5);
+  const cuts = four ? [9, 13, 17] : [10, 16];      // 칸막이벽
+  const names = four ? ['기관실', '선실', '선원 식당', '조타실'] : ['기관실', '선실', '조타실'];
+  const bounds = [H.x0, ...cuts, H.x1];
+  const gx = rng.int(bounds[1] + 1, bounds[2] - 2);      // 건널판(두 칸)은 선실로 이어진다
+  // 선체 윤곽은 막지 않는 장식이다 (그림만: view/scene/skins/major.ts 의 shipHull). color 는 건널판이 걸린 자리(선체 왼쪽 끝에서 몇 칸째)
+  addProp(s, 'cover', H.x0, H.y0, { w: H.x1 - H.x0 + 1, h: H.y1 - H.y0 + 1, blocking: false, skin: 'shipHull', color: gx - H.x0 });
+  for (let y = H.y0; y <= H.y1; y++) for (let x = H.x0; x <= H.x1; x++) set(s, x, y, x === H.x0 || x === H.x1 || y === H.y0 || y === H.y1 ? T.WALL : T.FLOOR);
+  for (const cx of cuts) for (let y = H.y0 + 1; y < H.y1; y++) set(s, cx, y, T.WALL);
+  const rooms: Region[] = names.map((nm, q) => addRegion(s, nm, 'room', bounds[q] + 1, H.y0 + 1, bounds[q + 1] - 1, H.y1 - 1, true, true));
+  const door = (x: number, y: number, r: Region, open: boolean): Prop => {
+    set(s, x, y, T.DOOR);
+    const p = addProp(s, 'door', x, y, { open, locked: false });
+    const i = tidx(s, x, y); s.region[i] = r.id; r.tiles.push(i);
+    return p;
+  };
+  cuts.forEach((cx, q) => door(cx, rng.int(H.y0 + 1, H.y1 - 1), rooms[q + 1], q === 0 || rng.chance(0.4)));      // 기관실 문은 열려 있다 (불이 빨리 번진다)
+  const engine = rooms[0], cabin = rooms[1];
+  door(gx, H.y0, cabin, true); door(gx + 1, H.y0, cabin, true);
+  set(s, gx, 13, T.FLOOR); set(s, gx + 1, 13, T.FLOOR);
+  addRegion(s, '건널판', 'corridor', gx, 13, gx + 1, 13, true, false);
+  addRegion(s, '부두', 'zone', 0, 3, SW - 1, 12, false, true);
+  // 둥근 창: 방마다 양쪽 뱃전 한가운데, 조타실은 뱃머리 쪽에도
+  for (const r of rooms) for (const wy of [H.y0, H.y1]) {
+    const wx = Math.round((r.x0 + r.x1) / 2);
+    if (get(s, wx, wy) === T.WALL && get(s, wx - 1, wy) !== T.DOOR && get(s, wx + 1, wy) !== T.DOOR) set(s, wx, wy, T.WINDOW);
+  }
+  set(s, H.x1, 16, T.WINDOW);
+  // 탈 것: 선실 바닥과 가구. 건널판은 타지 않는다
+  for (const r of rooms) for (const i of r.tiles) s.fuel[i] = s.tiles[i] === T.DOOR ? 0.3 : rng.range(0.55, 1.0);
+  const KINDS: Record<string, number[]> = { 기관실: [DECOR.MACHINE, DECOR.MACHINE, DECOR.CABINET, DECOR.CRATE], 선실: [DECOR.BED, DECOR.BED, DECOR.CABINET], '선원 식당': [DECOR.TABLE, DECOR.COUNTER, DECOR.KITCHEN], 조타실: [DECOR.DESK, DECOR.CABINET, DECOR.DESK] };
+  for (const r of rooms) furnish(s, rng, r, KINDS[r.name], r === engine ? 3 : 2, false);
+  for (let i = 0; i < s.tiles.length; i++) if (s.tiles[i] === T.FURN) s.fuel[i] = 1;
+  for (let i = 0; i < s.fuel.length; i++) if (s.fuel[i] > 0) s.totalFuelTiles++;
+  // 발화: 기관실
+  const seeds = rng.int(2, 3);
+  for (let k = 0; k < seeds; k++) { const i = freeTileIn(s, engine, rng); s.fire[i] = rng.range(0.45, 0.7); }
+  // 선원 5~8명: 배 안에 3~4 (연기 속), 바다에 2~3, 부두로 빠져나온 사람이 있을 수도 있다
+  const nIn = rng.int(3, 4), nW = rng.int(2, 3), nOut = rng.int(0, 1);
+  const nearFire = (q: number): boolean => { for (let f = 0; f < s.fire.length; f++) if (s.fire[f] > 0 && Math.hypot((f % SW) - (q % SW), ((f / SW) | 0) - ((q / SW) | 0)) < 2.5) return true; return false; };
+  for (let k = 0; k < nIn; k++) {
+    const r = rng.chance(0.85) ? rng.pick(rooms.slice(1)) : engine;
+    const i = freeTileIn(s, r, rng, nearFire);
+    const roll = rng.next();
+    const mob: Mobility = roll < 0.4 ? 'mobile' : roll < 0.8 ? 'immobile' : 'trapped';
+    addCas(s, i % SW, (i / SW) | 0, mob, mob === 'mobile' ? rng.range(78, 100) : rng.range(55, 85), mob === 'mobile' ? 0.03 : rng.range(0.07, 0.19), mob === 'trapped' ? rng.range(0.35, 0.55) : rng.range(0.1, 0.5));
+  }
+  const taken: number[] = [];
+  for (let k = 0; k < nW; k++) {
+    let x = rng.chance(0.5) ? rng.int(2, gx - 2) : rng.int(gx + 3, 17);
+    while (taken.indexOf(x) >= 0) x = x < gx ? Math.max(1, x - 1) : x + 1;
+    taken.push(x);
+    const c = addCas(s, x, 13, 'trapped', rng.range(62, 90), rng.range(0.17, 0.27) * (sim.weather === 'clear' ? 1 : 1.12), 0.1, { inWater: true, drift: rng.range(0.05, 0.12) });
+    c.trapWork = 0;
+  }
+  for (let k = 0; k < nOut; k++) { const p = freeNear(s, gx + rng.int(-2, 3), 11); addCas(s, p.x, p.y, 'mobile', rng.range(76, 96), rng.range(0, 0.04), 0); }
+  addProp(s, 'hydrant', 26, 3, {});
+  s.exits = [{ x: gx, y: 12 }];
+  s.spots = [{ x: gx, y: 11, exit: 0, taken: -1 }, { x: gx + 1, y: 11, exit: 0, taken: -1 }, { x: gx - 3, y: 11, exit: -1, taken: -1 }];
+  s.vantage = { x: gx, y: 10 };
+  s.rules = ['water'];
+  s.leadDept = 'fire';
   return s;
 });

@@ -96,8 +96,23 @@ const obstacleOn = (tr: TrafficState, edge: number): Obstacle | null => { for (c
  * 새 통제·불법 주차를 놓기 전에 본다: 이것이 참이면 도시의 어느 교차로도 어느 부대에게서도 끊기지 않는다.
  */
 function linked(sim: Sim, tr: TrafficState, a: number, b: number, skip: number): boolean {
-  return heavyPath(sim, tr, a, b, skip) !== null;
+  // 답은 (a, b, skip) 와 길의 상태 — 구간마다 막힘(closed)과 큰 차 불가(heavyOnly 장애물) — 로만 정해진다.
+  // 그 상태가 지난번과 한 칸도 다르지 않으면 지난번 답을 쓴다 (장애물마다 1초에 한 번씩 묻는데 상태는 거의 바뀌지 않는다).
+  const edges = sim.city.edges, n = edges.length;
+  let c = linkCache.get(tr);
+  if (!c || c.state.length !== n) { c = { state: new Uint8Array(n), cur: new Uint8Array(n), res: new Map() }; c.state.fill(255); linkCache.set(tr, c); }
+  const cur = c.cur;
+  for (let i = 0; i < n; i++) cur[i] = edges[i].closed ? 1 : 0;
+  for (const o of tr.obstacles) if (o.heavyOnly) cur[o.edge] |= 2;
+  let same = true;
+  for (let i = 0; i < n; i++) if (cur[i] !== c.state[i]) { same = false; break; }
+  if (!same) { c.state.set(cur); c.res.clear(); }
+  const key = (skip + 1) * 1e8 + a * 1e4 + b;
+  let r = c.res.get(key);
+  if (r === undefined) { r = heavyPath(sim, tr, a, b, skip) !== null; c.res.set(key, r); }
+  return r;
 }
+const linkCache = new WeakMap<TrafficState, { state: Uint8Array; cur: Uint8Array; res: Map<number, boolean> }>();
 /** 실제 상태에서 큰 차가 a 에서 b 로 가는 길 하나 (지나는 구간들, 없으면 null). skip·skip2 구간은 없는 것으로 본다 */
 function heavyPath(sim: Sim, tr: TrafficState, a: number, b: number, skip: number, skip2 = -1): number[] | null {
   const city = sim.city, via = new Int32Array(city.nodes.length).fill(-2), stack = [a];

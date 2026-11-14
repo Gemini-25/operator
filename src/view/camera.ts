@@ -6,6 +6,9 @@ import type { Sim } from '../sim/engine';
 import type { Incident, SimEvent } from '../sim/types';
 
 export interface CityCam { x: number; y: number; zoom: number }
+/** 현장 화면의 시점 (타일 좌표, 배율 1 = 현장 전체) */
+export interface SceneView { x: number; y: number; zoom: number }
+const SCENE_W = 30, SCENE_H = 20;
 
 export class CameraDirector {
   mode: 'city' | 'scene' = 'city';
@@ -15,6 +18,9 @@ export class CameraDirector {
   cam: CityCam = { x: 1200, y: 820, zoom: 1 };
   target: CityCam = { x: 1200, y: 820, zoom: 1 };
   reason = '도시 전체 관찰';
+  sceneCam: SceneView = { x: SCENE_W / 2, y: SCENE_H / 2, zoom: 1 };
+  sceneTarget: SceneView = { x: SCENE_W / 2, y: SCENE_H / 2, zoom: 1 };
+  private sceneFor = -1;
   private interest = new Map<number, number>();
   private processed = 0;
   private lastSwitch = -99;
@@ -108,6 +114,12 @@ export class CameraDirector {
         this.target = { x: (x0 + x1) / 2, y: (y0 + y1) / 2, zoom };
       } else this.target = { x: sim.city.w / 2, y: sim.city.h / 2, zoom: 1 };
     }
+    // 현장 시점: 관찰 대상이 바뀌면 전체 보기로 되돌린다
+    if (this.sceneFor !== this.focus || this.mode !== 'scene') { this.sceneFor = this.focus; this.sceneReset(true); }
+    const es = 1 - Math.exp(-dtReal * 9);
+    this.sceneCam.x += (this.sceneTarget.x - this.sceneCam.x) * es;
+    this.sceneCam.y += (this.sceneTarget.y - this.sceneCam.y) * es;
+    this.sceneCam.zoom += (this.sceneTarget.zoom - this.sceneCam.zoom) * es;
     const ease = 1 - Math.exp(-dtReal * 3.2);
     this.cam.x += (this.target.x - this.cam.x) * ease;
     this.cam.y += (this.target.y - this.cam.y) * ease;
@@ -121,6 +133,27 @@ export class CameraDirector {
     const r = this.target.zoom / z;
     this.target = { x: wx + (this.target.x - wx) * r, y: wy + (this.target.y - wy) * r, zoom: z };
     this.reason = '지도 직접 조작';
+  }
+  /** 현장 화면 확대·축소 (tx, ty: 고정할 지점의 타일 좌표). 관찰 대상은 그대로 고정된다. */
+  sceneZoom(factor: number, tx: number, ty: number): void {
+    this.manual = true;
+    const z = Math.max(1, Math.min(3.4, this.sceneTarget.zoom * factor));
+    const r = this.sceneTarget.zoom / z;
+    this.sceneTarget = this.clampScene({ x: tx + (this.sceneTarget.x - tx) * r, y: ty + (this.sceneTarget.y - ty) * r, zoom: z });
+  }
+  scenePan(dx: number, dy: number): void {
+    if (this.sceneTarget.zoom <= 1.001) return;
+    this.manual = true;
+    this.sceneTarget = this.clampScene({ ...this.sceneTarget, x: this.sceneTarget.x - dx, y: this.sceneTarget.y - dy });
+    this.sceneCam.x = this.sceneTarget.x; this.sceneCam.y = this.sceneTarget.y;
+  }
+  sceneReset(snap = false): void {
+    this.sceneTarget = { x: SCENE_W / 2, y: SCENE_H / 2, zoom: 1 };
+    if (snap) this.sceneCam = { ...this.sceneTarget };
+  }
+  private clampScene(v: SceneView): SceneView {
+    const hx = SCENE_W / 2 / v.zoom, hy = SCENE_H / 2 / v.zoom;
+    return { zoom: v.zoom, x: Math.max(hx - 1, Math.min(SCENE_W - hx + 1, v.x)), y: Math.max(hy - 1, Math.min(SCENE_H - hy + 1, v.y)) };
   }
   userPan(dx: number, dy: number): void {
     this.manual = true; this.freeLook = true; this.mode = 'city';

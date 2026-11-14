@@ -63,7 +63,11 @@ src/sim/field/brain.ts       대원 목표 선택(Utility)
 src/sim/field/executor.ts    임무별 실행(case 문), 이동, 장애물 발견·재계획
 src/sim/field/commander.ts   지휘관: 믿음 → 작업 목록(want), 배정, 지원 요청, 종료 판단
 src/sim/field/sceneManager.ts 현장 틱, 부대 도착·철수, 지휘권 이양
-src/view/                    runner(틱·되감기·저장), camera(자동 카메라), renderCity, renderScene, icons, audio(합성음)
+src/view/                    runner(틱·되감기·저장), camera(자동 카메라·현장 확대), renderCity, renderScene(그리는 순서 조립), icons, audio(합성음)
+src/view/scene/staticLayer.ts 현장의 고정된 부분을 한 번만 그려 두는 층: 바닥 재질, 벽·창·문틀, 가구, 나무, 개울
+src/view/scene/sprites.ts    사람(대원·시민·용의자), 쓰러진 사람, 차량, 소품의 벡터 그림
+src/view/scene/fx.ts         화염, 연기(저해상도 층), 물줄기, 어둠과 빛, 날씨
+src/view/scene/common.ts     색 계산, 해시, 벽에 가려지는 시야 다각형
 src/ui/                      App, Viewport(캔버스·입력), panels(모든 패널), styles.css
 scripts/sweep.ts             헤드리스 실행기 (균형·교착 확인의 기본 도구)
 tests/sim.test.ts            자동 테스트
@@ -92,6 +96,8 @@ tests/sim.test.ts            자동 테스트
 - **신고 키워드 표.** `callSystem.NATURE_LIK` 의 열 수는 사건 유형 수와 같아야 하고 `analyst.ts` 의 `lp`·`TYPES`·`probs` 와 맞아야 한다.
 - **한국어 조사.** 이름·호출부호 뒤 조사는 `josa(word, '이/가')` 로 붙인다.
 - **브라우저 확인 없이 UI 를 끝났다고 하지 않는다.** 헤드리스 브라우저로 화면을 찍어 보고, 콘솔 오류 0건을 확인한다.
+- **현장 그림의 고정 층.** `staticLayer.ts` 는 타일·가구가 바뀔 때만 다시 그린다(`staticSig`). 매 프레임 바뀌는 것(문짝, 불, 사람)을 여기에 넣지 않는다. 새 타일 종류·가구를 만들면 `surfaceMap`·`paintTile`·`furniture` 에 그림을 추가한다.
+- **가구는 실제 장애물이다(`T.FURN`).** 지나갈 수 없고, 시야는 통과하며, 엄폐물이 된다. 방을 새로 만들 때는 `builders.ts` 의 `furnish()` 를 쓴다(문 주변을 비우고 방이 끊기지 않는지 검사한다).
 
 ## 작업 방식
 

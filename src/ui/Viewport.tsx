@@ -3,7 +3,7 @@ import { TYPE_NAME } from '../sim/util';
 import type { SoundDirector } from '../view/audio';
 import type { CameraDirector } from '../view/camera';
 import { FONT, TYPE_COLOR, drawCity, hitCity, cityXf } from '../view/renderCity';
-import { drawScene, hitScene } from '../view/renderScene';
+import { drawScene, hitScene, sceneLayout } from '../view/renderScene';
 import type { Runner } from '../view/runner';
 
 export interface ViewportProps {
@@ -55,7 +55,7 @@ export function Viewport({ runner, director, sound, selectedRid, onSelectRid, on
       const truth = runner.settings.truthView;
       const scene = director.mode === 'scene' && director.focus >= 0 ? sim.scenes[director.focus] : null;
       sound.update(sim, { paused: runner.paused, speed: runner.settings.speed, focus: director.focus, inScene: !!scene });
-      if (scene) drawScene(ctx, sim, scene, w, h, { truth, alpha: runner.alpha, timeMs: now, selectedRid: sel.current });
+      if (scene) drawScene(ctx, sim, scene, w, h, { truth, alpha: runner.alpha, timeMs: now, selectedRid: sel.current, cam: director.sceneCam });
       else {
         const selUnit = sel.current >= 0 ? sim.responders[sel.current].unitId : -1;
         drawCity(ctx, sim, director.cam, w, h, { focus: director.focus, truth, timeMs: now, alpha: runner.alpha, selectedUnit: selUnit });
@@ -94,7 +94,9 @@ export function Viewport({ runner, director, sound, selectedRid, onSelectRid, on
     const move = (e: MouseEvent) => {
       if (!dragging) return;
       const dx = e.clientX - lx, dy = e.clientY - ly; lx = e.clientX; ly = e.clientY; moved += Math.abs(dx) + Math.abs(dy);
-      if (director.mode === 'city' && moved > 6) { const xf = cityXf(runner.sim, director.cam, w, h); director.userPan(dx / xf.scale, dy / xf.scale); }
+      if (moved <= 6) return;
+      if (director.mode === 'city') { const xf = cityXf(runner.sim, director.cam, w, h); director.userPan(dx / xf.scale, dy / xf.scale); }
+      else { const sc = runner.sim.scenes[director.focus]; if (sc) { const L = sceneLayout(sc, w, h, director.sceneCam); director.scenePan(dx / L.ts, dy / L.ts); } }
     };
     const up = (e: MouseEvent) => {
       if (!dragging) return; dragging = false;
@@ -106,7 +108,7 @@ export function Viewport({ runner, director, sound, selectedRid, onSelectRid, on
         return;
       }
       if (director.mode === 'scene' && director.focus >= 0 && sim.scenes[director.focus]) {
-        const hit = hitScene(sim, sim.scenes[director.focus]!, w, h, p.x, p.y);
+        const hit = hitScene(sim, sim.scenes[director.focus]!, w, h, p.x, p.y, director.sceneCam);
         onSelectRid(hit.rid);
       } else {
         const hit = hitCity(sim, director.cam, w, h, p.x, p.y, runner.settings.truthView);
@@ -115,14 +117,23 @@ export function Viewport({ runner, director, sound, selectedRid, onSelectRid, on
       }
     };
     const wheel = (e: WheelEvent) => {
-      if (director.mode !== 'city') return;
       e.preventDefault();
-      const p = pos(e); const xf = cityXf(runner.sim, director.cam, w, h);
+      const p = pos(e);
+      if (director.mode !== 'city') {
+        // 현장 화면: 마우스가 가리키는 곳을 중심으로 확대·축소 (시점 조작일 뿐, 현장에는 영향이 없다)
+        const sc = runner.sim.scenes[director.focus];
+        if (sc) { const L = sceneLayout(sc, w, h, director.sceneCam); director.sceneZoom(e.deltaY < 0 ? 1.2 : 1 / 1.2, (p.x - L.ox) / L.ts, (p.y - L.oy) / L.ts); }
+        return;
+      }
+      const xf = cityXf(runner.sim, director.cam, w, h);
       director.userZoom(e.deltaY < 0 ? 1.18 : 1 / 1.18, (p.x - xf.ox) / xf.scale, (p.y - xf.oy) / xf.scale);
     };
     canvas.addEventListener('mousedown', down); window.addEventListener('mousemove', move); window.addEventListener('mouseup', up);
     canvas.addEventListener('wheel', wheel, { passive: false });
+    const dbl = () => { if (director.mode === 'scene') director.sceneReset(); };
+    canvas.addEventListener('dblclick', dbl);
     return () => {
+      canvas.removeEventListener('dblclick', dbl);
       cancelAnimationFrame(raf); ro.disconnect();
       canvas.removeEventListener('mousedown', down); window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
       canvas.removeEventListener('wheel', wheel);

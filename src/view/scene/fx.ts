@@ -135,15 +135,16 @@ let soft: HTMLCanvasElement | null = null;
  * 연기를 낮은 해상도의 별도 층에 그려 돌려준다(연기는 원래 흐릿하므로 화질 손실이 없고 훨씬 가볍다).
  * 연기가 없으면 null. 같은 층을 사람 아래에 한 번, 위에 옅게 한 번 덮는다.
  */
-export function smokeLayer(s: Scene, ts: number, time: number): HTMLCanvasElement | null {
+export function smokeLayer(s: Scene, ts: number, time: number, tint?: string): HTMLCanvasElement | null {
   let any = false; for (let i = 0; i < s.smoke.length; i++) if (s.smoke[i] >= 0.06) { any = true; break; }
   if (!any) return null;
   const q = 1 / 3, w = Math.max(2, Math.ceil(s.w * ts * q)), h = Math.max(2, Math.ceil(s.h * ts * q));
   if (!soft) soft = document.createElement('canvas');
   if (soft.width !== w || soft.height !== h) { soft.width = w; soft.height = h; }
   const g = soft.getContext('2d')!;
-  g.clearRect(0, 0, w, h);
+  g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, w, h);
   drawSmoke(g, s, ts * q, time);
+  if (tint) { g.globalCompositeOperation = 'source-atop'; g.fillStyle = tint; g.fillRect(0, 0, w, h); g.globalCompositeOperation = 'source-over'; }
   return soft;
 }
 

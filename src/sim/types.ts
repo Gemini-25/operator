@@ -6,7 +6,7 @@ import type { BeliefStore } from './field/beliefs';
 
 export interface Pt { x: number; y: number }
 export type Dept = 'fire' | 'ems' | 'police';
-export type IncidentType = 'fire' | 'traffic' | 'search' | 'armed' | 'medical';
+export type IncidentType = 'fire' | 'traffic' | 'search' | 'armed' | 'medical' | 'collapse' | 'hazmat';
 export type District = 'residential' | 'commercial' | 'industrial' | 'outskirts';
 export type Weather = 'clear' | 'rain' | 'fog' | 'night';
 
@@ -94,7 +94,9 @@ export interface Region {
   x0: number; y0: number; x1: number; y1: number;
   indoor: boolean; searchable: boolean;
 }
-export type PropKind = 'debris' | 'door' | 'vehicle' | 'hydrant' | 'gas' | 'cover' | 'clue' | 'witness' | 'roadDebris';
+export type PropKind = 'debris' | 'door' | 'vehicle' | 'hydrant' | 'gas' | 'cover' | 'clue' | 'witness' | 'roadDebris'
+  | 'unstable'      // 금이 간 구조물: 보강(mitigate)하지 않으면 leak 가 1 에 이를 때마다 2차 붕괴가 난다
+  | 'valve';        // 가스가 새는 배관: 차단(mitigate)할 때까지 leakRate 세기로 가스를 내뿜는다
 export interface Prop {
   id: number; kind: PropKind; x: number; y: number; w: number; h: number;
   blocking: boolean;
@@ -219,6 +221,7 @@ export interface Scene {
   fire: Float32Array; heat: Float32Array; fuel: Float32Array; smoke: Float32Array; burned: Uint8Array; wet: Float32Array;
   shadow: Uint8Array;                 // 무전 음영 구역
   decor: Uint8Array;                  // 가구 종류 (DECOR)
+  damage: Uint8Array;                 // 무너져 내린 자리 (붕괴 사건: 잔해가 깔린 바닥)
   floorMat: number;                   // 실내 바닥 재질 (0 나무, 1 타일, 2 콘크리트)
   propAt: Int16Array;                 // 타일 → blocking prop id (-1)
   regions: Region[]; props: Prop[]; casualties: Casualty[]; hostiles: Hostile[];

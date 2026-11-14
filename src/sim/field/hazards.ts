@@ -475,3 +475,58 @@ export function tickLeaks(sim: Sim, s: Scene, I: Incident): void {
     }
   }
 }
+
+/** 2차 붕괴: 보강하지 않은 균열 구조물은 시간이 지나면 다시 무너진다 (매 틱). */
+export function tickCollapse(sim: Sim, s: Scene, I: Incident): void {
+  for (const p of s.props) {
+    if (p.kind !== 'unstable' || p.mitigated || !p.leakRate) continue;
+    p.leak = (p.leak ?? 0) + p.leakRate * sim.dt;
+    if (p.leak < 1) continue;
+    p.leak = 0; p.leakRate *= 0.6;
+    let made = 0;
+    for (let k = 0; k < 14 && made < 3; k++) {
+      const x = p.x + s.rng.int(-2, 2), y = p.y + s.rng.int(-2, 2);
+      if (x < 1 || y < 1 || x >= s.w - 1 || y >= s.h - 1) continue;
+      const i = tidx(s, x, y);
+      if (s.tiles[i] !== T.FLOOR || s.propAt[i] >= 0 || (x === p.x && y === p.y)) continue;
+      if (s.agents.some((a) => a.status !== 'left' && tileOf(s, a.x, a.y) === i)) continue;      // 사람이 선 칸을 막아 가두지 않는다(피해는 아래에서 따로 입는다)
+      addProp(s, 'debris', x, y, { blocking: true, hp: s.rng.range(8, 13) });
+      s.damage[i] = 1; made++;
+    }
+    for (let y = Math.max(0, p.y - 3); y <= Math.min(s.h - 1, p.y + 3); y++) for (let x = Math.max(0, p.x - 3); x <= Math.min(s.w - 1, p.x + 3); x++) { const i = tidx(s, x, y); if (isIndoor(s.tiles[i])) s.smoke[i] = Math.max(s.smoke[i], 0.5); }
+    s.staticVersion++;
+    const where = s.region[tidx(s, p.x, p.y)] >= 0 ? s.regions[s.region[tidx(s, p.x, p.y)]].name : '건물';
+    const ev = raiseProblem(sim, I, 'ESCALATION', `${where} 2차 붕괴`, { role: 'SYSTEM', actor: '현장', text: `2차 붕괴! ${where}의 금이 간 구조물이 다시 무너졌습니다.`, imp: 3, truth: s.arrivedAt < 0 }, false);
+    blast(sim, s, I, p.x, p.y, 2.6, 28, ev);
+    pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.1);
+  }
+}
+
+/** 가스 누출: 차단하지 않은 배관은 계속 가스를 내뿜고(연기 격자로 퍼진다), 짙게 고이면 불이 붙어 터질 수 있다 (1초에 한 번). */
+export function tickGas(sim: Sim, s: Scene, I: Incident): void {
+  let leaking = false;
+  for (const p of s.props) {
+    if (p.kind !== 'valve' || p.mitigated || p.ignited || !p.leakRate) continue;
+    leaking = true;
+    for (let d = -1; d < 4; d++) {
+      const x = d < 0 ? p.x : p.x + NB[d * 2], y = d < 0 ? p.y : p.y + NB[d * 2 + 1];
+      if (x < 0 || y < 0 || x >= s.w || y >= s.h) continue;
+      const i = tidx(s, x, y);
+      if (s.tiles[i] !== T.WALL) s.smoke[i] = Math.max(s.smoke[i], p.leakRate * (d < 0 ? 1 : 0.92));
+    }
+  }
+  if (!leaking) return;
+  let dense = 0;
+  for (let i = 0; i < s.smoke.length; i++) if (s.smoke[i] > 0.6 && isIndoor(s.tiles[i])) dense++;
+  if (dense < 10 || !s.rng.chance(Math.min(0.006, 0.00011 * dense * sim.tune.hazardMul))) return;
+  const p = s.props.find((q) => q.kind === 'valve' && !q.mitigated && !q.ignited)!;
+  p.ignited = true;
+  for (let y = Math.max(0, p.y - 2); y <= Math.min(s.h - 1, p.y + 2); y++) for (let x = Math.max(0, p.x - 2); x <= Math.min(s.w - 1, p.x + 2); x++) {
+    const j = tidx(s, x, y);
+    if (s.fuel[j] > 0 && dist(x, y, p.x, p.y) <= 1.9) s.fire[j] = Math.max(s.fire[j], 0.6);
+  }
+  for (let i = 0; i < s.smoke.length; i++) s.smoke[i] *= 0.45;      // 고여 있던 가스가 타 버린다
+  const ev = raiseProblem(sim, I, 'HIDDEN_HAZARD', '누출된 가스에 불이 붙어 폭발', { role: 'SYSTEM', actor: '현장', text: '폭발! 고여 있던 가스에 불이 붙었습니다. 화재가 발생했습니다.', imp: 3, truth: s.arrivedAt < 0 }, false);
+  blast(sim, s, I, p.x, p.y, 3.8, 32, ev);
+  pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.6);
+}

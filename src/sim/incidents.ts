@@ -25,12 +25,14 @@ const PLACE: Record<IncidentType, Record<District, string>> = {
   search: { residential: '근린공원', commercial: '도심 공원', industrial: '공단 뒤 야산', outskirts: '외곽 산책로' },
   armed: { residential: '주택가 편의점', commercial: '상점가 매장', industrial: '공단 매점', outskirts: '외곽 휴게소' },
   medical: { residential: '단독 주택', commercial: '오피스텔', industrial: '기숙사', outskirts: '농가 주택' },
+  collapse: { residential: '노후 연립 주택', commercial: '공사 중인 상가', industrial: '노후 창고', outskirts: '외곽 가건물' },
+  hazmat: { residential: '주택가 도시가스 정압실', commercial: '상가 지하 기계실', industrial: '화학 공장 배관동', outskirts: '외곽 저장 시설' },
 };
 
 function createIncident(sim: Sim, chainNote = ''): Incident {
   const rng = sim.rngGen, g = sim.gen, tn = sim.tune;
-  const types: IncidentType[] = ['fire', 'traffic', 'search', 'armed', 'medical'];
-  const w = [0.27, 0.24, 0.17, tn.armedWeight, 0.2].map((v, k) => (types[k] === g.lastType ? v * 0.3 : v));
+  const types: IncidentType[] = ['fire', 'traffic', 'search', 'armed', 'medical', 'collapse', 'hazmat'];
+  const w = [0.27, 0.24, 0.17, tn.armedWeight, 0.2, 0.075, 0.085].map((v, k) => (types[k] === g.lastType ? v * 0.3 : v));
   const type = chainNote ? 'armed' : rng.weighted(types, w);
   g.lastType = type;
   let severity = rng.weighted([1, 2, 3], tn.sevWeights);
@@ -48,7 +50,7 @@ function createIncident(sim: Sim, chainNote = ''): Incident {
   // 위치
   const busy = new Set(sim.incidents.filter((I) => I.phase !== 'closed').map((I) => I.truth.nodeId));
   const fac = new Set(sim.city.facilities.map((f) => f.nodeId));
-  const ok = (d: District): boolean => type === 'search' ? d === 'outskirts' : type === 'armed' ? d === 'commercial' || d === 'residential' : type === 'fire' ? d !== 'outskirts' || rng.chance(0.2) : type === 'medical' ? d !== 'industrial' || rng.chance(0.3) : true;
+  const ok = (d: District): boolean => type === 'search' ? d === 'outskirts' : type === 'armed' ? d === 'commercial' || d === 'residential' : type === 'fire' ? d !== 'outskirts' || rng.chance(0.2) : type === 'medical' ? d !== 'industrial' || rng.chance(0.3) : type === 'hazmat' ? d === 'industrial' || d === 'commercial' || rng.chance(0.25) : type === 'collapse' ? d !== 'outskirts' || rng.chance(0.3) : true;
   let cands = sim.city.nodes.filter((n) => !busy.has(n.id) && !fac.has(n.id) && ok(n.district) && (type !== 'traffic' || n.edges.length >= 3));
   if (!cands.length) cands = sim.city.nodes.filter((n) => !busy.has(n.id) && !fac.has(n.id));
   const node = rng.pick(cands);
@@ -66,10 +68,10 @@ function createIncident(sim: Sim, chainNote = ''): Incident {
   };
   sim.incidents.push(I);
   createScene(sim, I);
-  const delay = type === 'fire' ? rng.range(6, 16) : type === 'traffic' ? rng.range(3, 8) : type === 'search' ? rng.range(1, 3) : type === 'medical' ? rng.range(2, 6) : rng.range(4, 11);
+  const delay = type === 'fire' ? rng.range(6, 16) : type === 'traffic' ? rng.range(3, 8) : type === 'search' ? rng.range(1, 3) : type === 'medical' ? rng.range(2, 6) : type === 'collapse' ? rng.range(3, 8) : type === 'hazmat' ? rng.range(8, 20) : rng.range(4, 11);
   I.firstCallAt = sim.t + delay;
   const benign = variant === 'false' || variant === 'prank';
-  const pFollow = benign ? 0 : type === 'fire' ? 0.6 : type === 'traffic' ? 0.5 : type === 'armed' ? 0.42 : 0.12;
+  const pFollow = benign ? 0 : type === 'fire' ? 0.6 : type === 'traffic' ? 0.5 : type === 'armed' ? 0.42 : type === 'collapse' ? 0.55 : type === 'hazmat' ? 0.4 : 0.12;
   if (rng.chance(pFollow)) I.followupAt = I.firstCallAt + rng.range(24, 55);
   if (type === 'traffic') {
     // 사고 지점 도로는 느려지고, 통제가 끝나면 전면 차단된다(우회로가 있는 도로만)

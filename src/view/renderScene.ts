@@ -14,7 +14,7 @@ import { DEPT_COLOR, FONT } from './renderCity';
 import { alpha, disc, hash2, oval, rr, seg, visPoly } from './scene/common';
 import type { G } from './scene/common';
 import { beginDark, drawFire, drawFog, drawLight, drawRain, drawScorch, drawSmoke, drawSpray, drawVignette, hole, holePoly, smokeLayer } from './scene/fx';
-import { CAR_COLORS, VEH_SIZE, beaconColors, civilianLook, drawCar, drawClue, drawCone, drawDebris, drawDoorLeaf, drawEmergency, drawGasTank, drawHydrant, drawLying, drawPerson, drawRoadDebris, hostileLook, responderLook } from './scene/sprites';
+import { CAR_COLORS, VEH_SIZE, beaconColors, civilianLook, drawCar, drawClue, drawCone, drawDebris, drawDoorLeaf, drawEmergency, drawGasTank, drawHydrant, drawLying, drawPerson, drawRoadDebris, drawUnstable, drawValve, hostileLook, responderLook } from './scene/sprites';
 import type { ArmPose, Item, PersonLook } from './scene/sprites';
 import { buildStatic, doorHorizontal, staticSig } from './scene/staticLayer';
 import type { StaticLayer } from './scene/staticLayer';
@@ -234,6 +234,27 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       pill(ctx, p.interviewed ? '목격자 (청취 완료)' : '목격자', cx(p.x), cy(p.y) + ts * 0.66, ts * 0.27, '#c8d4df');
     } else if (p.kind === 'roadDebris') {
       unit(() => drawRoadDebris(ctx, p.id), cx(p.x), cy(p.y));
+    } else if (p.kind === 'unstable') {
+      // 금이 간 구조물: 지휘관이 알게 되기 전에는 관찰자 시점에서만 보인다
+      const known = !!(cmd && cmd.beliefs.get('haz', p.id));
+      if (!(o.truth || known)) continue;
+      ctx.globalAlpha = known ? 1 : 0.55;
+      unit(() => drawUnstable(ctx, !!p.mitigated, p.id), cx(p.x), cy(p.y));
+      if (!p.mitigated && !MINI) {
+        const lk = p.leak ?? 0, pr = 0.5 + 0.5 * Math.sin(time * (3 + 6 * lk));
+        ctx.strokeStyle = `rgba(255,${Math.round(200 - 110 * lk)},80,${0.35 + 0.45 * pr})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx(p.x), cy(p.y), ts * (0.52 + 0.07 * pr), 0, 7); ctx.stroke();
+        pill(ctx, known ? '균열 — 붕괴 위험' : '(미확인) 균열', cx(p.x), cy(p.y) - ts * 0.72, ts * 0.27, '#ffd166');
+      }
+      ctx.globalAlpha = 1;
+    } else if (p.kind === 'valve') {
+      const known = !!(cmd && cmd.beliefs.get('haz', p.id));
+      const wallAbove = tAt(p.x, p.y - 1) === T.WALL, wallBelow = tAt(p.x, p.y + 1) === T.WALL;
+      unit(() => drawValve(ctx, p.ignited ? 2 : p.mitigated ? 1 : 0), cx(p.x), cy(p.y) + (wallAbove ? -ts * 0.14 : wallBelow ? ts * 0.14 : 0));
+      if (!p.mitigated && !p.ignited && !MINI) {
+        // 새어 나오는 가스
+        for (let k = 0; k < 4; k++) { const ph = (time * 0.9 + k / 4) % 1, a = k * 1.7 + (wallAbove ? 1.57 : wallBelow ? -1.57 : 0); ctx.fillStyle = `rgba(206,232,110,${0.5 * (1 - ph)})`; ctx.beginPath(); ctx.arc(cx(p.x) + Math.cos(a) * ph * ts * 0.9, cy(p.y) + Math.sin(a) * ph * ts * 0.9, ts * (0.1 + 0.26 * ph), 0, 7); ctx.fill(); }
+        if (o.truth || known) pill(ctx, known ? '가스 누출' : '(미확인) 가스 누출', cx(p.x), cy(p.y) - ts * 0.72, ts * 0.27, '#d6f06a');
+      }
     }
   }
 
@@ -266,7 +287,9 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   }
 
   // ── 연기 (아래층) ──
-  const smoke = MINI ? null : smokeLayer(s, ts, time);
+  // 가스 누출 현장의 연기 격자는 새어 나온 가스다 (불이 붙기 전까지는 연두색으로 그린다)
+  const gasTint = s.kind === 'hazmat' && !s.props.some((p) => p.kind === 'valve' && p.ignited) ? 'rgba(198,226,92,0.62)' : undefined;
+  const smoke = MINI ? null : smokeLayer(s, ts, time, gasTint);
   if (MINI) drawSmoke(ctx, s, ts, time); else if (smoke) ctx.drawImage(smoke, 0, 0, W, H);
 
   // ── 사람: 구조 대상 → 용의자 → 대원 ──

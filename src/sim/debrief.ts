@@ -17,7 +17,7 @@ export const PROBLEM_LABEL: Record<ProblemCode, string> = {
   TIMEOUT: '대응 시간 초과', FATIGUE: '대원 체력 고갈', HIDDEN_HAZARD: '숨겨진 위험 발현', RECOUNT: '인원 불일치 재수색', WRONG_ADDRESS: '신고 위치 오류', FALSE_ALARM: '허위·오인 신고',
 };
 
-const RESP_LIMIT: Record<string, number> = { fire: 95, armed: 95, traffic: 105, search: 125, medical: 80 };
+const RESP_LIMIT: Record<string, number> = { fire: 95, armed: 95, traffic: 105, search: 125, medical: 80, collapse: 100, hazmat: 100 };
 
 function addProblem(I: Incident, code: ProblemCode, t: number, eventId: number, detail: string, recovered = false, recoveryText = ''): void {
   if (I.problems.some((p) => p.code === code && p.detail === detail)) return;
@@ -43,7 +43,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   const caught = s.hostiles.filter((h) => h.state === 'arrested' || h.state === 'down').length;
   const escaped = suspectsTotal - caught;
   let flames = 0; for (let i = 0; i < s.fire.length; i++) if (s.fire[i] > 0.2) flames++;      // 꺼져 가는 잔불은 제외
-  const hazardActive = flames > 0 || s.hostiles.some((h) => h.state === 'hold' || h.state === 'fight');
+  const hazardActive = flames > 0 || s.hostiles.some((h) => h.state === 'hold' || h.state === 'fight') || s.props.some((p) => p.kind === 'valve' && !p.mitigated && !p.ignited);
   const responseTime = I.firstArrivalAt >= 0 && I.reportedAt >= 0 ? I.firstArrivalAt - I.reportedAt : -1;
   const dispatchTime = I.firstDispatchAt >= 0 && I.reportedAt >= 0 ? I.firstDispatchAt - I.reportedAt : -1;
   const truth = I.truth;

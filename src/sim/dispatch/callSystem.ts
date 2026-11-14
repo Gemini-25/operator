@@ -40,14 +40,20 @@ const NATURE_TEXT: Record<string, string[]> = {
   notbreathing: ['사람이 쓰러졌는데 숨을 안 쉬어요!', '아버지가 갑자기 쓰러지셨어요. 숨을 안 쉬세요!'],
   collapsed: ['사람이 갑자기 쓰러졌어요.', '가족이 쓰러져서 일어나질 못해요.'],
   fall: ['사람이 계단에서 굴러서 크게 다쳤어요.', '높은 데서 떨어졌어요. 피가 많이 나요.'],
+  collapse: ['건물이 무너졌어요! 한쪽이 그대로 주저앉았어요.', '건물 일부가 무너져 내렸어요. 먼지가 엄청나요!'],
+  rumble: ['쿵 하고 뭔가 무너지는 소리가 났어요.', '땅이 울리더니 큰 소리가 났어요. 먼지가 올라와요.'],
+  gasleak: ['가스 냄새가 심하게 나요! 어디서 새는 것 같아요.', '배관에서 쉬익 소리가 나고 가스 냄새가 지독해요.'],
+  fumes: ['이상한 냄새가 나고 머리가 아파요.', '사람들이 기침하면서 건물에서 나오고 있어요.'],
 };
 /** 신고 키워드 → 사건 유형 가능도 (분석 AI 가 사용) */
-export const NATURE_LIK: Record<string, [number, number, number, number, number]> = {
-  //            fire  traffic search armed medical
-  flames: [0.94, 0.03, 0.01, 0.02, 0.01], smoke: [0.72, 0.18, 0.02, 0.07, 0.01], smell: [0.7, 0.15, 0.05, 0.08, 0.02], explosion: [0.46, 0.27, 0.02, 0.24, 0.01],
-  crash: [0.03, 0.93, 0.01, 0.02, 0.01], bang: [0.22, 0.46, 0.02, 0.28, 0.02], missing: [0.01, 0.01, 0.96, 0.01, 0.01], scream: [0.18, 0.18, 0.1, 0.42, 0.12],
-  gunshots: [0.02, 0.02, 0.01, 0.94, 0.01], robbery: [0.01, 0.01, 0.01, 0.96, 0.01], fight: [0.03, 0.05, 0.02, 0.86, 0.04], hostage: [0.01, 0.01, 0.01, 0.96, 0.01],
-  notbreathing: [0.02, 0.02, 0.01, 0.03, 0.92], collapsed: [0.03, 0.06, 0.04, 0.06, 0.81], fall: [0.02, 0.1, 0.03, 0.05, 0.8],
+export const NATURE_LIK: Record<string, number[]> = {
+  //            fire  traffic search armed medical collapse hazmat
+  flames: [0.94, 0.03, 0.01, 0.02, 0.01, 0.01, 0.02], smoke: [0.72, 0.18, 0.02, 0.07, 0.01, 0.04, 0.06], smell: [0.7, 0.15, 0.05, 0.08, 0.02, 0.01, 0.2], explosion: [0.46, 0.27, 0.02, 0.24, 0.01, 0.12, 0.18],
+  crash: [0.03, 0.93, 0.01, 0.02, 0.01, 0.02, 0.01], bang: [0.22, 0.46, 0.02, 0.28, 0.02, 0.2, 0.04], missing: [0.01, 0.01, 0.96, 0.01, 0.01, 0.01, 0.01], scream: [0.18, 0.18, 0.1, 0.42, 0.12, 0.06, 0.04],
+  gunshots: [0.02, 0.02, 0.01, 0.94, 0.01, 0.01, 0.01], robbery: [0.01, 0.01, 0.01, 0.96, 0.01, 0.01, 0.01], fight: [0.03, 0.05, 0.02, 0.86, 0.04, 0.01, 0.01], hostage: [0.01, 0.01, 0.01, 0.96, 0.01, 0.01, 0.01],
+  notbreathing: [0.02, 0.02, 0.01, 0.03, 0.92, 0.01, 0.03], collapsed: [0.03, 0.06, 0.04, 0.06, 0.81, 0.02, 0.07], fall: [0.02, 0.1, 0.03, 0.05, 0.8, 0.03, 0.01],
+  collapse: [0.03, 0.03, 0.01, 0.01, 0.01, 0.92, 0.01], rumble: [0.1, 0.2, 0.02, 0.1, 0.02, 0.5, 0.06],
+  gasleak: [0.06, 0.01, 0.01, 0.01, 0.02, 0.01, 0.9], fumes: [0.2, 0.02, 0.02, 0.03, 0.18, 0.02, 0.5],
 };
 
 function natureFor(I: Incident, s: Scene, persona: Persona, rng: Rng): { v: string; truthful: boolean; note: string } {
@@ -60,13 +66,15 @@ function natureFor(I: Incident, s: Scene, persona: Persona, rng: Rng): { v: stri
     if ((persona === 'confused' || persona === 'partial') && rng.chance(0.5)) return { v: 'collapsed', truthful: variant !== 'arrest', note: variant === 'arrest' ? '호흡이 없다는 사실을 말하지 못함' : '' };
     return { v: exactM, truthful: true, note: '' };
   }
-  const exact = t === 'fire' ? 'flames' : t === 'traffic' ? 'crash' : t === 'search' ? 'missing' : variant === 'shooter' ? 'gunshots' : variant === 'hostage' ? 'hostage' : variant === 'robbery' ? 'robbery' : 'fight';
+  const exact = t === 'collapse' ? 'collapse' : t === 'hazmat' ? 'gasleak' : t === 'fire' ? 'flames' : t === 'traffic' ? 'crash' : t === 'search' ? 'missing' : variant === 'shooter' ? 'gunshots' : variant === 'hostage' ? 'hostage' : variant === 'robbery' ? 'robbery' : 'fight';
   if (t === 'search') return { v: 'missing', truthful: true, note: '' };
-  const vague = t === 'fire' ? 'smoke' : t === 'traffic' ? 'bang' : 'scream';
+  const vague = t === 'collapse' ? 'rumble' : t === 'hazmat' ? 'fumes' : t === 'fire' ? 'smoke' : t === 'traffic' ? 'bang' : 'scream';
   if (persona === 'calm') return { v: exact, truthful: true, note: '' };
   if (persona === 'panicked') return rng.chance(0.7) ? { v: exact, truthful: true, note: '' } : { v: vague, truthful: true, note: '' };
   if (persona === 'confused' || persona === 'partial') return rng.chance(0.3) ? { v: exact, truthful: true, note: '' } : { v: vague, truthful: true, note: '' };
   // wrong: 실제보다 축소하거나 다른 종류로 오인
+  if (t === 'collapse') return { v: 'explosion', truthful: false, note: '붕괴를 폭발로 오인' };
+  if (t === 'hazmat') return rng.chance(0.5) ? { v: 'collapsed', truthful: false, note: '가스 누출인 줄 모르고 "사람이 쓰러졌다"고만 신고' } : { v: 'smell', truthful: false, note: '가스 냄새를 타는 냄새로 신고' };
   if (t === 'fire') return rng.chance(0.55) ? { v: 'smell', truthful: false, note: '화재를 "타는 냄새" 정도로 축소 신고' } : { v: 'explosion', truthful: false, note: '화재를 폭발음으로 신고' };
   if (t === 'traffic') return rng.chance(0.5) ? { v: 'bang', truthful: false, note: '충돌 사고를 "큰 소리"로만 신고' } : { v: 'explosion', truthful: false, note: '충돌 사고를 폭발로 오인' };
   if (variant === 'dispute') return { v: 'gunshots', truthful: false, note: '단순 난동을 총격으로 과장 신고' };
@@ -120,8 +128,8 @@ export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: 
   put('nature', nat.v, rng.pick(NATURE_TEXT[nat.v]), nat.truthful, nat.note);
   const cas = s.casualties;
   const nTrue = cas.length;
-  const trappedTrue = t === 'fire' ? nTrue > 0 : t === 'armed' ? cas.some((c) => c.hostage) : cas.some((c) => c.mob === 'trapped');
-  const injuredTrue = t === 'fire' ? nTrue > 0 : cas.some((c) => c.mob !== 'mobile' || c.health < 80);
+  const trappedTrue = t === 'fire' || t === 'hazmat' ? nTrue > 0 : t === 'armed' ? cas.some((c) => c.hostage) : cas.some((c) => c.mob === 'trapped');
+  const injuredTrue = t === 'fire' || t === 'hazmat' ? nTrue > 0 : cas.some((c) => c.mob !== 'mobile' || c.health < 80);
   // 부상자 여부
   if (rng.chance(kn)) {
     const ok = rng.chance(acc);
@@ -141,8 +149,8 @@ export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: 
   if (rng.chance(kn) && t !== 'search') {
     const ok = rng.chance(acc);
     const v = ok ? trappedTrue : !trappedTrue;
-    const yes = t === 'fire' ? '안에 아직 사람이 있어요!' : t === 'armed' ? '가게 안에 사람들이 못 나오고 있어요.' : '차 안에 사람이 끼어서 못 나와요.';
-    const no = t === 'fire' ? '사람들은 다 나온 것 같아요.' : t === 'armed' ? '안에 다른 사람은 없는 것 같아요.' : '다들 차 밖으로 나왔어요.';
+    const yes = t === 'collapse' ? '잔해 밑에 사람이 깔려 있어요!' : t === 'fire' || t === 'hazmat' ? '안에 아직 사람이 있어요!' : t === 'armed' ? '가게 안에 사람들이 못 나오고 있어요.' : '차 안에 사람이 끼어서 못 나와요.';
+    const no = t === 'fire' || t === 'hazmat' || t === 'collapse' ? '사람들은 다 나온 것 같아요.' : t === 'armed' ? '안에 다른 사람은 없는 것 같아요.' : '다들 차 밖으로 나왔어요.';
     put('trapped', v, v ? yes : no, ok, ok ? '' : v ? '고립자가 없는데 있다고 신고' : '고립자가 있는데 "다 나왔다"고 신고');
   }
   // 위험 요소
@@ -150,6 +158,10 @@ export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: 
     const gas = s.props.some((p) => p.kind === 'gas');
     if (gas && rng.chance(kn * 0.4)) put('hazard', 'gas', '안에 가스통 같은 게 있어요.', true);
     else if (rng.chance(kn * 0.7)) { const v = I.truth.severity >= 2 ? 'spreading' : 'small'; put('hazard', v, v === 'spreading' ? '불이 옆으로 번지고 있어요.' : '불이 크지는 않아요.', true); }
+  } else if (t === 'collapse') {
+    if (s.props.some((p) => p.kind === 'unstable') && rng.chance(kn * 0.6)) put('hazard', 'unstable', '아직도 뭐가 계속 떨어져요. 더 무너질 것 같아요.', true);
+  } else if (t === 'hazmat') {
+    if (rng.chance(Math.max(kn, 0.5))) put('hazard', 'gas', '가스가 계속 새고 있어요. 냄새가 점점 심해져요.', true);
   } else if (t === 'traffic') {
     const leak = s.props.some((p) => p.kind === 'vehicle' && p.leakRate);
     if (leak && rng.chance(kn * 0.45)) put('hazard', 'leak', '차에서 뭐가 새고 있어요. 기름 냄새가 나요.', true);
@@ -196,9 +208,9 @@ const QUESTION: Record<Topic, Record<string, string>> = {
   location: { any: '정확한 위치가 어디입니까?' },
   nature: { any: '정확히 무엇을 보셨습니까? 불, 사고, 사람 중 무엇입니까?' },
   injured: { medical: '환자가 의식이 있습니까? 불러 보세요.', any: '다친 사람이 있습니까?' },
-  count: { fire: '건물 안에 몇 명이나 있습니까?', traffic: '다친 사람은 모두 몇 명입니까?', armed: '안에 있는 사람은 몇 명입니까?', search: '찾는 분은 몇 명입니까?', medical: '환자는 몇 명입니까?', any: '사람은 몇 명입니까?' },
-  trapped: { fire: '건물 안에 아직 사람이 남아 있습니까?', traffic: '차 안에 갇힌 사람이 있습니까?', armed: '가게 안에 못 나온 사람이 있습니까?', any: '갇힌 사람이 있습니까?' },
-  hazard: { fire: '불이 번지고 있습니까? 위험물이 있습니까?', traffic: '연료가 새거나 연기가 나는 차량이 있습니까?', any: '주변에 다른 위험한 것이 있습니까?' },
+  count: { fire: '건물 안에 몇 명이나 있습니까?', traffic: '다친 사람은 모두 몇 명입니까?', armed: '안에 있는 사람은 몇 명입니까?', collapse: '건물 안에 몇 명이나 있었습니까?', hazmat: '건물 안에 몇 명이나 있습니까?', search: '찾는 분은 몇 명입니까?', medical: '환자는 몇 명입니까?', any: '사람은 몇 명입니까?' },
+  trapped: { collapse: '잔해에 깔리거나 갇힌 사람이 있습니까?', hazmat: '건물 안에 아직 사람이 남아 있습니까?', fire: '건물 안에 아직 사람이 남아 있습니까?', traffic: '차 안에 갇힌 사람이 있습니까?', armed: '가게 안에 못 나온 사람이 있습니까?', any: '갇힌 사람이 있습니까?' },
+  hazard: { collapse: '건물이 더 무너질 것 같습니까?', hazmat: '가스가 계속 새고 있습니까? 근처에 불씨가 있습니까?', fire: '불이 번지고 있습니까? 위험물이 있습니까?', traffic: '연료가 새거나 연기가 나는 차량이 있습니까?', any: '주변에 다른 위험한 것이 있습니까?' },
   weapon: { any: '무기를 가지고 있습니까? 어떤 무기입니까?' },
   detail: { fire: '사람이 있는 위치를 아십니까?', search: '마지막으로 본 곳이 어디입니까?', traffic: '차 밖으로 튕겨 나간 사람이 있습니까?', armed: '용의자는 몇 명입니까?', medical: '환자가 숨을 쉬고 있습니까? 가슴이 오르내리는지 보세요.', any: '더 알려 주실 내용이 있습니까?' },
 };
@@ -211,6 +223,8 @@ const TOPIC_VALUE: Record<string, Partial<Record<Topic, number>>> = {
   search: { detail: 0.92, injured: 0.6, count: 0.55 },
   armed: { weapon: 0.95, injured: 0.82, detail: 0.7, trapped: 0.64, count: 0.5 },
   medical: { detail: 0.95, injured: 0.85, count: 0.3 },
+  collapse: { trapped: 0.94, count: 0.8, injured: 0.62, hazard: 0.6 },
+  hazmat: { hazard: 0.88, trapped: 0.86, count: 0.7, injured: 0.6 },
 };
 
 /** 사건과 무관한 비긴급 전화. [신고자, 접수 AI, 신고자, 접수 AI …] */

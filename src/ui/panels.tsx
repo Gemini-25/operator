@@ -199,7 +199,7 @@ export function DecisionPanel({ sim, director, truth }: { sim: Sim; director: Ca
         <h4>② 상황 분석 AI</h4>
         {as ? (<>
           <div className="probs">
-            {(['fire', 'traffic', 'search', 'armed', 'medical'] as const).map((t) => (
+            {(['fire', 'traffic', 'search', 'armed', 'medical', 'collapse', 'hazmat'] as const).filter((t) => t === 'fire' || t === 'traffic' || t === 'search' || t === 'armed' || t === 'medical' || as.probs[t] >= 0.03).map((t) => (
               <div key={t} className="prob"><span>{TYPE_NAME[t]}</span><Bar v={I!.fieldType ? (I!.fieldType === t ? 1 : 0) : as.probs[t]} color={TYPE_COLOR[t]} w={120} /><span className="num">{pct(I!.fieldType ? (I!.fieldType === t ? 1 : 0) : as.probs[t])}</span></div>
             ))}
           </div>

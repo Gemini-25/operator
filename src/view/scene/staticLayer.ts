@@ -22,7 +22,8 @@ const isBuilding = (t: number): boolean => t === T.FLOOR || t === T.FURN || t ==
 /** 정적 층이 의존하는 값의 요약. 문이 열리는 정도로는 다시 그리지 않는다. */
 export function staticSig(s: Scene): number {
   let h = 2166136261 ^ s.floorMat;
-  for (let i = 0; i < s.tiles.length; i++) h = Math.imul(h ^ (s.tiles[i] + s.decor[i] * 16), 16777619);
+  for (let i = 0; i < s.tiles.length; i++) h = Math.imul(h ^ (s.tiles[i] + s.decor[i] * 16 + s.damage[i] * 512), 16777619);
+  for (const p of s.props) if (p.kind === 'unstable' && p.mitigated) h = Math.imul(h ^ (p.id + 77), 16777619);
   return h >>> 0;
 }
 
@@ -651,6 +652,23 @@ export function buildStatic(s: Scene, R: number, district: string): StaticLayer 
     const cx = (x + 0.5) * R, cy = (y + 0.5) * R;
     oval(g, cx + R * 0.2, cy + R * 0.26, R * 0.62, R * 0.56, 'rgba(6,14,8,0.34)');
     disc(g, cx, cy, R * 0.12, '#3a2a1b'); disc(g, cx - R * 0.02, cy - R * 0.02, R * 0.07, '#5a4129');
+  }
+
+  // 무너진 자리: 먼지 앉은 바닥, 금, 잔 부스러기
+  for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) {
+    const i = y * s.w + x;
+    if (!s.damage[i]) continue;
+    const cx = (x + 0.5) * R, cy = (y + 0.5) * R, hv = (k: number): number => hash2(x * 17 + k, y * 31 + 5);
+    oval(g, cx + (hv(1) - 0.5) * R * 0.3, cy + (hv(2) - 0.5) * R * 0.3, R * (0.62 + 0.2 * hv(3)), R * (0.55 + 0.2 * hv(4)), 'rgba(132,128,120,0.42)', hv(5) * 3);
+    g.strokeStyle = 'rgba(24,22,20,0.55)'; g.lineWidth = Math.max(1, R * 0.03); g.lineCap = 'round'; g.lineJoin = 'round';
+    g.beginPath(); let px = cx + (hv(6) - 0.5) * R * 0.8, py = cy + (hv(7) - 0.5) * R * 0.8; g.moveTo(px, py);
+    for (let k = 0; k < 4; k++) { px += (hv(10 + k) - 0.5) * R * 0.5; py += (hv(20 + k) - 0.5) * R * 0.5; g.lineTo(px, py); }
+    g.stroke();
+    for (let k = 0; k < 7; k++) {
+      const rx = cx + (hv(30 + k) - 0.5) * R * 0.95, ry = cy + (hv(40 + k) - 0.5) * R * 0.95, rad = R * (0.03 + 0.06 * hv(50 + k));
+      g.fillStyle = ['#8d867a', '#6a645b', '#a59d90', '#57524b'][k % 4];
+      g.beginPath(); g.moveTo(rx - rad, ry); g.lineTo(rx - rad * 0.2, ry - rad); g.lineTo(rx + rad, ry - rad * 0.3); g.lineTo(rx + rad * 0.5, ry + rad); g.closePath(); g.fill();
+    }
   }
 
   // 7) 건물: 벽 그림자 → 가구 → 벽 → 창 → 문턱

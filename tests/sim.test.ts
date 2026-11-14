@@ -300,8 +300,8 @@ describe('실내 전술 (무장 사건)', () => {
   });
   it('인질 사건이 발생하고, 섬광탄·기습·시한 같은 전술 요소가 실제로 쓰인다', () => {
     let hostage = 0, bangs = 0, breaches = 0, surprised = 0, caught = 0;
-    for (let k = 0; k < 40; k++) {
-      const s = new Sim('S' + k); s.runToEnd();
+    for (let k = 0; k < 70; k++) {
+      const s = new Sim('S' + k, { ...NORMAL, threat: 4 }); s.runToEnd();      // 무장 사건이 넉넉히 나오는 조건
       for (const I of s.incidents) if (I.truth.variant === 'hostage') { hostage++; if (I.result!.suspectsCaught > 0) caught++; }
       for (const e of s.events) { if (e.text.startsWith('섬광탄 투척') || e.text.includes('섬광탄을 던져 넣고')) bangs++; if (e.text.startsWith('진입!')) breaches++; if (e.text.includes('기습당했습니다')) surprised++; }
     }
@@ -310,5 +310,40 @@ describe('실내 전술 (무장 사건)', () => {
     expect(breaches).toBeGreaterThan(3);
     expect(bangs).toBeGreaterThan(1);
     expect(surprised).toBeGreaterThan(0);
-  }, 60000);
+  }, 120000);
+});
+
+describe('건물 붕괴 · 가스 누출', () => {
+  it('두 유형이 실제로 발생하고, 위험 요소(균열부·가스 배관)가 조치되거나 터지며, 대부분 한계 시간 안에 끝난다', () => {
+    let collapse = 0, hazmat = 0, shored = 0, unstable = 0, closed = 0, ignited = 0, valves = 0, timeouts = 0, secondary = 0;
+    for (let k = 0; k < 30; k++) {
+      const s = new Sim('S' + k); s.runToEnd();
+      for (const I of s.incidents) {
+        const t = I.truth.type;
+        if (t !== 'collapse' && t !== 'hazmat') continue;
+        const sc = s.scenes[I.id]!;
+        if (t === 'collapse') collapse++; else hazmat++;
+        if (I.closeReason === 'timeout') timeouts++;
+        for (const p of sc.props) {
+          if (p.kind === 'unstable') { unstable++; if (p.mitigated) shored++; }
+          if (p.kind === 'valve') { valves++; if (p.mitigated) closed++; if (p.ignited) ignited++; }
+        }
+        if (I.problems.some((p) => p.code === 'ESCALATION' && p.detail.includes('2차 붕괴'))) secondary++;
+        // 무너질 수 있거나 가스가 찬 건물 안에서는 소방만 구출·수색을 맡는다
+        for (const w of sc.board) if ((w.kind === 'extricate' || w.kind === 'search') && w.status === 'done') for (const rid of w.assignees) expect(s.responders[rid].dept).toBe('fire');
+      }
+    }
+    expect(collapse).toBeGreaterThan(5);
+    expect(hazmat).toBeGreaterThan(5);
+    expect(shored).toBeGreaterThan(unstable * 0.5);
+    expect(closed + ignited).toBeGreaterThan(valves * 0.8);
+    expect(closed).toBeGreaterThan(ignited);
+    expect(secondary).toBeGreaterThan(0);
+    expect(timeouts).toBeLessThan((collapse + hazmat) * 0.2);
+  }, 120000);
+
+  it('신고 키워드 표의 열 수가 사건 유형 수와 같다', async () => {
+    const { NATURE_LIK } = await import('../src/sim/dispatch/callSystem');
+    for (const k of Object.keys(NATURE_LIK)) expect(NATURE_LIK[k].length).toBe(7);
+  });
 });

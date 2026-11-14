@@ -191,7 +191,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         if (evid || (!wrecksPending && expected > found)) { pendingSearch++; want(sim, s, 'search', { region: r.id }, 0.64, 1, sim.weather !== 'clear' || c >= 0); }
         continue;
       }
-      if (s.kind !== 'fire' && s.kind !== 'armed' && s.kind !== 'medical') continue;
+      if (s.kind !== 'fire' && s.kind !== 'armed' && s.kind !== 'medical' && s.kind !== 'collapse' && s.kind !== 'hazmat') continue;
       if (s.kind === 'medical' && found >= 1) continue;      // 환자를 찾았으면 더 수색하지 않는다
       if (c >= th) continue;
       const fl = B.val<number>('fire', r.id) ?? 0;
@@ -203,7 +203,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       for (const f of fires) if (f.value > 0.3 && f.id !== r.id && Math.abs(s.regions[f.id].cx - r.cx) + Math.abs(s.regions[f.id].cy - r.cy) < 9) { pr += 0.1; break; }
       want(sim, s, 'search', { region: r.id }, Math.min(0.88, pr), 1, c >= 0 || s.researchRound > 0);
     }
-    if ((s.kind === 'fire' || s.kind === 'traffic') && pendingSearch === 0 && expected > found && s.researchRound < 1 && s.sizeupDone) {
+    if ((s.kind === 'fire' || s.kind === 'traffic' || s.kind === 'collapse' || s.kind === 'hazmat') && pendingSearch === 0 && expected > found && s.researchRound < 1 && s.sizeupDone) {
       s.researchRound = 1;
       // 수색을 마친 구역의 확인율을 낮춰 잡고(=놓쳤을 수 있다고 보고) 간격을 좁혀 다시 본다
       const redo = [];
@@ -243,7 +243,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         continue;
       }
       const rg = s.region[c.y * s.w + c.x];
-      const indoorHazard = s.kind === 'fire' || (rg >= 0 && (B.val<number>('fire', rg) ?? 0) > 0.1);
+      const indoorHazard = s.kind === 'fire' || s.kind === 'hazmat' || s.kind === 'collapse' || (rg >= 0 && (B.val<number>('fire', rg) ?? 0) > 0.1);
       const hasMedic = s.agents.some((b) => b.status === 'active' && sim.responders[b.rid].dept === 'ems');
       // 처치가 필요한가: 아직 아무 처치도 못 받았거나, 기본 처치만 받았는데 구급대원이 와 있다
       const needTreat = c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedic));
@@ -288,6 +288,8 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   if (fireRegions > 0 && fireUnits === 0) request(sim, s, I, a, 'suppression', '화재가 확인됐으나 진압 부대가 없음', true);
   else if ((fireSum >= 2.0 || fireRegions >= 3) && fireUnits < 2) request(sim, s, I, a, 'suppression', `화재가 ${fireRegions}개 구역으로 확대`, true);
   if (cas.some((f) => f.value.mob === 'trapped' && f.value.band < 3 && f.value.where === 'scene') && countUnits(sim, s, I, 'rescue', 0.5) === 0) request(sim, s, I, a, 'rescue', '고립된 구조 대상이 있으나 구조 장비가 없음', true);
+  // 가스가 찼거나 무너질 수 있는 건물: 소방 부대가 없으면 아무도 들어갈 수 없다
+  if ((s.kind === 'hazmat' || s.kind === 'collapse') && s.sizeupDone && countUnits(sim, s, I, 'rescue', 0.5) + fireUnits === 0) request(sim, s, I, a, 'rescue', s.kind === 'hazmat' ? '가스가 찬 건물에 진입할 소방 부대가 없음' : '붕괴 건물에 진입할 구조 부대가 없음', true);
   const patients = cas.filter((f) => f.value.band >= 1 && f.value.band < 3 && (f.value.where === 'scene' || f.value.where === 'carried' || f.value.where === 'safe'));
   const emsUnits = countUnits(sim, s, I, 'ems', 0.7);
   if (patients.length > 0 && emsUnits === 0) request(sim, s, I, a, 'ems', `부상자 ${patients.length}명 확인, 구급 부대 없음`, patients.some((f) => f.value.band === 2));

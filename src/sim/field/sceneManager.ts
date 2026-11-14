@@ -14,7 +14,7 @@ import { outstanding } from './commander';
 import { buildScene } from './builders';
 import { act, finishTask } from './executor';
 import { tileOf } from './grid';
-import { tickCasualties, tickFire, tickHostiles, tickLane, tickLeaks } from './hazards';
+import { tickCasualties, tickCollapse, tickFire, tickGas, tickHostiles, tickLane, tickLeaks } from './hazards';
 
 export function createScene(sim: Sim, I: Incident): Scene {
   const s = buildScene(sim, I, sim.rng.fork('scene:' + I.id));
@@ -145,7 +145,7 @@ function agentHealth(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   }
 }
 
-const LIMIT: Record<string, number> = { fire: 430, traffic: 400, search: 470, armed: 400, medical: 300 };
+const LIMIT: Record<string, number> = { fire: 430, traffic: 400, search: 470, armed: 400, medical: 300, collapse: 470, hazmat: 430 };
 
 export function tickScene(sim: Sim, s: Scene): void {
   if (s.archived) return;
@@ -156,7 +156,8 @@ export function tickScene(sim: Sim, s: Scene): void {
     tickHostiles(sim, s, I);
     tickLane(sim, s, I);
     tickLeaks(sim, s, I);
-    if ((sim.tick + s.id) % 5 === 0) tickFire(sim, s, I);
+    if (s.kind === 'collapse') tickCollapse(sim, s, I);
+    if ((sim.tick + s.id) % 5 === 0) { tickFire(sim, s, I); if (s.kind === 'hazmat') tickGas(sim, s, I); }
   }
   // 2) 무전
   deliverRadio(sim, s, I);

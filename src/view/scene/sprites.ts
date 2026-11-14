@@ -401,3 +401,31 @@ export function drawDoorLeaf(g: G, open: number, side: number, burned: boolean, 
     disc(g, 0, 0.035, 0.022, '#3a0f0c');
   }
 }
+
+/** 금이 간 기둥. 보강한 뒤에는 지지대가 세워진다. */
+export function drawUnstable(g: G, shored: boolean, seed: number): void {
+  const h = (k: number): number => hash2(seed * 29 + k, 11);
+  oval(g, 0.05, 0.07, 0.36, 0.34, 'rgba(0,0,0,0.36)');
+  rr(g, -0.3, -0.3, 0.6, 0.6, 0.04, '#6f7479'); rr(g, -0.26, -0.26, 0.52, 0.52, 0.03, '#9aa0a5');
+  g.strokeStyle = '#2a2d30'; g.lineWidth = 0.035; g.lineCap = 'round'; g.lineJoin = 'round';
+  g.beginPath(); g.moveTo(-0.24, -0.2 + h(1) * 0.1); g.lineTo(-0.08, -0.04); g.lineTo(-0.02 + h(2) * 0.08, 0.02); g.lineTo(0.1, 0.16); g.lineTo(0.24, 0.2); g.stroke();
+  g.lineWidth = 0.02; g.beginPath(); g.moveTo(-0.08, -0.04); g.lineTo(0.06, -0.2); g.moveTo(0.1, 0.16); g.lineTo(-0.04, 0.26); g.stroke();
+  for (let k = 0; k < 5; k++) { g.fillStyle = k % 2 ? '#8b8f93' : '#5f6468'; g.fillRect(-0.44 + h(10 + k) * 0.88, 0.3 + h(20 + k) * 0.14, 0.06, 0.05); }
+  if (shored) {
+    for (const [x0, y0, x1, y1] of [[-0.46, -0.46, -0.3, 0.46], [0.3, -0.46, 0.46, 0.46]]) { rr(g, x0, y0, x1 - x0, y1 - y0, 0.02, '#6b4a2a'); rr(g, x0 + 0.03, y0 + 0.03, x1 - x0 - 0.06, y1 - y0 - 0.06, 0.01, '#b98d56'); }
+    seg(g, -0.38, -0.4, 0.38, 0.4, 0.07, '#6b4a2a'); seg(g, -0.38, -0.4, 0.38, 0.4, 0.035, '#c79a60');
+    seg(g, 0.38, -0.4, -0.38, 0.4, 0.07, '#6b4a2a'); seg(g, 0.38, -0.4, -0.38, 0.4, 0.035, '#c79a60');
+    for (const [bx, by] of [[-0.38, -0.4], [0.38, -0.4], [-0.38, 0.4], [0.38, 0.4]]) disc(g, bx, by, 0.035, '#d9dde1');
+  }
+}
+/** 가스 배관과 밸브. state: 0 새는 중, 1 차단됨, 2 불이 붙었음 */
+export function drawValve(g: G, state: number): void {
+  oval(g, 0.04, 0.08, 0.5, 0.3, 'rgba(0,0,0,0.36)');
+  rr(g, -0.5, -0.14, 1.0, 0.28, 0.05, state === 2 ? '#2b2724' : '#7d868e'); rr(g, -0.5, -0.1, 1.0, 0.09, 0.03, state === 2 ? '#3a3531' : '#b4bcc3');
+  for (const fx of [-0.34, 0.34]) { rr(g, fx - 0.06, -0.2, 0.12, 0.4, 0.03, state === 2 ? '#1f1c1a' : '#59626b'); for (const by of [-0.15, 0.15]) disc(g, fx, by, 0.022, '#c9d0d6'); }
+  rr(g, -0.09, -0.24, 0.18, 0.48, 0.04, state === 2 ? '#241f1c' : '#4d555d');
+  const wheel = state === 1 ? '#3fae6a' : state === 2 ? '#3a2a22' : '#d8423a';
+  g.strokeStyle = wheel; g.lineWidth = 0.055; g.beginPath(); g.arc(0, 0, 0.2, 0, 6.2832); g.stroke();
+  g.lineWidth = 0.04; for (let k = 0; k < 3; k++) { const a = (k / 3) * Math.PI; g.beginPath(); g.moveTo(Math.cos(a) * 0.2, Math.sin(a) * 0.2); g.lineTo(-Math.cos(a) * 0.2, -Math.sin(a) * 0.2); g.stroke(); }
+  disc(g, 0, 0, 0.055, '#e8edf2');
+}

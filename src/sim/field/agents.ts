@@ -168,6 +168,14 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
       }
     } else if (p.kind === 'gas') {
       if (!p.exploded && d <= 3.5 && !a.beliefs.get('haz', p.id) && los(s, a.x, a.y, p.x, p.y)) learn(sim, a, mkFact('haz', p.id, { kind: 'gas', active: true, x: p.x, y: p.y }, me, sim.t, 1, true, `${regionNameAt(s, p.x, p.y)}에 가스 용기 확인 — 폭발 위험`));
+    } else if (p.kind === 'unstable' || p.kind === 'valve') {
+      if (d <= (p.kind === 'valve' ? 4.5 : r.judgment >= 0.45 ? 4 : 2.6) && los(s, a.x, a.y, p.x, p.y)) {
+        const active = !p.mitigated && !p.ignited;
+        const cur = a.beliefs.get('haz', p.id);
+        const where = regionNameAt(s, p.x, p.y);
+        const text = p.kind === 'valve' ? (active ? `${where} 배관에서 가스 누출 확인 — 밸브 차단 필요` : p.ignited ? '누출 가스 발화' : '가스 밸브 차단 확인') : active ? `${where} 구조물 균열 확인 — 추가 붕괴 위험, 보강 필요` : '균열부 보강 확인';
+        if (!cur || cur.value.active !== active) learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active, x: p.x, y: p.y }, me, sim.t, 1, true, text));
+      }
     } else if (p.kind === 'vehicle') {
       if (p.leakRate && d <= (r.judgment >= 0.45 ? 2.8 : 1.7)) {
         const active = !p.mitigated && !p.ignited;
@@ -297,7 +305,8 @@ export function workLabel(s: Scene, w: WorkItem): string {
   const cas = w.cas >= 0 ? `구조 대상 ${s.casualties[w.cas].label}` : '';
   const names: Record<WorkKind, string> = {
     sizeup: '현장 평가', search: `${reg} ${w.thorough ? '정밀 ' : ''}수색`, suppress: `${reg} 화재 진압`, hookup: '소화전 연결', clear: '잔해 제거', force: '문 강제 개방',
-    extricate: `${cas} 구출`, treat: `${cas} 응급 처치`, carry: `${cas} 이송`, load: `${cas} 구급차 탑승`, traffic: '교통 통제', mitigate: '연료 누출 조치',
+    extricate: `${cas} 구출`, treat: `${cas} 응급 처치`, carry: `${cas} 이송`, load: `${cas} 구급차 탑승`, traffic: '교통 통제',
+    mitigate: w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? '균열부 보강' : w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'valve' ? '가스 밸브 차단' : '연료 누출 조치',
     perimeter: `${w.tile === 0 ? '정문' : '후문'} 봉쇄`, negotiate: '협상', engage: '용의자 대응', arrest: '용의자 검거', interview: '목격자 면담', clearRoad: '도로 정리', rescueMate: '동료 구조', escort: `${cas} 동행`,
   };
   return names[w.kind];
@@ -307,7 +316,7 @@ export function workLabel(s: Scene, w: WorkItem): string {
 export function fitFor(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number {
   const r = resp(sim, a), u = sim.units[a.unitId];
   const hot = s.kind === 'armed' && s.secureAt < 0;
-  const fireRisk = (regionId: number): boolean => regionId >= 0 && ((a.beliefs.val<number>('fire', regionId) ?? 0) > 0.25 || s.kind === 'fire');
+  const fireRisk = (regionId: number): boolean => regionId >= 0 && ((a.beliefs.val<number>('fire', regionId) ?? 0) > 0.25 || s.kind === 'fire' || s.kind === 'hazmat' || s.kind === 'collapse');      // 불이 났거나, 가스가 찼거나, 무너질 수 있는 건물 안은 소방만 들어간다
   switch (w.kind) {
     case 'sizeup': return a.isCommander ? 1 : 0;
     case 'search':
@@ -317,7 +326,7 @@ export function fitFor(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number {
     case 'suppress': return r.skills.fire >= 0.35 && !u.pumpFailed && (u.water > 0 || u.hydrant) ? r.skills.fire : 0;
     case 'hookup': return r.dept === 'fire' && a.unitId === w.prop ? 0.8 : 0;
     case 'clear': case 'force': return 0.3 + r.skills.rescue * 0.5 + u.tool * 0.3;
-    case 'extricate': { const f = r.skills.rescue * (0.35 + 0.65 * u.tool); return f >= 0.2 || sim.t - w.createdAt > 25 ? Math.max(0.05, f) : 0; }
+    case 'extricate': { if ((s.kind === 'collapse' || s.kind === 'hazmat') && r.dept !== 'fire') return 0; const f = r.skills.rescue * (0.35 + 0.65 * u.tool); return f >= 0.2 || sim.t - w.createdAt > 25 ? Math.max(0.05, f) : 0; }
     case 'treat': {
       if (hot && r.dept !== 'police') return 0;
       const cb = a.beliefs.val<CasBelief>('cas', w.cas);
@@ -327,12 +336,13 @@ export function fitFor(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number {
     case 'carry': case 'escort': {
       if (hot && r.dept !== 'police') return 0;
       const cb = a.beliefs.val<CasBelief>('cas', w.cas);
+      if (!cb && (s.kind === 'collapse' || s.kind === 'hazmat') && r.dept !== 'fire') return 0;      // 어디에 있는지 아직 전달받지 못했다 — 위험한 건물 안일 수 있다
       if (cb && cb.where === 'scene') { const rg = s.region[cb.y * s.w + cb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg) && r.dept !== 'fire') return 0; }
       return 0.4 + 0.4 * r.fitness + (r.dept === 'ems' ? 0.1 : 0);
     }
     case 'load': return r.dept === 'ems' && u.patients.length < 2 && a.unitId === w.prop ? 1 : 0;
     case 'traffic': return r.dept === 'police' ? 1 : 0.45;
-    case 'mitigate': return r.skills.fire >= 0.3 ? r.skills.fire : 0;
+    case 'mitigate': { const k = w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? r.skills.rescue : r.skills.fire; return k >= 0.3 ? k : 0; }
     case 'perimeter': case 'engage': case 'arrest': return r.dept === 'police' ? 0.5 + r.skills.law * 0.5 : 0;
     case 'negotiate': return r.dept === 'police' ? 0.3 + r.composure * 0.35 + r.experience * 0.35 : 0;
     case 'interview': return r.dept === 'police' ? 1 : 0.6;

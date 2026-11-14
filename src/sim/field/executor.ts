@@ -532,15 +532,18 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     }
     case 'mitigate': {
       const p = s.props[t.prop];
-      if (p.mitigated || p.ignited) { learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y }, r.name, sim.t, 1, true, p.ignited ? '누출 연료 발화' : '연료 누출 조치 완료'), true, true); finishTask(sim, s, a, true); return; }
+      const doneText = p.kind === 'unstable' ? '균열부 보강 완료' : p.kind === 'valve' ? (p.ignited ? '누출 가스 발화' : '가스 밸브 차단 완료') : p.ignited ? '누출 연료 발화' : '연료 누출 조치 완료';
+      if (p.mitigated || p.ignited) { learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y }, r.name, sim.t, 1, true, doneText), true, true); finishTask(sim, s, a, true); return; }
       const m = moveTo(sim, s, a, p.x, p.y, 1.6);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
-      t.need = 7 / (0.5 + r.skills.fire); t.progress += dt; a.ring = t.progress / t.need;
+      t.need = p.kind === 'unstable' ? 13 / (0.5 + r.skills.rescue) : (p.kind === 'valve' ? 9 : 7) / (0.5 + r.skills.fire);
+      t.progress += dt; a.ring = t.progress / t.need;
       if (t.progress >= t.need) {
         p.mitigated = true;
-        learnQuiet(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y }, r.name, sim.t, 1, true, '연료 누출 조치 완료'));
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: '연료 누출 차단 완료. 발화 위험을 제거했습니다.' });
+        learnQuiet(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y }, r.name, sim.t, 1, true, doneText));
+        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: p.kind === 'unstable' ? '균열부에 지지대를 세웠습니다. 추가 붕괴 위험을 줄였습니다.' : p.kind === 'valve' ? '가스 밸브 차단 완료. 누출이 멈췄습니다.' : '연료 누출 차단 완료. 발화 위험을 제거했습니다.' });
+        if (p.kind === 'unstable') s.staticVersion++;
         r.xpGained += 0.003;
         finishTask(sim, s, a, true);
       }

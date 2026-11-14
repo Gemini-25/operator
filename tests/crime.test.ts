@@ -197,9 +197,42 @@ describe('도주 차량과 은신처', () => {
         }
       }
     }
-    expect(dens, '은신처로 향한 납치').toBeGreaterThanOrEqual(1);
-    expect(chained + followed, '도주 차량 또는 은신처에서 이어진 사건').toBeGreaterThanOrEqual(1);
+    // 드문 일이라(달아난 용의자의 35%, 납치의 40%) 40번의 교대에서 한두 건씩만 나온다. 일어나는지는 위·아래의 직접 확인이 맡는다
+    expect(dens + chained + followed, '은신처로 향한 납치·도주 차량·이어진 인질 사건').toBeGreaterThanOrEqual(1);
     expect(followed).toBeLessThanOrEqual(hidden);
+  });
+
+  it('납치범 열에 넷은 외진 창고·작업장으로 향하고, 들키지 않고 숨어들면 그 건물에서 인질 사건이 이어진다', () => {
+    let dens = 0, hidden = 0, followed = 0, n = 0;
+    for (let k = 0; k < 30; k++) {
+      const sim = new Sim('HIDE' + k);
+      sim.run(60);
+      const I = createIncident(sim, { type: 'armed', variant: 'kidnap', rng: sim.rng.fork('t') });
+      const p = I.pursuit!;
+      expect(p.kind).toBe('kidnap'); n++;
+      if (p.hideout === undefined) { expect(sim.city.nodes[p.goal].exit).toBe(true); continue; }      // 나머지는 예전처럼 도시 밖으로 달아난다
+      dens++;
+      const den = sim.city.places[p.hideout], from = sim.city.nodes[I.truth.nodeId];
+      expect(['warehouse', 'workshop']).toContain(den.kind);
+      expect(p.goal).toBe(den.nodeId);
+      expect(Math.hypot(den.x + den.w / 2 - from.x, den.y + den.h / 2 - from.y)).toBeGreaterThanOrEqual(500);      // 납치한 곳에서 멀리 떨어진 곳
+      sim.runToEnd();
+      expect(I.phase).toBe('closed');
+      const next = sim.incidents.filter((q) => q.parent === I.id && q.truth.variant === 'hostage');
+      if (p.how === 'hideout') {
+        hidden++;
+        expect(p.state).toBe('escaped'); expect(I.closeReason).toBe('abandoned');
+        expect(I.problems.some((q) => q.code === 'SUSPECT_FLED')).toBe(true);
+        expect(next.length).toBeLessThanOrEqual(1);
+        for (const H of next) { followed++; expect(H.truth.placeId).toBe(p.hideout); expect(H.createdAt).toBeGreaterThanOrEqual(I.closedAt + 39); expect(H.phase).toBe('closed'); }
+      } else {
+        expect(next.length, `${sim.seed}: 숨어들지 못했는데 인질 사건이 이어졌다`).toBe(0);
+        if (p.state === 'stopped') expect(['caught', 'block', 'crash']).toContain(p.how);
+      }
+    }
+    expect(dens).toBeGreaterThanOrEqual(6); expect(dens).toBeLessThan(n * 0.7);
+    expect(hidden).toBeGreaterThanOrEqual(2);
+    expect(followed).toBeGreaterThanOrEqual(1);
   });
 });
 

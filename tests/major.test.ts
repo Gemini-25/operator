@@ -147,21 +147,25 @@ describe('대형 사고의 현장', () => {
 describe('시나리오별 규칙', () => {
   it('다중 추돌: 사건 동안 고속도로 구간이 통제되고, 끝나면 풀린다', () => {
     for (const seed of ['MA', 'MB', 'MC']) {
-      const { sim, I, sc } = spawn(seed, 'traffic', 'pileup');
+      const sim = new Sim(seed);
+      sim.run(60);
+      const before = sim.city.edges.map((q) => q.slow);
+      const I = createIncident(sim, { type: 'traffic', variant: 'pileup', rng: sim.rng.fork('major-test') }), sc = sim.scenes[I.id]!;
       expect(I.truth.placeId).toBe(-1);
       expect(sim.city.nodes[I.truth.nodeId].edges.some((e) => sim.city.edges[e].cls === 'highway')).toBe(true);
       expect(I.blockedEdge, seed).toBeGreaterThanOrEqual(0);
       const e = sim.city.edges[I.blockedEdge];
       expect(e.cls).toBe('highway'); expect(e.closed).toBe(true); expect(e.closedReason).toBe('incident');
+      expect(e.slow).toBeCloseTo(before[e.id] + 1.4, 6);
       expect(sim.events.some((ev) => ev.kind === 'traffic' && ev.text.indexOf('전면 통제') >= 0 && ev.text.indexOf('다중 추돌') >= 0)).toBe(true);
-      // 평소 교통사고가 느리게 만들던 다른 구간은 되돌려져 있다
-      for (const k of sim.city.nodes[I.truth.nodeId].edges) if (k !== e.id) expect(sim.city.edges[k].slow).toBe(0);
+      // 평소 교통사고라면 느려졌을 다른 구간은 그대로다 (느리게 했던 것을 되돌렸다)
+      for (const q of sim.city.edges) if (q.id !== e.id) expect(q.slow, `${seed} 구간 ${q.id}`).toBeCloseTo(before[q.id], 6);
       expect(sc.props.filter((p) => p.kind === 'vehicle').length).toBeGreaterThanOrEqual(5);
       expect(sc.props.filter((p) => p.kind === 'vehicle' && p.leakRate).length).toBe(2);
       expect(sc.laneRows.length).toBe(2);      // 옆 차로로는 차가 계속 지나간다
       for (let k = 0; k < 9000 && I.phase !== 'closed'; k++) sim.step();
       expect(I.phase).toBe('closed');
-      expect(e.closedReason).not.toBe('incident'); expect(e.slow).toBe(0);
+      expect(e.closedReason).not.toBe('incident'); expect(e.slow).toBeCloseTo(before[e.id], 6);
       if (e.closedReason === null) expect(e.closed).toBe(false);
     }
   }, 120000);

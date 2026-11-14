@@ -1,11 +1,11 @@
 // ResourceManager — 부대·대원 명부, 차량 상태와 도시 지도 위 이동.
 
-import { edgeName, edgeTime, findRoute, nodeName, weatherSpeedFactor } from './city';
+import { COLS, ROWS, edgeName, edgeTime, findRoute, nodeName, weatherSpeedFactor } from './city';
 import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
 import { unitArrived } from './field/sceneManager';
 import { Rng } from './rng';
-import type { Dept, Incident, Responder, Unit, UnitCaps, UnitKind } from './types';
+import type { Dept, Incident, Needs, Responder, Unit, UnitCaps, UnitKind } from './types';
 import { clamp, fmtSec } from './util';
 
 const NAMES = ['김도윤', '이서준', '박하준', '최민재', '정지호', '강현우', '윤서연', '한지민', '오수아', '임채원', '신유나', '조은서',
@@ -83,6 +83,60 @@ export function createRoster(sim: Sim): void {
     };
     sim.units.push(u);
   });
+}
+
+const AID_NAMES = ['한도현', '서지우', '문태윤', '양서아', '고준혁', '배하린', '남건우', '유채원', '심재민', '노은서', '하승우', '전소율', '곽민석', '우다인', '진현수', '방예린'];
+const AID_KIND: Record<keyof Needs, UnitKind> = { suppression: 'engine', rescue: 'rescue', ems: 'bls', law: 'patrol', tactical: 'tactical', search: 'patrol', traffic: 'patrol' };
+const AID_CALL: Record<UnitKind, string> = { engine: '지원진압', rescue: '지원구조', als: '지원구급', bls: '지원구급', patrol: '지원순찰', tactical: '지원기동' };
+
+/**
+ * 인근 도시 지원 부대를 만든다. 도시 가장자리의 교차로 가운데 사건 현장에 가장 빨리 닿는 곳에서 출발한다.
+ * 임무를 마치고 그 자리로 돌아가면 관할로 복귀한 것으로 보고 다시 쓰지 않는다.
+ */
+export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | null {
+  const kind = AID_KIND[key], d = UNIT_DEFS.find((q) => q.kind === kind)!;
+  const wf = weatherSpeedFactor(sim);
+  let home = -1, bt = Infinity;
+  for (const n of sim.city.nodes) {
+    if (n.c !== 0 && n.c !== COLS - 1 && n.r !== 0 && n.r !== ROWS - 1) continue;
+    const rt = findRoute(sim.city, n.id, I.reportedNode, wf);
+    if (rt && rt.time < bt) { bt = rt.time; home = n.id; }
+  }
+  if (home < 0) return null;
+  const rng = sim.rng.fork('aid:' + sim.aidUsed), tn = sim.tune;
+  const uid = sim.units.length, crew: number[] = [];
+  for (let k = 0; k < 2; k++) {
+    const senior = k === 0;
+    const st = (): number => clamp(rng.range(0.3, 0.9), 0, 1);
+    const exp = senior ? rng.range(0.55, 0.9) : rng.range(0.15, 0.55);
+    const skill = clamp(st() * 0.6 + exp * 0.4 + 0.05, 0.3, 0.95);
+    const r: Responder = {
+      id: sim.responders.length, name: AID_NAMES[(sim.aidUsed * 2 + k) % AID_NAMES.length], dept: d.dept, unitId: uid, senior,
+      skill, judgment: clamp(st() * 0.65 + exp * 0.35, 0.2, 0.95), composure: st(), fitness: st(), teamwork: st() * 0.85, experience: exp,
+      skills: { fire: 0.05, rescue: 0.2, medical: 0.2, law: 0.05 },
+      trait: '', health: 100, stamina: 88, status: 'ok', xpGained: 0, incidentsWorked: 0,
+    };
+    if (d.dept === 'fire') r.skills = kind === 'rescue' ? { fire: skill * 0.75, rescue: skill, medical: 0.35, law: 0.05 } : { fire: skill, rescue: skill * 0.6, medical: 0.3, law: 0.05 };
+    else if (d.dept === 'ems') r.skills = { fire: 0.05, rescue: 0.25, medical: skill, law: 0.05 };
+    else r.skills = { fire: 0.05, rescue: 0.22, medical: 0.22, law: clamp(skill + (kind === 'tactical' ? 0.06 : 0), 0, 1) };
+    r.trait = traitOf(r);
+    crew.push(r.id); sim.responders.push(r);
+  }
+  const n = sim.city.nodes[home];
+  const same = sim.units.filter((q) => q.aid && q.kind === kind).length;
+  const u: Unit = {
+    id: uid, callsign: AID_CALL[kind] + (same + 1), dept: d.dept, kind, crew, homeNode: home, homeName: '인근 도시',
+    state: 'available', x: n.x, y: n.y, px: n.x, py: n.y, nodeId: home,
+    route: null, seg: 0, segT: 0, pendingDest: null, destNode: null, incidentId: null, timer: 0,
+    caps: d.caps, water: d.waterMax * tn.waterMul, waterMax: d.waterMax * tn.waterMul, hydrant: false,
+    pumpCond: d.dept === 'fire' ? rng.range(0.6, 0.95) : 1, pumpFailed: false,
+    tool: Math.min(1.15, d.tool * tn.toolMul), medLevel: Math.min(1.1, d.med * tn.medMul), armor: Math.min(0.8, d.armor * tn.armorMul),
+    flashbangs: kind === 'tactical' ? Math.min(2, tn.flashbangs) : 0,
+    patients: [], patientsIncident: null,
+    dispatchedAt: -1, estArrive: -1, diverted: false, busyTime: 0, runs: 0, boardOrder: null, aid: true,
+  };
+  sim.units.push(u);
+  return u;
 }
 
 export function crewNames(sim: Sim, u: Unit): string { return u.crew.map((r) => sim.responders[r].name).join('·'); }
@@ -177,8 +231,9 @@ function arrive(sim: Sim, u: Unit): void {
   } else if (u.state === 'returning') {
     u.water = u.waterMax; u.hydrant = false;
     if (u.pumpFailed) { u.pumpFailed = false; u.pumpCond = 0.55; }
-    u.state = crewReady(sim, u) === 0 ? 'oos' : 'available';
-    if (u.state === 'oos') emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', text: `${u.callsign} 대원 전원 부상으로 운용 중단.`, imp: 2 });
+    u.state = crewReady(sim, u) === 0 || u.aid ? 'oos' : 'available';
+    if (u.aid) emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', text: `${u.callsign}: 지원 임무를 마치고 관할로 복귀했습니다.`, imp: 1 });
+    else if (u.state === 'oos') emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', text: `${u.callsign} 대원 전원 부상으로 운용 중단.`, imp: 2 });
   }
 }
 

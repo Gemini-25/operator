@@ -48,7 +48,8 @@ export function incidentShownType(I: Incident, truth: boolean): string {
 export function unitScreen(sim: Sim, u: Unit, xf: Xf, alpha: number, len: number): { x: number; y: number; angle: number } {
   const city = sim.city;
   if (u.state === 'available' || u.state === 'oos') {
-    const f = city.facilities.find((q) => q.nodeId === u.homeNode)!;
+    const f = city.facilities.find((q) => q.nodeId === u.homeNode);
+    if (!f) { const n = city.nodes[u.homeNode]; return { x: n.x * xf.scale + xf.ox, y: n.y * xf.scale + xf.oy, angle: 0 }; }      // 인근 도시 지원 부대: 도시 가장자리
     let k = 0; for (const q of sim.units) { if (q.id === u.id) break; if (q.homeNode === u.homeNode) k++; }
     return { x: f.x * xf.scale + xf.ox + 16 + len * 0.62 + k * (len + 5), y: f.y * xf.scale + xf.oy, angle: 0 };
   }
@@ -240,6 +241,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
   // 차량
   const len = mini ? 9 : 27 * zs, wid = mini ? 5 : 13 * zs;
   for (const u of sim.units) {
+    if (u.aid && u.state === 'oos') continue;      // 관할로 돌아간 지원 부대
     if (mini && (u.state === 'available' || u.state === 'onscene' || u.state === 'oos')) continue;
     const p = unitScreen(sim, u, xf, o.alpha, len);
     const moving = u.state === 'enroute' || u.state === 'transport';
@@ -275,6 +277,6 @@ export function hitCity(sim: Sim, cam: CityCam, w: number, h: number, px: number
     if (d < bd) { bd = d; incident = I.id; }
   }
   let unit = -1, ud = 20;
-  for (const u of sim.units) { const p = unitScreen(sim, u, xf, 1, 27); const d = Math.hypot(p.x - px, p.y - py); if (d < ud) { ud = d; unit = u.id; } }
+  for (const u of sim.units) { if (u.aid && u.state === 'oos') continue; const p = unitScreen(sim, u, xf, 1, 27); const d = Math.hypot(p.x - px, p.y - py); if (d < ud) { ud = d; unit = u.id; } }
   return { incident, unit, wx, wy };
 }

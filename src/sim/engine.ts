@@ -33,6 +33,7 @@ export class Sim {
   readonly city: City;
   traffic: ReturnType<typeof initTraffic>;
   units: Unit[] = [];
+  aidUsed = 0;                 // 이번 교대에 받은 인근 도시 지원 횟수
   responders: Responder[] = [];
   incidents: Incident[] = [];
   scenes: (Scene | null)[] = [];

@@ -68,6 +68,7 @@ export interface Unit {
   dispatchedAt: number; estArrive: number; diverted: boolean;
   busyTime: number; runs: number;
   boardOrder: 'release' | 'transport' | null;
+  aid?: boolean;                      // 인근 도시에서 지원 온 부대 (임무를 마치면 관할로 돌아간다)
 }
 
 // ───────────────────────── 정보(Belief) ─────────────────────────
@@ -341,6 +342,7 @@ export interface Incident {
   firstAssess: { type: IncidentType; severity: number; t: number; eventId: number } | null;
   fieldNeedsSeen: number;          // 처리한 현장 지원 요청 수
   dispatchLog: number[];           // 출동 지령 이벤트
+  aidUnit?: number;                   // 이 사건에 요청한 인근 도시 지원 부대 (사건당 한 번)
 }
 
 // ───────────────────────── 이벤트 로그 ─────────────────────────

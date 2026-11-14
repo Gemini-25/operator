@@ -93,7 +93,7 @@ function IncidentCard({ sim, I, director, truth }: { sim: Sim; I: Incident; dire
 export function UnitList({ sim, selectedRid, onSelectRid }: { sim: Sim; selectedRid: number; onSelectRid: (rid: number) => void }) {
   return (
     <div className="panel-section">
-      <h3>출동 부대 <span className="dim">가용 {sim.units.filter((u) => u.state === 'available').length}/{sim.units.length}</span></h3>
+      <h3>출동 부대 <span className="dim">가용 {sim.units.filter((u) => u.state === 'available').length}/{sim.units.filter((u) => !u.aid).length}{sim.aidUsed ? ` · 인근 도시 지원 ${sim.aidUsed}/${sim.tune.aidUnits}` : ''}</span></h3>
       <div className="units">
         {sim.units.map((u) => <UnitRow key={u.id} sim={sim} u={u} selectedRid={selectedRid} onSelectRid={onSelectRid} />)}
       </div>
@@ -103,10 +103,10 @@ export function UnitList({ sim, selectedRid, onSelectRid }: { sim: Sim; selected
 function UnitRow({ sim, u, selectedRid, onSelectRid }: { sim: Sim; u: Unit; selectedRid: number; onSelectRid: (rid: number) => void }) {
   const inc = u.incidentId !== null ? sim.incidents[u.incidentId] : null;
   return (
-    <div className={`unit st-${u.state}`} style={{ ['--dc' as string]: DEPT_COLOR[u.dept] }} title={`${UNIT_KIND_NAME[u.kind]} · ${u.homeName}`}>
+    <div className={`unit st-${u.state} ${u.aid ? 'aid' : ''}`} style={{ ['--dc' as string]: DEPT_COLOR[u.dept] }} title={`${UNIT_KIND_NAME[u.kind]} · ${u.homeName}${u.aid ? ' (지원 부대)' : ''}`}>
       <div className="row">
         <span className="callsign" style={{ color: DEPT_COLOR[u.dept] }}>{u.callsign}</span>
-        <span className="state">{UNIT_STATE[u.state]}{inc ? ` ${inc.code}` : ''}</span>
+        <span className="state">{u.aid && u.state === 'oos' ? '관할 복귀' : UNIT_STATE[u.state]}{inc ? ` ${inc.code}` : ''}</span>
       </div>
       {u.dept === 'fire' && <div className="row small equip"><span className="dim">{u.hydrant ? '급수' : '용수'}</span><Bar v={u.hydrant ? 1 : u.water / u.waterMax} color={u.hydrant ? '#5ad17a' : '#58b6ff'} w={34} /><span className="dim">펌프</span><Bar v={u.pumpFailed ? 0 : u.pumpCond} color={u.pumpFailed ? '#ff5d5d' : u.pumpCond < 0.45 ? '#ffb454' : '#5ad17a'} w={34} /></div>}
       {u.crew.map((rid) => {

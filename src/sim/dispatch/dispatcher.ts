@@ -6,7 +6,7 @@ import { emit, markRecovered, raiseProblem } from '../events';
 import { transmit } from '../field/agents';
 import { mkFact } from '../field/beliefs';
 import { nodeName } from '../city';
-import { crewReady, dispatchUnit, etaFor, sendUnitTo } from '../resources';
+import { createAidUnit, crewReady, dispatchUnit, etaFor, sendUnitTo } from '../resources';
 import type { Claim, Incident, Needs, RadioMsg, Scene, Unit } from '../types';
 import { TYPE_NAME, fmtSec, josa } from '../util';
 import { assess, emptyNeeds, needsText, sevName } from './analyst';
@@ -130,8 +130,21 @@ export function tickDispatch(sim: Sim): void {
       }, false);
     }
     if (!blocked.length && progressed) I.noUnitLogged = false;
+    // 인근 도시 지원: 가용 부대가 없어 한참 밀린 수요가 있으면(사건당 한 번, 교대당 정해진 횟수 안에서) 외부 부대를 부른다
+    if (blocked.length && I.aidUnit === undefined && sim.aidUsed < sim.tune.aidUnits && sim.t - I.unmetSince >= AID_WAIT && (I.unmet[blocked[0]] ?? 0) > 0) {
+      const key = blocked[0];
+      const u = createAidUnit(sim, key, I);
+      if (u) {
+        sim.aidUsed++; I.aidUnit = u.id;
+        emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: `인근 도시에 지원 요청: 가용 ${NEED_LABEL[key]} 부대가 ${Math.round(sim.t - I.unmetSince)}초째 없습니다. ${josa(u.callsign, '이/가')} ${nodeName(sim.city, u.homeNode)} 방면에서 들어옵니다 (이번 교대 지원 ${sim.aidUsed}/${sim.tune.aidUnits}회).` });
+        I.unmet[key]!--;
+        sendUnit(sim, I, key, { u, score: 0, eta: etaFor(sim, u, I.reportedNode) + AID_DELAY, fit: u.caps[key], divertFrom: null }, null);
+        u.timer += AID_DELAY;      // 지원 요청이 접수되어 출발하기까지
+      }
+    }
   }
 }
+const AID_WAIT = 30, AID_DELAY = 18;
 
 /** 관제가 아는 위치가 바뀌었다: 그 사건으로 가는 부대의 목적지를 고친다. */
 export function redirectUnits(sim: Sim, I: Incident): void {

@@ -42,6 +42,7 @@ export interface Tuning {
   personaWeights: [number, number, number, number, number]; witnessAcc: number; wrongAddressProb: number; falseAlarmProb: number; nuisanceGap: number;
   // 부대
   unitLevel: number; flashbangs: number;
+  aidUnits: number;            // 한 교대에 받을 수 있는 인근 도시 지원 횟수
 }
 
 const lv = (v: number): number => Math.max(0, Math.min(4, Math.round(v) - 1));
@@ -85,6 +86,7 @@ export function tuningOf(d: Difficulty): Tuning {
     nuisanceGap: [70, 110, 170, 260, 420][i],
 
     unitLevel: r + 1,
+    aidUnits: [2, 2, 3, 4, 5][r],
     flashbangs: [0, 1, 2, 3, 4][e],
   };
 }

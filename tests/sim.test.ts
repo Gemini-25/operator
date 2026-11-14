@@ -347,3 +347,24 @@ describe('건물 붕괴 · 가스 누출', () => {
     for (const k of Object.keys(NATURE_LIK)) expect(NATURE_LIK[k].length).toBe(7);
   });
 });
+
+describe('인근 도시 지원', () => {
+  it('부대가 모자라 배정이 밀리면 외부 부대가 들어오고, 정해진 횟수를 넘지 않으며, 임무 뒤에는 돌아간다', () => {
+    let aided = 0, arrived = 0, goneHome = 0;
+    for (let k = 0; k < 10; k++) {
+      const s = new Sim('S' + k, { ...NORMAL, frequency: 5, resources: 1 }); s.runToEnd();
+      goneHome += s.units.filter((u) => u.aid && u.state === 'oos').length;
+      const aid = s.units.filter((u) => u.aid);
+      expect(aid.length).toBe(s.aidUsed);
+      expect(s.aidUsed).toBeLessThanOrEqual(s.tune.aidUnits);
+      aided += aid.length;
+      for (const u of aid) { if (u.runs > 0) arrived++; expect(u.state).not.toBe('available'); expect(s.incidents.filter((I) => I.aidUnit === u.id).length).toBe(1); }      // 대기 상태로 남아 상시 전력이 되지 않는다
+      for (const I of s.incidents) if (I.aidUnit !== undefined) expect(I.everAssigned).toContain(I.aidUnit);
+    }
+    expect(aided).toBeGreaterThan(8);
+    expect(arrived).toBe(aided);
+    expect(goneHome).toBeGreaterThan(aided * 0.5);
+    const calm = new Sim('S1', { ...NORMAL, frequency: 1, resources: 5 }); calm.runToEnd();
+    expect(calm.aidUsed).toBe(0);      // 여유가 있을 때는 부르지 않는다
+  }, 120000);
+});

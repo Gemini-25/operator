@@ -28,6 +28,7 @@ export function baseScene(sim: Sim, I: Incident, rng: Rng): Scene {
     totalFuelTiles: 0, burnedTiles: 0, burning: 0, secureAt: -1, fireOutAt: -1, lastSitrep: -99, sizeupDone: false, closing: false,
     entryOrdered: false, negotStart: -1, researchRound: 0, lastSpreadEvent: -99, collapseDone: new Set(), mismatchLogged: false, closedCheckAt: 0,
     staticVersion: 0, archived: false, idleSince: -1, breachAt: -1, breachDone: false, bangAt: -99,
+    outdoor: undefined, rules: undefined, placeName: undefined,      // 현장 틀마다 붙는 칸을 미리 비워 둔다 (모든 현장이 같은 모양)
   };
 }
 
@@ -49,8 +50,14 @@ export function addRegion(s: Scene, name: string, kind: Region['kind'], x0: numb
   return r;
 }
 
+// 소품마다 따로 붙던 선택 칸을 처음부터 같은 순서로 비워 둔다: 모든 소품이 같은 모양의 객체가 된다 (값은 없는 것과 같다)
+const PROP_BLANK: Partial<Prop> = {
+  locked: undefined, open: undefined, skin: undefined, leak: undefined, leakRate: undefined, mitigated: undefined, ignited: undefined,
+  occupants: undefined, emptySeat: undefined, cleared: undefined, angle: undefined, color: undefined, exploded: undefined, found: undefined, dirRegion: undefined,
+  interviewed: undefined, lastSeenRegion: undefined, accurate: undefined, removed: undefined, entered: undefined, bus: undefined, real: undefined, fuse: undefined,
+};
 export function addProp(s: Scene, kind: PropKind, x: number, y: number, extra: Partial<Prop> = {}): Prop {
-  const p: Prop = { id: s.props.length, kind, x, y, w: 1, h: 1, blocking: false, hp: 0, ...extra };
+  const p: Prop = { id: s.props.length, kind, x, y, w: 1, h: 1, blocking: false, hp: 0, ...PROP_BLANK, ...extra };
   s.props.push(p);
   if (p.blocking) for (let yy = y; yy < y + p.h; yy++) for (let xx = x; xx < x + p.w; xx++) s.propAt[tidx(s, xx, yy)] = p.id;
   return p;
@@ -61,7 +68,7 @@ export function addCas(s: Scene, x: number, y: number, mob: Mobility, health: nu
     id: s.casualties.length, label: String.fromCharCode(65 + s.casualties.length),
     x, y, px: x, py: y, health, bleed, mob, trapWork: mob === 'trapped' ? 14 : 0, concealment, inVehicle: null,
     where: 'scene', treated: false, treatProg: 0, dead: false, treatQ: 0, bleed0: bleed, bystander: false, walking: false, path: null, pathI: 0, panic: false,
-    wander: false, wanderT: 0, isTarget: false, hostage: false,
+    wander: false, wanderT: 0, isTarget: false, hostage: false, climb: undefined, bystander2: undefined, inWater: undefined, drift: undefined,      // 나중에 붙는 칸도 미리 (모든 구조 대상이 같은 모양)
     tDiscovered: -1, tFreed: -1, tTreated: -1, tSafe: -1, tLoaded: -1, tDead: -1, tHospital: -1, discoveredBy: -1, causeEvent: -1,
     ...extra,
   };

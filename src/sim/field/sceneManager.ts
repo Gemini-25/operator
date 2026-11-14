@@ -164,12 +164,13 @@ export function tickScene(sim: Sim, s: Scene): void {
     if (s.kind === 'collapse' || (also && also.indexOf('collapse') >= 0)) tickCollapse(sim, s, I);
     if (s.kind === 'water' || (also && also.indexOf('water') >= 0)) tickWater(sim, s, I);
     if ((sim.tick + s.id) % 5 === 0) { tickFire(sim, s, I); if (s.kind === 'hazmat' || (also && also.indexOf('gas') >= 0)) tickGas(sim, s, I); }
-    for (const rule of SCENE_RULES) rule(sim, s, I);      // 묶음별 세계 규칙 (field/rules/*)
+    for (let ri = 0; ri < SCENE_RULES.length; ri++) { const rule = SCENE_RULES[ri]; rule(sim, s, I); }      // 묶음별 세계 규칙 (field/rules/*)
   }
   // 2) 무전
   deliverRadio(sim, s, I);
   // 3) 대원
-  for (const a of s.agents) {
+  const agents = s.agents;      // 매 틱 도는 순회는 색인으로 (최적화되기 전 단계에서 반복자 객체를 만들지 않는다. 순서·결과는 같다)
+  for (let ai = 0; ai < agents.length; ai++) { const a = agents[ai];
     if (a.status === 'left') continue;
     agentHealth(sim, s, I, a);
     if (a.status === 'active' && sim.t >= a.nextThink) {
@@ -192,7 +193,7 @@ export function tickScene(sim: Sim, s: Scene): void {
   }
   // 5) 부대 출발 (철수 / 병원 이송)
   if (I.phase === 'closed') for (const a of s.agents) { const u = sim.units[a.unitId]; if (a.status !== 'left' && !u.boardOrder) u.boardOrder = u.patients.length ? 'transport' : 'release'; }
-  for (const u of sim.units) {
+  for (let ui = 0; ui < sim.units.length; ui++) { const u = sim.units[ui];
     if (u.state !== 'onscene' || u.incidentId !== I.id || !u.boardOrder) continue;
     const mates = s.agents.filter((b) => b.unitId === u.id && b.status !== 'left');
     if (mates.some((b) => b.status === 'active')) continue;

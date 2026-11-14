@@ -3,8 +3,21 @@
 
 import type { Fact, FactType } from '../types';
 
+// 'type:id' 열쇠 글자를 한 번만 만들어 다시 쓴다. 이동 비용 계산이 칸마다 믿음을 찾아보므로(agentCost)
+// 찾을 때마다 글자를 새로 붙이고 해시하던 비용이 컸다. 만들어지는 글자는 예전과 똑같다.
+const KEY_CACHE = new Map<string, string[]>();
+export function factKey(type: FactType, id: number): string {
+  if (id >= 0 && id < 8192 && (id | 0) === id) {
+    let arr = KEY_CACHE.get(type);
+    if (!arr) { arr = []; KEY_CACHE.set(type, arr); }
+    const k = arr[id];
+    return k !== undefined ? k : (arr[id] = type + ':' + id);
+  }
+  return type + ':' + id;
+}
+
 export function mkFact(type: FactType, id: number, value: any, src: string, t: number, conf: number, verified: boolean, text: string): Fact {
-  return { key: type + ':' + id, type, id, value, src, t, conf, verified, text };
+  return { key: factKey(type, id), type, id, value, src, t, conf, verified, text };
 }
 
 function sameValue(a: any, b: any): boolean {
@@ -17,6 +30,14 @@ function sameValue(a: any, b: any): boolean {
 
 export class BeliefStore {
   readonly facts = new Map<string, Fact>();
+  /** 종류별로 나눈 같은 내용 (facts 와 함께만 고친다). 열쇠에 종류가 들어 있으므로 종류 안의 순서는 facts 의 순서와 같다 */
+  private readonly byType = new Map<string, Map<string, Fact>>();
+  private put(f: Fact): void {
+    this.facts.set(f.key, f);
+    let m = this.byType.get(f.type);
+    if (!m) { m = new Map(); this.byType.set(f.type, m); }
+    m.set(f.key, f);
+  }
 
   /**
    * 새 정보를 병합한다. 반환값이 true 면 "새로운 소식"이다(판단을 바꿔야 할 수 있음).
@@ -24,20 +45,19 @@ export class BeliefStore {
    */
   merge(f: Fact): boolean {
     const cur = this.facts.get(f.key);
-    if (!cur) { this.facts.set(f.key, f); return true; }
+    if (!cur) { this.put(f); return true; }
     if (cur.verified && !f.verified) return false;
     if (cur.verified === f.verified && f.t < cur.t) return false;
     if (!cur.verified && !f.verified && f.conf < cur.conf - 0.05 && f.t <= cur.t + 20) return false;
     const changed = !sameValue(cur.value, f.value) || cur.verified !== f.verified;
-    this.facts.set(f.key, f);
+    this.put(f);
     return changed;
   }
-  get(type: FactType, id: number): Fact | undefined { return this.facts.get(type + ':' + id); }
-  val<V>(type: FactType, id: number): V | undefined { const f = this.facts.get(type + ':' + id); return f ? (f.value as V) : undefined; }
+  get(type: FactType, id: number): Fact | undefined { return this.facts.get(factKey(type, id)); }
+  val<V>(type: FactType, id: number): V | undefined { const f = this.facts.get(factKey(type, id)); return f ? (f.value as V) : undefined; }
   list(type: FactType): Fact[] {
-    const out: Fact[] = [];
-    for (const f of this.facts.values()) if (f.type === type) out.push(f);
-    return out;
+    const m = this.byType.get(type);
+    return m ? Array.from(m.values()) : [];
   }
   all(): Fact[] { return Array.from(this.facts.values()); }
   /** 전달받은 정보는 신뢰도가 조금 낮아진다. */

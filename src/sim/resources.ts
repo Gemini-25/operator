@@ -98,6 +98,7 @@ export function createRoster(sim: Sim): void {
       patients: [], patientsIncident: null,
       dispatchedAt: -1, estArrive: -1, diverted: false, busyTime: 0, runs: 0, boardOrder: null,
       field: d.field, air: d.kind === 'heli', sea: d.kind === 'boat',
+      aid: undefined, heavy: undefined, backing: undefined, curb: undefined, curbT: undefined, parking: undefined,      // 나중에 붙는 칸을 미리 비워 둔다: 모든 부대가 같은 모양의 객체가 된다
     };
     if (u.air || u.sea) { u.x = u.px = f.x + 30; u.y = u.py = u.sea ? coastY(f.x + 30) + SEA_OFF : f.y - 20; }
     if (HEAVY[d.kind]) u.heavy = true;
@@ -153,7 +154,8 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
     tool: Math.min(1.15, d.tool * tn.toolMul), medLevel: Math.min(1.1, d.med * tn.medMul), armor: Math.min(0.8, d.armor * tn.armorMul),
     flashbangs: kind === 'tactical' ? Math.min(2, tn.flashbangs) : 0,
     patients: [], patientsIncident: null,
-    dispatchedAt: -1, estArrive: -1, diverted: false, busyTime: 0, runs: 0, boardOrder: null, aid: true,
+    dispatchedAt: -1, estArrive: -1, diverted: false, busyTime: 0, runs: 0, boardOrder: null,
+    field: undefined, air: undefined, sea: undefined, aid: true, heavy: undefined, backing: undefined, curb: undefined, curbT: undefined, parking: undefined,      // 편성표 부대와 같은 칸, 같은 순서
   };
   if (HEAVY[kind]) u.heavy = true;
   sim.units.push(u);
@@ -316,12 +318,12 @@ function arrive(sim: Sim, u: Unit): void {
 
 export function tickUnits(sim: Sim): void {
   const city = sim.city, dt = sim.dt, wf = weatherSpeedFactor(sim);
-  for (const u of sim.units) {
+  for (let ui = 0; ui < sim.units.length; ui++) { const u = sim.units[ui];      // 색인 순회: 최적화 전 단계에서 반복자 객체를 만들지 않는다 (순서는 같다)
     u.px = u.x; u.py = u.y;
     if (u.state !== 'available' && u.state !== 'oos') u.busyTime += dt;
     if (u.state === 'available' || u.state === 'returning') {
       const rate = u.state === 'available' ? 0.55 : 0.2;
-      for (const rid of u.crew) { const r = sim.responders[rid]; if (r.status === 'ok') r.stamina = Math.min(100, r.stamina + rate * dt); }
+      for (let ci = 0; ci < u.crew.length; ci++) { const r = sim.responders[u.crew[ci]]; if (r.status === 'ok') r.stamina = Math.min(100, r.stamina + rate * dt); }
     }
     if (u.state === 'transport' && u.patientsIncident !== null) {
       // 이송 중 처치: 탑승 후 몇 초 뒤 구급대원이 차 안에서 응급 처치를 마친다

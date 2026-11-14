@@ -98,6 +98,11 @@ function hpop(): number {
 }
 const DX = [1, -1, 0, 0, 1, 1, -1, -1];
 const DY = [0, 0, 1, -1, 1, -1, 1, -1];
+// 한 번의 탐색 안에서 칸마다 비용을 한 번만 구한다 (이웃·대각선 검사로 같은 칸을 여러 번 묻는다).
+// 비용 함수는 탐색 도중 상태를 바꾸지 않고 같은 칸에 같은 값을 돌려주므로 결과가 같다.
+const costMemo = new Float64Array(MAXN);
+const costStamp = new Int32Array(MAXN);
+let costGen = 0;
 
 /** 계단 한 번의 이동 비용 (칸 수 환산) */
 export const STAIR_COST = 3;
@@ -108,11 +113,19 @@ export type CostFn = (i: number) => number;   // 추가 비용 (음수 = 통과 
  * 반환: 시작 타일을 제외한 타일 인덱스 배열. 이미 도달해 있으면 빈 배열. 경로가 없으면 null.
  * needLos 가 true 면 목표 타일에서 (tx,ty) 로 시야가 통해야 한다.
  */
-export function astar(s: Scene, sx: number, sy: number, tx: number, ty: number, range: number, cost: CostFn, needLos = false, costOut?: { v: number }): number[] | null {
+export function astar(s: Scene, sx: number, sy: number, tx: number, ty: number, range: number, costFn: CostFn, needLos = false, costOut?: { v: number }): number[] | null {
   const w = s.w, h = s.h, n = w * h;
   const start = tileOf(s, sx, sy);
   state.fill(0, 0, n);
   heapN = 0;
+  if (++costGen > 0x3fffffff) { costStamp.fill(0); costGen = 1; }
+  const gen = costGen;
+  const cost = (i: number): number => {
+    if (costStamp[i] === gen) return costMemo[i];
+    const v = costFn(i);
+    costMemo[i] = v; costStamp[i] = gen;
+    return v;
+  };
   const r2 = range * range + 0.01;
   const isGoal = (i: number): boolean => {
     const x = i % w, y = (i / w) | 0;

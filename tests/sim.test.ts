@@ -8,6 +8,14 @@ import { BeliefStore, mkFact } from '../src/sim/field/beliefs';
 import { Rng } from '../src/sim/rng';
 
 function runShift(seed: string): Sim { const s = new Sim(seed); s.runToEnd(); return s; }
+/** 같은 시드·같은 조건으로 끝까지 돈 교대는 이 파일 안에서 한 번만 돌리고 다시 쓴다 (재현성은 위 테스트가 따로 본다). 쓰는 테스트는 끝난 상태를 읽기만 한다 */
+const finished = new Map<string, Sim>();
+function shiftOf(seed: string, d: typeof NORMAL = NORMAL): Sim {
+  const key = seed + '|' + JSON.stringify(d);
+  let s = finished.get(key);
+  if (!s) { s = new Sim(seed, d); s.runToEnd(); finished.set(key, s); }
+  return s;
+}
 
 describe('재현성 (테스트 I)', () => {
   it('같은 시드는 같은 이벤트 기록과 같은 보고서를 만든다', () => {
@@ -40,7 +48,7 @@ describe('재현성 (테스트 I)', () => {
 });
 
 describe('교대 전체 진행 (테스트 A·B·C·D·F·G·J)', () => {
-  const sims = ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7'].map(runShift);
+  const sims = ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7'].map((seed) => shiftOf(seed));
   it('플레이어 입력 없이 교대가 끝까지 진행되고 보고서가 나온다', () => {
     for (const s of sims) {
       expect(s.ended).toBe(true);
@@ -170,7 +178,7 @@ describe('난이도 (교대 시작 전 조건)', () => {
     const good = (id: 'easy' | 'normal' | 'hard' | 'extreme'): number => {
       let ok = 0, n = 0;
       for (let k = 0; k < 14; k++) {
-        const s = new Sim('S' + k, PRESETS[id].d); s.runToEnd();
+        const s = shiftOf('S' + k, PRESETS[id].d);
         for (const I of s.incidents) {
           if (I.truth.variant === 'false' || I.truth.variant === 'prank') continue;      // 허위 신고는 본질적으로 쉬우므로 뺀다
           n++; if (I.result!.outcome === 'success' || I.result!.outcome === 'delayed') ok++;
@@ -185,7 +193,7 @@ describe('난이도 (교대 시작 전 조건)', () => {
   }, 180000);
   it('손잡이가 해당 조건을 실제로 바꾼다', async () => {
     const { parseDifficulty, difficultyLabel } = await import('../src/sim/difficulty');
-    const count = (d: typeof NORMAL): number => { let n = 0; for (let k = 0; k < 6; k++) { const s = new Sim('S' + k, d); s.runToEnd(); n += s.incidents.length; } return n; };
+    const count = (d: typeof NORMAL): number => { let n = 0; for (let k = 0; k < 6; k++) { const s = shiftOf('S' + k, d); n += s.incidents.length; } return n; };
     expect(count({ ...NORMAL, frequency: 5 })).toBeGreaterThan(count(NORMAL) + 8);          // 사건 빈도
     expect(count({ ...NORMAL, frequency: 1 })).toBeLessThan(count(NORMAL));
     const bad = new Sim('E', { ...NORMAL, equipment: 1 }), best = new Sim('E', { ...NORMAL, equipment: 5 });  // 장비 상태
@@ -208,7 +216,7 @@ describe('한 현장에 여러 팀', () => {
   it('같은 부서의 부대 둘 이상, 세 부서가 함께 들어가는 사건이 나온다', () => {
     let sameDeptTwice = 0, allThree = 0, most = 0;
     for (let k = 0; k < 12; k++) {
-      const s = new Sim('S' + k); s.runToEnd();
+      const s = shiftOf('S' + k);
       for (const I of s.incidents) {
         const depts = I.everAssigned.map((uid) => s.units[uid].dept);
         if (depts.some((d, i) => depts.indexOf(d) !== i)) sameDeptTwice++;
@@ -227,7 +235,7 @@ describe('한 현장에 여러 팀', () => {
 });
 
 describe('신고 접수 확장과 새 사건 유형', () => {
-  const sims = Array.from({ length: 14 }, (_, k) => { const s = new Sim('S' + k); s.runToEnd(); return s; });
+  const sims = Array.from({ length: 14 }, (_, k) => { return shiftOf('S' + k); });
   it('응급 환자 사건이 발생하고, 기본 처치 뒤에 전문 처치가 이어진다', () => {
     let medical = 0, upgraded = 0, any = 0;
     for (const s of sims) for (const I of s.incidents) {
@@ -304,7 +312,7 @@ describe('실내 전술 (무장 사건)', () => {
   it('인질 사건이 발생하고, 섬광탄·기습·시한 같은 전술 요소가 실제로 쓰인다', () => {
     let hostage = 0, bangs = 0, breaches = 0, surprised = 0, caught = 0;
     for (let k = 0; k < 70; k++) {
-      const s = new Sim('S' + k, { ...NORMAL, threat: 4 }); s.runToEnd();      // 무장 사건이 넉넉히 나오는 조건
+      const s = shiftOf('S' + k, { ...NORMAL, threat: 4 });      // 무장 사건이 넉넉히 나오는 조건
       for (const I of s.incidents) if (I.truth.variant === 'hostage') { hostage++; if (I.result!.suspectsCaught > 0) caught++; }
       for (const e of s.events) { if (e.text.startsWith('섬광탄 투척') || e.text.includes('섬광탄을 던져 넣고')) bangs++; if (e.text.startsWith('진입!')) breaches++; if (e.text.includes('기습당했습니다')) surprised++; }
     }
@@ -320,7 +328,7 @@ describe('건물 붕괴 · 가스 누출', () => {
   it('두 유형이 실제로 발생하고, 위험 요소(균열부·가스 배관)가 조치되거나 터지며, 대부분 한계 시간 안에 끝난다', () => {
     let collapse = 0, hazmat = 0, shored = 0, unstable = 0, closed = 0, ignited = 0, valves = 0, timeouts = 0, secondary = 0;
     for (let k = 0; k < 30; k++) {
-      const s = new Sim('S' + k); s.runToEnd();
+      const s = shiftOf('S' + k);
       for (const I of s.incidents) {
         const t = I.truth.type;
         if (t !== 'collapse' && t !== 'hazmat') continue;
@@ -382,7 +390,7 @@ describe('지휘관의 진입 계획', () => {
   it('진입을 결정하면 용의자의 시야 밖 출입구를 골라 진입조를 그곳에 모은다', () => {
     let plans = 0, unseen = 0, stacked = 0;
     for (let k = 0; k < 60; k++) {
-      const s = new Sim('S' + k, { ...NORMAL, threat: 4 }); s.runToEnd();
+      const s = shiftOf('S' + k, { ...NORMAL, threat: 4 });
       for (const sc of s.scenes) {
         if (!sc || sc.kind !== 'armed' || !sc.entryOrdered) continue;
         plans++;
@@ -403,7 +411,7 @@ describe('2층 건물', () => {
   it('계단으로 이어진 2층 건물 화재가 나오고, 대원이 2층까지 올라가 사람을 구해 내려온다', () => {
     let tall = 0, searched2F = 0, saved2F = 0, on2F = 0, timeouts = 0;
     for (let k = 0; k < 30; k++) {
-      const s = new Sim('S' + k); s.runToEnd();
+      const s = shiftOf('S' + k);
       for (const sc of s.scenes) {
         if (!sc || sc.kind !== 'fire' || !sc.stairTo.some((v) => v >= 0)) continue;
         tall++;
@@ -472,7 +480,7 @@ describe('교전과 진입', () => {
   it('용의자는 엄폐물로 옮기고 인질을 끌고 물러나며, 진입조는 두 문으로 나뉘거나 방 문 앞에 모였다가 들어간다', () => {
     let relocate = 0, drag = 0, twoDoor = 0, roomEntry = 0, armed = 0, timeouts = 0;
     for (let k = 0; k < 60; k++) {
-      const s = new Sim('S' + k, { ...NORMAL, threat: 4 }); s.runToEnd();
+      const s = shiftOf('S' + k, { ...NORMAL, threat: 4 });
       for (const sc of s.scenes) {
         if (!sc || sc.kind !== 'armed') continue;
         armed++;
@@ -496,7 +504,7 @@ describe('빈 곳 채우기', () => {
     const { T } = await import('../src/sim/types');
     let water = 0, victims = 0, pulled = 0, swept = 0, timeouts = 0;
     for (let k = 0; k < 40; k++) {
-      const s = new Sim('S' + k); s.runToEnd();
+      const s = shiftOf('S' + k);
       for (const sc of s.scenes) {
         if (!sc || sc.kind !== 'water') continue;
         water++;
@@ -531,7 +539,7 @@ describe('빈 곳 채우기', () => {
     expect(cordon).toBeGreaterThan(3);
     // 경찰이 제때 오면 주변 시민은 다치지 않는다. 부대가 모자란 극한 난이도에서는 통제가 늦어 노출이 생긴다
     for (let k = 0; k < 30; k++) {
-      const s = new Sim('S' + k, PRESETS.extreme.d); s.runToEnd();
+      const s = shiftOf('S' + k, PRESETS.extreme.d);
       for (const sc of s.scenes) if (sc && sc.kind === 'hazmat') exposed += sc.casualties.filter((c) => c.bystander2).length;
     }
     expect(exposed).toBeGreaterThan(0);
@@ -616,7 +624,7 @@ describe('건물마다 정해진 도시', () => {
     const { scenarioOf } = await import('../src/sim/scenarios');
     let atPlace = 0, bankLobby = 0, banks = 0, smallTall = 0, parked = 0, named = 0, intersections = 0;
     for (let k = 0; k < 30; k++) {
-      const s = new Sim('S' + k); s.runToEnd();
+      const s = shiftOf('S' + k);
       for (const I of s.incidents) {
         const sc = s.scenes[I.id]!;
         if (I.truth.type === 'traffic' || I.pursuit) { expect(I.truth.placeId).toBe(-1); intersections++; continue; }      // 교통사고와 추격전은 건물이 아니라 길 위에서 벌어진다

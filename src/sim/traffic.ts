@@ -11,7 +11,7 @@ import { edgeName, segCross } from './city';
 import type { Sim } from './engine';
 import { emit } from './events';
 import type { Rng } from './rng';
-import type { PlaceKind, RoadEdge, Unit } from './types';
+import type { City, PlaceKind, RoadEdge, Unit } from './types';
 import { clamp, josa } from './util';
 
 export type ObstacleKind = 'roadwork' | 'breakdown' | 'debris' | 'parked';
@@ -96,8 +96,23 @@ const obstacleOn = (tr: TrafficState, edge: number): Obstacle | null => { for (c
  * 새 통제·불법 주차를 놓기 전에 본다: 이것이 참이면 도시의 어느 교차로도 어느 부대에게서도 끊기지 않는다.
  */
 function linked(sim: Sim, tr: TrafficState, a: number, b: number, skip: number): boolean {
-  return heavyPath(sim, tr, a, b, skip) !== null;
+  // 답은 (a, b, skip) 와 길의 상태 — 구간마다 막힘(closed)과 큰 차 불가(heavyOnly 장애물) — 로만 정해진다.
+  // 그 상태가 지난번과 한 칸도 다르지 않으면 지난번 답을 쓴다 (장애물마다 1초에 한 번씩 묻는데 상태는 거의 바뀌지 않는다).
+  const edges = sim.city.edges, n = edges.length;
+  let c = linkCache.get(tr);
+  if (!c || c.state.length !== n) { c = { state: new Uint8Array(n), cur: new Uint8Array(n), res: new Map() }; c.state.fill(255); linkCache.set(tr, c); }
+  const cur = c.cur;
+  for (let i = 0; i < n; i++) cur[i] = edges[i].closed ? 1 : 0;
+  for (const o of tr.obstacles) if (o.heavyOnly) cur[o.edge] |= 2;
+  let same = true;
+  for (let i = 0; i < n; i++) if (cur[i] !== c.state[i]) { same = false; break; }
+  if (!same) { c.state.set(cur); c.res.clear(); }
+  const key = (skip + 1) * 1e8 + a * 1e4 + b;
+  let r = c.res.get(key);
+  if (r === undefined) { r = heavyPath(sim, tr, a, b, skip) !== null; c.res.set(key, r); }
+  return r;
 }
+const linkCache = new WeakMap<TrafficState, { state: Uint8Array; cur: Uint8Array; res: Map<number, boolean> }>();
 /** 실제 상태에서 큰 차가 a 에서 b 로 가는 길 하나 (지나는 구간들, 없으면 null). skip·skip2 구간은 없는 것으로 본다 */
 function heavyPath(sim: Sim, tr: TrafficState, a: number, b: number, skip: number, skip2 = -1): number[] | null {
   const city = sim.city, via = new Int32Array(city.nodes.length).fill(-2), stack = [a];
@@ -326,6 +341,23 @@ export function initTraffic(sim: Sim): TrafficState {
 
 // ───────────────────────── 매 틱 ─────────────────────────
 
+const nbCache = new WeakMap<object, { start: Int32Array; ids: Int32Array }>();
+/** 구간마다 이웃 구간(양 끝 교차로에 붙은 다른 구간) 목록. 교차로와 구간의 연결은 지도에 고정이다 (교대마다 바뀌는 것은 구간의 상태뿐) */
+function edgeNeighbors(city: City): { start: Int32Array; ids: Int32Array } {
+  let nb = nbCache.get(city.nodes);
+  if (nb && nb.start.length === city.edges.length + 1) return nb;
+  const start = new Int32Array(city.edges.length + 1), ids: number[] = [];
+  for (const e of city.edges) {
+    start[e.id] = ids.length;
+    for (const id of city.nodes[e.a].edges) if (id !== e.id) ids.push(id);
+    for (const id of city.nodes[e.b].edges) if (id !== e.id) ids.push(id);
+  }
+  start[city.edges.length] = ids.length;
+  nb = { start, ids: Int32Array.from(ids) };
+  nbCache.set(city.nodes, nb);
+  return nb;
+}
+
 /** 혼잡과 밀림 (12초마다) */
 function drift(sim: Sim): void {
   const tr = sim.traffic, city = sim.city, rng = sim.rngTraffic, n = city.edges.length;
@@ -340,19 +372,24 @@ function drift(sim: Sim): void {
     // 밀림의 뿌리: 막힌 구간, 사고 현장(slow), 그 자체로 꽉 찬 구간. 밀려서 찬 구간은 뿌리가 아니다(서로를 붙잡아 풀리지 않는 정체를 막는다)
     src[e.id] = e.closed || e.slow >= 1 || p >= 2.4 ? 1 : 0;
   }
-  const near = (e: RoadEdge, f: (id: number) => boolean): boolean => {
-    for (const id of city.nodes[e.a].edges) if (id !== e.id && f(id)) return true;
-    for (const id of city.nodes[e.b].edges) if (id !== e.id && f(id)) return true;
+  // 이웃 구간(양 끝 교차로에 붙은 다른 구간) 가운데 조건에 맞는 것이 있는가. 이웃 목록은 지도가 같으면 같으므로 한 번만 만든다
+  const nb = edgeNeighbors(city);
+  const nearSrc = (e: RoadEdge): boolean => {
+    for (let k = nb.start[e.id], end = nb.start[e.id + 1]; k < end; k++) if (src[nb.ids[k]] === 1) return true;
+    return false;
+  };
+  const nearBacked = (e: RoadEdge): boolean => {
+    for (let k = nb.start[e.id], end = nb.start[e.id + 1]; k < end; k++) { const id = nb.ids[k]; if (ring1[id] === 1 && q0[id] >= 0.6) return true; }
     return false;
   };
   const ring1 = new Uint8Array(n);
-  for (const e of city.edges) if (near(e, (id) => src[id] === 1)) ring1[e.id] = 1;
+  for (const e of city.edges) if (nearSrc(e)) ring1[e.id] = 1;
   const q0 = tr.queue.slice();
   for (const e of city.edges) {
     const half = e.cls === 'highway' ? 0.5 : 1;
     let q = q0[e.id];
     if (ring1[e.id]) q = Math.min(1, q + 0.14 * half);                                                   // 막힌 곳에 닿아 있다
-    else if (q < 0.5 && near(e, (id) => ring1[id] === 1 && q0[id] >= 0.6)) q = Math.min(0.5, q + 0.07 * half);      // 한 다리 건너: 많이 밀린 구간의 뒤
+    else if (q < 0.5 && nearBacked(e)) q = Math.min(0.5, q + 0.07 * half);      // 한 다리 건너: 많이 밀린 구간의 뒤
     else q *= 0.75;
     tr.queue[e.id] = q < 0.01 ? 0 : q;
   }

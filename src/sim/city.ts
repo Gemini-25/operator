@@ -207,7 +207,8 @@ let cached: City | null = null;
 /** 도시를 만든다. 지도 자체는 고정이므로 한 번만 만들고, 교대마다 바뀌는 도로 상태만 새로 복사해 돌려준다. */
 export function generateCity(rng: Rng): City {
   if (!cached) cached = buildCity(rng);
-  return { ...cached, edges: cached.edges.map((e) => ({ ...e })) };
+  // 교대 중에 붙는 칸(교통·재난)을 처음부터 같은 순서로 비워 둔다: 모든 구간이 같은 모양의 객체가 되어 경로 계산이 빨라진다 (값은 없는 것과 같다)
+  return { ...cached, edges: cached.edges.map((e) => ({ ...e, known: undefined, bump: undefined, wait: undefined, gateT: undefined, noHeavy: undefined })) };
 }
 
 function buildCity(rng: Rng): City {
@@ -495,27 +496,64 @@ export function edgeTime(e: RoadEdge, weatherF = 1, heavy = false): number {
   return (e.len / (e.speed * weatherF)) * congEff * (heavy && e.cls === 'local' ? 1.15 : 1) + (e.wait ?? 0);
 }
 
+// findRoute 가 다시 쓰는 버퍼와 이진 힙 (거리, 교차로 번호). 시뮬레이션 상태가 아니라 계산용 임시 공간이다
+let rDist = new Float64Array(0), rPrev = new Int32Array(0), rDone = new Uint8Array(0);
+let hKey = new Float64Array(64), hNode = new Int32Array(64), hN = 0;
+const hLess = (i: number, j: number): boolean => hKey[i] < hKey[j] || (hKey[i] === hKey[j] && hNode[i] < hNode[j]);
+function heapPush(k: number, v: number): void {
+  if (hN === hKey.length) { const k2 = new Float64Array(hN * 2), v2 = new Int32Array(hN * 2); k2.set(hKey); v2.set(hNode); hKey = k2; hNode = v2; }
+  let i = hN++;
+  hKey[i] = k; hNode[i] = v;
+  while (i > 0) {
+    const p = (i - 1) >> 1;
+    if (!hLess(i, p)) break;
+    const tk = hKey[i], tv = hNode[i]; hKey[i] = hKey[p]; hNode[i] = hNode[p]; hKey[p] = tk; hNode[p] = tv;
+    i = p;
+  }
+}
+function heapPop(): void {
+  hN--;
+  if (hN === 0) return;
+  hKey[0] = hKey[hN]; hNode[0] = hNode[hN];
+  let i = 0;
+  for (;;) {
+    const l = i * 2 + 1, r = l + 1;
+    let m = i;
+    if (l < hN && hLess(l, m)) m = l;
+    if (r < hN && hLess(r, m)) m = r;
+    if (m === i) break;
+    const tk = hKey[i], tv = hNode[i]; hKey[i] = hKey[m]; hNode[i] = hNode[m]; hKey[m] = tk; hNode[m] = tv;
+    i = m;
+  }
+}
+
 /**
  * 다익스트라. **알려진** 통제(closed)만 피한다: 아직 아무도 모르는 장애물(known === false)은 가 보아야 안다(traffic.ts).
  * 큰 차(heavy)는 불법 주차로 좁아졌다고 알려진 골목(noHeavy)도 피한다.
  */
 export function findRoute(city: City, from: number, to: number, weatherF = 1, avoidEdge = -1, heavy = false): Route | null {
   const n = city.nodes.length;
-  const distArr = new Float64Array(n).fill(Infinity);
-  const prevEdge = new Int32Array(n).fill(-1);
-  const done = new Uint8Array(n);
+  if (rDist.length < n) { rDist = new Float64Array(n); rPrev = new Int32Array(n); rDone = new Uint8Array(n); }
+  const distArr = rDist, prevEdge = rPrev, done = rDone;
+  distArr.fill(Infinity, 0, n); prevEdge.fill(-1, 0, n); done.fill(0, 0, n);
   distArr[from] = 0;
-  for (let it = 0; it < n; it++) {
-    let u = -1, best = Infinity;
-    for (let i = 0; i < n; i++) if (!done[i] && distArr[i] < best) { best = distArr[i]; u = i; }
-    if (u < 0 || u === to) break;
+  // 아직 끝나지 않은 교차로 가운데 (거리, 번호)가 가장 작은 것을 차례로 꺼낸다 — 거리가 같으면 번호가 작은 것.
+  // 예전의 "전부 훑어 가장 작은 것" 과 꺼내는 순서가 똑같다 (낡은 항목은 거리가 지금 값과 달라 버린다).
+  hN = 0; heapPush(0, from);
+  while (hN > 0) {
+    const u = hNode[0], du = hKey[0];
+    heapPop();
+    if (done[u] || du !== distArr[u]) continue;
+    if (u === to) break;
     done[u] = 1;
-    for (const eid of city.nodes[u].edges) {
+    const ue = city.nodes[u].edges;
+    for (let q = 0; q < ue.length; q++) {
+      const eid = ue[q];
       const e = city.edges[eid];
       if ((e.closed && e.known !== false) || (heavy && e.noHeavy) || eid === avoidEdge) continue;
       const v = e.a === u ? e.b : e.a;
       const nd = distArr[u] + edgeTime(e, weatherF, heavy) - Math.min(e.wait ?? 0, distArr[u]);      // 차단기는 거기 닿을 즈음이면 그만큼 덜 기다린다
-      if (nd < distArr[v]) { distArr[v] = nd; prevEdge[v] = eid; }
+      if (nd < distArr[v]) { distArr[v] = nd; prevEdge[v] = eid; heapPush(nd, v); }
     }
   }
   if (!isFinite(distArr[to])) return null;

@@ -8,7 +8,8 @@ import { Runner } from '../view/runner';
 import { Viewport } from './Viewport';
 import { MapLegend } from './MapLegend';
 import type { Difficulty } from '../sim/difficulty';
-import { AgentPanel, BottomBar, CallPanel, DecisionPanel, DifficultyPanel, Icon, IncidentList, LogPanel, ReportModal, Ticker, TopBar, UnitList } from './panels';
+import { AgentPanel, BottomBar, DecisionPanel, DifficultyPanel, Icon, IncidentList, LogPanel, ReportModal, Ticker, TopBar, UnitList } from './panels';
+import { CallDock } from './CallDock';
 
 export interface Moment { t: number; id: number; text: string }
 /** 다시 볼 만한 장면: 현장에서 벌어진 중대한 일. 같은 사건의 가까운 장면은 하나로 묶고, 많으면 고르게 여덟 개만 남긴다. */
@@ -189,11 +190,11 @@ export function App() {
           </>) : (<span className="dim">사건 표식을 누르면 현장 확대 · 휠 확대 · 끌어서 이동</span>)}
           </div>
         </div>
-        <div className="overlay call-wrap"><CallPanel sim={sim} truth={truth} /></div>
         <Ticker sim={sim} truth={truth} />
         {runner.paused && !sim.ended && <div className="paused">일시정지</div>}
       </div>
       <div className="right">
+        <CallDock sim={sim} truth={truth} />
         <div className="tabs">
           <button className={tab === 'decision' ? 'on' : ''} onClick={() => setTab('decision')}>판단 요약</button>
           <button className={tab === 'agent' ? 'on' : ''} onClick={() => setTab('agent')}>대원 정보</button>

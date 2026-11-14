@@ -192,3 +192,11 @@ ul.analysis { margin: 4px 0 4px 16px; padding: 0; line-height: 1.6; color: #cdd9
 .slider input { width: 100%; padding: 0; accent-color: #4fd1c5; }
 .diff-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); font-size: 14px; }
 .diff-foot .btns { display: flex; gap: 6px; }
+
+/* ── 되감기 · 소리 · 결정적 순간 ── */
+.track { cursor: pointer; }
+.sound { display: flex; align-items: center; gap: 6px; } .sound input { width: 70px; padding: 0; accent-color: #4fd1c5; }
+.moments { display: flex; flex-direction: column; gap: 3px; max-height: 250px; overflow-y: auto; }
+.moment { display: grid; grid-template-columns: 38px auto 1fr; gap: 6px; text-align: left; padding: 4px 7px; font-size: 11.5px; line-height: 1.4; align-items: start; border-left: 2px solid #35506a; }
+.moment.bad { border-left-color: var(--bad); }
+.moment .t { font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--dim); } .moment .inc { background: #5f7285; color: #0b1219; border-radius: 3px; padding: 0 4px; font-weight: 800; font-size: 10px; }

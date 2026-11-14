@@ -28,6 +28,13 @@ export class CameraDirector {
     this.cam = { x: 1200, y: 820, zoom: 1 }; this.target = { ...this.cam }; this.reason = '도시 전체 관찰';
   }
 
+  /** 되감기 뒤: 지나간 이벤트는 건너뛰고, 관찰 대상은 (그 시점에 존재하면) 유지한다. */
+  resync(sim: Sim): void {
+    this.simRef = sim; this.processed = sim.events.length; this.interest.clear(); this.closedLinger.clear();
+    if (this.focus >= sim.incidents.length || (this.focus >= 0 && sim.incidents[this.focus].phase === 'unreported')) { this.focus = -1; this.mode = 'city'; }
+    this.lastSwitch = this.clock;
+  }
+
   /** 사용자가 관찰 대상을 고른다(명령이 아니라 시점 선택일 뿐이다). */
   pin(incidentId: number, mode?: 'city' | 'scene'): void {
     this.manual = true; this.freeLook = false; this.focus = incidentId;

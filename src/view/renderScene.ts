@@ -9,11 +9,12 @@ import type { FieldAgent, Scene } from '../sim/types';
 import { drawVehicle } from './icons';
 import { DEPT_COLOR, FONT } from './renderCity';
 
-export interface SceneOpts { truth: boolean; alpha: number; timeMs: number; selectedRid: number }
+export interface SceneOpts { truth: boolean; alpha: number; timeMs: number; selectedRid: number; mini?: boolean }
+let MINI = false;      // 작은 창으로 그리는 중이면 글자 라벨을 생략한다
 export interface Layout { ts: number; ox: number; oy: number }
 
 export function sceneLayout(s: Scene, w: number, h: number): Layout {
-  const ts = Math.max(8, Math.floor(Math.min(w / (s.w + 0.6), h / (s.h + 0.6))));
+  const ts = Math.max(6, Math.floor(Math.min(w / (s.w + 0.6), h / (s.h + 0.6))));
   return { ts, ox: Math.floor((w - ts * s.w) / 2), oy: Math.floor((h - ts * s.h) / 2) };
 }
 
@@ -100,6 +101,7 @@ function buildStatic(s: Scene, ts: number): HTMLCanvasElement {
 }
 
 function pill(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, fs: number, fg: string, bg = 'rgba(8,13,18,0.82)'): void {
+  if (MINI) return;
   ctx.font = `600 ${fs}px ${FONT}`;
   const w = ctx.measureText(text).width + fs * 0.7;
   ctx.fillStyle = bg; ctx.beginPath(); ctx.roundRect(x - w / 2, y - fs * 0.75, w, fs * 1.4, fs * 0.4); ctx.fill();
@@ -111,6 +113,7 @@ const ipos = (o: { x: number; y: number; px: number; py: number }, a: number): {
 export function drawScene(ctx: CanvasRenderingContext2D, sim: Sim, s: Scene, w: number, h: number, o: SceneOpts): void {
   const L = sceneLayout(s, w, h);
   const ts = L.ts;
+  MINI = !!o.mini;
   if (!glow) { glow = sprite([[0, 'rgba(255,170,60,0.95)'], [0.45, 'rgba(255,90,30,0.55)'], [1, 'rgba(255,60,20,0)']]); glowCore = sprite([[0, 'rgba(255,250,210,0.95)'], [0.5, 'rgba(255,200,90,0.5)'], [1, 'rgba(255,180,60,0)']]); smokeSpr = sprite([[0, 'rgba(165,170,178,0.9)'], [0.6, 'rgba(150,155,162,0.45)'], [1, 'rgba(140,145,150,0)']]); }
   let st = cache.get(s.id);
   if (!st || st.ver !== s.staticVersion || st.ts !== ts || st.key !== s) { st = { c: buildStatic(s, ts), ver: s.staticVersion, ts, key: s }; cache.set(s.id, st); if (cache.size > 12) cache.delete(cache.keys().next().value!); }
@@ -129,7 +132,7 @@ export function drawScene(ctx: CanvasRenderingContext2D, sim: Sim, s: Scene, w: 
       if (!r.searchable) continue;
       const conf = cmd.beliefs.val<number>('srch', r.id);
       if (s.kind === 'search' && s.zoneProb[r.id] > 0 && conf === undefined) { ctx.fillStyle = `rgba(79,209,197,${Math.min(0.26, s.zoneProb[r.id] * 0.55)})`; ctx.fillRect(r.x0 * ts, r.y0 * ts, (r.x1 - r.x0 + 1) * ts, (r.y1 - r.y0 + 1) * ts); }
-      if (conf !== undefined && r.kind !== 'wreck') {
+      if (conf !== undefined && r.kind !== 'wreck' && !MINI) {
         ctx.font = `600 ${Math.round(ts * 0.32)}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.fillStyle = conf >= 0.72 ? 'rgba(90,209,122,0.8)' : 'rgba(255,180,84,0.85)';
         ctx.fillText(`수색 ${Math.round(conf * 100)}%`, cx(r.cx), cy(r.cy) + ts * (r.kind === 'zone' ? 0.75 : 0.42));
@@ -341,7 +344,8 @@ export function drawScene(ctx: CanvasRenderingContext2D, sim: Sim, s: Scene, w: 
     if (a.label) labels.push({ x, y: y - r - ts * 0.34, text: (a.isCommander ? '★ ' : '') + (a.label.length > 13 ? a.label.slice(0, 12) + '…' : a.label), col: a.status === 'down' ? '#ff5d5d' : col });
   }
   // 날씨와 야간 조명: 밤에는 대원의 시야(손전등), 불빛, 차량 주변만 밝다
-  if (sim.weather === 'night') {
+  if (sim.weather === 'night' && MINI) { ctx.fillStyle = 'rgba(3,6,18,0.3)'; ctx.fillRect(0, 0, s.w * ts, s.h * ts); }
+  else if (sim.weather === 'night') {
     if (!dark || dark.width !== s.w * ts || dark.height !== s.h * ts) { dark = document.createElement('canvas'); dark.width = s.w * ts; dark.height = s.h * ts; }
     const dg = dark.getContext('2d')!;
     dg.globalCompositeOperation = 'source-over'; dg.clearRect(0, 0, dark.width, dark.height);

@@ -10,7 +10,7 @@ const LS_SETTINGS = 'ar.settings.v1';
 const LS_CURRENT = 'ar.current.v1';
 const LS_HISTORY = 'ar.history.v1';
 
-export interface Settings { speed: number; autoCam: boolean; truthView: boolean; difficulty: Difficulty }
+export interface Settings { speed: number; autoCam: boolean; truthView: boolean; difficulty: Difficulty; sound: boolean; volume: number }
 export interface HistoryItem { seed: string; when: number; summary: string; counts: Record<string, number>; incidents: number; hash: string; difficulty?: string }
 
 function lsGet<T>(key: string, fallback: T): T {
@@ -36,11 +36,12 @@ export class Runner {
   private lastSave = 0;
   version = 0;                // 새 교대가 시작될 때마다 증가 (UI 상태 초기화용)
   restoredTicks = 0;
+  seeks = 0;                  // 되감기 횟수 (표현 계층이 다시 맞추는 데 쓴다)
   fps = 60;
   simMs = 0;
 
   constructor() {
-    this.settings = { speed: 3, autoCam: true, truthView: true, difficulty: { ...NORMAL }, ...lsGet<Partial<Settings>>(LS_SETTINGS, {}) };
+    this.settings = { speed: 3, autoCam: true, truthView: true, difficulty: { ...NORMAL }, sound: true, volume: 0.5, ...lsGet<Partial<Settings>>(LS_SETTINGS, {}) };
     if (!parseDifficulty(Object.values(this.settings.difficulty ?? {}).join(','))) this.settings.difficulty = { ...NORMAL };
     const url = new URL(window.location.href);
     const urlSeed = url.searchParams.get('seed');
@@ -62,6 +63,17 @@ export class Runner {
     this.sim = new Sim(seed && seed.trim() ? seed.trim() : randomSeed(), this.settings.difficulty);
     this.acc = 0; this.alpha = 0; this.paused = false; this.version++; this.restoredTicks = 0;
     lsSet(LS_CURRENT, { seed: this.sim.seed, tick: 0, diff: this.sim.difficulty });
+  }
+
+  /**
+   * 원하는 틱으로 이동한다. 앞으로는 그만큼 더 돌리고, 뒤로는 같은 시드·난이도로 처음부터 그 틱까지 다시 돌린다.
+   * 결정적 시뮬레이션이라 되돌아간 뒤의 전개도 처음과 똑같다(되감기는 관찰일 뿐 개입이 아니다).
+   */
+  seek(tick: number): void {
+    const target = Math.max(0, Math.round(tick));
+    if (target >= this.sim.tick) this.sim.run(target - this.sim.tick);
+    else { const s = new Sim(this.sim.seed, this.sim.difficulty); s.run(target); this.sim = s; }
+    this.acc = 0; this.alpha = 0; this.seeks++;
   }
 
   setSpeed(v: number): void { this.settings.speed = v; this.paused = false; this.saveSettings(); }

@@ -1,20 +1,23 @@
 import { useEffect, useRef } from 'react';
+import { TYPE_NAME } from '../sim/util';
+import type { SoundDirector } from '../view/audio';
 import type { CameraDirector } from '../view/camera';
-import { drawCity, hitCity, cityXf } from '../view/renderCity';
+import { FONT, TYPE_COLOR, drawCity, hitCity, cityXf } from '../view/renderCity';
 import { drawScene, hitScene } from '../view/renderScene';
 import type { Runner } from '../view/runner';
 
 export interface ViewportProps {
-  runner: Runner; director: CameraDirector;
+  runner: Runner; director: CameraDirector; sound: SoundDirector;
   selectedRid: number;
   onSelectRid: (rid: number) => void;
   onSelectUnit: (uid: number) => void;
 }
 
-const MINI_W = 232, MINI_H = 158, MINI_PAD = 12;
+const PIP_W = 232, PIP_H = 158, PAD = 12, GAP = 8;
+interface Pip { x: number; y: number; target: number }     // target: 사건 id, -1 = 도시 지도
 
 /** 중앙 화면: 도시 관제 지도 또는 현장 확대 화면. 렌더링은 requestAnimationFrame, 시뮬레이션은 고정 틱. */
-export function Viewport({ runner, director, selectedRid, onSelectRid, onSelectUnit }: ViewportProps) {
+export function Viewport({ runner, director, sound, selectedRid, onSelectRid, onSelectUnit }: ViewportProps) {
   const ref = useRef<HTMLCanvasElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef(selectedRid);
@@ -24,6 +27,7 @@ export function Viewport({ runner, director, selectedRid, onSelectRid, onSelectU
     const canvas = ref.current!, box = wrap.current!;
     const ctx = canvas.getContext('2d')!;
     let w = 0, h = 0, raf = 0, last = 0;
+    let pips: Pip[] = [];
     const resize = () => {
       const r = box.getBoundingClientRect();
       const dpr = Math.min(2, window.devicePixelRatio || 1);
@@ -34,6 +38,14 @@ export function Viewport({ runner, director, selectedRid, onSelectRid, onSelectU
     };
     const ro = new ResizeObserver(resize); ro.observe(box); resize();
 
+    const frameBox = (x: number, y: number, title: string, col: string) => {
+      ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.strokeRect(x + 0.5, y + 0.5, PIP_W, PIP_H);
+      ctx.font = `700 11px ${FONT}`;
+      const tw = ctx.measureText(title).width + 12;
+      ctx.fillStyle = 'rgba(8,13,18,0.9)'; ctx.fillRect(x + 1, y + 1, tw, 17);
+      ctx.fillStyle = col; ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.fillText(title, x + 7, y + 10);
+    };
+
     const loop = (now: number) => {
       raf = requestAnimationFrame(loop);
       const dtReal = last ? Math.min(0.1, (now - last) / 1000) : 0; last = now;
@@ -42,18 +54,35 @@ export function Viewport({ runner, director, selectedRid, onSelectRid, onSelectU
       director.update(sim, dtReal, (I) => !!sim.scenes[I.id] && (sim.scenes[I.id]!.arrivedAt >= 0 || director.manual));
       const truth = runner.settings.truthView;
       const scene = director.mode === 'scene' && director.focus >= 0 ? sim.scenes[director.focus] : null;
-      if (scene) {
-        drawScene(ctx, sim, scene, w, h, { truth, alpha: runner.alpha, timeMs: now, selectedRid: sel.current });
-        // 도시 미니맵
-        ctx.save();
-        ctx.translate(w - MINI_W - MINI_PAD, h - MINI_H - MINI_PAD);
-        ctx.beginPath(); ctx.rect(0, 0, MINI_W, MINI_H); ctx.clip();
-        drawCity(ctx, sim, { x: sim.city.w / 2, y: sim.city.h / 2, zoom: 1 }, MINI_W, MINI_H, { focus: director.focus, truth, timeMs: now, alpha: runner.alpha, selectedUnit: -1, mini: true });
-        ctx.restore();
-        ctx.strokeStyle = 'rgba(124,196,255,0.5)'; ctx.lineWidth = 1; ctx.strokeRect(w - MINI_W - MINI_PAD + 0.5, h - MINI_H - MINI_PAD + 0.5, MINI_W, MINI_H);
-      } else {
+      sound.update(sim, { paused: runner.paused, speed: runner.settings.speed, focus: director.focus, inScene: !!scene });
+      if (scene) drawScene(ctx, sim, scene, w, h, { truth, alpha: runner.alpha, timeMs: now, selectedRid: sel.current });
+      else {
         const selUnit = sel.current >= 0 ? sim.responders[sel.current].unitId : -1;
         drawCity(ctx, sim, director.cam, w, h, { focus: director.focus, truth, timeMs: now, alpha: runner.alpha, selectedUnit: selUnit });
+      }
+      // 작은 창: (현장 화면일 때) 도시 지도 + 진행 중인 다른 현장들
+      pips = [];
+      let slot = 0;
+      const place = (target: number) => { const p = { x: w - PAD - PIP_W - slot * (PIP_W + GAP), y: h - PAD - PIP_H, target }; slot++; pips.push(p); return p; };
+      if (scene) {
+        const p = place(-1);
+        ctx.save(); ctx.translate(p.x, p.y); ctx.beginPath(); ctx.rect(0, 0, PIP_W, PIP_H); ctx.clip();
+        drawCity(ctx, sim, { x: sim.city.w / 2, y: sim.city.h / 2, zoom: 1 }, PIP_W, PIP_H, { focus: director.focus, truth, timeMs: now, alpha: runner.alpha, selectedUnit: -1, mini: true });
+        ctx.restore();
+        frameBox(p.x, p.y, '도시', 'rgba(124,196,255,0.7)');
+      }
+      const maxScenes = Math.max(1, Math.min(3, Math.floor((w - 2 * PAD - 420) / (PIP_W + GAP)))) - (scene ? 1 : 0);
+      let shown = 0;
+      for (const I of sim.incidents) {
+        if (shown >= maxScenes) break;
+        const sc = sim.scenes[I.id];
+        if (!sc || I.phase !== 'onscene' || (scene && I.id === director.focus)) continue;
+        const p = place(I.id); shown++;
+        ctx.save(); ctx.translate(p.x, p.y); ctx.beginPath(); ctx.rect(0, 0, PIP_W, PIP_H); ctx.clip();
+        drawScene(ctx, sim, sc, PIP_W, PIP_H, { truth, alpha: runner.alpha, timeMs: now, selectedRid: -1, mini: true });
+        ctx.restore();
+        const type = I.assessment ? I.assessment.type : 'unknown';
+        frameBox(p.x, p.y, `사건 ${I.code} · ${I.assessment ? TYPE_NAME[type] : '확인 중'}`, TYPE_COLOR[type]);
       }
     };
     raf = requestAnimationFrame(loop);
@@ -71,8 +100,12 @@ export function Viewport({ runner, director, selectedRid, onSelectRid, onSelectU
       if (!dragging) return; dragging = false;
       if (moved > 6) return;
       const p = pos(e), sim = runner.sim;
+      for (const q of pips) {
+        if (p.x < q.x || p.x > q.x + PIP_W || p.y < q.y || p.y > q.y + PIP_H) continue;
+        if (q.target < 0) director.overview(); else director.pin(q.target, 'scene');
+        return;
+      }
       if (director.mode === 'scene' && director.focus >= 0 && sim.scenes[director.focus]) {
-        if (p.x > w - MINI_W - MINI_PAD && p.y > h - MINI_H - MINI_PAD) { director.overview(); return; }
         const hit = hitScene(sim, sim.scenes[director.focus]!, w, h, p.x, p.y);
         onSelectRid(hit.rid);
       } else {
@@ -94,7 +127,7 @@ export function Viewport({ runner, director, selectedRid, onSelectRid, onSelectU
       canvas.removeEventListener('mousedown', down); window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up);
       canvas.removeEventListener('wheel', wheel);
     };
-  }, [runner, director, onSelectRid, onSelectUnit]);
+  }, [runner, director, sound, onSelectRid, onSelectUnit]);
 
   return <div className="viewport" ref={wrap}><canvas ref={ref} /></div>;
 }

@@ -122,7 +122,7 @@ function UnitRow({ sim, u, selectedRid, onSelectRid }: { sim: Sim; u: Unit; sele
 }
 
 // ───────────────────────── 우측: AI 활동 기록 ─────────────────────────
-export function LogPanel({ sim, director, truth }: { sim: Sim; director: CameraDirector; truth: boolean }) {
+export function LogPanel({ sim, director, truth, onJump }: { sim: Sim; director: CameraDirector; truth: boolean; onJump?: (t: number, incidentId: number) => void }) {
   const [onlyFocus, setOnlyFocus] = useState(false);
   const [major, setMajor] = useState(false);
   const box = useRef<HTMLDivElement>(null);
@@ -152,7 +152,8 @@ export function LogPanel({ sim, director, truth }: { sim: Sim; director: CameraD
           const inc = e.incidentId >= 0 ? sim.incidents[e.incidentId] : null;
           const col = e.role === 'RESPONDER' && e.rid >= 0 ? DEPT_COLOR[sim.responders[e.rid].dept] : ROLE_COLOR[e.role];
           return (
-            <div key={e.id} className={`ev k-${e.kind} ${e.problem ? 'problem' : ''} ${e.truth ? 'truth' : ''} imp-${e.importance}`} onClick={() => { if (inc) director.pin(inc.id, inc.phase === 'onscene' || inc.phase === 'closed' ? 'scene' : 'city'); }}>
+            <div key={e.id} className={`ev k-${e.kind} ${e.problem ? 'problem' : ''} ${e.truth ? 'truth' : ''} imp-${e.importance}`} onClick={() => { if (inc) director.pin(inc.id, inc.phase === 'onscene' || inc.phase === 'closed' ? 'scene' : 'city'); }}
+              onDoubleClick={() => onJump && onJump(e.t, e.incidentId)} title="클릭: 이 사건 관찰 · 더블클릭: 이 순간으로 이동">
               <span className="t">{fmtClock(sim.startTod + e.t)}</span>
               {inc && <span className="inc">{inc.code}</span>}
               <span className="role" style={{ color: col }}>{e.truth ? '관찰자' : ROLE_NAME[e.role]}{e.role !== 'SYSTEM' && e.role !== 'ANALYST' && e.role !== 'DISPATCH' && e.role !== 'CALL_TAKER' ? ` ${e.actor.replace('신고자 ', '')}` : ''}</span>
@@ -281,26 +282,28 @@ export function AgentPanel({ sim, rid }: { sim: Sim; rid: number }) {
 }
 
 // ───────────────────────── 하단: 타임라인 / 배속 ─────────────────────────
-export function BottomBar({ runner, director, onTick }: { runner: Runner; director: CameraDirector; onTick: () => void }) {
+export function BottomBar({ runner, director, onTick, onSeek, sound }: { runner: Runner; director: CameraDirector; onTick: () => void; onSeek: (t: number) => void; sound: { enabled: boolean; volume: number; setEnabled: (on: boolean) => void; setVolume: (v: number) => void } }) {
   const sim = runner.sim;
   const total = Math.max(sim.shiftLen, sim.t);
   const speeds = [1, 3, 8, 15];
   return (
     <div className="bottom">
       <div className="controls">
-        <button className={`ctl ${runner.paused ? 'on' : ''}`} onClick={() => { runner.togglePause(); onTick(); }} title="일시정지 / 재개 (Space)">{runner.paused ? '▶ 재개' : '⏸ 일시정지'}</button>
+        <button className="ctl" onClick={() => onSeek(sim.t - 10)} title="10초 되감기 (←)">⏪</button>
+        <button className={`ctl ${runner.paused ? 'on' : ''}`} onClick={() => { runner.togglePause(); onTick(); }} title="일시정지 / 재개 (Space)">{runner.paused ? '▶ 재개' : '⏸ 정지'}</button>
+        <button className="ctl" onClick={() => onSeek(sim.t + 10)} title="10초 앞으로 (→)">⏩</button>
         {speeds.map((v) => <button key={v} className={`ctl ${!runner.paused && runner.settings.speed === v ? 'on' : ''}`} onClick={() => { runner.setSpeed(v); onTick(); }}>{v}×</button>)}
         <span className="shift-time">{fmtDur(sim.t)} <span className="dim">/ {fmtDur(sim.shiftLen)}{sim.t > sim.shiftLen ? ' · 연장' : ''}</span></span>
       </div>
       <div className="timeline">
-        <div className="track">
+        <div className="track" title="클릭하면 그 시각으로 이동합니다 (되감기 가능)" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); onSeek(((e.clientX - r.left) / r.width) * total); }}>
           <div className="shift-end" style={{ left: `${(sim.shiftLen / total) * 100}%` }} />
           {sim.incidents.filter((I) => I.phase !== 'unreported').map((I) => {
             const a = Math.max(0, I.reportedAt), b = I.phase === 'closed' ? I.closedAt : sim.t;
             const col = I.phase === 'closed' && I.result ? OUTCOME_COLOR[I.result.outcome] : TYPE_COLOR[I.assessment ? I.assessment.type : 'unknown'];
             return (
               <div key={I.id} className={`span ${director.focus === I.id ? 'focus' : ''} ${I.phase === 'closed' ? 'done' : 'live'}`} style={{ left: `${(a / total) * 100}%`, width: `${Math.max(0.6, ((b - a) / total) * 100)}%`, top: 4 + (I.id % 3) * 15, background: col }}
-                onClick={() => director.pin(I.id, I.phase === 'onscene' || I.phase === 'closed' ? 'scene' : 'city')} title={`사건 ${I.code} ${I.assessment ? TYPE_NAME[I.assessment.type] : ''}${I.result ? ' — ' + OUTCOME_NAME[I.result.outcome] : ''}`}>
+                onClick={(e) => { e.stopPropagation(); director.pin(I.id, I.phase === 'onscene' || I.phase === 'closed' ? 'scene' : 'city'); }} title={`사건 ${I.code} ${I.assessment ? TYPE_NAME[I.assessment.type] : ''}${I.result ? ' — ' + OUTCOME_NAME[I.result.outcome] : ''}`}>
                 <span>{I.code}</span>
               </div>
             );
@@ -308,6 +311,10 @@ export function BottomBar({ runner, director, onTick }: { runner: Runner; direct
           <div className="now" style={{ left: `${(sim.t / total) * 100}%` }} />
         </div>
         <div className="ticks">{[0, 0.25, 0.5, 0.75, 1].map((f) => <span key={f} style={{ left: `${((f * sim.shiftLen) / total) * 100}%` }}>{fmtDur(f * sim.shiftLen)}</span>)}</div>
+      </div>
+      <div className="sound">
+        <button className={`ctl ${sound.enabled ? 'on' : ''}`} onClick={() => { sound.setEnabled(!sound.enabled); onTick(); }} title="소리 켜기 / 끄기 (M)">{sound.enabled ? '소리 켜짐' : '소리 꺼짐'}</button>
+        <input type="range" min={0} max={1} step={0.05} value={sound.volume} onChange={(e) => { sound.setVolume(parseFloat(e.target.value)); onTick(); }} title="음량" />
       </div>
     </div>
   );
@@ -334,8 +341,9 @@ export function TopBar({ runner, onNew, onDifficulty }: { runner: Runner; onNew:
 }
 
 // ───────────────────────── 종료 보고서 ─────────────────────────
-export function ReportModal({ runner, onNew, onClose }: { runner: Runner; onNew: (seed?: string) => void; onClose: () => void }) {
+export function ReportModal({ runner, onNew, onClose, onJump }: { runner: Runner; onNew: (seed?: string) => void; onClose: () => void; onJump: (t: number, incidentId: number) => void }) {
   const sim = runner.sim, r = sim.report!;
+  const moments = sim.events.filter((e) => e.importance >= 3 && e.kind !== 'shift' && e.incidentId >= 0 && !(e.kind === 'resolve' && e.role === 'SYSTEM')).slice(0, 60);
   const hist = runner.history().filter((h) => !(h.seed === r.seed && h.hash === r.hash)).slice(0, 5);
   return (
     <div className="modal-back">
@@ -370,6 +378,15 @@ export function ReportModal({ runner, onNew, onClose }: { runner: Runner; onNew:
               ))}
             </div>
             <div className="side">
+              <h4>결정적 순간 <span className="dim small">누르면 그 장면으로 돌아갑니다</span></h4>
+              <div className="moments">
+                {moments.length === 0 && <div className="empty">없음</div>}
+                {moments.map((e) => (
+                  <button key={e.id} className={`moment ${e.problem ? 'bad' : ''}`} onClick={() => onJump(e.t, e.incidentId)}>
+                    <span className="t">{fmtDur(e.t)}</span><span className="inc">{sim.incidents[e.incidentId].code}</span><span className="tx">{e.text}</span>
+                  </button>
+                ))}
+              </div>
               <h4>대응 지연·실패 원인 (사건 수)</h4>
               {r.delayCauses.length === 0 && <div className="empty">기록된 문제 없음</div>}
               {r.delayCauses.slice(0, 12).map((c) => <div key={c.code} className="prob"><span>{c.label}</span><Bar v={c.count / Math.max(1, r.totalIncidents)} color="#ffb454" w={90} /><span className="num">{c.count}</span></div>)}

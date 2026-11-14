@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { TYPE_NAME, fmtDur } from '../sim/util';
+import { SoundDirector } from '../view/audio';
 import { CameraDirector } from '../view/camera';
 import { Runner } from '../view/runner';
 import { Viewport } from './Viewport';
@@ -14,6 +15,7 @@ import { AgentPanel, BottomBar, CallPanel, DecisionPanel, DifficultyPanel, Icon,
 export function App() {
   const runner = useMemo(() => new Runner(), []);
   const director = useMemo(() => new CameraDirector(), []);
+  const sound = useMemo(() => { const s = new SoundDirector(); s.enabled = runner.settings.sound; s.volume = runner.settings.volume; return s; }, [runner]);
   const [, setTick] = useState(0);
   const force = useCallback(() => setTick((t) => (t + 1) % 1e9), []);
   const [selectedRid, setSelectedRid] = useState(-1);
@@ -33,6 +35,37 @@ export function App() {
   }, [runner, director]);
   const selectUnit = useCallback((uid: number) => { selectRid(runner.sim.units[uid].crew[0]); }, [runner, selectRid]);
 
+  // 소리는 첫 사용자 입력 뒤에만 켤 수 있다(브라우저 정책)
+  useEffect(() => {
+    const unlock = () => sound.unlock();
+    window.addEventListener('pointerdown', unlock); window.addEventListener('keydown', unlock);
+    return () => { window.removeEventListener('pointerdown', unlock); window.removeEventListener('keydown', unlock); };
+  }, [sound]);
+
+  /** 시각 이동(되감기 포함). 같은 시드를 다시 돌릴 뿐이므로 결과는 달라지지 않는다. */
+  const seekTo = useCallback((t: number) => {
+    const sim = runner.sim;
+    const max = sim.ended ? sim.t : Math.max(sim.t, sim.hardCap);
+    runner.seek(Math.max(0, Math.min(max, t)) / sim.dt);
+    director.resync(runner.sim); sound.resync(runner.sim);
+    if (!runner.sim.ended) setReportClosed(-1);
+    force();
+  }, [runner, director, sound, force]);
+  const jumpTo = useCallback((t: number, incidentId: number) => {
+    seekTo(t - 4);
+    if (incidentId >= 0 && incidentId < runner.sim.incidents.length) {
+      const I = runner.sim.incidents[incidentId];
+      director.pin(incidentId, I.phase === 'onscene' || I.phase === 'closed' ? 'scene' : 'city');
+    }
+    runner.setSpeed(1); runner.paused = false;
+    force();
+  }, [runner, director, seekTo, force]);
+  const soundCtl = useMemo(() => ({
+    get enabled() { return sound.enabled; }, get volume() { return sound.volume; },
+    setEnabled: (on: boolean) => { sound.unlock(); sound.setEnabled(on); runner.settings.sound = on; runner.saveSettings(); },
+    setVolume: (v: number) => { sound.setVolume(v); runner.settings.volume = v; runner.saveSettings(); },
+  }), [sound, runner]);
+
   const onNew = useCallback((seed?: string, d?: Difficulty) => { runner.newShift(seed, d); director.reset(); setSelectedRid(-1); setReportClosed(-1); setTab('decision'); setDiffOpen(false); force(); }, [runner, director, force]);
 
   useEffect(() => {
@@ -46,12 +79,15 @@ export function App() {
       else if (e.key === 'a' || e.key === 'A') director.auto();
       else if (e.key === 'c' || e.key === 'C') director.overview();
       else if (e.key === 't' || e.key === 'T') { runner.settings.truthView = !runner.settings.truthView; runner.saveSettings(); }
+      else if (e.key === 'm' || e.key === 'M') soundCtl.setEnabled(!sound.enabled);
+      else if (e.key === 'ArrowLeft') seekTo(runner.sim.t - 10);
+      else if (e.key === 'ArrowRight') seekTo(runner.sim.t + 10);
       else return;
       force();
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [runner, director, force]);
+  }, [runner, director, force, seekTo, soundCtl, sound]);
 
   const sim = runner.sim;
   const truth = runner.settings.truthView;
@@ -68,7 +104,7 @@ export function App() {
         <UnitList sim={sim} selectedRid={selectedRid} onSelectRid={selectRid} />
       </div>
       <div className="center">
-        <Viewport runner={runner} director={director} selectedRid={selectedRid} onSelectRid={selectRid} onSelectUnit={selectUnit} />
+        <Viewport runner={runner} director={director} sound={sound} selectedRid={selectedRid} onSelectRid={selectRid} onSelectUnit={selectUnit} />
         <div className="overlay tl">
           <div className="cam-reason"><span className={`dot ${director.manual ? 'manual' : 'auto'}`} />{director.manual ? '수동 시점' : '자동 카메라'} · {director.reason}</div>
           {I && (
@@ -102,10 +138,10 @@ export function App() {
           <button className={tab === 'agent' ? 'on' : ''} onClick={() => setTab('agent')}>대원 정보</button>
         </div>
         <div className="right-top">{tab === 'decision' ? <DecisionPanel sim={sim} director={director} truth={truth} /> : <AgentPanel sim={sim} rid={selectedRid} />}</div>
-        <div className="right-bottom"><LogPanel sim={sim} director={director} truth={truth} /></div>
+        <div className="right-bottom"><LogPanel sim={sim} director={director} truth={truth} onJump={jumpTo} /></div>
       </div>
-      <BottomBar runner={runner} director={director} onTick={force} />
-      {showReport && !diffOpen && <ReportModal runner={runner} onNew={onNew} onClose={() => setReportClosed(runner.version)} />}
+      <BottomBar runner={runner} director={director} onTick={force} onSeek={seekTo} sound={soundCtl} />
+      {showReport && !diffOpen && <ReportModal runner={runner} onNew={onNew} onClose={() => setReportClosed(runner.version)} onJump={(t, id) => { setReportClosed(runner.version); jumpTo(t, id); }} />}
       {diffOpen && <DifficultyPanel runner={runner} onStart={onNew} onClose={() => setDiffOpen(false)} />}
       {sim.ended && !showReport && <button className="reopen" onClick={() => setReportClosed(-1)}>보고서 다시 보기</button>}
     </div>

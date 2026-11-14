@@ -93,7 +93,7 @@ function CallStrip({ sim, s, onClick }: { sim: Sim; s: Shown; onClick: () => voi
   if (call) { for (let i = call.transcript.length - 1; i >= 0; i--) if (call.transcript[i].who === 'CALLER') { said = call.transcript[i].text; break; } if (!said && call.transcript.length) said = call.transcript[call.transcript.length - 1].text; }
   let line = '', tail = '';
   if (mode === 'active') line = said;
-  else if (mode === 'ended') line = '통화 종료 · ' + said;
+  else if (mode === 'ended') line = said ? '통화 종료 · ' + said : '통화 종료';
   else if (mode === 'ringing') line = `신고 전화 대기 ${ringing}건`;
   else if (mode === 'past' && call) { line = '대기 중인 신고 전화 없음'; tail = call.endedAt >= 0 ? ` · 지난 통화 ${fmtDur(sim.t - call.endedAt)} 전 종료` : ' · 지난 통화 중단'; }
   else line = '아직 걸려 온 신고 전화가 없습니다';

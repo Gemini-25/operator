@@ -3,6 +3,16 @@
 공통 규칙은 `docs/specs/README.md`, 화면 묶음의 본보기는 `docs/specs/U1-ui.md`. 브랜치 `wf/u2`, 개발 서버 포트 **5214**.
 이 문서는 다음 구현 세션이 그대로 따라 할 수 있게 쓴 지시서다. 줄 번호는 커밋 `0636387` 기준(`db8cba0` 에서도 `src/`·`scripts/` 는 같다). Q1 이 먼저 합쳐지면 `App.tsx` 의 줄 번호가 밀린다 — 9절 7번.
 
+## 구현 상태 (이 세션에서 구현·합침)
+
+**구현됨** — 브랜치 `wf/u2`, 합침 `f4e44be`, 검토 반영 `7354934`(통화 칸을 펼쳐도 무전 기록이 맨 아래를 따라감)·`7218323`(대사가 없는 끝난 통화의 띠). 화면 자동 검사 `npm run ui-check` 의 8번 항목(통화창 자리)이 지킨다. 시뮬레이션 결과는 바뀌지 않았다. 아래 본문은 설계 그대로이고, **구현이 설계서와 다르게 한 곳**(코드가 정본)은 다음 다섯이다:
+
+1. **지난 통화의 머리줄 배치** — 설계(3.4-4·4.1)는 머리줄을 `지난 통화 · 1:20 전 종료` 한 덩어리로 적었다. 구현(`src/ui/CallDock.tsx` 의 `CallBody`)은 다른 상태와 같은 칸 순서를 쓴다: 제목 칸 `<b>지난 통화</b>` → 사건 번호(`.inc`) → 통화 길이(`.dur`) → 흐린 글자 `pastText()`(`1:20 전 종료` / `통화 중단`).
+2. **끊긴 통화의 길이 칸** — 통화 도중 사건이 닫혀 끝난 통화(`endedAt < 0`)는 길이 칸(`.dur`)을 비운다(`{active || call.endedAt >= 0 ? fmtDur(…) : ''}` — 길이를 잴 끝 시각이 없다).
+3. **'대기 N' 알약의 `title`** — `title="다른 신고 N건이 대기 중입니다"`(마우스를 올리면 뜻이 보인다). 설계(3.2-1)에는 없었다.
+4. **무전 기록의 붙음 규칙**(4.3) — 설계는 `ResizeObserver` 에서 `stick` 이면 맨 아래로 내리는 것만 적었다. 구현(`src/ui/panels.tsx` `LogPanel` 의 `onScroll`)은 **사용자가 위로 올렸을 때(scrollTop 이 줄었을 때)만 붙음을 풀고**(칸이 줄거나 새 줄이 붙어 생긴 틈은 위로 올린 것이 아니다), **붙어 있을 때만 `overflow-anchor` 를 끈다**(`el.style.overflowAnchor = stick.current ? '' : 'auto'` — 위로 올려 읽는 동안만 앵커링을 켜 140줄 상한에서 맨 위 줄이 빠져도 읽던 줄이 제자리에 있게, 붙어 있는 동안에는 그 보정이 scrollTop 을 줄여 위로 올린 것으로 읽히지 않게).
+5. **대사 없는 끝난 통화의 띠** — 설계(3.3 표 `ended` 행)는 `통화 종료 · ` + 마지막 대사였다. 대사가 없으면 띠는 `통화 종료` 만 쓴다(`'통화 종료 · '` 로 끝나지 않게 — `7218323`).
+
 사용자의 말: "통화 화면이 가운데 메인 화면을 가려서 너무 방해되는데, 여닫을 수 있게 하거나 아예 옆으로 빼버리자."
 
 **결정 (2절)**: 두 가지를 합친 C안. 통화창을 가운데 화면 위의 떠 있는 상자에서 **오른쪽 칸 맨 위의 고정 칸**으로 옮기고, 그 칸을 **한 줄 띠로 접을 수 있게** 한다. 기본은 펼침이다. 가운데 화면을 가리는 넓이는 펼쳐도 접어도 0이다.
@@ -118,7 +128,7 @@
 | 상태 (`shownCall` 의 `mode`, 3.4) | 고리 | 사건 칩 | 한 줄 | 오른쪽 |
 |---|---|---|---|---|
 | 통화 중 `active` | 파동 | 있음 | 신고자의 마지막 대사(아직 없으면 마지막 대사). 비긴급 전화도 같다 | 통화 시간, 빨간 점 깜박임, `대기 N`(있을 때) |
-| 끝난 지 6초 안 `ended` | 멈춤 | 있음 | `통화 종료 · ` + 신고자의 마지막 대사 | 통화 시간, `대기 N`(있을 때) |
+| 끝난 지 6초 안 `ended` | 멈춤 | 있음 | 대사가 있으면 `통화 종료 · ` + 신고자의 마지막 대사, 없으면 `통화 종료`(구현 상태 5) | 통화 시간, `대기 N`(있을 때) |
 | 받는 통화 없이 벨만 울림 `ringing` | 파동 | 없음 | `신고 전화 대기 N건` | `대기 N` |
 | 지난 통화 `past` | 흐림 | 흐림 | `대기 중인 신고 전화 없음` + 흐린 글자 ` · 지난 통화 1:20 전 종료` (`endedAt < 0` 이면 ` · 지난 통화 중단`, 시각은 쓰지 않는다) | — |
 | 아직 한 통도 없음 `none` | 흐림 | 없음 | `아직 걸려 온 신고 전화가 없습니다` | — |
@@ -233,8 +243,8 @@ export function CallDock({ sim, truth, open, onToggle }: { sim: Sim; truth: bool
 - `CallBody`: 지금의 `CallPanel` JSX(`panels.tsx:457-477`)를 **그대로 옮기고** 다음만 바꾼다.
   - 클래스 `call active|ended|ringing|past|none`.
   - 보여 줄 통화가 있을 때(`active`·`ended`·`past`) 머리줄은 `<div className="call-head" key={call.id}>` — 새 통화마다 다시 그려져 `.call.active` 일 때 `call-flash` 가 한 번 돈다(3.5).
-  - 머리줄의 `past` 문구: `지난 통화`, `N 전 종료` / `통화 중단`(`endedAt < 0`).
-  - `.queue` 줄을 머리줄의 `대기 N` 알약으로 올린다(`active`·`ended` 에서만).
+  - 머리줄의 `past` 문구: `지난 통화`, `N 전 종료` / `통화 중단`(`endedAt < 0`). 구현은 제목 칸·사건 번호·길이·흐린 글자의 칸 순서를 다른 상태와 같게 두고, 끊긴 통화는 길이 칸을 비운다(구현 상태 1·2).
+  - `.queue` 줄을 머리줄의 `대기 N` 알약으로 올린다(`active`·`ended` 에서만). 구현은 `title="다른 신고 N건이 대기 중입니다"` 를 단다(구현 상태 3).
   - `ringing` 은 지금의 벨 상자와 같은 머리줄 `신고 전화 대기 N건 · ● 벨 울림`, `none` 은 머리줄 없이 빈 칸 문구.
   - 접기 단추는 `CallBody` 안에 넣지 않는다(위의 `CallDock` 이 `.call` 옆에 둔다).
 - `CallStrip`: 3.3 의 표대로. 띠 전체가 단추 하나이고, 새 통화마다 다시 그려지도록 보여 주는 통화의 번호를 `key` 로 준다(반짝임 한 번). 전체 문장은 단추의 `title` 에 합친다(3.3):
@@ -281,6 +291,13 @@ export function CallDock({ sim, truth, open, onToggle }: { sim: Sim; truth: bool
     const ro = new ResizeObserver(() => { if (stick.current) el.scrollTop = el.scrollHeight; });
     ro.observe(el); return () => ro.disconnect();
   }, []);
+  // (구현 — 구현 상태 4) 붙음을 푸는 것은 사용자가 위로 올렸을 때뿐, 앵커링은 위로 올려 읽는 동안만 켠다
+  const onScroll = (el: HTMLDivElement) => {
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 40) stick.current = true;
+    else if (el.scrollTop < lastTop.current - 1) stick.current = false;
+    lastTop.current = el.scrollTop;
+    el.style.overflowAnchor = stick.current ? '' : 'auto';
+  };
 ```
 
 ### 4.4 `src/ui/styles.css`
@@ -504,7 +521,7 @@ Q1 의 7번(조작 목록)에는 오른쪽 칸의 '통화창 접기 (P)' 단추(
   - `README.md` 조작 표(`:46-68`)에 한 줄: `` | `P` | 신고 통화창 접기 / 펼치기 (오른쪽 칸 맨 위). 표시 방식일 뿐이다 | ``
   - `README.md` 화면 구성(`:103-109`): '가운데'의 "통화 중에는 신고 통화창이" 를 빼고, '오른쪽 위' 앞에 "**오른쪽 맨 위**: 신고 통화창(접으면 한 줄 띠, `P`)." 를 넣는다.
   - `docs/specs/N6-disaster.md:94` 의 메모 끝에 "U2 에서 통화창을 오른쪽 칸으로 옮겨 `.call-wrap` 줄은 지웠다" 를 덧붙인다.
-  - `docs/specs/README.md` 표에 U2 줄, `docs/ROADMAP.md` 의 완료 목록.
+  - `docs/specs/README.md` 표에 U2 줄(반영됨), `docs/ROADMAP.md` 의 완료 목록.
 
 ## 검토 메모
 

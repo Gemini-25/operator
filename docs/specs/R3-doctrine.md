@@ -6,7 +6,7 @@
 
 한 줄로: 네 분야(경찰·소방·의료·특수)마다 **상황**(사건 유형과 현장 국면) × **장비**(그 대원이 든 개인 장비와 부대 장비의 유무·잔량·알려진 고장) × **상태**(자기 몸·공기·탄·지구력·동요·경험, 짝이 있는가, 지원이 오는가)에 따라 "무엇을 먼저 하는가"를 정한 **교본 표**를 두고, 대원·지휘관·관제가 그 표로 고른다. 관찰자는 기록 문구·머리 위 라벨·대원 정보창·보고서 문장으로 "같은 상황인데 이번엔 장비가 없어서 / 다쳐서 / 혼자라서 다르게 했네"를 본다.
 
-**선행 관계**: 구현 순서는 `docs/ROADMAP.md` "진행 중"대로 R1(편성·개인 장비·헬기) → H1(부상과 사망) → X6(위험의 현실화) → R2(대응 방법) → **R3** → I1-b → I2 이고, G4·G5·U2 는 따로다. 그래서 다음 구현 세션이 R3 를 시작할 때는 **R1·H1·X6·R2 와 G5(어쩌면 G4)가 이미 합쳐져 있다**고 본다. 이 문서는 같은 날 쓰인 `R1-crews.md`·`R2-methods.md`·`H1-injuries.md`·`X6-catastrophe.md`·`G4-scene-legibility.md`·`G5-combat-fx.md`·`I1-causality.md`·`I2-persistence.md` 를 읽고 그 이름·자료형을 그대로 썼다. 이름이 어긋나면 **먼저 합쳐진 쪽(R1 > H1 > X6 > R2)의 실제 코드**를 따른다.
+**선행 관계**: 구현 순서는 `docs/specs/README.md` "구현 순서"(= `docs/ROADMAP.md` "진행 중")대로 R1(편성·개인 장비·헬기) → H1(부상과 사망) → X6(위험의 현실화) → R2(대응 방법) → **R3** → I1-b → I2 이고, G4·G5·U2 는 따로다(G5·U2 는 합쳐졌다). 그래서 다음 구현 세션이 R3 를 시작할 때는 **R1·H1·X6·R2 와 G5(어쩌면 G4)가 이미 합쳐져 있다**고 본다. 이 문서는 같은 날 쓰인 `R1-crews.md`·`R2-methods.md`·`H1-injuries.md`·`X6-catastrophe.md`·`G4-scene-legibility.md`·`G5-combat-fx.md`·`I1-causality.md`·`I2-persistence.md` 를 읽고 그 이름·자료형을 그대로 썼다. 이름이 어긋나면 **먼저 합쳐진 쪽(R1 > H1 > X6 > R2)의 실제 코드**를 따른다.
 
 **R3 는 그 위에 얹는 교본이다 — 같은 것을 다시 정의하지 않는다.** 편성·역할·장비 효과·공기·섬광탄·테이저는 R1, 같은 임무의 여러 방법과 고르는 점수(`chooseMethod`)·실패 기억(`a.mfail`)은 R2, 부상의 효과(`bandOf`·`hurtF`·출혈 후퇴)·쓰러진 동료 처치(`treatMate`)는 H1, 위험의 조짐·위험 단계·철수 명령·외부 방어(`DANGER_RULES`·`evacuate`·`a.avoid`)는 X6 이다. R3 가 새로 정하는 것은 넷이다.
 
@@ -27,7 +27,7 @@
 | `src/sim/field/doctrine.ts` | **판단부 엔진**: 분야 판정 `docDeptOf`, 판단 입력 `stateSelf`·`stateReported`·`docSit`·`docCtx`, 걸리는 자리 `docFit`·`docFitRules`·`docDuty`·`docAct`·`docRetreat`·`docDrop`·`docMethodMul`·`docGate`, 바탕 `coverSpot`·`buddyOf`·`outsideWatch`, 짝 표 `PAIRS`·`SOLO_OK`, 상수 표 `DOC` | **안 된다** — 테스트가 금지어와 행동을 검사한다(2.4·10절 1·3) |
 | `src/sim/field/doctrine/{common,police,fire,ems,special}.ts` | 분야별 교본 줄(3절). `registerDoctrine` 만 부른다 | **안 된다**(줄은 `DocCtx` 만 받는다) |
 | `src/sim/field/doctrine/index.ts` | 다섯 파일을 이 순서로 import(등록 순서 = 같은 순위의 줄끼리 이기는 순서) | — |
-| `src/sim/field/doctrineRun.ts` | **실행부**: 새 임무(`cover`·`rearm`·`airOut`·`pairOut`·`pair`·`triage`)의 실행, 탄약 소모·재장전(`fireRound`·`reloadTick`), 자기 신고(`selfReport`), 짝 맺기(`pairUp` — 부대가 내린 뒤 한 번)·다시 맺기(`rebuddy`), 출입구 하나의 진입(`breachExit` — `executor.breach` 에서 꺼낸 몸), 해체 방법 셋(`runDefuse`), 기록(`recordDoc`) | 된다(`executor.ts` 와 같은 자격) |
+| `src/sim/field/doctrineRun.ts` | **실행부**: 새 임무(`cover`·`rearm`·`airOut`·`pairOut`·`pair`·`triage`)의 실행, 탄약 소모·재장전(`fireRound`·`reloadTick`), 자기 신고(`selfReport`), 짝 맺기(`pairUp` — 부대가 내린 뒤 한 번)·다시 맺기(`rebuddy`), 출입구 하나의 진입(`breachExit` — `executor.breach` 에서 꺼낸 몸), 이송·교통 통제·해체 방법의 효과(`runCarry`·`runTraffic`·`runDefuse` — 3.7. 진압·수색 방법의 효과는 R2 의 `methodRun.ts`), 기록(`recordDoc`) | 된다(`executor.ts` 와 같은 자격) |
 | `src/sim/field/orders/doctrine.ts` | 지휘 교본(6.1의 새 줄): `registerOrders` | 안 된다(`tests/ext.test.ts` 가 이미 검사한다) |
 | `src/sim/dispatch/doctrine.ts` | 관제 교본(6.2): 부대 고르기 가산 `dispatchPref`, 수요 보정 `docNeeds`, 추격 역할 `chaseRoles` | 안 된다(관제 — 평가·조직 정보만) |
 | `tests/doctrine.test.ts` | 10절 | — |
@@ -71,11 +71,12 @@
 - 지휘관이 대원 한 사람의 방법을 지시하는 것(R2 의 결정 그대로).
 - 시한(폭발물 `fuse`)을 믿음에 넣는 것 — 진실에만 있다(11.3 결정 7).
 - 교대 사이의 지속(탄약 상자·예비 펌프의 이어받기는 I2 몫 — I2 §3.3 의 표에 R3 의 두 칸을 더하는 것은 I2 가 정한다).
+- 경찰의 용의자 호송. H1 이 "호송은 기계적으로 모델하지 않는다"(H1 §4.3)고 정했고 R3 도 다루지 않는다 — 다친 용의자의 이송은 H1 의 `treatSuspect` 그대로다.
 
 | 설계서 | 겹치는 곳 | R3 가 새로 정하는 것 | 가리키기만 하는 것 |
 |---|---|---|---|
 | R1 편성·개인 장비·헬기 | 역할 36·장비 35(`KITS`), 공기·섬광탄·테이저, 헬기 세 종류, 인원 문턱 | ① 탄약(`KitDef.mag`·`reload`·`perShot`, 총기 `uses`, `KitItem.mag`, `Unit.ammoBox`) ② 공기 탈출 문턱(`AIR_OUT`·`AIR_IN`)과 `swapAir` 후보의 문턱 하나 ③ 짝 묶음 표(`PAIRS` — 역할 쌍, 5.1) ④ 진입 문턱을 "쓸 수 있는 경찰"로(6.1 CP1) ⑤ 예비 펌프 수(`Unit.sparePump`) ⑥ 척추 고정판 효과의 조건을 "가졌는가"에서 "고정했는가"로(E13) ⑦ `defuse` 자격에 작동하는 로봇(S06) | 역할·기본 장비·장비 효과, `hasKit`·`kitUses`·`toolFor`·`crewHasKit`·`capableOf`(판단용)과 `kitWorks`·`useKit`·`toolUse`(효과용)의 나눔, `swapAir` 의 실행, 헬기의 상공 판단(`airDecide.ts`) |
-| R2 대응 방법 | 방법 틀(`METHOD`·`chooseMethod`·`MethodWhy`), 실패 기억 `a.mfail`, 선택 임무 | ① `MethodCtx` 에 교본 입력 칸(`dc: DocCtx`) ② 점수에 교본 배율(`docMethodMul`)을 곱한다 ③ `MethodWhy` 에 여섯(`hurt`·`alone`·`lowAir`·`lowAmmo`·`shaken`·`tired`) ④ 방법 행 열 개(위) — R2 가 "R3 몫"으로 넘긴 이송·교통 통제의 방법, 그리고 수색·진압·해체 몇 갈래 | 방법을 바꾸는 세 때, 도착 재선택, 기록 문구 `SAY`, `recordMethod`, `mrng` 흐름, `gear.ts` 의 판단용 `kitCount` |
+| R2 대응 방법 | 방법 틀(`METHOD`·`chooseMethod`·`MethodWhy`), 실패 기억 `a.mfail`, 선택 임무 | ① `chooseMethod` 의 마지막 인자 `dc: DocCtx \| null` 과 `MethodCtx.dc`(R2 §3.2·§3.4 에 반영됨) ② 점수에 교본 배율(`docMethodMul`)을 곱한다 ③ `MethodWhy` 에 여섯(`hurt`·`alone`·`lowAir`·`lowAmmo`·`shaken`·`tired` — 사상 표 3.7. R2 의 평소 까닭은 `usual`) ④ 방법 행 열 개(위) — R2 가 "R3 몫"으로 넘긴 이송·교통 통제의 방법, 그리고 수색·진압·해체 몇 갈래 | 방법을 바꾸는 세 때, 도착 재선택, 기록 문구 `SAY`, `recordMethod`, `mrng` 흐름, `gear.ts` 의 판단용 `kitCount` |
 | H1 부상과 사망 | 다친 대원의 행동, 동료 처치, 트리아지 순서 | ① 체력 41~70(중상) 대원의 **일 바꾸기**(가벼운 일 — 공통 G01) ② 자기 신고 사실 `crew`(지휘관이 남의 체력을 직접 읽지 않게 — 2.4) ③ 동요(`a.shaken`) ④ 의료의 분류 임무 `triage`(H1 §6.2 의 우선도 표는 그대로, 분류는 그 앞 단계) | `bandOf`·`hurtF`·`r.bleed`(자기 몸), 믿음 술어 `mateNeedsHospital`, 출혈 후퇴 조건, `rescueMate`·`treatMate` 의 자격 |
 | X6 위험의 현실화 | 철수 판단, 위험 구역, 외부 방어 | `DANGER_RULES` 에 **장비 조건이 붙은 줄 둘**(X6 줄보다 이르거나 높은 단계를 내는 것만 — 표의 모양은 그대로, 6.1 CF5·CF6), 교본의 의무(`airOut`)를 X6 의 `evacuate` 의무 **뒤**에 둔다(2.6) | 조짐·`signDanger`·`selfDanger`·`evacuate`·`a.avoid`·`registerGate`·제한적 구조 진입(`w.risky`), 외부 방수 자리 |
 | G4 현장 가독성 | 현장 그림 | 없음(R3 는 현장 고정 층·위험 표지를 건드리지 않는다) | — |
@@ -128,11 +129,14 @@ export interface DocUse {
   | 'crew';                                 // 대원 자신의 몸 상태 신고 (id = rid, 값 CrewBelief) — 1단계
 // TaskKind (한 줄 합집합 — R1 'swapAir' · X6 'evacuate' · R2 'ashore' 뒤, 그 줄 끝에)
   | 'cover' | 'rearm' | 'airOut' | 'pairOut' | 'pair'      // 2·3단계
+//   이름 'cover' 가 셋이다 — 헷갈리지 않게 구분한다: TaskKind·DocActId 'cover' = 숨기(엄폐 자리로 가서 쏘지 않고 기다림, 라벨 '엄폐'),
+//   R2 MethodId 'cover' = 엄폐 사격 분기의 기록 이름(쏜다 — G5 의 기록과 맞춰져 있다), DocEffect choose 'cover' = P05 의 엄폐 사격 자리 고르기.
+//   패널·split(8.2)에서는 임무 'cover' 를 '엄폐(대기)', 방법 'cover' 를 '엄폐 사격' 으로 적어 가른다
 // WorkKind 끝에 새 줄 — 4단계
   | 'triage';                               // 다수 사상자 분류 (구급만)
 // MethodId 끝에 새 줄 (R2) — 3·5·6단계 (METHOD 가 Record 라 행을 함께 둔다)
   | 'feel' | 'pulse' | 'pack' | 'drag' | 'litter' | 'post' | 'blockLane' | 'robotDefuse' | 'suitDefuse' | 'bareDefuse';
-// MethodWhy (R2 — 한 줄 합집합, 그 줄 끝에)
+// MethodWhy (R2 — 한 줄 합집합, 그 줄 끝에. R2 의 평소 까닭 이름은 'usual' — 교본(doctrine)과 헷갈리지 않게)
   | 'hurt' | 'alone' | 'lowAir' | 'lowAmmo' | 'shaken' | 'tired'
 // KitItem (R1)
 mag?: number;                               // 총기: 지금 탄창에 남은 탄 (uses 는 가진 탄 전부 — 탄창 포함)
@@ -203,7 +207,7 @@ R1 의 `crews.ts` `KitDef` 에 세 칸: `mag?: number`(탄창 크기), `reload?:
 |---|---|---|---|---|
 | ① `fit` — 누가 맡는가 | "이 대원이 이 일을 맡아도 되는가, 얼마나 먼저인가" | `agents.fitFor` 의 **맨 끝**(R1 의 역할 선호 다음): `fit = docFit(sim, s, a, w, fit)`. **늘 보고 모드**(2.4 — `fitFor` 는 남에게도 불린다) | 배율(`fitMul`, 0 = 금지)·가산(`fitAdd`). `drop` 표시가 있는 금지는 하던 임무도 놓게 한다(`docDrop`, 2.6) | 지휘관의 배정(`commander.assign`)과 대원의 자체 판단(`brain` 7번)이 **둘 다** `fitFor` 를 쓴다. 한 곳에 걸면 "다친 대원은 가벼운 일로", "짝 없이 위험 실내 금지"가 지휘관 지시에도 자체 판단에도 똑같이 걸린다. 맡을 사람이 없으면 B3 의 "맡을 사람이 없는 작업" 블록(R1 `anyCapable`)이 그대로 지원을 부른다 |
 | ② `duty`·`act` — 지금 무엇을 하는가 | "작업판의 일 말고, 내 상태 때문에 지금 해야 할 행동이 있는가" | `brain.think`: 의무(`docDuty`)는 X6 의 `evacuate` 의무 바로 뒤, 점수 후보(`docAct`)는 R1 의 공기통 교체 후보 다음, 후퇴 후보의 바꿔 끼우기(`docRetreat` — P11)는 후퇴 후보를 만드는 자리. **자기 모드** | 상태 행동 하나(`DocActId`)와 점수 | 지금도 상태 행동(후퇴·휴식·예비 펌프·공기통 교체)은 모두 `brain` 의 후보다. 같은 틀에 넣어야 판단 오차·계속 점수·지시와 같은 저울에 오른다 |
-| ③ `method` — 어떻게 하는가 | "이 임무를 어떤 방법으로" | R2 의 `chooseMethod` 점수에 `× docMethodMul(dc, m)`. `dc` 는 **부르는 쪽이 만들어 넘긴다**: 실행부의 `startMethod`·`recheckOnArrive`·`switchMethod`(t ≠ null)는 자기 모드, `methodFit`(t = null — `fitFor(waterRescue)` 등 남에게도 불린다)은 보고 모드 | 방법별 배율(0 = 후보에서 뺀다) | R2 가 "R3 는 METHOD 행과 situ 조건을 늘린다, 상태는 `MethodCtx` 에 칸을 더한다"고 정했다. 방법을 바꾸는 때(실패·고장·조건 상실)·기억·기록은 R2 의 것을 그대로 쓴다 |
+| ③ `method` — 어떻게 하는가 | "이 임무를 어떤 방법으로" | R2 의 `chooseMethod` 점수에 `× docMethodMul(dc, m)`(R2 §3.2 의 마지막 인자 `dc`). 실행부의 `startMethod`·`recheckOnArrive`·`switchMethod`(t ≠ null)는 자기 모드 `docCtx(…, 'self')` 를 만들어 넘기고, `methodFit`(t = null — `fitFor(waterRescue)` 등 남에게도 불린다)은 **인자를 그대로 두고 안에서** 보고 모드 `docCtx(…, 'report', w)` 를 만든다(그래서 `fitFor`·B3 `anyCapable` 은 고치지 않는다). `chooseMethod` 는 받은 `dc` 를 고치지 않고 `{ ...dc, m: { reach, flow, weak } }` 사본으로 `docMethodMul` 을 부른다 | 방법별 배율(0 = 후보에서 뺀다) | R2 가 "R3 는 METHOD 행과 situ 조건을 늘린다, 상태는 `MethodCtx` 에 칸을 더한다"고 정했다. 방법을 바꾸는 때(실패·고장·조건 상실)·기억·기록은 R2 의 것을 그대로 쓴다 |
 | ④ `gate` — 실행 중의 판단 지점 | "지금 이 한 걸음(혼자 방에 들어가기, 흉기 상대에게 붙기, 처치 중인 환자 들기)을 해도 되는가" | 실행기의 그 분기에서 `docGate(sim, s, a, gate, sense)`. **자기 모드** | `{ ok, rule, wait, opt }` — 막히면 실행기가 정해진 대체 행동(그 자리에서 기다림·거리 유지)을 한다 | 이 결정들은 지금 실행기의 분기 안에 있다(`executor` `case 'engage'` 의 "4초 뒤 혼자 진입", `case 'arrest'` 의 "곧장 다가가 제압"). 분기를 판단부로 옮기면 실행 코드가 둘로 갈라진다. 대신 **판단(믿음)은 교본 함수가, 효과(이동·기다림)는 실행기가** 한다 — R2 의 `chooseMethod`/`methodRun` 나눔과 같다 |
 | ⑤ `cmd` — 지휘관 | 무엇을 요청하고 무엇을 거두는가 | `orders/doctrine.ts`(`registerOrders`) + `commander.ts` 의 작은 조각 몇 곳(6.1 끝) | 요청·작업·배정 가산 | 지휘 규칙 파일은 이미 "믿음만"이 테스트로 걸려 있다 |
 | ⑥ `dispatch`·`chase` — 관제 | 어느 부대를 보내고 추격에서 누가 무엇을 하는가 | `dispatch/doctrine.ts` 를 `dispatcher.pickUnit`·`analyst` 수요·`pursuit.tickPursuits` 의 "알려진 위치로 방향을 바꾼다" 줄이 부른다 | 점수 가산·수요 보정·역할 | 관제 코드(`dispatch/*`)는 이미 진실 금지 구역이다 |
@@ -259,8 +263,10 @@ export interface DocCtx {
   dng: number;                                   // brain 의 위험 점수 (② 자리에서 brain 이 넘긴다. 다른 자리에서는 0)
   has: (id: KitId) => boolean;                   // gear.kitHas — 들었는가 (알려진 고장 제외, 수량 무관). kits·noKits 가 이것으로 본다
   kit: (id: KitId) => number;                    // gear.kitCount (R2 — scba 는 0/1, 수량 장비는 남은 수). 수량을 보는 when 이 쓴다
-  m?: { reach: number; flow: number; weak: boolean };      // ③ 방법 자리: R2 MethodCtx 의 그 값
+  m?: { reach: number; flow: number; weak: boolean };      // ③ 방법 자리: R2 chooseMethod 가 MethodCtx 를 만든 뒤 dc 의 사본에 채운다 (부르는 쪽은 채우지 않는다 — R2 §3.2)
 }
+// doctrine.ts
+export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report', w: WorkItem | null = null, sense: Sense = ZERO_SENSE, dng = 0): DocCtx;
 ```
 
 | `DocPhase` | 정하는 법 (`phaseOf(s, a)` — 자기 임무와 공개 지휘 상태) |
@@ -303,7 +309,7 @@ export interface DocCtx {
 
 **읽으면 안 되는 것**(테스트가 글자와 행동으로 검사한다 — 10절 1·3): `s.props`, `s.propAt`, `s.casualties`, `s.hostiles`, `.truth`, `.pursuit`, `s.fire[`, `s.smoke[`, `sim.scenes`, `s.variant`, `.fault`, `kitWorks`, `useKit`, `toolUse`, `needsHospital`. 그리고 **남의 몸** — `.health`·`.bleed`·`.injuries` 는 `stateSelf` 한 함수 안에만 나온다(글자 시험), 그리고 `b` 의 체력·출혈을 바꿔도 새 `crew` 사실이 없으면 `docFit`·`fitFor` 가 그대로다(행동 시험). 명부·짝의 역할·장비를 `sim.responders[b.rid]`·감싼 함수로 읽는 것은 허용한다(그래서 "`sim.responders[` 는 `a.rid` 꼴만" 같은 글자 규칙은 두지 않는다).
 
-**import**: `doctrine.ts` 는 `agents.ts`·`executor.ts`·`hazards.ts`·`methods.ts`·`methodRun.ts`·`doctrineRun.ts`·`crews.ts` 를 **값으로** import 하지 않는다(`agents.fitFor` 와 R2 `methods.chooseMethod` 가 `doctrine.ts` 를 부르므로 순환을 만들지 않는다). `import type`(예: R2 `methods.ts` 의 `Sense`·`MethodCtx`)은 된다 — 컴파일 뒤 지워지므로 순환이 아니다. import 해도 되는 값: `grid.ts`(`staticPass`·`losWalls`·`tileOf`), `util.ts`, `gear.ts`(판단용 — R2 의 `kitCount`·`kitName`·`seatsLeft` 와 R3 가 더하는 `kitHas`·`kitQty`·`gunOf`·`roleIdOf`·`groupOf`), H1 `injury.ts` 의 `bandOf`·`hurtF`(잎 모듈), `doctrine/registry.ts`.
+**import**: `doctrine.ts` 는 `agents.ts`·`executor.ts`·`hazards.ts`·`methods.ts`·`methodRun.ts`·`doctrineRun.ts`·`crews.ts` 를 **값으로** import 하지 않는다(`agents.fitFor` 와 R2 `methods.chooseMethod` 가 `doctrine.ts` 를 부르므로 순환을 만들지 않는다). `import type`(예: R2 `methods.ts` 의 `Sense`·`MTarget` — R2 가 export 하는 타입. `MethodCtx` 는 export 하지 않는다)은 된다 — 컴파일 뒤 지워지므로 순환이 아니다. import 해도 되는 값: `grid.ts`(`staticPass`·`losWalls`·`tileOf`), `util.ts`, `gear.ts`(판단용 — R2 의 `kitCount`·`kitName`·`seatsLeft` 와 R3 가 더하는 `kitHas`·`kitQty`·`gunOf`·`roleIdOf`·`groupOf`·`crewHas`), H1 `injury.ts` 의 `bandOf`·`hurtF`(잎 모듈), `doctrine/registry.ts`.
 
 **R3 가 `gear.ts` 에 더하는 판단용 감싼 함수**(R1 `crews.ts` 를 감싼다 — `doctrine.ts` 가 `crews.ts` 를 직접 부르지 않게. R2 의 `kitCount('scba')` 는 60초를 넘는지만 0/1 로 돌려주므로 공기 비율·짝의 공기·총의 탄을 구할 수 없다):
 
@@ -313,6 +319,7 @@ export interface DocCtx {
 | `kitQty(sim, rid, id): number` | `kitHas ? kitUses : 0` (scba 는 남은 초, 총기는 가진 탄) | `st.air`, 짝의 공기(`buddyOf`), CF2 |
 | `gunOf(sim, rid): { id: KitId; ammo: number; mag: number; magSize: number; perShot: number; reload: number } \| null` | 가진 총 가운데 `sniper` > `rifle` > `pistol` 첫째(G5 `weaponOf` 와 같은 순서), `KITS[id]` 의 `mag`·`perShot`·`reload`, 항목의 `uses`·`mag` | `st.ammo…`, CP1·CP3 |
 | `roleIdOf(sim, rid): RoleId \| null` · `groupOf(sim, rid): RoleGroup \| null` | R1 `roleOf(sim, rid).id` / `.group` | `docDeptOf`·줄의 `who`·`SOLO_OK`·`PAIRS` |
+| `crewHas(sim, u, id): boolean` | R1 `crewHasKit(sim, u, id, true)`(알려진 고장 제외) | `outsideWatch`(5.6)·CF4·CF5 — 부대에 그 장비를 든 사람이 있는가(조직 정보) |
 
 **중상의 간격**: `st.band` 는 자기 모드에서 `bandHyst(hp, prev)` 로 만든다: `const b = bandOf(hp); return b === 0 && prev >= 1 && hp < 75 ? 1 : b;` — H1 의 `bandOf` 경계(`> 70` 이면 0, `> 40` 이면 1, `≤ 40` 이면 2)를 그대로 두고, 0 으로 내려오는 쪽에만 75 의 간격을 얹는다(4.2). `prev` 는 지난 자기 신고의 값(`a.crewSig` 에서 읽는다). 보고 모드는 신고된 값을 그대로 쓴다.
 
@@ -394,7 +401,7 @@ perceive → R3 selfReport (몸 상태가 문턱을 넘었으면 crew 사실 —
 - **교본 임무 중인 대원을 지휘관이 빼 가지 않는다**: `commander.assign` 의 후보 반복에 지금의 휴식 건너뛰기(`b.task.kind === 'rehab' && stamina < 40`) 옆에 한 줄 — `cover`·`rearm`·`airOut`·`pairOut` 중인 대원, 그리고 짝이 위험 실내에 있는 동안의 `pair` 대원은 건너뛴다. 이 임무들은 짧고(엄폐 12초 상한, 보급·탈출은 대기 지점까지) 스스로 끝나며, 지금 `hasWork → curPr 0.6` 으로 보면 우선도 0.82 이상의 지시가 엄폐 중인 대원을 빼 와 엄폐 → 교전 → 엄폐로 왕복한다. 짝 동행을 빼 가면 2인 진입이 안에서 깨진다.
 - **놓기 `docDrop`**: `fit` 0 은 새로 맡는 것만 막는다 — 지금의 계속 점수(`0.5 + 0.4p + 0.08`)는 `fitFor` 를 보지 않는다. 그래서 하던 임무를 놓아야 하는 금지(`drop: true` — P09·P22 의 총기 상대 `engage`·`perimeter`)는 판단마다 지금 임무의 작업에 대해 보고 모드의 그 줄만 다시 보고, 0 이면 `finishTask(sim, s, a, false, 'doctrine')`(실패 기록·`w.fails`·`holdUntil` 없음 — 11.1 의 사유 표) 후 `recordDoc`. 기록 문구는 그 줄의 `note`(한 번).
 - **X6 와 교본**: X6 의 위험 구역 문(`registerGate`)·`fitFor` 안전망·`agentCost` 가 먼저 막는다. 교본은 그 안에서 더 좁히기만 한다(교본이 X6 의 금지를 푸는 길은 없다).
-- **R2 의 실패 기억과 교본의 기억**: 따로 둔다. `a.mfail` 은 방법, `a.docMem` 은 교본 줄. 교본이 방법을 막아(`methodMul 0`) 고를 것이 없으면 R2 의 넓히기 규칙(② `mfail` 무시)은 교본 배율을 무시하지 않는다 — 선택 임무는 방법 없이 지금 코드로, `waterRescue` 는 `methodFit` 0 → 맡지 않는다.
+- **R2 의 실패 기억과 교본의 기억**: 따로 둔다. `a.mfail` 은 방법, `a.docMem` 은 교본 줄. 교본이 방법을 막아(`methodMul 0`) 고를 것이 없으면 R2 의 넓히기 규칙(② `mfail` 무시)은 교본 배율을 무시하지 않는다 — 선택 임무는 방법 없이 지금 코드로, `waterRescue` 는 `methodFit` 0 → 맡지 않는다. **예외 — 진압**: 교본이 `interior` 를 빼서(F03b·F04b·F05b) 생긴 null 은 지금 코드(= 내부 공격)로 가지 않는다. 그때는 R2 의 `defensive` 가 후보가 되도록 그 `can` 에 "또는 `docMethodMul(c.dc, 'interior') === 0`" 조각을 더한다(3.7·11.1, R2 §4.5). 그래서 짝·대기조 없는 대원이 실내 진압으로 들어가다 판단 지점에서 기다리고 놓는 순환이 생기지 않는다.
 
 ### 2.7 기록 (규칙 5 — 상태를 바꾸는 바로 그 코드에서)
 
@@ -432,7 +439,7 @@ R1 은 "탄약 수는 넣지 않는다(총은 무제한)"고 정했다. R3 는 �
 | `sniper` 저격 소총 | 15 | 5 | 1 | 3.0 | 15 |
 
 - **명부**(R2 의 수량 복사 규칙을 그대로): `{ id, uses: KITS[id].uses, mag: KITS[id].mag }`. 인근 도시 지원 부대도 같다.
-- **소모**(`executor.shootAt` 첫머리 — 실행부): 쏘는 대원이 가진 총(G5 의 `weaponOf(sim, a)` 와 같은 순서 — 저격 > 소총 > 권총 가운데 가진 것. R1 의 `hasFirearm` 은 참/거짓만 돌려준다. 판단부는 같은 순서의 `gear.gunOf` 를 쓴다)의 `mag ≤ 0` 이면 쏘지 않는다. 쏘면 `useKit(sim, rid, w, perShot)` 과 `it.mag −= perShot`. `mag` 가 0 이 되고 `uses > 0` 이면 `a.reloadUntil = sim.t + reload`, 그 시각에 `mag = min(magSize, uses)`(`doctrineRun.reloadTick`, `act` 첫머리에서 한 줄). 재장전 중에는 `shootAt` 이 **난수를 부르기 전에** 돌아간다(그래야 `s.rng` 소비가 "쏘지 않았다"와 같다). 비살상탄(R2)은 자기 장비(`beanbag`)의 수량을 쓰므로 이 규칙과 따로다. 저격(R2 `sniper` 방법)의 한 발은 `sniper` 의 탄 1 — R2 의 `methodRun` 저격 실행부가 판정 직후 `useKit(sim, rid, 'sniper', 1)`·`it.mag −= 1` 을 하게 고친다(11.1). 탄이 0 이면 R2 의 조건 상실로 그 방법을 놓는다.
+- **소모**(`executor.shootAt` 첫머리 — 실행부): 쏘는 대원이 가진 총(G5 의 `weaponOf(sim, a)` 와 같은 순서 — 저격 > 소총 > 권총 가운데 가진 것. R1 의 `hasFirearm` 은 참/거짓만 돌려준다. 판단부는 같은 순서의 `gear.gunOf` 를 쓴다)의 `mag ≤ 0` 이면 쏘지 않는다. 쏘면 `useKit(sim, rid, w, perShot)` 과 `it.mag −= perShot`. `mag` 가 0 이 되고 `uses > 0` 이면 `a.reloadUntil = sim.t + reload`, 그 시각에 `mag = min(magSize, uses)`(`doctrineRun.reloadTick`, `act` 첫머리에서 한 줄). 재장전 중에는 `shootAt` 이 **난수를 부르기 전에** 돌아간다(그래야 `s.rng` 소비가 "쏘지 않았다"와 같다). 비살상탄(R2)은 자기 장비(`beanbag`)의 수량을 쓰므로 이 규칙과 따로다. 저격(R2 `sniper` 방법)의 한 발은 `sniper` 의 탄 1 — R2 의 `methodRun` 저격 실행부가 판정 직후 이 파일의 `doctrineRun.fireRound(sim, a, 'sniper')` 를 부른다(탄창·재장전을 이 함수 하나가 맡는다 — R2 는 `it.mag` 를 직접 깎지 않는다. 재장전 중이면 저격 조준을 멈춘다, R2 §4.6). `fireRound` 의 몸은 `shootAt` 의 소모와 같다(`useKit(sim, rid, w, perShot)`·`it.mag −= perShot`·재장전 시작 — 11.1). 탄이 0 이면 R2 의 조건 상실로 그 방법을 놓는다.
 - 총기 셋에 `uses` 를 채우면 R2 의 `gear.kitCount` 가 총기를 수량 장비로 보아 남은 탄을 돌려준다(R2 §3.3 의 `isQty`). 그래서 총기를 `kits` 로 거는 R2 방법은 탄 0 에서 후보가 아니게 된다 — 의도한 것이다(쏠 탄이 없는 사람이 저격을 고르지 않는다). R1 의 `perimeter`·`engage` 자격(`hasFirearm`)은 수량을 보지 않으므로 탄 0 의 금지는 교본(P09·P22)이 맡는다.
 - **문턱**: `ammoLow` = `uses ≤ magSize`(마지막 탄창), `ammoCrit` = `uses ≤ 2 × perShot`(발사 2회 이하). 둘 다 `CrewBelief.ammo` 로 신고한다.
 - **재보급**(`TaskKind 'rearm'`, 라벨 '탄약 보급'): 대기 지점까지 가서(3칸) 6초 → 자기 부대 `ammoBox > 0` 이면 가진 총기를 모두 처음 값으로(`uses`·`mag`), `ammoBox −= 1`, `emit(imp 0, '탄약 보급 완료.')`. 상자가 없으면 `emit(imp 1, '보급할 탄약이 없습니다.')`(이 대원·이 사건에 한 번), `a.docMem` 에 그 줄을 이 사건 끝까지.
@@ -521,7 +528,7 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
 | F09 | 관창을 든 대원 | 진압 | hose | 물 0, 소화전 연결 안 됨 | 진압 `fit` 은 지금도 R1 자격으로 0. 수색·구조·이송 `+0.1`(손을 놀리지 않는다). 작은 불(≤ 0.35)이고 소화기가 있으면 R2 `extinguisher` 가 고른다 (`fit`) | 0 | (지시 무전) | 새로 |
 | F10 | 소방 | 펌프 고장 | — | 부대 `sparePump > 0` | 예비 펌프 교체(지금 0.84 그대로)가 `sparePump` 를 하나 쓴다. **0 이면** 교체 후보를 내지 않는다(바탕 — `brain` 의 예비 펌프 후보에 조건 하나) — 지휘관이 "펌프 고장 — 진압 부대 교체"를 요청 | 1개 | (지금 문구) | 있음(지금) + 새로 — 지휘 CF3 |
 | F11 | 구조 대원 | 고립자 구출 | 유압 장비 없음·알려진 고장 | — | 수동·기본 구출(R2 `manual`·`basic`)은 R2 가 고른다. 교본은 지휘관 쪽: "유압 장비 고장" 지원 요청 | — | R2 | 있음(R2) + 새로 — 지휘 CF4 |
-| F12 | 소방 | 수난 구조 | 구명조끼(`pfd`) 없음 | 믿음 물살 ≥ 0.07(빠름) | 헤엄(R2 `swim`) `×0` — 빠른 물살에 구명조끼 없이 들어가지 않는다. 방화복·공기호흡기를 벗는 준비 6초는 R2 그대로 (방법, rank 0) | 0.07 | R2 SAY (까닭 `danger`) | 새로 |
+| F12 | 누구나(소방 표에 두지만 모든 분야에 건다 — 3.6 의 who `—`) | 수난 구조 | 구명조끼(`pfd`) 없음 | 믿음 물살 ≥ 0.07(빠름) | 헤엄(R2 `swim`) `×0` — 빠른 물살에 구명조끼 없이 들어가지 않는다. 방화복·공기호흡기를 벗는 준비 6초는 R2 그대로 (방법, rank 0) | 0.07 | R2 SAY (까닭 `danger`) | 새로 |
 | F13 | 방화복이 없는 대원 | 대상 작업의 구역이 X6 위험 단계 1(`sit.wDanger` — 대상 구역 단계. 자기 자리의 단계가 아니다) | turnout 없음 | — | 그 일 `fit` 0(X6 는 단계 2 부터 막는다 — 보호 장비가 없는 사람은 한 단계 먼저) | 단계 1 | (지시 무전) | 새로 |
 | F14 | 소방 표 대원 | — | — | **중상** | 위험 실내 일 `×0.35`, `suppress ×0.6`(바깥 방어도 같은 일이라 덜 줄인다), `hookup`·`traffic`·`clearRoad` `+0.2` (`fit`) | band 1 | (자기 신고) "부상 — 체력 저하." | 새로 (G01 의 소방판 — `who.doc: ['fire']`) |
 | F15 | — | — | — | — | — | — | — | **지움** — G03(지구력 < 30 → 위험 실내 새 일 0)과 같은 줄 |
@@ -560,11 +567,11 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
 | 줄 | 누구 | 상황 | 장비 | 상태 | → 행동 (자리) | 문턱 | 기록 문구 (예) | 구분 |
 |---|---|---|---|---|---|---|---|---|
 | S01 | 특공 | 동시 진입 | 방패 | 방패수가 진입조에 있고 중상·동요가 아님 | 방패수가 주 출입구 첫째(R1). R3: 다른 진입조원은 방패수가 문을 지난 뒤 0.6초 간격으로 들어간다(줄 서기) (판단 `breach` — `choose 'stack'`, `breach()` 의 출입구 반복 안 — 3.1 끝) | 0.6초 | "방패 선두 — 진입!" (지금의 진입 문구를 바꾼다) | 새로 (배치는 R1) |
-| S02 | 저격·관측수 | 무장 대치 | 저격 소총 | — | 진입조에 들지 않는다(`engage ×0.3` — 저격 방법은 R2 가 따로 고른다). 봉쇄 자리 가운데 가장 먼 자리를 먼저(`perimeter +0.1`) (`fit`) | — | — | 새로 (선호는 R1) |
+| S02 | 저격·관측수 | 무장 대치 | 저격 소총 | — | 진입조에 들지 않는다(`engage ×0.3`) — **단 R2 의 결정적 저격 조건일 때는 깎지 않는다**(저격은 `engage` 임무 안의 R2 방법이라, 그때 저격수가 `engage` 를 맡아야 고를 수 있다). 봉쇄 자리 가운데 가장 먼 자리를 먼저(`perimeter +0.1`) (`fit`) | — | — | 새로 (선호는 R1) |
 | S03 | 진입대원(파괴) | 잠긴 문 | 파괴 장비 | 대치 중 | 조용히(R2 `irons`) / 진입 순간(R2 `ram`) | R2 | R2 | 있음(R2) |
 | S04 | (지휘관) | 두 문 동시 진입 문턱 | — | 쓸 수 있는 경찰 < 4 (특공 결원·중상 포함) | 한 문 진입 (문턱을 머릿수에서 "쓸 수 있는 경찰"로) | 4 | — | 새로 — 지휘 CP1 |
 | S05 | 특공·기동 | 진입이 결정됨 | 섬광탄 | — | 섬광탄을 가진 사람이 진입조를 먼저 맡는다(`engage +0.1`) (`fit`) | — | — | 새로 |
-| S06 | 폭발물 처리반 | 살아 있는 장치(믿음) | 로봇(작동 — 알려진 고장 아님) | — | **로봇 먼저**(`robotDefuse` `×1.3` — 3.7): 로봇 조작 요원이 8칸 밖에서 원격 확인·무력화. 로봇 고장이 드러나면 로봇 조작 요원은 고를 방법이 없어 임무를 놓고, 처리 요원이 `suitDefuse` 로 맡는다(3.7). **기본 자격을 고친다**: R1 의 `defuse` 자격(eodKit)에 "작동하는 로봇을 든 대원 — `robotDefuse` 로만"을 더한다(`fitFor` 의 `defuse` — 11.1). 교본은 0 인 자격을 열 수 없기 때문이다(2.6) (방법) | 8칸 | "로봇 먼저 투입합니다." / 고장 "로봇이 작동하지 않습니다 — 방호복 착용 후 수동 해체." | 새로 |
+| S06 | 폭발물 처리반 | 살아 있는 장치(믿음) | 로봇(작동 — 알려진 고장 아님) | — | **로봇 먼저**(`robotDefuse` `×1.3` — 3.7): 로봇 조작 요원이 8칸 밖에서 원격 확인·무력화. 로봇 고장이 드러나면 로봇 조작 요원은 고를 방법이 없어 임무를 놓고, 처리 요원이 `suitDefuse` 로 맡는다(3.7). **기본 자격을 고친다**: R1 의 `defuse` 자격(eodKit)에 "작동하는 로봇을 든 대원 — `robotDefuse` 로만"을 더한다(`fitFor` 의 `defuse` — 11.1). 교본은 0 인 자격을 열 수 없기 때문이다(2.6). **배정은 S06b**(`fit`): 방법 배율은 한 사람이 가진 방법끼리만 견주므로(로봇은 로봇 조작 요원만, 방호복은 처리 요원만 든다) S06 의 `×1.3` 은 누가 맡는지를 바꾸지 못한다 — 처리 요원(R1 선호 +0.3)이 늘 먼저 배정된다. 그래서 현장에 작동하는 로봇을 든 활동 동료가 있으면 처리 요원의 `defuse` 적합도를 `×0.4` 로 낮춘다(S06b). S06 의 방법 줄은 기록·까닭용으로 남는다 (방법 + `fit`) | 8칸 | "로봇 먼저 투입합니다." / 고장 "로봇이 작동하지 않습니다 — 방호복 착용 후 수동 해체." | 새로 |
 | S07 | 폭발물 처리 요원 | 장치 | 로봇 없음·고장 | — | 방호복 없는 수동 해체(`bareDefuse`)는 둘 가운데 하나일 때만 후보: ① 방호복이 없다(지원 부대의 결원 등), ② 믿음 속 **옮길 수 없는** 사람(거동 불가 구조 대상·인질)이 장치 6칸 안 — 방호복을 벗고 더 빨리(필요 시간 ×0.75, 3.7) 해체한다(`×2` — `suitDefuse` 보다 먼저). 그 밖에는 `×0` (방법, rank 0). 시한(진실)은 보지 않는다 — 서두름은 주변 사람의 믿음으로만 정한다(11.3 결정 7) | 6칸 | ② "옮길 수 없는 사람이 곁에 있습니다 — 방호복 없이 바로 해체합니다." | 새로 |
 | S08 | 해체를 맡지 않은 대원 | 살아 있는 장치(믿음) + **해체 작업이 장치 곁에서 진행 중**(동료의 겉 — `sit.defusing`) | — | — | 장치 6칸 안의 일 `fit` 0 — **예외**: 해체·출입 통제, 그리고 반경 밖으로 옮기는 일(`carry`·`escort`·`rescueMate`). `agentCost` 에서 그 원 +20(같은 조건). 거두기·알림은 지휘 CS1 — 걸리는 때가 같다 (`fit`) | 6칸 | 지휘관 "해체 시작 — 반경 6칸 비워라." | 새로 |
 | S09 | 경계 요원 | 출입 통제 | 확성기 | — | 대피 방송(R2) · 봉쇄 +0.2(R1) | — | R2 | 있음(R1·R2) |
@@ -573,7 +580,7 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
 | S12 | 화학·사다리차 scba 대원 | 공기 | scba | 공기 < 30% | F01·F02 가 그대로(`kits: ['scba']`) | 0.30 | F01 | 있음(F01) |
 | S13 | 구조정 대원 | 바닷가 수난·해일, 또는 빠른 물살 | 구조정(부대) | — | 보트(R2 `boat`) `×1.3`, 헤엄 `×0`(바다·해일) (방법, rank 0) | 0.07 | R2 SAY (까닭 `danger`) | 새로 |
 | S14 | 구조정 대원 | 불타는 건물 | scba 없음 | — | 들어가지 않는다 | R1 | — | 있음(R1) |
-| S15 | 지상 대원(소방 헬기가 물 현장 상공) | 수난, 같은 대상에 호이스트 작업이 열려 있다(작업판 `s.board` — 공개 지휘 상태) | — | — | 헤엄 `×0.5`(R2 의 ×0.7 에 더해), 줄 확보(`tend`)·하류 차단(`catch`) `×1.2` — 헬기와 겹쳐 들어가지 않는다 (방법) | — | R2 SAY (까닭 `team`) | 새로 |
+| S15 | 지상 대원(소방 헬기가 물 현장 상공) | 수난, 같은 대상에 호이스트 작업이 열려 있다(작업판 `s.board` — 공개 지휘 상태) | — | — | 헤엄 `×0.5`(정본 — R2 의 상공 헬기 배율 ×0.7 은 R3 를 합칠 때 지운다, 3.7), 줄 확보(`tend`)·하류 차단(`catch`) `×1.2` — 헬기와 겹쳐 들어가지 않는다 (방법) | — | R2 SAY (까닭 `team`) | 새로 |
 | S16 | 항공 구조대원(내려앉은 소방 헬기) | 위험 실내 | scba | — | 짝 = 같은 헬기의 다른 대원(5절) | — | — | 있음(5절 PAIRS) |
 | S17 | 경찰 헬기 | 밤·연료 | 탐조등 | 연료 < 복귀 + 40초 | 탐조·복귀 | R1 | R1 | 있음(R1) |
 | S18 | 의료 헬기 | 위중 1명 | 의사 장비 | — | E04 | — | — | 있음(E04) |
@@ -654,14 +661,15 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
 | E11 | fit | doc ems | — | — | `st.band ≥ 1` && 현장에 다른 활동 구급 대원 | mul .5 [`treat`] · add .2 [`load`] | 1 | hurt |
 | E12 | gate | — | `treat` · `laneTreat` | — | 대상이 차로 줄 위 && 그 방향 `ctl` 사실 없음 && !(차 안에 갇힘 && 구출 전) | block 20 | 1 | danger |
 | E13 | gate | — | `carry` · `carryStart` | kits spineBoard | `s.kind` 교통·붕괴 && 대상 거동 불가 && `sense` ≤ 0.3 | choose immobilize | 3 | kit |
-| E14 | method | — | `carry` · `drag` | noKits stretcher | `st.alone` && `sense.smoke > 0.3` && 대상 거동 불가 | mul 1.5 | 1 | danger |
+| E14 | method | — | `carry` · `drag` | noKits stretcher | `st.alone` && `sense.smoke > 0.3` && 대상 거동 불가 | mul 1.6 | 1 | danger |
 | E18 | fit | dept ems | `treat` | — | 대상 믿음 band 2 && `st.stamina < 30` | mul .3 | 2 | tired |
 | E19 | fit | roles emt | `treat`·`load`·`carry` | — | `rookie` && 현장에 1급 응급구조사·의사가 활동 | mul .6 [`treat`, when 대상 band 2] · add .1 [`load`·`carry`] | 3 | protocol |
 | E20 | fit | dept ems | `treat` | — | `st.shaken` && `sit.hot` && 대상 `where 'safe'` | mul 0 | 1 | shaken |
 | S01 | gate | units swat | `engage` · `breach` | — | 그 문 진입조에 방패를 쓸 수 있는 대원이 있고 그 대원의 신고가 band 0·동요 아님 | choose stack | 2 | protocol |
-| S02 | fit | — | `engage`·`perimeter` | kits sniper | `s.kind === 'armed'` | mul .3 [`engage`] · add .1 [`perimeter`] | 3 | kit |
+| S02 | fit | — | `engage`·`perimeter` | kits sniper | `s.kind === 'armed'` | mul .3 [`engage`, when `!(sit.threat?.weapon === 'gun' && ((sit.threat.hostage && sit.threat.state === 'fight') \|\| sit.negotSec > 60))` — R2 저격 조건이면 깎지 않는다] · add .1 [`perimeter`] | 3 | kit |
 | S05 | fit | dept police | `engage` | kits flashbang | `entryOrdered` | add .1 | 3 | kit |
 | S06 | method | — | `defuse` · `robotDefuse` | kits robot | `sit.liveBomb` | mul 1.3 | 3 | kit |
+| S06b | fit | roles bombTech | `defuse` | — | `sit.liveBomb` && 현장에 작동하는 로봇(`gear.kitHas(robot)`)을 든 활동 동료가 있음 | mul .4 | 3 | kit |
 | S07 | method | roles bombTech | `defuse` · `bareDefuse` | noKits robot | — | mul 0 [when !(방호복 없음 ‖ 옮길 수 없는 사람이 장치 6칸 안)] · mul 2 [when 방호복 있음 && 옮길 수 없는 사람이 6칸 안] | 0 | danger |
 | S08 | fit | — | `defuse`·`perimeter`·`carry`·`escort`·`rescueMate` 를 뺀 모두 | — | `sit.liveBomb` && `sit.defusing` && 작업 대상이 장치 6칸 안 | mul 0 | 0 | danger |
 | S10 | fit | units hazmat | `search` | kits gasMeter | `s.kind === 'hazmat'` && HZ | add .15 | 3 | kit |
@@ -679,23 +687,35 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
 
 ### 3.7 R3 가 R2 의 `METHOD` 에 더하는 행
 
-R2 의 틀(`can`·`kits`·`pref`·`plain`·`record`·`SAY`·`WORK_MODE`)을 그대로 쓴다. 효과는 R2 의 `methodRun.ts` 의 그 임무 실행부에 둔다(11.1).
+R2 의 틀(`can`·`kits`·`pref`·`plain`·`record`·`SAY`·`WORK_MODE`)을 그대로 쓴다. 효과는 **진압·수색 방법은 R2 의 `methodRun.ts` 의 그 임무 실행부, 이송·교통 통제·해체 방법은 R3 의 `doctrineRun.ts`**(`runCarry`·`runTraffic`·`runDefuse`)에 둔다(11.1). 진압 방법 행의 `risk` 는 R2 표와 같이 0 이다(R2 §4.5).
 
 | 방법 | 임무 | 장비 | 조건 (`can`) | 실행·효과 | pref / plain | 단계 |
 |---|---|---|---|---|---|---|
 | `feel` 벽 더듬기 | `search` | — | 실내 구역, 감각 연기 > 0.5(도착 재선택에서도 본다) | 경유점을 그 구역에서 벽과 이웃한 바닥 칸으로만, 간격 ×0.75, 경유점마다 0.8초 멈춤. 탐지 반경은 그대로 | 0.5 / — | 3 |
-| `pulse` 끊어 쏘기 | `suppress` | `hose` | 자기 부대 물 < 30%, 소화전 연결 안 됨 | 진압 효과 ×0.85, 물 소모 ×0.65 | 0.5 / — | 3 |
+| `pulse` 끊어 쏘기 | `suppress` | `hose` | 자기 부대 물 < 30%, 소화전 연결 안 됨 | 진압 효과 ×0.85, 물 소모 ×0.65 | 0.6 / — (F08 ×1.6 → 0.96 > `interior` 0.85 — 조건이면 1등) | 3 |
 | `pack` 업기 | `carry` | — | 늘 | 지금 동작 | 0.7 / plain | 6 |
-| `drag` 끌기 | `carry` | — | 대상 거동 불가 | 옮기는 동안 대상·대원이 받는 연기 피해 ×0.5(낮게), 속도 ×0.85(혼자 업기 대비) | 0.4 / — | 6 |
+| `drag` 끌기 | `carry` | — | 대상 거동 불가 | 옮기는 동안 대상·대원이 받는 연기 피해 ×0.5(낮게), 속도 ×0.85(혼자 업기 대비) | 0.5 / — (E14 ×1.6 → 0.80 > `pack` 0.70 — 조건이면 1등) | 6 |
 | `litter` 들것 | `carry` | `stretcher` | 동료가 함께 든다 | R1 의 들것 배율 그대로 — **기록 전용**(`record`) | — | 6 |
 | `post` 통제 | `traffic` | — | 늘 | 지금 동작(경광봉이면 R1 의 ×0.85) | 0.75 / plain | 6 |
 | `blockLane` 차량 차단 | `traffic` | — (부대 차량) | 그 지점 통제 전 | 통제 지점에 닿는 순간 `s.laneShield` 에 그 지점을 넣고 설치 시간 +3초. `hazards.tickLane` 은 새 차를 만들 때 그 차가 들어오는 방향의 지점이 `s.laneShield` 에 있고 아직 통제 전이면 부주의 판정을 `s.rng.chance(p × 0.4)` 로 한다(호출 수는 그대로). 통제가 끝나면 그 방향에서는 원래 차가 들어오지 않으므로 효과는 설치하는 동안의 것이다 | 0.6 / — | 6 |
 | `robotDefuse` 로봇 해체 | `defuse` | `robot` | 장치에서 8칸 이내·시야인 자리에 닿을 수 있다 | 로봇 조작 요원이 그 자리에서 원격: 필요 시간 ×1.6, 실수 확률 ×0.3. **R1 의 로봇 수동 효과(같은 현장에 로봇이 있으면 실수 ×0.6·가짜 확인 10 → 5초)는 이 방법에는 곱하지 않는다** — 이 배율이 대신한다. 처음 시작할 때 `kitWorks(robot)`: 숨은 고장이면 `switchMethod('broken')` → 로봇 조작 요원에게는 다음 방법이 없어 `finish(false, 'nomethod')`(`EQUIP_FAIL` 은 R1 의 `kitWorks` 가 남긴다). 그 뒤 `hasKit(robot)` 이 거짓이라 S06 의 기본 자격이 사라지고 처리 요원이 맡는다 | 0.9 / — | 5 |
-| `suitDefuse` 방호복 해체 | `defuse` | `bombSuit`·`eodKit` | 늘(장비가 있으면) | 지금의 해체(시간·실수 그대로). R1 의 로봇 수동 효과는 같은 현장에 작동하는 로봇 대원이 있으면 그대로 받는다 | 0.75 / plain | 5 |
+| `suitDefuse` 방호복 해체 | `defuse` | `bombSuit`(해체 자격 `eodKit` 은 `fitFor` 가 본다 — R2 의 `kits` 는 "하나라도"라 `eodKit` 을 함께 적으면 방호복 없는 요원도 이 방법을 고른다) | 늘(장비가 있으면) | 지금의 해체(시간·실수 그대로). R1 의 로봇 수동 효과는 같은 현장에 작동하는 로봇 대원이 있으면 그대로 받는다 | 0.75 / plain | 5 |
 | `bareDefuse` 맨몸 해체 | `defuse` | `eodKit` | S07 의 조건 | 방호복을 벗고 한다: 필요 시간 ×0.75. 그 해체 동안 R1 의 `armorOf`·`blastFactor` 가 `bombSuit` 를 세지 않는다(`a.task.method === 'bareDefuse'` — 11.1) | 0.5 / — | 5 |
 
 - `WORK_MODE` 에 더하는 줄: `carry` — `pack`(늘 남는다, null 이 생기지 않는다), `traffic` — `post`(같다), `defuse` — **null 이면 맡지 않는다**(`waterRescue` 와 같이 `fitFor(defuse)` 는 기본 자격 × `methodFit > 0`). 그래서 다친·동요한 처리 요원(S23)과 로봇이 고장 난 로봇 조작 요원은 해체를 맡지 않고, 맡을 사람이 없으면 B3 블록이 폭발물 처리반을 부른다.
 - `SAY` 에 더하는 문구: 위 분야 표의 기록 문구. R3 의 까닭 여섯(`hurt`·`alone`·`lowAir`·`lowAmmo`·`shaken`·`tired`)의 앞말: "부상으로", "혼자라", "공기가 부족해", "탄약이 없어", "손이 떨려", "지쳐서".
+- **까닭의 사상 표 — 교본 줄의 `DocWhy` → R2 `MethodWhy`**(`t.mwhy`·`MethodUse.why` 는 `MethodWhy` 라 `DocWhy` 를 그대로 넣을 수 없다). R2 §3.4 의 까닭 순서에서 1(`switchMethod` 가 넘긴 것) 다음·2(`noGear`) 앞에 둔다: 교본 배율을 빼고 셈한 1등이 다르면, 그 차이를 만든 줄 가운데 `rank` 가 가장 작은 줄의 `why` 를 아래로 바꿔 쓴다.
+
+  | `DocWhy` | `MethodWhy` |
+  |---|---|
+  | `hurt`·`alone`·`lowAir`·`lowAmmo`·`shaken`·`tired`·`danger`·`team` | 같은 이름 |
+  | `noKit` | `noGear`(`missing` = 그 줄의 `noKits[0]`) |
+  | `outside` | `alone`(밖 대기조가 모자라 혼자인 셈) |
+  | `kit`·`protocol` | `usual`(R2 의 평소 까닭 — 교본 줄과 무관한 선택과 같은 말을 쓴다) |
+  | 그 밖(`buddy`·`civ`·`hostage`·`triage`·`backup`) | `team`(`buddy`·`backup`) · `danger`(`civ`·`hostage`) · `usual`(`triage`) |
+
+- **진압의 외부 방어 조각**(R3 0단계에 `methods.ts` 에 더한다 — R2 §4.5): `defensive` 의 `can` 에 "또는 `c.dc && docMethodMul(c.dc, 'interior') === 0`", 그리고 R2 의 몸 상태 조건 `r.health < 50` 을 `c.dc.st.band ≥ 1`(자기 모드는 몸, 보고 모드는 `crew` 신고)로 바꾼다. 배연 뒤의 예정된 전환(`ventilate` → `interior`)도 같은 검사로 막히면 `defensive` 로 바꾸거나 `finish(true)`.
+- **상공 호이스트의 헤엄 배율은 S15 하나**: R2 §4.1 의 "상공에 호이스트 헬기가 있다: swim ×0.7" 은 R3 를 합칠 때 지운다(같은 상황을 두 문서가 따로 깎으면 ×0.35 가 되고 R2 의 손잡이가 S15 를 모른다).
 
 ---
 
@@ -1004,7 +1024,7 @@ npm run check                                                             # 단�
 
 무거운 반복은 피한다: 강제 교대는 `new Sim(seed, NORMAL, 1200, { force: 'fire/std' })`, 장면 단위는 `createIncident(sim, { type, variant, rng: sim.rng.fork('t') })` 뒤에 대원·장비·몸 상태를 직접 놓는다. 장비를 빼는 것은 R1 의 장비 항목에 `faultKnown = true` 를 주거나 `kit` 에서 지운다. 특정 부대만 나가게 하려면 다른 부대를 시작 전에 `oos` 로 둔다. 각 시험이 들어가는 단계는 9절 표.
 
-1. **정보 격리(글자)**: `src/sim/field/doctrine.ts`·`doctrine/*.ts`·`orders/doctrine.ts`·`dispatch/doctrine.ts` 의 주석이 아닌 줄에 `s.props`·`s.propAt`·`s.casualties`·`s.hostiles`·`.truth`·`.pursuit`·`s.fire[`·`s.smoke[`·`sim.scenes`·`s.variant`·`.fault`·`kitWorks`·`useKit`·`toolUse`·`needsHospital` 가 없다. `doctrine.ts` 에서 `.health`·`.bleed`·`.injuries` 가 나오는 줄은 모두 `stateSelf` 의 몸 안이다(그 함수의 시작 줄부터 첫 `^}` 까지를 잘라 낸 나머지에 0건). 줄 파일(`doctrine/*.ts`)에는 `sim.responders` 가 없다(줄은 `DocCtx` 만 읽는다). `orders/doctrine.ts` 에서는 `.health`·`.bleed`·`.dead`·`.injuries` 0건. `doctrine.ts` 가 `agents`·`executor`·`hazards`·`methods`·`methodRun`·`doctrineRun`·`crews` 를 **값으로** import 하지 않는다(`import type` 줄은 허용 — 정규식은 `^import (?!type )` 인 줄만 본다). 줄 파일은 `doctrine/registry` 와 타입·`util` 만 import 한다.
+1. **정보 격리(글자)**: `src/sim/field/doctrine.ts`·`doctrine/*.ts`·`orders/doctrine.ts`·`dispatch/doctrine.ts` 의 주석이 아닌 줄에 `s.props`·`s.propAt`·`s.casualties`·`s.hostiles`·`.truth`·`.pursuit`·`s.fire[`·`s.smoke[`·`sim.scenes`·`s.variant`·`.fault`·`kitWorks`·`useKit`·`toolUse`·`bestTool`(R2 `gear.ts` 의 효과용 — `kitWorks` 를 부른다)·`needsHospital` 가 없다. `doctrine.ts` 에서 `.health`·`.bleed`·`.injuries` 가 나오는 줄은 모두 `stateSelf` 의 몸 안이다(그 함수의 시작 줄부터 첫 `^}` 까지를 잘라 낸 나머지에 0건). 줄 파일(`doctrine/*.ts`)에는 `sim.responders` 가 없다(줄은 `DocCtx` 만 읽는다). `orders/doctrine.ts` 에서는 `.health`·`.bleed`·`.dead`·`.injuries` 0건. `doctrine.ts` 가 `agents`·`executor`·`hazards`·`methods`·`methodRun`·`doctrineRun`·`crews` 를 **값으로** import 하지 않는다(`import type` 줄은 허용 — 정규식은 `^import (?!type )` 인 줄만 본다). 줄 파일은 `doctrine/registry` 와 타입·`util` 만 import 한다.
 2. **같은 상황, 다른 장비·상태 → 다른 행동** (장면을 직접 만든다):
    - a. 흉기 난동(`armed/dispute`, 용의자 `fight`, 경찰에게 **`arrest`** 지시): ① 순찰 둘, 테이저 있음 → 테이저 발사 기록과 `P01` ② 테이저 지움, 둘이고 한 사람이 멀리 → 3칸에서 기다렸다 동시 덮침 `P03` ③ 테이저 지움, 하나(다른 대원 `oos`) → 3칸 거리 유지 `P02`, 20초 안에 덮치지 않고, 20초 뒤(지원 없음) 덮친다 ④ ③ + 시민을 용의자 1.5칸에 → 바로 덮침(예외 기록).
    - b. 닫힌 방의 총기 용의자: 진입조 하나 → 4초가 지나도 들어가지 않는다(`P07`, `gateAt` 이 있다). 동료를 붙이면 들어간다. 지원이 없는 상태로 60초 → 진입(timeout 문구). **동시 진입**: 두 문 진입에서 2조가 한 명뿐이면, 1조가 `breach` 를 불러도 2조의 문은 열리지 않고(`t.gateId === 'breach'`) 그 대원은 문 앞에 남는다. 동료가 오면 자기 문만 열고 들어간다.
@@ -1019,7 +1039,7 @@ npm run check                                                             # 단�
    - k. 차량 차단(6단계): `traffic/std` 에서 밤으로 두면 경찰이 `blockLane` 을 고르고, 통제 지점에 닿은 순간부터 통제 전까지 그 방향 차의 부주의 확률이 0.4배다. 같은 시드에서 `s.rng` 의 다음 값이 `post` 를 고른 경우와 같은 횟수만큼 진행했다(호출 수 불변).
 3. **판단에 새지 않는다**:
    - 숨은 고장: 열화상·로봇·유압 장비에 숨은 고장(`fault: true, faultKnown: false`)이 있는 대원과 없는 대원의 `docFit`·`docAct`·`docMethodMul` 이 같다(R1 시험 ④ 와 같은 방식).
-   - 남의 몸: 대원 `b` 의 체력을 85 → 50, 출혈을 0 → 0.1 로 바꾸고 `b` 의 `crew` 사실은 그대로 두면(자기 신고 전) 지휘관이 부르는 `fitFor(sim, s, b, w)` 가 — `engage`·`search`·`waterRescue`(R2 `methodFit` 경로) 모두 — 바뀌지 않는다. `b` 가 다음 판단에서 신고하면 바뀐다.
+   - 남의 몸: 대원 `b` 의 체력을 85 → 50, 출혈을 0 → 0.1 로 바꾸고 `b` 의 `crew` 사실은 그대로 두면(자기 신고 전) 지휘관이 부르는 `fitFor(sim, s, b, w)` 가 — `engage`·`search`·`waterRescue`·`suppress`(둘 다 R2 `methodFit` 경로 — `suppress` 는 소화기 길과 `defensive` 의 몸 상태 조건) 모두 — 바뀌지 않는다. `b` 가 다음 판단에서 신고하면 바뀐다.
 4. **왕복 없음**:
    - 공기: `AIR_OUT ≤ air < AIR_IN` 인 대원은 위험 실내 일을 맡지 않는다(`fitFor` 0) — 탈출 뒤 교체 없이 다시 들어가지 않는다.
    - 강제 묶음(`fire/std` 6교대, `armed/hostage` 6교대)에서 대원별 임무 흐름을 기록해, 10초 안에 `A → B → A` 로 바뀌고 그중 하나가 교본 임무(`cover`·`rearm`·`airOut`·`pairOut`·`pair`)인 경우가 0. 판단 지점 timeout 으로 놓은 작업을 같은 대원이 30초 안에 다시 받는 경우가 0(`docMem` 의 `w:` 기억).
@@ -1044,14 +1064,16 @@ npm run check                                                             # 단�
 | `types.ts` | 2.1 | 추가만. 합집합은 그 단계에서 | 0~6 |
 | `difficulty.ts` | `Tuning`·`tuningOf` | `ammoBox`·`sparePump`, `KNOBS` 장비 설명문 끝에 '탄약 상자·예비 펌프' | 2·3 |
 | `crews.ts` (R1) | `KitDef`, `KITS` 총기 셋 | `mag`·`reload`·`perShot` 칸, 총기 `uses`·`mag` | 2 |
-| | `armorOf`·`blastFactor` | `a.task.method === 'bareDefuse'` 인 대원은 `bombSuit` 를 세지 않는다(3.7) — 대원을 받는 쪽이 임무를 넘기게 인자 하나 | 5 |
-| | 척추 고정판 효과(R1 §4 — 실행기 `carry`) | 조건을 "고정판이 없으면"에서 "고정하지 않았으면(`!c.immob`)"으로(E13) | 6 |
-| `field/gear.ts` (R2) | 판단용 감싼 함수 | `kitHas`·`kitQty`·`gunOf`·`roleIdOf`·`groupOf` 를 **더한다**(2.4 — R1 `crews.ts` 를 감싼다. `doctrine.ts` 가 `crews.ts` 를 직접 부르지 않게. 있는 함수는 고치지 않는다) | 0 |
+| | `armorOf`·`blastFactor` | `a.task.method === 'bareDefuse'` 인 대원은 `bombSuit` 를 세지 않는다(3.7) — 대원을 받는 쪽이 임무를 넘기게 인자 하나. **부르는 곳도 그 인자를 넘긴다**: H1 의 `hurtResponder`(`injury.ts` 의 `protection`), `hazards.tickHostiles`·`blast` — 그러지 않으면 맨몸 해체가 폭발·총격 피해에 반영되지 않는다 | 5 |
+| | `capableOf` 의 공기 문턱 | R1 의 `uses ≥ 45` 를 `uses ≥ AIR_IN × airFull` 로(F03 과 같은 문턱 — 오는 부대 쪽 판정이 도착해도 맡지 못할 부대를 "할 수 있는 부대"로 세지 않게) | 3 |
+| `field/executor.ts` `case 'carry'` (R1 의 고정판 규칙 자리) | 척추 고정판 효과(R1 §6.3 — 출혈 ×1.12) | 조건을 "고정판이 없으면"에서 "고정하지 않았으면(`!c.immob`)"으로(E13) | 6 |
+| `field/gear.ts` (R2) | 판단용 감싼 함수 | `kitHas`·`kitQty`·`gunOf`·`roleIdOf`·`groupOf`·`crewHas` 를 **더한다**(2.4 — R1 `crews.ts` 를 감싼다. `doctrine.ts` 가 `crews.ts` 를 직접 부르지 않게. 있는 함수는 고치지 않는다) | 0 |
 | `resources.ts` | `createRoster`·`createAidUnit` | 총기 `mag` 복사, `ammoBox`·`sparePump` 채움 | 2·3 |
 | | `arrive` 의 `returning` | `ammoBox`·`sparePump` 가득 (R1 의 `spareAir` 옆) | 2·3 |
 | `field/agents.ts` | `fitFor` 맨 끝 | `return docFit(sim, s, a, w, fit)` (R1 역할 선호 다음, 늘 보고 모드) | 0 |
 | | `fitFor` 의 `treat` | `hot && dept !== 'police'` → `hot && dept !== 'police' && 믿음 속 그 환자가 'safe' 가 아님`(E05 — 교본은 0 인 자격을 열 수 없다, 2.6) | 4 |
 | | `fitFor` 의 `defuse` | R1 의 eodKit 자격에 "작동하는 로봇(`hasKit(robot)`)"을 더하고, 전체에 `methodFit > 0` 을 곱한다(S06·3.7 `WORK_MODE`) | 5 |
+| | `fitFor` 의 위험 실내 일 공기 문턱 | R1 §9 의 `uses < 45`(위험 실내 일 0)를 F03 의 `AIR_IN` 비율(`kitQty(scba) < AIR_IN × airFull`)로 대신한다. 진압은 R2 4단계가 이미 이 줄에서 뺐다(R2 §4.5 — `methodFit(suppress)`) | 3 |
 | | `significant`, `flushOutbox` 의 `prompt`, 중요 사실 판정(`hot()`) | `'crew'` 갈래 (4.1) | 1 |
 | | `perceive` 의 쓰러진 동료 | `shake` (4.3) | 1 |
 | | `makeAgent` (R1) | `buddy: -1` 과 새 칸의 리터럴(짝 맺기는 `pairUp` — 5.1) | 0·3 |
@@ -1062,21 +1084,22 @@ npm run check                                                             # 단�
 | | 예비 펌프 후보 | `sparePump > 0` 조건(F10) | 3 |
 | `field/executor.ts` | `shootAt` | 탄약 소모·재장전 중 돌아가기(난수 전에) (2.9) | 2 |
 | | `act` 첫머리 | `reloadTick` 한 줄 | 2 |
-| | **`case 'arrest'`** | `moveTo` 를 부르기 전, R1 테이저 다음 자리에 `closeIn`(P01~P03): 막히면 P01 은 1.8칸·P02·P03 은 3칸에서 멈추고(그 칸까지만 `moveTo` — 한 틱에 하나) 기다림, 풀리면 지금 동작 | 2 |
+| | **`case 'arrest'`** | 순서는 **테이저 → 비살상탄 → `closeIn` 판단 지점 → `moveTo` 하나**(R2 §4.6 과 같은 문장). `moveTo` 를 부르기 전, R1 테이저·R2 비살상탄 다음 자리에 `closeIn`(P01~P03): 막히면 P01 은 1.8칸·P02·P03 은 3칸에서 멈추고(그 칸까지만 `moveTo` — 한 틱에 하나) 기다림, 풀리면 지금 동작 | 2 |
 | | `case 'engage'` | 첫 갈래(도주 추격)에는 걸지 않는다. ① 진입 대기의 조건을 `… ‖ t.gateId === 'breach'` 로(P07), 방 진입의 `roomEntry`(P07), 섬광탄의 `bangUse`(P15), 인질 갈래의 `closeIn`(P14 — 7.5칸 엄폐 자리, 상한 뒤 지금 동작), 마지막 분기의 `coverFire`(P05 — 임무에 담은 자리) | 2 |
 | | `breach` | 출입구 반복의 몸을 `doctrineRun.breachExit` 로 꺼내고, 진입조가 한 명인 출입구는 `docGate('breach')` 로 물어 건너뛴다(P07). 줄 서기(S01 — `choose 'stack'`)도 그 반복 안 | 2·5 |
 | | `case 'negotiate'` | 그대로(P16 은 `brain` 의 후보가 `cover` 로 옮긴다) | — |
-| | 위험 실내 첫걸음 | `interiorEntry` 판단 지점 (`moveTo` 를 부르기 전, 지금 칸이 실내가 아니고 경로의 다음 칸이 위험 건물 실내일 때 — `search`·`carry`·`escort`·`extricate`·`mitigate`·`overhaul` 과 `suppress` 의 실내 방법) | 3 |
-| | `case 'carry'` | `carryHold`(E08), 처음 들 때의 `carryStart`(E13 — 6단계, 고정하면 `c.immob = true`) | 4·6 |
+| | 위험 실내 첫걸음 | `interiorEntry` 판단 지점 (`moveTo` 를 부르기 전, 지금 칸이 실내가 아니고 경로의 다음 칸이 위험 건물 실내일 때 — `search`·`carry`·`escort`·`extricate`·`mitigate`·`overhaul` 과 `suppress` 의 실내 방법 — `t.method` 가 `interior` 이거나 없을 때. 교본이 `interior` 를 뺀 진압은 `defensive` 라 해당 없음, 2.6) | 3 |
+| | `case 'carry'` | 처음 돌 때 R2 의 `startMethod`(`pack`·`drag`·`litter` — 6단계, 실행은 `doctrineRun.runCarry`), `carryHold`(E08), 처음 들 때의 `carryStart`(E13 — 6단계, 고정하면 `c.immob = true`) | 4·6 |
 | | `case 'treat'` | `laneTreat`(E12), 처치 넘겨받기 — 그 작업을 맡은 구급 대원이 1.5칸 안이면 비구급 대원이 `finishTask(…, false, 'handover')`(CE2) | 4 |
-| | `case 'defuse'` | 해체 방법 셋 (S06·S07·S23 — 실행은 `doctrineRun` 의 `runDefuse`) | 5 |
-| | `case 'traffic'` | `post`·`blockLane` (6단계 — `blockLane` 은 닿는 순간 `s.laneShield`, 설치 +3초) | 6 |
+| | `case 'defuse'` | 처음 돌 때 R2 의 `startMethod`(null 이면 맡지 않음 — R2 §3.5 의 "맡지 않음" 갈래에 `defuse` 를 더한다), 해체 방법 셋 (S06·S07·S23 — 실행은 `doctrineRun` 의 `runDefuse`) | 5 |
+| | `case 'traffic'` | 처음 돌 때 R2 의 `startMethod`, `post`·`blockLane` (6단계 — 실행은 `doctrineRun.runTraffic`, `blockLane` 은 닿는 순간 `s.laneShield`, 설치 +3초) | 6 |
 | | 새 `case` 여섯 | `cover`·`rearm`·`airOut`·`pairOut`·`pair`·`triage` → `doctrineRun` 의 실행 함수 (R2 의 `XK: ExecKit` 를 그대로 넘긴다) | 2~4 |
 | | `finishTask` 사유 표 | `doctrine`·`handover`: 실패 기록·`w.fails`·`holdUntil`·'중단 — 재지시 요청' 무전 없음. `doctrine` 은 부르는 쪽이 `holdUntil = sim.t + 10` 을 따로 둔다(판단 지점 timeout 만 — 4.4) | 2 |
-| `field/methods.ts` (R2) | `MethodCtx`·`chooseMethod` | `dc: DocCtx` 를 **부르는 쪽에서 받는다**(실행부 = 자기 모드, `methodFit` = 보고 모드 — 2.3 ③), 점수에 `× docMethodMul`, `caution` 에 동요 +0.2(G02b, 상한 1.1), `MethodWhy` 여섯의 까닭 계산(교본 배율을 빼고 다시 셈한 1등이 다르면 그 줄의 까닭) | 0·1 |
+| `field/methods.ts` (R2) | `MethodCtx`·`chooseMethod`·`methodFit` | `chooseMethod` 의 마지막 인자 `dc`(실행부가 자기 모드로 만들어 넘긴다), `methodFit` 은 인자 그대로 두고 안에서 `docCtx(…, 'report', w)` — 2.3 ③·R2 §3.2. 점수에 `× docMethodMul`(받은 `dc` 의 사본 `{ ...dc, m }` 으로), `caution` 에 동요 +0.2(G02b, 상한 1.1), `MethodWhy` 여섯의 까닭 계산(교본 배율을 빼고 다시 셈한 1등이 다르면 그 차이를 만든 줄 가운데 `rank` 가 가장 작은 줄의 까닭을 3.7 의 사상 표로 — R2 §3.4 의 1 다음·2 앞). `defensive` 의 `can` 에 교본 조각과 몸 상태 조건 바꾸기(3.7) | 0·1 |
 | | `METHOD`·`SAY`·`WORK_MODE` | 행 열 개와 `carry`·`traffic`·`defuse` 의 갈래 (3.7) | 3·5·6 |
-| `field/methodRun.ts` (R2) | 진압·수색·이송·통제·해체 실행부 | `pulse`·`feel`·`pack`·`drag`·`post`·`blockLane`·해체 셋의 효과 (3.7) | 3·5·6 |
-| | 저격 실행부 | 판정 직후 `useKit(sim, rid, 'sniper', 1)`·`it.mag −= 1`(2.9) | 2 |
+| `field/methodRun.ts` (R2) | 진압·수색 실행부 | `pulse`·`feel` 의 효과 (3.7 — 이송·통제·해체의 효과는 R3 의 `doctrineRun.ts`) | 3 |
+| | 저격 실행부 | 판정 직후 `doctrineRun.fireRound(sim, a, 'sniper')`(2.9 — 탄창·재장전은 그 함수가 맡는다), 재장전 중이면 조준을 멈춘다 | 2 |
+| `debrief.ts` (R2 의 `WHY_TEXT`) | 방법 까닭 말 | 여섯을 더한다: `hurt: '다쳐서'`·`alone: '혼자라'`·`lowAir: '공기가 부족해'`·`lowAmmo: '탄약이 떨어져'`·`shaken: '동요해'`·`tired: '지쳐서'`(7.3 `WHY_DOC` 의 말 — R2 §3.8) | 1 |
 | `field/commander.ts` | `syncBoard` 의 무장 블록 | CP1 의 `usable` 과 쓰는 자리(흉기 검거·진입 갈래 — 100초 시간 예비와 `posts` 는 머릿수 그대로), 그 요청 한 줄 | 2 |
 | | 인질 진입의 125초 줄 | CP4 (확인 필요) | 2 |
 | | `request` | 보낸 무전의 기록 id, 버렸거나 못 보냈으면 −1 을 돌려준다(6.1 끝) | 2 |
@@ -1140,11 +1163,11 @@ npm run check                                                             # 단�
 
 ### 11.4 확인 필요 목록
 
-- X6 `DANGER_RULES` 의 실제 줄 모양(R3 의 CF5·CF6 두 줄을 그 모양에 맞춘다). "그 줄 때문에 단계가 올랐는가"를 알려면 `dangerMap` 이 이긴 줄을 알아야 한다 — 줄에 `id` 칸이 없으면 R3 가 더한다(모양을 바꾸지 않는 선택 칸).
+- X6 `DANGER_RULES` 의 실제 줄 모양(R3 의 CF5·CF6 두 줄을 그 모양에 맞춘다). "그 줄 때문에 단계가 올랐는가"를 알려면 `dangerMap` 이 이긴 줄을 알아야 한다 — 줄에 `id` 칸이 없으면 R3 가 더한다(모양을 바꾸지 않는 선택 칸). (반영됨 — X6 연관 표의 R3 줄이 이 예외를 적었다.)
 - R1 `makeAgent` 가 실제로 꺼내졌는지, 대원 리터럴의 자리(`buddy: -1` 을 넣는 곳). `pairUp` 은 `unitArrived` 의 반복 뒤.
-- R2 `chooseMethod` 의 실제 인자와 `MethodCtx` 가 export 되는지(R3 는 `dc` 를 넘길 인자 하나를 더한다 — `methodFit` 은 보고 모드로 만들어 넘긴다).
-- **R2 에 알릴 것**: R2 §4.6 "새 방법을 끼우는 자리 1"(흉기 상대 비살상탄을 `engage` 첫 갈래 안에)은 R3 의 P01~P03 과 같은 착오다 — 흉기 상대의 지휘는 `arrest` 이므로 비살상탄도 `case 'arrest'` 의 `moveTo` 앞(테이저 다음)에 두어야 걸린다. R3 를 구현할 때 R2 가 이미 그렇게 들어와 있으면 그 자리를 `arrest` 로 옮기거나 두 곳에 둔다.
-- **X6 에 제안할 것**: X6 §5.3 단계 2 의 "체력 ≥ 60"(허락된 구조 일)을 `fitFor` 가 다른 대원에게 읽으면 남의 몸 읽기다. R3 의 `crew` 신고(band 0)로 판정하자고 제안한다(합칠 때 X6 담당과 정한다).
+- (반영됨 — R2 §3.2) R2 `chooseMethod` 의 마지막 인자 `dc: DocCtx | null`, `MethodCtx` 는 export 하지 않음(R3 는 `Sense`·`MTarget` 만 타입으로), `methodFit` 은 인자 그대로 두고 안에서 보고 모드 `dc` 를 만든다.
+- (반영됨 — R2 §4.6·§5 예 7·§8 시험 3·§9) **R2 에 알릴 것**: 흉기 상대 비살상탄은 `case 'arrest'` 의 `moveTo` 앞(테이저 다음)이다. `case 'arrest'` 안의 순서는 테이저 → 비살상탄 → `closeIn` → `moveTo` 하나(11.1 과 같은 문장). R2 가 이미 `engage` 첫 갈래에 들어와 있으면 그 자리를 `arrest` 로 옮긴다.
+- (반영됨 — X6 §5.3·§5.6) **X6 에 제안할 것**: X6 §5.3 단계 2 의 "체력 ≥ 60"(허락된 구조 일)과 §5.6 제한적 구조 진입(`w.risky`)의 "체력 ≥ 70" 을 `fitFor` 가 다른 대원에게 읽으면 남의 몸 읽기다. R3 의 `crew` 신고(band 0 ≈ 체력 70 초과, 신고가 없으면 0)로 판정한다 — R3 전에는 체력 조건 없이 H1 의 물러남에 맡긴다. 지구력 ≥ 40 은 조직 정보라 그대로.
 - CP4(섬광탄 없는 인질 진입 금지)·D6(기동대 둘)은 균형을 보고 켤지 정한다.
 - I2 가 `ammoBox`·`sparePump`·동요를 이어받을지(I2 §3.3 의 표에 줄을 더하는 것은 I2 몫).
 - 교본 문장과 R2 방법 문장의 합계 상한 3 이 보고서 길이에 맞는지(R2 의 "11~12줄에서 잘린다").

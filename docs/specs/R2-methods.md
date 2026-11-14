@@ -6,7 +6,7 @@
 
 한 줄로: 한 임무(`WorkKind`)를 이루는 **방법(Method)** 을 여럿 두고, 그 일을 맡은 대원이 **자기 장비·자기 능력·자기가 본 상황**으로 고른다. 장비가 없거나 방법이 실패하면 다른 방법으로 바꾼다. 관찰자는 기록 문구, 대원의 자세와 손에 든 것, 보고서 문장으로 "이번엔 다르게 했네"를 본다.
 
-**선행 관계**: ROADMAP 의 구현 순서는 R1(부대 편성·개인 장비·헬기) → H1(부상과 사망) → X6(위험의 현실화) → **R2** → R3(분야별 대응 교본)이고, G4·G5·U2 는 따로다(G5 는 R2 보다 먼저 구현된다). 이 문서는 같은 날 쓰인 `R1-crews.md`·`H1-injuries.md`·`X6-catastrophe.md`·`G4-scene-legibility.md`·`G5-combat-fx.md` 를 읽고 그 이름에 맞췄다(10절). **R1 이 먼저 합쳐지므로 R1 의 이름이 기준이다.** R1 이 아직 합쳐지지 않았을 때는 같은 이름을 내보내는 얇은 모듈(`gear.ts`, 3.3 끝)로 대신한다. R3 는 이 문서의 틀(방법 표·고르는 점수) 위에 행과 조건을 더한다.
+**선행 관계**: ROADMAP 의 구현 순서는 R1(부대 편성·개인 장비·헬기) → H1(부상과 사망) → X6(위험의 현실화) → **R2** → R3(분야별 대응 교본)이고, G4·G5·U2 는 따로다(G5·U2 는 이미 합쳐졌다 — `docs/specs/README.md` "구현 순서"). 이 문서는 같은 날 쓰인 `R1-crews.md`·`H1-injuries.md`·`X6-catastrophe.md`·`G4-scene-legibility.md`·`G5-combat-fx.md` 를 읽고 그 이름에 맞췄다(10절). **R1 이 먼저 합쳐지므로 R1 의 이름이 기준이다.** R1 이 아직 합쳐지지 않았을 때는 같은 이름을 내보내는 얇은 모듈(`gear.ts`, 3.3 끝)로 대신한다. R3 는 이 문서의 틀(방법 표·고르는 점수) 위에 행과 조건을 더한다.
 
 **줄 번호를 쓰지 않는다.** `wf/b3`(executor·commander·agents·types·sceneManager)·`wf/p1`(hazards·grid·beliefs)과 R1·H1·X6 가 같은 파일을 고친다. 위치는 파일·함수·`case` 이름으로 가리킨다.
 
@@ -15,7 +15,7 @@
 | 파일 | 하는 일 | 진실을 읽어도 되는가 |
 |---|---|---|
 | `src/sim/field/methods.ts` | **판단부**: 방법 표 `METHOD`·문구 표 `SAY`·임무별 갈래 `WORK_MODE`, 장비 판정 `canUse`, 수영 능력 `swimOf`, 고르기 `chooseMethod`·`methodFit`, 지형 계산 `reachOf`·`landComp`·`catchPoint`·`onWater`·`swimCost`·`boatCost`, 대상 열쇠 `targetKey`, 탐지 배율 `searchMul` | **안 된다** — 테스트가 금지어를 검사한다(3.2) |
-| `src/sim/field/gear.ts` | **장비 판정의 얇은 층**: R1 이 있으면 `crews.ts` 의 함수를 감싸 같은 이름으로 내보내고, 없으면 부대 단위 대체(3.3 끝)를 담는다. `methods.ts`·`methodRun.ts` 는 장비를 이 파일로만 본다 | 판단용(`kitCount`·`kitName`·`swimBonus`·`seatsLeft`·`SHARED`)은 진실을 읽지 않는다. 효과용(`kitWorks`·`useKit`·`kitTool`·`bestTool`)은 실행부만 부른다 |
+| `src/sim/field/gear.ts` | **장비 판정의 얇은 층**: R1 이 있으면 `crews.ts` 의 함수를 감싸 같은 이름으로 내보내고, 없으면 부대 단위 대체(3.3 끝)를 담는다. `methods.ts`·`methodRun.ts` 는 장비를 이 파일로만 본다 | 판단용(`kitCount`·`kitName`·`swimBonus`·`seatsLeft`·`SHARED`, R3 가 더하는 `kitHas`·`kitQty`·`gunOf`·`roleIdOf`·`groupOf`·`crewHas`)은 진실을 읽지 않는다. 효과용(`kitWorks`·`useKit`·`kitTool`·`bestTool` — `bestTool` 은 `kitWorks` 를 불러 숨은 고장을 드러낸다)은 실행부만 부른다. 탄 소모(저격 탄)는 R3 의 `doctrineRun.fireRound` 로만(4.6) |
 | `src/sim/field/methodRun.ts` | **실행부**: 방법별 효과(`runWaterRescue`·`runSuppress`·`blockerRate` 등), 공통 함수 `startMethod`·`recheckOnArrive`·`switchMethod`·`recordMethod`·`recordAir`·`landCasualty`·`pullAshore`·`waterTick`·`senseOf`·`mrng`·`swimTrouble`, 실행 도구 `ExecKit` 의 타입 | 된다(`executor.ts` 와 같은 자격) |
 | `src/sim/field/rules/methods.ts` | 세계 규칙: 물살 `s.flow`, 안벽 표시 `s.quay`, 송풍기 `s.fan`, 뭍에 놓인 보트 대원 정리, 물 칸 위에 쓰러진 대원의 안전장치 | 된다(`hazards.ts` 와 같은 자격) |
 | `src/sim/field/orders/methods.ts` | 지휘 규칙: 수난 구조가 거듭 실패하면 수난 장비를 가진 부대를 더 부른다(맡을 사람이 아예 없는 경우는 B3 의 기존 블록이 맡는다 — 4.1) | 안 된다(`tests/ext.test.ts` 가 이미 검사한다) |
@@ -93,7 +93,7 @@ export type MethodId =
   | 'seal' | 'ventFirst' | 'cordon' | 'announce'                                                        // 누출 조치·통제 (mitigate · perimeter)
   | 'air' | 'drone' | 'dog';                                                                            // 야외 수색 (기록 전용·7단계)
 /** 왜 이 방법을 골랐는가 (기록 문구·보고서 문장이 쓴다) */
-export type MethodWhy = 'doctrine' | 'near' | 'noGear' | 'tooFar' | 'weak' | 'fast' | 'failed' | 'broken' | 'danger' | 'quiet' | 'team';
+export type MethodWhy = 'usual' | 'near' | 'noGear' | 'tooFar' | 'weak' | 'fast' | 'failed' | 'broken' | 'danger' | 'quiet' | 'team';   // usual = 평소 선택(교본 줄과 무관). R3 가 이 줄 끝에 상태 까닭 여섯을 더한다: 'hurt' | 'alone' | 'lowAir' | 'lowAmmo' | 'shaken' | 'tired' (R3 §2.1·§3.7 의 사상 표)
 /** 방법을 쓴 기록 한 줄 (보고서는 이것과 Problem 으로만 방법을 말한다) */
 export interface MethodUse {
   t0: number;                                     // 이 방법을 시작한 시각 (구출 시간 = t − t0)
@@ -181,8 +181,9 @@ R1 의 `crews.ts` `KitDef` 에 두 칸(3.3): `uses?: number`(처음 수량 — �
 export interface Sense { smoke: number; heat: number }        // 대원이 선 칸의 감각 (실행부가 senseOf 로 재서 넘긴다. fitFor 에서는 0)
 export interface MTarget { cas: number; prop: number; hostile: number; region: number; tile: number }   // 없으면 -1
 export interface MethodPick { m: MethodId; why: MethodWhy; cands: { m: MethodId; score: number }[]; missing?: KitId }
-export function chooseMethod(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, tg: MTarget, t: Task | null, sense: Sense): MethodPick | null;
-export function methodFit(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number;      // chooseMethod(…, t = null, sense = 0) 의 1등 점수, 없으면 0
+export function chooseMethod(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, tg: MTarget, t: Task | null, sense: Sense, dc: DocCtx | null = null): MethodPick | null;
+    // dc: R3 의 교본 입력(doctrine.ts 의 docCtx 가 만든다). R3 전에는 null. 실행부(startMethod·recheckOnArrive·switchMethod)는 docCtx(…, 'self') 를 넘긴다
+export function methodFit(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number;      // chooseMethod(…, t = null, sense = 0, dc) 의 1등 점수, 없으면 0. R3 가 합쳐지면 안에서 dc = docCtx(sim, s, a, 'report', w) 를 만든다(인자는 그대로 — fitFor·B3 anyCapable 은 고치지 않는다)
 export function reachOf(s: Scene, x: number, y: number, maxR = 4, from: FieldAgent | null = null): { x: number; y: number; d: number } | null;
     // (x, y) 에서 가장 가까운 뭍 칸(staticPass 이고 물·VOID 가 아님). from 이 있으면 from 과 같은 뭍 성분의 칸만(from 이 물 위면 from 에서 가장 가까운 뭍 칸의 성분).
     // 반경 maxR 안에 없으면 격자 전체로 넓히고, 그래도 없으면 null — 부르는 쪽이 s.safe → s.staging 으로 대신한다. 같은 거리면 칸 번호가 작은 쪽
@@ -190,7 +191,7 @@ export function landComp(s: Scene): Int32Array;      // 뭍 칸의 연결 성분
 export function targetKey(work: WorkKind, tg: MTarget): string;      // 'waterRescue:c3', 'force:t412' … (mfail·같은 대상 판정)
 ```
 
-`MethodCtx`(3.4)는 `chooseMethod` 안에서만 만든다(export 하지 않는다). 대상의 위치·상태·물살은 **`a.beliefs` 의 그 대상 사실에서만** 채운다. 실행부가 넘기는 것은 `sense` 하나다 — 그래서 진실(`c.x`, `c.drift`)을 판단에 끼워 넣을 길이 모양으로 막힌다.
+`MethodCtx`(3.4)는 `chooseMethod` 안에서만 만든다(export 하지 않는다 — R3 는 export 된 `Sense`·`MTarget` 만 타입으로 가져간다). 대상의 위치·상태·물살은 **`a.beliefs` 의 그 대상 사실에서만** 채운다. 실행부가 넘기는 것은 `sense` 와 판단부(`doctrine.ts`)가 만든 `dc` 뿐이다 — 그래서 진실(`c.x`, `c.drift`)을 판단에 끼워 넣을 길이 모양으로 막힌다. R3 가 합쳐지면 `chooseMethod` 는 `MethodCtx` 를 만든 뒤 `{ ...dc, m: { reach, flow, weak } }` **사본**으로 `docMethodMul` 을 불러 점수에 곱한다(받은 `dc` 를 고치지 않는다 — 시험 8 의 순수 함수. `DocCtx.m` 은 이 사본에서만 채워진다, R3 §2.4).
 
 **판단부(`methods.ts`)가 읽어도 되는 것**:
 - `a.beliefs`(그 대원의 믿음 — 구조 대상의 위치·상태·물속 여부·떠내려가는 속도·차량·구덩이는 `CasBelief` 의 새 칸으로, 균열·밸브·연료는 `haz` 사실의 `sub` 로 들어온다. X6 가 합쳐져 있으면 `ops` 사실(전술 모드·위험 구역)도).
@@ -200,11 +201,11 @@ export function targetKey(work: WorkKind, tg: MTarget): string;      // 'waterRe
 - 동료가 하는 일: `s.agents` 의 `task.kind`·`task.method`·`task.workId`·`task.cas`·`task.prop`·위치(같은 무전망에서 들린다 — `commander.assign` 도 위치를 쓴다), 동료의 장비(`kitCount` — 조직이 안다).
 - `Sense`: 실행부가 **대원이 선 칸에서** 잰 연기·열(몸의 감각. `brain.dangerScore` 가 자기 둘레 3×3 의 `s.fire` 를 읽는 것과 같은 자격 — X6 도 같은 판단을 적었다).
 
-**읽으면 안 되는 것**(테스트가 글자로 검사한다): `s.props`, `s.casualties`, `s.hostiles`, `.truth`, `s.fire[`, `s.smoke[`, `sim.scenes`, `s.variant`(시나리오 변형 — 관제·지휘관은 이름표로만 안다), `.fault`(R1 의 숨은 고장), `kitWorks`·`useKit`(효과·소모 — 실행부만). `methods.ts` 는 `agents.ts`·`hazards.ts`·`executor.ts`·`methodRun.ts`·`crews.ts` 를 import 하지 않는다(`agents.fitFor`·`perceive` 가 `methods.ts` 를 부르므로 순환을 만들지 않는다. 장비는 `gear.ts` 로만). import 해도 되는 것: 타입, `grid.ts`(`staticPass`·`losWalls`·`tileOf`), `rng.ts`(`hashStr`), `util.ts`, `gear.ts` 의 판단용 함수.
+**읽으면 안 되는 것**(테스트가 글자로 검사한다): `s.props`, `s.casualties`, `s.hostiles`, `.truth`, `s.fire[`, `s.smoke[`, `sim.scenes`, `s.variant`(시나리오 변형 — 관제·지휘관은 이름표로만 안다), `.fault`(R1 의 숨은 고장), `kitWorks`·`useKit`(효과·소모 — 실행부만). `methods.ts` 는 `agents.ts`·`hazards.ts`·`executor.ts`·`methodRun.ts`·`crews.ts` 를 import 하지 않는다(`agents.fitFor`·`perceive` 가 `methods.ts` 를 부르므로 순환을 만들지 않는다. 장비는 `gear.ts` 로만). import 해도 되는 것: 타입, `grid.ts`(`staticPass`·`losWalls`·`tileOf`), `rng.ts`(`hashStr`), `util.ts`, `gear.ts` 의 판단용 함수, (R3 뒤) `doctrine.ts` 의 `docCtx`·`docMethodMul` 만(판단부 — 믿음·자기 몸·자기 장비만 읽는다).
 
 **고르는 때**:
 1. **처음**: 실행부가 그 임무를 처음 돌릴 때(`t.method` 가 없고 `t.mt0` 도 없을 때) `startMethod`.
-2. **도착 재선택**(한 번): `suppress`·`mitigate`·`extricate` 에서, 그 방법의 작업 자리에 처음 닿은 틱(`moveTo` 가 처음 `'arrived'`)에 `t.progress === 0 && t.phase === 0` 이면 `recheckOnArrive` 가 지금의 `senseOf` 로 한 번 더 고른다(`t.marr = true`). 감각 조건(급박 구출·배연·환기 후 차단)은 대원이 현장 자리에 선 뒤에야 의미가 있기 때문이다 — 처음 고를 때 대원은 대개 대기 지점에 있다. 다른 방법이 1등이면 **예정된 전환**(아래 4)으로 바꾼다.
+2. **도착 재선택**(한 번): `suppress`·`mitigate`·`extricate`·`search` 에서(`search` 의 '작업 자리' = 그 구역의 첫 경유점), 그 방법의 작업 자리에 처음 닿은 틱(`moveTo` 가 처음 `'arrived'`)에 `t.progress === 0 && t.phase === 0` 이면 `recheckOnArrive` 가 지금의 `senseOf` 로 한 번 더 고른다(`t.marr = true`). 감각 조건(급박 구출·배연·환기 후 차단)은 대원이 현장 자리에 선 뒤에야 의미가 있기 때문이다 — 처음 고를 때 대원은 대개 대기 지점에 있다. 다른 방법이 1등이면 **예정된 전환**(아래 4)으로 바꾼다.
 3. **바꿀 때** — 이 셋뿐이다. 더 좋은 방법이 새로 보인다고 바꾸지는 않는다(왔다 갔다 방지).
    - 그 방법이 실패로 끝났다: `switchMethod(…, 'failed', 사유)`.
    - 장비가 작동하지 않는다(`kitWorks` 가 false — 숨은 고장이 드러났다): `switchMethod(…, 'broken', 사유)`.
@@ -338,6 +339,7 @@ interface MethodCtx {              // chooseMethod 안에서만 만든다
   sense: Sense;
   mates: FieldAgent[];             // 같은 작업(workId)을 맡은 활동 동료
   ops: any | null;                 // X6 가 있으면 a.beliefs 의 ops 사실(id 0), 없으면 null
+  dc: DocCtx | null;               // R3 가 합쳐지면 chooseMethod 의 dc 인자(3.2), 없으면 null. can·situ 가 교본 상태를 읽을 때 쓴다(예: defensive 의 can)
 }
 export interface MethodDef {
   id: MethodId; work: WorkKind[];
@@ -366,14 +368,14 @@ caution = clamp(1.1 − 0.3 × composure − 0.3 × experience, 0.5, 1.1)      /
 
 | 임무 | 늘 남는 맨몸·평소 방법 | `chooseMethod` 가 null 이면 |
 |---|---|---|
-| `waterRescue` | `improvise`(3.6칸 안), `catch`(하류에 뭍), `swim`(수영 능력) — 셋 다 조건이 있다 | **맡지 않는다**(`methodFit` 0). 실행 중이면 `finish(false, 'nomethod')`. 맡을 사람이 없으면 B3 의 "맡을 사람이 없는 작업" 블록이 `rescue` 를 부른다(4.1) |
+| `waterRescue` | `improvise`(3.6칸 안), `catch`(하류에 뭍), `swim`(수영 능력) — 셋 다 조건이 있다 | **맡지 않는다**(`methodFit` 0). 실행 중이면 `finish(false, 'nomethod')`. 맡을 사람이 없으면 B3 의 "맡을 사람이 없는 작업" 블록이 `rescue` 를 부른다(4.1). R3 가 `defuse` 를 같은 갈래("맡지 않음")로 더한다(R3 §3.7) |
 | `force`·`clear` | `kick`·`handClear` | 생기지 않는다 |
 | `extricate` | `manual` | 생기지 않는다 |
 | `search` | `call`(실내·붕괴)·`line`(야외) | 생기지 않는다 |
 | `treat` | `stay` | 생기지 않는다 |
 | `mitigate` | `seal` | 생기지 않는다 |
 | `perimeter` | `cordon` | 생기지 않는다 |
-| `suppress` | (`interior` 는 `hose` 가 있어야 한다) | **선택 임무**: `t.method` 를 비운 채 지금 코드로 |
+| `suppress` | (`interior` 는 `hose` 가 있어야 한다) | **선택 임무**: `t.method` 를 비운 채 지금 코드로. 예외(R3 이후): 교본이 `interior` 를 빼서(`docMethodMul(dc, 'interior') === 0`) 생긴 null 은 지금 코드(= 내부 공격)로 가지 않는다 — 그때는 `defensive` 가 후보가 된다(4.5) |
 | `engage` | (새 방법 둘은 조건일 때만) | **선택 임무**: `t.method` 를 비운 채 지금 분기로 |
 | `load` | (고르지 않는다 — `airlift` 기록만) | 선택 임무 |
 
@@ -381,7 +383,7 @@ caution = clamp(1.1 − 0.3 × composure − 0.3 × experience, 0.5, 1.1)      /
 - 하나도 없으면 차례로 넓힌다: ① `t.tried` 가 비어 있지 않으면 비우고 다시("다 써 봤으면 처음부터 다시") ② 그래도 없으면 `a.mfail` 가운데 `broken` 이 아닌 기억을 무시하고 다시 ③ 그래도 없으면 `null`. 선택 임무는 null 이 정상이다.
 - `chooseMethod` 는 상태를 바꾸지 않는다(시간이 지난 `mfail` 기억은 무시만 한다. 지우는 것은 실행부의 `startMethod`·`switchMethod`).
 - 같은 점수면 표의 순서. **난수를 쓰지 않는다**(같은 상황 = 같은 선택. 다양성은 장비·능력·상황의 차이에서 나온다).
-- 대상 믿음이 없으면(`cb === null` — 아직 못 봤다) `waterRescue`·`extricate` 의 후보는 없다(`methodFit` 0). 지금도 지휘관은 믿음으로 본 대상에게만 일을 낸다.
+- 대상 믿음이 없으면(`cb === null` — 아직 못 봤다) `waterRescue`·`extricate` 의 후보는 없다(`methodFit` 0). R3 가 `defuse`(믿음 `haz bomb` 이 없으면)를 같은 조건에 더한다. 지금도 지휘관은 믿음으로 본 대상에게만 일을 낸다.
 - **까닭(`why`)**: 위에서부터 처음 맞는 것.
   1. `switchMethod` 가 넘긴 것(`failed`·`broken`·`tooFar`·`team`).
   2. `noGear` — `canUse(…, ignoreKits = true)` 로 다시 셈한 1등이 지금 1등과 다르고, 그 1등이 장비 때문에 빠졌다(`needUnit` 은 그대로 따진다). `missing` = 그 1등의 `kits[0]`.
@@ -392,7 +394,8 @@ caution = clamp(1.1 − 0.3 × composure − 0.3 × experience, 0.5, 1.1)      /
   7. `tooFar` — 던져서 닿지 않는 거리(reach > 3.6)라서 고른 방법.
   8. `near` — 가까워서(hand·pole).
   9. `team` — 동료와 짝을 이루는 방법(tend·roof).
-  10. 그 밖은 `doctrine`.
+  10. 그 밖은 `usual`(평소 선택 — R3 의 "교본(doctrine)"과 헷갈리지 않게 이 이름을 쓴다).
+  - **R3 가 합쳐지면** 1 다음·2(`noGear`) 앞에 한 줄: 교본 배율(`docMethodMul`)을 빼고 다시 셈한 1등이 지금 1등과 다르면, 그 차이를 만든 교본 줄 가운데 `rank` 가 가장 작은 줄의 까닭을 R3 §3.7 의 사상 표로 `MethodWhy` 로 바꾼 것(`hurt`·`alone`·`lowAir`·`lowAmmo`·`shaken`·`tired`·`danger`·`team` 은 같은 이름, `noKit` → `noGear`(`missing` = 그 줄의 `noKits[0]`), `outside` → `alone`, `kit`·`protocol` → `usual`).
 - `methodFit(sim, s, a, w)` = 1등 점수가 있으면 그 점수, 없으면 0. 장비는 `kitCount`(R1 `hasKit` — 알려진 고장만)로만 보므로 숨은 고장이 있는 대원의 값은 고장이 없는 대원과 같다(R1 테스트 ④ — 숨은 고장이 배정에 새지 않는다). 수난 구조의 `fitFor` 는 R1 의 식 `0.22 + 0.5×rescue + 0.28×toolFor('water')` 의 장비 항을 바꾼 `best > 0 ? 0.22 + 0.5 × rescue + 0.28 × min(1, best) : 0` 이고, 그 뒤에 R1 의 역할 선호(`role.prefer` — 로프 대원·수난 구조대원 +0.3)를 지금처럼 더한다(값이 0 이면 0 으로 남는다).
 - **물 위의 대원**: `agents.fitFor` 맨 앞에서 대원이 헤엄 중이거나 보트 위(`onWater(s, a) ‖ a.afloat`)이면, 지금 맡은 `waterRescue` 작업 말고는 0 을 돌려준다. 물 위의 대원은 지시를 받아도 따르지 않으므로(3.5 의 `brain` 가드), 그런 대원이 `commander.assign` 의 "지시 수신함"(`b.orderWork === w.id`)에 묶여 다른 대원이 그 일을 못 맡는 일을 막는다.
 
@@ -418,7 +421,7 @@ const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask };
 ```ts
 startMethod(sim, s, I, a, t, work, tg): boolean
     // 시간이 지난 a.mfail 기억을 지운다 → chooseMethod(…, senseOf(s, a)) → t.method·mwhy·missing·mcands, t.mt0 = sim.t, t.mtry = 0, t.mbad = 0.
-    // 시작 문구(3.6). null 이면: 선택 임무(WORK_MODE)는 t.mt0 = sim.t 만 두고 true(방법 없이 지금 코드로), waterRescue 는 false
+    // 시작 문구(3.6). null 이면: 선택 임무(WORK_MODE)는 t.mt0 = sim.t 만 두고 true(방법 없이 지금 코드로), WORK_MODE 가 "맡지 않음"인 임무(지금 waterRescue — R3 가 defuse 를 더한다)는 false
 recheckOnArrive(sim, s, I, a, t, work, tg): void
     // 도착 재선택(3.2-2). t.marr 이면 아무것도 안 한다. 다른 방법이 1등이면 예정된 전환: t.method·mwhy·missing·mt0 를 바꾸고 phase·progress 0, 평소 방법이 아니면 시작 문구
 switchMethod(sim, s, I, a, t, why: 'failed' | 'broken' | 'tooFar' | 'team', detail: string, next = true): boolean
@@ -432,7 +435,7 @@ switchMethod(sim, s, I, a, t, why: 'failed' | 'broken' | 'tooFar' | 'team', deta
     // ④ recordMethod(sim, I, a, t, m0, t.mwhy, false, 그 기록 id)
     // ⑤ failed·broken 이고 t.workId ≥ 0 이고 선택 임무가 아니면 w.fails++ (문·잔해 하위 작업은 작업 항목이 없다). holdUntil 은 건드리지 않는다
     // ⑥ 다음 방법이 있으면 t.method = 그것, t.mwhy = why, t.mt0 = sim.t, t.phase = 0, t.progress = 0, t.mtry = 0, t.mbad = 0, a.path = null
-    //    없으면: 선택 임무는 t.method = undefined 로 두고 이어 간다(끝내지 않는다). waterRescue 는 finish(false, 'nomethod'). next = false 면 부른 쪽이 정한다
+    //    없으면: 선택 임무는 t.method = undefined 로 두고 이어 간다(끝내지 않는다). WORK_MODE 가 "맡지 않음"인 임무(지금 waterRescue — R3 가 defuse 를 더한다)는 finish(false, 'nomethod'). next = false 면 부른 쪽이 정한다
     // 부른 쪽은 그 틱에 return 한다 (한 틱에 moveTo 하나)
 recordMethod(sim, I, a, t, method: MethodId, why: MethodWhy, ok: boolean, eventId: number, tg?: MTarget): void
     // I.methods 에 한 줄 (t0 = t.mt0 ?? sim.t, 대상은 tg ?? t 에서, missing = t.missing). 방법을 인자로 받는다 — 기록 전용 분기(4.6 표)는 t.method 가 비어 있어도 자기 이름을 넘긴다.
@@ -523,7 +526,7 @@ if (onWater(s, a) || a.afloat) {
 
 | 언제 | 어디서 | 무엇을 | 예 |
 |---|---|---|---|
-| 방법을 정했다(`t.method` 를 넣은 순간) | `startMethod`·`recheckOnArrive` | 평소 방법이 아니거나 까닭이 `doctrine`·`near` 가 아닐 때만. `role 'RESPONDER'`, `kind 'action'`, `imp 1` | "구조 로프가 없습니다. 헤엄쳐 들어가겠습니다." |
+| 방법을 정했다(`t.method` 를 넣은 순간) | `startMethod`·`recheckOnArrive` | 평소 방법이 아니거나 까닭이 `usual`·`near` 가 아닐 때만. `role 'RESPONDER'`, `kind 'action'`, `imp 1` | "구조 로프가 없습니다. 헤엄쳐 들어가겠습니다." |
 | 한 번의 시도가 빗나갔다(방법은 그대로) | 실행부의 판정 자리 | `kind 'action'`, `imp 0` | "줄이 빗나갔습니다. 다시 감아 던집니다." |
 | 방법을 접었다 | `switchMethod` | 실패는 `raiseProblem`(문제 기록이 곧 기록 문구 — 같은 대상에서 되풀이되면 무전 한 줄, 3.5), 고장은 R1 이 남긴 `EQUIP_FAIL` 뒤에 무전 한 줄, 조건 상실은 `emit` `imp 1` | "물살에 밀려 대상을 놓쳤습니다. 뭍으로 돌아갑니다." |
 | 방법으로 끝냈다 | 실행부의 완료 자리 | **지금의 완료 문구를 방법별 문구로 바꾼다**(줄이 늘지 않는다) | "구조 대상 A, 구명줄로 끌어냈습니다. 처치와 이송이 필요합니다." |
@@ -578,7 +581,7 @@ if (onWater(s, a) || a.afloat) {
 2. **평소와 다른 방법으로 끝낸 것** → `I.methods` 의 `ok: true` 이고 그 방법의 `plain: false` 인 줄(같은 대상에 앞선 실패가 없는 것). 기록 전용 방법은 4.6 표의 `plain` 값을 따른다 — `hoist`·`airlift`·`bang`·`taser`·`shield` 는 싣고, `chase`·`breach`·`tackle`·`cover` 는 싣지 않는다(거의 모든 무장 사건의 평소 분기라 "다르게 한 것"을 밀어낸다). 사망·미발견 문장 다음, 맺음말 앞에 **최대 2문장**, `A.length < 12` 일 때만:
    - 수난 구조: "구조 대상 A는 이서준 대원이 헤엄쳐 들어가 구했습니다 (구명줄이 없었음)." / 호이스트: "구조 대상 B는 헬기1이 호이스트로 끌어올려 구했습니다."
    - 그 밖: `${이름} 대원이 ${noun} ${WORK_DONE[work]}` — `WORK_DONE = { force: '문을 열었습니다', clear: '잔해를 치웠습니다', extricate: '구출했습니다', suppress: '불길을 잡았습니다', engage: '제압했습니다', mitigate: '누출을 막았습니다', search: '찾아냈습니다', treat: '처치했습니다', perimeter: '주변에 대피를 알렸습니다', load: '환자를 이송했습니다', hoist: '끌어올려 구했습니다' }`.
-   - 까닭 말: `WHY_TEXT = { noGear: \`${kitName(missing)}이/가 없었음\`, weak: '줄을 잡을 힘이 없었음', fast: '물살이 빨랐음', tooFar: '던져서 닿지 않는 거리였음', danger: '추가 위험이 있었음', quiet: '용의자에게 들키지 않으려', team: '동료와 짝을 이뤄' }`, `doctrine`·`near` 는 붙이지 않는다. `missing` 이 없으면(대체 등) `noGear` 말도 붙이지 않는다.
+   - 까닭 말: `WHY_TEXT = { noGear: \`${kitName(missing)}이/가 없었음\`, weak: '줄을 잡을 힘이 없었음', fast: '물살이 빨랐음', tooFar: '던져서 닿지 않는 거리였음', danger: '추가 위험이 있었음', quiet: '용의자에게 들키지 않으려', team: '동료와 짝을 이뤄' }`, `usual`·`near` 는 붙이지 않는다. R3 가 합쳐지면 여섯을 더한다(R3 §7.3 `WHY_DOC` 의 말): `hurt: '다쳐서'`, `alone: '혼자라'`, `lowAir: '공기가 부족해'`, `lowAmmo: '탄약이 떨어져'`, `shaken: '동요해'`, `tired: '지쳐서'`. `missing` 이 없으면(대체 등) `noGear` 말도 붙이지 않는다.
 3. `buildReport`: `methods`(성공한 방법별 횟수 — 평소 방법 포함, `sweep --methods` 가 쓴다)를 채우고, 요약에 한 줄 — "대응 방법: 헤엄 2 · 구명환 3 · 호이스트 1 · 소화기 1 …"(`short` 이름. **`plain: false` 인 방법만** 센다 — 평소 방법 수십 건이 섞이면 줄이 읽히지 않는다. 하나도 없으면 줄을 넣지 않는다).
 
 ---
@@ -774,40 +777,44 @@ H1 의 "구출 중 잔해(붕괴 현장에서 구출을 마칠 때 `injuryRng.ch
 | `thermal` 열화상 수색 | 야외 | `tic` | 경유점마다 1.5초 정지해 훑는다. 모든 대상의 은폐 ×0.6 | 0.8 (조건일 때만) / — | 밤이거나, 그 구역에 나무 칸이 30% 넘게 있다 |
 
 - **배율은 `perceive` 의 구조 대상 반복문에서 곱한다**(진실을 읽어도 되는 곳 — 대상의 체력을 봐야 한다). `methods.ts` 는 `searchMul(a): { k: number; voice: boolean }` 만 내보낸다(대원의 임무·방법·정지 중인지(`t.wait > 0`)만 본다 — 순수 함수). `perceive` 는 `const sm = searchMul(a)` 를 한 번 구해, 대상마다 `voice` 면 `c.health > 30` 일 때만 `c.concealment × sm.k` 로 `detectRadius` 를 부른다. `agents.detectRadius` 의 R1 줄(`kitLive(searchKit)` 이면 붕괴 현장 은폐 ×0.45 — R1 이 순수 함수로 두었다. 숨은 고장은 R1 이 붕괴 현장의 첫 `perceive` 에서 `kitWorks` 로 드러낸다)은 **그대로 둔다**. 장비가 필요한 탐지 방법(`listen`·`thermal`)은 경유점에서 처음 멈출 때 실행부가 `kitWorks(searchKit / tic)` 를 부른다 — false 면 `switchMethod('broken')`(야외에는 연기가 없어 R1 의 자리에서는 `tic` 의 고장이 드러나지 않는다). `markCovered`(수색 완료 판정)와 단서 탐지에는 곱하지 않는다.
-- 수색 임무는 시작할 때 한 번 고른다(경유점마다 다시 고르지 않는다). `thermal` 의 "다음 경유점이 나무 칸" 조건은 고를 때 그 구역의 칸 가운데 나무 칸(`T.TREE`)이 30% 넘게인지로 본다(생김새).
+- 수색 임무는 시작할 때와 그 구역의 첫 경유점에 처음 닿을 때(도착 재선택, 3.2-2) 한 번씩 고른다 — 경유점마다 다시 고르지 않는다. 대기 지점에서 임무를 받은 대원은 처음 고를 때 연기를 느끼지 못하므로 감각 조건(R3 의 `feel` 등)은 도착 재선택에서 걸린다. `thermal` 의 "다음 경유점이 나무 칸" 조건은 고를 때 그 구역의 칸 가운데 나무 칸(`T.TREE`)이 30% 넘게인지로 본다(생김새).
 - 열화상의 연기 감쇠는 R1 의 수동 효과이므로 실내 방법으로 따로 두지 않는다. 야외의 `thermal` 은 정지해 훑는 행동이라 따로 둔다.
 - 경유점마다 정지하므로 수색이 느려진다(경유점 수 × 정지 시간). 대신 숨은 사람을 더 멀리서 찾는다 — 6절에서 수색 시간과 미발견 수를 함께 본다.
 - 수색 결과 보고는 지금처럼 즉시 보낸다(`flushOutbox` 의 `prompt` — CLAUDE.md 함정).
 
 ### 4.5 화재 `suppress` (4단계)
 
-`case 'suppress'` 첫 줄 앞에서 `startMethod`(선택 임무 — null 이면 지금 코드), 화점 곁에 처음 닿은 틱에 `recheckOnArrive`(배연의 감각 조건). 방법이 `interior`(또는 없음)면 **지금 코드 그대로**, 그 밖이면 `runSuppress(…)` 로 간다. `runSuppress` 는 대상 칸 고르기, '진압 확인' 보고(`learn(fire, 0)`), 끝내는 조건을 지금의 `suppress` 와 같게 쓴다 — 서는 자리·효과·물만 다르다. `spray` 의 인자 `eff`(효과 배율)·`wmul`(물 소모 배율, 기본 1)은 X6 가 먼저 더한다(X6 §외부 방어) — 없으면 R2 가 더한다. R1 의 기관원 배율과 곱한다. R2 는 그 뒤에 `jitter`(기본 `true`)를 더하고 자기 호출에서는 `false` 를 넘긴다(3.5 — 새 코드는 `s.rng` 를 쓰지 않는다).
+`case 'suppress'` 첫 줄 앞에서 `startMethod`(선택 임무 — null 이면 지금 코드), 화점 곁에 처음 닿은 틱에 `recheckOnArrive`(배연의 감각 조건). 방법이 `interior`(또는 없음 — 단 R3 의 교본이 `interior` 를 뺀 null 은 "없음"이 아니다, 3.4 `WORK_MODE`)면 **지금 코드 그대로**, 그 밖이면 `runSuppress(…)` 로 간다. `runSuppress` 는 대상 칸 고르기, '진압 확인' 보고(`learn(fire, 0)`), 끝내는 조건을 지금의 `suppress` 와 같게 쓴다 — 서는 자리·효과·물만 다르다. `spray` 의 인자 `eff`(효과 배율)·`wmul`(물 소모 배율, 기본 1)은 X6 가 먼저 더한다(X6 §외부 방어) — 없으면 R2 가 더한다. R1 의 기관원 배율과 곱한다. R2 는 그 뒤에 `jitter`(기본 `true`)를 더하고 자기 호출에서는 `false` 를 넘긴다(3.5 — 새 코드는 `s.rng` 를 쓰지 않는다).
 
 X6 가 합쳐져 있으면: 믿음 속 `ops` 사실의 `mode === 'defensive'` 이거나 그 구역이 단계 3 위험 구역이면 `suppress` 후보를 `defensive`·`aerial` 로만 좁힌다(지휘관이 정한 외부 방어 — X6 "R2 의 선택과 관계없이 외부 방수만"). 외부 방수 자리는 X6 의 `exteriorSpot` 을 쓴다(없으면 아래 표의 규칙).
 
 | 방법 | 장비 / 부대 | 서는 자리 · 거리 | 효과 · 물 | 노출 | pref / plain | 고를 조건 |
 |---|---|---|---|---|---|---|
 | `interior` 내부 공격 (**지금의 방법**) | `hose`(펌프·물) | 화점 3.2칸·시야 | ×1 · ×1 | 지금대로(연기·열) | 0.85 / 평소 | R1 의 진압 자격 |
-| `defensive` 외부 방어 방수 | `hose` | 실내가 아닌 칸에서 5.5칸, 시야(창은 통과 — `losWalls`) | ×0.7 · ×1.4 | 없음 | 0.7 (조건이면 ×1.4) / — | 믿음 속 그 구역 불 ≥ 0.7 이고, 그 구역에 믿음상 구조 대상이 없고, 그 구역 수색 확인율 ≥ 0.72 이거나 붕괴 현장 — "사람이 없다고 확인된 큰 불은 밖에서 끈다". 또는 자기 `r.health < 50`, 또는 R1 의 공기 잔량(`scba` 의 `uses`)이 60초 아래. 까닭 `danger` |
+| `defensive` 외부 방어 방수 | `hose` | 실내가 아닌 칸에서 5.5칸, 시야(창은 통과 — `losWalls`) | ×0.7 · ×1.4 | 없음 | 0.7 (조건이면 ×1.4) / — | 믿음 속 그 구역 불 ≥ 0.7 이고, 그 구역에 믿음상 구조 대상이 없고, 그 구역 수색 확인율 ≥ 0.72 이거나 붕괴 현장 — "사람이 없다고 확인된 큰 불은 밖에서 끈다". 또는 `c.t !== null`(실행부가 자기 판단으로 부를 때만 — `methodFit` 은 `t = null` 이라 남의 몸을 읽지 않는다)이고 자기 `r.health < 50`(R3 가 들어오면 `c.dc.st.band ≥ 1` — 자기 모드는 몸, 보고 모드는 `crew` 신고), 또는 R1 의 공기 잔량(`scba` 의 `uses`)이 60초 아래(`kitCount('scba') === 0` 만으로는 scba 가 없는 것과 구별되지 않는다 — R3 의 `kitHas`·`kitQty` 가 들어오면 `kitHas(scba) && kitQty(scba) < 60` 으로 바꾼다). **R3 가 들어오면**: 또는 교본이 실내 진압을 뺐다(`c.dc && docMethodMul(c.dc, 'interior') === 0` — R3 0단계에 더하는 조각, R3 §3.7). 까닭 `danger` |
 | `aerial` 고가 사다리 방수 | `hose` **그리고** 사다리차(`needUnit: ['ladder']`) | 대기 지점 쪽 실외 칸에서 7.5칸 | ×1.3 · ×2 | 없음 | 0.8 (조건이면 ×1.3) / — | 그 구역에 창(`T.WINDOW`)이 있고 믿음 불 ≥ 0.5. 대원이 사다리에 오르지 않으므로(조작대에서 방수) 추락 위험은 두지 않는다 |
 | `extinguisher` 소화기 | `extinguisher`(한 개 = 12초 분사) | 1.8칸 | `applyWater(s, tx, ty, 0.10 × dt)` 를 직접 부른다. 물·펌프를 쓰지 않는다(지금 `spray` 의 펌프·물 검사를 거치지 않는다). 그림은 `pushFx('spray', 흰색)` — **위치를 흩뜨리지 않는다**(`s.rng` 를 쓰지 않는다). 12초 쓰면 `useKit` | 지금대로 | 0.6 / — | 믿음 속 그 구역 불 ≤ 0.35 이고, (실외 구역이거나 화재·가스·붕괴 현장이 아님) — 차량 화재·작은 불의 초기 진압 |
-| `ventilate` 배연(송풍기) | `fan` | 가장 가까운 출입구 3칸 안에서 6초 설치(`kitWorks`) | `s.fan` 120초(`power` 1, 3.5 의 규칙) | — | 0.75 (조건일 때만 고를 수 있고, 그때 ×1.3) / — | `scba`(`kitCount`), 감각 연기 > 0.5(도착 재선택에서), 같은 현장에 송풍기가 없음(동료의 `task.method` 도 아님), 믿음에 불난 구역이 있다(불의 위치를 알고 하는 배연만). 설치가 끝나면 같은 대원은 **예정된 전환**으로 `interior` |
+| `ventilate` 배연(송풍기) | `fan` | 가장 가까운 출입구 3칸 안에서 6초 설치(`kitWorks`) | `s.fan` 120초(`power` 1, 3.5 의 규칙) | — | 0.75 (조건일 때만 고를 수 있고, 그때 ×1.3) / — | `scba`(`kitCount`), 감각 연기 > 0.5(도착 재선택에서), 같은 현장에 송풍기가 없음(동료의 `task.method` 도 아님), 믿음에 불난 구역이 있다(불의 위치를 알고 하는 배연만). 설치가 끝나면 같은 대원은 **예정된 전환**으로 `interior` — R3 가 들어오면 그 전환도 같은 교본 검사(`docMethodMul(dc, 'interior') === 0`)로 막히고, 막히면 `defensive` 를 고를 수 있을 때 그것으로, 아니면 `finish(true)` |
 
+- **진압 방법 다섯의 `risk` 는 모두 0** 이다(대원 노출은 실행의 연기·열 피해로 따로 들어간다 — 점수는 `pref × situ × skill` 로만 가른다. R3 §3.7 의 배율이 이 값을 전제로 1등을 정한다).
 - `agents.fitFor` `suppress`: R1 의 자격(`hose` && 펌프 정상 && 물)이 아닌 대원이라도 `extinguisher` 를 고를 수 있으면 0.25.
+- **R1 §9 의 공기 줄을 고친다**(4단계): R1 의 "`uses < 45` 인 대원에게 위험 건물 실내 일과 진압은 0" 을 **"위험 건물 실내 일(수색·구출·이송)만 0"** 으로 좁히고, 진압의 자격은 `methodFit(suppress)` 로 넘긴다 — `interior` 의 `can` 에 `kitCount('scba') > 0`(공기 60초 넘음). 그러지 않으면 공기가 45초 아래인 대원이 진압 작업 자체를 맡지 못해, 공기가 필요 없는 바깥 방수(`defensive`)와 R3 F03b 가 죽은 코드가 된다. R1 의 오는 쪽 판정 `capableOf`(공기 45초)는 R3 가 `AIR_IN` 비율로 맞춘다(R3 §11.1).
 - 화재 유형은 B1 이 균형을 맞추고 있다. 이 단계는 B1·R1·X6 가 합쳐진 뒤에 잰다(6절).
 
-### 4.6 무장 `engage` (5단계)
+### 4.6 무장 `engage`·`arrest` (5단계)
+
+**흉기 상대는 `arrest` 다.** 지금 `commander.syncBoard` 는 총이 아닌 용의자에게 `arrest` 만 낸다(`if (!gun) { … want('arrest') … continue; }`). `engage` 는 도주(`h.state === 'flee'`)이거나 총기이고 진입을 정한 뒤(`s.entryOrdered`)에만 생긴다. 그래서 흉기·맨손 `fight` 상대의 검거는 `case 'arrest'`(1.3칸 접근·5초 제압, 문구 '… 검거 완료.')에서 일어난다(R3 §3.1·§11.5 의 함정과 같은 판단 — 정본은 코드).
 
 지금의 분기와 R1 의 행동을 방법 이름으로 부르고, 검거·무력화 기록 자리에서 `recordMethod` 만 더한다 — **기록 전용**(`record: true`, 고르지 않는다. 지금처럼 현장 상태가 분기를 정한다). `chooseMethod` 는 새 방법 둘(`beanbag`·`sniper`) 가운데 하나를 고르거나 아무것도 고르지 않는다(선택 임무). 고르지 않으면 `t.method` 를 비운 채 지금의 분기 순서대로 돈다.
 
 **무력화 수단 기억**: 용의자를 무력화하는 코드가 그 자리에서 `h.stunHow` 를 적는다 — `hazards.flashbang` 은 `'bang'`, R1 의 테이저는 `'taser'`, 비살상탄은 `'beanbag'`. 검거 기록은 그 값을 쓴다.
 
-**기록 전용 분기 → 기록 이름**(`recordMethod(sim, I, a, t, 이름, 'doctrine', true, 그 검거 기록 id, { hostile: h.id, … })`):
+**기록 전용 분기 → 기록 이름**(`recordMethod(sim, I, a, t, 이름, 'usual', true, 그 검거 기록 id, { hostile: h.id, … })`):
 
-| 자리 (`executor` `case 'engage'`) | 기록 이름 | plain |
+| 자리 (`executor` `case 'engage'`·`case 'arrest'`) | 기록 이름 | plain |
 |---|---|---|
-| 첫 갈래(도주 중 `h.state === 'flee'`)의 검거 | `chase` | 평소 |
-| 첫 갈래(흉기·비무장에게 다가가)의 검거 | 무력화가 살아 있거나 막 풀렸으면(`sim.t < h.stunUntil + 1`) `h.stunHow`(R1 테이저면 `taser`), 아니면 `tackle` | taser 는 — / tackle 평소 |
+| `engage` 첫 갈래(도주 중 `h.state === 'flee'`)의 검거 | `chase` | 평소 |
+| `case 'arrest'` 의 검거(흉기·맨손 상대) | 무력화가 살아 있거나 막 풀렸으면(`sim.t < h.stunUntil + 1`) `h.stunHow`(`taser`·`beanbag`), 아니면 `tackle`. 투항한 사람의 검거는 기록하지 않는다 | taser·beanbag 은 — / tackle 평소 |
 | ③ "무력화된 용의자 제압"의 검거 | `h.stunHow`(`bang`·`taser`·`beanbag`), 없으면 `tackle` | bang·taser·beanbag 은 — |
 | 동시 진입(`breach`)·방 진입 뒤의 검거 | `breach` | 평소 |
 | 엄폐 사격 분기에서 쏜 뒤 용의자가 `down` | `cover` | 평소 |
@@ -816,13 +823,13 @@ X6 가 합쳐져 있으면: 믿음 속 `ops` 사실의 `mode === 'defensive'` �
 | R1 `rules/air.ts` 의 호이스트 완료 | `hoist`(`recordAir`) | — |
 
 **새 방법을 끼우는 자리** — 두 곳(어느 쪽이든 쏜 틱에는 `return` — 한 틱에 `moveTo` 하나):
-1. **흉기 상대**: `case 'engage'` 의 첫 갈래 `if (h.state === 'flee' || h.weapon !== 'gun') { … }` 는 흉기·비무장·도주 용의자를 ①·② 보다 먼저 처리하고 `return` 한다. 그래서 흉기 상대의 비살상탄은 **이 갈래 안, `moveTo` 를 부르기 전**에 둔다 — R1 의 테이저 바로 다음(4칸 안이고 테이저가 있으면 테이저가 먼저).
+1. **흉기 상대**: `case 'arrest'` 의 `moveTo` 앞, R1 의 테이저 바로 다음(4칸 안이고 테이저가 있으면 테이저가 먼저). `case 'arrest'` 안의 순서는 **테이저 → 비살상탄 → (R3) `closeIn` 판단 지점 → `moveTo` 하나**다(R3 §11.1 의 `case 'arrest'` 줄과 같은 문장). `engage` 의 첫 갈래(`if (h.state === 'flee' || h.weapon !== 'gun')`)에는 넣지 않는다 — 흉기 `fight` 상대는 그 갈래에 오지 않는다.
 2. **총기 상대(대치 중)**: 비살상탄·저격은 ①-2 다음, ② 섬광탄 분기 앞에 둔다.
 
 | 방법 | 장비 | 대상 · 조건 | 실행 | pref / plain |
 |---|---|---|---|---|
-| `beanbag` 비살상탄 | `beanbag`(발 — `kitCount > 0`) | 흉기·총기, 인질 곁이 아님(믿음 `hostage` 거짓), 9칸·시야, 총기면 대치(`hold`) 중일 때만 | 조준 1.5초 → 명중 `clamp(0.5 + 0.3×law, 0.2, 0.85)`(`mrng`) → `h.stunUntil = sim.t + 4`, `h.stunHow = 'beanbag'`, 사기 −0.3, 피해 8(H1 `hurtHostile(…, 'blunt')`). 한 발에 `useKit` 1. G5 가 있으면 판정 직후 `recShot(sim, s, a, 'beanbag', h.x, h.y, hit, 1, h.id)`. 그다음은 지금의 ③ "무력화된 용의자 제압" 분기가 잡는다. 다 쓰면 조건 상실 → 선택 임무라 `t.method` 를 비우고 지금 분기로 | 0.8 / — |
-| `sniper` 결정적 저격 | `sniper`(R1 저격·관측수) | 믿음: 총기 용의자가 인질을 붙잡은 채 교전 중이거나, 협상을 시작한 지(`s.negotStart`) 60초가 넘었는데 그 용의자가 아직 대치 중 | 대기 지점 쪽 엄폐 자리, 16칸·시야 → 조준 6초 → 명중 `clamp(0.55 + 0.4×law − (움직이면 0.2), 0.3, 0.95)`(`mrng`) → 피해 70(H1 `hurtHostile(…, 'gunshot', { down: true })` — 70 으로는 체력 100 에서 쓰러지지 않으므로 H1 이 "한 번에 쓰러뜨림"을 켠다). 빗나가면 `mrng.chance(0.2)` 로 인질이 다친다(지금 `shootAt` 의 인질 피격과 같은 처리, H1 이면 `hurtCas`). G5 가 있으면 `recShot(…, 'sniper', …)`. 기록 imp 3. 엄폐 자리를 못 찾으면(`nopath`) `switchMethod('tooFar')` → `a.mfail` 15초 → 선택 임무라 지금 분기(엄폐 사격·덮치기)로 이어 간다 | 0.6 (조건일 때만) / — |
+| `beanbag` 비살상탄 | `beanbag`(발 — `kitCount > 0`) | 흉기·총기, 인질 곁이 아님(믿음 `hostage` 거짓), 9칸·시야, 총기면 대치(`hold`) 중일 때만 | 조준 1.5초 → 명중 `clamp(0.5 + 0.3×law, 0.2, 0.85)`(`mrng`) → `h.stunUntil = sim.t + 4`, `h.stunHow = 'beanbag'`, 사기 −0.3, 피해 8(H1 `hurtHostile(…, 'blunt')`). 한 발에 `useKit` 1. 판정 직후 G5 의 `recShot(sim, s, a, 'beanbag', h.x, h.y, hit, 1, h.id)`(G5 는 합쳐졌다). 그다음은 지금의 ③ "무력화된 용의자 제압" 분기가 잡는다. 다 쓰면 조건 상실 → 선택 임무라 `t.method` 를 비우고 지금 분기로 | 0.8 / — |
+| `sniper` 결정적 저격 | `sniper`(R1 저격·관측수) | 믿음: 총기 용의자가 인질을 붙잡은 채 교전 중이거나, 협상을 시작한 지(`s.negotStart`) 60초가 넘었는데 그 용의자가 아직 대치 중 | 대기 지점 쪽 엄폐 자리, 16칸·시야 → 조준 6초 → 명중 `clamp(0.55 + 0.4×law − (움직이면 0.2), 0.3, 0.95)`(`mrng`) → 피해 70(H1 `hurtHostile(…, 'gunshot', { down: true })` — 70 으로는 체력 100 에서 쓰러지지 않으므로 H1 이 "한 번에 쓰러뜨림"을 켠다). 빗나가면 `mrng.chance(0.2)` 로 인질이 다친다(지금 `shootAt` 의 인질 피격과 같은 처리, H1 이면 `hurtCas`). G5 의 `recShot(sim, s, a, 'sniper', h.x, h.y, hit, 1, h.id, 다친 인질 ?? null)` — 마지막 인자로 그 인질을 넘겨 G5 의 `noteCollateral` 까지 남긴다(G5 §11 R2 줄). 기록 imp 3. **탄**: R3 가 합쳐지면 판정 직후 R3 의 `doctrineRun.fireRound(sim, a, 'sniper')` 를 불러 저격 탄 1 을 쓴다(탄창·재장전 — R3 §2.9). 탄이 0 이면 조건 상실(→ 선택 임무라 지금 분기로), 재장전 중(`a.reloadUntil > sim.t`)이면 조준을 멈추고 기다린다. R3 가 없으면 탄은 무제한(R1)이다. 엄폐 자리를 못 찾으면(`nopath`) `switchMethod('tooFar')` → `a.mfail` 15초 → 선택 임무라 지금 분기(엄폐 사격·덮치기)로 이어 간다 | 0.6 (조건일 때만) / — |
 
 - 판정은 모두 `mrng`. 지금의 `shootAt`·`flashbang` 이 쓰는 `s.rng`, R1 테이저의 `kit:<현장>` 에 호출을 더하지 않는다.
 - R1 의 테이저·방패는 다시 만들지 않는다. R1 이 없으면 `taser`·`shield` 기록은 생기지 않는다(대체를 만들지 않는다).
@@ -868,7 +875,7 @@ R1 에 이미 있는 장비로 만들 수 있는 야외 수색 방법(`hail`·`t
 점수는 3.4 의 식으로 어림한 것이다(둘째 자리에서 반올림). 이름은 보기다(R1 뒤에는 0·1번 자리만 지금 이름이고, 나머지 자리는 R1 의 새 이름 목록에서 온다).
 
 **예 1 — 로프 대원, 2.6칸 거리, 의식 있음** (구조1 구조대원(로프) 오세린: rescue 0.8, fitness 0.7, composure 0.6, experience 0.4 → caution 0.8, swimOf ≈ 1.0. 장비: 구명줄·구명환·구명조끼·드라이슈트·고무보트. 대상 믿음 band 0, reach 2.6, drift 0.02, 맑음)
-후보: rope 0.95 · ring 0.94 · boat 0.73 · swim 0.51 · improvise 0.34 → **rope**, 까닭 `doctrine`(평소 방법 — 시작을 알리지 않는다). pole·hand 는 닿지 않는다. improvise 는 reach > 2.4 라 ×0.6(0.5 × 1.12 × 0.6).
+후보: rope 0.95 · ring 0.94 · boat 0.73 · swim 0.51 · improvise 0.34 → **rope**, 까닭 `usual`(평소 방법 — 시작을 알리지 않는다). pole·hand 는 닿지 않는다. improvise 는 reach > 2.4 라 ×0.6(0.5 × 1.12 × 0.6).
 
 ```
 10:07:17 [02] COMMANDER/권도현: 오세린, 구조 대상 A 수난 구조 맡아라.
@@ -912,7 +919,7 @@ R1 에 이미 있는 장비로 만들 수 있는 야외 수색 방법(`hail`·`t
 서예린은 그 대상에 대해 60초 동안 헤엄·보트를 고르지 않는다(`a.mfail`) — 뭍에 오르자마자 다시 뛰어드는 일이 없다.
 
 **예 5 — 줄도 없고 헤엄도 못 치는 대원, 하류에 다리** (순찰3 순찰 경관 한지민: swimOf 0.3, 구명줄 없음. 대상 reach 3, drift 0.05, 하류 2칸에 다리 — 닿는 데 약 20초)
-후보: catch 0.8 · improvise 0.27 → **catch**, 까닭 `doctrine`(장비를 따지지 않아도 1등이 catch 다 — rope 0.75 보다 높다. 그래서 `noGear` 가 아니다). 평소 방법이 아니므로 알린다.
+후보: catch 0.8 · improvise 0.27 → **catch**, 까닭 `usual`(장비를 따지지 않아도 1등이 catch 다 — rope 0.75 보다 높다. 그래서 `noGear` 가 아니다). 평소 방법이 아니므로 알린다.
 
 ```
 10:30:02 [11] RESPONDER/한지민: 하류 다리에서 기다렸다 붙잡겠습니다.
@@ -932,7 +939,7 @@ R1 에 이미 있는 장비로 만들 수 있는 야외 수색 방법(`hail`·`t
 
 ```
 10:52:40 [16] RESPONDER/강현우: 테이저 발사 — 용의자 1 무력화.                              ← R1 의 문구 (h.stunHow = 'taser')
-10:52:42 [16] RESPONDER/강현우: 무력화된 용의자 1 제압·검거!                                ← 지금 문구. R2 는 recordMethod('taser')
+10:52:42 [16] RESPONDER/강현우: 용의자 1 검거 완료.                                          ← case 'arrest' 의 지금 문구. R2 는 recordMethod('taser')
 10:53:05 [16] RESPONDER/정지호: 총기 소지, 대치 중 — 비살상탄으로 무력화하겠습니다.          ← ①-2 다음 · ② 앞의 자리
 10:53:07 [16] RESPONDER/정지호: 비살상탄 명중. 용의자 2 무력화.                             ← ③ 이 이어서 검거 → recordMethod('beanbag')
 ```
@@ -1000,13 +1007,13 @@ npm run check                                           # 단계를 끝낼 때 �
 
 무거운 반복은 피한다: 강제 교대는 `new Sim(seed, NORMAL, 1200, { force: 'water/std' })`, 장면 단위는 `createIncident(sim, { type, variant, rng: sim.rng.fork('t') })`. 장비를 빼는 것은 R1 의 장비 항목에 `faultKnown = true`(알려진 고장 — `hasKit` 이 false)를 주거나 `kit` 에서 지운다. 특정 부대만 나가게 하려면 다른 부대를 시작 전에 `oos` 로 둔다.
 
-1. **판단부는 진실을 읽지 않는다**: `src/sim/field/methods.ts` 의 주석이 아닌 줄에 `s.props`·`s.casualties`·`s.hostiles`·`.truth`·`s.fire[`·`s.smoke[`·`sim.scenes`·`s.variant`·`.fault`·`kitWorks`·`useKit` 가 없다. `agents`·`hazards`·`executor`·`methodRun`·`crews` 를 import 하지 않는다(`tests/ext.test.ts` 의 지휘 규칙 검사와 같은 방식). `orders/methods.ts` 는 기존 테스트가 이미 검사한다.
+1. **판단부는 진실을 읽지 않는다**: `src/sim/field/methods.ts` 의 주석이 아닌 줄에 `s.props`·`s.casualties`·`s.hostiles`·`.truth`·`s.fire[`·`s.smoke[`·`sim.scenes`·`s.variant`·`.fault`·`kitWorks`·`useKit`·`bestTool`(실행부의 `kitWorks` 를 부른다) 가 없다. `agents`·`hazards`·`executor`·`methodRun`·`crews` 를 import 하지 않는다(`tests/ext.test.ts` 의 지휘 규칙 검사와 같은 방식). `orders/methods.ts` 는 기존 테스트가 이미 검사한다.
 2. **장비를 빼면 다른 방법을 쓴다**: 수난 강제 교대 6개(시드 `W0`~`W5`)를 두 번 — 한 번은 그대로, 한 번은 시작 전에 모든 대원의 `rope`·`ring`·`pole` 을 알려진 고장으로. 앞쪽은 성공 방법에 rope 나 pole 이 있고, 뒤쪽은 rope·ring·pole 이 없으며 성공한 수난 구조가 있고 그 방법은 hand·improvise·catch·swim·boat·hoist 가운데 하나다. 장비를 뺀 쪽에서 `why === 'noGear'` 이고 `missing` 이 있는 기록이 하나 이상.
 3. **방법마다 실제로 쓰인 교대가 있다**:
    - 수난 강제 12교대 + 2번의 장비를 뺀 6교대: 성공 방법 집합 ⊇ {rope, pole, swim, improvise}.
    - 선박 화재 4교대(`tests/major.test.ts` 의 `MA`~`MD`): `hand` 성공이 없다(안벽), 성공 방법에 pole·ring·rope·improvise 가운데 하나 이상.
    - 장면을 직접 만들어: **boat**(수난 현장, 대상 reach 3·믿음 band 2 — 구조정 대원 하나만 있는 장면과 고무보트를 든 로프 대원 하나만 있는 장면 둘. 각각 boat 를 고르고, 진수한 틱에 그 대원이 물 칸에 있고 `afloat === 'boat'`, 대상이 뭍에 내려진 뒤 대원이 뭍 칸에 있고 `afloat` 가 없다), **catch**(대상을 다리 3칸 위에 두고 `drift = 0.08`, 줄·헤엄이 없는 대원 하나), **tend**(헤엄 대원과 구명줄을 가진 같은 작업의 동료), **hand**(대상을 일반 물가 1칸에), **hoist 기록**(R1 의 호이스트로 끝난 대상의 `freedHow === 'hoist'`).
-   - 2단계 뒤: 문 — hydraulic·irons·kick 성공 각각 ≥ 1(`collapse/elevator`·`fire/std`·순찰만 나가는 `armed/dispute` — 다른 부대 `oos`). 3단계 뒤: haul ≥ 1(`traffic/manhole`, 구조 공작차), hail 또는 thermal ≥ 1(`search` 강제). 4단계 뒤: extinguisher ≥ 1(차량 화재가 있는 `traffic` 강제 또는 직접 만든 장면). 5단계 뒤: beanbag ≥ 1·taser 기록 ≥ 1(`armed/dispute`·`armed/robbery`).
+   - 2단계 뒤: 문 — hydraulic·irons·kick 성공 각각 ≥ 1(`collapse/elevator`·`fire/std`·순찰만 나가는 `armed/dispute` — 다른 부대 `oos`). 3단계 뒤: haul ≥ 1(`traffic/manhole`, 구조 공작차), hail 또는 thermal ≥ 1(`search` 강제). 4단계 뒤: extinguisher ≥ 1(차량 화재가 있는 `traffic` 강제 또는 직접 만든 장면). 5단계 뒤: beanbag ≥ 1·taser 기록 ≥ 1(`armed/dispute`·`armed/robbery` — 흉기 상대의 테이저·비살상탄 검거 기록은 `case 'arrest'` 에서 남는다, 4.6).
 4. **헤엄 구조는 수영 능력과 위험을 반영하고, 물 위의 대원은 끝내 나온다**:
    - 대원의 `fitness`·`skills.rescue` 를 바꾼 뒤 `swimOf` 를 계산해 문턱과 비교한다: `swimOf < 0.35` 이고 구명조끼가 없으면 `chooseMethod` 가 swim 을 내지 않는다. 구명조끼를 주면 `swimOf ≥ 0.25` 일 때 낸다(역할 보정·개인차 때문에 고정 숫자로 단정하지 않는다).
    - `swimTrouble(swim, flowK, pfd, drysuit, tended, tired, towing, night)` 는 swim 이 클수록 작고, pfd·tend 가 있으면 작고, flowK 가 클수록 크다. 붙잡힘 확률은 대상 `c.health ≤ 40` 에서 0.
@@ -1044,14 +1051,15 @@ npm run check                                           # 단계를 끝낼 때 �
 | | `finishTask` | 실패 사유 표에 `nomethod: '쓸 수 있는 방법이 없습니다'`. 업고 있던 사람이 물속 사람일 때의 내려놓기와 완료 기록(3.5) | 1a·1b |
 | | 새 `case 'ashore'` | 물 위의 대원을 뭍으로(3.5) | 1b |
 | | `workOnBlocker`(인자 `tk` 추가, 호출 두 곳)·`unblock`(인자 `method`) | 속도를 `blockerRate` 로, 완료 문구를 방법별로, G5 의 `recBreach` 에 방법 | 2 |
-| | `case 'extricate'`·`case 'search'` | `startMethod`·`recheckOnArrive`, 속도 `k`·탐지 정지, `shore` 의 균열 보강 | 3 |
+| | `case 'extricate'`·`case 'search'` | `startMethod`·`recheckOnArrive`(수색은 그 구역 첫 경유점 — 3.2-2), 속도 `k`·탐지 정지, `shore` 의 균열 보강 | 3 |
 | | `case 'mitigate'` | `haz` 사실 두 곳에 `sub`(3단계), `seal`·`ventFirst`(6단계) | 3·6 |
 | | `spray`(인자 `eff`·`wmul`, 기본 1 — X6 가 이미 더했으면 그대로 — 와 `jitter`, 기본 `true`)·`case 'suppress'` | 방법 분기 한 줄, `recheckOnArrive`. R2 의 호출은 `jitter = false`(`s.rng` 를 쓰지 않는다) | 4 |
-| | `case 'engage'` | 비살상탄 두 자리·저격, 검거·무력화 기록 자리마다 `recordMethod`(4.6 표) | 5 |
+| | `case 'engage'` | 총기 상대 비살상탄·저격(①-2 다음, ② 앞), 도주 추격 검거·진입·엄폐 사격 기록 자리마다 `recordMethod`(4.6 표) | 5 |
+| | `case 'arrest'` | 흉기 상대 비살상탄(테이저 다음, `moveTo` 앞), 검거 기록(`taser`·`beanbag`·`tackle` — 4.6 표) | 5 |
 | | `case 'treat'`·`case 'load'`·`case 'perimeter'` | rush·airlift 기록·announce | 6 |
 | `field/agents.ts` | `casFact` | `CasBelief` 의 `water`·`drift`(0단계), `veh`·`pit`(3단계), `rush`(6단계) — 본 것을 그대로 | 0·3·6 |
 | | `perceive` | `haz` 사실의 `sub`(균열·밸브 / 차량 연료 두 곳), 구조 대상 반복문의 `searchMul` | 3 |
-| | `fitFor` | 맨 앞의 물 위 가드(1b), `waterRescue` → `methodFit` 식(1a), `suppress` 의 소화기 길(4) | 1a·1b·4 |
+| | `fitFor` | 맨 앞의 물 위 가드(1b), `waterRescue` → `methodFit` 식(1a), `suppress` 의 소화기 길(4), R1 §9 의 `uses < 45` 줄에서 진압을 빼고 `methodFit(suppress)` 로(4 — 4.5) | 1a·1b·4 |
 | `field/brain.ts` | `think` | 물 위의 대원 가드(3.5) — 철수 지시 블록 바로 다음, 공기통·X6 철수 명령보다 앞 | 1b |
 | `field/commander.ts` | 구조 대상 블록: `needTreat`·안전 구역 쪽 처치 조건, 탑승 우선순위 | `!c.rush`, 즉시 이송이면 0.97 | 6 |
 | `field/hazards.ts` | `flashbang` | 무력화한 용의자에 `h.stunHow = 'bang'` | 5 |
@@ -1087,9 +1095,9 @@ npm run check                                           # 단계를 끝낼 때 �
 **R1 이 아직 없을 때**: 3.3 끝의 대체(`gear.ts` 의 `UNIT_KITS`·부대 단위 `kitCount`·`kitWorks`)로 만들고, 기록 전용 방법(hoist·taser·shield·airlift)은 생기지 않는다. R1 이 들어오면 `gear.ts` 의 몸만 R1 함수로 바꾸고 대체를 지운다 — `methods.ts`·`methodRun.ts` 는 고치지 않는다.
 
 **H1(부상과 사망)** — `docs/specs/H1-injuries.md` 의 나눔("원인 이름·피해 공식·`hurt*` 는 H1, 언제 그 방법을 쓰는가와 사고 확률(R2 의 `mrng`)은 R2")을 따른다. 헤엄 중 익수 피해(1.2/s, `tick`)와 사고 피해는 `hurtResponder(…, 'drown')`(H1 의 `protection('drown') = 0` — R2 의 사고 식이 `pfd`·`drysuit` 로 이미 줄였다), 붙잡힘은 R2 의 사고 원인 하나, 급박 구출의 환자 피해는 `hurtCas(…, 'blunt')`, 터널 붕락은 `crush`, 비살상탄은 `hurtHostile(…, 'blunt')`, 저격은 `hurtHostile(…, 'gunshot', { down: true })`. 물에서 건진 사람의 남는 악화는 `landCasualty` 에서 `bleedCause = 'exposure'`.
-- **물 위의 체력 하한은 H1 이 있든 없든 18 이다**(3.5). H1 의 결정 표("대원의 익수(물 위의 쓰러짐·사망) — 넣지 않는다. R2 의 체력 하한 18 을 둔다")와 같다. H1 문서의 "연관 설계서와 나누는 선" 표의 R2 줄에는 "R2 는 H1 이 있으면 체력 하한 18 을 두지 않고"라는 옛 문장이 남아 있다 — 이 문서와 H1 의 결정 표가 맞고, 합치는 사람이 그 줄을 고친다.
+- **물 위의 체력 하한은 H1 이 있든 없든 18 이다**(3.5 — 정본). H1 의 두 줄(연관 표의 R2 줄·결정 표의 "대원의 익수" 줄)에 남아 있던 옛 문장("H1 이 있으면 하한 18 을 두지 않고")은 정합성 점검에서 이 문서에 맞춰 고쳤다(반영됨).
 - H1 쪽이 지키는 두 가지(H1 연관 표): `rescueMate` 는 대상이 물 칸이면 물가에서 기다린다. 한 대원을 두 번 옮기지 않는다 — R2 의 `pullAshore` 는 물 칸에서만, `rescueMate` 의 끌기는 뭍에서만.
-- H1 의 원인 표가 "R2 의 사다리·창문"으로 적은 추락은 R2 가 만들지 않는다 — `aerial` 의 대원은 조작대에서 방수하고 사다리에 오르지 않는다. H1 이 그 줄을 비워 두면 된다.
+- 사다리·창문 추락은 R2 가 만들지 않는다 — `aerial` 의 대원은 조작대에서 방수하고 사다리에 오르지 않는다. H1 의 원인 표·결정 표에서 그 몫을 지웠다(반영됨).
 - H1 이 없으면 체력을 직접 깎는다(하한 18 그대로).
 
 **X6(위험의 현실화)** — `docs/specs/X6-catastrophe.md` 의 나눔("현장 단위의 전술 모드와 진입 금지 구역은 X6, 방법 선택은 대원 개인의 갈래")을 따른다.
@@ -1099,11 +1107,11 @@ npm run check                                           # 단계를 끝낼 때 �
 - 철수 명령: X6 의 `evacuate` 의무는 `brain` 의 철수 지시 블록 바로 뒤에 있고, R2 의 물 위 가드도 같은 자리다. **R2 의 가드를 먼저** 둔다 — 물 위의 대원은 건물 위험 구역 안에 있을 수 없고, 물 한가운데서 철수 목표로 가는 것보다 뭍이 먼저다.
 - 6절의 기준 수치는 X6 를 합친 뒤에 잰다.
 
-**G5(교전 연출)** — G5 는 R2 보다 먼저 구현된다. `ArmPose 'throw'`·`Item 'ram'` 은 G5 가 넣은 것을 쓴다. 비살상탄·저격의 판정 직후 `recShot(sim, s, a, 'beanbag' / 'sniper', h.x, h.y, hit, 1, h.id)` 한 줄(G5 `FxWeapon 'beanbag'`). `unblock(…, method)` 의 방법을 G5 의 `recBreach` 의 `how` 로 넘긴다(G5 `BreachHow` 의 문 방법 이름이 R2 의 `MethodId` 와 같다). `agentPose` 의 방법 분기를 G5 의 하위 작업 분기 앞에 둔다. 저격 대원의 겨누는 선은 G5 가 그리지 않고 R2 가 조준선을 그린다.
+**G5(교전 연출)** — G5 는 합쳐졌다(`9ab7fdb`). `ArmPose 'throw'`·`Item 'ram'` 은 G5 가 넣은 것을 쓴다. 비살상탄·저격의 판정 직후 `recShot(sim, s, a, 'beanbag' / 'sniper', h.x, h.y, hit, 1, h.id, hostage?)` 한 줄(G5 `FxWeapon 'beanbag'`. 저격이 빗나가 인질이 다쳤으면 마지막 인자로 그 인질 — 4.6). `unblock(…, method)` 의 방법을 G5 의 `recBreach` 의 `how` 로 넘긴다(G5 `BreachHow` 의 문 방법 이름이 R2 의 `MethodId` 와 같다). `agentPose` 의 방법 분기를 G5 의 하위 작업 분기 앞에 둔다. 저격 대원의 겨누는 선은 G5 가 그리지 않고 R2 가 조준선을 그린다.
 
 **G4(현장 가독성)** — G4 는 "구조 줄 블록과 `sprites.ts` 는 R2 몫"이라 적고 건드리지 않는다. R2 의 그림은 `methodsLayer.ts` 에 모으고 `renderScene` 은 9절의 세 자리만 고친다. G4 가 먼저 합쳐졌으면 그 표지 규칙(크기·색)을 따른다. G4 도 R2 의 비살상탄이 `stunUntil` 로 무력화한다는 것을 전제로 적었다(맞다).
 
-**R3(분야별 대응 교본)** — R3 는 `METHOD` 표의 행과 `situ` 조건을 늘리는 것으로 만든다. 공기(R1 `scba` 의 `uses`)·탄약·짝의 유무·부상(H1 `hurtF`·`bandOf`) 같은 '상태'는 `MethodCtx` 에 칸을 더해 넣는다. `situ`·`skill` 은 선택 칸이므로 칸을 넓혀도 기존 행이 깨지지 않는다. 이송·교통 통제의 방법도 R3 몫이다(2절).
+**R3(분야별 대응 교본)** — R3 는 `METHOD` 표의 행을 늘리고(R3 §3.7), 교본 배율을 점수에 곱한다: `chooseMethod` 의 마지막 인자 `dc: DocCtx | null`(3.2) — 실행부는 `docCtx(…, 'self')`, `methodFit` 은 안에서 `docCtx(…, 'report', w)` 를 만든다(인자는 그대로라 `fitFor`·B3 `anyCapable` 은 고치지 않는다). `chooseMethod` 는 `{ ...dc, m: { reach, flow, weak } }` 사본으로 `docMethodMul` 을 부르고(받은 `dc` 는 고치지 않는다), 공기·탄약·짝·부상 같은 '상태'는 `MethodCtx.dc` 로 읽는다. 동요는 `caution` 에 +0.2(R3 G02b, 상한 1.1). 까닭 여섯(`hurt`·`alone`·`lowAir`·`lowAmmo`·`shaken`·`tired`)은 3.4 의 순서·3.8 의 `WHY_TEXT` 에 더한다. 이송·교통 통제·해체의 방법도 R3 몫이다(실행은 R3 의 `doctrineRun.ts` — 2절). 상공 호이스트가 있을 때의 헤엄 감점은 R3 S15 와 곱해진다(12절).
 
 ## 11. `CLAUDE.md` 에 들어갈 줄 (합친 뒤에 고친다)
 
@@ -1130,14 +1138,14 @@ npm run check                                           # 단계를 끝낼 때 �
 - **수치는 모두 시작값이다**(사거리·준비 시간·명중·사고율·`pref`). 현장 격자 1칸이 실제로 몇 m 인지 정해져 있지 않아 거리는 서로의 비율로만 잡았다(지금의 줄 3.6칸을 기준으로).
 - **하류 차단(`catch`)은 평소에 드물 것이다.** 일반 수난 현장의 사람은 다리에서 4칸 이상 위에서 시작하고 drift 가 0.01~0.05 라 다리까지 60초 넘게 걸린다(40초 기준을 넘는다). 굽은 물가에 걸리는 경우·선박 화재·해일과 "줄도 헤엄도 없는 대원"에게서 주로 나온다. 테스트는 장면을 직접 만들어 확인한다. 더 자주 보이게 하려면 40초 기준을 늘린다.
 - **건너편 물가로 돌아가는 일**: `reachOf` 는 대원과 같은 뭍 성분(`landComp` — 다리로 이어진 건너편 둔치도 같은 성분)의 가장 가까운 칸을 고른다. 건너편이 더 가까우면 다리를 건너 돌아가서 장대·손을 쓴다(실제로 그럴 수 있는 일이라 두지만, 이동 시간이 길어지면 점수에 이동 거리를 넣는다).
-- **호이스트가 지상 방법을 앞지를 수 있다.** R1 에서 물 현장의 소방 헬기는 상공에 머물고 지휘관이 `hoist` 를 함께 낸다. 헬기가 자주 오면 지상의 다양성이 줄어든다(다양성 목표를 기록 전용 포함으로 잡은 까닭). 넘치면 상공 헬기가 있을 때의 지상 배율(swim ×0.7)을 1 로 되돌리거나 R1 의 `airFit` 을 본다.
+- **호이스트가 지상 방법을 앞지를 수 있다.** R1 에서 물 현장의 소방 헬기는 상공에 머물고 지휘관이 `hoist` 를 함께 낸다. 헬기가 자주 오면 지상의 다양성이 줄어든다(다양성 목표를 기록 전용 포함으로 잡은 까닭). 넘치면 상공 헬기가 있을 때의 지상 배율(swim ×0.7)을 1 로 되돌리거나 R1 의 `airFit` 을 본다. R3 가 합쳐지면 같은 상황에 R3 S15(헤엄 ×0.5)가 곱해져 ×0.35 가 된다 — R3 가 합쳐질 때 이 ×0.7 을 지우고 S15 하나로 잰다(R3 §3.7, 정본 R3 S15).
 - **경찰·구급의 소화기 초기 진압**은 화재 사건의 흐름을 바꿀 수 있다(먼저 도착하는 순찰차가 작은 불을 잡는다). B1(화재 균형) 뒤에 재고, 넘치면 `pref` 를 낮추거나 실외 구역으로만 좁힌다.
 - **급박 구출**은 화재 현장의 고립자(연기 0.3 넘는 칸)에서 자주 고를 수 있다 — 빨라지는 대신 환자 피해 10. 화재 결과가 움직이면 감각 조건을 올린다(6절).
 - **저격과 인질극**: "협상 60초 뒤에도 대치 중"이면 저격을 고를 수 있어, 투항으로 끝날 사건이 저격으로 끝날 수 있다(6절의 투항 비율로 본다).
 - **배연의 효과 크기**(연기 감쇠 0.2/초, 불 +0.006/초)는 `tickFire` 가 5틱마다 도는 것과 겹쳐 생각보다 세거나 약할 수 있다. 재어서 정한다.
 - **끌고 오는 동안의 대상은 `mob === 'trapped'` 로 남는다.** `orders/major.ts` 의 "옮겨지는 상태가 40초 넘으면 동행(`escort`)" 규칙이 걸리면 동행 실행기가 `trapped` 를 보고 `gone` 실패를 되풀이할 수 있다. 끌고 오는 시간이 대개 10~25초라 드물다. 보이면 그 규칙의 조건에 "믿음 `water` 가 아님"을 더한다.
 - **물 위의 안전장치**(쓰러진 대원·오래 갇힌 대원을 물가로 옮김)는 물리적으로 너그러운 처리다. 기록(`truth: true`)으로 드러나게 했다.
-- **동시 작업과의 충돌**: `wf/b3`(executor·commander·agents·types·sceneManager)·`wf/p1`(hazards·grid·beliefs)·R1(crews·resources·executor·agents·brain·commander·rules/air)·H1(agentHealth·injury)·X6(brain·executor·hazards·spray)·G4·G5(renderScene·sprites·executor) 과 같은 파일을 고친다. 합치는 순서는 ROADMAP(R1 → H1 → X6 → R2, G4·G5 는 따로). P1(헤드리스 속도)은 기록 해시 전후 비교로 검증하므로 R2 보다 먼저 합쳐야 한다(R2 는 로그 문구를 바꾼다).
+- **동시 작업과의 충돌**: `wf/b3`(executor·commander·agents·types·sceneManager)·`wf/p1`(hazards·grid·beliefs)·R1(crews·resources·executor·agents·brain·commander·rules/air)·H1(agentHealth·injury)·X6(brain·executor·hazards·spray)·G4·G5(renderScene·sprites·executor) 과 같은 파일을 고친다. 합치는 순서는 `docs/specs/README.md` "구현 순서"(R1 → H1 → X6 → R2 → R3, G4 는 따로 — G5 는 합쳐졌다). P1(헤드리스 속도)은 기록 해시 전후 비교로 검증하므로 R2 보다 먼저 합쳐야 한다(R2 는 로그 문구를 바꾼다).
 - **import 순환**: `methods.ts` → `gear.ts` → R1 `crews.ts`. R1 은 `crews.ts` 가 타입·`util`·`events` 만 import 한다고 정했으므로 `agents → methods → gear → crews` 에 순환이 없다. `gear.ts` 도 `agents.ts`·`executor.ts` 를 import 하지 않는다(대체의 `seatsLeft` 가 자기 표를 쓰는 까닭). `rules/methods.ts` 는 `methodRun.ts` 를 import 한다(같은 자격).
 - **성능**: `fitFor` 가 수난 현장에서 `methodFit` 을 생각 주기마다 부른다. `reachOf` 는 믿음 위치 둘레 반경 4칸만 훑고(못 찾을 때만 넓힌다), `landComp` 는 `s.staticVersion` 이 바뀔 때만 다시 칠한다(`WeakMap<Scene, …>`). 느려지면 대원별로 0.5초 동안 결과를 담아 둔다. R1 로 대원 수가 1.9배쯤 늘어나는 것과 겹친다.
 - **구조정은 바닷가에만 출동한다**(`dispatcher.pickUnit`). 일반 하천에서 보트 방법은 구조 공작차의 고무보트로만 나온다.
@@ -1151,6 +1159,6 @@ npm run check                                           # 단계를 끝낼 때 �
 - "물 위에 40초 넘게 있으면 옮긴다"는 쓰지 않았다 — 보트 구조(진수 지점에서 물에 뜬 뒤 접근·끌어올리기·귀환)와 헤엄 구조가 정상으로도 40초를 넘길 수 있다. 대신 `ashore` 가 30초를 넘거나 경로가 없을 때, 그리고 물 위 150초를 마지막 문턱으로 두었다.
 - `shore` 의 효과를 "그 균열의 `mitigate` 작업 시간을 줄인다"로 하지 않고 **그 균열을 직접 보강(`mitigated`)** 하게 했다 — 같은 균열에 "반쯤 보강"이라는 두 번째 상태가 생기지 않고, X6 의 보강 규칙(`c.shored`)이 그대로 받는다.
 - 실종 수색의 "탐조등 수색"은 넣지 않았다 — R1 에서 탐조등은 경찰 헬기 관측관(내리지 않는 자리)만 든다. 확성기 호출·열화상 수색 둘을 넣었다.
-- `aerial` 에 사다리 추락 위험을 넣지 않았다 — 대원이 사다리에 오르지 않는 방법으로 정의했다(H1 의 "R2 의 사다리·창문 추락" 줄은 비워 두면 된다고 10절에 적었다).
+- `aerial` 에 사다리 추락 위험을 넣지 않았다 — 대원이 사다리에 오르지 않는 방법으로 정의했다(H1 의 "R2 의 사다리·창문 추락" 줄은 비워 두면 된다고 10절에 적었다 — 정합성 점검에서 H1 쪽을 고쳤다, 반영됨).
 - `reachOf` 가 건너편 둔치를 고르는 문제는 같은 뭍 성분 조건만 더하고 이동 거리 감점은 넣지 않았다 — 다리로 돌아가 구하는 것도 실제로 있는 일이고, 점수에 이동 거리를 넣으면 고르는 규칙이 경로 계산에 묶인다. 알려진 위험으로 적었다(12절).
-- H1 문서의 연관 표 R2 줄("H1 이 있으면 하한 18 을 두지 않고")은 이 문서의 결정·H1 의 결정 표와 어긋나지만, 이번 검토는 이 파일만 고친다 — 10절에 합칠 때 고칠 줄로 적었다.
+- H1 문서의 연관 표 R2 줄("H1 이 있으면 하한 18 을 두지 않고")과 H1 의 결정 표 "대원의 익수" 줄이 이 문서의 결정과 어긋났다 — 정합성 점검에서 H1 의 두 줄을 이 문서(§3.5)에 맞춰 고쳤다(반영됨).

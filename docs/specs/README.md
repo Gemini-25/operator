@@ -3,17 +3,69 @@
 이 폴더의 문서는 **여러 작업자가 동시에** 일해도 서로 꼬이지 않도록 쓴 구현 지시서다. 한 문서 = 한 묶음 = 한 작업자(한 브랜치).
 전체 방향은 `docs/DESIGN.md`, 저장소의 규칙과 함정은 `CLAUDE.md`. 여기 적힌 것과 `DESIGN.md` 가 다르면 **이 폴더가 최신**이다.
 
-| 문서 | 묶음 | 브랜치 | 한 줄 요약 |
-|---|---|---|---|
-| `M1-map.md` | 지도 | (주 작업 폴더) | 블록 안의 이면 도로, 겹침 보장 |
-| `N4b-crime.md` | 강력 범죄 | `wf/crime` | 폭발물(+해체), 대형 인질극, 도주 차량·은신처, 폭동, 연쇄 방화 |
-| `N5-major.md` | 대형 사고 | `wf/major` | 비행기 추락, 열차 탈선, 다중 추돌, 가스 폭발, 크레인 붕괴, 선박 화재 |
-| `N6-disaster.md` | 재난 | `wf/disaster` | 태풍, 홍수, 지진, 산불, 해일 (+ 산사태) |
-| `N7-destruction.md` | 현장 파손 | `wf/destruction` | 총격·폭발에 창문과 가구가 부서진다 |
-| `T1-traffic.md` | 교통 | `wf/traffic` | 정체가 뒤로 밀림, 가 보아야 아는 장애물(낙하물·불법 주차), 건널목과 열차, 교통 손잡이 |
-| `U1-ui.md` | 화면 | `wf/ui` | 부대·시설 표식을 글자 대신 그림 기호로, 범례, 화면 전체 다듬기 |
+| 문서 | 묶음 | 브랜치 | 한 줄 요약 | 상태 |
+|---|---|---|---|---|
+| `M1-map.md` | 지도 | (주 작업 폴더) | 블록 안의 이면 도로, 겹침 보장 | 구현됨 |
+| `N4b-crime.md` | 강력 범죄 | `wf/crime` | 폭발물(+해체), 대형 인질극, 도주 차량·은신처, 폭동, 연쇄 방화 | 구현됨 |
+| `N5-major.md` | 대형 사고 | `wf/major` | 비행기 추락, 열차 탈선, 다중 추돌, 가스 폭발, 크레인 붕괴, 선박 화재 | 구현됨 |
+| `N6-disaster.md` | 재난 | `wf/disaster` | 태풍, 홍수, 지진, 산불, 해일 (+ 산사태) | 구현됨 |
+| `N7-destruction.md` | 현장 파손 | `wf/destruction` | 총격·폭발에 창문과 가구가 부서진다 | 구현됨 |
+| `T1-traffic.md` | 교통 | `wf/traffic` | 정체가 뒤로 밀림, 가 보아야 아는 장애물(낙하물·불법 주차), 건널목과 열차, 교통 손잡이 | 구현됨 |
+| `U1-ui.md` | 화면 | `wf/ui` | 부대·시설 표식을 글자 대신 그림 기호로, 범례, 화면 전체 다듬기 | 구현됨 |
+| `U2-call-panel.md` | 통화창 | `wf/u2` | 통화창을 가운데 화면 밖, 오른쪽 칸 맨 위의 접히는 칸으로(`P`) | **구현됨** (`f4e44be` — 문서 앞머리 "구현 상태") |
+| `G5-combat-fx.md` | 교전 연출 | `wf/g5` | 총구 섬광·예광선·탄착, 섬광탄, 폭발, 진입, 대치, 검거, 교전 소리, 결정적 순간의 자동 감속 — 결과 불변 | **구현됨** (`9ab7fdb` — 문서 끝 "구현 메모") |
+| `I1-causality.md` | 인과관계·시스템 통합 | `wf/i1a` · `wf/causality` | I1-a 측정 도구(지표 여덟 가지·일치 검사·관문), I1-b 인과 규칙·세계 상태 결합(신호·규칙 11개·조건부 연쇄) | **I1-a 구현됨** (`48dba83`) · I1-b 다음 구현 세션 |
+| `G4-scene-legibility.md` | 현장 가독성 | `wf/legibility` | 무너진 건물·가스가 찬 범위·되살아난 불·폭발 자리·붙잡힌 인질이 한눈에 — 결과 불변 | 다음 차례 (G5 뒤 — 이 세션에서 시간이 되면, 아니면 다음 구현 세션) |
+| `R1-crews.md` | 부대 편성·개인 장비·헬기 | `wf/crews` | 부대마다 2~5명의 역할, 사람마다 장비(공기·탄·고장), 경찰·소방·의료 헬기 | 다음 구현 세션 (1) |
+| `H1-injuries.md` | 부상과 사망 | `wf/injuries` | 대원·용의자·구조 대상이 한 모델로 다치고 숨진다 — 원인·방호·문턱·후송·결원·보고서 | 다음 구현 세션 (2) |
+| `X6-catastrophe.md` | 위험의 현실화 | `wf/catastrophe` | 조짐 → 막는 조치·철수·외부 방어 → 실제 붕괴·폭발·전소 → 사상자·지도·보고서 | 다음 구현 세션 (3) |
+| `R2-methods.md` | 대응 방식 다양화 | `wf/methods` | 같은 임무를 장비·능력·상황에 따라 여러 방법으로(헤엄 구조·보트·소화기·비살상탄·저격 …) | 다음 구현 세션 (4) |
+| `R3-doctrine.md` | 분야별 대응 교본 | `wf/doctrine` | 경찰·소방·의료·특수의 상황 × 장비 × 상태 교본 줄, 짝 규칙, 탄약·엄폐 | 다음 구현 세션 (5) |
+| `I2-persistence.md` | 교대 간 지속 | `wf/persist` | 대원 상태·장비·건물·도로를 "이어받은 상태"로 다음 교대의 입력에 | 다음 구현 세션 (7 — I1-b 가 6) |
 
-합치는 순서: M1 → N7 → N4b → N5 → N6 → T1 → U1. **일곱 묶음 모두 구현돼 합쳐졌다(2026-11-14).** 아래의 규칙은 다음에 묶음을 더할 때 그대로 쓴다. 각 설계서 끝의 구현 메모가 실제 코드와 맞는 최신 내용이다.
+합치는 순서: M1 → N7 → N4b → N5 → N6 → T1 → U1 — **일곱 묶음 모두 구현돼 합쳐졌다(2026-11-14).** 그 뒤 같은 날 U2·I1-a·G5 를 구현해 합쳤다(설계서 없이 진행한 B1·B3·P1·Q1·Z1 도 합쳐졌다). 남은 설계서의 순서는 아래 "구현 순서" 절이다. 아래의 규칙은 다음에 묶음을 더할 때 그대로 쓴다. 각 설계서 끝의 구현 메모(또는 앞머리의 "구현 상태")가 실제 코드와 맞는 최신 내용이다.
+
+## 구현 순서 (남은 설계서)
+
+**시뮬레이션 쪽은 한 줄로 차례대로**: **R1 → H1 → X6 → R2 → R3 → I1-b → I2**(`docs/ROADMAP.md` "진행 중"과 같다). 모두 결과를 바꾸고 같은 파일을 고치므로 한 세션이 처음부터 이어서 한다. 단계마다 그 설계서의 0단계(기준 재기)를 **앞 단계를 합친 뒤에** 다시 잰다. 각 설계서는 앞 단계가 합쳐져 있다고 보고 썼고, 순서가 바뀌었을 때 쓸 대체를 따로 적었다.
+
+| 단계 | 묶음 | 앞 단계에 기대는 것 | 앞 단계 없이 먼저 하면 (대체) |
+|---|---|---|---|
+| 1 | R1 | 지금 HEAD(B1·B3·P1·Q1·Z1·U2·I1-a·G5 를 합친 상태). B1 뒤에 기준을 잰다 | — (첫 단계) |
+| 2 | H1 | R1 의 `armorOf`·`blastFactor`·`kitWorks`·`kitUses`·`medLevelOf`·`seatsOf`·`minField`·`makeAgent`·`startTransport` 의 병원 이름, G5 가 지운 피·'hit' | H1 §12.2-5 (방호는 §2.4 의 "지금"·"새로" 열, 결원은 1, 자리는 구급차 2·헬기 1) |
+| 3 | X6 | H1 의 `hurt*`(`{ ev }`)·문턱·`agentHealth` 전이·`mateFact`·`MateBelief`, R1 의 `hasKit`·`kitWorks`·`kitLive`·`toolUse`·`makeAgent`·`briefFacts`. G4 가 먼저 합쳐졌으면 그 그림·시험 둘을 함께 고친다 | X6 §12.1 의 "R1·H1 이 먼저 합쳐지지 않았으면" 줄, §3.4 의 "R1 이 없을 때" 열, §7.2 의 "G4 가 아직이면" |
+| 4 | R2 | R1 의 `KitId`·`KITS`·명부 고장 추첨·`hoist`, H1 의 `hurt*`·`protection('drown')`, X6 의 `exteriorSpot`·`spray(eff, wmul)`·`ops` 사실·`s.fan` 자리 | R2 §3.3 끝의 `gear.ts` 대체, §10 "R1 이 아직 없을 때" |
+| 5 | R3 | R2 의 `chooseMethod(…, dc)`·`METHOD`·`WORK_MODE`·`gear.ts`, R1 의 `ROLES`·`KITS`·`capableOf`, H1 의 `bandOf`·`hurtF`·`treatMate`, X6 의 `DANGER_RULES`·`evacuate` | 대체를 두지 않는다 — 함수 이름이 다르면 실제 코드를 따른다(R3 §11.2-7). 순서를 지킨다 |
+| 6 | I1-b | X6 의 `catastrophe` 신호·`placeMarks`·`I.blockEv`, R1 단계 3 의 출발 문구(C5 관문), H1 의 넓힌 문구 규칙(T4·T6)·`u.oosEv` | I1 §3.10(X6 와 함께 넣을 부분 — 빈 `world/consequence.ts`), §3.11 1단계(R1 이 출발 문구를 안 고쳤으면 b1 에서) |
+| 7 | I2 | H1 의 `outShifts`·`RosterOut`, R1 의 `minField`·`skillsOf`·`STAFF`, X6 의 `placeMarks`·`placeUsable` 로 옮길 세 검사, I1-b 의 `knownBuildingAt`·`placeState`·`WorldTag`·`rubble` | I2 §3.2 의 "H1 이 아직 합쳐지지 않았으면", §11.1-3("앞 묶음의 이름" — 구현 전에 실제 이름 확인) |
+
+**화면 쪽은 따로**(결과를 바꾸지 않으므로 시뮬레이션 순서와 무관하게 합칠 수 있다):
+
+- **G5** — 구현됨(`9ab7fdb`). 뒤 묶음(G4·X6·R1·R2·H1)은 G5 설계서 끝 "구현 메모"의 이름(`shake(sid, ts, v?)`·`DECISIVE`·`ACTION_W`·`legacy()`·`fxSprites()`·`recShot(…, hostage?)`)을 쓴다.
+- **G4** — G5 다음. G5 의 위 이름과 `tests/combatfx.test.ts` 의 가짜 캔버스에 기댄다(G4 §4.3·§8·§12-4·§16). H1·X6 보다 먼저 합치면 X6 가 G4 의 가스·천장 그림과 시험 둘을 고치고(X6 §7.3), 나중에 합치면 G4 가 X6 의 `placeMarks`·`FallRecord` 값·그리는 자리를 그대로 받는다(G4 §16). 시뮬레이션 묶음이 먼저 합쳐질 때마다 §11 의 장면 시각을 `find.ts` 로 다시 잰다.
+- **U2** — 구현됨(`f4e44be`).
+
+## 설계서 사이의 정본
+
+여러 설계서가 함께 쓰는 이름은 정본 한 곳에서 정하고, 다른 설계서는 그 이름을 쓰거나 정본을 가리킨다. 어긋나 보이면 정본을 따른다(이미 구현된 것은 코드가 정본).
+
+| 공유하는 것 | 정본 |
+|---|---|
+| 편성·역할·개인 장비(`KitId`·`Responder.kit`·`hasKit`·`kitWorks`·`kitLive`·`toolUse`·`fieldCrew`·**`minField`**·`seatsOf`·`skillsOf`·`makeAgent`·`briefFacts`) | R1 §3·§4 |
+| 장비를 감싼 판단 층(`gear.ts` — `kitCount`·`bestTool`, R3 의 `kitHas`·`kitQty`·`gunOf`·`roleIdOf`·`groupOf`·`crewHas`) | R2 §3.3 (R3 §2.4 가 더한다) |
+| 부상 필드·피해 경로(`InjuryCause`·`Injury`·`hurt*`·`protection`·`bandOf`·`MateBelief`·`outShifts`·`RosterOut`·`crewReady`/`crewOk`·`seatsUsed`·결원 규칙) | H1 §2·§3 |
+| 물 위 대원의 피해 하한 18 | R2 §3.5 |
+| 방법(`MethodId`·`MethodWhy`(평소 = `usual`)·`MethodUse`·`METHOD`·`chooseMethod(…, dc)`·`methodFit`·`WORK_MODE`) | R2 §3 (R3 §3.7 이 행과 까닭 사상 표를 더한다) |
+| 교본(`DocCtx`·`docCtx`·`DocWhy`·`crew` 사실·`docMethodMul`·`PAIRS`·탄약 `fireRound`) | R3 §2 |
+| 위험 상태(`CatState`·`OpsState`·`SignBelief`·`PlaceMark`·`Sim.placeMarks`·`DANGER_RULES`·`trapped`·경계 1칸 갇힘의 `cat:` 흐름) | X6 §2·§4 |
+| 세계 상태·신호(`WorldState`·`SignalKind`·`signal()`·`placeState`·**`knownBuildingAt`**·`I.blockEv`·`blast` 신호의 범위) | I1 §3.3·§3.4 |
+| 쓸 수 있는 건물(`placeUsable`)·이어받은 상태(`Carryover`·`carryState`·`s.wear`) | I2 §3.6·§2 |
+| 문제 코드 | 코드마다 그것을 더하는 설계서: `RESPONDER_KILLED`·`SUSPECT_DIED` H1 §3.8, `METHOD_FAIL` R2 §3.8, `DANGER_SIGN`·`WITHDRAWAL`·`STRUCT_COLLAPSE`·`EXPLOSION`·`BURNOUT` X6 §5.10, `HOSPITAL_FULL`·`INFRA_FAIL` I1 §3.3. `order` 의 자리(9줄 컷)는 X6 §5.10 |
+| 기록 문구 규칙(`PHRASE` T1~T8) | I1 §2.3 = `scripts/metrics.ts`(코드). 문구를 바꾸는 묶음이 함께 넓힌다(H1 §3.4·§3.6) |
+| 흔들림 | G5 구현(`FxBook.shake(sid, ts, v?)`) + G4 `sceneShake(sim, s, mini, extra, reduced)`(G4 §4.3) |
+| 효과 종류·결정적 순간(`Fx.kind`, `DECISIVE`, `ACTION_W`, `legacy()`) | G5 구현 메모. 새 종류는 더하는 설계서가: `'collapse'` G4 §3.1, `'horn'` X6 §2.2 |
+| 그리는 순서(현장 층)·무너짐 그림 기록(`markRuin`·`recordFall`·`FallRecord`·`RUIN_*`) | G4 §4.6·§3 |
+| 구현 순서 | 이 문서 "구현 순서" (= `docs/ROADMAP.md`) |
 
 ## 1. 끼워 넣는 자리 (확장 지점)
 
@@ -97,4 +149,6 @@ npm run check                                             # 끝낼 때 한 번 (
 2. `npm run check` 통과(균형 범위를 벗어나면 자기 시나리오의 `share`·수치를 조정한다. 범위 자체는 건드리지 않는다).
 3. 새 시나리오마다 `--force` 20교대의 결과 표와 한계 시간 건수.
 4. 화면 확인(현장 그림이 있는 묶음): 스크린샷으로 직접 보고, 콘솔 오류 0건.
-5. 보고(마지막 응답): 브랜치 이름과 마지막 커밋, 구현한 것 / 못 한 것, 시나리오별 결과 표, 고친 공용 파일(파일·함수·이유), 알려진 문제.
+5. 측정 도구: `npm run sweep -- 40 --metrics` 로 지표 줄(연쇄 깊이·시스템 간 영향·재계획·대체 방법·행동 다양성·자원 경쟁·멈춘 시간·결과 다양성·기록 일치)을 전후로 견주고, `npm run check` 의 지표 관문(교착 후보 0·잊힌 사건 0·일치 검사)을 통과한다. 기록 문구를 바꿨으면 `scripts/metrics.ts` 의 문구 규칙과 `tests/causality.test.ts` 를 함께 고친다.
+6. 화면 검사(화면을 고친 묶음): `npm run ui-check`(Playwright, 2분쯤, 8개 항목) 통과.
+7. 보고(마지막 응답): 브랜치 이름과 마지막 커밋, 구현한 것 / 못 한 것, 시나리오별 결과 표, 고친 공용 파일(파일·함수·이유), 알려진 문제.

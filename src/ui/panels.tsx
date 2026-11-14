@@ -56,7 +56,7 @@ function IncidentCard({ sim, I, director, truth }: { sim: Sim; I: Incident; dire
   const focused = director.focus === I.id;
   const openProblems = I.problems.filter((p) => !p.recovered).length;
   return (
-    <div className={`card incident ${focused ? 'focused' : ''} ${I.phase === 'closed' ? 'closed' : ''}`} onClick={() => director.pin(I.id, I.phase === 'onscene' || I.phase === 'closed' ? 'scene' : 'city')} title="클릭하면 이 사건을 관찰합니다">
+    <div className={`card incident ${focused ? 'focused' : ''} ${I.phase === 'closed' ? 'closed' : ''}`} style={{ ['--tc' as string]: TYPE_COLOR[type] }} onClick={() => director.pin(I.id, I.phase === 'onscene' || I.phase === 'closed' ? 'scene' : 'city')} title="클릭하면 이 사건을 관찰합니다">
       <div className="row">
         <span className="code" style={{ background: TYPE_COLOR[type] }}><Icon name={I.phase === 'call' && !as ? 'phone' : type} size={12} color="#0b1219" />{I.code}</span>
         <span className="title">{as ? TYPE_NAME[as.type] : I.phase === 'unreported' ? '미신고 사건' : '유형 확인 중'}{as && as.typeConf < 0.6 && !I.fieldType ? ' ?' : ''}</span>
@@ -103,7 +103,7 @@ export function UnitList({ sim, selectedRid, onSelectRid }: { sim: Sim; selected
 function UnitRow({ sim, u, selectedRid, onSelectRid }: { sim: Sim; u: Unit; selectedRid: number; onSelectRid: (rid: number) => void }) {
   const inc = u.incidentId !== null ? sim.incidents[u.incidentId] : null;
   return (
-    <div className={`unit st-${u.state}`} title={`${UNIT_KIND_NAME[u.kind]} · ${u.homeName}`}>
+    <div className={`unit st-${u.state}`} style={{ ['--dc' as string]: DEPT_COLOR[u.dept] }} title={`${UNIT_KIND_NAME[u.kind]} · ${u.homeName}`}>
       <div className="row">
         <span className="callsign" style={{ color: DEPT_COLOR[u.dept] }}>{u.callsign}</span>
         <span className="state">{UNIT_STATE[u.state]}{inc ? ` ${inc.code}` : ''}</span>
@@ -329,9 +329,13 @@ export function TopBar({ runner, onNew, onDifficulty }: { runner: Runner; onNew:
   const lvl = Math.round(overallLevel(sim.difficulty));
   return (
     <div className="top">
+      <svg className="logo" width="30" height="30" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M16 2.5 27.5 7v9.2c0 6.6-4.6 11.2-11.5 13.3C9.1 27.4 4.500 22.800 4.500 16.200V7Z" fill="#0f2a2b" stroke="#4fd1c5" strokeWidth="1.6" strokeLinejoin="round" />
+        <path d="M8.500 17h4l2-5 3.200 9 2-4h3.800" fill="none" stroke="#c9fff8" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
       <div className="brand"><b>AUTONOMOUS RESPONSE</b><span>자율형 긴급구조 조직 시뮬레이션 · 관찰 전용</span></div>
       <div className="clock">{fmtClock(sim.clock)}</div>
-      <div className="meta"><span>날씨 {WEATHER_NAME[sim.weather]}</span><span>시드 <code>{sim.seed}</code></span><span className="dim">{Math.round(runner.fps)} FPS · 틱 {sim.tick}</span></div>
+      <div className="meta"><span className={`wx wx-${sim.weather}`}>{WEATHER_NAME[sim.weather]}</span><span>시드 <code>{sim.seed}</code></span><span className="dim">{Math.round(runner.fps)} FPS · 틱 {sim.tick}</span></div>
       <button className={`diff-chip lv${lvl}`} onClick={onDifficulty} title="난이도 설정 — 다음 교대의 조건을 정합니다">난이도 <b>{difficultyLabel(sim.difficulty)}</b> <span className="pips">{[1, 2, 3, 4, 5].map((k) => <i key={k} className={k <= lvl ? 'on' : ''} />)}</span></button>
       <div className="seed">
         <input value={seed} onChange={(e) => setSeed(e.target.value)} placeholder="시드 입력" maxLength={16} onKeyDown={(e) => { if (e.key === 'Enter') { onNew(seed); setSeed(''); } }} />

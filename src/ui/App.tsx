@@ -123,10 +123,14 @@ export function App() {
         </div>
         <div className="overlay bl legend">
           {inScene ? (<>
-            <span><i className="dot" style={{ background: '#ff7a45' }} />소방</span><span><i className="dot" style={{ background: '#2fd39a' }} />구급</span><span><i className="dot" style={{ background: '#5aa9ff' }} />경찰</span>
+            <span><i className="ring" style={{ borderColor: '#ff7a45' }} />소방</span><span><i className="ring" style={{ borderColor: '#2fd39a' }} />구급</span><span><i className="ring" style={{ borderColor: '#5aa9ff' }} />경찰</span>
+            <span><i className="ring gold" />지휘관</span>
+            <span className="sep" />
             <span><i className="sq" style={{ background: '#5ad17a' }} />경상</span><span><i className="sq" style={{ background: '#ffd166' }} />중상</span><span><i className="sq" style={{ background: '#ff5d5d' }} />위중</span>
-            <span><i className="tri" />용의자</span><span className="dim">★ 지휘관 · 점선 = AI 미확인</span>
-          </>) : (<span className="dim">사건 표식을 클릭하면 현장을 확대합니다 · 휠 확대/축소 · 드래그 이동</span>)}
+            <span><i className="ring" style={{ borderColor: '#e0486b', background: 'rgba(224,72,107,0.25)' }} />용의자</span>
+            <span className="sep" />
+            <span className="dim">휠 확대 · 끌어서 이동 · 두 번 눌러 전체 보기{truth ? ' · 흐린 표시 = AI 미확인' : ''}</span>
+          </>) : (<span className="dim">사건 표식을 누르면 현장을 확대합니다 · 휠 확대/축소 · 끌어서 이동</span>)}
         </div>
         <div className="overlay call-wrap"><CallPanel sim={sim} truth={truth} /></div>
         <Ticker sim={sim} truth={truth} />

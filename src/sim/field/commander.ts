@@ -147,6 +147,13 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     if (s.negotStart < 0) s.negotStart = sim.t;
     const waited = sim.t - s.negotStart;
     if (!gun) {
+      if (h.value.state === 'fight' && police.length >= 2) {
+        // 흉기를 휘두르는 상대와는 말이 통하지 않는다 — 협상을 접고 둘이 붙어 제압한다
+        // (협상을 붙들고 있으면 봉쇄·협상에 손이 다 묶여 검거할 사람이 남지 않는다)
+        cancel(s, (w) => w.kind === 'negotiate' && w.hostile === h.id);
+        want(sim, s, 'arrest', { hostile: h.id }, 0.86, 2);
+        continue;
+      }
       want(sim, s, 'negotiate', { hostile: h.id }, 0.8);
       if (police.length >= 2 || waited > 25) want(sim, s, 'arrest', { hostile: h.id }, 0.72);
       continue;
@@ -267,6 +274,25 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     if (c >= (s.regions[w.region].kind === 'wreck' ? 0.6 : th)) w.status = 'cancelled';
   }
 
+  // ── 잔불 정리 ──
+  // 알려진 불이 모두 꺼지고 수색이 끝나면, 불이 났던 구역과 그 가까운 실내 구역을 한 번 더 돌며 남은 불씨를 끈다.
+  // 진압을 확인할 때 구역의 일부만 보기 때문에, 보지 못한 구석의 불씨가 되살아날 수 있다.
+  if (fires.length && fireRegions === 0 && pendingSearch === 0 && s.sizeupDone && !hotArmed) {
+    for (const r of s.regions) {
+      let lastFire = -1;      // 이 구역이나 가까운 구역의 화재 보고 가운데 가장 늦은 것
+      for (const f of fires) {
+        const q = s.regions[f.id];
+        if (f.id === r.id || (r.indoor && q.indoor && Math.abs(q.cx - r.cx) + Math.abs(q.cy - r.cy) <= 7)) lastFire = Math.max(lastFire, f.t);
+      }
+      if (lastFire < 0) continue;
+      const done = B.get('ovh', r.id);
+      const skip = (done && done.t >= lastFire)
+        || s.board.some((w) => w.kind === 'overhaul' && w.region === r.id && (w.fails >= 2 || (w.status === 'done' && sim.t - w.doneAt < 12)));      // 닿지 못하는 구역은 두 번 시도하고 넘어간다 / 막 끝낸 보고를 기다린다
+      if (skip) { cancel(s, (w) => w.kind === 'overhaul' && w.region === r.id); continue; }
+      want(sim, s, 'overhaul', { region: r.id }, 0.5);
+    }
+  } else cancel(s, (w) => w.kind === 'overhaul' && w.status === 'open');
+
   // ── 구조 대상 ──
   const hasMedicAny = s.agents.some((b) => b.status === 'active' && sim.responders[b.rid].dept === 'ems');
   // 환자를 싣고 병원으로 갈 수 있는 부대: 구급차(2명)와 구조 헬기(1명)
@@ -329,7 +355,10 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
 
   // ── 지원 요청 ──
   const fireUnits = countUnits(sim, s, I, 'suppression', 0.7);
+  // 현장의 진압 부대가 모두 물이 떨어졌거나 펌프가 멈췄고 오는 부대도 없다 (길 위의 현장에는 소화전이 없다)
+  const dry = fireUnits > 0 && !I.assigned.some((uid) => { const u = sim.units[uid]; return u.caps.suppression >= 0.7 && (u.state === 'enroute' || u.state === 'turnout' || (!u.pumpFailed && (u.water > 0 || u.hydrant))); });
   if (fireRegions > 0 && fireUnits === 0) request(sim, s, I, a, 'suppression', '화재가 확인됐으나 진압 부대가 없음', true);
+  else if (fireRegions > 0 && dry) request(sim, s, I, a, 'suppression', '진압 부대의 용수가 떨어짐', true);
   else if ((fireSum >= 2.0 || fireRegions >= 3) && fireUnits < 2) request(sim, s, I, a, 'suppression', `화재가 ${fireRegions}개 구역으로 확대`, true);
   if (cas.some((f) => f.value.mob === 'trapped' && f.value.band < 3 && f.value.where === 'scene') && countUnits(sim, s, I, 'rescue', 0.5) === 0) request(sim, s, I, a, 'rescue', '고립된 구조 대상이 있으나 구조 장비가 없음', true);
   // 가스가 찼거나 무너질 수 있는 건물: 소방 부대가 없으면 아무도 들어갈 수 없다

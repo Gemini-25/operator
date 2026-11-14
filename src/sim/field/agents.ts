@@ -147,7 +147,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
       if (e.m > 0.05) {
         const lv = Math.round(e.m * 5) / 5;
         if (Math.abs(lv - cur) >= 0.2 || cur === 0) learn(sim, a, mkFact('fire', rg, Math.max(0.1, lv), me, sim.t, 1, true, `${reg.name} 화재 (강도 ${pct(Math.max(0.1, lv))})`));
-      } else if (cur > 0 && e.n >= reg.tiles.length * 0.6) {
+      } else if (cur > 0 && e.n >= reg.tiles.length * 0.85) {      // 방의 대부분을 봐야 진압을 확인한다 (일부만 보고 확인하면 보지 못한 구석의 불씨가 되살아난다)
         learn(sim, a, mkFact('fire', rg, 0, me, sim.t, 1, true, `${reg.name} 화재 진압 확인`));
       }
     }
@@ -231,7 +231,7 @@ export function flushOutbox(sim: Sim, s: Scene, a: FieldAgent): void {
   const I = sim.incidents[s.incidentId];
   const r = resp(sim, a);
   const important = a.outbox.some((f) => IMPORTANT[f.type]);
-  const prompt = important || a.outbox.some((f) => f.type === 'srch');      // 수색 결과는 바로 알린다
+  const prompt = important || a.outbox.some((f) => f.type === 'srch' || f.type === 'ovh');      // 수색·잔불 정리 결과는 바로 알린다
   if (!prompt && sim.t - a.outboxSince < 5) return;
   if (s.shadow[tileOf(s, a.x, a.y)]) {
     if (a.shadowSince < 0) a.shadowSince = sim.t;
@@ -315,7 +315,7 @@ export function workLabel(s: Scene, w: WorkItem): string {
     extricate: `${cas} 구출`, treat: `${cas} 응급 처치`, carry: `${cas} 이송`, load: `${cas} 구급차 탑승`, traffic: '교통 통제',
     mitigate: w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? '균열부 보강' : w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'valve' ? '가스 밸브 차단' : '연료 누출 조치',
     perimeter: s.kind === 'hazmat' ? `${w.tile === 0 ? '앞쪽' : '뒤쪽'} 출입구 통제` : `${exitName(s, w.tile)} 봉쇄`, negotiate: '협상', engage: '용의자 대응', arrest: '용의자 검거', interview: '목격자 면담', clearRoad: '도로 정리', rescueMate: '동료 구조', waterRescue: `${cas} 수난 구조`, escort: `${cas} 동행`,
-    defuse: '폭발물 해체',
+    defuse: '폭발물 해체', overhaul: `${reg} 잔불 정리`,
   };
   return names[w.kind];
 }
@@ -364,6 +364,7 @@ export function fitFor(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number {
     case 'rescueMate': return 0.5 + r.fitness * 0.3 + r.teamwork * 0.2;
     case 'waterRescue': return 0.22 + r.skills.rescue * 0.5 + u.tool * 0.28;
     case 'defuse': return u.caps.eod >= 0.9 ? 0.6 + 0.4 * r.skill : 0;      // 폭발물 처리반만 손댄다
+    case 'overhaul': return r.dept === 'fire' ? 0.4 + 0.6 * r.skills.fire : 0;      // 불탄 건물 안은 소방만
   }
 }
 

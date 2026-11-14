@@ -127,7 +127,8 @@ export interface Unit {
 }
 
 // ───────────────────────── 정보(Belief) ─────────────────────────
-export type FactType = 'cas' | 'fire' | 'srch' | 'blk' | 'hos' | 'haz' | 'occ' | 'ctl' | 'clue' | 'seen' | 'type' | 'secure' | 'mate' | 'evid';
+export type FactType = 'cas' | 'fire' | 'srch' | 'blk' | 'hos' | 'haz' | 'occ' | 'ctl' | 'clue' | 'seen' | 'type' | 'secure' | 'mate' | 'evid'
+  | 'ovh';         // 구역별 잔불 정리를 마친 시각 (값 1)
 export interface Fact {
   key: string; type: FactType; id: number;
   value: any;
@@ -220,7 +221,8 @@ export interface Fx { kind: 'shot' | 'spray' | 'radio' | 'text' | 'boom' | 'hit'
 export type WorkKind =
   | 'sizeup' | 'search' | 'suppress' | 'hookup' | 'clear' | 'force' | 'extricate' | 'treat' | 'carry' | 'load'
   | 'traffic' | 'mitigate' | 'perimeter' | 'negotiate' | 'engage' | 'arrest' | 'interview' | 'clearRoad' | 'rescueMate' | 'escort' | 'waterRescue'
-  | 'defuse';       // 폭발물 해체 (폭발물 처리반만)
+  | 'defuse'        // 폭발물 해체 (폭발물 처리반만)
+  | 'overhaul';     // 잔불 정리: 불이 꺼졌다고 본 방을 다시 돌며 남은 불씨를 찾아 적신다 (소방만)
 export type TaskKind = WorkKind | 'retreat' | 'rehab' | 'resupply' | 'board' | 'standby' | 'moveSignal';
 
 export interface WorkItem {

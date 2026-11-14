@@ -611,6 +611,49 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       }
       return;
     }
+    case 'overhaul': {
+      // 잔불 정리: 불이 꺼졌다고 본 방에 들어가 벽·바닥 속에 남은 불씨를 찾아 적신다. 꺼진 줄 알았던 불이 되살아나는 것을 막는다
+      // 되살아난 불을 찾으면 보고하고 그 자리에서 직접 끈다(진압조가 방의 일부만 보고 "진압 확인"을 내면 같은 일이 되풀이된다)
+      const reg = s.regions[t.region];
+      if (t.tile >= 0 && s.fire[t.tile] > 0.05) {
+        const tx = t.tile % s.w, ty = (t.tile / s.w) | 0;
+        const m = moveTo(sim, s, a, tx, ty, 3.2, true);
+        if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+        if (m !== 'arrived') return;
+        a.fx = tx - a.x; a.fy = ty - a.y; a.ring = 1 - s.fire[t.tile];
+        if (!spray(sim, s, a, tx, ty)) finishTask(sim, s, a, false, 'equip');
+        return;
+      }
+      if (t.progress < t.need || t.need <= 0) {
+        const m = moveTo(sim, s, a, Math.round(reg.cx), Math.round(reg.cy), 2.2);
+        if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+        if (m !== 'arrived') return;
+        t.need = 4 / (0.6 + 0.4 * r.skills.fire);
+        t.progress += dt * staminaF(r); a.ring = t.progress / t.need; drain(sim, a, 0.3);
+        if (t.progress < t.need) return;
+      }
+      let embers = 0, left = 0, hot = -1;
+      for (const i of reg.tiles) {
+        if (s.fire[i] > 0 && s.fire[i] < 0.35) { s.fire[i] = 0; embers++; }
+        if (s.fire[i] <= 0) { s.heat[i] = 0; s.wet[i] = Math.max(s.wet[i], 0.9); }
+        else if (s.fire[i] > left) { left = s.fire[i]; hot = i; }
+      }
+      if (embers) emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${reg.name}에 남아 있던 불씨 ${embers}곳을 찾아 적셨습니다.` });
+      if (hot >= 0) {
+        if (t.phase === 0) {
+          t.phase = 1;
+          learn(sim, a, mkFact('fire', reg.id, Math.max(0.1, Math.round(left * 5) / 5), r.name, sim.t, 1, true, `${reg.name} 잔불이 되살아남 (강도 ${pct(left)})`), true, true);
+          emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'radio', imp: 2, text: `${reg.name}에서 꺼진 줄 알았던 불이 다시 번지고 있습니다. 직접 진압합니다.` });
+        }
+        t.tile = hot;
+        return;
+      }
+      if (t.phase === 1) learn(sim, a, mkFact('fire', reg.id, 0, r.name, sim.t, 1, true, `${reg.name} 화재 진압 확인`), true, true);
+      learn(sim, a, mkFact('ovh', reg.id, 1, r.name, sim.t, 1, true, `${reg.name} 잔불 정리 완료`), true, true);
+      r.xpGained += 0.001;
+      finishTask(sim, s, a, true);
+      return;
+    }
     case 'defuse': {
       // 폭발물 해체 (처리반만 맡는다). 가짜 장치도 다가가 확인해야 끝난다. 시한은 해체하는 동안에도 흐른다 (rules/crime.ts)
       const p = s.props[t.prop];

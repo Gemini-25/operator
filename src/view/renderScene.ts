@@ -105,7 +105,7 @@ function agentPose(a: FieldAgent, u: Unit, moving: boolean): { arms: ArmPose; it
   const gun: Item = u.kind === 'tactical' ? 'rifle' : 'pistol';
   if (a.carrying >= 0 || a.carrying <= -2) return { arms: 'drag', item: 'none' };
   if (tk === 'engage' || tk === 'perimeter') return { arms: 'aim', item: gun };
-  if (tk === 'suppress') return { arms: 'hose', item: 'none' };
+  if (tk === 'suppress' || (tk === 'overhaul' && !moving)) return { arms: 'hose', item: 'none' };
   if (moving) return { arms: 'side', item: 'none' };
   const busy = a.ring > 0.01;
   switch (tk) {

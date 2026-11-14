@@ -5,7 +5,8 @@
 import type { Sim } from '../../engine';
 import type { Rng } from '../../rng';
 import { DECOR, T } from '../../types';
-import type { Incident, Prop, Scene } from '../../types';
+import type { Incident, Prop, Region, Scene } from '../../types';
+import { buildCollapse } from '../builders';
 import { tidx } from '../grid';
 import { SH, SW, addCas, addProp, addRegion, baseScene, freeTileIn, get, set } from '../kit';
 import { registerScene } from '../sceneRegistry';
@@ -95,6 +96,88 @@ registerScene('traffic', 'train', (sim, I, rng) => {
   s.placeName = '열차 탈선 사고 현장';
   // 건널목이 막혀 지나가는 차가 없다: 차로 통제 임무는 생기지 않는다
   s.controlPts = []; s.controlDone = []; s.laneRows = []; s.trafficFlow = 0; s.nextCarAt = Infinity;
+  return s;
+});
+
+/** 대기 지점에서 걸어서 닿는 칸. 잔해와 잠긴 문은 치우거나 열 수 있다고 보고, 밸브·차량 같은 고정 소품은 막힌 칸으로 본다 */
+function reachable(s: Scene): Uint8Array {
+  const seen = new Uint8Array(s.w * s.h);
+  const pass = (i: number): boolean => {
+    const t = s.tiles[i];
+    if (t !== T.FLOOR && t !== T.DOOR && t !== T.GROUND && t !== T.ROAD && t !== T.STAIR && t !== T.TREE && t !== T.TRAIL) return false;
+    const p = s.propAt[i];
+    return p < 0 || s.props[p].kind === 'door' || s.props[p].kind === 'debris';
+  };
+  const st = [tidx(s, s.staging.x, s.staging.y)];
+  seen[st[0]] = 1;
+  while (st.length) {
+    const c = st.pop()!, x = c % s.w, y = (c / s.w) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= s.w || ny >= s.h) continue;
+      const j = ny * s.w + nx;
+      if (!seen[j] && pass(j)) { seen[j] = 1; st.push(j); }
+    }
+    const sl = s.stairTo[c];
+    if (sl >= 0 && !seen[sl]) { seen[sl] = 1; st.push(sl); }
+  }
+  return seen;
+}
+
+// ───────────────────────── 가스 폭발 ─────────────────────────
+// 붕괴 현장에 덧붙인다: 무너진 자리 옆방의 불, 아직 새고 있는 가스 배관, 건물 앞 길에서 다친 행인.
+// 가스 규칙(s.rules)이 함께 돌아, 배관을 잠그기 전에는 고인 가스가 다시 터질 수 있다.
+registerScene('collapse', 'gasblast', (sim, I, rng) => {
+  const s = buildCollapse(sim, I, rng);
+  const rooms = s.regions.filter((r) => r.kind === 'room' && r.indoor);
+  let zx = 0, zy = 0, zn = 0;
+  for (let i = 0; i < s.damage.length; i++) if (s.damage[i]) { zx += i % SW; zy += (i / SW) | 0; zn++; }
+  zx /= Math.max(1, zn); zy /= Math.max(1, zn);
+  const wrecked = (r: Region): number => (r.tiles.filter((i) => s.damage[i]).length > r.tiles.length * 0.5 ? 1 : 0);
+  const far = (r: Region): number => Math.hypot(r.cx - zx, r.cy - zy);
+  const byZone = (a: Region, b: Region): number => wrecked(a) - wrecked(b) || far(a) - far(b) || a.id - b.id;
+  // 1) 불: 무너진 자리에서 가장 가까운 성한 방의 가구 3~5칸. 사람이 쓰러져 있는 곳 바로 곁에서는 시작하지 않는다
+  const clear = (i: number, d: number): boolean => !s.casualties.some((c) => Math.hypot(c.x - (i % SW), c.y - ((i / SW) | 0)) < d);
+  const kindling = (r: Region, d: number): number[] => rng.shuffle(r.tiles.filter((i) => s.tiles[i] === T.FURN && clear(i, d))).concat(rng.shuffle(r.tiles.filter((i) => s.tiles[i] === T.FLOOR && s.propAt[i] < 0 && clear(i, d))));
+  const ordered = rooms.slice().sort(byZone);
+  let fireRoom = ordered[0], burn: number[] = [];
+  for (const d of [4, 2.6]) {
+    for (const r of ordered) { const c = kindling(r, d); if (c.length >= 3) { fireRoom = r; burn = c; break; } }
+    if (burn.length) break;
+  }
+  for (const i of burn.slice(0, rng.int(3, 5))) {
+    if (s.fuel[i] <= 0) { s.fuel[i] = 0.5; s.totalFuelTiles++; }
+    s.fire[i] = rng.range(0.35, 0.55);
+  }
+  // 2) 새는 배관: 벽에 붙은 가구 자리에 놓는다. 옆에 서서 잠글 수 있도록 바로 옆 칸 하나는 걸어서 닿는 빈 바닥이어야 한다
+  const seen = reachable(s);
+  const standable = (i: number): boolean => [1, -1, SW, -SW].some((d) => s.tiles[i + d] === T.FLOOR && s.propAt[i + d] < 0 && seen[i + d] === 1);
+  const crowd = (r: Region): number => s.casualties.filter((c) => s.region[tidx(s, c.x, c.y)] === r.id).length;
+  const others = rng.shuffle(rooms.filter((r) => r !== fireRoom)).sort((a, b) => crowd(a) - crowd(b));      // 되도록 사람이 없는 방의 배관
+  let at = -1;
+  for (const r of others) {
+    const spots = r.tiles.filter((i) => s.tiles[i] === T.FURN && s.fire[i] <= 0 && (s.tiles[i - SW] === T.WALL || s.tiles[i + SW] === T.WALL) && standable(i));
+    if (spots.length) { at = rng.pick(spots); break; }
+  }
+  if (at < 0) for (const r of others.concat([fireRoom])) {
+    const spots = r.tiles.filter((i) => s.tiles[i] === T.FURN && s.fire[i] <= 0 && standable(i));
+    if (spots.length) { at = rng.pick(spots); break; }
+  }
+  if (at >= 0) {
+    s.tiles[at] = T.FLOOR; s.decor[at] = 0;
+    addProp(s, 'valve', at % SW, (at / SW) | 0, { blocking: true, leakRate: rng.range(0.55, 0.7) });
+    // 폭발에 깨진 창
+    for (let i = 0; i < s.tiles.length; i++) if (s.tiles[i] === T.WINDOW && Math.hypot((i % SW) - (at % SW), ((i / SW) | 0) - ((at / SW) | 0)) <= 6) s.glass[i] = 1;
+  }
+  // 3) 건물 앞 길에서 다친 행인 2~3명 (가스 규칙이 세는 "주변 시민"에 들어간다: 새는 가스에 쓰러지는 사람은 그만큼 덜 생긴다)
+  addRegion(s, '건물 앞 길', 'zone', 0, 14, SW - 1, 16, false, true);
+  const nBy = rng.int(2, 3);
+  for (let k = 0; k < nBy; k++) {
+    const p = freeNear(s, rng.int(6, 15), rng.int(15, 16));      // 도착한 부대가 내리자마자 보이는 자리 (건물 앞, 대기 지점 쪽)
+    const walk = rng.chance(0.4);
+    addCas(s, p.x, p.y, walk ? 'mobile' : 'immobile', walk ? rng.range(74, 94) : rng.range(50, 78), walk ? rng.range(0, 0.03) : rng.range(0.06, 0.14), 0.05, { bystander2: true });
+  }
+  s.rules = ['gas'];
   return s;
 });
 

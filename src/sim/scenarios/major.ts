@@ -27,6 +27,10 @@ export const MAJOR: Scenario[] = [
       for (const lim of [60, 150]) { const near = free.filter((n) => railDist(c.rail!, n.x, n.y) < lim); if (near.length) return rng.pick(near).id; }
       return null;
     } },
+  { type: 'collapse', variant: 'gasblast', name: '가스 폭발', share: 1.6, nature: 'gasblast', vague: 'bang', severity: [3, 3], tag: 'major', delay: [2, 6], limit: 150,
+    places: { restaurant: 4, villa: 3, shop: 2, market: 2, houseL: 1 },
+    texts: ['펑 하는 소리가 나더니 건물 한쪽이 무너졌어요! 불도 났어요!', '가스가 터진 것 같아요. 유리가 다 깨지고 사람들이 깔렸어요!'], lik: [0.2, 0.01, 0.005, 0.01, 0.01, 0.6, 0.15, 0.005],
+    needs: (n) => atLeast(n, { suppression: 2, rescue: 2, ems: 2 }) },
   { type: 'collapse', variant: 'crane', name: '크레인 붕괴', share: 1.2, nature: 'crane', vague: 'bang', severity: [3, 3], tag: 'major', delay: [2, 6], limit: 120,
     places: { construction: 6, containerYard: 1 },
     texts: ['공사장 크레인이 넘어갔어요! 사람이 깔렸어요!', '타워 크레인이 길 쪽으로 쓰러졌어요!'], lik: [0.01, 0.08, 0.005, 0.005, 0.03, 0.85, 0.01, 0.01],

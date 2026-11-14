@@ -552,7 +552,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     }
     case 'load': {
       const c = s.casualties[t.cas];
-      if (c.dead || c.where === 'loaded' || c.where === 'hospital') { finishTask(sim, s, a, true); return; }
+      if (c.dead || c.where === 'loaded' || c.where === 'hospital') { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }      // 이미 실려 갔다: 지휘관의 믿음이 낡았으므로 다시 알린다
       if (c.where !== 'safe' && a.carrying !== c.id) { finishTask(sim, s, a, false, 'gone'); return; }
       if (a.carrying !== c.id) {
         const m = moveTo(sim, s, a, c.x, c.y, 1.3);

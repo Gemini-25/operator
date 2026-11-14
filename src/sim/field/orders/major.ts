@@ -5,8 +5,11 @@ import { registerOrders } from '../sceneRegistry';
 
 // 사람이 많을 때: 기본 규칙은 구급 부대를 두 대까지만 더 부른다. 기다리는 부상자와 갇힌 사람의 수에 맞춰 더 부른다.
 // 믿음만 보므로 대형 사고가 아니어도(버스 사고 등) 사람이 많으면 똑같이 적용된다.
-registerOrders((_sim, _s, _I, a, k) => {
+registerOrders((sim, _s, _I, a, k) => {
   const cas = a.beliefs.list('cas');
+  // "옮기는 중"이라고만 알고 있는 사람의 소식이 한참 끊겼다: 무전 음영에서 도착·탑승 보고를 놓쳤을 수 있다. 가서 확인하게 한다
+  // (확인하러 간 대원이 지금 상태를 다시 보고한다. 이 믿음이 낡은 채로 남으면 지휘관은 상황을 끝내지 못한다)
+  for (const f of cas) if (f.value.where === 'carried' && f.value.band < 3 && sim.t - f.t > 40) k.want('escort', { cas: f.id }, 0.6);
   const waiting = cas.filter((f) => f.value.band >= 1 && f.value.band < 3 && (f.value.where === 'scene' || f.value.where === 'carried' || f.value.where === 'safe')).length;
   if (waiting >= 5 && k.countUnits('ems', 0.7) < Math.min(5, Math.ceil(waiting / 2))) k.request('ems', `부상자 ${waiting}명 — 구급 부대가 더 필요`, true);
   const trapped = cas.filter((f) => f.value.mob === 'trapped' && f.value.band < 3 && f.value.where === 'scene').length;

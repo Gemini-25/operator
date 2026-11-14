@@ -627,7 +627,7 @@ function buildMedical(sim: Sim, I: Incident, rng: Rng): Scene {
 }
 
 // ───────────────────────── 건물 붕괴 ─────────────────────────
-function buildCollapse(sim: Sim, I: Incident, rng: Rng): Scene {
+export function buildCollapse(sim: Sim, I: Incident, rng: Rng): Scene {
   const s = baseScene(sim, I, rng);
   const sev = I.truth.severity, dist = I.truth.district;
   s.floorMat = floorMatOf(dist);

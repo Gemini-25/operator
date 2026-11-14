@@ -27,6 +27,10 @@ export const MAJOR: Scenario[] = [
       for (const lim of [60, 150]) { const near = free.filter((n) => railDist(c.rail!, n.x, n.y) < lim); if (near.length) return rng.pick(near).id; }
       return null;
     } },
+  { type: 'collapse', variant: 'crane', name: '크레인 붕괴', share: 1.2, nature: 'crane', vague: 'bang', severity: [3, 3], tag: 'major', delay: [2, 6], limit: 120,
+    places: { construction: 6, containerYard: 1 },
+    texts: ['공사장 크레인이 넘어갔어요! 사람이 깔렸어요!', '타워 크레인이 길 쪽으로 쓰러졌어요!'], lik: [0.01, 0.08, 0.005, 0.005, 0.03, 0.85, 0.01, 0.01],
+    needs: (n) => atLeast(n, { rescue: 2, ems: 2, law: 1, traffic: 1 }) },
   { type: 'traffic', variant: 'pileup', name: '다중 추돌', share: 1.6, nature: 'pileup', vague: 'bang', severity: [3, 3], tag: 'major', delay: [2, 6], limit: 200,
     texts: ['고속도로에서 차 여러 대가 연달아 부딪쳤어요!', '차가 대여섯 대 엉켜 있어요. 기름이 새요!'], lik: [0.05, 0.88, 0.005, 0.01, 0.01, 0.02, 0.02, 0.005],
     needs: (n) => atLeast(n, { rescue: 2, ems: 3, suppression: 1, traffic: 1, law: 1 }),

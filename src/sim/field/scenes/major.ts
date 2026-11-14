@@ -4,10 +4,10 @@
 
 import type { Sim } from '../../engine';
 import type { Rng } from '../../rng';
-import { T } from '../../types';
+import { DECOR, T } from '../../types';
 import type { Incident, Prop, Scene } from '../../types';
 import { tidx } from '../grid';
-import { SH, SW, addCas, addProp, addRegion, baseScene, get, set } from '../kit';
+import { SH, SW, addCas, addProp, addRegion, baseScene, freeTileIn, get, set } from '../kit';
 import { registerScene } from '../sceneRegistry';
 
 /** 길가에 나무를 흩뿌린다 (도로 8~11줄의 위아래 수풀) */
@@ -95,6 +95,75 @@ registerScene('traffic', 'train', (sim, I, rng) => {
   s.placeName = '열차 탈선 사고 현장';
   // 건널목이 막혀 지나가는 차가 없다: 차로 통제 임무는 생기지 않는다
   s.controlPts = []; s.controlDone = []; s.laneRows = []; s.trafficFlow = 0; s.nextCarAt = Infinity;
+  return s;
+});
+
+// ───────────────────────── 크레인 붕괴 ─────────────────────────
+// 공사장: 울타리 안의 자재 마당과 짓다 만 골조. 타워 크레인의 팔이 마당에서 울타리를 넘어 길까지 비스듬히 쓰러졌다.
+// 팔은 치울 수 있는 잔해(skin 'craneBoom')이고, 골조의 금 간 자리(unstable)는 받쳐 두지 않으면 다시 무너져 내린다.
+registerScene('collapse', 'crane', (sim, I, rng) => {
+  const s = baseScene(sim, I, rng);
+  for (let y = 17; y < SH; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
+  s.floorMat = 2;
+  const F = { x0: 6, y0: 1, x1: 25, y1: 13 };      // 울타리
+  for (let x = F.x0; x <= F.x1; x++) { set(s, x, F.y0, T.WALL); set(s, x, F.y1, T.WALL); }
+  for (let y = F.y0; y <= F.y1; y++) { set(s, F.x0, y, T.WALL); set(s, F.x1, y, T.WALL); }
+  const gx = rng.int(9, 12), gy = rng.int(4, 9);      // 남쪽 정문(두 칸)과 서쪽 쪽문
+  set(s, gx, F.y1, T.GROUND); set(s, gx + 1, F.y1, T.GROUND); set(s, F.x0, gy, T.GROUND);
+  // 짓다 만 골조: 바닥 판과 띄엄띄엄 선 기둥, 올리다 만 벽
+  const B = { x0: 8, y0: 3, x1: 14, y1: 9 };
+  for (let y = B.y0; y <= B.y1; y++) for (let x = B.x0; x <= B.x1; x++) set(s, x, y, T.FLOOR);
+  for (const px of [8, 11, 14]) for (const py of [3, 6, 9]) set(s, px, py, T.WALL);
+  for (const [x, y] of [[9, 3], [10, 3], [12, 3], [8, 4], [8, 5]]) set(s, x, y, T.WALL);
+  // 크레인: 기초(마스트)에서 남동쪽으로 넘어간 팔. 끝은 언제나 길 위에 걸친다
+  const n = rng.int(6, 9), tipX = rng.int(25, 27);
+  const mast = { x: tipX - n, y: 17 - n };
+  set(s, mast.x, mast.y, T.WALL);
+  // 마당의 자재 더미
+  for (let k = 0; k < 4; k++) {
+    const x = rng.int(16, 23), y = rng.int(2, 5), i = tidx(s, x, y);
+    if (s.tiles[i] !== T.GROUND || Math.abs(x - mast.x) + Math.abs(y - mast.y) < 3) continue;
+    s.tiles[i] = T.FURN; s.decor[i] = rng.pick([DECOR.CRATE, DECOR.CRATE, DECOR.MACHINE]);
+  }
+  const frame = addRegion(s, '짓다 만 골조', 'room', B.x0, B.y0, B.x1, B.y1, true, true);
+  const yard = addRegion(s, '자재 마당', 'zone', F.x0 + 1, F.y0 + 1, F.x1 - 1, F.y1 - 1, false, true);
+  yard.tiles = yard.tiles.filter((i) => s.tiles[i] !== T.FLOOR);      // 골조 안은 마당 수색에 넣지 않는다 (무너질 수 있는 곳은 소방만 들어간다)
+  addRegion(s, '공사장 앞 길', 'zone', 0, 14, SW - 1, 16, false, false);
+  const boom: Prop[] = [];
+  for (let k = 1; k <= n; k++) {
+    const x = mast.x + k, y = mast.y + k, i = tidx(s, x, y);
+    if (s.tiles[i] === T.WALL) s.tiles[i] = T.GROUND;      // 팔에 눌려 넘어간 울타리
+    s.damage[i] = 1;
+    boom.push(addProp(s, 'debris', x, y, { blocking: true, hp: rng.range(12, 21), skin: 'craneBoom', angle: Math.PI / 4 }));
+  }
+  // 작업자 3~5명: 둘은 팔에 깔렸고, 나머지는 골조에서 떨어지거나 마당·길에서 다쳤다
+  const total = rng.int(3, 5);
+  const inside = boom.filter((p) => p.y < F.y1);
+  const under: number[] = [];
+  for (const p of inside) for (const [dx, dy] of [[-1, 0], [0, 1], [1, 0], [0, -1]]) {
+    const x = p.x + dx, y = p.y + dy, i = tidx(s, x, y);
+    if (x > F.x0 && x < F.x1 && y > F.y0 && y < F.y1 && s.tiles[i] === T.GROUND && s.propAt[i] < 0 && under.indexOf(i) < 0) under.push(i);
+  }
+  rng.shuffle(under);
+  for (let k = 0; k < 2 && k < under.length; k++) {
+    const i = under[k];
+    s.damage[i] = 1;
+    const c = addCas(s, i % SW, (i / SW) | 0, 'trapped', rng.range(46, 80), rng.range(0.08, 0.19), rng.range(0.3, 0.5));
+    c.trapWork = rng.range(14, 22);
+  }
+  if (total >= 3) { const i = freeTileIn(s, frame, rng); addCas(s, i % SW, (i / SW) | 0, 'immobile', rng.range(48, 80), rng.range(0.07, 0.16), rng.range(0.2, 0.4)); }
+  if (total >= 4) { const p = freeNear(s, mast.x - 1, mast.y - 1); addCas(s, p.x, p.y, rng.chance(0.6) ? 'immobile' : 'mobile', rng.range(55, 88), rng.range(0.04, 0.13), rng.range(0.1, 0.3)); }
+  if (total >= 5) { const p = freeNear(s, tipX, 15); const walk = rng.chance(0.5); addCas(s, p.x, p.y, walk ? 'mobile' : 'immobile', walk ? rng.range(74, 94) : rng.range(52, 80), walk ? 0.02 : rng.range(0.06, 0.14), 0.05); }
+  // 금 간 골조 두 곳: 기둥 곁
+  const cracks = frame.tiles.filter((i) => s.tiles[i] === T.FLOOR && [1, -1, SW, -SW].some((d) => s.tiles[i + d] === T.WALL) && !s.casualties.some((c) => tidx(s, c.x, c.y) === i));
+  rng.shuffle(cracks);
+  for (let k = 0; k < 2 && k < cracks.length; k++) addProp(s, 'unstable', cracks[k] % SW, (cracks[k] / SW) | 0, { leak: rng.range(0, 0.25), leakRate: rng.range(0.0045, 0.008) * (0.8 + 0.2 * sim.tune.hazardMul) });
+  const nd = rng.int(2, 3);
+  for (let k = 0; k < nd; k++) { const p = freeNear(s, tipX + rng.int(-3, 1), rng.int(17, 19)); addProp(s, 'roadDebris', p.x, p.y, { hp: 4 }); }
+  s.exits = [{ x: gx, y: F.y1 + 1 }, { x: F.x0 - 1, y: gy }];
+  s.spots = [{ x: gx, y: F.y1 + 2, exit: 0, taken: -1 }, { x: gx + 1, y: F.y1 + 2, exit: 0, taken: -1 }, { x: F.x0 - 2, y: gy, exit: 1, taken: -1 }];
+  s.staging = { x: 3, y: 17 }; s.safe = { x: 3, y: 14 }; s.vantage = { x: gx, y: F.y1 + 2 };
+  s.leadDept = 'fire';
   return s;
 });
 

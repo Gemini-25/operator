@@ -31,6 +31,7 @@ import { drawBlastScars, drawDangerZones, drawFallMoments, drawFallRing, drawGas
 import type { HazardLabel } from './scene/hazardFx';
 import { gasView, hostageState, rekindledRegions } from './hazardState';
 import { ruinZones, strokeRuinEdges } from './scene/ruins';
+import { drawCatOver, drawCatUnder } from './scene/catLayer';
 import { TRIAGE, TRIAGE_EDGE, TRIAGE_TEXT, casBand, casDrawn, casSheet, hostileBand, hostileDrawn, hostileSheet, hurtPose, respBand, respLying, respSheet } from './triage';
 
 /** 현장 화면의 시점: 중심(타일 좌표)과 배율(1 = 현장 전체가 보인다) */
@@ -833,8 +834,17 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   // ── 정보 표지 (G4): 어둠·날씨 뒤라 밤과 안개에도 보인다 ──
   if (night && !MINI) { const rz = ruinZones(s); if (rz.count) strokeRuinEdges(ctx, rz, ts, 0.45); }      // 밤에는 고정 층의 붕괴 구역 경계가 어둠에 묻힌다: 같은 선분을 한 번 더
   drawDangerZones(ctx, sim, s, ts, { truth: o.truth, timeMs: o.timeMs, mini: MINI, cmd });
+  const catView = { truth: o.truth, timeMs: o.timeMs, mini: MINI, cmd };
+  drawCatUnder(ctx, sim, s, ts, catView);      // (X6) 구획 건전도 빗금·가스 등고선·용기의 열 고리 (관찰자: 진실 · AI: 지휘관이 아는 조짐)
   drawFallRing(ctx, sim, s, ts, o.alpha, MINI);
   const hzLabels: HazardLabel[] = [];
+  const catPills: LabelBox[] = [];      // (X6) 대원 이름표가 피해 가는 자리 (mergeLabels 의 pinned)
+  for (const l of drawCatOver(sim, s, ts, catView)) {      // (X6) 붕괴 임박·LEL·안전밸브 표지 — 새 글자 표지 단계에서 그린다
+    hzLabels.push(l);
+    const fs = Math.max(10, ts * 0.3);
+    ctx.font = `600 ${fs}px ${FONT}`;
+    catPills.push({ x: l.x, y: l.y, w: ctx.measureText(l.text).width + fs * 0.8, h: fs * 1.5 });
+  }
   if (o.truth) for (const l of drawGasEdge(ctx, ts, o.timeMs, gv, MINI)) hzLabels.push(l);      // 짙은 가스 경계 (관찰자 시점)
   for (const l of drawRekindle(ctx, s, ts, o.timeMs, MINI ? [] : rekindledRegions(sim, s, o.truth), o.truth, MINI)) hzLabels.push(l);      // 되살아난 불
 
@@ -955,7 +965,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   }
   if (cv) timed(() => { drawNegotiation(cv); drawCuffs(cv); });      // (G5) 말풍선, 수갑 기호
   for (const l of hzLabels) pill(ctx, l.text, l.x, l.y, Math.max(10, ts * 0.3), l.color);      // (G4) 새 글자 표지: 가스 고임·되살아난 불
-  for (const l of mergeLabels(ctx, labels, Math.max(10, ts * 0.28), ts, hosPills)) pill(ctx, l.text, l.x, l.y, Math.max(10, ts * 0.28), l.col);      // (R1) 같은 이름표가 겹치면 하나로
+  for (const l of mergeLabels(ctx, labels, Math.max(10, ts * 0.28), ts, catPills.length ? hosPills.concat(catPills) : hosPills)) pill(ctx, l.text, l.x, l.y, Math.max(10, ts * 0.28), l.col);      // (R1) 같은 이름표가 겹치면 하나로
   // (R1) 상공의 헬기: 호출부호와 하는 일. 두 헬기가 한 자리에 떠 있으면 이름표를 위로 쌓는다(겹쳐 읽히지 않게)
   if (!MINI) {
     const fs = Math.max(10, ts * 0.3), put: { x: number; y: number; w: number }[] = [];

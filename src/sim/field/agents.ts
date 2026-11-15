@@ -176,6 +176,7 @@ function significant(f: Fact, old: any): boolean {
   if (f.type === 'cas') return v.where !== 'carried' && (old.mob !== v.mob || old.band !== v.band || old.where !== v.where || old.treated !== v.treated || old.tq !== v.tq);
   if (f.type === 'hos') return old.state !== v.state || old.weapon !== v.weapon || old.hostage !== v.hostage || !!old.dead !== !!v.dead || (old.tq ?? 0) !== (v.tq ?? 0) || (old.where ?? 'scene') !== (v.where ?? 'scene');
   if (f.type === 'mate') return old.status !== v.status || old.dead !== v.dead || old.band !== v.band || old.tq !== v.tq;
+  if (f.type === 'sign') return old.level !== v.level;      // (X6) 조짐은 단계가 바뀔 때만 알린다 — 측정값(lel)만 바뀐 것은 믿음에 합치되 보고하지 않는다
   return true;
 }
 function sameSig(a: Fact, b: Fact): boolean { return a.key === b.key && !significant(a, b.value); }
@@ -272,10 +273,12 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
     }
   }
   // 타일 스캔: 화재 / 잔해
+  let scanned: Map<number, { n: number; m: number }> | null = null;      // (X6) 외부 관찰의 기억(extSeen)이 스캔 결과를 읽는다
   if (s.burning > 0 || a.beliefs.list('fire').some((f) => f.value > 0)) {
     const R = Math.ceil(v);
     const ax = Math.round(a.x), ay = Math.round(a.y);
     const seen = new Map<number, { n: number; m: number }>();
+    scanned = seen;
     for (let y = Math.max(0, ay - R); y <= Math.min(s.h - 1, ay + R); y++) for (let x = Math.max(0, ax - R); x <= Math.min(s.w - 1, ax + R); x++) {
       const i = y * s.w + x;
       const rg = s.region[i];
@@ -298,6 +301,19 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
       }
     }
   }
+  // (X6 §3.3) 외부 관찰(벽 너머 불 ≥ 0.25 를 모두 보는 지휘관의 관찰)의 기억: 관찰 반경 안에 가운데가 든 실내 구획을 "덮었다"고 적고,
+  // 센 불(≥ 0.25)을 본 구획은 그 시각을 적는다. 덮인 구획에 새 시각이 없으면 "센 불을 보지 못했다"는 뜻이다 (외부 확인 종료 §6.2 가 쓴다 — 관찰자 자신의 기억)
+  if (throughWalls && !aloft) {
+    let e = a.extSeen;
+    if (!e) { const n = s.regions.length; e = a.extSeen = { hot: new Float32Array(n).fill(-1), cov: new Float32Array(n).fill(-1), cov0: new Float32Array(n).fill(-1) }; }
+    for (let rg = 0; rg < s.regions.length; rg++) {
+      const reg = s.regions[rg];
+      if (!reg.indoor || dist(a.x, a.y, reg.cx, reg.cy) > v) continue;
+      e.cov[rg] = sim.t;
+      if (e.cov0[rg] < 0) e.cov0[rg] = sim.t;
+    }
+    if (scanned) for (const [rg, en] of scanned) if (en.m >= 0.25 && s.regions[rg].indoor) e.hot[rg] = sim.t;
+  }
   for (let pi = aloft ? s.props.length : 0; pi < s.props.length; pi++) { const p = s.props[pi];      // 상공의 관측자는 소품을 살피지 않는다
     if (p.removed) continue;
     const d = dist(a.x, a.y, p.x, p.y);
@@ -319,7 +335,9 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
         else learn(sim, a, f);
       }
     } else if (p.kind === 'gas') {
-      if (!p.exploded && d <= 3.5 && !a.beliefs.get('haz', p.id) && los(s, a.x, a.y, p.x, p.y)) learn(sim, a, mkFact('haz', p.id, { kind: 'gas', active: true, x: p.x, y: p.y }, me, sim.t, 1, true, `${regionNameAt(s, p.x, p.y)}에 가스 용기 확인 — 폭발 위험`));
+      if (!p.exploded && d <= 3.5 && !a.beliefs.get('haz', p.id) && los(s, a.x, a.y, p.x, p.y)) learn(sim, a, mkFact('haz', p.id, { kind: 'gas', active: true, x: p.x, y: p.y }, me, sim.t, 1, true, `${regionNameAt(s, p.x, p.y)}에 ${vesselName(p)} 확인 — 폭발 위험`));
+      // (X6 §3.3) 터진 용기를 아직 살아 있다고 믿으면 바로잡는다 (예전에는 영영 active 로 남았다)
+      else if (p.exploded && d <= v && a.beliefs.get('haz', p.id)?.value.active && los(s, a.x, a.y, p.x, p.y)) learn(sim, a, mkFact('haz', p.id, { kind: 'gas', active: false, x: p.x, y: p.y }, me, sim.t, 1, true, `${vesselName(p)} 폭발 확인`));
     } else if (p.kind === 'unstable' || p.kind === 'valve') {
       if (sniff || (d <= (p.kind === 'valve' ? 4.5 : r.judgment >= 0.45 ? 4 : 2.6) && los(s, a.x, a.y, p.x, p.y))) {
         const active = !p.mitigated && !p.ignited;
@@ -351,6 +369,8 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
       if (!a.beliefs.get('evid', p.id) && d <= v) learn(sim, a, mkFact('evid', p.id, { kind: 'witness', done: !!p.interviewed }, me, sim.t, 1, true, '현장에 목격자 대기 중'), false);
     }
   }
+  // (X6 §3.3) 조짐: 구조 약화·가스 농도·용기 가열·건물 기울어짐 — 감각 범위 안의 것만 (field/catastrophe.ts)
+  perceiveSigns(sim, s, a, v);
   // 동료: 쓰러진 동료는 시야 안이면 본다. 안전 구역으로 물러난 동료는 바로 곁(2칸)에서만 살핀다 — 거기서 숨진 동료를 곁의 대원이 알아본다
   for (let bi = 0; bi < s.agents.length; bi++) { const b = s.agents[bi];
     if (b === a || (b.status !== 'down' && b.status !== 'withdrawn')) continue;
@@ -367,6 +387,8 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
 }
 
 const IMPORTANT: Record<string, boolean> = { cas: true, blk: true, hos: true, haz: true, mate: true, evid: true, clue: true, seen: true, secure: true };
+/** 바로 알리고 무전 문구에 싣는 사실: IMPORTANT 의 종류, 그리고 (X6 §3.2) 단계 2 이상의 조짐 — 단계 1(삐걱임·냄새)은 묶음 보고(5초)로 보낸다 */
+const hot = (f: Fact): boolean => IMPORTANT[f.type] === true || (f.type === 'sign' && f.value.level >= 2);
 
 /** 무전 송신. 음영 구역에서는 실패한다. */
 export function transmit(sim: Sim, s: Scene, a: FieldAgent | null, to: number, kind: RadioMsg['kind'], facts: Fact[], text: string, workId = -1, imp = 1, causes: number[] = [], silent = false): number {
@@ -386,7 +408,7 @@ export function flushOutbox(sim: Sim, s: Scene, a: FieldAgent): void {
   if (!a.outbox.length) { a.shadowSince = -1; return; }
   const I = sim.incidents[s.incidentId];
   const r = resp(sim, a);
-  const important = a.outbox.some((f) => IMPORTANT[f.type]);
+  const important = a.outbox.some(hot);
   const prompt = important || a.outbox.some((f) => f.type === 'srch' || f.type === 'ovh');      // 수색·잔불 정리 결과는 바로 알린다
   if (!prompt && sim.t - a.outboxSince < 5) return;
   if (!a.aloft && s.shadow[tileOf(s, a.x, a.y)]) {
@@ -403,7 +425,7 @@ export function flushOutbox(sim: Sim, s: Scene, a: FieldAgent): void {
   if (!facts.length) { a.quiet.clear(); return; }
   const speak = facts.filter((f) => !a.quiet.has(f.key));
   a.quiet.clear();
-  const shown = speak.filter((f) => IMPORTANT[f.type]);
+  const shown = speak.filter(hot);
   const list = (shown.length ? shown : speak).map((f) => f.text).filter((t, k, arr) => arr.indexOf(t) === k).slice(0, 3).join(' / ');
   const causes: number[] = [];
   if (a.commFailLogged) {
@@ -644,3 +666,5 @@ export function nearDoor(s: Scene, i: number): boolean { return doorAt(s, i) !==
 // ── (R3) 대응 교본의 판단부 (field/doctrine.ts) — fitFor 의 맨 끝이 부른다. doctrine.ts 는 이 파일을 import 하지 않는다(순환 없음).
 //    (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다) ──
 import { docFit } from './doctrine';
+// (X6) 조짐 관찰 (field/catastrophe.ts — 그 파일도 이 파일의 learn·regionNameAt 을 쓴다. 함수 안에서만 서로 부르므로 순환 import 는 문제없다)
+import { perceiveSigns, vesselName } from './catastrophe';

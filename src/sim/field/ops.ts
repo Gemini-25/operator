@@ -2,12 +2,25 @@
 // 이 파일은 **진실을 읽지 않는다**: s.cat·s.fire·s.props·s.casualties 를 보지 않고, 타일·구역·계단(생김새)과 지휘 상태만 읽는다.
 // 그래서 세계 규칙(field/catastrophe.ts)과 지휘 쪽(지휘 규칙·대원의 판단부)이 같은 함수를 함께 쓸 수 있다.
 //
-// 단계 1 에는 생김새 도움 함수 둘만 있다. 지휘 상태 쪽(opsOf·inZone·gateBlocks·cutOff·opsExterior·opsCordon·inRubble·isRubbleMode·
-// evacPoint·exteriorSpot·SIGN_BASE)은 그것을 쓰기 시작하는 단계(2·5·6)가 여기에 더한다.
+// 단계 1 에는 생김새 도움 함수 둘만 있었다. 단계 2 가 조짐·지휘 상태 사실의 id 공간(SIGN_BASE·OPS_ID·OPS_PAR)과 지휘 상태 사실의 값(OpsFact)을 더했다.
+// 지휘 상태 쪽(opsOf·inZone·gateBlocks·cutOff·opsExterior·opsCordon·inRubble·isRubbleMode·evacPoint·exteriorSpot)은 그것을 쓰기 시작하는 단계(5·6)가 여기에 더한다.
 
 import { T } from '../types';
-import type { Scene } from '../types';
+import type { NoGoZone, OpsState, Scene } from '../types';
 import { isIndoor } from './grid';
+
+/**
+ * 조짐 사실('sign')의 id 공간 (설계서 §3.2). 구획 번호·소품 id 를 더해 쓴다:
+ *   struct = 구획 번호(0~998) · gas = 1000 + 구획 번호 (신고로 만든 위치 모르는 가스 조짐은 gasUnknown 1999 — 1000 + (−1) 이 struct 공간과 겹치지 않게)
+ *   vessel = 2000 + 소품 id · fire = 3000 + 구획 번호 · dust = 4000 + 구획 번호 · bldg = 5000 · 도시가스 차단 완료(event, what 'utility') = 5001 · event = 6000 + 사건 번호
+ */
+export const SIGN_BASE = { struct: 0, gas: 1000, gasUnknown: 1999, vessel: 2000, fire: 3000, dust: 4000, bldg: 5000, utility: 5001, event: 6000 } as const;
+/** 지휘 상태 사실('ops')의 id: 0 = 전술 모드와 진입 금지 구역(지휘관이 보낸다), 100 + rid = 그 대원의 인원 점검 응답(철수를 마친 대원이 조용히 보낸다) */
+export const OPS_ID = 0, OPS_PAR = 100;
+/** 'ops' 사실 id 0 의 값 — 지휘관이 보내는 전술 모드와 진입 금지 구역 (구역의 기록·까닭·시각은 싣지 않는다). R3 의 doctrine.opsLevel 이 zones[].regions·level 을 읽는다 */
+export interface OpsFact { mode: OpsState['mode']; zones: Pick<NoGoZone, 'key' | 'kind' | 'level' | 'regions' | 'x' | 'y' | 'r'>[]; t: number }
+/** 'ops' 사실 id 100 + rid 의 값 — 인원 점검 응답 */
+export interface ParFact { par: true; t: number }
 
 /** footprint 의 값 */
 export const FOOT_OUT = 0, FOOT_IN = 1, FOOT_SHELL = 2, FOOT_FLOOR_EDGE = 3;

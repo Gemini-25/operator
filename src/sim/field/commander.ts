@@ -367,7 +367,12 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     const c = f.value as CasBelief;
     const dead = c.band === 3;
     const clear = (kinds: WorkKind[]) => cancel(s, (w) => w.cas === f.id && kinds.indexOf(w.kind) >= 0 && !(w.kind === 'carry' && w.status === 'active' && s.agents.some((b) => b.carrying === f.id)));
-    if (dead || c.where === 'loaded' || c.where === 'hospital') { clear(['extricate', 'treat', 'carry', 'load', 'hoist']); continue; }
+    if (dead || c.where === 'loaded' || c.where === 'hospital') {
+      clear(['extricate', 'treat', 'carry', 'load', 'hoist']);
+      // 호이스트로 물에서 곧바로 실려 간 사람: 지상의 수난 구조 지시도 거둔다 (지상에서 건진 사람은 그 작업이 이미 끝나 있다)
+      if (!dead) cancel(s, (w) => w.kind === 'waterRescue' && w.cas === f.id);
+      continue;
+    }
     const urg = c.band * 0.06;
     const afloat = c.where === 'scene' && c.mob === 'trapped' && s.tiles[c.y * s.w + c.x] === T.WATER;      // 물속에 있다고 믿는다
     if (hoistUp && !afloat) cancel(s, (w) => w.kind === 'hoist' && w.cas === f.id);      // 물 밖으로 나왔다

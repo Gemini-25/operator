@@ -8,7 +8,7 @@
 import type { Sim } from '../sim/engine';
 import { regionNameAt } from '../sim/field/agents';
 import { CAUSE_NAME, bandOf } from '../sim/field/injury';
-import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Injury, Responder, Scene, SimEvent } from '../sim/types';
+import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Injury, InjuryCause, Responder, Scene, SimEvent } from '../sim/types';
 import { fmtClock } from '../sim/util';
 
 /** 초록(경상) · 노랑(중상) · 빨강(위중) · 검정(사망) */
@@ -49,6 +49,26 @@ export function injuryLine(list: Injury[] | undefined, max = 4): string {
   const out: string[] = [];
   for (const j of rows) { const n = Math.round(j.dmg); if (n >= 1 && out.length < max) out.push(`${CAUSE_NAME[j.cause]} ${n}`); }
   return out.length ? out.join(' · ') : CAUSE_NAME[rows[0].cause];
+}
+/**
+ * 교대 보고서의 대원 목록 한 줄 (H1 §8.4 — 단계 6): '위중 · 총상 · 병원 이송 · 결장 예상 2', 순직은 '순직 · 화상 · 03'(그 사건의 번호).
+ * 보고서에 적힌 값(ShiftReport.respondersHurt·respondersKilled)만 읽는다
+ */
+export function reportHurtText(x: { status: string; band?: number; cause?: InjuryCause | null; dead?: boolean; hospital?: boolean; out?: number; name: string }, killed: { name: string; incident: string }[] = []): string {
+  const parts: string[] = [];
+  if (x.dead) {
+    parts.push('순직');
+    if (x.cause) parts.push(CAUSE_NAME[x.cause]);
+    const k = killed.find((q) => q.name === x.name);
+    if (k && k.incident) parts.push(k.incident);
+    return parts.join(' · ');
+  }
+  parts.push(x.band !== undefined ? TRIAGE_NAME[Math.min(2, x.band)] : x.status);
+  if (x.status === '쓰러짐') parts.push('쓰러짐');
+  if (x.cause) parts.push(CAUSE_NAME[x.cause]);
+  if (x.hospital) parts.push('병원 이송');
+  if (x.out !== undefined && x.out > 0) parts.push(`결장 예상 ${x.out}`);
+  return parts.join(' · ');
 }
 /** 받은 처치를 글로 (0 없음 … 1 전문) */
 export function careName(q: number | undefined): string { return !q || q <= 0 ? '없음' : q >= 0.6 ? '전문 처치' : '기본 처치'; }

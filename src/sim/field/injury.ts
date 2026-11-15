@@ -9,7 +9,7 @@
 // 예외는 용의자 하나다: 용의자의 쓰러짐·사망 전이는 hurtHostile 안에서 바로 하고(같은 틱에 다른 대원이 한 번 더 쏘지 않게), 그 문구도 상태를 바꾸는 그 자리 — hurtHostile — 가 남긴다 (설계서 H1 §4.6).
 // 단계 4b 가 더한 것: careResponder·needsHospital·mateNeedsHospital·canDeploy·LIGHT_WORK·HOSPITAL_BLEED (처치 식 treatPlan·treatEffect 는 4b 의 준비 커밋).
 // 단계 5 가 더한 것: hurtHostile·careHostile·hosNeedsCare·threatOverAt 과 용의자의 상수(HOSTILE_BLEED·HOSTILE_BLEED_MAX·HOSTILE_LEFT·SELF_HARM·SELF_HARM_HIT).
-// 뒤 단계가 여기에 더한다: outShifts.
+// 단계 6 이 더한 것: outShifts (교대 끝의 결장 표 — 보고서와 I2 가 함께 부른다).
 
 import { armorOf, blastFactor, hasKit, kitUses, kitWorks, medLevelOf } from '../crews';
 import type { Sim } from '../engine';
@@ -414,6 +414,19 @@ export function hosNeedsCare(v: { state: string; dead?: boolean; band?: number; 
  */
 export function threatOverAt(s: Scene): number {
   return s.kind === 'armed' ? s.secureAt : s.arrivedAt;
+}
+
+// ───────────────────────── 교대가 끝난 뒤 (단계 6 — §3.7) ─────────────────────────
+/**
+ * 다음 교대에 빠지는 교대 수 (제안 값 — §3.7 의 표). 보고서(debrief.buildReport — 명부 roster·대원 목록)와 I2(교대 간 지속)가 함께 부른다 —
+ * 같은 표가 두 곳에 있지 않게. 쓰러진 적은 tDown 으로 본다.
+ *   순직 −1 (가용 인원에서 빠진다) · 후송(병원 인계 또는 교대 끝에 후송 중) 쓰러진 적 있음 3 / 없음 2 · 쓰러진 채 후송 아님 3 · 다침(병원 안 감) 1 · 온전 0
+ */
+export function outShifts(r: Responder): number {
+  if (r.dead) return -1;
+  if (r.care !== undefined) return r.tDown !== undefined ? 3 : 2;
+  if (r.tDown !== undefined) return 3;
+  return r.status === 'injured' || r.status === 'down' ? 1 : 0;
 }
 
 // ───────────────────────── 한 번 피해의 기록 (단계 1) ─────────────────────────

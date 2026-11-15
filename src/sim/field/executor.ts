@@ -7,7 +7,7 @@ import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
 import type { Fact, FieldAgent, Hostile, Incident, KitId, MateBelief, Prop, Scene, Task, TaskKind, WorkItem } from '../types';
 import { clamp, dist, josa, pct } from '../util';
-import { hasKit, kitRng, kitUses, kitWorks, medLevelOf, refillAir, seatsOf, toolUse, useKit } from '../crews';
+import { hasKit, kitRng, kitUses, kitWorks, medLevelOf, refillAir, seatsOf, seatsUsed, toolUse, useKit } from '../crews';
 import { RETRY_AFTER, agentCost, casFact, debrisText, detectRadius, exitName, fitFor, flushOutbox, hosFact, learn, learnQuiet, mateFact, mateStatus, perceive, regionNameAt, resp, staminaF, visionOf, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { astar, doorAt, isIndoor, los, staticPass, tileOf, walkableCount } from './grid';
@@ -15,7 +15,7 @@ import { applyWater, flashbang, hostageNear, hostileActive, isHeld, placeAtSafe,
 import { coverRoll, fireShot } from './damage';
 import { breachHowFor, lastFx, noteCollateral, noteHit, noteShot, recBreach, recCuff, recTaser, weaponOf } from './fxlog';
 import { detonate } from './rules/crime';
-import { hurtCas, initialCause, injuryRng, mustRetreat, noteHostileHurt } from './injury';
+import { hurtCas, initialCause, injuryRng, mustRetreat, noteHostileHurt, treatEffect, treatPlan } from './injury';
 
 export function makeTask(kind: TaskKind, label: string, w: WorkItem | null = null): Task {
   return {
@@ -647,11 +647,9 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     case 'treat': {
       const c = s.casualties[t.cas];
       const med = medLevelOf(sim, a.rid);      // 이 대원이 든 의료 장비의 수준 (없으면 부서의 기본 교육)
-      const q0 = clamp(r.skills.medical * (0.5 + 0.5 * med) * 1.15, 0.2, 1);
-      // 제세동기: 심정지 환자나 위중한(건강 25 미만) 환자의 처치 질을 0.2 올린다(상한 1).
-      // 다시 볼 가치가 있는지는 든 장비로 어림하고(hasKit), 효과는 처치를 마칠 때 준다(kitWorks — 숨은 고장은 그때 드러난다)
-      const shock = (s.kind === 'medical' && s.variant === 'arrest') || c.health < 25;
-      const qPlan = shock && hasKit(sim, a.rid, 'aed') ? Math.min(1, q0 + 0.2) : q0;
+      // 처치의 질과 효과는 세 부류가 같은 식을 쓴다 (injury.treatPlan·treatEffect — 제세동기·의사 장비의 보정 포함).
+      // 다시 볼 가치가 있는지는 든 장비로 어림하고(treatPlan — hasKit), 효과는 처치를 마칠 때 준다(treatEffect — 숨은 고장은 그때 드러난다)
+      const qPlan = treatPlan(sim, s, a.rid, c.health);
       // 이미 처치를 받은 환자는 더 나은 처치를 할 수 있는 대원만 다시 본다
       if (c.dead || c.where === 'loaded' || c.where === 'hospital' || (c.treated && qPlan <= c.treatQ + 0.15)) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
       if (c.where === 'carried') return;
@@ -663,16 +661,13 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       t.need = 4.5 + (c.health < 40 ? 4 : c.health < 70 ? 2 : 0);
       c.treatProg += rate * dt; a.ring = c.treatProg / t.need; drain(sim, a, 0.3);
       if (c.treatProg >= t.need) {
-        const q = shock && kitWorks(sim, a.rid, 'aed', I) ? Math.min(1, q0 + 0.2) : q0;
+        const fx = treatEffect(sim, s, I, a.rid, c.health, c.treated ? c.treatQ : -1);
         // 제세동기가 듣지 않아 앞선 처치보다 나아진 것이 없다: 상태만 다시 알리고 끝낸다 (처치의 수준을 낮추지 않는다)
-        if (c.treated && q <= c.treatQ) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
-        // 의사 장비(약물·수혈): 위중한 환자(건강 40 미만)를 더 끌어올리고 악화를 더 늦춘다
-        const doc = kitWorks(sim, a.rid, 'doctorKit', I);
-        if (doc && c.health < 40) c.health = Math.min(100, c.health + 15);
-        else if (!c.treated) c.health = Math.min(100, c.health + 8 * q);
-        c.treated = true; if (c.tTreated < 0) c.tTreated = sim.t; c.treatQ = q; c.bleed = c.bleed0 * (1 - (doc ? 0.95 : 0.9) * q); c.bystander = false;
+        if (!fx) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
+        if (fx.heal > 0) c.health = Math.min(100, c.health + fx.heal);
+        c.treated = true; if (c.tTreated < 0) c.tTreated = sim.t; c.treatQ = fx.q; c.bleed = c.bleed0 * fx.bleedK; c.bystander = false;
         learnQuiet(sim, a, casFact(sim, s, c, r.name));
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: q < 0.6 ? `구조 대상 ${c.label} 기본 응급 처치 완료. 전문 처치가 필요합니다.` : `구조 대상 ${c.label} 전문 응급 처치 완료.` });
+        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: fx.q < 0.6 ? `구조 대상 ${c.label} 기본 응급 처치 완료. 전문 처치가 필요합니다.` : `구조 대상 ${c.label} 전문 응급 처치 완료.` });
         r.xpGained += 0.003;
         finishTask(sim, s, a, true);
       }
@@ -726,7 +721,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (c.dead || c.where === 'loaded' || c.where === 'hospital') { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }      // 이미 실려 갔다: 지휘관의 믿음이 낡았으므로 다시 알린다
       if (c.where !== 'safe' && a.carrying !== c.id) { finishTask(sim, s, a, false, 'gone'); return; }
       // 실을 자리가 없다(그 사이에 다른 환자가 먼저 실렸다): 데리러 가지 않는다. 옮기던 중이면 차 앞에서 다시 본다(아래)
-      if (a.carrying !== c.id && u.patients.length >= seatsOf(u)) { finishTask(sim, s, a, false, 'full'); return; }
+      if (a.carrying !== c.id && seatsUsed(sim, u) >= seatsOf(u)) { finishTask(sim, s, a, false, 'full'); return; }
       if (a.carrying !== c.id) {
         const m = moveTo(sim, s, a, c.x, c.y, 1.3);
         if (m !== 'arrived') return;
@@ -740,8 +735,9 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       t.progress += dt;
       if (t.progress >= 1.2) {
         // 실을 때 자리를 다시 본다: 환자 자리(seatsOf — 구급차 2, 헬기 1)가 찼으면 안전 구역에 도로 눕히고 지휘관에게 알린다
-        if (u.patients.length >= seatsOf(u)) { c.where = 'safe'; placeAtSafe(s, c); a.carrying = -1; finishTask(sim, s, a, false, 'full'); return; }
+        if (seatsUsed(sim, u) >= seatsOf(u)) { c.where = 'safe'; placeAtSafe(s, c); a.carrying = -1; finishTask(sim, s, a, false, 'full'); return; }
         c.where = 'loaded'; c.tLoaded = sim.t; a.carrying = -1; u.patients.push(c.id); u.patientsIncident = I.id;
+        u.firstLoadAt ??= sim.t;      // 이번 이송에 처음 사람을 태운 시각 (지휘관의 출발 판단이 읽는다 — commander.manageAmbulances)
         learnQuiet(sim, a, casFact(sim, s, c, r.name));
         emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `구조 대상 ${c.label} ${u.callsign}에 탑승 완료.` });
         finishTask(sim, s, a, true);

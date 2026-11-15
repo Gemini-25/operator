@@ -353,6 +353,17 @@ export function armorOf(sim: Sim, rid: number, engaging: boolean): number {
 export function blastFactor(sim: Sim, rid: number): number { return hasKit(sim, rid, 'bombSuit') ? 0.35 : hasKit(sim, rid, 'turnout') ? 0.7 : 1; }
 /** 환자 자리 (구급차 2, 소방·의료 헬기 1, 나머지 0) */
 export function seatsOf(u: Unit): number { return u.seats ?? 0; }
+/**
+ * 쓰인 환자 자리 (H1 §3.4-5): 실은 구조 대상 + 구조 대상이 아닌 환자(u.aboard — 다친 대원·용의자) 가운데 다른 부대의 대원과 용의자.
+ * 자기 부대의 다친 대원은 원래 자기 자리에 타므로 세지 않는다 (자기 대원을 태우고 병원으로 가는 경찰차가 "자리 0"에 걸리지 않게).
+ * 자리를 따지는 곳은 모두 seatsUsed(sim, u) 와 seatsOf(u) 를 견준다 — u.patients.length 를 직접 견주지 않는다.
+ */
+export function seatsUsed(sim: Sim, u: Unit): number {
+  let n = u.patients.length;
+  const ab = u.aboard;
+  if (ab) for (let k = 0; k < ab.length; k++) if (ab[k].kind !== 'mate' || sim.responders[ab[k].id].unitId !== u.id) n++;
+  return n;
+}
 /** 연기 속 일(위험한 건물 안의 수색·구출·이송, 진압·잔불 정리)을 새로 맡기에 공기가 모자란 문턱(초). R3 가 비율로 넓힌다 */
 export const AIR_MIN = 45;
 /** 공기 잔량 경고(초): 이 밑으로 떨어지면 기록을 남기고, 예비 공기통이 있으면 바꾸러 나간다 (brain.ts) */

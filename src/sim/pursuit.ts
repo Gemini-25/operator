@@ -83,7 +83,7 @@ function stop(sim: Sim, I: Incident, nodeId: number, how: 'caught' | 'block' | '
   I.reportedNode = nodeId; I.locationKnown = true;
   createScene(sim, I);      // 세운 자리의 현장을 이제 만든다 (사고로 멈췄으면 다친 사람이 있다)
   const who = WHO[p.kind];
-  const text = how === 'crash' ? `${josa(who, '이/가')} ${nodeName(sim.city, nodeId)}에서 사고를 내고 멈췄습니다.` : how === 'block' ? `${by!.callsign}: 앞을 막아 ${josa(who, '을/를')} 세웠습니다 — ${nodeName(sim.city, nodeId)}.` : `${by!.callsign}: 바짝 붙어 ${josa(who, '을/를')} 세웠습니다 — ${nodeName(sim.city, nodeId)}.`;
+  const text = how === 'crash' ? `${josa(who, '이/가')} ${nodeName(sim.city, nodeId)}에서 사고를 내고 멈췄습니다.` : how === 'block' ? `${by!.callsign}: 앞을 막아 ${josa(who, '을/를')} 세웠습니다 — ${nodeName(sim.city, nodeId)}.` : `${by!.callsign}: ${by!.air ? '하늘에서 놓치지 않고 쫓아' : '바짝 붙어'} ${josa(who, '을/를')} 세웠습니다 — ${nodeName(sim.city, nodeId)}.`;
   I.lastEvent = emit(sim, { inc: I.id, role: how === 'crash' ? 'SYSTEM' : 'UNIT', actor: how === 'crash' ? '교통정보' : by!.callsign, kind: 'unit', imp: 3, causes: [I.lastEvent], text });
   for (const uid of I.assigned) { const u = sim.units[uid]; if (u.state === 'enroute') sendUnitTo(sim, u, nodeId); else if (u.state === 'turnout') u.destNode = nodeId; }
 }

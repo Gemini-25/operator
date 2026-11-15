@@ -144,13 +144,23 @@ function buildSiege(sim: Sim, I: Incident, rng: Rng): Scene {
   // 안쪽 방에 들일 수 있는 인질 수: 용의자가 설 자리와 빈 칸 하나를 남긴다
   const nA = Math.min(2, Math.max(1, inner.tiles.filter((i) => s.tiles[i] === T.FLOOR && s.propAt[i] < 0).length - 2));
   const taken = (q: number): boolean => s.hostiles.some((h) => tidx(s, h.x, h.y) === q);
-  const near = (h: { x: number; y: number }, d: number) => (q: number): boolean => taken(q) || Math.hypot((q % SW) - h.x, ((q / SW) | 0) - h.y) > d;
+  const empty = (q: number): boolean => s.tiles[q] === T.FLOOR && s.propAt[q] < 0 && !taken(q) && !s.casualties.some((c) => tidx(s, Math.round(c.x), Math.round(c.y)) === q);
+  /**
+   * 용의자 곁의 빈 바닥 한 칸: 반경 d 안에서 고르고, 없으면 그 방에서 가장 가까운 빈 칸.
+   * (넓은 홀에서 아무 칸이나 뽑아 보는 freeTileIn 으로는 곁의 몇 칸을 못 맞히는 일이 있어, 붙들린 인질이 방 반대편에 놓였다)
+   */
+  const beside = (r: Region, h: { x: number; y: number }, d: number): number => {
+    const off = (q: number): number => Math.hypot((q % SW) - h.x, ((q / SW) | 0) - h.y);
+    const free = r.tiles.filter(empty), close = free.filter((q) => off(q) <= d);
+    if (close.length) return rng.pick(close);
+    return free.length ? free.reduce((a, b) => (off(b) < off(a) ? b : a)) : r.tiles[0];
+  };
   /** 한 곳에 용의자 guns 명과 인질 hostages 명을 놓는다. 인질은 용의자 곁(붙들린 사람은 바로 옆)에 둔다 */
   const group = (r: Region, guns: number, hostages: number, hall: boolean): void => {
     const hs = [];
     for (let k = 0; k < guns; k++) {
-      // 홀에서는 정문에서 떨어진 안쪽에 선다
-      const i = freeTileIn(s, r, rng, (q) => taken(q) || (hall && ((q / SW) | 0) > 8));
+      // 홀에서는 정문에서 떨어진 안쪽에 선다. 붙들 인질이 설 빈 칸이 바로 곁에 있는 자리여야 한다
+      const i = freeTileIn(s, r, rng, (q) => taken(q) || (hall && ((q / SW) | 0) > 8) || !AROUND.some((d) => empty(q + d) && s.region[q + d] === r.id));
       const h = addHostile(s, i % SW, (i / SW) | 0, 'gun', ag(rng.range(0.5, 0.75) - k * 0.06), sk(rng.range(0.4, 0.65)), false, Infinity);
       h.facing = Math.PI / 2; h.deadline = deadline + (s.hostiles.length - 1) * rng.range(12, 26);
       h.retreated = true;      // 자리를 지킨다: 진입이 시작돼도 인질을 끌고 다른 방으로 옮기지 않는다 (옮기면 안쪽 방의 문이 열려 버린다)
@@ -158,7 +168,7 @@ function buildSiege(sim: Sim, I: Incident, rng: Rng): Scene {
     }
     for (let k = 0; k < hostages; k++) {
       const h = hs[k % hs.length], held = k < hs.length;
-      const j = freeTileIn(s, r, rng, near(h, held ? 1.6 : 2.6));
+      const j = beside(r, h, held ? 1.6 : 2.6);
       const c = addCas(s, j % SW, (j / SW) | 0, 'mobile', rng.range(85, 100), 0, 0.05, { hostage: true });
       if (held) h.hostageId = c.id;
     }

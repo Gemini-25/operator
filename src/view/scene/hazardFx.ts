@@ -172,15 +172,15 @@ export function drawFallRing(g: G, sim: Sim, s: Scene, ts: number, alpha: number
 }
 
 // ───────────────────────── 가스가 찬 범위 ─────────────────────────
-/** 짙은 가스 경계(관찰자 시점, 새는 밸브가 있을 때): 폭발 판정 칸(실내 smoke > 0.6)의 경계를 흐르는 연두 점선으로. 10칸 이상이면 표지를 돌려준다 */
+/** 짙은 가스 경계(관찰자 시점): 폭발 위험 칸(X6 — 폭발 하한을 넘은 구름, 위험 상태가 없으면 실내 smoke > 0.6)의 경계를 흐르는 연두 점선으로. 위험하면 표지를 돌려준다 */
 export function drawGasEdge(g: G, ts: number, timeMs: number, gv: GasView, mini: boolean): HazardLabel[] {
-  if (mini || !gv.leaking || !gv.edges.length) return [];
+  if (mini || (!gv.leaking && !gv.danger) || !gv.edges.length) return [];      // (X6) 밸브를 잠근 뒤에도 남은 폭발 하한 구름은 그린다
   g.save();
   g.beginPath(); for (let e = 0; e < gv.edges.length; e += 4) { g.moveTo(gv.edges[e] * ts, gv.edges[e + 1] * ts); g.lineTo(gv.edges[e + 2] * ts, gv.edges[e + 3] * ts); }
   g.strokeStyle = 'rgba(8,13,18,0.5)'; g.lineWidth = Math.max(1.5, ts * 0.05) + 2; g.setLineDash([]); g.stroke();
   g.strokeStyle = '#d6f06a'; g.lineWidth = Math.max(1.5, ts * 0.05); g.setLineDash([ts * 0.24, ts * 0.16]); g.lineDashOffset = -timeMs / 90; g.stroke();
   g.restore();
-  return gv.dense >= 10 ? [{ x: (gv.cx + 0.5) * ts, y: (gv.cy + 0.5) * ts, text: '가스 고임 — 폭발 위험', color: '#ff5d5d' }] : [];
+  return gv.danger ? [{ x: (gv.cx + 0.5) * ts, y: (gv.cy + 0.5) * ts, text: gv.label, color: '#ff5d5d' }] : [];
 }
 
 // ───────────────────────── 되살아난 불 ─────────────────────────

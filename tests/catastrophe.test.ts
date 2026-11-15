@@ -33,7 +33,7 @@ import { agentHealth, tickScene } from '../src/sim/field/sceneManager';
 import { closeIncident, createIncident } from '../src/sim/incidents';
 import type { Rng } from '../src/sim/rng';
 import { T } from '../src/sim/types';
-import type { CatState, Incident, IncidentType, Scene } from '../src/sim/types';
+import type { CatState, Incident, IncidentType, OpsState, Prop, Scene } from '../src/sim/types';
 
 // ───────────────────────── 도움 함수 ─────────────────────────
 interface Made { sim: Sim; I: Incident; s: Scene }
@@ -422,41 +422,68 @@ describe('X6 단계 1: 틱은 계산만 한다 — 손 계산', () => {
     for (let t = 0; t < 10; t++) stepCat(k, c);
     expect(c.integ[rid]).toBe(v2);      // 더 깎이지도, 다시 오르지도 않는다
   });
-  it('용기의 열: 곁의 불이 달구고(안전밸브 단계가 한계보다 먼저), 물을 맞으면 오르지 않고, 불이 꺼지면 식는다', () => {
-    const m = find('X6-G', 'fire', 'std', (q) => q.s.props.some((p) => p.kind === 'gas'));
-    m.s.fire.fill(0); m.s.wet.fill(0);
-    const c = catOf(m.sim, m.s)!;
-    const p = m.s.props.find((q) => q.vessel === 'cylinder')!;
-    const side = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => (p.y + dy) * m.s.w + p.x + dx)[0];
-    let ventAt = -1, fullAt = -1;
-    for (let t = 1; t <= 80; t++) {
-      m.s.fire.fill(0); m.s.fire[side] = 0.8;      // 바로 옆 칸 하나의 불을 0.8 로 유지한다 (자기 칸의 1.25배를 피한다)
-      stepCat(m, c);
-      if (ventAt < 0 && p.heatLoad! >= CAT.VENT_AT) ventAt = t;
-      if (fullAt < 0 && p.heatLoad! >= 1) fullAt = t;
+  it('용기의 열: 곁의 불이 달구고(안전밸브 단계가 한계보다 먼저) 한계에서 터진다(§10-1 — 단계 4). 물을 맞으면 오르지 않고, 불이 꺼지면 식는다', () => {
+    const fresh = (): { m: Made; c: CatState; p: Prop; side: number } => {
+      const m = find('X6-G', 'fire', 'std', (q) => q.s.props.some((p) => p.kind === 'gas'));
+      m.s.fire.fill(0); m.s.wet.fill(0);
+      const c = catOf(m.sim, m.s)!;
+      const p = m.s.props.find((q) => q.vessel === 'cylinder')!;
+      const side = [[1, 0], [-1, 0], [0, 1], [0, -1]].map(([dx, dy]) => (p.y + dy) * m.s.w + p.x + dx)[0];
+      return { m, c, p, side };
+    };
+    {
+      const { m, c, p, side } = fresh();
+      let ventAt = -1, fullAt = -1;
+      for (let t = 1; t <= 80 && !p.exploded; t++) {
+        m.s.fire.fill(0); m.s.fire[side] = 0.8;      // 바로 옆 칸 하나의 불을 0.8 로 유지한다 (자기 칸의 1.25배를 피한다)
+        stepCat(m, c);
+        if (ventAt < 0 && p.heatLoad! >= CAT.VENT_AT) ventAt = t;
+        if (fullAt < 0 && p.heatLoad! >= 1) fullAt = t;
+      }
+      const rate = CAT.VESSEL_HEAT.cylinder * 0.8 * p.heatK!;
+      expect(ventAt).toBe(Math.ceil(CAT.VENT_AT / rate - 1e-6));
+      expect(fullAt).toBe(Math.ceil(1 / rate - 1e-6));
+      expect(ventAt).toBeLessThan(fullAt);
+      expect(fullAt).toBeGreaterThanOrEqual(20); expect(fullAt).toBeLessThanOrEqual(80);
+      expect(p.heatLoad).toBe(1);      // 넘치지 않는다
+      expect(p.exploded).toBe(true);      // 한계에 닿은 그 초에 터진다 (단계 4)
+      expect(c.vesselN).toBe(1);
+      const rec = m.I.problems.find((q) => q.detail === '보관 중이던 가스 용기 폭발')!;
+      expect(rec.code).toBe('HIDDEN_HAZARD');      // 지휘관이 없다 — 몰랐던 위험
+      expect(m.sim.events[rec.eventId].text).toBe('폭발! 불길에 달궈진 가스 용기가 터졌습니다.');
+      // 둘레 2.3칸의 연료 칸에 불, 폭발 그림 꼬리표, 현장 전원이 들을 소리
+      expect(m.s.fx.some((f) => f.kind === 'boom' && f.c?.src === 'tank' && f.c?.r === 3.6)).toBe(true);
+      const msg = m.s.radio.find((q) => q.eventId === rec.eventId)!;
+      expect(msg.facts.some((f) => f.type === 'haz' && f.id === p.id && f.value.active === false)).toBe(true);
+      expect(msg.facts.some((f) => f.type === 'sign' && f.id === SIGN_BASE.vessel + p.id && f.value.level === 0 && f.value.down)).toBe(true);
+      let lit = 0; for (let y = p.y - 2; y <= p.y + 2; y++) for (let x = p.x - 2; x <= p.x + 2; x++) { const j = y * m.s.w + x; if (Math.hypot(x - p.x, y - p.y) <= 2.3 && m.s.fuel[j] > 0 && m.s.fire[j] >= 0.85) lit++; }
+      expect(lit).toBeGreaterThan(0);
+      // 터진 용기는 다시 터지지 않는다
+      for (let t = 0; t < 5; t++) { m.s.fire[side] = 0.8; stepCat(m, c); }
+      expect(c.vesselN).toBe(1);
     }
-    const rate = CAT.VESSEL_HEAT.cylinder * 0.8 * p.heatK!;
-    expect(ventAt).toBe(Math.ceil(CAT.VENT_AT / rate - 1e-6));
-    expect(fullAt).toBe(Math.ceil(1 / rate - 1e-6));
-    expect(ventAt).toBeLessThan(fullAt);
-    expect(fullAt).toBeGreaterThanOrEqual(20); expect(fullAt).toBeLessThanOrEqual(80);
-    expect(p.heatLoad).toBe(1);      // 넘치지 않는다
-    expect(p.exploded).toBeFalsy();      // 단계 1 은 터뜨리지 않는다
-    // 불이 꺼지면 초당 0.012 씩 식는다
-    m.s.fire.fill(0);
-    for (let t = 0; t < 10; t++) stepCat(m, c);
-    expect(p.heatLoad).toBeCloseTo(1 - 10 * CAT.VESSEL_IDLE, 5);
-    // 매초 물을 뿌리면 같은 불 곁에서도 달궈지지 않는다
-    p.heatLoad = 0;
-    let peakHeat = 0;
-    for (let t = 1; t <= 80; t++) {
-      m.s.fire.fill(0); m.s.fire[side] = 0.8;
-      applyWater(m.s, p.x, p.y, 0.3);
-      m.s.fire[side] = 0.8;
-      stepCat(m, c);
-      peakHeat = Math.max(peakHeat, p.heatLoad!);
+    {
+      // 불이 꺼지면 초당 0.012 씩 식는다
+      const { m, c, p, side } = fresh();
+      for (let t = 0; t < 20; t++) { m.s.fire.fill(0); m.s.fire[side] = 0.8; stepCat(m, c); }
+      const h0 = p.heatLoad!;
+      expect(h0).toBeGreaterThan(0.2);
+      m.s.fire.fill(0);
+      for (let t = 0; t < 10; t++) stepCat(m, c);
+      expect(p.heatLoad).toBeCloseTo(h0 - 10 * CAT.VESSEL_IDLE, 5);
+      // 매초 물을 뿌리면 같은 불 곁에서도 달궈지지 않는다 (§10-2 ③ — 폭발 없음)
+      p.heatLoad = 0;
+      let peakHeat = 0;
+      for (let t = 1; t <= 80; t++) {
+        m.s.fire.fill(0); m.s.fire[side] = 0.8;
+        applyWater(m.s, p.x, p.y, 0.3);
+        m.s.fire[side] = 0.8;
+        stepCat(m, c);
+        peakHeat = Math.max(peakHeat, p.heatLoad!);
+      }
+      expect(peakHeat).toBeLessThan(0.3);
+      expect(p.exploded).toBeFalsy();
     }
-    expect(peakHeat).toBeLessThan(0.3);
   });
   it('가스: 실내 칸에만 있고, 가스 칸끼리만 주고받으며(합이 보존된다) 벽 틈으로 초당 0.4% 가 샌다', () => {
     const m = make('X6-GS1', 'hazmat', 'std');
@@ -515,7 +542,7 @@ describe('X6 단계 1: 틱은 계산만 한다 — 손 계산', () => {
     stepCat(m, c);
     expect(c.cloudSince).toBe(-1);
     expect(gasClouds(c, m.s)).toEqual([]);
-    expect(v.ignited).toBeFalsy();      // 단계 1 은 터뜨리지 않는다
+    expect(v.ignited).toBeFalsy();      // 점화원이 없으면 터지지 않는다 (불·충격이 없고, 막 생긴 구름에는 스파크도 없다 — 나이 0)
   });
   it('전소 판정: 건물 칸 위의 연료 칸이 70% 넘게 타면 그 시각에 한 번 BURNOUT 을 남기고 건물 상태를 지도에 적는다 (단계 3)', () => {
     const { m, c } = quiet('X6-B1');
@@ -551,24 +578,32 @@ describe('X6 단계 1: 틱은 계산만 한다 — 손 계산', () => {
 });
 
 // ───────────────────────── 세계 — 구조 (단계 3) ─────────────────────────
-/** X6 가 남긴 기록의 수 (현장별): 구획 붕괴 · 전체 붕괴 · 전소 */
-function x6Count(I: Incident): { partial: number; total: number; burnout: number } {
-  let partial = 0, total = 0, burnout = 0;
+/** X6 의 폭발 기록 문구 (HIDDEN_HAZARD 로 남을 때 — 지휘관이 몰랐던 위험): 가스 구름 · 용기 넷 · (단계 9) 분진 */
+const X6_BOOM = /^(누출된 가스 폭발 — |보관 중이던 가스 용기 폭발$|화학 드럼 파열$|CNG 버스 가스 용기 폭발$|항공유 폭발$|분진 폭발)/;
+/** X6 가 남긴 기록의 수 (현장별): 구획 붕괴 · 전체 붕괴 · 전소 · 폭발 (EXPLOSION 전부 + X6 문구의 HIDDEN_HAZARD) */
+function x6Count(I: Incident): { partial: number; total: number; burnout: number; boom: number } {
+  let partial = 0, total = 0, burnout = 0, boom = 0;
   for (const p of I.problems) {
     if (p.code === 'BURNOUT') burnout++;
     else if (p.code === 'STRUCT_COLLAPSE') { if (p.detail.startsWith('건물 전체 붕괴')) total++; else partial++; }
+    else if (p.code === 'EXPLOSION' || (p.code === 'HIDDEN_HAZARD' && X6_BOOM.test(p.detail))) boom++;
   }
-  return { partial, total, burnout };
+  return { partial, total, burnout, boom };
 }
-/** §10-8 가짜 연출 없음 (구조 쪽): STRUCT_COLLAPSE 기록 = 하나씩 무너진 구획 수 + 전체 붕괴 수, BURNOUT 은 전소 판정이 난 실제 건물 현장에 정확히 하나, 닫힌 뒤에는 0건 */
-function checkHonest(sim: Sim): { partial: number; total: number; burnout: number } {
-  const sum = { partial: 0, total: 0, burnout: 0 };
+/**
+ * §10-8 가짜 연출 없음: STRUCT_COLLAPSE 기록 = 하나씩 무너진 구획 수 + 전체 붕괴 수, BURNOUT 은 전소 판정이 난 실제 건물 현장에 정확히 하나,
+ * X6 의 폭발 기록 = 현장의 c.gasN + c.vesselN + c.dustN (소품 깃발로 세지 않는다), 닫힌 뒤에는 0건
+ */
+function checkHonest(sim: Sim): { partial: number; total: number; burnout: number; boom: number } {
+  const sum = { partial: 0, total: 0, burnout: 0, boom: 0 };
   for (const I of sim.incidents) {
     const s = sim.scenes[I.id];
     const n = x6Count(I);
-    sum.partial += n.partial; sum.total += n.total; sum.burnout += n.burnout;
+    sum.partial += n.partial; sum.total += n.total; sum.burnout += n.burnout; sum.boom += n.boom;
     const c = s?.cat;
-    if (!c) { expect(n.partial + n.total + n.burnout, I.code).toBe(0); continue; }
+    if (!c) { expect(n.partial + n.total + n.burnout + n.boom, I.code).toBe(0); continue; }
+    expect(n.boom, I.code).toBe(c.gasN + c.vesselN + c.dustN);
+    if (I.phase === 'closed') for (const p of I.problems) if (p.code === 'EXPLOSION' || (p.code === 'HIDDEN_HAZARD' && X6_BOOM.test(p.detail))) expect(p.t, I.code).toBeLessThanOrEqual(I.closedAt + 1e-9);
     const fallen = s!.regions.filter((r) => r.indoor && c.fallen[r.id]).length;
     if (c.totalAt < 0) { expect(n.partial, I.code).toBe(fallen); expect(n.total, I.code).toBe(0); }
     else { expect(n.total, I.code).toBe(1); expect(n.partial, I.code).toBeLessThanOrEqual(fallen); }
@@ -840,6 +875,216 @@ describe('X6 단계 3: 깔린 대원 (§10-12)', () => {
   });
 });
 
+// ───────────────────────── 세계 — 폭발 (단계 4) ─────────────────────────
+/** 그 소품이 있는 실내 구획 (소품 칸이 구역 밖이면 맞닿은 실내 구역) */
+function propRegion(s: Scene, p: Prop): number {
+  const i = p.y * s.w + p.x;
+  for (const j of [i, i + 1, i - 1, i + s.w, i - s.w]) { const r = s.region[j]; if (r >= 0 && s.regions[r].indoor) return r; }
+  return -1;
+}
+const gasMax = (c: CatState): number => { let v = 0; for (const x of c.gas!) if (x > v) v = x; return v; };
+
+describe('X6 단계 4: 세계 — 가스가 쌓이고 점화원이 닿으면 터진다 (§10-1·§10-2 ②)', () => {
+  const leaky = (prefix: string): Made => find(prefix, 'hazmat', 'std', (q) => q.s.props.some((p) => p.kind === 'valve' && (p.leakRate ?? 0) >= 0.8));
+  it('밸브 곁 방에 불을 두면 400초 안에 누출된 가스가 폭발하고 밸브가 불붙는다 — 기록이 먼저, 그 기록이 사람 피해의 원인이다', () => {
+    const m = leaky('X6-E1'), s = m.s;
+    const v = s.props.find((p) => p.kind === 'valve' && (p.leakRate ?? 0) >= 0.8)!;
+    const vr = propRegion(s, v);
+    // 밸브 곁 방(이웃한 방)의 연료가 있는 칸 셋에 불 0.6. 밸브 방 자체에 불을 두면 센 불이 그 방의 창을 깨뜨려 가스가 빠져나가 구름이 생기지 않는다(방치 시험)
+    const fuelFar = (k: number): number[] => s.regions[k].tiles.filter((i) => s.fuel[i] > 0 && Math.hypot((i % s.w) - v.x, ((i / s.w) | 0) - v.y) > 2);
+    const r = regionNbrs(s)[vr].find((k) => s.regions[k].kind === 'room' && fuelFar(k).length >= 3)!;
+    expect(r).toBeGreaterThanOrEqual(0);
+    const spots = fuelFar(r).slice(0, 3);
+    expect(spots.length).toBe(3);
+    for (const i of spots) s.fire[i] = 0.6;
+    const q = addCas(s, v.x, v.y, 'immobile', 90, 0, 0.1);
+    q.x = s.regions[r].cx; q.y = s.regions[r].cy;
+    let boom = -1;
+    for (let k = 0; k < 400 * 5 && boom < 0; k++) {
+      m.sim.tick++; m.sim.t = m.sim.tick * m.sim.dt; tickScene(m.sim, s);
+      if (s.cat!.gasN > 0) boom = m.sim.t;
+    }
+    expect(boom).toBeGreaterThan(0);
+    const rec = m.I.problems.find((p) => (p.code === 'EXPLOSION' || p.code === 'HIDDEN_HAZARD') && p.detail.startsWith('누출된 가스 폭발 — '))!;
+    expect(rec).toBeTruthy();
+    expect(rec.code).toBe('HIDDEN_HAZARD');      // 지휘관이 없다 — 몰랐던 위험
+    expect(v.ignited).toBe(true);
+    expect(m.sim.events[rec.eventId].text).toMatch(/^폭발! .*에 고여 있던 가스에 불이 붙었습니다\.$/);
+    expect(s.fx.some((f) => f.kind === 'boom' && f.c?.src === 'gas')).toBe(true);
+    checkHonest(m.sim);
+    // 구름은 타 버렸다 (구름 칸 0, 나머지 0.4배) — 터진 직후 폭발 하한을 넘은 칸이 없다
+    expect(gasClouds(s.cat!, s).filter((cl) => cl.length >= CAT.CLOUD_MIN).length).toBe(0);
+    const hit = q.injuries?.find((j) => j.cause === 'blast');      // 폭발에 다쳤다면 그 원인은 폭발 기록이다 ({ ev } — 기록이 먼저)
+    if (hit) expect(hit.ev).toBe(rec.eventId);
+  });
+  it('불이 없어도 400초 안에 폭발 하한을 넘은 구름(셋 이상 이어진 칸)이 생긴다. 밸브를 30초에 잠그면 400초 동안 터지지 않고 가스가 줄어든다', () => {
+    const m = leaky('X6-E2');
+    let cloud = -1;
+    for (let k = 0; k < 400 * 5 && cloud < 0; k++) {
+      m.sim.tick++; m.sim.t = m.sim.tick * m.sim.dt; tickScene(m.sim, m.s);
+      if (m.s.cat && gasClouds(m.s.cat, m.s).some((cl) => cl.length >= CAT.CLOUD_MIN)) cloud = m.sim.t;
+    }
+    expect(cloud).toBeGreaterThan(0);
+    const n = leaky('X6-E2');
+    runAlone(n.sim, n.s, 30);
+    for (const p of n.s.props) if (p.kind === 'valve') p.mitigated = true;
+    runAlone(n.sim, n.s, 30);
+    const g60 = gasMax(n.s.cat!);
+    runAlone(n.sim, n.s, 340);
+    expect(n.s.cat!.gasN).toBe(0);
+    expect(n.I.problems.some((p) => p.detail.startsWith('누출된 가스 폭발'))).toBe(false);
+    expect(gasMax(n.s.cat!)).toBeLessThan(g60);
+  });
+  it('폭발의 크기는 구름 칸 수로 정한다 (손 계산): 반경 2.0 + 0.55√N (2.6~6), 피해 18 + 4.5√N (24~55). 반경 안의 잠긴 문이 날아가고, 지휘관이 알았으면 EXPLOSION', () => {
+    const m = leaky('X6-E3'), s = m.s, c = catOf(m.sim, s)!;
+    const v = s.props.find((p) => p.kind === 'valve' && (p.leakRate ?? 0) >= 0.8)!;
+    const r = propRegion(s, v);
+    const cloud = s.regions[r].tiles.filter((i) => isIndoor(s.tiles[i]) && s.tiles[i] !== T.DOOR).slice(0, 16);
+    c.gas!.fill(0);
+    for (const i of cloud) c.gas![i] = 1.5;
+    // 지휘관: 그 밸브가 샌다는 것을 안다
+    const cmd = agentAt(m, m.sim.responders.find((q) => q.dept === 'fire')!.id, s.staging.x, s.staging.y);
+    cmd.isCommander = true; s.commanderRid = cmd.rid; s.agents.push(cmd);
+    cmd.beliefs.merge(mkFact('haz', v.id, { kind: 'leak', active: true, x: v.x, y: v.y }, '시험', m.sim.t, 1, true, ''));
+    // 잠긴 문 하나를 구름 곁에
+    const door = s.props.find((p) => p.kind === 'door' && Math.hypot(p.x - s.regions[r].cx, p.y - s.regions[r].cy) <= 4);
+    if (door) { door.locked = true; door.blocking = true; door.open = false; s.propAt[door.y * s.w + door.x] = door.id; }
+    s.fire[cloud[0]] = 0.5;      // 점화원: 구름 칸의 불
+    const N = gasClouds(c, s).find((cl) => cl.indexOf(cloud[0]) >= 0)!.length;      // 점화된 구름의 칸 수 (한 걸음 확산해도 1.5 의 칸은 하한 위에 남는다)
+    stepCat(m, c);
+    expect(c.gasN).toBe(1);
+    const rec = m.I.problems.find((p) => p.detail.startsWith('누출된 가스 폭발 — '))!;
+    expect(rec.code).toBe('EXPLOSION');
+    expect(rec.detail).toBe('누출된 가스 폭발 — 불길이 가스에 닿음');
+    const fx = s.fx.find((f) => f.kind === 'boom' && f.c?.src === 'gas')!;
+    expect(fx.c!.r).toBeCloseTo(Math.min(6, Math.max(2.6, 2.0 + 0.55 * Math.sqrt(N))), 6);
+    if (door && Math.hypot(door.x - (cloud[0] % s.w), door.y - ((cloud[0] / s.w) | 0)) <= fx.c!.r!) { expect(door.open).toBe(true); expect(door.locked).toBe(false); expect(s.propAt[door.y * s.w + door.x]).toBe(-1); }
+    expect(v.ignited).toBe(true);
+    for (const i of cloud) expect(c.gas![i]).toBe(0);
+  });
+  it('가스 폭발 현장(collapse/gasblast)은 밸브가 있는 방이 처음부터 가스로 차 있다 (결정적 — 난수 없음)', () => {
+    const m = make('X6-E4', 'collapse', 'gasblast');
+    const c = catOf(m.sim, m.s)!;
+    const v = m.s.props.find((p) => p.kind === 'valve')!;
+    const r = propRegion(m.s, v);
+    expect(r).toBeGreaterThanOrEqual(0);
+    for (const i of m.s.regions[r].tiles) if (isIndoor(m.s.tiles[i])) expect(c.gas![i]).toBeGreaterThanOrEqual(CAT.GASBLAST_INIT);
+    expect(peek(m.sim.rng)).toBe(peek(make('X6-E4', 'collapse', 'gasblast').sim.rng));
+  });
+  it('도시가스 공급 차단: 요청(지휘 상태)한 뒤 90~150초에 한 번만 살아 있는 밸브를 모두 잠그고, 차단 완료 사실을 현장 전원에게 알린다 (밸브마다 알리지 않는다)', () => {
+    const m = leaky('X6-E5'), s = m.s, c = catOf(m.sim, s)!;
+    const asked = m.sim.t;
+    s.ops = { utilityAsked: asked } as unknown as OpsState;      // 지휘 쪽(단계 5)이 요청한 것과 같다 — 세계는 이 칸만 읽는다
+    let done = -1;
+    for (let k = 0; k < 200 && done < 0; k++) { stepCat(m, c); if (c.utilityAt === -2) done = m.sim.t; }
+    expect(done - asked).toBeGreaterThanOrEqual(90 - 1);
+    expect(done - asked).toBeLessThanOrEqual(150 + 1);
+    for (const p of s.props) if (p.kind === 'valve') expect(p.mitigated || p.ignited).toBe(true);
+    const e = m.sim.events.filter((q) => q.text === '도시가스사: 공급 차단 완료 — 누출이 멈춥니다.');
+    expect(e.length).toBe(1);
+    const msg = s.radio.find((q) => q.eventId === e[0].id)!;
+    expect(msg.to).toBe(-1);
+    expect(msg.facts.length).toBe(1);
+    expect(msg.facts[0].type).toBe('sign'); expect(msg.facts[0].id).toBe(SIGN_BASE.utility); expect(msg.facts[0].value.what).toBe('utility');
+    for (let k = 0; k < 30; k++) stepCat(m, c);
+    expect(m.sim.events.filter((q) => q.text.startsWith('도시가스사')).length).toBe(1);
+  });
+});
+
+describe('X6 단계 4: 세계 — 용기·차량·드럼통 (§2.6·§4.4)', () => {
+  /** 차량 둘레(차체 1칸 안)에 불 v 를 둔다 */
+  const ring = (s: Scene, p: Prop, v: number): void => {
+    for (let y = p.y - 1; y <= p.y + p.h; y++) for (let x = p.x - 1; x <= p.x + p.w; x++) { if (x < 0 || y < 0 || x >= s.w || y >= s.h) continue; const j = y * s.w + x; if (s.fuel[j] <= 0) s.fuel[j] = 0.5; s.fire[j] = v; }
+  };
+  it('일반 버스(CNG): 불길에 싸이면 열이 쌓여 터지고, 차 안의 사람이 그 폭발로 다친다', () => {
+    const m = find('X6-V1', 'traffic', 'bus', (q) => q.s.props.some((p) => p.vessel === 'cng' || (p.kind === 'vehicle' && p.bus && !p.skin)));
+    const c = catOf(m.sim, m.s)!;
+    const bus = m.s.props.find((p) => p.vessel === 'cng')!;
+    const inside = m.s.casualties.filter((q) => q.inVehicle === bus.id && !q.dead);
+    const hp0 = inside.map((q) => q.health);
+    let t = 0;
+    for (; t < 200 && !bus.exploded; t++) { ring(m.s, bus, 1); stepCat(m, c); }
+    expect(bus.exploded).toBe(true); expect(bus.ignited).toBe(true);
+    const rate = CAT.VESSEL_HEAT.cng * 1.25 * bus.heatK!;
+    expect(t).toBeLessThanOrEqual(Math.ceil(1 / (CAT.VESSEL_HEAT.cng * 1.0 * bus.heatK!)) + 1);
+    expect(t).toBeGreaterThanOrEqual(Math.floor(1 / rate) - 1);
+    const rec = m.I.problems.find((p) => p.detail === 'CNG 버스 가스 용기 폭발')!;
+    expect(rec).toBeTruthy();
+    expect(m.sim.events[rec.eventId].text).toBe('폭발! 불길에 달궈진 CNG 용기가 터졌습니다.');
+    inside.forEach((q, k) => { if (!q.dead) { expect(q.health).toBeLessThan(hp0[k]); expect(q.causeEvent).toBe(rec.eventId); } });
+    expect(c.vesselN).toBe(1);
+    expect(m.s.fx.some((f) => f.kind === 'boom' && f.c?.src === 'cng')).toBe(true);
+  });
+  it('비행기 가운데 동체(항공유)도 터지고 둘레 땅에 연료가 번진다. 동체 기수·꼬리는 터지지 않는다', () => {
+    const m = make('X6-V2', 'fire', 'plane');
+    const c = catOf(m.sim, m.s)!;
+    const mid = m.s.props.find((p) => p.vessel === 'jet')!;
+    const ends = m.s.props.filter((p) => p.skin === 'fuselageNose' || p.skin === 'fuselageTail');
+    for (let t = 0; t < 200 && !mid.exploded; t++) { ring(m.s, mid, 1); for (const e of ends) ring(m.s, e, 1); stepCat(m, c); }
+    expect(mid.exploded).toBe(true);
+    expect(m.I.problems.some((p) => p.detail === '항공유 폭발')).toBe(true);
+    for (const e of ends) { expect(e.vessel).toBeUndefined(); expect(e.exploded).toBeFalsy(); }
+    expect(m.sim.placeMarks.size).toBe(0);      // 활주로는 건물이 아니다
+  });
+  it('새는 차량 연료에 곁의 불이 붙는다: 차체 1.5칸 안 불이 0.3 이상이면 누출 진행이 초당 0.015 × 불만큼 더 오른다 (발화는 tickLeaks)', () => {
+    const m = find('X6-V3', 'traffic', 'std', (q) => q.s.props.some((p) => p.kind === 'vehicle' && (p.leakRate ?? 0) > 0 && !p.vessel));
+    const c = catOf(m.sim, m.s)!;
+    const car = m.s.props.find((p) => p.kind === 'vehicle' && (p.leakRate ?? 0) > 0 && !p.vessel)!;
+    m.s.fire.fill(0);
+    const l0 = car.leak ?? 0;
+    stepCat(m, c);
+    expect(car.leak ?? 0).toBe(l0);      // 불이 없으면 X6 는 더하지 않는다
+    const j = car.y * m.s.w + car.x - 1;
+    m.s.fire[j] = 0.5;
+    stepCat(m, c);
+    expect((car.leak ?? 0) - l0).toBeCloseTo(0.015 * 0.5, 6);
+    expect(car.exploded).toBeFalsy();      // 보통 차는 터지지 않는다 (휘발유 탱크는 압력 용기가 아니다)
+  });
+  it('공업 화재의 화학 드럼: 화학 공장 화재에는 불이 없는 방의 빈 바닥에 1~3개 놓이고(길을 막지 않는다), 어느 입구로 처음 만들어도 같다', () => {
+    const sim0 = new Sim('X6-D0');
+    const chem = sim0.city.places.filter((p) => p.kind === 'chemical');
+    expect(chem.length).toBeGreaterThan(0);
+    let found: Made | null = null;
+    for (let k = 0; k < 20 && !found; k++) {
+      const sim = new Sim('X6-D' + k);
+      const I = createIncident(sim, { type: 'fire', variant: 'std', placeId: chem[k % chem.length].id, rng: sim.rng.fork('t') });
+      const s = sim.scenes[I.id]!;
+      if (I.truth.placeKind !== 'chemical') continue;
+      catOf(sim, s);
+      if (s.props.some((p) => p.skin === 'drum')) found = { sim, I, s };
+    }
+    expect(found).not.toBeNull();
+    const { sim, I, s } = found!;
+    const drums = s.props.filter((p) => p.skin === 'drum');
+    expect(drums.length).toBeGreaterThanOrEqual(1); expect(drums.length).toBeLessThanOrEqual(3);
+    for (const d of drums) {
+      expect(d.kind).toBe('gas'); expect(d.vessel).toBe('drum'); expect(d.blocking).toBe(false);
+      expect(d.heatK!).toBeGreaterThanOrEqual(0.8); expect(d.heatK!).toBeLessThanOrEqual(1.25);
+      const i = d.y * s.w + d.x;
+      expect(s.tiles[i]).toBe(T.FLOOR);
+      expect(s.regions[s.region[i]].tiles.some((j) => s.fire[j] > 0)).toBe(false);
+      expect(s.props.filter((p) => p.x === d.x && p.y === d.y).length).toBe(1);
+      expect([1, -1, s.w, -s.w].some((dd) => s.tiles[i + dd] === T.FLOOR && s.propAt[i + dd] < 0)).toBe(true);
+      expect(vesselName(d)).toBe('드럼통');
+    }
+    // 같은 현장을 perceive 입구로 처음 만들어도 같은 드럼통 (catinit 흐름 — 부모를 소비하지 않는다)
+    const sim2 = new Sim(sim.seed);
+    const I2 = createIncident(sim2, { type: 'fire', variant: 'std', placeId: I.truth.placeId, rng: sim2.rng.fork('t') });
+    const s2 = sim2.scenes[I2.id]!;
+    const a = agentAt({ sim: sim2, I: I2, s: s2 }, sim2.responders.find((r) => r.dept === 'fire')!.id, s2.staging.x, s2.staging.y);
+    s2.agents.push(a);
+    perceive(sim2, s2, a);
+    expect(JSON.stringify(s2.props.filter((p) => p.skin === 'drum').map((p) => [p.x, p.y, p.heatK]))).toBe(JSON.stringify(drums.map((p) => [p.x, p.y, p.heatK])));
+    // 터지면 화학 드럼 파열 — 둘레에 유독 연기
+    const c = s.cat!, d = drums[0];
+    d.heatLoad = 1; s.fire[d.y * s.w + d.x + 1] = 0.8;      // 한계의 열 + 곁의 불 (불이 없으면 그 초에 식어 1 아래가 된다)
+    stepCat({ sim, I, s }, c);
+    expect(d.exploded).toBe(true);
+    expect(I.problems.some((p) => p.detail === '화학 드럼 파열')).toBe(true);
+    expect(s.smoke[d.y * s.w + d.x]).toBeGreaterThanOrEqual(0.9 - 1e-6);
+  });
+});
+
 // ───────────────────────── 교대 단위 (단계 2 부터) ─────────────────────────
 describe('X6 단계 2: 교대 — 재현성과 아직 일어나지 않는 일', () => {
   // 단계 1 의 "세계 규칙을 뺀 교대와 같다"는 단계 2 에서 끝났다: 조짐이 사실로 들어오면 무전 문구(기록)가 바뀐다 (perceive 가 조짐을 보므로 규칙을 빼도 같지 않다).
@@ -860,8 +1105,8 @@ describe('X6 단계 2: 교대 — 재현성과 아직 일어나지 않는 일', 
       expect(state(again), cases[q][0]).toBe(state(runs[q]));
     }
   });
-  it('그 교대들에서 조짐은 지휘관에게까지 들어왔고, 세계는 구조를 실제로 무너뜨린다 — 기록·건물 상태·집계가 서로 맞고(§10-8), 아직 아무도 판단하지 않는다(철수·조짐 기록 0)', () => {
-    let signs = 0, cmdSigns = 0, scenes = 0, moved = 0, radio = 0, fell = 0;
+  it('그 교대들에서 조짐은 지휘관에게까지 들어왔고, 세계는 실제로 무너뜨리고 터뜨린다 — 기록·건물 상태·집계가 서로 맞고(§10-8), 아직 아무도 판단하지 않는다(철수·조짐 기록 0)', () => {
+    let signs = 0, cmdSigns = 0, scenes = 0, moved = 0, radio = 0, fell = 0, booms = 0;
     for (const sim of runs) {
       for (const s of sim.scenes) {
         if (!s) continue;
@@ -882,14 +1127,19 @@ describe('X6 단계 2: 교대 — 재현성과 아직 일어나지 않는 일', 
         expect(I.truth.placeId).toBe(id);
         expect(sim.scenes[I.id]!.cat!.struct).toBe(true);
         const k = x6Count(I);
-        expect(k.partial + k.total + k.burnout).toBeGreaterThan(0);
+        expect(k.partial + k.total + k.burnout + k.boom).toBeGreaterThan(0);
       }
-      // (단계 4 가 뒤집는다) 폭발은 아직 예전 규칙(HIDDEN_HAZARD)뿐이고, (단계 5) 아무도 조짐으로 판단하지 않는다: 조짐·철수 기록·지휘 상태(Scene.ops) 없음
-      expect(sim.events.some((e) => e.problem === 'EXPLOSION' || e.problem === 'DANGER_SIGN' || e.problem === 'WITHDRAWAL')).toBe(false);
+      // 폭발(단계 4): 집계가 기록과 맞는다. 예전 규칙의 폭발 문구('누출된 가스에 불이 붙어 폭발')는 더는 없다
+      expect(st.gas + st.vessel + st.dust).toBe(n.boom);
+      expect(st.known).toBe(sim.incidents.reduce((k, I) => k + I.problems.filter((p) => p.code === 'EXPLOSION').length, 0));
+      booms += n.boom;
+      expect(sim.events.some((e) => e.problem === 'HIDDEN_HAZARD' && e.text.startsWith('폭발! 고여 있던 가스에 불이 붙었습니다'))).toBe(false);
+      // (단계 5) 아무도 조짐으로 판단하지 않는다: 조짐·철수 기록·지휘 상태(Scene.ops) 없음
+      expect(sim.events.some((e) => e.problem === 'DANGER_SIGN' || e.problem === 'WITHDRAWAL')).toBe(false);
       expect(sim.report!.catastrophe).toBeUndefined();      // (단계 7) 교대 보고서의 칸
       expect(sim.report!.placeMarks).toBeUndefined();
-      expect([st.gas, st.vessel, st.dust, st.known, st.withdrawals, st.reentries, st.defensive, st.extClose, st.crewCaught, st.signs, st.averted, st.gaps.length])
-        .toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+      expect([st.withdrawals, st.reentries, st.defensive, st.extClose, st.crewCaught, st.signs, st.averted, st.gaps.length])
+        .toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
       expect(st.scenes).toBe(sim.scenes.filter((s) => s && s.cat).length);
       expect(sim.scenes.every((s) => !s || s.ops === undefined)).toBe(true);
     }
@@ -899,6 +1149,7 @@ describe('X6 단계 2: 교대 — 재현성과 아직 일어나지 않는 일', 
     expect(cmdSigns).toBeGreaterThan(0);
     expect(radio).toBeGreaterThan(3);
     expect(fell).toBeGreaterThan(0);
+    expect(booms).toBeGreaterThanOrEqual(0);      // 다섯 교대에 폭발이 없을 수 있다 — 폭발의 시험은 아래 '세계 — 폭발' 묶음이 한다
   });
   it('사건이 닫힌 뒤에는 계산도 멈춘다 (판정 뒤에는 아무것도 일어나지 않는다)', () => {
     const sim = runs[1];

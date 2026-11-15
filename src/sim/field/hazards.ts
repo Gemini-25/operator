@@ -73,22 +73,7 @@ export function tickFire(sim: Sim, s: Scene, I: Incident): void {
   let smoky = burning > 0;
   if (!smoky) { const sm = s.smoke; for (let i = 0; i < n; i++) if (sm[i] !== 0) { smoky = true; break; } }
   if (smoky) smokeSpread(s, w, h);
-  // 가스 용기 폭발 (숨겨진 추가 위험)
-  for (const p of s.props) {
-    if (p.kind !== 'gas' || p.exploded) continue;
-    let hot = s.fire[tidx(s, p.x, p.y)] > 0.3;
-    for (let d = 0; d < 4 && !hot; d++) { const nx = p.x + NB[d * 2], ny = p.y + NB[d * 2 + 1]; if (nx >= 0 && ny >= 0 && nx < w && ny < h && s.fire[ny * w + nx] > 0.6) hot = true; }
-    if (!hot) continue;
-    p.exploded = true;
-    for (let y = Math.max(0, p.y - 2); y <= Math.min(h - 1, p.y + 2); y++) for (let x = Math.max(0, p.x - 2); x <= Math.min(w - 1, p.x + 2); x++) {
-      const j = y * w + x;
-      if (s.fuel[j] > 0 && dist(x, y, p.x, p.y) <= 2.3) s.fire[j] = Math.max(s.fire[j], 0.85);
-    }
-    const ev = raiseProblem(sim, I, 'HIDDEN_HAZARD', '보관 중이던 가스 용기 폭발', { role: 'SYSTEM', actor: '현장', text: '폭발! 건물 내부에 보관되어 있던 가스 용기가 화염에 노출되어 폭발했습니다.', imp: 3, truth: s.arrivedAt < 0 }, false);
-    blast(sim, s, I, p.x, p.y, 3.6, 34, ev);
-    pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.6);
-    noteBoom(lastFx(sim, s, 'boom'), 3.6, 'tank');
-  }
+  // (X6 단계 4) 예전의 '가스 용기 폭발'(불이 닿으면 그 자리에서 터짐)은 지웠다 — 용기의 열이 쌓여야 터진다 (field/catastrophe.ts 의 ruptureVessel)
   // (X6 단계 3) 예전의 '천장 일부 붕괴'(탄 방을 한 번 판정해 s.rng 로 잔해·충격)는 지웠다 — 구조 건전도가 낮아진 구획의 붕괴(field/catastrophe.ts 의 collapseRegion)가 대신한다
   s.burning = burning;
   if (burning === 0 && s.fireOutAt < 0 && s.kind === 'fire' && sim.t - s.startedAt > 5) s.fireOutAt = sim.t;
@@ -682,7 +667,7 @@ export function tickCollapse(sim: Sim, s: Scene, I: Incident): void {
   }
 }
 
-/** 가스 누출: 차단하지 않은 배관은 계속 가스를 내뿜고(연기 격자로 퍼진다), 짙게 고이면 불이 붙어 터질 수 있다 (1초에 한 번). */
+/** 가스 누출: 차단하지 않은 배관은 계속 가스를 내뿜는다(연기 격자로 퍼진다 — 시야·건강 피해용). 폭발은 X6 의 가스 격자가 맡는다(field/catastrophe.ts) (1초에 한 번). */
 export function tickGas(sim: Sim, s: Scene, I: Incident): void {
   let leaking = false;
   for (const p of s.props) {
@@ -717,20 +702,7 @@ export function tickGas(sim: Sim, s: Scene, I: Incident): void {
       c.injuries = noteInjury(c.injuries, 'toxic', 100 - c.health, sim.t, bandOf(c.health), -1, 'world', c.causeEvent); c.bleedCause = 'toxic';      // (H1) 사건 중에 붙는 사람은 만드는 자리가 원인을 적는다
     });
   }
-  let dense = 0;
-  for (let i = 0; i < s.smoke.length; i++) if (s.smoke[i] > 0.6 && isIndoor(s.tiles[i])) dense++;
-  if (dense < 10 || !s.rng.chance(Math.min(0.007, 0.00015 * dense * sim.tune.hazardMul))) return;
-  const p = s.props.find((q) => q.kind === 'valve' && !q.mitigated && !q.ignited)!;
-  p.ignited = true;
-  for (let y = Math.max(0, p.y - 2); y <= Math.min(s.h - 1, p.y + 2); y++) for (let x = Math.max(0, p.x - 2); x <= Math.min(s.w - 1, p.x + 2); x++) {
-    const j = tidx(s, x, y);
-    if (s.fuel[j] > 0 && dist(x, y, p.x, p.y) <= 1.9) s.fire[j] = Math.max(s.fire[j], 0.6);
-  }
-  for (let i = 0; i < s.smoke.length; i++) s.smoke[i] *= 0.45;      // 고여 있던 가스가 타 버린다
-  const ev = raiseProblem(sim, I, 'HIDDEN_HAZARD', '누출된 가스에 불이 붙어 폭발', { role: 'SYSTEM', actor: '현장', text: '폭발! 고여 있던 가스에 불이 붙었습니다. 화재가 발생했습니다.', imp: 3, truth: s.arrivedAt < 0 }, false);
-  blast(sim, s, I, p.x, p.y, 3.8, 32, ev);
-  pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.6);
-  noteBoom(lastFx(sim, s, 'boom'), 3.8, 'gas');
+  // (X6 단계 4) 예전의 폭발 판정(짙은 연기 칸 수로 s.rng)은 지웠다 — 가스만의 격자에 폭발 하한을 넘은 구름이 생기고 점화원이 닿아야 터진다 (field/catastrophe.ts 의 explodeGas)
 }
 
 // ───────────────────────── 배회하는 실종자 ─────────────────────────

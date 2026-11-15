@@ -17,14 +17,16 @@ import { emit, raiseProblem } from '../events';
 import { TYPE_DEFS } from '../incidentTypes';
 import type { Rng } from '../rng';
 import { T } from '../types';
-import type { CatState, Fact, FieldAgent, Incident, PlaceMark, Prop, Region, Scene, SignBelief } from '../types';
-import { dist, fmtSec, pct } from '../util';
+import type { CatState, Fact, FieldAgent, FxInfo, Incident, PlaceMark, Prop, Region, Scene, SignBelief } from '../types';
+import { dist, fmtSec, josa, pct } from '../util';
 import { hasKit, kitLive, kitWorks } from '../crews';
 import { signal } from '../world/consequence';
 import { learn, regionNameAt } from './agents';
 import { mkFact } from './beliefs';
 import { WRECKED } from './damage';
 import { astar, doorAt, isIndoor, los, staticPass, tileOf } from './grid';
+import { lastFx, noteBoom } from './fxlog';
+import { blast, pushFx } from './hazards';
 import { hurtCas, hurtHostile, hurtResponder } from './injury';
 import { addProp } from './kit';
 import { FOOT_FLOOR_EDGE, FOOT_IN, FOOT_SHELL, SIGN_BASE, footprint, regionNbrs } from './ops';
@@ -48,6 +50,7 @@ export const CAT = {
   GAS_SRC: 0.15, GAS_D: 0.12,     // 가스 원천 · 확산
   GAS_DOOR: 0.15, GAS_STAIR: 0.9, // 닫힌 문·계단 너머의 교환 배율
   GAS_SEEP: 0.004, GAS_VENT: 0.12, GAS_MAX: 3,      // 벽 틈으로 새는 몫 · 깨진 창과 열린 바깥문 곁의 환기 · 상한
+  GASBLAST_INIT: 1.0,             // 가스 폭발 현장의 밸브 방에 처음부터 차 있는 가스 (단계 4 — 방치 시험으로 정했다: 0.6 이면 깨진 창의 환기로 구름이 끝내 생기지 않는다)
   LEL: 1.0,                       // 폭발 하한
   CLOUD_MIN: 3,                   // 구름으로 치는 덩어리의 칸 수 (스파크의 나이를 재기 시작한다)
   SPARK_MAX: 0.012, SPARK_AGE: 90,         // 스파크 초당 상한 · 구름이 생긴 뒤 스파크가 다 커지기까지의 초 (단계 4)
@@ -92,17 +95,19 @@ interface CatWork {
   crackN: Int16Array; shoreN: Int16Array;      // 구획별: 살아 있는 균열 수 · 이번에 새로 보강된 균열 수
   propN: number;            // 아래 세 목록을 만든 때의 s.props 길이 — 소품이 늘면(잔해 …) 다시 훑는다
   vessels: Prop[]; cracks: Prop[]; valves: Prop[];      // 용기 · 균열(unstable) · 밸브 (매초 모든 소품을 훑지 않으려고 따로 둔다)
+  leaks: Prop[];            // 연료가 새는 차량 (단계 4 — 곁의 불이 누출 연료에 불을 붙인다)
 }
 /** 소품 목록이 늘었으면 용기·균열·밸브를 다시 고른다 (소품은 지워지지 않고 끝에 붙기만 한다) */
 function syncProps(s: Scene, w: CatWork): void {
   const props = s.props;
   if (props.length === w.propN) return;
-  w.vessels.length = 0; w.cracks.length = 0; w.valves.length = 0;
+  w.vessels.length = 0; w.cracks.length = 0; w.valves.length = 0; w.leaks.length = 0;
   for (let k = 0; k < props.length; k++) {
     const p = props[k];
     if (p.vessel) w.vessels.push(p);
     else if (p.kind === 'unstable') w.cracks.push(p);
     else if (p.kind === 'valve') w.valves.push(p);
+    if (p.kind === 'vehicle' && (p.leakRate ?? 0) > 0) w.leaks.push(p);
   }
   w.propN = props.length;
 }
@@ -138,7 +143,8 @@ export function catOf(sim: Sim, s: Scene): CatState | null {
     if (!v) continue;
     p.vessel = v; p.heatK = init.range(0.8, 1.25); p.heatLoad = 0;
   }
-  // (단계 4) 드럼통 놓기 — 여기, heatK 다음에. (단계 9) 분진 구획 — 그다음에
+  // 드럼통 놓기 (§4.4) — 여기, heatK 다음에 (드럼통의 열 배율은 놓을 때 뽑는다). (단계 9) 분진 구획 — 그다음에
+  if (I.truth.type === 'fire') placeDrums(sim, s, I, init);
   const struct = indoor && !s.outdoor && NO_STRUCT.indexOf(s.variant) < 0;
   // 구조 건전도의 처음 값
   const integ = new Float32Array(R).fill(1);
@@ -177,6 +183,17 @@ export function catOf(sim: Sim, s: Scene): CatState | null {
     causeEv: new Int32Array(R).fill(-1),
   };
   c.bldg = bldgOf(c, s).bldg;
+  // 가스 폭발 현장(collapse/gasblast)은 밸브가 있는 방이 처음부터 가스로 차 있다 (§2.5 끝 — 깨진 창의 환기 때문에 새는 가스만으로는 폭발 하한에 닿지 못한다). 결정적 — 난수 없음
+  if (c.gas && s.kind === 'collapse' && s.variant === 'gasblast') {
+    for (let k = 0; k < props.length; k++) {
+      const p = props[k];
+      if (p.kind !== 'valve' || p.mitigated || p.ignited) continue;
+      const src = sourceTile(s, p), rr = src >= 0 ? s.region[src] : -1;
+      if (rr < 0 || !regs[rr].indoor) continue;
+      const tl = regs[rr].tiles;
+      for (let q = 0; q < tl.length; q++) if (isIndoor(s.tiles[tl[q]]) && c.gas[tl[q]] < CAT.GASBLAST_INIT) c.gas[tl[q]] = CAT.GASBLAST_INIT;
+    }
+  }
   // 바깥 출입문: 바깥 칸(땅·도로·나무·산길)과 맞닿은 문 칸 — 가스의 환기 항이 쓴다
   const extDoor = new Uint8Array(n);
   if (valve) {
@@ -190,12 +207,37 @@ export function catOf(sim: Sim, s: Scene): CatState | null {
   if (valve) { const list: number[] = []; for (let i = 0; i < n; i++) if (foot[i] >= 1) list.push(i); cells = Int16Array.from(list); }
   WORK.set(c, {
     extDoor, kind: valve ? new Uint8Array(n) : extDoor, cells, burnSeen: -1, burnFrac: 0, structBurn: -1, burnR: new Float32Array(R), crackN: new Int16Array(R), shoreN: new Int16Array(R),
-    propN: -1, vessels: [], cracks: [], valves: [],
+    propN: -1, vessels: [], cracks: [], valves: [], leaks: [],
   });
   s.cat = c;
   return c;
 }
 const outside = (t: number): boolean => t === T.GROUND || t === T.ROAD || t === T.TREE || t === T.TRAIL;
+
+/** 화학 드럼이 놓일 확률 (건물 종류별 — 심각도의 hazardMul 을 곱하고 0.95 에서 자른다) */
+const DRUM_P: Record<string, number> = { chemical: 0.9, factory: 0.35, storage: 0.35, warehouse: 0.2, workshop: 0.2 };
+/**
+ * 공업 화재의 화학 드럼 1~3개 (§4.4): 발화실이 아닌 방(불이 없는 방)의 빈 바닥에, 가스 용기처럼 길을 막지 않게 놓는다.
+ * 다른 소품·사람이 있는 칸, 문 칸, 곁에 빈 바닥이 하나도 없는 칸은 뺀다(CLAUDE.md "가구 자리에 소품을 놓을 때"). 난수는 catinit 흐름 — 현장 생성기의 흐름은 건드리지 않는다
+ */
+function placeDrums(sim: Sim, s: Scene, I: Incident, init: Rng): void {
+  const p0 = DRUM_P[I.truth.placeKind ?? ''];
+  if (!p0 || !init.chance(Math.min(0.95, p0 * sim.tune.hazardMul))) return;
+  const n = init.int(1, 3);
+  const rooms = s.regions.filter((r) => r.indoor && r.kind === 'room' && r.tiles.length && !r.tiles.some((i) => s.fire[i] > 0));
+  if (!rooms.length) return;
+  const W = s.w, N = W * s.h, taken = occupied(s), t = s.tiles;
+  const free = (j: number): boolean => j >= 0 && j < N && t[j] === T.FLOOR && s.propAt[j] < 0 && !taken[j];
+  for (let k = 0; k < n; k++) {
+    const r = init.pick(rooms);
+    const cands = r.tiles.filter((i) => free(i) && ((i % W + 1 < W && free(i + 1)) || (i % W > 0 && free(i - 1)) || free(i + W) || free(i - W)));
+    if (!cands.length) continue;
+    const i = init.pick(cands);
+    const p = addProp(s, 'gas', i % W, (i / W) | 0, { vessel: 'drum', skin: 'drum' });
+    p.heatK = init.range(0.8, 1.25); p.heatLoad = 0;
+    taken[i] = 1;
+  }
+}
 
 /** 건물 전체 건전도와 무너진 몫: 서 있는 실내 구획의 칸 수 가중 평균(무너진 구획은 0 으로 센다) · 무너진 구획의 칸 수 몫 */
 export function bldgOf(c: CatState, s: Scene): { bldg: number; fallenShare: number } {
@@ -270,19 +312,37 @@ export function catTick(sim: Sim, s: Scene, I: Incident, c: CatState): void {
     }
     c.shakeSeen = nShake;
   }
-  // 2) (단계 4) 도시가스 차단: s.ops.utilityAsked → c.utilityAt, 그 시각에 살아 있는 밸브를 모두 mitigated 로 + 차단 완료 사실
-  // 3) 가스: 원천 → 확산 → 손실, 구름의 나이. (단계 4) 구름 + 점화원 → explodeGas
-  if (c.gas) gasStep(sim, s, c, w);
-  // 4) 용기의 열. (단계 4) heatLoad ≥ 1 → ruptureVessel, 차량 누출의 불 점화
+  // 2) 도시가스 차단: s.ops.utilityAsked(지휘 상태 — 단계 5 가 요청한다) → c.utilityAt, 그 시각에 살아 있는 밸브를 모두 차단 + 차단 완료 사실
+  if (w.valves.length && c.utilityAt !== -2) utilityStep(sim, s, I, c);
+  // 3) 가스: 원천 → 확산 → 손실, 구름의 나이. 폭발 하한을 넘은 구름은 7) 에서 점화원을 본다
+  const clouds = c.gas ? gasStep(sim, s, c, w) : null;
+  // 4) 용기의 열, 그리고 곁의 불이 새는 연료에 불을 붙인다 (tickLeaks 가 발화를 처리한다)
   if (w.vessels.length) vesselStep(s, w);
+  if (w.leaks.length) leakFire(s, w);
   if (c.struct) {
     // 5) 구조: 구획별 손실, 보강 반영, 건물 건전도, 조짐 단계용 값
     structStep(sim, s, I, c, w);
     // 6) 전소 판정: 건물 칸 위의 연료 칸이 70% 넘게 탔다 — BURNOUT 기록·건물 상태·신호 (§4.6)
     if (c.burntAt < 0 && c.fuel0 >= CAT.BURNOUT_MIN && s.burnedTiles > 0 && burnFracOf(c, s) >= CAT.BURNOUT) burnout(sim, s, I, c);
   }
-  // 7) 일어나는 일: (단계 4) 가스 폭발 → 용기 폭발 → (분진 폭발) → 구획 붕괴 → 전체 붕괴. 여기서 생긴 붕괴는 c.hits 에 남아 다음 초의 가스 점화원이 된다
-  if (c.struct && c.totalAt < 0) fallStep(sim, s, I, c);
+  // 7) 일어나는 일: 가스 폭발 → 용기 폭발 → (단계 9, 선택: 분진 폭발) → 구획 붕괴 → 전체 붕괴. 순서를 지킨다 — 앞의 폭발이 뒤의 붕괴를 앞당긴다
+  //    (폭발의 충격이 건전도를 0.05 아래로 떨어뜨린 구획은 조짐 없이 바로 무너진다). 여기서 생긴 붕괴는 c.hits 에 남아 다음 초의 가스 점화원이 된다
+  let boom = '';
+  if (clouds) for (let k = 0; k < clouds.length; k++) {
+    const cl = clouds[k];
+    if (c.gas![cl[0]] < CAT.LEL) continue;      // 앞의 폭발이 태워 버렸다 (구름 밖의 가스는 0.4배)
+    const at = ignition(sim, s, c, cl, HOW);
+    if (at < 0) continue;
+    explodeGas(sim, s, I, c, cl, at, HOW[0]);
+    boom = '가스 폭발';
+  }
+  for (let k = 0; k < w.vessels.length; k++) {
+    const p = w.vessels[k];
+    if (p.exploded || p.removed || (p.heatLoad ?? 0) < 1) continue;
+    ruptureVessel(sim, s, I, c, p);
+    boom = `${vesselName(p)} 폭발`;
+  }
+  if (c.struct && c.totalAt < 0) fallStep(sim, s, I, c, boom);
   // 8) (단계 9, 선택) 플래시오버
   // 9) 지도 기록: Sim.placeMarks 의 탄 비율·잔해 비율 (건물 상태가 있는 현장만)
   if (c.struct && I.truth.placeId >= 0) {
@@ -296,7 +356,7 @@ export function catTick(sim: Sim, s: Scene, I: Incident, c: CatState): void {
  * 그다음 건물 전체 — 건물 조짐 3(건전도 0.30 아래 또는 무너진 몫 45% 이상)이 6초 넘게 이어지면 초당 0.02 + 0.6 × (0.30 − 건전도) (+0.1 무너진 몫 60% 이상),
  * 건전도 0.12 아래면 바로. 그래서 건물 조짐 3 은 언제나 끝내 무너진다. 구획이 무너지면 건물 값이 바뀌므로 다시 센다.
  */
-function fallStep(sim: Sim, s: Scene, I: Incident, c: CatState): void {
+function fallStep(sim: Sim, s: Scene, I: Incident, c: CatState, boom: string): void {
   const regs = s.regions, rng = catRng(sim, s);
   let fell = false;
   for (let r = 0; r < regs.length; r++) {
@@ -314,7 +374,8 @@ function fallStep(sim: Sim, s: Scene, I: Incident, c: CatState): void {
     if (b.bldg < CAT.TOTAL_BLDG || b.fallenShare >= CAT.TOTAL_SHARE) { if (c.bldgL3Since < 0) c.bldgL3Since = sim.t; } else c.bldgL3Since = -1;
   }
   if (c.bldgL3Since < 0) return;
-  if (b.bldg < CAT.TOTAL_NOW || (sim.t - c.bldgL3Since >= CAT.TOTAL_GRACE && rng.chance(CAT.TOTAL_BASE + CAT.TOTAL_SLOPE * Math.max(0, CAT.TOTAL_BLDG - b.bldg) + (b.fallenShare >= 0.6 ? 0.1 : 0)))) collapseBuilding(sim, s, I, c);
+  if (b.bldg < CAT.TOTAL_NOW) collapseBuilding(sim, s, I, c, boom || undefined);      // 바로 무너진다 — 같은 초에 폭발이 있었으면 그 충격이 원인이다
+  else if (sim.t - c.bldgL3Since >= CAT.TOTAL_GRACE && rng.chance(CAT.TOTAL_BASE + CAT.TOTAL_SLOPE * Math.max(0, CAT.TOTAL_BLDG - b.bldg) + (b.fallenShare >= 0.6 ? 0.1 : 0))) collapseBuilding(sim, s, I, c);
 }
 
 /** 구조 건전도 한 초 (§2.4): 불의 열·보강 안 된 균열이 깎고, 탄 몫이 상한을 내리고, 보강이 조금 되돌린다 */
@@ -407,6 +468,20 @@ function vesselStep(s: Scene, w: CatWork): void {
   }
 }
 
+/**
+ * 차량 연료 누출과 불 (§2.6 끝): 새는 연료에 곁의 불이 붙는다 — 발화 전인 누출 차량의 차체 1.5칸 안 불 최댓값이 0.3 이상이면 누출 진행(leak)을 0.015 × 불만큼 더한다.
+ * 발화(불·기록)는 tickLeaks 가 그대로 한다. 차량은 용기가 아니면 터지지 않는다 (휘발유 탱크는 압력 용기가 아니다)
+ */
+function leakFire(s: Scene, w: CatWork): void {
+  const list = w.leaks;
+  for (let k = 0; k < list.length; k++) {
+    const p = list[k];
+    if (p.mitigated || p.ignited || !p.leakRate) continue;
+    const near = vesselNear(s, p);
+    if (near >= 0.3) p.leak = (p.leak ?? 0) + 0.015 * near;
+  }
+}
+
 /** 가스가 나오는 칸: 밸브 칸이 실내 칸이면 그 칸, 아니면 맞닿은 첫 실내 칸 (없으면 -1) */
 function sourceTile(s: Scene, p: Prop): number {
   const w = s.w, i = p.y * w + p.x, t = s.tiles;
@@ -428,7 +503,7 @@ const holdsGas = (k: number): boolean => k === G_OPEN || k === G_SHUT || k === G
  * 가스는 실내 칸(바닥·문·가구·계단)에만 있고, 가스 칸끼리만 주고받는다(합이 보존된다). 벽 틈으로 조금 새고, 깨진 창·열린 바깥문 곁에서 빠진다.
  * 모든 칸이 0.001 아래이고 살아 있는 밸브가 없으면 건너뛴다.
  */
-function gasStep(sim: Sim, s: Scene, c: CatState, w: CatWork): void {
+function gasStep(sim: Sim, s: Scene, c: CatState, w: CatWork): number[][] | null {
   const g = c.gas!, tmp = c.gasTmp!, props = w.valves;
   let live = false;
   for (let k = 0; k < props.length; k++) {
@@ -443,7 +518,7 @@ function gasStep(sim: Sim, s: Scene, c: CatState, w: CatWork): void {
   if (!live) {
     let any = false;
     for (let q = 0; q < M; q++) if (g[cells[q]] >= 0.001) { any = true; break; }
-    if (!any) { c.cloudSince = -1; return; }      // 새는 밸브도 남은 가스도 없다
+    if (!any) { c.cloudSince = -1; return null; }      // 새는 밸브도 남은 가스도 없다
   }
   for (let q = 0; q < M; q++) {
     const i = cells[q], ti = t[i];
@@ -485,9 +560,10 @@ function gasStep(sim: Sim, s: Scene, c: CatState, w: CatWork): void {
     g[i] = v;
     if (v > peak) peak = v;
   }
-  // 구름의 나이: 폭발 하한을 넘은 칸이 CLOUD_MIN 개 이상 이어져 있는 동안. (단계 4) 여기서 구름마다 점화원을 본다
+  // 구름의 나이: 폭발 하한을 넘은 칸이 CLOUD_MIN 개 이상 이어져 있는 동안. 구름들(큰 것부터)을 돌려준다 — catTick 7) 이 점화원을 본다
   const big = peak >= CAT.LEL ? gasClouds(c, s) : null;
   if (big && big.length && big[0].length >= CAT.CLOUD_MIN) { if (c.cloudSince < 0) c.cloudSince = sim.t; } else c.cloudSince = -1;
+  return big && big.length ? big : null;
 }
 
 /** 폭발 하한을 넘은 칸이 4 이웃으로 이어진 덩어리들 (큰 것부터, 같으면 앞 칸이 먼저인 것부터). 가스가 없는 현장은 빈 배열 */
@@ -940,6 +1016,197 @@ function burnout(sim: Sim, s: Scene, I: Incident, c: CatState): void {
   const ev = raiseProblem(sim, I, 'BURNOUT', `건물 전소 — ${chain}`, { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, causes: [cause], text: '건물이 사실상 전소됐습니다. 남은 골조의 붕괴가 우려됩니다.' }, false);
   markPlace(sim, s, I, c, 'burnt');
   signal(sim, 'catastrophe', { inc: I.id, ev, size: 0, place: I.truth.placeId, data: 2 });
+}
+
+// ───────────────────────── 일어나는 일 — 폭발 (단계 4 — 설계서 §2.5·§2.6·§4.3·§4.4) ─────────────────────────
+// 기록 코드는 지휘관이 그 위험을 알았는가로 가른다 — 알았으면 EXPLOSION, 몰랐으면 HIDDEN_HAZARD(신고에 없던 위험).
+// 세계 규칙이 지휘관의 믿음을 읽는 것은 **기록 코드를 고르는 데만** 쓴다 (판정·보고서의 재료 — 일어나는 일에는 영향이 없다. debrief 와 같은 자격).
+
+/** 지금의 지휘관 (없으면 null) */
+function commanderOf(s: Scene): FieldAgent | null {
+  for (const a of s.agents) if (a.isCommander && a.rid === s.commanderRid && a.status !== 'left') return a;
+  return null;
+}
+/** 문이 날아간다 (§4.3): 반경 안의 문 소품은 열리고 잠금이 풀린다 — 잠겨 막고 있던 문은 길을 비운다 */
+function blowDoors(s: Scene, x: number, y: number, r: number): void {
+  for (const p of s.props) {
+    if (p.kind !== 'door' || p.removed || dist(p.x, p.y, x, y) > r) continue;
+    p.open = true;
+    if (p.locked || p.blocking) { p.locked = false; p.blocking = false; const i = p.y * s.w + p.x; if (s.propAt[i] === p.id) s.propAt[i] = -1; }
+  }
+}
+
+/**
+ * 가스 구름의 점화원 (§2.5) — 위에서부터 하나라도 맞으면 그 칸(점화된 칸)을 돌려준다. 없으면 -1.
+ *   1 불: 구름 칸의 불 ≥ 0.15, 또는 구름 칸의 4 이웃에 불 ≥ 0.3 (확률 없음)
+ *   2 무너짐·충격: 최근 1.2초의 충격 자리(c.hits)가 구름에서 3칸 안 (확률 없음)
+ *   3 알 수 없는 스파크: 구름이 셋 이상이면 초당 min(0.012, 0.0012 × N × hazardMul) × min(1, 나이/90) — 막 생긴 구름에는 거의 없다
+ * how 에 점화원 번호(1·2·3)를 적는다
+ */
+function ignition(sim: Sim, s: Scene, c: CatState, cloud: number[], how: number[]): number {
+  const W = s.w, n = W * s.h, fire = s.fire;
+  for (let q = 0; q < cloud.length; q++) {
+    const i = cloud[q], x = i % W;
+    if (fire[i] >= 0.15) { how[0] = 1; return i; }
+    if ((x + 1 < W && fire[i + 1] >= 0.3) || (x > 0 && fire[i - 1] >= 0.3) || (i + W < n && fire[i + W] >= 0.3) || (i >= W && fire[i - W] >= 0.3)) { how[0] = 1; return i; }
+  }
+  for (let k = 0; k < c.hits.length; k++) {
+    const h = c.hits[k];
+    if (h.t < sim.t - 1.2) continue;
+    let best = -1, bd = 3.0001;
+    for (let q = 0; q < cloud.length; q++) { const i = cloud[q], d = dist(i % W, (i / W) | 0, h.x, h.y); if (d < bd) { bd = d; best = i; } }
+    if (best >= 0) { how[0] = 2; return best; }
+  }
+  const N = cloud.length;
+  if (N < CAT.CLOUD_MIN || c.cloudSince < 0) return -1;
+  const age = sim.t - c.cloudSince;
+  if (!catRng(sim, s).chance(Math.min(CAT.SPARK_MAX, 0.0012 * N * sim.tune.hazardMul) * Math.min(1, age / CAT.SPARK_AGE))) return -1;
+  how[0] = 3;
+  let sx = 0, sy = 0;
+  for (let q = 0; q < N; q++) { sx += cloud[q] % W; sy += (cloud[q] / W) | 0; }
+  sx /= N; sy /= N;
+  let best = cloud[0], bd = 1e9;
+  for (let q = 0; q < N; q++) { const i = cloud[q], d = dist(i % W, (i / W) | 0, sx, sy); if (d < bd) { bd = d; best = i; } }
+  return best;
+}
+const IGNITE_TEXT = ['', '불길이 가스에 닿음', '무너지며 튄 불꽃', '원인 모를 불꽃(전기·정전기)'];
+const HOW: number[] = [0];
+
+/**
+ * 가스 폭발 (§4.3): 폭발 하한을 넘은 구름이 점화된다. 크기는 구름 칸 수 N 으로 — 반경 clamp(2.0 + 0.55√N, 2.6, 6.0), 피해 clamp(18 + 4.5√N, 24, 55).
+ * 구름 칸에 불이 붙고, 구름은 타 버리고(나머지 가스 × 0.4), 반경 안의 문이 날아가고, 가장 가까운 살아 있는 밸브가 불붙는다(누출이 멈춘다).
+ * 돌려주는 값은 기록 id
+ */
+export function explodeGas(sim: Sim, s: Scene, I: Incident, c: CatState, cloud: number[], at: number, how: number): number {
+  const W = s.w, g = c.gas!, N = cloud.length, cx = at % W, cy = (at / W) | 0;
+  const r = Math.min(6, Math.max(2.6, 2.0 + 0.55 * Math.sqrt(N))), dmg = Math.min(55, Math.max(24, 18 + 4.5 * Math.sqrt(N)));
+  // 불붙을 밸브: 구름 무게중심에 가장 가까운 살아 있는 밸브 (이미 차단했거나 도시가스가 끊긴 뒤 남은 구름이면 없다)
+  let sx = 0, sy = 0;
+  for (let q = 0; q < N; q++) { sx += cloud[q] % W; sy += (cloud[q] / W) | 0; }
+  sx /= N; sy /= N;
+  const wk = WORK.get(c)!;
+  let valve: Prop | null = null, vd = 1e9;
+  for (const p of wk.valves) { if (p.mitigated || p.ignited) continue; const d = dist(p.x, p.y, sx, sy); if (d < vd) { vd = d; valve = p; } }
+  // 구름이 든 구획들
+  const regs: number[] = [];
+  for (let q = 0; q < N; q++) { const rg = regionAtTile(s, cloud[q]); if (rg >= 0 && regs.indexOf(rg) < 0) regs.push(rg); }
+  regs.sort((a, b) => a - b);
+  const rg0 = regionAtTile(s, at), where = rg0 >= 0 ? s.regions[rg0].name : '건물 안';
+  // 기록 (먼저 — blast 와 그 안의 hurt* 가 이 ev 를 받는다)
+  const cmd = commanderOf(s);
+  let knew = false;
+  if (cmd) {
+    if (valve && cmd.beliefs.get('haz', valve.id)) knew = true;
+    for (let k = 0; k < regs.length && !knew; k++) { const v = cmd.beliefs.val<SignBelief>('sign', SIGN_BASE.gas + regs[k]); if (v && v.level >= 1) knew = true; }
+  }
+  const ev = raiseProblem(sim, I, knew ? 'EXPLOSION' : 'HIDDEN_HAZARD', `누출된 가스 폭발 — ${IGNITE_TEXT[how]}`,
+    { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `폭발! ${where}에 고여 있던 가스에 불이 붙었습니다.` }, false);
+  c.gasN++;
+  // 구름이 탄다: 구름 칸에 불, 나머지 가스는 0.4배
+  const inC = new Uint8Array(g.length);
+  for (let q = 0; q < N; q++) {
+    const i = cloud[q];
+    inC[i] = 1;
+    if (s.fuel[i] > 0) { if (s.fire[i] < 0.6) s.fire[i] = 0.6; }
+    else { s.fuel[i] = 0.4; s.fire[i] = 0.5; }
+    g[i] = 0;
+  }
+  for (let i = 0; i < g.length; i++) if (!inC[i] && g[i] > 0) g[i] *= 0.4;
+  if (valve) valve.ignited = true;
+  blowDoors(s, cx, cy, r);
+  blast(sim, s, I, cx, cy, r, dmg, ev, 'blast');
+  pushFx(sim, s, 'boom', cx, cy, undefined, undefined, undefined, undefined, 1.6);
+  noteBoom(lastFx(sim, s, 'boom'), r, 'gas');
+  s.staticVersion++;
+  // 현장 전원이 듣는다: 폭발 + 밸브는 불붙었다(지금의 발화와 같은 뜻) + 그 구획들의 가스는 타 버렸다(down)
+  const facts: Fact[] = [signFact(sim, SIGN_BASE.event + c.events++, { kind: 'event', level: 3, region: rg0, x: cx, y: cy, what: 'gas' }, `폭발! ${where}`)];
+  if (valve) facts.push(mkFact('haz', valve.id, { kind: 'leak', active: false, x: valve.x, y: valve.y }, '현장', sim.t, 1, true, '누출 가스 발화'));
+  for (const rg of regs) facts.push(signFact(sim, SIGN_BASE.gas + rg, { kind: 'gas', level: 0, region: rg, x: s.regions[rg].cx, y: s.regions[rg].cy, down: true }, `${s.regions[rg].name} 가스 연소 — 남은 가스 없음`));
+  hearAll(sim, s, ev, facts);
+  markPlace(sim, s, I, c, 'blasted');
+  signal(sim, 'catastrophe', { inc: I.id, ev, x: cx, y: cy, size: r, place: I.truth.placeId, data: 0 });
+  return ev;
+}
+
+/** 용기 종류별 폭발 (§4.4): 반경 · 피해 · 기록 문구 · 그림 꼬리표 */
+const VESSEL_BOOM: Record<string, { r: number; dmg: number; detail: string; src: NonNullable<FxInfo['src']> }> = {
+  cylinder: { r: 3.6, dmg: 34, detail: '보관 중이던 가스 용기 폭발', src: 'tank' },
+  drum: { r: 2.8, dmg: 26, detail: '화학 드럼 파열', src: 'drum' },
+  cng: { r: 3.0, dmg: 30, detail: 'CNG 버스 가스 용기 폭발', src: 'cng' },
+  jet: { r: 3.4, dmg: 32, detail: '항공유 폭발', src: 'jet' },
+};
+/**
+ * 용기 폭발 (§4.4): 열이 1 에 닿은 용기가 터진다. 가스 용기는 둘레 2.3칸 연료 칸에 불 0.85, 화학 드럼은 2칸 안 바닥·가구에 불 0.7 과 유독 연기,
+ * CNG 버스는 차체 둘레에 불 0.8 과 탑승자 피해, 항공유는 동체·날개 쪽 연료 칸에 불 0.9 와 둘레 땅에 번지는 연료. 돌려주는 값은 기록 id
+ */
+export function ruptureVessel(sim: Sim, s: Scene, I: Incident, c: CatState, p: Prop): number {
+  const v = p.vessel ?? 'cylinder', spec = VESSEL_BOOM[v] ?? VESSEL_BOOM.cylinder, W = s.w, H = s.h;
+  const cx = p.x + (p.w - 1) / 2, cy = p.y + (p.h - 1) / 2;
+  const cmd = commanderOf(s);
+  let knew = false;
+  if (cmd) {
+    if (cmd.beliefs.get('haz', p.id)) knew = true;
+    const sv = cmd.beliefs.val<SignBelief>('sign', SIGN_BASE.vessel + p.id);
+    if (sv && sv.level >= 2) knew = true;
+  }
+  const nm = vesselName(p);
+  const ev = raiseProblem(sim, I, knew ? 'EXPLOSION' : 'HIDDEN_HAZARD', spec.detail,
+    { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `폭발! 불길에 달궈진 ${josa(nm, '이/가')} 터졌습니다.` }, false);
+  p.exploded = true;
+  if (p.kind === 'vehicle') p.ignited = true;
+  c.vesselN++;
+  const rng = catRng(sim, s);
+  const x0 = Math.max(0, Math.floor(cx - 4)), x1 = Math.min(W - 1, Math.ceil(cx + 4)), y0 = Math.max(0, Math.floor(cy - 4)), y1 = Math.min(H - 1, Math.ceil(cy + 4));
+  const onBody = (x: number, y: number): boolean => x >= p.x && x < p.x + p.w && y >= p.y && y < p.y + p.h;
+  const nearBody = (x: number, y: number): number => { const dx = x < p.x ? p.x - x : x >= p.x + p.w ? x - (p.x + p.w - 1) : 0, dy = y < p.y ? p.y - y : y >= p.y + p.h ? y - (p.y + p.h - 1) : 0; return Math.hypot(dx, dy); };
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    const j = y * W + x, t = s.tiles[j];
+    if (v === 'cylinder') { if (s.fuel[j] > 0 && dist(x, y, p.x, p.y) <= 2.3 && s.fire[j] < 0.85) s.fire[j] = 0.85; }
+    else if (v === 'drum') {
+      const d = dist(x, y, p.x, p.y);
+      if (d <= 2.0 && (t === T.FLOOR || t === T.FURN)) { if (s.fuel[j] <= 0) s.fuel[j] = 0.5; if (s.fire[j] < 0.7) s.fire[j] = 0.7; }
+      if (d <= 3 && t !== T.WALL && t !== T.VOID && s.smoke[j] < 0.9) s.smoke[j] = 0.9;      // 유독 연기
+    } else if (v === 'cng') {
+      if (nearBody(x, y) <= 1 && staticPass(t)) { if (s.fuel[j] < 0.5) s.fuel[j] = 0.5; if (s.fire[j] < 0.8) s.fire[j] = 0.8; }
+    } else {
+      const d = nearBody(x, y);
+      if (d <= 1 && s.fuel[j] > 0) { if (s.fire[j] < 0.9) s.fire[j] = 0.9; }
+      else if (onBody(x, y)) { if (s.fuel[j] < 0.5) s.fuel[j] = 0.5; if (s.fire[j] < 0.9) s.fire[j] = 0.9; }
+      else if (d <= 3 && s.fuel[j] <= 0 && (t === T.GROUND || t === T.ROAD || t === T.TRAIL)) { s.fuel[j] = 0.5; s.fire[j] = 0.6; }      // 번지는 항공유
+    }
+  }
+  if (p.kind === 'vehicle') for (const q of s.casualties) if (q.inVehicle === p.id && !q.dead) hurtCas(sim, s, I, q, rng.range(20, 40), 'blast', { ev });      // 같은 차·동체의 탑승자
+  blowDoors(s, cx, cy, spec.r);
+  blast(sim, s, I, cx, cy, spec.r, spec.dmg, ev, 'blast');
+  pushFx(sim, s, 'boom', cx, cy, undefined, undefined, undefined, undefined, 1.6);
+  noteBoom(lastFx(sim, s, 'boom'), spec.r, spec.src);
+  s.staticVersion++;
+  // 현장 전원이 듣는다: 폭발 + 그 용기는 이제 없다(haz active:false · 용기 조짐 0 down)
+  const rg = regionOfProp(s, p), where = rg >= 0 ? s.regions[rg].name : regionNameAt(s, p.x, p.y);
+  const facts: Fact[] = [signFact(sim, SIGN_BASE.event + c.events++, { kind: 'event', level: 3, region: rg, x: p.x, y: p.y, prop: p.id, what: 'vessel' }, `폭발! ${where} ${nm}`)];
+  if (p.kind === 'gas') facts.push(mkFact('haz', p.id, { kind: 'gas', active: false, x: p.x, y: p.y }, '현장', sim.t, 1, true, `${nm} 폭발 확인`));
+  else if ((p.leakRate ?? 0) > 0) facts.push(mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y }, '현장', sim.t, 1, true, '누출 연료 발화'));
+  facts.push(signFact(sim, SIGN_BASE.vessel + p.id, { kind: 'vessel', level: 0, region: rg, x: p.x, y: p.y, prop: p.id, down: true }, `${where} ${nm} 폭발 — 더는 위험 없음`));
+  hearAll(sim, s, ev, facts);
+  markPlace(sim, s, I, c, 'blasted');
+  signal(sim, 'catastrophe', { inc: I.id, ev, x: cx, y: cy, size: spec.r, place: I.truth.placeId, data: 0 });
+  return ev;
+}
+
+/**
+ * 도시가스 공급 차단 (§2.3-2): 지휘관이 요청하면(s.ops.utilityAsked — 단계 5) 90~150초 뒤 한 번만 살아 있는 밸브를 모두 차단하고,
+ * 현장 전원에게 차단 완료 사실(sign 5001)을 알린다. 밸브마다 haz 를 알리지 않는다 — 아직 모르는 밸브의 위치가 새어 나간다
+ */
+function utilityStep(sim: Sim, s: Scene, I: Incident, c: CatState): void {
+  const ops = s.ops;
+  if (c.utilityAt === -1 && ops && ops.utilityAsked >= 0) c.utilityAt = ops.utilityAsked + catRng(sim, s).range(90, 150);
+  if (c.utilityAt < 0 || sim.t < c.utilityAt) return;
+  c.utilityAt = -2;
+  const wk = WORK.get(c)!;
+  for (const p of wk.valves) if (!p.mitigated && !p.ignited) p.mitigated = true;
+  const ev = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '도시가스사', kind: 'recovery', imp: 2, text: '도시가스사: 공급 차단 완료 — 누출이 멈춥니다.' });
+  s.radio.push({ id: s.nextMsgId++, t: sim.t, deliverAt: sim.t + 0.6, from: -1, to: -1, kind: 'brief', workId: -1, text: '', eventId: ev,
+    facts: [mkFact('sign', SIGN_BASE.utility, { kind: 'event', what: 'utility', level: 0, region: -1, x: -1, y: -1 }, '도시가스사', sim.t, 1, true, '도시가스 공급 차단 완료')] });
 }
 
 // ───────────────────────── 조짐 (단계 2 — 설계서 §3) ─────────────────────────

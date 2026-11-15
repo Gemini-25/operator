@@ -1,6 +1,7 @@
 // ResourceManager — 부대·대원 명부, 차량 상태와 도시 지도 위 이동.
 
 import { coastY, edgeName, edgeTime, findRoute, nodeName, weatherSpeedFactor } from './city';
+import { AIR_KIND, EXTRA_NAMES, ROLES, STAFF, dealFlashbangs, fieldCrew, kitFor, skillsOf, slotsOf } from './crews';
 import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
 import { unitArrived } from './field/sceneManager';
@@ -14,28 +15,32 @@ const NAMES = ['김도윤', '이서준', '박하준', '최민재', '정지호', 
   '배준영', '류시우', '문가은', '송태윤', '황보라', '안지후', '남궁민', '서예린', '권도현', '홍서진', '장하늘', '민지원', '차은우', '표나연', '석민호', '엄지안',
   '여준서', '길하은', '변우진', '탁서윤', '함도경', '채아린', '옥진우', '소유진', '봉재현', '추다은', '공시현', '금나래'];
 
-interface UnitDef { callsign: string; dept: Dept; kind: UnitKind; field: UnitField; facility: string; caps: UnitCaps; waterMax: number; tool: number; med: number; armor: number; minLevel: number }
+/** 차량·항공기에 딸린 것 (R1): 환자 자리, 예비 공기통, 호이스트, 물 바구니, 체공 시간 */
+interface Fit { seats: number; spareAir: number; hoist?: boolean; bucketMax?: number; fuelMax?: number }
+interface UnitDef extends Fit { callsign: string; dept: Dept; kind: UnitKind; field: UnitField; facility: string; caps: UnitCaps; waterMax: number; tool: number; med: number; armor: number; minLevel: number }
 const caps = (suppression: number, rescue: number, ems: number, law: number, tactical: number, search: number, traffic: number, eod = 0): UnitCaps =>
   ({ suppression, rescue, ems, law, tactical, search, traffic, eod });
-const KIND: Record<UnitKind, { dept: Dept; caps: UnitCaps; waterMax: number; tool: number; med: number; armor: number }> = {
-  engine: { dept: 'fire', caps: caps(1.0, 0.55, 0.2, 0, 0, 0.5, 0.4), waterMax: 100, tool: 0.55, med: 0.35, armor: 0.1 },
-  ladder: { dept: 'fire', caps: caps(1.0, 0.7, 0.2, 0, 0, 0.5, 0.3), waterMax: 140, tool: 0.7, med: 0.35, armor: 0.1 },
-  rescue: { dept: 'fire', caps: caps(0.75, 1.0, 0.25, 0, 0, 0.8, 0.4), waterMax: 60, tool: 1.0, med: 0.4, armor: 0.1 },
-  hazmat: { dept: 'fire', caps: caps(0.6, 0.9, 0.3, 0, 0, 0.5, 0.3), waterMax: 40, tool: 0.9, med: 0.45, armor: 0.15 },
-  heli: { dept: 'fire', caps: caps(0, 0.8, 0.7, 0, 0, 1.5, 0), waterMax: 0, tool: 0.6, med: 0.8, armor: 0.05 },
-  boat: { dept: 'fire', caps: caps(0, 0.9, 0.5, 0, 0, 0.8, 0), waterMax: 0, tool: 0.8, med: 0.5, armor: 0.05 },
-  als: { dept: 'ems', caps: caps(0, 0.15, 1.0, 0, 0, 0.3, 0.2), waterMax: 0, tool: 0.1, med: 1.0, armor: 0 },
-  bls: { dept: 'ems', caps: caps(0, 0.15, 0.8, 0, 0, 0.3, 0.2), waterMax: 0, tool: 0.1, med: 0.75, armor: 0 },
-  patrol: { dept: 'police', caps: caps(0, 0.15, 0.15, 0.8, 0.5, 0.7, 1.0), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.2 },
-  tactical: { dept: 'police', caps: caps(0, 0.15, 0.15, 1.0, 1.0, 0.7, 0.7), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.5 },
-  swat: { dept: 'police', caps: caps(0, 0.15, 0.2, 1.0, 1.4, 0.5, 0.3), waterMax: 0, tool: 0.2, med: 0.3, armor: 0.75 },
-  eod: { dept: 'police', caps: caps(0, 0.2, 0.15, 0.6, 0.5, 0.4, 0.4, 1), waterMax: 0, tool: 0.3, med: 0.25, armor: 0.6 },
+// tool·med·armor 는 부대의 대표 성능이다(관제가 본다). 사람이 든 장비는 crews.ts 의 KITS — 현장의 식은 R1 단계 2 부터 사람 값을 쓴다.
+const KIND: Record<UnitKind, { dept: Dept; caps: UnitCaps; waterMax: number; tool: number; med: number; armor: number } & Fit> = {
+  engine: { dept: 'fire', caps: caps(1.0, 0.55, 0.2, 0, 0, 0.5, 0.4), waterMax: 100, tool: 0.55, med: 0.35, armor: 0.1, seats: 0, spareAir: 4 },
+  ladder: { dept: 'fire', caps: caps(1.0, 0.7, 0.2, 0, 0, 0.5, 0.3), waterMax: 140, tool: 0.7, med: 0.35, armor: 0.1, seats: 0, spareAir: 3 },
+  rescue: { dept: 'fire', caps: caps(0.75, 1.0, 0.25, 0, 0, 0.8, 0.4), waterMax: 60, tool: 1.0, med: 0.4, armor: 0.1, seats: 0, spareAir: 5 },
+  hazmat: { dept: 'fire', caps: caps(0.6, 0.9, 0.3, 0, 0, 0.5, 0.3), waterMax: 40, tool: 0.9, med: 0.45, armor: 0.15, seats: 0, spareAir: 4 },
+  heli: { dept: 'fire', caps: caps(0, 0.8, 0.7, 0, 0, 1.5, 0), waterMax: 0, tool: 0.6, med: 0.8, armor: 0.05, seats: 1, spareAir: 0, hoist: true, bucketMax: 1, fuelMax: 660 },      // caps 는 단계 4 에서 바꾼다 (설계서 7.1)
+  boat: { dept: 'fire', caps: caps(0, 0.9, 0.5, 0, 0, 0.8, 0), waterMax: 0, tool: 0.8, med: 0.5, armor: 0.05, seats: 0, spareAir: 0 },
+  als: { dept: 'ems', caps: caps(0, 0.15, 1.0, 0, 0, 0.3, 0.2), waterMax: 0, tool: 0.1, med: 1.0, armor: 0, seats: 2, spareAir: 0 },
+  bls: { dept: 'ems', caps: caps(0, 0.15, 0.8, 0, 0, 0.3, 0.2), waterMax: 0, tool: 0.1, med: 0.75, armor: 0, seats: 2, spareAir: 0 },
+  patrol: { dept: 'police', caps: caps(0, 0.15, 0.15, 0.8, 0.5, 0.7, 1.0), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.2, seats: 0, spareAir: 0 },
+  tactical: { dept: 'police', caps: caps(0, 0.15, 0.15, 1.0, 1.0, 0.7, 0.7), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.5, seats: 0, spareAir: 0 },
+  swat: { dept: 'police', caps: caps(0, 0.15, 0.2, 1.0, 1.4, 0.5, 0.3), waterMax: 0, tool: 0.2, med: 0.3, armor: 0.75, seats: 0, spareAir: 0 },
+  eod: { dept: 'police', caps: caps(0, 0.2, 0.15, 0.6, 0.5, 0.4, 0.4, 1), waterMax: 0, tool: 0.3, med: 0.25, armor: 0.6, seats: 0, spareAir: 0 },
 };
 /** 큰 차: 불법 주차로 좁아진 골목을 지나지 못한다 (traffic.ts) */
 const HEAVY: Partial<Record<UnitKind, boolean>> = { engine: true, ladder: true, rescue: true, hazmat: true };
 const U = (callsign: string, kind: UnitKind, field: UnitField, facility: string, minLevel: number): UnitDef => ({ callsign, kind, field, facility, minLevel, ...KIND[kind] });
 // 편성표: 네 분야(경찰·소방·구조·특수)마다 3~5팀. minLevel 은 난이도의 "부대 규모"가 이 값 이상일 때 편성된다
 // (1 = 12팀, 2 = 15팀, 3 = 17팀, 4 = 19팀, 5 = 20팀). 줄의 순서를 바꾸면 대원 능력치가 바뀐다(이 순서로 뽑는다).
+// 부대마다의 인원과 역할은 crews.ts 의 STAFF (부대 규모 1·2 는 최소 인원, 3~5 는 표준 인원). 새 줄은 끝에 붙인다.
 const UNIT_DEFS: UnitDef[] = [
   U('순찰1', 'patrol', 'police', '중부경찰서', 1), U('순찰2', 'patrol', 'police', '서부지구대', 1), U('기동1', 'tactical', 'police', '동부지구대', 1), U('순찰3', 'patrol', 'police', '동부지구대', 2), U('기동2', 'tactical', 'police', '중부경찰서', 4),
   U('진압1', 'engine', 'fire', '중앙소방서', 1), U('진압2', 'engine', 'fire', '서부119안전센터', 1), U('사다리1', 'ladder', 'fire', '공단119안전센터', 1), U('진압3', 'engine', 'fire', '한솔119안전센터', 3), U('진압4', 'engine', 'fire', '공단119안전센터', 5),
@@ -54,39 +59,58 @@ function traitOf(r: Responder): string {
   return lows[0][1] < 0.42 ? `${stats[0][0]} · ${lows[0][0]}` : stats[0][0];
 }
 
-/** 대원 능력은 고정된 조직 시드에서 만든다(같은 대원이 매 교대에 등장). 장비 상태는 교대 시드에서 만든다. */
+/** 고정 조직 시드: 대원의 기본 능력은 여기서만 나온다 (교대 시드와 무관 — 같은 대원이 매 교대에 등장한다) */
+const ROSTER_SEED = 0x51ab7e;
+/** R1 전부터 있던 줄의 수. 이 줄들의 0·1번 자리는 예전의 선임·후임이다: 예전 흐름(roster-v1)과 NAMES 를 그대로 쓴다 */
+const LEGACY_ROWS = 20;
+/** 부대의 새 칸(R1)을 편성표·지원 두 부대 객체에 같은 순서로 넣는다. grounded 는 단계 4 에서 날씨로 정한다 */
+const fitOf = (d: Fit): Pick<Unit, 'seats' | 'hoist' | 'bucket' | 'bucketMax' | 'fuel' | 'fuelMax' | 'grounded' | 'spareAir' | 'airNeed'> =>
+  ({ seats: d.seats, hoist: !!d.hoist, bucket: d.bucketMax ?? 0, bucketMax: d.bucketMax ?? 0, fuel: d.fuelMax ?? 0, fuelMax: d.fuelMax ?? 0, grounded: null, spareAir: d.spareAir, airNeed: undefined });
+
+/**
+ * 대원 능력은 고정된 조직 시드에서 만든다(같은 대원이 매 교대에 등장). 장비 상태는 교대 시드에서 만든다.
+ * 부대마다의 자리는 crews.ts 의 STAFF 를 따른다. 능력의 난수는 두 흐름이다 (설계서 R1 5절):
+ *  - 처음 20줄의 0·1번 자리: roster-v1 에서 줄 순서대로 한 명당 6번(경험 → 능력 다섯). 편성되지 않는 부대도 똑같이 뽑는다.
+ *  - 그 밖의 자리: 자리마다 따로 roster-v2:<호출부호>:<자리>. 다른 부대의 인원과 상관없이 같은 사람 = 같은 능력치다.
+ */
 export function createRoster(sim: Sim): void {
-  const rosterRng = new Rng(0x51ab7e).fork('roster-v1');
+  const rosterRng = new Rng(ROSTER_SEED).fork('roster-v1');
   const equipRng = sim.rng.fork('equipment');
   const tn = sim.tune;
+  const minimal = tn.unitLevel <= 2;      // 부대 규모 1·2 는 최소 인원으로 나간다
+  let extra = 0;                           // EXTRA_NAMES 의 첨자: 표준 표의 자리마다 하나 (편성되지 않은 줄, 빠진 자리도 자기 번호를 차지한다)
   UNIT_DEFS.forEach((d, di) => {
     const f = sim.city.facilities.find((q) => q.name === d.facility)!;
     const home = sim.city.nodes[f.nodeId];
     const include = d.minLevel <= tn.unitLevel;
     const uid = sim.units.length;
-    const crew: number[] = [];
-    for (let k = 0; k < 2; k++) {
-      // 편성되지 않는 부대도 난수는 똑같이 뽑는다(부대 규모를 바꿔도 같은 대원은 같은 능력치를 갖도록)
+    const crew: number[] = [], members: Responder[] = [];
+    const staff = STAFF[d.kind];
+    for (let k = 0; k < staff.std.length; k++) {
+      const role = staff.std[k], def = ROLES[role];
+      const legacy = di < LEGACY_ROWS && k < 2;
+      // 편성되지 않는 부대·빠지는 자리도 난수는 똑같이 뽑는다(부대 규모를 바꿔도 같은 대원은 같은 능력치를 갖도록)
+      const rng = legacy ? rosterRng : new Rng(ROSTER_SEED).fork(`roster-v2:${d.callsign}:${k}`);
+      const name = legacy ? NAMES[di * 2 + k] : EXTRA_NAMES[extra++];
       const senior = k === 0;
-      const st = () => clamp(rosterRng.range(0.3, 0.95), 0, 1);
-      const exp = senior ? rosterRng.range(0.6, 0.97) : rosterRng.range(0.12, 0.6);
+      const st = () => clamp(rng.range(0.3, 0.95), 0, 1);
+      const exp = legacy ? (senior ? rng.range(0.6, 0.97) : rng.range(0.12, 0.6))
+        : def.exp ? rng.range(def.exp[0], def.exp[1]) : senior ? rng.range(0.6, 0.97) : rng.range(0.2, 0.75);
       const skill = clamp(st() * 0.6 + exp * 0.4 + 0.05, 0.3, 0.98);
       const r: Responder = {
-        id: sim.responders.length, name: NAMES[di * 2 + k], dept: d.dept, unitId: uid, senior,
+        id: sim.responders.length, name, dept: d.dept, unitId: uid, senior,
         skill, judgment: clamp(st() * 0.65 + exp * 0.35, 0.2, 0.98), composure: st(), fitness: st(), teamwork: st(), experience: exp,
-        skills: { fire: 0.05, rescue: 0.2, medical: 0.2, law: 0.05 },
+        skills: skillsOf(role, skill),      // 능력은 역할의 식으로만 정한다 (추가 난수 없음)
         trait: '', health: 100, stamina: tn.startStamina, status: 'ok', xpGained: 0, incidentsWorked: 0,
+        role, kit: kitFor(role),
       };
-      if (d.kind === 'heli' || d.kind === 'boat') r.skills = { fire: 0.15, rescue: skill, medical: d.kind === 'heli' ? 0.55 : 0.45, law: 0.05 };
-      else if (d.kind === 'hazmat') r.skills = { fire: skill * 0.7, rescue: skill * 0.92, medical: 0.4, law: 0.05 };
-      else if (d.dept === 'fire') r.skills = d.kind === 'rescue' ? { fire: skill * 0.75, rescue: skill, medical: 0.35, law: 0.05 } : { fire: skill, rescue: skill * 0.6, medical: 0.3, law: 0.05 };
-      else if (d.dept === 'ems') r.skills = { fire: 0.05, rescue: 0.25, medical: clamp(skill + (d.kind === 'als' ? 0.08 : 0), 0, 1), law: 0.05 };
-      else r.skills = { fire: 0.05, rescue: 0.22, medical: 0.22, law: clamp(skill + (d.kind === 'swat' ? 0.12 : d.kind === 'tactical' ? 0.06 : d.kind === 'eod' ? -0.08 : 0), 0, 1) };
       r.trait = traitOf(r);
-      if (include) { crew.push(r.id); sim.responders.push(r); }
+      if (include && !(minimal && staff.minDrop.indexOf(k) >= 0)) { crew.push(r.id); sim.responders.push(r); members.push(r); }
     }
     const pump = d.dept === 'fire' ? equipRng.range(tn.pumpMin, tn.pumpMax) : 1;
     if (!include) return;
+    // 섬광탄은 사람 몫으로 나눈다. 부대의 flashbangs 는 그 합이다
+    const bangs = dealFlashbangs(members, d.kind === 'tactical' ? tn.flashbangs : d.kind === 'swat' ? tn.flashbangs + 2 : 0);
     const u: Unit = {
       id: uid, callsign: d.callsign, dept: d.dept, kind: d.kind, crew, homeNode: f.nodeId, homeName: f.name,
       state: 'available', x: home.x, y: home.y, px: home.x, py: home.y, nodeId: f.nodeId,
@@ -94,11 +118,12 @@ export function createRoster(sim: Sim): void {
       caps: d.caps, water: d.waterMax * tn.waterMul, waterMax: d.waterMax * tn.waterMul, hydrant: false,
       pumpCond: pump, pumpFailed: false,
       tool: Math.min(1.15, d.tool * tn.toolMul), medLevel: Math.min(1.1, d.med * tn.medMul), armor: Math.min(0.8, d.armor * tn.armorMul),
-      flashbangs: d.kind === 'tactical' ? tn.flashbangs : d.kind === 'swat' ? tn.flashbangs + 2 : 0,
+      flashbangs: bangs,
       patients: [], patientsIncident: null,
       dispatchedAt: -1, estArrive: -1, diverted: false, busyTime: 0, runs: 0, boardOrder: null,
-      field: d.field, air: d.kind === 'heli', sea: d.kind === 'boat',
+      field: d.field, air: AIR_KIND.has(d.kind), sea: d.kind === 'boat',
       aid: undefined, heavy: undefined, backing: undefined, curb: undefined, curbT: undefined, parking: undefined,      // 나중에 붙는 칸을 미리 비워 둔다: 모든 부대가 같은 모양의 객체가 된다
+      ...fitOf(d),
     };
     if (u.air || u.sea) { u.x = u.px = f.x + 30; u.y = u.py = u.sea ? coastY(f.x + 30) + SEA_OFF : f.y - 20; }
     if (HEAVY[d.kind]) u.heavy = true;
@@ -106,7 +131,9 @@ export function createRoster(sim: Sim): void {
   });
 }
 
-const AID_NAMES = ['한도현', '서지우', '문태윤', '양서아', '고준혁', '배하린', '남건우', '유채원', '심재민', '노은서', '하승우', '전소율', '곽민석', '우다인', '진현수', '방예린'];
+// 지원 부대의 이름: 지원 한 번에 네 칸씩 쓴다(지원 종류의 최소 인원은 많아야 4명). 지원은 교대당 많아야 5회, 재난 때 3회 더(disaster.ts) — 8회 × 4칸
+const AID_NAMES = ['한도현', '서지우', '문태윤', '양서아', '고준혁', '배하린', '남건우', '유채원', '심재민', '노은서', '하승우', '전소율', '곽민석', '우다인', '진현수', '방예린',
+  '국태린', '마하겸', '도은결', '위서담', '기서후', '나도겸', '라온유', '모아진', '범준기', '빈세현', '사윤호', '어진솔', '예다함', '은가람', '인태오', '피세온'];
 const AID_KIND: Record<keyof Needs, UnitKind> = { suppression: 'engine', rescue: 'rescue', ems: 'bls', law: 'patrol', tactical: 'tactical', search: 'patrol', traffic: 'patrol', eod: 'eod' };
 const AID_CALL: Partial<Record<UnitKind, string>> = { engine: '지원진압', rescue: '지원구조', als: '지원구급', bls: '지원구급', patrol: '지원순찰', tactical: '지원기동', eod: '지원폭발물' };
 
@@ -125,24 +152,27 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
   }
   if (home < 0) return null;
   const rng = sim.rng.fork('aid:' + sim.aidUsed), tn = sim.tune;
-  const uid = sim.units.length, crew: number[] = [];
-  for (let k = 0; k < 2; k++) {
-    const senior = k === 0;
+  const uid = sim.units.length, crew: number[] = [], members: Responder[] = [];
+  // 지원 부대는 그 종류의 최소 인원 편성이다(급히 꾸린 팀). 역할·장비는 편성표 그대로.
+  // 난수(aid:<n>)의 순서: 대원(자리 순서, 한 명당 경험 1 + 능력 5) → 펌프 상태 → (단계 6) 개인 장비 고장 추첨
+  const staff = STAFF[kind];
+  slotsOf(kind, true).forEach((slot, k) => {
+    const role = staff.std[slot];
+    const senior = slot === 0;
     const st = (): number => clamp(rng.range(0.3, 0.9), 0, 1);
-    const exp = senior ? rng.range(0.55, 0.9) : rng.range(0.15, 0.55);
+    const exp = senior ? rng.range(0.55, 0.9) : rng.range(0.15, 0.55);      // 역할의 경험 범위(exp)는 쓰지 않는다 (지원 종류에는 조종사가 없다)
     const skill = clamp(st() * 0.6 + exp * 0.4 + 0.05, 0.3, 0.95);
     const r: Responder = {
-      id: sim.responders.length, name: AID_NAMES[(sim.aidUsed * 2 + k) % AID_NAMES.length], dept: d.dept, unitId: uid, senior,
+      id: sim.responders.length, name: AID_NAMES[(sim.aidUsed * 4 + k) % AID_NAMES.length], dept: d.dept, unitId: uid, senior,
       skill, judgment: clamp(st() * 0.65 + exp * 0.35, 0.2, 0.95), composure: st(), fitness: st(), teamwork: st() * 0.85, experience: exp,
-      skills: { fire: 0.05, rescue: 0.2, medical: 0.2, law: 0.05 },
+      skills: skillsOf(role, skill),
       trait: '', health: 100, stamina: 88, status: 'ok', xpGained: 0, incidentsWorked: 0,
+      role, kit: kitFor(role),
     };
-    if (d.dept === 'fire') r.skills = kind === 'rescue' ? { fire: skill * 0.75, rescue: skill, medical: 0.35, law: 0.05 } : { fire: skill, rescue: skill * 0.6, medical: 0.3, law: 0.05 };
-    else if (d.dept === 'ems') r.skills = { fire: 0.05, rescue: 0.25, medical: skill, law: 0.05 };
-    else r.skills = { fire: 0.05, rescue: 0.22, medical: 0.22, law: clamp(skill + (kind === 'tactical' ? 0.06 : 0), 0, 1) };
     r.trait = traitOf(r);
-    crew.push(r.id); sim.responders.push(r);
-  }
+    crew.push(r.id); sim.responders.push(r); members.push(r);
+  });
+  const bangs = dealFlashbangs(members, kind === 'tactical' ? Math.min(2, tn.flashbangs) : 0);
   const n = sim.city.nodes[home];
   const same = sim.units.filter((q) => q.aid && q.kind === kind).length;
   const u: Unit = {
@@ -152,18 +182,25 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
     caps: d.caps, water: d.waterMax * tn.waterMul, waterMax: d.waterMax * tn.waterMul, hydrant: false,
     pumpCond: d.dept === 'fire' ? rng.range(0.6, 0.95) : 1, pumpFailed: false,
     tool: Math.min(1.15, d.tool * tn.toolMul), medLevel: Math.min(1.1, d.med * tn.medMul), armor: Math.min(0.8, d.armor * tn.armorMul),
-    flashbangs: kind === 'tactical' ? Math.min(2, tn.flashbangs) : 0,
+    flashbangs: bangs,
     patients: [], patientsIncident: null,
     dispatchedAt: -1, estArrive: -1, diverted: false, busyTime: 0, runs: 0, boardOrder: null,
     field: undefined, air: undefined, sea: undefined, aid: true, heavy: undefined, backing: undefined, curb: undefined, curbT: undefined, parking: undefined,      // 편성표 부대와 같은 칸, 같은 순서
+    ...fitOf(d),      // 환자 자리·예비 공기통도 편성표 부대와 같게 (빠뜨리면 지원 구급차가 환자를 싣지 못한다)
   };
   if (HEAVY[kind]) u.heavy = true;
   sim.units.push(u);
   return u;
 }
 
-export function crewNames(sim: Sim, u: Unit): string { return u.crew.map((r) => sim.responders[r].name).join('·'); }
-export function crewReady(sim: Sim, u: Unit): number { return u.crew.filter((r) => sim.responders[r].status === 'ok').length; }
+/** 현장에 내리는 대원의 이름 (조종사·정장처럼 내리지 않는 자리는 뺀다) */
+export function crewNames(sim: Sim, u: Unit): string { return fieldCrew(sim, u).map((r) => sim.responders[r].name).join('·'); }
+/** 지금 현장에 내릴 수 있는 대원 수: 내리는 자리(fieldCrew) 가운데 상태가 'ok' 인 사람 */
+export function crewReady(sim: Sim, u: Unit): number {
+  const fc = fieldCrew(sim, u);
+  let n = 0; for (let k = 0; k < fc.length; k++) if (sim.responders[fc[k]].status === 'ok') n++;
+  return n;
+}
 
 const AIR_SPEED = 66, SEA_SPEED = 30, SEA_OFF = 46;
 /** 바닷가의 교차로인가 (구조정이 닿을 수 있다) */

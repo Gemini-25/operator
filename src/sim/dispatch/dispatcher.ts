@@ -6,6 +6,7 @@ import { emit, markRecovered, raiseProblem } from '../events';
 import { transmit } from '../field/agents';
 import { mkFact } from '../field/beliefs';
 import { nodeName } from '../city';
+import { fieldCrew } from '../crews';
 import { coastal, createAidUnit, crewReady, dispatchUnit, etaFor, sendUnitTo } from '../resources';
 import type { Claim, Incident, Needs, RadioMsg, Scene, Unit } from '../types';
 import { TYPE_NAME, fmtSec, josa } from '../util';
@@ -73,10 +74,11 @@ function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { be
       divertFrom = J;
     } else if (u.state !== 'available' && u.state !== 'returning') continue;
     const eta = etaFor(sim, u, I.reportedNode);
-    let stamina = 0; for (const rid of u.crew) stamina += sim.responders[rid].stamina; stamina /= u.crew.length;
+    const fc = fieldCrew(sim, u);      // 현장에 내리는 자리만 본다 (조종사·정장 때문에 늘 감점되지 않게)
+    let stamina = 0; for (const rid of fc) stamina += sim.responders[rid].stamina; stamina /= fc.length;
     let score = fit * 100 - eta * (0.45 + 0.22 * sev) - (100 - stamina) * 0.22;
     if (key === 'suppression' && u.pumpCond < 0.4) score -= 10;
-    if (crewReady(sim, u) < u.crew.length) score -= 18;
+    if (crewReady(sim, u) < fc.length) score -= 18;
     if (divertFrom) score -= 28;
     // 같은 부서의 마지막 가용 부대라면, 위험도가 낮은 사건에는 아껴 둔다
     const others = sim.units.filter((q) => q.dept === u.dept && q.id !== u.id && (q.state === 'available' || q.state === 'returning') && crewReady(sim, q) > 0).length;

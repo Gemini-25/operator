@@ -286,8 +286,12 @@ describe('신고 접수 확장과 새 사건 유형', () => {
     const { NORMAL } = await import('../src/sim/difficulty');
     const small = new Sim('R', { ...NORMAL, resources: 1 }), base = new Sim('R'), big = new Sim('R', { ...NORMAL, resources: 5 });
     expect(small.units.length).toBe(12); expect(base.units.length).toBe(17); expect(big.units.length).toBe(20);
-    expect(big.responders.length).toBe(40);
-    expect(new Set(big.responders.map((r) => r.name)).size).toBe(40);
+    // 총원은 편성표에서 계산한다: 부대 종류마다 2~5명 (crews.ts 의 STAFF — 부대 규모 3~5 는 표준 인원)
+    const { STAFF } = await import('../src/sim/crews');
+    const total = big.units.reduce((n, u) => n + STAFF[u.kind].std.length, 0);
+    expect(total).toBeGreaterThan(big.units.length * 2);
+    expect(big.responders.length).toBe(total);
+    expect(new Set(big.responders.map((r) => r.name)).size).toBe(total);
     // 네 분야마다 3~5팀
     for (const sim of [small, base, big]) for (const f of ['police', 'fire', 'rescue', 'special']) { const n = sim.units.filter((u) => u.field === f).length; expect(n).toBeGreaterThanOrEqual(3); expect(n).toBeLessThanOrEqual(5); }
     expect(base.units.filter((u) => u.kind === 'heli' || u.kind === 'swat' || u.kind === 'hazmat' || u.kind === 'eod' || u.kind === 'boat' || u.kind === 'ladder').length).toBe(6);

@@ -121,6 +121,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
     blockedEdge: -1, followupAt: Infinity, firstCallAt: 0, firstAssess: null, fieldNeedsSeen: 0, dispatchLog: [],
     reportedNode: node.id, addressFixed: false,
     pursuit: undefined, tag: undefined, parent: undefined, aidUnit: undefined, coResp: undefined,      // 나중에 붙는 칸을 미리 비워 둔다 (모든 사건이 같은 모양)
+    airDone: undefined,      // (R1) "상공 임무 종료"로 풀려난 헬기 종류 — 쓰는 것은 단계 5 부터
   };
   { const tag = opts.tag ?? special?.tag; if (tag) I.tag = tag; if (opts.parent !== undefined) I.parent = opts.parent; }
   sim.incidents.push(I);

@@ -7,6 +7,7 @@ import { emit, raiseProblem } from '../events';
 import { closeIncident } from '../incidents';
 import { releaseUnit, startTransport } from '../resources';
 import { scenarioOf } from '../scenarios';
+import { fieldCrew, roleOf } from '../crews';
 import './scenes';
 import { SCENE_RULES } from './sceneRegistry';
 import type { Fact, FieldAgent, Incident, Scene, Unit } from '../types';
@@ -17,12 +18,13 @@ import { think } from './brain';
 import { outstanding } from './commander';
 import { buildScene } from './builders';
 import { act, finishTask } from './executor';
-import { tileOf } from './grid';
+import { staticPass, tileOf } from './grid';
 import { tickCasualties, tickCollapse, tickCrush, tickFire, tickGas, tickHostiles, tickLane, tickLeaks, tickLift, tickMedical, tickWander, tickWater } from './hazards';
 
 export function createScene(sim: Sim, I: Incident): Scene {
   const s = buildScene(sim, I, sim.rng.fork('scene:' + I.id));
   s.allIdleSince = -1; s.rollCallAt = -1e9;      // 지휘관이 쓰는 칸은 만들 때 채워 둔다 (도중에 속성이 생기면 현장 객체의 모양이 바뀌어 매 틱 도는 코드가 느려진다)
+  s.air = []; s.light = null; s.airAt = -1;      // (R1) 상공의 헬기가 쓰는 칸 — 쓰는 것은 단계 4·5 부터
   sim.scenes[I.id] = s;
   return s;
 }
@@ -50,28 +52,34 @@ export function briefFacts(sim: Sim, I: Incident): Fact[] {
 
 export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
   const s = sim.scenes[I.id]!;
-  const first = s.arrivedAt < 0;
-  if (first) { s.arrivedAt = sim.t; I.firstArrivalAt = sim.t; I.phase = 'onscene'; }
+  // 현장 도착 시각은 지상 대원이 처음 내릴 때 정한다 (상공 부대의 도착은 단계 4 에서 s.airAt 으로 따로 둔다 — 설계서 R1 6.1)
+  const firstGround = s.arrivedAt < 0;
+  if (firstGround) { s.arrivedAt = sim.t; I.firstArrivalAt = sim.t; I.phase = 'onscene'; }
   const node = sim.city.nodes[I.truth.nodeId];
   const slot = I.everAssigned.indexOf(u.id);
   if (!u.curb && !u.air && !u.sea) { u.x = node.x + 16 * Math.cos(slot * 1.3); u.y = node.y + 16 * Math.sin(slot * 1.3); u.px = u.x; u.py = u.y; }      // 건물 앞 길가에 세운 차량은 그 자리에 둔다
   const brief = briefFacts(sim, I);
   const cmd = s.agents.find((a) => a.rid === s.commanderRid && a.status === 'active');
   const prevCmd = s.agents.find((a) => a.rid === s.commanderRid);
-  const crew = u.crew.filter((rid) => sim.responders[rid].status === 'ok');
+  // 내리는 사람: 내리는 자리(조종사·정장은 차에 남는다) 가운데 일할 수 있는 대원
+  const crew = fieldCrew(sim, u).filter((rid) => sim.responders[rid].status === 'ok');
   s.agents = s.agents.filter((a) => u.crew.indexOf(a.rid) < 0);      // 같은 대원이 다시 온 경우 이전 기록 정리
   crew.forEach((rid, k) => {
     const r = sim.responders[rid];
     const n = s.agents.length;
+    // 내리는 자리: 대기 지점 둘레에 다섯 칸 × 세 줄. 그 칸에 설 수 없으면(벽·물·격자 밖) 대기 지점에 그대로 선다
+    let ax = s.staging.x + (n % 5) * 0.7 - 1.4, ay = s.staging.y + (Math.floor(n / 5) % 3) * 0.7;
+    if (ax < -0.5 || ay < -0.5 || ax >= s.w - 0.5 || ay >= s.h - 0.5 || !staticPass(s.tiles[tileOf(s, ax, ay)])) { ax = s.staging.x; ay = s.staging.y; }
     const a: FieldAgent = {
       rid, unitId: u.id, isCommander: false,
-      x: s.staging.x + (n % 3) * 0.8 - 0.8, y: s.staging.y + Math.floor(n / 3) % 3 * 0.8, px: 0, py: 0, fx: 1, fy: 0,
+      x: ax, y: ay, px: 0, py: 0, fx: 1, fy: 0,
       path: null, pathI: 0, pathGoal: -1, task: null, orderWork: -1,
       beliefs: new BeliefStore(), outbox: [], outboxSince: 0, shadowSince: -1, commFailLogged: false,
-      nextThink: sim.t + 0.4 + k * 0.4, nextPerceive: 0, carrying: -1, inCover: false, cooldown: 1,
+      nextThink: sim.t + 0.4 + k * 0.3, nextPerceive: 0, carrying: -1, inCover: false, cooldown: 1,
       status: 'active', candidates: [], label: '도착', ring: 0, arrivedAt: sim.t, lastBlockEvent: -1, idleSince: sim.t,
       stuckT: 0, lastX: 0, lastY: 0, rng: sim.rng.fork(`agent:${I.id}:${rid}`), planT: 0, equipIssue: 'none', smokeT: 0, climb: 0, rehabLogAt: -99,
       pendingBlock: -1, underFireT: -99, spot: -1, quiet: new Set(), lastRetreatLog: -99, equipRetryAt: -99,
+      aloft: false, taserAt: -99,      // (R1) 공중 관측자가 아니다 · 테이저를 쏜 적이 없다
     };
     a.px = a.x; a.py = a.y;
     for (const f of brief) a.beliefs.merge(f);
@@ -80,9 +88,10 @@ export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
     s.agents.push(a);
     r.incidentsWorked++;
   });
-  const names = crew.map((rid) => sim.responders[rid].name).join('·');
+  // 누가 내렸는가: 실제로 내린 사람의 첫째(역할과 이름)와 나머지 인원. 한 명이면 이름만
+  const names = crew.length > 1 ? `${roleOf(sim, crew[0]).name} ${sim.responders[crew[0]].name} 외 ${crew.length - 1}명` : crew.length ? sim.responders[crew[0]].name : '';
   const took = I.reportedAt >= 0 ? Math.round(sim.t - I.reportedAt) : 0;
-  emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'arrive', imp: first ? 3 : 2, text: first ? `${u.callsign} 현장 도착 (${names}). 신고 접수 후 ${took}초.` : `${u.callsign} 현장 합류 (${names}).` });
+  emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'arrive', imp: firstGround ? 3 : 2, text: firstGround ? `${u.callsign} 현장 도착 (${names}). 신고 접수 후 ${took}초.` : `${u.callsign} 현장 합류 (${names}).` });
   if (!crew.length) return;
   const senior = s.agents.find((a) => a.rid === crew[0])!;
   if (!cmd) {

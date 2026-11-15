@@ -3,6 +3,7 @@
 //   계산만 하는 틱이 상태를 바꾸지 않음(손 계산과 함께), 기록 해시 불변.
 // 뒤 단계가 더할 것(설계서 §10 의 번호): 1 방치하면 일어난다 · 2 조치하면 일어나지 않는다 · 3 조짐 · 4 철수 · 5 사건이 끝난다 · 6 재현성 · 7 정보 격리 ·
 //   8 가짜 연출 없음 · 9 도시 지도 · 10 층 너머 · 11 catOf 의 입구(일부는 아래에 있다) · 12 깔린 대원.
+import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { PROBLEM_SYS } from '../scripts/metrics';
 import { catStats } from '../scripts/catstats';
@@ -283,6 +284,25 @@ describe('X6 단계 1: 건물 칸과 이웃 구획 (ops.ts)', () => {
   });
 });
 
+// ───────────────────────── 정보 격리 (§10-7) ─────────────────────────
+describe('X6: 위험 상태(진실)는 세계 규칙만 읽는다', () => {
+  const strip = (code: string): string => code.replace(/\/\*[\s\S]*?\*\//g, '').split('\n').filter((l) => !l.trim().startsWith('//')).map((l) => l.replace(/\s\/\/ .*$/, '')).join('\n');
+  const read = (rel: string): string => strip(readFileSync(new URL('../src/sim/' + rel, import.meta.url), 'utf8'));
+  const dir = (rel: string): string[] => readdirSync(new URL('../src/sim/' + rel, import.meta.url)).filter((f) => f.endsWith('.ts')).map((f) => rel + f);
+  it('지휘관·대원의 판단부·지휘 규칙·지휘 상태 도움 함수·관제는 s.cat·건전도·용기의 열·가스 격자를 읽지 않는다', () => {
+    const files = ['field/commander.ts', 'field/brain.ts', 'field/ops.ts', 'field/airDecide.ts', ...dir('field/orders/'), ...dir('dispatch/')];
+    expect(files.length).toBeGreaterThan(8);
+    for (const f of files) {
+      const src = read(f);
+      for (const bad of [/\.cat\b/, /heatLoad/, /\binteg\b/, /cat\.gas/, /catOf\(/]) expect(bad.test(src), `${f}: ${bad}`).toBe(false);
+    }
+  });
+  it('생김새 도움 함수(ops.ts)는 불·소품·사람·진실을 읽지 않는다', () => {
+    const src = read('field/ops.ts');
+    for (const bad of ['.fire', '.smoke', '.props', '.casualties', '.hostiles', '.agents', '.truth', 'sim.scenes']) expect(src.includes(bad), bad).toBe(false);
+  });
+});
+
 // ───────────────────────── 난수 흐름 ─────────────────────────
 describe('X6 단계 1: 새 난수 흐름은 부모를 소비하지 않는다', () => {
   it('catOf 와 catRng 를 불러도 교대·현장·대원의 흐름은 그대로다', () => {
@@ -539,7 +559,8 @@ describe('X6 단계 1: 틱은 계산만 한다 — 손 계산', () => {
 
 // ───────────────────────── 기록 해시 불변 ─────────────────────────
 describe('X6 단계 1: 결과는 한 글자도 바뀌지 않는다', () => {
-  // 단계 1·2 동안만 참인 시험이다: 단계 3 이 세계를 바꾸기 시작하면 "규칙을 뺀 교대와 같다"는 더 성립하지 않는다 — 그 단계가 이 묶음을 §10-6(재현성)·§10-8(가짜 연출 없음)로 바꾼다.
+  // 단계 1 동안만 참인 시험이다: 단계 2 가 조짐을 사실로 넣으면(무전 문구가 바뀐다) "규칙을 뺀 교대와 같다"는 더 성립하지 않는다 —
+  // 그 단계가 이 묶음을 지우거나 §10-6(재현성)·§10-8(가짜 연출 없음)로 바꾼다 (설계서 끝 "구현 메모 (진행 중)" 의 "시험과 관문").
   const cases: [string, Difficulty, string | null][] = [['S1', NORMAL, null], ['F0', NORMAL, 'fire/std'], ['F1', NORMAL, 'collapse/gasblast'], ['X0', { ...NORMAL, frequency: 5, severity: 5, threat: 5, equipment: 1, info: 5, resources: 1 }, null]];
   const shift = (seed: string, d: Difficulty, force: string | null): Sim => { const sim = new Sim(seed, d, 1200, { force }); sim.runToEnd(); return sim; };
   const state = (sim: Sim): string => JSON.stringify([

@@ -138,6 +138,7 @@ export function createRoster(sim: Sim): void {
       aid: undefined, heavy: undefined, backing: undefined, curb: undefined, curbT: undefined, parking: undefined,      // 나중에 붙는 칸을 미리 비워 둔다: 모든 부대가 같은 모양의 객체가 된다
       ...fitOf(d),
       aboard: undefined, firstLoadAt: undefined, oosEv: undefined,      // (H1) 부상 대원·용의자의 후송 — 쓰는 것은 단계 4b 부터
+      ammoBox: undefined, ammoBoxMax: undefined, sparePump: undefined,      // (R3) 탄약 상자(2단계)·예비 펌프(3단계) — 그 단계가 값을 채운다
     };
     if (u.sea) { u.x = u.px = f.x + 30; u.y = u.py = coastY(f.x + 30) + SEA_OFF; }
     if (u.air) {
@@ -211,6 +212,7 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
     field: undefined, air: undefined, sea: undefined, aid: true, heavy: undefined, backing: undefined, curb: undefined, curbT: undefined, parking: undefined,      // 편성표 부대와 같은 칸, 같은 순서
     ...fitOf(d),      // 환자 자리·예비 공기통도 편성표 부대와 같게 (빠뜨리면 지원 구급차가 환자를 싣지 못한다)
     aboard: undefined, firstLoadAt: undefined, oosEv: undefined,      // (H1) 편성표 부대와 같은 칸, 같은 순서
+    ammoBox: undefined, ammoBoxMax: undefined, sparePump: undefined,      // (R3) 편성표 부대와 같은 칸, 같은 순서
   };
   if (HEAVY[kind]) u.heavy = true;
   drawFaults(rng, members, tn.kitFault);      // 펌프 상태 다음에 뽑는다 (같은 흐름 aid:<n> 의 끝)

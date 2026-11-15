@@ -1,0 +1,118 @@
+// 대응 교본의 틀 (docs/specs/R3-doctrine.md §2.4·§2.5) — 잎 모듈: 타입과 배열뿐이다.
+// field/doctrine.ts(엔진)가 이 파일을 import 하고, 분야별 줄 파일(common·police·fire·ems·special)도 이 파일만 import 한다.
+// 줄 파일이 doctrine.ts 를 import 하면 doctrine.ts → 줄 → doctrine.ts 순환에서 배열이 초기화되기 전에 불린다 — 그래서 등록과 배열은 여기에 둔다.
+//
+// 등록 순서가 결과를 바꾼다(같은 순위의 줄끼리 먼저 등록된 줄이 이긴다 — §2.6). field/doctrine/index.ts 가 common → police → fire → ems → special 로 import 한다.
+// 새 줄은 그 분야 파일의 끝에 붙인다 (CLAUDE.md 의 "시나리오의 순서" 함정과 같다).
+//
+// 단계 0 (틀): 줄이 하나도 없다. DOC_DEPTS_DONE 도 비어 있다 — 분야를 구현하는 단계(2 경찰 · 3 소방 · 4 의료 · 5 특수)가 더한다.
+
+import type { Sim } from '../../engine';
+import type { Dept, DocActId, DocDept, DocGateId, DocHook, DocWhy, FieldAgent, IncidentType, KitId, MethodId, RoleGroup, RoleId, Scene, Unit, UnitKind, WorkItem, WorkKind } from '../../types';
+import type { Sense } from '../methods';
+
+/** 대상 대원의 상태 (자기 모드 = 자기 몸, 보고 모드 = 남이 아는 만큼 — §2.4 의 표) */
+export interface DocState {
+  hp: number; band: number; bleeding: boolean;                  // 보고 모드에서 hp = -1 · bleeding = false (쓰지 않는다), band 는 'crew' 신고
+  stamina: number; fitness: number; composure: number; experience: number; judgment: number; teamwork: number;
+  rookie: boolean; veteran: boolean;             // experience < 0.3 · ≥ 0.7
+  hasScba: boolean;                              // scba 를 들었다 (알려진 고장 제외 — gear.kitHas). 공기 잔량과 따로다
+  air: number;                                   // 공기 비율 0..1 = gear.kitQty(scba) / sim.tune.airFull. scba 가 없으면 1
+  spareAir: number;                              // 자기 부대의 예비 공기통
+  gun: KitId | null;                             // 가진 총 (gear.gunOf — sniper > rifle > pistol)
+  ammo: number; mag: number; magSize: number; perShot: number;   // 그 총의 탄 (총이 없으면 ammo = -1. 탄을 세지 않는 동안은 Infinity)
+  ammoLow: boolean; ammoCrit: boolean;           // 마지막 탄창 / 발사 2회 이하
+  reloading: boolean; ammoBox: number;           // 재장전 중 / 자기 부대의 탄약 상자
+  shaken: boolean; underFire: boolean; inCover: boolean; carrying: boolean;
+  buddy: FieldAgent | null; buddyNear: boolean;  // 쓸 수 있는 짝 (§5.2), 짝이 2.5칸 안
+  mates: number;                                 // 같은 Dept 의 다른 활동 대원 가운데 6칸 안의 수
+  alone: boolean;                                // buddy === null && mates === 0
+  backup: boolean;                               // 같은 Dept 부대가 이 사건으로 오는 중 (I.assigned · u.state — 조직 정보)
+}
+/** 믿음 속 가장 가까운 활동 용의자 */
+export interface DocThreat { id: number; x: number; y: number; d: number; weapon: 'gun' | 'knife' | 'none'; state: string; hostage: boolean; facing: number }
+/** 상황 (믿음·생김새·공개 지휘 상태) */
+export interface DocSit {
+  kind: IncidentType; label: string;             // 유형, 관제의 이름표 (I.assessment 의 이름 — 변형의 진실이 아니다)
+  phase: DocPhase;
+  hot: boolean; outdoor: boolean; secure: boolean;
+  threat: DocThreat | null;
+  civAtRisk: boolean;                            // 믿음: 위협 2칸 안에 살아 있는 구조 대상, 또는 교전 중 총기 용의자와 같은 구역의 다친 구조 대상·인질
+  inHazard: boolean;                             // 자기 자리가 위험 건물 실내 (fitFor 의 fireRisk 와 같은 믿음 판정)
+  victimInside: boolean;                         // 믿음: 위험 건물 안에 살아 있는 구조 대상, 또는 신고 인원(occ) > 찾은 수
+  danger: number;                                // X6: 믿음 ops 사실의 자기 구역 단계 (없으면 0)
+  wDanger: number;                               // X6: 대상 작업 w 의 구역 단계 (w 가 없거나 구역이 없으면 danger 와 같다)
+  ctlDone: boolean[];                            // 통제 지점별 교통 통제 끝 (ctl 사실)
+  liveBomb: { x: number; y: number; d: number } | null;   // 믿음 haz bomb active (가장 가까운 것)
+  defusing: boolean;                             // 동료의 겉: 누군가의 defuse 임무가 장치 곁(2칸)에서 진행 중
+  patients: number;                              // 믿음: 처치·탑승을 기다리는 band ≥ 1 구조 대상 수
+  seatsLeft: number;                             // 현장 부대의 남은 환자 자리 합 (gear.seatsLeft — 조직 정보)
+  negotSec: number; entryOrdered: boolean;       // s.negotStart 부터의 초(협상 전이면 0), s.entryOrdered
+  lanes2nd: boolean;                             // 이 현장 기록에 2차 사고가 있었다 (I.problems 의 SECONDARY_COLLISION)
+}
+export type DocPhase = 'arrive' | 'sizeup' | 'standoff' | 'entry' | 'assault' | 'interior' | 'care' | 'transport' | 'traffic' | 'withdraw' | 'idle';
+/** 교본 줄이 받는 단 하나의 입력. 줄의 when 은 이것만 읽는다 */
+export interface DocCtx {
+  sim: Sim; s: Scene; a: FieldAgent; u: Unit; dept: DocDept; role: RoleId | null; group: RoleGroup | null;
+  mode: 'self' | 'report';                       // 자기 모드(대원 자신의 판단 — duty·act·gate·실행부의 방법 고르기) / 보고 모드(fit · methodFit — 남에게도 불린다)
+  w: WorkItem | null;                            // fit·gate 의 대상 작업 (없으면 null)
+  st: DocState; sit: DocSit;
+  sense: Sense;                                  // R2 의 Sense — 대원이 선 칸의 연기·열 (부르는 쪽이 잰다. 보고 모드에서는 0)
+  dng: number;                                   // brain 의 위험 점수 (duty·act 자리에서 brain 이 넘긴다. 다른 자리에서는 0)
+  has: (id: KitId) => boolean;                   // gear.kitHas — 들었는가 (알려진 고장 제외, 수량 무관)
+  kit: (id: KitId) => number;                    // gear.kitCount (R2 — scba 는 0/1, 수량 장비는 남은 수)
+  m?: { reach: number; flow: number; weak: boolean; tile: number };      // 방법 자리: R2 chooseMethod 가 사본에 채운다 (부르는 쪽은 채우지 않는다)
+  see?: { stunned?: boolean };                   // 판단 지점 자리: 실행부가 시야 안에서 잰 것 (docGate 의 see — 용의자가 무력화된 것이 보인다)
+}
+
+/** 효과 하나. fit·method 효과는 자기 works·methods·when 을 더 가질 수 있다 (한 줄이 일마다 다른 배율을 줄 때) */
+export type DocEffect =
+  | { kind: 'fitMul'; mul: number; works?: WorkKind[]; when?: (c: DocCtx) => boolean; drop?: boolean }   // 곱한다. 0 = 그 일을 맡지 않는다. drop = 하던 그 임무도 놓는다. mul 1 = 기록 전용
+  | { kind: 'fitAdd'; add: number; works?: WorkKind[]; when?: (c: DocCtx) => boolean }                   // 0 이 아닐 때만 더한다 (선호가 자격을 만들지 않는다)
+  | { kind: 'duty'; act: DocActId }                                  // 의무 — 점수 없이 그 자리에서 바꾼다
+  | { kind: 'act'; act: DocActId; score: number | ((c: DocCtx) => number) }
+  | { kind: 'methodMul'; mul: number; methods?: MethodId[]; when?: (c: DocCtx) => boolean }              // R2 방법 점수에 곱한다. 0 = 후보에서 뺀다
+  | { kind: 'block'; maxWait: number | ((c: DocCtx) => number) }    // 판단 지점에서 막는다. maxWait 초가 지나면 timeout 갈래 (§4.4)
+  | { kind: 'choose'; opt: 'cover' | 'save' | 'stack' | 'immobilize' };   // 판단 지점에서 막지 않고 갈래만 고른다
+export interface DoctrineRule {
+  id: string;            // 'P07' — 표 글자 + 번호. 한 줄이 두 자리에 걸리면 같은 번호에 글자를 붙여 따로 등록한다('F04'·'F04b'). 측정·보고서는 앞 세 글자로 묶어 센다
+  dept: DocDept;         // 어느 표의 줄인가
+  name: string;          // 패널 이름 ('혼자 방 진입 금지')
+  short: string;         // 요약 줄의 짧은 이름 ('단독 진입 보류')
+  who?: { dept?: Dept[]; doc?: DocDept[]; roles?: RoleId[]; groups?: RoleGroup[]; units?: UnitKind[] };   // 없으면 누구나. 칸끼리는 그리고(AND)
+  hook: DocHook;
+  swap?: 'retreat';      // act 줄 가운데 docAct 후보가 아니라 후퇴 후보를 바꿔 끼우는 줄 (P11 — docRetreat 가 본다)
+  works?: WorkKind[];    // fit·method·gate: 이 임무만 (없으면 모두). 효과의 works 는 그 안에서 더 좁힌다
+  gate?: DocGateId | DocGateId[];   // gate 줄의 판단 지점
+  methods?: MethodId[];  // method 줄이 배율을 주는 방법 (효과의 methods 가 있으면 그것)
+  kits?: KitId[];        // 이 가운데 하나라도 쓸 수 있어야 걸린다 (scba 는 들었는지만 — 남은 공기는 when 이 st.air 로)
+  noKits?: KitId[];      // 이 가운데 아무것도 쓸 수 없어야 걸린다 — '장비 때문에'를 센다 (까닭 noKit)
+  when: (c: DocCtx) => boolean;      // 상황·상태 술어. DocCtx 만 읽는다. 예외는 여기에 넣는다 (§2.6 — "허락" 줄을 따로 두지 않는다)
+  effect: DocEffect | DocEffect[];
+  th?: Record<string, number>;       // 문턱 상수 (when 이 읽는 수 — 표·패널·테스트가 같은 값을 본다)
+  rank: 0 | 1 | 2 | 3;               // 0 생명 · 1 보호 · 2 짝·지원·절차 · 3 장비·효율
+  why: DocWhy;
+  note?: string;                     // 기록 문구 템플릿 ({name}·{mate}·{new}·{n}·{m}·{k}·{s}) — 없으면 기록 없이 센다
+  report?: string;                   // 보고서 문장 템플릿 (§7.3) — 없으면 보고서에 싣지 않는다
+}
+/** 개인 교본 줄 (등록 순서 그대로) */
+export const DOCTRINE: DoctrineRule[] = [];
+export function registerDoctrine(...rules: DoctrineRule[]): void { for (const r of rules) DOCTRINE.push(r); }
+/** 지휘·관제·추격 줄의 이름표 (코드는 orders/doctrine.ts · dispatch/doctrine.ts · orders/catastrophe.ts 에 있다. 기록·측정만 이 표로 이름을 찾는다) */
+export const CMD_ROWS: { id: string; dept: DocDept; hook: 'cmd' | 'dispatch' | 'chase'; name: string; short: string; why: DocWhy }[] = [];
+/** 줄이 다 들어간 분야 — 시험 8 의 "분야마다 12줄 이상"은 여기 든 분야만 본다 (단계마다 그 분야를 더한다) */
+export const DOC_DEPTS_DONE: DocDept[] = [];
+
+/** 판단 지점의 답: ok = 그 걸음을 해도 된다 · rule = 막은(알릴) 줄 · wait = 막은 줄들의 maxWait 가운데 가장 긴 값 · opt = choose 줄이 고른 갈래 */
+export interface DocGateAns { ok: boolean; rule: string | null; wait: number; opt: string | null }
+/** 의무·행동 후보 하나 (한 판단에 하나 — §2.6) */
+export interface DocPick { rule: DoctrineRule; act: DocActId; score: number }
+/** fit 자리의 자세한 답: fit = 교본을 넣은 값, base = 교본 전의 값, hits = 걸린 줄과 그 줄이 준 배율·가산 (assign 의 1등 비교가 쓴다 — §2.7) */
+export interface DocFitAns { fit: number; base: number; hits: { rule: DoctrineRule; mul: number; add: number; drop: boolean }[] }
+
+/** 줄 번호(앞 세 글자)로 묶은 이름 (패널·보고서). 개인 줄이 없으면 지휘·관제 줄에서 찾는다 */
+export function ruleName(id: string): { name: string; short: string } | null {
+  for (let k = 0; k < DOCTRINE.length; k++) if (DOCTRINE[k].id === id) return DOCTRINE[k];
+  for (let k = 0; k < CMD_ROWS.length; k++) if (CMD_ROWS[k].id === id) return CMD_ROWS[k];
+  return null;
+}

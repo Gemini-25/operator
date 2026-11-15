@@ -1224,3 +1224,76 @@ npm run check                                                             # 단�
 - "fit 이 배정을 바꿨다"를 '뽑힌 대원에게 중립 아닌 효과가 걸렸다'로 단순화하지 않고, `assign` 안에서 교본 전후의 1등을 비교하는 정의를 골랐다. 단순화하면 모든 다친 대원의 배정이 '쓰였다'가 되어 완료 조건 1 이 무의미해지고, 까닭 말이 결과를 바꾸지 않은 지시에도 붙는다. 비용은 같은 반복 안의 두 번째 최댓값뿐이다. 대원의 자체 판단은 비교할 1등이 없어 세지 않는다(2.7).
 - 무거운 시험·sweep 은 돌리지 않았다(이번 작업의 조건). 그래서 `npm run check` 에 더해질 시간은 숫자로 적지 않고, 0단계에서 재어 강제 교대 수를 정하는 규칙으로 적었다(9절).
 - **사용자 결정(2026-11-15): "가벼운 일은 계속"** — H1 이 걸을 수 있는 다친 대원(`injured`)에게 가벼운 일만 맡기게 정하면서, 가벼운 일 목록의 정본을 H1 의 `LIGHT_WORK`(`traffic`·`perimeter`·`negotiate`·`interview`·`hookup`, 안전 구역의 `treat`·`treatMate`) 하나로 맞췄다. 부상 줄 P12·F14·E11·G01 의 가산 목록을 그 이름으로 바꿨다 — 그래서 F14·G01 의 `clearRoad`, G01·E11 의 `load` 는 가산에서 빠지고(몸을 쓰는 일), G01 에 `negotiate`·안전 구역의 처치가 더해졌다. 분야별 감산(`×0.35`·`×0.6`·`×0.5`)은 그대로다. 고친 곳: 0절 3, 1절 연관 표의 H1 줄, 2.4 의 `crew` 사실 문단, 3.1·3.2·3.3·3.4 의 부상 줄, 3.6 등록 칸, 4.2 상태 표.
+
+---
+
+## 구현 메모 (진행 중 — 단계를 끝낸 작업자가 덧붙인다)
+
+**코드가 정본이고, 이 절이 본문보다 우선한다.** 다음 작업자는 본문(0~11절)과 함께 이 절의 "실제 이름"·"본문과 다른 곳"·"이어받을 자리"를 먼저 읽는다.
+
+### 단계 0 (틀) — 2026-11-15, 준비 실행
+
+**상태: 구현됨, 결과 불변.** 브랜치 `wf/doctrine`(작업자 브랜치 `wf/doctrine-s0`), 시작점 `ba58645`(주 브랜치 — R1 전체 · H1 단계 0~4c · X6 단계 1(상태만) · R2 단계 0(틀) · I1-a · I1-b 단계 b0 까지 합쳐진 자리). `docs/specs/README.md` "겹쳐 돌리기"의 **준비 줄**로 했다 — 같은 기계에서 H1 단계 5·6 작업자가 결과를 바꾸는 중이라 균형 기준(`r3-base*.json`)은 재지 않았고 **해시 목록만** 시작점에서 만들어 견줬다. 그래서 다음 작업자(1단계)는 맨 먼저 주 브랜치를 받아(`git merge --no-edit <주 브랜치>`) 충돌을 풀고, 그 위에서 8.3 의 0단계 기준(`r3-base.json`·`r3-base-{easy,hard,extreme}.json`)을 잰다.
+
+| 커밋 | 내용 |
+|---|---|
+| `3f43de1` | 자료형(`types.ts` 끝의 R3 블록), `gear.ts` 판단용 감싼 함수, `field/doctrine/registry.ts`·`field/doctrine.ts`(엔진), 빈 줄 파일 다섯·`doctrine/index.ts`·빈 `orders/doctrine.ts`, `doctrineRun.ts`(`recordDoc`·`docBegin`), 걸리는 자리(`fitFor` 끝 · `brain` 넷 · `chooseMethod` 배율 · `methodFit` · `methodRun` 세 곳 · 실행기 `arrest` 의 판단 지점), 생성 리터럴, `scenes/index.ts` 두 줄 |
+| `2818efd` | `sweep --doctrine`(`scripts/doctrinestats.ts`), 대원 정보창의 교본 칸(`ui/DoctrineRows.tsx`), `tests/doctrine.test.ts` 18개(시험 1·5·8) |
+| 그다음 커밋 | 이 메모 |
+
+#### 실제 이름 (단계 0 에 생긴 것)
+
+| 이름 | 어디 | 서명·뜻 |
+|---|---|---|
+| `DocDept`·`DocHook`·`DocActId`·`DocGateId`·`DocWhy`·`CrewBelief`·`DocUse` | `types.ts` 끝의 R3 블록(I1-b 블록 다음) | 본문 §2.1 그대로 |
+| 선택 칸: `KitItem.mag` · `FieldAgent.buddy`·`doc`·`docMem`·`shaken`·`shakenOff`·`reloadUntil`·`crewSig` · `Task.docRule`·`gateAt`·`gateId`·`gateSaid`·`cvX`·`cvY`·`cvTx`·`cvTy`·`cvLost` · `Unit.ammoBox`·`ammoBoxMax`·`sparePump` · `Scene.triageAt`·`laneShield` · `Incident.docs`·`trackBy`·`reportedPrev`·`reportedNodeAt` · `ShiftReport.doctrine`·`docSplit` | `types.ts` 의 R3 블록(인터페이스 합치기) | 생성 리터럴: `makeAgent`(`buddy: -1, doc: null`, 나머지 `undefined`) · `makeTask`(`gateAt: -1, gateSaid: false, cvLost: -1`, 나머지 `undefined`) · `resources` 두 부대 리터럴(셋 다 `undefined`) · `baseScene`(`triageAt: -1, laneShield: null`) · `createIncident`(넷 다 `undefined`). `KitItem.mag` 는 리터럴에 넣지 않았다(2단계가 총기에만 채운다) |
+| `kitHas(sim, rid, id)` · `kitQty(sim, rid, id)` · `gunOf(sim, rid)` · `roleIdOf(sim, rid)` · `groupOf(sim, rid)` · `crewHas(sim, u, id)` | `field/gear.ts` 끝의 "판단용 (R3)" 절 | `gunOf` → `{ id, ammo, mag, magSize, perShot, reload } \| null`(sniper > rifle > pistol, 알려진 고장 제외). **탄을 세지 않는 동안(2단계 전)은 `ammo = mag = magSize = Infinity`, `perShot 1`, `reload 0`** — `KitDef` 의 `mag`·`reload`·`perShot` 은 아직 없어 `GunDef = KitDef & {…}` 로 읽는다. `roleIdOf` 는 역할이 없는 명부에 R1 `roleOf` 의 부서별 기본 역할을 돌려준다 |
+| `DocState`·`DocThreat`·`DocSit`·`DocPhase`·`DocCtx`·`DocEffect`·`DoctrineRule`·`DOCTRINE`·`registerDoctrine`·`CMD_ROWS`·`DOC_DEPTS_DONE`(빈 배열)·`DocGateAns`·`DocPick`·`DocFitAns`·`ruleName(id)` | `field/doctrine/registry.ts` (잎 — 타입만 import) | `DocCtx` 에 칸 하나를 더했다: `see?: { stunned?: boolean }`(판단 지점의 `see` — 아래 "본문과 다른 곳") |
+| `ZERO_SENSE` · `DOC`(문턱 상수 표) · `DOC_DUTY_TASKS` · `PAIRS` · `SOLO_OK` · `docDeptOf` · `bandHyst(hp, prev)` · `crewSigOf(v)` · `sigBand(sig)` · `regionOfWork(s, a, w)` · `hazWork(sim, s, a, w)` · `buddyOf(sim, s, a, w = null)` · `outsideWatch(sim, s, a, ex: Pt)` · `watchNeed(sim, s)` · `stateSelf` · `stateReported` · `phaseOf(sim, s, a)` · `docSit(sim, s, a)` · `docCtx(sim, s, a, mode, w = null, sense = ZERO_SENSE, dng = 0)` · `docForget(a?)` · `hasDoc(hook)` · `applies(c, r)` · `docTarget(c)` · `docFitRules` · `docFit` · `docDrop(sim, s, a)` · `docDuty(sim, s, a, sense?, dng?)` · `docAct(…)` · `docRetreat(sim, s, a, dng, sense?)` · `docMethodMul(dc, m)` · `docGate(sim, s, a, gate, sense?, see?)` · `coverTileAt` · `coverSpot` | `field/doctrine.ts` | 값 import 는 `types`(T)·`util`·`gear`·`grid`·`injury`(`bandOf`)·`doctrine/registry` 뿐(시험 1). **줄이 없으면 모든 자리가 첫 줄에서 돌아간다**(`DOCTRINE.length === 0` — 상태를 만들지도 않는다). 상태·상황은 `WeakMap<FieldAgent, {tick, self, rep, sit}>` 에 틱마다 모드별로 담는다(`docForget` 이 버린다 — 같은 틱에 대원 상태를 손으로 바꾸는 시험용). 줄 목록은 `(자리, 일)` 별 `Map` 이고 `DOCTRINE.length` 가 바뀌면 다시 만든다 |
+| `recordDoc(sim, I, a \| null, rule, hook, extra = {}, eventId = -1, say = false)` · `docBegin(sim, s, a, pick, k)` · `DOC_MERGE`(30) | `field/doctrineRun.ts` | `recordDoc` 는 같은 (rule, rid, tgt) 의 줄이 30초 안이면(`sim.t − d.t1 ≤ 30`) `t1` 을 늘린다. `docBegin` 은 아래 |
+| `doctrineStats` · `sumDoctrine` · `doctrineJson` · `doctrineTables` · `SPLIT_MIN`(10) | `scripts/doctrinestats.ts` | `sweep --doctrine`: 글자 줄은 모두 `doctrine:` 으로 시작. `--json` 의 `doctrine` 칸은 **`--doctrine` 을 붙였을 때만** 넣는다(그 밖의 JSON 은 한 글자도 그대로) |
+| `DoctrineRows({ sim, scene, agent })` | `ui/DoctrineRows.tsx` · `panels.tsx` 의 `AgentPanel`(R2 `MethodRows` 바로 다음 한 줄 + import 한 줄) | 따르는 줄(`a.doc` / `task.docRule`, 판단 지점이면 `gateAt` 부터 몇 초째) · 그 대원의 최근 `I.docs` 셋. 적힌 것이 없으면 `null`(자리를 차지하지 않는다). 상태 칩은 1단계 |
+
+#### 걸리는 자리 (단계 0 의 호출 — 줄이 없어 모두 그대로)
+
+| 자리 | 파일·함수 | 단계 0 의 모양 |
+|---|---|---|
+| ① fit | `agents.fitFor` | `return docFit(sim, s, a, w, <R1 역할 선호까지 더한 값>)` 한 줄. `docFit` 은 `fit ≤ 0` · `docMem 'w:'` · 줄 없음 순서로 돌아간다 |
+| ② 의무·놓기 | `brain.think` — 부상 후퇴 붙잡기(`hurt && retreat`) 바로 다음, 점수 후보 앞 | `dSense = senseOf(s, a)` → `if (cur && DOC_DUTY_TASKS.has(cur.kind)) return;` → `docDuty` 가 있으면 `docBegin(…, XK)` 후 `return` → `docDrop` 이 있으면 `finishTask(…, false, 'doctrine')` + `recordDoc(…, 'fit')` 후 `return` |
+| ② 후퇴 바꿔 끼우기 | `brain.think` 의 1) 위험 회피 | `swapR = docRetreat(…)` 가 있으면 그 후보(라벨 `교본 · {short}`, 점수 `pick.score`), 없으면 **`else if`** 로 원래 후퇴 후보 |
+| ② 행동 후보 | `brain.think` — R1 공기통 교체 후보 다음, 5) 휴식 앞 | `swapping` 이 아니면 `docAct(…, dSense, dng)` — 있으면 후보 하나(`교본 · {short}`) |
+| ③ 방법 | `methods.ts` `rank` · `methodFit` · `methodRun` 의 `startMethod`·`recheckOnArrive`·`switchMethod` | `rank`: `dc` 가 있으면 `{ ...dc, m: { reach, flow, weak, tile } }` 사본 하나로 점수 × `docMethodMul`. `methodFit`: `hasDoc('method') ? docCtx(…, 'report', w) : null`. `methodRun` 세 곳: `selfDc(sim, s, a, t)`(자기 모드, `hasDoc('method')` 일 때만) |
+| ④ 판단 지점 | 실행기 `case 'arrest'` — R1 테이저 바로 다음, `moveTo` 앞 | `if (!docGate(sim, s, a, 'closeIn').ok) return;` 한 줄 (막히면 이 틱은 서 있는다 — 2단계가 기다리는 자리·상한·기록으로 바꾼다) |
+| 등록 | `field/scenes/index.ts` 끝 | `import '../doctrine/index';` `import '../orders/doctrine';` |
+
+`agents.ts`·`executor.ts`·`brain.ts` 의 새 import 는 R2 처럼 **파일 끝**에 두었다(위의 import 묶음을 다른 묶음이 함께 고치고 있어서 — 충돌을 줄이려고). `gear.ts` 의 `crews` 추가 import 도 파일 끝의 R3 절에 있다.
+
+#### 본문과 다르게 한 곳
+
+1. **`doctrineRun.ts` 에 `docBegin` 하나를 더 두었다**(본문 §9 는 "`recordDoc` 만"). `brain` 의 세 자리가 고른 교본 행동을 받을 곳이 있어야 걸리는 자리가 완결되기 때문이다: 하던 임무를 `preempt` 로 놓고, `k.makeTask(pick.act as string as TaskKind, short)` 로 임무를 열고(`t.docRule`), `a.doc` 을 적고, `recordDoc`. **기록 문구(emit — 줄의 `note`, 20초에 한 번)·새 임무의 실행 case·계속 점수는 넣지 않았다** — 그 행동을 쓰는 단계(2 `cover`·`rearm`, 3 `airOut`·`pairOut`·`pair`)가 `TaskKind` 에 이름을 더하면서 캐스트를 지우고 채운다. 단계 0 에는 줄이 없어 불리지 않는다.
+2. **`gear.ts` 의 함수는 여섯**(`kitHas`·`kitQty`·`gunOf`·`roleIdOf`·`groupOf`·`crewHas`) — 본문 §2.4 표의 다섯 줄(그중 한 줄이 둘)과 같다.
+3. **`DocCtx.see`** 를 더했다. 본문 §2.5 는 `docGate(…, see?)` 와 P01 의 `!see.stunned` 를 말하지만 `DocCtx` 에 그 칸이 없었다 — `docGate` 가 만든 입력에만 채운다.
+4. **판단 지점은 `arrest` 의 `closeIn` 한 곳만** 걸었다. 나머지(`engage` 의 `roomEntry`·`breach`·`bangUse`·`coverFire`·인질 갈래의 `closeIn`, `interiorEntry`, `carryHold`·`carryStart`, `laneTreat`)는 막혔을 때의 기다림·상한·기록이 그 단계의 내용이라 그 단계가 건다(11.1 표의 단계 열).
+5. **§3.7 끝의 "진압의 외부 방어 조각(R3 0단계에 `methods.ts` 에 더한다)"은 하지 않았다.** R2 단계 0 의 `defensive` 는 `can: NOT_YET` 이라, 거기에 "또는 `docMethodMul(c.dc, 'interior') === 0`" 을 붙이면 실행부가 생기기 전에 외부 방어가 고를 수 있는 방법이 된다(3단계의 F03b·F04b·F05b 가 들어오는 순간). 이어받을 자리에 적었다.
+6. **`--json` 의 `doctrine` 칸은 `--doctrine` 일 때만** 넣는다(§8.3 은 조건 없이 적었다) — 다른 자동화가 읽는 기본 JSON 을 바꾸지 않으려고.
+7. **0단계 해시 비교를 S0~S9 보다 넓혔다**: 보통 40 + 어려움 20 + 극한 20 + 재난 다섯 × 3 + `--force` 일곱(`fire/std`·`armed/hostage`·`armed/dispute`·`armed/bomb`·`traffic/bus`·`hazmat/std`·`collapse/gasblast`) × S0~S3 = **123교대**, 교대마다 `report.hash`·`JSON.stringify(report)` 의 FNV·`sim.logHash`. 시험 5 의 "0단계 커밋은 S0~S9 의 해시가 같다"는 이것으로 대신했다(그 시험은 본문대로 손으로만 돌리는 것이라 파일에 넣지 않았다).
+8. **`DOC_OF_UNIT`**: 역할 표(§2.2)에 없는 내리지 않는 자리(조종사·부기장·정장)는 부대 종류로 분야를 정한다(경찰 헬기 → 경찰, 의료 헬기 → 의료, 소방 헬기·구조정 → 특수). 교본이 걸리지 않는 자리라 결과와 무관하다.
+9. **`phaseOf` 의 `entry`/`assault`**: "출입구 앞 / 출입구를 지난 뒤"를 "선 칸의 구역이 실내가 아니다 / 실내다"로 정했다(출입구 거리보다 흔들리지 않는다). 위험 실내가 아닌 곳의 수색·진압 등은 `idle`. `split` 열쇠에만 쓰인다.
+
+#### 이어받을 자리 (다음 단계가 할 것)
+
+- **X6 의 이름이 아직 없다**: `brain` 에 `evacuate` 의무가 없고 `orders/catastrophe.ts`(`DANGER_RULES`)도 없다(X6 는 단계 1 — 상태만). 그래서 R3 의 의무 자리는 부상 후퇴 붙잡기 바로 다음에 있다 — X6 단계 2 가 철수 의무를 넣을 때 **R3 블록 앞**에 넣는다(§2.6 의 3번 → 4번 순서). `docSit.danger`·`wDanger` 는 믿음 `ops` 사실(id 0)의 `zones[].regions/level` 을 읽게 해 두었다 — X6 가 정한 `ops` 사실의 실제 값 모양이 다르면 `doctrine.ts` 의 `opsLevel` 하나를 고친다. CF5·CF6(3단계)은 X6 의 `DANGER_RULES` 가 생긴 뒤에.
+- **H1**: `bandOf`·`hurtF`·`LIGHT_WORK`·`mustRetreat` 는 있다(`field/injury.ts`). 엔진은 `bandOf` 만 쓴다. H1 단계 5·6 의 이름은 부르지 않았다.
+- **R2**: `defensive` 의 `can` 을 채우는 단계(R2 단계 4)가 "또는 `c.dc !== null && docMethodMul(c.dc, 'interior') === 0`" 과, 몸 상태 조건 `r.health < 50` 대신 `c.dc.st.band ≥ 1` 을 함께 넣는다(§3.7 끝). R2 §4.1 의 "상공 호이스트 swim ×0.7" 은 R3 5단계(S15)가 지운다.
+- **1단계**: `FactType` 에 `'crew'` 를 더하면 `doctrine.ts` 의 `CREW_FACT = 'crew' as string as FactType` 을 `'crew'` 로 바꾼다. `selfReport` 는 `brain.think` 의 `perceive` 다음·`flushOutbox` 앞(지금 그 자리에는 아무것도 없다), 서명은 `crewSigOf`·`sigBand` 를 쓴다. `docSplit` 표본(`setTask`·`takeWork`·의무 자리)·`buildReport` 의 `doctrine`·`docSplit`·요약 줄, `assign` 의 1등 비교(`docFitRules` 가 `base`·`hits` 를 돌려준다), 패널의 상태 칩. 시험 5 의 **"단계 0: 줄이 없어 …" 묶음**(교본 기록·상태 칸이 비어 있다, `hasDoc` 이 모두 거짓)과 "줄이 없으면 걸리는 자리가 그대로" 묶음은 줄이 생기는 단계가 자기 단계에 맞게 고친다 — 그대로 두면 깨진다.
+- **2단계**: `finishTask` 사유 표에 `'doctrine'`·`'handover'`(brain 의 `docDrop` 자리가 이미 `'doctrine'` 을 넘긴다 — 표가 없으면 '중단 — doctrine. 재지시 요청.' 무전과 `w.fails++` 가 난다), `docBegin` 의 캐스트 지우기와 기록 문구, `arrest` 의 판단 지점 줄을 기다리는 자리(1.8·3칸)·`t.gateAt`·`gateSaid`·상한·timeout 갈래로, `Tuning.ammoBox`·`KitDef.mag/reload/perShot`(그러면 `gear.ts` 의 `GunDef` 를 지운다), `DOC_DEPTS_DONE` 에 `'police'`, `dispatch/doctrine.ts`(생기면 시험 1 이 저절로 검사한다), `CommandKit.request` 의 기록 id.
+- **3단계**: `pairUp`(`sceneManager.unitArrived` 의 반복 뒤 — `PAIRS` 의 `std`/`min`, 최소 인원은 `u.crew.length === minCrew(u.kind)`), `rebuddy`(brain 의 `flushOutbox` 다음), `buddyOf`·`outsideWatch`·`watchNeed` 는 이미 있다.
+- **패널**: 단계 0 에는 늘 비어 있다(개발 서버 5219 에서 `?seed=S7&force=armed/hostage` 를 열어 대원 여섯의 정보창을 띄움 — 콘솔 오류 0, "대응 교본" 칸 없음).
+
+#### 수치 (단계 0)
+
+- **해시 목록 diff 0**: 시작점 `ba58645` 와 이 단계 끝에서 위 123교대의 `report.hash`·`FNV(JSON.stringify(report))`·`logHash` 가 한 글자도 다르지 않다(목록은 scratchpad 의 `wf-doctrine/base-hashes.txt`·`after-hashes.txt`). 교본 후보를 하나도 더하지 않으므로 `a.rng` 소비가 같다.
+- **시험**: `tests/doctrine.test.ts` 18개 — 시험 1(6) · 5(9 — 재현성: 보통·`fire/std`·`armed/hostage` 를 두 번씩, 순수 함수: 시험용 줄 여덟(G91~G98)을 잠깐 등록해 엔진의 모든 갈래를 백 번 부르고 상태(장비·명부·난수 흐름 다음 값·기록·작업판·무전)가 그대로인지, 그리고 곱하기·더하기·금지·막기·고르기의 규칙) · 8(3 — 검사 함수가 틀린 줄 열세 가지를 실제로 잡는지도). 단독 실행 8.4초(가져오기 6초 · 시험 2.2초).
+- **교대 하나의 시간**(§9 끝, `time npx vitest run tests/sim.test.ts -t 재현성` — 부하 평균 9.8): 26.5초 중 시험 5.7초 / 교대 10개 ≈ **교대당 0.6초**. 강제 교대를 따로 재면(교대당 벽시계 · 사용자 CPU) `fire/std` 0.77 · 1.37초, `armed/hostage` 0.52 · 0.81초, 최소 인원 `fire/std` 0.61 · 0.96초, `armed/dispute` 0.55 · 0.79초, `armed/hostage` 0.37 · 0.55초. 시험 4(강제 12교대) + 시험 6(최소 인원 18교대)을 더하면 ≈ 17초로 60초 아래다 — **6교대 그대로 둔다**(3교대로 줄이지 않는다).
+- **`npm run check` 통과**(`2818efd` 의 코드): 시험 파일 16 · 477개 통과 + 건너뜀 1(시작점 459 + 이 단계 18). 벽시계 7분 31초(vitest 422초 · 사용자 CPU 15분 26초) — 같은 기계에서 다른 묶음의 작업자가 함께 돌아 부하 평균이 8~14 였다. 이 단계가 관문에 더하는 몫은 `tests/doctrine.test.ts` 하나(단독 8.4초, 그중 시험 2.2초)뿐이다. `sweep 40 --check`: 성공 79% · 부분 10% · 지연 5% · 미해결 2% · 실패 5%, 닫힌 까닭 `resolved 565 · abandoned 2` — 해시가 같으므로 시작점과 같은 분포다.
+- **화면**: 개발 서버(5219)에서 대원 정보창을 여섯 번 띄움 — 콘솔 오류 0, 교본 칸은 그려지지 않는다(단계 0).

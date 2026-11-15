@@ -129,6 +129,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
     pursuit: undefined, tag: undefined, parent: undefined, aidUnit: undefined, coResp: undefined,      // 나중에 붙는 칸을 미리 비워 둔다 (모든 사건이 같은 모양)
     airDone: undefined,      // (R1) "상공 임무 종료"로 풀려난 헬기 종류 — 쓰는 것은 단계 5 부터
     cause: undefined, csq: undefined, blockedBy: undefined, blockEv: undefined,      // (I1-b) 인과 기록 — 판단은 읽지 않는다
+    docs: undefined, trackBy: undefined, reportedPrev: undefined, reportedNodeAt: undefined,      // (R3) 교본 기록(처음 남길 때 배열 — doctrineRun.recordDoc)·추격의 보고 칸(2단계)
   };
   { const tag = opts.tag ?? special?.tag; if (tag) I.tag = tag; if (opts.parent !== undefined) I.parent = opts.parent; }
   if (opts.cause !== undefined && opts.cause >= 0) I.cause = opts.cause;

@@ -340,8 +340,10 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
 
   // ── 구조 대상 ──
   const hasMedicAny = s.agents.some((b) => b.status === 'active' && sim.responders[b.rid].dept === 'ems');
-  // 환자를 싣고 병원으로 갈 수 있는 부대: 구급차(2명)와 구조 헬기(1명)
+  // 환자를 싣고 병원으로 갈 수 있는 부대: 환자 자리가 남은 부대 (seatsOf — 구급차 2명, 헬기 1명)
   const ambulances = unitsOnScene(sim, s).filter((uid) => canCarryPatients(sim.units[uid]) && !sim.units[uid].boardOrder);
+  // 그 부대에 이미 내려진 탑승 지시의 수 (실린 환자 + 이것이 자리 수를 넘지 않게 한다)
+  const loadsQueued = (uid: number): number => { let n = 0; for (const w of s.board) if (w.kind === 'load' && w.prop === uid && (w.status === 'open' || w.status === 'active')) n++; return n; };
   // 처치를 두 번 마쳤는데(기본 처치 + 구급대원이 다시 봄) 아직 기본 처치로 보고된다: 현장의 구급대원이 더 해 줄 수 있는 처치가 없다.
   // (구급대원은 자기가 더 낫게 할 수 없으면 손대지 않고 상태만 다시 보고한다 — 그대로 두면 같은 처치 지시와 같은 보고를 끝없이 주고받는다)
   const treatsDone = (cid: number): number => { let n = 0; for (const w of s.board) if (w.kind === 'treat' && w.cas === cid && w.status === 'done') n++; return n; };
@@ -374,13 +376,15 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       if (c.band >= 1 && ambulances.length) {
         const already = s.board.some((w) => w.kind === 'load' && w.cas === f.id && (w.status === 'open' || w.status === 'active'));
         if (!already) {
-          let best = ambulances[0];
-          for (const uid of ambulances) {
-            const queued = s.board.filter((w) => w.kind === 'load' && w.prop === uid && (w.status === 'open' || w.status === 'active')).length;
-            if (sim.units[uid].patients.length + queued < 2) { best = uid; break; }
+          // 위중 환자는 자리가 남은 헬기를 먼저, 그 밖의 환자는 지상 구급차를 먼저 고른다 (헬기의 한 자리를 위중 환자에게 남긴다)
+          const airFirst = c.band === 2;
+          let best = -1;
+          for (let pass = 0; pass < 2 && best < 0; pass++) for (const uid of ambulances) {
+            const q = sim.units[uid];
+            if ((!!q.air === airFirst) !== (pass === 0)) continue;
+            if (q.patients.length + loadsQueued(uid) < seatsOf(q)) { best = uid; break; }
           }
-          const queuedBest = s.board.filter((w) => w.kind === 'load' && w.prop === best && (w.status === 'open' || w.status === 'active')).length;
-          if (sim.units[best].patients.length + queuedBest < 2) want(sim, s, 'load', { cas: f.id, prop: best }, (c.treated ? 0.7 : 0.5) + urg);
+          if (best >= 0) want(sim, s, 'load', { cas: f.id, prop: best }, (c.treated ? 0.7 : 0.5) + urg);
         }
       }
     }
@@ -630,14 +634,15 @@ function manageAmbulances(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void 
   const cas = a.beliefs.list('cas');
   for (const uid of unitsOnScene(sim, s)) {
     const u = sim.units[uid];
-    if (!(u.dept === 'ems' || u.kind === 'heli') || !u.patients.length || u.boardOrder) continue;
+    if (seatsOf(u) === 0 || !u.patients.length || u.boardOrder) continue;      // 환자 자리가 있는 부대만 (구급차·헬기)
+    const full = u.patients.length >= seatsOf(u);      // 자리가 찼으면 바로 떠난다 (남은 탑승 지시는 아래에서 거둔다 — 다른 부대로 다시 낸다)
     const waiting = cas.filter((f) => f.value.band >= 1 && f.value.band < 3 && (f.value.where === 'scene' || f.value.where === 'carried' || f.value.where === 'safe'));
     const loading = s.board.some((w) => w.kind === 'load' && w.prop === uid && (w.status === 'open' || w.status === 'active'));
     const firstLoad = Math.min(...u.patients.map((cid) => s.casualties[cid].tLoaded));
     const waited = sim.t - firstLoad;
-    const redAboard = u.patients.some((cid) => s.casualties[cid].health < 40);
-    if (loading && waited < 30) continue;
-    if (u.patients.length >= 2 || waiting.length === 0 || (redAboard && waited > 10) || waited > 35) {
+    const redAboard = u.patients.some((cid) => { const b = a.beliefs.val<CasBelief>('cas', cid); return !!b && b.band === 2; });      // 위중 환자를 실었다고 알고 있다 (실은 대원의 보고 — 진실을 읽지 않는다)
+    if (!full && loading && waited < 30) continue;
+    if (full || waiting.length === 0 || (redAboard && waited > 10) || waited > 35) {
       u.boardOrder = 'transport';
       cancel(s, (w) => w.kind === 'load' && w.prop === uid);
       emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 1, text: `${u.callsign}, 환자 ${u.patients.length}명 병원 이송 출발하라.` });

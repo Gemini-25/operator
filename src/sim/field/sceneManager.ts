@@ -11,7 +11,7 @@ import { fieldCrew, hasKit, roleOf } from '../crews';
 import './scenes';
 import { SCENE_RULES } from './sceneRegistry';
 import type { Fact, FieldAgent, Incident, Scene, Unit } from '../types';
-import { TYPE_NAME } from '../util';
+import { TYPE_NAME, josa } from '../util';
 import { BeliefStore, mkFact } from './beliefs';
 import { learn } from './agents';
 import { think } from './brain';
@@ -222,9 +222,9 @@ export function tickScene(sim: Sim, s: Scene): void {
     for (const b of mates) { b.status = 'left'; b.task = null; b.label = ''; }
     if (u.boardOrder === 'transport' || u.patients.length > 0) {      // 철수 지시 뒤에 환자를 태웠어도 병원부터 간다
       const k = I.assigned.indexOf(u.id); if (k >= 0) I.assigned.splice(k, 1);
-      emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign} 환자 ${u.patients.length}명 싣고 시립병원으로 출발.` });
       u.boardOrder = null; u.incidentId = null;
-      startTransport(sim, u);
+      const hosp = startTransport(sim, u);      // 가장 빨리 닿는 병원을 고른다 — 기록에는 실제로 가는 그 병원을 쓴다
+      emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign} 환자 ${u.patients.length}명 싣고 ${josa(hosp.name, '으로/로')} 출발.` });
     } else {
       emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 0, text: `${u.callsign} 현장 철수, 복귀합니다.` });
       releaseUnit(sim, u);

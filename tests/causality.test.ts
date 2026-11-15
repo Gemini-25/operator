@@ -224,11 +224,14 @@ describe('연쇄 깊이', () => {
 });
 
 describe('일치 검사', () => {
-  it('보통 S0~S3 에서 C1~C4 위반 0', () => {
+  it('보통 S0~S3 에서 C1~C5 위반 0 (출발 기록의 병원 = 인계한 병원)', () => {
+    let pairs = 0;
     for (const seed of ['S0', 'S1', 'S2', 'S3']) {
       const c = probedShift(seed).m.consistency;
-      expect([c.C1, c.C2, c.C3, c.C4], seed).toEqual([0, 0, 0, 0]);
+      expect([c.C1, c.C2, c.C3, c.C4, c.C5], seed).toEqual([0, 0, 0, 0, 0]);
+      pairs += c.C5n;
     }
+    expect(pairs, '출발과 인계가 짝지어진 이송').toBeGreaterThan(20);
   });
   it('C5: 출발 문구와 인계 문구의 병원이 다르면 1, 뒤에 인계가 없는 출발은 분자·분모에서 뺀다', () => {
     const X: SimEvent[] = [];
@@ -280,5 +283,8 @@ describe('요약 모양', () => {
     const g = checkMetrics(bad, { baseline: false });
     expect(g.some((x) => x.startsWith('교착 후보') || x.startsWith('잊힌 사건'))).toBe(false);
     expect(g.length).toBe(4);
+    // C5 도 관문이다 (R1 단계 3 부터): 출발 기록의 병원과 인계한 병원이 다르면 실패
+    bad.consistency.C5 = 3;
+    expect(checkMetrics(bad, { baseline: false }).some((x) => x.startsWith('기록·상태 불일치 C5 3건'))).toBe(true);
   });
 });

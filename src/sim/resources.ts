@@ -8,7 +8,7 @@ import { unitArrived } from './field/sceneManager';
 import { Rng } from './rng';
 import { gateWait, reportObstacle, stopAhead } from './traffic';
 import type { Obstacle } from './traffic';
-import type { Dept, Incident, Needs, Responder, RoadEdge, Unit, UnitCaps, UnitField, UnitKind } from './types';
+import type { Dept, Facility, Incident, Needs, Responder, RoadEdge, Unit, UnitCaps, UnitField, UnitKind } from './types';
 import { clamp, fmtSec, josa } from './util';
 
 const NAMES = ['김도윤', '이서준', '박하준', '최민재', '정지호', '강현우', '윤서연', '한지민', '오수아', '임채원', '신유나', '조은서',
@@ -288,12 +288,14 @@ export function releaseUnit(sim: Sim, u: Unit): void {
   sendUnitTo(sim, u, u.homeNode);
 }
 
-export function startTransport(sim: Sim, u: Unit): void {
+/** 환자를 싣고 병원으로 떠난다. 고른 병원을 돌려준다 — 출발 기록이 그 이름을 쓴다(기록의 병원 = 실제로 가는 병원) */
+export function startTransport(sim: Sim, u: Unit): Facility {
   // 가장 빨리 닿는 병원으로 간다
   let hosp = sim.city.facilities.find((f) => f.kind === 'hospital')!, bt = Infinity;
   for (const f of sim.city.facilities) { if (f.kind !== 'hospital') continue; const t = etaFor(sim, u, f.nodeId); if (t < bt) { bt = t; hosp = f; } }
   u.state = 'transport';
   sendUnitTo(sim, u, hosp.nodeId);
+  return hosp;
 }
 
 const CURB_SPEED = 42;      // 길가로 붙을 때의 속도 (지도 단위/초)

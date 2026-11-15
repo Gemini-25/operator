@@ -6,7 +6,7 @@ import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
 import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Incident, RadioMsg, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
 import { clamp, dist, josa, pct } from '../util';
-import { hasFirearm, hasKit, kitLive, kitWorks, medLevelOf, roleOf, toolFor } from '../crews';
+import { hasFirearm, hasKit, kitLive, kitWorks, medLevelOf, roleOf, seatsOf, toolFor } from '../crews';
 import { BeliefStore, mkFact } from './beliefs';
 import type { CostFn } from './grid';
 import { doorAt, isIndoor, los, staticPass, tileOf } from './grid';
@@ -368,8 +368,8 @@ export function workLabel(s: Scene, w: WorkItem): string {
 /** 출입구의 이름. 길 위의 현장에서는 길의 양 끝이다. */
 export function exitName(s: Scene, k: number): string { return s.outdoor ? (k === 0 ? '서쪽 길목' : '동쪽 길목') : k === 0 ? '정문' : '후문'; }
 
-/** 환자를 싣고 병원으로 갈 수 있는가: 구급차는 2명, 구조 헬기는 1명 */
-export function canCarryPatients(u: Unit): boolean { return u.kind === 'heli' ? u.patients.length < 1 : u.dept === 'ems' && u.patients.length < 2; }
+/** 환자를 싣고 병원으로 갈 수 있는가: 환자 자리(crews.seatsOf — 구급차 2, 헬기 1)가 남았다. 자리의 수를 따로 적지 않는다 */
+export function canCarryPatients(u: Unit): boolean { return u.patients.length < seatsOf(u); }
 
 /** 그 부대에서 펌프를 맡은 대원(펌프 조작 장비를 든 기관원·사다리 조작원)이 지금 현장에서 활동 중인가 — 자기 조직의 상태라 지휘관·대원이 알아도 된다 */
 export function pumpOperatorOn(sim: Sim, s: Scene, unitId: number): boolean {

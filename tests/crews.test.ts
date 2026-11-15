@@ -6,8 +6,8 @@ import { NORMAL, parseDifficulty } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { kitBonus } from '../src/sim/dispatch/dispatcher';
 import { Sim } from '../src/sim/engine';
-import { detectRadius, fitFor, perceive, visionOf } from '../src/sim/field/agents';
-import { anyCapable } from '../src/sim/field/commander';
+import { canCarryPatients, casFact, detectRadius, fitFor, perceive, visionOf } from '../src/sim/field/agents';
+import { anyCapable, commanderThink } from '../src/sim/field/commander';
 import { act, makeTask, moveSpeed, pumpTended, rangeFactor } from '../src/sim/field/executor';
 import { los, staticPass, tileOf } from '../src/sim/field/grid';
 import { blast } from '../src/sim/field/hazards';
@@ -103,6 +103,30 @@ function watch(seed: string, d: Difficulty, force: string | null): Watched {
   return w;
 }
 const SEV5 = parseDifficulty('3,5,3,3,3,3')!;
+/**
+ * 매 틱 부대만 훑은 교대 (⑨ 가 쓴다. watch 보다 가볍다 — 같은 조건은 한 번만 돌린다).
+ *  seats = 환자 자리보다 많이 실은 순간들 (비어 있어야 한다)
+ */
+interface Patrol { sim: Sim; seats: string[]; loaded: Map<UnitKind, number> }
+const patrols = new Map<string, Patrol>();
+function patrol(seed: string, d: Difficulty, force: string | null): Patrol {
+  const key = seed + '|' + JSON.stringify(d) + '|' + force;
+  const hit = patrols.get(key);
+  if (hit) return hit;
+  const sim = new Sim(seed, d, 1200, { force });
+  const p: Patrol = { sim, seats: [], loaded: new Map() };
+  let n = 0;
+  while (!sim.ended && n++ < 20000) {
+    sim.step();
+    for (const u of sim.units) {
+      if (!u.patients.length) continue;
+      p.loaded.set(u.kind, Math.max(p.loaded.get(u.kind) ?? 0, u.patients.length));
+      if (u.patients.length > seatsOf(u) && p.seats.length < 12) p.seats.push(`${seed} t=${sim.t.toFixed(1)} ${u.callsign}: 환자 ${u.patients.length}명 / 자리 ${seatsOf(u)}`);
+    }
+  }
+  patrols.set(key, p);
+  return p;
+}
 /** 현장을 하나 만들고 부대를 내려 세운다 (fitFor·피해 식의 단위 시험용) */
 function sceneWith(seed: string, what: string, kinds: UnitKind[], d: Difficulty = withRes(5)): { sim: Sim; s: Scene; agents: (kind: UnitKind) => FieldAgent[] } {
   const sim = new Sim(seed, d);
@@ -554,6 +578,96 @@ describe('⑧ 장비 공백 요청', () => {
   }, 60000);
 });
 const room = (s: Scene, w: WorkItem): string => (w.region >= 0 ? s.regions[w.region].name : '?');
+
+describe('⑨ 환자 자리', () => {
+  const SEEDS = Array.from({ length: 20 }, (_, k) => 'S' + (k + 1));
+  const runs = (): Patrol[] => [...SEEDS.map((seed) => patrol(seed, NORMAL, 'traffic/bus')), ...SEEDS.map((seed) => patrol(seed, SEV5, 'traffic'))];
+  it('매 틱 모든 부대의 환자 수가 환자 자리를 넘지 않는다 — 다수 사상자 사고와 위험도 높은 교통사고 (시드 20개씩)', () => {
+    const most = new Map<UnitKind, number>();
+    let heliTrips = 0;
+    for (const p of runs()) {
+      expect(p.sim.ended).toBe(true);
+      expect(p.seats, p.seats.join('\n')).toEqual([]);
+      for (const [kind, n] of p.loaded) most.set(kind, Math.max(most.get(kind) ?? 0, n));
+      // 출발 기록: 헬기가 환자 둘을 싣고 떠난 적이 없고, 어느 부대도 자리보다 많이 싣고 떠나지 않았다
+      for (const e of p.sim.events) {
+        const m = /^(\S+) 환자 (\d+)명 싣고/.exec(e.text);
+        if (!m) continue;
+        const u = p.sim.units.find((q) => q.callsign === m[1])!;
+        expect(+m[2], e.text).toBeLessThanOrEqual(seatsOf(u));
+        if (u.air) heliTrips++;
+      }
+    }
+    // 검사한 일이 실제로 있었다: 구급차는 둘까지, 헬기는 하나까지 실었고, 환자 자리가 없는 부대는 한 번도 싣지 않았다
+    expect(most.get('als')).toBe(2); expect(most.get('bls')).toBe(2); expect(most.get('heli')).toBe(1);
+    for (const [kind] of most) expect(seatsOf(runs()[0].sim.units.find((u) => u.kind === kind)!), `${kind} 가 환자를 실었다`).toBeGreaterThan(0);
+    expect(heliTrips, '헬기가 환자를 싣고 떠난 횟수').toBeGreaterThan(10);
+  }, 120000);
+  it('출발 기록의 병원은 실제로 가는 병원이다 (가장 빨리 닿는 병원 — 두 병원 모두 쓰인다)', () => {
+    const used = new Set<string>();
+    let pairs = 0;
+    for (const p of runs().slice(0, 12)) {
+      const open = new Map<string, string>();      // 부대 → 출발 기록의 병원
+      for (const e of p.sim.events) {
+        const dep = /^(\S+) 환자 [1-9]\d*명 싣고 (.+?)(?:으로|로) 출발\.$/.exec(e.text);
+        if (dep) { open.set(dep[1], dep[2]); expect(p.sim.city.facilities.some((f) => f.kind === 'hospital' && f.name === dep[2]), e.text).toBe(true); continue; }
+        const arr = /^(\S+): (.+?) 도착, 환자/.exec(e.text);
+        if (arr && open.has(arr[1])) { expect(arr[2], `${arr[1]} 의 출발 기록과 인계 기록`).toBe(open.get(arr[1])); open.delete(arr[1]); used.add(arr[2]); pairs++; }
+      }
+    }
+    expect(pairs).toBeGreaterThan(40);
+    expect(used.size, [...used].join(',')).toBe(2);
+  }, 120000);
+  it('실을 때 자리를 다시 본다: 찬 헬기에는 싣지 않고 안전 구역에 도로 눕힌다', () => {
+    const { sim, s, agents } = sceneWith('SEAT', 'traffic/bus', ['heli']);
+    const heli = sim.units.find((u) => u.kind === 'heli')!, [a, b] = agents('heli');
+    const hurt = s.casualties.filter((c) => !c.dead).slice(0, 2);
+    expect(hurt.length).toBe(2);
+    for (const c of hurt) { c.where = 'safe'; c.mob = 'immobile'; c.inVehicle = null; c.x = s.safe.x; c.y = s.safe.y; }
+    // 지휘관이 한 자리뿐인 헬기에 탑승 지시를 둘 냈다고 치자 (예전에는 그렇게 둘을 태웠다)
+    put(a, standBy(s, hurt[0].x, hurt[0].y)); put(b, standBy(s, hurt[1].x, hurt[1].y));
+    const w1 = work(sim, 'load', { id: s.board.length, cas: hurt[0].id, prop: heli.id, status: 'active', assignees: [a.rid] }); s.board.push(w1);
+    const w2 = work(sim, 'load', { id: s.board.length, cas: hurt[1].id, prop: heli.id, status: 'active', assignees: [b.rid] }); s.board.push(w2);
+    expect(fitFor(sim, s, a, w1)).toBe(1); expect(fitFor(sim, s, b, w2)).toBe(1);
+    a.task = makeTask('load', '시험', w1); b.task = makeTask('load', '시험', w2);
+    for (let k = 0; k < 400 && (a.task || b.task); k++) { sim.tick++; sim.t = sim.tick * sim.dt; act(sim, s, a); act(sim, s, b); expect(heli.patients.length).toBeLessThanOrEqual(1); }
+    expect(a.task).toBeNull(); expect(b.task).toBeNull();
+    expect(heli.patients.length).toBe(1);
+    const [on, off] = heli.patients[0] === hurt[0].id ? [hurt[0], hurt[1]] : [hurt[1], hurt[0]];
+    expect(on.where).toBe('loaded');
+    expect(off.where, '실리지 못한 사람은 안전 구역에 남는다').toBe('safe');
+    expect(a.carrying).toBe(-1); expect(b.carrying).toBe(-1);
+    expect(sim.events.some((e) => e.text.includes('차에 환자 자리가 없습니다')), '자리가 없어 내려놓았다고 알린다').toBe(true);
+    // 자리가 찬 부대는 탑승을 맡을 수 없다 (환자 자리가 없는 부대는 처음부터)
+    expect(canCarryPatients(heli)).toBe(false);
+    expect(fitFor(sim, s, a, work(sim, 'load', { cas: off.id, prop: heli.id }))).toBe(0);
+    expect(canCarryPatients(sim.units.find((u) => u.kind === 'engine')!)).toBe(false);
+  });
+  it('탑승 배정: 위중 환자는 헬기 먼저, 그 밖의 환자는 지상 구급차 먼저, 지시는 자리 수만큼만', () => {
+    const board = (healths: number[]): { sim: Sim; s: Scene; loads: WorkItem[]; heli: Unit; als: Unit; ids: number[] } => {
+      const { sim, s } = sceneWith('SEAT', 'traffic/bus', ['als', 'heli']);
+      const heli = sim.units.find((u) => u.kind === 'heli')!, als = sim.units.find((u) => u.kind === 'als')!;
+      const cmd = s.agents.find((a) => a.rid === s.commanderRid)!;
+      const cs = s.casualties.filter((c) => !c.dead).slice(0, healths.length);
+      expect(cs.length).toBe(healths.length);
+      cs.forEach((c, k) => { c.health = healths[k]; c.where = 'safe'; c.mob = 'immobile'; c.inVehicle = null; c.x = s.safe.x; c.y = s.safe.y; cmd.beliefs.merge(casFact(sim, s, c, '시험')); });
+      commanderThink(sim, s, cmd);
+      return { sim, s, loads: s.board.filter((w) => w.kind === 'load' && (w.status === 'open' || w.status === 'active')), heli, als, ids: cs.map((c) => c.id) };
+    };
+    // 위중 1 + 중상 3: 위중 환자는 헬기로, 중상 둘은 구급차로, 남은 한 명은 자리가 없어 지시가 없다
+    const A = board([60, 30, 60, 60]);
+    expect(A.loads.find((w) => w.cas === A.ids[1])!.prop, '위중 환자').toBe(A.heli.id);
+    expect(A.loads.filter((w) => w.prop === A.als.id).map((w) => w.cas).sort()).toEqual([A.ids[0], A.ids[2]].sort());
+    expect(A.loads.length).toBe(3);
+    expect(A.loads.filter((w) => w.prop === A.heli.id).length, '헬기의 자리는 하나').toBe(1);
+    // 중상만 셋: 구급차 둘을 먼저 채우고, 남은 한 명이 헬기로 간다
+    const B = board([60, 60, 60]);
+    expect(B.loads.map((w) => w.prop)).toEqual([B.als.id, B.als.id, B.heli.id]);
+    // 위중만 둘: 첫 환자가 헬기, 다음 환자는 구급차
+    const C = board([30, 30]);
+    expect(C.loads.map((w) => w.prop)).toEqual([C.heli.id, C.als.id]);
+  });
+});
 
 describe('장비의 특색 (설계서 4절·6.3)', () => {
   it('열화상 카메라는 연기 너머를, 탐지 장비는 잔해 속을, 가스 측정기는 벽 너머의 누출을 잡는다 — 고장은 perceive 에서만 드러난다', () => {

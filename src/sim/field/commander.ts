@@ -8,7 +8,7 @@ import { closeIncident } from '../incidents';
 import { T } from '../types';
 import type { CasBelief, FieldAgent, Incident, Scene, UnitCaps, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, dist, josa } from '../util';
-import { capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, isHovering, kitUses, roleOf, seatsOf } from '../crews';
+import { airShort, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, isHovering, kitUses, roleOf, seatsOf } from '../crews';
 import { HURT_HEALTH, canCarryPatients, exitName, failedRecently, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { losWalls } from './grid';
@@ -138,7 +138,10 @@ function needFor(s: Scene, w: WorkItem, hotArmed: boolean): keyof UnitCaps | nul
  *  오는 쪽: 그 능력의 부대이고, 그 일을 할 장비를 가진 내리는 대원이 있다 (crews.capableOf)
  */
 export function anyCapable(sim: Sim, s: Scene, I: Incident, w: WorkItem, need: keyof UnitCaps): boolean {
-  if (s.agents.some((b) => b.status === 'active' && !sim.units[b.unitId].boardOrder && fitFor(sim, s, b, w) > 0 && !failedRecently(sim, w, b.rid))) return true;
+  // 공기가 문턱 아래라 지금은 맡지 못해도(fitFor 0) 그 부대에 예비 공기통이 남아 있으면 바꾸고 와서 맡는다 — 그런 대원도 맡을 수 있는 사람이다.
+  // 공기도 예비도 없으면 아니다 (그때는 그 일을 할 부대를 부른다). 공기 잔량과 예비 공기통은 자기 조직의 장비 상태다
+  if (s.agents.some((b) => b.status === 'active' && !sim.units[b.unitId].boardOrder && !failedRecently(sim, w, b.rid)
+    && (fitFor(sim, s, b, w) > 0 || (airShort(sim, b.rid) && (sim.units[b.unitId].spareAir ?? 0) > 0 && fitFor(sim, s, b, w, true) > 0)))) return true;
   return I.assigned.some((uid) => {
     const u = sim.units[uid];
     return (u.state === 'enroute' || u.state === 'turnout') && u.caps[need] >= NEED_MIN[need] && fieldCrew(sim, u).some((rid) => sim.responders[rid].status === 'ok' && capableOf(sim, rid, w.kind));
@@ -522,7 +525,7 @@ function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         if (b.status !== 'active' || taken.has(b.rid) || w.assignees.indexOf(b.rid) >= 0) continue;
         if (sim.units[b.unitId].boardOrder) continue;
         if (b.task && b.task.kind === 'rehab' && sim.responders[b.rid].stamina < 40) continue;      // 지친 대원은 어느 정도 회복할 때까지 지시를 받지 않는다 (brain.ts 의 휴식 붙잡기)
-        if (b.task && b.task.kind === 'resupply') continue;      // 예비 장비로 바꾸는 중(11초 남짓): 끝날 때까지 기다린다. 지시로 빼 오면 교체를 처음부터 다시 시작하며 같은 말을 되풀이한다
+        if (b.task && (b.task.kind === 'resupply' || b.task.kind === 'swapAir')) continue;      // 예비 장비·공기통으로 바꾸는 중(8~11초 남짓): 끝날 때까지 기다린다. 지시로 빼 오면 교체를 처음부터 다시 시작하며 같은 말을 되풀이한다
         if (sim.responders[b.rid].health < HURT_HEALTH) continue;      // 부상을 알린 대원은 후퇴 중이다 (brain.ts 의 부상 후퇴 붙잡기) — 지시해도 받지 못하고 재지시만 되풀이된다
         if (failedRecently(sim, w, b.rid)) continue;      // 이 작업에 닿지 못했거나 위험해서 물러난 대원: 한동안 다른 대원에게 맡기거나 기다린다
         const fit = fitFor(sim, s, b, w);

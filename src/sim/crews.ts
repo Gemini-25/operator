@@ -71,7 +71,7 @@ export const KITS: Record<KitId, KitDef> = {
   // 폭파 장약: R1 에서는 효과가 없다. tool 값을 두지 않는다(두면 문 개방 속도가 바뀐다). 고장 추첨도 받지 않는다. 쓰는 것은 R2 §4.2a
   charge: { name: '폭파 장약', group: 'police' },
 };
-/** 처음에 채워 두는 수량 (섬광탄은 부대 몫을 dealFlashbangs 가 나눈다. 공기호흡기의 공기는 단계 6 에서 채운다) */
+/** 처음에 채워 두는 수량 (섬광탄은 부대 몫을 dealFlashbangs 가 나눈다. 공기호흡기의 공기는 kitFor 가 장비 손잡이의 값 tn.airFull 로 채운다) */
 const KIT_USES: Partial<Record<KitId, number>> = { taser: 2, charge: 2 };
 
 // ───────────────────────── 역할 ─────────────────────────
@@ -204,9 +204,23 @@ export function skillsOf(role: RoleId, skill: number): Skills {
   const v = ROLES[role].skills(skill);
   return { fire: clamp(v.fire, 0, 1), rescue: clamp(v.rescue, 0, 1), medical: clamp(v.medical, 0, 1), law: clamp(v.law, 0, 1) };
 }
-/** 역할의 기본 장비를 든 상태로 만든다 (모든 장비 항목이 같은 칸을 같은 순서로 갖는다) */
-export function kitFor(role: RoleId): KitItem[] {
-  return ROLES[role].kit.map((id) => ({ id, uses: KIT_USES[id], fault: false, faultKnown: false }));
+/**
+ * 역할의 기본 장비를 든 상태로 만든다 (모든 장비 항목이 같은 칸을 같은 순서로 갖는다).
+ * air = 공기호흡기 한 통의 공기(초, tn.airFull). 주지 않으면 공기를 세지 않는다(줄지 않는다 — 손으로 만든 명부·시험용).
+ */
+export function kitFor(role: RoleId, air?: number): KitItem[] {
+  return ROLES[role].kit.map((id) => ({ id, uses: id === 'scba' ? air : KIT_USES[id], fault: false, faultKnown: false }));
+}
+/**
+ * 개인 장비의 고장 추첨 (설계서 9절): 대원 순서 × 든 장비의 순서대로, 고장 추첨을 받는 장비(KITS 의 faultable)마다 확률 p.
+ * 고장 난 장비는 효과가 없고(kitLive), 처음 효과를 주려 할 때 드러난다(kitWorks·toolUse). 그때까지는 조직이 모른다(hasKit 은 참).
+ * 난수는 부르는 쪽이 준다: 편성표 부대는 교대 흐름 'kit' 하나, 지원 부대는 자기 흐름 aid:<n> 의 끝(대원 → 펌프 → 고장).
+ * 돌려주는 값 = 고장 난 장비 수.
+ */
+export function drawFaults(rng: Rng, crew: Responder[], p: number): number {
+  let n = 0;
+  for (const r of crew) for (const it of r.kit ?? []) if (KITS[it.id].faultable && rng.chance(p)) { it.fault = true; n++; }
+  return n;
 }
 /**
  * 부대 몫의 섬광탄을 섬광탄 장비를 든 사람에게 자리 순서대로 하나씩 돌려 나눈다 (2 → 기동대원 1·1, 4 → 팀장 2·진입(파괴) 1·진입 1).
@@ -339,8 +353,19 @@ export function armorOf(sim: Sim, rid: number, engaging: boolean): number {
 export function blastFactor(sim: Sim, rid: number): number { return hasKit(sim, rid, 'bombSuit') ? 0.35 : hasKit(sim, rid, 'turnout') ? 0.7 : 1; }
 /** 환자 자리 (구급차 2, 소방·의료 헬기 1, 나머지 0) */
 export function seatsOf(u: Unit): number { return u.seats ?? 0; }
-/** 진압·잔불 정리를 맡기에 공기가 모자란 문턱(초). R3 가 비율로 넓힌다 */
-const AIR_MIN = 45;
+/** 연기 속 일(위험한 건물 안의 수색·구출·이송, 진압·잔불 정리)을 새로 맡기에 공기가 모자란 문턱(초). R3 가 비율로 넓힌다 */
+export const AIR_MIN = 45;
+/** 공기 잔량 경고(초): 이 밑으로 떨어지면 기록을 남기고, 예비 공기통이 있으면 바꾸러 나간다 (brain.ts) */
+export const AIR_LOW = 60;
+/**
+ * 공기가 모자란가: 공기호흡기를 멨는데 남은 공기가 문턱(AIR_MIN) 아래다. 공기호흡기가 없거나 공기를 세지 않는 대원은 해당 없음(false).
+ * 자기 장비의 상태라 배정·판단(fitFor)이 읽어도 된다.
+ */
+export function airShort(sim: Sim, rid: number): boolean { const it = itemOf(sim, rid, 'scba'); return it !== null && it.uses !== undefined && it.uses < AIR_MIN; }
+/** 공기호흡기로 연기 속에 들어갈 수 있는가: 메고 있고(알려진 고장이 아니다) 공기가 문턱 이상 남았다 */
+export function scbaReady(sim: Sim, rid: number): boolean { return hasKit(sim, rid, 'scba') && !airShort(sim, rid); }
+/** 공기통을 가득 채운다 (예비 공기통으로 바꿨거나, 부대가 집에 돌아왔다). 공기를 세지 않는 대원은 그대로다 */
+export function refillAir(sim: Sim, rid: number): void { const it = itemOf(sim, rid, 'scba'); if (it !== null && it.uses !== undefined) it.uses = sim.tune.airFull; }
 /**
  * 이 대원이 그 일을 할 장비를 갖췄는가 — 장비·부서와 **알려진 장비 상태**만 본다(숨은 고장은 모른다. 공기 잔량과 예비 공기통은 자기 조직의 상태다).
  * 오고 있는 부대에 그 일을 할 사람이 있는지 볼 때 쓴다(commander.anyCapable). 현장의 대원은 fitFor 가 본다.
@@ -351,8 +376,7 @@ export function capableOf(sim: Sim, rid: number, kind: WorkKind): boolean {
     case 'suppress': case 'overhaul': {
       if (!hasKit(sim, rid, 'hose')) return false;
       // 공기가 된다: 공기호흡기가 없거나, 공기를 세지 않거나, 문턱 이상 남았거나, 그 부대에 예비 공기통이 있다
-      const air = itemOf(sim, rid, 'scba');
-      return air === null || air.uses === undefined || air.uses >= AIR_MIN || (sim.units[sim.responders[rid].unitId].spareAir ?? 0) > 0;
+      return !airShort(sim, rid) || (sim.units[sim.responders[rid].unitId].spareAir ?? 0) > 0;
     }
     case 'defuse': return hasKit(sim, rid, 'eodKit');
     case 'engage': case 'perimeter': return hasFirearm(sim, rid);

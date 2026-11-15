@@ -7,7 +7,7 @@ import { emit, raiseProblem } from '../events';
 import { closeIncident } from '../incidents';
 import { releaseUnit, startTransport } from '../resources';
 import { scenarioOf } from '../scenarios';
-import { fieldCrew, hasKit, isHovering, roleOf } from '../crews';
+import { AIR_LOW, fieldCrew, hasKit, isHovering, kitUses, roleOf, useKit } from '../crews';
 import './scenes';
 import { SCENE_RULES } from './sceneRegistry';
 import type { FieldAgent, Incident, Scene, Unit } from '../types';
@@ -115,7 +115,11 @@ function deliverRadio(sim: Sim, s: Scene, I: Incident): void {
   }
 }
 
-/** 대원이 선 칸의 연기·불이 주는 피해. 방호는 부서가 아니라 든 장비가 정한다: 공기호흡기(연기), 방화복(불) */
+/**
+ * 대원이 선 칸의 연기·불이 주는 피해. 방호는 부서가 아니라 든 장비가 정한다: 공기호흡기(연기), 방화복(불).
+ * 공기호흡기의 공기는 연기 속(0.25 초과)에 있는 동안만 준다 — 체력이 좋을수록 천천히(초당 1.25 − 0.5 × fitness).
+ * 공기가 떨어지면 공기호흡기의 연기 방호가 없다(메지 않은 사람과 같은 피해). 여기서는 사실만 기록한다 — 바꾸러 갈지는 대원의 판단(brain.ts)이다.
+ */
 export function agentHealth(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   if (a.status === 'left') return;
   const r = sim.responders[a.rid];
@@ -123,7 +127,20 @@ export function agentHealth(sim: Sim, s: Scene, I: Incident, a: FieldAgent): voi
   const smoke = s.smoke[i], fire = s.fire[i];
   if (smoke > 0.25) {
     a.smokeT += sim.dt;
-    const scba = hasKit(sim, a.rid, 'scba');
+    let scba = hasKit(sim, a.rid, 'scba');
+    if (scba) {
+      const before = kitUses(sim, a.rid, 'scba');      // 공기를 세지 않는 장비면 Infinity
+      if (before <= 0) scba = false;      // 빈 통: 방호가 없다
+      else if (before !== Infinity) {
+        useKit(sim, a.rid, 'scba', sim.dt * (1.25 - 0.5 * r.fitness));
+        const left = kitUses(sim, a.rid, 'scba');
+        // 쓰러진 대원의 통도 줄지만 스스로 알리지는 못한다 (기록은 일하고 있는 대원의 것만)
+        if (a.status !== 'down') {
+          if (before >= AIR_LOW && left < AIR_LOW) emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'radio', imp: 1, text: `${r.name}: 공기 잔량 ${AIR_LOW}초 미만.` });
+          if (left <= 0) emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'radio', imp: 2, text: `${r.name}: 공기통이 비었습니다.` });
+        }
+      }
+    }
     r.health -= (scba ? 0.1 : 1.3) * smoke * sim.dt;
     if (scba) r.stamina = Math.max(0, r.stamina - 0.22 * smoke * sim.dt);      // 공기호흡기를 메고 연기 속에서 일하면 지친다
   } else a.smokeT = Math.max(0, a.smokeT - sim.dt * 2);

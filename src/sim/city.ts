@@ -4,7 +4,7 @@
 
 import type { Sim } from './engine';
 import { Rng } from './rng';
-import { BANKS, CITY_H, CITY_W, COAST, CONVENIENCE, DISTRICTS, EXITS, FACTORIES, KIND_DISTRICT, LAKE, LANDMARKS, MOUNTAINS, NAME_PREFIX, NODES, PENSIONS, RAIL, RESTAURANTS, RIVER, RIVER_NAME, ROADS, SHOPS } from './cityPlan';
+import { BANKS, CITY_H, CITY_W, COAST, CONVENIENCE, DISTRICTS, EXITS, FACTORIES, KIND_DISTRICT, LAKE, LANDMARKS, LATE_LANDMARKS, MOUNTAINS, NAME_PREFIX, NODES, PENSIONS, RAIL, RESTAURANTS, RIVER, RIVER_NAME, ROADS, SHOPS } from './cityPlan';
 import type { DistrictDef } from './cityPlan';
 import type { Alley, City, District, Facility, Place, PlaceKind, RoadEdge, RoadNode, Route } from './types';
 import { clamp } from './util';
@@ -465,6 +465,8 @@ function buildPlaces(pr: Rng, nodes: RoadNode[], edges: RoadEdge[]): { places: P
     const q = mk(kind, nameOf(kind, dong), x, y, w, d, box.rot, dm[4], kind === 'parking', dm[6], dong);
     fronts.set(q.id, be.id);
   }
+  // (N9 §5.8) 덧붙인 장소: 채우기가 끝난 뒤에 놓아 앞 건물의 id·주소·tone 이 그대로다 — cityPlan.LATE_LANDMARKS 의 조건(종류가 아직 어떤 사건 표에도 없다)을 지킬 때만 결과가 바뀌지 않는다
+  for (const l of LATE_LANDMARKS) mk(l.kind, l.name, l.x, l.y, l.w, l.h, ((l.rot ?? 0) * Math.PI) / 180, l.floors ?? 1, !!l.open, l.rank ?? 2, dongAt(l.x, l.y));
 
   // 5) 진입 지점과 주소: 가장 가까운 길가 (고속도로에는 차를 댈 수 없다)
   const roadLen = new Map<number, number[]>();

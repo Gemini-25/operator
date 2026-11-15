@@ -95,7 +95,7 @@ function setCommander(sim: Sim, s: Scene, I: Incident, a: FieldAgent, text: stri
   emit(sim, { inc: I.id, role: 'COMMANDER', actor: sim.responders[a.rid].name, rid: a.rid, kind: 'command', imp: 2, text });
 }
 
-const ROLL_CALL: Record<string, boolean> = { cas: true, hos: true, haz: true, mate: true, fire: true, srch: true, ovh: true, ctl: true, evid: true };
+const ROLL_CALL: Record<string, boolean> = { cas: true, hos: true, haz: true, mate: true, fire: true, srch: true, ovh: true, ctl: true, evid: true, sign: true };
 
 function deliverRadio(sim: Sim, s: Scene, I: Incident): void {
   if (!s.radio.length) return;
@@ -111,6 +111,8 @@ function deliverRadio(sim: Sim, s: Scene, I: Incident): void {
       if (s.shadow[tileOf(s, b.x, b.y)]) continue;      // 음영 구역의 대원은 듣지 못한다
       if (b.isCommander) for (const f of m.facts) mergeHeard(b.beliefs, BeliefStore.relay(f), m.eventId);      // (I1-b) 지휘관은 사실을 실어 온 무전 기록을 기억한다 (작업 원인 — 기록만)
       else for (const f of m.facts) b.beliefs.merge(BeliefStore.relay(f));
+      // (X6 §3.5) 단계를 낮추는 조짐(down)을 들은 대원은 자기 관찰의 기억도 그 단계로 고친다 (무너진 구획의 "임박"을 다시 "올라감"으로 착각하지 않게)
+      for (const f of m.facts) if (f.type === 'sign' && f.value.down) (b.signObs ?? (b.signObs = {}))[f.id] = f.value.level;
       if (m.kind === 'rollcall' && b.status === 'active') {
         // 확인 무전: 자기가 알고 있는 상황을 다시 보고한다 (음영 구역에서 지휘관이 놓친 보고를 되살린다). 무전 문구는 남기지 않는다
         for (const f of b.beliefs.all()) if (ROLL_CALL[f.type]) { b.quiet.add(f.key); learn(sim, b, f, true, true); }

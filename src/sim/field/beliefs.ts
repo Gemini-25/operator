@@ -47,6 +47,9 @@ export class BeliefStore {
     const cur = this.facts.get(f.key);
     if (!cur) { this.put(f); return true; }
     if (cur.verified && !f.verified) return false;
+    // (X6 §3.2) 조짐의 단계는 확인된 하향(down — 앞 단계를 알아챌 감각 범위 안에서 사라진 것을 본 보고)일 때만 내려간다.
+    // 일부만 본 대원(소리 거리·맨눈)의 낮은 단계가 확인된 높은 단계를 끌어내리지 않는다 (시각도 새로 하지 않는다)
+    if (f.type === 'sign' && cur.verified && f.value.level < cur.value.level && !f.value.down) return false;
     if (cur.verified === f.verified && f.t < cur.t) return false;
     if (!cur.verified && !f.verified && f.conf < cur.conf - 0.05 && f.t <= cur.t + 20) return false;
     const changed = !sameValue(cur.value, f.value) || cur.verified !== f.verified;

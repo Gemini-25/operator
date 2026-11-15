@@ -31,6 +31,7 @@ import { drawBlastScars, drawDangerZones, drawFallMoments, drawFallRing, drawGas
 import type { HazardLabel } from './scene/hazardFx';
 import { gasView, hostageState, rekindledRegions } from './hazardState';
 import { ruinZones, strokeRuinEdges } from './scene/ruins';
+import { drawCatOver, drawCatUnder } from './scene/catLayer';
 import { TRIAGE, TRIAGE_EDGE, TRIAGE_TEXT, casBand, casDrawn, casSheet, hostileBand, hostileDrawn, hostileSheet, hurtPose, respBand, respLying, respSheet } from './triage';
 
 /** 현장 화면의 시점: 중심(타일 좌표)과 배율(1 = 현장 전체가 보인다) */
@@ -833,8 +834,11 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   // ── 정보 표지 (G4): 어둠·날씨 뒤라 밤과 안개에도 보인다 ──
   if (night && !MINI) { const rz = ruinZones(s); if (rz.count) strokeRuinEdges(ctx, rz, ts, 0.45); }      // 밤에는 고정 층의 붕괴 구역 경계가 어둠에 묻힌다: 같은 선분을 한 번 더
   drawDangerZones(ctx, sim, s, ts, { truth: o.truth, timeMs: o.timeMs, mini: MINI, cmd });
+  const catView = { truth: o.truth, timeMs: o.timeMs, mini: MINI, cmd };
+  drawCatUnder(ctx, sim, s, ts, catView);      // (X6) 구획 건전도 빗금·가스 등고선·용기의 열 고리 (관찰자: 진실 · AI: 지휘관이 아는 조짐)
   drawFallRing(ctx, sim, s, ts, o.alpha, MINI);
   const hzLabels: HazardLabel[] = [];
+  for (const l of drawCatOver(sim, s, ts, catView)) hzLabels.push(l);      // (X6) 붕괴 임박·LEL·안전밸브 표지 — 새 글자 표지 단계에서 그린다
   if (o.truth) for (const l of drawGasEdge(ctx, ts, o.timeMs, gv, MINI)) hzLabels.push(l);      // 짙은 가스 경계 (관찰자 시점)
   for (const l of drawRekindle(ctx, s, ts, o.timeMs, MINI ? [] : rekindledRegions(sim, s, o.truth), o.truth, MINI)) hzLabels.push(l);      // 되살아난 불
 

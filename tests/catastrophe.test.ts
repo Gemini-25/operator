@@ -1,10 +1,20 @@
-// X6 위험의 현실화 (docs/specs/X6-catastrophe.md §10). 단계마다 채운다 — 지금은 단계 1(상태만)의 시험이다:
-//   자료형, catOf(대상·입구·용기 판별·처음 값), 생김새 도움 함수, 난수 흐름이 부모를 소비하지 않음,
-//   계산만 하는 틱이 상태를 바꾸지 않음(손 계산과 함께), 기록 해시 불변.
-// 뒤 단계가 더할 것(설계서 §10 의 번호): 1 방치하면 일어난다 · 2 조치하면 일어나지 않는다 · 3 조짐 · 4 철수 · 5 사건이 끝난다 · 6 재현성 · 7 정보 격리 ·
+// X6 위험의 현실화 (docs/specs/X6-catastrophe.md §10). 단계마다 채운다 — 지금은 단계 1(상태만)·단계 2(조짐)의 시험이다:
+//   단계 1: 자료형, catOf(대상·입구·용기 판별·처음 값), 생김새 도움 함수, 난수 흐름이 부모를 소비하지 않음, 계산만 하는 틱이 상태를 바꾸지 않음(손 계산과 함께).
+//   단계 2: §10-3 조짐(관찰·보고 규칙·합치기·무전·외부 관찰의 기억·가스 용기 구멍), §10-6 재현성, 그림(catLayer)이 결과를 바꾸지 않음.
+//   (단계 1 의 "세계 규칙을 뺀 교대와 같다"는 단계 2 에서 끝났다 — 조짐이 사실로 들어오면 무전 문구가 바뀐다)
+// 뒤 단계가 더할 것(설계서 §10 의 번호): 1 방치하면 일어난다 · 2 조치하면 일어나지 않는다 · 4 철수 · 5 사건이 끝난다 · 7 정보 격리(일부는 아래에 있다) ·
 //   8 가짜 연출 없음 · 9 도시 지도 · 10 층 너머 · 11 catOf 의 입구(일부는 아래에 있다) · 12 깔린 대원.
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { fakeCtx, withFakeDom } from './fakeCanvas';
+import { hasKit } from '../src/sim/crews';
+import { flushOutbox, learn, makeAgent, perceive, visionOf } from '../src/sim/field/agents';
+import { BeliefStore, mkFact } from '../src/sim/field/beliefs';
+import { los, staticPass, tileOf } from '../src/sim/field/grid';
+import { vesselLevel, vesselName } from '../src/sim/field/catastrophe';
+import { SIGN_BASE } from '../src/sim/field/ops';
+import { drawCatOver, drawCatUnder } from '../src/view/scene/catLayer';
+import type { FieldAgent, Region, SignBelief } from '../src/sim/types';
 import { PROBLEM_SYS } from '../scripts/metrics';
 import { catStats } from '../scripts/catstats';
 import { PROBLEM_LABEL } from '../src/sim/debrief';
@@ -557,34 +567,37 @@ describe('X6 단계 1: 틱은 계산만 한다 — 손 계산', () => {
   });
 });
 
-// ───────────────────────── 기록 해시 불변 ─────────────────────────
-describe('X6 단계 1: 결과는 한 글자도 바뀌지 않는다', () => {
-  // 단계 1 동안만 참인 시험이다: 단계 2 가 조짐을 사실로 넣으면(무전 문구가 바뀐다) "규칙을 뺀 교대와 같다"는 더 성립하지 않는다 —
-  // 그 단계가 이 묶음을 지우거나 §10-6(재현성)·§10-8(가짜 연출 없음)로 바꾼다 (설계서 끝 "구현 메모 (진행 중)" 의 "시험과 관문").
-  const cases: [string, Difficulty, string | null][] = [['S1', NORMAL, null], ['F0', NORMAL, 'fire/std'], ['F1', NORMAL, 'collapse/gasblast'], ['X0', { ...NORMAL, frequency: 5, severity: 5, threat: 5, equipment: 1, info: 5, resources: 1 }, null]];
+// ───────────────────────── 교대 단위 (단계 2 부터) ─────────────────────────
+describe('X6 단계 2: 교대 — 재현성과 아직 일어나지 않는 일', () => {
+  // 단계 1 의 "세계 규칙을 뺀 교대와 같다"는 단계 2 에서 끝났다: 조짐이 사실로 들어오면 무전 문구(기록)가 바뀐다 (perceive 가 조짐을 보므로 규칙을 빼도 같지 않다).
+  // 대신 §10-6(재현성)과 "세계는 아직 아무것도 일으키지 않는다"(단계 3·4 가 뒤집는다)를 본다
+  const cases: [string, Difficulty, string | null][] = [['S1', NORMAL, null], ['F0', NORMAL, 'fire/std'], ['F1', NORMAL, 'collapse/gasblast'], ['F2', NORMAL, 'hazmat/std'], ['X0', { ...NORMAL, frequency: 5, severity: 5, threat: 5, equipment: 1, info: 5, resources: 1 }, null]];
   const shift = (seed: string, d: Difficulty, force: string | null): Sim => { const sim = new Sim(seed, d, 1200, { force }); sim.runToEnd(); return sim; };
   const state = (sim: Sim): string => JSON.stringify([
     sim.report!.hash, sim.events.length, sim.tick,
     sim.incidents.map((I) => [I.closeReason, I.closedAt, I.result?.outcome, I.result?.casSaved, I.result?.casLost, I.result?.propertyLoss, I.problems.map((p) => [p.code, p.t, p.recovered])]),
     sim.responders.map((r) => [r.health, r.stamina, r.status]), sim.units.map((u) => [u.state, u.x, u.y, u.water, u.runs]),
-    sim.scenes.map((s) => (s ? [s.burnedTiles, s.staticVersion, s.props.length, s.casualties.map((c) => [c.health, c.where, c.dead]), peek(s.rng)] : null)), peek(sim.rng),
+    sim.scenes.map((s) => (s ? [s.burnedTiles, s.staticVersion, s.props.length, s.casualties.map((c) => [c.health, c.where, c.dead]), peek(s.rng), s.agents.map((a) => [a.rid, a.signObs ? Object.entries(a.signObs).join(';') : '-'])] : null)), peek(sim.rng),
   ]);
-  const withRule = cases.map(([seed, d, f]) => shift(seed, d, f));
-  it('세계 규칙을 뺀 교대와 기록 해시·판정·사람·부대·난수 흐름이 같다', () => {
-    const k = SCENE_RULES.indexOf(catRule);
-    SCENE_RULES.splice(k, 1);
-    let without: Sim[];
-    try { without = cases.map(([seed, d, f]) => shift(seed, d, f)); } finally { SCENE_RULES.splice(k, 0, catRule); }
+  const runs = cases.map(([seed, d, f]) => shift(seed, d, f));
+  it('§10-6 재현성: 같은 시드·같은 난이도·같은 강제는 기록 해시와 상태가 같다 (조짐 관찰의 기억까지)', () => {
     for (let q = 0; q < cases.length; q++) {
-      expect(without[q].scenes.every((s) => !s || s.cat === undefined)).toBe(true);
-      expect(withRule[q].report!.hash, cases[q][0]).toBe(without[q].report!.hash);
-      expect(state(withRule[q]), cases[q][0]).toBe(state(without[q]));
+      const again = shift(...cases[q]);
+      expect(again.report!.hash, cases[q][0]).toBe(runs[q].report!.hash);
+      expect(state(again), cases[q][0]).toBe(state(runs[q]));
     }
   });
-  it('그 교대들에서 위험 상태는 계산됐고, X6 의 기록·건물 상태·집계는 아직 0 이다', () => {
-    let scenes = 0, moved = 0;
-    for (const sim of withRule) {
-      for (const s of sim.scenes) { if (!s || !s.cat) continue; scenes++; if (s.cat.struct && indoorRegs(s).some((r) => s.cat!.integ[r.id] < 1)) moved++; }
+  it('그 교대들에서 조짐은 지휘관에게까지 들어왔고, 세계는 아직 아무것도 일으키지 않는다 (붕괴·폭발·전소·철수·건물 상태 0)', () => {
+    let signs = 0, cmdSigns = 0, scenes = 0, moved = 0, radio = 0;
+    for (const sim of runs) {
+      for (const s of sim.scenes) {
+        if (!s) continue;
+        for (const a of s.agents) { const l = a.beliefs.list('sign'); signs += l.length; if (a.isCommander) cmdSigns += l.length; }
+        if (!s.cat) continue;
+        scenes++;
+        if (s.cat.struct && indoorRegs(s).some((r) => s.cat!.integ[r.id] < 1)) moved++;
+      }
+      radio += sim.events.filter((e) => /삐걱이는 소리|균열·처짐|붕괴 임박|가스 농도 LEL|가스 냄새|안전밸브|불길에 직접|전체 붕괴 위험/.test(e.text)).length;
       expect(sim.events.some((e) => e.problem === 'STRUCT_COLLAPSE' || e.problem === 'EXPLOSION' || e.problem === 'BURNOUT' || e.problem === 'DANGER_SIGN' || e.problem === 'WITHDRAWAL')).toBe(false);
       expect(sim.placeMarks.size).toBe(0);
       expect(sim.report!.catastrophe).toBeUndefined();
@@ -593,12 +606,17 @@ describe('X6 단계 1: 결과는 한 글자도 바뀌지 않는다', () => {
       expect([st.burnouts, st.totals, st.partials, st.gas, st.vessel, st.dust, st.known, st.withdrawals, st.reentries, st.defensive, st.extClose, st.crewCaught, st.signs, st.averted, st.gaps.length])
         .toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
       expect(st.scenes).toBe(sim.scenes.filter((s) => s && s.cat).length);
+      // 아직 아무도 조짐으로 판단하지 않는다: 지휘 상태(Scene.ops)는 생기지 않는다 (단계 5)
+      expect(sim.scenes.every((s) => !s || s.ops === undefined)).toBe(true);
     }
     expect(scenes).toBeGreaterThan(20);
     expect(moved).toBeGreaterThan(2);
+    expect(signs).toBeGreaterThan(10);
+    expect(cmdSigns).toBeGreaterThan(0);
+    expect(radio).toBeGreaterThan(3);
   });
   it('사건이 닫힌 뒤에는 계산도 멈춘다 (판정 뒤에는 아무것도 일어나지 않는다)', () => {
-    const sim = withRule[1];
+    const sim = runs[1];
     const s = sim.scenes.find((q) => q && q.cat && q.cat.struct && sim.incidents[q.incidentId].phase === 'closed')!;
     const I = sim.incidents[s.incidentId], c = s.cat!;
     const before = JSON.stringify([Array.from(c.integ), Array.from(c.hotT), Array.from(c.loss), c.bldg, c.burntAt, s.props.map((p) => p.heatLoad)]);
@@ -608,5 +626,366 @@ describe('X6 단계 1: 결과는 한 글자도 바뀌지 않는다', () => {
     for (let k = 0; k < 10; k++) { sim.tick++; catRule(sim, s, I); }
     sim.tick = tick0;
     expect(JSON.stringify([Array.from(c.integ), Array.from(c.hotT), Array.from(c.loss), c.bldg, c.burntAt, s.props.map((p) => p.heatLoad)])).toBe(before);
+  });
+});
+
+// ───────────────────────── 조짐 (§10-3) ─────────────────────────
+/** 시험용 대원: 그 대원을 (x, y) 에 세운다. 판단력은 0.5 로 맞춘다 (소리·눈의 거리 보정 0) */
+function agentAt(m: Made, rid: number, x: number, y: number): FieldAgent {
+  m.sim.responders[rid].judgment = 0.5;
+  return makeAgent(m.sim, rid, m.sim.responders[rid].unitId, x, y, m.sim.t, m.sim.rng.fork('ta:' + rid));
+}
+/** 조건에 맞는 걸을 수 있는 칸 (위에서부터 첫 칸) */
+function tileWhere(s: Scene, ok: (x: number, y: number, i: number) => boolean): [number, number] {
+  for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) { const i = y * s.w + x; if (staticPass(s.tiles[i]) && s.propAt[i] < 0 && ok(x, y, i)) return [x, y]; }
+  throw new Error('칸을 찾지 못함');
+}
+/** 그 구획 칸 가운데 하나라도 (x, y) 에서 보이는가 */
+const seesAny = (s: Scene, reg: { tiles: number[] }, x: number, y: number): boolean => reg.tiles.some((i) => los(s, x, y, i % s.w, (i / s.w) | 0));
+/** (x, y) 에서 4칸 안·시야 안인 그 구획 칸의 몫 */
+const seenShare = (s: Scene, reg: { tiles: number[] }, x: number, y: number): number => reg.tiles.filter((i) => { const tx = i % s.w, ty = (i / s.w) | 0; return Math.hypot(tx - x, ty - y) <= 4 && los(s, x, y, tx, ty); }).length / reg.tiles.length;
+const signOf = (a: FieldAgent, id: number): SignBelief | undefined => a.beliefs.val<SignBelief>('sign', id);
+/** 건물 화재 현장에서 이웃 방이 있는 방 하나 (복도가 아닌 두 방) */
+function roomPair(s: Scene): { r: Region; n: Region } {
+  const nb = regionNbrs(s);
+  for (const r of s.regions) {
+    if (!r.indoor || r.kind !== 'room' || r.tiles.length < 8) continue;
+    for (const k of nb[r.id]) { const n = s.regions[k]; if (n.kind === 'room' && n.tiles.length >= 6) return { r, n }; }
+  }
+  throw new Error('이웃한 방 둘을 찾지 못함');
+}
+const fireRids = (sim: Sim): number[] => sim.responders.filter((r) => r.dept === 'fire').map((r) => r.id);
+/** 시험 배치: 이웃 방이 있는 방 r, 그 이웃 방 n, 벽 너머 6.5~8.5칸(r 도 이웃 구획도 아니고 r 이 하나도 보이지 않는 칸) b, 15칸 넘게 떨어져 r 이 보이지 않는 칸 far */
+function layout(s: Scene): { r: Region; n: Region; b: [number, number]; far: [number, number] } | null {
+  try {
+    const { r, n } = roomPair(s), nb = regionNbrs(s);
+    const b = tileWhere(s, (x, y, i) => { const d = Math.hypot(x - r.cx, y - r.cy); return d >= 6.5 && d <= 8.5 && s.region[i] !== r.id && nb[r.id].indexOf(s.region[i]) < 0 && !seesAny(s, r, x, y); });
+    const far = tileWhere(s, (x, y) => Math.hypot(x - r.cx, y - r.cy) > 15 && !seesAny(s, r, x, y));
+    return { r, n, b, far };
+  } catch { return null; }
+}
+const findLayout = (prefix: string): Made & { L: NonNullable<ReturnType<typeof layout>> } => {
+  const m = find(prefix, 'fire', 'std', (q) => q.sim.weather === 'clear' && layout(q.s) !== null);
+  return { ...m, L: layout(m.s)! };
+};
+
+describe('X6 단계 2: 조짐이 사실로 들어온다 (§10-3)', () => {
+  it('구획의 건전도가 0.4 면 그 방을 보는 대원의 다음 판단에 단계 2 조짐이 있고, 3초 안에 지휘관의 믿음에도 있다', () => {
+    const sim = new Sim('X6-S3', NORMAL, 1200, { force: 'collapse/std' });
+    let pick: { s: Scene; a: FieldAgent; cmd: FieldAgent; r: number } | null = null;
+    for (let k = 0; k < 4000 && !pick; k++) {
+      sim.step();
+      if (k % 5) continue;
+      for (const s of sim.scenes) {
+        if (!s || s.kind !== 'collapse' || !s.cat || s.arrivedAt < 0 || sim.t - s.arrivedAt < 15) continue;
+        const cmd = s.agents.find((a) => a.isCommander && a.status === 'active');
+        if (!cmd || s.shadow[tileOf(s, cmd.x, cmd.y)]) continue;
+        for (const a of s.agents) {
+          if (a === cmd || a.status !== 'active' || s.shadow[tileOf(s, a.x, a.y)]) continue;
+          const r = s.region[tileOf(s, a.x, a.y)];
+          if (r < 0 || s.regions[r].kind !== 'room' || s.cat.fallen[r] || s.cat.integ[r] < CAT.L1 || cmd.beliefs.get('sign', r)) continue;
+          if (seenShare(s, s.regions[r], Math.round(a.x), Math.round(a.y)) < 0.4) continue;      // 넉넉히 30% 를 넘게 보는 자리
+          pick = { s, a, cmd, r }; break;
+        }
+        if (pick) break;
+      }
+    }
+    expect(pick).not.toBeNull();
+    const { s, a, cmd, r } = pick!;
+    sim.responders[a.rid].judgment = 0.5;      // 눈의 거리 4칸 그대로 (판단력 보정 0)
+    s.cat!.integ[r] = 0.4;
+    perceive(sim, s, a);      // 그 대원의 다음 판단 (think 가 맨 먼저 perceive 를 부른다)
+    const v = signOf(a, r)!;
+    expect(v).toBeTruthy();
+    expect(v.kind).toBe('struct'); expect(v.region).toBe(r); expect(v.level).toBeGreaterThanOrEqual(2);
+    expect(a.beliefs.get('sign', r)!.verified).toBe(true);
+    expect(a.outbox.some((f) => f.type === 'sign' && f.id === r)).toBe(true);
+    for (let k = 0; k < 15 && (signOf(cmd, r)?.level ?? 0) < 2; k++) sim.step();      // 15틱 = 3초
+    expect(signOf(cmd, r)?.level ?? 0).toBeGreaterThanOrEqual(2);
+    // 무전 문구에 실렸고 중요한 보고(imp 1)다 — 묶음 보고(5초)를 기다리지 않았다
+    const e = sim.events.find((q) => q.incidentId === s.incidentId && q.text.includes(`${s.regions[r].name} 천장 균열·처짐`));
+    expect(e).toBeTruthy();
+    expect(e!.importance).toBe(1);
+  });
+  it('0.3 이면 단계 3(임박)을 10칸 안의 대원 모두가 듣는다 — 벽 너머도. 15칸 넘게 떨어져 그 구획이 보이지 않는 대원은 모른다', () => {
+    const m = findLayout('X6-SB');
+    const s = m.s, c = catOf(m.sim, s)!, { r, b, far } = m.L;
+    const ids = fireRids(m.sim);
+    const [ax, ay] = tileWhere(s, (x, y, i) => s.region[i] === r.id);
+    const A = agentAt(m, ids[0], ax, ay), B = agentAt(m, ids[1], b[0], b[1]), C = agentAt(m, ids[2], far[0], far[1]);
+    c.integ[r.id] = 0.3;
+    for (const q of [A, B, C]) perceive(m.sim, s, q);
+    for (const q of [A, B]) {
+      expect(signOf(q, r.id)?.level).toBe(3);
+      expect(q.beliefs.get('sign', r.id)!.text).toContain('붕괴 임박');
+      expect(q.signObs![r.id]).toBe(3);
+    }
+    expect(signOf(C, r.id)).toBeUndefined();
+    expect(C.signObs?.[r.id]).toBeUndefined();
+    // 0.55 (삐걱임 — 단계 1): 처음 듣는 벽 너머 7칸의 대원은 그 구획·이웃 구획에 있지 않아 삐걱임을 듣지 못하고(관찰 없음),
+    // 3 을 들었던 그 구획 안의 A 는 삐걱임으로 내려간 것을 확인한다(임박의 감각 조건이 지금도 맞다 — 확인된 하향)
+    const B2 = agentAt(m, ids[3], b[0], b[1]);
+    c.integ[r.id] = 0.55;
+    m.sim.t += 1;
+    perceive(m.sim, s, B2); perceive(m.sim, s, A);
+    expect(signOf(B2, r.id)).toBeUndefined();
+    expect(B2.signObs?.[r.id]).toBeUndefined();
+    expect(signOf(A, r.id)?.level).toBe(1);
+    expect(signOf(A, r.id)?.down).toBe(true);
+  });
+  it('가스: 측정기를 든 대원만 측정값(lel)을 안다. 맨몸의 대원은 냄새로 단계 1 만(미확인)이고, 그것이 측정값을 덮지 않는다', () => {
+    const m = make('X6-SG', 'hazmat', 'std');
+    const s = m.s, c = catOf(m.sim, s)!;
+    expect(c.gas).not.toBeNull();
+    const reg = indoorRegs(s).find((q) => q.kind === 'room' && q.tiles.length >= 6)!;
+    for (const i of reg.tiles) c.gas![i] = 0.3;
+    const meterRid = m.sim.responders.find((q) => hasKit(m.sim, q.id, 'gasMeter'))!.id;
+    const bareRid = m.sim.responders.find((q) => q.dept === 'fire' && !hasKit(m.sim, q.id, 'gasMeter'))!.id;
+    const [x, y] = tileWhere(s, (_x, _y, i) => s.region[i] === reg.id);
+    const M = agentAt(m, meterRid, x, y), N = agentAt(m, bareRid, x, y);
+    perceive(m.sim, s, M); perceive(m.sim, s, N);
+    const id = SIGN_BASE.gas + reg.id;
+    const mv = signOf(M, id)!, nv = signOf(N, id)!;
+    expect([mv.kind, mv.level, mv.lel, M.beliefs.get('sign', id)!.verified]).toEqual(['gas', 2, 30, true]);
+    expect(M.beliefs.get('sign', id)!.text).toContain('LEL 30%');
+    expect([nv.kind, nv.level, nv.lel, N.beliefs.get('sign', id)!.verified]).toEqual(['gas', 1, undefined, false]);
+    expect(N.beliefs.get('sign', id)!.text).toContain('가스 냄새');
+    // 측정값을 아는 믿음 위에 냄새는 덮이지 않는다
+    expect(M.beliefs.merge(BeliefStore.relay(N.beliefs.get('sign', id)!))).toBe(false);
+    expect(signOf(M, id)!.lel).toBe(30);
+    // 측정값만 바뀐 것(같은 단계)은 믿음에 합치되 보고하지 않는다
+    M.outbox.length = 0;
+    for (const i of reg.tiles) c.gas![i] = 0.42;
+    perceive(m.sim, s, M);
+    expect(signOf(M, id)!.lel).toBe(40);
+    expect(M.outbox.some((f) => f.key === 'sign:' + id)).toBe(false);
+    // 단계가 내려가면 측정기 대원은 확인된 하향으로 보고한다
+    for (const i of reg.tiles) c.gas![i] = 0.05;
+    perceive(m.sim, s, M);
+    expect(signOf(M, id)!.level).toBe(0);
+    expect(signOf(M, id)!.down).toBe(true);
+    expect(M.outbox.some((f) => f.key === 'sign:' + id)).toBe(true);
+  });
+  it('하향이 깜박이지 않는다: 소리로만 듣는 대원의 단계 1 보고는 지휘관의 "임박"을 끌어내리지 못하고, 확인된 하향(down)만 내린다', () => {
+    const m = findLayout('X6-SF');
+    const s = m.s, c = catOf(m.sim, s)!;
+    for (let i = 0; i < s.fire.length; i++) s.fire[i] = 0;      // 열화상 문턱이 끼지 않게
+    const { r, n } = m.L;
+    const ids = fireRids(m.sim);
+    const [ax, ay] = tileWhere(s, (x, y, i) => s.region[i] === r.id);
+    const [hx, hy] = tileWhere(s, (x, y, i) => s.region[i] === n.id && Math.hypot(x - r.cx, y - r.cy) <= 5.5 && seenShare(s, r, x, y) < 0.2);
+    const A = agentAt(m, ids[0], ax, ay), H = agentAt(m, ids[1], hx, hy);
+    const cmdStore = new BeliefStore();
+    c.integ[r.id] = 0.3;
+    perceive(m.sim, s, A);
+    expect(signOf(A, r.id)!.level).toBe(3);
+    cmdStore.merge(BeliefStore.relay(A.beliefs.get('sign', r.id)!));
+    const t3 = cmdStore.get('sign', r.id)!.t;
+    // 건전도가 0.5 로 올랐다(보강) — 이웃 방에서 소리로만 듣는 H 는 삐걱임(1)을 처음 듣는다: 하향이 아니다
+    c.integ[r.id] = 0.5;
+    m.sim.t += 1;
+    perceive(m.sim, s, H);
+    const hf = H.beliefs.get('sign', r.id)!;
+    expect(hf.value.level).toBe(1);
+    expect(hf.value.down).toBeUndefined();
+    expect(cmdStore.merge(BeliefStore.relay(hf))).toBe(false);
+    expect(cmdStore.val<SignBelief>('sign', r.id)!.level).toBe(3);
+    expect(cmdStore.get('sign', r.id)!.t).toBe(t3);
+    // 0.7 로 오르고, 3 을 들었던 A 가 다시 보면 확인된 하향 → 지휘관의 믿음이 내려간다
+    c.integ[r.id] = 0.7;
+    m.sim.t += 1;
+    perceive(m.sim, s, A);
+    const af = A.beliefs.get('sign', r.id)!;
+    expect(af.value.down).toBe(true);
+    expect(af.value.level).toBeLessThan(3);
+    expect(A.outbox.some((f) => f.key === af.key)).toBe(true);
+    expect(cmdStore.merge(BeliefStore.relay(af))).toBe(true);
+    expect(cmdStore.val<SignBelief>('sign', r.id)!.level).toBe(af.value.level);
+  });
+  it('구역 밖에서 임박 조짐을 듣던 대원은 그 소리가 멎은 것을 안다 — 상한 2 의 확인된 하향 (§5.7)', () => {
+    const m = findLayout('X6-SB');
+    const s = m.s, c = catOf(m.sim, s)!, { r, b } = m.L;
+    for (let i = 0; i < s.fire.length; i++) s.fire[i] = 0;
+    const B = agentAt(m, fireRids(m.sim)[0], b[0], b[1]);
+    c.integ[r.id] = 0.3; perceive(m.sim, s, B);
+    expect(signOf(B, r.id)!.level).toBe(3);
+    c.integ[r.id] = 0.8; m.sim.t += 1; perceive(m.sim, s, B);
+    const f = signOf(B, r.id)!;
+    expect([f.level, f.down]).toEqual([2, true]);
+    expect(B.beliefs.get('sign', r.id)!.text).toContain('붕괴 임박 징후 멎음');
+    // 다시 보아도 같은 말을 되풀이하지 않는다
+    B.outbox.length = 0; m.sim.t += 1; perceive(m.sim, s, B);
+    expect(B.outbox.length).toBe(0);
+  });
+  it('용기: 불길에 직접 노출(눈 4칸)과 안전밸브 소리(7칸, 벽 너머) — 열이 오르기 전에는 아무 말도 없다', () => {
+    const m = find('X6-G', 'fire', 'std', (q) => q.s.props.some((p) => p.kind === 'gas'));
+    const s = m.s; catOf(m.sim, s);
+    const p = s.props.find((q) => q.kind === 'gas')!;
+    const ids = fireRids(m.sim);
+    const [nx, ny] = tileWhere(s, (x, y) => Math.hypot(x - p.x, y - p.y) <= 2.5 && Math.hypot(x - p.x, y - p.y) >= 1 && los(s, x, y, p.x, p.y));
+    const [fx, fy] = tileWhere(s, (x, y) => { const d = Math.hypot(x - p.x, y - p.y); return d >= 5 && d <= 6.5 && !los(s, x, y, p.x, p.y); });
+    const Near = agentAt(m, ids[0], nx, ny), Far = agentAt(m, ids[1], fx, fy);
+    const id = SIGN_BASE.vessel + p.id;
+    perceive(m.sim, s, Near);
+    expect(signOf(Near, id)).toBeUndefined();
+    // 불길이 닿고 열이 0.3: 곁에서 보는 대원만 (2)
+    for (let i = 0; i < s.fire.length; i++) s.fire[i] = 0;
+    s.fire[p.y * s.w + p.x] = 0.6; p.heatLoad = 0.35;
+    expect(vesselLevel(s, p)).toBe(2);
+    perceive(m.sim, s, Near); perceive(m.sim, s, Far);
+    expect(signOf(Near, id)!.level).toBe(2);
+    expect(signOf(Far, id)).toBeUndefined();
+    // 안전밸브(0.55): 벽 너머 6칸의 대원도 듣는다
+    p.heatLoad = 0.6;
+    perceive(m.sim, s, Near); perceive(m.sim, s, Far);
+    expect(signOf(Near, id)!.level).toBe(3);
+    expect(signOf(Far, id)!.level).toBe(3);
+    expect(Far.beliefs.get('sign', id)!.text).toContain('안전밸브 작동음');
+    expect(vesselName(p)).toBe('가스 용기');
+  });
+  it('터진 가스 용기를 아직 살아 있다고 믿는 대원은 본 순간 바로잡는다 (예전에는 영영 active 로 남았다)', () => {
+    const m = find('X6-G', 'fire', 'std', (q) => q.s.props.some((p) => p.kind === 'gas'));
+    const s = m.s;
+    const p = s.props.find((q) => q.kind === 'gas')!;
+    const [x, y] = tileWhere(s, (tx, ty) => Math.hypot(tx - p.x, ty - p.y) <= 2.5 && Math.hypot(tx - p.x, ty - p.y) >= 1 && los(s, tx, ty, p.x, p.y));
+    const A = agentAt(m, fireRids(m.sim)[0], x, y);
+    perceive(m.sim, s, A);
+    expect(A.beliefs.val<{ active: boolean }>('haz', p.id)!.active).toBe(true);
+    p.exploded = true;
+    m.sim.t += 1;
+    perceive(m.sim, s, A);
+    const f = A.beliefs.get('haz', p.id)!;
+    expect(f.value.active).toBe(false);
+    expect(f.text).toBe('가스 용기 폭발 확인');
+  });
+  it('합치기 규칙: 확인된 조짐의 단계는 down 이 붙은 사실로만 내려가고, 미확인 사실은 확인된 것을 덮지 않는다', () => {
+    const b = new BeliefStore();
+    const mk = (lv: number, t: number, down?: boolean, verified = true) => mkFact('sign', 7, { kind: 'struct', level: lv, region: 7, x: 1, y: 1, down } as SignBelief, '시험', t, 1, verified, 's');
+    expect(b.merge(mk(3, 10))).toBe(true);
+    expect(b.merge(mk(1, 11))).toBe(false);
+    expect([b.val<SignBelief>('sign', 7)!.level, b.get('sign', 7)!.t]).toEqual([3, 10]);
+    expect(b.merge(mk(2, 12, true))).toBe(true);
+    expect(b.val<SignBelief>('sign', 7)!.level).toBe(2);
+    expect(b.merge(mk(3, 13))).toBe(true);      // 올라가는 것은 언제나
+    expect(b.merge(mk(0, 14, false, false))).toBe(false);      // 미확인은 확인된 것을 덮지 않는다
+    expect(b.merge(mk(0, 15, true))).toBe(true);
+    expect(b.val<SignBelief>('sign', 7)!.level).toBe(0);
+  });
+  it('단계 2 이상은 바로(중요 보고), 단계 1 은 묶음 보고로 보낸다', () => {
+    const m = find('X6-SB', 'fire', 'std', (q) => { try { roomPair(q.s); return true; } catch { return false; } });
+    const s = m.s;
+    const [x, y] = tileWhere(s, (_x, _y, i) => !s.shadow[i] && s.region[i] >= 0);
+    const A = agentAt(m, fireRids(m.sim)[0], x, y);
+    const r0 = s.radio.length;
+    learn(m.sim, A, mkFact('sign', 3, { kind: 'struct', level: 1, region: 3, x: 1, y: 1 } as SignBelief, '시험', m.sim.t, 1, true, '시험 구획 천장에서 삐걱이는 소리 — 구조 약화 조짐'));
+    flushOutbox(m.sim, s, A);
+    expect(s.radio.length).toBe(r0);      // 5초를 기다린다
+    learn(m.sim, A, mkFact('sign', 4, { kind: 'struct', level: 2, region: 4, x: 1, y: 1 } as SignBelief, '시험', m.sim.t, 1, true, '시험 구획 천장 균열·처짐 — 붕괴 위험'));
+    flushOutbox(m.sim, s, A);
+    expect(s.radio.length).toBe(r0 + 1);
+    const msg = s.radio[s.radio.length - 1];
+    expect(msg.facts.map((f) => f.id).sort()).toEqual([3, 4]);
+    const e = m.sim.events[msg.eventId];
+    expect(e.text).toContain('균열·처짐');
+    expect(e.importance).toBe(1);
+  });
+  it('들은 조짐이 단계를 낮추면(down) 받은 대원의 관찰 기억도 그 단계가 된다. 확인 무전에는 조짐도 다시 보고한다', () => {
+    const m = find('X6-SB', 'fire', 'std', (q) => { try { roomPair(q.s); return true; } catch { return false; } });
+    const s = m.s;
+    const [x, y] = tileWhere(s, (_x, _y, i) => !s.shadow[i] && s.region[i] >= 0);
+    const ids = fireRids(m.sim);
+    const A = agentAt(m, ids[0], x, y), B = agentAt(m, ids[1], x, y);
+    A.nextThink = B.nextThink = 1e9;      // 이 틱에 판단하지 않게 (무전 배달만 본다)
+    s.agents.push(A, B);
+    B.signObs = { 5: 3 };
+    B.beliefs.merge(mkFact('sign', 5, { kind: 'struct', level: 3, region: 5, x: 1, y: 1 } as SignBelief, '시험', m.sim.t, 1, true, '시험'));
+    s.radio.push({ id: s.nextMsgId++, t: m.sim.t, deliverAt: m.sim.t, from: A.rid, to: -1, kind: 'report', facts: [mkFact('sign', 5, { kind: 'struct', level: 0, region: 5, x: 1, y: 1, down: true } as SignBelief, '시험', m.sim.t, 1, true, '시험 구획 구조 이상 징후 없음')], workId: -1, text: '', eventId: -1 });
+    tickScene(m.sim, s);
+    expect(B.signObs![5]).toBe(0);
+    expect(B.beliefs.val<SignBelief>('sign', 5)!.level).toBe(0);
+    // 확인 무전: B 가 아는 조짐을 다시 보고 대기열에 넣는다
+    B.outbox.length = 0;
+    s.radio.push({ id: s.nextMsgId++, t: m.sim.t, deliverAt: m.sim.t, from: A.rid, to: -1, kind: 'rollcall', facts: [], workId: -1, text: '', eventId: -1 });
+    tickScene(m.sim, s);
+    expect(B.outbox.some((f) => f.type === 'sign' && f.id === 5)).toBe(true);
+  });
+  it('외부 관찰의 기억(extSeen): 벽 너머 관찰이 덮은 실내 구획과 센 불을 본 시각을 적는다', () => {
+    const m = findLayout('X6-SB');
+    const s = m.s, { r } = m.L;
+    for (let i = 0; i < s.fire.length; i++) s.fire[i] = 0;
+    for (const i of r.tiles.slice(0, 3)) s.fire[i] = 0.6;
+    s.burning = 3;
+    const A = agentAt(m, fireRids(m.sim)[0], 0, 0);
+    const [x, y] = tileWhere(s, (tx, ty, i) => { if (isIndoor(s.tiles[i])) return false; A.x = tx; A.y = ty; const d = Math.hypot(tx - r.cx, ty - r.cy); return d <= 9 && d + 1 < 2.4 * visionOf(m.sim, s, A); });
+    A.x = A.px = x; A.y = A.py = y;
+    perceive(m.sim, s, A);
+    expect(A.extSeen).toBeUndefined();      // 보통 관찰은 기억을 만들지 않는다
+    m.sim.t += 2;
+    perceive(m.sim, s, A, 2.4, true);
+    const e = A.extSeen!;
+    expect(e.cov.length).toBe(s.regions.length);
+    expect(e.cov[r.id]).toBeCloseTo(m.sim.t, 3);
+    expect(e.cov0[r.id]).toBeCloseTo(m.sim.t, 3);
+    expect(e.hot[r.id]).toBeCloseTo(m.sim.t, 3);
+    // 불이 꺼진 뒤의 관찰: 덮은 시각은 새로 적히고 처음 시각과 센 불의 시각은 그대로
+    const t0 = m.sim.t;
+    for (let i = 0; i < s.fire.length; i++) s.fire[i] = 0;
+    m.sim.t += 7;
+    perceive(m.sim, s, A, 2.4, true);
+    expect(e.cov[r.id]).toBeCloseTo(m.sim.t, 3);
+    expect(e.cov0[r.id]).toBeCloseTo(t0, 3);
+    expect(e.hot[r.id]).toBeCloseTo(t0, 3);
+    for (const q of s.regions) if (!q.indoor) expect(e.cov[q.id]).toBe(-1);
+  });
+  it('상공의 관측자는 조짐을 보지 않는다', () => {
+    const m = find('X6-SB', 'fire', 'std', (q) => { try { roomPair(q.s); return true; } catch { return false; } });
+    const s = m.s, c = catOf(m.sim, s)!;
+    const { r } = roomPair(s);
+    const [x, y] = tileWhere(s, (_x, _y, i) => s.region[i] === r.id);
+    const A = agentAt(m, fireRids(m.sim)[0], x, y);
+    A.aloft = true;
+    c.integ[r.id] = 0.3;
+    perceive(m.sim, s, A);
+    expect(A.beliefs.list('sign').length).toBe(0);
+    expect(A.signObs).toBeUndefined();
+  });
+});
+
+// ───────────────────────── 그림 (§7.3 — 결과 불변) ─────────────────────────
+describe('X6 단계 2: 현장 위의 위험 그림 (catLayer)', () => {
+  it('관찰자·AI 시점 모두 예외 없이 그리고, 그려도 시뮬레이션은 한 글자도 바뀌지 않는다. 위험 상태가 없는 현장에는 아무것도 하지 않는다', async () => {
+    const m = find('X6-G', 'fire', 'std', (q) => q.s.props.some((p) => p.kind === 'gas'));
+    const s = m.s;
+    // 위험 상태가 없으면 만들지도 않는다 (그림이 위험 상태를 만들면 결과가 바뀐다)
+    await withFakeDom(() => { drawCatUnder(fakeCtx(), m.sim, s, 24, { truth: true, timeMs: 0, mini: false, cmd: undefined }); });
+    expect(s.cat).toBeUndefined();
+    const c = catOf(m.sim, s)!;
+    const rs = indoorRegs(s);
+    c.integ[rs[0].id] = 0.3; c.integ[rs[1 % rs.length].id] = 0.42; c.integ[rs[2 % rs.length].id] = 0.55;
+    const p = s.props.find((q) => q.vessel)!; p.heatLoad = 0.7;
+    const cmd = agentAt(m, fireRids(m.sim)[0], 3, 17);
+    cmd.isCommander = true;
+    cmd.beliefs.merge(mkFact('sign', rs[0].id, { kind: 'struct', level: 3, region: rs[0].id, x: rs[0].cx, y: rs[0].cy } as SignBelief, '시험', 0, 1, true, ''));
+    cmd.beliefs.merge(mkFact('sign', SIGN_BASE.vessel + p.id, { kind: 'vessel', level: 3, region: 0, x: p.x, y: p.y, prop: p.id } as SignBelief, '시험', 0, 1, true, ''));
+    cmd.beliefs.merge(mkFact('sign', SIGN_BASE.gas + rs[0].id, { kind: 'gas', level: 2, region: rs[0].id, x: rs[0].cx, y: rs[0].cy, lel: 35 } as SignBelief, '시험', 0, 1, true, ''));
+    const g = make('X6-SG', 'hazmat', 'std'), gc = catOf(g.sim, g.s)!;
+    for (const i of indoorRegs(g.s)[0].tiles) gc.gas![i] = 1.2;
+    const before = [worldDigest(m.sim, s), worldDigest(g.sim, g.s), JSON.stringify([Array.from(c.integ), p.heatLoad, Array.from(gc.gas!)])];
+    const out: string[] = [];
+    await withFakeDom(() => {
+      for (const truth of [true, false]) for (const [sim, sc] of [[m.sim, s], [g.sim, g.s]] as [Sim, Scene][]) {
+        const o = { truth, timeMs: 1234, mini: false, cmd: sc === s ? cmd : undefined };
+        drawCatUnder(fakeCtx(), sim, sc, 24, o);
+        for (const l of drawCatOver(sim, sc, 24, o)) out.push(`${truth ? 'T' : 'A'}:${l.text}`);
+      }
+    });
+    expect([worldDigest(m.sim, s), worldDigest(g.sim, g.s), JSON.stringify([Array.from(c.integ), p.heatLoad, Array.from(gc.gas!)])]).toEqual(before);
+    expect(out).toContain('T:붕괴 임박');
+    expect(out.some((t) => t.startsWith('T:구조 약화'))).toBe(true);
+    expect(out).toContain('T:LEL 초과');
+    expect(out).toContain('A:붕괴 임박');
+    expect(out).toContain('A:LEL 35%');
+    // 작은 창(mini)은 표지를 내지 않는다
+    expect(drawCatOver(m.sim, s, 24, { truth: true, timeMs: 0, mini: true, cmd })).toEqual([]);
   });
 });

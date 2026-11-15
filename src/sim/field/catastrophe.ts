@@ -2,12 +2,13 @@
 // 이 파일은 "세계"의 규칙이다 (hazards.ts·damage.ts 와 같은 자격: 진실을 읽고 바꾼다). 지휘관·대원의 판단부·관제는 이 파일을 부르지 않고
 // s.cat 을 읽지 않는다 — 조짐(sign 사실)으로만 안다.
 //
-// ── 단계 1 (상태만) ──────────────────────────────────────────────────────────────────────────────
-// 지금은 **계산만 한다**: 구조 건전도·가스 격자·용기의 열·전소 비율을 Scene.cat 과 소품의 X6 칸(vessel·heatK·heatLoad)에 적을 뿐,
-// 타일·불·연기·사람·소품의 다른 칸·기록·작업판을 하나도 바꾸지 않는다. 그래서 결과(기록 해시)는 이 파일이 없을 때와 한 글자도 같다.
+// ── 단계 1 (상태만) · 단계 2 (조짐) ──────────────────────────────────────────────────────────────
+// 세계 쪽은 아직 **계산만 한다**: 구조 건전도·가스 격자·용기의 열·전소 비율을 Scene.cat 과 소품의 X6 칸(vessel·heatK·heatLoad)에 적을 뿐,
+// 타일·불·연기·사람·소품의 다른 칸·기록·작업판을 하나도 바꾸지 않는다.
 // 예전 규칙(tickFire 의 천장 붕괴·가스 용기 폭발, tickGas 의 폭발 판정)은 그대로 돈다 — 여기 숫자는 아직 그림자다.
+// 단계 2 부터 대원이 그 값을 **조짐**으로 알아챈다(perceiveSigns — agents.perceive 가 부른다): 고정 문턱으로 정한 단계를 감각 범위 안에서만 sign 사실로 배운다.
+// 그래서 무전 문구(기록)는 바뀌지만, 아직 아무도 그 사실로 판단하지 않는다(지휘 규칙은 단계 5).
 // 뒤 단계가 채울 자리는 catTick 의 번호 주석에 적었다:
-//   단계 2  perceiveSigns(+ structLevel·gasReading·vesselLevel) — 조짐이 사실로 들어온다
 //   단계 3  구획·전체 붕괴(collapseRegion·collapseBuilding), 전소 기록, catOnBlast, placeMarks, 신호
 //   단계 4  가스 폭발(explodeGas)·용기 폭발(ruptureVessel), 드럼통, 차량 누출의 불 점화, 도시가스 차단
 // 난수: 한 번만 정하는 준비는 catinit:<현장 id>, 실행 중 판정은 cat:<현장 id> (damage.ts 의 dmg: 와 같은 방식). s.rng·a.rng·sim.rng 를 부르지 않는다.
@@ -15,9 +16,13 @@
 import type { Sim } from '../engine';
 import type { Rng } from '../rng';
 import { T } from '../types';
-import type { CatState, Incident, Prop, Scene } from '../types';
-import { doorAt, isIndoor } from './grid';
-import { footprint, regionNbrs } from './ops';
+import type { CatState, FieldAgent, Incident, Prop, Region, Scene, SignBelief } from '../types';
+import { dist } from '../util';
+import { hasKit, kitLive, kitWorks } from '../crews';
+import { learn, regionNameAt } from './agents';
+import { mkFact } from './beliefs';
+import { doorAt, isIndoor, los, tileOf } from './grid';
+import { FOOT_SHELL, SIGN_BASE, footprint, regionNbrs } from './ops';
 
 /** 균형 상수 — 모두 시작값이다 (설계서 §2.9). 균형 단계(8)가 §8.4 의 순서로 맞춘다 */
 export const CAT = {
@@ -466,4 +471,309 @@ export function gasClouds(c: CatState, s: Scene): number[][] {
   }
   out.sort((a, b) => b.length - a.length || a[0] - b[0]);
   return out;
+}
+
+// ───────────────────────── 조짐 (단계 2 — 설계서 §3) ─────────────────────────
+// 진실의 값에서 **고정 문턱**으로 단계를 정하고(대원에 따라 문턱이 달라지지 않는다 — 열화상만 예외), 대원의 감각 범위 안에 있을 때만 사실이 된다.
+// 판단력이 좋은 대원은 조금 멀리서 알아챈다: 소리·눈의 거리에 + 2 × (판단력 − 0.5) 칸 (난수 없이).
+// 진실을 숫자로 넘기는 것은 가스 측정기의 값(lel, 5 단위)뿐이다. 건전도·열은 단계로만 넘긴다.
+
+/** 조짐의 감각 상수 (설계서 §3.1 의 표) */
+export const SIGN = {
+  TIC_L1: 0.7, TIC_L2: 0.5,       // 열화상으로 불타는 구획을 볼 때의 구조 조짐 1·2 문턱 (장비가 문턱을 바꾸는 유일한 경우)
+  HEAR_CREAK: 6,                  // 구조 1(삐걱임): 그 구획이나 이웃 구획 안에서, 구획 가운데에서 이 칸 안 (벽 너머도)
+  SEE_CRACK: 4, SEE_SHARE: 0.3,   // 구조 2(균열·처짐): 이 칸 안·시야 안인 칸이 그 구획 칸의 이 몫 이상
+  HEAR_RUMBLE: 10,                // 구조 3(임박): 구획 가운데에서 이 칸 안 누구나 (벽 너머도)
+  GAS_L1: 0.10, GAS_L2: 0.25, GAS_L3: 0.60,      // 가스 조짐 문턱 (그 구획 칸의 가스 최댓값, LEL = 1)
+  VESSEL_HEAT2: 0.3, VESSEL_FIRE2: 0.5, SEE_VESSEL: 4,      // 용기 2: 열 ≥ 0.3 이고 곁 불 ≥ 0.5 — 4칸 안·시야
+  HEAR_VENT: 7,                   // 용기 3(안전밸브 = CAT.VENT_AT): 7칸 안 (벽 너머도)
+  SEE_SHELL: 3,                   // 건물 2·3: 건물 바깥 칸에서 바깥벽 칸이 이만큼 보인다
+};
+
+/** 구조 조짐 단계(진실 쪽): 0 · 1 삐걱임 · 2 균열·처짐 · 3 임박. 무너진 구획은 0 (더 무너질 것이 없다). tic = 열화상으로 불타는 구획을 본다(1·2 를 0.7·0.5 에서) */
+export function structLevel(c: CatState, r: number, tic = false): number {
+  if (c.fallen[r]) return 0;
+  const v = c.integ[r];
+  return v < CAT.L3 ? 3 : v < (tic ? SIGN.TIC_L2 : CAT.L2) ? 2 : v < (tic ? SIGN.TIC_L1 : CAT.L1) ? 1 : 0;
+}
+/** 가스 측정값: 그 구획 칸의 가스 최댓값으로 정한 단계와 % LEL (5 단위). 구획 하나에 값 하나 — 같은 구획을 대원마다 다르게 읽지 않는다 */
+export function gasReading(c: CatState, s: Scene, r: number): { level: number; lel: number } {
+  const g = c.gas;
+  if (!g || r < 0) return { level: 0, lel: 0 };
+  const tl = s.regions[r].tiles;
+  let m = 0;
+  for (let q = 0; q < tl.length; q++) { const v = g[tl[q]]; if (v > m) m = v; }
+  return { level: m >= SIGN.GAS_L3 ? 3 : m >= SIGN.GAS_L2 ? 2 : m >= SIGN.GAS_L1 ? 1 : 0, lel: Math.round((m * 100) / 5) * 5 };
+}
+/** 용기 칸(차량은 차체 칸)과 그 1.5칸 안의 불 최댓값 (용기 자기 칸은 × 1.25 — vesselStep 의 near 와 같은 식) */
+export function vesselNear(s: Scene, p: Prop): number {
+  const W = s.w, H = s.h, fire = s.fire;
+  const x0 = p.x, y0 = p.y, x1 = p.x + p.w - 1, y1 = p.y + p.h - 1;
+  let near = 0;
+  for (let y = Math.max(0, y0 - 2); y <= Math.min(H - 1, y1 + 2); y++) for (let x = Math.max(0, x0 - 2); x <= Math.min(W - 1, x1 + 2); x++) {
+    const dx = x < x0 ? x0 - x : x > x1 ? x - x1 : 0, dy = y < y0 ? y0 - y : y > y1 ? y - y1 : 0;
+    if (dx * dx + dy * dy > 2.25) continue;
+    const f = dx + dy === 0 ? fire[y * W + x] * 1.25 : fire[y * W + x];
+    if (f > near) near = f;
+  }
+  return near;
+}
+/** 용기 조짐 단계(진실 쪽): 0 · 2 불길에 직접 노출(열 ≥ 0.3, 곁 불 ≥ 0.5) · 3 안전밸브(열 ≥ 0.55). 터진 용기는 0 */
+export function vesselLevel(s: Scene, p: Prop): number {
+  if (!p.vessel || p.exploded) return 0;
+  const h = p.heatLoad ?? 0;
+  if (h >= CAT.VENT_AT) return 3;
+  return h >= SIGN.VESSEL_HEAT2 && vesselNear(s, p) >= SIGN.VESSEL_FIRE2 ? 2 : 0;
+}
+/** 용기를 부르는 이름 (가스 용기 · 드럼통 · CNG 용기 · 항공유 탱크) */
+export function vesselName(p: Prop): string {
+  const v = p.vessel ?? vesselKind(p);
+  return v === 'drum' || p.skin === 'drum' ? '드럼통' : v === 'cng' ? 'CNG 용기' : v === 'jet' ? '항공유 탱크' : '가스 용기';
+}
+
+const LV_STRUCT = [1, 2, 3] as const, LV_VESSEL = [2, 3] as const, LV_BLDG = [2, 3] as const;
+/**
+ * 관찰·보고 규칙 (설계서 §3.1) — 사실 id 하나에 대해. 결과는 out 에 [보고할 단계(-1 = 없음), down(1), 새 관찰 단계(-1 = 그대로)].
+ *   obs = 진실 단계(tl) 이하의 단계 가운데 그 단계를 알아채는 감각 조건(cond)이 지금 맞는 가장 높은 단계.
+ *         진실이 가장 낮은 단계 아래(0)이고 가장 낮은 단계의 감각 조건이 맞으면 obs = 0. 어느 것도 맞지 않으면 관찰 없음.
+ *   관찰이 없어도 진실보다 높은 단계의 감각 조건이 맞으면 "그 단계는 없다"는 것은 안다 — 그 단계 바로 아래를 상한(bound)으로 본다.
+ *         소리 10칸의 임박 조짐이 멎은 것을 구역 밖에서 듣는 경우다 (§5.7 "단계 3 의 감각은 소리 10칸이라 구역 밖에서 확인할 수 있다").
+ *   비교는 자기 감각으로 마지막에 관찰한 단계(prev = a.signObs[id])와 한다(전달받은 믿음과 견주지 않는다): 올라가면 보고,
+ *   내려갔고 prev 단계의 감각 조건이 지금 맞으면 down(확인된 하향)으로 보고, 그 밖은 보고하지 않는다.
+ */
+function judge(tl: number, prev: number | undefined, levels: readonly number[], cond: (l: number) => boolean, out: number[]): void {
+  out[0] = -1; out[1] = 0; out[2] = -1;
+  let ob = -1;
+  for (let k = levels.length - 1; k >= 0; k--) { const l = levels[k]; if (l <= tl && cond(l)) { ob = l; break; } }
+  if (ob < 0 && tl < levels[0] && cond(levels[0])) ob = 0;
+  if (ob >= 0) {
+    if (ob > (prev ?? 0)) out[0] = ob;
+    else if (prev !== undefined && ob < prev && cond(prev)) { out[0] = ob; out[1] = 1; }
+    out[2] = ob;
+    return;
+  }
+  if (prev === undefined) return;
+  for (let k = 0; k < levels.length; k++) {
+    const l = levels[k];
+    if (l <= tl || !cond(l)) continue;
+    const bound = k > 0 ? levels[k - 1] : 0;
+    if (prev > bound) { out[0] = bound; out[1] = 1; out[2] = bound; }
+    return;
+  }
+}
+const JUDGE: number[] = [-1, 0, -1];
+
+/** 칸이 든 구역 (구역이 없는 실내 칸 — 문턱 — 이면 맞닿은 실내 구역) */
+function regionAtTile(s: Scene, i: number): number {
+  const r = s.region[i];
+  if (r >= 0) return r;
+  if (!isIndoor(s.tiles[i])) return -1;
+  const w = s.w, x = i % w, reg = s.region, regs = s.regions;
+  if (x + 1 < w && reg[i + 1] >= 0 && regs[reg[i + 1]].indoor) return reg[i + 1];
+  if (x > 0 && reg[i - 1] >= 0 && regs[reg[i - 1]].indoor) return reg[i - 1];
+  if (i + w < reg.length && reg[i + w] >= 0 && regs[reg[i + w]].indoor) return reg[i + w];
+  if (i >= w && reg[i - w] >= 0 && regs[reg[i - w]].indoor) return reg[i - w];
+  return -1;
+}
+/** 그 구획 칸 가운데 within 칸 안이고 시야 안인 칸이 SEE_SHARE 몫 이상인가 (구조 2 의 눈 — 일부만 보고 판단하지 않는다) */
+function seesRegion(s: Scene, a: FieldAgent, reg: Region, within: number): boolean {
+  if (reg.x0 - a.x > within || a.x - reg.x1 > within || reg.y0 - a.y > within || a.y - reg.y1 > within) return false;
+  const tl = reg.tiles, w = s.w, need = Math.max(1, Math.ceil(SIGN.SEE_SHARE * tl.length));
+  let n = 0;
+  for (let q = 0; q < tl.length; q++) {
+    const i = tl[q], x = i % w, y = (i / w) | 0;
+    if (dist(a.x, a.y, x, y) > within || !los(s, a.x, a.y, x, y)) continue;
+    if (++n >= need) return true;
+  }
+  return false;
+}
+/**
+ * 불에 달궈진 구획인가 (열화상의 문턱 효과): 불 0.3 이상인 칸이 있거나 이미 탄 칸이 있다. 탄 칸을 함께 보는 것은
+ * 불이 옮겨 다니며 그 구획을 떠났다 돌아올 때마다 열화상 대원의 문턱이 0.7 ↔ 0.6 으로 바뀌어 "삐걱임 ↔ 이상 없음"을 되풀이하지 않게 하려는 것이다
+ * (달궈진 골조는 불이 잠시 비켜도 식지 않는다)
+ */
+function regionBurning(s: Scene, reg: Region): boolean {
+  const tl = reg.tiles, f = s.fire, b = s.burned;
+  for (let q = 0; q < tl.length; q++) if (f[tl[q]] >= 0.3 || b[tl[q]]) return true;
+  return false;
+}
+const SHELL = new WeakMap<Scene, Int32Array>();
+/** 바깥벽 칸(footprint 2)의 목록 — 처음 생김새로 한 번 */
+function shellTiles(s: Scene): Int32Array {
+  let l = SHELL.get(s);
+  if (l) return l;
+  const f = footprint(s), out: number[] = [];
+  for (let i = 0; i < f.length; i++) if (f[i] === FOOT_SHELL) out.push(i);
+  l = Int32Array.from(out);
+  SHELL.set(s, l);
+  return l;
+}
+/** 바깥벽 칸이 within 칸 안·시야 안에 need 개 이상 보이는가 */
+function seesShell(s: Scene, a: FieldAgent, within: number, need: number): boolean {
+  const l = shellTiles(s), w = s.w;
+  let n = 0;
+  for (let q = 0; q < l.length; q++) {
+    const i = l[q], x = i % w, y = (i / w) | 0;
+    if (dist(a.x, a.y, x, y) > within || !los(s, a.x, a.y, x, y)) continue;
+    if (++n >= need) return true;
+  }
+  return false;
+}
+/** 그 구획에 맞닿은 바깥벽이 보이는가 (밖에서 듣는 임박 조짐을 '외벽 균열'로 부른다) */
+function seesRegionShell(s: Scene, a: FieldAgent, reg: Region, within: number): boolean {
+  const f = footprint(s), w = s.w, h = s.h, tl = reg.tiles;
+  for (let q = 0; q < tl.length; q++) {
+    const i = tl[q], x = i % w, y = (i / w) | 0;
+    for (let d = 0; d < 4; d++) {
+      const xx = x + (d === 0 ? 1 : d === 1 ? -1 : 0), yy = y + (d === 2 ? 1 : d === 3 ? -1 : 0);
+      if (xx < 0 || yy < 0 || xx >= w || yy >= h) continue;
+      if (f[yy * w + xx] === FOOT_SHELL && dist(a.x, a.y, xx, yy) <= within && los(s, a.x, a.y, xx, yy)) return true;
+    }
+  }
+  return false;
+}
+/** 건물 가운데 (실내 구획 가운데들의 평균) */
+function bldgCenter(s: Scene): [number, number] {
+  let x = 0, y = 0, n = 0;
+  for (const r of s.regions) if (r.indoor) { x += r.cx; y += r.cy; n++; }
+  return n ? [Math.round(x / n), Math.round(y / n)] : [-1, -1];
+}
+
+function structText(name: string, level: number, down: boolean, outside: boolean): string {
+  if (down) return level >= 2 ? `${name} 붕괴 임박 징후 멎음 — 균열·처짐은 남아 있음` : level === 1 ? `${name} 균열·처짐 보이지 않음` : `${name} 구조 이상 징후 없음`;
+  return level >= 3 ? (outside ? `${name} 외벽 균열 — 붕괴 임박!` : `${name} 굉음 — 천장이 내려앉고 있음, 붕괴 임박!`) : level === 2 ? `${name} 천장 균열·처짐 — 붕괴 위험` : `${name} 천장에서 삐걱이는 소리 — 구조 약화 조짐`;
+}
+function vesselText(p: Prop, where: string, level: number, down: boolean): string {
+  const nm = vesselName(p), drum = nm === '드럼통';
+  if (down) return level >= 2 ? `${where} ${nm} ${drum ? '부풀음이 가라앉음' : '안전밸브 소리 멎음'} — 불길은 아직 닿아 있음` : `${where} ${nm} 열기 가라앉음`;
+  if (level >= 3) return drum ? `${where} 드럼통이 부풀어 오름 — 파열 임박!` : `${where} 안전밸브 작동음 — ${nm} 폭발 임박!`;
+  return p.vessel === 'cng' ? 'CNG 용기 쪽으로 불길이 번짐 — 냉각 필요' : p.vessel === 'jet' ? '동체 연료 탱크 쪽으로 불길이 번짐 — 냉각 필요' : drum ? `${where} 드럼통이 불길에 휩싸임 — 냉각 필요` : `${where} 가스 용기가 불길에 직접 노출 — 냉각 필요`;
+}
+function bldgText(level: number, down: boolean): string {
+  if (down) return level >= 2 ? '건물 기울어짐이 멈춤 — 외벽 균열은 남아 있음' : '건물 외벽 이상 없음';
+  return level >= 3 ? '건물 외벽 균열이 번지고 기울어짐 — 전체 붕괴 임박!' : '건물 외벽 균열이 번지고 기울어짐 — 전체 붕괴 위험';
+}
+
+/**
+ * 조짐을 본다 (agents.perceive 가 소품 반복문 뒤에 부른다 — 진실을 읽어도 되는 자리). 설계서 §3.1·§3.3.
+ *   struct: 구획별 건전도 → 삐걱임(소리 — 그 구획·이웃 구획 안, 6칸) · 균열·처짐(눈 — 4칸 안 시야 30%) · 임박(소리 — 10칸, 벽 너머도)
+ *   gas:    구획별 가스 최댓값 → 측정기를 든 대원이 그 구획 칸이나 문턱에 서면 단계와 % LEL. 측정기가 없으면 자기 칸의 냄새로 단계 1만(미확인)
+ *   vessel: 용기의 열 → 불길에 직접 노출(눈 — 4칸 시야) · 안전밸브(소리 — 7칸, 벽 너머도)
+ *   bldg:   건물 건전도·무너진 몫 → 건물 바깥 칸에서 바깥벽 칸이 셋 이상 보이면 (지휘관의 7초 외부 관찰에서도 같은 함수가 돈다)
+ * 상공의 관측자는 소리를 듣지 못하고 지붕 밑을 보지 못한다 — 조짐을 보지 않는다. 외부 관찰(throughWalls)이라고 감각이 달라지지는 않는다:
+ * 소리는 원래 벽을 넘고, 눈의 조건은 시야선을 본다(외부 관찰이 벽 너머로 보는 것은 불뿐이다).
+ */
+export function perceiveSigns(sim: Sim, s: Scene, a: FieldAgent, v: number): void {
+  if (a.aloft) return;
+  const c = s.cat ?? catOf(sim, s);
+  if (!c) return;
+  const rsp = sim.responders[a.rid], me = rsp.name;
+  const jb = 2 * (rsp.judgment - 0.5);
+  const regs = s.regions, R = regs.length;
+  const ai = tileOf(s, a.x, a.y), ar = regionAtTile(s, ai);
+  const outsideMe = c.foot[ai] === 0 && !isIndoor(s.tiles[ai]);
+  const o = JUDGE;
+  const report = (id: number, val: SignBelief, text: string, verified = true): void => { learn(sim, a, mkFact('sign', id, val, me, sim.t, 1, verified, text)); };
+  const prevOf = (id: number): number | undefined => (a.signObs ? a.signObs[id] : undefined);
+  const setObs = (id: number, lv: number): void => { (a.signObs ?? (a.signObs = {}))[id] = lv; };
+  // ── 구조 (구획) ──
+  if (c.struct) {
+    const nb = regionNbrs(s);
+    let tic = -1;      // 열화상: 처음 필요할 때 한 번 본다 (kitLive — 드러내지 않는다. 드러나는 자리는 perceive 의 연기 속 한 곳)
+    for (let r = 0; r < R; r++) {
+      const reg = regs[r];
+      if (!reg.indoor) continue;
+      const id = SIGN_BASE.struct + r, prev = prevOf(id), had = prev !== undefined && prev > 0;
+      if (c.integ[r] >= SIGN.TIC_L1 && !had) continue;      // 열화상으로도 단계 0 이고 전에 본 것도 없다 — 알 것이 없다
+      let ticOn = false;
+      if (c.integ[r] < SIGN.TIC_L1 && !c.fallen[r]) {
+        if (tic < 0) tic = kitLive(sim, a.rid, 'tic') ? 1 : 0;
+        ticOn = tic === 1 && regionBurning(s, reg);
+      }
+      const tl = structLevel(c, r, ticOn);
+      if (tl === 0 && !had) continue;
+      const d = dist(a.x, a.y, reg.cx, reg.cy);
+      const inNb = ar === r || (ar >= 0 && nb[r].indexOf(ar) >= 0);
+      let eye = -1;
+      judge(tl, prev, LV_STRUCT, (l) => (l === 1 ? inNb && d <= SIGN.HEAR_CREAK + jb : l === 3 ? d <= SIGN.HEAR_RUMBLE + jb : (eye < 0 ? (eye = seesRegion(s, a, reg, SIGN.SEE_CRACK + jb) ? 1 : 0) : eye) === 1), o);
+      if (o[2] >= 0) setObs(id, o[2]);
+      if (o[0] < 0) continue;
+      const lv = o[0], down = o[1] === 1;
+      const outside = lv >= 3 && !down && outsideMe && seesRegionShell(s, a, reg, SIGN.HEAR_RUMBLE + jb);
+      report(id, { kind: 'struct', level: lv, region: r, x: reg.cx, y: reg.cy, down: down || undefined }, structText(reg.name, lv, down, outside));
+    }
+    // ── 건물 전체 ──
+    const id = SIGN_BASE.bldg, prev = prevOf(id), tl = bldgLevel(c, s);
+    if (tl > 0 || (prev !== undefined && prev > 0)) {
+      let eye = -1;
+      judge(tl, prev, LV_BLDG, () => (eye < 0 ? (eye = outsideMe && seesShell(s, a, v, SIGN.SEE_SHELL) ? 1 : 0) : eye) === 1, o);
+      if (o[2] >= 0) setObs(id, o[2]);
+      if (o[0] >= 0) {
+        const [bx, by] = bldgCenter(s), down = o[1] === 1;
+        report(id, { kind: 'bldg', level: o[0], region: -1, x: bx, y: by, down: down || undefined }, bldgText(o[0], down));
+      }
+    }
+  }
+  // ── 가스 (구획) ──
+  if (c.gas) {
+    let meter = hasKit(sim, a.rid, 'gasMeter');
+    const ti = s.tiles[ai], w = s.w, x = ai % w, reg = s.region;
+    // 읽는 구획: 서 있는 구획, 그리고 문·바닥 칸에 서 있으면 4 이웃 칸의 구획 (문턱에서 그 구획을 한 번 훑은 값)
+    const read: number[] = [];
+    const add = (rr: number): void => { if (rr >= 0 && regs[rr].indoor && read.indexOf(rr) < 0) read.push(rr); };
+    add(reg[ai]);
+    if (ti === T.DOOR || ti === T.FLOOR) {
+      if (x + 1 < w) add(reg[ai + 1]);
+      if (x > 0) add(reg[ai - 1]);
+      if (ai + w < reg.length) add(reg[ai + w]);
+      if (ai >= w) add(reg[ai - w]);
+    }
+    if (meter && read.length && !kitWorks(sim, a.rid, 'gasMeter', sim.incidents[s.incidentId])) meter = false;      // 값을 읽을 때 숨은 고장이 드러난다 (R1 — 효과의 자리)
+    if (meter) {
+      for (let k = 0; k < read.length; k++) {
+        const rr = read[k], id = SIGN_BASE.gas + rr, prev = prevOf(id);
+        const g = gasReading(c, s, rr);
+        judge(g.level, prev, LV_STRUCT, () => true, o);      // 측정기는 모든 단계의 감각 조건이 같다(지금 맞다) — 내려간 값도 확인된 하향이다
+        setObs(id, g.level);
+        const rg = regs[rr], down = o[1] === 1;
+        const val: SignBelief = { kind: 'gas', level: g.level, region: rr, x: rg.cx, y: rg.cy, lel: g.lel, down: down || undefined };
+        const text = down && g.level === 0 ? `${rg.name} 가스 농도 LEL ${g.lel}% — 위험 수준 아래` : `${rg.name} 가스 농도 LEL ${g.lel}%`;
+        if (o[0] >= 0) { report(id, val, text); continue; }
+        // 같은 단계: 측정값(lel)만 바뀌었으면 믿음에 합치되 보고하지 않는다 (significant 가 단계만 본다)
+        const cur = a.beliefs.val<SignBelief>('sign', id);
+        if (cur && cur.level === g.level && cur.lel !== g.lel) report(id, val, text);
+      }
+    } else if (ar >= 0 && c.gas[ai] >= SIGN.GAS_L1) {
+      // 냄새: 자기 칸의 가스가 단계 1 문턱을 넘으면 단계 1 만 (측정값 없음 · 미확인 — 측정값을 덮지 않는다 · 하향 보고도 없다)
+      const id = SIGN_BASE.gas + ar, prev = prevOf(id);
+      if (prev === undefined || prev < 1) {
+        setObs(id, 1);
+        const rg = regs[ar];
+        report(id, { kind: 'gas', level: 1, region: ar, x: rg.cx, y: rg.cy }, `${rg.name} 가스 냄새`, false);
+      }
+    }
+  }
+  // ── 용기 ──
+  const wk = WORK.get(c);
+  if (wk) {
+    syncProps(s, wk);
+    const vs = wk.vessels;
+    for (let k = 0; k < vs.length; k++) {
+      const p = vs[k];
+      if (p.removed) continue;
+      const id = SIGN_BASE.vessel + p.id, prev = prevOf(id), had = prev !== undefined && prev > 0;
+      if ((p.exploded || (p.heatLoad ?? 0) < SIGN.VESSEL_HEAT2) && !had) continue;
+      const tl = vesselLevel(s, p);
+      if (tl === 0 && !had) continue;
+      // 차량은 차체의 가장 가까운 칸까지
+      const nx = Math.max(p.x, Math.min(p.x + p.w - 1, Math.round(a.x))), ny = Math.max(p.y, Math.min(p.y + p.h - 1, Math.round(a.y)));
+      const d = dist(a.x, a.y, nx, ny);
+      let eye = -1;
+      judge(tl, prev, LV_VESSEL, (l) => (l === 3 ? d <= SIGN.HEAR_VENT + jb : (eye < 0 ? (eye = d <= SIGN.SEE_VESSEL + jb && los(s, a.x, a.y, nx, ny) ? 1 : 0) : eye) === 1), o);
+      if (o[2] >= 0) setObs(id, o[2]);
+      if (o[0] < 0) continue;
+      const down = o[1] === 1;
+      report(id, { kind: 'vessel', level: o[0], region: regionOfProp(s, p), x: p.x, y: p.y, prop: p.id, down: down || undefined }, vesselText(p, regionNameAt(s, p.x, p.y), o[0], down));
+    }
+  }
 }

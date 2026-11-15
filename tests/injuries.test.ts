@@ -1131,8 +1131,41 @@ describe('3. 방호 — 대원이 받는 피해는 입은 장비가 줄인다 (�
     const full = tank.uses;
     tank.uses = 0; expect(P(ff, 'smoke')).toBe(0); expect(P(ff, 'toxic')).toBe(0);
     tank.uses = full;
-    // 지금 방호가 없는 원인
+    // 방호가 없는 원인
     for (const cause of ['blunt', 'vehicle', 'drown', 'exposure', 'illness', 'exhaustion'] as InjuryCause[]) for (const a of [ff, cop, tech]) expect(P(a, cause), cause).toBe(0);
+  });
+  it('새 방호값(단계 4a-2): 자상은 조끼가(기동 < 순찰 < 구급), 유독 가스는 화학 보호복이(화학 ≤ 소방 < 경찰), 잔해는 조끼도, 추락·감전은 방화복이 줄인다', () => {
+    const { sim, s, I, of } = crewScene('INJ-prot3', 'armed', 'hostage', ['tactical', 'patrol', 'als', 'engine', 'hazmat', 'eod', 'swat']);
+    const P = (a: FieldAgent, cause: InjuryCause, engaging = false): number => protection(sim, sim.responders[a.rid], sim.units[a.unitId], cause, engaging);
+    const hit = (a: FieldAgent, raw: number, cause: InjuryCause): number => { fresh(sim, a); return hurtResponder(sim, s, I, a, raw, cause); };
+    const tac = of('tactical', 'tacOfficer'), cop = of('patrol', 'officer'), medic = of('als', 'emt'), ff = of('engine', 'nozzle');
+    const haz = of('hazmat', 'hazTech'), hazLead = of('hazmat', 'hazLead'), tech = of('eod', 'bombTech'), sh = of('swat', 'shield');
+    for (const a of [tac, cop, medic, ff, haz, hazLead, tech, sh]) a.task = null;
+    // 자상: 조끼의 방호 × 0.5 (예전에는 흉기에 방호가 없었다)
+    rel(P(tac, 'stab'), 0.6 * 0.5); rel(P(cop, 'stab'), 0.25 * 0.5); expect(P(medic, 'stab')).toBe(0);
+    const st = [tac, cop, medic].map((a) => hit(a, 20, 'stab'));
+    expect(st[0]).toBeLessThan(st[1]); expect(st[1]).toBeLessThan(st[2]);
+    rel(st[0], 20 * (1 - 0.3)); rel(st[1], 20 * (1 - 0.125)); expect(st[2]).toBe(20);
+    rel(P(sh, 'stab'), 0.6 * 0.5); rel(P(sh, 'stab', true), 0.8 * 0.5);      // 방패는 교전·봉쇄 중에만
+    sh.task = makeTask('perimeter', '봉쇄'); rel(hit(sh, 20, 'stab'), 20 * (1 - 0.4)); sh.task = null;
+    rel(P(tac, 'stab'), armorOf(sim, tac.rid, false) * 0.5);
+    // 유독 가스: 화학 보호복 대원 0.95, 그 밖의 공기호흡기 0.923, 없으면 0. 연기에는 보호복이 더 듣지 않는다
+    rel(P(haz, 'toxic'), 0.95); rel(P(hazLead, 'toxic'), 1 - 0.1 / 1.3); rel(P(ff, 'toxic'), 1 - 0.1 / 1.3); expect(P(cop, 'toxic')).toBe(0);
+    expect(P(haz, 'toxic')).toBeGreaterThanOrEqual(P(ff, 'toxic')); expect(P(ff, 'toxic')).toBeGreaterThan(P(cop, 'toxic'));
+    rel(P(haz, 'smoke'), 1 - 0.1 / 1.3);
+    const tank = sim.responders[haz.rid].kit!.find((it) => it.id === 'scba')!, full = tank.uses;
+    tank.uses = 0; expect(P(haz, 'toxic'), '공기가 떨어지면 보호복도 소용없다').toBe(0); tank.uses = full;
+    // 폭발: 폭발물 처리반 < 소방 < 순찰 = 구급 (R1 의 blastFactor 그대로 — 조끼는 폭발을 줄이지 않는다)
+    const bl = [tech, ff, cop, medic].map((a) => hit(a, 20, 'blast'));
+    expect(bl[0]).toBeLessThan(bl[1]); expect(bl[1]).toBeLessThan(bl[2]); expect(bl[2]).toBe(bl[3]);
+    // 잔해: 조끼 0.1 — 방화복(0.3)·방호복(0.65)은 예전 그대로
+    rel(P(cop, 'crush'), 0.1); rel(P(tac, 'crush'), 0.1); rel(P(ff, 'crush'), 0.3); rel(P(tech, 'crush'), 0.65); expect(P(medic, 'crush')).toBe(0);
+    // 추락·감전: 방화복
+    rel(P(ff, 'fall'), 0.2); rel(P(ff, 'electric'), 0.4);
+    for (const a of [cop, tac, medic]) { expect(P(a, 'fall')).toBe(0); expect(P(a, 'electric')).toBe(0); }
+    // 장비 손잡이(armorMul)가 조끼의 값을 바꾸면 자상의 방호도 따라간다
+    (sim.tune as { armorMul: number }).armorMul = 0.5;
+    rel(P(cop, 'stab'), 0.25 * 0.5 * 0.5);
   });
 });
 

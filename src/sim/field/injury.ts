@@ -145,19 +145,28 @@ export function mustRetreat(r: Responder): boolean {
 /**
  * 방호: 피해에서 빼는 몫(0~0.95). 대원이 받는 피해 = 방호 전 피해 × (1 − 몫). 입은 장비가 정한다 (R1 의 사람 장비 — 부대 값이 아니다).
  * 읽기만 한다: 방호 장비(조끼·방화복·공기호흡기·방호복)는 고장 추첨을 받지 않으므로 hasKit 으로 본다 (kitWorks 처럼 기록을 남기지 않는다 — 화면이 불러도 된다).
+ * 예전 식을 그대로 옮긴 몫 (단계 4a-1):
  *   총상  armorOf × 0.6 (방패는 교전·봉쇄 중에만 — engaging)
  *   화상  방화복 1 − 2.6/9            연기·유독 가스  공기호흡기에 공기가 남았을 때 1 − 0.1/1.3 (통이 비면 0)
  *   폭발·잔해  1 − blastFactor (폭발물 방호복 0.65 · 방화복 0.3 — 천장·2차 붕괴가 blast 로 주던 몫 그대로)
- *   그 밖(자상·타박상·추락·감전·익수·차량 …)은 지금 방호가 없다 — 새 방호값은 단계 4a-2 가 켠다 (§2.4 "새로" 열)
+ * 예전에는 방호가 없던 몫 (단계 4a-2, §2.4 "새로" 열 — 균형 변경):
+ *   자상  armorOf × 0.5 (흉기에도 조끼가 듣는다)       유독 가스  화학 보호복 대원(hazTech)은 0.95 (공기가 남았을 때)
+ *   잔해  방검·방탄 조끼 0.1 (방화복 0.3·방호복 0.65 보다 작으므로 더 큰 쪽)       추락  방화복 0.2       감전  방화복 0.4
+ *   타박상·차량·익수·탈진·실외 노출·질환에는 방호가 없다 (익수는 R2 의 사고 식이 구명조끼·드라이슈트로 이미 줄인다)
  * u 는 지금 쓰지 않는다 (R1 이 부대 값을 사람 장비로 옮겼다) — 서명은 설계서 그대로 둔다.
  */
 export function protection(sim: Sim, r: Responder, u: Unit, cause: InjuryCause, engaging = false): number {
   const rid = r.id;
   switch (cause) {
     case 'gunshot': return armorOf(sim, rid, engaging) * 0.6;
+    case 'stab': return armorOf(sim, rid, engaging) * 0.5;
     case 'burn': return hasKit(sim, rid, 'turnout') ? 1 - 2.6 / 9 : 0;
-    case 'smoke': case 'toxic': return hasKit(sim, rid, 'scba') && kitUses(sim, rid, 'scba') > 0 ? 1 - 0.1 / 1.3 : 0;
-    case 'blast': case 'crush': return 1 - blastFactor(sim, rid);
+    case 'smoke': return hasKit(sim, rid, 'scba') && kitUses(sim, rid, 'scba') > 0 ? 1 - 0.1 / 1.3 : 0;
+    case 'toxic': return hasKit(sim, rid, 'scba') && kitUses(sim, rid, 'scba') > 0 ? (r.role === 'hazTech' ? 0.95 : 1 - 0.1 / 1.3) : 0;
+    case 'blast': return 1 - blastFactor(sim, rid);
+    case 'crush': return Math.max(1 - blastFactor(sim, rid), hasKit(sim, rid, 'vest') || hasKit(sim, rid, 'plate') ? 0.1 : 0);
+    case 'fall': return hasKit(sim, rid, 'turnout') ? 0.2 : 0;
+    case 'electric': return hasKit(sim, rid, 'turnout') ? 0.4 : 0;
     default: return 0;
   }
 }

@@ -182,6 +182,7 @@ export function anyFire(s: Scene): boolean { for (let i = 0; i < s.fire.length; 
 /** 구조 대상 상태 변화 (매 틱) */
 export function tickCasualties(sim: Sim, s: Scene, I: Incident): void {
   const dt = sim.dt;
+  const open = I.phase !== 'closed';      // 사건이 끝난 뒤(판정 뒤)에는 악화도 사망 판정도 없다 — 대피 이동만 남는다 (설계서 H1 §2.6)
   for (const c of s.casualties) {
     c.px = c.x; c.py = c.y;
     if (c.dead || c.where === 'hospital') continue;
@@ -196,9 +197,10 @@ export function tickCasualties(sim: Sim, s: Scene, I: Incident): void {
       nSmoke = s.smoke[i] * (s.kind === 'hazmat' ? 0.62 : 0.36); if (s.fire[i] > 0.3) nBurn = 2.6 * s.fire[i]; if (!isIndoor(s.tiles[i]) && (c.isTarget || s.kind === 'search')) nExpo = s.exposure;
     } else if (c.where === 'loaded') d *= 0.5;
     else if (c.where === 'safe' && c.treated) d *= 0.6;
+    if (!open) d = 0;
     c.health -= d * dt;
     if (d > 0) { if (c.where !== 'scene' && c.where !== 'carried') nWound = d; noteDecay(c, s, nWound, nSmoke, nBurn, nExpo, dt, sim.t); }      // (H1) 기록만
-    if (c.health <= 0) {
+    if (c.health <= 0 && open) {
       if (c.deathCause === undefined) c.deathCause = decayCause(c, s, I, nWound, nSmoke, nBurn, nExpo);      // (H1) 숨진 틱의 가장 큰 항 (한 번 피해로 0 이하가 됐으면 그 자리가 이미 적었다)
       c.health = 0; c.dead = true; c.tDead = sim.t; c.walking = false;
       const known = c.tDiscovered >= 0;
@@ -327,6 +329,7 @@ export function flashbang(sim: Sim, s: Scene, x: number, y: number, by?: FieldAg
  * 섬광탄으로 먼저 무력화하면 일어나지 않는다.
  */
 export function panicShot(sim: Sim, s: Scene, I: Incident, x: number, y: number): void {
+  if (I.phase === 'closed') return;      // 판정 뒤에는 누구도 더 다치지 않는다 (§2.6) — 다치지 않는 피격을 기록하지 않는다
   for (const h of s.hostiles) {
     if (h.hostageId < 0 || (h.state !== 'hold' && h.state !== 'fight') || sim.t < h.stunUntil) continue;
     if (dist(h.x, h.y, x, y) > 8) continue;
@@ -399,7 +402,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
     if (h.hostageId >= 0) {
       const c = s.casualties[h.hostageId];
       if (c.dead || c.where !== 'scene') h.hostageId = -1;
-      else if (sim.t >= h.deadline) {
+      else if (sim.t >= h.deadline && I.phase !== 'closed') {
         h.deadline = sim.t + 70; h.state = 'fight'; h.cooldown = 1; h.alertUntil = sim.t + 20;
         const dmg = s.rng.range(28, 42);
         const ev = raiseProblem(sim, I, 'ESCALATION', '시한이 지나 인질이 다침', { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `${h.label}가 요구가 받아들여지지 않자 인질을 다치게 했습니다!` }, false);
@@ -448,7 +451,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
       }
     }
     // 총격범: 대원이 보이지 않는 동안에는 건물 안의 다른 사람을 찾아다니며 쏜다 (진입이 늦을수록 피해가 는다)
-    if (s.variant === 'shooter' && h.weapon === 'gun' && see.nearest < 0 && (h.state === 'hold' || h.state === 'fight') && sim.t >= h.moveAt && sim.t - s.startedAt > 40) {
+    if (s.variant === 'shooter' && h.weapon === 'gun' && see.nearest < 0 && (h.state === 'hold' || h.state === 'fight') && sim.t >= h.moveAt && sim.t - s.startedAt > 40 && I.phase !== 'closed') {
       let target: Casualty | null = null, td = 1e9;
       for (const c of s.casualties) { if (c.dead || c.where !== 'scene' || c.health < 72) continue; const d = dist(c.x, c.y, h.x, h.y); if (d < td) { td = d; target = c; } }      // 이미 쓰러진 사람은 다시 쏘지 않는다
       if (target) {
@@ -676,7 +679,7 @@ export function tickGas(sim: Sim, s: Scene, I: Incident): void {
   }
   if (!leaking) return;
   // 통제되지 않은 출입구로 다가온 주변 시민이 가스를 마신다 (경찰이 출입구를 지키면 일어나지 않는다)
-  if (s.arrivedAt >= 0 && s.casualties.filter((c) => c.bystander2).length < 3) {
+  if (s.arrivedAt >= 0 && I.phase !== 'closed' && s.casualties.filter((c) => c.bystander2).length < 3) {      // 판정 뒤에 다친 사람이 새로 생기지 않는다 (§2.6)
     s.exits.forEach((e, k) => {
       if (s.smoke[tidx(s, Math.max(0, Math.min(s.w - 1, e.x)), Math.max(0, Math.min(s.h - 1, e.y)))] < 0.12 || exitCovered(sim, s, k)) return;
       if (!s.rng.chance(Math.min(0.03, 0.011 * sim.tune.hazardMul))) return;
@@ -746,6 +749,7 @@ function nearTile(s: Scene, x: number, y: number, t: number, r: number): number 
 
 /** 배회 실종자 (매 틱, 실종 현장만) */
 export function tickWander(sim: Sim, s: Scene, I: Incident): void {
+  if (I.phase === 'closed') return;      // 판정 뒤에는 아무 일도 일어나지 않는다 (§2.6)
   for (let ci = 0; ci < s.casualties.length; ci++) { const c = s.casualties[ci];
     if (!c.isTarget || c.dead || c.where !== 'scene') continue;
     let st = wanderStates.get(c);
@@ -851,6 +855,7 @@ const crushStates = new WeakMap<Casualty, CrushState>();
 
 /** 건물 붕괴 (매 틱, 승강기 갇힘을 뺀 붕괴 현장) */
 export function tickCrush(sim: Sim, s: Scene, I: Incident): void {
+  if (I.phase === 'closed') return;      // (§2.6)
   for (let ci = 0; ci < s.casualties.length; ci++) { const c = s.casualties[ci];
     if (c.dead || c.inWater) continue;
     let st = crushStates.get(c);
@@ -878,6 +883,7 @@ const liftStates = new WeakMap<Scene, LiftState>();
 
 /** 승강기 갇힘 (매 틱, 승강기 현장만) */
 export function tickLift(sim: Sim, s: Scene, I: Incident): void {
+  if (I.phase === 'closed') return;      // (§2.6)
   let st = liftStates.get(s);
   if (!st) {
     const car = s.regions.find((r) => r.name === '승강기');
@@ -921,6 +927,7 @@ const medStates = new WeakMap<Casualty, MedState>();
 
 /** 응급 환자 (매 틱, 응급 환자 현장만) */
 export function tickMedical(sim: Sim, s: Scene, I: Incident): void {
+  if (I.phase === 'closed') return;      // (§2.6)
   for (let ci = 0; ci < s.casualties.length; ci++) { const c = s.casualties[ci];
     if (c.dead || c.where === 'hospital') continue;
     let st = medStates.get(c);
@@ -960,6 +967,7 @@ export function tickMedical(sim: Sim, s: Scene, I: Incident): void {
 
 /** 수난 사고: 물에 빠진 사람은 하류로 떠내려간다. 다리나 물가에 걸리면 멈추고, 현장 밖으로 벗어나면 잃는다 (매 틱). */
 export function tickWater(sim: Sim, s: Scene, I: Incident): void {
+  if (I.phase === 'closed') return;      // 판정 뒤에는 떠내려가 숨지는 사람도 없다 (§2.6)
   for (const c of s.casualties) {
     if (!c.inWater || c.dead || c.where !== 'scene' || !c.drift) continue;
     const nx = c.x + c.drift * sim.dt;

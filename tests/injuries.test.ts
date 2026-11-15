@@ -8,7 +8,7 @@ import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
 import { createIncident } from '../src/sim/incidents';
 import { createAidUnit } from '../src/sim/resources';
-import { band, tickGas, tickWater } from '../src/sim/field/hazards';
+import { band, blast, tickCasualties, tickCollapse, tickGas, tickWater } from '../src/sim/field/hazards';
 import { CAUSE_NAME, bandOf, hurtCas, hurtCasTo, initialCause, injuryRng, mainCause, noteCasHurt, noteHostileHurt, noteInjury, noteRespHurt, smokeCause } from '../src/sim/field/injury';
 import { makeAgent } from '../src/sim/field/agents';
 import { addCas, addHostile } from '../src/sim/field/kit';
@@ -339,6 +339,64 @@ describe('9. 숨진 사람의 원인', () => {
     expect(sumDmg(c.injuries)).toBeCloseTo(100, 6);
     expect(hp).toBeGreaterThan(0);
     for (const q of s.casualties) if (q !== c) expect(q.lost).toBeUndefined();
+  });
+  // ── 단계 3: 사건이 끝나면(판정 뒤) 구조 대상의 악화·사망 판정이 멈춘다 (§2.6) ──
+  it('모든 구조 대상의 사망 시각과 사망 기록(생체 반응 소실 · 떠내려감)의 시각 ≤ 그 사건의 closedAt', () => {
+    let dead = 0, recs = 0;
+    for (const sim of all()) {
+      for (const s of scenesOf(sim)) {
+        const I = sim.incidents[s.incidentId];
+        for (const c of s.casualties) if (c.dead) { dead++; expect(c.tDead, `${sim.seed} ${I.code} ${c.label}`).toBeLessThanOrEqual(I.closedAt); }
+      }
+      for (const e of sim.events) {
+        if (e.role !== 'SYSTEM' || !/생체 반응 소실|생체 반응이 사라졌습니다|떠내려갔습니다/.test(e.text)) continue;
+        recs++;
+        expect(e.t, `${sim.seed} ${e.text}`).toBeLessThanOrEqual(sim.incidents[e.incidentId].closedAt);
+      }
+    }
+    expect(dead).toBeGreaterThan(10); expect(recs).toBe(dead);
+  });
+  it('판정 뒤에는 악화가 멈추고 hurtCas 도 아무것도 하지 않는다 — 대피 이동만 남는다', () => {
+    const { sim, s } = sceneOf('INJ-closed', 'fire');
+    const I = sim.incidents[s.incidentId];
+    const c = addCas(s, s.staging.x, s.staging.y + 6, 'immobile', 30, 0.5, 0);
+    const walker = addCas(s, s.staging.x + 1, s.staging.y + 6, 'mobile', 90, 0.3, 0);
+    walker.walking = true;
+    const step = (): void => { sim.tick++; sim.t = sim.tick * sim.dt; tickCasualties(sim, s, I); };
+    step();
+    expect(c.health).toBeLessThan(30); expect(walker.health).toBeLessThan(90);      // 열려 있는 동안에는 나빠진다
+    I.phase = 'closed'; I.closedAt = sim.t;
+    const hp = c.health, hpW = walker.health, x0 = walker.x, y0 = walker.y, n = sim.events.length;
+    for (let k = 0; k < 40; k++) step();
+    expect(c.health).toBe(hp); expect(walker.health).toBe(hpW);
+    expect(Math.hypot(walker.x - x0, walker.y - y0)).toBeGreaterThan(0.5);      // 걷던 사람은 계속 걷는다
+    hurtCas(sim, s, I, c, 500, 'blast', { bleed: 0.9, immobile: true, ev: 3 });
+    expect([c.health, c.bleed, c.dead, c.deathCause]).toEqual([hp, 0.5, false, undefined]);
+    // 이미 0 이하였던 사람도 판정 뒤에는 숨진 것으로 바뀌지 않는다 (판정과 기록이 어긋나지 않게)
+    c.health = -3;
+    for (let k = 0; k < 5; k++) step();
+    expect(c.dead).toBe(false);
+    expect(sim.events.slice(n).some((e) => /생체 반응/.test(e.text))).toBe(false);
+  });
+  it('판정 뒤에는 세계 규칙도 사람을 다치게 하지 않는다: 떠내려가 숨지지 않고, 주변 시민이 새로 쓰러지지 않는다', () => {
+    const w = sceneOf('INJ-closed-w', 'water');
+    const Iw = w.sim.incidents[w.s.incidentId];
+    const c = w.s.casualties.find((q) => q.inWater)!;
+    c.drift = 5; c.x = w.s.w - 1.25;
+    Iw.phase = 'closed'; Iw.closedAt = w.sim.t;
+    w.sim.tick++; w.sim.t = w.sim.tick * w.sim.dt;
+    tickWater(w.sim, w.s, Iw);
+    expect([c.dead, c.lost, c.inWater]).toEqual([false, undefined, true]);
+    // 가스 누출 현장 열두 곳: 열려 있을 때는 주변 시민이 쓰러지는 조건(위의 '사건 중에 붙는 주변 시민' 시험과 같다)에서, 닫힌 뒤에는 한 명도 생기지 않는다
+    for (let k = 0; k < 12; k++) {
+      const { sim, s } = sceneOf('INJ-gas' + k, 'hazmat');
+      const I = sim.incidents[s.incidentId];
+      s.arrivedAt = 0;
+      I.phase = 'closed'; I.closedAt = sim.t;
+      const n0 = s.casualties.length;
+      for (let q = 0; q < 400; q++) { sim.tick++; sim.t = sim.tick * sim.dt; for (const e of s.exits) s.smoke[e.y * s.w + e.x] = Math.max(s.smoke[e.y * s.w + e.x], 0.5); tickGas(sim, s, I); }
+      expect(s.casualties.length, 'INJ-gas' + k).toBe(n0);
+    }
   });
 });
 

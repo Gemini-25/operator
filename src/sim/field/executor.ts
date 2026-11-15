@@ -394,7 +394,7 @@ function shootAt(sim: Sim, s: Scene, a: FieldAgent, hid: number): void {
   // 빗나간 탄이 겨눈 점 (판정 흐름에서 x 다음 y — 예전 그림 줄과 같은 호출 순서)
   const mx = h.x + (hit ? 0 : s.rng.range(-0.8, 0.8)), my = h.y + (hit ? 0 : s.rng.range(-0.8, 0.8));
   const hc = hostageNear(s, h);
-  const struck = !hit && hc && s.rng.chance(0.2) ? hc : null;      // 인질 곁의 용의자를 향해 쏜 빗나간 탄이 인질에게 간다 (판정 흐름의 순서는 예전과 같다: 흔들기 다음)
+  const struck = !hit && hc && s.rng.chance(0.2) && I.phase !== 'closed' ? hc : null;      // 인질 곁의 용의자를 향해 쏜 빗나간 탄이 인질에게 간다 (판정 흐름의 순서는 예전과 같다: 흔들기 다음)
   const ct = !hit && covered ? coverRoll(sim, s, h.x, h.y, a.x, a.y) : -1;      // 빗나간 탄이 용의자의 엄폐 가구에 맞는가 (파손용 흐름)
   // 탄이 실제로 간 선: 지나간 창이 깨지고 엄폐 가구가 닳는다. 그림은 같은 선을 그 끝(end)까지 그린다
   const end = hit ? fireShot(sim, s, a.x, a.y, h.x, h.y, 'body') : struck ? fireShot(sim, s, a.x, a.y, struck.x, struck.y, 'body') : ct >= 0 ? fireShot(sim, s, a.x, a.y, h.x, h.y, ct) : fireShot(sim, s, a.x, a.y, mx, my, 'miss');

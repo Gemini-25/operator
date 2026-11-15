@@ -95,7 +95,7 @@ export function hurtCas(sim: Sim, s: Scene, I: Incident, c: Casualty, amount: nu
  * 지금보다 높은 값은 무시한다 — 다치는 일로 체력이 오르지는 않는다.
  */
 export function hurtCasTo(sim: Sim, s: Scene, I: Incident, c: Casualty, to: number, cause: InjuryCause, o?: HurtOpts): void {
-  if (c.dead) return;
+  if (c.dead || I.phase === 'closed') return;
   const hp0 = c.health;
   if (to < hp0) {
     c.health = to;

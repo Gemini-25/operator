@@ -1662,6 +1662,7 @@ R1 최종본을 `git merge` 로 받은 뒤(충돌 없음 — `12a8b2b`) 다시 �
 - 측정 도구 40교대(기준 → `5988db7` → 검토 뒤): 교착 후보 0 · 잊힌 사건 0 · C1~C5 0 (보통·어려움·극한 모두), 반복 최대 보통 9 → 9 → 9 · 어려움 5 → 6 → 6 · 극한 6 → 7 → 7. 극한 40교대의 한계 시간 5 → 13 → 13 · 방치 19 → 24 → 24 — 새로 한계 시간이 된 8건(화재 4 · 교통 2 · 수난 1 · 실종 1 · 총격범 1)에 열린 채 남은 H1 작업(treatMate·treatSuspect·rescueMate)은 없고, 넷은 '구급 부대 없음' 요청을 남겼다(구급차가 다친 대원·용의자를 실어 나르는 몫 — 자원 다툼이지 고리가 아니다). 극한 S18 #08(총격범)을 읽었다: 경관 넷이 다치는 긴 교전 끝에 안전 확보 26초 뒤 한계 시간.
 - 정보 격리: `commander.ts`·`orders/*`·`dispatch/*` 가 읽는 남의 상태는 명부의 `status`(조직이 아는 상태)·`unitId`·`dept`·`name`, 개체의 `left`(부대의 출발)뿐이고 체력·출혈·사망·후송·부상 기록은 믿음(`mate`·`hos`·`cas`)으로만 읽는다. 다친 지휘관의 현장 평가(`sizeup` 예외)는 바깥(`s.vantage`·`s.staging`)에서 하는 일이라 `LIGHT_WORK` 의 "위험 구역 밖" 결정과 어긋나지 않는다. `u.oosEv`(그 부대의 마지막 부상·순직 기록)는 I1-b b0 의 `blockersOf` 가 운용 중단 기록을 거슬러 찾는 아래 끝으로 맞게 쓰인다. R3 의 `docFit`·`docGate` 는 줄이 없어 treatMate·treatSuspect 를 그대로 지나간다.
 - 뒤 묶음이 기대는 이름: `hurtCas`·`hurtResponder`·`hurtHostile`(`{ ev }`)·`protection(…, 'drown') = 0`·`bandOf`·`hurtF`·`mateFact`·`MateBelief`·`treatMate`·`outShifts`·`RosterOut`·`threatOverAt`·`crewReady`/`crewOk`·`u.oosEv`·`PHRASE.T4`·`T6` 모두 그 이름·그 뜻으로 있다.
+- 화면 검사: 검토 뒤 `npm run ui-check` 여덟 항목 통과(콘솔 오류 0, 되감기 표본 57개 해시 일치, 보고서 해시 `b122321b` = 헤드리스).
 - 그림: 시험 11-10(피·붉은 조각 없음)과 숨진 용의자·순직 대원의 덮개(흰 천)·검정 딱지 — 단계 5·6 의 스크린샷(`shots6/`·`shots6b/`)을 다시 보았다.
 
 **고치지 않은 것 — 단계 7 이 볼 것**

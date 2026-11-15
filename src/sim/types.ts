@@ -5,7 +5,8 @@ import type { Rng } from './rng';
 import type { BeliefStore } from './field/beliefs';
 
 export interface Pt { x: number; y: number }
-export type Dept = 'fire' | 'ems' | 'police';
+export type Dept = 'fire' | 'ems' | 'police'
+  | 'civil';      // (N8 §5.3) 유관 기관(전력·가스·수도 복구반·견인차): 지휘하지 않고 첫 도착으로 세지 않으며 자기 일(repair·towAway)만 한다
 export type IncidentType = 'fire' | 'traffic' | 'search' | 'armed' | 'medical' | 'collapse' | 'hazmat' | 'water';
 export type District = 'residential' | 'commercial' | 'industrial' | 'outskirts';
 export type Weather = 'clear' | 'rain' | 'fog' | 'night';
@@ -107,9 +108,11 @@ export type RoleId =
   | 'bombTech' | 'robotOp' | 'eodGuard' | 'observer' | 'pilot' | 'copilot'
   | 'fireLead' | 'nozzle' | 'firefighter' | 'engineer' | 'ladderLead' | 'ladderOp'
   | 'rescueLead' | 'extricator' | 'searcher' | 'ropeTech' | 'hazLead' | 'hazTech' | 'decon' | 'airRescuer' | 'boatRescuer' | 'boatLead'
-  | 'paramedic' | 'emt' | 'emsDriver' | 'doctor' | 'flightNurse';
+  | 'paramedic' | 'emt' | 'emsDriver' | 'doctor' | 'flightNurse'
+  | 'utilLead' | 'lineman' | 'gasTech' | 'plumber' | 'towDriver' | 'catcherLead' | 'catcher' | 'detective' | 'motorOfficer' | 'k9Handler';      // (N8 §4.9) 복구반장·전력·가스·수도 기사·견인 기사·포획 팀장·포획 요원·형사·교통 순찰 대원·경찰견 핸들러
 /** 역할의 그림 묶음 (부대 목록의 역할 점, 대원 그림) */
-export type RoleGroup = 'lead' | 'officer' | 'shield' | 'entry' | 'marksman' | 'bomb' | 'observer' | 'pilot' | 'nozzle' | 'engineer' | 'rescue' | 'search' | 'water' | 'hazmat' | 'medic' | 'doctor';
+export type RoleGroup = 'lead' | 'officer' | 'shield' | 'entry' | 'marksman' | 'bomb' | 'observer' | 'pilot' | 'nozzle' | 'engineer' | 'rescue' | 'search' | 'water' | 'hazmat' | 'medic' | 'doctor'
+  | 'civil';      // (N8) 유관 기관의 기사 (복구반장·기사·견인 기사)
 export type KitId =
   | 'scba' | 'turnout' | 'hose' | 'tic' | 'irons' | 'spreader' | 'breachKit' | 'lightRescue' | 'searchKit' | 'rope' | 'ring'
   | 'pumpPanel' | 'plugKit' | 'gasMeter'
@@ -117,7 +120,8 @@ export type KitId =
   | 'pistol' | 'rifle' | 'sniper' | 'taser' | 'flashbang' | 'vest' | 'plate' | 'shield' | 'bombSuit' | 'eodKit' | 'robot' | 'megaphone' | 'baton'
   | 'flir' | 'searchlight'
   | 'pole' | 'pfd' | 'drysuit' | 'raft' | 'extinguisher' | 'fan' | 'airbag' | 'shoring' | 'beanbag'      // (R2 §3.3) 갈고리 장대·구명조끼·드라이슈트·고무보트·소화기·송풍기·에어백·지지대·비살상탄 발사기 — 표(KITS)에만 있고 역할에는 단계 1a~5 가 붙인다
-  | 'charge';            // 폭파 장약 — R1 은 들려 두기만 한다. 쓰는 것은 R2 §4.2a (사용자 결정 2026-11-15)
+  | 'charge'             // 폭파 장약 — R1 은 들려 두기만 한다. 쓰는 것은 R2 §4.2a (사용자 결정 2026-11-15)
+  | 'insulKit' | 'voltDetector' | 'valveKey' | 'pumpSet' | 'towKit' | 'dart' | 'catchpole' | 'net' | 'beeSuit' | 'jumpMat' | 'dog';      // (N8 §4.9) 절연 장비·검전기·밸브 키·배수 펌프·견인 장비·마취총·올가미·포획망·벌 보호복·안전 매트·경찰견
 /** 대원 한 사람이 든 장비 하나 */
 export interface KitItem {
   id: KitId;
@@ -140,9 +144,11 @@ export interface AirOp {
 export interface AirStats { sorties: number; byKind: Record<string, number>; hoists: number; drops: number; airLifts: number; rtb: number; tracked: number; grounded: string | null }
 
 export type UnitKind = 'engine' | 'rescue' | 'als' | 'bls' | 'patrol' | 'tactical' | 'ladder' | 'hazmat' | 'swat' | 'eod' | 'heli' | 'boat'
-  | 'policeHeli' | 'medHeli';      // (R1) 경찰 헬기 · 의료 헬기. 'heli' 는 그대로 소방 헬기다
+  | 'policeHeli' | 'medHeli'       // (R1) 경찰 헬기 · 의료 헬기. 'heli' 는 그대로 소방 헬기다
+  | 'powerCrew' | 'gasCrew' | 'waterCrew' | 'tow' | 'animalCtl' | 'detective' | 'trafficPol' | 'k9';      // (N8 §4.9) 전력·가스·수도 복구반 · 견인차 · 동물 포획팀 · 형사 · 교통 경찰 · 경찰견 (단계 2b 는 편성하지 않는다 — minLevel 6)
 /** 부대의 분야 (편성표와 화면의 묶음) */
-export type UnitField = 'police' | 'fire' | 'rescue' | 'special';
+export type UnitField = 'police' | 'fire' | 'rescue' | 'special'
+  | 'civil';      // (N8) 유관 기관 (화면 묶음)
 export type UnitState = 'available' | 'turnout' | 'enroute' | 'onscene' | 'transport' | 'hospital' | 'returning' | 'oos';
 export interface UnitCaps { suppression: number; rescue: number; ems: number; law: number; tactical: number; search: number; traffic: number; eod: number }
 export interface Unit {
@@ -1095,3 +1101,11 @@ export interface WorkItem {
 export interface Incident {
   dupOf?: number;                                 // 중복 신고 오인: 원 사건의 id — 진실 (접수 AI·관제는 읽지 않는다 — 단계 10)
 }
+
+// ───────────────────────── 사건 종류 다양화 (N8 단계 2b — 새 부대의 자리) ─────────────────────────
+// docs/specs/N8-incident-kinds.md §5.3. 새 수요 열쇠 다섯 — 서로 바꿔 쓸 수 없어 따로 둔다(하나로 묶으면 능력만 보고 고르는 recomputeUnmet 이
+// 가스 사고에 전력 복구반을 보낸다). 단계 2b 에는 이 열쇠를 내는 곳이 없고 그 능력의 부대도 편성되지 않는다(UNIT_DEFS 의 minLevel 6) — 결과가 바뀌지 않는다.
+// 열쇠 하나가 지나는 자리: resources.caps()·AID_KIND/AID_CALL · analyst.NEED_NAME·emptyNeeds · dispatcher.ORDER(끝)·MINCAP·NEED_LABEL ·
+// commander.request 의 이름표·NEED_MIN·needFor · scripts/metrics.ts NEED_KEYS (빠뜨리면 복구반만 기다리는 사건이 '잊힌 사건'으로 잡힌다)
+export interface UnitCaps { utilPower: number; utilGas: number; utilWater: number; tow: number; capture: number }      // 전력 복구 · 가스 복구 · 수도 복구 · 견인 · 동물 포획
+export interface Needs { utilPower: number; utilGas: number; utilWater: number; tow: number; capture: number }

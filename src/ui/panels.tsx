@@ -18,7 +18,7 @@ import { TYPE_DEFS, TYPE_ORDER } from '../sim/incidentTypes';
 import type { CameraDirector } from '../view/camera';
 import { MethodRows } from './MethodRows';      // (R2) 대원 정보창의 대응 방법 두 줄
 import { DoctrineRows } from './DoctrineRows';      // (R3) 대원 정보창의 대응 교본 칸 (단계 0 에는 비어 있다)
-import { FIELD_TEXT } from '../view/city/tokens';
+import { FIELD_TEXT, unitField } from '../view/city/tokens';
 import { ICON_PATH } from '../view/icons';
 import { KIT_GROUP_MARK, UNIT_MARK } from '../view/marks';
 import { DEPT_COLOR, OUTCOME_COLOR, TYPE_COLOR } from '../view/renderCity';
@@ -108,10 +108,10 @@ function IncidentCard({ sim, I, director, truth }: { sim: Sim; I: Incident; dire
 // ───────────────────────── 좌측: 부대 ─────────────────────────
 const FIELD_COLOR: Record<UnitField, string> = FIELD_TEXT;
 /** 분야 묶음의 제목 옆에 두는 기호 (그 분야를 대표하는 종류) */
-const FIELD_MARK: Record<UnitField, string> = { police: UNIT_MARK.patrol, fire: UNIT_MARK.engine, rescue: UNIT_MARK.bls, special: UNIT_MARK.swat };
-function fieldOf(u: Unit): UnitField { return u.field ?? (u.dept === 'police' ? 'police' : u.dept === 'ems' ? 'rescue' : 'fire'); }
+const FIELD_MARK: Record<UnitField, string> = { police: UNIT_MARK.patrol, fire: UNIT_MARK.engine, rescue: UNIT_MARK.bls, special: UNIT_MARK.swat, civil: UNIT_MARK.powerCrew };
+function fieldOf(u: Unit): UnitField { return unitField(u); }      // 분야가 없는 지원 부대는 부서로 짐작한다 (tokens.unitField — 지도와 같은 식)
 export function UnitList({ sim, selectedRid, onSelectRid }: { sim: Sim; selectedRid: number; onSelectRid: (rid: number) => void }) {
-  const fields: UnitField[] = ['police', 'fire', 'rescue', 'special'];
+  const fields: UnitField[] = ['police', 'fire', 'rescue', 'special', 'civil'];      // civil (N8): 유관 기관 — 편성된 부대가 없으면 묶음이 보이지 않는다
   const aid = sim.units.filter((u) => u.aid);
   const own = sim.units.filter((u) => !u.aid);
   return (

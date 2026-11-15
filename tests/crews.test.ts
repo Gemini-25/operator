@@ -226,7 +226,7 @@ function seedsWhere(pred: (sim: Sim) => boolean, n: number, d: Difficulty = NORM
 }
 /** 관제의 평가를 손으로 붙인다 (airFit 의 단위 시험용 — 관제가 아는 것은 평가뿐이다) */
 function assessAs(sim: Sim, I: Incident, type: IncidentType, severity: number, label?: string, needs: Partial<Needs> = {}): void {
-  const a: Assessment = { type, typeConf: 0.9, probs: {} as Assessment['probs'], severity, confidence: 0.9, needs: { suppression: 0, rescue: 0, ems: 0, law: 0, tactical: 0, search: 0, traffic: 0, eod: 0, ...needs }, risks: [], summary: '', t: sim.t, revision: 0, label };
+  const a: Assessment = { type, typeConf: 0.9, probs: {} as Assessment['probs'], severity, confidence: 0.9, needs: { suppression: 0, rescue: 0, ems: 0, law: 0, tactical: 0, search: 0, traffic: 0, eod: 0, utilPower: 0, utilGas: 0, utilWater: 0, tow: 0, capture: 0, ...needs }, risks: [], summary: '', t: sim.t, revision: 0, label };
   I.assessment = a; I.locationKnown = true; I.reportedAt = sim.t; I.unmetSince = sim.t; I.airDone = undefined;
 }
 /** 현장을 하나 만들고 부대를 내려 세운다 (fitFor·피해 식의 단위 시험용) */
@@ -809,7 +809,7 @@ describe('⑩ 관제 규칙 — 헬기 세 종류', () => {
     const hosp = sim.city.facilities.find((q) => q.kind === 'hospital')!;
     expect(heliPad(sim, hosp)).toEqual([hosp.x - 5, hosp.y - 3]);
     // 관제의 기준(MINCAP: 구조 .5 · 구급 .7 · 수색 .3)을 넘는 것은 그 헬기가 맡는 수요뿐이다
-    const over = (u: Unit): string => (['suppression', 'rescue', 'ems', 'law', 'tactical', 'search', 'traffic', 'eod'] as (keyof Needs)[]).filter((k) => u.caps[k] >= ({ suppression: 0.7, rescue: 0.5, ems: 0.7, law: 0.5, tactical: 0.9, search: 0.3, traffic: 0.4, eod: 0.9 })[k]).join(',');
+    const over = (u: Unit): string => (['suppression', 'rescue', 'ems', 'law', 'tactical', 'search', 'traffic', 'eod'] as (keyof Needs)[]).filter((k) => u.caps[k] >= ({ suppression: 0.7, rescue: 0.5, ems: 0.7, law: 0.5, tactical: 0.9, search: 0.3, traffic: 0.4, eod: 0.9, utilPower: 0.7, utilGas: 0.7, utilWater: 0.7, tow: 0.7, capture: 0.7 })[k]).join(',');
     expect(over(police)).toBe('search'); expect(over(fire)).toBe('rescue,search'); expect(over(med)).toBe('ems');
     expect([seatsOf(police), seatsOf(fire), seatsOf(med)]).toEqual([0, 1, 1]);
     expect([police.hoist, fire.hoist, med.hoist]).toEqual([false, true, false]);

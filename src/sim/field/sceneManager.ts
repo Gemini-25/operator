@@ -56,8 +56,9 @@ export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
     emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'arrive', imp: 2, text: `${u.callsign} 현장 상공 도착.` });
     return;
   }
-  // 현장 도착 시각은 지상 대원이 처음 내릴 때 정한다 (설계서 R1 6.1)
-  const firstGround = s.arrivedAt < 0;
+  // 현장 도착 시각은 지상 대원이 처음 내릴 때 정한다 (설계서 R1 6.1). 유관 기관(civil — N8 §5.3.2)은 첫 도착으로 세지 않는다:
+  // 한계 시간의 시계(onAt)와 판정의 대응 시간이 복구반 도착으로 시작되지 않는다 (혼자 먼저 닿으면 resources.arrive 가 길가에서 기다리게 한다)
+  const firstGround = s.arrivedAt < 0 && u.dept !== 'civil';
   if (firstGround) { s.arrivedAt = sim.t; I.firstArrivalAt = sim.t; I.phase = 'onscene'; }
   const node = sim.city.nodes[I.truth.nodeId];
   const slot = I.everAssigned.indexOf(u.id);
@@ -92,7 +93,7 @@ export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
   for (const rid of crew) if (sim.responders[rid].status === 'injured') { const b = s.agents.find((q) => q.rid === rid)!; learnQuiet(sim, b, mateFact(sim, s, b, 'light', sim.responders[rid].name, 0)); }
   const senior = s.agents.find((a) => a.rid === crew[0])!;
   if (!cmd) {
-    setCommander(sim, s, I, senior, '현장 지휘를 맡습니다. 현장 평가부터 실시합니다.');
+    if (u.dept !== 'civil') setCommander(sim, s, I, senior, '현장 지휘를 맡습니다. 현장 평가부터 실시합니다.');      // (N8) 유관 기관은 지휘하지 않는다
   } else if (sim.responders[cmd.rid].dept !== s.leadDept && u.dept === s.leadDept) {
     for (const f of cmd.beliefs.all()) senior.beliefs.merge(BeliefStore.relay(f));
     cmd.isCommander = false;
@@ -309,7 +310,7 @@ export function tickScene(sim: Sim, s: Scene): void {
   if (I.phase !== 'closed' && s.agents.length) {
     const cmd = s.agents.find((a) => a.rid === s.commanderRid);
     if (!cmd || cmd.status !== 'active') {
-      const cands = s.agents.filter((a) => a.status === 'active');
+      const cands = s.agents.filter((a) => a.status === 'active' && sim.responders[a.rid].dept !== 'civil');      // (N8) 유관 기관 대원은 지휘권을 승계하지 않는다
       if (cands.length) {
         cands.sort((x, y) => (sim.responders[y.rid].dept === s.leadDept ? 1 : 0) - (sim.responders[x.rid].dept === s.leadDept ? 1 : 0) || sim.responders[y.rid].experience - sim.responders[x.rid].experience || x.rid - y.rid);
         if (cmd) for (const f of cmd.beliefs.all()) cands[0].beliefs.merge(BeliefStore.relay(f));
@@ -374,7 +375,9 @@ export function tickScene(sim: Sim, s: Scene): void {
   // 7) 한계 시간 / 방치
   const on = onAt(s);      // 지상이든 상공이든 부대가 처음 닿은 때부터 잰다 — 헬기만 떠 있어도 사건은 반드시 끝난다
   if (I.phase !== 'closed' && on >= 0) {
-    const anyActive = s.agents.some((a) => a.status === 'active') || airBusy(s);
+    // (N8 §5.3.2) 유관 기관 대원은 일하는 동안만(작업을 쥐었고 대기가 아니다) 센다 — 고치던 복구반이 끝내기 전에 닫거나 다시 부르지 않고,
+    // 손을 놓은 복구반만 남은 현장이 '대원이 있으니 기다린다'에 갇히지도 않는다
+    const anyActive = s.agents.some((a) => a.status === 'active' && (sim.responders[a.rid].dept !== 'civil' || (a.task !== null && a.task.kind !== 'standby'))) || airBusy(s);
     if (sim.t - on > TYPE_DEFS[s.kind].limit + (s.variant === 'bus' ? 170 : 0) + (scenarioOf(I.truth.type, I.truth.variant)?.limit ?? 0)) {      // 다수 사상자 사고는 이송에 시간이 더 걸린다
       emit(sim, { inc: I.id, role: 'COMMANDER', actor: s.commanderRid >= 0 ? sim.responders[s.commanderRid].name : '현장', kind: 'command', imp: 2, text: '대응 한계 시간을 넘겼습니다. 현 상태로 현장을 인계하고 철수합니다.' });
       closeIncident(sim, I, 'timeout');
@@ -383,6 +386,9 @@ export function tickScene(sim: Sim, s: Scene): void {
         // 현장에 남은 대원이 없다(예: 구급차가 환자를 싣고 떠남). 마지막 지휘관이 알고 있던 상황으로 판단한다
         s.idleSince = sim.t;
         const last = s.agents.find((a) => a.rid === s.commanderRid);
+        // (N8 §5.3.2) 남은 유관 기관 대원이 본 시설물 사실(haz)을 마지막 지휘관의 믿음에 넘긴 뒤 판단한다 — 지휘관이 떠난 뒤 복구반이 고친 것을 모르는 낡은 믿음으로
+        // 같은 복구반을 다시 부르지 않게 (지휘권 승계 때 믿음을 넘기는 길과 같다). 유관 기관 대원이 없으면 아무것도 하지 않는다
+        if (last) for (const b of s.agents) if (b.status !== 'left' && sim.responders[b.rid].dept === 'civil') for (const f of b.beliefs.list('haz')) last.beliefs.merge(BeliefStore.relay(f));
         const o = last ? outstanding(last, sim.t, s) : null;      // 대피 중이라던 사람의 소식이 오래 끊겼으면 남은 일로 센다 (H1 §5.2). 쓰러진 채 현장에 남은 동료도 남은 일이다 (§3.5)
         // 현장 평가를 마친 현장만 이렇게 끝낸다. 실종 현장을 상공의 헬기가 살핀 뒤라면 평가를 마치지 못했어도 같다 —
         // 하늘에서 먼저 다 찾아 주면 지상 부대가 평가를 건너뛰고 환자부터 싣고 떠나, 남은 일이 없는데도 '방치'로 닫혔다

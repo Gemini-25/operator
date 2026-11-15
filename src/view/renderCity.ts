@@ -14,7 +14,7 @@ import type { CityLamp } from './city/staticCity';
 import { drawIcon } from './icons';
 import { hash2, mix } from './scene/common';
 import { drawLight } from './scene/fx';
-import { FACILITY_COLOR, FIELD_COLOR, FIELD_TEXT, drawFacilityBadge, drawFugitive, drawToken, placeLabel } from './city/tokens';
+import { FACILITY_COLOR, FIELD_COLOR, FIELD_TEXT, drawFacilityBadge, drawFugitive, drawToken, placeLabel, unitField } from './city/tokens';
 import type { Box } from './city/tokens';
 import { facilityMarkKey } from './marks';
 import { combatPinJitter, drawCombatPin } from './city/combatPin';
@@ -23,7 +23,7 @@ import { drawRuinBadge, drawRuinsWorld, ruinGlyphAt } from './city/ruinLayer';
 import { pinIcon, ruinLine } from './hazardState';
 import { TYPE_COLOR, respLimitOf } from './typeStyle';
 
-export const DEPT_COLOR: Record<string, string> = { fire: '#ff7a45', ems: '#2fd39a', police: '#5aa9ff' };
+export const DEPT_COLOR: Record<string, string> = { fire: '#ff7a45', ems: '#2fd39a', police: '#5aa9ff', civil: '#e6c14e' };
 export { TYPE_COLOR };      // 유형색은 typeStyle.ts 에 (부르는 쪽은 예전처럼 여기서 가져간다)
 export const OUTCOME_COLOR: Record<string, string> = { success: '#5ad17a', partial: '#ffd166', delayed: '#7cc4ff', unresolved: '#b3a0d6', failed: '#ff5d5d' };
 export const FONT = "'Pretendard', 'Noto Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif";
@@ -327,11 +327,11 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     if (mini && (idle || u.state === 'onscene')) continue;
     if (idle && cam.zoom < IDLE_ZOOM && !u.air && !u.sea && u.id !== o.selectedUnit) continue;
     const p = unitScreen(sim, u, xf, o.alpha, len);
-    drawToken(ctx, p.x, p.y, tr, { field: u.field ?? (u.dept === 'police' ? 'police' : u.dept === 'ems' ? 'rescue' : 'fire'), kind: u.kind, state: u.state, no: +(u.callsign.match(/\d+$/) ?? ['0'])[0], timeMs: o.timeMs, angle: p.angle, selected: u.id === o.selectedUnit, mini });
+    drawToken(ctx, p.x, p.y, tr, { field: unitField(u), kind: u.kind, state: u.state, no: +(u.callsign.match(/\d+$/) ?? ['0'])[0], timeMs: o.timeMs, angle: p.angle, selected: u.id === o.selectedUnit, mini });
     if (mini || idle || u.state === 'onscene') continue;
     if (cam.zoom >= 1.8 || (u.incidentId !== null && u.incidentId === o.focus) || u.id === o.selectedUnit) {
       const eta = u.state === 'enroute' ? ` ${Math.max(0, Math.round(u.estArrive - sim.t))}초` : u.state === 'transport' ? ' 이송' : u.state === 'returning' ? ' 복귀' : '';
-      label(ctx, u.callsign + eta, p.x, p.y - tr * 1.62 - 7, 10 * zs, FIELD_TEXT[u.field ?? (u.dept === 'police' ? 'police' : u.dept === 'ems' ? 'rescue' : 'fire')]);      // 분야가 없는 지원 부대도 돌과 같은 색
+      label(ctx, u.callsign + eta, p.x, p.y - tr * 1.62 - 7, 10 * zs, FIELD_TEXT[unitField(u)]);      // 분야가 없는 지원 부대도 돌과 같은 색
     }
   }
   // (G4) 무너진 건물 배지 (확인 = 실선, 신고 = 점선) · 2차 붕괴 고리: 핀의 왼쪽 아래, 부대 표식 위

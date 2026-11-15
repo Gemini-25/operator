@@ -27,7 +27,8 @@ export type SysOf = SystemId | 'origin' | 'none';
 export const BASE: ReadonlySet<SystemId> = new Set<SystemId>(['call', 'dispatch', 'field']);
 
 /** Needs 의 여덟 열쇠 (I.unmet 의 합을 객체를 훑지 않고 구한다) */
-const NEED_KEYS: readonly (keyof Needs)[] = ['suppression', 'rescue', 'ems', 'law', 'tactical', 'search', 'traffic', 'eod'];
+const NEED_KEYS: readonly (keyof Needs)[] = ['suppression', 'rescue', 'ems', 'law', 'tactical', 'search', 'traffic', 'eod',
+  'utilPower', 'utilGas', 'utilWater', 'tow', 'capture'];      // (N8 §5.3.5) 빠뜨리면 복구반만 기다리는 사건이 '수요 0 → 잊힘'으로 잡혀 관문이 깨진다
 export function unmetSum(I: { unmet: Partial<Needs> }): number { let n = 0; for (const k of NEED_KEYS) n += I.unmet[k] ?? 0; return n; }
 
 // ───────────────────────── 시스템 대응표 (§2.3) ─────────────────────────
@@ -400,7 +401,7 @@ export class Probe {
     let busy = 0, denom = 0;
     for (let ui = 0; ui < units.length; ui++) {
       const u = units[ui];
-      if (u.state !== 'oos') { denom++; if (u.state !== 'available') busy++; }
+      if (u.state !== 'oos' && u.dept !== 'civil') { denom++; if (u.state !== 'available') busy++; }      // (N8 §5.3.4) 유관 기관은 가동 최고치에서 뺀다 (한가한 부대가 늘어 숫자가 내려가지 않게 — 기준과 견줄 수 있게)
       const cur = u.incidentId ?? -1;
       if (ui < this.uInc.length) {
         if (this.uInc[ui] !== cur && this.uInc[ui] >= 0) this.etaLog.push({ unit: ui, t: now, fromInc: this.uInc[ui], fromEta: this.uEta[ui] });

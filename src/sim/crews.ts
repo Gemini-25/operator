@@ -28,7 +28,8 @@ export interface KitDef {
   armor?: number;                     // 총격 방호 (부대의 armor 자리)
   faultable?: boolean;                // 교대마다 고장 추첨을 받는다
   uses?: number;                      // (R2) 처음 수량 — 명부가 KitItem.uses 로 복사한다 (단계 1a: kitFor). 섬광탄·테이저·장약·공기는 R1 의 자리(KIT_USES·dealFlashbangs·tn.airFull) 그대로
-  batch?: 'r2';                       // (R2) 고장 추첨을 R1 의 흐름(kit·aid:<n>) 밖에서 따로 받는 장비 — kit-r2·aid-r2:<n> (단계 1a: drawFaults 가 건너뛴다)
+  batch?: 'r2'                        // (R2) 고장 추첨을 R1 의 흐름(kit·aid:<n>) 밖에서 따로 받는 장비 — kit-r2·aid-r2:<n> (단계 1a: drawFaults 가 건너뛴다)
+    | 'n8';                           // (N8 §4.9) 마취총 — 따로 kit-n8 흐름 (R2 단계 1a 가 넣는 건너뛰기 조건에 'n8' 을 더한다. 단계 2b 에는 그 장비를 든 부대가 편성되지 않는다)
 }
 /**
  * 장비 표. 효과의 내용은 설계서 4절 표에 있고, 여기에는 여러 장비가 같은 식으로 견주는 값(tool·med·armor)과 고장 추첨 여부만 둔다.
@@ -83,6 +84,19 @@ export const KITS: Record<KitId, KitDef> = {
   airbag: { name: '구조용 에어백', group: 'rescue', faultable: true, batch: 'r2' },
   shoring: { name: '지지대', group: 'rescue' },
   beanbag: { name: '비살상탄 발사기', group: 'police', uses: 3 },      // 발
+  // ── (N8 §4.9) 새 부대 여덟의 장비 열하나. 단계 2b 에는 그 부대가 편성되지 않는다(UNIT_DEFS 의 minLevel 6). 기존 역할에 붙이는 셋(beeSuit·jumpMat·gasMeter)은
+  //    결과를 바꾸므로 그 장비를 쓰는 단계(5·7·8)가 끝에 붙인다. 고장 나는 것은 마취총 하나(batch 'n8') ──
+  insulKit: { name: '절연 장비', group: 'rescue' },      // 감전 방호 0.9 (injury.protection 의 electric 줄)
+  voltDetector: { name: '검전기', group: 'rescue' },      // 전선이 죽었는지 확인한다 (단계 4a)
+  valveKey: { name: '밸브 키', group: 'rescue' },
+  pumpSet: { name: '배수 펌프', group: 'rescue' },      // 지하 침수를 1초에 0.004 더 뺀다 (단계 4b)
+  towKit: { name: '견인 장비', group: 'rescue' },
+  dart: { name: '마취총', group: 'rescue', uses: 3, faultable: true, batch: 'n8' },
+  catchpole: { name: '올가미', group: 'rescue' },
+  net: { name: '포획망', group: 'rescue' },
+  beeSuit: { name: '벌 보호복', group: 'fire' },      // 쏘임(animal) 방호 0.95
+  jumpMat: { name: '안전 매트', group: 'rescue' },
+  dog: { name: '경찰견', group: 'police' },      // 사람이 아니라 장비로 다룬다 (R2 dog 방법의 장비, 고장 없음)
 };
 /** 처음에 채워 두는 수량 (섬광탄은 부대 몫을 dealFlashbangs 가 나눈다. 공기호흡기의 공기는 kitFor 가 장비 손잡이의 값 tn.airFull 로 채운다) */
 const KIT_USES: Partial<Record<KitId, number>> = { taser: 2, charge: 2 };
@@ -140,14 +154,26 @@ export const ROLES: Record<RoleId, RoleDef> = {
   emsDriver: { name: '구급 운전원', group: 'medic', skills: (s) => sk(0.05, 0.3, s * 0.85, 0.05), kit: ['stretcher'], prefer: { load: 0.2, carry: 0.1 } },
   doctor: { name: '의사', group: 'doctor', skills: (s) => sk(0.05, 0.2, Math.min(1, s + 0.2), 0.05), kit: ['doctorKit', 'aed'], prefer: { treat: 0.3, carry: -0.2 }, exp: [0.5, 0.9] },
   flightNurse: { name: '항공 간호사', group: 'medic', skills: (s) => sk(0.05, 0.25, s + 0.1, 0.05), kit: ['alsBag', 'stretcher'], prefer: { treat: 0.15, load: 0.15 } },
+  // ── (N8 §4.9) 유관 기관 · 동물 포획 · 경찰의 새 자리. 복구반장의 장비는 부대마다 다르다(전력·가스 복구반장은 STAFF 의 자리별 장비 kit 가 덮는다 — 아래 kitIdsOf) ──
+  utilLead: { name: '복구반장', group: 'civil', skills: () => sk(0.1, 0.35, 0.15, 0.05), kit: ['valveKey'], prefer: { repair: 0.2 } },
+  lineman: { name: '전력 기사', group: 'civil', skills: () => sk(0.08, 0.3, 0.12, 0.05), kit: ['insulKit'], prefer: {} },
+  gasTech: { name: '가스 기사', group: 'civil', skills: () => sk(0.08, 0.3, 0.12, 0.05), kit: ['plugKit', 'valveKey'], prefer: {} },
+  plumber: { name: '수도 기사', group: 'civil', skills: () => sk(0.08, 0.3, 0.12, 0.05), kit: ['valveKey', 'pumpSet'], prefer: {} },
+  towDriver: { name: '견인 기사', group: 'civil', skills: () => sk(0.08, 0.3, 0.12, 0.05), kit: ['towKit'], prefer: { towAway: 0.2 } },
+  catcherLead: { name: '포획 팀장', group: 'rescue', skills: (s) => sk(0.2, s * 0.7, 0.3, 0.05), kit: ['dart', 'net'], prefer: { capture: 0.2 } },
+  catcher: { name: '포획 요원', group: 'rescue', skills: (s) => sk(0.2, s * 0.7, 0.3, 0.05), kit: ['catchpole', 'net', 'beeSuit'], prefer: { capture: 0.2 } },
+  detective: { name: '형사', group: 'officer', skills: (s) => sk(0.05, 0.2, 0.2, s + 0.06), kit: ['pistol', 'vest'], prefer: { interview: 0.2, arrest: 0.1, cordon: 0.15, perimeter: 0.15 } },
+  motorOfficer: { name: '교통 순찰 대원', group: 'officer', skills: (s) => sk(0.05, 0.22, 0.22, s), kit: ['pistol', 'baton', 'vest'], prefer: { traffic: 0.2, cordon: 0.15, perimeter: 0.15 } },
+  k9Handler: { name: '경찰견 핸들러', group: 'officer', skills: (s) => sk(0.05, 0.22, 0.22, s), kit: ['pistol', 'dog'], prefer: { search: 0.2 } },
 };
 /** 역할을 모르는 대원(시험에서 손으로 만든 명부 등)에게 쓰는 부서별 기본 역할 */
-const DEPT_ROLE: Record<Responder['dept'], RoleId> = { police: 'officer', fire: 'firefighter', ems: 'emt' };
+const DEPT_ROLE: Record<Responder['dept'], RoleId> = { police: 'officer', fire: 'firefighter', ems: 'emt', civil: 'utilLead' };
 
 // ───────────────────────── 편성표 ─────────────────────────
 export interface StaffDef {
   std: RoleId[];          // 표준 인원의 자리 순서 = crew 순서. 0번 자리가 부대장
   minDrop: number[];      // 최소 인원(부대 규모 1·2, 지원 부대)에서 빼는 자리 번호
+  kit?: Partial<Record<number, KitId[]>>;      // (N8) 자리별 장비 — 같은 역할이 부대마다 다른 장비를 들 때만 (복구반장). 없으면 역할의 기본 장비 (kitIdsOf)
 }
 /**
  * 부대 종류별 자리. 처음 20줄(UNIT_DEFS)의 0·1번 자리는 R1 전의 선임·후임이다(이름·기본 능력이 그대로다).
@@ -170,6 +196,15 @@ export const STAFF: Record<UnitKind, StaffDef> = {
   eod: { std: ['bombTech', 'robotOp', 'eodGuard'], minDrop: [2] },
   policeHeli: { std: ['pilot', 'copilot', 'observer'], minDrop: [1] },
   medHeli: { std: ['doctor', 'flightNurse', 'pilot', 'copilot'], minDrop: [3] },
+  // (N8 §4.9) 최소 인원에서 빠지는 자리는 경찰견의 경관 하나뿐이다(핸들러가 남는다). 견인차·교통 경찰은 처음부터 한 명
+  powerCrew: { std: ['utilLead', 'lineman'], minDrop: [], kit: { 0: ['insulKit', 'voltDetector'] } },
+  gasCrew: { std: ['utilLead', 'gasTech'], minDrop: [], kit: { 0: ['gasMeter', 'valveKey'] } },
+  waterCrew: { std: ['utilLead', 'plumber'], minDrop: [] },
+  tow: { std: ['towDriver'], minDrop: [] },
+  animalCtl: { std: ['catcherLead', 'catcher'], minDrop: [] },
+  detective: { std: ['detective', 'detective'], minDrop: [] },
+  trafficPol: { std: ['motorOfficer'], minDrop: [] },
+  k9: { std: ['k9Handler', 'officer'], minDrop: [1] },
 };
 /** 항공 부대의 종류 (소방 · 경찰 · 의료 헬기). 명부(createRoster)와 지도 표식(view)이 함께 쓴다 */
 export const AIR_KIND: Set<UnitKind> = new Set<UnitKind>(['heli', 'policeHeli', 'medHeli']);
@@ -193,7 +228,9 @@ export function heliPad(_sim: Sim, f: Facility): [number, number] { return f.kin
  */
 export const EXTRA_NAMES = ['구본호', '나윤슬', '도해찬', '마서율', '반지성', '백승아', '사공진', '선우람', '설하윤', '성도진', '손예찬', '송하람',
   '심지율', '양태호', '염소희', '오세린', '우지환', '원채린', '유건희', '윤다온', '이로하', '임하준', '장세아', '전도하',
-  '정이든', '제갈윤', '조서하', '주원석', '지예솔', '진태경', '천소율', '최한결', '태은호', '편서우', '하도율', '허은재'];
+  '정이든', '제갈윤', '조서하', '주원석', '지예솔', '진태경', '천소율', '최한결', '태은호', '편서우', '하도율', '허은재',
+  // (N8 §4.9) 새 부대 여덟의 자리 열넷 — 끝에 붙인다 (앞 사람의 이름이 바뀌지 않는다). 편성되지 않는 줄도 자기 번호를 차지한다
+  '감도윤', '경하린', '고은찬', '공서진', '곽지후', '남궁솔', '노태윤', '담하은', '명재이', '모서윤', '변준서', '봉하람', '석지안', '어서후'];
 
 /** 편성되는 자리 번호 (표준 표의 번호 그대로). minimal 이면 최소 인원 — minDrop 을 뺀다 */
 export function slotsOf(kind: UnitKind, minimal: boolean): number[] {
@@ -221,9 +258,11 @@ export function skillsOf(role: RoleId, skill: number): Skills {
  * 역할의 기본 장비를 든 상태로 만든다 (모든 장비 항목이 같은 칸을 같은 순서로 갖는다).
  * air = 공기호흡기 한 통의 공기(초, tn.airFull). 주지 않으면 공기를 세지 않는다(줄지 않는다 — 손으로 만든 명부·시험용).
  */
-export function kitFor(role: RoleId, air?: number): KitItem[] {
-  return ROLES[role].kit.map((id) => ({ id, uses: id === 'scba' ? air : KIT_USES[id], fault: false, faultKnown: false }));
+export function kitFor(role: RoleId, air?: number, ids: KitId[] = ROLES[role].kit): KitItem[] {
+  return ids.map((id) => ({ id, uses: id === 'scba' ? air : KIT_USES[id], fault: false, faultKnown: false }));
 }
+/** (N8) 그 부대 종류의 그 자리가 드는 장비: 자리별 장비(STAFF.kit)가 있으면 그것, 없으면 역할의 기본 장비 (지금은 복구반장만 부대마다 다르다) */
+export function kitIdsOf(kind: UnitKind, slot: number): KitId[] { const st = STAFF[kind]; return st.kit?.[slot] ?? ROLES[st.std[slot]].kit; }
 /**
  * 개인 장비의 고장 추첨 (설계서 9절): 대원 순서 × 든 장비의 순서대로, 고장 추첨을 받는 장비(KITS 의 faultable)마다 확률 p.
  * 고장 난 장비는 효과가 없고(kitLive), 처음 효과를 주려 할 때 드러난다(kitWorks·toolUse). 그때까지는 조직이 모른다(hasKit 은 참).
@@ -339,7 +378,7 @@ export function toolUse(sim: Sim, rid: number, use: ToolUse, I: Incident): numbe
   }
 }
 /** 의료 장비가 없는 대원의 처치 수준 (부서의 기본 교육) */
-const MED_BASE: Record<Responder['dept'], number> = { police: 0.25, fire: 0.35, ems: 0.5 };
+const MED_BASE: Record<Responder['dept'], number> = { police: 0.25, fire: 0.35, ems: 0.5, civil: 0.1 };
 /** 가장 좋은 의료 장비 × 장비 손잡이(medMul), 상한 1.1. 없으면 부서 기본값 (경찰 .25 · 소방 .35 · 구급 .5) */
 export function medLevelOf(sim: Sim, rid: number): number {
   const r = sim.responders[rid], kit = r.kit;
@@ -394,8 +433,9 @@ export function refillAir(sim: Sim, rid: number): void { const it = itemOf(sim, 
  * 이 대원이 그 일을 할 장비를 갖췄는가 — 장비·부서와 **알려진 장비 상태**만 본다(숨은 고장은 모른다. 공기 잔량과 예비 공기통은 자기 조직의 상태다).
  * 오고 있는 부대에 그 일을 할 사람이 있는지 볼 때 쓴다(commander.anyCapable). 현장의 대원은 fitFor 가 본다.
  * 표에 없는 일은 true: 위험한 건물 안의 일은 현장 쪽 fitFor 와 "능력과 장비가 어긋나지 않는다"(tests/crews.test.ts ③)가 맡는다.
+ * what (N8) = 대상 소품의 생김새 — commander.anyCapable 이 소품을 대상으로 하는 일(mitigate·repair·capture·towAway)에만 넘긴다(skin, 없으면 kind).
  */
-export function capableOf(sim: Sim, rid: number, kind: WorkKind): boolean {
+export function capableOf(sim: Sim, rid: number, kind: WorkKind, what?: string): boolean {
   switch (kind) {
     case 'suppress': case 'overhaul': {
       if (!hasKit(sim, rid, 'hose')) return false;
@@ -405,7 +445,17 @@ export function capableOf(sim: Sim, rid: number, kind: WorkKind): boolean {
     case 'defuse': return hasKit(sim, rid, 'eodKit');
     case 'engage': case 'perimeter': return hasFirearm(sim, rid);
     case 'arrest': return hasFirearm(sim, rid) || hasKit(sim, rid, 'taser');
-    default: return true;
+    // ── (N8 §5.3.3) 대상의 생김새(what — 소품의 skin, 없으면 소품의 kind)까지 본다. 현장 쪽 agents.fitBase 와 같은 조건이다 ──
+    case 'repair': return what === 'wire' ? hasKit(sim, rid, 'insulKit') : what === 'pipe' || what === 'valve' ? hasKit(sim, rid, 'valveKey') || hasKit(sim, rid, 'plugKit') : false;
+    case 'towAway': return hasKit(sim, rid, 'towKit');
+    case 'capture': return what === 'hive' ? hasKit(sim, rid, 'beeSuit') : hasKit(sim, rid, 'dart') || hasKit(sim, rid, 'catchpole') || hasKit(sim, rid, 'net');      // 맨손 몰이는 능력으로 세지 않는다
+    case 'mitigate': {
+      if (what === 'sign') { const role = sim.responders[rid].role; return role === 'ladderOp' || role === 'ladderLead' || hasKit(sim, rid, 'rope'); }
+      if (what === 'hole') return sim.units[sim.responders[rid].unitId].kind === 'rescue' || hasKit(sim, rid, 'shoring');
+      if (what === 'matSite') return hasKit(sim, rid, 'jumpMat');
+      return true;      // 지금의 밸브·균열부 — 그대로
+    }
+    default: return true;      // persuade·cordon 도 여기 — 수요 열쇠(law)의 능력이 가린다
   }
 }
 const kitRngs = new WeakMap<Scene, Rng>();

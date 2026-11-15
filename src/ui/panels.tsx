@@ -170,7 +170,7 @@ const GROUNDED: Record<string, string> = { fog: '안개로 뜨지 못함', night
 function hurtNote(sim: Sim, rid: number): string {
   const r = sim.responders[rid], st = respStateText(r), line = injuryLine(r.injuries, 3);
   if (!st && respBand(r) === 0) return '';
-  return ` · ${st || TRIAGE_NAME[respBand(r)]}${line ? ` (${line})` : ''}${(r.bleed ?? 0) > 0 ? ' · 출혈' : ''}`;
+  return ` · ${st || TRIAGE_NAME[respBand(r)]}${line ? ` (${line})` : ''}${!r.dead && (r.bleed ?? 0) > 0 ? ' · 출혈' : ''}`;
 }
 /** 대원이 든 장비를 한 줄로 (역할 점의 설명에 쓴다) */
 function kitLine(sim: Sim, rid: number): string { return (sim.responders[rid].kit ?? []).map((it) => KITS[it.id].name).join(', '); }
@@ -359,7 +359,7 @@ export function AgentPanel({ sim, rid, truth = false }: { sim: Sim; rid: number;
           <h4>부상</h4>
           <div className="kv"><span className="dim">중증도</span><span><span className={`band band-${respBand(r)}`}>{TRIAGE_NAME[respBand(r)]}</span>{respStateText(r) ? ` · ${respStateText(r)}` : ''}{outShifts(r) > 0 ? ` · 다음 교대 결장 예상 ${outShifts(r)}` : ''}</span></div>
           <div className="kv"><span className="dim">원인</span><span>{injuryLine(r.injuries) || '기록 없음'}</span></div>
-          {(r.bleed ?? 0) > 0 && <div className="kv"><span className="dim">출혈</span><span>있음{(r.treatQ ?? 0) > 0 ? ' (처치로 늦춤)' : ''}</span></div>}
+          {!r.dead && (r.bleed ?? 0) > 0 && <div className="kv"><span className="dim">출혈</span><span>있음{(r.treatQ ?? 0) > 0 ? ' (처치로 늦춤)' : ''}</span></div>}
           {(r.treatQ ?? 0) > 0 && <div className="kv"><span className="dim">처치</span><span>{careName(r.treatQ)}</span></div>}
           {r.care && <div className="kv"><span className="dim">후송</span><span>{r.care === 'aboard' ? '구급차 탑승 — 병원으로' : '병원 인계'}</span></div>}
         </>)}

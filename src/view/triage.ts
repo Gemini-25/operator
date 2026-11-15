@@ -199,7 +199,7 @@ export function hostileInfo(sim: Sim, s: Scene, h: Hostile, truth: boolean, cmd:
   ];
   if (h.hostageId >= 0 && (h.state === 'hold' || h.state === 'fight')) rows.push({ k: '인질', v: `구조 대상 ${s.casualties[h.hostageId].label}` });
   rows.push({ k: '부상', v: hurt ? `${TRIAGE_NAME[band]} — ${injuryLine(h.injuries) || '원인 기록 없음'}` : '없음' });
-  if ((h.bleed ?? 0) > 0 && h.bleedCause) rows.push({ k: '악화', v: CAUSE_NAME[h.bleedCause] });
+  if (!h.dead && (h.bleed ?? 0) > 0 && h.bleedCause) rows.push({ k: '악화', v: CAUSE_NAME[h.bleedCause] });      // 숨진 사람은 악화를 보이지 않는다 (구조 대상과 같다)
   if (h.dead && h.deathCause) rows.push({ k: '숨진 원인', v: CAUSE_NAME[h.deathCause] });
   if (hurt) rows.push({ k: '처치', v: careName(h.treatQ) });
   const times: PersonRow[] = [];

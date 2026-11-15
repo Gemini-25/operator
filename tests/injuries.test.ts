@@ -3230,3 +3230,53 @@ describe('단계 6 — 교대 보고서 (§3.7 · §7.3)', () => {
     expect(j.suspectsInstantDeathShare === null || j.suspectsInstantDeathShare === 0, '즉사 없음 (용의자 문턱)').toBe(true);
   });
 });
+
+// ───────────────────────── 단계 7 — 화면 마무리 (결과 불변) ─────────────────────────
+describe('단계 7 — 화면 마무리', () => {
+  /** 글자를 적는 자리를 모으는 가짜 맥락 (글자 폭 = 글자 수 × 7 화소) */
+  const recCtx = (out: { text: string; x: number; y: number }[]): CanvasRenderingContext2D => {
+    const base = fakeCtx() as unknown as Record<string | symbol, unknown>;
+    return new Proxy({}, {
+      get(_t, k) {
+        if (k === 'fillText') return (text: string, x: number, y: number) => { out.push({ text, x, y }); };
+        if (k === 'measureText') return (text: string) => ({ width: text.length * 7 });
+        return base[k];
+      },
+      set(_t, k, v) { base[k] = v; return true; },
+    }) as CanvasRenderingContext2D;
+  };
+  it('대원 이름표는 쓰러진 용의자의 상태 알약을 덮지 않고, 곁에 쓰러진 두 용의자의 알약도 서로 겹치지 않는다 (그림만 — 상태 그대로)', async () => {
+    await withFakeDom(async () => {
+      const { drawScene } = await import('../src/view/renderScene');
+      const { sim, s } = staffed('INJ-pill7');
+      sim.run(3);
+      const a = s.agents[0];
+      const h0 = s.hostiles[0];
+      h0.state = 'arrested'; h0.health = 9; h0.tDown = sim.t - 5; h0.x = h0.px = 12; h0.y = h0.py = 6; h0.hidden = false; h0.hostageId = -1;
+      const h1 = addHostile(s, 12.4, 6, 'gun', 0.5, 0.5, false, 1e9); h1.state = 'down'; h1.health = 7; h1.tDown = sim.t - 3;
+      a.x = a.px = 12.1; a.y = a.py = 6; a.label = `${h0.label} 응급 처치`;
+      const look = (): string => JSON.stringify([sim.logHash, sim.events.length, s.hostiles.map((h) => [h.x, h.y, h.state, h.health]), s.agents.map((b) => [b.x, b.y, b.label])]);
+      const before = look();
+      const texts: { text: string; x: number; y: number }[] = [];
+      drawScene(recCtx(texts), sim, s, 1200, 800, { truth: true, alpha: 1, timeMs: 0, selectedRid: -1 } as never);
+      expect(look()).toBe(before);
+      const p0 = texts.find((t) => t.text.startsWith(`${h0.label}·`)), p1 = texts.find((t) => t.text.startsWith(`${h1.label}·`));
+      const lab = texts.find((t) => t.text.includes('응급 처치'));
+      expect(!!(p0 && p1 && lab), texts.map((t) => t.text).join(' | ')).toBe(true);
+      const clash = (p: { text: string; x: number; y: number }, q: { text: string; x: number; y: number }): boolean =>
+        Math.abs(p.x - q.x) < (p.text.length + q.text.length) * 3.5 && Math.abs(p.y - q.y) < 12;
+      expect(clash(p0!, p1!), `${p0!.text} / ${p1!.text}`).toBe(false);
+      expect(clash(lab!, p0!) || clash(lab!, p1!), lab!.text).toBe(false);
+    });
+  }, 60000);
+  it('숨진 용의자의 정보창에는 악화 줄이 없다 (구조 대상과 같은 규칙)', () => {
+    const { sim, s, cmd } = staffed('INJ-card7');
+    const h = s.hostiles[0];
+    h.health = 30; h.injuries = noteInjury(undefined, 'gunshot', 70, 3, 2, 1, 'responder'); h.bleed = 0.03; h.bleedCause = 'gunshot'; h.state = 'down'; h.tDown = 3; h.hidden = false;
+    expect(hostileInfo(sim, s, h, true, cmd).rows.find((r) => r.k === '악화')!.v).toBe('총상');
+    h.dead = true; h.health = 0; h.deathCause = 'gunshot'; h.tDead = 9;
+    const d = hostileInfo(sim, s, h, true, cmd);
+    expect(d.rows.some((r) => r.k === '악화')).toBe(false);
+    expect(d.rows.find((r) => r.k === '숨진 원인')!.v).toBe('총상');
+  });
+});

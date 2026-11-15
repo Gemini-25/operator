@@ -884,9 +884,13 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     const stt = hostileSheet(sim, hst, o.truth, cmd) ? '사망' : stunned ? '무력화' : hst.hidden ? '(숨음)' : hst.state === 'hold' ? (hst.hostageId >= 0 ? '인질 대치' : '대치') : hst.state === 'fight' ? '교전' : hst.state === 'flee' ? '도주' : hst.state === 'surrendered' ? '투항' : hst.state === 'arrested' ? (hst.tDown !== undefined ? '검거 · 쓰러짐' : '검거') : '쓰러짐';
     const wp = hst.weapon === 'gun' ? '총' : hst.weapon === 'knife' ? '칼' : '';
     ctx.globalAlpha = hst.hidden ? 0.6 : 1;
+    // (H1 단계 7) 곁에 선(쓰러진) 다른 용의자의 알약과 겹치면 한 줄 위로 (많아야 두 줄). 대원 이름표는 이 알약들을 피한다(mergeLabels)
     const hText = `${hst.label}${wp ? '·' + wp : ''} · ${stt}`, hFs = ts * 0.27;
-    pill(ctx, hText, x, y - ts * 0.8, hFs, col);
-    hosPills.push({ x, y: y - ts * 0.8, w: ctx.measureText(hText).width + hFs * 0.8, h: hFs * 1.5 });      // (H1 단계 7) 대원 이름표가 이 알약을 피한다 (pill 이 글꼴을 맞춰 두었다)
+    ctx.font = `600 ${hFs}px ${FONT}`;
+    const hBox: LabelBox = { x, y: y - ts * 0.8, w: ctx.measureText(hText).width + hFs * 0.8, h: hFs * 1.5 };
+    for (let up = 0; up < 2 && hosPills.some((q) => Math.abs(q.x - hBox.x) < (q.w + hBox.w) / 2 && Math.abs(q.y - hBox.y) < (q.h + hBox.h) / 2); up++) hBox.y -= hFs * 1.6;
+    pill(ctx, hText, x, hBox.y, hFs, col);
+    hosPills.push(hBox);
     if (hst.state === 'hold' || hst.state === 'fight') {
       const bw = ts * 0.6, bh = Math.max(3, ts * 0.085);
       rr(ctx, x - bw / 2 - 1, y + ts * 0.54 - 1, bw + 2, bh + 2, bh / 2, 'rgba(8,13,18,0.85)');

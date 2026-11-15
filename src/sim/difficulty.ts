@@ -53,6 +53,7 @@ export interface Tuning {
   gapMul: number; maxIncidents: number; maxConcurrent: number;
   // 심각도
   sevWeights: [number, number, number]; hazardMul: number; bleedMul: number; fireSpreadMul: number;
+  injuryMul: number;           // 대원·용의자가 새 상처로 얻는 출혈에 곱하는 값 (H1 — 화면의 조절 막대는 없다. 심각도 손잡이를 따른다)
   // 용의자
   armedWeight: number; shooterWeight: number; aggroShift: number; skillShift: number; accompliceProb: number; extraSuspectProb: number; fleeShift: number; knifeProb: number;
   // 장비
@@ -85,6 +86,7 @@ export function tuningOf(d: Difficulty): Tuning {
     sevWeights: ([[0.5, 0.4, 0.1], [0.38, 0.44, 0.18], [0.28, 0.45, 0.27], [0.17, 0.43, 0.4], [0.08, 0.37, 0.55]] as [number, number, number][])[s],
     hazardMul: [0.55, 0.78, 1, 1.25, 1.5][s],
     bleedMul: [0.78, 0.9, 1, 1.12, 1.26][s],
+    injuryMul: [0.75, 0.9, 1, 1.12, 1.25][s],
     fireSpreadMul: [0.82, 0.92, 1, 1.09, 1.18][s],
 
     armedWeight: [0.15, 0.19, 0.23, 0.28, 0.33][t],

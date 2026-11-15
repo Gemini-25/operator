@@ -1,16 +1,18 @@
 // 부상과 사망의 공통 모델 (H1). 구조 대상·대원·용의자 세 부류가 같은 원인 이름(InjuryCause), 같은 중증도 단계(bandOf),
 // 같은 기록(Injury)을 쓴다.
 //
-// 잎 모듈이다: types · rng(타입) · engine(타입)만 import 한다. agents·hazards·executor·sceneManager·resources 를 import 하지 않는다 —
-// hazards.ts 가 bandOf 를 다시 내보내므로 거꾸로 부르면 순환이 생겨 초기화 전의 값을 읽는다 (설계서 H1 §2.2).
+// 잎 모듈이다: types · rng(타입) · engine(타입) · util · crews(대원의 방호 장비)만 import 한다. agents·hazards·executor·sceneManager·resources 를 import 하지 않는다 —
+// hazards.ts 가 bandOf 를, agents.ts 가 hurtF 를 가져가므로 거꾸로 부르면 순환이 생겨 초기화 전의 값을 읽는다 (설계서 H1 §2.2).
 //
-// 단계 1(지금): **기록만 한다.** 체력·출혈을 바꾸는 식은 각 자리에 그대로 있고, 여기 함수들은 이미 계산된 값을 Injury 에 적을 뿐이다.
-// 난수를 부르지 않고(injuryRng 는 뒤 단계가 쓴다) 기록(emit)도 남기지 않는다 — 결과와 기록 해시는 바뀌지 않는다.
-// 뒤 단계가 여기에 더한다: hurtCas·hurtResponder·hurtHostile·protection·hurtF·treatEffect·needsHospital·mateNeedsHospital·threatOverAt·outShifts·LIGHT_WORK.
+// 피해는 한 길로만 준다: 구조 대상은 hurtCas·hurtCasTo(단계 3), 대원은 hurtResponder·woundTick(단계 4a). 용의자(hurtHostile)는 단계 5 — 그때까지는 noteHostileHurt 가 기록만 한다.
+// 이 파일의 함수는 기록(emit)을 남기지 않는다: 문구는 피해를 준 자리(상태를 바꾸는 그 코드)가 남기고 그 id 를 o.ev 로 넘긴다. 대원의 상태 전이(부상·쓰러짐·순직)는 sceneManager.agentHealth 가 한다.
+// 뒤 단계가 여기에 더한다: hurtHostile·treatEffect·needsHospital·mateNeedsHospital·threatOverAt·outShifts·LIGHT_WORK.
 
+import { armorOf, blastFactor, hasKit, kitUses } from '../crews';
 import type { Sim } from '../engine';
 import type { Rng } from '../rng';
-import type { Casualty, Hostile, Incident, Injury, InjuryCause, Responder, Scene } from '../types';
+import type { Casualty, FieldAgent, Hostile, Incident, Injury, InjuryCause, Responder, Scene, Unit } from '../types';
+import { clamp } from '../util';
 
 export const CAUSE_NAME: Record<InjuryCause, string> = {
   gunshot: '총상', stab: '자상', blunt: '타박상', burn: '화상', smoke: '연기 흡입', toxic: '유독 가스 흡입', fall: '추락', crush: '잔해 깔림', blast: '폭발',
@@ -109,10 +111,138 @@ export function hurtCasTo(sim: Sim, s: Scene, I: Incident, c: Casualty, to: numb
   if (c.health <= 0 && c.deathCause === undefined) c.deathCause = cause;
 }
 
+// ───────────────────────── 대원 (단계 4a) ─────────────────────────
+/** 대원·용의자가 쓰러지는 체력 */
+export const DOWN_AT = 15;
+/** 대원이 물러나는 체력 (이 아래면 후퇴한다 — brain.ts 의 후퇴 붙잡기, 지휘관의 지시 제외와 같은 기준) */
+export const HURT_AT = 40;
+/**
+ * 출혈로 물러나는 조건: 상처 출혈이 이 값 이상이고 체력이 MATE_RETREAT_HP 아래일 때 (둘 다). 균형 손잡이 1번 (§9.3).
+ * 설계서의 처음 값은 0.06 — 순찰 경관이 큰 총알 한 발(방호 뒤 30 초과)에 물러나는 값이었다. 재 보니 물러나는 대원이 너무 많았다
+ * (보통 60교대의 다친 대원 0.17 → 0.55/교대, 무장 사건 성공률 −11%p, 극한 3.6/교대 — 흉기에 세 번 베인 대원도 물러났다).
+ * 0.09 면 총알은 두 번째 명중에(한 발의 출혈은 0.084 이하), 흉기는 체력 40 아래가 되기 전에는 물러나지 않는다(자상의 출혈 0.0015 × 60 = 0.09).
+ */
+export const MATE_RETREAT_BLEED = 0.09, MATE_RETREAT_HP = 70;
+/** 대원 문턱: 이 틱이 시작될 때 체력이 이 값 이상이던 대원은 "한 번" 피해가 그 틱에 몇 번 겹쳐도 숨지지 않는다 (체력 MATE_FLOOR 로 남아 쓰러진다) */
+export const MATE_LETHAL_FROM = 41, MATE_FLOOR = 8;
+/** 쓰러질 만큼 다친(체력 DOWN_AT 이하) 대원의 출혈 상한 — 체력 8 에서 200초, 15 에서 375초 (동료가 닿을 시간) */
+export const DOWN_BLEED_CAP = 0.04;
+/** 대원의 상처 출혈 상한 (초당) */
+export const MATE_BLEED_MAX = 0.12;
+/** 피해 1 마다 얻는 상처 출혈 (대원·용의자의 "한 번" 피해만 — 매 틱 피해는 출혈을 만들지 않는다). 구조 대상의 bleed 는 각 자리가 직접 정한다 (§2.3) */
+export const BLEED_PER_DMG: Record<InjuryCause, number> = {
+  gunshot: 0.0024, stab: 0.0015, blunt: 0.0003, burn: 0.0006, smoke: 0, toxic: 0, fall: 0.0008, crush: 0.001, blast: 0.0012,
+  drown: 0, electric: 0.0005, exhaustion: 0, vehicle: 0.0015, exposure: 0, illness: 0,
+};
+
+/** 다친 대원은 느려진다: 체력 70 이상은 1, 40 에서 0.75. agents.staminaF 에 곱한다 (이동·작업 진도·사격이 함께 바뀐다). 자기 몸이다 */
+export function hurtF(r: Responder): number { return 0.75 + 0.25 * clamp((r.health - HURT_AT) / 30, 0, 1); }
+/** 물러나야 하는 몸인가: 체력 40 아래, 또는 상처 출혈이 크고(≥ 0.06) 체력이 70 아래. 대원이 자기 몸으로 판단한다 (brain·executor 의 후퇴, agentHealth 의 부상 전이) */
+export function mustRetreat(r: Responder): boolean {
+  return r.health < HURT_AT || ((r.bleed ?? 0) >= MATE_RETREAT_BLEED && r.health < MATE_RETREAT_HP);
+}
+
+/**
+ * 방호: 피해에서 빼는 몫(0~0.95). 대원이 받는 피해 = 방호 전 피해 × (1 − 몫). 입은 장비가 정한다 (R1 의 사람 장비 — 부대 값이 아니다).
+ * 읽기만 한다: 방호 장비(조끼·방화복·공기호흡기·방호복)는 고장 추첨을 받지 않으므로 hasKit 으로 본다 (kitWorks 처럼 기록을 남기지 않는다 — 화면이 불러도 된다).
+ * 예전 식을 그대로 옮긴 몫 (단계 4a-1):
+ *   총상  armorOf × 0.6 (방패는 교전·봉쇄 중에만 — engaging)
+ *   화상  방화복 1 − 2.6/9            연기·유독 가스  공기호흡기에 공기가 남았을 때 1 − 0.1/1.3 (통이 비면 0)
+ *   폭발·잔해  1 − blastFactor (폭발물 방호복 0.65 · 방화복 0.3 — 천장·2차 붕괴가 blast 로 주던 몫 그대로)
+ * 예전에는 방호가 없던 몫 (단계 4a-2, §2.4 "새로" 열 — 균형 변경):
+ *   자상  armorOf × 0.5 (흉기에도 조끼가 듣는다)       유독 가스  화학 보호복 대원(hazTech)은 0.95 (공기가 남았을 때)
+ *   잔해  방검·방탄 조끼 0.1 (방화복 0.3·방호복 0.65 보다 작으므로 더 큰 쪽)       추락  방화복 0.2       감전  방화복 0.4
+ *   타박상·차량·익수·탈진·실외 노출·질환에는 방호가 없다 (익수는 R2 의 사고 식이 구명조끼·드라이슈트로 이미 줄인다)
+ * u 는 지금 쓰지 않는다 (R1 이 부대 값을 사람 장비로 옮겼다) — 서명은 설계서 그대로 둔다.
+ */
+export function protection(sim: Sim, r: Responder, u: Unit, cause: InjuryCause, engaging = false): number {
+  const rid = r.id;
+  switch (cause) {
+    case 'gunshot': return armorOf(sim, rid, engaging) * 0.6;
+    case 'stab': return armorOf(sim, rid, engaging) * 0.5;
+    case 'burn': return hasKit(sim, rid, 'turnout') ? 1 - 2.6 / 9 : 0;
+    case 'smoke': return hasKit(sim, rid, 'scba') && kitUses(sim, rid, 'scba') > 0 ? 1 - 0.1 / 1.3 : 0;
+    case 'toxic': return hasKit(sim, rid, 'scba') && kitUses(sim, rid, 'scba') > 0 ? (r.role === 'hazTech' ? 0.95 : 1 - 0.1 / 1.3) : 0;
+    case 'blast': return 1 - blastFactor(sim, rid);
+    case 'crush': return Math.max(1 - blastFactor(sim, rid), hasKit(sim, rid, 'vest') || hasKit(sim, rid, 'plate') ? 0.1 : 0);
+    case 'fall': return hasKit(sim, rid, 'turnout') ? 0.2 : 0;
+    case 'electric': return hasKit(sim, rid, 'turnout') ? 0.4 : 0;
+    default: return 0;
+  }
+}
+
+/** 이 틱에 그 대원을 가장 크게 깎은 원인 (부상·쓰러짐·순직 기록의 원인 낱말). 대원 객체의 모양을 바꾸지 않으려고 따로 둔다 */
+const tickHurt = new WeakMap<Responder, { t: number; cause: InjuryCause; dmg: number }>();
+function noteTick(r: Responder, t: number, cause: InjuryCause, dmg: number): void {
+  const e = tickHurt.get(r);
+  if (!e) { tickHurt.set(r, { t, cause, dmg }); return; }
+  if (e.t !== t || dmg > e.dmg) { e.t = t; e.cause = cause; e.dmg = dmg; }
+}
+/** 이 틱의 가장 큰 피해 항의 원인. 이 틱에 다치지 않았으면 지금까지의 가장 큰 원인(없으면 null) */
+export function hurtCauseNow(r: Responder, t: number): InjuryCause | null {
+  const e = tickHurt.get(r);
+  return e && e.t === t ? e.cause : mainCause(r.injuries);
+}
+
+/**
+ * 대원이 다친다: 방호를 빼고(protection), 문턱을 걸고, 새 상처의 출혈을 더하고, 그 원인으로 적는다. 깎인 양을 돌려준다.
+ * 대원의 체력을 깎는 자리는 모두 이 함수(와 상처 악화 woundTick)를 거친다. 상태 전이(부상·쓰러짐·순직)와 그 기록은 하지 않는다 —
+ * sceneManager.agentHealth 가 같은 틱에 한다. 숨졌거나 사건이 끝났으면 아무것도 하지 않는다 (§2.6 — 기록을 남기는 자리는 부르기 전에 스스로 가린다).
+ *   o.tick  매 틱 피해(연기·불): 문턱도 출혈도 없다
+ *   한 번 피해: ① 대원 문턱 — 이 틱이 시작될 때(a.hpTick) 체력이 41 이상이던 대원은 0 아래로 가지 않고 8 로 남는다(같은 틱에 몇 번 겹쳐도).
+ *              ② 출혈 = min(0.12, 출혈 + 계수 × 방호 뒤 피해 × injuryMul), 처치 전 값도 그 값으로, 받은 처치는 0 으로(새 상처는 다시 처치할 수 있다).
+ *              ③ 체력이 15 이하로 남으면 출혈은 0.04 이하.
+ *   o.down  한 번에 쓰러뜨린다 (체력을 15 이하로 — 감전). 문턱 때문에 0 아래로는 가지 않는다
+ *   o.ev    피해를 준 자리가 이미 남긴 기록 id — Injury.ev 와 a.hurtEv(RESPONDER_HURT·RESPONDER_KILLED 의 원인)에 넣는다
+ */
+export function hurtResponder(sim: Sim, s: Scene, I: Incident, a: FieldAgent, raw: number, cause: InjuryCause, o?: HurtOpts): number {
+  const r = sim.responders[a.rid];
+  if (r.dead || I.phase === 'closed' || a.status === 'left') return 0;
+  const tick = o !== undefined && o.tick === true;
+  const engaging = a.task !== null && (a.task.kind === 'engage' || a.task.kind === 'perimeter');      // 방패는 교전·봉쇄 임무 중에만 세운다
+  const dmg = raw * (1 - protection(sim, r, sim.units[a.unitId], cause, engaging));
+  let after = r.health - dmg;
+  if (!tick) {
+    if (o !== undefined && o.down === true && after > DOWN_AT) after = DOWN_AT;
+    if ((a.hpTick ?? r.health) >= MATE_LETHAL_FROM && after <= 0) after = Math.min(r.health, MATE_FLOOR);      // 대원 문턱 (다치는 일로 체력이 오르지는 않는다)
+  }
+  if (!(after < r.health)) return 0;
+  const took = r.health - after;
+  r.health = after;
+  if (!tick) {
+    const k = BLEED_PER_DMG[cause];
+    if (k > 0) {
+      const b = Math.min(MATE_BLEED_MAX, (r.bleed ?? 0) + k * dmg * sim.tune.injuryMul);
+      r.bleed = b; r.bleed0 = b; r.treatQ = 0; r.bleedCause = cause;
+    }
+    if (after <= DOWN_AT && (r.bleed ?? 0) > DOWN_BLEED_CAP) { r.bleed = DOWN_BLEED_CAP; r.bleed0 = DOWN_BLEED_CAP; }
+    if (after <= 0 && r.deathCause === undefined) r.deathCause = cause;      // 이미 크게 다친 대원이 한 번 더 크게 다쳤다 — 순직 처리는 agentHealth 가 이 틱에 한다
+  }
+  const ev = o !== undefined && o.ev !== undefined ? o.ev : -1;
+  r.injuries = noteInjury(r.injuries, cause, took, sim.t, bandOf(after), o?.by ?? -1, o?.byKind ?? 'world', ev);
+  if (ev >= 0) a.hurtEv = ev;
+  noteTick(r, sim.t, cause, took);
+  return took;
+}
+/**
+ * 상처 악화 한 틱: 대원의 출혈이 체력을 깎는다 (방호도 문턱도 없다). k = 배율 (현장·끌려가는 중 1 — §2.6). 깎인 양을 돌려준다.
+ * 판정 뒤에 멈추는 것은 부르는 쪽(agentHealth)이 본다.
+ */
+export function woundTick(sim: Sim, r: Responder, k: number): number {
+  const b = r.bleed ?? 0;
+  if (b <= 0 || k <= 0 || r.dead) return 0;
+  const d = b * k * sim.dt;
+  r.health -= d;
+  const cause = r.bleedCause ?? mainCause(r.injuries) ?? 'blunt';
+  r.injuries = noteInjury(r.injuries, cause, d, sim.t, bandOf(r.health));
+  noteTick(r, sim.t, cause, d);
+  return d;
+}
+
 // ───────────────────────── 한 번 피해의 기록 (단계 1) ─────────────────────────
 // 피해를 주는 자리는 식을 그대로 두고, 바꾸기 전의 값(hp0, bleed0)을 잡아 두었다가 바꾼 뒤에 아래 함수를 한 줄 부른다.
 // 깎인 양은 (앞 − 뒤)로 센다 — 그 자리의 난수·연산 순서를 건드리지 않는다. 뒤 단계가 이 줄들을 hurt* 로 바꾼다
-// (구조 대상의 자리는 단계 3 에서 hurtCas 로 바꿨다 — noteCasHurt 는 시험과, 다친 채 새로 생기는 사람을 적는 자리에만 남는다).
+// (구조 대상의 자리는 단계 3 에서 hurtCas 로, 대원의 자리는 단계 4a 에서 hurtResponder 로 바꿨다 — noteCasHurt 는 시험만 쓰고, 용의자의 noteHostileHurt 는 단계 5 까지 남는다).
 
 /**
  * 구조 대상이 방금 다쳤다: 깎인 체력을 그 원인으로 적는다. 그 자리가 출혈(bleed)을 키웠으면 지금의 출혈 원인도 그 원인으로 바꾸고,
@@ -123,14 +253,6 @@ export function noteCasHurt(c: Casualty, cause: InjuryCause, hp0: number, bleed0
   if (dmg > 0) c.injuries = noteInjury(c.injuries, cause, dmg, t, bandOf(c.health), by, byKind, ev);
   if (c.bleed > bleed0) c.bleedCause = cause;
   if (c.health <= 0 && c.deathCause === undefined) c.deathCause = cause;
-}
-/**
- * 대원이 방금 다쳤다: 깎인 체력을 그 원인으로 적는다 (방호를 뺀 뒤의 값이다 — 그 자리의 식이 이미 뺐다).
- * 지금 모델에서 대원은 숨지지 않으므로(체력 하한 1 — agentHealth) 숨지지 않은 대원의 sev 는 위중(2)까지만 적는다.
- */
-export function noteRespHurt(r: Responder, cause: InjuryCause, hp0: number, t: number, by = -1, byKind: Injury['byKind'] = 'world', ev = -1): void {
-  const dmg = hp0 - r.health;
-  if (dmg > 0) r.injuries = noteInjury(r.injuries, cause, dmg, t, r.dead ? 3 : Math.min(2, bandOf(r.health)), by, byKind, ev);
 }
 /** 용의자가 방금 다쳤다. 지금 모델에서 체력 0 이하는 '제압'(쓰러짐)이지 사망이 아니다 — 숨지지 않은 용의자의 sev 는 위중(2)까지만 적는다 */
 export function noteHostileHurt(h: Hostile, cause: InjuryCause, hp0: number, t: number, by = -1, byKind: Injury['byKind'] = 'world', ev = -1): void {

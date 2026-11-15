@@ -10,17 +10,18 @@ import { scenarioOf } from '../scenarios';
 import { AIR_LOW, fieldCrew, hasKit, isHovering, kitUses, roleOf, useKit } from '../crews';
 import './scenes';
 import { SCENE_RULES } from './sceneRegistry';
-import type { FieldAgent, Incident, Scene, Unit } from '../types';
-import { josa } from '../util';
+import type { FieldAgent, Incident, MateBelief, Scene, Unit } from '../types';
+import { fmtSec, josa } from '../util';
 import { BeliefStore } from './beliefs';
-import { briefFacts, learn, makeAgent } from './agents';
+import { briefFacts, flushOutbox, learn, learnQuiet, makeAgent, mateFact } from './agents';
 import { think } from './brain';
 import { outstanding } from './commander';
 import { buildScene } from './builders';
 import { act, finishTask } from './executor';
 import { staticPass, tileOf } from './grid';
 import { tickCasualties, tickCollapse, tickCrush, tickFire, tickGas, tickHostiles, tickLane, tickLeaks, tickLift, tickMedical, tickWander, tickWater } from './hazards';
-import { bandOf, initInjuries, noteInjury, smokeCause } from './injury';
+import { CAUSE_NAME, DOWN_AT, hurtCauseNow, hurtResponder, initInjuries, mustRetreat, smokeCause, woundTick } from './injury';
+import type { HurtOpts } from './injury';
 
 export function createScene(sim: Sim, I: Incident): Scene {
   const s = buildScene(sim, I, sim.rng.fork('scene:' + I.id));
@@ -117,17 +118,24 @@ function deliverRadio(sim: Sim, s: Scene, I: Incident): void {
   }
 }
 
+/** 매 틱 피해 (문턱·출혈 없음) — 틱마다 객체를 새로 만들지 않는다 */
+const TICK: HurtOpts = { tick: true };
+
 /**
- * 대원이 선 칸의 연기·불이 주는 피해. 방호는 부서가 아니라 든 장비가 정한다: 공기호흡기(연기), 방화복(불).
+ * 대원의 몸: 선 칸의 연기·불이 주는 피해, 상처의 악화, 그리고 상태 전이(부상 → 쓰러짐 → 순직). 전이는 이 한 곳에서만 한다 (설계서 H1 §3.2).
+ * 방호는 부서가 아니라 든 장비가 정한다(injury.protection): 공기호흡기(연기), 방화복(불).
  * 공기호흡기의 공기는 연기 속(0.25 초과)에 있는 동안만 준다 — 체력이 좋을수록 천천히(초당 1.25 − 0.5 × fitness).
- * 공기가 떨어지면 공기호흡기의 연기 방호가 없다(메지 않은 사람과 같은 피해). 여기서는 사실만 기록한다 — 바꾸러 갈지는 대원의 판단(brain.ts)이다.
+ * 공기가 떨어지면 공기호흡기의 연기 방호가 없다(메지 않은 사람과 같은 피해). 방호가 남은 공기를 읽으므로 소모가 먼저다.
+ * 여기서는 사실만 기록한다 — 바꾸러 갈지, 물러날지는 대원의 판단(brain.ts)이다.
+ * 숨진 대원은 더 바뀌지 않고, 사건이 끝난 뒤(판정 뒤)에는 악화도 전이도 없다 (§2.6).
  */
 export function agentHealth(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   if (a.status === 'left') return;
   const r = sim.responders[a.rid];
+  if (r.dead) return;
+  if (I.phase === 'closed') return;
   const i = tileOf(s, a.x, a.y);
   const smoke = s.smoke[i], fire = s.fire[i];
-  const hp0 = r.health;      // (H1) 기록용: 연기 전의 체력
   if (smoke > 0.25) {
     a.smokeT += sim.dt;
     let scba = hasKit(sim, a.rid, 'scba');
@@ -144,26 +152,71 @@ export function agentHealth(sim: Sim, s: Scene, I: Incident, a: FieldAgent): voi
         }
       }
     }
-    r.health -= (scba ? 0.1 : 1.3) * smoke * sim.dt;
+    hurtResponder(sim, s, I, a, 1.3 * smoke * sim.dt, smokeCause(s), TICK);      // 가스 누출 현장의 연기는 유독 가스로 적는다
     if (scba) r.stamina = Math.max(0, r.stamina - 0.22 * smoke * sim.dt);      // 공기호흡기를 메고 연기 속에서 일하면 지친다
   } else a.smokeT = Math.max(0, a.smokeT - sim.dt * 2);
-  const hp1 = r.health;      // (H1) 기록용: 불 전의 체력
-  if (fire > 0.4) r.health -= (hasKit(sim, a.rid, 'turnout') ? 2.6 : 9) * fire * sim.dt;
-  if (r.health < 1) r.health = 1;
-  // (H1) 기록만: 이 틱에 연기(가스 누출 현장이면 유독 가스)와 불이 깎은 양 — 식은 위에 그대로 있다
-  if (hp1 < hp0) r.injuries = noteInjury(r.injuries, smokeCause(s), hp0 - hp1, sim.t, Math.min(2, bandOf(r.health)));
-  if (r.health < hp1) r.injuries = noteInjury(r.injuries, 'burn', hp1 - r.health, sim.t, Math.min(2, bandOf(r.health)));
-  if (r.health <= 15 && a.status !== 'down') {
+  if (fire > 0.4) hurtResponder(sim, s, I, a, 9 * fire * sim.dt, 'burn', TICK);
+  // 상처 악화: 현장에 있는 동안(일하는 중·쓰러져 있는 중·끌려가는 중) 출혈이 체력을 깎는다.
+  // 안전 구역으로 물러난 대원(withdrawn)의 출혈은 지금 멈춰 둔다 — 처치·후송이 단계 4b 에서 생긴다 (그 전에 흐르게 두면 기다리다 숨진다. 4b 가 §2.6 의 배율로 푼다)
+  if (a.status !== 'withdrawn') woundTick(sim, r, 1);
+  settle(sim, s, I, a);
+}
+
+/**
+ * 상태 전이: 체력 0 이하 → 순직, 15 이하 → 쓰러짐, 물러나야 하는 몸(체력 40 아래, 또는 출혈이 크고 70 아래) → 부상.
+ * 기록은 상태를 바꾸는 이 자리에서 남긴다. 원인 낱말은 이 틱에 가장 크게 깎은 항(없으면 지금까지의 가장 큰 원인), 원인 기록은 마지막으로 다친 기록(a.hurtEv).
+ */
+function settle(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
+  const r = sim.responders[a.rid];
+  if (r.dead) return;
+  if (r.health <= 0) { fallen(sim, s, I, a); return; }
+  if (r.health <= DOWN_AT && r.status !== 'down') {
     if (a.task) finishTask(sim, s, a, false, 'preempt');
+    // 안전 구역에서 기다리던 대원은 그 자리에 그대로 있다 (기록 없음 — 이미 부상으로 알렸다)
     const wasSafe = a.status === 'withdrawn';
     a.status = wasSafe ? 'withdrawn' : 'down'; r.status = 'down'; a.label = '쓰러짐';
+    r.tDown ??= sim.t;
     if (!wasSafe) {
-      raiseProblem(sim, I, 'RESPONDER_HURT', `${r.name} 대원 중상`, { role: 'SYSTEM', actor: '현장', rid: r.id, imp: 3, causes: [a.lastBlockEvent], text: `${r.name} 대원이 쓰러졌습니다! 즉시 구조가 필요합니다.` }, false);
+      raiseProblem(sim, I, 'RESPONDER_HURT', `${r.name} 대원 쓰러짐${causeNote(sim, a)}`, { role: 'SYSTEM', actor: '현장', rid: r.id, imp: 3, causes: [a.hurtEv ?? -1], text: `${r.name} 대원이 쓰러졌습니다! 즉시 구조가 필요합니다.` }, false);
     }
-  } else if (r.health < 40 && r.status === 'ok') {
+  } else if (r.status === 'ok' && mustRetreat(r)) {
     r.status = 'injured';
-    raiseProblem(sim, I, 'RESPONDER_HURT', `${r.name} 대원 부상`, { role: 'RESPONDER', actor: r.name, rid: r.id, imp: 2, causes: [a.lastBlockEvent], text: `${r.name} 부상. 임무 수행이 어렵습니다.` }, false);
+    raiseProblem(sim, I, 'RESPONDER_HURT', `${r.name} 대원 부상${causeNote(sim, a)}`, { role: 'RESPONDER', actor: r.name, rid: r.id, imp: 2, causes: [a.hurtEv ?? -1], text: `${r.name} 부상. 임무 수행이 어렵습니다.` }, false);
+    // 물러나는 대원은 말할 수 있다: 자기 상태를 알린다. 보고 대기열을 거치므로 음영 구역이면 재전송 경로를 탄다. 무전 문구는 남기지 않는다(위 기록이 이미 알렸다)
+    if (a.status === 'active') learnQuiet(sim, a, mateFact(sim, s, a, 'hurt', r.name, 0));
   }
+}
+
+/** 기록에 붙는 원인 낱말: ' (총상)'. 이 틱에 가장 크게 깎은 항, 없으면 지금까지의 가장 큰 원인 */
+function causeNote(sim: Sim, a: FieldAgent): string {
+  const cause = hurtCauseNow(sim.responders[a.rid], sim.t);
+  return cause ? ` (${CAUSE_NAME[cause]})` : '';
+}
+
+/** 순직. 원인과 경과는 숨지는 이 자리에서 상태로 만든다 — 보고서의 문장은 이 detail 을 그대로 쓴다 */
+function fallen(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
+  const r = sim.responders[a.rid];
+  const cause = r.deathCause ?? hurtCauseNow(r, sim.t) ?? 'blunt';
+  const carried = s.agents.some((b) => b.carrying === -(a.rid + 2));      // 동료가 끌고 나오던 중이었다
+  if (a.task) finishTask(sim, s, a, false, 'preempt');      // 업고 있던 사람을 내려놓는다 (쓰러질 때와 같다)
+  r.dead = true; r.tDead = sim.t; r.health = 0; r.status = 'down'; r.deathCause = cause;
+  const safe = a.status === 'withdrawn';
+  if (!safe) a.status = 'down';
+  a.label = '';
+  let detail = `${r.name} 대원(${sim.units[a.unitId].callsign}) — ${CAUSE_NAME[cause]}`;
+  if (safe) detail += ', 안전 구역에서 후송을 기다리던 중';
+  else if (r.tDown !== undefined) detail += carried ? `, 쓰러진 뒤 ${fmtSec(sim.t - r.tDown)} 만에 구조되던 중` : `, 쓰러진 뒤 ${fmtSec(sim.t - r.tDown)} 동안 구조되지 못함`;
+  raiseProblem(sim, I, 'RESPONDER_KILLED', detail, { role: 'SYSTEM', actor: '현장', rid: r.id, imp: 3, causes: [a.hurtEv ?? -1], text: `${r.name} 대원 생체 반응 소실.` }, false);
+}
+
+/**
+ * 판정 직전에 밀린 상태 전이를 마친다 — incidents.closeIncident 가 evaluate 앞에서 부른다.
+ * 한 번 피해(폭발·총격·2차 사고)는 그 틱의 환경 단계에서 체력을 깎고, 전이는 뒤의 대원 단계(agentHealth)가 한다. 그 사이에 사건이 닫히면
+ * (같은 틱에 지휘관이 종료를 선언했거나, 세계 규칙이 닫았다) 판정 뒤에는 전이가 없으므로 "체력 0 이하인데 숨지지 않은 대원"·"쓰러질 체력인데 멀쩡한 대원"이 남는다.
+ * 새 피해는 주지 않는다 — 이미 깎인 체력의 결과만 적는다. 기록의 시각은 종료 시각과 같고 판정(evaluate)에 들어간다.
+ */
+export function settleInjuries(sim: Sim, s: Scene, I: Incident): void {
+  for (let k = 0; k < s.agents.length; k++) { const a = s.agents[k]; if (a.status !== 'left') settle(sim, s, I, a); }
 }
 
 const LIMIT: Record<string, number> = { fire: 430, traffic: 400, search: 470, armed: 400, medical: 300, collapse: 470, hazmat: 430, water: 380 };
@@ -180,6 +233,8 @@ export function tickScene(sim: Sim, s: Scene): void {
   if (s.archived) return;
   const I = sim.incidents[s.incidentId];
   if (I.pursuit && I.pursuit.state === 'driving') return;      // 차가 아직 달리고 있다: 현장은 차가 선 뒤에 열린다
+  // 대원 문턱의 기준: 이 틱이 시작될 때의 체력 (같은 틱에 피해가 몇 번 겹쳐도 첫 피해 전의 체력으로 본다 — injury.hurtResponder)
+  for (let ai = 0; ai < s.agents.length; ai++) { const a = s.agents[ai]; if (a.status !== 'left') a.hpTick = sim.responders[a.rid].health; }
   // 1) 환경
   if (I.phase !== 'closed' || s.agents.some((a) => a.status !== 'left')) {
     tickCasualties(sim, s, I);
@@ -216,7 +271,10 @@ export function tickScene(sim: Sim, s: Scene): void {
       if (cands.length) {
         cands.sort((x, y) => (sim.responders[y.rid].dept === s.leadDept ? 1 : 0) - (sim.responders[x.rid].dept === s.leadDept ? 1 : 0) || sim.responders[y.rid].experience - sim.responders[x.rid].experience || x.rid - y.rid);
         if (cmd) for (const f of cmd.beliefs.all()) cands[0].beliefs.merge(BeliefStore.relay(f));
-        setCommander(sim, s, I, cands[0], cmd ? `${sim.responders[cmd.rid].name} 지휘 불능. 지휘권을 승계합니다.` : '현장 지휘를 맡습니다.');
+        // 승계자가 옛 지휘관의 상태를 알고 있으면(본 사람의 보고, 물러나며 본인이 알린 것) 그 까닭을 말한다. 모르면 예전 문구
+        const mb = cmd ? cands[0].beliefs.val<MateBelief>('mate', cmd.rid) : undefined;
+        const why = mb ? `${sim.responders[cmd!.rid].name} 대원 ${mb.dead ? '순직' : mb.status === 'down' ? '쓰러짐' : '부상'}으로 지휘 불능. 지휘권을 승계합니다.` : '';
+        setCommander(sim, s, I, cands[0], cmd ? why || `${sim.responders[cmd.rid].name} 지휘 불능. 지휘권을 승계합니다.` : '현장 지휘를 맡습니다.');
       }
     }
   }
@@ -262,15 +320,16 @@ export function tickScene(sim: Sim, s: Scene): void {
         // 현장에 남은 대원이 없다(예: 구급차가 환자를 싣고 떠남). 마지막 지휘관이 알고 있던 상황으로 판단한다
         s.idleSince = sim.t;
         const last = s.agents.find((a) => a.rid === s.commanderRid);
-        const o = last ? outstanding(last, sim.t) : null;      // 대피 중이라던 사람의 소식이 오래 끊겼으면 남은 일로 센다 (H1 §5.2)
+        const o = last ? outstanding(last, sim.t, s) : null;      // 대피 중이라던 사람의 소식이 오래 끊겼으면 남은 일로 센다 (H1 §5.2). 쓰러진 채 현장에 남은 동료도 남은 일이다 (§3.5)
         // 현장 평가를 마친 현장만 이렇게 끝낸다. 실종 현장을 상공의 헬기가 살핀 뒤라면 평가를 마치지 못했어도 같다 —
         // 하늘에서 먼저 다 찾아 주면 지상 부대가 평가를 건너뛰고 환자부터 싣고 떠나, 남은 일이 없는데도 '방치'로 닫혔다
         const surveyed = s.sizeupDone || (s.kind === 'search' && (s.airAt ?? -1) >= 0);
-        if (last && o && surveyed && o.patients === 0 && !o.fire && !o.hostile && !(s.kind === 'search' && o.search) && !(s.kind === 'armed' && s.secureAt < 0)) {
+        if (last && o && surveyed && o.patients === 0 && o.mates === 0 && !o.fire && !o.hostile && !(s.kind === 'search' && o.search) && !(s.kind === 'armed' && s.secureAt < 0)) {
           emit(sim, { inc: I.id, role: 'COMMANDER', actor: sim.responders[last.rid].name, rid: last.rid, kind: 'command', imp: 2, text: '현장에 남은 임무가 없습니다. 환자 이송과 함께 상황 종료를 선언합니다.' });
           closeIncident(sim, I, 'resolved');
-        } else if (o && (o.patients > 0 || o.fire || o.hostile)) {
-          const need = o.hostile ? 'law' : o.fire ? 'suppression' : 'ems';
+        } else if (o && (o.patients > 0 || o.fire || o.hostile || o.mates > 0)) {
+          // 쓰러진 동료가 남았으면 구하러 들어갈 수 있는 부대를 부른다: 불·가스·붕괴 현장은 공기호흡기를 멘 구조 부대, 그 밖은 구급 부대
+          const need = o.hostile ? 'law' : o.fire ? 'suppression' : o.patients === 0 && (s.kind === 'fire' || s.kind === 'hazmat' || s.kind === 'collapse') ? 'rescue' : 'ems';
           I.unmet[need] = Math.max(I.unmet[need] ?? 0, 1); I.unmetSince = sim.t; I.noUnitLogged = false;
           emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: `사건 ${I.code}: 현장에 남은 부대가 없는데 아직 끝나지 않았습니다. 추가 부대를 찾습니다.` });
         }

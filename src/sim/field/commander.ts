@@ -6,10 +6,10 @@ import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import { closeIncident } from '../incidents';
 import { T } from '../types';
-import type { CasBelief, FieldAgent, Incident, Scene, UnitCaps, WorkItem, WorkKind } from '../types';
+import type { CasBelief, FieldAgent, Incident, MateBelief, Scene, UnitCaps, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, dist, josa } from '../util';
 import { airShort, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, isHovering, kitUses, roleOf, seatsOf } from '../crews';
-import { HURT_HEALTH, canCarryPatients, exitName, failedRecently, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
+import { canCarryPatients, exitName, failedRecently, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { losWalls } from './grid';
 import { BAND_NAME, HOSTILE_FOV } from './hazards';
@@ -126,6 +126,7 @@ function needFor(s: Scene, w: WorkItem, hotArmed: boolean): keyof UnitCaps | nul
     case 'carry': case 'escort': return hotArmed ? 'law' : 'rescue';      // 위험한 건물 안은 소방만, 안전 확보 전의 무장 현장은 경찰만
     case 'search': return hotArmed ? 'law' : 'rescue';
     case 'perimeter': case 'engage': case 'arrest': case 'negotiate': return 'law';
+    case 'rescueMate': return hotArmed ? 'law' : 'rescue';      // 쓰러진 동료: 안전 확보 전의 무장 현장은 경찰만, 위험한 건물 안은 공기호흡기를 멘 대원만 들어간다 (fitFor)
     case 'defuse': return 'eod';
     default: return null;
   }
@@ -420,7 +421,13 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       }
     }
   }
-  for (const f of B.list('mate')) if (f.value.status === 'down') want(sim, s, 'rescueMate', { mate: f.id }, 0.97, 2);
+  // ── 쓰러진 동료 ── 쓰러진 줄 알면 가장 먼저 구한다. 숨진 줄 알면 수습은 산 사람의 일보다 뒤다(0.55).
+  // 더는 쓰러져 있지 않다고 알거나(안전 구역·후송), 자기 부대와 함께 현장을 떠난 동료(조직이 아는 부대의 출발)의 구조 지시는 거둔다
+  for (const f of B.list('mate')) {
+    const v = f.value as MateBelief;
+    if (v.status === 'down' && onScene(s, f.id)) want(sim, s, 'rescueMate', { mate: f.id }, v.dead ? 0.55 : 0.97, 2);
+    else cancel(s, (w) => w.kind === 'rescueMate' && w.mate === f.id);
+  }
 
   // ── 교통 통제 / 위험 조치 / 도로 정리 ──
   if (s.laneRows.length) {
@@ -455,7 +462,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   if (emsUnits === 1) { const on = unitsOnScene(sim, s); for (const uid of I.assigned) { const u = sim.units[uid]; if (u.caps.ems >= 0.7 && (u.state === 'enroute' || u.state === 'turnout' || on.indexOf(uid) >= 0)) emsSeats += seatsOf(u); } }
   if (patients.length > 0 && emsUnits === 0) request(sim, s, I, a, 'ems', `부상자 ${patients.length}명 확인, 구급 부대 없음`, patients.some((f) => f.value.band === 2));
   else if (emsUnits === 1 && patients.length > emsSeats) request(sim, s, I, a, 'ems', `부상자 ${patients.length}명으로 구급 부대 1대로 감당 불가`, true);
-  if (B.list('mate').some((f) => f.value.status === 'down') && emsUnits === 0) request(sim, s, I, a, 'ems', '대원 부상', true);
+  if (B.list('mate').some((f) => f.value.status === 'down' && !f.value.dead && onScene(s, f.id)) && emsUnits === 0) request(sim, s, I, a, 'ems', '대원 부상', true);
   const gunActive = active.some((h) => h.value.weapon === 'gun');
   const lawUnits = countUnits(sim, s, I, 'law', 0.5);
   if (gunActive && lawUnits < 2) request(sim, s, I, a, lawUnits === 0 ? 'law' : 'tactical', '총기를 소지한 용의자와 대치 중, 인원 부족', true);
@@ -472,6 +479,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     if (w.status !== 'open' || w.assignees.length || sim.t - w.createdAt < 20 || sim.t < w.holdUntil) continue;
     const need = needFor(s, w, hotArmed);
     if (!need) continue;
+    if (w.kind === 'rescueMate' && B.val<MateBelief>('mate', w.mate)?.dead) continue;      // 숨진 동료의 수습 때문에 다른 곳의 부대를 부르지 않는다 (맡을 사람이 생기면 하고, 없으면 종료도 막지 않는다 — recoveryStuck)
     if (anyCapable(sim, s, I, w, need)) continue;
     request(sim, s, I, a, need, `${josa(workLabel(s, w), '을/를')} 맡을 대원이 없음`, w.priority >= 0.85);
     break;
@@ -527,7 +535,7 @@ function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         if (sim.units[b.unitId].boardOrder) continue;
         if (b.task && b.task.kind === 'rehab' && sim.responders[b.rid].stamina < 40) continue;      // 지친 대원은 어느 정도 회복할 때까지 지시를 받지 않는다 (brain.ts 의 휴식 붙잡기)
         if (b.task && (b.task.kind === 'resupply' || b.task.kind === 'swapAir')) continue;      // 예비 장비·공기통으로 바꾸는 중(8~11초 남짓): 끝날 때까지 기다린다. 지시로 빼 오면 교체를 처음부터 다시 시작하며 같은 말을 되풀이한다
-        if (sim.responders[b.rid].health < HURT_HEALTH) continue;      // 부상을 알린 대원은 후퇴 중이다 (brain.ts 의 부상 후퇴 붙잡기) — 지시해도 받지 못하고 재지시만 되풀이된다
+        if (sim.responders[b.rid].status === 'injured') continue;      // 부상을 알린 대원은 후퇴 중이다 (brain.ts 의 부상 후퇴 붙잡기) — 지시해도 받지 못하고 재지시만 되풀이된다. 조직이 아는 상태(RESPONDER_HURT 로 알렸다)만 본다 — 남의 체력을 읽지 않는다
         if (failedRecently(sim, w, b.rid)) continue;      // 이 작업에 닿지 못했거나 위험해서 물러난 대원: 한동안 다른 대원에게 맡기거나 기다린다
         const fit = fitFor(sim, s, b, w);
         if (fit <= 0) continue;
@@ -564,7 +572,7 @@ function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     let best: FieldAgent | null = null, bf = low + RELIEF_GAP;
     for (const b of s.agents) {
       if (b === a || b.status !== 'active' || taken.has(b.rid) || w.assignees.indexOf(b.rid) >= 0 || sim.units[b.unitId].boardOrder) continue;
-      if (hasWork(b) || b.orderWork >= 0 || b.carrying !== -1 || sim.responders[b.rid].health < HURT_HEALTH || failedRecently(sim, w, b.rid)) continue;      // 손이 빈 대원만
+      if (hasWork(b) || b.orderWork >= 0 || b.carrying !== -1 || sim.responders[b.rid].status === 'injured' || failedRecently(sim, w, b.rid)) continue;      // 손이 빈 대원만
       const fit = fitFor(sim, s, b, w);
       if (fit >= bf) { bf = fit; best = b; }
     }
@@ -642,10 +650,26 @@ function sitrep(sim: Sim, s: Scene, I: Incident, a: FieldAgent, force = false): 
   s.lastSitrep = sim.t;
 }
 
+/** 그 대원이 아직 이 현장에 있는가 (자기 부대와 함께 떠나지 않았다) — 부대의 출발은 조직이 아는 사실이다 */
+function onScene(s: Scene, rid: number): boolean {
+  for (let k = 0; k < s.agents.length; k++) if (s.agents[k].rid === rid) return s.agents[k].status !== 'left';
+  return false;
+}
+/**
+ * 숨진 동료의 수습인데 지금 현장의 누구도 맡을 수 없다 (불 속·교전 중인 건물 안 — 들어갈 자격이 없거나 방금 닿지 못했다).
+ * 이런 수습은 종료를 막지 않는다: 닿을 수 없는 자리의 수습 때문에 한계 시간까지 끌지 않는다 (부대가 떠날 때 함께 복귀한다).
+ */
+function recoveryStuck(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): boolean {
+  if (w.kind !== 'rescueMate' || w.assignees.length > 0) return false;
+  const v = a.beliefs.val<MateBelief>('mate', w.mate);
+  if (!v || !v.dead) return false;
+  return !s.agents.some((b) => b.status === 'active' && !failedRecently(sim, w, b.rid) && fitFor(sim, s, b, w) > 0);
+}
+
 function canClose(sim: Sim, s: Scene, a: FieldAgent): boolean {
   if (!s.sizeupDone) return false;
   const B = a.beliefs;
-  if (s.board.some((w) => w.status === 'open' || w.status === 'active')) return false;
+  if (s.board.some((w) => (w.status === 'open' || w.status === 'active') && !recoveryStuck(sim, s, a, w))) return false;
   if (B.list('fire').some((f) => f.value > 0.05)) return false;
   for (const f of B.list('cas')) {
     const c = f.value as CasBelief;
@@ -656,7 +680,7 @@ function canClose(sim: Sim, s: Scene, a: FieldAgent): boolean {
   if (B.list('hos').some((h) => h.value.state === 'hold' || h.value.state === 'fight' || h.value.state === 'flee' || h.value.state === 'surrendered')) return false;
   if (s.kind === 'armed' && s.secureAt < 0) return false;
   if (s.kind === 'search' && B.list('cas').length < 1) return false;
-  if (B.list('mate').some((f) => f.value.status === 'down')) return false;
+  if (B.list('mate').some((f) => f.value.status === 'down' && !f.value.dead && onScene(s, f.id))) return false;      // 쓰러진 동료를 두고 끝내지 않는다 (숨진 동료의 수습은 위의 작업 항목이 막는다)
   for (const blocked of CLOSE_BLOCKERS) if (blocked(sim, s, a)) return false;
   return true;
 }
@@ -687,8 +711,9 @@ const MOBILE_STALE = 32;
  * 지휘관의 믿음 기준으로 아직 남은 일. 현장을 비우게 될 때(환자 이송 등) 종료할지 판단하는 데 쓴다.
  * now 를 주면(현장이 비었을 때의 종료 판단): 현장에서 스스로 대피 중이라던 사람 가운데 소식이 MOBILE_STALE 초 넘게 끊긴 사람을 남은 일로 센다 —
  * 대피하다 쓰러졌을 수 있다(H1 §5.2). 주지 않으면 예전처럼 대피 중인 사람을 모두 뺀다.
+ * mates = 믿음상 쓰러져 있는(숨지지 않은) 동료의 수 (H1 §3.5) — 현장이 비었는데 쓰러진 동료가 남았으면 끝내지 않고 구하러 갈 부대를 찾는다.
  */
-export function outstanding(a: FieldAgent, now = -1): { patients: number; fire: boolean; hostile: boolean; search: boolean } {
+export function outstanding(a: FieldAgent, now = -1, s?: Scene): { patients: number; fire: boolean; hostile: boolean; search: boolean; mates: number } {
   const B = a.beliefs;
   let patients = 0;
   for (const f of B.list('cas')) {
@@ -697,8 +722,15 @@ export function outstanding(a: FieldAgent, now = -1): { patients: number; fire: 
     if (c.mob === 'mobile' && !(now >= 0 && c.where === 'scene' && now - f.t > MOBILE_STALE)) continue;
     patients++;
   }
+  // 쓰러진 채 현장에 남은 동료 (숨진 줄 아는 동료는 세지 않는다 — 수습 임무를 따로 만들지 않고, 부대가 떠날 때 함께 복귀한다).
+  // s 를 주면 자기 부대와 함께 이미 떠난 동료를 뺀다. 병원이 필요한 채 안전 구역에서 기다리는 동료는 처치·후송이 생기는 단계 4b 에서 더한다
+  let mates = 0;
+  for (const f of B.list('mate')) {
+    const v = f.value as MateBelief;
+    if (v.status === 'down' && !v.dead && (!s || onScene(s, f.id))) mates++;
+  }
   return {
-    patients,
+    patients, mates,
     fire: B.list('fire').some((f) => f.value > 0.05),
     hostile: B.list('hos').some((h) => h.value.state === 'hold' || h.value.state === 'fight' || h.value.state === 'flee' || h.value.state === 'surrendered'),
     search: B.list('cas').length === 0,

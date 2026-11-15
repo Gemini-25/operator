@@ -8,7 +8,7 @@ import type { Incident, Scene } from '../../types';
 import { staticPass, tidx } from '../grid';
 import { pushFx } from '../hazards';
 import { registerRule } from '../sceneRegistry';
-import { hurtCasTo, noteRespHurt } from '../injury';
+import { hurtCasTo, hurtResponder } from '../injury';
 
 /**
  * 해일이 해안 대피 현장을 덮친다 (현장마다 한 번).
@@ -100,10 +100,9 @@ function swamp(sim: Sim, s: Scene, I: Incident): number {
     if (Math.round(a.y) < half) continue;
     const p = dry(Math.round(a.x));
     a.x = p.x; a.y = p.y; a.px = p.x; a.py = p.y;
-    const hp0 = sim.responders[a.rid].health;
-    sim.responders[a.rid].health -= rng.range(10, 22);
+    const raw = rng.range(10, 22);      // 난수는 예전 자리 그대로 뽑는다 (숨진 대원·판정 뒤에도 — hurtResponder 가 가린다)
     a.lastBlockEvent = ev;
-    noteRespHurt(sim.responders[a.rid], 'drown', hp0, sim.t, -1, 'world', ev);      // (H1) 기록만
+    hurtResponder(sim, s, I, a, raw, 'drown', { ev });
   }
   pushFx(sim, s, 'text', s.w / 2, half - 1.2, undefined, undefined, '해일!', '#9fd8ff', 3);
   return swept;

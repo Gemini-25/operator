@@ -50,7 +50,8 @@ describe('① 편성표대로 만들어진다', () => {
           expect(r.unitId).toBe(u.id); expect(r.dept).toBe(u.dept); expect(r.id).toBe(rid);
           expect(r.kit!.map((it) => it.id)).toEqual(ROLES[r.role!].kit);      // 역할의 기본 장비를 그 순서로 든다
         });
-        expect(stays(sim, u.crew[0]), `${u.callsign}: 부대장은 내리는 자리`).toBe(false);
+        // 부대장(0번 자리)은 내리는 자리다 — 전원이 내리지 않는 부대(단계 4 의 경찰 헬기)만 예외
+        if (deploying(sim, u).length > 0) expect(stays(sim, u.crew[0]), `${u.callsign}: 부대장은 내리는 자리`).toBe(false);
       }
       expect(sim.responders.length, `규모 ${lv} 총원`).toBe(total);
     }
@@ -159,9 +160,10 @@ describe('③ 능력과 장비가 어긋나지 않는다', () => {
     }
   });
   it('환자 자리와 예비 공기통은 종류를 따른다', () => {
+    const SEATS: Record<string, number> = { als: 2, bls: 2, heli: 1, medHeli: 1 };      // 구급차 2, 소방·의료 헬기 1, 나머지 0 (의료 헬기는 단계 4 에 생긴다)
     const sim = new Sim('CREW', withRes(5));
     for (const u of sim.units) {
-      expect(u.seats, u.callsign).toBe(u.kind === 'als' || u.kind === 'bls' ? 2 : u.kind === 'heli' ? 1 : 0);
+      expect(u.seats, u.callsign).toBe(SEATS[u.kind] ?? 0);
       expect((u.spareAir ?? 0) > 0, `${u.callsign} 예비 공기통`).toBe(u.kind === 'engine' || u.kind === 'ladder' || u.kind === 'rescue' || u.kind === 'hazmat');
     }
   });
@@ -230,7 +232,7 @@ describe('현장에 내리는 사람 (설계서 6.1)', () => {
         for (const [uid, n] of perUnit) { expect(n).toBeLessThanOrEqual(fieldCrew(sim, sim.units[uid]).length); if (n > 2) big++; }
       }
       for (const e of sim.events) {
-        if (e.kind !== 'arrive') continue;
+        if (e.kind !== 'arrive' || e.text.includes('상공 도착')) continue;      // 상공에 머무는 헬기(단계 4 부터)는 아무도 내리지 않는다 — 이름이 없다
         arrivals++;
         const u = sim.units.find((q) => q.callsign === e.actor)!;
         // "(역할 이름 외 n명)" 이거나, 한 명이면 "(이름)"

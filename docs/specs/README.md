@@ -22,14 +22,14 @@
 | `R2-methods.md` | 대응 방식 다양화 | `wf/methods` | 같은 임무를 장비·능력·상황에 따라 여러 방법으로(헤엄 구조·보트·소화기·비살상탄·저격·폭파 진입 …) | **준비 단계만 구현됨** (2026-11-15 — 단계 0(틀 — 결과 불변)이 주 브랜치에 있다. 단계 1a 부터는 X6 다음. 설계서 끝 "구현 메모 (진행 중)" — 실제 이름·본문과 다른 곳 14가지) |
 | `R3-doctrine.md` | 분야별 대응 교본 | `wf/doctrine` | 경찰·소방·의료·특수의 상황 × 장비 × 상태 교본 줄, 짝 규칙, 탄약·엄폐 | **준비 단계만 구현됨** (2026-11-15 밤 — 단계 0(틀 — 해시 불변)이 주 브랜치에 있다. 1~8 은 R2 다음(5). 설계서 끝 "구현 메모 (진행 중)" — 실제 이름·본문과 다른 곳·이어받을 자리) |
 | `I2-persistence.md` | 교대 간 지속 | `wf/persist` | 대원 상태·장비·건물·도로를 "이어받은 상태"로 다음 교대의 입력에 | **준비 단계만 구현됨** (2026-11-15 밤 — 단계 1(틀 — 이어받은 상태가 없으면 해시 불변)이 주 브랜치에 있다. 0·2~8 은 I1-b 다음(7). 설계서 끝 "구현 메모 (진행 중)" — 실제 이름·생성자 순서·본문과 다른 곳 11가지·이어받을 자리) |
-| `N8-incident-kinds.md` | 사건 종류 다양화 ① 일상 사건 | `wf/kinds` | 새 유형 다섯(시설 사고·동물·치안·보호·구조)과 시나리오 24, 비응급 신고 네 갈래, 새 부대 여섯(유관 기관 복구반·견인차·동물 포획·형사·교통 경찰·경찰견), 공통 틀(유형을 자료로·짧은 사건 추첨·조건부 연쇄) | **설계 초안 — 독립 검토 전** (2026-11-15, 사용자 결정 열네 가지 반영. 구현은 I2 다음 (8). 구현 전에 `workflows/design-incident-kinds.js` 로 항목별 상세와 검토를 채운다. 조사 보고서 `N8-research/`) |
-| `N9-major-kinds.md` | 사건 종류 다양화 ② 큰 사건·새 장소 | `wf/kinds2` | 새 유형 군중, 시나리오 23(교통 시설·산업·재산 범죄·테러·날씨·산악·해상), 새 부대 넷(산악·수중·제독·기동대), 새 장소(터널·지하철역·은행·지하차도·공연장) | **설계 초안 — 독립 검토 전** (구현은 N8 다음 (9)) |
+| `N8-incident-kinds.md` | 사건 종류 다양화 ① 일상 사건 | `wf/kinds` | 새 유형 다섯(시설 사고·동물·치안·보호·구조)과 시나리오 24, 비응급 신고 네 갈래, 새 부대 여섯 갈래·종류 여덟(복구반 셋·견인차·동물 포획·형사·교통 경찰·경찰견), 공통 틀(유형을 자료로·짧은 사건 추첨 `daily`·통제 `cordon`·보류·판정 등록·조건부 연쇄) | **설계됨 — 구현은 I2 다음** (2026-11-15, 독립 검토 두 갈래 반영 — 끝의 "검토 메모", 사용자 결정 열네 가지. 조사 보고서 `N8-research/`) |
+| `N9-major-kinds.md` | 사건 종류 다양화 ② 큰 사건·새 장소 | `wf/kinds2` | 새 유형 군중(구역 밀도·흐름 자리), 시나리오 25(군중·교통 시설·독성 공기와 화생방·산업과 재산 범죄·테러·날씨·해상·산악 — 24개가 사용자 예시), 새 부대 넷(산악·수중·제독·기동대 — kindFit 으로 자기 일만), 새 장소(지하철역 셋·공연장·은행 본점 덧붙이기 — 해시 불변, 산성터널·중앙대로 지하차도·경기장·공항·부두 전용 현장) | **설계됨 — 구현은 N8 다음** (2026-11-15, 독립 검토 반영. 단계 4 전에 분량을 사용자에게 묻는다 — §12.5-1) |
 
 합치는 순서: M1 → N7 → N4b → N5 → N6 → T1 → U1 — **일곱 묶음 모두 구현돼 합쳐졌다(2026-11-14).** 그 뒤 같은 날 U2·I1-a·G5 를 구현해 합쳤다(설계서 없이 진행한 B1·B3·P1·Q1·Z1 도 합쳐졌다). 2026-11-15 에 R1 을 아래 "실행 방법"대로 구현했다. 남은 설계서의 순서는 아래 "구현 순서" 절이다. 아래의 규칙은 다음에 묶음을 더할 때 그대로 쓴다. 각 설계서 끝의 구현 메모(또는 앞머리의 "구현 상태")가 실제 코드와 맞는 최신 내용이다.
 
 ## 구현 순서 (남은 설계서)
 
-**시뮬레이션 쪽은 한 줄로 차례대로**: **R1 → H1 → X6 → R2 → R3 → I1-b → I2**(`docs/ROADMAP.md` "진행 중"과 같다). 모두 결과를 바꾸고 같은 파일을 고치므로 한 세션이 처음부터 이어서 한다. 단계마다 그 설계서의 0단계(기준 재기)를 **앞 단계를 합친 뒤에** 다시 잰다. 각 설계서는 앞 단계가 합쳐져 있다고 보고 썼고, 순서가 바뀌었을 때 쓸 대체를 따로 적었다.
+**시뮬레이션 쪽은 한 줄로 차례대로**: **R1 → H1 → X6 → R2 → R3 → I1-b → I2 → N8 → N9**(`docs/ROADMAP.md` "진행 중"과 같다). 모두 결과를 바꾸고 같은 파일을 고치므로 한 세션이 처음부터 이어서 한다. 단계마다 그 설계서의 0단계(기준 재기)를 **앞 단계를 합친 뒤에** 다시 잰다. 각 설계서는 앞 단계가 합쳐져 있다고 보고 썼고, 순서가 바뀌었을 때 쓸 대체를 따로 적었다.
 
 | 단계 | 묶음 | 앞 단계에 기대는 것 | 앞 단계 없이 먼저 하면 (대체) |
 |---|---|---|---|
@@ -40,6 +40,8 @@
 | 5 | R3 | R2 의 `chooseMethod(…, dc)`·`METHOD`·`WORK_MODE`·`gear.ts`, R1 의 `ROLES`·`KITS`·`capableOf`, H1 의 `bandOf`·`hurtF`·`treatMate`, X6 의 `DANGER_RULES`·`evacuate` | 대체를 두지 않는다 — 함수 이름이 다르면 실제 코드를 따른다(R3 §11.2-7). 순서를 지킨다 |
 | 6 | I1-b | X6 의 `catastrophe` 신호·`placeMarks`·`I.blockEv`, R1 단계 3 의 출발 문구(C5 관문), H1 의 넓힌 문구 규칙(T4·T6)·`u.oosEv` | I1 §3.10(X6 와 함께 넣을 부분 — 빈 `world/consequence.ts`), §3.11 1단계(R1 이 출발 문구를 안 고쳤으면 b1 에서) |
 | 7 | I2 | H1 의 `outShifts`·`RosterOut`, R1 의 `minField`·`skillsOf`·`STAFF`, X6 의 `placeMarks`·`placeUsable` 로 옮길 세 검사, I1-b 의 `knownBuildingAt`·`placeState`·`WorldTag`·`rubble` | I2 §3.2 의 "H1 이 아직 합쳐지지 않았으면", §11.1-3("앞 묶음의 이름" — 구현 전에 실제 이름 확인) |
+| 8 | N8 | 일곱 묶음 전부(각 설계서 끝 "구현 메모"가 정본): R1 의 `UNIT_DEFS`·`STAFF`·`KITS`·`capableOf`·`airFit`·`kitBonus`·`isHovering`·`airDecide`·`rules/air.ts`·`drawFaults`, H1 의 `InjuryCause`·`BLEED_PER_DMG`·`initialCause`·`LIGHT_WORK`·`hurt*`·`hurtHostile`·임무 `treatSuspect`, X6 의 `NO_STRUCT`·`OpsState`, R2 의 `METHOD`·`WORK_MODE`·`CasBelief.pit`·`batch` 건너뛰기·`shoring`, R3 의 `registerDoctrine`·`DocSit`·`DOC_OF_UNIT`·`PAIRS`·`doctrine/index.ts`, I1-b 의 `registerConsequence`·`spawnConsequence`·`PROBLEM_SYS`·C4·C10·C11, I2 의 `roadsNext`·`placeUsable` | N8 "이어받는 사람에게" 2 의 표 — 이름이 다르면 실제 이름을 따르고 구현 메모에 적는다. I1-b 가 없으면 연쇄는 시나리오 `onClose`+`canChain`(§5.6), R3 가 없으면 교본 줄 없이 지휘 규칙으로 |
+| 9 | N9 | N8 의 공통 틀 전부(`TYPE_DEFS`(`floorHp`)·`kindFit`·`KIND_AUX`·`LABEL_BONUS`·`capableOf` 의 넷째 인자·`needFor(…, a)`·`cordon`·`registerPending`·`registerCasHold`·`registerVerdict`·`T.LEDGE`·`'perch'`·`streetFrame`·`card: false`·`runUntilClosed`), R1 의 `kitBonus`·`airFit`·`isHovering`, R2 의 `METHOD`·`CasBelief.veh`, R3 의 `registerDoctrine`(단계 0 의 `DoctrineRule`), I1-b 의 `registerConsequence`·C7 `floodLow`, I2 의 `roadsNext`, X6 의 `NO_STRUCT`·`vessel`·분진 폭발 | N8 없이는 시작하지 않는다. 그 밖은 N9 §12.3 의 대체(R2 가 없으면 잠수·펜스를 실행부의 고정 갈래로, R3 가 없으면 교본 줄 대신 지휘 규칙, I1-b 가 없으면 연쇄를 시나리오 `onClose`·`canChain` 으로, X6 9단계가 없으면 공장의 2차 폭발을 `plantRule` 이 한 번) |
 
 **R1 이 끝난 뒤의 확인(2026-11-15)**: 위 표와 아래 "정본" 표가 R1 에 기대하는 이름은 **모두 그 이름으로 있다** — `src/sim/crews.ts` 의 `KitId`·`KITS`·`ROLES`·`STAFF`·`hasKit`·`kitWorks`·`kitLive`·`kitUses`·`useKit`·`toolFor`·`toolUse`·`medLevelOf`·`armorOf(sim, rid, engaging)`·`blastFactor`·`seatsOf`·`fieldCrew`·`minField`·`minCrew`·`skillsOf`·`capableOf`, `field/agents.ts` 의 `makeAgent`·`briefFacts`, `resources.ts` 의 `startTransport`(고른 병원 `Facility` 를 돌려준다)·명부 고장 추첨(`crews.drawFaults`), `Unit.hoist`·`WorkKind 'hoist'`, 측정 도구의 C5 관문(켜져 있다). 본문과 서명이 다른 것은 둘뿐이다: `kitRng(sim, s)`(본문은 `kitRng(s)`), `heliPad(sim, f)` 가 `[x, y]` 를 돌려준다. 본문에 없이 더해진 것(`fitFor` 의 다섯째 인자 `afterSwap`, `airShort`·`scbaReady`·`AIR_MIN`, `anyCapable`, `airFit`, 구출 교대, 헬기만 왔던 현장의 마무리)과 뒤 묶음마다 알아야 할 것은 `R1-crews.md` 끝 "구현 메모"의 "뒤 묶음이 쓰는 이름"·"뒤 묶음마다 알아야 할 것"에 있다. **H1 부터는 0단계의 기준을 R1 을 합친 뒤에 다시 잰다**(R1 이 모든 시드의 결과를 바꿨다 — 보통 성공률 76 → 81%).
 
@@ -67,8 +69,8 @@
 | R3 `wf/doctrine` | 5219 | `0` (틀) | `1` → `2` → `3` → `4·5` → `6·7` | 8 |
 | I1-b `wf/causality` | 5218 | `b0` (기록만 잇기) | `b1·b2` → `b3` 규칙 1~6 → `b3` 규칙 7~11 → `b4·b5` | 문서 |
 | I2 `wf/persist` | 5232 | `1` (틀) | `0·2` → `3·4` → `5` → `6·7` | 8 |
-| N8 `wf/kinds` | 5236 | `1·2` (틀·새 부대) | `0·3` → `4·5` → `6·7` → `8·9` | 10 |
-| N9 `wf/kinds2` | 5237 | `1·2` (틀·새 부대) | `0·3`(지도 — 기준 다시) → `4·5` → `6·7` → `8·9` | 10 |
+| N8 `wf/kinds` | 5236 | `1·2a·2b` (틀 — 유형을 자료로 · 자료형과 등록 자리 · 새 부대의 자리) | `0·3` → `4a·4b` → `5·6a` → `6b·7` → `8·9` → `10` | 11 |
+| N9 `wf/kinds2` | 5237 | `1·2·3` (틀 — 자료형과 등록 자리 · 새 부대의 자리 · 지도 덧붙이기, 결과 불변. 단계 3 의 해시가 바뀌면 3 을 빼 `0·3·4` 로) | `0·4` → `5·6` → `7·8` → `9` | 10 |
 
 **겹쳐 돌리기**(2026-11-15 부터, 사용자 요청: 더 빠르게). 묶음 N 의 검토·문서 단계가 도는 동안, 묶음 N+1 의 "먼저 해 두는 앞 단계"를 다른 작업 폴더에서 한다(워크플로를 하나 더 띄운다 — `only: 'impl'`, 덩어리 하나). 규칙:
 
@@ -103,11 +105,20 @@
 | 위험 상태(`CatState`·`OpsState`·`SignBelief`·`PlaceMark`·`Sim.placeMarks`·`DANGER_RULES`·`trapped`·경계 1칸 갇힘의 `cat:` 흐름) | X6 §2·§4 |
 | 세계 상태·신호(`WorldState`·`SignalKind`·`signal()`·`placeState`·**`knownBuildingAt`**·`I.blockEv`·`blast` 신호의 범위) | I1 §3.3·§3.4 |
 | 쓸 수 있는 건물(`placeUsable`)·이어받은 상태(`Carryover`·`carryState`·`s.wear`) | I2 §3.6·§2 |
-| 문제 코드 | 코드마다 그것을 더하는 설계서: `RESPONDER_KILLED`·`SUSPECT_DIED` H1 §3.8, `METHOD_FAIL` R2 §3.8, `DANGER_SIGN`·`WITHDRAWAL`·`STRUCT_COLLAPSE`·`EXPLOSION`·`BURNOUT` X6 §5.10, `HOSPITAL_FULL`·`INFRA_FAIL` I1 §3.3. `order` 의 자리(9줄 컷)는 X6 §5.10 |
+| 문제 코드 | 코드마다 그것을 더하는 설계서: `RESPONDER_KILLED`·`SUSPECT_DIED` H1 §3.8, `METHOD_FAIL` R2 §3.8, `DANGER_SIGN`·`WITHDRAWAL`·`STRUCT_COLLAPSE`·`EXPLOSION`·`BURNOUT` X6 §5.10, `HOSPITAL_FULL`·`INFRA_FAIL` I1 §3.3, `UTIL_LATE`(`PROBLEM_SYS` 'infra')·`ANIMAL_LOST`('field') N8 §4.2·§4.3·§5.3.6, `DECON_LATE` N9 §5.10. `order` 의 자리(9줄 컷)는 X6 §5.10 |
 | 기록 문구 규칙(`PHRASE` T1~T8) | I1 §2.3 = `scripts/metrics.ts`(코드). 문구를 바꾸는 묶음이 함께 넓힌다(H1 §3.4·§3.6) |
 | 흔들림 | G5 구현(`FxBook.shake(sid, ts, v?)`) + G4 `sceneShake(sim, s, mini, extra, reduced)`(G4 §4.3) |
 | 효과 종류·결정적 순간(`Fx.kind`, `DECISIVE`, `ACTION_W`, `legacy()`) | G5 구현 메모. 새 종류는 더하는 설계서가: `'collapse'` G4 §3.1, `'horn'` X6 §2.2 |
 | 그리는 순서(현장 층)·무너짐 그림 기록(`markRuin`·`recordFall`·`FallRecord`·`RUIN_*`) | G4 §4.6·§3 |
+| 사건 유형의 자료(`TYPE_ORDER`·`typeIdx`·`TYPE_DEFS`·`LIK_FLOOR`·`LikMap`·`likRow`)·새 유형을 더하는 절차·화면 색(`typeStyle.TYPE_COLOR`)·카드 제목에서 빼는 시나리오(`Scenario.card`·`NO_CARD`) | N8 §5.1·§5.2·§5.12 (N9 의 `crowd` 가 같은 절차를 따른다) |
+| 유관 기관(`Dept`·`UnitField` 의 `'civil'` — 지휘하지 않음·첫 도착 아님·길가 대기·`utility` 밖에서는 선택 수요)·새 수요 열쇠(`utilPower`·`utilGas`·`utilWater`·`tow`·`capture`)·새 부대의 일 좁히기(`kindFit`·`KIND_AUX`)·이름표 가점(`kitBonus` 의 `LABEL_BONUS`)·`capableOf` 의 대상 인자 | N8 §5.3 |
+| 짧은 사건(`daily` 흐름·`DAILY_TOTAL`·`isDailyLoad`)·비응급 신고(`closeReason 'screened'`·`dispatch/screening.ts`·`kindsCaller` 의 `verifyAnswer`·`sameAnswer`·`Incident.dupOf`) | N8 §5.4·§5.5 |
+| 묶음 규칙의 등록 자리(`registerPending`·`registerCasHold`·`registerPropHold`·`registerVerdict`)·통제 임무 `cordon`·세계 규칙의 강제 보고 | N8 §5.7·§5.10·§5.16·§5.17 |
+| 장면의 새 진실(`Scene.kinds`·`KindsState`·`Scene.animals`·`Animal`·`AniBelief`·`exitKind`)·높은 자리(`T.LEDGE`·`Scene.rules` 의 `'perch'`·`CasBelief.perch`)·설득(`persuade`)·민감 소재(`Casualty.quietLoss`·`TYPE_DEFS.floorHp`)·새 사실의 id 범위 | N8 §5.8~§5.13 |
+| 군중 밀도와 흐름 자리(`CrowdState`·`CrowdZone`·`FlowSpot`·`Scene.flowSpots`(생김새)·밀도 문턱 1.15)·용의자 보류(`registerHosHold`·`Hostile.crowdRole`·`dispersed`·믿음 `tag`·`threw`) | N9 §5.6 (판정의 `dispersed` 는 §5.15) |
+| 독성 공기(`s.kinds2.tox`·`haz air` 의 `gas`)·오염과 제독(`contamIds`·`CasBelief.dirty`·임무 `decontam`·수요 열쇠 `decon`·`DECON_LATE`)·깊이 없는 잠수(`underIds`·`CasBelief.sunk`·방법 `dive`·실행부의 잠수 갈래) | N9 §5.4·§5.5·§5.10 (수요 열쇠는 §5.3.1) |
+| 바람(`Scene.windDir` — 생김새)·물로 바뀌는 칸(`setWater`)·체력 하한의 장면 값(`s.kinds2.floorHp`·`floorOf`)·N9 사실의 id 범위(`kinds2Ids.FACT_ID`)·`s.rules 'sightline'` | N9 §5.7·§5.13·§5.14·§5.16·§5.4 |
+| 결과 불변으로 덧붙인 장소(`cityPlan.LATE_LANDMARKS` — `buildPlaces` 의 4)와 5) 사이, 종류가 아직 어떤 표에도 없을 때만) | N9 §4.9·§5.8 |
 | 구현 순서 | 이 문서 "구현 순서" (= `docs/ROADMAP.md`) |
 
 ## 1. 끼워 넣는 자리 (확장 지점)

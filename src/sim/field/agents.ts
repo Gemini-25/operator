@@ -260,7 +260,12 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
         h.hidden = false;
         raiseProblem(sim, I, 'SCENE_MISMATCH', '숨어 있던 추가 용의자 발견', { role: 'RESPONDER', actor: me, rid: r.id, imp: 3, text: `숨어 있던 추가 용의자 발견! ${regionNameAt(s, h.x, h.y)}.` }, false);
       }
-      if (wasHidden) learnQuiet(sim, a, hosFact(sim, s, h, me, d)); else learn(sim, a, hosFact(sim, s, h, me, d));
+      const hf = hosFact(sim, s, h, me, d);
+      // 쓰러졌거나 붙잡혀 움직이지 않는 용의자를 멀리서(2칸 밖) 다시 본 것은 새 소식이 아니다 — 숨졌는지는 곁에서만 안다.
+      // 달라진 것이 없으면 믿음을 새 시각으로 덮지 않는다: 덮으면 곁에서 숨진 것을 본 대원의 보고(무전으로 1.2초 늦게 닿는다)가 "더 오래된 사실"이 되어 버려지고,
+      // 지휘관은 숨진 용의자에게 처치 지시를 되풀이한다 (H1 검토 — 동료의 'mate' 사실은 이미 같은 규칙이다)
+      if (!wasHidden && cur && d > 2 && (h.state === 'down' || h.state === 'arrested') && !significant(hf, cur.value)) continue;
+      if (wasHidden) learnQuiet(sim, a, hf); else learn(sim, a, hf);
     } else if (cur && cur.value.state !== h.state && (h.state === 'escaped' || h.state === 'down' || h.state === 'arrested') && d <= 16) {
       learn(sim, a, hosFact(sim, s, h, me, d));
     }

@@ -455,3 +455,6 @@ input:focus { border-color: var(--accent); }
 /* 교대 보고서 (H1 단계 6): 순직 타일과 목록의 순직 줄은 빨강이 아니라 차분한 회청색 */
 .tile.loss { border: 1px solid #8fa3b8; background: rgba(143, 163, 184, 0.08); }
 .kv .loss { color: #c7d3df; }
+/* (H1 단계 7) 보고서의 대원 부상·순직 목록: 이름(역할 · 호출부호)과 상태를 두 줄로 — 76px 이름 칸에 '저격·관측수 · 특공1' 이 세 줄로 접혀 읽히지 않았다 */
+.kv.hurt-row { grid-template-columns: 1fr; gap: 0; padding: 3px 0; }
+.kv.hurt-row > span:last-child { padding-left: 12px; }

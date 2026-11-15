@@ -232,12 +232,14 @@ function spreadAirs(airs: AirDraw[], ts: number, timeMs: number): void {
   }
 }
 type SceneLabel = { x: number; y: number; text: string; col: string };
+/** 이름표가 피해 가는 고정 글자의 자리 (가운데 x·y, 너비·높이 — 화소) */
+type LabelBox = { x: number; y: number; w: number; h: number };
 /**
  * 같은 글자의 이름표가 겹치면 하나로 모은다 (대기 지점에 여럿이 모이면 "대기"가 겹겹이 쌓여 읽을 수 없다).
  * 자리는 모인 것들의 가운데·맨 위. 분야가 섞였으면 글자색을 중립색으로 쓴다(이름표의 색 = 분야).
  */
-function mergeLabels(ctx: G, labels: SceneLabel[], fs: number, ts: number): SceneLabel[] {
-  if (MINI || labels.length < 2) return labels;
+function mergeLabels(ctx: G, labels: SceneLabel[], fs: number, ts: number, pinned: readonly LabelBox[] = []): SceneLabel[] {
+  if (MINI || (labels.length < 2 && !pinned.length)) return labels;
   ctx.font = `600 ${fs}px ${FONT}`;
   type M = SceneLabel & { w: number; n: number };
   let out: M[] = labels.map((l) => ({ x: l.x, y: l.y, text: l.text, col: l.col, w: ctx.measureText(l.text).width + fs * 0.8, n: 1 }));
@@ -254,12 +256,14 @@ function mergeLabels(ctx: G, labels: SceneLabel[], fs: number, ts: number): Scen
     out = next;
     if (!merged) break;
   }
-  // 글자가 다른 이름표끼리 겹치면 뒤의 것을 한 줄 위로 올린다 (많아야 두 줄)
-  for (let i = 1; i < out.length; i++) {
+  // 글자가 다른 이름표끼리 겹치면 뒤의 것을 한 줄 위로 올린다 (많아야 두 줄).
+  // (H1 단계 7) 먼저 그려진 고정 글자(용의자의 상태 알약)도 피한다 — 쓰러진 용의자를 처치하는 대원의 이름표가 그 알약을 덮어 둘 다 읽히지 않았다
+  for (let i = 0; i < out.length; i++) {
     const l = out[i];
     for (let up = 0; up < 2; up++) {
       let clash = false;
       for (let j = 0; j < i; j++) { const q = out[j]; if (Math.abs(q.x - l.x) < (q.w + l.w) / 2 && Math.abs(q.y - l.y) < fs * 1.5) { clash = true; break; } }
+      if (!clash) for (const p of pinned) if (Math.abs(p.x - l.x) < (p.w + l.w) / 2 && Math.abs(p.y - l.y) < (p.h + fs * 1.5) / 2) { clash = true; break; }
       if (!clash) break;
       l.y -= fs * 1.6;
     }
@@ -870,6 +874,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     for (const q of respChips) triageBadge(ctx, q.x + ts * 0.36, q.y - ts * 0.38, ts * 0.13, q.b, ts, '', q.cross);
     for (const q of hosChips) { ctx.globalAlpha = q.hidden ? 0.6 : 1; triageBadge(ctx, q.x - ts * 0.36, q.y - ts * 0.38, ts * 0.13, q.b, ts, '', q.cross); ctx.globalAlpha = 1; }      // 용의자의 딱지는 왼쪽 위 (붙잡힌 인질의 딱지와 겹치지 않게)
   }
+  const hosPills: LabelBox[] = [];
   if (!MINI) for (const hst of s.hostiles) {
     if (!hostileDrawn(hst) || (hst.hidden && !o.truth)) continue;
     const p = ipos(hst, o.alpha), x = cx(p.x), y = cy(p.y);
@@ -879,7 +884,13 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     const stt = hostileSheet(sim, hst, o.truth, cmd) ? '사망' : stunned ? '무력화' : hst.hidden ? '(숨음)' : hst.state === 'hold' ? (hst.hostageId >= 0 ? '인질 대치' : '대치') : hst.state === 'fight' ? '교전' : hst.state === 'flee' ? '도주' : hst.state === 'surrendered' ? '투항' : hst.state === 'arrested' ? (hst.tDown !== undefined ? '검거 · 쓰러짐' : '검거') : '쓰러짐';
     const wp = hst.weapon === 'gun' ? '총' : hst.weapon === 'knife' ? '칼' : '';
     ctx.globalAlpha = hst.hidden ? 0.6 : 1;
-    pill(ctx, `${hst.label}${wp ? '·' + wp : ''} · ${stt}`, x, y - ts * 0.8, ts * 0.27, col);
+    // (H1 단계 7) 곁에 선(쓰러진) 다른 용의자의 알약과 겹치면 한 줄 위로 (많아야 두 줄). 대원 이름표는 이 알약들을 피한다(mergeLabels)
+    const hText = `${hst.label}${wp ? '·' + wp : ''} · ${stt}`, hFs = ts * 0.27;
+    ctx.font = `600 ${hFs}px ${FONT}`;
+    const hBox: LabelBox = { x, y: y - ts * 0.8, w: ctx.measureText(hText).width + hFs * 0.8, h: hFs * 1.5 };
+    for (let up = 0; up < 2 && hosPills.some((q) => Math.abs(q.x - hBox.x) < (q.w + hBox.w) / 2 && Math.abs(q.y - hBox.y) < (q.h + hBox.h) / 2); up++) hBox.y -= hFs * 1.6;
+    pill(ctx, hText, x, hBox.y, hFs, col);
+    hosPills.push(hBox);
     if (hst.state === 'hold' || hst.state === 'fight') {
       const bw = ts * 0.6, bh = Math.max(3, ts * 0.085);
       rr(ctx, x - bw / 2 - 1, y + ts * 0.54 - 1, bw + 2, bh + 2, bh / 2, 'rgba(8,13,18,0.85)');
@@ -944,7 +955,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   }
   if (cv) timed(() => { drawNegotiation(cv); drawCuffs(cv); });      // (G5) 말풍선, 수갑 기호
   for (const l of hzLabels) pill(ctx, l.text, l.x, l.y, Math.max(10, ts * 0.3), l.color);      // (G4) 새 글자 표지: 가스 고임·되살아난 불
-  for (const l of mergeLabels(ctx, labels, Math.max(10, ts * 0.28), ts)) pill(ctx, l.text, l.x, l.y, Math.max(10, ts * 0.28), l.col);      // (R1) 같은 이름표가 겹치면 하나로
+  for (const l of mergeLabels(ctx, labels, Math.max(10, ts * 0.28), ts, hosPills)) pill(ctx, l.text, l.x, l.y, Math.max(10, ts * 0.28), l.col);      // (R1) 같은 이름표가 겹치면 하나로
   // (R1) 상공의 헬기: 호출부호와 하는 일. 두 헬기가 한 자리에 떠 있으면 이름표를 위로 쌓는다(겹쳐 읽히지 않게)
   if (!MINI) {
     const fs = Math.max(10, ts * 0.3), put: { x: number; y: number; w: number }[] = [];

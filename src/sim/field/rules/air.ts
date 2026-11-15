@@ -15,10 +15,11 @@ import { fieldCrew, isHovering, kitWorks, seatsOf } from '../../crews';
 import type { Sim } from '../../engine';
 import { emit } from '../../events';
 import { airRtb, etaFor, releaseUnit, startTransport } from '../../resources';
-import type { AirOp, Fact, FieldAgent, Incident, Scene, Unit, WorkItem } from '../../types';
+import type { AirOp, CasBelief, Fact, FieldAgent, Incident, Needs, Scene, Unit, WorkItem } from '../../types';
 import { josa } from '../../util';
 import { briefFacts, casFact, flushOutbox, learn, learnQuiet, makeAgent, perceive, transmit } from '../agents';
 import { WATCH_SPEED, airDecide, nearestLeg } from '../airDecide';
+import { outstanding } from '../commander';
 import type { AirTerrain, AirView } from '../airDecide';
 import { mkFact } from '../beliefs';
 import { isIndoor } from '../grid';
@@ -103,6 +104,24 @@ function handOver(sim: Sim, s: Scene, op: AirOp, st: AirState, u: Unit, cmd: Fie
   for (const f of st.missed.values()) { const cur = op.eye.beliefs.get(f.type, f.id); if (cur) facts.push(cur); }      // 지금 알고 있는 내용으로
   st.missed.clear();
   if (facts.length) transmit(sim, s, op.eye, cmd.rid, 'report', facts, `${u.callsign}: 상공 관측 내용을 전달합니다.`, -1, 0);
+}
+
+/**
+ * 마지막으로 현장을 떠나는 헬기가 관제에 알린다: 지상 대원도, 오는 부대도, 다른 헬기도 없는데 관측자가 보기에 아직 남은 일이 있으면
+ * (건지지 못한 사람·불·용의자) 그 수요를 다시 연다. 지상 부대가 닿은 현장은 마지막 지휘관의 믿음으로 같은 일을 한다(sceneManager 7)번) —
+ * 헬기만 왔던 현장에는 지휘관이 없으므로 관측자의 믿음으로 한다. 남은 일이 없으면 아무것도 하지 않는다(사건은 방치 시간 뒤에 닫힌다)
+ */
+function tellDispatch(sim: Sim, s: Scene, I: Incident, op: AirOp, u: Unit): void {
+  if (I.phase === 'closed' || (s.air !== undefined && s.air.length > 0)) return;
+  for (const a of s.agents) if (a.status === 'active') return;
+  for (const uid of I.assigned) { const q = sim.units[uid]; if (q.state === 'enroute' || q.state === 'turnout') return; }
+  const o = outstanding(op.eye);
+  if (!(o.patients > 0 || o.fire || o.hostile)) return;
+  let stuck = false;      // 물속이나 잔해에 갇힌 사람이 남았는가 (구조 장비가 필요하다)
+  for (const f of op.eye.beliefs.list('cas')) { const c = f.value as CasBelief; if (c.where === 'scene' && c.mob === 'trapped' && c.band < 3) { stuck = true; break; } }
+  const need: keyof Needs = o.hostile ? 'law' : o.fire ? 'suppression' : stuck ? 'rescue' : 'ems';
+  I.unmet[need] = Math.max(I.unmet[need] ?? 0, 1); I.unmetSince = sim.t; I.noUnitLogged = false;
+  emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: `사건 ${I.code}: ${josa(u.callsign, '이/가')} 떠난 현장에 아직 ${o.hostile ? '용의자가' : o.fire ? '불이' : '구조 대상이'} 남아 있습니다. 지상 부대를 찾습니다.` });
 }
 
 /** (tx, ty) 쪽으로 한 틱 움직인다. 돌려주는 값 = 남은 거리(칸) */
@@ -230,6 +249,7 @@ registerRule((sim, s, I) => {
       releaseUnit(sim, u);
       air.splice(k, 1);
       if (lit === op) lit = null;
+      tellDispatch(sim, s, I, op, u);
       continue;
     }
     // 8) 실행
@@ -257,6 +277,7 @@ registerRule((sim, s, I) => {
         const hosp = startTransport(sim, u);
         emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign} 환자 ${u.patients.length}명 싣고 ${josa(hosp.name, '으로/로')} 출발.` });
         air.splice(k, 1);
+        tellDispatch(sim, s, I, op, u);
         continue;
       }
       reset(sim, op, st);

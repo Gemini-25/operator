@@ -1347,9 +1347,9 @@ describe('상공의 일 (설계서 7.3·7.4)', () => {
     expect(heli.state, '자리(1)가 찼다: 바로 병원으로').toBe('transport'); expect(heli.incidentId).toBeNull(); expect(I.assigned.indexOf(heli.id)).toBe(-1);
     expect(s.air!.length).toBe(0);
     expect([heli.x, heli.y], '상공에 머무는 동안 지도의 위치는 그대로다').toEqual([x0, y0]);
-    const tail = sim.events.slice(-2).map((e) => e.text);
-    expect(tail[0]).toBe(`${heli.callsign}: 호이스트로 구조 대상 ${c.label} 인양 완료.`);
-    expect(tail[1]).toMatch(new RegExp(`^${heli.callsign} 환자 1명 싣고 .+(으로|로) 출발\\.$`));
+    const texts = sim.events.map((e) => e.text), at = texts.indexOf(`${heli.callsign}: 호이스트로 구조 대상 ${c.label} 인양 완료.`);
+    expect(at).toBeGreaterThan(0);
+    expect(texts[at + 1]).toMatch(new RegExp(`^${heli.callsign} 환자 1명 싣고 .+(으로|로) 출발\\.$`));
     expect(sim.airStats.airLifts).toBe(1);
     // 병원에 닿아 인계한다
     tickScn(sim, s, 5 * 200, () => c.where === 'hospital');
@@ -1371,6 +1371,34 @@ describe('상공의 일 (설계서 7.3·7.4)', () => {
     expect(B.s.air!.length).toBe(0);
     expect(live('hoist').length, '상공에 호이스트를 단 헬기가 없다').toBe(0);
     expect(w.status).toBe('cancelled');
+  });
+  it('헬기만 왔던 현장: 마지막 헬기가 떠날 때 관측자가 보기에 남은 사람이 있으면 관제가 지상 부대를 찾는다', () => {
+    // 물에 빠진 사람이 여럿인 현장에 소방 헬기만 닿았다 — 한 명을 건져 병원으로 떠난다 (자리는 하나)
+    const mk = (ground: boolean): { sim: Sim; I: Incident; s: Scene; heli: Unit } => {
+      const sim = new Sim(clearSeed());
+      const I = createIncident(sim, { type: 'water', variant: 'std', severity: 3, rng: sim.rng.fork('t') });
+      const s = sim.scenes[I.id]!;
+      I.reportedAt = sim.t; I.phase = 'dispatched';
+      for (const kind of (ground ? ['patrol', 'heli'] : ['heli']) as UnitKind[]) { const u = sim.units.find((q) => q.kind === kind)!; u.state = 'onscene'; u.incidentId = I.id; I.assigned.push(u.id); I.everAssigned.push(u.id); unitArrived(sim, I, u); }
+      assessAs(sim, I, 'water', 3, undefined, { rescue: 1, ems: 1 });
+      I.unmet = {};
+      return { sim, I, s, heli: sim.units.find((q) => q.kind === 'heli')! };
+    };
+    const A = mk(false);
+    expect(A.s.casualties.filter((c) => c.inWater).length, '물에 빠진 사람').toBeGreaterThanOrEqual(2);
+    tickScn(A.sim, A.s, 5 * 150, () => A.heli.state !== 'onscene');
+    expect(A.sim.airStats.hoists).toBe(1); expect(A.heli.state).toBe('transport');
+    expect(A.s.casualties.some((c) => c.inWater && !c.dead && c.tDiscovered >= 0), '관측자가 본, 아직 물속에 있는 사람').toBe(true);
+    expect(A.I.unmet.rescue, '구조 수요를 다시 연다').toBe(1);
+    expect(A.I.unmetSince).toBe(A.sim.t);
+    expect(A.sim.events[A.sim.events.length - 1].text).toBe(`사건 ${A.I.code}: 헬기1이 떠난 현장에 아직 구조 대상이 남아 있습니다. 지상 부대를 찾습니다.`);
+    // 지상 대원이 있는 현장에서는 지휘관이 알아서 한다 — 헬기가 따로 알리지 않는다
+    const B = mk(true);
+    tickScn(B.sim, B.s, 5 * 150, () => B.heli.state !== 'onscene');
+    expect(said(B.sim, /떠난 현장에 아직/)).toBe(0);
+    // 남은 사람이 없으면(한 명뿐인 현장) 아무것도 알리지 않는다 — 사건은 방치 시간 뒤에 닫히고 결과는 진실로 판정한다
+    const C = sceneOf(clearSeed(), 'water/std', ['heli']);
+    if (C.s.casualties.length === 1) { tickScn(C.sim, C.s, 5 * 150, () => C.unit('heli').state !== 'onscene'); expect(said(C.sim, /떠난 현장에 아직/)).toBe(0); expect(C.I.unmet.rescue ?? 0).toBe(0); }
   });
   it('물 투하: 산불의 바깥 구역에 물을 쏟고, 바구니가 비면 물을 뜨러 다녀온다. 밤에는 뿌리지 않는다', () => {
     const { sim, s, unit } = sceneOf(clearSeed(), 'fire/wild', ['heli']);

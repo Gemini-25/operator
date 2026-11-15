@@ -1563,7 +1563,7 @@ npx tsx scripts/sweep.ts 1 --force utility/wire --log S3     # 한 교대를 읽
 
 #### 본문과 다른 곳
 
-1. **`WorkItem.animal` 은 선택 칸**(`animal?: number`)이다 — 본문 §5.8 은 필수 칸(`animal: number`)이다. 이 단계는 앞 묶음 다섯(X6 2~·R2 1a~·R3 1~·I1-b b1~·I2 0·2~)보다 먼저 들어가는 준비 줄이라, 필수 칸이면 그 묶음들이 새로 쓰는 작업 항목 리터럴(지금도 시험 넷 — `crews`·`doctrine`·`methods`·`injuries` 의 `work()`·`workItem()` 도우미 등 여덟 자리)이 모두 tsc 에 걸린다. 그래서 선택 칸으로 두고, 객체 모양은 `commander.want` 의 리터럴(맨 끝 `animal`)과 `orders/injury.ts` 의 `PROBE`(`animal: -1`)가 지킨다. **읽는 쪽은 `(w.animal ?? -1)`** 로 읽는다. 앞 묶음이 다 합쳐진 뒤(단계 5 의 `capture`)에 필수로 좁혀도 된다 — 그때 tsc 가 짚는 리터럴에 `animal: -1` 을 더한다.
+1. **`WorkItem.animal` 은 선택 칸**(`animal?: number`)이다 — 본문 §5.8 은 필수 칸(`animal: number`)이다. 이 단계는 앞 묶음 다섯(X6 2~·R2 1a~·R3 1~·I1-b b1~·I2 0·2~)보다 먼저 들어가는 준비 줄이라, 필수 칸이면 그 묶음들이 새로 쓰는 작업 항목 리터럴(지금도 시험 넷 — `crews`·`doctrine`·`methods`·`injuries` 의 `work()`·`workItem()` 도우미 등 일곱 자리)이 모두 tsc 에 걸린다. 그래서 선택 칸으로 두고, 객체 모양은 `commander.want` 의 리터럴(맨 끝 `animal`)과 `orders/injury.ts` 의 `PROBE`(`animal: -1`)가 지킨다. **읽는 쪽은 `(w.animal ?? -1)`** 로 읽는다. 앞 묶음이 다 합쳐진 뒤(단계 5 의 `capture`)에 필수로 좁혀도 된다 — 그때 tsc 가 짚는 리터럴에 `animal: -1` 을 더한다.
 2. **Scene 의 새 칸은 `kit.baseScene` 의 리터럴에만** 넣었다(본문은 `createScene` 도 적었다). 현장 객체를 만드는 리터럴은 `baseScene` 하나뿐이고(`createScene` 은 R1 의 칸을 만든 뒤에 붙인다), N8 의 칸은 현장 생성기가 채우는 칸이라 처음 리터럴에 두는 것이 맞다.
 3. **`Dept`·`UnitField`·`RoleGroup` 의 `'civil'`, `UnitCaps`·`Needs` 의 수요 열쇠 다섯, `KitDef.batch` 의 `'n8'` 은 넣지 않았다** — 본문 §5.8 의 목록에 있지만 §8 의 2a 줄이 "새 유형·부대·역할·장비 줄은 빼고"라 했고, 넣으면 tsc 가 강제하는 표(`crews.DEPT_ROLE`·`MED_BASE`·`marks.ROLE_MARK`·`resources.AID_KIND` …)가 따라오므로 그 표를 채우는 단계 2b 의 몫으로 남겼다. 방호의 `electric × insulKit 0.9`·`animal × beeSuit 0.95` 도 장비 이름(`KitId`)이 2b 에 생기므로 그때 `protection` 의 두 줄(주석으로 자리를 적어 두었다)에 더한다.
 4. **`field/doctrine/kinds.ts` 는 만들었지만 `doctrine/index.ts` 에서 아직 부르지 않는다** — R3 의 시험(`tests/doctrine.test.ts` "줄 파일의 등록 순서는 common → police → fire → ems → special")이 그 다섯을 글자 그대로 본다. 빈 파일을 부르려고 R3 의 시험을 지금 고치면 R3 의 본 구현(R2 다음)과 부딪친다. 첫 줄을 넣는 단계(4a~9)가 `import './special'` 다음 줄에 `import './kinds'` 를 더하고 그 시험의 배열에 `'kinds'` 를 함께 더한다.
@@ -1575,7 +1575,13 @@ npx tsx scripts/sweep.ts 1 --force utility/wire --log S3     # 한 교대를 읽
 
 #### 시험
 
-`tests/kinds.test.ts` 에 더했다: **시험 4**(정보 격리 — 판단 파일 여덟 `commander`·`brain`·`analyst`·`dispatcher`·`screening`·`methods`·`airDecide`·`doctrine/kinds` 와 생기면 `orders/kinds` 의 주석 아닌 줄에 `s.kinds`·`.animals`·`.dupOf`·`hideUntil`·`quietLoss`·`.truth`·`s.variant`·`p.live`·`p.sub`·`].live`·`].sub` 가 없다 / `callSystem.ts` 에 `.dupOf`·`s.kinds`·`.animals`·`quietLoss` 가 없다) · **2a 틀의 자리**(`T.LEDGE` 의 `staticPass`·`isIndoor`·`los` — 시험 17 의 칸 부분 / 등록 자리 넷이 비어 있다 — 4a 가 첫 줄을 넣을 때 이 기대를 고친다 / 판정 등록이 `open`·`bad`·`delayed` 를 판정에 넣고 줄을 지우면 그대로다). 시험 2(`HASH0`)는 그대로 통과한다.
+`tests/kinds.test.ts` 에 더했다: **시험 4**(정보 격리 — 판단 파일 여덟 `commander`·`brain`·`analyst`·`dispatcher`·`screening`·`methods`·`airDecide`·`doctrine/kinds` 와 생기면 `orders/kinds` 의 주석 아닌 줄에 `s.kinds`·`.animals`·`.dupOf`·`hideUntil`·`quietLoss`·`.truth`·`s.variant`·`p.live`·`p.sub`·`].live`·`].sub` 가 없다 / `callSystem.ts` 에 `.dupOf`·`s.kinds`·`.animals`·`quietLoss` 가 없다) · **2a 틀의 자리**(`T.LEDGE` 의 `staticPass`·`isIndoor`·`los` — 시험 17 의 칸 부분 / 현장의 고정 층(`buildStatic`, 가짜 캔버스)이 `T.LEDGE` 칸을 예외 없이 그린다 / 등록 자리 넷이 비어 있다 — 4a 가 첫 줄을 넣을 때 이 기대를 고친다 / 판정 등록이 `open`·`bad`·`delayed` 를 판정에 넣고 줄을 지우면 그대로다). 시험 2(`HASH0`)는 그대로 통과한다 — `tests/kinds.test.ts` 10개.
+
+#### 해시 확인 · 관문 · 화면
+
+- 해시 목록: 단계 1 의 도구(`$S/s1/hashes.ts` 를 `$S/s2a/` 에 옮겨 그대로)로 이 단계의 나무를 돌려(`$S/s2a/hash-2a.txt`) 시작점 `313ec41` 의 목록(`$S/s1/hash0.txt` — `git archive` 로 푼 `$S/s1/base` 에서 만든 것. 이번에 끝 15줄을 그 폴더에서 다시 돌려 같음을 확인했다)과 견줬다: **153교대 한 글자도 같다**(보통 40 · 어려움 20 · 극한 20 · 쉬움 6 · 재난 5×3 · 강제 14×3 · 부대 규모 1·5×3 · 신고 신뢰도 1×2 · 교통 5×2, 줄마다 `report.hash`·`JSON.stringify(report)` 의 FNV·기록 수·사건 수·연쇄 수·사건 서명).
+- 관문: `npx tsc --noEmit` 통과 · `npm run check` 통과(시험 파일 18 · 546 통과 + 건너뜀 1, 테스트 427초 — 같은 기계에서 다른 작업이 함께 돌았다(부하 15) · 시드 40 `--check` "검증 통과", 교착 후보 0 · 잊힌 사건 0 · C1~C5 0).
+- 화면: 개발 서버(5236, 자기 Vite 캐시)에서 `?seed=S7` 를 15배속으로 열어 찍었다 — 콘솔 오류 0, 사건 카드 2 · 확률 막대 5줄 · 현장 그림이 예전과 같다. 이 단계의 화면 변경(`S.LEDGE`)은 아직 어느 현장에도 나오지 않는다. `npm run ui-check` 는 돌리지 않았다(화면 값이 바뀌지 않는 단계).
 
 #### 이어받을 자리 (단계 2b 와 뒤 단계)
 

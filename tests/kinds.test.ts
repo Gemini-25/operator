@@ -10,6 +10,7 @@ import { CAS_HOLDS, PENDING_RULES, PROP_HOLDS, VERDICT_RULES, registerVerdict } 
 import { isIndoor, los, staticPass } from '../src/sim/field/grid';
 import { T } from '../src/sim/types';
 import type { Scene } from '../src/sim/types';
+import { withFakeDom } from './fakeCanvas';
 import { LIK_FLOOR, TYPE_DEFS, TYPE_ORDER, likRow, typeIdx } from '../src/sim/incidentTypes';
 import type { LikMap } from '../src/sim/incidentTypes';
 import { NATURE_LIK } from '../src/sim/dispatch/callSystem';
@@ -129,6 +130,17 @@ describe('2a 틀의 자리 — 높은 자리 칸 · 등록 자리 (결과 불변
     expect(los(s, 0, 0, 6, 0)).toBe(true);      // 높은 자리 너머가 보인다
     tiles[3] = T.WALL;
     expect(los(s, 0, 0, 6, 0)).toBe(false);     // (견줌) 벽은 막는다
+  });
+  it('현장의 고정 층이 T.LEDGE 칸을 예외 없이 그린다 (staticLayer 의 빈 그림 — 아직 어느 현장도 쓰지 않으므로 칸을 직접 바꿔 본다)', async () => {
+    const sim = new Sim('N8-2A-LEDGE');
+    sim.run(5);
+    const I = createIncident(sim, { type: 'fire', rng: sim.rng.fork('n8-2a-ledge') });
+    const s = sim.scenes[I.id]!;
+    for (let x = 2; x < 10; x++) s.tiles[4 * s.w + x] = T.LEDGE;
+    await withFakeDom(async () => {
+      const { buildStatic } = await import('../src/view/scene/staticLayer');
+      expect(() => buildStatic(s, 16, 'commercial')).not.toThrow();
+    });
   });
   it('등록 자리 넷은 아직 비어 있다 (단계 2a — 첫 줄은 4a~9 가 넣는다)', () => {
     new Sim('N8-2A-REG');      // 현장 등록(field/scenes/index.ts)을 불러 둔다

@@ -1237,7 +1237,7 @@ R1 최종본을 `git merge` 로 받은 뒤(충돌 없음 — `12a8b2b`) 다시 �
 
 ### 단계 3 이 끝난 자리 — 단계 4a 가 이어받을 때
 
-**관문** (단계 3 의 마지막 커밋에서): `npx tsc --noEmit` 통과 · `npm run check` 통과(Vitest 312개 + 건너뜀 1, 파일 13개 / 시드 40개 `검증 통과` — 성공 448 · 부분 55 · 지연 26 · 미해결 12 · 실패 26 으로 단계 2 끝과 같은 분포, 한계 시간 0 · 방치 2) · `sweep 40 --diff hard --check`·`--diff extreme --check` 통과. 완료 조건 3 의 깨지기 쉬운 기존 시험 둘(`tests/sim.test.ts` 의 생활 사건 성공률, `tests/crime.test.ts` 의 폭동)을 따로 돌려 통과. 화면은 고치지 않았다(`npm run ui-check` 는 돌리지 않았다 — 사망 기록의 문구만 바뀐다).
+**관문** (단계 3 의 마지막 커밋에서): `npx tsc --noEmit` 통과 · `npm run check` 통과(Vitest 312개 + 건너뜀 1, 파일 13개 / 시드 40개 `검증 통과` — 성공 448 · 부분 55 · 지연 26 · 미해결 12 · 실패 26 으로 단계 2 끝과 같은 분포, 한계 시간 0 · 방치 2) · `sweep 40 --diff hard --check`·`--diff extreme --check` 통과. 완료 조건 3 의 깨지기 쉬운 기존 시험 둘(`tests/sim.test.ts` 의 생활 사건 성공률, `tests/crime.test.ts` 의 폭동)을 따로 돌려 통과. 화면은 고치지 않았지만 `npm run ui-check` 도 한 번 돌렸다 — 여덟 항목 모두 통과(콘솔 오류 0, 되감기 표본 61개 해시 일치, 보고서 해시 `3c453999` = 헤드리스. 사망 기록의 문구가 바뀌어 단계 2 끝의 `2342b7c9` 와는 다르다).
 
 - **기준은 `wf-injuries/base/`** 다(위 "단계 0 — 기준을 다시 쟀다"). 단계 4a 부터는 `node compare.mjs base <새 폴더>` 와 함께 `node compare.mjs s3-full <새 폴더>` 로 단계 3 끝과도 견주면 그 단계만의 변화가 보인다.
 - **`hurtResponder`·`hurtHostile` 은 `hurtCas` 옆에 둔다**(`HurtOpts` 는 이미 `tick`·`down` 을 갖고 있다). 대원·용의자 쪽의 기록 줄(`noteRespHurt`·`noteHostileHurt` — `grep -rn "(H1)" src/sim` 에 남은 것)은 그대로다: `blast` 의 대원 쪽, `tickHostiles` 의 피격·흉기·맨손, `tickLane`, `agentHealth`, 해일의 대원, `shootAt` 의 용의자. 다 옮긴 뒤에는 `noteCasHurt`(지금 시험만 쓴다)·`noteRespHurt`·`noteHostileHurt` 를 함께 지울 수 있다.

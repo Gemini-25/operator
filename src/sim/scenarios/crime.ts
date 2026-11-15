@@ -47,7 +47,8 @@ function arsonNext(sim: Sim, I: Incident, reason: string): void {
   if (!pool.length) return;
   const near = pool.filter((q) => d(q) <= 600);
   const next = near.length ? rng.pick(near) : pool.reduce((a, b) => (d(b) < d(a) ? b : a));
-  sim.gen.chain.push({ at: sim.t + rng.range(60, 120), opts: { type: 'fire', variant: 'arson', placeId: next.id, parent: I.id, note: '연쇄 방화로 보이는 불이 또 났습니다', rng: sim.rng.fork('arson-next:' + I.id) } });
+  // (I1-b) 원인 = 이 불의 마지막 기록. 종료 기록은 onClose 다음 줄에서 생기므로 예약하는 지금은 없다 (onClose 를 그 뒤로 옮기면 기록 순서·해시가 바뀐다)
+  sim.gen.chain.push({ at: sim.t + rng.range(60, 120), opts: { type: 'fire', variant: 'arson', placeId: next.id, parent: I.id, note: '연쇄 방화로 보이는 불이 또 났습니다', rng: sim.rng.fork('arson-next:' + I.id), cause: I.lastEvent, csq: 'arson' } });
 }
 
 export const CRIME: Scenario[] = [

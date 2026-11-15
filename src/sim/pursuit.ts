@@ -143,11 +143,11 @@ export function tickPursuits(sim: Sim): void {
       const den = city.places[p.hideout];
       p.state = 'escaped'; p.how = 'hideout';
       emit(sim, { inc: I.id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: 1, truth: true, text: `납치범이 붙잡은 사람을 데리고 ${den.name}에 숨어들었습니다.` });
-      raiseProblem(sim, I, 'SUSPECT_FLED', '납치 차량을 놓침', { role: 'SYSTEM', actor: '교통정보', imp: 3, causes: [I.lastEvent], text: `${josa(WHO[p.kind], '이/가')} ${nodeName(city, B.id)} 부근에서 자취를 감췄습니다. 추격 실패.` }, false);
+      const fledEv = raiseProblem(sim, I, 'SUSPECT_FLED', '납치 차량을 놓침', { role: 'SYSTEM', actor: '교통정보', imp: 3, causes: [I.lastEvent], text: `${josa(WHO[p.kind], '이/가')} ${nodeName(city, B.id)} 부근에서 자취를 감췄습니다. 추격 실패.` }, false);
       closeIncident(sim, I, 'abandoned');
       // 은신처 제보: 연쇄 상한(chain.ts) 안에서만 잇는다 (난수는 상한과 상관없이 똑같이 뽑는다)
       const at = sim.t + rng.range(40, 90);
-      if (canChain(sim, I)) sim.gen.chain.push({ at, opts: { type: 'armed', variant: 'hostage', placeId: p.hideout, parent: I.id, note: '납치범이 숨어든 곳에서 제보가 들어옵니다', rng: sim.rng.fork('hideout-call:' + I.id) } });
+      if (canChain(sim, I)) sim.gen.chain.push({ at, opts: { type: 'armed', variant: 'hostage', placeId: p.hideout, parent: I.id, note: '납치범이 숨어든 곳에서 제보가 들어옵니다', rng: sim.rng.fork('hideout-call:' + I.id), cause: fledEv, csq: 'hideout' } });      // (I1-b) 원인 = 놓친 기록
       continue;
     }
     if ((B.exit && B.id === p.goal) || sim.t >= p.giveUpAt) {

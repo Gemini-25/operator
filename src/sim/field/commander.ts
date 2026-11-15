@@ -10,7 +10,7 @@ import type { CasBelief, FieldAgent, Incident, MateBelief, Scene, UnitCaps, Work
 import { TYPE_NAME, dist, josa } from '../util';
 import { airShort, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, isHovering, kitUses, roleOf, seatsOf, seatsUsed } from '../crews';
 import { canCarryPatients, exitName, failedRecently, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
-import { mkFact } from './beliefs';
+import { heardEv, mkFact } from './beliefs';
 import { losWalls } from './grid';
 import { BAND_NAME, HOSTILE_FOV } from './hazards';
 import { mateNeedsHospital } from './injury';
@@ -198,9 +198,10 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   const surrendered = hos.filter((h) => h.value.state === 'surrendered');
   const threat = active.length > 0 || surrendered.length > 0;
   if (threat && s.secureAt >= 0) s.secureAt = -1;
-  for (const h of surrendered) want(sim, s, 'arrest', { hostile: h.id }, 0.93);
+  // (I1-b) cause = 그 사실을 실어 온 무전 기록 (heardEv) — 지시 무전의 causes 에만 들어간다
+  for (const h of surrendered) want(sim, s, 'arrest', { hostile: h.id }, 0.93, 1, false, heardEv(h));
   for (const h of active) {
-    if (h.value.state === 'flee') { want(sim, s, 'engage', { hostile: h.id }, 0.95, 2); continue; }
+    if (h.value.state === 'flee') { want(sim, s, 'engage', { hostile: h.id }, 0.95, 2, false, heardEv(h)); continue; }
     // 진입이 결정되면 진입조 둘을 먼저 채우고, 남는 경찰만 출입구를 지킨다
     // (봉쇄에 묶인 대원은 진입 지시보다 봉쇄를 계속하므로, 경찰이 둘뿐이면 아무도 들어가지 않는다)
     // 다친 경관은 진입조에 들지 못하므로 출입구를 지킨다: 진입이 정해지면 온전한 경관이 맡을 자리(okPosts)는 예전 그대로이고, 다친 경관 몫으로 더한 자리는 우선도를 낮춘다 —
@@ -386,20 +387,21 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       continue;
     }
     const urg = c.band * 0.06;
-    const afloat = c.where === 'scene' && c.mob === 'trapped' && s.tiles[c.y * s.w + c.x] === T.WATER;      // 물속에 있다고 믿는다
+    const cev = heardEv(f);      // (I1-b) 이 구조 대상 소식을 실어 온 무전 기록 — 아래 작업의 원인 (기록만)
+    const afloat =c.where === 'scene' && c.mob === 'trapped' && s.tiles[c.y * s.w + c.x] === T.WATER;      // 물속에 있다고 믿는다
     if (hoistUp && !afloat) cancel(s, (w) => w.kind === 'hoist' && w.cas === f.id);      // 물 밖으로 나왔다
     // 총을 든 용의자 바로 곁에 있는 사람(인질)은 위협이 사라지기 전에는 손댈 수 없다
     if (c.where === 'scene' && active.some((h) => h.value.weapon === 'gun' && Math.hypot(h.value.x - c.x, h.value.y - c.y) <= 3.6)) { clear(['treat', 'carry', 'extricate']); continue; }
     if (c.where === 'scene') {
       if (afloat) {
-        want(sim, s, 'waterRescue', { cas: f.id }, 0.9 + urg, 2);      // 물속: 물가에서 줄을 던져 끌어낸다
-        if (hoistUp) want(sim, s, 'hoist', { cas: f.id }, 0.92 + urg, 1);      // 상공에 호이스트를 단 헬기가 있으면 함께 낸다 — 먼저 끝나는 쪽이 이긴다
+        want(sim, s, 'waterRescue', { cas: f.id }, 0.9 + urg, 2, false, cev);      // 물속: 물가에서 줄을 던져 끌어낸다
+        if (hoistUp) want(sim, s, 'hoist', { cas: f.id }, 0.92 + urg, 1, false, cev);      // 상공에 호이스트를 단 헬기가 있으면 함께 낸다 — 먼저 끝나는 쪽이 이긴다
         continue;
       }
       // 갇혀 있다: 구출이 먼저다. 갇히기 전에 낸 이송·동행 지시는 거둔다 (2차 붕괴로 다시 갇힌 사람 — 두면 '대상이 그 위치에 없다'는 실패가 구출이 끝날 때까지 되풀이된다)
-      if (c.mob === 'trapped') { clear(['carry', 'escort']); want(sim, s, 'extricate', { cas: f.id }, 0.82 + urg, 2); continue; }
+      if (c.mob === 'trapped') { clear(['carry', 'escort']); want(sim, s, 'extricate', { cas: f.id }, 0.82 + urg, 2, false, cev); continue; }
       if (c.mob === 'mobile') {                // 스스로 대피 중 — 한참 지나도 도착 보고가 없으면 확인하러 보낸다
-        if (sim.t - f.t > 32) want(sim, s, 'escort', { cas: f.id }, 0.62 + urg);
+        if (sim.t - f.t > 32) want(sim, s, 'escort', { cas: f.id }, 0.62 + urg, 1, false, cev);
         continue;
       }
       const rg = s.region[c.y * s.w + c.x];
@@ -408,10 +410,10 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       // 처치가 필요한가: 아직 아무 처치도 못 받았거나, 기본 처치만 받았는데 구급대원이 와 있다
       const needTreat = c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedic && treatsDone(f.id) < 2));
       const treatHere = hasMedic || (s.kind === 'medical' && c.tq === 0);      // 응급 환자는 누구든 먼저 손을 쓴다
-      if (!indoorHazard && needTreat && treatHere && !hotArmed) { want(sim, s, 'treat', { cas: f.id }, 0.8 + urg); want(sim, s, 'carry', { cas: f.id }, 0.5, 2); }
-      else { cancel(s, (w) => w.kind === 'treat' && w.cas === f.id && w.status === 'open'); want(sim, s, 'carry', { cas: f.id }, 0.84 + urg, 2); }
+      if (!indoorHazard && needTreat && treatHere && !hotArmed) { want(sim, s, 'treat', { cas: f.id }, 0.8 + urg, 1, false, cev); want(sim, s, 'carry', { cas: f.id }, 0.5, 2, false, cev); }
+      else { cancel(s, (w) => w.kind === 'treat' && w.cas === f.id && w.status === 'open'); want(sim, s, 'carry', { cas: f.id }, 0.84 + urg, 2, false, cev); }
     } else if (c.where === 'safe') {
-      if (c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedicAny && treatsDone(f.id) < 2))) want(sim, s, 'treat', { cas: f.id }, 0.72 + urg);
+      if (c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedicAny && treatsDone(f.id) < 2))) want(sim, s, 'treat', { cas: f.id }, 0.72 + urg, 1, false, cev);
       else cancel(s, (w) => w.kind === 'treat' && w.cas === f.id && w.status === 'open');
       if (c.band >= 1 && ambulances.length) {
         const already = s.board.some((w) => w.kind === 'load' && w.cas === f.id && (w.status === 'open' || w.status === 'active'));
@@ -424,7 +426,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
             if ((!!q.air === airFirst) !== (pass === 0)) continue;
             if (seatsUsed(sim, q) + loadsQueued(uid) < seatsOf(q)) { best = uid; break; }
           }
-          if (best >= 0) want(sim, s, 'load', { cas: f.id, prop: best }, (c.treated ? 0.7 : 0.5) + urg);
+          if (best >= 0) want(sim, s, 'load', { cas: f.id, prop: best }, (c.treated ? 0.7 : 0.5) + urg, 1, false, cev);
         }
       }
     }
@@ -433,7 +435,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   // 더는 쓰러져 있지 않다고 알거나(안전 구역·후송), 자기 부대와 함께 현장을 떠난 동료(조직이 아는 부대의 출발)의 구조 지시는 거둔다
   for (const f of B.list('mate')) {
     const v = f.value as MateBelief;
-    if (v.status === 'down' && onScene(s, f.id)) want(sim, s, 'rescueMate', { mate: f.id }, v.dead ? 0.55 : 0.97, 2);
+    if (v.status === 'down' && onScene(s, f.id)) want(sim, s, 'rescueMate', { mate: f.id }, v.dead ? 0.55 : 0.97, 2, false, heardEv(f));
     else cancel(s, (w) => w.kind === 'rescueMate' && w.mate === f.id);
   }
 
@@ -442,14 +444,14 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     const hit = I.problems.some((p) => p.code === 'SECONDARY_COLLISION');
     s.controlPts.forEach((_, k) => { if (!B.get('ctl', k)) want(sim, s, 'traffic', { tile: k }, hit ? 0.9 : 0.74); });
   }
-  for (const f of B.list('haz')) if (f.value.kind === 'leak') { if (f.value.active) want(sim, s, 'mitigate', { prop: f.id }, 0.86); else cancel(s, (w) => w.kind === 'mitigate' && w.prop === f.id); }
+  for (const f of B.list('haz')) if (f.value.kind === 'leak') { if (f.value.active) want(sim, s, 'mitigate', { prop: f.id }, 0.86, 1, false, heardEv(f)); else cancel(s, (w) => w.kind === 'mitigate' && w.prop === f.id); }
   if (s.kind === 'traffic' && s.sizeupDone) {
     const unresolved = cas.some((f) => f.value.band < 3 && (f.value.where === 'scene' || f.value.where === 'carried'));
     if (!unresolved && pendingSearch === 0 && fireRegions === 0) {
       for (const p of s.props) if ((p.kind === 'vehicle' && !p.cleared) || (p.kind === 'roadDebris' && !p.removed)) want(sim, s, 'clearRoad', { prop: p.id }, p.kind === 'vehicle' ? 0.42 : 0.36);
     }
   }
-  for (const f of B.list('evid')) if (f.value.kind === 'witness' && !f.value.done) want(sim, s, 'interview', { prop: f.id }, 0.82);
+  for (const f of B.list('evid')) if (f.value.kind === 'witness' && !f.value.done) want(sim, s, 'interview', { prop: f.id }, 0.82, 1, false, heardEv(f));
 
   // ── 지원 요청 ──
   const fireUnits = countUnits(sim, s, I, 'suppression', 0.7);

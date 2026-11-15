@@ -200,7 +200,7 @@ function discover(sim: Sim, s: Scene, I: Incident, a: FieldAgent, c: Casualty): 
   emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'casualty', imp: 2, text: `구조 대상 ${c.label} 발견! ${regionNameAt(s, c.x, c.y)}, ${mobT}, ${BAND_NAME[band(c.health)]}.` });
   pushFx(sim, s, 'text', c.x, c.y - 0.9, undefined, undefined, `${c.label} 발견`, '#7cf5a0', 2);
   if (late && !I.problems.some((p) => p.code === 'LATE_DISCOVERY')) {
-    I.problems.push({ code: 'LATE_DISCOVERY', t: sim.t, eventId: sim.events.length - 1, detail: `구조 대상 ${c.label} 발견까지 도착 후 ${Math.round(sim.t - s.arrivedAt)}초 소요`, recovered: true, recoveryText: '' });
+    I.problems.push({ code: 'LATE_DISCOVERY', t: sim.t, eventId: sim.events.length - 1, detail: `구조 대상 ${c.label} 발견까지 도착 후 ${Math.round(sim.t - s.arrivedAt)}초 소요`, recovered: true, recoveryText: '', times: undefined, ref: undefined });      // times·ref: raiseProblem 과 같은 모양 (I1-b)
   }
   // 거동 가능한 대상은 대피를 안내한다 (배회하던 실종자는 동행이 필요). 상공의 관측자는 안내하지 못한다 — 보고만 하고,
   // 지상 대원이 그 사람을 처음 만났을 때 안내한다 (perceive 의 UNGUIDED)

@@ -28,7 +28,7 @@ const RESP_LIMIT: Record<string, number> = { fire: 95, armed: 95, traffic: 105, 
 
 function addProblem(I: Incident, code: ProblemCode, t: number, eventId: number, detail: string, recovered = false, recoveryText = ''): void {
   if (I.problems.some((p) => p.code === code && p.detail === detail)) return;
-  I.problems.push({ code, t, eventId, detail, recovered, recoveryText });
+  I.problems.push({ code, t, eventId, detail, recovered, recoveryText, times: undefined, ref: undefined });      // times·ref: raiseProblem 과 같은 모양 (I1-b)
 }
 
 export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult {

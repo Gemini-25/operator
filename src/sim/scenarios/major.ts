@@ -62,7 +62,7 @@ export const MAJOR: Scenario[] = [
       for (const e of hw) {
         if (!findRoute(c, e.a, e.b, 1, e.id)) continue;
         I.blockedEdge = e.id; e.slow += 1.4; e.closed = true; e.closedReason = 'incident';
-        emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(c, e)} 전면 통제 — 다중 추돌 사고로 차로가 모두 막혔습니다.`, imp: 2, truth: true });
+        I.blockEv = emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(c, e)} 전면 통제 — 다중 추돌 사고로 차로가 모두 막혔습니다.`, imp: 2, truth: true });      // (I1-b) 통제 기록
         break;
       }
     } },

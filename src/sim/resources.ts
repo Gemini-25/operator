@@ -10,7 +10,7 @@ import { unitArrived } from './field/sceneManager';
 import { Rng } from './rng';
 import { gateWait, reportObstacle, stopAhead } from './traffic';
 import type { Obstacle } from './traffic';
-import type { Dept, Facility, Incident, Needs, Responder, RoadEdge, Unit, UnitCaps, UnitField, UnitKind } from './types';
+import type { Dept, Facility, Incident, Needs, Problem, Responder, RoadEdge, Unit, UnitCaps, UnitField, UnitKind } from './types';
 import { clamp, fmtSec, josa } from './util';
 
 const NAMES = ['김도윤', '이서준', '박하준', '최민재', '정지호', '강현우', '윤서연', '한지민', '오수아', '임채원', '신유나', '조은서',
@@ -267,6 +267,16 @@ export function etaFor(sim: Sim, u: Unit, destNode: number): number {
   return r ? r.time + extra : 9999;
 }
 
+/**
+ * (I1-b 0단계) 출동 중에 만난 통제의 기록: 구간·부대, 그 구간을 막은 사건(closedReason 'incident' 인 구간을 blockedEdge 로 가진 열린 사건)과 그 사건의 통제 기록.
+ * 기록(ROUTE_BLOCKED 의 ref·causes)에만 쓴다 — 길을 고르는 판단은 이것을 읽지 않는다
+ */
+function blockRef(sim: Sim, u: Unit, e: RoadEdge): { ref: Problem['ref']; causes: number[] } {
+  let J: Incident | null = null;
+  if (e.closedReason === 'incident') for (let k = sim.incidents.length - 1; k >= 0; k--) { const q = sim.incidents[k]; if (q.blockedEdge === e.id && q.phase !== 'closed') { J = q; break; } }
+  return { ref: { inc: J ? J.id : undefined, unit: u.id, edge: e.id }, causes: J && J.blockEv !== undefined ? [J.blockEv] : [] };
+}
+
 function setRoute(sim: Sim, u: Unit, to: number): void {
   u.destNode = to; u.seg = 0; u.segT = 0; u.backing = false;
   u.route = u.nodeId === to ? null : findRoute(sim.city, u.nodeId, to, weatherSpeedFactor(sim), -1, u.heavy);
@@ -283,9 +293,10 @@ function turnBack(sim: Sim, u: Unit, e: RoadEdge, o: Obstacle, wf: number): void
   let remainT = (1 - u.segT) * et; for (let k = u.seg + 1; k < rt.edges.length; k++) remainT += edgeTime(city.edges[rt.edges[k]], wf, u.heavy);
   const alt = findRoute(city, A, u.destNode!, wf, -1, u.heavy);
   if (u.state === 'enroute' && u.incidentId !== null) {
+    const br = blockRef(sim, u, e);
     raiseProblem(sim, sim.incidents[u.incidentId], 'ROUTE_BLOCKED', `${u.callsign} 이동 경로(${edgeName(city, e)}) 막힘 — ${o.label}`, {
-      role: 'UNIT', actor: u.callsign, text: `${u.callsign}: ${edgeName(city, e)} — ${josa(o.label, '으로/로')} 지나갈 수 없습니다. 되돌아 우회합니다.`, imp: 2,
-    }, false);
+      role: 'UNIT', actor: u.callsign, text: `${u.callsign}: ${edgeName(city, e)} — ${josa(o.label, '으로/로')} 지나갈 수 없습니다. 되돌아 우회합니다.`, imp: 2, causes: br.causes,
+    }, false, br.ref);
   }
   sim.traffic.stats.detours++; sim.traffic.stats.delaySec += Math.max(0, back + (alt ? alt.time : 0) - remainT);
   // 경로가 없으면 들어온 교차로까지만 되돌아가 기다린다 (아래의 "경로가 끊겨 대기"가 다시 시도한다)
@@ -397,9 +408,12 @@ function arrive(sim: Sim, u: Unit): void {
     }
     const took = sim.t - u.dispatchedAt, est = u.estArrive - u.dispatchedAt;
     if (took > est * 1.35 + 6 && !I.pursuit) {
+      // (I1-b 0단계) 지나온 구간은 여기서 알 수 없다(경로는 이미 지웠다). 이번 출동에서 이 부대가 남긴 마지막 ROUTE_BLOCKED 가 있으면 그것을 원인으로 잇고 구간·막은 사건을 이어받는다 (없으면 혼잡만으로 늦은 것 — 비워 둔다)
+      let rb: Problem | null = null;
+      for (let k = I.problems.length - 1; k >= 0; k--) { const p = I.problems[k]; if (p.code === 'ROUTE_BLOCKED' && p.ref !== undefined && p.ref.unit === u.id && p.t >= u.dispatchedAt) { rb = p; break; } }
       raiseProblem(sim, I, 'TRAFFIC_DELAY', `${u.callsign} 도착이 예상보다 ${fmtSec(took - est)} 지연`, {
-        role: 'UNIT', actor: u.callsign, text: `${u.callsign}: 교통 상황으로 예상보다 ${fmtSec(took - est)} 늦게 도착.`, imp: 1,
-      });
+        role: 'UNIT', actor: u.callsign, text: `${u.callsign}: 교통 상황으로 예상보다 ${fmtSec(took - est)} 늦게 도착.`, imp: 1, causes: rb ? [rb.eventId] : undefined,
+      }, true, rb ? { inc: rb.ref!.inc, unit: u.id, edge: rb.ref!.edge } : { unit: u.id });
     }
     u.state = 'onscene';
     unitArrived(sim, I, u);
@@ -541,9 +555,10 @@ export function tickUnits(sim: Sim): void {
       if ((first.closed && first.known !== false) || (u.heavy && first.noHeavy)) {
         const alt = findRoute(city, u.nodeId, u.destNode!, wf, -1, u.heavy);
         if (alt && u.state === 'enroute' && u.incidentId !== null) {
+          const br = blockRef(sim, u, first);
           raiseProblem(sim, sim.incidents[u.incidentId], 'ROUTE_BLOCKED', `${u.callsign} 이동 경로(${edgeName(city, first)}) 통제`, {
-            role: 'UNIT', actor: u.callsign, text: `${u.callsign}: ${edgeName(city, first)} 통제 확인. 우회 경로로 변경합니다.`, imp: 2,
-          }, false);
+            role: 'UNIT', actor: u.callsign, text: `${u.callsign}: ${edgeName(city, first)} 통제 확인. 우회 경로로 변경합니다.`, imp: 2, causes: br.causes,
+          }, false, br.ref);
         }
         u.route = alt; u.seg = 0; u.segT = 0;
         if (!u.route) continue;      // 길이 끊겼다: 여기서 기다린다 (위의 재시도가 다시 본다)
@@ -576,9 +591,10 @@ export function tickUnits(sim: Sim): void {
         if (alt) {
           const add = Math.max(0, alt.time - remainT);
           if (u.state === 'enroute' && u.incidentId !== null) {
+            const br = blockRef(sim, u, next);
             raiseProblem(sim, sim.incidents[u.incidentId], 'ROUTE_BLOCKED', `${u.callsign} 이동 경로(${edgeName(city, next)}) 통제`, {
-              role: 'UNIT', actor: u.callsign, text: `${u.callsign}: ${edgeName(city, next)} 통제 확인. 우회 경로로 변경합니다 (약 ${fmtSec(add)} 추가).`, imp: 2,
-            }, false);
+              role: 'UNIT', actor: u.callsign, text: `${u.callsign}: ${edgeName(city, next)} 통제 확인. 우회 경로로 변경합니다 (약 ${fmtSec(add)} 추가).`, imp: 2, causes: br.causes,
+            }, false, br.ref);
           }
           u.route = alt; u.seg = 0; u.segT = 0;
         } else { u.route = null; break; }

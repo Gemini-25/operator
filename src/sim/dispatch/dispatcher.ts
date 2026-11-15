@@ -8,7 +8,7 @@ import { mkFact } from '../field/beliefs';
 import { nodeName } from '../city';
 import { crewHasKit, fieldCrew } from '../crews';
 import { coastal, createAidUnit, crewOk, crewReady, dispatchUnit, etaFor, sendUnitTo } from '../resources';
-import type { Claim, Incident, Needs, RadioMsg, Scene, Unit } from '../types';
+import type { Claim, Incident, Needs, Problem, RadioMsg, Scene, Unit } from '../types';
 import { TYPE_NAME, fmtSec, josa } from '../util';
 import { assess, emptyNeeds, needsText, sevName } from './analyst';
 
@@ -173,7 +173,8 @@ function sendUnit(sim: Sim, I: Incident, key: keyof Needs, c: Cand, nearest: Can
     const J = c.divertFrom;
     const k = J.assigned.indexOf(u.id); if (k >= 0) J.assigned.splice(k, 1);
     u.diverted = true;
-    raiseProblem(sim, J, 'DIVERTED', `${josa(u.callsign, '이/가')} 더 긴급한 사건 ${josa(I.code, '으로/로')} 전환 배정`, { role: 'DISPATCH', actor: '배정 AI', imp: 2, text: `${josa(u.callsign, '을/를')} 더 긴급한 사건 ${josa(I.code, '으로/로')} 전환 배정합니다. 사건 ${josa(J.code, '은/는')} 대체 부대를 찾습니다.` }, false);
+    // (I1-b 0단계) 원인 = 받는 사건의 마지막 기록(사건 사이 원인 간선), ref = 받는 사건·부대 — 기록만
+    raiseProblem(sim, J, 'DIVERTED', `${josa(u.callsign, '이/가')} 더 긴급한 사건 ${josa(I.code, '으로/로')} 전환 배정`, { role: 'DISPATCH', actor: '배정 AI', imp: 2, causes: [I.lastEvent], text: `${josa(u.callsign, '을/를')} 더 긴급한 사건 ${josa(I.code, '으로/로')} 전환 배정합니다. 사건 ${josa(J.code, '은/는')} 대체 부대를 찾습니다.` }, false, { inc: I.id, unit: u.id });
     if (!J.fieldVerified) recomputeUnmet(sim, J); else { J.unmet[key] = (J.unmet[key] ?? 0) + 1; J.unmetSince = sim.t; J.noUnitLogged = false; }
   }
   const first = I.firstDispatchAt < 0;
@@ -251,10 +252,11 @@ export function tickDispatch(sim: Sim): void {
     if (blocked.length && !I.noUnitLogged) {
       I.noUnitLogged = true;
       const partial = I.assigned.length > 0;
+      const why = blockersOf(sim, I, blocked);
       raiseProblem(sim, I, 'NO_UNIT', `가용 ${blocked.map((k) => NEED_LABEL[k]).join('·')} 부대 없음`, {
-        role: 'DISPATCH', actor: '배정 AI', imp: 2, causes: [I.lastEvent],
+        role: 'DISPATCH', actor: '배정 AI', imp: 2, causes: [I.lastEvent, ...why.causes],
         text: `사건 ${I.code}: 가용 ${blocked.map((k) => NEED_LABEL[k]).join('·')} 부대가 없습니다. ${partial ? '현재 배정된 부대로 우선 대응하고' : '출동 가능한 부대가 생길 때까지'} 대기열에 올립니다.`,
-      }, false);
+      }, false, why.ref);
     }
     if (!blocked.length && progressed) I.noUnitLogged = false;
     // 인근 도시 지원: 가용 부대가 없어 한참 밀린 수요가 있으면(사건당 한 번, 교대당 정해진 횟수 안에서) 외부 부대를 부른다
@@ -272,6 +274,40 @@ export function tickDispatch(sim: Sim): void {
   }
 }
 const AID_WAIT = 30, AID_DELAY = 18;
+
+/**
+ * (I1-b 0단계) 부족의 귀속 — 기록만(NO_UNIT 의 causes·ref, I.blockedBy). 배정 판단은 이것을 읽지 않는다.
+ * 막힌 수요를 채울 수 있는(능력이 기준 이상인) 지상 부대 가운데 다른 사건에 묶인 것: 그 사건을 I.blockedBy 에, 그 사건의 마지막 출동 지령을 원인에.
+ * 결원으로 운용을 멈춘 부대(oos, 지원 부대 제외): ref.unit 과 그 부대의 운용 중단 기록(문구 규칙 T6)을 원인에 — 그 기록 id 는 어디에도 두지 않으므로
+ * 기록을 끝에서부터 그 부대의 마지막 부상·순직 기록(u.oosEv, H1)까지만 거슬러 찾는다(NO_UNIT 이 날 때만이라 드물다).
+ * 관제가 아는 것만 쓴다: 자기 조직의 부대 상태·배정, 자기가 낸 지령과 받은 운용 중단 보고. export 는 시험용
+ */
+export function blockersOf(sim: Sim, I: Incident, keys: (keyof Needs)[]): { causes: number[]; ref: Problem['ref'] } {
+  const causes: number[] = [];
+  let inc = -1, oos = -1;
+  for (const u of sim.units) {
+    if (u.air || u.sea) continue;
+    let can = false;
+    for (const k of keys) if (u.caps[k] >= MINCAP[k] || (k === 'tactical' && u.caps.law >= MINCAP.law)) { can = true; break; }
+    if (!can) continue;
+    if (u.state === 'oos') {
+      if (u.aid || u.oosEv === undefined || oos >= 0) continue;
+      oos = u.id;
+      let rec = u.oosEv;
+      for (let k = sim.events.length - 1; k > u.oosEv; k--) { const e = sim.events[k]; if (e.kind === 'unit' && e.incidentId < 0 && e.actor === u.callsign && /운용 중단/.test(e.text)) { rec = e.id; break; } }
+      causes.push(rec);
+      continue;
+    }
+    const jid = u.incidentId ?? (u.state === 'transport' || u.state === 'hospital' ? u.patientsIncident : null);
+    if (jid === null || jid === I.id) continue;
+    const J = sim.incidents[jid];
+    if (!I.blockedBy) I.blockedBy = [];
+    if (I.blockedBy.indexOf(J.id) < 0) I.blockedBy.push(J.id);
+    if (inc < 0) inc = J.id;
+    if (J.dispatchLog.length) causes.push(J.dispatchLog[J.dispatchLog.length - 1]);
+  }
+  return { causes, ref: inc >= 0 || oos >= 0 ? { inc: inc >= 0 ? inc : undefined, unit: oos >= 0 ? oos : undefined } : undefined };
+}
 
 /** 관제가 아는 위치가 바뀌었다: 그 사건으로 가는 부대의 목적지를 고친다. */
 export function redirectUnits(sim: Sim, I: Incident): void {

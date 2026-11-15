@@ -12,7 +12,7 @@ import './scenes';
 import { SCENE_RULES } from './sceneRegistry';
 import type { FieldAgent, Incident, MateBelief, Scene, Unit } from '../types';
 import { fmtSec, josa } from '../util';
-import { BeliefStore } from './beliefs';
+import { BeliefStore, mergeHeard } from './beliefs';
 import { briefFacts, flushOutbox, learn, learnQuiet, makeAgent, mateFact } from './agents';
 import { think } from './brain';
 import { outstanding } from './commander';
@@ -109,7 +109,8 @@ function deliverRadio(sim: Sim, s: Scene, I: Incident): void {
       if (b.status !== 'active' && b.status !== 'withdrawn') continue;
       if (m.to >= 0 && b.rid !== m.to) continue;
       if (s.shadow[tileOf(s, b.x, b.y)]) continue;      // 음영 구역의 대원은 듣지 못한다
-      for (const f of m.facts) b.beliefs.merge(BeliefStore.relay(f));
+      if (b.isCommander) for (const f of m.facts) mergeHeard(b.beliefs, BeliefStore.relay(f), m.eventId);      // (I1-b) 지휘관은 사실을 실어 온 무전 기록을 기억한다 (작업 원인 — 기록만)
+      else for (const f of m.facts) b.beliefs.merge(BeliefStore.relay(f));
       if (m.kind === 'rollcall' && b.status === 'active') {
         // 확인 무전: 자기가 알고 있는 상황을 다시 보고한다 (음영 구역에서 지휘관이 놓친 보고를 되살린다). 무전 문구는 남기지 않는다
         for (const f of b.beliefs.all()) if (ROLL_CALL[f.type]) { b.quiet.add(f.key); learn(sim, b, f, true, true); }
@@ -351,7 +352,7 @@ export function tickScene(sim: Sim, s: Scene): void {
   // 6) 사고 현장 도로 통제 반영
   if (s.laneRows.length && I.blockedEdge >= 0 && I.phase !== 'closed') {
     const e = sim.city.edges[I.blockedEdge];
-    if (s.controlDone.every(Boolean) && !e.closed) { e.closed = true; e.closedReason = 'incident'; emit(sim, { inc: I.id, role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 0, text: '사고 구간 전면 통제. 주변 차량은 우회합니다.' }); }
+    if (s.controlDone.every(Boolean) && !e.closed) { e.closed = true; e.closedReason = 'incident'; I.blockEv = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 0, text: '사고 구간 전면 통제. 주변 차량은 우회합니다.' }); }      // (I1-b) 통제 기록 id
   }
   // 7) 한계 시간 / 방치
   const on = onAt(s);      // 지상이든 상공이든 부대가 처음 닿은 때부터 잰다 — 헬기만 떠 있어도 사건은 반드시 끝난다

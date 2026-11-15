@@ -4,10 +4,15 @@ import { PROBLEM_LABEL } from '../src/sim/debrief';
 import { NORMAL, parseDifficulty, parseDisaster } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
+import { blockersOf } from '../src/sim/dispatch/dispatcher';
+import { emit } from '../src/sim/events';
+import { BeliefStore, heardEv, mergeHeard, mkFact } from '../src/sim/field/beliefs';
+import { createIncident } from '../src/sim/incidents';
+import { findRoute } from '../src/sim/city';
 import type { EventKind, Incident, Responder, Role, SimEvent, Unit } from '../src/sim/types';
 import {
   PHRASE, PROBLEM_SYS, Probe, SAMPLE_EVERY, STALL_ALLOW, STALL_SEC, SYSTEMS, causeDepths, causesDepthByIncident, checkC5, checkMetrics,
-  divertAnalysis, eventSystems, formatLines, linkCounts, metricsJson, runWithProbe, shiftMetrics, spreadByIncident, spreadDistinct,
+  divertAnalysis, eventSystems, formatLines, genDropped, linkCounts, metricsJson, runWithProbe, shiftMetrics, spreadByIncident, spreadDistinct,
   spreadGraph, spreadPath, summarize, sysOf, waitState,
 } from '../scripts/metrics';
 import type { MetricsSummary, ShiftMetrics, SysOf } from '../scripts/metrics';
@@ -302,5 +307,203 @@ describe('요약 모양', () => {
     // C5 도 관문이다 (R1 단계 3 부터): 출발 기록의 병원과 인계한 병원이 다르면 실패
     bad.consistency.C5 = 3;
     expect(checkMetrics(bad, { baseline: false }).some((x) => x.startsWith('기록·상태 불일치 C5 3건'))).toBe(true);
+  });
+});
+
+// ───────────────────────── I1-b 0단계 (§3.11): 기록만 잇기 — 결과는 그대로, 원인 간선만 생긴다 ─────────────────────────
+// 결과 불변 자체는 저장소 밖 해시 목록(보통 40·어려움 20·극한 20·재난 다섯 ×3·강제 연쇄 28 — a1fe68a 와 diff 0)으로 확인했다.
+// 여기서는 원인이 실제로 이어졌는지를 본다. 교대는 위에서 이미 돈 것(probedShift)을 다시 쓴다
+describe('I1-b 0단계: 기록만 잇기', () => {
+  it('연쇄 사건의 발생 기록이 원인을 가리킨다 — 방화는 앞 불의 기록, 은신처·재범·도주 차량은 SUSPECT_FLED', () => {
+    // 극한 S1 의 무장 사건 강제 교대에는 달아난 용의자의 재범·도주 차량이 여섯 건 이어진다
+    const cases: [string, Difficulty, string | null, string[]][] = [
+      ['S1', NORMAL, 'fire/arson', ['arson']], ['S0', NORMAL, 'armed/kidnap', ['hideout']], ['S4', NORMAL, null, ['arson']], ['S1', parseDifficulty('extreme')!, 'armed/std', ['reoffend', 'getaway', 'hideout']],
+    ];
+    const seen = new Set<string>();
+    for (const [seed, d, force, csqs] of cases) {
+      const { sim, m } = probedShift(seed, d, force);
+      const kids = sim.incidents.filter((J) => J.parent !== undefined);
+      expect(kids.length, seed).toBeGreaterThan(0);
+      for (const J of kids) {
+        expect(csqs, `${seed} #${J.code}`).toContain(J.csq);
+        seen.add(J.csq!);
+        expect(J.cause).toBeGreaterThanOrEqual(0);
+        expect(sim.events[J.rootEvent].causes).toEqual([J.cause]);
+        const c = sim.events[J.cause!];
+        expect(c.incidentId).toBe(J.parent);
+        if (J.csq !== 'arson') expect(c.problem).toBe('SUSPECT_FLED');
+      }
+      expect(m.crossLinks, seed).toBeGreaterThan(0);
+    }
+    expect(seen.has('reoffend') || seen.has('getaway'), '달아난 용의자의 연쇄').toBe(true);
+    // 연쇄가 아닌 사건에는 원인·연쇄 이름이 없다
+    expect(probedShift('S2').sim.incidents.every((J) => J.cause === undefined && J.csq === undefined)).toBe(true);
+  });
+  it('재난이 일으킨 사건은 마지막 재난 알림을 원인으로 (부모는 두지 않는다) — 세계 → 사건 간선', () => {
+    const { sim, m } = probedShift('S2', QUAKE);
+    const dis = sim.incidents.filter((J) => J.tag?.startsWith('disaster:'));
+    expect(dis.length).toBeGreaterThan(0);
+    for (const J of dis) {
+      expect(J.parent).toBe(undefined);
+      const c = sim.events[J.cause!];
+      expect([c.incidentId, c.kind, sysOf(c)]).toEqual([-1, 'hazard', 'disaster']);
+      expect(sim.events[J.rootEvent].causes).toEqual([J.cause]);
+    }
+    const last = sim.events[sim.disaster!.lastEv];
+    expect([last.kind, last.incidentId]).toEqual(['hazard', -1]);
+    expect(m.worldLinks).toBeGreaterThan(0);
+  });
+  it('전환 배정(DIVERTED)은 받는 사건의 마지막 기록을 원인으로, ref 에 받는 사건·부대 (바로 뒤 출동 지령의 사건과 같다)', () => {
+    let n = 0;
+    for (const seed of ['S0', 'S3', 'S7']) {
+      const { sim } = probedShift(seed);
+      for (const J of sim.incidents) for (const p of J.problems) if (p.code === 'DIVERTED') {
+        n++;
+        const inc = p.ref!.inc!;
+        expect(inc).not.toBe(J.id);
+        expect(sim.units[p.ref!.unit!]).toBeDefined();
+        expect(sim.events[p.eventId].causes.some((c) => sim.events[c].incidentId === inc)).toBe(true);
+        const next = sim.events.find((e) => e.id > p.eventId && e.kind === 'dispatch' && e.role === 'DISPATCH')!;
+        expect(next.incidentId).toBe(inc);
+        expect(next.text.startsWith(`출동 지령: ${sim.units[p.ref!.unit!].callsign} →`)).toBe(true);
+      }
+    }
+    expect(n).toBeGreaterThan(0);
+  });
+  it('부족(NO_UNIT)은 그 능력의 부대를 잡고 있던 사건(blockedBy)과 그 사건의 출동 지령을 원인으로', () => {
+    let withBlk = 0;
+    for (const seed of ['S0', 'S3', 'S7']) {
+      const { sim } = probedShift(seed);
+      for (const I of sim.incidents) {
+        expect(I.blockedBy?.includes(I.id) ?? false).toBe(false);
+        for (const p of I.problems) if (p.code === 'NO_UNIT' && p.ref?.inc !== undefined) {
+          withBlk++;
+          expect(I.blockedBy).toContain(p.ref.inc);
+          const cs = sim.events[p.eventId].causes.map((c) => sim.events[c]);
+          expect(cs.some((e) => e.kind === 'dispatch' && I.blockedBy!.includes(e.incidentId))).toBe(true);
+        }
+      }
+    }
+    expect(withBlk).toBeGreaterThan(0);
+  });
+  it('결원으로 운용을 멈춘 부대: ref.unit 과 그 부대의 운용 중단 기록(T6)이 부족의 원인 (blockersOf)', () => {
+    const s = new Sim('S1', NORMAL, 1200);
+    for (let k = 0; k < 5; k++) s.step();
+    const ems = s.units.filter((u) => u.dept === 'ems' && !u.air && !u.sea);
+    const [e1, ...rest] = ems;
+    expect(rest.length).toBeGreaterThan(0);
+    // e1: 대원 전원 순직 뒤 복귀 → 실제 코드(resources.arrive)가 운용 중단 기록을 남긴다. oosEv(마지막 부상·순직 기록, H1)는 시험에서 정해 둔다
+    e1.oosEv = 0;
+    for (const rid of e1.crew) { const r = s.responders[rid]; r.status = 'down'; r.dead = true; r.health = 0; }
+    e1.state = 'returning'; e1.destNode = e1.homeNode;
+    s.step();
+    expect(e1.state).toBe('oos');
+    const rec = s.events.find((e) => PHRASE.T6.test(e.text) && e.actor === e1.callsign)!;
+    expect(rec.causes).toEqual([0]);
+    const I = createIncident(s, { type: 'medical' }), J = createIncident(s, { type: 'fire' });
+    const order = emit(s, { inc: J.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', text: '출동 지령: 시험' });
+    J.dispatchLog.push(order);
+    for (const u of rest) { u.incidentId = J.id; u.state = 'enroute'; }
+    const why = blockersOf(s, I, ['ems']);
+    expect(I.blockedBy).toEqual([J.id]);
+    expect(why.ref).toEqual({ inc: J.id, unit: e1.id });
+    expect(why.causes).toContain(order);
+    expect(why.causes).toContain(rec.id);
+  });
+  it('통제를 만난 출동(ROUTE_BLOCKED)은 막은 사건의 통제 기록을, 늦은 도착(TRAFFIC_DELAY)은 그 ROUTE_BLOCKED 를 원인으로', () => {
+    // 평소 교대에서는 대개 자기 사건의 통제를 만난다(알려진 통제는 경로가 처음부터 피한다 — 사건 사이의 경우는 아래 시험이 만든다)
+    let own = 0, td = 0;
+    for (const seed of ['S0', 'S1', 'S3']) {
+      const { sim } = probedShift(seed);
+      for (const I of sim.incidents) for (const p of I.problems) {
+        if (p.code === 'ROUTE_BLOCKED') {
+          expect(sim.units[p.ref!.unit!]).toBeDefined();
+          expect(p.ref!.edge).toBeGreaterThanOrEqual(0);
+          if (p.ref!.inc !== undefined) {
+            const J = sim.incidents[p.ref!.inc];
+            expect(J.blockedEdge).toBe(p.ref!.edge);
+            expect(sim.events[J.blockEv!].kind).toBe('traffic');
+            expect(sim.events[p.eventId].causes).toContain(J.blockEv);
+            own++;
+          }
+        }
+        if (p.code === 'TRAFFIC_DELAY') {
+          const cs = sim.events[p.eventId].causes;
+          if (!cs.length) continue;
+          td++;
+          const rb = I.problems.find((q) => q.eventId === cs[0])!;
+          expect(rb.code).toBe('ROUTE_BLOCKED');
+          expect([rb.ref!.unit, rb.ref!.edge, rb.ref!.inc]).toEqual([p.ref!.unit, p.ref!.edge, p.ref!.inc]);
+        }
+      }
+    }
+    expect(own, '사건의 통제를 만난 출동').toBeGreaterThan(0);
+    expect(td, 'ROUTE_BLOCKED 를 이어받은 TRAFFIC_DELAY').toBeGreaterThan(0);
+  });
+  it('다른 사건이 막은 구간: 출동 중인 부대의 ROUTE_BLOCKED 가 그 사건과 통제 기록을 가리킨다 (만든 상황 — 사건 사이 간선)', () => {
+    const s = new Sim('S0', NORMAL, 1200);
+    let u: Unit | undefined;
+    while (!u && s.t < 600) {
+      s.step();
+      u = s.units.find((q) => q.state === 'enroute' && !q.air && !q.sea && q.incidentId !== null && q.pendingDest === null && q.route !== null && q.route.edges.length - q.seg >= 3
+        && findRoute(s.city, s.city.edges[q.route.edges[q.seg + 1]].a, s.city.edges[q.route.edges[q.seg + 1]].b, 1, q.route.edges[q.seg + 1]) !== null);
+    }
+    expect(u).toBeDefined();
+    const e = s.city.edges[u!.route!.edges[u!.seg + 1]];
+    // 다른 사건 J 가 부대의 다음 다음 구간을 막는다 (sceneManager 6) 블록의 전면 통제와 같은 상태·같은 기록)
+    const J = createIncident(s, { type: 'medical' });
+    J.blockedEdge = e.id; e.closed = true; e.closedReason = 'incident';
+    J.blockEv = emit(s, { inc: J.id, role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 0, text: '시험 구간 전면 통제.' });
+    const I = s.incidents[u!.incidentId!], before = I.problems.length;
+    for (let k = 0; k < 1500 && !I.problems.slice(before).some((p) => p.code === 'ROUTE_BLOCKED'); k++) s.step();
+    const p = I.problems.slice(before).find((q) => q.code === 'ROUTE_BLOCKED')!;
+    expect(p).toBeDefined();
+    expect(p.ref).toEqual({ inc: J.id, unit: u!.id, edge: e.id });
+    expect(s.events[p.eventId].causes).toContain(J.blockEv);
+    expect(linkCounts(s.events, s.events.map(sysOf)).cross).toBeGreaterThan(0);
+  });
+  it('버린 예약은 gen.dropped 에만 남는다 — 교대 끝 150초 안(late)·열린 사건이 많을 때(busy). 기록은 남기지 않는다', () => {
+    const late = new Sim('S2', NORMAL, 200);
+    late.gen.chain.push({ at: 60, opts: { type: 'fire', note: '시험 예약' } });
+    while (late.t < 62) late.step();
+    expect(late.gen.dropped.length).toBe(1);
+    expect(late.gen.dropped[0]).toMatchObject({ why: 'late', type: 'fire' });
+    expect(late.events.some((e) => e.text.startsWith('시험 예약'))).toBe(false);
+    expect(genDropped(late)).toBe(1);
+    const busy = new Sim('S2', NORMAL, 1200);
+    busy.tune.maxConcurrent = -1;
+    busy.gen.chain.push({ at: 1, opts: { type: 'medical', parent: 0, note: '시험 예약' } });
+    while (busy.t < 2) busy.step();
+    expect(busy.gen.dropped).toEqual([{ t: busy.gen.dropped[0].t, why: 'busy', type: 'medical', variant: undefined, parent: 0 }]);
+    expect(busy.events.some((e) => e.text.startsWith('시험 예약'))).toBe(false);
+    // 측정 도구의 dropped 는 이 배열의 길이다 (표본의 근사는 droppedApprox)
+    const m = probedShift('S1').m;
+    expect(m.dropped).toBe(genDropped(probedShift('S1').sim));
+  });
+  it('지휘관의 지시는 그 일을 낳은 사실을 실어 온 무전 기록을 원인으로 (want 의 cause → 지시 무전의 causes)', () => {
+    const { sim } = probedShift('S0');
+    let n = 0;
+    for (const I of sim.incidents) {
+      const s = sim.scenes[I.id];
+      if (!s) continue;
+      for (const w of s.board) if (w.cause >= 0) {
+        n++;
+        const ce = sim.events[w.cause];
+        expect(ce.kind).toBe('radio');
+        expect(ce.incidentId).toBe(I.id);
+        expect(ce.t).toBeLessThanOrEqual(w.createdAt);
+      }
+    }
+    expect(n).toBeGreaterThan(0);
+    expect(sim.events.some((e) => e.kind === 'command' && e.role === 'COMMANDER' && e.causes.some((c) => sim.events[c].kind === 'radio'))).toBe(true);
+    // mergeHeard: 실제로 저장된 사실만 그 무전을 기억한다 (더 오래된 소식은 합쳐지지 않으므로 앞의 기록이 남는다)
+    const B = new BeliefStore();
+    mergeHeard(B, mkFact('evid', 3, { kind: 'witness', done: false }, '시험', 10, 0.9, true, '목격자'), 7);
+    expect(heardEv(B.get('evid', 3))).toBe(7);
+    mergeHeard(B, mkFact('evid', 3, { kind: 'witness', done: true }, '시험', 5, 0.9, true, '목격자'), 9);
+    expect(heardEv(B.get('evid', 3))).toBe(7);
+    B.merge(mkFact('evid', 3, { kind: 'witness', done: true }, '시험', 20, 0.9, true, '목격자'));      // 직접 본 새 소식: 무전이 아니다
+    expect(heardEv(B.get('evid', 3))).toBe(-1);
+    expect(heardEv(undefined)).toBe(-1);
   });
 });

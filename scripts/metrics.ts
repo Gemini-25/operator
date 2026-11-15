@@ -559,7 +559,8 @@ export interface ShiftMetrics {
   seed: string; sampled: boolean; probeErrors: number;
   incidents: IncRow[];
   chained: number; maxParentDepth: number;
-  dropped: number | null; disasterSkipped: number | null; disasterCleared: number | null;
+  /** 버린 예약: I1-b 0단계 뒤에는 sim.gen.dropped 의 길이(정확한 값 — 표본 없이도 낸다), 그 칸이 없는 옛 코드에서는 표본의 근사 */
+  dropped: number | null; droppedApprox: number | null; disasterSkipped: number | null; disasterCleared: number | null;
   crossLinks: number; worldLinks: number; spreadWorld: number; spreadWorldRaw: number;
   aidUsed: number; peakOpen: number; peakBusy: number | null;
   divert: DivertRow[]; erWaits: number; erCross: number | null;
@@ -580,6 +581,12 @@ function evLabel(sim: Sim, e: SimEvent, sys: SysOf, texts: boolean): string {
 }
 
 /** 교대 하나. probe 가 없거나 실패했으면 표본 항목은 null */
+/** 버린 예약의 수 (I1-b 0단계의 sim.gen.dropped). 칸이 없으면(그 전의 코드) null — 칸이 없을 때도 컴파일되게 읽는다 */
+export function genDropped(sim: Sim): number | null {
+  const d = (sim.gen as { dropped?: unknown[] }).dropped;
+  return Array.isArray(d) ? d.length : null;
+}
+
 export function shiftMetrics(sim: Sim, probe: Probe | null, opts: { texts?: boolean } = {}): ShiftMetrics {
   const P = probe && !probe.failed ? probe : null;
   const events = sim.events, incs = sim.incidents, nInc = incs.length;
@@ -755,7 +762,7 @@ export function shiftMetrics(sim: Sim, probe: Probe | null, opts: { texts?: bool
   return {
     seed: sim.seed, sampled: !!P, probeErrors: probe ? probe.errors : 0,
     incidents: rows, chained, maxParentDepth,
-    dropped: P ? P.dropped : null, disasterSkipped: P ? P.disasterSkipped : null, disasterCleared: P ? P.disasterCleared : null,
+    dropped: genDropped(sim) ?? (P ? P.dropped : null), droppedApprox: P ? P.dropped : null, disasterSkipped: P ? P.disasterSkipped : null, disasterCleared: P ? P.disasterCleared : null,
     crossLinks: links.cross, worldLinks: links.world, spreadWorld: sp.world.distinct, spreadWorldRaw: sp.world.raw,
     aidUsed: sim.aidUsed, peakOpen, peakBusy: P ? P.peakBusy : null,
     divert: dv.rows, erWaits, erCross: P ? P.erCross : null,
@@ -781,7 +788,7 @@ export interface MetricsSummary {
   errors: number; shifts: number; incidents: number;
   chain: {
     parentDepth: Record<string, number>; maxParentDepth: number; chained: number; chainedPerShift: number; maxChainedInShift: number;
-    rooted: Record<string, number>; dropped: number | null; disasterSkipped: number | null; disasterCleared: number | null;
+    rooted: Record<string, number>; dropped: number | null; droppedApprox: number | null; disasterSkipped: number | null; disasterCleared: number | null;
     causesDepth: { avg: number; max: number; hist: Record<string, number> }; crossIncidentLinks: number; worldLinks: number;
   };
   systems: { avg: number; extraAvg: number; share: Record<string, number>; spread: { hist: Record<string, number>; max: number; ge3: number; rawMax: number; rawGe3: number; world: number; examples: string[] } };
@@ -827,7 +834,7 @@ export function summarize(list: readonly (ShiftMetrics | null)[]): MetricsSummar
   const chain = {
     parentDepth, maxParentDepth: Math.max(0, ...shifts.map((m) => m.maxParentDepth)),
     chained: shifts.reduce((a, m) => a + m.chained, 0), chainedPerShift: r2(avgOf(shifts.map((m) => m.chained))), maxChainedInShift: Math.max(0, ...shifts.map((m) => m.chained)),
-    rooted, dropped: sumN((m) => m.dropped), disasterSkipped: sumN((m) => m.disasterSkipped), disasterCleared: sumN((m) => m.disasterCleared),
+    rooted, dropped: shifts.some((m) => m.dropped !== null) ? shifts.reduce((a, m) => a + (m.dropped ?? 0), 0) : null, droppedApprox: sumN((m) => m.droppedApprox), disasterSkipped: sumN((m) => m.disasterSkipped), disasterCleared: sumN((m) => m.disasterCleared),
     causesDepth: { avg: r2(cdSum / Math.max(1, all.length)), max: cdMax, hist: cdHist },
     crossIncidentLinks: shifts.reduce((a, m) => a + m.crossLinks, 0), worldLinks: shifts.reduce((a, m) => a + m.worldLinks, 0),
   };
@@ -960,7 +967,7 @@ export function formatLines(m: MetricsSummary, verbose: boolean): string[] {
   const c = m.chain, pdh = c.parentDepth;
   const rootedN = Object.entries(c.rooted).reduce((a, [k, v]) => a + (Number(k) >= 1 ? v : 0), 0);
   const rootedMax = Math.max(0, ...Object.keys(c.rooted).map(Number));
-  out.push(`chain: parent depth 0:${pdh['0']} 1:${pdh['1']} 2:${pdh['2']} 3+:${pdh['3+']} (max ${c.maxParentDepth}, chained ${c.chainedPerShift.toFixed(2)}/shift, max/shift ${c.maxChainedInShift}, dropped ${na(c.dropped)}, disaster skipped ${na(c.disasterSkipped)} cleared ${na(c.disasterCleared)}) · rooted 1+:${rootedN} (max ${rootedMax}) · causes depth avg ${c.causesDepth.avg} max ${c.causesDepth.max} · cross-incident links ${c.crossIncidentLinks} · world links ${c.worldLinks}`);
+  out.push(`chain: parent depth 0:${pdh['0']} 1:${pdh['1']} 2:${pdh['2']} 3+:${pdh['3+']} (max ${c.maxParentDepth}, chained ${c.chainedPerShift.toFixed(2)}/shift, max/shift ${c.maxChainedInShift}, dropped ${na(c.dropped)}${c.droppedApprox !== null && c.droppedApprox !== c.dropped ? ` (approx ${c.droppedApprox})` : ''}, disaster skipped ${na(c.disasterSkipped)} cleared ${na(c.disasterCleared)}) · rooted 1+:${rootedN} (max ${rootedMax}) · causes depth avg ${c.causesDepth.avg} max ${c.causesDepth.max} · cross-incident links ${c.crossIncidentLinks} · world links ${c.worldLinks}`);
   const sy = m.systems;
   const order = SYSTEMS.filter((x) => !BASE.has(x)).slice().sort((a, b) => (sy.share[b] ?? 0) - (sy.share[a] ?? 0) || SYSTEMS.indexOf(a) - SYSTEMS.indexOf(b));
   const hist = Object.keys(sy.spread.hist).map(Number).sort((a, b) => a - b).map((k) => `${k}:${sy.spread.hist[String(k)]}`).join(' ');

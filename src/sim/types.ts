@@ -845,3 +845,17 @@ export interface ShiftReport {
   catastrophe?: { burnouts: number; totals: number; partials: number; explosions: number; withdrawals: number; averted: number; crewCaught: number };
   placeMarks?: PlaceMark[];
 }
+
+// ───────────────────────── 인과 기록 (I1-b 0단계 — 기록만 잇는다) ─────────────────────────
+// 있는 자료형에 더하는 칸 — 모두 선택 칸이다(X6 와 같은 인터페이스 합치기). 시뮬레이션의 판단은 이 칸들을 읽지 않는다:
+// 기록(causes)·보고서·측정 도구(scripts/metrics.ts)만 읽는다. 그래서 채워도 결과(logHash)가 바뀌지 않는다 (docs/specs/I1-causality.md §3.11 0단계).
+// 객체 모양: Incident 의 네 칸은 incidents.createIncident 의 리터럴에, Problem.ref 는 events.raiseProblem·debrief.addProblem·agents 의 LATE_DISCOVERY 리터럴에 undefined 로 넣었다.
+export interface Incident {
+  cause?: number;              // 이 사건을 낳은 기록 (발생 기록의 causes 에 들어간다) — 재범·도주 차량·은신처는 SUSPECT_FLED, 방화는 앞 불의 마지막 기록, 재난 사건은 마지막 재난 알림
+  csq?: string;                // 이 사건을 만든 연쇄 ('reoffend' · 'getaway' · 'hideout' · 'arson'). I1-b b3 부터 인과 규칙의 id 도 여기에 ('blastSpread' …)
+  blockedBy?: number[];        // 수요를 막은 사건들 (NO_UNIT 때 그 능력의 부대를 잡고 있던 사건, 처음 막힌 차례부터 쌓는다)
+  blockEv?: number;            // 이 사건이 도로를 막을 때 남긴 통제 기록 (교통사고 전면 통제·쓰러진 나무·다중 추돌·산사태). 다른 사건의 ROUTE_BLOCKED 가 원인으로 가리킨다
+}
+export interface Problem {
+  ref?: { inc?: number; unit?: number; edge?: number; fac?: number; lost?: number };    // 관련 사건·부대·구간·병원, 늘어난 초 (lost 는 b3-1 의 C6 이 채운다)
+}

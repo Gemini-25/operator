@@ -61,6 +61,8 @@ export interface DisasterState {
   // ── 해일 ──
   hit?: number[];                // 물이 덮친 대피 현장 (사건 id). rules/disaster.ts 가 채운다
   swept?: number;                // 물에 휩쓸린 사람 수
+  // ── 인과 기록 (I1-b) ──
+  lastEv: number;                // 마지막 재난 알림 기록 (-1). 재난이 일으킨 사건의 발생 기록이 원인으로 가리킨다 — 판단은 읽지 않는다
 }
 
 /** 재난 하나가 일으키는 사건 수의 상한 */
@@ -87,6 +89,7 @@ function plan(sim: Sim, kind: DisasterKind, rng: Rng): DisasterState {
   const d: DisasterState = {
     kind, name: DISASTER_NAME[kind], phase: 'calm', tWarn: 0, tImpact: 0, tEnd: 0, intensity: 0, rng,
     spawned: [], closedEdges: [], nextAt: Infinity, log: [], closedTotal: 0, queue: [], timed: [], done: {},
+    lastEv: -1,
   };
   if (kind === 'typhoon') { d.tWarn = L * rng.range(0.1, 0.18); d.tImpact = d.tWarn + rng.range(90, 120); d.tEnd = d.tImpact + 420; }
   else if (kind === 'flood') {
@@ -132,10 +135,12 @@ function plan(sim: Sim, kind: DisasterKind, rng: Rng): DisasterState {
 
 const has = (t: IncidentType, v: string): boolean => !!scenarioOf(t, v);
 
-/** 재난안전본부·기상청의 알림. 보고서에 남길 일이면 d.log 에도 적는다 */
-function tell(sim: Sim, d: DisasterState, text: string, actor = '재난안전본부', log = true): void {
-  emit(sim, { role: 'SYSTEM', actor, kind: 'hazard', imp: 3, text });
+/** 재난안전본부·기상청의 알림. 보고서에 남길 일이면 d.log 에도 적는다. 그 기록 id 를 돌려주고 d.lastEv 에 둔다 (I1-b — 재난 사건의 원인) */
+function tell(sim: Sim, d: DisasterState, text: string, actor = '재난안전본부', log = true): number {
+  const ev = emit(sim, { role: 'SYSTEM', actor, kind: 'hazard', imp: 3, text });
+  d.lastEv = ev;
   if (log) d.log.push({ t: sim.t, text });
+  return ev;
 }
 
 function openCount(sim: Sim): number { let n = 0; for (const I of sim.incidents) if (I.phase !== 'closed') n++; return n; }
@@ -146,7 +151,7 @@ function canSpawn(sim: Sim, d: DisasterState): boolean {
 /** 사건을 일으킨다. 상한에 걸리면 그 차례를 건너뛴다(null). */
 function spawn(sim: Sim, d: DisasterState, opts: SpawnOpts): Incident | null {
   if (!canSpawn(sim, d)) return null;
-  const I = createIncident(sim, { ...opts, tag: 'disaster:' + d.kind, rng: d.rng });
+  const I = createIncident(sim, { ...opts, tag: 'disaster:' + d.kind, rng: d.rng, cause: d.lastEv >= 0 ? d.lastEv : undefined });      // (I1-b) 원인 = 마지막 재난 알림 (부모는 두지 않는다 — 재난은 사건이 아니다)
   d.spawned.push(I.id);
   return I;
 }

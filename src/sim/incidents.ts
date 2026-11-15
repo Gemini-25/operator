@@ -119,6 +119,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
     firstDispatchAt: -1, firstArrivalAt: -1, closedAt: -1, fieldVerified: false, fieldType: null, priority: 1,
     problems: [], result: null, lastEvent: -1, rootEvent: -1, callEvents: [], callsCount: 0, closeReason: '', interest: 0,
     blockedEdge: -1, followupAt: Infinity, firstCallAt: 0, firstAssess: null, fieldNeedsSeen: 0, dispatchLog: [],
+    methods: undefined,      // (R2) 방법을 쓴 기록 — 처음 남길 때 배열이 된다 (methodRun.recordMethod)
     reportedNode: node.id, addressFixed: false,
     pursuit: undefined, tag: undefined, parent: undefined, aidUnit: undefined, coResp: undefined,      // 나중에 붙는 칸을 미리 비워 둔다 (모든 사건이 같은 모양)
     airDone: undefined,      // (R1) "상공 임무 종료"로 풀려난 헬기 종류 — 쓰는 것은 단계 5 부터

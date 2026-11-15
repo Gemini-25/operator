@@ -2107,7 +2107,9 @@ describe('⑭ 소모와 고장', () => {
 
   it('고장 추첨: 추첨을 받는 장비만, 장비 손잡이가 낮을수록 많이 고장 난다. 같은 교대는 같은 고장이고, 지원 부대는 자기 흐름에서 뽑는다', () => {
     const faults = (sim: Sim): string[] => { const out: string[] = []; for (const r of sim.responders) for (const it of r.kit!) if (it.fault) out.push(r.name + ':' + it.id); return out; };
-    expect((Object.keys(KITS) as KitId[]).filter((id) => KITS[id].faultable).sort()).toEqual(['aed', 'robot', 'searchKit', 'searchlight', 'spreader', 'taser', 'tic']);
+    expect((Object.keys(KITS) as KitId[]).filter((id) => KITS[id].faultable && !KITS[id].batch).sort()).toEqual(['aed', 'robot', 'searchKit', 'searchlight', 'spreader', 'taser', 'tic']);
+    // (R2) 대응 방법의 고장 나는 장비는 따로 뽑는 묶음이다 — 교대 흐름 kit 의 추첨 순서에 끼지 않는다 (R2 §3.3. 단계 0 에는 어느 역할도 들지 않는다)
+    expect((Object.keys(KITS) as KitId[]).filter((id) => KITS[id].faultable && KITS[id].batch === 'r2').sort()).toEqual(['airbag', 'fan', 'raft']);
     expect([1, 2, 3, 4, 5].map((eq) => new Sim('KIT', { ...NORMAL, equipment: eq }).tune.kitFault)).toEqual([0.12, 0.07, 0.03, 0.015, 0.005]);
     let low = 0, mid = 0, high = 0;
     for (let k = 1; k <= 30; k++) {

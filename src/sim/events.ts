@@ -35,7 +35,7 @@ export function emit(sim: Sim, a: EmitArgs): number {
 export function raiseProblem(sim: Sim, I: Incident, code: ProblemCode, detail: string, a: Omit<EmitArgs, 'kind' | 'problem' | 'inc'>, dedupe = true): number {
   const ev = emit(sim, { ...a, inc: I.id, kind: 'problem', problem: code, imp: a.imp ?? 2 });
   if (!dedupe || !I.problems.some((p) => p.code === code && !p.recovered)) {
-    I.problems.push({ code, t: sim.t, eventId: ev, detail, recovered: false, recoveryText: '' });
+    I.problems.push({ code, t: sim.t, eventId: ev, detail, recovered: false, recoveryText: '', times: undefined });      // times: (R2) METHOD_FAIL 이 같은 대상에서 되풀이된 횟수
   }
   return ev;
 }

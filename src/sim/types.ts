@@ -114,6 +114,7 @@ export type KitId =
   | 'bag' | 'alsBag' | 'doctorKit' | 'aed' | 'stretcher' | 'spineBoard'
   | 'pistol' | 'rifle' | 'sniper' | 'taser' | 'flashbang' | 'vest' | 'plate' | 'shield' | 'bombSuit' | 'eodKit' | 'robot' | 'megaphone' | 'baton'
   | 'flir' | 'searchlight'
+  | 'pole' | 'pfd' | 'drysuit' | 'raft' | 'extinguisher' | 'fan' | 'airbag' | 'shoring' | 'beanbag'      // (R2 §3.3) 갈고리 장대·구명조끼·드라이슈트·고무보트·소화기·송풍기·에어백·지지대·비살상탄 발사기 — 표(KITS)에만 있고 역할에는 단계 1a~5 가 붙인다
   | 'charge';            // 폭파 장약 — R1 은 들려 두기만 한다. 쓰는 것은 R2 §4.2a (사용자 결정 2026-11-15)
 /** 대원 한 사람이 든 장비 하나 */
 export interface KitItem {
@@ -528,6 +529,7 @@ export interface Assessment {
 export type ProblemCode =
   | 'DANGER_SIGN' | 'WITHDRAWAL' | 'STRUCT_COLLAPSE' | 'EXPLOSION' | 'BURNOUT'      // (X6) 위험 조짐(막으면 복구) · 전원 철수(다시 들어가면 복구) · 구조물 붕괴 · 폭발(지휘관이 몰랐던 위험이면 HIDDEN_HAZARD) · 건물 전소
   | 'CALL_QUEUE' | 'CALL_MISINFO' | 'CALL_VAGUE' | 'MISJUDGE_TYPE' | 'UNDERESTIMATE' | 'OVERESTIMATE'
+  | 'METHOD_FAIL'      // (R2) 대응 방법이 실패해 다른 방법으로 바꿨다 (같은 대상에서 되풀이되면 Problem.times 만 는다)
   | 'NO_UNIT' | 'UNDER_DISPATCH' | 'DIVERTED' | 'ROUTE_BLOCKED' | 'TRAFFIC_DELAY'
   | 'PATH_BLOCKED' | 'VICTIM_MISSED' | 'EQUIP_FAIL' | 'WATER_OUT' | 'RESPONDER_HURT' | 'COMM_FAIL'
   | 'ESCALATION' | 'BACKUP_LATE' | 'SCENE_MISMATCH' | 'SUSPECT_FLED' | 'SECONDARY_COLLISION' | 'LATE_DISCOVERY'
@@ -648,6 +650,80 @@ export interface ShiftReport {
 export interface FallRecord {
   t: number; x: number; y: number; r: number; region: number;
   cause: 'zone' | 'secondary' | 'ceiling'      // 마지막 줄에 둔다 — X6 가 끝에 새 줄로 | 'partial' | 'total' 을 덧붙인다
+}
+
+// ───────────────────────── 대응 방법 (R2) ─────────────────────────
+/** 같은 임무를 이루는 여러 방법. 내용(조건·속도·위험·문구)은 field/methods.ts 의 METHOD 표 */
+export type MethodId =
+  | 'hand' | 'pole' | 'ring' | 'rope' | 'improvise' | 'catch' | 'swim' | 'tend' | 'boat' | 'hoist'   // 수난 구조 (waterRescue · hoist 는 R1 의 공중 임무)
+  | 'kick' | 'irons' | 'ram' | 'hydraulic' | 'handClear' | 'toolClear' | 'charge'                      // 문·통로 (force·clear, 이동 중 하위 작업). charge = 폭파 진입 (사용자 결정 2026-11-15 — G5 BreachHow 'charge' 와 같은 이름)
+  | 'manual' | 'basic' | 'spread' | 'roof' | 'rapid' | 'haul' | 'tunnel' | 'airbag' | 'shore'          // 구출 (extricate)
+  | 'call' | 'listen' | 'line' | 'hail' | 'thermal'                                                     // 수색·탐지 (search)
+  | 'interior' | 'defensive' | 'aerial' | 'extinguisher' | 'ventilate'                                  // 화재 (suppress)
+  | 'chase' | 'breach' | 'bang' | 'tackle' | 'cover' | 'taser' | 'shield' | 'beanbag' | 'sniper'       // 무장 (engage · arrest)
+  | 'stay' | 'rush' | 'airlift'                                                                         // 응급 (treat · 이송 수단)
+  | 'seal' | 'ventFirst' | 'cordon' | 'announce'                                                        // 누출 조치·통제 (mitigate · perimeter)
+  | 'air' | 'drone' | 'dog';                                                                            // 야외 수색 (기록 전용·7단계)
+/** 왜 이 방법을 골랐는가 (기록 문구·보고서 문장이 쓴다). usual = 평소 선택(교본 줄과 무관) */
+export type MethodWhy = 'usual' | 'near' | 'noGear' | 'tooFar' | 'weak' | 'fast' | 'failed' | 'broken' | 'danger' | 'quiet' | 'team';      // R3 가 이 줄 끝에 상태 까닭 여섯을 더한다 (R3 §2.1·§3.7)
+/** 방법을 쓴 기록 한 줄 (보고서는 이것과 Problem 으로만 방법을 말한다). field/methodRun.ts 의 recordMethod·recordAir 만 만든다 */
+export interface MethodUse {
+  t0: number;                                     // 이 방법을 시작한 시각 (구출 시간 = t − t0)
+  t: number; rid: number; unitId: number; work: WorkKind; method: MethodId; why: MethodWhy;
+  ok: boolean;                                    // true = 이 방법으로 끝냈다, false = 이 방법을 접었다 (실패·고장·조건 상실)
+  cas: number; prop: number; hostile: number; region: number; tile: number;   // 대상 (없으면 -1). 문·잔해 하위 작업은 tile 과 prop = s.propAt[tile], work = 하위 작업의 kind
+  missing?: KitId;                                // why === 'noGear' 일 때 빠진 장비 (보고서 '…이 없었음')
+  eventId: number;                                // 그때 남긴 기록 (접은 줄이면 그 문제 기록)
+}
+// (R2) 있는 자료형에 더하는 칸 — 모두 선택 칸이다. 인터페이스 합치기로 여기 한곳에 모았다 (X6 블록·G5 의 Fx.c 와 같은 방식).
+// 객체 모양: 생성 리터럴에도 undefined 로 넣었다 — Task 는 executor.makeTask, FieldAgent 는 agents.makeAgent, Casualty 는 kit.addCas 와 hazards 의 주변 시민,
+// Hostile 은 kit.addHostile, Scene 은 kit.baseScene, Incident 는 incidents.createIncident, Problem 은 events.raiseProblem.
+// TaskKind 의 'ashore'(물 위의 대원이 뭍으로 돌아간다)는 그것을 쓰는 단계 1b 가 넣는다 (TaskKind 줄이 WorkKind 의 끝 줄과 맞닿아 있다 — H1 이 그 끝에 줄을 더한다).
+export interface Task {
+  method?: MethodId; mwhy?: MethodWhy; missing?: KitId;   // 지금 쓰는 방법, 고른 까닭, (noGear 면) 빠진 장비
+  tried?: MethodId[];                             // 이 임무에서 접은 방법 (다시 고르지 않는다. 모두 접었으면 비운다)
+  entryDoor?: number;                             // engage: 방 진입에서 잠긴 문을 여는 중인 그 문 id (§4.2a — 단계 2)
+  mtry?: number;                                  // 지금 방법을 시도한 횟수 (투척이 빗나간 횟수 등)
+  mbad?: number;                                  // 고른 방법의 조건이 맞지 않은 지 몇 초 (3초면 바꾼다)
+  mt0?: number;                                   // 지금 방법을 시작한 시각 (MethodUse.t0)
+  marr?: boolean;                                 // 도착 재선택을 이미 했다
+  mcands?: { m: MethodId; score: number }[];      // 고를 때의 후보와 점수 (패널이 보여 준다)
+}
+export interface FieldAgent {
+  afloat?: 'boat';                                // 보트에 타고 있다 (헤엄은 "선 칸이 물" 로 판단하므로 칸이 없다)
+  mrng?: Rng;                                     // 방법 판정 난수 method:<사건>:<rid>:<k> (처음 쓸 때 만든다 — methodRun.mrng)
+  mfail?: { k: string; m: MethodId; until: number }[];   // 접은 방법의 기억 (대상 열쇠 targetKey, 그 시각까지 다시 고르지 않는다. 고장은 Infinity)
+  msaid?: MethodId[];                             // 이 사건에서 시작을 알린 탐지 방법 (한 번만 알린다)
+  wetSince?: number;                              // 물 칸에 들어간 시각 (뭍이면 undefined)
+  wetTired?: boolean;                             // 이번에 물에 들어가 '지침' 사고를 이미 겪었다
+}
+export interface Casualty {
+  freedHow?: MethodId; freedBy?: number;          // 어떤 방법으로 누가 구했는가 (보고서 타임라인)
+  rush?: boolean;                                 // 구급 대원이 즉시 이송을 정했다
+}
+export interface CasBelief {                      // perceive 가 본 것 — casFact 가 채운다 (water·drift 는 단계 1a, veh·pit 는 3, rush 는 6)
+  water?: boolean;                                // 물속
+  drift?: number;                                 // 떠내려가는 속도 (본 그대로)
+  veh?: number;                                   // 갇힌 차량 소품의 id (차 안이 아니면 없음) — 같은 차의 고립자 세기
+  pit?: boolean;                                  // 구덩이(맨홀) 아래 — 줄로 끌어올려야 한다
+  rush?: boolean;
+}
+export interface Hostile {
+  stunHow?: MethodId;                             // 마지막으로 무력화한 수단 ('bang'·'taser'·'beanbag') — 검거 기록이 쓴다
+}
+export interface Problem {
+  times?: number;                                 // 같은 작업·같은 대상에서 되풀이된 횟수 (METHOD_FAIL 만, 없으면 1)
+}
+export interface Scene {
+  flow?: number;                                  // 물살 (칸/초). field/rules/methods.ts 가 관리한다
+  quay?: boolean;                                 // 물가가 높은 안벽이다 (선박 화재의 부두). field/rules/methods.ts 가 처음 한 번 정한다
+  fan?: { x: number; y: number; until: number; rid: number; power: number } | null;   // 돌고 있는 송풍기 (power 1, 맨몸 환기 0.5)
+}
+export interface Incident {
+  methods?: MethodUse[];
+}
+export interface ShiftReport {
+  methods?: Partial<Record<MethodId, number>>;    // 이 교대에 성공한 방법별 횟수 (평소 방법 포함)
 }
 
 // ───────────────────────── 위험의 현실화 (X6) ─────────────────────────

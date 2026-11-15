@@ -700,6 +700,7 @@ export function tickGas(sim: Sim, s: Scene, I: Incident): void {
       const c: Casualty = {
         id, label: String.fromCharCode(65 + id), x: e.x, y: e.y, px: e.x, py: e.y, health: s.rng.range(60, 80), bleed: s.rng.range(0.05, 0.09), mob: 'immobile', trapWork: 0, concealment: 0.05, inVehicle: null,
         where: 'scene', treated: false, treatProg: 0, dead: false, treatQ: 0, bleed0: 0.07, bystander: false, walking: false, path: null, pathI: 0, panic: false,
+        freedHow: undefined, freedBy: undefined, rush: undefined,      // (R2) kit.addCas 와 같은 칸, 같은 순서
         wander: false, wanderT: 0, isTarget: false, hostage: false, climb: undefined, bystander2: true, inWater: undefined, drift: undefined,
         tDiscovered: -1, tFreed: -1, tTreated: -1, tSafe: -1, tLoaded: -1, tDead: -1, tHospital: -1, discoveredBy: -1, causeEvent: -1,
         injuries: undefined, bleedCause: undefined, deathCause: undefined, lost: undefined,      // (H1) kit.addCas 와 같은 칸, 같은 순서

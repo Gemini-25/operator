@@ -10,6 +10,7 @@ import type { Sim } from '../engine';
 import { T } from '../types';
 import type { AirOp, CasBelief, FieldAgent, IncidentType, Region, WorkItem } from '../types';
 import { outstanding } from './commander';
+import { TYPE_DEFS } from '../incidentTypes';
 
 export interface AirTerrain { w: number; h: number; tiles: Uint8Array; region: Int16Array; regions: Region[] }
 /** airDecide 가 받는 것의 전부 (air.ts 가 만들어 넘긴다) */
@@ -149,7 +150,7 @@ function watchBusy(v: AirView): boolean {
   const o = outstanding(v.cmd);
   if (o.hostile) return true;
   if (v.kind === 'armed' && v.cmd.beliefs.get('secure', 0) === undefined) return true;
-  if ((v.kind === 'search' || v.kind === 'water') && o.search) return true;
+  if ((TYPE_DEFS[v.kind].zoneSearch || v.kind === 'water') && o.search) return true;
   for (const f of v.cmd.beliefs.list('cas')) if (inWaterBelief(v.terrain, f.value as CasBelief)) return true;
   for (const w of v.board) if (w.kind === 'search' && live(w) && w.region >= 0 && !v.terrain.regions[w.region].indoor) return true;
   return false;

@@ -21,6 +21,7 @@ import { clamp, josa } from '../util';
 export const CAUSE_NAME: Record<InjuryCause, string> = {
   gunshot: '총상', stab: '자상', blunt: '타박상', burn: '화상', smoke: '연기 흡입', toxic: '유독 가스 흡입', fall: '추락', crush: '잔해 깔림', blast: '폭발',
   drown: '익수', electric: '감전', exhaustion: '열 탈진', vehicle: '차량 충격', exposure: '실외 노출', illness: '급성 질환',
+  animal: '동물·벌 피해',      // (N8) 물림·받힘·쏘임
 };
 
 /** 중증도 단계: 0 경상(>70) · 1 중상(41~70) · 2 위중(1~40) · 3 사망(≤0). 함수 선언으로 둔다 (순환 import 에서도 끌어올려져 안전하다) */
@@ -137,6 +138,7 @@ export const MATE_BLEED_MAX = 0.12;
 export const BLEED_PER_DMG: Record<InjuryCause, number> = {
   gunshot: 0.0024, stab: 0.0015, blunt: 0.0003, burn: 0.0006, smoke: 0, toxic: 0, fall: 0.0008, crush: 0.001, blast: 0.0012,
   drown: 0, electric: 0.0005, exhaustion: 0, vehicle: 0.0015, exposure: 0, illness: 0,
+  animal: 0.0003,      // (N8) 타박상(blunt)과 같다 — 물림·쏘임은 출혈이 크지 않다
 };
 
 /** 다친 대원은 느려진다: 체력 70 이상은 1, 40 에서 0.75. agents.staminaF 에 곱한다 (이동·작업 진도·사격이 함께 바뀐다). 자기 몸이다 */
@@ -170,7 +172,8 @@ export function protection(sim: Sim, r: Responder, u: Unit, cause: InjuryCause, 
     case 'blast': return 1 - blastFactor(sim, rid);
     case 'crush': return Math.max(1 - blastFactor(sim, rid), hasKit(sim, rid, 'vest') || hasKit(sim, rid, 'plate') ? 0.1 : 0);
     case 'fall': return hasKit(sim, rid, 'turnout') ? 0.2 : 0;
-    case 'electric': return hasKit(sim, rid, 'turnout') ? 0.4 : 0;
+    case 'electric': return hasKit(sim, rid, 'turnout') ? 0.4 : 0;      // (N8) 절연 장비 insulKit 0.9 는 그 장비가 생기는 단계 2b 에 이 줄 앞에 더한다
+    case 'animal': return hasKit(sim, rid, 'turnout') ? 0.3 : 0;      // (N8) 방화복이 물림·쏘임을 조금 막는다. 벌 보호복 beeSuit 0.95 는 그 장비가 생기는 단계 2b 에 더한다
     default: return 0;
   }
 }

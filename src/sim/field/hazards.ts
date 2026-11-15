@@ -721,6 +721,7 @@ export function tickGas(sim: Sim, s: Scene, I: Incident): void {
         wander: false, wanderT: 0, isTarget: false, hostage: false, climb: undefined, bystander2: true, inWater: undefined, drift: undefined,
         tDiscovered: -1, tFreed: -1, tTreated: -1, tSafe: -1, tLoaded: -1, tDead: -1, tHospital: -1, discoveredBy: -1, causeEvent: -1,
         injuries: undefined, bleedCause: undefined, deathCause: undefined, lost: undefined,      // (H1) kit.addCas 와 같은 칸, 같은 순서
+        quietLoss: undefined,      // (N8) kit.addCas 와 같은 칸, 같은 순서
       };
       c.bleed0 = c.bleed;
       s.casualties.push(c);

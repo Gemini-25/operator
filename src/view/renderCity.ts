@@ -6,7 +6,7 @@ import { describeTraffic, drawTrafficScreen, drawTrafficWorld, flowOf } from './
 import type { Sim } from '../sim/engine';
 import { placeAt } from '../sim/city';
 import { KIND_NAME } from '../sim/cityPlan';
-import type { Facility, Incident, Place, Unit } from '../sim/types';
+import type { Facility, Incident, IncidentType, Place, Unit } from '../sim/types';
 import { fmtDur } from '../sim/util';
 import type { CityCam } from './camera';
 import { buildCityStatic, facilityLot } from './city/staticCity';
@@ -21,13 +21,12 @@ import { combatPinJitter, drawCombatPin } from './city/combatPin';
 import type { FxBook } from './scene/fxBook';
 import { drawRuinBadge, drawRuinsWorld, ruinGlyphAt } from './city/ruinLayer';
 import { pinIcon, ruinLine } from './hazardState';
+import { TYPE_COLOR, respLimitOf } from './typeStyle';
 
 export const DEPT_COLOR: Record<string, string> = { fire: '#ff7a45', ems: '#2fd39a', police: '#5aa9ff' };
-export const TYPE_COLOR: Record<string, string> = { fire: '#ff6b3d', traffic: '#ffc24a', search: '#58d68d', armed: '#b98cff', medical: '#ff7eb6', collapse: '#d6a878', hazmat: '#b6e04a', water: '#4fb8ff', unknown: '#9aa7b4' };
+export { TYPE_COLOR };      // 유형색은 typeStyle.ts 에 (부르는 쪽은 예전처럼 여기서 가져간다)
 export const OUTCOME_COLOR: Record<string, string> = { success: '#5ad17a', partial: '#ffd166', delayed: '#7cc4ff', unresolved: '#b3a0d6', failed: '#ff5d5d' };
 export const FONT = "'Pretendard', 'Noto Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif";
-
-const RESP_LIMIT: Record<string, number> = { fire: 95, armed: 95, traffic: 105, search: 125, medical: 80, collapse: 100, hazmat: 100, water: 90, unknown: 100 };
 
 let staticLayer: { c: HTMLCanvasElement; lamps: CityLamp[] } | null = null;
 let staticFor: unknown = null;
@@ -67,7 +66,7 @@ export function incidentXY(sim: Sim, I: Incident, truth: boolean): { x: number; 
   return { x: I.truth.x, y: I.truth.y };
 }
 
-export function incidentShownType(I: Incident, truth: boolean): string {
+export function incidentShownType(I: Incident, truth: boolean): IncidentType | 'unknown' {
   if (I.assessment) return I.assessment.type;
   return truth ? I.truth.type : 'unknown';
 }
@@ -310,7 +309,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     // 경과 링: 신고 후 첫 도착까지는 기준 시간 대비 진행도, 도착 후에는 초록
     if (I.reportedAt >= 0) {
       const arrived = I.firstArrivalAt >= 0;
-      const frac = arrived ? 1 : Math.min(1, (sim.t - I.reportedAt) / RESP_LIMIT[type]);
+      const frac = arrived ? 1 : Math.min(1, (sim.t - I.reportedAt) / respLimitOf(type));
       ctx.strokeStyle = arrived ? '#5ad17a' : frac >= 1 ? '#ff5d5d' : frac > 0.7 ? '#ffb454' : '#e8f0f7'; ctx.lineWidth = Math.max(2, r * 0.14);
       ctx.beginPath(); ctx.arc(x, y, r + plw * 0.5 + r * 0.2, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac); ctx.stroke();
     }

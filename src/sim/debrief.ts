@@ -3,6 +3,7 @@
 // 원인 설명 문장은 시뮬레이션 중 실제로 기록된 문제(Problem)와 타임라인에서만 만든다.
 
 import { scenarioName } from './scenarios';
+import { TYPE_DEFS } from './incidentTypes';
 import { personaName } from './dispatch/callSystem';
 import { sevName } from './dispatch/analyst';
 import { difficultyLabel } from './difficulty';
@@ -10,6 +11,7 @@ import { disasterSummary } from './disaster';
 import { methodFailLine, methodLines, methodSummary, methodTally } from './field/methodReport';      // (R2) 대응 방법의 문장과 집계
 import { roleOf } from './crews';
 import { CAUSE_NAME, bandOf, mainCause, outShifts, threatOverAt } from './field/injury';
+import { VERDICT_RULES } from './field/sceneRegistry';      // (N8) 판정 등록 — 묶음의 세계 규칙이 새 위험을 등급에 넣는다
 import type { Sim } from './engine';
 import type { Incident, IncidentResult, InjuryCause, Outcome, Problem, ProblemCode, RosterOut, ShiftReport } from './types';
 import { TYPE_NAME, fmtSec, josa, pct } from './util';
@@ -23,9 +25,8 @@ export const PROBLEM_LABEL: Record<ProblemCode, string> = {
   ESCALATION: '상황 악화', BACKUP_LATE: '지원 지연', SCENE_MISMATCH: '신고와 다른 현장 상황', SUSPECT_FLED: '용의자 도주', SECONDARY_COLLISION: '2차 사고', LATE_DISCOVERY: '구조 대상 발견 지연',
   TIMEOUT: '대응 시간 초과', FATIGUE: '대원 체력 고갈', HIDDEN_HAZARD: '숨겨진 위험 발현', RECOUNT: '인원 불일치 재수색', WRONG_ADDRESS: '신고 위치 오류', FALSE_ALARM: '허위·오인 신고',
   RESPONDER_KILLED: '대원 순직', SUSPECT_DIED: '용의자 사망',
+  UTIL_LATE: '유관 기관 지연(대신한 조치)', ANIMAL_LOST: '동물 놓침',      // (N8) 이름표만 — order 의 자리와 문장 틀은 그 코드를 남기는 단계(4a·5)
 };
-
-const RESP_LIMIT: Record<string, number> = { fire: 95, armed: 95, traffic: 105, search: 125, medical: 80, collapse: 100, hazmat: 100, water: 90 };
 
 function addProblem(I: Incident, code: ProblemCode, t: number, eventId: number, detail: string, recovered = false, recoveryText = ''): void {
   if (I.problems.some((p) => p.code === code && p.detail === detail)) return;
@@ -67,8 +68,18 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   const deathCauses: Partial<Record<InjuryCause, number>> = {};
   for (const c of cas) if (c.dead && c.deathCause) deathCauses[c.deathCause] = (deathCauses[c.deathCause] ?? 0) + 1;
   let flames = 0; for (let i = 0; i < s.fire.length; i++) if (s.fire[i] > 0.2) flames++;      // 꺼져 가는 잔불은 제외
-  const hazardActive = flames > 0 || s.hostiles.some((h) => h.state === 'hold' || h.state === 'fight') || s.props.some((p) => p.kind === 'valve' && !p.mitigated && !p.ignited)
+  let hazardActive = flames > 0 || s.hostiles.some((h) => h.state === 'hold' || h.state === 'fight') || s.props.some((p) => p.kind === 'valve' && !p.mitigated && !p.ignited)
     || s.props.some((p) => p.kind === 'bomb' && p.real && !p.mitigated && !p.exploded);      // 처리되지 않은 진짜 폭발물
+  // (N8) 판정 등록(field/sceneRegistry.registerVerdict): 살아 있는 시설물·풀린 동물처럼 위의 식이 모르는 위험. open 이면 위험이 남은 것으로(벌점 1.5 와 목표 미완이 아래 식 그대로 따라온다),
+  // bad 는 벌점에 더하고, delayed 는 대응 지연으로 센다. 등록된 줄이 없으면 아무것도 바뀌지 않는다
+  let vBad = 0, vDelayed = false;
+  for (const rule of VERDICT_RULES) {
+    const v = rule(sim, s, I);
+    if (!v) continue;
+    if (v.open) hazardActive = true;
+    if (v.bad) vBad += v.bad;
+    if (v.delayed) vDelayed = true;
+  }
   const responseTime = I.firstArrivalAt >= 0 && I.reportedAt >= 0 ? I.firstArrivalAt - I.reportedAt : -1;
   const dispatchTime = I.firstDispatchAt >= 0 && I.reportedAt >= 0 ? I.firstDispatchAt - I.reportedAt : -1;
   const truth = I.truth;
@@ -98,6 +109,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   if (s.kind === 'armed' || suspectsTotal > 0) bad += escaped * 1.25;
   bad += propertyLoss > 0.6 ? 1 : propertyLoss > 0.35 ? 0.5 : 0;
   if (hazardActive) bad += 1.5;
+  bad += vBad;      // (N8) 판정 등록의 벌점
   let grade: IncidentResult['grade'];
   const objectiveOpen = hazardActive || undiscovered > 0 || left > 0 || (s.kind === 'search' && cas.every((c) => c.tDiscovered < 0))
     || s.props.some((p) => p.kind === 'bomb' && !p.mitigated && !p.exploded);      // 수상한 물건을 끝내 확인하지 못했다 (가짜였더라도 아무도 그것을 알지 못한 채 끝났다)
@@ -109,8 +121,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   else if (bad > 0.01) grade = 'partial';
   else grade = 'success';
   if (I.pursuit && I.pursuit.state === 'escaped') grade = I.pursuit.kind === 'kidnap' && I.pursuit.how !== 'hideout' ? 'failed' : 'unresolved';      // 납치된 사람을 되찾지 못했다 / 난폭 운전자를 놓쳤다 / 은신처에 숨어든 납치는 이어지는 인질 사건이 결말을 낸다
-  const limit = RESP_LIMIT[truth.type];
-  const delayed = !I.pursuit && (responseTime < 0 || responseTime > limit || I.problems.some((p) => p.code === 'BACKUP_LATE'));      // 추격전은 차를 세운 뒤에야 현장이 생긴다
+  const limit = TYPE_DEFS[truth.type].respLimit;
+  const delayed = !I.pursuit && (responseTime < 0 || responseTime > limit || I.problems.some((p) => p.code === 'BACKUP_LATE') || vDelayed);      // 추격전은 차를 세운 뒤에야 현장이 생긴다. vDelayed: (N8) 판정 등록
   const outcome: Outcome = grade === 'success' && delayed ? 'delayed' : grade;
 
   // ── 설명 ──

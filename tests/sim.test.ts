@@ -358,9 +358,13 @@ describe('건물 붕괴 · 가스 누출', () => {
     expect(timeouts).toBeLessThan((collapse + hazmat) * 0.2);
   }, 120000);
 
-  it('신고 키워드 표의 열 수가 사건 유형 수와 같다', async () => {
+  it('신고 키워드 표의 가능도는 유형 이름으로 적는다 — 열쇠는 TYPE_ORDER 의 유형뿐, 값은 0~1 (log 를 쓰므로 0 은 아니다)', async () => {
     const { NATURE_LIK } = await import('../src/sim/dispatch/callSystem');
-    for (const k of Object.keys(NATURE_LIK)) expect(NATURE_LIK[k].length).toBe(8);
+    const { TYPE_ORDER } = await import('../src/sim/incidentTypes');
+    for (const k of Object.keys(NATURE_LIK)) for (const [t, v] of Object.entries(NATURE_LIK[k])) {
+      expect(TYPE_ORDER.indexOf(t as never), `${k}.${t}`).toBeGreaterThanOrEqual(0);
+      expect(v! > 0 && v! <= 1, `${k}.${t} = ${v}`).toBe(true);
+    }
   });
 });
 

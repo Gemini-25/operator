@@ -14,6 +14,7 @@ import { scenarioName } from '../sim/scenarios';
 import type { AirOp, FieldAgent, Incident, Role, Scene, SimEvent, Unit, UnitField } from '../sim/types';
 import { TrafficChip } from './TrafficChip';
 import { DEPT_NAME, OUTCOME_NAME, TYPE_NAME, WEATHER_NAME, fmtClock, fmtDur, fmtSec, pct } from '../sim/util';
+import { TYPE_DEFS, TYPE_ORDER } from '../sim/incidentTypes';
 import type { CameraDirector } from '../view/camera';
 import { MethodRows } from './MethodRows';      // (R2) 대원 정보창의 대응 방법 두 줄
 import { DoctrineRows } from './DoctrineRows';      // (R3) 대원 정보창의 대응 교본 칸 (단계 0 에는 비어 있다)
@@ -281,7 +282,7 @@ export function DecisionPanel({ sim, director, truth }: { sim: Sim; director: Ca
         <h4>② 상황 분석 AI</h4>
         {as ? (<>
           <div className="probs">
-            {(['fire', 'traffic', 'search', 'armed', 'medical', 'collapse', 'hazmat', 'water'] as const).filter((t) => t === 'fire' || t === 'traffic' || t === 'search' || t === 'armed' || t === 'medical' || as.probs[t] >= 0.03).map((t) => (
+            {TYPE_ORDER.filter((t) => TYPE_DEFS[t].alwaysShow || as.probs[t] >= 0.03).map((t) => (
               <div key={t} className="prob"><span>{TYPE_NAME[t]}</span><Bar v={I!.fieldType ? (I!.fieldType === t ? 1 : 0) : as.probs[t]} color={TYPE_COLOR[t]} w={120} /><span className="num">{pct(I!.fieldType ? (I!.fieldType === t ? 1 : 0) : as.probs[t])}</span></div>
             ))}
           </div>

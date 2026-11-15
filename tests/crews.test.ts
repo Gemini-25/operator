@@ -1410,7 +1410,7 @@ describe('상공의 일 (설계서 7.3·7.4)', () => {
     expect(live('hoist').length, '상공에 호이스트를 단 헬기가 없다').toBe(0);
     expect(w.status).toBe('cancelled');
   });
-  it('헬기만 왔던 현장: 마지막 헬기가 떠날 때 관측자가 보기에 남은 사람이 있으면 관제가 지상 부대를 찾는다', () => {
+  it('헬기만 왔던 현장: 마지막 헬기가 떠날 때 관측자가 보기에 남은 사람이 있으면 관제가 지상 부대를 찾고, 확인한 사람이 모두 실려 갔으면 그 보고로 사건을 끝낸다', () => {
     // 물에 빠진 사람이 여럿인 현장에 소방 헬기만 닿았다 — 한 명을 건져 병원으로 떠난다 (자리는 하나)
     const mk = (ground: boolean): { sim: Sim; I: Incident; s: Scene; heli: Unit } => {
       const sim = new Sim(clearSeed());
@@ -1434,16 +1434,25 @@ describe('상공의 일 (설계서 7.3·7.4)', () => {
     const B = mk(true);
     tickScn(B.sim, B.s, 5 * 150, () => B.heli.state !== 'onscene');
     expect(said(B.sim, /떠난 현장에 아직/)).toBe(0);
-    // 남은 사람이 없으면(한 명뿐인 현장) 아무것도 알리지 않는다 — 사건은 방치 시간 뒤에 닫히고 결과는 진실로 판정한다.
+    // 남은 사람이 없으면(한 명뿐인 현장) 지상 부대를 부르지 않는다. 확인한 사람이 모두 실려 간 뒤라면 마지막 헬기가 떠나며 그 보고로 사건을 끝낸다 —
+    // 아무도 맡지 않고 대기열에도 없는 사건이 방치 시간(60초) 동안 떠 있다가 '방치'로 닫히지 않는다(측정 도구의 '잊힌 사건'). 결과는 진실로 판정한다.
     // 함께 떠 있던 경찰 헬기도 무전으로 들어 안다: 소방 헬기가 건져 간 사람을 아직 물속에 있다고 믿고 지상 부대를 부르지 않는다
-    const C = new Sim(clearSeed());
-    const J = createIncident(C, { type: 'water', variant: 'std', severity: 1, rng: C.rng.fork('t') });
-    const sc = C.scenes[J.id]!;
-    J.reportedAt = C.t; J.phase = 'dispatched';
-    expect(sc.casualties.length).toBe(1);
-    const helis = (['policeHeli', 'heli'] as UnitKind[]).map((kind) => { const u = C.units.find((q) => q.kind === kind)!; u.state = 'onscene'; u.incidentId = J.id; J.assigned.push(u.id); J.everAssigned.push(u.id); unitArrived(C, J, u); return u; });
+    const one = (told: number | null): { C: Sim; J: Incident; sc: Scene; helis: Unit[] } => {
+      const C = new Sim(clearSeed());
+      const J = createIncident(C, { type: 'water', variant: 'std', severity: 1, rng: C.rng.fork('t') });
+      const sc = C.scenes[J.id]!;
+      J.reportedAt = C.t; J.phase = 'dispatched';
+      // 신고자가 말한 인원 (관제의 브리핑으로 관측자에게 전해진다)
+      if (told !== null) J.claims.push({ topic: 'count', value: told, conf: 0.7, text: '', truthful: told === sc.casualties.length, callId: -1, note: '' });
+      expect(sc.casualties.length).toBe(1);
+      expect(sc.regions.some((q) => q.indoor), '하늘에서 다 내려다보이는 현장(지붕 밑이 없다)').toBe(false);
+      const helis = (['policeHeli', 'heli'] as UnitKind[]).map((kind) => { const u = C.units.find((q) => q.kind === kind)!; u.state = 'onscene'; u.incidentId = J.id; J.assigned.push(u.id); J.everAssigned.push(u.id); unitArrived(C, J, u); return u; });
+      return { C, J, sc, helis };
+    };
+    const { C, J, sc, helis } = one(null);
     tickScn(C, sc, 5 * 150, () => helis[1].state !== 'onscene');
     expect(C.airStats.hoists).toBe(1);
+    expect(J.phase, '경찰 헬기가 아직 떠 있다: 끝내지 않는다').not.toBe('closed');
     const pop = opOf(sc, helis[0]);
     expect(pop.eye.beliefs.val<CasBelief>('cas', 0)!.where, '경찰 헬기의 관측자가 본 것: 아직 물속').toBe('scene');
     tickScn(C, sc, 5 * 2);      // 인양 보고가 무전으로 전해진다 (1.2초)
@@ -1451,9 +1460,28 @@ describe('상공의 일 (설계서 7.3·7.4)', () => {
     tickScn(C, sc, 5 * 40, () => helis[0].state !== 'onscene');
     expect(helis[0].state).not.toBe('onscene'); expect(said(C, /^경찰헬기1: 상공 임무 종료, 복귀합니다\.$/)).toBe(1);
     expect(said(C, /떠난 현장에 아직/)).toBe(0); expect(J.unmet.rescue ?? 0).toBe(0);
-    tickScn(C, sc, 5 * 62);
-    expect(J.closeReason).toBe('abandoned'); expect(J.result!.casSaved).toBe(1);
+    // 마지막 헬기가 떠나는 바로 그 틱에 끝난다 (기록은 상태를 바꾸는 그 자리에서 — 종료를 알린 헬기의 이름으로)
+    expect([J.phase, J.closeReason, J.closedAt]).toEqual(['closed', 'resolved', C.t]);
+    expect(said(C, /^경찰헬기1: 확인한 구조 대상은 모두 실려 갔습니다\. 현장에 남은 사람이 없어 상황을 종료합니다\.$/)).toBe(1);
+    expect(J.result!.casSaved).toBe(1);
     expect(J.result!.analysis.some((t) => /^헬기가 신고 접수 .+ 만에 현장 상공에 도착했지만, 지상 부대는 현장에 닿지 못했습니다\.$/.test(t)), '헬기만 왔던 사건의 문장').toBe(true);
+    tickScn(C, sc, 5 * 2);
+    expect(sc.archived, '남은 부대가 없다: 보관된다').toBe(true);
+    // 신고된 인원(둘)보다 적게 확인했으면 헬기의 보고로 끝내지 않는다 — 지금처럼 방치 시간 뒤에 닫히고, 결과는 진실로 판정한다
+    const N = one(2);
+    tickScn(N.C, N.sc, 5 * 200, () => N.helis.every((u) => u.state !== 'onscene'));
+    expect(N.helis.every((u) => u.state !== 'onscene')).toBe(true); expect(N.C.airStats.hoists).toBe(1);
+    expect(N.J.phase, '신고된 인원이 다 확인되지 않았다').not.toBe('closed'); expect(said(N.C, /상황을 종료합니다/)).toBe(0);
+    tickScn(N.C, N.sc, 5 * 62);
+    expect(N.J.closeReason).toBe('abandoned'); expect(N.J.result!.casSaved).toBe(1);
+    // 현장에 남은 사람이 있으면(숨진 채 물속에 있다 — 싣지 못했다) "모두 실려 갔다"고 알리지 않는다: 지금처럼 방치 시간 뒤에 닫힌다
+    const X = one(null);
+    X.sc.casualties[0].dead = true; X.sc.casualties[0].health = 0;
+    tickScn(X.C, X.sc, 5 * 70, () => X.J.phase === 'closed');
+    expect(X.C.airStats.hoists).toBe(0); expect(X.helis.every((u) => u.state !== 'onscene')).toBe(true);
+    expect(said(X.C, /상황을 종료합니다/)).toBe(0); expect(X.J.closeReason).toBe('abandoned');
+    // 지상 부대가 닿았던 현장은 헬기가 끝내지 않는다 (마지막 지휘관의 믿음으로 끝낸다 — sceneManager 7)번)
+    expect(said(B.sim, /상황을 종료합니다/)).toBe(0);
   });
   it('물 투하: 산불의 바깥 구역에 물을 쏟고, 바구니가 비면 물을 뜨러 다녀온다. 밤에는 뿌리지 않는다', () => {
     const { sim, s, unit } = sceneOf(clearSeed(), 'fire/wild', ['heli']);

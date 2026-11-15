@@ -87,20 +87,20 @@
 | 시설 사고 | 새 유형 `utility`: 끊어진 전선 `wire` · 수도관 파열 `main` · 싱크홀 `sinkhole` · 간판 `sign` | — |
 | 위기에 놓인 사람 | 새 유형 `welfare`: 위기자 `ledge` · 치매 노인 `dementia` · 미아 `lostchild` · 문 잠긴 집 `lockin`, 설득 틀 | — |
 | 일상 치안 | 새 유형 `disturb`: 주취 소란 `rowdy` · 폭행 시비 `brawl` · 날치기 `snatch` · 수거책 잠복 `scam` · 차량 절도 `cartheft` | — |
-| 재산 범죄 | 차량 절도(치안 유형으로) | `armed/bank` · `armed/vault` · `armed/cashvan` |
+| 재산 범죄 | 차량 절도(치안 유형으로) | `armed/bankjob` · `armed/vault` · `armed/cashvan` |
 | 군중·행사 | — | 새 유형 `crowd`: `crush` · `protest` · `event`(행사장 환자 다발) |
-| 테러·중대 위협 | — | `hazmat/powder` · `armed/sniper` · `traffic/ramming` · `armed/drone` · `armed/serial` |
-| 교통 시설 | — | `fire/tunnel` · `traffic/subway` · `fire/standby` · `water/ferry` |
-| 산업 현장 | — | `fire/factory` · `hazmat/tanker` · `rescue/confined` · `rescue/machine` |
-| 의료의 여러 갈래 | `medical/poison` · `overdose` · `birth` · `heat` | `crowd/event`. 한파는 넣지 않는다(날씨 값이 없다 — `domain.md` K5) |
-| 날씨·환경 피해 | — | `water/underpass` · `traffic/debris` · `water/oilspill` · (선택) `search/snow` |
-| 헬기·해상 (결정 6) | 높은 자리 위의 호이스트(외벽·놀이기구) | `rescue/mountain` · `water/boat` |
+| 테러·중대 위협 | — | `hazmat/powder` · `armed/rooftop` · `traffic/ramming` · `armed/uav`(선택) · `armed/serial` |
+| 교통 시설 | — | `fire/tunnelfire` · `traffic/metrofall` · `fire/standby` · `water/ferryboat` |
+| 산업 현장 | — | `fire/plantblast` · `hazmat/tanker` · `rescue/confined` · `rescue/machine` |
+| 의료의 여러 갈래 | `medical/poison` · `overdose` · `birth` · `heat` | `crowd/event` · `medical/co`(이 문서의 부록 A 가 넘긴 것 — 독성 공기 틀과 함께). 한파는 넣지 않는다(날씨 값이 없다 — `domain.md` K5) |
+| 날씨·환경 피해 | — | `water/underpass` · `traffic/gale` · `water/oilspill` (`search/snow` 는 N9 부록 A — 날씨에 눈 값이 없다) |
+| 헬기·해상 (결정 6) | 높은 자리 위의 호이스트(외벽·놀이기구) | `rescue/mountain` · `water/fishboat` |
 | 비응급 신고 (결정 10) | 네 갈래 전부(§4.8) | — |
 | 새 부대 (결정 7) | 전력·가스·수도 복구반 · 견인차 · 동물 포획팀 · 형사 · 교통 경찰 · 경찰견 | 산악 구조대 · 수중 구조대 · 화생방 제독차 · 기동대 |
-| 새 장소 (결정 8) | 없다(지도 그대로 — 사건이 없던 주차장·비닐하우스·학교·놀이공원을 사건 장소로 쓴다) | 터널 · 지하철역 · 지하차도 · 공연장 (은행은 이미 지도에 있다 — `cityPlan.ts` 의 `bank` 몫과 `KIND_SCENE.bank`. 새 장소가 아니라 전용 현장이다) |
+| 새 장소 (결정 8) | 없다(지도 그대로 — 사건이 없던 주차장·비닐하우스·학교·놀이공원을 사건 장소로 쓴다) | 지하철역 셋 · 공연장 · 은행 본점(새 종류 `bankHQ` — 지금의 은행 넷은 그대로 두고, 같은 건물의 되풀이를 줄이려 더한다)을 해시가 바뀌지 않게 덧붙이고, 이미 지도에 있는 산성터널 · 중앙대로 지하차도 · 경기장 · 놀이공원 · 공항 · 부두에 전용 현장 |
 | 공통 틀 | **여기서 정한다**(§5): 유형을 자료로 · `civil` 분야와 새 부대의 틀 · `daily` 흐름 · 비응급 신고 · 조건부 연쇄 · 남은 일·보류·판정 등록 · 동물 목록 · 설득 · 통제(`cordon`)와 위험 반경 · 높은 자리 · 화면 · 민감 소재 · 강제 보고 | 그대로 쓴다(다시 설계하지 않는다) |
 
-합계: N8 새 유형 5 · 새 시나리오 24 · 비응급 네 갈래 · 새 부대 종류 8. N9 새 유형 1 · 시나리오 23 · 부대 4. 둘을 합쳐 결정 2 의 "+35쯤, +5~6"을 채운다.
+합계: N8 새 유형 5 · 새 시나리오 24 · 비응급 네 갈래 · 새 부대 종류 8. N9 새 유형 1 · 시나리오 25(그 가운데 선택 1 — `armed/uav`) · 부대 4. 둘을 합쳐 새 유형 6 · 시나리오 49 — 결정 2 의 "+35쯤"의 1.4배다(N9 의 스물넷이 사용자가 결정 5·6 에 적은 예시라서). N9 는 단계 4 전에 사용자에게 분량을 묻는다(N9 §12.5-1). N9 의 변형 이름은 부대·방법·장비·장소·장애물 종류와 겹치지 않게 지었다(N9 원칙 12 — 초안의 `tunnel`·`subway`·`ferry`·`factory`·`bank`·`sniper`·`drone`·`debris`·`boat` 를 바꿨다).
 
 ## 3. 지금 상태 — "종류가 적다"의 진단
 
@@ -1388,8 +1388,8 @@ npx tsx scripts/sweep.ts 1 --force utility/wire --log S3     # 한 교대를 읽
 
 | 결정 | 반영한 자리 |
 |---|---|
-| 1 새 유형과 새 시나리오 둘 다 | §4.0 — 새 유형 다섯 + 시나리오 스물넷(N9 가 유형 하나 + 스물셋) |
-| 2 크게 (+35쯤 · +5~6, N8·N9 둘) | §2.2 — 합쳐 새 유형 6 · 시나리오 47 · 비응급 넷. 넘치는 만큼은 균형에서 N9 의 선택 표시부터 뺀다(N9 §2.2) |
+| 1 새 유형과 새 시나리오 둘 다 | §4.0 — 새 유형 다섯 + 시나리오 스물넷(N9 가 유형 하나 + 스물다섯) |
+| 2 크게 (+35쯤 · +5~6, N8·N9 둘) | §2.2 — 합쳐 새 유형 6 · 시나리오 49 · 비응급 넷(+35쯤의 1.4배). N9 가 단계 4 전에 사용자에게 분량을 묻는다(N9 §12.5-1 — 기본값은 모두 만들고, 줄이라는 답이면 N9 의 사용자 예시가 아닌 것부터 `share 0`) |
 | 3 가벼운·무거운 고르게 | §4.0 의 크기 칸(L/M/H — 분을 비율로, §12.2-1)과 크기 나눔(L 37% · L~M 30% · M 33%). 중간 크기도 처음 출동은 두세 팀(§7.1 의 "짧은 사건의 무게"). N8 은 결정 11 에 따라 L·M 위주, 무거운 쪽은 `rescue`·식중독과 N9 |
 | 4 부족한 분야 전부 + 특수 | 경찰 일상 치안(§4.4) · 소방·구조(§4.2·4.6) · 구급(§4.7) · 합동(위기자·싱크홀·차량 절도) · 특수(헬기 호이스트 §5.11, 동물 포획 · 측정기 §4.6 pit). 특공·폭발물·화생방·해상은 N9 |
 | 5 열두 묶음 모두 | §2.2 의 나눔 표 — 묶음마다 대표 사건이 N8 또는 N9 에 있다 |
@@ -1480,15 +1480,15 @@ npx tsx scripts/sweep.ts 1 --force utility/wire --log S3     # 한 교대를 읽
 
 | 후보 | 어디에 | 까닭 · 필요한 것 |
 |---|---|---|
-| `medical/co` 일산화탄소 중독 | N9(독성 공기 틀과 함께) | 조사 1위 — 측정기 든 부대가 먼저 들어가는 판단. "불이 붙지 않는 독성 공기" 틀이 N9 의 밀폐 공간·의심 물질·암모니아와 같다 |
+| `medical/co` 일산화탄소 중독 | **N9 에 넣었다**(N9 §4.4 — 독성 공기 틀과 함께) | 조사 1위 — 측정기 든 부대가 먼저 들어가는 판단. "불이 붙지 않는 독성 공기" 틀이 N9 의 밀폐 공간·의심 물질·암모니아와 같다 |
 | `fire/car` 차량 화재 | N8 확장(가장 싸다 — 지금 틀) | 차량 소품을 처음부터 `ignited` 로. 먼저 닿은 경찰·구급의 소화기(R2 `extinguisher`) · 견인차로 끝 |
 | `water/riptide`·`water/carriver`·`water/breakwater` | 다음 묶음(연안) | 수난 유형의 평소 시나리오 0개를 채운다. 바다 쪽 표류·가라앉는 차·블록 사이 칸이 새 규칙 |
 | `utility/transformer` 변압기 화재 | N8 확장 | 물을 쓰지 않는 판단 · 정전 연쇄(I1-b C4) |
 | `rescue/trench` 굴착 도랑 매몰 | N8 확장 | 지지대 먼저(R2 `shore`) · 교통 모델의 도로 공사 자리 |
 | `fire/brush` 들불 | N8 확장 | 평소 교대에 0번인 헬기 물 투하 |
 | `welfare/carlock` 차 안에 갇힌 아이 | N8 확장 | 기다릴까 깰까 · 열 노출(H1 `exhaustion`) |
-| `medical/school` 집단 이상 증상 | N9(독성 공기 틀) | 측정이 음성일 때의 판단 |
-| `traffic/crossing` 건널목 고립 차량 | N9 | 열차 시각에 묶인 현장 — 지도 변경 없이 |
+| `medical/school` 집단 이상 증상 | N9 부록 A(다음 후보 — 독성 공기 틀) | 측정이 음성일 때의 판단 |
+| `traffic/crossing` 건널목 고립 차량 | N9 부록 A(다음 후보) | 열차 시각에 묶인 현장 — 지도 변경 없이 |
 | `fire/std` 의 전원 차단 확인 | N8 확장(균형 뒤) | 건물 화재 진압 뒤 전력 복구반이 인입선 차단을 확인 — 전력 복구반의 일을 늘린다(§5.3.8 의 선택 수요와 같은 꼴). 가장 민감한 유형이라 이번 묶음에는 넣지 않았다 |
 
 ## 구현 메모

@@ -33,6 +33,7 @@ export function baseScene(sim: Sim, I: Incident, rng: Rng): Scene {
     ruin: undefined, falls: undefined,      // (G4) 그림용 기록 칸 (field/ruins.ts). 무너진 현장에만 값이 생긴다
     clearVision: 7.5,      // (R1) 맑은 날의 바깥 시야 — 탐조등이 밤의 시야를 여기까지 올린다 (실종 현장은 3.8 로 덮어쓴다). 쓰는 것은 단계 5 부터
     cat: undefined, ops: undefined,      // (X6) 위험 상태(진실 — field/catastrophe.ts 의 catOf 가 첫 틱에 채운다)와 지휘 상태(지휘 규칙이 채운다)
+    triageAt: -1, laneShield: null,      // (R3) 분류가 끝난 시각(4단계)·차량으로 막은 통제 지점(6단계) — 단계 0 에는 아무도 바꾸지 않는다
   };
 }
 

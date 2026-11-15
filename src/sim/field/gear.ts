@@ -1,5 +1,5 @@
 // 장비 판정의 얇은 층 (docs/specs/R2-methods.md §3.3). R1 의 개인 장비(crews.ts)를 감싸 같은 이름으로 내보낸다.
-// 방법의 판단부(methods.ts)와 실행부(methodRun.ts)는 장비를 이 파일로만 본다 — R3 가 판단용 함수 다섯(kitHas·kitQty·gunOf·roleIdOf·groupOf)을 더한다.
+// 방법의 판단부(methods.ts)와 실행부(methodRun.ts)는 장비를 이 파일로만 본다 — R3 가 판단용 함수(kitHas·kitQty·gunOf·roleIdOf·groupOf·crewHas)를 파일 끝에 더했다.
 //
 // 두 묶음이다. 섞어 쓰지 않는다:
 //   판단용 (methods.ts·orders·화면이 불러도 된다)   kitCount · kitName · swimBonus · seatsLeft · SHARED · isQty
@@ -67,3 +67,52 @@ export function bestTool(sim: Sim, rid: number, use: ToolUse, I: Incident): numb
 export function kitWorks(sim: Sim, rid: number, id: KitId, I?: Incident): boolean { return crewKitWorks(sim, rid, id, I); }
 /** 수량을 줄인다 (R1 그대로 — 섬광탄이면 부대의 합도 함께). 실행부만 부른다 */
 export function useKit(sim: Sim, rid: number, id: KitId, n = 1): void { crewUseKit(sim, rid, id, n); }
+
+// ───────────────────────── 판단용 (R3 — 교본, docs/specs/R3-doctrine.md §2.4) ─────────────────────────
+// 교본의 판단부(field/doctrine.ts)가 crews.ts 를 직접 부르지 않게 감싼다. 모두 알려진 고장만 반영하고(숨은 고장은 모른다) 상태를 바꾸지 않는다.
+// R2 의 kitCount('scba') 는 60초를 넘는지만 0/1 로 돌려주므로, 공기 비율·짝의 공기·총의 탄은 아래 함수로 구한다.
+// (import 를 이 절에 둔 것은 위의 import 줄을 다른 묶음이 함께 고치고 있어서다 — 같은 모듈의 값만 더 가져온다)
+import { ROLES, crewHasKit, roleOf } from '../crews';
+import type { KitDef } from '../crews';
+import type { RoleGroup } from '../types';
+/** 들었는가 (R1 hasKit — 알려진 고장이면 false, 수량 무관) */
+export function kitHas(sim: Sim, rid: number, id: KitId): boolean { return hasKit(sim, rid, id); }
+/** 쓸 수 있는 수량: 들었으면 남은 수(공기호흡기는 남은 초, 총기는 가진 탄 — 수량을 세지 않으면 Infinity), 아니면 0 */
+export function kitQty(sim: Sim, rid: number, id: KitId): number { return hasKit(sim, rid, id) ? kitUses(sim, rid, id) : 0; }
+/** 총기의 탄창·재장전 칸 (R3 2단계가 crews.ts 의 KitDef 에 mag·reload·perShot 을 더한다 — 그 전에는 없다) */
+type GunDef = KitDef & { mag?: number; reload?: number; perShot?: number };
+/** 총기를 고르는 순서: 저격 소총 > 소총 > 권총 (G5 fxlog.weaponOf 와 같은 순서) */
+const GUNS: KitId[] = ['sniper', 'rifle', 'pistol'];
+/**
+ * 가진 총 (알려진 고장이 아닌 것 가운데 GUNS 순서의 첫째)과 그 탄. 없으면 null.
+ * ammo = 가진 탄 전부(탄창 포함), mag = 지금 탄창, magSize = 탄창 크기, perShot = 한 번 쏠 때 쓰는 탄, reload = 재장전 초.
+ * 탄을 세지 않는 동안(2단계 전 — 총기의 uses 가 없다)은 ammo = mag = magSize = Infinity 다.
+ */
+export function gunOf(sim: Sim, rid: number): { id: KitId; ammo: number; mag: number; magSize: number; perShot: number; reload: number } | null {
+  const kit = sim.responders[rid].kit;
+  if (!kit) return null;
+  for (let g = 0; g < GUNS.length; g++) {
+    const id = GUNS[g];
+    for (let k = 0; k < kit.length; k++) {
+      const it = kit[k];
+      if (it.id !== id || it.faultKnown) continue;
+      const d = KITS[id] as GunDef;
+      const ammo = it.uses === undefined ? Infinity : it.uses;
+      const magSize = d.mag ?? Infinity;
+      return { id, ammo, mag: it.mag ?? Math.min(magSize, ammo), magSize, perShot: d.perShot ?? 1, reload: d.reload ?? 0 };
+    }
+  }
+  return null;
+}
+/** 역할 (R1 의 자리. 역할이 없는 손으로 만든 명부는 R1 roleOf 가 쓰는 부서별 기본 역할) */
+export function roleIdOf(sim: Sim, rid: number): RoleId | null {
+  const r = sim.responders[rid];
+  if (r.role !== undefined) return r.role;
+  const def = roleOf(sim, rid);
+  for (const id of Object.keys(ROLES) as RoleId[]) if (ROLES[id] === def) return id;
+  return null;
+}
+/** 역할의 그림 묶음 (R1 roleOf(…).group) */
+export function groupOf(sim: Sim, rid: number): RoleGroup | null { const d = roleOf(sim, rid); return d ? d.group : null; }
+/** 부대에 그 장비를 든(알려진 고장 제외) 일할 수 있는 내리는 대원이 있는가 — 조직 정보 (R1 crewHasKit) */
+export function crewHas(sim: Sim, u: Unit, id: KitId): boolean { return crewHasKit(sim, u, id, true); }

@@ -23,6 +23,7 @@ export function makeTask(kind: TaskKind, label: string, w: WorkItem | null = nul
     phase: 0, progress: 0, need: 1, tx: 0, ty: 0, range: 0, pts: null, ptI: 0, covered: null,
     method: undefined, mwhy: undefined, missing: undefined, tried: undefined, entryDoor: undefined, mtry: undefined, mbad: undefined, mt0: undefined, marr: undefined, mcands: undefined,      // (R2) 대응 방법 — 쓰는 것은 단계 1a 부터 (모든 임무가 같은 모양)
     startedAt: 0, selfAssigned: false, thorough: w ? w.thorough : false, wait: 0, sub: null, fails: 0, label, repathAt: 0,
+    docRule: undefined, gateAt: -1, gateId: undefined, gateSaid: false, cvX: undefined, cvY: undefined, cvTx: undefined, cvTy: undefined, cvLost: -1,      // (R3) 교본 줄·판단 지점·엄폐 자리 — 쓰는 것은 단계 2 부터 (모든 임무가 같은 모양)
   };
 }
 
@@ -1043,6 +1044,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (h.state === 'arrested' || h.state === 'escaped' || h.state === 'down') { learn(sim, a, hosFact(sim, s, h, r.name), true, true); finishTask(sim, s, a, true); return; }
       if (h.state !== 'surrendered' && h.weapon === 'gun') { finishTask(sim, s, a, false, 'unsafe'); return; }
       if (tryTaser(sim, s, a, h)) { a.label = '테이저 발사'; return; }      // 덤벼드는 상대(총이 아닌)에게 테이저 — 쏜 틱에는 움직이지 않는다
+      if (!docGate(sim, s, a, 'closeIn').ok) return;      // (R3) 판단 지점 closeIn — 단계 0 은 줄이 없어 늘 통과. 2단계가 기다리는 자리(1.8·3칸)·상한·기록을 채운다
       const m = moveTo(sim, s, a, h.x, h.y, 1.3);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
@@ -1315,3 +1317,6 @@ export { isIndoor };
 //    (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다 — 타입만 가져오므로 실행 순서와 무관하다) ──
 import type { ExecKit } from './methodRun';
 export const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask };
+
+// ── (R3) 대응 교본의 판단 지점 (field/doctrine.ts 의 docGate — 자기 모드). 판단은 교본 함수가, 효과(이동·기다림)는 이 파일이 한다 ──
+import { docGate } from './doctrine';

@@ -21,6 +21,8 @@ import type { CasBelief, FieldAgent, KitId, MethodId, MethodWhy, Responder, Scen
 import { clamp, josa } from '../util';
 import { SHARED, kitCount, kitName, swimBonus } from './gear';
 import { staticPass, tileOf } from './grid';
+import { docCtx, docMethodMul, hasDoc } from './doctrine';      // (R3) 교본 배율 — doctrine.ts 는 이 파일을 값으로 import 하지 않는다 (순환 없음)
+import type { DocCtx } from './doctrine/registry';
 
 // ───────────────────────── 자료형 ─────────────────────────
 /** 대원이 선 칸의 감각 (실행부가 methodRun.senseOf 로 재서 넘긴다. 배정용 methodFit 에서는 0) */
@@ -29,8 +31,8 @@ export interface Sense { smoke: number; heat: number }
 export interface MTarget { cas: number; prop: number; hostile: number; region: number; tile: number }
 /** 고른 결과: 방법 · 까닭 · 후보와 점수(점수 내림차순) · (noGear 면) 빠진 장비 */
 export interface MethodPick { m: MethodId; why: MethodWhy; cands: { m: MethodId; score: number }[]; missing?: KitId }
-/** R3 의 교본 입력 (doctrine.ts 의 docCtx 가 만든다). R3 전에는 늘 null 이다 — R3 가 이 자리를 자기 타입으로 바꾼다 */
-export type DocCtx = Record<string, unknown>;
+/** R3 의 교본 입력 (doctrine.ts 의 docCtx 가 만든다 — 타입은 doctrine/registry.ts). 실행부는 자기 모드로 넘기고, methodFit 은 안에서 보고 모드로 만든다. 없으면 null */
+export type { DocCtx } from './doctrine/registry';
 export const NO_SENSE: Sense = { smoke: 0, heat: 0 };
 
 /** chooseMethod 안에서만 만든다 (내보내지 않는다 — 진실을 판단에 끼워 넣을 길을 모양으로 막는다) */
@@ -356,13 +358,14 @@ function rank(c: MethodCtx, key: string, tried: MethodId[] | null, brokenOnly: b
   const out: { m: MethodId; score: number }[] = [];
   const list = methodsOf(c.work);
   const hurt = c.r.status === 'injured';      // 걸을 수 있는 다친 대원은 위험한 방법을 고르지 않는다 (H1 "가벼운 일은 계속" — 가벼운 일 안의 위험한 방법까지 막는 안전장치)
+  const dm: DocCtx | null = c.dc ? { ...c.dc, m: { reach: c.reach, flow: c.flow, weak: c.weak, tile: c.tg.tile } } : null;      // (R3) 교본 배율은 받은 dc 의 사본으로 (dc 를 고치지 않는다)
   for (let k = 0; k < list.length; k++) {
     const m = list[k], d = METHOD[m];
     if (d.record || (hurt && d.risk > 0)) continue;
     if (tried !== null && tried.indexOf(m) >= 0) continue;
     if (remembered(c, key, m, brokenOnly)) continue;
     if (!canUse(c, m, ignoreKits) || !d.can(c)) continue;
-    const score = d.pref * (d.situ ? d.situ(c) : 1) * (d.skill ? d.skill(c) : 1) * (1 - d.risk * c.caution);
+    const score = d.pref * (d.situ ? d.situ(c) : 1) * (d.skill ? d.skill(c) : 1) * (1 - d.risk * c.caution) * (dm !== null ? docMethodMul(dm, m) : 1);      // (R3) × 교본 배율 (줄이 없으면 1)
     if (!(score > 0)) continue;
     let at = out.length;
     while (at > 0 && out[at - 1].score < score) at--;      // 같은 점수면 먼저 온(표에서 앞선) 방법 뒤에 선다
@@ -410,7 +413,7 @@ export const THROW_REACH = 3.6;
  * 하나도 없으면 차례로 넓힌다: ① t.tried 를 무시 ② 고장이 아닌 a.mfail 기억을 무시 ③ null (선택 임무는 null 이 정상이다).
  * 까닭은 위에서부터 처음 맞는 것: noGear(장비를 따지지 않은 1등이 장비 때문에 빠졌다) · weak · danger · quiet · fast · tooFar · near · team · usual.
  * 실패·고장·조건 상실로 바꿀 때의 까닭(failed·broken·tooFar·team)은 실행부(switchMethod)가 덮어쓴다.
- * dc: R3 의 교본 입력 — R3 전에는 null.
+ * dc: R3 의 교본 입력 — 실행부가 자기 모드 docCtx(…, 'self') 로 넘긴다(없으면 null). 점수에 × docMethodMul(사본, m) — 교본 줄이 없으면 1.
  */
 export function chooseMethod(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, tg: MTarget, t: Task | null, sense: Sense, dc: DocCtx | null = null): MethodPick | null {
   if (!methodsOf(work).length) return null;
@@ -444,7 +447,7 @@ export function targetOfWork(w: WorkItem): MTarget { return { cas: w.cas, prop: 
 export function methodFit(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number {
   if (!methodsOf(w.kind).length) return 0;
   const tg = targetOfWork(w);
-  const c = makeCtx(sim, s, a, w.kind, tg, null, NO_SENSE, null);
+  const c = makeCtx(sim, s, a, w.kind, tg, null, NO_SENSE, hasDoc('method') ? docCtx(sim, s, a, 'report', w) : null);      // (R3) 남에게도 불리므로 보고 모드 (방법 줄이 없으면 만들지 않는다)
   if (NEEDS_CAS[w.kind] && c.cb === null) return 0;
   const key = targetKey(w.kind, tg);
   let cands = rank(c, key, null, false, false);

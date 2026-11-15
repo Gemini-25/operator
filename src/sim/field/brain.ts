@@ -85,10 +85,18 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
   const hurt = mustRetreat(r);
   if (hurt && cur && cur.kind === 'retreat') { a.candidates = [{ label: '계속: 후퇴 (부상)', score: 1.4, chosen: true }]; return; }
 
+  // (R3) 교본의 의무와 놓기 — 설계서 R3 §2.6 의 4번 (X6 의 철수(evacuate) 의무가 들어오면 그 바로 뒤에 둔다). 단계 0: 줄이 없어 아무것도 하지 않는다
+  const dSense = senseOf(s, a);
+  if (cur && DOC_DUTY_TASKS.has(cur.kind)) return;
+  { const d = docDuty(sim, s, a, dSense); if (d) { docBegin(sim, s, a, d, XK); return; } }
+  { const r = docDrop(sim, s, a); if (r && cur) { const wk = s.board[cur.workId].kind; finishTask(sim, s, a, false, 'doctrine'); recordDoc(sim, I, a, r.id, 'fit', { work: wk }); return; } }
+
   const opts: Option[] = [];
   // 1) 위험 회피
   const dng = dangerScore(sim, s, a);
-  if (dng > 0.3 && (!cur || cur.kind !== 'retreat')) opts.push({ label: hurt ? '부상 — 후퇴' : '위험 회피 — 후퇴 후 재평가', score: dng, apply: () => {
+  const swapR = dng > 0.3 && (!cur || cur.kind !== 'retreat') ? docRetreat(sim, s, a, dng, dSense) : null;      // (R3) P11 — 후퇴 후보를 교본 행동(엄폐)으로 바꿔 끼운다. 단계 0: 늘 null
+  if (swapR) opts.push({ label: `교본 · ${swapR.rule.short}`, score: swapR.score, apply: () => docBegin(sim, s, a, swapR, XK) });
+  else if (dng > 0.3 && (!cur || cur.kind !== 'retreat')) opts.push({ label: hurt ? '부상 — 후퇴' : '위험 회피 — 후퇴 후 재평가', score: dng, apply: () => {
     // 맡고 있던 작업은 위험해서 내려놓은 것으로 기록한다: 지휘관이 곧바로 같은 대원에게 다시 맡기지 않는다
     if (cur && cur.workId >= 0) finishTask(sim, s, a, false, 'danger');
     setTask(sim, s, a, 'retreat', '후퇴');
@@ -164,6 +172,8 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
       emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: '공기통을 교체하러 대기 지점으로 갑니다.' });
     } });
   }
+  // (R3) 교본 행동 후보 하나 (R1 공기통 교체 다음 — 설계서 R3 §2.6 의 5번). 단계 0: 줄이 없어 후보를 내지 않는다 (판단 오차의 a.rng 소비가 그대로)
+  { const p = swapping ? null : docAct(sim, s, a, dSense, dng); if (p) opts.push({ label: `교본 · ${p.rule.short}`, score: p.score, apply: () => docBegin(sim, s, a, p, XK) }); }
   // 5) 휴식 (공기통을 바꾸는 중이면 바꾼 뒤에 쉰다 — 8초)
   if (r.stamina < 22 && (!cur || (cur.kind !== 'rehab' && cur.kind !== 'swapAir')) && a.carrying === -1) opts.push({ label: '체력 고갈 — 교대 휴식', score: 0.55 + ((22 - r.stamina) / 22) * 0.4, apply: () => {
     setTask(sim, s, a, 'rehab', '휴식');
@@ -209,3 +219,10 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
   if (chosen && chosen.apply) chosen.apply();
   void tileOf;
 }
+
+// ── (R3) 대응 교본의 자리 (field/doctrine.ts 의 판단 · doctrineRun.ts 의 실행 · R2 의 감각 senseOf · 실행기 도구 XK).
+//    (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다) ──
+import { DOC_DUTY_TASKS, docAct, docDrop, docDuty, docRetreat } from './doctrine';
+import { docBegin, recordDoc } from './doctrineRun';
+import { XK } from './executor';
+import { senseOf } from './methodRun';

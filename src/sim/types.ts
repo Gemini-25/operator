@@ -859,3 +859,74 @@ export interface Incident {
 export interface Problem {
   ref?: { inc?: number; unit?: number; edge?: number; fac?: number; lost?: number };    // 관련 사건·부대·구간·병원, 늘어난 초 (lost 는 b3-1 의 C6 이 채운다)
 }
+
+// ───────────────────────── 대응 교본 (R3 0단계 — 틀) ─────────────────────────
+// 교본 줄(field/doctrine/*.ts)이 쓰는 자료형과, 있는 자료형에 더하는 선택 칸 (docs/specs/R3-doctrine.md §2.1). 0단계는 틀만이다 — 줄이 없어 아무것도 이 칸을 채우지 않는다.
+// 합집합(FactType 'crew' · TaskKind 'cover'·'rearm'·'airOut'·'pairOut'·'pair' · WorkKind 'triage' · MethodId 열 개 · MethodWhy 여섯)은 그것을 쓰는 단계가 그 줄 끝에 새 줄로 더한다.
+// 객체 모양: FieldAgent 는 agents.makeAgent, Task 는 executor.makeTask, Unit 은 resources 의 두 리터럴, Scene 은 kit.baseScene, Incident 는 incidents.createIncident 에 같은 순서로 넣었다.
+/** 교본 표의 분야. 부대 분야(UnitField)와 다르다 — 사다리차는 부대 분야가 소방이지만 교본은 특수 표에 있다 (§2.2) */
+export type DocDept = 'common' | 'police' | 'fire' | 'ems' | 'special';
+/** 교본이 걸리는 자리 (§2.3) */
+export type DocHook = 'fit' | 'duty' | 'act' | 'method' | 'gate' | 'cmd' | 'dispatch' | 'chase';
+/** 교본이 내는 상태 행동 (같은 이름의 TaskKind 로 실행한다 — 그 행동을 쓰는 단계가 TaskKind 에 더한다) */
+export type DocActId = 'airOut' | 'pairOut' | 'cover' | 'rearm' | 'pair';
+/** 실행기가 교본에 묻는 판단 지점 (§2.3 ④) */
+export type DocGateId = 'interiorEntry' | 'roomEntry' | 'breach' | 'closeIn' | 'coverFire' | 'bangUse' | 'carryHold' | 'carryStart' | 'laneTreat';
+/** 교본 행동의 까닭 — 보고서·패널의 말 (§7.3 의 WHY_DOC) */
+export type DocWhy = 'alone' | 'buddy' | 'outside' | 'hurt' | 'tired' | 'shaken' | 'lowAir' | 'lowAmmo' | 'noKit' | 'kit' | 'civ' | 'hostage' | 'danger' | 'triage' | 'backup' | 'protocol' | 'team';
+/** 대원 자신의 몸 상태 신고 ('crew' 사실의 값 — 1단계). 지휘관·동료는 남의 몸을 이것으로만 안다 (§2.4) */
+export interface CrewBelief {
+  band: number;          // 신고한 중증도 0~2 (중상 문턱에 간격이 있다 — §4)
+  air: 0 | 1 | 2;        // 공기: 0 넉넉함(≥ AIR_IN) · 1 낮음 · 2 위급(< AIR_OUT). scba 가 없으면 0
+  ammo: 0 | 1 | 2;       // 탄: 0 넉넉함 · 1 마지막 탄창 · 2 위급(발사 2회 이하) 또는 0. 총이 없으면 0
+  shaken: boolean;       // 동요 중
+  t: number;
+}
+/** 교본을 쓴 기록 한 줄 (보고서·측정은 이것으로만 교본을 말한다). field/doctrineRun.ts 의 recordDoc 만 만든다 */
+export interface DocUse {
+  t: number; t1: number;               // 시작·끝 (기다림처럼 길이가 있는 것. 한 순간이면 t1 = t)
+  rid: number; unitId: number; rule: string; hook: DocHook;
+  act?: DocActId; gate?: DocGateId; method?: MethodId; work?: WorkKind;
+  mate: number;                        // 짝·함께한 대원 rid (없으면 -1)
+  tgt: string;                         // 대상 열쇠 (R2 targetKey 와 같은 모양, 없으면 '')
+  eventId: number;                     // 그때 남긴 기록 (기록 없이 센 것은 -1)
+  say: boolean;                        // 보고서 문장 후보인가 (§7.3)
+}
+export interface KitItem {
+  mag?: number;                        // 총기: 지금 탄창에 남은 탄 (uses 는 가진 탄 전부 — 탄창 포함). 2단계가 명부에서 채운다
+}
+export interface FieldAgent {
+  buddy?: number;                                              // 짝의 rid (-1 = 짝 없음). makeAgent 는 -1, 부대가 내린 뒤 pairUp 이 맺는다 (3단계)
+  doc?: { rule: string; act: DocActId; since: number } | null; // 지금 따르는 교본 행동 (패널·계속 점수)
+  docMem?: { rule: string; key: string; until: number }[];     // 교본 기억: key 'w:<작업 id>' = 그 작업을 그때까지 맡지 않는다 · 그 밖(대상 열쇠) = 그 줄을 그 대상에 다시 걸지 않는다
+  shaken?: number;                                             // 동요가 끝나는 시각 (없거나 지났으면 동요 아님)
+  shakenOff?: number;                                          // 동요가 끝난 시각 — 10초 동안 다시 동요하지 않는다
+  reloadUntil?: number;                                        // 재장전이 끝나는 시각 (그 전에는 쏘지 않는다)
+  crewSig?: string;                                            // 마지막으로 신고한 몸 상태의 서명 (doctrine.crewSigOf — 같은 신고를 되풀이하지 않는다)
+}
+export interface Task {
+  docRule?: string;                    // 이 임무를 연(또는 막고 있는) 교본 줄
+  gateAt?: number;                     // 판단 지점에서 막히기 시작한 시각 (-1 = 막히지 않음)
+  gateId?: DocGateId;                  // 막고 있는 판단 지점
+  gateSaid?: boolean;                  // 막힘을 이미 알렸다 (한 번만)
+  cvX?: number; cvY?: number;          // 고른 엄폐 자리 (§2.10 — 다시 고르는 조건이 될 때까지 그대로. 못 찾았으면 NaN)
+  cvTx?: number; cvTy?: number; cvLost?: number;   // 고를 때의 위협 믿음 위치, 시야를 잃은 시각 (-1)
+}
+export interface Unit {
+  ammoBox?: number; ammoBoxMax?: number;   // 차에 실은 탄약 상자 (한 상자 = 한 사람의 총기를 가득 채움) — 2단계
+  sparePump?: number;                      // 남은 예비 펌프 (지금은 무제한 — 3단계 F10)
+}
+export interface Scene {
+  triageAt?: number;                   // 분류가 끝난 시각 (-1 = 아직). 지휘 상태 — s.secureAt 과 같은 자격 (4단계)
+  laneShield?: number[] | null;        // 차량으로 막은 통제 지점 (6단계 blockLane)
+}
+export interface Incident {
+  docs?: DocUse[];                     // 교본을 쓴 기록 (처음 남길 때 배열이 된다 — doctrineRun.recordDoc)
+  trackBy?: 'air' | 'ground' | null;   // 추격전: 지금 차를 보고 있는 쪽 (2단계 — 공개 정보)
+  reportedPrev?: number;               // 그 전에 알려진 교차로 (값이 바뀔 때만 적는다 — 2단계)
+  reportedNodeAt?: number;             // 알려진 위치가 마지막으로 보고된 시각 (2단계)
+}
+export interface ShiftReport {
+  doctrine?: Record<string, number>;                     // 이 교대에 교본 줄이 쓰인 횟수 (번호별 — 1단계 buildReport)
+  docSplit?: Record<string, Record<string, number>>;     // '분야|국면|임무' → (고른 것 → 횟수) (1단계)
+}

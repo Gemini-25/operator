@@ -18,6 +18,8 @@ import { josa } from '../util';
 import { tileOf } from './grid';
 import { METHOD, SAY, WORK_MODE, chooseMethod, sayStart, targetKey } from './methods';
 import type { MTarget, MethodPick, Sense } from './methods';
+import { docCtx, hasDoc } from './doctrine';      // (R3) 교본 입력 (자기 모드)
+import type { DocCtx } from './doctrine/registry';
 
 /** 실행기가 건네는 도구 (executor.ts 의 XK). 지휘 규칙의 CommandKit 과 같은 방식 */
 export interface ExecKit {
@@ -30,6 +32,8 @@ export interface ExecKit {
 
 /** 대원이 선 칸에서 잰 연기와 열 (몸의 감각 — 판단부에 넘기는 유일한 진실) */
 export function senseOf(s: Scene, a: FieldAgent): Sense { const i = tileOf(s, a.x, a.y); return { smoke: s.smoke[i], heat: s.fire[i] }; }
+/** (R3) 실행부가 방법을 고를 때 넘기는 교본 입력 — 자기 모드 (R3 §2.3 ③). 방법 줄이 없으면 만들지 않는다(null) */
+function selfDc(sim: Sim, s: Scene, a: FieldAgent, t: Task): DocCtx | null { return hasDoc('method') ? docCtx(sim, s, a, 'self', t.workId >= 0 ? s.board[t.workId] ?? null : null, senseOf(s, a)) : null; }
 
 /**
  * 방법 판정의 난수 흐름 method:<사건 id>:<rid>:<k> (처음 쓸 때 만든다). k = 그 대원이 이 현장에 들어온 순번(s.agents 에서 같은 rid 가운데 몇째인가) —
@@ -115,7 +119,7 @@ function applyPick(sim: Sim, t: Task, pick: MethodPick): void {
  */
 export function startMethod(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, work: WorkKind, tg: MTarget): boolean {
   pruneFails(sim, a);
-  const pick = chooseMethod(sim, s, a, work, tg, t, senseOf(s, a));
+  const pick = chooseMethod(sim, s, a, work, tg, t, senseOf(s, a), selfDc(sim, s, a, t));
   if (pick === null) { t.mt0 = sim.t; t.mtry = 0; t.mbad = 0; return WORK_MODE[work] !== 'refuse'; }
   applyPick(sim, t, pick);
   announce(sim, I, a, t, work, tg);
@@ -130,7 +134,7 @@ export function recheckOnArrive(sim: Sim, s: Scene, I: Incident, a: FieldAgent, 
   if (t.marr) return;
   t.marr = true;
   if (t.progress !== 0 || t.phase !== 0) return;
-  const pick = chooseMethod(sim, s, a, work, tg, t, senseOf(s, a));
+  const pick = chooseMethod(sim, s, a, work, tg, t, senseOf(s, a), selfDc(sim, s, a, t));
   if (pick === null || pick.m === t.method) return;
   applyPick(sim, t, pick);
   t.phase = 0; t.progress = 0;
@@ -156,7 +160,7 @@ export function switchMethod(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: 
   if (tried.indexOf(m0) < 0) tried.push(m0);
   rememberFail(sim, a, key, m0, why);
   // ② 다음 방법 (tried·mfail 이 반영된다)
-  const pick = next ? chooseMethod(sim, s, a, work, tg, t, senseOf(s, a)) : null;
+  const pick = next ? chooseMethod(sim, s, a, work, tg, t, senseOf(s, a), selfDc(sim, s, a, t)) : null;
   // ③ 기록
   const tail = pick !== null && SAY[pick.m] ? ' ' + SAY[pick.m] : '';
   let ev: number;

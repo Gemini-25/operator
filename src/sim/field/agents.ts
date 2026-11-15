@@ -36,6 +36,7 @@ export function makeAgent(sim: Sim, rid: number, unitId: number, x: number, y: n
     trapped: undefined, trapEv: undefined, avoid: undefined, opsSeen: undefined, signObs: undefined, extSeen: undefined,      // (X6) 깔림·피하는 곳·철수 명령·조짐 관찰의 기억 — 쓰는 것은 단계 2 부터
     aloft: false, taserAt: -99,      // (R1) 공중 관측자가 아니다(관측자는 air.ts 가 true 로 바꾼다) · 테이저를 쏜 적이 없다
     hurtEv: undefined, hpTick: undefined, lastTile: undefined, fellOnce: undefined, lightBack: undefined,      // (H1) 부상 — 쓰는 것은 단계 4a 부터
+    buddy: -1, doc: null, docMem: undefined, shaken: undefined, shakenOff: undefined, reloadUntil: undefined, crewSig: undefined,      // (R3) 짝(부대가 내린 뒤 pairUp — 3단계)·교본 행동·기억·동요·재장전·자기 신고 — 쓰는 것은 단계 1 부터
   };
 }
 
@@ -499,7 +500,7 @@ export function pumpOperatorOn(sim: Sim, s: Scene, unitId: number): boolean {
  */
 export function fitFor(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap = false): number {
   const fit = fitBase(sim, s, a, w, afterSwap);
-  return fit > 0 ? Math.max(0.02, fit + (roleOf(sim, a.rid).prefer[w.kind] ?? 0)) : fit;
+  return docFit(sim, s, a, w, fit > 0 ? Math.max(0.02, fit + (roleOf(sim, a.rid).prefer[w.kind] ?? 0)) : fit);      // (R3) 교본은 맨 끝에서 좁히기만 한다 (늘 보고 모드 — 줄이 없으면 그대로)
 }
 /** 공기가 되는가: 문턱 아래가 아니다 (공기호흡기가 없는 대원은 해당 없음). afterSwap 이면 통을 바꾼 뒤로 보고 따지지 않는다 */
 const airOk = (sim: Sim, rid: number, afterSwap: boolean): boolean => afterSwap || !airShort(sim, rid);
@@ -603,3 +604,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
 
 export function inShadow(s: Scene, a: FieldAgent): boolean { return s.shadow[tileOf(s, a.x, a.y)] === 1; }
 export function nearDoor(s: Scene, i: number): boolean { return doorAt(s, i) !== null; }
+
+// ── (R3) 대응 교본의 판단부 (field/doctrine.ts) — fitFor 의 맨 끝이 부른다. doctrine.ts 는 이 파일을 import 하지 않는다(순환 없음).
+//    (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다) ──
+import { docFit } from './doctrine';

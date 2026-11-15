@@ -8,6 +8,7 @@ import { closeIncident } from '../incidents';
 import { T } from '../types';
 import type { CasBelief, FieldAgent, Incident, MateBelief, Scene, UnitCaps, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, dist, josa } from '../util';
+import { TYPE_DEFS } from '../incidentTypes';
 import { airShort, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, isHovering, kitUses, roleOf, seatsOf, seatsUsed } from '../crews';
 import { canCarryPatients, exitName, failedRecently, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
 import { heardEv, mkFact } from './beliefs';
@@ -270,7 +271,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   const th = s.researchRound > 0 ? 0.9 : 0.72;
   const hotArmed = s.kind === 'armed' && s.secureAt < 0;
   let pendingSearch = 0;
-  if (s.kind === 'search') {
+  if (TYPE_DEFS[s.kind].zoneSearch) {      // 구역 확률 수색 (incidentTypes — 실종)
     updateZoneProb(sim, s, a);
     const targetsFound = cas.length;
     if (targetsFound < Math.max(1, expected)) {
@@ -306,7 +307,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         if (evid || (!wrecksPending && expected > found)) { pendingSearch++; want(sim, s, 'search', { region: r.id }, 0.64, 1, sim.weather !== 'clear' || c >= 0); }
         continue;
       }
-      if (s.kind !== 'fire' && s.kind !== 'armed' && s.kind !== 'medical' && s.kind !== 'collapse' && s.kind !== 'hazmat' && s.kind !== 'water') continue;
+      if (!TYPE_DEFS[s.kind].roomSearch) continue;      // 방 수색을 하는 유형 (incidentTypes)
       if (s.kind === 'water' && found >= Math.max(1, expected)) continue;      // 신고된 인원을 모두 찾았으면 물가 수색을 멈춘다
       if (s.kind === 'medical' && found >= 1) continue;      // 환자를 찾았으면 더 수색하지 않는다
       if (c >= th) continue;
@@ -663,7 +664,7 @@ function sitrep(sim: Sim, s: Scene, I: Incident, a: FieldAgent, force = false): 
   if (fires.length) parts.push(`화재 ${fires.length}개 구역`);
   if (cas.length) { const bands = [0, 0, 0, 0]; for (const c of cas) bands[c.value.band]++; parts.push(`구조 대상 ${cas.length}명 확인(${bands.map((n, k) => (n ? `${BAND_NAME[k]} ${n}` : '')).filter(Boolean).join(', ')})`); }
   if (hos.length) parts.push(`용의자 ${hos.length}명 대치 중`);
-  if (!parts.length) parts.push(s.kind === 'search' ? '대상 수색 중' : '특이 사항 없음');
+  if (!parts.length) parts.push(TYPE_DEFS[s.kind].zoneSearch ? '대상 수색 중' : '특이 사항 없음');
   const ev = transmit(sim, s, a, -2, 'sitrep', [], `관제, 현장 상황 보고: ${parts.join(', ')}.`, -1, 0);
   if (ev < 0) return;
   s.lastSitrep = sim.t;
@@ -698,7 +699,7 @@ function canClose(sim: Sim, s: Scene, a: FieldAgent): boolean {
   }
   if (B.list('hos').some((h) => h.value.state === 'hold' || h.value.state === 'fight' || h.value.state === 'flee' || h.value.state === 'surrendered')) return false;
   if (s.kind === 'armed' && s.secureAt < 0) return false;
-  if (s.kind === 'search' && B.list('cas').length < 1) return false;
+  if (TYPE_DEFS[s.kind].zoneSearch && B.list('cas').length < 1) return false;
   if (B.list('mate').some((f) => f.value.status === 'down' && !f.value.dead && onScene(s, f.id))) return false;      // 쓰러진 동료를 두고 끝내지 않는다 (숨진 동료의 수습은 위의 작업 항목이 막는다)
   for (const blocked of CLOSE_BLOCKERS) if (blocked(sim, s, a)) return false;
   return true;

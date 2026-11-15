@@ -3,6 +3,7 @@
 // 원인 설명 문장은 시뮬레이션 중 실제로 기록된 문제(Problem)와 타임라인에서만 만든다.
 
 import { scenarioName } from './scenarios';
+import { TYPE_DEFS } from './incidentTypes';
 import { personaName } from './dispatch/callSystem';
 import { sevName } from './dispatch/analyst';
 import { difficultyLabel } from './difficulty';
@@ -24,8 +25,6 @@ export const PROBLEM_LABEL: Record<ProblemCode, string> = {
   TIMEOUT: '대응 시간 초과', FATIGUE: '대원 체력 고갈', HIDDEN_HAZARD: '숨겨진 위험 발현', RECOUNT: '인원 불일치 재수색', WRONG_ADDRESS: '신고 위치 오류', FALSE_ALARM: '허위·오인 신고',
   RESPONDER_KILLED: '대원 순직', SUSPECT_DIED: '용의자 사망',
 };
-
-const RESP_LIMIT: Record<string, number> = { fire: 95, armed: 95, traffic: 105, search: 125, medical: 80, collapse: 100, hazmat: 100, water: 90 };
 
 function addProblem(I: Incident, code: ProblemCode, t: number, eventId: number, detail: string, recovered = false, recoveryText = ''): void {
   if (I.problems.some((p) => p.code === code && p.detail === detail)) return;
@@ -109,7 +108,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   else if (bad > 0.01) grade = 'partial';
   else grade = 'success';
   if (I.pursuit && I.pursuit.state === 'escaped') grade = I.pursuit.kind === 'kidnap' && I.pursuit.how !== 'hideout' ? 'failed' : 'unresolved';      // 납치된 사람을 되찾지 못했다 / 난폭 운전자를 놓쳤다 / 은신처에 숨어든 납치는 이어지는 인질 사건이 결말을 낸다
-  const limit = RESP_LIMIT[truth.type];
+  const limit = TYPE_DEFS[truth.type].respLimit;
   const delayed = !I.pursuit && (responseTime < 0 || responseTime > limit || I.problems.some((p) => p.code === 'BACKUP_LATE'));      // 추격전은 차를 세운 뒤에야 현장이 생긴다
   const outcome: Outcome = grade === 'success' && delayed ? 'delayed' : grade;
 

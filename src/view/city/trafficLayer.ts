@@ -9,6 +9,7 @@ import type { Obstacle, ObstacleKind } from '../../sim/traffic';
 import type { RoadEdge } from '../../sim/types';
 import { fmtSec } from '../../sim/util';
 import { mix } from '../scene/common';
+import { TYPE_COLOR } from '../typeStyle';
 
 type G = CanvasRenderingContext2D;
 
@@ -165,8 +166,8 @@ export function drawObstacleMark(ctx: G, kind: ObstacleKind, x: number, y: numbe
 
 const obstacleXY = (sim: Sim, ob: Obstacle): { x: number; y: number } => { const e = sim.city.edges[ob.edge], A = sim.city.nodes[e.a], B = sim.city.nodes[e.b]; return { x: A.x + (B.x - A.x) * ob.t, y: A.y + (B.y - A.y) * ob.t }; };
 
-/** (G4 §7.5) 통제의 원인 색: 사건 유형색(renderCity.TYPE_COLOR 의 복사 — 그 파일을 import 하면 서로 부르게 된다)과 재난 */
-const CAUSE_COLOR: Record<string, string> = { fire: '#ff6b3d', traffic: '#ffc24a', search: '#58d68d', armed: '#b98cff', medical: '#ff7eb6', collapse: '#d6a878', hazmat: '#b6e04a', water: '#4fb8ff', unknown: '#9aa7b4' };
+/** (G4 §7.5) 통제의 원인 색: 사건 유형색(typeStyle.TYPE_COLOR — 예전에는 renderCity 의 표를 복사해 두었다)과 재난 */
+const CAUSE_COLOR = TYPE_COLOR;
 export const DISASTER_RING = '#ffb454';
 export interface TrafficScreenOpts { timeMs: number; truth: boolean; zs?: number; mini?: boolean }
 

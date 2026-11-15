@@ -8,7 +8,9 @@ import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import { josa } from '../util';
 import type { Rng } from '../rng';
-import type { Call, Caller, Claim, Incident, Persona, Scene, Topic } from '../types';
+import type { Call, Caller, Claim, Incident, IncidentType, Persona, Scene, Topic } from '../types';
+import { TYPE_DEFS } from '../incidentTypes';
+import type { LikMap } from '../incidentTypes';
 import { applyCallerAid } from '../field/hazards';
 import { assess } from './analyst';
 import { briefUpdate, redirectUnits } from './dispatcher';
@@ -47,16 +49,28 @@ const NATURE_TEXT: Record<string, string[]> = {
   gasleak: ['가스 냄새가 심하게 나요! 어디서 새는 것 같아요.', '배관에서 쉬익 소리가 나고 가스 냄새가 지독해요.'],
   fumes: ['이상한 냄새가 나고 머리가 아파요.', '사람들이 기침하면서 건물에서 나오고 있어요.'],
 };
-/** 신고 키워드 → 사건 유형 가능도 (분석 AI 가 사용) */
-export const NATURE_LIK: Record<string, number[]> = {
-  //            fire  traffic search armed medical collapse hazmat water
-  flames: [0.94, 0.03, 0.01, 0.02, 0.01, 0.01, 0.02, 0.01], smoke: [0.72, 0.18, 0.02, 0.07, 0.01, 0.04, 0.06, 0.01], smell: [0.7, 0.15, 0.05, 0.08, 0.02, 0.01, 0.2, 0.01], explosion: [0.46, 0.27, 0.02, 0.24, 0.01, 0.12, 0.18, 0.01],
-  crash: [0.03, 0.93, 0.01, 0.02, 0.01, 0.02, 0.01, 0.01], bang: [0.22, 0.46, 0.02, 0.28, 0.02, 0.2, 0.04, 0.02], missing: [0.01, 0.01, 0.96, 0.01, 0.01, 0.01, 0.01, 0.03], scream: [0.18, 0.18, 0.1, 0.42, 0.12, 0.06, 0.04, 0.07],
-  gunshots: [0.02, 0.02, 0.01, 0.94, 0.01, 0.01, 0.01, 0.01], robbery: [0.01, 0.01, 0.01, 0.96, 0.01, 0.01, 0.01, 0.01], fight: [0.03, 0.05, 0.02, 0.86, 0.04, 0.01, 0.01, 0.01], hostage: [0.01, 0.01, 0.01, 0.96, 0.01, 0.01, 0.01, 0.01],
-  notbreathing: [0.02, 0.02, 0.01, 0.03, 0.92, 0.01, 0.03, 0.01], collapsed: [0.03, 0.06, 0.04, 0.06, 0.81, 0.02, 0.07, 0.02], fall: [0.02, 0.1, 0.03, 0.05, 0.8, 0.03, 0.01, 0.01],
-  collapse: [0.03, 0.03, 0.01, 0.01, 0.01, 0.92, 0.01, 0.01], rumble: [0.1, 0.2, 0.02, 0.1, 0.02, 0.5, 0.06, 0.01],
-  drowning: [0.01, 0.02, 0.03, 0.01, 0.03, 0.01, 0.01, 0.93],
-  gasleak: [0.06, 0.01, 0.01, 0.01, 0.02, 0.01, 0.9, 0.01], fumes: [0.2, 0.02, 0.02, 0.03, 0.18, 0.02, 0.5, 0.01],
+/** 신고 키워드 → 사건 유형 가능도 (분석 AI 가 incidentTypes.likRow 로 읽는다). 유형 이름으로 적고, 적지 않은 유형은 LIK_FLOOR */
+export const NATURE_LIK: Record<string, LikMap> = {
+  flames: { fire: 0.94, traffic: 0.03, search: 0.01, armed: 0.02, medical: 0.01, collapse: 0.01, hazmat: 0.02, water: 0.01 },
+  smoke: { fire: 0.72, traffic: 0.18, search: 0.02, armed: 0.07, medical: 0.01, collapse: 0.04, hazmat: 0.06, water: 0.01 },
+  smell: { fire: 0.7, traffic: 0.15, search: 0.05, armed: 0.08, medical: 0.02, collapse: 0.01, hazmat: 0.2, water: 0.01 },
+  explosion: { fire: 0.46, traffic: 0.27, search: 0.02, armed: 0.24, medical: 0.01, collapse: 0.12, hazmat: 0.18, water: 0.01 },
+  crash: { fire: 0.03, traffic: 0.93, search: 0.01, armed: 0.02, medical: 0.01, collapse: 0.02, hazmat: 0.01, water: 0.01 },
+  bang: { fire: 0.22, traffic: 0.46, search: 0.02, armed: 0.28, medical: 0.02, collapse: 0.2, hazmat: 0.04, water: 0.02 },
+  missing: { fire: 0.01, traffic: 0.01, search: 0.96, armed: 0.01, medical: 0.01, collapse: 0.01, hazmat: 0.01, water: 0.03 },
+  scream: { fire: 0.18, traffic: 0.18, search: 0.1, armed: 0.42, medical: 0.12, collapse: 0.06, hazmat: 0.04, water: 0.07 },
+  gunshots: { fire: 0.02, traffic: 0.02, search: 0.01, armed: 0.94, medical: 0.01, collapse: 0.01, hazmat: 0.01, water: 0.01 },
+  robbery: { fire: 0.01, traffic: 0.01, search: 0.01, armed: 0.96, medical: 0.01, collapse: 0.01, hazmat: 0.01, water: 0.01 },
+  fight: { fire: 0.03, traffic: 0.05, search: 0.02, armed: 0.86, medical: 0.04, collapse: 0.01, hazmat: 0.01, water: 0.01 },
+  hostage: { fire: 0.01, traffic: 0.01, search: 0.01, armed: 0.96, medical: 0.01, collapse: 0.01, hazmat: 0.01, water: 0.01 },
+  notbreathing: { fire: 0.02, traffic: 0.02, search: 0.01, armed: 0.03, medical: 0.92, collapse: 0.01, hazmat: 0.03, water: 0.01 },
+  collapsed: { fire: 0.03, traffic: 0.06, search: 0.04, armed: 0.06, medical: 0.81, collapse: 0.02, hazmat: 0.07, water: 0.02 },
+  fall: { fire: 0.02, traffic: 0.1, search: 0.03, armed: 0.05, medical: 0.8, collapse: 0.03, hazmat: 0.01, water: 0.01 },
+  collapse: { fire: 0.03, traffic: 0.03, search: 0.01, armed: 0.01, medical: 0.01, collapse: 0.92, hazmat: 0.01, water: 0.01 },
+  rumble: { fire: 0.1, traffic: 0.2, search: 0.02, armed: 0.1, medical: 0.02, collapse: 0.5, hazmat: 0.06, water: 0.01 },
+  drowning: { fire: 0.01, traffic: 0.02, search: 0.03, armed: 0.01, medical: 0.03, collapse: 0.01, hazmat: 0.01, water: 0.93 },
+  gasleak: { fire: 0.06, traffic: 0.01, search: 0.01, armed: 0.01, medical: 0.02, collapse: 0.01, hazmat: 0.9, water: 0.01 },
+  fumes: { fire: 0.2, traffic: 0.02, search: 0.02, armed: 0.03, medical: 0.18, collapse: 0.02, hazmat: 0.5, water: 0.01 },
 };
 // 시나리오 표에 적힌 신고 문구와 가능도를 합친다 (scenarios/*.ts)
 for (const sc of SCENARIOS) { if (sc.texts) NATURE_TEXT[sc.nature] = sc.texts; if (sc.lik) NATURE_LIK[sc.nature] = sc.lik; }
@@ -167,8 +181,8 @@ export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: 
   if (rng.chance(kn) && t !== 'search') {
     const ok = rng.chance(acc);
     const v = ok ? trappedTrue : !trappedTrue;
-    const yes = t === 'water' ? '물에 빠져서 못 나오고 있어요!' : t === 'collapse' ? '잔해 밑에 사람이 깔려 있어요!' : t === 'fire' || t === 'hazmat' ? '안에 아직 사람이 있어요!' : t === 'armed' ? '가게 안에 사람들이 못 나오고 있어요.' : '차 안에 사람이 끼어서 못 나와요.';
-    const no = t === 'water' ? '다들 물 밖으로 나온 것 같아요.' : t === 'fire' || t === 'hazmat' || t === 'collapse' ? '사람들은 다 나온 것 같아요.' : t === 'armed' ? '안에 다른 사람은 없는 것 같아요.' : '다들 차 밖으로 나왔어요.';
+    const yes = TYPE_DEFS[t].trappedYes ?? '갇힌 사람이 있어요.';      // 갇힘 문구는 유형의 표에 (incidentTypes.TYPE_DEFS)
+    const no = TYPE_DEFS[t].trappedNo ?? '갇힌 사람은 없는 것 같아요.';
     put('trapped', v, v ? yes : no, ok, ok ? '' : v ? '고립자가 없는데 있다고 신고' : '고립자가 있는데 "다 나왔다"고 신고');
   }
   // 위험 요소
@@ -203,7 +217,7 @@ export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: 
     const rooms = s.regions.filter((r) => r.kind === 'room');
     const reg = ok && trueReg >= 0 ? s.regions[trueReg] : rng.pick(rooms);
     put('detail', { region: reg.id }, `${reg.name} 쪽에 사람이 있는 걸 봤어요.`, reg.id === trueReg, reg.id === trueReg ? '' : `요구조자 위치를 ${josa(reg.name, '으로/로')} 잘못 신고`);
-  } else if (t === 'search') {
+  } else if (TYPE_DEFS[t].zoneSearch) {      // 구역 확률 수색 유형: 마지막으로 본 구역
     const tgt = cas.find((c) => c.isTarget)!;
     let trueReg = s.region[Math.round(tgt.y) * s.w + Math.round(tgt.x)];
     // 개울(물 칸)은 어느 구역에도 들지 않는다: 물에 빠지기 직전에 걷던 물가 구역을 본 것으로 한다
@@ -229,29 +243,20 @@ export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: 
   };
 }
 
-const QUESTION: Record<Topic, Record<string, string>> = {
-  location: { any: '정확한 위치가 어디입니까?' },
-  nature: { any: '정확히 무엇을 보셨습니까? 불, 사고, 사람 중 무엇입니까?' },
-  injured: { medical: '환자가 의식이 있습니까? 불러 보세요.', any: '다친 사람이 있습니까?' },
-  count: { fire: '건물 안에 몇 명이나 있습니까?', traffic: '다친 사람은 모두 몇 명입니까?', armed: '안에 있는 사람은 몇 명입니까?', water: '물에 빠진 사람은 몇 명입니까?', collapse: '건물 안에 몇 명이나 있었습니까?', hazmat: '건물 안에 몇 명이나 있습니까?', search: '찾는 분은 몇 명입니까?', medical: '환자는 몇 명입니까?', any: '사람은 몇 명입니까?' },
-  trapped: { water: '아직 물속에 있습니까, 물 밖으로 나왔습니까?', collapse: '잔해에 깔리거나 갇힌 사람이 있습니까?', hazmat: '건물 안에 아직 사람이 남아 있습니까?', fire: '건물 안에 아직 사람이 남아 있습니까?', traffic: '차 안에 갇힌 사람이 있습니까?', armed: '가게 안에 못 나온 사람이 있습니까?', any: '갇힌 사람이 있습니까?' },
-  hazard: { water: '물살이 셉니까? 떠내려가고 있습니까?', collapse: '건물이 더 무너질 것 같습니까?', hazmat: '가스가 계속 새고 있습니까? 근처에 불씨가 있습니까?', fire: '불이 번지고 있습니까? 위험물이 있습니까?', traffic: '연료가 새거나 연기가 나는 차량이 있습니까?', any: '주변에 다른 위험한 것이 있습니까?' },
-  weapon: { any: '무기를 가지고 있습니까? 어떤 무기입니까?' },
-  detail: { fire: '사람이 있는 위치를 아십니까?', search: '마지막으로 본 곳이 어디입니까?', traffic: '차 밖으로 튕겨 나간 사람이 있습니까?', armed: '용의자는 몇 명입니까?', medical: '환자가 숨을 쉬고 있습니까? 가슴이 오르내리는지 보세요.', any: '더 알려 주실 내용이 있습니까?' },
+/** 접수 AI 의 질문 — 유형마다 다른 문구는 그 유형의 표(TYPE_DEFS[…].question)에, 여기에는 공통 문구만 */
+const QUESTION_ANY: Record<Topic, string> = {
+  location: '정확한 위치가 어디입니까?',
+  nature: '정확히 무엇을 보셨습니까? 불, 사고, 사람 중 무엇입니까?',
+  injured: '다친 사람이 있습니까?',
+  count: '사람은 몇 명입니까?',
+  trapped: '갇힌 사람이 있습니까?',
+  hazard: '주변에 다른 위험한 것이 있습니까?',
+  weapon: '무기를 가지고 있습니까? 어떤 무기입니까?',
+  detail: '더 알려 주실 내용이 있습니까?',
 };
+const question = (topic: Topic, type: IncidentType | undefined): string => (type ? TYPE_DEFS[type].question[topic] : undefined) ?? QUESTION_ANY[topic];
 const DONT_KNOW = ['잘 모르겠어요.', '그건 못 봤어요.', '거기까지는 모르겠어요.'];
 const PANIC_NOISE = ['빨리 좀 와 주세요! 제발요!', '모르겠어요, 빨리요!', '아… 어떡해, 어떡해요!'];
-
-const TOPIC_VALUE: Record<string, Partial<Record<Topic, number>>> = {
-  fire: { trapped: 0.92, count: 0.7, detail: 0.66, hazard: 0.62, injured: 0.5 },
-  traffic: { injured: 0.9, trapped: 0.84, count: 0.62, hazard: 0.6, detail: 0.5 },
-  search: { detail: 0.92, injured: 0.6, count: 0.55 },
-  armed: { weapon: 0.95, injured: 0.82, detail: 0.7, trapped: 0.64, count: 0.5 },
-  medical: { detail: 0.95, injured: 0.85, count: 0.3 },
-  collapse: { trapped: 0.94, count: 0.8, injured: 0.62, hazard: 0.6 },
-  hazmat: { hazard: 0.88, trapped: 0.86, count: 0.7, injured: 0.6 },
-  water: { trapped: 0.95, count: 0.82, hazard: 0.6, injured: 0.35 },
-};
 
 /** 사건과 무관한 비긴급 전화. [신고자, 접수 AI, 신고자, 접수 AI …] */
 const NUISANCE: string[][] = [
@@ -327,7 +332,7 @@ function nextTopic(sim: Sim, call: Call, I: Incident): Topic | null {
   const as = I.assessment;
   if (as && as.typeConf < 0.6 && call.asked.indexOf('nature') < 0) return 'nature';
   const hyp = as ? as.type : 'fire';
-  const table = TOPIC_VALUE[hyp];
+  const table = TYPE_DEFS[hyp].topicValue;      // 주제마다 물을 가치 (유형의 표 — 열쇠의 순서가 같은 값끼리의 순서)
   let best: Topic | null = null, bs = 0;
   const elapsed = sim.t - call.answeredAt;
   if (!table) return null;
@@ -417,7 +422,7 @@ export function tickCalls(sim: Sim): void {
     // 공황 상태의 신고자는 첫 질문에 제대로 답하지 못할 수 있다
     if (cl.persona === 'panicked' && call.retries === 0 && call.rng.chance(0.38)) {
       say(sim, call, I, 'CALLER', call.rng.pick(PANIC_NOISE));
-      say(sim, call, I, 'CALL_TAKER', '진정하세요. 도와드리겠습니다. ' + (QUESTION[topic][I.assessment?.type ?? 'any'] ?? QUESTION[topic].any));
+      say(sim, call, I, 'CALL_TAKER', '진정하세요. 도와드리겠습니다. ' + question(topic, I.assessment?.type));
       call.retries = 1; call.nextAt = sim.t + cl.answerTime;
       return;
     }
@@ -455,8 +460,7 @@ export function tickCalls(sim: Sim): void {
     endCall(sim, call, I, call.isFollowup ? '추가 정보 감사합니다. 출동 부대에 전달하겠습니다.' : I.firstDispatchAt >= 0 ? '부대가 출동했습니다. 안전한 곳에서 기다려 주세요.' : '접수했습니다. 곧 부대를 보내겠습니다. 안전한 곳에서 기다려 주세요.');
     return;
   }
-  const hyp = I.assessment?.type ?? 'any';
-  say(sim, call, I, 'CALL_TAKER', QUESTION[topic][hyp] ?? QUESTION[topic].any);
+  say(sim, call, I, 'CALL_TAKER', question(topic, I.assessment?.type));
   call.asked.push(topic); call.pending = topic; call.phase = 'wait';
   call.nextAt = sim.t + 1.6 + cl.answerTime * call.rng.range(0.8, 1.25);
 }

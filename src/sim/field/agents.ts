@@ -6,6 +6,7 @@ import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
 import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Incident, MateBelief, RadioMsg, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, clamp, dist, josa, pct } from '../util';
+import { TYPE_DEFS } from '../incidentTypes';
 import type { Rng } from '../rng';
 import { airShort, hasFirearm, hasKit, kitLive, kitWorks, medLevelOf, roleOf, seatsOf, seatsUsed, toolFor } from '../crews';
 import { BeliefStore, mkFact } from './beliefs';
@@ -434,7 +435,7 @@ export function agentCost(sim: Sim, s: Scene, a: FieldAgent, allowBlockers = tru
   const scba = hasKit(sim, a.rid, 'scba'), turnout = hasKit(sim, a.rid, 'turnout');
   const canSuppress = hasKit(sim, a.rid, 'hose') && !u.pumpFailed && (u.water > 0 || u.hydrant);
   // 공기호흡기가 없는 대원은 화재·가스·붕괴 현장의 건물 안을 가로질러 가지 않는다 (돌아갈 길이 있으면 돌아간다 — 안에 볼일이 있는 일은 fitFor 가 먼저 막는다)
-  const shun = !scba && (s.kind === 'fire' || s.kind === 'hazmat' || s.kind === 'collapse');
+  const shun = !scba && TYPE_DEFS[s.kind].indoorRisk;
   const ax = a.x, ay = a.y;
   const v = Math.min(5, visionOf(sim, s, a));
   // 판단력이 낮으면 장애물 제거 시간을 잘못 추정한다
@@ -526,7 +527,8 @@ const scbaOk = (sim: Sim, rid: number, afterSwap: boolean): boolean => hasKit(si
 function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: boolean): number {
   const r = resp(sim, a), u = sim.units[a.unitId], rid = a.rid;
   const hot = s.kind === 'armed' && s.secureAt < 0;
-  const fireRisk = (regionId: number): boolean => regionId >= 0 && ((a.beliefs.val<number>('fire', regionId) ?? 0) > 0.25 || s.kind === 'fire' || s.kind === 'hazmat' || s.kind === 'collapse');      // 불이 났거나, 가스가 찼거나, 무너질 수 있는 건물 안은 공기호흡기를 멘 대원만 들어간다
+  const indoorRisk = TYPE_DEFS[s.kind].indoorRisk;      // 위험한 건물의 유형 (incidentTypes — 화재·가스 누출·붕괴)
+  const fireRisk = (regionId: number): boolean => regionId >= 0 && ((a.beliefs.val<number>('fire', regionId) ?? 0) > 0.25 || indoorRisk);      // 불이 났거나, 가스가 찼거나, 무너질 수 있는 건물 안은 공기호흡기를 멘 대원만 들어간다
   // 걸을 수 있는 다친 대원은 가벼운 일만 맡는다 (H1 §2.5 — 사용자 결정 2026-11-15 "가벼운 일은 계속"). 조직이 아는 상태(status — RESPONDER_HURT 로 알렸다)만 본다:
   // 남에게도 불리는 함수라 체력·출혈은 읽지 않는다. 목록(injury.LIGHT_WORK) 안의 일도 자리가 위험 구역(불·가스·붕괴의 건물 안, 안전 확보 전의 무장 현장 건물 안)이면 맡지 않고,
   // 처치는 대상이 안전 구역에 나와 있을 때만 돕는다. 현장 평가는 지휘의 일이라 다친 지휘관도 한다(위험 구역 밖에서 본다 — 못 하면 그 현장은 끝나지 않는다)
@@ -571,7 +573,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
     case 'carry': case 'escort': {
       if (hot && r.dept !== 'police') return 0;
       const cb = a.beliefs.val<CasBelief>('cas', w.cas);
-      if (!cb && (s.kind === 'fire' || s.kind === 'collapse' || s.kind === 'hazmat') && !scbaOk(sim, rid, afterSwap)) return 0;      // 어디에 있는지 아직 전달받지 못했다 — 위험한 건물 안일 수 있다
+      if (!cb && indoorRisk && !scbaOk(sim, rid, afterSwap)) return 0;      // 어디에 있는지 아직 전달받지 못했다 — 위험한 건물 안일 수 있다
       // 누가 옮기는 중('carried')이어도 믿음 속 자리로 같은 검사를 한다: 공기호흡기 없는 대원이 이송 보조로 위험한 건물 안에 따라 들어가지 않게
       if (cb && (cb.where === 'scene' || cb.where === 'carried')) { const rg = s.region[cb.y * s.w + cb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg) && !scbaOk(sim, rid, afterSwap)) return 0; }
       return 0.4 + 0.4 * r.fitness + (hasKit(sim, rid, 'stretcher') ? 0.1 : 0);

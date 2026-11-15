@@ -27,6 +27,8 @@ export interface KitDef {
   med?: number;                       // 의료 장비 수준 (부대의 medLevel 자리)
   armor?: number;                     // 총격 방호 (부대의 armor 자리)
   faultable?: boolean;                // 교대마다 고장 추첨을 받는다
+  uses?: number;                      // (R2) 처음 수량 — 명부가 KitItem.uses 로 복사한다 (단계 1a: kitFor). 섬광탄·테이저·장약·공기는 R1 의 자리(KIT_USES·dealFlashbangs·tn.airFull) 그대로
+  batch?: 'r2';                       // (R2) 고장 추첨을 R1 의 흐름(kit·aid:<n>) 밖에서 따로 받는 장비 — kit-r2·aid-r2:<n> (단계 1a: drawFaults 가 건너뛴다)
 }
 /**
  * 장비 표. 효과의 내용은 설계서 4절 표에 있고, 여기에는 여러 장비가 같은 식으로 견주는 값(tool·med·armor)과 고장 추첨 여부만 둔다.
@@ -70,6 +72,17 @@ export const KITS: Record<KitId, KitDef> = {
   searchlight: { name: '탐조등', group: 'air', faultable: true },
   // 폭파 장약: R1 에서는 효과가 없다. tool 값을 두지 않는다(두면 문 개방 속도가 바뀐다). 고장 추첨도 받지 않는다. 쓰는 것은 R2 §4.2a
   charge: { name: '폭파 장약', group: 'police' },
+  // ── (R2 §3.3) 대응 방법이 쓰는 장비 아홉 가지. 단계 0 에는 표에만 있다 — 어느 역할도 들지 않는다(역할의 기본 장비에는 단계 1a·3·4·5 가 끝에 붙인다).
+  //    고장 나는 것(raft·fan·airbag)은 batch 'r2': R1 의 고장 추첨 순서에 끼지 않고 따로 뽑는다 ──
+  pole: { name: '갈고리 장대', group: 'rescue', tool: { water: 0.7 } },
+  pfd: { name: '구명조끼', group: 'rescue' },
+  drysuit: { name: '드라이슈트', group: 'rescue' },
+  raft: { name: '구조용 고무보트', group: 'rescue', faultable: true, batch: 'r2' },
+  extinguisher: { name: '소화기', group: 'fire', uses: 1 },      // 한 개 = 12초 분사
+  fan: { name: '송풍기', group: 'fire', faultable: true, batch: 'r2' },
+  airbag: { name: '구조용 에어백', group: 'rescue', faultable: true, batch: 'r2' },
+  shoring: { name: '지지대', group: 'rescue' },
+  beanbag: { name: '비살상탄 발사기', group: 'police', uses: 3 },      // 발
 };
 /** 처음에 채워 두는 수량 (섬광탄은 부대 몫을 dealFlashbangs 가 나눈다. 공기호흡기의 공기는 kitFor 가 장비 손잡이의 값 tn.airFull 로 채운다) */
 const KIT_USES: Partial<Record<KitId, number>> = { taser: 2, charge: 2 };

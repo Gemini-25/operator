@@ -21,6 +21,7 @@ export function makeTask(kind: TaskKind, label: string, w: WorkItem | null = nul
   return {
     kind, workId: w ? w.id : -1, region: w ? w.region : -1, cas: w ? w.cas : -1, prop: w ? w.prop : -1, hostile: w ? w.hostile : -1, tile: w ? w.tile : -1, mate: w ? w.mate : -1,
     phase: 0, progress: 0, need: 1, tx: 0, ty: 0, range: 0, pts: null, ptI: 0, covered: null,
+    method: undefined, mwhy: undefined, missing: undefined, tried: undefined, entryDoor: undefined, mtry: undefined, mbad: undefined, mt0: undefined, marr: undefined, mcands: undefined,      // (R2) 대응 방법 — 쓰는 것은 단계 1a 부터 (모든 임무가 같은 모양)
     startedAt: 0, selfAssigned: false, thorough: w ? w.thorough : false, wait: 0, sub: null, fails: 0, label, repathAt: 0,
   };
 }
@@ -1217,3 +1218,9 @@ export function act(sim: Sim, s: Scene, a: FieldAgent): void {
 
 export function reportFact(sim: Sim, a: FieldAgent, f: Fact): void { learn(sim, a, f); }
 export { isIndoor };
+
+// ── (R2) 방법의 실행부(field/methodRun.ts)에 건네는 도구 — methodRun 은 이 파일을 import 하지 않는다(순환). 지휘 규칙의 CommandKit 과 같은 방식이다.
+//    단계 0 에는 아직 건네는 곳이 없다: 단계 1a 가 case 'waterRescue' 에서 runWaterRescue(sim, s, I, a, t, XK) 로 처음 쓴다.
+//    (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다 — 타입만 가져오므로 실행 순서와 무관하다) ──
+import type { ExecKit } from './methodRun';
+export const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask };

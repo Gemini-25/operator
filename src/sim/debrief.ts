@@ -7,6 +7,7 @@ import { personaName } from './dispatch/callSystem';
 import { sevName } from './dispatch/analyst';
 import { difficultyLabel } from './difficulty';
 import { disasterSummary } from './disaster';
+import { methodFailLine, methodLines, methodSummary, methodTally } from './field/methodReport';      // (R2) 대응 방법의 문장과 집계
 import { roleOf } from './crews';
 import type { Sim } from './engine';
 import type { Incident, IncidentResult, Outcome, Problem, ProblemCode, ShiftReport } from './types';
@@ -17,6 +18,7 @@ export const PROBLEM_LABEL: Record<ProblemCode, string> = {
   CALL_QUEUE: '신고 대기', CALL_MISINFO: '신고자의 잘못된 정보', CALL_VAGUE: '불명확한 신고', MISJUDGE_TYPE: '사건 유형 오판', UNDERESTIMATE: '위험도 과소평가', OVERESTIMATE: '위험도 과대평가',
   NO_UNIT: '가용 부대 부족', UNDER_DISPATCH: '전문 부대 없이 대응 시작', DIVERTED: '부대 전환 배정', ROUTE_BLOCKED: '이동 경로 통제', TRAFFIC_DELAY: '교통 지연',
   PATH_BLOCKED: '현장 진입로 차단', VICTIM_MISSED: '수색에서 대상 누락', EQUIP_FAIL: '장비 고장', WATER_OUT: '용수 소진', RESPONDER_HURT: '대원 부상', COMM_FAIL: '무전 전달 실패',
+  METHOD_FAIL: '대응 방법 실패·변경',      // (R2) 문장 틀과 order 의 자리(EQUIP_FAIL 바로 다음)는 evaluate 안
   ESCALATION: '상황 악화', BACKUP_LATE: '지원 지연', SCENE_MISMATCH: '신고와 다른 현장 상황', SUSPECT_FLED: '용의자 도주', SECONDARY_COLLISION: '2차 사고', LATE_DISCOVERY: '구조 대상 발견 지연',
   TIMEOUT: '대응 시간 초과', FATIGUE: '대원 체력 고갈', HIDDEN_HAZARD: '숨겨진 위험 발현', RECOUNT: '인원 불일치 재수색', WRONG_ADDRESS: '신고 위치 오류', FALSE_ALARM: '허위·오인 신고',
   RESPONDER_KILLED: '대원 순직',
@@ -134,6 +136,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
     LATE_DISCOVERY: (ps) => `${ps[0].detail}.`,
     TIMEOUT: (ps) => `${ps[0].detail}.`,
   };
+  // (R2) 대응 방법 실패·변경: 장비 고장 바로 다음 자리. 위의 order·T 글자를 다른 묶음(H1·X6)이 함께 고치고 있어 여기서 끼운다 — 합쳐진 뒤에는 글자 안으로 옮겨도 된다
+  order.splice(order.indexOf('EQUIP_FAIL') + 1, 0, 'METHOD_FAIL'); T.METHOD_FAIL = methodFailLine;
   for (const code of order) {
     const ps = I.problems.filter((p) => p.code === code);
     if (!ps.length || A.length >= 9) continue;
@@ -151,6 +155,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
       }
     } else if (c.tDiscovered < 0) A.push(`구조 대상 ${josa(c.label, '은/는')} 발견되지 못한 채 현장에 남았습니다 — 지휘관은 이 사실을 모른 채 상황을 종료했습니다.`);
   }
+  for (const line of methodLines(sim, I, s)) if (A.length < 12) A.push(line);      // (R2) 평소와 다른 방법으로 끝낸 것 (최대 2문장 — 기록된 I.methods 에서만)
   // 한 줄 요약
   const hl: string[] = [];
   { const b = s.props.find((p) => p.kind === 'bomb'); if (noBomb) hl.push(truth.variant === 'bombthreat' ? '허위 협박 — 폭발물 없음' : b && !b.mitigated ? '폭발물은 아니었으나 확인하지 못함' : '확인 결과 폭발물 아님'); else if (b && b.real) hl.push(b.mitigated ? '폭발물 해체' : b.exploded ? '폭발물 폭발' : '폭발물 미처리'); }
@@ -200,6 +205,8 @@ export function buildReport(sim: Sim): ShiftReport {
   if (casTotal) summary.push(`요구조자 ${casTotal}명 중 ${casSaved}명을 구조했습니다 (구조율 ${pct(casSaved / casTotal)}).${casLost ? ` ${casLost}명은 구하지 못했습니다.` : ''}${casUnd ? ` ${casUnd}명은 발견하지 못했습니다.` : ''}`);
   if (delayCauses.length) summary.push(`가장 자주 발생한 문제: ${delayCauses.slice(0, 3).map((c) => `${c.label}(${c.count}건)`).join(', ')}.`);
   if (n && good === n) summary.push('모든 사건을 목표대로 해결한 교대였습니다.');
+  const methods = methodTally(sim);      // (R2) 성공한 방법별 횟수 (평소 방법 포함). 요약 줄은 평소 방법이 아닌 것만, 하나도 없으면 넣지 않는다
+  { const line = methodSummary(methods); if (line) summary.push(line); }
   // 교통: 기록된 통계로만 쓴다 (traffic.ts)
   const tf = { ...sim.traffic.stats };
   if (tf.jams + tf.closures + tf.obstacles + tf.detours + tf.gateWaits === 0) summary.push('교통으로 인한 지연은 없었습니다.');
@@ -214,6 +221,7 @@ export function buildReport(sim: Sim): ShiftReport {
     traffic: tf, air,
     major: sim.incidents.filter((I) => I.tag === 'major').length, disaster: disasterSummary(sim),
     seed: sim.seed, duration: dur, weather: sim.weather, difficulty: { ...sim.difficulty }, difficultyLabel: difficultyLabel(sim.difficulty), totalCalls: sim.calls.length, totalIncidents: n, counts,
+    methods,      // (R2)
     avgResponse: rN ? rSum / rN : -1, avgDispatch: dN ? dSum / dN : -1, utilization, unitUtil,
     casTotal, casSaved, casLost, casUndiscovered: casUnd, respondersHurt: hurt, equipFailures: equip, delayCauses, incidents, summary,
     hash: sim.logHash.toString(16),

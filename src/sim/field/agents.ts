@@ -153,9 +153,10 @@ export function mateFact(sim: Sim, s: Scene, b: FieldAgent, status: MateBelief['
   const v: MateBelief = {
     x: Math.round(b.x), y: Math.round(b.y), status, band, bleeding: near && (r.bleed ?? 0) >= HOSPITAL_BLEED,      // 병원이 필요할 만큼 피를 흘린다 (injury.needsHospital 과 같은 문턱)
     tq: (r.treatQ ?? 0) >= 0.6 ? 2 : (r.treatQ ?? 0) > 0 ? 1 : 0, dead, wasDown: r.tDown !== undefined, since: sim.t,
+    trapped: (b.trapped ?? 0) > 0 || undefined,      // (X6 §4.8) 잔해에 깔린 동료 — 먼저 빼내야 끌고 나올 수 있다 (깔리지 않았으면 비워 둔다)
   };
   const text = dead ? `${r.name} 대원 생체 반응 없음`
-    : status === 'down' ? `${r.name} 대원 쓰러짐 — 구조 필요`
+    : status === 'down' ? ((b.trapped ?? 0) > 0 ? `${r.name} 대원 잔해에 깔림 — 구조 필요` : `${r.name} 대원 쓰러짐 — 구조 필요`)
     : status === 'hurt' ? `${r.name} 대원 부상 — 후퇴 중`
     : status === 'safe' ? `${r.name} 대원 안전 구역 — 후송 대기`
     : status === 'evac' ? `${r.name} 대원 현장 이탈`
@@ -175,7 +176,7 @@ function significant(f: Fact, old: any): boolean {
   const v = f.value;
   if (f.type === 'cas') return v.where !== 'carried' && (old.mob !== v.mob || old.band !== v.band || old.where !== v.where || old.treated !== v.treated || old.tq !== v.tq);
   if (f.type === 'hos') return old.state !== v.state || old.weapon !== v.weapon || old.hostage !== v.hostage || !!old.dead !== !!v.dead || (old.tq ?? 0) !== (v.tq ?? 0) || (old.where ?? 'scene') !== (v.where ?? 'scene');
-  if (f.type === 'mate') return old.status !== v.status || old.dead !== v.dead || old.band !== v.band || old.tq !== v.tq;
+  if (f.type === 'mate') return old.status !== v.status || old.dead !== v.dead || old.band !== v.band || old.tq !== v.tq || !!old.trapped !== !!v.trapped;
   if (f.type === 'sign') return old.level !== v.level;      // (X6) 조짐은 단계가 바뀔 때만 알린다 — 측정값(lel)만 바뀐 것은 믿음에 합치되 보고하지 않는다
   return true;
 }

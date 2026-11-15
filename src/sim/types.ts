@@ -665,6 +665,7 @@ export interface ShiftReport {
 export interface FallRecord {
   t: number; x: number; y: number; r: number; region: number;
   cause: 'zone' | 'secondary' | 'ceiling'      // 마지막 줄에 둔다 — X6 가 끝에 새 줄로 | 'partial' | 'total' 을 덧붙인다
+    | 'partial' | 'total';      // (X6) 구획 붕괴(불이 아닌 원인 — 불이면 'ceiling') · 건물 전체 붕괴
 }
 
 // ───────────────────────── 대응 방법 (R2) ─────────────────────────

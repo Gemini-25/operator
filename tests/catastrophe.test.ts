@@ -1,35 +1,36 @@
-// X6 위험의 현실화 (docs/specs/X6-catastrophe.md §10). 단계마다 채운다 — 지금은 단계 1(상태만)·단계 2(조짐)의 시험이다:
-//   단계 1: 자료형, catOf(대상·입구·용기 판별·처음 값), 생김새 도움 함수, 난수 흐름이 부모를 소비하지 않음, 계산만 하는 틱이 상태를 바꾸지 않음(손 계산과 함께).
+// X6 위험의 현실화 (docs/specs/X6-catastrophe.md §10). 단계마다 채운다 — 지금은 단계 1(상태만)·2(조짐)·3(세계 — 구조)의 시험이다:
+//   단계 1: 자료형, catOf(대상·입구·용기 판별·처음 값), 생김새 도움 함수, 난수 흐름이 부모를 소비하지 않음, 틱의 손 계산.
 //   단계 2: §10-3 조짐(관찰·보고 규칙·합치기·무전·외부 관찰의 기억·가스 용기 구멍), §10-6 재현성, 그림(catLayer)이 결과를 바꾸지 않음.
-//   (단계 1 의 "세계 규칙을 뺀 교대와 같다"는 단계 2 에서 끝났다 — 조짐이 사실로 들어오면 무전 문구가 바뀐다)
-// 뒤 단계가 더할 것(설계서 §10 의 번호): 1 방치하면 일어난다 · 2 조치하면 일어나지 않는다 · 4 철수 · 5 사건이 끝난다 · 7 정보 격리(일부는 아래에 있다) ·
-//   8 가짜 연출 없음 · 9 도시 지도 · 10 층 너머 · 11 catOf 의 입구(일부는 아래에 있다) · 12 깔린 대원.
+//   단계 3: §10-1 방치하면 무너지고 다 탄다(화재·붕괴), §10-2 ① 보강하면 무너지지 않는다, 구조 충격의 손 계산, 전체 붕괴(§10-5 의 닿음·2층), §10-8 기록 일치(구조 쪽),
+//           §10-9 도시 지도(일부), §10-10 층 너머, §10-12 깔린 대원.
+//   (단계 1 의 "세계 규칙을 뺀 교대와 같다"는 단계 2 에서, "계산만 한다"·"아직 아무것도 일으키지 않는다"는 단계 3 에서 끝났다)
+// 뒤 단계가 더할 것(설계서 §10 의 번호): 1·2 의 가스·용기(단계 4) · 4 철수 · 5 사건이 끝난다 · 8 의 폭발 쪽 · 9 의 건물 제외(단계 7) · 11 catOf 의 입구(일부는 아래에 있다).
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { fakeCtx, withFakeDom } from './fakeCanvas';
 import { hasKit } from '../src/sim/crews';
-import { flushOutbox, learn, makeAgent, perceive, visionOf } from '../src/sim/field/agents';
+import { flushOutbox, learn, makeAgent, mateFact, perceive, visionOf } from '../src/sim/field/agents';
 import { BeliefStore, mkFact } from '../src/sim/field/beliefs';
-import { los, staticPass, tileOf } from '../src/sim/field/grid';
+import { astar, los, staticPass, tileOf } from '../src/sim/field/grid';
 import { vesselLevel, vesselName } from '../src/sim/field/catastrophe';
 import { SIGN_BASE } from '../src/sim/field/ops';
 import { drawCatOver, drawCatUnder } from '../src/view/scene/catLayer';
-import type { FieldAgent, Region, SignBelief } from '../src/sim/types';
+import type { FieldAgent, MateBelief, Region, SignBelief } from '../src/sim/types';
 import { PROBLEM_SYS } from '../scripts/metrics';
 import { catStats } from '../scripts/catstats';
 import { PROBLEM_LABEL } from '../src/sim/debrief';
 import { NORMAL } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
-import { CAT, LOSS_BURN, LOSS_CREEP, LOSS_FIRE, LOSS_N, LOSS_QUAKE, NO_STRUCT, bldgLevel, burnFracOf, catOf, catRng, catTick, gasClouds, vesselKind } from '../src/sim/field/catastrophe';
+import { CAT, LOSS_BLAST, LOSS_BURN, LOSS_CREEP, LOSS_FIRE, LOSS_IMPACT, LOSS_N, LOSS_QUAKE, NO_STRUCT, bldgLevel, burnFracOf, catOf, catRng, catTick, collapseBuilding, collapseRegion, gasClouds, vesselKind } from '../src/sim/field/catastrophe';
 import { isIndoor } from '../src/sim/field/grid';
-import { applyWater } from '../src/sim/field/hazards';
-import { baseScene, set } from '../src/sim/field/kit';
+import { applyWater, blast } from '../src/sim/field/hazards';
+import { addCas, baseScene, set } from '../src/sim/field/kit';
 import { FOOT_FLOOR_EDGE, FOOT_IN, FOOT_SHELL, footprint, regionNbrs } from '../src/sim/field/ops';
 import { catRule } from '../src/sim/field/rules/catastrophe';
 import { SCENE_RULES } from '../src/sim/field/sceneRegistry';
-import { tickScene } from '../src/sim/field/sceneManager';
-import { createIncident } from '../src/sim/incidents';
+import { agentHealth, tickScene } from '../src/sim/field/sceneManager';
+import { closeIncident, createIncident } from '../src/sim/incidents';
 import type { Rng } from '../src/sim/rng';
 import { T } from '../src/sim/types';
 import type { CatState, Incident, IncidentType, Scene } from '../src/sim/types';
@@ -516,17 +517,18 @@ describe('X6 단계 1: 틱은 계산만 한다 — 손 계산', () => {
     expect(gasClouds(c, m.s)).toEqual([]);
     expect(v.ignited).toBeFalsy();      // 단계 1 은 터뜨리지 않는다
   });
-  it('전소 판정: 건물 칸 위의 연료 칸이 70% 넘게 타면 시각만 적는다 (기록은 아직 없다)', () => {
+  it('전소 판정: 건물 칸 위의 연료 칸이 70% 넘게 타면 그 시각에 한 번 BURNOUT 을 남기고 건물 상태를 지도에 적는다 (단계 3)', () => {
     const { m, c } = quiet('X6-B1');
     const fuelTiles: number[] = [];
     for (let i = 0; i < c.fuelMask.length; i++) if (c.fuelMask[i]) fuelTiles.push(i);
     expect(fuelTiles.length).toBe(c.fuel0);
     const burn = (k: number): void => { for (let q = 0; q < fuelTiles.length; q++) m.s.burned[fuelTiles[q]] = q < k ? 1 : 0; m.s.burnedTiles = k; };
-    const ev0 = m.sim.events.length;
+    const burnouts = (): number => m.I.problems.filter((p) => p.code === 'BURNOUT').length;
     burn(Math.ceil(c.fuel0 * 0.7) - 1);
     stepCat(m, c);
     expect(burnFracOf(c, m.s)).toBeLessThan(CAT.BURNOUT);
     expect(c.burntAt).toBe(-1);
+    expect(burnouts()).toBe(0);
     burn(Math.ceil(c.fuel0 * 0.7));
     stepCat(m, c);
     expect(burnFracOf(c, m.s)).toBeGreaterThanOrEqual(CAT.BURNOUT);
@@ -536,34 +538,305 @@ describe('X6 단계 1: 틱은 계산만 한다 — 손 계산', () => {
     stepCat(m, c);
     expect(c.burntAt).toBe(at);      // 한 번만
     expect(burnFracOf(c, m.s)).toBe(1);
-    expect(m.sim.events.length).toBe(ev0);
-    expect(m.I.problems.length).toBe(0);
-    expect(m.sim.placeMarks.size).toBe(0);
+    expect(burnouts()).toBe(1);
+    const p = m.I.problems.find((q) => q.code === 'BURNOUT')!;
+    expect(p.detail).toMatch(/^건물 전소 — /);
+    expect(p.t).toBeCloseTo(at, 3);
+    expect(m.sim.events[p.eventId].text).toContain('전소');
+    const mark = m.sim.placeMarks.get(m.I.truth.placeId)!;
+    expect(['burnt', 'collapsed']).toContain(mark.state);      // 다 탄 방은 그 자리에서 무너질 수 있다 (탄 몫 상한 0)
+    expect(mark.incidentId).toBe(m.I.id);
+    expect(mark.burnFrac).toBe(1);
   });
-  it('방치된 화재: 틱이 몇백 번 돌아 위험 상태는 자라지만, 세계는 규칙이 없을 때와 한 칸도 다르지 않다', () => {
-    // 같은 현장 둘: 하나는 세계 규칙(계산만 하는 틱)과 함께, 하나는 그 규칙을 뺀 채 400초를 혼자 돌린다
-    const a = find('X6-G', 'fire', 'std', (q) => q.s.props.some((p) => p.kind === 'gas'));
-    const b = find('X6-G', 'fire', 'std', (q) => q.s.props.some((p) => p.kind === 'gas'));
-    runAlone(a.sim, a.s, 400);
-    const k = SCENE_RULES.indexOf(catRule);
-    expect(k).toBeGreaterThanOrEqual(0);
-    SCENE_RULES.splice(k, 1);
-    try { runAlone(b.sim, b.s, 400); } finally { SCENE_RULES.splice(k, 0, catRule); }
-    expect(b.s.cat).toBeUndefined();
-    expect(worldDigest(a.sim, a.s)).toBe(worldDigest(b.sim, b.s));
-    // 그동안 위험 상태는 실제로 계산됐다
-    const c = a.s.cat!;
-    expect(a.s.burnedTiles).toBeGreaterThan(20);
-    expect(Math.min(...indoorRegs(a.s).map((r) => c.integ[r.id]))).toBeLessThan(CAT.L3);
-    expect(Math.max(...Array.from(c.hotT))).toBeGreaterThan(10);
-    expect(Math.max(...Array.from(c.l3Since))).toBeGreaterThan(0);
-    expect(c.bldg).toBeLessThan(1);
-    expect(burnFracOf(c, a.s)).toBeGreaterThan(0.1);
-    // 그리고 X6 의 일은 아직 하나도 일어나지 않았다
-    expect([c.gasN, c.vesselN, c.dustN, c.events, c.totalAt, c.limitBonus]).toEqual([0, 0, 0, 0, -1, 0]);
-    expect(Array.from(c.fallen).some((v) => v > 0)).toBe(false);
-    expect(a.sim.events.some((e) => e.problem === 'STRUCT_COLLAPSE' || e.problem === 'EXPLOSION' || e.problem === 'BURNOUT' || e.problem === 'DANGER_SIGN' || e.problem === 'WITHDRAWAL')).toBe(false);
-    expect(a.sim.placeMarks.size).toBe(0);
+});
+
+// ───────────────────────── 세계 — 구조 (단계 3) ─────────────────────────
+/** X6 가 남긴 기록의 수 (현장별): 구획 붕괴 · 전체 붕괴 · 전소 */
+function x6Count(I: Incident): { partial: number; total: number; burnout: number } {
+  let partial = 0, total = 0, burnout = 0;
+  for (const p of I.problems) {
+    if (p.code === 'BURNOUT') burnout++;
+    else if (p.code === 'STRUCT_COLLAPSE') { if (p.detail.startsWith('건물 전체 붕괴')) total++; else partial++; }
+  }
+  return { partial, total, burnout };
+}
+/** §10-8 가짜 연출 없음 (구조 쪽): STRUCT_COLLAPSE 기록 = 하나씩 무너진 구획 수 + 전체 붕괴 수, BURNOUT 은 전소 판정이 난 실제 건물 현장에 정확히 하나, 닫힌 뒤에는 0건 */
+function checkHonest(sim: Sim): { partial: number; total: number; burnout: number } {
+  const sum = { partial: 0, total: 0, burnout: 0 };
+  for (const I of sim.incidents) {
+    const s = sim.scenes[I.id];
+    const n = x6Count(I);
+    sum.partial += n.partial; sum.total += n.total; sum.burnout += n.burnout;
+    const c = s?.cat;
+    if (!c) { expect(n.partial + n.total + n.burnout, I.code).toBe(0); continue; }
+    const fallen = s!.regions.filter((r) => r.indoor && c.fallen[r.id]).length;
+    if (c.totalAt < 0) { expect(n.partial, I.code).toBe(fallen); expect(n.total, I.code).toBe(0); }
+    else { expect(n.total, I.code).toBe(1); expect(n.partial, I.code).toBeLessThanOrEqual(fallen); }
+    expect(n.burnout, I.code).toBe(c.burntAt >= 0 ? 1 : 0);
+    if (n.partial + n.total + n.burnout) expect(c.struct, I.code).toBe(true);
+    if (I.phase === 'closed') for (const p of I.problems) if (p.code === 'STRUCT_COLLAPSE' || p.code === 'BURNOUT') expect(p.t, I.code).toBeLessThanOrEqual(I.closedAt + 1e-9);
+  }
+  return sum;
+}
+/** 2층 건물 화재 현장 (빈 공간과 계단이 있다) */
+const tall = (prefix: string): Made => find(prefix, 'fire', 'std', (q) => q.s.tiles.some((v) => v === T.VOID) && q.s.stairTo.some((v) => v >= 0));
+/** 걸을 수 있는 칸끼리 4방향으로 이은 덩어리 번호 (계단은 잇지 않는다 — 층을 가른다) */
+function floorsOf(s: Scene): Int32Array {
+  const lab = new Int32Array(s.w * s.h).fill(-1);
+  let k = 0;
+  for (let i0 = 0; i0 < lab.length; i0++) {
+    if (lab[i0] >= 0 || !staticPass(s.tiles[i0])) continue;
+    const q = [i0]; lab[i0] = k;
+    for (let h = 0; h < q.length; h++) {
+      const i = q[h], x = i % s.w;
+      for (const j of [x + 1 < s.w ? i + 1 : -1, x > 0 ? i - 1 : -1, i + s.w < lab.length ? i + s.w : -1, i - s.w]) if (j >= 0 && lab[j] < 0 && staticPass(s.tiles[j])) { lab[j] = k; q.push(j); }
+    }
+    k++;
+  }
+  return lab;
+}
+
+describe('X6 단계 3: 세계 — 방치하면 무너지고 다 탄다 (§10-1)', () => {
+  it('방치된 화재: 900초 혼자 두면 전소(BURNOUT) 기록·구획 붕괴·건물 상태(전소 또는 전체 붕괴)가 남는다', () => {
+    const m = make('X6-T1', 'fire', 'std');
+    runAlone(m.sim, m.s, 900);
+    const c = m.s.cat!;
+    expect(c.burntAt).toBeGreaterThanOrEqual(0);
+    const n = x6Count(m.I);
+    expect(n.burnout).toBe(1);
+    expect(n.partial + n.total).toBeGreaterThanOrEqual(1);
+    expect(['burnt', 'collapsed']).toContain(m.sim.placeMarks.get(m.I.truth.placeId)?.state);
+    // 불로 무너진 구획의 원인 문구와 그림 기록 (G4 의 'ceiling' 을 이어받는다)
+    expect(m.I.problems.some((p) => p.code === 'STRUCT_COLLAPSE' && /달궈짐|골조가 타서/.test(p.detail))).toBe(true);
+    expect((m.s.falls ?? []).some((f) => f.cause === 'ceiling')).toBe(true);
+    // 예전 규칙(천장 일부 붕괴)은 더는 없다
+    expect(m.I.problems.some((p) => p.code === 'ESCALATION' && p.detail.endsWith('천장 일부 붕괴'))).toBe(false);
+    checkHonest(m.sim);
+    // 원인 사슬: 붕괴 기록은 그 구획을 깎은 기록을 원인으로 가리킨다
+    const first = m.I.problems.find((p) => p.code === 'STRUCT_COLLAPSE')!;
+    expect(m.sim.events[first.eventId].causes.length).toBeGreaterThan(0);
+  });
+  it('붕괴 현장: 무너진 자리가 있는 구획의 건전도를 0.2 로 두면 60초 안에 무너지고, 그 안의 구조 대상은 숨지거나 갇히거나 못 걷게 된다', () => {
+    const pickRegion = (q: Made): Region | undefined => {
+      const c = catOf(q.sim, q.s)!;
+      return indoorRegs(q.s).find((r) => c.integ[r.id] < 0.8 && q.s.casualties.some((x) => x.where === 'scene' && !x.dead && q.s.region[tileOf(q.s, x.x, x.y)] === r.id));
+    };
+    const m = find('X6-T2', 'collapse', 'std', (q) => pickRegion(q) !== undefined);
+    const c = catOf(m.sim, m.s)!, r = pickRegion(m)!;
+    c.integ[r.id] = 0.2;
+    for (let k = 0; k < 60 * 5 && !c.fallen[r.id]; k++) { m.sim.tick++; m.sim.t = m.sim.tick * m.sim.dt; tickScene(m.sim, m.s); }
+    expect(c.fallen[r.id]).toBe(1);
+    const p = m.I.problems.find((q) => q.code === 'STRUCT_COLLAPSE' && q.detail.startsWith(r.name))!;
+    expect(p).toBeTruthy();
+    const inside = m.s.casualties.filter((x) => x.where === 'scene' && m.s.region[tileOf(m.s, x.x, x.y)] === r.id);
+    expect(inside.length).toBeGreaterThan(0);
+    for (const x of inside) {
+      expect(x.health <= 0 || x.dead || x.mob === 'trapped' || x.mob === 'immobile', x.label).toBe(true);
+      if (!x.dead) expect(x.causeEvent, x.label).toBe(p.eventId);      // 피해의 원인은 그 붕괴 기록이다 ({ ev })
+    }
+    // 무너진 칸 · 한계 시간 보탬 · 지도 · 그림 기록
+    expect(r.tiles.every((i) => m.s.damage[i] === 1)).toBe(true);
+    expect(c.limitBonus).toBeGreaterThanOrEqual(60);
+    expect(['partial', 'collapsed']).toContain(m.sim.placeMarks.get(m.I.truth.placeId)?.state);
+    expect(m.s.falls!.some((f) => f.cause === 'partial' || f.cause === 'ceiling')).toBe(true);
+  });
+  it('조치하면 무너지지 않는다 (§10-2 ①): 균열을 모두 보강하고 건전도 0.5 면 300초 동안 구획 붕괴가 없다', () => {
+    const m = find('X6-T3', 'collapse', 'std', (q) => q.s.props.some((p) => p.kind === 'unstable') && !q.s.fire.some((v) => v > 0) && !q.s.props.some((p) => p.kind === 'valve' || p.kind === 'gas'));
+    const c = catOf(m.sim, m.s)!;
+    for (const p of m.s.props) if (p.kind === 'unstable') p.mitigated = true;
+    for (const r of indoorRegs(m.s)) c.integ[r.id] = Math.min(c.integ[r.id], 0.5);
+    runAlone(m.sim, m.s, 300);
+    expect(x6Count(m.I).partial + x6Count(m.I).total).toBe(0);
+    expect(Array.from(c.fallen).every((v) => v === 0)).toBe(true);
+    expect(m.I.problems.some((p) => p.code === 'ESCALATION' && p.detail.endsWith('2차 붕괴'))).toBe(false);
+  });
+});
+
+describe('X6 단계 3: 세계 — 충격·전체 붕괴·층 (§10-5·§10-9·§10-10)', () => {
+  it('blast 의 구조 충격 (손 계산): 2차 붕괴(28, 무너져 내림)는 가운데 구획을 0.14, 폭발물(55, 폭발)은 0.44 깎고 충격 자리를 남긴다', () => {
+    const m = make('X6-H1', 'fire', 'std');
+    m.s.fire.fill(0);
+    const c = catOf(m.sim, m.s)!;
+    const r = indoorRegs(m.s).filter((q) => q.kind === 'room').sort((p, q) => q.tiles.length - p.tiles.length)[0];
+    const v0 = c.integ[r.id];
+    blast(m.sim, m.s, m.I, r.cx, r.cy, 2.6, 28, 7, 'crush');
+    expect(v0 - c.integ[r.id]).toBeCloseTo(CAT.K_HIT_CRUSH * 0.28, 6);
+    expect(c.loss[r.id * LOSS_N + LOSS_IMPACT]).toBeCloseTo(0.14, 6);
+    expect(c.causeEv[r.id]).toBe(7);
+    const v1 = c.integ[r.id];
+    blast(m.sim, m.s, m.I, r.cx, r.cy, 3.4, 55, 8);
+    expect(v1 - c.integ[r.id]).toBeCloseTo(CAT.K_HIT_BLAST * 0.55, 6);
+    expect(c.loss[r.id * LOSS_N + LOSS_BLAST]).toBeCloseTo(0.44, 6);
+    expect(c.hits.length).toBe(2);
+    expect(c.hits[1]).toEqual({ t: m.sim.t, x: r.cx, y: r.cy });
+    // 멀리 떨어진 구획(가운데가 반경 + 2 밖)은 그대로다
+    for (const q of indoorRegs(m.s)) if (Math.hypot(q.cx - r.cx, q.cy - r.cy) >= 3.4 + 2) expect(c.integ[q.id]).toBe(1);
+  });
+  it('전체 붕괴: 안쪽 벽은 모두·바깥벽은 일부 사라지고 문은 열리며, 대기 지점에서 모든 바닥 칸에 닿는다(잔해는 치울 수 있다). 길이 통제되고 지도에 남는다', () => {
+    const m = make('X6-H2', 'fire', 'std');
+    const c = catOf(m.sim, m.s)!, s = m.s;
+    const tiles0 = s.tiles.slice();
+    const ev = collapseBuilding(m.sim, s, m.I, c);
+    expect(m.sim.events[ev].problem).toBe('STRUCT_COLLAPSE');
+    expect(c.totalAt).toBeCloseTo(m.sim.t, 6);
+    expect(indoorRegs(s).every((r) => c.fallen[r.id] === 1)).toBe(true);
+    let shell = 0, shellLeft = 0;
+    for (let i = 0; i < s.tiles.length; i++) {
+      if (c.foot[i] === FOOT_IN && (tiles0[i] === T.WALL || tiles0[i] === T.WINDOW)) expect(s.tiles[i]).toBe(T.FLOOR);
+      if (c.foot[i] === FOOT_SHELL) { shell++; if (s.tiles[i] === T.WALL || s.tiles[i] === T.WINDOW) shellLeft++; }
+      if (c.foot[i] === FOOT_FLOOR_EDGE) expect(s.tiles[i]).toBe(tiles0[i]);
+      if (tiles0[i] === T.STAIR) expect(s.tiles[i]).toBe(T.STAIR);
+      if (tiles0[i] === T.DOOR || tiles0[i] === T.FURN) expect(s.tiles[i]).toBe(T.FLOOR);
+    }
+    expect(shellLeft).toBeGreaterThan(0); expect(shellLeft).toBeLessThan(shell);      // 그루터기가 남는다
+    for (const p of s.props) if (p.kind === 'door') { expect(p.removed).toBe(true); expect(p.blocking).toBe(false); }
+    // 모든 바닥 칸에 대기 지점에서 닿는다 (잔해 소품은 지나갈 수 있는 것으로 본다 — 치울 수 있다)
+    const cost = (j: number): number => (staticPass(s.tiles[j]) ? (s.propAt[j] >= 0 && s.props[s.propAt[j]].kind !== 'debris' ? -1 : 0) : -1);
+    let unreached = 0, floors = 0;
+    for (let i = 0; i < s.tiles.length; i++) {
+      if (!staticPass(s.tiles[i]) || c.foot[i] === 0) continue;
+      floors++;
+      if (!astar(s, s.staging.x, s.staging.y, i % s.w, (i / s.w) | 0, 0, cost)) unreached++;
+    }
+    expect(floors).toBeGreaterThan(50);
+    expect(unreached).toBe(0);
+    // 길: 큰 차가 돌아갈 수 있는 구간 하나를 사건 동안 막는다 (known 은 건드리지 않는다)
+    expect(m.I.blockedEdge).toBeGreaterThanOrEqual(0);
+    const e = m.sim.city.edges[m.I.blockedEdge];
+    expect(e.closed).toBe(true); expect(e.closedReason).toBe('incident');
+    expect(m.sim.events[m.I.blockEv!].text).toMatch(/^건물 붕괴 잔해로 .* 통제$/);
+    expect(m.sim.placeMarks.get(m.I.truth.placeId)?.state).toBe('collapsed');
+    expect(c.limitBonus).toBe(180);
+    expect(s.falls!.some((f) => f.cause === 'total')).toBe(true);
+    // 현장 전원이 들을 소리: 전체 붕괴 + 건물 조짐 3
+    const msg = s.radio.find((q) => q.eventId === ev)!;
+    expect(msg.to).toBe(-1);
+    expect(msg.facts.some((f) => f.type === 'sign' && f.value.kind === 'event' && f.value.what === 'total')).toBe(true);
+    expect(msg.facts.some((f) => f.type === 'sign' && f.id === SIGN_BASE.bldg && f.value.level === 3)).toBe(true);
+    closeIncident(m.sim, m.I, 'resolved');
+    expect(e.closed).toBe(false);
+  });
+  it('2층 건물의 전체 붕괴: 빈 공간과 맞닿은 벽(층 경계)은 그대로이고 위층과 그 밖의 바닥은 4칸 이상 떨어져 있다. 계단으로 위층 잔해에 오른다', () => {
+    const m = tall('X6-H3');
+    const c = catOf(m.sim, m.s)!, s = m.s;
+    const before = floorsOf(s);
+    const st = s.stairTo.findIndex((v) => v >= 0);
+    const upper = before[s.stairTo[st]];
+    expect(upper).not.toBe(before[st]);
+    const tiles0 = s.tiles.slice();
+    collapseBuilding(m.sim, s, m.I, c);
+    for (let i = 0; i < s.tiles.length; i++) if (c.foot[i] === FOOT_FLOOR_EDGE) expect(s.tiles[i]).toBe(tiles0[i]);
+    const after = floorsOf(s);
+    const upLab = new Set<number>();
+    for (let i = 0; i < s.tiles.length; i++) if (before[i] === upper) upLab.add(after[i]);
+    const up: number[] = [], rest: number[] = [];
+    // 1층 바닥 = 위층이 아닌 건물 칸 가운데 걸을 수 있는 칸 (바깥 땅은 처음부터 위층 곁에 있을 수 있다 — 층 사이 4칸의 전제는 두 층의 바닥 사이다)
+    for (let i = 0; i < s.tiles.length; i++) { if (after[i] < 0) continue; if (upLab.has(after[i])) up.push(i); else if (c.foot[i] !== 0) rest.push(i); }
+    expect(up.length).toBeGreaterThan(10); expect(rest.length).toBeGreaterThan(10);
+    let dmin = 1e9;
+    for (const i of up) for (const j of rest) dmin = Math.min(dmin, Math.max(Math.abs((i % s.w) - (j % s.w)), Math.abs(((i / s.w) | 0) - ((j / s.w) | 0))));
+    expect(dmin).toBeGreaterThanOrEqual(4);
+    expect(s.tiles[st]).toBe(T.STAIR);
+    expect(s.stairTo[st]).toBeGreaterThanOrEqual(0);
+  });
+  it('층 너머 (§10-10): 2층 건물의 1층에서 반경 6 의 폭발이 나도 빈 공간 너머 2층의 대원·구조 대상은 다치지 않는다', () => {
+    const m = tall('X6-H4');
+    const s = m.s, lab = floorsOf(s);
+    const st = s.stairTo.findIndex((v) => v >= 0);
+    const upper = lab[s.stairTo[st]], lower = lab[st];
+    // 1층 칸 하나와 5칸 안의 2층 칸 하나
+    let pair: [number, number] | null = null;
+    for (let i = 0; i < s.tiles.length && !pair; i++) {
+      if (lab[i] !== lower || s.tiles[i] !== T.FLOOR) continue;
+      for (let j = 0; j < s.tiles.length; j++) if (lab[j] === upper && s.tiles[j] === T.FLOOR && s.propAt[j] < 0 && Math.hypot((i % s.w) - (j % s.w), ((i / s.w) | 0) - ((j / s.w) | 0)) <= 5) { pair = [i, j]; break; }
+    }
+    expect(pair).not.toBeNull();
+    const [bi, ui] = pair!;
+    const rid = m.sim.responders.find((r) => r.dept === 'fire')!.id;
+    const a = agentAt(m, rid, ui % s.w, (ui / s.w) | 0);
+    s.agents.push(a);
+    const q = addCas(s, ui % s.w, (ui / s.w) | 0, 'mobile', 90, 0, 0.1);
+    const hp = m.sim.responders[rid].health;
+    blast(m.sim, s, m.I, bi % s.w, (bi / s.w) | 0, 6, 50, -1);
+    expect(m.sim.responders[rid].health).toBe(hp);
+    expect(q.health).toBe(90);
+    // 같은 층이면 다친다 (검사가 무딘 것이 아님을 확인)
+    const q2 = addCas(s, bi % s.w, (bi / s.w) | 0, 'mobile', 90, 0, 0.1);
+    blast(m.sim, s, m.I, bi % s.w, (bi / s.w) | 0, 6, 50, -1);
+    expect(q2.health).toBeLessThan(90);
+  });
+  it('도시 지도는 그대로이고(건물 상태는 교대의 자료), 건물이 아닌 현장(비행기·선박·산불)은 지도에 남지 않는다 (§10-9)', () => {
+    const m = make('X6-H5', 'fire', 'std');
+    const sig = (sim: Sim): string => JSON.stringify(sim.city.places.map((p) => [p.x, p.y, p.w, p.h, p.kind]));
+    const before = sig(m.sim), n0 = m.sim.city.places.length;
+    collapseBuilding(m.sim, m.s, m.I, catOf(m.sim, m.s)!);
+    expect(m.sim.placeMarks.size).toBe(1);
+    expect(m.sim.city.places.length).toBe(n0);
+    expect(sig(m.sim)).toBe(before);
+    expect(new Sim('X6-H5').placeMarks.size).toBe(0);
+    for (const v of ['plane', 'ship', 'wild']) {
+      const q = make('X6-H6' + v, 'fire', v);
+      runAlone(q.sim, q.s, 500);
+      expect(q.s.cat?.struct ?? false, v).toBe(false);
+      expect(q.sim.placeMarks.size, v).toBe(0);
+      const n = x6Count(q.I);
+      expect(n.partial + n.total + n.burnout, v).toBe(0);
+    }
+  });
+});
+
+describe('X6 단계 3: 깔린 대원 (§10-12)', () => {
+  /** 화재 현장의 가장 큰 방에 소방 대원 여럿을 세우고 그 방을 무너뜨린다 — 깔린 대원과 깔리지 않은 대원이 함께 나오는 시드를 찾는다 */
+  function crushed(): { m: Made; agents: FieldAgent[]; ev: number; downed: FieldAgent } {
+    for (let k = 0; k < 40; k++) {
+      const m = make('X6-K' + k, 'fire', 'std');
+      m.s.fire.fill(0);
+      const c = catOf(m.sim, m.s)!;
+      const r = indoorRegs(m.s).filter((q) => q.kind === 'room').sort((p, q) => q.tiles.length - p.tiles.length)[0];
+      const spots = r.tiles.filter((i) => m.s.tiles[i] === T.FLOOR && m.s.propAt[i] < 0).slice(0, 7);
+      const rids = fireRids(m.sim).slice(0, spots.length);
+      const agents = rids.map((rid, q) => { const a = agentAt(m, rid, spots[q] % m.s.w, (spots[q] / m.s.w) | 0); m.s.agents.push(a); return a; });
+      // 하나는 이미 쓰러져 있다 (기록이 더해지지 않아야 한다)
+      const downed = agents[agents.length - 1];
+      downed.status = 'down'; m.sim.responders[downed.rid].status = 'down';
+      for (const a of agents) a.hpTick = m.sim.responders[a.rid].health;
+      const ev = collapseRegion(m.sim, m.s, m.I, c, r.id);
+      const tr = agents.filter((a) => (a.trapped ?? 0) > 0 && a !== downed);
+      if (tr.length && tr.length < agents.length - 1 && (downed.trapped ?? 0) > 0) return { m, agents, ev, downed };
+    }
+    throw new Error('깔린 대원과 깔리지 않은 대원이 함께 나오는 시드를 찾지 못함');
+  }
+  it('구획 붕괴로 깔린 대원은 같은 틱의 agentHealth 에서 쓰러지고 RESPONDER_HURT "… 쓰러짐 (잔해 깔림)" 이 하나, 원인은 그 붕괴 기록이다. 이미 쓰러진 대원에게는 기록이 더해지지 않는다', () => {
+    const { m, agents, ev, downed } = crushed();
+    for (const a of agents) agentHealth(m.sim, m.s, m.I, a);
+    for (const a of agents) {
+      const r = m.sim.responders[a.rid];
+      const recs = m.I.problems.filter((p) => p.code === 'RESPONDER_HURT' && p.detail.startsWith(`${r.name} 대원 쓰러짐 (잔해 깔림)`));
+      expect(r.injuries?.some((j) => j.cause === 'crush' && j.ev === ev), r.name).toBe(true);      // 피해의 원인은 그 붕괴 기록이다 ({ ev })
+      expect(r.health, r.name).toBeGreaterThan(0);      // 멀쩡하던 대원은 한 번에 숨지지 않는다 (H1 문턱)
+      if (a === downed) { expect(recs.length).toBe(0); continue; }
+      if ((a.trapped ?? 0) > 0) {
+        expect(a.status).toBe('down'); expect(r.status).toBe('down'); expect(a.label).toBe('잔해에 깔림');
+        expect(recs.length).toBe(1);
+        expect(m.sim.events[recs[0].eventId].causes).toEqual([ev]);
+        expect(a.trapEv).toBe(ev);
+      } else expect(recs.length).toBe(0);
+    }
+  });
+  it('동료가 보면 mate 사실에 깔렸다는 것이 붙고, 쓰러졌다고만 알던 동료에게도 그것은 새 소식이다', () => {
+    const { m, agents, downed } = crushed();
+    for (const a of agents) agentHealth(m.sim, m.s, m.I, a);
+    const victim = agents.find((a) => a !== downed && (a.trapped ?? 0) > 0)!;
+    const f = mateFact(m.sim, m.s, victim, 'down', '시험', 1);
+    expect((f.value as MateBelief).trapped).toBe(true);
+    expect(f.text).toContain('잔해에 깔림');
+    const watcher = agentAt(m, m.sim.responders.find((r) => r.dept === 'ems')!.id, victim.x, victim.y);
+    const plain = mateFact(m.sim, m.s, victim, 'down', '시험', 1);
+    (plain.value as MateBelief).trapped = false;
+    learn(m.sim, watcher, plain);
+    watcher.outbox.length = 0;
+    learn(m.sim, watcher, f);
+    expect(watcher.outbox.some((q) => q.type === 'mate' && q.id === victim.rid)).toBe(true);
   });
 });
 
@@ -587,8 +860,8 @@ describe('X6 단계 2: 교대 — 재현성과 아직 일어나지 않는 일', 
       expect(state(again), cases[q][0]).toBe(state(runs[q]));
     }
   });
-  it('그 교대들에서 조짐은 지휘관에게까지 들어왔고, 세계는 아직 아무것도 일으키지 않는다 (붕괴·폭발·전소·철수·건물 상태 0)', () => {
-    let signs = 0, cmdSigns = 0, scenes = 0, moved = 0, radio = 0;
+  it('그 교대들에서 조짐은 지휘관에게까지 들어왔고, 세계는 구조를 실제로 무너뜨린다 — 기록·건물 상태·집계가 서로 맞고(§10-8), 아직 아무도 판단하지 않는다(철수·조짐 기록 0)', () => {
+    let signs = 0, cmdSigns = 0, scenes = 0, moved = 0, radio = 0, fell = 0;
     for (const sim of runs) {
       for (const s of sim.scenes) {
         if (!s) continue;
@@ -598,15 +871,26 @@ describe('X6 단계 2: 교대 — 재현성과 아직 일어나지 않는 일', 
         if (s.cat.struct && indoorRegs(s).some((r) => s.cat!.integ[r.id] < 1)) moved++;
       }
       radio += sim.events.filter((e) => /삐걱이는 소리|균열·처짐|붕괴 임박|가스 농도 LEL|가스 냄새|안전밸브|불길에 직접|전체 붕괴 위험/.test(e.text)).length;
-      expect(sim.events.some((e) => e.problem === 'STRUCT_COLLAPSE' || e.problem === 'EXPLOSION' || e.problem === 'BURNOUT' || e.problem === 'DANGER_SIGN' || e.problem === 'WITHDRAWAL')).toBe(false);
-      expect(sim.placeMarks.size).toBe(0);
-      expect(sim.report!.catastrophe).toBeUndefined();
-      expect(sim.report!.placeMarks).toBeUndefined();
+      // 단계 3: 구조가 실제로 무너진다. 기록은 무너진 구획·전체 붕괴·전소 판정과 하나씩 맞는다 (가짜 연출 없음)
+      const n = checkHonest(sim);
+      fell += n.partial + n.total;
       const st = catStats(sim);
-      expect([st.burnouts, st.totals, st.partials, st.gas, st.vessel, st.dust, st.known, st.withdrawals, st.reentries, st.defensive, st.extClose, st.crewCaught, st.signs, st.averted, st.gaps.length])
-        .toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+      expect([st.partials, st.totals, st.burnouts]).toEqual([n.partial, n.total, n.burnout]);
+      // 건물 상태: 무너지거나 다 탄 실제 건물마다 하나 (그 밖의 현장은 없다)
+      for (const [id, mk] of sim.placeMarks) {
+        const I = sim.incidents[mk.incidentId];
+        expect(I.truth.placeId).toBe(id);
+        expect(sim.scenes[I.id]!.cat!.struct).toBe(true);
+        const k = x6Count(I);
+        expect(k.partial + k.total + k.burnout).toBeGreaterThan(0);
+      }
+      // (단계 4 가 뒤집는다) 폭발은 아직 예전 규칙(HIDDEN_HAZARD)뿐이고, (단계 5) 아무도 조짐으로 판단하지 않는다: 조짐·철수 기록·지휘 상태(Scene.ops) 없음
+      expect(sim.events.some((e) => e.problem === 'EXPLOSION' || e.problem === 'DANGER_SIGN' || e.problem === 'WITHDRAWAL')).toBe(false);
+      expect(sim.report!.catastrophe).toBeUndefined();      // (단계 7) 교대 보고서의 칸
+      expect(sim.report!.placeMarks).toBeUndefined();
+      expect([st.gas, st.vessel, st.dust, st.known, st.withdrawals, st.reentries, st.defensive, st.extClose, st.crewCaught, st.signs, st.averted, st.gaps.length])
+        .toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
       expect(st.scenes).toBe(sim.scenes.filter((s) => s && s.cat).length);
-      // 아직 아무도 조짐으로 판단하지 않는다: 지휘 상태(Scene.ops)는 생기지 않는다 (단계 5)
       expect(sim.scenes.every((s) => !s || s.ops === undefined)).toBe(true);
     }
     expect(scenes).toBeGreaterThan(20);
@@ -614,6 +898,7 @@ describe('X6 단계 2: 교대 — 재현성과 아직 일어나지 않는 일', 
     expect(signs).toBeGreaterThan(10);
     expect(cmdSigns).toBeGreaterThan(0);
     expect(radio).toBeGreaterThan(3);
+    expect(fell).toBeGreaterThan(0);
   });
   it('사건이 닫힌 뒤에는 계산도 멈춘다 (판정 뒤에는 아무것도 일어나지 않는다)', () => {
     const sim = runs[1];

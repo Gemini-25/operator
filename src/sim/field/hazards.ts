@@ -12,9 +12,10 @@ import { armorOf } from '../crews';
 import { addProp } from './kit';
 import { casFact, exitName } from './agents';
 import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, truthWalkable } from './grid';
-import { coverRoll, fireShot, heatGlass, shatter } from './damage';
+import { acrossVoid, coverRoll, fireShot, heatGlass, shatter } from './damage';
+import { catOnBlast } from './catastrophe';
 import { lastFx, noteBoom, noteFlash, noteHit, noteShot, recHarm, recMelee } from './fxlog';
-import { RUIN_CEILING, RUIN_SECONDARY, markRuin, recordFall } from './ruins';
+import { RUIN_SECONDARY, markRuin, recordFall } from './ruins';
 import { CAUSE_NAME, DOWN_AT, SELF_HARM, SELF_HARM_HIT, bandOf, decayCause, hurtCas, hurtCasTo, hurtHostile, hurtResponder, injuryRng, noteDecay, noteInjury, settleHostile } from './injury';
 
 export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2, c?: FxInfo): void {
@@ -88,22 +89,7 @@ export function tickFire(sim: Sim, s: Scene, I: Incident): void {
     pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.6);
     noteBoom(lastFx(sim, s, 'boom'), 3.6, 'tank');
   }
-  // 붕괴
-  for (const r of s.regions) {
-    if (!r.indoor || r.kind !== 'room' || s.collapseDone.has(r.id)) continue;
-    let b = 0; if (s.burnedTiles > 0) for (const i of r.tiles) if (s.burned[i]) b++;      // 탄 칸이 하나도 없으면 셀 것도 없다
-    if (b / r.tiles.length < 0.55) continue;
-    s.collapseDone.add(r.id);
-    if (!s.rng.chance(0.55)) continue;
-    const cands = r.tiles.filter((i) => s.propAt[i] < 0 && s.tiles[i] !== T.DOOR);
-    if (!cands.length) continue;
-    const k = Math.min(cands.length, s.rng.int(1, 2));
-    for (let q = 0; q < k; q++) { const i = s.rng.pick(cands); if (s.propAt[i] < 0) { addProp(s, 'debris', i % w, (i / w) | 0, { blocking: true, hp: s.rng.range(9, 14) }); markRuin(s, i, RUIN_CEILING); } }
-    s.staticVersion++;
-    const ev = raiseProblem(sim, I, 'ESCALATION', `${r.name} 천장 일부 붕괴`, { role: 'SYSTEM', actor: '현장', text: `${r.name} 천장 일부가 무너졌습니다.`, imp: 2, truth: s.arrivedAt < 0 }, false);
-    blast(sim, s, I, r.cx, r.cy, 2.2, 22, ev, 'crush');
-    recordFall(sim, s, r.cx, r.cy, 2.2, 'ceiling');      // (G4) 그림용 기록
-  }
+  // (X6 단계 3) 예전의 '천장 일부 붕괴'(탄 방을 한 번 판정해 s.rng 로 잔해·충격)는 지웠다 — 구조 건전도가 낮아진 구획의 붕괴(field/catastrophe.ts 의 collapseRegion)가 대신한다
   s.burning = burning;
   if (burning === 0 && s.fireOutAt < 0 && s.kind === 'fire' && sim.t - s.startedAt > 5) s.fireOutAt = sim.t;
   if (burning > 0) s.fireOutAt = -1;
@@ -143,27 +129,29 @@ function smokeSpread(s: Scene, w: number, h: number): void {
  * 세 부류를 고르게 친다 (H1 §5.1): 대원(방호를 뺀다), 구조 대상·용의자(×0.8). 용의자는 예전에 건너뛰었다 — 쓰러지지 않은 용의자는 문턱 때문에 한 번에 숨지지 않는다(hurtHostile).
  */
 export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, radius: number, dmg: number, ev: number, cause: InjuryCause = 'blast'): void {
+  const bx = Math.round(x), by = Math.round(y);      // (X6 §12.1) 빈 공간(층 사이) 너머의 사람은 다치지 않는다 — 나란히 놓인 다른 층
   for (const a of s.agents) {
     if (a.status === 'left' || sim.responders[a.rid].dead) continue;      // 숨진 대원은 더 다치지 않는다
     const d = dist(a.x, a.y, x, y);
-    if (d > radius) continue;
+    if (d > radius || acrossVoid(s, bx, by, Math.round(a.x), Math.round(a.y))) continue;
     hurtResponder(sim, s, I, a, dmg * (1 - d / (radius + 1)), cause, { ev });      // 폭발물 방호복·방화복이 줄인다 (injury.protection — blastFactor)
     a.lastBlockEvent = ev;
   }
   for (const c of s.casualties) {
     if (c.dead || c.where !== 'scene') continue;
     const d = dist(c.x, c.y, x, y);
-    if (d > radius) continue;
+    if (d > radius || acrossVoid(s, bx, by, Math.round(c.x), Math.round(c.y))) continue;
     hurtCas(sim, s, I, c, dmg * 0.8 * (1 - d / (radius + 1)), cause, { ev });
     if (cause === 'blast' && c.health < 80) hurtCas(sim, s, I, c, 0, 'blast', { bleed: (0.09 + 0.09 * (1 - d / radius)) * sim.tune.bleedMul, immobile: true });
   }
   for (const h of s.hostiles) {
     if (h.dead || h.state === 'escaped' || (h.where !== undefined && h.where !== 'scene')) continue;
     const d = dist(h.x, h.y, x, y);
-    if (d > radius) continue;
+    if (d > radius || acrossVoid(s, bx, by, Math.round(h.x), Math.round(h.y))) continue;
     hurtHostile(sim, s, I, h, dmg * 0.8 * (1 - d / (radius + 1)), cause, { ev });
   }
   shatter(sim, s, x, y, radius + 1.5, Math.min(2.5, radius), 3);      // 반경 안의 창과 가구가 부서진다
+  catOnBlast(sim, s, I, x, y, radius, dmg, ev, cause);      // (X6 §2.4) 구조 충격과 가스 점화용 충격 자리 — 위험 상태가 없는 현장에서는 아무것도 하지 않는다
 }
 
 /** 물(또는 소화 약제)을 뿌린다. 대원의 진압 행동이 호출한다. */

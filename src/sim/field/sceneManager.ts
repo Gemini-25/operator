@@ -194,14 +194,17 @@ function settle(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   const r = sim.responders[a.rid];
   if (r.dead) return;
   if (r.health <= 0) { fallen(sim, s, I, a); return; }
-  if (r.health <= DOWN_AT && r.status !== 'down') {
+  const trapped = (a.trapped ?? 0) > 0;      // (X6 §4.8) 무너진 잔해에 깔린 대원은 체력과 상관없이 쓰러진다 — 붕괴 함수는 a.trapped·a.trapEv 만 세우고 전이는 여기서 한다
+  if ((r.health <= DOWN_AT || trapped) && r.status !== 'down') {
     if (a.task) finishTask(sim, s, a, false, 'preempt');
     // 안전 구역에서 기다리던 대원은 그 자리에 그대로 있다 (기록 없음 — 이미 부상으로 알렸다)
     const wasSafe = a.status === 'withdrawn';
-    a.status = wasSafe ? 'withdrawn' : 'down'; r.status = 'down'; a.label = '쓰러짐';
+    a.status = wasSafe ? 'withdrawn' : 'down'; r.status = 'down'; a.label = trapped ? '잔해에 깔림' : '쓰러짐';
     r.tDown ??= sim.t;
     if (!wasSafe) {
-      sim.units[a.unitId].oosEv = raiseProblem(sim, I, 'RESPONDER_HURT', `${r.name} 대원 쓰러짐${causeNote(sim, a)}`, { role: 'SYSTEM', actor: '현장', rid: r.id, imp: 3, causes: [a.hurtEv ?? -1], text: `${r.name} 대원이 쓰러졌습니다! 즉시 구조가 필요합니다.` }, false);
+      sim.units[a.unitId].oosEv = trapped
+        ? raiseProblem(sim, I, 'RESPONDER_HURT', `${r.name} 대원 쓰러짐 (잔해 깔림)`, { role: 'SYSTEM', actor: '현장', rid: r.id, imp: 3, causes: [a.trapEv ?? -1], text: `${r.name} 대원이 무너진 잔해에 깔렸습니다! 구조가 필요합니다.` }, false)
+        : raiseProblem(sim, I, 'RESPONDER_HURT', `${r.name} 대원 쓰러짐${causeNote(sim, a)}`, { role: 'SYSTEM', actor: '현장', rid: r.id, imp: 3, causes: [a.hurtEv ?? -1], text: `${r.name} 대원이 쓰러졌습니다! 즉시 구조가 필요합니다.` }, false);
     }
   } else if (r.status === 'ok' && mustRetreat(r)) {
     r.status = 'injured';

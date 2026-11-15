@@ -5,7 +5,7 @@ import { useState } from 'react';
 import { FIELD_NAME, UNIT_KIND_NAME } from '../sim/resources';
 import type { UnitField, UnitKind } from '../sim/types';
 import { FACILITY_COLOR, FIELD_COLOR, FIELD_TEXT } from '../view/city/tokens';
-import { OBSTACLE_ICON } from '../view/city/trafficLayer';
+import { DISASTER_RING, OBSTACLE_ICON } from '../view/city/trafficLayer';
 import { ICON_PATH } from '../view/icons';
 import { RUIN_MARK, STATE_MARK } from '../view/marks';
 import { FacilityBadge, Token } from './Mark';
@@ -37,6 +37,18 @@ function ObstacleSample({ kind, unknown = false, size = 20 }: { kind: keyof type
       <circle cx={c} cy={c} r={r} fill="#161d24" stroke="#f2c94c" strokeWidth={1.4} strokeDasharray={unknown ? '2.4 2.2' : undefined} />
       <svg x={c - g / 2} y={c - g / 2} width={g} height={g} viewBox="0 0 24 24"><path d={OBSTACLE_ICON[kind]} fill={kind === 'parked' ? '#d9e1e8' : '#f2c94c'} fillRule="evenodd" /></svg>
       {kind === 'parked' && <line x1={c - g * 0.4} y1={c + g * 0.4} x2={c + g * 0.4} y2={c - g * 0.4} stroke="#ff5d5d" strokeWidth={g * 0.14} strokeLinecap="round" />}
+    </svg>
+  );
+}
+
+/** (G4 §7.5) 통제 구간의 진입 금지 표시: 빨간 원 + 원인 색 테 */
+function ClosureSample({ ring, size = 22 }: { ring: string; size?: number }) {
+  const c = size / 2;
+  return (
+    <svg className="token" width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+      <circle cx={c} cy={c} r={size * 0.33} fill="#ff5d5d" />
+      <rect x={c - size * 0.21} y={c - size * 0.065} width={size * 0.42} height={size * 0.13} fill="#0b1219" />
+      <circle cx={c} cy={c} r={size * 0.44} fill="none" stroke={ring} strokeWidth={1.8} />
     </svg>
   );
 }
@@ -137,6 +149,17 @@ export function MapLegend() {
           <div className="lg-row">
             {COLLAPSE_ICONS.map(([k, name]) => <span key={k} className="lg-item"><IconSample name={k} />{name}</span>)}
           </div>
+          <div className="lg-row">
+            {ROADS.map(([name, col, dash]) => <span key={name} className="lg-item"><i className={`road ${dash ? 'dash' : ''}`} style={{ ['--rc' as string]: col }} />{name}</span>)}
+          </div>
+          <div className="lg-row">
+            {OBSTACLES.map(([k, name]) => <span key={k} className="lg-item"><ObstacleSample kind={k} />{name}</span>)}
+            <span className="lg-item" title="관찰자 시점에서만 보입니다. 부대가 가서 보거나 시민이 제보하면 실선이 됩니다"><ObstacleSample kind="debris" unknown />점선 = 관제가 아직 모름</span>
+          </div>
+          <div className="lg-row">
+            <span className="lg-item" title="사건 현장 때문에 막은 구간: 테의 색 = 그 사건의 유형색"><ClosureSample ring="#d6a878" />통제 — 사건 (유형색 테)</span>
+            <span className="lg-item" title="재난이 막은 구간"><ClosureSample ring={DISASTER_RING} />통제 — 재난 (주황 테)</span>
+          </div>
           <h5>건물 상태 <span className="dim">사건 핀의 왼쪽 아래</span></h5>
           <div className="lg-row">
             <span className="lg-item" title="부대가 도착해 확인했다 (관찰자 시점은 처음부터)"><RuinBadgeSample level="partial" />일부 무너짐</span>
@@ -146,13 +169,7 @@ export function MapLegend() {
           <div className="lg-row">
             <span className="lg-item" title="금이 간 구조물이 다시 무너졌다"><SecondaryRingSample />2차 붕괴 (퍼지는 흙빛 고리)</span>
             <span className="lg-item" title="사건이 끝나도 교대 끝까지 남는다. 크게 보면 지붕이 내려앉은 모습"><RuinGlyphSample />끝난 붕괴</span>
-          </div>
-          <div className="lg-row">
-            {ROADS.map(([name, col, dash]) => <span key={name} className="lg-item"><i className={`road ${dash ? 'dash' : ''}`} style={{ ['--rc' as string]: col }} />{name}</span>)}
-          </div>
-          <div className="lg-row">
-            {OBSTACLES.map(([k, name]) => <span key={k} className="lg-item"><ObstacleSample kind={k} />{name}</span>)}
-            <span className="lg-item" title="관찰자 시점에서만 보입니다. 부대가 가서 보거나 시민이 제보하면 실선이 됩니다"><ObstacleSample kind="debris" unknown />점선 = 관제가 아직 모름</span>
+            <span className="lg-item" title="끝난 화재 사건의 건물: 크게 보면 탄 만큼 지붕이 그을려 있다"><i style={{ display: 'inline-block', width: 14, height: 10, borderRadius: 2, background: '#2a211b', border: '1px solid #4a3d33' }} />끝난 화재 (그을린 지붕)</span>
           </div>
           <p className="lg-help">사건 표식을 누르면 현장을 확대합니다. 건물이나 도로에 마우스를 올리면 이름과 종류가 보입니다. 휠로 확대·축소하고 끌어서 옮깁니다.</p>
         </div>

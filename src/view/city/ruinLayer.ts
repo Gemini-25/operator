@@ -41,6 +41,7 @@ export function drawRuinsWorld(ctx: CanvasRenderingContext2D, sim: Sim, o: World
   const night = sim.weather === 'night';
   const col = (c: string): string => (night ? shade(c, -0.35) : c);
   for (const I of sim.incidents) {
+    if (I.truth.type === 'fire' && I.phase === 'closed' && I.truth.placeId >= 0) { paintScorchedRoof(ctx, sim, I, o.truth, o.scale, col); continue; }
     if (I.truth.type !== 'collapse' || I.truth.placeId < 0) continue;
     const seen = ruinSeen(sim, I, o.truth);
     if (seen !== 'confirmed') continue;
@@ -140,6 +141,26 @@ function paintRoofHole(ctx: CanvasRenderingContext2D, q: Place, r: RuinInfo, sca
     ctx.stroke();
   }
   ctx.globalAlpha = base;
+}
+
+/**
+ * (선택 §7.6) 끝난 화재 사건의 그을린 지붕: 넓이 = 지붕의 clamp(탄 칸 / 탈 수 있는 칸 × 1.6, 0.25, 0.9). AI 시점은 도착했던 사건만.
+ * 크게 볼 때만 (붕괴 덧그림과 같은 틀)
+ */
+function paintScorchedRoof(ctx: CanvasRenderingContext2D, sim: Sim, I: Incident, truth: boolean, scale: number, col: (c: string) => string): void {
+  const s = sim.scenes[I.id];
+  if (!s || s.burnedTiles <= 0 || s.totalFuelTiles <= 0 || (!truth && I.firstArrivalAt < 0)) return;
+  const q = sim.city.places[I.truth.placeId];
+  if (!ruinOverlayVisible(q, scale)) return;
+  const A = Math.max(0.25, Math.min(0.9, (s.burnedTiles / s.totalFuelTiles) * 1.6));
+  const sc = Math.min(1, Math.sqrt((4 * A) / Math.PI)), ax = (q.w * sc) / 2, ay = (q.h * sc) / 2;
+  ctx.save(); local(ctx, q);
+  ctx.globalAlpha = 0.55; ctx.fillStyle = col('#0e0a08'); ctx.beginPath();
+  for (let k = 0; k < 12; k++) { const a = (k / 12) * 6.2832, r = 0.8 + 0.3 * hash2(q.id + 7, k); const x = Math.max(-q.w / 2, Math.min(q.w / 2, Math.cos(a) * ax * r)), y = Math.max(-q.h / 2, Math.min(q.h / 2, Math.sin(a) * ay * r)); if (k) ctx.lineTo(x, y); else ctx.moveTo(x, y); }
+  ctx.closePath(); ctx.fill();
+  ctx.globalAlpha = 0.45;
+  for (let k = 0; k < 4; k++) { const a = hash2(q.id, 300 + k) * 6.2832, d = 0.5 * hash2(q.id, 310 + k); ctx.beginPath(); ctx.arc(Math.cos(a) * ax * d, Math.sin(a) * ay * d, Math.min(q.w, q.h) * (0.06 + 0.06 * hash2(q.id, 320 + k)), 0, 6.2832); ctx.fill(); }
+  ctx.restore();
 }
 
 /** 크레인: 공사장을 가로질러 길까지 쓰러진 팔 (노란 트러스, 격자 눈금, 끝의 갈고리) */

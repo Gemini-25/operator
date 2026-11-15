@@ -15,7 +15,7 @@ import { applyWater, flashbang, hostageNear, hostileActive, isHeld, placeAtSafe,
 import { coverRoll, fireShot } from './damage';
 import { breachHowFor, lastFx, noteCollateral, noteHit, noteShot, recBreach, recCuff, recTaser, weaponOf } from './fxlog';
 import { detonate } from './rules/crime';
-import { bandOf, noteCasHurt, noteHostileHurt, noteInjury } from './injury';
+import { hurtCas, initialCause, noteHostileHurt } from './injury';
 
 export function makeTask(kind: TaskKind, label: string, w: WorkItem | null = null): Task {
   return {
@@ -404,10 +404,9 @@ function shootAt(sim: Sim, s: Scene, a: FieldAgent, hid: number): void {
   if (sim.t >= h.stunUntil) { h.alertUntil = sim.t + 6; h.facing = Math.atan2(a.y - h.y, a.x - h.x); }
   if (struck) {
     // 인질 곁의 용의자를 향해 쏜 빗나간 탄
-    const hp0 = struck.health, bl0 = struck.bleed;
-    struck.health -= s.rng.range(22, 34); struck.mob = 'immobile'; struck.bleed = Math.max(struck.bleed, 0.15); struck.bleed0 = struck.bleed; struck.walking = false;
-    struck.causeEvent = raiseProblem(sim, I, 'ESCALATION', '교전 중 인질 피격', { role: 'SYSTEM', actor: '현장', rid: r.id, imp: 3, text: `교전 중 빗나간 탄에 인질(구조 대상 ${struck.label})이 다쳤습니다!` }, false);
-    noteCasHurt(struck, 'gunshot', hp0, bl0, sim.t, r.id, 'responder', struck.causeEvent);      // (H1) 기록만
+    const dmg = s.rng.range(22, 34);      // 판정 흐름에서 뽑는 자리는 그대로
+    const ev = raiseProblem(sim, I, 'ESCALATION', '교전 중 인질 피격', { role: 'SYSTEM', actor: '현장', rid: r.id, imp: 3, text: `교전 중 빗나간 탄에 인질(구조 대상 ${struck.label})이 다쳤습니다!` }, false);
+    hurtCas(sim, s, I, struck, dmg, 'gunshot', { by: r.id, byKind: 'responder', ev, bleed: 0.15, immobile: true });
     noteCollateral(sim, s, shot, struck, a.x, a.y);
   }
   if (!I.problems.some((q) => q.detail === '교전 발생')) {
@@ -689,9 +688,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       c.x = a.x - a.fx * 0.45; c.y = a.y - a.fy * 0.45;
       // 척추 고정판: 차·잔해에서 꺼낸 사람(교통사고·붕괴)을 고정판 없이 옮기면 옮기는 동안 더 나빠진다 (악화 ×1.12).
       // 옮기는 사람이나 곁에서 돕는 사람이 고정판을 가졌으면 괜찮다
-      const hpC = c.health;
-      if ((s.kind === 'traffic' || s.kind === 'collapse') && c.tFreed >= 0 && !c.dead && !carryHas(sim, s, a, 'spineBoard')) c.health -= c.bleed * 0.12 * dt;
-      if (c.health < hpC && c.bleedCause !== undefined) c.injuries = noteInjury(c.injuries, c.bleedCause, hpC - c.health, sim.t, bandOf(c.health));      // (H1) 기록만: 더해진 악화를 그 상처의 원인으로
+      // 더해진 악화는 그 상처의 원인으로 적는다 (매 틱 피해)
+      if ((s.kind === 'traffic' || s.kind === 'collapse') && c.tFreed >= 0 && !c.dead && !carryHas(sim, s, a, 'spineBoard')) hurtCas(sim, s, I, c, c.bleed * 0.12 * dt, c.bleedCause ?? initialCause(s, I, c), { tick: true });
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m === 'arrived') {
         c.where = 'safe'; c.tSafe = sim.t; placeAtSafe(s, c); a.carrying = -1;

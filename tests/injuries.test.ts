@@ -9,7 +9,7 @@ import { Sim } from '../src/sim/engine';
 import { createIncident } from '../src/sim/incidents';
 import { createAidUnit } from '../src/sim/resources';
 import { band, tickGas, tickWater } from '../src/sim/field/hazards';
-import { CAUSE_NAME, bandOf, initialCause, injuryRng, mainCause, noteCasHurt, noteHostileHurt, noteInjury, noteRespHurt, smokeCause } from '../src/sim/field/injury';
+import { CAUSE_NAME, bandOf, hurtCas, hurtCasTo, initialCause, injuryRng, mainCause, noteCasHurt, noteHostileHurt, noteInjury, noteRespHurt, smokeCause } from '../src/sim/field/injury';
 import { makeAgent } from '../src/sim/field/agents';
 import { addCas, addHostile } from '../src/sim/field/kit';
 import { mkFact } from '../src/sim/field/beliefs';
@@ -123,6 +123,100 @@ describe('2. 기록의 모양', () => {
     const causes: InjuryCause[] = ['gunshot', 'stab', 'blunt', 'burn', 'smoke', 'toxic', 'fall', 'crush', 'blast', 'drown', 'electric', 'exhaustion', 'vehicle', 'exposure', 'illness'];
     for (const k of causes) expect(CAUSE_NAME[k], k).toBeTruthy();
     expect(Object.keys(CAUSE_NAME).length).toBe(causes.length);
+  });
+});
+
+// ───────────────────────── 2. 원인별 기록 — 구조 대상의 피해는 hurtCas 한 길로 (단계 3) ─────────────────────────
+describe('2. hurtCas — 구조 대상의 피해는 한 길로만 준다', () => {
+  const CAUSES: InjuryCause[] = ['gunshot', 'stab', 'blunt', 'burn', 'smoke', 'toxic', 'fall', 'crush', 'blast', 'drown', 'electric', 'exhaustion', 'vehicle', 'exposure', 'illness'];
+  it('원인마다 한 줄씩 생기고, 같은 원인은 한 줄로 합쳐지며(dmg 가 더해진다), sev 가 그때의 bandOf 와 맞는다', () => {
+    const { sim, s } = sceneOf('INJ-hurt', 'fire');
+    const I = sim.incidents[s.incidentId];
+    const c = addCas(s, 5, 5, 'mobile', 100, 0, 0);
+    let hp = 100;
+    for (const cause of CAUSES) {
+      hurtCas(sim, s, I, c, 2, cause);
+      hp -= 2;
+      expect(c.health).toBe(hp);
+      expect(c.injuries!.filter((j) => j.cause === cause)).toEqual([{ cause, dmg: 2, sev: bandOf(hp), t: sim.t, last: sim.t, by: -1, byKind: 'world', ev: -1 }]);
+    }
+    expect(c.injuries!.length).toBe(CAUSES.length);
+    hurtCas(sim, s, I, c, 35, 'smoke');      // 70 → 35: 위중
+    expect(c.injuries!.length).toBe(CAUSES.length);
+    expect(c.injuries!.find((j) => j.cause === 'smoke')).toMatchObject({ dmg: 37, sev: 2 });
+    expect(c.health).toBe(35);
+    expect(sumDmg(c.injuries)).toBeCloseTo(100 - c.health, 9);
+    // 피해 자체의 문구는 남기지 않는다 (문구는 피해를 준 자리가 남긴다)
+    const n = sim.events.length;
+    hurtCas(sim, s, I, c, 1, 'burn');
+    expect(sim.events.length).toBe(n);
+  });
+  it('가해자·기록 id·출혈·거동: o.ev 는 causeEvent 로, o.bleed 는 그 값 이상으로(원인도 그 원인으로), o.immobile 은 걷던 사람을 세우고 갇힌 사람은 그대로 둔다', () => {
+    const { sim, s } = sceneOf('INJ-hurt2', 'armed', 'hostage');
+    const I = sim.incidents[s.incidentId];
+    const c = addCas(s, 5, 5, 'mobile', 100, 0, 0);
+    c.walking = true; c.path = [1, 2, 3];
+    hurtCas(sim, s, I, c, 30, 'gunshot', { by: 2, byKind: 'hostile', ev: 55, bleed: 0.18, immobile: true });
+    expect(c.injuries).toEqual([{ cause: 'gunshot', dmg: 30, sev: 1, t: sim.t, last: sim.t, by: 2, byKind: 'hostile', ev: 55 }]);
+    expect([c.health, c.bleed, c.bleed0, c.bleedCause, c.causeEvent]).toEqual([70, 0.18, 0.18, 'gunshot', 55]);
+    expect([c.mob, c.walking, c.path]).toEqual(['immobile', false, null]);
+    // 더 약한 출혈은 올리지 않고 원인도 바꾸지 않는다. 기록 id 가 없으면 causeEvent 를 건드리지 않는다
+    hurtCas(sim, s, I, c, 5, 'blast', { bleed: 0.1 });
+    expect([c.bleed, c.bleedCause, c.causeEvent]).toEqual([0.18, 'gunshot', 55]);
+    // 갇힌 사람은 갇힌 채로 있다
+    const t = addCas(s, 6, 5, 'trapped', 90, 0, 0);
+    hurtCas(sim, s, I, t, 5, 'crush', { immobile: true });
+    expect(t.mob).toBe('trapped');
+  });
+  it('0 이하가 되면 숨지게 한 원인을 그 자리에서 적고(사망 처리는 다음 틱의 악화 규칙이 한다), 숨진 사람은 더 다치지 않는다', () => {
+    const { sim, s } = sceneOf('INJ-hurt3', 'fire');
+    const I = sim.incidents[s.incidentId];
+    const c = addCas(s, 5, 5, 'immobile', 20, 0, 0);
+    hurtCas(sim, s, I, c, 26, 'blast');
+    expect(c.health).toBe(-6); expect(c.dead).toBe(false); expect(c.deathCause).toBe('blast');
+    hurtCas(sim, s, I, c, 3, 'burn');      // 아직 dead 가 아니다: 기록은 이어지지만 숨지게 한 원인은 바뀌지 않는다
+    expect(c.deathCause).toBe('blast');
+    c.dead = true;
+    const snap = JSON.stringify([c.health, c.injuries, c.bleed]);
+    hurtCas(sim, s, I, c, 50, 'gunshot', { bleed: 0.5, immobile: true, ev: 9 });
+    expect(JSON.stringify([c.health, c.injuries, c.bleed])).toBe(snap);
+    expect(c.causeEvent).not.toBe(9);
+  });
+  it('hurtCasTo: 깎은 뒤의 체력을 받는다 — 하한·상한이 걸린 자리의 예전 식과 끝자리까지 같고, 지금보다 높은 값으로 체력을 올리지 않는다', () => {
+    const { sim, s } = sceneOf('INJ-hurt4', 'water');
+    const I = sim.incidents[s.incidentId];
+    const c = addCas(s, 5, 5, 'immobile', 30.123456789, 0, 0);
+    const x = 20.987654321;
+    const want = Math.max(8, c.health - x);
+    hurtCasTo(sim, s, I, c, Math.max(8, c.health - x), 'drown');
+    expect(c.health).toBe(want);
+    expect(c.injuries![0].dmg).toBe(30.123456789 - want);
+    // 하한보다 이미 낮은 사람: 예전 식은 체력을 하한까지 올렸다 — 다치는 일로 체력이 오르지는 않는다
+    c.health = 3;
+    hurtCasTo(sim, s, I, c, Math.max(8, c.health - 30), 'drown');
+    expect(c.health).toBe(3);
+    hurtCasTo(sim, s, I, c, Math.min(c.health, 55), 'illness');      // "그 값까지 떨어진다": 이미 더 낮으면 그대로
+    expect(c.health).toBe(3);
+    expect(c.injuries!.length).toBe(1);
+  });
+  it('구조 대상의 체력을 직접 깎는 줄이 남아 있지 않다 — 매 틱 악화, 사망 처리, 처치, 처음 상태를 만드는 자리만 예외다', () => {
+    const files = ['hazards.ts', 'executor.ts', 'agents.ts', 'sceneManager.ts', 'commander.ts', 'brain.ts', ...readdirSync('src/sim/field/rules').map((f) => 'rules/' + f)].map((f) => 'src/sim/field/' + f).concat(['src/sim/resources.ts', 'src/sim/pursuit.ts', 'src/sim/incidents.ts', 'src/sim/disaster.ts']);
+    const ALLOW = [
+      'c.health -= d * dt;',                                             // tickCasualties 의 매 틱 악화 (noteDecay 로 적는다)
+      'c.health = 0; c.dead = true; c.tDead = sim.t; c.walking = false;',      // tickCasualties 의 사망 처리
+      'c.dead = true; c.health = 0; c.tDead = sim.t; c.inWater = false;',      // tickWater: 떠내려가 숨짐 (바로 앞 줄이 hurtCasTo)
+      'c.health = Math.min(100, c.health + 15);',                        // 처치 (오른다)
+      'c.health = Math.min(100, c.health + 8 * q);',
+    ];
+    const bad: string[] = [];
+    for (const f of files) {
+      readFileSync(f, 'utf8').split('\n').forEach((line, k) => {
+        if (!/\b(c|cas|target|struck|v|victim)\.health\s*(-=|\*=|\/=|=[^=])/.test(line)) return;
+        if (ALLOW.some((a) => line.includes(a))) return;
+        bad.push(`${f}:${k + 1} ${line.trim().slice(0, 90)}`);
+      });
+    }
+    expect(bad).toEqual([]);
   });
 });
 

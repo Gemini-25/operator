@@ -30,6 +30,7 @@ export function baseScene(sim: Sim, I: Incident, rng: Rng): Scene {
     staticVersion: 0, archived: false, idleSince: -1, breachAt: -1, breachDone: false, bangAt: -99,
     outdoor: undefined, rules: undefined, placeName: undefined,      // 현장 틀마다 붙는 칸을 미리 비워 둔다 (모든 현장이 같은 모양)
     ruin: undefined, falls: undefined,      // (G4) 그림용 기록 칸 (field/ruins.ts). 무너진 현장에만 값이 생긴다
+    clearVision: 7.5,      // (R1) 맑은 날의 바깥 시야 — 탐조등이 밤의 시야를 여기까지 올린다 (실종 현장은 3.8 로 덮어쓴다). 쓰는 것은 단계 5 부터
   };
 }
 

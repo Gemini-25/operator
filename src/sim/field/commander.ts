@@ -8,6 +8,7 @@ import { closeIncident } from '../incidents';
 import { T } from '../types';
 import type { CasBelief, FieldAgent, Incident, Scene, UnitCaps, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, dist, josa } from '../util';
+import { capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, kitUses, roleOf, seatsOf } from '../crews';
 import { HURT_HEALTH, canCarryPatients, exitName, failedRecently, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { losWalls } from './grid';
@@ -127,13 +128,28 @@ function needFor(s: Scene, w: WorkItem, hotArmed: boolean): keyof UnitCaps | nul
   }
 }
 
+/**
+ * 이 작업을 맡을 수 있는 사람이 현장에 있거나 오고 있는가 (장비·부서·알려진 장비 상태만 — 진실을 읽지 않는다).
+ *  현장 쪽: fitFor > 0 인 활동 대원. 장비 자격이 fitFor 에 들어 있으므로 저절로 따른다
+ *           (방금 이 작업에 닿지 못한 대원은 치지 않는다: 소화전에 갇혀 닿지 못하는 진압 대원 → 진압 부대 지원 요청)
+ *  오는 쪽: 그 능력의 부대이고, 그 일을 할 장비를 가진 내리는 대원이 있다 (crews.capableOf)
+ */
+export function anyCapable(sim: Sim, s: Scene, I: Incident, w: WorkItem, need: keyof UnitCaps): boolean {
+  if (s.agents.some((b) => b.status === 'active' && !sim.units[b.unitId].boardOrder && fitFor(sim, s, b, w) > 0 && !failedRecently(sim, w, b.rid))) return true;
+  return I.assigned.some((uid) => {
+    const u = sim.units[uid];
+    return (u.state === 'enroute' || u.state === 'turnout') && u.caps[need] >= NEED_MIN[need] && fieldCrew(sim, u).some((rid) => sim.responders[rid].status === 'ok' && capableOf(sim, rid, w.kind));
+  });
+}
+
 /** 믿음 → 작업 목록 */
 function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   const B = a.beliefs;
   const cas = B.list('cas');
   const fires = B.list('fire');
   const hos = B.list('hos');
-  const police = s.agents.filter((b) => b.status === 'active' && sim.responders[b.rid].dept === 'police');
+  // 무장 사건의 인원 문턱에 드는 사람: 총기를 든 활동 중인 경찰. 폭발물 처리 요원·로봇 조작 요원은 (권총이 있어도) 역할로 뺀다
+  const police = s.agents.filter((b) => b.status === 'active' && sim.responders[b.rid].dept === 'police' && hasFirearm(sim, b.rid) && roleOf(sim, b.rid).group !== 'bomb');
   if (!s.sizeupDone) want(sim, s, 'sizeup', {}, 0.96);
 
   // ── 화재 ──
@@ -185,7 +201,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       const crit = cas.some((c) => c.value.where === 'scene' && c.value.band === 2);
       const fighting = h.value.state === 'fight';
       const hostage = !!h.value.hostage;
-      const hasBang = unitsOnScene(sim, s).some((uid) => sim.units[uid].flashbangs > 0);
+      const hasBang = s.agents.some((b) => b.status === 'active' && kitUses(sim, b.rid, 'flashbang') > 0);      // 섬광탄은 사람 몫이다 (자기 조직의 장비 상태 — 지휘관이 알아도 된다)
       let why = '';
       if (hostage) {
         // 인질 사건: 섣불리 들어가지 않는다. 섬광탄을 가진 부대가 오거나, 인질이 다쳤거나, 협상이 한계에 이르렀을 때만
@@ -393,12 +409,17 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   else if (fireRegions > 0 && dry) request(sim, s, I, a, 'suppression', '진압 부대의 용수가 떨어짐', true);
   else if ((fireSum >= 2.0 || fireRegions >= 3) && fireUnits < 2) request(sim, s, I, a, 'suppression', `화재가 ${fireRegions}개 구역으로 확대`, true);
   if (cas.some((f) => f.value.mob === 'trapped' && f.value.band < 3 && f.value.where === 'scene') && countUnits(sim, s, I, 'rescue', 0.5) === 0) request(sim, s, I, a, 'rescue', '고립된 구조 대상이 있으나 구조 장비가 없음', true);
-  // 가스가 찼거나 무너질 수 있는 건물: 소방 부대가 없으면 아무도 들어갈 수 없다
-  if ((s.kind === 'hazmat' || s.kind === 'collapse') && s.sizeupDone && countUnits(sim, s, I, 'rescue', 0.5) + fireUnits === 0) request(sim, s, I, a, 'rescue', s.kind === 'hazmat' ? '가스가 찬 건물에 진입할 소방 부대가 없음' : '붕괴 건물에 진입할 구조 부대가 없음', true);
+  // 가스가 찼거나 무너질 수 있는 건물: 공기호흡기를 멘 대원이 현장에도, 오는 부대에도 없으면 아무도 들어갈 수 없다 (자기 조직의 편성·장비만 본다)
+  if ((s.kind === 'hazmat' || s.kind === 'collapse') && s.sizeupDone
+    && !s.agents.some((b) => b.status === 'active' && hasKit(sim, b.rid, 'scba'))
+    && !I.assigned.some((uid) => { const u = sim.units[uid]; return (u.state === 'enroute' || u.state === 'turnout') && crewHasKit(sim, u, 'scba'); })) request(sim, s, I, a, 'rescue', s.kind === 'hazmat' ? '가스가 찬 건물에 진입할 소방 부대가 없음' : '붕괴 건물에 진입할 구조 부대가 없음', true);
   const patients = cas.filter((f) => f.value.band >= 1 && f.value.band < 3 && (f.value.where === 'scene' || f.value.where === 'carried' || f.value.where === 'safe'));
   const emsUnits = countUnits(sim, s, I, 'ems', 0.7);
+  // 구급 부대가 한 대뿐인데 부상자가 그 부대의 환자 자리보다 많다 (구급차 2명, 헬기 1명 — 와 있거나 오고 있는 구급 부대의 자리를 더한다)
+  let emsSeats = 0;
+  if (emsUnits === 1) { const on = unitsOnScene(sim, s); for (const uid of I.assigned) { const u = sim.units[uid]; if (u.caps.ems >= 0.7 && (u.state === 'enroute' || u.state === 'turnout' || on.indexOf(uid) >= 0)) emsSeats += seatsOf(u); } }
   if (patients.length > 0 && emsUnits === 0) request(sim, s, I, a, 'ems', `부상자 ${patients.length}명 확인, 구급 부대 없음`, patients.some((f) => f.value.band === 2));
-  else if (patients.length > 2 * emsUnits && emsUnits < 2 && emsUnits > 0) request(sim, s, I, a, 'ems', `부상자 ${patients.length}명으로 구급 부대 1대로 감당 불가`, true);
+  else if (emsUnits === 1 && patients.length > emsSeats) request(sim, s, I, a, 'ems', `부상자 ${patients.length}명으로 구급 부대 1대로 감당 불가`, true);
   if (B.list('mate').some((f) => f.value.status === 'down') && emsUnits === 0) request(sim, s, I, a, 'ems', '대원 부상', true);
   const gunActive = active.some((h) => h.value.weapon === 'gun');
   const lawUnits = countUnits(sim, s, I, 'law', 0.5);
@@ -416,9 +437,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     if (w.status !== 'open' || w.assignees.length || sim.t - w.createdAt < 20 || sim.t < w.holdUntil) continue;
     const need = needFor(s, w, hotArmed);
     if (!need) continue;
-    // (방금 이 작업에 닿지 못한 대원은 맡을 수 있는 사람으로 치지 않는다: 소화전에 갇혀 닿지 못하는 진압 대원 → 진압 부대 지원 요청)
-    if (s.agents.some((b) => b.status === 'active' && !sim.units[b.unitId].boardOrder && fitFor(sim, s, b, w) > 0 && !failedRecently(sim, w, b.rid))) continue;
-    if (I.assigned.some((uid) => { const u = sim.units[uid]; return (u.state === 'enroute' || u.state === 'turnout') && u.caps[need] >= NEED_MIN[need]; })) continue;
+    if (anyCapable(sim, s, I, w, need)) continue;
     request(sim, s, I, a, need, `${josa(workLabel(s, w), '을/를')} 맡을 대원이 없음`, w.priority >= 0.85);
     break;
   }
@@ -500,7 +519,28 @@ function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       transmit(sim, s, a, best.rid, 'order', [], `${br.name}, ${workLabel(s, w)}${w.kind === 'search' || w.kind === 'suppress' || w.kind === 'carry' ? ' 실시' : ' 맡아라'}${redo}.`, w.id, w.priority > 0.8 ? 1 : 0, w.cause >= 0 ? [w.cause] : []);
     }
   }
+  // 교대: 구출을 맡은 사람이 다 찼는데(먼저 닿은 대원이 맨손으로 붙들고 있다), 손이 빈 대원 가운데 훨씬 나은 장비를 든 사람이 있으면
+  // (뒤에 닿은 구조대의 유압 구조기) 그 사람을 보낸다. 닿으면 그 자리에서 가장 서툰 사람과 자리를 바꾼다(executor 의 구출 임무 — relieve).
+  // 한 작업의 사람 수(max)는 그대로다: 넘겨받는 동안만 한 명이 더 붙는다. 적합도는 든 장비로만 본다(fitFor — 숨은 고장은 모른다)
+  for (const w of s.board) {
+    if (w.kind !== 'extricate' || w.status !== 'active' || w.assignees.length !== w.max || sim.t < w.holdUntil) continue;
+    let low = Infinity;
+    for (const rid of w.assignees) { const b = s.agents.find((q) => q.rid === rid); if (b) low = Math.min(low, fitFor(sim, s, b, w)); }
+    let best: FieldAgent | null = null, bf = low + RELIEF_GAP;
+    for (const b of s.agents) {
+      if (b === a || b.status !== 'active' || taken.has(b.rid) || w.assignees.indexOf(b.rid) >= 0 || sim.units[b.unitId].boardOrder) continue;
+      if (hasWork(b) || b.orderWork >= 0 || b.carrying !== -1 || sim.responders[b.rid].health < HURT_HEALTH || failedRecently(sim, w, b.rid)) continue;      // 손이 빈 대원만
+      const fit = fitFor(sim, s, b, w);
+      if (fit >= bf) { bf = fit; best = b; }
+    }
+    if (!best) continue;
+    taken.add(best.rid);
+    w.assignees.push(best.rid); w.orderSentAt[best.rid] = sim.t;
+    transmit(sim, s, a, best.rid, 'order', [], `${sim.responders[best.rid].name}, ${workLabel(s, w)} 넘겨받아라 — 장비를 갖춘 대원으로 교대한다.`, w.id, 1, w.cause >= 0 ? [w.cause] : []);
+  }
 }
+/** 구출을 넘겨받게 하는 적합도 차이 (맨손 0.1 안팎, 할리건 0.2~0.45, 유압 구조기 0.6~1.2 — 맨손은 손에 익은 할리건이나 유압 구조기가, 할리건은 유압 구조기가 넘겨받는다) */
+const RELIEF_GAP = 0.3;
 
 function targetX(s: Scene, w: WorkItem, a: FieldAgent): number {
   if (w.region >= 0) return s.regions[w.region].cx;

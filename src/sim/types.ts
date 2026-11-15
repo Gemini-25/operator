@@ -86,7 +86,47 @@ export interface Responder {
   // 교대 내내 유지되는 상태
   health: number; stamina: number; status: 'ok' | 'injured' | 'down';
   xpGained: number; incidentsWorked: number;
+  // ── 역할과 개인 장비 (R1, crews.ts) ──
+  role?: RoleId;                      // 부대 안의 자리 (crews.ts ROLES)
+  kit?: KitItem[];                    // 이 사람이 든 장비. 순서 = 역할의 기본 장비 순서 (고장 추첨도 이 순서로 한다)
 }
+
+// ── 대원의 역할과 개인 장비 (R1) ──
+export type RoleId =
+  | 'patrolLead' | 'officer' | 'tacLead' | 'tacOfficer' | 'swatLead' | 'shield' | 'breacher' | 'assaulter' | 'marksman'
+  | 'bombTech' | 'robotOp' | 'eodGuard' | 'observer' | 'pilot' | 'copilot'
+  | 'fireLead' | 'nozzle' | 'firefighter' | 'engineer' | 'ladderLead' | 'ladderOp'
+  | 'rescueLead' | 'extricator' | 'searcher' | 'ropeTech' | 'hazLead' | 'hazTech' | 'decon' | 'airRescuer' | 'boatRescuer' | 'boatLead'
+  | 'paramedic' | 'emt' | 'emsDriver' | 'doctor' | 'flightNurse';
+/** 역할의 그림 묶음 (부대 목록의 역할 점, 대원 그림) */
+export type RoleGroup = 'lead' | 'officer' | 'shield' | 'entry' | 'marksman' | 'bomb' | 'observer' | 'pilot' | 'nozzle' | 'engineer' | 'rescue' | 'search' | 'water' | 'hazmat' | 'medic' | 'doctor';
+export type KitId =
+  | 'scba' | 'turnout' | 'hose' | 'tic' | 'irons' | 'spreader' | 'breachKit' | 'lightRescue' | 'searchKit' | 'rope' | 'ring'
+  | 'pumpPanel' | 'plugKit' | 'gasMeter'
+  | 'bag' | 'alsBag' | 'doctorKit' | 'aed' | 'stretcher' | 'spineBoard'
+  | 'pistol' | 'rifle' | 'sniper' | 'taser' | 'flashbang' | 'vest' | 'plate' | 'shield' | 'bombSuit' | 'eodKit' | 'robot' | 'megaphone' | 'baton'
+  | 'flir' | 'searchlight'
+  | 'charge';            // 폭파 장약 — R1 은 들려 두기만 한다. 쓰는 것은 R2 §4.2a (사용자 결정 2026-11-15)
+/** 대원 한 사람이 든 장비 하나 */
+export interface KitItem {
+  id: KitId;
+  uses?: number;        // 남은 수량: 섬광탄·테이저 카트리지는 개수, 공기호흡기는 남은 초
+  fault?: boolean;      // 이번 교대에 고장 나 있다 (처음 쓰려 할 때 드러난다)
+  faultKnown?: boolean; // 고장이 드러났다 (이때부터 조직이 안다)
+}
+/** 현장 상공에 머무는 헬기의 일 (field/rules/air.ts 가 굴린다) */
+export interface AirOp {
+  unitId: number; mode: 'watch' | 'hoist' | 'bucket';
+  x: number; y: number; px: number; py: number;       // 현장 격자 위의 자리 (칸)
+  phase: 'hover' | 'work' | 'away' | 'leave';          // away = 물을 뜨러 감 (현장 밖)
+  target: number;                                      // hoist: casualty id, bucket: region id, 없으면 -1
+  workId: number;                                      // 지휘관 작업판의 작업 (없으면 -1)
+  progress: number; need: number;
+  backAt: number;                                      // away 에서 돌아오는 시각
+  idleSince: number;                                   // 할 일이 없어진 시각 (-1 = 일하는 중)
+  eye: FieldAgent;                                     // 공중 관측자 — s.agents 에 넣지 않는다
+}
+export interface AirStats { sorties: number; byKind: Record<string, number>; hoists: number; drops: number; airLifts: number; rtb: number; tracked: number; grounded: string | null }
 
 export type UnitKind = 'engine' | 'rescue' | 'als' | 'bls' | 'patrol' | 'tactical' | 'ladder' | 'hazmat' | 'swat' | 'eod' | 'heli' | 'boat';
 /** 부대의 분야 (편성표와 화면의 묶음) */
@@ -124,6 +164,14 @@ export interface Unit {
   aid?: boolean;                      // 인근 도시에서 지원 온 부대 (임무를 마치면 관할로 돌아간다)
   heavy?: boolean;                    // 큰 차 (펌프차·사다리차·구조 공작차·화학차): 좁아진 골목을 지나지 못한다
   backing?: boolean;                  // 막힌 길에서 되돌아 나오는 중
+  // ── 편성·헬기 (R1) ──
+  seats?: number;                     // 환자 자리 (구급차 2, 소방·의료 헬기 1, 나머지 0). 읽을 때는 seatsOf 하나로 (crews.ts)
+  hoist?: boolean;                    // 호이스트가 있다 (소방 헬기)
+  bucket?: number; bucketMax?: number;        // 물 바구니에 담긴 투하 횟수 / 한 번에 담는 횟수 (소방 헬기 1)
+  fuel?: number; fuelMax?: number;            // 헬기의 남은 체공 시간(초)
+  grounded?: 'fog' | 'night' | 'storm' | null;      // 지금 뜰 수 없는 이유
+  spareAir?: number;                  // 차에 실은 예비 공기통 수
+  airNeed?: keyof Needs;              // 헬기가 이번 출동에서 맡은 수요 (dispatcher.sendUnit 이 적는다. airRtb 가 되돌린다)
 }
 
 // ───────────────────────── 정보(Belief) ─────────────────────────
@@ -312,6 +360,9 @@ export interface FieldAgent {
   quiet: Set<string>;                         // 이미 별도 이벤트로 알린 정보(무전 문구에서 생략)
   lastRetreatLog: number;
   equipRetryAt: number;                       // 이 시각 전에는 장비 문제(소화전 연결)를 스스로 다시 시도하지 않는다 (닿지 못해 실패한 뒤)
+  // ── R1 ──
+  aloft?: boolean;                            // 공중 관측자 (AirOp.eye). 걷지 않고 무전 음영을 받지 않는다
+  taserAt?: number;                           // 마지막으로 테이저를 쏜 시각 (사격 대기 a.cooldown 과 따로)
 }
 
 export interface RadioMsg {
@@ -373,6 +424,11 @@ export interface Scene {
   ruin?: Uint8Array;        // (G4) 그림용 기록 — 무너진 자리의 원래 모습(field/ruins.ts). 시뮬레이션은 읽지 않는다.
                             // 0 없음 · 1 넘어간 벽 · 8 2차 붕괴로 잔해가 쏟아진 칸 · 9 천장이 내려앉은 칸 · 16+DECOR 깔린 가구(키 큰 진열대 포함)
   falls?: FallRecord[];     // (G4) 그림용 기록 — 무너진 순간들(시각 순, 많아야 32). 시뮬레이션은 읽지 않는다
+  // ── 상공의 헬기 (R1) ──
+  air?: AirOp[];
+  light?: { x: number; y: number; r: number } | null;      // 경찰 헬기 탐조등이 비추는 곳 (밤)
+  airAt?: number;           // 상공 부대가 처음 닿은 시각 (없으면 -1/undefined). s.arrivedAt 은 지금 뜻 그대로 지상 대원이 처음 내린 시각
+  clearVision?: number;     // 그 현장의 맑은 날 바깥 시야 (baseScene 7.5, 실종 현장 3.8). 탐조등이 쓴다
 }
 
 // ───────────────────────── 신고 / 관제 ─────────────────────────
@@ -483,6 +539,7 @@ export interface Incident {
   dispatchLog: number[];           // 출동 지령 이벤트
   aidUnit?: number;                   // 이 사건에 요청한 인근 도시 지원 부대 (사건당 한 번)
   coResp?: number;                    // 응급 환자: 구급차가 멀어 함께 보낸 선착 대응 부대 (사건당 한 번, dispatcher.firstResponder)
+  airDone?: UnitKind[];               // (R1) 이 사건에서 "상공 임무 종료"로 풀려난 헬기 종류 (관제가 같은 종류를 다시 보내지 않는다)
 }
 
 // ───────────────────────── 이벤트 로그 ─────────────────────────
@@ -513,6 +570,7 @@ export interface ShiftReport {
   major?: number;                  // 대형 사고 건수
   traffic?: { jams: number; closures: number; obstacles: number; detours: number; delaySec: number; gateWaits: number };      // 교통 통계 (traffic.ts)
   disaster?: { name: string; lines: string[] };      // 재난이 있었던 교대의 요약 (disaster.ts)
+  air?: AirStats;                  // (R1) 헬기 통계
   hash: string;
 }
 

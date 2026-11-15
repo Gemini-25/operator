@@ -145,8 +145,9 @@ describe('대응표가 문구를 아직 잡는다', () => {
   it('모든 문제 코드가 대응표에 있다', () => {
     for (const code of Object.keys(PROBLEM_LABEL)) expect(PROBLEM_SYS.has(code), code).toBe(true);
   });
-  it('T1·T2·T3·T4·T7 이 보통 S1 의 기록과 맞고, 그 기록의 시스템이 맞다', () => {
-    const { sim } = probedShift('S1');
+  it('T1·T2·T3·T4·T7 이 보통 S7 의 기록과 맞고, 그 기록의 시스템이 맞다', () => {
+    // 시드는 다섯 문구가 모두 나오는 교대로 고른다 (R1 에서 대원 수가 바뀌어 모든 시드의 결과가 달라졌다: S1 에는 응급실 대기가 없어졌고 S7 에는 5건 있다)
+    const { sim } = probedShift('S7');
     const hit = (re: RegExp): SimEvent[] => sim.events.filter((e) => re.test(e.text));
     for (const k of ['T1', 'T2', 'T3', 'T4', 'T7'] as const) expect(hit(PHRASE[k]).length, k).toBeGreaterThan(0);
     expect(hit(PHRASE.T1).every((e) => sysOf(e) === 'aid')).toBe(true);
@@ -154,15 +155,18 @@ describe('대응표가 문구를 아직 잡는다', () => {
     expect(hit(PHRASE.T4).every((e) => sysOf(e) === 'hospital')).toBe(true);
     expect(hit(PHRASE.T7).every((e) => sysOf(e) === 'dispatch')).toBe(true);
   });
-  it('T6(결원 운용 중단)이 대원이 다치는 교대(극한 S10·S13·S18 가운데 처음 맞는 것)의 기록과 맞는다', () => {
-    const ext = parseDifficulty('extreme')!;
-    let found: SimEvent | null = null;
-    for (const seed of ['S10', 'S13', 'S18']) {
-      const s = new Sim(seed, ext, 1200); s.runToEnd();
-      found = s.events.find((e) => PHRASE.T6.test(e.text)) ?? null;
-      if (found) break;
-    }
+  it('T6(결원 운용 중단)이 내리는 대원이 모두 다친 부대가 복귀할 때 남는 기록과 맞는다', () => {
+    // R1 뒤로 부대가 2~5명이라 한 부대의 전원이 다치는 교대는 드물다(극한 60교대에 1건 — S28 의 순찰3). 시드에 기대지 않고 그 상태를 직접 만든다.
+    // 기록은 실제 코드(resources.arrive 의 복귀 갈래)가 남긴다
+    const s = new Sim('S1', NORMAL, 1200);
+    const u = s.units.find((q) => q.kind === 'patrol')!;
+    for (const rid of u.crew) s.responders[rid].status = 'injured';
+    u.state = 'returning'; u.destNode = u.homeNode;
+    s.step();
+    expect(u.state).toBe('oos');
+    const found = s.events.find((e) => PHRASE.T6.test(e.text)) ?? null;
     expect(found).not.toBe(null);
+    expect(found!.actor).toBe(u.callsign);
     expect(sysOf(found!)).toBe('crew');
   });
   it.skip('T5(지난 교대에서 이어받은 상태) — I2 뒤에 켠다', () => {});

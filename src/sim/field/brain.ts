@@ -6,7 +6,8 @@ import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import type { Candidate, CasBelief, FieldAgent, Scene, WorkItem } from '../types';
 import { dist } from '../util';
-import { HURT_HEALTH, failedRecently, fitFor, flushOutbox, perceive, resp, shareNearby, workLabel } from './agents';
+import { hasKit } from '../crews';
+import { HURT_HEALTH, failedRecently, fitFor, flushOutbox, perceive, pumpOperatorOn, resp, shareNearby, workLabel } from './agents';
 import { commanderThink } from './commander';
 import { finishTask, makeTask } from './executor';
 import { tileOf } from './grid';
@@ -37,7 +38,7 @@ function dangerScore(sim: Sim, s: Scene, a: FieldAgent): number {
   const ax = Math.round(a.x), ay = Math.round(a.y);
   let f = 0;
   for (let y = Math.max(0, ay - 1); y <= Math.min(s.h - 1, ay + 1); y++) for (let x = Math.max(0, ax - 1); x <= Math.min(s.w - 1, ax + 1); x++) f = Math.max(f, s.fire[y * s.w + x]);
-  if (r.dept === 'fire') { if (f > 0.85 && r.health < 65) u += 0.45; if (r.stamina < 8) u += 0.5; }
+  if (hasKit(sim, a.rid, 'turnout')) { if (f > 0.85 && r.health < 65) u += 0.45; if (r.stamina < 8) u += 0.5; }      // 방화복을 입은 대원은 불 곁에서도 버틴다
   else { u += f * 1.1; if (a.smokeT > 4) u += 0.45 + (a.smokeT - 4) * 0.06; }
   if (r.dept !== 'police' && sim.t - a.underFireT < 4) u += 0.7;
   if (r.dept === 'police' && sim.t - a.underFireT < 3 && !a.inCover && r.health < 70) u += 0.35 * (1.3 - r.composure);
@@ -107,8 +108,11 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
       opts.push({ label: `지시 수행: ${workLabel(s, w)}`, score: 0.56 + 0.4 * w.priority, apply: () => takeWork(sim, s, a, w, false) });
     } else a.orderWork = -1;
   }
-  // 4) 장비 문제
-  if (a.equipIssue === 'pump' && (!cur || cur.kind !== 'resupply')) {
+  // 4) 장비 문제: 예비 펌프 교체와 소화전 급수 연결은 그 부대에서 펌프를 맡은 대원(기관원·사다리 조작원)이 활동 중이면 그 사람만 나선다
+  //    (물이 떨어진 관창수가 스스로 관창을 놓고 가지 않는다. 펌프를 맡은 대원이 없거나 쓰러졌으면 지금처럼 문제를 겪은 대원이 한다)
+  const panel = hasKit(sim, a.rid, 'pumpPanel');
+  const pumpMine = panel || !pumpOperatorOn(sim, s, a.unitId);
+  if (pumpMine && a.equipIssue === 'pump' && (!cur || cur.kind !== 'resupply')) {
     const someoneFixing = s.agents.some((b) => b !== a && b.unitId === a.unitId && b.task && b.task.kind === 'resupply');
     if (!someoneFixing) opts.push({ label: '장비 교체 (예비 펌프)', score: 0.84, apply: () => {
       setTask(sim, s, a, 'resupply', '장비 교체');
@@ -116,12 +120,18 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
     } });
   }
   // (소화전에 닿지 못해 실패했으면 한동안 다시 고르지 않는다: equipRetryAt · 그 작업의 실패 기억)
-  if (a.equipIssue === 'water' && (!cur || cur.kind !== 'hookup') && !u.hydrant && sim.t >= a.equipRetryAt && s.props.some((p) => p.kind === 'hydrant')) {
+  // 펌프를 맡은 대원은 탱크를 지켜본다: 물이 떨어지기 전이라도 지휘관이 급수 연결을 작업판에 올리면(탱크 40% 아래) 스스로 나선다.
+  // 물이 이미 떨어졌으면 그 부대는 불을 끌 수 없으므로 하던 일(수색 등)보다 급수를 앞세운다
+  const hookW = (a.equipIssue === 'water' || panel) && !u.hydrant ? s.board.find((q) => q.kind === 'hookup' && q.prop === a.unitId && (q.status === 'open' || q.status === 'active')) : undefined;
+  const dry = a.equipIssue === 'water';
+  // (예비 펌프로 바꾸는 중에는 급수 연결을 내지 않는다: 두 후보의 점수가 비슷해 교체와 연결을 오가며 같은 말을 되풀이한다 — 교체를 끝낸 뒤 연결한다)
+  if (pumpMine && (dry || hookW) && (!cur || (cur.kind !== 'hookup' && cur.kind !== 'resupply')) && !u.hydrant && sim.t >= a.equipRetryAt && s.props.some((p) => p.kind === 'hydrant')) {
     const someone = s.agents.some((b) => b !== a && b.unitId === a.unitId && b.task && b.task.kind === 'hookup');
-    const w = s.board.find((q) => q.kind === 'hookup' && q.prop === a.unitId && (q.status === 'open' || q.status === 'active'));
-    if (!someone && !(w && failedRecently(sim, w, a.rid))) opts.push({ label: '소화전 급수 연결', score: 0.83, apply: () => {
+    const w = hookW;
+    if (!someone && !(w && failedRecently(sim, w, a.rid))) opts.push({ label: '소화전 급수 연결', score: dry && panel ? 0.92 : 0.83, apply: () => {
       if (w) takeWork(sim, s, a, w, true); else { setTask(sim, s, a, 'hookup', '소화전 연결'); }
-      emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 1, causes: [a.lastBlockEvent], text: '소화전에 급수 라인을 연결하겠습니다.' });
+      if (dry) emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 1, causes: [a.lastBlockEvent], text: '소화전에 급수 라인을 연결하겠습니다.' });
+      else emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 0, text: '탱크 용수가 줄었습니다. 소화전에 급수 라인을 연결하겠습니다.' });
     } });
   }
   // 5) 휴식

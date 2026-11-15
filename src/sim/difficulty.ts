@@ -44,7 +44,7 @@ export const KNOBS: { key: keyof Difficulty; name: string; low: string; high: st
   { key: 'threat', name: '용의자 위협', low: '약함', high: '중무장', harderWhen: 'high', desc: '무장 사건 비중, 총격범 비중, 용의자 수·공격성·사격 실력, 숨은 공범, 도주 시점' },
   { key: 'equipment', name: '대원 장비 상태', low: '불량', high: '최상', harderWhen: 'low', desc: '차량 주행 속도, 펌프 상태와 마모, 용수 탱크, 구조 장비, 의료 장비, 방호 장비, 출근 시 체력' },
   { key: 'info', name: '신고 신뢰도', low: '엉망', high: '정확', harderWhen: 'low', desc: '침착한 신고자 비율, 위치를 틀리게 말할 확률, 허위·오인 신고와 비긴급 전화의 빈도, 목격자 정확도' },
-  { key: 'resources', name: '부대 규모', low: '12팀', high: '20팀', harderWhen: 'low', desc: '출동 부대 수 (12 · 15 · 17 · 19 · 20팀). 경찰·소방·구조·특수 네 분야에 3~5팀씩이고, 3 이 기본 편성이다. 인근 도시 지원 횟수도 함께 늘어난다 (2 · 2 · 3 · 4 · 5회).' },
+  { key: 'resources', name: '부대 규모', low: '12팀', high: '20팀', harderWhen: 'low', desc: '출동 부대 수 (12 · 15 · 17 · 19 · 20팀). 경찰·소방·구조·특수 네 분야에 3~5팀씩이고, 3 이 기본 편성이다. 1·2 는 최소 인원(펌프차 3명, 구조대 4명, 특공대 4명 …)으로 나간다. 인근 도시 지원 횟수도 함께 늘어난다 (2 · 2 · 3 · 4 · 5회).' },
   { key: 'traffic', name: '교통 상황', low: '한산', high: '극심', harderWhen: 'high', desc: '도로의 교통량, 정체·공사·고장 차량·낙하물의 빈도, 골목의 불법 주차' },
 ];
 

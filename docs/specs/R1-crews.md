@@ -917,3 +917,72 @@ diff /scratch/hash-before.txt /scratch/hash-after.txt      # 출력이 없어야
 - (검토 밖) B3 이후 `dispatcher.pickUnit` 의 헬기 줄에 "구급 60초 대기" 예외가 붙었다. 7.2 의 인용을 지금 줄로 고치고, 그 예외를 의료 헬기의 `airFit` 조건으로 옮겼다(17절 위험에 부대 규모 1·2 의 영향을 적었다).
 - (검토 밖) P1 이 합쳐지며 "새 칸은 객체를 만들 때 채운다"는 규칙이 생겼다(`createScene`·부대 객체 글자). 3절 끝에 R1 의 새 칸을 어디서 채우는지 적었다.
 - (검토 밖) 관측자에게 브리핑을 넣으려면 `air.ts` 가 `briefFacts` 를 불러야 하는데 그 함수가 `sceneManager.ts` 에 있어 순환이 생긴다. `makeAgent` 와 함께 `agents.ts` 로 옮기게 했다(7.3, 15절).
+
+---
+
+## 구현 메모 (진행 중 — 단계를 끝낸 작업자가 덧붙인다)
+
+**코드가 정본이다.** 이 절은 묶음이 끝나기 전에 이어받는 사람(또는 뒤 단계의 작업자)이 본문과 코드가 어긋난 곳을 헤매지 않게 하려는 것이다. 마지막 문서 단계(8)가 이 절을 정리해 최종 "구현 메모"로 만든다. 브랜치·기준 수치·끊겼을 때 이어받는 법은 `docs/specs/README.md` "실행 방법".
+
+### 단계 0 · 1 (`018aceb` · `0834792`) — 편성표와 명부
+
+- `STAFF`·`AIR_KIND` 는 지금의 `UnitKind` 12가지만 갖는다(`AIR_KIND = {'heli'}`). 경찰 헬기·의료 헬기 두 줄은 `UnitKind` 가 넓어지는 단계 4 에서 더한다(값은 `crews.ts` 의 `STAFF` 주석에 있다).
+- `crews.ts` 에 표 함수가 더 있다: `roleOf` · `slotsOf(kind, minimal)` · `kitFor(role)` · `dealFlashbangs(crew, n)` · `hasFirearm` · `crewHasKit(sim, u, id, okOnly = true)` · `minCrew` · `minField` · `skillsOf`.
+- `kitUses` 는 들지 않았으면 0, 수량을 세지 않는 장비(단계 6 전의 공기호흡기 포함)면 `Infinity` 를 돌려준다. `roleOf` 는 역할이 없는 대원에게 부서 기본 역할을 쓴다. `fieldCrew` 는 전원이 내리지 않는 부대면 `u.crew` 배열 자체를 돌려준다(고치지 말 것).
+- `AID_NAMES` 는 32개(재난 때 지원이 8회까지 간다). 새 칸(`s.air`·`s.light`·`s.airAt`·`clearVision`·`airDone`·`aloft`·`taserAt`·부대의 `fitOf`)은 이미 생성 리터럴에 들어 있다 — 뒤 단계는 다시 넣지 않는다.
+
+### 단계 2a · 2b (`80cc968` · `0327419`) — 부서 → 장비, 장비의 특색
+
+**실제 이름과 서명**
+
+| 파일 | 이름 | 비고 |
+|---|---|---|
+| `crews.ts` | `kitLive(sim, rid, id)` · `kitWorks(sim, rid, id, I?)` · `toolFor(sim, rid, use)` · `toolUse(sim, rid, use, I)` · `medLevelOf(sim, rid)` · `armorOf(sim, rid, engaging)` · `blastFactor(sim, rid)` · `capableOf(sim, rid, kind)` · `seatsOf(u)` · `kitRng(sim, s)` | `kitWorks` 는 `I` 가 없으면 사건 없는 `EQUIP_FAIL` 기록을 남긴다. 맨손 0.12 와 부서 기본 의료 수준(.25·.35·.5)에는 장비 손잡이를 곱하지 않는다. **`kitRng` 는 `(sim, s)`** — 본문의 `kitRng(s)` 는 흐름을 만들 `sim` 이 없다. `seatsOf` 는 2b 가 미리 넣었다(구급 자리 수 요청) — 단계 3 은 쓰는 곳만 늘린다 |
+| `field/agents.ts` | `fitFor`(= 안쪽 `fitBase` + 역할 선호) · `pumpOperatorOn(sim, s, unitId)` | 새 일(`hoist`·`airDrop`)의 0 은 `fitBase` 의 `switch` 에 넣는다 |
+| `field/executor.ts` | `rangeFactor(sim, rid, d)` · `pumpTended(sim, s, unitId)` (export), `tryTaser` · `relieve` · `noAirEntry` · `carryHas` · `equipTrouble` (안쪽) | |
+| `field/commander.ts` | `anyCapable(sim, s, I, w, need)` (export) · 교대(`RELIEF_GAP` 0.3) | |
+| `dispatch/dispatcher.ts` | `kitBonus(sim, u, I, key)` (export — 시험용) | |
+| `field/sceneManager.ts` | `agentHealth` (export) | |
+| `field/fxlog.ts` | `weaponOf`·`breachHowFor` 가 장비를 본다, 피격 꼬리표 `arm` = `armorOf(…, 교전 중)`, 테이저는 `recTaser` | G5 §11 의 R1 줄 ①~④ 를 여기서 했다. ⑤(`Item 'halligan'`)·⑥(`'drop'`)은 단계 7·5 |
+
+**본문과 다르게 한 곳**
+
+1. **급수 연결(`hookup`)은 펌프를 맡은 대원이 활동 중이면 그 사람만** 맡는다(`fitFor` — 본문 6.2 표는 "소방 && 자기 부대"). 선호 +0.3 과 `brain` 후보만으로는 지휘관의 지시가 손이 빈 다른 대원에게 가서 ⑤ 의 60% 를 못 채웠다(41%). 그 대신 펌프 대원은 지휘관이 급수 연결을 작업판에 올리면(탱크 40% 아래) **물이 떨어지기 전에 스스로 나서고**(0.83, 기록 "탱크 용수가 줄었습니다 …"), 물이 이미 떨어졌으면 0.92 로 하던 일보다 앞세운다. 예비 펌프 교체 중에는 급수 연결 후보를 내지 않는다(둘을 오가며 같은 말을 되풀이했다). 구조 공작차·화학차·최소 인원 사다리차처럼 펌프 대원이 없는 부대는 예전처럼 누구나 한다.
+2. **구출 교대**(본문에 없음): 먼저 닿은 대원이 맨손으로 붙든 구출(정원 2)을, 뒤에 닿은 손이 빈 대원의 적합도가 0.3 넘게 높으면 지휘관이 그 대원을 보낸다(`commander.assign` 끝 — 지시 "… 넘겨받아라"). 닿으면 그 자리에서 가장 서툰 사람이 손을 뗀다(`executor.relieve` — 기록 "…과 교대합니다"). 정원은 그대로다. 이것이 없으면 유압 구조대원이 대기하는 곁에서 경찰이 맨손으로 80초 넘게 구출을 붙들어 ⑤ 의 50% 가 28% 였다.
+3. **위험한 건물 안의 자격을 넓혔다**: (가) 불이 난 건물 안에 갇힌 사람의 `extricate` 도 믿음 속 자리가 실내면 공기호흡기(본문 표는 붕괴·가스 현장만), (나) 어디 있는지 아직 모르는 사람의 `carry`·`extricate` 는 화재 현장에서도 공기호흡기(본문은 붕괴·가스만), (다) 임무를 맡은 뒤 그 사람이 건물 안에 있음을 알게 되면 문 앞에서 내려놓는다(`executor.noAirEntry` — 이송 보조와 같은 `'unsafe'`), (라) 공기호흡기 없는 대원은 화재·가스·붕괴 현장의 실내 구역을 가로지르는 길에 칸마다 +6 의 비용을 본다(`agentCost`). ④ 의 "위험 건물 실내 칸의 수색·구출·이송은 모두 scba" 를 매 틱 지키려는 것이다(85교대에서 위반 0). "실내"는 **구역의 `indoor`** 다 — 크레인 붕괴의 골조처럼 바닥(`T.FLOOR`)이지만 구역이 실내로 잡힌 곳이 있어 칸 종류로 보면 어긋난다.
+4. `anyCapable` 의 현장 쪽은 B3 의 코드 그대로 `!failedRecently` 를 함께 본다(본문 예시에는 빠져 있다). 오는 쪽은 `status === 'ok'` 인 내리는 대원만 센다.
+5. 테이저의 그림 기록은 본문 6.3 의 노란 `'shot'` 이 아니라 G5 의 `recTaser`(G5 §11). 흔들림 난수를 쓰지 않는다. 이미 무력화된 상대에게는 쏘지 않는다.
+6. 제세동기: 다시 볼 가치가 있는지는 `hasKit` 으로 어림하고 효과는 처치를 마칠 때 `kitWorks` 로 준다. 고장이 드러나 앞선 처치보다 나아진 것이 없으면 상태만 다시 알리고 끝낸다(처치 수준을 낮추지 않는다). 심정지는 `s.kind === 'medical' && s.variant === 'arrest'`.
+7. 척추 고정판의 "출혈 ×1.12" 는 옮기는 동안 매 틱 `c.health -= c.bleed × 0.12 × dt` 로 넣었다(`case 'carry'`).
+8. 누출 차단 장비의 적합도 +0.2 와 시간 ÷1.6 은 밸브·연료 누출에만(균열부 보강에는 아니다). 약한 불(0.12~0.5)의 경로 비용은 방화복 기준.
+9. 이송 중 처치는 함께 탄 `fieldCrew` 전원의 최댓값(다친 대원도 센다 — 본문 그대로. H1 이 다시 정한다).
+
+**뒤 단계가 알아야 할 것**
+
+- 단계 3: `fitFor` 의 `load`, `agents.canCarryPatients`, 지휘관 탑승 대기열은 아직 예전 식이다(`seatsOf` 는 구급 부족 요청만 쓴다).
+- 단계 5: `perceive` 맨 앞의 고장 드러내기는 `!a.aloft` 로 이미 갈라져 있다. `visionOf` 의 `s.light` 보강은 아직 없다. `kitRng(sim, s)` 를 물 투하 흔들림에 쓴다.
+- 단계 6: 고장 추첨만 넣으면 드러나는 자리는 이미 이어져 있다 — `tic`·`searchKit`(`perceive`), 도구(`toolUse`), `aed`(`case 'treat'` 끝), `taser`(`tryTaser`), `robot`(`case 'defuse'`). `searchlight` 만 단계 5 의 `air.ts`. `capableOf` 는 이미 공기 문턱(45초)과 `spareAir` 를 본다 — `fitFor` 쪽 공기 규칙만 더하면 된다.
+- 단계 7: 예광선·총성의 무기는 이미 장비 기준인데 손에 든 그림(`renderScene.agentPose` 의 `gun`)은 아직 부대 종류 기준이다 — 특공 팀장·방패수는 소총 그림에 권총 예광선이 나간다. `agentPose` 를 장비로 바꾸면 맞는다.
+- H1: 테이저 무력화 3.2초·명중 0.72·대기 4초는 `executor.ts` 의 `TASER`. 방호는 `armorOf(sim, rid, engaging)`(방패는 교전·봉쇄 임무 중에만 +0.3, 상한 0.8)·`blastFactor`.
+- R2: 장비를 감싸는 `gear.ts` 는 `hasKit`·`toolFor`·`kitUses` 와 `kitRng(sim, s)` 를 쓰면 된다. 구출 교대는 `fitFor` 값의 차이로만 정한다 — 방법(`MethodId`)이 생기면 `RELIEF_GAP` 을 다시 본다.
+
+**수치** (12절의 명령, 기준 = `5fc667e`)
+
+| | 기준 | 단계 1 | 2a | 2b |
+|---|---|---|---|---|
+| 보통 60 성공률 | 76.5% | 78.2% | 77.8% | 78.5% |
+| bad | 10.2% | 8.4% | 8.3% | 8.4% |
+| 한계 시간 + 방치 | 1 | 2 | 4 | 2 |
+| 평균 대응 | 48초 | 49초 | 49초 | 48초 |
+| 화재 · 무장 | 67.1 · 79.2% | 73.1 · 76.2% | 73.3 · 77.9% | 70.7 · 78.6% |
+| 쉬움 · 어려움 · 극한 | 85.7 · 60.6 · 34.1% | 87.4 · 65.7 · 36.9% | 85.9 · 63.5 · 35.4% | 86.4 · 63.4 · 35.9% |
+| 부대 규모 1 / 5 (30교대) | 63 / 76% | 66 / 79% | 62 / 80% | 62 / 80% |
+| 교대당 시간 (sweep 20) | 240ms | 257ms | 284ms | 281ms |
+
+강제 20교대(2b)의 그 시나리오 줄 한계 시간·방치: 인질 0 · 대형 인질극 0 · 수난 0 · 산불 0 · 버스 0. 납치의 방치 13 은 놓친 추격전의 종료 사유로 기준에서도 13 이다. `tests/crews.test.ts` 28개(11초), `npm run check`·`npm run ui-check` 통과(브라우저 해시 = 헤드리스).
+
+**알려진 문제**
+
+- 부대 규모 1·2(최소 인원)의 화재가 어려워졌다: 펌프차·사다리차의 관창이 하나뿐이라 보통 난이도·부대 규모 1 의 화재 성공률이 58 → 47%, 30교대의 한계 시간이 2 → 4건. 본문 2절의 최소 인원 표대로다(12절의 "부대 규모 1 이 3 보다 어렵다"는 지킨다). 단계 6 에서 공기가 더해지면 더 어려워지므로 그때 12절의 "화재가 너무 어려워지면"을 본다.
+- 보통 60교대의 한계 시간 + 방치가 2a 에서 4(상한 4)까지 갔다가 2b 에서 2 로 내려왔다. 화재가 길어지는 쪽으로 조금만 움직여도 상한에 닿는다.
+- 관창을 든 사람만 물을 쏘므로 관창수의 지구력이 먼저 바닥난다("체력이 한계입니다"가 관창수에게 몰린다). 관창을 넘겨받는 규칙은 R3(교본)의 몫으로 두었다.

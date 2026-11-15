@@ -8,6 +8,7 @@ import { T } from '../types';
 import type { Casualty, FieldAgent, FxInfo, Hostile, Incident, Prop, Scene } from '../types';
 import type { Rng } from '../rng';
 import { clamp, dist, josa } from '../util';
+import { armorOf, blastFactor } from '../crews';
 import { addProp } from './kit';
 import { casFact, exitName } from './agents';
 import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, truthWalkable } from './grid';
@@ -140,7 +141,7 @@ export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, rad
     const d = dist(a.x, a.y, x, y);
     if (d > radius) continue;
     const r = sim.responders[a.rid];
-    r.health -= dmg * (1 - d / (radius + 1)) * (r.dept === 'fire' ? 0.7 : 1);
+    r.health -= dmg * (1 - d / (radius + 1)) * blastFactor(sim, a.rid);      // 폭발물 방호복·방화복이 줄인다
     a.lastBlockEvent = ev;
   }
   for (const c of s.casualties) {
@@ -491,7 +492,8 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
         const ta = s.agents.find((a) => a.rid === see.nearest)!;
         const r = sim.responders[ta.rid];
         if (h.weapon === 'gun') {
-          const u = sim.units[ta.unitId];
+          // 맞은 사람이 입은 방호 (부대 값이 아니라 사람 값). 방패는 교전·봉쇄 임무 중에만 세운다
+          const armor = armorOf(sim, ta.rid, ta.task !== null && (ta.task.kind === 'engage' || ta.task.kind === 'perimeter'));
           const moving = Math.abs(ta.x - ta.px) + Math.abs(ta.y - ta.py) > 0.05;
           const p = 0.32 * (0.6 + h.skill * 0.6) * (ta.inCover ? 0.3 : moving ? 0.6 : 1) * clamp(1.25 - see.nearestD / 16, 0.4, 1.1);
           h.cooldown = s.rng.range(1.5, 2.6);
@@ -501,15 +503,15 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
           const ct = !hit && ta.inCover ? coverRoll(sim, s, ta.x, ta.y, h.x, h.y) : -1;      // 빗나간 탄이 대원의 엄폐 가구에 맞는가 (파손용 흐름)
           const end = hit || ct >= 0 ? fireShot(sim, s, h.x, h.y, ta.x, ta.y, hit ? 'body' : ct) : fireShot(sim, s, h.x, h.y, mx, my, 'miss');      // 탄이 실제로 간 선: 지나간 창이 깨지고 엄폐 가구가 닳는다
           pushFx(sim, s, 'shot', h.x, h.y, end.x, end.y, undefined, '#ff8a5c', 0.25);
-          noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit, end, tx: ta.x, ty: ta.y, tk: 0, target: ta.rid, arm: u.armor });
+          noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit, end, tx: ta.x, ty: ta.y, tk: 0, target: ta.rid, arm: armor });
           if (!I.problems.some((q) => q.code === 'ESCALATION' && q.detail === '용의자 발포')) {
             raiseProblem(sim, I, 'ESCALATION', '용의자 발포', { role: 'SYSTEM', actor: '현장', text: `${h.label}가 대원을 향해 발포했습니다!`, imp: 3 }, false);
           }
           if (hit) {
-            const dmg = s.rng.range(25, 41) * (1 - u.armor * 0.6);
+            const dmg = s.rng.range(25, 41) * (1 - armor * 0.6);
             r.health -= dmg; h.morale = Math.min(1, h.morale + 0.05);
             pushFx(sim, s, 'hit', ta.x, ta.y);
-            noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 0, target: ta.rid, arm: u.armor });
+            noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 0, target: ta.rid, arm: armor });
             ta.lastBlockEvent = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'hazard', text: `${r.name} 피격${ta.inCover ? ' (엄폐 중)' : ' (엄폐 없이 노출)'}.`, imp: 2, causes: [I.lastEvent] });
           }
         } else {

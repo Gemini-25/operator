@@ -206,6 +206,259 @@ describe('1 틀 A — 자료형과 등록 자리 (결과 불변 — 해시는 �
   });
 });
 
+// ───────────────────────── 단계 2 (틀 B — 새 부대의 자리) ─────────────────────────
+// 시험 3 의 틀 부분. 새 부대 넷은 편성되지 않는다(minLevel 6) — 표와 관제의 틀은 온 조직을 편성한 명부(unitLevel 6 으로 createRoster 를 다시 부른 시험용 교대)와
+// 인근 도시 지원(제독차만 지원 종류다)으로 본다. 편성 단계의 짝(tests/crews.test.ts ③)·AID_KEYS·공기호흡기 예외는 그 부대를 편성하는 단계(4·5·6·9)가 넣는다.
+import { mountainAt } from '../src/sim/city';
+import { EXTRA_NAMES, KITS, ROLES, STAFF, drawBatchFaults, drawFaults, hasFirearm, hasKit, kitIdsOf, slotsOf } from '../src/sim/crews';
+import { NORMAL } from '../src/sim/difficulty';
+import { emptyNeeds, needsText } from '../src/sim/dispatch/analyst';
+import { KIND_AUX, LABEL_BONUS, kindFit, kitBonus, notSpare, recomputeUnmet } from '../src/sim/dispatch/dispatcher';
+import { PAIRS, docDeptOf } from '../src/sim/field/doctrine';
+import { createAidUnit, createRoster, rosterKeys, UNIT_KIND_NAME } from '../src/sim/resources';
+import { Rng } from '../src/sim/rng';
+import type { Assessment, KitId, Needs, Responder, RoleId, Unit, UnitKind } from '../src/sim/types';
+import { unitField } from '../src/view/city/tokens';
+import { UNIT_MARK } from '../src/view/marks';
+import { VEH_SIZE, responderLook } from '../src/view/scene/sprites';
+
+const N9_KINDS: UnitKind[] = ['mtnRescue', 'dive', 'deconUnit', 'riotPol'];
+/** 온 조직을 편성한 명부: 보통 교대(부대 규모 5)를 만든 뒤 편성 단계 6 으로 명부를 다시 짠다 — 표를 보는 시험 전용(교대를 돌리지 않는다) */
+function fullOrg(seed: string, equipment = 3): Sim {
+  const sim = new Sim(seed, { ...NORMAL, resources: 5, equipment });
+  sim.units.length = 0; sim.responders.length = 0;
+  sim.tune.unitLevel = 6;
+  createRoster(sim);
+  return sim;
+}
+const assessOf = (sim: Sim, type: string, label?: string, needs: Partial<Needs> = {}): Assessment =>
+  ({ type: type as IncidentType, typeConf: 0.9, probs: {} as Assessment['probs'], severity: 1.5, confidence: 0.9, needs: { ...emptyNeeds(), ...needs }, risks: [], summary: '', t: sim.t, revision: 0, label });
+const kitsOf = (sim: Sim, rid: number): KitId[] => sim.responders[rid].kit!.map((it) => it.id);
+
+describe('3 새 부대 — 편성되지 않는 넷 · 표 · 관제의 틀 (단계 2)', () => {
+  it('어느 부대 규모에서도 편성되지 않는다(minLevel 6). 명부의 열쇠·이름은 끝에 붙어 앞 사람이 그대로다. 이름은 모두 다르다(지원 13회 뒤에도)', () => {
+    for (const lv of [1, 2, 3, 4, 5]) {
+      const sim = new Sim('N9-2-ROSTER', { ...NORMAL, resources: lv });
+      for (const u of sim.units) expect(N9_KINDS.indexOf(u.kind), `규모 ${lv} ${u.callsign}`).toBe(-1);
+      for (const r of sim.responders) for (const it of r.kit!) expect(it.id === 'diveKit' || it.id === 'mtnKit' || it.id === 'deconKit', `규모 ${lv} ${r.name}: ${it.id}`).toBe(false);
+    }
+    const keys = rosterKeys();
+    const tail = keys.slice(-15);
+    expect(tail.map((k) => k.callsign)).toEqual(['산악1', '산악1', '산악1', '수중1', '수중1', '수중1', '제독1', '제독1', '제독1', '제독1', '기동대1', '기동대1', '기동대1', '기동대1', '기동대1']);
+    expect(tail.map((k) => k.slot)).toEqual([0, 1, 2, 0, 1, 2, 0, 1, 2, 3, 0, 1, 2, 3, 4]);
+    expect(keys[keys.length - 16].callsign, 'N9 의 줄은 N8 의 줄(경찰견1) 다음').toBe('경찰견1');
+    expect(new Set(keys.map((k) => k.name)).size).toBe(keys.length);
+    expect(EXTRA_NAMES.length).toBeGreaterThanOrEqual(keys.length - 40);
+    // 지원 13회 (옛 여덟 + N8 의 넷 + 제독 — 견인은 지원을 부르지 않는다): 지원 대원의 이름이 편성표 대원·다른 지원 대원과 겹치지 않는다
+    const sim = new Sim('N9-2-AID', { ...NORMAL, resources: 5 });
+    const I = createIncident(sim, { type: 'fire', rng: sim.rng.fork('n9-2-aid') });
+    for (const key of ['suppression', 'rescue', 'ems', 'law', 'tactical', 'search', 'traffic', 'eod', 'utilPower', 'utilGas', 'utilWater', 'capture', 'decon'] as (keyof Needs)[]) {
+      const u = createAidUnit(sim, key, I); expect(u, key).not.toBeNull(); sim.aidUsed++;
+    }
+    const names = sim.responders.map((r) => r.name);
+    expect(new Set(names).size, names.join(',')).toBe(names.length);
+  });
+
+  it('표 (§4.8): 분야·능력·차량·자리·역할·장비 — 온 조직 명부에서 본다. 화학 구조차의 제독 0.7 · 수난 구조대원의 오일펜스는 장비 끝 · R3 의 분야와 짝', () => {
+    const full = fullOrg('N9-2-ORG');
+    const want: Record<string, { dept: string; field: string; caps: Partial<Record<keyof Needs, number>>; heavy: boolean; spareAir: number; call: string }> = {
+      mtnRescue: { dept: 'fire', field: 'rescue', caps: { rescue: 0.7, search: 0.85, ems: 0.35 }, heavy: false, spareAir: 0, call: '산악1' },
+      dive: { dept: 'fire', field: 'rescue', caps: { rescue: 0.8, search: 0.7, ems: 0.3 }, heavy: false, spareAir: 0, call: '수중1' },
+      deconUnit: { dept: 'fire', field: 'special', caps: { decon: 1.0, rescue: 0.45, suppression: 0.3, search: 0.2 }, heavy: true, spareAir: 4, call: '제독1' },
+      riotPol: { dept: 'police', field: 'police', caps: { law: 0.9, tactical: 0.85, traffic: 0.6, search: 0.25 }, heavy: true, spareAir: 0, call: '기동대1' },
+    };
+    for (const kind of N9_KINDS) {
+      const u = full.units.find((q) => q.kind === kind)!, w = want[kind];
+      expect(u, kind).toBeTruthy();
+      expect([u.callsign, u.dept, u.field, !!u.heavy, u.seats, u.spareAir]).toEqual([w.call, w.dept, w.field, w.heavy, 0, w.spareAir]);
+      const nonzero: Partial<Record<keyof Needs, number>> = {};
+      for (const k of Object.keys(u.caps) as (keyof Needs)[]) if (u.caps[k] > 0) nonzero[k] = u.caps[k];
+      expect(nonzero, `${kind} 능력`).toEqual(w.caps);
+      expect(u.crew.map((rid) => full.responders[rid].role)).toEqual(STAFF[kind].std);
+      u.crew.forEach((rid, k) => expect(kitsOf(full, rid), `${kind} ${k}번 자리`).toEqual(kitIdsOf(kind, k)));
+      expect(UNIT_KIND_NAME[kind].length).toBeGreaterThan(2);
+    }
+    expect(STAFF.mtnRescue.minDrop).toEqual([2]); expect(STAFF.dive.minDrop).toEqual([2]); expect(STAFF.deconUnit.minDrop).toEqual([3]); expect(STAFF.riotPol.minDrop).toEqual([3, 4]);
+    // 지금 부대: 화학 구조차의 제독 0.7 (측정·제독 대원이 최소 인원에서도 남는다) · 다른 지금 부대는 제독 0
+    const now = new Sim('N9-2-NOW', { ...NORMAL, resources: 5 });
+    for (const u of now.units) expect(u.caps.decon, u.callsign).toBe(u.kind === 'hazmat' ? 0.7 : 0);
+    expect(slotsOf('hazmat', true).map((k) => STAFF.hazmat.std[k])).toContain('decon');
+    // 장비 넷: 고장 나는 것은 잠수 장비 하나(batch n9) · 오일펜스는 수량 3 · 수난 구조대원의 장비 끝
+    expect(KITS.diveKit.faultable).toBe(true); expect(KITS.diveKit.batch).toBe('n9'); expect(KITS.diveKit.uses).toBe(900);
+    for (const id of ['mtnKit', 'deconKit', 'oilBoom'] as KitId[]) { expect(!!KITS[id].faultable, id).toBe(false); expect(KITS[id].batch, id).toBeUndefined(); }
+    expect(KITS.oilBoom.uses).toBe(3);
+    expect(ROLES.boatRescuer.kit).toEqual(['rope', 'ring', 'oilBoom']);
+    // 새 역할 아홉: 그림 묶음은 지금 묶음에서 · 방패 대원은 총기가 없다 · 기동대의 최소 인원에도 총기 대원(소대장)이 남는다(경찰 0.9 ⇒ 총기)
+    const groups: Record<string, string> = { mtnLead: 'lead', mtnRescuer: 'rescue', diveLead: 'water', diver: 'water', deconLead: 'lead', deconTech: 'hazmat', riotLead: 'lead', riotShield: 'shield', riotGrab: 'officer' };
+    for (const [role, g] of Object.entries(groups)) expect(ROLES[role as RoleId].group, role).toBe(g);
+    const riot = full.units.find((q) => q.kind === 'riotPol')!;
+    for (const rid of riot.crew) expect(hasFirearm(full, rid), full.responders[rid].role).toBe(full.responders[rid].role === 'riotLead');
+    expect(slotsOf('riotPol', true).map((k) => STAFF.riotPol.std[k])).toEqual(['riotLead', 'riotShield', 'riotShield']);
+    // 능력과 장비의 짝 — 표준·최소 인원 모두 (편성 단계에 crews.test ③ 이 같은 것을 본다): 수중 → 잠수 장비 · 산악 → 산악 장비 · 제독 ≥ 0.7 → 제독 장비 또는 역할 decon · 구조정 → 오일펜스 · 제독차 → 공기호흡기
+    const slotKits = (kind: UnitKind, minimal: boolean): KitId[][] => slotsOf(kind, minimal).map((k) => kitIdsOf(kind, k));
+    for (const minimal of [false, true]) {
+      expect(slotKits('dive', minimal).some((ks) => ks.indexOf('diveKit') >= 0)).toBe(true);
+      expect(slotKits('mtnRescue', minimal).some((ks) => ks.indexOf('mtnKit') >= 0)).toBe(true);
+      for (const kind of ['deconUnit', 'hazmat'] as UnitKind[]) expect(slotsOf(kind, minimal).some((k) => kitIdsOf(kind, k).indexOf('deconKit') >= 0 || STAFF[kind].std[k] === 'decon'), `${kind} 제독`).toBe(true);
+      expect(slotKits('boat', minimal).some((ks) => ks.indexOf('oilBoom') >= 0)).toBe(true);
+      expect(slotKits('deconUnit', minimal).some((ks) => ks.indexOf('scba') >= 0)).toBe(true);
+    }
+    // R3: 분야(부대의 분야와 같다)와 짝
+    const dept: Record<string, string> = { mtnRescue: 'fire', dive: 'fire', deconUnit: 'special', riotPol: 'police' };
+    for (const kind of N9_KINDS) for (const rid of full.units.find((q) => q.kind === kind)!.crew) expect(docDeptOf(full, rid), `${kind} ${full.responders[rid].role}`).toBe(dept[kind]);
+    expect(PAIRS.riotPol).toEqual({ std: [['riotShield', 'riotShield']], min: [['riotShield', 'riotShield']] });
+    expect(PAIRS.dive).toEqual({ std: [['diver', 'diver']], min: [['diveLead', 'diver']] });
+  });
+
+  it('고장 추첨: 잠수 장비(batch n9)는 교대 흐름 kit 의 순서에 끼지 않고 kit-n9 흐름에서 따로 뽑는다 — 지금 편성의 대원은 고장이 그대로다', () => {
+    // 함수: drawFaults 는 잠수 장비를 건너뛴다(난수를 쓰지 않는다), drawBatchFaults 는 그 묶음만 뽑는다
+    const diver: Responder = { ...new Sim('N9-2-F0').responders[0], kit: [{ id: 'diveKit', fault: false, faultKnown: false }, { id: 'tic', fault: false, faultKnown: false }] };
+    const a = new Rng(7), b = new Rng(7);
+    expect(drawFaults(a, [diver], 1)).toBe(1);
+    expect(diver.kit!.map((it) => !!it.fault)).toEqual([false, true]);
+    b.chance(1); expect(a.next(), '잠수 장비에는 난수를 쓰지 않았다(한 번만 뽑았다)').toBe(b.next());
+    diver.kit![1].fault = false;
+    expect(drawBatchFaults(new Rng(7), [diver], 1, 'n9')).toBe(1);
+    expect(diver.kit!.map((it) => !!it.fault)).toEqual([true, false]);
+    // 명부: 온 조직(장비 1 — 고장이 잦다)의 고장 = 교대 흐름 kit(잠수 장비를 뺀 순서) + kit-n9(잠수 장비만). 지금 편성(규모 5)의 대원은 명부의 앞부분이고 고장이 같다
+    let n9 = 0;
+    const faults = (rs: Responder[]): string[] => rs.flatMap((r) => r.kit!.filter((it) => it.fault).map((it) => r.name + ':' + it.id));
+    for (const seed of ['F1', 'F2', 'F3', 'F4', 'F5', 'F6']) {
+      const full = fullOrg(seed, 1), now = new Sim(seed, { ...NORMAL, resources: 5, equipment: 1 });
+      const p = full.tune.kitFault;
+      const rk = full.rng.fork('kit'), r9 = full.rng.fork('kit-n9'), want: string[] = [], want9: string[] = [], got: string[] = [], got9: string[] = [];
+      for (const r of full.responders) for (const it of r.kit!) {
+        if (KITS[it.id].faultable && KITS[it.id].batch !== 'n9' && rk.chance(p)) want.push(r.name + ':' + it.id);
+        if (it.fault) (KITS[it.id].batch === 'n9' ? got9 : got).push(r.name + ':' + it.id);
+      }
+      for (const r of full.responders) for (const it of r.kit!) if (KITS[it.id].batch === 'n9' && r9.chance(p)) want9.push(r.name + ':' + it.id);
+      expect(got, seed).toEqual(want); expect(got9, seed).toEqual(want9);
+      n9 += full.responders.reduce((m, r) => m + r.kit!.filter((it) => it.id === 'diveKit').length, 0);
+      const k = now.responders.length;
+      expect(full.responders.slice(0, k).map((r) => r.name)).toEqual(now.responders.map((r) => r.name));
+      expect(faults(full.responders.slice(0, k)), `${seed}: 지금 편성의 고장이 그대로`).toEqual(faults(now.responders));
+    }
+    expect(n9, '수중 구조대의 셋이 잠수 장비를 든다 (6교대)').toBe(18);
+  });
+
+  it('관제: kindFit 이 새 부대 넷의 일을 좁힌다 (§5.3.2). 형사·경찰견의 금고털이 · KIND_AUX · 예비 셈 · 기동대는 기동 수요를 덮지 않는다', () => {
+    const sim = new Sim('N9-2-KIND');
+    sim.run(3);
+    const I = createIncident(sim, { type: 'search', rng: sim.rng.fork('n9-2-kind') });
+    const base = sim.units.find((u) => u.kind === 'patrol')!, eng = sim.units.find((u) => u.kind === 'engine')!;
+    const fake = (kind: UnitKind, dept: Unit['dept'] = kind === 'riotPol' ? 'police' : 'fire'): Unit => ({ ...(dept === 'police' ? base : eng), kind, dept });
+    const set = (type: string, label?: string): void => { I.assessment = assessOf(sim, type, label); };
+    const fit = (kind: UnitKind, key: keyof Needs, dept?: Unit['dept']): number => kindFit(sim, fake(kind, dept), I, key);
+    const mtnNode = sim.city.nodes.find((n) => mountainAt(n.x, n.y) >= 0.35)!, flatNode = sim.city.nodes.find((n) => mountainAt(n.x, n.y) === 0)!;
+    expect(mtnNode, '산의 교차로가 있다(산성터널로)').toBeTruthy();
+    for (const k of N9_KINDS) expect(KIND_AUX.has(k), k).toBe(true);
+    // 기동대: 군중 유형이거나 이름표 '집단 난동'(폭동)의 경찰·교통 수요만
+    set('crowd'); expect([fit('riotPol', 'law'), fit('riotPol', 'traffic'), fit('riotPol', 'tactical'), fit('riotPol', 'search')]).toEqual([1, 1, 0, 0]);
+    set('armed', '집단 난동'); expect(fit('riotPol', 'law')).toBe(1);
+    for (const t of ['armed', 'disturb', 'traffic', 'medical']) { set(t); expect([fit('riotPol', 'law'), fit('riotPol', 'traffic')], t).toEqual([0, 0]); }
+    // 산악 구조대: 이름표 '산악 조난' 의 구조·수색 1 · 산의 교차로로 신고된 실종·구조 유형 0.6 · 그 밖 0
+    set('fire', '산악 조난'); expect([fit('mtnRescue', 'rescue'), fit('mtnRescue', 'search'), fit('mtnRescue', 'ems')]).toEqual([1, 1, 0]);
+    for (const t of ['search', 'rescue']) {
+      set(t); I.reportedNode = mtnNode.id; expect([fit('mtnRescue', 'search'), fit('mtnRescue', 'rescue')], `${t} 산`).toEqual([0.6, 0.6]);
+      I.reportedNode = flatNode.id; expect(fit('mtnRescue', 'search'), `${t} 평지`).toBe(0);
+    }
+    set('medical'); I.reportedNode = mtnNode.id; expect(fit('mtnRescue', 'search'), '산이라도 응급의 선착 대응 수색에는 0').toBe(0);
+    set('search'); I.reportedNode = -1; expect(fit('mtnRescue', 'search'), '위치를 모르면 0').toBe(0);
+    // 수중 구조대: 수난 유형이거나 네 이름표의 구조·수색
+    set('water'); expect([fit('dive', 'rescue'), fit('dive', 'search'), fit('dive', 'ems')]).toEqual([1, 1, 0]);
+    for (const lb of ['침수 지하차도', '여객선 사고', '선박 화재', '어선 사고']) { set('fire', lb); expect(fit('dive', 'rescue'), lb).toBe(1); }
+    for (const t of ['fire', 'collapse', 'search', 'traffic']) { set(t); expect(fit('dive', 'rescue'), t).toBe(0); }
+    // 제독차: 제독 수요만
+    set('hazmat'); expect((['decon', 'rescue', 'suppression', 'search'] as (keyof Needs)[]).map((k) => fit('deconUnit', k))).toEqual([1, 0, 0, 0]);
+    // 형사·경찰견: 이름표 '금고털이'(무장 유형)에도 — 무장의 다른 사건에는 그대로 0
+    set('armed', '금고털이'); expect([fit('detective', 'law', 'police'), fit('k9', 'search', 'police'), fit('detective', 'search', 'police')]).toEqual([1, 1, 0]);
+    set('armed', '강도'); expect([fit('detective', 'law', 'police'), fit('k9', 'search', 'police')]).toEqual([0, 0]);
+    // 예비 셈: 산악·수중·제독(소방 부서)·기동대는 남은 부대로 세지 않는다 (마지막 펌프차가 나가는 일이 없게)
+    for (const k of N9_KINDS) expect(notSpare(fake(k)), k).toBe(true);
+    expect(notSpare(eng)).toBe(false);
+    // 기동대는 기동 수요를 덮지 않는다(기동 0.85 < 기준 0.9) — 인질 사건의 '섬광탄을 가진 기동대' 요청이 기동대 배정으로 멈추지 않는다. 경찰 수요는 덮는다
+    const full = fullOrg('N9-2-TAC');
+    const J = createIncident(full, { type: 'armed', rng: full.rng.fork('n9-2-tac') });
+    const riot = full.units.find((u) => u.kind === 'riotPol')!, tac = full.units.find((u) => u.kind === 'tactical')!;
+    J.assessment = assessOf(full, 'armed', undefined, { law: 1, tactical: 1 });
+    J.assigned = [riot.id]; recomputeUnmet(full, J);
+    expect([J.unmet.law ?? 0, J.unmet.tactical ?? 0]).toEqual([0, 1]);
+    J.assigned = [riot.id, tac.id]; recomputeUnmet(full, J);
+    expect([J.unmet.law ?? 0, J.unmet.tactical ?? 0]).toEqual([0, 0]);
+  });
+
+  it('이름표 가점 표(§5.3.3): 줄 열여덟이 들어와 있고 지금은 걸리지 않는다 — 이름표를 내는 시나리오가 없거나 줄의 부대가 편성되지 않는다. 걸리면 그 종류·장비의 부대에 더한다', () => {
+    const N9_LABELS = ['압사 위험', '시위 충돌', '행사장 환자 다발', '집단 난동', '여객선 사고', '어선 사고', '침수 지하차도', '밀폐 공간 질식', '일산화탄소 중독', '화학 탱크로리', '기계 끼임', '금고털이', '강풍 낙하물', '기름 유출', '산악 조난'];
+    const rows = LABEL_BONUS.filter((r) => N9_LABELS.indexOf(r.label) >= 0);
+    expect(rows.length).toBe(18);
+    // 지금 관제가 붙일 수 있는 이름표 = 시나리오의 이름표(없으면 이름) + 옛 이름표 넷
+    const issued = new Set<string>([...SCENARIOS.map((sc) => sc.label ?? sc.name), '강도', '인질극', '총격', '심정지']);
+    const live = rows.filter((r) => issued.has(r.label));
+    expect([...new Set(live.map((r) => r.label))], '지금 나오는 이름표는 폭동의 것 하나').toEqual(['집단 난동']);
+    for (const r of live) {
+      expect(r.kind, r.label).toBe('riotPol');
+      for (const lv of [1, 2, 3, 4, 5]) expect(new Sim('N9-2-LB', { ...NORMAL, resources: lv }).units.some((u) => u.kind === r.kind), `규모 ${lv}`).toBe(false);
+    }
+    // 줄이 걸리면: 이름표·수요 열쇠·종류(또는 장비)가 맞는 부대에만 더한다
+    const full = fullOrg('N9-2-LB2');
+    const I = createIncident(full, { type: 'fire', rng: full.rng.fork('n9-2-lb2') });
+    const unit = (k: UnitKind): Unit => full.units.find((u) => u.kind === k)!;
+    for (const u of full.units) for (const rid of u.crew) for (const it of full.responders[rid].kit!) it.faultKnown = false;
+    I.assessment = assessOf(full, 'armed', '집단 난동');
+    expect([kitBonus(full, unit('riotPol'), I, 'law'), kitBonus(full, unit('patrol'), I, 'law'), kitBonus(full, unit('riotPol'), I, 'traffic')]).toEqual([25, 0, 0]);
+    I.assessment = assessOf(full, 'fire', '여객선 사고');
+    expect([kitBonus(full, unit('dive'), I, 'rescue'), kitBonus(full, unit('rescue'), I, 'rescue')]).toEqual([15, 0]);
+    I.assessment = assessOf(full, 'search', '산악 조난');
+    expect([kitBonus(full, unit('mtnRescue'), I, 'rescue'), kitBonus(full, unit('mtnRescue'), I, 'search'), kitBonus(full, unit('rescue'), I, 'rescue')]).toEqual([20, 20, 0]);
+    I.assessment = assessOf(full, 'water', '기름 유출');
+    expect(kitBonus(full, unit('boat'), I, 'rescue'), '구조정: 구명환·로프 12 + 오일펜스 20').toBe(32);
+    expect(kitBonus(full, unit('hazmat'), I, 'rescue'), '화학 구조차: 누출 차단 장비 15 (로프·구명환 없음)').toBe(15);
+  });
+
+  it('수요 열쇠 decon (§5.3.1): 이름 · 빈 수요 · 지원 제독차(최소 인원 셋, 화면 분야 특수) · 관제의 남은 수요 · 지휘관이 맡을 사람 없는 제독 작업에 "제독 부대"를 부른다(needFor)', () => {
+    expect(emptyNeeds().decon).toBe(0);
+    expect(needsText({ decon: 1 })).toBe('제독 1');
+    const sim = new Sim('N9-2-DECON', { ...NORMAL, resources: 5 });
+    sim.run(3);
+    const I = createIncident(sim, { type: 'medical', rng: sim.rng.fork('n9-2-decon') });
+    const u = createAidUnit(sim, 'decon', I)!;
+    sim.aidUsed++;
+    expect([u.kind, u.callsign, u.dept, unitField(u), !!u.heavy, u.caps.decon, u.spareAir]).toEqual(['deconUnit', '지원제독1', 'fire', 'special', true, 1, 4]);
+    expect(u.crew.map((rid) => sim.responders[rid].role)).toEqual(['deconLead', 'deconTech', 'deconTech']);
+    for (const rid of u.crew) expect(hasKit(sim, rid, 'deconKit') && hasKit(sim, rid, 'scba'), sim.responders[rid].role).toBe(true);
+    // 관제의 남은 수요: 제독차(1.0)·화학 구조차(0.7)가 덮는다. 다른 부대는 덮지 않는다
+    I.assessment = assessOf(sim, 'hazmat', undefined, { decon: 1 });
+    I.assigned = []; recomputeUnmet(sim, I); expect(I.unmet.decon).toBe(1);
+    I.assigned = [sim.units.find((q) => q.kind === 'engine')!.id]; recomputeUnmet(sim, I); expect(I.unmet.decon).toBe(1);
+    I.assigned = [sim.units.find((q) => q.kind === 'hazmat')!.id]; recomputeUnmet(sim, I); expect(I.unmet.decon ?? 0).toBe(0);
+    I.assigned = [u.id]; recomputeUnmet(sim, I); expect(I.unmet.decon ?? 0).toBe(0);
+    I.assigned = [];
+    // 지휘관: 20초 넘게 열린 제독 작업을 맡을 사람이 현장에도 오는 쪽에도 없으면 제독 부대를 부른다 (단계 2 에는 아무도 제독을 맡지 않는다 — fitFor 0)
+    const s = sim.scenes[I.id]!;
+    const [cmd] = copsOn(sim, s, 2);
+    s.board.unshift(workOf(sim, 'decontam', { cas: 0, createdAt: sim.t - 30, id: s.nextWorkId++ }));
+    commanderThink(sim, s, cmd);
+    expect(s.requests.some((r) => r.need === 'decon'), '제독 지원 요청').toBe(true);
+    expect(sim.events.some((e) => e.incidentId === I.id && e.text.startsWith('관제, 제독 부대 추가 지원 요청.')), '요청 무전').toBe(true);
+  });
+
+  it('화면의 자리: 새 부대 넷의 기호가 다른 모든 부대 기호와 다르고, 차량 크기·대원 겉모습이 있다 (산악·수중은 공기호흡기를 메지 않는다)', () => {
+    const marks = Object.values(UNIT_MARK);
+    for (const k of N9_KINDS) {
+      expect(UNIT_MARK[k], k).toMatch(/^M[\d. A-Za-z-]+Z$/);
+      expect(marks.filter((d) => d === UNIT_MARK[k]).length, k).toBe(1);
+      expect(VEH_SIZE[k][0] > VEH_SIZE[k][1] && VEH_SIZE[k][1] >= 0.9, k).toBe(true);
+    }
+    const mtn = responderLook('fire', 'mtnRescue', 7, 'mtnRescuer'), dive = responderLook('fire', 'dive', 7, 'diver');
+    expect(mtn.pack).not.toBe('scba'); expect(mtn.head).toBe('helmet');
+    expect(dive.head).toBe('hood');
+    expect(responderLook('fire', 'deconUnit', 7, 'deconTech').top).toBe(responderLook('fire', 'hazmat', 7, 'hazTech').top);      // 화학 보호복과 같은 묶음
+    expect(responderLook('fire', 'deconUnit', 7, 'deconLead').band, '제독 팀장의 띠').toBeTruthy();
+    expect(responderLook('police', 'riotPol', 7, 'riotShield').head).toBe('helmet');
+    expect(responderLook('police', 'riotPol', 7).top).not.toBe(responderLook('police', 'patrol', 7).top);
+  });
+});
+
 // ───────────────────────── 시험 4 — 정보 격리 (소스 글자 검사, 주석 줄은 뺀다) ─────────────────────────
 // 판단 파일은 N9 의 새 진실(Scene.kinds2 — tox·crowd·contamIds·deconned·underIds·…, 용의자의 crowdRole·dispersed)을 읽지 않는다. N8 시험 4(tests/kinds.test.ts)의 목록에 더한다.
 // 진실 쪽 글자만 있으므로 믿음 칸(dirty·sunk·lvl·tag·threw)·유형 색인·생김새(windDir·flowSpots)는 걸리지 않는다. callSystem.ts 는 대상이 아니다(신고자 모델).

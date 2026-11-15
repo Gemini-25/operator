@@ -51,6 +51,7 @@ const ceilCache = new WeakMap<Scene, { tick: number; rooms: { x0: number; y0: nu
 export function drawDangerZones(g: G, sim: Sim, s: Scene, ts: number, o: DangerOpts): void {
   const cx = (x: number): number => (x + 0.5) * ts, cy = (y: number): number => (y + 0.5) * ts;
   const t = o.timeMs / 1000;
+  let saved = false;      // save/restore 는 그릴 균열이 있을 때 한 번만 (헤드리스 소프트웨어 그리기에서 save 가 비싸다)
   for (const p of s.props) {
     if (p.kind !== 'unstable' || p.mitigated || p.removed) continue;
     const known = !!(o.cmd && o.cmd.beliefs.get('haz', p.id));
@@ -58,11 +59,12 @@ export function drawDangerZones(g: G, sim: Sim, s: Scene, ts: number, o: DangerO
     const lk = Math.max(0, Math.min(1, p.leak ?? 0));
     const x = cx(p.x), y = cy(p.y);
     const a0 = (o.truth ? 0.5 + 0.4 * lk : 0.7) * (o.truth && !known ? 0.55 : 1);
-    g.save();
+    if (!saved) { g.save(); saved = true; }
+    g.lineCap = 'butt';
     if (o.mini) {
       g.globalAlpha = a0; g.strokeStyle = '#ffd166'; g.lineWidth = 1;
       g.beginPath(); g.arc(x, y, 2.6 * ts, 0, 6.2832); g.stroke();
-      g.restore(); continue;
+      continue;
     }
     // 위험 범위: 바깥 어두운 띠 위에 도는 노란 점선 (통제선 테이프)
     g.globalAlpha = a0;
@@ -88,8 +90,8 @@ export function drawDangerZones(g: G, sim: Sim, s: Scene, ts: number, o: DangerO
         }
       }
     }
-    g.restore();
   }
+  if (saved) g.restore();
   // (선택) 불난 방의 천장 붕괴 위험: 탄 칸이 45% 이상이고 아직 판정하지 않은 방 (관찰자 시점). 틱마다 한 번 센다
   if (o.truth && !o.mini && s.burnedTiles > 0) {
     let c = ceilCache.get(s);
@@ -120,6 +122,7 @@ export function drawFallMoments(g: G, sim: Sim, s: Scene, ts: number, alpha: num
   const falls = s.falls;
   if (!falls || !falls.length) return;
   const now = sim.t + alpha * sim.dt;
+  if (!falls.some((f) => now - f.t >= 0 && now - f.t < 25)) return;
   const cx = (x: number): number => (x + 0.5) * ts, cy = (y: number): number => (y + 0.5) * ts;
   g.save();
   for (let n = 0; n < falls.length; n++) {
@@ -173,6 +176,7 @@ export function drawFallRing(g: G, sim: Sim, s: Scene, ts: number, alpha: number
   const falls = s.falls;
   if (!falls || !falls.length) return;
   const now = sim.t + alpha * sim.dt;
+  if (!falls.some((f) => now - f.t >= 0 && now - f.t < 0.8)) return;
   g.save();
   for (const f of falls) {
     const age = now - f.t;

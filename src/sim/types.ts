@@ -110,7 +110,8 @@ export type RoleId =
   | 'fireLead' | 'nozzle' | 'firefighter' | 'engineer' | 'ladderLead' | 'ladderOp'
   | 'rescueLead' | 'extricator' | 'searcher' | 'ropeTech' | 'hazLead' | 'hazTech' | 'decon' | 'airRescuer' | 'boatRescuer' | 'boatLead'
   | 'paramedic' | 'emt' | 'emsDriver' | 'doctor' | 'flightNurse'
-  | 'utilLead' | 'lineman' | 'gasTech' | 'plumber' | 'towDriver' | 'catcherLead' | 'catcher' | 'detective' | 'motorOfficer' | 'k9Handler';      // (N8 §4.9) 복구반장·전력·가스·수도 기사·견인 기사·포획 팀장·포획 요원·형사·교통 순찰 대원·경찰견 핸들러
+  | 'utilLead' | 'lineman' | 'gasTech' | 'plumber' | 'towDriver' | 'catcherLead' | 'catcher' | 'detective' | 'motorOfficer' | 'k9Handler'      // (N8 §4.9) 복구반장·전력·가스·수도 기사·견인 기사·포획 팀장·포획 요원·형사·교통 순찰 대원·경찰견 핸들러
+  | 'mtnLead' | 'mtnRescuer' | 'diveLead' | 'diver' | 'deconLead' | 'deconTech' | 'riotLead' | 'riotShield' | 'riotGrab';      // (N9 §4.8) 산악 구조 팀장·대원 · 잠수 팀장·대원 · 제독 팀장·대원 · 기동대 소대장·방패 대원·검거 대원 (지금 역할 shield·tacOfficer 와 이름이 겹치지 않게)
 /** 역할의 그림 묶음 (부대 목록의 역할 점, 대원 그림) */
 export type RoleGroup = 'lead' | 'officer' | 'shield' | 'entry' | 'marksman' | 'bomb' | 'observer' | 'pilot' | 'nozzle' | 'engineer' | 'rescue' | 'search' | 'water' | 'hazmat' | 'medic' | 'doctor'
   | 'civil';      // (N8) 유관 기관의 기사 (복구반장·기사·견인 기사)
@@ -122,7 +123,8 @@ export type KitId =
   | 'flir' | 'searchlight'
   | 'pole' | 'pfd' | 'drysuit' | 'raft' | 'extinguisher' | 'fan' | 'airbag' | 'shoring' | 'beanbag'      // (R2 §3.3) 갈고리 장대·구명조끼·드라이슈트·고무보트·소화기·송풍기·에어백·지지대·비살상탄 발사기 — 표(KITS)에만 있고 역할에는 단계 1a~5 가 붙인다
   | 'charge'             // 폭파 장약 — R1 은 들려 두기만 한다. 쓰는 것은 R2 §4.2a (사용자 결정 2026-11-15)
-  | 'insulKit' | 'voltDetector' | 'valveKey' | 'pumpSet' | 'towKit' | 'dart' | 'catchpole' | 'net' | 'beeSuit' | 'jumpMat' | 'dog';      // (N8 §4.9) 절연 장비·검전기·밸브 키·배수 펌프·견인 장비·마취총·올가미·포획망·벌 보호복·안전 매트·경찰견
+  | 'insulKit' | 'voltDetector' | 'valveKey' | 'pumpSet' | 'towKit' | 'dart' | 'catchpole' | 'net' | 'beeSuit' | 'jumpMat' | 'dog'      // (N8 §4.9) 절연 장비·검전기·밸브 키·배수 펌프·견인 장비·마취총·올가미·포획망·벌 보호복·안전 매트·경찰견
+  | 'mtnKit' | 'diveKit' | 'deconKit' | 'oilBoom';      // (N9 §4.8) 산악 장비 · 잠수 장비 · 제독 장비 · 오일펜스
 /** 대원 한 사람이 든 장비 하나 */
 export interface KitItem {
   id: KitId;
@@ -146,7 +148,8 @@ export interface AirStats { sorties: number; byKind: Record<string, number>; hoi
 
 export type UnitKind = 'engine' | 'rescue' | 'als' | 'bls' | 'patrol' | 'tactical' | 'ladder' | 'hazmat' | 'swat' | 'eod' | 'heli' | 'boat'
   | 'policeHeli' | 'medHeli'       // (R1) 경찰 헬기 · 의료 헬기. 'heli' 는 그대로 소방 헬기다
-  | 'powerCrew' | 'gasCrew' | 'waterCrew' | 'tow' | 'animalCtl' | 'detective' | 'trafficPol' | 'k9';      // (N8 §4.9) 전력·가스·수도 복구반 · 견인차 · 동물 포획팀 · 형사 · 교통 경찰 · 경찰견 (단계 2b 는 편성하지 않는다 — minLevel 6)
+  | 'powerCrew' | 'gasCrew' | 'waterCrew' | 'tow' | 'animalCtl' | 'detective' | 'trafficPol' | 'k9'      // (N8 §4.9) 전력·가스·수도 복구반 · 견인차 · 동물 포획팀 · 형사 · 교통 경찰 · 경찰견 (단계 2b 는 편성하지 않는다 — minLevel 6)
+  | 'mtnRescue' | 'dive' | 'deconUnit' | 'riotPol';      // (N9 §4.8) 산악 구조대 · 수중 구조대 · 화생방 제독차 · 경찰 기동대 (단계 2 는 편성하지 않는다 — minLevel 6)
 /** 부대의 분야 (편성표와 화면의 묶음) */
 export type UnitField = 'police' | 'fire' | 'rescue' | 'special'
   | 'civil';      // (N8) 유관 기관 (화면 묶음)
@@ -1167,3 +1170,11 @@ export interface CasBelief {
   dirty?: boolean;                                // 오염돼 보인다 (2칸 안에서 본 그대로 · 믿음 속 오염 구역 안에서 본 사람 — 진실 contamIds 와 다른 이름, 단계 6)
   sunk?: boolean;                                 // 물에 잠긴 차·선실 안 (잠수 대원이 찾았다 — 진실 underIds 와 다른 이름, 단계 5)
 }
+
+// ───────────────────────── 사건 종류 다양화 ② (N9 단계 2 — 새 부대의 자리) ─────────────────────────
+// docs/specs/N9-major-kinds.md §5.3.1. 새 수요 열쇠 하나 — 제독은 다른 일로 바꿔 쓸 수 없어 따로 둔다(진압·구조 수요로 두면 제독차가 화재·교통에 나간다).
+// 단계 2 에는 이 열쇠를 내는 곳이 없고 제독차도 편성되지 않는다(UNIT_DEFS 의 minLevel 6) — 결과가 바뀌지 않는다. 화학 구조차의 decon 0.7 은 제독차가 없을 때의 둘째 후보다.
+// 열쇠가 지나는 자리(N8 의 다섯과 같다): resources.caps()·AID_KIND/AID_CALL · analyst.NEED_NAME·emptyNeeds · dispatcher.ORDER(끝)·MINCAP·NEED_LABEL ·
+// commander.request 의 이름표·NEED_MIN·needFor(decontam → decon) · scripts/metrics.ts NEED_KEYS
+export interface UnitCaps { decon: number }      // 제독
+export interface Needs { decon: number }

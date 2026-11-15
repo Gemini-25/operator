@@ -67,7 +67,7 @@ export function countUnits(sim: Sim, s: Scene, I: Incident, need: keyof UnitCaps
 function request(sim: Sim, s: Scene, I: Incident, a: FieldAgent, need: keyof UnitCaps, reason: string, urgent: boolean): void {
   if (s.requests.some((q) => q.need === need && (q.fulfilled < q.count || sim.t - q.t < 70))) return;
   const label: Record<string, string> = { suppression: '진압 부대', rescue: '구조 장비 부대', ems: '구급 부대', law: '경찰 부대', tactical: '경찰 기동 부대', search: '수색 인력', traffic: '교통 통제 인력', eod: '폭발물 처리반',
-    utilPower: '전력 복구반', utilGas: '가스 복구반', utilWater: '수도 복구반', tow: '견인차', capture: '동물 포획팀' };      // (N8 §5.3.5)
+    utilPower: '전력 복구반', utilGas: '가스 복구반', utilWater: '수도 복구반', tow: '견인차', capture: '동물 포획팀', decon: '제독 부대' };      // (N8 §5.3.5) · (N9 §5.3.1) 제독차 또는 화학 구조차
   const ev = transmit(sim, s, a, -2, 'request', [], `관제, ${label[need]} 추가 지원 요청. 사유: ${reason}.`, -1, 2, [I.lastEvent]);
   if (ev < 0) return;     // 음영 구역 — 다음 계획 주기에 재시도
   s.requests.push({ t: sim.t, need, count: 1, reason, eventId: ev, fulfilled: 0, urgent });
@@ -117,7 +117,7 @@ function planEntry(s: Scene, hv: { x: number; y: number; facing?: number }): { e
 const josaLocal = (w: string): string => `${w}으로`;
 
 /** 관제가 그 능력의 부대로 치는 최소 적합도 (dispatcher.ts 의 MINCAP 과 같다) */
-const NEED_MIN: Record<keyof UnitCaps, number> = { suppression: 0.7, rescue: 0.5, ems: 0.7, law: 0.5, tactical: 0.9, search: 0.3, traffic: 0.4, eod: 0.9, utilPower: 0.7, utilGas: 0.7, utilWater: 0.7, tow: 0.7, capture: 0.7 };
+const NEED_MIN: Record<keyof UnitCaps, number> = { suppression: 0.7, rescue: 0.5, ems: 0.7, law: 0.5, tactical: 0.9, search: 0.3, traffic: 0.4, eod: 0.9, utilPower: 0.7, utilGas: 0.7, utilWater: 0.7, tow: 0.7, capture: 0.7, decon: 0.7 };
 
 /**
  * 이 작업을 할 수 있는 대원을 보내 줄 부대의 능력. 아무나 할 수 있는 일이면 null.
@@ -148,6 +148,7 @@ function needFor(s: Scene, w: WorkItem, hotArmed: boolean, a: FieldAgent): keyof
     case 'perimeter': case 'engage': case 'arrest': case 'negotiate': return 'law';
     case 'rescueMate': return hotArmed ? 'law' : 'rescue';      // 쓰러진 동료: 안전 확보 전의 무장 현장은 경찰만, 위험한 건물 안은 공기호흡기를 멘 대원만 들어간다 (fitFor)
     case 'defuse': return 'eod';
+    case 'decontam': return 'decon';      // (N9 §5.3.1) 제독 — 맡는 사람(fitFor)·실행은 단계 6
     default: return null;
   }
 }

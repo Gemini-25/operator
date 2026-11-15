@@ -13,7 +13,7 @@ export const FIELD_COLOR: Record<UnitField, string> = { police: '#3f7fd0', fire:
 /** 어두운 바탕 위에 글자·선으로 쓸 때의 밝은 분야색 */
 export const FIELD_TEXT: Record<UnitField, string> = { police: '#7db9ff', fire: '#ff8f66', rescue: '#4fd9a6', special: '#c9a2ff', civil: '#e6c14e' };
 /** 부대의 화면 분야: 편성표 부대는 u.field, 분야가 없는 인근 도시 지원 부대는 부서로 짐작한다 (동물 포획팀은 소방 부서지만 특수 분야 — N8) */
-export function unitField(u: Unit): UnitField { return u.field ?? (u.dept === 'police' ? 'police' : u.dept === 'ems' ? 'rescue' : u.dept === 'civil' ? 'civil' : u.kind === 'animalCtl' ? 'special' : 'fire'); }
+export function unitField(u: Unit): UnitField { return u.field ?? (u.dept === 'police' ? 'police' : u.dept === 'ems' ? 'rescue' : u.dept === 'civil' ? 'civil' : u.kind === 'animalCtl' || u.kind === 'deconUnit' ? 'special' : 'fire'); }      // (N9) 지원 제독차도 특수
 /** 상태 테의 색 (출동은 분야색을 밝힌 점선이라 여기에 없다) */
 export const STATE_RING = { onscene: '#ffd166', transport: '#5ad17a' };
 /** 시설 배지의 색 */

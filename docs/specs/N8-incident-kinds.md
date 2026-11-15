@@ -1591,6 +1591,69 @@ npx tsx scripts/sweep.ts 1 --force utility/wire --log S3     # 한 교대를 읽
 - `T.LEDGE` 의 모습은 단계 7(위기자)이 `staticLayer` 의 `S.LEDGE` 그림을 다듬거나 스킨으로 덧그린다.
 - 앞 묶음 이름은 단계 1 의 줄 그대로다(시작점이 같다 — `NO_STRUCT` 는 배열, `registerConsequence`·`spawnConsequence` 는 `world/consequence.ts` 의 주석에만, `roadsNext`·`placeUsable` 없음, X6 의 진입 금지 구역은 아직 `agents.agentCost` 에 들어가지 않는다). 단계 2a 는 이 가운데 어느 것도 부르지 않는다.
 
+### 단계 2b (틀 B-2 — 새 부대의 자리) — 2026-11-15 밤, 준비 줄
+
+**상태: 구현됨, 결과 불변.** 작업자 브랜치 `wf/kinds-s2b`(단계 2a 의 `wf/kinds` 에서 갈라 주 브랜치 `9d514a8`(단계 1 합침 · 문서)을 받았다 — `tests/kinds.test.ts` 의 시험 2(`HASH0`)는 주 브랜치를 따라 뺐다), 가리킴 `wf/kinds`. 준비 줄이라 균형 기준은 재지 않았고 해시 목록·명부 지문만 견줬다. 새 부대 여덟은 `minLevel 6` 이라 어느 부대 규모에서도 편성되지 않고, 새 수요 열쇠를 내는 곳이 없다.
+
+#### 실제 이름 (단계 2b 에 생긴 것)
+
+| 이름 | 어디 | 서명·뜻 |
+|---|---|---|
+| `Dept`·`UnitField`·`RoleGroup` 의 `'civil'` · `UnitKind` 여덟 · `RoleId` 열 · `KitId` 열하나 | `types.ts` (각 합집합 끝에 새 줄로) | 본문 §4.9 의 이름 그대로 (`powerCrew`·`gasCrew`·`waterCrew`·`tow`·`animalCtl`·`detective`·`trafficPol`·`k9` / `utilLead`·`lineman`·`gasTech`·`plumber`·`towDriver`·`catcherLead`·`catcher`·`detective`·`motorOfficer`·`k9Handler` / `insulKit`·`voltDetector`·`valveKey`·`pumpSet`·`towKit`·`dart`·`catchpole`·`net`·`beeSuit`·`jumpMat`·`dog`) |
+| `UnitCaps`·`Needs` 의 `utilPower`·`utilGas`·`utilWater`·`tow`·`capture` | `types.ts` 끝의 N8 2b 절 (인터페이스 합치기) | 열쇠 다섯. 지나는 자리: `resources.caps()`(끝에 기본값 0 인 인자 다섯)·`AID_KIND`(다섯 — `tow` 는 표를 채우려고만)·`AID_CALL`(넷) · `analyst.NEED_NAME`·`emptyNeeds` · `dispatcher.ORDER`(끝)·`MINCAP`(0.7)·`NEED_LABEL` · `commander.request` 의 이름표·`NEED_MIN`·`needFor` · `scripts/metrics.ts NEED_KEYS` |
+| `KitDef.batch: 'r2' \| 'n8'` · `KITS` 열하나 | `crews.ts` | `dart` 만 `faultable`·`batch 'n8'`·`uses 3`. `drawFaults` 는 아직 `batch` 를 건너뛰지 않는다(R2 1a) — 아래 "이어받을 자리" |
+| `ROLES` 열 · `DEPT_ROLE.civil = 'utilLead'` · `MED_BASE.civil = 0.1` | `crews.ts` | 능력 식은 본문 그대로, `motorOfficer`·`k9Handler` 는 본문에 식이 없어 순찰 경관의 식(`sk(0.05, 0.22, 0.22, s)`). 먼저 맡는 일(`prefer`)은 본문 그대로 |
+| `STAFF` 여덟 · `StaffDef.kit?: Partial<Record<number, KitId[]>>` · `kitIdsOf(kind, slot)` · `kitFor(role, air, ids = ROLES[role].kit)` | `crews.ts` | 자리별 장비 — 복구반장의 장비가 부대마다 다르다(아래 "본문과 다른 곳" 1). `createRoster`·`createAidUnit` 이 `kitFor(role, airFull, kitIdsOf(kind, slot))` 로 든다(기존 부대는 역할의 기본 장비 배열 그대로) |
+| `EXTRA_NAMES` +14 · `AID_NAMES` +16 | `crews.ts` · `resources.ts` | 끝에. 새 자리의 이름은 `허은재`(남아 있던 한 칸)부터 차례로. 지원 이름은 교대당 지원 8회(첨자 0~31) 안에서는 앞의 이름 그대로 |
+| `capableOf(sim, rid, kind, what?)` | `crews.ts` | §5.3.3 의 표: `repair`(wire → `insulKit` · pipe/valve → `valveKey`·`plugKit` · 그 밖 거짓) · `towAway`(`towKit`) · `capture`(hive → `beeSuit` · 그 밖 `dart`·`catchpole`·`net`) · `mitigate`(sign → 사다리 팀장·조작원 또는 `rope` · hole → 구조 공작차의 대원 또는 `shoring` · matSite → `jumpMat` · 그 밖 그대로 참) · `persuade`·`cordon` 은 기본(참) |
+| `KIND` 여덟 · `HEAVY`(전력·수도·견인) · `UNIT_DEFS` 여덟(끝, `minLevel 6`) · `UNIT_KIND_NAME` · `FIELD_NAME.civil = '유관 기관'` | `resources.ts` | 능력은 본문 표 그대로(형사 law 0.6·search 0.5, 교통 traffic 1.0·law 0.4·search 0.2, 경찰견 search 0.9·law 0.5, 포획 capture 1.0·rescue 0.3·search 0.2). 편성 단계로 내릴 값은 줄 위의 주석(전력·가스·수도·포획 1, 견인·형사 2, 교통·경찰견 3) |
+| `civilHeld: WeakMap<Unit, Incident>` (내보내지 않는다) | `resources.ts` | `arrive` 의 길가 대기: `u.dept === 'civil' && I.firstArrivalAt < 0 && s.airAt < 0` 이면 기록 "`<호출부호>`: 현장 도착 — 통제 부대를 기다립니다." 한 번(kind `'unit'`, imp 1)을 남기고 `enroute` 그대로 돌아간다. 길가에 섰으면 `u.parking = true` 로 남겨 다음 틱에 `tickUnits` 의 길가 갈래가 다시 `arrive` 를 부른다(떠나는 갈래로 빠지지 않게). 기다렸던 차량은 들어갈 때 교통 지연(`TRAFFIC_DELAY`)을 다시 재지 않는다 |
+| `KIND_AUX` · `kindFit(sim, u, I, key)` · `notSpare(u)` · `LABEL_BONUS`(빈 배열) | `dispatch/dispatcher.ts` (모두 내보낸다) | `kindFit`: 형사 = 평가 유형 `disturb` 의 `law` 만, 경찰견 = `search`·`welfare`·`disturb` 의 `search` 만, 교통 경찰 = `traffic` 만, 포획 = `capture` 만 (유형 목록은 글자 집합 — 아직 없는 유형 이름이 있어도 tsc 에 걸리지 않는다). `pickUnit` 의 헬기 줄 바로 다음에 한 줄. `notSpare` = `civil` 또는 `KIND_AUX` — `pickUnit` 의 같은 부서 마지막 부대 감점(받는 쪽·세는 쪽 둘 다)과 `firstResponder` 의 `spare` 에서 뺀다. `kitBonus` 는 조기 반환을 지우고 기존 두 줄(수난 +12·붕괴 +8)을 그대로 앞에 둔 뒤 `LABEL_BONUS` 를 돈다(이름표·수요 열쇠·종류·장비가 맞으면 더한다) |
+| `needFor(s, w, hotArmed, a)` | `field/commander.ts` | 넷째 인자 = 지휘관. `repair` → 믿음 `haz`(id = 소품 id)의 `kind 'wire'` → `utilPower`, `kind 'pipe'`+`pipe 'gas'` 또는 대상이 `PropKind 'valve'` → `utilGas`, 그 밖 `utilWater` · `towAway` → `tow` · `capture` → 대상 skin `hive` 면 `suppression`, 그 밖 `capture` · `persuade`·`cordon` → `law` · `mitigate` → 대상이 `unstable` 이거나 skin 이 `sign`·`hole`·`matSite` 면 `rescue`, 그 밖 `suppression` |
+| `anyCapable` 의 대상 생김새 | `field/commander.ts` | `mitigate`·`repair`·`capture`·`towAway` 이면 `what = 소품.skin ?? 소품.kind` 를 `capableOf` 에 넘긴다 |
+| `civilFit(sim, s, rid, w)` (내보내지 않는다) | `field/agents.ts` | `fitBase` 맨 앞 한 줄 `if (r.dept === 'civil') return r.status === 'injured' ? 0 : civilFit(…)`. `towAway` = `towKit` 0.8, `repair` = 대상의 생김새에 맞는 장비면 `0.7 + 0.3 × skills.rescue`, 그 밖 0 |
+| `unitField(u)` | `view/city/tokens.ts` | 화면 분야: `u.field`, 없으면(인근 도시 지원) 부서로 — `civil` → `civil`, 포획팀(소방 부서) → `special`. `panels.fieldOf`·`renderCity` 의 지원 부대 짐작 두 곳이 이것을 부른다 |
+| `UNIT_MARK` 여덟 · `ROLE_MARK.civil` · `FIELD_COLOR.civil = '#a37c12'`·`FIELD_TEXT.civil = '#e6c14e'` · `DEPT_COLOR.civil` · `icons.BODY.civil` · `BEACON.civil` · `VEH_SIZE` 여덟 · `drawMotorbike`·`drawKindsBody` · `baseLook` 의 `civil`·포획팀·형사·교통 경찰 | `view/*` | 기호는 번개 · 밸브 바퀴 · 물방울+렌치 구멍 · 도르래 덩어리를 얹은 갈고리 · 발자국 · 챙 모자 · 오토바이 바퀴 · 앞에서 본 개 얼굴, 역할 civil 은 비스듬한 렌치. 범례(`MapLegend.FIELDS`·`ROLES`)에 유관 기관 묶음과 새 종류 여덟·역할 하나 |
+
+**R3 의 표**(`field/doctrine.ts`): `DOC_OF_UNIT`(복구반 셋·견인 `common`, 포획 `special`, 형사·교통·경찰견 `police`) · `DOC_OF_ROLE`(같은 나눔) · `PAIRS`(형사 `[detective, detective]`, 경찰견 std `[k9Handler, officer]`·min 없음, 포획 `[catcherLead, catcher]`) · `SOLO_OK` 에 `towDriver`·`motorOfficer`. **H1 의 방호**(`injury.protection`): `electric` = 절연 장비 0.9 · 방화복 0.4, `animal` = 벌 보호복 0.95 · 방화복 0.3. **가동률**: `debrief.buildReport` 의 평균 가동률과 `scripts/metrics.ts` 의 가동 최고치에서 `civil` 부대를 뺀다(편성된 유관 기관이 없으면 예전 식 그대로).
+
+**civil 의 규칙**(§5.3.2): `sceneManager.unitArrived` — `firstGround` 에서 `civil` 을 빼고(`s.arrivedAt`·`I.firstArrivalAt`·`phase` 를 정하지 않는다), 지휘관이 없을 때 `civil` 부대의 0번 자리는 지휘를 맡지 않는다 · `tickScene` 4) 승계 후보에서 `civil` 대원을 뺀다 · 7) `anyActive` 는 `civil` 대원을 작업을 쥔(대기 `standby` 가 아닌) 동안만 센다 · 7) 의 판단 전에 남은 `civil` 대원의 `haz` 사실을 마지막 지휘관의 믿음에 넘긴다(`BeliefStore.relay` — `const o = outstanding(…)` 바로 앞, 그래서 `pendingNeed` 도 넘겨받은 믿음을 본다) · `dispatcher.priorityOf` 는 고치지 않았다(`civil` 이 `I.firstArrivalAt` 을 정하지 않으므로 "아직 아무도 닿지 않은 사건"이 저절로 그대로다).
+
+#### 본문과 다른 곳
+
+1. **복구반장(`utilLead`)의 장비는 자리별 장비로 부대마다 다르게 했다.** 본문 §4.9 의 표는 같은 역할에 부대마다 다른 장비(전력 `insulKit`·`voltDetector` / 가스 `gasMeter`·`valveKey` / 수도 `valveKey`)를 주는데 `ROLES` 는 역할마다 장비 하나뿐이다. 그래서 `StaffDef.kit`(자리 번호 → 장비)와 `kitIdsOf(kind, slot)` 를 더했다. `ROLES.utilLead.kit` 은 공통인 `['valveKey']`(수도 복구반장) 이고 전력·가스 복구반의 0번 자리만 덮는다. **편성 단계(4a·4b)에서 `tests/crews.test.ts` ① 의 `expect(r.kit!.map(…)).toEqual(ROLES[r.role!].kit)` 가 전력·가스 복구반장에서 깨진다** — 그 비교를 `kitIdsOf(u.kind, k)` 로 바꾼다(기존 부대는 같은 배열이라 뜻이 같다).
+2. **유관 기관의 바탕색은 `#a37c12`**(본문 `#c9a227`). 지도 돌의 바탕은 흰 기호와의 명암비 3.5:1 이상이라는 규칙(`tokens.ts` 주석)이 있는데 `#c9a227` 은 2.4:1 이다. 같은 황토 계열을 어둡게 해 3.9:1 로 맞췄다(시험 20 이 잰다). 글자색 `FIELD_TEXT.civil` 은 밝은 `#e6c14e`.
+3. **`capableOf` 의 넷째 인자는 `skin ?? kind`** 다(본문은 `skin`). 표의 `repair · 'valve'`(가스 누출 현장의 공급 차단 확인 — §5.3.8)가 가리키는 소품은 `PropKind 'valve'` 이고 `skin` 이 없기 때문이다. 지금의 밸브·균열부(`mitigate`)는 그대로 참이라 결과가 같다. 같은 값을 `civilFit` 도 본다.
+4. **기호**: 역할 civil 은 견본표(10·12·13·16·24 화소)에서 **렌치**로 정했다 — 안전모 안은 기관원의 압력계(반원)와 종처럼 읽혔다. 경찰견은 옆얼굴이 12 화소에서 ▶ 로 읽혀 **앞얼굴**(선 귀 둘·눈·코)로, 견인 갈고리는 글자 J 로 읽혀 **도르래 덩어리**를 얹었다. 견본표는 scratchpad `wf-kinds/s2b/sheet3.png`·`big.png`.
+5. **`kindFit` 의 유형 목록은 글자 집합**(`K9_TYPES`·`DETECTIVE_TYPES`)이다 — `welfare`·`disturb` 가 아직 `IncidentType` 에 없어 `type === 'disturb'` 는 tsc 에 걸린다. 그 유형이 생기는 단계(6a·7)부터 저절로 걸린다.
+6. **`LABEL_BONUS` 는 빈 배열**(2b 의 본문 그대로 — 줄은 비어 있음). 넣을 줄은 그 배열 위 주석에 적었다(본문 §5.3.4 그대로).
+7. 방호 두 줄(`electric × insulKit 0.9`·`animal × beeSuit 0.95`)은 §8 의 2b 줄에 없지만 단계 2a 가 장비 이름을 기다려 남긴 자리라 여기서 넣었다(그 장비를 든 부대가 편성되지 않아 결과 불변).
+8. 본문 목록 밖에서 고친 공용 자리: `debrief.buildReport` 의 평균 가동률·`scripts/metrics.ts` 의 가동 최고치에서 `civil` 제외(§5.3.4 — 본문 §10.2 가 1~10·2b·3·10 으로 적은 자리), `renderCity` 의 지원 부대 분야 짐작 두 곳을 `unitField` 로(값은 기존 부서에서 같다), `tests/crews.test.ts` 의 `Needs` 글자 두 곳에 새 열쇠 다섯(tsc — 단언은 그대로), **`tests/persistence.test.ts`(I2) "조직 명부의 열쇠"** — "규모 5 의 명부 = 열쇠 전부"가 편성되지 않는 끝 여덟 줄(minLevel 6) 때문에 깨져, "규모 5 의 명부 = 열쇠의 앞부분, 뒤의 열쇠는 모두 규모 5 에 없는 부대(자리 번호는 그 호출부호의 열쇠 수 안)"로 고쳤다(엄격함은 같다 — 규모 1~4 의 부분열 검사는 그대로). I2 의 뜻(§2.4 — 편성되지 않은 사람도 조직 명부에 있다)과 맞고, `makeCarryover` 의 대원 항목도 열넷 는다(편성되지 않은 사람의 항목 — I2 가 허락한다).
+9. **새 부대의 대원 겉모습**: 본문은 `civil`(형광 조끼)만 적었지만 포획팀(올리브 작업복)·형사(사복)·교통 경찰(흰 헬멧·형광 조끼)도 `baseLook` 에 넣었다(그 부대가 편성되면 경찰·소방 겉모습으로 떨어지지 않게).
+
+#### 시험
+
+`tests/kinds.test.ts` 에 8개를 더했다(모두 18개): **시험 3 의 틀** — ① 복구반만 먼저 닿으면 길가에서 기다린다(기록 한 번, `I.firstArrivalAt`·`s.arrivedAt` 그대로, 대원이 내리지 않음, 길가 `curbT` 1) → 펌프차가 닿으면 다음 틱에 들어가되 지휘관은 펌프차, 기다린 시간이 교통 지연으로 남지 않는다 ② `civil` 의 `fitFor` 는 복구(대상 생김새에 맞는 장비)·견인뿐이고 `capableOf(…, what)` 와 같은 대원을 고른다 · 수색·이송·처치·통제·교통·도로 정리·면담은 0 ③ 7번 블록 — 손을 놓은 복구반은 활동으로 세지 않음 · 남은 복구반의 `haz` 를 넘겨받으면 다시 부르지 않음 · 넘겨받을 것이 없으면 와 있는 복구반 대신 통제 부대 · 일하는(작업을 쥔) 복구반이 있으면 기다림 · 지휘관이 떠나도 `civil` 이 승계하지 않음(임시 `registerPending` 줄 — 시험 뒤 지운다). **시험 20 의 틀** — 편성되지 않음(규모 1·3·5)·명부의 끝 열넷·이름이 모두 다름(지원 12회 뒤에도) · 짝(지원 부대 — 최소 인원: 전력 → 절연 장비 · 가스·수도 → 밸브 키 · 견인 → 견인 장비 · 포획 → 마취총/올가미)·`kitIdsOf`·분야 표·방호 · `capableOf` 의 대상별 갈래 · `anyCapable` 이 생김새를 넘김 · `kindFit`·`notSpare`·`kitBonus`(기존 두 줄 그대로, 임시 줄로 표의 동작) · 기호·바탕색 명암비·겉모습. 고치기 전에 실패하는지: 길가 대기를 끄면 ①, `anyActive` 를 예전 식으로 되돌리면 ③, 승계 필터·넘겨받기를 빼면 ③ 이 깨지는 것을 확인했다.
+
+#### 해시 확인 · 명부 지문 · 관문 · 화면
+
+- 해시 목록: 단계 1 의 도구(`$S/s2b/hashes.ts`)로 이 단계의 나무를 돌려(`$S/s2b/hash-2b.txt`) 시작점 `313ec41` 의 목록(`$S/s2a/hash0-313ec41.txt`)과 견줬다: **153교대 한 글자도 같다**(보통 40 · 어려움 20 · 극한 20 · 쉬움 6 · 재난 5×3 · 강제 14×3 · 부대 규모 1·5×3 · 신고 신뢰도 1×2 · 교통 5×2 — `report.hash`·`JSON.stringify(report)` 의 FNV·기록 수·사건 수·연쇄 수·사건 서명). 주 브랜치 `9d514a8` 은 단계 1 과 문서뿐이라 시작점의 목록을 그대로 쓴다.
+- 명부 지문(`$S/s2b/roster.ts` — 부대 규모 1~5 × S0·S7 의 편성된 대원 전부(이름·역할·능력 여섯·능력 식·성격·장비와 고장·소속)와 부대(호출부호·종류·분야·시설·대원·펌프·섬광탄·옛 능력 여덟), `rosterKeys()`, 인근 도시 지원 옛 열쇠 여덟 × 두 바퀴): **편성된 대원·부대와 지원 첫 바퀴(지원 0~7회)가 모두 같다.** `rosterKeys()` 는 앞 75칸이 같고 끝에 새 자리 열넷이 붙었다. 지원 둘째 바퀴(9~16회째 — 교대당 지원은 많아야 8회라 실제로는 닿지 않는다)는 `AID_NAMES` 가 길어져 이름의 나머지 셈만 달라진다.
+- 관문: `npx tsc --noEmit` 통과 · `tests/kinds.test.ts` 18개 통과 · `npm run check` 통과(시험 파일 18 · 554 통과 + 건너뜀 1, 테스트 379초 — 같은 기계에서 다른 작업이 함께 돌았다(부하 9~10) · 시드 40 `--check` "검증 통과", 교착 후보 0 · 잊힌 사건 0 · C1~C5 0). 첫 돌림은 I2 의 명부 열쇠 시험이 깨졌고(위 "본문과 다른 곳" 8 — 고쳤다), 둘째 돌림은 `tests/persistence.test.ts` 의 `beforeAll` 이 부하로 10초 시간 초과만 나 그 파일만 다시 돌려 통과(21개)한 뒤, 셋째 돌림에서 한 번에 통과했다
+- 화면: 개발 서버(5236, 자기 Vite 캐시)에서 `?seed=S7` 를 15배속으로 열어 찍었다 — 콘솔 오류 0, 사건 카드·부대 목록이 예전과 같고(편성된 유관 기관이 없어 묶음이 보이지 않는다), 범례에 유관 기관 묶음·새 종류 여덟·역할 "유관 기관 기사"가 보인다. 새 차량 여덟·대원 겉모습은 개발 서버의 `sprites.ts` 모듈을 페이지에서 불러 캔버스에 그려 확인했다(`$S/s2b/s2b-vehicles.png`·`s2b-legend.png`). `npm run ui-check` 는 돌리지 않았다(편성되는 새 부대가 없어 기존 화면의 값이 바뀌지 않는다).
+
+#### 이어받을 자리 (단계 3 과 뒤 단계)
+
+- **편성(4a·4b·5·6a·6b)**: `UNIT_DEFS` 끝 여덟 줄의 `minLevel` 을 줄 위 주석의 값으로 내린다(모두 5 이하가 되면 `tests/persistence.test.ts` 의 "규모 5 = 열쇠 전부"가 다시 그대로 참이다 — 고친 단언은 그때도 통과한다). 그때 바뀌는 시험: `tests/sim.test.ts` 의 부대 수·분야별 팀 수(§9.2), `tests/crews.test.ts` ① 의 장비 비교(위 "본문과 다른 곳" 1 — `kitIdsOf`), ② 의 최소 인원(견인·교통 경찰 1명, 경찰견 최소 1명), ③ 의 짝(§5.3.3 의 일곱)과 `AID_KEYS`(편성하는 단계에 그 열쇠를 — 편성되지 않은 종류는 ③ 이 `own` 을 찾지 못한다), 포획팀의 공기호흡기 예외(소방 부서인데 `scba` 없음 — 구조정과 같은 예외).
+- **마취총의 고장 추첨**: `KITS.dart` 는 `batch 'n8'` 이지만 `crews.drawFaults` 는 아직 `batch` 를 건너뛰지 않는다(R2 단계 1a 가 넣는다). 포획팀을 편성하는 단계 5 는 그 건너뛰기 조건에 `'n8'` 을 더하고 `kit-n8` 흐름(지원 부대는 자기 흐름의 끝)으로 따로 뽑는다 — 그러지 않으면 편성표 끝의 포획팀이 교대 흐름 `kit` 을 소비해 그 뒤에 붙을 줄(N9)의 고장이 바뀐다.
+- **기존 역할에 붙이는 장비 셋**(`beeSuit` → 관창수·로프 대원 5, `jumpMat` → 유압 대원 7, `gasMeter` → 구조 팀장 8)은 넣지 않았다(결과를 바꾼다 — §5.3.7). 장비의 손 그림(`renderScene.agentPose`·`sprites.drawPerson` 의 `Item`)과 핸들러 곁의 개 그림도 그 장비를 쓰는 단계(5~8·6a).
+- **유관 기관 수요의 대기열**(§5.3.8 — 평가 유형이 `utility` 가 아닌 사건의 `civil` 수요는 후보가 없으면 지우고 `NO_UNIT`·지원 없음)은 4b·6b 의 몫이라 넣지 않았다. `pickUnit`·`tickDispatch` 의 막힌 수요 갈래에 그 조건을 더한다.
+- **R2 의 `dog` 줄**(`methods.ts` — 지금 `kits: []`, 주석 "부대가 생기면 needUnit 을 채운다")은 장비 `KitId 'dog'` 가 생겼지만 경찰견을 편성하는 6a 에 `kits: ['dog']` 로 채운다(§5.14 — R2 의 표라 이 단계에서는 건드리지 않았다).
+- **교통 경찰의 혼잡 계수**(`congFor`)는 6a. 측정 도구의 `kinds` 줄에 둘 유관 기관 가동률(§5.3.4 "civil 은 따로 한 줄")은 단계 0 의 `scripts/kindstats.ts`. **`incidents.tickIncidents` 의 `avail`(N8 의 새 부대를 세지 않는다)**은 단계 3 — `dispatcher.notSpare` 를 같은 뜻으로 쓸 수 있다.
+- **`LABEL_BONUS` 의 줄**은 그 이름표를 내는 시나리오의 단계에(배열 위 주석). R3 관제 D 줄(이름표 → 사다리차·형사·경찰견)도 같은 글자를 쓴다.
+- **`needFor` 의 `repair`** 는 믿음 `haz` 의 `kind 'wire'`·`'pipe'` 와 `pipe` 칸(진실 칸 `sub` 와 다른 이름)을 읽는다 — 4a·4b 의 `perceive` 가 그 칸으로 사실을 남긴다. `civilFit`·`capableOf` 의 `repair` 는 대상 소품의 `skin`(`wire`·`pipe`) 또는 `PropKind 'valve'` 를 본다 — 새 소품 `PropKind 'fixture'` 의 `skin` 을 그 글자로 짓는다.
+- 앞 묶음 이름은 단계 1·2a 의 줄 그대로다(시작점이 같다 — `NO_STRUCT` 는 배열, `registerConsequence`·`spawnConsequence` 는 `world/consequence.ts` 의 주석에만, `roadsNext`·`placeUsable` 없음, R2 `drawFaults` 의 `batch` 건너뛰기 없음). 단계 2b 는 이 가운데 어느 것도 부르지 않는다.
+
 ## 검토 메모
 
 독립 검토 두 갈래(실현성·규칙 / 빠진 것·사용자 결정·인계)를 받아 지적마다 주 브랜치의 코드(2026-11-15 밤 — R1 전체·H1 4c·X6·R2 0·R3 0·I1-b b0)를 열어 확인했다. 맞는 지적은 본문에 녹였고, 여기에는 **반영하지 않았거나 다르게 반영한 것과 그 이유**만 적는다.

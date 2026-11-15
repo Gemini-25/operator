@@ -172,8 +172,8 @@ export function protection(sim: Sim, r: Responder, u: Unit, cause: InjuryCause, 
     case 'blast': return 1 - blastFactor(sim, rid);
     case 'crush': return Math.max(1 - blastFactor(sim, rid), hasKit(sim, rid, 'vest') || hasKit(sim, rid, 'plate') ? 0.1 : 0);
     case 'fall': return hasKit(sim, rid, 'turnout') ? 0.2 : 0;
-    case 'electric': return hasKit(sim, rid, 'turnout') ? 0.4 : 0;      // (N8) 절연 장비 insulKit 0.9 는 그 장비가 생기는 단계 2b 에 이 줄 앞에 더한다
-    case 'animal': return hasKit(sim, rid, 'turnout') ? 0.3 : 0;      // (N8) 방화복이 물림·쏘임을 조금 막는다. 벌 보호복 beeSuit 0.95 는 그 장비가 생기는 단계 2b 에 더한다
+    case 'electric': return hasKit(sim, rid, 'insulKit') ? 0.9 : hasKit(sim, rid, 'turnout') ? 0.4 : 0;      // (N8) 절연 장비 0.9 (복구반의 전력 일 — 단계 2b 에는 그 장비를 든 부대가 편성되지 않는다)
+    case 'animal': return hasKit(sim, rid, 'beeSuit') ? 0.95 : hasKit(sim, rid, 'turnout') ? 0.3 : 0;      // (N8) 벌 보호복 0.95 · 방화복이 물림·쏘임을 조금 막는다
     default: return 0;
   }
 }

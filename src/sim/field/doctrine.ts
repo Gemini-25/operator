@@ -71,11 +71,14 @@ const DOC_OF_ROLE: Partial<Record<RoleId, DocDept>> = {
   paramedic: 'ems', emt: 'ems', emsDriver: 'ems', doctor: 'ems', flightNurse: 'ems',
   swatLead: 'special', shield: 'special', breacher: 'special', assaulter: 'special', marksman: 'special', bombTech: 'special', robotOp: 'special', eodGuard: 'special',
   hazLead: 'special', hazTech: 'special', decon: 'special', airRescuer: 'special', boatRescuer: 'special', ladderLead: 'special', ladderOp: 'special',
+  // (N8 §5.14) 새 역할 — 유관 기관은 공통 표, 포획은 특수 표, 형사·교통 경찰·핸들러는 경찰 표
+  utilLead: 'common', lineman: 'common', gasTech: 'common', plumber: 'common', towDriver: 'common', catcherLead: 'special', catcher: 'special', detective: 'police', motorOfficer: 'police', k9Handler: 'police',
 };
 /** 표에 없는 자리(조종사·부기장·정장 — 내리지 않는 자리)는 부대로 */
 const DOC_OF_UNIT: Record<UnitKind, DocDept> = {
   patrol: 'police', tactical: 'police', policeHeli: 'police', engine: 'fire', rescue: 'fire', als: 'ems', bls: 'ems', medHeli: 'ems',
   swat: 'special', eod: 'special', hazmat: 'special', heli: 'special', boat: 'special', ladder: 'special',
+  powerCrew: 'common', gasCrew: 'common', waterCrew: 'common', tow: 'common', animalCtl: 'special', detective: 'police', trafficPol: 'police', k9: 'police',      // (N8 §5.14)
 };
 export function docDeptOf(sim: Sim, rid: number): DocDept {
   const role = roleIdOf(sim, rid);
@@ -100,9 +103,14 @@ export const PAIRS: Partial<Record<UnitKind, { std: [RoleId, RoleId][]; min: [Ro
   medHeli: { std: [['doctor', 'flightNurse']], min: [['doctor', 'flightNurse']] },
   heli: { std: [['airRescuer', 'airRescuer']], min: [['airRescuer', 'airRescuer']] },
   boat: { std: [['boatRescuer', 'boatRescuer']], min: [['boatRescuer', 'boatRescuer']] },
+  // (N8 §5.14) 경찰견은 최소 인원이면 핸들러 혼자다 (min 없음)
+  detective: { std: [['detective', 'detective']], min: [['detective', 'detective']] },
+  k9: { std: [['k9Handler', 'officer']], min: [] },
+  animalCtl: { std: [['catcherLead', 'catcher']], min: [['catcherLead', 'catcher']] },
 };
 /** 혼자 규칙에서 빠지는 역할 — 원래 혼자 서는 자리 (§5.1 끝). F04·P07·P17·G08 이 걸리지 않고 다시 맺지도 않는다 */
-export const SOLO_OK: ReadonlySet<RoleId> = new Set<RoleId>(['marksman', 'bombTech', 'engineer', 'ladderOp', 'emsDriver', 'observer']);
+export const SOLO_OK: ReadonlySet<RoleId> = new Set<RoleId>(['marksman', 'bombTech', 'engineer', 'ladderOp', 'emsDriver', 'observer',
+  'towDriver', 'motorOfficer']);      // (N8) 견인 기사·교통 순찰 대원 — 원래 혼자 다니는 자리
 
 // ───────────────────────── 몸 상태의 신고 ─────────────────────────
 /** 중상의 간격 (§2.4): H1 bandOf 의 경계를 그대로 두고, 0 으로 내려오는 쪽에만 75 의 간격을 얹는다 */

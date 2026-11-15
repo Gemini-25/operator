@@ -143,8 +143,13 @@ describe('조직 명부의 열쇠 (rosterKeys)', () => {
     const keys = rosterKeys();
     expect(new Set(keys.map((k) => k.name)).size).toBe(keys.length);      // 이름은 모두 다르다
     const full = new Sim('K1', { ...NORMAL, resources: 5 });
-    expect(full.responders.map((r) => r.name)).toEqual(keys.map((k) => k.name));      // 규모 5 = 모든 부대의 표준 편성
-    for (const k of keys) expect(k.slot).toBeLessThan(STAFF[full.units.find((u) => u.callsign === k.callsign)!.kind].std.length);
+    // 규모 5 = 편성될 수 있는 모든 부대의 표준 편성 = 열쇠의 앞부분. (N8 단계 2b) 편성표 끝의 편성되지 않는 줄(minLevel 6 — 그 부대를 쓰는 단계가 내린다)은
+    // 이름 칸만 차지하므로 열쇠의 뒤에 남는다 — 그 열쇠는 모두 규모 5 에 없는 부대의 것이다
+    const n5 = full.responders.length;
+    expect(full.responders.map((r) => r.name)).toEqual(keys.slice(0, n5).map((k) => k.name));
+    for (const k of keys.slice(n5)) expect(full.units.some((u) => u.callsign === k.callsign), `${k.callsign}: 편성되지 않는 줄`).toBe(false);
+    for (const k of keys.slice(0, n5)) expect(k.slot).toBeLessThan(STAFF[full.units.find((u) => u.callsign === k.callsign)!.kind].std.length);
+    for (const k of keys.slice(n5)) expect(k.slot).toBeLessThan(keys.filter((q) => q.callsign === k.callsign).length);
     for (const level of [1, 2, 3, 4]) {
       const s = new Sim('K1', { ...NORMAL, resources: level });
       let j = 0;

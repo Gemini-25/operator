@@ -239,7 +239,9 @@ export function buildReport(sim: Sim): ShiftReport {
   }
   const dur = sim.t;
   const unitUtil = sim.units.map((u) => ({ callsign: u.callsign, util: u.busyTime / Math.max(1, dur), runs: u.runs }));
-  const utilization = unitUtil.reduce((x, y) => x + y.util, 0) / unitUtil.length;
+  // (N8 §5.3.4) 평균 가동률은 유관 기관(civil)을 빼고 센다 — 드물게 나가는 복구반·견인차가 숫자를 끌어내리지 않게 (편성된 유관 기관이 없으면 예전 식 그대로)
+  const counted = sim.units.some((u) => u.dept === 'civil') ? unitUtil.filter((_, k) => sim.units[k].dept !== 'civil') : unitUtil;
+  const utilization = counted.reduce((x, y) => x + y.util, 0) / counted.length;
   // 대원 피해 (H1 §7.3): 상태 글은 순직 · 쓰러짐 · 부상 (예전에는 쓰러짐을 '중상'으로 적어 중증도 이름과 겹쳤다).
   // 교대 끝의 중증도·주된 원인·순직·병원 이송(후송 중 포함)·다음 교대 결장 예상(outShifts)을 함께 적는다
   const hurt = sim.responders.filter((r) => r.status !== 'ok').map((r) => ({

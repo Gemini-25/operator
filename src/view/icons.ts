@@ -40,6 +40,7 @@ const BODY: Record<string, { body: string; stripe: string; a: string; b: string 
   fire: { body: '#d2452a', stripe: '#ffe1b8', a: '#ff4433', b: '#ffd24a' },
   ems: { body: '#e7edf2', stripe: '#27c08c', a: '#ff4433', b: '#4aa3ff' },
   police: { body: '#27477c', stripe: '#e7edf2', a: '#4aa3ff', b: '#ff4433' },
+  civil: { body: '#e9c23e', stripe: '#2a2d31', a: '#ffb300', b: '#ffd24a' },      // (N8) 유관 기관: 노란 작업차 · 노란 경광등
 };
 
 /** 위에서 본 긴급 차량. len/wid 는 화면(또는 현재 변환) 단위. */

@@ -12,10 +12,11 @@ import { FacilityBadge, RoleDot, Token } from './Mark';
 
 const LS_LEGEND = 'ar.legend.v1';
 const FIELDS: [UnitField, UnitKind[]][] = [
-  ['police', ['patrol', 'tactical', 'policeHeli']],
+  ['police', ['patrol', 'tactical', 'policeHeli', 'detective', 'trafficPol', 'k9']],
   ['fire', ['engine', 'ladder']],
   ['rescue', ['rescue', 'als', 'bls', 'medHeli']],
-  ['special', ['swat', 'eod', 'hazmat', 'heli', 'boat']],
+  ['special', ['swat', 'eod', 'hazmat', 'heli', 'boat', 'animalCtl']],
+  ['civil', ['powerCrew', 'gasCrew', 'waterCrew', 'tow']],      // (N8) 유관 기관
 ];
 /** (R1) 대원의 역할 묶음: 부대 목록의 역할 점. 분야색은 그 대원의 부대를 따른다 (여기서는 대표 분야로 보인다) */
 const ROLES: [RoleGroup, string, UnitField][] = [
@@ -23,7 +24,7 @@ const ROLES: [RoleGroup, string, UnitField][] = [
   ['bomb', '폭발물 처리', 'special'], ['observer', '전술 관측관', 'police'], ['pilot', '조종사·정장', 'special'],
   ['nozzle', '관창수', 'fire'], ['entry', '진입대원', 'fire'], ['engineer', '기관원·조작원', 'fire'],
   ['rescue', '구조대원', 'rescue'], ['search', '탐지 대원', 'rescue'], ['water', '수난·로프 구조', 'rescue'], ['hazmat', '화학 대원', 'special'],
-  ['medic', '응급구조사·간호사', 'rescue'], ['doctor', '의사', 'rescue'],
+  ['medic', '응급구조사·간호사', 'rescue'], ['doctor', '의사', 'rescue'], ['civil', '유관 기관 기사', 'civil'],
 ];
 const STATES: [string, string, string][] = [
   ['available', '대기', '테 없음'],

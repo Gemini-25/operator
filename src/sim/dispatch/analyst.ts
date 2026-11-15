@@ -13,13 +13,14 @@ import { recomputeUnmet } from './dispatcher';
 
 const TYPES = TYPE_ORDER;      // 가설의 순서 = likRow 의 열 순서 (incidentTypes.TYPE_ORDER — 새 유형은 끝에만)
 export const sevName = (s: number): string => (s < 1.7 ? '보통' : s < 2.4 ? '높음' : '매우 높음');
-const NEED_NAME: Record<keyof Needs, string> = { suppression: '진압', rescue: '구조', ems: '구급', law: '경찰', tactical: '경찰 기동', search: '수색', traffic: '교통 통제', eod: '폭발물 처리' };
+const NEED_NAME: Record<keyof Needs, string> = { suppression: '진압', rescue: '구조', ems: '구급', law: '경찰', tactical: '경찰 기동', search: '수색', traffic: '교통 통제', eod: '폭발물 처리',
+  utilPower: '전력 복구', utilGas: '가스 복구', utilWater: '수도 복구', tow: '견인', capture: '동물 포획' };      // (N8 §5.3.5)
 export const needsText = (n: Partial<Needs>): string => {
   const out: string[] = [];
   for (const k of Object.keys(NEED_NAME) as (keyof Needs)[]) if ((n[k] ?? 0) > 0) out.push(`${NEED_NAME[k]} ${n[k]}`);
   return out.length ? out.join(', ') : '없음';
 };
-export const emptyNeeds = (): Needs => ({ suppression: 0, rescue: 0, ems: 0, law: 0, tactical: 0, search: 0, traffic: 0, eod: 0 });
+export const emptyNeeds = (): Needs => ({ suppression: 0, rescue: 0, ems: 0, law: 0, tactical: 0, search: 0, traffic: 0, eod: 0, utilPower: 0, utilGas: 0, utilWater: 0, tow: 0, capture: 0 });
 
 /** 주제별로 가장 "안전한 쪽(더 심각한 쪽)"의 진술을 고른다. 충돌 여부도 돌려준다. */
 function pick(claims: Claim[], topic: Topic): { c: Claim | null; conflict: boolean } {

@@ -26,7 +26,7 @@ export const pct = (v: number): string => Math.round(v * 100) + '%';
 /** 유형의 이름 — incidentTypes.TYPE_DEFS 의 name 으로 만든 같은 모양의 표 (부르는 쪽은 예전 그대로 쓴다) */
 export const TYPE_NAME: Record<string, string> = {};
 for (const t of TYPE_ORDER) TYPE_NAME[t] = TYPE_DEFS[t].name;
-export const DEPT_NAME: Record<string, string> = { fire: '소방', ems: '구급', police: '경찰' };
+export const DEPT_NAME: Record<string, string> = { fire: '소방', ems: '구급', police: '경찰', civil: '유관 기관' };
 export const DISTRICT_NAME: Record<string, string> = { residential: '주거 구역', commercial: '상업 구역', industrial: '산업 구역', outskirts: '외곽 구역' };
 export const OUTCOME_NAME: Record<string, string> = { success: '성공', partial: '부분 성공', delayed: '대응 지연', unresolved: '미해결', failed: '실패' };
 export const WEATHER_NAME: Record<string, string> = { clear: '맑음', rain: '비', fog: '안개', night: '야간' };

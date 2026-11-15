@@ -125,7 +125,7 @@ export function drawCatOver(sim: Sim, s: Scene, ts: number, o: CatView): HazardL
     if (c.struct) for (const reg of s.regions) {
       if (!reg.indoor || c.fallen[reg.id]) continue;
       const lv = structLevel(c, reg.id);
-      const [x, y] = at(reg.cx, reg.cy);
+      const [x, y] = at(reg.cx, reg.cy - 0.5);      // 구역 이름·수색% 글자(가운데와 그 아래) 위에
       if (lv === 3) out.push({ x, y, text: '붕괴 임박', color: '#ff5d5d' });
       else if (lv === 2) out.push({ x, y, text: `구조 약화 · 건전도 ${Math.round(c.integ[reg.id] * 100)}%`, color: '#ffb066' });
     }
@@ -147,12 +147,12 @@ export function drawCatOver(sim: Sim, s: Scene, ts: number, o: CatView): HazardL
     if (v.kind === 'struct' && v.level >= 2 && v.region >= 0) {
       const reg = s.regions[v.region];
       if (!reg.indoor || c.fallen[reg.id]) continue;
-      const [x, y] = at(reg.cx, reg.cy);
+      const [x, y] = at(reg.cx, reg.cy - 0.5);      // 구역 이름·수색% 글자(가운데와 그 아래) 위에
       out.push({ x, y, text: v.level >= 3 ? '붕괴 임박' : '균열·처짐', color: v.level >= 3 ? '#ff5d5d' : '#ffb066' });
     } else if (v.kind === 'gas' && v.region >= 0 && v.level >= 1) {
       const reg = s.regions[v.region];
-      const [x, y] = at(reg.cx, reg.cy);
-      out.push({ x, y: y + ts * 0.55, text: v.lel !== undefined ? `LEL ${v.lel}%` : '가스 냄새', color: v.level >= 3 ? GAS_LEL : GAS_WARN });
+      const [x, y] = at(reg.cx, reg.cy - 0.5);      // 구역 이름·수색% 글자(가운데와 그 아래) 위에
+      out.push({ x, y: y - ts * 0.6, text: v.lel !== undefined ? `LEL ${v.lel}%` : '가스 냄새', color: v.level >= 3 ? GAS_LEL : GAS_WARN });
     } else if (v.kind === 'vessel' && v.level >= 3 && v.prop !== undefined && Math.sin(t * 9) > -0.2) {
       const p = s.props[v.prop];
       if (!p || p.removed) continue;

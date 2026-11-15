@@ -540,28 +540,37 @@ const LV_STRUCT = [1, 2, 3] as const, LV_VESSEL = [2, 3] as const, LV_BLDG = [2,
  *         소리 10칸의 임박 조짐이 멎은 것을 구역 밖에서 듣는 경우다 (§5.7 "단계 3 의 감각은 소리 10칸이라 구역 밖에서 확인할 수 있다").
  *   비교는 자기 감각으로 마지막에 관찰한 단계(prev = a.signObs[id])와 한다(전달받은 믿음과 견주지 않는다): 올라가면 보고,
  *   내려갔고 prev 단계의 감각 조건이 지금 맞으면 down(확인된 하향)으로 보고, 그 밖은 보고하지 않는다.
+ * cond[l] = 단계 l 의 감각 조건이 지금 맞는가 (매 대원·매 판단마다 도는 길이라 함수를 만들지 않고 배열로 받는다)
  */
-function judge(tl: number, prev: number | undefined, levels: readonly number[], cond: (l: number) => boolean, out: number[]): void {
+function judge(tl: number, prev: number | undefined, levels: readonly number[], cond: readonly boolean[], out: number[]): void {
   out[0] = -1; out[1] = 0; out[2] = -1;
   let ob = -1;
-  for (let k = levels.length - 1; k >= 0; k--) { const l = levels[k]; if (l <= tl && cond(l)) { ob = l; break; } }
-  if (ob < 0 && tl < levels[0] && cond(levels[0])) ob = 0;
+  for (let k = levels.length - 1; k >= 0; k--) { const l = levels[k]; if (l <= tl && cond[l]) { ob = l; break; } }
+  if (ob < 0 && tl < levels[0] && cond[levels[0]]) ob = 0;
   if (ob >= 0) {
     if (ob > (prev ?? 0)) out[0] = ob;
-    else if (prev !== undefined && ob < prev && cond(prev)) { out[0] = ob; out[1] = 1; }
+    else if (prev !== undefined && ob < prev && cond[prev]) { out[0] = ob; out[1] = 1; }
     out[2] = ob;
     return;
   }
   if (prev === undefined) return;
   for (let k = 0; k < levels.length; k++) {
     const l = levels[k];
-    if (l <= tl || !cond(l)) continue;
+    if (l <= tl || !cond[l]) continue;
     const bound = k > 0 ? levels[k - 1] : 0;
     if (prev > bound) { out[0] = bound; out[1] = 1; out[2] = bound; }
     return;
   }
 }
 const JUDGE: number[] = [-1, 0, -1];
+const COND: boolean[] = [false, false, false, false];
+const ALL: readonly boolean[] = [true, true, true, true];
+const READ: number[] = [];      // 가스 측정기가 읽는 구획 (다시 쓰는 버퍼)
+/** 조짐 사실 하나를 배운다 (새 소식이면 보고 대기열에 — learn) */
+function reportSign(sim: Sim, a: FieldAgent, me: string, id: number, val: SignBelief, text: string, verified = true): void {
+  learn(sim, a, mkFact('sign', id, val, me, sim.t, 1, verified, text));
+}
+function setObs(a: FieldAgent, id: number, lv: number): void { (a.signObs ?? (a.signObs = {}))[id] = lv; }
 
 /** 칸이 든 구역 (구역이 없는 실내 칸 — 문턱 — 이면 맞닿은 실내 구역) */
 function regionAtTile(s: Scene, i: number): number {
@@ -667,23 +676,18 @@ export function perceiveSigns(sim: Sim, s: Scene, a: FieldAgent, v: number): voi
   if (a.aloft) return;
   const c = s.cat ?? catOf(sim, s);
   if (!c) return;
-  const rsp = sim.responders[a.rid], me = rsp.name;
-  const jb = 2 * (rsp.judgment - 0.5);
-  const regs = s.regions, R = regs.length;
-  const ai = tileOf(s, a.x, a.y), ar = regionAtTile(s, ai);
-  const outsideMe = c.foot[ai] === 0 && !isIndoor(s.tiles[ai]);
-  const o = JUDGE;
-  const report = (id: number, val: SignBelief, text: string, verified = true): void => { learn(sim, a, mkFact('sign', id, val, me, sim.t, 1, verified, text)); };
-  const prevOf = (id: number): number | undefined => (a.signObs ? a.signObs[id] : undefined);
-  const setObs = (id: number, lv: number): void => { (a.signObs ?? (a.signObs = {}))[id] = lv; };
+  // 이 함수는 모든 대원의 판단마다 돈다: 대부분의 구획·용기는 알 것이 없으므로 값싸게 거르고, 함수(클로저)를 만들지 않는다
+  const obs = a.signObs, regs = s.regions, R = regs.length, o = JUDGE, cond = COND;
+  const rsp = sim.responders[a.rid], me = rsp.name, jb = 2 * (rsp.judgment - 0.5);
+  const ai = tileOf(s, a.x, a.y), ar = regionAtTile(s, ai), outsideMe = c.foot[ai] === 0 && !isIndoor(s.tiles[ai]);
   // ── 구조 (구획) ──
   if (c.struct) {
-    const nb = regionNbrs(s);
-    let tic = -1;      // 열화상: 처음 필요할 때 한 번 본다 (kitLive — 드러내지 않는다. 드러나는 자리는 perceive 의 연기 속 한 곳)
+    let minInteg = 1, anyFallen = false, tic = -1;      // 열화상: 처음 필요할 때 한 번 본다 (kitLive — 드러내지 않는다. 드러나는 자리는 perceive 의 연기 속 한 곳)
     for (let r = 0; r < R; r++) {
       const reg = regs[r];
       if (!reg.indoor) continue;
-      const id = SIGN_BASE.struct + r, prev = prevOf(id), had = prev !== undefined && prev > 0;
+      if (c.fallen[r]) anyFallen = true; else if (c.integ[r] < minInteg) minInteg = c.integ[r];
+      const id = SIGN_BASE.struct + r, prev = obs ? obs[id] : undefined, had = prev !== undefined && prev > 0;
       if (c.integ[r] >= SIGN.TIC_L1 && !had) continue;      // 열화상으로도 단계 0 이고 전에 본 것도 없다 — 알 것이 없다
       let ticOn = false;
       if (c.integ[r] < SIGN.TIC_L1 && !c.fallen[r]) {
@@ -693,63 +697,62 @@ export function perceiveSigns(sim: Sim, s: Scene, a: FieldAgent, v: number): voi
       const tl = structLevel(c, r, ticOn);
       if (tl === 0 && !had) continue;
       const d = dist(a.x, a.y, reg.cx, reg.cy);
-      const inNb = ar === r || (ar >= 0 && nb[r].indexOf(ar) >= 0);
-      let eye = -1;
-      judge(tl, prev, LV_STRUCT, (l) => (l === 1 ? inNb && d <= SIGN.HEAR_CREAK + jb : l === 3 ? d <= SIGN.HEAR_RUMBLE + jb : (eye < 0 ? (eye = seesRegion(s, a, reg, SIGN.SEE_CRACK + jb) ? 1 : 0) : eye) === 1), o);
-      if (o[2] >= 0) setObs(id, o[2]);
+      cond[1] = (ar === r || (ar >= 0 && regionNbrs(s)[r].indexOf(ar) >= 0)) && d <= SIGN.HEAR_CREAK + jb;
+      cond[3] = d <= SIGN.HEAR_RUMBLE + jb;
+      // 눈(2)은 단계 2 가 있거나 전에 2 이상을 보았을 때만 본다 — 그 밖에는 판정에 쓰이지 않는다(judge 의 주석)
+      cond[2] = (tl >= 2 || (prev !== undefined && prev >= 2)) && seesRegion(s, a, reg, SIGN.SEE_CRACK + jb);
+      judge(tl, prev, LV_STRUCT, cond, o);
+      if (o[2] >= 0) setObs(a, id, o[2]);
       if (o[0] < 0) continue;
       const lv = o[0], down = o[1] === 1;
       const outside = lv >= 3 && !down && outsideMe && seesRegionShell(s, a, reg, SIGN.HEAR_RUMBLE + jb);
-      report(id, { kind: 'struct', level: lv, region: r, x: reg.cx, y: reg.cy, down: down || undefined }, structText(reg.name, lv, down, outside));
+      reportSign(sim, a, me, id, { kind: 'struct', level: lv, region: r, x: reg.cx, y: reg.cy, down: down || undefined }, structText(reg.name, lv, down, outside));
     }
-    // ── 건물 전체 ──
-    const id = SIGN_BASE.bldg, prev = prevOf(id), tl = bldgLevel(c, s);
+    // ── 건물 전체 ── (무너진 구획이 없고 모든 구획이 0.5 이상이면 건물 건전도도 0.5 이상 — 단계 0)
+    const id = SIGN_BASE.bldg, prev = obs ? obs[id] : undefined;
+    const tl = !anyFallen && minInteg >= CAT.BLDG_L2 ? 0 : bldgLevel(c, s);
     if (tl > 0 || (prev !== undefined && prev > 0)) {
-      let eye = -1;
-      judge(tl, prev, LV_BLDG, () => (eye < 0 ? (eye = outsideMe && seesShell(s, a, v, SIGN.SEE_SHELL) ? 1 : 0) : eye) === 1, o);
-      if (o[2] >= 0) setObs(id, o[2]);
+      cond[2] = cond[3] = outsideMe && seesShell(s, a, v, SIGN.SEE_SHELL);
+      judge(tl, prev, LV_BLDG, cond, o);
+      if (o[2] >= 0) setObs(a, id, o[2]);
       if (o[0] >= 0) {
         const [bx, by] = bldgCenter(s), down = o[1] === 1;
-        report(id, { kind: 'bldg', level: o[0], region: -1, x: bx, y: by, down: down || undefined }, bldgText(o[0], down));
+        reportSign(sim, a, me, id, { kind: 'bldg', level: o[0], region: -1, x: bx, y: by, down: down || undefined }, bldgText(o[0], down));
       }
     }
   }
   // ── 가스 (구획) ──
   if (c.gas) {
-    let meter = hasKit(sim, a.rid, 'gasMeter');
-    const ti = s.tiles[ai], w = s.w, x = ai % w, reg = s.region;
+    const ti = s.tiles[ai], w = s.w, x = ai % w, reg = s.region, read = READ;
     // 읽는 구획: 서 있는 구획, 그리고 문·바닥 칸에 서 있으면 4 이웃 칸의 구획 (문턱에서 그 구획을 한 번 훑은 값)
-    const read: number[] = [];
-    const add = (rr: number): void => { if (rr >= 0 && regs[rr].indoor && read.indexOf(rr) < 0) read.push(rr); };
-    add(reg[ai]);
-    if (ti === T.DOOR || ti === T.FLOOR) {
-      if (x + 1 < w) add(reg[ai + 1]);
-      if (x > 0) add(reg[ai - 1]);
-      if (ai + w < reg.length) add(reg[ai + w]);
-      if (ai >= w) add(reg[ai - w]);
+    read.length = 0;
+    const cand0 = reg[ai], cand1 = ti === T.DOOR || ti === T.FLOOR;
+    for (let k = 0; k < 5; k++) {
+      const rr = k === 0 ? cand0 : !cand1 ? -1 : k === 1 ? (x + 1 < w ? reg[ai + 1] : -1) : k === 2 ? (x > 0 ? reg[ai - 1] : -1) : k === 3 ? (ai + w < reg.length ? reg[ai + w] : -1) : ai >= w ? reg[ai - w] : -1;
+      if (rr >= 0 && regs[rr].indoor && read.indexOf(rr) < 0) read.push(rr);
     }
+    let meter = hasKit(sim, a.rid, 'gasMeter');
     if (meter && read.length && !kitWorks(sim, a.rid, 'gasMeter', sim.incidents[s.incidentId])) meter = false;      // 값을 읽을 때 숨은 고장이 드러난다 (R1 — 효과의 자리)
     if (meter) {
       for (let k = 0; k < read.length; k++) {
-        const rr = read[k], id = SIGN_BASE.gas + rr, prev = prevOf(id);
+        const rr = read[k], id = SIGN_BASE.gas + rr, prev = obs ? obs[id] : undefined;
         const g = gasReading(c, s, rr);
-        judge(g.level, prev, LV_STRUCT, () => true, o);      // 측정기는 모든 단계의 감각 조건이 같다(지금 맞다) — 내려간 값도 확인된 하향이다
-        setObs(id, g.level);
-        const rg = regs[rr], down = o[1] === 1;
-        const val: SignBelief = { kind: 'gas', level: g.level, region: rr, x: rg.cx, y: rg.cy, lel: g.lel, down: down || undefined };
-        const text = down && g.level === 0 ? `${rg.name} 가스 농도 LEL ${g.lel}% — 위험 수준 아래` : `${rg.name} 가스 농도 LEL ${g.lel}%`;
-        if (o[0] >= 0) { report(id, val, text); continue; }
+        judge(g.level, prev, LV_STRUCT, ALL, o);      // 측정기는 모든 단계의 감각 조건이 같다(지금 맞다) — 내려간 값도 확인된 하향이다
+        setObs(a, id, g.level);
+        const cur = o[0] < 0 ? a.beliefs.val<SignBelief>('sign', id) : undefined;
         // 같은 단계: 측정값(lel)만 바뀌었으면 믿음에 합치되 보고하지 않는다 (significant 가 단계만 본다)
-        const cur = a.beliefs.val<SignBelief>('sign', id);
-        if (cur && cur.level === g.level && cur.lel !== g.lel) report(id, val, text);
+        if (o[0] < 0 && !(cur && cur.level === g.level && cur.lel !== g.lel)) continue;
+        const rg = regs[rr], down = o[1] === 1;
+        const text = down && g.level === 0 ? `${rg.name} 가스 농도 LEL ${g.lel}% — 위험 수준 아래` : `${rg.name} 가스 농도 LEL ${g.lel}%`;
+        reportSign(sim, a, me, id, { kind: 'gas', level: g.level, region: rr, x: rg.cx, y: rg.cy, lel: g.lel, down: down || undefined }, text);
       }
     } else if (ar >= 0 && c.gas[ai] >= SIGN.GAS_L1) {
       // 냄새: 자기 칸의 가스가 단계 1 문턱을 넘으면 단계 1 만 (측정값 없음 · 미확인 — 측정값을 덮지 않는다 · 하향 보고도 없다)
-      const id = SIGN_BASE.gas + ar, prev = prevOf(id);
+      const id = SIGN_BASE.gas + ar, prev = obs ? obs[id] : undefined;
       if (prev === undefined || prev < 1) {
-        setObs(id, 1);
+        setObs(a, id, 1);
         const rg = regs[ar];
-        report(id, { kind: 'gas', level: 1, region: ar, x: rg.cx, y: rg.cy }, `${rg.name} 가스 냄새`, false);
+        reportSign(sim, a, me, id, { kind: 'gas', level: 1, region: ar, x: rg.cx, y: rg.cy }, `${rg.name} 가스 냄새`, false);
       }
     }
   }
@@ -761,19 +764,20 @@ export function perceiveSigns(sim: Sim, s: Scene, a: FieldAgent, v: number): voi
     for (let k = 0; k < vs.length; k++) {
       const p = vs[k];
       if (p.removed) continue;
-      const id = SIGN_BASE.vessel + p.id, prev = prevOf(id), had = prev !== undefined && prev > 0;
+      const id = SIGN_BASE.vessel + p.id, prev = obs ? obs[id] : undefined, had = prev !== undefined && prev > 0;
       if ((p.exploded || (p.heatLoad ?? 0) < SIGN.VESSEL_HEAT2) && !had) continue;
       const tl = vesselLevel(s, p);
       if (tl === 0 && !had) continue;
       // 차량은 차체의 가장 가까운 칸까지
       const nx = Math.max(p.x, Math.min(p.x + p.w - 1, Math.round(a.x))), ny = Math.max(p.y, Math.min(p.y + p.h - 1, Math.round(a.y)));
       const d = dist(a.x, a.y, nx, ny);
-      let eye = -1;
-      judge(tl, prev, LV_VESSEL, (l) => (l === 3 ? d <= SIGN.HEAR_VENT + jb : (eye < 0 ? (eye = d <= SIGN.SEE_VESSEL + jb && los(s, a.x, a.y, nx, ny) ? 1 : 0) : eye) === 1), o);
-      if (o[2] >= 0) setObs(id, o[2]);
+      cond[3] = d <= SIGN.HEAR_VENT + jb;
+      cond[2] = d <= SIGN.SEE_VESSEL + jb && los(s, a.x, a.y, nx, ny);
+      judge(tl, prev, LV_VESSEL, cond, o);
+      if (o[2] >= 0) setObs(a, id, o[2]);
       if (o[0] < 0) continue;
       const down = o[1] === 1;
-      report(id, { kind: 'vessel', level: o[0], region: regionOfProp(s, p), x: p.x, y: p.y, prop: p.id, down: down || undefined }, vesselText(p, regionNameAt(s, p.x, p.y), o[0], down));
+      reportSign(sim, a, me, id, { kind: 'vessel', level: o[0], region: regionOfProp(s, p), x: p.x, y: p.y, prop: p.id, down: down || undefined }, vesselText(p, regionNameAt(s, p.x, p.y), o[0], down));
     }
   }
 }

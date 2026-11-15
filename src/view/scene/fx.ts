@@ -119,8 +119,8 @@ export function drawFire(g: G, s: Scene, ts: number, time: number, mini: boolean
   g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1;
 }
 
-/** 연기를 직접 그린다 (작은 창용). */
-export function drawSmoke(g: G, s: Scene, ts: number, time: number): boolean {
+/** 연기를 직접 그린다 (작은 창용). gas 가 1 인 칸은 연두 가스 덩어리로 (G4 — 예전의 연두 물들이기를 미리 섞은 색) */
+export function drawSmoke(g: G, s: Scene, ts: number, time: number, gas: Uint8Array | null = null): boolean {
   const sp = sprites();
   let any = false;
   for (let i = 0; i < s.smoke.length; i++) {
@@ -131,8 +131,10 @@ export function drawSmoke(g: G, s: Scene, ts: number, time: number): boolean {
     const ph = time * 0.45 + i * 1.7;
     const d = ts * (1.9 + 0.35 * Math.sin(ph * 1.3));
     g.globalAlpha = Math.min(0.72, v * 0.6);
-    g.drawImage(dense ? sp.puffDark : sp.puff, x - d / 2 + Math.sin(ph) * ts * 0.16, y - d / 2 + Math.cos(ph * 0.8) * ts * 0.12, d, d);
-    if (dense) { g.globalAlpha = Math.min(0.5, (v - 0.4) * 0.6); g.drawImage(sp.puff, x - d * 0.4 + Math.cos(ph * 1.1) * ts * 0.2, y - d * 0.4 + Math.sin(ph * 0.7) * ts * 0.2, d * 0.8, d * 0.8); }
+    const isGas = !!gas && gas[i] === 1;
+    const light = isGas ? sp.gas : sp.puff;
+    g.drawImage(dense ? (isGas ? sp.gasDark : sp.puffDark) : light, x - d / 2 + Math.sin(ph) * ts * 0.16, y - d / 2 + Math.cos(ph * 0.8) * ts * 0.12, d, d);
+    if (dense) { g.globalAlpha = Math.min(0.5, (v - 0.4) * 0.6); g.drawImage(light, x - d * 0.4 + Math.cos(ph * 1.1) * ts * 0.2, y - d * 0.4 + Math.sin(ph * 0.7) * ts * 0.2, d * 0.8, d * 0.8); }
   }
   g.globalAlpha = 1;
   return any;
@@ -143,7 +145,7 @@ let soft: HTMLCanvasElement | null = null;
  * 연기를 낮은 해상도의 별도 층에 그려 돌려준다(연기는 원래 흐릿하므로 화질 손실이 없고 훨씬 가볍다).
  * 연기가 없으면 null. 같은 층을 사람 아래에 한 번, 위에 옅게 한 번 덮는다.
  */
-export function smokeLayer(s: Scene, ts: number, time: number, tint?: string): HTMLCanvasElement | null {
+export function smokeLayer(s: Scene, ts: number, time: number, gas: Uint8Array | null = null): HTMLCanvasElement | null {
   let any = false; for (let i = 0; i < s.smoke.length; i++) if (s.smoke[i] >= 0.06) { any = true; break; }
   if (!any) return null;
   const q = 1 / 3, w = Math.max(2, Math.ceil(s.w * ts * q)), h = Math.max(2, Math.ceil(s.h * ts * q));
@@ -151,8 +153,7 @@ export function smokeLayer(s: Scene, ts: number, time: number, tint?: string): H
   if (soft.width !== w || soft.height !== h) { soft.width = w; soft.height = h; }
   const g = soft.getContext('2d')!;
   g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, w, h);
-  drawSmoke(g, s, ts * q, time);
-  if (tint) { g.globalCompositeOperation = 'source-atop'; g.fillStyle = tint; g.fillRect(0, 0, w, h); g.globalCompositeOperation = 'source-over'; }
+  drawSmoke(g, s, ts * q, time, gas);
   return soft;
 }
 

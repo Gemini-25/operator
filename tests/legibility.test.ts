@@ -12,7 +12,13 @@ import { T } from '../src/sim/types';
 import type { Incident, Scene } from '../src/sim/types';
 import { staticSig } from '../src/view/scene/staticLayer';
 import { BeliefStore, mkFact } from '../src/sim/field/beliefs';
-import { hazardChips, pinIcon, ruinInfo, ruinSeen } from '../src/view/hazardState';
+import { gasView, hazardChips, hostageState, pinIcon, ruinInfo, ruinSeen } from '../src/view/hazardState';
+import { addCas, addHostile } from '../src/sim/field/kit';
+import { isIndoor } from '../src/sim/field/grid';
+import { isHeld } from '../src/sim/field/hazards';
+import { buildStatic } from '../src/view/scene/staticLayer';
+import { drawBlastScar } from '../src/view/scene/hazardFx';
+import { fakeCtx, withFakeDom } from './fakeCanvas';
 
 // ───────────────────────── 도우미 ─────────────────────────
 /** 강제 사건(15초에 생긴다)을 찾는다 */
@@ -243,4 +249,113 @@ describe('시점 규칙', () => {
     for (const p of [p1, p2]) b.merge(mkFact('haz', p.id, { kind: 'bomb', active: false, x: p.x, y: p.y }, 't', sim.t, 1, true, ''));
     expect(hazardChips(sim, I, false).find((c) => c.key === 'bomb')?.text).toBe('폭발물 0 · 처리 1 · 터짐 1');
   });
+});
+
+// ───────────────────────── 7. 가스 ─────────────────────────
+describe('가스', () => {
+  it('가스 누출 현장(불붙은 밸브 없음)은 연기 칸 전부가 가스, 가스 폭발 현장의 새는 밸브 칸은 가스, dense 는 폭발 판정 식과 같다', () => {
+    const sim = new Sim('G4-GAS');
+    const I = createIncident(sim, { type: 'hazmat', variant: 'std', rng: sim.rng.fork('g4') });
+    const s = sim.scenes[I.id]!;
+    for (let i = 0; i < s.smoke.length; i++) s.smoke[i] = ((i * 7919) % 100) / 100;      // 0 ~ 0.99 를 고루
+    const gv = gasView(s, 1);
+    expect(s.props.some((p) => p.kind === 'valve' && p.ignited)).toBe(false);
+    for (let i = 0; i < s.smoke.length; i++) expect(gv.gas![i]).toBe(s.smoke[i] >= 0.06 ? 1 : 0);
+    let dense = 0; for (let i = 0; i < s.smoke.length; i++) if (s.smoke[i] > 0.6 && isIndoor(s.tiles[i])) dense++;      // hazards.tickGas 의 판정
+    expect(gv.dense).toBe(dense);
+    expect(gv.leaking).toBe(true);
+    expect(gv.edges.length).toBeGreaterThan(0);
+    const gb = collapseScene('G4-GAS', 'gasblast', 1).s;
+    const v = gb.props.find((p) => p.kind === 'valve' && !p.mitigated && !p.ignited)!;
+    expect(v).toBeTruthy();
+    for (let i = 0; i < gb.smoke.length; i++) gb.smoke[i] = 0;
+    gb.smoke[v.y * gb.w + v.x] = v.leakRate!;
+    const g2 = gasView(gb, 1);
+    expect(g2.gas![v.y * gb.w + v.x]).toBe(1);
+    // 불붙은 뒤에는 가스로 칠하지 않는다 (새는 밸브가 없다)
+    v.ignited = true;
+    expect(gasView(gb, 2).gas).toBeNull();
+  });
+});
+
+// ───────────────────────── 8. 인질 ─────────────────────────
+describe('인질의 상태', () => {
+  it('isHeld 와 같은 판정(hostageId 무관), 구출 기회, 지켜봄, 갇힘, 풀려남', () => {
+    const { sim, s } = room('G4-HOST');
+    const h = addHostile(s, 8, 8, 'gun', 0.5, 0.5, false, 0.2);
+    const a = addCas(s, 10, 8, 'mobile', 90, 0.02, 0.1, { hostage: true });      // 2칸
+    const b = addCas(s, 8, 10.5, 'mobile', 90, 0.02, 0.1, { hostage: true });    // 2.5칸, hostageId 가 아니다
+    h.hostageId = a.id;
+    const st = (c: typeof a): string => hostageState(sim, s, c).state;
+    expect(st(a)).toBe('held');
+    expect(st(b)).toBe('held');
+    expect(hostageState(sim, s, a).by).toBe(h.id);
+    a.walking = true; expect(st(a)).toBe('held');      // 끌려가는 인질은 걷는 중이어도 붙잡혀 있다
+    a.walking = false;
+    h.stunUntil = sim.t + 5; expect(st(a)).toBe('window');
+    h.stunUntil = -1;
+    h.weapon = 'knife'; expect(st(a)).toBe('guarded');
+    h.weapon = 'gun'; h.x = 8; h.y = 4.5; a.x = 8; a.y = 8.5;      // 총기인데 4칸
+    expect(st(a)).toBe('guarded');
+    const far = addCas(s, 14, 10, 'mobile', 90, 0.02, 0.1, { hostage: true });      // 8칸 넘게, 걷지 않음
+    h.x = 6; h.y = 6;
+    expect(dist2(h, far)).toBeGreaterThan(5);
+    expect(st(far)).toBe('confined');
+    h.state = 'surrendered'; expect(st(a)).toBe('confined');
+    a.walking = true; expect(st(a)).toBe('freed');
+    a.walking = false; a.where = 'safe'; expect(st(a)).toBe('freed');
+    // isHeld 가 참이면 언제나 held
+    h.state = 'hold'; a.where = 'scene';
+    for (let x = 6; x <= 14; x += 0.5) for (let y = 6; y <= 10; y += 0.5) {
+      a.x = x; a.y = y;
+      if (isHeld(sim, s, a.id)) expect(st(a)).toBe('held');
+    }
+  });
+});
+function dist2(p: { x: number; y: number }, q: { x: number; y: number }): number { return Math.hypot(p.x - q.x, p.y - q.y); }
+
+// ───────────────────────── 4. 그림 함수 ─────────────────────────
+describe('그림 함수가 예외 없이 돈다', () => {
+  it('붕괴 현장 넷의 고정 층(12·96), 무너지는 순간, 관찰자·AI·작은 창·확대·밤, 터진 폭발물, 지도', async () => {
+    await withFakeDom(async () => {
+      const { drawScene } = await import('../src/view/renderScene');
+      const { drawCity } = await import('../src/view/renderCity');
+      const ctx = fakeCtx();
+      for (const variant of ['std', 'gasblast', 'crane', 'landslide']) {
+        const { sim, s, I } = collapseScene('G4-DRAW', variant, 1);
+        buildStatic(s, 12, I.truth.district);
+        buildStatic(s, 96, I.truth.district);
+        const t = sim.t;
+        s.falls = [...(s.falls ?? []),
+          { t, x: 10, y: 8, r: 2.6, region: -1, cause: 'secondary' }, { t, x: 12, y: 6, r: 2.2, region: -1, cause: 'ceiling' },
+          { t: t - 0.2, x: 9, y: 9, r: 2.6, region: -1, cause: 'secondary' }, { t: t - 2, x: 9, y: 9, r: 2.6, region: -1, cause: 'zone' }, { t: t - 10, x: 9, y: 9, r: 2.6, region: -1, cause: 'secondary' }];
+        const crack = s.props.find((p) => p.kind === 'unstable'); if (crack) crack.leak = 0.9;
+        const deb = s.props.find((p) => p.kind === 'debris'); if (deb) { deb.removed = true; s.staticVersion++; }
+        for (const o of [{ truth: true }, { truth: false }, { truth: true, mini: true }, { truth: true, cam: { x: 15, y: 10, zoom: 2 } }]) {
+          drawScene(ctx, sim, s, 1200, 800, { alpha: 0.5, timeMs: 1000, selectedRid: -1, ...o });
+        }
+        (sim as unknown as { weather: string }).weather = 'night';
+        drawScene(ctx, sim, s, 1200, 800, { truth: true, alpha: 0.5, timeMs: 1000, selectedRid: -1 });
+      }
+      // 터진 폭발물
+      const sim = new Sim('G4-BOMB');
+      const I = createIncident(sim, { type: 'armed', variant: 'bomb', rng: sim.rng.fork('g4') });
+      const s = sim.scenes[I.id]!;
+      for (const p of s.props) if (p.kind === 'bomb') p.exploded = true;
+      for (const truth of [true, false]) drawScene(ctx, sim, s, 1200, 800, { truth, alpha: 0, timeMs: 0, selectedRid: -1 });
+      drawScene(ctx, sim, s, 232, 158, { truth: true, alpha: 0, timeMs: 0, selectedRid: -1, mini: true });
+      drawBlastScar(ctx, 3, 1, false, true); drawBlastScar(ctx, 4, 0.6, true, false);
+      // 지도: 사건 단계(미신고·출동·현장·종료)와 배율(1·4)
+      const q = new Sim('S3', { ...NORMAL, disaster: 'quake' }, 1200);
+      for (const tk of [2665, 2900, 3420, 5750]) {
+        while (q.tick < tk && !q.ended) q.step();
+        for (const zoom of [1, 4]) for (const truth of [true, false]) {
+          const I2 = q.incidents.find((x) => x.truth.type === 'collapse' && x.truth.placeId >= 0) ?? q.incidents[0];
+          const cam = zoom === 1 ? { x: q.city.w / 2, y: q.city.h / 2, zoom } : { x: I2.truth.x, y: I2.truth.y, zoom };
+          drawCity(ctx, q, cam, 1200, 800, { focus: I2.id, truth, timeMs: tk * 10, alpha: 0.5, selectedUnit: -1, hover: { x: 600, y: 400 } });
+          drawCity(ctx, q, cam, 232, 158, { focus: -1, truth, timeMs: tk * 10, alpha: 0.5, selectedUnit: -1, mini: true });
+        }
+      }
+    });
+  }, 120000);
 });

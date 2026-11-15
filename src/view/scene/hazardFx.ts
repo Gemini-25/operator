@@ -5,6 +5,7 @@
 
 import type { Sim } from '../../sim/engine';
 import type { FieldAgent, Scene } from '../../sim/types';
+import type { GasView } from '../hazardState';
 import { hash2 } from './common';
 import type { G } from './common';
 import { g4Sprites } from './fx';
@@ -182,4 +183,78 @@ export function drawFallRing(g: G, sim: Sim, s: Scene, ts: number, alpha: number
     g.beginPath(); g.arc((f.x + 0.5) * ts, (f.y + 0.5) * ts, ts * (0.4 + (f.r - 0.4) * e), 0, 6.2832); g.stroke();
   }
   g.restore();
+}
+
+// ───────────────────────── 가스가 찬 범위 ─────────────────────────
+/** 짙은 가스 경계(관찰자 시점, 새는 밸브가 있을 때): 폭발 판정 칸(실내 smoke > 0.6)의 경계를 흐르는 연두 점선으로. 10칸 이상이면 표지를 돌려준다 */
+export function drawGasEdge(g: G, ts: number, timeMs: number, gv: GasView, mini: boolean): HazardLabel[] {
+  if (mini || !gv.leaking || !gv.edges.length) return [];
+  g.save();
+  g.beginPath(); for (let e = 0; e < gv.edges.length; e += 4) { g.moveTo(gv.edges[e] * ts, gv.edges[e + 1] * ts); g.lineTo(gv.edges[e + 2] * ts, gv.edges[e + 3] * ts); }
+  g.strokeStyle = 'rgba(8,13,18,0.5)'; g.lineWidth = Math.max(1.5, ts * 0.05) + 2; g.setLineDash([]); g.stroke();
+  g.strokeStyle = '#d6f06a'; g.lineWidth = Math.max(1.5, ts * 0.05); g.setLineDash([ts * 0.24, ts * 0.16]); g.lineDashOffset = -timeMs / 90; g.stroke();
+  g.restore();
+  return gv.dense >= 10 ? [{ x: (gv.cx + 0.5) * ts, y: (gv.cy + 0.5) * ts, text: '가스 고임 — 폭발 위험', color: '#ff5d5d' }] : [];
+}
+
+// ───────────────────────── 되살아난 불 ─────────────────────────
+/** 되살아난 불이 있는 방의 테두리 (주황 점선 둥근 사각형)와 표지. 관찰자: '다시 붙은 불 — 지휘관은 모름', AI: '잔불 되살아남' */
+export function drawRekindle(g: G, s: Scene, ts: number, timeMs: number, ids: number[], truth: boolean, mini: boolean): HazardLabel[] {
+  if (mini || !ids.length) return [];
+  const out: HazardLabel[] = [];
+  g.save();
+  g.strokeStyle = '#ff6b3d'; g.lineWidth = Math.max(1.5, ts * 0.06); g.setLineDash([ts * 0.26, ts * 0.16]); g.lineDashOffset = -timeMs / 70;
+  for (const id of ids) {
+    const r = s.regions[id];
+    if (!r) continue;
+    const m = ts * 0.1;
+    g.globalAlpha = 0.65 + 0.3 * Math.abs(Math.sin(timeMs / 380));
+    g.beginPath(); g.roundRect(r.x0 * ts + m, r.y0 * ts + m, (r.x1 - r.x0 + 1) * ts - 2 * m, (r.y1 - r.y0 + 1) * ts - 2 * m, ts * 0.3); g.stroke();
+    out.push({ x: (r.cx + 0.5) * ts, y: (r.cy + 0.5) * ts + ts * 0.62, text: truth ? '다시 붙은 불 — 지휘관은 모름' : '잔불 되살아남', color: '#ff9a6a' });
+  }
+  g.restore();
+  return out;
+}
+
+// ───────────────────────── 폭발 자리 ─────────────────────────
+/** 터진 폭발물(크기 1)·불붙은 밸브(0.6)의 바닥 자국. 그을음 바로 뒤에서 매 프레임 (소품 수만큼 — 가볍다). 작은 창은 검은 자국만 */
+export function drawBlastScars(g: G, s: Scene, ts: number, mini: boolean): void {
+  for (const p of s.props) {
+    const sc = p.kind === 'bomb' && p.exploded ? 1 : p.kind === 'valve' && p.ignited ? 0.6 : 0;
+    if (!sc) continue;
+    g.save(); g.translate((p.x + 0.5) * ts, (p.y + 0.5) * ts); g.scale(ts, ts);
+    drawBlastScar(g, p.id, sc, mini, p.kind === 'bomb');
+    g.restore();
+  }
+}
+/** 폭발 자국 하나 (칸 단위 좌표, 가운데가 원점). 모양은 소품 번호 해시라 다시 그려도 같다 */
+export function drawBlastScar(g: G, seed: number, scale: number, mini = false, bag = true): void {
+  const hv = (k: number): number => hash2(seed * 37 + k, 6151);
+  // 들쭉날쭉한 검은 자국 (반지름 0.9칸)
+  g.fillStyle = 'rgba(6,5,5,0.75)'; g.beginPath();
+  const n = 16;
+  for (let k = 0; k < n; k++) { const a = (k / n) * 6.2832, r = 0.9 * scale * (k % 2 ? 0.62 + 0.25 * hv(k) : 0.9 + 0.2 * hv(k)); if (k) g.lineTo(Math.cos(a) * r, Math.sin(a) * r); else g.moveTo(Math.cos(a) * r, Math.sin(a) * r); }
+  g.closePath(); g.fill();
+  if (mini) return;
+  // 1.6칸까지 뻗는 방사형 금 6~8줄
+  g.strokeStyle = 'rgba(20,18,16,0.7)'; g.lineWidth = 0.035; g.lineCap = 'round'; g.lineJoin = 'round';
+  const nc = 6 + Math.floor(hv(50) * 3);
+  for (let k = 0; k < nc; k++) {
+    const a = (k / nc) * 6.2832 + (hv(60 + k) - 0.5) * 0.6, L = 1.6 * scale * (0.65 + 0.35 * hv(70 + k));
+    g.beginPath(); g.moveTo(Math.cos(a) * 0.5 * scale, Math.sin(a) * 0.5 * scale);
+    for (let q = 1; q <= 3; q++) { const t = 0.5 * scale + ((L - 0.5 * scale) * q) / 3, j = (hv(80 + k * 4 + q) - 0.5) * 0.25; g.lineTo(Math.cos(a + j) * t, Math.sin(a + j) * t); }
+    g.stroke();
+  }
+  // 찢어진 가방·상자 조각 3~4개 (폭발물만)
+  if (bag) {
+    const cols = ['#3d3a35', '#5a4a3a', '#2b2b2e', '#6b5a44'];
+    const nb = 3 + (hv(90) > 0.5 ? 1 : 0);
+    for (let k = 0; k < nb; k++) {
+      const a = hv(100 + k) * 6.2832, d = (0.7 + 0.6 * hv(110 + k)) * scale;
+      g.save(); g.translate(Math.cos(a) * d, Math.sin(a) * d); g.rotate(hv(120 + k) * 3);
+      const w = 0.16 + 0.1 * hv(130 + k), h = 0.08 + 0.06 * hv(140 + k);
+      g.fillStyle = cols[k % cols.length]; g.beginPath(); g.moveTo(-w / 2, -h / 2); g.lineTo(w / 2, -h / 2 + 0.02); g.lineTo(w / 2 - 0.03, h / 2); g.lineTo(-w / 2 + 0.02, h / 2 - 0.01); g.closePath(); g.fill();
+      g.restore();
+    }
+  }
 }

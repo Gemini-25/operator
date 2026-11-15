@@ -8,6 +8,7 @@ import { closeIncident } from '../incidents';
 import { T } from '../types';
 import type { CasBelief, FieldAgent, Incident, Scene, UnitCaps, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, dist, josa } from '../util';
+import { hasFirearm, kitUses, roleOf } from '../crews';
 import { HURT_HEALTH, canCarryPatients, exitName, failedRecently, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { losWalls } from './grid';
@@ -133,7 +134,8 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   const cas = B.list('cas');
   const fires = B.list('fire');
   const hos = B.list('hos');
-  const police = s.agents.filter((b) => b.status === 'active' && sim.responders[b.rid].dept === 'police');
+  // 무장 사건의 인원 문턱에 드는 사람: 총기를 든 활동 중인 경찰. 폭발물 처리 요원·로봇 조작 요원은 (권총이 있어도) 역할로 뺀다
+  const police = s.agents.filter((b) => b.status === 'active' && sim.responders[b.rid].dept === 'police' && hasFirearm(sim, b.rid) && roleOf(sim, b.rid).group !== 'bomb');
   if (!s.sizeupDone) want(sim, s, 'sizeup', {}, 0.96);
 
   // ── 화재 ──
@@ -185,7 +187,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       const crit = cas.some((c) => c.value.where === 'scene' && c.value.band === 2);
       const fighting = h.value.state === 'fight';
       const hostage = !!h.value.hostage;
-      const hasBang = unitsOnScene(sim, s).some((uid) => sim.units[uid].flashbangs > 0);
+      const hasBang = s.agents.some((b) => b.status === 'active' && kitUses(sim, b.rid, 'flashbang') > 0);      // 섬광탄은 사람 몫이다 (자기 조직의 장비 상태 — 지휘관이 알아도 된다)
       let why = '';
       if (hostage) {
         // 인질 사건: 섣불리 들어가지 않는다. 섬광탄을 가진 부대가 오거나, 인질이 다쳤거나, 협상이 한계에 이르렀을 때만

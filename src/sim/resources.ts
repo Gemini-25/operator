@@ -1,7 +1,7 @@
 // ResourceManager — 부대·대원 명부, 차량 상태와 도시 지도 위 이동.
 
 import { coastY, edgeName, edgeTime, findRoute, nodeName, weatherSpeedFactor } from './city';
-import { AIR_KIND, EXTRA_NAMES, ROLES, STAFF, dealFlashbangs, fieldCrew, kitFor, skillsOf, slotsOf } from './crews';
+import { AIR_KIND, EXTRA_NAMES, ROLES, STAFF, dealFlashbangs, fieldCrew, kitFor, medLevelOf, skillsOf, slotsOf } from './crews';
 import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
 import { unitArrived } from './field/sceneManager';
@@ -365,9 +365,11 @@ export function tickUnits(sim: Sim): void {
     if (u.state === 'transport' && u.patientsIncident !== null) {
       // 이송 중 처치: 탑승 후 몇 초 뒤 구급대원이 차 안에서 응급 처치를 마친다
       const sc = sim.scenes[u.patientsIncident];
+      // 차 안의 처치 수준은 함께 탄 대원(내리는 자리) 가운데 가장 좋은 의료 장비를 든 사람의 것이다
+      let med = 0; if (sc && u.patients.length) { const fc = fieldCrew(sim, u); for (let k = 0; k < fc.length; k++) med = Math.max(med, medLevelOf(sim, fc[k])); }
       if (sc) for (const cid of u.patients) {
         const c = sc.casualties[cid];
-        const q = Math.min(1, u.medLevel * 0.95);
+        const q = Math.min(1, med * 0.95);
         if (!c.dead && sim.t - c.tLoaded > 6 && q > c.treatQ + 0.05) { c.treated = true; if (c.tTreated < 0) c.tTreated = sim.t; c.treatQ = q; c.bleed = c.bleed0 * (1 - 0.9 * q); }
       }
     }

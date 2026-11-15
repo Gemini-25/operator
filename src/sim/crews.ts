@@ -2,17 +2,20 @@
 // 부대 종류마다 자리(역할)의 순서가 있고(STAFF), 역할마다 능력의 식·기본 장비·먼저 맡는 일이 있으며(ROLES),
 // 장비마다 효과가 있다(KITS). 명부(resources.createRoster·createAidUnit)가 이 표로 대원을 만든다.
 //
-// 이 파일은 types.ts·util.ts 와 타입만 import 한다. resources.ts·field/*·dispatch/* 를 import 하지 않는다
+// 이 파일은 types.ts·util.ts·events.ts 와 타입만 import 한다. resources.ts·field/*·dispatch/* 를 import 하지 않는다
 // (resources.ts 가 이 파일을 import 하므로 거꾸로 import 하면 순환이 생겨 초기화 전의 표를 읽는다).
 //
 // 장비를 읽는 방법은 쓰는 자리에 따라 다르다 (설계서 4절 "장비를 읽는 네 가지 방법"):
-//   배정·계획·관제  → hasKit · crewHasKit        숨은 고장은 모른다(있는 것으로 본다). 상태를 바꾸지 않는다
-//   수량            → kitUses · useKit            useKit 만 상태를 바꾼다
-// 효과를 주는 자리의 kitWorks·toolUse(숨은 고장을 드러낸다)와 화면도 부르는 물리의 kitLive 는 뒤 단계가 더한다.
+//   배정·계획·관제      → hasKit · toolFor · crewHasKit    숨은 고장은 모른다(있는 것으로 본다). 상태를 바꾸지 않는다
+//   화면도 부르는 물리  → kitLive                          숨은 고장이면 효과가 없다. 드러내지 않고 기록도 남기지 않는다 (visionOf·detectRadius)
+//   효과를 주는 자리    → kitWorks · toolUse               숨은 고장이 이때 드러난다(기록). 시뮬레이션만 부른다 (실행기·perceive)
+//   수량                → kitUses · useKit                 useKit 만 상태를 바꾼다
+// 표현 계층(src/view·src/ui)이 부르는 함수에서는 kitWorks·toolUse·useKit 을 부르지 않는다 — 그림을 그리는 것만으로 기록과 해시가 바뀐다.
 
 import type { Sim } from './engine';
-import type { KitId, KitItem, Responder, RoleGroup, RoleId, Skills, Unit, UnitKind, WorkKind } from './types';
-import { clamp } from './util';
+import { emit, raiseProblem } from './events';
+import type { Incident, KitId, KitItem, Responder, RoleGroup, RoleId, Skills, Unit, UnitKind, WorkKind } from './types';
+import { clamp, josa } from './util';
 
 // ───────────────────────── 개인 장비 ─────────────────────────
 export type ToolUse = 'force' | 'clear' | 'extricate' | 'water';
@@ -238,3 +241,84 @@ export function crewHasKit(sim: Sim, u: Unit, id: KitId, okOnly = true): boolean
   for (let k = 0; k < fc.length; k++) if ((!okOnly || sim.responders[fc[k]].status === 'ok') && hasKit(sim, fc[k], id)) return true;
   return false;
 }
+
+// ───────────────────────── 장비의 효과 ─────────────────────────
+/**
+ * 들고 있고 실제로 작동한다 (= 고장이 아니다. 숨은 고장도 본다). 드러내지 않고 기록도 남기지 않는다.
+ * 세계의 물리 가운데 표현 계층도 부르는 함수(visionOf·detectRadius)만 쓴다 — 배정·판단에서 쓰면 숨은 고장이 샌다.
+ */
+export function kitLive(sim: Sim, rid: number, id: KitId): boolean { const it = itemOf(sim, rid, id); return it !== null && !it.fault; }
+/**
+ * 효과를 줄 때만 부른다: 들고 있고 작동하면 true. 숨은 고장이면 **이때 드러나** 기록을 남기고 false (같은 대원·같은 장비는 한 번만).
+ * 기록은 상태(faultKnown)를 바꾸는 바로 이 자리에서 남긴다. 표현 계층이 부르는 함수에서는 부르지 않는다.
+ */
+export function kitWorks(sim: Sim, rid: number, id: KitId, I?: Incident): boolean {
+  const it = itemOf(sim, rid, id);
+  if (it === null || it.faultKnown) return false;
+  if (!it.fault) return true;
+  it.faultKnown = true;      // 이때부터 조직이 안다 (hasKit 이 false 가 된다)
+  const r = sim.responders[rid], name = KITS[id].name;
+  if (I) raiseProblem(sim, I, 'EQUIP_FAIL', `${r.name}의 ${josa(name, '이/가')} 고장`, { role: 'RESPONDER', actor: r.name, rid: r.id, imp: 1, text: `${josa(name, '이/가')} 작동하지 않습니다.` }, false);
+  else emit(sim, { role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'problem', problem: 'EQUIP_FAIL', imp: 1, text: `${josa(name, '이/가')} 작동하지 않습니다.` });
+  return false;
+}
+/** 장비 없이 맨손으로 하는 일의 성능 */
+const BARE_HANDS = 0.12;
+/** 그 일에 쓸 수 있는 장비 가운데 가장 좋은 것 (알려진 고장은 뺀다. 같은 값이면 먼저 든 것). 없으면 null */
+function bestTool(sim: Sim, rid: number, use: ToolUse): KitId | null {
+  const kit = sim.responders[rid].kit;
+  let best: KitId | null = null, bv = 0;
+  if (kit) for (let k = 0; k < kit.length; k++) {
+    const it = kit[k], tool = KITS[it.id].tool;
+    if (!tool || it.faultKnown) continue;
+    const v = tool[use];
+    if (v !== undefined && v > bv) { bv = v; best = it.id; }
+  }
+  return best;
+}
+const toolValue = (sim: Sim, id: KitId, use: ToolUse): number => Math.min(1.15, KITS[id].tool![use]! * sim.tune.toolMul);
+/**
+ * 계획용: 알려진 고장만 뺀 장비 가운데 가장 좋은 값 × 장비 손잡이(toolMul), 상한 1.15. 없으면 맨손 0.12.
+ * fitFor·agentCost·관제가 쓴다 — 숨은 고장은 모른다.
+ */
+export function toolFor(sim: Sim, rid: number, use: ToolUse): number {
+  const id = bestTool(sim, rid, use);
+  return id === null ? BARE_HANDS : toolValue(sim, id, use);
+}
+/**
+ * 실행기 전용: toolFor 의 순서대로 고른 장비에 kitWorks 를 부른다. 숨은 고장이 드러나면 다음으로 좋은 장비로, 다 없으면 맨손 0.12.
+ * (효과 자리에서 toolFor 를 쓰면 고장 난 유압 구조기가 끝내 효과를 내거나, 효과 없이 드러나지도 않는다.)
+ */
+export function toolUse(sim: Sim, rid: number, use: ToolUse, I: Incident): number {
+  for (;;) {
+    const id = bestTool(sim, rid, use);
+    if (id === null) return BARE_HANDS;
+    if (kitWorks(sim, rid, id, I)) return toolValue(sim, id, use);      // 고장이 드러났으면 faultKnown 이 되어 다음 바퀴에서 빠진다
+  }
+}
+/** 의료 장비가 없는 대원의 처치 수준 (부서의 기본 교육) */
+const MED_BASE: Record<Responder['dept'], number> = { police: 0.25, fire: 0.35, ems: 0.5 };
+/** 가장 좋은 의료 장비 × 장비 손잡이(medMul), 상한 1.1. 없으면 부서 기본값 (경찰 .25 · 소방 .35 · 구급 .5) */
+export function medLevelOf(sim: Sim, rid: number): number {
+  const r = sim.responders[rid], kit = r.kit;
+  let m = 0;
+  if (kit) for (let k = 0; k < kit.length; k++) { const v = KITS[kit[k].id].med; if (v !== undefined && v > m && !kit[k].faultKnown) m = v; }
+  return m > 0 ? Math.min(1.1, m * sim.tune.medMul) : MED_BASE[r.dept];
+}
+/** 방패가 교전·봉쇄 중에 더하는 방호 */
+const SHIELD_ARMOR = 0.3;
+/** 총격 방호: 가장 좋은 방호 장비 (교전·봉쇄 중이면 + 방패) × 장비 손잡이(armorMul), 상한 0.8 */
+export function armorOf(sim: Sim, rid: number, engaging: boolean): number {
+  const kit = sim.responders[rid].kit;
+  let m = 0, shield = false;
+  if (kit) for (let k = 0; k < kit.length; k++) {
+    if (kit[k].faultKnown) continue;
+    const v = KITS[kit[k].id].armor;
+    if (v !== undefined && v > m) m = v;
+    if (kit[k].id === 'shield') shield = true;
+  }
+  if (engaging && shield) m += SHIELD_ARMOR;
+  return Math.min(0.8, m * sim.tune.armorMul);
+}
+/** 폭발 피해에 곱하는 값: 폭발물 방호복 .35 · 방화복 .7 · 그 밖 1 */
+export function blastFactor(sim: Sim, rid: number): number { return hasKit(sim, rid, 'bombSuit') ? 0.35 : hasKit(sim, rid, 'turnout') ? 0.7 : 1; }

@@ -7,7 +7,7 @@ import { emit, raiseProblem } from '../events';
 import { closeIncident } from '../incidents';
 import { releaseUnit, startTransport } from '../resources';
 import { scenarioOf } from '../scenarios';
-import { fieldCrew, roleOf } from '../crews';
+import { fieldCrew, hasKit, roleOf } from '../crews';
 import './scenes';
 import { SCENE_RULES } from './sceneRegistry';
 import type { Fact, FieldAgent, Incident, Scene, Unit } from '../types';
@@ -140,17 +140,19 @@ function deliverRadio(sim: Sim, s: Scene, I: Incident): void {
   }
 }
 
-function agentHealth(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
+/** 대원이 선 칸의 연기·불이 주는 피해. 방호는 부서가 아니라 든 장비가 정한다: 공기호흡기(연기), 방화복(불) */
+export function agentHealth(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   if (a.status === 'left') return;
   const r = sim.responders[a.rid];
   const i = tileOf(s, a.x, a.y);
   const smoke = s.smoke[i], fire = s.fire[i];
   if (smoke > 0.25) {
     a.smokeT += sim.dt;
-    r.health -= (r.dept === 'fire' ? 0.1 : 1.3) * smoke * sim.dt;
-    if (r.dept === 'fire') r.stamina = Math.max(0, r.stamina - 0.22 * smoke * sim.dt);
+    const scba = hasKit(sim, a.rid, 'scba');
+    r.health -= (scba ? 0.1 : 1.3) * smoke * sim.dt;
+    if (scba) r.stamina = Math.max(0, r.stamina - 0.22 * smoke * sim.dt);      // 공기호흡기를 메고 연기 속에서 일하면 지친다
   } else a.smokeT = Math.max(0, a.smokeT - sim.dt * 2);
-  if (fire > 0.4) r.health -= (r.dept === 'fire' ? 2.6 : 9) * fire * sim.dt;
+  if (fire > 0.4) r.health -= (hasKit(sim, a.rid, 'turnout') ? 2.6 : 9) * fire * sim.dt;
   if (r.health < 1) r.health = 1;
   if (r.health <= 15 && a.status !== 'down') {
     if (a.task) finishTask(sim, s, a, false, 'preempt');

@@ -7,6 +7,7 @@ import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
 import type { Fact, FieldAgent, Hostile, Incident, Prop, Scene, Task, TaskKind, WorkItem } from '../types';
 import { clamp, dist, josa, pct } from '../util';
+import { hasKit, kitUses, medLevelOf, toolUse, useKit } from '../crews';
 import { RETRY_AFTER, agentCost, casFact, debrisText, detectRadius, exitName, hosFact, learn, learnQuiet, perceive, regionNameAt, resp, staminaF, visionOf, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { astar, doorAt, isIndoor, los, staticPass, tileOf, walkableCount } from './grid';
@@ -79,7 +80,8 @@ export function moveSpeed(sim: Sim, s: Scene, a: FieldAgent): number {
   const r = resp(sim, a);
   const i = tileOf(s, a.x, a.y);
   let v = 2.5 * (0.75 + 0.5 * r.fitness) * staminaF(r);
-  if (s.smoke[i] > 0.3) v *= r.dept === 'fire' ? 0.8 : 0.6;
+  if (s.smoke[i] > 0.3) v *= hasKit(sim, a.rid, 'scba') ? 0.8 : 0.6;      // 공기호흡기가 없으면 연기 속에서 더 느리다
+  if (hasKit(sim, a.rid, 'bombSuit')) v *= 0.75;      // 폭발물 방호복은 무겁다
   if (s.kind === 'search') v *= s.tiles[i] === T.TRAIL ? 0.9 : s.tiles[i] === T.TREE ? 0.42 : 0.6;      // 험한 지형
   else if (s.tiles[i] === T.TREE) v *= 0.62;
   if (a.carrying !== -1) {
@@ -129,7 +131,7 @@ function moveTo(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, range
   }
   if (s.fire[next] > 0.5) {
     const u = sim.units[a.unitId];
-    if (r.dept === 'fire' && !u.pumpFailed && (u.water > 0 || u.hydrant)) {
+    if (hasKit(sim, a.rid, 'hose') && !u.pumpFailed && (u.water > 0 || u.hydrant)) {      // 관창을 든 사람만 길 위의 불을 끄며 지나간다
       const sub = makeTask('suppress', '진입로 화재 진압'); sub.tile = next; t.sub = sub;
       return 'busy';
     }
@@ -224,7 +226,7 @@ function unblock(sim: Sim, s: Scene, a: FieldAgent, tile: number): void {
   const p = s.props[s.propAt[tile]];
   s.propAt[tile] = -1; p.blocking = false;
   if (p.kind === 'door') { p.locked = false; p.open = true; } else p.removed = true;
-  if (p.kind === 'door') recBreach(sim, s, p.x, p.y, a.x, a.y, { door: p.id, how: r.dept === 'police' ? 'ram' : r.dept === 'fire' ? 'irons' : 'kick', n: 1, sync: false, by: a.rid, forced: true });
+  if (p.kind === 'door') recBreach(sim, s, p.x, p.y, a.x, a.y, { door: p.id, how: breachHowFor(sim, [a], true, false), n: 1, sync: false, by: a.rid, forced: true });
   s.staticVersion++;
   learnQuiet(sim, a, mkFact('blk', tile, 'none', r.name, sim.t, 1, true, p.kind === 'door' ? '문 개방 완료' : '잔해 제거, 통로 확보'));
   const pe = markRecovered(I, 'PATH_BLOCKED', `${josa(r.name, '이/가')} ${p.kind === 'door' ? '문을 강제 개방' : '잔해를 제거'}해 통로 확보`);
@@ -236,8 +238,9 @@ function workOnBlocker(sim: Sim, s: Scene, a: FieldAgent, tile: number, kind: Ta
   const pid = s.propAt[tile];
   if (pid < 0) return true;
   const p = s.props[pid];
-  const r = resp(sim, a), u = sim.units[a.unitId];
-  const rate = kind === 'force' ? 0.6 + r.skills.rescue * 0.6 + u.tool * 0.6 + r.skills.law * 0.3 : 0.5 + r.skills.rescue * 0.8 + u.tool * 0.5;
+  const r = resp(sim, a), I = sim.incidents[s.incidentId];
+  // 효과 자리: 실제로 쓰는 도구의 성능 (숨은 고장은 여기서 드러난다 — crews.toolUse)
+  const rate = kind === 'force' ? 0.6 + r.skills.rescue * 0.6 + toolUse(sim, a.rid, 'force', I) * 0.6 + r.skills.law * 0.3 : 0.5 + r.skills.rescue * 0.8 + toolUse(sim, a.rid, 'clear', I) * 0.5;
   p.hp -= rate * staminaF(r) * sim.dt;
   drain(sim, a, 0.7);
   a.ring = clamp(1 - p.hp / 12, 0.05, 1);
@@ -246,25 +249,33 @@ function workOnBlocker(sim: Sim, s: Scene, a: FieldAgent, tile: number, kind: Ta
 }
 
 /** 진압 분사. 물 소모와 펌프 마모가 누적된다. 반환: false = 장비 문제로 중단 */
+/**
+ * 물이 떨어졌거나 펌프가 멈췄다: 분사하던 대원과, 그 부대에서 펌프를 맡은 활동 중인 대원(기관원·사다리 조작원)이 함께 안다.
+ * 급수 연결·예비 펌프 교체는 펌프를 맡은 대원이 스스로 나선다(brain.ts) — 관창수는 관창을 놓지 않는다.
+ */
+function equipTrouble(sim: Sim, s: Scene, a: FieldAgent, issue: 'pump' | 'water', ev = -1): void {
+  a.equipIssue = issue; if (ev >= 0) a.lastBlockEvent = ev;
+  for (const b of s.agents) if (b !== a && b.unitId === a.unitId && b.status === 'active' && hasKit(sim, b.rid, 'pumpPanel')) { b.equipIssue = issue; if (ev >= 0) b.lastBlockEvent = ev; }      // 그 기록이 급수 연결·장비 교체의 원인으로 이어진다
+}
+
 function spray(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number): boolean {
   const I = sim.incidents[s.incidentId];
   const r = resp(sim, a), u = sim.units[a.unitId];
-  if (u.pumpFailed) { a.equipIssue = 'pump'; return false; }
-  if (u.water <= 0 && !u.hydrant) { a.equipIssue = 'water'; return false; }
+  if (u.pumpFailed) { equipTrouble(sim, s, a, 'pump'); return false; }
+  if (u.water <= 0 && !u.hydrant) { equipTrouble(sim, s, a, 'water'); return false; }
   applyWater(s, tx, ty, 0.15 * (0.6 + 0.8 * r.skills.fire) * staminaF(r) * sim.dt);
   if (!u.hydrant) u.water = Math.max(0, u.water - 1.5 * sim.dt);
   u.pumpCond -= 0.0042 * sim.tune.pumpWearMul * sim.dt;
   drain(sim, a, 0.55);
   if (sim.tick % 2 === 0) pushFx(sim, s, 'spray', a.x, a.y, tx + s.rng.range(-0.4, 0.4), ty + s.rng.range(-0.4, 0.4), undefined, undefined, 0.3);
   if (u.pumpCond < 0.2 && !u.pumpFailed) {
-    u.pumpFailed = true; a.equipIssue = 'pump';
-    a.lastBlockEvent = raiseProblem(sim, I, 'EQUIP_FAIL', `${u.callsign} 펌프 고장 (출동 전 상태 불량)`, { role: 'RESPONDER', actor: r.name, rid: r.id, imp: 2, text: `${u.callsign} 펌프 압력 저하! 방수가 중단됐습니다.` }, false);
+    u.pumpFailed = true;
+    equipTrouble(sim, s, a, 'pump', raiseProblem(sim, I, 'EQUIP_FAIL', `${u.callsign} 펌프 고장 (출동 전 상태 불량)`, { role: 'RESPONDER', actor: r.name, rid: r.id, imp: 2, text: `${u.callsign} 펌프 압력 저하! 방수가 중단됐습니다.` }, false));
     pushFx(sim, s, 'text', a.x, a.y - 1, undefined, undefined, '펌프 고장', '#ff6b6b', 2);
     return false;
   }
   if (u.water <= 0 && !u.hydrant) {
-    a.equipIssue = 'water';
-    a.lastBlockEvent = raiseProblem(sim, I, 'WATER_OUT', `${u.callsign} 탱크 용수 소진`, { role: 'RESPONDER', actor: r.name, rid: r.id, imp: 2, text: `${u.callsign} 탱크 용수가 바닥났습니다. 급수 연결이 필요합니다.` }, false);
+    equipTrouble(sim, s, a, 'water', raiseProblem(sim, I, 'WATER_OUT', `${u.callsign} 탱크 용수 소진`, { role: 'RESPONDER', actor: r.name, rid: r.id, imp: 2, text: `${u.callsign} 탱크 용수가 바닥났습니다. 급수 연결이 필요합니다.` }, false));
     return false;
   }
   return true;
@@ -362,9 +373,9 @@ function breach(sim: Sim, s: Scene, a: FieldAgent): void {
     }
     if (!doorSeen) recBreach(sim, s, e.x, e.y, e.x, e.y, { door: -1, how: 'open', n: team.length, sync: true, by: team[0].rid, forced: false });
     // 문 바로 안쪽에 용의자가 있다고 알고 있을 때만 섬광탄을 쓴다(없으면 방 진입 때를 위해 아낀다)
-    const thrower = team.find((b) => sim.units[b.unitId].flashbangs > 0 && b.beliefs.list('hos').some((f) => (f.value.state === 'hold' || f.value.state === 'fight') && dist(f.value.x, f.value.y, inX, inY) <= 5));
+    const thrower = team.find((b) => kitUses(sim, b.rid, 'flashbang') > 0 && b.beliefs.list('hos').some((f) => (f.value.state === 'hold' || f.value.state === 'fight') && dist(f.value.x, f.value.y, inX, inY) <= 5));      // 섬광탄은 사람 몫이다: 가진 사람이 던진다
     if (thrower && sim.t - s.bangAt > 2) {
-      sim.units[thrower.unitId].flashbangs--; s.bangAt = sim.t;
+      useKit(sim, thrower.rid, 'flashbang'); s.bangAt = sim.t;
       bangs += flashbang(sim, s, inX, inY, thrower);
     }
     for (const b of team) { b.path = null; b.pathGoal = -1; }
@@ -407,7 +418,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     case 'search': {
       const reg = s.regions[t.region];
       if (!t.pts) { t.pts = sweepPoints(sim, s, a, t); t.ptI = 0; t.covered = new Set(); t.fails = 0; }
-      if (reg.indoor && r.dept !== 'fire') { let m = 0; for (const i of reg.tiles) if (s.fire[i] > m && dist(a.x, a.y, i % s.w, (i / s.w) | 0) < 4) m = s.fire[i]; if (m > 0.35) { finishTask(sim, s, a, false, 'fire'); return; } }
+      if (reg.indoor && !hasKit(sim, a.rid, 'turnout')) { let m = 0; for (const i of reg.tiles) if (s.fire[i] > m && dist(a.x, a.y, i % s.w, (i / s.w) | 0) < 4) m = s.fire[i]; if (m > 0.35) { finishTask(sim, s, a, false, 'fire'); return; } }
       if (t.ptI >= t.pts.length) {
         const total = Math.max(1, walkableCount(s, reg.tiles));
         const conf = clamp(t.covered!.size / total, 0, 1);
@@ -427,7 +438,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       return;
     }
     case 'suppress': {
-      if (u.pumpFailed || (u.water <= 0 && !u.hydrant)) { a.equipIssue = u.pumpFailed ? 'pump' : 'water'; finishTask(sim, s, a, false, 'equip'); return; }
+      if (u.pumpFailed || (u.water <= 0 && !u.hydrant)) { equipTrouble(sim, s, a, u.pumpFailed ? 'pump' : 'water'); finishTask(sim, s, a, false, 'equip'); return; }
       if (t.tile < 0 || s.fire[t.tile] <= 0.05 || sim.t > t.progress) { t.tile = nearestFireTile(sim, s, a, t.region); t.progress = sim.t + 1.6; }
       const reg = s.regions[t.region];
       if (t.tile < 0) {
@@ -487,7 +498,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       a.label = m === 'arrived' ? '구조 줄 투척' : '물가로 이동';
       if (m !== 'arrived') { t.progress = Math.max(0, t.progress - dt * 0.5); return; }
       a.fx = c.x - a.x; a.fy = c.y - a.y;
-      t.need = 9 / (0.4 + r.skills.rescue * 0.8 + u.tool * 0.5);
+      t.need = 9 / (0.4 + r.skills.rescue * 0.8 + toolUse(sim, a.rid, 'water', I) * 0.5);
       t.progress += dt * staminaF(r); a.ring = t.progress / t.need;
       drain(sim, a, 0.5);
       if (t.progress >= t.need) {
@@ -508,7 +519,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const m = moveTo(sim, s, a, c.x, c.y, 1.5);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
-      const rate = r.skills.rescue * (0.35 + 0.65 * u.tool) * staminaF(r) * (s.smoke[tileOf(s, a.x, a.y)] > 0.4 ? 0.7 : 1);
+      const rate = r.skills.rescue * (0.35 + 0.65 * toolUse(sim, a.rid, 'extricate', I)) * staminaF(r) * (s.smoke[tileOf(s, a.x, a.y)] > 0.4 ? 0.7 : 1);
       c.trapWork -= rate * dt; drain(sim, a, 0.8);
       a.ring = clamp(1 - c.trapWork / 16, 0.05, 1);
       if (c.trapWork <= 0) {
@@ -523,7 +534,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     }
     case 'treat': {
       const c = s.casualties[t.cas];
-      const q = clamp(r.skills.medical * (0.5 + 0.5 * u.medLevel) * 1.15, 0.2, 1);
+      const med = medLevelOf(sim, a.rid);      // 이 대원이 든 의료 장비의 수준 (없으면 부서의 기본 교육)
+      const q = clamp(r.skills.medical * (0.5 + 0.5 * med) * 1.15, 0.2, 1);
       // 이미 처치를 받은 환자는 더 나은 처치를 할 수 있는 대원만 다시 본다
       if (c.dead || c.where === 'loaded' || c.where === 'hospital' || (c.treated && q <= c.treatQ + 0.15)) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
       if (c.where === 'carried') return;
@@ -531,7 +543,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const m = moveTo(sim, s, a, c.x, c.y, 1.3);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
-      const rate = Math.max(0.1, r.skills.medical * (0.5 + 0.5 * u.medLevel)) * staminaF(r);
+      const rate = Math.max(0.1, r.skills.medical * (0.5 + 0.5 * med)) * staminaF(r);
       t.need = 4.5 + (c.health < 40 ? 4 : c.health < 70 ? 2 : 0);
       c.treatProg += rate * dt; a.ring = c.treatProg / t.need; drain(sim, a, 0.3);
       if (c.treatProg >= t.need) {
@@ -554,6 +566,15 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         // 다른 대원이 이송 중 → 곁에서 보조
         const carrier = s.agents.find((b) => b.carrying === c.id);
         if (!carrier) { c.where = 'scene'; return; }
+        // 공기호흡기가 없는 대원은 위험한 건물(화재·가스·붕괴) 안으로 따라 들어가지 않는다.
+        // 옮기는 중이라는 것과 그 자리를 믿음에 넣고 물러난다(fitFor 가 그 믿음으로 다시 맡지 않는다 — 낡은 믿음으로 같은 시도를 되풀이하지 않게)
+        if (!hasKit(sim, a.rid, 'scba')) {
+          const rg = s.region[tileOf(s, carrier.x, carrier.y)];
+          if (rg >= 0 && s.regions[rg].indoor && (s.kind === 'fire' || s.kind === 'hazmat' || s.kind === 'collapse' || (a.beliefs.val<number>('fire', rg) ?? 0) > 0.25)) {
+            learn(sim, a, casFact(sim, s, c, r.name), false);
+            finishTask(sim, s, a, false, 'unsafe'); return;
+          }
+        }
         a.label = '이송 보조';
         moveTo(sim, s, a, carrier.x, carrier.y, 1.2);
         return;
@@ -683,6 +704,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const p = s.props[t.prop];
       const gone = (text: string): Fact => mkFact('haz', p.id, { kind: 'bomb', active: false, x: p.x, y: p.y }, r.name, sim.t, 1, true, text);
       if (p.mitigated || p.exploded) { learn(sim, a, gone(p.exploded ? '장치가 이미 터졌습니다 — 해체할 것이 남아 있지 않음' : '폭발물 위험 해소'), true, true); finishTask(sim, s, a, true); return; }
+      if (!hasKit(sim, a.rid, 'eodKit')) { finishTask(sim, s, a, false, 'equip'); return; }      // 해체 공구를 든 처리 요원만 손댄다 (fitFor 가 먼저 막는다)
       const m = moveTo(sim, s, a, p.x, p.y, 1.6);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
@@ -761,10 +783,10 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
           if (s.entryExit >= 0 && s.entryExit < s.exits.length) {
             t.tile = s.entryExit;
             if (s.entryExit2 >= 0 && s.entryExit2 < s.exits.length) {
-              // 두 문 동시 진입: 1조가 둘 채워지면 그다음 둘은 2조로 돈다
+              // 두 문 동시 진입: 사람이 적은 문으로 간다(둘째부터 번갈아 — 셋이면 2·1, 넷이면 2·2). 방패수는 언제나 주 출입구
               let n1 = 0, n2 = 0;
               for (const b of s.agents) if (b !== a && b.status === 'active' && b.task && b.task.kind === 'engage' && b.task.tile >= 0) { if (b.task.tile === s.entryExit) n1++; else if (b.task.tile === s.entryExit2) n2++; }
-              if (n1 >= 2 && n2 < 2) t.tile = s.entryExit2;
+              if (n2 < n1 && !hasKit(sim, a.rid, 'shield')) t.tile = s.entryExit2;
             }
           } else { let bd = 1e9; s.exits.forEach((e, k) => { const d0 = dist(a.x, a.y, e.x, e.y); if (d0 < bd) { bd = d0; t.tile = k; } }); }
         }
@@ -788,10 +810,10 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
             rd.entered = true; rd.open = true; s.staticVersion++;
             if (rd.blocking) { s.propAt[rd.y * s.w + rd.x] = -1; rd.blocking = false; rd.locked = false; }
             recBreach(sim, s, rd.x, rd.y, a.x, a.y, { door: rd.id, how: breachHowFor(sim, [a, ...mates], wasLocked, false), n: mates.length + 1, sync: false, by: a.rid, forced: wasLocked });
-            const thrower = [a, ...mates].find((b) => sim.units[b.unitId].flashbangs > 0);
+            const thrower = [a, ...mates].find((b) => kitUses(sim, b.rid, 'flashbang') > 0);
             let n = -1;
             if (thrower && sim.t - s.bangAt > 2 && dist(h.x, h.y, rd.x, rd.y) <= 8) {
-              sim.units[thrower.unitId].flashbangs--; s.bangAt = sim.t;
+              useKit(sim, thrower.rid, 'flashbang'); s.bangAt = sim.t;
               n = flashbang(sim, s, rd.x + (h.x - rd.x) * 0.6, rd.y + (h.y - rd.y) * 0.6, thrower);
             } else if (sim.t >= h.alertUntil) { h.facing = Math.atan2(rd.y - h.y, rd.x - h.x); h.alertUntil = sim.t + 5; }
             panicShot(sim, s, I, rd.x, rd.y);
@@ -805,8 +827,9 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const stunned = sim.t < h.stunUntil;
       const d = dist(a.x, a.y, h.x, h.y);
       // ② 섬광탄: 용의자 가까이 다가갔을 때 던져 넣는다
-      if (!stunned && u.flashbangs > 0 && d <= 5 && sim.t - s.bangAt > 7 && los(s, a.x, a.y, h.x, h.y)) {
-        u.flashbangs--; s.bangAt = sim.t;
+      const myBangs = kitUses(sim, a.rid, 'flashbang');      // 내가 가진 섬광탄 (부대 몫이 아니라 사람 몫)
+      if (!stunned && myBangs > 0 && d <= 5 && sim.t - s.bangAt > 7 && los(s, a.x, a.y, h.x, h.y)) {
+        useKit(sim, a.rid, 'flashbang'); s.bangAt = sim.t;
         const n = flashbang(sim, s, a.x + (h.x - a.x) * 0.7, a.y + (h.y - a.y) * 0.7, a);
         emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 3, text: `섬광탄 투척! ${n ? `용의자 ${n}명 무력화.` : '효과 없음.'}` });
       }
@@ -830,10 +853,11 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         return;
       }
       // ④ 인질이 곁에 있고 용의자가 쏘지 않는 동안에는 사격하지 않는다
-      const bangComing = s.agents.some((b) => b !== a && b.status === 'active' && b.task && b.task.kind === 'engage' && b.task.hostile === h.id && sim.units[b.unitId].flashbangs > 0);
-      if (hostageNear(s, h) && (h.state !== 'fight' || bangComing || u.flashbangs > 0)) {
+      const bangComing = s.agents.some((b) => b !== a && b.status === 'active' && b.task && b.task.kind === 'engage' && b.task.hostile === h.id && kitUses(sim, b.rid, 'flashbang') > 0);
+      const haveBang = kitUses(sim, a.rid, 'flashbang') > 0;      // (위에서 방금 던졌으면 줄어 있다)
+      if (hostageNear(s, h) && (h.state !== 'fight' || bangComing || haveBang)) {
         a.fx = h.x - a.x; a.fy = h.y - a.y;
-        if (u.flashbangs > 0) {
+        if (haveBang) {
           // 벽 너머로는 던질 수 없다: 용의자가 보이는 자리까지 다가간다
           a.label = '섬광탄 투척 위치로 접근';
           if (d > 4.6 || !los(s, a.x, a.y, h.x, h.y)) { a.pathGoal = sim.t >= t.repathAt - 4.4 ? -1 : a.pathGoal; if (moveTo(sim, s, a, h.x, h.y, 4.2, true) === 'nopath') finishTask(sim, s, a, false, 'nopath'); }

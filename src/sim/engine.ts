@@ -3,7 +3,7 @@
 // 어떤 배속으로 보든 같은 시드에서는 같은 결과가 나온다. 이 파일을 포함한 src/sim 은 DOM 에 의존하지 않는다.
 
 import { generateCity } from './city';
-import { initTraffic, tickTraffic } from './traffic';
+import { endTraffic, initTraffic, tickTraffic } from './traffic';
 import type { TrafficState } from './traffic';
 import { buildReport } from './debrief';
 import { tickPursuits } from './pursuit';
@@ -133,6 +133,7 @@ export class Sim {
     const open = this.incidents.filter((I) => I.phase !== 'closed');
     if (open.length && this.t < this.hardCap) return;
     for (const I of open) closeIncident(this, I, 'shiftend');
+    endTraffic(this);      // 남은 행사 인파의 혼잡을 거둔다 (결과 불변 — 교대가 끝난 뒤에는 아무것도 돌지 않는다)
     this.ended = true;
     this.report = buildReport(this);
     emit(this, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 3, text: `교대 종료. 사건 ${this.report.totalIncidents}건 처리.` });

@@ -175,6 +175,7 @@ export class CameraDirector {
     for (const h of s.hostiles) if ((h.state === 'hold' || h.state === 'fight' || h.state === 'flee') && !h.hidden) add(h.x, h.y, 2.5);
     for (const a of s.agents) {
       if (a.status === 'left') continue;
+      if (a.status === 'down') { add(a.x, a.y, 1.0); continue; }      // (H1) 쓰러진 대원: 임무가 없어 빠지던 것을 넣는다 (구하러 가는 대원은 아래에서 rescueMate 로 든다)
       const tk = a.task ? a.task.kind : 'standby';
       if (tk === 'standby' || tk === 'board' || tk === 'rehab' || tk === 'resupply' || tk === 'swapAir') continue;
       add(a.x, a.y, tk === 'perimeter' || tk === 'traffic' ? 0.5 : 1.2);

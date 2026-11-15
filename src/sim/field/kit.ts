@@ -72,6 +72,7 @@ export function addCas(s: Scene, x: number, y: number, mob: Mobility, health: nu
     where: 'scene', treated: false, treatProg: 0, dead: false, treatQ: 0, bleed0: bleed, bystander: false, walking: false, path: null, pathI: 0, panic: false,
     wander: false, wanderT: 0, isTarget: false, hostage: false, climb: undefined, bystander2: undefined, inWater: undefined, drift: undefined,      // 나중에 붙는 칸도 미리 (모든 구조 대상이 같은 모양)
     tDiscovered: -1, tFreed: -1, tTreated: -1, tSafe: -1, tLoaded: -1, tDead: -1, tHospital: -1, discoveredBy: -1, causeEvent: -1,
+    injuries: undefined, bleedCause: undefined, deathCause: undefined, lost: undefined,      // (H1) 부상 기록 — 처음 상태의 원인은 injury.initInjuries 가 붙인다
     ...extra,
   };
   s.casualties.push(c);
@@ -84,6 +85,9 @@ export function addHostile(s: Scene, x: number, y: number, weapon: Hostile['weap
     health: 100, morale: 0.55 + aggression * 0.45, aggression, skill, weapon, state: 'hold', hidden, cooldown: 1, fleeAt,
     path: null, pathI: 0, negot: 0, seenOfficers: 0, targetRid: -1,
     facing: Math.PI / 2, lookAt: 0, stunUntil: -1, hostageId: -1, deadline: Infinity, alertUntil: -1, moveAt: 0, shotAt: -99, retreated: false, dragging: false,
+    // (H1) 부상 — 나중에 붙는 칸을 미리 비워 둔다 (모든 용의자가 같은 모양)
+    injuries: undefined, bleed: undefined, bleed0: undefined, treatQ: undefined, tTreated: undefined, dead: undefined, tDown: undefined, tDead: undefined,
+    where: undefined, bleedCause: undefined, deathCause: undefined, selfHarmRolled: undefined,
   };
   s.hostiles.push(h);
   return h;

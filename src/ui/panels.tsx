@@ -23,12 +23,13 @@ import { Mark, RoleDot, Token } from './Mark';
 import { airOpLabel } from '../view/renderScene';
 import { HazardStrip } from './HazardStrip';
 import { pinIcon } from '../view/hazardState';
+import { TRIAGE, TRIAGE_NAME, agentStateText, careName, injuryLine, isLoss, respBand, respStateText } from '../view/triage';
 
 const PHASE: Record<string, string> = { unreported: '미신고', call: '신고 접수 중', pending: '배정 대기', dispatched: '출동 중', onscene: '현장 대응', closed: '종료' };
 const UNIT_STATE: Record<string, string> = { available: '대기', turnout: '출동 준비', enroute: '출동 중', onscene: '현장', transport: '병원 이송', hospital: '환자 인계', returning: '복귀 중', oos: '운용 중단' };
 const ROLE_NAME: Record<Role, string> = { SYSTEM: '시스템', CALLER: '신고자', CALL_TAKER: '접수 AI', ANALYST: '분석 AI', DISPATCH: '배정 AI', COMMANDER: '현장 지휘', RESPONDER: '대원', UNIT: '부대' };
 const ROLE_COLOR: Record<Role, string> = { SYSTEM: '#6f7f8e', CALLER: '#d6e2ee', CALL_TAKER: '#86cfd6', ANALYST: '#c3b3f0', DISPATCH: '#f0c27a', COMMANDER: '#ffd166', RESPONDER: '#8fb8de', UNIT: '#9fb3c6' };
-const BAND = ['경상', '중상', '위중', '사망'];
+const BAND = TRIAGE_NAME;      // 중증도 이름·색은 view/triage.ts 한 곳 (H1)
 
 export function Icon({ name, size = 14, color = 'currentColor' }: { name: string; size?: number; color?: string }) {
   return <svg className="icon" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d={ICON_PATH[name] ?? ICON_PATH.unknown} fill={color} fillRule="evenodd" /></svg>;
@@ -146,12 +147,12 @@ function UnitRow({ sim, u, selectedRid, onSelectRid }: { sim: Sim; u: Unit; sele
       <div className={`crewN n${u.crew.length}`}>
         {u.crew.slice().reverse().map((rid) => {
           const r = sim.responders[rid], role = roleOf(sim, rid);
-          return <RoleDot key={rid} group={role.group} field={field} health={r.health} down={r.status === 'down'} stays={stays(sim, rid)} selected={selectedRid === rid} onClick={() => onSelectRid(rid)}
-            title={`${r.name} · ${role.name}${rid === u.crew[0] ? ' (부대장)' : ''} · ${kitLine(sim, rid) || '장비 없음'} · 체력 ${Math.round(r.health)} · 지구력 ${Math.round(r.stamina)} — 클릭하면 이 대원의 판단과 정보를 봅니다`} />;
+          return <RoleDot key={rid} group={role.group} field={field} health={r.health} down={r.status === 'down'} dead={r.dead === true} stays={stays(sim, rid)} selected={selectedRid === rid} onClick={() => onSelectRid(rid)}
+            title={`${r.name} · ${role.name}${rid === u.crew[0] ? ' (부대장)' : ''} · ${kitLine(sim, rid) || '장비 없음'} · 체력 ${Math.round(r.health)} · 지구력 ${Math.round(r.stamina)}${hurtNote(sim, rid)} — 클릭하면 이 대원의 판단과 정보를 봅니다`} />;
         })}
         {(() => { const rid = u.crew[0], r = sim.responders[rid]; return (
-          <span className={`cchip ${selectedRid === rid ? 'sel' : ''} ${r.status}`} onClick={() => onSelectRid(rid)} title={`부대장 ${r.name} · ${roleOf(sim, rid).name}`}>
-            {r.name}<i style={{ width: `${r.health}%`, background: r.health < 40 ? '#ff5d5d' : r.health < 70 ? '#ffd166' : '#5ad17a' }} />
+          <span className={`cchip ${selectedRid === rid ? 'sel' : ''} ${r.status} ${r.dead ? 'dead' : ''}`} onClick={() => onSelectRid(rid)} title={`부대장 ${r.name} · ${roleOf(sim, rid).name}${hurtNote(sim, rid)}`}>
+            {r.name}<i style={{ width: `${Math.max(0, r.health)}%`, background: TRIAGE[Math.min(2, respBand(r))] }} />
           </span>
         ); })()}
       </div>
@@ -162,6 +163,12 @@ function UnitRow({ sim, u, selectedRid, onSelectRid }: { sim: Sim; u: Unit; sele
 
 /** 헬기가 뜨지 못하는 까닭 (부대 줄의 설명과 대원 정보창) */
 const GROUNDED: Record<string, string> = { fog: '안개로 뜨지 못함', night: '야간 운항 안 함', storm: '강풍으로 뜨지 못함' };
+/** (H1) 다친 대원의 한마디: " · 부상 (총상 32 · 연기 흡입 8)". 멀쩡하고 기록도 없으면 빈 글 */
+function hurtNote(sim: Sim, rid: number): string {
+  const r = sim.responders[rid], st = respStateText(r), line = injuryLine(r.injuries, 3);
+  if (!st && respBand(r) === 0) return '';
+  return ` · ${st || TRIAGE_NAME[respBand(r)]}${line ? ` (${line})` : ''}${(r.bleed ?? 0) > 0 ? ' · 출혈' : ''}`;
+}
 /** 대원이 든 장비를 한 줄로 (역할 점의 설명에 쓴다) */
 function kitLine(sim: Sim, rid: number): string { return (sim.responders[rid].kit ?? []).map((it) => KITS[it.id].name).join(', '); }
 /** 그 대원이 탄 헬기가 지금 어느 현장의 상공에 머물고 있는가 (없으면 null) — 읽기만 한다 */
@@ -226,7 +233,7 @@ export function LogPanel({ sim, director, truth, onJump }: { sim: Sim; director:
           const unit = e.role === 'RESPONDER' && e.rid >= 0 ? sim.units[sim.responders[e.rid].unitId] : e.role === 'UNIT' ? byCall.get(e.actor) : undefined;
           const col = unit ? FIELD_TEXT[fieldOf(unit)] : ROLE_COLOR[e.role];
           return (
-            <div key={e.id} className={`ev k-${e.kind} ${e.problem ? 'problem' : ''} ${e.truth ? 'truth' : ''} imp-${e.importance}`} onClick={() => { if (inc) director.pin(inc.id, inc.phase === 'onscene' || inc.phase === 'closed' ? 'scene' : 'city'); }}
+            <div key={e.id} className={`ev k-${e.kind} ${e.problem ? 'problem' : ''} ${e.truth ? 'truth' : ''} imp-${e.importance} ${isLoss(e) ? 'loss' : ''}`} onClick={() => { if (inc) director.pin(inc.id, inc.phase === 'onscene' || inc.phase === 'closed' ? 'scene' : 'city'); }}
               onDoubleClick={() => onJump && onJump(e.t, e.incidentId)} title="클릭: 이 사건 관찰 · 더블클릭: 이 순간으로 이동">
               <span className="t">{fmtClock(sim.startTod + e.t)}</span>
               {inc && <span className="inc">{inc.code}</span>}
@@ -341,9 +348,18 @@ export function AgentPanel({ sim, rid, truth = false }: { sim: Sim; rid: number;
         </div>
         <div className="stats">
           {stats.map(([k, v]) => <div key={k} className="prob"><span>{k}</span><Bar v={v} color="#7cc4ff" w={110} /><span className="num">{Math.round(v * 100)}</span></div>)}
-          <div className="prob"><span>건강</span><Bar v={r.health / 100} color={r.health < 40 ? '#ff5d5d' : '#5ad17a'} w={110} /><span className="num">{Math.round(r.health)}</span></div>
+          <div className="prob"><span>건강</span><Bar v={r.health / 100} color={TRIAGE[Math.min(2, respBand(r))]} w={110} /><span className="num">{Math.round(r.health)}</span></div>
           <div className="prob"><span>체력 잔량</span><Bar v={r.stamina / 100} color="#58b6ff" w={110} /><span className="num">{Math.round(r.stamina)}</span></div>
         </div>
+        {/* (H1) 부상: 원인별 피해, 출혈, 처치, 후송 — 다친 적이 있는 대원만 */}
+        {((r.injuries && r.injuries.length > 0) || r.status !== 'ok' || r.dead) && (<>
+          <h4>부상</h4>
+          <div className="kv"><span className="dim">중증도</span><span><span className={`band band-${respBand(r)}`}>{TRIAGE_NAME[respBand(r)]}</span>{respStateText(r) ? ` · ${respStateText(r)}` : ''}</span></div>
+          <div className="kv"><span className="dim">원인</span><span>{injuryLine(r.injuries) || '기록 없음'}</span></div>
+          {(r.bleed ?? 0) > 0 && <div className="kv"><span className="dim">출혈</span><span>있음{(r.treatQ ?? 0) > 0 ? ' (처치로 늦춤)' : ''}</span></div>}
+          {(r.treatQ ?? 0) > 0 && <div className="kv"><span className="dim">처치</span><span>{careName(r.treatQ)}</span></div>}
+          {r.care && <div className="kv"><span className="dim">후송</span><span>{r.care === 'aboard' ? '구급차 탑승 — 병원으로' : '병원 인계'}</span></div>}
+        </>)}
         {/* (R1) 든 장비: 묶음 기호 · 이름 · 수량 · 고장. 숨은 고장은 관찰자 시점에서만 흐리게 보인다 (AI 는 아직 모른다) */}
         <h4>장비</h4>
         {kit.length === 0 ? <div className="empty">개인 장비 없음{role.stays ? ' (현장에 내리지 않는 자리)' : ''}</div> : (
@@ -372,9 +388,9 @@ export function AgentPanel({ sim, rid, truth = false }: { sim: Sim; rid: number;
             </tbody></table>
           </>)}
         </>)}
-        {aloft ? null : !agent || !scene ? <div className="empty">현재 현장에 투입되어 있지 않습니다 ({UNIT_STATE[u.state]}{u.grounded ? ` — ${GROUNDED[u.grounded]}` : ''}).</div> : (<>
+        {aloft ? null : !agent || !scene ? <div className="empty">현재 현장에 투입되어 있지 않습니다 ({respStateText(r) ? `${respStateText(r)} · ` : ''}{UNIT_STATE[u.state]}{u.grounded ? ` — ${GROUNDED[u.grounded]}` : ''}).</div> : (<>
           <h4>현재 행동</h4>
-          <div className="kv"><span className="dim">상태</span><span>{agent.status === 'active' ? (agent.label || '판단 중') : agent.status === 'down' ? '쓰러짐' : agent.status === 'withdrawn' ? '부상 — 후송 대기' : '이동'}{agent.isCommander ? ' · 현장 지휘관' : ''}</span></div>
+          <div className="kv"><span className="dim">상태</span><span>{agentStateText(agent, r)}{agent.isCommander ? ' · 현장 지휘관' : ''}</span></div>
           <h4>행동 후보와 점수 (Utility)</h4>
           {agent.candidates.length === 0 && <div className="empty">아직 판단 기록이 없습니다.</div>}
           {agent.candidates.map((c, k) => <div key={k} className={`cand ${c.chosen ? 'chosen' : ''}`}><Bar v={Math.max(0, Math.min(1, c.score / 1.3))} color={c.chosen ? '#d6e2ee' : '#52606d'} w={60} /><span className="num">{c.score.toFixed(2)}</span><span>{c.label}</span></div>)}
@@ -528,7 +544,7 @@ export function Ticker({ sim, truth }: { sim: Sim; truth: boolean }) {
   }
   if (!ev) return null;
   const inc = ev.incidentId >= 0 ? sim.incidents[ev.incidentId] : null;
-  const cls = ev.problem ? 'bad' : ev.kind === 'resolve' || ev.kind === 'recovery' ? 'good' : ev.kind === 'arrive' ? 'info' : 'note';
+  const cls = isLoss(ev) ? 'loss' : ev.problem ? 'bad' : ev.kind === 'resolve' || ev.kind === 'recovery' ? 'good' : ev.kind === 'arrive' ? 'info' : 'note';      // (H1) 순직·사망은 빨간 경고가 아니라 차분한 회청색
   return <div key={ev.id} className={`ticker ${cls}`}>{inc && <b>사건 {inc.code}</b>}<span>{ev.text}</span></div>;
 }
 

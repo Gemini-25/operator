@@ -20,9 +20,11 @@ import { buildScene } from './builders';
 import { act, finishTask } from './executor';
 import { staticPass, tileOf } from './grid';
 import { tickCasualties, tickCollapse, tickCrush, tickFire, tickGas, tickHostiles, tickLane, tickLeaks, tickLift, tickMedical, tickWander, tickWater } from './hazards';
+import { bandOf, initInjuries, noteInjury, smokeCause } from './injury';
 
 export function createScene(sim: Sim, I: Incident): Scene {
   const s = buildScene(sim, I, sim.rng.fork('scene:' + I.id));
+  initInjuries(sim, s, I);      // (H1) 처음부터 다쳐 있는 사람의 원인을 적는다 — 기록만, 난수를 부르지 않는다
   s.allIdleSince = -1; s.rollCallAt = -1e9;      // 지휘관이 쓰는 칸은 만들 때 채워 둔다 (도중에 속성이 생기면 현장 객체의 모양이 바뀌어 매 틱 도는 코드가 느려진다)
   s.air = []; s.light = null; s.airAt = -1;      // (R1) 상공의 헬기가 쓰는 칸 — 쓰는 것은 단계 4·5 부터
   sim.scenes[I.id] = s;
@@ -125,6 +127,7 @@ export function agentHealth(sim: Sim, s: Scene, I: Incident, a: FieldAgent): voi
   const r = sim.responders[a.rid];
   const i = tileOf(s, a.x, a.y);
   const smoke = s.smoke[i], fire = s.fire[i];
+  const hp0 = r.health;      // (H1) 기록용: 연기 전의 체력
   if (smoke > 0.25) {
     a.smokeT += sim.dt;
     let scba = hasKit(sim, a.rid, 'scba');
@@ -144,8 +147,12 @@ export function agentHealth(sim: Sim, s: Scene, I: Incident, a: FieldAgent): voi
     r.health -= (scba ? 0.1 : 1.3) * smoke * sim.dt;
     if (scba) r.stamina = Math.max(0, r.stamina - 0.22 * smoke * sim.dt);      // 공기호흡기를 메고 연기 속에서 일하면 지친다
   } else a.smokeT = Math.max(0, a.smokeT - sim.dt * 2);
+  const hp1 = r.health;      // (H1) 기록용: 불 전의 체력
   if (fire > 0.4) r.health -= (hasKit(sim, a.rid, 'turnout') ? 2.6 : 9) * fire * sim.dt;
   if (r.health < 1) r.health = 1;
+  // (H1) 기록만: 이 틱에 연기(가스 누출 현장이면 유독 가스)와 불이 깎은 양 — 식은 위에 그대로 있다
+  if (hp1 < hp0) r.injuries = noteInjury(r.injuries, smokeCause(s), hp0 - hp1, sim.t, Math.min(2, bandOf(r.health)));
+  if (r.health < hp1) r.injuries = noteInjury(r.injuries, 'burn', hp1 - r.health, sim.t, Math.min(2, bandOf(r.health)));
   if (r.health <= 15 && a.status !== 'down') {
     if (a.task) finishTask(sim, s, a, false, 'preempt');
     const wasSafe = a.status === 'withdrawn';

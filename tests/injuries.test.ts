@@ -9,7 +9,7 @@ import { Sim } from '../src/sim/engine';
 import { createIncident } from '../src/sim/incidents';
 import { createAidUnit } from '../src/sim/resources';
 import { TRAP_R, TRAP_WORK, band, blast, tickCasualties, tickCollapse, tickGas, tickWater } from '../src/sim/field/hazards';
-import { act, makeTask } from '../src/sim/field/executor';
+import { MISHAP, act, makeTask } from '../src/sim/field/executor';
 import { commanderThink } from '../src/sim/field/commander';
 import { detonate } from '../src/sim/field/rules/crime';
 import { CAUSE_NAME, bandOf, hurtCas, hurtCasTo, initialCause, injuryRng, mainCause, noteCasHurt, noteHostileHurt, noteInjury, noteRespHurt, smokeCause } from '../src/sim/field/injury';
@@ -522,6 +522,57 @@ describe('5. 사건 중 새 부상 — 폭발은 고르게, 2차 붕괴는 곁�
     commanderThink(sim, s, cmd);
     expect([carry.status, escort.status]).toEqual(['cancelled', 'cancelled']);
     expect(s.board.some((w) => w.kind === 'extricate' && w.cas === c.id && (w.status === 'open' || w.status === 'active'))).toBe(true);
+  });
+});
+
+/** 대원 하나가 곁에 갇힌 사람을 구출하게 해 놓고 끝날 때까지 돌린다. 위험 배율(hazardMul)을 바꿔 사고를 반드시 내거나 반드시 막는다 */
+function extricateOnce(type: IncidentType, variant: string | undefined, hazardMul: number, closed = false): { sim: Sim; s: Scene; c: Casualty; hp0: number; n0: number; done: boolean } {
+  const { sim, s } = type === 'collapse' && variant === 'std' ? collapseScene('INJ-ext') : sceneOf('INJ-ext', type, variant);
+  const I = sim.incidents[s.incidentId];
+  unitArrived(sim, I, sim.units.find((u) => u.kind === 'rescue')!);
+  const a = s.agents.find((b) => b.status === 'active')!;
+  s.agents = [a];      // 교대(더 알맞은 대원이 넘겨받기)가 끼어들지 않게 혼자 둔다
+  const c = addCas(s, Math.round(a.x), Math.round(a.y) + 1, 'trapped', 80, 0, 0);
+  c.trapWork = 0.05; c.tDiscovered = sim.t;
+  const w: WorkItem = { id: s.nextWorkId++, kind: 'extricate', region: -1, cas: c.id, prop: -1, hostile: -1, tile: -1, mate: -1, priority: 0.82, status: 'active', assignees: [a.rid], max: 2, createdAt: sim.t, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough: false, orderSentAt: {}, cause: -1, failedAt: {} };
+  s.board[w.id] = w;
+  a.task = makeTask('extricate', '구출', w);
+  (sim.tune as { hazardMul: number }).hazardMul = hazardMul;
+  if (closed) { I.phase = 'closed'; I.closedAt = sim.t; }
+  const n0 = sim.events.length;
+  for (let k = 0; k < 60 && c.mob === 'trapped'; k++) { sim.tick++; sim.t = sim.tick * sim.dt; act(sim, s, a); }
+  return { sim, s, c, hp0: 80, n0, done: c.mob !== 'trapped' };
+}
+describe('5. 구출 중 사고 — 붕괴 현장에서 구출을 마칠 때 잔해가 내려앉을 수 있다', () => {
+  it('사고가 나면: 잔해 깔림 6~14 를 더 입고, 그 기록이 구출 완료 기록 앞에 남으며 부상 기록·causeEvent 가 그 기록을 가리킨다', () => {
+    const { sim, s, c, hp0, n0, done } = extricateOnce('collapse', 'std', 1000);
+    expect(done).toBe(true);
+    const evs = sim.events.slice(n0);
+    const acc = evs.find((e) => /^구출 도중 잔해가 내려앉아 구조 대상 .+[이가] 더 다쳤습니다\.$/.test(e.text))!;
+    const fin = evs.find((e) => /구출 완료/.test(e.text))!;
+    expect(acc).toBeTruthy(); expect(fin).toBeTruthy();
+    expect(acc.id).toBeLessThan(fin.id);
+    expect([acc.kind, acc.importance, acc.role]).toEqual(['hazard', 2, 'SYSTEM']);
+    expect(hp0 - c.health).toBeGreaterThanOrEqual(MISHAP.hit[0]); expect(hp0 - c.health).toBeLessThanOrEqual(MISHAP.hit[1]);
+    expect(c.injuries).toEqual([{ cause: 'crush', dmg: hp0 - c.health, sev: bandOf(c.health), t: acc.t, last: acc.t, by: -1, byKind: 'world', ev: acc.id }]);
+    expect(c.causeEvent).toBe(acc.id);
+    // 목적별 흐름 injury:<현장>:extricate 에서 확률, 피해 순서로 뽑았다
+    const probe = sim.rng.fork('injury:' + s.id + ':extricate'); probe.next();
+    expect(hp0 - c.health).toBeCloseTo(probe.range(MISHAP.hit[0], MISHAP.hit[1]), 9);
+  });
+  it('사고가 없으면 아무것도 남지 않는다. 붕괴 현장이 아닌 곳(차에 낀 사람)과 승강기, 판정 뒤에는 추첨도 하지 않는다', () => {
+    const quiet = extricateOnce('collapse', 'std', 0);
+    expect(quiet.done).toBe(true);
+    expect([quiet.c.health, quiet.c.injuries]).toEqual([80, undefined]);
+    expect(quiet.sim.events.slice(quiet.n0).some((e) => /구출 도중/.test(e.text))).toBe(false);
+    for (const [type, variant, closed] of [['traffic', 'std', false], ['collapse', 'elevator', false], ['collapse', 'std', true]] as [IncidentType, string, boolean][]) {
+      const r = extricateOnce(type, variant, 1000, closed);
+      const tag = `${type}/${variant}${closed ? ' (판정 뒤)' : ''}`;
+      expect(r.done, tag).toBe(true);
+      expect([r.c.health, r.c.injuries], tag).toEqual([80, undefined]);
+      // 흐름을 건드리지 않았다: 다음에 뽑히는 값이 새로 만든 흐름의 첫 값과 같다
+      expect(injuryRng(r.sim, r.s, 'extricate').next(), tag).toBe(r.sim.rng.fork('injury:' + r.s.id + ':extricate').next());
+    }
   });
 });
 

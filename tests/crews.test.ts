@@ -2097,6 +2097,21 @@ describe('⑭ 소모와 고장', () => {
     expect(faults(x)).toEqual(faults(y));
     expect(faults(x).slice(0, faults(plain).length)).toEqual(faults(plain));
     for (const r of x.responders.slice(plain.responders.length)) for (const it of r.kit!) { if (it.fault) expect(KITS[it.id].faultable).toBe(true); if (it.id === 'scba') expect(it.uses).toBe(x.tune.airFull); }
+    // 지원 부대의 추첨 순서: 자기 흐름 aid:<n> 에서 대원(한 명당 6번) → 펌프 상태(소방만 1번) → 고장(대원 순서 × 장비 순서)
+    let aidFaults = 0, aidItems = 0;
+    for (let k = 1; k <= 6; k++) {
+      const sim = new Sim('F' + k, { ...NORMAL, equipment: 1 });
+      const I = createIncident(sim, { type: 'fire', rng: sim.rng.fork('t') });
+      for (const key of AID_KEYS) {
+        const u = createAidUnit(sim, key, I)!;
+        const rng = sim.rng.fork('aid:' + sim.aidUsed);
+        for (let q = 0; q < u.crew.length * 6; q++) rng.next();
+        if (u.dept === 'fire') rng.next();
+        for (const rid of u.crew) for (const it of sim.responders[rid].kit!) if (KITS[it.id].faultable) { aidItems++; const want = rng.chance(sim.tune.kitFault); expect(!!it.fault, `${u.callsign} ${sim.responders[rid].name} ${it.id}`).toBe(want); if (want) aidFaults++; }
+        sim.aidUsed++;
+      }
+    }
+    expect(aidItems).toBeGreaterThan(40); expect(aidFaults, '지원 부대에도 고장 난 장비가 있다').toBeGreaterThan(0);
   });
 
   it('예비 펌프로 바꿔 복구되는 것은 펌프 고장이다 — 같은 문제 코드의 개인 장비 고장은 복구되지 않은 채 남는다', () => {

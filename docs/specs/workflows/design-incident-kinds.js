@@ -202,7 +202,8 @@ const proposalText = proposals.map((p) => [
   '약점·버린 것: ' + (p.tradeoffs || []).join(' / '),
 ].join('\n')).join('\n\n')
 
-const wt = (branch, from, file) => [
+const PTR9 = 'wf/kinds-spec-n9'
+const wt = (branch, from, file, ptr = PTR) => [
   '## 작업 폴더와 브랜치',
   '지금 있는 곳은 너만의 git worktree 다. /home/user/operator(주 작업 폴더)의 파일은 고치지 않는다. 먼저:',
   '    git checkout -q -b ' + branch + ' ' + from,
@@ -210,7 +211,7 @@ const wt = (branch, from, file) => [
   '- 고치는 파일은 ' + file + ' 뿐이다(README.md · CLAUDE.md · docs/ROADMAP.md · docs/specs/README.md · 다른 설계서 · 코드는 고치지 않는다 — 표에 넣을 줄은 보고로 돌려준다).',
   '- 커밋 메시지는 한국어로, 끝에 다음 두 줄:',
   ATTR,
-  '- 커밋할 때마다 git branch -f ' + PTR + ' HEAD 로 가리킴 브랜치를 옮긴다(' + PTR + ' 자체를 체크아웃하지 않는다). 푸시하지 않는다. PR 을 만들지 않는다. 끝낼 때 git status 가 깨끗해야 한다.',
+  '- 커밋할 때마다 git branch -f ' + ptr + ' HEAD 로 가리킴 브랜치를 옮긴다(' + ptr + ' 자체를 체크아웃하지 않는다). 푸시하지 않는다. PR 을 만들지 않는다. 끝낼 때 git status 가 깨끗해야 한다.',
 ].join('\n')
 
 const W_SCHEMA = {
@@ -323,8 +324,8 @@ const REVIEWS = [
   ] },
 ]
 
-const reviewPrompt = (v, tag, file, d, extra) => [
-  '너는 독립 검토자다. 다른 사람이 쓴 설계서 초안 ' + file + ' (브랜치 ' + PTR + ')을 **틀린 곳·빠진 곳을 찾으려는 자세로** 검토한다. 네 갈래: **' + v.title + '**. 고치지는 않는다 — 찾은 것을 근거와 함께 보고한다. 쓴 사람의 요약을 믿지 말고 코드로 직접 확인한다. 문제가 없으면 없다고 한다(지어내지 않는다).',
+const reviewPrompt = (v, tag, file, d, extra, ptr = PTR) => [
+  '너는 독립 검토자다. 다른 사람이 쓴 설계서 초안 ' + file + ' (브랜치 ' + ptr + ')을 **틀린 곳·빠진 곳을 찾으려는 자세로** 검토한다. 네 갈래: **' + v.title + '**. 고치지는 않는다 — 찾은 것을 근거와 함께 보고한다. 쓴 사람의 요약을 믿지 말고 코드로 직접 확인한다. 문제가 없으면 없다고 한다(지어내지 않는다).',
   '',
   CTX,
   '',
@@ -332,7 +333,7 @@ const reviewPrompt = (v, tag, file, d, extra) => [
   '',
   '## 설계서 읽는 법',
   '주 작업 폴더에는 이 파일이 없다. 다음으로 꺼내 읽는다:',
-  '    mkdir -p ' + SP + '/review && git -C /home/user/operator show ' + PTR + ':' + file + ' > ' + SP + '/review/' + tag + '-' + v.id + '.md',
+  '    mkdir -p ' + SP + '/review && git -C /home/user/operator show ' + ptr + ':' + file + ' > ' + SP + '/review/' + tag + '-' + v.id + '.md',
   '처음부터 끝까지 읽는다. 조사 보고서(' + SP + '/research/*.md)와 설계안(' + SP + '/proposals/*.md)도 참고한다.' + (extra || ''),
   '',
   '## 쓴 사람의 요약 (참고 — 확인할 대상)',
@@ -379,7 +380,7 @@ const V_SCHEMA = {
   required: ['branch', 'commit', 'lines', 'applied', 'notApplied', 'summary', 'newTypes', 'scenarios', 'units', 'places', 'forOther', 'tableRow', 'orderRow', 'chunkRow', 'canonRows', 'roadmapEntry', 'openQuestions'],
 }
 
-const revisePrompt = (file, tag, w, ftext, extra) => [
+const revisePrompt = (file, tag, w, ftext, extra, first) => [
   '너는 설계서 ' + file + ' (브랜치 ' + PTR + ')의 검토 반영자다. 독립 검토 두 갈래의 지적을 **하나씩 코드로 확인한 뒤** 설계서에 반영한다. 지적이 맞으면 본문을 고치고(검토 메모에 "반영함"을 늘어놓지 않는다 — 본문에 녹인다), 틀렸거나 다르게 반영하면 설계서 끝 "검토 메모"에 그 지적과 이유를 적는다(본보기: docs/specs/X6-catastrophe.md 끝의 "검토 메모").',
   '',
   CTX,
@@ -387,6 +388,7 @@ const revisePrompt = (file, tag, w, ftext, extra) => [
   USER,
   '',
   wt(PTR + '-r' + tag, PTR, file + (extra ? ' (그리고 ' + extra + ')' : '')),
+  ...(first ? ['', '## 시작하기 전에 (브랜치를 만든 바로 다음)', first] : []),
   '',
   '## 검토 지적 (전체 목록은 ' + SP + '/review/findings-' + tag + '-*.md)',
   ftext,
@@ -422,13 +424,11 @@ const reviews8 = (await parallel(REVIEWS.map((v) => () =>
     .then((x) => x ? Object.assign({ id: v.id, title: v.title }, x) : null)))).filter(Boolean)
 log('N8 검토 ' + reviews8.length + '/' + REVIEWS.length + ' 끝 — 지적 ' + reviews8.reduce((n, r) => n + (r.findings || []).length, 0) + '건')
 
-phase('Revise N8')
-const final8 = await twice(revisePrompt(SPEC8, 'n8', W8, findingsOf(reviews8), ''), 'revise:n8', 'Revise N8', V_SCHEMA)
-const n8 = final8 || draft8
+const findings8 = findingsOf(reviews8)
 
-// ───── N9 ─────
+// ───── N8 반영과 N9 초안을 나란히 ─────
 const write9Prompt = [
-  '너는 사건 종류 다양화의 **둘째 설계서 N9 "큰 사건 · 새 장소"**(' + SPEC9 + ')를 쓰는 사람이다. 첫째 설계서 N8(일상 사건 · 공통 틀)은 검토까지 끝나 ' + PTR + ' 브랜치에 있다. N9 는 N8 이 합쳐진 뒤에 구현되므로 N8 의 공통 틀과 이름을 그대로 쓰고, N8 이 N9 로 넘긴 것을 빠짐없이 받는다. 사용자 결정 열네 가지는 그대로 따른다.',
+  '너는 사건 종류 다양화의 **둘째 설계서 N9 "큰 사건 · 새 장소"**(' + SPEC9 + ')를 쓰는 사람이다. 첫째 설계서 N8(일상 사건 · 공통 틀)의 초안은 ' + PTR + ' 브랜치에 있고, 지금 다른 사람이 독립 검토의 지적을 반영하고 있다(너와 나란히 — 끝나면 N8 이 조금 바뀐다). N9 는 N8 이 합쳐진 뒤에 구현되므로 N8 의 공통 틀과 이름을 그대로 쓰고, N8 이 N9 로 넘긴 것을 빠짐없이 받는다. 사용자 결정 열네 가지는 그대로 따른다.',
   '',
   CTX,
   '',
@@ -440,14 +440,18 @@ const write9Prompt = [
   '## 설계안 둘 (전체 파일을 반드시 읽는다)',
   proposalText,
   '',
-  wt(PTR + '-w9', PTR, SPEC9),
+  wt(PTR + '-w9', PTR, SPEC9, PTR9),
   '',
   '## N8 (먼저 처음부터 끝까지 읽는다 — 네 작업 폴더의 ' + SPEC8 + ')',
-  n8.summary ? ('요약: ' + n8.summary) : ('차례: ' + n8.outline),
-  '새 유형: ' + (n8.newTypes || []).join(' / '),
-  '새 시나리오: ' + (n8.scenarios || []).join(' / '),
-  '새 부대: ' + (n8.units || []).join(' / '),
-  'N9 가 알아야 할 것: ' + (n8.forOther || []).join(' / '),
+  '차례: ' + draft8.outline,
+  '새 유형: ' + (draft8.newTypes || []).join(' / '),
+  '새 시나리오: ' + (draft8.scenarios || []).join(' / '),
+  '새 부대: ' + (draft8.units || []).join(' / '),
+  '새 장소: ' + (draft8.places || []).join(' / '),
+  'N9 가 알아야 할 것: ' + (draft8.forOther || []).join(' / '),
+  '',
+  '## N8 초안이 독립 검토에서 받은 지적 (N8 은 이 지적대로 고쳐지는 중이다 — 지적받은 부분에 기대어 쓰지 말고, 같은 잘못을 N9 에서 되풀이하지 않는다)',
+  findings8,
   '',
   '## N9 가 맡는 것',
   '- N8 의 "N8 과 N9 에 나누는 표"에서 N9 몫인 것 전부: 큰 사건(터널 · 지하철 · 공항 · 항구, 산업 현장, 군중 · 행사, 테러 · 중대 위협 등), 새 장소(지도에 더하는 건물과 전용 현장 — 결정 8), 그에 딸린 새 유형 · 새 전문 부대(산악 · 수중 · 화생방 제독, 기동대 등 — N8 이 넘긴 것), 특수 부대 넷의 일을 늘리는 사건(결정 6).',
@@ -464,19 +468,25 @@ const write9Prompt = [
   '초안을 다 쓰면 처음부터 다시 읽으며 절 사이의 어긋남과 N8 과의 어긋남을 고친 뒤 커밋한다(메시지: "N9 설계서: 사건 종류 다양화 — 큰 사건 · 새 장소 (초안)"). 마지막 응답은 구조화된 보고다.',
 ].join('\n')
 
-phase('Write N9')
-const draft9 = await twice(write9Prompt, 'write:n9', 'Write N9', W_SCHEMA)
+phase('Revise N8')
+const both = await parallel([
+  () => twice(revisePrompt(SPEC8, 'n8', W8, findings8, '', ''), 'revise:n8', 'Revise N8', V_SCHEMA),
+  () => twice(write9Prompt, 'write:n9', 'Write N9', W_SCHEMA),
+])
+const final8 = both[0]
+const draft9 = both[1]
+const n8 = final8 || draft8
 if (!draft9) return { pointer: PTR, n8: { spec: SPEC8, draft: draft8, final: final8 }, error: 'N9 초안을 쓰지 못했다' }
 
 phase('Review N9')
-const also8 = ' N8 설계서도 같은 방법으로 꺼내(' + SPEC8 + ') 읽고, N9 가 N8 의 공통 틀·이름·나눔 표와 어긋나는 곳을 함께 찾는다.'
+const also8 = ' N8 설계서(검토 반영이 끝난 것)는 브랜치 ' + PTR + ' 에 있다 — git -C /home/user/operator show ' + PTR + ':' + SPEC8 + ' 로 꺼내 처음부터 끝까지 읽고, N9 가 N8 의 공통 틀·이름·나눔 표와 어긋나는 곳을 함께 찾는다(N9 초안은 N8 이 고쳐지기 전에 쓰였다).'
 const reviews9 = (await parallel(REVIEWS.map((v) => () =>
-  agent(reviewPrompt(v, 'n9', SPEC9, draft9, also8), { label: 'review:n9:' + v.id, phase: 'Review N9', schema: F_SCHEMA })
+  agent(reviewPrompt(v, 'n9', SPEC9, draft9, also8, PTR9), { label: 'review:n9:' + v.id, phase: 'Review N9', schema: F_SCHEMA })
     .then((x) => x ? Object.assign({ id: v.id, title: v.title }, x) : null)))).filter(Boolean)
 log('N9 검토 ' + reviews9.length + '/' + REVIEWS.length + ' 끝 — 지적 ' + reviews9.reduce((n, r) => n + (r.findings || []).length, 0) + '건')
 
 phase('Revise N9')
-const final9 = await twice(revisePrompt(SPEC9, 'n9', W9, findingsOf(reviews9), SPEC8 + ' 의 "N8 과 N9 에 나누는 표"와 N9 를 가리키는 줄 — N9 와 어긋난 곳만 맞춘다'), 'revise:n9', 'Revise N9', V_SCHEMA)
+const final9 = await twice(revisePrompt(SPEC9, 'n9', W9, findingsOf(reviews9), SPEC8 + ' 의 "N8 과 N9 에 나누는 표"와 N9 를 가리키는 줄 — N9 와 어긋난 곳만 맞춘다', 'N9 초안은 다른 브랜치에 있다. 먼저 받아 온다:  git merge --no-edit ' + PTR9 + '   (N8 과 N9 는 다른 파일이라 충돌하지 않는다). 그 뒤 ' + SPEC8 + '(검토 반영이 끝난 최종본)을 처음부터 끝까지 읽고, N9 초안이 N8 이 고쳐지기 전에 쓰였다는 점을 염두에 두고 N9 를 N8 최종본에 맞춘다.'), 'revise:n9', 'Revise N9', V_SCHEMA)
 
 const counts = (reviews) => reviews.map((r) => ({ id: r.id, verdict: r.verdict, counts: (r.findings || []).reduce((m, f) => { m[f.severity] = (m[f.severity] || 0) + 1; return m }, {}) }))
 return {

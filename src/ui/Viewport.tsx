@@ -76,7 +76,8 @@ export function Viewport({ runner, director, sound, book, selectedRid, onSelectR
       runner.frame(now);
       const sim = runner.sim;
       director.sceneAuto = runner.settings.sceneAuto;
-      director.update(sim, dtReal, (I) => !!sim.scenes[I.id] && (sim.scenes[I.id]!.arrivedAt >= 0 || director.manual));
+      // 자동 카메라가 현장을 여는 때: 지상 부대가 닿았거나, (R1) 헬기가 상공에 닿았거나(호이스트 인양·물 투하는 지상 부대보다 먼저 벌어진다), 손으로 고른 사건
+      director.update(sim, dtReal, (I) => { const sc = sim.scenes[I.id]; return !!sc && (sc.arrivedAt >= 0 || (sc.airAt ?? -1) >= 0 || director.manual); });
       // 실제 배속: 자동 감속 중이면 설정이 15여도 1배속이다. 연출 시계와 소리 규칙은 이 값을 쓴다
       const effSpeed = runner.paused ? 0 : runner.slowed ? 1 : runner.settings.speed;
       book.frame(sim, dtReal, { paused: runner.paused || sim.ended, speed: effSpeed, seeks: runner.seeks });

@@ -3,12 +3,12 @@
 
 import { useState } from 'react';
 import { FIELD_NAME, UNIT_KIND_NAME } from '../sim/resources';
-import type { UnitField, UnitKind } from '../sim/types';
+import type { RoleGroup, UnitField, UnitKind } from '../sim/types';
 import { FACILITY_COLOR, FIELD_COLOR, FIELD_TEXT } from '../view/city/tokens';
 import { DISASTER_RING, OBSTACLE_ICON } from '../view/city/trafficLayer';
 import { ICON_PATH } from '../view/icons';
 import { RUIN_MARK, STATE_MARK } from '../view/marks';
-import { FacilityBadge, Token } from './Mark';
+import { FacilityBadge, RoleDot, Token } from './Mark';
 
 const LS_LEGEND = 'ar.legend.v1';
 const FIELDS: [UnitField, UnitKind[]][] = [
@@ -16,6 +16,14 @@ const FIELDS: [UnitField, UnitKind[]][] = [
   ['fire', ['engine', 'ladder']],
   ['rescue', ['rescue', 'als', 'bls', 'medHeli']],
   ['special', ['swat', 'eod', 'hazmat', 'heli', 'boat']],
+];
+/** (R1) 대원의 역할 묶음: 부대 목록의 역할 점. 분야색은 그 대원의 부대를 따른다 (여기서는 대표 분야로 보인다) */
+const ROLES: [RoleGroup, string, UnitField][] = [
+  ['lead', '부대장·팀장', 'police'], ['officer', '경관·기동대원', 'police'], ['shield', '방패수', 'special'], ['marksman', '저격·관측수', 'special'],
+  ['bomb', '폭발물 처리', 'special'], ['observer', '전술 관측관', 'police'], ['pilot', '조종사·정장', 'special'],
+  ['nozzle', '관창수', 'fire'], ['entry', '진입대원', 'fire'], ['engineer', '기관원·조작원', 'fire'],
+  ['rescue', '구조대원', 'rescue'], ['search', '탐지 대원', 'rescue'], ['water', '수난·로프 구조', 'rescue'], ['hazmat', '화학 대원', 'special'],
+  ['medic', '응급구조사·간호사', 'rescue'], ['doctor', '의사', 'rescue'],
 ];
 const STATES: [string, string, string][] = [
   ['available', '대기', '테 없음'],
@@ -135,6 +143,17 @@ export function MapLegend() {
           </div>
           <div className="lg-row">
             <span className="lg-item"><Token field="police" kind="patrol" size={18} no={2} />아래의 점 = 같은 종류 안의 번호 (순찰2)</span>
+          </div>
+          <h5>대원 역할 <span className="dim">부대 목록의 점 · 아래 반 테 = 건강</span></h5>
+          <div className="lg-row lg-roles">
+            {ROLES.map(([g, name, f]) => <span key={g} className="lg-item"><RoleDot group={g} field={f} stays={g === 'pilot' || g === 'observer'} />{name}</span>)}
+          </div>
+          <div className="lg-row">
+            <span className="lg-item"><RoleDot group="nozzle" field="fire" health={100} />온전</span>
+            <span className="lg-item"><RoleDot group="nozzle" field="fire" health={55} />다침</span>
+            <span className="lg-item"><RoleDot group="nozzle" field="fire" health={20} />중상</span>
+            <span className="lg-item"><RoleDot group="nozzle" field="fire" down />쓰러짐</span>
+            <span className="lg-item" title="조종사·정장·관측관: 현장에 내리지 않는다"><RoleDot group="pilot" field="special" stays />점선 = 내리지 않는 자리</span>
           </div>
           <h5>시설 <span className="dim">이름 옆의 숫자 = 대기 중인 부대 수</span></h5>
           <div className="lg-row">

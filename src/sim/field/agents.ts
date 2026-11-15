@@ -7,7 +7,7 @@ import { T } from '../types';
 import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Incident, RadioMsg, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, clamp, dist, josa, pct } from '../util';
 import type { Rng } from '../rng';
-import { hasFirearm, hasKit, kitLive, kitWorks, medLevelOf, roleOf, seatsOf, toolFor } from '../crews';
+import { airShort, hasFirearm, hasKit, kitLive, kitWorks, medLevelOf, roleOf, seatsOf, toolFor } from '../crews';
 import { BeliefStore, mkFact } from './beliefs';
 import type { CostFn } from './grid';
 import { doorAt, isIndoor, los, staticPass, tileOf } from './grid';
@@ -446,13 +446,20 @@ export function pumpOperatorOn(sim: Sim, s: Scene, unitId: number): boolean {
 /**
  * 맡을 수 있는 일은 든 장비가 정한다 (R1 6.2): 위험한 건물 안은 공기호흡기, 진압·잔불 정리는 관창, 봉쇄·교전은 총기, 해체는 해체 공구.
  * 장비 판정은 모두 hasKit·toolFor(알려진 고장만 뺀다)다 — 숨은 고장이 있는 대원의 적합도는 고장이 없는 대원과 같아야 한다(숨은 고장이 배정에 새지 않게).
+ * 공기(R1 9절): 남은 공기가 문턱(45초) 아래인 대원은 위험한 건물 안의 일(수색·구출·이송)과 진압·잔불 정리를 새로 맡지 않는다(crews.airShort —
+ * 자기 장비의 알려진 상태다). 그 일을 맡을 사람이 현장에 없어지면 지휘관의 "맡을 사람이 없는 작업" 요청(commander.anyCapable)이 부대를 부른다.
  * 역할이 먼저 맡는 일(+)·피하는 일(−)은 맡을 수 있을 때만 더한다. 0 이던 것은 0 으로 남는다(선호가 자격을 만들지 않는다).
  */
-export function fitFor(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number {
-  const fit = fitBase(sim, s, a, w);
+export function fitFor(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap = false): number {
+  const fit = fitBase(sim, s, a, w, afterSwap);
   return fit > 0 ? Math.max(0.02, fit + (roleOf(sim, a.rid).prefer[w.kind] ?? 0)) : fit;
 }
-function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number {
+/** 공기가 되는가: 문턱 아래가 아니다 (공기호흡기가 없는 대원은 해당 없음). afterSwap 이면 통을 바꾼 뒤로 보고 따지지 않는다 */
+const airOk = (sim: Sim, rid: number, afterSwap: boolean): boolean => afterSwap || !airShort(sim, rid);
+/** 연기 속에 들어갈 수 있는가: 공기호흡기를 멨고 공기가 된다 */
+const scbaOk = (sim: Sim, rid: number, afterSwap: boolean): boolean => hasKit(sim, rid, 'scba') && airOk(sim, rid, afterSwap);
+/** afterSwap = 공기통을 바꾼 뒤라면 (공기 문턱을 보지 않는다 — 지휘관이 "예비 공기통으로 바꾸면 맡을 수 있는 사람이 있는가"를 볼 때만 쓴다) */
+function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: boolean): number {
   const r = resp(sim, a), u = sim.units[a.unitId], rid = a.rid;
   const hot = s.kind === 'armed' && s.secureAt < 0;
   const fireRisk = (regionId: number): boolean => regionId >= 0 && ((a.beliefs.val<number>('fire', regionId) ?? 0) > 0.25 || s.kind === 'fire' || s.kind === 'hazmat' || s.kind === 'collapse');      // 불이 났거나, 가스가 찼거나, 무너질 수 있는 건물 안은 공기호흡기를 멘 대원만 들어간다
@@ -460,9 +467,9 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number {
     case 'sizeup': return a.isCommander ? 1 : 0;
     case 'search':
       if (hot && !(r.dept === 'police' && hasFirearm(sim, rid))) return 0;
-      if (s.regions[w.region].indoor && fireRisk(w.region) && !hasKit(sim, rid, 'scba')) return 0;
+      if (s.regions[w.region].indoor && fireRisk(w.region) && !scbaOk(sim, rid, afterSwap)) return 0;
       return 0.45 + 0.3 * r.experience + 0.25 * r.judgment + (r.dept === 'police' && s.kind !== 'fire' && s.kind !== 'medical' ? 0.1 : 0) + (r.dept === 'ems' && s.kind === 'medical' ? 0.15 : 0);
-    case 'suppress': return hasKit(sim, rid, 'hose') && !u.pumpFailed && (u.water > 0 || u.hydrant) ? r.skills.fire : 0;      // 관창을 든 사람만 물을 쏜다
+    case 'suppress': return hasKit(sim, rid, 'hose') && airOk(sim, rid, afterSwap) && !u.pumpFailed && (u.water > 0 || u.hydrant) ? r.skills.fire : 0;      // 관창을 든 사람만 물을 쏜다 (공기가 문턱 아래면 통을 바꾼 뒤에)
     case 'hookup':
       if (r.dept !== 'fire' || a.unitId !== w.prop) return 0;
       // 그 부대에서 펌프를 맡은 대원(기관원·사다리 조작원)이 활동 중이면 급수 연결은 그 사람의 일이다. 없거나 쓰러졌으면 그 부대의 누구나 한다
@@ -470,7 +477,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number {
     case 'clear': return 0.3 + r.skills.rescue * 0.5 + toolFor(sim, rid, 'clear') * 0.3;
     case 'force': return 0.3 + r.skills.rescue * 0.5 + toolFor(sim, rid, 'force') * 0.3;
     case 'extricate': {
-      if (!hasKit(sim, rid, 'scba')) {
+      if (!scbaOk(sim, rid, afterSwap)) {
         if (s.kind === 'collapse' || s.kind === 'hazmat') return 0;
         // 불이 난 건물 안에 갇힌 사람도 같다: 믿음 속 자리가 위험한 건물 안이면 공기호흡기를 멘 대원만 들어가 구출한다 (수색·이송과 같은 검사)
         const cb = a.beliefs.val<CasBelief>('cas', w.cas);
@@ -489,9 +496,9 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number {
     case 'carry': case 'escort': {
       if (hot && r.dept !== 'police') return 0;
       const cb = a.beliefs.val<CasBelief>('cas', w.cas);
-      if (!cb && (s.kind === 'fire' || s.kind === 'collapse' || s.kind === 'hazmat') && !hasKit(sim, rid, 'scba')) return 0;      // 어디에 있는지 아직 전달받지 못했다 — 위험한 건물 안일 수 있다
+      if (!cb && (s.kind === 'fire' || s.kind === 'collapse' || s.kind === 'hazmat') && !scbaOk(sim, rid, afterSwap)) return 0;      // 어디에 있는지 아직 전달받지 못했다 — 위험한 건물 안일 수 있다
       // 누가 옮기는 중('carried')이어도 믿음 속 자리로 같은 검사를 한다: 공기호흡기 없는 대원이 이송 보조로 위험한 건물 안에 따라 들어가지 않게
-      if (cb && (cb.where === 'scene' || cb.where === 'carried')) { const rg = s.region[cb.y * s.w + cb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg) && !hasKit(sim, rid, 'scba')) return 0; }
+      if (cb && (cb.where === 'scene' || cb.where === 'carried')) { const rg = s.region[cb.y * s.w + cb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg) && !scbaOk(sim, rid, afterSwap)) return 0; }
       return 0.4 + 0.4 * r.fitness + (hasKit(sim, rid, 'stretcher') ? 0.1 : 0);
     }
     case 'load': return canCarryPatients(u) && a.unitId === w.prop ? 1 : 0;
@@ -509,7 +516,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number {
     case 'rescueMate': return 0.5 + r.fitness * 0.3 + r.teamwork * 0.2;
     case 'waterRescue': return 0.22 + r.skills.rescue * 0.5 + toolFor(sim, rid, 'water') * 0.28;
     case 'defuse': return hasKit(sim, rid, 'eodKit') ? 0.6 + 0.4 * r.skill : 0;      // 해체 공구를 든 처리 요원만 손댄다
-    case 'overhaul': return hasKit(sim, rid, 'hose') ? 0.4 + 0.6 * r.skills.fire : 0;      // 불씨를 만나면 분사한다: 관창을 든 사람만
+    case 'overhaul': return hasKit(sim, rid, 'hose') && airOk(sim, rid, afterSwap) ? 0.4 + 0.6 * r.skills.fire : 0;      // 불씨를 만나면 분사한다: 관창을 든 사람만 (공기가 문턱 아래면 통을 바꾼 뒤에)
     case 'hoist': case 'airDrop': return 0;      // 공중 임무: 지상 대원은 맡지 않는다 (상공의 헬기가 field/rules/air.ts 에서 가져간다)
   }
 }

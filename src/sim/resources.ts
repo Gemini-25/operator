@@ -1,7 +1,7 @@
 // ResourceManager — 부대·대원 명부, 차량 상태와 도시 지도 위 이동.
 
 import { coastY, edgeName, edgeTime, findRoute, nodeName, weatherSpeedFactor } from './city';
-import { AIR_KIND, EXTRA_NAMES, ROLES, STAFF, dealFlashbangs, fieldCrew, heliPad, isHovering, kitFor, medLevelOf, skillsOf, slotsOf } from './crews';
+import { AIR_KIND, EXTRA_NAMES, ROLES, STAFF, dealFlashbangs, drawFaults, fieldCrew, heliPad, isHovering, kitFor, medLevelOf, refillAir, skillsOf, slotsOf } from './crews';
 import { recomputeUnmet } from './dispatch/dispatcher';      // 함수 안에서만 부른다 (dispatcher 가 이 파일을 import 한다 — 모듈 맨 위에서 쓰지 않는다)
 import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
@@ -113,7 +113,7 @@ export function createRoster(sim: Sim): void {
         skill, judgment: clamp(st() * 0.65 + exp * 0.35, 0.2, 0.98), composure: st(), fitness: st(), teamwork: st(), experience: exp,
         skills: skillsOf(role, skill),      // 능력은 역할의 식으로만 정한다 (추가 난수 없음)
         trait: '', health: 100, stamina: tn.startStamina, status: 'ok', xpGained: 0, incidentsWorked: 0,
-        role, kit: kitFor(role),
+        role, kit: kitFor(role, tn.airFull),      // 공기통은 장비 손잡이의 용량으로 가득 채워 나간다
       };
       r.trait = traitOf(r);
       if (include && !(minimal && staff.minDrop.indexOf(k) >= 0)) { crew.push(r.id); sim.responders.push(r); members.push(r); }
@@ -146,6 +146,8 @@ export function createRoster(sim: Sim): void {
     if (HEAVY[d.kind]) u.heavy = true;
     sim.units.push(u);
   });
+  // 개인 장비의 고장 추첨: 교대 흐름 'kit' 하나로, 편성된 대원만 (대원 순서 × 장비 순서). 고장은 처음 쓰려 할 때 드러난다
+  drawFaults(sim.rng.fork('kit'), sim.responders, tn.kitFault);
 }
 
 // 지원 부대의 이름: 지원 한 번에 네 칸씩 쓴다(지원 종류의 최소 인원은 많아야 4명). 지원은 교대당 많아야 5회, 재난 때 3회 더(disaster.ts) — 8회 × 4칸
@@ -171,7 +173,7 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
   const rng = sim.rng.fork('aid:' + sim.aidUsed), tn = sim.tune;
   const uid = sim.units.length, crew: number[] = [], members: Responder[] = [];
   // 지원 부대는 그 종류의 최소 인원 편성이다(급히 꾸린 팀). 역할·장비는 편성표 그대로.
-  // 난수(aid:<n>)의 순서: 대원(자리 순서, 한 명당 경험 1 + 능력 5) → 펌프 상태 → (단계 6) 개인 장비 고장 추첨
+  // 난수(aid:<n>)의 순서: 대원(자리 순서, 한 명당 경험 1 + 능력 5) → 펌프 상태 → 개인 장비 고장 추첨
   const staff = STAFF[kind];
   slotsOf(kind, true).forEach((slot, k) => {
     const role = staff.std[slot];
@@ -184,7 +186,7 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
       skill, judgment: clamp(st() * 0.65 + exp * 0.35, 0.2, 0.95), composure: st(), fitness: st(), teamwork: st() * 0.85, experience: exp,
       skills: skillsOf(role, skill),
       trait: '', health: 100, stamina: 88, status: 'ok', xpGained: 0, incidentsWorked: 0,
-      role, kit: kitFor(role),
+      role, kit: kitFor(role, tn.airFull),
     };
     r.trait = traitOf(r);
     crew.push(r.id); sim.responders.push(r); members.push(r);
@@ -206,6 +208,7 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
     ...fitOf(d),      // 환자 자리·예비 공기통도 편성표 부대와 같게 (빠뜨리면 지원 구급차가 환자를 싣지 못한다)
   };
   if (HEAVY[kind]) u.heavy = true;
+  drawFaults(rng, members, tn.kitFault);      // 펌프 상태 다음에 뽑는다 (같은 흐름 aid:<n> 의 끝)
   sim.units.push(u);
   return u;
 }
@@ -393,6 +396,9 @@ function arrive(sim: Sim, u: Unit): void {
   } else if (u.state === 'returning') {
     u.water = u.waterMax; u.hydrant = false;
     if (u.air) { u.fuel = u.fuelMax; u.bucket = u.bucketMax; }      // 집에 닿은 헬기는 연료와 물 바구니를 채운다
+    // 집에 닿으면 예비 공기통을 다시 싣고 대원의 공기통도 가득 채운다
+    if (KIND[u.kind].spareAir > 0) u.spareAir = KIND[u.kind].spareAir;
+    for (let ci = 0; ci < u.crew.length; ci++) refillAir(sim, u.crew[ci]);
     if (u.pumpFailed) { u.pumpFailed = false; u.pumpCond = 0.55; }
     u.state = crewReady(sim, u) === 0 || u.aid ? 'oos' : 'available';
     if (u.aid) emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', text: `${u.callsign}: 지원 임무를 마치고 관할로 복귀했습니다.`, imp: 1 });

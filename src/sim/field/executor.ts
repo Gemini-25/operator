@@ -7,7 +7,7 @@ import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
 import type { Fact, FieldAgent, Hostile, Incident, KitId, Prop, Scene, Task, TaskKind, WorkItem } from '../types';
 import { clamp, dist, josa, pct } from '../util';
-import { hasKit, kitRng, kitUses, kitWorks, medLevelOf, seatsOf, toolUse, useKit } from '../crews';
+import { hasKit, kitRng, kitUses, kitWorks, medLevelOf, refillAir, seatsOf, toolUse, useKit } from '../crews';
 import { RETRY_AFTER, agentCost, casFact, debrisText, detectRadius, exitName, fitFor, hosFact, learn, learnQuiet, perceive, regionNameAt, resp, staminaF, visionOf, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { astar, doorAt, isIndoor, los, staticPass, tileOf, walkableCount } from './grid';
@@ -75,6 +75,8 @@ function discoverBlock(sim: Sim, s: Scene, I: Incident, a: FieldAgent, tile: num
 }
 
 type MoveRes = 'arrived' | 'moving' | 'nopath' | 'busy';
+/** 공기통을 바꾸는 데 걸리는 시간(초) */
+const SWAP_AIR_TIME = 8;
 
 export function moveSpeed(sim: Sim, s: Scene, a: FieldAgent): number {
   const r = resp(sim, a);
@@ -477,7 +479,11 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     if (t.sub.kind === 'suppress') {
       const tx = t.sub.tile % s.w, ty = (t.sub.tile / s.w) | 0;
       if (s.fire[t.sub.tile] < 0.2) { t.sub = null; a.path = null; return; }
-      if (!spray(sim, s, a, tx, ty)) { t.sub = null; finishTask(sim, s, a, false, 'equip'); }
+      if (!spray(sim, s, a, tx, ty)) {
+        t.sub = null;
+        if (t.kind === 'swapAir') a.equipRetryAt = sim.t + RETRY_AFTER;      // 길의 불을 끄지 못해 대기 지점에 닿지 못했다: 공기통 교체는 한동안 다시 시도하지 않는다 (아래 case 'swapAir' 의 nopath 와 같은 기억)
+        finishTask(sim, s, a, false, 'equip');
+      }
     } else if (workOnBlocker(sim, s, a, t.sub.tile, t.sub.kind)) { t.sub = null; a.path = null; }
     return;
   }
@@ -1090,8 +1096,30 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (t.progress >= t.need) {
         u.pumpFailed = false; u.pumpCond = 0.62;
         for (const b of s.agents) if (b.unitId === a.unitId && b.equipIssue === 'pump') b.equipIssue = 'none';
-        const pe = markRecovered(I, 'EQUIP_FAIL', `${josa(r.name, '이/가')} 예비 장비로 교체`);
+        // 복구하는 것은 이 부대의 펌프 고장이다. 개인 장비의 고장도 같은 문제 코드라서, 가장 최근 것을 그냥 복구 처리하면
+        // 고장 난 유압 구조기가 "예비 장비로 교체"된 것으로 보고서에 남는다 — 펌프 고장 기록만 찾는다
+        let pe = -1;
+        for (let k = I.problems.length - 1; k >= 0; k--) {
+          const p = I.problems[k];
+          if (p.code === 'EQUIP_FAIL' && !p.recovered && p.detail.startsWith(`${u.callsign} 펌프 고장`)) { p.recovered = true; p.recoveryText = `${josa(r.name, '이/가')} 예비 장비로 교체`; pe = p.eventId; break; }
+        }
         emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, causes: [pe], text: `예비 펌프로 교체 완료. ${u.callsign} 방수 재개 가능.` });
+        finishTask(sim, s, a, true);
+      }
+      return;
+    }
+    case 'swapAir': {
+      // 공기통 교체: 대기 지점(차 곁)으로 나가 차에 실은 예비 공기통으로 바꾼다. 닿지 못하면 그만두고 한동안 다시 시도하지 않는다
+      const m = moveTo(sim, s, a, s.staging.x, s.staging.y, 1.6);
+      if (m === 'moving' || m === 'busy') return;
+      if (m === 'nopath') { a.equipRetryAt = sim.t + RETRY_AFTER; finishTask(sim, s, a, false); return; }
+      t.need = SWAP_AIR_TIME; t.progress += dt; a.ring = t.progress / t.need;
+      if (t.progress >= t.need) {
+        // 예비가 남아 있을 때만 바꾼다 (오는 동안 같은 부대의 다른 대원이 마지막 통을 썼으면 그대로 돌아간다)
+        if ((u.spareAir ?? 0) > 0) {
+          u.spareAir = (u.spareAir ?? 0) - 1; refillAir(sim, a.rid);
+          emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 0, text: `공기통 교체 완료 (${u.callsign} 예비 ${u.spareAir}개).` });
+        }
         finishTask(sim, s, a, true);
       }
       return;

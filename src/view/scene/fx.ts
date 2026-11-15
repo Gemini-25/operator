@@ -230,6 +230,30 @@ export function drawDebrisFx(g: G, s: Scene, f: Fx, ts: number, k: number): void
   g.globalAlpha = 1;
 }
 
+/**
+ * (R1) 공중 물 투하(1.6초): 띠의 두 끝(f.x,f.y → f.x2,f.y2) 사이로 물 장막이 쏟아지고, 떨어진 자리에 물보라와 번지는 고리가 남는다.
+ * k 는 효과의 경과 비율(0..1). 흩어지는 자리는 기록의 시각·자리에서 정한다(난수 없음 — 같은 기록은 언제나 같은 그림).
+ */
+export function drawDropFx(g: G, f: Fx, ts: number, k: number, mini: boolean): void {
+  const x0 = (f.x + 0.5) * ts, y0 = (f.y + 0.5) * ts, x1 = ((f.x2 ?? f.x) + 0.5) * ts, y1 = ((f.y2 ?? f.y) + 0.5) * ts;
+  const dx = x1 - x0, dy = y1 - y0, len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len;
+  const fall = Math.min(1, k / 0.3);                       // 처음 0.3: 쏟아져 내린다
+  const a = k < 0.3 ? 1 : 1 - (k - 0.3) / 0.7;
+  g.lineCap = 'round';
+  g.strokeStyle = `rgba(140,200,250,${0.5 * a})`; g.lineWidth = ts * (0.5 + 1.4 * fall); g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+  g.strokeStyle = `rgba(228,244,255,${0.62 * a})`; g.lineWidth = ts * (0.2 + 0.6 * fall); g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+  if (mini) return;
+  const sp = sprites(), seed = ((f.t * 5) | 0) * 13 + Math.round(f.x) * 7 + Math.round(f.y) * 3;
+  for (let q = 0; q < 9; q++) {
+    const t = (q + 0.5) / 9, h1 = hash2(seed + q, 3), h2 = hash2(q, seed + 5);
+    const px = x0 + dx * t + nx * (h1 - 0.5) * ts * 1.6, py = y0 + dy * t + ny * (h1 - 0.5) * ts * 1.6;
+    const d = ts * (0.9 + 1.5 * k) * (0.7 + 0.6 * h2);
+    g.globalAlpha = 0.55 * a; g.drawImage(sp.mist, px - d / 2, py - d / 2, d, d);
+    if (k > 0.25) { const ph = (k - 0.25) / 0.75; g.globalAlpha = 0.65 * (1 - ph); g.strokeStyle = '#d6efff'; g.lineWidth = Math.max(1, ts * 0.04); g.beginPath(); g.ellipse(px, py, ts * (0.2 + 0.75 * ph), ts * (0.14 + 0.5 * ph), 0, 0, 6.2832); g.stroke(); }
+  }
+  g.globalAlpha = 1;
+}
+
 // ───────────────────────── 어둠과 빛 ─────────────────────────
 let dark: HTMLCanvasElement | null = null;
 /** 어둠 층을 준비한다. 반환된 맥락에 destination-out 으로 밝은 곳을 뚫은 뒤 본 화면에 덮는다. 좌표는 sc 배(절반 해상도). */

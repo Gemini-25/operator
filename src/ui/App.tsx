@@ -1,5 +1,6 @@
 import { DisasterBanner } from './DisasterBanner';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { stays } from '../sim/crews';
 import type { Sim } from '../sim/engine';
 import { TYPE_NAME, fmtDur } from '../sim/util';
 import { SoundDirector } from '../view/audio';
@@ -92,9 +93,21 @@ export function App() {
     if (rid < 0) return;
     setTab('agent');
     const sim = runner.sim;
-    for (const s of sim.scenes) if (s && !s.archived && s.agents.some((a) => a.rid === rid && a.status !== 'left')) director.pin(s.incidentId, 'scene');
+    // 그 대원이 서 있는 현장을 고정한다. 상공에 머무는 헬기에 탄 대원(관측자·조종사)이면 그 헬기가 떠 있는 사건 — 시점만 바꾼다(개입이 아니다)
+    for (const s of sim.scenes) {
+      if (!s || s.archived) continue;
+      const here = s.agents.some((a) => a.rid === rid && a.status !== 'left')
+        || (s.air ?? []).some((op) => { const u = sim.units[op.unitId]; return u.state === 'onscene' && u.incidentId === s.incidentId && u.crew.indexOf(rid) >= 0; });
+      if (here) director.pin(s.incidentId, 'scene');
+    }
   }, [runner, director]);
-  const selectUnit = useCallback((uid: number) => { selectRid(runner.sim.units[uid].crew[0]); }, [runner, selectRid]);
+  // 부대를 고르면: 상공에 머무는 헬기는 그 관측자, 그 밖은 현장에 내리는 첫 사람 (경찰 헬기의 0번 자리는 현장에 없는 기장이다 — 내리는 사람이 없으면 관측관)
+  const selectUnit = useCallback((uid: number) => {
+    const sim = runner.sim, u = sim.units[uid];
+    let rid = u.crew.find((q) => !stays(sim, q)) ?? u.crew.find((q) => sim.responders[q].role === 'observer') ?? u.crew[0];
+    if (u.state === 'onscene' && u.incidentId !== null) for (const op of sim.scenes[u.incidentId]?.air ?? []) if (op.unitId === uid) rid = op.eye.rid;
+    selectRid(rid);
+  }, [runner, selectRid]);
 
   // 소리는 첫 사용자 입력 뒤에만 켤 수 있다(브라우저 정책)
   useEffect(() => {
@@ -204,7 +217,7 @@ export function App() {
             <div className="scene-title">
               <Icon name={I.assessment ? I.assessment.type : 'unknown'} size={15} /> <b>사건 {I.code}</b> {I.assessment ? I.assessment.label ?? TYPE_NAME[I.assessment.type] : '유형 확인 중'} · {I.locationKnown || truth ? I.truth.label : '위치 확인 중'}
               {scene && scene.arrivedAt >= 0 && <span className="dim"> · 현장 경과 {fmtDur((I.phase === 'closed' ? I.closedAt : sim.t) - scene.arrivedAt)}</span>}
-              {inScene && scene && scene.arrivedAt < 0 && <span className="warn"> · 부대 도착 전</span>}
+              {inScene && scene && scene.arrivedAt < 0 && <span className="warn"> · {(scene.airAt ?? -1) >= 0 ? '헬기 상공 도착 · 지상 부대 도착 전' : '부대 도착 전'}</span>}
             </div>
           )}
         </div>
@@ -223,6 +236,7 @@ export function App() {
             <span className="sep" />
             <span><i className="sq" style={{ background: '#5ad17a' }} />경상</span><span><i className="sq" style={{ background: '#ffd166' }} />중상</span><span><i className="sq" style={{ background: '#ff5d5d' }} />위중</span>
             <span><i className="ring" style={{ borderColor: '#e0486b', background: 'rgba(224,72,107,0.25)' }} />용의자</span>
+            <span title="공기호흡기의 공기가 60초 아래로 떨어진 대원 (빨강 = 빈 통)"><i className="dot" style={{ background: '#ff9f43' }} />공기 부족</span>
             <span className="sep" />
             <span className="dim">휠 확대 · 끌어서 이동 · 두 번 눌러 전체 보기{truth ? ' · 흐린 표시 = AI 미확인' : ''}</span>
           </>) : (<span className="dim">사건 표식을 누르면 현장 확대 · 휠 확대 · 끌어서 이동</span>)}
@@ -237,7 +251,7 @@ export function App() {
           <button className={tab === 'decision' ? 'on' : ''} onClick={() => setTab('decision')}>판단 요약</button>
           <button className={tab === 'agent' ? 'on' : ''} onClick={() => setTab('agent')}>대원 정보</button>
         </div>
-        <div className="right-top">{tab === 'decision' ? <DecisionPanel sim={sim} director={director} truth={truth} /> : <AgentPanel sim={sim} rid={selectedRid} />}</div>
+        <div className="right-top">{tab === 'decision' ? <DecisionPanel sim={sim} director={director} truth={truth} /> : <AgentPanel sim={sim} rid={selectedRid} truth={truth} />}</div>
         <div className="right-bottom"><LogPanel sim={sim} director={director} truth={truth} onJump={jumpTo} /></div>
       </div>
       <BottomBar runner={runner} director={director} onTick={force} onSeek={seekTo} sound={soundCtl} />

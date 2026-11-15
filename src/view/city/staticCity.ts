@@ -59,6 +59,11 @@ function drawFacility(g: G, f: Facility, night: boolean): void {
     g.fillStyle = dim('#55709e'); g.fillRect(x + 8, y + 8, w - 30, 32);
     g.fillStyle = dim('#e8edf2'); g.fillRect(x + 8, y + 21, w - 30, 5);
     disc(g, x + 16, y + 14, 3, dim('#c9d0d6')); seg(g, x + 16, y + 14, x + 21, y + 9, 0.8, dim('#c9d0d6'));
+    // (R1) 중부경찰서 옥상의 헬기 착륙장: 경찰 헬기가 서는 자리(crews.heliPad — f.x + 30, f.y − 20)에 다른 착륙장과 같은 표시
+    if (f.name.includes('중부')) {
+      disc(g, x + 48, y + 32, 7.5, dim('#3f4a55')); g.strokeStyle = dim('#e8c15a'); g.lineWidth = 1.1; g.beginPath(); g.arc(x + 48, y + 32, 5.7, 0, 6.2832); g.stroke();
+      g.fillStyle = dim('#f4f7f9'); g.fillRect(x + 45.7, y + 29.2, 1.2, 5.6); g.fillRect(x + 49.1, y + 29.2, 1.2, 5.6); g.fillRect(x + 45.7, y + 31.4, 4.6, 1.2);
+    }
     // 주차장과 순찰차
     g.strokeStyle = 'rgba(255,255,255,0.25)'; g.lineWidth = 0.6;
     for (let k = 0; k < 4; k++) { g.beginPath(); g.moveTo(x + w - 16, y + 8 + k * 11); g.lineTo(x + w - 4, y + 8 + k * 11); g.stroke(); }

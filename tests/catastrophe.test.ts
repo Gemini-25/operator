@@ -5,7 +5,9 @@
 //           §10-9 도시 지도(일부), §10-10 층 너머, §10-12 깔린 대원.
 //   단계 4: §10-1·§10-2 의 가스(불·구름·차단)와 용기(한계·식음·물), 폭발 손 계산, 처음 가스(collapse/gasblast), 도시가스 차단, CNG·항공유·누출 연료·드럼통, §10-8 폭발 쪽.
 //   (단계 1 의 "세계 규칙을 뺀 교대와 같다"는 단계 2 에서, "계산만 한다"·"아직 아무것도 일으키지 않는다"는 단계 3·4 에서 끝났다)
-// 뒤 단계가 더할 것(설계서 §10 의 번호): 4 철수 · 5 사건이 끝난다 · 9 의 건물 제외(단계 7) · 11 catOf 의 입구(일부는 아래에 있다).
+//   단계 5: §10-4 철수(명령·경적·음영·인원 점검·복도), 문(빈 작업·ops.gated)·이동 비용·자기 감각의 철수·피하는 곳·외부 방수 자리, 외부 방어(방치로 닫히지 않음 — §10-5 일부),
+//           냉각·가스 재측정·도시가스 차단 요청·관제 재평가. 교대 묶음은 위험 조짐·철수 기록이 지휘 상태·집계와 맞는지 본다.
+// 뒤 단계가 더할 것(설계서 §10 의 번호): 5 사건이 끝난다(잔해 수색·외부 확인 종료·종료 차단 — 단계 6) · 9 의 건물 제외(단계 7) · 11 catOf 의 입구(일부는 아래에 있다).
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { fakeCtx, withFakeDom } from './fakeCanvas';
@@ -1642,6 +1644,20 @@ describe('X6 단계 5: 지휘관이 철수를 명령한다 (§10-4)', () => {
     expect(sim.events.slice(ev0).filter((e) => e.text.startsWith('인원 점검:')).length).toBeLessThanOrEqual(3);
     expect(sim.events.slice(ev0).some((e) => e.text.startsWith('인원 점검 미완료'))).toBe(true);
     expect(sim.t).toBeLessThanOrEqual(ops.parDue + 4);
+  });
+
+  it('건물 조짐 3 이면 건물 전체 철수 → 외부 방어(한계 시간 보탬 +150 을 적는다)이고, 외부 방어로 60초 넘게 있어도 대원은 활동 중이라 방치로 닫히지 않는다 (§5.5·§6.4)', () => {
+    const { sim, s, I, cmd } = liveInside('X6-D');
+    const [bx, by] = [Math.round(s.regions.filter((r) => r.indoor).reduce((k, r) => k + r.cx, 0) / s.regions.filter((r) => r.indoor).length), 5];
+    const pin = () => cmd.beliefs.merge(mkFact('sign', SIGN_BASE.bldg, { kind: 'bldg', level: 3, region: -1, x: bx, y: by } as SignBelief, '시험', sim.t, 1, true, '건물 외벽 균열이 번지고 기울어짐 — 전체 붕괴 임박! (시험)'));
+    pin();
+    for (let k = 0; k < 75 * 5 && I.phase !== 'closed'; k++) { if (k % 25 === 0 && cmd.status === 'active') pin(); sim.step(); }
+    expect(zoneOf(s, 'bldg')?.level).toBe(3);
+    expect(['defensive', 'withdraw']).toContain(s.ops!.mode);
+    expect(s.ops!.limitBonus).toBe(150);
+    expect(I.closeReason).not.toBe('abandoned');
+    expect(s.agents.some((a) => a.status === 'active')).toBe(true);
+    expect(I.problems.some((p) => p.code === 'WITHDRAWAL' && p.detail.includes('건물 전체'))).toBe(true);
   });
 
   it('복도는 같이 막히지 않는다: 방 하나의 붕괴 임박은 그 방과 이웃 방만 구역이 된다 (조짐이 난 구역 자신이 복도면 그 복도는 든다)', () => {

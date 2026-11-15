@@ -1528,6 +1528,7 @@ npx tsx scripts/sweep.ts 1 --force utility/wire --log S3     # 한 교대를 읽
 `$S/s1/hashes.ts`(scratchpad 의 `wf-kinds/s1/` — 저장소에 없다. 한 줄 = 번호 · 조건 · 시드 · 강제 · `report.hash` · `JSON.stringify(report)` 의 FNV · 기록 수 · 사건 수 · 연쇄 수 · 사건마다 (유형/변형/판정/닫힌 까닭) 의 FNV)를 시작점(`313ec41` 을 `git archive` 로 푼 폴더)과 지금 폴더에서 따로 돌려 줄 단위로 견줬다: 보통 S0~S39 · 어려움 S0~S19 · 극한 S0~S19 · 쉬움 S0~S5 · 재난 다섯 × S0~S2 · 강제 열넷(`armed/prank`·`fire/false`·`water/std`·`collapse/elevator`·`traffic/tree`·`fire/std`·`search/std`·`medical/std`·`hazmat/std`·`armed/hostage`·`armed/getaway`·`traffic/bus`·`collapse/gasblast`·`search/wander`) × S0~S2 · 부대 규모 1·5 × S0~S2 · 신고 신뢰도 1 × S0~S1 · 교통 5 × S0~S1 = **153교대, 한 글자도 같다**(설계서 §7.2 의 43교대를 넓혔다). 옮긴 가능도 42줄·`TYPE_NAME` 은 옛 표와 숫자로도 견줬다(`$S/s1/eqcheck.ts` — 다른 곳 0).
 
 관문: `npx tsc --noEmit` 통과 · `tests/kinds.test.ts` 4개(시험 1 셋 + 시험 2) · 고친 시험 셋(`sim`·`ext`·`major`) · `npm run check` 통과(시험 파일 18 · 540 통과 + 건너뜀 1, 테스트 305초 — 같은 기계에서 다른 작업이 함께 돌았다 · 시드 40 `--check` 검증 통과). sweep 분포는 해시 목록이 같으므로 따로 견주지 않았다.
+화면: 개발 서버(5236, 자기 Vite 캐시)에서 `?seed=S7` 를 15배속으로 열어 Playwright 로 찍었다 — 콘솔 오류 0, 사건 카드 2·판단 요약의 확률 막대 5줄(늘 보이는 다섯)·지도 핀의 유형색이 예전과 같다. `npm run ui-check` 는 돌리지 않았다(화면의 값이 바뀌지 않는 단계 — 본문 §5.12 가 ui-check 를 화면을 고친 단계 4a~9·11 에 둔다).
 
 #### 이어받을 자리 (단계 2a·2b 와 뒤 단계)
 

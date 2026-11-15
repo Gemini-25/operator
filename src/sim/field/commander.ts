@@ -15,7 +15,7 @@ import { heardEv, mkFact } from './beliefs';
 import { losWalls } from './grid';
 import { BAND_NAME, HOSTILE_FOV } from './hazards';
 import { hosNeedsCare, mateNeedsHospital } from './injury';
-import { CAS_HOLDS, CLOSE_BLOCKERS, ORDER_RULES, PROP_HOLDS } from './sceneRegistry';
+import { CAS_HOLDS, CLOSE_BLOCKERS, HOS_HOLDS, ORDER_RULES, PROP_HOLDS } from './sceneRegistry';
 import type { CommandKit } from './sceneRegistry';
 
 interface Target { region?: number; cas?: number; prop?: number; hostile?: number; tile?: number; mate?: number; animal?: number }      // animal: (N8) 대상 동물
@@ -221,8 +221,12 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   const threat = active.length > 0 || surrendered.length > 0;
   if (threat && s.secureAt >= 0) s.secureAt = -1;
   // (I1-b) cause = 그 사실을 실어 온 무전 기록 (heardEv) — 지시 무전의 causes 에만 들어간다
-  for (const h of surrendered) want(sim, s, 'arrest', { hostile: h.id }, 0.93, 1, false, heardEv(h));
+  for (const h of surrendered) {
+    if (HOS_HOLDS.length && HOS_HOLDS.some((f) => f(sim, s, a, h.id, h.value))) continue;      // (N9) 보류: 묶음 규칙이 맡은 용의자(시위의 주최자 …)에게는 핵심 규칙이 일을 내지 않는다 — 줄이 없으면 그대로
+    want(sim, s, 'arrest', { hostile: h.id }, 0.93, 1, false, heardEv(h));
+  }
   for (const h of active) {
+    if (HOS_HOLDS.length && HOS_HOLDS.some((f) => f(sim, s, a, h.id, h.value))) continue;      // (N9) 보류 — 위협 셈(threat)에는 그대로 든다
     if (h.value.state === 'flee') { want(sim, s, 'engage', { hostile: h.id }, 0.95, 2, false, heardEv(h)); continue; }
     // 진입이 결정되면 진입조 둘을 먼저 채우고, 남는 경찰만 출입구를 지킨다
     // (봉쇄에 묶인 대원은 진입 지시보다 봉쇄를 계속하므로, 경찰이 둘뿐이면 아무도 들어가지 않는다)

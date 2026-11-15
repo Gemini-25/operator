@@ -515,6 +515,7 @@ export function workLabel(s: Scene, w: WorkItem, sim?: Sim): string {
     treatMate: sim && w.mate >= 0 && sim.responders[w.mate] ? `${sim.responders[w.mate].name} 대원 응급 처치` : '부상 대원 응급 처치',
     treatSuspect: `${hos} 응급 처치`,
     repair: '시설물 복구', towAway: '차량 견인', capture: '동물 포획', persuade: `${cas} 설득`, cordon: '통제',      // (N8) 이름만 — 대상의 글자는 그 임무를 쓰는 단계가 다듬는다
+    decontam: '제독',      // (N9 §5.5) 이름만 — 대상의 글자는 그 임무를 쓰는 단계 6 이 다듬는다
   };
   return names[w.kind];
 }
@@ -670,6 +671,8 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
     // (N8 단계 2a) 새 임무 다섯의 자리 — 맡는 사람은 그 임무를 쓰는 단계가 정한다(repair 4a · towAway 6b · capture 5 · persuade 7 · cordon 4a, 설계서 §5.3.3·§5.10).
     // 지금은 아무도 이 작업을 만들지 않고, 누구도 맡지 않는다
     case 'repair': case 'towAway': case 'capture': case 'persuade': case 'cordon': return 0;
+    // (N9 단계 1) 제독의 자리 — 맡는 사람(제독 장비 1.0 · 역할 decon 0.7 · 120초 뒤 호스를 든 소방 0.4)은 단계 6 이 정한다(설계서 §5.3.5). 지금은 아무도 이 작업을 만들지 않는다
+    case 'decontam': return 0;
   }
 }
 

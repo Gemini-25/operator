@@ -13,6 +13,7 @@ import { CHASE } from './scenarios/chase';
 import { CRIME } from './scenarios/crime';
 import { DISASTER } from './scenarios/disaster';
 import { KINDS } from './scenarios/kinds';
+import { KINDS2 } from './scenarios/kinds2';
 import { LIFE } from './scenarios/life';
 import { MAJOR } from './scenarios/major';
 import type { Incident, IncidentType, Needs, PlaceKind } from './types';
@@ -44,7 +45,7 @@ export interface Scenario {
                                  // 이름표 자체는 그대로 붙어 가점·교본·airFit 이 쓴다. 카드 제목 식(ui/panels.tsx 사건 카드·ui/App.tsx 사건 줄)을 바꾸는 것은 단계 4a
 }
 
-export const SCENARIOS: Scenario[] = [...LIFE, ...CHASE, ...CRIME, ...MAJOR, ...DISASTER, ...KINDS];      // KINDS (N8) 는 맨 끝 — 앞 구간의 순서를 밀지 않는다
+export const SCENARIOS: Scenario[] = [...LIFE, ...CHASE, ...CRIME, ...MAJOR, ...DISASTER, ...KINDS, ...KINDS2];      // KINDS (N8) 는 맨 끝 — 앞 구간의 순서를 밀지 않는다. KINDS2 (N9) 는 그 다음
 /** (N8) 카드 제목에 쓰지 않는 이름표 — card: false 인 시나리오의 label ?? name (natureLabel 이 붙이는 글자와 같다). 단계 2a 에는 비어 있다 */
 export const NO_CARD: ReadonlySet<string> = new Set(SCENARIOS.filter((q) => q.card === false).map((q) => q.label ?? q.name));
 

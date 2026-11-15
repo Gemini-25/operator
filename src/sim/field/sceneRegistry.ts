@@ -9,7 +9,7 @@
 
 import type { Sim } from '../engine';
 import type { Rng } from '../rng';
-import type { CasBelief, FieldAgent, Incident, IncidentType, Scene, UnitCaps, WorkItem, WorkKind } from '../types';
+import type { CasBelief, FieldAgent, HosBelief, Incident, IncidentType, Scene, UnitCaps, WorkItem, WorkKind } from '../types';
 
 export type SceneBuilder = (sim: Sim, I: Incident, rng: Rng) => Scene;
 export const SCENE_BUILDERS: Record<string, SceneBuilder> = {};
@@ -67,3 +67,16 @@ export type VerdictRule = (sim: Sim, s: Scene, I: Incident) => VerdictAdd | null
 export const VERDICT_RULES: VerdictRule[] = [];
 /** debrief.evaluate 가 위험 판정(hazardActive) 바로 뒤에 돈다 */
 export function registerVerdict(fn: VerdictRule): void { VERDICT_RULES.push(fn); }
+
+// ───────────────────────── (N9 단계 1) 등록 자리 하나 — docs/specs/N9-major-kinds.md §5.6 ─────────────────────────
+// 줄은 그것을 쓰는 단계(4 — 시위의 주최자·던지지 않은 선동자)가 field/orders/kinds2.ts(믿음만)에 등록한다.
+// 등록된 줄이 없으면 부르는 자리(commander.syncBoard 의 용의자 고리 둘)가 아무것도 바꾸지 않는다 (단계 1 은 결과 불변 — 해시 목록).
+
+/**
+ * 보류(용의자): 참이면 핵심 지휘 규칙(commander.syncBoard 의 투항한 용의자의 검거 줄과 활동 중인 용의자의 고리)이 그 용의자에게
+ * 출구 봉쇄·협상·검거·대응을 내지 않는다 — 묶음 규칙이 맡는다(시위 주최자와의 대화). 위협 셈(threat)에는 그대로 든다
+ * (그래야 핵심 규칙의 "위협이 없으면 perimeter·negotiate·engage 를 거둔다" 줄이 묶음 규칙이 낸 협상을 거두지 않는다). 믿음과 작업판만 — registerCasHold 의 용의자판
+ */
+export type HosHold = (sim: Sim, s: Scene, a: FieldAgent, id: number, h: HosBelief) => boolean;
+export const HOS_HOLDS: HosHold[] = [];
+export function registerHosHold(fn: HosHold): void { HOS_HOLDS.push(fn); }

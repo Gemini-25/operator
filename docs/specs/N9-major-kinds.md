@@ -1514,6 +1514,67 @@ N8 의 틀 시험(`tests/kinds.test.ts`) 세 곳을 N9 의 줄에 맞췄다(엄�
 - **단계 4~9**: `capableOf`·`fitBase`·`needFor` 의 대상별 갈래(§5.3.5) · `decontam` 의 자격(`fitBase` — 지금 0)·실행(단계 6) · 방호 두 줄(위 7) · METHOD 의 `kits` 를 새 장비로(`dive` → `diveKit`, `boom` → `oilBoom`, `deconTent` → `deconKit` — 단계 5·9·6) · R3 관제 D 줄·E01 · `isHovering` 의 지하차도 예외와 `airFit` 의 이름표 막기(4·5·9) · 렌더의 측정기 손 그림 등.
 - `kindFit` 의 유형 `'rescue'`(N8)·`'crowd'`(N9 단계 4)는 글자로 견준다 — 그 유형이 생기면 저절로 걸린다(N8 의 `K9_TYPES` 와 같은 방식).
 
+### 단계 3 (지도 — 덧붙이기) — 2026-11-15 밤, 준비 줄
+
+**상태: 구현됨, 결과 불변 — §4.9 의 조건이 지켜져 단계 3 은 "먼저 해 두는 앞 단계"에 남는다**(`0·3·4` 로 옮기지 않는다). 작업자 브랜치 `wf/kinds2-s3`(`wf/kinds2` = 단계 2 의 `80ec8bb` 에서 갈라, 맨 먼저 주 브랜치 `4bd3e2d` 를 받았다 — 문서 세 파일뿐이라 코드는 그대로: 합친 커밋 `8cf8f3a`), 가리킴 `wf/kinds2`. 해시 목록의 기준은 그 합친 커밋에서 다시 쟀다(`$S/s3/hash0.txt` — 단계 2 의 `s2/hash1.txt` 와 한 글자도 같다).
+
+#### 실제 이름 (단계 3 에 생긴 것)
+
+| 이름 | 어디 | 서명·뜻 |
+|---|---|---|
+| `LATE_LANDMARKS: LandmarkDef[]` | `cityPlan.ts` 끝 | 본문 §4.9 의 다섯 줄 그대로(`L()` 꼴, 각도는 도): 시청역 (1986, 840) 14×10 · 162 / 중앙역 (1548, 996) 14×10 · −156 / 남문역 (1644, 1368) 14×10 · 61 / 가온아트홀 (1846, 366) 64×46 · 93 · 2층 / 가람은행 본점 (2094, 918) 30×26 · 78 · 4층. `rank` 는 줄마다 적었다(역 2 · 공연장 3 · 본점 2 — 지도 이름표가 보이는 배율). 대안 좌표는 쓰지 않았다 |
+| 덧붙이는 한 줄 | `city.ts` `buildPlaces` 의 "4) 블록 안쪽"과 "5) 진입 지점과 주소" 사이 (+ import 에 `LATE_LANDMARKS`) | `for (const l of LATE_LANDMARKS) mk(l.kind, l.name, l.x, l.y, l.w, l.h, ((l.rot ?? 0) * Math.PI) / 180, l.floors ?? 1, !!l.open, l.rank ?? 2, dongAt(l.x, l.y));` — `mk` 의 인자 순서는 (종류, 이름, 가운데 x, y, 폭, 깊이, 각도(라디안), 층, 터인가, rank, 동네)로 1) 의 `LANDMARKS` 줄과 같다. 시설 번호를 붙이지 않고 `fronts` 에도 넣지 않는다(진입 지점은 5) 가 가장 가까운 고속도로 아닌 구간으로 정한다) |
+| 덧붙인 결과 | 도시 | 건물 id 1302~1306(그 앞 1302곳은 모든 칸이 같다). 주소·진입 교차로: 시청역 `가온대로 23` · L64 / 중앙역 `시청로 123` · C0(중앙광장 로터리) / 남문역 `중앙대로 191` · I4 / 가온아트홀 `시청북로 19` · N6 / 가람은행 본점 `외곽순환로 181` · L4. 모두 `commercial`, 동네는 시청동·중앙동·남문동·북촌·시청동. 도로 반폭에서 7.9~15.7, 가장 가까운 건물과 4~10 떨어져 있다 |
+| `KIND_SCENE.concertHall` · `.bankHQ` | `cityPlan.ts` `KIND_SCENE` 끝 | `{ arch: [0, 0, 1], tall: 0.5 }`(아래 "본문과 다른 곳" 1) · `{ arch: [0.3, 0.3, 0.4], tall: 0.6, venue: 'bank' }`(본문 그대로). 지하철역은 넣지 않았다(교통 유형 — 현장은 단계 5 의 `subwayFrame`) |
+| `TUNNEL_AT = 0.35` · `tunnelEdges(city)` · `underpassEdges(city)` | `field/kinds2Kit.ts`(새 파일 — 세계 쪽) | 구간 번호의 배열. 터널 = 간선 && 구간 가운데의 `mountainAt ≥ 0.35`(`staticCity` 의 터널 입구 그림과 같은 식) → 지금 `[53, 54]`(산성터널로 N1–N2 · N2–N3). 지하차도 = 간선·고속도로 가운데 `cityPlan.RAIL` 의 선분과 `segCross` 하는 것 → 지금 `[196]`(중앙대로 L52–L74). 도시마다 한 번 구해 `WeakMap`(열쇠 = 함께 쓰는 `city.places`)에 둔다 |
+| `tunnelNode(sim, rng, busy)` · `underpassNode(sim, rng, busy)` | 〃 | 시나리오 `node` 의 서명 그대로, **`number` — null 을 돌려주지 않는다**. 후보 = 그 구간들의 끝 교차로에서 도시 밖 끝(`exit` — N3)을 뺀 것(터널 N1·N2 · 지하차도 L52·L74, 넷 모두 출동 시설 앞이 아니다). 고르는 차례: 사건이 없고 출동 시설 앞이 아닌 곳 → 사건이 없는 곳 → 아무 후보. `rng.pick` 한 번. 후보가 아예 없으면(지도가 바뀌어 터널·지하차도가 사라지면) 도시 밖 끝이 아닌 모든 교차로에서 같은 차례로 |
+| `paintKinds2Static(c, sim)` · `drawKinds2Layer(g, city, night)` · `SUBWAY_LINE` · `SUBWAY_GLYPH` | `view/city/kinds2Layer.ts`(새 파일 — 화면) | `renderCity.drawCity` 가 고정 층을 만든 바로 다음 한 번(`staticLayer = buildCityStatic(sim); paintKinds2Static(staticLayer.c, sim)`) 그 캔버스 위에 덧그린다(배율 = 캔버스 폭 ÷ 도시 폭). 그리는 것: 지하차도(철길 아래의 어두운 띠·옹벽·각진 철교와 난간) → 땅 밑 노선(세 역을 차례로 잇는 보라 점선) → 공연장의 둥근 지붕(살·고리·채광창, 길 쪽 차양) · 은행 본점의 지붕 → 지하철 출입구(유리 지붕·길 쪽 노선 색 띠 + 똑바로 선 동그란 기호: 흰 계단 + 아래 화살). 길 쪽은 진입 지점(`q.cx`·`q.cy`)으로 정한다. 밤에는 `staticCity` 처럼 어둡게 |
+| 범례 | `ui/MapLegend.tsx` "사건과 도로" 끝 줄 | `SubwaySample`(같은 `SUBWAY_GLYPH` 를 SVG 로) "지하철역" · 보라 점선 "땅 밑 노선" |
+
+`staticCity.ts`·`places.ts` 는 고치지 않았다 — 새 종류 셋의 바탕(평지붕)과 그림자는 그쪽의 기본 그림(`paintRoof` 의 마지막 갈래)이 그리고, `kinds2Layer` 가 그 위에 덧그린다.
+
+#### 본문과 다른 곳
+
+1. **`KIND_SCENE.concertHall` 의 값**: 본문은 "큰 홀 틀"이라고만 했다 — 홀형 평면만(`arch [0, 0, 1]`), 2층일 확률 0.5(덧붙인 건물이 2층). 군중 사건의 현장은 `venueFrame` 이 따로 지으므로 이 값은 공연장이 평소 사건(화재 등)의 장소 표에 들어갈 때만 쓰인다 — 지금은 어느 표에도 없어 읽히지 않는다.
+2. **`mk` 의 기본값**: 본문의 줄은 `l.open ?? false`·`l.rank ?? 1` 이었는데 1) 의 `LANDMARKS` 줄과 같게 `!!l.open`·`l.rank ?? 2` 로 했다. 다섯 줄 모두 `rank` 를 적어 차이가 없다.
+3. **은행 본점의 지붕도 그린다**(본문 §5.8 의 그림은 넷 — 출입구·노선·지하차도·공연장). 기본 평지붕은 은행으로 읽히지 않아 `places.ts` 의 은행 지붕과 같은 색(베이지 테·초록 지붕·금빛 원)에 길 쪽 기둥 줄을 `kinds2Layer` 에 그렸다(`places.ts` 는 고치지 않았다 — 색 값만 같다).
+4. **범례에 두 줄**(본문 §10.2 에 없는 자리): CLAUDE.md "새 표식을 만들면 범례(`ui/MapLegend.tsx`)에도 넣는다". 기호의 모양은 `SUBWAY_GLYPH` 한 곳에 두고 지도와 범례가 같이 쓴다. 견본(10·12·13·16·24·40 화소)으로 봤다 — 처음의 "계단 선 + 화살 선"은 작게 보면 꼬불꼬불한 글자처럼 보여 "채운 계단 + 화살"로 바꿨다.
+5. **교차로 도우미는 도시 밖 끝을 빼고 출동 시설 앞을 미룬다** — 본문은 "빈 교차로를 먼저, 없으면 바쁜 교차로"만 적었다. N3 은 그 너머에 길이 없는 끝이라(§4.3) 터널 현장의 자리로 쓰지 않고, 출동 시설 앞을 미루는 것은 본문의 `nearPlaceNode` 규칙과 `createIncident` 의 기본 교차로 규칙을 따랐다(지금 후보 넷은 어느 것도 시설 앞이 아니라 결과는 같다).
+6. **시험 2 의 "터널 구간을 닫는 일이 없다"(강제 `fire/tunnelfire` S0~S1)는 넣지 않았다** — 그 시나리오가 단계 5 에 생긴다. 단계 5 가 시험 2 에 더한다(아래 "이어받을 자리").
+7. **땅 밑 노선은 건물 위에 그린다** — 고정 층 다음에 덧그리므로 점선이 지붕 위를 지난다(노선도처럼 읽힌다). 반투명(0.66)·가는 점선이라 건물 그림을 가리지 않는다.
+
+#### 결과 불변의 확인 — 덧붙이기가 해시를 바꾸지 않을 조건 (§4.9 의 넷)
+
+- **종류가 어떤 표에도 없다**: 세 종류의 글자는 `src/sim` 에서 `types.ts`(합집합)와 `cityPlan.ts` 의 `KIND_NAME`·`KIND_DISTRICT`·`KIND_SCENE`·`LATE_LANDMARKS` 에만 있다(시험 2 의 셋째 — 주석 아닌 줄을 글자로 훑는다. `traffic.VENUES`·`pursuit.HIDEOUT_KINDS`·재난의 종류 표·`ARSON_PLACES`·`BOMB_PLACES`·`ARMED_BIAS` 처럼 내보내지 않은 표도 걸린다).
+- **건물을 훑는 다른 길**: `incidents.pickPlace`·`disaster.pickPlace` 는 모든 건물 위의 가중 추첨인데 끝에 붙은 가중치 0 은 합과 고르는 자리를 바꾸지 않는다. 종류가 아닌 자리로 고르는 줄은 홍수의 대체 한 줄(`!p.open && 강까지 90 미만`)뿐이고 다섯 곳은 강에서 450 넘게 떨어져 있다. `placeAt` 은 화면(`renderCity`)에서만 쓴다. `city.buildings` 를 읽는 곳이 없다. `persist.cityKey`(도시 지문 — 건물 수와 종류·자리를 센다)는 바뀌지만 보고서·기록에 들지 않는다(아래 "알려진 것").
+- **건물·도로**: 도시 지문(`$S/s3/cityprint.ts` — 건물마다 모든 칸 한 줄, 구간·교차로·골목·출동 시설의 FNV)이 앞 1302곳·구간 257·교차로 173·골목 27·출동 시설 14 가 모두 같고 끝에 다섯 줄이 붙었다(`$S/s3/city0.txt` ↔ `city1.txt`).
+
+#### 시험
+
+`tests/kinds2.test.ts` 에 **시험 2** 여섯을 더했다(모두 26개, 3초 안): ① 다섯 장소가 도시의 끝에 덧붙인 순서대로(id = 끝 다섯), 종류·이름·가운데·각도·주소·동네·진입 교차로(구간 절반 안·고속도로 아님)·터 아님·시설 아님, 손으로 놓은 건물과 이름이 겹치지 않음, 모든 건물의 주소가 겹치지 않음, 다른 교대의 도시에서도 같음 ② 서로·기존 건물·터와 겹치지 않음(`obbHit` 여유 0, `placeAt` 이 자기를 찾는다) · 도로 반폭 + 3 밖 · 철길 8·골목 5.5 밖 · 네 모서리와 가운데가 바다·강에서 떨어짐 ③ 세 종류의 글자가 `src/sim` 의 다른 파일에 없음 · `cityPlan.ts` 안에서도 네 표의 줄에만 · `KIND_SCENE` 의 값 ④ `tunnelEdges` 의 이름이 모두 `산성터널로`(간선·산 문턱 — 산성터널로의 산 구간을 빠뜨리지 않는다), `underpassEdges` 의 이름이 `중앙대로`(다리 아님), 다른 교대의 도시에서도 같은 구간 ⑤ `tunnelNode`·`underpassNode` 는 후보(N1·N2 / L52·L74)에서만, 빈 곳이 여럿이면 그 가운데서 모두, 한 곳이 바쁘면 다른 곳, 모든 교차로가 바빠도 null 이 아님 ⑥ `kinds2Layer` 를 가짜 캔버스에 그려도 시각·기록 수·난수 상태·건물 수·도로 상태가 그대로이고, 그린 교대와 그리지 않은 교대가 이어서 같은 기록을 남김(시험 17 의 몫). 단계 1 의 "새 장소 종류 셋" 시험에서 `KIND_SCENE` 의 기대만 바꿨다(공연장·은행 본점은 있다, 지하철역은 없다).
+
+고치기 전에 실패하는지: 시청역을 가온대로 위 (1990, 866) 로 옮기면 ② 가, `traffic.VENUES` 에 `concertHall` 을 넣으면 ③ 이 깨지는 것을 확인했다(되돌렸다).
+
+#### 해시 확인 · 명부 지문 · 관문 · 화면
+
+- 해시 목록(단계 1 의 도구 `$S/hashes.ts` 그대로 — scratchpad `wf-kinds2/s3/`): 합친 커밋 `8cf8f3a` 를 `git archive` 로 푼 나무(`$S/s3/base`)와 이 단계의 나무를 따로 돌려 견줬다 — **177교대 한 글자도 같다**(`$S/s3/hash0.txt` ↔ `$S/s3/hash1.txt`). 지도에 민감한 길을 더 넓게 본 덧 목록(`$S/s3/hashes-extra.ts` — 보통 S40~S79 · 재난 다섯 × S3~S6 · 강제 `armed/getaway`(은신처) S3~S8 · 교통 5 S2~S5 · 어려움 S20~S29, 사건 서명에 건물 id 를 넣었다)도 **80교대 한 글자도 같다**(`extra0.txt` ↔ `extra1.txt`).
+- 명부 지문(`$S/roster.ts`): **한 글자도 같다**(`$S/s3/roster0.txt` ↔ `roster1.txt`).
+- 관문: `npx tsc --noEmit` 통과 · `tests/kinds2.test.ts` 26개 · `tests/sim.test.ts` "건물마다 정해진 도시" 둘 · `tests/traffic.test.ts` 16개 통과 · **`npm run check` 통과**(그림 다듬기 커밋 `b4a43f3` — 시험 파일 19 · 612 통과 + 건너뜀 1, 테스트 506초 — 같은 기계에서 다른 작업이 함께 돌았다 · 시드 40 `--check` "검증 통과", 보통 성공 78% · 교대당 14.18건 · close reasons resolved 565 · abandoned 1 · timeout 1(단계 2 와 같다) · 교착 후보 0 · 잊힌 사건 0 · C1~C5 0 · 계산 오류 0) · **`npm run ui-check` 모두 통과**(145.9초 — 콘솔·페이지 오류 0, 되감기 표본 57개 헤드리스와 해시 같음, 교대 끝 보고서 해시 `41bbf788` = 헤드리스, 새 조작 없음). 그 뒤의 커밋은 이 메모뿐이다.
+- 화면: 개발 서버(5237, 자기 Vite 캐시)의 앱(`?seed=S7`)과, 같은 페이지에서 `drawCity` 로 새 장소마다 확대해 찍었다(`$S/s3/shots2/` — 시청역·중앙역·남문역·가온아트홀·가람은행 본점·지하차도·산성터널·노선 전체·밤 두 장, `subway-mark-sheet.png` 견본, `$S/s3/shots3/legend-bottom.png` 범례) — **콘솔 오류 0**.
+
+#### 알려진 것
+
+- **도시 지문(`persist.cityKey`)이 바뀐다** — 건물 수와 종류·자리를 세므로, 단계 3 전에 저장한 이어받은 상태(I2)는 "다른 도시"로 읽혀 건물·도로 상태를 버린다(I2 가 설계한 동작). 이어받은 상태가 없는 교대(지금 모든 교대)의 결과와는 무관하다.
+- `rng.weighted` 는 실수 오차로 끝까지 남으면 마지막 항목을 돌려준다. 예전에도 그 항목(블록 안쪽의 마지막 건물)은 대개 가중치 0 이었고 이제는 가람은행 본점이다 — 해시 목록 257교대에서 한 번도 걸리지 않았다.
+- 덧붙인 다섯 곳은 아직 사건이 나지 않는다(어느 표에도 없다). 지도에 보이기만 한다.
+
+#### 이어받을 자리 (단계 4~9)
+
+- **세 종류를 사건 표에 처음 넣는 단계**(공연장 4 — `crowd` 의 `places`·`INCIDENT_PLACES.crowd` / 지하철역 5 — `traffic/metrofall` 의 `node`(`nearPlaceNode`) / 은행 본점 6·7 — `hazmat/powder`·은행 사건의 `places`, `INCIDENT_PLACES.armed` 의 `bankHQ: 2`): 시험 2 ③ 의 글자 검사를 그 파일·표만큼 좁힌다(넣은 자리를 허락 목록에 더한다). 그 단계는 원래 결과가 바뀐다.
+- **단계 5**: `fire/tunnelfire` 의 `node: tunnelNode`, 시험 2 에 "터널 구간을 닫는 일이 없다"(강제 S0~S1 — 통제가 끝난 뒤에도 `e53`·`e54` 가 `closed` 가 아니고 `I.blockedEdge` −1, 닫힌 뒤 `slow` 가 처음 값) · `nearPlaceNode`·`setWater` 와 현장 틀을 `kinds2Kit.ts` 에 더한다(`plazaNode` 는 단계 4).
+- **단계 9**: `water/underpass` 의 `node: underpassNode` · I1-b C7 의 지하차도 갈래가 `underpassNode` 를 쓴다(§5.12).
+- 지도 그림: 지하철 출입구 기호·노선 색은 `kinds2Layer` 의 `SUBWAY_GLYPH`·`SUBWAY_LINE` 한 곳이다. 지하차도 침수(단계 9)의 지도 그림을 더하면 `drawUnderpasses` 곁의 매 프레임 층(`renderCity` 의 월드 층)에 둔다 — 고정 층은 한 번만 그린다.
+
 ## 검토 메모
 
 독립 검토 두 갈래(실현성·규칙 31 / 빠진 것·사용자 결정·인계 29)를 받아 지적마다 주 브랜치의 코드(`fe1683f` — R1 전체·H1 1~6·X6 1·R2 0·R3 0·I1-b b0·I2 1)를 열어 확인했다(`commander.syncBoard` 의 위협·`cordon` 줄과 `targetX/Y` 의 `perimeter` 갈래, `agents.fitBase` 의 `perimeter`·`arrest` 자격, `scripts/metrics.ts` 의 `STALL_SEC`·`STALL_ALLOW`·`takeSnap`, `debrief.evaluate` 의 `hazardActive`·`escaped`·무장 미해결 규칙, `dispatcher` 의 `MINCAP`·`kitBonus`·`airFit`·`u.sea`, `incidents.createIncident` 의 `traffic` 갈래와 `tag` 줄, `crews.isHovering`, `hazards.startFlee`, `tests/major.test.ts`·`tests/crews.test.ts` ③, `engine.ts` 의 날씨 표). 같은 날 검토가 끝난 N8 의 최종본(공통 틀)에 맞춰 함께 고쳤다. 맞는 지적은 본문에 녹였고, 여기에는 **반영하지 않았거나 다르게 반영한 것과 그 이유**만 적는다.

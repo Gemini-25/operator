@@ -181,7 +181,8 @@ describe('1 틀 A — 자료형과 등록 자리 (결과 불변 — 해시는 �
     expect(three.map((k) => KIND_NAME[k])).toEqual(['지하철역', '공연장', '은행 본점']);
     for (const k of three) {
       expect(KIND_DISTRICT[k], k).toBe('commercial');
-      expect(KIND_SCENE[k], `${k}: 현장 틀은 단계 3`).toBeUndefined();
+      if (k === 'subway') expect(KIND_SCENE[k], '지하철역은 현장 틀이 없다(교통 유형 — 단계 5 의 subwayFrame)').toBeUndefined();
+      else expect(KIND_SCENE[k], `${k}: 현장 틀은 단계 3 에 생겼다`).toBeDefined();
       for (const t of Object.keys(INCIDENT_PLACES) as IncidentType[]) expect(INCIDENT_PLACES[t][k], `${t}: ${k}`).toBeUndefined();
       for (const sc of SCENARIOS) expect(sc.places?.[k], `${sc.type}/${sc.variant}: ${k}`).toBeUndefined();
     }
@@ -476,5 +477,133 @@ describe('4 정보 격리 — 판단 파일은 N9 의 새 진실을 읽지 않�
   });
   it('믿음 칸·생김새의 이름은 금지 글자에 걸리지 않는다 (진실 칸과 다른 이름 — 원칙 13)', () => {
     for (const ok of ALLOWED) for (const bad of TRUTH) expect(ok.includes(bad), `${ok} ⊃ ${bad}`).toBe(false);
+  });
+});
+
+// ───────────────────────── 시험 2 — 지도 덧붙이기 (단계 3) ─────────────────────────
+// 지하철역 셋·공연장·은행 본점을 buildPlaces 의 "4)"와 "5)" 사이에 덧붙였다(cityPlan.LATE_LANDMARKS). 결과 불변은 구현 메모의 해시 목록으로 증명한다
+// (해시를 숫자로 박지 않는다 — 결과를 바꾸는 묶음이 같은 주 브랜치에 나란히 합쳐진다). 여기서는 그 조건(끝에 붙는다 · 겹치지 않는다 · 종류가 어떤 사건 표에도 없다)을 본다.
+// 터널 구간을 닫지 않는다는 강제 fire/tunnelfire 시험은 그 시나리오가 생기는 단계 5 가 더한다. 세 종류를 사건 표에 처음 넣는 단계(4·5·6·7)는 셋째 시험의 글자 검사를 좁힌다.
+import { readdirSync } from 'node:fs';
+import { boxOf, coastY, obbHit, placeAt, rectSegDist, riverDist, roadHalf } from '../src/sim/city';
+import { LANDMARKS, LATE_LANDMARKS, RAIL } from '../src/sim/cityPlan';
+import { TUNNEL_AT, tunnelEdges, tunnelNode, underpassEdges, underpassNode } from '../src/sim/field/kinds2Kit';
+import { drawKinds2Layer, paintKinds2Static } from '../src/view/city/kinds2Layer';
+import { fakeCanvas, fakeCtx } from './fakeCanvas';
+
+const NEW_KINDS: PlaceKind[] = ['subway', 'concertHall', 'bankHQ'];
+describe('2 지도 덧붙이기 — 새 장소 다섯 · 터널과 지하차도의 도우미 (단계 3)', () => {
+  it('다섯 장소가 도시의 끝에 덧붙인 순서대로 있다 — 종류·이름·주소·진입 교차로가 있고 출동 시설이 아니다. 지도는 교대가 바뀌어도 같다', () => {
+    const city = new Sim('A').city, n = LATE_LANDMARKS.length;
+    expect(n).toBe(5);
+    const late = city.places.slice(-n);
+    expect(late.map((q) => [q.kind, q.name])).toEqual(LATE_LANDMARKS.map((l) => [l.kind, l.name]));
+    expect(late.map((q) => q.kind)).toEqual(['subway', 'subway', 'subway', 'concertHall', 'bankHQ']);
+    expect(late.map((q) => q.name)).toEqual(['시청역', '중앙역', '남문역', '가온아트홀', '가람은행 본점']);
+    expect(city.places.filter((q) => NEW_KINDS.indexOf(q.kind) >= 0).length, '세 종류의 건물은 덧붙인 다섯뿐').toBe(5);
+    for (const [k, q] of late.entries()) {
+      const l = LATE_LANDMARKS[k];
+      expect(q.id).toBe(city.places.length - n + k);
+      expect(q.x + q.w / 2).toBeCloseTo(l.x, 6); expect(q.y + q.h / 2).toBeCloseTo(l.y, 6);
+      expect(q.rot ?? 0).toBeCloseTo(((l.rot ?? 0) * Math.PI) / 180, 9);
+      expect(q.open, q.name).toBe(false); expect(q.facility, q.name).toBe(-1);
+      expect(q.district, q.name).toBe('commercial');
+      expect(q.addr.length, q.name).toBeGreaterThan(0); expect(q.dong.length, q.name).toBeGreaterThan(0);
+      expect(q.nodeId, q.name).toBeGreaterThanOrEqual(0);
+      const e = city.edges[q.edgeId!], nd = city.nodes[q.nodeId];
+      expect(e.cls, q.name).not.toBe('highway');
+      expect(Math.hypot(q.cx - nd.x, q.cy - nd.y), q.name).toBeLessThanOrEqual(e.len * 0.5 + 1);
+      expect(LANDMARKS.some((m) => m.name === q.name), `${q.name}: 손으로 놓은 건물(LANDMARKS)과 이름이 겹치지 않는다`).toBe(false);
+    }
+    const addr = city.places.filter((q) => !q.open).map((q) => q.addr);
+    expect(new Set(addr).size, '주소가 겹치지 않는다').toBe(addr.length);
+    const b = new Sim('B').city;
+    expect(b.places.slice(-n).map((q) => `${q.id}:${q.addr}:${q.nodeId}:${q.tone}`)).toEqual(late.map((q) => `${q.id}:${q.addr}:${q.nodeId}:${q.tone}`));
+  });
+
+  it('겹치지 않는다 — 서로·기존 건물·터와 겹치지 않고(placeAt 이 자기를 찾는다), 도로 반폭 + 3 밖, 철길·골목·물에서 떨어져 있다', () => {
+    const city = new Sim('A').city, late = city.places.slice(-LATE_LANDMARKS.length);
+    for (const q of late) {
+      const bx = boxOf(q), cx = q.x + q.w / 2, cy = q.y + q.h / 2;
+      expect(placeAt(city, cx, cy)!.id, q.name).toBe(q.id);
+      for (const p of city.places) if (p.id !== q.id) expect(obbHit(bx, boxOf(p), 0), `${q.name} ↔ ${p.name}`).toBe(false);
+      for (const e of city.edges) { const A = city.nodes[e.a], B = city.nodes[e.b]; expect(rectSegDist(bx, A.x, A.y, B.x, B.y), `${q.name} ↔ ${e.name}`).toBeGreaterThanOrEqual(roadHalf(e) + 3); }
+      for (let i = 0; i < RAIL.length - 1; i++) expect(rectSegDist(bx, RAIL[i][0], RAIL[i][1], RAIL[i + 1][0], RAIL[i + 1][1]), `${q.name} ↔ 철길`).toBeGreaterThanOrEqual(8);
+      for (const a of city.alleys) expect(rectSegDist(bx, a.x0, a.y0, a.x1, a.y1), `${q.name} ↔ ${a.name}`).toBeGreaterThanOrEqual(5.5);
+      const c = Math.cos(bx.rot), s = Math.sin(bx.rot);
+      for (const [lx, ly] of [[-1, -1], [1, -1], [1, 1], [-1, 1], [0, 0]]) {
+        const x = cx + (lx * q.w * c) / 2 - (ly * q.h * s) / 2, y = cy + (lx * q.w * s) / 2 + (ly * q.h * c) / 2;
+        expect(y, `${q.name}: 바다`).toBeLessThan(coastY(x) - 9); expect(riverDist(x, y), `${q.name}: 강`).toBeGreaterThanOrEqual(8);
+      }
+    }
+  });
+
+  it('세 종류는 아직 어떤 사건 장소 표에도 없다 — src/sim 에서 그 글자는 types.ts 와 cityPlan.ts 의 이름표·동네·현장 틀·덧붙이기 표에만 있다 (단계 4·5·6·7 이 처음 넣는다)', () => {
+    const root = new URL('../src/sim/', import.meta.url);
+    const files = (readdirSync(root, { recursive: true }) as string[]).filter((f) => f.endsWith('.ts')).map((f) => f.split('\\').join('/'));
+    expect(files.length).toBeGreaterThan(40);
+    for (const f of files) {
+      if (f === 'types.ts' || f === 'cityPlan.ts') continue;
+      const src = code(f);
+      for (const k of NEW_KINDS) expect(src.includes(k), `${f}: ${k}`).toBe(false);
+    }
+    // cityPlan.ts 안에서는 KIND_NAME·KIND_DISTRICT·KIND_SCENE·LATE_LANDMARKS 의 줄에만
+    const lines = code('cityPlan.ts').split('\n');
+    const at = (head: string): number => lines.findIndex((l) => l.startsWith(head));
+    const ends = (from: number): number => { let k = from; while (k < lines.length && !lines[k].startsWith('}') && !lines[k].startsWith('];')) k++; return k; };
+    const ok = new Set<number>();
+    for (const head of ['export const KIND_NAME', 'export const KIND_DISTRICT', 'export const KIND_SCENE', 'export const LATE_LANDMARKS']) { const a = at(head); expect(a, head).toBeGreaterThanOrEqual(0); for (let k = a; k <= ends(a); k++) ok.add(k); }
+    lines.forEach((l, k) => { for (const kd of NEW_KINDS) if (l.includes(kd)) expect(ok.has(k), `cityPlan.ts ${k + 1}행: ${l.trim().slice(0, 60)}`).toBe(true); });
+    // 지하철역은 현장 틀이 없고(교통 유형), 공연장·은행 본점은 있다. 은행 본점의 무장 장소는 은행
+    expect(KIND_SCENE.subway).toBeUndefined();
+    expect(KIND_SCENE.concertHall).toEqual({ arch: [0, 0, 1], tall: 0.5 });
+    expect(KIND_SCENE.bankHQ).toEqual({ arch: [0.3, 0.3, 0.4], tall: 0.6, venue: 'bank' });
+  });
+
+  it('터널·지하차도 도우미: tunnelEdges 는 산성터널로(staticCity 의 터널 입구와 같은 식), underpassEdges 는 중앙대로 — 이름으로 본다', () => {
+    const city = new Sim('A').city;
+    const te = tunnelEdges(city), ue = underpassEdges(city);
+    expect(te.length).toBeGreaterThanOrEqual(1); expect(ue.length).toBeGreaterThanOrEqual(1);
+    for (const id of te) {
+      const e = city.edges[id], A = city.nodes[e.a], B = city.nodes[e.b];
+      expect(e.name).toBe('산성터널로'); expect(e.cls).toBe('arterial');
+      expect(mountainAt((A.x + B.x) / 2, (A.y + B.y) / 2)).toBeGreaterThanOrEqual(TUNNEL_AT);
+    }
+    // 산성터널로의 구간 가운데 산을 지나는 것은 모두 터널이다(빠뜨리지 않는다)
+    for (const e of city.edges) if (e.name === '산성터널로' && mountainAt((city.nodes[e.a].x + city.nodes[e.b].x) / 2, (city.nodes[e.a].y + city.nodes[e.b].y) / 2) >= TUNNEL_AT) expect(te).toContain(e.id);
+    for (const id of ue) { const e = city.edges[id]; expect(e.name).toBe('중앙대로'); expect(e.cls === 'arterial' || e.cls === 'highway').toBe(true); expect(e.bridge).toBe(false); }
+    // 도시는 고정이다 — 다른 교대의 도시에서도 같은 구간
+    const b = new Sim('B').city;
+    expect(tunnelEdges(b)).toEqual(te); expect(underpassEdges(b)).toEqual(ue);
+  });
+
+  it('교차로 도우미 tunnelNode·underpassNode 는 null 을 돌려주지 않는다 — 빈 교차로 먼저, 모두 바쁘면 바쁜 곳이라도. 도시 밖 끝(N3)은 고르지 않는다', () => {
+    const sim = new Sim('A'), city = sim.city;
+    const fac = new Set(city.facilities.map((f) => f.nodeId));
+    const ends = (ids: number[]): number[] => [...new Set(ids.flatMap((id) => [city.edges[id].a, city.edges[id].b]))].filter((n) => !city.nodes[n].exit).sort((a, b) => a - b);
+    const cases: [typeof tunnelNode, number[], string[]][] = [[tunnelNode, ends(tunnelEdges(city)), ['N1', 'N2']], [underpassNode, ends(underpassEdges(city)), ['L52', 'L74']]];
+    for (const [f, cands, keys] of cases) {
+      expect(cands.map((n) => city.nodes[n].key).sort()).toEqual(keys);
+      const rng = new Rng(7), seen = new Set<number>();
+      for (let k = 0; k < 40; k++) { const n = f(sim, rng, new Set()); expect(cands).toContain(n); expect(fac.has(n)).toBe(false); seen.add(n); }
+      const free = cands.filter((n) => !fac.has(n));
+      expect([...seen].sort((a, b) => a - b), '빈 교차로가 여럿이면 그 가운데서 고른다').toEqual(free);
+      // 한 곳이 바쁘면 다른 곳
+      if (free.length >= 2) for (let k = 0; k < 10; k++) expect(f(sim, rng, new Set([free[0]]))).not.toBe(free[0]);
+      // 모든 교차로가 바빠도 null 이 아니다 — 후보 가운데 하나
+      const all = new Set(city.nodes.map((nd) => nd.id));
+      for (let k = 0; k < 10; k++) { const n = f(sim, rng, all); expect(n).not.toBeNull(); expect(cands).toContain(n); }
+    }
+  });
+
+  it('kinds2Layer 는 시뮬레이션 상태를 바꾸지 않는다 — 가짜 캔버스에 그려도 기록·난수·건물·도로가 그대로이고, 그린 교대와 그리지 않은 교대가 같은 기록을 남긴다', () => {
+    const a = new Sim('S1'), b = new Sim('S1');
+    a.run(40); b.run(40);
+    const sig = (s: Sim): string => JSON.stringify([s.t, s.events.length, JSON.stringify(s.rng), s.city.places.length, s.city.edges.map((e) => [e.closed, e.slow, e.cong])]);
+    const before = sig(a);
+    drawKinds2Layer(fakeCtx(), a.city, false); drawKinds2Layer(fakeCtx(), a.city, true); paintKinds2Static(fakeCanvas(), a);
+    expect(sig(a)).toBe(before);
+    a.run(600); b.run(600);
+    expect(a.events.map((ev) => ev.text).join('\n')).toBe(b.events.map((ev) => ev.text).join('\n'));
   });
 });

@@ -6,6 +6,7 @@ import { FIELD_NAME, UNIT_KIND_NAME } from '../sim/resources';
 import type { RoleGroup, UnitField, UnitKind } from '../sim/types';
 import { FACILITY_COLOR, FIELD_COLOR, FIELD_TEXT } from '../view/city/tokens';
 import { DISASTER_RING, OBSTACLE_ICON } from '../view/city/trafficLayer';
+import { SUBWAY_GLYPH, SUBWAY_LINE } from '../view/city/kinds2Layer';
 import { ICON_PATH } from '../view/icons';
 import { RUIN_MARK, STATE_MARK } from '../view/marks';
 import { FacilityBadge, RoleDot, Token } from './Mark';
@@ -113,6 +114,17 @@ function SecondaryRingSample({ size = 22 }: { size?: number }) {
 }
 /** (G4) 붕괴 사건의 변형 아이콘 (핀과 사건 카드) */
 const COLLAPSE_ICONS: [string, string][] = [['collapse', '건물 붕괴'], ['gasblast', '가스 폭발'], ['crane', '크레인 붕괴'], ['elevator', '승강기 갇힘'], ['landslide', '산사태']];
+/** (N9) 지하철역 출입구: 지도의 기호(view/city/kinds2Layer.ts 의 SUBWAY_GLYPH)와 같은 모양 */
+function SubwaySample({ size = 18 }: { size?: number }) {
+  const g = SUBWAY_GLYPH, pts = (p: [number, number][]): string => p.map(([x, y]) => `${x},${y}`).join(' ');
+  return (
+    <svg className="token" width={size} height={size} viewBox="-8 -8 16 16" aria-hidden="true">
+      <circle r={g.r + 1.1} fill="#f4f6f8" /><circle r={g.r} fill={SUBWAY_LINE} />
+      <polygon points={pts(g.stairs)} fill="#fff" />
+      {g.arrow.map((pl, k) => <polyline key={k} points={pts(pl)} fill="none" stroke="#fff" strokeWidth={1.2} strokeLinecap="round" strokeLinejoin="round" />)}
+    </svg>
+  );
+}
 function IconSample({ name, size = 18 }: { name: string; size?: number }) {
   return <svg className="token" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d={ICON_PATH[name]} fill={RUIN_EDGE} fillRule="evenodd" /></svg>;
 }
@@ -179,6 +191,10 @@ export function MapLegend() {
           <div className="lg-row">
             <span className="lg-item" title="사건 현장 때문에 막은 구간: 테의 색 = 그 사건의 유형색"><ClosureSample ring="#d6a878" />통제 — 사건 (유형색 테)</span>
             <span className="lg-item" title="재난이 막은 구간"><ClosureSample ring={DISASTER_RING} />통제 — 재난 (주황 테)</span>
+          </div>
+          <div className="lg-row">
+            <span className="lg-item" title="지하철역 출입구 (시청역·중앙역·남문역)"><SubwaySample />지하철역</span>
+            <span className="lg-item" title="세 역을 잇는 땅 밑 노선 — 그림일 뿐 열차 시각표는 없다"><i className="road dash" style={{ ['--rc' as string]: SUBWAY_LINE }} />땅 밑 노선</span>
           </div>
           <h5>건물 상태 <span className="dim">사건 핀의 왼쪽 아래</span></h5>
           <div className="lg-row">

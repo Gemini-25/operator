@@ -84,7 +84,8 @@ export interface Responder {
   skills: Skills;
   trait: string;
   // 교대 내내 유지되는 상태
-  health: number; stamina: number; status: 'ok' | 'injured' | 'down';
+  health: number; stamina: number; status: 'ok' | 'injured' | 'down'
+    | 'off';                          // (I2) 이번 교대에 나오지 않음 (결장·공석 — persist.ts). 현장에 내리지 않고 crewReady 에 세지 않는다
   xpGained: number; incidentsWorked: number;
   // ── 역할과 개인 장비 (R1, crews.ts) ──
   role?: RoleId;                      // 부대 안의 자리 (crews.ts ROLES)
@@ -931,4 +932,90 @@ export interface Incident {
 export interface ShiftReport {
   doctrine?: Record<string, number>;                     // 이 교대에 교본 줄이 쓰인 횟수 (번호별 — 1단계 buildReport)
   docSplit?: Record<string, Record<string, number>>;     // '분야|국면|임무' → (고른 것 → 횟수) (1단계)
+}
+
+// ───────────────────────── 교대 간 지속 (I2 — sim/persist.ts) ─────────────────────────
+// docs/specs/I2-persistence.md §2.1. 있는 자료형에 더하는 칸은 모두 선택 칸이다(X6·R3 와 같은 인터페이스 합치기). Responder.status 의 'off' 는 그 합집합 끝에 새 줄로 넣었다.
+// 객체 모양: Responder 의 네 칸은 resources.createRoster·createAidUnit 의 대원 리터럴에, Unit 의 세 칸은 두 부대 리터럴에 같은 순서로 넣었다
+// (pumpFails 는 0). Scene.wear 는 그 칸을 쓰기 시작하는 단계 5 가 field/sceneManager.createScene 에 넣는다.
+// (I1-b 의 WorldTag 에 'carry' 를 더하는 것은 WorldTag 가 생긴 뒤 — 지금은 WorldTag·SimEvent.tag 가 없다. 설계서 끝 "구현 메모"의 이어받을 자리)
+/**
+ * 다음 교대가 이어받는 상태 — Sim 생성자의 입력(extra.carry). 회복·수리·보충을 이미 반영한 "다음 교대가 시작할 때의 상태"다.
+ * JSON 으로 저장·복원할 수 있는 꼴만 쓴다: Map·Set·typed array·Infinity·NaN·undefined 값을 넣지 않는다(선택 칸은 아예 빼 둔다).
+ * 판(v)이 다르면 persist.readCarryover 가 옮기거나(옮기는 함수가 있을 때) 읽지 않는다.
+ */
+export interface Carryover {
+  v: 1;
+  shift: number;                         // 이 상태로 시작하는 교대가 조직의 몇 번째 교대인가 (새 조직의 첫 교대 = 1 이고 그 교대가 만든 상태 = 2)
+  city: string;                          // 도시 지문 (persist.cityKey). 지금 도시와 다르면 places·roads 를 버린다
+  from: { seed: string; hash: string; diff: string };    // 이 상태를 만든 교대 (화면·검증용. 결과에 쓰지 않고 지문에도 넣지 않는다)
+  crew: CrewCarry[];
+  units: UnitCarry[];
+  stock: Partial<Record<StockId, number>>;               // 서(署) 창고에 남은 소모품 — 이번 교대에 지급하고 남는 것까지 포함한 수
+  places: PlaceCarry[];
+  roads: RoadCarry[];
+}
+export type StockId = 'flashbang';
+/** 대원 한 사람. 열쇠는 자리(seat ?? name) — 명부에서 이름은 모두 다르다 */
+export interface CrewCarry {
+  name: string;                          // 이 사람의 이름
+  seat?: string;                         // 신임 대원만: 이 사람이 앉은 명부 자리의 원래 이름 (없으면 name 이 자리)
+  callsign: string;                      // 만들 때의 소속 (화면용 — 열쇠가 아니다)
+  out: number;                           // 앞으로 빠지는 교대 수, 이번 교대 포함 (0 = 나온다 · -1 = 순직)
+  cause: string | null;                  // 결장 이유 — H1 의 InjuryCause
+  health: number;                        // 이번 교대를 시작할 때의 체력 (결장 중이면 돌아올 때의 체력)
+  dExp: number; dSkill: number;          // 기본 능력(조직 시드)에 더한 경험·숙련. 누적 (상한 EXP_CAP · SKILL_CAP)
+  shifts: number; incidents: number;     // 경력: 나온 교대 수, 다룬 사건 수 (화면·문장)
+  replaceIn?: number;                    // out === -1 일 때: 신임 대원이 이 자리에 오기까지 남은 교대
+  recruit?: RecruitBase;                 // 신임 대원: 조직 시드에 없는 사람의 기본 능력
+  kitFault?: string[];                   // 점검에서 드러나지 않아 이번 교대에도 고장인 개인 장비 (KitId)
+}
+export interface RecruitBase { skill: number; judgment: number; composure: number; fitness: number; teamwork: number; experience: number }
+/** 부대 하나. 열쇠는 호출부호 (편성표 UNIT_DEFS 에서 모두 다르다). 인근 도시 지원 부대는 넣지 않는다 */
+export interface UnitCarry {
+  callsign: string;
+  pump?: number;                         // 소방 부대: 펌프 상태 0..1 (적용할 때 장비 손잡이의 범위 pumpMin..pumpMax 로 자른다)
+  service?: { readyAt: number; why: 'pump' | 'vehicle' };    // 정비 중: 교대 시작 뒤 readyAt 초까지 'oos'
+}
+/** 건물 한 채의 남은 피해. 열쇠는 Place.id (도시가 고정이라 열쇠가 된다 — city 지문으로 확인) */
+export interface PlaceCarry {
+  id: number;
+  state: 'marked' | 'closed' | 'ruin';   // 흔적만 남음(사용) · 출입 통제(복구 공사) · 무너짐. 열린 터(q.open)는 marked 만 (§3.6)
+  dmg: number; soot: number;             // 구조 손상 0..1 · 그을음 0..1
+  repair: number;                        // closed·ruin 이 풀리기까지 남은 교대, 이번 교대 포함 (marked 면 0)
+  cause: 'fire' | 'collapse' | 'blast' | 'burnout';
+  inc: string;                           // 원인 사건 ("조직 3번째 교대 · 04 화재") — 문장용
+  since: number;                         // 생긴 교대
+  spot?: [number, number];               // 무너진 자리의 건물 안 상대 위치 0..1 (그림용 — G4 의 u·v)
+  mark?: 'scorched' | 'blasted' | 'partial' | 'burnt' | 'collapsed';   // 이 상태를 만든 X6 의 건물 상태 (그림용 — X6 가 없으면 빼 둔다)
+  opened?: true;                         // 이번 교대를 앞두고 출입 통제가 풀렸다 (문장용, 한 번만)
+}
+/** 도로 한 구간의 복구 공사. 열쇠는 RoadEdge.id */
+export interface RoadCarry {
+  edge: number;
+  why: 'crack' | 'washout' | 'flood' | 'fire' | 'mud' | 'tree' | 'debris' | 'surface';
+  lane: boolean;                         // true = 한 차로 공사(느려질 뿐 — slow), false = 전면 통제(closed)
+  left: number;                          // 남은 교대, 이번 교대 포함 (1 = 이번 교대 안에 openAt 에 끝난다, 2 = 이번 교대 내내)
+  openAt: number;                        // left === 1 일 때 끝나는 시각 (교대 시작 뒤 초, 60..900)
+  inc: string; since: number;
+}
+/** 화면·보고서용 요약 (persist.carrySummary) */
+export interface CarrySummary { shift: number; absent: number; fallen: number; service: number; marked: number; closed: number; ruin: number; roads: number; grown: number }
+export interface Responder {
+  seat?: string;                           // 신임 대원이 앉은 명부 자리 (persist 가 채운다)
+  relief?: boolean;                        // 본부 예비 인력 (이번 교대만 — 이어받지 않는다)
+  carryOut?: number;                       // status 'off' 일 때 남은 결장 교대 (-1 = 공석)
+  carryCause?: string | null;              // status 'off' 일 때 결장 이유
+}
+export interface Unit {
+  readyAt?: number;                        // 정비 중인 부대가 운용에 들어가는 시각 (persist.tickCarry 가 본다)
+  oosWhy?: string;                         // 'oos' 의 이유 (화면용: '정비 중' · '결원')
+  pumpFails?: number;                      // 이번 교대에 펌프가 고장 난 횟수 (executor 의 펌프 고장 자리가 센다 — 단계 3. 결과에 쓰지 않는다)
+}
+export interface Scene {
+  wear?: { dmg: number; soot: number; cause: string; inc: string; pre: number };      // 이어받은 건물 상태 (persist.applyPlaceWear 가 현장을 만든 직후 채운다 — 단계 5. pre = 처음부터 탄 칸으로 둔 수)
+}
+export interface ShiftReport {
+  carry?: { shift: number; key: string; lines: string[] };   // 이어받은 상태와 그 영향 — 이어받은 상태로 시작한 교대만 (단계 7)
+  carryNext?: CarrySummary;                                  // 다음 교대로 넘기는 것 (단계 7)
 }

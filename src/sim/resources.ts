@@ -58,7 +58,7 @@ const UNIT_DEFS: UnitDef[] = [
 export const UNIT_KIND_NAME: Record<UnitKind, string> = { engine: '진압 펌프차', rescue: '구조 공작차', als: '전문 구급차', bls: '일반 구급차', patrol: '순찰차', tactical: '기동 순찰차', ladder: '사다리차', hazmat: '화학 구조차', swat: '특공대 장갑차', eod: '폭발물 처리 차량', heli: '소방 헬기', boat: '구조정', policeHeli: '경찰 헬기', medHeli: '의료 헬기' };
 export const FIELD_NAME: Record<UnitField, string> = { police: '경찰', fire: '소방', rescue: '구조·구급', special: '특수' };
 
-function traitOf(r: Responder): string {
+export function traitOf(r: Responder): string {
   const stats: [string, number][] = [['침착함', r.composure], ['판단 빠름', r.judgment], ['체력 좋음', r.fitness], ['협동적', r.teamwork], ['베테랑', r.experience], ['기술 숙련', r.skill]];
   stats.sort((a, b) => b[1] - a[1]);
   const lows: [string, number][] = [['쉽게 동요', r.composure], ['판단 미숙', r.judgment], ['체력 약함', r.fitness], ['독단적', r.teamwork], ['신입', r.experience]];
@@ -76,6 +76,27 @@ const LEGACY_ROWS = 20;
 const fitOf = (d: Fit): Pick<Unit, 'seats' | 'hoist' | 'bucket' | 'bucketMax' | 'fuel' | 'fuelMax' | 'grounded' | 'spareAir' | 'airNeed'> =>
   ({ seats: d.seats, hoist: !!d.hoist, bucket: d.bucketMax ?? 0, bucketMax: d.bucketMax ?? 0, fuel: d.fuelMax ?? 0, fuelMax: d.fuelMax ?? 0, grounded: null, spareAir: d.spareAir, airNeed: undefined });
 
+/** 조직 명부의 열쇠 한 자리 (I2 — 교대 간 지속): 그 자리의 원래 이름, 소속 호출부호, 표준 자리 번호 */
+export interface RosterKey { name: string; callsign: string; slot: number }
+let rosterKeyList: RosterKey[] | null = null;
+/**
+ * 조직 명부의 모든 자리 (I2 §2.4·§10.2): 편성표(UNIT_DEFS) 줄 순서 × 표준 자리(STAFF[kind].std) 순서. 난수를 쓰지 않는다.
+ * 편성되지 않는 부대·최소 인원에서 빠지는 자리도 들어 있다 — 부대 규모 손잡이와 상관없는 "조직의 사람"이다 (교대 간 지속의 열쇠는 이름이다).
+ * 이름은 처음 20줄의 0·1번 자리가 NAMES[줄 × 2 + 자리], 그 밖의 자리는 EXTRA_NAMES 를 표준 자리 첨자로 (설계서 R1 5절).
+ * createRoster 도 이 목록에서 이름을 읽는다 — 같은 식이 두 곳에 있지 않게. 처음 부를 때 한 번 만든다
+ */
+export function rosterKeys(): readonly RosterKey[] {
+  if (rosterKeyList) return rosterKeyList;
+  const out: RosterKey[] = [];
+  let extra = 0;                           // EXTRA_NAMES 의 첨자: 표준 표의 자리마다 하나 (편성되지 않은 줄, 빠진 자리도 자기 번호를 차지한다)
+  UNIT_DEFS.forEach((d, di) => {
+    const std = STAFF[d.kind].std;
+    for (let k = 0; k < std.length; k++) out.push({ name: di < LEGACY_ROWS && k < 2 ? NAMES[di * 2 + k] : EXTRA_NAMES[extra++], callsign: d.callsign, slot: k });
+  });
+  rosterKeyList = out;
+  return out;
+}
+
 /**
  * 대원 능력은 고정된 조직 시드에서 만든다(같은 대원이 매 교대에 등장). 장비 상태는 교대 시드에서 만든다.
  * 부대마다의 자리는 crews.ts 의 STAFF 를 따른다. 능력의 난수는 두 흐름이다 (설계서 R1 5절):
@@ -90,7 +111,8 @@ export function createRoster(sim: Sim): void {
   // 의료 헬기가 편성되지 않는 부대 규모(1·2)에서는 소방 헬기가 예전처럼 구급차를 대신할 수 있다 (구급 능력 0.7 = 관제의 기준. 설계서 R1 17절의 위험과 그 대책).
   // 능력 표(KIND)는 같은 종류의 부대가 함께 쓰는 객체이므로 그 헬기 것만 따로 만든다
   const medHeliFielded = UNIT_DEFS.some((q) => q.kind === 'medHeli' && q.minLevel <= tn.unitLevel);
-  let extra = 0;                           // EXTRA_NAMES 의 첨자: 표준 표의 자리마다 하나 (편성되지 않은 줄, 빠진 자리도 자기 번호를 차지한다)
+  const keys = rosterKeys();               // (I2) 이름은 조직 명부의 열쇠에서 — 편성표 줄 × 표준 자리마다 하나 (편성되지 않은 줄, 빠진 자리도 자기 번호를 차지한다)
+  let ki = 0;
   UNIT_DEFS.forEach((d, di) => {
     const f = sim.city.facilities.find((q) => q.name === d.facility)!;
     const home = sim.city.nodes[f.nodeId];
@@ -103,7 +125,7 @@ export function createRoster(sim: Sim): void {
       const legacy = di < LEGACY_ROWS && k < 2;
       // 편성되지 않는 부대·빠지는 자리도 난수는 똑같이 뽑는다(부대 규모를 바꿔도 같은 대원은 같은 능력치를 갖도록)
       const rng = legacy ? rosterRng : new Rng(ROSTER_SEED).fork(`roster-v2:${d.callsign}:${k}`);
-      const name = legacy ? NAMES[di * 2 + k] : EXTRA_NAMES[extra++];
+      const name = keys[ki++].name;      // 처음 20줄의 0·1번 자리는 NAMES, 그 밖은 EXTRA_NAMES (rosterKeys)
       const senior = k === 0;
       const st = () => clamp(rng.range(0.3, 0.95), 0, 1);
       const exp = legacy ? (senior ? rng.range(0.6, 0.97) : rng.range(0.12, 0.6))
@@ -116,6 +138,7 @@ export function createRoster(sim: Sim): void {
         trait: '', health: 100, stamina: tn.startStamina, status: 'ok', xpGained: 0, incidentsWorked: 0,
         role, kit: kitFor(role, tn.airFull),      // 공기통은 장비 손잡이의 용량으로 가득 채워 나간다
         injuries: undefined, bleed: undefined, bleed0: undefined, treatQ: undefined, dead: undefined, tDown: undefined, tDead: undefined, care: undefined, deathCause: undefined, bleedCause: undefined,      // (H1) 부상 — 없으면 "다친 적 없음"
+        seat: undefined, relief: undefined, carryOut: undefined, carryCause: undefined,      // (I2) 이어받은 상태 — persist.ts 가 채운다 (단계 2)
       };
       r.trait = traitOf(r);
       if (include && !(minimal && staff.minDrop.indexOf(k) >= 0)) { crew.push(r.id); sim.responders.push(r); members.push(r); }
@@ -139,6 +162,7 @@ export function createRoster(sim: Sim): void {
       ...fitOf(d),
       aboard: undefined, firstLoadAt: undefined, oosEv: undefined,      // (H1) 부상 대원·용의자의 후송 — 쓰는 것은 단계 4b 부터
       ammoBox: undefined, ammoBoxMax: undefined, sparePump: undefined,      // (R3) 탄약 상자(2단계)·예비 펌프(3단계) — 그 단계가 값을 채운다
+      readyAt: undefined, oosWhy: undefined, pumpFails: 0,      // (I2) 정비 중인 부대의 운용 시각·oos 의 이유(단계 3·2)·이번 교대의 펌프 고장 수(단계 3)
     };
     if (u.sea) { u.x = u.px = f.x + 30; u.y = u.py = coastY(f.x + 30) + SEA_OFF; }
     if (u.air) {
@@ -192,6 +216,7 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
       trait: '', health: 100, stamina: 88, status: 'ok', xpGained: 0, incidentsWorked: 0,
       role, kit: kitFor(role, tn.airFull),
       injuries: undefined, bleed: undefined, bleed0: undefined, treatQ: undefined, dead: undefined, tDown: undefined, tDead: undefined, care: undefined, deathCause: undefined, bleedCause: undefined,      // (H1) 편성표 대원과 같은 칸, 같은 순서
+      seat: undefined, relief: undefined, carryOut: undefined, carryCause: undefined,      // (I2) 편성표 대원과 같은 칸, 같은 순서
     };
     r.trait = traitOf(r);
     crew.push(r.id); sim.responders.push(r); members.push(r);
@@ -213,6 +238,7 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
     ...fitOf(d),      // 환자 자리·예비 공기통도 편성표 부대와 같게 (빠뜨리면 지원 구급차가 환자를 싣지 못한다)
     aboard: undefined, firstLoadAt: undefined, oosEv: undefined,      // (H1) 편성표 부대와 같은 칸, 같은 순서
     ammoBox: undefined, ammoBoxMax: undefined, sparePump: undefined,      // (R3) 편성표 부대와 같은 칸, 같은 순서
+    readyAt: undefined, oosWhy: undefined, pumpFails: 0,      // (I2) 편성표 부대와 같은 칸, 같은 순서
   };
   if (HEAVY[kind]) u.heavy = true;
   drawFaults(rng, members, tn.kitFault);      // 펌프 상태 다음에 뽑는다 (같은 흐름 aid:<n> 의 끝)

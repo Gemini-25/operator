@@ -958,3 +958,57 @@ for (const [seed, d, f] of cases) {
 8. **그을음**: 두 검토의 제안 가운데 "처음부터 탄 칸으로 두고 분자·분모에서 함께 뺀다"를 골랐다. "번짐 계수에만 곱하는 칸을 따로 둔다"는 `hazards.ts` 의 `tickFire` 안쪽 고리를 고쳐야 한다. 그러면 이어받은 상태가 없을 때의 결과 불변을 지키기가 더 어렵다(매 칸의 곱셈 순서). 처음부터 탄 칸은 현장을 만든 직후 한 번만 바꾸고 `tickFire` 를 건드리지 않는다.
 9. **사용자 결정(2026-11-15) — 결원 규칙**("운용을 멈추는 건 그 부대 전부 죽었을 때로"): 예비 인력은 결장한 자리를 `minField` 까지 채우되, 모자라도 출근한 대원이 한 명이라도 있으면 그 인원으로 운용한다(`short`). 부대가 `oos` '결원' 이 되는 것은 나올 대원(헬기·구조정은 조종·조타할 사람까지)이 한 명도 없을 때뿐이다(`empty`). 고친 곳: 연관 표 R1 줄, §2.2 `CarryNote`, §3.2 적용 6·끝 문단, §3.7 기록 4·`operable`, §6.1, §7 R1 줄, §8 단계 2, 시험 8, §10.2, §11.2.
 10. **사용자 결정(2026-11-15) — "가벼운 일은 계속"**(H1 §3.6·§3.6a): 걸을 수 있는 다친 대원은 그 교대 안에서 부대에 남아 가벼운 일만 맡는다. 이것은 교대 안의 규칙이라 결장(`off` — 출근하지 않음)과 다르고, 교대를 넘는 결장은 H1 의 `outShifts` 표 그대로다 — 이어받는 대원 상태는 `off` 아니면 `ok` 라 다음 교대에 `injured` 로 출근하는 사람이 없어 두 규칙이 부딪치지 않는다. 고친 곳: 연관 표 H1 줄, §3.2 의 `off` 가 지나가는 곳·`arrive` 두 줄·끝 문단(결장과 부상의 구별), 시험 2, §10.2, §11.2.
+
+---
+
+## 구현 메모 (진행 중)
+
+뒤 단계의 작업자는 이 절을 정본으로 읽는다(본문과 다르면 이 절과 코드가 맞다).
+
+### 단계 1 — 틀 (이어받은 상태가 없을 때 결과 불변) · 준비 줄, `wf/persist`
+
+시작점 `5988db7`(주 브랜치 — R1 전체, H1 단계 0~6, X6 단계 1, R2 단계 0, I1-a, I1-b 단계 b0, R3 단계 0). README "겹쳐 돌리기"의 준비 줄 규칙대로 공용 파일은 `engine.ts`·`types.ts`·`resources.ts` 만 고쳤다(`debrief.ts`·`field/injury.ts` 는 고칠 것이 없었다 — 아래 11).
+
+**실제 이름** (뒤 단계가 쓴다)
+
+| 파일 | 이름 |
+|---|---|
+| `src/sim/persist.ts` (새) | 상수 `CARRY_VERSION`·`EXP_CAP`·`SKILL_CAP`·`REPLACE_AFTER`·`STOCK_CAP`·`PLACE_CAP`·`CLOSED_CAP`·`ROAD_CAP`(§10.1 의 나머지 상수는 그것을 쓰는 단계가 더한다) · `CarryState`·`CarryNote`(§2.2 그대로) · `cityKey(city)` · `carryKey(co)` · `readCarryover(x, city)` · `initCarry(sim, dropped)` · `applyCrewCarry(sim)`(빈 함수 — 자리만) · `shiftStartCounts(sim)`(문구의 "가용 부대 …, 대원 …명" 부분만 돌려준다) · `announceCarry(sim)` · `tickCarry(sim)` · `makeCarryover(sim)` |
+| `src/sim/resources.ts` | `rosterKeys(): readonly RosterKey[]`(`RosterKey = { name; callsign; slot }` — 이 파일에서 export, 처음 부를 때 한 번 만든다) · `traitOf` export |
+| `src/sim/engine.ts` | `readonly carry: Carryover \| null` · `carryState: CarryState` · 생성자 `extra.carry` |
+| `src/sim/types.ts` | 끝의 "교대 간 지속 (I2)" 블록: `Carryover`·`StockId`·`CrewCarry`·`RecruitBase`·`UnitCarry`·`PlaceCarry`·`RoadCarry`·`CarrySummary` 와 인터페이스 합치기(`Responder` 의 `seat`·`relief`·`carryOut`·`carryCause`, `Unit` 의 `readyAt`·`oosWhy`·`pumpFails`, `Scene.wear`, `ShiftReport` 의 `carry`·`carryNext`). `Responder.status` 의 `'off'` 는 그 줄 끝에 새 줄로 |
+
+엔진 생성자의 순서(§3.4): `generateCity` → `readCarryover` → `initCarry`(①) → `initTraffic` → `createRoster` → `applyCrewCarry`(②) → `initGenerator`·`majorAt`·`initDisaster` → '교대 시작' → 헬기 운항 줄 → `announceCarry`(③). `step` 은 `tickTraffic` → `tickCarry` → `tickDisaster` …. '교대 시작' 문구는 `this.carryState.on ? shiftStartCounts(this) : 지금 문구`.
+
+**본문과 다르게 한 곳**
+
+1. **`announceCarry` 를 1단계에 넣었다**(요약 줄과 `dropped` 줄). §8 의 1단계 줄에는 없지만, 1단계의 시험 1("조금 다른 상태는 지문과 해시가 다르다", "`run('P2')` 와 다르다")이 지문이 든 요약 줄에 기댄다. 요약의 몫(결장·공석·정비 중·출입 통제 건물(무너짐)·복구 공사 도로)은 지금 상태에서 센다 — 1단계는 적용하는 것이 없어 언제나 '남은 피해 없음.'. **'숙련이 오른 대원'은 넣지 않았다** — 성장을 적용하는 단계 2 가 더한다(적용하지 않은 성장을 기록하면 가짜 연출).
+2. **`applyCrewCarry` 를 빈 함수로 두고 생성자에서 부른다** — 생성자의 자리(②)를 1단계에 고정해 단계 2·3 이 `engine.ts` 를 다시 고치지 않게.
+3. **`readCarryover` 의 버림 문장을 더했다**: 형식이 틀린 항목·같은 열쇠의 뒤 항목·모르는 열거값의 항목은 한 줄로 모아 '형식이 맞지 않는 기록 n개는 버립니다.'. 편성표에 없는 호출부호는 '편성표에 없는 부대 n대의 기록은 버립니다.'(본문은 대원 줄만 정했다). 상한은 '남은 피해가 있는 건물이 많아 n곳의 기록은 이어받지 않습니다.'·'복구 공사 도로가 많아 n구간의 기록은 이어받지 않습니다.'(출입 통제 상한과 건물 상한을 한 줄로).
+4. **대원의 `cause` 는 H1 의 `CAUSE_NAME` 에 있는 이름만** 받는다 — 모르는 이름은 `null`(결장은 남긴다). 그래서 `persist.ts` 가 `field/injury` 를 import 한다(§10.1 이 허락한 import — 잎 모듈). `kitFault` 는 `crews.KITS` 의 열쇠만 남긴다.
+5. **숫자**: 정수 칸(`out`·`replaceIn`·`shifts`·`incidents`·`repair`·`left`·`since`·재고)은 반올림한 뒤 자른다. 필수 칸의 수가 유한하지 않으면(또는 숫자가 아니면) 그 항목을 버린다. 선택 칸(`seat`·`replaceIn`·`recruit`·`kitFault`(배열이 아님)·`pump`·`service`·`spot`·`mark`·`opened`)이 틀려도 그 항목을 버린다 — 반쯤 읽은 항목을 남기지 않는다. `marked` 의 `repair` 는 0 으로 읽는다(타입 주석 "marked 면 0").
+6. **도시 지문이 다르면** 돌려주는 `carry.city` 를 지금 도시의 지문으로 둔다(건물·도로를 비웠으므로 지금 도시와 맞다). 건물·도로가 처음부터 비어 있어도 그 한 줄은 남긴다(본문 그대로).
+7. `from.diff` 는 `difficultyLabel(sim.difficulty)`(화면용 이름 — '보통' · '사용자 설정 …' · '… · 재난 지진'). 그래서 `difficulty` 를 함수까지 import 한다(잎 모듈 — 본문은 "타입").
+8. **`makeCarryover` 뼈대**: 조직 명부의 모든 열쇠마다 한 항목 — 앞 상태에 있으면 복사(모든 칸 — 선택 칸은 있을 때만), 없으면 처음 상태(`out 0`·`cause null`·`health 100`·나머지 0). `units`·`stock`·`places`·`roads` 는 비운다. 끝 상태 읽기와 휴식은 단계 2(대원)·3(펌프·정비·재고)·4(도로)·5(건물). `from.hash` 는 `sim.report ? sim.report.hash : ''`(단계 7 이 `buildReport` 안에서 부르면 빈 문자열 — 본문 그대로).
+9. **`Scene.wear` 의 리터럴 칸**(`createScene` 의 `wear: undefined`)은 넣지 않았다 — §10.2 표가 5단계(`applyPlaceWear` 와 함께)로 적었고(§2.1 끝은 그 칸을 1단계와 함께 적었다), 준비 줄의 1단계는 공용 파일을 위의 셋만 고친다. 1단계에는 `wear` 를 채우는 코드가 없어 현장 객체의 모양이 갈라지지 않는다. **단계 5 가 넣는다.**
+10. **`WorldTag` 의 `'carry'`**: 넣지 않았다 — `WorldTag`·`SimEvent.tag` 가 아직 없다(I1-b 단계 b1·b2 의 몫). 아래 "이어받을 자리".
+11. **H1 `outShifts` 의 두 줄**(교대 끝에 후송 중 · 쓰러진 채 병원·후송 아님): **이미 있다**(H1 단계 6 — `care !== undefined` 면 쓰러진 적 있음 3 / 없음 2, `tDown !== undefined` 이고 후송 아님 3). `injury.ts` 는 고치지 않았고 H1 의 보고서 `out` 도 그대로다. `status 'off'` 인 대원에게는 `outShifts` 가 0 을 돌려준다 — I2 가 `off` 대원의 `out` 을 자기 값으로 채운다(본문 그대로 — 단계 2·7).
+
+**객체 모양**: `Responder` 의 네 칸(`undefined`)은 `createRoster`·`createAidUnit` 의 대원 리터럴 끝(H1 줄 다음)에, `Unit` 의 `readyAt`·`oosWhy`(`undefined`)·`pumpFails`(`0`)는 두 부대 리터럴 끝(R3 줄 다음)에 같은 순서로 넣었다. 단계 2 의 예비 인력 리터럴은 `createRoster` 의 대원 리터럴과 같은 순서로 만든다.
+
+**시험** (`tests/persistence.test.ts` 새 파일 — 21개, 혼자 돌리면 6초쯤): 1(전부 — 같은 상태·JSON 왕복·배속 묶음·조금 다른 상태·`null`/인자 없음·요약 줄 하나와 지문·입력 불변·`makeCarryover` 의 순수성·끝나지 않은 교대의 예외·교대 시작 문구의 가용 부대 수), 이어받은 상태가 없는 교대(인자 없음·`{}`·`{ carry: null }` 이 같은 해시, `carryState` 가 꺼지고 비어 있음), 명부의 열쇠(규모 5 의 명부 = `rosterKeys()` 의 이름·순서, 규모 1~4 는 그 부분열이고 소속이 같다), 5(전부 — 왕복·`null` 이 되는 입력·도시 지문·범위·열거값·출동 시설·`marked` 로 읽기·상한·JSON 안전), 7 의 읽기 부분(명부에 없는 이름·같은 열쇠·편성되지 않을 사람의 항목은 남음·편성표에 없는 호출부호, 버린 것의 기록이 요약 줄 뒤에 요약 줄을 원인으로), 9(전부 — 글자). §9 의 2·3·4·6·7(성장·부대 규모)·8·10·11 은 그것을 적용하는 단계가 더한다.
+
+**수치**
+
+- 해시 목록 158교대(scratchpad `wf-persist/hashlist.ts`, 기준 `base-hashes.txt` = `5988db7` 를 따로 풀어 잰 것): §8 의 0단계 목록(S0~S11 보통, `armed/shooter`·`collapse/std`·`fire/arson` × F0~F2, 지진 Q0~Q2, X0~X3 `5,5,5,1,5,1`) + 보통 40 + 어려움 20 + 극한 20 + 재난 다섯 × 3 + 강제 일곱(`fire/std`·`armed/hostage`·`armed/kidnap`·`armed/bomb`·`traffic/bus`·`hazmat/std`·`collapse/gasblast`) × 3 + 부대 규모 1·2·4·5 × 3 + 500초 교대 2. 줄마다 `report.hash`·`JSON.stringify(report)` 의 FNV·기록 수·명부 지문(이름·숙련·특성) — **변경 뒤 158줄 모두 한 글자도 다르지 않다**(보고서 JSON 도 같다: 1단계는 보고서 칸을 채우지 않는다).
+- 관문 `npm run check` 통과: 파일 17 · 527개 통과 + 건너뜀 1(앞 506 + 새 21), vitest 294초 · 전체 5분 16초(다른 묶음과 함께 도는 기계 — 앞 합치기의 관문 vitest 319초보다 짧게 잰 것은 부하 차이다. 새 파일 혼자는 6초쯤이고 다른 파일과 나란히 돈다). `sweep 40 --check` 의 출력(분포·지표·후보)은 앞 합치기의 관문 기록과 줄마다 같다(교대당 시간 줄만 다르다).
+- 교대 하나의 시간(`sweep 20`, 기준·변경 번갈아 두 번): 사용자 CPU 기준 28.9·27.5초 / 변경 27.8·27.5초, 교대당 벽시계 469~480ms — 차이 없음(`tickCarry` 는 첫 줄에서 돌아간다). 출력도 같다.
+- 이어받은 상태 하나의 JSON 크기: 8.5KB 쯤(대원 75명 — 뼈대. 본문의 10~20KB 예상 안).
+
+**뒤 단계가 이어받을 자리**
+
+- **I1-b 단계 b1·b2 가 합쳐지면**: `types.ts` 의 `WorldTag` 끝에 `| 'carry'`(새 줄), `announceCarry` 의 요약이 아닌 줄(지금은 `dropped` 줄)과 단계 2~5 의 기록에 `tag: 'carry'`. `initWorld` 는 옮기지 않고 `carry` 를 넘기지 않는다 — I1-b 가 `initWorld` 를 `initDisaster` 뒤에 두면 I2 의 세 자리(①②③)와 그대로 맞물린다.
+- **X6 단계 2~**: `pickPlace`·`createIncident`(정해 준 건물)·은신처 후보의 `collapsed`·`burnt` 제외는 아직 없다(X6 단계 1 은 상태만) → 그 검사가 들어온 뒤 단계 5 가 `placeUsable` 한 번의 호출로 바꾼다. `catOf` 의 처음 건전도·전소 분자(`fuelMask`·`fuel0` — `types.ts` 의 `CatState` 주석이 "전소 비율의 분모·분자를 이 칸으로만 센다"고 적었다)도 단계 5.
+- **I1-b 의 `knownBuildingAt`·`placeState`·`rubble`**: 아직 없다(grep 으로 확인) → 단계 4(`rubble` → `debris` (나))·단계 5.
+- **단계 2**: `crewNext`·`applyCrewCarry` 의 몸, `announceCarry` 의 대원 줄과 '숙련이 오른 대원', `respondersHurt`·`dispatchUnit`·`arrive` 의 `off`, 결원 도착 기록의 `causes`. 시작할 때 §11.1-2 대로 `grep -n "\.status" src/sim src/ui` 로 `Responder.status` 를 읽는 곳을 다시 본다(`FieldAgent.status` 와 헷갈리지 않게 — 1단계는 이 목록을 고치지 않았다). `Responder.status` 에 `'off'` 를 더해도 `tsc` 는 깨지지 않았다 — 상태별 표(`Record<status, …>`)가 없다. 측정 도구의 `S(I)`(`metrics.ts:634`)는 이미 `'off'` 를 본다.
+- 시험 10(적용 목록과 기록의 일대일)은 적용 항목이 생기는 단계 2 부터 더한다.

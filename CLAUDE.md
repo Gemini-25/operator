@@ -18,7 +18,7 @@ TypeScript + React + Vite, 그림은 Canvas 2D. 서버·외부 API·LLM 호출 �
 |---|---|
 | `npm run dev` | 개발 서버 (`http://localhost:5173`, `?seed=S7&diff=hard` 로 조건 고정) |
 | `npm run check` | **커밋 전 관문**: 타입 검사 + 테스트 + 시드 40개 헤드리스 검증 (4분쯤 — R1 뒤로 대원이 늘어 테스트만 3분 남짓 걸린다. 같은 기계에서 다른 작업이 함께 돌면 4분 30초) |
-| `npm test` | Vitest 506개(+건너뜀 1), 파일 16개(H1 진행 중 — `injuries` 150개: 부상 기록·화면·구조 대상의 부상·대원의 부상 모델·대원 후송과 가벼운 일·열 탈진·잔해 추락·몸싸움·용의자의 부상과 처치·판정과 보고서 / X6 준비 — `catastrophe` 31개: 위험 상태를 계산만 하는 단계 / R2 준비 — `methods` 44개: 방법 표와 고르는 틀 / R3 준비 — `doctrine` 18개: 교본 틀의 정보 격리·순수 함수·표 모양): `sim`(재현성, 교대 완주, 정보 격리, 난이도, 전술, 유형별 현장, 지도, 생활 사건, 추격전) · `ext`(확장 지점) · `crime` · `major` · `disaster` · `destruction` · `traffic` · `causality`(측정 도구: 결과 불변·손 계산·문구 규칙·멈춤 감지기 / I1-b 준비: 기록만 잇기) · `combatfx`(교전 연출: 기록 꼬리표·소리 상한·결과 불변) · `loops`(반복 고리·실패 기억·연쇄 상한) · `legibility`(무너짐 기록·시점 규칙·그림 함수) · `crews`(편성표·능력과 장비의 불변 조건·장비 자격·환자 자리·헬기 세 종류·상공의 일·공기와 고장·화면이 읽기만 하는가 — 70개, 40초쯤). 한 묶음만 볼 때는 `npx vitest run tests/crime.test.ts` |
+| `npm test` | Vitest 515개(+건너뜀 1), 파일 16개(`injuries` 159개 — 부상과 사망: 부상 기록·화면·구조 대상의 부상·대원의 부상 모델·대원 후송과 가벼운 일·열 탈진·잔해 추락·몸싸움·용의자의 부상과 처치·판정과 보고서·이름표와 알약의 겹침 / X6 준비 — `catastrophe` 31개: 위험 상태를 계산만 하는 단계 / R2 준비 — `methods` 44개: 방법 표와 고르는 틀 / R3 준비 — `doctrine` 18개: 교본 틀의 정보 격리·순수 함수·표 모양): `sim`(재현성, 교대 완주, 정보 격리, 난이도, 전술, 유형별 현장, 지도, 생활 사건, 추격전) · `ext`(확장 지점) · `crime` · `major` · `disaster` · `destruction` · `traffic` · `causality`(측정 도구: 결과 불변·손 계산·문구 규칙·멈춤 감지기 / I1-b 준비: 기록만 잇기) · `combatfx`(교전 연출: 기록 꼬리표·소리 상한·결과 불변) · `loops`(반복 고리·실패 기억·연쇄 상한) · `legibility`(무너짐 기록·시점 규칙·그림 함수) · `crews`(편성표·능력과 장비의 불변 조건·장비 자격·환자 자리·헬기 세 종류·상공의 일·공기와 고장·화면이 읽기만 하는가 — 70개, 40초쯤). 한 묶음만 볼 때는 `npx vitest run tests/crime.test.ts` |
 | `npm run sweep -- 100` | 시드 100개 결과 분포. `--diff hard`, `--diff 4,4,4,2,3,3`(빈도·심각도·용의자·장비·신고·부대, 일곱째 숫자를 붙이면 교통), `-v`, `--json`, `--check` |
 | `npm run sweep -- 1 --log S7` | 한 교대의 전체 이벤트 기록과 종료 보고서 (동작 확인에 가장 유용). `--metrics` 를 붙이면 사건마다 가장 긴 원인 사슬과 확산 길 |
 | `npm run sweep -- 40 --metrics` | 측정 도구(I1-a, `scripts/metrics.ts`): 기본 출력의 지표 아홉 줄(`chain` 연쇄 깊이 · `systems` 시스템 간 영향 · `replan` 재계획 · `alt` 대체 방법 · `actions` 행동 다양성 · `contention` 자원 경쟁 · `stall` 멈춘 시간 · `variety` 결과 다양성 · `consistency` 기록 일치)에 더해 시나리오별 표와 모든 후보(`STALL`·`FORGOT`·`REPEAT`·`SPREAD`·`UNLOC`). `--no-metrics` 는 표본을 끈다(속도 비교용). 관문(`--check`)은 연쇄 깊이 ≤ 4·교대당 연쇄 ≤ 8·기록 일치 C1~C5 = 0·계산 오류 0 을 늘, 교착 후보·잊힌 사건 0 을 보통 기본 조건에서 건다 |
@@ -39,6 +39,7 @@ TypeScript + React + Vite, 그림은 Canvas 2D. 서버·외부 API·LLM 호출 �
    - 진실을 읽어도 되는 곳: `field/hazards.ts`(세계 규칙), `field/executor.ts`(행동의 효과 적용), `field/agents.ts` 의 `perceive`(시야 안 관찰), `debrief.ts`(판정), `incidents.ts`, `field/fxlog.ts`(기록 전용 — 그림·소리에 쓸 꼬리표만 남기고 판단하지 않는다), `field/rules/air.ts`(상공 헬기의 관측과 실행 — 세계 규칙).
    - 진실을 읽으면 안 되는 곳: `field/commander.ts`, `field/brain.ts` 의 판단부, `dispatch/*`, `field/airDecide.ts`(상공 헬기의 판단 — 좁힌 입력 `AirView` 만 받는다. 작업판을 무전 없이 읽는 것은 의도한 예외다).
    - 조직이 아는 것(편성·역할·장비·알려진 고장·남은 섬광탄·공기·연료)은 판단에 써도 된다. **숨은 고장**(`KitItem.fault` 인데 `faultKnown` 이 아님)은 진실이다 — 판단 파일은 `.fault` 를 읽지 않고 `hasKit`·`toolFor`·`capableOf` 를 쓴다(테스트가 소스를 본다).
+   - 부상(H1): 진실 쪽은 `field/injury.ts`(피해 한 길 `hurt*` · `needsHospital`)와 `field/rules/injury.ts`(매 틱 피해·출혈). 판단 쪽 `field/orders/injury.ts`·`commander.ts` 는 **남의** 체력·출혈·부상 기록·사망·후송을 읽지 않고 믿음 술어 `mateNeedsHospital`·`hosNeedsCare` 를 쓴다(명부에서는 `unitId`·`dept`·`name`·`status` 만 — 테스트가 소스를 본다). 대원이 자기 몸을 읽는 것(`brain.ts` 의 후퇴)은 된다.
    - 현재 남아 있는 예외 3건은 `README.md` "알려진 문제"에 적혀 있다. 늘리지 않는다.
 5. **가짜 연출 금지.** 로그는 상태를 바꾸는 바로 그 코드에서 `emit()` 으로만 남긴다. 문제는 `raiseProblem()`, 복구는 `markRecovered()`. 보고서 문장은 기록된 문제와 타임라인에서만 만든다.
 6. **모든 사건은 반드시 끝난다.** 현장 한계 시간(`sceneManager.ts` 의 `LIMIT`), 작업 보류(`holdUntil`), 교대 상한(`engine.ts` 의 `hardCap`)을 없애지 않는다.
@@ -80,6 +81,8 @@ src/sim/field/commander.ts   지휘관: 믿음 → 작업 목록(want), 배정, 
 src/sim/field/sceneManager.ts 현장 틱, 부대 도착(내리는 자리만 내린다 / 상공에 머무는 헬기는 s.airAt 만)·철수, 지휘권 이양, agentHealth(장비 방호·공기 소모)
 src/sim/field/rules/air.ts   상공 헬기의 실행(세계 규칙 — 진실을 읽는다): 부대마다 AirOp, 공중 관측·보고, 탐조등, 호이스트 인양, 물 투하, 상공 연료, 한가하면 복귀, 헬기만 왔던 현장의 마무리(tellDispatch·allAboard). 균형 상수 AIR
 src/sim/field/airDecide.ts   상공 헬기의 판단(믿음만 — 좁힌 입력 AirView): 호이스트 > 물 투하 > 살피기, 한가한가
+src/sim/field/injury.ts      부상과 사망의 공통 모델(H1, 잎 모듈 — types·events·util·crews 만 import): 원인 InjuryCause·중증도 bandOf·기록 Injury, 피해 한 길 hurtCas·hurtResponder·hurtHostile(방호 protection·문턱·출혈), 처치 treatEffect, 병원 판단(진실 needsHospital / 믿음 mateNeedsHospital·hosNeedsCare), 가벼운 일 LIGHT_WORK·canDeploy, 결장 outShifts, 목적별 난수 injuryRng. 균형 상수 MATE_RETREAT_BLEED·HOSTILE_LEFT 등
+src/sim/field/rules/injury.ts 매 틱의 부상 규칙(세계 규칙): 걷던 사람의 쓰러짐(WALK_STOP), 대원의 열 탈진·잔해 바닥 추락, 용의자의 불·연기·출혈 / field/orders/injury.ts: 다친 대원·용의자의 처치와 후송 지시(treatMate·treatSuspect, 20초 규칙, 다수 사상자 다시 세기 — 믿음만)
 src/view/                    runner(틱·되감기·저장), camera(자동 카메라·현장 확대), renderCity, renderScene(그리는 순서 조립), icons, audio(합성음)
 src/sim/field/fxlog.ts       교전 연출 기록(사격·섬광탄·진입·폭발·검거·근접): s.fx 의 꼬리표(Fx.c)에만 쓰고 난수를 부르지 않는다 — 결과는 바뀌지 않는다
 src/view/scene/fxBook.ts     연출 시계(최대 2배, 일시정지면 멈춤), 처음 보는 기록 받아들이기, 같은 틱 안의 순서 지연, 합성 항목, 남는 그림, 흔들림, 화면 막
@@ -88,6 +91,7 @@ src/view/audioCombat.ts      교전 소리(planCues 는 순수 함수: 배속별
 src/view/city/combatPin.ts   지도의 교전 핀(사격 별·폭발 고리·교전 중 점선 테)
 src/sim/field/ruins.ts       무너짐 기록(markRuin: Scene.ruin 칸의 처음 모습·무너진 모습, recordFall: Scene.falls·Fx 'collapse'). 기록 전용 — 결과는 바뀌지 않는다
 src/view/hazardState.ts      현장·지도·카드가 함께 쓰는 상태 읽기(ruinInfo·ruinSeen·pinIcon·가스·인질 상태, 시점 규칙)
+src/view/triage.ts           중증도 색 TRIAGE(초록·노랑·빨강·검정)·덮개 규칙(casSheet·respSheet·hostileSheet — 확인된 사망부터, AI 시점은 믿음)·정보창 내용(casInfo·hostileInfo)·보고서 글(reportHurtText). src/ui/PersonCard.tsx 가 구조 대상·용의자 정보창(오른쪽 칸의 대원 정보 자리)
 src/view/scene/ruins.ts      무너진 구역의 고정 층 그림(내려앉은 음영·잔해 더미·쓰러진 벽·금·경계) / scene/hazardFx.ts: 위험 범위·무너지는 순간·먼지 충격 고리·되살아난 불·인질 표지
 src/view/city/ruinLayer.ts   지도의 무너진 지붕·먼지·배지(부대 표식 뒤에 그린다)·끝난 붕괴 기호 / src/ui/HazardStrip.tsx: 사건 카드의 상태 칩
 src/view/marks.ts            부대 열네 종류·시설·상태·대원 역할 묶음 16가지(ROLE_MARK)·장비 묶음(KIT_GROUP_MARK)의 그림 기호(24×24 경로 문자열). 지도(캔버스 Path2D)와 패널(SVG)이 같은 것을 쓴다. 지도와 목록에 글자 표식을 쓰지 않는다
@@ -103,6 +107,7 @@ src/view/scene/common.ts     색 계산, 해시, 벽에 가려지는 시야 다�
 src/view/scene/skins/        묶음별 소품 그림(crime·major·disaster). skins.ts 가 모아서 renderScene 에 넘긴다
 src/ui/                      App, Viewport(캔버스·입력), panels(모든 패널), CallDock(오른쪽 칸 맨 위의 접히는 통화창, P 키, 접힘 기억 ar.call.v1), Mark(<Mark>·<Token>·<FacilityBadge>·<RoleDot> 부대 목록의 역할 점), MapLegend(지도 범례), TrafficChip(상단 교통 요약), DisasterBanner(특보 띠), styles.css
 scripts/sweep.ts             헤드리스 실행기 (균형·교착 확인의 기본 도구)
+scripts/injurystats.ts       sweep 의 `injuries:` 줄과 --json 의 injuries 칸: 다친·쓰러진·순직 대원, 다친·숨진 용의자(총에 맞아 쓰러진 용의자의 사망 비율·즉사), 잔해 추락, 운용 중단, 가벼운 일 복귀, 숨진 구조 대상의 원인 (끝난 교대를 읽기만 한다)
 scripts/ui-check.cjs         화면 자동 검사 (+ ui-check-ref.ts: 같은 시드·난이도의 헤드리스 기록 해시). 화면 쪽 관찰 고리는 App.tsx 의 window.__ar.snap()·combat()·fxStep() (개발 서버에서만, 읽기 전용)
 scripts/combatshots.cjs      교전 장면 찍기(장면 틱에 멈추고 연출 시계만 넘기며 찍는다)
 tests/                       sim.test.ts(기본) + 묶음별 ext·crime·major·disaster·destruction·traffic·causality·combatfx·loops·legibility·crews (fakeCanvas.ts: 그림 시험용 가짜 캔버스)
@@ -125,6 +130,9 @@ tests/                       sim.test.ts(기본) + 묶음별 ext·crime·major·
 | 새 역할 | `types.ts` `RoleId` → `crews.ts` `ROLES`(이름·그림 묶음 `group`·skills 식·기본 장비·`prefer`·`stays`·`exp`) → 그림 `sprites.responderLook`. 새 그림 묶음이면 `RoleGroup` + `view/marks.ts` `ROLE_MARK` + 범례 |
 | 새 개인 장비 | `types.ts` `KitId` → `crews.ts` `KITS`(이름·묶음·tool·med·armor·`faultable`) → 역할의 기본 장비 **끝에** 붙인다(장비 순서가 고장 추첨 순서다) → 효과는 그 장비를 보는 자리 하나에서 `kitWorks`(숨은 고장이 이때 드러난다), 배정은 `hasKit`·`capableOf`, 화면도 부르는 함수(`visionOf`·`detectRadius`)에서는 `kitLive` → 손에 든 그림 `renderScene.agentPose` + `sprites.drawPerson` 의 `Item` → 대원 정보창은 저절로(`KITS[id].name`) |
 | 새 헬기·공중 임무 | `UnitKind` + `crews.ts` `STAFF`·`AIR_KIND`·`isHovering`(현장 상공에 머무는가) + `dispatcher.ts` `airFit`(관제가 그 헬기를 보내는 수요) → 상공의 실행은 `field/rules/air.ts`(진실을 읽는다), 판단은 `field/airDecide.ts`(믿음만) → 지휘관의 작업은 `commander.ts` 에서 `want('hoist' \| 'airDrop')` 처럼 지상 대원의 `fitFor` 가 0 인 작업으로 내고, 그 일을 할 헬기가 상공에 없으면 `cancel` 한다 → 그림은 `renderScene` 의 "상공의 헬기" 블록과 `airOpLabel` |
+| 사람에게 피해를 주는 새 규칙 | 체력을 직접 깎지 않는다 — `injury.hurtCas`·`hurtResponder`·`hurtHostile` 을 원인(`InjuryCause`)과 함께 부르고, 그 자리가 남긴 기록 id 를 `{ ev }` 로 넘긴다(대원의 RESPONDER_HURT·RESPONDER_KILLED 와 구조 대상의 사망이 그 기록을 원인으로 잇는다). 피해 문구는 그 자리가 남기고 `hurt*` 는 남기지 않는다. 확률은 새 목적의 `injuryRng(sim, s, '<목적>')`, 하한이 걸리면 `hurtCasTo`. 매 틱 피해는 `{ tick: true }`(문턱·출혈 없음) |
+| 새 부상 원인 | `types.ts` `InjuryCause`(끝에 새 줄) → `injury.ts` `CAUSE_NAME`·`BLEED_PER_DMG`·`protection` 의 갈래 → 처음 상태로 생기면 `initInjuries` 의 표 |
+| 부상·사망의 균형 | 설계서 H1 §9.3 의 차례: `injury.ts` `MATE_RETREAT_BLEED`·`BLEED_PER_DMG` → `difficulty.ts` `injuryMul`(보통 1 — 위쪽 두 칸도 1)·문턱 → `HOSTILE_LEFT`·`HOSTILE_BLEED` → `hazards.TRAP_R`·`executor.MISHAP` → `rules/injury.ts` `HEAT_*`·`FALL_*`. `HOSPITAL_BLEED` 는 `MATE_RETREAT_BLEED` 에 묶여 함께 움직인다. 운용 중단 조건과 `SELF_HARM = 0` 은 사용자 결정이라 손잡이가 아니다 |
 | 새 시나리오 (유형은 그대로, 모습만 다르게) | 묶음별 파일에만 쓴다: `scenarios/<묶음>.ts` 에 한 줄(몫·신고 문구 `texts`·가능도 `lik` 8열·필요 자원 `needs`·장소 `places`·한계 시간 `limit`·`onCreate`/`onClose`) → `field/scenes/<묶음>.ts` 에서 `registerScene(유형, 변형, 만드는 함수)` → 세계 규칙이 필요하면 `field/rules/<묶음>.ts` `registerRule`, 지휘관이 달리 움직여야 하면 `field/orders/<묶음>.ts` `registerOrders`·`registerBlocker`(믿음만 읽는다) → 소품에 다른 모습은 `Prop.skin` + `view/scene/skins/<묶음>.ts`. 확인은 `npm run sweep -- 20 --force 유형/변형 --scen`. 자세한 규칙은 `docs/specs/README.md` |
 | 새 교통 사건·장애물 | `traffic.ts` 의 `ObstacleKind`·`OBSTACLE_LABEL`·교통 사건 추첨(`spawn`) → 길을 막는 것은 반드시 `addObstacle`(큰 차 기준 우회로를 확인한다) → 그림은 `view/city/trafficLayer.ts` `OBSTACLE_ICON` → `ui/MapLegend.tsx`. 다른 시스템이 길을 닫을 때는 `closedReason` 을 'incident'·'disaster' 로 두고 `known` 은 건드리지 않는다 |
 | 새 난이도 손잡이 | `difficulty.ts`(타입·표·프리셋) → 쓰는 곳에서 `sim.tune.*` → `ui/panels.tsx` `DifficultyPanel` |
@@ -224,6 +232,12 @@ tests/                       sim.test.ts(기본) + 묶음별 ext·crime·major·
 - **현장의 대원 이름표는 `mergeLabels` 를 거친다.** 부대마다 2~5명이라 대기 지점에 열 명 넘게 모인다. 같은 글자의 이름표가 겹치거나 바로 곁이면 하나로 모으고(분야가 섞이면 중립색), 글자가 다른 이름표끼리 겹치면 한 줄 올린다. 대원 이름표를 더하는 코드는 `labels` 배열에 넣는다(직접 `pill` 을 부르면 다시 겹친다). 부대 목록의 대원 칸은 `.crewN`, 역할 점은 `.rdot`(`RoleDot`)이다.
 - **역할 기호는 글자처럼 읽히면 안 된다.** 곧은 집게 둘은 13 화소에서 글자 Y 로 읽혔고, 고리 모양 기호는 서로 헷갈렸다. 새 기호는 견본표(10·12·13·16·24 화소로 나란히)를 찍어 보고 정한다. 순찰·기동대원(문장형 방패)과 방패수(시야 창이 뚫린 긴 방패)처럼 뜻이 가까운 기호는 윤곽을 다르게 한다.
 - **장비 효과를 시험하는 현장은 숨은 고장을 지우고 시작한다.** `tests/crews.test.ts` 의 `sceneWith` 는 모든 장비의 `fault` 를 지운다(시드에 따라 로봇·유압 구조기가 고장 난 채 시작해 무관한 시험이 깨졌다 — 고장 자체는 "소모와 고장" 시험이 본다). 그 파일은 90초 예산이다: 교대를 끝까지 도는 시험은 매 틱 부대만 훑는 `patrol` 도우미의 결과를 나눠 쓰고, 날씨를 타는 시험은 `seedsWhere` 로 맞는 시드를 찾는다(안개 교대에는 헬기가 뜨지 않는다 — `npm run ui-check` 의 기본 시드 S3 도 안개다).
+- **피해는 한 길로(H1).** 사람의 체력을 깎는 모든 곳은 `injury.hurt*` 를 거친다 — 부상 기록·방호·문턱·출혈·사망 원인이 거기서 정해진다. 판정 뒤(`I.phase === 'closed'`)에는 `tickCasualties` 의 악화, `agentHealth`, `rules/injury.ts`, `hurt*` 가 모두 첫 줄에서 돌아간다 — 새 피해 규칙도 그렇게 해야 사망 기록이 판정과 어긋나지 않는다(시험 9). 숨진 사람을 다시 치지 않는다(`tickLane`·`blast` 의 대상 고르기에서 `r.dead` 를 뺀다 — 빼지 않으면 시신을 친 차가 '작업 중인 대원을 충격' 기록을 남긴다).
+- **문턱(H1).** 이 틱이 시작될 때 41 이상이던 대원은 한 번 피해가 몇 번 겹쳐도 숨지지 않고 체력 8 로 쓰러진다(`a.hpTick` — `tickScene` 이 1) 직전에 적는다. 실행기 단계의 피해도 그 값을 쓴다). 쓰러지지 않은 용의자는 한 번 피해로 숨지지 않고 4~15 로 남아 **그 자리에서** 쓰러진다(`hurtHostile` → `settleHostile` — 다음 틱까지 기다리면 같은 틱의 다른 대원이 한 번 더 쏜다). 그래서 용의자의 사망은 쓰러진 뒤의 출혈·처치 지연·폭발로만 생긴다.
+- **먼 관찰이 가까운 보고를 덮는다.** 지휘관이 쓰러진 용의자를 2칸 밖에서 매 틱 다시 보면, 새 시각의 그 사실이 곁에서 본 대원의 늦게 닿은 보고('숨졌다')를 `merge` 에서 "더 오래된 사실"로 버리게 한다 — 숨진 용의자에게 처치 지시가 되풀이됐다(H1 검토). 움직이지 않는 대상(쓰러진 동료·쓰러졌거나 붙잡힌 용의자)을 멀리서 다시 본 것은 `significant` 한 변화가 없으면 믿음을 덮지 않는다(`perceive`). 비슷한 사실 종류를 새로 만들면 같은 규칙을 둔다. `TS_MAX_DONE`(한 용의자에게 내는 지시 넷)은 안전장치다.
+- **다친 대원은 가벼운 일만, 부대는 걸을 사람이 있는 한 나간다(H1 — 사용자 결정).** `fitFor` 는 남에게도 불리므로 `r.status === 'injured'`(조직이 아는 상태)만 보고 체력을 읽지 않는다. 배정(`resources.crewReady`)과 내리는 사람(`unitArrived`)은 같은 술어 `injury.canDeploy` 를 쓴다 — 따로 쓰면 "배정은 됐는데 아무도 내리지 않는 부대"가 생긴다. 감점은 온전한 대원 수(`crewOk`)로 본다. 운용 중단 문구 셋은 측정 도구의 `PHRASE.T6` 와 맞물려 있다.
+- **환자 자리는 `crews.seatsUsed(sim, u)`(H1).** 다친 대원·용의자는 `u.aboard` 에 타고 다른 부대의 대원·용의자만 자리를 쓴다. `u.patients.length` 로 자리를 세면 구급차에 셋이 탄다. 출발 지시·출발 기록은 `commander.riderText(u)`, 병원 인계(`resources.tickUnits`)는 `aboard` 도 인계하고 비운다 — `patientsIncident` 블록 밖에서.
+- **사람 곁의 글자는 서로 피한다(H1 단계 7).** 대원 이름표(`mergeLabels`)는 먼저 그린 용의자 알약을 고정 글자(`LabelBox`)로 받아 겹치면 한 줄 올리고, 용의자 알약끼리도 겹치면 한 줄 올린다(쓰러진 용의자를 처치하는 대원의 이름표가 알약을 덮어 둘 다 읽히지 않았다). 사람 곁에 글자를 새로 그리면 같은 상자 목록에 넣는다.
 
 ## 작업 방식
 

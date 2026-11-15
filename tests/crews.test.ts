@@ -1279,6 +1279,15 @@ describe('상공의 일 (설계서 7.3·7.4)', () => {
     for (const h of B.s.hostiles) if (isIndoor(B.s.tiles[tileOf(B.s, h.x, h.y)])) { inside++; expect(eyeB.beliefs.get('hos', h.id)).toBeUndefined(); }
     expect(inside, '건물 안에 사람이 있는 현장').toBeGreaterThan(0);
     expect(eyeB.beliefs.list('blk').length + eyeB.beliefs.list('haz').length + eyeB.beliefs.list('evid').length, '소품은 살피지 않는다').toBe(0);
+    // 소품(단서·목격자·잔해·밸브 …)은 하늘에서 살피지 않는다: 실종 현장을 한 바퀴 훑어도 이동 흔적(단서)을 찾지 못한다 — 지상 대원이 걸어서 찾는 것이다
+    const C = sceneOf(clearSeed(), 'search', ['policeHeli']);
+    const clues = C.s.props.filter((q) => q.kind === 'clue' || q.kind === 'witness');
+    expect(clues.length, '단서나 목격자가 있는 현장').toBeGreaterThan(0);
+    tickScn(C.sim, C.s, 5 * 29);      // 할 일이 없어 떠나기 전까지 (오는 부대가 없다)
+    const eyeC = opOf(C.s, C.unit('policeHeli')).eye;
+    expect(eyeC.beliefs.list('evid').length + eyeC.beliefs.list('clue').length).toBe(0);
+    expect(clues.some((q) => q.found), '단서를 찾은 것으로 되지 않는다').toBe(false);
+    expect(said(C.sim, /이동 흔적 발견/)).toBe(0);
   });
   it('탐조등: 밤에 경찰 헬기가 비추는 원 안의 바깥에서 지상 대원의 시야가 그 현장의 맑은 날 값까지 오른다. 고장은 처음 켤 때 드러난다', () => {
     const { sim, I, s, unit, arrive } = sceneOf(nightSeed(), 'search', ['policeHeli']);
@@ -1366,6 +1375,7 @@ describe('상공의 일 (설계서 7.3·7.4)', () => {
   it('물 투하: 산불의 바깥 구역에 물을 쏟고, 바구니가 비면 물을 뜨러 다녀온다. 밤에는 뿌리지 않는다', () => {
     const { sim, s, unit } = sceneOf(clearSeed(), 'fire/wild', ['heli']);
     const heli = unit('heli');
+    const home = [heli.x, heli.y];      // 현장 상공에 있는 동안 지도의 위치
     expect(heli.bucket).toBe(1);
     tickScn(sim, s, 5 * 60, () => sim.airStats.drops > 0);
     expect(sim.airStats.drops).toBe(1);
@@ -1383,9 +1393,10 @@ describe('상공의 일 (설계서 7.3·7.4)', () => {
     tickScn(sim, s, 5 * 3);
     const op = opOf(s, heli);
     expect([op.mode, op.phase]).toEqual(['bucket', 'away']); expect(op.backAt).toBeGreaterThan(sim.t + AIR.fill - 2);
-    const at = [heli.x, heli.y], fuel1 = heli.fuel!, t1 = sim.t;
+    const fuel1 = heli.fuel!, t1 = sim.t;
+    expect([heli.x, heli.y], '물을 뜨러 가도 지도의 위치는 옮기지 않는다').toEqual(home);
     tickScn(sim, s, 5 * 200, () => op.phase !== 'away');
-    expect(sim.t).toBeGreaterThanOrEqual(op.backAt); expect(heli.bucket).toBe(1); expect([heli.x, heli.y]).toEqual(at);
+    expect(sim.t).toBeGreaterThanOrEqual(op.backAt); expect(heli.bucket).toBe(1); expect([heli.x, heli.y]).toEqual(home);
     expect(fuel1 - heli.fuel!).toBeCloseTo((sim.t - t1) * AIR.bucketBurn, 1);
     tickScn(sim, s, 5 * 60, () => sim.airStats.drops > 1);
     expect(sim.airStats.drops, '다시 뿌린다').toBe(2);
@@ -1475,6 +1486,17 @@ describe('⑬ 정보 격리와 순수 함수', () => {
     expect(again).toEqual(first);
     expect([sim.events.length, sim.logHash]).toEqual(before);
     for (const [rid, id] of [[lead.rid, 'tic'], [seeker.rid, 'searchKit'], [obs, 'searchlight']] as [number, KitId][]) expect(kitItem(sim, rid, id).faultKnown, id).toBe(false);
+    // 밤의 관측자: 고장 난 탐조등으로는 4칸만 본다 — 그래도 visionOf 는 고장을 드러내지 않는다 (드러내는 자리는 air.ts 가 처음 켤 때)
+    const N = sceneOf(nightSeed(), 'search', []);
+    const nh = N.unit('policeHeli'), nobs = nh.crew.find((rid) => N.sim.responders[rid].role === 'observer')!;
+    const neye = makeAgent(N.sim, nobs, nh.id, 5, 5, 0, N.sim.rng.fork('t'));
+    neye.aloft = true;
+    expect(visionOf(N.sim, N.s, neye)).toBe(8);
+    kitItem(N.sim, nobs, 'searchlight').fault = true;
+    const nb = [N.sim.events.length, N.sim.logHash];
+    for (let k = 0; k < 10; k++) { expect(visionOf(N.sim, N.s, neye)).toBe(4); detectRadius(N.sim, N.s, neye, 0.6); }
+    expect([N.sim.events.length, N.sim.logHash]).toEqual(nb);
+    expect(kitItem(N.sim, nobs, 'searchlight').faultKnown).toBe(false);
   });
   it('airDecide: 하던 인양을 끝까지 하고, 지휘관이 있으면 작업판을 따르고, 한가함은 믿음으로 정한다 (난수 없이 같은 입력에 같은 답)', () => {
     const sim = new Sim(clearSeed());

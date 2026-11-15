@@ -8,7 +8,7 @@ import { closeIncident } from '../incidents';
 import { T } from '../types';
 import type { CasBelief, FieldAgent, Incident, MateBelief, Scene, UnitCaps, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, dist, josa } from '../util';
-import { airShort, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, isHovering, kitUses, roleOf, seatsOf } from '../crews';
+import { airShort, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, isHovering, kitUses, roleOf, seatsOf, seatsUsed } from '../crews';
 import { canCarryPatients, exitName, failedRecently, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { losWalls } from './grid';
@@ -361,7 +361,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   // ── 구조 대상 ──
   const hasMedicAny = s.agents.some((b) => b.status === 'active' && sim.responders[b.rid].dept === 'ems');
   // 환자를 싣고 병원으로 갈 수 있는 부대: 환자 자리가 남은 부대 (seatsOf — 구급차 2명, 헬기 1명)
-  const ambulances = unitsOnScene(sim, s).filter((uid) => canCarryPatients(sim.units[uid]) && !sim.units[uid].boardOrder);
+  const ambulances = unitsOnScene(sim, s).filter((uid) => canCarryPatients(sim, sim.units[uid]) && !sim.units[uid].boardOrder);
   // 그 부대에 이미 내려진 탑승 지시의 수 (실린 환자 + 이것이 자리 수를 넘지 않게 한다)
   const loadsQueued = (uid: number): number => { let n = 0; for (const w of s.board) if (w.kind === 'load' && w.prop === uid && (w.status === 'open' || w.status === 'active')) n++; return n; };
   // 처치를 두 번 마쳤는데(기본 처치 + 구급대원이 다시 봄) 아직 기본 처치로 보고된다: 현장의 구급대원이 더 해 줄 수 있는 처치가 없다.
@@ -414,7 +414,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
           for (let pass = 0; pass < 2 && best < 0; pass++) for (const uid of ambulances) {
             const q = sim.units[uid];
             if ((!!q.air === airFirst) !== (pass === 0)) continue;
-            if (q.patients.length + loadsQueued(uid) < seatsOf(q)) { best = uid; break; }
+            if (seatsUsed(sim, q) + loadsQueued(uid) < seatsOf(q)) { best = uid; break; }
           }
           if (best >= 0) want(sim, s, 'load', { cas: f.id, prop: best }, (c.treated ? 0.7 : 0.5) + urg);
         }
@@ -690,11 +690,10 @@ function manageAmbulances(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void 
   for (const uid of unitsOnScene(sim, s)) {
     const u = sim.units[uid];
     if (seatsOf(u) === 0 || !u.patients.length || u.boardOrder) continue;      // 환자 자리가 있는 부대만 (구급차·헬기)
-    const full = u.patients.length >= seatsOf(u);      // 자리가 찼으면 바로 떠난다 (남은 탑승 지시는 아래에서 거둔다 — 다른 부대로 다시 낸다)
+    const full = seatsUsed(sim, u) >= seatsOf(u);      // 자리가 찼으면 바로 떠난다 (남은 탑승 지시는 아래에서 거둔다 — 다른 부대로 다시 낸다)
     const waiting = cas.filter((f) => f.value.band >= 1 && f.value.band < 3 && (f.value.where === 'scene' || f.value.where === 'carried' || f.value.where === 'safe'));
     const loading = s.board.some((w) => w.kind === 'load' && w.prop === uid && (w.status === 'open' || w.status === 'active'));
-    const firstLoad = Math.min(...u.patients.map((cid) => s.casualties[cid].tLoaded));
-    const waited = sim.t - firstLoad;
+    const waited = sim.t - (u.firstLoadAt ?? sim.t);      // 이번 이송에 처음 사람을 태운 뒤 지난 시간 — 부대 자신의 기록 (실은 사람의 진실을 읽지 않는다)
     const redAboard = u.patients.some((cid) => { const b = a.beliefs.val<CasBelief>('cas', cid); return !!b && b.band === 2; });      // 위중 환자를 실었다고 알고 있다 (실은 대원의 보고 — 진실을 읽지 않는다)
     if (!full && loading && waited < 30) continue;
     if (full || waiting.length === 0 || (redAboard && waited > 10) || waited > 35) {

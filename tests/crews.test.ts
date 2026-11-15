@@ -760,9 +760,9 @@ describe('⑨ 환자 자리', () => {
     expect(a.carrying).toBe(-1); expect(b.carrying).toBe(-1);
     expect(sim.events.some((e) => e.text.includes('차에 환자 자리가 없습니다')), '자리가 없어 내려놓았다고 알린다').toBe(true);
     // 자리가 찬 부대는 탑승을 맡을 수 없다 (환자 자리가 없는 부대는 처음부터)
-    expect(canCarryPatients(heli)).toBe(false);
+    expect(canCarryPatients(sim, heli)).toBe(false);
     expect(fitFor(sim, s, a, work(sim, 'load', { cas: off.id, prop: heli.id }))).toBe(0);
-    expect(canCarryPatients(sim.units.find((u) => u.kind === 'engine')!)).toBe(false);
+    expect(canCarryPatients(sim, sim.units.find((u) => u.kind === 'engine')!)).toBe(false);
   });
   it('탑승 배정: 위중 환자는 헬기 먼저, 그 밖의 환자는 지상 구급차 먼저, 지시는 자리 수만큼만', () => {
     const board = (healths: number[]): { sim: Sim; s: Scene; loads: WorkItem[]; heli: Unit; als: Unit; ids: number[] } => {

@@ -217,8 +217,7 @@ describe('2. hurtCas — 구조 대상의 피해는 한 길로만 준다', () =>
       'c.health -= d * dt;',                                             // tickCasualties 의 매 틱 악화 (noteDecay 로 적는다)
       'c.health = 0; c.dead = true; c.tDead = sim.t; c.walking = false;',      // tickCasualties 의 사망 처리
       'c.dead = true; c.health = 0; c.tDead = sim.t; c.inWater = false;',      // tickWater: 떠내려가 숨짐 (바로 앞 줄이 hurtCasTo)
-      'c.health = Math.min(100, c.health + 15);',                        // 처치 (오른다)
-      'c.health = Math.min(100, c.health + 8 * q);',
+      'c.health = Math.min(100, c.health + fx.heal);',                   // 처치 (오른다 — injury.treatEffect 의 값)
     ];
     const bad: string[] = [];
     for (const f of files) {

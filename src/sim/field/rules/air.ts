@@ -11,7 +11,7 @@
 
 import { coastY, riverDist } from '../../city';
 import { LAKE } from '../../cityPlan';
-import { fieldCrew, isHovering, kitWorks, seatsOf } from '../../crews';
+import { fieldCrew, isHovering, kitWorks, seatsOf, seatsUsed } from '../../crews';
 import type { Sim } from '../../engine';
 import { emit } from '../../events';
 import { closeIncident } from '../../incidents';      // 함수 안에서만 부른다 (incidents → sceneManager → scenes/index → 이 파일의 순환)
@@ -208,7 +208,7 @@ function hoistDone(sim: Sim, s: Scene, I: Incident, op: AirOp, u: Unit): void {
   c.inWater = false; c.drift = 0; c.mob = 'immobile'; c.trapWork = 0; c.tFreed = sim.t;
   c.bleed *= 0.35; c.bleed0 = c.bleed;      // 물 밖으로 나오면 악화가 느려진다 (저체온은 남는다)
   c.bleedCause = 'exposure';      // 남은 악화는 익수가 아니라 실외 노출(저체온)로 적는다 (H1 §2.3 — 지상의 waterRescue 와 같다)
-  if (u.patients.length < seatsOf(u)) { c.where = 'loaded'; c.tLoaded = sim.t; c.x = op.x; c.y = op.y; c.px = c.x; c.py = c.y; u.patients.push(c.id); u.patientsIncident = I.id; }
+  if (seatsUsed(sim, u) < seatsOf(u)) { c.where = 'loaded'; c.tLoaded = sim.t; c.x = op.x; c.y = op.y; c.px = c.x; c.py = c.y; u.patients.push(c.id); u.patientsIncident = I.id; u.firstLoadAt ??= sim.t; }
   else { c.where = 'safe'; c.tSafe = sim.t; placeAtSafe(s, c); }      // 자리가 없으면 안전 구역에 내려놓는다
   learnQuiet(sim, eye, casFact(sim, s, c, name));
   emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'recovery', imp: 2, text: `${u.callsign}: 호이스트로 구조 대상 ${c.label} 인양 완료.` });
@@ -316,7 +316,7 @@ registerRule((sim, s, I) => {
       if (op.progress < op.need) continue;
       hoistDone(sim, s, I, op, u);
       report(sim, s, op, st);      // 인양 결과를 바로 알린다 (곧 떠날 수 있다)
-      if (seatsOf(u) > 0 && u.patients.length >= seatsOf(u)) {
+      if (seatsOf(u) > 0 && seatsUsed(sim, u) >= seatsOf(u)) {
         // 자리가 찼다: 바로 병원으로 간다
         const j = I.assigned.indexOf(u.id); if (j >= 0) I.assigned.splice(j, 1);
         u.boardOrder = null; u.incidentId = null;

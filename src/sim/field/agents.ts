@@ -7,7 +7,7 @@ import { T } from '../types';
 import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Incident, MateBelief, RadioMsg, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, clamp, dist, josa, pct } from '../util';
 import type { Rng } from '../rng';
-import { airShort, hasFirearm, hasKit, kitLive, kitWorks, medLevelOf, roleOf, seatsOf, toolFor } from '../crews';
+import { airShort, hasFirearm, hasKit, kitLive, kitWorks, medLevelOf, roleOf, seatsOf, seatsUsed, toolFor } from '../crews';
 import { BeliefStore, mkFact } from './beliefs';
 import type { CostFn } from './grid';
 import { doorAt, isIndoor, los, staticPass, tileOf } from './grid';
@@ -473,8 +473,8 @@ export function workLabel(s: Scene, w: WorkItem): string {
 /** 출입구의 이름. 길 위의 현장에서는 길의 양 끝이다. */
 export function exitName(s: Scene, k: number): string { return s.outdoor ? (k === 0 ? '서쪽 길목' : '동쪽 길목') : k === 0 ? '정문' : '후문'; }
 
-/** 환자를 싣고 병원으로 갈 수 있는가: 환자 자리(crews.seatsOf — 구급차 2, 헬기 1)가 남았다. 자리의 수를 따로 적지 않는다 */
-export function canCarryPatients(u: Unit): boolean { return u.patients.length < seatsOf(u); }
+/** 환자를 싣고 병원으로 갈 수 있는가: 환자 자리(crews.seatsOf — 구급차 2, 헬기 1)가 남았다. 자리의 수를 따로 적지 않는다. 쓰인 자리는 crews.seatsUsed (구조 대상 + 다른 부대의 다친 대원·용의자) */
+export function canCarryPatients(sim: Sim, u: Unit): boolean { return seatsUsed(sim, u) < seatsOf(u); }
 
 /** 그 부대에서 펌프를 맡은 대원(펌프 조작 장비를 든 기관원·사다리 조작원)이 지금 현장에서 활동 중인가 — 자기 조직의 상태라 지휘관·대원이 알아도 된다 */
 export function pumpOperatorOn(sim: Sim, s: Scene, unitId: number): boolean {
@@ -540,7 +540,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
       if (cb && (cb.where === 'scene' || cb.where === 'carried')) { const rg = s.region[cb.y * s.w + cb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg) && !scbaOk(sim, rid, afterSwap)) return 0; }
       return 0.4 + 0.4 * r.fitness + (hasKit(sim, rid, 'stretcher') ? 0.1 : 0);
     }
-    case 'load': return canCarryPatients(u) && a.unitId === w.prop ? 1 : 0;
+    case 'load': return canCarryPatients(sim, u) && a.unitId === w.prop ? 1 : 0;
     case 'traffic': return r.dept === 'police' ? 1 : 0.45;
     case 'mitigate': {
       const shore = w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'unstable';

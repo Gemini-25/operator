@@ -8,7 +8,7 @@
 // 이 파일의 함수는 기록(emit)을 남기지 않는다: 문구는 피해를 준 자리(상태를 바꾸는 그 코드)가 남기고 그 id 를 o.ev 로 넘긴다. 대원의 상태 전이(부상·쓰러짐·순직)는 sceneManager.agentHealth 가 한다.
 // 뒤 단계가 여기에 더한다: hurtHostile·treatEffect·needsHospital·mateNeedsHospital·threatOverAt·outShifts·LIGHT_WORK.
 
-import { armorOf, blastFactor, hasKit, kitUses } from '../crews';
+import { armorOf, blastFactor, hasKit, kitUses, kitWorks, medLevelOf } from '../crews';
 import type { Sim } from '../engine';
 import type { Rng } from '../rng';
 import type { Casualty, FieldAgent, Hostile, Incident, Injury, InjuryCause, Responder, Scene, Unit } from '../types';
@@ -237,6 +237,35 @@ export function woundTick(sim: Sim, r: Responder, k: number): number {
   r.injuries = noteInjury(r.injuries, cause, d, sim.t, bandOf(r.health));
   noteTick(r, sim.t, cause, d);
   return d;
+}
+
+// ───────────────────────── 처치 (세 부류가 같은 식 — §2.6) ─────────────────────────
+/**
+ * 처치의 질 — 계획용. 그 대원의 의료 능력과 든 의료 장비로 어림한다: q = clamp(medical × (0.5 + 0.5 × 장비 수준) × 1.15, 0.2, 1).
+ * 제세동기는 심정지 환자(응급 현장의 심정지 변형)나 체력 25 미만인 사람의 처치 질을 0.2 올린다(상한 1).
+ * 든 장비로만 본다(hasKit — 숨은 고장을 모른다, 드러내지도 않는다): "다시 볼 가치가 있는가"를 정하는 데 쓴다.
+ */
+export function treatPlan(sim: Sim, s: Scene, rid: number, health: number): number {
+  const r = sim.responders[rid];
+  const q0 = clamp(r.skills.medical * (0.5 + 0.5 * medLevelOf(sim, rid)) * 1.15, 0.2, 1);
+  const shock = (s.kind === 'medical' && s.variant === 'arrest') || health < 25;
+  return shock && hasKit(sim, rid, 'aed') ? Math.min(1, q0 + 0.2) : q0;
+}
+/**
+ * 처치를 마치는 순간의 질과 효과 — 효과 자리다(제세동기·의사 장비의 숨은 고장은 이때 드러난다: kitWorks, I 는 그 고장 기록의 사건).
+ *   had   이미 받은 처치의 질 (처음이면 −1)
+ *   돌려주는 값: q 처치의 질 · heal 오르는 체력(처음 처치면 8q, 의사 장비가 위중한 사람(체력 40 미만)을 볼 때는 15) · bleedK 처치 전 출혈에 곱하는 값(1 − 0.9q, 의사 장비 1 − 0.95q)
+ *   앞선 처치보다 나아진 것이 없으면(제세동기가 듣지 않았다) null — 처치의 수준을 낮추지 않는다.
+ * 구조 대상(executor 의 treat)·다친 대원(treatMate)·용의자(treatSuspect — 단계 5)가 함께 쓴다.
+ */
+export function treatEffect(sim: Sim, s: Scene, I: Incident, rid: number, health: number, had = -1): { q: number; heal: number; bleedK: number } | null {
+  const r = sim.responders[rid];
+  const q0 = clamp(r.skills.medical * (0.5 + 0.5 * medLevelOf(sim, rid)) * 1.15, 0.2, 1);
+  const shock = (s.kind === 'medical' && s.variant === 'arrest') || health < 25;
+  const q = shock && kitWorks(sim, rid, 'aed', I) ? Math.min(1, q0 + 0.2) : q0;
+  if (had >= 0 && q <= had) return null;
+  const doc = kitWorks(sim, rid, 'doctorKit', I);      // 의사 장비(약물·수혈): 위중한 사람을 더 끌어올리고 악화를 더 늦춘다
+  return { q, heal: doc && health < 40 ? 15 : had < 0 ? 8 * q : 0, bleedK: 1 - (doc ? 0.95 : 0.9) * q };
 }
 
 // ───────────────────────── 한 번 피해의 기록 (단계 1) ─────────────────────────

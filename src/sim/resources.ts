@@ -468,7 +468,7 @@ export function tickUnits(sim: Sim): void {
           const alive = u.patients.filter((cid) => !scene.casualties[cid].dead).length;
           emit(sim, { inc: I!.id, role: 'UNIT', actor: u.callsign, kind: 'casualty', text: `${u.callsign}: ${sim.city.facilities.find((f) => f.kind === 'hospital' && f.nodeId === u.nodeId)?.name ?? '병원'} 도착, 환자 ${alive}명 인계 완료.`, imp: 1 });
         }
-        u.patients = []; u.patientsIncident = null;
+        u.patients = []; u.patientsIncident = null; u.firstLoadAt = undefined;
         releaseUnit(sim, u);
       }
       continue;

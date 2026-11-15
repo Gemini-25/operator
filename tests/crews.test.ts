@@ -1,22 +1,28 @@
 // 부대 편성 · 개인 장비 · 헬기 (docs/specs/R1-crews.md 14절). 번호(①②…)는 설계서의 테스트 번호다.
 // 이 파일은 90초 안에 끝나야 한다: 끝까지 돌린 교대는 shiftOf 로 한 번만 돌리고 여러 단언이 나눠 쓴다(읽기만 한다).
+import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { AIR_KIND, EXTRA_NAMES, KITS, ROLES, STAFF, armorOf, blastFactor, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, heliPad, isHovering, kitLive, kitUses, kitWorks, medLevelOf, minCrew, minField, roleOf, seatsOf, skillsOf, slotsOf, stays, toolFor, toolUse, useKit } from '../src/sim/crews';
 import { NORMAL, parseDifficulty } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { airFit, kitBonus, tickDispatch } from '../src/sim/dispatch/dispatcher';
 import { Sim } from '../src/sim/engine';
-import { canCarryPatients, casFact, detectRadius, fitFor, perceive, visionOf } from '../src/sim/field/agents';
+import { canCarryPatients, casFact, detectRadius, fitFor, flushOutbox, learn, makeAgent, perceive, transmit, visionOf } from '../src/sim/field/agents';
+import { airDecide, nearestLeg } from '../src/sim/field/airDecide';
+import type { AirView } from '../src/sim/field/airDecide';
+import { BeliefStore, mkFact } from '../src/sim/field/beliefs';
+import { AIR } from '../src/sim/field/rules/air';
 import { anyCapable, commanderThink, countUnits } from '../src/sim/field/commander';
 import { act, makeTask, moveSpeed, pumpTended, rangeFactor } from '../src/sim/field/executor';
-import { los, staticPass, tileOf } from '../src/sim/field/grid';
+import { isIndoor, los, staticPass, tileOf } from '../src/sim/field/grid';
 import { blast } from '../src/sim/field/hazards';
 import { agentHealth, tickScene, unitArrived } from '../src/sim/field/sceneManager';
 import { closeIncident, createIncident } from '../src/sim/incidents';
 import { airRtb, createAidUnit, crewNames, crewReady, dispatchUnit, etaFor, startTransport, tickUnits } from '../src/sim/resources';
 import { Rng } from '../src/sim/rng';
-import type { AirOp, Assessment, FieldAgent, Incident, IncidentType, KitId, Needs, RoleId, Scene, Unit, UnitKind, WorkItem, WorkKind } from '../src/sim/types';
-import { clamp } from '../src/sim/util';
+import { T } from '../src/sim/types';
+import type { AirOp, Assessment, CasBelief, FieldAgent, Incident, IncidentType, KitId, Needs, RoleId, Scene, Unit, UnitKind, WorkItem, WorkKind } from '../src/sim/types';
+import { TYPE_NAME, clamp } from '../src/sim/util';
 
 const withRes = (resources: number): Difficulty => ({ ...NORMAL, resources });
 /** 끝까지 돈 교대 (같은 조건은 한 번만 돌린다) */
@@ -109,16 +115,21 @@ const SEV5 = parseDifficulty('3,5,3,3,3,3')!;
  *  bad   = 대원 없는 부대·상공 부대의 불변 조건을 어긴 순간들 (비어 있어야 한다 — ⑪):
  *          닫힌 지 2틱이 넘은 사건에 대원 없이 onscene 인 부대, 보관된 현장에 onscene 인 부대, 그 사건에 onscene 이 아닌 부대의 상공 작업(AirOp),
  *          s.agents 안의 공중 관측자(aloft)·내리지 않는 자리, 달리는 추격전에 배정된 소방·의료 헬기, 강풍 속의 헬기 출동
+ *          (단계 5) 상공에 머무는 부대마다 상공 작업이 하나이고 관측자는 s.agents 밖의 공중 개체다, 탐조등은 밤의 경찰 헬기만 켠다,
+ *          맡을 헬기가 없는 공중 임무가 작업판에 오래 열려 있지 않다, 물을 뜨러 간 동안 지도의 위치가 바뀌지 않는다
  *  hover = 상공에 머문 헬기가 있던 사건, hoverAlone = 그 가운데 지상 대원이 아무도 활동하지 않던 틱 수
+ *  hospital = 환자를 싣고 병원에 내린 부대의 종류, modes = 상공에서 한 일의 종류, lit = 탐조등이 켜져 있던 틱 수
  */
-interface Patrol { sim: Sim; seats: string[]; loaded: Map<UnitKind, number>; bad: string[]; hover: Set<number>; hoverAlone: number; stormTicks: number; maxStay: number }
+interface Patrol { sim: Sim; seats: string[]; loaded: Map<UnitKind, number>; bad: string[]; hover: Set<number>; hoverAlone: number; stormTicks: number; maxStay: number; hospital: Set<UnitKind>; modes: Set<string>; lit: number }
 const patrols = new Map<string, Patrol>();
 function patrol(seed: string, d: Difficulty, force: string | null): Patrol {
   const key = seed + '|' + JSON.stringify(d) + '|' + force;
   const hit = patrols.get(key);
   if (hit) return hit;
   const sim = new Sim(seed, d, 1200, { force });
-  const p: Patrol = { sim, seats: [], loaded: new Map(), bad: [], hover: new Set(), hoverAlone: 0, stormTicks: 0, maxStay: 0 };
+  const p: Patrol = { sim, seats: [], loaded: new Map(), bad: [], hover: new Set(), hoverAlone: 0, stormTicks: 0, maxStay: 0, hospital: new Set(), modes: new Set(), lit: 0 };
+  const orphan = new Map<string, number>();      // 맡을 헬기가 없는 공중 임무가 열려 있기 시작한 시각
+  const awayAt = new Map<number, [number, number]>();      // 물을 뜨러 간 헬기의 지도 위치
   const note = (text: string): void => { if (p.bad.length < 12) p.bad.push(`${seed} t=${sim.t.toFixed(1)} ${text}`); };
   let n = 0, sorties = 0;
   while (!sim.ended && n++ < 20000) {
@@ -132,6 +143,8 @@ function patrol(seed: string, d: Difficulty, force: string | null): Patrol {
         if (u.patients.length > seatsOf(u) && p.seats.length < 12) p.seats.push(`${seed} t=${sim.t.toFixed(1)} ${u.callsign}: 환자 ${u.patients.length}명 / 자리 ${seatsOf(u)}`);
       }
       if (u.air && storm) { if (u.grounded === null) note(`${u.callsign} 강풍인데 뜰 수 있다`); if (u.state === 'enroute' || u.state === 'turnout') note(`${u.callsign} 강풍 속에 출동 중`); }
+      if (u.air && (u.fuel ?? 0) < 0) note(`${u.callsign} 연료가 0 밑으로`);
+      if (u.state === 'hospital' && u.patients.length) p.hospital.add(u.kind);
       if (u.state !== 'onscene' || u.incidentId === null) continue;
       const I = sim.incidents[u.incidentId], s = sim.scenes[I.id]!;
       if (s.archived) note(`${u.callsign} 보관된 현장(사건 ${I.code})에 onscene`);
@@ -140,7 +153,11 @@ function patrol(seed: string, d: Difficulty, force: string | null): Patrol {
         if (!s.agents.some((a) => a.unitId === u.id && a.status !== 'left')) { if (since > 0.41) note(`${u.callsign} 대원 없이 닫힌 사건 ${I.code} 에 ${since.toFixed(1)}초째 onscene`); }
         else p.maxStay = Math.max(p.maxStay, since);
       }
-      if (isHovering(u, s)) { p.hover.add(I.id); if (!s.agents.some((a) => a.status === 'active')) p.hoverAlone++; }
+      if (isHovering(u, s)) {
+        p.hover.add(I.id); if (!s.agents.some((a) => a.status === 'active')) p.hoverAlone++;
+        // 상공에 머무는 부대에는 상공 작업이 꼭 하나 있다 (사건이 열려 있는 동안)
+        if (I.phase !== 'closed') { const n = (s.air ?? []).filter((op) => op.unitId === u.id).length; if (n !== 1) note(`${u.callsign} 의 상공 작업이 ${n}개 (사건 ${I.code})`); }
+      }
     }
     for (const I of sim.incidents) {
       if (I.phase === 'closed' || !I.pursuit || I.pursuit.state !== 'driving') continue;
@@ -149,10 +166,40 @@ function patrol(seed: string, d: Difficulty, force: string | null): Patrol {
     if (sim.tick % 5 === 0) for (const s of sim.scenes) {
       if (!s || s.archived) continue;
       for (const a of s.agents) { if (a.aloft) note(`사건 ${s.incidentId}: s.agents 에 공중 관측자`); if (stays(sim, a.rid)) note(`사건 ${s.incidentId}: 내리지 않는 자리(${sim.responders[a.rid].name})가 현장에`); }
-      if (sim.incidents[s.incidentId].phase !== 'closed') for (const op of s.air ?? []) { const u = sim.units[op.unitId]; if (u.state !== 'onscene' || u.incidentId !== s.incidentId) note(`사건 ${s.incidentId}: 현장에 없는 ${u.callsign} 의 상공 작업`); }
+      const open = sim.incidents[s.incidentId].phase !== 'closed';
+      if (open) for (const op of s.air ?? []) { const u = sim.units[op.unitId]; if (u.state !== 'onscene' || u.incidentId !== s.incidentId) note(`사건 ${s.incidentId}: 현장에 없는 ${u.callsign} 의 상공 작업`); }
+      for (const op of s.air ?? []) {
+        const u = sim.units[op.unitId];
+        p.modes.add(op.mode + (op.phase === 'away' ? ':away' : ''));
+        if (!op.eye.aloft || s.agents.indexOf(op.eye) >= 0 || u.crew.indexOf(op.eye.rid) < 0) note(`사건 ${s.incidentId}: ${u.callsign} 의 관측자가 공중 개체가 아니다`);
+        if (op.x < 0 || op.y < 0 || op.x > s.w - 1 || op.y > s.h - 1) note(`사건 ${s.incidentId}: ${u.callsign} 가 격자 밖(${op.x.toFixed(1)}, ${op.y.toFixed(1)})`);
+        if (op.mode === 'hoist' && !u.hoist) note(`${u.callsign} 호이스트 없이 인양`);
+        if (op.mode === 'bucket' && (!(u.bucketMax ?? 0) || sim.weather === 'night')) note(`${u.callsign} 물 바구니 없이(또는 밤에) 물 투하`);
+        // 물을 뜨러 간 동안 지도의 위치는 그대로다
+        if (op.phase === 'away') { const at = awayAt.get(u.id); if (!at) awayAt.set(u.id, [u.x, u.y]); else if (at[0] !== u.x || at[1] !== u.y) note(`${u.callsign} 물을 뜨러 간 동안 지도 위치가 바뀌었다`); } else awayAt.delete(u.id);
+      }
+      // 탐조등은 밤에 상공의 경찰 헬기만 켠다
+      if (s.light) { p.lit++; if (sim.weather !== 'night' || !(s.air ?? []).some((op) => sim.units[op.unitId].kind === 'policeHeli')) note(`사건 ${s.incidentId}: 켤 헬기가 없는 탐조등`); }
+      // 공중 임무는 상공에 그 일을 할 헬기가 있을 때만 열려 있다 (지휘관이 다음 계획 때 거둔다 — 지휘관이 활동 중이면 8초 안에)
+      if (open) for (const w of s.board) {
+        if ((w.kind !== 'hoist' && w.kind !== 'airDrop') || (w.status !== 'open' && w.status !== 'active')) continue;
+        const able = sim.units.some((u) => u.state === 'onscene' && u.incidentId === s.incidentId && isHovering(u, s) && (w.kind === 'hoist' ? u.hoist : (u.bucketMax ?? 0) > 0));
+        const key = s.id + ':' + w.id;
+        const cmdOn = s.agents.some((a) => a.rid === s.commanderRid && a.status === 'active');
+        if (able || !cmdOn) orphan.delete(key);
+        else { const since = orphan.get(key) ?? sim.t; orphan.set(key, since); if (sim.t - since > 8) note(`사건 ${s.incidentId}: 맡을 헬기가 없는 ${w.kind} 작업이 ${(sim.t - since).toFixed(0)}초째 열려 있다`); }
+        if (w.assignees.length) note(`사건 ${s.incidentId}: 지상 대원이 ${w.kind} 를 맡았다`);
+      }
     }
   }
   for (const id of p.hover) if (sim.incidents[id].phase !== 'closed') note(`상공 헬기가 있던 사건 ${sim.incidents[id].code} 가 닫히지 않았다`);
+  // 통계는 기록과 같다: 인양·투하·상공 임무 종료를 센 값 = 그 기록의 수
+  const count = (re: RegExp): number => sim.events.filter((e) => re.test(e.text)).length;
+  if (sim.airStats.hoists !== count(/호이스트로 구조 대상 .+ 인양 완료/)) note('호이스트 인양 통계가 기록과 다르다');
+  if (sim.airStats.drops !== count(/에 물 투하\.$/)) note('물 투하 통계가 기록과 다르다');
+  if (sim.airStats.rtb !== count(/연료가 부족해 복귀합니다/)) note('연료 복귀 통계가 기록과 다르다');
+  let done = 0; for (const I of sim.incidents) done += I.airDone ? I.airDone.length : 0;
+  if (done !== count(/상공 임무 종료, 복귀합니다/)) note('상공 임무 종료(I.airDone)가 기록과 다르다');
   patrols.set(key, p);
   return p;
 }
@@ -768,12 +815,14 @@ describe('⑩ 관제 규칙 — 헬기 세 종류', () => {
     const I = createIncident(sim, { type: 'fire', rng: sim.rng.fork('t') }), N = createIncident(night, { type: 'fire', rng: night.rng.fork('t') });
     const fire = unitOf(sim, 'heli'), police = unitOf(sim, 'policeHeli'), med = unitOf(sim, 'medHeli');
     const fit = (u: Unit, key: keyof Needs, type: IncidentType, sev: number, label?: string): number => { assessAs(sim, I, type, sev, label); return airFit(sim, u, I, key); };
-    // 경찰 헬기: 추격전(납치·도주 차량)의 수색 수요만 (무장·실종 현장의 상공 감시는 상공의 일이 생기는 단계 5 에서 열린다)
+    // 경찰 헬기: 수색 수요만 — 추격전(납치·도주 차량)과 무장·실종 사건은 1, 수난·붕괴·화재는 0.5(산불은 물 바구니를 단 소방 헬기의 일이다)
     expect(fit(police, 'search', 'armed', 3, '납치')).toBe(1);
     expect(fit(police, 'search', 'armed', 2.5, '도주 차량')).toBe(1);
-    expect(fit(police, 'search', 'armed', 3)).toBe(0);
-    expect(fit(police, 'search', 'search', 2)).toBe(0);
-    expect(fit(police, 'search', 'medical', 3)).toBe(0);      // 응급 환자의 선착 대응
+    expect(fit(police, 'search', 'armed', 3)).toBe(1);
+    expect(fit(police, 'search', 'search', 2)).toBe(1);
+    for (const type of ['water', 'collapse', 'fire'] as IncidentType[]) expect(fit(police, 'search', type, 2), type).toBe(0.5);
+    expect(fit(police, 'search', 'fire', 2.5, '산불')).toBe(0);
+    for (const type of ['medical', 'traffic', 'hazmat'] as IncidentType[]) expect(fit(police, 'search', type, 3), type).toBe(0);      // 응급 환자의 선착 대응 등
     for (const key of ['law', 'tactical', 'ems', 'rescue', 'traffic'] as (keyof Needs)[]) expect(fit(police, key, 'armed', 3, '납치'), key).toBe(0);
     // 소방 헬기: 수색은 실종·수난·붕괴·화재, 구조는 큰 사건이나 수난 사고. 무장 사건·응급 환자·구급 수요에는 뜨지 않는다
     for (const type of ['search', 'water', 'collapse', 'fire'] as IncidentType[]) expect(fit(fire, 'search', type, 1.5), type).toBe(1);
@@ -827,7 +876,12 @@ describe('⑩ 관제 규칙 — 헬기 세 종류', () => {
       // 수색 수요로 나간 헬기의 출동 지령은 모두 그 헬기가 맡는 유형이다
       for (const e of p.sim.events) {
         const m = /^출동 지령: (\S+) → 사건 (\d+) /.exec(e.text);
-        if (m && m[1] === police.callsign) expect(p.sim.incidents[e.incidentId].pursuit, `${e.text} — 경찰 헬기는 추격전에만`).toBeTruthy();
+        if (m && m[1] === police.callsign) {
+          // 경찰 헬기는 수색 수요로만 나간다: 추격전, 무장·실종 사건, (반쯤) 수난·붕괴·화재
+          expect(e.text.includes('수색 수요'), e.text).toBe(true);
+          const tm = /\((.+?), 위험도/.exec(e.text)!;
+          expect([TYPE_NAME.armed, TYPE_NAME.search, TYPE_NAME.water, TYPE_NAME.collapse, TYPE_NAME.fire].indexOf(tm[1]), e.text).toBeGreaterThanOrEqual(0);
+        }
         if (/발견 — .*추격을 시작합니다/.test(e.text) && e.actor === police.callsign) found++;
         expect(e.actor === '헬기', '발견 기록의 행위자는 호출부호다').toBe(false);
       }
@@ -985,30 +1039,40 @@ describe('⑪ 대원 없는 부대가 끝내 떠난다', () => {
     expect(s.agents.length).toBe(2); expect(s.agents.every((a) => a.unitId === patrolCar.id)).toBe(true);
     expect(sim.responders[s.commanderRid].unitId).toBe(patrolCar.id);
   });
-  it('헬기만 떠 있는 현장도 반드시 끝난다: 무대응으로 닫히지 않고, 방치·한계 시간으로 닫힌 다음 틱에 헬기가 떠난 뒤 보관된다', () => {
+  it('헬기만 떠 있는 현장도 반드시 끝난다: 할 일이 없으면 30초 뒤 복귀하고, 오는 부대를 기다리다 한계 시간에 닫히면 다음 틱에 떠난 뒤 보관된다', () => {
     const { sim, I, s, police } = hoverScene([]);
-    // 상공 작업이 남아 있어도(단계 5) 떠날 때 함께 지운다
-    s.air!.push({ unitId: police.id, mode: 'watch', x: 0, y: 0, px: 0, py: 0, phase: 'hover', target: -1, workId: -1, progress: 0, need: 0, backAt: 0, idleSince: sim.t, eye: null as unknown as FieldAgent } as AirOp);
-    // 지상 부대가 오지 않는다: 60초 뒤 방치로 닫힌다 (감시만 하는 헬기는 '활동 중'으로 치지 않는다)
-    tick(sim, s, 5 * 59);
-    expect(I.phase).not.toBe('closed'); expect(police.state).toBe('onscene');
-    tick(sim, s, 5 * 3);
-    expect(I.phase).toBe('closed'); expect(I.closeReason).toBe('abandoned');
-    tick(sim, s, 2);
-    expect(police.state, '닫힌 지 2틱 안에 떠난다').not.toBe('onscene'); expect(police.incidentId).toBeNull(); expect(I.assigned.indexOf(police.id)).toBe(-1);
+    assessAs(sim, I, 'armed', 2, undefined, { search: 1 });
+    // 지상 부대가 오지 않는다: 지휘관도 오는 부대도 없으니 살필 까닭이 없다 — 30초 뒤 스스로 복귀한다 (감시만 하는 헬기는 '활동 중'으로 치지 않는다)
+    tick(sim, s, 1);
+    expect(s.air!.length).toBe(1); expect(s.air![0].mode).toBe('watch'); expect(s.air![0].eye.aloft).toBe(true); expect(s.agents.length).toBe(0);
+    tick(sim, s, 5 * 29);
+    expect(police.state).toBe('onscene'); expect(I.phase).not.toBe('closed');
+    tick(sim, s, 5 * 2);
+    expect(police.state, '할 일 없이 30초: 복귀한다').not.toBe('onscene'); expect(police.incidentId).toBeNull(); expect(I.assigned.indexOf(police.id)).toBe(-1);
     expect(s.air!.length).toBe(0);
-    expect(s.archived, '헬기가 떠난 뒤에 보관된다').toBe(true);
-    expect(sim.events.some((e) => e.text === `${police.callsign} 현장 철수, 복귀합니다.`)).toBe(true);
-    // 한계 시간도 상공 도착부터 잰다
+    expect(sim.events.filter((e) => e.text === `${police.callsign}: 상공 임무 종료, 복귀합니다.`).length).toBe(1);
+    // 관제는 이 사건에 같은 종류의 헬기를 다시 보내지 않는다 (헬기가 알린 사실이다)
+    expect(I.airDone).toEqual(['policeHeli']);
+    expect(airFit(sim, police, I, 'search')).toBe(0);
+    // 사건은 60초 뒤 방치로 닫히고, 남은 부대가 없으니 곧바로 보관된다
+    tick(sim, s, 5 * 31);
+    expect(I.phase).toBe('closed'); expect(I.closeReason).toBe('abandoned');
+    expect(s.archived).toBe(true);
+    // 오는 부대가 있으면 그들이 올 때까지 하늘에서 살핀다. 한계 시간은 상공 도착부터 재고, 닫힌 다음 틱에 헬기가 떠난 뒤 보관된다
     const B = hoverScene([]);
-    const coming = B.sim.units.find((u) => u.kind === 'tactical')!;      // 오는 부대가 있어 방치로는 닫히지 않는다 (출동 준비에서 멈춰 세워 둔다)
+    const coming = B.sim.units.find((u) => u.kind === 'tactical')!;      // 출동 준비에서 멈춰 세워 둔다 — 그래서 방치로는 닫히지 않는다
     coming.state = 'turnout'; coming.timer = 1e9; coming.incidentId = B.I.id; coming.destNode = B.I.reportedNode; B.I.assigned.push(coming.id);
+    const fuel0 = B.police.fuel!;
     tick(B.sim, B.s, 5 * 399);
-    expect(B.I.phase).not.toBe('closed');
+    expect(B.I.phase).not.toBe('closed'); expect(B.police.state).toBe('onscene'); expect(B.s.air!.length).toBe(1);
+    expect(B.s.air![0].idleSince, '오는 부대가 있다: 한가하지 않다').toBe(-1);
+    expect(B.police.fuel!, '상공에 머무는 동안 연료가 준다 (초당 1)').toBeCloseTo(fuel0 - 399, 0);
     tick(B.sim, B.s, 5 * 3);
     expect(B.I.closeReason).toBe('timeout');
     tick(B.sim, B.s, 2);
-    expect(B.police.state).not.toBe('onscene'); expect(B.s.archived).toBe(true);
+    expect(B.police.state, '닫힌 지 2틱 안에 떠난다').not.toBe('onscene'); expect(B.s.air!.length).toBe(0); expect(B.s.archived, '헬기가 떠난 뒤에 보관된다').toBe(true);
+    expect(B.sim.events.some((e) => e.text === `${B.police.callsign} 현장 철수, 복귀합니다.`)).toBe(true);
+    expect(B.I.airDone, '사건이 끝나서 떠난 것은 상공 임무 종료가 아니다').toBeUndefined();
   });
   it('무대응 종료는 지상 부대도 상공의 헬기도 닿지 못했을 때만이다', () => {
     const mk = (hover: boolean): { sim: Sim; I: Incident } => {
@@ -1058,6 +1122,500 @@ describe('⑪ 대원 없는 부대가 끝내 떠난다', () => {
     // 오는 중인 부대는 지금처럼 능력대로 센다
     police.state = 'enroute';
     expect(countUnits(sim, s, I, 'rescue', 0.5)).toBe(1);
+  });
+});
+
+/** 현장 하나를 만들고 부대를 세운다: 상공에 머무는 부대는 상공에, 그 밖은 내려서 (kinds 순서대로 닿는다) */
+function sceneOf(seed: string, what: string, kinds: UnitKind[], d: Difficulty = NORMAL): { sim: Sim; I: Incident; s: Scene; unit: (kind: UnitKind) => Unit; arrive: (kind: UnitKind) => Unit } {
+  const sim = new Sim(seed, d);
+  const [type, variant] = what.split('/');
+  const I = createIncident(sim, { type: type as IncidentType, variant: variant || undefined, rng: sim.rng.fork('t') });
+  const s = sim.scenes[I.id]!;
+  I.reportedAt = sim.t; I.phase = 'dispatched';
+  const unit = (kind: UnitKind): Unit => sim.units.find((q) => q.kind === kind)!;
+  const arrive = (kind: UnitKind): Unit => { const u = unit(kind); u.state = 'onscene'; u.incidentId = I.id; I.assigned.push(u.id); I.everAssigned.push(u.id); unitArrived(sim, I, u); return u; };
+  for (const kind of kinds) arrive(kind);
+  return { sim, I, s, unit, arrive };
+}
+/** 부대와 그 현장만 돌린다 (다른 사건·관제는 돌지 않는다) */
+const tickScn = (sim: Sim, s: Scene, n = 1, stop: () => boolean = () => false): void => { for (let k = 0; k < n && !stop(); k++) { sim.tick++; sim.t = sim.tick * sim.dt; tickUnits(sim); tickScene(sim, s); } };
+const clearSeed = (): string => seedsWhere((q) => q.weather === 'clear', 1)[0];
+const nightSeed = (): string => seedsWhere((q) => q.weather === 'night', 1)[0];
+const opOf = (s: Scene, u: Unit): AirOp => s.air!.find((op) => op.unitId === u.id)!;
+const said = (sim: Sim, re: RegExp): number => sim.events.filter((e) => re.test(e.text)).length;
+
+describe('⑫ 세 헬기가 각자의 일을 한다', () => {
+  const CLEAR = (): string[] => seedsWhere((q) => q.weather === 'clear', 4);
+  it('경찰 헬기: 추격전에서는 하늘에서 먼저 찾아 추적하고, 실종 현장에서는 관측관이 사람을 찾는다', () => {
+    // 추격전 — 출동 중인 경찰 헬기가 처음 발견한다 (발견 기록의 행위자는 호출부호)
+    let tracked = 0, calls = 0, found = 0, done = 0, searches = 0;
+    for (const seed of CLEAR()) {
+      const p = patrol(seed, NORMAL, 'armed/kidnap');
+      const police = p.sim.units.find((u) => u.kind === 'policeHeli')!;
+      tracked += p.sim.airStats.tracked;
+      calls += p.sim.events.filter((e) => /발견 — .*추격을 시작합니다/.test(e.text) && e.actor === police.callsign).length;
+    }
+    expect(tracked, '하늘에서 먼저 찾은 추격전').toBeGreaterThan(0);
+    expect(calls).toBe(tracked);
+    // 실종 현장 — 상공의 관측관이 찾는다. 관측자는 현장의 대원이 아니고(s.agents 밖), 찾은 사람을 움직이지 않는다
+    for (const seed of CLEAR()) {
+      const p = patrol(seed, NORMAL, 'search');
+      expect(p.bad, p.bad.join('\n')).toEqual([]);
+      const police = p.sim.units.find((u) => u.kind === 'policeHeli')!;
+      const observer = police.crew.find((rid) => p.sim.responders[rid].role === 'observer')!;
+      for (const I of p.sim.incidents) {
+        if (I.truth.type !== 'search') continue;
+        searches++;
+        for (const c of p.sim.scenes[I.id]!.casualties) if (c.discoveredBy === observer) found++;
+        if (I.airDone && I.airDone.indexOf('policeHeli') >= 0) done++;
+      }
+      expect(p.modes.has('watch')).toBe(true);
+      expect(police.patients.length).toBe(0);
+    }
+    expect(searches).toBeGreaterThanOrEqual(4);
+    expect(found, '관측관이 찾은 사람 (discoveredBy)').toBeGreaterThan(0);
+    expect(done, '찾은 뒤 "상공 임무 종료"로 돌아간 실종 사건').toBeGreaterThan(0);
+  }, 60000);
+  it('소방 헬기: 수난 현장에서는 호이스트로 건져 병원으로 싣고 가고, 산불에는 물을 뿌린다', () => {
+    let hoists = 0, lifts = 0, drops = 0, away = 0, runs = 0;
+    // 지상의 수난 구조가 먼저 끝나는 날이 많다(물가에서 줄을 던지는 쪽이 빠르다) — 헬기가 먼저 닿은 교대가 나올 때까지 맑은 날을 차례로 본다 (많아야 12교대)
+    for (const seed of seedsWhere((q) => q.weather === 'clear', 12)) {
+      if (runs >= 3 && hoists > 0) break;
+      runs++;
+      const p = patrol(seed, NORMAL, 'water/std');
+      expect(p.bad, p.bad.join('\n')).toEqual([]); expect(p.seats, p.seats.join('\n')).toEqual([]);
+      hoists += p.sim.airStats.hoists;
+      if (p.sim.airStats.hoists > 0) { expect(p.modes.has('hoist')).toBe(true); expect(p.hospital.has('heli'), '건진 사람을 싣고 병원에 내렸다').toBe(true); }
+      lifts += p.sim.airStats.airLifts;
+      // 인양한 사람은 물 밖에 있다: 그 틱에 실렸다 (자리는 하나 — 인양 뒤 곧바로 떠난다)
+      for (const e of p.sim.events) { const m = /^(\S+): 호이스트로 구조 대상 (\S+) 인양 완료\.$/.exec(e.text); if (m) { const c = p.sim.scenes[e.incidentId]!.casualties.find((q) => q.label === m[2])!; expect(c.inWater).toBeFalsy(); expect(c.tFreed).toBeGreaterThanOrEqual(0); expect(c.tLoaded).toBe(e.t); } }
+    }
+    expect(hoists, '호이스트 인양 (airStats.hoists)').toBeGreaterThan(0);
+    expect(lifts).toBeGreaterThanOrEqual(hoists);
+    const WILD: Difficulty = { ...NORMAL, disaster: 'wildfire' };
+    for (const seed of seedsWhere((q) => q.weather === 'clear', 2, WILD)) {
+      const p = patrol(seed, WILD, null);
+      expect(p.bad, p.bad.join('\n')).toEqual([]);
+      drops += p.sim.airStats.drops; if (p.modes.has('bucket:away')) away++;
+      // 물 투하는 소방 헬기가, 산불 현장(과 물의 규칙이 도는 화재 현장)에서만
+      for (const e of p.sim.events) if (/에 물 투하\.$/.test(e.text)) { const sc = p.sim.scenes[e.incidentId]!; expect(sc.kind === 'fire' && (sc.variant === 'wild' || (sc.rules ?? []).indexOf('water') >= 0), e.text).toBe(true); expect(e.actor).toBe(p.sim.units.find((u) => u.kind === 'heli')!.callsign); }
+    }
+    expect(drops, '물 투하 (airStats.drops)').toBeGreaterThan(0);
+    expect(away, '물을 뜨러 다녀온 교대').toBeGreaterThan(0);
+  }, 60000);
+  it('의료 헬기: 내려앉아 처치하고, 환자를 싣고 병원에 내린다', () => {
+    let trips = 0;
+    for (const seed of CLEAR().slice(0, 3)) {
+      const p = patrol(seed, NORMAL, 'traffic/bus');
+      expect(p.bad, p.bad.join('\n')).toEqual([]);
+      if (p.hospital.has('medHeli')) trips++;
+      expect(p.loaded.get('medHeli') ?? 0).toBeLessThanOrEqual(1);
+      // 의료 헬기는 상공에 머물지 않는다 (의사·간호사가 내린다)
+      for (const sc of p.sim.scenes) if (sc) expect(isHovering(p.sim.units.find((u) => u.kind === 'medHeli')!, sc)).toBe(false);
+    }
+    expect(trips, '환자를 싣고 병원에 내린 교대').toBeGreaterThan(0);
+  }, 60000);
+});
+
+describe('상공의 일 (설계서 7.3·7.4)', () => {
+  it('상공에 머무는 헬기: 경찰 헬기는 언제나, 소방 헬기는 물·산불 현장에서만, 의료 헬기는 머물지 않는다', () => {
+    const sim = new Sim(clearSeed());
+    const u = (kind: UnitKind): Unit => sim.units.find((q) => q.kind === kind)!;
+    const sc = (what: string): Scene => { const [type, variant] = what.split('/'); return sim.scenes[createIncident(sim, { type: type as IncidentType, variant: variant || undefined, rng: sim.rng.fork('t:' + what) }).id]!; };
+    const row = (what: string): boolean[] => { const s = sc(what); return [isHovering(u('policeHeli'), s), isHovering(u('heli'), s), isHovering(u('medHeli'), s), isHovering(u('patrol'), s)]; };
+    expect(row('armed/dispute')).toEqual([true, false, false, false]);
+    expect(row('search')).toEqual([true, false, false, false]);
+    expect(row('collapse')).toEqual([true, false, false, false]);
+    expect(row('fire/std')).toEqual([true, false, false, false]);
+    expect(row('water/std')).toEqual([true, true, false, false]);
+    expect(row('water/evac'), '물의 규칙이 도는 현장').toEqual([true, true, false, false]);
+    expect(row('fire/wild')).toEqual([true, true, false, false]);
+  });
+  it('공중 관측: 날씨가 시야를 정하고, 지붕 밑은 보지 못하고, 바깥은 벽에 가리지 않는다. 사람을 움직이지 않는다', () => {
+    // 해안 대피 현장: 모래밭에 걸을 수 있는 사람들이 있다 (바깥). 경찰 헬기가 먼저 닿는다
+    const { sim, I, s, unit, arrive } = sceneOf(clearSeed(), 'water/evac', ['policeHeli']);
+    const police = unit('policeHeli');
+    tickScn(sim, s, 1);
+    const op = opOf(s, police), eye = op.eye;
+    expect(sim.responders[eye.rid].role).toBe('observer');
+    expect(eye.aloft).toBe(true); expect(s.agents.indexOf(eye)).toBe(-1);
+    expect(visionOf(sim, s, eye)).toBe(9);      // 낮 9 (열영상은 연기를 무시한다)
+    const here = tileOf(s, eye.x, eye.y);
+    s.smoke[here] = 0.8; expect(visionOf(sim, s, eye)).toBe(9);
+    const flir = sim.responders[eye.rid].kit!.find((it) => it.id === 'flir')!;
+    // 열영상이 없으면 연기에 가리고, 가려진 사람을 덜 멀리서 알아본다
+    strip(sim, eye.rid, 'flir'); expect(visionOf(sim, s, eye)).toBeLessThan(9); s.smoke[here] = 0;
+    const bare = detectRadius(sim, s, eye, 0.8);
+    sim.responders[eye.rid].kit!.unshift(flir);
+    expect(detectRadius(sim, s, eye, 0.8)).toBeGreaterThan(bare * 1.5);
+    tickScn(sim, s, 5 * 20);
+    const seen = s.casualties.filter((c) => c.tDiscovered >= 0);
+    expect(seen.length, '하늘에서 찾은 사람').toBeGreaterThan(2);
+    for (const c of seen) {
+      expect(c.discoveredBy).toBe(eye.rid);
+      expect(isIndoor(s.tiles[tileOf(s, c.x, c.y)])).toBe(false);
+      expect(c.walking, '관측자는 대피를 안내하지 못한다').toBe(false);
+    }
+    // 발견 기록은 관측관의 이름으로 남고, 들을 대원이 없는 동안의 보고는 지상 부대가 닿으면 지휘관에게 한 번 넘긴다
+    expect(said(sim, /^구조 대상 \S+ 발견!/)).toBe(seen.length);
+    expect(said(sim, /상공 관측 내용을 전달합니다/)).toBe(0);
+    const car = arrive('patrol');
+    tickScn(sim, s, 5 * 4);
+    expect(said(sim, /^경찰헬기1: 상공 관측 내용을 전달합니다\.$/)).toBe(1);
+    const cmd = s.agents.find((a) => a.rid === s.commanderRid)!;
+    expect(cmd.unitId).toBe(car.id);
+    expect(cmd.beliefs.list('cas').length, '지휘관이 하늘에서 본 것을 넘겨받았다').toBeGreaterThanOrEqual(seen.length);
+    // 하늘에서 먼저 본 사람은 지상 대원이 처음 만났을 때 대피를 안내한다
+    tickScn(sim, s, 5 * 25);
+    expect(seen.filter((c) => c.walking || c.where !== 'scene').length, '지상 대원이 만나 안내한 사람').toBeGreaterThan(0);
+    expect(said(sim, /상공 관측 내용을 전달합니다/), '같은 것을 되풀이해 넘기지 않는다').toBe(1);
+    expect(I.phase).not.toBe('closed');
+    // 실내의 사람은 보지 못한다: 무장 현장(가게 안)에 경찰 헬기만 떠 있으면 안의 사람도 용의자도 모른다
+    const B = sceneOf(clearSeed(), 'armed/robbery', ['policeHeli']);
+    tickScn(B.sim, B.s, 5 * 15);
+    const eyeB = opOf(B.s, B.unit('policeHeli')).eye;
+    let inside = 0;
+    for (const c of B.s.casualties) if (isIndoor(B.s.tiles[tileOf(B.s, c.x, c.y)])) { inside++; expect(eyeB.beliefs.get('cas', c.id), `실내의 ${c.label}`).toBeUndefined(); }
+    for (const h of B.s.hostiles) if (isIndoor(B.s.tiles[tileOf(B.s, h.x, h.y)])) { inside++; expect(eyeB.beliefs.get('hos', h.id)).toBeUndefined(); }
+    expect(inside, '건물 안에 사람이 있는 현장').toBeGreaterThan(0);
+    expect(eyeB.beliefs.list('blk').length + eyeB.beliefs.list('haz').length + eyeB.beliefs.list('evid').length, '소품은 살피지 않는다').toBe(0);
+    // 소품(단서·목격자·잔해·밸브 …)은 하늘에서 살피지 않는다: 실종 현장을 한 바퀴 훑어도 이동 흔적(단서)을 찾지 못한다 — 지상 대원이 걸어서 찾는 것이다
+    const C = sceneOf(clearSeed(), 'search', ['policeHeli']);
+    const clues = C.s.props.filter((q) => q.kind === 'clue' || q.kind === 'witness');
+    expect(clues.length, '단서나 목격자가 있는 현장').toBeGreaterThan(0);
+    tickScn(C.sim, C.s, 5 * 29);      // 할 일이 없어 떠나기 전까지 (오는 부대가 없다)
+    const eyeC = opOf(C.s, C.unit('policeHeli')).eye;
+    expect(eyeC.beliefs.list('evid').length + eyeC.beliefs.list('clue').length).toBe(0);
+    expect(clues.some((q) => q.found), '단서를 찾은 것으로 되지 않는다').toBe(false);
+    expect(said(C.sim, /이동 흔적 발견/)).toBe(0);
+    // 상공에는 무전 음영이 없다: 음영 구역 위에서도 관측자의 무전은 나가고(지상 대원은 그 자리에서 막힌다), 밀린 보고도 그대로 나간다
+    C.arrive('patrol');
+    const ground = C.s.agents[0];
+    C.s.shadow[tileOf(C.s, eyeC.x, eyeC.y)] = 1; put(ground, { x: Math.round(eyeC.x), y: Math.round(eyeC.y) });
+    expect(transmit(C.sim, C.s, ground, -1, 'report', [], '시험', -1, 0)).toBe(-1);
+    expect(transmit(C.sim, C.s, eyeC, -1, 'report', [], '시험', -1, 0)).toBeGreaterThanOrEqual(0);
+    const seenAt = (id: number) => mkFact('cas', id, { x: 1, y: 1, mob: 'immobile', band: 1, where: 'scene', treated: false, trappedDone: true, tq: 0 } as CasBelief, '시험', C.sim.t, 1, true, '시험 보고');
+    eyeC.outbox.length = 0; ground.outbox.length = 0;
+    learn(C.sim, eyeC, seenAt(9)); learn(C.sim, ground, seenAt(8));
+    flushOutbox(C.sim, C.s, eyeC); flushOutbox(C.sim, C.s, ground);
+    expect(eyeC.outbox.length, '관측자의 보고는 나갔다').toBe(0);
+    expect(ground.outbox.length, '음영 구역의 지상 대원은 보고가 밀린다').toBe(1);
+  });
+  it('탐조등: 밤에 경찰 헬기가 비추는 원 안의 바깥에서 지상 대원의 시야가 그 현장의 맑은 날 값까지 오른다. 고장은 처음 켤 때 드러난다', () => {
+    const { sim, I, s, unit, arrive } = sceneOf(nightSeed(), 'search', ['policeHeli']);
+    const police = unit('policeHeli');
+    expect(s.light).toBeNull();
+    tickScn(sim, s, 1);
+    const op = opOf(s, police);
+    expect(s.light).toEqual({ x: op.x, y: op.y, r: AIR.lightR });
+    expect(visionOf(sim, s, op.eye), '탐조등을 켠 관측 거리').toBe(8);
+    // 지상 대원: 원 안의 바깥 칸에서는 맑은 날의 바깥 시야, 원 밖에서는 밤의 시야
+    arrive('patrol');
+    const a = s.agents[0];
+    const out = (x: number, y: number): boolean => !isIndoor(s.tiles[tileOf(s, x, y)]) && s.tiles[tileOf(s, x, y)] !== T.TREE && s.smoke[tileOf(s, x, y)] === 0;
+    let inside: [number, number] | null = null, outside: [number, number] | null = null;
+    for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) { if (!out(x, y)) continue; const d = Math.hypot(x - s.light!.x, y - s.light!.y); if (d <= 3 && !inside) inside = [x, y]; if (d >= 8 && !outside) outside = [x, y]; }
+    expect(inside).not.toBeNull(); expect(outside).not.toBeNull();
+    put(a, { x: outside![0], y: outside![1] });
+    const dark = visionOf(sim, s, a);
+    expect(dark).toBe(s.outdoorVision);
+    put(a, { x: inside![0], y: inside![1] });
+    expect(visionOf(sim, s, a)).toBe(Math.max(s.outdoorVision, s.clearVision!));
+    expect(s.clearVision!, '밤의 바깥 시야는 맑은 날보다 짧다').toBeGreaterThan(dark);
+    const lit = s.light!; s.light = null; expect(visionOf(sim, s, a)).toBe(dark); s.light = lit;
+    // 헬기가 움직이면 원도 따라간다. 떠나면 꺼진다
+    tickScn(sim, s, 5 * 4);
+    expect([s.light!.x, s.light!.y]).toEqual([op.x, op.y]);
+    closeIncident(sim, I, 'resolved'); tickScn(sim, s, 3);
+    expect(police.state).not.toBe('onscene'); expect(s.air!.length).toBe(0); expect(s.light).toBeNull();
+    // 낮에는 켜지 않는다
+    const D = sceneOf(clearSeed(), 'search', ['policeHeli']);
+    tickScn(D.sim, D.s, 5 * 3); expect(D.s.light).toBeNull();
+    // 숨은 고장: 처음 켤 때 드러나 기록이 한 번 남고, 켜지지 않는다 (관측 거리도 밤의 4칸)
+    const F = sceneOf(nightSeed(), 'search', ['policeHeli']);
+    const obs = F.unit('policeHeli').crew.find((rid) => F.sim.responders[rid].role === 'observer')!;
+    kitItem(F.sim, obs, 'searchlight').fault = true;
+    const ev0 = F.sim.events.length;
+    tickScn(F.sim, F.s, 5 * 3);
+    expect(F.s.light).toBeNull();
+    expect(kitItem(F.sim, obs, 'searchlight').faultKnown).toBe(true);
+    expect(F.sim.events.slice(ev0).filter((e) => e.problem === 'EQUIP_FAIL').map((e) => e.text)).toEqual(['탐조등이 작동하지 않습니다.']);
+    expect(visionOf(F.sim, F.s, opOf(F.s, F.unit('policeHeli')).eye)).toBe(4);
+  });
+  it('호이스트: 물속의 사람 위로 가서 끌어올려 싣고, 자리가 차면 곧바로 병원으로 간다', () => {
+    const { sim, I, s, unit } = sceneOf(clearSeed(), 'water/std', ['heli']);
+    const heli = unit('heli');
+    const wet = s.casualties.filter((c) => c.inWater);
+    expect(wet.length).toBeGreaterThan(0);
+    expect(s.agents.length, '아무도 내리지 않는다').toBe(0); expect(s.airAt).toBe(sim.t); expect(s.arrivedAt).toBeLessThan(0);
+    const [x0, y0] = [heli.x, heli.y];
+    tickScn(sim, s, 5 * 120, () => sim.airStats.hoists > 0);
+    expect(sim.airStats.hoists, '지휘관이 없으면 관측자가 본 물속의 사람을 스스로 고른다').toBe(1);
+    const c = wet.find((q) => q.where === 'loaded')!;
+    expect(c).toBeDefined();
+    expect([c.inWater, c.drift, c.mob, c.tFreed, c.tLoaded]).toEqual([false, 0, 'immobile', sim.t, sim.t]);
+    expect(c.discoveredBy).toBe(fieldCrew(sim, heli)[0]);      // 소방 헬기의 관측자는 내리는 자리의 첫 사람
+    expect(heli.patients).toEqual([c.id]); expect(heli.patientsIncident).toBe(I.id);
+    expect(heli.state, '자리(1)가 찼다: 바로 병원으로').toBe('transport'); expect(heli.incidentId).toBeNull(); expect(I.assigned.indexOf(heli.id)).toBe(-1);
+    expect(s.air!.length).toBe(0);
+    expect([heli.x, heli.y], '상공에 머무는 동안 지도의 위치는 그대로다').toEqual([x0, y0]);
+    const texts = sim.events.map((e) => e.text), at = texts.indexOf(`${heli.callsign}: 호이스트로 구조 대상 ${c.label} 인양 완료.`);
+    expect(at).toBeGreaterThan(0);
+    expect(texts[at + 1]).toMatch(new RegExp(`^${heli.callsign} 환자 1명 싣고 .+(으로|로) 출발\\.$`));
+    expect(sim.airStats.airLifts).toBe(1);
+    // 병원에 닿아 인계한다
+    tickScn(sim, s, 5 * 200, () => c.where === 'hospital');
+    expect(c.where).toBe('hospital'); expect(c.treated, '가는 동안 항공 구조대원이 처치한다').toBe(true);
+    // 지상의 지휘관이 있으면 작업판의 호이스트 작업을 따른다: 물속의 사람을 알면 수난 구조와 함께 내고, 상공의 헬기가 없어지면 거둔다
+    const B = sceneOf(clearSeed(), 'water/std', ['patrol', 'heli']);
+    const live = (kind: WorkKind): WorkItem[] => B.s.board.filter((w) => w.kind === kind && (w.status === 'open' || w.status === 'active'));
+    tickScn(B.sim, B.s, 5 * 60, () => live('hoist').length > 0);
+    expect(live('hoist').length, '호이스트 작업').toBeGreaterThan(0);
+    const w = live('hoist')[0];
+    expect(live('waterRescue').some((q) => q.cas === w.cas), '지상의 수난 구조도 함께 낸다').toBe(true);
+    for (const a of B.s.agents) expect(fitFor(B.sim, B.s, a, w), '지상 대원은 공중 임무를 맡지 못한다').toBe(0);
+    tickScn(B.sim, B.s, 5 * 2);
+    expect([opOf(B.s, B.unit('heli')).mode, opOf(B.s, B.unit('heli')).workId]).toEqual(['hoist', w.id]);
+    // 헬기가 강풍으로 돌아간다: 그 작업은 거둔다 (남겨 두면 열린 작업 때문에 종료를 선언하지 못한다)
+    const bh = B.unit('heli');
+    bh.airNeed = 'rescue'; airRtb(B.sim, bh, 'storm');
+    tickScn(B.sim, B.s, 5 * 5);
+    expect(B.s.air!.length).toBe(0);
+    expect(live('hoist').length, '상공에 호이스트를 단 헬기가 없다').toBe(0);
+    expect(w.status).toBe('cancelled');
+  });
+  it('헬기만 왔던 현장: 마지막 헬기가 떠날 때 관측자가 보기에 남은 사람이 있으면 관제가 지상 부대를 찾는다', () => {
+    // 물에 빠진 사람이 여럿인 현장에 소방 헬기만 닿았다 — 한 명을 건져 병원으로 떠난다 (자리는 하나)
+    const mk = (ground: boolean): { sim: Sim; I: Incident; s: Scene; heli: Unit } => {
+      const sim = new Sim(clearSeed());
+      const I = createIncident(sim, { type: 'water', variant: 'std', severity: 3, rng: sim.rng.fork('t') });
+      const s = sim.scenes[I.id]!;
+      I.reportedAt = sim.t; I.phase = 'dispatched';
+      for (const kind of (ground ? ['patrol', 'heli'] : ['heli']) as UnitKind[]) { const u = sim.units.find((q) => q.kind === kind)!; u.state = 'onscene'; u.incidentId = I.id; I.assigned.push(u.id); I.everAssigned.push(u.id); unitArrived(sim, I, u); }
+      assessAs(sim, I, 'water', 3, undefined, { rescue: 1, ems: 1 });
+      I.unmet = {};
+      return { sim, I, s, heli: sim.units.find((q) => q.kind === 'heli')! };
+    };
+    const A = mk(false);
+    expect(A.s.casualties.filter((c) => c.inWater).length, '물에 빠진 사람').toBeGreaterThanOrEqual(2);
+    tickScn(A.sim, A.s, 5 * 150, () => A.heli.state !== 'onscene');
+    expect(A.sim.airStats.hoists).toBe(1); expect(A.heli.state).toBe('transport');
+    expect(A.s.casualties.some((c) => c.inWater && !c.dead && c.tDiscovered >= 0), '관측자가 본, 아직 물속에 있는 사람').toBe(true);
+    expect(A.I.unmet.rescue, '구조 수요를 다시 연다').toBe(1);
+    expect(A.I.unmetSince).toBe(A.sim.t);
+    expect(A.sim.events[A.sim.events.length - 1].text).toBe(`사건 ${A.I.code}: 헬기1이 떠난 현장에 아직 구조 대상이 남아 있습니다. 지상 부대를 찾습니다.`);
+    // 지상 대원이 있는 현장에서는 지휘관이 알아서 한다 — 헬기가 따로 알리지 않는다
+    const B = mk(true);
+    tickScn(B.sim, B.s, 5 * 150, () => B.heli.state !== 'onscene');
+    expect(said(B.sim, /떠난 현장에 아직/)).toBe(0);
+    // 남은 사람이 없으면(한 명뿐인 현장) 아무것도 알리지 않는다 — 사건은 방치 시간 뒤에 닫히고 결과는 진실로 판정한다.
+    // 함께 떠 있던 경찰 헬기도 무전으로 들어 안다: 소방 헬기가 건져 간 사람을 아직 물속에 있다고 믿고 지상 부대를 부르지 않는다
+    const C = new Sim(clearSeed());
+    const J = createIncident(C, { type: 'water', variant: 'std', severity: 1, rng: C.rng.fork('t') });
+    const sc = C.scenes[J.id]!;
+    J.reportedAt = C.t; J.phase = 'dispatched';
+    expect(sc.casualties.length).toBe(1);
+    const helis = (['policeHeli', 'heli'] as UnitKind[]).map((kind) => { const u = C.units.find((q) => q.kind === kind)!; u.state = 'onscene'; u.incidentId = J.id; J.assigned.push(u.id); J.everAssigned.push(u.id); unitArrived(C, J, u); return u; });
+    tickScn(C, sc, 5 * 150, () => helis[1].state !== 'onscene');
+    expect(C.airStats.hoists).toBe(1);
+    const pop = opOf(sc, helis[0]);
+    expect(pop.eye.beliefs.val<CasBelief>('cas', 0)!.where, '경찰 헬기의 관측자가 본 것: 아직 물속').toBe('scene');
+    tickScn(C, sc, 5 * 2);      // 인양 보고가 무전으로 전해진다 (1.2초)
+    expect(pop.eye.beliefs.val<CasBelief>('cas', 0)!.where, '무전으로 들었다: 실려 갔다').toBe('loaded');
+    tickScn(C, sc, 5 * 40, () => helis[0].state !== 'onscene');
+    expect(helis[0].state).not.toBe('onscene'); expect(said(C, /^경찰헬기1: 상공 임무 종료, 복귀합니다\.$/)).toBe(1);
+    expect(said(C, /떠난 현장에 아직/)).toBe(0); expect(J.unmet.rescue ?? 0).toBe(0);
+    tickScn(C, sc, 5 * 62);
+    expect(J.closeReason).toBe('abandoned'); expect(J.result!.casSaved).toBe(1);
+    expect(J.result!.analysis.some((t) => /^헬기가 신고 접수 .+ 만에 현장 상공에 도착했지만, 지상 부대는 현장에 닿지 못했습니다\.$/.test(t)), '헬기만 왔던 사건의 문장').toBe(true);
+  });
+  it('물 투하: 산불의 바깥 구역에 물을 쏟고, 바구니가 비면 물을 뜨러 다녀온다. 밤에는 뿌리지 않는다', () => {
+    const { sim, s, unit } = sceneOf(clearSeed(), 'fire/wild', ['heli']);
+    const heli = unit('heli');
+    const home = [heli.x, heli.y];      // 현장 상공에 있는 동안 지도의 위치
+    expect(heli.bucket).toBe(1);
+    tickScn(sim, s, 5 * 60, () => sim.airStats.drops > 0);
+    expect(sim.airStats.drops).toBe(1);
+    const fx = s.fx.filter((f) => f.kind === 'drop');
+    expect(fx.length).toBe(1);
+    // 띠(길이 6칸)의 칸은 불이 꺼지고 젖어 있다
+    const f = fx[0], n = Math.max(Math.abs(f.x2! - f.x), Math.abs(f.y2! - f.y));
+    expect(n).toBe(AIR.dropLen - 1);
+    for (let k = 0; k <= n; k++) { const x = f.x + ((f.x2! - f.x) * k) / n, y = f.y + ((f.y2! - f.y) * k) / n; if (x < 0 || y < 0 || x >= s.w || y >= s.h) continue; expect(s.fire[y * s.w + x], `(${x},${y})`).toBe(0); expect(s.wet[y * s.w + x]).toBeGreaterThan(0.5); }
+    const last = sim.events[sim.events.length - 1];
+    expect(last.text).toMatch(new RegExp(`^${heli.callsign}: .+에 물 투하\\.$`));
+    expect(s.regions.find((r) => last.text.includes(r.name))!.indoor, '바깥 구역에만 뿌린다').toBe(false);
+    expect(heli.bucket).toBe(0);
+    // 바구니가 비었다: 물을 뜨러 간다 (그동안 지도의 위치는 그대로이고, 바구니 작업 중이라 연료가 1.25배로 준다)
+    tickScn(sim, s, 5 * 3);
+    const op = opOf(s, heli);
+    expect([op.mode, op.phase]).toEqual(['bucket', 'away']); expect(op.backAt).toBeGreaterThan(sim.t + AIR.fill - 2);
+    const fuel1 = heli.fuel!, t1 = sim.t;
+    expect([heli.x, heli.y], '물을 뜨러 가도 지도의 위치는 옮기지 않는다').toEqual(home);
+    tickScn(sim, s, 5 * 200, () => op.phase !== 'away');
+    expect(sim.t).toBeGreaterThanOrEqual(op.backAt); expect(heli.bucket).toBe(1); expect([heli.x, heli.y]).toEqual(home);
+    expect(fuel1 - heli.fuel!).toBeCloseTo((sim.t - t1) * AIR.bucketBurn, 1);
+    tickScn(sim, s, 5 * 60, () => sim.airStats.drops > 1);
+    expect(sim.airStats.drops, '다시 뿌린다').toBe(2);
+    // 밤: 뿌리지 않는다. 할 일이 없으니 45초 뒤 돌아간다
+    const N = sceneOf(nightSeed(), 'fire/wild', ['heli']);
+    tickScn(N.sim, N.s, 5 * 44);
+    expect(N.sim.airStats.drops).toBe(0); expect(N.unit('heli').state).toBe('onscene'); expect(opOf(N.s, N.unit('heli')).mode).toBe('watch');
+    tickScn(N.sim, N.s, 5 * 3);
+    expect(N.unit('heli').state).not.toBe('onscene'); expect(N.I.airDone).toEqual(['heli']);
+    expect(said(N.sim, /^헬기1: 상공 임무 종료, 복귀합니다\.$/)).toBe(1);
+  });
+  it('상공의 연료: 집까지 갈 만큼만 남으면 돌아가고, 맡았던 수요를 되돌린다 (다른 부대가 그 칸을 메운다)', () => {
+    const { sim, I, s, unit } = sceneOf(clearSeed(), 'search', ['policeHeli']);
+    const police = unit('policeHeli');
+    assessAs(sim, I, 'search', 2, undefined, { search: 2 });
+    police.airNeed = 'search'; police.x += 500; police.y += 300;      // 집에서 한참 떨어진 현장
+    const coming = sim.units.find((u) => u.kind === 'patrol')!;      // 오는 부대가 있어 한가하지 않다
+    coming.state = 'turnout'; coming.timer = 1e9; coming.incidentId = I.id; coming.destNode = I.reportedNode; I.assigned.push(coming.id);
+    I.unmet = {};
+    police.fuel = etaFor(sim, police, police.homeNode) + AIR.rtbMargin + 3;
+    tickScn(sim, s, 5 * 2);
+    expect(police.state).toBe('onscene'); expect(sim.airStats.rtb).toBe(0);
+    tickScn(sim, s, 5 * 2);
+    expect(police.state).toBe('returning'); expect(police.incidentId).toBeNull();
+    expect(said(sim, /^경찰헬기1: 연료가 부족해 복귀합니다\.$/)).toBe(1);
+    expect(sim.airStats.rtb).toBe(1); expect(s.air!.length).toBe(0);
+    expect(I.unmet.search, '헬기가 맡았던 수색 수요').toBeGreaterThanOrEqual(1);
+    expect(I.airDone, '연료로 돌아간 것은 상공 임무 종료가 아니다 — 다른 헬기가 올 수 있다').toBeUndefined();
+  });
+  it('실종 현장을 하늘에서 살핀 뒤라면, 지상 대원이 현장 평가를 마치지 못하고 떠났어도 마지막 지휘관의 믿음으로 끝낸다', () => {
+    const mk = (hover: boolean): { sim: Sim; I: Incident; s: Scene } => {
+      const q = sceneOf(clearSeed(), 'search', hover ? ['policeHeli', 'bls'] : ['bls']);
+      const last = q.s.agents.find((a) => a.rid === q.s.commanderRid)!;
+      // 찾은 사람을 모두 싣고 떠났다 (마지막 지휘관의 믿음에는 남은 일이 없다). 현장 평가는 하지 못했다
+      const v: CasBelief = { x: 3, y: 3, mob: 'immobile', band: 1, where: 'loaded', treated: true, trappedDone: true, tq: 2 };
+      last.beliefs.merge(mkFact('cas', 0, v, '시험', q.sim.t, 1, true, ''));
+      expect(q.s.sizeupDone).toBe(false);
+      for (const a of q.s.agents) { a.status = 'left'; a.task = null; }
+      const amb = q.unit('bls'); amb.state = 'returning'; amb.incidentId = null; q.I.assigned.splice(q.I.assigned.indexOf(amb.id), 1);
+      tickScn(q.sim, q.s, 2);
+      return q;
+    };
+    const air = mk(true);
+    expect(air.I.phase).toBe('closed'); expect(air.I.closeReason).toBe('resolved');
+    const ground = mk(false);
+    expect(ground.I.phase, '하늘에서 살핀 적이 없으면 지금처럼 기다린다').not.toBe('closed');
+    tickScn(ground.sim, ground.s, 5 * 61);
+    expect(ground.I.closeReason).toBe('abandoned');
+  });
+});
+
+describe('⑬ 정보 격리와 순수 함수', () => {
+  const code = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8').split('\n').filter((l) => { const t = l.trim(); return !t.startsWith('//') && !t.startsWith('*') && !t.startsWith('/*'); }).join('\n');
+  const files = (dir: string): string[] => readdirSync(new URL(dir, import.meta.url)).filter((f) => /\.tsx?$/.test(f)).map((f) => dir + f);
+  it('상공의 판단(field/airDecide.ts)은 진실을 읽지 않는다 — 좁힌 입력(AirView)의 믿음·작업판·지형만', () => {
+    const src = code('../src/sim/field/airDecide.ts');
+    for (const bad of ['s.props', 's.casualties', 's.hostiles', '.truth', 's.fire[', 's.smoke[', 's.heat[', 's.wet[', 's.fuel[', 's.burning', '.fault', 'sim.scenes']) expect(src.includes(bad), bad).toBe(false);
+    // 현장 객체를 받지 않는다(Scene 을 import 하지 않는다). 실행 쪽(air.ts·실행기·세계 규칙·부대)을 import 하지 않는다
+    expect(/\bScene\b/.test(src), 'Scene').toBe(false);
+    for (const bad of ['rules/air', './executor', './hazards', './sceneManager', '../resources']) expect(src.includes(bad), bad).toBe(false);
+  });
+  it('배정·판단하는 파일은 숨은 고장(.fault)을 읽지 않는다', () => {
+    const list = [...files('../src/sim/dispatch/'), ...files('../src/sim/field/orders/'), '../src/sim/field/commander.ts', '../src/sim/field/brain.ts', '../src/sim/field/airDecide.ts'];
+    expect(list.length).toBeGreaterThan(6);
+    for (const f of list) expect(/\.fault\b/.test(code(f)), f).toBe(false);
+  });
+  it('표현 계층(src/view·src/ui)은 장비의 상태를 바꾸는 함수(kitWorks·toolUse·useKit)를 쓰지 않는다', () => {
+    const walk = (dir: string): string[] => { const out: string[] = []; for (const e of readdirSync(new URL(dir, import.meta.url), { withFileTypes: true })) { if (e.isDirectory()) out.push(...walk(dir + e.name + '/')); else if (/\.tsx?$/.test(e.name)) out.push(dir + e.name); } return out; };
+    const list = [...walk('../src/view/'), ...walk('../src/ui/')];
+    expect(list.length).toBeGreaterThan(20);
+    for (const f of list) for (const bad of ['kitWorks', 'toolUse', 'useKit']) expect(new RegExp('\\b' + bad + '\\b').test(code(f)), `${f}: ${bad}`).toBe(false);
+  });
+  it('visionOf·detectRadius 는 순수하다: 숨은 고장이 있는 장비로 여러 번 불러도 기록·해시·고장 상태가 그대로다 (지상 대원과 상공의 관측자)', () => {
+    const { sim, s, agents } = sceneWith('CREW', 'collapse', ['engine', 'rescue']);
+    const lead = roleAgent(sim, agents('engine'), 'fireLead'), seeker = roleAgent(sim, agents('rescue'), 'searcher');
+    kitItem(sim, lead.rid, 'tic').fault = true; kitItem(sim, seeker.rid, 'searchKit').fault = true;
+    s.smoke[tileOf(s, lead.x, lead.y)] = 0.6; s.smoke[tileOf(s, seeker.x, seeker.y)] = 0.6;
+    const heli = sim.units.find((u) => u.kind === 'policeHeli')!;
+    const obs = heli.crew.find((rid) => sim.responders[rid].role === 'observer')!;
+    kitItem(sim, obs, 'searchlight').fault = true;
+    const eye = makeAgent(sim, obs, heli.id, lead.x, lead.y, 0, sim.rng.fork('t'));
+    eye.aloft = true;
+    const before = [sim.events.length, sim.logHash];
+    const first: number[] = [], again: number[] = [];
+    for (const a of [lead, seeker, eye]) first.push(visionOf(sim, s, a), detectRadius(sim, s, a, 0.6));
+    for (let k = 0; k < 20; k++) { again.length = 0; for (const a of [lead, seeker, eye]) again.push(visionOf(sim, s, a), detectRadius(sim, s, a, 0.6)); }
+    expect(again).toEqual(first);
+    expect([sim.events.length, sim.logHash]).toEqual(before);
+    for (const [rid, id] of [[lead.rid, 'tic'], [seeker.rid, 'searchKit'], [obs, 'searchlight']] as [number, KitId][]) expect(kitItem(sim, rid, id).faultKnown, id).toBe(false);
+    // 밤의 관측자: 고장 난 탐조등으로는 4칸만 본다 — 그래도 visionOf 는 고장을 드러내지 않는다 (드러내는 자리는 air.ts 가 처음 켤 때)
+    const N = sceneOf(nightSeed(), 'search', []);
+    const nh = N.unit('policeHeli'), nobs = nh.crew.find((rid) => N.sim.responders[rid].role === 'observer')!;
+    const neye = makeAgent(N.sim, nobs, nh.id, 5, 5, 0, N.sim.rng.fork('t'));
+    neye.aloft = true;
+    expect(visionOf(N.sim, N.s, neye)).toBe(8);
+    kitItem(N.sim, nobs, 'searchlight').fault = true;
+    const nb = [N.sim.events.length, N.sim.logHash];
+    for (let k = 0; k < 10; k++) { expect(visionOf(N.sim, N.s, neye)).toBe(4); detectRadius(N.sim, N.s, neye, 0.6); }
+    expect([N.sim.events.length, N.sim.logHash]).toEqual(nb);
+    expect(kitItem(N.sim, nobs, 'searchlight').faultKnown).toBe(false);
+  });
+  it('airDecide: 하던 인양을 끝까지 하고, 지휘관이 있으면 작업판을 따르고, 한가함은 믿음으로 정한다 (난수 없이 같은 입력에 같은 답)', () => {
+    const sim = new Sim(clearSeed());
+    const s = sim.scenes[createIncident(sim, { type: 'water', variant: 'std', rng: sim.rng.fork('t') }).id]!;
+    const terrain = { w: s.w, h: s.h, tiles: s.tiles, region: s.region, regions: s.regions };
+    const water: number[] = []; for (let i = 0; i < s.tiles.length; i++) if (s.tiles[i] === T.WATER) water.push(i);
+    expect(water.length).toBeGreaterThan(10);
+    const agent = (): FieldAgent => makeAgent(sim, 0, 0, 5, 5, 0, sim.rng.fork('t'));
+    const eye = agent(); eye.aloft = true;
+    const op: AirOp = { unitId: 7, mode: 'watch', x: 5, y: 5, px: 5, py: 5, phase: 'hover', target: -1, workId: -1, progress: 0, need: 0, backAt: -1, idleSince: -1, eye };
+    const view = (over: Partial<AirView> = {}): AirView => ({ op, eye, board: [], cmd: null, terrain, kind: 'water', night: false, others: [], incoming: false, hoist: true, bucket: true, leg: 0, ...over });
+    const cas = (a: FieldAgent, id: number, i: number, band: number, over: Partial<CasBelief> = {}): void => { a.beliefs.merge(mkFact('cas', id, { x: i % s.w, y: (i / s.w) | 0, mob: 'trapped', band, where: 'scene', treated: false, trappedDone: false, tq: 0, ...over } as CasBelief, '시험', sim.t, 1, true, '')); };
+    // 아무것도 모른다: 물이 있는 줄을 훑는다. 오는 부대가 없으면 한가하다
+    const idle = airDecide(sim, view());
+    expect([idle.mode, idle.sweep, idle.busy]).toEqual(['watch', true, false]);
+    expect(airDecide(sim, view({ incoming: true })).busy, '오는 부대가 있다').toBe(true);
+    expect(Array.from(terrain.tiles.slice((idle.ty - 1) * s.w, (idle.ty + 2) * s.w)).indexOf(T.WATER), '물가의 줄').toBeGreaterThanOrEqual(0);
+    expect(airDecide(sim, view())).toEqual(idle);
+    const legs = new Set<string>(); for (let k = 0; k < 40; k++) { const p = airDecide(sim, view({ leg: k })); expect(p.tx >= 0 && p.ty >= 0 && p.tx <= s.w - 1 && p.ty <= s.h - 1).toBe(true); legs.add(p.tx + ',' + p.ty); }
+    expect(legs.size).toBeGreaterThanOrEqual(2);
+    expect(nearestLeg(terrain, 'water', idle.tx, idle.ty)).toBe(0);
+    // 지휘관이 없다: 관측자가 본 물속의 사람을 스스로 고른다 — 위중한 사람 먼저
+    cas(eye, 1, water[0], 1); cas(eye, 2, water[5], 2); cas(eye, 3, water[9], 2, { where: 'safe' });
+    expect(airDecide(sim, view())).toMatchObject({ mode: 'hoist', target: 2, workId: -1, busy: true });
+    const noHoist = airDecide(sim, view({ hoist: false, bucket: false }));
+    expect([noHoist.mode, noHoist.sweep], '호이스트가 없는 헬기(경찰 헬기)는 그 하류에서 지켜본다').toEqual(['watch', false]);
+    expect(airDecide(sim, view({ others: [{ ...op, mode: 'hoist', target: 2 }] })).target, '다른 헬기가 잡은 사람은 고르지 않는다').toBe(1);
+    op.mode = 'hoist'; op.target = 1;
+    expect(airDecide(sim, view()).target, '하던 인양은 끝까지').toBe(1);
+    op.mode = 'watch'; op.target = -1;
+    // 지휘관이 있다: 작업판의 호이스트 작업만 (우선순위 순). 없으면 스스로 고르지 않는다
+    const cmd = agent();
+    expect(airDecide(sim, view({ cmd })).mode).toBe('watch');
+    const w1 = work(sim, 'hoist', { id: 0, cas: 1, priority: 0.92 }), w2 = work(sim, 'hoist', { id: 1, cas: 2, priority: 0.98 }), w3 = work(sim, 'hoist', { id: 2, cas: 3, priority: 0.99, status: 'cancelled' });
+    expect(airDecide(sim, view({ cmd, board: [w1, w2, w3] }))).toMatchObject({ mode: 'hoist', target: 2, workId: 1 });
+    // 물 투하: 작업판의 작업, 없으면 관측자가 본 불이 가장 센 바깥 구역. 밤에는 하지 않는다
+    const outdoor = s.regions.filter((r) => !r.indoor);
+    expect(outdoor.length).toBeGreaterThanOrEqual(2);
+    const dry = agent(); dry.aloft = true;
+    dry.beliefs.merge(mkFact('fire', outdoor[0].id, 0.4, '시험', sim.t, 1, true, '')); dry.beliefs.merge(mkFact('fire', outdoor[1].id, 0.8, '시험', sim.t, 1, true, ''));
+    expect(airDecide(sim, view({ eye: dry }))).toMatchObject({ mode: 'bucket', target: outdoor[1].id, workId: -1 });
+    expect(airDecide(sim, view({ eye: dry, night: true })).mode).toBe('watch');
+    expect(airDecide(sim, view({ eye: dry, bucket: false })).mode).toBe('watch');
+    expect(airDecide(sim, view({ eye: dry, board: [work(sim, 'airDrop', { id: 0, region: outdoor[0].id, priority: 0.8 })] }))).toMatchObject({ mode: 'bucket', target: outdoor[0].id, workId: 0 });
+    // 용의자: 달아나는 사람 위를 반지름 4칸으로 돈다
+    const cop = agent(); cop.aloft = true;
+    cop.beliefs.merge(mkFact('hos', 0, { x: 14, y: 9, weapon: 'knife', state: 'hold', hostage: false, facing: 0 }, '시험', sim.t, 1, true, ''));
+    cop.beliefs.merge(mkFact('hos', 1, { x: 20, y: 10, weapon: 'knife', state: 'flee', hostage: false, facing: 0 }, '시험', sim.t, 1, true, ''));
+    const orbit = airDecide(sim, view({ eye: cop, kind: 'armed', hoist: false, bucket: false }));
+    expect([orbit.mode, orbit.sweep]).toEqual(['watch', false]);
+    expect(Math.hypot(orbit.tx - 20, orbit.ty - 10)).toBeCloseTo(4, 5);
+    // 한가함: 지휘관의 믿음에 용의자가 남았으면 할 일이 있다. 무장 현장은 안전 확보를 선언할 때까지, 실종 현장은 찾을 때까지
+    const busy = (kind: IncidentType, c: FieldAgent): boolean => airDecide(sim, view({ eye: agent(), cmd: c, kind, hoist: false, bucket: false })).busy;
+    expect(busy('armed', agent())).toBe(true);
+    const safe = agent(); safe.beliefs.merge(mkFact('secure', 0, true, '시험', sim.t, 1, true, ''));
+    expect(busy('armed', safe)).toBe(false);
+    safe.beliefs.merge(mkFact('hos', 0, { x: 1, y: 1, weapon: 'gun', state: 'hold', hostage: false, facing: 0 }, '시험', sim.t, 1, true, ''));
+    expect(busy('armed', safe)).toBe(true);
+    expect(busy('search', agent()), '아직 아무도 찾지 못했다').toBe(true);
+    const found = agent(); cas(found, 1, 0, 1, { mob: 'immobile', where: 'safe' });
+    expect(busy('search', found)).toBe(false);
+    expect(busy('fire', agent())).toBe(false);
   });
 });
 

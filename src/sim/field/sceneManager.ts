@@ -10,10 +10,10 @@ import { scenarioOf } from '../scenarios';
 import { fieldCrew, hasKit, isHovering, roleOf } from '../crews';
 import './scenes';
 import { SCENE_RULES } from './sceneRegistry';
-import type { Fact, FieldAgent, Incident, Scene, Unit } from '../types';
-import { TYPE_NAME, josa } from '../util';
-import { BeliefStore, mkFact } from './beliefs';
-import { learn } from './agents';
+import type { FieldAgent, Incident, Scene, Unit } from '../types';
+import { josa } from '../util';
+import { BeliefStore } from './beliefs';
+import { briefFacts, learn, makeAgent } from './agents';
 import { think } from './brain';
 import { outstanding } from './commander';
 import { buildScene } from './builders';
@@ -27,27 +27,6 @@ export function createScene(sim: Sim, I: Incident): Scene {
   s.air = []; s.light = null; s.airAt = -1;      // (R1) 상공의 헬기가 쓰는 칸 — 쓰는 것은 단계 4·5 부터
   sim.scenes[I.id] = s;
   return s;
-}
-
-/** 관제가 출동 부대에 전달하는 브리핑. 신고자 진술에서 나온 미확인 정보다. */
-export function briefFacts(sim: Sim, I: Incident): Fact[] {
-  const out: Fact[] = [];
-  const s = sim.scenes[I.id]!;
-  const last = (topic: string) => { for (let k = I.claims.length - 1; k >= 0; k--) if (I.claims[k].topic === topic) return I.claims[k]; return null; };
-  const as = I.assessment;
-  if (as) out.push(mkFact('type', 0, as.type, '관제', sim.t, as.typeConf, false, `관제 판단: ${TYPE_NAME[as.type]} (신뢰도 ${Math.round(as.typeConf * 100)}%)`));
-  const cnt = last('count'), inj = last('injured'), trap = last('trapped'), det = last('detail');
-  let count: number | null = null, conf = 0.4;
-  if (cnt && typeof cnt.value === 'number') { count = cnt.value; conf = cnt.conf; }
-  else if (inj && inj.value === true) { count = 1; conf = inj.conf * 0.8; }
-  else if (trap && trap.value === true) { count = 1; conf = trap.conf * 0.8; }
-  let region = -1;
-  if (det && det.value && typeof det.value.region === 'number' && det.value.region < s.regions.length) region = det.value.region;
-  if (count !== null || region >= 0) {
-    const where = region >= 0 ? ` · 위치 추정: ${s.regions[region].name}` : '';
-    out.push(mkFact('occ', 0, { count, region, trapped: !!(trap && trap.value === true) }, '신고자', sim.t, conf, false, `신고 내용: ${count !== null ? `요구조자 약 ${count}명` : '요구조자 수 불명'}${where}`));
-  }
-  return out;
 }
 
 export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
@@ -77,18 +56,7 @@ export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
     // 내리는 자리: 대기 지점 둘레에 다섯 칸 × 세 줄. 그 칸에 설 수 없으면(벽·물·격자 밖) 대기 지점에 그대로 선다
     let ax = s.staging.x + (n % 5) * 0.7 - 1.4, ay = s.staging.y + (Math.floor(n / 5) % 3) * 0.7;
     if (ax < -0.5 || ay < -0.5 || ax >= s.w - 0.5 || ay >= s.h - 0.5 || !staticPass(s.tiles[tileOf(s, ax, ay)])) { ax = s.staging.x; ay = s.staging.y; }
-    const a: FieldAgent = {
-      rid, unitId: u.id, isCommander: false,
-      x: ax, y: ay, px: 0, py: 0, fx: 1, fy: 0,
-      path: null, pathI: 0, pathGoal: -1, task: null, orderWork: -1,
-      beliefs: new BeliefStore(), outbox: [], outboxSince: 0, shadowSince: -1, commFailLogged: false,
-      nextThink: sim.t + 0.4 + k * 0.3, nextPerceive: 0, carrying: -1, inCover: false, cooldown: 1,
-      status: 'active', candidates: [], label: '도착', ring: 0, arrivedAt: sim.t, lastBlockEvent: -1, idleSince: sim.t,
-      stuckT: 0, lastX: 0, lastY: 0, rng: sim.rng.fork(`agent:${I.id}:${rid}`), planT: 0, equipIssue: 'none', smokeT: 0, climb: 0, rehabLogAt: -99,
-      pendingBlock: -1, underFireT: -99, spot: -1, quiet: new Set(), lastRetreatLog: -99, equipRetryAt: -99,
-      aloft: false, taserAt: -99,      // (R1) 공중 관측자가 아니다 · 테이저를 쏜 적이 없다
-    };
-    a.px = a.x; a.py = a.y;
+    const a = makeAgent(sim, rid, u.id, ax, ay, sim.t + 0.4 + k * 0.3, sim.rng.fork(`agent:${I.id}:${rid}`));
     for (const f of brief) a.beliefs.merge(f);
     if (cmd) for (const f of cmd.beliefs.all()) a.beliefs.merge(BeliefStore.relay(f));
     else if (prevCmd) for (const f of prevCmd.beliefs.all()) a.beliefs.merge(BeliefStore.relay(f));      // 관제가 이전 지휘관의 보고를 전달
@@ -242,7 +210,7 @@ export function tickScene(sim: Sim, s: Scene): void {
     if (mates.some((b) => b.status === 'active')) continue;
     for (const b of mates) { b.status = 'left'; b.task = null; b.label = ''; }
     // 상공에 있던 부대면 그 상공 작업(AirOp)도 지운다 (사건이 닫힌 뒤에는 세계 규칙이 돌지 않아 air.ts 가 스스로 치우지 못한다)
-    if (s.air && s.air.length) for (let k = s.air.length - 1; k >= 0; k--) if (s.air[k].unitId === u.id) s.air.splice(k, 1);
+    if (s.air && s.air.length) { for (let k = s.air.length - 1; k >= 0; k--) if (s.air[k].unitId === u.id) s.air.splice(k, 1); if (!s.air.length) s.light = null; }      // 탐조등도 함께 꺼진다
     if (u.boardOrder === 'transport' || u.patients.length > 0) {      // 철수 지시 뒤에 환자를 태웠어도 병원부터 간다
       const k = I.assigned.indexOf(u.id); if (k >= 0) I.assigned.splice(k, 1);
       u.boardOrder = null; u.incidentId = null;
@@ -271,7 +239,10 @@ export function tickScene(sim: Sim, s: Scene): void {
         s.idleSince = sim.t;
         const last = s.agents.find((a) => a.rid === s.commanderRid);
         const o = last ? outstanding(last) : null;
-        if (last && o && s.sizeupDone && o.patients === 0 && !o.fire && !o.hostile && !(s.kind === 'search' && o.search) && !(s.kind === 'armed' && s.secureAt < 0)) {
+        // 현장 평가를 마친 현장만 이렇게 끝낸다. 실종 현장을 상공의 헬기가 살핀 뒤라면 평가를 마치지 못했어도 같다 —
+        // 하늘에서 먼저 다 찾아 주면 지상 부대가 평가를 건너뛰고 환자부터 싣고 떠나, 남은 일이 없는데도 '방치'로 닫혔다
+        const surveyed = s.sizeupDone || (s.kind === 'search' && (s.airAt ?? -1) >= 0);
+        if (last && o && surveyed && o.patients === 0 && !o.fire && !o.hostile && !(s.kind === 'search' && o.search) && !(s.kind === 'armed' && s.secureAt < 0)) {
           emit(sim, { inc: I.id, role: 'COMMANDER', actor: sim.responders[last.rid].name, rid: last.rid, kind: 'command', imp: 2, text: '현장에 남은 임무가 없습니다. 환자 이송과 함께 상황 종료를 선언합니다.' });
           closeIncident(sim, I, 'resolved');
         } else if (o && (o.patients > 0 || o.fire || o.hostile)) {

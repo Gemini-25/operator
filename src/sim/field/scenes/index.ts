@@ -8,3 +8,4 @@ import '../rules/disaster';
 import '../orders/crime';
 import '../orders/major';
 import '../orders/disaster';
+import '../rules/air';      // (R1) 상공의 헬기 — 마지막에 돈다

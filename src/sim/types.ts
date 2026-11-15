@@ -565,7 +565,7 @@ export interface ShiftReport {
   avgResponse: number; avgDispatch: number;
   utilization: number; unitUtil: { callsign: string; util: number; runs: number }[];
   casTotal: number; casSaved: number; casLost: number; casUndiscovered: number;
-  respondersHurt: { name: string; callsign: string; status: string }[];
+  respondersHurt: { name: string; callsign: string; status: string; role?: string }[];      // role = 역할 이름 (R1)
   equipFailures: number;
   delayCauses: { code: ProblemCode; label: string; count: number }[];
   incidents: { id: number; code: string; type: IncidentType; name?: string; reportedType: IncidentType | null; label: string; result: IncidentResult; start: number; end: number }[];

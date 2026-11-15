@@ -154,6 +154,18 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   // 무장 사건의 인원 문턱에 드는 사람: 총기를 든 활동 중인 경찰. 폭발물 처리 요원·로봇 조작 요원은 (권총이 있어도) 역할로 뺀다
   const police = s.agents.filter((b) => b.status === 'active' && sim.responders[b.rid].dept === 'police' && hasFirearm(sim, b.rid) && roleOf(sim, b.rid).group !== 'bomb');
   if (!s.sizeupDone) want(sim, s, 'sizeup', {}, 0.96);
+  // 이 사건 상공에 머무는 헬기가 할 수 있는 일 (자기 조직의 부대 상태): 호이스트 인양, 공중 물 투하(밤에는 뿌리지 않는다).
+  // 공중 임무(hoist·airDrop)는 지상 대원이 맡지 못한다(fitFor 0) — 상공에 그 일을 할 부대가 있을 때만 작업판에 올리고, 없어지면 거둔다.
+  // 남겨 두면 열린 작업 때문에 종료를 선언하지 못한다(canClose). 헬기가 다시 오면 다시 낸다
+  let hoistUp = false, bucketUp = false;
+  for (const uid of I.assigned) {
+    const u = sim.units[uid];
+    if (u.state !== 'onscene' || !isHovering(u, s)) continue;
+    if (u.hoist) hoistUp = true;
+    if ((u.bucketMax ?? 0) > 0 && sim.weather !== 'night') bucketUp = true;
+  }
+  if (!hoistUp) cancel(s, (w) => w.kind === 'hoist');
+  if (!bucketUp) cancel(s, (w) => w.kind === 'airDrop');
 
   // ── 화재 ──
   let fireSum = 0, fireRegions = 0;
@@ -162,7 +174,8 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       fireSum += f.value; fireRegions++;
       const near = cas.some((c) => c.value.where === 'scene' && c.value.band < 3 && s.region[c.value.y * s.w + c.value.x] === f.id);
       want(sim, s, 'suppress', { region: f.id }, 0.56 + 0.24 * f.value + (near ? 0.14 : 0), f.value > 0.5 ? 2 : 1);
-    } else for (const w of s.board) if (w.kind === 'suppress' && w.region === f.id && (w.status === 'open' || w.status === 'active')) { w.status = 'done'; w.doneAt = sim.t; }
+      if (bucketUp && !s.regions[f.id].indoor) want(sim, s, 'airDrop', { region: f.id }, 0.7 + 0.2 * f.value, 1);      // 바깥 구역의 불: 상공의 헬기가 물을 뿌린다 (지상의 진압과 함께)
+    } else for (const w of s.board) if ((w.kind === 'suppress' || w.kind === 'airDrop') && w.region === f.id && (w.status === 'open' || w.status === 'active')) { w.status = 'done'; w.doneAt = sim.t; }
   }
   if (fireRegions > 0 && s.props.some((p) => p.kind === 'hydrant')) {
     for (const uid of unitsOnScene(sim, s)) {
@@ -354,12 +367,18 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     const c = f.value as CasBelief;
     const dead = c.band === 3;
     const clear = (kinds: WorkKind[]) => cancel(s, (w) => w.cas === f.id && kinds.indexOf(w.kind) >= 0 && !(w.kind === 'carry' && w.status === 'active' && s.agents.some((b) => b.carrying === f.id)));
-    if (dead || c.where === 'loaded' || c.where === 'hospital') { clear(['extricate', 'treat', 'carry', 'load']); continue; }
+    if (dead || c.where === 'loaded' || c.where === 'hospital') { clear(['extricate', 'treat', 'carry', 'load', 'hoist']); continue; }
     const urg = c.band * 0.06;
+    const afloat = c.where === 'scene' && c.mob === 'trapped' && s.tiles[c.y * s.w + c.x] === T.WATER;      // 물속에 있다고 믿는다
+    if (hoistUp && !afloat) cancel(s, (w) => w.kind === 'hoist' && w.cas === f.id);      // 물 밖으로 나왔다
     // 총을 든 용의자 바로 곁에 있는 사람(인질)은 위협이 사라지기 전에는 손댈 수 없다
     if (c.where === 'scene' && active.some((h) => h.value.weapon === 'gun' && Math.hypot(h.value.x - c.x, h.value.y - c.y) <= 3.6)) { clear(['treat', 'carry', 'extricate']); continue; }
     if (c.where === 'scene') {
-      if (c.mob === 'trapped' && s.tiles[c.y * s.w + c.x] === T.WATER) { want(sim, s, 'waterRescue', { cas: f.id }, 0.9 + urg, 2); continue; }      // 물속: 물가에서 줄을 던져 끌어낸다
+      if (afloat) {
+        want(sim, s, 'waterRescue', { cas: f.id }, 0.9 + urg, 2);      // 물속: 물가에서 줄을 던져 끌어낸다
+        if (hoistUp) want(sim, s, 'hoist', { cas: f.id }, 0.92 + urg, 1);      // 상공에 호이스트를 단 헬기가 있으면 함께 낸다 — 먼저 끝나는 쪽이 이긴다
+        continue;
+      }
       if (c.mob === 'trapped') { want(sim, s, 'extricate', { cas: f.id }, 0.82 + urg, 2); continue; }
       if (c.mob === 'mobile') {                // 스스로 대피 중 — 한참 지나도 도착 보고가 없으면 확인하러 보낸다
         if (sim.t - f.t > 32) want(sim, s, 'escort', { cas: f.id }, 0.62 + urg);

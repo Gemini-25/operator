@@ -7,6 +7,7 @@ import { personaName } from './dispatch/callSystem';
 import { sevName } from './dispatch/analyst';
 import { difficultyLabel } from './difficulty';
 import { disasterSummary } from './disaster';
+import { roleOf } from './crews';
 import type { Sim } from './engine';
 import type { Incident, IncidentResult, Outcome, Problem, ProblemCode, ShiftReport } from './types';
 import { TYPE_NAME, fmtSec, josa, pct } from './util';
@@ -94,6 +95,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   const A: string[] = [];
   if (reason === 'noresponse') A.push(`신고 접수 후 ${fmtSec(sim.t - I.reportedAt)}이 지나도록 어떤 부대도 현장에 도착하지 못했습니다.`);
   else if (responseTime >= 0) A.push(`신고 접수 ${fmtSec(dispatchTime)} 만에 첫 출동 지령이 내려졌고, ${fmtSec(responseTime)} 만에 첫 부대가 도착했습니다${responseTime > limit ? ` (기준 ${fmtSec(limit)} 초과)` : ''}.`);
+  // 헬기만 왔던 사건: 상공 도착은 현장 도착(대응 시간)에 넣지 않는다 — 지상 대원이 내린 적이 없으면 그렇게 적는다
+  else if ((s.airAt ?? -1) >= 0 && I.reportedAt >= 0) A.push(`헬기가 신고 접수 ${fmtSec(Math.max(0, s.airAt! - I.reportedAt))} 만에 현장 상공에 도착했지만, 지상 부대는 현장에 닿지 못했습니다.`);
   if (wrongNotes.length && firstCall) A.push(`최초 신고자(${personaName(firstCall.caller.persona)})의 정보가 실제와 달랐습니다: ${wrongNotes.slice(0, 2).join('; ')}.`);
   const order: ProblemCode[] = ['CALL_QUEUE', 'CALL_VAGUE', 'MISJUDGE_TYPE', 'UNDERESTIMATE', 'OVERESTIMATE', 'NO_UNIT', 'DIVERTED', 'ROUTE_BLOCKED', 'TRAFFIC_DELAY', 'SCENE_MISMATCH', 'UNDER_DISPATCH', 'BACKUP_LATE',
     'WRONG_ADDRESS', 'FALSE_ALARM', 'PATH_BLOCKED', 'COMM_FAIL', 'RECOUNT', 'VICTIM_MISSED', 'EQUIP_FAIL', 'WATER_OUT', 'HIDDEN_HAZARD', 'ESCALATION', 'SECONDARY_COLLISION', 'RESPONDER_HURT', 'FATIGUE', 'SUSPECT_FLED', 'LATE_DISCOVERY', 'TIMEOUT'];
@@ -183,7 +186,7 @@ export function buildReport(sim: Sim): ShiftReport {
   const dur = sim.t;
   const unitUtil = sim.units.map((u) => ({ callsign: u.callsign, util: u.busyTime / Math.max(1, dur), runs: u.runs }));
   const utilization = unitUtil.reduce((x, y) => x + y.util, 0) / unitUtil.length;
-  const hurt = sim.responders.filter((r) => r.status !== 'ok').map((r) => ({ name: r.name, callsign: sim.units[r.unitId].callsign, status: r.status === 'down' ? '중상' : '부상' }));
+  const hurt = sim.responders.filter((r) => r.status !== 'ok').map((r) => ({ name: r.name, callsign: sim.units[r.unitId].callsign, status: r.status === 'down' ? '중상' : '부상', role: roleOf(sim, r.id).name }));
   const equip = sim.events.filter((e) => e.problem === 'EQUIP_FAIL').length;
   const delayCauses = Array.from(causeCount.entries()).map(([code, count]) => ({ code, label: PROBLEM_LABEL[code], count })).sort((a, b) => b.count - a.count || (a.code < b.code ? -1 : 1));
   const n = incidents.length;
@@ -197,8 +200,14 @@ export function buildReport(sim: Sim): ShiftReport {
   const tf = { ...sim.traffic.stats };
   if (tf.jams + tf.closures + tf.obstacles + tf.detours + tf.gateWaits === 0) summary.push('교통으로 인한 지연은 없었습니다.');
   else summary.push(`교통: 정체 ${tf.jams}건·통제 ${tf.closures}건·장애물 ${tf.obstacles}건. ${tf.detours + tf.gateWaits === 0 ? '길이 막혀 되돌아가거나 건널목에서 기다린 출동은 없었습니다.' : `길이 막혀 되돌아간 출동 ${tf.detours}회, 건널목 대기 ${tf.gateWaits}회 (합쳐 약 ${Math.round(tf.delaySec)}초 지연).`}`);
+  // 헬기: 기록된 통계로만 쓴다 (sim.airStats — 상태를 바꾸는 자리에서 센 값)
+  const air = { ...sim.airStats, byKind: { ...sim.airStats.byKind } };
+  if (air.sorties > 0) summary.push(`헬기: 출동 ${air.sorties}회(경찰 ${air.byKind.policeHeli ?? 0} · 소방 ${air.byKind.heli ?? 0} · 의료 ${air.byKind.medHeli ?? 0}), 호이스트 인양 ${air.hoists}명, 물 투하 ${air.drops}회, 공중 이송 ${air.airLifts}명, 연료 부족 복귀 ${air.rtb}회.`);
+  if (air.grounded === 'fog') summary.push('안개로 헬기가 뜨지 못했습니다.');
+  else if (air.grounded === 'night') summary.push('밤이라 의료 헬기는 뜨지 못했습니다.');
+  else if (air.grounded === 'storm') summary.push('태풍의 강풍으로 헬기가 한동안 뜨지 못했습니다.');
   return {
-    traffic: tf,
+    traffic: tf, air,
     major: sim.incidents.filter((I) => I.tag === 'major').length, disaster: disasterSummary(sim),
     seed: sim.seed, duration: dur, weather: sim.weather, difficulty: { ...sim.difficulty }, difficultyLabel: difficultyLabel(sim.difficulty), totalCalls: sim.calls.length, totalIncidents: n, counts,
     avgResponse: rN ? rSum / rN : -1, avgDispatch: dN ? dSum / dN : -1, utilization, unitUtil,

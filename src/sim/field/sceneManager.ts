@@ -210,7 +210,7 @@ export function tickScene(sim: Sim, s: Scene): void {
     if (mates.some((b) => b.status === 'active')) continue;
     for (const b of mates) { b.status = 'left'; b.task = null; b.label = ''; }
     // 상공에 있던 부대면 그 상공 작업(AirOp)도 지운다 (사건이 닫힌 뒤에는 세계 규칙이 돌지 않아 air.ts 가 스스로 치우지 못한다)
-    if (s.air && s.air.length) for (let k = s.air.length - 1; k >= 0; k--) if (s.air[k].unitId === u.id) s.air.splice(k, 1);
+    if (s.air && s.air.length) { for (let k = s.air.length - 1; k >= 0; k--) if (s.air[k].unitId === u.id) s.air.splice(k, 1); if (!s.air.length) s.light = null; }      // 탐조등도 함께 꺼진다
     if (u.boardOrder === 'transport' || u.patients.length > 0) {      // 철수 지시 뒤에 환자를 태웠어도 병원부터 간다
       const k = I.assigned.indexOf(u.id); if (k >= 0) I.assigned.splice(k, 1);
       u.boardOrder = null; u.incidentId = null;
@@ -239,7 +239,10 @@ export function tickScene(sim: Sim, s: Scene): void {
         s.idleSince = sim.t;
         const last = s.agents.find((a) => a.rid === s.commanderRid);
         const o = last ? outstanding(last) : null;
-        if (last && o && s.sizeupDone && o.patients === 0 && !o.fire && !o.hostile && !(s.kind === 'search' && o.search) && !(s.kind === 'armed' && s.secureAt < 0)) {
+        // 현장 평가를 마친 현장만 이렇게 끝낸다. 실종 현장을 상공의 헬기가 살핀 뒤라면 평가를 마치지 못했어도 같다 —
+        // 하늘에서 먼저 다 찾아 주면 지상 부대가 평가를 건너뛰고 환자부터 싣고 떠나, 남은 일이 없는데도 '방치'로 닫혔다
+        const surveyed = s.sizeupDone || (s.kind === 'search' && (s.airAt ?? -1) >= 0);
+        if (last && o && surveyed && o.patients === 0 && !o.fire && !o.hostile && !(s.kind === 'search' && o.search) && !(s.kind === 'armed' && s.secureAt < 0)) {
           emit(sim, { inc: I.id, role: 'COMMANDER', actor: sim.responders[last.rid].name, rid: last.rid, kind: 'command', imp: 2, text: '현장에 남은 임무가 없습니다. 환자 이송과 함께 상황 종료를 선언합니다.' });
           closeIncident(sim, I, 'resolved');
         } else if (o && (o.patients > 0 || o.fire || o.hostile)) {

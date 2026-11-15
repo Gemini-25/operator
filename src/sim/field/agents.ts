@@ -147,6 +147,9 @@ export function learn(sim: Sim, a: FieldAgent, f: Fact, report = true, force = f
   return news;
 }
 
+/** 상공의 관측자가 먼저 발견해 아직 아무도 대피를 안내하지 못한 사람 (구조 대상의 모양을 바꾸지 않으려고 따로 둔다) */
+const UNGUIDED = new WeakSet<Casualty>();
+
 function discover(sim: Sim, s: Scene, I: Incident, a: FieldAgent, c: Casualty): void {
   const r = resp(sim, a);
   c.tDiscovered = sim.t; c.discoveredBy = a.rid;
@@ -161,8 +164,9 @@ function discover(sim: Sim, s: Scene, I: Incident, a: FieldAgent, c: Casualty): 
   if (late && !I.problems.some((p) => p.code === 'LATE_DISCOVERY')) {
     I.problems.push({ code: 'LATE_DISCOVERY', t: sim.t, eventId: sim.events.length - 1, detail: `구조 대상 ${c.label} 발견까지 도착 후 ${Math.round(sim.t - s.arrivedAt)}초 소요`, recovered: true, recoveryText: '' });
   }
-  // 거동 가능한 대상은 대피를 안내한다 (배회하던 실종자는 동행이 필요). 상공의 관측자는 안내하지 못한다 — 보고만 한다
-  if (!a.aloft && c.mob === 'mobile' && !c.wander && !c.isTarget && !isHeld(sim, s, c.id)) { c.walking = true; c.path = null; }
+  // 거동 가능한 대상은 대피를 안내한다 (배회하던 실종자는 동행이 필요). 상공의 관측자는 안내하지 못한다 — 보고만 하고,
+  // 지상 대원이 그 사람을 처음 만났을 때 안내한다 (perceive 의 UNGUIDED)
+  if (c.mob === 'mobile' && !c.wander && !c.isTarget) { if (a.aloft) UNGUIDED.add(c); else if (!isHeld(sim, s, c.id)) { c.walking = true; c.path = null; } }
   r.xpGained += 0.004;
 }
 
@@ -192,6 +196,8 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
     if (d > dr || !sees(c.x, c.y)) continue;
     let fresh = sim.t - c.tDiscovered < 2.5;      // 방금 누군가 발견을 알렸다면 같은 내용을 되풀이하지 않는다
     if (!known) { discover(sim, s, I, a, c); fresh = true; }
+    // 하늘에서 먼저 본 사람을 지상 대원이 처음 만났다: 걸을 수 있으면 대피를 안내한다 (발견한 대원이 하는 것과 같다)
+    if (!aloft && known && !c.walking && c.mob === 'mobile' && c.where === 'scene' && !c.dead && UNGUIDED.has(c) && !isHeld(sim, s, c.id)) { UNGUIDED.delete(c); c.walking = true; c.path = null; }
     if (!aloft && known && c.hostage && c.mob === 'mobile' && !c.walking && !c.dead && c.where === 'scene' && !isHeld(sim, s, c.id) && !s.hostiles.some((h) => h.state === 'hold' || h.state === 'fight')) { c.walking = true; c.path = null; }
     if (c.tDiscovered >= 0) { if (fresh) learnQuiet(sim, a, casFact(sim, s, c, me)); else learn(sim, a, casFact(sim, s, c, me)); }
   }

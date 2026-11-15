@@ -162,11 +162,14 @@ export const STAFF: Record<UnitKind, StaffDef> = {
 export const AIR_KIND: Set<UnitKind> = new Set<UnitKind>(['heli', 'policeHeli', 'medHeli']);
 /**
  * 이 부대는 그 현장의 상공에 머무는가 (내려앉지 않는다 — 아무도 내리지 않는 '대원 없는 현장 부대'). 종류와 현장만 본다: 상태는 부르는 쪽이 따로 본다.
- * 경찰 헬기는 언제나 상공에 머문다. 의료 헬기와 소방 헬기는 내려앉아 대원이 일한다.
- * (단계 5 에서 소방 헬기의 물·산불 현장을 더한다 — 호이스트·물 투하가 생길 때:
- *   || (u.kind === 'heli' && (s.kind === 'water' || (s.rules !== undefined && s.rules.indexOf('water') >= 0) || (s.kind === 'fire' && s.variant === 'wild'))) )
+ * 경찰 헬기는 언제나 상공에 머문다(관측·탐조등). 소방 헬기는 물이 있는 현장(수난 사고, 물의 규칙이 도는 현장)과 산불 현장에서 상공에 머물며
+ * 호이스트로 사람을 건지고 물을 뿌린다 — 그 밖의 현장에는 내려앉아 대원이 일한다. 의료 헬기는 언제나 내려앉는다.
+ * 상공의 일은 field/rules/air.ts 가 굴린다.
  */
-export function isHovering(u: Unit, _s: Scene): boolean { return u.kind === 'policeHeli'; }
+export function isHovering(u: Unit, s: Scene): boolean {
+  if (u.kind === 'policeHeli') return true;
+  return u.kind === 'heli' && (s.kind === 'water' || (s.rules !== undefined && s.rules.indexOf('water') >= 0) || (s.kind === 'fire' && s.variant === 'wild'));
+}
 /** 그 시설의 헬기 착륙 자리 (지도 좌표). 병원은 부지 안의 착륙장, 그 밖(항공대·경찰서)은 건물 옆 */
 export function heliPad(_sim: Sim, f: Facility): [number, number] { return f.kind === 'hospital' ? [f.x - 5, f.y - 3] : [f.x + 30, f.y - 20]; }
 

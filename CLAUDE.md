@@ -82,6 +82,10 @@ src/view/scene/fxBook.ts     연출 시계(최대 2배, 일시정지면 멈춤),
 src/view/scene/combat.ts     교전 그림(총구 섬광·예광선·탄착, 섬광탄, 폭발, 진입 3-2-1·문짝, 겨누는 선·말풍선, 수갑). 새 효과 종류를 그리면 FX_DRAWN, 결정적 순간이면 DECISIVE 에 더한다
 src/view/audioCombat.ts      교전 소리(planCues 는 순수 함수: 배속별 묶음, 토큰 통, 동시 발음 상한 / CombatVoice 음색)
 src/view/city/combatPin.ts   지도의 교전 핀(사격 별·폭발 고리·교전 중 점선 테)
+src/sim/field/ruins.ts       무너짐 기록(markRuin: Scene.ruin 칸의 처음 모습·무너진 모습, recordFall: Scene.falls·Fx 'collapse'). 기록 전용 — 결과는 바뀌지 않는다
+src/view/hazardState.ts      현장·지도·카드가 함께 쓰는 상태 읽기(ruinInfo·ruinSeen·pinIcon·가스·인질 상태, 시점 규칙)
+src/view/scene/ruins.ts      무너진 구역의 고정 층 그림(내려앉은 음영·잔해 더미·쓰러진 벽·금·경계) / scene/hazardFx.ts: 위험 범위·무너지는 순간·먼지 충격 고리·되살아난 불·인질 표지
+src/view/city/ruinLayer.ts   지도의 무너진 지붕·먼지·배지(부대 표식 뒤에 그린다)·끝난 붕괴 기호 / src/ui/HazardStrip.tsx: 사건 카드의 상태 칩
 src/view/marks.ts            부대 열두 종류·시설·상태의 그림 기호(24×24 경로 문자열). 지도(캔버스 Path2D)와 패널(SVG)이 같은 것을 쓴다. 지도와 목록에 글자 표식을 쓰지 않는다
 src/view/city/tokens.ts       지도의 둥근 부대 표식(분야색 바탕 + 기호 + 번호 점 + 상태 테), 시설 배지(둥근 네모), 이름표 자리 고르기
 src/view/city/trafficLayer.ts 혼잡 띠(노랑 서행·주황 정체·빨강 극심), 통제 점선, 장애물 표식, 열차와 차단기, 마우스 설명
@@ -185,6 +189,7 @@ tests/                       sim.test.ts(기본) + 묶음별 ext·crime·major·
 - **처치 왕복.** 처치를 두 번 마쳤는데도 기본 처치(tq 1)로만 보고되는 환자에게는 지휘관이 처치를 다시 내지 않는다(더 나아지게 할 수 없는 구급대원이 같은 상태 보고만 되돌려 보냈다).
 - **연쇄 상한.** 연쇄 사건은 `chain.canChain(sim, 부모)` 가 참일 때만 예약한다. 막히면 아무것도 예약하지 않고 기록도 남기지 않는다. 난수는 상한과 상관없이 늘 그대로 뽑는다(상한에 걸리지 않는 교대의 결과가 바뀌지 않게).
 - **기록에 남지 않는 왕복.** 대원이 같은 종류의 두 작업(탑승 D↔F, 처치 B↔D) 사이를 기록 없이 수십 번 오가는 일이 있다(극한 S49 #18 탑승 89회). 측정 도구의 REPEAT 는 기록 줄만 세서 이것을 보지 못한다.
+- **무너짐의 기록.** 벽·건물을 무너뜨리는 새 규칙은 상태를 바꾸는 자리에서 `ruins.markRuin`(칸)·`recordFall`(순간)을 부른다. 무너짐은 `Fx 'collapse'`(그리지 않음 — 카메라·감속·소리용)와 `Scene.falls`(그림용)로 남는다. 고정 층의 `staticSig` 에는 `ruin` 과 치운 잔해 수가 들어가고 보강 항은 빠졌다.
 - **현장 그림의 고정 층.** `staticLayer.ts` 는 타일·가구가 바뀔 때만 다시 그린다(`staticSig`). 매 프레임 바뀌는 것(문짝, 불, 사람)을 여기에 넣지 않는다. 새 타일 종류·가구를 만들면 `surfaceMap`·`paintTile`·`furniture` 에 그림을 추가한다.
 - **건물 배치는 고정이 아니다.** 방의 수·위치·출입구가 사건마다 다르다. 좌표를 직접 쓰지 말고 `Plan`(`rooms`·`corridors`·`exitDoors`·`floors`)과 `s.exits`·`s.regions` 로 찾는다. 복도가 없는 건물(`corridors` 가 빈 배열)도 있다. 새 틀을 만들면 "모든 바닥에 걸어서 닿는다"는 테스트(`현장 배치의 다양성`)를 통과해야 한다.
 - **가구는 실제 장애물이다(`T.FURN`).** 지나갈 수 없고, 시야는 통과하며, 엄폐물이 된다. 방을 새로 만들 때는 `builders.ts` 의 `furnish()` 를 쓴다(문 주변을 비우고 방이 끊기지 않는지 검사한다).

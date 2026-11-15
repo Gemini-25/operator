@@ -1106,8 +1106,8 @@ describe('X6 단계 2: 교대 — 재현성과 아직 일어나지 않는 일', 
       expect(state(again), cases[q][0]).toBe(state(runs[q]));
     }
   });
-  it('그 교대들에서 조짐은 지휘관에게까지 들어왔고, 세계는 실제로 무너뜨리고 터뜨린다 — 기록·건물 상태·집계가 서로 맞고(§10-8), 아직 아무도 판단하지 않는다(철수·조짐 기록 0)', () => {
-    let signs = 0, cmdSigns = 0, scenes = 0, moved = 0, radio = 0, fell = 0, booms = 0;
+  it('그 교대들에서 조짐은 지휘관에게까지 들어왔고, 세계는 실제로 무너뜨리고 터뜨린다 — 기록·건물 상태·집계가 서로 맞고(§10-8), 지휘관이 조짐으로 판단한 기록(위험 조짐·철수)이 지휘 상태와 맞는다 (단계 5)', () => {
+    let signs = 0, cmdSigns = 0, scenes = 0, moved = 0, radio = 0, fell = 0, booms = 0, withdrew = 0, dsigns = 0, opsScenes = 0;
     for (const sim of runs) {
       for (const s of sim.scenes) {
         if (!s) continue;
@@ -1135,15 +1135,21 @@ describe('X6 단계 2: 교대 — 재현성과 아직 일어나지 않는 일', 
       expect(st.known).toBe(sim.incidents.reduce((k, I) => k + I.problems.filter((p) => p.code === 'EXPLOSION').length, 0));
       booms += n.boom;
       expect(sim.events.some((e) => e.problem === 'HIDDEN_HAZARD' && e.text.startsWith('폭발! 고여 있던 가스에 불이 붙었습니다'))).toBe(false);
-      // (단계 5) 아무도 조짐으로 판단하지 않는다: 조짐·철수 기록·지휘 상태(Scene.ops) 없음
-      expect(sim.events.some((e) => e.problem === 'DANGER_SIGN' || e.problem === 'WITHDRAWAL')).toBe(false);
+      // (단계 5) 지휘관이 조짐으로 판단한다: 위험 조짐·전원 철수 기록은 지휘 상태(Scene.ops)가 있는 현장에만 있고, 집계와 맞는다.
+      // 철수 기록마다 그 사건의 지휘 상태에 철수가 있었고(구역의 기록 = 그 문제), 다시 들어간 것은 복구로 남는다
+      const prob = (code: string): number => sim.incidents.reduce((k, I) => k + I.problems.filter((p) => p.code === code).length, 0);
+      expect([st.withdrawals, st.signs]).toEqual([prob('WITHDRAWAL'), prob('DANGER_SIGN')]);
+      expect(st.reentries).toBe(sim.incidents.reduce((k, I) => k + I.problems.filter((p) => p.code === 'WITHDRAWAL' && p.recovered).length, 0));
+      for (const I of sim.incidents) if (I.problems.some((p) => p.code === 'WITHDRAWAL' || p.code === 'DANGER_SIGN')) expect(sim.scenes[I.id]!.ops, I.code).toBeDefined();
+      withdrew += st.withdrawals; dsigns += st.signs; opsScenes += sim.scenes.filter((s) => s && s.ops).length;
       expect(sim.report!.catastrophe).toBeUndefined();      // (단계 7) 교대 보고서의 칸
       expect(sim.report!.placeMarks).toBeUndefined();
-      expect([st.withdrawals, st.reentries, st.defensive, st.extClose, st.crewCaught, st.signs, st.averted, st.gaps.length])
-        .toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+      expect([st.extClose, st.crewCaught]).toEqual([0, 0]);      // (단계 6 · 7)
       expect(st.scenes).toBe(sim.scenes.filter((s) => s && s.cat).length);
-      expect(sim.scenes.every((s) => !s || s.ops === undefined)).toBe(true);
     }
+    expect(dsigns).toBeGreaterThan(0);
+    expect(opsScenes).toBeGreaterThan(0);
+    void withdrew;
     expect(scenes).toBeGreaterThan(20);
     expect(moved).toBeGreaterThan(2);
     expect(signs).toBeGreaterThan(10);

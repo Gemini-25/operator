@@ -13,12 +13,24 @@ import { airShort, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, isHover
 import { canCarryPatients, exitName, failedRecently, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
 import { heardEv, mkFact } from './beliefs';
 import { losWalls } from './grid';
+import { opsCordon } from './ops';
 import { BAND_NAME, HOSTILE_FOV } from './hazards';
 import { hosNeedsCare, mateNeedsHospital } from './injury';
-import { CAS_HOLDS, CLOSE_BLOCKERS, ORDER_RULES, PROP_HOLDS } from './sceneRegistry';
+import { CAS_HOLDS, CLOSE_BLOCKERS, ORDER_RULES, PROP_HOLDS, WORK_GATES } from './sceneRegistry';
 import type { CommandKit } from './sceneRegistry';
 
 interface Target { region?: number; cas?: number; prop?: number; hostile?: number; tile?: number; mate?: number; animal?: number }      // animal: (N8) 대상 동물
+
+/**
+ * (X6 §5.3) 문이 막은 새 작업 대신 돌려주는 빈 작업: 작업판에 넣지 않는다. 얼려 두었다 — 돌려받은 작업을 고치는 코드는 `if (w.id >= 0)` 으로 감싼다
+ * (얼린 객체에 쓰면 엄격 모드에서 TypeError 가 나므로 실수가 바로 드러난다)
+ */
+const GHOST: WorkItem = Object.freeze({
+  id: -1, kind: 'sizeup', region: -1, cas: -1, prop: -1, hostile: -1, tile: -1, mate: -1, priority: 0, status: 'cancelled', assignees: Object.freeze([]) as unknown as number[], max: 0,
+  createdAt: 0, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough: false, orderSentAt: Object.freeze({}), cause: -1, failedAt: Object.freeze({}), animal: -1, risky: undefined,
+}) as WorkItem;
+/** (X6) 계획 주기(syncBoard) 동안의 지휘관과 문이 막은 수. want 는 syncBoard 안에서만 불린다 — 밖에서 불리면 문을 묻지 않는다 */
+let gateCmd: FieldAgent | null = null, gateHits = 0;
 
 function want(sim: Sim, s: Scene, kind: WorkKind, tg: Target, priority: number, max = 1, thorough = false, cause = -1): WorkItem {
   const region = tg.region ?? -1, cas = tg.cas ?? -1, prop = tg.prop ?? -1, hostile = tg.hostile ?? -1, tile = tg.tile ?? -1, mate = tg.mate ?? -1, animal = tg.animal ?? -1;
@@ -29,9 +41,11 @@ function want(sim: Sim, s: Scene, kind: WorkKind, tg: Target, priority: number, 
       return w;
     }
   }
+  // (X6 §5.3) 진입 금지 구역의 문: 새 작업을 만들기 직전에 묻는다 (있는 작업은 지휘 규칙이 구역을 만들 때 거둔다)
+  if (gateCmd && WORK_GATES.length) { const cmd = gateCmd; if (WORK_GATES.some((g) => g(sim, s, cmd, kind, tg))) { gateHits++; return GHOST; } }
   const w: WorkItem = {
     id: s.nextWorkId++, kind, region, cas, prop, hostile, tile, mate, priority, status: 'open', assignees: [], max,
-    createdAt: sim.t, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough, orderSentAt: {}, cause, failedAt: {}, animal,
+    createdAt: sim.t, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough, orderSentAt: {}, cause, failedAt: {}, animal, risky: undefined,      // risky: (X6) 제한적 구조 진입 — 지휘 규칙이 고친다
   };
   s.board.push(w);
   return w;
@@ -129,6 +143,7 @@ function needFor(s: Scene, w: WorkItem, hotArmed: boolean, a: FieldAgent): keyof
     case 'mitigate': {
       // 균열부, (N8) 간판·구멍·매트 터는 구조 부대(최소 인원에서도 로프·유압 대원이 있다). 그 밖(밸브 …)은 진압
       const p = w.prop >= 0 ? s.props[w.prop] : undefined;
+      if (w.prop < 0 && w.tile >= 0) return null;      // (X6 §5.7) 가스 재측정(칸만 있는 작업): 측정기는 관제 요청으로 부를 수 없다 — 진압 부대를 헛되이 부르지 않는다
       return p && (p.kind === 'unstable' || p.skin === 'sign' || p.skin === 'hole' || p.skin === 'matSite') ? 'rescue' : 'suppression';
     }
     case 'repair': {
@@ -174,6 +189,7 @@ export function anyCapable(sim: Sim, s: Scene, I: Incident, w: WorkItem, need: k
 
 /** 믿음 → 작업 목록 */
 function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
+  gateCmd = a; gateHits = 0;      // (X6 §5.3) 이 계획 주기의 문
   const B = a.beliefs;
   const cas = B.list('cas');
   const fires = B.list('fire');
@@ -281,7 +297,8 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   }
   // 가스 누출: 새는 동안에는 경찰이 출입구를 지켜 주변 시민의 접근을 막는다
   const liveBomb = B.list('haz').some((f) => f.value.kind === 'bomb' && f.value.active);      // 폭발물로 보이는 물건이 아직 처리되지 않았다
-  const cordon = (s.kind === 'hazmat' && B.list('haz').some((f) => f.value.kind === 'leak' && f.value.active)) || liveBomb;
+  const gasCordon = s.kind === 'hazmat' && B.list('haz').some((f) => f.value.kind === 'leak' && f.value.active);
+  const cordon = gasCordon || liveBomb || opsCordon(s);      // (X6 §5.3) 건물·가스·용기의 철수 구역이 있거나 외부 방어 중이면 경찰이 출입구에서 사람을 막는다
   if (cordon) s.exits.forEach((_, k) => want(sim, s, 'perimeter', { tile: k }, 0.62 - k * 0.04));
   if (!threat && !cordon) cancel(s, (w) => w.kind === 'perimeter' || w.kind === 'negotiate' || w.kind === 'engage');
   else if (!threat) cancel(s, (w) => w.kind === 'negotiate' || w.kind === 'engage');
@@ -504,7 +521,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   if (gunActive && lawUnits < 2) request(sim, s, I, a, lawUnits === 0 ? 'law' : 'tactical', '총기를 소지한 용의자와 대치 중, 인원 부족', true);
   else if (active.length > 0 && lawUnits === 0) request(sim, s, I, a, 'law', '용의자 대응 인력 없음', true);
   else if (active.length > 0 && lawUnits === 1 && s.negotStart >= 0 && sim.t - s.negotStart > 22) request(sim, s, I, a, 'law', '한 팀으로는 말을 걸면서 붙잡을 수 없음', false);      // 한 사람은 말을 걸고 한 사람은 길목을 지키면 붙잡을 손이 없다
-  if (cordon && lawUnits === 0 && s.sizeupDone) request(sim, s, I, a, 'law', liveBomb ? '폭발물로 보이는 물건이 있는 건물 주변을 통제할 인력이 없음' : '가스가 새는 건물 주변을 통제할 인력이 없음', false);
+  if (cordon && lawUnits === 0 && s.sizeupDone) request(sim, s, I, a, 'law', liveBomb ? '폭발물로 보이는 물건이 있는 건물 주변을 통제할 인력이 없음' : gasCordon ? '가스가 새는 건물 주변을 통제할 인력이 없음' : '붕괴·폭발 위험 반경을 통제할 인력이 없음', false);
   // 무장 사건 현장은 안전을 확보하기 전까지 경찰만 수색할 수 있다
   if (hotArmed && pendingSearch > 0 && lawUnits === 0 && s.sizeupDone) request(sim, s, I, a, 'law', '건물 안을 수색해 안전을 확보할 경찰이 없음', true);
   if (s.laneRows.length && lawUnits === 0 && !s.controlDone.every(Boolean) && cas.length > 0 && s.sizeupDone) request(sim, s, I, a, 'traffic', '차량 통행이 계속되는데 교통 통제 인력이 없음', false);
@@ -531,6 +548,8 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     };
     for (const rule of ORDER_RULES) rule(sim, s, I, a, kit);
   }
+  if (s.ops) s.ops.gated = gateHits;      // (X6 §5.3) 지난 계획 주기에 문이 막은 수 — 종료를 막는 것(단계 6)이 읽는다
+  gateCmd = null;
 }
 
 /** 작업 배정 */
@@ -571,6 +590,7 @@ function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         if (sim.units[b.unitId].boardOrder) continue;
         if (b.task && b.task.kind === 'rehab' && sim.responders[b.rid].stamina < 40) continue;      // 지친 대원은 어느 정도 회복할 때까지 지시를 받지 않는다 (brain.ts 의 휴식 붙잡기)
         if (b.task && (b.task.kind === 'resupply' || b.task.kind === 'swapAir')) continue;      // 예비 장비·공기통으로 바꾸는 중(8~11초 남짓): 끝날 때까지 기다린다. 지시로 빼 오면 교체를 처음부터 다시 시작하며 같은 말을 되풀이한다
+        if (b.task && b.task.kind === 'evacuate') continue;      // (X6) 철수 중인 대원은 밖에 닿을 때까지 지시를 받지 않는다 (think 가 철수를 붙잡으므로 지시가 '응답 없음'으로 끝난다)
         if (sim.responders[b.rid].status === 'injured' && !lightDuty(a, b)) continue;      // 부상을 알린 대원은 후퇴 중이다 (brain.ts 의 부상 후퇴 붙잡기) — 지시해도 받지 못하고 재지시만 되풀이된다. 가벼운 일을 한다고 알린 다친 대원에게는 지시한다(맡을 수 있는 일은 fitFor 가 거른다). 조직이 아는 상태와 믿음만 본다 — 남의 체력을 읽지 않는다
         if (failedRecently(sim, w, b.rid)) continue;      // 이 작업에 닿지 못했거나 위험해서 물러난 대원: 한동안 다른 대원에게 맡기거나 기다린다
         const fit = fitFor(sim, s, b, w);

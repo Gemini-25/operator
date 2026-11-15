@@ -54,3 +54,12 @@ export function lastProblemEvent(I: Incident, code: ProblemCode): number {
   for (let i = I.problems.length - 1; i >= 0; i--) if (I.problems[i].code === code) return I.problems[i].eventId;
   return -1;
 }
+
+/** (X6 §5.7) 그 코드·상세(detail)의 가장 최근 미복구 문제를 복구 처리한다 — 같은 코드를 여러 번 남기는 기록(구역마다의 전원 철수·위험 조짐)에서 하나만 고른다. 돌려주는 값은 그 문제의 기록 (-1 = 없음) */
+export function markRecoveredBy(I: Incident, code: ProblemCode, detail: string, text: string): number {
+  for (let i = I.problems.length - 1; i >= 0; i--) {
+    const p = I.problems[i];
+    if (p.code === code && !p.recovered && p.detail === detail) { p.recovered = true; p.recoveryText = text; return p.eventId; }
+  }
+  return -1;
+}

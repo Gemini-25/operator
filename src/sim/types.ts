@@ -378,7 +378,8 @@ export type WorkKind =
   | 'treatMate'      // (H1) 다친 대원 처치. 태울 차(prop)가 정해져 있고 병원이 필요하면 이어서 그 차에 태운다 (구급 분야, 또는 의료 가방을 든 대원)
   | 'treatSuspect'      // (H1) 쓰러진·다친 용의자 처치. 태울 차(prop)가 내 차이고 자리가 있으면 이어서 그 차에 태운다 (경찰은 언제든, 구급대원은 안전 확보 뒤)
   | 'repair' | 'towAway' | 'capture' | 'persuade' | 'cordon';      // (N8) 시설물 복구(유관 기관) · 견인 · 동물 포획 · 위기자 설득 · 통제(위협이 없는 현장에서 한 칸을 지킨다 — tile = 격자 칸 번호). 단계 2a 에는 자리만 (fitFor 0, 실행부는 빈 갈래)
-export type TaskKind = WorkKind | 'retreat' | 'rehab' | 'resupply' | 'board' | 'standby' | 'moveSignal' | 'swapAir';      // swapAir = 공기통 교체 (R1 9절)
+export type TaskKind = WorkKind | 'retreat' | 'rehab' | 'resupply' | 'board' | 'standby' | 'moveSignal' | 'swapAir'      // swapAir = 공기통 교체 (R1 9절)
+  | 'evacuate';      // (X6) 철수 이동: 단계 3 구역 밖, 대개 대기 지점으로 (철수 명령·자기 감각의 임박 조짐 — brain.think 의 의무)
 
 export interface WorkItem {
   id: number; kind: WorkKind;

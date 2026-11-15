@@ -132,6 +132,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
     cause: undefined, csq: undefined, blockedBy: undefined, blockEv: undefined,      // (I1-b) 인과 기록 — 판단은 읽지 않는다
     docs: undefined, trackBy: undefined, reportedPrev: undefined, reportedNodeAt: undefined,      // (R3) 교본 기록(처음 남길 때 배열 — doctrineRun.recordDoc)·추격의 보고 칸(2단계)
     dupOf: undefined,      // (N8) 중복 신고 오인의 원 사건 — 진실 (단계 10)
+    fieldRisk: undefined,      // (X6 §5.9) 현장 상황 보고로 관제가 올린 위험도 — dispatcher.fieldReport 가 채운다
   };
   { const tag = opts.tag ?? special?.tag; if (tag) I.tag = tag; if (opts.parent !== undefined) I.parent = opts.parent; }
   if (opts.cause !== undefined && opts.cause >= 0) I.cause = opts.cause;

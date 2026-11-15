@@ -84,20 +84,9 @@ describe('1 유형 자료 (incidentTypes — 단계 1)', () => {
   });
 });
 
-// 시험 2 — 틀은 결과를 바꾸지 않는다. 단계 1·2a·2b 동안만 둔다 (단계 3 의 작업자가 지운다 — 짧은 사건을 켜면 해시가 바뀐다).
-// HASH0 = 단계 1 을 시작할 때(313ec41) 잰 기록 해시 (report.hash). 더 넓은 확인은 scratchpad 의 해시 목록(153교대)으로 했다 — 설계서 끝 구현 메모
-const HASH0: [string, 'normal' | 'hard', string][] = [
-  ['S0', 'normal', '68e8a214'], ['S1', 'normal', '298fd990'], ['S2', 'normal', 'dc862ed7'], ['S3', 'normal', 'e8024017'], ['S0', 'hard', '9f8d61cb'],
-];
-describe('2 틀은 결과를 바꾸지 않는다 (단계 1·2a·2b)', () => {
-  it('보통 S0~S3·어려움 S0 의 기록 해시가 단계 1 을 시작할 때와 같다', () => {
-    for (const [seed, d, hash] of HASH0) {
-      const sim = new Sim(seed, d === 'hard' ? PRESETS.hard.d : NORMAL);
-      sim.runToEnd();
-      expect(sim.report!.hash, `${d} ${seed}`).toBe(hash);
-    }
-  }, 90000);
-});
+// 시험 2(HASH0 — 단계 1·2a·2b 의 결과 불변을 기록 해시 숫자로 지키던 시험)는 주 브랜치에서는 뺀다(2026-11-15 밤, 주 세션).
+// 결과를 바꾸는 묶음(X6 …)이 같은 주 브랜치에 나란히 합쳐지므로 숫자를 박아 두면 그 묶음의 관문이 깨진다.
+// 준비 단계의 결과 불변은 덩어리마다 해시 목록(scratchpad, 150교대 남짓 — 자기 시작점 대비 diff 0)으로 확인하고 구현 메모에 적는다.
 
 // ───────────────────────── 단계 2a (틀 B-1 — 자료형과 등록 자리) ─────────────────────────
 // 시험 4 — 정보 격리 (소스 글자 검사, 주석 줄은 뺀다). tests/ext.test.ts 의 orders/ 검사와 같은 방식.

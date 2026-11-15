@@ -10,7 +10,7 @@ export const FX_RATE_MAX = 2;
 /** G5 가 그리는 종류. 이 밖의 종류도 fresh 에는 들어간다(소리·카메라·감속·지도 핀) */
 export const FX_DRAWN = new Set<string>(['shot', 'hit', 'flash', 'boom', 'glass', 'debris', 'breach', 'melee', 'cuff', 'taser']);
 /** 결정적 순간(자동 감속·카메라 바로 다시 잡기). G4 는 'collapse', X6 는 'horn' 을 한 단어씩 더한다 */
-export const DECISIVE = new Set<string>(['shot', 'flash', 'boom', 'breach', 'collapse']);
+export const DECISIVE = new Set<string>(['shot', 'flash', 'boom', 'breach', 'collapse', 'horn']);      // horn = (X6) 철수 경적
 /** 상태에서 만든 합성 항목(s.fx 에는 넣지 않는다) */
 export type SynKind = 'tick' | 'strike' | 'hail' | 'reply';
 export interface FxEntry {

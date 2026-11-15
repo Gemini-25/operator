@@ -494,6 +494,7 @@ export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel 
             <div className="tile"><b>{r.totalCalls}</b><span>전체 신고 전화</span></div>
             <div className="tile"><b>{r.totalIncidents}</b><span>처리 사건</span></div>
             {(r.major ?? 0) >= 1 && <div className="tile major"><b>{r.major}</b><span>대형 사고</span></div>}
+            {r.catastrophe && r.catastrophe.burnouts + r.catastrophe.totals + r.catastrophe.partials + r.catastrophe.explosions + r.catastrophe.withdrawals > 0 && <div className="tile catastrophe" title={`구획 붕괴 ${r.catastrophe.partials}곳 · 막아 낸 조짐 ${r.catastrophe.averted}건${r.catastrophe.crewCaught ? ` · 휘말린 대원 ${r.catastrophe.crewCaught}명` : ''}`}><b><small>전소 </small>{r.catastrophe.burnouts}<small> · 붕괴 </small>{r.catastrophe.totals}<small> · 폭발 </small>{r.catastrophe.explosions}<small> · 철수 </small>{r.catastrophe.withdrawals}</b><span>붕괴·폭발·전소</span></div>}      {/* (X6) 위험의 현실화 */}
             {(['success', 'partial', 'delayed', 'unresolved', 'failed'] as const).map((k) => <div key={k} className="tile"><b style={{ color: OUTCOME_COLOR[k] }}>{r.counts[k]}</b><span>{OUTCOME_NAME[k]}</span></div>)}
             <div className="tile"><b>{r.avgResponse >= 0 ? fmtSec(r.avgResponse) : '-'}</b><span>평균 대응 시간</span></div>
             <div className="tile"><b>{pct(r.utilization)}</b><span>자원 활용률</span></div>

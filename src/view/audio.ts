@@ -197,6 +197,7 @@ export class SoundDirector {
     if (f.kind === 'spray') { if (!fast && this.ok('spray', 0.28)) this.burst(0.22, 0.03, 5200, 0.6, 'highpass'); }
     else if (f.kind === 'collapse') { if (this.ok('collapse', 0.5)) { this.burst(0.9, 0.3, 220, 0.8, 'lowpass'); this.tone(48, 0.9, 0.25, 'sine', 0, 30); this.burst(0.07, 0.18, 2400, 1.2, 'bandpass', 0.02); } }      // (G4) 무너짐: 낮게 우르르 + 짧게 쩍
     else if (f.kind === 'drop') { if (this.ok('drop', 0.6)) { this.burst(1.1, 0.16, 900, 0.7, 'lowpass'); this.burst(0.5, 0.07, 4200, 0.8, 'highpass', 0.25); } }      // (R1) 헬기의 물 투하: 쏟아지는 물의 낮은 쏴 소리와 뒤따르는 물보라
+    else if (f.kind === 'horn') { if (this.ok('horn', 4)) for (let k = 0; k < 3; k++) { this.tone(178, 1.0, 0.07, 'sawtooth', k * 1.4); this.tone(224, 1.0, 0.045, 'square', k * 1.4); } }      // (X6) 철수 경적: 길고 낮은 공기 경적 세 번 (1초 울리고 0.4초 쉰다)
   }
 
   /** 섬광탄 이명: sine 4100Hz + 주 버스 덕킹 + 교전 버스 lowpass 회복 */

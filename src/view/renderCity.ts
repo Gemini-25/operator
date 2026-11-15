@@ -305,7 +305,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     ctx.fillStyle = pg; ctx.strokeStyle = col; ctx.lineWidth = plw;
     ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); ctx.stroke();
     drawIcon(ctx, I.phase === 'call' && !I.assessment ? 'phone' : pinIcon(I, o.truth), x, y, r * 1.2, col);      // (G4) 붕괴 변형(승강기·크레인·산사태·가스 폭발)은 제 아이콘
-    if (I.truth.type === 'collapse') ruinBadges.push({ I, x: x + (pj ? pj.x : 0), y: y + (pj ? pj.y : 0), r });      // (G4) 배지는 부대 표식 뒤에 그린다 (현장 부대의 돌이 핀 둘레를 덮는다)
+    if (I.truth.type === 'collapse' || (sim.placeMarks.size > 0 && I.truth.placeId >= 0 && sim.placeMarks.get(I.truth.placeId)?.incidentId === I.id)) ruinBadges.push({ I, x: x + (pj ? pj.x : 0), y: y + (pj ? pj.y : 0), r });      // (G4) 배지는 부대 표식 뒤에 그린다 (현장 부대의 돌이 핀 둘레를 덮는다). (X6) 건물 상태를 남긴 사건도
     // 경과 링: 신고 후 첫 도착까지는 기준 시간 대비 진행도, 도착 후에는 초록
     if (I.reportedAt >= 0) {
       const arrived = I.firstArrivalAt >= 0;

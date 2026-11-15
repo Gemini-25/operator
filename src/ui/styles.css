@@ -458,3 +458,8 @@ input:focus { border-color: var(--accent); }
 /* (H1 단계 7) 보고서의 대원 부상·순직 목록: 이름(역할 · 호출부호)과 상태를 두 줄로 — 76px 이름 칸에 '저격·관측수 · 특공1' 이 세 줄로 접혀 읽히지 않았다 */
 .kv.hurt-row { grid-template-columns: 1fr; gap: 0; padding: 3px 0; }
 .kv.hurt-row > span:last-child { padding-left: 12px; }
+
+/* ── X6 ── */
+/* 보고서의 위험의 현실화 타일 (대형 사고 타일 옆 — 전소 · 붕괴 · 폭발 · 철수): 두 칸 너비 */
+.tile.catastrophe { grid-column: span 2; border: 1px solid #8a4b32; background: linear-gradient(180deg, rgba(214, 120, 80, 0.14), #101922); }
+.tile.catastrophe b { font-size: 16px; color: #ffb08a; }

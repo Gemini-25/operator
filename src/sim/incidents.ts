@@ -17,6 +17,7 @@ import type { Scenario } from './scenarios';
 import type { Incident, IncidentType, Place, PlaceKind } from './types';
 import { OUTCOME_NAME, TYPE_NAME } from './util';
 import { TYPE_DEFS, TYPE_ORDER } from './incidentTypes';
+import { noteClosedPlace } from './field/catastrophe';      // (X6 단계 7) 끝난 화재의 그을린 건물
 
 /** 사건을 정해서 일으킬 때 주는 조건. 비워 두면 평소처럼 추첨한다. */
 export interface SpawnOpts {
@@ -52,6 +53,16 @@ const ARMED_BIAS: Record<string, Partial<Record<PlaceKind, number>>> = {
 
 const kindCount = new WeakMap<object, Map<string, number>>();
 /** 사건이 일어날 건물이나 터를 고른다. 교통사고는 교차로에서 일어나므로 null. */
+/**
+ * (X6 §7.1) 이 교대에 통째로 무너졌거나 다 탄 건물인가 (Sim.placeMarks) — 그 건물에서는 새 사건을 내지 않는다.
+ * 부르는 곳 셋: pickPlace(엄격·대안 추첨 모두) · createIncident 의 정해 준 건물(재난·은신처의 길) · pursuit 의 은신처 후보. I2 단계 5 가 이 셋을 placeUsable(sim, id) 로 바꾼다
+ */
+export function placeGone(sim: Sim, id: number): boolean {
+  if (!sim.placeMarks.size) return false;
+  const pm = sim.placeMarks.get(id);
+  return pm !== undefined && (pm.state === 'collapsed' || pm.state === 'burnt');
+}
+
 function pickPlace(sim: Sim, rng: Rng, type: IncidentType, variant: string, busy: Set<number>): Place | null {
   const table = scenarioOf(type, variant)?.places ?? INCIDENT_PLACES[type];
   const used = new Set(sim.incidents.map((I) => I.truth.placeId));
@@ -60,7 +71,7 @@ function pickPlace(sim: Sim, rng: Rng, type: IncidentType, variant: string, busy
   const counts = kindCount.get(sim.city.places)!;
   const weigh = (q: Place, strict: boolean): number => {
     let w = (table[q.kind] ?? 0) / (counts.get(q.kind) ?? 1);
-    if (w <= 0 || q.facility >= 0) return 0;
+    if (w <= 0 || q.facility >= 0 || placeGone(sim, q.id)) return 0;      // (X6) 무너졌거나 다 탄 건물은 대안 추첨에서도 뺀다
     if (strict && (busy.has(q.nodeId) || used.has(q.id))) return 0;
     if (type === 'armed') w *= ARMED_BIAS[variant]?.[q.kind] ?? 1;
     if (type === 'search' && variant === 'hiker' && q.kind !== 'forest') return 0;
@@ -105,8 +116,10 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
   // 위치: 유형에 맞는 건물이나 터를 고른다 (교통사고는 교차로)
   const busy = new Set(sim.incidents.filter((I) => I.phase !== 'closed').map((I) => I.truth.nodeId));
   // 정해 준 자리가 있으면 그곳, 길 위에서 일어나는 시나리오면 그 교차로, 아니면 유형에 맞는 건물
-  const fixedNode = opts.nodeId ?? (opts.placeId === undefined ? special?.node?.(sim, rng, busy) ?? null : null);
-  const place = opts.placeId !== undefined ? sim.city.places[opts.placeId] : fixedNode !== null || type === 'traffic' ? null : pickPlace(sim, rng, type, variant, busy);
+  // (X6 §7.1) 정해 준 건물이 이 교대에 무너졌거나 다 탔으면 그 유형의 건물을 다시 고른다 (재난·은신처는 pickPlace 를 거치지 않는다 — 그 경우에만 사건 흐름을 한 번 더 쓴다)
+  const fixedPlace = opts.placeId !== undefined && !placeGone(sim, opts.placeId) ? opts.placeId : undefined;
+  const fixedNode = opts.nodeId ?? (fixedPlace === undefined && opts.placeId === undefined ? special?.node?.(sim, rng, busy) ?? null : null);
+  const place = fixedPlace !== undefined ? sim.city.places[fixedPlace] : fixedNode !== null || type === 'traffic' ? null : pickPlace(sim, rng, type, variant, busy);
   let node = place ? sim.city.nodes[place.nodeId] : fixedNode !== null ? sim.city.nodes[fixedNode] : null;
   if (!node) {
     const fac = new Set(sim.city.facilities.map((f) => f.nodeId));
@@ -247,4 +260,5 @@ export function closeIncident(sim: Sim, I: Incident, reason: 'resolved' | 'timeo
   I.result = evaluate(sim, I, reason);
   scenarioOf(I.truth.type, I.truth.variant)?.onClose?.(sim, I, reason);
   emit(sim, { inc: I.id, role: 'SYSTEM', actor: '사건 관리', kind: 'resolve', imp: 3, causes: [I.lastEvent], text: `사건 ${I.code} 종료 — ${OUTCOME_NAME[I.result.outcome]}. ${I.result.headline}` });
+  noteClosedPlace(sim, I);      // (X6 §7.1) 실제 건물의 화재가 닫혔고 건물 상태가 없는데 15% 넘게 탔으면 그을린 건물
 }

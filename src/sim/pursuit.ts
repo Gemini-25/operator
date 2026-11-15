@@ -7,7 +7,7 @@ import { edgeName, nodeName, weatherSpeedFactor } from './city';
 import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
 import { createScene } from './field/sceneManager';
-import { closeIncident } from './incidents';
+import { closeIncident, placeGone } from './incidents';
 import { sendUnitTo } from './resources';
 import type { Rng } from './rng';
 import type { Incident, Unit } from './types';
@@ -36,7 +36,7 @@ export function startPursuit(sim: Sim, I: Incident, kind: 'kidnap' | 'drunk' | '
   let hideout: number | undefined;
   if (kind === 'kidnap') {
     const hr = sim.rng.fork('hideout:' + I.id);
-    const cands = city.places.filter((q) => HIDEOUT_KINDS.indexOf(q.kind) >= 0 && !q.open && q.facility < 0 && q.nodeId !== n.id && Math.hypot(q.x + q.w / 2 - n.x, q.y + q.h / 2 - n.y) >= 500);
+    const cands = city.places.filter((q) => HIDEOUT_KINDS.indexOf(q.kind) >= 0 && !q.open && q.facility < 0 && q.nodeId !== n.id && Math.hypot(q.x + q.w / 2 - n.x, q.y + q.h / 2 - n.y) >= 500 && !placeGone(sim, q.id));      // (X6 §7.1) 무너졌거나 다 탄 건물에는 숨어들지 않는다 (기록의 건물과 사건의 건물이 어긋나지 않게)
     if (hr.chance(0.4) && cands.length) { const pl = hr.pick(cands); hideout = pl.id; goal = pl.nodeId; }
   }
   I.pursuit = {

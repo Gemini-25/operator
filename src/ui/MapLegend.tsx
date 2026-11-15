@@ -89,7 +89,7 @@ function CombatPinSample({ size = 26 }: { size?: number }) {
 
 /** (G4) 무너진 건물: 핀의 왼쪽 아래 배지 (확인 = 실선 테, 신고만 = 점선 테와 흐린 기호) · 끝난 사건의 테 두른 실루엣 · 2차 붕괴의 퍼지는 흙빛 고리 */
 const RUIN_EDGE = '#d6a878';
-function RuinBadgeSample({ level, reported = false, size = 20 }: { level: 'partial' | 'major'; reported?: boolean; size?: number }) {
+function RuinBadgeSample({ level, reported = false, size = 20 }: { level: 'partial' | 'major' | 'total' | 'burnt'; reported?: boolean; size?: number }) {      // (X6) 전체 붕괴 · 전소
   const c = size / 2, r = size / 2 - 1.5, g = r * 1.5;
   return (
     <svg className="token" width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
@@ -190,6 +190,11 @@ export function MapLegend() {
             <span className="lg-item" title="금이 간 구조물이 다시 무너졌다"><SecondaryRingSample />2차 붕괴 (퍼지는 흙빛 고리)</span>
             <span className="lg-item" title="사건이 끝나도 교대 끝까지 남는다. 크게 보면 지붕이 내려앉은 모습"><RuinGlyphSample />끝난 붕괴</span>
             <span className="lg-item" title="끝난 화재 사건의 건물: 크게 보면 탄 만큼 지붕이 그을려 있다"><i style={{ display: 'inline-block', width: 14, height: 10, borderRadius: 2, background: '#2a211b', border: '1px solid #4a3d33' }} />끝난 화재 (그을린 지붕)</span>
+          </div>
+          <div className="lg-row">
+            <span className="lg-item" title="건물이 통째로 무너졌다: 크게 보면 지붕 대신 잔해 더미. 그 교대에는 그 건물에서 새 사건이 나지 않는다"><RuinBadgeSample level="total" />전체 붕괴</span>
+            <span className="lg-item" title="건물 칸의 연료가 70% 넘게 탔다: 크게 보면 지붕 전체가 그을리고 구멍이 뚫려 있다. 그 교대에는 그 건물에서 새 사건이 나지 않는다"><RuinBadgeSample level="burnt" />전소</span>
+            <span className="lg-item" title="가스·용기 폭발이 있었다: 크게 보면 건물 둘레에 깨진 유리가 반짝이고 지붕에 검은 자국"><i style={{ display: 'inline-block', width: 14, height: 10, borderRadius: 2, background: '#2a211b', boxShadow: '0 0 0 2px #9fd6ea' }} />폭발 흔적</span>
           </div>
           <p className="lg-help">사건 표식을 누르면 현장을 확대합니다. 건물이나 도로에 마우스를 올리면 이름과 종류가 보입니다. 휠로 확대·축소하고 끌어서 옮깁니다.</p>
         </div>

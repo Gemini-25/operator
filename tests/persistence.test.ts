@@ -24,6 +24,8 @@ const run = (seed: string, carry?: Carryover | null, d: Difficulty = NORMAL, len
   return s;
 };
 const json = <T>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
+/** 교대를 여러 번 돌리는 beforeAll 의 예산 (vitest 의 기본 hookTimeout 은 10초 — 다른 묶음과 함께 도는 기계에서는 교대 열둘이 그보다 오래 걸린다) */
+const HOOK_MS = 240_000;
 const SUMMARY = /^지난 교대에서 이어받은 상태 — 조직의 (\d+)번째 교대 \(지문 ([0-9a-f]{8})\)\. /;
 /** 값 안에 유한하지 않은 수나 undefined 인 칸이 있으면 그 자리 (없으면 null) */
 function unsafeAt(x: unknown, path = '$'): string | null {
@@ -53,7 +55,7 @@ describe('1. 같은 이어받은 상태 = 같은 해시', () => {
     A = run('P1');
     co = makeCarryover(A);
     B = run('P2', co);
-  });
+  }, HOOK_MS);
 
   it('같은 상태(그대로·JSON 왕복)는 같은 해시, 없는 것(인자 없음·null)끼리 같고 그것과는 다르다', () => {
     const h = B.report!.hash;
@@ -179,7 +181,7 @@ describe('5. 저장·복원 왕복 (readCarryover)', () => {
     roomy = A.city.places.filter((q) => q.facility < 0 && !q.open).map((q) => q.id);
     openId = A.city.places.find((q) => q.facility < 0 && q.open)!.id;
     facId = A.city.places.find((q) => q.facility >= 0)!.id;
-  });
+  }, HOOK_MS);
   const place = (id: number, state: PlaceCarry['state'], repair: number): PlaceCarry => ({ id, state, dmg: 0.3, soot: 0.2, repair, cause: 'fire', inc: '조직 1번째 교대 · 01 화재', since: 1 });
   const road = (edge: number, left: number): RoadCarry => ({ edge, why: 'crack', lane: false, left, openAt: 300, inc: '조직 1번째 교대 · 지진', since: 1 });
 
@@ -405,7 +407,7 @@ describe('2. 다친 대원이 다음 교대에 결장 (교대 안의 부상과 �
       for (const s of B.scenes) if (s) for (const a of s.agents) if (a.rid === xr || a.rid === yr) agentsSeen.push(`${B.t}:${a.rid}`);
     }
     co2 = makeCarryover(B);
-  });
+  }, HOOK_MS);
 
   it('결장 교대 수는 H1 의 outShifts 표 그대로 (다침 1 · 쓰러짐 3 · 병원 인계 2 · 후송 중 2), 돌아올 때의 체력 85', () => {
     expect(entryOf(co, X).out).toBe(1);
@@ -523,6 +525,27 @@ describe('7. 경험 성장과 부대 규모 · 공석과 신임', () => {
     expect(entryOf(coD, seat)).toMatchObject({ name: rc.name, seat, shifts: 1 });
     expect(new Sim('Q5', L5, 60, { carry: coD }).carryState.applied.some((n) => n.what === 'recruit')).toBe(false);
   });
+
+  it('개인 장비 점검: 드러난 고장은 고치고, 드러나지 않은 고장은 일부만 찾는다 — 남은 고장은 다음 교대에 명부의 추첨 뒤에 다시 고장', () => {
+    const A = new Sim('P1', NORMAL, 60); A.runToEnd();
+    const people = A.responders.filter((r) => !r.relief && (r.kit?.length ?? 0) >= 3).slice(0, 7);
+    for (const r of people) for (const it of r.kit!) { it.fault = true; it.faultKnown = false; }
+    const known = people[0];
+    for (const it of known.kit!) it.faultKnown = true;
+    const co = makeCarryover(A);
+    expect(entryOf(co, known.name).kitFault).toBeUndefined();
+    let kept = 0, total = 0;
+    for (const r of people.slice(1)) {
+      const kf = entryOf(co, r.name).kitFault ?? [];
+      total += r.kit!.length; kept += kf.length;
+      for (const id of kf) expect(r.kit!.some((it) => it.id === id)).toBe(true);
+    }
+    expect(kept).toBeGreaterThan(0);
+    expect(kept).toBeLessThan(total);
+    expect(makeCarryover(A)).toEqual(co);      // 난수 흐름을 쓰지 않는다 — 몇 번 불러도 같다
+    const B = new Sim('P2', NORMAL, 60, { carry: co });
+    for (const r of people.slice(1)) for (const id of entryOf(co, r.name).kitFault ?? []) expect(personOf(B, r.name).kit!.find((it) => it.id === id)!.fault, `${r.name} ${id}`).toBe(true);
+  });
 });
 
 // ───────────────────────── 8 (결원 부분). 헬기·구조정 · 예비 인력 · short · empty ─────────────────────────
@@ -532,7 +555,7 @@ describe('8. 결원 — 예비 인력·모자라면 그 인원으로·나올 사
     const A = new Sim('P1', NORMAL, 60); A.runToEnd();
     co0 = calmCrew(makeCarryover(A));
     s0 = new Sim('P2', NORMAL, 1);
-  });
+  }, HOOK_MS);
   /** 순찰1·2·3 의 0번 자리, 진압1 의 1·2번(예비 인력 넷을 다 쓴다) → 구급2 의 한 명(모자람) · 구급3 전원(나올 사람 없음) · 헬기1 기장·부기장(조종사 없음) */
   const heavy = (): Carryover => {
     const co = json(co0);
@@ -642,6 +665,20 @@ describe('8. 결원 — 예비 인력·모자라면 그 인원으로·나올 사
     expect(s.carryState.stats.early).toBe(3);
     checkCarryLog(s);
   });
+
+  it('결장한 기동대원의 섬광탄은 나온 대원에게 다시 나눈다 (부대의 합은 그대로, 결장자의 몫은 0)', () => {
+    const co = json(co0);
+    const names = namesOf(s0, '기동1');      // 조장 · 기동대원 · 기동대원 (섬광탄은 기동대원 몫)
+    setOut(co, [names[1]]);
+    const s = new Sim('P2', NORMAL, 60, { carry: co });
+    const u = unitOf(s, '기동1');
+    const bangs = (n: string): number => personOf(s, n).kit!.find((it) => it.id === 'flashbang')?.uses ?? 0;
+    expect(u.flashbangs).toBe(unitOf(s0, '기동1').flashbangs);
+    expect(u.flashbangs).toBeGreaterThan(0);
+    expect(bangs(names[1])).toBe(0);
+    expect(bangs(names[2])).toBe(u.flashbangs);
+    expect(s.responders.some((r) => r.relief)).toBe(false);      // 기동 순찰차 3 → 최소 2: 한 명 결장은 예비 인력 없이
+  });
 });
 
 // ───────────────────────── 6·10. 짧은 연속 (계보 3 × 교대 4) — 대원 몫 ─────────────────────────
@@ -659,7 +696,7 @@ describe('6·10. 짧은 연속 (계보 3 × 교대 4) — 대원 몫', () => {
         co = next;
       }
     }
-  });
+  }, HOOK_MS);
 
   it('예외 없이 모든 사건이 닫히고, 왕복 지문이 같고, 결장 ≤ 상한, 교대 2 부터 지문이 든 요약 줄이 정확히 하나', () => {
     expect(shifts.length).toBe(12);

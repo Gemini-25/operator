@@ -15,7 +15,7 @@ import { fmtSec, josa } from '../util';
 import { BeliefStore } from './beliefs';
 import { briefFacts, flushOutbox, learn, learnQuiet, makeAgent, mateFact } from './agents';
 import { think } from './brain';
-import { outstanding } from './commander';
+import { outstanding, riderText } from './commander';
 import { buildScene } from './builders';
 import { act, finishTask } from './executor';
 import { staticPass, tileOf } from './grid';
@@ -335,13 +335,11 @@ export function tickScene(sim: Sim, s: Scene): void {
       // 물러날 만큼은 아니던 상처(피만 흘리던 대원)도 병원으로 실려 가면 다친 대원이다 — 조직이 아는 상태를 맞춘다 (아래의 출발 기록이 '부상 대원'으로 적는다)
       if (r.status === 'ok') r.status = 'injured';
     }
-    let riders = 0;
-    if (u.aboard) for (let k = 0; k < u.aboard.length; k++) if (u.aboard[k].kind === 'mate') riders++;
     if (u.boardOrder === 'transport' || u.patients.length > 0 || (u.aboard !== undefined && u.aboard.length > 0)) {      // 철수 지시 뒤에 환자를 태웠어도, 다친 대원을 태웠어도 병원부터 간다
       const k = I.assigned.indexOf(u.id); if (k >= 0) I.assigned.splice(k, 1);
       u.boardOrder = null; u.incidentId = null;
       const hosp = startTransport(sim, u);      // 가장 빨리 닿는 병원을 고른다 — 기록에는 실제로 가는 그 병원을 쓴다
-      const who = riders > 0 ? (u.patients.length ? `환자 ${u.patients.length}명·부상 대원 ${riders}명` : `부상 대원 ${riders}명`) : `환자 ${u.patients.length}명`;
+      const who = riderText(u);      // 환자 · 부상 대원 · 용의자 (H1 — 실은 사람마다)
       emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign} ${who} 싣고 ${josa(hosp.name, '으로/로')} 출발.` });
     } else {
       emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 0, text: `${u.callsign} 현장 철수, 복귀합니다.` });

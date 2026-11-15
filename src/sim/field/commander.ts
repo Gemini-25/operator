@@ -13,7 +13,7 @@ import { canCarryPatients, exitName, failedRecently, fitFor, hasWork, learn, res
 import { mkFact } from './beliefs';
 import { losWalls } from './grid';
 import { BAND_NAME, HOSTILE_FOV } from './hazards';
-import { mateNeedsHospital } from './injury';
+import { hosNeedsCare, mateNeedsHospital } from './injury';
 import { CLOSE_BLOCKERS, ORDER_RULES } from './sceneRegistry';
 import type { CommandKit } from './sceneRegistry';
 
@@ -371,7 +371,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   // 환자를 싣고 병원으로 갈 수 있는 부대: 환자 자리가 남은 부대 (seatsOf — 구급차 2명, 헬기 1명)
   const ambulances = unitsOnScene(sim, s).filter((uid) => canCarryPatients(sim, sim.units[uid]) && !sim.units[uid].boardOrder);
   // 그 부대에 이미 내려진 탑승 지시의 수 (실린 환자 + 이것이 자리 수를 넘지 않게 한다)
-  const loadsQueued = (uid: number): number => { let n = 0; for (const w of s.board) if ((w.kind === 'load' || w.kind === 'treatMate') && w.prop === uid && (w.status === 'open' || w.status === 'active')) n++; return n; };      // 다친 대원의 후송(treatMate 의 prop)도 자리를 맡아 둔다
+  const loadsQueued = (uid: number): number => { let n = 0; for (const w of s.board) if ((w.kind === 'load' || w.kind === 'treatMate' || w.kind === 'treatSuspect') && w.prop === uid && (w.status === 'open' || w.status === 'active')) n++; return n; };      // 다친 대원·용의자의 후송(treatMate·treatSuspect 의 prop)도 자리를 맡아 둔다
   // 처치를 두 번 마쳤는데(기본 처치 + 구급대원이 다시 봄) 아직 기본 처치로 보고된다: 현장의 구급대원이 더 해 줄 수 있는 처치가 없다.
   // (구급대원은 자기가 더 낫게 할 수 없으면 손대지 않고 상태만 다시 보고한다 — 그대로 두면 같은 처치 지시와 같은 보고를 끝없이 주고받는다)
   const treatsDone = (cid: number): number => { let n = 0; for (const w of s.board) if (w.kind === 'treat' && w.cas === cid && w.status === 'done') n++; return n; };
@@ -605,6 +605,7 @@ function targetX(s: Scene, w: WorkItem, a: FieldAgent): number {
   if (w.kind === 'perimeter') return s.exits[w.tile].x;
   if (w.kind === 'hookup' || w.kind === 'load') return s.staging.x;
   if (w.kind === 'treatMate') { const m = a.beliefs.val<MateBelief>('mate', w.mate); if (m) return m.x; }
+  if (w.kind === 'treatSuspect') { const h = a.beliefs.val<any>('hos', w.hostile); if (h) return h.x; }      // prop 은 태울 차(부대 id)라 소품이 아니다
   if (w.prop >= 0 && s.props[w.prop]) return s.props[w.prop].x;
   if (w.hostile >= 0) { const h = a.beliefs.val<any>('hos', w.hostile); if (h) return h.x; }
   return s.staging.x;
@@ -616,6 +617,7 @@ function targetY(s: Scene, w: WorkItem, a: FieldAgent): number {
   if (w.kind === 'perimeter') return s.exits[w.tile].y;
   if (w.kind === 'hookup' || w.kind === 'load') return s.staging.y;
   if (w.kind === 'treatMate') { const m = a.beliefs.val<MateBelief>('mate', w.mate); if (m) return m.y; }
+  if (w.kind === 'treatSuspect') { const h = a.beliefs.val<any>('hos', w.hostile); if (h) return h.y; }
   if (w.prop >= 0 && s.props[w.prop]) return s.props[w.prop].y;
   if (w.hostile >= 0) { const h = a.beliefs.val<any>('hos', w.hostile); if (h) return h.y; }
   return s.staging.y;
@@ -705,26 +707,39 @@ function manageAmbulances(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void 
   // 병원이 필요하다고 아는 다친 동료 가운데 아직 현장에 있는 사람 (실을 사람이 남았는가를 볼 때 구조 대상과 함께 센다 — H1 §3.4-5)
   let matesWaiting = 0;
   for (const f of a.beliefs.list('mate')) if (mateNeedsHospital(f.value as MateBelief) && onScene(s, f.id)) matesWaiting++;
+  // 처치·이송이 필요하다고 아는 용의자 (위협이 끝났을 때만 — 맞서는 용의자가 있으면 그 처치는 아직 시작하지 않는다)
+  const hosB = a.beliefs.list('hos');
+  const hosWaiting = hosB.some((h) => h.value.state === 'hold' || h.value.state === 'fight' || h.value.state === 'flee') ? 0 : hosB.filter((h) => hosNeedsCare(h.value)).length;
   for (const uid of unitsOnScene(sim, s)) {
     const u = sim.units[uid];
-    const riders = u.aboard ? u.aboard.length : 0;      // 구조 대상이 아닌 환자 (다친 대원 …) — 부대 자신의 기록
-    if (seatsOf(u) === 0 || (!u.patients.length && !riders) || u.boardOrder) continue;      // 환자 자리가 있는 부대만 (구급차·헬기). 다친 대원만 태운 차도 출발한다
+    const riders = u.aboard ? u.aboard.length : 0;      // 구조 대상이 아닌 환자 (다친 대원·용의자) — 부대 자신의 기록
+    if (seatsOf(u) === 0 || (!u.patients.length && !riders) || u.boardOrder) continue;      // 환자 자리가 있는 부대만 (구급차·헬기). 다친 대원·용의자만 태운 차도 출발한다
     const full = seatsUsed(sim, u) >= seatsOf(u);      // 자리가 찼으면 바로 떠난다 (남은 탑승 지시는 아래에서 거둔다 — 다른 부대로 다시 낸다)
-    const waiting = cas.filter((f) => f.value.band >= 1 && f.value.band < 3 && (f.value.where === 'scene' || f.value.where === 'carried' || f.value.where === 'safe')).length + matesWaiting;
-    const loading = s.board.some((w) => (w.kind === 'load' || w.kind === 'treatMate') && w.prop === uid && (w.status === 'open' || w.status === 'active'));
+    const waiting = cas.filter((f) => f.value.band >= 1 && f.value.band < 3 && (f.value.where === 'scene' || f.value.where === 'carried' || f.value.where === 'safe')).length + matesWaiting + hosWaiting;
+    const loading = s.board.some((w) => (w.kind === 'load' || w.kind === 'treatMate' || w.kind === 'treatSuspect') && w.prop === uid && (w.status === 'open' || w.status === 'active'));
     const waited = sim.t - (u.firstLoadAt ?? sim.t);      // 이번 이송에 처음 사람을 태운 뒤 지난 시간 — 부대 자신의 기록 (실은 사람의 진실을 읽지 않는다)
     // 위중 환자를 실었다고 알고 있거나(실은 대원의 보고 — 진실을 읽지 않는다) 다친 대원을 태웠다: 10초 뒤 출발한다
     const redAboard = riders > 0 || u.patients.some((cid) => { const b = a.beliefs.val<CasBelief>('cas', cid); return !!b && b.band === 2; });
     if (!full && loading && waited < 30) continue;
     if (full || waiting === 0 || (redAboard && waited > 10) || waited > 35) {
       u.boardOrder = 'transport';
-      cancel(s, (w) => (w.kind === 'load' || w.kind === 'treatMate') && w.prop === uid);
-      const who = riders > 0 ? (u.patients.length ? `환자 ${u.patients.length}명·부상 대원 ${riders}명` : `부상 대원 ${riders}명`) : `환자 ${u.patients.length}명`;
+      cancel(s, (w) => (w.kind === 'load' || w.kind === 'treatMate' || w.kind === 'treatSuspect') && w.prop === uid);
+      const who = riderText(u);
       emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 1, text: `${u.callsign}, ${who} 병원 이송 출발하라.` });
     }
   }
 }
 
+/** 실은 사람의 글: '환자 n명·부상 대원 m명·용의자 k명' (0 인 항은 뺀다 — 부대 자신의 기록으로). 출발 지시(manageAmbulances)와 출발 기록(sceneManager 5)번 블록)이 같은 글을 쓴다 */
+export function riderText(u: { patients: number[]; aboard?: { kind: 'mate' | 'suspect' }[] }): string {
+  let mates = 0, sus = 0;
+  if (u.aboard) for (let k = 0; k < u.aboard.length; k++) { if (u.aboard[k].kind === 'mate') mates++; else sus++; }
+  const parts: string[] = [];
+  if (u.patients.length || (!mates && !sus)) parts.push(`환자 ${u.patients.length}명`);
+  if (mates) parts.push(`부상 대원 ${mates}명`);
+  if (sus) parts.push(`용의자 ${sus}명`);
+  return parts.join('·');
+}
 /** 스스로 대피 중이라던 사람의 소식이 이만큼(초) 끊기면 대피를 마친 것으로 치지 않는다 — 동행 확인(escort)을 보내는 기준과 같다 */
 const MOBILE_STALE = 32;
 /**

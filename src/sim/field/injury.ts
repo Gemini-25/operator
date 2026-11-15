@@ -4,16 +4,19 @@
 // 잎 모듈이다: types · rng(타입) · engine(타입) · util · crews(대원의 방호 장비)만 import 한다. agents·hazards·executor·sceneManager·resources 를 import 하지 않는다 —
 // hazards.ts 가 bandOf 를, agents.ts 가 hurtF 를 가져가므로 거꾸로 부르면 순환이 생겨 초기화 전의 값을 읽는다 (설계서 H1 §2.2).
 //
-// 피해는 한 길로만 준다: 구조 대상은 hurtCas·hurtCasTo(단계 3), 대원은 hurtResponder·woundTick(단계 4a). 용의자(hurtHostile)는 단계 5 — 그때까지는 noteHostileHurt 가 기록만 한다.
-// 이 파일의 함수는 기록(emit)을 남기지 않는다: 문구는 피해를 준 자리(상태를 바꾸는 그 코드)가 남기고 그 id 를 o.ev 로 넘긴다. 대원의 상태 전이(부상·쓰러짐·순직)는 sceneManager.agentHealth 가 한다.
+// 피해는 한 길로만 준다: 구조 대상은 hurtCas·hurtCasTo(단계 3), 대원은 hurtResponder·woundTick(단계 4a), 용의자는 hurtHostile(단계 5).
+// 피해 자체의 문구(emit)는 남기지 않는다: 문구는 피해를 준 자리(상태를 바꾸는 그 코드)가 남기고 그 id 를 o.ev 로 넘긴다. 대원의 상태 전이(부상·쓰러짐·순직)는 sceneManager.agentHealth 가 한다.
+// 예외는 용의자 하나다: 용의자의 쓰러짐·사망 전이는 hurtHostile 안에서 바로 하고(같은 틱에 다른 대원이 한 번 더 쏘지 않게), 그 문구도 상태를 바꾸는 그 자리 — hurtHostile — 가 남긴다 (설계서 H1 §4.6).
 // 단계 4b 가 더한 것: careResponder·needsHospital·mateNeedsHospital·canDeploy·LIGHT_WORK·HOSPITAL_BLEED (처치 식 treatPlan·treatEffect 는 4b 의 준비 커밋).
-// 뒤 단계가 여기에 더한다: hurtHostile·threatOverAt·outShifts.
+// 단계 5 가 더한 것: hurtHostile·careHostile·hosNeedsCare·threatOverAt 과 용의자의 상수(HOSTILE_BLEED·HOSTILE_BLEED_MAX·HOSTILE_LEFT·SELF_HARM·SELF_HARM_HIT).
+// 뒤 단계가 여기에 더한다: outShifts.
 
 import { armorOf, blastFactor, hasKit, kitUses, kitWorks, medLevelOf } from '../crews';
 import type { Sim } from '../engine';
+import { emit, raiseProblem } from '../events';
 import type { Rng } from '../rng';
 import type { Casualty, FieldAgent, Hostile, Incident, Injury, InjuryCause, MateBelief, Responder, Scene, Unit, WorkKind } from '../types';
-import { clamp } from '../util';
+import { clamp, josa } from '../util';
 
 export const CAUSE_NAME: Record<InjuryCause, string> = {
   gunshot: '총상', stab: '자상', blunt: '타박상', burn: '화상', smoke: '연기 흡입', toxic: '유독 가스 흡입', fall: '추락', crush: '잔해 깔림', blast: '폭발',
@@ -313,10 +316,110 @@ export function canDeploy(r: Responder): boolean {
  */
 export const LIGHT_WORK: ReadonlySet<WorkKind> = new Set<WorkKind>(['traffic', 'perimeter', 'negotiate', 'interview', 'hookup', 'treat', 'treatMate']);
 
+// ───────────────────────── 용의자 (단계 5 — §4) ─────────────────────────
+/** 용의자 상처의 출혈 배율 (대원과 같은 계수 BLEED_PER_DMG 에 곱한다). 균형 손잡이 3번의 둘째 (§9.3) */
+export const HOSTILE_BLEED = 0.35;
+/** 용의자의 상처 출혈 상한 (초당) */
+export const HOSTILE_BLEED_MAX = 0.15;
+/**
+ * 용의자 문턱: 아직 쓰러지지 않은(체력 DOWN_AT 초과) 용의자가 "한 번" 피해로 0 아래까지 가면, 숨지지 않고 이 범위의 체력으로 남아 쓰러진다 (흐름 injury:<현장>:down).
+ * 쓰러진 뒤 숨지기까지의 시간을 정한다 — 균형 손잡이 3번의 첫째 (§9.3). 문턱이 없으면 총에 맞아 쓰러지는 용의자의 약 78% 가 그 순간 이미 0 이하였다 (§1)
+ */
+export const HOSTILE_LEFT: readonly [number, number] = [4, 15];
+/**
+ * 투항 대신 스스로를 해칠 확률 — **사용자 결정(2026-11-15): 끈다 (0).** 조정하는 손잡이가 아니다: 값을 올리려면 사용자의 새 결정이 있어야 한다 (§4.5·§12.2-8).
+ * 경로는 남겨 둔다 — 0 에서는 추첨(injury:<현장>:self)이 늘 거짓이라 투항이 예전처럼 일어나고, 그 흐름 밖의 결과는 바뀌지 않는다
+ */
+export const SELF_HARM = 0;
+/** 자해의 피해 범위 (SELF_HARM 이 0 이 아닐 때만 쓰인다) */
+export const SELF_HARM_HIT: readonly [number, number] = [22, 38];
+
+/**
+ * 용의자가 다친다: 문턱을 걸고, 새 상처의 출혈을 더하고, 그 원인으로 적은 뒤 쓰러짐·사망 전이를 그 자리에서 한다. 용의자의 체력을 깎는 자리는 모두 이 함수를 거친다.
+ * 숨졌거나 · 사건이 끝났거나 · 현장을 벗어났거나(도주) · 차에 실렸으면 아무것도 하지 않는다 (§2.6·§2.7).
+ *   o.tick  매 틱 피해(불·연기·가스·상처 악화 — rules/injury.ts): 문턱도 새 출혈도 없다 (쓰러진 뒤에는 이것으로 숨질 수 있다)
+ *   한 번 피해: ① 용의자 문턱 — 아직 쓰러지지 않은(체력 15 초과) 용의자는 0 아래로 가지 않고 HOSTILE_LEFT 범위의 체력으로 남는다 (흐름 injury:<현장>:down).
+ *              ② 출혈 = min(0.15, 출혈 + 계수 × 피해 × injuryMul × HOSTILE_BLEED), 처치 전 값도 그 값으로, 받은 처치는 0 으로 (새 상처는 다시 처치할 수 있다).
+ *   o.down  한 번에 쓰러뜨린다 (체력을 15 이하로 — 감전 30%, R2 의 저격, 자해). 문턱 때문에 0 아래로는 가지 않는다
+ *   o.ev    피해를 준 자리가 이미 남긴 기록 id — Injury.ev 와 쓰러짐·사망 기록의 원인으로 쓴다
+ * 전이 (§4.1): 체력 15 이하가 처음 되면 쓰러진다(tDown, 상태 'down' — 검거된 용의자는 'arrested' 그대로) — 같은 틱에 다른 대원이 한 번 더 쏘지 않게 여기서 바로 세운다.
+ * 0 이하가 되면 숨진다(dead·tDead·deathCause, 체력 0). 둘 다 그 문구를 이 자리에서 남긴다 (상태를 바꾸는 바로 그 코드 — §4.6)
+ */
+export function hurtHostile(sim: Sim, s: Scene, I: Incident, h: Hostile, amount: number, cause: InjuryCause, o?: HurtOpts): void {
+  if (h.dead || I.phase === 'closed' || h.state === 'escaped' || (h.where !== undefined && h.where !== 'scene')) return;
+  const tick = o !== undefined && o.tick === true;
+  let after = h.health - amount;
+  if (!tick) {
+    if (o !== undefined && o.down === true && after > DOWN_AT) after = DOWN_AT;
+    // 용의자 문턱: 쓰러지지 않은 용의자는 한 번 피해로 숨지지 않는다 (다치는 일로 체력이 오르지는 않는다)
+    if (after <= 0 && h.tDown === undefined && h.health > DOWN_AT) after = Math.min(h.health, injuryRng(sim, s, 'down').range(HOSTILE_LEFT[0], HOSTILE_LEFT[1]));
+  }
+  if (!(after < h.health)) return;
+  const took = h.health - after;
+  h.health = after;
+  if (!tick) {
+    const k = BLEED_PER_DMG[cause];
+    if (k > 0) {
+      const b = Math.min(HOSTILE_BLEED_MAX, (h.bleed ?? 0) + k * amount * sim.tune.injuryMul * HOSTILE_BLEED);
+      h.bleed = b; h.bleed0 = b; h.treatQ = 0; h.bleedCause = cause;
+    }
+  }
+  const ev = o !== undefined && o.ev !== undefined ? o.ev : -1;
+  h.injuries = noteInjury(h.injuries, cause, took, sim.t, bandOf(after), o?.by ?? -1, o?.byKind ?? 'world', ev);
+  settleHostile(sim, I, h, cause, ev);
+}
+/**
+ * 용의자의 쓰러짐·사망 전이와 그 문구 (hurtHostile 이 부른다 — tickHostiles 의 안전장치도 같은 함수를 쓴다).
+ * 쓰러짐: 총상이면 '○○이 총상을 입고 쓰러졌습니다 — 무력화.'(hazard · 3 — 결정적 순간), 그 밖은 '○○이 ${원인}으로 쓰러졌습니다.'(hazard · 2).
+ * 사망: SUSPECT_DIED '○○ 사망 (원인, 처치 전|처치 후)', 기록 문구 '○○ 생체 반응 소실.' (problem · 3)
+ */
+export function settleHostile(sim: Sim, I: Incident, h: Hostile, cause: InjuryCause, ev = -1): void {
+  if (h.health <= DOWN_AT && h.tDown === undefined) {
+    h.tDown = sim.t;
+    if (h.state !== 'arrested') { h.state = 'down'; h.path = null; h.dragging = false; }
+    const dEv = emit(sim, {
+      inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: cause === 'gunshot' ? 3 : 2, causes: [ev],
+      text: cause === 'gunshot' ? `${josa(h.label, '이/가')} 총상을 입고 쓰러졌습니다 — 무력화.` : `${josa(h.label, '이/가')} ${josa(CAUSE_NAME[cause], '으로/로')} 쓰러졌습니다.`,
+    });
+    // 기록이 없던 상처(대원의 사격은 따로 기록을 남기지 않는다)는 이 쓰러짐 기록을 원인으로 잇는다 — 뒤에 그 상처로 숨지면 사망 기록이 여기로 거슬러 간다
+    if (h.injuries) for (let k = 0; k < h.injuries.length; k++) if (h.injuries[k].cause === cause && h.injuries[k].ev < 0) h.injuries[k].ev = dEv;
+  }
+  if (h.health <= 0 && !h.dead) {
+    h.dead = true; h.tDead = sim.t; h.health = 0;
+    if (h.deathCause === undefined) h.deathCause = cause;
+    let why = ev;
+    if (why < 0 && h.injuries) for (let k = 0; k < h.injuries.length; k++) if (h.injuries[k].cause === h.deathCause) why = h.injuries[k].ev;
+    raiseProblem(sim, I, 'SUSPECT_DIED', `${h.label} 사망 (${CAUSE_NAME[h.deathCause]}, ${h.tTreated !== undefined ? '처치 후' : '처치 전'})`, {
+      role: 'SYSTEM', actor: '현장', imp: 3, causes: [why], text: `${h.label} 생체 반응 소실.`,
+    }, false);
+  }
+}
+/** 처치를 받은 용의자: 체력이 오르고(heal), 출혈은 처치 전 값 × bleedK, 받은 처치의 질과 처음 처치 받은 시각을 적는다 (대원의 careResponder 와 같은 식 — 세 부류가 같은 처치 공식) */
+export function careHostile(sim: Sim, h: Hostile, fx: { q: number; heal: number; bleedK: number }): void {
+  if (fx.heal > 0) h.health = Math.min(100, h.health + fx.heal);
+  h.treatQ = fx.q; h.bleed = (h.bleed0 ?? h.bleed ?? 0) * fx.bleedK;
+  if (h.tTreated === undefined) h.tTreated = sim.t;
+}
+/**
+ * 처치가 필요한 다친 용의자인가 — **믿음**. 'hos' 사실의 값만 본다: 숨지지 않았고 현장에 있고(차에 실리지 않았다), 쓰러졌거나 중상 이상(band ≥ 1 — 모르면 위중으로 본다).
+ * 지휘 쪽(orders/injury.ts·commander.ts)이 쓴다 — 용의자의 체력·출혈(진실)을 읽지 않는다
+ */
+export function hosNeedsCare(v: { state: string; dead?: boolean; band?: number; where?: string }): boolean {
+  if (v.dead || (v.where !== undefined && v.where !== 'scene') || v.state === 'escaped') return false;
+  return v.state === 'down' || (v.band ?? 2) >= 1;
+}
+/**
+ * 위협이 끝난 시각: 무장 현장은 지휘관의 안전 확보 선언(s.secureAt), 그 밖의 현장(추격전·음주 운전 — secureAt 이 정해지지 않는다)은 첫 도착(s.arrivedAt). 없으면 −1.
+ * 이 시각 뒤에 숨진 용의자는 "위협이 끝난 뒤 다친 사람을 돌보지 못한 것"이다 (§4.4 — 판정의 벌점과 보고서 문장이 쓴다)
+ */
+export function threatOverAt(s: Scene): number {
+  return s.kind === 'armed' ? s.secureAt : s.arrivedAt;
+}
+
 // ───────────────────────── 한 번 피해의 기록 (단계 1) ─────────────────────────
 // 피해를 주는 자리는 식을 그대로 두고, 바꾸기 전의 값(hp0, bleed0)을 잡아 두었다가 바꾼 뒤에 아래 함수를 한 줄 부른다.
-// 깎인 양은 (앞 − 뒤)로 센다 — 그 자리의 난수·연산 순서를 건드리지 않는다. 뒤 단계가 이 줄들을 hurt* 로 바꾼다
-// (구조 대상의 자리는 단계 3 에서 hurtCas 로, 대원의 자리는 단계 4a 에서 hurtResponder 로 바꿨다 — noteCasHurt 는 시험만 쓰고, 용의자의 noteHostileHurt 는 단계 5 까지 남는다).
+// 깎인 양은 (앞 − 뒤)로 센다 — 그 자리의 난수·연산 순서를 건드리지 않는다. 뒤 단계가 이 줄들을 hurt* 로 바꿨다
+// (구조 대상의 자리는 단계 3 에서 hurtCas 로, 대원의 자리는 단계 4a 에서 hurtResponder 로, 용의자의 자리는 단계 5 에서 hurtHostile 로 — noteCasHurt 는 시험만 쓴다).
 
 /**
  * 구조 대상이 방금 다쳤다: 깎인 체력을 그 원인으로 적는다. 그 자리가 출혈(bleed)을 키웠으면 지금의 출혈 원인도 그 원인으로 바꾸고,
@@ -327,11 +430,6 @@ export function noteCasHurt(c: Casualty, cause: InjuryCause, hp0: number, bleed0
   if (dmg > 0) c.injuries = noteInjury(c.injuries, cause, dmg, t, bandOf(c.health), by, byKind, ev);
   if (c.bleed > bleed0) c.bleedCause = cause;
   if (c.health <= 0 && c.deathCause === undefined) c.deathCause = cause;
-}
-/** 용의자가 방금 다쳤다. 지금 모델에서 체력 0 이하는 '제압'(쓰러짐)이지 사망이 아니다 — 숨지지 않은 용의자의 sev 는 위중(2)까지만 적는다 */
-export function noteHostileHurt(h: Hostile, cause: InjuryCause, hp0: number, t: number, by = -1, byKind: Injury['byKind'] = 'world', ev = -1): void {
-  const dmg = hp0 - h.health;
-  if (dmg > 0) h.injuries = noteInjury(h.injuries, cause, dmg, t, h.dead ? 3 : Math.min(2, bandOf(h.health)), by, byKind, ev);
 }
 
 // ───────────────────────── 구조 대상의 매 틱 악화 (단계 1) ─────────────────────────

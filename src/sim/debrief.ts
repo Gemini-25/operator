@@ -9,6 +9,7 @@ import { difficultyLabel } from './difficulty';
 import { disasterSummary } from './disaster';
 import { methodFailLine, methodLines, methodSummary, methodTally } from './field/methodReport';      // (R2) 대응 방법의 문장과 집계
 import { roleOf } from './crews';
+import { CAUSE_NAME, mainCause, threatOverAt } from './field/injury';
 import type { Sim } from './engine';
 import type { Incident, IncidentResult, Outcome, Problem, ProblemCode, ShiftReport } from './types';
 import { TYPE_NAME, fmtSec, josa, pct } from './util';
@@ -21,7 +22,7 @@ export const PROBLEM_LABEL: Record<ProblemCode, string> = {
   METHOD_FAIL: '대응 방법 실패·변경',      // (R2) 문장 틀과 order 의 자리(EQUIP_FAIL 바로 다음)는 evaluate 안
   ESCALATION: '상황 악화', BACKUP_LATE: '지원 지연', SCENE_MISMATCH: '신고와 다른 현장 상황', SUSPECT_FLED: '용의자 도주', SECONDARY_COLLISION: '2차 사고', LATE_DISCOVERY: '구조 대상 발견 지연',
   TIMEOUT: '대응 시간 초과', FATIGUE: '대원 체력 고갈', HIDDEN_HAZARD: '숨겨진 위험 발현', RECOUNT: '인원 불일치 재수색', WRONG_ADDRESS: '신고 위치 오류', FALSE_ALARM: '허위·오인 신고',
-  RESPONDER_KILLED: '대원 순직',
+  RESPONDER_KILLED: '대원 순직', SUSPECT_DIED: '용의자 사망',
 };
 
 const RESP_LIMIT: Record<string, number> = { fire: 95, armed: 95, traffic: 105, search: 125, medical: 80, collapse: 100, hazmat: 100, water: 90 };
@@ -104,7 +105,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   if (wrongNotes.length && firstCall) A.push(`최초 신고자(${personaName(firstCall.caller.persona)})의 정보가 실제와 달랐습니다: ${wrongNotes.slice(0, 2).join('; ')}.`);
   // 순직은 맨 앞에 둔다: 분석 문장이 9줄에서 잘려도 빠지지 않는다 (H1 §3.8)
   const order: ProblemCode[] = ['RESPONDER_KILLED', 'CALL_QUEUE', 'CALL_VAGUE', 'MISJUDGE_TYPE', 'UNDERESTIMATE', 'OVERESTIMATE', 'NO_UNIT', 'DIVERTED', 'ROUTE_BLOCKED', 'TRAFFIC_DELAY', 'SCENE_MISMATCH', 'UNDER_DISPATCH', 'BACKUP_LATE',
-    'WRONG_ADDRESS', 'FALSE_ALARM', 'PATH_BLOCKED', 'COMM_FAIL', 'RECOUNT', 'VICTIM_MISSED', 'EQUIP_FAIL', 'WATER_OUT', 'HIDDEN_HAZARD', 'ESCALATION', 'SECONDARY_COLLISION', 'RESPONDER_HURT', 'FATIGUE', 'SUSPECT_FLED', 'LATE_DISCOVERY', 'TIMEOUT'];
+    'WRONG_ADDRESS', 'FALSE_ALARM', 'PATH_BLOCKED', 'COMM_FAIL', 'RECOUNT', 'VICTIM_MISSED', 'EQUIP_FAIL', 'WATER_OUT', 'HIDDEN_HAZARD', 'ESCALATION', 'SUSPECT_DIED', 'SECONDARY_COLLISION', 'RESPONDER_HURT', 'FATIGUE', 'SUSPECT_FLED', 'LATE_DISCOVERY', 'TIMEOUT'];
   const T: Partial<Record<ProblemCode, (ps: Problem[]) => string>> = {
     RESPONDER_KILLED: (ps) => `순직: ${ps.map((p) => p.detail).join(' / ')}.`,      // 원인과 경과는 숨지는 그 자리에서 상태로 만든 detail 에 들어 있다 (sceneManager.agentHealth)
     CALL_QUEUE: (ps) => `신고 전화가 다른 통화 처리 때문에 ${ps[0].detail} 대기했습니다.`,
@@ -129,6 +130,19 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
     WATER_OUT: (ps) => `${ps[0].detail}${ps[0].recovered ? ` — ${ps[0].recoveryText}` : ''}.`,
     HIDDEN_HAZARD: (ps) => `신고에 없던 위험이 현실화됐습니다: ${ps.map((p) => p.detail).join(', ')}.`,
     ESCALATION: (ps) => `대응 도중 상황이 악화됐습니다: ${ps.map((p) => p.detail).slice(0, 3).join(', ')}.`,
+    // 용의자 사망 (H1 §7.2): 숨진 용의자마다 기록(쓰러진·처치·숨진 시각과 부상 기록)으로 — 위협이 끝난 뒤(안전 확보·첫 도착)면 그 뒤 얼마 동안 돌보지 못했는지를 말한다
+    SUSPECT_DIED: (ps) => {
+      const over = threatOverAt(s), lines: string[] = [];
+      for (const h of s.hostiles) {
+        if (!h.dead || h.tDead === undefined) continue;
+        const main = mainCause(h.injuries) ?? h.deathCause ?? 'gunshot', death = h.deathCause ?? main;
+        const hit = `${josa(h.label, '은/는')} ${s.kind === 'armed' && (over < 0 || (h.tDown ?? h.tDead) <= over) ? '교전 중 ' : ''}${josa(CAUSE_NAME[main], '을/를')} 입고 쓰러졌고`;
+        const tail = death !== main ? ` (${CAUSE_NAME[death]})` : '';
+        if (over >= 0 && h.tDead > over) lines.push(`${hit}, ${s.kind === 'armed' ? '현장 안전 확보' : '대원 도착'} 뒤 ${fmtSec(h.tDead - over)} 동안 ${h.tTreated !== undefined ? '처치를 받았지만 이송되지 못하고' : '처치를 받지 못하고'} 숨졌습니다${tail}`);
+        else lines.push(`${hit}, ${h.tTreated !== undefined ? '처치를 받았지만' : '처치를 받기 전에'} 숨졌습니다${tail}`);
+      }
+      return lines.length ? `${lines.join('. ')}.` : `${ps.map((p) => p.detail).join(' / ')}.`;
+    },
     SECONDARY_COLLISION: (ps) => `${ps[0].detail}가 발생했습니다. 교통 통제가 완료되기 전이었습니다.`,
     RESPONDER_HURT: (ps) => `대원 피해: ${ps.map((p) => p.detail).filter((v, i, arr) => arr.indexOf(v) === i).join(', ')}.`,
     FATIGUE: (ps) => `${ps[0].detail}.`,

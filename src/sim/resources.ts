@@ -488,15 +488,19 @@ export function tickUnits(sim: Sim): void {
           }
           parts.push(`환자 ${u.patients.filter((cid) => !scene.casualties[cid].dead).length}명`);
         }
-        // 구조 대상이 아닌 환자(다친 대원)의 인계 — 그 사람들만 태운 차량은 patientsIncident 가 없으므로 위의 갈래 밖에서 한다 (H1 §3.4-4)
+        // 구조 대상이 아닌 환자(다친 대원·용의자)의 인계 — 그 사람들만 태운 차량은 patientsIncident 가 없으므로 위의 갈래 밖에서 한다 (H1 §3.4-4)
         const ab = u.aboard;
-        let mates = 0, abInc = -1;
+        let mates = 0, sus = 0, abInc = -1;
         if (ab && ab.length) {
           abInc = ab[0].inc;
-          for (let k = 0; k < ab.length; k++) if (ab[k].kind === 'mate') { const r = sim.responders[ab[k].id]; r.care = 'hospital'; r.bleed = 0; mates++; }
+          for (let k = 0; k < ab.length; k++) {
+            if (ab[k].kind === 'mate') { const r = sim.responders[ab[k].id]; r.care = 'hospital'; r.bleed = 0; mates++; }
+            else { const hs = sim.scenes[ab[k].inc]; const h = hs ? hs.hostiles[ab[k].id] : undefined; if (h && !h.dead) { h.where = 'hospital'; h.bleed = 0; } sus++; }      // 용의자: 병원 인계 뒤의 경찰 인계는 모델 밖이다 (H1 §4.3)
+          }
           ab.length = 0;
         }
         if (mates > 0) parts.push(`부상 대원 ${mates}명`);
+        if (sus > 0) parts.push(`용의자 ${sus}명`);
         if (parts.length) emit(sim, { inc: I ? I.id : abInc, role: 'UNIT', actor: u.callsign, kind: 'casualty', text: `${u.callsign}: ${sim.city.facilities.find((f) => f.kind === 'hospital' && f.nodeId === u.nodeId)?.name ?? '병원'} 도착, ${parts.join('·')} 인계 완료.`, imp: 1 });
         u.patients = []; u.patientsIncident = null; u.firstLoadAt = undefined;
         releaseUnit(sim, u);

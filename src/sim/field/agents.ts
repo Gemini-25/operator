@@ -122,11 +122,19 @@ export function casFact(sim: Sim, s: Scene, c: Casualty, src: string): Fact {
   const whereT = c.where === 'safe' ? '안전 구역' : c.where === 'loaded' ? '구급차 탑승' : c.where === 'carried' ? '이송 중' : regionNameAt(s, c.x, c.y);
   return mkFact('cas', c.id, v, src, sim.t, 1, true, `구조 대상 ${c.label}: ${whereT}${mobT} · ${BAND_NAME[b]}`);
 }
-export function hosFact(sim: Sim, s: Scene, h: Hostile, src: string): Fact {
+/**
+ * 용의자의 상태 ('hos' 사실). d = 관찰자와 그 용의자 사이의 거리 (검거·처치한 대원은 곁에서 본다 — 0 에 가깝다). 필수 인자다 — 빠뜨린 호출을 tsc 가 잡는다.
+ * (H1 단계 5) 값에 dead · band · tq · where 를 더한다: 숨졌는지는 2칸 안에서만 알 수 있고(멀리서는 쓰러진 것만 보인다), 중증도는 위중(2)까지만 적는다 —
+ * 구조 대상의 casFact 처럼 보이는 그대로다(다친 모습·쓰러진 모습). 받은 처치(tq)와 있는 곳(where — 현장·차에 실림)도 본 그대로.
+ */
+export function hosFact(sim: Sim, s: Scene, h: Hostile, src: string, d: number): Fact {
   const wt = h.weapon === 'gun' ? '총기 소지' : h.weapon === 'knife' ? '흉기 소지' : '비무장';
-  const st = h.state === 'hold' ? '대치 중' : h.state === 'fight' ? '교전 중' : h.state === 'flee' ? '도주 중' : h.state === 'surrendered' ? '투항' : h.state === 'arrested' ? '검거' : h.state === 'down' ? '제압' : '도주';
+  const dead = h.dead === true && d <= 2;
+  const st = dead ? '사망' : h.state === 'hold' ? '대치 중' : h.state === 'fight' ? '교전 중' : h.state === 'flee' ? '도주 중' : h.state === 'surrendered' ? '투항' : h.state === 'arrested' ? (h.tDown !== undefined ? '검거 · 쓰러짐' : '검거') : h.state === 'down' ? '쓰러짐' : '도주';
   const hold = h.hostageId >= 0 && (h.state === 'hold' || h.state === 'fight');
-  return mkFact('hos', h.id, { x: Math.round(h.x), y: Math.round(h.y), weapon: h.weapon, state: h.state, hostage: hold, facing: Math.round(h.facing * 4) / 4 }, src, sim.t, 1, true, `${h.label}: ${wt}${hold ? ' · 인질을 붙잡고 있음' : ''} · ${st} (${regionNameAt(s, h.x, h.y)})`);
+  const tq = (h.treatQ ?? 0) >= 0.6 ? 2 : (h.treatQ ?? 0) > 0 ? 1 : 0;
+  const v = { x: Math.round(h.x), y: Math.round(h.y), weapon: h.weapon, state: h.state, hostage: hold, facing: Math.round(h.facing * 4) / 4, dead, band: dead ? 3 : Math.min(2, bandOf(h.health)), tq, where: h.where ?? 'scene' };
+  return mkFact('hos', h.id, v, src, sim.t, 1, true, `${h.label}: ${wt}${hold ? ' · 인질을 붙잡고 있음' : ''} · ${st} (${regionNameAt(s, h.x, h.y)})`);
 }
 
 /**
@@ -164,7 +172,7 @@ export function mateStatus(sim: Sim, b: FieldAgent): MateBelief['status'] {
 function significant(f: Fact, old: any): boolean {
   const v = f.value;
   if (f.type === 'cas') return v.where !== 'carried' && (old.mob !== v.mob || old.band !== v.band || old.where !== v.where || old.treated !== v.treated || old.tq !== v.tq);
-  if (f.type === 'hos') return old.state !== v.state || old.weapon !== v.weapon || old.hostage !== v.hostage;
+  if (f.type === 'hos') return old.state !== v.state || old.weapon !== v.weapon || old.hostage !== v.hostage || !!old.dead !== !!v.dead || (old.tq ?? 0) !== (v.tq ?? 0) || (old.where ?? 'scene') !== (v.where ?? 'scene');
   if (f.type === 'mate') return old.status !== v.status || old.dead !== v.dead || old.band !== v.band || old.tq !== v.tq;
   return true;
 }
@@ -240,18 +248,20 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
     if (c.tDiscovered >= 0) { if (fresh) learnQuiet(sim, a, casFact(sim, s, c, me)); else learn(sim, a, casFact(sim, s, c, me)); }
   }
   for (let hi = 0; hi < s.hostiles.length; hi++) { const h = s.hostiles[hi];
+    if (h.where !== undefined && h.where !== 'scene') continue;      // 차에 실려 간 용의자는 현장에 없다 (H1)
     const d = dist(a.x, a.y, h.x, h.y);
     const range = aloft ? (h.hidden ? v * 0.4 : v) : h.hidden ? 4.2 : 13;      // 지상은 시야와 상관없이 13칸(숨은 용의자 4.2칸). 상공은 관측 거리만큼 — 밤의 4칸이 용의자에게도 걸린다
     const cur = a.beliefs.get('hos', h.id);
+    if (cur && cur.value.dead) continue;      // 숨진 줄 안 뒤에는 더 바뀌지 않는다 — 먼 관찰로 되돌리지 않는다 (H1)
     if (d <= range && sees(h.x, h.y)) {
       const wasHidden = h.hidden;
       if (h.hidden) {
         h.hidden = false;
         raiseProblem(sim, I, 'SCENE_MISMATCH', '숨어 있던 추가 용의자 발견', { role: 'RESPONDER', actor: me, rid: r.id, imp: 3, text: `숨어 있던 추가 용의자 발견! ${regionNameAt(s, h.x, h.y)}.` }, false);
       }
-      if (wasHidden) learnQuiet(sim, a, hosFact(sim, s, h, me)); else learn(sim, a, hosFact(sim, s, h, me));
+      if (wasHidden) learnQuiet(sim, a, hosFact(sim, s, h, me, d)); else learn(sim, a, hosFact(sim, s, h, me, d));
     } else if (cur && cur.value.state !== h.state && (h.state === 'escaped' || h.state === 'down' || h.state === 'arrested') && d <= 16) {
-      learn(sim, a, hosFact(sim, s, h, me));
+      learn(sim, a, hosFact(sim, s, h, me, d));
     }
   }
   // 타일 스캔: 화재 / 잔해
@@ -473,6 +483,7 @@ export function workLabel(s: Scene, w: WorkItem, sim?: Sim): string {
     defuse: '폭발물 해체', overhaul: `${reg} 잔불 정리`,
     hoist: `${cas} 호이스트 인양`, airDrop: `${reg} 공중 물 투하`,
     treatMate: sim && w.mate >= 0 && sim.responders[w.mate] ? `${sim.responders[w.mate].name} 대원 응급 처치` : '부상 대원 응급 처치',
+    treatSuspect: `${hos} 응급 처치`,
   };
   return names[w.kind];
 }
@@ -597,6 +608,20 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
       // 기본 처치를 이미 받은 동료를 다시 보는 것은 전문 처치를 할 수 있는 대원만 (자기 능력과 든 장비로 어림한다). 자기 차에 태우러 가는 일이면 처치 수준과 상관없다
       if (mb && mb.tq >= 1 && !own && treatPlan(sim, s, rid, 100) < 0.6) return 0;
       return Math.max(0.08, r.skills.medical * (0.5 + 0.5 * medLevelOf(sim, rid))) * (w.prop >= 0 && !own ? 0.7 : 1);
+    }
+    case 'treatSuspect': {
+      // 쓰러진·다친 용의자의 처치 (H1 §4.3): 경찰은 언제든(기본 처치), 구급대원은 안전 확보 뒤에만 (구조 대상의 처치와 같은 hot 술어 — 교전 중인 건물 안으로 구급대원을 보내지 않는다)
+      if (r.dept !== 'police' && !(r.dept === 'ems' && !hot)) return 0;
+      const hv = a.beliefs.val<{ x: number; y: number; tq?: number }>('hos', w.hostile);
+      // 불·가스·붕괴 위험 구역 안의 용의자: 공기호흡기를 멘 대원만 들어간다 (구역은 믿음 속 위치로 본다 — 동료 구조와 같다)
+      if (hv) { const rg = s.region[tileOf(s, hv.x, hv.y)]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg) && !scbaOk(sim, rid, afterSwap)) return 0; }
+      // 태울 차가 정해진 일: 이미 처치를 받은 용의자를 그 차로 옮기는 것은 그 차의 대원만 한다 (다른 부대의 대원은 처치까지만)
+      const own = w.prop >= 0 && a.unitId === w.prop;
+      const tq = hv ? hv.tq ?? 0 : 0;
+      if (w.prop >= 0 && !own && tq >= 1) return 0;
+      // 기본 처치를 이미 받은 용의자를 다시 보는 것은 전문 처치를 할 수 있는 대원만 (같은 처치와 같은 보고를 주고받지 않게). 자기 차에 태우러 가는 일이면 처치 수준과 상관없다
+      if (tq >= 1 && !own && treatPlan(sim, s, rid, 100) < 0.6) return 0;
+      return Math.max(0.08, r.skills.medical * (0.5 + 0.5 * medLevelOf(sim, rid)));
     }
   }
 }

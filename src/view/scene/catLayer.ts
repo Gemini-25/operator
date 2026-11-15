@@ -4,11 +4,12 @@
 // 관찰자 시점은 진실(Scene.cat — 건전도·가스·용기의 열)을, AI 시점은 지휘관이 아는 조짐(sign 사실)을 그린다(숫자 없이 같은 색).
 // s.cat 이 없는 현장(아직 위험 상태를 만들지 않았거나 대상이 아님)은 아무것도 그리지 않는다 — 여기서 위험 상태를 만들지 않는다(만들면 그림이 결과를 바꾼다).
 // 모양으로 G4 와 가른다: 무너진 구역 경계는 G4 의 #d6a878 점선, 2차 붕괴 위험 범위는 G4 의 #ffd166 점선 — 건전도는 구획 **안쪽의 빗금**이다.
-// (단계 5 가 진입 금지 구역의 테이프 실선·철수 대원 표지를 여기에 더한다)
+// 진입 금지 구역(지휘 상태 Scene.ops — 조직이 아는 것이라 두 시점이 같다): 두 색이 번갈아 드는 굵은 테이프 실선 — 단계 2 주황·검정, 단계 3 빨강·흰색
+// (G4 의 2차 붕괴 위험 범위 #ffd166 점선과 모양으로 가른다), 구역 위 '진입 금지' / '철수' 표지. 철수 중인 대원의 이름표 '철수'는 실행기가 정한다(a.label)
 
 import type { Sim } from '../../sim/engine';
 import { CAT, structLevel } from '../../sim/field/catastrophe';
-import type { FieldAgent, Prop, Region, Scene, SignBelief } from '../../sim/types';
+import type { FieldAgent, NoGoZone, Prop, Region, Scene, SignBelief } from '../../sim/types';
 import type { G } from './common';
 import type { HazardLabel } from './hazardFx';
 
@@ -73,6 +74,38 @@ function vesselRing(g: G, p: Prop, ts: number, fill: number, blink: boolean, t: 
   g.restore();
 }
 
+/** 진입 금지 구역 테이프의 두 색 (단계 2 · 3) */
+const TAPE: Record<number, [string, string]> = { 2: ['#ff9f1c', '#1b1b1b'], 3: ['#ff3b3b', '#f4f4f4'] };
+/** 구역 칸 덩어리의 경계를 두 색이 번갈아 드는 굵은 실선으로 (원 구역은 원) */
+function tapeZone(g: G, s: Scene, z: NoGoZone, ts: number): void {
+  const [c1, c2] = TAPE[z.level] ?? TAPE[2];
+  const w = s.w, h = s.h, lw = Math.max(2.5, ts * 0.13), dash = Math.max(4, ts * 0.32);
+  g.save();
+  g.beginPath();
+  if (z.regions.length) {
+    const inZ = new Uint8Array(w * h);
+    for (const r of z.regions) { const reg = s.regions[r]; if (reg) for (const i of reg.tiles) inZ[i] = 1; }
+    for (let y = 0, i = 0; y < h; y++) for (let x = 0; x < w; x++, i++) {
+      if (!inZ[i]) continue;
+      const X = x * ts, Y = y * ts;
+      if (x + 1 >= w || !inZ[i + 1]) { g.moveTo(X + ts, Y); g.lineTo(X + ts, Y + ts); }
+      if (x <= 0 || !inZ[i - 1]) { g.moveTo(X, Y); g.lineTo(X, Y + ts); }
+      if (y + 1 >= h || !inZ[i + w]) { g.moveTo(X, Y + ts); g.lineTo(X + ts, Y + ts); }
+      if (y <= 0 || !inZ[i - w]) { g.moveTo(X, Y); g.lineTo(X + ts, Y); }
+    }
+  }
+  if (z.r > 0) { g.moveTo((z.x + 0.5) * ts + z.r * ts, (z.y + 0.5) * ts); g.arc((z.x + 0.5) * ts, (z.y + 0.5) * ts, z.r * ts, 0, Math.PI * 2); }
+  g.lineWidth = lw; g.setLineDash([]); g.strokeStyle = c2; g.stroke();
+  g.setLineDash([dash, dash]); g.strokeStyle = c1; g.stroke();
+  g.setLineDash([]);
+  g.restore();
+}
+/** 구역 표지의 자리 (첫 구역의 가운데, 원이면 원 위) */
+function zoneAnchor(s: Scene, z: NoGoZone): [number, number] {
+  if (z.regions.length && s.regions[z.regions[0]]) { const reg = s.regions[z.regions[0]]; return [reg.cx, reg.cy + 0.6]; }
+  return [z.x, z.y - Math.max(1, z.r * 0.7)];
+}
+
 /** 지휘관이 아는 조짐 (AI 시점) */
 function cmdSigns(o: CatView): SignBelief[] {
   if (!o.cmd) return [];
@@ -84,8 +117,10 @@ function cmdSigns(o: CatView): SignBelief[] {
 /** 정보 표지 단계: 구획 건전도 빗금 · 가스 등고선 · 용기의 열 고리 */
 export function drawCatUnder(g: G, sim: Sim, s: Scene, ts: number, o: CatView): void {
   void sim;
+  if (o.mini) return;
+  if (s.ops) for (const z of s.ops.zones) tapeZone(g, s, z, ts);      // 진입 금지 구역 (두 시점 같다 — 지휘 상태는 조직이 안다)
   const c = s.cat;
-  if (!c || o.mini) return;
+  if (!c) return;
   const t = o.timeMs / 1000, pulse = 0.5 + 0.5 * Math.sin(t * 6);
   if (o.truth) {
     if (c.struct) for (const reg of s.regions) {
@@ -119,8 +154,11 @@ export function drawCatUnder(g: G, sim: Sim, s: Scene, ts: number, o: CatView): 
 export function drawCatOver(sim: Sim, s: Scene, ts: number, o: CatView): HazardLabel[] {
   void sim;
   const c = s.cat, out: HazardLabel[] = [];
-  if (!c || o.mini) return out;
+  if (o.mini) return out;
   const t = o.timeMs / 1000, at = (x: number, y: number): [number, number] => [(x + 0.5) * ts, (y + 0.5) * ts];
+  if (s.ops) for (const z of s.ops.zones) { const [zx, zy] = zoneAnchor(s, z); const [x, y] = at(zx, zy); out.push({ x, y, text: z.level === 3 ? '철수' : '진입 금지', color: z.level === 3 ? '#ff5d5d' : '#ffb347' }); }
+  if (s.ops && s.ops.mode === 'defensive' && s.regions.length) { let bx = 0, by = 0, n = 0; for (const r of s.regions) if (r.indoor) { bx += r.cx; by += r.cy; n++; } if (n) { const [x, y] = at(bx / n, by / n - 1.4); out.push({ x, y, text: '외부 방어', color: '#ff7a59' }); } }
+  if (!c) return out;
   if (o.truth) {
     if (c.struct) for (const reg of s.regions) {
       if (!reg.indoor || c.fallen[reg.id]) continue;

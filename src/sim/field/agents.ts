@@ -59,7 +59,19 @@ export function briefFacts(sim: Sim, I: Incident): Fact[] {
     const where = region >= 0 ? ` · 위치 추정: ${s.regions[region].name}` : '';
     out.push(mkFact('occ', 0, { count, region, trapped: !!(trap && trap.value === true) }, '신고자', sim.t, conf, false, `신고 내용: ${count !== null ? `요구조자 약 ${count}명` : '요구조자 수 불명'}${where}`));
   }
+  for (const c of I.claims) if (c.topic === 'hazard') { const f = hazardSign(sim, I, c); if (f && !out.some((g) => g.key === f.key)) out.push(f); }      // (X6 §3.6) 신고에서 안 위험 — 미확인 조짐
   return out;
+}
+/**
+ * (X6 §3.6) 신고의 위험 진술 → 미확인 조짐 사실 (현장 관찰이 오면 덮어쓴다 — BeliefStore.merge). 지휘 쪽 위험 단계는 올리지 않는다(기록·주의만 — §5.2):
+ *   '아직도 뭐가 계속 떨어져요'(unstable) → 건물 조짐 1 (id 5000) · 가스 누출로 판단한 사건의 '가스가 새요'(gas) → 위치 모르는 가스 조짐 1 (id 1999).
+ * 화재의 '가스통 같은 게 있어요'는 위치를 모르므로 사실로 만들지 않는다 (지휘관은 찾으면 안다). 브리핑(briefFacts)과 추가 신고 전달(dispatcher.briefUpdate)이 함께 쓴다
+ */
+export function hazardSign(sim: Sim, I: Incident, c: { topic: string; value: unknown; conf: number }): Fact | null {
+  if (c.topic !== 'hazard') return null;
+  if (c.value === 'unstable') return mkFact('sign', SIGN_BASE.bldg, { kind: 'bldg', level: 1, region: -1, x: -1, y: -1 }, '신고자', sim.t, c.conf, false, '신고 내용: 무언가 계속 무너지는 소리 — 2차 붕괴 위험');
+  if (c.value === 'gas' && I.assessment && I.assessment.type === 'hazmat') return mkFact('sign', SIGN_BASE.gasUnknown, { kind: 'gas', level: 1, region: -1, x: -1, y: -1 }, '신고자', sim.t, c.conf, false, '신고 내용: 가스 냄새');
+  return null;
 }
 
 /** 공중 관측 거리(칸): 낮 9 · 비 7 · 밤 4 (탐조등이 작동하면 8). 안개에는 헬기가 뜨지 않는다 */
@@ -465,10 +477,22 @@ export function agentCost(sim: Sim, s: Scene, a: FieldAgent, allowBlockers = tru
   const est = 1 + (a.rng.next() - 0.5) * (1 - r.judgment) * 0.9;
   const clearCost = (22 / (0.5 + r.skills.rescue * 0.8 + toolFor(sim, a.rid, 'clear') * 0.5)) * est;
   const forceCost = (15 / (0.6 + r.skills.rescue * 0.6 + toolFor(sim, a.rid, 'force') * 0.6 + r.skills.law * 0.3)) * est;
+  // (X6 §5.1) 믿음 속 지휘 상태의 단계 3 구역(철수) 칸은 지나갈 수 없다 — 지나가다 철수 의무에 걸려 "들어감 → 철수 → 다시 배정"을 되풀이하지 않게.
+  // 철수 중·제한적 구조 진입(risky)을 맡음·업고 있음·지금 그 구역 안에 서 있는 대원은 예외(나가는 길을 막지 않는다). 피하는 곳(a.avoid — 조짐을 보고 물러난 곳)은 +20
+  let zm: Uint8Array | null = null;
+  const opsV = a.beliefs.val<OpsFact>('ops', OPS_ID);
+  if (opsV && opsV.zones && opsV.zones.length) {
+    const tk = a.task;
+    const exempt = a.carrying !== -1 || (tk !== null && (tk.kind === 'evacuate' || (tk.workId >= 0 && s.board[tk.workId] !== undefined && s.board[tk.workId].risky === true)));
+    if (!exempt) { const m = zoneMask(s, opsV.zones); if (m[tileOf(s, a.x, a.y)] < 3) zm = m; }
+  }
+  const av = a.avoid !== undefined && a.avoid.until > sim.t ? a.avoid : null;
   return (i: number): number => {
     const t = s.tiles[i];
     if (!staticPass(t)) return -1;
+    if (zm !== null && zm[i] >= 3) return -1;
     let c = t === T.TREE ? 0.7 : 0;
+    if (av !== null && inAvoid(s, av, i)) c += 20;
     if (shun) { const rg = s.region[i]; if (rg >= 0 && s.regions[rg].indoor) c += 6; }
     const b = a.beliefs.get('blk', i);
     if (b && b.value !== 'none') {
@@ -487,6 +511,14 @@ export function agentCost(sim: Sim, s: Scene, a: FieldAgent, allowBlockers = tru
     }
     return c;
   };
+}
+
+/** (X6 §5.1) 칸 i 가 피하는 곳(구획 목록 또는 원) 안인가 */
+export function inAvoid(s: Scene, av: NonNullable<FieldAgent['avoid']>, i: number): boolean {
+  if (i < 0) return false;
+  if (av.r > 0) { const dx = (i % s.w) - av.x, dy = ((i / s.w) | 0) - av.y; if (dx * dx + dy * dy <= av.r * av.r) return true; }
+  const rg = regionAt(s, i);
+  return rg >= 0 && av.regions.indexOf(rg) >= 0;
 }
 
 export function hasWork(a: FieldAgent): boolean { return a.task !== null && a.task.kind !== 'standby'; }
@@ -508,7 +540,9 @@ export function workLabel(s: Scene, w: WorkItem, sim?: Sim): string {
   const names: Record<WorkKind, string> = {
     sizeup: '현장 평가', search: `${reg} ${w.thorough ? '정밀 ' : ''}수색`, suppress: `${reg} 화재 진압`, hookup: '소화전 연결', clear: '잔해 제거', force: '문 강제 개방',
     extricate: `${cas} 구출`, treat: `${cas} 응급 처치`, carry: `${cas} 이송`, load: `${cas} 구급차 탑승`, traffic: '교통 통제',
-    mitigate: w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? '균열부 보강' : w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'valve' ? '가스 밸브 차단' : '연료 누출 조치',
+    mitigate: w.prop < 0 ? `${reg ? reg + ' ' : ''}가스 재측정`      // (X6 §5.7) 칸만 있는 작업
+      : s.props[w.prop] && s.props[w.prop].kind === 'gas' ? (s.props[w.prop].skin === 'drum' ? '드럼통 냉각' : '가스 용기 냉각')      // (X6 §5.8)
+      : s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? '균열부 보강' : s.props[w.prop] && s.props[w.prop].kind === 'valve' ? '가스 밸브 차단' : '연료 누출 조치',
     perimeter: s.kind === 'hazmat' ? `${w.tile === 0 ? '앞쪽' : '뒤쪽'} 출입구 통제` : `${exitName(s, w.tile)} 봉쇄`, negotiate: `${hos} 협상`, engage: `${hos} 대응`, arrest: `${hos} 검거`, interview: '목격자 면담', clearRoad: '도로 정리', rescueMate: '동료 구조', waterRescue: `${cas} 수난 구조`, escort: `${cas} 동행`,
     defuse: '폭발물 해체', overhaul: `${reg} 잔불 정리`,
     hoist: `${cas} 호이스트 인양`, airDrop: `${reg} 공중 물 투하`,
@@ -563,6 +597,18 @@ const scbaOk = (sim: Sim, rid: number, afterSwap: boolean): boolean => hasKit(si
 function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: boolean): number {
   const r = resp(sim, a), u = sim.units[a.unitId], rid = a.rid;
   if (r.dept === 'civil') return r.status === 'injured' ? 0 : civilFit(sim, s, rid, w);      // (N8 §5.3.3) 유관 기관은 자기 일만 (다치면 가벼운 일도 없다 — 그 목록에 자기 일이 없다)
+  // (X6 §5.3·§5.1·§5.6) 진입 금지 구역의 문을 안전망으로 (이미 맡은 일이 구역 안이 되면 0 — 단계 2 의 허락된 일, 단계 3 의 밖에서 하는 진압·냉각은 예외),
+  // 조짐을 보고 물러난 곳(a.avoid — 30초), 제한적 구조 진입(risky — 건강한 소방 대원만: 공기호흡기·명부의 지구력 40 이상)
+  if (s.ops !== undefined || a.avoid !== undefined || w.risky) {
+    if (s.ops !== undefined && gateBlocks(sim, s, a, w.kind, w)) return 0;
+    if (w.risky && (!scbaOk(sim, rid, afterSwap) || r.stamina < 40)) return 0;
+    if (a.avoid !== undefined && a.avoid.until > sim.t) { const ti = targetTile(s, a, w.kind, w); if (ti === -2 ? a.avoid.regions.indexOf(w.region) >= 0 : inAvoid(s, a.avoid, ti)) return 0; }
+    // 단계 2 구역 안의 구조 대상·동료를 데려오는 일은 위험한 건물 실내와 같은 자격(공기호흡기)으로만 (§5.3 — 몸 상태는 보고된 것만: R3 전에는 H1 의 물러남에 맡긴다)
+    if (s.ops !== undefined && s.ops.zones.length && (w.kind === 'carry' || w.kind === 'extricate' || w.kind === 'waterRescue' || w.kind === 'rescueMate') && !scbaOk(sim, rid, afterSwap)) {
+      const ti = targetTile(s, a, w.kind, w);
+      if (ti >= 0 && (zoneLevelAt(s, s.ops.zones, ti) >= 2 || regionLevel(s.ops.zones, regionAt(s, ti)) >= 2)) return 0;
+    }
+  }
   const hot = s.kind === 'armed' && s.secureAt < 0;
   const indoorRisk = TYPE_DEFS[s.kind].indoorRisk;      // 위험한 건물의 유형 (incidentTypes — 화재·가스 누출·붕괴)
   const fireRisk = (regionId: number): boolean => regionId >= 0 && ((a.beliefs.val<number>('fire', regionId) ?? 0) > 0.25 || indoorRisk);      // 불이 났거나, 가스가 찼거나, 무너질 수 있는 건물 안은 공기호흡기를 멘 대원만 들어간다
@@ -618,6 +664,10 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
     case 'load': return canCarryPatients(sim, u) && a.unitId === w.prop ? 1 : 0;
     case 'traffic': return r.dept === 'police' ? 1 : 0.45;
     case 'mitigate': {
+      // (X6 §5.7) 가스 재측정(소품 없이 문턱 칸만): 가스 측정기를 든 대원만 — 그 칸에 서면 perceiveSigns 가 읽는다
+      if (w.prop < 0) return w.tile >= 0 && hasKit(sim, rid, 'gasMeter') ? 0.6 + 0.4 * r.experience : 0;
+      // (X6 §5.8) 가스 용기·드럼통의 냉각: 진압과 같은 자격 (관창을 들고 물·펌프가 된다)
+      if (s.props[w.prop] && s.props[w.prop].kind === 'gas') return hasKit(sim, rid, 'hose') && airOk(sim, rid, afterSwap) && !u.pumpFailed && (u.water > 0 || u.hydrant) ? r.skills.fire : 0;
       const shore = w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'unstable';
       const k = shore ? r.skills.rescue : r.skills.fire;
       return k >= 0.3 ? k + (!shore && hasKit(sim, rid, 'plugKit') ? 0.2 : 0) : 0;      // 누출 차단 장비는 밸브·연료 누출에 쓴다 (균열부 보강은 아니다)
@@ -633,6 +683,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
       // 불·가스·붕괴 위험 구역 안에 쓰러진 동료: 공기호흡기를 멘 대원만 들어간다 (구하러 들어간 대원이 다시 쓰러지는 연쇄를 막는다). 구역은 믿음 속 위치로 본다
       const mb = a.beliefs.val<MateBelief>('mate', w.mate);
       if (mb) { const rg = s.region[mb.y * s.w + mb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg) && !scbaOk(sim, rid, afterSwap)) return 0; }
+      if (mb && mb.trapped && r.skills.rescue < 0.3) return 0;      // (X6 §4.8) 잔해에 깔린 동료: 잔해를 들어낼 줄 아는 대원만 (구출 능력 0.3 이상)
       return 0.5 + r.fitness * 0.3 + r.teamwork * 0.2;
     }
     case 'waterRescue': return 0.22 + r.skills.rescue * 0.5 + toolFor(sim, rid, 'water') * 0.28;
@@ -684,3 +735,6 @@ export function nearDoor(s: Scene, i: number): boolean { return doorAt(s, i) !==
 import { docFit } from './doctrine';
 // (X6) 조짐 관찰 (field/catastrophe.ts — 그 파일도 이 파일의 learn·regionNameAt 을 쓴다. 함수 안에서만 서로 부르므로 순환 import 는 문제없다)
 import { perceiveSigns, vesselName } from './catastrophe';
+// (X6 단계 5) 지휘 상태의 도움 함수 (진입 금지 구역·문·피하는 곳 — 진실을 읽지 않는다)
+import { OPS_ID, SIGN_BASE, gateBlocks, regionAt, regionLevel, targetTile, zoneLevelAt, zoneMask } from './ops';
+import type { OpsFact } from './ops';

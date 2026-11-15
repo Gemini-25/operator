@@ -319,15 +319,16 @@ export function pumpTended(sim: Sim, s: Scene, unitId: number): boolean {
   return false;
 }
 
-function spray(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number): boolean {
+/** eff = 효과 배율(물이 불에 닿는 양), wmul = 물 소모 배율 — (X6 §5.5) 외부 방수는 0.7·1.4 (R2 의 defensive 가 같은 인자를 쓴다) */
+function spray(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, eff = 1, wmul = 1): boolean {
   const I = sim.incidents[s.incidentId];
   const r = resp(sim, a), u = sim.units[a.unitId];
   if (u.pumpFailed) { equipTrouble(sim, s, a, 'pump'); return false; }
   if (u.water <= 0 && !u.hydrant) { equipTrouble(sim, s, a, 'water'); return false; }
-  applyWater(s, tx, ty, 0.15 * (0.6 + 0.8 * r.skills.fire) * staminaF(r) * sim.dt);
+  applyWater(s, tx, ty, 0.15 * (0.6 + 0.8 * r.skills.fire) * staminaF(r) * sim.dt * eff);
   // 펌프를 맡은 대원(기관원·사다리 조작원)이 차 곁(대기 지점 6칸 안)에서 펌프를 보고 있으면 물을 덜 쓰고 펌프가 덜 닳는다
   const tended = pumpTended(sim, s, a.unitId);
-  if (!u.hydrant) u.water = Math.max(0, u.water - 1.5 * (tended ? 0.9 : 1) * sim.dt);
+  if (!u.hydrant) u.water = Math.max(0, u.water - 1.5 * (tended ? 0.9 : 1) * wmul * sim.dt);
   u.pumpCond -= 0.0042 * sim.tune.pumpWearMul * (tended ? 0.6 : 1) * sim.dt;
   drain(sim, a, 0.55);
   if (sim.tick % 2 === 0) pushFx(sim, s, 'spray', a.x, a.y, tx + s.rng.range(-0.4, 0.4), ty + s.rng.range(-0.4, 0.4), undefined, undefined, 0.3);
@@ -500,6 +501,115 @@ function breach(sim: Sim, s: Scene, a: FieldAgent): void {
   emit(sim, { inc: I.id, role: 'RESPONDER', actor: resp(sim, a).name, rid: a.rid, kind: 'action', imp: 3, text: s.bangAt === sim.t ? `진입! 섬광탄을 던져 넣고 들어갑니다${bangs ? ` (용의자 ${bangs}명 무력화)` : ''}.` : '진입! 출입문을 열고 들어갑니다.' });
 }
 
+/** (X6 §5.5) 그 대원이 단계 2 구역(외부 방어 아님)인 그 구획 안에 서 있는가 — 거기서 이미 안에서 진압하던 대원은 안에서 잇는다 */
+function insideLevel2(s: Scene, a: FieldAgent, region: number): boolean {
+  const ops = s.ops;
+  return !!ops && ops.mode !== 'defensive' && regionLevel(ops.zones, region) === 2 && regionAt(s, tileOf(s, a.x, a.y)) === region;
+}
+/** (X6 §5.5) 서 있는 자리(spot)에서 그 구획의 불 칸 가운데 5.5칸 안·시야선이 닿는 가장 가까운 칸 (-1 = 없음). 진실(불)을 읽는다 — 실행기 */
+function exteriorFire(s: Scene, region: number, spot: number): number {
+  const w = s.w, sx = spot % w, sy = (spot / w) | 0, tl = s.regions[region].tiles;
+  let best = -1, bd = EXT_RANGE + 1e-6;
+  for (let q = 0; q < tl.length; q++) {
+    const i = tl[q];
+    if (s.fire[i] <= 0.05) continue;
+    const d = dist(sx, sy, i % w, (i / w) | 0);
+    if (d < bd && los(s, sx, sy, i % w, (i / w) | 0)) { bd = d; best = i; }
+  }
+  return best;
+}
+/**
+ * (X6 §5.5) 외부 방수: 실내가 아니고 단계 3 구역 밖인 자리(구조 위험 때문이면 건물 칸에서 2칸 넘게 떨어진 자리)에서 그 구획의 불 칸에 시야선(창·열린 문·무너진 벽 너머)이
+ * 닿는 5.5칸 안으로 가서 효과 0.7·물 1.4배로 쏜다. 창 없는 안쪽 방은 밖에서 끌 수 없다 — 그것이 외부 방어의 실제 결과다.
+ * 돌려주는 값: true = 이 틱은 끝(밖에서 했거나 실패로 끝냈다) · false = 밖에서 닿을 자리가 없는데 안에서 해도 되는 단계 2 구역이다(안에서 잇는다)
+ */
+function runExterior(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, region: number): boolean {
+  const ops = s.ops!, r = resp(sim, a), reg = s.regions[region];
+  if (!reg) { finishTask(sim, s, a, false, 'nopath'); return true; }
+  let lit = false;
+  for (const i of reg.tiles) if (s.fire[i] > 0.05) { lit = true; break; }
+  if (!lit) {      // 그 구획에 불이 없다: 안에서의 진압 확인과 같다 (밖에서 본 대로 알린다)
+    learn(sim, a, mkFact('fire', reg.id, 0, r.name, sim.t, 1, true, `${reg.name} 화재 진압 확인 (외부)`), true, true);
+    r.xpGained += 0.003; finishTask(sim, s, a, true); return true;
+  }
+  const zm = ops.zones.length ? zoneMask(s, ops.zones) : null;
+  // 자리 고르기: 처음이거나, 지금 자리에서 불이 보이지 않게 됐거나, 자리가 구역 안이 됐다
+  let spot = t.phase === 1 ? Math.round(t.ty) * s.w + Math.round(t.tx) : -1;
+  if (spot >= 0 && zm && zm[spot] >= 3) spot = -1;
+  if (spot < 0) {
+    const far = ops.mode === 'defensive' || ops.zones.some((z) => z.kind === 'bldg' || (z.kind === 'struct' && z.regions.indexOf(region) >= 0));
+    const cands = exteriorSpots(s, region, far), order: number[] = [];
+    for (let q = 0; q < cands.length; q++) if (!zm || zm[cands[q]] < 3) order.push(cands[q]);
+    order.sort((p, q) => dist(a.x, a.y, p % s.w, (p / s.w) | 0) - dist(a.x, a.y, q % s.w, (q / s.w) | 0) || p - q);
+    for (const c of order) { const f = exteriorFire(s, region, c); if (f >= 0) { spot = c; t.tile = f; break; } }
+    if (spot < 0) {
+      // 밖에서 닿을 자리가 없다. 단계 2 구역(외부 방어 아님)이고 들어갈 수 있으면 안에서 한다 — 허락된 일이다. 그 밖은 실패(8초 보류 — 두 번이면 지휘 규칙이 거둔다)
+      if (ops.mode !== 'defensive' && regionLevel(ops.zones, region) === 2 && regionReachable(s, ops, region)) return false;
+      finishTask(sim, s, a, false, 'nopath'); return true;
+    }
+    t.phase = 1; t.tx = spot % s.w; t.ty = (spot / s.w) | 0; t.progress = sim.t + 1.6; a.path = null;
+  }
+  a.label = '외부 방수';
+  const m = moveTo(sim, s, a, t.tx, t.ty, 0.6);
+  if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return true; }
+  if (m !== 'arrived') return true;
+  if (t.tile < 0 || s.fire[t.tile] <= 0.05 || sim.t > t.progress) {
+    t.tile = exteriorFire(s, region, spot); t.progress = sim.t + 1.6;
+    if (t.tile < 0) { t.phase = 0; return true; }      // 이 자리에서는 더 보이지 않는다 — 다음 틱에 다른 자리를 찾는다
+  }
+  const tx = t.tile % s.w, ty = (t.tile / s.w) | 0;
+  a.fx = tx - a.x; a.fy = ty - a.y; a.ring = 1 - s.fire[t.tile];
+  if (!spray(sim, s, a, tx, ty, 0.7, 1.4)) finishTask(sim, s, a, false, 'equip');
+  void I;
+  return true;
+}
+
+/**
+ * (X6 §5.8) 가스 용기·드럼통의 냉각 (mitigate 의 갈래 — 새 임무 종류 없음): 시야선이 닿는 3.2칸 안으로 가서 물을 뿌린다(밖에서 하면 §5.5 의 자리에서 5.5칸).
+ * 열이 0.15 아래로 내려가고 2.5칸 안에 불 0.3 이상이 없으면 끝 — 영구 조치가 아니다(mitigated 를 세우지 않는다. 불이 다시 닿으면 다시 데워진다).
+ * 이미 터졌으면 본 대로 다시 알린다 (이미 끝나 있던 일은 조용히 + 강제로 — reportDone)
+ */
+function runCool(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, p: Prop): void {
+  const r = resp(sim, a), u = sim.units[a.unitId];
+  const where = regionNameAt(s, p.x, p.y), nm = p.skin === 'drum' ? '드럼통' : '가스 용기';
+  if (p.exploded || p.removed) { reportDone(sim, a, mkFact('haz', p.id, { kind: 'gas', active: false, x: p.x, y: p.y }, r.name, sim.t, 1, true, `${nm} 폭발 확인`)); finishTask(sim, s, a, true); return; }
+  if (u.pumpFailed || (u.water <= 0 && !u.hydrant)) { equipTrouble(sim, s, a, u.pumpFailed ? 'pump' : 'water'); finishTask(sim, s, a, false, 'equip'); return; }
+  let hot = false;
+  for (let y = Math.max(0, p.y - 3); y <= Math.min(s.h - 1, p.y + 3) && !hot; y++) for (let x = Math.max(0, p.x - 3); x <= Math.min(s.w - 1, p.x + 3); x++) if (s.fire[y * s.w + x] >= 0.3 && dist(x, y, p.x, p.y) <= 2.5) { hot = true; break; }
+  if ((p.heatLoad ?? 0) < 0.15 && !hot) {
+    learnQuiet(sim, a, mkFact('sign', SIGN_BASE.vessel + p.id, { kind: 'vessel', level: 0, region: regionAt(s, tileOf(s, p.x, p.y)), x: p.x, y: p.y, prop: p.id, down: true }, r.name, sim.t, 1, true, `${where} ${nm} 열기 가라앉음`));
+    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: `${nm === '드럼통' ? '드럼통' : '가스 용기'} 냉각 완료. 폭발 위험을 낮췄습니다.` });
+    r.xpGained += 0.003;
+    finishTask(sim, s, a, true);
+    return;
+  }
+  const out = opsExterior(s, regionAt(s, tileOf(s, p.x, p.y))) && !isIndoor(s.tiles[tileOf(s, a.x, a.y)]);
+  const m = moveTo(sim, s, a, p.x, p.y, out ? EXT_RANGE : 3.2, true);
+  if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+  if (m !== 'arrived') return;
+  a.fx = p.x - a.x; a.fy = p.y - a.y; a.label = `${nm} 냉각`;
+  a.ring = 1 - Math.min(1, p.heatLoad ?? 0);
+  if (!spray(sim, s, a, p.x, p.y, out ? 0.7 : 1, out ? 1.4 : 1)) finishTask(sim, s, a, false, 'equip');
+}
+
+/**
+ * (X6 §5.1) 철수 이동: 단계 3 구역 밖이고 건물 칸에서 2칸 넘게 떨어진 바깥 칸(대개 대기 지점)으로 간다 — 물러나는 길이라 불길도 뚫는다(후퇴와 같다).
+ * 닿으면 인원 점검 응답(ops 100 + rid)을 조용히 보낸다. 길이 없으면 2초 기다렸다 다시 찾는다(잔해는 지금의 "장애물 발견 → 치우기"로 뚫는다)
+ */
+function runEvacuate(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
+  const ops = a.beliefs.val<OpsFact>('ops', OPS_ID);
+  const zones: ZoneLike[] = ops && ops.zones ? ops.zones.slice() : [];
+  if (a.avoid && a.avoid.until > sim.t) zones.push({ level: 3, regions: a.avoid.regions, x: a.avoid.x, y: a.avoid.y, r: a.avoid.r });
+  const pt = evacPoint(s, zones);
+  const m = moveTo(sim, s, a, pt.x, pt.y, 1.6, false, true);
+  if (m === 'arrived') {
+    const r = resp(sim, a);
+    finishTask(sim, s, a, true);
+    learnQuiet(sim, a, mkFact('ops', OPS_PAR + a.rid, { par: true, t: sim.t }, r.name, sim.t, 1, true, `${r.name} 철수 완료`));
+    a.label = '철수 완료';
+  } else if (m === 'nopath') { a.path = null; t.wait = 2; }
+}
+
 function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
   const I = sim.incidents[s.incidentId];
   const r = resp(sim, a), u = sim.units[a.unitId];
@@ -558,6 +668,10 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     }
     case 'suppress': {
       if (u.pumpFailed || (u.water <= 0 && !u.hydrant)) { equipTrouble(sim, s, a, u.pumpFailed ? 'pump' : 'water'); finishTask(sim, s, a, false, 'equip'); return; }
+      // (X6 §5.5) 외부 방어·진입 금지 구역·단계 3 구역 너머: 밖에서 방수한다. 단계 2 구역 안에서 이미 진압하던 대원은 안에서 잇는다
+      if (opsExterior(s, t.region) && !(t.phase === 2 && insideLevel2(s, a, t.region))) { if (runExterior(sim, s, I, a, t, t.region)) return; }
+      if (t.phase === 1) { t.tile = -1; a.path = null; }      // 밖에서 하다 안으로 (구역이 풀렸거나, 단계 2 구역인데 밖에서 닿을 자리가 없다)
+      t.phase = 2;      // 안에서 한다
       if (t.tile < 0 || s.fire[t.tile] <= 0.05 || sim.t > t.progress) { t.tile = nearestFireTile(sim, s, a, t.region); t.progress = sim.t + 1.6; }
       const reg = s.regions[t.region];
       if (t.tile < 0) {
@@ -782,7 +896,18 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       return;
     }
     case 'mitigate': {
+      if (t.prop < 0) {
+        // (X6 §5.7) 가스 재측정: 그 구획의 문턱 칸에 가서 1초 서 있는다 — 읽기는 perceive 의 조짐 관찰(perceiveSigns)이 한다
+        const m = moveTo(sim, s, a, t.tile % s.w, (t.tile / s.w) | 0, 0.5);
+        if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+        if (m !== 'arrived') return;
+        if (t.progress === 0) perceive(sim, s, a);
+        t.progress += dt; a.ring = t.progress;
+        if (t.progress >= 1) { perceive(sim, s, a); finishTask(sim, s, a, true); }
+        return;
+      }
       const p = s.props[t.prop];
+      if (p.kind === 'gas') { runCool(sim, s, I, a, t, p); return; }      // (X6 §5.8) 가스 용기·드럼통의 냉각
       const doneText = p.kind === 'unstable' ? '균열부 보강 완료' : p.kind === 'valve' ? (p.ignited ? '누출 가스 발화' : '가스 밸브 차단 완료') : p.ignited ? '누출 연료 발화' : '연료 누출 조치 완료';
       if (p.mitigated || p.ignited) { learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y }, r.name, sim.t, 1, true, doneText), true, true); finishTask(sim, s, a, true); return; }
       const m = moveTo(sim, s, a, p.x, p.y, 1.6);
@@ -1296,6 +1421,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       finishTask(sim, s, a, false, 'preempt');
       return;
     }
+    case 'evacuate': runEvacuate(sim, s, a, t); return;      // (X6 §5.1) 철수 이동
     case 'retreat': {
       const m = moveTo(sim, s, a, s.staging.x, s.staging.y, 2, false, true);      // 물러나는 길은 불길도 뚫는다
       if (m === 'arrived') {
@@ -1413,3 +1539,7 @@ export const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask 
 
 // ── (R3) 대응 교본의 판단 지점 (field/doctrine.ts 의 docGate — 자기 모드). 판단은 교본 함수가, 효과(이동·기다림)는 이 파일이 한다 ──
 import { docGate } from './doctrine';
+
+// ── (X6 단계 5) 지휘 상태의 도움 함수 (진입 금지 구역·외부 방수 자리·철수 지점 — ops.ts 는 진실을 읽지 않는다. 불을 고르는 것은 이 파일이다) ──
+import { EXT_RANGE, OPS_ID, OPS_PAR, SIGN_BASE, evacPoint, exteriorSpots, opsExterior, regionAt, regionLevel, regionReachable, zoneMask } from './ops';
+import type { OpsFact, ZoneLike } from './ops';

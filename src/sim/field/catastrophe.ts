@@ -29,7 +29,7 @@ import { lastFx, noteBoom } from './fxlog';
 import { blast, pushFx } from './hazards';
 import { hurtCas, hurtHostile, hurtResponder } from './injury';
 import { addProp } from './kit';
-import { FOOT_FLOOR_EDGE, FOOT_IN, FOOT_SHELL, SIGN_BASE, footprint, regionNbrs } from './ops';
+import { FOOT_FLOOR_EDGE, FOOT_IN, FOOT_SHELL, NO_STRUCT, SIGN_BASE, footprint, regionNbrs } from './ops';
 import { RUIN_FURN, RUIN_TOTAL, RUIN_WALL, markRuin, recordFall } from './ruins';
 
 /** 균형 상수 — 모두 시작값이다 (설계서 §2.9). 균형 단계(8)가 §8.4 의 순서로 맞춘다 */
@@ -62,7 +62,7 @@ export const CAT = {
 /** CatState.loss 의 원인 칸 (구획 × LOSS_N) */
 export const LOSS_FIRE = 0, LOSS_BURN = 1, LOSS_CREEP = 2, LOSS_IMPACT = 3, LOSS_BLAST = 4, LOSS_QUAKE = 5, LOSS_N = 6;
 /** 구조 규칙을 쓰지 않는 변형 (건물이 아니다). 용기·가스 규칙은 쓴다 */
-export const NO_STRUCT = ['ship', 'plane', 'train', 'pileup', 'crane', 'landslide', 'elevator', 'wild'];
+export { NO_STRUCT } from './ops';      // (단계 5) 지휘 쪽(ops.structScene)도 같은 목록을 쓰므로 생김새 도움 함수(ops.ts)로 옮겼다
 
 const RNGS = new WeakMap<Scene, Rng>();
 /** 이 현장의 실행 중 판정용 난수 흐름 cat:<현장 id> (붕괴 판정·잔해 자리·사람의 결과·스파크 …). 다른 흐름과 섞이지 않고, 만들 때 부모(sim.rng)를 소비하지 않는다 */

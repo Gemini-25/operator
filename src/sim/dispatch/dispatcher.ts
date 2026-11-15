@@ -3,7 +3,7 @@
 
 import type { Sim } from '../engine';
 import { emit, markRecovered, raiseProblem } from '../events';
-import { transmit } from '../field/agents';
+import { hazardSign, transmit } from '../field/agents';
 import { mkFact } from '../field/beliefs';
 import { mountainAt, nodeName } from '../city';
 import { crewHasKit, fieldCrew } from '../crews';
@@ -404,6 +404,30 @@ export function fieldReport(sim: Sim, I: Incident, s: Scene, m: RadioMsg): void 
     I.fieldType = tb.value;
     assess(sim, I, '현장 지휘관 보고');
   }
+  // (X6 §5.9) 현장 상황 보고에 붕괴·폭발·전소 사실이 실려 왔다: 위험도를 다음 문턱까지 올리고 위험을 더한 뒤 다시 평가한다 (지휘관이 보낸 것만 — 진실 아님)
+  if (m.kind === 'sitrep') {
+    const ev = m.facts.filter((f) => f.type === 'sign' && f.value && f.value.kind === 'event');
+    if (ev.length && I.assessment) {
+      const fr = I.fieldRisk ?? (I.fieldRisk = { sev: 0, risks: [] });
+      const what: string[] = [];
+      let added = false;
+      for (const f of ev) {
+        const w = f.value.what as string;
+        const r = w === 'partial' || w === 'total' ? '건물 붕괴' : w === 'gas' || w === 'vessel' || w === 'dust' ? '폭발 발생' : w === 'burnout' ? '건물 전소' : '';
+        if (r && what.indexOf(r) < 0) what.push(r);
+        if (r && fr.risks.indexOf(r) < 0) { fr.risks.push(r); added = true; }
+      }
+      if (what.length) {
+        const was = I.assessment.severity, prev = Math.max(was, fr.sev);
+        fr.sev = Math.min(3, prev < 1.7 ? 1.7 : prev < 2.4 ? 2.4 : 3);
+        // 이미 가장 높은 위험도이고 새 위험도 없으면 다시 평가하지 않는다 (같은 기록을 되풀이하지 않게)
+        if (added || sevName(fr.sev) !== sevName(was)) {
+          emit(sim, { inc: I.id, role: 'ANALYST', actor: '상황 분석 AI', kind: 'assess', imp: 2, causes: [m.eventId], text: `현장 보고 반영: ${what.join('·')} — 위험도 ${sevName(was)} → ${sevName(Math.max(was, fr.sev))}.` });
+          assess(sim, I, '현장 상황 보고');
+        }
+      }
+    }
+  }
   while (I.fieldNeedsSeen < s.requests.length) {
     const q = s.requests[I.fieldNeedsSeen++];
     I.unmet[q.need] = Math.max(I.unmet[q.need] ?? 0, q.count);
@@ -416,6 +440,12 @@ export function fieldReport(sim: Sim, I: Incident, s: Scene, m: RadioMsg): void 
 export function briefUpdate(sim: Sim, I: Incident, c: Claim): void {
   const s = sim.scenes[I.id];
   if (!s || !s.agents.length) return;
+  if (c.topic === 'hazard') {
+    // (X6 §3.6) 위험 진술(아직도 뭐가 계속 떨어져요 · 가스가 새요)은 미확인 조짐으로 현장에 넘긴다 (위치 모르는 화재의 가스통은 넘기지 않는다)
+    const f = hazardSign(sim, I, c);
+    if (f) transmit(sim, s, null, -1, 'brief', [f], `현장 지휘관, 추가 신고 내용 전달: ${f.text.replace('신고 내용: ', '')} (미확인).`, -1, 1, I.callEvents.slice(-1));
+    return;
+  }
   if (c.topic !== 'count' && c.topic !== 'trapped' && c.topic !== 'detail' && c.topic !== 'injured') return;
   let count: number | null = null, region = -1;
   for (const q of I.claims) {

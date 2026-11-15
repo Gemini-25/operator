@@ -36,6 +36,7 @@ function setTask(sim: Sim, s: Scene, a: FieldAgent, kind: Parameters<typeof make
 
 function dangerScore(sim: Sim, s: Scene, a: FieldAgent): number {
   const r = resp(sim, a);
+  sdScore = 0; sdWhy = ''; sdRegion = -1;      // (X6) 조짐의 몫은 이 대원의 것만
   if (mustRetreat(r)) return 1.4;      // 다쳤다: 체력 40 아래, 또는 상처 출혈이 크고 체력이 70 아래 (자기 몸이다 — injury.mustRetreat)
   let u = 0;
   const ax = Math.round(a.x), ay = Math.round(a.y);
@@ -51,9 +52,74 @@ function dangerScore(sim: Sim, s: Scene, a: FieldAgent): number {
   if (r.dept !== 'police' && sim.t - a.underFireT < 4) u += 0.7;
   if (r.dept === 'police' && sim.t - a.underFireT < 3 && !a.inCover && r.health < 70) u += 0.35 * (1.3 - r.composure);
   u *= 1.25 - 0.5 * r.composure;
+  u += signDanger(s, a);      // (X6 §5.1) 자기 믿음 속 조짐 — 침착함이 조짐 점수까지 깎지 않게 곱셈 뒤에 더한다
   if (a.carrying !== -1) u *= 0.55;
   return u;
 }
+
+// ───────────────────────── (X6 §5.1) 조짐을 보면 물러난다 — 믿음만 읽는다 ─────────────────────────
+/** 마지막 signDanger 의 점수와 까닭 ('gas' 가스 농도 · 'roll' 롤오버) — think 가 후퇴를 고를 때 피하는 곳과 기록 문구에 쓴다 */
+let sdScore = 0, sdWhy = '', sdRegion = -1;
+/**
+ * 점수: 자기 자리의 가스 조짐 2 이고 자기 구역·이웃 구역의 불 믿음 > 0.1 → +0.9 · 자기 방의 롤오버(fire 조짐 2)이고 그 방을 진압하는 중이 아님 → +0.6.
+ * 단계 3 은 점수가 아니라 의무다(evacDuty) — 점수로 더하면 진압·운반 중인 대원과의 비교가 동전 던지기가 된다
+ */
+function signDanger(s: Scene, a: FieldAgent): number {
+  sdScore = 0; sdWhy = ''; sdRegion = -1;
+  const B = a.beliefs;
+  if (!B.list('sign').length) return 0;
+  const ar = regionAt(s, tileOf(s, a.x, a.y));
+  if (ar < 0) return 0;
+  const g = B.val<SignBelief>('sign', SIGN_BASE.gas + ar);
+  if (g && g.level === 2) {
+    let hot = (B.val<number>('fire', ar) ?? 0) > 0.1;
+    if (!hot) for (const n of regionNbrs(s)[ar] ?? []) if ((B.val<number>('fire', n) ?? 0) > 0.1) { hot = true; break; }
+    if (hot) { sdScore += 0.9; sdWhy = 'gas'; sdRegion = ar; }
+  }
+  const f = B.val<SignBelief>('sign', SIGN_BASE.fire + ar);
+  if (f && f.level >= 2 && !(a.task && a.task.kind === 'suppress' && a.task.region === ar)) { sdScore += 0.6; if (!sdWhy) sdWhy = 'roll'; sdRegion = ar; }
+  return sdScore;
+}
+/** 그 구역과 이웃 구역 */
+const withNbrs = (s: Scene, r: number): number[] => [r, ...(regionNbrs(s)[r] ?? [])];
+/**
+ * 철수 의무 (§5.1): 업고 있지 않은 대원이 ① 믿음 속 지휘 상태(ops 사실)의 단계 3 구역 안에 있거나(철수 명령 — 'order'),
+ * ② 자기 믿음의 임박 조짐을 안다(자기 구역·이웃 구역의 구조 3, 자기 구역의 가스 3, 7칸 안 용기 3, 건물 칸 위에서 건물 3).
+ * 돌려주는 값: 까닭 ('order' · 'struct' · 'gas' · 'vessel' · 'bldg') 또는 ''. ② 면 a.avoid(30초)를 정한다
+ */
+function evacDuty(sim: Sim, s: Scene, a: FieldAgent): string {
+  if (a.carrying !== -1) return '';      // 업고 있으면 그 운반이 곧 밖으로 나가는 길이다
+  const B = a.beliefs, ai = tileOf(s, a.x, a.y);
+  const ops = B.val<OpsFact>('ops', OPS_ID);
+  if (ops && ops.zones && ops.zones.length && zoneLevelAt(s, ops.zones, ai) >= 3) return 'order';
+  const signs = B.list('sign');
+  if (!signs.length) return '';
+  const ar = regionAt(s, ai), near = ar >= 0 ? withNbrs(s, ar) : null;
+  for (const f of signs) {
+    const v = f.value as SignBelief;
+    if (v.level < 3 || v.kind === 'event') continue;
+    let why = '', regs: number[] = [], cx = -1, cy = -1, rad = 0;
+    if (v.kind === 'struct' && near && near.indexOf(v.region) >= 0) { why = 'struct'; regs = withNbrs(s, v.region); }
+    else if (v.kind === 'gas' && v.region === ar && ar >= 0 && !allowedHere(s, a)) { why = 'gas'; regs = withNbrs(s, ar); }
+    else if (v.kind === 'vessel' && dist(a.x, a.y, v.x, v.y) <= 7) { why = 'vessel'; cx = v.x; cy = v.y; rad = 7; regs = v.region >= 0 ? [v.region] : []; }
+    else if (v.kind === 'bldg' && footprint(s)[ai] >= 1) { why = 'bldg'; for (const rg of s.regions) if (rg.indoor) regs.push(rg.id); }
+    if (!why) continue;
+    a.avoid = { regions: regs, x: cx, y: cy, r: rad, until: sim.t + 30 };
+    return why;
+  }
+  return '';
+}
+/**
+ * 지금 하는 일이 진입 금지 구역(단계 2)에서도 허락된 일인가 (밸브 차단·냉각·진압·아는 구조 대상의 이송·구출·동료 구조 — ops.ALLOWED2).
+ * 가스 단계 3 은 지휘관에게 단계 2(새 진입 금지 — 허락된 일만)다: 밸브를 잠그러 들어간 대원이 측정값을 읽자마자 스스로 나오면 밸브는 끝내 잠기지 않는다
+ */
+function allowedHere(s: Scene, a: FieldAgent): boolean {
+  const t = a.task;
+  if (!t || t.workId < 0) return false;
+  const w = s.board[t.workId];
+  return !!w && ALLOWED2.has(w.kind);
+}
+const EVAC_TEXT: Record<string, string> = { struct: '천장이 내려앉고 있습니다. 물러납니다.', gas: '가스 농도가 위험합니다. 물러납니다.', vessel: '용기 안전밸브가 울립니다. 물러납니다!', bldg: '건물이 무너질 것 같습니다. 물러납니다.', roll: '롤오버 — 방에서 나갑니다.' };
 
 export function think(sim: Sim, s: Scene, a: FieldAgent): void {
   const I = sim.incidents[s.incidentId];
@@ -85,6 +151,26 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
   const hurt = mustRetreat(r);
   if (hurt && cur && cur.kind === 'retreat') { a.candidates = [{ label: '계속: 후퇴 (부상)', score: 1.4, chosen: true }]; return; }
 
+  // (X6 §5.1) 철수 — 점수가 아니라 의무: 철수 명령(믿음 속 지휘 상태의 단계 3 구역 안)과 자기 감각의 임박 조짐. R3 교본의 의무보다 앞.
+  // 철수 중에는 다른 갈래로 넘어가지 않는다 (작업판에 없는 임무라 "계속" 점수가 0.5 여서, 이것이 없으면 지시나 후퇴에 밀려 구역 안으로 되돌아간다)
+  if (cur && cur.kind === 'evacuate') { a.candidates = [{ label: '계속: 철수', score: 1.5, chosen: true }]; return; }
+  {
+    const why = evacDuty(sim, s, a);
+    if (why) {
+      if (cur && cur.workId >= 0) finishTask(sim, s, a, false, why === 'order' ? 'preempt' : 'danger');      // 자기 감각으로 물러나면 위험해서 놓은 것으로 남긴다 (곧바로 다시 맡기지 않게)
+      setTask(sim, s, a, 'evacuate', '철수');
+      a.candidates = [{ label: why === 'order' ? '의무: 철수 명령' : '의무: 임박 조짐 — 철수', score: 1.5, chosen: true }];
+      if (why === 'order') {
+        const ops = a.beliefs.val<OpsFact>('ops', OPS_ID)!;
+        if (a.opsSeen !== ops.t) { a.opsSeen = ops.t; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: '철수 명령 수신. 밖으로 나갑니다.' }); }
+      } else if (sim.t - a.lastRetreatLog >= 20) {
+        a.lastRetreatLog = sim.t;
+        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, causes: [I.lastEvent], text: EVAC_TEXT[why] });
+      }
+      return;
+    }
+  }
+
   // (R3) 교본의 의무와 놓기 — 설계서 R3 §2.6 의 4번 (X6 의 철수(evacuate) 의무가 들어오면 그 바로 뒤에 둔다). 단계 0: 줄이 없어 아무것도 하지 않는다
   const dSense = senseOf(s, a);
   if (cur && DOC_DUTY_TASKS.has(cur.kind)) return;
@@ -94,19 +180,23 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
   const opts: Option[] = [];
   // 1) 위험 회피
   const dng = dangerScore(sim, s, a);
+  const sd = sdScore, sdW = sdWhy, sdR = sdRegion;      // (X6) 그 점수 가운데 조짐의 몫 — 그 때문에 물러나면 피하는 곳(30초)과 까닭의 문구
   const swapR = dng > 0.3 && (!cur || cur.kind !== 'retreat') ? docRetreat(sim, s, a, dng, dSense) : null;      // (R3) P11 — 후퇴 후보를 교본 행동(엄폐)으로 바꿔 끼운다. 단계 0: 늘 null
   if (swapR) opts.push({ label: `교본 · ${swapR.rule.short}`, score: swapR.score, apply: () => docBegin(sim, s, a, swapR, XK) });
   else if (dng > 0.3 && (!cur || cur.kind !== 'retreat')) opts.push({ label: hurt ? '부상 — 후퇴' : '위험 회피 — 후퇴 후 재평가', score: dng, apply: () => {
     // 맡고 있던 작업은 위험해서 내려놓은 것으로 기록한다: 지휘관이 곧바로 같은 대원에게 다시 맡기지 않는다
     if (cur && cur.workId >= 0) finishTask(sim, s, a, false, 'danger');
     setTask(sim, s, a, 'retreat', '후퇴');
+    // (X6 §5.1) 조짐 때문에 물러났다: 그 구역과 이웃 구역을 30초 동안 피한다 (후퇴했다 바로 다시 들어가지 않게)
+    const signed = !hurt && sd > 0 && sdR >= 0;
+    if (signed) a.avoid = { regions: withNbrs(s, sdR), x: -1, y: -1, r: 0, until: sim.t + 30 };
     // 가벼운 일을 한다고 알렸던 다친 대원이 다시 물러난다: 지휘관이 더는 일을 맡기지 않게 자기 상태를 소리 없이 다시 알린다 (처음 다칠 때는 agentHealth 가 알린다)
     if (hurt) { const me = a.beliefs.val<MateBelief>('mate', a.rid); if (me !== undefined && me.status === 'light') learnQuiet(sim, a, mateFact(sim, s, a, 'hurt', r.name, 0)); }
     // 부상 후퇴는 상태가 바뀌는 이 한 번만 알린다(위의 붙잡기로 다시 고르지 않는다 — 길 위의 불을 끄다 물이 떨어져 후퇴를 다시 시작해도 되풀이하지 않는다), 위험 회피는 20초에 한 번
     if (hurt) { if (hurtTold.has(a)) return; hurtTold.add(a); }
     else if (sim.t - a.lastRetreatLog < 20) return;
     a.lastRetreatLog = sim.t;
-    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: hurt ? 2 : 1, causes: [hurt && a.hurtEv !== undefined ? a.hurtEv : a.lastBlockEvent], text: hurt ? '부상으로 더 이상 임무 수행 불가. 후퇴합니다.' : '위험 수준이 너무 높습니다. 일단 물러나 재평가합니다.' });
+    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: hurt ? 2 : 1, causes: [hurt && a.hurtEv !== undefined ? a.hurtEv : a.lastBlockEvent], text: hurt ? '부상으로 더 이상 임무 수행 불가. 후퇴합니다.' : signed && EVAC_TEXT[sdW] ? EVAC_TEXT[sdW] : '위험 수준이 너무 높습니다. 일단 물러나 재평가합니다.' });
   } });
   // 2) 현재 임무 계속
   if (cur && cur.kind !== 'standby') {
@@ -226,3 +316,7 @@ import { DOC_DUTY_TASKS, docAct, docDrop, docDuty, docRetreat } from './doctrine
 import { docBegin, recordDoc } from './doctrineRun';
 import { XK } from './executor';
 import { senseOf } from './methodRun';
+// (X6 단계 5) 조짐을 보면 물러난다 — 믿음 속 조짐·지휘 상태(ops 사실)와 생김새(이웃 구획·건물 칸)만 읽는다
+import { ALLOWED2, OPS_ID, SIGN_BASE, footprint, regionAt, regionNbrs, zoneLevelAt } from './ops';
+import type { OpsFact } from './ops';
+import type { SignBelief } from '../types';

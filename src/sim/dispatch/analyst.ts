@@ -146,6 +146,8 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
   }
   sev = clamp(sev, 1, 3);
   if (type === 'collapse' && nat.indexOf('elevator') >= 0 && nat.indexOf('collapse') < 0) sev = Math.min(sev, 1.8);      // 승강기가 멈춘 것이지 건물이 무너진 것은 아니다
+  // (X6 §5.9) 현장 상황 보고로 올린 위험도와 위험은 새 신고 진술로 다시 평가해도 지워지지 않는다 (I.fieldType 과 같은 방식)
+  if (I.fieldRisk) { sev = Math.max(sev, I.fieldRisk.sev); for (const r of I.fieldRisk.risks) if (risks.indexOf(r) < 0) risks.push(r); }
   const conflicts = [inj, cnt, trap, haz, wpn].filter((x) => x.conflict).length;
   let confSum = 0; for (const c of claims) confSum += c.conf;
   const callers = new Set(claims.map((c) => c.callId)).size;

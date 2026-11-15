@@ -1,18 +1,21 @@
 // 부대 편성 · 개인 장비 · 헬기 (docs/specs/R1-crews.md 14절). 번호(①②…)는 설계서의 테스트 번호다.
 // 이 파일은 90초 안에 끝나야 한다: 끝까지 돌린 교대는 shiftOf 로 한 번만 돌리고 여러 단언이 나눠 쓴다(읽기만 한다).
 import { describe, expect, it } from 'vitest';
-import { AIR_KIND, EXTRA_NAMES, KITS, ROLES, STAFF, armorOf, blastFactor, crewHasKit, fieldCrew, hasFirearm, hasKit, kitLive, kitUses, kitWorks, medLevelOf, minCrew, minField, roleOf, skillsOf, slotsOf, stays, toolFor, toolUse, useKit } from '../src/sim/crews';
+import { AIR_KIND, EXTRA_NAMES, KITS, ROLES, STAFF, armorOf, blastFactor, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, kitLive, kitUses, kitWorks, medLevelOf, minCrew, minField, roleOf, seatsOf, skillsOf, slotsOf, stays, toolFor, toolUse, useKit } from '../src/sim/crews';
 import { NORMAL, parseDifficulty } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
+import { kitBonus } from '../src/sim/dispatch/dispatcher';
 import { Sim } from '../src/sim/engine';
-import { fitFor } from '../src/sim/field/agents';
-import { isIndoor, tileOf } from '../src/sim/field/grid';
+import { detectRadius, fitFor, perceive, visionOf } from '../src/sim/field/agents';
+import { anyCapable } from '../src/sim/field/commander';
+import { act, makeTask, moveSpeed, pumpTended, rangeFactor } from '../src/sim/field/executor';
+import { los, staticPass, tileOf } from '../src/sim/field/grid';
 import { blast } from '../src/sim/field/hazards';
 import { agentHealth, unitArrived } from '../src/sim/field/sceneManager';
 import { createIncident } from '../src/sim/incidents';
 import { createAidUnit, crewNames, crewReady } from '../src/sim/resources';
 import { Rng } from '../src/sim/rng';
-import type { FieldAgent, IncidentType, KitId, Needs, RoleId, Scene, Unit, UnitKind, WorkItem, WorkKind } from '../src/sim/types';
+import type { FieldAgent, Incident, IncidentType, KitId, Needs, RoleId, Scene, Unit, UnitKind, WorkItem, WorkKind } from '../src/sim/types';
 import { clamp } from '../src/sim/util';
 
 const withRes = (resources: number): Difficulty => ({ ...NORMAL, resources });
@@ -76,13 +79,22 @@ function watch(seed: string, d: Difficulty, force: string | null): Watched {
           if ((k === 'engage' || k === 'perimeter') && !hasFirearm(sim, a.rid)) note(`${who} 총기 없이 ${k}`);
         }
         const k = a.task.kind;
-        if (HAZ_BUILDING[s.kind] && (k === 'search' || k === 'extricate' || k === 'carry' || k === 'escort') && isIndoor(s.tiles[tileOf(s, a.x, a.y)])) {
+        const rg = s.region[tileOf(s, a.x, a.y)];      // 건물 안 = 실내 구역 (fitFor 가 보는 것과 같은 뜻)
+        if (HAZ_BUILDING[s.kind] && (k === 'search' || k === 'extricate' || k === 'carry' || k === 'escort') && rg >= 0 && s.regions[rg].indoor) {
           w.indoorWork++;
           if (!hasKit(sim, a.rid, 'scba')) note(`${who} 공기호흡기 없이 ${s.kind} 건물 안에서 ${k}${a.carrying < 0 && k === 'carry' ? '(보조)' : ''}`);
         }
         if (k === 'extricate' && spreaderOn) w.extr[r.role === 'extricator' ? 0 : 1]++;
       }
       if (n1 > 0 && n2 > 0) w.twoDoor++;
+      // 교대: 구출 작업에 그 자리에서 붙어 일하는 사람은 정원(max)을 넘지 않는다 (넘겨받는 순간 가장 서툰 사람이 손을 뗀다)
+      for (const job of s.board) {
+        if (job.kind !== 'extricate' || job.status !== 'active' || job.cas < 0) continue;
+        const c = s.casualties[job.cas];
+        let near = 0;
+        for (const a of s.agents) if (a.status === 'active' && a.task && a.task.workId === job.id && a.ring > 0 && Math.hypot(a.x - c.x, a.y - c.y) <= 2.5) near++;
+        if (near > job.max) note(`구출 ${job.id} 에 ${near}명이 붙어 일한다 (정원 ${job.max})`);
+      }
     }
     // 섬광탄은 사람 몫이다: 쓴 뒤에도 부대의 수는 사람 몫의 합이다
     if (sim.tick % 25 === 0) for (const u of sim.units) if (u.flashbangs !== u.crew.reduce((x, rid) => x + (hasKit(sim, rid, 'flashbang') ? kitUses(sim, rid, 'flashbang') : 0), 0)) w.bangsOff++;
@@ -92,13 +104,45 @@ function watch(seed: string, d: Difficulty, force: string | null): Watched {
 }
 const SEV5 = parseDifficulty('3,5,3,3,3,3')!;
 /** 현장을 하나 만들고 부대를 내려 세운다 (fitFor·피해 식의 단위 시험용) */
-function sceneWith(seed: string, type: IncidentType, kinds: UnitKind[], d: Difficulty = withRes(5)): { sim: Sim; s: Scene; agents: (kind: UnitKind) => FieldAgent[] } {
+function sceneWith(seed: string, what: string, kinds: UnitKind[], d: Difficulty = withRes(5)): { sim: Sim; s: Scene; agents: (kind: UnitKind) => FieldAgent[] } {
   const sim = new Sim(seed, d);
-  const I = createIncident(sim, { type, rng: sim.rng.fork('t') });
+  const [type, variant] = what.split('/');      // '유형' 또는 '유형/변형'
+  const I = createIncident(sim, { type: type as IncidentType, variant: variant || undefined, rng: sim.rng.fork('t') });
   const s = sim.scenes[I.id]!;
   for (const kind of kinds) unitArrived(sim, I, sim.units.find((u) => u.kind === kind)!);
   return { sim, s, agents: (kind) => s.agents.filter((a) => sim.units[a.unitId].kind === kind) };
 }
+/** 그 칸 바로 곁의 설 수 있는 빈 칸 */
+function standBy(s: Scene, x: number, y: number): { x: number; y: number } {
+  const cx = Math.round(x), cy = Math.round(y);
+  for (const [dx, dy] of [[0, 1], [1, 0], [0, -1], [-1, 0], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+    const nx = cx + dx, ny = cy + dy;
+    if (nx < 0 || ny < 0 || nx >= s.w || ny >= s.h) continue;
+    const i = ny * s.w + nx;
+    if (staticPass(s.tiles[i]) && s.propAt[i] < 0 && los(s, nx, ny, cx, cy)) return { x: nx, y: ny };
+  }
+  throw new Error(`(${cx},${cy}) 곁에 설 자리가 없다`);
+}
+const put = (a: FieldAgent, p: { x: number; y: number }): void => { a.x = p.x; a.y = p.y; a.px = p.x; a.py = p.y; a.path = null; a.pathGoal = -1; };
+/**
+ * 대원 한 명의 임무를 실행기만으로 돌린다 (다른 시스템은 돌지 않고 시각만 흐른다) — 임무가 끝나거나 stop 이 참이 되거나 max 틱이 될 때까지.
+ * 돌려주는 값: 진행 고리(a.ring)가 차오르던 틱 수 (작업에 걸린 시간 ÷ 0.2초 − 1: 마지막 틱은 임무가 끝나 고리가 지워진다)
+ */
+function drive(sim: Sim, s: Scene, a: FieldAgent, kind: WorkKind, tg: Partial<WorkItem>, max = 400, stop: () => boolean = () => false): number {
+  const w = work(sim, kind, { ...tg, id: s.board.length, status: 'active', assignees: [a.rid] });
+  s.board.push(w);
+  sim.responders[a.rid].stamina = 100;
+  a.status = 'active'; a.task = makeTask(kind, '시험', w); a.path = null; a.pathGoal = -1;
+  let busy = 0;
+  for (let k = 0; k < max && a.task && !stop(); k++) {
+    sim.tick++; sim.t = sim.tick * sim.dt;
+    act(sim, s, a);
+    if (a.task && a.ring > 0.001) busy++;
+  }
+  return busy;
+}
+const strip = (sim: Sim, rid: number, ...ids: KitId[]): void => { sim.responders[rid].kit = sim.responders[rid].kit!.filter((it) => ids.indexOf(it.id) < 0); };
+const kitItem = (sim: Sim, rid: number, id: KitId) => sim.responders[rid].kit!.find((it) => it.id === id)!;
 const work = (sim: Sim, kind: WorkKind, tg: Partial<WorkItem> = {}): WorkItem => ({
   id: 0, kind, region: -1, cas: -1, prop: -1, hostile: -1, tile: -1, mate: -1, priority: 0.8, status: 'open', assignees: [], max: 1,
   createdAt: sim.t - 60, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough: false, orderSentAt: {}, cause: -1, failedAt: {}, ...tg,
@@ -362,6 +406,13 @@ describe('⑤ 역할이 배정에 쓰인다', () => {
     for (const w of [watch('K1', SEV5, 'traffic'), watch('K2', SEV5, 'traffic'), watch('K2', NORMAL, 'collapse'), watch('K5', SEV5, 'collapse')]) { mine += w.extr[0]; others += w.extr[1]; }
     expect(mine + others, '구조 공작차가 온 현장의 구출 작업').toBeGreaterThan(200);
     expect(mine / (mine + others), `유압 구조대원 ${mine} / 그 밖 ${others}`).toBeGreaterThanOrEqual(0.5);
+    // 먼저 닿은 대원이 맨손으로 붙들고 있던 구출을, 뒤에 닿은 유압 구조대원이 넘겨받는다 (그 자리의 사람 수는 정원을 넘지 않는다 — watch 가 본다)
+    let reliefs = 0;
+    for (const w of [watch('K1', SEV5, 'traffic'), watch('K2', SEV5, 'traffic'), watch('K2', NORMAL, 'collapse'), watch('K5', SEV5, 'collapse')]) {
+      expect(w.bad, w.bad.join('\n')).toEqual([]);
+      for (const e of w.sim.events) if (e.text.includes('교대합니다')) { reliefs++; expect(toolFor(w.sim, e.rid, 'extricate'), `${e.text} — 넘겨받는 사람은 구조 장비를 들었다`).toBeGreaterThan(0.4); }
+    }
+    expect(reliefs, '구출을 넘겨받은 횟수').toBeGreaterThan(0);
     // 해체: 처리 요원만
     let defusers = 0;
     for (const w of [watch('K1', NORMAL, 'armed/bomb'), watch('K2', NORMAL, 'armed/bomb')]) for (const role of (w.held.get('defuse') ?? new Map<string, RoleId>()).values()) { defusers++; expect(role).toBe('bombTech'); }
@@ -412,6 +463,378 @@ describe('⑥ 방호가 장비를 따른다', () => {
     blast(sim, s, I, s.staging.x, s.staging.y, 3, 40, -1);
     const lost = three.map((a) => 100 - sim.responders[a.rid].health);
     expect(lost[0]).toBeCloseTo(40 * 0.35, 6); expect(lost[1]).toBeCloseTo(40 * 0.7, 6); expect(lost[2]).toBeCloseTo(40, 6);
+  });
+});
+
+describe('⑧ 장비 공백 요청', () => {
+  it('capableOf: 그 일을 할 장비를 든 사람인가 (알려진 장비 상태만)', () => {
+    const sim = new Sim('KIT', withRes(5));
+    const of = (role: RoleId): number => sim.responders.find((r) => r.role === role)!.id;
+    for (const role of ['nozzle', 'firefighter', 'ladderOp', 'ropeTech', 'decon'] as RoleId[]) { expect(capableOf(sim, of(role), 'suppress'), role).toBe(true); expect(capableOf(sim, of(role), 'overhaul'), role).toBe(true); }
+    for (const role of ['fireLead', 'engineer', 'officer', 'paramedic', 'extricator', 'airRescuer'] as RoleId[]) expect(capableOf(sim, of(role), 'suppress'), role).toBe(false);
+    expect(capableOf(sim, of('bombTech'), 'defuse')).toBe(true); expect(capableOf(sim, of('robotOp'), 'defuse')).toBe(false);
+    expect(capableOf(sim, of('bombTech'), 'engage')).toBe(false); expect(capableOf(sim, of('bombTech'), 'arrest')).toBe(false);
+    expect(capableOf(sim, of('officer'), 'perimeter')).toBe(true); expect(capableOf(sim, of('marksman'), 'engage')).toBe(true);
+    expect(capableOf(sim, of('nozzle'), 'engage')).toBe(false);
+    // 테이저만 남아도 검거는 맡는다. 알려진 고장은 없는 것으로 본다
+    const cop = sim.responders[of('officer')];
+    cop.kit = cop.kit!.filter((it) => it.id !== 'pistol');
+    expect(capableOf(sim, cop.id, 'arrest')).toBe(true); expect(capableOf(sim, cop.id, 'perimeter')).toBe(false);
+    const taser = cop.kit!.find((it) => it.id === 'taser')!;
+    taser.fault = true; expect(capableOf(sim, cop.id, 'arrest'), '숨은 고장은 모른다').toBe(true);
+    taser.faultKnown = true; expect(capableOf(sim, cop.id, 'arrest')).toBe(false);
+    // 표에 없는 일은 누구나
+    for (const k of ['search', 'carry', 'treat', 'mitigate', 'extricate', 'traffic'] as WorkKind[]) expect(capableOf(sim, of('officer'), k), k).toBe(true);
+    // 공기: 문턱(45초) 아래로 떨어졌고 예비 공기통도 없으면 진압을 맡을 수 없다 (공기를 세는 것은 단계 6 부터 — 세지 않으면 된다)
+    const noz = sim.responders[of('nozzle')], air = noz.kit!.find((it) => it.id === 'scba')!, eng = sim.units[noz.unitId];
+    expect(air.uses === undefined || air.uses >= 45).toBe(true);
+    air.uses = 30; expect(capableOf(sim, noz.id, 'suppress'), '예비 공기통이 있다').toBe(true);
+    eng.spareAir = 0; expect(capableOf(sim, noz.id, 'suppress')).toBe(false);
+    air.uses = 45; expect(capableOf(sim, noz.id, 'suppress')).toBe(true);
+  });
+  it('anyCapable: 순찰차만 있는 현장에는 진압을 맡을 사람이 없고, 펌프차가 오는 중이면 있다', () => {
+    const { sim, s } = sceneWith('KIT', 'fire', ['patrol']);
+    const I = sim.incidents[s.incidentId];
+    const room = s.regions.find((r) => r.indoor)!;
+    const sup = work(sim, 'suppress', { region: room.id }), per = work(sim, 'perimeter', { tile: 0 });
+    expect(anyCapable(sim, s, I, sup, 'suppression')).toBe(false);
+    expect(anyCapable(sim, s, I, per, 'law'), '봉쇄는 순찰 대원이 맡는다').toBe(true);
+    // 구급차가 오는 중이어도 진압은 못 한다. 펌프차가 오는 중이면 된다
+    const amb = sim.units.find((u) => u.kind === 'als')!, eng = sim.units.find((u) => u.kind === 'engine')!;
+    amb.state = 'enroute'; amb.incidentId = I.id; I.assigned.push(amb.id);
+    expect(anyCapable(sim, s, I, sup, 'suppression')).toBe(false);
+    eng.state = 'enroute'; eng.incidentId = I.id; I.assigned.push(eng.id);
+    expect(anyCapable(sim, s, I, sup, 'suppression')).toBe(true);
+    // 오는 펌프차의 관창을 든 대원이 모두 다쳤으면(내리지 않는다) 없다. 관창의 고장이 알려졌어도 같다
+    const hoses = eng.crew.filter((rid) => hasKit(sim, rid, 'hose'));
+    expect(hoses.length).toBe(2);
+    for (const rid of hoses) sim.responders[rid].status = 'injured';
+    expect(anyCapable(sim, s, I, sup, 'suppression')).toBe(false);
+    for (const rid of hoses) sim.responders[rid].status = 'ok';
+    eng.state = 'available';
+    expect(anyCapable(sim, s, I, sup, 'suppression'), '오고 있지 않은 부대는 치지 않는다').toBe(false);
+    // 내려서 현장에 서면 fitFor 가 본다: 물이 있는 펌프차의 관창수
+    eng.state = 'onscene'; unitArrived(sim, I, eng);
+    expect(anyCapable(sim, s, I, sup, 'suppression')).toBe(true);
+    eng.water = 0; eng.hydrant = false;
+    expect(anyCapable(sim, s, I, sup, 'suppression'), '물이 떨어지면 맡을 사람이 없다').toBe(false);
+  });
+  it('진압 작업이 맡을 사람 없이 오래 열려 있으면 진압 부대를 부른다 (큰 화재 교대, 매 틱)', () => {
+    let checked = 0, gaps = 0;
+    const bad: string[] = [];
+    for (const seed of ['K1', 'K2', 'K4']) {
+      const sim = new Sim(seed, SEV5, 1200, { force: 'fire' });
+      const since = new Map<string, number>();      // 작업 → 맡을 사람도 요청도 없는 상태가 시작된 시각
+      let n = 0;
+      while (!sim.ended && n++ < 20000) {
+        sim.step();
+        if (sim.tick % 5) continue;
+        for (const s of sim.scenes) {
+          if (!s || s.archived) continue;
+          const I = sim.incidents[s.incidentId];
+          const cmd = s.agents.find((a) => a.rid === s.commanderRid && a.status === 'active');
+          if (I.phase === 'closed' || !cmd || s.shadow[tileOf(s, cmd.x, cmd.y)]) continue;      // 지휘관이 없거나 무전이 닿지 않는 곳에 있으면 요청할 수 없다
+          for (const w of s.board) {
+            const key = seed + ':' + s.id + ':' + w.id;
+            if (w.kind !== 'suppress' || w.status !== 'open' || w.assignees.length || sim.t - w.createdAt <= 30 || sim.t < w.holdUntil) { since.delete(key); continue; }
+            checked++;
+            const asked = s.requests.some((q) => q.need === 'suppression' && (q.fulfilled < q.count || sim.t - q.t < 70));
+            if (anyCapable(sim, s, I, w, 'suppression') || asked) { since.delete(key); continue; }
+            gaps++;
+            if (!since.has(key)) since.set(key, sim.t);
+            // 지휘관의 판단 주기(2~3.4초)와 한 번에 한 요청이라는 규칙을 넉넉히 넘겨서도 그대로면 잘못이다
+            if (sim.t - since.get(key)! > 12 && bad.length < 8) bad.push(`${seed} t=${sim.t.toFixed(0)} 사건 ${s.id} ${room(s, w)} 진압: 맡을 사람도 요청도 없이 ${Math.round(sim.t - since.get(key)!)}초`);
+          }
+        }
+      }
+    }
+    expect(bad, bad.join('\n')).toEqual([]);
+    expect(checked, '30초 넘게 열려 있던 진압 작업을 본 횟수').toBeGreaterThan(20);
+    expect(gaps, '맡을 사람도 요청도 없던 순간 (지휘관의 판단 주기만큼은 있을 수 있다)').toBeLessThan(checked * 0.05);
+  }, 60000);
+});
+const room = (s: Scene, w: WorkItem): string => (w.region >= 0 ? s.regions[w.region].name : '?');
+
+describe('장비의 특색 (설계서 4절·6.3)', () => {
+  it('열화상 카메라는 연기 너머를, 탐지 장비는 잔해 속을, 가스 측정기는 벽 너머의 누출을 잡는다 — 고장은 perceive 에서만 드러난다', () => {
+    // ── 열화상 카메라 (진압 팀장) ──
+    const f = sceneWith('KIT', 'fire', ['engine']);
+    const lead = roleAgent(f.sim, f.agents('engine'), 'fireLead'), noz = roleAgent(f.sim, f.agents('engine'), 'nozzle');
+    put(noz, lead);
+    const i = tileOf(f.s, lead.x, lead.y);
+    f.s.smoke[i] = 0.8;
+    const seen = visionOf(f.sim, f.s, lead), blind = visionOf(f.sim, f.s, noz);
+    expect(blind).toBeGreaterThan(1.3);
+    expect(seen / blind, '연기 감쇠 0.35 대 0.78').toBeCloseTo((1 - 0.35 * 0.8) / (1 - 0.78 * 0.8), 6);
+    const tic = kitItem(f.sim, lead.rid, 'tic'), sharp = detectRadius(f.sim, f.s, lead, 0.5);
+    tic.fault = true;      // 숨은 고장: 실제로는 덜 보인다 (세계의 물리). 그러나 드러나지 않는다
+    const ev = f.sim.events.length, hash = f.sim.logHash;
+    for (let k = 0; k < 20; k++) { expect(visionOf(f.sim, f.s, lead)).toBeCloseTo(blind, 9); detectRadius(f.sim, f.s, lead, 0.5); }
+    expect(sharp / detectRadius(f.sim, f.s, lead, 0.5), '연기 속 은폐 ×0.7 과 시야').toBeCloseTo(((1 - 0.35 * 0.8) * (1 - 0.72 * 0.5 * 0.7)) / ((1 - 0.78 * 0.8) * (1 - 0.72 * 0.5)), 6);
+    expect(f.sim.events.length, 'visionOf·detectRadius 는 기록을 남기지 않는다(화면도 부른다)').toBe(ev); expect(f.sim.logHash).toBe(hash); expect(tic.faultKnown).toBe(false);
+    f.s.smoke[i] = 0; perceive(f.sim, f.s, lead);
+    expect(tic.faultKnown, '연기가 없는 곳에서는 드러나지 않는다').toBe(false);
+    f.s.smoke[i] = 0.8; perceive(f.sim, f.s, lead);
+    expect(tic.faultKnown).toBe(true);
+    const fails = (sim: Sim): string[] => sim.events.filter((e) => e.problem === 'EQUIP_FAIL').map((e) => e.text);
+    expect(fails(f.sim)).toEqual(['열화상 카메라가 작동하지 않습니다.']);
+    perceive(f.sim, f.s, lead); perceive(f.sim, f.s, noz);
+    expect(fails(f.sim).length, '한 번만').toBe(1);
+    // ── 탐지 장비 (구조 팀장, 붕괴 현장) ──
+    const c = sceneWith('KIT', 'collapse', ['rescue']);
+    const rl = roleAgent(c.sim, c.agents('rescue'), 'rescueLead'), kit = kitItem(c.sim, rl.rid, 'searchKit');
+    c.s.smoke[tileOf(c.s, rl.x, rl.y)] = 0;
+    const deep = detectRadius(c.sim, c.s, rl, 0.6);
+    kit.fault = true;
+    expect(deep / detectRadius(c.sim, c.s, rl, 0.6), '붕괴 현장의 은폐 ×0.45').toBeCloseTo((1 - 0.72 * 0.6 * 0.45) / (1 - 0.72 * 0.6), 6);
+    expect(kit.faultKnown).toBe(false);
+    perceive(c.sim, c.s, rl);
+    expect(kit.faultKnown, '붕괴 현장에서 처음 살필 때 드러난다').toBe(true);
+    expect(fails(c.sim).length).toBe(1); expect(fails(c.sim)[0]).toContain('탐지 장비');
+    // ── 가스 측정기 (측정·제독 대원): 새는 밸브를 7칸 안에서, 벽 너머로도 ──
+    const h = sceneWith('KIT', 'hazmat', ['hazmat', 'engine']);
+    const valve = h.s.props.find((p) => p.kind === 'valve' && !p.mitigated && !p.ignited)!;
+    expect(valve, '가스 누출 현장에는 새는 밸브가 있다').toBeTruthy();
+    let spot: { x: number; y: number } | null = null, walled = false;
+    for (let y = 0; y < h.s.h && !walled; y++) for (let x = 0; x < h.s.w; x++) {
+      const d = Math.hypot(x - valve.x, y - valve.y), t = y * h.s.w + x;
+      if (d < 4.8 || d > 6.8 || !staticPass(h.s.tiles[t]) || h.s.propAt[t] >= 0) continue;
+      if (!los(h.s, x, y, valve.x, valve.y)) { spot = { x, y }; walled = true; break; }
+      spot ??= { x, y };
+    }
+    expect(spot).not.toBeNull();
+    const meter = roleAgent(h.sim, h.agents('hazmat'), 'decon'), plain = roleAgent(h.sim, h.agents('engine'), 'fireLead');
+    put(meter, spot!); put(plain, spot!);
+    perceive(h.sim, h.s, plain); perceive(h.sim, h.s, meter);
+    expect(plain.beliefs.get('haz', valve.id), '측정기가 없으면 4.5칸 안에서 보아야 안다').toBeUndefined();
+    expect(meter.beliefs.get('haz', valve.id)?.value.active).toBe(true);
+    expect(walled, '벽 너머 자리에서 시험했다').toBe(true);
+  });
+
+  it('펌프 조작·누출 차단 장비·경광봉·확성기·원격 로봇은 그 일을 빠르게 한다', () => {
+    const near = (ticks: number, secs: number): void => { expect(Math.abs((ticks + 1) * 0.2 - secs), `${ticks}틱 ≈ ${secs.toFixed(2)}초`).toBeLessThanOrEqual(0.21); };
+    // ── 소화전 연결: 펌프를 맡은 대원 5.5초, 그 밖 9초 ──
+    const f = sceneWith('KIT', 'fire', ['engine']);
+    const hy = f.s.props.find((p) => p.kind === 'hydrant')!;
+    expect(hy, '화재 현장의 소화전').toBeTruthy();
+    const eng = roleAgent(f.sim, f.agents('engine'), 'engineer'), lead = roleAgent(f.sim, f.agents('engine'), 'fireLead'), unit = f.sim.units[eng.unitId];
+    put(eng, standBy(f.s, hy.x, hy.y)); put(lead, standBy(f.s, hy.x, hy.y));
+    near(drive(f.sim, f.s, eng, 'hookup', { prop: unit.id }), 5.5);
+    expect(unit.hydrant).toBe(true);
+    unit.hydrant = false;
+    near(drive(f.sim, f.s, lead, 'hookup', { prop: unit.id }), 9);
+    // 펌프를 맡은 대원이 차 곁(대기 지점 6칸 안)에 있으면 분사 때 물을 덜 쓰고 펌프가 덜 닳는다
+    put(eng, f.s.staging);
+    expect(pumpTended(f.sim, f.s, unit.id)).toBe(true);
+    put(eng, { x: f.s.staging.x + 6.5, y: f.s.staging.y }); expect(pumpTended(f.sim, f.s, unit.id)).toBe(false);
+    put(eng, f.s.staging); eng.status = 'down'; expect(pumpTended(f.sim, f.s, unit.id), '쓰러졌으면 아니다').toBe(false); eng.status = 'active';
+    const noz = roleAgent(f.sim, f.agents('engine'), 'nozzle');
+    const burn = f.s.regions.find((r) => r.tiles.some((t) => staticPass(f.s.tiles[t]) && f.s.propAt[t] < 0))!;
+    const hot = burn.tiles.find((t) => staticPass(f.s.tiles[t]) && f.s.propAt[t] < 0)!;
+    const sprayOnce = (tended: boolean): [number, number] => {
+      put(eng, tended ? f.s.staging : { x: f.s.staging.x + 6.5, y: f.s.staging.y });
+      f.s.fire[hot] = 0.9; unit.hydrant = false; unit.water = 100; unit.pumpCond = 0.9; unit.pumpFailed = false;
+      put(noz, standBy(f.s, hot % f.s.w, (hot / f.s.w) | 0));
+      drive(f.sim, f.s, noz, 'suppress', { region: burn.id }, 1);
+      return [100 - unit.water, 0.9 - unit.pumpCond];
+    };
+    const [w1, p1] = sprayOnce(false), [w2, p2] = sprayOnce(true);
+    expect(w1).toBeCloseTo(1.5 * 0.2, 9); expect(w2 / w1, '물 소모 ×0.9').toBeCloseTo(0.9, 6); expect(p2 / p1, '펌프 마모 ×0.6').toBeCloseTo(0.6, 6);
+    // ── 밸브 차단: 누출 차단 장비 ÷1.6 ──
+    const h = sceneWith('KIT', 'hazmat', ['hazmat']);
+    const valve = h.s.props.find((p) => p.kind === 'valve' && !p.mitigated)!;
+    const tech = roleAgent(h.sim, h.agents('hazmat'), 'hazTech'), fire = h.sim.responders[tech.rid].skills.fire;
+    put(tech, standBy(h.s, valve.x, valve.y));
+    near(drive(h.sim, h.s, tech, 'mitigate', { prop: valve.id }), 9 / (0.5 + fire) / 1.6);
+    expect(valve.mitigated).toBe(true);
+    valve.mitigated = false; strip(h.sim, tech.rid, 'plugKit');
+    near(drive(h.sim, h.s, tech, 'mitigate', { prop: valve.id }), 9 / (0.5 + fire));
+    // ── 교통 통제: 경광봉 ×0.85 ──
+    const t = sceneWith('KIT', 'traffic', ['patrol']);
+    const cop = roleAgent(t.sim, t.agents('patrol'), 'officer'), boss = roleAgent(t.sim, t.agents('patrol'), 'patrolLead');
+    put(cop, t.s.controlPts[0]); put(boss, t.s.controlPts[1]);
+    near(drive(t.sim, t.s, cop, 'traffic', { tile: 0 }), 6 * 0.85);
+    near(drive(t.sim, t.s, boss, 'traffic', { tile: 1 }), 6);
+    expect(t.s.controlDone).toEqual([true, true]);
+    // ── 협상: 확성기 ×1.2 ──
+    const a = sceneWith('KIT', 'armed/dispute', ['patrol']);
+    const talker = roleAgent(a.sim, a.agents('patrol'), 'patrolLead'), sus = a.s.hostiles[0];
+    expect(sus).toBeTruthy();
+    sus.state = 'hold'; sus.morale = 0.9;
+    drive(a.sim, a.s, talker, 'negotiate', { hostile: sus.id }, 600, () => talker.task !== null && talker.task.phase >= 1);
+    expect(talker.task?.phase, '협상을 시작했다').toBe(1);
+    const fall = (n: number): number => { const m0 = sus.morale; for (let k = 0; k < n; k++) { a.sim.tick++; a.sim.t = a.sim.tick * a.sim.dt; act(a.sim, a.s, talker); } return m0 - sus.morale; };
+    const loud = fall(5);
+    strip(a.sim, talker.rid, 'megaphone');
+    expect(loud / fall(5), '확성기 ×1.2').toBeCloseTo(1.2, 6);
+    // ── 해체: 원격 로봇이 있으면 가짜 장치 확인 10 → 5초 ──
+    const b = sceneWith('KIT', 'armed/package', ['eod']);
+    const fake = b.s.props.find((p) => p.kind === 'bomb' && !p.real && !p.mitigated)!;
+    expect(fake, '수상한 물건 현장의 가짜 장치').toBeTruthy();
+    const bt = roleAgent(b.sim, b.agents('eod'), 'bombTech'), op = roleAgent(b.sim, b.agents('eod'), 'robotOp'), skill = b.sim.responders[bt.rid].skill;
+    put(bt, standBy(b.s, fake.x, fake.y));
+    near(drive(b.sim, b.s, bt, 'defuse', { prop: fake.id }), 5 / (0.5 + skill));
+    expect(fake.mitigated).toBe(true);
+    // 로봇이 고장 나 있으면(숨은 고장) 쓰려 할 때 드러나고, 손으로 확인한다
+    fake.mitigated = false; fake.blocking = true; b.s.propAt[fake.y * b.s.w + fake.x] = fake.id;
+    kitItem(b.sim, op.rid, 'robot').fault = true;
+    put(bt, standBy(b.s, fake.x, fake.y));
+    near(drive(b.sim, b.s, bt, 'defuse', { prop: fake.id }), 10 / (0.5 + skill));
+    expect(kitItem(b.sim, op.rid, 'robot').faultKnown).toBe(true);
+    expect(b.sim.events.filter((e) => e.problem === 'EQUIP_FAIL').map((e) => e.text)).toEqual(['원격 로봇이 작동하지 않습니다.']);
+  });
+
+  it('제세동기·의사 장비·들것·척추 고정판', () => {
+    // ── 제세동기: 심정지 환자의 처치 질 +0.2 ──
+    const m = sceneWith('KIT', 'medical/arrest', ['patrol', 'als']);
+    const I = m.sim.incidents[m.s.incidentId];
+    expect(m.s.variant).toBe('arrest');
+    const pt = m.s.casualties[0];
+    const treatBy = (a: FieldAgent): number => {
+      pt.treated = false; pt.treatQ = 0; pt.treatProg = 0; pt.health = 60; pt.where = 'scene'; pt.dead = false;
+      put(a, standBy(m.s, pt.x, pt.y));
+      drive(m.sim, m.s, a, 'treat', { cas: pt.id });
+      return pt.treatQ;
+    };
+    const boss = roleAgent(m.sim, m.agents('patrol'), 'patrolLead'), cop = roleAgent(m.sim, m.agents('patrol'), 'officer');
+    const base = (rid: number): number => clamp(m.sim.responders[rid].skills.medical * (0.5 + 0.5 * medLevelOf(m.sim, rid)) * 1.15, 0.2, 1);
+    expect(treatBy(cop)).toBeCloseTo(base(cop.rid), 9);
+    expect(treatBy(boss), '순찰 팀장의 제세동기').toBeCloseTo(Math.min(1, base(boss.rid) + 0.2), 9);
+    // 숨은 고장: 처치를 마칠 때 드러나고 보정이 없다
+    kitItem(m.sim, boss.rid, 'aed').fault = true;
+    expect(treatBy(boss)).toBeCloseTo(base(boss.rid), 9);
+    expect(kitItem(m.sim, boss.rid, 'aed').faultKnown).toBe(true);
+    expect(I.problems.filter((p) => p.code === 'EQUIP_FAIL').length).toBe(1);
+    // ── 의사 장비: 위중한 환자를 더 끌어올리고(+15) 악화를 더 늦춘다(1 − 0.95q) ──
+    const para = roleAgent(m.sim, m.agents('als'), 'paramedic');
+    const doctor = (kit: boolean): [number, number] => {
+      if (kit) m.sim.responders[para.rid].kit!.push({ id: 'doctorKit', uses: undefined, fault: false, faultKnown: false });
+      pt.treated = true; pt.treatQ = 0.2; pt.treatProg = 0; pt.health = 30; pt.bleed0 = 0.5; pt.bleed = 0.5; pt.where = 'scene';
+      put(para, standBy(m.s, pt.x, pt.y));
+      drive(m.sim, m.s, para, 'treat', { cas: pt.id });
+      return [pt.health - 30, pt.bleed / 0.5];
+    };
+    const [up0, bl0] = doctor(false), q0 = pt.treatQ, [up1, bl1] = doctor(true), q1 = pt.treatQ;
+    expect(up0, '이미 처치받은 환자는 보통 장비로는 체력이 오르지 않는다').toBe(0); expect(bl0).toBeCloseTo(1 - 0.9 * q0, 9);
+    expect(up1).toBe(15); expect(bl1).toBeCloseTo(1 - 0.95 * q1, 9);
+    expect(medLevelOf(m.sim, para.rid)).toBe(1.1);
+    // ── 들것: 혼자 0.48 → 0.55 ──
+    const drv = roleAgent(m.sim, m.agents('als'), 'emsDriver'), emt = roleAgent(m.sim, m.agents('als'), 'emt');
+    const hauling = (a: FieldAgent): number => { const free = moveSpeed(m.sim, m.s, a); a.carrying = pt.id; pt.mob = 'immobile'; const v = moveSpeed(m.sim, m.s, a); a.carrying = -1; return v / free; };
+    put(drv, m.s.staging); put(emt, { x: m.s.staging.x + 5, y: m.s.staging.y }); put(para, { x: m.s.staging.x - 5, y: m.s.staging.y });
+    expect(hauling(drv), '들것').toBeCloseTo(0.55, 9); expect(hauling(emt)).toBeCloseTo(0.48, 9);
+    // ── 척추 고정판: 차에서 꺼낸 사람을 고정판 없이 옮기면 옮기는 동안 악화 ×1.12 ──
+    const t = sceneWith('KIT', 'traffic', ['engine', 'bls']);
+    const hurt = t.s.casualties[0];
+    const carryLoss = (a: FieldAgent): number => {
+      hurt.mob = 'immobile'; hurt.walking = false; hurt.tFreed = 0; hurt.where = 'carried'; hurt.dead = false; hurt.health = 50; hurt.bleed = 0.5; hurt.inVehicle = null;
+      put(a, { x: t.s.safe.x + 6, y: t.s.safe.y }); hurt.x = a.x; hurt.y = a.y;
+      for (const b of t.s.agents) if (b !== a) put(b, { x: 1, y: 1 });
+      a.carrying = hurt.id;
+      drive(t.sim, t.s, a, 'carry', { cas: hurt.id }, 5);
+      a.carrying = -1; a.task = null;
+      return 50 - hurt.health;
+    };
+    expect(carryLoss(roleAgent(t.sim, t.agents('engine'), 'nozzle')), '고정판 없이 5틱').toBeCloseTo(0.5 * 0.12 * 0.2 * 5, 9);
+    expect(carryLoss(roleAgent(t.sim, t.agents('bls'), 'emt')), '응급구조사의 고정판').toBe(0);
+    hurt.tFreed = -1;      // 갇혀 있지 않던 사람은 해당 없다
+    const noBoard = roleAgent(t.sim, t.agents('engine'), 'nozzle');
+    hurt.where = 'carried'; hurt.health = 50; put(noBoard, { x: t.s.safe.x + 6, y: t.s.safe.y }); noBoard.carrying = hurt.id;
+    drive(t.sim, t.s, noBoard, 'carry', { cas: hurt.id }, 5);
+    expect(hurt.health).toBe(50);
+  });
+
+  it('테이저: 총을 들지 않고 덤비는 상대에게 4초에 한 번, 가진 수만큼. 판정은 현장의 사격 난수를 건드리지 않는다', () => {
+    const setup = (weapon: 'knife' | 'gun') => {
+      const x = sceneWith('KIT', 'armed/dispute', ['patrol']);
+      const cop = roleAgent(x.sim, x.agents('patrol'), 'officer'), h = x.s.hostiles[0];
+      h.weapon = weapon; h.state = 'fight'; h.stunUntil = 0; h.health = 100;
+      const p = standBy(x.s, h.x, h.y);
+      put(cop, standBy(x.s, p.x, p.y)); if (Math.hypot(cop.x - h.x, cop.y - h.y) < 0.5 || !los(x.s, cop.x, cop.y, h.x, h.y)) put(cop, p);
+      return { ...x, cop, h };
+    };
+    const shots = (sim: Sim): { t: number; text: string }[] => sim.events.filter((e) => e.text.startsWith('테이저 발사')).map((e) => ({ t: e.t, text: e.text }));
+    // 칼을 든 상대: 첫 틱에 쏘고, 4초 뒤(무력화가 풀렸으면) 한 번 더. 카트리지는 둘
+    const k = setup('knife');
+    const rngState = (): number => (k.s.rng as unknown as { s: number }).s;
+    const before = rngState();
+    expect(kitUses(k.sim, k.cop.rid, 'taser')).toBe(2);
+    drive(k.sim, k.s, k.cop, 'arrest', { hostile: k.h.id }, 1);
+    expect(shots(k.sim).length).toBe(1);
+    expect(kitUses(k.sim, k.cop.rid, 'taser')).toBe(1); expect(k.cop.taserAt).toBe(k.sim.t);
+    const hit = shots(k.sim)[0].text.includes('무력화');
+    expect(k.h.stunUntil > k.sim.t).toBe(hit);
+    if (hit) expect(k.h.stunUntil).toBeCloseTo(k.sim.t + 3.2, 9);
+    expect(rngState(), '테이저 판정은 kit:<현장> 흐름을 쓴다').toBe(before);
+    const fx = k.s.fx.filter((q) => q.kind === 'taser');
+    expect(fx.length).toBe(1); expect(fx[0].c).toMatchObject({ side: 0, by: k.cop.rid, wpn: 'taser', res: hit ? 'hit' : 'miss', tk: 1, target: k.h.id });
+    // 이어서 돌린다: 검거(5초)가 끝나기 전, 첫 발 뒤 4초에 둘째 발
+    k.cop.task = null;
+    drive(k.sim, k.s, k.cop, 'arrest', { hostile: k.h.id }, 200, () => k.h.state !== 'fight');
+    const all = shots(k.sim);
+    expect(all.length).toBeGreaterThanOrEqual(1); expect(all.length).toBeLessThanOrEqual(2);
+    for (let j = 1; j < all.length; j++) expect(all[j].t - all[j - 1].t).toBeGreaterThanOrEqual(4 - 1e-9);
+    expect(kitUses(k.sim, k.cop.rid, 'taser')).toBe(2 - all.length);
+    // 총을 든 상대에게는 쏘지 않는다 (검거 임무는 위험해서 물러난다)
+    const g = setup('gun');
+    drive(g.sim, g.s, g.cop, 'arrest', { hostile: g.h.id }, 20);
+    expect(shots(g.sim).length).toBe(0); expect(kitUses(g.sim, g.cop.rid, 'taser')).toBe(2);
+    // 숨은 고장: 쏘려 할 때 드러나고 쏘지 못한다. 카트리지는 그대로
+    const bad = setup('knife');
+    kitItem(bad.sim, bad.cop.rid, 'taser').fault = true;
+    drive(bad.sim, bad.s, bad.cop, 'arrest', { hostile: bad.h.id }, 3);
+    expect(shots(bad.sim).length).toBe(0); expect(kitUses(bad.sim, bad.cop.rid, 'taser')).toBe(2);
+    expect(kitItem(bad.sim, bad.cop.rid, 'taser').faultKnown).toBe(true);
+    expect(bad.sim.events.filter((e) => e.problem === 'EQUIP_FAIL').map((e) => e.text)).toEqual(['테이저가 작동하지 않습니다.']);
+    expect(fitFor(bad.sim, bad.s, bad.cop, work(bad.sim, 'arrest', { hostile: bad.h.id })), '권총이 있으니 검거는 여전히 맡는다').toBeGreaterThan(0);
+  });
+
+  it('총마다 거리 감쇠가 다르고, 방패수는 교전 중 느리지만 덜 다친다', () => {
+    const sim = new Sim('KIT', withRes(5));
+    const of = (role: RoleId): number => sim.responders.find((r) => r.role === role)!.id;
+    const pistol = of('officer'), rifle = of('tacOfficer'), sniper = of('marksman');
+    for (const d of [2, 7.5, 13]) {
+      expect(rangeFactor(sim, pistol, d)).toBeCloseTo(clamp(1.3 - d / 14, 0.4, 1.1), 9);
+      expect(rangeFactor(sim, rifle, d)).toBeCloseTo(clamp(1.3 - d / 18, 0.4, 1.1), 9);
+      expect(rangeFactor(sim, sniper, d)).toBeCloseTo(clamp(1.35 - d / 32, 0.6, 1.1), 9);
+    }
+    expect(rangeFactor(sim, sniper, 13)).toBeGreaterThan(rangeFactor(sim, rifle, 13)); expect(rangeFactor(sim, rifle, 13)).toBeGreaterThan(rangeFactor(sim, pistol, 13));
+    expect(rangeFactor(sim, sniper, 30)).toBe(0.6); expect(rangeFactor(sim, pistol, 30)).toBe(0.4);
+    // 방패: 교전·봉쇄 임무 중 이동 ×0.9
+    const a = sceneWith('KIT', 'armed', ['swat']);
+    const sh = roleAgent(a.sim, a.agents('swat'), 'shield'), as = roleAgent(a.sim, a.agents('swat'), 'assaulter');
+    const slow = (b: FieldAgent): number => { b.task = null; const free = moveSpeed(a.sim, a.s, b); b.task = makeTask('engage', '시험'); const v = moveSpeed(a.sim, a.s, b); b.task = null; return v / free; };
+    expect(slow(sh)).toBeCloseTo(0.9, 9); expect(slow(as)).toBeCloseTo(1, 9);
+    // 폭발물 방호복은 언제나 무겁다
+    const e = sceneWith('KIT', 'armed', ['eod']);
+    const tech = roleAgent(e.sim, e.agents('eod'), 'bombTech'), guard = roleAgent(e.sim, e.agents('eod'), 'eodGuard');
+    const pace = (b: FieldAgent): number => { const r = e.sim.responders[b.rid]; r.stamina = 100; return moveSpeed(e.sim, e.s, b) / (2.5 * (0.75 + 0.5 * r.fitness)); };
+    put(tech, e.s.staging); put(guard, e.s.staging);
+    expect(pace(tech) / pace(guard)).toBeCloseTo(0.75, 9);
+  });
+
+  it('관제의 장비 가산: 수난 사고에는 로프·구명환, 붕괴에는 탐지 장비를 가진 부대', () => {
+    const sim = new Sim('KIT', withRes(5));
+    const mk = (type: IncidentType) => { const I = createIncident(sim, { type, rng: sim.rng.fork('t:' + type) }); I.assessment = { type } as Incident['assessment']; return I; };
+    const water = mk('water'), collapse = mk('collapse'), fire = mk('fire');
+    const unit = (kind: UnitKind): Unit => sim.units.find((u) => u.kind === kind)!;
+    expect(kitBonus(sim, unit('rescue'), water, 'rescue')).toBe(12);      // 로프 대원
+    expect(kitBonus(sim, unit('engine'), water, 'rescue')).toBe(12);      // 진입대원의 로프
+    expect(kitBonus(sim, unit('heli'), water, 'rescue')).toBe(12); expect(kitBonus(sim, unit('boat'), water, 'rescue')).toBe(12);
+    expect(kitBonus(sim, unit('ladder'), water, 'rescue')).toBe(0); expect(kitBonus(sim, unit('hazmat'), water, 'rescue')).toBe(0);
+    expect(kitBonus(sim, unit('rescue'), collapse, 'rescue')).toBe(8); expect(kitBonus(sim, unit('engine'), collapse, 'rescue')).toBe(0);
+    expect(kitBonus(sim, unit('rescue'), water, 'search')).toBe(0); expect(kitBonus(sim, unit('rescue'), fire, 'rescue')).toBe(0);
+    // 최소 인원 펌프차에는 로프를 든 진입대원이 없다
+    const small = new Sim('KIT', withRes(1));
+    expect(kitBonus(small, small.units.find((u) => u.kind === 'engine')!, water, 'rescue')).toBe(0);
+    // 숨은 고장은 모른다. 알려진 고장·다친 대원은 뺀다
+    const res = unit('rescue'), kits = res.crew.filter((rid) => hasKit(sim, rid, 'searchKit')).map((rid) => kitItem(sim, rid, 'searchKit'));
+    expect(kits.length).toBe(2);
+    for (const it of kits) it.fault = true;
+    expect(kitBonus(sim, res, collapse, 'rescue')).toBe(8);
+    for (const it of kits) it.faultKnown = true;
+    expect(kitBonus(sim, res, collapse, 'rescue')).toBe(0);
+    expect(seatsOf(unit('als'))).toBe(2); expect(seatsOf(unit('heli'))).toBe(1); expect(seatsOf(unit('engine'))).toBe(0);
   });
 });
 

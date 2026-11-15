@@ -492,7 +492,8 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
         const ta = s.agents.find((a) => a.rid === see.nearest)!;
         const r = sim.responders[ta.rid];
         if (h.weapon === 'gun') {
-          const armor = armorOf(sim, ta.rid, false);      // 맞은 사람이 입은 방호 (부대 값이 아니라 사람 값)
+          // 맞은 사람이 입은 방호 (부대 값이 아니라 사람 값). 방패는 교전·봉쇄 임무 중에만 세운다
+          const armor = armorOf(sim, ta.rid, ta.task !== null && (ta.task.kind === 'engage' || ta.task.kind === 'perimeter'));
           const moving = Math.abs(ta.x - ta.px) + Math.abs(ta.y - ta.py) > 0.05;
           const p = 0.32 * (0.6 + h.skill * 0.6) * (ta.inCover ? 0.3 : moving ? 0.6 : 1) * clamp(1.25 - see.nearestD / 16, 0.4, 1.1);
           h.cooldown = s.rng.range(1.5, 2.6);

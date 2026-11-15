@@ -14,7 +14,8 @@
 
 import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
-import type { Incident, KitId, KitItem, Responder, RoleGroup, RoleId, Skills, Unit, UnitKind, WorkKind } from './types';
+import type { Rng } from './rng';
+import type { Incident, KitId, KitItem, Responder, RoleGroup, RoleId, Scene, Skills, Unit, UnitKind, WorkKind } from './types';
 import { clamp, josa } from './util';
 
 // ───────────────────────── 개인 장비 ─────────────────────────
@@ -322,3 +323,36 @@ export function armorOf(sim: Sim, rid: number, engaging: boolean): number {
 }
 /** 폭발 피해에 곱하는 값: 폭발물 방호복 .35 · 방화복 .7 · 그 밖 1 */
 export function blastFactor(sim: Sim, rid: number): number { return hasKit(sim, rid, 'bombSuit') ? 0.35 : hasKit(sim, rid, 'turnout') ? 0.7 : 1; }
+/** 환자 자리 (구급차 2, 소방·의료 헬기 1, 나머지 0) */
+export function seatsOf(u: Unit): number { return u.seats ?? 0; }
+/** 진압·잔불 정리를 맡기에 공기가 모자란 문턱(초). R3 가 비율로 넓힌다 */
+const AIR_MIN = 45;
+/**
+ * 이 대원이 그 일을 할 장비를 갖췄는가 — 장비·부서와 **알려진 장비 상태**만 본다(숨은 고장은 모른다. 공기 잔량과 예비 공기통은 자기 조직의 상태다).
+ * 오고 있는 부대에 그 일을 할 사람이 있는지 볼 때 쓴다(commander.anyCapable). 현장의 대원은 fitFor 가 본다.
+ * 표에 없는 일은 true: 위험한 건물 안의 일은 현장 쪽 fitFor 와 "능력과 장비가 어긋나지 않는다"(tests/crews.test.ts ③)가 맡는다.
+ */
+export function capableOf(sim: Sim, rid: number, kind: WorkKind): boolean {
+  switch (kind) {
+    case 'suppress': case 'overhaul': {
+      if (!hasKit(sim, rid, 'hose')) return false;
+      // 공기가 된다: 공기호흡기가 없거나, 공기를 세지 않거나, 문턱 이상 남았거나, 그 부대에 예비 공기통이 있다
+      const air = itemOf(sim, rid, 'scba');
+      return air === null || air.uses === undefined || air.uses >= AIR_MIN || (sim.units[sim.responders[rid].unitId].spareAir ?? 0) > 0;
+    }
+    case 'defuse': return hasKit(sim, rid, 'eodKit');
+    case 'engage': case 'perimeter': return hasFirearm(sim, rid);
+    case 'arrest': return hasFirearm(sim, rid) || hasKit(sim, rid, 'taser');
+    default: return true;
+  }
+}
+const kitRngs = new WeakMap<Scene, Rng>();
+/**
+ * 개인 장비의 판정에 쓰는 현장별 난수 흐름 kit:<현장 id> (테이저 명중 등). 현장의 s.rng 는 명중·용의자 행동이 쓰는 흐름이라
+ * 새 판정이나 효과 그림의 흔들림을 거기서 뽑으면 모든 교전 결과가 바뀐다 — 새 코드는 이 흐름만 쓴다.
+ */
+export function kitRng(sim: Sim, s: Scene): Rng {
+  let r = kitRngs.get(s);
+  if (!r) { r = sim.rng.fork('kit:' + s.id); kitRngs.set(s, r); }
+  return r;
+}

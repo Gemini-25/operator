@@ -6,7 +6,7 @@ import { emit, markRecovered, raiseProblem } from '../events';
 import { transmit } from '../field/agents';
 import { mkFact } from '../field/beliefs';
 import { nodeName } from '../city';
-import { fieldCrew } from '../crews';
+import { crewHasKit, fieldCrew } from '../crews';
 import { coastal, createAidUnit, crewReady, dispatchUnit, etaFor, sendUnitTo } from '../resources';
 import type { Claim, Incident, Needs, RadioMsg, Scene, Unit } from '../types';
 import { TYPE_NAME, fmtSec, josa } from '../util';
@@ -54,6 +54,18 @@ function priorityOf(sim: Sim, I: Incident): number {
 
 interface Cand { u: Unit; score: number; eta: number; fit: number; divertFrom: Incident | null }
 
+/**
+ * 장비 가산: 그 사건에 맞는 장비를 든 대원이 있는 부대를 조금 앞세운다 — 수난 사고의 구조 수요에는 구조 로프·구명환(+12),
+ * 붕괴의 구조 수요에는 탐지 장비(+8). 관제가 아는 것만 본다: 평가한 유형과 자기 조직의 편성·장비(hasKit — 숨은 고장은 모른다).
+ */
+export function kitBonus(sim: Sim, u: Unit, I: Incident, key: keyof Needs): number {
+  if (key !== 'rescue') return 0;
+  const type = I.assessment!.type;
+  if (type === 'water') return crewHasKit(sim, u, 'rope') || crewHasKit(sim, u, 'ring') ? 12 : 0;
+  if (type === 'collapse') return crewHasKit(sim, u, 'searchKit') ? 8 : 0;
+  return 0;
+}
+
 function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { best: Cand | null; nearest: Cand | null } {
   const sev = I.assessment!.severity;
   const cands: Cand[] = [];
@@ -79,6 +91,7 @@ function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { be
     let score = fit * 100 - eta * (0.45 + 0.22 * sev) - (100 - stamina) * 0.22;
     if (key === 'suppression' && u.pumpCond < 0.4) score -= 10;
     if (crewReady(sim, u) < fc.length) score -= 18;
+    score += kitBonus(sim, u, I, key);
     if (divertFrom) score -= 28;
     // 같은 부서의 마지막 가용 부대라면, 위험도가 낮은 사건에는 아껴 둔다
     const others = sim.units.filter((q) => q.dept === u.dept && q.id !== u.id && (q.state === 'available' || q.state === 'returning') && crewReady(sim, q) > 0).length;

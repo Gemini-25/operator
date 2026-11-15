@@ -1497,6 +1497,44 @@ npx tsx scripts/sweep.ts 1 --force utility/wire --log S3     # 한 교대를 읽
 
 (구현한 뒤 적는다 — 단계를 끝낸 작업자가 덧붙인다: 실제 이름 · 본문과 다른 곳 · 잰 수치 · 해시 확인 · 다음 단계가 이어받을 자리. **코드가 정본이고 이 절이 본문보다 우선한다.** N9 는 이 절을 정본으로 읽고 시작한다.)
 
+### 단계 1 (틀 A — 유형을 자료로) — 2026-11-15 밤, 준비 줄
+
+**상태: 구현됨, 결과 불변.** 작업자 브랜치 `wf/kinds-s1`, 가리킴 `wf/kinds`. 시작점 `313ec41`(주 브랜치 — R1·H1 전체, X6 단계 1, R2 단계 0, I1-a·I1-b b0, R3 단계 0, I2 단계 1). `docs/specs/README.md` "겹쳐 돌리기"의 **준비 줄**로 했다 — 같은 기계에서 X6 의 결과를 바꾸는 작업자가 함께 돌아 균형 기준(`before-*`)은 재지 않았고 **해시 목록만** 시작점에서 만들어 견줬다. 그래서 N8 의 0단계(기준 재기)는 앞 묶음이 다 합쳐진 뒤 다음 덩어리(`0·3`)의 작업자가 한다.
+
+#### 실제 이름 (단계 1 에 생긴 것)
+
+| 이름 | 어디 | 서명·뜻 |
+|---|---|---|
+| `TYPE_ORDER: readonly IncidentType[]` · `typeIdx: Record<IncidentType, number>` | `src/sim/incidentTypes.ts` (잎 — `types` 의 타입만 가져온다) | 본문 그대로. `readonly` 라 `rng.weighted(TYPE_ORDER, w)`·`.indexOf` 에 그대로 쓴다 |
+| `TypeDef` · `TYPE_DEFS: Record<IncidentType, TypeDef>` | 〃 | 칸: `name`·`limit`·`respLimit`·`delay`·`follow`·`weight`(`number \| 'armed'`)·`fallback?`·`atNode`·`alwaysShow`·`indoorRisk`·`roomSearch`·`zoneSearch`·`wander`·`outdoor`·`question`·`topicValue`·`trappedYes?`·`trappedNo?`·`baseNeeds?`·`cause?`·`floorHp`. 여덟 유형의 값은 옛 코드의 글자 그대로 |
+| `LIK_FLOOR = 0.01` · `LikMap` · `likRow(m)` | 〃 | `likRow` 는 `WeakMap<LikMap, number[]>` 로 **표의 줄 객체마다 한 번** 만들어 같은 배열을 돌려준다(표의 줄을 고치지 않는다는 전제 — 지금 아무도 고치지 않는다) |
+| `TYPE_COLOR: Record<IncidentType \| 'unknown', string>` · `respLimitOf(type)` | `src/view/typeStyle.ts` | 핀의 경과 고리 기준 = `TYPE_DEFS[type].respLimit`, `'unknown'` 은 100(옛 `renderCity.RESP_LIMIT.unknown`). `renderCity.ts` 는 `export { TYPE_COLOR }` 로 다시 내보낸다(부르는 쪽 `panels.tsx`·`Viewport.tsx` 는 그대로) |
+| `NATURE_LIK: Record<string, LikMap>` · `Scenario.lik?: LikMap` | `dispatch/callSystem.ts` · `scenarios.ts` | 가능도 42줄(신고 키 20 + 시나리오 22)을 `{ fire: 0.94, traffic: 0.03, … }` 꼴로 — 여덟 칸을 모두 적었다. 분석은 `likRow(NATURE_LIK[키])` 로 읽는다 |
+| `QUESTION_ANY` · `question(topic, type?)` | `dispatch/callSystem.ts` | 옛 `QUESTION[topic][type] ?? QUESTION[topic].any` 를 둘로 나눴다: 유형 문구는 `TYPE_DEFS[type].question`, 공통 문구는 `QUESTION_ANY` |
+
+**옮긴 자리**(모두 값 그대로): `util.TYPE_NAME`(`TYPE_DEFS` 로 만든 같은 모양 — 열쇠의 순서도 같다) · `sceneManager.LIMIT`(→ `.limit`) · `debrief.RESP_LIMIT`(→ `.respLimit`) · `incidents.createIncident` 의 유형 배열·가중(→ `TYPE_ORDER`·`.weight`, 직전 유형 ×0.3 그대로)·첫 신고 지연 사슬(→ `special?.delay ?? .delay`)·추가 신고 사슬(→ `.follow`, 장난·오인은 0 그대로) · `analyst.TYPES`(→ `TYPE_ORDER`)·`lp[3]`·`lp[1]`(→ `typeIdx.armed`·`typeIdx.traffic`)·`placePrior` 의 교차로 상수(→ `.atNode`) · `callSystem.QUESTION`·`TOPIC_VALUE`(→ `.question`·`.topicValue` — **열쇠 순서 그대로**: `nextTopic` 이 `Object.keys` 로 돌며 같은 값이면 먼저 적은 주제를 묻는다)·`makeCaller` 의 갇힘 문구(→ `.trappedYes`·`.trappedNo`)·구역 단서 갈래(`t === 'search'` → `.zoneSearch`) · `panels.tsx` 의 손으로 쓴 여덟 유형 배열과 "앞의 다섯"(→ `TYPE_ORDER`·`.alwaysShow`) · `commander.syncBoard` 의 구역 수색(`s.kind === 'search'` → `.zoneSearch`)·방 수색 유형 목록(→ `.roomSearch`)·`canClose` 의 실종 줄·현장 상황 보고의 "대상 수색 중"(→ `.zoneSearch`) · `sceneManager.tickScene` 의 `tickWander`(→ `.wander`)와 7번 블록의 실종 줄 둘(→ `.zoneSearch`) · `agents.agentCost` 의 `shun`·`fitBase` 의 `fireRisk`(→ `.indoorRisk`) · `builders.sealPockets` 건너뛰기(→ `.outdoor`) · `airDecide.watchBusy` 의 실종 조건(→ `.zoneSearch`) · `renderCity.TYPE_COLOR`·`RESP_LIMIT`·`trafficLayer.CAUSE_COLOR`(→ `typeStyle`).
+
+#### 본문과 다른 곳
+
+1. **`trappedYes`·`trappedNo` 는 선택 칸**이다(본문은 필수처럼 적었다). 실종(`makeCaller` 가 갇힘 진술을 건너뛴다)·응급(응급 전용 갈래가 먼저 돌아간다)은 갇힘 문구를 쓰지 않아 비워 두었고, §4.1 표의 치안·보호도 "—"다. 칸이 없으면 `callSystem` 의 공통 문구('갇힌 사람이 있어요.' / '갇힌 사람은 없는 것 같아요.') — 여덟 유형에서는 닿지 않는 길이라 결과가 같다. 옛 코드의 끝 갈래(교통사고 문구)는 교통 줄에 그대로 옮겼다.
+2. 본문 목록에 없던 두 자리도 같은 플래그로 바꿨다(값이 같아 결과 불변): 7번 블록의 쓰러진 동료 갈래 `(fire \|\| hazmat \|\| collapse)` → `.indoorRisk`, `fitBase` 의 이송·동행(`carry`·`escort`) 줄 `!cb && (fire \|\| collapse \|\| hazmat)` → `.indoorRisk`(같은 함수의 `fireRisk` 와 같은 뜻), 현장 상황 보고의 "대상 수색 중" → `.zoneSearch`.
+3. **바꾸지 않고 둔 유형 글자**(본문 §5.1 의 목록 밖 — 새 유형이 들어오는 단계가 정한다): `commander.ts` 의 `s.kind === 'search' && cas.length === 0 … request(… 'search', '수색 범위에 비해 인력 부족')`(보호 유형의 구역 수색이 들어오는 단계 7 이 `.zoneSearch` 로 넓힐지 정한다) · `agents.fitBase` 의 구출(`extricate`) 줄(붕괴·가스는 언제나 0, 화재는 믿음이 없을 때만 0 — 플래그 하나로 나타낼 수 없다) · `analyst.assess` 의 위험도·필요 자원 사슬, `buildScene`·`natureFor` 의 유형 사슬, `injury.initialCause`(끝 갈래가 무장 — §5.2 의 4·5·6, 새 유형 단계에서) · `executor`·`hazards`·`dispatcher` 의 유형 분기 · `icons.ICON_PATH`(§5.2 의 2 — 시험 18).
+4. `TypeDef.fallback`·`baseNeeds`·`cause` 는 칸만 있고 아무도 읽지 않는다(여덟 유형은 모두 비어 있다 — 쓰는 곳은 `fallback` 단계 8, `baseNeeds` 분석의 일반식 단계 4a~, `cause` `initialCause` 단계 4a~). `floorHp` 도 여덟 유형 0 이고 아직 읽는 곳이 없다(단계 7).
+5. 화면: `renderCity.incidentShownType` 의 돌려주는 타입을 `string` → `IncidentType | 'unknown'` 으로 좁혔다(`TYPE_COLOR` 의 열쇠 타입이 좁아져서). 색 값은 그대로.
+6. 시험 1 은 셋으로 나눴다(덮음·순서 / 옮긴 값의 글자 / 가능도의 열쇠·`likRow`). 시험 2 의 `HASH0` 는 보통 S0~S3·어려움 S0 다섯 교대(`68e8a214`·`298fd990`·`dc862ed7`·`e8024017`·`9f8d61cb`).
+
+#### 해시 확인
+
+`$S/s1/hashes.ts`(scratchpad 의 `wf-kinds/s1/` — 저장소에 없다. 한 줄 = 번호 · 조건 · 시드 · 강제 · `report.hash` · `JSON.stringify(report)` 의 FNV · 기록 수 · 사건 수 · 연쇄 수 · 사건마다 (유형/변형/판정/닫힌 까닭) 의 FNV)를 시작점(`313ec41` 을 `git archive` 로 푼 폴더)과 지금 폴더에서 따로 돌려 줄 단위로 견줬다: 보통 S0~S39 · 어려움 S0~S19 · 극한 S0~S19 · 쉬움 S0~S5 · 재난 다섯 × S0~S2 · 강제 열넷(`armed/prank`·`fire/false`·`water/std`·`collapse/elevator`·`traffic/tree`·`fire/std`·`search/std`·`medical/std`·`hazmat/std`·`armed/hostage`·`armed/getaway`·`traffic/bus`·`collapse/gasblast`·`search/wander`) × S0~S2 · 부대 규모 1·5 × S0~S2 · 신고 신뢰도 1 × S0~S1 · 교통 5 × S0~S1 = **153교대, 한 글자도 같다**(설계서 §7.2 의 43교대를 넓혔다). 옮긴 가능도 42줄·`TYPE_NAME` 은 옛 표와 숫자로도 견줬다(`$S/s1/eqcheck.ts` — 다른 곳 0).
+
+관문: `npx tsc --noEmit` 통과 · `tests/kinds.test.ts` 4개(시험 1 셋 + 시험 2) · 고친 시험 셋(`sim`·`ext`·`major`) · `npm run check` 통과(시험 파일 18 · 540 통과 + 건너뜀 1, 테스트 305초 — 같은 기계에서 다른 작업이 함께 돌았다 · 시드 40 `--check` 검증 통과). sweep 분포는 해시 목록이 같으므로 따로 견주지 않았다.
+
+#### 이어받을 자리 (단계 2a·2b 와 뒤 단계)
+
+- **카드 제목의 `Scenario.card`·`NO_CARD`**(사용자 결정 §12.5-7 — 새 시나리오 이름을 카드 제목에 쓰지 않는다): 단계 1 에서는 넣지 않았다(본문 §10.2 의 `scenarios.ts` 줄이 4a, 틀의 칸은 2a 의 자료형과 함께). 카드 제목 식은 `ui/panels.tsx` 의 사건 카드(`as.label ?? TYPE_NAME[as.type]`)와 `ui/App.tsx` 의 사건 줄 두 곳이다.
+- 새 유형은 `TYPE_ORDER` 의 **끝**과 `TYPE_DEFS`·`typeStyle.TYPE_COLOR` 의 줄(둘 다 tsc 가 강제)로 시작한다. 확률 막대·`TYPE_NAME`·한계 시간·대응 기준·질문·가능도의 열은 저절로 따라온다. 기존 신고 키에 새 열을 더할 때(§4.1 의 `bang`·`scream` …)는 `NATURE_LIK` 의 그 줄에 `utility: 0.08` 처럼 이름으로 더한다(적지 않으면 `LIK_FLOOR`).
+- 앞 묶음 이름(시작점 `313ec41` 에서 grep): `catastrophe.NO_STRUCT` 는 변형 이름의 **배열**(`['ship', …, 'wild']` — 새 변형은 끝에 `.push` 가 아니라 글자로 더한다) · R2 `methods.METHOD`·`WORK_MODE`(`Partial<Record<WorkKind, 'refuse' \| 'always' \| 'optional'>>`)·`chooseMethod` 있음 · R3 `doctrine.ts` 의 `DOC_OF_UNIT`(모듈 안 `const` — 내보내지 않는다)·`PAIRS`·`SOLO_OK`, `registerDoctrine`(`doctrine/registry.ts`) 있음 · I1-b `world/consequence.ts` 는 빈 `signal()`·`SignalKind`(`'closed'` 포함)뿐이고 `registerConsequence`·`spawnConsequence` 는 아직 없다(주석의 이름) · I2 `roadsNext` 없음, `placeUsable` 은 `persist.ts` 의 주석에만. 단계 1 은 이 가운데 어느 것도 부르지 않는다.
+
 ## 검토 메모
 
 독립 검토 두 갈래(실현성·규칙 / 빠진 것·사용자 결정·인계)를 받아 지적마다 주 브랜치의 코드(2026-11-15 밤 — R1 전체·H1 4c·X6·R2 0·R3 0·I1-b b0)를 열어 확인했다. 맞는 지적은 본문에 녹였고, 여기에는 **반영하지 않았거나 다르게 반영한 것과 그 이유**만 적는다.

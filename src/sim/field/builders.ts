@@ -9,6 +9,7 @@ import { staticPass, tidx } from './grid';
 import { SH, SW, addCas, addHostile, addProp, addRegion, baseScene, freeTileIn, furnish, get, set } from './kit';
 import { KIND_SCENE } from '../cityPlan';
 import { SCENE_BUILDERS } from './sceneRegistry';
+import { TYPE_DEFS } from '../incidentTypes';
 import { blockPassage, lockDoor, planBuilding, suiteRooms, tallPlan } from './plans';
 import { RUIN_FURN, RUIN_WALL, markRuin, recordFall } from './ruins';
 import type { Arch, Plan, PlanOpts } from './plans';
@@ -794,7 +795,7 @@ export function buildScene(sim: Sim, I: Incident, rng: Rng): Scene {
  * 사람이나 소품이 있는 칸, 세 칸 이상 이어진 곳은 건드리지 않는다(그런 곳이 끊겨 있다면 평면 생성의 잘못이므로 테스트가 잡는다).
  */
 function sealPockets(s: Scene): void {
-  if (s.kind === 'search' || s.kind === 'traffic' || s.kind === 'water') return;
+  if (TYPE_DEFS[s.kind].outdoor) return;      // 바깥 현장 (incidentTypes)
   const walk = (i: number): boolean => { const t = s.tiles[i]; return t === T.FLOOR || t === T.DOOR || t === T.GROUND || t === T.ROAD || t === T.STAIR; };
   const seen = new Uint8Array(s.w * s.h), st = [tidx(s, s.staging.x, s.staging.y)];
   seen[st[0]] = 1;

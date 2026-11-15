@@ -6,6 +6,7 @@ import { Sim } from '../src/sim/engine';
 import { createIncident } from '../src/sim/incidents';
 import { SCENARIOS, scenarioOf } from '../src/sim/scenarios';
 import { SCENE_BUILDERS } from '../src/sim/field/sceneRegistry';
+import { TYPE_ORDER, likRow, typeIdx } from '../src/sim/incidentTypes';
 import { T } from '../src/sim/types';
 import type { Incident, IncidentType, Scene } from '../src/sim/types';
 import { MAJOR_SKINS } from '../src/view/scene/skins/major';
@@ -61,8 +62,8 @@ describe('대형 사고의 틀', () => {
       expect(SCENE_BUILDERS[`${q.type}/${q.variant}`], q.variant).toBeTruthy();
       expect(q.share).toBeGreaterThan(0);
       expect(q.severity).toEqual([3, 3]);
-      expect(q.texts!.length).toBe(2); expect(q.lik!.length).toBe(8);
-      expect(q.lik![['fire', 'traffic', 'search', 'armed', 'medical', 'collapse', 'hazmat', 'water'].indexOf(q.type)]).toBeGreaterThanOrEqual(0.6);      // 자기 유형의 가능도가 가장 높다
+      expect(q.texts!.length).toBe(2); expect(likRow(q.lik!).length).toBe(TYPE_ORDER.length);
+      expect(likRow(q.lik!)[typeIdx[q.type]]).toBeGreaterThanOrEqual(0.6);      // 자기 유형의 가능도가 가장 높다 (가능도는 유형 이름으로 — N8 §5.1)
       expect(q.limit).toBeGreaterThan(0); expect(q.needs).toBeTruthy();
       expect(q.places || q.node, `${q.variant}: 일어나는 곳`).toBeTruthy();
     }

@@ -6,6 +6,7 @@ import { Sim } from '../src/sim/engine';
 import { createIncident } from '../src/sim/incidents';
 import { SCENARIOS, scenarioOf } from '../src/sim/scenarios';
 import { SCENE_BUILDERS } from '../src/sim/field/sceneRegistry';
+import { TYPE_ORDER } from '../src/sim/incidentTypes';
 
 describe('확장 지점', () => {
   it('유형·시나리오·장소를 정해서 사건을 일으킬 수 있고, 끝까지 간다', () => {
@@ -34,7 +35,7 @@ describe('확장 지점', () => {
     for (const k of Object.keys(sum)) expect(sum[k], k).toBeLessThanOrEqual(0.75);
     for (const q of SCENARIOS) {
       expect(q.tag, `${q.type}/${q.variant} 에 tag 가 없다`).toBeTruthy();
-      if (q.lik) expect(q.lik.length).toBe(8);
+      if (q.lik) for (const [t, v] of Object.entries(q.lik)) { expect(TYPE_ORDER.indexOf(t as never), `${q.type}/${q.variant} 가능도의 열쇠 ${t}`).toBeGreaterThanOrEqual(0); expect(v! > 0 && v! <= 1, `${q.type}/${q.variant}.${t} = ${v}`).toBe(true); }      // 가능도는 유형 이름으로 (N8 §5.1)
       if (q.texts) expect(q.texts.length).toBeGreaterThan(0);
     }
     // 등록된 현장 생성기는 모두 시나리오 표에 있는 것이다

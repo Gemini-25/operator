@@ -15,6 +15,7 @@ import { DISASTER } from './scenarios/disaster';
 import { LIFE } from './scenarios/life';
 import { MAJOR } from './scenarios/major';
 import type { Incident, IncidentType, Needs, PlaceKind } from './types';
+import type { LikMap } from './incidentTypes';
 import { TYPE_NAME } from './util';
 
 /** 필요 자원을 고칠 때 볼 수 있는 것: 관제가 아는 위험도와 신고 내용뿐이다 (진실을 보지 않는다) */
@@ -28,7 +29,7 @@ export interface Scenario {
   severity: [number, number];
   places?: Partial<Record<PlaceKind, number>>;      // 일어나는 곳(건물 종류의 몫). 없으면 유형의 표(cityPlan.INCIDENT_PLACES)를 쓴다
   texts?: string[];              // nature 키의 신고 문구. 적어 두면 callSystem 의 표에 들어간다
-  lik?: number[];                // 그 신고 내용이 각 유형일 가능도 8개 (analyst.TYPES 순서: 화재·교통·실종·무장·응급·붕괴·가스·수난)
+  lik?: LikMap;                  // 그 신고 내용이 각 유형일 가능도 — 유형 이름으로 적는다({ fire: 0.9, … }). 적지 않은 유형은 incidentTypes.LIK_FLOOR
   label?: string;                // 관제가 사건에 붙이는 이름 (없으면 name)
   needs?: (n: Needs, c: ScenarioCtx) => void;      // 신고 내용이 이 시나리오를 가리킬 때 필요 자원을 고친다
   limit?: number;                // 현장 한계 시간에 더하는 초

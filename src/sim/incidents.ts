@@ -16,6 +16,7 @@ import { SCENARIOS, scenarioName, scenarioOf } from './scenarios';
 import type { Scenario } from './scenarios';
 import type { Incident, IncidentType, Place, PlaceKind } from './types';
 import { OUTCOME_NAME, TYPE_NAME } from './util';
+import { TYPE_DEFS, TYPE_ORDER } from './incidentTypes';
 
 /** 사건을 정해서 일으킬 때 주는 조건. 비워 두면 평소처럼 추첨한다. */
 export interface SpawnOpts {
@@ -78,9 +79,9 @@ function pickPlace(sim: Sim, rng: Rng, type: IncidentType, variant: string, busy
 export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
   const rng = opts.rng ?? sim.rngGen, g = sim.gen, tn = sim.tune;
   const chainNote = opts.note ?? '';
-  const types: IncidentType[] = ['fire', 'traffic', 'search', 'armed', 'medical', 'collapse', 'hazmat', 'water'];
-  const w = [0.27, 0.24, 0.17, tn.armedWeight, 0.2, 0.075, 0.085, 0.07].map((v, k) => (types[k] === g.lastType ? v * 0.3 : v));
-  const type = opts.type ?? rng.weighted(types, w);
+  // 유형의 가중은 표(incidentTypes.TYPE_DEFS)에서 — 무장은 난이도의 값. 직전과 같은 유형은 ×0.3
+  const w = TYPE_ORDER.map((t) => { const d = TYPE_DEFS[t].weight, v = d === 'armed' ? tn.armedWeight : d; return t === g.lastType ? v * 0.3 : v; });
+  const type = opts.type ?? rng.weighted(TYPE_ORDER, w);
   if (!opts.rng) g.lastType = type;
   let severity = rng.weighted([1, 2, 3], tn.sevWeights);
   let variant = 'std';
@@ -137,10 +138,11 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
   sim.incidents.push(I);
   createScene(sim, I);
   { const sc = sim.scenes[I.id]; if (sc && sc.placeName && !place) I.truth.label = `${nodeName(sim.city, node.id)} ${sc.placeName}`; }      // 교차로 사고: 현장을 만들면서 정해진 이름
-  const delay = special?.delay ? rng.range(special.delay[0], special.delay[1]) : type === 'fire' ? rng.range(6, 16) : type === 'traffic' ? rng.range(3, 8) : type === 'search' ? rng.range(1, 3) : type === 'medical' ? rng.range(2, 6) : type === 'collapse' ? rng.range(3, 8) : type === 'water' ? rng.range(2, 6) : type === 'hazmat' ? rng.range(8, 20) : rng.range(4, 11);
+  const dl = special?.delay ?? TYPE_DEFS[type].delay;      // 발생 → 첫 신고: 시나리오가 적었으면 그것, 아니면 유형의 값
+  const delay = rng.range(dl[0], dl[1]);
   I.firstCallAt = sim.t + delay;
   const benign = variant === 'false' || variant === 'prank';
-  const pFollow = benign ? 0 : type === 'fire' ? 0.6 : type === 'traffic' ? 0.5 : type === 'armed' ? 0.42 : type === 'collapse' ? 0.55 : type === 'hazmat' ? 0.4 : type === 'water' ? 0.3 : 0.12;
+  const pFollow = benign ? 0 : TYPE_DEFS[type].follow;
   if (rng.chance(pFollow)) I.followupAt = I.firstCallAt + rng.range(24, 55);
   if (type === 'traffic') {
     // 사고 지점 도로는 느려지고, 통제가 끝나면 전면 차단된다(우회로가 있는 도로만)

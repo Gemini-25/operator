@@ -436,3 +436,19 @@ input:focus { border-color: var(--accent); }
 .kit b { font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; } .kit b.warn { color: #ff9f43; }
 .kit em { font-style: normal; } .kit em.bad { color: var(--bad); font-weight: 700; } .kit em.hidden { color: #b79fe0; opacity: 0.75; }
 .kit.broken { border-color: rgba(255, 93, 93, 0.5); } .kit.broken .mark { opacity: 0.5; }
+
+/* ── injuries ── (H1: 중증도 색은 view/triage.ts 와 같은 값 — 초록·노랑·빨강·검정. 사망은 검정 바탕에 밝은 테두리와 흰 글씨) */
+.band-0 { color: #5ad17a; } .band-1 { color: #ffd166; } .band-2 { color: #ff5d5d; }
+.band-3 { color: #e8f0f7; background: #14181d; border: 1px solid #cfd6dc; border-radius: 4px; padding: 0 4px; }
+.legend i.sq.dead { background: #14181d; box-shadow: 0 0 0 1px #cfd6dc; }
+.legend i.litter { width: 13px; height: 7px; border-radius: 2px; background: #ef9548; box-shadow: 0 0 0 1px #353c44; display: inline-block; }
+.legend i.sheet { width: 13px; height: 7px; border-radius: 3px; background: #cfd6dc; display: inline-block; }
+/* 부대장 칩: 부상·쓰러짐·순직을 중증도 색으로 나눈다 (예전에는 부상과 쓰러짐이 같은 색이었다) */
+.cchip.injured { color: #ffd166; } .cchip.down { color: #ff5d5d; } .cchip.dead { color: #9aa7b4; }
+/* 순직·사망 기록: 빨간 경고가 아니라 차분한 회청색 */
+.ticker.loss { border-color: #8fa3b8; color: #dbe4ee; }
+.ev.loss, .ev.loss.problem { border-left-color: #8fa3b8; background: rgba(143, 163, 184, 0.07); }
+/* 구조 대상·용의자 정보창 */
+.tri-badge { flex: none; min-width: 44px; height: 30px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; border: 1.5px solid #0b1219; font-weight: 800; font-size: 12px; }
+.tri-badge.none { background: var(--surface); color: var(--dim); border-color: var(--line); }
+.person-head { margin-bottom: 10px; }

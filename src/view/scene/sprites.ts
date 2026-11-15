@@ -20,7 +20,8 @@ export interface PersonLook {
   bulk?: number;                          // (R1) 몸통 배율 (폭발물 방호복 1.25)
 }
 export type ArmPose = 'side' | 'aim' | 'hose' | 'work' | 'kneel' | 'up' | 'back' | 'drag' | 'carry' | 'baton' | 'megaphone'
-  | 'throw';                              // (G5) 섬광탄 던지기: act 0→1 동안 한 팔을 뒤로 젖혔다 앞으로
+  | 'throw'                               // (G5) 섬광탄 던지기: act 0→1 동안 한 팔을 뒤로 젖혔다 앞으로
+  | 'clutch';                             // (H1) 다친 사람: 한 팔로 옆구리를 붙든다
 export type Item = 'rifle' | 'pistol' | 'knife' | 'axe' | 'spreader' | 'none'
   | 'ram'                                 // (G5) 공성추
   | 'sniper' | 'taser' | 'shield' | 'tic' | 'halligan' | 'bigbag' | 'aed';      // (R1) 든 장비에서 고른다: 저격 소총 · 테이저 · 방탄 방패(+권총) · 열화상 카메라 · 할리건 · 전문 응급 가방 · 제세동기
@@ -31,6 +32,7 @@ export interface PersonPose {
   crouch?: boolean;                       // (G5) 엄폐 자세: 몸 0.9배, 다리를 접는다
   cuffed?: boolean;                       // (G5) 'back' 자세에서 막대 대신 수갑 고리 둘 (검거된 용의자만 — 인질의 묶인 손은 막대 그대로)
   act?: number;                           // (G5) 'throw' 의 진행 0..1
+  hurt?: number;                          // (H1) 다친 자세 0..1: 걸음 폭이 줄고 몸이 한쪽으로 기운다 (맞는 순간의 움찔은 flinch — G5)
 }
 
 const SKIN = ['#e8c4a0', '#d9ad86', '#f0d0b0', '#c99872'];
@@ -132,8 +134,10 @@ export function drawPerson(g: G, x: number, y: number, ang: number, ts: number, 
   oval(g, 0.06, 0.09, 0.32, 0.3, 'rgba(0,0,0,0.3)');
   g.rotate(ang);
   if (p.recoil) g.translate(-0.06 * p.recoil, 0);
+  const hurt = p.hurt ?? 0;
+  if (hurt > 0) { g.rotate(0.2 * hurt); g.translate(-0.02 * hurt, 0.03 * hurt); }      // (H1) 다친 쪽으로 몸이 기운다
   const sc = (p.scale ?? 1) * BODY * (p.crouch ? 0.9 : 1); g.scale(sc, sc);
-  const sw = p.moving ? Math.sin(p.step) : 0;
+  const sw = (p.moving ? Math.sin(p.step) : 0) * (1 - 0.55 * hurt);      // (H1) 다치면 걸음 폭이 준다
   const AW = 0.1;
   // 다리·발
   if (p.arms === 'kneel' || p.crouch) { oval(g, -0.15, -0.1, 0.14, 0.07, k.leg); oval(g, -0.15, 0.1, 0.14, 0.07, k.leg); oval(g, -0.27, -0.1, 0.06, 0.055, k.shoe); oval(g, -0.27, 0.1, 0.06, 0.055, k.shoe); }
@@ -177,6 +181,10 @@ export function drawPerson(g: G, x: number, y: number, ang: number, ts: number, 
       break;
     }
     case 'megaphone': arm(-sw * 0.09, -0.27, 0.04, -0.29); arm(0.02, 0.24, 0.2, 0.09); break;
+    case 'clutch':      // (H1) 한 팔은 늘어뜨리고 다른 팔로 옆구리를 붙든다 (붙든 손은 몸통을 그린 뒤에 얹는다)
+      oval(g, -sw * 0.09, -0.275, 0.09, 0.066, k.arm); disc(g, -sw * 0.17 + 0.05, -0.285, 0.048, k.hand);
+      seg(g, 0.0, 0.25, 0.12, 0.2, AW, k.arm);
+      break;
     default: {
       oval(g, -sw * 0.09, -0.275, 0.09, 0.066, k.arm); disc(g, -sw * 0.17 + 0.05, -0.285, 0.048, k.hand);
       oval(g, sw * 0.09, 0.275, 0.09, 0.066, k.arm); disc(g, sw * 0.17 + 0.05, 0.285, 0.048, k.hand);
@@ -205,6 +213,7 @@ export function drawPerson(g: G, x: number, y: number, ang: number, ts: number, 
   }
   if (bulk !== 1) g.restore();
   if (k.pack === 'scba') { seg(g, -0.1, -0.11, 0.09, -0.15, 0.03, '#23272c'); seg(g, -0.1, 0.11, 0.09, 0.15, 0.03, '#23272c'); }
+  if (p.arms === 'clutch') { seg(g, 0.12, 0.2, 0.07, 0.1, AW * 0.9, k.arm); disc(g, 0.06, 0.09, 0.052, k.hand); }      // (H1) 옆구리를 붙든 손
   // 손에 든 것
   if (p.recoil && p.arms === 'aim') g.translate(-0.04 * p.recoil, 0);
   if (p.arms === 'work' && p.item === 'ram') {

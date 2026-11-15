@@ -360,7 +360,7 @@ describe('9. 숨진 사람의 원인', () => {
         for (const c of s.casualties) if (c.dead) { dead++; expect(c.tDead, `${sim.seed} ${I.code} ${c.label}`).toBeLessThanOrEqual(I.closedAt); }
       }
       for (const e of sim.events) {
-        if (e.role !== 'SYSTEM' || !/생체 반응 소실|생체 반응이 사라졌습니다|떠내려갔습니다/.test(e.text)) continue;
+        if (e.role !== 'SYSTEM' || e.kind !== 'casualty' || !/생체 반응 소실|생체 반응이 사라졌습니다|떠내려갔습니다/.test(e.text)) continue;      // 구조 대상의 사망 기록만 (대원의 순직 기록도 '생체 반응 소실' 이라고 쓴다 — 아래 "9. 가짜 연출 없음 — 순직" 이 본다)
         recs++;
         expect(e.t, `${sim.seed} ${e.text}`).toBeLessThanOrEqual(sim.incidents[e.incidentId].closedAt);
       }

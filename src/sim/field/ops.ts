@@ -141,7 +141,8 @@ export function newOps(t: number): OpsState {
 
 /** 구역 목록의 판(版): 지휘 규칙이 구역을 바꿀 때마다 올린다 (끊긴 곳의 계산을 다시 쓰는 열쇠) */
 const ZVER = new WeakMap<OpsState, number>();
-export function bumpZones(ops: OpsState): void { ZVER.set(ops, (ZVER.get(ops) ?? 0) + 1); }
+/** 구역을 고친 쪽이 부른다: 판을 올리고, 그 구역 목록(배열 — 제자리에서 고친다)의 칸 계산을 버린다 */
+export function bumpZones(ops: OpsState): void { ZVER.set(ops, (ZVER.get(ops) ?? 0) + 1); MASK.delete(ops.zones); }
 export const zonesVer = (ops: OpsState): number => ZVER.get(ops) ?? 0;
 
 /** 구역의 생김새 (지휘 상태의 NoGoZone 과 믿음 속 ops 사실의 구역이 함께 쓴다) */

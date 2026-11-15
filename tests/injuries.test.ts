@@ -10,13 +10,15 @@ import { createIncident } from '../src/sim/incidents';
 import { createAidUnit } from '../src/sim/resources';
 import { TRAP_R, TRAP_WORK, band, blast, tickCasualties, tickCollapse, tickGas, tickWater } from '../src/sim/field/hazards';
 import { MISHAP, act, makeTask } from '../src/sim/field/executor';
-import { commanderThink } from '../src/sim/field/commander';
+import { commanderThink, outstanding } from '../src/sim/field/commander';
+import { WALK_STOP } from '../src/sim/field/rules/injury';
+import { josa } from '../src/sim/util';
 import { detonate } from '../src/sim/field/rules/crime';
 import { CAUSE_NAME, bandOf, hurtCas, hurtCasTo, initialCause, injuryRng, mainCause, noteCasHurt, noteHostileHurt, noteInjury, noteRespHurt, smokeCause } from '../src/sim/field/injury';
 import { makeAgent } from '../src/sim/field/agents';
 import { addCas, addHostile } from '../src/sim/field/kit';
 import { mkFact } from '../src/sim/field/beliefs';
-import { unitArrived } from '../src/sim/field/sceneManager';
+import { tickScene, unitArrived } from '../src/sim/field/sceneManager';
 import type { Casualty, FieldAgent, Incident, IncidentType, Injury, InjuryCause, Prop, Responder, Scene, SimEvent, UnitKind, WorkItem } from '../src/sim/types';
 import { CameraDirector } from '../src/view/camera';
 import { TRIAGE, TRIAGE_EDGE, TRIAGE_NAME, TRIAGE_TEXT, agentStateText, careName, casBand, casDrawn, casInfo, casSheet, hostileBand, hostileDrawn, hostileInfo, hostileSheet, hurtPose, injuryLine, isLoss, respBand, respLying, respSheet, respStateText } from '../src/view/triage';
@@ -362,8 +364,8 @@ describe('9. 숨진 사람의 원인', () => {
   it('판정 뒤에는 악화가 멈추고 hurtCas 도 아무것도 하지 않는다 — 대피 이동만 남는다', () => {
     const { sim, s } = sceneOf('INJ-closed', 'fire');
     const I = sim.incidents[s.incidentId];
-    const c = addCas(s, s.staging.x, s.staging.y + 6, 'immobile', 30, 0.5, 0);
-    const walker = addCas(s, s.staging.x + 1, s.staging.y + 6, 'mobile', 90, 0.3, 0);
+    const c = addCas(s, s.staging.x + 2, s.staging.y, 'immobile', 30, 0.5, 0);      // 대기 지점 곁의 길 위 (현장 안)
+    const walker = addCas(s, s.staging.x + 5, s.staging.y, 'mobile', 90, 0.3, 0);
     walker.walking = true;
     const step = (): void => { sim.tick++; sim.t = sim.tick * sim.dt; tickCasualties(sim, s, I); };
     step();
@@ -573,6 +575,62 @@ describe('5. 구출 중 사고 — 붕괴 현장에서 구출을 마칠 때 잔�
       // 흐름을 건드리지 않았다: 다음에 뽑히는 값이 새로 만든 흐름의 첫 값과 같다
       expect(injuryRng(r.sim, r.s, 'extricate').next(), tag).toBe(r.sim.rng.fork('injury:' + r.s.id + ':extricate').next());
     }
+  });
+});
+
+describe('5. 스스로 대피하다 다치는 경우 — 위중(체력 40 이하)이 되면 멈춘다 (§5.2)', () => {
+  const stepScene = (sim: Sim, s: Scene): void => { sim.tick++; sim.t = sim.tick * sim.dt; tickScene(sim, s); };
+  it('걷던 사람이 체력 40 이하가 되면 쓰러진다: 거동 불가가 되고, 관찰자만 아는 기록 하나가 원인과 함께 남는다', () => {
+    const { sim, s } = sceneOf('INJ-walk', 'fire');
+    const c = addCas(s, s.staging.x + 4, s.staging.y, 'mobile', 40.5, 4, 0);      // 대기 지점 곁의 길 위 (현장 안)
+    c.walking = true; c.bleedCause = 'smoke';
+    const ok = addCas(s, s.staging.x + 5, s.staging.y, 'mobile', 47, 4, 0);      // 40 위: 계속 걷는다
+    ok.walking = true; ok.bleedCause = 'smoke';
+    const still = addCas(s, s.staging.x + 6, s.staging.y, 'mobile', 30, 0, 0);      // 걷고 있지 않은 사람은 건드리지 않는다
+    const n0 = sim.events.length;
+    stepScene(sim, s);
+    expect(c.health).toBeLessThanOrEqual(WALK_STOP);
+    expect([c.walking, c.mob, c.path]).toEqual([false, 'immobile', null]);
+    const recs = sim.events.slice(n0).filter((e) => /^대피하던 구조 대상 /.test(e.text));
+    expect(recs.map((e) => e.text)).toEqual([`대피하던 구조 대상 ${josa(c.label, '이/가')} 연기 흡입으로 쓰러졌습니다.`]);
+    expect([recs[0].kind, recs[0].importance, recs[0].truth, recs[0].role]).toEqual(['casualty', 2, true, 'SYSTEM']);
+    expect(c.causeEvent).toBe(recs[0].id);
+    expect([ok.walking, ok.mob]).toEqual([true, 'mobile']);
+    expect([still.walking, still.mob]).toEqual([false, 'mobile']);
+    // 한 번만 남는다
+    for (let k = 0; k < 10; k++) stepScene(sim, s);
+    expect(sim.events.slice(n0).filter((e) => new RegExp(`^대피하던 구조 대상 ${c.label}`).test(e.text)).length).toBe(1);
+  });
+  it('원인은 지금 선 자리에서 가장 크게 깎는 항이다 (불 속이면 화상). 판정 뒤에는 쓰러지지 않는다', () => {
+    const { sim, s } = sceneOf('INJ-walk2', 'fire');
+    const c = addCas(s, s.staging.x + 4, s.staging.y, 'mobile', 40.2, 0.2, 0);
+    c.walking = true; c.bleedCause = 'smoke';
+    for (let y = Math.max(0, c.y - 2); y <= Math.min(s.h - 1, c.y + 2); y++) for (let x = Math.max(0, c.x - 2); x <= Math.min(s.w - 1, c.x + 2); x++) { s.fire[y * s.w + x] = 0.45; s.fuel[y * s.w + x] = 1; }      // 한 걸음 옮겨도 불 속이다
+    stepScene(sim, s);
+    expect(sim.events.some((e) => e.text === `대피하던 구조 대상 ${josa(c.label, '이/가')} 화상으로 쓰러졌습니다.`)).toBe(true);
+    const closed = sceneOf('INJ-walk3', 'fire');
+    const I = closed.sim.incidents[closed.s.incidentId];
+    const d = addCas(closed.s, closed.s.staging.x + 4, closed.s.staging.y, 'mobile', 30, 0, 0);
+    d.walking = true;
+    I.phase = 'closed'; I.closedAt = closed.sim.t;
+    closed.s.agents.push(makeAgent(closed.sim, 0, 0, closed.s.staging.x, closed.s.staging.y, 1e9, closed.sim.rng.fork('t')));      // 대원이 남아 있어 환경 단계가 도는 닫힌 현장
+    stepScene(closed.sim, closed.s);
+    expect([d.walking, d.mob]).toEqual([true, 'mobile']);
+  });
+  it('현장이 비었을 때의 종료 판단(outstanding): 대피 중이라던 사람의 소식이 32초 넘게 끊겼으면 남은 일로 센다', () => {
+    const { sim, s } = sceneOf('INJ-out', 'fire');
+    const a = makeAgent(sim, 0, 0, s.staging.x, s.staging.y, 1e9, sim.rng.fork('t'));
+    const fact = (id: number, mob: 'mobile' | 'immobile', where: 'scene' | 'safe', band: number, t: number): void => { a.beliefs.merge(mkFact('cas', id, { x: 3, y: 3, mob, band, where, treated: false, trappedDone: false, tq: 0 }, 't', t, 1, true, '')); };
+    fact(0, 'mobile', 'scene', 1, 100);
+    expect(outstanding(a).patients).toBe(0);              // 시각을 주지 않으면 예전 그대로 (상공의 감시 판단이 쓴다)
+    expect(outstanding(a, 120).patients).toBe(0);         // 방금 대피를 시작했다
+    expect(outstanding(a, 132).patients).toBe(0);
+    expect(outstanding(a, 132.2).patients).toBe(1);       // 32초 넘게 소식이 없다: 대피하다 쓰러졌을 수 있다
+    fact(1, 'mobile', 'safe', 1, 0);                      // 안전 구역에 닿은 걸을 수 있는 사람은 예전처럼 남은 일이 아니다
+    fact(2, 'mobile', 'safe', 0, 0);
+    expect(outstanding(a, 500).patients).toBe(1);
+    fact(3, 'immobile', 'scene', 2, 0);
+    expect(outstanding(a, 500).patients).toBe(2);
   });
 });
 

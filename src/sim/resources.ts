@@ -390,6 +390,20 @@ export function tickUnits(sim: Sim): void {
       setRoute(sim, u, u.destNode);       // 경로가 끊겨 대기 중이었다면 재시도
       if (!u.route) continue;
     }
+    // 경로는 떠날 때 잡지만 길가에서 교차로로 나오는 데 몇 초가 걸린다. 그 사이에 첫 구간이 통제됐다고 알려졌으면(재난·사건·공사) 들어서기 전에 다시 잡는다
+    if (u.segT === 0 && !u.backing && u.seg < u.route.edges.length) {
+      const first = city.edges[u.route.edges[u.seg]];
+      if ((first.closed && first.known !== false) || (u.heavy && first.noHeavy)) {
+        const alt = findRoute(city, u.nodeId, u.destNode!, wf, -1, u.heavy);
+        if (alt && u.state === 'enroute' && u.incidentId !== null) {
+          raiseProblem(sim, sim.incidents[u.incidentId], 'ROUTE_BLOCKED', `${u.callsign} 이동 경로(${edgeName(city, first)}) 통제`, {
+            role: 'UNIT', actor: u.callsign, text: `${u.callsign}: ${edgeName(city, first)} 통제 확인. 우회 경로로 변경합니다.`, imp: 2,
+          }, false);
+        }
+        u.route = alt; u.seg = 0; u.segT = 0;
+        if (!u.route) continue;      // 길이 끊겼다: 여기서 기다린다 (위의 재시도가 다시 본다)
+      }
+    }
     let budget = dt;
     let guard = 0;
     while (budget > 0 && u.route && guard++ < 8) {

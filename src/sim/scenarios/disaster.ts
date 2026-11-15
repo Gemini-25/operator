@@ -1,8 +1,9 @@
 // 재난에 딸린 시나리오: 산불 현장, 산사태, 해안 대피 (docs/specs/N6-disaster.md)
 // 모두 tag 가 disaster 이고 share 가 0 이다: 평소에는 추첨되지 않고 disaster.ts 가 직접 일으킨다(시험은 sweep --force).
-import { edgeName, findRoute, mountainAt } from '../city';
+import { edgeName, mountainAt } from '../city';
 import { emit } from '../events';
 import type { Scenario } from '../scenarios';
+import { reallyLinked } from '../traffic';
 
 export const DISASTER: Scenario[] = [
   { type: 'fire', variant: 'wild', name: '산불', share: 0, nature: 'wildfire', vague: 'smoke', severity: [2, 3], tag: 'disaster', label: '산불',
@@ -24,7 +25,7 @@ export const DISASTER: Scenario[] = [
       const node = sim.city.nodes[I.truth.nodeId];
       const es = node.edges.map((id) => sim.city.edges[id]).filter((e) => !e.closed && e.cls !== 'highway');
       for (const e of es) {
-        if (!findRoute(sim.city, e.a, e.b, 1, e.id)) continue;
+        if (!reallyLinked(sim, e.a, e.b, e.id)) continue;      // 실제 상태로 본다: 아직 아무도 모르는 낙하물이 놓인 길은 돌아갈 길이 아니다
         I.blockedEdge = e.id; e.slow += 1.4; e.closed = true; e.closedReason = 'incident';
         emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(sim.city, e)} 통행 불가 — 흙더미가 길을 덮었습니다.`, imp: 1, truth: true });
         break;

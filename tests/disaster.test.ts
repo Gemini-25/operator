@@ -1,11 +1,12 @@
 // 재난 (docs/specs/N6-disaster.md): 다섯 종류의 일정·사건·도로 통제, 재난 없는 교대의 불변, 새 시나리오 셋의 현장
 import { describe, expect, it } from 'vitest';
-import { findRoute } from '../src/sim/city';
+import { findRoute, mountainAt } from '../src/sim/city';
 import { NORMAL } from '../src/sim/difficulty';
 import type { DisasterKind } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
-import { createIncident } from '../src/sim/incidents';
+import { closeIncident, createIncident } from '../src/sim/incidents';
 import { scenarioOf } from '../src/sim/scenarios';
+import { addObstacle } from '../src/sim/traffic';
 import { T } from '../src/sim/types';
 import type { Scene } from '../src/sim/types';
 
@@ -222,6 +223,84 @@ describe('재난: 종류별 규칙', () => {
     }
     expect(swept).toBeGreaterThanOrEqual(16);
     expect(pulled).toBeGreaterThanOrEqual(2);      // 일부는 물가에서 끌어낸다
+  }, 60000);
+});
+
+/** 실제 상태(아직 아무도 모르는 통제까지 막힌 것으로)에서 첫 시설의 교차로에서 닿지 못하는 교차로 수 */
+function cutOff(s: Sim): number {
+  const c = s.city, seen = new Uint8Array(c.nodes.length), st = [c.facilities[0].nodeId];
+  seen[st[0]] = 1; let n = 1;
+  while (st.length) { const v = st.pop()!; for (const id of c.nodes[v].edges) { const e = c.edges[id]; if (e.closed) continue; const w = e.a === v ? e.b : e.a; if (!seen[w]) { seen[w] = 1; n++; st.push(w); } } }
+  return c.nodes.length - n;
+}
+
+describe('재난과 교통이 맞물리는 자리', () => {
+  it('홍수: 아직 아무도 모르는 낙하물이 놓인 다리를 돌아갈 길로 믿고 나머지 다리를 모두 닫지 않는다', () => {
+    // 경로 계산(findRoute)은 모르는 낙하물을 지나갈 수 있는 길로 본다. 재난은 세계이므로 실제 상태로 우회로를 확인해야 한다
+    // (고치기 전: 다른 다리가 모두 잠겨 강 건너편이 통째로 끊겼고, 교통의 '하나 남은 길' 규칙이 1초 안에 낙하물을 치워서야 이어졌다)
+    const s = dz('DZ-X1', 'flood'), d = s.disaster!;
+    s.traffic.nextEvent = Infinity; s.gen.nextAt = Infinity; s.gen.majorAt = Infinity;      // 낙하물은 직접 놓고, 다른 사건은 일으키지 않는다
+    while (s.t < d.tImpact + 200) { s.step(); d.nextAt = Infinity; }
+    expect(d.level).toBeGreaterThan(0.5); expect(d.level).toBeLessThan(0.9);      // 다리는 아직 잠기지 않았다
+    const bridges = s.city.edges.filter((e) => e.bridge);
+    expect(bridges.every((e) => !e.closed)).toBe(true);
+    let ob = null as ReturnType<typeof addObstacle>;
+    for (const b of bridges) { ob = addObstacle(s, { edge: b.id, kind: 'debris', full: true, dur: 380, known: false }); if (ob) break; }
+    expect(ob).not.toBeNull();
+    const blocked = s.city.edges[ob!.edge];
+    let worst = 0, minOpen = bridges.length;
+    while (s.t < d.tImpact + 400) {
+      s.step(); d.nextAt = Infinity;
+      worst = Math.max(worst, cutOff(s));
+      minOpen = Math.min(minOpen, bridges.filter((e) => !e.closed).length);
+    }
+    expect(d.level).toBeCloseTo(1, 5);
+    expect(worst).toBe(0);      // 어느 틱에도 끊기지 않았다
+    expect(minOpen).toBeGreaterThanOrEqual(1);      // 실제로 건널 수 있는 다리가 하나는 남아 있었다
+    expect(bridges.filter((e) => e.closedReason === 'disaster').length).toBeGreaterThanOrEqual(2);      // 그래도 다른 다리들은 잠겼다
+    expect(blocked.closedReason).toBe('obstacle'); expect(s.traffic.obstacles.indexOf(ob!)).toBeGreaterThanOrEqual(0);      // 낙하물은 그대로 있다
+    expect(s.events.some((ev) => ev.text.includes('하나 남은 길'))).toBe(false);      // 서둘러 치울 일이 없었다
+  }, 60000);
+
+  it('산사태: 돌아갈 길에 아직 아무도 모르는 낙하물이 있으면 그 구간을 덮지 않는다. 사건이 어떻게 끝나든 덮었던 구간은 열린다', () => {
+    const probe = new Sim('DZ-X2');
+    // 산자락 교차로 가운데, 막아도 돌아갈 길이 있는 곳
+    const hill = probe.city.nodes.filter((n) => mountainAt(n.x, n.y) > 0.12);
+    const pick = (s: Sim): { node: number; edge: number; via: number[] } | null => {
+      for (const n of hill) for (const id of n.edges) { const e = s.city.edges[id]; if (e.cls === 'highway') continue; const r = findRoute(s.city, e.a, e.b, 1, e.id); if (r) return { node: n.id, edge: id, via: r.edges }; }
+      return null;
+    };
+    const spot = pick(probe)!;
+    expect(spot).not.toBeNull();
+    // 1) 평소: 그 구간을 덮고, 사건이 한계 시간·방치·무대응·교대 끝 어느 쪽으로 끝나도 다시 열린다
+    for (const reason of ['timeout', 'abandoned', 'noresponse', 'shiftend'] as const) {
+      const s = new Sim('DZ-X2');
+      const I = createIncident(s, { type: 'collapse', variant: 'landslide', nodeId: spot.node, rng: s.rng.fork('x') });
+      expect(I.blockedEdge).toBeGreaterThanOrEqual(0);
+      const e = s.city.edges[I.blockedEdge];
+      expect(e.closed).toBe(true); expect(e.closedReason).toBe('incident'); expect(e.slow).toBeGreaterThan(1);
+      closeIncident(s, I, reason);
+      expect(e.closed, reason).toBe(false); expect(e.closedReason).toBeNull(); expect(e.slow).toBeLessThan(0.01);
+      expect(cutOff(s)).toBe(0);
+    }
+    // 2) 돌아갈 길 한가운데에 모르는 낙하물이 있다: 덮으면 그 동네가 끊기므로 덮지 않는다
+    const s = new Sim('DZ-X2');
+    s.traffic.nextEvent = Infinity;
+    let placed = 0;
+    for (const id of spot.via) {
+      const ob = addObstacle(s, { edge: id, kind: 'debris', full: true, dur: 600, known: false });
+      if (!ob) continue;
+      placed++;
+      const before = s.city.edges.filter((e) => e.closedReason === 'incident').length;
+      const I = createIncident(s, { type: 'collapse', variant: 'landslide', nodeId: spot.node, rng: s.rng.fork('y' + id) });
+      expect(cutOff(s), `낙하물 ${id}`).toBe(0);
+      if (I.blockedEdge >= 0) expect(s.city.edges[I.blockedEdge].closed).toBe(true);
+      else expect(s.city.edges.filter((e) => e.closedReason === 'incident').length).toBe(before);
+      closeIncident(s, I, 'resolved');
+      // 낙하물을 치우고 다음 자리로
+      const e = s.city.edges[id]; e.closed = false; e.closedReason = null; e.known = undefined; s.traffic.obstacles.splice(s.traffic.obstacles.indexOf(ob), 1);
+    }
+    expect(placed).toBeGreaterThanOrEqual(1);
   }, 60000);
 });
 

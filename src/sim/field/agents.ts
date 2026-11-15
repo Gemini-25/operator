@@ -5,7 +5,8 @@ import type { Sim } from '../engine';
 import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
 import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Incident, RadioMsg, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
-import { clamp, dist, josa, pct } from '../util';
+import { TYPE_NAME, clamp, dist, josa, pct } from '../util';
+import type { Rng } from '../rng';
 import { hasFirearm, hasKit, kitLive, kitWorks, medLevelOf, roleOf, seatsOf, toolFor } from '../crews';
 import { BeliefStore, mkFact } from './beliefs';
 import type { CostFn } from './grid';
@@ -14,6 +15,45 @@ import { BAND_NAME, band, isHeld, pushFx } from './hazards';
 
 export const resp = (sim: Sim, a: FieldAgent): Responder => sim.responders[a.rid];
 export const staminaF = (r: Responder): number => 0.55 + 0.45 * clamp(r.stamina / 60, 0, 1);
+
+/**
+ * 현장의 개체 하나를 만든다 — 차에서 내리는 대원(sceneManager.unitArrived)과 상공의 관측자(field/rules/air.ts)가 함께 쓴다.
+ * 모든 칸을 같은 순서로 채운다(도중에 속성이 생기면 객체의 모양이 갈라져 매 틱 도는 코드가 느려진다). 믿음은 비어 있다 — 브리핑은 부르는 쪽이 넣는다.
+ */
+export function makeAgent(sim: Sim, rid: number, unitId: number, x: number, y: number, firstThink: number, rng: Rng): FieldAgent {
+  return {
+    rid, unitId, isCommander: false,
+    x, y, px: x, py: y, fx: 1, fy: 0,
+    path: null, pathI: 0, pathGoal: -1, task: null, orderWork: -1,
+    beliefs: new BeliefStore(), outbox: [], outboxSince: 0, shadowSince: -1, commFailLogged: false,
+    nextThink: firstThink, nextPerceive: 0, carrying: -1, inCover: false, cooldown: 1,
+    status: 'active', candidates: [], label: '도착', ring: 0, arrivedAt: sim.t, lastBlockEvent: -1, idleSince: sim.t,
+    stuckT: 0, lastX: 0, lastY: 0, rng, planT: 0, equipIssue: 'none', smokeT: 0, climb: 0, rehabLogAt: -99,
+    pendingBlock: -1, underFireT: -99, spot: -1, quiet: new Set(), lastRetreatLog: -99, equipRetryAt: -99,
+    aloft: false, taserAt: -99,      // (R1) 공중 관측자가 아니다(관측자는 air.ts 가 true 로 바꾼다) · 테이저를 쏜 적이 없다
+  };
+}
+
+/** 관제가 출동 부대에 전달하는 브리핑. 신고자 진술에서 나온 미확인 정보다. */
+export function briefFacts(sim: Sim, I: Incident): Fact[] {
+  const out: Fact[] = [];
+  const s = sim.scenes[I.id]!;
+  const last = (topic: string) => { for (let k = I.claims.length - 1; k >= 0; k--) if (I.claims[k].topic === topic) return I.claims[k]; return null; };
+  const as = I.assessment;
+  if (as) out.push(mkFact('type', 0, as.type, '관제', sim.t, as.typeConf, false, `관제 판단: ${TYPE_NAME[as.type]} (신뢰도 ${Math.round(as.typeConf * 100)}%)`));
+  const cnt = last('count'), inj = last('injured'), trap = last('trapped'), det = last('detail');
+  let count: number | null = null, conf = 0.4;
+  if (cnt && typeof cnt.value === 'number') { count = cnt.value; conf = cnt.conf; }
+  else if (inj && inj.value === true) { count = 1; conf = inj.conf * 0.8; }
+  else if (trap && trap.value === true) { count = 1; conf = trap.conf * 0.8; }
+  let region = -1;
+  if (det && det.value && typeof det.value.region === 'number' && det.value.region < s.regions.length) region = det.value.region;
+  if (count !== null || region >= 0) {
+    const where = region >= 0 ? ` · 위치 추정: ${s.regions[region].name}` : '';
+    out.push(mkFact('occ', 0, { count, region, trapped: !!(trap && trap.value === true) }, '신고자', sim.t, conf, false, `신고 내용: ${count !== null ? `요구조자 약 ${count}명` : '요구조자 수 불명'}${where}`));
+  }
+  return out;
+}
 
 export function visionOf(sim: Sim, s: Scene, a: FieldAgent): number {
   const i = tileOf(s, a.x, a.y);

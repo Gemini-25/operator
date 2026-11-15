@@ -452,3 +452,6 @@ input:focus { border-color: var(--accent); }
 .tri-badge { flex: none; min-width: 44px; height: 30px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; border: 1.5px solid #0b1219; font-weight: 800; font-size: 12px; }
 .tri-badge.none { background: var(--surface); color: var(--dim); border-color: var(--line); }
 .person-head { margin-bottom: 10px; }
+/* 교대 보고서 (H1 단계 6): 순직 타일과 목록의 순직 줄은 빨강이 아니라 차분한 회청색 */
+.tile.loss { border: 1px solid #8fa3b8; background: rgba(143, 163, 184, 0.08); }
+.kv .loss { color: #c7d3df; }

@@ -362,7 +362,8 @@ export type WorkKind =
   | 'defuse'        // 폭발물 해체 (폭발물 처리반만)
   | 'overhaul'      // 잔불 정리: 불이 꺼졌다고 본 방을 다시 돌며 남은 불씨를 찾아 적신다 (소방만)
   | 'hoist' | 'airDrop'      // (R1) 공중 임무: 호이스트 인양 · 공중 물 투하. 지휘관이 작업판에 올리고 field/rules/air.ts 가 가져간다. 지상 대원은 맡지 않는다(fitFor = 0)
-  | 'treatMate';      // (H1) 다친 대원 처치. 태울 차(prop)가 정해져 있고 병원이 필요하면 이어서 그 차에 태운다 (구급 분야, 또는 의료 가방을 든 대원)
+  | 'treatMate'      // (H1) 다친 대원 처치. 태울 차(prop)가 정해져 있고 병원이 필요하면 이어서 그 차에 태운다 (구급 분야, 또는 의료 가방을 든 대원)
+  | 'treatSuspect';      // (H1) 쓰러진·다친 용의자 처치. 태울 차(prop)가 내 차이고 자리가 있으면 이어서 그 차에 태운다 (경찰은 언제든, 구급대원은 안전 확보 뒤)
 export type TaskKind = WorkKind | 'retreat' | 'rehab' | 'resupply' | 'board' | 'standby' | 'moveSignal' | 'swapAir';      // swapAir = 공기통 교체 (R1 9절)
 
 export interface WorkItem {
@@ -536,7 +537,8 @@ export type ProblemCode =
   | 'PATH_BLOCKED' | 'VICTIM_MISSED' | 'EQUIP_FAIL' | 'WATER_OUT' | 'RESPONDER_HURT' | 'COMM_FAIL'
   | 'ESCALATION' | 'BACKUP_LATE' | 'SCENE_MISMATCH' | 'SUSPECT_FLED' | 'SECONDARY_COLLISION' | 'LATE_DISCOVERY'
   | 'TIMEOUT' | 'FATIGUE' | 'HIDDEN_HAZARD' | 'RECOUNT' | 'WRONG_ADDRESS' | 'FALSE_ALARM'
-  | 'RESPONDER_KILLED';      // (H1) 대원 순직
+  | 'RESPONDER_KILLED'      // (H1) 대원 순직
+  | 'SUSPECT_DIED';      // (H1) 용의자 사망
 export interface Problem { code: ProblemCode; t: number; eventId: number; detail: string; recovered: boolean; recoveryText: string }
 
 export type IncidentPhase = 'unreported' | 'call' | 'pending' | 'dispatched' | 'onscene' | 'closed';

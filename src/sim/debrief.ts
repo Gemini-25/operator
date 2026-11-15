@@ -9,8 +9,9 @@ import { difficultyLabel } from './difficulty';
 import { disasterSummary } from './disaster';
 import { methodFailLine, methodLines, methodSummary, methodTally } from './field/methodReport';      // (R2) 대응 방법의 문장과 집계
 import { roleOf } from './crews';
+import { CAUSE_NAME, bandOf, mainCause, outShifts, threatOverAt } from './field/injury';
 import type { Sim } from './engine';
-import type { Incident, IncidentResult, Outcome, Problem, ProblemCode, ShiftReport } from './types';
+import type { Incident, IncidentResult, InjuryCause, Outcome, Problem, ProblemCode, RosterOut, ShiftReport } from './types';
 import { TYPE_NAME, fmtSec, josa, pct } from './util';
 
 export const PROBLEM_LABEL: Record<ProblemCode, string> = {
@@ -21,7 +22,7 @@ export const PROBLEM_LABEL: Record<ProblemCode, string> = {
   METHOD_FAIL: '대응 방법 실패·변경',      // (R2) 문장 틀과 order 의 자리(EQUIP_FAIL 바로 다음)는 evaluate 안
   ESCALATION: '상황 악화', BACKUP_LATE: '지원 지연', SCENE_MISMATCH: '신고와 다른 현장 상황', SUSPECT_FLED: '용의자 도주', SECONDARY_COLLISION: '2차 사고', LATE_DISCOVERY: '구조 대상 발견 지연',
   TIMEOUT: '대응 시간 초과', FATIGUE: '대원 체력 고갈', HIDDEN_HAZARD: '숨겨진 위험 발현', RECOUNT: '인원 불일치 재수색', WRONG_ADDRESS: '신고 위치 오류', FALSE_ALARM: '허위·오인 신고',
-  RESPONDER_KILLED: '대원 순직',
+  RESPONDER_KILLED: '대원 순직', SUSPECT_DIED: '용의자 사망',
 };
 
 const RESP_LIMIT: Record<string, number> = { fire: 95, armed: 95, traffic: 105, search: 125, medical: 80, collapse: 100, hazmat: 100, water: 90 };
@@ -42,13 +43,29 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
     else left++;
   }
   const propertyLoss = s.kind === 'fire' ? s.burnedTiles / Math.max(1, s.totalFuelTiles) : s.props.some((p) => p.ignited) ? 0.4 : 0;
-  const hurtRids = new Set<number>();
-  let downCount = 0;
-  for (const ev of sim.events) if (ev.incidentId === I.id && ev.problem === 'RESPONDER_HURT' && ev.rid >= 0) { if (!hurtRids.has(ev.rid)) hurtRids.add(ev.rid); }
-  for (const rid of hurtRids) if (sim.responders[rid].status === 'down') downCount++;
+  // 대원 피해 (H1 §7.1): 순직은 이 사건의 RESPONDER_KILLED 기록으로 따로 센다 — 문턱 때문에 순직한 대원에게는 대개 앞선 RESPONDER_HURT 가 있지만, 집계는 그 가정에 기대지 않는다.
+  // 쓰러짐 = RESPONDER_HURT 가 난 대원 가운데 순직하지 않고 쓰러져 있는 대원, 부상 = 나머지
+  const hurtRids = new Set<number>(), killed = new Set<number>();
+  for (const ev of sim.events) {
+    if (ev.incidentId !== I.id || ev.rid < 0) continue;
+    if (ev.problem === 'RESPONDER_HURT') hurtRids.add(ev.rid);
+    else if (ev.problem === 'RESPONDER_KILLED') killed.add(ev.rid);
+  }
+  let downCount = 0, hurtOnly = 0;
+  for (const rid of hurtRids) { if (killed.has(rid)) continue; if (sim.responders[rid].status === 'down') downCount++; else hurtOnly++; }
   const suspectsTotal = s.hostiles.length;
-  const caught = s.hostiles.filter((h) => h.state === 'arrested' || h.state === 'down').length;
+  const caught = s.hostiles.filter((h) => h.state === 'arrested' || h.state === 'down').length;      // 쓰러진·숨진 용의자도 검거로 센다 (§4.4)
   const escaped = suspectsTotal - caught;
+  // 용의자 피해: 이 사건에서 다친 용의자(처음부터 다쳐 있던 몫은 빼고 — 숨진 용의자 포함), 숨진 용의자, 그 가운데 위협이 끝난 뒤에 숨진 용의자 (§4.4)
+  const over = threatOverAt(s);
+  let suspectsHurt = 0, suspectsDead = 0, deadAfter = 0;
+  for (const h of s.hostiles) {
+    if (h.dead || (h.injuries !== undefined && h.injuries.some((j) => j.byKind !== 'initial'))) suspectsHurt++;
+    if (h.dead) { suspectsDead++; if (over >= 0 && h.tDead !== undefined && h.tDead > over) deadAfter++; }
+  }
+  // 숨진 구조 대상의 원인 (숨지게 한 원인 — 사망 기록에 적힌 그 원인)
+  const deathCauses: Partial<Record<InjuryCause, number>> = {};
+  for (const c of cas) if (c.dead && c.deathCause) deathCauses[c.deathCause] = (deathCauses[c.deathCause] ?? 0) + 1;
   let flames = 0; for (let i = 0; i < s.fire.length; i++) if (s.fire[i] > 0.2) flames++;      // 꺼져 가는 잔불은 제외
   const hazardActive = flames > 0 || s.hostiles.some((h) => h.state === 'hold' || h.state === 'fight') || s.props.some((p) => p.kind === 'valve' && !p.mitigated && !p.ignited)
     || s.props.some((p) => p.kind === 'bomb' && p.real && !p.mitigated && !p.exploded);      // 처리되지 않은 진짜 폭발물
@@ -76,7 +93,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   // ── 판정 ──
   let bad = 0;
   bad += lost * 2 + undiscovered * 1.5 + left * 1;
-  bad += downCount * 1.5 + (hurtRids.size - downCount) * 0.75;
+  bad += killed.size * 3 + downCount * 1.5 + hurtOnly * 0.75;      // 순직 3 (다른 문제가 없어도 부분 성공, 하나 더 겹치면 실패) · 쓰러짐 1.5 · 부상 0.75
+  bad += deadAfter * 0.5;      // 위협이 끝난 뒤 숨진 용의자 — 다친 사람을 돌보지 못한 것이다. 교전 중에 숨진 용의자는 벌점이 없다 (§4.4)
   if (s.kind === 'armed' || suspectsTotal > 0) bad += escaped * 1.25;
   bad += propertyLoss > 0.6 ? 1 : propertyLoss > 0.35 ? 0.5 : 0;
   if (hazardActive) bad += 1.5;
@@ -104,7 +122,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   if (wrongNotes.length && firstCall) A.push(`최초 신고자(${personaName(firstCall.caller.persona)})의 정보가 실제와 달랐습니다: ${wrongNotes.slice(0, 2).join('; ')}.`);
   // 순직은 맨 앞에 둔다: 분석 문장이 9줄에서 잘려도 빠지지 않는다 (H1 §3.8)
   const order: ProblemCode[] = ['RESPONDER_KILLED', 'CALL_QUEUE', 'CALL_VAGUE', 'MISJUDGE_TYPE', 'UNDERESTIMATE', 'OVERESTIMATE', 'NO_UNIT', 'DIVERTED', 'ROUTE_BLOCKED', 'TRAFFIC_DELAY', 'SCENE_MISMATCH', 'UNDER_DISPATCH', 'BACKUP_LATE',
-    'WRONG_ADDRESS', 'FALSE_ALARM', 'PATH_BLOCKED', 'COMM_FAIL', 'RECOUNT', 'VICTIM_MISSED', 'EQUIP_FAIL', 'WATER_OUT', 'HIDDEN_HAZARD', 'ESCALATION', 'SECONDARY_COLLISION', 'RESPONDER_HURT', 'FATIGUE', 'SUSPECT_FLED', 'LATE_DISCOVERY', 'TIMEOUT'];
+    'WRONG_ADDRESS', 'FALSE_ALARM', 'PATH_BLOCKED', 'COMM_FAIL', 'RECOUNT', 'VICTIM_MISSED', 'EQUIP_FAIL', 'WATER_OUT', 'HIDDEN_HAZARD', 'ESCALATION', 'SUSPECT_DIED', 'SECONDARY_COLLISION', 'RESPONDER_HURT', 'FATIGUE', 'SUSPECT_FLED', 'LATE_DISCOVERY', 'TIMEOUT'];
   const T: Partial<Record<ProblemCode, (ps: Problem[]) => string>> = {
     RESPONDER_KILLED: (ps) => `순직: ${ps.map((p) => p.detail).join(' / ')}.`,      // 원인과 경과는 숨지는 그 자리에서 상태로 만든 detail 에 들어 있다 (sceneManager.agentHealth)
     CALL_QUEUE: (ps) => `신고 전화가 다른 통화 처리 때문에 ${ps[0].detail} 대기했습니다.`,
@@ -129,6 +147,19 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
     WATER_OUT: (ps) => `${ps[0].detail}${ps[0].recovered ? ` — ${ps[0].recoveryText}` : ''}.`,
     HIDDEN_HAZARD: (ps) => `신고에 없던 위험이 현실화됐습니다: ${ps.map((p) => p.detail).join(', ')}.`,
     ESCALATION: (ps) => `대응 도중 상황이 악화됐습니다: ${ps.map((p) => p.detail).slice(0, 3).join(', ')}.`,
+    // 용의자 사망 (H1 §7.2): 숨진 용의자마다 기록(쓰러진·처치·숨진 시각과 부상 기록)으로 — 위협이 끝난 뒤(안전 확보·첫 도착)면 그 뒤 얼마 동안 돌보지 못했는지를 말한다
+    SUSPECT_DIED: (ps) => {
+      const over = threatOverAt(s), lines: string[] = [];
+      for (const h of s.hostiles) {
+        if (!h.dead || h.tDead === undefined) continue;
+        const main = mainCause(h.injuries) ?? h.deathCause ?? 'gunshot', death = h.deathCause ?? main;
+        const hit = `${josa(h.label, '은/는')} ${s.kind === 'armed' && (over < 0 || (h.tDown ?? h.tDead) <= over) ? '교전 중 ' : ''}${josa(CAUSE_NAME[main], '을/를')} 입고 쓰러졌고`;
+        const tail = death !== main ? ` (${CAUSE_NAME[death]})` : '';
+        if (over >= 0 && h.tDead > over) lines.push(`${hit}, ${s.kind === 'armed' ? '현장 안전 확보' : '대원 도착'} 뒤 ${fmtSec(h.tDead - over)} 동안 ${h.tTreated !== undefined ? '처치를 받았지만 이송되지 못하고' : '처치를 받지 못하고'} 숨졌습니다${tail}`);
+        else lines.push(`${hit}, ${h.tTreated !== undefined ? '처치를 받았지만' : '처치를 받기 전에'} 숨졌습니다${tail}`);
+      }
+      return lines.length ? `${lines.join('. ')}.` : `${ps.map((p) => p.detail).join(' / ')}.`;
+    },
     SECONDARY_COLLISION: (ps) => `${ps[0].detail}가 발생했습니다. 교통 통제가 완료되기 전이었습니다.`,
     RESPONDER_HURT: (ps) => `대원 피해: ${ps.map((p) => p.detail).filter((v, i, arr) => arr.indexOf(v) === i).join(', ')}.`,
     FATIGUE: (ps) => `${ps[0].detail}.`,
@@ -147,11 +178,12 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   for (const c of cas) {
     if (A.length >= 11) break;
     if (c.dead) {
-      if (s.arrivedAt < 0 || c.tDead < s.arrivedAt) A.push(`구조 대상 ${josa(c.label, '은/는')} 첫 부대가 도착하기 전에 이미 숨졌습니다${responseTime > limit ? ' — 도착 지연이 결정적이었습니다' : ''}.`);
-      else if (c.tDiscovered < 0 || c.tDiscovered > c.tDead) A.push(`구조 대상 ${josa(c.label, '은/는')} 도착 ${fmtSec(c.tDead - s.arrivedAt)} 뒤, 발견되기 전에 숨졌습니다.`);
+      const why = c.deathCause ? ` (${CAUSE_NAME[c.deathCause]})` : '';      // 숨지게 한 원인 — 사망 기록에 적힌 그 원인 (H1 §7.2)
+      if (s.arrivedAt < 0 || c.tDead < s.arrivedAt) A.push(`구조 대상 ${josa(c.label, '은/는')} 첫 부대가 도착하기 전에 이미 숨졌습니다${why}${responseTime > limit ? ' — 도착 지연이 결정적이었습니다' : ''}.`);
+      else if (c.tDiscovered < 0 || c.tDiscovered > c.tDead) A.push(`구조 대상 ${josa(c.label, '은/는')} 도착 ${fmtSec(c.tDead - s.arrivedAt)} 뒤, 발견되기 전에 숨졌습니다${why}.`);
       else {
         const found = c.tDiscovered - (s.arrivedAt >= 0 ? s.arrivedAt : c.tDiscovered);
-        A.push(`구조 대상 ${josa(c.label, '은/는')} 도착 ${fmtSec(Math.max(0, found))} 뒤 발견됐지만${c.tTreated < 0 ? ' 처치를 받기 전에' : c.tLoaded < 0 ? ' 이송 전에' : ''} 숨졌습니다.`);
+        A.push(`구조 대상 ${josa(c.label, '은/는')} 도착 ${fmtSec(Math.max(0, found))} 뒤 발견됐지만${c.tTreated < 0 ? ' 처치를 받기 전에' : c.tLoaded < 0 ? ' 이송 전에' : ''} 숨졌습니다${why}.`);
       }
     } else if (c.tDiscovered < 0) A.push(`구조 대상 ${josa(c.label, '은/는')} 발견되지 못한 채 현장에 남았습니다 — 지휘관은 이 사실을 모른 채 상황을 종료했습니다.`);
   }
@@ -163,8 +195,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   else if (cas.length) hl.push(`요구조자 ${cas.length}명 중 ${saved}명 구조${lost ? `, ${lost}명 사망` : ''}${undiscovered ? `, ${undiscovered}명 미발견` : ''}${left ? `, ${left}명 구조 미완료` : ''}`);
   else hl.push('인명 피해 없음');
   if (s.kind === 'fire') hl.push(`소실률 ${pct(propertyLoss)}`);
-  if (suspectsTotal) hl.push(`용의자 ${suspectsTotal}명 중 ${caught}명 검거`);
-  if (hurtRids.size) hl.push(`대원 ${hurtRids.size}명 부상`);
+  if (suspectsTotal) hl.push(`용의자 ${suspectsTotal}명 중 ${caught}명 검거${suspectsDead ? ` (사망 ${suspectsDead})` : ''}`);
+  { const hurtN = downCount + hurtOnly; if (hurtN) hl.push(`대원 ${hurtN}명 부상${killed.size ? `, ${killed.size}명 순직` : ''}`); else if (killed.size) hl.push(`대원 ${killed.size}명 순직`); }
   const troubles = I.problems.filter((p) => p.code !== 'CALL_MISINFO' && p.code !== 'OVERESTIMATE' && p.code !== 'LATE_DISCOVERY' && p.code !== 'FALSE_ALARM').length;
   if (benign) A.push('출동한 부대가 직접 확인하고 이상 없음으로 종결했습니다.');
   else if (outcome === 'success') A.push(troubles === 0 ? '큰 문제 없이 목표를 모두 달성했습니다.' : troubles >= 3 ? '여러 문제가 겹쳤지만 그때마다 계획을 바꿔 목표를 모두 달성했습니다.' : '도중에 문제가 있었지만 수습하고 목표를 모두 달성했습니다.');
@@ -173,6 +205,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
     outcome, delayed, grade, casTotal: cas.length, casSaved: saved, casLost: lost, casUndiscovered: undiscovered, casCritical: critical,
     propertyLoss, respondersHurt: hurtRids.size, suspectsTotal, suspectsCaught: caught, suspectsEscaped: escaped,
     responseTime, dispatchTime, duration: sim.t - I.createdAt, analysis: A, headline: hl.join(' · ') + '.',
+    respondersDown: downCount, respondersKilled: killed.size, suspectsHurt, suspectsDead, deathCauses,      // (H1)
   };
 }
 
@@ -195,14 +228,48 @@ export function buildReport(sim: Sim): ShiftReport {
   const dur = sim.t;
   const unitUtil = sim.units.map((u) => ({ callsign: u.callsign, util: u.busyTime / Math.max(1, dur), runs: u.runs }));
   const utilization = unitUtil.reduce((x, y) => x + y.util, 0) / unitUtil.length;
-  const hurt = sim.responders.filter((r) => r.status !== 'ok').map((r) => ({ name: r.name, callsign: sim.units[r.unitId].callsign, status: r.status === 'down' ? '중상' : '부상', role: roleOf(sim, r.id).name }));
+  // 대원 피해 (H1 §7.3): 상태 글은 순직 · 쓰러짐 · 부상 (예전에는 쓰러짐을 '중상'으로 적어 중증도 이름과 겹쳤다).
+  // 교대 끝의 중증도·주된 원인·순직·병원 이송(후송 중 포함)·다음 교대 결장 예상(outShifts)을 함께 적는다
+  const hurt = sim.responders.filter((r) => r.status !== 'ok').map((r) => ({
+    name: r.name, callsign: sim.units[r.unitId].callsign, status: r.dead ? '순직' : r.status === 'down' ? '쓰러짐' : '부상', role: roleOf(sim, r.id).name,
+    rid: r.id, band: r.dead ? 3 : Math.min(2, bandOf(r.health)), cause: r.dead ? r.deathCause ?? mainCause(r.injuries) : mainCause(r.injuries), dead: r.dead === true, hospital: r.care !== undefined, out: outShifts(r),
+  }));
+  // 순직: 그 기록(RESPONDER_KILLED)이 난 사건과 함께
+  const killedList: NonNullable<ShiftReport['respondersKilled']> = [];
+  for (const e of sim.events) {
+    if (e.problem !== 'RESPONDER_KILLED' || e.rid < 0) continue;
+    const r = sim.responders[e.rid];
+    killedList.push({ name: r.name, callsign: sim.units[r.unitId].callsign, cause: r.deathCause ?? mainCause(r.injuries), incident: e.incidentId >= 0 ? sim.incidents[e.incidentId].code : '' });
+  }
+  // 교대 끝의 명부 (I2 가 다음 교대의 입력을 만들 때 읽는다 — 인근 도시 지원 대원은 뺀다)
+  const roster: RosterOut[] = [];
+  for (const r of sim.responders) {
+    if (sim.units[r.unitId].aid) continue;
+    roster.push({ rid: r.id, name: r.name, health: r.dead ? 0 : r.health, band: r.dead ? 3 : Math.min(2, bandOf(r.health)), dead: r.dead === true, hospital: r.care !== undefined, out: outShifts(r), cause: r.dead ? r.deathCause ?? mainCause(r.injuries) : mainCause(r.injuries) });
+  }
+  // 용의자 피해와 숨진 구조 대상의 원인 (사건 판정에 적힌 값의 합)
+  let susHurt = 0, susDead = 0;
+  const causeTally: Partial<Record<InjuryCause, number>> = {};
+  for (const I of sim.incidents) {
+    const res = I.result;
+    if (!res) continue;
+    susHurt += res.suspectsHurt ?? 0; susDead += res.suspectsDead ?? 0;
+    if (res.deathCauses) for (const k of Object.keys(res.deathCauses) as InjuryCause[]) causeTally[k] = (causeTally[k] ?? 0) + (res.deathCauses[k] ?? 0);
+  }
   const equip = sim.events.filter((e) => e.problem === 'EQUIP_FAIL').length;
   const delayCauses = Array.from(causeCount.entries()).map(([code, count]) => ({ code, label: PROBLEM_LABEL[code], count })).sort((a, b) => b.count - a.count || (a.code < b.code ? -1 : 1));
   const n = incidents.length;
   const good = counts.success + counts.delayed;
   const summary: string[] = [];
   summary.push(`이번 교대에서 ${n}건의 사건을 처리했습니다. 성공 ${counts.success}건, 부분 성공 ${counts.partial}건, 대응 지연 ${counts.delayed}건, 미해결 ${counts.unresolved}건, 실패 ${counts.failed}건.`);
-  if (casTotal) summary.push(`요구조자 ${casTotal}명 중 ${casSaved}명을 구조했습니다 (구조율 ${pct(casSaved / casTotal)}).${casLost ? ` ${casLost}명은 구하지 못했습니다.` : ''}${casUnd ? ` ${casUnd}명은 발견하지 못했습니다.` : ''}`);
+  // 순직은 첫 줄 바로 다음에 둔다 (H1 §7.3) — 담담하게, 기록에 적힌 것만
+  if (killedList.length) summary.push(`순직: ${killedList.map((k) => { const I = sim.incidents.find((J) => J.code === k.incident); return `${k.name} 대원(${k.callsign}${I ? `, 사건 ${I.code} ${scenarioName(I.truth.type, I.truth.variant)}` : ''})`; }).join(', ')}.`);
+  // 숨진 구조 대상의 원인 집계를 붙인다: "… 6명은 구하지 못했습니다(연기 흡입 4, 총상 2)."
+  const tally = (Object.keys(causeTally) as InjuryCause[]).sort((a, b) => (causeTally[b] ?? 0) - (causeTally[a] ?? 0) || (a < b ? -1 : 1)).map((k) => `${CAUSE_NAME[k]} ${causeTally[k]}`).join(', ');
+  if (casTotal) summary.push(`요구조자 ${casTotal}명 중 ${casSaved}명을 구조했습니다 (구조율 ${pct(casSaved / casTotal)}).${casLost ? ` ${casLost}명은 구하지 못했습니다${tally ? `(${tally})` : ''}.` : ''}${casUnd ? ` ${casUnd}명은 발견하지 못했습니다.` : ''}`);
+  // 대원 피해: 순직을 뺀 다친 대원과 그 가운데 병원으로 옮겨진 수
+  { const alive = hurt.filter((x) => !x.dead); if (alive.length) { const hosp = alive.filter((x) => x.hospital).length; summary.push(`대원 피해: 부상 ${alive.length}명${hosp ? `(병원 이송 ${hosp}명)` : ''}.`); } }
+  if (susHurt) summary.push(susDead ? `용의자 ${susHurt}명이 다쳤고 그중 ${susDead}명이 숨졌습니다.` : `용의자 ${susHurt}명이 다쳤습니다.`);
   if (delayCauses.length) summary.push(`가장 자주 발생한 문제: ${delayCauses.slice(0, 3).map((c) => `${c.label}(${c.count}건)`).join(', ')}.`);
   if (n && good === n) summary.push('모든 사건을 목표대로 해결한 교대였습니다.');
   const methods = methodTally(sim);      // (R2) 성공한 방법별 횟수 (평소 방법 포함). 요약 줄은 평소 방법이 아닌 것만, 하나도 없으면 넣지 않는다
@@ -224,6 +291,7 @@ export function buildReport(sim: Sim): ShiftReport {
     methods,      // (R2)
     avgResponse: rN ? rSum / rN : -1, avgDispatch: dN ? dSum / dN : -1, utilization, unitUtil,
     casTotal, casSaved, casLost, casUndiscovered: casUnd, respondersHurt: hurt, equipFailures: equip, delayCauses, incidents, summary,
+    respondersKilled: killedList, suspectsHurt: susHurt, suspectsDead: susDead, roster,      // (H1)
     hash: sim.logHash.toString(16),
   };
 }

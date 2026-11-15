@@ -1,17 +1,16 @@
 // 부상과 사망 (H1) — 세계 규칙. 진실을 읽고 바꾼다 (hazards.ts 와 같은 자격).
 //   단계 3  스스로 대피하다 위중(체력 40 이하)이 된 사람이 멈춘다 (설계서 H1 §5.2) — 아래
 //   단계 4c 열 탈진, 붕괴 현장의 잔해 바닥 추락 (§2.3) — 아래 (덮쳐 제압할 때의 몸싸움은 실행기의 검거 자리 — executor.scuffle)
-// 뒤 단계가 여기에 채운다:
-//   단계 5  용의자의 상처 출혈과 그로 인한 사망 (§4.1)
+//   단계 5  용의자의 매 틱 피해: 불·연기·유독 가스, 상처 출혈과 그로 인한 쓰러짐·사망 (§2.3·§4.1) — 아래 (전이와 그 문구는 hurtHostile)
 // 매 틱 모든 현장에서 불리므로, 다친 사람이 없는 현장은 싼 검사 하나로 지나가게 하고 배열을 새로 만들지 않는다 (§12.2-7).
 // 사건이 끝난 뒤(I.phase === 'closed')에는 아무것도 하지 않는다 (§2.6).
 
 import type { Sim } from '../../engine';
 import { emit } from '../../events';
-import type { Casualty, FieldAgent, Incident, Scene } from '../../types';
+import type { Casualty, FieldAgent, Hostile, Incident, Scene } from '../../types';
 import { josa } from '../../util';
 import { isIndoor, tileOf } from '../grid';
-import { CAUSE_NAME, DOWN_AT, decayCause, hurtResponder, injuryRng } from '../injury';
+import { CAUSE_NAME, DOWN_AT, decayCause, hurtHostile, hurtResponder, injuryRng, smokeCause } from '../injury';
 import type { HurtOpts } from '../injury';
 import { registerRule } from '../sceneRegistry';
 
@@ -84,7 +83,35 @@ registerRule((sim, s, I) => {
     collapseWalker(sim, s, I, c);
   }
   responderHazards(sim, s, I);
+  hostileHazards(sim, s, I);
 });
+
+// ───────────────────────── 단계 5: 용의자 — 매 틱 피해 (§2.3·§4.1) ─────────────────────────
+/**
+ * 상처 출혈의 배율: 현장에 있는 동안 1, 처치를 받고 붙잡혀(검거) 있거나 쓰러져 있으면 0.6 — 구조 대상·대원의 "처치를 받고 안전 구역에 있으면 0.6"과 같은 자리다 (§2.6).
+ * 차에 실린 뒤(aboard·hospital)는 hurtHostile 이 멈춘다
+ */
+export const HOSTILE_CARED = 0.6;
+const HOSTILE_TICK: HurtOpts = { tick: true };
+/**
+ * 용의자 (단계 5): 선 칸의 불(0.3 초과 — 2.6 × 불), 연기(0.36 × 연기 — 가스 누출 현장은 유독 가스 0.62 × 연기), 상처 출혈.
+ * 구조 대상의 악화 식(tickCasualties)과 같은 계수다. 매 틱 피해에는 문턱이 없다 — 쓰러진 뒤에는 이것으로 숨질 수 있다.
+ * 다친 데가 없고 불·연기도 없는 현장은 싼 검사로 지나간다. 현장에 있는 용의자만(달아났거나 차에 실렸거나 숨진 용의자는 아니다). export 는 시험용
+ */
+export function hostileHazards(sim: Sim, s: Scene, I: Incident): void {
+  const hs = s.hostiles;
+  if (!hs.length) return;
+  const smokeK = s.kind === 'hazmat' ? 0.62 : 0.36, sc = smokeCause(s), dt = sim.dt;
+  for (let k = 0; k < hs.length; k++) {
+    const h: Hostile = hs[k];
+    if (h.dead || h.state === 'escaped' || (h.where !== undefined && h.where !== 'scene')) continue;
+    const i = tileOf(s, h.x, h.y);
+    const fire = s.fire[i], smoke = s.smoke[i], b = h.bleed ?? 0;
+    if (fire > 0.3) hurtHostile(sim, s, I, h, 2.6 * fire * dt, 'burn', HOSTILE_TICK);
+    if (smoke > 0 && !h.dead) hurtHostile(sim, s, I, h, smoke * smokeK * dt, sc, HOSTILE_TICK);
+    if (b > 0 && !h.dead) hurtHostile(sim, s, I, h, b * ((h.treatQ ?? 0) > 0 && (h.state === 'arrested' || h.state === 'down') ? HOSTILE_CARED : 1) * dt, h.bleedCause ?? 'gunshot', HOSTILE_TICK);
+  }
+}
 
 /** 대원 (단계 4c): 붕괴 현장의 잔해 바닥 추락, 지친 소방 대원의 열 탈진. 차에 탔거나 숨진 대원은 건너뛴다. 판정 뒤에는 부르지 않는다(위의 규칙 첫 줄). export 는 시험용 */
 export function responderHazards(sim: Sim, s: Scene, I: Incident): void {

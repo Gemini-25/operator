@@ -7,6 +7,7 @@ import { needsText, sevName } from '../sim/dispatch/analyst';
 import { personaName, topicName } from '../sim/dispatch/callSystem';
 import type { Sim } from '../sim/engine';
 import { workLabel } from '../sim/field/agents';
+import { outShifts } from '../sim/field/injury';      // (H1) 다음 교대 결장 예상 — 읽기만 한다
 import { KITS, roleOf, stays } from '../sim/crews';      // 읽기만 한다 (장비의 상태를 바꾸는 함수는 쓰지 않는다)
 import { FIELD_NAME, UNIT_KIND_NAME } from '../sim/resources';
 import { scenarioName } from '../sim/scenarios';
@@ -25,7 +26,7 @@ import { Mark, RoleDot, Token } from './Mark';
 import { airOpLabel } from '../view/renderScene';
 import { HazardStrip } from './HazardStrip';
 import { pinIcon } from '../view/hazardState';
-import { TRIAGE, TRIAGE_NAME, agentStateText, careName, injuryLine, isLoss, respBand, respStateText } from '../view/triage';
+import { LOSS_COLOR, TRIAGE, TRIAGE_NAME, agentStateText, careName, injuryLine, isLoss, reportHurtText, respBand, respStateText } from '../view/triage';
 
 const PHASE: Record<string, string> = { unreported: '미신고', call: '신고 접수 중', pending: '배정 대기', dispatched: '출동 중', onscene: '현장 대응', closed: '종료' };
 const UNIT_STATE: Record<string, string> = { available: '대기', turnout: '출동 준비', enroute: '출동 중', onscene: '현장', transport: '병원 이송', hospital: '환자 인계', returning: '복귀 중', oos: '운용 중단' };
@@ -356,7 +357,7 @@ export function AgentPanel({ sim, rid, truth = false }: { sim: Sim; rid: number;
         {/* (H1) 부상: 원인별 피해, 출혈, 처치, 후송 — 다친 적이 있는 대원만 */}
         {((r.injuries && r.injuries.length > 0) || r.status !== 'ok' || r.dead) && (<>
           <h4>부상</h4>
-          <div className="kv"><span className="dim">중증도</span><span><span className={`band band-${respBand(r)}`}>{TRIAGE_NAME[respBand(r)]}</span>{respStateText(r) ? ` · ${respStateText(r)}` : ''}</span></div>
+          <div className="kv"><span className="dim">중증도</span><span><span className={`band band-${respBand(r)}`}>{TRIAGE_NAME[respBand(r)]}</span>{respStateText(r) ? ` · ${respStateText(r)}` : ''}{outShifts(r) > 0 ? ` · 다음 교대 결장 예상 ${outShifts(r)}` : ''}</span></div>
           <div className="kv"><span className="dim">원인</span><span>{injuryLine(r.injuries) || '기록 없음'}</span></div>
           {(r.bleed ?? 0) > 0 && <div className="kv"><span className="dim">출혈</span><span>있음{(r.treatQ ?? 0) > 0 ? ' (처치로 늦춤)' : ''}</span></div>}
           {(r.treatQ ?? 0) > 0 && <div className="kv"><span className="dim">처치</span><span>{careName(r.treatQ)}</span></div>}
@@ -497,7 +498,9 @@ export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel 
             <div className="tile"><b>{pct(r.utilization)}</b><span>자원 활용률</span></div>
             <div className="tile"><b>{r.casSaved}/{r.casTotal}</b><span>구조 성과</span></div>
             <div className="tile"><b style={{ color: r.casLost ? '#ff5d5d' : undefined }}>{r.casLost}{r.casUndiscovered ? <small> +미발견 {r.casUndiscovered}</small> : null}</b><span>시민 피해</span></div>
-            <div className="tile"><b>{r.respondersHurt.length}</b><span>대원 부상</span></div>
+            <div className="tile"><b>{r.respondersHurt.filter((x) => !x.dead).length}</b><span>대원 부상</span></div>
+            {(r.respondersKilled?.length ?? 0) >= 1 && <div className="tile loss"><b style={{ color: LOSS_COLOR }}>{r.respondersKilled!.length}</b><span>대원 순직</span></div>}
+            {(r.suspectsHurt ?? 0) >= 1 && <div className="tile"><b>{r.suspectsHurt}<small> 다침 · 사망 {r.suspectsDead ?? 0}</small></b><span>용의자 사상</span></div>}
             <div className="tile"><b>{r.equipFailures}</b><span>장비 고장</span></div>
           </div>
           <div className="cols">
@@ -527,8 +530,8 @@ export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel 
               {r.delayCauses.slice(0, 12).map((c) => <div key={c.code} className="prob"><span>{c.label}</span><Bar v={c.count / Math.max(1, r.totalIncidents)} color="#ffb454" w={90} /><span className="num">{c.count}</span></div>)}
               <h4>부대별 활용률</h4>
               {r.unitUtil.map((u) => <div key={u.callsign} className="prob"><span>{u.callsign}</span><Bar v={u.util} color="#7cc4ff" w={90} /><span className="num">{pct(u.util)} · {u.runs}회</span></div>)}
-              <h4>대원 부상</h4>
-              {r.respondersHurt.length === 0 ? <div className="empty">없음</div> : r.respondersHurt.map((x) => <div key={x.name} className="kv"><span>{x.name} ({x.role ? `${x.role} · ` : ''}{x.callsign})</span><span className="warn">{x.status}</span></div>)}
+              <h4>대원 부상·순직</h4>
+              {r.respondersHurt.length === 0 ? <div className="empty">없음</div> : r.respondersHurt.map((x) => <div key={x.name} className="kv"><span>{x.name} ({x.role ? `${x.role} · ` : ''}{x.callsign})</span><span className={x.dead ? 'loss' : `warn${x.band !== undefined ? ` band-${Math.min(2, x.band)}` : ''}`}>{reportHurtText(x, r.respondersKilled)}</span></div>)}
               {hist.length > 0 && (<><h4>이전 교대 기록</h4>{hist.map((x, k) => <div key={k} className="kv small"><span className="dim">시드 {x.seed}</span><span>{x.difficulty ? `${x.difficulty} · ` : ''}{x.incidents}건 · 성공 {x.counts.success ?? 0} · 실패 {x.counts.failed ?? 0}</span></div>)}</>)}
             </div>
           </div>

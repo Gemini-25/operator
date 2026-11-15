@@ -15,7 +15,7 @@ import { applyWater, flashbang, hostageNear, hostileActive, isHeld, placeAtSafe,
 import { coverRoll, fireShot } from './damage';
 import { breachHowFor, lastFx, noteCollateral, noteHit, noteShot, recBreach, recCuff, recTaser, weaponOf } from './fxlog';
 import { detonate } from './rules/crime';
-import { careResponder, hurtCas, hurtResponder, initialCause, injuryRng, mustRetreat, needsHospital, noteHostileHurt, treatEffect, treatPlan } from './injury';
+import { DOWN_AT, careHostile, careResponder, hurtCas, hurtHostile, hurtResponder, initialCause, injuryRng, mustRetreat, needsHospital, treatEffect, treatPlan } from './injury';
 
 export function makeTask(kind: TaskKind, label: string, w: WorkItem | null = null): Task {
   return {
@@ -380,7 +380,7 @@ export const FIGHT_HIT: readonly [number, number] = [3, 8];
 const fights = (sim: Sim, I: Incident, h: Hostile, was: Hostile['state']): boolean => was === 'fight' && sim.t >= h.stunUntil && I.phase !== 'closed';
 /**
  * 몸싸움 끝의 검거 (§4.2): 기록 '○○이 저항해 몸싸움 끝에 검거.'(검거 문구를 대신한다)를 먼저 남기고, 난수는 injury:<현장>:fight 에서 대원 몫 → 용의자 몫 순서로 뽑는다.
- * 대원은 hurtResponder(타박상, 가해자 = 그 용의자). 용의자의 피해는 단계 5 가 hurtHostile 로 바꿀 때까지 기록 줄(noteHostileHurt)과 함께 직접 깎는다
+ * 대원은 hurtResponder(타박상, 가해자 = 그 용의자), 용의자는 hurtHostile(타박상, 가해자 = 그 대원)
  */
 function scuffle(sim: Sim, s: Scene, I: Incident, a: FieldAgent, h: Hostile): void {
   const rng = injuryRng(sim, s, 'fight');
@@ -388,9 +388,10 @@ function scuffle(sim: Sim, s: Scene, I: Incident, a: FieldAgent, h: Hostile): vo
   const r = resp(sim, a);
   const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${josa(h.label, '이/가')} 저항해 몸싸움 끝에 검거.` });
   hurtResponder(sim, s, I, a, toMe, 'blunt', { by: h.id, byKind: 'hostile', ev });
-  const hp0 = h.health; h.health -= toHim;      // (H1) 단계 5 가 hurtHostile 로 바꾼다
-  noteHostileHurt(h, 'blunt', hp0, sim.t, a.rid, 'responder', ev);      // (H1)
+  hurtHostile(sim, s, I, h, toHim, 'blunt', { by: a.rid, byKind: 'responder', ev });
 }
+/** 테이저에 맞은 용의자 (§4.2): 감전 2 를 기록한다 — 체력을 1 아래로 내리지 않는다 (무력화가 목적이지 다치게 하는 것이 아니다) */
+const TASER_HIT = 2;
 function tryTaser(sim: Sim, s: Scene, a: FieldAgent, h: Hostile): boolean {
   if (h.weapon === 'gun' || h.state !== 'fight' || sim.t < h.stunUntil) return false;
   if (sim.t - (a.taserAt ?? -99) < TASER.wait || kitUses(sim, a.rid, 'taser') <= 0 || !hasKit(sim, a.rid, 'taser')) return false;
@@ -402,7 +403,8 @@ function tryTaser(sim: Sim, s: Scene, a: FieldAgent, h: Hostile): boolean {
   const hit = kitRng(sim, s).chance(TASER.hit);
   if (hit) h.stunUntil = sim.t + TASER.stun;
   recTaser(sim, s, a, h.x, h.y, hit, 1, h.id);
-  emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, text: hit ? `테이저 발사 — ${h.label} 무력화.` : '테이저 발사 — 빗나감.' });
+  const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, text: hit ? `테이저 발사 — ${h.label} 무력화.` : '테이저 발사 — 빗나감.' });
+  if (hit && h.health > 1) hurtHostile(sim, s, I, h, Math.min(TASER_HIT, h.health - 1), 'electric', { by: a.rid, byKind: 'responder', ev });      // 기록만 남길 만큼 (H1 §4.2)
   return true;
 }
 
@@ -441,12 +443,12 @@ function shootAt(sim: Sim, s: Scene, a: FieldAgent, hid: number): void {
     I.problems.push({ code: 'ESCALATION', t: sim.t, eventId: emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 3, text: '교전 발생! 대응 사격합니다.' }), detail: '교전 발생', recovered: true, recoveryText: '' });
   }
   if (hit) {
-    const hp0 = h.health;
-    h.health -= s.rng.range(30, 48); h.morale -= 0.12;
-    noteHostileHurt(h, 'gunshot', hp0, sim.t, r.id, 'responder');      // (H1) 기록만
+    const dmg = s.rng.range(30, 48);      // 판정 흐름에서 뽑는 자리는 그대로 — 뽑은 값만 hurtHostile 에 넘긴다
+    h.morale -= 0.12;
+    hurtHostile(sim, s, I, h, dmg, 'gunshot', { by: r.id, byKind: 'responder' });      // 용의자 문턱·출혈·쓰러짐(체력 15 이하 — 그 자리에서 바로)과 그 기록
     pushFx(sim, s, 'hit', h.x, h.y);
     noteHit(lastFx(sim, s, 'hit'), { side: 0, ox: a.x, oy: a.y, tk: 1, target: h.id });
-    if (h.health <= 0) r.xpGained += 0.004;
+    if (h.health <= DOWN_AT) r.xpGained += 0.004;
   }
 }
 
@@ -889,20 +891,20 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (vis && a.cooldown <= 0 && vis.weapon === 'gun') { a.fx = vis.x - a.x; a.fy = vis.y - a.y; shootAt(sim, s, a, vis.id); }
       if (t.kind === 'negotiate') {
         const h = s.hostiles[t.hostile];
-        if (!hostileActive(h) || h.state === 'surrendered' || h.state === 'flee') { learn(sim, a, hosFact(sim, s, h, r.name), true, true); finishTask(sim, s, a, true); return; }
+        if (!hostileActive(h) || h.state === 'surrendered' || h.state === 'flee') { learn(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)), true, true); finishTask(sim, s, a, true); return; }
         if (h.state === 'fight') { a.label = '엄폐 (협상 중단)'; return; }
         const k = 0.0125 * (0.4 + 0.6 * (r.composure + r.experience) / 2) * (1.25 - h.aggression) * (kitWorks(sim, a.rid, 'megaphone', I) ? 1.2 : 1);      // 확성기로 말하면 더 잘 닿는다
         h.negot += dt; h.morale -= k * dt;
         t.progress += dt; a.ring = clamp(1 - (h.morale - 0.2) / 0.6, 0, 1);
-        if (t.phase === 0) { t.phase = 1; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${h.label}와 협상을 시도합니다.` }); }
-        else if (t.phase === 1 && h.morale < 0.42) { t.phase = 2; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${h.label}가 동요하고 있습니다. 협상을 계속합니다.` }); }
-        else if (t.phase === 1 && t.progress > 30 && h.aggression > 0.6) { t.phase = 3; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'radio', imp: 1, text: `${h.label}가 협상에 응하지 않습니다.` }); }
+        if (t.phase === 0) { t.phase = 1; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${josa(h.label, '과/와')} 협상을 시도합니다.` }); }
+        else if (t.phase === 1 && h.morale < 0.42) { t.phase = 2; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${josa(h.label, '이/가')} 동요하고 있습니다. 협상을 계속합니다.` }); }
+        else if (t.phase === 1 && t.progress > 30 && h.aggression > 0.6) { t.phase = 3; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'radio', imp: 1, text: `${josa(h.label, '이/가')} 협상에 응하지 않습니다.` }); }
       } else a.label = s.kind === 'hazmat' ? '출입구 통제' : `${exitName(s, t.tile)} 봉쇄`;
       return;
     }
     case 'engage': {
       const h = s.hostiles[t.hostile];
-      if (!hostileActive(h) || h.state === 'surrendered') { learn(sim, a, hosFact(sim, s, h, r.name), true, true); finishTask(sim, s, a, true); return; }
+      if (!hostileActive(h) || h.state === 'surrendered') { learn(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)), true, true); finishTask(sim, s, a, true); return; }
       a.cooldown -= dt;
       if (h.state === 'flee' || h.weapon !== 'gun') {
         a.label = h.state === 'flee' ? '도주 용의자 추격' : '용의자 접근';
@@ -915,7 +917,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
           if (t.progress >= 1.6) {
             const was = h.state;
             h.state = 'arrested'; h.path = null;
-            learnQuiet(sim, a, hosFact(sim, s, h, r.name));
+            learnQuiet(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)));
             if (fights(sim, I, h, was)) scuffle(sim, s, I, a, h);      // 맞서던 상대: 몸싸움 끝에 (H1 단계 4c)
             else emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${h.label} 검거!` });
             recCuff(sim, s, h, a, was === 'flee' ? 'chase' : 'tackle');
@@ -991,7 +993,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
           t.progress += dt; a.ring = t.progress / 1.2;
           if (t.progress >= 1.2) {
             h.state = 'arrested'; h.path = null;
-            learnQuiet(sim, a, hosFact(sim, s, h, r.name));
+            learnQuiet(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)));
             emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `무력화된 ${h.label} 제압·검거!` });
             recCuff(sim, s, h, a, 'stunned');
             r.xpGained += 0.006;
@@ -1020,8 +1022,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
           t.progress += dt; a.ring = t.progress / 2.2;
           if (t.progress >= 2.2) {
             h.state = 'arrested'; h.path = null;
-            learnQuiet(sim, a, hosFact(sim, s, h, r.name));
-            emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${h.label}를 곁에서 덮쳐 제압·검거!` });
+            learnQuiet(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)));
+            emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${josa(h.label, '을/를')} 곁에서 덮쳐 제압·검거!` });
             recCuff(sim, s, h, a, 'tackle');
             r.xpGained += 0.006;
             finishTask(sim, s, a, true);
@@ -1041,7 +1043,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     }
     case 'arrest': {
       const h = s.hostiles[t.hostile];
-      if (h.state === 'arrested' || h.state === 'escaped' || h.state === 'down') { learn(sim, a, hosFact(sim, s, h, r.name), true, true); finishTask(sim, s, a, true); return; }
+      if (h.state === 'arrested' || h.state === 'escaped' || h.state === 'down') { learn(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)), true, true); finishTask(sim, s, a, true); return; }
       if (h.state !== 'surrendered' && h.weapon === 'gun') { finishTask(sim, s, a, false, 'unsafe'); return; }
       if (tryTaser(sim, s, a, h)) { a.label = '테이저 발사'; return; }      // 덤벼드는 상대(총이 아닌)에게 테이저 — 쏜 틱에는 움직이지 않는다
       if (!docGate(sim, s, a, 'closeIn').ok) return;      // (R3) 판단 지점 closeIn — 단계 0 은 줄이 없어 늘 통과. 2단계가 기다리는 자리(1.8·3칸)·상한·기록을 채운다
@@ -1052,7 +1054,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (t.progress >= t.need) {
         const was = h.state;
         h.state = 'arrested';
-        learnQuiet(sim, a, hosFact(sim, s, h, r.name));
+        learnQuiet(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)));
         if (fights(sim, I, h, was)) scuffle(sim, s, I, a, h);      // 맞서던 상대: 몸싸움 끝에 (H1 단계 4c)
         else emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${h.label} 검거 완료.` });
         recCuff(sim, s, h, a, was === 'surrendered' ? 'surrender' : 'tackle');
@@ -1200,6 +1202,73 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, causes: [b.hurtEv ?? -1], text: `${br.name} 대원 ${u.callsign}에 탑승 — 병원 후송.` });
       // 그 대원이 자기 부대에서 현장에 남은 마지막 사람이었으면 그 부대를 철수시킨다. 그러지 않으면 그 차량은 지시를 받을 사람이 없어 교대 끝까지 현장에 남는다
       if (!s.agents.some((q) => q.unitId === b.unitId && q.status !== 'left')) { const bu = sim.units[b.unitId]; if (!bu.boardOrder) bu.boardOrder = 'release'; }
+      finishTask(sim, s, a, true);
+      return;
+    }
+    case 'treatSuspect': {
+      // 쓰러진·다친 용의자의 처치와 이송 (H1 §4.3). 처치는 세 부류가 같은 식(injury.treatEffect)이다.
+      // 태울 차(w.prop)가 내 차이고 자리가 있으면, 처치에 이어 차까지 옮겨 태운다 — 쓰러진 용의자는 스스로 움직이지 않으므로 내가 옮긴다 (좌표를 내 뒤에 붙인다).
+      // 호송은 모델하지 않는다(결정): 경찰은 처치까지, 이송은 구급차가 한다
+      const h = s.hostiles[t.hostile];
+      const d0 = dist(a.x, a.y, h.x, h.y);
+      // 숨졌다: 숨진 것은 곁(2칸 안)에서만 알 수 있다 — 멀리서 본 대로 알리면 지휘관은 여전히 처치가 필요한 줄 알고 같은 지시를 되풀이한다 (낡은 믿음). 가서 보고 알린다
+      if (h.dead && (h.where ?? 'scene') === 'scene' && d0 > 2) {
+        const m = moveTo(sim, s, a, h.x, h.y, 1.5);
+        if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+        if (m !== 'arrived') return;
+      }
+      // 처치할 수 없는 상태 — 숨졌다 · 차에 실렸다 · 달아났다 · 아직 맞서고 있다: 지휘관의 믿음이 낡았으므로 본 대로 다시 알리고 끝낸다
+      if (h.dead || (h.where ?? 'scene') !== 'scene' || h.state === 'escaped' || h.state === 'hold' || h.state === 'fight' || h.state === 'flee') {
+        if ((h.where ?? 'scene') === 'scene') reportDone(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)));
+        finishTask(sim, s, a, true); return;
+      }
+      if (t.phase === 0) {
+        // ① 처치. 이미 받은 처치보다 0.15 넘게 나은 처치를 할 수 있을 때만 다시 한다 (구조 대상·다친 대원의 처치와 같다). 다친 데가 없으면(중상 아래이고 피도 거의 없다) 할 것이 없다
+        const had = (h.treatQ ?? 0) > 0;
+        if ((had && treatPlan(sim, s, a.rid, h.health) <= (h.treatQ ?? 0) + 0.15) || (h.tDown === undefined && h.health > 70 && (h.bleed ?? 0) < 0.01)) { t.phase = 1; t.progress = 0; return; }
+        const m = moveTo(sim, s, a, h.x, h.y, 1.3);
+        if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+        if (m !== 'arrived') return;
+        a.fx = h.x - a.x; a.fy = h.y - a.y;
+        t.need = 4.5 + (h.health < 40 ? 4 : h.health < 70 ? 2 : 0);
+        t.progress += Math.max(0.1, r.skills.medical * (0.5 + 0.5 * medLevelOf(sim, a.rid))) * staminaF(r) * dt; a.ring = t.progress / t.need; drain(sim, a, 0.3);
+        if (t.progress < t.need) return;
+        if (h.dead) { reportDone(sim, a, hosFact(sim, s, h, r.name, 0)); finishTask(sim, s, a, true); return; }      // 처치하는 동안 숨졌다
+        const fx = treatEffect(sim, s, I, a.rid, h.health, had ? (h.treatQ ?? 0) : -1);
+        if (fx) {
+          careHostile(sim, h, fx);
+          learnQuiet(sim, a, hosFact(sim, s, h, r.name, 0));      // 처치한 대원은 곁에서 본다 (중증도·처치 수준까지)
+          emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${h.label} 응급 처치 완료.` });
+          r.xpGained += 0.003;
+        }
+        t.phase = 1; t.progress = 0;
+        return;
+      }
+      if (t.phase === 1) {
+        // ② 태울 것인가: 태울 차가 내 차이고 자리가 남았을 때만 (그 차를 고른 것은 지휘관이다 — 더 무겁거나 같은 사람이 기다리지 않을 때만 정한다)
+        if (!w || w.prop !== a.unitId || seatsUsed(sim, u) >= seatsOf(u)) { reportDone(sim, a, hosFact(sim, s, h, r.name, d0)); finishTask(sim, s, a, true); return; }
+        const m = moveTo(sim, s, a, h.x, h.y, 1.3);
+        if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+        if (m !== 'arrived') return;
+        t.progress += dt;
+        if (t.progress >= 1.2) { t.phase = 2; t.progress = 0; a.path = null; a.pathGoal = -1; }
+        return;
+      }
+      // ③ 차까지 옮겨 태운다 (들것 — a.carrying 은 쓰지 않는다: 그 칸은 구조 대상 id 와 대원 −(rid+2) 만 담는다)
+      a.label = '용의자 이송';
+      const m = moveTo(sim, s, a, s.staging.x, s.staging.y, 1.2);
+      h.x = a.x - a.fx * 0.5; h.y = a.y - a.fy * 0.5;
+      if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+      if (m !== 'arrived') return;
+      t.progress += dt;
+      if (t.progress < 1.2) return;
+      // 실을 때 자리를 다시 본다 (그 사이에 다른 환자가 실렸다): 그대로 두고 지휘관에게 알린다
+      if (seatsUsed(sim, u) >= seatsOf(u)) { reportDone(sim, a, hosFact(sim, s, h, r.name, 0)); finishTask(sim, s, a, false, 'full'); return; }
+      h.where = 'aboard';
+      (u.aboard ??= []).push({ kind: 'suspect', id: h.id, inc: I.id, t: sim.t });
+      u.firstLoadAt ??= sim.t;
+      reportDone(sim, a, hosFact(sim, s, h, r.name, 0));      // 강제 보고 (무전 문구는 아래 기록이 대신한다)
+      emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, text: `${josa(h.label, '을/를')} ${u.callsign}에 태워 병원으로.` });
       finishTask(sim, s, a, true);
       return;
     }

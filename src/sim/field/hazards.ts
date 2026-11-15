@@ -15,7 +15,7 @@ import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, trut
 import { coverRoll, fireShot, heatGlass, shatter } from './damage';
 import { lastFx, noteBoom, noteFlash, noteHit, noteShot, recHarm, recMelee } from './fxlog';
 import { RUIN_CEILING, RUIN_SECONDARY, markRuin, recordFall } from './ruins';
-import { CAUSE_NAME, bandOf, decayCause, hurtCas, hurtCasTo, hurtResponder, injuryRng, noteDecay, noteInjury } from './injury';
+import { CAUSE_NAME, DOWN_AT, SELF_HARM, SELF_HARM_HIT, bandOf, decayCause, hurtCas, hurtCasTo, hurtHostile, hurtResponder, injuryRng, noteDecay, noteInjury, settleHostile } from './injury';
 
 export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2, c?: FxInfo): void {
   s.fx.push({ kind, t: sim.t, x, y, x2, y2, text, color, ttl, c });
@@ -140,6 +140,7 @@ function smokeSpread(s: Scene, w: number, h: number): void {
  * cause: 기록에 적는 원인 — 폭발이면 blast(기본), 천장·2차 붕괴처럼 무너져 내린 것이면 crush.
  * 폭발(blast)에 휩쓸려 체력이 80 아래가 된 구조 대상은 쓰러져 스스로 나오지 못하고(갇힌 사람은 그대로) 피를 흘린다 —
  * 가스 용기·누출 가스·폭발물이 같은 규칙이다(예전에는 폭발물만 그랬다). 무너져 내린 것(crush)에는 걸지 않는다.
+ * 세 부류를 고르게 친다 (H1 §5.1): 대원(방호를 뺀다), 구조 대상·용의자(×0.8). 용의자는 예전에 건너뛰었다 — 쓰러지지 않은 용의자는 문턱 때문에 한 번에 숨지지 않는다(hurtHostile).
  */
 export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, radius: number, dmg: number, ev: number, cause: InjuryCause = 'blast'): void {
   for (const a of s.agents) {
@@ -155,6 +156,12 @@ export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, rad
     if (d > radius) continue;
     hurtCas(sim, s, I, c, dmg * 0.8 * (1 - d / (radius + 1)), cause, { ev });
     if (cause === 'blast' && c.health < 80) hurtCas(sim, s, I, c, 0, 'blast', { bleed: (0.09 + 0.09 * (1 - d / radius)) * sim.tune.bleedMul, immobile: true });
+  }
+  for (const h of s.hostiles) {
+    if (h.dead || h.state === 'escaped' || (h.where !== undefined && h.where !== 'scene')) continue;
+    const d = dist(h.x, h.y, x, y);
+    if (d > radius) continue;
+    hurtHostile(sim, s, I, h, dmg * 0.8 * (1 - d / (radius + 1)), cause, { ev });
   }
   shatter(sim, s, x, y, radius + 1.5, Math.min(2.5, radius), 3);      // 반경 안의 창과 가구가 부서진다
 }
@@ -376,11 +383,8 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
   for (const h of s.hostiles) {
     h.px = h.x; h.py = h.y;
     if (h.state === 'arrested' || h.state === 'down' || h.state === 'escaped') continue;
-    if (h.health <= 0) {
-      h.state = 'down';
-      emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'resolve', text: `${h.label} 제압됨.`, imp: 2 });
-      continue;
-    }
+    // 쓰러짐은 hurtHostile 이 다치는 그 자리에서 바로 세운다 (H1 §4.1). 이 검사는 그 길을 거치지 않은 체력 변화의 안전장치일 뿐이다
+    if (h.health <= DOWN_AT && h.tDown === undefined) { settleHostile(sim, I, h, h.bleedCause ?? 'blunt'); continue; }
     if (sim.t < h.stunUntil) continue;       // 무력화된 동안에는 아무것도 못 한다
     const wasAlert = sim.t < h.alertUntil;
     const see = officersSeeing(sim, s, h, 11);
@@ -391,7 +395,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
       // 시야 밖에서 바로 곁까지 다가온 대원에게 기습당하면 잠시 얼어붙는다
       if (!wasAlert && see.nearestD < 2.6 && sim.t - s.startedAt > 5 && (h.state === 'hold')) {
         h.stunUntil = sim.t + 1.6; h.morale -= 0.25;
-        emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, text: `${h.label}가 시야 밖에서 접근한 ${sim.responders[ta.rid].name}에게 기습당했습니다.` });
+        emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, text: `${josa(h.label, '이/가')} 시야 밖에서 접근한 ${sim.responders[ta.rid].name}에게 기습당했습니다.` });
       }
       h.facing = Math.atan2(ta.y - h.y, ta.x - h.x); h.alertUntil = sim.t + 5;
     } else if (sim.t >= h.lookAt && h.state === 'hold') {
@@ -417,8 +421,20 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
     // 사기 변화: 포위될수록, 부상당할수록 떨어진다
     h.morale -= (0.006 * Math.max(0, see.n - 1) + (h.health < 60 ? 0.012 : 0)) * dt;
     if (h.morale < 0.2 && h.state !== 'flee') {
+      // 자해 (H1 §4.5) — 사용자 결정으로 끈 경로다(SELF_HARM = 0): 무기를 들고 공격성이 높고 인질이 없는 용의자가 한 번만 추첨한다(흐름 injury:<현장>:self — 그 밖의 결과는 바뀌지 않는다).
+      // 걸리면 투항 대신 스스로를 해친다: 한 번에 쓰러뜨려(down) 다음 틱에 같은 추첨이 되풀이되지 않게 한다. 그 뒤는 처치(treatSuspect)가 받는다
+      if (h.weapon !== 'none' && h.aggression > 0.7 && h.hostageId < 0 && !h.selfHarmRolled && I.phase !== 'closed') {
+        h.selfHarmRolled = true;
+        const sr = injuryRng(sim, s, 'self');
+        if (sr.chance(SELF_HARM)) {
+          const raw = sr.range(SELF_HARM_HIT[0], SELF_HARM_HIT[1]);
+          const ev = raiseProblem(sim, I, 'ESCALATION', '용의자 자해', { role: 'SYSTEM', actor: '현장', imp: 3, text: `${josa(h.label, '이/가')} 스스로를 해쳤습니다. 즉시 처치가 필요합니다.` }, false);
+          hurtHostile(sim, s, I, h, raw, h.weapon === 'gun' ? 'gunshot' : 'stab', { by: h.id, byKind: 'hostile', ev, down: true });
+          continue;
+        }
+      }
       h.state = 'surrendered'; h.path = null;
-      emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', text: `${h.label}가 무기를 내려놓고 투항 의사를 보입니다.`, imp: 2, truth: see.n === 0 });
+      emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', text: `${josa(h.label, '이/가')} 무기를 내려놓고 투항 의사를 보입니다.`, imp: 2, truth: see.n === 0 });
       continue;
     }
     // 자리를 옮기는 중 (엄폐 이동, 인질을 끌고 물러나기): 옮기는 동안에는 쏘지 않는다
@@ -447,7 +463,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
         const path = best >= 0 ? astar(s, h.x, h.y, best % s.w, (best / s.w) | 0, 0, truthCost(s)) : null;
         if (path && path.length > 2 && path.length <= 34) {
           h.path = path; h.pathI = 0; h.dragging = true; h.state = 'hold';
-          emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, truth: see.n === 0, text: `${h.label}가 인질을 끌고 ${josa(s.regions[room].name, '으로/로')} 물러납니다.` });
+          emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, truth: see.n === 0, text: `${josa(h.label, '이/가')} 인질을 끌고 ${josa(s.regions[room].name, '으로/로')} 물러납니다.` });
           continue;
         }
       }
@@ -490,7 +506,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
       const path = best >= 0 ? astar(s, h.x, h.y, best % s.w, (best / s.w) | 0, 0, truthCost(s)) : null;
       if (path && path.length >= 1 && path.length <= 9) {
         h.path = path; h.pathI = 0; h.moveAt = sim.t + s.rng.range(8, 13);
-        emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, text: `${h.label}가 엄폐물 뒤로 자리를 옮깁니다.` });
+        emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, text: `${josa(h.label, '이/가')} 엄폐물 뒤로 자리를 옮깁니다.` });
         continue;
       }
       h.moveAt = sim.t + 4;
@@ -523,7 +539,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
           pushFx(sim, s, 'shot', h.x, h.y, end.x, end.y, undefined, '#ff8a5c', 0.25);
           noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit, end, tx: ta.x, ty: ta.y, tk: 0, target: ta.rid, arm: armor });
           if (!I.problems.some((q) => q.code === 'ESCALATION' && q.detail === '용의자 발포')) {
-            raiseProblem(sim, I, 'ESCALATION', '용의자 발포', { role: 'SYSTEM', actor: '현장', text: `${h.label}가 대원을 향해 발포했습니다!`, imp: 3 }, false);
+            raiseProblem(sim, I, 'ESCALATION', '용의자 발포', { role: 'SYSTEM', actor: '현장', text: `${josa(h.label, '이/가')} 대원을 향해 발포했습니다!`, imp: 3 }, false);
           }
           if (hit) {
             const raw = s.rng.range(25, 41);      // 판정 흐름에서 뽑는 자리는 그대로 — 방호(armorOf × 0.6)는 hurtResponder 가 뺀다
@@ -548,7 +564,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
     } else if (h.state === 'flee') {
       if (!h.path || h.pathI >= h.path.length) {
         h.state = 'escaped';
-        const fledEv = raiseProblem(sim, I, 'SUSPECT_FLED', `${h.label} 도주`, { role: 'SYSTEM', actor: '현장', text: `${h.label}가 현장을 벗어나 도주했습니다.`, imp: 3, truth: s.arrivedAt < 0 }, false);      // (I1-b) 이어지는 사건의 원인 기록
+        const fledEv = raiseProblem(sim, I, 'SUSPECT_FLED', `${h.label} 도주`, { role: 'SYSTEM', actor: '현장', text: `${josa(h.label, '이/가')} 현장을 벗어나 도주했습니다.`, imp: 3, truth: s.arrivedAt < 0 }, false);      // (I1-b) 이어지는 사건의 원인 기록
         // 연쇄: 총기를 든 채 달아난 용의자는 다른 곳에서 다시 범행할 수 있다
         if (h.weapon === 'gun') {
           const r = s.rng.next();

@@ -168,7 +168,9 @@ describe('R2 장비 아홉 줄과 gear.ts', () => {
   const NEW: KitId[] = ['pole', 'pfd', 'drysuit', 'raft', 'extinguisher', 'fan', 'airbag', 'shoring', 'beanbag'];
   it('표에만 있다: 어느 역할도 들지 않고(단계 0), 교대의 명부에도 없다', () => {
     for (const id of NEW) expect(KITS[id].name.length, id).toBeGreaterThan(0);
-    for (const role of Object.keys(ROLES) as RoleId[]) for (const id of ROLES[role].kit) expect(NEW.indexOf(id), `${role}: ${id}`).toBe(-1);
+    // (N9 단계 2) 수중 구조대의 두 자리(잠수 팀장·대원)는 설계서(N9 §4.8)대로 드라이슈트를 든다 — 편성되지 않는 줄(minLevel 6)이라 아래 교대의 명부에는 없다
+    const N9_DIVE: RoleId[] = ['diveLead', 'diver'];
+    for (const role of Object.keys(ROLES) as RoleId[]) for (const id of ROLES[role].kit) if (N9_DIVE.indexOf(role) < 0 || id !== 'drysuit') expect(NEW.indexOf(id), `${role}: ${id}`).toBe(-1);
     const sim = new Sim('R2-KIT', FULL);
     for (const r of sim.responders) for (const it of r.kit!) expect(NEW.indexOf(it.id), `${r.name}: ${it.id}`).toBe(-1);
     expect(KITS.extinguisher.uses).toBe(1); expect(KITS.beanbag.uses).toBe(3);

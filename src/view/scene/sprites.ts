@@ -49,7 +49,7 @@ const PANTS = ['#2f3a4f', '#3a3f47', '#4a4238', '#28303c'];
 export function responderLook(dept: Dept, kind: UnitKind, seed: number, role?: RoleId): PersonLook {
   const k = baseLook(dept, kind, seed);
   switch (role) {
-    case 'fireLead': case 'ladderLead': case 'rescueLead': case 'hazLead': return { ...k, headCol: '#f2f2ee', headCol2: '#d63a2c', band: '#d63a2c' };
+    case 'fireLead': case 'ladderLead': case 'rescueLead': case 'hazLead': case 'deconLead': case 'mtnLead': return { ...k, headCol: '#f2f2ee', headCol2: '#d63a2c', band: '#d63a2c' };      // (N9) 제독·산악 팀장도
     case 'engineer': case 'ladderOp': return { ...k, trim: 'vest', trimCol: '#f08a2a' };
     case 'doctor': return { ...k, top: '#f4f6f7', arm: '#f4f6f7', trim: 'plus', trimCol: '#d8423a', pack: 'none' };
     case 'flightNurse': return { ...k, top: '#27375e', arm: '#27375e', leg: '#1f2c4c', trim: 'plus', trimCol: '#ffffff' };
@@ -63,7 +63,9 @@ function baseLook(dept: Dept, kind: UnitKind, seed: number): PersonLook {
   const skin = SKIN[(hash2(seed, 1) * SKIN.length) | 0];
   if (dept === 'fire') {
     const rescue = kind === 'rescue' || kind === 'heli' || kind === 'boat';      // 'heli' = 소방 헬기의 항공 구조대원 (경찰·의료 헬기의 대원은 부서가 다르다)
-    if (kind === 'hazmat') return { ...baseLook('fire', 'engine', seed), top: '#cfc23a', arm: '#c2b534', leg: '#b3a72e', trimCol: '#3a3f45' };
+    if (kind === 'hazmat' || kind === 'deconUnit') return { ...baseLook('fire', 'engine', seed), top: '#cfc23a', arm: '#c2b534', leg: '#b3a72e', trimCol: '#3a3f45' };      // (N9) 제독 대원은 화학 보호복과 같은 묶음
+    if (kind === 'mtnRescue') return { top: '#e8662a', trim: 'stripes', trimCol: '#f4f4ee', arm: '#d85c24', hand: '#2a2d31', leg: '#3a3f45', shoe: '#2a1f18', head: 'helmet', headCol: '#d63a2c', headCol2: '#f4d24a', skin, pack: 'bag', packCol: '#3a3f45' };      // (N9) 산악 구조대: 주황 상의·빨간 헬멧·배낭 (공기호흡기 없음)
+    if (kind === 'dive') return { top: '#1f2830', trim: 'stripes', trimCol: '#3aa7e0', arm: '#1a2229', hand: '#14181c', leg: '#1a2229', shoe: '#14181c', head: 'hood', headCol: '#161c22', headCol2: '#3aa7e0', skin, pack: 'scba', packCol: '#e9c53c' };      // (N9) 수중 구조대: 검은 드라이슈트·잠수 두건·노란 공기통
     if (kind === 'animalCtl') return { top: '#6b6a3a', trim: 'stripes', trimCol: '#e6f04a', arm: '#62612f', hand: '#2a2d31', leg: '#55542e', shoe: '#1c1e21', head: 'cap', headCol: '#4a4a2a', headCol2: '#e6f04a', skin, pack: 'none' };      // (N8) 동물 포획팀: 올리브 작업복
     return { top: rescue ? '#d9742a' : '#b08f3e', trim: 'stripes', trimCol: '#e6f04a', arm: rescue ? '#c96824' : '#a2833a', hand: '#2a2d31', leg: rescue ? '#b85e20' : '#8f7434', shoe: '#1c1e21', head: 'helmet', headCol: rescue ? '#f2f2ee' : '#d63a2c', headCol2: '#f4d24a', skin, pack: 'scba', packCol: '#e9c53c' };
   }
@@ -80,6 +82,7 @@ function baseLook(dept: Dept, kind: UnitKind, seed: number): PersonLook {
   }
   if (kind === 'detective') return { top: '#4a4e57', trim: 'none', arm: '#4a4e57', hand: skin, leg: '#2a2d33', shoe: '#16181b', head: 'hair', headCol: HAIR[(hash2(seed, 2) * HAIR.length) | 0], skin, pack: 'none' };      // (N8) 형사: 사복
   if (kind === 'trafficPol') return { top: '#7ea4d6', trim: 'vest', trimCol: '#c8f03a', arm: '#7ea4d6', hand: skin, leg: '#1f2d4c', shoe: '#14161a', head: 'helmet', headCol: '#f2f2ee', headCol2: '#1f2f55', skin, pack: 'none' };      // (N8) 교통 순찰 대원: 흰 헬멧·형광 조끼
+  if (kind === 'riotPol') return { top: '#2f3d55', trim: 'vest', trimCol: '#1b2433', arm: '#2f3d55', hand: '#15181c', leg: '#253247', shoe: '#121416', head: 'helmet', headCol: '#26324a', headCol2: '#a9d4ea', skin, pack: 'none' };      // (N9) 경찰 기동대: 남색 진압복·얼굴 가리개 헬멧 (방패는 손에 든 것 — renderScene.agentPose)
   return { top: '#7ea4d6', trim: 'vest', trimCol: '#22355c', arm: '#7ea4d6', hand: skin, leg: '#1f2d4c', shoe: '#14161a', head: 'cap', headCol: '#1f2f55', headCol2: '#e8edf2', skin, pack: 'none' };
 }
 export function civilianLook(seed: number): PersonLook {
@@ -305,7 +308,8 @@ export function drawLying(g: G, x: number, y: number, ang: number, ts: number, k
 
 // ───────────────────────── 차량 ─────────────────────────
 export const VEH_SIZE: Record<UnitKind, [number, number]> = { engine: [3.1, 1.14], rescue: [2.9, 1.14], als: [2.5, 1.06], bls: [2.4, 1.04], patrol: [2.05, 0.96], tactical: [2.6, 1.08], ladder: [3.7, 1.16], hazmat: [3.0, 1.14], swat: [2.85, 1.16], eod: [2.7, 1.12], heli: [3.0, 1.0], boat: [2.7, 0.96], policeHeli: [2.8, 0.95], medHeli: [3.0, 1.0],
-  powerCrew: [3.2, 1.14], gasCrew: [2.4, 1.02], waterCrew: [3.0, 1.12], tow: [3.1, 1.1], animalCtl: [2.5, 1.04], detective: [2.1, 0.94], trafficPol: [1.25, 0.42], k9: [2.3, 1.0] };      // (N8)
+  powerCrew: [3.2, 1.14], gasCrew: [2.4, 1.02], waterCrew: [3.0, 1.12], tow: [3.1, 1.1], animalCtl: [2.5, 1.04], detective: [2.1, 0.94], trafficPol: [1.25, 0.42], k9: [2.3, 1.0],      // (N8)
+  mtnRescue: [2.2, 1.0], dive: [2.8, 1.06], deconUnit: [3.3, 1.16], riotPol: [3.6, 1.12] };      // (N9) 사륜구동 · 보트 받침 승합 · 천막 실은 큰 차 · 버스
 
 function wheels(g: G, L: number, W: number): void {
   for (const wx of [-L * 0.3, L * 0.3]) { rr(g, wx - 0.17, -W / 2 - 0.035, 0.34, 0.1, 0.03, '#0e1114'); rr(g, wx - 0.17, W / 2 - 0.065, 0.34, 0.1, 0.03, '#0e1114'); }
@@ -408,6 +412,8 @@ export function drawEmergency(g: G, x: number, y: number, ang: number, ts: numbe
     rr(g, 0.26, -W / 2 - 0.04, 0.09, 0.06, 0.02, '#27477c'); rr(g, 0.26, W / 2 - 0.02, 0.09, 0.06, 0.02, '#27477c');
   } else if (KINDS_VEH.has(kind)) {
     drawKindsBody(g, kind, L, W, ca, cb, lights, timeMs);      // (N8) 새 부대의 차량
+  } else if (KINDS2_VEH.has(kind)) {
+    drawKinds2Body(g, kind, L, W, ca, cb, lights, timeMs);      // (N9) 새 부대의 차량
   } else {
     const navy = kind === 'swat' ? '#1b1e24' : kind === 'eod' ? '#2c3a2a' : '#1f2c44';
     rr(g, -L / 2, -W / 2, L, W, 0.12, '#0d1320'); rr(g, -L / 2 + 0.03, -W / 2 + 0.03, L - 0.06, W - 0.06, 0.1, navy);
@@ -497,6 +503,58 @@ function drawKindsBody(g: G, kind: UnitKind, L: number, W: number, ca: string, c
     g.fillStyle = '#5a6370'; for (let k = 0; k < 4; k++) g.fillRect(-L / 2 + 0.16 + k * 0.2, -W / 2 + 0.2, 0.08, W - 0.4);
     rr(g, -0.05, -W / 2 + 0.1, 0.6, W - 0.2, 0.12, glass);
     lightbar(g, 0.12, W, ca, cb, lights, timeMs);
+    heads();
+  }
+}
+/** (N9 §4.8) 새 부대 넷의 차량. 앞이 +x, 바퀴·그림자는 drawEmergency 가 이미 그렸다. 경광등은 부서대로(BEACON) */
+const KINDS2_VEH: ReadonlySet<UnitKind> = new Set<UnitKind>(['mtnRescue', 'dive', 'deconUnit', 'riotPol']);
+function drawKinds2Body(g: G, kind: UnitKind, L: number, W: number, ca: string, cb: string, lights: boolean, timeMs: number): void {
+  const glass = '#182734', glassHi = 'rgba(160,210,240,0.35)';
+  const heads = (): void => { rr(g, L / 2 - 0.05, -W / 2 + 0.1, 0.05, 0.15, 0.015, '#fff3c4'); rr(g, L / 2 - 0.05, W / 2 - 0.25, 0.05, 0.15, 0.015, '#fff3c4'); };
+  const screen = (x0: number): void => { rr(g, x0, -W / 2 + 0.12, 0.18, W - 0.24, 0.05, glass); rr(g, x0 + 0.02, -W / 2 + 0.14, 0.05, W - 0.28, 0.03, glassHi); };
+  if (kind === 'mtnRescue') {
+    // 산악 구조대: 짧은 사륜구동 — 빨간 차체에 주황 띠, 지붕 짐받이(들것·로프 가방), 뒤에 매단 예비 바퀴
+    rr(g, -L / 2, -W / 2, L, W, 0.18, shade('#c0392b', -0.35)); rr(g, -L / 2 + 0.03, -W / 2 + 0.03, L - 0.06, W - 0.06, 0.16, '#c0392b');
+    g.fillStyle = '#f08a2a'; g.fillRect(-L / 2 + 0.1, -W / 2 + 0.05, L - 0.4, 0.06); g.fillRect(-L / 2 + 0.1, W / 2 - 0.11, L - 0.4, 0.06);
+    rr(g, -L / 2 + 0.22, -W / 2 + 0.17, L - 0.95, W - 0.34, 0.04, '#3a3f45');
+    g.fillStyle = '#7a8189'; for (let k = 0; k < 4; k++) g.fillRect(-L / 2 + 0.26 + k * ((L - 1.1) / 3), -W / 2 + 0.17, 0.03, W - 0.34);
+    rr(g, -L / 2 + 0.3, -0.12, 0.62, 0.24, 0.05, '#f08a2a'); disc(g, -L / 2 + 1.05, 0, 0.1, '#e9c53c');
+    disc(g, -L / 2 - 0.02, 0, 0.17, '#0e1114'); disc(g, -L / 2 - 0.02, 0, 0.08, '#59626b');
+    screen(L / 2 - 0.42);
+    lightbar(g, L / 2 - 0.6, W, ca, cb, lights, timeMs);
+    heads();
+  } else if (kind === 'dive') {
+    // 수중 구조대: 빨간 승합차 지붕의 보트 받침에 얹은 주황 고무보트, 뒤쪽의 공기통 걸이
+    rr(g, -L / 2, -W / 2, L, W, 0.12, shade('#c0392b', -0.35)); rr(g, -L / 2 + 0.03, -W / 2 + 0.03, L - 0.06, W - 0.06, 0.1, '#c0392b');
+    g.fillStyle = '#f1ede2'; g.fillRect(-L / 2 + 0.08, -W / 2 + 0.06, L - 0.3, 0.05); g.fillRect(-L / 2 + 0.08, W / 2 - 0.11, L - 0.3, 0.05);
+    g.fillStyle = '#2a2d31'; g.fillRect(-L / 2 + 0.2, -W / 2 + 0.16, 0.05, W - 0.32); g.fillRect(L / 2 - 1.0, -W / 2 + 0.16, 0.05, W - 0.32);
+    rr(g, -L / 2 + 0.12, -W / 2 + 0.18, L - 0.95, W - 0.36, (W - 0.36) / 2, '#e8742a'); rr(g, -L / 2 + 0.26, -W / 2 + 0.3, L - 1.23, W - 0.6, (W - 0.6) / 2, '#3a3f45');
+    for (const ty of [-0.12, 0.12]) { disc(g, -L / 2 + 0.06, ty, 0.07, '#e9c53c'); }
+    screen(L / 2 - 0.36);
+    lightbar(g, L / 2 - 0.55, W, ca, cb, lights, timeMs);
+    heads();
+  } else if (kind === 'deconUnit') {
+    // 화생방 제독차: 노란 큰 차체, 접어 실은 제독 천막(줄무늬 덩어리)과 샤워대 둘, 빨간 운전실
+    rr(g, -L / 2, -W / 2, L, W, 0.1, shade('#cfc23a', -0.38)); rr(g, -L / 2 + 0.03, -W / 2 + 0.03, L - 0.06, W - 0.06, 0.08, '#cfc23a');
+    rr(g, -L / 2 + 0.12, -W / 2 + 0.16, L - 1.32, W - 0.32, 0.05, '#e7e2c8');
+    g.fillStyle = '#2f6fb3'; for (let k = 0; k < 4; k++) g.fillRect(-L / 2 + 0.2 + k * 0.2, -W / 2 + 0.18, 0.1, W - 0.36);
+    rr(g, -L / 2 + 1.05, -0.2, 0.5, 0.4, 0.05, '#5a6168');
+    for (const sy of [-0.2, 0.2]) { disc(g, -L / 2 + 1.85, sy, 0.1, '#c9cfd4'); disc(g, -L / 2 + 1.85, sy, 0.05, '#4aa3ff'); }
+    const cx0 = L / 2 - 0.95;
+    rr(g, cx0, -W / 2 + 0.05, 0.91, W - 0.1, 0.1, '#c0392b');
+    screen(L / 2 - 0.33);
+    lightbar(g, cx0 + 0.18, W, ca, cb, lights, timeMs);
+    heads();
+  } else {
+    // 경찰 기동대 버스: 긴 남색 차체에 창 줄, 지붕의 환기구와 앞 유리 보호 철망
+    rr(g, -L / 2, -W / 2, L, W, 0.12, '#0d1320'); rr(g, -L / 2 + 0.03, -W / 2 + 0.03, L - 0.06, W - 0.06, 0.1, '#25365a');
+    g.fillStyle = glass; for (let k = 0; k < 7; k++) { g.fillRect(-L / 2 + 0.2 + k * 0.38, -W / 2 + 0.05, 0.28, 0.07); g.fillRect(-L / 2 + 0.2 + k * 0.38, W / 2 - 0.12, 0.28, 0.07); }
+    rr(g, -L / 2 + 0.14, -W / 2 + 0.18, L - 0.7, W - 0.36, 0.05, '#2e4370');
+    for (const vx of [-L / 2 + 0.6, -L / 2 + 1.5, -L / 2 + 2.4]) rr(g, vx, -0.14, 0.34, 0.28, 0.03, '#1b2742');
+    g.fillStyle = '#f2c63c'; g.fillRect(-L / 2 + 0.14, -0.02, L - 0.7, 0.04);
+    screen(L / 2 - 0.3);
+    g.strokeStyle = '#8a9198'; g.lineWidth = 0.02; g.beginPath(); for (let k = 0; k < 4; k++) { const yy = -W / 2 + 0.16 + k * ((W - 0.32) / 3); g.moveTo(L / 2 - 0.3, yy); g.lineTo(L / 2 - 0.12, yy); } g.stroke();
+    lightbar(g, L / 2 - 0.5, W, ca, cb, lights, timeMs);
     heads();
   }
 }

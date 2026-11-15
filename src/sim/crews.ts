@@ -29,7 +29,8 @@ export interface KitDef {
   faultable?: boolean;                // 교대마다 고장 추첨을 받는다
   uses?: number;                      // (R2) 처음 수량 — 명부가 KitItem.uses 로 복사한다 (단계 1a: kitFor). 섬광탄·테이저·장약·공기는 R1 의 자리(KIT_USES·dealFlashbangs·tn.airFull) 그대로
   batch?: 'r2'                        // (R2) 고장 추첨을 R1 의 흐름(kit·aid:<n>) 밖에서 따로 받는 장비 — kit-r2·aid-r2:<n> (단계 1a: drawFaults 가 건너뛴다)
-    | 'n8';                           // (N8 §4.9) 마취총 — 따로 kit-n8 흐름 (R2 단계 1a 가 넣는 건너뛰기 조건에 'n8' 을 더한다. 단계 2b 에는 그 장비를 든 부대가 편성되지 않는다)
+    | 'n8'                            // (N8 §4.9) 마취총 — 따로 kit-n8 흐름 (R2 단계 1a 가 넣는 건너뛰기 조건에 'n8' 을 더한다. 단계 2b 에는 그 장비를 든 부대가 편성되지 않는다)
+    | 'n9';                           // (N9 §4.8) 잠수 장비 — drawFaults 가 건너뛰고 drawBatchFaults 가 따로 kit-n9 흐름에서 뽑는다 (OWN_DRAW)
 }
 /**
  * 장비 표. 효과의 내용은 설계서 4절 표에 있고, 여기에는 여러 장비가 같은 식으로 견주는 값(tool·med·armor)과 고장 추첨 여부만 둔다.
@@ -97,6 +98,12 @@ export const KITS: Record<KitId, KitDef> = {
   beeSuit: { name: '벌 보호복', group: 'fire' },      // 쏘임(animal) 방호 0.95
   jumpMat: { name: '안전 매트', group: 'rescue' },
   dog: { name: '경찰견', group: 'police' },      // 사람이 아니라 장비로 다룬다 (R2 dog 방법의 장비, 고장 없음)
+  // ── (N9 §4.8) 새 부대 넷의 장비 넷. 단계 2 에는 그 부대가 편성되지 않는다(UNIT_DEFS 의 minLevel 6). 오일펜스만 기존 역할(수난 구조대원)의 장비 끝에 붙는다 —
+  //    고장 나지 않는 장비라 교대 흐름 kit 의 추첨 순서를 바꾸지 않는다. 고장 나는 것은 잠수 장비 하나(batch 'n9' — 따로 kit-n9 흐름) ──
+  mtnKit: { name: '산악 장비', group: 'rescue' },      // 하강기·보온·들것 묶음 (걸음 ×1.35 — 단계 9)
+  diveKit: { name: '잠수 장비', group: 'rescue', uses: 900, faultable: true, batch: 'n9' },      // 공기통·수중 등 (uses = 공기 초 — 명부의 수량 복사는 R2 단계 1a). 잠수(dive)는 단계 5
+  deconKit: { name: '제독 장비', group: 'fire' },      // 샤워·텐트·중화제 (decontam — 단계 6)
+  oilBoom: { name: '오일펜스', group: 'rescue', uses: 3 },      // 펼칠 수 있는 자리 수 (boom — 단계 9)
 };
 /** 처음에 채워 두는 수량 (섬광탄은 부대 몫을 dealFlashbangs 가 나눈다. 공기호흡기의 공기는 kitFor 가 장비 손잡이의 값 tn.airFull 로 채운다) */
 const KIT_USES: Partial<Record<KitId, number>> = { taser: 2, charge: 2 };
@@ -146,7 +153,7 @@ export const ROLES: Record<RoleId, RoleDef> = {
   hazTech: { name: '화학 보호복 대원', group: 'hazmat', skills: (s) => sk(s * 0.7, s * 0.9, 0.4, 0.05), kit: ['scba', 'turnout', 'plugKit'], prefer: { mitigate: 0.3 } },
   decon: { name: '측정·제독 대원', group: 'hazmat', skills: (s) => sk(s * 0.6, s * 0.85, 0.4, 0.05), kit: ['scba', 'turnout', 'gasMeter', 'hose'], prefer: { search: 0.1, escort: 0.1 } },
   airRescuer: { name: '항공 구조대원', group: 'rescue', skills: (s) => sk(0.15, s, 0.55, 0.05), kit: ['scba', 'turnout', 'lightRescue', 'bag', 'rope'], prefer: {} },
-  boatRescuer: { name: '수난 구조대원', group: 'water', skills: (s) => sk(0.1, s, 0.45, 0.05), kit: ['rope', 'ring'], prefer: { waterRescue: 0.3 } },
+  boatRescuer: { name: '수난 구조대원', group: 'water', skills: (s) => sk(0.1, s, 0.45, 0.05), kit: ['rope', 'ring', 'oilBoom'], prefer: { waterRescue: 0.3 } },      // (N9 §4.8) 오일펜스는 끝에 (고장 나지 않는다 — 추첨 순서 그대로)
   boatLead: { name: '정장', group: 'pilot', skills: () => sk(0.1, 0.3, 0.3, 0.05), kit: [], prefer: {}, stays: true, exp: [0.5, 0.95] },
   // ── 구급·의료 ──
   paramedic: { name: '1급 응급구조사', group: 'medic', skills: (s) => sk(0.05, 0.25, s + 0.08, 0.05), kit: ['alsBag', 'aed'], prefer: { treat: 0.15 } },
@@ -165,6 +172,16 @@ export const ROLES: Record<RoleId, RoleDef> = {
   detective: { name: '형사', group: 'officer', skills: (s) => sk(0.05, 0.2, 0.2, s + 0.06), kit: ['pistol', 'vest'], prefer: { interview: 0.2, arrest: 0.1, cordon: 0.15, perimeter: 0.15 } },
   motorOfficer: { name: '교통 순찰 대원', group: 'officer', skills: (s) => sk(0.05, 0.22, 0.22, s), kit: ['pistol', 'baton', 'vest'], prefer: { traffic: 0.2, cordon: 0.15, perimeter: 0.15 } },
   k9Handler: { name: '경찰견 핸들러', group: 'officer', skills: (s) => sk(0.05, 0.22, 0.22, s), kit: ['pistol', 'dog'], prefer: { search: 0.2 } },
+  // ── (N9 §4.8) 산악 구조대 · 수중 구조대 · 화생방 제독차 · 경찰 기동대의 자리 아홉 (새 그림 묶음은 없다). 방패 대원은 총기가 없어 perimeter·engage 를 맡지 못한다 — 군중의 일은 cordon ──
+  mtnLead: { name: '산악 구조 팀장', group: 'lead', skills: (s) => sk(s * 0.4, s, 0.4, 0.05), kit: ['mtnKit', 'rope', 'bag'], prefer: { extricate: 0.15, search: 0.1 } },
+  mtnRescuer: { name: '산악 구조대원', group: 'rescue', skills: (s) => sk(s * 0.4, s + 0.04, 0.35, 0.05), kit: ['mtnKit', 'rope', 'stretcher'], prefer: { carry: 0.15, extricate: 0.1 } },
+  diveLead: { name: '잠수 팀장', group: 'water', skills: (s) => sk(0.1, s, 0.4, 0.05), kit: ['drysuit', 'diveKit', 'rope', 'ring'], prefer: { waterRescue: 0.2 } },
+  diver: { name: '잠수 구조대원', group: 'water', skills: (s) => sk(0.1, s + 0.04, 0.35, 0.05), kit: ['drysuit', 'diveKit', 'rope'], prefer: { waterRescue: 0.25 } },
+  deconLead: { name: '제독 팀장', group: 'lead', skills: (s) => sk(s * 0.6, s * 0.85, 0.4, 0.05), kit: ['scba', 'turnout', 'gasMeter', 'deconKit'], prefer: { decontam: 0.15 } },
+  deconTech: { name: '제독 대원', group: 'hazmat', skills: (s) => sk(s * 0.6, s * 0.85, 0.4, 0.05), kit: ['scba', 'turnout', 'deconKit', 'hose'], prefer: { decontam: 0.3 } },
+  riotLead: { name: '기동대 소대장', group: 'lead', skills: (s) => sk(0.05, 0.22, 0.22, s + 0.06), kit: ['pistol', 'vest', 'megaphone', 'baton'], prefer: { cordon: 0.15, negotiate: 0.1 } },
+  riotShield: { name: '방패 대원', group: 'shield', skills: (s) => sk(0.05, 0.22, 0.22, s + 0.04), kit: ['shield', 'baton', 'vest'], prefer: { cordon: 0.25 } },
+  riotGrab: { name: '검거 대원', group: 'officer', skills: (s) => sk(0.05, 0.22, 0.22, s + 0.06), kit: ['taser', 'baton', 'vest'], prefer: { arrest: 0.2 } },
 };
 /** 역할을 모르는 대원(시험에서 손으로 만든 명부 등)에게 쓰는 부서별 기본 역할 */
 const DEPT_ROLE: Record<Responder['dept'], RoleId> = { police: 'officer', fire: 'firefighter', ems: 'emt', civil: 'utilLead' };
@@ -205,6 +222,11 @@ export const STAFF: Record<UnitKind, StaffDef> = {
   detective: { std: ['detective', 'detective'], minDrop: [] },
   trafficPol: { std: ['motorOfficer'], minDrop: [] },
   k9: { std: ['k9Handler', 'officer'], minDrop: [1] },
+  // (N9 §4.8) 제독차의 최소 인원은 지금 역할 decon(측정·제독 대원)을 뺀다 — 팀장·제독 대원이 제독 장비를 든다. 기동대의 최소 인원은 소대장과 방패 대원 둘
+  mtnRescue: { std: ['mtnLead', 'mtnRescuer', 'mtnRescuer'], minDrop: [2] },
+  dive: { std: ['diveLead', 'diver', 'diver'], minDrop: [2] },
+  deconUnit: { std: ['deconLead', 'deconTech', 'deconTech', 'decon'], minDrop: [3] },
+  riotPol: { std: ['riotLead', 'riotShield', 'riotShield', 'riotShield', 'riotGrab'], minDrop: [3, 4] },
 };
 /** 항공 부대의 종류 (소방 · 경찰 · 의료 헬기). 명부(createRoster)와 지도 표식(view)이 함께 쓴다 */
 export const AIR_KIND: Set<UnitKind> = new Set<UnitKind>(['heli', 'policeHeli', 'medHeli']);
@@ -230,7 +252,9 @@ export const EXTRA_NAMES = ['구본호', '나윤슬', '도해찬', '마서율', 
   '심지율', '양태호', '염소희', '오세린', '우지환', '원채린', '유건희', '윤다온', '이로하', '임하준', '장세아', '전도하',
   '정이든', '제갈윤', '조서하', '주원석', '지예솔', '진태경', '천소율', '최한결', '태은호', '편서우', '하도율', '허은재',
   // (N8 §4.9) 새 부대 여덟의 자리 열넷 — 끝에 붙인다 (앞 사람의 이름이 바뀌지 않는다). 편성되지 않는 줄도 자기 번호를 차지한다
-  '감도윤', '경하린', '고은찬', '공서진', '곽지후', '남궁솔', '노태윤', '담하은', '명재이', '모서윤', '변준서', '봉하람', '석지안', '어서후'];
+  '감도윤', '경하린', '고은찬', '공서진', '곽지후', '남궁솔', '노태윤', '담하은', '명재이', '모서윤', '변준서', '봉하람', '석지안', '어서후',
+  // (N9 §4.8) 새 부대 넷의 자리 열다섯 — 끝에 붙인다. 새 자리의 이름은 N8 이 남긴 한 칸('어서후')부터 차례로 쓰고 끝의 한 칸이 남는다
+  '가은솔', '국서윤', '기태오', '남윤채', '노아린', '도민혁', '류하진', '맹지우', '방서현', '사도윤', '상하율', '시은호', '여태린', '연우석', '예다인'];
 
 /** 편성되는 자리 번호 (표준 표의 번호 그대로). minimal 이면 최소 인원 — minDrop 을 뺀다 */
 export function slotsOf(kind: UnitKind, minimal: boolean): number[] {
@@ -267,11 +291,23 @@ export function kitIdsOf(kind: UnitKind, slot: number): KitId[] { const st = STA
  * 개인 장비의 고장 추첨 (설계서 9절): 대원 순서 × 든 장비의 순서대로, 고장 추첨을 받는 장비(KITS 의 faultable)마다 확률 p.
  * 고장 난 장비는 효과가 없고(kitLive), 처음 효과를 주려 할 때 드러난다(kitWorks·toolUse). 그때까지는 조직이 모른다(hasKit 은 참).
  * 난수는 부르는 쪽이 준다: 편성표 부대는 교대 흐름 'kit' 하나, 지원 부대는 자기 흐름 aid:<n> 의 끝(대원 → 펌프 → 고장).
+ * (N9) 따로 뽑는 묶음(OWN_DRAW — 잠수 장비)은 건너뛴다(난수를 쓰지 않는다) — drawBatchFaults 가 그 묶음의 흐름에서 뽑는다.
  * 돌려주는 값 = 고장 난 장비 수.
  */
 export function drawFaults(rng: Rng, crew: Responder[], p: number): number {
   let n = 0;
-  for (const r of crew) for (const it of r.kit ?? []) if (KITS[it.id].faultable && rng.chance(p)) { it.fault = true; n++; }
+  for (const r of crew) for (const it of r.kit ?? []) { const d = KITS[it.id]; if (d.faultable && !(d.batch !== undefined && OWN_DRAW.has(d.batch)) && rng.chance(p)) { it.fault = true; n++; } }
+  return n;
+}
+/**
+ * (N9 §5.12) 따로 뽑는 고장 묶음 — drawFaults 가 건너뛰고(교대 흐름 kit 의 추첨 순서에 끼지 않는다) drawBatchFaults 가 자기 흐름에서 뽑는다.
+ * 지금은 'n9'(잠수 장비 — kit-n9 흐름) 하나. R2 단계 1a 가 'r2', N8 의 포획팀을 편성하는 단계가 'n8' 을 더한다(그 전에는 그 장비가 교대 흐름에서 뽑힌다 — 든 부대가 편성되지 않는다)
+ */
+const OWN_DRAW: ReadonlySet<NonNullable<KitDef['batch']>> = new Set<NonNullable<KitDef['batch']>>(['n9']);
+/** 그 묶음(batch)의 장비만 같은 순서(대원 순서 × 든 장비의 순서)·같은 확률로 뽑는다. 난수는 부르는 쪽이 준다(편성표 부대는 kit-n9). 돌려주는 값 = 고장 난 장비 수 */
+export function drawBatchFaults(rng: Rng, crew: Responder[], p: number, batch: NonNullable<KitDef['batch']>): number {
+  let n = 0;
+  for (const r of crew) for (const it of r.kit ?? []) { const d = KITS[it.id]; if (d.faultable && d.batch === batch && rng.chance(p)) { it.fault = true; n++; } }
   return n;
 }
 /**

@@ -73,12 +73,15 @@ const DOC_OF_ROLE: Partial<Record<RoleId, DocDept>> = {
   hazLead: 'special', hazTech: 'special', decon: 'special', airRescuer: 'special', boatRescuer: 'special', ladderLead: 'special', ladderOp: 'special',
   // (N8 §5.14) 새 역할 — 유관 기관은 공통 표, 포획은 특수 표, 형사·교통 경찰·핸들러는 경찰 표
   utilLead: 'common', lineman: 'common', gasTech: 'common', plumber: 'common', towDriver: 'common', catcherLead: 'special', catcher: 'special', detective: 'police', motorOfficer: 'police', k9Handler: 'police',
+  // (N9 §5.12) 새 역할 아홉 — 부대의 분야와 같다 (산악·수중 소방, 제독 특수, 기동대 경찰)
+  mtnLead: 'fire', mtnRescuer: 'fire', diveLead: 'fire', diver: 'fire', deconLead: 'special', deconTech: 'special', riotLead: 'police', riotShield: 'police', riotGrab: 'police',
 };
 /** 표에 없는 자리(조종사·부기장·정장 — 내리지 않는 자리)는 부대로 */
 const DOC_OF_UNIT: Record<UnitKind, DocDept> = {
   patrol: 'police', tactical: 'police', policeHeli: 'police', engine: 'fire', rescue: 'fire', als: 'ems', bls: 'ems', medHeli: 'ems',
   swat: 'special', eod: 'special', hazmat: 'special', heli: 'special', boat: 'special', ladder: 'special',
   powerCrew: 'common', gasCrew: 'common', waterCrew: 'common', tow: 'common', animalCtl: 'special', detective: 'police', trafficPol: 'police', k9: 'police',      // (N8 §5.14)
+  mtnRescue: 'fire', dive: 'fire', deconUnit: 'special', riotPol: 'police',      // (N9 §5.12)
 };
 export function docDeptOf(sim: Sim, rid: number): DocDept {
   const role = roleIdOf(sim, rid);
@@ -107,6 +110,9 @@ export const PAIRS: Partial<Record<UnitKind, { std: [RoleId, RoleId][]; min: [Ro
   detective: { std: [['detective', 'detective']], min: [['detective', 'detective']] },
   k9: { std: [['k9Handler', 'officer']], min: [] },
   animalCtl: { std: [['catcherLead', 'catcher']], min: [['catcherLead', 'catcher']] },
+  // (N9 §5.12) 방패 대원은 둘씩 · 잠수는 둘이(한 사람이 물가에서 줄을 잡는다). 수중 구조대의 최소 인원(팀장 + 대원 하나)은 팀장과 짝을 짓는다
+  riotPol: { std: [['riotShield', 'riotShield']], min: [['riotShield', 'riotShield']] },
+  dive: { std: [['diver', 'diver']], min: [['diveLead', 'diver']] },
 };
 /** 혼자 규칙에서 빠지는 역할 — 원래 혼자 서는 자리 (§5.1 끝). F04·P07·P17·G08 이 걸리지 않고 다시 맺지도 않는다 */
 export const SOLO_OK: ReadonlySet<RoleId> = new Set<RoleId>(['marksman', 'bombTech', 'engineer', 'ladderOp', 'emsDriver', 'observer',

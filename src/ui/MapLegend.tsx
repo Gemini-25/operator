@@ -12,10 +12,10 @@ import { FacilityBadge, RoleDot, Token } from './Mark';
 
 const LS_LEGEND = 'ar.legend.v1';
 const FIELDS: [UnitField, UnitKind[]][] = [
-  ['police', ['patrol', 'tactical', 'policeHeli', 'detective', 'trafficPol', 'k9']],
+  ['police', ['patrol', 'tactical', 'policeHeli', 'detective', 'trafficPol', 'k9', 'riotPol']],      // (N9) 기동대
   ['fire', ['engine', 'ladder']],
-  ['rescue', ['rescue', 'als', 'bls', 'medHeli']],
-  ['special', ['swat', 'eod', 'hazmat', 'heli', 'boat', 'animalCtl']],
+  ['rescue', ['rescue', 'als', 'bls', 'medHeli', 'mtnRescue', 'dive']],      // (N9) 산악·수중 구조대
+  ['special', ['swat', 'eod', 'hazmat', 'heli', 'boat', 'animalCtl', 'deconUnit']],      // (N9) 화생방 제독차
   ['civil', ['powerCrew', 'gasCrew', 'waterCrew', 'tow']],      // (N8) 유관 기관
 ];
 /** (R1) 대원의 역할 묶음: 부대 목록의 역할 점. 분야색은 그 대원의 부대를 따른다 (여기서는 대표 분야로 보인다) */

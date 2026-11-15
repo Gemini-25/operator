@@ -4,27 +4,93 @@
 import type { Sim } from '../engine';
 import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
-import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Incident, RadioMsg, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
-import { clamp, dist, josa, pct } from '../util';
+import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Incident, MateBelief, RadioMsg, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
+import { TYPE_NAME, clamp, dist, josa, pct } from '../util';
+import type { Rng } from '../rng';
+import { airShort, hasFirearm, hasKit, kitLive, kitWorks, medLevelOf, roleOf, seatsOf, seatsUsed, toolFor } from '../crews';
 import { BeliefStore, mkFact } from './beliefs';
 import type { CostFn } from './grid';
 import { doorAt, isIndoor, los, staticPass, tileOf } from './grid';
 import { BAND_NAME, band, isHeld, pushFx } from './hazards';
+import { HURT_AT, bandOf, hurtF } from './injury';
 
 export const resp = (sim: Sim, a: FieldAgent): Responder => sim.responders[a.rid];
-export const staminaF = (r: Responder): number => 0.55 + 0.45 * clamp(r.stamina / 60, 0, 1);
+/** 지친 정도와 다친 정도가 이동·작업 진도·사격에 함께 곱해진다 (다친 대원은 느려진다 — injury.hurtF: 체력 70 이상은 1, 40 에서 0.75) */
+export const staminaF = (r: Responder): number => (0.55 + 0.45 * clamp(r.stamina / 60, 0, 1)) * hurtF(r);
 
+/**
+ * 현장의 개체 하나를 만든다 — 차에서 내리는 대원(sceneManager.unitArrived)과 상공의 관측자(field/rules/air.ts)가 함께 쓴다.
+ * 모든 칸을 같은 순서로 채운다(도중에 속성이 생기면 객체의 모양이 갈라져 매 틱 도는 코드가 느려진다). 믿음은 비어 있다 — 브리핑은 부르는 쪽이 넣는다.
+ */
+export function makeAgent(sim: Sim, rid: number, unitId: number, x: number, y: number, firstThink: number, rng: Rng): FieldAgent {
+  return {
+    rid, unitId, isCommander: false,
+    x, y, px: x, py: y, fx: 1, fy: 0,
+    path: null, pathI: 0, pathGoal: -1, task: null, orderWork: -1,
+    beliefs: new BeliefStore(), outbox: [], outboxSince: 0, shadowSince: -1, commFailLogged: false,
+    nextThink: firstThink, nextPerceive: 0, carrying: -1, inCover: false, cooldown: 1,
+    status: 'active', candidates: [], label: '도착', ring: 0, arrivedAt: sim.t, lastBlockEvent: -1, idleSince: sim.t,
+    stuckT: 0, lastX: 0, lastY: 0, rng, planT: 0, equipIssue: 'none', smokeT: 0, climb: 0, rehabLogAt: -99,
+    afloat: undefined, mrng: undefined, mfail: undefined, msaid: undefined, wetSince: undefined, wetTired: undefined,      // (R2) 보트·방법 판정 난수·접은 방법의 기억·물에 들어간 시각 — 쓰는 것은 단계 1a 부터
+    pendingBlock: -1, underFireT: -99, spot: -1, quiet: new Set(), lastRetreatLog: -99, equipRetryAt: -99,
+    trapped: undefined, trapEv: undefined, avoid: undefined, opsSeen: undefined, signObs: undefined, extSeen: undefined,      // (X6) 깔림·피하는 곳·철수 명령·조짐 관찰의 기억 — 쓰는 것은 단계 2 부터
+    aloft: false, taserAt: -99,      // (R1) 공중 관측자가 아니다(관측자는 air.ts 가 true 로 바꾼다) · 테이저를 쏜 적이 없다
+    hurtEv: undefined, hpTick: undefined, lastTile: undefined, fellOnce: undefined, lightBack: undefined,      // (H1) 부상 — 쓰는 것은 단계 4a 부터
+  };
+}
+
+/** 관제가 출동 부대에 전달하는 브리핑. 신고자 진술에서 나온 미확인 정보다. */
+export function briefFacts(sim: Sim, I: Incident): Fact[] {
+  const out: Fact[] = [];
+  const s = sim.scenes[I.id]!;
+  const last = (topic: string) => { for (let k = I.claims.length - 1; k >= 0; k--) if (I.claims[k].topic === topic) return I.claims[k]; return null; };
+  const as = I.assessment;
+  if (as) out.push(mkFact('type', 0, as.type, '관제', sim.t, as.typeConf, false, `관제 판단: ${TYPE_NAME[as.type]} (신뢰도 ${Math.round(as.typeConf * 100)}%)`));
+  const cnt = last('count'), inj = last('injured'), trap = last('trapped'), det = last('detail');
+  let count: number | null = null, conf = 0.4;
+  if (cnt && typeof cnt.value === 'number') { count = cnt.value; conf = cnt.conf; }
+  else if (inj && inj.value === true) { count = 1; conf = inj.conf * 0.8; }
+  else if (trap && trap.value === true) { count = 1; conf = trap.conf * 0.8; }
+  let region = -1;
+  if (det && det.value && typeof det.value.region === 'number' && det.value.region < s.regions.length) region = det.value.region;
+  if (count !== null || region >= 0) {
+    const where = region >= 0 ? ` · 위치 추정: ${s.regions[region].name}` : '';
+    out.push(mkFact('occ', 0, { count, region, trapped: !!(trap && trap.value === true) }, '신고자', sim.t, conf, false, `신고 내용: ${count !== null ? `요구조자 약 ${count}명` : '요구조자 수 불명'}${where}`));
+  }
+  return out;
+}
+
+/** 공중 관측 거리(칸): 낮 9 · 비 7 · 밤 4 (탐조등이 작동하면 8). 안개에는 헬기가 뜨지 않는다 */
+const AIR_VISION = { day: 9, rain: 7, night: 4, lit: 8 };
 export function visionOf(sim: Sim, s: Scene, a: FieldAgent): number {
   const i = tileOf(s, a.x, a.y);
-  const base = isIndoor(s.tiles[i]) ? s.indoorVision : s.outdoorVision;
+  if (a.aloft) {
+    // 상공의 관측자: 현장의 시야(실내·실외·나무)가 아니라 날씨가 정한다. 공중 열영상은 연기를 무시한다.
+    // 이 함수는 순수하다 — 탐조등·열영상의 고장은 kitLive 로 효과만 뺀다 (드러내는 자리는 field/rules/air.ts 가 탐조등을 처음 켤 때)
+    const w = sim.weather;
+    const base = w === 'night' ? (kitLive(sim, a.rid, 'searchlight') ? AIR_VISION.lit : AIR_VISION.night) : w === 'rain' ? AIR_VISION.rain : AIR_VISION.day;
+    return kitLive(sim, a.rid, 'flir') ? base : Math.max(1.3, base * (1 - 0.78 * s.smoke[i]));
+  }
+  let base = isIndoor(s.tiles[i]) ? s.indoorVision : s.outdoorVision;
+  // 경찰 헬기의 탐조등이 비추는 원 안의 바깥 칸: 맑은 날 그 현장의 바깥 시야만큼 보인다 (어두워서 줄어든 만큼을 되돌린다 — 넘지는 않는다)
+  const lt = s.light;
+  if (lt && !isIndoor(s.tiles[i])) { const dx = a.x - lt.x, dy = a.y - lt.y; if (dx * dx + dy * dy <= lt.r * lt.r) base = Math.max(base, s.clearVision ?? 7.5); }
   const tree = s.tiles[i] === T.TREE ? 0.75 : 1;
-  return Math.max(1.3, base * (1 - 0.78 * s.smoke[i]) * tree);
+  // 열화상 카메라는 연기 너머를 본다. 이 함수는 화면(시야 다각형·어둠 층)도 부르므로 순수해야 한다:
+  // kitLive 로 효과만 계산하고 고장을 드러내지 않는다(여기서 드러내면 그림을 그리는 것만으로 기록과 해시가 바뀐다 — 드러내는 자리는 perceive)
+  const smokeK = s.smoke[i] > 0 && kitLive(sim, a.rid, 'tic') ? 0.35 : 0.78;
+  return Math.max(1.3, base * (1 - smokeK * s.smoke[i]) * tree);
 }
 /** 숨겨진 대상을 알아볼 수 있는 거리. 연기·은폐·날씨가 줄이고, 판단력·경험이 늘린다. */
 export function detectRadius(sim: Sim, s: Scene, a: FieldAgent, concealment: number): number {
   const r = resp(sim, a);
-  // 붕괴 현장의 구조 공작차 대원은 탐지 장비(청음·영상)를 써서 잔해에 가려진 사람을 더 멀리서 찾는다
-  if (s.kind === 'collapse' && sim.units[a.unitId].kind === 'rescue') concealment *= 0.45;
+  // 상공의 관측자: 공중 열영상이 가려진 사람의 열을 잡는다 (지상의 탐지 장비·열화상 카메라는 쓰지 않는다)
+  if (a.aloft) return visionOf(sim, s, a) * (1 - 0.72 * concealment * (kitLive(sim, a.rid, 'flir') ? 0.35 : 1)) * (0.72 + 0.3 * r.judgment + 0.25 * r.experience);
+  // 붕괴 현장에서 탐지 장비(청음·영상)를 든 대원은 잔해에 가려진 사람을 더 멀리서 찾는다
+  // (이 함수는 화면도 부른다: 고장을 드러내지 않는 kitLive 로 효과만 계산한다 — 드러내는 자리는 perceive)
+  if (s.kind === 'collapse' && kitLive(sim, a.rid, 'searchKit')) concealment *= 0.45;
+  // 짙은 연기 속에서는 열화상 카메라가 가려진 사람의 윤곽을 잡아 준다
+  if (s.smoke[tileOf(s, a.x, a.y)] > 0.3 && kitLive(sim, a.rid, 'tic')) concealment *= 0.7;
   return visionOf(sim, s, a) * (1 - 0.72 * concealment) * (0.72 + 0.3 * r.judgment + 0.25 * r.experience);
 }
 
@@ -49,7 +115,9 @@ export function regionNameAt(s: Scene, x: number, y: number): string {
 export function casFact(sim: Sim, s: Scene, c: Casualty, src: string): Fact {
   const mob = c.mob === 'trapped' ? 'trapped' : c.walking ? 'mobile' : 'immobile';
   const b = band(c.health);
-  const v: CasBelief = { x: Math.round(c.x), y: Math.round(c.y), mob, band: b, where: c.where, treated: c.treated, trappedDone: c.mob !== 'trapped', tq: c.treatQ >= 0.6 ? 2 : c.treated ? 1 : 0 };
+  // water: (R2) 물속인가 — 본 그대로. 이 값은 늘 mob·band 와 함께 바뀌므로(물에 빠짐·건져 냄·휩쓸려 숨짐) 믿음의 "새 소식" 판정을 바꾸지 않는다.
+  // 떠내려가는 속도(drift)는 단계 1a 가 더한다 — 걸려 멈추는 순간 그 값만 달라져 보고가 한 번 더 나간다 (재 보니 64교대 가운데 1교대의 무전 수가 달라졌다)
+  const v: CasBelief = { x: Math.round(c.x), y: Math.round(c.y), mob, band: b, where: c.where, treated: c.treated, trappedDone: c.mob !== 'trapped', tq: c.treatQ >= 0.6 ? 2 : c.treated ? 1 : 0, water: c.inWater === true };
   const mobT = c.dead ? '' : mob === 'trapped' ? ' · 고립' : mob === 'mobile' ? ' · 자력 대피 중' : c.where === 'scene' ? ' · 거동 불가' : '';
   const whereT = c.where === 'safe' ? '안전 구역' : c.where === 'loaded' ? '구급차 탑승' : c.where === 'carried' ? '이송 중' : regionNameAt(s, c.x, c.y);
   return mkFact('cas', c.id, v, src, sim.t, 1, true, `구조 대상 ${c.label}: ${whereT}${mobT} · ${BAND_NAME[b]}`);
@@ -61,12 +129,40 @@ export function hosFact(sim: Sim, s: Scene, h: Hostile, src: string): Fact {
   return mkFact('hos', h.id, { x: Math.round(h.x), y: Math.round(h.y), weapon: h.weapon, state: h.state, hostage: hold, facing: Math.round(h.facing * 4) / 4 }, src, sim.t, 1, true, `${h.label}: ${wt}${hold ? ' · 인질을 붙잡고 있음' : ''} · ${st} (${regionNameAt(s, h.x, h.y)})`);
 }
 
+/**
+ * 동료의 상태 ('mate' 사실 — 값은 MateBelief). 본 대원·끌고 가는 대원·다친 본인이 만든다.
+ * d = 관찰자와 그 동료 사이의 거리 (본인의 보고, 끌고 가는 대원은 0). 멀리서는 쓰러진 것만 보인다:
+ *   숨졌는지는 2칸 안에서만 알 수 있고, 중증도는 3칸 안에서만 실제 값이다 (그보다 멀면 쓰러졌으면 위중, 아니면 중상으로 적는다).
+ * 칸 이름이 bleed 가 아니라 bleeding 인 것은 지휘 쪽의 진실 읽기 검사(.bleed)에 걸리지 않게 하려는 것이다.
+ */
+export function mateFact(sim: Sim, s: Scene, b: FieldAgent, status: MateBelief['status'], src: string, d: number): Fact {
+  const r = sim.responders[b.rid];
+  const dead = r.dead === true && d <= 2;
+  const near = d <= 3;
+  const band = dead ? 3 : near ? Math.min(2, bandOf(r.health)) : status === 'down' ? 2 : 1;      // 숨진 줄 모르면 사망(3)으로 적지 않는다
+  const v: MateBelief = {
+    x: Math.round(b.x), y: Math.round(b.y), status, band, bleeding: near && (r.bleed ?? 0) >= 0.01,
+    tq: (r.treatQ ?? 0) >= 0.6 ? 2 : (r.treatQ ?? 0) > 0 ? 1 : 0, dead, wasDown: r.tDown !== undefined, since: sim.t,
+  };
+  const text = dead ? `${r.name} 대원 생체 반응 없음`
+    : status === 'down' ? `${r.name} 대원 쓰러짐 — 구조 필요`
+    : status === 'hurt' ? `${r.name} 대원 부상 — 후퇴 중`
+    : status === 'safe' ? `${r.name} 대원 안전 구역 — 후송 대기`
+    : status === 'evac' ? `${r.name} 대원 현장 이탈`
+    : `${r.name} 대원 가벼운 임무로 복귀`;
+  return mkFact('mate', b.rid, v, src, sim.t, 1, true, text);
+}
+/** 그 동료의 지금 상태를 mate 사실의 status 로: 쓰러져 있으면 down, 안전 구역에 있으면 safe, 차에 탔으면 evac, 걷고 있으면 hurt */
+export function mateStatus(b: FieldAgent): MateBelief['status'] {
+  return b.status === 'down' ? 'down' : b.status === 'withdrawn' ? 'safe' : b.status === 'left' ? 'evac' : 'hurt';
+}
+
 /** 보고할 가치가 있는 변화인가 (위치만 바뀐 것은 조용히 갱신) */
 function significant(f: Fact, old: any): boolean {
   const v = f.value;
   if (f.type === 'cas') return v.where !== 'carried' && (old.mob !== v.mob || old.band !== v.band || old.where !== v.where || old.treated !== v.treated || old.tq !== v.tq);
   if (f.type === 'hos') return old.state !== v.state || old.weapon !== v.weapon || old.hostage !== v.hostage;
-  if (f.type === 'mate') return old.status !== v.status;
+  if (f.type === 'mate') return old.status !== v.status || old.dead !== v.dead || old.band !== v.band || old.tq !== v.tq;
   return true;
 }
 function sameSig(a: Fact, b: Fact): boolean { return a.key === b.key && !significant(a, b.value); }
@@ -86,6 +182,9 @@ export function learn(sim: Sim, a: FieldAgent, f: Fact, report = true, force = f
   return news;
 }
 
+/** 상공의 관측자가 먼저 발견해 아직 아무도 대피를 안내하지 못한 사람 (구조 대상의 모양을 바꾸지 않으려고 따로 둔다) */
+const UNGUIDED = new WeakSet<Casualty>();
+
 function discover(sim: Sim, s: Scene, I: Incident, a: FieldAgent, c: Casualty): void {
   const r = resp(sim, a);
   c.tDiscovered = sim.t; c.discoveredBy = a.rid;
@@ -100,8 +199,9 @@ function discover(sim: Sim, s: Scene, I: Incident, a: FieldAgent, c: Casualty): 
   if (late && !I.problems.some((p) => p.code === 'LATE_DISCOVERY')) {
     I.problems.push({ code: 'LATE_DISCOVERY', t: sim.t, eventId: sim.events.length - 1, detail: `구조 대상 ${c.label} 발견까지 도착 후 ${Math.round(sim.t - s.arrivedAt)}초 소요`, recovered: true, recoveryText: '' });
   }
-  // 거동 가능한 대상은 대피를 안내한다 (배회하던 실종자는 동행이 필요)
-  if (c.mob === 'mobile' && !c.wander && !c.isTarget && !isHeld(sim, s, c.id)) { c.walking = true; c.path = null; }
+  // 거동 가능한 대상은 대피를 안내한다 (배회하던 실종자는 동행이 필요). 상공의 관측자는 안내하지 못한다 — 보고만 하고,
+  // 지상 대원이 그 사람을 처음 만났을 때 안내한다 (perceive 의 UNGUIDED)
+  if (c.mob === 'mobile' && !c.wander && !c.isTarget) { if (a.aloft) UNGUIDED.add(c); else if (!isHeld(sim, s, c.id)) { c.walking = true; c.path = null; } }
   r.xpGained += 0.004;
 }
 
@@ -109,25 +209,38 @@ function discover(sim: Sim, s: Scene, I: Incident, a: FieldAgent, c: Casualty): 
 export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWalls = false): void {
   const I = sim.incidents[s.incidentId];
   const r = resp(sim, a);
+  // 고장이 드러나는 자리 (열화상 카메라·탐지 장비는 여기뿐이다 — perceive 는 시뮬레이션만 부른다):
+  // 연기 속에서 열화상 카메라를, 붕괴 현장에서 탐지 장비를 쓰려 할 때. 고장이 없거나 이미 드러났으면 아무 일도 없다
+  if (!a.aloft) {
+    if (s.smoke[tileOf(s, a.x, a.y)] > 0.3) kitWorks(sim, a.rid, 'tic', I);
+    if (s.kind === 'collapse') kitWorks(sim, a.rid, 'searchKit', I);
+  }
   const v = visionOf(sim, s, a) * boost;
   const me = r.name;
+  // 상공의 관측자(a.aloft): 지붕 밑(실내 칸)은 보지 못하고, 바깥 칸은 벽·나무에 가리지 않는다(시야선을 보지 않는다).
+  // 사람을 움직이지 않고(대피 안내·인질 유도 없음), 소품(문·밸브·단서 …)은 살피지 않는다
+  const aloft = a.aloft === true;
+  const sees = (x: number, y: number): boolean => (aloft ? !isIndoor(s.tiles[tileOf(s, x, y)]) : los(s, a.x, a.y, x, y));
+  const meter = hasKit(sim, a.rid, 'gasMeter');      // 가스 측정기: 새는 밸브를 벽 너머 7칸에서 알아챈다
   for (let ci = 0; ci < s.casualties.length; ci++) { const c = s.casualties[ci];      // 색인 순회: 최적화 전 단계에서 반복자 객체를 만들지 않는다 (순서는 같다)
     if (c.where === 'hospital' || c.where === 'loaded') continue;
     const d = dist(a.x, a.y, c.x, c.y);
     if (d > v) continue;
     const known = c.tDiscovered >= 0;
     const dr = known ? v : detectRadius(sim, s, a, c.concealment) * boost;
-    if (d > dr || !los(s, a.x, a.y, c.x, c.y)) continue;
+    if (d > dr || !sees(c.x, c.y)) continue;
     let fresh = sim.t - c.tDiscovered < 2.5;      // 방금 누군가 발견을 알렸다면 같은 내용을 되풀이하지 않는다
     if (!known) { discover(sim, s, I, a, c); fresh = true; }
-    if (known && c.hostage && c.mob === 'mobile' && !c.walking && !c.dead && c.where === 'scene' && !isHeld(sim, s, c.id) && !s.hostiles.some((h) => h.state === 'hold' || h.state === 'fight')) { c.walking = true; c.path = null; }
+    // 하늘에서 먼저 본 사람을 지상 대원이 처음 만났다: 걸을 수 있으면 대피를 안내한다 (발견한 대원이 하는 것과 같다)
+    if (!aloft && known && !c.walking && c.mob === 'mobile' && c.where === 'scene' && !c.dead && UNGUIDED.has(c) && !isHeld(sim, s, c.id)) { UNGUIDED.delete(c); c.walking = true; c.path = null; }
+    if (!aloft && known && c.hostage && c.mob === 'mobile' && !c.walking && !c.dead && c.where === 'scene' && !isHeld(sim, s, c.id) && !s.hostiles.some((h) => h.state === 'hold' || h.state === 'fight')) { c.walking = true; c.path = null; }
     if (c.tDiscovered >= 0) { if (fresh) learnQuiet(sim, a, casFact(sim, s, c, me)); else learn(sim, a, casFact(sim, s, c, me)); }
   }
   for (let hi = 0; hi < s.hostiles.length; hi++) { const h = s.hostiles[hi];
     const d = dist(a.x, a.y, h.x, h.y);
-    const range = h.hidden ? 4.2 : 13;
+    const range = aloft ? (h.hidden ? v * 0.4 : v) : h.hidden ? 4.2 : 13;      // 지상은 시야와 상관없이 13칸(숨은 용의자 4.2칸). 상공은 관측 거리만큼 — 밤의 4칸이 용의자에게도 걸린다
     const cur = a.beliefs.get('hos', h.id);
-    if (d <= range && los(s, a.x, a.y, h.x, h.y)) {
+    if (d <= range && sees(h.x, h.y)) {
       const wasHidden = h.hidden;
       if (h.hidden) {
         h.hidden = false;
@@ -148,8 +261,9 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
       const rg = s.region[i];
       if (rg < 0) continue;
       if (dist(ax, ay, x, y) > v) continue;
-      if (!throughWalls && !los(s, ax, ay, x, y)) continue;
-      if (throughWalls && s.fire[i] < 0.25 && !los(s, ax, ay, x, y)) continue;
+      if (aloft) { if (isIndoor(s.tiles[i])) continue; }      // 상공에서는 바깥 칸의 불만 본다
+      else if (!throughWalls && !los(s, ax, ay, x, y)) continue;
+      else if (throughWalls && s.fire[i] < 0.25 && !los(s, ax, ay, x, y)) continue;
       let e = seen.get(rg); if (!e) { e = { n: 0, m: 0 }; seen.set(rg, e); }
       e.n++; if (s.fire[i] > e.m) e.m = s.fire[i];
     }
@@ -164,10 +278,11 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
       }
     }
   }
-  for (let pi = 0; pi < s.props.length; pi++) { const p = s.props[pi];
+  for (let pi = aloft ? s.props.length : 0; pi < s.props.length; pi++) { const p = s.props[pi];      // 상공의 관측자는 소품을 살피지 않는다
     if (p.removed) continue;
     const d = dist(a.x, a.y, p.x, p.y);
-    if (d > v + 1) continue;
+    const sniff = meter && p.kind === 'valve' && !p.mitigated && !p.ignited && d <= 7;      // 측정기가 잡는 누출 (시야·벽과 상관없다)
+    if (d > v + 1 && !sniff) continue;
     if (p.kind === 'debris') {
       const i = p.y * s.w + p.x;
       if (!a.beliefs.get('blk', i) && d <= v && los(s, a.x, a.y, p.x, p.y)) {
@@ -186,7 +301,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
     } else if (p.kind === 'gas') {
       if (!p.exploded && d <= 3.5 && !a.beliefs.get('haz', p.id) && los(s, a.x, a.y, p.x, p.y)) learn(sim, a, mkFact('haz', p.id, { kind: 'gas', active: true, x: p.x, y: p.y }, me, sim.t, 1, true, `${regionNameAt(s, p.x, p.y)}에 가스 용기 확인 — 폭발 위험`));
     } else if (p.kind === 'unstable' || p.kind === 'valve') {
-      if (d <= (p.kind === 'valve' ? 4.5 : r.judgment >= 0.45 ? 4 : 2.6) && los(s, a.x, a.y, p.x, p.y)) {
+      if (sniff || (d <= (p.kind === 'valve' ? 4.5 : r.judgment >= 0.45 ? 4 : 2.6) && los(s, a.x, a.y, p.x, p.y))) {
         const active = !p.mitigated && !p.ignited;
         const cur = a.beliefs.get('haz', p.id);
         const where = regionNameAt(s, p.x, p.y);
@@ -216,12 +331,18 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
       if (!a.beliefs.get('evid', p.id) && d <= v) learn(sim, a, mkFact('evid', p.id, { kind: 'witness', done: !!p.interviewed }, me, sim.t, 1, true, '현장에 목격자 대기 중'), false);
     }
   }
-  for (const b of s.agents) {
-    if (b === a || b.status !== 'down') continue;
-    if (dist(a.x, a.y, b.x, b.y) <= v && los(s, a.x, a.y, b.x, b.y)) {
-      const cur = a.beliefs.get('mate', b.rid);
-      if (!cur || cur.value.status !== 'down') learn(sim, a, mkFact('mate', b.rid, { x: Math.round(b.x), y: Math.round(b.y), status: 'down' }, me, sim.t, 1, true, `${sim.responders[b.rid].name} 대원 쓰러짐 — 구조 필요`));
-    }
+  // 동료: 쓰러진 동료는 시야 안이면 본다. 안전 구역으로 물러난 동료는 바로 곁(2칸)에서만 살핀다 — 거기서 숨진 동료를 곁의 대원이 알아본다
+  for (let bi = 0; bi < s.agents.length; bi++) { const b = s.agents[bi];
+    if (b === a || (b.status !== 'down' && b.status !== 'withdrawn')) continue;
+    const d = dist(a.x, a.y, b.x, b.y);
+    if (d > v || (b.status === 'withdrawn' && d > 2) || !sees(b.x, b.y)) continue;
+    const cur = a.beliefs.get('mate', b.rid);
+    if (cur && cur.value.dead) continue;      // 숨진 줄 안다 — 멀리서 다시 본 것으로 되돌리지 않는다
+    const f = mateFact(sim, s, b, b.status === 'down' ? 'down' : 'safe', me, d);
+    // 3칸 밖에서는 중증도·사망을 알 수 없다: 상태(쓰러짐·안전 구역)가 달라졌을 때만 새 소식이다 (가까이서 본 동료의 보고를 먼 관찰이 덮어쓰지 않는다)
+    if (cur && !(d <= 3 ? significant(f, cur.value) : cur.value.status !== f.value.status)) continue;
+    // 쓰러진 것·숨진 것은 말로 알린다. 안전 구역에 있는 동료의 상태는 믿음과 무전 자료로만 보낸다 (물러날 때 본인이 이미 알렸다)
+    if (b.status === 'down' || f.value.dead) learn(sim, a, f); else learnQuiet(sim, a, f);
   }
 }
 
@@ -229,7 +350,7 @@ const IMPORTANT: Record<string, boolean> = { cas: true, blk: true, hos: true, ha
 
 /** 무전 송신. 음영 구역에서는 실패한다. */
 export function transmit(sim: Sim, s: Scene, a: FieldAgent | null, to: number, kind: RadioMsg['kind'], facts: Fact[], text: string, workId = -1, imp = 1, causes: number[] = [], silent = false): number {
-  if (a && s.shadow[tileOf(s, a.x, a.y)]) return -1;
+  if (a && !a.aloft && s.shadow[tileOf(s, a.x, a.y)]) return -1;      // 상공의 관측자는 음영 구역의 영향을 받지 않는다
   const I = sim.incidents[s.incidentId];
   let ev = -1;
   if (!silent) {
@@ -248,7 +369,7 @@ export function flushOutbox(sim: Sim, s: Scene, a: FieldAgent): void {
   const important = a.outbox.some((f) => IMPORTANT[f.type]);
   const prompt = important || a.outbox.some((f) => f.type === 'srch' || f.type === 'ovh');      // 수색·잔불 정리 결과는 바로 알린다
   if (!prompt && sim.t - a.outboxSince < 5) return;
-  if (s.shadow[tileOf(s, a.x, a.y)]) {
+  if (!a.aloft && s.shadow[tileOf(s, a.x, a.y)]) {
     if (a.shadowSince < 0) a.shadowSince = sim.t;
     if (!a.commFailLogged && important && sim.t - a.shadowSince > 1.5 + 7 * (1 - r.experience)) {
       a.commFailLogged = true;
@@ -286,21 +407,26 @@ export function shareNearby(sim: Sim, s: Scene, a: FieldAgent): void {
 }
 
 /** 대원의 믿음에 근거한 이동 비용. 모르는 장애물은 비용에 반영되지 않는다(가다가 발견한다). */
-export function agentCost(sim: Sim, s: Scene, a: FieldAgent, allowBlockers = true): CostFn {
+/** escape = 물러나는 길(executor.moveTo): 끌 수 없는 불도 막힌 칸으로 치지 않고 비싼 칸으로 친다 — 불길을 뚫고 나가는 길 */
+export function agentCost(sim: Sim, s: Scene, a: FieldAgent, allowBlockers = true, escape = false): CostFn {
   const r = resp(sim, a);
-  const isFire = r.dept === 'fire';
   const u = sim.units[a.unitId];
-  const canSuppress = isFire && !u.pumpFailed && (u.water > 0 || u.hydrant);
+  // 연기·불을 지나는 값은 부서가 아니라 든 장비가 정한다: 공기호흡기(연기), 방화복(약한 불), 관창(센 불을 끄며 지나간다)
+  const scba = hasKit(sim, a.rid, 'scba'), turnout = hasKit(sim, a.rid, 'turnout');
+  const canSuppress = hasKit(sim, a.rid, 'hose') && !u.pumpFailed && (u.water > 0 || u.hydrant);
+  // 공기호흡기가 없는 대원은 화재·가스·붕괴 현장의 건물 안을 가로질러 가지 않는다 (돌아갈 길이 있으면 돌아간다 — 안에 볼일이 있는 일은 fitFor 가 먼저 막는다)
+  const shun = !scba && (s.kind === 'fire' || s.kind === 'hazmat' || s.kind === 'collapse');
   const ax = a.x, ay = a.y;
   const v = Math.min(5, visionOf(sim, s, a));
   // 판단력이 낮으면 장애물 제거 시간을 잘못 추정한다
   const est = 1 + (a.rng.next() - 0.5) * (1 - r.judgment) * 0.9;
-  const clearCost = (22 / (0.5 + r.skills.rescue * 0.8 + u.tool * 0.5)) * est;
-  const forceCost = (15 / (0.6 + r.skills.rescue * 0.6 + u.tool * 0.6 + r.skills.law * 0.3)) * est;
+  const clearCost = (22 / (0.5 + r.skills.rescue * 0.8 + toolFor(sim, a.rid, 'clear') * 0.5)) * est;
+  const forceCost = (15 / (0.6 + r.skills.rescue * 0.6 + toolFor(sim, a.rid, 'force') * 0.6 + r.skills.law * 0.3)) * est;
   return (i: number): number => {
     const t = s.tiles[i];
     if (!staticPass(t)) return -1;
     let c = t === T.TREE ? 0.7 : 0;
+    if (shun) { const rg = s.region[i]; if (rg >= 0 && s.regions[rg].indoor) c += 6; }
     const b = a.beliefs.get('blk', i);
     if (b && b.value !== 'none') {
       if (!allowBlockers) return -1;
@@ -313,8 +439,8 @@ export function agentCost(sim: Sim, s: Scene, a: FieldAgent, allowBlockers = tru
     const dx = x - ax, dy = y - ay;
     if (dx * dx + dy * dy <= v * v) {
       const f = s.fire[i];
-      if (f > 0.5) { if (!canSuppress) return -1; c += 16; } else if (f > 0.12) c += isFire ? 2 : 6;
-      c += s.smoke[i] * (isFire ? 0.8 : 3);
+      if (f > 0.5) { if (!canSuppress && !escape) return -1; c += 16; } else if (f > 0.12) c += turnout ? 2 : 6;
+      c += s.smoke[i] * (scba ? 0.8 : 3);
     }
     return c;
   };
@@ -328,8 +454,8 @@ export function hasWork(a: FieldAgent): boolean { return a.task !== null && a.ta
  */
 export const RETRY_AFTER = 25;
 export function failedRecently(sim: Sim, w: WorkItem, rid: number): boolean { const t = w.failedAt[rid]; return t !== undefined && sim.t - t < RETRY_AFTER; }
-/** 부상으로 더는 임무를 맡을 수 없는 대원 (brain.dangerScore 의 후퇴 기준과 같다) */
-export const HURT_HEALTH = 40;
+/** 부상으로 더는 임무를 맡을 수 없는 체력 (injury.HURT_AT — 후퇴 기준은 injury.mustRetreat: 이 체력 아래이거나 출혈이 클 때) */
+export const HURT_HEALTH = HURT_AT;
 
 export function workLabel(s: Scene, w: WorkItem): string {
   const reg = w.region >= 0 ? s.regions[w.region].name : '';
@@ -341,6 +467,7 @@ export function workLabel(s: Scene, w: WorkItem): string {
     mitigate: w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? '균열부 보강' : w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'valve' ? '가스 밸브 차단' : '연료 누출 조치',
     perimeter: s.kind === 'hazmat' ? `${w.tile === 0 ? '앞쪽' : '뒤쪽'} 출입구 통제` : `${exitName(s, w.tile)} 봉쇄`, negotiate: `${hos} 협상`, engage: `${hos} 대응`, arrest: `${hos} 검거`, interview: '목격자 면담', clearRoad: '도로 정리', rescueMate: '동료 구조', waterRescue: `${cas} 수난 구조`, escort: `${cas} 동행`,
     defuse: '폭발물 해체', overhaul: `${reg} 잔불 정리`,
+    hoist: `${cas} 호이스트 인양`, airDrop: `${reg} 공중 물 투하`,
   };
   return names[w.kind];
 }
@@ -349,47 +476,97 @@ export function workLabel(s: Scene, w: WorkItem): string {
 /** 출입구의 이름. 길 위의 현장에서는 길의 양 끝이다. */
 export function exitName(s: Scene, k: number): string { return s.outdoor ? (k === 0 ? '서쪽 길목' : '동쪽 길목') : k === 0 ? '정문' : '후문'; }
 
-/** 환자를 싣고 병원으로 갈 수 있는가: 구급차는 2명, 구조 헬기는 1명 */
-export function canCarryPatients(u: Unit): boolean { return u.kind === 'heli' ? u.patients.length < 1 : u.dept === 'ems' && u.patients.length < 2; }
+/** 환자를 싣고 병원으로 갈 수 있는가: 환자 자리(crews.seatsOf — 구급차 2, 헬기 1)가 남았다. 자리의 수를 따로 적지 않는다. 쓰인 자리는 crews.seatsUsed (구조 대상 + 다른 부대의 다친 대원·용의자) */
+export function canCarryPatients(sim: Sim, u: Unit): boolean { return seatsUsed(sim, u) < seatsOf(u); }
 
-export function fitFor(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number {
-  const r = resp(sim, a), u = sim.units[a.unitId];
+/** 그 부대에서 펌프를 맡은 대원(펌프 조작 장비를 든 기관원·사다리 조작원)이 지금 현장에서 활동 중인가 — 자기 조직의 상태라 지휘관·대원이 알아도 된다 */
+export function pumpOperatorOn(sim: Sim, s: Scene, unitId: number): boolean {
+  for (const b of s.agents) if (b.unitId === unitId && b.status === 'active' && hasKit(sim, b.rid, 'pumpPanel')) return true;
+  return false;
+}
+
+/**
+ * 맡을 수 있는 일은 든 장비가 정한다 (R1 6.2): 위험한 건물 안은 공기호흡기, 진압·잔불 정리는 관창, 봉쇄·교전은 총기, 해체는 해체 공구.
+ * 장비 판정은 모두 hasKit·toolFor(알려진 고장만 뺀다)다 — 숨은 고장이 있는 대원의 적합도는 고장이 없는 대원과 같아야 한다(숨은 고장이 배정에 새지 않게).
+ * 공기(R1 9절): 남은 공기가 문턱(45초) 아래인 대원은 위험한 건물 안의 일(수색·구출·이송)과 진압·잔불 정리를 새로 맡지 않는다(crews.airShort —
+ * 자기 장비의 알려진 상태다). 그 일을 맡을 사람이 현장에 없어지면 지휘관의 "맡을 사람이 없는 작업" 요청(commander.anyCapable)이 부대를 부른다.
+ * 역할이 먼저 맡는 일(+)·피하는 일(−)은 맡을 수 있을 때만 더한다. 0 이던 것은 0 으로 남는다(선호가 자격을 만들지 않는다).
+ */
+export function fitFor(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap = false): number {
+  const fit = fitBase(sim, s, a, w, afterSwap);
+  return fit > 0 ? Math.max(0.02, fit + (roleOf(sim, a.rid).prefer[w.kind] ?? 0)) : fit;
+}
+/** 공기가 되는가: 문턱 아래가 아니다 (공기호흡기가 없는 대원은 해당 없음). afterSwap 이면 통을 바꾼 뒤로 보고 따지지 않는다 */
+const airOk = (sim: Sim, rid: number, afterSwap: boolean): boolean => afterSwap || !airShort(sim, rid);
+/** 연기 속에 들어갈 수 있는가: 공기호흡기를 멨고 공기가 된다 */
+const scbaOk = (sim: Sim, rid: number, afterSwap: boolean): boolean => hasKit(sim, rid, 'scba') && airOk(sim, rid, afterSwap);
+/** afterSwap = 공기통을 바꾼 뒤라면 (공기 문턱을 보지 않는다 — 지휘관이 "예비 공기통으로 바꾸면 맡을 수 있는 사람이 있는가"를 볼 때만 쓴다) */
+function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: boolean): number {
+  const r = resp(sim, a), u = sim.units[a.unitId], rid = a.rid;
   const hot = s.kind === 'armed' && s.secureAt < 0;
-  const fireRisk = (regionId: number): boolean => regionId >= 0 && ((a.beliefs.val<number>('fire', regionId) ?? 0) > 0.25 || s.kind === 'fire' || s.kind === 'hazmat' || s.kind === 'collapse');      // 불이 났거나, 가스가 찼거나, 무너질 수 있는 건물 안은 소방만 들어간다
+  const fireRisk = (regionId: number): boolean => regionId >= 0 && ((a.beliefs.val<number>('fire', regionId) ?? 0) > 0.25 || s.kind === 'fire' || s.kind === 'hazmat' || s.kind === 'collapse');      // 불이 났거나, 가스가 찼거나, 무너질 수 있는 건물 안은 공기호흡기를 멘 대원만 들어간다
   switch (w.kind) {
     case 'sizeup': return a.isCommander ? 1 : 0;
     case 'search':
-      if (hot && r.dept !== 'police') return 0;
-      if (s.regions[w.region].indoor && fireRisk(w.region) && r.dept !== 'fire') return 0;
+      if (hot && !(r.dept === 'police' && hasFirearm(sim, rid))) return 0;
+      if (s.regions[w.region].indoor && fireRisk(w.region) && !scbaOk(sim, rid, afterSwap)) return 0;
       return 0.45 + 0.3 * r.experience + 0.25 * r.judgment + (r.dept === 'police' && s.kind !== 'fire' && s.kind !== 'medical' ? 0.1 : 0) + (r.dept === 'ems' && s.kind === 'medical' ? 0.15 : 0);
-    case 'suppress': return r.skills.fire >= 0.35 && !u.pumpFailed && (u.water > 0 || u.hydrant) ? r.skills.fire : 0;
-    case 'hookup': return r.dept === 'fire' && a.unitId === w.prop ? 0.8 : 0;
-    case 'clear': case 'force': return 0.3 + r.skills.rescue * 0.5 + u.tool * 0.3;
-    case 'extricate': { if ((s.kind === 'collapse' || s.kind === 'hazmat') && r.dept !== 'fire') return 0; const f = r.skills.rescue * (0.35 + 0.65 * u.tool); return f >= 0.2 || sim.t - w.createdAt > 25 ? Math.max(0.05, f) : 0; }
+    case 'suppress': return hasKit(sim, rid, 'hose') && airOk(sim, rid, afterSwap) && !u.pumpFailed && (u.water > 0 || u.hydrant) ? r.skills.fire : 0;      // 관창을 든 사람만 물을 쏜다 (공기가 문턱 아래면 통을 바꾼 뒤에)
+    case 'hookup':
+      if (r.dept !== 'fire' || a.unitId !== w.prop) return 0;
+      // 그 부대에서 펌프를 맡은 대원(기관원·사다리 조작원)이 활동 중이면 급수 연결은 그 사람의 일이다. 없거나 쓰러졌으면 그 부대의 누구나 한다
+      return hasKit(sim, rid, 'pumpPanel') || !pumpOperatorOn(sim, s, a.unitId) ? 0.8 : 0;
+    case 'clear': return 0.3 + r.skills.rescue * 0.5 + toolFor(sim, rid, 'clear') * 0.3;
+    case 'force': return 0.3 + r.skills.rescue * 0.5 + toolFor(sim, rid, 'force') * 0.3;
+    case 'extricate': {
+      if (!scbaOk(sim, rid, afterSwap)) {
+        if (s.kind === 'collapse' || s.kind === 'hazmat') return 0;
+        // 불이 난 건물 안에 갇힌 사람도 같다: 믿음 속 자리가 위험한 건물 안이면 공기호흡기를 멘 대원만 들어가 구출한다 (수색·이송과 같은 검사)
+        const cb = a.beliefs.val<CasBelief>('cas', w.cas);
+        if (!cb && s.kind === 'fire') return 0;      // 어디에 있는지 아직 전달받지 못했다 — 불이 난 건물 안일 수 있다
+        if (cb) { const rg = s.region[cb.y * s.w + cb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg)) return 0; }
+      }
+      const f = r.skills.rescue * (0.35 + 0.65 * toolFor(sim, rid, 'extricate'));
+      return f >= 0.2 || sim.t - w.createdAt > 25 ? Math.max(0.05, f) : 0;
+    }
     case 'treat': {
       if (hot && r.dept !== 'police') return 0;
       const cb = a.beliefs.val<CasBelief>('cas', w.cas);
       if (cb && cb.tq >= 1 && r.dept !== 'ems') return 0;      // 기본 처치가 끝난 환자는 구급대원만 더 손볼 수 있다
-      return Math.max(0.08, r.skills.medical * (0.5 + 0.5 * u.medLevel));
+      return Math.max(0.08, r.skills.medical * (0.5 + 0.5 * medLevelOf(sim, rid)));
     }
     case 'carry': case 'escort': {
       if (hot && r.dept !== 'police') return 0;
       const cb = a.beliefs.val<CasBelief>('cas', w.cas);
-      if (!cb && (s.kind === 'collapse' || s.kind === 'hazmat') && r.dept !== 'fire') return 0;      // 어디에 있는지 아직 전달받지 못했다 — 위험한 건물 안일 수 있다
-      if (cb && cb.where === 'scene') { const rg = s.region[cb.y * s.w + cb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg) && r.dept !== 'fire') return 0; }
-      return 0.4 + 0.4 * r.fitness + (r.dept === 'ems' ? 0.1 : 0);
+      if (!cb && (s.kind === 'fire' || s.kind === 'collapse' || s.kind === 'hazmat') && !scbaOk(sim, rid, afterSwap)) return 0;      // 어디에 있는지 아직 전달받지 못했다 — 위험한 건물 안일 수 있다
+      // 누가 옮기는 중('carried')이어도 믿음 속 자리로 같은 검사를 한다: 공기호흡기 없는 대원이 이송 보조로 위험한 건물 안에 따라 들어가지 않게
+      if (cb && (cb.where === 'scene' || cb.where === 'carried')) { const rg = s.region[cb.y * s.w + cb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg) && !scbaOk(sim, rid, afterSwap)) return 0; }
+      return 0.4 + 0.4 * r.fitness + (hasKit(sim, rid, 'stretcher') ? 0.1 : 0);
     }
-    case 'load': return canCarryPatients(u) && a.unitId === w.prop ? 1 : 0;
+    case 'load': return canCarryPatients(sim, u) && a.unitId === w.prop ? 1 : 0;
     case 'traffic': return r.dept === 'police' ? 1 : 0.45;
-    case 'mitigate': { const k = w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? r.skills.rescue : r.skills.fire; return k >= 0.3 ? k : 0; }
-    case 'perimeter': case 'engage': case 'arrest': return r.dept === 'police' ? 0.5 + r.skills.law * 0.5 : 0;
+    case 'mitigate': {
+      const shore = w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'unstable';
+      const k = shore ? r.skills.rescue : r.skills.fire;
+      return k >= 0.3 ? k + (!shore && hasKit(sim, rid, 'plugKit') ? 0.2 : 0) : 0;      // 누출 차단 장비는 밸브·연료 누출에 쓴다 (균열부 보강은 아니다)
+    }
+    case 'perimeter': case 'engage': return r.dept === 'police' && hasFirearm(sim, rid) ? 0.5 + r.skills.law * 0.5 : 0;
+    case 'arrest': return r.dept === 'police' && (hasFirearm(sim, rid) || hasKit(sim, rid, 'taser')) ? 0.5 + r.skills.law * 0.5 : 0;
     case 'negotiate': return r.dept === 'police' ? 0.3 + r.composure * 0.35 + r.experience * 0.35 : 0;
     case 'interview': return r.dept === 'police' ? 1 : 0.6;
     case 'clearRoad': return r.dept === 'ems' ? 0 : 0.4 + r.skills.rescue * 0.4;
-    case 'rescueMate': return 0.5 + r.fitness * 0.3 + r.teamwork * 0.2;
-    case 'waterRescue': return 0.22 + r.skills.rescue * 0.5 + u.tool * 0.28;
-    case 'defuse': return u.caps.eod >= 0.9 ? 0.6 + 0.4 * r.skill : 0;      // 폭발물 처리반만 손댄다
-    case 'overhaul': return r.dept === 'fire' ? 0.4 + 0.6 * r.skills.fire : 0;      // 불탄 건물 안은 소방만
+    case 'rescueMate': {
+      if (rid === w.mate) return 0;      // 자기 자신을 구조하지 못한다
+      if (hot && r.dept !== 'police') return 0;      // 안전 확보 전의 무장 현장: 경찰만 들어간다
+      // 불·가스·붕괴 위험 구역 안에 쓰러진 동료: 공기호흡기를 멘 대원만 들어간다 (구하러 들어간 대원이 다시 쓰러지는 연쇄를 막는다). 구역은 믿음 속 위치로 본다
+      const mb = a.beliefs.val<MateBelief>('mate', w.mate);
+      if (mb) { const rg = s.region[mb.y * s.w + mb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg) && !scbaOk(sim, rid, afterSwap)) return 0; }
+      return 0.5 + r.fitness * 0.3 + r.teamwork * 0.2;
+    }
+    case 'waterRescue': return 0.22 + r.skills.rescue * 0.5 + toolFor(sim, rid, 'water') * 0.28;
+    case 'defuse': return hasKit(sim, rid, 'eodKit') ? 0.6 + 0.4 * r.skill : 0;      // 해체 공구를 든 처리 요원만 손댄다
+    case 'overhaul': return hasKit(sim, rid, 'hose') && airOk(sim, rid, afterSwap) ? 0.4 + 0.6 * r.skills.fire : 0;      // 불씨를 만나면 분사한다: 관창을 든 사람만 (공기가 문턱 아래면 통을 바꾼 뒤에)
+    case 'hoist': case 'airDrop': return 0;      // 공중 임무: 지상 대원은 맡지 않는다 (상공의 헬기가 field/rules/air.ts 에서 가져간다)
   }
 }
 

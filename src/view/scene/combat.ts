@@ -183,7 +183,7 @@ export function drawAimLines(cv: CombatView): void {
 }
 
 // ───────────────────────── 5. 사람의 자세 ─────────────────────────
-export interface PersonFx { recoil?: number; flinch?: { x: number; y: number }; throwAct?: number; ram?: boolean; glow?: number; lunge?: { x: number; y: number }; jitter?: { x: number; y: number } }
+export interface PersonFx { recoil?: number; flinch?: { x: number; y: number }; throwAct?: number; ram?: boolean; irons?: boolean; glow?: number; lunge?: { x: number; y: number }; jitter?: { x: number; y: number } }
 function flinchOf(book: FxBook, sid: number, tk: 0 | 1 | 2, target: number, x: number, y: number): { x: number; y: number } | undefined {
   const e = book.recentOn(sid, tk, target, 0.12);
   if (!e || !e.f?.c || e.f.c.ox === undefined) return undefined;
@@ -199,6 +199,7 @@ export function agentFx(cv: CombatView, a: FieldAgent): PersonFx {
     if (e.kind === 'shot' && c.side === 0 && c.by === a.rid && age < 0.1) out.recoil = 1 - age / 0.1;
     else if (e.kind === 'flash' && c.by === a.rid && c.ox !== undefined && age < 0.28) out.throwAct = age / 0.28;
     else if (e.kind === 'breach' && c.by === a.rid && c.how === 'ram' && age < 0.4) out.ram = true;
+    else if (e.kind === 'breach' && c.by === a.rid && c.how === 'irons' && age < 0.4) out.irons = true;      // (R1) 할리건으로 연 문: 0.4초 동안 할리건을 든 자세 (G5 §11 ⑤)
     else if (e.kind === 'breach' && c.sync && age < 0.4 && c.ox !== undefined && Math.hypot(a.x - c.ox, a.y - (c.oy ?? 0)) <= 2.6) out.glow = 1 - age / 0.4;
     else if (e.kind === 'taser' && c.tk === 0 && c.target === a.rid && c.res === 'hit' && age < 1.2) out.jitter = { x: Math.sin(cv.time * 190) * 0.02, y: Math.cos(cv.time * 170) * 0.02 };
   }

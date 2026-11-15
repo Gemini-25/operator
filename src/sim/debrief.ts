@@ -7,16 +7,21 @@ import { personaName } from './dispatch/callSystem';
 import { sevName } from './dispatch/analyst';
 import { difficultyLabel } from './difficulty';
 import { disasterSummary } from './disaster';
+import { methodFailLine, methodLines, methodSummary, methodTally } from './field/methodReport';      // (R2) 대응 방법의 문장과 집계
+import { roleOf } from './crews';
 import type { Sim } from './engine';
 import type { Incident, IncidentResult, Outcome, Problem, ProblemCode, ShiftReport } from './types';
 import { TYPE_NAME, fmtSec, josa, pct } from './util';
 
 export const PROBLEM_LABEL: Record<ProblemCode, string> = {
+  DANGER_SIGN: '위험 조짐', WITHDRAWAL: '전원 철수', STRUCT_COLLAPSE: '구조물 붕괴', EXPLOSION: '폭발', BURNOUT: '건물 전소',      // (X6) 이름표만 — order 의 자리와 문장 틀은 단계 7
   CALL_QUEUE: '신고 대기', CALL_MISINFO: '신고자의 잘못된 정보', CALL_VAGUE: '불명확한 신고', MISJUDGE_TYPE: '사건 유형 오판', UNDERESTIMATE: '위험도 과소평가', OVERESTIMATE: '위험도 과대평가',
   NO_UNIT: '가용 부대 부족', UNDER_DISPATCH: '전문 부대 없이 대응 시작', DIVERTED: '부대 전환 배정', ROUTE_BLOCKED: '이동 경로 통제', TRAFFIC_DELAY: '교통 지연',
   PATH_BLOCKED: '현장 진입로 차단', VICTIM_MISSED: '수색에서 대상 누락', EQUIP_FAIL: '장비 고장', WATER_OUT: '용수 소진', RESPONDER_HURT: '대원 부상', COMM_FAIL: '무전 전달 실패',
+  METHOD_FAIL: '대응 방법 실패·변경',      // (R2) 문장 틀과 order 의 자리(EQUIP_FAIL 바로 다음)는 evaluate 안
   ESCALATION: '상황 악화', BACKUP_LATE: '지원 지연', SCENE_MISMATCH: '신고와 다른 현장 상황', SUSPECT_FLED: '용의자 도주', SECONDARY_COLLISION: '2차 사고', LATE_DISCOVERY: '구조 대상 발견 지연',
   TIMEOUT: '대응 시간 초과', FATIGUE: '대원 체력 고갈', HIDDEN_HAZARD: '숨겨진 위험 발현', RECOUNT: '인원 불일치 재수색', WRONG_ADDRESS: '신고 위치 오류', FALSE_ALARM: '허위·오인 신고',
+  RESPONDER_KILLED: '대원 순직',
 };
 
 const RESP_LIMIT: Record<string, number> = { fire: 95, armed: 95, traffic: 105, search: 125, medical: 80, collapse: 100, hazmat: 100, water: 90 };
@@ -76,7 +81,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   bad += propertyLoss > 0.6 ? 1 : propertyLoss > 0.35 ? 0.5 : 0;
   if (hazardActive) bad += 1.5;
   let grade: IncidentResult['grade'];
-  const objectiveOpen = hazardActive || undiscovered > 0 || left > 0 || (s.kind === 'search' && cas.every((c) => c.tDiscovered < 0));
+  const objectiveOpen = hazardActive || undiscovered > 0 || left > 0 || (s.kind === 'search' && cas.every((c) => c.tDiscovered < 0))
+    || s.props.some((p) => p.kind === 'bomb' && !p.mitigated && !p.exploded);      // 수상한 물건을 끝내 확인하지 못했다 (가짜였더라도 아무도 그것을 알지 못한 채 끝났다)
   if (reason === 'noresponse') grade = lost > 0 ? 'failed' : 'unresolved';
   else if (cas.length > 0 && lost >= Math.max(1, Math.ceil(cas.length / 2))) grade = 'failed';
   else if (bad >= 4.5) grade = 'failed';
@@ -84,7 +90,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   else if (s.kind === 'armed' && suspectsTotal > 0 && caught === 0 && lost === 0) grade = 'unresolved';
   else if (bad > 0.01) grade = 'partial';
   else grade = 'success';
-  if (I.pursuit && I.pursuit.state === 'escaped') grade = I.pursuit.kind === 'kidnap' ? 'failed' : 'unresolved';      // 납치된 사람을 되찾지 못했다 / 난폭 운전자를 놓쳤다
+  if (I.pursuit && I.pursuit.state === 'escaped') grade = I.pursuit.kind === 'kidnap' && I.pursuit.how !== 'hideout' ? 'failed' : 'unresolved';      // 납치된 사람을 되찾지 못했다 / 난폭 운전자를 놓쳤다 / 은신처에 숨어든 납치는 이어지는 인질 사건이 결말을 낸다
   const limit = RESP_LIMIT[truth.type];
   const delayed = !I.pursuit && (responseTime < 0 || responseTime > limit || I.problems.some((p) => p.code === 'BACKUP_LATE'));      // 추격전은 차를 세운 뒤에야 현장이 생긴다
   const outcome: Outcome = grade === 'success' && delayed ? 'delayed' : grade;
@@ -93,10 +99,14 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   const A: string[] = [];
   if (reason === 'noresponse') A.push(`신고 접수 후 ${fmtSec(sim.t - I.reportedAt)}이 지나도록 어떤 부대도 현장에 도착하지 못했습니다.`);
   else if (responseTime >= 0) A.push(`신고 접수 ${fmtSec(dispatchTime)} 만에 첫 출동 지령이 내려졌고, ${fmtSec(responseTime)} 만에 첫 부대가 도착했습니다${responseTime > limit ? ` (기준 ${fmtSec(limit)} 초과)` : ''}.`);
+  // 헬기만 왔던 사건: 상공 도착은 현장 도착(대응 시간)에 넣지 않는다 — 지상 대원이 내린 적이 없으면 그렇게 적는다
+  else if ((s.airAt ?? -1) >= 0 && I.reportedAt >= 0) A.push(`헬기가 신고 접수 ${fmtSec(Math.max(0, s.airAt! - I.reportedAt))} 만에 현장 상공에 도착했지만, 지상 부대는 현장에 닿지 못했습니다.`);
   if (wrongNotes.length && firstCall) A.push(`최초 신고자(${personaName(firstCall.caller.persona)})의 정보가 실제와 달랐습니다: ${wrongNotes.slice(0, 2).join('; ')}.`);
-  const order: ProblemCode[] = ['CALL_QUEUE', 'CALL_VAGUE', 'MISJUDGE_TYPE', 'UNDERESTIMATE', 'OVERESTIMATE', 'NO_UNIT', 'DIVERTED', 'ROUTE_BLOCKED', 'TRAFFIC_DELAY', 'SCENE_MISMATCH', 'UNDER_DISPATCH', 'BACKUP_LATE',
+  // 순직은 맨 앞에 둔다: 분석 문장이 9줄에서 잘려도 빠지지 않는다 (H1 §3.8)
+  const order: ProblemCode[] = ['RESPONDER_KILLED', 'CALL_QUEUE', 'CALL_VAGUE', 'MISJUDGE_TYPE', 'UNDERESTIMATE', 'OVERESTIMATE', 'NO_UNIT', 'DIVERTED', 'ROUTE_BLOCKED', 'TRAFFIC_DELAY', 'SCENE_MISMATCH', 'UNDER_DISPATCH', 'BACKUP_LATE',
     'WRONG_ADDRESS', 'FALSE_ALARM', 'PATH_BLOCKED', 'COMM_FAIL', 'RECOUNT', 'VICTIM_MISSED', 'EQUIP_FAIL', 'WATER_OUT', 'HIDDEN_HAZARD', 'ESCALATION', 'SECONDARY_COLLISION', 'RESPONDER_HURT', 'FATIGUE', 'SUSPECT_FLED', 'LATE_DISCOVERY', 'TIMEOUT'];
   const T: Partial<Record<ProblemCode, (ps: Problem[]) => string>> = {
+    RESPONDER_KILLED: (ps) => `순직: ${ps.map((p) => p.detail).join(' / ')}.`,      // 원인과 경과는 숨지는 그 자리에서 상태로 만든 detail 에 들어 있다 (sceneManager.agentHealth)
     CALL_QUEUE: (ps) => `신고 전화가 다른 통화 처리 때문에 ${ps[0].detail} 대기했습니다.`,
     CALL_VAGUE: () => '신고자가 상황을 제대로 설명하지 못해 초기 정보가 불확실했습니다.',
     MISJUDGE_TYPE: (ps) => `상황 분석 단계에서 사건 유형을 잘못 판단했습니다 — ${ps[0].detail}${ps[0].recovered ? ` (${ps[0].recoveryText})` : ''}.`,
@@ -126,6 +136,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
     LATE_DISCOVERY: (ps) => `${ps[0].detail}.`,
     TIMEOUT: (ps) => `${ps[0].detail}.`,
   };
+  // (R2) 대응 방법 실패·변경: 장비 고장 바로 다음 자리. 위의 order·T 글자를 다른 묶음(H1·X6)이 함께 고치고 있어 여기서 끼운다 — 합쳐진 뒤에는 글자 안으로 옮겨도 된다
+  order.splice(order.indexOf('EQUIP_FAIL') + 1, 0, 'METHOD_FAIL'); T.METHOD_FAIL = methodFailLine;
   for (const code of order) {
     const ps = I.problems.filter((p) => p.code === code);
     if (!ps.length || A.length >= 9) continue;
@@ -143,6 +155,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
       }
     } else if (c.tDiscovered < 0) A.push(`구조 대상 ${josa(c.label, '은/는')} 발견되지 못한 채 현장에 남았습니다 — 지휘관은 이 사실을 모른 채 상황을 종료했습니다.`);
   }
+  for (const line of methodLines(sim, I, s)) if (A.length < 12) A.push(line);      // (R2) 평소와 다른 방법으로 끝낸 것 (최대 2문장 — 기록된 I.methods 에서만)
   // 한 줄 요약
   const hl: string[] = [];
   { const b = s.props.find((p) => p.kind === 'bomb'); if (noBomb) hl.push(truth.variant === 'bombthreat' ? '허위 협박 — 폭발물 없음' : b && !b.mitigated ? '폭발물은 아니었으나 확인하지 못함' : '확인 결과 폭발물 아님'); else if (b && b.real) hl.push(b.mitigated ? '폭발물 해체' : b.exploded ? '폭발물 폭발' : '폭발물 미처리'); }
@@ -182,7 +195,7 @@ export function buildReport(sim: Sim): ShiftReport {
   const dur = sim.t;
   const unitUtil = sim.units.map((u) => ({ callsign: u.callsign, util: u.busyTime / Math.max(1, dur), runs: u.runs }));
   const utilization = unitUtil.reduce((x, y) => x + y.util, 0) / unitUtil.length;
-  const hurt = sim.responders.filter((r) => r.status !== 'ok').map((r) => ({ name: r.name, callsign: sim.units[r.unitId].callsign, status: r.status === 'down' ? '중상' : '부상' }));
+  const hurt = sim.responders.filter((r) => r.status !== 'ok').map((r) => ({ name: r.name, callsign: sim.units[r.unitId].callsign, status: r.status === 'down' ? '중상' : '부상', role: roleOf(sim, r.id).name }));
   const equip = sim.events.filter((e) => e.problem === 'EQUIP_FAIL').length;
   const delayCauses = Array.from(causeCount.entries()).map(([code, count]) => ({ code, label: PROBLEM_LABEL[code], count })).sort((a, b) => b.count - a.count || (a.code < b.code ? -1 : 1));
   const n = incidents.length;
@@ -192,14 +205,23 @@ export function buildReport(sim: Sim): ShiftReport {
   if (casTotal) summary.push(`요구조자 ${casTotal}명 중 ${casSaved}명을 구조했습니다 (구조율 ${pct(casSaved / casTotal)}).${casLost ? ` ${casLost}명은 구하지 못했습니다.` : ''}${casUnd ? ` ${casUnd}명은 발견하지 못했습니다.` : ''}`);
   if (delayCauses.length) summary.push(`가장 자주 발생한 문제: ${delayCauses.slice(0, 3).map((c) => `${c.label}(${c.count}건)`).join(', ')}.`);
   if (n && good === n) summary.push('모든 사건을 목표대로 해결한 교대였습니다.');
+  const methods = methodTally(sim);      // (R2) 성공한 방법별 횟수 (평소 방법 포함). 요약 줄은 평소 방법이 아닌 것만, 하나도 없으면 넣지 않는다
+  { const line = methodSummary(methods); if (line) summary.push(line); }
   // 교통: 기록된 통계로만 쓴다 (traffic.ts)
   const tf = { ...sim.traffic.stats };
   if (tf.jams + tf.closures + tf.obstacles + tf.detours + tf.gateWaits === 0) summary.push('교통으로 인한 지연은 없었습니다.');
   else summary.push(`교통: 정체 ${tf.jams}건·통제 ${tf.closures}건·장애물 ${tf.obstacles}건. ${tf.detours + tf.gateWaits === 0 ? '길이 막혀 되돌아가거나 건널목에서 기다린 출동은 없었습니다.' : `길이 막혀 되돌아간 출동 ${tf.detours}회, 건널목 대기 ${tf.gateWaits}회 (합쳐 약 ${Math.round(tf.delaySec)}초 지연).`}`);
+  // 헬기: 기록된 통계로만 쓴다 (sim.airStats — 상태를 바꾸는 자리에서 센 값)
+  const air = { ...sim.airStats, byKind: { ...sim.airStats.byKind } };
+  if (air.sorties > 0) summary.push(`헬기: 출동 ${air.sorties}회(경찰 ${air.byKind.policeHeli ?? 0} · 소방 ${air.byKind.heli ?? 0} · 의료 ${air.byKind.medHeli ?? 0}), 호이스트 인양 ${air.hoists}명, 물 투하 ${air.drops}회, 공중 이송 ${air.airLifts}명, 연료 부족 복귀 ${air.rtb}회.`);
+  if (air.grounded === 'fog') summary.push('안개로 헬기가 뜨지 못했습니다.');
+  else if (air.grounded === 'night') summary.push('밤이라 의료 헬기는 뜨지 못했습니다.');
+  else if (air.grounded === 'storm') summary.push('태풍의 강풍으로 헬기가 한동안 뜨지 못했습니다.');
   return {
-    traffic: tf,
+    traffic: tf, air,
     major: sim.incidents.filter((I) => I.tag === 'major').length, disaster: disasterSummary(sim),
     seed: sim.seed, duration: dur, weather: sim.weather, difficulty: { ...sim.difficulty }, difficultyLabel: difficultyLabel(sim.difficulty), totalCalls: sim.calls.length, totalIncidents: n, counts,
+    methods,      // (R2)
     avgResponse: rN ? rSum / rN : -1, avgDispatch: dN ? dSum / dN : -1, utilization, unitUtil,
     casTotal, casSaved, casLost, casUndiscovered: casUnd, respondersHurt: hurt, equipFailures: equip, delayCauses, incidents, summary,
     hash: sim.logHash.toString(16),

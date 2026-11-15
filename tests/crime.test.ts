@@ -2,7 +2,7 @@
 import { describe, expect, it } from 'vitest';
 import { NORMAL } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
-import { createIncident } from '../src/sim/incidents';
+import { closeIncident, createIncident } from '../src/sim/incidents';
 import { arsonDepth } from '../src/sim/scenarios/crime';
 import type { Incident, Scene } from '../src/sim/types';
 
@@ -80,6 +80,22 @@ describe('폭발물', () => {
     expect(fake).toBeGreaterThan(0);
     expect(fake + real).toBe(8);
   });
+
+  it('수상한 물건을 끝내 확인하지 못한 채 한계 시간으로 끝나면, 가짜였더라도 성공으로 판정하지 않는다', () => {
+    let fake = 0;
+    for (let k = 0; k < 12; k++) {
+      const sim = new Sim('PKGT' + k);
+      sim.run(40);
+      const I = createIncident(sim, { type: 'armed', variant: 'package', rng: sim.rng.fork('t') });
+      const sc = sim.scenes[I.id]!, b = sc.props.find((p) => p.kind === 'bomb')!;
+      expect(b).toBeTruthy();
+      for (const c of sc.casualties) { c.tDiscovered = sim.t; c.where = 'safe'; c.tSafe = sim.t; }      // 안의 사람들은 모두 대피했고, 물건만 확인하지 못했다
+      closeIncident(sim, I, 'timeout');
+      if (!b.real) { fake++; expect(I.result!.headline).toContain('확인하지 못함'); }
+      expect(I.result!.outcome, `${sim.seed}: ${b.real ? '진짜' : '가짜'}`).toBe('unresolved');
+    }
+    expect(fake).toBeGreaterThan(0);
+  });
 });
 
 describe('대형 인질극', () => {
@@ -121,6 +137,27 @@ describe('대형 인질극', () => {
     }
     expect(tips, '풀려난 인질이 남은 용의자를 알려 준 횟수').toBeGreaterThanOrEqual(1);
     expect(roomEntries, '방 진입 횟수').toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('대형 인질극의 배치', () => {
+  it('어느 건물·어느 시드에서나 용의자마다 붙든 인질이 바로 곁(같은 방)에 있다', () => {
+    for (let k = 0; k < 80; k++) {
+      const sim = new Sim('SIEGEL' + k);
+      sim.run(20);
+      const I = createIncident(sim, { type: 'armed', variant: 'siege', rng: sim.rng.fork('t' + k) });
+      const s = sim.scenes[I.id]!;
+      for (const h of s.hostiles) {
+        expect(h.hostageId, `${sim.seed}: ${h.label}`).toBeGreaterThanOrEqual(0);
+        const c = s.casualties[h.hostageId];
+        // 진입에 놀란 인질범이 인질을 쏠 수 있는 거리(hazards.panicShot 의 2.2) 안이다. 넓은 홀에서도 방 반대편에 놓이지 않는다
+        expect(Math.hypot(c.x - h.x, c.y - h.y), `${sim.seed}: ${h.label} 와 붙든 인질의 거리`).toBeLessThanOrEqual(2.2);
+        expect(s.region[Math.round(c.y) * s.w + Math.round(c.x)]).toBe(s.region[Math.round(h.y) * s.w + Math.round(h.x)]);
+      }
+      // 사람과 용의자는 저마다 다른 칸에 서 있다
+      const at = new Set<number>();
+      for (const q of [...s.hostiles, ...s.casualties]) { const i = Math.round(q.y) * s.w + Math.round(q.x); expect(at.has(i), `${sim.seed}: 겹친 자리`).toBe(false); at.add(i); }
+    }
   });
 });
 
@@ -181,8 +218,8 @@ describe('도주 차량과 은신처', () => {
           if (p.how === 'hideout') {
             hidden++;
             expect(p.state).toBe('escaped'); expect(I.closeReason).toBe('abandoned');
-            // 설계서는 '미해결'로 적었지만, tests/sim.test.ts(추격전)가 놓친 납치를 모두 '실패'로 검사하므로 그대로 둔다
-            expect(I.result!.outcome).toBe('failed');
+            // 숨어든 납치는 실패가 아니라 미해결이다: 이어지는 인질 사건이 결말을 낸다 (설계서 ④)
+            expect(I.result!.outcome).toBe('unresolved');
           }
         }
         if (I.parent !== undefined) {
@@ -223,6 +260,7 @@ describe('도주 차량과 은신처', () => {
         hidden++;
         expect(p.state).toBe('escaped'); expect(I.closeReason).toBe('abandoned');
         expect(I.problems.some((q) => q.code === 'SUSPECT_FLED')).toBe(true);
+        expect(I.result!.outcome, `${sim.seed}: 숨어든 납치의 판정`).toBe('unresolved');      // 도시 밖으로 놓친 납치(실패)와 다르다
         expect(next.length).toBeLessThanOrEqual(1);
         for (const H of next) { followed++; expect(H.truth.placeId).toBe(p.hideout); expect(H.createdAt).toBeGreaterThanOrEqual(I.closedAt + 39); expect(H.phase).toBe('closed'); }
       } else {

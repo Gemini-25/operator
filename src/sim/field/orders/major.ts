@@ -5,8 +5,9 @@ import { registerOrders } from '../sceneRegistry';
 
 // 비행기 추락: 동체 토막을 다 살핀 뒤에는 들판 가장자리도 수색한다 (튕겨 나간 사람이 있다고 본다).
 // 기본 규칙은 신고된 인원이 모자랄 때만 가장자리를 본다. 한 번 보고도 확인율이 낮으면 간격을 좁혀 다시 본다.
+// 시나리오의 정체(s.variant)는 진실이므로 읽지 않는다. 지휘관이 도착해서 보는 것 — 불이 난 현장에 부서진 동체(wreck 구역)가 널려 있다 — 으로 가린다.
 registerOrders((_sim, s, _I, a, k) => {
-  if (s.variant !== 'plane' || s.kind !== 'fire' || !s.sizeupDone) return;
+  if (s.kind !== 'fire' || !s.sizeupDone || !s.regions.some((r) => r.kind === 'wreck')) return;
   const seen = (id: number): number => a.beliefs.val<number>('srch', id) ?? -1;
   if (s.regions.some((r) => r.kind === 'wreck' && seen(r.id) < 0.6)) return;
   for (const r of s.regions) if (r.kind === 'verge' && r.searchable && seen(r.id) < 0.72) k.want('search', { region: r.id }, 0.6, 1, seen(r.id) >= 0);

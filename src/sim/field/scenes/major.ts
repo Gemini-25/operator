@@ -196,6 +196,22 @@ function reachable(s: Scene): Uint8Array {
 // 가스 규칙(s.rules)이 함께 돌아, 배관을 잠그기 전에는 고인 가스가 다시 터질 수 있다.
 registerScene('collapse', 'gasblast', (sim, I, rng) => {
   const s = buildCollapse(sim, I, rng);
+  // 넘어간 칸막이벽 자리에 쓰러진 사람이 양옆의 가구에 막혀 어디서도 닿지 못하는 일이 드물게 있다 (붕괴 현장의 배치에서 물려받는다).
+  // 구출해도 데리고 나올 수 없어 같은 지시만 되풀이되므로, 걸어서 닿는 가장 가까운 빈 바닥으로 옮긴다 (비워진 틈은 buildScene 이 벽으로 메운다)
+  {
+    const open = reachable(s);
+    for (const c of s.casualties) {
+      if (open[tidx(s, c.x, c.y)]) continue;
+      let best = -1, bd = Infinity;
+      for (let i = 0; i < s.tiles.length; i++) {
+        if (!open[i] || s.tiles[i] !== T.FLOOR || s.propAt[i] >= 0 || s.fire[i] > 0 || s.stairTo[i] >= 0) continue;
+        if (s.casualties.some((q) => tidx(s, q.x, q.y) === i) || s.props.some((p) => p.kind === 'unstable' && tidx(s, p.x, p.y) === i)) continue;
+        const d = Math.hypot((i % SW) - c.x, ((i / SW) | 0) - c.y);
+        if (d < bd) { bd = d; best = i; }
+      }
+      if (best >= 0) { c.x = c.px = best % SW; c.y = c.py = (best / SW) | 0; }
+    }
+  }
   const rooms = s.regions.filter((r) => r.kind === 'room' && r.indoor);
   let zx = 0, zy = 0, zn = 0;
   for (let i = 0; i < s.damage.length; i++) if (s.damage[i]) { zx += i % SW; zy += (i / SW) | 0; zn++; }

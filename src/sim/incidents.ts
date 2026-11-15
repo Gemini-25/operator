@@ -6,7 +6,7 @@ import { evaluate } from './debrief';
 import { startCall, startNuisanceCall } from './dispatch/callSystem';
 import type { Sim } from './engine';
 import { emit } from './events';
-import { createScene } from './field/sceneManager';
+import { createScene, settleInjuries } from './field/sceneManager';
 import { releaseUnit } from './resources';
 import type { Rng } from './rng';
 import { INCIDENT_PLACES } from './cityPlan';
@@ -119,8 +119,10 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
     firstDispatchAt: -1, firstArrivalAt: -1, closedAt: -1, fieldVerified: false, fieldType: null, priority: 1,
     problems: [], result: null, lastEvent: -1, rootEvent: -1, callEvents: [], callsCount: 0, closeReason: '', interest: 0,
     blockedEdge: -1, followupAt: Infinity, firstCallAt: 0, firstAssess: null, fieldNeedsSeen: 0, dispatchLog: [],
+    methods: undefined,      // (R2) 방법을 쓴 기록 — 처음 남길 때 배열이 된다 (methodRun.recordMethod)
     reportedNode: node.id, addressFixed: false,
     pursuit: undefined, tag: undefined, parent: undefined, aidUnit: undefined, coResp: undefined,      // 나중에 붙는 칸을 미리 비워 둔다 (모든 사건이 같은 모양)
+    airDone: undefined,      // (R1) "상공 임무 종료"로 풀려난 헬기 종류 — 쓰는 것은 단계 5 부터
   };
   { const tag = opts.tag ?? special?.tag; if (tag) I.tag = tag; if (opts.parent !== undefined) I.parent = opts.parent; }
   sim.incidents.push(I);
@@ -159,7 +161,8 @@ export function tickIncidents(sim: Sim): void {
     open++;
     if (I.phase === 'unreported' && sim.t >= I.firstCallAt) startCall(sim, I, false);
     if (sim.t >= I.followupAt && I.phase !== 'unreported') { I.followupAt = Infinity; startCall(sim, I, true); }
-    if (I.firstArrivalAt < 0 && I.reportedAt >= 0 && sim.t - I.reportedAt > 330) closeIncident(sim, I, 'noresponse');
+    // 무대응 종료: 지상 부대도, 상공의 헬기도 닿지 못했을 때만 (헬기가 현장 위에 떠 있는데 '어떤 부대도 닿지 못했다'고 닫지 않는다)
+    if (I.firstArrivalAt < 0 && I.reportedAt >= 0 && sim.t - I.reportedAt > 330 && !((sim.scenes[I.id]?.airAt ?? -1) >= 0)) closeIncident(sim, I, 'noresponse');
   }
   const tn = sim.tune;
   // 사건과 무관한 비긴급 전화: 접수 회선을 잠시 점유한다
@@ -205,6 +208,7 @@ export function tickIncidents(sim: Sim): void {
 export function closeIncident(sim: Sim, I: Incident, reason: 'resolved' | 'timeout' | 'noresponse' | 'abandoned' | 'shiftend'): void {
   if (I.phase === 'closed') return;
   const s = sim.scenes[I.id]!;
+  settleInjuries(sim, s, I);      // (H1) 판정 직전에 밀린 대원의 상태 전이를 마친다 — 판정 뒤에는 전이가 없다
   I.phase = 'closed'; I.closedAt = sim.t; I.closeReason = reason;
   s.closing = true;
   I.unmet = {};

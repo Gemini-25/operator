@@ -2,7 +2,8 @@
 // 난수 금지, 기록(로그) 금지, s.fx 밖의 상태를 쓰지 않는다. 시뮬레이션은 s.fx 를 읽지 않는다(sceneManager 의 정리 한 줄뿐).
 // 이 파일은 진실(용의자·구조 대상의 실제 자리)을 읽지만 판단하지 않는다: 그림과 소리에 쓸 꼬리표만 남긴다.
 import type { Sim } from '../engine';
-import type { ArrestHow, BreachHow, Casualty, FieldAgent, Fx, FxInfo, FxWeapon, Hostile, Scene } from '../types';
+import type { ArrestHow, BreachHow, Casualty, FieldAgent, Fx, FxInfo, FxWeapon, Hostile, KitId, Scene } from '../types';
+import { hasKit } from '../crews';
 import { MISS_OVER, rayEnd } from './damage';
 import type { ShotEnd } from './damage';
 
@@ -31,10 +32,9 @@ export function recFx(sim: Sim, s: Scene, kind: Fx['kind'], x: number, y: number
   return f;
 }
 
-/** 대원의 무기: 지금은 부대 종류로 정한다 — tactical·swat 'rifle', 그 밖 'pistol'. R1(개인 장비)이 들어오면 sniper > rifle > pistol 을 장비로 고른다 */
+/** 대원의 무기: 든 장비로 정한다 (R1) — 저격 소총 > 소총 > 권총. 읽기만 한다(hasKit) */
 export function weaponOf(sim: Sim, a: FieldAgent): FxWeapon {
-  const k = sim.units[a.unitId]?.kind;
-  return k === 'tactical' || k === 'swat' ? 'rifle' : 'pistol';
+  return hasKit(sim, a.rid, 'sniper') ? 'sniper' : hasKit(sim, a.rid, 'rifle') ? 'rifle' : 'pistol';
 }
 
 /**
@@ -115,16 +115,16 @@ export function recBreach(sim: Sim, s: Scene, x: number, y: number, fromX: numbe
 /**
  * 진입 방법(그림·소리만 쓴다). 시뮬레이션은 방법을 다루지 않으므로 상태에서만 정한다 — 난수를 쓰지 않는다.
  *  이미 열린 문 → 'open'
- *  잠긴 문      → 진입조에 경찰이 있으면 'ram', 소방이면 'irons', 그 밖 'kick'
- *  닫힌 문      → 진입조에 swat 가 있으면 'ram', tactical 이면 'kick', 그 밖 'push'
- * R1 이 들어오면 진입조에 breachKit 을 든 사람이 있으면 'ram', irons 를 든 사람이면 'irons' 로 본다. 'charge' 는 여기서 고르지 않는다.
+ *  잠긴 문      → 진입조에 파괴 장비(breachKit)를 든 사람이 있으면 'ram', 할리건·유압 구조기·휴대 구조 장비면 'irons', 그 밖 'kick'
+ *  닫힌 문      → 진입조에 파괴 장비를 든 사람이 있으면 'ram', 소총을 든 사람이 있으면 'kick', 그 밖 'push'
+ * 든 장비로 본다(R1 — 읽기만, hasKit). 'charge' 는 여기서 고르지 않는다.
  */
 export function breachHowFor(sim: Sim, team: FieldAgent[], wasLocked: boolean, wasOpen: boolean): BreachHow {
   if (wasOpen) return 'open';
-  const depts = team.map((b) => sim.responders[b.rid]?.dept);
-  if (wasLocked) return depts.includes('police') ? 'ram' : depts.includes('fire') ? 'irons' : 'kick';
-  const kinds = team.map((b) => sim.units[b.unitId]?.kind);
-  return kinds.includes('swat') ? 'ram' : kinds.includes('tactical') ? 'kick' : 'push';
+  const any = (id: KitId): boolean => team.some((b) => hasKit(sim, b.rid, id));
+  if (any('breachKit')) return 'ram';
+  if (wasLocked) return any('irons') || any('spreader') || any('lightRescue') ? 'irons' : 'kick';
+  return any('rifle') ? 'kick' : 'push';
 }
 
 /** 흉기·맨손 공격: 'melee'(x,y = 용의자, x2,y2 = 대원, c = { side 1, by, wpn: knife 'knife' · 맨손 'blunt', res 'hit', tk 0, target }) */

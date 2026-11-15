@@ -1,5 +1,6 @@
 import { DisasterBanner } from './DisasterBanner';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { stays } from '../sim/crews';
 import type { Sim } from '../sim/engine';
 import { TYPE_NAME, fmtDur } from '../sim/util';
 import { SoundDirector } from '../view/audio';
@@ -11,6 +12,9 @@ import { MapLegend } from './MapLegend';
 import type { Difficulty } from '../sim/difficulty';
 import { AgentPanel, BottomBar, DecisionPanel, DifficultyPanel, Icon, IncidentList, LogPanel, ReportModal, Ticker, TopBar, UnitList } from './panels';
 import { CallDock, loadCallOpen, saveCallOpen } from './CallDock';
+import { PersonCard } from './PersonCard';
+import type { PersonSel } from './PersonCard';
+import { TRIAGE } from '../view/triage';
 
 export interface Moment { t: number; id: number; text: string }
 /** 다시 볼 만한 장면: 현장에서 벌어진 중대한 일. 같은 사건의 가까운 장면은 하나로 묶고, 많으면 고르게 여덟 개만 남긴다. */
@@ -48,6 +52,7 @@ export function App() {
   const [, setTick] = useState(0);
   const force = useCallback(() => setTick((t) => (t + 1) % 1e9), []);
   const [selectedRid, setSelectedRid] = useState(-1);
+  const [person, setPerson] = useState<PersonSel | null>(null);      // (H1) 정보창에 띄운 구조 대상·용의자 — 관찰 대상 선택일 뿐이다
   const [tab, setTab] = useState<'decision' | 'agent'>('decision');
   const [reportClosed, setReportClosed] = useState(-1);
   const [diffOpen, setDiffOpen] = useState(false);
@@ -87,14 +92,28 @@ export function App() {
     return () => { delete w.__ar; };
   }, [runner, director, sound, book]);
 
+  const selectPerson = useCallback((p: PersonSel | null) => { setPerson(p); if (p) setTab('agent'); }, []);
   const selectRid = useCallback((rid: number) => {
     setSelectedRid(rid);
     if (rid < 0) return;
+    setPerson(null);
     setTab('agent');
     const sim = runner.sim;
-    for (const s of sim.scenes) if (s && !s.archived && s.agents.some((a) => a.rid === rid && a.status !== 'left')) director.pin(s.incidentId, 'scene');
+    // 그 대원이 서 있는 현장을 고정한다. 상공에 머무는 헬기에 탄 대원(관측자·조종사)이면 그 헬기가 떠 있는 사건 — 시점만 바꾼다(개입이 아니다)
+    for (const s of sim.scenes) {
+      if (!s || s.archived) continue;
+      const here = s.agents.some((a) => a.rid === rid && a.status !== 'left')
+        || (s.air ?? []).some((op) => { const u = sim.units[op.unitId]; return u.state === 'onscene' && u.incidentId === s.incidentId && u.crew.indexOf(rid) >= 0; });
+      if (here) director.pin(s.incidentId, 'scene');
+    }
   }, [runner, director]);
-  const selectUnit = useCallback((uid: number) => { selectRid(runner.sim.units[uid].crew[0]); }, [runner, selectRid]);
+  // 부대를 고르면: 상공에 머무는 헬기는 그 관측자, 그 밖은 현장에 내리는 첫 사람 (경찰 헬기의 0번 자리는 현장에 없는 기장이다 — 내리는 사람이 없으면 관측관)
+  const selectUnit = useCallback((uid: number) => {
+    const sim = runner.sim, u = sim.units[uid];
+    let rid = u.crew.find((q) => !stays(sim, q)) ?? u.crew.find((q) => sim.responders[q].role === 'observer') ?? u.crew[0];
+    if (u.state === 'onscene' && u.incidentId !== null) for (const op of sim.scenes[u.incidentId]?.air ?? []) if (op.unitId === uid) rid = op.eye.rid;
+    selectRid(rid);
+  }, [runner, selectRid]);
 
   // 소리는 첫 사용자 입력 뒤에만 켤 수 있다(브라우저 정책)
   useEffect(() => {
@@ -146,7 +165,7 @@ export function App() {
     setVolume: (v: number) => { sound.setVolume(v); runner.settings.volume = v; runner.saveSettings(); },
   }), [sound, runner]);
 
-  const onNew = useCallback((seed?: string, d?: Difficulty) => { setReel(null); runner.newShift(seed, d); director.reset(); setSelectedRid(-1); setReportClosed(-1); setTab('decision'); setDiffOpen(false); force(); }, [runner, director, force]);
+  const onNew = useCallback((seed?: string, d?: Difficulty) => { setReel(null); runner.newShift(seed, d); director.reset(); setSelectedRid(-1); setPerson(null); setReportClosed(-1); setTab('decision'); setDiffOpen(false); force(); }, [runner, director, force]);
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
@@ -188,7 +207,7 @@ export function App() {
         <UnitList sim={sim} selectedRid={selectedRid} onSelectRid={selectRid} />
       </div>
       <div className="center">
-        <Viewport runner={runner} director={director} sound={sound} book={book} selectedRid={selectedRid} onSelectRid={selectRid} onSelectUnit={selectUnit} />
+        <Viewport runner={runner} director={director} sound={sound} book={book} selectedRid={selectedRid} onSelectRid={selectRid} onSelectUnit={selectUnit} person={person} onSelectPerson={selectPerson} />
         <div className="overlay tl">
           <div className="cam-reason"><span className={`dot ${director.manual ? 'manual' : 'auto'}`} />{director.manual ? '수동 시점' : '자동 카메라'} · {director.reason}</div>
           {runner.slowed && <div className="cam-reason slow"><span className="dot slow" />결정적 순간 · 1배속으로 낮춤</div>}
@@ -204,7 +223,7 @@ export function App() {
             <div className="scene-title">
               <Icon name={I.assessment ? I.assessment.type : 'unknown'} size={15} /> <b>사건 {I.code}</b> {I.assessment ? I.assessment.label ?? TYPE_NAME[I.assessment.type] : '유형 확인 중'} · {I.locationKnown || truth ? I.truth.label : '위치 확인 중'}
               {scene && scene.arrivedAt >= 0 && <span className="dim"> · 현장 경과 {fmtDur((I.phase === 'closed' ? I.closedAt : sim.t) - scene.arrivedAt)}</span>}
-              {inScene && scene && scene.arrivedAt < 0 && <span className="warn"> · 부대 도착 전</span>}
+              {inScene && scene && scene.arrivedAt < 0 && <span className="warn"> · {(scene.airAt ?? -1) >= 0 ? '헬기 상공 도착 · 지상 부대 도착 전' : '부대 도착 전'}</span>}
             </div>
           )}
         </div>
@@ -221,10 +240,12 @@ export function App() {
             <span><i className="ring" style={{ borderColor: '#ff7a45' }} />소방</span><span><i className="ring" style={{ borderColor: '#2fd39a' }} />구급</span><span><i className="ring" style={{ borderColor: '#5aa9ff' }} />경찰</span>
             <span><i className="ring gold" />지휘관</span>
             <span className="sep" />
-            <span><i className="sq" style={{ background: '#5ad17a' }} />경상</span><span><i className="sq" style={{ background: '#ffd166' }} />중상</span><span><i className="sq" style={{ background: '#ff5d5d' }} />위중</span>
+            <span><i className="sq" style={{ background: TRIAGE[0] }} />경상</span><span><i className="sq" style={{ background: TRIAGE[1] }} />중상</span><span><i className="sq" style={{ background: TRIAGE[2] }} />위중</span><span title="숨진 사람 — 검정 딱지"><i className="sq dead" />사망</span>
+            <span title="쓰러진 사람을 들것으로 옮기는 중"><i className="litter" />들것</span><span title="사망이 확인된 사람"><i className="sheet" />덮개</span>
             <span><i className="ring" style={{ borderColor: '#e0486b', background: 'rgba(224,72,107,0.25)' }} />용의자</span>
+            <span title="공기호흡기의 공기가 60초 아래로 떨어진 대원 (빨강 = 빈 통)"><i className="dot" style={{ background: '#ff9f43' }} />공기 부족</span>
             <span className="sep" />
-            <span className="dim">휠 확대 · 끌어서 이동 · 두 번 눌러 전체 보기{truth ? ' · 흐린 표시 = AI 미확인' : ''}</span>
+            <span className="dim">휠 확대 · 끌어서 이동 · 두 번 눌러 전체 보기 · 사람을 누르면 정보{truth ? ' · 흐린 표시 = AI 미확인' : ''}</span>
           </>) : (<span className="dim">사건 표식을 누르면 현장 확대 · 휠 확대 · 끌어서 이동</span>)}
           </div>
         </div>
@@ -237,7 +258,7 @@ export function App() {
           <button className={tab === 'decision' ? 'on' : ''} onClick={() => setTab('decision')}>판단 요약</button>
           <button className={tab === 'agent' ? 'on' : ''} onClick={() => setTab('agent')}>대원 정보</button>
         </div>
-        <div className="right-top">{tab === 'decision' ? <DecisionPanel sim={sim} director={director} truth={truth} /> : <AgentPanel sim={sim} rid={selectedRid} />}</div>
+        <div className="right-top">{tab === 'decision' ? <DecisionPanel sim={sim} director={director} truth={truth} /> : person ? <PersonCard sim={sim} sel={person} truth={truth} onClose={() => setPerson(null)} /> : <AgentPanel sim={sim} rid={selectedRid} truth={truth} />}</div>
         <div className="right-bottom"><LogPanel sim={sim} director={director} truth={truth} onJump={jumpTo} /></div>
       </div>
       <BottomBar runner={runner} director={director} onTick={force} onSeek={seekTo} sound={soundCtl} />

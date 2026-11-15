@@ -9,7 +9,7 @@ export interface Difficulty {
   threat: number;      // 용의자 위협      1 약함 … 5 중무장·공격적
   equipment: number;   // 대원 장비 상태   1 불량 … 5 최상   (높을수록 쉬움)
   info: number;        // 신고 신뢰도      1 엉망 … 5 정확   (높을수록 쉬움)
-  resources: number;   // 부대 규모        1 = 12팀 … 3 = 17팀 … 5 = 20팀  (높을수록 쉬움)
+  resources: number;   // 부대 규모        1 = 12팀 … 3 = 19팀 … 5 = 22팀  (높을수록 쉬움)
   traffic?: number;    // 교통 상황        1 한산 … 5 극심  (없으면 3. 3 은 없는 것과 같다)
   disaster?: DisasterChoice;      // 재난: 없음(기본) · 무작위(심각도에 따라 드물게) · 종류를 정해서
 }
@@ -42,9 +42,9 @@ export const KNOBS: { key: keyof Difficulty; name: string; low: string; high: st
   { key: 'frequency', name: '사건 빈도', low: '드묾', high: '쉴 틈 없음', harderWhen: 'high', desc: '사건 사이 간격, 교대당 사건 수, 동시에 진행되는 사건 수' },
   { key: 'severity', name: '사건 심각도', low: '가벼움', high: '대형', harderWhen: 'high', desc: '규모 분포, 숨은 위험(잔해·잠긴 문·가스·누출), 부상 악화 속도, 화재 확산 속도' },
   { key: 'threat', name: '용의자 위협', low: '약함', high: '중무장', harderWhen: 'high', desc: '무장 사건 비중, 총격범 비중, 용의자 수·공격성·사격 실력, 숨은 공범, 도주 시점' },
-  { key: 'equipment', name: '대원 장비 상태', low: '불량', high: '최상', harderWhen: 'low', desc: '차량 주행 속도, 펌프 상태와 마모, 용수 탱크, 구조 장비, 의료 장비, 방호 장비, 출근 시 체력' },
+  { key: 'equipment', name: '대원 장비 상태', low: '불량', high: '최상', harderWhen: 'low', desc: '차량 주행 속도, 펌프 상태와 마모, 용수 탱크, 구조 장비, 의료 장비, 방호 장비, 출근 시 체력, 개인 장비의 고장, 공기통 용량' },
   { key: 'info', name: '신고 신뢰도', low: '엉망', high: '정확', harderWhen: 'low', desc: '침착한 신고자 비율, 위치를 틀리게 말할 확률, 허위·오인 신고와 비긴급 전화의 빈도, 목격자 정확도' },
-  { key: 'resources', name: '부대 규모', low: '12팀', high: '20팀', harderWhen: 'low', desc: '출동 부대 수 (12 · 15 · 17 · 19 · 20팀). 경찰·소방·구조·특수 네 분야에 3~5팀씩이고, 3 이 기본 편성이다. 인근 도시 지원 횟수도 함께 늘어난다 (2 · 2 · 3 · 4 · 5회).' },
+  { key: 'resources', name: '부대 규모', low: '12팀', high: '22팀', harderWhen: 'low', desc: '출동 부대 수 (12 · 15 · 19 · 21 · 22팀)와 인원. 경찰·소방·구조·특수 네 분야에 3~6팀씩이고, 3 이 기본 편성이다. 1·2 는 최소 인원(펌프차 3명, 구조대 4명, 특공대 4명 …)으로 나간다. 인근 도시 지원 횟수도 함께 늘어난다 (2 · 2 · 3 · 4 · 5회).' },
   { key: 'traffic', name: '교통 상황', low: '한산', high: '극심', harderWhen: 'high', desc: '도로의 교통량, 정체·공사·고장 차량·낙하물의 빈도, 골목의 불법 주차' },
 ];
 
@@ -53,10 +53,13 @@ export interface Tuning {
   gapMul: number; maxIncidents: number; maxConcurrent: number;
   // 심각도
   sevWeights: [number, number, number]; hazardMul: number; bleedMul: number; fireSpreadMul: number;
+  injuryMul: number;           // 대원·용의자가 새 상처로 얻는 출혈에 곱하는 값 (H1 — 화면의 조절 막대는 없다. 심각도 손잡이를 따른다)
   // 용의자
   armedWeight: number; shooterWeight: number; aggroShift: number; skillShift: number; accompliceProb: number; extraSuspectProb: number; fleeShift: number; knifeProb: number;
   // 장비
   pumpMin: number; pumpMax: number; waterMul: number; toolMul: number; medMul: number; armorMul: number; pumpWearMul: number; startStamina: number; vehicleSpeedMul: number;
+  airFull: number;             // 공기호흡기 한 통의 공기(초) — 연기 속에서만 준다
+  kitFault: number;            // 개인 장비 하나(고장 추첨을 받는 종류)가 이번 교대에 고장 나 있을 확률
   // 신고
   personaWeights: [number, number, number, number, number]; witnessAcc: number; wrongAddressProb: number; falseAlarmProb: number; nuisanceGap: number;
   // 부대
@@ -83,6 +86,7 @@ export function tuningOf(d: Difficulty): Tuning {
     sevWeights: ([[0.5, 0.4, 0.1], [0.38, 0.44, 0.18], [0.28, 0.45, 0.27], [0.17, 0.43, 0.4], [0.08, 0.37, 0.55]] as [number, number, number][])[s],
     hazardMul: [0.55, 0.78, 1, 1.25, 1.5][s],
     bleedMul: [0.78, 0.9, 1, 1.12, 1.26][s],
+    injuryMul: [0.75, 0.9, 1, 1.12, 1.25][s],
     fireSpreadMul: [0.82, 0.92, 1, 1.09, 1.18][s],
 
     armedWeight: [0.15, 0.19, 0.23, 0.28, 0.33][t],
@@ -103,6 +107,8 @@ export function tuningOf(d: Difficulty): Tuning {
     pumpWearMul: [1.5, 1.22, 1, 0.82, 0.65][e],
     startStamina: [65, 82, 100, 100, 100][e],
     vehicleSpeedMul: [0.82, 0.91, 1, 1.05, 1.1][e],
+    airFull: [220, 250, 280, 300, 320][e],
+    kitFault: [0.12, 0.07, 0.03, 0.015, 0.005][e],
 
     //                 침착   공황   혼란   일부   오인
     personaWeights: ([[0.14, 0.26, 0.2, 0.18, 0.22], [0.22, 0.25, 0.17, 0.18, 0.18], [0.3, 0.24, 0.15, 0.17, 0.14], [0.42, 0.22, 0.12, 0.15, 0.09], [0.56, 0.18, 0.09, 0.12, 0.05]] as [number, number, number, number, number][])[i],

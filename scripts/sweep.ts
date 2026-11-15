@@ -6,14 +6,19 @@
 //   npm run sweep -- 40 --check          불변 조건을 어기면 종료 코드 1 (커밋 전 관문)
 //   npm run sweep -- 1 --log S7          시드 S7 의 전체 이벤트 기록과 보고서
 //   npm run sweep -- 30 --scen           시나리오(유형/변형)별 결과 표
+//   npm run sweep -- 30 --cat            위험의 현실화(scripts/catstats.ts): 사건이 닫힐 때의 위험 상태(건전도·가스·용기의 열·전소 비율) 줄을 더 낸다
 //   npm run sweep -- 20 --force armed/bomb --scen    교대마다 그 시나리오를 초반에 한 번 일으킨다 (새 시나리오 확인용)
 //   npm run sweep -- 20 --disaster typhoon           재난을 정해서 (none|random|typhoon|flood|quake|wildfire|tsunami)
+//   npm run sweep -- 20 --force water/std --methods  대응 방법(scripts/methodstats.ts): 성공한 방법의 가짓수와 비중, 접은 방법, 방법별 평균 시간, 시나리오별 대원 부상
 //   npm run sweep -- 40 --metrics        측정 지표(scripts/metrics.ts)의 시나리오별 표와 모든 후보 줄
 //   npm run sweep -- 10 --no-metrics     표본을 뜨지 않고 지표 줄을 내지 않는다 (속도 비교용)
 //   npm run sweep -- 1 --log S7 --metrics            한 교대의 사건마다 가장 긴 원인 사슬과 확산 길
 import { NORMAL, difficultyKey, difficultyLabel, parseDifficulty, parseDisaster } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
+import { catJson, catLine, catShadowLine, catStats, sumCat } from './catstats';
+import type { CatCount } from './catstats';
 import { OUTCOME_NAME, TYPE_NAME, fmtClock } from '../src/sim/util';
+import { methodJson, methodStats, methodTables, sumMethods } from './methodstats';      // (R2) 대응 방법 집계
 import { chainReport, checkMetrics, formatLines, metricsJson, runWithProbe, shiftMetrics, summarize } from './metrics';
 import type { Probe, ShiftMetrics } from './metrics';
 
@@ -61,8 +66,10 @@ if (logSeed) {
 
 const out: Record<string, number> = { success: 0, partial: 0, delayed: 0, unresolved: 0, failed: 0 };
 const byType: Record<string, Record<string, number>> = {};
+const catList: CatCount[] = [];      // (X6) 교대별 위험의 현실화 집계
 const prob: Record<string, number> = {};
 const closeReasons: Record<string, number> = {};
+const methodList: ReturnType<typeof methodStats>[] = [];      // (R2) 교대별 대응 방법 집계
 let benignN = 0, realGood = 0, realRespSum = 0, realRespN = 0;
 let incN = 0, respSum = 0, respN = 0, durSum = 0, ms = 0, errors = 0, casT = 0, casS = 0, casL = 0, casU = 0, hurt = 0, replan = 0, unitSum = 0, maxUnits = 0, open = 0;
 const shiftList: (ShiftMetrics | null)[] = [];
@@ -78,6 +85,7 @@ for (let k = 0; k < n; k++) {
   const r = sim.report;
   if (!r) { console.log(`seed ${seed}: 보고서 없음 (t=${sim.t})`); errors++; continue; }
   for (const I of sim.incidents) if (I.phase !== 'closed' || !I.result) open++;
+  catList.push(catStats(sim));
   for (const inc of r.incidents) {
     incN++;
     out[inc.result.outcome]++;
@@ -99,6 +107,7 @@ for (let k = 0; k < n; k++) {
     if (verbose) console.log(`${seed} [${inc.code}] ${inc.type}/${I.truth.variant} sev${I.truth.severity} → ${inc.result.outcome} (${I.closeReason}) rt=${Math.round(inc.result.responseTime)} dur=${Math.round(inc.result.duration)} units=${I.everAssigned.length} | ${inc.result.headline}`);
   }
   hurt += r.respondersHurt.length;
+  methodList.push(methodStats(sim));
   reportHashes.push(r.hash);
   // 측정 도구의 오류는 기존 집계를 바꾸지 않는다: 그 교대의 지표만 null 로 두고 metrics.errors 에 센다
   if (metricsOn) {
@@ -106,14 +115,18 @@ for (let k = 0; k < n; k++) {
     catch (e) { shiftList.push(null); console.error(`seed ${seed} 지표 계산 오류:`, (e as Error).stack); }
   }
 }
+const catSum = sumCat(catList);
 const share = (k: string): number => (incN ? out[k] / incN : 0);
+const methodSum = sumMethods(methodList);
 const timeoutShare = incN ? ((closeReasons.timeout ?? 0) + (closeReasons.noresponse ?? 0) + (closeReasons.abandoned ?? 0)) / incN : 0;
 const summary = {
   difficulty: difficultyKey(diff), label: difficultyLabel(diff), seeds: n, errors, incidents: incN, perShift: +(incN / n).toFixed(2), msPerShift: Math.round(ms / n),
+  catastrophe: catJson(catSum),      // (X6)
   outcomes: out, good: +(share('success') + share('delayed')).toFixed(3), bad: +(share('failed') + share('unresolved')).toFixed(3),
   closeReasons, timeoutShare: +timeoutShare.toFixed(3), avgResponse: Math.round(respSum / Math.max(1, respN)), avgDuration: Math.round(durSum / Math.max(1, incN)),
   casualties: { total: casT, saved: casS, lost: casL, undiscovered: casU, savedRate: +(casS / Math.max(1, casT)).toFixed(3) },
   falseAlarms: benignN, realGood: +(realGood / Math.max(1, incN - benignN)).toFixed(3), realAvgResponse: Math.round(realRespSum / Math.max(1, realRespN)),
+  methods: methodJson(methodSum),      // (R2)
   unitsPerIncident: +(unitSum / Math.max(1, incN)).toFixed(2), maxUnitsOnOneIncident: maxUnits, respondersHurtPerShift: +(hurt / n).toFixed(2), recoveredShare: +(replan / Math.max(1, incN)).toFixed(3),
 };
 const metrics = metricsOn ? summarize(shiftList) : null;
@@ -134,6 +147,9 @@ else {
     for (const k of Object.keys(byScen).sort()) { const b = byScen[k]; console.log(`  ${k.padEnd(20)} ${String(b.n).padStart(4)} · ${b.success ?? 0} · ${b.partial ?? 0} · ${b.delayed ?? 0} · ${b.unresolved ?? 0} · ${b.failed ?? 0} | ${b.timeout ?? 0}·${b.noresponse ?? 0}·${b.abandoned ?? 0} | ${Math.round(b.dur / b.n)}s · ${(b.units / b.n).toFixed(1)}`); }
   }
   console.log('problems (incidents affected):', Object.entries(prob).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', '));
+  if (flag('--methods')) for (const line of methodTables(methodSum)) console.log(line);
+  console.log(catLine(catSum));
+  if (flag('--cat')) console.log(catShadowLine(catSum));
   if (metrics) for (const line of formatLines(metrics, metricsAll)) console.log(line);
 }
 if (flag('--check')) {

@@ -8,6 +8,7 @@ import type { Incident, Scene } from '../../types';
 import { staticPass, tidx } from '../grid';
 import { pushFx } from '../hazards';
 import { registerRule } from '../sceneRegistry';
+import { hurtCasTo, hurtResponder } from '../injury';
 
 /**
  * 해일이 해안 대피 현장을 덮친다 (현장마다 한 번).
@@ -82,8 +83,8 @@ function swamp(sim: Sim, s: Scene, I: Incident): number {
     if (c.dead || c.where !== 'scene' || Math.round(c.y) < half) continue;
     swept++;
     c.inWater = true; c.mob = 'trapped'; c.trapWork = 0; c.walking = false; c.path = null; c.inVehicle = null;
-    c.health = Math.max(8, c.health - rng.range(25, 45));
-    c.bleed = Math.max(c.bleed, rng.range(0.13, 0.2) * sim.tune.bleedMul); c.bleed0 = c.bleed;
+    // 휩쓸리는 것만으로는 숨지지 않는다(하한 8). 난수는 예전 순서 그대로(잃는 체력 → 물속의 악화). 물속에 있는 동안의 악화는 익수로 적는다 (기록 id 는 아래에서 causeEvent 로 이어진다)
+    hurtCasTo(sim, s, I, c, Math.max(8, c.health - rng.range(25, 45)), 'drown', { bleed: rng.range(0.13, 0.2) * sim.tune.bleedMul }); c.bleedCause = 'drown';
     c.drift = 0.1;
     // 밀려든 물에 뭍 쪽으로 떠밀린다: 새 물가에서 줄이 닿는 곳 (동쪽 끝에 있던 사람도 곧바로 떠내려가지는 않게 안쪽으로 당긴다)
     c.x = Math.max(1, Math.min(s.w - 10, Math.round(c.x))); c.y = Math.min(s.h - 1, half + rng.int(0, 2)); c.px = c.x; c.py = c.y;
@@ -99,8 +100,9 @@ function swamp(sim: Sim, s: Scene, I: Incident): number {
     if (Math.round(a.y) < half) continue;
     const p = dry(Math.round(a.x));
     a.x = p.x; a.y = p.y; a.px = p.x; a.py = p.y;
-    sim.responders[a.rid].health -= rng.range(10, 22);
+    const raw = rng.range(10, 22);      // 난수는 예전 자리 그대로 뽑는다 (숨진 대원·판정 뒤에도 — hurtResponder 가 가린다)
     a.lastBlockEvent = ev;
+    hurtResponder(sim, s, I, a, raw, 'drown', { ev });
   }
   pushFx(sim, s, 'text', s.w / 2, half - 1.2, undefined, undefined, '해일!', '#9fd8ff', 3);
   return swept;

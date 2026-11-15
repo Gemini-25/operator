@@ -8,23 +8,28 @@ import { DECISIVE } from '../view/scene/fxBook';
 import type { FxBook } from '../view/scene/fxBook';
 import type { Fx, Scene } from '../sim/types';
 import type { Runner } from '../view/runner';
+import type { PersonSel } from './PersonCard';
 
 export interface ViewportProps {
   runner: Runner; director: CameraDirector; sound: SoundDirector; book: FxBook;
   selectedRid: number;
   onSelectRid: (rid: number) => void;
   onSelectUnit: (uid: number) => void;
+  person: PersonSel | null;                        // (H1) 정보창에 띄운 구조 대상·용의자
+  onSelectPerson: (p: PersonSel | null) => void;
 }
 
 const PIP_W = 232, PIP_H = 158, PAD = 12, GAP = 8;
 interface Pip { x: number; y: number; target: number }     // target: 사건 id, -1 = 도시 지도
 
 /** 중앙 화면: 도시 관제 지도 또는 현장 확대 화면. 렌더링은 requestAnimationFrame, 시뮬레이션은 고정 틱. */
-export function Viewport({ runner, director, sound, book, selectedRid, onSelectRid, onSelectUnit }: ViewportProps) {
+export function Viewport({ runner, director, sound, book, selectedRid, onSelectRid, onSelectUnit, person, onSelectPerson }: ViewportProps) {
   const ref = useRef<HTMLCanvasElement>(null);
   const wrap = useRef<HTMLDivElement>(null);
   const sel = useRef(selectedRid);
   sel.current = selectedRid;
+  const pick = useRef(person);
+  pick.current = person;
 
   useEffect(() => {
     const canvas = ref.current!, box = wrap.current!;
@@ -76,7 +81,8 @@ export function Viewport({ runner, director, sound, book, selectedRid, onSelectR
       runner.frame(now);
       const sim = runner.sim;
       director.sceneAuto = runner.settings.sceneAuto;
-      director.update(sim, dtReal, (I) => !!sim.scenes[I.id] && (sim.scenes[I.id]!.arrivedAt >= 0 || director.manual));
+      // 자동 카메라가 현장을 여는 때: 지상 부대가 닿았거나, (R1) 헬기가 상공에 닿았거나(호이스트 인양·물 투하는 지상 부대보다 먼저 벌어진다), 손으로 고른 사건
+      director.update(sim, dtReal, (I) => { const sc = sim.scenes[I.id]; return !!sc && (sc.arrivedAt >= 0 || (sc.airAt ?? -1) >= 0 || director.manual); });
       // 실제 배속: 자동 감속 중이면 설정이 15여도 1배속이다. 연출 시계와 소리 규칙은 이 값을 쓴다
       const effSpeed = runner.paused ? 0 : runner.slowed ? 1 : runner.settings.speed;
       book.frame(sim, dtReal, { paused: runner.paused || sim.ended, speed: effSpeed, seeks: runner.seeks });
@@ -111,7 +117,7 @@ export function Viewport({ runner, director, sound, book, selectedRid, onSelectR
       };
       const tension = !!scene && scene.kind === 'armed' && scene.hostiles.some((x) => x.weapon === 'gun' && (x.state === 'hold' || x.state === 'fight') && sim.t >= x.stunUntil);
       sound.update(sim, { paused: runner.paused, speed: effSpeed, focus: director.focus, inScene: !!scene, fresh, place: placeSound, clock: book.clock, rate: book.rate, tension });
-      if (scene) drawScene(ctx, sim, scene, w, h, { truth, alpha: runner.alpha, timeMs: now, selectedRid: sel.current, cam: director.sceneCam, book });
+      if (scene) drawScene(ctx, sim, scene, w, h, { truth, alpha: runner.alpha, timeMs: now, selectedRid: sel.current, cam: director.sceneCam, book, pick: pick.current && pick.current.inc === scene.incidentId ? pick.current : null });
       else {
         const selUnit = sel.current >= 0 ? sim.responders[sel.current].unitId : -1;
         drawCity(ctx, sim, director.cam, w, h, { focus: director.focus, truth, timeMs: now, alpha: runner.alpha, selectedUnit: selUnit, hover: hoverAt, book });
@@ -167,8 +173,10 @@ export function Viewport({ runner, director, sound, book, selectedRid, onSelectR
         return;
       }
       if (director.mode === 'scene' && director.focus >= 0 && sim.scenes[director.focus]) {
-        const hit = hitScene(sim, sim.scenes[director.focus]!, w, h, p.x, p.y, director.sceneCam);
+        // 관찰 대상 선택: 대원이 먼저, 없으면 구조 대상, 그다음 용의자 (AI 시점에서는 화면에 보이는 사람만 잡힌다)
+        const hit = hitScene(sim, sim.scenes[director.focus]!, w, h, p.x, p.y, director.sceneCam, runner.settings.truthView);
         onSelectRid(hit.rid);
+        onSelectPerson(hit.rid >= 0 ? null : hit.cas >= 0 ? { kind: 'cas', inc: director.focus, id: hit.cas } : hit.hostile >= 0 ? { kind: 'hostile', inc: director.focus, id: hit.hostile } : null);
       } else {
         const hit = hitCity(sim, director.cam, w, h, p.x, p.y, runner.settings.truthView);
         if (hit.incident >= 0) director.pin(hit.incident, 'scene');
@@ -200,7 +208,7 @@ export function Viewport({ runner, director, sound, book, selectedRid, onSelectR
       canvas.removeEventListener('wheel', wheel);
       canvas.removeEventListener('mouseleave', leave);
     };
-  }, [runner, director, sound, book, onSelectRid, onSelectUnit]);
+  }, [runner, director, sound, book, onSelectRid, onSelectUnit, onSelectPerson]);
 
   return <div className="viewport" ref={wrap}><canvas ref={ref} /></div>;
 }

@@ -1158,9 +1158,141 @@ for f in fire/std fire/arson fire/ship fire/plane fire/wild collapse/std collaps
 
 ---
 
-## 구현 메모
+## 구현 메모 (진행 중 — 단계를 끝낸 작업자가 덧붙인다)
 
-(구현한 뒤 이 절에 설계와 달라진 점, 조정한 상수, 잰 값을 적는다. 이 절이 실제 코드와 맞는 최신 내용이 된다.)
+**코드가 정본이다.** 이 절은 묶음이 끝나기 전에 이어받는 사람(뒤 단계의 작업자)이 본문과 코드가 어긋난 곳을 헤매지 않게 하려는 것이다. 마지막 문서 단계가 이 절을 정리해 최종 "구현 메모"로 만든다. 브랜치·기준 수치·끊겼을 때 이어받는 법은 `docs/specs/README.md` "실행 방법".
+
+**상태** (2026-11-15): **단계 1(상태만)** 이 끝났다 — 작업 브랜치 `wf/catastrophe-s1`, 시작 커밋 `e9ba964`(R1 전체와 H1 의 단계 0~3 이 있는 자리). `wf/catastrophe` 는 단계 1 끝을 가리킨다. **단계 0(기준 재기)은 아직 하지 않았다.** 다음은 단계 0·2 다.
+
+**H1 과 겹쳐 돌았다.** 이 덩어리는 H1 의 단계 4a 부터가 다른 작업 폴더에서 도는 동안 먼저 했다(`docs/specs/README.md` "겹쳐 돌리기"). 그래서:
+
+- **§8.3 의 `before-*` 는 재지 않았다.** H1 이 주 브랜치에 다 합쳐진 뒤 다음 작업자가 **맨 먼저** `git merge <주 브랜치>` 로 받고, 그 자리에서 해시 목록과 `before-*` 를 다시 잰다. 아래 해시 목록의 기준(`e9ba964`)은 그때는 쓸 수 없다.
+- 단계 1 은 H1 의 `hurt*` 등에 기대지 않는다(아무것도 바꾸지 않으므로 기댈 일이 없다). 본문의 "R1·H1 이 먼저 합쳐지지 않았으면" 대체는 쓰지 않았다.
+- **합칠 때 부딪히지 않게** 공용 파일에서는 줄을 더하기만 했고(고친 기존 줄은 `types.ts` 의 합집합 끝 두 줄 — `'ovh'`·`'drop'` 뒤의 `;` — 뿐이다), H1 이 줄을 더하는 자리(합집합·객체 글자의 맨 끝)와 한 줄 넘게 떨어뜨렸다. 단계 1 을 끝낼 때 `git merge-tree --write-tree wf/catastrophe wf/injuries`(H1 단계 4a-2 `213ea0a`)는 충돌 없이 합쳐졌다.
+
+### 단계 1 (상태만) — 실제 이름
+
+| 파일 | 이름 | 무엇 |
+|---|---|---|
+| `sim/types.ts` | `CatState` · `OpsState` · `NoGoZone` · `SignBelief` · `PlaceMark` (파일 끝의 X6 블록) | §2.2 그대로 |
+| | `Scene.cat`·`ops`, `Prop.vessel`·`heatLoad`·`heatK`, `MateBelief.trapped`, `FieldAgent.trapped`·`trapEv`·`avoid`·`opsSeen`·`signObs`·`extSeen`, `WorkItem.risky`, `Incident.fieldRisk`, `IncidentResult.catastrophe`, `ShiftReport.catastrophe`·`placeMarks` | 같은 블록에서 **인터페이스 합치기**로 더했다(아래 "본문과 다른 곳" 1) |
+| | `FactType` 에 `'sign'`·`'ops'`, `Fx.kind` 에 `'horn'`, `ProblemCode` 에 다섯 | 새 줄로 |
+| `sim/debrief.ts` | `PROBLEM_LABEL` 의 다섯 줄 | '위험 조짐'·'전원 철수'·'구조물 붕괴'·'폭발'·'건물 전소'. `order`·`T` 는 단계 7 |
+| `sim/engine.ts` | `Sim.placeMarks` | `Map<number, PlaceMark>` — 단계 1 에서는 늘 비어 있다 |
+| `sim/field/kit.ts` | `baseScene` 의 `cat`·`ops`, `PROP_BLANK` 의 `vessel`·`heatLoad`·`heatK` | 객체 모양 |
+| `sim/field/agents.ts` | `makeAgent` 의 여섯 칸 | 객체 모양 (`pendingBlock …` 줄과 R1 의 `aloft` 줄 사이) |
+| `sim/field/ops.ts` (새) | `footprint(s)` · `regionNbrs(s)` · `FOOT_OUT`(0)·`FOOT_IN`(1)·`FOOT_SHELL`(2)·`FOOT_FLOOR_EDGE`(3) | 생김새 도움 함수. `WeakMap` 에 처음 한 번. 진실을 읽지 않는다. 지휘 상태 쪽 함수(`opsOf`·`inZone` …)와 `SIGN_BASE` 는 아직 없다 — 쓰는 단계가 더한다 |
+| `sim/field/catastrophe.ts` (새) | `CAT`(상수) · `LOSS_FIRE`…`LOSS_QUAKE`·`LOSS_N` · `NO_STRUCT` | §2.9 의 값 + 본문에 숫자로만 있던 것(`BLDG_L2` 0.5 · `BLDG_L2_SHARE` 0.25 · `SHORE` 0.1 · `NBR_FALL` 0.12 · `QUAKE` 0.08 · `QUAKE_COLLAPSE` 0.18 · `INIT_*` · `GAS_DOOR` 0.15 · `GAS_STAIR` 0.9 · `GAS_SEEP` 0.004 · `GAS_VENT` 0.12 · `GAS_MAX` 3 · `CLOUD_MIN` 3 · `VESSEL_WET` 0.7 · `VESSEL_COOL` 0.05 · `VESSEL_IDLE` 0.012 · `BURNOUT_MIN` 30) |
+| | `catRng(sim, s)` | `cat:<현장 id>` 흐름 (`WeakMap<Scene, Rng>`). 단계 1 에서는 아무도 뽑지 않는다 |
+| | `catOf(sim, s)` | 대상 판별(현장 객체만 → `NONE` `WeakSet`) → 사건이 없으면 `null` → `catinit:<현장 id>` 로 용기의 `heatK`(소품 순서) → 처음 값 → `s.cat`. 드럼통·분진·`collapse/gasblast` 의 처음 가스는 아직 없다 |
+| | `vesselKind(p)` | 용기 판별 (소품만 본다) |
+| | `catTick(sim, s, I, c)` | 아래 "계산만 하는 틱" |
+| | `bldgOf(c, s)` → `{ bldg, fallenShare }` · `bldgLevel(c, s)` → 0·2·3 · `burnFracOf(c, s)` · `gasClouds(c, s)` → `number[][]`(큰 것부터) | 읽기 함수 — 단계 2 의 `perceiveSigns`, 단계 3·4 의 판정, 집계가 쓴다 |
+| `sim/field/rules/catastrophe.ts` (새) | `catRule` (export) | `registerRule(catRule)`. 이름을 붙여 내보낸 것은 시험이 `SCENE_RULES` 에서 뺄 수 있게 |
+| `sim/world/consequence.ts` (새) | `SignalKind` · `signal(sim, kind, s)` | I1 §3.10 의 빈 함수. 아직 아무도 부르지 않는다(단계 3·4 가 붕괴·폭발·전소 자리에서 부른다) |
+| `scripts/catstats.ts` (새) | `CatCount` · `catStats(sim)` · `sumCat(list)` · `catJson(c)` · `catLine(c)` · `catShadowLine(c)` | §8.3 의 집계 줄. `sweep.ts` 는 아홉 줄(머리말 한 줄·import 둘·목록·교대마다 `push`·합·`summary.catastrophe`·출력 둘)만 더했다 |
+| `tests/catastrophe.test.ts` (새) | 31개, 3초쯤 | 아래 "시험과 관문" |
+
+**계산만 하는 틱** — `catTick` 은 §2.3 의 번호 가운데 1·3·4·5·6 을 `Scene.cat` 과 소품의 X6 칸(`heatLoad`)에만 적는다:
+
+| 번호 | 단계 1 이 하는 것 | 뒤 단계가 그 자리에 더할 것 |
+|---|---|---|
+| 1 지진 | `c.hits` 거르기, 새 흔들림마다 실내 구획 `integ` −0.08(붕괴 유형 −0.18), `loss[QUAKE]` | (3) `causeEv` 에 재난 기록 |
+| 2 도시가스 차단 | 없음 | (4) 전부 |
+| 3 가스 | 원천 → 확산 → 손실·환기·상한, `cloudSince`(LEL 넘은 칸이 `CLOUD_MIN` 개 넘게 이어진 동안) | (4) 구름마다 점화원 → `explodeGas`. 함수 끝의 `gasClouds` 결과를 그대로 쓴다 |
+| 4 용기의 열 | `heatLoad` 올리고 식히기(0..1 로 자름) | (4) `heatLoad ≥ 1` → `ruptureVessel`, 차량 누출의 불 점화(`p.leak += …` — 기존 칸을 바꾸므로 단계 1 에서는 뺐다) |
+| 5 구조 | 구획별 손실(열·균열)·탄 몫 상한·보강(`c.shored`)·`hotT`·`l3Since`·`bldg`·`bldgL3Since`, 불이 깎는 구획의 `causeEv`(= `I.lastEvent` — `s.lastSpreadEvent` 는 지금 코드에서 한 번도 적히지 않는다) | (3) 충격·폭발·여진의 `causeEv`, `catOnBlast` |
+| 6 전소 | 비율이 0.7 을 넘으면 `c.burntAt = sim.t` **만** | (3) 같은 줄에서 `BURNOUT` 기록·`placeMarks`·신호 |
+| 7·8·9 | 없음 | (3·4·9) |
+
+**작업 기억은 `CatState` 밖에 둔다**: `catastrophe.ts` 안쪽의 `CatWork`(`WeakMap<CatState, CatWork>`) — 바깥 출입문 칸, 가스 단계의 칸 종류·건물 칸 목록, 탄 몫을 마지막으로 센 때의 `s.burnedTiles`, 구획별 균열 수, 그리고 용기·균열·밸브 소품의 목록(`s.props.length` 가 바뀌면 다시 고른다 — 소품은 끝에 붙기만 한다). 모두 다시 계산할 수 있는 값이다. **건전도·가스 값 자체는 매초 다시 읽는다** — 시험이나 뒤 단계(충격)가 `c.integ`·`c.gas` 를 밖에서 고쳐도 다음 틱에 `l3Since`·`bldg`·구름이 따라온다.
+
+**`s.burning` 에 기댄다**: 구조 단계는 `s.burning > 0`(같은 틱의 `tickFire` 가 방금 센 타는 칸 수 — 세계 규칙은 `tickFire` 뒤에 돈다)일 때만 구획의 칸을 훑는다. `tickScene` 으로 도는 한 늘 맞다. `catTick` 을 **직접** 부르는 시험은 `s.burning` 을 맞춰야 한다(`tests/catastrophe.test.ts` 의 `stepCat`).
+
+### 단계 1 — 본문과 다른 곳
+
+1. **있는 자료형의 선택 칸을 각 인터페이스의 끝이 아니라 `types.ts` 끝의 X6 블록에서 인터페이스 합치기로 더했다**(G5 의 `Fx { c?: FxInfo }` 와 같은 방식). 뜻은 같다. H1 이 같은 인터페이스(`MateBelief`·`FieldAgent`·`IncidentResult`·`ShiftReport` …)를 고치는 중이라 줄이 부딪히지 않게 한 것이다. 문서 단계에서 제자리로 옮겨도 되고 그대로 두어도 된다.
+2. **`TaskKind` 의 `'evacuate'` 를 넣지 않았다.** `TaskKind` 는 한 줄짜리 선언이고 바로 윗줄이 `WorkKind` 의 끝인데, H1 단계 4b 가 그 끝에 `'treatMate'` 를 새 줄로 더한다(맞닿은 줄을 양쪽이 고치면 `git merge` 가 충돌한다). 쓰는 곳이 단계 5(철수 임무)뿐이므로 **단계 5 가 넣는다** — `types.ts` 의 `TaskKind` 줄 끝에 `| 'evacuate'`. 같은 까닭으로 `FallRecord.cause` 의 `'partial' | 'total'`(§7.5)과 `FxInfo['src']` 의 넷(§7.4)도 본문대로 단계 3·4 의 몫으로 두었다.
+3. **`ProblemCode` 의 다섯은 합집합의 맨 앞 줄**, `PROBLEM_LABEL` 의 다섯도 표의 맨 앞 줄이다(본문은 "끝에"). H1 이 두 곳의 끝에 `RESPONDER_KILLED`(4a)·`SUSPECT_DIED`(5)를 더하기 때문이다. 합집합과 표의 순서에는 뜻이 없다(`PROBLEM_LABEL` 을 차례로 도는 곳은 `tests/causality.test.ts` 의 "모든 코드에 시스템이 있다" 하나다).
+4. **`scripts/metrics.ts` 와 `tests/causality.test.ts` 는 고치지 않았다** — `PROBLEM_SYS` 에 다섯 코드가 I1-a 때부터 들어 있다(`STRUCT_COLLAPSE`·`BURNOUT` → `building`, `EXPLOSION` → `hazard`, `DANGER_SIGN`·`WITHDRAWAL` → `field`). 새 시험이 그것을 확인한다.
+5. **`scenes/index.ts` 의 자리**: 본문은 "맨 끝"이지만 R1 이 `'../rules/air'` 를 마지막에 두었다(상공의 헬기는 마지막에 돈다 — R1 구현 메모). 그래서 `'../orders/injury'` 다음, `'../rules/air'` 앞에 넣었다. 단계 5 의 `'../orders/catastrophe'` 도 그 줄 다음(air 앞)에 넣는다.
+6. **`WorkItem.risky`·`Incident.fieldRisk` 의 생성 리터럴은 아직이다**(§11.2 의 단계 5). 형만 있고 아무도 값을 넣지 않으므로 객체 모양은 갈라지지 않는다. 그 칸을 쓰기 시작하는 단계 5 가 `commander.want`·`incidents.createIncident` 의 리터럴에 `undefined` 로 넣는다.
+7. **`regionNbrs` 는 실내 구역끼리만** 이웃으로 친다(마당·길가 같은 실내가 아닌 구역은 넣지 않는다 — 본문의 "구획"을 실내 구획으로 읽었다). 그리고 본문의 두 경우(벽 한 칸 너머, 문 칸 하나)에 더해 **벽 없이 맞닿은 두 실내 구역**(꺾인 복도처럼 한 공간을 둘로 나눈 것)도 이웃이다. 문 칸이 어느 구역에도 들지 않은 건물이 있어(출입구) 문 칸의 4 이웃끼리도 잇는다. 2층 건물에서 층을 건너는 이웃은 없다(시험).
+8. **`footprint`**: 격자 밖과 맞닿은 벽은 바깥벽(2)으로 본다(본문에 없던 경우).
+9. **가스의 환기**: "열린 바깥 출입문"은 바깥 칸과 맞닿은 문 칸이 열려 있는 것(문 소품이 없는 출입구도 열린 것으로 본다)이고, 그 **문 칸 자신도** 환기된다(본문은 "4 이웃에 … 있는 가스 칸"). 닫힌 바깥문 칸은 가스가 없는 칸이다(본문 "막힌 칸"). 가스 단계는 건물 칸(`foot ≥ 1`)만 훑는다 — 가스 칸과 깨진 창이 모두 그 안에 있다.
+10. **전소 비율의 분모** `fuelMask`: `foot ≥ 1` 이고 `s.fuel > 0` **이거나 이미 탄**(`s.burned`) 칸. `catOf` 가 첫 틱보다 늦게 불려도(다른 입구) 같은 칸이 되게 한 것이다.
+11. **`catRule` 의 첫 줄**: `const c = s.cat ?? catOf(sim, s)` — 이미 만든 현장은 칸 하나만 읽는다(매 틱 모든 현장에서 도는 길).
+12. **집계 줄(`scripts/catstats.ts`)의 어림**: `defensive/fire` 는 "지휘 쪽 한계 시간 보탬이 있는 건물 화재"(`s.ops.limitBonus > 0` — §5.5 가 외부 방어로 처음 바꿀 때 넣는 값)로 센다. `ext-close` 의 `wrong` 은 지금 "미발견이 남음"(`casUndiscovered > 0`)만 본다 — 단계 6·7 이 판정의 `hazardActive` 를 결과에 남기면 그것도 넣는다. 구획 붕괴의 원인(fire/struct/blast)은 `STRUCT_COLLAPSE` 의 detail 문구(§4.1 의 원인 문구)로 가른다 — 문구를 바꾸면 `catStats` 의 정규식 둘을 함께 고친다. `--cat` 은 본문에 없는 덤이다(아래 "그림자 수치").
+
+### 단계 1 — 해시 확인
+
+scratchpad `wf-catastrophe/`(세션 폴더 — 새 컨테이너에서는 없다. `README.md` 에 도구와 쓰는 법):
+
+| 파일 | 내용 |
+|---|---|
+| `xhashes.ts <소스 폴더> narrow\|wide` | H1 의 `hashes.ts` 를 넓힌 것. 한 줄 = 시드·난이도·강제·재난·`report.hash`·**상태 요약**(사람·부대·사건·문제 목록)·**현장**(타일·불·열·연료·연기·탄 칸·젖음·가구·창·무너진 자리·소품의 기존 칸·작업판 — 날것의 바이트)·**난수 흐름**(`sim.rng` 계열과 현장·대원 흐름의 다음 값). X6 의 새 칸은 넣지 않았다 |
+| `out/base-narrow.txt` · `out/base-wide.txt` | `e9ba964` 를 `git archive` 로 푼 사본(`base-src/`)에서 잰 기준. narrow = §9 의 28교대(보통 S0~S11 · 강제 `fire/std`·`collapse/std`·`hazmat/std`·`collapse/gasblast` × 3 · `5,5,5,1,5,1` × 4), wide = 92교대(강제 20종 × 3 · 재난 5종 × 2 · 어려움 10 · 극한 8 · 쉬움 4) |
+| `out/s1-narrow.txt` · `out/s1-wide.txt` | 단계 1 뒤. **기준과 `cmp` 로 한 글자도 같다**(120교대, 네 칸 모두) |
+| `xdiff.mjs` | 목록 둘의 칸마다 다른 교대 수 |
+
+목록이 무딘지 변이로 확인했다: 틱이 `s.wet[7]` 을 0.0001 올리게 하면 28교대 모두 현장 칸이 달라지고(기록 해시는 그대로 — 기록만 보는 목록으로는 잡지 못한다), `catOf` 가 `s.rng` 를 한 번 소비하게 하면 26교대의 기록 해시가 달라진다. 두 변이 모두 `tests/catastrophe.test.ts` 도 잡는다.
+
+### 단계 1 — 시험과 관문 (`tests/catastrophe.test.ts`, 31개)
+
+자료형(5) · `catOf` 의 대상·입구·용기 판별·`heatK`·구조 대상·처음 값·지진(7 — §10-11 의 대부분) · 건물 칸과 이웃 구획(3) · 정보 격리(2 — §10-7 을 미리: `commander.ts`·`brain.ts`·`ops.ts`·`airDecide.ts`·`orders/*`·`dispatch/*` 에 `.cat`·`heatLoad`·`integ`·`cat.gas`·`catOf(` 가 없다) · 난수 흐름(2) · 손 계산(9: 열·탄 몫·임박 시각·균열과 보강·용기의 열·가스의 보존·구름·전소 시각·방치된 화재 400초) · 기록 해시 불변(3).
+
+`npm run check` 통과: 테스트 14파일 343개 통과 + 건너뜀 1(앞의 312 + 31), 시드 40개 헤드리스는 성공 448 · 부분 55 · 지연 26 · 미해결 12 · 실패 26(시작점과 같다 — `sweep 60 --json` 도 `msPerShift` 와 새 `catastrophe` 칸 말고 모두 같고 `reportHash` 는 `ed7f09a4`), 지표 관문 통과. 공유 기계에서 5분 30초.
+
+- **"세계 규칙을 뺀 교대와 같다"는 단계 1 동안만 참이다.** `SCENE_RULES` 에서 `catRule` 을 빼고 돌린 교대와 기록 해시·판정·사람·부대·난수 흐름을 견준다. 단계 2 가 조짐을 사실로 넣으면(무전 문구가 바뀐다) 성립하지 않는다 — 단계 2 가 이 묶음(`X6 단계 1: 결과는 한 글자도 바뀌지 않는다`)과 "방치된 화재 … 한 칸도 다르지 않다"를 지우거나 §10-6(재현성)으로 바꾼다. 손 계산 가운데 "단계 1 은 터뜨리지 않는다"·"기록은 아직 없다"를 확인하는 줄도 단계 3·4 에서 뒤집힌다.
+- 도움 함수 `make`·`find`(조건에 맞는 현장이 나올 때까지 시드를 바꿔 찾는다)·`runAlone`(§10 의 것)·`stepCat`·`worldDigest` 는 뒤 단계가 그대로 쓰면 된다.
+
+### 단계 1 — 교대당 시간
+
+기계가 다른 작업자와 나눠 쓰여(부하 평균 4~7) 따로 띄운 프로세스의 벽시계·사용자 CPU 는 ±15% 흔들렸다(전후를 번갈아 일곱 번 쟀는데 앞뒤가 뒤바뀌었다 — `out/speed-normal.txt`). 그래서 덜 흔들리는 두 가지로 쟀다:
+
+- **프로파일**(`npx tsx --cpu-prof … speed.ts`, 보통 42교대): `catastrophe.ts` 의 함수가 전체 표본의 **1.84~1.86%**, `ops.ts` 0.11~0.17%. 가장 큰 것은 가스 단계(0.46~0.6% — 밸브가 있는 현장만)와 매초의 구조 단계.
+- **규칙 안에서 쓴 시간**(`speed4.ts` — 규칙을 시계로 감싼다): 보통 교대당 규칙 호출 11,375번(1초 틱 2,208번, 위험 상태를 가진 현장 10.3곳)에 5.0~7.5 ms — 그때의 교대당 310~360 ms 의 **1.6~2.1%**. 강제 `hazmat/std` 2.4%, 극한 1.8%.
+- 데워진 뒤의 `catTick` 한 번(`micro.ts`): 조용한 건물 48 ns · 타는 건물 0.28 µs · 가스 누출 3.3 µs.
+
+5% 문턱 아래라 주기는 바꾸지 않았다. 줄인 것 둘: 가스 단계가 600칸이 아니라 건물 칸만 훑게 했고, 규칙이 `s.cat` 을 먼저 읽게 했다.
+
+### 단계 1 — 그림자 수치 (참고 — 예전 규칙이 그대로 도는 동안 계산만 한 값)
+
+방치 시험(`neglect.ts` — 현장만 600~700초, 대원 없음. 시드 N0~N5):
+
+- `fire/std`(불이 붙은 3건): 임박(`integ < 0.36`) 구획이 처음 생기는 때 114~121초, 전소 문턱 241~427초, 건물 조짐 3(= 전체 붕괴 문턱) 241~425초 — §2.4 계산 예 ①·§1.2 와 맞는다. 가스 용기는 예전 규칙이 94초에 터뜨릴 때 `heatLoad` 0.44 였다(새 규칙이면 더 늦다).
+- `collapse/std`: 심각도 3·균열 둘 → 0.60 에서 343초에 0.36 아래(§2.4 계산 예 ③ 의 "약 340초"). 균열이 없는 현장은 그대로.
+- `hazmat/std`: 600초 동안 가스 최댓값 1.4~2.6, LEL 구름(3칸 이상)이 처음 생기는 때 90~200초(한 건 529초), 가장 큰 구름 3~18칸 — §2.5 "맞출 값"(100~160초·160~260초) 언저리다.
+- **`collapse/gasblast`: 6건 모두 구름이 생기지 않았다**(가스 최댓값 0.44~1.0, 1칸). 본문 §2.5 가 걱정한 대로 깨진 창의 환기 때문이다 — 단계 4 가 그 현장의 처음 가스(밸브 방에 0.6)를 넣거나 `GAS_SRC` 를 다시 맞춰야 §8.1 의 15~40% 에 닿는다.
+- `fire/plane`: 가운데 동체의 열이 257~267초에 0.55 를 넘었다가 불이 사그라지며 식었다(1.0 에는 닿지 않음). `traffic/bus`: 600초 동안 0.
+
+교대 안에서(`shadow.ts` — 예전 규칙이 일으킨 일과, 같은 교대에서 계산만 한 위험 상태가 사건이 **닫힐 때** 어디에 있었는가. `e9ba964` 기준이라 H1 을 합친 뒤에는 달라진다 — 관계만 본다):
+
+| | 보통 60교대 | 극한 30교대 | 강제 `fire/std` 20 |
+|---|---|---|---|
+| 예전 규칙: 천장 일부 붕괴 · 가스 용기 폭발 · 누출 가스 폭발 · 2차 붕괴 | 36 · 7 · 2 · 5 | 149 · 24 · 16 · 43 | 25 · 3 · 1 · 2 |
+| 건물 화재(분모) 가운데 임박(`integ < 0.36`) 구획이 남은 것 | 172건 가운데 37 | 121건 가운데 94 | 82건 가운데 25 |
+| 구획 수: 임박 · 위험(< 0.45) · 조짐(< 0.6) | 48 · 15 · 42 | 271 · 29 · 48 | 39 · 3 · 18 |
+| 전소 문턱을 넘음 · 건물 조짐 3 | 0 · 0 | 17 · 17 | 1 · 1 |
+| 건물 화재의 탄 비율: 가운데 · 90% · 최대 | 0.04 · 0.18 · 0.61 | 0.34 · 0.73 · 0.99 | 0.05 · 0.30 · 0.81 |
+| 가스 용기: 개수 · 예전 규칙으로 터진 것 · 그때의 `heatLoad` 가운데/최대 | 31 · 7 · 0.18 / 0.32 | 33 · 24 · 0.19 / 0.89 | 11 · 3 · 0.18 / 0.28 |
+| 밸브 현장 가운데 닫힐 때 LEL 구름 | 66 가운데 5 | 42 가운데 14 | 25 가운데 1 |
+
+읽는 법(뒤 단계의 균형에 미리 알려 둘 것):
+
+- **불로 인한 구획 붕괴**(§8.1 "기준선의 천장 일부 붕괴 ±30%"): 임박 구획은 끝내 무너지므로(§2.4) 지금의 AI 대로라면 보통 60교대에 48건쯤 — 예전 규칙의 36건보다 33% 많다. 목표의 위쪽 끝이다(`K_BURN`·`K_HEAT` — §8.4-1).
+- **평범한 화재 다섯에 하나(172건 가운데 37)는 닫힐 때까지 임박 구획이 남아 있다** — §12.2-13 의 위험(64% 넘게 탄 방은 무너질 때까지 진입 금지)이 드문 일이 아니다. 단계 5·6 에서 한계 시간 건수를 꼭 본다.
+- **가스 용기**: 본문은 "지금 거의 100% 터진다"고 했지만 보통에서는 31개 가운데 7개(23%)다 — 불이 닿기 전에 꺼지는 용기가 많다. 그리고 예전 규칙이 터뜨린 그 순간의 `heatLoad` 가 가운데 0.18·최대 0.32 뿐이라, 새 규칙(1.0 에서 터짐)으로는 보통에서 **거의 터지지 않는다**. §8.1 의 "용기가 있는 화재의 25~60%"에 닿으려면 `VESSEL_HEAT` 를 크게 올려야 한다(§8.4-5) — 단계 4 의 방치 시험에서 먼저 잰다.
+- **전소**는 보통에서 그림자로 0건(탄 비율 최대 0.61)이다. §8.1 의 2~6% 는 외부 방어·철수(단계 5)가 들어간 뒤의 값으로 읽는다.
+
+### 다음 작업자(단계 0·2)가 이어받을 자리
+
+1. **맨 먼저 `git merge <주 브랜치>`**(H1 이 다 합쳐진 자리). 단계 1 은 H1 과 같은 줄을 고치지 않게 해 두었지만, H1 의 남은 단계가 `agents.makeAgent`·`kit.ts`·`scripts/sweep.ts`·`types.ts` 의 끝을 더 고쳤으면 더한 줄만 다시 끼운다. 받은 뒤 `npx tsc --noEmit` · `npx vitest run tests/catastrophe.test.ts tests/injuries.test.ts tests/causality.test.ts`.
+2. **해시를 다시 확인한다**: 단계 1 은 결과를 바꾸지 않으므로, "주 브랜치의 그 커밋을 `git archive` 로 푼 사본"과 "받아 합친 작업 폴더"의 `xhashes.ts` 목록(narrow·wide)이 한 글자도 같아야 한다. 다르면 합치다 생긴 문제다.
+3. **단계 0**: 그 자리에서 §8.3 의 `before-*` 를 잰다(`sweep --json` 에 `catastrophe` 칸이 이미 있다 — 값은 0, 분모 `buildingFires` 만 있다). 방치 시험 스크립트는 scratchpad 의 `neglect.ts` 를 쓰면 된다. 기준 수치에 `--cat` 의 그림자 줄도 함께 떠 두면 단계 3·4 의 균형에서 견줄 수 있다.
+4. **단계 2 가 고칠 곳**: `perceiveSigns` 와 읽기 함수(`structLevel`·`gasReading`·`vesselLevel`)를 `catastrophe.ts` 에 — `bldgLevel`·`bldgOf`·`gasClouds`·`burnFracOf` 는 이미 있다. `ops.ts` 에 사실 id 상수(`SIGN_BASE`). 대원의 새 칸(`signObs`·`extSeen` …)은 `makeAgent` 에 이미 `undefined` 로 있다. `FactType 'sign'`·`'ops'` 도 있다. `tests/catastrophe.test.ts` 의 "결과는 한 글자도 바뀌지 않는다" 묶음을 손본다(위 "시험과 관문").
+5. **`catOf` 의 입구가 늘어날 때**(`perceive`·`blast`·`debrief`): 세계 규칙이 사건이 열려 있는 동안 매 틱 `catOf` 를 부르므로 보통은 첫 틱에 이미 만들어져 있다. 닫힌 사건(`I.phase === 'closed'`)에서는 규칙이 `catOf` 를 부르지 않는다 — 판정(`debrief`)이 `s.cat` 을 읽을 때는 `catOf` 로 받는다.
+6. **단계 3·4 의 `catTick`**: 번호 주석(2·7·8·9)이 빈 자리다. 용기·균열·밸브 소품을 `catOf` 뒤에 더하는 규칙을 만들면 `s.props.length` 가 바뀌므로 목록은 저절로 다시 골라진다(드럼통은 `catOf` 안, `heatK` 다음 자리).
 
 ---
 

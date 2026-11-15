@@ -26,10 +26,13 @@ export function baseScene(sim: Sim, I: Incident, rng: Rng): Scene {
     startedAt: sim.t, arrivedAt: -1, commanderRid: -1, leadDept: 'fire',
     board: [], nextWorkId: 0, radio: [], nextMsgId: 0, requests: [], zoneProb: [], fx: [], rng,
     totalFuelTiles: 0, burnedTiles: 0, burning: 0, secureAt: -1, fireOutAt: -1, lastSitrep: -99, sizeupDone: false, closing: false,
+    flow: undefined, quay: undefined, fan: undefined,      // (R2) 물살·안벽 표시(field/rules/methods.ts 가 물 현장에서 채운다)·송풍기(단계 4)
     entryOrdered: false, negotStart: -1, researchRound: 0, lastSpreadEvent: -99, collapseDone: new Set(), mismatchLogged: false, closedCheckAt: 0,
     staticVersion: 0, archived: false, idleSince: -1, breachAt: -1, breachDone: false, bangAt: -99,
     outdoor: undefined, rules: undefined, placeName: undefined,      // 현장 틀마다 붙는 칸을 미리 비워 둔다 (모든 현장이 같은 모양)
     ruin: undefined, falls: undefined,      // (G4) 그림용 기록 칸 (field/ruins.ts). 무너진 현장에만 값이 생긴다
+    clearVision: 7.5,      // (R1) 맑은 날의 바깥 시야 — 탐조등이 밤의 시야를 여기까지 올린다 (실종 현장은 3.8 로 덮어쓴다). 쓰는 것은 단계 5 부터
+    cat: undefined, ops: undefined,      // (X6) 위험 상태(진실 — field/catastrophe.ts 의 catOf 가 첫 틱에 채운다)와 지휘 상태(지휘 규칙이 채운다)
   };
 }
 
@@ -56,6 +59,7 @@ const PROP_BLANK: Partial<Prop> = {
   locked: undefined, open: undefined, skin: undefined, leak: undefined, leakRate: undefined, mitigated: undefined, ignited: undefined,
   occupants: undefined, emptySeat: undefined, cleared: undefined, angle: undefined, color: undefined, exploded: undefined, found: undefined, dirRegion: undefined,
   interviewed: undefined, lastSeenRegion: undefined, accurate: undefined, removed: undefined, entered: undefined, bus: undefined, real: undefined, fuse: undefined,
+  vessel: undefined, heatLoad: undefined, heatK: undefined,      // (X6) 열을 받으면 터지는 용기 — field/catastrophe.ts 의 catOf 가 처음 한 번 판별해 채운다
 };
 export function addProp(s: Scene, kind: PropKind, x: number, y: number, extra: Partial<Prop> = {}): Prop {
   const p: Prop = { id: s.props.length, kind, x, y, w: 1, h: 1, blocking: false, hp: 0, ...PROP_BLANK, ...extra };
@@ -69,8 +73,10 @@ export function addCas(s: Scene, x: number, y: number, mob: Mobility, health: nu
     id: s.casualties.length, label: String.fromCharCode(65 + s.casualties.length),
     x, y, px: x, py: y, health, bleed, mob, trapWork: mob === 'trapped' ? 14 : 0, concealment, inVehicle: null,
     where: 'scene', treated: false, treatProg: 0, dead: false, treatQ: 0, bleed0: bleed, bystander: false, walking: false, path: null, pathI: 0, panic: false,
+    freedHow: undefined, freedBy: undefined, rush: undefined,      // (R2) 어떤 방법으로 누가 구했는가 · 즉시 이송 — 쓰는 것은 단계 1a 부터
     wander: false, wanderT: 0, isTarget: false, hostage: false, climb: undefined, bystander2: undefined, inWater: undefined, drift: undefined,      // 나중에 붙는 칸도 미리 (모든 구조 대상이 같은 모양)
     tDiscovered: -1, tFreed: -1, tTreated: -1, tSafe: -1, tLoaded: -1, tDead: -1, tHospital: -1, discoveredBy: -1, causeEvent: -1,
+    injuries: undefined, bleedCause: undefined, deathCause: undefined, lost: undefined,      // (H1) 부상 기록 — 처음 상태의 원인은 injury.initInjuries 가 붙인다
     ...extra,
   };
   s.casualties.push(c);
@@ -82,7 +88,11 @@ export function addHostile(s: Scene, x: number, y: number, weapon: Hostile['weap
     id: s.hostiles.length, label: '용의자 ' + (s.hostiles.length + 1), x, y, px: x, py: y,
     health: 100, morale: 0.55 + aggression * 0.45, aggression, skill, weapon, state: 'hold', hidden, cooldown: 1, fleeAt,
     path: null, pathI: 0, negot: 0, seenOfficers: 0, targetRid: -1,
+    stunHow: undefined,      // (R2) 마지막으로 무력화한 수단 — 쓰는 것은 단계 5
     facing: Math.PI / 2, lookAt: 0, stunUntil: -1, hostageId: -1, deadline: Infinity, alertUntil: -1, moveAt: 0, shotAt: -99, retreated: false, dragging: false,
+    // (H1) 부상 — 나중에 붙는 칸을 미리 비워 둔다 (모든 용의자가 같은 모양)
+    injuries: undefined, bleed: undefined, bleed0: undefined, treatQ: undefined, tTreated: undefined, dead: undefined, tDown: undefined, tDead: undefined,
+    where: undefined, bleedCause: undefined, deathCause: undefined, selfHarmRolled: undefined,
   };
   s.hostiles.push(h);
   return h;

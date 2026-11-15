@@ -6,12 +6,16 @@ import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import type { Candidate, CasBelief, FieldAgent, Scene, WorkItem } from '../types';
 import { dist } from '../util';
-import { HURT_HEALTH, failedRecently, fitFor, flushOutbox, perceive, resp, shareNearby, workLabel } from './agents';
+import { AIR_LOW, hasKit, kitUses } from '../crews';
+import { failedRecently, fitFor, flushOutbox, perceive, pumpOperatorOn, resp, shareNearby, workLabel } from './agents';
 import { commanderThink } from './commander';
 import { finishTask, makeTask } from './executor';
 import { tileOf } from './grid';
+import { mustRetreat } from './injury';
 
 interface Option { label: string; score: number; apply: (() => void) | null }
+/** 부상 후퇴를 이미 알린 대원 (현장의 개체마다 한 번 — 대원 개체의 모양을 바꾸지 않으려고 따로 둔다) */
+const hurtTold = new WeakSet<FieldAgent>();
 
 function takeWork(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, self: boolean): void {
   if (a.task) finishTask(sim, s, a, false, 'preempt');
@@ -32,12 +36,17 @@ function setTask(sim: Sim, s: Scene, a: FieldAgent, kind: Parameters<typeof make
 
 function dangerScore(sim: Sim, s: Scene, a: FieldAgent): number {
   const r = resp(sim, a);
-  if (r.health < 40) return 1.4;
+  if (mustRetreat(r)) return 1.4;      // 다쳤다: 체력 40 아래, 또는 상처 출혈이 크고 체력이 70 아래 (자기 몸이다 — injury.mustRetreat)
   let u = 0;
   const ax = Math.round(a.x), ay = Math.round(a.y);
   let f = 0;
   for (let y = Math.max(0, ay - 1); y <= Math.min(s.h - 1, ay + 1); y++) for (let x = Math.max(0, ax - 1); x <= Math.min(s.w - 1, ax + 1); x++) f = Math.max(f, s.fire[y * s.w + x]);
-  if (r.dept === 'fire') { if (f > 0.85 && r.health < 65) u += 0.45; if (r.stamina < 8) u += 0.5; }
+  if (hasKit(sim, a.rid, 'turnout')) {      // 방화복을 입은 대원은 불 곁에서도 버틴다
+    if (f > 0.85 && r.health < 65) u += 0.45; if (r.stamina < 8) u += 0.5;
+    // 공기통이 비었다: 공기호흡기의 연기 방호가 없으므로(sceneManager.agentHealth) 메지 않은 사람처럼 연기 속에 오래 있지 못한다 — 하던 일을 놓고 나온다.
+    // (바꿀 예비 공기통이 있으면 그 전에 60초 아래에서 스스로 바꾸러 나간다. 자기 장비의 상태라 판단에 써도 된다)
+    if (a.smokeT > 4 && hasKit(sim, a.rid, 'scba') && kitUses(sim, a.rid, 'scba') <= 0) u += 0.45 + (a.smokeT - 4) * 0.06;
+  }
   else { u += f * 1.1; if (a.smokeT > 4) u += 0.45 + (a.smokeT - 4) * 0.06; }
   if (r.dept !== 'police' && sim.t - a.underFireT < 4) u += 0.7;
   if (r.dept === 'police' && sim.t - a.underFireT < 3 && !a.inCover && r.health < 70) u += 0.35 * (1.3 - r.composure);
@@ -73,7 +82,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
 
   // 부상: 한번 후퇴를 시작하면 대기 지점에 닿을 때까지 다른 일(지시·자체 판단)에 끌려 나가지 않는다.
   // 끌려 나가면 다시 위험 점수가 이겨 후퇴 → 다른 일 → 후퇴를 되풀이하며 같은 무전을 반복한다
-  const hurt = r.health < HURT_HEALTH;
+  const hurt = mustRetreat(r);
   if (hurt && cur && cur.kind === 'retreat') { a.candidates = [{ label: '계속: 후퇴 (부상)', score: 1.4, chosen: true }]; return; }
 
   const opts: Option[] = [];
@@ -83,10 +92,11 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
     // 맡고 있던 작업은 위험해서 내려놓은 것으로 기록한다: 지휘관이 곧바로 같은 대원에게 다시 맡기지 않는다
     if (cur && cur.workId >= 0) finishTask(sim, s, a, false, 'danger');
     setTask(sim, s, a, 'retreat', '후퇴');
-    // 부상 후퇴는 상태가 바뀌는 이 한 번만 알린다(위의 붙잡기로 다시 고르지 않는다), 위험 회피는 20초에 한 번
-    if (!hurt && sim.t - a.lastRetreatLog < 20) return;
+    // 부상 후퇴는 상태가 바뀌는 이 한 번만 알린다(위의 붙잡기로 다시 고르지 않는다 — 길 위의 불을 끄다 물이 떨어져 후퇴를 다시 시작해도 되풀이하지 않는다), 위험 회피는 20초에 한 번
+    if (hurt) { if (hurtTold.has(a)) return; hurtTold.add(a); }
+    else if (sim.t - a.lastRetreatLog < 20) return;
     a.lastRetreatLog = sim.t;
-    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: hurt ? 2 : 1, causes: [a.lastBlockEvent], text: hurt ? '부상으로 더 이상 임무 수행 불가. 후퇴합니다.' : '위험 수준이 너무 높습니다. 일단 물러나 재평가합니다.' });
+    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: hurt ? 2 : 1, causes: [hurt && a.hurtEv !== undefined ? a.hurtEv : a.lastBlockEvent], text: hurt ? '부상으로 더 이상 임무 수행 불가. 후퇴합니다.' : '위험 수준이 너무 높습니다. 일단 물러나 재평가합니다.' });
   } });
   // 2) 현재 임무 계속
   if (cur && cur.kind !== 'standby') {
@@ -96,19 +106,27 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
     else if (cur.kind === 'retreat') sc = 0.95;
     else if (cur.kind === 'rehab') sc = r.stamina < 40 ? 0.96 : 0.62;      // 어느 정도 회복할 때까지는 다른 지시에 끌려 나가지 않는다
     else if (cur.kind === 'resupply') sc = 0.85;
+    else if (cur.kind === 'swapAir') sc = 0.93;      // 공기통을 바꾸는 동안(8초)은 다른 일에 끌려 나가지 않는다
     else if (cur.kind === 'moveSignal') sc = 0.66;
     if (a.carrying !== -1) sc += 0.35;
     opts.push({ label: `계속: ${cur.label}`, score: sc, apply: null });
   }
+  // 공기통을 바꾸는 중(대기 지점까지 가서 8초)에는 끝까지 한다: 위험 회피와 철수 지시 말고는 다른 후보를 내지 않는다.
+  // 점수만으로 붙잡으면(0.93) 눈앞의 일·지시·장비 교체·휴식과 점수가 비슷해 둘을 오가며 "교체하러 갑니다"를 되풀이했다
+  const swapping = cur !== null && cur.kind === 'swapAir';
   // 3) 지휘관 지시
-  if (a.orderWork >= 0 && (!cur || cur.workId !== a.orderWork)) {
+  if (!swapping && a.orderWork >= 0 && (!cur || cur.workId !== a.orderWork)) {
     const w = s.board[a.orderWork];
     if (w && (w.status === 'open' || w.status === 'active') && fitFor(sim, s, a, w) > 0) {
       opts.push({ label: `지시 수행: ${workLabel(s, w)}`, score: 0.56 + 0.4 * w.priority, apply: () => takeWork(sim, s, a, w, false) });
     } else a.orderWork = -1;
   }
-  // 4) 장비 문제
-  if (a.equipIssue === 'pump' && (!cur || cur.kind !== 'resupply')) {
+  // 4) 장비 문제: 예비 펌프 교체와 소화전 급수 연결은 그 부대에서 펌프를 맡은 대원(기관원·사다리 조작원)이 활동 중이면 그 사람만 나선다
+  //    (물이 떨어진 관창수가 스스로 관창을 놓고 가지 않는다. 펌프를 맡은 대원이 없거나 쓰러졌으면 지금처럼 문제를 겪은 대원이 한다)
+  //    (공기통을 바꾸는 중에는 이 둘도 내지 않고, 이 둘을 하는 중에는 공기통 교체를 내지 않는다 — 시작한 것을 끝낸 뒤 다음 것을 한다)
+  const panel = hasKit(sim, a.rid, 'pumpPanel');
+  const pumpMine = panel || !pumpOperatorOn(sim, s, a.unitId);
+  if (pumpMine && a.equipIssue === 'pump' && (!cur || cur.kind !== 'resupply') && !swapping) {
     const someoneFixing = s.agents.some((b) => b !== a && b.unitId === a.unitId && b.task && b.task.kind === 'resupply');
     if (!someoneFixing) opts.push({ label: '장비 교체 (예비 펌프)', score: 0.84, apply: () => {
       setTask(sim, s, a, 'resupply', '장비 교체');
@@ -116,21 +134,41 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
     } });
   }
   // (소화전에 닿지 못해 실패했으면 한동안 다시 고르지 않는다: equipRetryAt · 그 작업의 실패 기억)
-  if (a.equipIssue === 'water' && (!cur || cur.kind !== 'hookup') && !u.hydrant && sim.t >= a.equipRetryAt && s.props.some((p) => p.kind === 'hydrant')) {
+  // 펌프를 맡은 대원은 탱크를 지켜본다: 물이 떨어지기 전이라도 지휘관이 급수 연결을 작업판에 올리면(탱크 40% 아래) 스스로 나선다.
+  // 물이 이미 떨어졌으면 그 부대는 불을 끌 수 없으므로 하던 일(수색 등)보다 급수를 앞세운다
+  const hookW = (a.equipIssue === 'water' || panel) && !u.hydrant ? s.board.find((q) => q.kind === 'hookup' && q.prop === a.unitId && (q.status === 'open' || q.status === 'active')) : undefined;
+  const dry = a.equipIssue === 'water';
+  // (예비 펌프로 바꾸는 중에는 급수 연결을 내지 않는다: 두 후보의 점수가 비슷해 교체와 연결을 오가며 같은 말을 되풀이한다 — 교체를 끝낸 뒤 연결한다)
+  if (pumpMine && (dry || hookW) && (!cur || (cur.kind !== 'hookup' && cur.kind !== 'resupply')) && !swapping && !u.hydrant && sim.t >= a.equipRetryAt && s.props.some((p) => p.kind === 'hydrant')) {
     const someone = s.agents.some((b) => b !== a && b.unitId === a.unitId && b.task && b.task.kind === 'hookup');
-    const w = s.board.find((q) => q.kind === 'hookup' && q.prop === a.unitId && (q.status === 'open' || q.status === 'active'));
-    if (!someone && !(w && failedRecently(sim, w, a.rid))) opts.push({ label: '소화전 급수 연결', score: 0.83, apply: () => {
+    const w = hookW;
+    if (!someone && !(w && failedRecently(sim, w, a.rid))) opts.push({ label: '소화전 급수 연결', score: dry && panel ? 0.92 : 0.83, apply: () => {
       if (w) takeWork(sim, s, a, w, true); else { setTask(sim, s, a, 'hookup', '소화전 연결'); }
-      emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 1, causes: [a.lastBlockEvent], text: '소화전에 급수 라인을 연결하겠습니다.' });
+      if (dry) emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 1, causes: [a.lastBlockEvent], text: '소화전에 급수 라인을 연결하겠습니다.' });
+      else emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 0, text: '탱크 용수가 줄었습니다. 소화전에 급수 라인을 연결하겠습니다.' });
     } });
   }
-  // 5) 휴식
-  if (r.stamina < 22 && (!cur || cur.kind !== 'rehab') && a.carrying === -1) opts.push({ label: '체력 고갈 — 교대 휴식', score: 0.55 + ((22 - r.stamina) / 22) * 0.4, apply: () => {
+  // 4-2) 공기: 남은 공기가 60초 아래이고 자기 부대에 예비 공기통이 남아 있으면 대기 지점으로 나가 바꾼다 (연기 속이면 더 급하다).
+  //      사람을 옮기는 중이면 그것부터 끝낸다(나가는 길이다). 방금 대기 지점에 닿지 못했으면 한동안 다시 고르지 않는다(equipRetryAt — 급수 연결과 같은 기억).
+  //      같은 부대의 다른 대원이 이미 바꾸러 간 통은 빼고 센다(가 보니 예비가 없는 헛걸음을 하지 않게)
+  //      후퇴 중이거나 지쳐서 물러나는 중(체력 40 까지의 붙잡기)에는 내지 않는다 — 둘 다 대기 지점으로 가는 길이고, 닿은 뒤에 바꾼다
+  //      (점수가 비슷해 후퇴·휴식과 교체를 오가며 같은 말을 되풀이했다)
+  const tied = cur !== null && (cur.kind === 'swapAir' || cur.kind === 'resupply' || cur.kind === 'hookup' || cur.kind === 'retreat' || (cur.kind === 'rehab' && r.stamina < 40));
+  if (hasKit(sim, a.rid, 'scba') && kitUses(sim, a.rid, 'scba') < AIR_LOW && !tied && a.carrying === -1 && sim.t >= a.equipRetryAt) {
+    let taken = 0;
+    for (const b of s.agents) if (b !== a && b.unitId === a.unitId && b.status === 'active' && b.task && b.task.kind === 'swapAir') taken++;
+    if ((u.spareAir ?? 0) > taken) opts.push({ label: '공기통 교체', score: s.smoke[tileOf(s, a.x, a.y)] > 0.25 ? 0.95 : 0.9, apply: () => {
+      setTask(sim, s, a, 'swapAir', '공기통 교체');
+      emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: '공기통을 교체하러 대기 지점으로 갑니다.' });
+    } });
+  }
+  // 5) 휴식 (공기통을 바꾸는 중이면 바꾼 뒤에 쉰다 — 8초)
+  if (r.stamina < 22 && (!cur || (cur.kind !== 'rehab' && cur.kind !== 'swapAir')) && a.carrying === -1) opts.push({ label: '체력 고갈 — 교대 휴식', score: 0.55 + ((22 - r.stamina) / 22) * 0.4, apply: () => {
     setTask(sim, s, a, 'rehab', '휴식');
     if (sim.t - a.rehabLogAt > 45) { a.rehabLogAt = sim.t; raiseProblem(sim, I, 'FATIGUE', `${r.name} 체력 고갈로 작업 중단`, { role: 'RESPONDER', actor: r.name, rid: r.id, imp: 1, text: '체력이 한계입니다. 잠시 물러나 회복하겠습니다.' }); }
   } });
   // 6) 무전 음영: 중요한 보고가 막혀 있으면 신호가 닿는 곳으로 이동
-  if (a.commFailLogged && a.outbox.length && (!cur || cur.kind !== 'moveSignal') && a.carrying === -1) {
+  if (!swapping && a.commFailLogged && a.outbox.length && (!cur || cur.kind !== 'moveSignal') && a.carrying === -1) {
     opts.push({ label: '무전 가능한 위치로 이동해 보고', score: 0.6 + 0.2 * r.experience, apply: () => setTask(sim, s, a, 'moveSignal', '무전 가능 지점으로 이동') });
   }
   // 7) 스스로 판단해 맡을 수 있는 일 (지휘관 지시가 없을 때, 혹은 눈앞의 급한 일)
@@ -149,7 +187,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
     const sc = (free ? 0.3 : 0.15) + initiative * 0.25 + w.priority * 0.35 + near + fit * 0.1;
     if (sc > bestS) { bestS = sc; bestW = w; }
   }
-  if (bestW) {
+  if (bestW && !swapping) {
     const w = bestW;
     opts.push({ label: `자체 판단: ${workLabel(s, w)}`, score: bestS, apply: () => {
       takeWork(sim, s, a, w, true);

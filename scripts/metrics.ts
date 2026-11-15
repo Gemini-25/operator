@@ -979,7 +979,7 @@ export function formatLines(m: MetricsSummary, verbose: boolean): string[] {
   const v = m.variety;
   out.push(`variety: outcome ${v.outcomeEntropy} bits · story ${v.storyEntropy} bits · distinct ${v.storyDistinct}/incident · flat ${v.flat.length ? v.flat.join(',') : 'none'}`);
   const k = m.consistency;
-  out.push(`consistency: C1 ${k.C1} · C2 ${k.C2} · C3 ${k.C3} · C4 ${k.C4} · C5 ${k.C5}/${k.C5n} (보고만) · metric errors ${m.errors}`);
+  out.push(`consistency: C1 ${k.C1} · C2 ${k.C2} · C3 ${k.C3} · C4 ${k.C4} · C5 ${k.C5}/${k.C5n} · metric errors ${m.errors}`);
   // 후보 줄: STALL·FORGOT 은 언제나 모두, REPEAT·SPREAD 는 기본 3개, UNLOC 은 --metrics 에서만
   for (const x of s.list) if (x.kind !== 'UNLOC') out.push(stallLine(x));
   if (verbose) for (const x of s.list) if (x.kind === 'UNLOC') out.push(stallLine(x));
@@ -998,7 +998,8 @@ export function checkMetrics(m: MetricsSummary, opts: { baseline: boolean }): st
   if (m.errors > 0) f.push(`지표 계산 오류 ${m.errors}건`);
   if (m.chain.maxParentDepth > CHAIN_DEPTH_GATE) f.push(`연쇄 깊이 ${m.chain.maxParentDepth} > ${CHAIN_DEPTH_GATE}`);
   if (m.chain.maxChainedInShift > CHAINED_SHIFT_GATE) f.push(`한 교대의 연쇄 사건 ${m.chain.maxChainedInShift}건 > ${CHAINED_SHIFT_GATE}`);
-  for (const k of ['C1', 'C2', 'C3', 'C4'] as const) if (m.consistency[k] > 0) f.push(`기록·상태 불일치 ${k} ${m.consistency[k]}건`);
+  // C5(출발 문구의 병원 = 다음 인계의 병원)는 R1 단계 3 이 출발 기록을 실제로 가는 병원으로 고친 뒤부터 관문이다 (I1 §2.12)
+  for (const k of ['C1', 'C2', 'C3', 'C4', 'C5'] as const) if (m.consistency[k] > 0) f.push(`기록·상태 불일치 ${k} ${m.consistency[k]}건`);
   if (opts.baseline) {
     const st = m.stall;
     const first = (kind: string): string => st.list.filter((c) => c.kind === kind).slice(0, 3).map((c) => `${c.seed} ${c.code}`).join(', ');

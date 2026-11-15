@@ -375,6 +375,7 @@ function buildSearch(sim: Sim, I: Incident, rng: Rng): Scene {
   }
   if (rng.chance(Math.min(0.95, 0.4 * sim.tune.hazardMul))) { const z = rng.pick(zones.filter((q) => q.cx > 18)); for (const i of z.tiles) if (s.tiles[i] === T.TREE || rng.chance(0.5)) s.shadow[i] = 1; }
   s.outdoorVision = sim.weather === 'clear' ? 3.8 : sim.weather === 'rain' ? 3.2 : sim.weather === 'fog' ? 2.5 : 2.7;
+  s.clearVision = 3.8;      // (R1) 숲은 맑은 날에도 여기까지만 보인다 — 탐조등의 상한
   s.leadDept = 'police';
   return s;
 }

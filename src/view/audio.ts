@@ -143,6 +143,8 @@ export class SoundDirector {
       if (e.kind === 'call') { if (!fast && this.ok('blip', 0.22)) this.tone(e.role === 'CALLER' ? 520 : 760, 0.05, 0.035, 'sine'); }
       else if (e.kind === 'radio' || e.kind === 'command') { if (!fast && this.ok('radio', 0.32)) { this.burst(0.07, 0.07, 1700, 2); this.tone(940, 0.045, 0.045, 'square', 0.06); } }
       else if (e.kind === 'dispatch') { if (this.ok('dispatch', 0.5)) { this.tone(660, 0.13, 0.11, 'triangle'); this.tone(880, 0.16, 0.11, 'triangle', 0.14); } }
+      // (H1) 순직·용의자 사망: 문제 소리(톱니파 두 음) 대신 차분한 loss 음 — 순직은 더 낮고 길게. 이 코드들은 H1 의 뒤 단계(4a·5)가 만든다
+      else if (e.kind === 'problem' && ((e.problem as string) === 'RESPONDER_KILLED' || (e.problem as string) === 'SUSPECT_DIED')) { if (this.ok('loss', 0.8)) { if ((e.problem as string) === 'RESPONDER_KILLED') this.tone(140, 0.9, 0.12, 'sine', 0, 90); else this.tone(160, 0.6, 0.12, 'sine', 0, 110); } }
       else if (e.kind === 'problem') { if (e.importance >= 2 && this.ok('problem', 0.7)) { this.tone(220, 0.16, 0.12, 'sawtooth'); this.tone(196, 0.2, 0.12, 'sawtooth', 0.18); } }
       else if (e.kind === 'recovery') { if (this.ok('recovery', 0.5)) this.tone(520, 0.14, 0.07, 'sine', 0, 780); }
       else if (e.kind === 'arrive') { if (this.ok('arrive', 0.5)) { this.tone(700, 0.06, 0.07, 'square'); this.tone(700, 0.06, 0.07, 'square', 0.1); } }
@@ -194,6 +196,7 @@ export class SoundDirector {
   private legacy(f: Fx, fast: boolean): void {
     if (f.kind === 'spray') { if (!fast && this.ok('spray', 0.28)) this.burst(0.22, 0.03, 5200, 0.6, 'highpass'); }
     else if (f.kind === 'collapse') { if (this.ok('collapse', 0.5)) { this.burst(0.9, 0.3, 220, 0.8, 'lowpass'); this.tone(48, 0.9, 0.25, 'sine', 0, 30); this.burst(0.07, 0.18, 2400, 1.2, 'bandpass', 0.02); } }      // (G4) 무너짐: 낮게 우르르 + 짧게 쩍
+    else if (f.kind === 'drop') { if (this.ok('drop', 0.6)) { this.burst(1.1, 0.16, 900, 0.7, 'lowpass'); this.burst(0.5, 0.07, 4200, 0.8, 'highpass', 0.25); } }      // (R1) 헬기의 물 투하: 쏟아지는 물의 낮은 쏴 소리와 뒤따르는 물보라
   }
 
   /** 섬광탄 이명: sine 4100Hz + 주 버스 덕킹 + 교전 버스 lowpass 회복 */

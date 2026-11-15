@@ -1,4 +1,5 @@
 // 대형 사고 (docs/specs/N5-major.md): 여섯 시나리오의 현장, 교대당 많아야 한 번이라는 틀, 시나리오별 고유한 규칙, 재현성
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { NORMAL } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
@@ -232,6 +233,18 @@ describe('시나리오별 규칙', () => {
     }
   });
 
+  it('가스 폭발: 넘어간 벽 자리의 가구 틈에 갇혀 손이 닿지 않는 사람이 없다', () => {
+    // 붕괴 현장의 배치에서 물려받는 드문 경우(1500개에 3개꼴)였다. 지금 지도에서 그 경우가 나오던 시드와 경과 시간
+    for (const [seed, t] of [['L85', 35], ['L485', 50], ['L1412', 95]] as [string, number][]) {
+      const sim = new Sim(seed);
+      sim.run(t);
+      const sc = sim.scenes[createIncident(sim, { type: 'collapse', variant: 'gasblast', rng: sim.rng.fork('lay') }).id]!;
+      const seen = reach(sc);
+      for (const c of sc.casualties) expect(seen[c.y * sc.w + c.x], `${seed}: 구조 대상 ${c.label} (${c.x},${c.y})`).toBe(1);
+      for (let i = 0; i < sc.tiles.length; i++) if (walkable(sc.tiles[i]) && sc.propAt[i] < 0) expect(seen[i], `${seed}: 닿지 못하는 바닥 (${i % sc.w},${(i / sc.w) | 0})`).toBe(1);
+    }
+  });
+
   it('비행기 추락: 동체 세 토막과 불붙은 연료, 새는 가운데 토막. 동체를 살핀 뒤에는 가장자리도 수색한다', () => {
     let vergeSearched = 0;
     for (const seed of ['MA', 'MB', 'MC']) {
@@ -260,4 +273,12 @@ describe('재현성', () => {
       expect(scenarioOf(force.split('/')[0] as IncidentType, force.split('/')[1])!.tag).toBe('major');
     }
   }, 120000);
+});
+
+describe('정보 격리', () => {
+  it('대형 사고의 지휘 규칙은 시나리오의 정체(변형·건물 종류)를 읽지 않는다', () => {
+    // tests/ext.test.ts 가 s.props·s.casualties·.truth 를 잡는다. 여기서는 그 검사에 걸리지 않는 진실의 사본(Scene.variant 등)을 잡는다
+    const src = readFileSync(new URL('../src/sim/field/orders/major.ts', import.meta.url), 'utf8').split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+    for (const bad of ['.variant', 'placeKind', 'placeName']) expect(src.includes(bad), bad).toBe(false);
+  });
 });

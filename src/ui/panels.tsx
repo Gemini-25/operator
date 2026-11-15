@@ -7,26 +7,30 @@ import { needsText, sevName } from '../sim/dispatch/analyst';
 import { personaName, topicName } from '../sim/dispatch/callSystem';
 import type { Sim } from '../sim/engine';
 import { workLabel } from '../sim/field/agents';
+import { KITS, roleOf, stays } from '../sim/crews';      // 읽기만 한다 (장비의 상태를 바꾸는 함수는 쓰지 않는다)
 import { FIELD_NAME, UNIT_KIND_NAME } from '../sim/resources';
 import { scenarioName } from '../sim/scenarios';
-import type { Incident, Role, SimEvent, Unit, UnitField } from '../sim/types';
+import type { AirOp, FieldAgent, Incident, Role, Scene, SimEvent, Unit, UnitField } from '../sim/types';
 import { TrafficChip } from './TrafficChip';
 import { DEPT_NAME, OUTCOME_NAME, TYPE_NAME, WEATHER_NAME, fmtClock, fmtDur, fmtSec, pct } from '../sim/util';
 import type { CameraDirector } from '../view/camera';
+import { MethodRows } from './MethodRows';      // (R2) 대원 정보창의 대응 방법 두 줄
 import { FIELD_TEXT } from '../view/city/tokens';
 import { ICON_PATH } from '../view/icons';
-import { UNIT_MARK } from '../view/marks';
+import { KIT_GROUP_MARK, UNIT_MARK } from '../view/marks';
 import { DEPT_COLOR, OUTCOME_COLOR, TYPE_COLOR } from '../view/renderCity';
 import type { Runner } from '../view/runner';
-import { Mark, Token } from './Mark';
+import { Mark, RoleDot, Token } from './Mark';
+import { airOpLabel } from '../view/renderScene';
 import { HazardStrip } from './HazardStrip';
 import { pinIcon } from '../view/hazardState';
+import { TRIAGE, TRIAGE_NAME, agentStateText, careName, injuryLine, isLoss, respBand, respStateText } from '../view/triage';
 
 const PHASE: Record<string, string> = { unreported: '미신고', call: '신고 접수 중', pending: '배정 대기', dispatched: '출동 중', onscene: '현장 대응', closed: '종료' };
 const UNIT_STATE: Record<string, string> = { available: '대기', turnout: '출동 준비', enroute: '출동 중', onscene: '현장', transport: '병원 이송', hospital: '환자 인계', returning: '복귀 중', oos: '운용 중단' };
 const ROLE_NAME: Record<Role, string> = { SYSTEM: '시스템', CALLER: '신고자', CALL_TAKER: '접수 AI', ANALYST: '분석 AI', DISPATCH: '배정 AI', COMMANDER: '현장 지휘', RESPONDER: '대원', UNIT: '부대' };
 const ROLE_COLOR: Record<Role, string> = { SYSTEM: '#6f7f8e', CALLER: '#d6e2ee', CALL_TAKER: '#86cfd6', ANALYST: '#c3b3f0', DISPATCH: '#f0c27a', COMMANDER: '#ffd166', RESPONDER: '#8fb8de', UNIT: '#9fb3c6' };
-const BAND = ['경상', '중상', '위중', '사망'];
+const BAND = TRIAGE_NAME;      // 중증도 이름·색은 view/triage.ts 한 곳 (H1)
 
 export function Icon({ name, size = 14, color = 'currentColor' }: { name: string; size?: number; color?: string }) {
   return <svg className="icon" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d={ICON_PATH[name] ?? ICON_PATH.unknown} fill={color} fillRule="evenodd" /></svg>;
@@ -136,22 +140,46 @@ function UnitRow({ sim, u, selectedRid, onSelectRid }: { sim: Sim; u: Unit; sele
   const field = fieldOf(u);
   // 한 줄: 지도와 같은 둥근 표식 · 호출부호(+용수) · 대원 · 상태(색 점 + 글자)
   return (
-    <div className={`unit st-${u.state} ${u.aid ? 'aid' : ''}`} style={{ ['--dc' as string]: FIELD_TEXT[field] }} title={`${UNIT_KIND_NAME[u.kind]} · ${u.homeName}${u.aid ? ' (지원 부대)' : ''}${u.waterMax > 0 ? ` · 용수 ${Math.round((u.water / u.waterMax) * 100)}%${u.pumpFailed ? ' · 펌프 고장' : ''}` : ''}`}>
+    <div className={`unit st-${u.state} ${u.aid ? 'aid' : ''}`} style={{ ['--dc' as string]: FIELD_TEXT[field] }} title={`${UNIT_KIND_NAME[u.kind]} · ${u.homeName}${u.aid ? ' (지원 부대)' : ''}${u.waterMax > 0 ? ` · 용수 ${Math.round((u.water / u.waterMax) * 100)}%${u.pumpFailed ? ' · 펌프 고장' : ''} · 예비 공기통 ${u.spareAir ?? 0}개` : ''}${u.air ? ` · 남은 체공 ${Math.max(0, Math.round(u.fuel ?? 0))}초${u.grounded ? ` · ${GROUNDED[u.grounded]}` : ''}` : ''}`}>
       <Token field={field} kind={u.kind} size={22} state={u.state} no={+(u.callsign.match(/\d+$/) ?? ['0'])[0]} />
       <span className="callsign">{u.callsign}{u.waterMax > 0 && <Bar v={u.hydrant ? 1 : u.water / u.waterMax} color={u.pumpFailed ? '#ff5d5d' : u.hydrant ? '#5ad17a' : '#58b6ff'} w={14} />}</span>
-      <div className="crew2">
-        {u.crew.map((rid) => {
-          const r = sim.responders[rid];
-          return (
-            <span key={rid} className={`cchip ${selectedRid === rid ? 'sel' : ''} ${r.status}`} onClick={() => onSelectRid(rid)} title={`${r.name} · 체력 ${Math.round(r.health)} · 지구력 ${Math.round(r.stamina)} — 클릭하면 이 대원의 판단과 정보를 봅니다`}>
-              {r.name}<i style={{ width: `${r.health}%`, background: r.health < 40 ? '#ff5d5d' : r.health < 70 ? '#ffd166' : '#5ad17a' }} />
-            </span>
-          );
+      {/* 대원 칸 (R1): 부대장 이름 칩 하나 + 대원마다 역할 점. 자리가 모자라면 이름 칩부터 숨는다(점만 남는다 — 0번 점이 부대장).
+          그래서 점을 먼저, 칩을 맨 뒤에 두고 오른쪽에서부터 채운다(styles.css 의 .crewN): 넘치는 것은 맨 뒤의 칩이다 */}
+      <div className={`crewN n${u.crew.length}`}>
+        {u.crew.slice().reverse().map((rid) => {
+          const r = sim.responders[rid], role = roleOf(sim, rid);
+          return <RoleDot key={rid} group={role.group} field={field} health={r.health} down={r.status === 'down'} dead={r.dead === true} stays={stays(sim, rid)} selected={selectedRid === rid} onClick={() => onSelectRid(rid)}
+            title={`${r.name} · ${role.name}${rid === u.crew[0] ? ' (부대장)' : ''} · ${kitLine(sim, rid) || '장비 없음'} · 체력 ${Math.round(r.health)} · 지구력 ${Math.round(r.stamina)}${hurtNote(sim, rid)} — 클릭하면 이 대원의 판단과 정보를 봅니다`} />;
         })}
+        {(() => { const rid = u.crew[0], r = sim.responders[rid]; return (
+          <span className={`cchip ${selectedRid === rid ? 'sel' : ''} ${r.status} ${r.dead ? 'dead' : ''}`} onClick={() => onSelectRid(rid)} title={`부대장 ${r.name} · ${roleOf(sim, rid).name}${hurtNote(sim, rid)}`}>
+            {r.name}<i style={{ width: `${Math.max(0, r.health)}%`, background: TRIAGE[Math.min(2, respBand(r))] }} />
+          </span>
+        ); })()}
       </div>
       <span className="state"><i className="sdot" />{u.aid && u.state === 'oos' ? '관할 복귀' : UNIT_STATE[u.state]}{inc ? <b>{inc.code}</b> : null}</span>
     </div>
   );
+}
+
+/** 헬기가 뜨지 못하는 까닭 (부대 줄의 설명과 대원 정보창) */
+const GROUNDED: Record<string, string> = { fog: '안개로 뜨지 못함', night: '야간 운항 안 함', storm: '강풍으로 뜨지 못함' };
+/** (H1) 다친 대원의 한마디: " · 부상 (총상 32 · 연기 흡입 8)". 멀쩡하고 기록도 없으면 빈 글 */
+function hurtNote(sim: Sim, rid: number): string {
+  const r = sim.responders[rid], st = respStateText(r), line = injuryLine(r.injuries, 3);
+  if (!st && respBand(r) === 0) return '';
+  return ` · ${st || TRIAGE_NAME[respBand(r)]}${line ? ` (${line})` : ''}${(r.bleed ?? 0) > 0 ? ' · 출혈' : ''}`;
+}
+/** 대원이 든 장비를 한 줄로 (역할 점의 설명에 쓴다) */
+function kitLine(sim: Sim, rid: number): string { return (sim.responders[rid].kit ?? []).map((it) => KITS[it.id].name).join(', '); }
+/** 그 대원이 탄 헬기가 지금 어느 현장의 상공에 머물고 있는가 (없으면 null) — 읽기만 한다 */
+function airOpOf(sim: Sim, rid: number): { s: Scene; op: AirOp } | null {
+  const uid = sim.responders[rid].unitId, u = sim.units[uid];
+  if (u.state !== 'onscene' || u.incidentId === null) return null;
+  const s = sim.scenes[u.incidentId];
+  if (!s || s.archived || !s.air) return null;
+  for (const op of s.air) if (op.unitId === uid) return { s, op };
+  return null;
 }
 
 // ───────────────────────── 우측: AI 활동 기록 ─────────────────────────
@@ -206,7 +234,7 @@ export function LogPanel({ sim, director, truth, onJump }: { sim: Sim; director:
           const unit = e.role === 'RESPONDER' && e.rid >= 0 ? sim.units[sim.responders[e.rid].unitId] : e.role === 'UNIT' ? byCall.get(e.actor) : undefined;
           const col = unit ? FIELD_TEXT[fieldOf(unit)] : ROLE_COLOR[e.role];
           return (
-            <div key={e.id} className={`ev k-${e.kind} ${e.problem ? 'problem' : ''} ${e.truth ? 'truth' : ''} imp-${e.importance}`} onClick={() => { if (inc) director.pin(inc.id, inc.phase === 'onscene' || inc.phase === 'closed' ? 'scene' : 'city'); }}
+            <div key={e.id} className={`ev k-${e.kind} ${e.problem ? 'problem' : ''} ${e.truth ? 'truth' : ''} imp-${e.importance} ${isLoss(e) ? 'loss' : ''}`} onClick={() => { if (inc) director.pin(inc.id, inc.phase === 'onscene' || inc.phase === 'closed' ? 'scene' : 'city'); }}
               onDoubleClick={() => onJump && onJump(e.t, e.incidentId)} title="클릭: 이 사건 관찰 · 더블클릭: 이 순간으로 이동">
               <span className="t">{fmtClock(sim.startTod + e.t)}</span>
               {inc && <span className="inc">{inc.code}</span>}
@@ -298,33 +326,76 @@ export function DecisionPanel({ sim, director, truth }: { sim: Sim; director: Ca
 }
 
 // ───────────────────────── 우측: 대원 ─────────────────────────
-export function AgentPanel({ sim, rid }: { sim: Sim; rid: number }) {
+export function AgentPanel({ sim, rid, truth = false }: { sim: Sim; rid: number; truth?: boolean }) {
   if (rid < 0) return <div className="panel-section grow"><h3>대원 정보</h3><div className="empty">현장 화면에서 대원을 클릭하거나, 왼쪽 부대 목록에서 이름을 선택하세요.<br />대원이 무엇을 알고 있고 왜 그 행동을 골랐는지 볼 수 있습니다.</div></div>;
   const r = sim.responders[rid];
   const u = sim.units[r.unitId];
-  let agent = null, scene = null;
+  let agent: FieldAgent | null = null, scene: Scene | null = null;
   for (const s of sim.scenes) { if (!s || s.archived) continue; const a = s.agents.find((q) => q.rid === rid && q.status !== 'left'); if (a) { agent = a; scene = s; } }
+  // (R1) 상공에 머무는 헬기에 탄 대원: 현장에 내리지 않았다. 관측자면 그 믿음을, 그 밖(조종사)은 헬기가 하는 일만 보여 준다
+  const aloft = agent ? null : airOpOf(sim, rid);
+  const eye = aloft && aloft.op.eye.rid === rid ? aloft.op.eye : null;
+  const role = roleOf(sim, rid), kit = r.kit ?? [];
   const stats: [string, number][] = [['전문 기술', r.skill], ['상황 판단', r.judgment], ['침착성', r.composure], ['체력', r.fitness], ['팀워크', r.teamwork], ['경험', r.experience]];
-  const facts = agent ? agent.beliefs.all().sort((a, b) => b.t - a.t).slice(0, 24) : [];
+  const knower = agent ?? eye;
+  const facts = knower ? knower.beliefs.all().sort((a, b) => b.t - a.t).slice(0, 24) : [];
   return (
     <div className="panel-section grow">
       <h3>대원 정보</h3>
       <div className="scroll decision">
         <div className="agent-head">
           <Token field={fieldOf(u)} kind={u.kind} size={32} state={u.state} title={UNIT_KIND_NAME[u.kind]} />
-          <div><div className="nm">{r.name} {r.senior && <span className="dim">선임</span>}</div><div className="dim small">{DEPT_NAME[r.dept]} · {u.callsign} · {r.trait}</div></div>
+          <div><div className="nm">{r.name} <span className="dim">{role.name}{rid === u.crew[0] ? ' · 부대장' : ''}</span></div><div className="dim small">{DEPT_NAME[r.dept]} · {u.callsign} · {r.trait}</div></div>
         </div>
         <div className="stats">
           {stats.map(([k, v]) => <div key={k} className="prob"><span>{k}</span><Bar v={v} color="#7cc4ff" w={110} /><span className="num">{Math.round(v * 100)}</span></div>)}
-          <div className="prob"><span>건강</span><Bar v={r.health / 100} color={r.health < 40 ? '#ff5d5d' : '#5ad17a'} w={110} /><span className="num">{Math.round(r.health)}</span></div>
+          <div className="prob"><span>건강</span><Bar v={r.health / 100} color={TRIAGE[Math.min(2, respBand(r))]} w={110} /><span className="num">{Math.round(r.health)}</span></div>
           <div className="prob"><span>체력 잔량</span><Bar v={r.stamina / 100} color="#58b6ff" w={110} /><span className="num">{Math.round(r.stamina)}</span></div>
         </div>
-        {!agent || !scene ? <div className="empty">현재 현장에 투입되어 있지 않습니다 ({UNIT_STATE[u.state]}).</div> : (<>
+        {/* (H1) 부상: 원인별 피해, 출혈, 처치, 후송 — 다친 적이 있는 대원만 */}
+        {((r.injuries && r.injuries.length > 0) || r.status !== 'ok' || r.dead) && (<>
+          <h4>부상</h4>
+          <div className="kv"><span className="dim">중증도</span><span><span className={`band band-${respBand(r)}`}>{TRIAGE_NAME[respBand(r)]}</span>{respStateText(r) ? ` · ${respStateText(r)}` : ''}</span></div>
+          <div className="kv"><span className="dim">원인</span><span>{injuryLine(r.injuries) || '기록 없음'}</span></div>
+          {(r.bleed ?? 0) > 0 && <div className="kv"><span className="dim">출혈</span><span>있음{(r.treatQ ?? 0) > 0 ? ' (처치로 늦춤)' : ''}</span></div>}
+          {(r.treatQ ?? 0) > 0 && <div className="kv"><span className="dim">처치</span><span>{careName(r.treatQ)}</span></div>}
+          {r.care && <div className="kv"><span className="dim">후송</span><span>{r.care === 'aboard' ? '구급차 탑승 — 병원으로' : '병원 인계'}</span></div>}
+        </>)}
+        {/* (R1) 든 장비: 묶음 기호 · 이름 · 수량 · 고장. 숨은 고장은 관찰자 시점에서만 흐리게 보인다 (AI 는 아직 모른다) */}
+        <h4>장비</h4>
+        {kit.length === 0 ? <div className="empty">개인 장비 없음{role.stays ? ' (현장에 내리지 않는 자리)' : ''}</div> : (
+          <div className="kitlist">
+            {kit.map((it) => {
+              const def = KITS[it.id];
+              const qty = it.uses === undefined ? '' : it.id === 'scba' ? `공기 ${Math.round(it.uses)}초` : `${it.uses}`;
+              const low = it.id === 'scba' && it.uses !== undefined && it.uses < 60;
+              return (
+                <span key={it.id} className={`kit ${it.faultKnown ? 'broken' : ''}`} title={def.name}>
+                  <Mark d={KIT_GROUP_MARK[def.group]} size={11} />{def.name}{qty && <b className={low ? 'warn' : ''}>{qty}</b>}
+                  {it.faultKnown ? <em className="bad">고장</em> : truth && it.fault ? <em className="hidden">(숨은 고장)</em> : null}
+                </span>
+              );
+            })}
+          </div>
+        )}
+        {aloft && (<>
           <h4>현재 행동</h4>
-          <div className="kv"><span className="dim">상태</span><span>{agent.status === 'active' ? (agent.label || '판단 중') : agent.status === 'down' ? '쓰러짐' : agent.status === 'withdrawn' ? '부상 — 후송 대기' : '이동'}{agent.isCommander ? ' · 현장 지휘관' : ''}</span></div>
+          <div className="kv"><span className="dim">상태</span><span>현장 상공 — 탑승 중{eye ? ' · 공중 관측' : ''}</span></div>
+          <div className="kv"><span className="dim">{u.callsign}</span><span>{airOpLabel(aloft.s, aloft.op)}{u.fuelMax ? ` · 남은 체공 ${Math.max(0, Math.round(u.fuel ?? 0))}초` : ''}{(u.bucketMax ?? 0) > 0 ? ` · 물 바구니 ${(u.bucket ?? 0) > 0 ? '참' : '빔'}` : ''}</span></div>
+          {eye && (<>
+            <h4>알고 있는 정보 ({eye.beliefs.facts.size})</h4>
+            <table className="claims"><tbody>
+              {facts.map((f) => <tr key={f.key}><td>{f.text}</td><td className="dim">{f.src}</td><td className="num">{pct(f.conf)}</td><td className={f.verified ? 'ok' : 'dim'}>{f.verified ? '확인' : '미확인'}</td></tr>)}
+            </tbody></table>
+          </>)}
+        </>)}
+        {aloft ? null : !agent || !scene ? <div className="empty">현재 현장에 투입되어 있지 않습니다 ({respStateText(r) ? `${respStateText(r)} · ` : ''}{UNIT_STATE[u.state]}{u.grounded ? ` — ${GROUNDED[u.grounded]}` : ''}).</div> : (<>
+          <h4>현재 행동</h4>
+          <div className="kv"><span className="dim">상태</span><span>{agentStateText(agent, r)}{agent.isCommander ? ' · 현장 지휘관' : ''}</span></div>
           <h4>행동 후보와 점수 (Utility)</h4>
           {agent.candidates.length === 0 && <div className="empty">아직 판단 기록이 없습니다.</div>}
           {agent.candidates.map((c, k) => <div key={k} className={`cand ${c.chosen ? 'chosen' : ''}`}><Bar v={Math.max(0, Math.min(1, c.score / 1.3))} color={c.chosen ? '#d6e2ee' : '#52606d'} w={60} /><span className="num">{c.score.toFixed(2)}</span><span>{c.label}</span></div>)}
+          <MethodRows agent={agent} />
           <h4>알고 있는 정보 ({agent.beliefs.facts.size})</h4>
           <table className="claims"><tbody>
             {facts.map((f) => <tr key={f.key}><td>{f.text}</td><td className="dim">{f.src}</td><td className="num">{pct(f.conf)}</td><td className={f.verified ? 'ok' : 'dim'}>{f.verified ? '확인' : '미확인'}</td></tr>)}
@@ -455,7 +526,7 @@ export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel 
               <h4>부대별 활용률</h4>
               {r.unitUtil.map((u) => <div key={u.callsign} className="prob"><span>{u.callsign}</span><Bar v={u.util} color="#7cc4ff" w={90} /><span className="num">{pct(u.util)} · {u.runs}회</span></div>)}
               <h4>대원 부상</h4>
-              {r.respondersHurt.length === 0 ? <div className="empty">없음</div> : r.respondersHurt.map((x) => <div key={x.name} className="kv"><span>{x.name} ({x.callsign})</span><span className="warn">{x.status}</span></div>)}
+              {r.respondersHurt.length === 0 ? <div className="empty">없음</div> : r.respondersHurt.map((x) => <div key={x.name} className="kv"><span>{x.name} ({x.role ? `${x.role} · ` : ''}{x.callsign})</span><span className="warn">{x.status}</span></div>)}
               {hist.length > 0 && (<><h4>이전 교대 기록</h4>{hist.map((x, k) => <div key={k} className="kv small"><span className="dim">시드 {x.seed}</span><span>{x.difficulty ? `${x.difficulty} · ` : ''}{x.incidents}건 · 성공 {x.counts.success ?? 0} · 실패 {x.counts.failed ?? 0}</span></div>)}</>)}
             </div>
           </div>
@@ -475,7 +546,7 @@ export function Ticker({ sim, truth }: { sim: Sim; truth: boolean }) {
   }
   if (!ev) return null;
   const inc = ev.incidentId >= 0 ? sim.incidents[ev.incidentId] : null;
-  const cls = ev.problem ? 'bad' : ev.kind === 'resolve' || ev.kind === 'recovery' ? 'good' : ev.kind === 'arrive' ? 'info' : 'note';
+  const cls = isLoss(ev) ? 'loss' : ev.problem ? 'bad' : ev.kind === 'resolve' || ev.kind === 'recovery' ? 'good' : ev.kind === 'arrive' ? 'info' : 'note';      // (H1) 순직·사망은 빨간 경고가 아니라 차분한 회청색
   return <div key={ev.id} className={`ticker ${cls}`}>{inc && <b>사건 {inc.code}</b>}<span>{ev.text}</span></div>;
 }
 

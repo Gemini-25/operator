@@ -7,7 +7,7 @@ import { NORMAL, parseDifficulty } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { airFit, kitBonus, tickDispatch } from '../src/sim/dispatch/dispatcher';
 import { Sim } from '../src/sim/engine';
-import { canCarryPatients, casFact, detectRadius, fitFor, makeAgent, perceive, visionOf } from '../src/sim/field/agents';
+import { canCarryPatients, casFact, detectRadius, fitFor, flushOutbox, learn, makeAgent, perceive, transmit, visionOf } from '../src/sim/field/agents';
 import { airDecide, nearestLeg } from '../src/sim/field/airDecide';
 import type { AirView } from '../src/sim/field/airDecide';
 import { BeliefStore, mkFact } from '../src/sim/field/beliefs';
@@ -1288,6 +1288,18 @@ describe('상공의 일 (설계서 7.3·7.4)', () => {
     expect(eyeC.beliefs.list('evid').length + eyeC.beliefs.list('clue').length).toBe(0);
     expect(clues.some((q) => q.found), '단서를 찾은 것으로 되지 않는다').toBe(false);
     expect(said(C.sim, /이동 흔적 발견/)).toBe(0);
+    // 상공에는 무전 음영이 없다: 음영 구역 위에서도 관측자의 무전은 나가고(지상 대원은 그 자리에서 막힌다), 밀린 보고도 그대로 나간다
+    C.arrive('patrol');
+    const ground = C.s.agents[0];
+    C.s.shadow[tileOf(C.s, eyeC.x, eyeC.y)] = 1; put(ground, { x: Math.round(eyeC.x), y: Math.round(eyeC.y) });
+    expect(transmit(C.sim, C.s, ground, -1, 'report', [], '시험', -1, 0)).toBe(-1);
+    expect(transmit(C.sim, C.s, eyeC, -1, 'report', [], '시험', -1, 0)).toBeGreaterThanOrEqual(0);
+    const seenAt = (id: number) => mkFact('cas', id, { x: 1, y: 1, mob: 'immobile', band: 1, where: 'scene', treated: false, trappedDone: true, tq: 0 } as CasBelief, '시험', C.sim.t, 1, true, '시험 보고');
+    eyeC.outbox.length = 0; ground.outbox.length = 0;
+    learn(C.sim, eyeC, seenAt(9)); learn(C.sim, ground, seenAt(8));
+    flushOutbox(C.sim, C.s, eyeC); flushOutbox(C.sim, C.s, ground);
+    expect(eyeC.outbox.length, '관측자의 보고는 나갔다').toBe(0);
+    expect(ground.outbox.length, '음영 구역의 지상 대원은 보고가 밀린다').toBe(1);
   });
   it('탐조등: 밤에 경찰 헬기가 비추는 원 안의 바깥에서 지상 대원의 시야가 그 현장의 맑은 날 값까지 오른다. 고장은 처음 켤 때 드러난다', () => {
     const { sim, I, s, unit, arrive } = sceneOf(nightSeed(), 'search', ['policeHeli']);

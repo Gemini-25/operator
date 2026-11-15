@@ -53,7 +53,7 @@
 
 1. 탄약(재장전·재보급)과 엄폐 자리 찾기 — 바탕이 아예 없다.
 2. 혼자인가·짝이 있는가·지원이 오는가 — 어떤 판단도 보지 않는다.
-3. 다친 대원의 일 바꾸기 — H1 은 느려지고(`hurtF`) 물러나는(`health < 40`) 것만 정했다. 그 사이(체력 41~70)의 대원은 같은 일을 한다.
+3. 다친 대원의 일 바꾸기 — H1 은 느려지고(`hurtF`) 물러나는(`health < 40`·출혈) 것과, 물러났던 걸을 수 있는 다친 대원(`injured`)이 가벼운 일(H1 `LIGHT_WORK` — 정본 H1 §2.5·§2.7)만 맡는다는 것을 정했다(사용자 결정 2026-11-15 "가벼운 일은 계속" — 그 목록 밖은 `fit` 0). 물러나지 않은 중상(체력 41~70) 대원은 H1 에서 같은 일을 한다 — R3 의 부상 줄(P12·F14·E11·G01)이 그 대원의 일을 같은 목록 쪽으로 기울인다.
 4. 공기 탈출의 문턱과 "짝과 함께 나오기" — R1 은 60초 미만이면 교체 후보를 낼 뿐이다.
 5. 의료의 분류·넘겨받기·처치 중 이송 막기·경계 밖 처치소.
 6. 특수 부대가 자기 일을 먼저 하게 하는 관제·지휘의 갈래.
@@ -77,7 +77,7 @@
 |---|---|---|---|
 | R1 편성·개인 장비·헬기 | 역할 36·장비 35(`KITS`), 공기·섬광탄·테이저, 헬기 세 종류, 인원 문턱 | ① 탄약(`KitDef.mag`·`reload`·`perShot`, 총기 `uses`, `KitItem.mag`, `Unit.ammoBox`) ② 공기 탈출 문턱(`AIR_OUT`·`AIR_IN`)과 `swapAir` 후보의 문턱 하나 ③ 짝 묶음 표(`PAIRS` — 역할 쌍, 5.1) ④ 진입 문턱을 "쓸 수 있는 경찰"로(6.1 CP1) ⑤ 예비 펌프 수(`Unit.sparePump`) ⑥ 척추 고정판 효과의 조건을 "가졌는가"에서 "고정했는가"로(E13) ⑦ `defuse` 자격에 작동하는 로봇(S06) | 역할·기본 장비·장비 효과, `hasKit`·`kitUses`·`toolFor`·`crewHasKit`·`capableOf`(판단용)과 `kitWorks`·`useKit`·`toolUse`(효과용)의 나눔, `swapAir` 의 실행, 헬기의 상공 판단(`airDecide.ts`) |
 | R2 대응 방법 | 방법 틀(`METHOD`·`chooseMethod`·`MethodWhy`), 실패 기억 `a.mfail`, 선택 임무 | ① `chooseMethod` 의 마지막 인자 `dc: DocCtx \| null` 과 `MethodCtx.dc`(R2 §3.2·§3.4 에 반영됨) ② 점수에 교본 배율(`docMethodMul`)을 곱한다 ③ `MethodWhy` 에 여섯(`hurt`·`alone`·`lowAir`·`lowAmmo`·`shaken`·`tired` — 사상 표 3.7. R2 의 평소 까닭은 `usual`) ④ 방법 행 열 개(위) — R2 가 "R3 몫"으로 넘긴 이송·교통 통제의 방법, 그리고 수색·진압·해체 몇 갈래 | 방법을 바꾸는 세 때, 도착 재선택, 기록 문구 `SAY`, `recordMethod`, `mrng` 흐름, `gear.ts` 의 판단용 `kitCount` |
-| H1 부상과 사망 | 다친 대원의 행동, 동료 처치, 트리아지 순서 | ① 체력 41~70(중상) 대원의 **일 바꾸기**(가벼운 일 — 공통 G01) ② 자기 신고 사실 `crew`(지휘관이 남의 체력을 직접 읽지 않게 — 2.4) ③ 동요(`a.shaken`) ④ 의료의 분류 임무 `triage`(H1 §6.2 의 우선도 표는 그대로, 분류는 그 앞 단계) | `bandOf`·`hurtF`·`r.bleed`(자기 몸), 믿음 술어 `mateNeedsHospital`, 출혈 후퇴 조건, `rescueMate`·`treatMate` 의 자격 |
+| H1 부상과 사망 | 다친 대원의 행동, 동료 처치, 트리아지 순서 | ① 체력 41~70(중상) 대원의 **일 바꾸기**(가벼운 일 — 공통 G01. 가벼운 일 목록은 H1 의 `LIGHT_WORK` 하나를 쓴다 — 정본 H1 §2.5·§2.7. H1 은 `injured` 대원에게 그 목록 밖을 `fit` 0 으로 막고(사용자 결정 2026-11-15 "가벼운 일은 계속"), R3 는 그 위에서 아직 `injured` 가 아닌 중상 대원을 배율로 기울인다) ② 자기 신고 사실 `crew`(지휘관이 남의 체력을 직접 읽지 않게 — 2.4) ③ 동요(`a.shaken`) ④ 의료의 분류 임무 `triage`(H1 §6.2 의 우선도 표는 그대로, 분류는 그 앞 단계) | `bandOf`·`hurtF`·`r.bleed`(자기 몸), 믿음 술어 `mateNeedsHospital`, 출혈 후퇴 조건, `rescueMate`·`treatMate` 의 자격 |
 | X6 위험의 현실화 | 철수 판단, 위험 구역, 외부 방어 | `DANGER_RULES` 에 **장비 조건이 붙은 줄 둘**(X6 줄보다 이르거나 높은 단계를 내는 것만 — 표의 모양은 그대로, 6.1 CF5·CF6), 교본의 의무(`airOut`)를 X6 의 `evacuate` 의무 **뒤**에 둔다(2.6) | 조짐·`signDanger`·`selfDanger`·`evacuate`·`a.avoid`·`registerGate`·제한적 구조 진입(`w.risky`), 외부 방수 자리 |
 | G4 현장 가독성 | 현장 그림 | 없음(R3 는 현장 고정 층·위험 표지를 건드리지 않는다) | — |
 | G5 교전 연출 | 사격·엄폐·진입 그림 | ① `cover` 임무의 자세(G5 의 엄폐 자세 `PersonPose.crouch` 를 그대로 쓴다) ② 재장전 중에는 사격 기록(`recShot`)이 나지 않는 것 ③ 협상 중단 표시의 조건 한 조각(7.2) | 사격·섬광탄·진입의 그림과 소리 전부, 쏘는 총 고르기(`weaponOf` — `sniper` > `rifle` > `pistol`) |
@@ -296,7 +296,7 @@ export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report
 | `buddy`·`mates`·`alone`·`backup` | 동료의 겉·조직 정보 | 같다 |
 
 - 자기 신고를 쓰는 까닭: 대원은 자기 몸이 문턱을 넘을 때 그 사실을 자기 믿음에 넣고 무전으로 보낸다(`selfReport`, 4.1). 지금 `fitFor` 가 이미 `b.beliefs` 의 구조 대상 위치를 읽는 것과 같은 길이고, 판단 주기만큼의 지연이 생긴다(의도 — 지휘관이 알게 되는 데 걸리는 시간). 대원 자신이 자기 일을 고를 때(`brain` 7번 자체 판단·지시 수행)도 `fitFor` 를 거치므로 보고 모드다 — 자기 신고는 판단마다 갱신되므로 차이는 한 판단 주기뿐이다.
-- `mate` 사실(H1)을 쓰지 않고 새 사실 종류를 두는 까닭: H1 의 `orders/injury.ts` 는 `mate` 사실이 `hurt` 이고 `band ≥ 1` 이면 `treatMate` 를 낸다. 아직 일하고 있는 중상 대원을 `mate` 로 신고하면 구급대원이 움직이는 대원을 쫓아다니게 된다.
+- `mate` 사실(H1)을 쓰지 않고 새 사실 종류를 두는 까닭: H1 의 `orders/injury.ts` 는 `mate` 사실이 `hurt` 이고 `band ≥ 1` 이면 `treatMate` 를 낸다. 아직 일하고 있는 중상 대원을 `mate` 로 신고하면 구급대원이 움직이는 대원을 쫓아다니게 된다. (H1 도 같은 까닭으로, 처치 뒤 가벼운 일로 돌아온 대원은 `mate` 사실을 `'light'` 로 바꿔 `treatMate` 의 대상에서 뺀다 — H1 §3.6a.)
 
 **판단부(`doctrine.ts`·`doctrine/*.ts`)가 읽어도 되는 것**:
 - 그 대원의 믿음 `a.beliefs`(구조 대상·용의자·불·위험 사실, 동료의 `crew`·`mate` 사실, X6 의 `ops` 사실, `occ`·`ctl`·`secure` 사실).
@@ -497,7 +497,7 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
 | P09 | 총을 가진 대원 | 총기 위협 `fight` | 탄 `ammoCrit` 또는 0 | 피격 3초 안, 또는 부대 탄약 상자 0 | **엄폐(숨기)** — 끝나면 P08 이 재보급으로 잇는다 (행동 0.97). 총기 상대 일의 금지·놓기는 P22 | 발사 2회 이하 | "탄약 바닥 — 엄폐합니다!" | 새로 |
 | P10 | 총을 가진 대원 | 교전 중 탄창이 비었다(재장전 중) | 탄 남음 | 엄폐 아님·피격 3초 안 | 재장전(2~3초 사격 멈춤 — 2.9)을 그 자리에서 하지 않고 **엄폐(숨기)** 로 가서 한다 (행동 0.97) | 2.0/2.5/3.0초 | "재장전 — 엄폐!" | 새로 |
 | P11 | 경찰 | 피격 3초 안 | — | 40 ≤ 체력 < 70, 엄폐 아님, 4칸 안에 숨을 자리 있음, 위험 점수에 X6 조짐 몫이 없음 | 지금의 **후퇴(대기 지점까지) 대신 엄폐(숨기)**. 점수는 지금의 위험 점수 그대로 — 후퇴 후보를 만드는 자리에서 `docRetreat` 가 후보의 이름·`apply` 를 엄폐로 바꾼다(교본 후보 하나 규칙과 따로 — P09 가 이겨도 P11 이 빠지지 않는다). 체력 < 40·출혈 후퇴(H1)·가스·롤오버 조짐의 물러남(X6)은 그대로 후퇴 | 3초 · 40~70 · 4칸 | "피격 — 엄폐!" | 새로 |
-| P12 | 경찰 표 대원 | — | — | **중상** | `engage`·`arrest` `×0.35`, `perimeter`·`traffic`·`interview` `+0.15`, 침착함 ≥ 0.6 이면 `negotiate +0.2` (`fit`) | band 1 | (자기 신고) "부상 — 체력 저하." | 새로 (G01 의 경찰판 — `who.doc: ['police']`) |
+| P12 | 경찰 표 대원 | — | — | **중상** | `engage`·`arrest` `×0.35`, 가벼운 일(H1 `LIGHT_WORK` 가운데 `negotiate` 를 뺀 것) `+0.15`, 침착함 ≥ 0.6 이면 `negotiate +0.2` (`fit`) | band 1 | (자기 신고) "부상 — 체력 저하." | 새로 (G01 의 경찰판 — `who.doc: ['police']`) |
 | P13 | 경찰 | 인질 곁 총기 용의자 | 섬광탄(나 또는 동료) | — | 섬광탄 들고 4.6칸까지 / 동료 섬광탄이면 7.5칸 대기 (지금 그대로) | 지금 | 지금 | 있음(지금·R1) |
 | P14 | 경찰 | 인질 곁 총기 용의자(진입 결정 뒤 `engage` 의 인질 갈래 — 쏘지 않는다) | 현장 경찰 **누구도 섬광탄 없음** | — | 지금은 다가가 2.2초에 덮친다 → **동료 ≥ 1 이 2.6칸 안이고 믿음 속 용의자가 등졌을 때(`facing` 과 대원 방향의 차 > 100°)만** 바로 덮친다. 아니면 7.5칸 엄폐 자리(`wantLos` — 돌아서는 것을 보아야 한다)에서 대기. **상한 20초**(섬광탄을 가진 부대가 오는 중이면 40초) 뒤에는 지금 동작(접근·덮침). 용의자는 11칸 안에서 본 대원 쪽으로 돌아서므로 "등졌다"는 드물다 — 대부분 상한으로 끝난다 (판단 `closeIn`) | 2.6칸 · 100° · 20/40초 | "섬광탄 없음 — 인질 위험, 엄폐 대기." / "등졌다 — 지금!" / 상한 "더 기다릴 수 없습니다 — 접근해 제압합니다." | 새로 |
 | P15 | 섬광탄을 든 대원 | 동시 진입(`breach`) | 섬광탄 1개 남음 | — | 동시 진입에서는 쓰지 않고 방 진입용으로 아낀다(지금: 문 안쪽 5칸 안이면 쓴다). 용의자가 3칸 안이면 예외 (판단 `bangUse` — `choose 'save'`, 막지 않는다) | 1개 · 3칸 | "마지막 섬광탄 — 방 진입에 아낍니다." (imp 0, 한 번) | 새로 |
@@ -530,7 +530,7 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
 | F11 | 구조 대원 | 고립자 구출 | 유압 장비 없음·알려진 고장 | — | 수동·기본 구출(R2 `manual`·`basic`)은 R2 가 고른다. 교본은 지휘관 쪽: "유압 장비 고장" 지원 요청 | — | R2 | 있음(R2) + 새로 — 지휘 CF4 |
 | F12 | 누구나(소방 표에 두지만 모든 분야에 건다 — 3.6 의 who `—`) | 수난 구조 | 구명조끼(`pfd`) 없음 | 믿음 물살 ≥ 0.07(빠름) | 헤엄(R2 `swim`) `×0` — 빠른 물살에 구명조끼 없이 들어가지 않는다. 방화복·공기호흡기를 벗는 준비 6초는 R2 그대로 (방법, rank 0) | 0.07 | R2 SAY (까닭 `danger`) | 새로 |
 | F13 | 방화복이 없는 대원 | 대상 작업의 구역이 X6 위험 단계 1(`sit.wDanger` — 대상 구역 단계. 자기 자리의 단계가 아니다) | turnout 없음 | — | 그 일 `fit` 0(X6 는 단계 2 부터 막는다 — 보호 장비가 없는 사람은 한 단계 먼저) | 단계 1 | (지시 무전) | 새로 |
-| F14 | 소방 표 대원 | — | — | **중상** | 위험 실내 일 `×0.35`, `suppress ×0.6`(바깥 방어도 같은 일이라 덜 줄인다), `hookup`·`traffic`·`clearRoad` `+0.2` (`fit`) | band 1 | (자기 신고) "부상 — 체력 저하." | 새로 (G01 의 소방판 — `who.doc: ['fire']`) |
+| F14 | 소방 표 대원 | — | — | **중상** | 위험 실내 일 `×0.35`, `suppress ×0.6`(바깥 방어도 같은 일이라 덜 줄인다), 가벼운 일(H1 `LIGHT_WORK`) `+0.2` (`fit`) | band 1 | (자기 신고) "부상 — 체력 저하." | 새로 (G01 의 소방판 — `who.doc: ['fire']`) |
 | F15 | — | — | — | — | — | — | — | **지움** — G03(지구력 < 30 → 위험 실내 새 일 0)과 같은 줄 |
 | F16 | 소방 | 위험 실내 수색 | — | **신입**(경험 < 0.3), 짝이 신입 아님 | 수색 `×0.5` — 짝이 앞장서고 신입은 `pair` 로 따라간다 (`fit`) | 0.3 | — | 새로 |
 | F17 | 소방 | 가스 밸브 방 앞, 감각 가스 > 0.6 | 측정기 없음 | — | 환기 후 차단(R2 `ventFirst`), 짝 규칙(F04·F05)이 그대로 걸린다 | R2 | R2 | 있음(R2) |
@@ -551,7 +551,7 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
 | E08 | 이송 대원(누구든) | 옮기려는 환자를 **구급 대원이 처치 중**(같은 `cas` 의 `treat` 임무가 진행 중 — 동료의 겉) | — | — | 처치가 끝날 때까지 들지 않고 곁에서 기다린다. **예외**: 감각 연기·열 > 0.3, 위험 건물 실내, X6 단계 ≥ 2 → 먼저 옮긴다 (판단 `carryHold`, 상한 15초) | 15초 | "처치 끝나면 옮기겠습니다." | 새로 |
 | E09 | (지휘관) | 자리 하나에 기다리는 환자 둘 | — | — | 믿음 중증도가 높은 쪽 탑승을 먼저, 다른 쪽 탑승 작업은 미룬다 | 자리 1 | 지휘관 "자리 하나 — 구조 대상 {s} 먼저." | 새로 — 지휘 CE3 |
 | E10 | (지휘관) | 위중 환자, 현장 자리 0, 가장 가까운 오는 구급 부대 도착 예상 > 100초(조직 정보) | — | — | `ems` 긴급 요청 '위중 환자 — 항공 이송 검토' (R1 `airFit` 의 "채워지지 않은 긴급 구급 요청" 줄로 의료 헬기가 간다) | 100초 | 지휘관 요청 문구 | 새로 — 지휘 CE4 |
-| E11 | 의료 표 대원 | — | — | **중상** | 현장 처치 `×0.5`, `load`·탑승 `+0.2`(이송 중 처치만 — 차 안 처치는 R1 의 "함께 탄 대원 최댓값"). 현장에 다른 구급 대원이 없으면 배율을 걸지 않는다 (`fit`) | band 1 | (자기 신고) "부상 — 체력 저하." | 새로 (G01 의 의료판 — `who.doc: ['ems']`) |
+| E11 | 의료 표 대원 | — | — | **중상** | 안전 구역 밖의 현장 처치 `×0.5`, 가벼운 일(H1 `LIGHT_WORK` — 안전 구역의 `treat`·`treatMate` 처치 보조 포함) `+0.2`. `load`(들어 싣기)는 H1 의 무거운 일이라 더하지 않는다 — 차 안 처치는 차에 함께 타서 한다(R1 의 "함께 탄 대원 최댓값"). 현장에 다른 구급 대원이 없으면 배율을 걸지 않는다 (`fit`) | band 1 | (자기 신고) "부상 — 체력 저하." | 새로 (G01 의 의료판 — `who.doc: ['ems']`) |
 | E12 | 처치 대원 | 차로 위 환자(통제 지점의 차로 줄), 그 방향 통제 전(`ctl` 사실 없음) | — | — | 차로 위에서 처치하지 않는다 — 옮겨지기를(지휘관의 `carry`) 또는 통제를 기다린다. **예외**: 차 안에 갇힌 환자(구출 전)는 통제 뒤 그 자리에서 (판단 `laneTreat`, 상한 20초 — 지나면 처치) | 20초 | "차로 통제 전 — 차로 밖으로 옮긴 뒤 처치합니다." | 새로 |
 | E13 | 척추 고정판을 든 대원 | 교통·붕괴 현장(`s.kind` — 생김새)의 거동 불가 환자를 처음 들 때 | 척추 고정판 | — | 들기 전에 3초 고정(`c.immob = true`). 감각 연기·열 > 0.3 이면 고정하지 않고 바로 (판단 `carryStart` — `choose 'immobilize'`, 6단계). **R1 의 효과 조건을 바꾼다**: 지금 R1 은 "고정판 없이 옮기면 출혈 ×1.12"라 고정판을 들기만 해도 효과를 받는다 — 그러면 3초는 얻는 것 없는 지연이다. R3 는 그 조건을 "고정하지 않고(`!c.immob`) 옮기면"으로 바꾼다(11.1) | 3초 | "척추 고정 후 이송합니다." | 새로 |
 | E14 | 이송 대원 | 거동 불가 환자 | 들것 없음 | 혼자, 감각 연기 > 0.3 | **끌기**(`drag` — 3.7). 들것이 있으면 `litter`(R1 배율 — 기록 전용) (방법 — 6단계) | 0.3 | "연기가 짙습니다 — 낮게 끌어 나갑니다." | 새로 |
@@ -597,7 +597,7 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
 
 | 줄 | 누구 | 상황 | 장비 | 상태 | → 행동 (자리) | 문턱 | 기록 문구 (예) | 구분 |
 |---|---|---|---|---|---|---|---|---|
-| G01 | **특수 표 대원**(`who.doc: ['special']` — 경찰·소방·의료 표 대원은 P12·F14·E11 이 맡는다. 한 대원에게 부상 줄이 둘 걸리지 않는다) | 무거운 일: `engage`·위험 실내 일·`rescueMate`(위험 구역)·`waterRescue` | — | **중상**(신고 band 1) | 무거운 일 `×0.35`, 가벼운 일(`perimeter`·`traffic`·`interview`·`hookup`·`clearRoad`·`load`) `+0.15` (`fit`) | band 1 (75 에서 풀림) | (자기 신고) "부상 — 체력 저하." | 새로 |
+| G01 | **특수 표 대원**(`who.doc: ['special']` — 경찰·소방·의료 표 대원은 P12·F14·E11 이 맡는다. 한 대원에게 부상 줄이 둘 걸리지 않는다) | 무거운 일: `engage`·위험 실내 일·`rescueMate`(위험 구역)·`waterRescue` | — | **중상**(신고 band 1) | 무거운 일 `×0.35`, 가벼운 일(H1 `LIGHT_WORK` — 정본 H1 §2.7) `+0.15` (`fit`) | band 1 (75 에서 풀림) | (자기 신고) "부상 — 체력 저하." | 새로 |
 | G02 | 누구나 | 진입(`engage` 의 진입 결정 뒤)·위험 실내 일 | — | **동요** | `×0.6`(`fit`), 그리고 R2 의 `caution +0.2`(상한 1.1 — `G02b`, 방법) | 4.3 | — | 새로 |
 | G03 | 누구나 | 위험 실내 새 일 | — | 지구력 < 30 (보고 모드에서는 조직 정보 — 2.4) | `fit` 0. 하던 일은 지금처럼 22 까지 | 30 | — | 새로 |
 | G04 | 누구나 | 내 짝이 쓰러졌다(믿음 `mate` `down`) | — | — | 그 짝의 `rescueMate +0.2`(짝이 먼저 간다). H1 의 자격(hot 이면 경찰, 위험 구역이면 scba)은 그대로 (`fit`) | — | (H1 문구) | 새로 |
@@ -612,7 +612,7 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
 
 | id | 자리 | who | works · gate · methods | kits / noKits | when (요지) | effect | rank | why |
 |---|---|---|---|---|---|---|---|---|
-| G01 | fit | doc special | — | — | `st.band ≥ 1` | mul .35 [`engage`·HZ·`rescueMate`·`waterRescue`] · add .15 [`perimeter`·`traffic`·`interview`·`hookup`·`clearRoad`·`load`] | 1 | hurt |
+| G01 | fit | doc special | — | — | `st.band ≥ 1` | mul .35 [`engage`·HZ·`rescueMate`·`waterRescue`] · add .15 [H1 `LIGHT_WORK`] | 1 | hurt |
 | G02 | fit | — | `engage`·HZ | — | `st.shaken` (engage 는 `entryOrdered` 일 때) | mul .6 | 1 | shaken |
 | G02b | method | — | — | — | `st.shaken` | 기록 전용 `methodMul 1` — `caution +0.2`(상한 1.1)는 `methods.ts` 가 `dc.st.shaken` 으로 올린다(11.1). 1등이 바뀌었을 때 센다 | 1 | shaken |
 | G03 | fit | — | HZ | — | `st.stamina < 30` && 새로 맡는 일(`a.task?.workId !== w.id`) | mul 0 | 1 | tired |
@@ -627,7 +627,7 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
 | P09 | act | `st.gun` 있음 | — | — | gunFight && `ammoCrit` && (`underFire` ‖ `ammoBox === 0`) && 숨을 자리 있음 && 기억 없음 | act `cover`, 0.97 | 0 | lowAmmo |
 | P10 | act | `st.gun` 있음 | — | — | `reloading` && `underFire` && `!inCover` && 위협 있음 | act `cover`, 0.97 | 1 | lowAmmo |
 | P11 | act (`swap: 'retreat'`) | dept police | — | — | `underFire` && 40 ≤ hp < 70 && `!bleeding` && `!inCover` && 위험 점수에 X6 조짐 몫 0 && 숨을 자리 있음 | act `cover`, score `c.dng`(후퇴 점수 그대로) | 1 | danger |
-| P12 | fit | doc police | — | — | `st.band ≥ 1` | mul .35 [`engage`·`arrest`] · add .15 [`perimeter`·`traffic`·`interview`] · add .2 [`negotiate`, when composure ≥ .6] | 1 | hurt |
+| P12 | fit | doc police | — | — | `st.band ≥ 1` | mul .35 [`engage`·`arrest`] · add .15 [H1 `LIGHT_WORK` − `negotiate`] · add .2 [`negotiate`, when composure ≥ .6] | 1 | hurt |
 | P14 | gate | dept police | `engage` · `closeIn` | — | 위협 총기·인질, 현장 경찰 누구도 섬광탄 쓸 수 없음(동료 장비), `!(2.6칸 안 동료 && facing 차 > 100°)` | block `섬광탄 가진 부대가 오는 중 ? 40 : 20` | 1 | hostage |
 | P15 | gate | — | `engage` · `bangUse` | kits flashbang | `c.kit('flashbang') === 1` && 동시 진입 && 위협 `d > 3` | choose save | 3 | kit |
 | P16 | act | — | — | — | `a.task.kind === 'negotiate'` && 위협 `fight` && 숨을 자리 있음 | act `cover`, 0.93 | 1 | danger |
@@ -650,7 +650,7 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
 | F09 | fit | — | `search`·`carry`·`extricate`·`escort` | kits hose | 자기 부대 물 0 && `!u.hydrant` | add .1 | 3 | kit |
 | F12 | method | — | `waterRescue` · `swim` | noKits pfd | `m.flow ≥ 0.07` | mul 0 | 0 | danger |
 | F13 | fit | — | — | noKits turnout | `sit.wDanger ≥ 1` | mul 0 | 1 | noKit |
-| F14 | fit | doc fire | — | — | `st.band ≥ 1` | mul .35 [HZ] · mul .6 [`suppress`] · add .2 [`hookup`·`traffic`·`clearRoad`] | 1 | hurt |
+| F14 | fit | doc fire | — | — | `st.band ≥ 1` | mul .35 [HZ] · mul .6 [`suppress`] · add .2 [H1 `LIGHT_WORK`] | 1 | hurt |
 | F16 | fit | dept fire | `search` | — | `rookie` && HZ && 짝이 있고 짝은 신입 아님 | mul .5 | 2 | buddy |
 | F18 | method | units engine·ladder | `traffic` · `blockLane` | — | `s.kind === 'traffic'` && (믿음 `haz leak` active ‖ 불 믿음 > 0) && 그 지점 통제 전 | mul 1.5 | 3 | danger |
 | E01 | fit | — | `triage` | — | 늘(작업이 있을 때) | add .3 [when role paramedic] · add .2 [emt] · add .1 [doctor] | 2 | triage |
@@ -659,7 +659,7 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
 | E04 | method | roles doctor·flightNurse | `treat` | kits doctorKit·alsBag | 대상 믿음 band 2 | mul 1.3 [`stay`] · mul .7 [`rush`] | 3 | kit |
 | E05 | fit | dept ems | `treat` | — | `sit.hot` && 대상 믿음 `where 'safe'` | 기록 전용 `mul 1`(자격은 `fitFor` 기본 규칙 — 11.1) | 2 | protocol |
 | E08 | gate | — | `carry` · `carryHold` | — | 같은 `cas` 의 `treat` 를 하는 구급 동료 && `sense.smoke ≤ 0.3` && `sense.heat ≤ 0.3` && `!inHazard` && `wDanger < 2` | block 15 | 2 | protocol |
-| E11 | fit | doc ems | — | — | `st.band ≥ 1` && 현장에 다른 활동 구급 대원 | mul .5 [`treat`] · add .2 [`load`] | 1 | hurt |
+| E11 | fit | doc ems | — | — | `st.band ≥ 1` && 현장에 다른 활동 구급 대원 | mul .5 [`treat` — 대상이 안전 구역 밖] · add .2 [H1 `LIGHT_WORK`] | 1 | hurt |
 | E12 | gate | — | `treat` · `laneTreat` | — | 대상이 차로 줄 위 && 그 방향 `ctl` 사실 없음 && !(차 안에 갇힘 && 구출 전) | block 20 | 1 | danger |
 | E13 | gate | — | `carry` · `carryStart` | kits spineBoard | `s.kind` 교통·붕괴 && 대상 거동 불가 && `sense` ≤ 0.3 | choose immobilize | 3 | kit |
 | E14 | method | — | `carry` · `drag` | noKits stretcher | `st.alone` && `sense.smoke > 0.3` && 대상 거동 불가 | mul 1.6 | 1 | danger |
@@ -743,8 +743,8 @@ CLAUDE.md 함정 "쉬는 대원의 왕복": 들어가는 문턱과 나오는 문
 | 탄 | `ammoLow` 이고 믿음 속 교전 없음 | 재보급 0.78 (P08) | `uses > magSize` | 상자 0 이면 후보 없음 + `docMem`(사건 끝까지) |
 | 탄 (위급) | `ammoCrit`·0 이고 총기 위협 교전 | 피격 중이면 엄폐 0.97(P09) → 4초 피격 없으면 재보급 0.97(P08). 총기 상대 `engage`·`perimeter` 는 놓는다(P22 `drop`) | 보급 뒤 `ammoCrit` 풀림 | 엄폐 12초 상한, 같은 위협에 `docMem` 20초. 놓은 일은 `fit` 0 이라 보급 전에는 다시 받지 않는다 |
 | 재장전 | 탄창 0 | 2~3초 사격 멈춤. 피격 중이고 엄폐가 아니면 엄폐로(P10 0.97) | 시간 | 재장전 자체는 자동 — 판단 아님 |
-| 부상 (중상) | 자기 신고 band 0 → 1: 체력 ≤ 70 | 무거운 일 ×0.35, 가벼운 일 +0.15 | 신고 band 1 → 0: 체력 ≥ 75 | 5 의 간격(처치로 체력이 70 언저리를 오갈 때). 신고는 서명이 바뀔 때만. H1 `bandOf` 의 40 경계(≤ 40 이면 2)는 그대로 |
-| 부상 (위중·출혈) | 체력 ≤ 40, 또는 출혈 ≥ 0.06 && 체력 < 70 | H1 의 물러남 | H1 | H1 |
+| 부상 (중상) | 자기 신고 band 0 → 1: 체력 ≤ 70 | 무거운 일 ×0.35, 가벼운 일(H1 `LIGHT_WORK`) +0.15 | 신고 band 1 → 0: 체력 ≥ 75 | 5 의 간격(처치로 체력이 70 언저리를 오갈 때). 신고는 서명이 바뀔 때만. H1 `bandOf` 의 40 경계(≤ 40 이면 2)는 그대로 |
+| 부상 (위중·출혈) | 체력 ≤ 40, 또는 출혈 ≥ 0.06 && 체력 < 70 | H1 의 물러남. 대기 지점에서 처치 뒤 병원이 필요 없으면 가벼운 일로 돌아온다(H1 §3.6a — 사용자 결정 2026-11-15 "가벼운 일은 계속"). 그 뒤 `injured` 인 동안 H1 `LIGHT_WORK` 밖은 `fit` 0 | H1 (현장마다 한 번 — `a.lightBack`) | H1 |
 | 지구력 | 위험 실내 새 일: < 30. 하던 일: < 22 휴식(지금) | 새 일 금지 / 휴식 | 휴식은 40 까지 붙잡고 55 에서 끝(지금) | 30 / 22 / 40 의 간격. 지금 `brain` 의 휴식 계속 점수 0.96 그대로 |
 | 동요 | 피격, 6칸 안에서 동료가 쓰러지는 것을 봄, 6칸 안 폭발 — 동요 중이 아니고 끝난 뒤 10초가 지났을 때만 | `a.shaken = sim.t + 20 × (1.3 − composure)`(6~26초): 진입·위험 실내 ×0.6, 방법 `caution +0.2`, 저격·손 해체 금지(S23·S24) | 시간 | 동요 중에는 다시 걸리지 않는다(연장 없음). 끝난 뒤 10초 면역(`a.shakenOff`) |
 | 혼자 | 쓸 수 있는 짝이 없고 6칸 안 같은 부서 동료 0 | 위험 실내 금지(F04), 단독 진입 보류(P07), 흉기 거리 유지(P02) | 짝이 생김(`rebuddy`·동료 도착) | 판단 지점 기다림 상한 + 그 작업 `fit` 0 의 기억 30초(4.4 끝) |
@@ -1223,3 +1223,4 @@ npm run check                                                             # 단�
 - `PAIRS` 를 위해 `Responder.slot` 칸을 더하는 대안은 쓰지 않았다 — R1 의 명부 리터럴과 I2 의 이어받기 표를 함께 고쳐야 한다. 역할 쌍과 최소 인원 열로 같은 결과를 낸다.
 - "fit 이 배정을 바꿨다"를 '뽑힌 대원에게 중립 아닌 효과가 걸렸다'로 단순화하지 않고, `assign` 안에서 교본 전후의 1등을 비교하는 정의를 골랐다. 단순화하면 모든 다친 대원의 배정이 '쓰였다'가 되어 완료 조건 1 이 무의미해지고, 까닭 말이 결과를 바꾸지 않은 지시에도 붙는다. 비용은 같은 반복 안의 두 번째 최댓값뿐이다. 대원의 자체 판단은 비교할 1등이 없어 세지 않는다(2.7).
 - 무거운 시험·sweep 은 돌리지 않았다(이번 작업의 조건). 그래서 `npm run check` 에 더해질 시간은 숫자로 적지 않고, 0단계에서 재어 강제 교대 수를 정하는 규칙으로 적었다(9절).
+- **사용자 결정(2026-11-15): "가벼운 일은 계속"** — H1 이 걸을 수 있는 다친 대원(`injured`)에게 가벼운 일만 맡기게 정하면서, 가벼운 일 목록의 정본을 H1 의 `LIGHT_WORK`(`traffic`·`perimeter`·`negotiate`·`interview`·`hookup`, 안전 구역의 `treat`·`treatMate`) 하나로 맞췄다. 부상 줄 P12·F14·E11·G01 의 가산 목록을 그 이름으로 바꿨다 — 그래서 F14·G01 의 `clearRoad`, G01·E11 의 `load` 는 가산에서 빠지고(몸을 쓰는 일), G01 에 `negotiate`·안전 구역의 처치가 더해졌다. 분야별 감산(`×0.35`·`×0.6`·`×0.5`)은 그대로다. 고친 곳: 0절 3, 1절 연관 표의 H1 줄, 2.4 의 `crew` 사실 문단, 3.1·3.2·3.3·3.4 의 부상 줄, 3.6 등록 칸, 4.2 상태 표.

@@ -10,7 +10,7 @@
 
 **자기 파일**(새로): `src/sim/field/injury.ts`(공통 모델), `src/sim/field/rules/injury.ts`(세계 규칙), `src/sim/field/orders/injury.ts`(지휘 규칙 — 믿음만), `src/view/triage.ts`(중증도 색 한 곳), `src/ui/PersonCard.tsx`(구조 대상·용의자 정보창), `tests/injuries.test.ts`.
 **공용 파일 수정**: §12 의 표에 적힌 함수만, 가장 작은 조각으로(README §2).
-**건드리지 않는다**: `city.ts`, `cityPlan.ts`, `view/city/*`, `renderCity.ts`, `dispatch/*`(`pickUnit` 의 두 줄만 — §6.4. 그 밖의 배정은 `crewReady` 로 충분하다), `tests/sim.test.ts`, `README.md`, `CLAUDE.md`, `docs/ROADMAP.md`, `docs/DESIGN.md`.
+**건드리지 않는다**: `city.ts`, `cityPlan.ts`, `view/city/*`, `renderCity.ts`, `dispatch/*`(`pickUnit` 의 두 줄과 `firstResponder` 의 한 줄만 — §6.4. 그 밖의 배정은 `crewReady` 로 충분하다), `tests/sim.test.ts`, `README.md`, `CLAUDE.md`, `docs/ROADMAP.md`, `docs/DESIGN.md`.
 
 ## 원칙
 
@@ -435,6 +435,7 @@ a.status === 'withdrawn' && r.status === 'injured' && r.care === undefined && !n
 
 - 다친 순간은 지금처럼 물러난다(§2.5 의 물러남 — 체력 40 아래 또는 출혈). 체력 40 아래의 후퇴는 대기 지점에 닿을 때까지 이어 간다(Z1 "다친 대원의 후퇴는 끝까지" — `brain.ts` 의 붙잡기 그대로). 닿으면 `withdrawn`(지금).
 - **돌아오는 조건**(`sceneManager.agentHealth` — 상태 전이는 이 한 곳에서, §3.2): `a.status === 'withdrawn'` 이고, `r.status === 'injured'`·`r.care === undefined`·`!needsHospital(r)`(자기 몸 — 출혈이 0.01 아래로 멎었고 체력 40 초과, 쓰러진 적 없음)이고, 그 대원을 대상으로 한 `active` `treatMate` 가 없고, 이 현장에서 아직 돌아온 적이 없으면(`!a.lightBack`) → `a.status = 'active'; a.lightBack = true; a.task = null; a.label = '부상 — 가벼운 일'`, 자기 보고 `learnQuiet(sim, a, mateFact(sim, s, a, 'light', r.name, 0))` 바로 뒤에 같은 자리에서 `flushOutbox(sim, s, a)`, 기록 `emit({ inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: '처치 받음. 가벼운 임무로 복귀합니다.' })`(상태를 바꾸는 그 자리). 대개 처치(§3.4-2 — 체력 +8q, 출혈 × (1 − 0.9q)) 뒤에 이 조건이 맞는다. 병원이 필요한 대원(체력 40 이하·출혈 0.01 이상·쓰러졌던 적 있음)은 `withdrawn` 으로 남아 후송을 기다리고, 그 교대에 돌아오지 않는다. 부대가 떠날 때 병원이 필요 없는 다친 대원은 부대와 함께 타고(5번 블록은 `needsHospital` 인 사람만 `aboard` 에 넣는다) 다음 현장에 내린다(§3.6).
+- **처치한 뒤 병원이 필요 없으면 태우지 않는다**: `treatMate` 실행부(§3.4-2)는 처치를 마친 뒤 대상이 `needsHospital` 이 아니면(실행부는 진실을 읽어도 된다) `w.prop` 이 있어도 차로 끌고 가지 않고, `learn(sim, a, mateFact(…, d), true, true)` 로 강제 보고한 뒤 끝낸다. 그래야 그 대원이 위의 조건으로 돌아온다(안 그러면 병원이 필요 없는 대원을 태워 그 교대에서 빼게 된다).
 - **고른 쪽**: "대기 지점에 닿은 뒤 가벼운 일을 맡는다". "그 교대 동안 쉰다"는 쓰지 않는다 — 다쳐도 부대가 멈추지 않는다는 사용자 뜻에 맞는 쪽이다. 병원이 필요 없는 사람만 돌아오므로 Z1 의 붙잡기(체력 40 아래)와 부딪치지 않는다 — 돌아온 대원은 체력 40 초과·출혈 없음이라 `dangerScore` 의 물러남 조건에 걸리지 않는다.
 - **왕복을 막는다**: 다시 물러나면(체력 40 아래·출혈) 그 현장에서는 다시 돌아오지 않는다(`a.lightBack` — CLAUDE.md "쉬는 대원의 왕복"). 다음 현장에서는 새 개체라 다시 내린다.
 - **지휘관 쪽**: `mate` 사실이 `'light'` 인 동료는 `treatMate`·`rescueMate`·`outstanding` 의 `mates` 대상이 아니다. `orders/injury.ts` 는 `'light'` 면 열린 `treatMate` 를 거둔다 — 일하는 대원을 구급대원이 쫓아다니지 않게(R3 §2.4 가 `crew` 사실을 따로 둔 것과 같은 까닭). `mateNeedsHospital` 은 값으로 이미 거짓이다(band ≤ 1, 출혈·쓰러짐 없음). 지휘관이 그 대원에게 주는 일은 `fitFor` 가 가벼운 일로 거른다(§2.5).
@@ -603,12 +604,13 @@ CLAUDE.md "새 임무 종류" 절차대로: `types.ts` `WorkKind` → `agents.ts
 
 ### 6.4 관제
 
-`dispatch/*` 는 `pickUnit` 의 두 줄만 고친다(§3.6 의 사용자 결정 둘):
+`dispatch/*` 는 세 줄만 고친다(§3.6 의 사용자 결정 둘):
 
 1. 감점 줄 `crewReady(sim, u) < u.crew.length`(R1 뒤 `< fieldCrew(sim, u).length`) → `crewOk(sim, u) < fieldCrew(sim, u).length` — 온전한 대원이 정원보다 적으면 −18 한 번(지금의 뜻 그대로). `crewReady` 가 걸을 수 있는 다친 대원도 세게 되었으므로 이 줄만 `crewOk` 로 옮긴다.
 2. 새 줄 `if (crewOk(sim, u) === 0 && HEAVY_NEED.has(key)) score -= 25;` — 걸을 수 있는 다친 대원만 남은 부대는 가벼운 일만 할 수 있으므로 무거운 일이 필요한 수요(`HEAVY_NEED` = `suppression`·`rescue`·`ems`·`tactical`·`search`·`eod`)에 1순위로 가지 않는다. 빼지 않고 점수만 낮춘다 — 다른 후보가 없으면 그래도 간다(다쳐도 부대가 멈추지 않는다). `law`·`traffic` 은 봉쇄·협상·면담·교통 통제로 할 수 있어 더 깎지 않는다. 관제가 읽는 것은 자기 조직의 대원 상태(`crewOk` — 명부의 `status`)뿐이다(정보 격리 — 현장의 진실을 읽지 않는다).
+3. 선착 대응(`firstResponder`)의 후보 건너뛰기 `crewReady(sim, u) === 0` → `crewOk(sim, u) === 0` — 선착 대응 부대는 구급차보다 먼저 가서 집 안의 환자를 처치하는데, 그것은 가벼운 일(안전 구역의 처치 보조)이 아니다. 같은 함수의 `spare`(남는 소방 부대가 있나)는 `crewReady` 그대로 둔다.
 
-나머지 두 줄(`crewReady === 0` 건너뛰기, 같은 분야의 남은 부대 수)은 그대로 `crewReady` 를 본다 — 걸을 수 있는 대원이 하나도 없는 부대(전원 순직·쓰러짐·후송)만 빠진다. 복귀 중인 부대도 마찬가지다. 순직 대원은 `status === 'down'` 이라 어디에도 세지 않는다. '대원 부상'·'부상 대원 후송' 요청은 지금의 지원 요청 경로로 간다.
+나머지 자리(`pickUnit` 의 `crewReady === 0` 건너뛰기, 같은 분야의 남은 부대 수)는 그대로 `crewReady` 를 본다 — 걸을 수 있는 대원이 하나도 없는 부대(전원 순직·쓰러짐·후송)만 빠진다. 복귀 중인 부대도 마찬가지다. 순직 대원은 `status === 'down'` 이라 어디에도 세지 않는다. '대원 부상'·'부상 대원 후송' 요청은 지금의 지원 요청 경로로 간다.
 
 ---
 
@@ -779,7 +781,7 @@ for f in armed/shooter armed/hostage armed/siege armed/bomb fire/arson; do npx t
 | **3. 구조 대상** | `blast` 를 고르게(구조 대상 `immobile`·`bleed`), 2차 붕괴 갇힘(+ `carry` 의 강제 보고), 천장 붕괴 원인 crush, 구출 중 사고, 걷던 사람이 멈춤, `outstanding(a, now)` 의 오래된 `mobile`, **사건이 끝나면 구조 대상의 악화·사망 판정을 멈춤**(§2.6), 사망 문구에 원인, `waterRescue` 의 `bleedCause = 'exposure'`, 해일의 `hurtCas`, 박힌 조사 `josa()` | 그렇다 — sweep 비교 |
 | **4a-1. 대원 — 모델** (이 커밋에서는 `withdrawn` 대원의 출혈을 멈춰 둔다 — 후송이 4b 에서 생기므로, 안 그러면 안전 구역에서 기다리다 숨진다. 4b 에서 §2.6 대로 푼다) | `'RESPONDER_KILLED'` 와 `PROBLEM_LABEL`·`order`, `hurtResponder`(방호는 §2.4 "지금" 열 — **R1 이 합쳐져 있으면 "R1 이 있으면" 열**(그것이 그때의 지금 식이다. 부서 계수로 되돌리지 않는다), `a.hpTick` 문턱, 출혈·상한), `tickScene` 의 `hpTick` 적기, `agentHealth` 개편(종료 뒤 멈춤, 순직, `tDown ??=`, 부상 조건, 자기 보고), `hurtF`, `dangerScore`·`retreat` 의 출혈 조건, 흉기·맨손 기록, `blast`·`tickLane` 의 숨진 대원 제외, `rescueMate`(숨진 동료 0.55, `hot`·`fireRisk`, 강제 보고, 물 칸 대기), `mateFact`·`significant`·`perceive`, 4번 블록 문구, `outstanding` 의 `mates`, `difficulty.ts` 의 `injuryMul` | 그렇다 |
 | **4a-2. 대원 — 새 방호값** | §2.4 "새로" 열(화학의 toxic, 폭발물 처리반·경찰의 blast, 자상, crush 의 경찰. R1 이 있으면 "R1 이 있으면" 열의 같은 몫 — §2.4). 이 커밋만으로 sweep 을 따로 잰다 | 그렇다 |
-| **4b. 대원 — 후송** | `'treatMate'` 와 `workLabel`·`fitFor`, `executor` case, `orders/injury.ts` 의 처치·후송·20초 규칙(대상당 한 항목, 맡을 사람 없으면 거둠), `Unit.aboard`·`firstLoadAt`, 자리 셈, `canCarryPatients`·`manageAmbulances`(진실 읽기 둘 제거, `aboard` 만 태운 차의 출발), 5번 블록(병원행, 종료 시 `boardOrder`, 고아 부대 안전장치), 병원 인계(`patientsIncident` 블록 밖), `crewReady`(걸을 수 있는 대원)·`crewOk`·`arrive` 문구(전원 순직·모두 후송·걸을 수 있는 대원 없음), `unitArrived` 가 걸을 수 있는 다친 대원을 내림, `fitFor` 의 `LIGHT_WORK`, 가벼운 일로 복귀(§3.6a)와 `mate` 의 `'light'`, `pickUnit` 의 두 줄(§6.4), T6 시험(§11-15) | 그렇다 |
+| **4b. 대원 — 후송** | `'treatMate'` 와 `workLabel`·`fitFor`, `executor` case, `orders/injury.ts` 의 처치·후송·20초 규칙(대상당 한 항목, 맡을 사람 없으면 거둠), `Unit.aboard`·`firstLoadAt`, 자리 셈, `canCarryPatients`·`manageAmbulances`(진실 읽기 둘 제거, `aboard` 만 태운 차의 출발), 5번 블록(병원행, 종료 시 `boardOrder`, 고아 부대 안전장치), 병원 인계(`patientsIncident` 블록 밖), `crewReady`(걸을 수 있는 대원)·`crewOk`·`arrive` 문구(전원 순직·모두 후송·걸을 수 있는 대원 없음), `unitArrived` 가 걸을 수 있는 다친 대원을 내림, `fitFor` 의 `LIGHT_WORK`, 가벼운 일로 복귀(§3.6a)와 `mate` 의 `'light'`, 관제의 세 줄(§6.4), T6 시험(§11-15) | 그렇다 |
 | **4c. 대원 — 새 규칙** | 열 탈진, 잔해 바닥 추락(`lastTile`·`fellOnce`), 덮쳐 제압할 때의 몸싸움 | 그렇다 |
 | **5. 용의자** | `'treatSuspect'`·`'SUSPECT_DIED'` 와 `workLabel`·`fitFor`·`PROBLEM_LABEL`·`order`, `hurtHostile`(용의자 문턱, 쓰러짐 15 를 그 안에서 바로), 출혈·사망(`rules/injury.ts`), 폭발(`blast`)·불·연기·가스 피해, `treatSuspect`, `hosFact(…, d)` 칸, 구급차 이송, 자해 경로(`SELF_HARM = 0` — 사용자 결정으로 끈 채, §4.5), (선택) 차로에서 치임 | 그렇다 |
 | **6. 판정·보고서** | `evaluate` 의 점수·문장, `IncidentResult`·`ShiftReport` 의 새 칸, 요약 줄, `roster`, 보고서 화면 타일·목록, `sweep.ts` 집계 | 판정 분포가 바뀐다 |
@@ -868,7 +870,7 @@ for (const [seed, d, f] of cases) { const sim = new Sim(seed, parseDifficulty(d)
 | | `retreat`·`rescueMate` | 출혈 조건, 자기 보고 'safe' + `flushOutbox`, 숨진 동료 수습, 강제 보고, 물 칸 대기 | 4a |
 | | `load` | `u.firstLoadAt ??= sim.t` | 4b |
 | | `engage`(① 분기)·`arrest` | 덮쳐 제압할 때의 몸싸움(`injuryRng(…, 'fight')`) | 4c |
-| | 새 case `treatMate`·`treatSuspect` | §3.4·§4.3 (대상 좌표 끌기, 고아 부대 `release`, `firstLoadAt`) | 4b·5 |
+| | 새 case `treatMate`·`treatSuspect` | §3.4·§4.3 (대상 좌표 끌기, 고아 부대 `release`, `firstLoadAt`), 처치 뒤 병원이 필요 없는 대원은 태우지 않음(§3.6a) | 4b·5 |
 | `field/agents.ts` | `staminaF` | `× hurtF(r)` | 4a |
 | | 새 `seatsUsed`(R1 `seatsOf` 옆) | 쓰인 자리 = `patients` + 다른 부대 대원·용의자의 `aboard`(§3.4-5). R1 의 비교 자리 넷이 이것을 본다 | 4b |
 | | `casFact` 옆 | `mateFact(sim, s, b, status, src, d)` | 4a |
@@ -881,7 +883,7 @@ for (const [seed, d, f] of cases) { const sim = new Sim(seed, parseDifficulty(d)
 | `field/rules/disaster.ts` | 해일 | drown 기록(1) → `hurtCas`(하한 8 을 지키는 양)·`hurtResponder`(3·4a) | 1·3·4a |
 | `field/scenes/index.ts` | import | `../rules/injury`, `../orders/injury` | 1 |
 | `sim/resources.ts` | `crewReady`·새 `crewOk` | `crewReady` = 걸을 수 있는 대원(온전한 대원 + 걸을 수 있는 다친 대원 — 0 이면 배정에서 빠진다), `crewOk` = 온전한 대원(§3.6 사용자 결정 둘) | 4b |
-| `dispatch/dispatcher.ts` | `pickUnit` | 감점 줄을 `crewOk < fieldCrew.length` 로, 걸을 수 있는 다친 대원만 남은 부대의 무거운 수요 −25(§6.4). 그 밖은 고치지 않는다 | 4b |
+| `dispatch/dispatcher.ts` | `pickUnit`·`firstResponder` | 감점 줄을 `crewOk < fieldCrew.length` 로, 걸을 수 있는 다친 대원만 남은 부대의 무거운 수요 −25, 선착 대응 후보는 `crewOk > 0`(§6.4). 그 밖은 고치지 않는다 | 4b |
 | | `tickUnits` 의 `hospital` | `aboard` 인계와 `u.aboard = []`·`firstLoadAt` 지우기 — `patientsIncident` 블록 **밖에서** | 4b |
 | | `arrive` 의 `returning` | `oos` 문구를 까닭(전원 순직·남은 대원 모두 후송·걸을 수 있는 대원 없음)에 따라, `causes`·`u.oosEv`. '대원 전원 부상으로 운용 중단.' 은 없앤다 | 4b |
 | `scripts/metrics.ts` | `PHRASE.T4`·`PHRASE.T6` | T4 는 새 인계 문구를 잡게 넓히고(§3.4-4), T6 은 새 운용 중단 문구 셋으로 바꾼다(§3.6). `tests/causality.test.ts` 의 T6 사례를 고치고 통과(§11-15) | 4b |
@@ -963,6 +965,6 @@ for (const [seed, d, f] of cases) { const sim = new Sim(seed, parseDifficulty(d)
 - **정합성 점검(설계서 열 개를 맞춘 뒤)에서 고친 것**: 결원 기준 `minCrew` → R1 의 `minField`(내리는 자리 단위)와 최소 편성 부대의 결원 결정(§3.6·§9.1·§9.3-6·시험 12 — 뒤의 사용자 최종 결정으로 둘 다 없어졌다. H1 은 `minField` 를 더는 쓰지 않는다), `protection`·`treatEffect` 의 인자, `hurtCas` 의 `causeEvent`, 객체 모양 문단(§2.1), 출발 문구의 병원 이름·`PHRASE.T4`·`T6`·`u.oosEv`, `seatsUsed`, §3.7 의 두 줄(I2 값), B1 나머지의 네 피해 자리(§5.3), X6·G4·G5·R2·R3 와의 경계 문장.
 - **사용자 결정(2026-11-15, "전부 추천대로")** — 열려 있던 질문 가운데 자해를 추천안대로 확정해 적었다: 자해는 끈다(`SELF_HARM = 0` — §2.2·§4.5·§10·§12.2-8·§12.3). 이때 결원 규칙도 (가) "최소 편성 부대는 부상 한 명으로 운용 중단"으로 확정됐다고 적었으나 잘못 적은 것이다 — 결원 규칙은 아래 줄의 사용자 최종 결정을 따른다. 같은 날의 다른 결정(폭파 진입은 R2 에 실제 방법으로)은 R2 §4.2a 에 있고, H1 에는 연관 표의 R2 줄 한 구절(원인 `blast`)만 더했다.
 - **사용자 최종 결정(2026-11-15) — 결원 규칙**: "운용을 멈추는 건 그 부대 전부 죽었을 때로. 하나라도 다치거나 죽으면 멈추는 건 너무 그렇다." 부대의 운용 중단은 그 부대 대원이 전부 숨졌을 때만이고, 다치거나 일부가 숨진 부대는 −18 감점만 받고 계속 출동한다. 모두 후송돼 빈 부대가 빠지는 것은 규칙이 아니라 사람이 없어서다. 앞서 적혀 있던 두 안 — (가) 최소 편성 부대(`minField` 미만)는 부상 한 명으로 운용 중단(§3.6 에 '사용자 확정'으로 잘못 적혀 있었다), (나) 순직 대원이 하나라도 있으면 중단(§9.3-6 의 대안·로드맵에 한때 적힌 안) — 은 둘 다 쓰지 않는다. 고친 곳: 연관 표의 R1 줄(H1 은 `minField` 를 쓰지 않는다), §3.6, §6.4, §9.1·§9.2 의 지표(목표 → 보고 지표), §9.3-6(대안 손잡이를 지웠다), §10 의 4b, 시험 12, §12.1·§12.2-5·§12.3.
-- **사용자 결정(2026-11-15): "가벼운 일은 계속" — 다친 대원의 일**: 걸을 수 있는 다친 대원(`injured` — 쓰러지지 않았고 후송되지 않은 사람)은 계속 부대에 타고 다음 현장에도 내리되 가벼운 일만 맡는다(`LIGHT_WORK` — 교통 통제·출입구 봉쇄·협상·목격자 면담·바깥의 소화전 연결·안전 구역의 처치 보조). 다친 현장에서는 물러났다가 병원이 필요 없으면 대기 지점에서 가벼운 일로 돌아온다("그 교대 동안 쉰다" 안은 쓰지 않았다 — 다쳐도 부대가 멈추지 않는다는 뜻에 맞춰). 그래서 부대가 출동에서 빠지는 것은 걸을 수 있는 대원이 하나도 없을 때(전원 순직·쓰러짐·후송)뿐이고, '대원 전원 부상으로 운용 중단.' 갈래는 없앴다. `crewReady` 는 걸을 수 있는 대원 수, `crewOk` 는 온전한 대원 수가 되었고, 관제는 `pickUnit` 의 두 줄만 고친다(감점은 `crewOk` 로 지금 뜻 그대로, 다친 대원만 남은 부대는 무거운 수요에서 −25). 고친 곳: 머리의 "건드리지 않는다", 연관 표 R1 줄, §2.1(`MateBelief` 의 `'light'`, `FieldAgent.lightBack`), §2.5 표, §2.7 `LIGHT_WORK`, §3.2, §3.5, §3.6·새 §3.6a, §6.4, §9.1·§9.2, §10 의 4b, 시험 12(③ 전원이 다쳤지만 걸을 수 있는 부대, ⑥ 가벼운 일로 복귀)·새 시험 15(`tests/causality.test.ts` 의 T6), §12.1·§12.2-12·§12.3. 같은 목록을 R3 의 부상 줄이, `risk > 0` 방법 금지를 R2 §3.4 가 함께 적었다.
+- **사용자 결정(2026-11-15): "가벼운 일은 계속" — 다친 대원의 일**: 걸을 수 있는 다친 대원(`injured` — 쓰러지지 않았고 후송되지 않은 사람)은 계속 부대에 타고 다음 현장에도 내리되 가벼운 일만 맡는다(`LIGHT_WORK` — 교통 통제·출입구 봉쇄·협상·목격자 면담·바깥의 소화전 연결·안전 구역의 처치 보조). 다친 현장에서는 물러났다가 병원이 필요 없으면 대기 지점에서 가벼운 일로 돌아온다("그 교대 동안 쉰다" 안은 쓰지 않았다 — 다쳐도 부대가 멈추지 않는다는 뜻에 맞춰). 그래서 부대가 출동에서 빠지는 것은 걸을 수 있는 대원이 하나도 없을 때(전원 순직·쓰러짐·후송)뿐이고, '대원 전원 부상으로 운용 중단.' 갈래는 없앴다. `crewReady` 는 걸을 수 있는 대원 수, `crewOk` 는 온전한 대원 수가 되었고, 관제는 세 줄만 고친다(감점은 `crewOk` 로 지금 뜻 그대로, 다친 대원만 남은 부대는 무거운 수요에서 −25, 선착 대응은 온전한 대원이 있는 부대만). 고친 곳: 머리의 "건드리지 않는다", 연관 표 R1 줄, §2.1(`MateBelief` 의 `'light'`, `FieldAgent.lightBack`), §2.5 표, §2.7 `LIGHT_WORK`, §3.2, §3.5, §3.6·새 §3.6a, §6.4, §9.1·§9.2, §10 의 4b, 시험 12(③ 전원이 다쳤지만 걸을 수 있는 부대, ⑥ 가벼운 일로 복귀)·새 시험 15(`tests/causality.test.ts` 의 T6), §12.1·§12.2-12·§12.3. 같은 목록을 R3 의 부상 줄이, `risk > 0` 방법 금지를 R2 §3.4 가 함께 적었다.
 - **수치의 출처** — "대원 피격 2건·RESPONDER_HURT 0건"(보통·`armed/shooter` 각 3교대)은 검토의 작은 측정을 옮겼다. 이번 수정에서는 다른 작업이 CPU 를 쓰고 있어 sweep 을 다시 돌리지 않았다. "쓰러질 때 이미 0 이하 78%(48~78 에서 시작하면 69%)"는 몬테카를로로 다시 계산해 확인했다.
 

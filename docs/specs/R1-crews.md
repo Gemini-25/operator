@@ -352,7 +352,7 @@ export const AIR_KIND: Set<UnitKind>;                                    // new 
   - 경험 범위: 0번 자리는 지금의 선임 범위(.55~.9), 그 밖의 모든 자리는 지금의 후임 범위(.15~.55). 역할의 `exp` 는 쓰지 않는다(지원 종류에는 조종사가 없다).
   - 이름은 `AID_NAMES[(sim.aidUsed * 4 + k) % AID_NAMES.length]`. 지원 종류의 최소 인원은 많아야 4명(구조 공작차)이고 지원은 교대당 많아야 5회이므로 **`AID_NAMES` 를 20개 이상으로 늘린다**(지금 16개 — 그대로면 다섯째 지원의 대원이 첫째 지원과 같은 이름이 된다). 더할 가상의 이름 예: `국태린 마하겸 도은결 위서담`(`NAMES`·`EXTRA_NAMES`·지금의 `AID_NAMES` 와 겹치지 않는다). 테스트 ⑦ 이 한 교대 안에서 이름이 겹치지 않는지 본다.
   - `AID_KIND` 는 그대로(헬기·구조정·특공대는 오지 않는다).
-- `crewReady(sim, u)` = `fieldCrew` 가운데 `status === 'ok'` 인 수. `crewNames` 는 `fieldCrew` 만.
+- `crewReady(sim, u)` = `fieldCrew` 가운데 `status === 'ok'` 인 수. `crewNames` 는 `fieldCrew` 만. (H1 이 이 값을 `crewOk` 로 옮기고 `crewReady` 를 걸을 수 있는 대원 수 — 걸을 수 있는 다친 대원 포함 — 로 다시 정한다. 세는 대상은 그대로 `fieldCrew` — H1 §3.6, 사용자 결정 2026-11-15 "가벼운 일은 계속".)
 - 헬기가 뜨지 못하는 날씨: `u.grounded` 는 `createRoster` 에서 정하지만 **기록은 `engine.ts` 생성자에서 교대 시작 `emit` 바로 뒤에** 한 줄 남긴다(`createRoster` 는 교대 시작 기록보다 먼저 불린다 — `engine.ts` 의 `createRoster(this)` 가 `emit(… '교대 시작 …')` 보다 앞이다). `if (this.units.some((u) => u.grounded === 'fog')) emit(this, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 1, text: '안개로 오늘 헬기는 뜨지 못합니다.' })`, 밤이면 `'의료 헬기는 야간에 운항하지 않습니다.'`. 교대 시작 기록의 문구("가용 부대 N대, 대원 M명")는 그대로.
 
 ---
@@ -501,7 +501,7 @@ if (u.air) { const m = airFit(sim, u, I, key); if (m <= 0) continue; fit *= m; }
 - `recomputeUnmet` 은 고치지 않는다(헬기의 `caps` 가 맡는 수요만 기준을 넘도록 좁게 잡았다).
 - **단계 4 와 단계 5**: 단계 4 에서는 경찰 헬기를 추격전에만 보낸다(위 표의 첫 줄). 경찰 헬기는 `caps.search 1.6` 이라 배정되면 `recomputeUnmet`·`countUnits(search)` 를 채우는데, 상공의 일(관측)은 단계 5 에야 생긴다. 단계 4 에 무장·실종의 `search` 를 열면 그 칸을 걸어서 수색하던 소방 헬기 대원 둘 대신 아무 일도 하지 않는 헬기가 들어가 수색 인력이 한 팀 준 것처럼 돈다.
 - 소방 헬기가 받던 "구급 60초 대기" 예외는 의료 헬기로 옮긴다(소방 헬기의 `ems` 는 0.4 로 `MINCAP` 밑이다).
-- `pickUnit` 의 다른 손질: 다친 대원 감점 `crewReady < crew.length` → `crewReady < fieldCrew.length`(조종사 때문에 늘 감점되지 않게), 평균 체력은 `fieldCrew` 로. "같은 부서의 마지막 가용 부대" 감점(`others === 0 && sev < 1.9`)은 `others` 를 셀 때 `!q.air` 를 더하고 헬기 자신에게는 걸지 않는다 — 경찰·의료 헬기가 같은 부서의 "남은 부대"로 세어지면 지상 부대를 아껴 두는 판단이 흐려진다. 장비 가산 `kitBonus` — 수난 사고의 `rescue` 수요에 `rope`·`ring` 대원이 있는 부대 +12, 붕괴의 `rescue` 수요에 `searchKit` 대원이 있는 부대 +8(숨은 고장은 모른다 — `hasKit` 을 쓴다).
+- `pickUnit` 의 다른 손질: 다친 대원 감점 `crewReady < crew.length` → `crewReady < fieldCrew.length`(조종사 때문에 늘 감점되지 않게 — H1 이 이 줄을 `crewOk < fieldCrew.length` 로 옮긴다, H1 §6.4), 평균 체력은 `fieldCrew` 로. "같은 부서의 마지막 가용 부대" 감점(`others === 0 && sev < 1.9`)은 `others` 를 셀 때 `!q.air` 를 더하고 헬기 자신에게는 걸지 않는다 — 경찰·의료 헬기가 같은 부서의 "남은 부대"로 세어지면 지상 부대를 아껴 두는 판단이 흐려진다. 장비 가산 `kitBonus` — 수난 사고의 `rescue` 수요에 `rope`·`ring` 대원이 있는 부대 +12, 붕괴의 `rescue` 수요에 `searchKit` 대원이 있는 부대 +8(숨은 고장은 모른다 — `hasKit` 을 쓴다).
 - `sendUnit` 에서 헬기면 `u.airNeed = key` 를 적는다(7.4 `airRtb` 가 그 수요를 되돌린다).
 - 출동 횟수: `resources.dispatchUnit` 에서 `u.air` 면 `sim.airStats.sorties++`, `byKind[u.kind]++`.
 

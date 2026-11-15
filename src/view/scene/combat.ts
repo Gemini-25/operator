@@ -45,9 +45,13 @@ export function originOf(cv: CombatView, f: Fx): { x: number; y: number } {
 }
 const sideOf = (f: Fx): 0 | 1 => (f.c?.side ?? (f.color === '#ff8a5c' ? 1 : 0)) as 0 | 1;
 const throwOf = (f: Fx): number => (f.c && f.c.ox !== undefined ? 0.34 : 0);
-/** 사격의 선: 총구(칸)와 탄착점, 방향, 총구~탄착 거리, 머리의 도착 시간 */
+/**
+ * 사격의 선: 총구(칸)와 탄착점, 방향, 총구~탄착 거리, 머리의 도착 시간.
+ * 선은 기록의 자리(쏜 순간의 자리 f.x, f.y)에서 탄착점까지다 — 시뮬레이션의 탄도(damage.fireShot)와 같은 선분이라, 그 위의 창이 깨지고 끝의 칸이 탄을 멈춘 칸이다.
+ * 쏜 사람이 그 뒤에 움직여도 선은 따라가지 않는다(따라가면 배속이 높을 때 선이 깨진 창에서 벗어난다).
+ */
 function shotLine(cv: CombatView, e: FxEntry): { mx: number; my: number; ix: number; iy: number; ux: number; uy: number; D: number; fly: number; o: { x: number; y: number } } {
-  const f = e.f!, o = originOf(cv, f), imp = impactOf(f);
+  const f = e.f!, o = { x: f.x, y: f.y }, imp = impactOf(f);
   let ux = imp.x - o.x, uy = imp.y - o.y;
   const d0 = Math.hypot(ux, uy) || 1; ux /= d0; uy /= d0;
   const ml = f.c ? Math.min(muzzleLen(f), d0 * 0.5) : 0.25;
@@ -457,7 +461,7 @@ function impact(cv: CombatView, e: FxEntry): void {
   } else if (ia < 0.5) {
     const k = ia / 0.5, e2 = easeOut(k);
     const door = c.stop === 'door';
-    const tx = Math.round(Ls.ix), ty = Math.round(Ls.iy);
+    const tx = Math.round(Ls.ix + Ls.ux * 0.001), ty = Math.round(Ls.iy + Ls.uy * 0.001);      // 탄착점은 그 칸에 들어서는 가장자리: 탄이 나아가던 쪽으로 조금 들어가 칸을 고른다
     const cols = door ? ['#b98d56', '#7a5a36'] : rubbleColors(s.decor[ty * s.w + tx] ?? 0, tx, ty);
     const d0 = ts * (door ? 0.5 : 0.7) * (0.6 + 0.6 * e2); g.globalAlpha = 0.45 * (1 - k); g.drawImage(sp.puff, x - d0 / 2, y - d0 / 2, d0, d0);
     const n = door ? 4 : 5;

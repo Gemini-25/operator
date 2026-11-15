@@ -27,7 +27,8 @@ export type SysOf = SystemId | 'origin' | 'none';
 export const BASE: ReadonlySet<SystemId> = new Set<SystemId>(['call', 'dispatch', 'field']);
 
 /** Needs 의 여덟 열쇠 (I.unmet 의 합을 객체를 훑지 않고 구한다) */
-const NEED_KEYS: readonly (keyof Needs)[] = ['suppression', 'rescue', 'ems', 'law', 'tactical', 'search', 'traffic', 'eod'];
+const NEED_KEYS: readonly (keyof Needs)[] = ['suppression', 'rescue', 'ems', 'law', 'tactical', 'search', 'traffic', 'eod',
+  'utilPower', 'utilGas', 'utilWater', 'tow', 'capture'];      // (N8 §5.3.5) 빠뜨리면 복구반만 기다리는 사건이 '수요 0 → 잊힘'으로 잡혀 관문이 깨진다
 export function unmetSum(I: { unmet: Partial<Needs> }): number { let n = 0; for (const k of NEED_KEYS) n += I.unmet[k] ?? 0; return n; }
 
 // ───────────────────────── 시스템 대응표 (§2.3) ─────────────────────────

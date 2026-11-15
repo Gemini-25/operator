@@ -12,9 +12,11 @@ import type { Claim, Incident, Needs, Problem, RadioMsg, Scene, Unit } from '../
 import { TYPE_NAME, fmtSec, josa } from '../util';
 import { assess, emptyNeeds, needsText, sevName } from './analyst';
 
-const ORDER: (keyof Needs)[] = ['eod', 'tactical', 'law', 'suppression', 'rescue', 'ems', 'traffic', 'search'];
-const MINCAP: Record<keyof Needs, number> = { suppression: 0.7, rescue: 0.5, ems: 0.7, law: 0.5, tactical: 0.9, search: 0.3, traffic: 0.4, eod: 0.9 };
-const NEED_LABEL: Record<keyof Needs, string> = { suppression: '진압', rescue: '구조', ems: '구급', law: '경찰', tactical: '경찰 기동', search: '수색', traffic: '교통 통제', eod: '폭발물 처리' };
+const ORDER: (keyof Needs)[] = ['eod', 'tactical', 'law', 'suppression', 'rescue', 'ems', 'traffic', 'search',
+  'utilPower', 'utilGas', 'utilWater', 'tow', 'capture'];      // (N8 §5.3.5) 새 수요 다섯은 끝에 — 기존 배정 순서 그대로
+const MINCAP: Record<keyof Needs, number> = { suppression: 0.7, rescue: 0.5, ems: 0.7, law: 0.5, tactical: 0.9, search: 0.3, traffic: 0.4, eod: 0.9, utilPower: 0.7, utilGas: 0.7, utilWater: 0.7, tow: 0.7, capture: 0.7 };
+const NEED_LABEL: Record<keyof Needs, string> = { suppression: '진압', rescue: '구조', ems: '구급', law: '경찰', tactical: '경찰 기동', search: '수색', traffic: '교통 통제', eod: '폭발물 처리',
+  utilPower: '전력 복구', utilGas: '가스 복구', utilWater: '수도 복구', tow: '견인', capture: '동물 포획' };
 
 /** 평가된 수요에서 이미 배정된 부대가 덮는 부분을 빼고 남은 수요를 계산한다. */
 export function recomputeUnmet(sim: Sim, I: Incident): void {

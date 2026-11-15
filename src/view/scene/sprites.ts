@@ -64,7 +64,12 @@ function baseLook(dept: Dept, kind: UnitKind, seed: number): PersonLook {
   if (dept === 'fire') {
     const rescue = kind === 'rescue' || kind === 'heli' || kind === 'boat';      // 'heli' = 소방 헬기의 항공 구조대원 (경찰·의료 헬기의 대원은 부서가 다르다)
     if (kind === 'hazmat') return { ...baseLook('fire', 'engine', seed), top: '#cfc23a', arm: '#c2b534', leg: '#b3a72e', trimCol: '#3a3f45' };
+    if (kind === 'animalCtl') return { top: '#6b6a3a', trim: 'stripes', trimCol: '#e6f04a', arm: '#62612f', hand: '#2a2d31', leg: '#55542e', shoe: '#1c1e21', head: 'cap', headCol: '#4a4a2a', headCol2: '#e6f04a', skin, pack: 'none' };      // (N8) 동물 포획팀: 올리브 작업복
     return { top: rescue ? '#d9742a' : '#b08f3e', trim: 'stripes', trimCol: '#e6f04a', arm: rescue ? '#c96824' : '#a2833a', hand: '#2a2d31', leg: rescue ? '#b85e20' : '#8f7434', shoe: '#1c1e21', head: 'helmet', headCol: rescue ? '#f2f2ee' : '#d63a2c', headCol2: '#f4d24a', skin, pack: 'scba', packCol: '#e9c53c' };
+  }
+  if (dept === 'civil') {
+    // (N8) 유관 기관: 남색 작업복에 형광 조끼, 노란 안전모, 장갑 (전에는 모르는 부서가 경찰 겉모습으로 떨어졌다)
+    return { top: '#3b4a5a', trim: 'vest', trimCol: '#c8f03a', arm: '#3b4a5a', hand: '#2a2d31', leg: '#2c3540', shoe: '#1c1e21', head: 'helmet', headCol: '#f2c43a', headCol2: '#f4f4ee', skin, pack: 'none' };
   }
   if (dept === 'ems') {
     return { top: '#27a583', trim: 'cross', trimCol: '#ffffff', arm: '#e9eef2', hand: '#7fc0ee', leg: '#28353f', shoe: '#1c1e21', head: 'hair', headCol: HAIR[(hash2(seed, 2) * HAIR.length) | 0], skin, pack: 'bag', packCol: '#d8423a' };
@@ -73,6 +78,8 @@ function baseLook(dept: Dept, kind: UnitKind, seed: number): PersonLook {
   if (kind === 'tactical' || kind === 'swat') {
     return { top: '#2c323b', trim: 'vest', trimCol: '#191d23', arm: '#2c323b', hand: '#15181c', leg: '#262b33', shoe: '#121416', head: 'tac', headCol: '#1f242b', headCol2: '#5aa9ff', skin, pack: 'none' };
   }
+  if (kind === 'detective') return { top: '#4a4e57', trim: 'none', arm: '#4a4e57', hand: skin, leg: '#2a2d33', shoe: '#16181b', head: 'hair', headCol: HAIR[(hash2(seed, 2) * HAIR.length) | 0], skin, pack: 'none' };      // (N8) 형사: 사복
+  if (kind === 'trafficPol') return { top: '#7ea4d6', trim: 'vest', trimCol: '#c8f03a', arm: '#7ea4d6', hand: skin, leg: '#1f2d4c', shoe: '#14161a', head: 'helmet', headCol: '#f2f2ee', headCol2: '#1f2f55', skin, pack: 'none' };      // (N8) 교통 순찰 대원: 흰 헬멧·형광 조끼
   return { top: '#7ea4d6', trim: 'vest', trimCol: '#22355c', arm: '#7ea4d6', hand: skin, leg: '#1f2d4c', shoe: '#14161a', head: 'cap', headCol: '#1f2f55', headCol2: '#e8edf2', skin, pack: 'none' };
 }
 export function civilianLook(seed: number): PersonLook {
@@ -297,7 +304,8 @@ export function drawLying(g: G, x: number, y: number, ang: number, ts: number, k
 }
 
 // ───────────────────────── 차량 ─────────────────────────
-export const VEH_SIZE: Record<UnitKind, [number, number]> = { engine: [3.1, 1.14], rescue: [2.9, 1.14], als: [2.5, 1.06], bls: [2.4, 1.04], patrol: [2.05, 0.96], tactical: [2.6, 1.08], ladder: [3.7, 1.16], hazmat: [3.0, 1.14], swat: [2.85, 1.16], eod: [2.7, 1.12], heli: [3.0, 1.0], boat: [2.7, 0.96], policeHeli: [2.8, 0.95], medHeli: [3.0, 1.0] };
+export const VEH_SIZE: Record<UnitKind, [number, number]> = { engine: [3.1, 1.14], rescue: [2.9, 1.14], als: [2.5, 1.06], bls: [2.4, 1.04], patrol: [2.05, 0.96], tactical: [2.6, 1.08], ladder: [3.7, 1.16], hazmat: [3.0, 1.14], swat: [2.85, 1.16], eod: [2.7, 1.12], heli: [3.0, 1.0], boat: [2.7, 0.96], policeHeli: [2.8, 0.95], medHeli: [3.0, 1.0],
+  powerCrew: [3.2, 1.14], gasCrew: [2.4, 1.02], waterCrew: [3.0, 1.12], tow: [3.1, 1.1], animalCtl: [2.5, 1.04], detective: [2.1, 0.94], trafficPol: [1.25, 0.42], k9: [2.3, 1.0] };      // (N8)
 
 function wheels(g: G, L: number, W: number): void {
   for (const wx of [-L * 0.3, L * 0.3]) { rr(g, wx - 0.17, -W / 2 - 0.035, 0.34, 0.1, 0.03, '#0e1114'); rr(g, wx - 0.17, W / 2 - 0.065, 0.34, 0.1, 0.03, '#0e1114'); }
@@ -308,7 +316,7 @@ function lightbar(g: G, x: number, W: number, a: string, b: string, on: boolean,
   rr(g, x - 0.05, -W / 2 + 0.16, 0.1, W / 2 - 0.2, 0.03, ph === 0 ? shade(a, 0.35) : shade(a, on ? -0.55 : -0.25));
   rr(g, x - 0.05, 0.04, 0.1, W / 2 - 0.2, 0.03, ph === 1 ? shade(b, 0.35) : shade(b, on ? -0.55 : -0.25));
 }
-const BEACON: Record<Dept, [string, string]> = { fire: ['#ff3b2f', '#ffd24a'], ems: ['#ff3b2f', '#4aa3ff'], police: ['#4aa3ff', '#ff3b2f'] };
+const BEACON: Record<Dept, [string, string]> = { fire: ['#ff3b2f', '#ffd24a'], ems: ['#ff3b2f', '#4aa3ff'], police: ['#4aa3ff', '#ff3b2f'], civil: ['#ffb300', '#ffd24a'] };      // civil (N8): 노란 경광등
 export function beaconColors(dept: Dept): [string, string] { return BEACON[dept]; }
 
 /** 위에서 본 긴급 차량. 앞이 +x. */
@@ -316,6 +324,7 @@ export function drawEmergency(g: G, x: number, y: number, ang: number, ts: numbe
   const [L, W] = VEH_SIZE[kind];
   if (AIR_KIND.has(kind)) { drawHeli(g, x, y, ang, ts, lights, timeMs, kind); return; }      // 헬기 세 종류: 종류마다 도색이 다르다
   if (kind === 'boat') { drawBoat(g, x, y, ang, ts, lights, timeMs); return; }
+  if (kind === 'trafficPol') { drawMotorbike(g, x, y, ang, ts, lights, timeMs); return; }      // (N8) 교통 경찰 오토바이
   g.save(); g.translate(x, y); g.scale(ts, ts);
   g.save(); g.translate(0.08, 0.12); g.rotate(ang); rr(g, -L / 2, -W / 2, L, W, 0.14, 'rgba(0,0,0,0.38)'); g.restore();
   g.rotate(ang);
@@ -397,6 +406,8 @@ export function drawEmergency(g: G, x: number, y: number, ang: number, ts: numbe
     rr(g, L / 2 - 0.05, -W / 2 + 0.1, 0.05, 0.16, 0.015, '#fff3c4'); rr(g, L / 2 - 0.05, W / 2 - 0.26, 0.05, 0.16, 0.015, '#fff3c4');
     rr(g, -L / 2, -W / 2 + 0.1, 0.045, 0.16, 0.015, '#d8423a'); rr(g, -L / 2, W / 2 - 0.26, 0.045, 0.16, 0.015, '#d8423a');
     rr(g, 0.26, -W / 2 - 0.04, 0.09, 0.06, 0.02, '#27477c'); rr(g, 0.26, W / 2 - 0.02, 0.09, 0.06, 0.02, '#27477c');
+  } else if (KINDS_VEH.has(kind)) {
+    drawKindsBody(g, kind, L, W, ca, cb, lights, timeMs);      // (N8) 새 부대의 차량
   } else {
     const navy = kind === 'swat' ? '#1b1e24' : kind === 'eod' ? '#2c3a2a' : '#1f2c44';
     rr(g, -L / 2, -W / 2, L, W, 0.12, '#0d1320'); rr(g, -L / 2 + 0.03, -W / 2 + 0.03, L - 0.06, W - 0.06, 0.1, navy);
@@ -411,6 +422,97 @@ export function drawEmergency(g: G, x: number, y: number, ang: number, ts: numbe
     rr(g, L / 2 - 0.02, -W / 2 + 0.08, 0.07, W - 0.16, 0.02, '#59636e');
     rr(g, L / 2 - 0.06, -W / 2 + 0.12, 0.05, 0.14, 0.015, '#fff3c4'); rr(g, L / 2 - 0.06, W / 2 - 0.26, 0.05, 0.14, 0.015, '#fff3c4');
   }
+  g.restore();
+}
+
+/** (N8 §4.9) 새 부대의 차량 (교통 경찰 오토바이는 drawMotorbike). 앞이 +x, 바퀴·그림자는 drawEmergency 가 이미 그렸다 */
+const KINDS_VEH: ReadonlySet<UnitKind> = new Set<UnitKind>(['powerCrew', 'gasCrew', 'waterCrew', 'tow', 'animalCtl', 'detective', 'k9']);
+function drawKindsBody(g: G, kind: UnitKind, L: number, W: number, ca: string, cb: string, lights: boolean, timeMs: number): void {
+  const glass = '#182734', glassHi = 'rgba(160,210,240,0.35)';
+  const cab = (cx0: number, len: number, col: string): void => {
+    rr(g, cx0, -W / 2 + 0.05, len, W - 0.1, 0.1, col);
+    rr(g, cx0 + len - 0.3, -W / 2 + 0.12, 0.18, W - 0.24, 0.05, glass); rr(g, cx0 + len - 0.28, -W / 2 + 0.14, 0.05, W - 0.28, 0.03, glassHi);
+  };
+  const heads = (): void => { rr(g, L / 2 - 0.05, -W / 2 + 0.1, 0.05, 0.15, 0.015, '#fff3c4'); rr(g, L / 2 - 0.05, W / 2 - 0.25, 0.05, 0.15, 0.015, '#fff3c4'); };
+  if (kind === 'powerCrew' || kind === 'gasCrew' || kind === 'waterCrew') {
+    // 복구반: 흰 작업차에 갈래색 띠 (전력 황색 · 가스 주황 · 수도 파랑)
+    const band = kind === 'powerCrew' ? '#f2b632' : kind === 'gasCrew' ? '#e06a2a' : '#3a8fd8';
+    rr(g, -L / 2, -W / 2, L, W, 0.1, '#9aa0a3'); rr(g, -L / 2 + 0.03, -W / 2 + 0.03, L - 0.06, W - 0.06, 0.08, '#eceae2');
+    g.fillStyle = band; g.fillRect(-L / 2 + 0.06, -W / 2 + 0.06, L - 0.3, 0.07); g.fillRect(-L / 2 + 0.06, W / 2 - 0.13, L - 0.3, 0.07);
+    const cx0 = L / 2 - 0.9;
+    cab(cx0, 0.86, '#f4f2ea');
+    lightbar(g, cx0 + 0.12, W, ca, cb, lights, timeMs);
+    if (kind === 'powerCrew') {
+      // 버킷 트럭: 회전대와 접은 붐, 앞쪽 끝의 작업 바구니
+      disc(g, -L / 2 + 0.55, 0, 0.24, '#5a6168'); disc(g, -L / 2 + 0.55, 0, 0.14, '#c9cfd4');
+      rr(g, -L / 2 + 0.55, -0.08, L - 1.25, 0.16, 0.03, '#d9dde0'); rr(g, -L / 2 + 0.55, -0.025, L - 1.25, 0.05, 0.02, '#8a9198');
+      rr(g, L / 2 - 0.92, -0.2, 0.34, 0.4, 0.05, band); rr(g, L / 2 - 0.86, -0.14, 0.22, 0.28, 0.03, shade(band, -0.35));
+    } else if (kind === 'gasCrew') {
+      // 가스 복구 승합차: 지붕 짐받이와 공구함
+      rr(g, -L / 2 + 0.14, -W / 2 + 0.2, L - 1.15, W - 0.4, 0.04, '#d9d6cb');
+      g.fillStyle = '#9aa0a3'; for (let k = 0; k < 4; k++) g.fillRect(-L / 2 + 0.2 + k * ((L - 1.3) / 3), -W / 2 + 0.2, 0.03, W - 0.4);
+      rr(g, -L / 2 + 0.3, -0.12, 0.42, 0.24, 0.03, band);
+    } else {
+      // 수도 복구차: 감아 둔 배수 호스 둘과 펌프
+      rr(g, -L / 2 + 0.12, -W / 2 + 0.18, L - 1.2, W - 0.36, 0.04, '#d6dde3');
+      for (const hx of [-L / 2 + 0.5, -L / 2 + 1.05]) { disc(g, hx, 0, 0.24, '#2f6fb3'); disc(g, hx, 0, 0.11, '#d6dde3'); }
+      rr(g, -L / 2 + 1.45, -0.18, 0.4, 0.36, 0.04, '#5a6168');
+    }
+    heads();
+  } else if (kind === 'tow') {
+    // 견인차: 노란 운전실, 평판 적재함, 뒤쪽의 붐과 갈고리
+    rr(g, -L / 2, -W / 2, L, W, 0.1, shade('#e9c23e', -0.35)); rr(g, -L / 2 + 0.03, -W / 2 + 0.03, L - 0.06, W - 0.06, 0.08, '#e9c23e');
+    rr(g, -L / 2 + 0.1, -W / 2 + 0.12, L - 1.15, W - 0.24, 0.04, '#5a6168');
+    g.fillStyle = '#3f454b'; for (let k = 0; k < 6; k++) g.fillRect(-L / 2 + 0.16 + k * ((L - 1.3) / 5), -W / 2 + 0.12, 0.03, W - 0.24);
+    rr(g, -L / 2 - 0.06, -0.07, 0.9, 0.14, 0.03, '#2a2d31'); disc(g, -L / 2 - 0.02, 0, 0.09, '#c9cfd4');
+    const cx0 = L / 2 - 0.92;
+    cab(cx0, 0.88, '#f0cc4a');
+    lightbar(g, cx0 + 0.12, W, ca, cb, lights, timeMs);
+    heads();
+  } else if (kind === 'animalCtl') {
+    // 동물 포획차: 소방의 빨간 운전실과 뒤의 철망 우리
+    rr(g, -L / 2, -W / 2, L, W, 0.1, shade('#c0392b', -0.35));
+    rr(g, -L / 2 + 0.04, -W / 2 + 0.06, L - 0.95, W - 0.12, 0.05, '#6b7178');
+    g.strokeStyle = '#c9cfd4'; g.lineWidth = 0.03; g.beginPath();
+    for (let k = 1; k < 7; k++) { const gx = -L / 2 + 0.04 + k * ((L - 0.95) / 7); g.moveTo(gx, -W / 2 + 0.08); g.lineTo(gx, W / 2 - 0.08); }
+    g.moveTo(-L / 2 + 0.06, 0); g.lineTo(L / 2 - 0.93, 0); g.stroke();
+    const cx0 = L / 2 - 0.86;
+    cab(cx0, 0.82, '#c0392b');
+    lightbar(g, cx0 + 0.12, W, ca, cb, lights, timeMs);
+    heads();
+  } else if (kind === 'detective') {
+    // 형사 차량: 표시 없는 회색 승용차, 앞유리 안쪽의 작은 경광등만
+    rr(g, -L / 2, -W / 2, L, W, 0.2, '#262a30'); rr(g, -L / 2 + 0.03, -W / 2 + 0.03, L - 0.06, W - 0.06, 0.18, '#3b4148');
+    rr(g, -0.5, -W / 2 + 0.1, 1.0, W - 0.2, 0.14, glass);
+    rr(g, -0.28, -W / 2 + 0.13, 0.52, W - 0.26, 0.08, '#434a52');
+    rr(g, 0.32, -W / 2 + 0.16, 0.05, W - 0.32, 0.02, glassHi);
+    if (lights) { const on = Math.floor(timeMs / 160) % 2; disc(g, 0.42, -0.12, 0.06, on ? shade(ca, 0.35) : shade(ca, -0.5)); disc(g, 0.42, 0.12, 0.06, on ? shade(cb, -0.5) : shade(cb, 0.35)); }
+    heads();
+  } else {
+    // 경찰견 차량: 순찰차 도색의 SUV, 뒤의 어두운 개 우리 (통풍구 줄)
+    rr(g, -L / 2, -W / 2, L, W, 0.16, '#8d98a3'); rr(g, -L / 2 + 0.03, -W / 2 + 0.03, L - 0.06, W - 0.06, 0.14, '#eef1f4');
+    rr(g, L / 2 - 0.6, -W / 2 + 0.05, 0.56, W - 0.1, 0.14, '#27477c');
+    g.fillStyle = '#f2c63c'; g.fillRect(-L / 2 + 0.1, -W / 2 + 0.035, L - 0.7, 0.045); g.fillRect(-L / 2 + 0.1, W / 2 - 0.08, L - 0.7, 0.045);
+    rr(g, -L / 2 + 0.08, -W / 2 + 0.14, 0.9, W - 0.28, 0.06, '#2a2f38');
+    g.fillStyle = '#5a6370'; for (let k = 0; k < 4; k++) g.fillRect(-L / 2 + 0.16 + k * 0.2, -W / 2 + 0.2, 0.08, W - 0.4);
+    rr(g, -0.05, -W / 2 + 0.1, 0.6, W - 0.2, 0.12, glass);
+    lightbar(g, 0.12, W, ca, cb, lights, timeMs);
+    heads();
+  }
+}
+/** (N8) 교통 경찰 오토바이: 앞뒤 바퀴, 흰 차체, 탄 대원의 흰 헬멧, 뒤의 경광등 */
+function drawMotorbike(g: G, x: number, y: number, ang: number, ts: number, lights: boolean, timeMs: number): void {
+  const [L, W] = VEH_SIZE.trafficPol;
+  g.save(); g.translate(x, y); g.scale(ts, ts);
+  g.save(); g.translate(0.06, 0.08); g.rotate(ang); rr(g, -L / 2, -W / 2, L, W, 0.2, 'rgba(0,0,0,0.35)'); g.restore();
+  g.rotate(ang);
+  rr(g, -L / 2, -0.07, 0.34, 0.14, 0.06, '#0e1114'); rr(g, L / 2 - 0.34, -0.07, 0.34, 0.14, 0.06, '#0e1114');      // 바퀴
+  rr(g, -L / 2 + 0.22, -0.12, L - 0.48, 0.24, 0.1, '#e8edf2'); rr(g, -L / 2 + 0.28, -0.05, L - 0.66, 0.1, 0.04, '#27477c');
+  seg(g, L / 2 - 0.36, -W / 2 + 0.02, L / 2 - 0.36, W / 2 - 0.02, 0.04, '#2a2d31');      // 손잡이
+  disc(g, -0.02, 0, 0.13, '#f2f2ee'); disc(g, 0.02, 0, 0.07, '#1f2f55');      // 탄 대원의 헬멧
+  const [ca, cb] = BEACON.police, on = lights ? Math.floor(timeMs / 160) % 2 : -1;
+  disc(g, -L / 2 + 0.24, -0.08, 0.045, on === 0 ? shade(ca, 0.35) : shade(ca, lights ? -0.55 : -0.25)); disc(g, -L / 2 + 0.24, 0.08, 0.045, on === 1 ? shade(cb, 0.35) : shade(cb, lights ? -0.55 : -0.25));
+  rr(g, L / 2 - 0.05, -0.04, 0.05, 0.08, 0.015, '#fff3c4');
   g.restore();
 }
 

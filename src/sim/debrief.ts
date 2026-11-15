@@ -7,6 +7,7 @@ import { personaName } from './dispatch/callSystem';
 import { sevName } from './dispatch/analyst';
 import { difficultyLabel } from './difficulty';
 import { disasterSummary } from './disaster';
+import { methodFailLine, methodLines, methodSummary, methodTally } from './field/methodReport';      // (R2) 대응 방법의 문장과 집계
 import { roleOf } from './crews';
 import type { Sim } from './engine';
 import type { Incident, IncidentResult, Outcome, Problem, ProblemCode, ShiftReport } from './types';
@@ -132,6 +133,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
     LATE_DISCOVERY: (ps) => `${ps[0].detail}.`,
     TIMEOUT: (ps) => `${ps[0].detail}.`,
   };
+  // (R2) 대응 방법 실패·변경: 장비 고장 바로 다음 자리. 위의 order·T 글자를 다른 묶음(H1·X6)이 함께 고치고 있어 여기서 끼운다 — 합쳐진 뒤에는 글자 안으로 옮겨도 된다
+  order.splice(order.indexOf('EQUIP_FAIL') + 1, 0, 'METHOD_FAIL'); T.METHOD_FAIL = methodFailLine;
   for (const code of order) {
     const ps = I.problems.filter((p) => p.code === code);
     if (!ps.length || A.length >= 9) continue;
@@ -149,6 +152,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
       }
     } else if (c.tDiscovered < 0) A.push(`구조 대상 ${josa(c.label, '은/는')} 발견되지 못한 채 현장에 남았습니다 — 지휘관은 이 사실을 모른 채 상황을 종료했습니다.`);
   }
+  for (const line of methodLines(sim, I, s)) if (A.length < 12) A.push(line);      // (R2) 평소와 다른 방법으로 끝낸 것 (최대 2문장 — 기록된 I.methods 에서만)
   // 한 줄 요약
   const hl: string[] = [];
   { const b = s.props.find((p) => p.kind === 'bomb'); if (noBomb) hl.push(truth.variant === 'bombthreat' ? '허위 협박 — 폭발물 없음' : b && !b.mitigated ? '폭발물은 아니었으나 확인하지 못함' : '확인 결과 폭발물 아님'); else if (b && b.real) hl.push(b.mitigated ? '폭발물 해체' : b.exploded ? '폭발물 폭발' : '폭발물 미처리'); }
@@ -198,6 +202,8 @@ export function buildReport(sim: Sim): ShiftReport {
   if (casTotal) summary.push(`요구조자 ${casTotal}명 중 ${casSaved}명을 구조했습니다 (구조율 ${pct(casSaved / casTotal)}).${casLost ? ` ${casLost}명은 구하지 못했습니다.` : ''}${casUnd ? ` ${casUnd}명은 발견하지 못했습니다.` : ''}`);
   if (delayCauses.length) summary.push(`가장 자주 발생한 문제: ${delayCauses.slice(0, 3).map((c) => `${c.label}(${c.count}건)`).join(', ')}.`);
   if (n && good === n) summary.push('모든 사건을 목표대로 해결한 교대였습니다.');
+  const methods = methodTally(sim);      // (R2) 성공한 방법별 횟수 (평소 방법 포함). 요약 줄은 평소 방법이 아닌 것만, 하나도 없으면 넣지 않는다
+  { const line = methodSummary(methods); if (line) summary.push(line); }
   // 교통: 기록된 통계로만 쓴다 (traffic.ts)
   const tf = { ...sim.traffic.stats };
   if (tf.jams + tf.closures + tf.obstacles + tf.detours + tf.gateWaits === 0) summary.push('교통으로 인한 지연은 없었습니다.');
@@ -212,6 +218,7 @@ export function buildReport(sim: Sim): ShiftReport {
     traffic: tf, air,
     major: sim.incidents.filter((I) => I.tag === 'major').length, disaster: disasterSummary(sim),
     seed: sim.seed, duration: dur, weather: sim.weather, difficulty: { ...sim.difficulty }, difficultyLabel: difficultyLabel(sim.difficulty), totalCalls: sim.calls.length, totalIncidents: n, counts,
+    methods,      // (R2)
     avgResponse: rN ? rSum / rN : -1, avgDispatch: dN ? dSum / dN : -1, utilization, unitUtil,
     casTotal, casSaved, casLost, casUndiscovered: casUnd, respondersHurt: hurt, equipFailures: equip, delayCauses, incidents, summary,
     hash: sim.logHash.toString(16),

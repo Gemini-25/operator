@@ -701,9 +701,9 @@ export interface Casualty {
   freedHow?: MethodId; freedBy?: number;          // 어떤 방법으로 누가 구했는가 (보고서 타임라인)
   rush?: boolean;                                 // 구급 대원이 즉시 이송을 정했다
 }
-export interface CasBelief {                      // perceive 가 본 것 — casFact 가 채운다 (water·drift 는 단계 1a, veh·pit 는 3, rush 는 6)
+export interface CasBelief {                      // perceive 가 본 것 — agents.casFact 가 채운다 (water 는 단계 0 부터, drift 는 1a, veh·pit 는 3, rush 는 6)
   water?: boolean;                                // 물속
-  drift?: number;                                 // 떠내려가는 속도 (본 그대로)
+  drift?: number;                                 // 떠내려가는 속도 (본 그대로). 단계 1a 가 채운다 — 걸려 멈추는 순간 이 값만 달라져 무전 자료가 한 번 더 오간다(결과가 바뀐다)
   veh?: number;                                   // 갇힌 차량 소품의 id (차 안이 아니면 없음) — 같은 차의 고립자 세기
   pit?: boolean;                                  // 구덩이(맨홀) 아래 — 줄로 끌어올려야 한다
   rush?: boolean;

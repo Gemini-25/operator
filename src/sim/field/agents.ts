@@ -113,7 +113,9 @@ export function regionNameAt(s: Scene, x: number, y: number): string {
 export function casFact(sim: Sim, s: Scene, c: Casualty, src: string): Fact {
   const mob = c.mob === 'trapped' ? 'trapped' : c.walking ? 'mobile' : 'immobile';
   const b = band(c.health);
-  const v: CasBelief = { x: Math.round(c.x), y: Math.round(c.y), mob, band: b, where: c.where, treated: c.treated, trappedDone: c.mob !== 'trapped', tq: c.treatQ >= 0.6 ? 2 : c.treated ? 1 : 0 };
+  // water: (R2) 물속인가 — 본 그대로. 이 값은 늘 mob·band 와 함께 바뀌므로(물에 빠짐·건져 냄·휩쓸려 숨짐) 믿음의 "새 소식" 판정을 바꾸지 않는다.
+  // 떠내려가는 속도(drift)는 단계 1a 가 더한다 — 걸려 멈추는 순간 그 값만 달라져 보고가 한 번 더 나간다 (재 보니 64교대 가운데 1교대의 무전 수가 달라졌다)
+  const v: CasBelief = { x: Math.round(c.x), y: Math.round(c.y), mob, band: b, where: c.where, treated: c.treated, trappedDone: c.mob !== 'trapped', tq: c.treatQ >= 0.6 ? 2 : c.treated ? 1 : 0, water: c.inWater === true };
   const mobT = c.dead ? '' : mob === 'trapped' ? ' · 고립' : mob === 'mobile' ? ' · 자력 대피 중' : c.where === 'scene' ? ' · 거동 불가' : '';
   const whereT = c.where === 'safe' ? '안전 구역' : c.where === 'loaded' ? '구급차 탑승' : c.where === 'carried' ? '이송 중' : regionNameAt(s, c.x, c.y);
   return mkFact('cas', c.id, v, src, sim.t, 1, true, `구조 대상 ${c.label}: ${whereT}${mobT} · ${BAND_NAME[b]}`);

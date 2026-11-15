@@ -14,6 +14,7 @@ import type { AirOp, FieldAgent, Incident, Role, Scene, SimEvent, Unit, UnitFiel
 import { TrafficChip } from './TrafficChip';
 import { DEPT_NAME, OUTCOME_NAME, TYPE_NAME, WEATHER_NAME, fmtClock, fmtDur, fmtSec, pct } from '../sim/util';
 import type { CameraDirector } from '../view/camera';
+import { MethodRows } from './MethodRows';      // (R2) 대원 정보창의 대응 방법 두 줄
 import { FIELD_TEXT } from '../view/city/tokens';
 import { ICON_PATH } from '../view/icons';
 import { KIT_GROUP_MARK, UNIT_MARK } from '../view/marks';
@@ -394,6 +395,7 @@ export function AgentPanel({ sim, rid, truth = false }: { sim: Sim; rid: number;
           <h4>행동 후보와 점수 (Utility)</h4>
           {agent.candidates.length === 0 && <div className="empty">아직 판단 기록이 없습니다.</div>}
           {agent.candidates.map((c, k) => <div key={k} className={`cand ${c.chosen ? 'chosen' : ''}`}><Bar v={Math.max(0, Math.min(1, c.score / 1.3))} color={c.chosen ? '#d6e2ee' : '#52606d'} w={60} /><span className="num">{c.score.toFixed(2)}</span><span>{c.label}</span></div>)}
+          <MethodRows agent={agent} />
           <h4>알고 있는 정보 ({agent.beliefs.facts.size})</h4>
           <table className="claims"><tbody>
             {facts.map((f) => <tr key={f.key}><td>{f.text}</td><td className="dim">{f.src}</td><td className="num">{pct(f.conf)}</td><td className={f.verified ? 'ok' : 'dim'}>{f.verified ? '확인' : '미확인'}</td></tr>)}

@@ -1,8 +1,16 @@
 // N8 사건 종류 다양화 — docs/specs/N8-incident-kinds.md §9.1 (번호는 설계서 §8 의 단계 표와 같다).
 // 시간 예산 90초: 평소 교대 몇 번에 나온다에 기대지 않고, 교대를 끝까지 돌리는 시험은 몇 개만 둔다.
+import { existsSync, readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { NORMAL, PRESETS } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
+import { evaluate } from '../src/sim/debrief';
+import { createIncident } from '../src/sim/incidents';
+import { CAS_HOLDS, PENDING_RULES, PROP_HOLDS, VERDICT_RULES, registerVerdict } from '../src/sim/field/sceneRegistry';
+import { isIndoor, los, staticPass } from '../src/sim/field/grid';
+import { T } from '../src/sim/types';
+import type { Scene } from '../src/sim/types';
+import { withFakeDom } from './fakeCanvas';
 import { LIK_FLOOR, TYPE_DEFS, TYPE_ORDER, likRow, typeIdx } from '../src/sim/incidentTypes';
 import type { LikMap } from '../src/sim/incidentTypes';
 import { NATURE_LIK } from '../src/sim/dispatch/callSystem';
@@ -79,3 +87,78 @@ describe('1 유형 자료 (incidentTypes — 단계 1)', () => {
 // 시험 2(HASH0 — 단계 1·2a·2b 의 결과 불변을 기록 해시 숫자로 지키던 시험)는 주 브랜치에서는 뺀다(2026-11-15 밤, 주 세션).
 // 결과를 바꾸는 묶음(X6 …)이 같은 주 브랜치에 나란히 합쳐지므로 숫자를 박아 두면 그 묶음의 관문이 깨진다.
 // 준비 단계의 결과 불변은 덩어리마다 해시 목록(scratchpad, 150교대 남짓 — 자기 시작점 대비 diff 0)으로 확인하고 구현 메모에 적는다.
+
+// ───────────────────────── 단계 2a (틀 B-1 — 자료형과 등록 자리) ─────────────────────────
+// 시험 4 — 정보 격리 (소스 글자 검사, 주석 줄은 뺀다). tests/ext.test.ts 의 orders/ 검사와 같은 방식.
+// 판단 파일은 N8 의 새 진실(Scene.kinds·Scene.animals·Incident.dupOf·Hostile.hideUntil·Casualty.quietLoss·소품의 live·sub)과 .truth·s.variant 를 읽지 않는다.
+// 믿음의 칸 이름(haz 의 pipe·crack·narrow)은 걸리지 않는다. 지휘관이 소품의 생김새(kind·skin)를 읽는 것은 허락된다.
+const SRC = '../src/sim/';
+const code = (rel: string): string => readFileSync(new URL(SRC + rel, import.meta.url), 'utf8').split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+const JUDGE = ['field/commander.ts', 'field/brain.ts', 'dispatch/analyst.ts', 'dispatch/dispatcher.ts', 'dispatch/screening.ts', 'field/methods.ts', 'field/airDecide.ts', 'field/doctrine/kinds.ts'];
+const JUDGE_LATER = ['field/orders/kinds.ts'];      // 단계 4a 에 생긴다 — 생기면 같은 검사를 받는다
+const TRUTH = ['s.kinds', '.animals', '.dupOf', 'hideUntil', 'quietLoss', '.truth', 's.variant', 'p.live', 'p.sub', '].live', '].sub'];
+describe('4 정보 격리 — 판단 파일은 N8 의 새 진실을 읽지 않는다 (글자)', () => {
+  it('판단 파일의 주석이 아닌 줄에 s.kinds·.animals·.dupOf·hideUntil·quietLoss·.truth·s.variant·소품의 진실 칸이 없다', () => {
+    const files = [...JUDGE, ...JUDGE_LATER.filter((f) => existsSync(new URL(SRC + f, import.meta.url)))];
+    for (const f of JUDGE) expect(existsSync(new URL(SRC + f, import.meta.url)), `${f} 가 있다`).toBe(true);
+    for (const f of files) { const src = code(f); for (const bad of TRUTH) expect(src.includes(bad), `${f}: ${bad}`).toBe(false); }
+  });
+  it('신고자 모델 callSystem.ts 는 새 진실(.dupOf·s.kinds)을 읽지 않는다 — 새 진실 읽기는 kindsCaller.ts 로만', () => {
+    const src = code('dispatch/callSystem.ts');
+    for (const bad of ['.dupOf', 's.kinds', '.animals', 'quietLoss']) expect(src.includes(bad), bad).toBe(false);
+  });
+});
+
+describe('2a 틀의 자리 — 높은 자리 칸 · 등록 자리 (결과 불변)', () => {
+  it('T.LEDGE 는 걸어서 지나지 못하고(staticPass 거짓) 실내가 아니며 시야를 막지 않는다 (시험 17 의 칸 부분)', () => {
+    expect(T.LEDGE).toBe(13);
+    expect(staticPass(T.LEDGE)).toBe(false);
+    expect(isIndoor(T.LEDGE)).toBe(false);
+    const tiles = new Uint8Array(7).fill(T.GROUND); tiles[2] = T.LEDGE; tiles[3] = T.LEDGE; tiles[4] = T.LEDGE;
+    const s = { w: 7, h: 1, tiles, props: [] } as unknown as Scene;
+    expect(los(s, 0, 0, 6, 0)).toBe(true);      // 높은 자리 너머가 보인다
+    tiles[3] = T.WALL;
+    expect(los(s, 0, 0, 6, 0)).toBe(false);     // (견줌) 벽은 막는다
+  });
+  it('현장의 고정 층이 T.LEDGE 칸을 예외 없이 그린다 (staticLayer 의 빈 그림 — 아직 어느 현장도 쓰지 않으므로 칸을 직접 바꿔 본다)', async () => {
+    const sim = new Sim('N8-2A-LEDGE');
+    sim.run(5);
+    const I = createIncident(sim, { type: 'fire', rng: sim.rng.fork('n8-2a-ledge') });
+    const s = sim.scenes[I.id]!;
+    for (let x = 2; x < 10; x++) s.tiles[4 * s.w + x] = T.LEDGE;
+    await withFakeDom(async () => {
+      const { buildStatic } = await import('../src/view/scene/staticLayer');
+      expect(() => buildStatic(s, 16, 'commercial')).not.toThrow();
+    });
+  });
+  it('등록 자리 넷은 아직 비어 있다 (단계 2a — 첫 줄은 4a~9 가 넣는다)', () => {
+    new Sim('N8-2A-REG');      // 현장 등록(field/scenes/index.ts)을 불러 둔다
+    expect([PENDING_RULES.length, CAS_HOLDS.length, PROP_HOLDS.length, VERDICT_RULES.length]).toEqual([0, 0, 0, 0]);
+  });
+  it('판정 등록이 판정에 들어간다: open → 위험이 남음(벌점 1.5·목표 미완) · bad → 벌점 · delayed → 대응 지연. 줄이 없으면 그대로', () => {
+    const sim = new Sim('N8-2A-VERDICT');
+    sim.run(20);
+    const I = createIncident(sim, { type: 'medical', rng: sim.rng.fork('n8-2a') });
+    const s = sim.scenes[I.id]!;
+    // 다 끝난 사건처럼 둔다: 모든 구조 대상이 발견돼 안전 구역에, 신고와 도착이 같은 시각 (대응 지연 아님)
+    for (const c of s.casualties) { c.tDiscovered = sim.t; c.where = 'safe'; c.health = 90; }
+    I.reportedAt = sim.t; I.firstDispatchAt = sim.t; I.firstArrivalAt = sim.t;
+    const base = evaluate(sim, I, 'resolved');
+    expect(base.grade).toBe('success'); expect(base.outcome).toBe('success');
+    let add: { open?: boolean; bad?: number; delayed?: boolean } | null = null;
+    const rule = (_sim: Sim, sc: Scene): typeof add => (sc.id === s.id ? add : null);
+    registerVerdict(rule);
+    try {
+      add = null; expect(evaluate(sim, I, 'resolved').outcome).toBe('success');
+      add = { delayed: true }; expect(evaluate(sim, I, 'resolved').outcome).toBe('delayed');
+      add = { bad: 0.5 }; expect(evaluate(sim, I, 'resolved').grade).toBe('partial');
+      add = { bad: 5 }; expect(evaluate(sim, I, 'resolved').grade).toBe('failed');
+      add = { open: true }; expect(evaluate(sim, I, 'resolved').grade).toBe('partial');
+      expect(evaluate(sim, I, 'timeout').grade).toBe('unresolved');      // 목표 미완 — 한계 시간으로 닫혔다
+    } finally {
+      VERDICT_RULES.splice(VERDICT_RULES.indexOf(rule), 1);
+    }
+    expect(VERDICT_RULES.length).toBe(0);
+    expect(evaluate(sim, I, 'resolved').grade).toBe('success');
+  });
+});

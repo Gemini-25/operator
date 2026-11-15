@@ -1536,6 +1536,61 @@ npx tsx scripts/sweep.ts 1 --force utility/wire --log S3     # 한 교대를 읽
 - 새 유형은 `TYPE_ORDER` 의 **끝**과 `TYPE_DEFS`·`typeStyle.TYPE_COLOR` 의 줄(둘 다 tsc 가 강제)로 시작한다. 확률 막대·`TYPE_NAME`·한계 시간·대응 기준·질문·가능도의 열은 저절로 따라온다. 기존 신고 키에 새 열을 더할 때(§4.1 의 `bang`·`scream` …)는 `NATURE_LIK` 의 그 줄에 `utility: 0.08` 처럼 이름으로 더한다(적지 않으면 `LIK_FLOOR`).
 - 앞 묶음 이름(시작점 `313ec41` 에서 grep): `catastrophe.NO_STRUCT` 는 변형 이름의 **배열**(`['ship', …, 'wild']` — 새 변형은 끝에 `.push` 가 아니라 글자로 더한다) · R2 `methods.METHOD`·`WORK_MODE`(`Partial<Record<WorkKind, 'refuse' \| 'always' \| 'optional'>>`)·`chooseMethod` 있음 · R3 `doctrine.ts` 의 `DOC_OF_UNIT`(모듈 안 `const` — 내보내지 않는다)·`PAIRS`·`SOLO_OK`, `registerDoctrine`(`doctrine/registry.ts`) 있음 · I1-b `world/consequence.ts` 는 빈 `signal()`·`SignalKind`(`'closed'` 포함)뿐이고 `registerConsequence`·`spawnConsequence` 는 아직 없다(주석의 이름) · I2 `roadsNext` 없음, `placeUsable` 은 `persist.ts` 의 주석에만. 단계 1 은 이 가운데 어느 것도 부르지 않는다.
 
+### 단계 2a (틀 B-1 — 자료형과 등록 자리) — 2026-11-15 밤, 준비 줄
+
+**상태: 구현됨, 결과 불변.** 작업자 브랜치 `wf/kinds-s2a`(단계 1 의 `wf/kinds` 에서 갈랐다 — 주 브랜치 `313ec41` 을 받아도 바뀐 것이 없었다), 가리킴 `wf/kinds`. 단계 1 과 같이 준비 줄이라 균형 기준은 재지 않았고 해시 목록만 견줬다.
+
+#### 실제 이름 (단계 2a 에 생긴 것)
+
+| 이름 | 어디 | 서명·뜻 |
+|---|---|---|
+| `Animal` · `AniBelief` · `KindsState` | `types.ts` 끝의 N8 절 | 본문 §5.8 그대로 |
+| `Scene.animals`·`exitKind`·`kinds` · `Prop.live`·`sub` · `Casualty.quietLoss` · `Hostile.group`·`hideUntil`·`asleep` · `CasBelief.perch`·`stage` · `Incident.dupOf` · `WorkItem.animal` | 〃 (인터페이스 합치기 — X6·R2 와 같은 꼴) | 모두 선택 칸. 생성 리터럴에 `undefined`(`WorkItem.animal` 만 `-1`) — 아래 "본문과 다른 곳" 1·2 |
+| 합집합의 새 줄 | `types.ts` 의 각 합집합 끝(새 줄로) | `FactType 'ani'` · `InjuryCause 'animal'` · `T.LEDGE = 13` · `Region.kind` 의 `'pen' \| 'shade' \| 'roof' \| 'basement'` · `WorkKind` 의 `'repair' \| 'towAway' \| 'capture' \| 'persuade' \| 'cordon'` · `Scene.rules` 의 `'perch'` · `Topic` 의 `'verify' \| 'same'` · `ProblemCode` 의 `'UTIL_LATE' \| 'ANIMAL_LOST'` · `Pursuit.kind` 의 `'cartheft'` |
+| `PendingRule`·`PENDING_RULES`·`registerPending` | `field/sceneRegistry.ts` 끝 | `(sim, s, a) => keyof UnitCaps \| null` — 본문 그대로 |
+| `CasHold`·`CAS_HOLDS`·`registerCasHold` · `PropHold`·`PROP_HOLDS`·`registerPropHold` | 〃 | `(sim, s, a, id, c: CasBelief) => boolean` · `(sim, s, a, propId) => boolean` — 본문 그대로 |
+| `VerdictAdd`·`VerdictRule`·`VERDICT_RULES`·`registerVerdict` | 〃 | `{ open?, bad?, delayed? }` · `(sim, s, I) => VerdictAdd \| null` — 본문 그대로 |
+| `WorkTarget.animal?` · commander 의 `Target.animal?` | `sceneRegistry.ts` · `commander.ts` | `want` 이 `tg.animal ?? -1` 을 칸에 적고, 같은 작업을 찾을 때 `(w.animal ?? -1) === animal` 도 본다(지금은 늘 -1) |
+| `pendingNeed(sim, s, I, last)` | `field/sceneManager.ts` (내보내지 않는다) | 7번 블록이 부른다: 줄 가운데 처음으로 null 이 아닌 수요, 그 수요를 채울 부대(`caps ≥ 0.7`)가 이 사건에 배정돼 `onscene`·`enroute`·`turnout` 이면 통제 부대(`s.leadDept === 'fire'` → `suppression`, 그 밖 `law`) |
+| `Scenario.card?: false` · `NO_CARD: ReadonlySet<string>` | `scenarios.ts` | `NO_CARD` = `card === false` 인 줄의 `label ?? name` (`natureLabel` 이 붙이는 글자와 같다 — 카드 제목 식이 `as.label` 과 견준다). 지금은 비어 있다 |
+| `KINDS: Scenario[]` | `scenarios/kinds.ts` (새 파일) | 빈 배열. `SCENARIOS = [...LIFE, …, ...DISASTER, ...KINDS]` 의 맨 끝 |
+| `decide(sim, I): ScreenVerdict` · `ScreenVerdict = 'screen' \| 'referral' \| { link: number } \| null` | `dispatch/screening.ts` (새 파일) | 언제나 null, 부르는 곳이 없다(단계 3 이 `endCall` 에서 부른다) |
+| (빈 파일) | `field/doctrine/kinds.ts` (새 파일) | `export {}` — 아래 "본문과 다른 곳" 4 |
+
+**부르는 자리**(줄이 없으면 아무것도 바꾸지 않는다): `sceneManager.tickScene` 7번 블록 — 닫는 조건에 `pend === null` 을 더하고, 지금의 다시 부르기 갈래(환자·불·용의자·동료) **뒤에** `else if (pend !== null)` 갈래로 같은 일(`I.unmet[pend] = max(…, 1)`·같은 문구)을 한다(지금의 갈래가 먼저 — 남은 일과 환자가 함께 있으면 지금처럼 환자의 수요) · `commander.syncBoard` — 구조 대상 고리의 `const c = f.value` 바로 다음 줄에 `CAS_HOLDS`, 교통사고의 도로 정리 고리 맨 앞에 `PROP_HOLDS`(한 줄이던 `for` 를 블록으로 풀었다) · `debrief.evaluate` — `hazardActive` 를 `let` 으로 바꾸고 그 바로 뒤에 `VERDICT_RULES` 를 돌아 `open → hazardActive = true`, `bad += vBad`(위험 벌점 줄 다음), `delayed` 식 괄호 안에 `|| vDelayed`(추격전은 지금처럼 빠진다).
+
+**그 밖의 2a 자리**: `T.LEDGE` — `grid.staticPass`·`isIndoor`·`los` 는 **코드를 고치지 않았다**(셋 다 목록에 없는 칸을 이미 "지나지 못함·실내 아님·시야 통함"으로 다룬다 — 주석만), `view/scene/staticLayer.ts` 에 바탕 재질 `S.LEDGE = 12`(`surfaceMap` 의 한 줄 + `paintTile` 의 어두운 콘크리트 턱 그림 — 아직 어느 현장도 쓰지 않는다) · `WorkKind` 다섯 — `agents.workLabel` 의 이름(시설물 복구·차량 견인·동물 포획·○○ 설득·통제), `fitBase` 끝의 `return 0`, `executor.act` 의 빈 갈래(닿으면 `finishTask(…, 'preempt')` — 임무를 쥔 채 서 있지 않게. 지금은 아무도 이 작업을 만들지 않는다) · `ProblemCode` 둘 — `debrief.PROBLEM_LABEL`(유관 기관 지연(대신한 조치) · 동물 놓침), `scripts/metrics.ts` 의 `PROBLEM_SYS`(`UTIL_LATE → infra`, `ANIMAL_LOST → field`). `order` 의 자리와 문장 틀은 그 코드를 남기는 단계(4a·5) · `InjuryCause 'animal'` — `CAUSE_NAME`('동물·벌 피해'), `BLEED_PER_DMG`(0.0003 — `blunt` 와 같다), `protection` 의 `animal × turnout 0.3` · `Topic` 둘 — tsc 가 강제하는 `callSystem.QUESTION_ANY` 의 문구 둘(묻는 차례는 단계 3·10) · 생성 리터럴 — `kit.baseScene`(맨 끝 줄)·`PROP_BLANK`·`addCas`·`addHostile`, `hazards` 의 주변 시민 리터럴, `incidents.createIncident`, `commander.want`·`orders/injury.ts` 의 `PROBE`.
+
+#### 본문과 다른 곳
+
+1. **`WorkItem.animal` 은 선택 칸**(`animal?: number`)이다 — 본문 §5.8 은 필수 칸(`animal: number`)이다. 이 단계는 앞 묶음 다섯(X6 2~·R2 1a~·R3 1~·I1-b b1~·I2 0·2~)보다 먼저 들어가는 준비 줄이라, 필수 칸이면 그 묶음들이 새로 쓰는 작업 항목 리터럴(지금도 시험 넷 — `crews`·`doctrine`·`methods`·`injuries` 의 `work()`·`workItem()` 도우미 등 일곱 자리)이 모두 tsc 에 걸린다. 그래서 선택 칸으로 두고, 객체 모양은 `commander.want` 의 리터럴(맨 끝 `animal`)과 `orders/injury.ts` 의 `PROBE`(`animal: -1`)가 지킨다. **읽는 쪽은 `(w.animal ?? -1)`** 로 읽는다. 앞 묶음이 다 합쳐진 뒤(단계 5 의 `capture`)에 필수로 좁혀도 된다 — 그때 tsc 가 짚는 리터럴에 `animal: -1` 을 더한다.
+2. **Scene 의 새 칸은 `kit.baseScene` 의 리터럴에만** 넣었다(본문은 `createScene` 도 적었다). 현장 객체를 만드는 리터럴은 `baseScene` 하나뿐이고(`createScene` 은 R1 의 칸을 만든 뒤에 붙인다), N8 의 칸은 현장 생성기가 채우는 칸이라 처음 리터럴에 두는 것이 맞다.
+3. **`Dept`·`UnitField`·`RoleGroup` 의 `'civil'`, `UnitCaps`·`Needs` 의 수요 열쇠 다섯, `KitDef.batch` 의 `'n8'` 은 넣지 않았다** — 본문 §5.8 의 목록에 있지만 §8 의 2a 줄이 "새 유형·부대·역할·장비 줄은 빼고"라 했고, 넣으면 tsc 가 강제하는 표(`crews.DEPT_ROLE`·`MED_BASE`·`marks.ROLE_MARK`·`resources.AID_KIND` …)가 따라오므로 그 표를 채우는 단계 2b 의 몫으로 남겼다. 방호의 `electric × insulKit 0.9`·`animal × beeSuit 0.95` 도 장비 이름(`KitId`)이 2b 에 생기므로 그때 `protection` 의 두 줄(주석으로 자리를 적어 두었다)에 더한다.
+4. **`field/doctrine/kinds.ts` 는 만들었지만 `doctrine/index.ts` 에서 아직 부르지 않는다** — R3 의 시험(`tests/doctrine.test.ts` "줄 파일의 등록 순서는 common → police → fire → ems → special")이 그 다섯을 글자 그대로 본다. 빈 파일을 부르려고 R3 의 시험을 지금 고치면 R3 의 본 구현(R2 다음)과 부딪친다. 첫 줄을 넣는 단계(4a~9)가 `import './special'` 다음 줄에 `import './kinds'` 를 더하고 그 시험의 배열에 `'kinds'` 를 함께 더한다.
+5. `Scenario.card`·`NO_CARD` 는 본문 §10.2 가 4a 에 두었지만 칸만은 지금 넣었다(사용자 결정 §12.5-7 — "틀 단계에서는 칸만 만든다"). **카드 제목 식(`ui/panels.tsx` 사건 카드·`ui/App.tsx` 사건 줄)은 고치지 않았다** — 단계 4a. `NO_CARD` 의 글자는 본문의 "시나리오 이름" 대신 `label ?? name` 이다(카드 제목 식이 견주는 `as.label` 이 그 글자다).
+6. `Topic` 에 `'verify'`·`'same'` 을 더하자 tsc 가 `callSystem.QUESTION_ANY`(`Record<Topic, string>`)의 두 줄을 강제해 문구를 넣었다. `topicName`(형 단언이라 강제하지 않는다)의 이름 둘은 묻는 차례를 넣는 단계 3·10 에 더한다. `nextTopic` 은 유형의 `topicValue` 열쇠만 돌므로 결과가 같다.
+7. `scenarios/kinds.ts` 에 `DAILY_TOTAL` 은 아직 두지 않았다(본문 §10.1 은 같은 파일 — 쓰는 것은 단계 3 의 짧은 사건 추첨).
+8. `LIGHT_WORK` 의 `persuade`·`cordon`(본문 §5.14 H1 줄)은 그 임무가 실행되는 단계(4a `cordon`·7 `persuade`)에 더한다 — 지금 넣어도 결과는 같지만 2a 줄에 없다.
+9. 공용 시험 하나를 고쳤다: `tests/injuries.test.ts` "원인의 이름이 모두 있다"의 원인 목록에 `'animal'`(그 시험이 `CAUSE_NAME` 의 열쇠 수를 센다 — 기준을 낮춘 것이 아니라 새 원인을 더한 것).
+
+#### 시험
+
+`tests/kinds.test.ts` 에 더했다: **시험 4**(정보 격리 — 판단 파일 여덟 `commander`·`brain`·`analyst`·`dispatcher`·`screening`·`methods`·`airDecide`·`doctrine/kinds` 와 생기면 `orders/kinds` 의 주석 아닌 줄에 `s.kinds`·`.animals`·`.dupOf`·`hideUntil`·`quietLoss`·`.truth`·`s.variant`·`p.live`·`p.sub`·`].live`·`].sub` 가 없다 / `callSystem.ts` 에 `.dupOf`·`s.kinds`·`.animals`·`quietLoss` 가 없다) · **2a 틀의 자리**(`T.LEDGE` 의 `staticPass`·`isIndoor`·`los` — 시험 17 의 칸 부분 / 현장의 고정 층(`buildStatic`, 가짜 캔버스)이 `T.LEDGE` 칸을 예외 없이 그린다 / 등록 자리 넷이 비어 있다 — 4a 가 첫 줄을 넣을 때 이 기대를 고친다 / 판정 등록이 `open`·`bad`·`delayed` 를 판정에 넣고 줄을 지우면 그대로다). 시험 2(`HASH0`)는 그대로 통과한다 — `tests/kinds.test.ts` 10개.
+
+#### 해시 확인 · 관문 · 화면
+
+- 해시 목록: 단계 1 의 도구(`$S/s1/hashes.ts` 를 `$S/s2a/` 에 옮겨 그대로)로 이 단계의 나무를 돌려(`$S/s2a/hash-2a.txt`) 시작점 `313ec41` 의 목록(`$S/s1/hash0.txt` — `git archive` 로 푼 `$S/s1/base` 에서 만든 것. 이번에 끝 15줄을 그 폴더에서 다시 돌려 같음을 확인했다)과 견줬다: **153교대 한 글자도 같다**(보통 40 · 어려움 20 · 극한 20 · 쉬움 6 · 재난 5×3 · 강제 14×3 · 부대 규모 1·5×3 · 신고 신뢰도 1×2 · 교통 5×2, 줄마다 `report.hash`·`JSON.stringify(report)` 의 FNV·기록 수·사건 수·연쇄 수·사건 서명).
+- 관문: `npx tsc --noEmit` 통과 · `npm run check` 통과(시험 파일 18 · 546 통과 + 건너뜀 1, 테스트 427초 — 같은 기계에서 다른 작업이 함께 돌았다(부하 15) · 시드 40 `--check` "검증 통과", 교착 후보 0 · 잊힌 사건 0 · C1~C5 0).
+- 화면: 개발 서버(5236, 자기 Vite 캐시)에서 `?seed=S7` 를 15배속으로 열어 찍었다 — 콘솔 오류 0, 사건 카드 2 · 확률 막대 5줄 · 현장 그림이 예전과 같다. 이 단계의 화면 변경(`S.LEDGE`)은 아직 어느 현장에도 나오지 않는다. `npm run ui-check` 는 돌리지 않았다(화면 값이 바뀌지 않는 단계).
+
+#### 이어받을 자리 (단계 2b 와 뒤 단계)
+
+- **2b**: `'civil'`(분야 두 축·역할 묶음)·수요 열쇠 다섯·`KitDef.batch 'n8'`·새 장비 이름 → `protection` 의 `electric × insulKit 0.9`·`animal × beeSuit 0.95`(그 `case` 줄 주석에 자리) · 7번 블록의 `anyActive`(일하는 `civil` 만)와 `civil` 대원의 `haz` 사실 넘겨받기 — `pendingNeed` 를 부르기 **전에** 마지막 지휘관의 믿음에 넘긴다(`const pend = …` 줄 바로 앞).
+- **3**: `screening.decide` 를 `callSystem.endCall` 에서 부르기 · `topicName` 의 `verify`·`same` · `DAILY_TOTAL`.
+- **4a**: 카드 제목 식에 `NO_CARD`(`as.label && !NO_CARD.has(as.label) ? as.label : TYPE_NAME[as.type]` — panels 사건 카드·App 사건 줄) · `field/scenes/index.ts` 에 `'./kinds'`·`'../rules/kinds'`·`'../orders/kinds'` 를 `'../orders/disaster'` 다음 줄에 · 등록 자리의 첫 줄(`registerPending`·`registerCasHold`·`registerVerdict`) — 그때 `tests/kinds.test.ts` "등록 자리 넷은 아직 비어 있다"를 고친다 · `repair`·`cordon` 의 `fitBase`·실행 갈래(지금 `return 0`·`preempt` 인 자리)와 `workLabel` 의 대상 글자 · `order` 에 `UTIL_LATE` 의 자리와 문장 틀 · 교본 줄을 넣으면 `doctrine/index.ts` 의 `'./kinds'` 와 R3 시험(위 4).
+- `T.LEDGE` 의 모습은 단계 7(위기자)이 `staticLayer` 의 `S.LEDGE` 그림을 다듬거나 스킨으로 덧그린다.
+- 앞 묶음 이름은 단계 1 의 줄 그대로다(시작점이 같다 — `NO_STRUCT` 는 배열, `registerConsequence`·`spawnConsequence` 는 `world/consequence.ts` 의 주석에만, `roadsNext`·`placeUsable` 없음, X6 의 진입 금지 구역은 아직 `agents.agentCost` 에 들어가지 않는다). 단계 2a 는 이 가운데 어느 것도 부르지 않는다.
+
 ## 검토 메모
 
 독립 검토 두 갈래(실현성·규칙 / 빠진 것·사용자 결정·인계)를 받아 지적마다 주 브랜치의 코드(2026-11-15 밤 — R1 전체·H1 4c·X6·R2 0·R3 0·I1-b b0)를 열어 확인했다. 맞는 지적은 본문에 녹였고, 여기에는 **반영하지 않았거나 다르게 반영한 것과 그 이유**만 적는다.

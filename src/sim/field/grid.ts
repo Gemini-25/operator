@@ -13,9 +13,11 @@ export const tileOf = (s: Scene, x: number, y: number): number => {
   return ty * s.w + tx;
 };
 
+/** 걸어서 지나갈 수 있는 칸. (N8) 높은 자리 T.LEDGE 는 넣지 않는다 — 사람이 서 있을 뿐 걸어서 오가지 못한다(astar 가 지나지 않는다. 닿는 것은 사다리·하강·호이스트뿐) */
 export function staticPass(t: number): boolean {
   return t === T.GROUND || t === T.ROAD || t === T.FLOOR || t === T.TREE || t === T.DOOR || t === T.TRAIL || t === T.STAIR;
 }
+/** (N8) T.LEDGE 는 실내가 아니다 (넣지 않는다) */
 export function isIndoor(t: number): boolean { return t === T.FLOOR || t === T.DOOR || t === T.FURN || t === T.STAIR; }
 
 /** 진실 기준: 지금 이 타일에 들어갈 수 있는가 (화재 제외) */
@@ -23,7 +25,7 @@ export function truthWalkable(s: Scene, i: number): boolean {
   return staticPass(s.tiles[i]) && s.propAt[i] < 0;
 }
 
-/** 시야선. 벽/닫힌 문에 막힌다(창문은 통과). */
+/** 시야선. 벽/닫힌 문에 막힌다(창문은 통과). (N8) 높은 자리 T.LEDGE 는 막지 않는다 — 난간 밖의 사람이 보인다 */
 export function los(s: Scene, x0: number, y0: number, x1: number, y1: number): boolean {
   let ax = Math.round(x0), ay = Math.round(y0);
   const bx = Math.round(x1), by = Math.round(y1);

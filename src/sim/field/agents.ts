@@ -491,6 +491,7 @@ export function workLabel(s: Scene, w: WorkItem, sim?: Sim): string {
     hoist: `${cas} 호이스트 인양`, airDrop: `${reg} 공중 물 투하`,
     treatMate: sim && w.mate >= 0 && sim.responders[w.mate] ? `${sim.responders[w.mate].name} 대원 응급 처치` : '부상 대원 응급 처치',
     treatSuspect: `${hos} 응급 처치`,
+    repair: '시설물 복구', towAway: '차량 견인', capture: '동물 포획', persuade: `${cas} 설득`, cordon: '통제',      // (N8) 이름만 — 대상의 글자는 그 임무를 쓰는 단계가 다듬는다
   };
   return names[w.kind];
 }
@@ -631,6 +632,9 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
       if (tq >= 1 && !own && treatPlan(sim, s, rid, 100) < 0.6) return 0;
       return Math.max(0.08, r.skills.medical * (0.5 + 0.5 * medLevelOf(sim, rid)));
     }
+    // (N8 단계 2a) 새 임무 다섯의 자리 — 맡는 사람은 그 임무를 쓰는 단계가 정한다(repair 4a · towAway 6b · capture 5 · persuade 7 · cordon 4a, 설계서 §5.3.3·§5.10).
+    // 지금은 아무도 이 작업을 만들지 않고, 누구도 맡지 않는다
+    case 'repair': case 'towAway': case 'capture': case 'persuade': case 'cordon': return 0;
   }
 }
 

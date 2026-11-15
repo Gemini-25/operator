@@ -15,23 +15,23 @@ import { heardEv, mkFact } from './beliefs';
 import { losWalls } from './grid';
 import { BAND_NAME, HOSTILE_FOV } from './hazards';
 import { hosNeedsCare, mateNeedsHospital } from './injury';
-import { CLOSE_BLOCKERS, ORDER_RULES } from './sceneRegistry';
+import { CAS_HOLDS, CLOSE_BLOCKERS, ORDER_RULES, PROP_HOLDS } from './sceneRegistry';
 import type { CommandKit } from './sceneRegistry';
 
-interface Target { region?: number; cas?: number; prop?: number; hostile?: number; tile?: number; mate?: number }
+interface Target { region?: number; cas?: number; prop?: number; hostile?: number; tile?: number; mate?: number; animal?: number }      // animal: (N8) 대상 동물
 
 function want(sim: Sim, s: Scene, kind: WorkKind, tg: Target, priority: number, max = 1, thorough = false, cause = -1): WorkItem {
-  const region = tg.region ?? -1, cas = tg.cas ?? -1, prop = tg.prop ?? -1, hostile = tg.hostile ?? -1, tile = tg.tile ?? -1, mate = tg.mate ?? -1;
+  const region = tg.region ?? -1, cas = tg.cas ?? -1, prop = tg.prop ?? -1, hostile = tg.hostile ?? -1, tile = tg.tile ?? -1, mate = tg.mate ?? -1, animal = tg.animal ?? -1;
   for (const w of s.board) {
     if (w.kind !== kind || (w.status !== 'open' && w.status !== 'active')) continue;
-    if (w.region === region && w.cas === cas && w.prop === prop && w.hostile === hostile && w.tile === tile && w.mate === mate) {
+    if (w.region === region && w.cas === cas && w.prop === prop && w.hostile === hostile && w.tile === tile && w.mate === mate && (w.animal ?? -1) === animal) {
       w.priority = priority; w.max = max; if (thorough) w.thorough = true;
       return w;
     }
   }
   const w: WorkItem = {
     id: s.nextWorkId++, kind, region, cas, prop, hostile, tile, mate, priority, status: 'open', assignees: [], max,
-    createdAt: sim.t, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough, orderSentAt: {}, cause, failedAt: {},
+    createdAt: sim.t, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough, orderSentAt: {}, cause, failedAt: {}, animal,
   };
   s.board.push(w);
   return w;
@@ -379,6 +379,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   const treatsDone = (cid: number): number => { let n = 0; for (const w of s.board) if (w.kind === 'treat' && w.cas === cid && w.status === 'done') n++; return n; };
   for (const f of cas) {
     const c = f.value as CasBelief;
+    if (CAS_HOLDS.length && CAS_HOLDS.some((h) => h(sim, s, a, f.id, c))) continue;      // (N8) 보류: 묶음 규칙이 맡은 사람(위험 반경 안·높은 자리)에게는 핵심 규칙이 일을 내지 않는다 — 줄이 없으면 그대로
     const dead = c.band === 3;
     const clear = (kinds: WorkKind[]) => cancel(s, (w) => w.cas === f.id && kinds.indexOf(w.kind) >= 0 && !(w.kind === 'carry' && w.status === 'active' && s.agents.some((b) => b.carrying === f.id)));
     if (dead || c.where === 'loaded' || c.where === 'hospital') {
@@ -449,7 +450,10 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   if (s.kind === 'traffic' && s.sizeupDone) {
     const unresolved = cas.some((f) => f.value.band < 3 && (f.value.where === 'scene' || f.value.where === 'carried'));
     if (!unresolved && pendingSearch === 0 && fireRegions === 0) {
-      for (const p of s.props) if ((p.kind === 'vehicle' && !p.cleared) || (p.kind === 'roadDebris' && !p.removed)) want(sim, s, 'clearRoad', { prop: p.id }, p.kind === 'vehicle' ? 0.42 : 0.36);
+      for (const p of s.props) {
+        if (PROP_HOLDS.length && PROP_HOLDS.some((h) => h(sim, s, a, p.id))) continue;      // (N8) 보류: 견인차가 맡은 차는 핵심 규칙이 밀어 두지 않는다 — 줄이 없으면 그대로
+        if ((p.kind === 'vehicle' && !p.cleared) || (p.kind === 'roadDebris' && !p.removed)) want(sim, s, 'clearRoad', { prop: p.id }, p.kind === 'vehicle' ? 0.42 : 0.36);
+      }
     }
   }
   for (const f of B.list('evid')) if (f.value.kind === 'witness' && !f.value.done) want(sim, s, 'interview', { prop: f.id }, 0.82, 1, false, heardEv(f));

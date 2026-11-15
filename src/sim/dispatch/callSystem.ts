@@ -253,6 +253,8 @@ const QUESTION_ANY: Record<Topic, string> = {
   hazard: '주변에 다른 위험한 것이 있습니까?',
   weapon: '무기를 가지고 있습니까? 어떤 무기입니까?',
   detail: '더 알려 주실 내용이 있습니까?',
+  verify: '지금 직접 보고 계신 상황이 맞습니까?',      // (N8) 묻는 차례는 단계 3(장난 낌새 진술이 있을 때만) — 지금은 문구만
+  same: '혹시 근처에서 이미 신고된 일과 같은 일입니까?',      // (N8) 묻는 차례는 단계 10(이웃 교차로에 같은 유형의 열린 사건이 있을 때만)
 };
 const question = (topic: Topic, type: IncidentType | undefined): string => (type ? TYPE_DEFS[type].question[topic] : undefined) ?? QUESTION_ANY[topic];
 const DONT_KNOW = ['잘 모르겠어요.', '그건 못 봤어요.', '거기까지는 모르겠어요.'];

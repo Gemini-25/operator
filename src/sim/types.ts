@@ -194,7 +194,8 @@ export interface Unit {
 export type FactType = 'cas' | 'fire' | 'srch' | 'blk' | 'hos' | 'haz' | 'occ' | 'ctl' | 'clue' | 'seen' | 'type' | 'secure' | 'mate' | 'evid'
   | 'ovh'          // 구역별 잔불 정리를 마친 시각 (값 1)
   | 'sign'         // (X6) 조짐: 구조 약화·가스 농도·용기 가열·불꽃 역류·분진, 그리고 붕괴·폭발 소리 (값 SignBelief)
-  | 'ops';         // (X6) 지휘 상태: id 0 = 전술 모드와 진입 금지 구역, id 100 + rid = 그 대원의 인원 점검 응답
+  | 'ops'          // (X6) 지휘 상태: id 0 = 전술 모드와 진입 금지 구역, id 100 + rid = 그 대원의 인원 점검 응답
+  | 'ani';         // (N8) 본 동물: id = Animal.id, 값 AniBelief (시야 밖으로 나가면 마지막 자리가 남는다)
 export interface Fact {
   key: string; type: FactType; id: number;
   value: any;
@@ -216,7 +217,8 @@ export type InjuryCause =
   | 'burn' | 'smoke' | 'toxic'                   // 화상 · 연기 흡입 · 유독 가스 흡입(가스 누출 현장)
   | 'fall' | 'crush' | 'blast'                   // 추락·미끄러짐 · 잔해 깔림·낙하물 · 폭발
   | 'drown' | 'electric' | 'exhaustion'          // 익수 · 감전 · 탈진(열 탈진)
-  | 'vehicle' | 'exposure' | 'illness';          // 차량 충격 · 실외 노출(저체온·탈수) · 급성 질환
+  | 'vehicle' | 'exposure' | 'illness'           // 차량 충격 · 실외 노출(저체온·탈수) · 급성 질환
+  | 'animal';                                    // (N8) 동물·벌 피해 (물림·받힘·쏘임)
 /** 한 사람이 한 원인으로 입은 피해. 원인마다 한 줄로 합친다 (연기처럼 매 틱 더해지는 피해가 배열을 늘리지 않게) */
 export interface Injury {
   cause: InjuryCause;
@@ -232,12 +234,15 @@ export interface Injury {
 export interface RosterOut { rid: number; name: string; health: number; band: number; dead: boolean; hospital: boolean; out: number; cause: InjuryCause | null }
 
 // ───────────────────────── 현장 ─────────────────────────
-export const T = { VOID: 0, GROUND: 1, ROAD: 2, FLOOR: 3, WALL: 4, WINDOW: 5, TREE: 6, WATER: 7, ROCK: 8, DOOR: 9, TRAIL: 10, FURN: 11, STAIR: 12 } as const;
+export const T = { VOID: 0, GROUND: 1, ROAD: 2, FLOOR: 3, WALL: 4, WINDOW: 5, TREE: 6, WATER: 7, ROCK: 8, DOOR: 9, TRAIL: 10, FURN: 11, STAIR: 12,
+  LEDGE: 13,      // (N8 §5.11) 높은 자리 — 사람이 서 있을 수 있지만 걸어서 오가지 못한다(grid.staticPass 거짓), 시야는 통한다, 실내·바닥이 아니다
+} as const;
 /** 가구 종류 (Scene.decor). 가구는 지나갈 수 없지만 시야는 가리지 않고, 엄폐물이 되며, 불에 탄다. */
 export const DECOR = { NONE: 0, BED: 1, DESK: 2, TABLE: 3, SOFA: 4, CABINET: 5, CRATE: 6, MACHINE: 7, COUNTER: 8, PLANT: 9, KITCHEN: 10, SHELF: 11 } as const;
 
 export interface Region {
-  id: number; name: string; kind: 'room' | 'corridor' | 'zone' | 'wreck' | 'verge';
+  id: number; name: string; kind: 'room' | 'corridor' | 'zone' | 'wreck' | 'verge'
+    | 'pen' | 'shade' | 'roof' | 'basement';      // (N8) 우리(가축을 모는 곳) · 그늘(폭염 환자를 옮기는 곳) · 옥상 · 지하(수도관 파열의 지하 주차장)
   tiles: number[]; cx: number; cy: number;
   x0: number; y0: number; x1: number; y1: number;
   indoor: boolean; searchable: boolean;
@@ -364,7 +369,8 @@ export type WorkKind =
   | 'overhaul'      // 잔불 정리: 불이 꺼졌다고 본 방을 다시 돌며 남은 불씨를 찾아 적신다 (소방만)
   | 'hoist' | 'airDrop'      // (R1) 공중 임무: 호이스트 인양 · 공중 물 투하. 지휘관이 작업판에 올리고 field/rules/air.ts 가 가져간다. 지상 대원은 맡지 않는다(fitFor = 0)
   | 'treatMate'      // (H1) 다친 대원 처치. 태울 차(prop)가 정해져 있고 병원이 필요하면 이어서 그 차에 태운다 (구급 분야, 또는 의료 가방을 든 대원)
-  | 'treatSuspect';      // (H1) 쓰러진·다친 용의자 처치. 태울 차(prop)가 내 차이고 자리가 있으면 이어서 그 차에 태운다 (경찰은 언제든, 구급대원은 안전 확보 뒤)
+  | 'treatSuspect'      // (H1) 쓰러진·다친 용의자 처치. 태울 차(prop)가 내 차이고 자리가 있으면 이어서 그 차에 태운다 (경찰은 언제든, 구급대원은 안전 확보 뒤)
+  | 'repair' | 'towAway' | 'capture' | 'persuade' | 'cordon';      // (N8) 시설물 복구(유관 기관) · 견인 · 동물 포획 · 위기자 설득 · 통제(위협이 없는 현장에서 한 칸을 지킨다 — tile = 격자 칸 번호). 단계 2a 에는 자리만 (fitFor 0, 실행부는 빈 갈래)
 export type TaskKind = WorkKind | 'retreat' | 'rehab' | 'resupply' | 'board' | 'standby' | 'moveSignal' | 'swapAir';      // swapAir = 공기통 교체 (R1 9절)
 
 export interface WorkItem {
@@ -444,7 +450,7 @@ export interface ResourceRequest { t: number; need: keyof UnitCaps; count: numbe
 
 export interface Scene {
   outdoor?: boolean;        // 건물이 아니라 길 위의 현장 (출입구 대신 길목)
-  rules?: ('collapse' | 'gas' | 'water')[];      // 유형의 규칙에 더해 돌릴 세계 규칙 (예: 가스 폭발 현장 = 붕괴 + 가스, 선박 화재 = 화재 + 표류)
+  rules?: ('collapse' | 'gas' | 'water' | 'perch')[];      // 유형의 규칙에 더해 돌릴 세계 규칙 (예: 가스 폭발 현장 = 붕괴 + 가스, 선박 화재 = 화재 + 표류). (N8) 'perch' = 높은 자리가 있는 현장 — sceneManager 는 보지 않고 N8 의 규칙·crews.isHovering 이 본다
   glass: Uint8Array;                  // 깨진 창 (1 = 깨짐). 창 칸에만 뜻이 있다
   decorHp: Uint8Array;                // 가구가 받은 피해 (0 = 멀쩡하거나 가구가 아님 · 1…200 = 닳음 · 255 = 부서져 바닥이 됨). field/damage.ts
   id: number; incidentId: number; kind: IncidentType; variant: string;
@@ -500,7 +506,8 @@ export interface Scene {
 
 // ───────────────────────── 신고 / 관제 ─────────────────────────
 export type Persona = 'calm' | 'panicked' | 'confused' | 'partial' | 'wrong' | 'prank';
-export type Topic = 'location' | 'nature' | 'injured' | 'count' | 'trapped' | 'hazard' | 'weapon' | 'detail';
+export type Topic = 'location' | 'nature' | 'injured' | 'count' | 'trapped' | 'hazard' | 'weapon' | 'detail'
+  | 'verify' | 'same';      // (N8) 장난 낌새를 확인하는 질문 · 이웃의 열린 사건과 같은 일인가 (묻는 것은 단계 3·10 — 답은 kindsCaller 가 만든다)
 export interface Claim { topic: Topic; value: any; conf: number; text: string; truthful: boolean; callId: number; note: string; placeKind?: PlaceKind | 'intersection' }
 export interface Caller {
   name: string; persona: Persona;
@@ -539,7 +546,8 @@ export type ProblemCode =
   | 'ESCALATION' | 'BACKUP_LATE' | 'SCENE_MISMATCH' | 'SUSPECT_FLED' | 'SECONDARY_COLLISION' | 'LATE_DISCOVERY'
   | 'TIMEOUT' | 'FATIGUE' | 'HIDDEN_HAZARD' | 'RECOUNT' | 'WRONG_ADDRESS' | 'FALSE_ALARM'
   | 'RESPONDER_KILLED'      // (H1) 대원 순직
-  | 'SUSPECT_DIED';      // (H1) 용의자 사망
+  | 'SUSPECT_DIED'      // (H1) 용의자 사망
+  | 'UTIL_LATE' | 'ANIMAL_LOST';      // (N8) 유관 기관이 오지 못해 대신한 조치로 끝냄 (원격 차단·제수밸브) · 동물을 찻길로 놓침
 export interface Problem { code: ProblemCode; t: number; eventId: number; detail: string; recovered: boolean; recoveryText: string }
 
 export type IncidentPhase = 'unreported' | 'call' | 'pending' | 'dispatched' | 'onscene' | 'closed';
@@ -561,7 +569,8 @@ export interface IncidentResult {
 }
 /** 추격전: 도주 차량이 도로망을 달리는 동안의 상태 (pursuit.ts) */
 export interface Pursuit {
-  state: 'driving' | 'stopped' | 'escaped'; kind: 'kidnap' | 'drunk' | 'getaway';
+  state: 'driving' | 'stopped' | 'escaped'; kind: 'kidnap' | 'drunk' | 'getaway'
+    | 'cartheft';      // (N8) 차량 절도 — 세운 뒤 도보 도주 (단계 6b)
   hideout?: number;            // 납치범이 향하는 은신처 (건물 id). 없으면 도시 밖으로 달아난다
   from: number; to: number; edge: number; t: number;      // 지금 달리는 구간(교차로 → 교차로)과 그 위의 위치 0..1
   x: number; y: number; angle: number;
@@ -1018,4 +1027,69 @@ export interface Scene {
 export interface ShiftReport {
   carry?: { shift: number; key: string; lines: string[] };   // 이어받은 상태와 그 영향 — 이어받은 상태로 시작한 교대만 (단계 7)
   carryNext?: CarrySummary;                                  // 다음 교대로 넘기는 것 (단계 7)
+}
+
+// ───────────────────────── 사건 종류 다양화 (N8 단계 2a — 자료형만) ─────────────────────────
+// docs/specs/N8-incident-kinds.md §5.8. 새 진실의 자리는 Scene.kinds·Scene.animals·소품의 live·sub·용의자의 hideUntil·asleep·구조 대상의 quietLoss·Incident.dupOf 다 —
+// 판단 파일(commander·brain 판단부·orders/*·dispatch/analyst·dispatcher·screening·methods·airDecide·doctrine/kinds)은 읽지 않는다 (tests/kinds.test.ts 시험 4).
+// 단계 2a 에는 아무도 채우지 않는다(N8 의 현장이 없다) — 그래서 결과가 바뀌지 않는다. 객체 모양: Scene 은 kit.baseScene·sceneManager.createScene,
+// Prop 은 kit.PROP_BLANK, Casualty 는 kit.addCas·hazards 의 주변 시민 리터럴, Hostile 은 kit.addHostile, Incident 는 incidents.createIncident,
+// WorkItem 은 commander.want 의 리터럴에 같은 순서로 넣는다 (CLAUDE.md "자주 도는 객체의 모양").
+// 합집합에 더한 줄(같은 파일 위쪽, 각 줄 끝에 새 줄로): FactType 'ani' · InjuryCause 'animal' · T.LEDGE · Region.kind 넷 · WorkKind 다섯 · Scene.rules 'perch'
+// · Topic 'verify'·'same' · ProblemCode 'UTIL_LATE'·'ANIMAL_LOST' · Pursuit.kind 'cartheft'. 새 유형·부대·역할·장비·분야('civil')·수요 열쇠는 단계 2b 와 4a~8.
+/** 동물 (사람이 아니다 — s.hostiles 에 넣지 않는다). 만드는 곳은 kindsKit.addAnimal 하나, 모든 칸을 채운다 (단계 5) */
+export interface Animal {
+  id: number; kind: 'boar' | 'dog' | 'cow' | 'pig'; label: string;
+  x: number; y: number; px: number; py: number; facing: number;
+  path: number[] | null; pathI: number;
+  state: 'roam' | 'alert' | 'flee' | 'charge' | 'hide' | 'sedated' | 'caught' | 'gone';
+  agit: number;                 // 흥분 0..1
+  sedate: number;               // 맞은 마취의 진행 0..1 (1 이 되면 sedated)
+  via: 'wild' | 'road' | null;  // gone 일 때 나간 출구의 종류
+  bull: boolean;                // 돌진하는 황소 (escape) — 늘 채운다
+}
+/** 'ani' 사실의 값 — 본 대원의 믿음 */
+export interface AniBelief { kind: Animal['kind']; x: number; y: number; state: 'loose' | 'sedated' | 'caught' | 'gone'; via?: 'wild' | 'road' }
+/** Scene.kinds — 진실 (판단 파일은 읽지 않는다). 시나리오가 쓰는 칸만 채우고 나머지는 undefined */
+export interface KindsState {
+  told?: boolean; remoteAt?: number;              // 전선: 차 안 사람이 "내리지 말라"를 들었다 · 원격 차단 시각
+  flood?: number;                                 // 수도관: 지하 침수 0..1
+  headInjury?: boolean;                           // 주취자: 머리 부상
+  arriveAt?: number; expectHidden?: boolean;      // 잠복: 수거책이 들어올 시각 · 날치기: 처음부터 숨겨 둔 용의자
+  crisis?: number; stage?: number; drop?: number; // 위기자: 위기 정도 · 단계 · 떨어지면 닿는 칸
+  key?: number;                                   // 문 잠긴 집: 열쇠가 오는 시각
+  perch?: { cas: number; x: number; y: number; h: number; ground: number; top: number }[];   // 높은 자리 (§5.11 — h 높이 단계 1~3, ground 사다리를 펴는 땅 칸, top 하강을 시작하는 위쪽 칸)
+  depth?: number; badAir?: boolean;               // 구덩이: 깊이 · 나쁜 공기
+  power?: number;                                 // 놀이기구: 전원이 돌아올 시각 (돌아오지 않으면 Infinity)
+  agitated?: number;                              // 약물 과다: 흥분이 끝나는 시각
+  birthAt?: number; coached?: boolean;            // 출산: 시각 · 신고자 안내를 따랐다
+}
+export interface Scene {
+  animals?: Animal[];                             // 동물 현장만 배열 (그 밖은 undefined)
+  exitKind?: ('road' | 'wild')[];                 // s.exits 와 같은 순서 — 동물이 나가면 찻길 / 산·들 (생김새라 판단부도 읽는다)
+  kinds?: KindsState;                             // N8 시나리오의 진실
+}
+export interface Prop {
+  live?: boolean;                                 // fixture: 살아 있는 시설물 (전선·관·구멍·간판·벌집 …) — 진실
+  sub?: string;                                   // fixture: 진실의 갈래 (관의 물·가스, 우물의 좁음). 믿음에는 다른 이름의 칸(haz 의 pipe·crack·narrow)으로 옮겨 적는다
+}
+export interface Casualty {
+  quietLoss?: boolean;                            // 보호 유형에서 숨지는 단 하나의 길 (§5.13 — 그리지 않고 기록 한 줄). lost 를 다시 쓰지 않는다
+}
+export interface Hostile {
+  group?: 'A' | 'B';                              // 폭행 시비의 두 무리
+  hideUntil?: number;                             // 날치기: 숨은 자리에서 나갈 시각
+  asleep?: boolean;                               // 잠든 취객 (state 는 'hold' 그대로)
+}
+export interface CasBelief {
+  perch?: number;                                 // 높은 자리의 높이 단계 (0 또는 없음 = 높은 자리가 아니다)
+  stage?: number;                                 // 위기자 설득의 단계 (설득하는 대원이 본 정수)
+}
+export interface WorkItem {
+  animal?: number;                                // 대상 동물의 id (없으면 -1) — 임무 capture. commander.want·orders/injury 의 PROBE 리터럴은 늘 -1 로 채운다(객체 모양).
+                                                  // 설계서(§5.8)는 필수 칸이지만, 앞 묶음(X6·R2·R3·I1-b·I2)이 합쳐지기 전에 들어가는 준비 단계라 선택 칸으로 둔다 —
+                                                  // 필수면 그 묶음들이 새로 쓰는 작업 항목 리터럴(시험의 work() 도우미 등)이 모두 tsc 에 걸린다. 읽을 때는 (w.animal ?? -1)
+}
+export interface Incident {
+  dupOf?: number;                                 // 중복 신고 오인: 원 사건의 id — 진실 (접수 AI·관제는 읽지 않는다 — 단계 10)
 }

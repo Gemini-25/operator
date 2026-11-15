@@ -34,6 +34,7 @@ export function baseScene(sim: Sim, I: Incident, rng: Rng): Scene {
     clearVision: 7.5,      // (R1) 맑은 날의 바깥 시야 — 탐조등이 밤의 시야를 여기까지 올린다 (실종 현장은 3.8 로 덮어쓴다). 쓰는 것은 단계 5 부터
     cat: undefined, ops: undefined,      // (X6) 위험 상태(진실 — field/catastrophe.ts 의 catOf 가 첫 틱에 채운다)와 지휘 상태(지휘 규칙이 채운다)
     triageAt: -1, laneShield: null,      // (R3) 분류가 끝난 시각(4단계)·차량으로 막은 통제 지점(6단계) — 단계 0 에는 아무도 바꾸지 않는다
+    animals: undefined, exitKind: undefined, kinds: undefined,      // (N8) 동물·출구의 종류·N8 시나리오의 진실 — 채우는 것은 그 시나리오의 현장 생성기(단계 4a~)
   };
 }
 
@@ -61,6 +62,7 @@ const PROP_BLANK: Partial<Prop> = {
   occupants: undefined, emptySeat: undefined, cleared: undefined, angle: undefined, color: undefined, exploded: undefined, found: undefined, dirRegion: undefined,
   interviewed: undefined, lastSeenRegion: undefined, accurate: undefined, removed: undefined, entered: undefined, bus: undefined, real: undefined, fuse: undefined,
   vessel: undefined, heatLoad: undefined, heatK: undefined,      // (X6) 열을 받으면 터지는 용기 — field/catastrophe.ts 의 catOf 가 처음 한 번 판별해 채운다
+  live: undefined, sub: undefined,      // (N8) 시설물(fixture)의 살아 있음·갈래 — 진실 (단계 4a~)
 };
 export function addProp(s: Scene, kind: PropKind, x: number, y: number, extra: Partial<Prop> = {}): Prop {
   const p: Prop = { id: s.props.length, kind, x, y, w: 1, h: 1, blocking: false, hp: 0, ...PROP_BLANK, ...extra };
@@ -78,6 +80,7 @@ export function addCas(s: Scene, x: number, y: number, mob: Mobility, health: nu
     wander: false, wanderT: 0, isTarget: false, hostage: false, climb: undefined, bystander2: undefined, inWater: undefined, drift: undefined,      // 나중에 붙는 칸도 미리 (모든 구조 대상이 같은 모양)
     tDiscovered: -1, tFreed: -1, tTreated: -1, tSafe: -1, tLoaded: -1, tDead: -1, tHospital: -1, discoveredBy: -1, causeEvent: -1,
     injuries: undefined, bleedCause: undefined, deathCause: undefined, lost: undefined,      // (H1) 부상 기록 — 처음 상태의 원인은 injury.initInjuries 가 붙인다
+    quietLoss: undefined,      // (N8) 보호 유형에서 숨지는 단 하나의 길 (단계 7)
     ...extra,
   };
   s.casualties.push(c);
@@ -94,6 +97,7 @@ export function addHostile(s: Scene, x: number, y: number, weapon: Hostile['weap
     // (H1) 부상 — 나중에 붙는 칸을 미리 비워 둔다 (모든 용의자가 같은 모양)
     injuries: undefined, bleed: undefined, bleed0: undefined, treatQ: undefined, tTreated: undefined, dead: undefined, tDown: undefined, tDead: undefined,
     where: undefined, bleedCause: undefined, deathCause: undefined, selfHarmRolled: undefined,
+    group: undefined, hideUntil: undefined, asleep: undefined,      // (N8) 폭행 시비의 무리 · 날치기가 숨은 자리에서 나갈 시각 · 잠든 취객 (단계 6a)
   };
   s.hostiles.push(h);
   return h;

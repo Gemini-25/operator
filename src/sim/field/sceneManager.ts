@@ -10,8 +10,8 @@ import { scenarioOf } from '../scenarios';
 import { TYPE_DEFS } from '../incidentTypes';
 import { AIR_LOW, fieldCrew, hasKit, isHovering, kitUses, roleOf, useKit } from '../crews';
 import './scenes';
-import { SCENE_RULES } from './sceneRegistry';
-import type { FieldAgent, Incident, MateBelief, Scene, Unit } from '../types';
+import { PENDING_RULES, SCENE_RULES } from './sceneRegistry';
+import type { FieldAgent, Incident, MateBelief, Scene, Unit, UnitCaps } from '../types';
 import { fmtSec, josa } from '../util';
 import { BeliefStore, mergeHeard } from './beliefs';
 import { briefFacts, flushOutbox, learn, learnQuiet, makeAgent, mateFact } from './agents';
@@ -23,6 +23,20 @@ import { staticPass, tileOf } from './grid';
 import { tickCasualties, tickCollapse, tickCrush, tickFire, tickGas, tickHostiles, tickLane, tickLeaks, tickLift, tickMedical, tickWander, tickWater } from './hazards';
 import { CAUSE_NAME, DOWN_AT, canDeploy, hurtCauseNow, hurtResponder, initInjuries, mustRetreat, needsHospital, smokeCause, woundTick } from './injury';
 import type { HurtOpts } from './injury';
+
+/**
+ * (N8 단계 2a — 설계서 §5.7) 남은 일 등록의 답: 줄 가운데 처음으로 null 이 아닌 수요. 그 수요를 채울 부대(능력 0.7 이상)가 이미 이 사건에 배정돼
+ * 현장에 있거나 오는 중이면 그 수요 대신 통제 부대(현장의 주관 분야가 소방이면 진압, 그 밖은 경찰)를 부른다 — 와 있는 복구반은 지휘할 부대가 없어 일을 못 하고,
+ * 그 부대를 다시 부르면 onscene 이라 배정되지 않아 NO_UNIT·지원 요청이 되풀이된다. 줄은 믿음만 읽는다(orders/<묶음>.ts). 줄이 없으면 null
+ */
+function pendingNeed(sim: Sim, s: Scene, I: Incident, last: FieldAgent): keyof UnitCaps | null {
+  let need: keyof UnitCaps | null = null;
+  for (const rule of PENDING_RULES) { need = rule(sim, s, last); if (need !== null) break; }
+  if (need === null) return null;
+  const k = need;
+  const here = I.assigned.some((uid) => { const u = sim.units[uid]; return u.caps[k] >= 0.7 && (u.state === 'onscene' || u.state === 'enroute' || u.state === 'turnout'); });
+  return here ? (s.leadDept === 'fire' ? 'suppression' : 'law') : need;
+}
 
 export function createScene(sim: Sim, I: Incident): Scene {
   const s = buildScene(sim, I, sim.rng.fork('scene:' + I.id));
@@ -368,7 +382,9 @@ export function tickScene(sim: Sim, s: Scene): void {
         // 현장 평가를 마친 현장만 이렇게 끝낸다. 실종 현장을 상공의 헬기가 살핀 뒤라면 평가를 마치지 못했어도 같다 —
         // 하늘에서 먼저 다 찾아 주면 지상 부대가 평가를 건너뛰고 환자부터 싣고 떠나, 남은 일이 없는데도 '방치'로 닫혔다
         const surveyed = s.sizeupDone || (TYPE_DEFS[s.kind].zoneSearch && (s.airAt ?? -1) >= 0);
-        if (last && o && surveyed && o.patients === 0 && o.mates === 0 && !o.fire && !o.hostile && !(TYPE_DEFS[s.kind].zoneSearch && o.search) && !(s.kind === 'armed' && s.secureAt < 0)) {
+        // (N8) 남은 일 등록: 묶음 규칙이 마지막 지휘관의 믿음으로 본 끝나지 않은 일(살아 있는 시설물·풀린 동물·높은 자리의 사람)의 수요. 줄이 없으면 null — 아래는 지금 그대로
+        const pend = last && PENDING_RULES.length ? pendingNeed(sim, s, I, last) : null;
+        if (last && o && surveyed && o.patients === 0 && o.mates === 0 && !o.fire && !o.hostile && !(TYPE_DEFS[s.kind].zoneSearch && o.search) && !(s.kind === 'armed' && s.secureAt < 0) && pend === null) {
           emit(sim, { inc: I.id, role: 'COMMANDER', actor: sim.responders[last.rid].name, rid: last.rid, kind: 'command', imp: 2, text: '현장에 남은 임무가 없습니다. 환자 이송과 함께 상황 종료를 선언합니다.' });
           closeIncident(sim, I, 'resolved');
         } else if (o && (o.patients > 0 || o.fire || o.hostile || o.mates > 0)) {
@@ -376,6 +392,10 @@ export function tickScene(sim: Sim, s: Scene): void {
           // 안전 구역에서 후송을 기다리는 다친 동료만 남았으면 구급 부대 (처치·후송 — orders/injury.ts)
           const need = o.hostile ? 'law' : o.fire ? 'suppression' : o.patients === 0 && o.matesDown > 0 && TYPE_DEFS[s.kind].indoorRisk ? 'rescue' : 'ems';
           I.unmet[need] = Math.max(I.unmet[need] ?? 0, 1); I.unmetSince = sim.t; I.noUnitLogged = false;
+          emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: `사건 ${I.code}: 현장에 남은 부대가 없는데 아직 끝나지 않았습니다. 추가 부대를 찾습니다.` });
+        } else if (pend !== null) {
+          // (N8) 남은 일의 수요로 같은 일을 한다 (문구는 측정 도구의 문구 규칙 때문에 그대로)
+          I.unmet[pend] = Math.max(I.unmet[pend] ?? 0, 1); I.unmetSince = sim.t; I.noUnitLogged = false;
           emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: `사건 ${I.code}: 현장에 남은 부대가 없는데 아직 끝나지 않았습니다. 추가 부대를 찾습니다.` });
         }
       }

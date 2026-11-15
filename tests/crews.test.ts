@@ -1396,9 +1396,26 @@ describe('상공의 일 (설계서 7.3·7.4)', () => {
     const B = mk(true);
     tickScn(B.sim, B.s, 5 * 150, () => B.heli.state !== 'onscene');
     expect(said(B.sim, /떠난 현장에 아직/)).toBe(0);
-    // 남은 사람이 없으면(한 명뿐인 현장) 아무것도 알리지 않는다 — 사건은 방치 시간 뒤에 닫히고 결과는 진실로 판정한다
-    const C = sceneOf(clearSeed(), 'water/std', ['heli']);
-    if (C.s.casualties.length === 1) { tickScn(C.sim, C.s, 5 * 150, () => C.unit('heli').state !== 'onscene'); expect(said(C.sim, /떠난 현장에 아직/)).toBe(0); expect(C.I.unmet.rescue ?? 0).toBe(0); }
+    // 남은 사람이 없으면(한 명뿐인 현장) 아무것도 알리지 않는다 — 사건은 방치 시간 뒤에 닫히고 결과는 진실로 판정한다.
+    // 함께 떠 있던 경찰 헬기도 무전으로 들어 안다: 소방 헬기가 건져 간 사람을 아직 물속에 있다고 믿고 지상 부대를 부르지 않는다
+    const C = new Sim(clearSeed());
+    const J = createIncident(C, { type: 'water', variant: 'std', severity: 1, rng: C.rng.fork('t') });
+    const sc = C.scenes[J.id]!;
+    J.reportedAt = C.t; J.phase = 'dispatched';
+    expect(sc.casualties.length).toBe(1);
+    const helis = (['policeHeli', 'heli'] as UnitKind[]).map((kind) => { const u = C.units.find((q) => q.kind === kind)!; u.state = 'onscene'; u.incidentId = J.id; J.assigned.push(u.id); J.everAssigned.push(u.id); unitArrived(C, J, u); return u; });
+    tickScn(C, sc, 5 * 150, () => helis[1].state !== 'onscene');
+    expect(C.airStats.hoists).toBe(1);
+    const pop = opOf(sc, helis[0]);
+    expect(pop.eye.beliefs.val<CasBelief>('cas', 0)!.where, '경찰 헬기의 관측자가 본 것: 아직 물속').toBe('scene');
+    tickScn(C, sc, 5 * 2);      // 인양 보고가 무전으로 전해진다 (1.2초)
+    expect(pop.eye.beliefs.val<CasBelief>('cas', 0)!.where, '무전으로 들었다: 실려 갔다').toBe('loaded');
+    tickScn(C, sc, 5 * 40, () => helis[0].state !== 'onscene');
+    expect(helis[0].state).not.toBe('onscene'); expect(said(C, /^경찰헬기1: 상공 임무 종료, 복귀합니다\.$/)).toBe(1);
+    expect(said(C, /떠난 현장에 아직/)).toBe(0); expect(J.unmet.rescue ?? 0).toBe(0);
+    tickScn(C, sc, 5 * 62);
+    expect(J.closeReason).toBe('abandoned'); expect(J.result!.casSaved).toBe(1);
+    expect(J.result!.analysis.some((t) => /^헬기가 신고 접수 .+ 만에 현장 상공에 도착했지만, 지상 부대는 현장에 닿지 못했습니다\.$/.test(t)), '헬기만 왔던 사건의 문장').toBe(true);
   });
   it('물 투하: 산불의 바깥 구역에 물을 쏟고, 바구니가 비면 물을 뜨러 다녀온다. 밤에는 뿌리지 않는다', () => {
     const { sim, s, unit } = sceneOf(clearSeed(), 'fire/wild', ['heli']);

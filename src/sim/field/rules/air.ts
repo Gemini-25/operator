@@ -21,7 +21,7 @@ import { briefFacts, casFact, flushOutbox, learn, learnQuiet, makeAgent, perceiv
 import { WATCH_SPEED, airDecide, nearestLeg } from '../airDecide';
 import { outstanding } from '../commander';
 import type { AirTerrain, AirView } from '../airDecide';
-import { mkFact } from '../beliefs';
+import { BeliefStore, mkFact } from '../beliefs';
 import { isIndoor } from '../grid';
 import { applyWater, placeAtSafe, pushFx } from '../hazards';
 import { registerRule } from '../sceneRegistry';
@@ -83,6 +83,24 @@ function viewOf(sim: Sim, s: Scene, I: Incident, op: AirOp, u: Unit, st: AirStat
     op, eye: op.eye, board: s.board, cmd: activeCmd(s), terrain: st.terrain, kind: s.kind, night: sim.weather === 'night', others, incoming,
     hoist: u.hoist === true, bucket: (u.bucketMax ?? 0) > 0, leg: st.leg,
   };
+}
+
+/**
+ * 관측자도 현장의 무전을 듣는다: 이번 틱에 전해질 '현장 전체' 무전의 내용을 믿음에 합친다.
+ * 관측자는 s.agents 밖이라 sceneManager 의 무전 전달이 닿지 않는다 — 듣지 못하면 다른 헬기가 건져 간 사람을 아직 물속에 있다고 믿는다.
+ * (이 규칙은 그 틱의 무전 전달보다 먼저 돌고, 전달된 무전은 그 틱에 대기열에서 빠지므로 한 번씩만 듣는다. 상공에는 무전 음영이 없다)
+ */
+function listen(sim: Sim, s: Scene, air: AirOp[]): void {
+  const radio = s.radio;
+  for (let k = 0; k < radio.length; k++) {
+    const m = radio[k];
+    if (m.deliverAt > sim.t || m.to !== -1 || !m.facts.length) continue;
+    for (let j = 0; j < air.length; j++) {
+      const op = air[j];
+      if (op.eye.rid === m.from || op.phase === 'away') continue;
+      for (const f of m.facts) op.eye.beliefs.merge(BeliefStore.relay(f));
+    }
+  }
 }
 
 /**
@@ -210,6 +228,7 @@ registerRule((sim, s, I) => {
     if (!has) air.push(makeOp(sim, s, I, u));
   }
   if (!air.length) { if (s.light) s.light = null; return; }
+  if (s.radio.length) listen(sim, s, air);
   const night = sim.weather === 'night';
   let lit: AirOp | null = null;
   for (let k = air.length - 1; k >= 0; k--) {

@@ -26,6 +26,7 @@ export const PROBLEM_LABEL: Record<ProblemCode, string> = {
   TIMEOUT: '대응 시간 초과', FATIGUE: '대원 체력 고갈', HIDDEN_HAZARD: '숨겨진 위험 발현', RECOUNT: '인원 불일치 재수색', WRONG_ADDRESS: '신고 위치 오류', FALSE_ALARM: '허위·오인 신고',
   RESPONDER_KILLED: '대원 순직', SUSPECT_DIED: '용의자 사망',
   UTIL_LATE: '유관 기관 지연(대신한 조치)', ANIMAL_LOST: '동물 놓침',      // (N8) 이름표만 — order 의 자리와 문장 틀은 그 코드를 남기는 단계(4a·5)
+  DECON_LATE: '제독 지연',      // (N9 §5.5) 이름표와 order 의 자리(아래 splice — 지원 지연 다음)만. 문장 틀 T 와 남기는 곳은 단계 6
 };
 
 function addProblem(I: Incident, code: ProblemCode, t: number, eventId: number, detail: string, recovered = false, recoveryText = ''): void {
@@ -54,8 +55,10 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   }
   let downCount = 0, hurtOnly = 0;
   for (const rid of hurtRids) { if (killed.has(rid)) continue; if (sim.responders[rid].status === 'down') downCount++; else hurtOnly++; }
-  const suspectsTotal = s.hostiles.length;
-  const caught = s.hostiles.filter((h) => h.state === 'arrested' || h.state === 'down').length;      // 쓰러진·숨진 용의자도 검거로 센다 (§4.4)
+  // (N9 §5.15) 해산한 용의자(dispersed — 시위의 주최자·던지지 않은 선동자)는 용의자 셈에서 뺀다: 도주로 벌점을 받지 않고 해산이 성공이 된다. 없으면 예전 그대로
+  const counted = s.hostiles.some((h) => h.dispersed === true) ? s.hostiles.filter((h) => h.dispersed !== true) : s.hostiles;
+  const suspectsTotal = counted.length;
+  const caught = counted.filter((h) => h.state === 'arrested' || h.state === 'down').length;      // 쓰러진·숨진 용의자도 검거로 센다 (§4.4)
   const escaped = suspectsTotal - caught;
   // 용의자 피해: 이 사건에서 다친 용의자(처음부터 다쳐 있던 몫은 빼고 — 숨진 용의자 포함), 숨진 용의자, 그 가운데 위협이 끝난 뒤에 숨진 용의자 (§4.4)
   const over = threatOverAt(s);
@@ -68,7 +71,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   const deathCauses: Partial<Record<InjuryCause, number>> = {};
   for (const c of cas) if (c.dead && c.deathCause) deathCauses[c.deathCause] = (deathCauses[c.deathCause] ?? 0) + 1;
   let flames = 0; for (let i = 0; i < s.fire.length; i++) if (s.fire[i] > 0.2) flames++;      // 꺼져 가는 잔불은 제외
-  let hazardActive = flames > 0 || s.hostiles.some((h) => h.state === 'hold' || h.state === 'fight') || s.props.some((p) => p.kind === 'valve' && !p.mitigated && !p.ignited)
+  // (N9 §5.15) 해산한 용의자(dispersed)는 대치·교전으로 세지 않는다
+  let hazardActive = flames > 0 || s.hostiles.some((h) => (h.state === 'hold' || h.state === 'fight') && h.dispersed !== true) || s.props.some((p) => p.kind === 'valve' && !p.mitigated && !p.ignited)
     || s.props.some((p) => p.kind === 'bomb' && p.real && !p.mitigated && !p.exploded);      // 처리되지 않은 진짜 폭발물
   // (N8) 판정 등록(field/sceneRegistry.registerVerdict): 살아 있는 시설물·풀린 동물처럼 위의 식이 모르는 위험. open 이면 위험이 남은 것으로(벌점 1.5 와 목표 미완이 아래 식 그대로 따라온다),
   // bad 는 벌점에 더하고, delayed 는 대응 지연으로 센다. 등록된 줄이 없으면 아무것도 바뀌지 않는다
@@ -181,6 +185,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   };
   // (R2) 대응 방법 실패·변경: 장비 고장 바로 다음 자리. 위의 order·T 글자를 다른 묶음(H1·X6)이 함께 고치고 있어 여기서 끼운다 — 합쳐진 뒤에는 글자 안으로 옮겨도 된다
   order.splice(order.indexOf('EQUIP_FAIL') + 1, 0, 'METHOD_FAIL'); T.METHOD_FAIL = methodFailLine;
+  // (N9 §5.5) 제독 지연: 지원 지연(BACKUP_LATE) 바로 다음 자리 — 같은 까닭(order 글자를 X6 가 고치는 중)으로 여기서 끼운다. 문장 틀 T.DECON_LATE 는 단계 6 이 넣는다(그 전에는 이 코드가 남지 않는다)
+  order.splice(order.indexOf('BACKUP_LATE') + 1, 0, 'DECON_LATE');
   for (const code of order) {
     const ps = I.problems.filter((p) => p.code === code);
     if (!ps.length || A.length >= 9) continue;

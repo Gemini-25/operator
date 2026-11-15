@@ -1,7 +1,7 @@
 // ResourceManager — 부대·대원 명부, 차량 상태와 도시 지도 위 이동.
 
 import { coastY, edgeName, edgeTime, findRoute, nodeName, weatherSpeedFactor } from './city';
-import { AIR_KIND, EXTRA_NAMES, ROLES, STAFF, dealFlashbangs, drawFaults, fieldCrew, heliPad, isHovering, kitFor, kitIdsOf, medLevelOf, refillAir, skillsOf, slotsOf } from './crews';
+import { AIR_KIND, EXTRA_NAMES, ROLES, STAFF, dealFlashbangs, drawBatchFaults, drawFaults, fieldCrew, heliPad, isHovering, kitFor, kitIdsOf, medLevelOf, refillAir, skillsOf, slotsOf } from './crews';
 import { recomputeUnmet } from './dispatch/dispatcher';      // 함수 안에서만 부른다 (dispatcher 가 이 파일을 import 한다 — 모듈 맨 위에서 쓰지 않는다)
 import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
@@ -20,16 +20,16 @@ const NAMES = ['김도윤', '이서준', '박하준', '최민재', '정지호', 
 /** 차량·항공기에 딸린 것 (R1): 환자 자리, 예비 공기통, 호이스트, 물 바구니, 체공 시간 */
 interface Fit { seats: number; spareAir: number; hoist?: boolean; bucketMax?: number; fuelMax?: number }
 interface UnitDef extends Fit { callsign: string; dept: Dept; kind: UnitKind; field: UnitField; facility: string; caps: UnitCaps; waterMax: number; tool: number; med: number; armor: number; minLevel: number }
-// (N8 §5.3.5) 끝의 다섯은 새 수요 열쇠(전력·가스·수도 복구 · 견인 · 동물 포획) — 기본값이 있어 기존 줄은 그대로 컴파일된다
+// (N8 §5.3.5) 끝의 다섯은 새 수요 열쇠(전력·가스·수도 복구 · 견인 · 동물 포획) — 기본값이 있어 기존 줄은 그대로 컴파일된다. (N9 §5.3.1) 그다음이 제독
 const caps = (suppression: number, rescue: number, ems: number, law: number, tactical: number, search: number, traffic: number, eod = 0,
-  utilPower = 0, utilGas = 0, utilWater = 0, tow = 0, capture = 0): UnitCaps =>
-  ({ suppression, rescue, ems, law, tactical, search, traffic, eod, utilPower, utilGas, utilWater, tow, capture });
+  utilPower = 0, utilGas = 0, utilWater = 0, tow = 0, capture = 0, decon = 0): UnitCaps =>
+  ({ suppression, rescue, ems, law, tactical, search, traffic, eod, utilPower, utilGas, utilWater, tow, capture, decon });
 // tool·med·armor 는 부대의 대표 성능이다(관제가 본다). 사람이 든 장비는 crews.ts 의 KITS — 현장의 식은 R1 단계 2 부터 사람 값을 쓴다.
 const KIND: Record<UnitKind, { dept: Dept; caps: UnitCaps; waterMax: number; tool: number; med: number; armor: number } & Fit> = {
   engine: { dept: 'fire', caps: caps(1.0, 0.55, 0.2, 0, 0, 0.5, 0.4), waterMax: 100, tool: 0.55, med: 0.35, armor: 0.1, seats: 0, spareAir: 4 },
   ladder: { dept: 'fire', caps: caps(1.0, 0.7, 0.2, 0, 0, 0.5, 0.3), waterMax: 140, tool: 0.7, med: 0.35, armor: 0.1, seats: 0, spareAir: 3 },
   rescue: { dept: 'fire', caps: caps(0.75, 1.0, 0.25, 0, 0, 0.8, 0.4), waterMax: 60, tool: 1.0, med: 0.4, armor: 0.1, seats: 0, spareAir: 5 },
-  hazmat: { dept: 'fire', caps: caps(0.6, 0.9, 0.3, 0, 0, 0.5, 0.3), waterMax: 40, tool: 0.9, med: 0.45, armor: 0.15, seats: 0, spareAir: 4 },
+  hazmat: { dept: 'fire', caps: caps(0.6, 0.9, 0.3, 0, 0, 0.5, 0.3, 0, 0, 0, 0, 0, 0, 0.7), waterMax: 40, tool: 0.9, med: 0.45, armor: 0.15, seats: 0, spareAir: 4 },      // (N9) 제독 0.7 — 측정·제독 대원(최소 인원에서도 남는다). 제독차가 없을 때 관제의 둘째 후보
   // 헬기 세 종류 (설계서 R1 7.1). 어느 수요에 뜨는지는 dispatcher.airFit 이 정한다 — caps 는 그 헬기가 맡는 수요만 기준(MINCAP)을 넘게 좁혀 두었다
   heli: { dept: 'fire', caps: caps(0, 0.9, 0.4, 0, 0, 0.9, 0), waterMax: 0, tool: 0.6, med: 0.8, armor: 0.05, seats: 1, spareAir: 0, hoist: true, bucketMax: 1, fuelMax: 660 },      // 소방 헬기: 구조·수색 (구급 0.4 는 기준 밑 — 구급차 대신은 의료 헬기가 한다)
   policeHeli: { dept: 'police', caps: caps(0, 0, 0, 0, 0, 1.6, 0), waterMax: 0, tool: 0.1, med: 0.2, armor: 0, seats: 0, spareAir: 0, fuelMax: 720 },      // 경찰 헬기: 하늘의 눈 (수색만)
@@ -50,9 +50,16 @@ const KIND: Record<UnitKind, { dept: Dept; caps: UnitCaps; waterMax: number; too
   detective: { dept: 'police', caps: caps(0, 0, 0, 0.6, 0, 0.5, 0), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.2, seats: 0, spareAir: 0 },      // 형사 (치안 유형만 — kindFit)
   trafficPol: { dept: 'police', caps: caps(0, 0, 0, 0.4, 0, 0.2, 1.0), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.2, seats: 0, spareAir: 0 },      // 교통 경찰 오토바이 (경찰 0.4·수색 0.2 는 기준 밑)
   k9: { dept: 'police', caps: caps(0, 0, 0, 0.5, 0, 0.9, 0), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.2, seats: 0, spareAir: 0 },      // 경찰견 (실종·보호·치안의 수색만 — kindFit)
+  // (N9 §4.8) 새 부대 넷. 보조 능력이 관제 기준(MINCAP)을 넘으므로 dispatcher.kindFit 이 일을 좁힌다(KIND_AUX) — 평소 사건의 1순위가 되지 않게.
+  // 기동대의 기동 0.85 는 기준(0.9) 밑이다(섬광탄이 없다 — 인질 사건의 '섬광탄을 가진 기동대' 요청이 기동대 배정으로 멈추지 않게)
+  mtnRescue: { dept: 'fire', caps: caps(0, 0.7, 0.35, 0, 0, 0.85, 0), waterMax: 0, tool: 0.7, med: 0.4, armor: 0.05, seats: 0, spareAir: 0 },      // 산악 구조대 (사륜구동 — 산·'산악 조난'만)
+  dive: { dept: 'fire', caps: caps(0, 0.8, 0.3, 0, 0, 0.7, 0), waterMax: 0, tool: 0.6, med: 0.35, armor: 0.05, seats: 0, spareAir: 0 },      // 수중 구조대 (보트 받침 승합 — 수난만)
+  deconUnit: { dept: 'fire', caps: caps(0.3, 0.45, 0, 0, 0, 0.2, 0, 0, 0, 0, 0, 0, 0, 1.0), waterMax: 40, tool: 0.5, med: 0.45, armor: 0.15, seats: 0, spareAir: 4 },      // 화생방 제독차 (천막 실은 큰 차 — 제독만)
+  riotPol: { dept: 'police', caps: caps(0, 0, 0, 0.9, 0.85, 0.25, 0.6), waterMax: 0, tool: 0.15, med: 0.25, armor: 0.45, seats: 0, spareAir: 0 },      // 경찰 기동대 버스 (군중·폭동의 경찰·교통 수요만)
 };
 /** 큰 차: 불법 주차로 좁아진 골목을 지나지 못한다 (traffic.ts) */
-const HEAVY: Partial<Record<UnitKind, boolean>> = { engine: true, ladder: true, rescue: true, hazmat: true, powerCrew: true, waterCrew: true, tow: true };      // (N8) 버킷 트럭·수도 복구차·견인차
+const HEAVY: Partial<Record<UnitKind, boolean>> = { engine: true, ladder: true, rescue: true, hazmat: true, powerCrew: true, waterCrew: true, tow: true,      // (N8) 버킷 트럭·수도 복구차·견인차
+  deconUnit: true, riotPol: true };      // (N9) 제독차 · 기동대 버스
 const U = (callsign: string, kind: UnitKind, field: UnitField, facility: string, minLevel: number): UnitDef => ({ callsign, kind, field, facility, minLevel, ...KIND[kind] });
 // 편성표: 네 분야(경찰·소방·구조·특수)마다 3~6팀. minLevel 은 난이도의 "부대 규모"가 이 값 이상일 때 편성된다
 // (1 = 12팀, 2 = 15팀, 3 = 19팀, 4 = 21팀, 5 = 22팀). 줄의 순서를 바꾸면 대원 능력치가 바뀐다(이 순서로 뽑는다).
@@ -69,10 +76,14 @@ const UNIT_DEFS: UnitDef[] = [
   // 전력1·가스1·수도1 → 1 (4a·4b), 견인1 → 2 (6b), 포획1 → 1 (5), 형사1 → 2 (6a), 교통1 → 3 (6a), 경찰견1 → 3 (6a). 시청·물류터미널은 부대가 없던 출동 시설이다
   U('전력1', 'powerCrew', 'civil', '시청', 6), U('가스1', 'gasCrew', 'civil', '시청', 6), U('수도1', 'waterCrew', 'civil', '시청', 6), U('견인1', 'tow', 'civil', '물류터미널', 6),
   U('포획1', 'animalCtl', 'special', '서부119안전센터', 6), U('형사1', 'detective', 'police', '중부경찰서', 6), U('교통1', 'trafficPol', 'police', '동부지구대', 6), U('경찰견1', 'k9', 'police', '서부지구대', 6),
+  // (N9 §4.8 · §5.3.7) 새 부대 넷 — N8 줄 다음 끝에. minLevel 6 = 편성되지 않는다(단계 2 — 결과 불변). 소방 줄 셋(산악·수중·제독)도 펌프 상태(equipment 흐름)를
+  // 편성 검사 전에 뽑지만 그 흐름은 이 뒤에 쓰는 곳이 없다. 그 부대를 쓰는 단계가 3 으로 내린다: 기동대1 → 4, 수중1 → 5, 제독1 → 6, 산악1 → 9
+  U('산악1', 'mtnRescue', 'rescue', '서부119안전센터', 6), U('수중1', 'dive', 'rescue', '해양구조대', 6), U('제독1', 'deconUnit', 'special', '공단119안전센터', 6), U('기동대1', 'riotPol', 'police', '중부경찰서', 6),
 ];
 
 export const UNIT_KIND_NAME: Record<UnitKind, string> = { engine: '진압 펌프차', rescue: '구조 공작차', als: '전문 구급차', bls: '일반 구급차', patrol: '순찰차', tactical: '기동 순찰차', ladder: '사다리차', hazmat: '화학 구조차', swat: '특공대 장갑차', eod: '폭발물 처리 차량', heli: '소방 헬기', boat: '구조정', policeHeli: '경찰 헬기', medHeli: '의료 헬기',
-  powerCrew: '전력 복구차', gasCrew: '가스 복구차', waterCrew: '수도 복구차', tow: '견인차', animalCtl: '동물 포획차', detective: '형사 차량', trafficPol: '교통 순찰 오토바이', k9: '경찰견 차량' };
+  powerCrew: '전력 복구차', gasCrew: '가스 복구차', waterCrew: '수도 복구차', tow: '견인차', animalCtl: '동물 포획차', detective: '형사 차량', trafficPol: '교통 순찰 오토바이', k9: '경찰견 차량',
+  mtnRescue: '산악 구조대 차량', dive: '수중 구조대 차량', deconUnit: '화생방 제독차', riotPol: '경찰 기동대 버스' };      // (N9)
 export const FIELD_NAME: Record<UnitField, string> = { police: '경찰', fire: '소방', rescue: '구조·구급', special: '특수', civil: '유관 기관' };
 
 export function traitOf(r: Responder): string {
@@ -193,17 +204,22 @@ export function createRoster(sim: Sim): void {
   });
   // 개인 장비의 고장 추첨: 교대 흐름 'kit' 하나로, 편성된 대원만 (대원 순서 × 장비 순서). 고장은 처음 쓰려 할 때 드러난다
   drawFaults(sim.rng.fork('kit'), sim.responders, tn.kitFault);
+  // (N9 §5.12) 잠수 장비(batch 'n9')는 kit 의 추첨 순서에 끼지 않고 그 뒤에 따로 kit-n9 흐름에서 같은 순서·같은 확률로 뽑는다 (든 대원이 편성되지 않으면 한 번도 뽑지 않는다)
+  drawBatchFaults(sim.rng.fork('kit-n9'), sim.responders, tn.kitFault, 'n9');
 }
 
 // 지원 부대의 이름: 지원 한 번에 네 칸씩 쓴다(지원 종류의 최소 인원은 많아야 4명). 지원은 교대당 많아야 5회, 재난 때 3회 더(disaster.ts) — 8회 × 4칸
 const AID_NAMES = ['한도현', '서지우', '문태윤', '양서아', '고준혁', '배하린', '남건우', '유채원', '심재민', '노은서', '하승우', '전소율', '곽민석', '우다인', '진현수', '방예린',
   '국태린', '마하겸', '도은결', '위서담', '기서후', '나도겸', '라온유', '모아진', '범준기', '빈세현', '사윤호', '어진솔', '예다함', '은가람', '인태오', '피세온',
   // (N8 §4.9) 새 지원 수요 넷(전력·가스·수도·포획) × 4칸 — 끝에 붙인다. 교대당 지원은 많아야 8회(aidUsed 0~7 → 첨자 0~31)라 앞의 이름이 바뀌지 않는다
-  '강서율', '구하진', '길도담', '나은후', '단서연', '류하온', '맹지섭', '목하늘', '방지오', '서한별', '소이안', '안도유', '옥서진', '육하람', '장도경', '편지안'];
+  '강서율', '구하진', '길도담', '나은후', '단서연', '류하온', '맹지섭', '목하늘', '방지오', '서한별', '소이안', '안도유', '옥서진', '육하람', '장도경', '편지안',
+  // (N9 §4.8) 새 지원 수요 하나(제독) × 4칸 — 끝에 붙인다 (교대당 지원 8회 안에서는 앞의 이름이 그대로다)
+  '권이준', '소하윤', '차서진', '하은별'];
 const AID_KIND: Record<keyof Needs, UnitKind> = { suppression: 'engine', rescue: 'rescue', ems: 'bls', law: 'patrol', tactical: 'tactical', search: 'patrol', traffic: 'patrol', eod: 'eod',
-  utilPower: 'powerCrew', utilGas: 'gasCrew', utilWater: 'waterCrew', tow: 'tow', capture: 'animalCtl' };      // (N8) 견인은 지원을 부르지 않는다(§5.3.8 — 밀어 둠이 언제나 있다): AID_KIND.tow 는 표를 채우려고만 둔다
+  utilPower: 'powerCrew', utilGas: 'gasCrew', utilWater: 'waterCrew', tow: 'tow', capture: 'animalCtl',      // (N8) 견인은 지원을 부르지 않는다(§5.3.8 — 밀어 둠이 언제나 있다): AID_KIND.tow 는 표를 채우려고만 둔다
+  decon: 'deconUnit' };      // (N9 §5.3.1) 지원 제독차 (최소 인원 — 팀장·제독 대원 둘)
 const AID_CALL: Partial<Record<UnitKind, string>> = { engine: '지원진압', rescue: '지원구조', als: '지원구급', bls: '지원구급', patrol: '지원순찰', tactical: '지원기동', eod: '지원폭발물',
-  powerCrew: '지원전력', gasCrew: '지원가스', waterCrew: '지원수도', animalCtl: '지원포획' };
+  powerCrew: '지원전력', gasCrew: '지원가스', waterCrew: '지원수도', animalCtl: '지원포획', deconUnit: '지원제독' };
 
 /**
  * 인근 도시 지원 부대를 만든다. 도시 가장자리의 교차로 가운데 사건 현장에 가장 빨리 닿는 곳에서 출발한다.
@@ -263,6 +279,7 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
   };
   if (HEAVY[kind]) u.heavy = true;
   drawFaults(rng, members, tn.kitFault);      // 펌프 상태 다음에 뽑는다 (같은 흐름 aid:<n> 의 끝)
+  drawBatchFaults(sim.rng.fork('aid-n9:' + sim.aidUsed), members, tn.kitFault, 'n9');      // (N9) 잠수 장비는 따로 (지원 종류에는 그 장비를 든 자리가 없다 — 지금은 한 번도 뽑지 않는다)
   sim.units.push(u);
   return u;
 }

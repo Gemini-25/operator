@@ -28,7 +28,8 @@ export const BASE: ReadonlySet<SystemId> = new Set<SystemId>(['call', 'dispatch'
 
 /** Needs 의 여덟 열쇠 (I.unmet 의 합을 객체를 훑지 않고 구한다) */
 const NEED_KEYS: readonly (keyof Needs)[] = ['suppression', 'rescue', 'ems', 'law', 'tactical', 'search', 'traffic', 'eod',
-  'utilPower', 'utilGas', 'utilWater', 'tow', 'capture'];      // (N8 §5.3.5) 빠뜨리면 복구반만 기다리는 사건이 '수요 0 → 잊힘'으로 잡혀 관문이 깨진다
+  'utilPower', 'utilGas', 'utilWater', 'tow', 'capture',      // (N8 §5.3.5) 빠뜨리면 복구반만 기다리는 사건이 '수요 0 → 잊힘'으로 잡혀 관문이 깨진다
+  'decon'];      // (N9 §5.3.1) 제독차만 기다리는 사건도 같다
 export function unmetSum(I: { unmet: Partial<Needs> }): number { let n = 0; for (const k of NEED_KEYS) n += I.unmet[k] ?? 0; return n; }
 
 // ───────────────────────── 시스템 대응표 (§2.3) ─────────────────────────
@@ -54,6 +55,7 @@ export const PROBLEM_SYS: ReadonlyMap<string, SystemId> = (() => {
   put('hospital', 'HOSPITAL_FULL');
   put('infra', 'INFRA_FAIL');
   put('infra', 'UTIL_LATE');      // (N8) 유관 기관이 오지 못해 대신한 조치로 끝냄
+  put('hazard', 'DECON_LATE');      // (N9 §5.5) 제독 지연 — 대체 제독으로 했거나 오염이 번졌다
   put('field', 'PATH_BLOCKED VICTIM_MISSED COMM_FAIL SCENE_MISMATCH LATE_DISCOVERY RECOUNT TIMEOUT METHOD_FAIL DANGER_SIGN WITHDRAWAL');
   put('field', 'ANIMAL_LOST');      // (N8) 동물을 찻길로 놓침
   return m;

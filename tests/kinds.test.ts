@@ -314,7 +314,9 @@ describe('20 새 부대 — 편성되지 않는 여덟 줄 · 표 · 관제의 �
       for (const u of sim.units) expect(NEW_KINDS.indexOf(u.kind), `규모 ${lv} ${u.callsign}`).toBe(-1);
     }
     const keys = rosterKeys();
-    const tail = keys.slice(-14);
+    // (N9 단계 2) 열쇠 끝에는 N9 의 새 부대 넷(편성되지 않는 줄)이 더 붙는다 — N8 의 열넷은 그 앞에 이어져 있다 (N9 의 줄은 tests/kinds2.test.ts 시험 3)
+    const at = keys.findIndex((k) => k.callsign === '전력1');
+    const tail = keys.slice(at, at + 14);
     expect(tail.map((k) => k.callsign)).toEqual(['전력1', '전력1', '가스1', '가스1', '수도1', '수도1', '견인1', '포획1', '포획1', '형사1', '형사1', '교통1', '경찰견1', '경찰견1']);
     for (const k of keys) expect(typeof k.name === 'string' && k.name.length > 1, `${k.callsign} ${k.slot}`).toBe(true);
     expect(new Set(keys.map((k) => k.name)).size).toBe(keys.length);
@@ -378,11 +380,11 @@ describe('20 새 부대 — 편성되지 않는 여덟 줄 · 표 · 관제의 �
   it('관제: kindFit 이 새 부대의 일을 좁히고(경찰견은 응급 선착 대응·무장의 경찰 수요에 0, 포획팀은 포획 밖 0, 형사는 치안 밖 0), 예비 셈에서 뺀다. 이름표 가점 표는 비어 있다', () => {
     const { sim, I } = quietSim('N8-2B-KIND', 'medical');
     const set = (type: string, label?: string): void => {
-      I.assessment = { type: type as IncidentType, typeConf: 0.9, probs: {} as Assessment['probs'], severity: 1.5, confidence: 0.9, needs: { suppression: 0, rescue: 0, ems: 0, law: 0, tactical: 0, search: 0, traffic: 0, eod: 0, utilPower: 0, utilGas: 0, utilWater: 0, tow: 0, capture: 0 }, risks: [], summary: '', t: sim.t, revision: 0, label } as Assessment;
+      I.assessment = { type: type as IncidentType, typeConf: 0.9, probs: {} as Assessment['probs'], severity: 1.5, confidence: 0.9, needs: { suppression: 0, rescue: 0, ems: 0, law: 0, tactical: 0, search: 0, traffic: 0, eod: 0, utilPower: 0, utilGas: 0, utilWater: 0, tow: 0, capture: 0, decon: 0 }, risks: [], summary: '', t: sim.t, revision: 0, label } as Assessment;
     };
     const base = sim.units.find((u) => u.kind === 'patrol')!;
     const fake = (kind: UnitKind): Unit => ({ ...base, kind });
-    expect([...KIND_AUX].sort()).toEqual(['animalCtl', 'detective', 'k9', 'trafficPol']);
+    expect([...KIND_AUX].sort()).toEqual(['animalCtl', 'deconUnit', 'detective', 'dive', 'k9', 'mtnRescue', 'riotPol', 'trafficPol']);      // (N9 단계 2) 산악·수중·제독·기동대를 더했다
     set('medical'); expect(kindFit(sim, fake('k9'), I, 'search'), '응급의 선착 대응 수색').toBe(0);
     set('armed'); expect(kindFit(sim, fake('k9'), I, 'law')).toBe(0); expect(kindFit(sim, fake('k9'), I, 'search')).toBe(0); expect(kindFit(sim, fake('detective'), I, 'law'), '무장의 경찰 수요').toBe(0);
     set('search'); expect(kindFit(sim, fake('k9'), I, 'search')).toBe(1);
@@ -394,8 +396,10 @@ describe('20 새 부대 — 편성되지 않는 여덟 줄 · 표 · 관제의 �
     const ac = aid(sim, 'capture', I), pc = aid(sim, 'utilPower', I);
     expect(ac.dept).toBe('fire');
     expect([notSpare(ac), notSpare(pc), notSpare(sim.units.find((u) => u.kind === 'engine')!), notSpare(base)]).toEqual([true, true, false, false]);
-    // 이름표 가점: 표는 비어 있고(단계 2b), 줄이 생기면 그 종류·장비의 부대에 더한다. 기존 두 줄(수난·붕괴의 구조 수요)은 그대로
-    expect(LABEL_BONUS.length).toBe(0);
+    // 이름표 가점: N8 의 줄은 아직 없고(단계 2b — 그 이름표를 내는 시나리오의 단계에 붙인다), 줄이 생기면 그 종류·장비의 부대에 더한다. 기존 두 줄(수난·붕괴의 구조 수요)은 그대로
+    // (N9 단계 2) 표에는 N9 의 줄이 먼저 들어와 있다 — 걸리지 않는 줄이다(tests/kinds2.test.ts 시험 3)
+    const N8_LABELS = ['떨어질 듯한 간판', '외벽 작업자 고립', '멈춘 놀이기구', '가축 탈출', '날치기', '수거책 잠복', '치매 노인 실종', '출산 임박', '위기자', '싱크홀'];
+    expect(LABEL_BONUS.filter((r) => N8_LABELS.indexOf(r.label) >= 0).length).toBe(0);
     const rope = sim.units.find((u) => u.kind === 'rescue')!;
     for (const r of rope.crew) for (const it of sim.responders[r].kit!) it.faultKnown = false;
     set('water'); expect(kitBonus(sim, rope, I, 'rescue')).toBe(12); expect(kitBonus(sim, rope, I, 'law')).toBe(0);

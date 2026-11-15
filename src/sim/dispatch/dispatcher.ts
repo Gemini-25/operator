@@ -5,7 +5,7 @@ import type { Sim } from '../engine';
 import { emit, markRecovered, raiseProblem } from '../events';
 import { hazardSign, transmit } from '../field/agents';
 import { mkFact } from '../field/beliefs';
-import { nodeName } from '../city';
+import { mountainAt, nodeName } from '../city';
 import { crewHasKit, fieldCrew } from '../crews';
 import { coastal, createAidUnit, crewOk, crewReady, dispatchUnit, etaFor, sendUnitTo } from '../resources';
 import type { Claim, Incident, KitId, Needs, Problem, RadioMsg, Scene, Unit, UnitKind } from '../types';
@@ -13,10 +13,11 @@ import { TYPE_NAME, fmtSec, josa } from '../util';
 import { assess, emptyNeeds, needsText, sevName } from './analyst';
 
 const ORDER: (keyof Needs)[] = ['eod', 'tactical', 'law', 'suppression', 'rescue', 'ems', 'traffic', 'search',
-  'utilPower', 'utilGas', 'utilWater', 'tow', 'capture'];      // (N8 §5.3.5) 새 수요 다섯은 끝에 — 기존 배정 순서 그대로
-const MINCAP: Record<keyof Needs, number> = { suppression: 0.7, rescue: 0.5, ems: 0.7, law: 0.5, tactical: 0.9, search: 0.3, traffic: 0.4, eod: 0.9, utilPower: 0.7, utilGas: 0.7, utilWater: 0.7, tow: 0.7, capture: 0.7 };
+  'utilPower', 'utilGas', 'utilWater', 'tow', 'capture',      // (N8 §5.3.5) 새 수요 다섯은 끝에 — 기존 배정 순서 그대로
+  'decon'];      // (N9 §5.3.1) 제독 — N8 의 다섯 다음 끝에
+const MINCAP: Record<keyof Needs, number> = { suppression: 0.7, rescue: 0.5, ems: 0.7, law: 0.5, tactical: 0.9, search: 0.3, traffic: 0.4, eod: 0.9, utilPower: 0.7, utilGas: 0.7, utilWater: 0.7, tow: 0.7, capture: 0.7, decon: 0.7 };      // (N9) 제독 0.7 — 후보는 제독차(1.0)와 화학 구조차(0.7)
 const NEED_LABEL: Record<keyof Needs, string> = { suppression: '진압', rescue: '구조', ems: '구급', law: '경찰', tactical: '경찰 기동', search: '수색', traffic: '교통 통제', eod: '폭발물 처리',
-  utilPower: '전력 복구', utilGas: '가스 복구', utilWater: '수도 복구', tow: '견인', capture: '동물 포획' };
+  utilPower: '전력 복구', utilGas: '가스 복구', utilWater: '수도 복구', tow: '견인', capture: '동물 포획', decon: '제독' };
 
 /** 평가된 수요에서 이미 배정된 부대가 덮는 부분을 빼고 남은 수요를 계산한다. */
 export function recomputeUnmet(sim: Sim, I: Incident): void {
@@ -82,26 +83,58 @@ export function kitBonus(sim: Sim, u: Unit, I: Incident, key: keyof Needs): numb
  * '수거책 잠복' → law · detective +15 · '치매 노인 실종' → search · k9 +10 · '출산 임박' → ems · alsBag +8 · '위기자' → rescue · jumpMat +20 · '싱크홀' → rescue · rescue(부대) +15 ·
  * '떨어질 듯한 간판' → rescue · rope +10. 기존 두 줄(수난·붕괴의 구조 수요)은 위에 글자 그대로 둔다
  */
-export const LABEL_BONUS: { label: string; key: keyof Needs; kind?: UnitKind; kit?: KitId; bonus: number }[] = [];
+export const LABEL_BONUS: { label: string; key: keyof Needs; kind?: UnitKind; kit?: KitId; bonus: number }[] = [
+  // ── (N9 §5.3.3) 큰 사건의 이름표 — 단계 2 에 줄을 넣는다. 이름표를 내는 시나리오(N9 단계 4~9)가 아직 없고, 줄이 앞세우는 새 부대는 편성되지 않았다 —
+  //    걸리는 줄이 없어 결과가 바뀌지 않는다('집단 난동'(폭동 — 지금 있는 이름표)의 줄은 기동대에만 붙는다). 이름표는 설계서 §4.0 의 글자 그대로 ──
+  { label: '압사 위험', key: 'law', kind: 'riotPol', bonus: 25 }, { label: '시위 충돌', key: 'law', kind: 'riotPol', bonus: 25 },
+  { label: '행사장 환자 다발', key: 'law', kind: 'riotPol', bonus: 25 }, { label: '집단 난동', key: 'law', kind: 'riotPol', bonus: 25 },
+  { label: '여객선 사고', key: 'rescue', kit: 'diveKit', bonus: 15 }, { label: '어선 사고', key: 'rescue', kit: 'diveKit', bonus: 15 }, { label: '침수 지하차도', key: 'rescue', kit: 'diveKit', bonus: 15 },
+  { label: '밀폐 공간 질식', key: 'rescue', kit: 'gasMeter', bonus: 15 }, { label: '일산화탄소 중독', key: 'rescue', kit: 'gasMeter', bonus: 15 },
+  { label: '화학 탱크로리', key: 'rescue', kind: 'hazmat', bonus: 20 },
+  { label: '기계 끼임', key: 'ems', kit: 'alsBag', bonus: 8 },
+  { label: '금고털이', key: 'search', kind: 'k9', bonus: 10 }, { label: '금고털이', key: 'law', kind: 'detective', bonus: 10 },
+  { label: '강풍 낙하물', key: 'suppression', kind: 'ladder', bonus: 12 },
+  { label: '기름 유출', key: 'rescue', kit: 'oilBoom', bonus: 20 }, { label: '기름 유출', key: 'rescue', kit: 'plugKit', bonus: 15 },
+  { label: '산악 조난', key: 'rescue', kit: 'mtnKit', bonus: 20 }, { label: '산악 조난', key: 'search', kit: 'mtnKit', bonus: 20 },
+];
 
 /** (N8 §5.3.4) 일을 kindFit 으로 좁히는 새 부대 — 관제 기준을 넘는 보조 능력이 평소 사건의 수요에 끼어들지 않게 */
-export const KIND_AUX: ReadonlySet<UnitKind> = new Set<UnitKind>(['animalCtl', 'detective', 'trafficPol', 'k9']);
+export const KIND_AUX: ReadonlySet<UnitKind> = new Set<UnitKind>(['animalCtl', 'detective', 'trafficPol', 'k9',
+  'mtnRescue', 'dive', 'deconUnit', 'riotPol']);      // (N9 §5.3.2) 산악·수중·제독·기동대 — 산악의 수색 0.85·수중의 구조 0.8·기동대의 경찰 0.9 가 기준을 넘는다
 /** 경찰견이 나가는 수색 수요의 평가 유형 (보호·치안은 그 유형이 생기는 단계 6a·7 부터 걸린다 — 글자로 둔다) */
 const K9_TYPES: ReadonlySet<string> = new Set<string>(['search', 'welfare', 'disturb']);
 /** 형사가 나가는 경찰 수요의 평가 유형 (치안 — 단계 6a 부터) */
 const DETECTIVE_TYPES: ReadonlySet<string> = new Set<string>(['disturb']);
+/** (N9 §5.3.2) 수중 구조대가 나가는 이름표 (평가 유형 수난 밖 — 선박 화재는 화재, 지하차도·여객선·어선의 흐릿한 평가) */
+const DIVE_LABELS: ReadonlySet<string> = new Set<string>(['침수 지하차도', '여객선 사고', '선박 화재', '어선 사고']);
+/** (N9 §5.3.2) 산 — 신고 교차로가 이만큼 산 안쪽이면 산악 구조대가 실종·구조 사건에 0.6 으로 나간다 (지도는 공개된 지형이다 — staticCity 가 터널 입구를 그리는 값과 같다) */
+const MTN_AT = 0.35;
 /**
  * (N8 §5.3.4) 새 부대를 이 사건의 이 수요에 보내는가 — 0 이면 보내지 않고, 아니면 적합도에 곱하는 값 (airFit 과 같은 꼴). 관제가 아는 것(평가 유형)만 읽는다.
  *  형사: 평가 유형이 치안인 사건의 경찰 수요만 · 경찰견: 실종·보호·치안의 수색 수요만(응급의 선착 대응·무장의 경찰 수요에 나가지 않는다)
  *  교통 경찰: 교통 수요만(모든 유형 — 교통 통제는 그 부대의 본래 일이다) · 동물 포획팀: 동물 포획 수요만. 유관 기관은 자기 열쇠 말고는 능력이 0 이라 따로 거르지 않는다
+ *  (N9 §5.3.2) 산악 구조대: 이름표 '산악 조난' 의 구조·수색 1, 산의 교차로로 신고된 실종·구조 유형 0.6 · 수중 구조대: 수난 유형이거나 네 이름표의 구조·수색 ·
+ *  제독차: 제독 수요만 · 기동대: 군중 유형이거나 이름표 '집단 난동'(폭동)의 경찰·교통 수요만(기동 0.85 는 기준 밑이라 기동 수요의 후보가 되지 않는다) ·
+ *  형사·경찰견: 이름표 '금고털이'(무장 유형)의 경찰·수색 수요에도
  */
-export function kindFit(_sim: Sim, u: Unit, I: Incident, key: keyof Needs): number {
+export function kindFit(sim: Sim, u: Unit, I: Incident, key: keyof Needs): number {
   const type: string = I.assessment!.type;
   switch (u.kind) {
-    case 'detective': return key === 'law' && DETECTIVE_TYPES.has(type) ? 1 : 0;
-    case 'k9': return key === 'search' && K9_TYPES.has(type) ? 1 : 0;
+    case 'detective': return key === 'law' && (DETECTIVE_TYPES.has(type) || I.assessment!.label === '금고털이') ? 1 : 0;      // (N9) 금고털이는 무장 유형이다
+    case 'k9': return key === 'search' && (K9_TYPES.has(type) || I.assessment!.label === '금고털이') ? 1 : 0;
     case 'trafficPol': return key === 'traffic' ? 1 : 0;
     case 'animalCtl': return key === 'capture' ? 1 : 0;
+    // ── (N9 §5.3.2) 새 부대 넷. 관제가 아는 것(평가 유형·이름표·신고 위치의 지형)만 읽는다. 유형 'rescue'·'crowd' 는 N8·N9 가 더할 유형이라 글자로 견준다 ──
+    case 'mtnRescue': {
+      if (key !== 'rescue' && key !== 'search') return 0;
+      if (I.assessment!.label === '산악 조난') return 1;
+      if (type !== 'search' && type !== 'rescue') return 0;
+      const n = sim.city.nodes[I.reportedNode];
+      return n && mountainAt(n.x, n.y) >= MTN_AT ? 0.6 : 0;
+    }
+    case 'dive': return (key === 'rescue' || key === 'search') && (type === 'water' || DIVE_LABELS.has(I.assessment!.label ?? '')) ? 1 : 0;
+    case 'deconUnit': return key === 'decon' ? 1 : 0;
+    case 'riotPol': return (key === 'law' || key === 'traffic') && (type === 'crowd' || I.assessment!.label === '집단 난동') ? 1 : 0;
     default: return 1;
   }
 }

@@ -16,7 +16,7 @@ import { losWalls } from './grid';
 import { opsCordon } from './ops';
 import { BAND_NAME, HOSTILE_FOV } from './hazards';
 import { hosNeedsCare, mateNeedsHospital } from './injury';
-import { CAS_HOLDS, CLOSE_BLOCKERS, ORDER_RULES, PROP_HOLDS, WORK_GATES } from './sceneRegistry';
+import { CAS_HOLDS, CLOSE_BLOCKERS, HOS_HOLDS, ORDER_RULES, PROP_HOLDS, WORK_GATES } from './sceneRegistry';
 import type { CommandKit } from './sceneRegistry';
 
 interface Target { region?: number; cas?: number; prop?: number; hostile?: number; tile?: number; mate?: number; animal?: number }      // animal: (N8) 대상 동물
@@ -81,7 +81,7 @@ export function countUnits(sim: Sim, s: Scene, I: Incident, need: keyof UnitCaps
 function request(sim: Sim, s: Scene, I: Incident, a: FieldAgent, need: keyof UnitCaps, reason: string, urgent: boolean): void {
   if (s.requests.some((q) => q.need === need && (q.fulfilled < q.count || sim.t - q.t < 70))) return;
   const label: Record<string, string> = { suppression: '진압 부대', rescue: '구조 장비 부대', ems: '구급 부대', law: '경찰 부대', tactical: '경찰 기동 부대', search: '수색 인력', traffic: '교통 통제 인력', eod: '폭발물 처리반',
-    utilPower: '전력 복구반', utilGas: '가스 복구반', utilWater: '수도 복구반', tow: '견인차', capture: '동물 포획팀' };      // (N8 §5.3.5)
+    utilPower: '전력 복구반', utilGas: '가스 복구반', utilWater: '수도 복구반', tow: '견인차', capture: '동물 포획팀', decon: '제독 부대' };      // (N8 §5.3.5) · (N9 §5.3.1) 제독차 또는 화학 구조차
   const ev = transmit(sim, s, a, -2, 'request', [], `관제, ${label[need]} 추가 지원 요청. 사유: ${reason}.`, -1, 2, [I.lastEvent]);
   if (ev < 0) return;     // 음영 구역 — 다음 계획 주기에 재시도
   s.requests.push({ t: sim.t, need, count: 1, reason, eventId: ev, fulfilled: 0, urgent });
@@ -131,7 +131,7 @@ function planEntry(s: Scene, hv: { x: number; y: number; facing?: number }): { e
 const josaLocal = (w: string): string => `${w}으로`;
 
 /** 관제가 그 능력의 부대로 치는 최소 적합도 (dispatcher.ts 의 MINCAP 과 같다) */
-const NEED_MIN: Record<keyof UnitCaps, number> = { suppression: 0.7, rescue: 0.5, ems: 0.7, law: 0.5, tactical: 0.9, search: 0.3, traffic: 0.4, eod: 0.9, utilPower: 0.7, utilGas: 0.7, utilWater: 0.7, tow: 0.7, capture: 0.7 };
+const NEED_MIN: Record<keyof UnitCaps, number> = { suppression: 0.7, rescue: 0.5, ems: 0.7, law: 0.5, tactical: 0.9, search: 0.3, traffic: 0.4, eod: 0.9, utilPower: 0.7, utilGas: 0.7, utilWater: 0.7, tow: 0.7, capture: 0.7, decon: 0.7 };
 
 /**
  * 이 작업을 할 수 있는 대원을 보내 줄 부대의 능력. 아무나 할 수 있는 일이면 null.
@@ -163,6 +163,7 @@ function needFor(s: Scene, w: WorkItem, hotArmed: boolean, a: FieldAgent): keyof
     case 'perimeter': case 'engage': case 'arrest': case 'negotiate': return 'law';
     case 'rescueMate': return hotArmed ? 'law' : 'rescue';      // 쓰러진 동료: 안전 확보 전의 무장 현장은 경찰만, 위험한 건물 안은 공기호흡기를 멘 대원만 들어간다 (fitFor)
     case 'defuse': return 'eod';
+    case 'decontam': return 'decon';      // (N9 §5.3.1) 제독 — 맡는 사람(fitFor)·실행은 단계 6
     default: return null;
   }
 }
@@ -237,8 +238,12 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   const threat = active.length > 0 || surrendered.length > 0;
   if (threat && s.secureAt >= 0) s.secureAt = -1;
   // (I1-b) cause = 그 사실을 실어 온 무전 기록 (heardEv) — 지시 무전의 causes 에만 들어간다
-  for (const h of surrendered) want(sim, s, 'arrest', { hostile: h.id }, 0.93, 1, false, heardEv(h));
+  for (const h of surrendered) {
+    if (HOS_HOLDS.length && HOS_HOLDS.some((f) => f(sim, s, a, h.id, h.value))) continue;      // (N9) 보류: 묶음 규칙이 맡은 용의자(시위의 주최자 …)에게는 핵심 규칙이 일을 내지 않는다 — 줄이 없으면 그대로
+    want(sim, s, 'arrest', { hostile: h.id }, 0.93, 1, false, heardEv(h));
+  }
   for (const h of active) {
+    if (HOS_HOLDS.length && HOS_HOLDS.some((f) => f(sim, s, a, h.id, h.value))) continue;      // (N9) 보류 — 위협 셈(threat)에는 그대로 든다
     if (h.value.state === 'flee') { want(sim, s, 'engage', { hostile: h.id }, 0.95, 2, false, heardEv(h)); continue; }
     // 진입이 결정되면 진입조 둘을 먼저 채우고, 남는 경찰만 출입구를 지킨다
     // (봉쇄에 묶인 대원은 진입 지시보다 봉쇄를 계속하므로, 경찰이 둘뿐이면 아무도 들어가지 않는다)

@@ -6,7 +6,7 @@
 // 잎 모듈이다: types 만 가져온다 (util·analyst·callSystem·incidents·sceneManager·화면이 이 파일을 가져간다 — 서로 부르게 되지 않게).
 // 색은 시뮬레이션 쪽 표에 넣지 않는다 — view/typeStyle.ts.
 
-import type { IncidentType, InjuryCause, Needs, Topic } from './types';
+import type { IncidentType, InjuryCause, Needs, Scene, Topic } from './types';
 
 /**
  * 유형의 순서. 분석 AI 의 가설 순서·가능도 배열(likRow)의 열 순서·평소 추첨의 가중 순서·확률 막대의 순서가 모두 이것이다.
@@ -114,3 +114,10 @@ export function likRow(m: LikMap): number[] {
   if (!row) { row = TYPE_ORDER.map((t) => m[t] ?? LIK_FLOOR); likRows.set(m, row); }
   return row;
 }
+
+/**
+ * (N9 §5.14) 구조 대상의 체력 하한 — 유형의 값(TYPE_DEFS.floorHp — N8 의 보호 유형 20)과 장면의 값(s.kinds2.floorHp — N9 의 차량 돌진·지하철 선로 추락 20)
+ * 가운데 큰 쪽. 0 이면 하한이 없다. 하한을 읽는 자리(N8 단계 7 의 hazards.tickCasualties 악화·tickWander·welfareRule, N9 의 규칙이 hurtCas 뒤에 자르는 자리)는
+ * 모두 이 함수 하나로 읽는다 — TYPE_DEFS[…].floorHp 를 직접 읽지 않는다. 단계 1 에는 부르는 곳이 없다(둘 다 0 — 결과 불변)
+ */
+export function floorOf(s: Pick<Scene, 'kind' | 'kinds2'>): number { return Math.max(TYPE_DEFS[s.kind].floorHp, s.kinds2?.floorHp ?? 0); }

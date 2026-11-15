@@ -1416,6 +1416,12 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       return;
     }
     case 'evacuate': runEvacuate(sim, s, a, t); return;      // (X6 §5.1) 철수 이동
+    // (N9 단계 1) 제독의 빈 갈래 — 실행(제독 자리로 데려가 15·30·45초)은 단계 6 이 채운다(설계서 §5.5). 지금은 아무도 이 작업을 만들지 않고 fitFor 가 0 이라 닿지 않는다.
+    // 닿으면 내려놓는다 (임무를 쥔 채 제자리에 서 있지 않게)
+    case 'decontam': {
+      finishTask(sim, s, a, false, 'preempt');
+      return;
+    }
     case 'retreat': {
       const m = moveTo(sim, s, a, s.staging.x, s.staging.y, 2, false, true);      // 물러나는 길은 불길도 뚫는다
       if (m === 'arrived') {

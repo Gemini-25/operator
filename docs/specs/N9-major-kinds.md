@@ -1410,6 +1410,110 @@ npx tsx scripts/sweep.ts 20 --force water/underpass --scen --metrics # --force �
 
 (구현한 뒤 적는다 — 단계를 끝낸 작업자가 덧붙인다: 실제 이름 · 본문과 다른 곳 · 잰 수치 · 해시 확인 · 다음 단계가 이어받을 자리. **코드가 정본이고 이 절이 본문보다 우선한다.**)
 
+### 단계 1 (틀 A — 자료형과 등록 자리) — 2026-11-15 밤, 준비 줄
+
+**상태: 구현됨, 결과 불변.** 작업자 브랜치 `wf/kinds2-s1`, 가리킴 `wf/kinds2`. 시작점 `2714032`(주 브랜치 — R1·H1 전체, X6 단계 0·1·2, R2 단계 0, I1-a·I1-b b0, R3 단계 0, I2 단계 1, N8 의 틀 1·2a·2b). `docs/specs/README.md` "겹쳐 돌리기"의 **준비 줄**로 했다 — 같은 기계에서 X6 의 결과를 바꾸는 작업자가 함께 돌아 균형 기준(`before-*`)은 재지 않았고 **해시 목록만** 시작점에서 만들어 견줬다. N9 의 0단계(기준 재기)는 N8 까지 합쳐진 뒤 다음 덩어리(`0·4`)의 작업자가 한다.
+
+#### 실제 이름 (단계 1 에 생긴 것)
+
+| 이름 | 어디 | 서명·뜻 |
+|---|---|---|
+| `FlowSpot` · `CrowdZone` · `CrowdState` | `types.ts` 끝의 N9 절 | 본문 §5.6 그대로 |
+| `Kinds2State` | 〃 | 칸은 §5 의 여섯만: `tox?: Float32Array` · `crowd?: CrowdState` · `contamIds?`·`deconned?`·`underIds?: Set<number>` · `floorHp?: number`. 시나리오 하나에만 있는 칸(`train`·`tilt`·`oil`·`flood`·`plane`·`drone`·`escapeAt`·`highPos`·`tunnelEdge`)은 넣지 않았다 — 아래 "본문과 다른 곳" 3 |
+| `HosBelief` | 〃 (새 이름 — N8 은 이름을 붙이지 않았다) | `hosFact` 의 값 칸 그대로(`x`·`y`·`weapon`·`state`·`hostage`·`facing`·`dead`·`band`·`tq`·`where`) + `tag?: 'organizer' \| 'agitator'` · `threw?: boolean` |
+| `Scene.kinds2`·`windDir`·`flowSpots` · `Hostile.crowdRole`·`dispersed` · `CasBelief.dirty`·`sunk` | 〃 (인터페이스 합치기) | 모두 선택 칸. 생성 리터럴: `kit.baseScene` 끝 줄(`kinds2`·`windDir`·`flowSpots` — N8 줄 다음), `kit.addHostile` 끝 줄(`crowdRole`·`dispersed`). `CasBelief` 는 생성 리터럴이 없다(`casFact` 가 채울 때 그 단계가 넣는다) |
+| 합집합의 새 줄 | `types.ts` 의 각 합집합 끝(새 줄로) | `PlaceKind` 의 `'subway' \| 'concertHall' \| 'bankHQ'` · `WorkKind 'decontam'` · `ProblemCode 'DECON_LATE'` · `MethodId` 의 `'dive' \| 'boom' \| 'shieldLine' \| 'deconTent' \| 'hoseWash'`. 칸 안의 합집합 둘은 그 줄을 고쳤다: `Scene.rules` 에 `'sightline'`, `Prop.vessel` 에 `'tank'`(새 줄 `\| 'tank';`) — 인터페이스 합치기로는 있는 칸의 타입을 넓힐 수 없다 |
+| `HosHold` · `HOS_HOLDS` · `registerHosHold` | `field/sceneRegistry.ts` 끝 | `(sim, s, a, id, h: HosBelief) => boolean` — 본문 그대로. 비어 있다 |
+| `floorOf(s)` | `incidentTypes.ts` 끝 | `Math.max(TYPE_DEFS[s.kind].floorHp, s.kinds2?.floorHp ?? 0)`, 인자 `Pick<Scene, 'kind' \| 'kinds2'>`. 부르는 곳이 아직 없다 — 아래 "본문과 다른 곳" 2 |
+| `FACT_ID` | `field/kinds2Ids.ts` (새 잎 — 아무것도 가져오지 않는다) | `CROWD 2000`(+구역) · `TRAIN 3001` · `FLOOD 3002` · `TILT 3003` · `OIL 3004` · `LANDING 3005` · `LAB 3006` · `EVENT 3007` · `DRONE 3008` · `HEADCOUNT 3009` · `SWITCH 3010` · `AIR_GUESS 3011` · `HANDOVER 3012` · `FALLPT 3013` · `AIR 4000`(+원천 소품) · `CARGO 4500`(+차량) · `SPILL 4800`(+원천) · `DIZZY 5000`(+rid) · `CONTAM 5500`(+구역). 겹치지 않는 조건: 구역 < 1000 · 소품 < 300 · rid < 500. N8 의 범위(소품 id · 소품 id + 1000 · 1000 + 구조 대상 id — 모두 0~1999)와 겹치지 않는다 |
+| `KINDS2: Scenario[]` | `scenarios/kinds2.ts` (새 파일) | 빈 배열. `SCENARIOS = [...LIFE, …, ...KINDS, ...KINDS2]` 의 맨 끝 |
+| (빈 파일) | `field/doctrine/kinds2.ts` (새 파일) | `export {}` — `doctrine/index.ts` 에서 아직 부르지 않는다(N8 의 `doctrine/kinds.ts` 와 같은 까닭 — R3 의 등록 순서 시험이 다섯 파일을 글자로 본다) |
+| METHOD 의 새 줄 다섯 | `field/methods.ts` 의 `METHOD`·`SAY` 끝, `WORK_MODE` | `dive`(`waterRescue`·`extricate`·`search`, `['drysuit']`, 0.8/0.1) · `boom`(`mitigate`, `[]`, 0.85/0) · `shieldLine`(`cordon`, `['shield']`, 0.85/0) · `deconTent`(`decontam`, `[]`, 0.9/0) · `hoseWash`(`decontam`, `['hose']`, 0.5/0) — 모두 `can = NOT_YET`, `plain`·`record` 거짓. `WORK_MODE.cordon = 'always'`·`WORK_MODE.decontam = 'always'`(§5.12 의 값) |
+
+**부르는 자리**(줄이 없으면 아무것도 바꾸지 않는다): `commander.syncBoard` — 투항한 용의자의 검거 줄을 블록으로 풀어 맨 앞에, 활동 중인 용의자 고리의 맨 앞에 `if (HOS_HOLDS.length && HOS_HOLDS.some((f) => f(sim, s, a, h.id, h.value))) continue;`(위협 셈 `threat` 은 고리 앞에서 이미 세므로 보류된 용의자도 든다 — 묶음 규칙이 낸 협상을 핵심 규칙이 거두지 않는다) · `debrief.evaluate` — 용의자 셈을 `counted`(해산한 용의자가 하나라도 있으면 뺀 배열, 없으면 `s.hostiles` 그대로)로 세고(`suspectsTotal`·`caught`·`escaped`·머리글의 "용의자 n명 중"), `hazardActive` 의 대치·교전 셈에서 `dispersed` 를 뺀다 · `PROBLEM_LABEL.DECON_LATE = '제독 지연'` · `order` 에 `DECON_LATE` 를 `BACKUP_LATE` 바로 다음에(R2 의 `METHOD_FAIL` 처럼 따로 한 줄 `order.splice` — 문장 틀 `T.DECON_LATE` 가 없어 지금은 아무 문장도 나오지 않는다) · `scripts/metrics.ts PROBLEM_SYS`: `DECON_LATE → 'hazard'` · `agents.workLabel` 의 `decontam: '제독'` · `fitBase` 의 `case 'decontam': return 0` · `executor.act` 의 빈 갈래 `case 'decontam'`(닿으면 `finishTask(…, false, 'preempt')`) · `cityPlan.KIND_NAME`(지하철역·공연장·은행 본점)·`KIND_DISTRICT`(셋 다 `commercial`)의 새 줄.
+
+#### 본문과 다른 곳
+
+1. **시험 1(`HASH0`)은 넣지 않았다** — 결과를 바꾸는 X6 가 같은 주 브랜치에 나란히 합쳐지므로 해시를 숫자로 박으면 그 관문이 깨진다(N8 의 시험 2 를 주 세션이 같은 까닭으로 뺐다). 결과 불변은 아래 해시 목록으로 증명했다. `tests/kinds2.test.ts` 의 시험 1 자리에는 틀 자체의 시험을 두었다(아래 "시험").
+2. **`floorOf` 는 `incidentTypes.ts` 에 두었다**(본문 §10.2 는 `hazards.ts` 의 "N8 의 하한 함수"를 고치라고 했다). N8 은 아직 하한을 읽는 자리가 없다(`TYPE_DEFS.floorHp` 를 읽는 곳 0 — N8 구현 메모 단계 1 의 4: 단계 7). 그래서 N8 이 고칠 곳 대신 `TYPE_DEFS` 곁에 함수 하나를 두었다 — **N8 단계 7(보호 유형)이 `hazards.tickCasualties` 의 악화·`tickWander`·`welfareRule` 에 하한을 넣을 때 `TYPE_DEFS[s.kind].floorHp` 대신 `floorOf(s)` 를 부르면 된다**(본문 §5.14 의 "한 함수로 모은다"). `incidentTypes.ts` 는 `types` 의 타입만 가져오는 잎이라 어디서든 부를 수 있다.
+3. **`Kinds2State` 는 §5 의 칸 여섯만** 넣었다. 시나리오 하나에만 있는 칸(§6 의 목록 가운데 `train`·`tilt`·`oil`·`flood`·`plane`·`drone`·`escapeAt`·`highPos`·`tunnelEdge`)은 모양이 그 시나리오 절(§4)에서 정해지고 그 단계의 작업자가 다듬을 것이라, 지금 틀린 모양으로 박아 두지 않았다 — 그 단계가 `types.ts` 의 N9 절에 `export interface Kinds2State { train?: … }` 로 더한다(인터페이스 합치기 — "추가만"의 규칙 안).
+4. **`HosBelief` 는 새 이름이다**(본문: "N8 이 이름을 붙였으면 그것" — 붙이지 않았다). `agents.hosFact` 의 값 리터럴에는 타입을 달지 않았다 — 다른 묶음(X6 등)이 그 리터럴에 칸을 더하면 합칠 때 tsc 가 걸리게 되므로, `tag` 를 채우는 단계 4 가 `const v: HosBelief = …` 로 단다. 그때까지 `HosHold` 는 `h.value`(`any`)를 그대로 받는다.
+5. **`KIND_SCENE` 은 단계 1 에 넣지 않았다** — `Partial<Record<PlaceKind, KindScene>>` 이라 tsc 가 강제하지 않는다(§8 의 "Record 면 여기서"). 단계 3 의 몫이다.
+6. **METHOD 의 장비 칸**: 새 장비(`diveKit`·`oilBoom`·`deconKit`)는 단계 2 에 생기므로 `dive` 는 있는 `drysuit` 만, `boom`·`deconTent` 는 빈 배열로 두었다(모두 `NOT_YET` 이라 고르지 않는다). **그 방법을 쓰는 단계(5·9·6)가 `kits` 를 새 장비로 바꾼다.** `pref`·`risk` 는 본문에 값이 없어 시작값으로 정했다(위 표 — 다른 방법과 견준 값). `dive` 의 `risk 0.1` 은 본문의 "실패 위험 0.1" 이 대원 위험인지 실패 확률인지 정해지지 않아 둘 다 0.1 로 읽었다 — 단계 5 가 실행부에서 정한다.
+7. **`WORK_MODE` 의 두 값(`cordon`·`decontam` = `'always'`)을 단계 1 에 넣었다**(본문 §5.12 는 단계를 적지 않았다) — R2 의 시험("모든 방법의 임무에 `WORK_MODE` 가 있다")이 `shieldLine`·`deconTent`·`hoseWash` 의 임무에 값을 요구한다. `methodRun` 을 부르는 곳이 아직 없어(R2 단계 0) 결과와 무관하다.
+8. **`DECON_LATE` 의 `order` 자리는 `BACKUP_LATE` 다음**이다(본문: "N8 `UTIL_LATE` 곁" — `UTIL_LATE` 는 아직 `order` 에 자리가 없다. 같은 "오지 못한 부대 대신" 무리라 지원 지연 곁에 두었다). `order` 글자는 X6 가 단계 7 에 다시 고치므로 R2 처럼 따로 `splice` 한 줄로 끼웠다. 문장 틀은 단계 6.
+9. `tests/methods.test.ts` 는 표의 줄 수(55 → 60)에 더해 `methodsOf('waterRescue')` 의 목록 끝에 `'dive'` 를 더했다(같은 시험 안 — 새 줄을 더한 것이지 기준을 낮춘 것이 아니다).
+
+#### 시험
+
+`tests/kinds2.test.ts` (13개, 3초 안): **1 틀 A** — 등록 자리 `HOS_HOLDS` 가 비어 있다 · 용의자 보류의 부르는 자리(보류 없음: 협상·검거·출입구 봉쇄가 난다 / 임시 줄이 참: 두 고리 모두에서 묻고 그 용의자에게 아무 일도 내지 않으며 출입구 봉쇄도 없다, 위협 셈에는 들어 `secureAt` 이 풀린다 / 줄을 지우면 같은 현장의 다음 계획이 예전대로 낸다 — **두 고리의 줄을 빼면 이 시험이 깨지는 것을 확인했다**) · 해산한 용의자는 판정의 용의자 셈(`suspectsTotal`·`Caught`·`Escaped`)·위험 판정에서 빠진다(부분 성공 → 성공) · `floorOf` · 생성 리터럴의 새 칸 · `decontam` 의 이름·`fitFor` 0·빈 갈래(쥔 임무를 놓고 작업을 다시 연다) · `DECON_LATE` 의 이름표·`PROBLEM_SYS` · METHOD 다섯 줄(표의 끝·`NOT_YET`·문구·임무별 갈래) · 새 장소 종류 셋(이름·동네, 어떤 사건 장소 표·시나리오 `places` 에도 없음, `KIND_SCENE` 은 아직 없음) · `FACT_ID` 의 범위가 겹치지 않음 · `KINDS2` 가 비어 있음. **4 정보 격리** — 판단 파일 여덟(`commander`·`brain`·`analyst`·`dispatcher`·`screening`·`methods`·`airDecide`·`doctrine/kinds2`)과 생기면 `orders/kinds2` 의 주석 아닌 줄에 §6 의 글자 열셋이 없다 · 믿음 칸·생김새 이름(`windDir`·`flowSpots`·`dirty`·`sunk`·`lvl`·`tag`·`threw`·`typeIdx.crowd`)은 금지 글자에 걸리지 않는다.
+
+#### 해시 확인 · 명부 지문 · 관문
+
+- 해시 목록: `$S/hashes.ts`(scratchpad `wf-kinds2/` — N8 의 도구를 넓혔다. 줄 = 번호 · 조건 · 시드 · 강제 · `report.hash` · `JSON.stringify(report)` 의 FNV · 기록 수 · 사건 수 · 연쇄 수 · 사건마다 (유형/변형/판정/닫힌 까닭) 의 FNV)를 시작점 `2714032`(`git archive` 로 푼 `$S/base`)와 이 단계의 나무에서 따로 돌려 견줬다: 보통 S0~S39 · 어려움 S0~S19 · 극한 S0~S19 · 쉬움 S0~S5 · 재난 다섯 × S0~S2 · 강제 스물둘(N8 의 열넷 + `armed/riot`·`fire/plane`·`collapse/crane`·`armed/bomb`·`fire/ship`·`traffic/pileup`·`armed/siege`·`armed/package`) × S0~S2 · 부대 규모 1·5 × S0~S2 · 신고 신뢰도 1 × S0~S1 · 교통 5 × S0~S1 = **177교대, 한 글자도 같다**(`$S/hash0.txt` ↔ `$S/hash-s1.txt`).
+- 명부 지문(`$S/roster.ts` — N8 2b 의 도구 그대로: 부대 규모 1~5 × S0·S7 의 편성된 대원·부대, `rosterKeys()`, 인근 도시 지원 두 바퀴): **한 글자도 같다**(`$S/roster0.txt` ↔ `$S/roster-s1.txt`).
+- 관문: `npx tsc --noEmit` 통과 · `tests/kinds2.test.ts` 13개 · `tests/methods.test.ts`·`kinds`·`ext`·`causality`·`doctrine` 통과 · **`npm run check` 통과**(코드 커밋 `c77204c` — 시험 파일 19 · 580 통과 + 건너뜀 1, 테스트 280초 — 같은 기계에서 다른 작업이 함께 돌았다 · 시드 40 `--check` "검증 통과", 교착 후보 0 · 잊힌 사건 0 · C1~C5 0 · 계산 오류 0). sweep 분포는 해시 목록이 같으므로 따로 견주지 않았다. 화면은 바꾸지 않았다(`npm run ui-check` 는 돌리지 않았다 — 화면 값이 바뀌지 않는 단계).
+
+#### 이어받을 자리 (단계 2·3 과 뒤 단계)
+
+- **단계 2**: 수요 열쇠 `decon`(§5.3.1 — `needFor` 의 `case 'decontam'` 은 지금 `default: null` 로 떨어진다. 열쇠가 생기면 `decon` 을 돌려준다) · 새 장비 `diveKit`·`oilBoom`·`deconKit` 이 생기면 METHOD 의 `kits` 를 바꿀지는 그 방법을 쓰는 단계(5·9·6)의 몫이다(지금 `NOT_YET` 이라 결과와 무관 — 2 에서 바꿔도 해시는 같다).
+- **단계 4**: `registerHosHold` 의 첫 줄(`orders/kinds2.ts` — 그때 시험 1 의 "비어 있다"를 고친다) · `hosFact` 가 `crowdRole` 을 `tag` 로 옮길 때 값 리터럴에 `HosBelief` 타입을 단다(위 4) · `tickHostiles` 가 `dispersed` 인 용의자를 `flee` 로 두지 않게(§5.6) · `Scene.flowSpots` 를 채우는 `venueFrame` · `s.kinds2.crowd`.
+- **단계 5·6·8·9**: `Kinds2State` 에 그 시나리오의 칸(위 3) · `floorOf` 를 부르는 자리(N9 규칙의 `hurtCas` 뒤 자르기 — 단계 4·5·8) · `T.DECON_LATE` 문장 틀과 `raiseProblem`(단계 6) · `vesselName`·`VESSEL_HEAT` 의 `'tank'`(단계 6) · `s.rules` 에 `'sightline'` 을 넣는 생성기(단계 8) · `doctrine/index.ts` 의 `import './kinds2'`(N8 의 `'./kinds'` 다음 — 그때 R3 의 등록 순서 시험에 `'kinds2'`).
+- **N8 단계 7**: 보호 유형의 하한을 `floorOf(s)` 로 읽는다(위 2).
+- 앞 묶음 이름(시작점 `2714032` 에서 grep): `catastrophe.NO_STRUCT` 는 변형 이름의 배열 · `CAT.VESSEL_HEAT` 는 `Record<string, number>`(없는 종류는 `?? 0`) · `Prop.vessel` 은 X6 단계 1 의 칸(`cylinder`·`drum`·`cng`·`jet` + 이번의 `tank`) · R2 `METHOD`·`WORK_MODE`·`chooseMethod` 있음(실행부 `methodRun` 을 부르는 곳 없음) · `KitDef.batch` 는 `'r2' | 'n8'` 이고 `crews.drawFaults` 는 아직 `batch` 를 건너뛰지 않는다(R2 단계 1a — 단계 2 의 `'n9'` 도 편성되지 않는 동안은 추첨에 닿지 않는지 본다) · R3 `registerDoctrine`(`doctrine/registry.ts`) 있음, `doctrine/index.ts` 는 다섯 파일만 · I1-b `registerConsequence`·`spawnConsequence` 없음 · I2 `roadsNext`·`placeUsable` 없음. 단계 1 은 이 가운데 `METHOD`·`WORK_MODE`·`Prop.vessel` 만 고쳤고 나머지는 부르지 않는다.
+
+### 단계 2 (틀 B — 새 부대의 자리) — 2026-11-15 밤, 준비 줄
+
+**상태: 구현됨, 결과 불변.** 작업자 브랜치 `wf/kinds2-s2`(`wf/kinds2` = 단계 1 의 `9ae00e6` 에서 갈라, 맨 먼저 주 브랜치 `708df11` — X6 단계 3·4 가 합쳐진 자리 — 를 받았다: 합친 커밋 `48cb28a`, 충돌 없음), 가리킴 `wf/kinds2`. X6 3·4 가 모든 교대의 결과를 바꿨으므로 **해시 목록의 기준은 합친 커밋 `48cb28a` 에서 다시 쟀다**(단계 1 의 `2714032` 목록과는 346줄이 다르다 — X6 의 몫). 새 부대 넷은 `minLevel 6` 이라 어느 부대 규모에서도 편성되지 않고, 제독 수요를 내는 곳이 없으며, 이름표 가점의 줄은 지금 나오는 이름표에 걸리지 않는다.
+
+#### 실제 이름 (단계 2 에 생긴 것)
+
+| 이름 | 어디 | 서명·뜻 |
+|---|---|---|
+| `UnitKind` 넷 · `RoleId` 아홉 · `KitId` 넷 | `types.ts` (각 합집합 끝에 새 줄로) | `mtnRescue`·`dive`·`deconUnit`·`riotPol` / `mtnLead`·`mtnRescuer`·`diveLead`·`diver`·`deconLead`·`deconTech`·`riotLead`·`riotShield`·`riotGrab` / `mtnKit`·`diveKit`·`deconKit`·`oilBoom` — 본문 §4.8 그대로 |
+| `UnitCaps`·`Needs` 의 `decon` | `types.ts` 끝의 N9 단계 2 절 (인터페이스 합치기) | 열쇠 하나. 지나는 자리(§5.3.1 의 단계 2 줄 전부): `resources.caps()`(N8 의 다섯 다음, 기본값 0 인 끝 인자)·`AID_KIND.decon = 'deconUnit'`·`AID_CALL.deconUnit = '지원제독'` · `analyst.NEED_NAME`('제독')·`emptyNeeds` · `dispatcher.ORDER`(끝)·`MINCAP`(0.7)·`NEED_LABEL`('제독') · `commander.request` 의 이름표('제독 부대')·`NEED_MIN`(0.7)·`needFor`(`decontam` → `decon`) · `scripts/metrics.ts NEED_KEYS` |
+| `KIND` 넷 · 화학 구조차의 `decon` 0.7 · `HEAVY`(제독차·기동대 버스) · `UNIT_DEFS` 넷(N8 줄 다음 끝, `minLevel 6`) · `UNIT_KIND_NAME` | `resources.ts` | 능력은 본문 표 그대로(산악 rescue 0.7·search 0.85·ems 0.35 · 수중 rescue 0.8·search 0.7·ems 0.3 · 제독 decon 1.0·rescue 0.45·suppression 0.3·search 0.2 · 기동대 law 0.9·tactical 0.85·traffic 0.6·search 0.25). 호출부호 `산악1`·`수중1`·`제독1`·`기동대1`, 소속 서부119안전센터·해양구조대·공단119안전센터·중부경찰서, 화면 분야 rescue·rescue·special·police. 편성 단계로 내릴 값은 줄 위 주석(기동대 → 4, 수중 → 5, 제독 → 6, 산악 → 9, 모두 `minLevel 3`) |
+| `KITS` 넷 · `KitDef.batch` 의 `'n9'` | `crews.ts` | `diveKit` 만 `faultable`·`batch 'n9'`·`uses 900`(공기 초), `oilBoom` 은 `uses 3`. `mtnKit`·`deconKit` 은 고장 없음. 수량을 `KitItem.uses` 로 옮기는 것은 R2 단계 1a 의 `kitFor` |
+| `ROLES` 아홉 · `STAFF` 넷 · `ROLES.boatRescuer.kit` 끝의 `'oilBoom'` | `crews.ts` | 능력 식·먼저 맡는 일·장비는 본문 그대로. `STAFF`: 산악 `[mtnLead, mtnRescuer, mtnRescuer]`·`[2]` · 수중 `[diveLead, diver, diver]`·`[2]` · 제독 `[deconLead, deconTech, deconTech, decon]`·`[3]` · 기동대 `[riotLead, riotShield ×3, riotGrab]`·`[3, 4]` |
+| `EXTRA_NAMES` +15 · `AID_NAMES` +4 | `crews.ts` · `resources.ts` | 끝에. 새 자리의 이름은 N8 이 남긴 한 칸 `어서후` 부터 차례로(끝에 한 칸 `예다인` 이 남는다). 본문 예시의 `어진솔` 은 `AID_NAMES` 에 이미 있어 `여태린` 으로 바꿨다. 지원 이름은 `권이준`·`소하윤`·`차서진`·`하은별` |
+| `OWN_DRAW`(내보내지 않는다) · `drawBatchFaults(rng, crew, p, batch)` | `crews.ts` | `drawFaults` 는 `OWN_DRAW` 의 묶음(지금 `'n9'` 하나)을 건너뛴다(난수를 쓰지 않는다). `drawBatchFaults` 는 그 묶음만 같은 순서(대원 × 장비)·같은 확률로. `createRoster` 가 `kit` 다음에 `kit-n9` 흐름으로, `createAidUnit` 이 `aid-n9:<n>` 흐름으로 부른다(지원 종류에는 잠수 장비를 든 자리가 없어 지금은 한 번도 뽑지 않는다) |
+| `KIND_AUX` 넷 · `kindFit` 넷 줄 · 형사·경찰견의 '금고털이' 갈래 · `DIVE_LABELS` · `MTN_AT = 0.35` | `dispatch/dispatcher.ts` | §5.3.2 표 그대로(기동대의 이름표만 아래 "본문과 다른 곳" 1). `kindFit` 의 첫 인자를 `_sim` → `sim` 으로 고쳤다(산악의 신고 교차로 `sim.city.nodes[I.reportedNode]` 와 `city.mountainAt` — 위치를 모르면 0) |
+| `LABEL_BONUS` 열여덟 줄 | `dispatch/dispatcher.ts` | §5.3.3 표의 줄 전부(이름표 열다섯). 지금 나오는 이름표는 `'집단 난동'`(폭동) 하나이고 그 줄은 편성되지 않은 기동대에만 붙는다 — 걸리는 줄이 없다 |
+| R3 의 표 | `field/doctrine.ts` | `DOC_OF_UNIT`(산악·수중 `fire` · 제독 `special` · 기동대 `police`) · `DOC_OF_ROLE`(새 역할 아홉 — 부대의 분야 그대로) · `PAIRS.riotPol`(std·min `[riotShield, riotShield]`) · `PAIRS.dive`(std `[diver, diver]`, min `[diveLead, diver]`) |
+| `UNIT_MARK` 넷 · `VEH_SIZE` 넷 · `drawKinds2Body`(`KINDS2_VEH`) · `baseLook` 의 넷 · 팀장 띠(`deconLead`·`mtnLead`) · 범례 `FIELDS` · `unitField` 의 지원 제독차 | `view/marks.ts` · `view/scene/sprites.ts` · `ui/MapLegend.tsx` · `view/city/tokens.ts` | 기호: 산악 = 봉우리 둘 + 밧줄 고리 · 수중 = 앞에서 본 잠수 마스크(유리 둘·코 주머니) · 제독 = 샤워 꼭지 + 물방울 셋 · 기동대 = 겹친 방패 셋(가운데에 시야 창). 차량: 빨간 사륜구동(지붕 짐받이·뒤의 예비 바퀴) · 보트를 얹은 빨간 승합 · 천막 덩어리와 샤워대를 실은 노란 큰 차 · 남색 버스. 겉모습: 산악(주황 상의·빨간 헬멧·배낭 — 공기호흡기 없음) · 수중(검은 드라이슈트·잠수 두건·노란 공기통) · 제독(화학 보호복과 같은 묶음) · 기동대(남색 진압복·얼굴 가리개 헬멧) |
+
+#### 본문과 다른 곳
+
+1. **기동대의 이름표는 `'집단 난동'`** 이다(본문 §5.3.2·§5.3.3 은 '폭동'). 관제의 이름표는 `natureLabel` 이 돌려주는 `Scenario.label ?? name` 이고 `armed/riot` 의 `label` 이 `'집단 난동'`(이름은 '폭동')이다. `kindFit`(riotPol)·`LABEL_BONUS` 의 줄 모두 그 글자를 쓴다 — '폭동' 으로 두면 줄이 영영 걸리지 않는다. 뒤 단계(R3 의 관제 D 줄 '압사 위험'·'시위 충돌' → 기동대)도 폭동은 `'집단 난동'` 으로 쓴다.
+2. **`drawFaults` 의 `'n9'`**: 본문 §5.12 는 "R2 단계 1a 가 넣은 `batch` 건너뛰기에 `'n9'`" 을 전제로 썼는데 그 건너뛰기가 아직 없다. 그래서 일반 건너뛰기 대신 `OWN_DRAW`(지금 `'n9'` 하나)와 `drawBatchFaults` 를 두었다 — 편성되지 않는 동안은 잠수 장비가 어느 추첨에도 닿지 않고, 편성 단계 5 에서는 그대로 `kit-n9` 에서 뽑힌다. **R2 단계 1a 는 자기 줄을 따로 두지 말고 `OWN_DRAW` 에 `'r2'` 를 더하고 `drawBatchFaults(…, 'r2')` 를 `kit-r2`·`aid-r2:<n>` 흐름으로 부르면 된다**(N8 의 포획팀을 편성하는 단계 5 는 `'n8'`·`kit-n8`). `tests/crews.test.ts` 의 고장 추첨 시험(교대 흐름 kit 을 다시 뽑아 견주는 줄)은 지금 편성에 잠수 장비가 없어 그대로 통과한다 — 수중을 편성하는 단계 5 가 그 줄에 `batch` 건너뛰기를 더한다.
+3. **`AID_NAMES` 넷 = 지원 13회까지 이름이 다르다**(본문 시험 3 은 "지원 14회"). 지원 이름의 첨자는 `aidUsed × 4 + 자리` 라 52칸은 13회분이다. 지원을 부르는 열쇠는 옛 여덟 + N8 넷(견인은 부르지 않는다) + 제독 = 13 이므로 시험은 13회로 했다. 14회를 지키려면 넷을 더 붙여야 한다(교대당 지원은 많아야 8회라 실제로 닿지 않는다 — N8 과 같은 사정).
+4. **잠수 역할 둘이 드라이슈트를 든다**(본문 그대로)는 것이 R2 단계 0 의 시험("R2 장비는 어느 역할도 들지 않는다")과 부딪쳐, `tests/methods.test.ts` 그 줄에서 `diveLead`·`diver` 의 `drysuit` 만 빼고 본다(교대의 명부를 훑는 둘째 검사는 그대로 — 수중이 편성되지 않는다). R2 단계 1a 가 그 시험을 어차피 고쳐 쓴다.
+5. **`commander.request` 의 이름표는 `'제독 부대'`**(본문 '제독') — 다른 줄이 부대 이름('진압 부대'·'동물 포획팀')이고, 제독차가 없으면 화학 구조차가 온다. 요청 무전은 "관제, 제독 부대 추가 지원 요청. 사유: …" (측정 도구의 `PHRASE` 는 "추가 지원 요청"만 보므로 그대로 걸린다).
+6. 본문에 값이 없어 정한 것: 제독차 `waterMax` 40(화학 구조차와 같다 — 관창을 든 제독 대원의 물 세척은 단계 6), 수중의 `armor` 0.05(구조정과 같다), 산악·수중의 `spareAir` 0(공기호흡기가 없다), 기동대의 `med`·`tool` 은 본문 그대로. `PAIRS.dive.min` 은 `[diveLead, diver]`(최소 인원에는 잠수 대원이 하나뿐이다).
+7. **H1 의 방호 두 줄**(`toxic × deconKit` 0.95 · `drown × diveKit` 0.9 — §5.12)은 넣지 않았다. §10.2 가 `injury.ts` 를 4~9 단계로 적었고, N8 처럼 "앞 단계가 남긴 자리"도 없다 — 그 장비를 든 부대를 편성하는 단계(5 수중 · 6 제독)가 넣는다. R3 의 E01 이름표·관제 D 줄도 4~9.
+8. `LABEL_BONUS` 는 §5.3.3 의 줄 열여덟을 이 단계에 모두 넣었다(§8 의 단계 2 줄 그대로 — 표의 "단계" 칸은 그 이름표가 살아나는 단계다). 넣은 순서는 표의 순서.
+9. 화면 분야를 정하는 `tokens.unitField`(분야가 없는 지원 부대의 짐작)에 지원 제독차를 특수로 더했다(소방 부서지만 특수 분야 — 포획팀과 같다). 본문 §10.2 에 없는 자리다.
+
+#### 시험
+
+`tests/kinds2.test.ts` 에 시험 3 의 틀 일곱을 더했다(모두 20개, 2초 안): ① 부대 규모 1~5 에서 편성되지 않음(대원의 장비에도 새 장비가 없다) · 명부 끝 열다섯(호출부호·자리, N8 의 `경찰견1` 다음) · 이름이 모두 다르다(지원 13회 뒤에도) ② 표 — 온 조직 명부(`unitLevel 6` 으로 `createRoster` 를 다시 부른 시험용 교대)에서 넷의 분야·능력(0 아닌 칸 전부)·큰 차·환자 자리·예비 공기통·자리·자리별 장비, 지금 부대의 `decon`(화학 구조차만 0.7), 장비 넷의 고장·수량, 오일펜스가 수난 구조대원 장비의 끝, 역할 아홉의 그림 묶음, 기동대의 총기 대원(소대장 — 최소 인원에도 남는다), 능력 ↔ 장비의 짝(표준·최소: 수중 → 잠수 장비 · 산악 → 산악 장비 · 제독 ≥ 0.7 → 제독 장비 또는 역할 decon · 구조정 → 오일펜스 · 제독차 → 공기호흡기), R3 의 분야·짝 ③ 고장 추첨 — `drawFaults` 는 잠수 장비에 난수를 쓰지 않고 `drawBatchFaults` 가 그 묶음만 뽑는다 · 온 조직 명부 여섯 교대(장비 1)의 고장 = `kit`(잠수 장비를 뺀 순서) + `kit-n9`(잠수 장비만) · 지금 편성(규모 5)의 대원은 명부의 앞부분이고 고장이 같다 ④ `kindFit` — 기동대(군중·'집단 난동' 의 경찰·교통만, 기동·수색 0) · 산악('산악 조난' 1, 산의 교차로로 신고된 실종·구조 0.6, 평지·응급·위치 모름 0) · 수중(수난·네 이름표) · 제독(제독만) · 형사·경찰견의 '금고털이' · `KIND_AUX` · 예비 셈 · 기동대가 배정돼도 기동 수요는 남는다(`recomputeUnmet`) ⑤ 이름표 가점 — N9 의 줄 열여덟, 지금 나오는 이름표에 걸리는 줄은 '집단 난동' 의 기동대 줄뿐이고 기동대는 어느 규모에서도 편성되지 않는다, 줄이 걸리면 그 종류·장비의 부대에만 더한다(온 조직 명부) ⑥ `decon` 열쇠 — 이름·빈 수요·지원 제독차(최소 인원 셋·화면 분야 특수·큰 차)·관제의 남은 수요(제독차·화학 구조차만 덮는다)·지휘관이 20초 넘게 맡을 사람 없는 제독 작업에 "제독 부대 추가 지원 요청" ⑦ 기호(다른 모든 부대 기호와 다르다)·차량 크기·겉모습. 고치기 전에 실패하는지: `drawFaults` 의 건너뛰기를 빼면 ③, `needFor` 의 `decontam` 줄을 빼면 ⑥ 이 깨지는 것을 확인했다.
+
+N8 의 틀 시험(`tests/kinds.test.ts`) 세 곳을 N9 의 줄에 맞췄다(엄격함은 같다): 명부 열쇠의 N8 열넷을 끝이 아니라 `전력1` 부터 찾는다 · `KIND_AUX` 의 정확한 목록에 N9 넷 · "이름표 가점 표는 비어 있다" → "N8 의 이름표 줄은 아직 없다".
+
+#### 해시 확인 · 명부 지문 · 관문 · 화면
+
+- 해시 목록(단계 1 의 도구 `$S/hashes.ts` 그대로 — scratchpad `wf-kinds2/s2/`): 합친 커밋 `48cb28a` 를 `git archive` 로 푼 나무(`$S/s2/base`)와 이 단계의 나무를 따로 돌려 견줬다 — **177교대 한 글자도 같다**(`$S/s2/hash0.txt` ↔ `$S/s2/hash1.txt` — `report.hash`·`JSON.stringify(report)` 의 FNV·기록 수·사건 수·연쇄 수·사건 서명).
+- 명부 지문(`$S/roster.ts`): 부대 FNV 는 모든 규모·시드에서 같다. 대원 FNV 는 규모 1 에서 같고 규모 2~5 에서 다르다 — 구조정(규모 2 부터 편성)의 수난 구조대원 장비 글자에 `oilBoom` 이 붙어서다. 그 글자만 지운 지문(`$S/s2/roster-strip.ts`)은 **편성된 대원·부대·지원 첫 바퀴(지원 0~7회)가 모두 같다**. `rosterKeys()` 는 앞 89칸이 같고 끝에 열다섯이 붙었다. 지원 둘째 바퀴(8~15회 — 교대당 지원은 많아야 8회라 닿지 않는다)는 `AID_NAMES` 가 길어져 이름의 나머지 셈만 달라진다(N8 과 같다).
+- 관문: `npx tsc --noEmit` 통과 · `tests/kinds2.test.ts` 20개 · `crews`·`kinds`·`methods`·`doctrine`·`persistence`·`causality` 통과 · **`npm run check` 통과**(시험 커밋 `81cf064` — 시험 파일 19 · 606 통과 + 건너뜀 1, 테스트 353초 · 시드 40 `--check` "검증 통과", 교착 후보 0 · 잊힌 사건 0 · C1~C5 0 · 계산 오류 0 · close reasons resolved 565 · abandoned 1 · timeout 1). 그 뒤의 커밋은 이 메모와 `drawFaults` 의 주석 한 줄뿐이다. sweep 분포는 해시 목록이 같으므로 따로 견주지 않았다.
+- 화면: 개발 서버(5237, 자기 Vite 캐시)에서 `?seed=S7` 를 15배속으로 돌리고 도시 전체·범례를 열어 찍었다 — **콘솔 오류 0**, 범례의 경찰·구조·구급·특수 묶음에 새 종류 넷(경찰 기동대 버스·산악 구조대 차량·수중 구조대 차량·화생방 제독차)이 보이고 편성된 부대 목록은 예전과 같다. 새 차량 넷·대원 겉모습 아홉은 개발 서버의 `sprites.ts` 모듈을 페이지에서 불러 그려 봤다(`$S/s2/s2-vehicles.png`·`s2-legend.png`). 기호 견본표(10·12·13·16·24 화소, 같은 분야의 기호와 나란히)는 `$S/s2/marks/zoom2.png`. `npm run ui-check` 는 돌리지 않았다(편성되는 새 부대가 없어 기존 화면의 값이 바뀌지 않는다).
+
+#### 이어받을 자리 (단계 3 과 뒤 단계)
+
+- **편성(기동대 4 · 수중 5 · 제독 6 · 산악 9)**: `UNIT_DEFS` 끝 넷의 `minLevel` 을 3 으로 내린다(줄 위 주석). 그때 바뀌는 시험: `tests/kinds2.test.ts` 시험 3 ① 의 "규모 1~5 에서 편성되지 않는다"(편성한 종류를 빼고, 규모 3~5 에 있는지로) · ⑤ 의 '집단 난동' 줄(기동대가 편성되면 폭동에 +25 가 살아난다 — 그 단계는 원래 결과가 바뀐다) · `tests/sim.test.ts` 의 부대 수·분야 팀 수(§9.2) · `tests/crews.test.ts` ③ 의 짝·`AID_KEYS`(제독 6 — 14개)·공기호흡기 예외(산악·수중) · 고장 추첨 시험의 `batch` 건너뛰기(수중 5).
+- **R2 단계 1a**: `OWN_DRAW` 에 `'r2'` + `drawBatchFaults` 를 `kit-r2`·`aid-r2:<n>` 으로(위 2) · `kitFor` 가 `KITS[id].uses` 를 옮기면 잠수 장비 900·오일펜스 3 이 저절로 든다 · `tests/methods.test.ts` 의 드라이슈트 예외(위 4)는 그 시험을 고쳐 쓸 때 함께.
+- **단계 4~9**: `capableOf`·`fitBase`·`needFor` 의 대상별 갈래(§5.3.5) · `decontam` 의 자격(`fitBase` — 지금 0)·실행(단계 6) · 방호 두 줄(위 7) · METHOD 의 `kits` 를 새 장비로(`dive` → `diveKit`, `boom` → `oilBoom`, `deconTent` → `deconKit` — 단계 5·9·6) · R3 관제 D 줄·E01 · `isHovering` 의 지하차도 예외와 `airFit` 의 이름표 막기(4·5·9) · 렌더의 측정기 손 그림 등.
+- `kindFit` 의 유형 `'rescue'`(N8)·`'crowd'`(N9 단계 4)는 글자로 견준다 — 그 유형이 생기면 저절로 걸린다(N8 의 `K9_TYPES` 와 같은 방식).
+
 ## 검토 메모
 
 독립 검토 두 갈래(실현성·규칙 31 / 빠진 것·사용자 결정·인계 29)를 받아 지적마다 주 브랜치의 코드(`fe1683f` — R1 전체·H1 1~6·X6 1·R2 0·R3 0·I1-b b0·I2 1)를 열어 확인했다(`commander.syncBoard` 의 위협·`cordon` 줄과 `targetX/Y` 의 `perimeter` 갈래, `agents.fitBase` 의 `perimeter`·`arrest` 자격, `scripts/metrics.ts` 의 `STALL_SEC`·`STALL_ALLOW`·`takeSnap`, `debrief.evaluate` 의 `hazardActive`·`escaped`·무장 미해결 규칙, `dispatcher` 의 `MINCAP`·`kitBonus`·`airFit`·`u.sea`, `incidents.createIncident` 의 `traffic` 갈래와 `tag` 줄, `crews.isHovering`, `hazards.startFlee`, `tests/major.test.ts`·`tests/crews.test.ts` ③, `engine.ts` 의 날씨 표). 같은 날 검토가 끝난 N8 의 최종본(공통 틀)에 맞춰 함께 고쳤다. 맞는 지적은 본문에 녹였고, 여기에는 **반영하지 않았거나 다르게 반영한 것과 그 이유**만 적는다.

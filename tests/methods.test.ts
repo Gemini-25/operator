@@ -108,7 +108,7 @@ describe('R2 시험 1: 판단부(methods.ts)는 진실을 읽지 않는다', () 
 describe('R2 방법 표 (METHOD)', () => {
   const ids = Object.keys(METHOD) as MethodId[];
   it('모든 줄이 온전하다: 이름·짧은 이름·라벨(12자 안)·문장에 끼우는 말, 장비는 표에 있는 것, 임무가 하나 이상', () => {
-    expect(ids.length).toBe(55);
+    expect(ids.length).toBe(60);      // R2 의 55 + N9 단계 1 의 다섯(dive·boom·shieldLine·deconTent·hoseWash — can 은 NOT_YET)
     expect(METHOD_ORDER).toEqual(ids);
     for (const m of ids) {
       const d = METHOD[m];
@@ -150,7 +150,7 @@ describe('R2 방법 표 (METHOD)', () => {
       // 늘 남는 줄: 장비도 부대 조건도 없는 방법이 하나는 있다 (기록 전용 제외)
       expect(methodsOf(w).some((m) => !METHOD[m].record && METHOD[m].kits.length === 0 && !METHOD[m].needUnit), w).toBe(true);
     }
-    expect(methodsOf('waterRescue')).toEqual(['hand', 'pole', 'ring', 'rope', 'improvise', 'catch', 'swim', 'tend', 'boat']);
+    expect(methodsOf('waterRescue')).toEqual(['hand', 'pole', 'ring', 'rope', 'improvise', 'catch', 'swim', 'tend', 'boat', 'dive']);      // dive: N9 단계 1 (표의 끝 — can 은 NOT_YET)
     expect(methodsOf('carry')).toEqual([]); expect(WORK_MODE.carry).toBeUndefined();
   });
   it('문구: 시작 문구는 까닭을 먼저 말하고, 패널의 까닭 말은 짧다', () => {
@@ -168,7 +168,9 @@ describe('R2 장비 아홉 줄과 gear.ts', () => {
   const NEW: KitId[] = ['pole', 'pfd', 'drysuit', 'raft', 'extinguisher', 'fan', 'airbag', 'shoring', 'beanbag'];
   it('표에만 있다: 어느 역할도 들지 않고(단계 0), 교대의 명부에도 없다', () => {
     for (const id of NEW) expect(KITS[id].name.length, id).toBeGreaterThan(0);
-    for (const role of Object.keys(ROLES) as RoleId[]) for (const id of ROLES[role].kit) expect(NEW.indexOf(id), `${role}: ${id}`).toBe(-1);
+    // (N9 단계 2) 수중 구조대의 두 자리(잠수 팀장·대원)는 설계서(N9 §4.8)대로 드라이슈트를 든다 — 편성되지 않는 줄(minLevel 6)이라 아래 교대의 명부에는 없다
+    const N9_DIVE: RoleId[] = ['diveLead', 'diver'];
+    for (const role of Object.keys(ROLES) as RoleId[]) for (const id of ROLES[role].kit) if (N9_DIVE.indexOf(role) < 0 || id !== 'drysuit') expect(NEW.indexOf(id), `${role}: ${id}`).toBe(-1);
     const sim = new Sim('R2-KIT', FULL);
     for (const r of sim.responders) for (const it of r.kit!) expect(NEW.indexOf(it.id), `${r.name}: ${it.id}`).toBe(-1);
     expect(KITS.extinguisher.uses).toBe(1); expect(KITS.beanbag.uses).toBe(3);

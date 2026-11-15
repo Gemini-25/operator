@@ -38,7 +38,7 @@ function puffSprite(r: number, gC: number, b: number): HTMLCanvasElement {
   return c;
 }
 
-let spr: { glow: HTMLCanvasElement; flameA: HTMLCanvasElement; flameB: HTMLCanvasElement; puff: HTMLCanvasElement; puffDark: HTMLCanvasElement; mist: HTMLCanvasElement; scorch: HTMLCanvasElement } | null = null;
+let spr: { glow: HTMLCanvasElement; flameA: HTMLCanvasElement; flameB: HTMLCanvasElement; puff: HTMLCanvasElement; puffDark: HTMLCanvasElement; mist: HTMLCanvasElement; scorch: HTMLCanvasElement; dust: HTMLCanvasElement; gas: HTMLCanvasElement; gasDark: HTMLCanvasElement } | null = null;
 function sprites() {
   if (!spr) {
     const [sc, sg] = canvas(96, 96);
@@ -53,11 +53,15 @@ function sprites() {
       flameA: flame('rgba(255,150,50,1)', 'rgba(255,70,20,0.6)'),
       flameB: flame('rgba(255,250,215,1)', 'rgba(255,205,90,0.7)'),
       puff: puffSprite(176, 180, 186), puffDark: puffSprite(58, 58, 62), mist: puffSprite(200, 230, 250), scorch: sc,
+      // (G4) 무너짐의 먼지, 가스(옅은 것·짙은 것 — 예전의 연두 물들이기를 미리 섞은 색)
+      dust: puffSprite(196, 178, 146), gas: puffSprite(190, 208, 128), gasDark: puffSprite(145, 162, 80),
     };
   }
   return spr;
 }
 
+/** (G4) 미리 그린 조각: 무너짐의 먼지, 가스 덩어리 (fxSprites() 의 반환은 그대로 둔다) */
+export function g4Sprites(): { dust: HTMLCanvasElement; gas: HTMLCanvasElement; gasDark: HTMLCanvasElement } { const s = sprites(); return { dust: s.dust, gas: s.gas, gasDark: s.gasDark }; }
 /** (G5) 미리 그린 조각: 연기(puff·puffDark)·빛(glow)·그을음(scorch). 교전 그림(combat.ts)이 같은 조각을 drawImage 로 쓴다 */
 export function fxSprites(): { puff: HTMLCanvasElement; puffDark: HTMLCanvasElement; glow: HTMLCanvasElement; scorch: HTMLCanvasElement; mist: HTMLCanvasElement } { const s = sprites(); return { puff: s.puff, puffDark: s.puffDark, glow: s.glow, scorch: s.scorch, mist: s.mist }; }
 
@@ -115,8 +119,8 @@ export function drawFire(g: G, s: Scene, ts: number, time: number, mini: boolean
   g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1;
 }
 
-/** 연기를 직접 그린다 (작은 창용). */
-export function drawSmoke(g: G, s: Scene, ts: number, time: number): boolean {
+/** 연기를 직접 그린다 (작은 창용). gas 가 1 인 칸은 연두 가스 덩어리로 (G4 — 예전의 연두 물들이기를 미리 섞은 색) */
+export function drawSmoke(g: G, s: Scene, ts: number, time: number, gas: Uint8Array | null = null): boolean {
   const sp = sprites();
   let any = false;
   for (let i = 0; i < s.smoke.length; i++) {
@@ -127,8 +131,10 @@ export function drawSmoke(g: G, s: Scene, ts: number, time: number): boolean {
     const ph = time * 0.45 + i * 1.7;
     const d = ts * (1.9 + 0.35 * Math.sin(ph * 1.3));
     g.globalAlpha = Math.min(0.72, v * 0.6);
-    g.drawImage(dense ? sp.puffDark : sp.puff, x - d / 2 + Math.sin(ph) * ts * 0.16, y - d / 2 + Math.cos(ph * 0.8) * ts * 0.12, d, d);
-    if (dense) { g.globalAlpha = Math.min(0.5, (v - 0.4) * 0.6); g.drawImage(sp.puff, x - d * 0.4 + Math.cos(ph * 1.1) * ts * 0.2, y - d * 0.4 + Math.sin(ph * 0.7) * ts * 0.2, d * 0.8, d * 0.8); }
+    const isGas = !!gas && gas[i] === 1;
+    const light = isGas ? sp.gas : sp.puff;
+    g.drawImage(dense ? (isGas ? sp.gasDark : sp.puffDark) : light, x - d / 2 + Math.sin(ph) * ts * 0.16, y - d / 2 + Math.cos(ph * 0.8) * ts * 0.12, d, d);
+    if (dense) { g.globalAlpha = Math.min(0.5, (v - 0.4) * 0.6); g.drawImage(light, x - d * 0.4 + Math.cos(ph * 1.1) * ts * 0.2, y - d * 0.4 + Math.sin(ph * 0.7) * ts * 0.2, d * 0.8, d * 0.8); }
   }
   g.globalAlpha = 1;
   return any;
@@ -139,7 +145,7 @@ let soft: HTMLCanvasElement | null = null;
  * 연기를 낮은 해상도의 별도 층에 그려 돌려준다(연기는 원래 흐릿하므로 화질 손실이 없고 훨씬 가볍다).
  * 연기가 없으면 null. 같은 층을 사람 아래에 한 번, 위에 옅게 한 번 덮는다.
  */
-export function smokeLayer(s: Scene, ts: number, time: number, tint?: string): HTMLCanvasElement | null {
+export function smokeLayer(s: Scene, ts: number, time: number, gas: Uint8Array | null = null): HTMLCanvasElement | null {
   let any = false; for (let i = 0; i < s.smoke.length; i++) if (s.smoke[i] >= 0.06) { any = true; break; }
   if (!any) return null;
   const q = 1 / 3, w = Math.max(2, Math.ceil(s.w * ts * q)), h = Math.max(2, Math.ceil(s.h * ts * q));
@@ -147,8 +153,7 @@ export function smokeLayer(s: Scene, ts: number, time: number, tint?: string): H
   if (soft.width !== w || soft.height !== h) { soft.width = w; soft.height = h; }
   const g = soft.getContext('2d')!;
   g.globalCompositeOperation = 'source-over'; g.clearRect(0, 0, w, h);
-  drawSmoke(g, s, ts * q, time);
-  if (tint) { g.globalCompositeOperation = 'source-atop'; g.fillStyle = tint; g.fillRect(0, 0, w, h); g.globalCompositeOperation = 'source-over'; }
+  drawSmoke(g, s, ts * q, time, gas);
   return soft;
 }
 

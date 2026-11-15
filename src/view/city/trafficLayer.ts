@@ -165,6 +165,9 @@ export function drawObstacleMark(ctx: G, kind: ObstacleKind, x: number, y: numbe
 
 const obstacleXY = (sim: Sim, ob: Obstacle): { x: number; y: number } => { const e = sim.city.edges[ob.edge], A = sim.city.nodes[e.a], B = sim.city.nodes[e.b]; return { x: A.x + (B.x - A.x) * ob.t, y: A.y + (B.y - A.y) * ob.t }; };
 
+/** (G4 §7.5) 통제의 원인 색: 사건 유형색(renderCity.TYPE_COLOR 의 복사 — 그 파일을 import 하면 서로 부르게 된다)과 재난 */
+const CAUSE_COLOR: Record<string, string> = { fire: '#ff6b3d', traffic: '#ffc24a', search: '#58d68d', armed: '#b98cff', medical: '#ff7eb6', collapse: '#d6a878', hazmat: '#b6e04a', water: '#4fb8ff', unknown: '#9aa7b4' };
+export const DISASTER_RING = '#ffb454';
 export interface TrafficScreenOpts { timeMs: number; truth: boolean; zs?: number; mini?: boolean }
 
 /** 지도의 화면 좌표계에서, 사건 핀과 부대 표식 아래. 장애물 표식과, 사건·재난으로 통제된 구간의 진입 금지 표시 */
@@ -177,6 +180,10 @@ export function drawTrafficScreen(ctx: G, sim: Sim, xf: { scale: number; ox: num
     const A = city.nodes[e.a], B = city.nodes[e.b];
     const mx = ((A.x + B.x) / 2) * xf.scale + xf.ox, my = ((A.y + B.y) / 2) * xf.scale + xf.oy;
     ctx.fillStyle = RED; ctx.beginPath(); ctx.arc(mx, my, 8, 0, 7); ctx.fill(); ctx.fillStyle = '#0b1219'; ctx.fillRect(mx - 5, my - 1.5, 10, 3);
+    // (G4 §7.5) 무엇이 막았는가: 사건이 막은 구간은 그 사건의 유형색 테, 재난이 막은 구간은 주황 테
+    const by = e.closedReason === 'disaster' ? null : sim.incidents.find((I) => I.blockedEdge === e.id && I.phase !== 'closed');
+    const ring = e.closedReason === 'disaster' ? DISASTER_RING : by ? CAUSE_COLOR[by.assessment ? by.assessment.type : o.truth ? by.truth.type : 'unknown'] ?? CAUSE_COLOR.unknown : null;
+    if (ring) { ctx.strokeStyle = ring; ctx.lineWidth = 2.2; ctx.beginPath(); ctx.arc(mx, my, 10.2, 0, 7); ctx.stroke(); }
   }
   for (const ob of sim.traffic.obstacles) {
     if (!ob.known && !o.truth) continue;      // 아직 아무도 모르는 것은 관찰자 시점에서만

@@ -10,7 +10,7 @@ export const FX_RATE_MAX = 2;
 /** G5 가 그리는 종류. 이 밖의 종류도 fresh 에는 들어간다(소리·카메라·감속·지도 핀) */
 export const FX_DRAWN = new Set<string>(['shot', 'hit', 'flash', 'boom', 'glass', 'debris', 'breach', 'melee', 'cuff', 'taser']);
 /** 결정적 순간(자동 감속·카메라 바로 다시 잡기). G4 는 'collapse', X6 는 'horn' 을 한 단어씩 더한다 */
-export const DECISIVE = new Set<string>(['shot', 'flash', 'boom', 'breach']);
+export const DECISIVE = new Set<string>(['shot', 'flash', 'boom', 'breach', 'collapse']);
 /** 상태에서 만든 합성 항목(s.fx 에는 넣지 않는다) */
 export type SynKind = 'tick' | 'strike' | 'hail' | 'reply';
 export interface FxEntry {
@@ -152,7 +152,7 @@ export class FxBook {
       // 남는 그림과 문짝 연출
       const c = f.c;
       if (f.kind === 'shot' && c && (c.stop === 'wall' || c.stop === 'door') && c.ix !== undefined && c.iy !== undefined) this.decal(s.id, { kind: 'hole', x: c.ix, y: c.iy, r: 0.05, born: e.born + e.delay + (e.fly ?? 0) });
-      else if (f.kind === 'boom') this.decal(s.id, { kind: 'scorch', x: f.x, y: f.y, r: 0.7 * (c?.r ?? 3), born: e.born });
+      else if (f.kind === 'boom' && c?.src !== 'bomb') this.decal(s.id, { kind: 'scorch', x: f.x, y: f.y, r: 0.7 * (c?.r ?? 3), born: e.born });      // 터진 폭발물 자리는 G4 의 바닥 자국(hazardFx.drawBlastScars)이 맡는다
       else if (f.kind === 'flash' && c && c.ox !== undefined) this.decal(s.id, { kind: 'can', x: f.x, y: f.y, r: 0.09, born: e.born + e.delay + 0.34 });
       else if (f.kind === 'breach' && c && c.door !== undefined && c.door >= 0 && c.how) this.kicks.set(s.id + ':' + c.door, { at: e.born + e.delay, how: c.how });
     }

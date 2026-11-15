@@ -10,6 +10,7 @@ import { SH, SW, addCas, addHostile, addProp, addRegion, baseScene, freeTileIn, 
 import { KIND_SCENE } from '../cityPlan';
 import { SCENE_BUILDERS } from './sceneRegistry';
 import { blockPassage, lockDoor, planBuilding, suiteRooms, tallPlan } from './plans';
+import { RUIN_FURN, RUIN_WALL, markRuin, recordFall } from './ruins';
 import type { Arch, Plan, PlanOpts } from './plans';
 
 // ───────────────────────── 건물 (화재 · 붕괴 · 가스 누출 공통) ─────────────────────────
@@ -662,13 +663,14 @@ export function buildCollapse(sim: Sim, I: Incident, rng: Rng): Scene {
   for (let y = zy0; y <= zy1; y++) for (let x = zx0; x <= zx1; x++) {
     const i = tidx(s, x, y), t = s.tiles[i];
     if (t === T.STAIR) continue;
-    if (t === T.WALL && rng.chance(0.75)) { s.tiles[i] = T.FLOOR; s.decor[i] = 0; }
-    else if (t === T.FURN && rng.chance(0.6)) { s.tiles[i] = T.FLOOR; s.decor[i] = 0; }
+    if (t === T.WALL && rng.chance(0.75)) { markRuin(s, i, s.decor[i] === DECOR.SHELF ? RUIN_FURN + DECOR.SHELF : RUIN_WALL); s.tiles[i] = T.FLOOR; s.decor[i] = 0; }
+    else if (t === T.FURN && rng.chance(0.6)) { markRuin(s, i, RUIN_FURN + s.decor[i]); s.tiles[i] = T.FLOOR; s.decor[i] = 0; }
     if (s.tiles[i] === T.DOOR) { const d = s.props.find((p) => p.kind === 'door' && p.x === x && p.y === y); if (d && !d.locked) d.open = true; }
     s.damage[i] = 1;
     if (s.tiles[i] === T.FLOOR) { zone.push(i); if (s.fuel[i] === 0) s.fuel[i] = 0.3; }
     s.smoke[i] = 0.55;
   }
+  recordFall(sim, s, (zx0 + zx1) / 2, (zy0 + zy1) / 2, Math.max(zw, zh) / 2, 'zone', false);      // (G4) 그림용 기록
   // 넘어간 벽 자리는 이웃한 방에 속한 것으로 본다
   for (const i of zone) if (s.region[i] < 0) { for (const d of [1, -1, SW, -SW]) { const j = i + d; if (j >= 0 && j < s.region.length && s.region[j] >= 0) { s.region[i] = s.region[j]; break; } } }
   for (const i of zone) if (rng.chance(0.17 + 0.03 * sev)) addProp(s, 'debris', i % SW, (i / SW) | 0, { blocking: true, hp: rng.range(8, 14) });

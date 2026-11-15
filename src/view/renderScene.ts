@@ -25,6 +25,10 @@ import { FX_DRAWN } from './scene/fxBook';
 import type { FxBook, FxView } from './scene/fxBook';
 import { agentFx, casualtyFlinch, drawAimLines, drawBreachGlow, drawCombatDecals, drawCombatFx, drawCombatHoles, drawCombatLights, drawCountdown, drawCoverBadge, drawCoverBand, drawCuffs, drawNegotiation, drawScreenVeil, drawStunStars, hostileFx, stunMark } from './scene/combat';
 import type { CombatView } from './scene/combat';
+import { drawBlastScars, drawDangerZones, drawFallMoments, drawFallRing, drawGasEdge, drawRekindle, sceneShake } from './scene/hazardFx';
+import type { HazardLabel } from './scene/hazardFx';
+import { gasView, hostageState, rekindledRegions } from './hazardState';
+import { ruinZones, strokeRuinEdges } from './scene/ruins';
 
 /** 현장 화면의 시점: 중심(타일 좌표)과 배율(1 = 현장 전체가 보인다) */
 export interface SceneCam { x: number; y: number; zoom: number }
@@ -174,12 +178,14 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   ctx.save();
   ctx.fillStyle = BG; ctx.fillRect(0, 0, w, h);
   ctx.translate(L.ox, L.oy);
-  if (cv && !MINI && !cv.reduced) { const sh = cv.book.shake(s.id, ts, view); if (sh.x || sh.y) ctx.translate(sh.x * ts, sh.y * ts); }      // (G5) 폭발 흔들림 (칸 단위 → 화소)
+  // 흔들림 (칸 단위 → 화소, 한 번의 translate): G4 무너짐·지진 몫 + G5 폭발 몫(동작 줄이기·작은 창이면 없음)
+  const sh = sceneShake(sim, s, MINI, cv && !cv.reduced ? cv.book.shake(s.id, ts, view) : undefined, cv ? cv.reduced : reducedMotion(), o.alpha); if (sh.x || sh.y) ctx.translate(sh.x * ts, sh.y * ts);
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(layer.base, 0, 0, W, H);
 
   // ── 바닥 흔적: 그을음, 젖은 바닥 ──
   drawScorch(ctx, s, ts);
+  drawBlastScars(ctx, s, ts, MINI);      // (G4) 터진 폭발물·불붙은 밸브의 바닥 자국
   for (let i = 0; i < s.wet.length; i++) {
     const v = s.wet[i]; if (v <= 0.25 || s.burned[i]) continue;
     const x = cx(i % s.w), y = cy((i / s.w) | 0);
@@ -285,7 +291,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       unit(() => drawUnstable(ctx, !!p.mitigated, p.id), cx(p.x), cy(p.y));
       if (!p.mitigated && !MINI) {
         const lk = p.leak ?? 0, pr = 0.5 + 0.5 * Math.sin(time * (3 + 6 * lk));
-        ctx.strokeStyle = `rgba(255,${Math.round(200 - 110 * lk)},80,${0.35 + 0.45 * pr})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx(p.x), cy(p.y), ts * (0.52 + 0.07 * pr), 0, 7); ctx.stroke();
+        // 맥박 고리는 AI 시점에서만 (관찰자 시점은 정보 표지 단계의 진행 고리 — scene/hazardFx.ts)
+        if (!o.truth) { ctx.strokeStyle = `rgba(255,${Math.round(200 - 110 * lk)},80,${0.35 + 0.45 * pr})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx(p.x), cy(p.y), ts * (0.52 + 0.07 * pr), 0, 7); ctx.stroke(); }
         pill(ctx, known ? '균열 — 붕괴 위험' : '(미확인) 균열', cx(p.x), cy(p.y) - ts * 0.72, ts * 0.27, '#ffd166');
       }
       ctx.globalAlpha = 1;
@@ -330,10 +337,10 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   }
 
   // ── 연기 (아래층) ──
-  // 가스 누출 현장의 연기 격자는 새어 나온 가스다 (불이 붙기 전까지는 연두색으로 그린다)
-  const gasTint = s.kind === 'hazmat' && !s.props.some((p) => p.kind === 'valve' && p.ignited) ? 'rgba(198,226,92,0.62)' : undefined;
-  const smoke = MINI ? null : smokeLayer(s, ts, time, gasTint);
-  if (MINI) drawSmoke(ctx, s, ts, time); else if (smoke) ctx.drawImage(smoke, 0, 0, W, H);
+  // 가스가 찬 칸은 연두 덩어리로, 불 연기·먼지는 회색으로 (G4 — hazardState.gasView: 가스 누출 현장은 연기 칸 전부, 그 밖은 새는 밸브가 설명하는 칸)
+  const gv = gasView(s, sim.tick);
+  const smoke = MINI ? null : smokeLayer(s, ts, time, gv.gas);
+  if (MINI) drawSmoke(ctx, s, ts, time, gv.gas); else if (smoke) ctx.drawImage(smoke, 0, 0, W, H);
 
   // ── 사람: 구조 대상 → 용의자 → 대원 ──
   const carrierOf = new Map<number, FieldAgent>();
@@ -353,12 +360,20 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     const ghost = known ? 1 : 0.45;
     const carrier = carrierOf.get(c.id);
     if (b === 2 && !c.dead) { ctx.strokeStyle = `rgba(255,93,93,${0.25 + 0.3 * Math.abs(Math.sin(time * 4))})`; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, ts * (0.46 + 0.08 * Math.abs(Math.sin(time * 4))), 0, 7); ctx.stroke(); }
+    // (G4) 인질의 상태: 붙잡힘(빨강) · 구출 기회(노랑 깜박임)는 발밑 고리. 자세는 겉모습이라 늘 따른다. AI 시점은 그 용의자가 보일 때만 고리
+    const hs = c.hostage ? hostageState(sim, s, c) : null;
+    const captive = !!hs && hs.state !== 'freed';
+    if (hs && (hs.state === 'held' || hs.state === 'window') && (o.truth || (hs.by >= 0 && !s.hostiles[hs.by].hidden))) {
+      const win = hs.state === 'window';
+      ctx.strokeStyle = win ? alpha('#ffd166', 0.45 + 0.5 * Math.abs(Math.sin(time * 6))) : 'rgba(255,93,93,0.85)'; ctx.lineWidth = Math.max(1.5, ts * 0.06);
+      ctx.beginPath(); ctx.ellipse(x, y + ts * 0.12, ts * 0.4, ts * 0.3, 0, 0, 7); ctx.stroke();
+    }
     if (c.inWater && !c.dead) { drawSwimmer(ctx, x, y, ts, lk, time + c.id, ghost); continue; }
     const upright = !c.dead && c.mob === 'mobile' && c.where !== 'carried' && c.health > 40;
     if (upright) {
       const mv = Math.abs(c.x - c.px) + Math.abs(c.y - c.py) > 0.005;
       const ang = mv ? Math.atan2(c.y - c.py, c.x - c.px) : hash2(c.id, s.id + 3) * 6.28;
-      drawPerson(ctx, x, y, ang, ts, lk, { step: time * 10 + c.id, moving: mv, arms: c.hostage && c.where === 'scene' ? 'back' : c.panic && mv ? 'up' : 'side', t: time, scale: c.hostage && c.where === 'scene' ? 0.9 : 0.96, ghost, flinch: cv ? casualtyFlinch(cv, c.id, c.x, c.y) : undefined });
+      drawPerson(ctx, x, y, ang, ts, lk, { step: time * 10 + c.id, moving: mv, arms: captive ? 'back' : c.panic && mv ? 'up' : 'side', t: time, scale: captive ? 0.9 : 0.96, ghost, flinch: cv ? casualtyFlinch(cv, c.id, c.x, c.y) : undefined });
     } else {
       const ang = carrier ? Math.atan2(carrier.fy, carrier.fx) : hash2(c.id * 7, s.id) * 6.28;
       drawLying(ctx, x, y, ang, ts, lk, { variant: hash2(c.id, 5), sheet: c.dead, stretcher: c.where === 'carried', bandage: c.treated && !c.dead, ghost });
@@ -378,9 +393,13 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     ctx.globalAlpha = hst.hidden ? 0.5 : 1;
     if (MINI) { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(x, y - ts * 0.4); ctx.lineTo(x + ts * 0.38, y + ts * 0.32); ctx.lineTo(x - ts * 0.38, y + ts * 0.32); ctx.closePath(); ctx.fill(); ctx.globalAlpha = 1; continue; }
     if (hst.hostageId >= 0 && (hst.state === 'hold' || hst.state === 'fight')) {
-      const hc = s.casualties[hst.hostageId];
-      ctx.strokeStyle = 'rgba(255,93,93,0.8)'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]);
-      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(cx(hc.x), cy(hc.y)); ctx.stroke(); ctx.setLineDash([]);
+      // 용의자 → 짝인 인질 점선: 색은 그 인질의 상태 (G4 — 붙잡힘 빨강 · 구출 기회 노랑 점점선 · 지켜봄 주황, 풀려났거나 혼자 갇힌 인질에게는 긋지 않는다)
+      const hc = s.casualties[hst.hostageId], st = hc.hostage ? hostageState(sim, s, hc).state : 'held';
+      if (st === 'held' || st === 'window' || st === 'guarded') {
+        ctx.strokeStyle = st === 'held' ? 'rgba(255,93,93,0.8)' : st === 'window' ? alpha('#ffd166', 0.45 + 0.5 * Math.abs(Math.sin(time * 6))) : alpha('#ff9f43', 0.8);
+        ctx.lineWidth = 1.5; ctx.setLineDash(st === 'window' ? [1.5, 3] : [3, 3]);
+        ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(cx(hc.x), cy(hc.y)); ctx.stroke(); ctx.setLineDash([]);
+      }
     }
     // 발밑 표지: 위협 대상임을 한눈에
     ctx.fillStyle = alpha(col, 0.16); ctx.strokeStyle = alpha(col, hst.state === 'fight' ? 0.5 + 0.4 * Math.abs(Math.sin(time * 6)) : 0.7); ctx.lineWidth = Math.max(1.5, ts * 0.05);
@@ -474,6 +493,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
 
   // ── 불 ──
   drawFire(ctx, s, ts, time, MINI);
+  // ── 무너지는 순간의 몸통: 그림자·떨어지는 덩어리·먼지 기둥·가라앉는 먼지·불티 (G4, 빛 없음) ──
+  drawFallMoments(ctx, sim, s, ts, o.alpha, MINI);
 
   // ── 나무 수관: 사람이 있는 자리는 뚫어 보여 준다 ──
   if (layer.over) {
@@ -533,6 +554,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       if (f.kind === 'shot' && age >= 0 && age < 0.25) hole(dg, cx(f.x) * k, cy(f.y) * k, ts * 2.6 * k, 0.8);
       else if ((f.kind === 'flash' || f.kind === 'boom') && age >= 0 && age < f.ttl) hole(dg, cx(f.x) * k, cy(f.y) * k, ts * 6.5 * k, 1 - age / f.ttl);
     }
+    // (G4) 무너진 자리의 어둠을 몇 초 옅게 걷는다 — 빛이 아니다 (투명도 0.3 이하). 먼지 기둥이 밤에도 보이게
+    for (const f of s.falls ?? []) { const age = (sim.t + o.alpha * sim.dt) - f.t; if (age >= 0 && age < 4) hole(dg, cx(f.x) * k, cy(f.y) * k, ts * f.r * 1.3 * k, 0.3 * (1 - age / 4)); }
     ctx.drawImage(D.c, 0, 0, W, H);
   }
   // 색이 있는 빛: 경광등, 불빛, 가로등, 총구 섬광
@@ -596,6 +619,14 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   }
   if (!MINI) { ctx.font = `700 ${Math.round(ts * 0.3)}px ${FONT}`; ctx.fillStyle = 'rgba(190,255,215,0.75)'; ctx.fillText('안전 구역', (s.safe.x + 0.45) * ts, (s.safe.y - 0.84) * ts); }
 
+  // ── 정보 표지 (G4): 어둠·날씨 뒤라 밤과 안개에도 보인다 ──
+  if (night && !MINI) { const rz = ruinZones(s); if (rz.count) strokeRuinEdges(ctx, rz, ts, 0.45); }      // 밤에는 고정 층의 붕괴 구역 경계가 어둠에 묻힌다: 같은 선분을 한 번 더
+  drawDangerZones(ctx, sim, s, ts, { truth: o.truth, timeMs: o.timeMs, mini: MINI, cmd });
+  drawFallRing(ctx, sim, s, ts, o.alpha, MINI);
+  const hzLabels: HazardLabel[] = [];
+  if (o.truth) for (const l of drawGasEdge(ctx, ts, o.timeMs, gv, MINI)) hzLabels.push(l);      // 짙은 가스 경계 (관찰자 시점)
+  for (const l of drawRekindle(ctx, s, ts, o.timeMs, MINI ? [] : rekindledRegions(sim, s, o.truth), o.truth, MINI)) hzLabels.push(l);      // 되살아난 불
+
   // 지휘관이 정한 진입 지점
   if (!MINI && s.entryOrdered && !s.breachDone) for (const [k, label] of [[s.entryExit, s.entryExit2 >= 0 ? '1조 진입' : '진입 지점'], [s.entryExit2, '2조 진입']] as [number, string][]) {
     if (k < 0 || k >= s.exits.length) continue;
@@ -648,6 +679,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   for (const [f, age] of fxAges()) {
     if (age < 0 || age > f.ttl) continue;
     const k = age / f.ttl;
+    // 'collapse'(G4)는 여기서 그리지 않는다: 무너짐은 s.falls 로 그린다(drawFallMoments·drawFallRing). 이 효과는 카메라·자동 감속·소리만 본다
     if (f.kind === 'shot') {
       const x0 = cx(f.x), y0 = cy(f.y), x1 = cx(f.x2!), y1 = cy(f.y2!);
       const hd = Math.min(1, k * 2.4), tl = Math.max(0, hd - 0.45);
@@ -695,6 +727,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     ctx.globalAlpha = 1;
   }
   if (cv) timed(() => { drawNegotiation(cv); drawCuffs(cv); });      // (G5) 말풍선, 수갑 기호
+  for (const l of hzLabels) pill(ctx, l.text, l.x, l.y, Math.max(10, ts * 0.3), l.color);      // (G4) 새 글자 표지: 가스 고임·되살아난 불
   for (const l of labels) pill(ctx, l.text, l.x, l.y, Math.max(10, ts * 0.28), l.col);
 
   // 지도 가장자리를 배경으로 녹인다

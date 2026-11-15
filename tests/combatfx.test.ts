@@ -16,6 +16,7 @@ import { drawCombatPin } from '../src/view/city/combatPin';
 import * as combat from '../src/view/scene/combat';
 import { DECISIVE, FX_DRAWN, FxBook } from '../src/view/scene/fxBook';
 import type { FxEntry } from '../src/view/scene/fxBook';
+import { fakeCanvas, fakeCtx } from './fakeCanvas';
 
 const HOT = parseDifficulty('3,3,5,4,3,3')!;
 
@@ -316,25 +317,7 @@ describe('연출 기억 FxBook', () => {
 });
 
 // ───────────────────────── 6. 그림 함수 ─────────────────────────
-/** 모든 메서드·속성을 받아 주는 가짜 2D 맥락과 가짜 캔버스 */
-function fakeCtx(): CanvasRenderingContext2D {
-  const store: Record<string | symbol, unknown> = {};
-  const grad = { addColorStop(): void { /* 없음 */ } };
-  const handler: ProxyHandler<object> = {
-    get(_t, k) {
-      if (k in store) return store[k];
-      if (k === 'measureText') return () => ({ width: 10 });
-      if (k === 'createRadialGradient' || k === 'createLinearGradient' || k === 'createPattern' || k === 'createConicGradient') return () => grad;
-      if (k === 'getTransform') return () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 });
-      if (k === 'getImageData' || k === 'createImageData') return (a: unknown, b: unknown) => { const w = typeof a === 'number' ? a : 1, h = typeof b === 'number' ? b : 1; return { width: w, height: h, data: new Uint8ClampedArray(Math.max(4, w * h * 4)) }; };
-      if (k === 'canvas') return fakeCanvas();
-      return () => undefined;
-    },
-    set(_t, k, v) { store[k] = v; return true; },
-  };
-  return new Proxy({}, handler) as CanvasRenderingContext2D;
-}
-function fakeCanvas(): HTMLCanvasElement { return { width: 64, height: 64, style: {}, getContext: () => fakeCtx() } as unknown as HTMLCanvasElement; }
+// 가짜 2D 맥락과 가짜 캔버스는 tests/fakeCanvas.ts (G4 의 시험도 함께 쓴다)
 
 describe('교전 그림 함수가 예외 없이 돈다', () => {
   it('모든 종류의 합성 기록(테이저 포함)을 k = 0·0.3·0.7·1, 작은 창 참·거짓으로 그린다 · drawScene 도 한 번', async () => {

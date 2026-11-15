@@ -29,6 +29,7 @@ export function baseScene(sim: Sim, I: Incident, rng: Rng): Scene {
     entryOrdered: false, negotStart: -1, researchRound: 0, lastSpreadEvent: -99, collapseDone: new Set(), mismatchLogged: false, closedCheckAt: 0,
     staticVersion: 0, archived: false, idleSince: -1, breachAt: -1, breachDone: false, bangAt: -99,
     outdoor: undefined, rules: undefined, placeName: undefined,      // 현장 틀마다 붙는 칸을 미리 비워 둔다 (모든 현장이 같은 모양)
+    ruin: undefined, falls: undefined,      // (G4) 그림용 기록 칸 (field/ruins.ts). 무너진 현장에만 값이 생긴다
   };
 }
 

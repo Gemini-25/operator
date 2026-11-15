@@ -193,6 +193,7 @@ export class SoundDirector {
   /** G5 가 음색을 정하지 않은 효과의 소리 (지금의 분기) */
   private legacy(f: Fx, fast: boolean): void {
     if (f.kind === 'spray') { if (!fast && this.ok('spray', 0.28)) this.burst(0.22, 0.03, 5200, 0.6, 'highpass'); }
+    else if (f.kind === 'collapse') { if (this.ok('collapse', 0.5)) { this.burst(0.9, 0.3, 220, 0.8, 'lowpass'); this.tone(48, 0.9, 0.25, 'sine', 0, 30); this.burst(0.07, 0.18, 2400, 1.2, 'bandpass', 0.02); } }      // (G4) 무너짐: 낮게 우르르 + 짧게 쩍
   }
 
   /** 섬광탄 이명: sine 4100Hz + 주 버스 덕킹 + 교전 버스 lowpass 회복 */

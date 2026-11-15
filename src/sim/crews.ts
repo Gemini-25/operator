@@ -291,6 +291,7 @@ export function kitIdsOf(kind: UnitKind, slot: number): KitId[] { const st = STA
  * 개인 장비의 고장 추첨 (설계서 9절): 대원 순서 × 든 장비의 순서대로, 고장 추첨을 받는 장비(KITS 의 faultable)마다 확률 p.
  * 고장 난 장비는 효과가 없고(kitLive), 처음 효과를 주려 할 때 드러난다(kitWorks·toolUse). 그때까지는 조직이 모른다(hasKit 은 참).
  * 난수는 부르는 쪽이 준다: 편성표 부대는 교대 흐름 'kit' 하나, 지원 부대는 자기 흐름 aid:<n> 의 끝(대원 → 펌프 → 고장).
+ * (N9) 따로 뽑는 묶음(OWN_DRAW — 잠수 장비)은 건너뛴다(난수를 쓰지 않는다) — drawBatchFaults 가 그 묶음의 흐름에서 뽑는다.
  * 돌려주는 값 = 고장 난 장비 수.
  */
 export function drawFaults(rng: Rng, crew: Responder[], p: number): number {

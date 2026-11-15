@@ -31,6 +31,7 @@ export function baseScene(sim: Sim, I: Incident, rng: Rng): Scene {
     outdoor: undefined, rules: undefined, placeName: undefined,      // 현장 틀마다 붙는 칸을 미리 비워 둔다 (모든 현장이 같은 모양)
     ruin: undefined, falls: undefined,      // (G4) 그림용 기록 칸 (field/ruins.ts). 무너진 현장에만 값이 생긴다
     clearVision: 7.5,      // (R1) 맑은 날의 바깥 시야 — 탐조등이 밤의 시야를 여기까지 올린다 (실종 현장은 3.8 로 덮어쓴다). 쓰는 것은 단계 5 부터
+    cat: undefined, ops: undefined,      // (X6) 위험 상태(진실 — field/catastrophe.ts 의 catOf 가 첫 틱에 채운다)와 지휘 상태(지휘 규칙이 채운다)
   };
 }
 
@@ -57,6 +58,7 @@ const PROP_BLANK: Partial<Prop> = {
   locked: undefined, open: undefined, skin: undefined, leak: undefined, leakRate: undefined, mitigated: undefined, ignited: undefined,
   occupants: undefined, emptySeat: undefined, cleared: undefined, angle: undefined, color: undefined, exploded: undefined, found: undefined, dirRegion: undefined,
   interviewed: undefined, lastSeenRegion: undefined, accurate: undefined, removed: undefined, entered: undefined, bus: undefined, real: undefined, fuse: undefined,
+  vessel: undefined, heatLoad: undefined, heatK: undefined,      // (X6) 열을 받으면 터지는 용기 — field/catastrophe.ts 의 catOf 가 처음 한 번 판별해 채운다
 };
 export function addProp(s: Scene, kind: PropKind, x: number, y: number, extra: Partial<Prop> = {}): Prop {
   const p: Prop = { id: s.props.length, kind, x, y, w: 1, h: 1, blocking: false, hp: 0, ...PROP_BLANK, ...extra };

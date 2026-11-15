@@ -138,7 +138,7 @@ function UnitRow({ sim, u, selectedRid, onSelectRid }: { sim: Sim; u: Unit; sele
   const field = fieldOf(u);
   // 한 줄: 지도와 같은 둥근 표식 · 호출부호(+용수) · 대원 · 상태(색 점 + 글자)
   return (
-    <div className={`unit st-${u.state} ${u.aid ? 'aid' : ''}`} style={{ ['--dc' as string]: FIELD_TEXT[field] }} title={`${UNIT_KIND_NAME[u.kind]} · ${u.homeName}${u.aid ? ' (지원 부대)' : ''}${u.waterMax > 0 ? ` · 용수 ${Math.round((u.water / u.waterMax) * 100)}%${u.pumpFailed ? ' · 펌프 고장' : ''}` : ''}`}>
+    <div className={`unit st-${u.state} ${u.aid ? 'aid' : ''}`} style={{ ['--dc' as string]: FIELD_TEXT[field] }} title={`${UNIT_KIND_NAME[u.kind]} · ${u.homeName}${u.aid ? ' (지원 부대)' : ''}${u.waterMax > 0 ? ` · 용수 ${Math.round((u.water / u.waterMax) * 100)}%${u.pumpFailed ? ' · 펌프 고장' : ''} · 예비 공기통 ${u.spareAir ?? 0}개` : ''}${u.air ? ` · 남은 체공 ${Math.max(0, Math.round(u.fuel ?? 0))}초${u.grounded ? ` · ${GROUNDED[u.grounded]}` : ''}` : ''}`}>
       <Token field={field} kind={u.kind} size={22} state={u.state} no={+(u.callsign.match(/\d+$/) ?? ['0'])[0]} />
       <span className="callsign">{u.callsign}{u.waterMax > 0 && <Bar v={u.hydrant ? 1 : u.water / u.waterMax} color={u.pumpFailed ? '#ff5d5d' : u.hydrant ? '#5ad17a' : '#58b6ff'} w={14} />}</span>
       {/* 대원 칸 (R1): 부대장 이름 칩 하나 + 대원마다 역할 점. 자리가 모자라면 이름 칩부터 숨는다(점만 남는다 — 0번 점이 부대장).
@@ -160,6 +160,8 @@ function UnitRow({ sim, u, selectedRid, onSelectRid }: { sim: Sim; u: Unit; sele
   );
 }
 
+/** 헬기가 뜨지 못하는 까닭 (부대 줄의 설명과 대원 정보창) */
+const GROUNDED: Record<string, string> = { fog: '안개로 뜨지 못함', night: '야간 운항 안 함', storm: '강풍으로 뜨지 못함' };
 /** 대원이 든 장비를 한 줄로 (역할 점의 설명에 쓴다) */
 function kitLine(sim: Sim, rid: number): string { return (sim.responders[rid].kit ?? []).map((it) => KITS[it.id].name).join(', '); }
 /** 그 대원이 탄 헬기가 지금 어느 현장의 상공에 머물고 있는가 (없으면 null) — 읽기만 한다 */
@@ -370,7 +372,7 @@ export function AgentPanel({ sim, rid, truth = false }: { sim: Sim; rid: number;
             </tbody></table>
           </>)}
         </>)}
-        {aloft ? null : !agent || !scene ? <div className="empty">현재 현장에 투입되어 있지 않습니다 ({UNIT_STATE[u.state]}{u.grounded ? ` — ${u.grounded === 'fog' ? '안개로 뜨지 못함' : u.grounded === 'night' ? '야간 운항 안 함' : '강풍으로 뜨지 못함'}` : ''}).</div> : (<>
+        {aloft ? null : !agent || !scene ? <div className="empty">현재 현장에 투입되어 있지 않습니다 ({UNIT_STATE[u.state]}{u.grounded ? ` — ${GROUNDED[u.grounded]}` : ''}).</div> : (<>
           <h4>현재 행동</h4>
           <div className="kv"><span className="dim">상태</span><span>{agent.status === 'active' ? (agent.label || '판단 중') : agent.status === 'down' ? '쓰러짐' : agent.status === 'withdrawn' ? '부상 — 후송 대기' : '이동'}{agent.isCommander ? ' · 현장 지휘관' : ''}</span></div>
           <h4>행동 후보와 점수 (Utility)</h4>

@@ -217,7 +217,7 @@ export function App() {
             <div className="scene-title">
               <Icon name={I.assessment ? I.assessment.type : 'unknown'} size={15} /> <b>사건 {I.code}</b> {I.assessment ? I.assessment.label ?? TYPE_NAME[I.assessment.type] : '유형 확인 중'} · {I.locationKnown || truth ? I.truth.label : '위치 확인 중'}
               {scene && scene.arrivedAt >= 0 && <span className="dim"> · 현장 경과 {fmtDur((I.phase === 'closed' ? I.closedAt : sim.t) - scene.arrivedAt)}</span>}
-              {inScene && scene && scene.arrivedAt < 0 && <span className="warn"> · 부대 도착 전</span>}
+              {inScene && scene && scene.arrivedAt < 0 && <span className="warn"> · {(scene.airAt ?? -1) >= 0 ? '헬기 상공 도착 · 지상 부대 도착 전' : '부대 도착 전'}</span>}
             </div>
           )}
         </div>

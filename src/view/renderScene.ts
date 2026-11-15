@@ -503,6 +503,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       const pose = agentPose(sim, s, a, moving);
       if (af && af.throwAct !== undefined) { pose.arms = 'throw'; pose.item = 'none'; }
       else if (af && af.ram) { pose.arms = 'work'; pose.item = 'ram'; }
+      else if (af && af.irons) { pose.arms = 'work'; pose.item = 'halligan'; }
       const off = af ? { x: (af.flinch?.x ?? 0) + (af.jitter?.x ?? 0), y: (af.flinch?.y ?? 0) + (af.jitter?.y ?? 0) } : undefined;
       drawPerson(ctx, x, y, ang, ts, lk, { step: time * 11 + a.rid, moving, arms: pose.arms, item: pose.item, t: time + a.rid * 0.37, recoil: af?.recoil, act: af?.throwAct, crouch: a.inCover && s.kind === 'armed' && !moving && pose.arms === 'aim', flinch: off && (off.x || off.y) ? off : undefined });
       if (a.inCover && s.kind === 'armed') drawCoverBadge(ctx, x + ts * 0.36, y + ts * 0.34, ts);      // (G5) 엄폐: 반쪽 벽 기호

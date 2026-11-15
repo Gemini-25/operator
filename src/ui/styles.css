@@ -422,13 +422,13 @@ input:focus { border-color: var(--accent); }
    한 줄에 다 들어가지 않으면 맨 뒤의 칩이 다음 줄로 넘어가 가려진다(높이 18px 로 자른다). 점마저 넘치면 지름을 10px 로 줄인다 */
 .crewN { flex: 1 1 0; min-width: 0; height: 18px; overflow: hidden; display: flex; flex-flow: row-reverse wrap; justify-content: flex-end; align-items: center; align-content: flex-start; gap: 5px 2px; container-type: inline-size; }
 .crewN .cchip { flex: 0 0 auto; margin-right: 2px; }
-.rdot { flex: 0 0 auto; width: 13px; height: 13px; display: block; cursor: pointer; border-radius: 50%; transition: transform 0.12s; }
+.rdot { flex: 0 0 auto; width: 13px; height: 13px; margin: 2.5px 0; display: block; cursor: pointer; border-radius: 50%; transition: transform 0.12s; }
 .rdot:hover { transform: scale(1.25); }
-@container (max-width: 72px) { .crewN.n5 .rdot { width: 10px; height: 10px; } }
-@container (max-width: 57px) { .crewN.n4 .rdot { width: 10px; height: 10px; } }
-@container (max-width: 42px) { .crewN.n3 .rdot { width: 10px; height: 10px; } }
+@container (max-width: 72px) { .crewN.n5 .rdot { width: 10px; height: 10px; margin: 4px 0; } }
+@container (max-width: 57px) { .crewN.n4 .rdot { width: 10px; height: 10px; margin: 4px 0; } }
+@container (max-width: 42px) { .crewN.n3 .rdot { width: 10px; height: 10px; margin: 4px 0; } }
 /* 범례의 역할 점은 조금 크게 */
-.maplegend .rdot { width: 15px; height: 15px; cursor: default; } .maplegend .rdot:hover { transform: none; }
+.maplegend .rdot { width: 15px; height: 15px; margin: 0; cursor: default; } .maplegend .rdot:hover { transform: none; }
 .lg-roles { gap: 2px 10px; }
 /* 대원 정보창의 장비 줄 */
 .kitlist { display: flex; flex-wrap: wrap; gap: 4px; margin: 3px 0 8px; }

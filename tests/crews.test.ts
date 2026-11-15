@@ -23,8 +23,11 @@ import { closeIncident, createIncident } from '../src/sim/incidents';
 import { airRtb, createAidUnit, crewNames, crewReady, dispatchUnit, etaFor, startTransport, tickUnits } from '../src/sim/resources';
 import { Rng } from '../src/sim/rng';
 import { T } from '../src/sim/types';
-import type { AirOp, Assessment, CasBelief, FieldAgent, Incident, IncidentType, KitId, Needs, RoleId, Scene, Unit, UnitKind, WorkItem, WorkKind } from '../src/sim/types';
+import type { AirOp, Assessment, CasBelief, FieldAgent, Incident, IncidentType, KitId, Needs, RoleId, Scene, TaskKind, Unit, UnitKind, WorkItem, WorkKind } from '../src/sim/types';
 import { TYPE_NAME, clamp } from '../src/sim/util';
+import { KIT_GROUP_MARK, ROLE_MARK, UNIT_MARK } from '../src/view/marks';
+import { responderLook } from '../src/view/scene/sprites';
+import { fakeCtx, withFakeDom } from './fakeCanvas';
 
 const withRes = (resources: number): Difficulty => ({ ...NORMAL, resources });
 /** 끝까지 돈 교대 (같은 조건은 한 번만 돌린다) */
@@ -2160,6 +2163,87 @@ describe('⑭ 소모와 고장', () => {
     expect(revealed, '쓰다가 드러난 고장').toBeGreaterThan(0);
     expect(worst, '한 사건에서 한 대원의 교체 선언').toBeLessThanOrEqual(3);
   }, 60000);
+});
+
+describe('화면 (설계서 10절) — 읽기만 한다', () => {
+  it('상공의 헬기·호이스트 줄·탐조등·물 투하와 숨은 고장이 있는 대원을 그려도 기록·해시·장비·상공 작업이 그대로다 (작은 창·확대·밤·AI 시점 포함)', async () => {
+    await withFakeDom(async () => {
+      const { drawScene, hitScene, sceneLayout, airOpLabel } = await import('../src/view/renderScene');
+      // 수난 사고를 일으킨 교대에서 호이스트 인양이 벌어지는 틱까지 돌린다 (지상 구조가 먼저 끝나는 교대가 많다 — 맑은 시드를 차례로 본다)
+      let sim: Sim | null = null, s: Scene | null = null;
+      for (const seed of seedsWhere((x) => x.weather !== 'fog', 10)) {
+        const q = new Sim(seed, NORMAL, 1200, { force: 'water/std' });
+        for (let n = 0; n < 2600 && !s; n++) { q.step(); for (const sc of q.scenes) if (sc && !sc.archived && (sc.air ?? []).some((op) => op.mode === 'hoist' && op.phase === 'work' && op.progress > 0)) { sim = q; s = sc; } }
+        if (s) break;
+      }
+      expect(s, '호이스트 인양 중인 현장').not.toBeNull();
+      const S = s!, Q = sim!;
+      const hoist = S.air!.find((op) => op.mode === 'hoist' && op.phase === 'work')!;
+      // 그릴 거리를 더 얹는다: 탐조등의 원, 물 투하 기록, 숨은 고장(열화상 카메라·유압 구조기·탐조등), 공기가 거의 빈 대원, 지상 대원 몇
+      for (const kind of ['engine', 'rescue', 'swat', 'als', 'eod'] as UnitKind[]) unitArrived(Q, Q.incidents[S.incidentId], Q.units.find((u) => u.kind === kind)!);
+      S.light = { x: hoist.x, y: hoist.y, r: AIR.lightR };
+      S.fx.push({ kind: 'drop', t: Q.t - 0.4, x: 6, y: 6, x2: 12, y2: 6, ttl: 1.6 });
+      for (const r of Q.responders) for (const it of r.kit!) { if (it.id === 'tic' || it.id === 'spreader' || it.id === 'searchlight' || it.id === 'aed') it.fault = true; if (it.id === 'scba' && r.role === 'nozzle') it.uses = 12; }
+      for (const a of S.agents) S.smoke[tileOf(S, a.x, a.y)] = 0.6;
+      const tasks: TaskKind[] = ['engage', 'perimeter', 'treat', 'force', 'extricate', 'search', 'clear', 'arrest', 'swapAir', 'suppress', 'carry'];
+      S.agents.forEach((a, k) => { a.task = makeTask(tasks[k % tasks.length], '시험'); a.task.cas = 0; a.ring = k % 2 ? 0.5 : 0; a.taserAt = k % 7 === 0 ? Q.t : -99; if (k % 5 === 0) { a.px = a.x - 0.2; } });
+      const state = (): string => JSON.stringify({
+        ev: Q.events.length, hash: Q.logHash, tick: Q.tick,
+        kits: Q.responders.map((r) => r.kit!.map((it) => [it.id, it.uses, it.fault, it.faultKnown])),
+        units: Q.units.map((u) => [u.state, u.fuel, u.bucket, u.spareAir, u.patients.length, u.x, u.y]),
+        air: S.air!.map((op) => [op.unitId, op.mode, op.phase, op.x, op.y, op.progress, op.target, op.eye.beliefs.facts.size]),
+        people: S.casualties.map((c) => [c.x, c.y, c.where, c.walking, c.health]), agents: S.agents.map((a) => [a.x, a.y, a.status, a.task ? a.task.kind : '']),
+        light: S.light,
+      });
+      const before = state();
+      const ctx = fakeCtx();
+      const eyeRid = hoist.eye.rid;
+      for (const weather of ['clear', 'night', 'rain'] as const) {
+        (Q as unknown as { weather: string }).weather = weather;
+        for (const o of [{ truth: true }, { truth: false }, { truth: true, mini: true }, { truth: true, cam: { x: hoist.x, y: hoist.y, zoom: 2.4 } }, { truth: false, selectedRid: eyeRid }]) {
+          drawScene(ctx, Q, S, 1200, 800, { alpha: 0.5, timeMs: 1234, selectedRid: -1, ...o });
+        }
+      }
+      expect(state(), '그리는 것만으로는 아무것도 바뀌지 않는다').toBe(before);
+      // 상공의 헬기를 누르면 그 관측자를 고른다 (몸체는 땅 위의 자리보다 왼쪽 위에 떠 있다). 물을 뜨러 간 헬기는 현장에 없다
+      const L = sceneLayout(S, 1200, 800);
+      const at = (x: number, y: number): { rid: number } => hitScene(Q, S, 1200, 800, L.ox + (x + 0.5) * L.ts, L.oy + (y + 0.5) * L.ts);
+      for (const a of S.agents) { a.x = 0; a.y = 0; }      // 지상 대원을 비켜 세운다 (가까운 지상 대원이 먼저 잡힌다)
+      expect(at(hoist.x - 0.77, hoist.y - 0.92).rid).toBe(eyeRid);
+      hoist.phase = 'away';
+      const others = S.air!.filter((op) => op !== hoist && Math.hypot(op.x - hoist.x, op.y - hoist.y) < 1.6);
+      if (!others.length) expect(at(hoist.x - 0.77, hoist.y - 0.92).rid).toBe(-1);
+      // 하는 일의 이름
+      expect(airOpLabel(S, hoist)).toBe('물 뜨러 감');
+      hoist.phase = 'work'; expect(airOpLabel(S, hoist)).toBe('호이스트 인양 중');
+      hoist.phase = 'hover'; expect(airOpLabel(S, hoist)).toBe('인양 위치로 이동');
+      hoist.mode = 'bucket'; expect(airOpLabel(S, hoist)).toBe('공중 물 투하');
+      hoist.mode = 'watch'; expect(airOpLabel(S, hoist)).toBe('상공 감시 · 탐조등');
+      S.light = null; expect(airOpLabel(S, hoist)).toBe('상공 감시');
+    });
+  }, 60000);
+
+  it('역할이 겉모습을 정하고, 기호 표는 모든 역할 묶음·장비 묶음을 덮는다 (글자가 아니라 그림 기호)', () => {
+    const base = responderLook('fire', 'engine', 7), noz = responderLook('fire', 'engine', 7, 'nozzle');
+    expect(noz).toEqual(base);      // 덧입히지 않는 역할은 부대 종류의 모습 그대로
+    for (const role of ['fireLead', 'ladderLead', 'rescueLead', 'hazLead'] as RoleId[]) { const k = responderLook('fire', 'engine', 7, role); expect(k.headCol, role).toBe('#f2f2ee'); expect(k.band, role).toBeTruthy(); }
+    expect(responderLook('fire', 'engine', 7, 'engineer').trim).toBe('vest'); expect(responderLook('fire', 'ladder', 7, 'ladderOp').trim).toBe('vest');
+    const doc = responderLook('ems', 'medHeli', 7, 'doctor'), nurse = responderLook('ems', 'medHeli', 7, 'flightNurse'), drv = responderLook('ems', 'als', 7, 'emsDriver'), emt = responderLook('ems', 'als', 7, 'emt');
+    expect(doc.trim).toBe('plus'); expect(doc.top).toBe('#f4f6f7'); expect(nurse.trim).toBe('plus'); expect(nurse.top).not.toBe(doc.top);
+    expect(drv.pack).toBe('none'); expect(emt.pack).toBe('bag');
+    const tech = responderLook('police', 'eod', 7, 'bombTech'), guard = responderLook('police', 'eod', 7, 'eodGuard');
+    expect(tech.bulk).toBe(1.25); expect(tech.head).toBe('visor'); expect(guard.bulk).toBeUndefined();
+    expect(responderLook('fire', 'boat', 7, 'boatRescuer').trim).toBe('lifevest');
+    // 기호 표: 역할 묶음마다 하나, 서로 다른 경로. 방패 둘(순찰·기동대원 / 방패수)의 윤곽이 다르다
+    const groups = new Set(Object.values(ROLES).map((r) => r.group));
+    for (const g of groups) expect(ROLE_MARK[g], g).toMatch(/^M[\d. A-Za-z-]+Z$/);
+    expect(Object.keys(ROLE_MARK).sort()).toEqual([...groups].sort());
+    expect(new Set(Object.values(ROLE_MARK)).size).toBe(groups.size);
+    expect(ROLE_MARK.officer).not.toBe(ROLE_MARK.shield);
+    for (const id of Object.keys(KITS) as KitId[]) expect(KIT_GROUP_MARK[KITS[id].group], id).toBeTruthy();
+    // 헬기 셋은 지도에서 같은 윤곽을 쓴다 (분야색으로 갈린다)
+    expect(UNIT_MARK.policeHeli).toBe(UNIT_MARK.heli); expect(UNIT_MARK.medHeli).toBe(UNIT_MARK.heli);
+  });
 });
 
 describe('⑦ 같은 사람 = 같은 능력', () => {

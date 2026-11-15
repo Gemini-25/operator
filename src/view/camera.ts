@@ -157,7 +157,7 @@ export class CameraDirector {
   private frameAction(sim: Sim): SceneView {
     const full: SceneView = { x: SCENE_W / 2, y: SCENE_H / 2, zoom: 1 };
     const s = sim.scenes[this.focus];
-    if (!s || s.arrivedAt < 0) return full;
+    if (!s || (s.arrivedAt < 0 && (s.airAt ?? -1) < 0)) return full;      // 지상 부대도 상공의 헬기도 닿기 전이면 현장 전체
     const pts: number[] = [];
     const add = (x: number, y: number, w: number): void => { pts.push(x, y, w); };
     for (const f of s.fx) {

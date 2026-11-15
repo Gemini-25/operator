@@ -387,7 +387,8 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         if (hoistUp) want(sim, s, 'hoist', { cas: f.id }, 0.92 + urg, 1);      // 상공에 호이스트를 단 헬기가 있으면 함께 낸다 — 먼저 끝나는 쪽이 이긴다
         continue;
       }
-      if (c.mob === 'trapped') { want(sim, s, 'extricate', { cas: f.id }, 0.82 + urg, 2); continue; }
+      // 갇혀 있다: 구출이 먼저다. 갇히기 전에 낸 이송·동행 지시는 거둔다 (2차 붕괴로 다시 갇힌 사람 — 두면 '대상이 그 위치에 없다'는 실패가 구출이 끝날 때까지 되풀이된다)
+      if (c.mob === 'trapped') { clear(['carry', 'escort']); want(sim, s, 'extricate', { cas: f.id }, 0.82 + urg, 2); continue; }
       if (c.mob === 'mobile') {                // 스스로 대피 중 — 한참 지나도 도착 보고가 없으면 확인하러 보낸다
         if (sim.t - f.t > 32) want(sim, s, 'escort', { cas: f.id }, 0.62 + urg);
         continue;

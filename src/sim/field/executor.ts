@@ -661,7 +661,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     case 'carry': case 'escort': {
       const c = s.casualties[t.cas];
       if (c.dead || c.where === 'safe' || c.where === 'loaded' || c.where === 'hospital') { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
-      if (c.mob === 'trapped') { finishTask(sim, s, a, false, 'gone'); return; }
+      // 갇혔다(맡은 뒤에 2차 붕괴로 갇힌 사람 등): 옮길 수 없다. 지휘관의 믿음이 '거동 불가'로 남아 같은 지시를 되풀이하지 않게 다시 알린다 (낡은 믿음)
+      if (c.mob === 'trapped') { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, false, 'gone'); return; }
       if (a.carrying !== c.id && isHeld(sim, s, c.id)) { finishTask(sim, s, a, false, 'unsafe'); return; }      // 용의자 곁의 인질은 데리고 나올 수 없다
       if (c.walking) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
       if (c.where === 'carried' && a.carrying !== c.id) {

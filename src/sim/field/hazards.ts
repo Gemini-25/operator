@@ -15,7 +15,7 @@ import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, trut
 import { coverRoll, fireShot, heatGlass, shatter } from './damage';
 import { lastFx, noteBoom, noteFlash, noteHit, noteShot, recHarm, recMelee } from './fxlog';
 import { RUIN_CEILING, RUIN_SECONDARY, markRuin, recordFall } from './ruins';
-import { bandOf, decayCause, hurtCas, hurtCasTo, noteDecay, noteInjury, noteRespHurt } from './injury';
+import { bandOf, decayCause, hurtCas, hurtCasTo, injuryRng, noteDecay, noteInjury, noteRespHurt } from './injury';
 
 export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2, c?: FxInfo): void {
   s.fx.push({ kind, t: sim.t, x, y, x2, y2, text, color, ttl, c });
@@ -136,7 +136,11 @@ function smokeSpread(s: Scene, w: number, h: number): void {
   }
 }
 
-/** cause: 기록에 적는 원인 — 폭발이면 blast(기본), 천장·2차 붕괴처럼 무너져 내린 것이면 crush */
+/**
+ * cause: 기록에 적는 원인 — 폭발이면 blast(기본), 천장·2차 붕괴처럼 무너져 내린 것이면 crush.
+ * 폭발(blast)에 휩쓸려 체력이 80 아래가 된 구조 대상은 쓰러져 스스로 나오지 못하고(갇힌 사람은 그대로) 피를 흘린다 —
+ * 가스 용기·누출 가스·폭발물이 같은 규칙이다(예전에는 폭발물만 그랬다). 무너져 내린 것(crush)에는 걸지 않는다.
+ */
 export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, radius: number, dmg: number, ev: number, cause: InjuryCause = 'blast'): void {
   for (const a of s.agents) {
     if (a.status === 'left') continue;
@@ -153,6 +157,7 @@ export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, rad
     const d = dist(c.x, c.y, x, y);
     if (d > radius) continue;
     hurtCas(sim, s, I, c, dmg * 0.8 * (1 - d / (radius + 1)), cause, { ev });
+    if (cause === 'blast' && c.health < 80) hurtCas(sim, s, I, c, 0, 'blast', { bleed: (0.09 + 0.09 * (1 - d / radius)) * sim.tune.bleedMul, immobile: true });
   }
   shatter(sim, s, x, y, radius + 1.5, Math.min(2.5, radius), 3);      // 반경 안의 창과 가구가 부서진다
 }
@@ -638,6 +643,8 @@ export function tickLeaks(sim: Sim, s: Scene, I: Incident): void {
   }
 }
 
+/** 2차 붕괴 곁의 갇힘 (H1 §5.1): 무너진 자리에서 이 거리 안의 구조 대상이 갇히고, 구출에 드는 작업량은 이 범위에서 뽑는다. 붕괴 현장이 너무 어려워지면 반경부터 줄인다 (§9.3-4) */
+export const TRAP_R = 1.6, TRAP_WORK = [6, 10];
 /** 2차 붕괴: 보강하지 않은 균열 구조물은 시간이 지나면 다시 무너진다 (매 틱). */
 export function tickCollapse(sim: Sim, s: Scene, I: Incident): void {
   for (const p of s.props) {
@@ -660,6 +667,12 @@ export function tickCollapse(sim: Sim, s: Scene, I: Incident): void {
     const where = s.region[tidx(s, p.x, p.y)] >= 0 ? s.regions[s.region[tidx(s, p.x, p.y)]].name : '건물';
     const ev = raiseProblem(sim, I, 'ESCALATION', `${where} 2차 붕괴`, { role: 'SYSTEM', actor: '현장', text: `2차 붕괴! ${where}의 금이 간 구조물이 다시 무너졌습니다.`, imp: 3, truth: s.arrivedAt < 0 }, false);
     blast(sim, s, I, p.x, p.y, 2.6, 28, ev, 'crush');
+    // 무너진 자리 곁(TRAP_R 칸 안)에 있던 구조 대상은 잔해에 갇힌다 (현장에 있고, 업혀 있지 않고, 물속이 아닌 사람). 걷던 사람도 멈춘다.
+    // 지휘관은 본 대원이 알릴 때 안다 — 그 뒤 구출(extricate)이 받는다. 판정 뒤에는 일어나지 않는다 (§2.6). 난수는 목적별 흐름 injury:<현장>:trap
+    if (I.phase !== 'closed') for (let ci = 0; ci < s.casualties.length; ci++) { const c = s.casualties[ci];
+      if (c.dead || c.where !== 'scene' || c.inWater || c.mob === 'trapped' || c.health <= 0 || dist(c.x, c.y, p.x, p.y) > TRAP_R) continue;
+      c.mob = 'trapped'; c.trapWork = injuryRng(sim, s, 'trap').range(TRAP_WORK[0], TRAP_WORK[1]); c.walking = false; c.path = null;
+    }
     recordFall(sim, s, p.x, p.y, 2.6, 'secondary');      // (G4) 예전의 pushFx(…'boom'…) 자리: 무너짐은 폭발 그림이 아니라 'collapse' 로 그린다
   }
 }

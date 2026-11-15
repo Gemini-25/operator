@@ -1209,9 +1209,15 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       // 호송은 모델하지 않는다(결정): 경찰은 처치까지, 이송은 구급차가 한다
       const h = s.hostiles[t.hostile];
       const d0 = dist(a.x, a.y, h.x, h.y);
+      // 숨졌다: 숨진 것은 곁(2칸 안)에서만 알 수 있다 — 멀리서 본 대로 알리면 지휘관은 여전히 처치가 필요한 줄 알고 같은 지시를 되풀이한다 (낡은 믿음). 가서 보고 알린다
+      if (h.dead && (h.where ?? 'scene') === 'scene' && d0 > 2) {
+        const m = moveTo(sim, s, a, h.x, h.y, 1.5);
+        if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+        if (m !== 'arrived') return;
+      }
       // 처치할 수 없는 상태 — 숨졌다 · 차에 실렸다 · 달아났다 · 아직 맞서고 있다: 지휘관의 믿음이 낡았으므로 본 대로 다시 알리고 끝낸다
       if (h.dead || (h.where ?? 'scene') !== 'scene' || h.state === 'escaped' || h.state === 'hold' || h.state === 'fight' || h.state === 'flee') {
-        if ((h.where ?? 'scene') === 'scene') reportDone(sim, a, hosFact(sim, s, h, r.name, d0));
+        if ((h.where ?? 'scene') === 'scene') reportDone(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)));
         finishTask(sim, s, a, true); return;
       }
       if (t.phase === 0) {

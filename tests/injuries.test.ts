@@ -19,7 +19,7 @@ import { los, staticPass, tileOf } from '../src/sim/field/grid';
 import { commanderThink, outstanding, riderText } from '../src/sim/field/commander';
 import { think } from '../src/sim/field/brain';
 import { FALL_HIT, FALL_P, HEAT_DMG, HEAT_STAMINA, HOSTILE_CARED, WALK_STOP, hostileHazards, responderHazards } from '../src/sim/field/rules/injury';
-import { SELF_EVAC_WAIT } from '../src/sim/field/orders/injury';
+import { SELF_EVAC_WAIT, TS_MAX_DONE } from '../src/sim/field/orders/injury';
 import { PHRASE, checkC5, sysOf } from '../scripts/metrics';
 import { fmtSec, josa } from '../src/sim/util';
 import { detonate } from '../src/sim/field/rules/crime';
@@ -2969,5 +2969,41 @@ describe('7 · 9. 용의자 — 총격범 교대에서 (§11-7 · §11-9)', () =
     h.tTreated = 120; h.tDead = 95;
     expect(evaluate(sim, I, 'resolved').analysis).toContain(`${josa(h.label, '은/는')} 교전 중 총상을 입고 쓰러졌고, 처치를 받았지만 숨졌습니다.`);
     expect(PROBLEM_LABEL.SUSPECT_DIED).toBe('용의자 사망');
+  });
+});
+
+describe('단계 5 — 고침: 숨진 용의자는 가서 보고 알린다 · 지시의 상한 (같은 지시가 수백 번 되풀이되던 것)', () => {
+  it('맡은 용의자가 멀리서 숨져 있으면 곁(2칸 안)까지 가서 숨진 것을 알리고 끝낸다 — 멀리서 본 대로 알리면 지휘관은 처치가 필요한 줄 알고 지시를 되풀이한다', () => {
+    const { sim, s, h, of } = suspectScene('INJ-tsfar', 'hostage', ['patrol']);
+    const cop = of('patrol');
+    for (const q of s.agents) { q.nextThink = 1e9; q.task = null; q.planT = 1e9; }
+    h.state = 'down'; h.dead = true; h.health = 0; h.tDown = 1; h.tDead = 2; h.x = s.staging.x + 6; h.y = s.staging.y;
+    cop.x = s.staging.x; cop.y = s.staging.y;
+    const w = workItem(s, 'treatSuspect', sim.t, { hostile: h.id, max: 1 });
+    cop.task = makeTask('treatSuspect', '시험', w); w.status = 'active'; w.assignees.push(cop.rid);
+    act(sim, s, cop);
+    expect(cop.task, '멀리서 바로 끝내지 않는다').not.toBeNull();
+    for (let n = 0; n < 200 && cop.task; n++) act(sim, s, cop);
+    expect(cop.task).toBeNull(); expect(w.status).toBe('done');
+    expect(Math.hypot(cop.x - h.x, cop.y - h.y)).toBeLessThanOrEqual(2);
+    expect(cop.beliefs.val<any>('hos', h.id)?.dead).toBe(true);
+  });
+  it('한 용의자에게 낸 지시를 TS_MAX_DONE 번 마쳤으면 더 내지 않는다', () => {
+    const { sim, s, I, h } = suspectScene('INJ-tscap', 'hostage', ['patrol', 'als']);
+    assignAll(sim, I, ['patrol', 'als']);
+    const cmd = s.agents.find((a) => a.isCommander)!;
+    s.sizeupDone = true; s.mismatchLogged = true; s.secureAt = sim.t;
+    for (const q of s.agents) { q.nextThink = 1e9; q.task = null; }
+    for (const q of s.hostiles) if (q !== h) hosKnown(sim, cmd, q, { state: 'arrested', band: 0 });
+    cmd.beliefs.merge(mkFact('fire', 0, 0.5, '시험', sim.t, 1, true, ''));
+    hosKnown(sim, cmd, h, { band: 2 });
+    commanderThink(sim, s, cmd);
+    expect(liveTS(s, h.id).length).toBe(1);
+    for (let k = 0; k < TS_MAX_DONE; k++) {
+      for (const w of liveTS(s, h.id)) { w.status = 'done'; w.doneAt = sim.t; }
+      commanderThink(sim, s, cmd);
+    }
+    expect(liveTS(s, h.id).length, '상한').toBe(0);
+    expect(s.board.filter((w) => w.kind === 'treatSuspect' && w.hostile === h.id && w.status === 'done').length).toBe(TS_MAX_DONE);
   });
 });

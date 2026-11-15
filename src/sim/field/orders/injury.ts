@@ -122,6 +122,8 @@ registerOrders((sim, s, _I, a, k) => {
     // 처치가 필요한가: 아직 못 받았거나, 기본 처치만 받았다 (두 번 보고도 그대로면 현장에서 더 해 줄 처치가 없다)
     let done = 0;
     for (const w of s.board) if (w.kind === 'treatSuspect' && w.hostile === id && w.status === 'done') done++;
+    // 안전장치: 이 용의자의 지시를 이미 TS_MAX_DONE 번 마쳤다(처치 둘·이송 하나 남짓) — 더 내도 같은 보고만 돌아온다 (낡은 믿음으로 같은 지시가 되풀이되지 않게)
+    if (done >= TS_MAX_DONE) { if (cur && cur.status === 'open') cur.status = 'cancelled'; continue; }
     const treat = tq === 0 || (tq === 1 && done < 2);
     // 태울 차: 자리가 남은 구급차·헬기 (위중이면 헬기 먼저). 더 무겁거나 같은 사람이 기다리면 정하지 않는다
     let prop = -1;
@@ -140,6 +142,8 @@ registerOrders((sim, s, _I, a, k) => {
     } else if (able) k.want('treatSuspect', { hostile: id, prop }, 0.74 + 0.06 * Math.min(2, band), 1);
   }
 });
+/** 한 용의자에게 내는 처치·이송 지시의 상한 (마친 항목 수) — 그 뒤로는 내지 않는다 */
+export const TS_MAX_DONE = 4;
 /** 용의자 처치의 자격을 물어볼 빈 작업 항목 (작업판에 올리지 않는다) */
 const PROBE_S: WorkItem = { ...PROBE, kind: 'treatSuspect', orderSentAt: {}, failedAt: {}, assignees: [] };
 

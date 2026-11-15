@@ -1286,8 +1286,8 @@ describe('4. 문턱 — 멀쩡하던 대원은 한 틱 안에 숨지지 않는�
     r = fresh(sim, medic, 45); r.bleed = 0.1; r.bleed0 = 0.1;
     hurtResponder(sim, s, I, medic, 41, 'blunt');
     expect(r.health).toBe(4); expect(r.bleed).toBe(DOWN_BLEED_CAP); expect(r.bleed0).toBe(DOWN_BLEED_CAP);
-    // 심각도 손잡이가 출혈을 키운다
-    expect([1, 2, 3, 4, 5].map((sv) => new Sim('INJ-mul', { ...NORMAL, severity: sv }).tune.injuryMul)).toEqual([0.75, 0.9, 1, 1.12, 1.25]);
+    // 심각도 손잡이가 출혈을 정한다 (단계 7: 보통보다 위쪽은 보통과 같다 — 균형 손잡이 2)
+    expect([1, 2, 3, 4, 5].map((sv) => new Sim('INJ-mul', { ...NORMAL, severity: sv }).tune.injuryMul)).toEqual([0.75, 0.9, 1, 1, 1]);
     (sim.tune as { injuryMul: number }).injuryMul = 1.25;
     r = fresh(sim, medic); hurtResponder(sim, s, I, medic, 20, 'gunshot');
     rel(r.bleed!, BLEED_PER_DMG.gunshot * 20 * 1.25);

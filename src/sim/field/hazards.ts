@@ -15,7 +15,7 @@ import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, trut
 import { coverRoll, fireShot, heatGlass, shatter } from './damage';
 import { lastFx, noteBoom, noteFlash, noteHit, noteShot, recHarm, recMelee } from './fxlog';
 import { RUIN_CEILING, RUIN_SECONDARY, markRuin, recordFall } from './ruins';
-import { bandOf, decayCause, hurtCas, hurtCasTo, injuryRng, noteDecay, noteInjury, noteRespHurt } from './injury';
+import { CAUSE_NAME, bandOf, decayCause, hurtCas, hurtCasTo, injuryRng, noteDecay, noteInjury, noteRespHurt } from './injury';
 
 export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2, c?: FxInfo): void {
   s.fx.push({ kind, t: sim.t, x, y, x2, y2, text, color, ttl, c });
@@ -211,7 +211,7 @@ export function tickCasualties(sim: Sim, s: Scene, I: Incident): void {
       const known = c.tDiscovered >= 0;
       const ev = emit(sim, {
         inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'casualty', imp: 3, truth: !known, causes: [c.causeEvent, I.lastEvent],
-        text: known ? `구조 대상 ${c.label}: 생체 반응 소실. 구조에 실패했습니다.` : `(미발견) 구조 대상 ${c.label}의 생체 반응이 사라졌습니다.`,
+        text: known ? `구조 대상 ${c.label}: 생체 반응 소실 (${CAUSE_NAME[c.deathCause]}). 구조에 실패했습니다.` : `(미발견) 구조 대상 ${c.label}의 생체 반응이 사라졌습니다 (${CAUSE_NAME[c.deathCause]}).`,
       });
       c.causeEvent = ev;
       for (const a of s.agents) if (a.carrying === c.id) a.carrying = -1;
@@ -346,7 +346,7 @@ export function panicShot(sim: Sim, s: Scene, I: Incident, x: number, y: number)
     pushFx(sim, s, 'shot', h.x, h.y, c.x, c.y, undefined, '#ff8a5c', 0.25); pushFx(sim, s, 'hit', c.x, c.y);
     noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit: true, tx: c.x, ty: c.y, tk: 2, target: c.id }); noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 2, target: c.id });
     fireShot(sim, s, h.x, h.y, c.x, c.y, 'body');
-    const ev = raiseProblem(sim, I, 'ESCALATION', '진입 순간 인질 피격', { role: 'SYSTEM', actor: '현장', imp: 3, text: `진입에 놀란 ${h.label}가 인질(구조 대상 ${c.label})을 쐈습니다!` }, false);
+    const ev = raiseProblem(sim, I, 'ESCALATION', '진입 순간 인질 피격', { role: 'SYSTEM', actor: '현장', imp: 3, text: `진입에 놀란 ${josa(h.label, '이/가')} 인질(구조 대상 ${c.label})을 쐈습니다!` }, false);
     hurtCas(sim, s, I, c, dmg, 'gunshot', { by: h.id, byKind: 'hostile', ev, bleed: 0.18, immobile: true });
   }
 }
@@ -410,7 +410,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
       else if (sim.t >= h.deadline && I.phase !== 'closed') {
         h.deadline = sim.t + 70; h.state = 'fight'; h.cooldown = 1; h.alertUntil = sim.t + 20;
         const dmg = s.rng.range(28, 42);
-        const ev = raiseProblem(sim, I, 'ESCALATION', '시한이 지나 인질이 다침', { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `${h.label}가 요구가 받아들여지지 않자 인질을 다치게 했습니다!` }, false);
+        const ev = raiseProblem(sim, I, 'ESCALATION', '시한이 지나 인질이 다침', { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `${josa(h.label, '이/가')} 요구가 받아들여지지 않자 인질을 다치게 했습니다!` }, false);
         // 원인은 든 무기대로 (G5 의 recHarm 과 같은 갈래): 총 → 총상, 칼 → 자상, 맨손 → 타박상
         hurtCas(sim, s, I, c, dmg, h.weapon === 'gun' ? 'gunshot' : h.weapon === 'knife' ? 'stab' : 'blunt', { by: h.id, byKind: 'hostile', ev, bleed: 0.18, immobile: true });
         recHarm(sim, s, h, c);
@@ -466,7 +466,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
           noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit: true, tx: target.x, ty: target.y, tk: 2, target: target.id }); noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 2, target: target.id });
           fireShot(sim, s, h.x, h.y, target.x, target.y, 'body');
           const dmg = s.rng.range(20, 32);
-          const ev = raiseProblem(sim, I, 'ESCALATION', `총격범의 추가 범행 (구조 대상 ${target.label})`, { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `총성! ${h.label}가 건물 안의 시민을 쐈습니다.` }, false);
+          const ev = raiseProblem(sim, I, 'ESCALATION', `총격범의 추가 범행 (구조 대상 ${target.label})`, { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `총성! ${josa(h.label, '이/가')} 건물 안의 시민을 쐈습니다.` }, false);
           hurtCas(sim, s, I, target, dmg, 'gunshot', { by: h.id, byKind: 'hostile', ev, bleed: 0.13, immobile: true });
           continue;
         }
@@ -986,7 +986,7 @@ export function tickWater(sim: Sim, s: Scene, I: Incident): void {
     const nx = c.x + c.drift * sim.dt;
     if (nx >= s.w - 1.2) {
       const known = c.tDiscovered >= 0;
-      const ev = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'casualty', imp: 3, truth: !known, causes: [I.lastEvent], text: known ? `구조 대상 ${c.label}: 물살에 휩쓸려 현장 밖으로 떠내려갔습니다. 구조에 실패했습니다.` : `(미발견) 구조 대상 ${c.label}가 물살에 휩쓸려 떠내려갔습니다.` });
+      const ev = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'casualty', imp: 3, truth: !known, causes: [I.lastEvent], text: known ? `구조 대상 ${c.label}: 물살에 휩쓸려 현장 밖으로 떠내려갔습니다. 구조에 실패했습니다.` : `(미발견) 구조 대상 ${josa(c.label, '이/가')} 물살에 휩쓸려 떠내려갔습니다.` });
       hurtCasTo(sim, s, I, c, 0, 'drown', { ev });      // 남은 체력을 익수로 적고, 숨지게 한 원인도 익수로 (이미 정해져 있으면 그대로)
       c.dead = true; c.health = 0; c.tDead = sim.t; c.inWater = false;      // 사망은 지금처럼 그 자리에서
       c.lost = true;      // 현장 밖으로 떠내려갔다 — 화면이 그리지 않는다

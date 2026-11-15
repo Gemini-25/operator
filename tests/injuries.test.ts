@@ -634,6 +634,51 @@ describe('5. 스스로 대피하다 다치는 경우 — 위중(체력 40 이하
   });
 });
 
+describe('5. 문구와 원인 — 사망 기록의 원인, 물에서 건진 뒤의 악화, 조사 (§5.3)', () => {
+  it('구조 대상의 사망 기록에는 숨지게 한 원인이 괄호로 붙는다 (발견된 사람·미발견 모두)', () => {
+    let seen = 0, unseen = 0;
+    for (const sim of all()) for (const s of scenesOf(sim)) for (const c of s.casualties) {
+      if (!c.dead || c.lost) continue;
+      const name = CAUSE_NAME[c.deathCause!];
+      const texts = sim.events.filter((e) => e.incidentId === s.incidentId && e.role === 'SYSTEM' && e.kind === 'casualty' && e.importance === 3).map((e) => e.text);
+      const known = `구조 대상 ${c.label}: 생체 반응 소실 (${name}). 구조에 실패했습니다.`, hidden = `(미발견) 구조 대상 ${c.label}의 생체 반응이 사라졌습니다 (${name}).`;
+      const hit = texts.filter((t) => t === known || t === hidden);
+      expect(hit.length, `${sim.seed} ${sim.incidents[s.incidentId].code} ${c.label}: ${texts.join(' / ')}`).toBe(1);
+      if (hit[0] === known) seen++; else unseen++;
+    }
+    expect(seen).toBeGreaterThan(3); expect(unseen).toBeGreaterThan(3);
+  });
+  it('물에서 건져 낸 사람에게 남는 악화는 익수가 아니라 실외 노출(저체온)이다 — 물가의 구조 줄과 헬기의 호이스트 모두', () => {
+    let hoists = 0, freed = 0;
+    for (const seed of ['S5', 'S8']) {
+      const sim = shift(seed, NORMAL, 'water/std');
+      hoists += sim.airStats.hoists;
+      for (const s of scenesOf(sim)) if (s.kind === 'water') for (const c of s.casualties) {
+        if (c.tFreed < 0) { if (c.inWater) expect(c.bleedCause, `${seed} ${c.label}`).toBe('drown'); continue; }
+        freed++;
+        expect(c.bleedCause, `${seed} ${c.label}`).toBe('exposure');
+        expect((c.injuries ?? []).some((j) => j.cause === 'drown'), `${seed} ${c.label}`).toBe(true);      // 물속에 있던 동안은 익수로 적혀 있다
+      }
+    }
+    expect(hoists).toBeGreaterThanOrEqual(2);      // 호이스트로 건진 사람이 있다
+    expect(freed).toBeGreaterThan(hoists);         // 물가에서 줄로 건진 사람도 있다
+  });
+  it('이름표 뒤의 조사는 josa 로 붙는다: 떠내려간 사람(미발견), 용의자가 다치게 한 기록', () => {
+    const { sim, s } = sceneOf('INJ-water', 'water');
+    const I = sim.incidents[s.incidentId];
+    const c = s.casualties.find((q) => q.inWater)!;
+    c.label = 'L';      // 받침이 있는 이름표 (엘)
+    c.drift = 5; c.x = s.w - 1.25;
+    sim.tick++; sim.t = sim.tick * sim.dt;
+    tickWater(sim, s, I);
+    expect(sim.events[sim.events.length - 1].text).toBe('(미발견) 구조 대상 L이 물살에 휩쓸려 떠내려갔습니다.');
+    const src = readFileSync('src/sim/field/hazards.ts', 'utf8');
+    for (const fn of ['panicShot', 'tickWater']) expect(src.slice(src.indexOf('export function ' + fn + '('), src.indexOf('\n}\n', src.indexOf('export function ' + fn + '('))), fn).not.toMatch(/\$\{[a-z]+\.label\}[가이는은를을] /);
+    // 인질 시한·총격범의 문구 (tickHostiles 안)
+    for (const key of ['요구가 받아들여지지 않자', '건물 안의 시민을 쐈습니다']) { const line = src.split('\n').find((l) => l.includes(key))!; expect(line, key).toContain("josa(h.label, '이/가')"); }
+  });
+});
+
 // ───────────────────────── 11. 재현성 ─────────────────────────
 describe('11. 재현성과 목적별 난수 흐름', () => {
   it('같은 시드·같은 강제 시나리오는 기록 해시와 부상 기록이 같다', () => {

@@ -597,6 +597,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         c.inWater = false; c.drift = 0; c.mob = 'immobile'; c.trapWork = 0; c.tFreed = sim.t;
         c.x = Math.round(a.x); c.y = Math.round(a.y); c.px = c.x; c.py = c.y;
         c.bleed *= 0.35; c.bleed0 = c.bleed;      // 물 밖으로 나오면 악화가 느려진다 (저체온은 남는다)
+        c.bleedCause = 'exposure';      // 남은 악화는 익수가 아니라 실외 노출(저체온)로 적는다 (H1 §2.3)
         learnQuiet(sim, a, casFact(sim, s, c, r.name));
         emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: `구조 대상 ${c.label}를 물에서 끌어냈습니다. 처치와 이송이 필요합니다.` });
         r.xpGained += 0.005;

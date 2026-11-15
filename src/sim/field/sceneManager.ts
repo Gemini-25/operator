@@ -378,7 +378,10 @@ export function tickScene(sim: Sim, s: Scene): void {
     // (N8 §5.3.2) 유관 기관 대원은 일하는 동안만(작업을 쥐었고 대기가 아니다) 센다 — 고치던 복구반이 끝내기 전에 닫거나 다시 부르지 않고,
     // 손을 놓은 복구반만 남은 현장이 '대원이 있으니 기다린다'에 갇히지도 않는다
     const anyActive = s.agents.some((a) => a.status === 'active' && (sim.responders[a.rid].dept !== 'civil' || (a.task !== null && a.task.kind !== 'standby'))) || airBusy(s);
-    if (sim.t - on > TYPE_DEFS[s.kind].limit + (s.variant === 'bus' ? 170 : 0) + (scenarioOf(I.truth.type, I.truth.variant)?.limit ?? 0)) {      // 다수 사상자 사고는 이송에 시간이 더 걸린다
+    // (X6 §6.4) 무너진 건물을 파내거나 외부 방어로 다 탈 때까지 기다리는 시간: 세계 쪽(구획 붕괴 +60 · 전체 붕괴 +180)과 지휘 쪽(외부 방어로 처음 바꿀 때 +150)을 합쳐 330초까지.
+    // 교대 상한(engine.hardCap)은 그대로다 — 보탬이 그 뒤로 미루는 사건은 교대 끝에 닫힌다
+    const catBonus = s.cat !== undefined || s.ops !== undefined ? Math.min(330, (s.cat?.limitBonus ?? 0) + (s.ops?.limitBonus ?? 0)) : 0;
+    if (sim.t - on > TYPE_DEFS[s.kind].limit + (s.variant === 'bus' ? 170 : 0) + (scenarioOf(I.truth.type, I.truth.variant)?.limit ?? 0) + catBonus) {      // 다수 사상자 사고는 이송에 시간이 더 걸린다
       emit(sim, { inc: I.id, role: 'COMMANDER', actor: s.commanderRid >= 0 ? sim.responders[s.commanderRid].name : '현장', kind: 'command', imp: 2, text: '대응 한계 시간을 넘겼습니다. 현 상태로 현장을 인계하고 철수합니다.' });
       closeIncident(sim, I, 'timeout');
     } else if (!anyActive && !I.assigned.some((uid) => sim.units[uid].state === 'enroute' || sim.units[uid].state === 'turnout')) {

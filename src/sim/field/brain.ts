@@ -95,9 +95,13 @@ function evacDuty(sim: Sim, s: Scene, a: FieldAgent): string {
   const signs = B.list('sign');
   if (!signs.length) return '';
   const ar = regionAt(s, ai), near = ar >= 0 ? withNbrs(s, ar) : null;
+  // (X6 단계 6) 이미 통째로 무너진 건물(전체 붕괴를 안 지 30초 — 지휘 쪽의 잔해 수색 국면과 같은 때)은 더 무너질 것이 없다: 건물 조짐 3 으로 물러나지 않는다.
+  // 그러지 않으면 잔해 수색에 들어간 대원이 잔해 위에서 철수 의무에 걸려 "수색 → 철수 → 30초 피함"을 되풀이한다
+  let pile = ops !== undefined && ops.mode === 'rubble';
+  if (!pile) for (const f of signs) { const v = f.value as SignBelief; if (v.kind === 'event' && v.what === 'total' && sim.t - f.t >= 30) { pile = true; break; } }
   for (const f of signs) {
     const v = f.value as SignBelief;
-    if (v.level < 3 || v.kind === 'event') continue;
+    if (v.level < 3 || v.kind === 'event' || (pile && v.kind === 'bldg')) continue;
     let why = '', regs: number[] = [], cx = -1, cy = -1, rad = 0;
     if (v.kind === 'struct' && near && near.indexOf(v.region) >= 0) { why = 'struct'; regs = withNbrs(s, v.region); }
     else if (v.kind === 'gas' && v.region === ar && ar >= 0 && !allowedHere(s, a)) { why = 'gas'; regs = withNbrs(s, ar); }

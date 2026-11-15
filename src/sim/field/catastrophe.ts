@@ -113,6 +113,8 @@ function syncProps(s: Scene, w: CatWork): void {
 }
 const WORK = new WeakMap<CatState, CatWork>();
 const NONE = new WeakSet<Scene>();
+/** (단계 6) 전체 붕괴의 사건 사실 (현장 전원이 들은 그것) — 늦게 닿은 대원이 잔해 더미를 보고 같은 사실을 배운다 */
+const TOTAL_EV = new WeakMap<CatState, Fact>();
 
 /**
  * 이 현장의 위험 상태. 대상이 아니면 null. 처음 부를 때 만든다 — 규칙·blast·perceive·debrief 어느 입구에서 처음 불려도 같은 결과여야 하므로
@@ -989,6 +991,7 @@ export function collapseBuilding(sim: Sim, s: Scene, I: Incident, c: CatState, b
     signFact(sim, SIGN_BASE.event + c.events++, { kind: 'event', level: 3, region: -1, x: bx, y: by, what: 'total' }, '굉음! 건물 전체 무너짐'),
     signFact(sim, SIGN_BASE.bldg, { kind: 'bldg', level: 3, region: -1, x: bx, y: by }, '건물 전체 붕괴'),
   ];
+  TOTAL_EV.set(c, facts[0]);      // (단계 6) 소리를 듣지 못한 대원도 잔해 더미를 보면 이 사건을 안다 (perceiveSigns)
   for (const r of was) facts.push(signFact(sim, SIGN_BASE.struct + r, { kind: 'struct', level: 0, region: r, x: regs[r].cx, y: regs[r].cy, down: true }, fallenText(regs[r].name)));
   hearAll(sim, s, ev, facts);
   markPlace(sim, s, I, c, 'collapsed');
@@ -1455,6 +1458,10 @@ export function perceiveSigns(sim: Sim, s: Scene, a: FieldAgent, v: number): voi
         const [bx, by] = bldgCenter(s), down = o[1] === 1;
         reportSign(sim, a, me, id, { kind: 'bldg', level: o[0], region: -1, x: bx, y: by, down: down || undefined }, c.totalAt >= 0 ? '건물 전체 붕괴 — 잔해 더미' : bldgText(o[0], down));
       }
+      // (단계 6) 이미 무너진 건물: 무너지는 소리를 듣지 못한 대원(늦게 닿은 부대·그때 음영 구역에 있던 대원)도 잔해 더미를 보면(바깥벽 셋 이상이 보이거나 잔해 위에 서 있으면)
+      // 그 사건(전체 붕괴)을 안다 — 지휘 규칙의 잔해 수색 국면(§6.1)이 이 사실을 읽는다. 시각은 본 때다 (언제 무너졌는지는 모른다)
+      const tf = c.totalAt >= 0 ? TOTAL_EV.get(c) : undefined;
+      if (tf && (cond[2] || c.foot[ai] >= FOOT_IN) && !a.beliefs.get('sign', tf.id)) learn(sim, a, mkFact('sign', tf.id, tf.value, me, sim.t, 1, true, '건물이 무너져 있음 — 잔해 더미'));
     }
   }
   // ── 가스 (구획) ──

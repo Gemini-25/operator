@@ -102,7 +102,7 @@ export function detectRadius(sim: Sim, s: Scene, a: FieldAgent, concealment: num
   if (a.aloft) return visionOf(sim, s, a) * (1 - 0.72 * concealment * (kitLive(sim, a.rid, 'flir') ? 0.35 : 1)) * (0.72 + 0.3 * r.judgment + 0.25 * r.experience);
   // 붕괴 현장에서 탐지 장비(청음·영상)를 든 대원은 잔해에 가려진 사람을 더 멀리서 찾는다
   // (이 함수는 화면도 부른다: 고장을 드러내지 않는 kitLive 로 효과만 계산한다 — 드러내는 자리는 perceive)
-  if (s.kind === 'collapse' && kitLive(sim, a.rid, 'searchKit')) concealment *= 0.45;
+  if ((s.kind === 'collapse' || isRubbleMode(s)) && kitLive(sim, a.rid, 'searchKit')) concealment *= 0.45;      // (X6 §6.1) 무너진 건물의 잔해 수색에서도
   // 짙은 연기 속에서는 열화상 카메라가 가려진 사람의 윤곽을 잡아 준다
   if (s.smoke[tileOf(s, a.x, a.y)] > 0.3 && kitLive(sim, a.rid, 'tic')) concealment *= 0.7;
   return visionOf(sim, s, a) * (1 - 0.72 * concealment) * (0.72 + 0.3 * r.judgment + 0.25 * r.experience);
@@ -240,7 +240,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
   // 연기 속에서 열화상 카메라를, 붕괴 현장에서 탐지 장비를 쓰려 할 때. 고장이 없거나 이미 드러났으면 아무 일도 없다
   if (!a.aloft) {
     if (s.smoke[tileOf(s, a.x, a.y)] > 0.3) kitWorks(sim, a.rid, 'tic', I);
-    if (s.kind === 'collapse') kitWorks(sim, a.rid, 'searchKit', I);
+    if (s.kind === 'collapse' || isRubbleMode(s)) kitWorks(sim, a.rid, 'searchKit', I);      // (X6 §6.1) 효과가 걸리는 현장(잔해 수색)에서 고장도 드러난다
   }
   const v = visionOf(sim, s, a) * boost;
   const me = r.name;
@@ -611,7 +611,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
   }
   const hot = s.kind === 'armed' && s.secureAt < 0;
   const indoorRisk = TYPE_DEFS[s.kind].indoorRisk;      // 위험한 건물의 유형 (incidentTypes — 화재·가스 누출·붕괴)
-  const fireRisk = (regionId: number): boolean => regionId >= 0 && ((a.beliefs.val<number>('fire', regionId) ?? 0) > 0.25 || indoorRisk);      // 불이 났거나, 가스가 찼거나, 무너질 수 있는 건물 안은 공기호흡기를 멘 대원만 들어간다
+  const fireRisk = (regionId: number): boolean => regionId >= 0 && ((a.beliefs.val<number>('fire', regionId) ?? 0) > 0.25 || indoorRisk || inRubble(s, regionId));      // 불이 났거나, 가스가 찼거나, 무너질 수 있는 건물 안, (X6 §6.1) 무너진 잔해 구역은 공기호흡기를 멘 대원만 들어간다
   // 걸을 수 있는 다친 대원은 가벼운 일만 맡는다 (H1 §2.5 — 사용자 결정 2026-11-15 "가벼운 일은 계속"). 조직이 아는 상태(status — RESPONDER_HURT 로 알렸다)만 본다:
   // 남에게도 불리는 함수라 체력·출혈은 읽지 않는다. 목록(injury.LIGHT_WORK) 안의 일도 자리가 위험 구역(불·가스·붕괴의 건물 안, 안전 확보 전의 무장 현장 건물 안)이면 맡지 않고,
   // 처치는 대상이 안전 구역에 나와 있을 때만 돕는다. 현장 평가는 지휘의 일이라 다친 지휘관도 한다(위험 구역 밖에서 본다 — 못 하면 그 현장은 끝나지 않는다)
@@ -641,7 +641,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
         if (s.kind === 'collapse' || s.kind === 'hazmat') return 0;
         // 불이 난 건물 안에 갇힌 사람도 같다: 믿음 속 자리가 위험한 건물 안이면 공기호흡기를 멘 대원만 들어가 구출한다 (수색·이송과 같은 검사)
         const cb = a.beliefs.val<CasBelief>('cas', w.cas);
-        if (!cb && s.kind === 'fire') return 0;      // 어디에 있는지 아직 전달받지 못했다 — 불이 난 건물 안일 수 있다
+        if (!cb && (s.kind === 'fire' || isRubbleMode(s))) return 0;      // 어디에 있는지 아직 전달받지 못했다 — 불이 난 건물 안(X6 §6.1: 무너진 잔해 속)일 수 있다
         if (cb) { const rg = s.region[cb.y * s.w + cb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg)) return 0; }
       }
       const f = r.skills.rescue * (0.35 + 0.65 * toolFor(sim, rid, 'extricate'));
@@ -736,5 +736,5 @@ import { docFit } from './doctrine';
 // (X6) 조짐 관찰 (field/catastrophe.ts — 그 파일도 이 파일의 learn·regionNameAt 을 쓴다. 함수 안에서만 서로 부르므로 순환 import 는 문제없다)
 import { perceiveSigns, vesselName } from './catastrophe';
 // (X6 단계 5) 지휘 상태의 도움 함수 (진입 금지 구역·문·피하는 곳 — 진실을 읽지 않는다)
-import { OPS_ID, SIGN_BASE, gateBlocks, regionAt, regionLevel, targetTile, zoneLevelAt, zoneMask } from './ops';
+import { OPS_ID, SIGN_BASE, gateBlocks, inRubble, isRubbleMode, regionAt, regionLevel, targetTile, zoneLevelAt, zoneMask } from './ops';
 import type { OpsFact } from './ops';

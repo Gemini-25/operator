@@ -14,6 +14,7 @@ import { LAKE } from '../../cityPlan';
 import { fieldCrew, isHovering, kitWorks, seatsOf } from '../../crews';
 import type { Sim } from '../../engine';
 import { emit } from '../../events';
+import { closeIncident } from '../../incidents';      // 함수 안에서만 부른다 (incidents → sceneManager → scenes/index → 이 파일의 순환)
 import { airRtb, etaFor, releaseUnit, startTransport } from '../../resources';
 import type { AirOp, CasBelief, Fact, FieldAgent, Incident, Needs, Scene, Unit, WorkItem } from '../../types';
 import { josa } from '../../util';
@@ -125,16 +126,41 @@ function handOver(sim: Sim, s: Scene, op: AirOp, st: AirState, u: Unit, cmd: Fie
 }
 
 /**
+ * 헬기만 왔던 현장을 그 헬기의 보고로 끝낼 수 있는가 — 관측자의 믿음과 지형만 본다:
+ *  지상 부대가 한 번도 닿지 않았고(닿았던 현장은 마지막 지휘관의 믿음으로 끝낸다 — sceneManager 7)번),
+ *  지붕 밑이 없어 하늘에서 현장을 다 내려다볼 수 있었고, 확인한 사람이 한 명 이상(신고된 인원을 알면 그 수 이상)이며,
+ *  그 사람이 모두 실려 갔다(탑승·병원). 현장에 남은 사람이 하나라도 있으면 — 걸어 다니든, 안전 구역에 있든, 숨졌든 — 아니다
+ *  (하늘에서는 안내도 처치도 수습도 못 한다. 그런 현장은 지금처럼 방치 시간 뒤에 닫힌다)
+ */
+function allAboard(s: Scene, eye: FieldAgent): boolean {
+  if (s.arrivedAt >= 0) return false;
+  for (const reg of s.regions) if (reg.indoor) return false;
+  const cas = eye.beliefs.list('cas');
+  if (!cas.length) return false;
+  for (const f of cas) { const c = f.value as CasBelief; if (c.where !== 'loaded' && c.where !== 'hospital') return false; }
+  const occ = eye.beliefs.val<{ count: number | null }>('occ', 0);      // 관제의 브리핑: 신고자가 말한 인원 (없을 수 있다)
+  return !(occ && occ.count !== null && cas.length < occ.count);
+}
+
+/**
  * 마지막으로 현장을 떠나는 헬기가 관제에 알린다: 지상 대원도, 오는 부대도, 다른 헬기도 없는데 관측자가 보기에 아직 남은 일이 있으면
  * (건지지 못한 사람·불·용의자) 그 수요를 다시 연다. 지상 부대가 닿은 현장은 마지막 지휘관의 믿음으로 같은 일을 한다(sceneManager 7)번) —
- * 헬기만 왔던 현장에는 지휘관이 없으므로 관측자의 믿음으로 한다. 남은 일이 없으면 아무것도 하지 않는다(사건은 방치 시간 뒤에 닫힌다)
+ * 헬기만 왔던 현장에는 지휘관이 없으므로 관측자의 믿음으로 한다.
+ * 남은 일이 없을 때: 확인한 사람이 모두 실려 간 뒤라면(allAboard) 그 보고로 사건을 끝낸다 — 그러지 않으면 아무도 맡지 않고 대기열에도 없는 사건이
+ * 방치 시간(60초) 동안 떠 있다가 '방치'로 닫힌다(측정 도구의 '잊힌 사건'). 그 밖에는 아무것도 하지 않는다(사건은 방치 시간 뒤에 닫힌다)
  */
 function tellDispatch(sim: Sim, s: Scene, I: Incident, op: AirOp, u: Unit): void {
   if (I.phase === 'closed' || (s.air !== undefined && s.air.length > 0)) return;
   for (const a of s.agents) if (a.status === 'active') return;
   for (const uid of I.assigned) { const q = sim.units[uid]; if (q.state === 'enroute' || q.state === 'turnout') return; }
   const o = outstanding(op.eye);
-  if (!(o.patients > 0 || o.fire || o.hostile)) return;
+  if (!(o.patients > 0 || o.fire || o.hostile)) {
+    if (allAboard(s, op.eye)) {
+      emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 2, causes: [I.lastEvent], text: `${u.callsign}: 확인한 구조 대상은 모두 실려 갔습니다. 현장에 남은 사람이 없어 상황을 종료합니다.` });
+      closeIncident(sim, I, 'resolved');
+    }
+    return;
+  }
   let stuck = false;      // 물속이나 잔해에 갇힌 사람이 남았는가 (구조 장비가 필요하다)
   for (const f of op.eye.beliefs.list('cas')) { const c = f.value as CasBelief; if (c.where === 'scene' && c.mob === 'trapped' && c.band < 3) { stuck = true; break; } }
   const need: keyof Needs = o.hostile ? 'law' : o.fire ? 'suppression' : stuck ? 'rescue' : 'ems';

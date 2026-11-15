@@ -297,14 +297,16 @@ export interface FxInfo {
 /** (G5) 인터페이스 합치기: 아래 한 줄짜리 Fx 에 꼬리표 칸을 더한다 */
 export interface Fx { c?: FxInfo }
 export interface Fx { kind: 'shot' | 'spray' | 'radio' | 'text' | 'boom' | 'hit' | 'flash' | 'glass' | 'debris' | 'melee' | 'breach' | 'cuff' | 'taser'
-  | 'collapse';      // (G4) 무너짐: field/ruins.ts 의 recordFall 만 남긴다. 그림은 Scene.falls 로 그리고, 이 효과는 카메라·자동 감속·소리만 본다
+  | 'collapse'       // (G4) 무너짐: field/ruins.ts 의 recordFall 만 남긴다. 그림은 Scene.falls 로 그리고, 이 효과는 카메라·자동 감속·소리만 본다
+  | 'drop';          // (R1) 헬기의 물 투하: field/rules/air.ts 가 남긴다 (x,y → x2,y2 = 물이 떨어진 띠의 두 끝)
   t: number; x: number; y: number; x2?: number; y2?: number; text?: string; color?: string; ttl: number }
 
 export type WorkKind =
   | 'sizeup' | 'search' | 'suppress' | 'hookup' | 'clear' | 'force' | 'extricate' | 'treat' | 'carry' | 'load'
   | 'traffic' | 'mitigate' | 'perimeter' | 'negotiate' | 'engage' | 'arrest' | 'interview' | 'clearRoad' | 'rescueMate' | 'escort' | 'waterRescue'
   | 'defuse'        // 폭발물 해체 (폭발물 처리반만)
-  | 'overhaul';     // 잔불 정리: 불이 꺼졌다고 본 방을 다시 돌며 남은 불씨를 찾아 적신다 (소방만)
+  | 'overhaul'      // 잔불 정리: 불이 꺼졌다고 본 방을 다시 돌며 남은 불씨를 찾아 적신다 (소방만)
+  | 'hoist' | 'airDrop';      // (R1) 공중 임무: 호이스트 인양 · 공중 물 투하. 지휘관이 작업판에 올리고 field/rules/air.ts 가 가져간다. 지상 대원은 맡지 않는다(fitFor = 0)
 export type TaskKind = WorkKind | 'retreat' | 'rehab' | 'resupply' | 'board' | 'standby' | 'moveSignal';
 
 export interface WorkItem {

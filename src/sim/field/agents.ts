@@ -55,9 +55,21 @@ export function briefFacts(sim: Sim, I: Incident): Fact[] {
   return out;
 }
 
+/** 공중 관측 거리(칸): 낮 9 · 비 7 · 밤 4 (탐조등이 작동하면 8). 안개에는 헬기가 뜨지 않는다 */
+const AIR_VISION = { day: 9, rain: 7, night: 4, lit: 8 };
 export function visionOf(sim: Sim, s: Scene, a: FieldAgent): number {
   const i = tileOf(s, a.x, a.y);
-  const base = isIndoor(s.tiles[i]) ? s.indoorVision : s.outdoorVision;
+  if (a.aloft) {
+    // 상공의 관측자: 현장의 시야(실내·실외·나무)가 아니라 날씨가 정한다. 공중 열영상은 연기를 무시한다.
+    // 이 함수는 순수하다 — 탐조등·열영상의 고장은 kitLive 로 효과만 뺀다 (드러내는 자리는 field/rules/air.ts 가 탐조등을 처음 켤 때)
+    const w = sim.weather;
+    const base = w === 'night' ? (kitLive(sim, a.rid, 'searchlight') ? AIR_VISION.lit : AIR_VISION.night) : w === 'rain' ? AIR_VISION.rain : AIR_VISION.day;
+    return kitLive(sim, a.rid, 'flir') ? base : Math.max(1.3, base * (1 - 0.78 * s.smoke[i]));
+  }
+  let base = isIndoor(s.tiles[i]) ? s.indoorVision : s.outdoorVision;
+  // 경찰 헬기의 탐조등이 비추는 원 안의 바깥 칸: 맑은 날 그 현장의 바깥 시야만큼 보인다 (어두워서 줄어든 만큼을 되돌린다 — 넘지는 않는다)
+  const lt = s.light;
+  if (lt && !isIndoor(s.tiles[i])) { const dx = a.x - lt.x, dy = a.y - lt.y; if (dx * dx + dy * dy <= lt.r * lt.r) base = Math.max(base, s.clearVision ?? 7.5); }
   const tree = s.tiles[i] === T.TREE ? 0.75 : 1;
   // 열화상 카메라는 연기 너머를 본다. 이 함수는 화면(시야 다각형·어둠 층)도 부르므로 순수해야 한다:
   // kitLive 로 효과만 계산하고 고장을 드러내지 않는다(여기서 드러내면 그림을 그리는 것만으로 기록과 해시가 바뀐다 — 드러내는 자리는 perceive)
@@ -67,6 +79,8 @@ export function visionOf(sim: Sim, s: Scene, a: FieldAgent): number {
 /** 숨겨진 대상을 알아볼 수 있는 거리. 연기·은폐·날씨가 줄이고, 판단력·경험이 늘린다. */
 export function detectRadius(sim: Sim, s: Scene, a: FieldAgent, concealment: number): number {
   const r = resp(sim, a);
+  // 상공의 관측자: 공중 열영상이 가려진 사람의 열을 잡는다 (지상의 탐지 장비·열화상 카메라는 쓰지 않는다)
+  if (a.aloft) return visionOf(sim, s, a) * (1 - 0.72 * concealment * (kitLive(sim, a.rid, 'flir') ? 0.35 : 1)) * (0.72 + 0.3 * r.judgment + 0.25 * r.experience);
   // 붕괴 현장에서 탐지 장비(청음·영상)를 든 대원은 잔해에 가려진 사람을 더 멀리서 찾는다
   // (이 함수는 화면도 부른다: 고장을 드러내지 않는 kitLive 로 효과만 계산한다 — 드러내는 자리는 perceive)
   if (s.kind === 'collapse' && kitLive(sim, a.rid, 'searchKit')) concealment *= 0.45;
@@ -147,8 +161,8 @@ function discover(sim: Sim, s: Scene, I: Incident, a: FieldAgent, c: Casualty): 
   if (late && !I.problems.some((p) => p.code === 'LATE_DISCOVERY')) {
     I.problems.push({ code: 'LATE_DISCOVERY', t: sim.t, eventId: sim.events.length - 1, detail: `구조 대상 ${c.label} 발견까지 도착 후 ${Math.round(sim.t - s.arrivedAt)}초 소요`, recovered: true, recoveryText: '' });
   }
-  // 거동 가능한 대상은 대피를 안내한다 (배회하던 실종자는 동행이 필요)
-  if (c.mob === 'mobile' && !c.wander && !c.isTarget && !isHeld(sim, s, c.id)) { c.walking = true; c.path = null; }
+  // 거동 가능한 대상은 대피를 안내한다 (배회하던 실종자는 동행이 필요). 상공의 관측자는 안내하지 못한다 — 보고만 한다
+  if (!a.aloft && c.mob === 'mobile' && !c.wander && !c.isTarget && !isHeld(sim, s, c.id)) { c.walking = true; c.path = null; }
   r.xpGained += 0.004;
 }
 
@@ -164,6 +178,10 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
   }
   const v = visionOf(sim, s, a) * boost;
   const me = r.name;
+  // 상공의 관측자(a.aloft): 지붕 밑(실내 칸)은 보지 못하고, 바깥 칸은 벽·나무에 가리지 않는다(시야선을 보지 않는다).
+  // 사람을 움직이지 않고(대피 안내·인질 유도 없음), 소품(문·밸브·단서 …)은 살피지 않는다
+  const aloft = a.aloft === true;
+  const sees = (x: number, y: number): boolean => (aloft ? !isIndoor(s.tiles[tileOf(s, x, y)]) : los(s, a.x, a.y, x, y));
   const meter = hasKit(sim, a.rid, 'gasMeter');      // 가스 측정기: 새는 밸브를 벽 너머 7칸에서 알아챈다
   for (let ci = 0; ci < s.casualties.length; ci++) { const c = s.casualties[ci];      // 색인 순회: 최적화 전 단계에서 반복자 객체를 만들지 않는다 (순서는 같다)
     if (c.where === 'hospital' || c.where === 'loaded') continue;
@@ -171,17 +189,17 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
     if (d > v) continue;
     const known = c.tDiscovered >= 0;
     const dr = known ? v : detectRadius(sim, s, a, c.concealment) * boost;
-    if (d > dr || !los(s, a.x, a.y, c.x, c.y)) continue;
+    if (d > dr || !sees(c.x, c.y)) continue;
     let fresh = sim.t - c.tDiscovered < 2.5;      // 방금 누군가 발견을 알렸다면 같은 내용을 되풀이하지 않는다
     if (!known) { discover(sim, s, I, a, c); fresh = true; }
-    if (known && c.hostage && c.mob === 'mobile' && !c.walking && !c.dead && c.where === 'scene' && !isHeld(sim, s, c.id) && !s.hostiles.some((h) => h.state === 'hold' || h.state === 'fight')) { c.walking = true; c.path = null; }
+    if (!aloft && known && c.hostage && c.mob === 'mobile' && !c.walking && !c.dead && c.where === 'scene' && !isHeld(sim, s, c.id) && !s.hostiles.some((h) => h.state === 'hold' || h.state === 'fight')) { c.walking = true; c.path = null; }
     if (c.tDiscovered >= 0) { if (fresh) learnQuiet(sim, a, casFact(sim, s, c, me)); else learn(sim, a, casFact(sim, s, c, me)); }
   }
   for (let hi = 0; hi < s.hostiles.length; hi++) { const h = s.hostiles[hi];
     const d = dist(a.x, a.y, h.x, h.y);
-    const range = h.hidden ? 4.2 : 13;
+    const range = aloft ? (h.hidden ? v * 0.4 : v) : h.hidden ? 4.2 : 13;      // 지상은 시야와 상관없이 13칸(숨은 용의자 4.2칸). 상공은 관측 거리만큼 — 밤의 4칸이 용의자에게도 걸린다
     const cur = a.beliefs.get('hos', h.id);
-    if (d <= range && los(s, a.x, a.y, h.x, h.y)) {
+    if (d <= range && sees(h.x, h.y)) {
       const wasHidden = h.hidden;
       if (h.hidden) {
         h.hidden = false;
@@ -202,8 +220,9 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
       const rg = s.region[i];
       if (rg < 0) continue;
       if (dist(ax, ay, x, y) > v) continue;
-      if (!throughWalls && !los(s, ax, ay, x, y)) continue;
-      if (throughWalls && s.fire[i] < 0.25 && !los(s, ax, ay, x, y)) continue;
+      if (aloft) { if (isIndoor(s.tiles[i])) continue; }      // 상공에서는 바깥 칸의 불만 본다
+      else if (!throughWalls && !los(s, ax, ay, x, y)) continue;
+      else if (throughWalls && s.fire[i] < 0.25 && !los(s, ax, ay, x, y)) continue;
       let e = seen.get(rg); if (!e) { e = { n: 0, m: 0 }; seen.set(rg, e); }
       e.n++; if (s.fire[i] > e.m) e.m = s.fire[i];
     }
@@ -218,7 +237,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
       }
     }
   }
-  for (let pi = 0; pi < s.props.length; pi++) { const p = s.props[pi];
+  for (let pi = aloft ? s.props.length : 0; pi < s.props.length; pi++) { const p = s.props[pi];      // 상공의 관측자는 소품을 살피지 않는다
     if (p.removed) continue;
     const d = dist(a.x, a.y, p.x, p.y);
     const sniff = meter && p.kind === 'valve' && !p.mitigated && !p.ignited && d <= 7;      // 측정기가 잡는 누출 (시야·벽과 상관없다)
@@ -273,7 +292,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
   }
   for (const b of s.agents) {
     if (b === a || b.status !== 'down') continue;
-    if (dist(a.x, a.y, b.x, b.y) <= v && los(s, a.x, a.y, b.x, b.y)) {
+    if (dist(a.x, a.y, b.x, b.y) <= v && sees(b.x, b.y)) {
       const cur = a.beliefs.get('mate', b.rid);
       if (!cur || cur.value.status !== 'down') learn(sim, a, mkFact('mate', b.rid, { x: Math.round(b.x), y: Math.round(b.y), status: 'down' }, me, sim.t, 1, true, `${sim.responders[b.rid].name} 대원 쓰러짐 — 구조 필요`));
     }
@@ -284,7 +303,7 @@ const IMPORTANT: Record<string, boolean> = { cas: true, blk: true, hos: true, ha
 
 /** 무전 송신. 음영 구역에서는 실패한다. */
 export function transmit(sim: Sim, s: Scene, a: FieldAgent | null, to: number, kind: RadioMsg['kind'], facts: Fact[], text: string, workId = -1, imp = 1, causes: number[] = [], silent = false): number {
-  if (a && s.shadow[tileOf(s, a.x, a.y)]) return -1;
+  if (a && !a.aloft && s.shadow[tileOf(s, a.x, a.y)]) return -1;      // 상공의 관측자는 음영 구역의 영향을 받지 않는다
   const I = sim.incidents[s.incidentId];
   let ev = -1;
   if (!silent) {
@@ -303,7 +322,7 @@ export function flushOutbox(sim: Sim, s: Scene, a: FieldAgent): void {
   const important = a.outbox.some((f) => IMPORTANT[f.type]);
   const prompt = important || a.outbox.some((f) => f.type === 'srch' || f.type === 'ovh');      // 수색·잔불 정리 결과는 바로 알린다
   if (!prompt && sim.t - a.outboxSince < 5) return;
-  if (s.shadow[tileOf(s, a.x, a.y)]) {
+  if (!a.aloft && s.shadow[tileOf(s, a.x, a.y)]) {
     if (a.shadowSince < 0) a.shadowSince = sim.t;
     if (!a.commFailLogged && important && sim.t - a.shadowSince > 1.5 + 7 * (1 - r.experience)) {
       a.commFailLogged = true;
@@ -400,6 +419,7 @@ export function workLabel(s: Scene, w: WorkItem): string {
     mitigate: w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? '균열부 보강' : w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'valve' ? '가스 밸브 차단' : '연료 누출 조치',
     perimeter: s.kind === 'hazmat' ? `${w.tile === 0 ? '앞쪽' : '뒤쪽'} 출입구 통제` : `${exitName(s, w.tile)} 봉쇄`, negotiate: `${hos} 협상`, engage: `${hos} 대응`, arrest: `${hos} 검거`, interview: '목격자 면담', clearRoad: '도로 정리', rescueMate: '동료 구조', waterRescue: `${cas} 수난 구조`, escort: `${cas} 동행`,
     defuse: '폭발물 해체', overhaul: `${reg} 잔불 정리`,
+    hoist: `${cas} 호이스트 인양`, airDrop: `${reg} 공중 물 투하`,
   };
   return names[w.kind];
 }
@@ -484,6 +504,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): number {
     case 'waterRescue': return 0.22 + r.skills.rescue * 0.5 + toolFor(sim, rid, 'water') * 0.28;
     case 'defuse': return hasKit(sim, rid, 'eodKit') ? 0.6 + 0.4 * r.skill : 0;      // 해체 공구를 든 처리 요원만 손댄다
     case 'overhaul': return hasKit(sim, rid, 'hose') ? 0.4 + 0.6 * r.skills.fire : 0;      // 불씨를 만나면 분사한다: 관창을 든 사람만
+    case 'hoist': case 'airDrop': return 0;      // 공중 임무: 지상 대원은 맡지 않는다 (상공의 헬기가 field/rules/air.ts 에서 가져간다)
   }
 }
 

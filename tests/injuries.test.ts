@@ -1,6 +1,7 @@
 // H1 부상과 사망 (docs/specs/H1-injuries.md §11). 번호는 설계서의 시험 번호다.
-// 단계 1(기록만)·단계 2(화면)까지의 시험이 들어 있다 — 뒤 단계가 같은 번호 아래에 덧붙인다(3 방호, 4 문턱, 5 순직 빈도, 6 구조·후송, 7 용의자 처치, 12~15).
+// 단계 1(기록만)·단계 2(화면)·단계 3(구조 대상)까지의 시험이 들어 있다 — 뒤 단계가 같은 번호 아래에 덧붙인다(3 방호, 4 문턱, 5 순직 빈도, 6 구조·후송, 7 용의자 처치, 12~15).
 // 단계 1 의 시험은 파일 앞쪽(1·2·처음 원인·장부·9·11·객체 모양·8), 단계 2 의 시험은 뒤쪽(10·중증도 색·읽는 함수·현장 그림)이다.
+// 단계 3 의 시험: "2. hurtCas", "9" 의 뒤쪽(판정 뒤에는 멈춘다), 설계서에 번호가 없는 규칙은 §5 의 이름으로 "5. …" 다섯 묶음(사건 중 새 부상 · 구출 중 사고 · 스스로 대피하다 · 문구와 원인), "11" 의 지진 교대.
 import { readFileSync, readdirSync } from 'node:fs';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { NORMAL } from '../src/sim/difficulty';
@@ -8,13 +9,18 @@ import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
 import { createIncident } from '../src/sim/incidents';
 import { createAidUnit } from '../src/sim/resources';
-import { band, tickGas, tickWater } from '../src/sim/field/hazards';
-import { CAUSE_NAME, bandOf, initialCause, injuryRng, mainCause, noteCasHurt, noteHostileHurt, noteInjury, noteRespHurt, smokeCause } from '../src/sim/field/injury';
+import { TRAP_R, TRAP_WORK, band, blast, tickCasualties, tickCollapse, tickGas, tickWater } from '../src/sim/field/hazards';
+import { MISHAP, act, makeTask } from '../src/sim/field/executor';
+import { commanderThink, outstanding } from '../src/sim/field/commander';
+import { WALK_STOP } from '../src/sim/field/rules/injury';
+import { josa } from '../src/sim/util';
+import { detonate } from '../src/sim/field/rules/crime';
+import { CAUSE_NAME, bandOf, hurtCas, hurtCasTo, initialCause, injuryRng, mainCause, noteCasHurt, noteHostileHurt, noteInjury, noteRespHurt, smokeCause } from '../src/sim/field/injury';
 import { makeAgent } from '../src/sim/field/agents';
 import { addCas, addHostile } from '../src/sim/field/kit';
 import { mkFact } from '../src/sim/field/beliefs';
-import { unitArrived } from '../src/sim/field/sceneManager';
-import type { Casualty, FieldAgent, IncidentType, Injury, InjuryCause, Responder, Scene, SimEvent, UnitKind } from '../src/sim/types';
+import { tickScene, unitArrived } from '../src/sim/field/sceneManager';
+import type { Casualty, FieldAgent, Incident, IncidentType, Injury, InjuryCause, Prop, Responder, Scene, SimEvent, UnitKind, WorkItem } from '../src/sim/types';
 import { CameraDirector } from '../src/view/camera';
 import { TRIAGE, TRIAGE_EDGE, TRIAGE_NAME, TRIAGE_TEXT, agentStateText, careName, casBand, casDrawn, casInfo, casSheet, hostileBand, hostileDrawn, hostileInfo, hostileSheet, hurtPose, injuryLine, isLoss, respBand, respLying, respSheet, respStateText } from '../src/view/triage';
 import { fakeCtx, withFakeDom } from './fakeCanvas';
@@ -123,6 +129,100 @@ describe('2. 기록의 모양', () => {
     const causes: InjuryCause[] = ['gunshot', 'stab', 'blunt', 'burn', 'smoke', 'toxic', 'fall', 'crush', 'blast', 'drown', 'electric', 'exhaustion', 'vehicle', 'exposure', 'illness'];
     for (const k of causes) expect(CAUSE_NAME[k], k).toBeTruthy();
     expect(Object.keys(CAUSE_NAME).length).toBe(causes.length);
+  });
+});
+
+// ───────────────────────── 2. 원인별 기록 — 구조 대상의 피해는 hurtCas 한 길로 (단계 3) ─────────────────────────
+describe('2. hurtCas — 구조 대상의 피해는 한 길로만 준다', () => {
+  const CAUSES: InjuryCause[] = ['gunshot', 'stab', 'blunt', 'burn', 'smoke', 'toxic', 'fall', 'crush', 'blast', 'drown', 'electric', 'exhaustion', 'vehicle', 'exposure', 'illness'];
+  it('원인마다 한 줄씩 생기고, 같은 원인은 한 줄로 합쳐지며(dmg 가 더해진다), sev 가 그때의 bandOf 와 맞는다', () => {
+    const { sim, s } = sceneOf('INJ-hurt', 'fire');
+    const I = sim.incidents[s.incidentId];
+    const c = addCas(s, 5, 5, 'mobile', 100, 0, 0);
+    let hp = 100;
+    for (const cause of CAUSES) {
+      hurtCas(sim, s, I, c, 2, cause);
+      hp -= 2;
+      expect(c.health).toBe(hp);
+      expect(c.injuries!.filter((j) => j.cause === cause)).toEqual([{ cause, dmg: 2, sev: bandOf(hp), t: sim.t, last: sim.t, by: -1, byKind: 'world', ev: -1 }]);
+    }
+    expect(c.injuries!.length).toBe(CAUSES.length);
+    hurtCas(sim, s, I, c, 35, 'smoke');      // 70 → 35: 위중
+    expect(c.injuries!.length).toBe(CAUSES.length);
+    expect(c.injuries!.find((j) => j.cause === 'smoke')).toMatchObject({ dmg: 37, sev: 2 });
+    expect(c.health).toBe(35);
+    expect(sumDmg(c.injuries)).toBeCloseTo(100 - c.health, 9);
+    // 피해 자체의 문구는 남기지 않는다 (문구는 피해를 준 자리가 남긴다)
+    const n = sim.events.length;
+    hurtCas(sim, s, I, c, 1, 'burn');
+    expect(sim.events.length).toBe(n);
+  });
+  it('가해자·기록 id·출혈·거동: o.ev 는 causeEvent 로, o.bleed 는 그 값 이상으로(원인도 그 원인으로), o.immobile 은 걷던 사람을 세우고 갇힌 사람은 그대로 둔다', () => {
+    const { sim, s } = sceneOf('INJ-hurt2', 'armed', 'hostage');
+    const I = sim.incidents[s.incidentId];
+    const c = addCas(s, 5, 5, 'mobile', 100, 0, 0);
+    c.walking = true; c.path = [1, 2, 3];
+    hurtCas(sim, s, I, c, 30, 'gunshot', { by: 2, byKind: 'hostile', ev: 55, bleed: 0.18, immobile: true });
+    expect(c.injuries).toEqual([{ cause: 'gunshot', dmg: 30, sev: 1, t: sim.t, last: sim.t, by: 2, byKind: 'hostile', ev: 55 }]);
+    expect([c.health, c.bleed, c.bleed0, c.bleedCause, c.causeEvent]).toEqual([70, 0.18, 0.18, 'gunshot', 55]);
+    expect([c.mob, c.walking, c.path]).toEqual(['immobile', false, null]);
+    // 더 약한 출혈은 올리지 않고 원인도 바꾸지 않는다. 기록 id 가 없으면 causeEvent 를 건드리지 않는다
+    hurtCas(sim, s, I, c, 5, 'blast', { bleed: 0.1 });
+    expect([c.bleed, c.bleedCause, c.causeEvent]).toEqual([0.18, 'gunshot', 55]);
+    // 갇힌 사람은 갇힌 채로 있다
+    const t = addCas(s, 6, 5, 'trapped', 90, 0, 0);
+    hurtCas(sim, s, I, t, 5, 'crush', { immobile: true });
+    expect(t.mob).toBe('trapped');
+  });
+  it('0 이하가 되면 숨지게 한 원인을 그 자리에서 적고(사망 처리는 다음 틱의 악화 규칙이 한다), 숨진 사람은 더 다치지 않는다', () => {
+    const { sim, s } = sceneOf('INJ-hurt3', 'fire');
+    const I = sim.incidents[s.incidentId];
+    const c = addCas(s, 5, 5, 'immobile', 20, 0, 0);
+    hurtCas(sim, s, I, c, 26, 'blast');
+    expect(c.health).toBe(-6); expect(c.dead).toBe(false); expect(c.deathCause).toBe('blast');
+    hurtCas(sim, s, I, c, 3, 'burn');      // 아직 dead 가 아니다: 기록은 이어지지만 숨지게 한 원인은 바뀌지 않는다
+    expect(c.deathCause).toBe('blast');
+    c.dead = true;
+    const snap = JSON.stringify([c.health, c.injuries, c.bleed]);
+    hurtCas(sim, s, I, c, 50, 'gunshot', { bleed: 0.5, immobile: true, ev: 9 });
+    expect(JSON.stringify([c.health, c.injuries, c.bleed])).toBe(snap);
+    expect(c.causeEvent).not.toBe(9);
+  });
+  it('hurtCasTo: 깎은 뒤의 체력을 받는다 — 하한·상한이 걸린 자리의 예전 식과 끝자리까지 같고, 지금보다 높은 값으로 체력을 올리지 않는다', () => {
+    const { sim, s } = sceneOf('INJ-hurt4', 'water');
+    const I = sim.incidents[s.incidentId];
+    const c = addCas(s, 5, 5, 'immobile', 30.123456789, 0, 0);
+    const x = 20.987654321;
+    const want = Math.max(8, c.health - x);
+    hurtCasTo(sim, s, I, c, Math.max(8, c.health - x), 'drown');
+    expect(c.health).toBe(want);
+    expect(c.injuries![0].dmg).toBe(30.123456789 - want);
+    // 하한보다 이미 낮은 사람: 예전 식은 체력을 하한까지 올렸다 — 다치는 일로 체력이 오르지는 않는다
+    c.health = 3;
+    hurtCasTo(sim, s, I, c, Math.max(8, c.health - 30), 'drown');
+    expect(c.health).toBe(3);
+    hurtCasTo(sim, s, I, c, Math.min(c.health, 55), 'illness');      // "그 값까지 떨어진다": 이미 더 낮으면 그대로
+    expect(c.health).toBe(3);
+    expect(c.injuries!.length).toBe(1);
+  });
+  it('구조 대상의 체력을 직접 깎는 줄이 남아 있지 않다 — 매 틱 악화, 사망 처리, 처치, 처음 상태를 만드는 자리만 예외다', () => {
+    const files = ['hazards.ts', 'executor.ts', 'agents.ts', 'sceneManager.ts', 'commander.ts', 'brain.ts', ...readdirSync('src/sim/field/rules').map((f) => 'rules/' + f)].map((f) => 'src/sim/field/' + f).concat(['src/sim/resources.ts', 'src/sim/pursuit.ts', 'src/sim/incidents.ts', 'src/sim/disaster.ts']);
+    const ALLOW = [
+      'c.health -= d * dt;',                                             // tickCasualties 의 매 틱 악화 (noteDecay 로 적는다)
+      'c.health = 0; c.dead = true; c.tDead = sim.t; c.walking = false;',      // tickCasualties 의 사망 처리
+      'c.dead = true; c.health = 0; c.tDead = sim.t; c.inWater = false;',      // tickWater: 떠내려가 숨짐 (바로 앞 줄이 hurtCasTo)
+      'c.health = Math.min(100, c.health + 15);',                        // 처치 (오른다)
+      'c.health = Math.min(100, c.health + 8 * q);',
+    ];
+    const bad: string[] = [];
+    for (const f of files) {
+      readFileSync(f, 'utf8').split('\n').forEach((line, k) => {
+        if (!/\b(c|cas|target|struck|v|victim)\.health\s*(-=|\*=|\/=|=[^=])/.test(line)) return;
+        if (ALLOW.some((a) => line.includes(a))) return;
+        bad.push(`${f}:${k + 1} ${line.trim().slice(0, 90)}`);
+      });
+    }
+    expect(bad).toEqual([]);
   });
 });
 
@@ -246,6 +346,360 @@ describe('9. 숨진 사람의 원인', () => {
     expect(hp).toBeGreaterThan(0);
     for (const q of s.casualties) if (q !== c) expect(q.lost).toBeUndefined();
   });
+  // ── 단계 3: 사건이 끝나면(판정 뒤) 구조 대상의 악화·사망 판정이 멈춘다 (§2.6) ──
+  it('모든 구조 대상의 사망 시각과 사망 기록(생체 반응 소실 · 떠내려감)의 시각 ≤ 그 사건의 closedAt', () => {
+    let dead = 0, recs = 0;
+    for (const sim of all()) {
+      for (const s of scenesOf(sim)) {
+        const I = sim.incidents[s.incidentId];
+        for (const c of s.casualties) if (c.dead) { dead++; expect(c.tDead, `${sim.seed} ${I.code} ${c.label}`).toBeLessThanOrEqual(I.closedAt); }
+      }
+      for (const e of sim.events) {
+        if (e.role !== 'SYSTEM' || !/생체 반응 소실|생체 반응이 사라졌습니다|떠내려갔습니다/.test(e.text)) continue;
+        recs++;
+        expect(e.t, `${sim.seed} ${e.text}`).toBeLessThanOrEqual(sim.incidents[e.incidentId].closedAt);
+      }
+    }
+    expect(dead).toBeGreaterThan(10); expect(recs).toBe(dead);
+  });
+  it('판정 뒤에는 악화가 멈추고 hurtCas 도 아무것도 하지 않는다 — 대피 이동만 남는다', () => {
+    const { sim, s } = sceneOf('INJ-closed', 'fire');
+    const I = sim.incidents[s.incidentId];
+    const c = addCas(s, s.staging.x + 2, s.staging.y, 'immobile', 30, 0.5, 0);      // 대기 지점 곁의 길 위 (현장 안)
+    const walker = addCas(s, s.staging.x + 5, s.staging.y, 'mobile', 90, 0.3, 0);
+    walker.walking = true;
+    const step = (): void => { sim.tick++; sim.t = sim.tick * sim.dt; tickCasualties(sim, s, I); };
+    step();
+    expect(c.health).toBeLessThan(30); expect(walker.health).toBeLessThan(90);      // 열려 있는 동안에는 나빠진다
+    I.phase = 'closed'; I.closedAt = sim.t;
+    const hp = c.health, hpW = walker.health, x0 = walker.x, y0 = walker.y, n = sim.events.length;
+    for (let k = 0; k < 40; k++) step();
+    expect(c.health).toBe(hp); expect(walker.health).toBe(hpW);
+    expect(Math.hypot(walker.x - x0, walker.y - y0)).toBeGreaterThan(0.5);      // 걷던 사람은 계속 걷는다
+    hurtCas(sim, s, I, c, 500, 'blast', { bleed: 0.9, immobile: true, ev: 3 });
+    expect([c.health, c.bleed, c.dead, c.deathCause]).toEqual([hp, 0.5, false, undefined]);
+    // 이미 0 이하였던 사람도 판정 뒤에는 숨진 것으로 바뀌지 않는다 (판정과 기록이 어긋나지 않게)
+    c.health = -3;
+    for (let k = 0; k < 5; k++) step();
+    expect(c.dead).toBe(false);
+    expect(sim.events.slice(n).some((e) => /생체 반응/.test(e.text))).toBe(false);
+  });
+  it('판정 뒤에는 세계 규칙도 사람을 다치게 하지 않는다: 떠내려가 숨지지 않고, 주변 시민이 새로 쓰러지지 않는다', () => {
+    const w = sceneOf('INJ-closed-w', 'water');
+    const Iw = w.sim.incidents[w.s.incidentId];
+    const c = w.s.casualties.find((q) => q.inWater)!;
+    c.drift = 5; c.x = w.s.w - 1.25;
+    Iw.phase = 'closed'; Iw.closedAt = w.sim.t;
+    w.sim.tick++; w.sim.t = w.sim.tick * w.sim.dt;
+    tickWater(w.sim, w.s, Iw);
+    expect([c.dead, c.lost, c.inWater]).toEqual([false, undefined, true]);
+    // 가스 누출 현장 열두 곳: 열려 있을 때는 주변 시민이 쓰러지는 조건(위의 '사건 중에 붙는 주변 시민' 시험과 같다)에서, 닫힌 뒤에는 한 명도 생기지 않는다
+    for (let k = 0; k < 12; k++) {
+      const { sim, s } = sceneOf('INJ-gas' + k, 'hazmat');
+      const I = sim.incidents[s.incidentId];
+      s.arrivedAt = 0;
+      I.phase = 'closed'; I.closedAt = sim.t;
+      const n0 = s.casualties.length;
+      for (let q = 0; q < 400; q++) { sim.tick++; sim.t = sim.tick * sim.dt; for (const e of s.exits) s.smoke[e.y * s.w + e.x] = Math.max(s.smoke[e.y * s.w + e.x], 0.5); tickGas(sim, s, I); }
+      expect(s.casualties.length, 'INJ-gas' + k).toBe(n0);
+    }
+  });
+});
+
+// ───────────────────────── 단계 3: 사건 중 새 부상 (§5.1) ─────────────────────────
+/** 붕괴 현장 가운데 아직 무너지지 않은 균열 구조물이 있고 그 둘레가 빈 현장 */
+function collapseScene(tag: string): { sim: Sim; s: Scene; I: Incident; p: Prop } {
+  for (let k = 0; k < 40; k++) {
+    const { sim, s } = sceneOf(tag + k, 'collapse', 'std');
+    const p = s.props.find((q) => q.kind === 'unstable' && !q.mitigated && (q.leakRate ?? 0) > 0);
+    if (!p || p.x < 4 || p.y < 4 || p.x > s.w - 5 || p.y > s.h - 5) continue;
+    return { sim, s, I: sim.incidents[s.incidentId], p };
+  }
+  throw new Error('균열 구조물이 있는 붕괴 현장을 찾지 못했다');
+}
+describe('5. 사건 중 새 부상 — 폭발은 고르게, 2차 붕괴는 곁의 사람을 가둔다', () => {
+  it('폭발(blast)에 휩쓸려 체력이 80 아래가 된 사람은 걷던 사람도 쓰러지고 피를 흘린다 (갇힌 사람은 그대로, 80 이상 남은 사람은 그대로)', () => {
+    const { sim, s } = sceneOf('INJ-blast', 'fire');
+    const I = sim.incidents[s.incidentId];
+    const cx = 8, cy = 8, R = 3.6, D = 34;      // 가스 용기 폭발의 반경과 피해
+    const near = addCas(s, cx + 1, cy, 'mobile', 95, 0, 0); near.walking = true; near.path = [1, 2];
+    const edge = addCas(s, cx + 3.5, cy, 'mobile', 100, 0, 0); edge.walking = true;
+    const trapped = addCas(s, cx, cy + 1, 'trapped', 90, 0.01, 0);
+    const bleeder = addCas(s, cx - 1, cy, 'immobile', 60, 0.9, 0);
+    blast(sim, s, I, cx, cy, R, D, 77);
+    const want = (d: number): number => (0.09 + 0.09 * (1 - d / R)) * sim.tune.bleedMul;
+    expect(near.health).toBeCloseTo(95 - D * 0.8 * (1 - 1 / (R + 1)), 9);
+    expect([near.mob, near.walking, near.path, near.bleedCause, near.causeEvent]).toEqual(['immobile', false, null, 'blast', 77]);
+    expect(near.bleed).toBeCloseTo(want(1), 12); expect(near.bleed0).toBe(near.bleed);
+    expect(near.injuries!.map((j) => [j.cause, j.ev])).toEqual([['blast', 77]]);
+    // 가장자리: 다치기는 했지만 80 이상 남았다 — 계속 걷는다
+    expect(edge.health).toBeLessThan(100); expect(edge.health).toBeGreaterThanOrEqual(80);
+    expect([edge.mob, edge.walking, edge.bleed]).toEqual(['mobile', true, 0]);
+    // 갇힌 사람은 갇힌 채로 피를 흘린다. 이미 더 크게 피를 흘리던 사람의 출혈은 줄지 않고 원인도 그대로다
+    expect(trapped.mob).toBe('trapped'); expect(trapped.bleed).toBeCloseTo(want(1), 12);
+    expect(bleeder.bleed).toBe(0.9); expect(bleeder.bleedCause).toBeUndefined();
+  });
+  it('무너져 내린 것(천장·2차 붕괴 — 원인 crush)에는 그 규칙을 걸지 않는다: 체력만 깎인다', () => {
+    const { sim, s } = sceneOf('INJ-crushblast', 'fire');
+    const I = sim.incidents[s.incidentId];
+    const c = addCas(s, 9, 8, 'mobile', 70, 0, 0); c.walking = true;
+    blast(sim, s, I, 8, 8, 2.2, 22, 5, 'crush');
+    expect(c.health).toBeLessThan(70);
+    expect([c.mob, c.walking, c.bleed, c.bleedCause]).toEqual(['mobile', true, 0, undefined]);
+    expect(c.injuries!.map((j) => j.cause)).toEqual(['crush']);
+  });
+  it('폭발물도 같은 규칙으로 간다 (detonate 가 따로 하던 일을 blast 가 한다)', () => {
+    const { sim, s } = sceneOf('INJ-bomb', 'armed', 'bomb');
+    const I = sim.incidents[s.incidentId];
+    const p = s.props.find((q) => q.kind === 'bomb')!;
+    expect(p).toBeTruthy();
+    const c = addCas(s, p.x + 1, p.y, 'mobile', 100, 0, 0); c.walking = true;
+    detonate(sim, s, I, p);
+    expect(c.health).toBeCloseTo(100 - 55 * 0.8 * (1 - 1 / 4.4), 9);
+    expect([c.mob, c.walking, c.bleedCause]).toEqual(['immobile', false, 'blast']);
+    expect(c.bleed).toBeCloseTo((0.09 + 0.09 * (1 - 1 / 3.4)) * sim.tune.bleedMul, 12);
+    expect(c.causeEvent).toBeGreaterThanOrEqual(0);
+    expect(sim.events[c.causeEvent].text).toMatch(/폭발물이 터졌습니다/);
+  });
+  it('2차 붕괴: 무너진 자리 1.6칸 안의 사람은 갇힌다 (걷던 사람도 멈춘다) — 업혀 있는 사람, 이미 갇힌 사람, 그보다 먼 사람은 그대로', () => {
+    const { sim, s, I, p } = collapseScene('INJ-col');
+    const near = addCas(s, p.x + 1, p.y, 'mobile', 100, 0, 0); near.walking = true; near.path = [1, 2];
+    const lying = addCas(s, p.x, p.y + 1.5, 'immobile', 80, 0.05, 0);
+    const far = addCas(s, p.x + 2.4, p.y, 'immobile', 100, 0, 0);
+    const already = addCas(s, p.x - 1, p.y, 'trapped', 90, 0, 0);
+    const carried = addCas(s, p.x, p.y - 1, 'immobile', 90, 0, 0); carried.where = 'carried';
+    const first = sim.rng.fork('injury:' + s.id + ':trap').range(TRAP_WORK[0], TRAP_WORK[1]);
+    p.leak = 1;
+    sim.tick++; sim.t = sim.tick * sim.dt;
+    tickCollapse(sim, s, I);
+    expect(sim.events.some((e) => /2차 붕괴!/.test(e.text))).toBe(true);
+    expect([near.mob, near.walking, near.path]).toEqual(['trapped', false, null]);
+    expect(near.trapWork).toBe(first);      // 목적별 흐름 injury:<현장>:trap 의 첫 값
+    expect(lying.mob).toBe('trapped');
+    for (const c of [near, lying]) { expect(c.trapWork).toBeGreaterThanOrEqual(TRAP_WORK[0]); expect(c.trapWork).toBeLessThanOrEqual(TRAP_WORK[1]); expect(c.injuries!.some((j) => j.cause === 'crush')).toBe(true); }
+    expect(far.mob).toBe('immobile'); expect(far.health).toBeLessThan(100);      // 피해는 입지만(반경 2.6) 갇히지는 않는다
+    expect([already.mob, already.trapWork]).toEqual(['trapped', 14]);
+    expect(carried.mob).toBe('immobile'); expect(carried.health).toBe(90);
+    expect(TRAP_R).toBe(1.6);
+  });
+  it('판정 뒤의 2차 붕괴는 사람을 가두지도 다치게 하지도 않는다', () => {
+    const { sim, s, I, p } = collapseScene('INJ-col');
+    const near = addCas(s, p.x + 1, p.y, 'mobile', 100, 0, 0);
+    I.phase = 'closed'; I.closedAt = sim.t;
+    p.leak = 1;
+    sim.tick++; sim.t = sim.tick * sim.dt;
+    tickCollapse(sim, s, I);
+    expect([near.mob, near.health, near.injuries]).toEqual(['mobile', 100, undefined]);
+  });
+  it('옮기러 간 사람이 갇혀 있으면 실행기가 그 사실을 강제로 다시 알리고 끝낸다 (지휘관의 낡은 믿음으로 같은 지시가 되풀이되지 않게)', () => {
+    const { sim, s, I, p } = collapseScene('INJ-carry');
+    unitArrived(sim, I, sim.units.find((u) => u.kind === 'rescue')!);
+    const a = s.agents.find((b) => b.status === 'active')!;
+    const c = addCas(s, p.x + 1, p.y, 'immobile', 80, 0.05, 0);
+    c.tDiscovered = sim.t;
+    a.beliefs.merge(mkFact('cas', c.id, { x: c.x, y: c.y, mob: 'immobile', band: 0, where: 'scene', treated: false, tq: 0 }, 't', sim.t, 1, true, ''));
+    const w: WorkItem = { id: s.nextWorkId++, kind: 'carry', region: -1, cas: c.id, prop: -1, hostile: -1, tile: -1, mate: -1, priority: 0.84, status: 'active', assignees: [a.rid], max: 2, createdAt: sim.t, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough: false, orderSentAt: {}, cause: -1, failedAt: {} };
+    s.board[w.id] = w;
+    a.task = makeTask('carry', '이송', w);
+    c.mob = 'trapped'; c.trapWork = 8;      // 맡은 뒤에 갇혔다
+    a.outbox.length = 0;
+    act(sim, s, a);
+    expect(a.task).toBeNull();
+    expect(w.status).toBe('open'); expect(w.fails).toBe(1);
+    expect((a.beliefs.get('cas', c.id)!.value as { mob: string }).mob).toBe('trapped');
+    expect(a.outbox.some((f) => f.type === 'cas' && f.id === c.id && (f.value as { mob: string }).mob === 'trapped')).toBe(true);
+  });
+  it('지휘관은 갇힌 줄 알게 된 사람의 이송·동행 지시를 거두고 구출을 낸다 (두면 같은 실패가 구출이 끝날 때까지 되풀이된다)', () => {
+    const { sim, s, I, p } = collapseScene('INJ-carry');
+    unitArrived(sim, I, sim.units.find((u) => u.kind === 'rescue')!);
+    const cmd = s.agents.find((b) => b.isCommander)!;
+    const c = addCas(s, p.x + 1, p.y, 'trapped', 60, 0.05, 0);
+    c.tDiscovered = sim.t;
+    cmd.beliefs.merge(mkFact('cas', c.id, { x: c.x, y: c.y, mob: 'trapped', band: 1, where: 'scene', treated: false, tq: 0 }, 't', sim.t, 1, true, ''));
+    const item = (kind: 'carry' | 'escort'): WorkItem => {
+      const w: WorkItem = { id: s.nextWorkId++, kind, region: -1, cas: c.id, prop: -1, hostile: -1, tile: -1, mate: -1, priority: 0.84, status: 'open', assignees: [], max: 2, createdAt: sim.t, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough: false, orderSentAt: {}, cause: -1, failedAt: {} };
+      s.board[w.id] = w; return w;
+    };
+    const carry = item('carry'), escort = item('escort');
+    s.sizeupDone = true;
+    commanderThink(sim, s, cmd);
+    expect([carry.status, escort.status]).toEqual(['cancelled', 'cancelled']);
+    expect(s.board.some((w) => w.kind === 'extricate' && w.cas === c.id && (w.status === 'open' || w.status === 'active'))).toBe(true);
+  });
+});
+
+/** 대원 하나가 곁에 갇힌 사람을 구출하게 해 놓고 끝날 때까지 돌린다. 위험 배율(hazardMul)을 바꿔 사고를 반드시 내거나 반드시 막는다 */
+function extricateOnce(type: IncidentType, variant: string | undefined, hazardMul: number, closed = false): { sim: Sim; s: Scene; c: Casualty; hp0: number; n0: number; done: boolean } {
+  const { sim, s } = type === 'collapse' && variant === 'std' ? collapseScene('INJ-ext') : sceneOf('INJ-ext', type, variant);
+  const I = sim.incidents[s.incidentId];
+  unitArrived(sim, I, sim.units.find((u) => u.kind === 'rescue')!);
+  const a = s.agents.find((b) => b.status === 'active')!;
+  s.agents = [a];      // 교대(더 알맞은 대원이 넘겨받기)가 끼어들지 않게 혼자 둔다
+  const c = addCas(s, Math.round(a.x), Math.round(a.y) + 1, 'trapped', 80, 0, 0);
+  c.trapWork = 0.05; c.tDiscovered = sim.t;
+  const w: WorkItem = { id: s.nextWorkId++, kind: 'extricate', region: -1, cas: c.id, prop: -1, hostile: -1, tile: -1, mate: -1, priority: 0.82, status: 'active', assignees: [a.rid], max: 2, createdAt: sim.t, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough: false, orderSentAt: {}, cause: -1, failedAt: {} };
+  s.board[w.id] = w;
+  a.task = makeTask('extricate', '구출', w);
+  (sim.tune as { hazardMul: number }).hazardMul = hazardMul;
+  if (closed) { I.phase = 'closed'; I.closedAt = sim.t; }
+  const n0 = sim.events.length;
+  for (let k = 0; k < 60 && c.mob === 'trapped'; k++) { sim.tick++; sim.t = sim.tick * sim.dt; act(sim, s, a); }
+  return { sim, s, c, hp0: 80, n0, done: c.mob !== 'trapped' };
+}
+describe('5. 구출 중 사고 — 붕괴 현장에서 구출을 마칠 때 잔해가 내려앉을 수 있다', () => {
+  it('사고가 나면: 잔해 깔림 6~14 를 더 입고, 그 기록이 구출 완료 기록 앞에 남으며 부상 기록·causeEvent 가 그 기록을 가리킨다', () => {
+    const { sim, s, c, hp0, n0, done } = extricateOnce('collapse', 'std', 1000);
+    expect(done).toBe(true);
+    const evs = sim.events.slice(n0);
+    const acc = evs.find((e) => /^구출 도중 잔해가 내려앉아 구조 대상 .+[이가] 더 다쳤습니다\.$/.test(e.text))!;
+    const fin = evs.find((e) => /구출 완료/.test(e.text))!;
+    expect(acc).toBeTruthy(); expect(fin).toBeTruthy();
+    expect(acc.id).toBeLessThan(fin.id);
+    expect([acc.kind, acc.importance, acc.role]).toEqual(['hazard', 2, 'SYSTEM']);
+    expect(hp0 - c.health).toBeGreaterThanOrEqual(MISHAP.hit[0]); expect(hp0 - c.health).toBeLessThanOrEqual(MISHAP.hit[1]);
+    expect(c.injuries).toEqual([{ cause: 'crush', dmg: hp0 - c.health, sev: bandOf(c.health), t: acc.t, last: acc.t, by: -1, byKind: 'world', ev: acc.id }]);
+    expect(c.causeEvent).toBe(acc.id);
+    // 목적별 흐름 injury:<현장>:extricate 에서 확률, 피해 순서로 뽑았다
+    const probe = sim.rng.fork('injury:' + s.id + ':extricate'); probe.next();
+    expect(hp0 - c.health).toBeCloseTo(probe.range(MISHAP.hit[0], MISHAP.hit[1]), 9);
+  });
+  it('사고가 없으면 아무것도 남지 않는다. 붕괴 현장이 아닌 곳(차에 낀 사람)과 승강기, 판정 뒤에는 추첨도 하지 않는다', () => {
+    const quiet = extricateOnce('collapse', 'std', 0);
+    expect(quiet.done).toBe(true);
+    expect([quiet.c.health, quiet.c.injuries]).toEqual([80, undefined]);
+    expect(quiet.sim.events.slice(quiet.n0).some((e) => /구출 도중/.test(e.text))).toBe(false);
+    for (const [type, variant, closed] of [['traffic', 'std', false], ['collapse', 'elevator', false], ['collapse', 'std', true]] as [IncidentType, string, boolean][]) {
+      const r = extricateOnce(type, variant, 1000, closed);
+      const tag = `${type}/${variant}${closed ? ' (판정 뒤)' : ''}`;
+      expect(r.done, tag).toBe(true);
+      expect([r.c.health, r.c.injuries], tag).toEqual([80, undefined]);
+      // 흐름을 건드리지 않았다: 다음에 뽑히는 값이 새로 만든 흐름의 첫 값과 같다
+      expect(injuryRng(r.sim, r.s, 'extricate').next(), tag).toBe(r.sim.rng.fork('injury:' + r.s.id + ':extricate').next());
+    }
+  });
+});
+
+describe('5. 스스로 대피하다 다치는 경우 — 위중(체력 40 이하)이 되면 멈춘다 (§5.2)', () => {
+  const stepScene = (sim: Sim, s: Scene): void => { sim.tick++; sim.t = sim.tick * sim.dt; tickScene(sim, s); };
+  it('걷던 사람이 체력 40 이하가 되면 쓰러진다: 거동 불가가 되고, 관찰자만 아는 기록 하나가 원인과 함께 남는다', () => {
+    const { sim, s } = sceneOf('INJ-walk', 'fire');
+    const c = addCas(s, s.staging.x + 4, s.staging.y, 'mobile', 40.5, 4, 0);      // 대기 지점 곁의 길 위 (현장 안)
+    c.walking = true; c.bleedCause = 'smoke';
+    const ok = addCas(s, s.staging.x + 5, s.staging.y, 'mobile', 47, 4, 0);      // 40 위: 계속 걷는다
+    ok.walking = true; ok.bleedCause = 'smoke';
+    const still = addCas(s, s.staging.x + 6, s.staging.y, 'mobile', 30, 0, 0);      // 걷고 있지 않은 사람은 건드리지 않는다
+    const n0 = sim.events.length;
+    stepScene(sim, s);
+    expect(c.health).toBeLessThanOrEqual(WALK_STOP);
+    expect([c.walking, c.mob, c.path]).toEqual([false, 'immobile', null]);
+    const recs = sim.events.slice(n0).filter((e) => /^대피하던 구조 대상 /.test(e.text));
+    expect(recs.map((e) => e.text)).toEqual([`대피하던 구조 대상 ${josa(c.label, '이/가')} 연기 흡입으로 쓰러졌습니다.`]);
+    expect([recs[0].kind, recs[0].importance, recs[0].truth, recs[0].role]).toEqual(['casualty', 2, true, 'SYSTEM']);
+    expect(c.causeEvent).toBe(recs[0].id);
+    expect([ok.walking, ok.mob]).toEqual([true, 'mobile']);
+    expect([still.walking, still.mob]).toEqual([false, 'mobile']);
+    // 한 번만 남는다
+    for (let k = 0; k < 10; k++) stepScene(sim, s);
+    expect(sim.events.slice(n0).filter((e) => new RegExp(`^대피하던 구조 대상 ${c.label}`).test(e.text)).length).toBe(1);
+  });
+  it('원인은 지금 선 자리에서 가장 크게 깎는 항이다 (불 속이면 화상). 판정 뒤에는 쓰러지지 않는다', () => {
+    const { sim, s } = sceneOf('INJ-walk2', 'fire');
+    const c = addCas(s, s.staging.x + 4, s.staging.y, 'mobile', 40.2, 0.2, 0);
+    c.walking = true; c.bleedCause = 'smoke';
+    for (let y = Math.max(0, c.y - 2); y <= Math.min(s.h - 1, c.y + 2); y++) for (let x = Math.max(0, c.x - 2); x <= Math.min(s.w - 1, c.x + 2); x++) { s.fire[y * s.w + x] = 0.45; s.fuel[y * s.w + x] = 1; }      // 한 걸음 옮겨도 불 속이다
+    stepScene(sim, s);
+    expect(sim.events.some((e) => e.text === `대피하던 구조 대상 ${josa(c.label, '이/가')} 화상으로 쓰러졌습니다.`)).toBe(true);
+    const closed = sceneOf('INJ-walk3', 'fire');
+    const I = closed.sim.incidents[closed.s.incidentId];
+    const d = addCas(closed.s, closed.s.staging.x + 4, closed.s.staging.y, 'mobile', 30, 0, 0);
+    d.walking = true;
+    I.phase = 'closed'; I.closedAt = closed.sim.t;
+    closed.s.agents.push(makeAgent(closed.sim, 0, 0, closed.s.staging.x, closed.s.staging.y, 1e9, closed.sim.rng.fork('t')));      // 대원이 남아 있어 환경 단계가 도는 닫힌 현장
+    stepScene(closed.sim, closed.s);
+    expect([d.walking, d.mob]).toEqual([true, 'mobile']);
+  });
+  it('현장이 비었을 때의 종료 판단(outstanding): 대피 중이라던 사람의 소식이 32초 넘게 끊겼으면 남은 일로 센다', () => {
+    const { sim, s } = sceneOf('INJ-out', 'fire');
+    const a = makeAgent(sim, 0, 0, s.staging.x, s.staging.y, 1e9, sim.rng.fork('t'));
+    const fact = (id: number, mob: 'mobile' | 'immobile', where: 'scene' | 'safe', band: number, t: number): void => { a.beliefs.merge(mkFact('cas', id, { x: 3, y: 3, mob, band, where, treated: false, trappedDone: false, tq: 0 }, 't', t, 1, true, '')); };
+    fact(0, 'mobile', 'scene', 1, 100);
+    expect(outstanding(a).patients).toBe(0);              // 시각을 주지 않으면 예전 그대로 (상공의 감시 판단이 쓴다)
+    expect(outstanding(a, 120).patients).toBe(0);         // 방금 대피를 시작했다
+    expect(outstanding(a, 132).patients).toBe(0);
+    expect(outstanding(a, 132.2).patients).toBe(1);       // 32초 넘게 소식이 없다: 대피하다 쓰러졌을 수 있다
+    fact(1, 'mobile', 'safe', 1, 0);                      // 안전 구역에 닿은 걸을 수 있는 사람은 예전처럼 남은 일이 아니다
+    fact(2, 'mobile', 'safe', 0, 0);
+    expect(outstanding(a, 500).patients).toBe(1);
+    fact(3, 'immobile', 'scene', 2, 0);
+    expect(outstanding(a, 500).patients).toBe(2);
+  });
+  it('현장이 비면(7번 블록): 소식이 끊긴 "대피 중"이 있으면 끝내지 않고 추가 부대를 찾고, 방금 대피를 시작한 사람뿐이면 예전처럼 끝낸다', () => {
+    const run = (age: number): { sim: Sim; I: Incident; texts: string[] } => {
+      const { sim, s } = sceneOf('INJ-empty', 'medical');
+      const I = sim.incidents[s.incidentId];
+      sim.tick = 1000; sim.t = sim.tick * sim.dt;
+      unitArrived(sim, I, sim.units.find((u) => u.kind === 'als')!);
+      const cmd = s.agents.find((b) => b.isCommander)!;
+      s.sizeupDone = true;
+      for (const c of s.casualties) cmd.beliefs.merge(mkFact('cas', c.id, { x: 3, y: 3, mob: 'mobile', band: 1, where: 'scene', treated: false, trappedDone: false, tq: 0 }, 't', sim.t - age, 1, true, ''));
+      for (const b of s.agents) { b.status = 'left'; b.task = null; }      // 구급차가 환자를 싣고 떠난 것처럼 현장을 비운다
+      const n0 = sim.events.length;
+      sim.tick++; sim.t = sim.tick * sim.dt;
+      tickScene(sim, s);
+      return { sim, I, texts: sim.events.slice(n0).map((e) => e.text) };
+    };
+    const stale = run(100);
+    expect(stale.I.phase).not.toBe('closed');
+    expect(stale.texts.some((t) => /현장에 남은 부대가 없는데 아직 끝나지 않았습니다/.test(t))).toBe(true);
+    expect(stale.I.unmet.ems).toBeGreaterThanOrEqual(1);
+    const fresh = run(10);
+    expect(fresh.I.phase).toBe('closed'); expect(fresh.I.closeReason).toBe('resolved');
+  });
+});
+
+describe('5. 문구와 원인 — 사망 기록의 원인, 물에서 건진 뒤의 악화, 조사 (§5.3)', () => {
+  it('구조 대상의 사망 기록에는 숨지게 한 원인이 괄호로 붙는다 (발견된 사람·미발견 모두)', () => {
+    let seen = 0, unseen = 0;
+    for (const sim of all()) for (const s of scenesOf(sim)) for (const c of s.casualties) {
+      if (!c.dead || c.lost) continue;
+      const name = CAUSE_NAME[c.deathCause!];
+      const texts = sim.events.filter((e) => e.incidentId === s.incidentId && e.role === 'SYSTEM' && e.kind === 'casualty' && e.importance === 3).map((e) => e.text);
+      const known = `구조 대상 ${c.label}: 생체 반응 소실 (${name}). 구조에 실패했습니다.`, hidden = `(미발견) 구조 대상 ${c.label}의 생체 반응이 사라졌습니다 (${name}).`;
+      const hit = texts.filter((t) => t === known || t === hidden);
+      expect(hit.length, `${sim.seed} ${sim.incidents[s.incidentId].code} ${c.label}: ${texts.join(' / ')}`).toBe(1);
+      if (hit[0] === known) seen++; else unseen++;
+    }
+    expect(seen).toBeGreaterThan(3); expect(unseen).toBeGreaterThan(3);
+  });
+  it('물에서 건져 낸 사람에게 남는 악화는 익수가 아니라 실외 노출(저체온)이다 — 물가의 구조 줄과 헬기의 호이스트 모두', () => {
+    let hoists = 0, freed = 0;
+    for (const seed of ['S5', 'S8']) {
+      const sim = shift(seed, NORMAL, 'water/std');
+      hoists += sim.airStats.hoists;
+      for (const s of scenesOf(sim)) if (s.kind === 'water') for (const c of s.casualties) {
+        if (c.tFreed < 0) { if (c.inWater) expect(c.bleedCause, `${seed} ${c.label}`).toBe('drown'); continue; }
+        freed++;
+        expect(c.bleedCause, `${seed} ${c.label}`).toBe('exposure');
+        expect((c.injuries ?? []).some((j) => j.cause === 'drown'), `${seed} ${c.label}`).toBe(true);      // 물속에 있던 동안은 익수로 적혀 있다
+      }
+    }
+    expect(hoists).toBeGreaterThanOrEqual(2);      // 호이스트로 건진 사람이 있다
+    expect(freed).toBeGreaterThan(hoists);         // 물가에서 줄로 건진 사람도 있다
+  });
+  it('이름표 뒤의 조사는 josa 로 붙는다: 떠내려간 사람(미발견), 용의자가 다치게 한 기록', () => {
+    const { sim, s } = sceneOf('INJ-water', 'water');
+    const I = sim.incidents[s.incidentId];
+    const c = s.casualties.find((q) => q.inWater)!;
+    c.label = 'L';      // 받침이 있는 이름표 (엘)
+    c.drift = 5; c.x = s.w - 1.25;
+    sim.tick++; sim.t = sim.tick * sim.dt;
+    tickWater(sim, s, I);
+    expect(sim.events[sim.events.length - 1].text).toBe('(미발견) 구조 대상 L이 물살에 휩쓸려 떠내려갔습니다.');
+    const src = readFileSync('src/sim/field/hazards.ts', 'utf8');
+    for (const fn of ['panicShot', 'tickWater']) expect(src.slice(src.indexOf('export function ' + fn + '('), src.indexOf('\n}\n', src.indexOf('export function ' + fn + '('))), fn).not.toMatch(/\$\{[a-z]+\.label\}[가이는은를을] /);
+    // 인질 시한·총격범의 문구 (tickHostiles 안)
+    for (const key of ['요구가 받아들여지지 않자', '건물 안의 시민을 쐈습니다']) { const line = src.split('\n').find((l) => l.includes(key))!; expect(line, key).toContain("josa(h.label, '이/가')"); }
+  });
 });
 
 // ───────────────────────── 11. 재현성 ─────────────────────────
@@ -256,6 +710,17 @@ describe('11. 재현성과 목적별 난수 흐름', () => {
     const dump = (sim: Sim): string => JSON.stringify([sim.responders.map((r) => r.injuries ?? null), scenesOf(sim).map((s) => [s.casualties.map((c) => [c.injuries ?? null, c.bleedCause ?? null, c.deathCause ?? null]), s.hostiles.map((h) => h.injuries ?? null)])]);
     expect(dump(b)).toBe(dump(a));
     expect(dump(a)).toContain('gunshot');
+  });
+  it('injuryRng 를 쓰는 규칙(2차 붕괴 곁의 갇힘)이 일어난 교대도 같다 — 지진 교대 둘', () => {
+    const QUAKE: Difficulty = { ...NORMAL, disaster: 'quake' };
+    const a = shift('W6', QUAKE), b = shift('W6', QUAKE);
+    expect(b.report!.hash).toBe(a.report!.hash);
+    expect(a.events.some((e) => /^2차 붕괴!/.test(e.text))).toBe(true);
+    // 갇힘 흐름이 실제로 쓰였다: 어느 현장에서는 다음 값이 새 흐름의 첫 값과 다르다
+    const used = (sim: Sim): number => scenesOf(sim).filter((s) => injuryRng(sim, s, 'trap').next() !== sim.rng.fork('injury:' + s.id + ':trap').next()).length;
+    expect(used(a)).toBeGreaterThanOrEqual(1);
+    const dump = (sim: Sim): string => JSON.stringify(scenesOf(sim).map((s) => s.casualties.map((c) => [c.health, c.mob, c.trapWork, c.injuries ?? null, c.deathCause ?? null])));
+    expect(dump(b)).toBe(dump(a));
   });
   it('injuryRng: 목적마다 흐름이 따로다 — 한쪽을 몇 번 뽑아도 다른 쪽의 첫 값이 같고, 현장의 다른 흐름을 건드리지 않는다', () => {
     const mk = (): { sim: Sim; s: Scene } => sceneOf('INJ-rng', 'collapse');

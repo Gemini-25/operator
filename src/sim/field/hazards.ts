@@ -15,7 +15,7 @@ import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, trut
 import { coverRoll, fireShot, heatGlass, shatter } from './damage';
 import { lastFx, noteBoom, noteFlash, noteHit, noteShot, recHarm, recMelee } from './fxlog';
 import { RUIN_CEILING, RUIN_SECONDARY, markRuin, recordFall } from './ruins';
-import { bandOf, decayCause, noteCasHurt, noteDecay, noteInjury, noteRespHurt } from './injury';
+import { CAUSE_NAME, bandOf, decayCause, hurtCas, hurtCasTo, injuryRng, noteDecay, noteInjury, noteRespHurt } from './injury';
 
 export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2, c?: FxInfo): void {
   s.fx.push({ kind, t: sim.t, x, y, x2, y2, text, color, ttl, c });
@@ -136,7 +136,11 @@ function smokeSpread(s: Scene, w: number, h: number): void {
   }
 }
 
-/** cause: 기록에 적는 원인 — 폭발이면 blast(기본), 천장·2차 붕괴처럼 무너져 내린 것이면 crush */
+/**
+ * cause: 기록에 적는 원인 — 폭발이면 blast(기본), 천장·2차 붕괴처럼 무너져 내린 것이면 crush.
+ * 폭발(blast)에 휩쓸려 체력이 80 아래가 된 구조 대상은 쓰러져 스스로 나오지 못하고(갇힌 사람은 그대로) 피를 흘린다 —
+ * 가스 용기·누출 가스·폭발물이 같은 규칙이다(예전에는 폭발물만 그랬다). 무너져 내린 것(crush)에는 걸지 않는다.
+ */
 export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, radius: number, dmg: number, ev: number, cause: InjuryCause = 'blast'): void {
   for (const a of s.agents) {
     if (a.status === 'left') continue;
@@ -151,9 +155,9 @@ export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, rad
   for (const c of s.casualties) {
     if (c.dead || c.where !== 'scene') continue;
     const d = dist(c.x, c.y, x, y);
-    const hp0 = c.health;
-    if (d <= radius) { c.health -= dmg * 0.8 * (1 - d / (radius + 1)); c.causeEvent = ev; }
-    if (d <= radius) noteCasHurt(c, cause, hp0, c.bleed, sim.t, -1, 'world', ev);      // (H1) 기록만
+    if (d > radius) continue;
+    hurtCas(sim, s, I, c, dmg * 0.8 * (1 - d / (radius + 1)), cause, { ev });
+    if (cause === 'blast' && c.health < 80) hurtCas(sim, s, I, c, 0, 'blast', { bleed: (0.09 + 0.09 * (1 - d / radius)) * sim.tune.bleedMul, immobile: true });
   }
   shatter(sim, s, x, y, radius + 1.5, Math.min(2.5, radius), 3);      // 반경 안의 창과 가구가 부서진다
 }
@@ -183,6 +187,7 @@ export function anyFire(s: Scene): boolean { for (let i = 0; i < s.fire.length; 
 /** 구조 대상 상태 변화 (매 틱) */
 export function tickCasualties(sim: Sim, s: Scene, I: Incident): void {
   const dt = sim.dt;
+  const open = I.phase !== 'closed';      // 사건이 끝난 뒤(판정 뒤)에는 악화도 사망 판정도 없다 — 대피 이동만 남는다 (설계서 H1 §2.6)
   for (const c of s.casualties) {
     c.px = c.x; c.py = c.y;
     if (c.dead || c.where === 'hospital') continue;
@@ -197,15 +202,16 @@ export function tickCasualties(sim: Sim, s: Scene, I: Incident): void {
       nSmoke = s.smoke[i] * (s.kind === 'hazmat' ? 0.62 : 0.36); if (s.fire[i] > 0.3) nBurn = 2.6 * s.fire[i]; if (!isIndoor(s.tiles[i]) && (c.isTarget || s.kind === 'search')) nExpo = s.exposure;
     } else if (c.where === 'loaded') d *= 0.5;
     else if (c.where === 'safe' && c.treated) d *= 0.6;
+    if (!open) d = 0;
     c.health -= d * dt;
     if (d > 0) { if (c.where !== 'scene' && c.where !== 'carried') nWound = d; noteDecay(c, s, nWound, nSmoke, nBurn, nExpo, dt, sim.t); }      // (H1) 기록만
-    if (c.health <= 0) {
+    if (c.health <= 0 && open) {
       if (c.deathCause === undefined) c.deathCause = decayCause(c, s, I, nWound, nSmoke, nBurn, nExpo);      // (H1) 숨진 틱의 가장 큰 항 (한 번 피해로 0 이하가 됐으면 그 자리가 이미 적었다)
       c.health = 0; c.dead = true; c.tDead = sim.t; c.walking = false;
       const known = c.tDiscovered >= 0;
       const ev = emit(sim, {
         inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'casualty', imp: 3, truth: !known, causes: [c.causeEvent, I.lastEvent],
-        text: known ? `구조 대상 ${c.label}: 생체 반응 소실. 구조에 실패했습니다.` : `(미발견) 구조 대상 ${c.label}의 생체 반응이 사라졌습니다.`,
+        text: known ? `구조 대상 ${c.label}: 생체 반응 소실 (${CAUSE_NAME[c.deathCause]}). 구조에 실패했습니다.` : `(미발견) 구조 대상 ${c.label}의 생체 반응이 사라졌습니다 (${CAUSE_NAME[c.deathCause]}).`,
       });
       c.causeEvent = ev;
       for (const a of s.agents) if (a.carrying === c.id) a.carrying = -1;
@@ -328,20 +334,20 @@ export function flashbang(sim: Sim, s: Scene, x: number, y: number, by?: FieldAg
  * 섬광탄으로 먼저 무력화하면 일어나지 않는다.
  */
 export function panicShot(sim: Sim, s: Scene, I: Incident, x: number, y: number): void {
+  if (I.phase === 'closed') return;      // 판정 뒤에는 누구도 더 다치지 않는다 (§2.6) — 다치지 않는 피격을 기록하지 않는다
   for (const h of s.hostiles) {
     if (h.hostageId < 0 || (h.state !== 'hold' && h.state !== 'fight') || sim.t < h.stunUntil) continue;
     if (dist(h.x, h.y, x, y) > 8) continue;
     const c = s.casualties[h.hostageId];
     if (c.dead || c.where !== 'scene' || dist(c.x, c.y, h.x, h.y) > 2.2) continue;
     if (!s.rng.chance(0.18 + 0.42 * h.aggression)) continue;
-    const hp0 = c.health, bl0 = c.bleed;
-    c.health -= s.rng.range(26, 40); c.mob = 'immobile'; c.bleed = Math.max(c.bleed, 0.18); c.bleed0 = c.bleed; c.walking = false;
+    const dmg = s.rng.range(26, 40);      // 판정 흐름에서 뽑는 자리는 그대로 — 뽑은 값만 아래 hurtCas 에 넘긴다
     h.state = 'fight'; h.cooldown = 1;
     pushFx(sim, s, 'shot', h.x, h.y, c.x, c.y, undefined, '#ff8a5c', 0.25); pushFx(sim, s, 'hit', c.x, c.y);
     noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit: true, tx: c.x, ty: c.y, tk: 2, target: c.id }); noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 2, target: c.id });
     fireShot(sim, s, h.x, h.y, c.x, c.y, 'body');
-    c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '진입 순간 인질 피격', { role: 'SYSTEM', actor: '현장', imp: 3, text: `진입에 놀란 ${h.label}가 인질(구조 대상 ${c.label})을 쐈습니다!` }, false);
-    noteCasHurt(c, 'gunshot', hp0, bl0, sim.t, h.id, 'hostile', c.causeEvent);      // (H1) 기록만
+    const ev = raiseProblem(sim, I, 'ESCALATION', '진입 순간 인질 피격', { role: 'SYSTEM', actor: '현장', imp: 3, text: `진입에 놀란 ${josa(h.label, '이/가')} 인질(구조 대상 ${c.label})을 쐈습니다!` }, false);
+    hurtCas(sim, s, I, c, dmg, 'gunshot', { by: h.id, byKind: 'hostile', ev, bleed: 0.18, immobile: true });
   }
 }
 
@@ -401,12 +407,12 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
     if (h.hostageId >= 0) {
       const c = s.casualties[h.hostageId];
       if (c.dead || c.where !== 'scene') h.hostageId = -1;
-      else if (sim.t >= h.deadline) {
+      else if (sim.t >= h.deadline && I.phase !== 'closed') {
         h.deadline = sim.t + 70; h.state = 'fight'; h.cooldown = 1; h.alertUntil = sim.t + 20;
-        const hp0 = c.health, bl0 = c.bleed;
-        c.health -= s.rng.range(28, 42); c.mob = 'immobile'; c.bleed = Math.max(c.bleed, 0.18); c.bleed0 = c.bleed; c.walking = false;
-        c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '시한이 지나 인질이 다침', { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `${h.label}가 요구가 받아들여지지 않자 인질을 다치게 했습니다!` }, false);
-        noteCasHurt(c, h.weapon === 'gun' ? 'gunshot' : h.weapon === 'knife' ? 'stab' : 'blunt', hp0, bl0, sim.t, h.id, 'hostile', c.causeEvent);      // (H1) 기록만 — 든 무기대로 (G5 의 recHarm 과 같은 갈래)
+        const dmg = s.rng.range(28, 42);
+        const ev = raiseProblem(sim, I, 'ESCALATION', '시한이 지나 인질이 다침', { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `${josa(h.label, '이/가')} 요구가 받아들여지지 않자 인질을 다치게 했습니다!` }, false);
+        // 원인은 든 무기대로 (G5 의 recHarm 과 같은 갈래): 총 → 총상, 칼 → 자상, 맨손 → 타박상
+        hurtCas(sim, s, I, c, dmg, h.weapon === 'gun' ? 'gunshot' : h.weapon === 'knife' ? 'stab' : 'blunt', { by: h.id, byKind: 'hostile', ev, bleed: 0.18, immobile: true });
         recHarm(sim, s, h, c);
         if (h.weapon === 'gun') fireShot(sim, s, h.x, h.y, c.x, c.y, 'body');      // (G5c) 그려진 탄의 선이 지나는 창도 깨진다
       }
@@ -450,7 +456,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
       }
     }
     // 총격범: 대원이 보이지 않는 동안에는 건물 안의 다른 사람을 찾아다니며 쏜다 (진입이 늦을수록 피해가 는다)
-    if (s.variant === 'shooter' && h.weapon === 'gun' && see.nearest < 0 && (h.state === 'hold' || h.state === 'fight') && sim.t >= h.moveAt && sim.t - s.startedAt > 40) {
+    if (s.variant === 'shooter' && h.weapon === 'gun' && see.nearest < 0 && (h.state === 'hold' || h.state === 'fight') && sim.t >= h.moveAt && sim.t - s.startedAt > 40 && I.phase !== 'closed') {
       let target: Casualty | null = null, td = 1e9;
       for (const c of s.casualties) { if (c.dead || c.where !== 'scene' || c.health < 72) continue; const d = dist(c.x, c.y, h.x, h.y); if (d < td) { td = d; target = c; } }      // 이미 쓰러진 사람은 다시 쏘지 않는다
       if (target) {
@@ -459,10 +465,9 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
           pushFx(sim, s, 'shot', h.x, h.y, target.x, target.y, undefined, '#ff8a5c', 0.25); pushFx(sim, s, 'hit', target.x, target.y);
           noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit: true, tx: target.x, ty: target.y, tk: 2, target: target.id }); noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 2, target: target.id });
           fireShot(sim, s, h.x, h.y, target.x, target.y, 'body');
-          const hp0 = target.health, bl0 = target.bleed;
-          target.health -= s.rng.range(20, 32); target.mob = 'immobile'; target.bleed = Math.max(target.bleed, 0.13); target.bleed0 = target.bleed; target.walking = false; target.path = null;
-          target.causeEvent = raiseProblem(sim, I, 'ESCALATION', `총격범의 추가 범행 (구조 대상 ${target.label})`, { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `총성! ${h.label}가 건물 안의 시민을 쐈습니다.` }, false);
-          noteCasHurt(target, 'gunshot', hp0, bl0, sim.t, h.id, 'hostile', target.causeEvent);      // (H1) 기록만
+          const dmg = s.rng.range(20, 32);
+          const ev = raiseProblem(sim, I, 'ESCALATION', `총격범의 추가 범행 (구조 대상 ${target.label})`, { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `총성! ${josa(h.label, '이/가')} 건물 안의 시민을 쐈습니다.` }, false);
+          hurtCas(sim, s, I, target, dmg, 'gunshot', { by: h.id, byKind: 'hostile', ev, bleed: 0.13, immobile: true });
           continue;
         }
         const path = astar(s, h.x, h.y, Math.round(target.x), Math.round(target.y), 4.5, truthCost(s), true);
@@ -638,6 +643,8 @@ export function tickLeaks(sim: Sim, s: Scene, I: Incident): void {
   }
 }
 
+/** 2차 붕괴 곁의 갇힘 (H1 §5.1): 무너진 자리에서 이 거리 안의 구조 대상이 갇히고, 구출에 드는 작업량은 이 범위에서 뽑는다. 붕괴 현장이 너무 어려워지면 반경부터 줄인다 (§9.3-4) */
+export const TRAP_R = 1.6, TRAP_WORK = [6, 10];
 /** 2차 붕괴: 보강하지 않은 균열 구조물은 시간이 지나면 다시 무너진다 (매 틱). */
 export function tickCollapse(sim: Sim, s: Scene, I: Incident): void {
   for (const p of s.props) {
@@ -660,6 +667,12 @@ export function tickCollapse(sim: Sim, s: Scene, I: Incident): void {
     const where = s.region[tidx(s, p.x, p.y)] >= 0 ? s.regions[s.region[tidx(s, p.x, p.y)]].name : '건물';
     const ev = raiseProblem(sim, I, 'ESCALATION', `${where} 2차 붕괴`, { role: 'SYSTEM', actor: '현장', text: `2차 붕괴! ${where}의 금이 간 구조물이 다시 무너졌습니다.`, imp: 3, truth: s.arrivedAt < 0 }, false);
     blast(sim, s, I, p.x, p.y, 2.6, 28, ev, 'crush');
+    // 무너진 자리 곁(TRAP_R 칸 안)에 있던 구조 대상은 잔해에 갇힌다 (현장에 있고, 업혀 있지 않고, 물속이 아닌 사람). 걷던 사람도 멈춘다.
+    // 지휘관은 본 대원이 알릴 때 안다 — 그 뒤 구출(extricate)이 받는다. 판정 뒤에는 일어나지 않는다 (§2.6). 난수는 목적별 흐름 injury:<현장>:trap
+    if (I.phase !== 'closed') for (let ci = 0; ci < s.casualties.length; ci++) { const c = s.casualties[ci];
+      if (c.dead || c.where !== 'scene' || c.inWater || c.mob === 'trapped' || c.health <= 0 || dist(c.x, c.y, p.x, p.y) > TRAP_R) continue;
+      c.mob = 'trapped'; c.trapWork = injuryRng(sim, s, 'trap').range(TRAP_WORK[0], TRAP_WORK[1]); c.walking = false; c.path = null;
+    }
     recordFall(sim, s, p.x, p.y, 2.6, 'secondary');      // (G4) 예전의 pushFx(…'boom'…) 자리: 무너짐은 폭발 그림이 아니라 'collapse' 로 그린다
   }
 }
@@ -679,7 +692,7 @@ export function tickGas(sim: Sim, s: Scene, I: Incident): void {
   }
   if (!leaking) return;
   // 통제되지 않은 출입구로 다가온 주변 시민이 가스를 마신다 (경찰이 출입구를 지키면 일어나지 않는다)
-  if (s.arrivedAt >= 0 && s.casualties.filter((c) => c.bystander2).length < 3) {
+  if (s.arrivedAt >= 0 && I.phase !== 'closed' && s.casualties.filter((c) => c.bystander2).length < 3) {      // 판정 뒤에 다친 사람이 새로 생기지 않는다 (§2.6)
     s.exits.forEach((e, k) => {
       if (s.smoke[tidx(s, Math.max(0, Math.min(s.w - 1, e.x)), Math.max(0, Math.min(s.h - 1, e.y)))] < 0.12 || exitCovered(sim, s, k)) return;
       if (!s.rng.chance(Math.min(0.03, 0.011 * sim.tune.hazardMul))) return;
@@ -749,6 +762,7 @@ function nearTile(s: Scene, x: number, y: number, t: number, r: number): number 
 
 /** 배회 실종자 (매 틱, 실종 현장만) */
 export function tickWander(sim: Sim, s: Scene, I: Incident): void {
+  if (I.phase === 'closed') return;      // 판정 뒤에는 아무 일도 일어나지 않는다 (§2.6)
   for (let ci = 0; ci < s.casualties.length; ci++) { const c = s.casualties[ci];
     if (!c.isTarget || c.dead || c.where !== 'scene') continue;
     let st = wanderStates.get(c);
@@ -779,13 +793,12 @@ export function tickWander(sim: Sim, s: Scene, I: Incident): void {
       st.phase = 'water'; st.col = wet % s.w;
       c.wander = false; c.path = null; c.inWater = true; c.mob = 'trapped'; c.trapWork = 0;
       c.x = wet % s.w; c.y = (wet / s.w) | 0;
-      const hp0 = c.health, bl0 = c.bleed;
-      c.health = Math.max(5, c.health - rng.range(WANDER.dunk[0], WANDER.dunk[1]));
-      c.bleed = Math.max(c.bleed, rng.range(WANDER.cold[0], WANDER.cold[1]) * sim.tune.bleedMul); c.bleed0 = c.bleed;
+      // 난수는 예전 자리·예전 순서 그대로(잃는 체력 → 찬물의 악화 → 떠내려가는 속도) 뽑고, 뽑은 값만 hurtCasTo 에 넘긴다. 이 일만으로는 숨지지 않는다(하한 5)
+      const to = Math.max(5, c.health - rng.range(WANDER.dunk[0], WANDER.dunk[1])), cold = rng.range(WANDER.cold[0], WANDER.cold[1]) * sim.tune.bleedMul;
       c.drift = st.speed = rng.range(WANDER.drift[0], WANDER.drift[1]);
       c.concealment = Math.min(c.concealment, 0.15);      // 물속에서 허우적거리는 사람은 덤불 속보다 눈에 띈다
-      c.causeEvent = raiseProblem(sim, I, 'HIDDEN_HAZARD', '배회하던 실종자가 개울에 빠짐', { role: 'SYSTEM', actor: '현장', imp: 3, truth: true, text: `(미발견) 배회하던 ${josa(c.label, '이/가')} 개울가에서 미끄러져 물에 빠졌습니다. 물살에 떠밀려 내려갑니다.` }, false);
-      noteCasHurt(c, 'drown', hp0, bl0, sim.t, -1, 'world', c.causeEvent); c.bleedCause = 'drown';      // (H1) 기록만 — 물속에 있는 동안의 악화는 익수로 적는다
+      const ev = raiseProblem(sim, I, 'HIDDEN_HAZARD', '배회하던 실종자가 개울에 빠짐', { role: 'SYSTEM', actor: '현장', imp: 3, truth: true, text: `(미발견) 배회하던 ${josa(c.label, '이/가')} 개울가에서 미끄러져 물에 빠졌습니다. 물살에 떠밀려 내려갑니다.` }, false);
+      hurtCasTo(sim, s, I, c, to, 'drown', { ev, bleed: cold }); c.bleedCause = 'drown';      // 물속에 있는 동안의 악화는 익수로 적는다
       continue;
     }
     // 바위 비탈·덤불에서 넘어짐
@@ -793,12 +806,12 @@ export function tickWander(sim: Sim, s: Scene, I: Incident): void {
     if (rough && rng.chance(bad ? WANDER.fallBad : WANDER.fall)) {
       st.phase = 'down';
       c.wander = false; c.path = null; c.mob = 'immobile';
-      const hp0 = c.health, bl0 = c.bleed;
-      c.health = Math.max(5, c.health - rng.range(WANDER.fallHit[0], WANDER.fallHit[1]));
+      const to = Math.max(5, c.health - rng.range(WANDER.fallHit[0], WANDER.fallHit[1])), bl0 = c.bleed;      // 하한 5
       c.bleed *= WANDER.fallMul; c.bleed0 = c.bleed;
+      if (c.bleed > bl0) c.bleedCause = 'fall';      // 넘어져 빨라진 악화는 추락으로 적는다
       if (s.tiles[i] === T.TREE) c.concealment = Math.max(c.concealment, Math.min(WANDER.hideMax, c.concealment + WANDER.brush));
-      c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '배회하던 실종자가 넘어져 다침', { role: 'SYSTEM', actor: '현장', imp: 2, truth: true, text: `(미발견) 배회하던 ${josa(c.label, '이/가')} ${s.tiles[i] === T.TREE ? '덤불' : '바위 비탈'}에서 넘어져 다쳤습니다. 더는 걷지 못합니다.` }, false);
-      noteCasHurt(c, 'fall', hp0, bl0, sim.t, -1, 'world', c.causeEvent);      // (H1) 기록만
+      const ev = raiseProblem(sim, I, 'ESCALATION', '배회하던 실종자가 넘어져 다침', { role: 'SYSTEM', actor: '현장', imp: 2, truth: true, text: `(미발견) 배회하던 ${josa(c.label, '이/가')} ${s.tiles[i] === T.TREE ? '덤불' : '바위 비탈'}에서 넘어져 다쳤습니다. 더는 걷지 못합니다.` }, false);
+      hurtCasTo(sim, s, I, c, to, 'fall', { ev });
       continue;
     }
     // 추위: 비·밤·안개 속에서 체온을 잃는다
@@ -807,7 +820,7 @@ export function tickWander(sim: Sim, s: Scene, I: Incident): void {
       st.phase = 'down';
       c.wander = false; c.path = null; c.mob = 'immobile';
       c.bleed += WANDER.chillBleed * sim.tune.bleedMul; c.bleed0 = c.bleed;
-      c.bleedCause = 'exposure';      // (H1) 기록만 — 추위로 늘어난 악화
+      c.bleedCause = 'exposure';      // 추위로 늘어난 악화는 실외 노출로 적는다
       c.concealment = Math.max(c.concealment, Math.min(WANDER.hideMax, c.concealment + WANDER.burrow));      // 추위에 정신이 흐려진 사람은 몸을 숨길 곳으로 기어든다
       const why = sim.weather === 'rain' ? '비에 젖어' : sim.weather === 'night' ? '밤 추위에' : sim.weather === 'fog' ? '차가운 안개 속에서' : '오래 헤매다';
       c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '실종자 저체온', { role: 'SYSTEM', actor: '현장', imp: 2, truth: true, text: `(미발견) ${josa(c.label, '이/가')} ${why} 체온을 잃고 덤불 밑으로 기어들어 웅크렸습니다. 상태가 빠르게 나빠집니다.` }, false);
@@ -826,9 +839,7 @@ function creekDrift(sim: Sim, s: Scene, I: Incident, c: Casualty, st: WanderStat
     return;
   }
   let snag = '';
-  const hp0 = c.health;
-  if (sec && st.rng.chance(WANDER.under)) c.health = Math.max(1, c.health - st.rng.range(WANDER.underHit[0], WANDER.underHit[1]));      // 물살에 휩쓸려 물을 먹는다 (숨이 멎는 것은 구조 대상 악화 규칙이 판정한다)
-  if (c.health < hp0) noteCasHurt(c, 'drown', hp0, c.bleed, sim.t, -1, 'world', c.causeEvent);      // (H1) 기록만
+  if (sec && st.rng.chance(WANDER.under)) hurtCasTo(sim, s, I, c, Math.max(1, c.health - st.rng.range(WANDER.underHit[0], WANDER.underHit[1])), 'drown', { ev: c.causeEvent });      // 물살에 휩쓸려 물을 먹는다 (하한 1 — 숨이 멎는 것은 구조 대상 악화 규칙이 판정한다)
   if (sec && st.rng.chance(WANDER.snag)) snag = '물가의 나무뿌리';
   const ny = c.y + c.drift * sim.dt, row = Math.round(ny);
   if (!snag && row !== Math.round(c.y)) {
@@ -857,6 +868,7 @@ const crushStates = new WeakMap<Casualty, CrushState>();
 
 /** 건물 붕괴 (매 틱, 승강기 갇힘을 뺀 붕괴 현장) */
 export function tickCrush(sim: Sim, s: Scene, I: Incident): void {
+  if (I.phase === 'closed') return;      // (§2.6)
   for (let ci = 0; ci < s.casualties.length; ci++) { const c = s.casualties[ci];
     if (c.dead || c.inWater) continue;
     let st = crushStates.get(c);
@@ -864,12 +876,12 @@ export function tickCrush(sim: Sim, s: Scene, I: Incident): void {
     if (st.done || c.mob === 'trapped') continue;
     st.done = true;      // 방금 풀려났다
     if (sim.t - st.since < CRUSH.after || !st.rng.chance(CRUSH.p)) continue;
-    const hp0 = c.health, bl0 = c.bleed;
-    c.health = Math.max(1, c.health - st.rng.range(CRUSH.hit[0], CRUSH.hit[1]));
+    const to = Math.max(1, c.health - st.rng.range(CRUSH.hit[0], CRUSH.hit[1])), bl0 = c.bleed;      // 이 일만으로는 숨지지 않는다(하한 1)
     c.bleed0 = Math.max(c.bleed0, st.rng.range(CRUSH.bleed[0], CRUSH.bleed[1]) * sim.tune.bleedMul);
     c.bleed = c.treated ? c.bleed0 * (1 - 0.9 * c.treatQ) : c.bleed0;
-    c.causeEvent = raiseProblem(sim, I, 'ESCALATION', `구출된 사람의 압궤 증후군 (구조 대상 ${c.label})`, { role: 'SYSTEM', actor: '현장', imp: 3, text: `구출된 ${c.label}의 상태가 급격히 나빠집니다 — 잔해에 ${Math.round(sim.t - st.since)}초 넘게 눌려 있던 몸이 풀리며 압궤 증후군이 왔습니다. 서둘러 처치·이송해야 합니다.` }, false);
-    noteCasHurt(c, 'crush', hp0, bl0, sim.t, -1, 'world', c.causeEvent);      // (H1) 기록만
+    if (c.bleed > bl0) c.bleedCause = 'crush';
+    const ev = raiseProblem(sim, I, 'ESCALATION', `구출된 사람의 압궤 증후군 (구조 대상 ${c.label})`, { role: 'SYSTEM', actor: '현장', imp: 3, text: `구출된 ${c.label}의 상태가 급격히 나빠집니다 — 잔해에 ${Math.round(sim.t - st.since)}초 넘게 눌려 있던 몸이 풀리며 압궤 증후군이 왔습니다. 서둘러 처치·이송해야 합니다.` }, false);
+    hurtCasTo(sim, s, I, c, to, 'crush', { ev });
   }
 }
 
@@ -884,6 +896,7 @@ const liftStates = new WeakMap<Scene, LiftState>();
 
 /** 승강기 갇힘 (매 틱, 승강기 현장만) */
 export function tickLift(sim: Sim, s: Scene, I: Incident): void {
+  if (I.phase === 'closed') return;      // (§2.6)
   let st = liftStates.get(s);
   if (!st) {
     const car = s.regions.find((r) => r.name === '승강기');
@@ -903,11 +916,8 @@ export function tickLift(sim: Sim, s: Scene, I: Incident): void {
     const c = s.casualties[e.id];
     if (c.dead || c.where !== 'scene' || c.mob !== 'mobile') continue;
     c.mob = 'immobile'; c.walking = false; c.path = null;
-    const hp0 = c.health, bl0 = c.bleed;
-    c.health = Math.min(c.health, e.hp);
-    c.bleed = Math.max(c.bleed, e.bleed * sim.tune.bleedMul); c.bleed0 = c.bleed;
-    c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '승강기에 갇힌 사람이 쓰러짐', { role: 'SYSTEM', actor: '현장', imp: 3, truth: true, text: `(문 안쪽) 승강기에 오래 갇혀 있던 ${josa(c.label, '이/가')} 숨이 가빠지더니 쓰러졌습니다 — 지병(심장)이 도졌습니다.` }, false);
-    noteCasHurt(c, 'illness', hp0, bl0, sim.t, -1, 'world', c.causeEvent); c.bleedCause = 'illness';      // (H1) 기록만
+    const ev = raiseProblem(sim, I, 'ESCALATION', '승강기에 갇힌 사람이 쓰러짐', { role: 'SYSTEM', actor: '현장', imp: 3, truth: true, text: `(문 안쪽) 승강기에 오래 갇혀 있던 ${josa(c.label, '이/가')} 숨이 가빠지더니 쓰러졌습니다 — 지병(심장)이 도졌습니다.` }, false);
+    hurtCasTo(sim, s, I, c, Math.min(c.health, e.hp), 'illness', { ev, bleed: e.bleed * sim.tune.bleedMul }); c.bleedCause = 'illness';      // 그 값까지 떨어진다 (이미 더 낮으면 그대로)
   }
 }
 
@@ -930,6 +940,7 @@ const medStates = new WeakMap<Casualty, MedState>();
 
 /** 응급 환자 (매 틱, 응급 환자 현장만) */
 export function tickMedical(sim: Sim, s: Scene, I: Incident): void {
+  if (I.phase === 'closed') return;      // (§2.6)
   for (let ci = 0; ci < s.casualties.length; ci++) { const c = s.casualties[ci];
     if (c.dead || c.where === 'hospital') continue;
     let st = medStates.get(c);
@@ -951,12 +962,11 @@ export function tickMedical(sim: Sim, s: Scene, I: Incident): void {
     } else if (!st.fired && sim.t >= st.at) {
       st.fired = true;
       if (st.kind === 'arrest') {
-        const hp0 = c.health;
-        c.health = Math.min(c.health, st.rng.range(MEDICAL.arrestHp[0], MEDICAL.arrestHp[1]));
+        const to = Math.min(c.health, st.rng.range(MEDICAL.arrestHp[0], MEDICAL.arrestHp[1]));
         c.bleed0 = st.rng.range(MEDICAL.arrestBleed[0], MEDICAL.arrestBleed[1]) * sim.tune.bleedMul; c.bleed = c.bleed0;
         c.treated = false; c.treatQ = 0; c.treatProg = 0; c.bystander = false;      // 실신에 맞춘 처치도, 곁을 지키던 신고자의 돌봄도 심정지에는 듣지 않는다 (가슴 압박이 필요하다)
-        c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '실신 환자가 심정지로 넘어감', { role: 'SYSTEM', actor: '현장', imp: 3, truth: !seen, text: `${seen ? '' : '(현장 도착 전) '}환자 ${c.label}의 상태가 급변했습니다 — 심정지. 실신의 원인은 부정맥이었습니다.` }, false);
-        noteCasHurt(c, 'illness', hp0, c.bleed, sim.t, -1, 'world', c.causeEvent); c.bleedCause = 'illness';      // (H1) 기록만
+        const ev = raiseProblem(sim, I, 'ESCALATION', '실신 환자가 심정지로 넘어감', { role: 'SYSTEM', actor: '현장', imp: 3, truth: !seen, text: `${seen ? '' : '(현장 도착 전) '}환자 ${c.label}의 상태가 급변했습니다 — 심정지. 실신의 원인은 부정맥이었습니다.` }, false);
+        hurtCasTo(sim, s, I, c, to, 'illness', { ev }); c.bleedCause = 'illness';
       } else {
         c.bleed0 *= st.rng.range(MEDICAL.internalMul[0], MEDICAL.internalMul[1]);
         c.bleed = c.treated ? c.bleed0 * (1 - 0.9 * c.treatQ * MEDICAL.care) : c.bleed0;
@@ -970,16 +980,16 @@ export function tickMedical(sim: Sim, s: Scene, I: Incident): void {
 
 /** 수난 사고: 물에 빠진 사람은 하류로 떠내려간다. 다리나 물가에 걸리면 멈추고, 현장 밖으로 벗어나면 잃는다 (매 틱). */
 export function tickWater(sim: Sim, s: Scene, I: Incident): void {
+  if (I.phase === 'closed') return;      // 판정 뒤에는 떠내려가 숨지는 사람도 없다 (§2.6)
   for (const c of s.casualties) {
     if (!c.inWater || c.dead || c.where !== 'scene' || !c.drift) continue;
     const nx = c.x + c.drift * sim.dt;
     if (nx >= s.w - 1.2) {
-      const hp0 = c.health;
-      c.dead = true; c.health = 0; c.tDead = sim.t; c.inWater = false;
-      c.lost = true;      // (H1) 현장 밖으로 떠내려갔다 — 화면이 그리지 않는다
       const known = c.tDiscovered >= 0;
-      c.causeEvent = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'casualty', imp: 3, truth: !known, causes: [I.lastEvent], text: known ? `구조 대상 ${c.label}: 물살에 휩쓸려 현장 밖으로 떠내려갔습니다. 구조에 실패했습니다.` : `(미발견) 구조 대상 ${c.label}가 물살에 휩쓸려 떠내려갔습니다.` });
-      noteCasHurt(c, 'drown', hp0, c.bleed, sim.t, -1, 'world', c.causeEvent);      // (H1) 기록만 — 남은 체력을 익수로 적고, 숨지게 한 원인도 익수로 (이미 정해져 있으면 그대로)
+      const ev = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'casualty', imp: 3, truth: !known, causes: [I.lastEvent], text: known ? `구조 대상 ${c.label}: 물살에 휩쓸려 현장 밖으로 떠내려갔습니다. 구조에 실패했습니다.` : `(미발견) 구조 대상 ${josa(c.label, '이/가')} 물살에 휩쓸려 떠내려갔습니다.` });
+      hurtCasTo(sim, s, I, c, 0, 'drown', { ev });      // 남은 체력을 익수로 적고, 숨지게 한 원인도 익수로 (이미 정해져 있으면 그대로)
+      c.dead = true; c.health = 0; c.tDead = sim.t; c.inWater = false;      // 사망은 지금처럼 그 자리에서
+      c.lost = true;      // 현장 밖으로 떠내려갔다 — 화면이 그리지 않는다
       continue;
     }
     if (s.tiles[tidx(s, Math.round(nx + 0.4), Math.round(c.y))] !== T.WATER) { c.drift = 0; continue; }      // 다리 기둥이나 물가에 걸렸다

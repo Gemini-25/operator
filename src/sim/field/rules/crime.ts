@@ -24,18 +24,7 @@ export function detonate(sim: Sim, s: Scene, I: Incident, p: Prop): void {
   p.blocking = false; s.propAt[tidx(s, p.x, p.y)] = -1;      // 터진 자리는 더 이상 길을 막지 않는다
   const rg = s.region[tidx(s, p.x, p.y)], where = rg >= 0 ? s.regions[rg].name : '건물 안';
   const ev = raiseProblem(sim, I, 'ESCALATION', '폭발물 폭발', { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `폭발! ${where}에 있던 폭발물이 터졌습니다.` }, false);
-  blast(sim, s, I, p.x, p.y, 3.4, 55, ev);
-  // 폭발에 휩쓸린 사람은 쓰러져 스스로 나오지 못한다
-  for (const c of s.casualties) {
-    if (c.dead || c.where !== 'scene' || c.health >= 80) continue;
-    const d = dist(c.x, c.y, p.x, p.y);
-    if (d > 3.4) continue;
-    if (c.mob === 'mobile') c.mob = 'immobile';
-    c.walking = false; c.path = null;
-    const bl0 = c.bleed;
-    c.bleed = Math.max(c.bleed, (0.09 + 0.09 * (1 - d / 3.4)) * sim.tune.bleedMul); c.bleed0 = c.bleed;
-    if (c.bleed > bl0) c.bleedCause = 'blast';      // (H1) 기록만 — 체력 피해는 위의 blast 가 이미 적었다
-  }
+  blast(sim, s, I, p.x, p.y, 3.4, 55, ev);      // 폭발에 휩쓸린 사람(체력 80 아래)이 쓰러져 스스로 나오지 못하고 피를 흘리는 것도 blast 가 한다 (모든 폭발이 같은 규칙 — H1)
   // 불: 둘레 두 칸의 바닥과 가구 (벽 너머로는 번지지 않는다)
   for (let y = Math.max(0, p.y - 2); y <= Math.min(s.h - 1, p.y + 2); y++) for (let x = Math.max(0, p.x - 2); x <= Math.min(s.w - 1, p.x + 2); x++) {
     const j = tidx(s, x, y), t = s.tiles[j];

@@ -15,7 +15,7 @@ import { applyWater, flashbang, hostageNear, hostileActive, isHeld, placeAtSafe,
 import { coverRoll, fireShot } from './damage';
 import { breachHowFor, lastFx, noteCollateral, noteHit, noteShot, recBreach, recCuff, recTaser, weaponOf } from './fxlog';
 import { detonate } from './rules/crime';
-import { bandOf, noteCasHurt, noteHostileHurt, noteInjury } from './injury';
+import { hurtCas, initialCause, injuryRng, noteHostileHurt } from './injury';
 
 export function makeTask(kind: TaskKind, label: string, w: WorkItem | null = null): Task {
   return {
@@ -363,6 +363,8 @@ export function rangeFactor(sim: Sim, rid: number, d: number): number {
  * 돌려주는 값: 이번 틱에 쐈는가 (쐈으면 부른 쪽은 그 틱에 움직이지 않는다).
  */
 const TASER = { range: 4, hit: 0.72, stun: 3.2, wait: 4 };
+/** 구출 중 사고 (H1 §5.1): 붕괴 현장에서 구출을 마칠 때의 확률(× 위험 배율 × (1.2 − 쓴 장비의 값))과 그때 잃는 체력. 붕괴 현장이 너무 어려워지면 확률을 줄인다 (§9.3-4) */
+export const MISHAP = { p: 0.06, hit: [6, 14] };
 function tryTaser(sim: Sim, s: Scene, a: FieldAgent, h: Hostile): boolean {
   if (h.weapon === 'gun' || h.state !== 'fight' || sim.t < h.stunUntil) return false;
   if (sim.t - (a.taserAt ?? -99) < TASER.wait || kitUses(sim, a.rid, 'taser') <= 0 || !hasKit(sim, a.rid, 'taser')) return false;
@@ -394,7 +396,7 @@ function shootAt(sim: Sim, s: Scene, a: FieldAgent, hid: number): void {
   // 빗나간 탄이 겨눈 점 (판정 흐름에서 x 다음 y — 예전 그림 줄과 같은 호출 순서)
   const mx = h.x + (hit ? 0 : s.rng.range(-0.8, 0.8)), my = h.y + (hit ? 0 : s.rng.range(-0.8, 0.8));
   const hc = hostageNear(s, h);
-  const struck = !hit && hc && s.rng.chance(0.2) ? hc : null;      // 인질 곁의 용의자를 향해 쏜 빗나간 탄이 인질에게 간다 (판정 흐름의 순서는 예전과 같다: 흔들기 다음)
+  const struck = !hit && hc && s.rng.chance(0.2) && I.phase !== 'closed' ? hc : null;      // 인질 곁의 용의자를 향해 쏜 빗나간 탄이 인질에게 간다 (판정 흐름의 순서는 예전과 같다: 흔들기 다음)
   const ct = !hit && covered ? coverRoll(sim, s, h.x, h.y, a.x, a.y) : -1;      // 빗나간 탄이 용의자의 엄폐 가구에 맞는가 (파손용 흐름)
   // 탄이 실제로 간 선: 지나간 창이 깨지고 엄폐 가구가 닳는다. 그림은 같은 선을 그 끝(end)까지 그린다
   const end = hit ? fireShot(sim, s, a.x, a.y, h.x, h.y, 'body') : struck ? fireShot(sim, s, a.x, a.y, struck.x, struck.y, 'body') : ct >= 0 ? fireShot(sim, s, a.x, a.y, h.x, h.y, ct) : fireShot(sim, s, a.x, a.y, mx, my, 'miss');
@@ -404,10 +406,9 @@ function shootAt(sim: Sim, s: Scene, a: FieldAgent, hid: number): void {
   if (sim.t >= h.stunUntil) { h.alertUntil = sim.t + 6; h.facing = Math.atan2(a.y - h.y, a.x - h.x); }
   if (struck) {
     // 인질 곁의 용의자를 향해 쏜 빗나간 탄
-    const hp0 = struck.health, bl0 = struck.bleed;
-    struck.health -= s.rng.range(22, 34); struck.mob = 'immobile'; struck.bleed = Math.max(struck.bleed, 0.15); struck.bleed0 = struck.bleed; struck.walking = false;
-    struck.causeEvent = raiseProblem(sim, I, 'ESCALATION', '교전 중 인질 피격', { role: 'SYSTEM', actor: '현장', rid: r.id, imp: 3, text: `교전 중 빗나간 탄에 인질(구조 대상 ${struck.label})이 다쳤습니다!` }, false);
-    noteCasHurt(struck, 'gunshot', hp0, bl0, sim.t, r.id, 'responder', struck.causeEvent);      // (H1) 기록만
+    const dmg = s.rng.range(22, 34);      // 판정 흐름에서 뽑는 자리는 그대로
+    const ev = raiseProblem(sim, I, 'ESCALATION', '교전 중 인질 피격', { role: 'SYSTEM', actor: '현장', rid: r.id, imp: 3, text: `교전 중 빗나간 탄에 인질(구조 대상 ${struck.label})이 다쳤습니다!` }, false);
+    hurtCas(sim, s, I, struck, dmg, 'gunshot', { by: r.id, byKind: 'responder', ev, bleed: 0.15, immobile: true });
     noteCollateral(sim, s, shot, struck, a.x, a.y);
   }
   if (!I.problems.some((q) => q.detail === '교전 발생')) {
@@ -596,6 +597,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         c.inWater = false; c.drift = 0; c.mob = 'immobile'; c.trapWork = 0; c.tFreed = sim.t;
         c.x = Math.round(a.x); c.y = Math.round(a.y); c.px = c.x; c.py = c.y;
         c.bleed *= 0.35; c.bleed0 = c.bleed;      // 물 밖으로 나오면 악화가 느려진다 (저체온은 남는다)
+        c.bleedCause = 'exposure';      // 남은 악화는 익수가 아니라 실외 노출(저체온)로 적는다 (H1 §2.3)
         learnQuiet(sim, a, casFact(sim, s, c, r.name));
         emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: `구조 대상 ${c.label}를 물에서 끌어냈습니다. 처치와 이송이 필요합니다.` });
         r.xpGained += 0.005;
@@ -612,12 +614,22 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
       if (w && relieve(sim, s, a, w, c.x, c.y)) return;      // 교대: 내가 손을 뗐다
-      const rate = r.skills.rescue * (0.35 + 0.65 * toolUse(sim, a.rid, 'extricate', I)) * staminaF(r) * (s.smoke[tileOf(s, a.x, a.y)] > 0.4 ? 0.7 : 1);
+      const tool = toolUse(sim, a.rid, 'extricate', I);
+      const rate = r.skills.rescue * (0.35 + 0.65 * tool) * staminaF(r) * (s.smoke[tileOf(s, a.x, a.y)] > 0.4 ? 0.7 : 1);
       c.trapWork -= rate * dt; drain(sim, a, 0.8);
       a.ring = clamp(1 - c.trapWork / 16, 0.05, 1);
       if (c.trapWork <= 0) {
         c.mob = 'immobile'; c.tFreed = sim.t;
         if (c.inVehicle !== null) { c.inVehicle = null; c.x = Math.round(a.x); c.y = Math.round(a.y); }
+        // 구출 중 사고 (H1 §5.1): 붕괴 현장에서 구출을 마칠 때 잔해가 내려앉아 더 다칠 수 있다 — 장비가 좋을수록 드물다. 난수는 목적별 흐름 injury:<현장>:extricate.
+        // 승강기 갇힘에는 잔해가 없다. 판정 뒤에는 일어나지 않는다 (§2.6)
+        if (s.kind === 'collapse' && s.variant !== 'elevator' && I.phase !== 'closed') {
+          const xr = injuryRng(sim, s, 'extricate');
+          if (xr.chance(MISHAP.p * sim.tune.hazardMul * (1.2 - tool))) {
+            const ev = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, causes: [c.causeEvent], text: `구출 도중 잔해가 내려앉아 구조 대상 ${josa(c.label, '이/가')} 더 다쳤습니다.` });
+            hurtCas(sim, s, I, c, xr.range(MISHAP.hit[0], MISHAP.hit[1]), 'crush', { ev });
+          }
+        }
         learnQuiet(sim, a, casFact(sim, s, c, r.name));
         emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, text: `구조 대상 ${c.label} 구출 완료. 이송이 필요합니다.` });
         r.xpGained += 0.004;
@@ -662,7 +674,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     case 'carry': case 'escort': {
       const c = s.casualties[t.cas];
       if (c.dead || c.where === 'safe' || c.where === 'loaded' || c.where === 'hospital') { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
-      if (c.mob === 'trapped') { finishTask(sim, s, a, false, 'gone'); return; }
+      // 갇혔다(맡은 뒤에 2차 붕괴로 갇힌 사람 등): 옮길 수 없다. 지휘관의 믿음이 '거동 불가'로 남아 같은 지시를 되풀이하지 않게 다시 알린다 (낡은 믿음)
+      if (c.mob === 'trapped') { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, false, 'gone'); return; }
       if (a.carrying !== c.id && isHeld(sim, s, c.id)) { finishTask(sim, s, a, false, 'unsafe'); return; }      // 용의자 곁의 인질은 데리고 나올 수 없다
       if (c.walking) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
       if (c.where === 'carried' && a.carrying !== c.id) {
@@ -689,9 +702,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       c.x = a.x - a.fx * 0.45; c.y = a.y - a.fy * 0.45;
       // 척추 고정판: 차·잔해에서 꺼낸 사람(교통사고·붕괴)을 고정판 없이 옮기면 옮기는 동안 더 나빠진다 (악화 ×1.12).
       // 옮기는 사람이나 곁에서 돕는 사람이 고정판을 가졌으면 괜찮다
-      const hpC = c.health;
-      if ((s.kind === 'traffic' || s.kind === 'collapse') && c.tFreed >= 0 && !c.dead && !carryHas(sim, s, a, 'spineBoard')) c.health -= c.bleed * 0.12 * dt;
-      if (c.health < hpC && c.bleedCause !== undefined) c.injuries = noteInjury(c.injuries, c.bleedCause, hpC - c.health, sim.t, bandOf(c.health));      // (H1) 기록만: 더해진 악화를 그 상처의 원인으로
+      // 더해진 악화는 그 상처의 원인으로 적는다 (매 틱 피해)
+      if ((s.kind === 'traffic' || s.kind === 'collapse') && c.tFreed >= 0 && !c.dead && !carryHas(sim, s, a, 'spineBoard')) hurtCas(sim, s, I, c, c.bleed * 0.12 * dt, c.bleedCause ?? initialCause(s, I, c), { tick: true });
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m === 'arrived') {
         c.where = 'safe'; c.tSafe = sim.t; placeAtSafe(s, c); a.carrying = -1;

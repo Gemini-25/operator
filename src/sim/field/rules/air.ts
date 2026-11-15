@@ -153,7 +153,7 @@ function tellDispatch(sim: Sim, s: Scene, I: Incident, op: AirOp, u: Unit): void
   if (I.phase === 'closed' || (s.air !== undefined && s.air.length > 0)) return;
   for (const a of s.agents) if (a.status === 'active') return;
   for (const uid of I.assigned) { const q = sim.units[uid]; if (q.state === 'enroute' || q.state === 'turnout') return; }
-  const o = outstanding(op.eye);
+  const o = outstanding(op.eye, sim.t);      // 대피 중이라던 사람의 소식이 오래 끊겼으면 남은 일로 센다 (H1 §5.2)
   if (!(o.patients > 0 || o.fire || o.hostile)) {
     if (allAboard(s, op.eye)) {
       emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 2, causes: [I.lastEvent], text: `${u.callsign}: 확인한 구조 대상은 모두 실려 갔습니다. 현장에 남은 사람이 없어 상황을 종료합니다.` });
@@ -207,6 +207,7 @@ function hoistDone(sim: Sim, s: Scene, I: Incident, op: AirOp, u: Unit): void {
   const c = s.casualties[op.target], eye = op.eye, name = sim.responders[eye.rid].name;
   c.inWater = false; c.drift = 0; c.mob = 'immobile'; c.trapWork = 0; c.tFreed = sim.t;
   c.bleed *= 0.35; c.bleed0 = c.bleed;      // 물 밖으로 나오면 악화가 느려진다 (저체온은 남는다)
+  c.bleedCause = 'exposure';      // 남은 악화는 익수가 아니라 실외 노출(저체온)로 적는다 (H1 §2.3 — 지상의 waterRescue 와 같다)
   if (u.patients.length < seatsOf(u)) { c.where = 'loaded'; c.tLoaded = sim.t; c.x = op.x; c.y = op.y; c.px = c.x; c.py = c.y; u.patients.push(c.id); u.patientsIncident = I.id; }
   else { c.where = 'safe'; c.tSafe = sim.t; placeAtSafe(s, c); }      // 자리가 없으면 안전 구역에 내려놓는다
   learnQuiet(sim, eye, casFact(sim, s, c, name));

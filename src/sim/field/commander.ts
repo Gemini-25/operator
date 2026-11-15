@@ -387,7 +387,8 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         if (hoistUp) want(sim, s, 'hoist', { cas: f.id }, 0.92 + urg, 1);      // 상공에 호이스트를 단 헬기가 있으면 함께 낸다 — 먼저 끝나는 쪽이 이긴다
         continue;
       }
-      if (c.mob === 'trapped') { want(sim, s, 'extricate', { cas: f.id }, 0.82 + urg, 2); continue; }
+      // 갇혀 있다: 구출이 먼저다. 갇히기 전에 낸 이송·동행 지시는 거둔다 (2차 붕괴로 다시 갇힌 사람 — 두면 '대상이 그 위치에 없다'는 실패가 구출이 끝날 때까지 되풀이된다)
+      if (c.mob === 'trapped') { clear(['carry', 'escort']); want(sim, s, 'extricate', { cas: f.id }, 0.82 + urg, 2); continue; }
       if (c.mob === 'mobile') {                // 스스로 대피 중 — 한참 지나도 도착 보고가 없으면 확인하러 보낸다
         if (sim.t - f.t > 32) want(sim, s, 'escort', { cas: f.id }, 0.62 + urg);
         continue;
@@ -680,13 +681,20 @@ function manageAmbulances(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void 
   }
 }
 
-/** 지휘관의 믿음 기준으로 아직 남은 일. 현장을 비우게 될 때(환자 이송 등) 종료할지 판단하는 데 쓴다. */
-export function outstanding(a: FieldAgent): { patients: number; fire: boolean; hostile: boolean; search: boolean } {
+/** 스스로 대피 중이라던 사람의 소식이 이만큼(초) 끊기면 대피를 마친 것으로 치지 않는다 — 동행 확인(escort)을 보내는 기준과 같다 */
+const MOBILE_STALE = 32;
+/**
+ * 지휘관의 믿음 기준으로 아직 남은 일. 현장을 비우게 될 때(환자 이송 등) 종료할지 판단하는 데 쓴다.
+ * now 를 주면(현장이 비었을 때의 종료 판단): 현장에서 스스로 대피 중이라던 사람 가운데 소식이 MOBILE_STALE 초 넘게 끊긴 사람을 남은 일로 센다 —
+ * 대피하다 쓰러졌을 수 있다(H1 §5.2). 주지 않으면 예전처럼 대피 중인 사람을 모두 뺀다.
+ */
+export function outstanding(a: FieldAgent, now = -1): { patients: number; fire: boolean; hostile: boolean; search: boolean } {
   const B = a.beliefs;
   let patients = 0;
   for (const f of B.list('cas')) {
     const c = f.value as CasBelief;
-    if (c.band === 3 || c.where === 'loaded' || c.where === 'hospital' || (c.where === 'safe' && c.band === 0) || c.mob === 'mobile') continue;
+    if (c.band === 3 || c.where === 'loaded' || c.where === 'hospital' || (c.where === 'safe' && c.band === 0)) continue;
+    if (c.mob === 'mobile' && !(now >= 0 && c.where === 'scene' && now - f.t > MOBILE_STALE)) continue;
     patients++;
   }
   return {

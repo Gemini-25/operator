@@ -975,7 +975,7 @@ for (const [seed, d, f] of cases) { const sim = new Sim(seed, parseDifficulty(d)
 
 **코드가 정본이다.** 이 절은 묶음이 끝나기 전에 이어받는 사람(또는 뒤 단계의 작업자)이 본문과 코드가 어긋난 곳을 헤매지 않게 하려는 것이다. 마지막 문서 단계(7)가 이 절을 정리해 최종 "구현 메모"로 만든다. 브랜치·기준 수치·끊겼을 때 이어받는 법은 `docs/specs/README.md` "실행 방법".
 
-**상태** (2026-11-15): 단계 0(해시 목록만)·1·2 가 끝났다 — 둘 다 결과가 바뀌지 않는 단계다. `wf/injuries` 는 단계 2 끝을 가리킨다(작업 브랜치 `wf/injuries-s12`, 시작 커밋 `f4837e8` = R1 단계 0~7 이 합쳐진 주 브랜치). 다음은 단계 3 이다.
+**상태** (2026-11-15): 단계 0(기준)·1·2·3 이 끝났다. 단계 1·2 는 결과가 바뀌지 않는 단계라 R1 의 검토·문서와 겹쳐 먼저 했고(작업 브랜치 `wf/injuries-s12`, 시작 커밋 `f4837e8`), R1 최종본(`f9965c0`)을 받은 뒤 단계 0 의 기준을 다시 재고 단계 3(구조 대상)을 했다(작업 브랜치 `wf/injuries-s03` — 이 절 끝의 "단계 0 — 기준을 다시 쟀다"·"단계 3"). `wf/injuries` 는 단계 3 끝을 가리킨다. 다음은 단계 4a-1(대원 — 모델)이다.
 
 **R1 과 겹쳐 돌았다.** 이 덩어리는 R1 의 독립 검토와 단계 8(균형과 문서)이 다른 작업 폴더에서 도는 동안 먼저 했다. 그래서:
 
@@ -1140,3 +1140,120 @@ scratchpad `wf-injuries/`(세션 폴더 — 새 컨테이너에서는 없다. �
 | `sim/field/rules/crime.ts` | `detonate` | 폭발이 키운 출혈의 `bleedCause` |
 | `ui/Mark.tsx` | `RoleDot` | 건강 반 테의 색을 `TRIAGE` 로, `dead` (R1 이 만든 대원 칩) |
 | `view/audio.ts` | 기록 소리의 `problem` 갈래 앞 | §8.6 (선택 항목 — 표에는 "2·6") |
+
+### 단계 0 — 기준을 다시 쟀다 (R1 최종본 `f9965c0`, 단계 3 작업자)
+
+R1 최종본을 `git merge` 로 받은 뒤(충돌 없음 — `12a8b2b`) 다시 쟀다. **이 값이 단계 3 부터의 기준이다**(위 "단계 0 — 기준 (해시 목록만)" 절의 `h0.txt` 는 R1 최종본 전의 것이라 `h0-f4837e8.txt` 로 옮겼다).
+
+- 받은 뒤의 확인: `npx tsc --noEmit` · `tests/injuries.test.ts` 33개 · `tests/crews.test.ts` 70개 통과. 장부(`diag_ledger.ts`, 69교대 — 구조 대상 2,661 · 대원 4,572 · 용의자 288): 불일치는 숨진 사람의 넘친 양 3건뿐, 출혈 원인이 빈 채 악화 중인 사람 0, 원인 없는 사망 0 — **R1 최종본에서 기록이 빠진 피해 자리는 없다.**
+- `f9965c0`(H1 을 하나도 넣지 않은 자리)과 `12a8b2b`(단계 1·2 를 합친 자리)의 해시 목록 68교대가 한 글자도 다르지 않다(`base/head-12a8b2b-hashes.txt`) — 기준은 `f9965c0` 을 따로 푼 사본(`base-src/`)에서 쟀다.
+- 저장한 곳: scratchpad `wf-injuries/base/`(그 폴더의 `README.md` 가 색인). §9.2 의 `before-*`(보통·쉬움·어려움·극한 60교대 `--json`·`--scen`, 강제 20교대 `armed/shooter`·`armed/hostage`·`armed/siege`·`armed/bomb`·`fire/arson`)에 더해 완료 조건 4 의 `armed/riot`, 단계 3 이 건드리는 현장(`collapse`·`collapse/gasblast`·`collapse/elevator`·`collapse/crane`·`hazmat`·`water`·`search`·`traffic/bus`·`fire`·`armed/domestic`), 재난(`--disaster tsunami`·`quake`), 부대 규모 1(30교대), `--metrics 40`, 해시 목록(`before-hashes.txt` = `h0.txt`)을 쟀다. 다시 재는 법: `measure.sh <소스 폴더> <결과 폴더> <before|after>`(4~5분), 견주기 `node compare.mjs base <결과 폴더>`.
+
+| 기준 (`f9965c0`) | 보통 | 쉬움 | 어려움 | 극한 |
+|---|---|---|---|---|
+| 사건 (60교대) | 848 | 669 | 1,104 | 1,394 |
+| 성공 / 성공+대응 지연 | 80.5% / 84.7% | 87.6% / 89.4% | 63.0% / 69.1% | 36.4% / 48.3% |
+| 실패+미해결 | 6.0% | 4.5% | 15.9% | 34.1% |
+| 한계 시간 + 방치 (+ 무대응) | 4 (한계 1 + 놓친 추격전 3) | 1 | 15 | 40 (+1) |
+| 구조율 (숨짐 · 미발견) | 94.1% (99 · 11) | 95.9% (44 · 9) | 87.1% (306 · 34) | 75.2% (836 · 50) |
+| 다친 대원 / 교대 | 0.17 | 0.08 | 0.57 | 0.82 |
+
+보통 60교대의 유형별 성공률: 화재 70.9 · 교통 82.8 · 실종 97.0 · 무장 76.9 · 응급 83.2 · 붕괴 78.3 · 가스 82.3 · 수난 78.4%. 강제 20교대의 그 시나리오 줄(n · 성공 · 부분 · 지연 · 미해결 · 실패 | 한계 시간·무대응·방치): `armed/shooter` 23 · 21 · 2 · 0 · 0 · 0 | 0·0·0, `armed/hostage` 20 · 18 · 2 · 0 · 0 · 0 | 0·0·0, `armed/siege` 21 · 15 · 4 · 2 · 0 · 0 | 0·0·0, `armed/bomb` 21 · 21 · 0 · 0 · 0 · 0 | 0·0·0, `fire/arson` 43 · 30 · 7 · 1 · 0 · 5 | 0·0·0, `armed/riot` 22 · 19 · 3 · 0 · 0 · 0 | 0·0·0 (그 20교대 전체의 한계 시간 2건은 다른 사건). 부대 규모 1(30교대): 성공 60%, 한계 시간 4 · 방치 2. 지표(보통 40): 교착 후보 0 · 잊힌 사건 0 · C1~C5 0 · 반복 최대 9.
+
+### 단계 3 (`896351d` · `a1fec0a` · `2978770` · `41cf379` · `7f5ff79` · `c34db3d`) — 구조 대상
+
+**실제 이름**
+
+| 파일 | 이름 | 비고 |
+|---|---|---|
+| `field/injury.ts` | `HurtOpts { by, byKind, ev, tick, bleed, immobile, down }` | 본문 §2.7 그대로. 구조 대상이 쓰는 것은 `by`·`byKind`·`ev`·`bleed`·`immobile` — `tick`·`down` 은 4a·5 가 쓴다 |
+| | `hurtCas(sim, s, I, c, amount, cause, o?)` | 본문 그대로. 숨졌거나 판정 뒤면 돌아간다. 체력 − amount, 그 원인으로 한 줄(같은 원인은 합친다), `o.ev` → `Injury.ev`·`c.causeEvent`, `o.bleed` → `c.bleed = max(c.bleed, o.bleed)`·`c.bleed0 = c.bleed`(키웠으면 `bleedCause = cause`), `o.immobile` → 걷던 사람을 세운다(갇힌 사람은 그대로), 0 이하면 `deathCause`(이미 있으면 그대로). 문구는 남기지 않는다 |
+| | `hurtCasTo(sim, s, I, c, to, cause, o?)` | **본문에 없다.** 깎을 양 대신 깎은 뒤의 체력을 받는다 — 하한·상한이 걸린 자리가 쓴다(아래 "다르게 한 곳" 1). 지금보다 높은 값은 무시한다 |
+| `field/hazards.ts` | `TRAP_R`(1.6) · `TRAP_WORK`([6, 10]) | 2차 붕괴 곁의 갇힘 — §9.3-4 의 손잡이 |
+| `field/executor.ts` | `MISHAP { p: 0.06, hit: [6, 14] }` | 구출 중 사고 — §9.3-4 의 손잡이 |
+| `field/rules/injury.ts` | `WALK_STOP`(40) | 걷던 사람이 쓰러지는 체력. 규칙 하나가 등록돼 있다(4c·5 가 같은 파일에 더한다) |
+| `field/commander.ts` | `outstanding(a, now = -1)` · `MOBILE_STALE`(32, 안쪽) | `now` 를 주면 현장에서 대피 중이라던 사람(`mob 'mobile'`·`where 'scene'`)의 소식이 32초 넘게 끊겼을 때 남은 일로 센다. 부르는 곳 셋: `sceneManager` 7)번 블록과 `rules/air.ts` 의 `tellDispatch` 는 `sim.t` 를 넘기고, `airDecide.watchBusy` 는 넘기지 않는다(`patients` 를 읽지 않는다). 4a 가 `mates` 를 더한다 |
+
+**`hurtCas` 로 옮긴 자리** (단계 1 이 붙여 둔 `const hp0 …` 과 `noteCasHurt` 줄을 지웠다. 난수는 예전 자리·예전 순서 그대로 뽑고 뽑은 값만 넘긴다)
+
+| 파일 · 함수 | 넘기는 것 |
+|---|---|
+| `hazards.blast` (구조 대상 쪽) | `hurtCas(…, dmg × 0.8 × (1 − d/(r+1)), cause, { ev })`. 원인이 `blast` 이고 그 뒤 체력이 80 아래면 한 번 더 `hurtCas(…, 0, 'blast', { bleed: (0.09 + 0.09 × (1 − d/r)) × bleedMul, immobile: true })` |
+| `hazards.panicShot` · 인질 시한 · 총격범 · `executor.shootAt` 의 빗나간 탄 | `hurtCas(…, 뽑아 둔 피해, 원인, { by, byKind, ev, bleed: 0.18 / 0.18 / 0.13 / 0.15, immobile: true })` — 기록(`raiseProblem`)을 먼저 남기고 그 id 를 넘긴다 |
+| `hazards.tickWander` 개울에 빠짐 · 넘어짐, `creekDrift` 물을 먹음 | `hurtCasTo(…, Math.max(5 또는 1, c.health − x), 'drown' / 'fall', { ev[, bleed] })`. 넘어져 빨라진 악화는 그 자리가 `bleedCause = 'fall'`, 추위는 `'exposure'` |
+| `hazards.tickCrush` · `tickLift` · `tickMedical`(심정지) | `hurtCasTo(…, Math.max(1, …) / Math.min(c.health, e.hp) / Math.min(c.health, 뽑은 값), 'crush' / 'illness' / 'illness', { ev })`. 출혈은 그 자리의 식 그대로 |
+| `hazards.tickWater` (떠내려가 숨짐) | 기록을 먼저 남기고 `hurtCasTo(…, 0, 'drown', { ev })` 뒤에 `c.dead = true …`(사망은 지금처럼 그 자리에서) |
+| `executor` `case 'carry'` (척추 고정판 없이 옮김) | `hurtCas(…, c.bleed × 0.12 × dt, c.bleedCause ?? initialCause(…), { tick: true })` |
+| `rules/disaster.ts` 해일 (구조 대상) | `hurtCasTo(…, Math.max(8, c.health − x), 'drown', { bleed })` — 대원 쪽은 4a |
+
+`tickCasualties` 의 매 틱 악화는 본문대로 자기 식을 그대로 두고 `noteDecay` 로 적는다. 가스 노출 시민(`tickGas`)은 다친 채 새로 생기는 사람이라 만드는 자리가 `noteInjury` 로 적는다(그대로). 구조 대상의 체력을 직접 깎는 줄은 `tickCasualties` 의 악화·사망 처리, `tickWater` 의 사망 처리, 처치 둘뿐이다 — 시험이 글자로 지킨다.
+
+**새 규칙** (§5.1·§5.2·§2.6·§5.3 — 본문 그대로인 것은 줄만 적는다)
+
+- **판정 뒤에는 멈춘다**(§2.6): `tickCasualties` 는 `I.phase === 'closed'` 면 악화도 사망 판정도 하지 않고(대피 이동은 남는다) `hurtCas`·`hurtCasTo` 는 첫 줄에서 돌아간다. 다치지 않는 피격·급변이 기록으로 남지 않게 자리마다 가렸다: `panicShot`(첫 줄), 인질 시한·총격범(조건에 `I.phase !== 'closed'`), 빗나간 탄(`struck` 을 정하는 식 — 난수는 그대로 뽑는다), 가스 노출 시민, `tickWander`·`tickCrush`·`tickLift`·`tickMedical`·`tickWater`(첫 줄), 2차 붕괴의 갇힘, 구출 중 사고. 폭발·붕괴 자체(불·잔해·기록)는 판정 뒤에도 일어난다 — 사람만 다치지 않는다.
+- **폭발은 고르게**: 위 표의 `blast`. `rules/crime.detonate` 가 따로 하던 같은 반복문은 지웠다(아래 "다르게 한 곳" 3).
+- **2차 붕괴 곁의 갇힘**(`tickCollapse`): 무너진 자리(균열 구조물 `p.x, p.y` — `blast` 의 가운데)에서 `TRAP_R` 안, 현장에 있고(`where 'scene'` — 업혀 있는 사람 제외) 물속이 아니고 아직 갇히지 않았고 체력이 0 보다 큰 사람. `trapWork = injuryRng(sim, s, 'trap').range(6, 10)`, `walking = false`, `path = null`. 갇히는 사람마다 한 번씩만 뽑는다.
+- **구출 중 사고**(`executor` `extricate`): `s.kind === 'collapse'` 이고 승강기 갇힘이 아닐 때, 구출을 마치는 틱에 `injuryRng(sim, s, 'extricate')` 에서 확률 → (걸리면) 피해 순서로 뽑는다. 장비 값은 R1 의 사람 장비(`toolUse(sim, a.rid, 'extricate', I)` — 그 틱의 작업 속도에 쓴 바로 그 값, 본문의 `u.tool` 자리). 기록이 '구출 완료' 앞에 남는다.
+- **걷던 사람이 멈춘다**(`rules/injury.ts`): `c.walking` 이고 체력이 0 초과 40 이하인 현장의 사람. 기록의 원인은 그 자리에서 가장 크게 깎는 항(`decayCause` — 불 속이면 화상, 연기면 연기 흡입 …)이고 `c.causeEvent` 를 그 기록으로 잇는다(뒤에 숨지면 사망 기록의 원인 사슬에 들어간다).
+- **사망 문구의 원인**, **물에서 건진 뒤의 `bleedCause = 'exposure'`**(`executor` `waterRescue` 와 `rules/air.ts` `hoistDone` 두 곳), **`josa`**(`panicShot`·인질 시한·총격범의 `${h.label}가`, `tickWater` 의 `${c.label}가`).
+
+**본문과 다르게 한 곳**
+
+1. **`hurtCasTo` 를 더했다.** 본문은 하한을 두고 깎는 자리에 "하한을 지키는 양"(`c.health − Math.max(8, c.health − x)`)을 넘기라고 한다. 그러면 `h − (h − m)` 이 `m` 과 부동소수점 끝자리가 달라질 수 있고, "그 값까지 떨어진다"(`Math.min(c.health, e.hp)`)는 양으로 정확히 적을 수 없다. 깎은 뒤의 체력을 그대로 받는 함수를 두어, 옮기는 커밋(`896351d`)이 결과를 바꾸지 않았음을 해시로 확인할 수 있게 했다(아래 "확인").
+2. **하한이 체력을 올리던 것은 없앴다.** 예전 식 `c.health = Math.max(1, c.health − x)` 는 체력이 이미 하한보다 낮은 사람을 하한까지 **올렸다**(압궤 증후군이 체력 0.5 인 사람을 1 로). `hurtCasTo` 는 지금보다 높은 값을 무시한다 — 다치는 일로 체력이 오르지 않는다. 옮기는 커밋에서 달라진 것은 이것뿐이다(해시 목록 68교대 가운데 극한 둘).
+3. **`detonate` 의 반복문을 지웠다**(본문은 "`max` 라 두 번 돌아도 같으니 그대로 둔다"). `blast` 가 같은 사람에게 같은 값을 주므로 남기면 죽은 코드이고, 판정 뒤에 터질 때 `hurtCas` 는 돌아가는데 그 반복문만 사람을 쓰러뜨리게 된다.
+4. **지휘관이 갇힌 줄 알게 된 사람의 이송·동행 지시를 거둔다**(`commander.ts` 의 `c.mob === 'trapped'` 줄에 `clear(['carry', 'escort'])` — §12.1 표 밖). 본문은 실행기의 강제 보고만 적었는데, 그것만으로는 갇히기 전에 낸 `carry`·`escort` 항목이 열린 채 남아 '대상이 더 이상 그 위치에 없습니다' 실패가 구출이 끝날 때까지 8초마다 되풀이됐다(지진 20교대에서 한 사건 최대 7회 → 1회). CLAUDE.md "낡은 믿음" 함정의 지휘관 쪽 절반이다.
+5. **오래된 `mobile` 은 현장에 있다고 믿는 사람만 센다**(`where === 'scene'`). 본문은 "오래된 `mobile` 은 남은 일로"인데, 안전 구역에 닿은 걸을 수 있는 사람(`where 'safe'`·`mobile`)까지 세면 구급차가 떠난 뒤 끝나던 사건이 끝나지 않는다 — 동행 확인(`escort`)을 보내는 규칙과 같은 대상으로 맞췄다. 그리고 R1 이 더한 `tellDispatch`(헬기만 왔던 현장)도 같은 판단이라 `sim.t` 를 넘긴다.
+6. **체력이 이미 0 이하인 사람은 '대피하다 쓰러짐'을 적지 않는다**(다음 틱에 사망으로 판정된다). 갇힘도 같다.
+7. **판정 뒤에 가리는 자리가 본문의 넷보다 많다**(위 "판정 뒤에는 멈춘다"). `hurt*` 만 돌아가면 다치지 않았는데 '인질이 다침'·'물에 빠졌습니다' 같은 기록이 남는다(가짜 연출).
+8. `tickWater` 의 조사는 미발견 문구에만 있었다(발견된 사람의 문구는 `${c.label}: …` 라 조사가 없다). 본문의 `tickGas` 에는 이름표 뒤 조사가 없어 고칠 것이 없다. `tickHostiles` 의 다른 `${h.label}가`(기습·투항·엄폐 이동·발포·도주 …)와 실행기의 `${h.label}를`·`${c.label}를` 은 손대지 않았다 — 용의자 문구는 5단계가 다시 쓴다(§4.6).
+
+**시험** (`tests/injuries.test.ts` — 단계 3 뒤 58개(단계 1·2 의 33개 + 25개), 20초 남짓. 번호는 §11)
+
+- 2: `hurtCas`(원인별 한 줄·합치기·`sev`, 가해자·기록 id·출혈·거동, 숨지게 한 원인, `hurtCasTo`, 직접 깎는 줄이 남지 않았는가).
+- 9: 모든 사망 시각·사망 기록 ≤ `closedAt`, 판정 뒤의 악화·`hurtCas`·떠내려감·가스 노출 시민.
+- 5(본문에 번호가 없는 단계 3 의 규칙): 폭발의 규칙·`crush` 제외·폭발물, 2차 붕괴의 갇힘(목적별 흐름의 첫 값)·판정 뒤, `carry` 의 강제 보고, 지휘관의 거둠, 구출 중 사고(났을 때·없을 때·차에 낀 사람·승강기·판정 뒤), 걷던 사람의 쓰러짐·원인, `outstanding` 의 경계, 7)번 블록, 사망 문구의 원인, 물가의 줄과 호이스트 뒤의 출혈 원인, 조사.
+- 11: `injuryRng` 를 쓰는 규칙이 일어난 교대(지진 `W6`)의 재현성.
+- 장부 시험은 그대로 통과한다(`diag_ledger.ts` 69교대도 단계 3 전과 같다 — 불일치는 숨진 사람의 넘친 양 3건뿐, 출혈 원인이 빈 사람 0, 원인 없는 사망 0). 그 시험의 `n > 300` 은 표본 크기 확인이다(지금 처치를 받지 않은 구조 대상 324명) — 뒤 단계에서 300 아래로 내려가면 장부가 깨진 것이 아니라 표본이 준 것이니 교대를 늘린다.
+- 변이 확인(`mutate3.py` — 40가지: `hurtCas` 5 · 판정 뒤 5 · 폭발 3 · 2차 붕괴와 낡은 믿음 8 · 구출 중 사고 5 · 대피하다 쓰러짐과 `outstanding` 8 · 문구 6): 하나씩 망가뜨리면 모두 실패한다(살아남은 변이 0).
+
+**확인과 수치** (scratchpad `wf-injuries/s3/`·`s3-full/` — `s3-full/COMPARE.txt` 가 기준과 견준 전체 표)
+
+- 옮기는 커밋(`896351d`)의 검증: 넓은 해시 목록 87교대(강제 15종·재난 5종·어려움 — 기록 해시·상태 요약·부상 기록 해시)가 옮기기 전과 한 글자도 같고, §10 의 68교대는 66 이 같다. 다른 둘(극한 S9·S18)은 위 "다르게 한 곳" 2 — 그 한 줄을 되살린 사본에서는 68 이 모두 같다.
+- 판정 뒤에 숨진 구조 대상(전 → 후, 40교대씩): 보통 1 → 0, 어려움 0 → 0, 극한 4 → 0. 모두 종료 직후 구급차 안에서 숨지던 사람이다 — 판정(구조로 셈)과 기록이 어긋나던 것(§1).
+- 새 규칙이 일어난 횟수(`diag_s3.ts`·`diag_phr.ts`): 2차 붕괴는 붕괴 강제 20교대에 5번·극한 30교대에 43번·지진 20교대에 148번, 그때 갇힌 사람은 0 · 4(모두 숨짐) · 11(구출 4, 숨짐 7 — 끝까지 갇힌 사람 0). 보통 난이도에서는 균열부 보강이 먼저 끝나 2차 붕괴 자체가 드물다(보통 40교대에 5번). 구출 중 사고는 보통 40교대 2건·극한 40교대 3건. 대피하다 쓰러진 사람은 보통 40교대 3명·극한 40교대 14명. 현장이 비어 추가 부대를 찾은 일은 보통 0 → 0·극한 2 → 2(40교대) — 오래된 `mobile` 때문에 끝나지 않는 사건은 생기지 않았다.
+
+| 기준 → 단계 3 끝 (60교대) | 보통 | 쉬움 | 어려움 | 극한 |
+|---|---|---|---|---|
+| 성공 | 80.5 → 80.4% (683 → 682) | 87.6 → 87.3% | 63.0 → 63.1% | 36.4 → 36.3% |
+| 성공+대응 지연 | 84.7 → 84.6% | 89.4 → 89.2% | 69.1 → 69.4% | 48.3 → 48.2% |
+| 실패+미해결 | 6.0 → 6.1% | 4.5 → 4.5% | 15.9 → 16.0% | 34.1 → 34.6% |
+| 한계 시간 + 방치 | 4 → 4 | 1 → 1 | 15 → 14 | 40 → 43 |
+| 구조율 (숨짐) | 94.1 → 94.0% (99 → 101) | 95.9 → 95.8% (44 → 45) | 87.1 → 87.1% (306 → 306) | 75.2 → 74.8% (836 → 850) |
+| 다친 대원 / 교대 | 0.17 → 0.17 | 0.08 → 0.08 | 0.57 → 0.57 | 0.82 → 0.88 |
+
+모두 §9.1 의 범위 안이다(성공+지연 ±4%p, 실패+미해결 +3%p 이하, 한계 시간·방치 보통 +2·극한 +6 이하, 구조율 −3%p 이상, 프리셋의 순서). 손잡이는 돌리지 않았다. 보통 60교대의 유형별 성공률은 화재 70.9 → 70.3% 말고 그대로(무장 76.9 → 76.9%). 극한의 붕괴는 24.5 → 21.5%(23 → 20건 — 2차 붕괴가 잦은 난이도에서 갇힘·구출 중 사고가 걸린다. §9.3-4 의 손잡이를 돌릴 만큼은 아니라고 보았다 — 보통·어려움의 붕괴는 78.3·60.3% 그대로). 강제 20교대의 그 시나리오 줄: `armed/shooter`·`armed/hostage`·`armed/siege`·`armed/bomb`·`armed/riot` 은 기준과 같고(한계 시간·방치 0 → 0 — 완료 조건 4), `fire/arson` 성공 30 → 31, `collapse/std`·`collapse/gasblast`·`collapse/elevator`·`collapse/crane`·`water/std`·`armed/domestic` 같음, `hazmat/std` 부분 8 → 7·실패 0 → 1, `fire/std` 성공 45 → 44·실패 8 → 9, `traffic/bus` 한계 시간 1 → 0, 해일 재난의 `water/evac` 부분 2 → 1·지연 13 → 14, 지진 재난의 `collapse/std` 성공 24 → 22·부분 20 → 25·실패 34 → 31. 부대 규모 1(30교대): 성공 239 → 238, 한계 시간 4 → 5. 지표(보통 40): 교착 후보 0 · 잊힌 사건 0 · C1~C5 0 · 반복 최대 9 — 그대로. 교대당 시간(`sweep 20 --no-metrics`, 사용자 CPU): 20.4초 → 19.2초(차이는 측정 흔들림 안).
+- 해시 목록 68교대는 63 이 달라졌다 — 사망 기록의 문구에 원인이 붙어, 숨진 사람이 있는 교대는 모두 다르다(문구를 고치기 전 커밋 `7f5ff79` 에서는 26).
+
+### 단계 3 이 끝난 자리 — 단계 4a 가 이어받을 때
+
+**관문** (단계 3 의 마지막 커밋에서): `npx tsc --noEmit` 통과 · `npm run check` 통과(Vitest 312개 + 건너뜀 1, 파일 13개 / 시드 40개 `검증 통과` — 성공 448 · 부분 55 · 지연 26 · 미해결 12 · 실패 26 으로 단계 2 끝과 같은 분포, 한계 시간 0 · 방치 2) · `sweep 40 --diff hard --check`·`--diff extreme --check` 통과. 완료 조건 3 의 깨지기 쉬운 기존 시험 둘(`tests/sim.test.ts` 의 생활 사건 성공률, `tests/crime.test.ts` 의 폭동)을 따로 돌려 통과. 화면은 고치지 않았지만 `npm run ui-check` 도 한 번 돌렸다 — 여덟 항목 모두 통과(콘솔 오류 0, 되감기 표본 61개 해시 일치, 보고서 해시 `3c453999` = 헤드리스. 사망 기록의 문구가 바뀌어 단계 2 끝의 `2342b7c9` 와는 다르다).
+
+- **기준은 `wf-injuries/base/`** 다(위 "단계 0 — 기준을 다시 쟀다"). 단계 4a 부터는 `node compare.mjs base <새 폴더>` 와 함께 `node compare.mjs s3-full <새 폴더>` 로 단계 3 끝과도 견주면 그 단계만의 변화가 보인다.
+- **`hurtResponder`·`hurtHostile` 은 `hurtCas` 옆에 둔다**(`HurtOpts` 는 이미 `tick`·`down` 을 갖고 있다). 대원·용의자 쪽의 기록 줄(`noteRespHurt`·`noteHostileHurt` — `grep -rn "(H1)" src/sim` 에 남은 것)은 그대로다: `blast` 의 대원 쪽, `tickHostiles` 의 피격·흉기·맨손, `tickLane`, `agentHealth`, 해일의 대원, `shootAt` 의 용의자. 다 옮긴 뒤에는 `noteCasHurt`(지금 시험만 쓴다)·`noteRespHurt`·`noteHostileHurt` 를 함께 지울 수 있다.
+- **판정 뒤 가리기는 대원·용의자에도 같은 방식으로.** `hurt*` 첫 줄에서 돌아가는 것만으로는 기록이 남는 자리(용의자의 발포 '○○ 피격', `tickLane` 의 SECONDARY_COLLISION, 해일)가 다치지 않은 피해를 적는다 — 자리마다 `I.phase !== 'closed'` 로 가린다(단계 3 이 구조 대상 쪽에 한 것과 같다).
+- **`outstanding(a, now)`** 에 `mates` 를 더할 때 인자는 이미 있다. 7)번 블록은 `o.patients > 0` 이면 구급을 찾는다 — 본문 §3.5 의 'rescue' 갈래를 여기에 잇는다.
+- **`injuryRng` 의 쓰인 이름**: `'trap'`(`tickCollapse` — 갇히는 사람마다 한 번)·`'extricate'`(구출을 마칠 때마다 확률 한 번, 걸리면 피해 한 번). X6 는 `'trap'` 을 쓰지 않는다(본문 연관 표). 남은 이름 `'fall'`·`'fight'`·`'down'`·`'self'`·`'electric'` 은 아직 아무도 쓰지 않는다.
+- **`blast` 의 구조 대상 규칙은 원인이 `'blast'` 일 때만**이다. 5단계가 용의자를 넣을 때 "쓰러진 뒤에는 문턱이 없다"는 `hurtHostile` 의 일이고, 구조 대상 쪽 두 줄은 그대로 둔다.
+- 해일에 휩쓸린 구조 대상의 `Injury.ev` 는 여전히 −1 이다(기록이 사람 순회 뒤에 남는다 — `causeEvent` 로 이어진다).
+- `tests/injuries.test.ts` 의 도우미: `collapseScene(tag)`(균열 구조물이 있는 붕괴 현장), `extricateOnce(type, variant, hazardMul, closed)`(대원 하나가 곁의 갇힌 사람을 구출 — 작업 항목을 손으로 만들어 `act` 를 돌리는 본), 현장 안의 자리는 `s.staging.x + k, s.staging.y`(대기 지점 곁의 길 — 현장마다 크기가 달라 `staging.y + 6` 같은 자리는 격자 밖일 수 있다).
+
+**§12.1("고칠 파일") 밖에서 고친 곳 — 단계 3**
+
+| 파일 | 함수 · 자리 | 이유 |
+|---|---|---|
+| `sim/field/commander.ts` | 구조 대상 순회의 `c.mob === 'trapped'` 줄 | 갇힌 줄 알게 된 사람의 `carry`·`escort` 를 거둔다 (위 "다르게 한 곳" 4) |
+| `sim/field/rules/air.ts` | `hoistDone` · `tellDispatch` | 호이스트로 건진 뒤의 `bleedCause = 'exposure'`(단계 1·2 의 메모가 적어 둔 것) · `outstanding(op.eye, sim.t)` |
+| `sim/field/rules/crime.ts` | `detonate` | `blast` 가 맡게 된 반복문을 지웠다 |
+| `sim/field/hazards.ts` | `tickWander`·`creekDrift`·`tickCrush`·`tickLift`·`tickMedical` | 본문 §5.3 의 표에는 있고 §12.1 표에는 없다 — `hurtCasTo` 로 옮기고 판정 뒤에는 돌아가게 |
+| `sim/field/executor.ts` | `case 'carry'`(척추 고정판) · `shootAt` 의 `struck` | R1 이 더한 피해 자리를 `hurtCas` 로 · 판정 뒤에는 빗나간 탄이 인질에게 가지 않게 |

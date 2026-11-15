@@ -262,7 +262,7 @@ export function tickScene(sim: Sim, s: Scene): void {
         // 현장에 남은 대원이 없다(예: 구급차가 환자를 싣고 떠남). 마지막 지휘관이 알고 있던 상황으로 판단한다
         s.idleSince = sim.t;
         const last = s.agents.find((a) => a.rid === s.commanderRid);
-        const o = last ? outstanding(last) : null;
+        const o = last ? outstanding(last, sim.t) : null;      // 대피 중이라던 사람의 소식이 오래 끊겼으면 남은 일로 센다 (H1 §5.2)
         // 현장 평가를 마친 현장만 이렇게 끝낸다. 실종 현장을 상공의 헬기가 살핀 뒤라면 평가를 마치지 못했어도 같다 —
         // 하늘에서 먼저 다 찾아 주면 지상 부대가 평가를 건너뛰고 환자부터 싣고 떠나, 남은 일이 없는데도 '방치'로 닫혔다
         const surveyed = s.sizeupDone || (s.kind === 'search' && (s.airAt ?? -1) >= 0);

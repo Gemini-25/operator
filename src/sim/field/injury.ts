@@ -66,9 +66,53 @@ export function smokeCause(s: Scene): InjuryCause {
   return s.kind === 'hazmat' || (s.rules !== undefined && s.rules.indexOf('gas') >= 0) ? 'toxic' : 'smoke';
 }
 
+// ───────────────────────── 피해는 한 길로만 (단계 3: 구조 대상) ─────────────────────────
+/**
+ * hurt* 가 받는 선택 사항. 구조 대상(hurtCas)이 쓰는 것은 by·byKind·ev·bleed·immobile 이고, tick·down 은 대원·용의자용이다(단계 4a·5).
+ *   by·byKind  가해자 (용의자 id 또는 대원 rid) — 기록에만 남는다
+ *   ev         피해를 준 자리가 이미 남긴 기록 id — Injury.ev 와 구조 대상의 causeEvent 에 넣는다 (hurt* 는 피해 자체의 문구를 남기지 않는다)
+ *   tick       매 틱 피해 (문턱 없음)
+ *   bleed      구조 대상의 bleed 를 이 값 이상으로 올린다 (처치 전 값 bleed0 도 지금 값으로 맞춘다 — 새 상처는 다시 처치할 수 있다)
+ *   immobile   구조 대상을 걷지 못하게 한다 (걷던 사람은 멈추고, 갇힌 사람은 그대로 갇혀 있다)
+ *   down       한 번에 쓰러뜨린다 (대원·용의자)
+ */
+export interface HurtOpts { by?: number; byKind?: Injury['byKind']; ev?: number; tick?: boolean; bleed?: number; immobile?: boolean; down?: boolean }
+
+/**
+ * 구조 대상이 다친다: 체력을 amount 만큼 깎고 그 원인으로 적는다. 구조 대상의 체력을 깎는 자리는 모두 이 함수(또는 hurtCasTo)를 거친다 —
+ * 매 틱 악화(hazards.tickCasualties)만 자기 식을 그대로 두고 noteDecay 로 적는다.
+ * 숨졌거나 사건이 끝났으면 아무것도 하지 않는다 (§2.6 — 판정 뒤에는 누구도 더 다치지 않는다. 기록을 남기는 자리는 부르기 전에 스스로 가린다).
+ * 체력이 0 이하가 되면 숨지게 한 원인을 적는다 — 사망 처리(dead·기록)는 지금처럼 tickCasualties 가 다음 틱에 한다.
+ * 피해 자체의 문구는 남기지 않는다: 문구는 피해를 준 자리가 남기고 그 id 를 o.ev 로 넘긴다 (로그 중복).
+ */
+export function hurtCas(sim: Sim, s: Scene, I: Incident, c: Casualty, amount: number, cause: InjuryCause, o?: HurtOpts): void {
+  hurtCasTo(sim, s, I, c, c.health - amount, cause, o);
+}
+/**
+ * hurtCas 와 같되 깎을 양 대신 **깎은 뒤의 체력**을 받는다. 하한·상한을 두고 깎는 자리가 쓴다 —
+ * `Math.max(8, c.health - x)`(이 일만으로는 숨지지 않는다)나 `Math.min(c.health, hp)`(이 값까지 떨어진다)를 그대로 넘기면
+ * 부동소수점 끝자리까지 예전 식과 같다(양으로 바꿔 넘기면 h − (h − m) 이 m 과 한 끝자리 다를 수 있다).
+ * 지금보다 높은 값은 무시한다 — 다치는 일로 체력이 오르지는 않는다.
+ */
+export function hurtCasTo(sim: Sim, s: Scene, I: Incident, c: Casualty, to: number, cause: InjuryCause, o?: HurtOpts): void {
+  if (c.dead || I.phase === 'closed') return;
+  const hp0 = c.health;
+  if (to < hp0) {
+    c.health = to;
+    c.injuries = noteInjury(c.injuries, cause, hp0 - to, sim.t, bandOf(to), o?.by ?? -1, o?.byKind ?? 'world', o?.ev ?? -1);
+  }
+  if (o !== undefined) {
+    if (o.bleed !== undefined) { if (o.bleed > c.bleed) { c.bleed = o.bleed; c.bleedCause = cause; } c.bleed0 = c.bleed; }
+    if (o.immobile) { if (c.mob === 'mobile') c.mob = 'immobile'; c.walking = false; c.path = null; }
+    if (o.ev !== undefined && o.ev >= 0) c.causeEvent = o.ev;
+  }
+  if (c.health <= 0 && c.deathCause === undefined) c.deathCause = cause;
+}
+
 // ───────────────────────── 한 번 피해의 기록 (단계 1) ─────────────────────────
 // 피해를 주는 자리는 식을 그대로 두고, 바꾸기 전의 값(hp0, bleed0)을 잡아 두었다가 바꾼 뒤에 아래 함수를 한 줄 부른다.
-// 깎인 양은 (앞 − 뒤)로 센다 — 그 자리의 난수·연산 순서를 건드리지 않는다. 뒤 단계가 이 줄들을 hurt* 로 바꾼다.
+// 깎인 양은 (앞 − 뒤)로 센다 — 그 자리의 난수·연산 순서를 건드리지 않는다. 뒤 단계가 이 줄들을 hurt* 로 바꾼다
+// (구조 대상의 자리는 단계 3 에서 hurtCas 로 바꿨다 — noteCasHurt 는 시험과, 다친 채 새로 생기는 사람을 적는 자리에만 남는다).
 
 /**
  * 구조 대상이 방금 다쳤다: 깎인 체력을 그 원인으로 적는다. 그 자리가 출혈(bleed)을 키웠으면 지금의 출혈 원인도 그 원인으로 바꾸고,

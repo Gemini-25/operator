@@ -353,7 +353,8 @@ export interface FxInfo {
   ox?: number; oy?: number;              // 힘이 온 곳: 피격은 쏜 자리, 섬광탄은 던진 사람, 진입은 진입조 쪽, 검거는 대원
   r?: number;                            // 반경(칸): 섬광탄 효과 반경, 폭발 피해 반경
   n?: number;                            // 섬광탄: 무력화한 용의자 수 · 진입: 함께 들어간 인원
-  src?: 'bomb' | 'gas' | 'tank' | 'collapse' | 'fuel';
+  src?: 'bomb' | 'gas' | 'tank' | 'collapse' | 'fuel'
+    | 'drum' | 'cng' | 'jet' | 'dust';      // (X6) 화학 드럼 · CNG 버스 · 항공유 · 분진 폭발
   door?: number;                         // 진입·강제 개방한 문(소품 id, 문 없는 출입구는 -1)
   how?: BreachHow;
   sync?: boolean;                        // 진입: 지휘관의 동시 진입 신호에 맞춘 진입(breach)
@@ -671,6 +672,7 @@ export interface ShiftReport {
 export interface FallRecord {
   t: number; x: number; y: number; r: number; region: number;
   cause: 'zone' | 'secondary' | 'ceiling'      // 마지막 줄에 둔다 — X6 가 끝에 새 줄로 | 'partial' | 'total' 을 덧붙인다
+    | 'partial' | 'total';      // (X6) 구획 붕괴(불이 아닌 원인 — 불이면 'ceiling') · 건물 전체 붕괴
 }
 
 // ───────────────────────── 대응 방법 (R2) ─────────────────────────

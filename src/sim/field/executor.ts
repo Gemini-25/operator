@@ -1115,6 +1115,17 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         const m = moveTo(sim, s, a, b.x, b.y, 1.3);
         if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
         if (m !== 'arrived') return;
+        if ((b.trapped ?? 0) > 0) {
+          // (X6 §4.8) 잔해에 깔린 동료: 먼저 잔해를 들어내 빼낸다 (구출과 같은 식 — 숨은 고장은 이 효과 자리에서 드러난다). 빠지면 아래처럼 끌고 나온다
+          a.fx = b.x - a.x; a.fy = b.y - a.y; a.label = '깔린 동료 구출';
+          const tool = toolUse(sim, a.rid, 'extricate', I);
+          b.trapped = Math.max(0, b.trapped! - r.skills.rescue * (0.35 + 0.65 * tool) * staminaF(r) * dt);
+          drain(sim, a, 0.8);
+          if (b.trapped > 0) return;
+          b.label = '쓰러짐';
+          emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, text: `잔해에 깔린 ${sim.responders[b.rid].name} 대원을 빼냈습니다. 안전 구역으로 옮깁니다.` });
+          learnQuiet(sim, a, mateFact(sim, s, b, 'down', r.name, 0));      // 곁에서 본다 — 이제 깔려 있지 않다 (지휘관이 같은 구출을 다시 내지 않게)
+        }
         t.progress += dt;
         if (t.progress >= 1.5) { a.carrying = -(b.rid + 2); a.path = null; a.pathGoal = -1; }
         return;

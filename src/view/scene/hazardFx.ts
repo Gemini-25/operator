@@ -45,7 +45,6 @@ export function sceneShake(sim: Sim, s: Scene, mini: boolean, extra: { x: number
 
 // ───────────────────────── 무너지기 전: 2차 붕괴 위험 ─────────────────────────
 interface DangerOpts { truth: boolean; timeMs: number; mini: boolean; cmd: FieldAgent | undefined }
-const ceilCache = new WeakMap<Scene, { tick: number; rooms: { x0: number; y0: number; x1: number; y1: number }[] }>();
 
 /** 보강하지 않은 균열마다 위험 범위(무너지면 다치는 반경 2.6칸)·진행 고리·곧 무너짐 알갱이. 어둠·날씨 뒤의 정보 표지 단계에서 부른다 */
 export function drawDangerZones(g: G, sim: Sim, s: Scene, ts: number, o: DangerOpts): void {
@@ -92,24 +91,7 @@ export function drawDangerZones(g: G, sim: Sim, s: Scene, ts: number, o: DangerO
     }
   }
   if (saved) g.restore();
-  // (선택) 불난 방의 천장 붕괴 위험: 탄 칸이 45% 이상이고 아직 판정하지 않은 방 (관찰자 시점). 틱마다 한 번 센다
-  if (o.truth && !o.mini && s.burnedTiles > 0) {
-    let c = ceilCache.get(s);
-    if (!c || c.tick !== sim.tick) {
-      const rooms: { x0: number; y0: number; x1: number; y1: number }[] = [];
-      for (const r of s.regions) {
-        if (!r.indoor || r.kind !== 'room' || s.collapseDone.has(r.id) || !r.tiles.length) continue;
-        let b = 0; for (const i of r.tiles) if (s.burned[i]) b++;
-        if (b / r.tiles.length >= 0.45) rooms.push({ x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1 });
-      }
-      c = { tick: sim.tick, rooms }; ceilCache.set(s, c);
-    }
-    if (c.rooms.length) {
-      g.save(); g.strokeStyle = 'rgba(214,168,120,0.5)'; g.lineWidth = Math.max(1.5, ts * 0.05); g.setLineDash([ts * 0.24, ts * 0.18]);
-      for (const r of c.rooms) { g.beginPath(); g.roundRect(r.x0 * ts + ts * 0.12, r.y0 * ts + ts * 0.12, (r.x1 - r.x0 + 1) * ts - ts * 0.24, (r.y1 - r.y0 + 1) * ts - ts * 0.24, ts * 0.2); g.stroke(); }
-      g.restore();
-    }
-  }
+  // (X6) 예전의 '불난 방의 천장 붕괴 위험' 점선(탄 칸 45% 이상)은 지웠다 — 천장 붕괴 판정이 구조 건전도로 바뀌었고, 그 위험은 catLayer 의 건전도 빗금이 그린다 (X6 §7.3)
 }
 
 // ───────────────────────── 무너지는 순간 ─────────────────────────
@@ -190,15 +172,15 @@ export function drawFallRing(g: G, sim: Sim, s: Scene, ts: number, alpha: number
 }
 
 // ───────────────────────── 가스가 찬 범위 ─────────────────────────
-/** 짙은 가스 경계(관찰자 시점, 새는 밸브가 있을 때): 폭발 판정 칸(실내 smoke > 0.6)의 경계를 흐르는 연두 점선으로. 10칸 이상이면 표지를 돌려준다 */
+/** 짙은 가스 경계(관찰자 시점): 폭발 위험 칸(X6 — 폭발 하한을 넘은 구름, 위험 상태가 없으면 실내 smoke > 0.6)의 경계를 흐르는 연두 점선으로. 위험하면 표지를 돌려준다 */
 export function drawGasEdge(g: G, ts: number, timeMs: number, gv: GasView, mini: boolean): HazardLabel[] {
-  if (mini || !gv.leaking || !gv.edges.length) return [];
+  if (mini || (!gv.leaking && !gv.danger) || !gv.edges.length) return [];      // (X6) 밸브를 잠근 뒤에도 남은 폭발 하한 구름은 그린다
   g.save();
   g.beginPath(); for (let e = 0; e < gv.edges.length; e += 4) { g.moveTo(gv.edges[e] * ts, gv.edges[e + 1] * ts); g.lineTo(gv.edges[e + 2] * ts, gv.edges[e + 3] * ts); }
   g.strokeStyle = 'rgba(8,13,18,0.5)'; g.lineWidth = Math.max(1.5, ts * 0.05) + 2; g.setLineDash([]); g.stroke();
   g.strokeStyle = '#d6f06a'; g.lineWidth = Math.max(1.5, ts * 0.05); g.setLineDash([ts * 0.24, ts * 0.16]); g.lineDashOffset = -timeMs / 90; g.stroke();
   g.restore();
-  return gv.dense >= 10 ? [{ x: (gv.cx + 0.5) * ts, y: (gv.cy + 0.5) * ts, text: '가스 고임 — 폭발 위험', color: '#ff5d5d' }] : [];
+  return gv.danger ? [{ x: (gv.cx + 0.5) * ts, y: (gv.cy + 0.5) * ts, text: gv.label, color: '#ff5d5d' }] : [];
 }
 
 // ───────────────────────── 되살아난 불 ─────────────────────────

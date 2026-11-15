@@ -22,7 +22,7 @@
 | `src/view/scene/methodsLayer.ts` | 방법 그림: 줄·장대·고무보트·송풍기·지지대·에어백 | 화면 계층(읽기만) |
 | `tests/methods.test.ts` | 8절 | — |
 
-**공용 파일 수정**(9절에 함수와 이유): `types.ts`, `crews.ts`(R1 의 `KitDef` 에 `uses?`·`batch?` 두 칸, `KITS` 아홉 줄, 역할의 기본 장비 몇 줄), `resources.ts`(R1 이 고친 `createRoster`·`createAidUnit` — 수량 복사와 R2 장비의 따로 하는 고장 추첨), `field/rules/air.ts`(R1 — 호이스트 완료에 기록 한 줄, 끌려가는 대상은 기다리는 한 줄), `field/executor.ts`, `field/agents.ts`(`casFact`·`perceive`·`fitFor`), `field/brain.ts`, `field/commander.ts`(6단계에 조건 두 군데), `field/hazards.ts`(`flashbang` 한 줄, `tickGas` 한 줄), `debrief.ts`, `field/scenes/index.ts`(import 두 줄), `view/renderScene.ts`, `view/scene/sprites.ts`, `ui/panels.tsx`, `scripts/sweep.ts`(`--methods`). R1 이 없을 때만 `difficulty.ts`(`Tuning` 두 칸). 객체 모양을 맞추는 생성 리터럴 몇 곳(3.1 끝 — 속도만의 문제).
+**공용 파일 수정**(9절에 함수와 이유): `types.ts`, `crews.ts`(R1 의 `KitDef` 에 `uses?`·`batch?` 두 칸, `KITS` 아홉 줄, 역할의 기본 장비 몇 줄), `resources.ts`(R1 이 고친 `createRoster`·`createAidUnit` — 수량 복사와 R2 장비의 따로 하는 고장 추첨), `field/rules/air.ts`(R1 — 호이스트 완료에 기록 한 줄, 끌려가는 대상은 기다리는 한 줄), `field/executor.ts`, `field/agents.ts`(`casFact`·`perceive`·`fitFor`), `field/brain.ts`, `field/commander.ts`(6단계에 조건 두 군데), `field/hazards.ts`(`flashbang` 한 줄, `tickGas` 한 줄), `debrief.ts`, `field/scenes/index.ts`(import 두 줄), `view/renderScene.ts`, `view/scene/sprites.ts`, G5 의 `view/scene/combat.ts`·`view/audioCombat.ts`(폭파 진입 `'charge'` 갈래 — 4.2a), `ui/panels.tsx`, `scripts/sweep.ts`(`--methods`). R1 이 없을 때만 `difficulty.ts`(`Tuning` 두 칸). 객체 모양을 맞추는 생성 리터럴 몇 곳(3.1 끝 — 속도만의 문제).
 
 **건드리지 않는다**: `dispatch/*`, `sceneManager.ts`(대원 리터럴에 칸을 넣는 한 줄만 예외 — 3.1 끝), `builders.ts`·`field/scenes/{crime,major,disaster}.ts`(현장 생성은 그대로 — `scenes/index.ts` 의 import 두 줄만), `field/injury.ts`(H1 — 부르기만 한다), X6 의 `catastrophe.ts`·`ops.ts`(읽기만), `city.ts`·`cityPlan.ts`, `tests/sim.test.ts`, `README.md`·`CLAUDE.md`·`docs/ROADMAP.md`(합친 뒤에 한꺼번에).
 
@@ -61,7 +61,7 @@
 
 ## 2. 범위
 
-**하는 것**: 방법의 틀(자료형·고르기·바꾸기·기록·그림·보고서), 4절의 갈래별 방법, R1 의 장비 표에 R2 가 쓰는 장비 아홉 가지를 더하기, R1 이 없을 때의 장비 대체(`gear.ts`).
+**하는 것**: 방법의 틀(자료형·고르기·바꾸기·기록·그림·보고서), 4절의 갈래별 방법, R1 의 장비 표에 R2 가 쓰는 장비 아홉 가지를 더하기, R1 이 없을 때의 장비 대체(`gear.ts`). **폭파 진입**(`charge` — 사용자 결정 2026-11-15)과 그것이 실제로 나올 자리 둘(무장 현장의 농성 문 잠금 세계 규칙, 방 진입의 잠긴 문 — 4.2a). 현장 생성(`builders.ts`·`scenes/*`)은 그대로이고, 농성 문 잠금은 `rules/methods.ts` 의 세계 규칙이다.
 
 **하지 않는 것**:
 - 새 사건 유형·새 시나리오·새 부대 종류. 탐지견·드론은 부대·장비가 생기면 7단계에서 켠다.
@@ -84,7 +84,7 @@
 /** 같은 임무를 이루는 여러 방법. 내용(조건·속도·위험·문구)은 field/methods.ts 의 METHOD 표 */
 export type MethodId =
   | 'hand' | 'pole' | 'ring' | 'rope' | 'improvise' | 'catch' | 'swim' | 'tend' | 'boat' | 'hoist'   // 수난 구조 (waterRescue · hoist 는 R1 의 공중 임무)
-  | 'kick' | 'irons' | 'ram' | 'hydraulic' | 'handClear' | 'toolClear'                                 // 문·통로 (force·clear, 이동 중 하위 작업)
+  | 'kick' | 'irons' | 'ram' | 'hydraulic' | 'handClear' | 'toolClear' | 'charge'                      // 문·통로 (force·clear, 이동 중 하위 작업). charge = 폭파 진입 (사용자 결정 2026-11-15 — 4.2a, G5 BreachHow 'charge' 와 같은 이름)
   | 'manual' | 'basic' | 'spread' | 'roof' | 'rapid' | 'haul' | 'tunnel' | 'airbag' | 'shore'          // 구출 (extricate)
   | 'call' | 'listen' | 'line' | 'hail' | 'thermal'                                                     // 수색·탐지 (search)
   | 'interior' | 'defensive' | 'aerial' | 'extinguisher' | 'ventilate'                                  // 화재 (suppress)
@@ -117,6 +117,7 @@ R1 의 `KitId` 끝에 새 줄로(R2 가 쓰는 장비 — 3.3):
 // Task
 method?: MethodId; mwhy?: MethodWhy; missing?: KitId;  // 지금 쓰는 방법, 고른 까닭, (noGear 면) 빠진 장비
 tried?: MethodId[];                               // 이 임무에서 접은 방법 (다시 고르지 않는다. 모두 접었으면 비운다)
+entryDoor?: number;                               // engage: 방 진입에서 잠긴 문을 여는 중인 그 문 id (열린 뒤에도 entered 전까지 roomDoorFor 가 돌려준다 — 4.2a)
 mtry?: number;                                    // 지금 방법을 시도한 횟수 (투척이 빗나간 횟수 등)
 mbad?: number;                                    // 고른 방법의 조건이 맞지 않은 지 몇 초 (3초면 바꾼다)
 mt0?: number;                                     // 지금 방법을 시작한 시각 (MethodUse.t0)
@@ -191,7 +192,7 @@ export function landComp(s: Scene): Int32Array;      // 뭍 칸의 연결 성분
 export function targetKey(work: WorkKind, tg: MTarget): string;      // 'waterRescue:c3', 'force:t412' … (mfail·같은 대상 판정)
 ```
 
-`MethodCtx`(3.4)는 `chooseMethod` 안에서만 만든다(export 하지 않는다 — R3 는 export 된 `Sense`·`MTarget` 만 타입으로 가져간다). 대상의 위치·상태·물살은 **`a.beliefs` 의 그 대상 사실에서만** 채운다. 실행부가 넘기는 것은 `sense` 와 판단부(`doctrine.ts`)가 만든 `dc` 뿐이다 — 그래서 진실(`c.x`, `c.drift`)을 판단에 끼워 넣을 길이 모양으로 막힌다. R3 가 합쳐지면 `chooseMethod` 는 `MethodCtx` 를 만든 뒤 `{ ...dc, m: { reach, flow, weak } }` **사본**으로 `docMethodMul` 을 불러 점수에 곱한다(받은 `dc` 를 고치지 않는다 — 시험 8 의 순수 함수. `DocCtx.m` 은 이 사본에서만 채워진다, R3 §2.4).
+`MethodCtx`(3.4)는 `chooseMethod` 안에서만 만든다(export 하지 않는다 — R3 는 export 된 `Sense`·`MTarget` 만 타입으로 가져간다). 대상의 위치·상태·물살은 **`a.beliefs` 의 그 대상 사실에서만** 채운다. 실행부가 넘기는 것은 `sense` 와 판단부(`doctrine.ts`)가 만든 `dc` 뿐이다 — 그래서 진실(`c.x`, `c.drift`)을 판단에 끼워 넣을 길이 모양으로 막힌다. R3 가 합쳐지면 `chooseMethod` 는 `MethodCtx` 를 만든 뒤 `{ ...dc, m: { reach, flow, weak, tile } }` **사본**으로(`tile` = `tg.tile` — 문·잔해 대상의 칸, 없으면 -1. R3 S26 이 폭파 진입의 문을 이것으로 안다) `docMethodMul` 을 불러 점수에 곱한다(받은 `dc` 를 고치지 않는다 — 시험 8 의 순수 함수. `DocCtx.m` 은 이 사본에서만 채워진다, R3 §2.4).
 
 **판단부(`methods.ts`)가 읽어도 되는 것**:
 - `a.beliefs`(그 대원의 믿음 — 구조 대상의 위치·상태·물속 여부·떠내려가는 속도·차량·구덩이는 `CasBelief` 의 새 칸으로, 균열·밸브·연료는 `haz` 사실의 `sub` 로 들어온다. X6 가 합쳐져 있으면 `ops` 사실(전술 모드·위험 구역)도).
@@ -219,7 +220,7 @@ export function targetKey(work: WorkKind, tg: MTarget): string;      // 'waterRe
 
 | `gear.ts` 함수 | R1 이 있을 때의 몸 | 어디서 |
 |---|---|---|
-| `kitCount(sim, rid, id): number` | `hasKit` 이 false 면 0(알려진 고장 포함). 수량 장비(`isQty(id)` = `KITS[id].uses` 가 있거나 R1 이 수량을 채우는 `flashbang`·`taser`)면 `kitUses`. `scba` 는 `uses === undefined ‖ uses ≥ 60` 이면 1, 아니면 0. 그 밖 1. **수량이 없는 장비에는 `kitUses` 를 부르지 않는다**(R1 이 그 값을 정하지 않았다) | 판단부 |
+| `kitCount(sim, rid, id): number` | `hasKit` 이 false 면 0(알려진 고장 포함). 수량 장비(`isQty(id)` = `KITS[id].uses` 가 있거나 R1 이 수량을 채우는 `flashbang`·`taser`·`charge`)면 `kitUses`. `scba` 는 `uses === undefined ‖ uses ≥ 60` 이면 1, 아니면 0. 그 밖 1. **수량이 없는 장비에는 `kitUses` 를 부르지 않는다**(R1 이 그 값을 정하지 않았다) | 판단부 |
 | `kitName(id): string` | `KITS[id].name` | 판단부·보고서 |
 | `swimBonus(sim, rid): number` | `roleOf(sim, rid)` 의 `RoleId` 로 아래 표 | 판단부 |
 | `seatsLeft(sim, u): number` | `seatsOf(u) − u.patients.length` | 판단부 |
@@ -263,7 +264,7 @@ function canUse(c: MethodCtx, m: MethodId, ignoreKits = false): boolean {
 3. **명부**(`resources.createRoster`·`createAidUnit` — R1 이 고친 함수. 공용 파일 수정):
    - 장비 복사(R1: 역할의 기본 장비를 `{ id }` 로)에서 `KITS[id].uses` 가 있으면 `{ id, uses: KITS[id].uses }`. R1 이 따로 채우는 섬광탄·테이저·공기는 그대로 둔다.
    - **고장 추첨은 R1 의 흐름에 끼우지 않는다.** R1 은 교대 명부를 `sim.rng.fork('kit')` 하나로 "대원 순서 × 장비 순서" 대로, 지원 부대를 `sim.rng.fork('aid:' + sim.aidUsed)` 하나로 "대원(자리 순서) → 펌프 상태 → 고장 추첨(대원 순서 × 장비 순서)" 순서로 뽑는다(R1 5절). 역할 장비 끝에 고장 나는 장비를 더하면 같은 흐름의 뒤 대원 능력치·뒤 장비 고장이 밀린다. 그래서 R1 의 고장 추첨 반복에 `if (KITS[id].batch === 'r2') continue;` 한 줄을 넣고, R2 장비는 그 반복이 끝난 뒤 같은 순서·같은 확률(`tn.kitFault`)로 따로 뽑는다 — 교대 명부는 `sim.rng.fork('kit-r2')`, 지원 부대는 `sim.rng.fork('aid-r2:' + n)`(n = 그 부대를 만들 때의 `sim.aidUsed`).
-4. R1 의 장비 가운데 R2 가 쓰는 것: `rope`·`ring`(투척·줄 확보·끌어올리기), `irons`(할리건·도끼), `breachKit`(충격기), `spreader`(유압 구조기 — 문 개방·구출), `lightRescue`, `searchKit`(청음), `hose`, `tic`(열화상 수색), `taser`·`shield`·`sniper`(무장), `megaphone`(대피 방송·호출 수색), `bag`·`alsBag`·`doctorKit`(구급), `plugKit`, `scba`.
+4. R1 의 장비 가운데 R2 가 쓰는 것: `rope`·`ring`(투척·줄 확보·끌어올리기), `irons`(할리건·도끼), `breachKit`(충격기), `charge`(폭파 장약 — 폭파 진입, 4.2a. 사용자 결정 뒤 R1 의 표에 더했다), `spreader`(유압 구조기 — 문 개방·구출), `lightRescue`, `searchKit`(청음), `hose`, `tic`(열화상 수색), `taser`·`shield`·`sniper`(무장), `megaphone`(대피 방송·호출 수색), `bag`·`alsBag`·`doctorKit`(구급), `plugKit`, `scba`.
 
 - 이 배치로 생기는 갈래(의도): 순찰·구급·의료 헬기 대원에게는 줄이 없다 → 헤엄·즉석 부력물·하류 차단. 펌프차의 줄은 진입대원(`firefighter`)에게만 있어, 부대 규모 1·2(최소 인원 — 진입대원이 빠진다)에서는 펌프차에 줄이 없다. 구조 공작차는 로프 대원이 줄·구명환·구명조끼·드라이슈트·고무보트를 든다.
 - 기관원은 R1 에서 `hose` 가 없어 진압(`suppress`)을 맡지 못한다. 그래서 기관원의 송풍기는 가스 현장의 환기 후 차단(`mitigate` 의 `ventFirst`)과 예비용이고, 화재의 배연(`ventilate`)은 사다리 조작원·측정·제독 대원이 한다(의도).
@@ -555,6 +556,7 @@ if (onWater(s, a) || a.afloat) {
 | hoist | (R1 — 상공 헬기·호이스트 줄은 R1 의 그림) | — |
 | kick · handClear · manual · tunnel | `work` · 없음 | — |
 | irons · ram | `work` · `irons` / `ram` | — |
+| charge | 설치 중 `work` · 없음, 물러서면 `kneel` | 문에 붙인 장약·카운트 '3'·'2'·'1'(`methodsLayer.ts`), 막힌 문의 쌓인 가구. 폭발은 G5 진입 효과의 `'charge'` 갈래(섬광·문짝·파편·흔들림)와 폭음 — 4.2a |
 | hydraulic · spread · roof | `work` · `spreader`(있는 그림) | — |
 | haul | `hold` · `rope` | 구덩이로 내려간 줄(짧은 수직선과 고리) |
 | airbag · shore | `work` · 없음 | 대상 곁의 납작한 검은 패드 / 세운 버팀목 |
@@ -722,10 +724,49 @@ R1 의 `airFit` 은 수난 사고의 `rescue` 수요에 소방 헬기를, `kitBo
 | `hydraulic` 유압 개방기 | force | `spreader`(R1 force .8) | R1 식 ×1.6 | 0.9 / — | 시작할 때 `kitWorks` — 숨은 고장이면 `broken`. 승강기 문(hp 17)에서 차이가 크다 |
 | `handClear` 손으로 치우기 | clear | 없음 | `0.5 + 0.8×rescue + 0.5×0.12` | 0.55 / 평소 | 맨몸 방법 |
 | `toolClear` 장비로 절단·지렛대 | clear | `spreader`·`irons`·`lightRescue`·`breachKit` 가운데 가장 좋은 것 | R1 식(`bestTool(…, 'clear', I)` — R1 의 `toolUse`) | 0.8 / 평소 | |
+| `charge` 폭파 진입 (**사용자 결정 2026-11-15**) | force(잠긴 문) · clear(문을 막은 잔해) | `charge`(폭파 장약 — R1 진입대원(파괴)·폭발물 처리 요원) | `p.hp` 와 상관없이 설치 5초 + 3-2-1 1.5초(+ 물러서는 걸음) | 0.8 (진입 순간 ×1.3, 문을 막은 잔해 ×1.4) / — | 조건일 때만(문 2.5칸 안에 구조 대상·인질 믿음 없음, 폭발성 분위기·살아 있는 장치·구조 조짐 없음, 무장 현장은 진입 뒤). 문 뒤 1.5칸에 `blast` — **4.2a** |
 
-- 상황: 무장 현장에서 믿음에 대치·교전 중(`hold`·`fight`) 용의자가 있으면 시끄러운 방법(kick·ram) ×0.7 → 까닭 `quiet`. 진입조의 동시 진입(`breach`)과 방 진입은 지금 코드 그대로 문을 연다(바꾸지 않는다 — R1 의 진입대원(파괴)이 그 몫이다).
+- 상황: 무장 현장에서 믿음에 대치·교전 중(`hold`·`fight`) 용의자가 있으면 시끄러운 방법(kick·ram) ×0.7 → 까닭 `quiet`(폭파에는 걸지 않는다 — 4.2a). 진입조의 동시 진입(`breach`)은 지금 코드 그대로 문을 연다(바꾸지 않는다 — R1 의 진입대원(파괴)이 그 몫이다). 방 진입도 그대로 열되, **문이 잠겨 있으면**(4.2a 의 농성 문 잠금) 그 문을 4.2·4.2a 의 방법으로 여는 하위 작업을 거친다(사용자 결정 2026-11-15 — 4.2a).
 - `agentCost` 의 제거 시간 추정(`forceCost`·`clearCost`)은 **바꾸지 않는다**(R1 의 `toolFor` 식 그대로 — 경로 선택이 크게 흔들린다). 알려진 한계로 둔다.
-- `unblock(sim, s, a, tile, method)`: 완료 문구를 방법별로 — "할리건으로 문을 땄습니다. 진입합니다.", "유압 개방기로 철문을 열었습니다.", "충격기로 문을 부쉈습니다.", "문을 걷어차 열었습니다.", "절단기로 잔해를 잘라 통로를 확보했습니다." `markRecovered(PATH_BLOCKED, …)` 의 문구에도 방법 이름을 넣는다. G5 가 합쳐져 있으면 G5 가 `unblock` 에 넣은 `recBreach(…, { how })` 의 `how` 에 이 방법(`kick`·`irons`·`ram`·`hydraulic` — G5 의 `BreachHow` 와 같은 이름)을 그대로 넘긴다.
+- `unblock(sim, s, a, tile, method)`: 완료 문구를 방법별로 — "할리건으로 문을 땄습니다. 진입합니다.", "유압 개방기로 철문을 열었습니다.", "충격기로 문을 부쉈습니다.", "문을 걷어차 열었습니다.", "절단기로 잔해를 잘라 통로를 확보했습니다." `markRecovered(PATH_BLOCKED, …)` 의 문구에도 방법 이름을 넣는다. G5 가 합쳐져 있으면 G5 가 `unblock` 에 넣은 `recBreach(…, { how })` 의 `how` 에 이 방법(`kick`·`irons`·`ram`·`hydraulic`·`charge` — G5 의 `BreachHow` 와 같은 이름)을 그대로 넘긴다. 폭파의 완료 문구·`blast` 순서는 4.2a.
+
+### 4.2a 폭파 진입 `charge` — 2단계 (사용자 결정 2026-11-15)
+
+**결정**: 사용자가 "전부 추천대로"로 정했다 — 대원의 폭파 진입(문을 폭약으로 여는 것)을 **실제 방법**으로 넣는다. 특공대·폭발물 처리반이 **잠긴 문**과 **막힌 문**(문을 막은 잔해 — 바리케이드)을 연다. 문 가까이에 인질·구조 대상이 있으면 쓰지 않는다. G5 가 이름만 예약해 둔 `BreachHow 'charge'`(`types.ts` 의 주석 "시뮬레이션이 실제 폭발 효과를 적용할 때만")가 이 방법의 그림이 된다 — 그림·소리는 R2 가 이 단계에서 그린다(아래 "그림·소리"). 문 방법의 이름은 G5 `BreachHow` 와 같게 `'charge'` 다.
+
+| 칸 | 내용 |
+|---|---|
+| 누가 | R1 의 `charge`(폭파 장약, `uses` 2 — R1 §4 표, 사용자 결정 뒤 R1 에 더했다)를 든 대원: 특공 **진입대원(파괴)** `breacher`, 폭발물 처리반 **폭발물 처리 요원** `bombTech`(R1 역할 표 — 기본 장비 끝). 인근 도시 지원 폭발물 처리반의 처리 요원도 든다(최소 편성에 있다). 특공대는 지원으로 오지 않는다(R1 `AID_KIND`) |
+| 임무 · 대상 | `force` — 믿음 `blk` 가 `'locked'` 인 문. `clear` — 믿음 `blk` 가 `'debris'` 이고 그 칸의 4 이웃에 `T.DOOR` 칸이 있는 잔해(문을 막은 것 — 생김새로 가린다. 복도를 가로지른 잔해는 대상이 아니다). 본 임무와 이동 중 하위 작업(`t.sub`) 모두 `workOnBlocker` 를 지난다(4.2 첫 문단). 아래 농성 문 잠금의 바리케이드(문 안쪽에 쌓은 가구)는 **잠긴 문**(`force`, `p.skin === 'barricade'`)으로 나타낸다 — 바깥에서는 가구가 보이지 않으므로 대원의 믿음에는 그냥 `'locked'` 다 |
+| 조건 (`can` — 믿음·생김새·동료의 겉만. 장비는 `kits: ['charge']`) | ① **사람**: 믿음 속 살아 있는 구조 대상(`cas` — 인질 포함)이 대상 칸에서 2.5칸 안에 없다(문 앞뒤 칸과 그 옆을 덮는다). 같은 칸을 다른 동료가 맡고 있지 않다(동료의 `task.tile`·`task.sub.tile`). 폭파 반경 안의 동료는 실행부가 기다린다(아래 "기다림"). ② **폭발성 분위기**: X6 가 있으면 믿음 `sign` 의 `gas`·`dust` 단계 ≥ 1 이 대상 칸 6칸 안이나 문 양쪽 구역에 없다. X6 가 없으면 믿음에 살아 있는 누출(`haz` leak active, `sub 'valve'`)이 없고 `s.rules` 에 `'gas'` 가 없다. ③ **장치**: 믿음 `haz bomb`(active)이 6칸 안에 없다(유폭 — R3 S08 과 같은 반경). ④ **구조**: `s.kind !== 'collapse'`, X6 가 있으면 믿음 `sign` 의 `struct`·`bldg` 단계 ≥ 1 이 6칸 안에 없다(작은 폭발도 구획 건전도를 깎는다 — 10절 X6). ⑤ **무장 현장**(`s.kind === 'armed'`)에서는 진입이 정해진 뒤(`s.entryOrdered`)에만 — 그 전의 폭음은 대치를 깬다(R3 S03 의 "대치 중에는 조용히") |
+| 속도 | 설치 5초(라벨 '장약 설치', 하위 작업이 멈춘 문 곁 칸) → 물러서기(아래 "자리") → 3-2-1 카운트 1.5초 → 폭발하는 틱에 연다. **문·잔해의 `p.hp` 와 상관없이 6.5초 + 물러서는 걸음** — 가장 빠른 개방이다. 견줌(4.2 의 식, 진입대원(파괴) 기준): 충격기(약 1.9/초)는 hp 5~11 의 문을 3~6초, 농성 바리케이드(10~16)를 5~8초, 승강기 문(17)을 약 9초에 열고, 문을 막은 잔해(9~15)를 장비로 치우면 9~15초다. 그래서 폭파는 **무거운 문과 문을 막은 잔해에서 가장 빠르고**, 가벼운 문에서는 충격기가 더 빠르다(그래서 평소에는 충격기가 먼저다 — "점수") |
+| 점수 | `pref` 0.8, `risk` 0.1, plain 아님. `situ`: 무장 현장의 진입 순간(`s.entryOrdered`) ×1.3, 대상이 문을 막은 잔해 ×1.4. 4.2 의 `quiet`(시끄러운 방법 ×0.7)는 걸지 않는다 — 진입 전에는 ⑤ 가 아예 막고, 진입 순간에는 소리가 문제가 아니다. 그래서 진입 순간의 잠긴 문과 막힌 문에서는 1등(충격기 0.9·장비로 치우기 0.8 보다 위), 그 밖의 잠긴 문에서는 충격기·할리건이 먼저다(장약을 아낀다). 문 여는 장비가 장약뿐인 처리 요원은 조건이 맞으면 폭파를 고른다(발로 차기 0.5 보다 위) |
+| 자리 | 물러설 자리 `stackSpot(s, door, a)`(methodRun): 대원이 선 쪽(문의 바깥쪽)의 걸어서 닿는 바닥 칸 가운데 문에서 3~4칸이고 문을 정면으로 마주 보지 않는(문 칸에서 그은 문의 축 위가 아닌) 칸, 대원에게 가장 가까운 것. 처음 한 번 정해 임무의 `t.tx, t.ty` 에 적고 다시 고르지 않는다(함정 "한 임무 안에서 이동 목표를 둘 두지 않는다"). 없으면 문에서 3칸 넘는 아무 바닥 칸, 그것도 없으면 `switchMethod('tooFar', '물러설 자리가 없음')` |
+| 기다림 | 카운트는 대상 칸 2.5칸 안에 다른 활동 대원이 없을 때만 시작한다(동료의 겉 — 실행부). 카운트 중에 누가 들어오면 멈추고 다시 기다린다. 10초 넘게 비지 않으면 `switchMethod('team', '동료가 폭파 반경 안')` → 다음 방법(충격기·할리건·발로 차기 — 늘 남는다) |
+| 효과 (실행부 `methodRun`) | 폭발하는 틱에, 이 순서로: `useKit(charge, 1)` → `unblock(sim, s, a, tile, 'charge')`(문이면 `locked = false`·`open = true`, 잔해면 `removed`, G5 `recBreach(…, { how: 'charge', forced: true })`, 완료 기록 — `unblock` 이 그 기록 id 를 돌려주게 한다) → `hazards.blast(sim, s, I, 문 x, 문 y, 1.5, 18, 그 기록 id, 'blast', true)`(뒤의 두 인자는 H1·X6 의 원인 `cause`, I1 의 `noSignal` — 실제 코드의 인자 순서를 따른다) → `recordMethod(…, 'charge', why, true, 그 기록 id)`. 13칸 안의 무력화되지 않은 용의자는 충격기와 같은 코드로 문 쪽을 돌아보고 5초 경계한다 |
+| 위험 | **문 뒤 칸의 사람**: `blast` 는 진실의 모든 사람에게 걸린다 — 믿음에 없던(못 본) 구조 대상·인질·용의자가 1.5칸 안에 있으면 다친다(H1 의 원인 `blast`, 세 부류 공통. 가운데 18 · 1칸 12 · 1.5칸 8, 구조 대상은 ×0.8, 대원은 R1 의 `blastFactor`). 그래서 실행부는 `blast` 를 부르기 직전에 문 1.5칸 안의 진실 사람(대원이 아닌 구조 대상·용의자 — 실행부는 진실을 읽어도 된다)을 세어 두고, 하나라도 있으면 `blast` 뒤에 `raiseProblem(sim, I, 'ESCALATION', '폭파 진입으로 ○○ 부상', { …, causes: [완료 기록] }, false)` 를 한 줄 남긴다(규칙 5 — 피해를 준 그 자리. 사람마다가 아니라 폭파마다 한 줄). "인질 위치를 모르면 쓰지 않는다"는 교본(R3 S26)이 이것을 따로 막는다. **파손**: `blast` 안의 N7 `shatter` 가 그대로 — 3칸 안의 창, 1.5칸 안의 가구(`dmg:<현장 id>` 흐름). **세계**: X6 가 있으면 `blast` 끝의 `catOnBlast` 가 이 폭발을 충격으로 받는다 — 믿음이 틀려 실제로 가스 구름(LEL)이 3칸 안에 있으면 진짜 가스 폭발이 되고, 가운데 구획 건전도가 −0.14(dmg 18 × `K_HIT` 0.8 — X6 §2.4 의 `blast` 줄). I1 의 `blast` 신호는 보내지 않는다(`noSignal` — 문 하나를 여는 작은 폭발은 세계 상태 규칙의 원인이 아니다) |
+| 소모 | 폭발할 때 장약 1(`useKit`). 설치·물러서기·기다림 중에 접으면(바꾸기·철수) 쓰지 않은 것으로 본다. 다 쓰면 `kitCount` 0 → 고르지 않는다. 교대마다 다시 2(I2 의 재고는 섬광탄만 다룬다) |
+| 난수 | 쓰지 않는다 — 불발·위력의 흔들림을 두지 않는다(같은 상황 = 같은 결과). `mrng` 도 부르지 않는다 |
+| 기록 | 시작(`startMethod` — plain 아님): `SAY` "장약 설치합니다. 물러서십시오."(까닭이 `noGear` 등이면 3.6 의 규칙대로 앞말이 붙는다). 완료(`unblock` 의 방법별 문구 — 4.2): 문 "폭파 — 문 개방. 진입합니다.", 막힌 문 "폭파 — 막힌 문을 뚫었습니다. 진입합니다." 숨은 사람이 다치면 위 "위험"의 한 줄. 3-2-1 은 기록이 아니라 그림이다(기록이 늘지 않는다). 보고서 `noun` '폭파 장약으로'(3.8 — "○○ 대원이 폭파 장약으로 문을 열었습니다"), `short` '폭파', 라벨 '폭파 진입' |
+| 그림·소리 | G5 가 이름만 예약한 `'charge'` 를 R2 가 그린다(G5 의 파일에 갈래 하나씩 — 9절). 설치·물러서기·카운트: `methodsLayer.ts` 가 `a.task`(또는 `a.task.sub`)의 `method === 'charge'` 와 단계로 — 문에 붙인 장약(작은 회색 띠 + 깜박이는 빨간 점), 카운트 중 문 위에 '3'·'2'·'1'(0.5초씩), 물러선 대원은 웅크린 자세(`kneel`). 폭발: G5 의 진입 효과(`view/scene/combat.ts` 의 `'breach'` 그림, `c.how` 갈래)에 `'charge'` 갈래 — 흰 섬광(반경 1.2칸, 0.15초), 문 안쪽으로 날아가는 문짝과 파편 10여 개, 먼지, G5 흔들림(`shake(sid, ts, v)` — 충격기보다 크게). 문짝: `renderScene` 의 `kickOpen` 에서 `'charge'` 는 바로 끝까지(날아간 문). 소리: `view/audioCombat.ts` 의 `'breach'` 갈래에 `'charge'` 폭음(낮은 쿵 + 넓은 잡음 — G5 의 폭발 소리 결). G5 의 `DECISIVE` 에 `'breach'` 가 이미 있어 결정적 순간의 자동 감속·카메라가 그대로 걸린다. `fxlog.breachHowFor` 는 고치지 않는다(거기서는 `'charge'` 를 고르지 않는다 — 실행부가 `unblock(…, 'charge')` 로 넘긴다). 유리·파편은 `blast` 의 N7 효과가 이미 남기므로 `'boom'` 효과를 따로 남기지 않는다(그림이 둘이 되지 않게). 막힌 문(`p.skin === 'barricade'`)은 잠긴 문 표시에 더해 문 안쪽 칸에 쌓인 가구 몇 개를 그린다(`methodsLayer.ts`) |
+
+**어디서 나오는가 — 그대로면 거의 나오지 않는다**. 지금 현장 생성에서 잠긴 문·문을 막은 잔해는 화재·가스·응급·승강기 현장에만 나오고(`builders.ts` 의 `lockDoor`·`blockPassage`), 특공대·폭발물 처리반은 그런 현장에 거의 가지 않는다. 무장 현장에는 잠긴 문이 없고, 있어도 동시 진입(`breach()`)·방 진입(①-2)이 잠금을 보지 않고 그 자리에서 연다. 이름만 있는 방법이 되지 않도록 둘을 더한다:
+
+1. **농성 문 잠금**(세계 규칙 — `rules/methods.ts`, 진실을 바꾼다): 무장 현장(`s.kind === 'armed'`, `!s.outdoor`)에서 총을 든 용의자가 인질을 잡은 채(`hostageId ≥ 0`) 방(`kind 'room'`)에 있고, 그 방의 문 가운데 출입구 문이 아닌 것(출입구 1.5칸 밖)이 하나뿐이며, 그 방에 붙잡히지 않은 구조 대상이 없으면 — 첫 대원이 내린 뒤(`s.arrivedAt`) 15~40초에 한 번, `BARRICADE_P × tune.hazardMul`(상한 0.8, `BARRICADE_P = 0.4`) 확률로 용의자가 그 문을 닫고 막는다: `plans.lockDoor` 와 같은 처리(`open = false`·`locked = true`·`blocking = true`·`hp` 10~16·`s.propAt`), `p.skin = 'barricade'`, `s.staticVersion++`. 흐름은 `sim.rng.fork('barricade:' + I.id)` 하나(결정 → 시각 → hp 순서). 기록 `emit(sim, { inc: I.id, truth: true, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, text: \`${josa(용의자, '이/가')} 방 문을 걸어 잠그고 가구로 막았습니다.\` })` — 대원은 아직 모른다(가서 막히면 지금의 `discoverBlock` 이 알린다). 그 용의자는 그 방을 나가지 않는다(진실 경로 비용이 막힌 문을 지나지 못한다 — 인질을 잡은 용의자는 지금도 대개 그 자리에서 버틴다). `BARRICADE_P = 0` 이면 지금과 같다(끄는 손잡이). 심각도 손잡이의 설명("숨은 위험(잔해·잠긴 문·…)")과 같은 뜻이라 `hazardMul` 을 곱한다. 동시 진입의 출입문은 잠그지 않는다.
+2. **방 진입의 잠긴 문**(`executor` `case 'engage'` ①-2): 진입조가 모였을 때 `rd.blocking` 이면 바로 열지 않는다. 먼저 `discoverBlock(…, 'locked')`(손잡이를 돌려 보고 안다 — 지금의 기록과 `blk` 믿음), 그다음 모인 대원 가운데 그 문의 `force` 방법 1등 점수(`chooseMethod(…, 'force', { tile: 문 칸, prop: 문 id, cas: -1, hostile: -1, region: -1 }, null, { smoke: 0, heat: 0 })`)가 가장 높은 한 사람(같으면 rid 가 작은 쪽)이 문 여는 하위 작업(`t.sub = makeTask('force', '문 강제 개방')`, `sub.tile` = 문 칸)을 맡아 그 안에서 4.2 의 방법(폭파·충격기·할리건·유압·발로 차기)을 고른다. 나머지는 그 자리에서 기다린다 — 폭파가 골라졌으면 각자의 `stackSpot` 으로 물러난다(한 분기에 `moveTo` 하나). 문이 열리면 다음 틱에 지금의 방 진입 덩어리(섬광탄 → 함께 들어감, `rd.entered = true`)가 이어진다: `roomDoorFor` 는 임무에 적어 둔 문(`t.entryDoor` — 3.1)이면 열려 있어도 `entered` 가 아닌 동안 돌려준다(`recBreach` 는 `unblock` 이 이미 남겼으므로 다시 남기지 않는다). 상한: 모인 뒤 25초가 지나도 안 열리면 지금처럼 바로 연다(모든 사건은 끝난다).
+
+R3 S03(진입대원(파괴) — 대치 중이면 조용히 `irons`, 진입 순간 `ram`)과 S26(폭파 진입을 언제 고르는가 — 인질 위치를 모르면 쓰지 않는다)이 이 위에 얹힌다.
+
+예(무장 인질극 — 농성 문 잠금 뒤 진입이 정해졌고, 믿음 속 인질은 방 안쪽 끝, 문에서 5칸):
+
+```
+10:58:02 [18] SYSTEM/현장: 용의자 1이 방 문을 걸어 잠그고 가구로 막았습니다.                   ← 진실 기록 (농성 문 잠금)
+11:01:40 [18] RESPONDER/윤다온: 기존 접근 경로가 차단되어 있습니다 — 사무실 문이 잠겨 있음.      ← 방 진입에서 손잡이를 돌려 봄 (지금의 discoverBlock)
+11:01:41 [18] RESPONDER/윤다온: 장약 설치합니다. 물러서십시오.                                 ← startMethod (charge — 진입 순간 ×1.3)
+11:01:49 [18] RESPONDER/윤다온: 폭파 — 문 개방. 진입합니다.                                     ← unblock(…, 'charge') → blast(1.5, 18, noSignal)
+          (이어서 지금 코드의 방 진입 — 섬광탄을 던져 넣고 함께 들어간다)
+보고서: "윤다온 대원이 폭파 장약으로 문을 열었습니다."                                          ← 3.8 의 방법 문장 (plain 아님)
+```
 
 ### 4.3 구출 `extricate` — 차량·붕괴·그 밖 (3단계)
 
@@ -964,6 +1005,7 @@ R1 에 이미 있는 장비로 만들 수 있는 야외 수색 방법(`hail`·`t
 - **다양성(단조로움의 지표)**: `--force water/std` 20교대에서 성공한 방법이 **4가지 이상**, 가장 많이 쓰인 방법이 **70% 이하**. 문은 3가지 이상, 화재 3가지 이상, 무장 4가지 이상(기록 전용 포함, 각 단계의 강제 교대에서), 실종 2가지 이상(`line`·`hail`·`thermal`).
 - 무장: 성공률 기준 ±5%p, 그리고 `armed/hostage`·`armed/siege` 의 투항 비율이 기준 ±10%p(저격의 "협상 60초 뒤" 조건이 투항으로 끝날 사건을 저격으로 끝낼 수 있다 — 넘으면 60초를 늘린다).
 - 부대 규모 1(`--diff 3,3,3,3,3,1` — R1 최소 인원)에서 맨몸 방법·헤엄이 늘어난다(방법 분포가 손잡이를 따른다).
+- **폭파 진입**(사용자 결정 — 4.2a): `--force armed/hostage`·`armed/siege` 각 20교대에서 농성 문 잠금이 교대 몇 번 생기고, `charge` 성공이 합쳐 **2건 이상**(이름만 있는 방법이 아니다). 폭파 진입으로 다친 구조 대상·인질(숨은 사람 — 믿음이 틀린 경우)은 합쳐 **1건 이하**, 그때마다 `ESCALATION` 기록이 있다. 두 시나리오의 성공률·한계 시간은 위의 무장 목표 안. 넘치거나 모자라면 `BARRICADE_P`(0.4)·`pref`(0.8)를 고친다.
 - 구출: 평균 구출 시간 ±15%(평소 방법의 식을 그대로 두었으므로 크게 움직이지 않아야 한다). 화재 현장의 급박 구출이 늘어 화재 결과가 움직이면 감각 조건(연기 0.3)을 올린다.
 
 **재는 법** — 단계마다 전후로(전 = 그 단계 직전 커밋):
@@ -976,7 +1018,7 @@ npx tsx scripts/sweep.ts 20 --disaster tsunami --scen --methods
 npx tsx scripts/sweep.ts 20 --diff 3,3,3,1,3,3 --force water/std --methods     # 장비 불량 (숨은 고장↑)
 npx tsx scripts/sweep.ts 20 --diff 3,3,3,3,3,1 --force water/std --methods     # 최소 인원 (줄 가진 사람↓)
 npx tsx scripts/sweep.ts 1 --force water/std --log S7                           # 왜 그 방법을 골랐는지 읽는다
-# 단계별: 2 문 → --force collapse/elevator, armed/hostage, fire/std · 3 구출·탐지 → traffic/std, traffic/manhole, collapse/std, search/std
+# 단계별: 2 문 → --force collapse/elevator, armed/hostage, armed/siege(폭파 진입·농성 문 잠금), fire/std · 3 구출·탐지 → traffic/std, traffic/manhole, collapse/std, search/std
 #         4 화재 → fire/std, fire/arson · 5 무장 → armed/dispute, armed/robbery, armed/hostage, armed/siege · 6 → medical/trauma, hazmat/std
 npm run check                                           # 단계를 끝낼 때 한 번 (오래 걸린다)
 ```
@@ -994,7 +1036,7 @@ npm run check                                           # 단계를 끝낼 때 �
 | **1b 수난: 헤엄** | 물 위 바탕(3.5: `costFor`·`moveSpeed`·`waterTick`·`ashore`·`pullAshore`·`brain` 가드·`fitFor` 의 물 위 가드·`finishTask` 내려놓기·`rules/methods` 의 안전장치·체력 하한 18), swim·tend·붙잡힘, `a.mfail` | 물 칸에 갇힌 대원 0, 대원 부상·순직 목표 안 |
 | **1c 수난: 보트** | boat(구조정·고무보트 — 진수 때 물 칸으로 옮기기, 뭍에 대기), `rules/air.ts` 의 끌려가는 대상 기다리기 | 보트 장면 테스트, 해일에서 boat 성공이 있다 |
 | **1d 수난: 그림** | 3.7 의 수난 줄, 헤엄치는 대원, 보트, `agentPose` | 스크린샷(`?seed=…&force=water/std`), 콘솔 오류 0, 분포가 1c 와 한 건도 다르지 않다 |
-| **2 문·통로** | 4.2, `workOnBlocker`·`unblock`, G5 의 `recBreach` 에 방법 넘기기 | 다양성 목표, 분포 |
+| **2 문·통로** | 4.2, `workOnBlocker`·`unblock`, G5 의 `recBreach` 에 방법 넘기기. **4.2a 폭파 진입**(사용자 결정 2026-11-15): `charge` 실행부·`stackSpot`·기다림, `unblock` 의 기록 id 반환, 농성 문 잠금(`rules/methods.ts`), 방 진입의 잠긴 문(`case 'engage'` ①-2·`roomDoorFor` 의 `t.entryDoor`). 그림·소리(설치·카운트·`'charge'` 갈래)는 따로 커밋 | 다양성 목표, 분포, 6절의 폭파 진입 목표, 시험 10 |
 | **3 구출·탐지** | 4.3·4.4, 역할에 `airbag`·`shoring`, `haz` 의 `sub`, `casFact` 의 `veh`·`pit`, `searchMul`(`perceive`) | 구출 시간 ±15%, 실종 수색 시간·미발견 수 |
 | **4 화재** | 4.5, 역할에 `extinguisher`·`fan`, `spray` 인자(X6 가 없을 때만), 송풍기 규칙, `fitFor suppress` 소화기 | B1·R1·X6 뒤 화재 성공률 −3~+5%p |
 | **5 무장** | 4.6, 역할에 `beanbag`, `h.stunHow`(`hazards.flashbang` 한 줄·R1 테이저), 기록 전용 분기의 `recordMethod`, G5 의 `recShot` | 무장 성공률·대원 부상·투항 비율 |
@@ -1025,6 +1067,7 @@ npm run check                                           # 단계를 끝낼 때 �
 7. **기록과 보고서**(분석 문장은 11~12줄에서 잘리므로 **문제가 셋 이하인 사건**만 본다): 평소 방법이 아닌 방법으로 구한 사건의 `result.analysis` 에 그 방법의 `noun` 이 들어간 문장이 있다. `METHOD_FAIL` 이 있는 사건은 (다음 방법이 성공했다면) 그 문제가 `recovered`. 장비 고장 뒤 다른 방법으로 끝낸 사건의 그 `EQUIP_FAIL` 이 `recovered`(문은 `tile` 로 맞춘다). 보고서 요약에 "대응 방법:" 줄이 있다(평소 방법이 아닌 성공이 있을 때).
 8. **소모 장비와 순수 함수**: 소화기를 12초 쓰거나 비살상탄을 쏘면 `kitCount` 가 준다. 0 이면 그 방법을 고르지 않는다. `chooseMethod`·`methodFit`·`searchMul`·`reachOf` 를 백 번 불러도 시뮬레이션 상태(장비 수량·고장 표시·난수 흐름·`a.mfail`)가 바뀌지 않는다.
 9. **다양성**(느슨하게): 수난 강제 20교대에서 성공 방법 3가지 이상, 가장 많은 방법 85% 이하(6절의 목표 70% 는 sweep 으로 본다).
+10. **폭파 진입**(2단계 뒤 — 사용자 결정, 4.2a): 손으로 만든 장면 — 잠긴 문(hp 17) 뒤에 빈 방, 장약을 든 진입대원(파괴) 하나만 그 문의 `force` 를 맡는다. 그 대원이 `charge` 를 고르고(`why` 는 `usual`), 설치 시작부터 문이 열리기까지 6.5초 + 물러서는 걸음(± 0.4초), `kitCount(charge)` 가 하나 줄고, FXLOG 를 켜면 그 문의 `recBreach` 가 `how === 'charge'`·`forced`. 문 1칸 뒤에 **믿음에 넣지 않은** 구조 대상을 두면 그 사람에게 원인 `blast` 의 부상(H1 `Injury`)과 `ESCALATION` 기록이 생긴다. 같은 장면에서 그 구조 대상을 대원의 믿음에 넣으면 `charge` 를 고르지 않는다(충격기). 믿음에 가스 조짐(X6 `sign gas` 단계 1 — X6 가 없으면 `haz` leak `sub 'valve'`)이나 6칸 안의 살아 있는 장치를 넣어도 고르지 않는다. 무장 장면에서 `s.entryOrdered = false` 면 고르지 않고, `true` 면 고른다. 반경 안에 다른 대원을 세워 두면 카운트를 시작하지 않고 10초 뒤 다른 방법으로 바꾼다(`METHOD_FAIL` 이 아니라 `team` 기록). 농성 문 잠금은 끄는 손잡이를 지킨다: `BARRICADE_P = 0` 으로 두면 무장 강제 교대(`armed/hostage`·`armed/siege` 시드 셋)의 기록 해시가 농성 규칙과 방 진입의 잠긴 문을 넣기 직전 커밋과 같다(`fork` 는 부모 흐름을 쓰지 않는다).
 
 ## 9. 고칠 파일
 
@@ -1050,7 +1093,8 @@ npm run check                                           # 단계를 끝낼 때 �
 | | `moveSpeed` | 맨 앞에 물 칸의 헤엄·보트 속도 | 1b |
 | | `finishTask` | 실패 사유 표에 `nomethod: '쓸 수 있는 방법이 없습니다'`. 업고 있던 사람이 물속 사람일 때의 내려놓기와 완료 기록(3.5) | 1a·1b |
 | | 새 `case 'ashore'` | 물 위의 대원을 뭍으로(3.5) | 1b |
-| | `workOnBlocker`(인자 `tk` 추가, 호출 두 곳)·`unblock`(인자 `method`) | 속도를 `blockerRate` 로, 완료 문구를 방법별로, G5 의 `recBreach` 에 방법 | 2 |
+| | `workOnBlocker`(인자 `tk` 추가, 호출 두 곳)·`unblock`(인자 `method`) | 속도를 `blockerRate` 로, 완료 문구를 방법별로, G5 의 `recBreach` 에 방법. `unblock` 이 완료 기록 id 를 돌려준다(폭파 진입의 `blast` 원인 — 4.2a) | 2 |
+| | `case 'engage'` ①-2 방 진입·`roomDoorFor` | 잠긴 방 문: `discoverBlock` → 문 여는 하위 작업(방법 1등 점수가 가장 높은 한 사람), 나머지는 기다림·폭파면 물러남, 열린 뒤 이어지는 방 진입(`t.entryDoor`), 25초 상한(4.2a — 사용자 결정 2026-11-15) | 2 |
 | | `case 'extricate'`·`case 'search'` | `startMethod`·`recheckOnArrive`(수색은 그 구역 첫 경유점 — 3.2-2), 속도 `k`·탐지 정지, `shore` 의 균열 보강 | 3 |
 | | `case 'mitigate'` | `haz` 사실 두 곳에 `sub`(3단계), `seal`·`ventFirst`(6단계) | 3·6 |
 | | `spray`(인자 `eff`·`wmul`, 기본 1 — X6 가 이미 더했으면 그대로 — 와 `jitter`, 기본 `true`)·`case 'suppress'` | 방법 분기 한 줄, `recheckOnArrive`. R2 의 호출은 `jitter = false`(`s.rng` 를 쓰지 않는다) | 4 |
@@ -1072,6 +1116,9 @@ npm run check                                           # 단계를 끝낼 때 �
 | `view/renderScene.ts` | `agentPose` | 방법별 자세·물건(G5 의 하위 작업 분기보다 앞) | 1d~ |
 | | 대원 그리기 | 헤엄치는 대원(`drawSwimmer`), 보트 위 대원 | 1d |
 | | "구조 줄" 블록 | `drawMethodFx(ctx, s, L, o)` 호출 하나로 바꾼다(그림은 `methodsLayer.ts`) | 1d |
+| `view/scene/combat.ts` (G5) | 진입 효과 `'breach'` 의 `c.how` 갈래 | `'charge'` 갈래 — 섬광·날아가는 문짝·파편·먼지·흔들림(4.2a. G5 가 이름만 예약한 것) | 2 |
+| `view/audioCombat.ts` (G5) | `'breach'` 소리의 `how` 갈래 | `'charge'` 폭음 | 2 |
+| `view/renderScene.ts` | `kickOpen` | `'charge'` 는 문짝이 바로 끝까지(날아간 문) | 2 |
 | `view/scene/sprites.ts` | `ArmPose`·`Item`·`drawPerson` 끝의 물건 그림 | 3.7 의 자세·물건(G5 가 넣은 `'throw'`·`'ram'` 은 빼고), `drawBoat`, 헤엄치는 대원 모습 | 1d~ |
 | `ui/panels.tsx` | 대원 정보(R1 의 역할·장비 줄 아래) | 방법·방법 후보 | 0 |
 | `scripts/sweep.ts` | 인자 처리·출력 | `--methods`(표 셋 — 6절) | 0 |
@@ -1079,10 +1126,10 @@ npm run check                                           # 단계를 끝낼 때 �
 
 `sceneManager.ts` 는 고치지 않는다(대원 리터럴에 칸을 넣는 한 줄 — R1 이 없을 때 — 말고): 부대 도착·`agentHealth`(물 위에서 쓰러지지 않게 하는 것은 R2 피해의 하한 18 과 `rules/methods.ts` 의 안전장치로)·한계 시간·부대 출발은 R1·H1 이 고친 그대로다. `hazards.tickHostiles`(방패)·`commander` 의 헬기 먼저는 R1 이 한다 — R2 는 고치지 않는다.
 
-## 10. R1·H1·X6·G4·G5·R3 과의 맞물림
+## 10. R1·H1·X6·G4·G5·R3·I1 과의 맞물림
 
 **R1(부대 편성·개인 장비·헬기 세 종류)** — `docs/specs/R1-crews.md` 를 읽고 맞췄다.
-- 장비 이름: R1 의 `KitId` 를 그대로 쓴다 — 할리건·도끼는 `irons`, 충격기는 `breachKit`, 청음 장비는 `searchKit`, 저격 소총은 `sniper`, 확성기는 `megaphone`, 열화상은 `tic`. R1 에 없는 아홉 가지만 R2 가 더한다(3.3).
+- 장비 이름: R1 의 `KitId` 를 그대로 쓴다 — 할리건·도끼는 `irons`, 충격기는 `breachKit`, 청음 장비는 `searchKit`, 저격 소총은 `sniper`, 확성기는 `megaphone`, 열화상은 `tic`, 폭파 장약은 `charge`(사용자 결정 2026-11-15 뒤 R1 의 표·진입대원(파괴)·폭발물 처리 요원의 기본 장비에 더했다 — R1 에서는 효과가 없고 R2 의 4.2a 가 쓴다). R1 에 없는 아홉 가지만 R2 가 더한다(3.3).
 - 자료형: R1 의 `KitDef`(name·group·tool·med·armor·faultable)에 `uses?`·`batch?` 두 칸을 더한다. 수량은 R1 처럼 명부가 `KitItem.uses` 에 채운다(R2 장비는 `KitDef.uses` 에서 복사).
 - 함수: `methods.ts`·`methodRun.ts` 는 `gear.ts` 를 거쳐 `hasKit`·`kitUses`(판단부 — `kitCount`), `kitWorks`·`useKit`·`toolUse`(실행부 — `bestTool`), `KITS`(`kitName`·`kitTool`), `seatsOf`(`seatsLeft`), `roleOf`(`swimBonus`) 를 쓴다. 숨은 고장은 판단부가 모른다(R1 원칙과 같다).
 - 명부: R1 의 `createRoster`·`createAidUnit` 의 고장 추첨 반복에 "R2 장비 건너뛰기" 한 줄, 그 뒤에 R2 장비의 따로 추첨(`kit-r2`·`aid-r2:<n>`). R1 의 `kit`·`aid:<n>` 흐름의 결과는 그대로다.
@@ -1098,6 +1145,7 @@ npm run check                                           # 단계를 끝낼 때 �
 - **물 위의 체력 하한은 H1 이 있든 없든 18 이다**(3.5 — 정본). H1 의 두 줄(연관 표의 R2 줄·결정 표의 "대원의 익수" 줄)에 남아 있던 옛 문장("H1 이 있으면 하한 18 을 두지 않고")은 정합성 점검에서 이 문서에 맞춰 고쳤다(반영됨).
 - H1 쪽이 지키는 두 가지(H1 연관 표): `rescueMate` 는 대상이 물 칸이면 물가에서 기다린다. 한 대원을 두 번 옮기지 않는다 — R2 의 `pullAshore` 는 물 칸에서만, `rescueMate` 의 끌기는 뭍에서만.
 - 사다리·창문 추락은 R2 가 만들지 않는다 — `aerial` 의 대원은 조작대에서 방수하고 사다리에 오르지 않는다. H1 의 원인 표·결정 표에서 그 몫을 지웠다(반영됨).
+- 폭파 진입(4.2a)의 문 뒤 피해는 `hazards.blast` 가 원인 `'blast'` 로 세 부류의 `hurt*` 를 부르는 길 그대로다(H1 의 연관 표 R2 줄에 한 구절로 적혀 있다). R2 는 그 피해가 생겼을 때의 `ESCALATION` 한 줄만 남긴다.
 - H1 이 없으면 체력을 직접 깎는다(하한 18 그대로).
 
 **X6(위험의 현실화)** — `docs/specs/X6-catastrophe.md` 의 나눔("현장 단위의 전술 모드와 진입 금지 구역은 X6, 방법 선택은 대원 개인의 갈래")을 따른다.
@@ -1105,13 +1153,16 @@ npm run check                                           # 단계를 끝낼 때 �
 - 보강: R2 의 `shore` 는 균열을 `mitigated` 로 만들므로 X6 의 보강 규칙(`c.shored` — 구획 건전도 +0.1)이 저절로 받는다(4.3).
 - 환기: R2 의 `s.fan` 은 X6 의 가스 모델이 출입구 3칸 감쇠(×(1 − 0.3))로 읽는다. R2 가 `power`(맨몸 환기 0.5)를 더했으므로 X6 의 그 감쇠에 `power` 를 곱한다(`1 − 0.3 × power`) — X6 를 고치는 쪽이 하나만 고른다: R2 구현 때 X6 의 그 줄에 `power` 를 곱하는 한 조각을 더하고 보고에 적는다.
 - 철수 명령: X6 의 `evacuate` 의무는 `brain` 의 철수 지시 블록 바로 뒤에 있고, R2 의 물 위 가드도 같은 자리다. **R2 의 가드를 먼저** 둔다 — 물 위의 대원은 건물 위험 구역 안에 있을 수 없고, 물 한가운데서 철수 목표로 가는 것보다 뭍이 먼저다.
+- 폭파 진입(4.2a): `charge` 의 `blast` 는 X6 의 `catOnBlast` 를 지나 충격(가스 점화 `c.hits`)과 구획 건전도 손실(dmg 18 → 가운데 구획 −0.14)이 된다 — X6 쪽은 고칠 것이 없다(모든 `blast` 를 받는다. X6 §2.5 의 점화 2번 줄에 한 구절로 적었다). R2 는 믿음 속 `sign` 의 `gas`·`dust`·`struct`·`bldg` 단계 ≥ 1 이 6칸 안이면 폭파를 고르지 않는다. 믿음이 틀렸을 때 진짜 폭발·붕괴로 이어지는 것은 X6 의 진실 규칙이 정한다(의도).
 - 6절의 기준 수치는 X6 를 합친 뒤에 잰다.
 
-**G5(교전 연출)** — G5 는 합쳐졌다(`9ab7fdb`). `ArmPose 'throw'`·`Item 'ram'` 은 G5 가 넣은 것을 쓴다. 비살상탄·저격의 판정 직후 `recShot(sim, s, a, 'beanbag' / 'sniper', h.x, h.y, hit, 1, h.id, hostage?)` 한 줄(G5 `FxWeapon 'beanbag'`. 저격이 빗나가 인질이 다쳤으면 마지막 인자로 그 인질 — 4.6). `unblock(…, method)` 의 방법을 G5 의 `recBreach` 의 `how` 로 넘긴다(G5 `BreachHow` 의 문 방법 이름이 R2 의 `MethodId` 와 같다). `agentPose` 의 방법 분기를 G5 의 하위 작업 분기 앞에 둔다. 저격 대원의 겨누는 선은 G5 가 그리지 않고 R2 가 조준선을 그린다.
+**G5(교전 연출)** — G5 는 합쳐졌다(`9ab7fdb`). `ArmPose 'throw'`·`Item 'ram'` 은 G5 가 넣은 것을 쓴다. 비살상탄·저격의 판정 직후 `recShot(sim, s, a, 'beanbag' / 'sniper', h.x, h.y, hit, 1, h.id, hostage?)` 한 줄(G5 `FxWeapon 'beanbag'`. 저격이 빗나가 인질이 다쳤으면 마지막 인자로 그 인질 — 4.6). `unblock(…, method)` 의 방법을 G5 의 `recBreach` 의 `how` 로 넘긴다(G5 `BreachHow` 의 문 방법 이름이 R2 의 `MethodId` 와 같다). `agentPose` 의 방법 분기를 G5 의 하위 작업 분기 앞에 둔다. 저격 대원의 겨누는 선은 G5 가 그리지 않고 R2 가 조준선을 그린다. **폭파 진입**(사용자 결정 2026-11-15): G5 가 이름만 예약한 `BreachHow 'charge'` 를 R2 가 실제로 넘기고(`unblock(…, 'charge')` → `recBreach(…, { how: 'charge', forced: true })`) 그 그림·소리도 R2 가 G5 의 파일(`combat.ts` 의 진입 효과, `audioCombat.ts`, `renderScene.kickOpen`)에 갈래 하나씩으로 더한다(4.2a·9절). G5 의 `breachHowFor`(그림 전용 추정 — 동시 진입·방 진입의 문)는 고치지 않는다. 잠기지 않은 닫힌 문을 진입조 구성에 따라 공성추·발차기로 그리는 G5 의 기본값은 그대로다(같은 날의 사용자 결정).
 
 **G4(현장 가독성)** — G4 는 "구조 줄 블록과 `sprites.ts` 는 R2 몫"이라 적고 건드리지 않는다. R2 의 그림은 `methodsLayer.ts` 에 모으고 `renderScene` 은 9절의 세 자리만 고친다. G4 가 먼저 합쳐졌으면 그 표지 규칙(크기·색)을 따른다. G4 도 R2 의 비살상탄이 `stunUntil` 로 무력화한다는 것을 전제로 적었다(맞다).
 
-**R3(분야별 대응 교본)** — R3 는 `METHOD` 표의 행을 늘리고(R3 §3.7), 교본 배율을 점수에 곱한다: `chooseMethod` 의 마지막 인자 `dc: DocCtx | null`(3.2) — 실행부는 `docCtx(…, 'self')`, `methodFit` 은 안에서 `docCtx(…, 'report', w)` 를 만든다(인자는 그대로라 `fitFor`·B3 `anyCapable` 은 고치지 않는다). `chooseMethod` 는 `{ ...dc, m: { reach, flow, weak } }` 사본으로 `docMethodMul` 을 부르고(받은 `dc` 는 고치지 않는다), 공기·탄약·짝·부상 같은 '상태'는 `MethodCtx.dc` 로 읽는다. 동요는 `caution` 에 +0.2(R3 G02b, 상한 1.1). 까닭 여섯(`hurt`·`alone`·`lowAir`·`lowAmmo`·`shaken`·`tired`)은 3.4 의 순서·3.8 의 `WHY_TEXT` 에 더한다. 이송·교통 통제·해체의 방법도 R3 몫이다(실행은 R3 의 `doctrineRun.ts` — 2절). 상공 호이스트가 있을 때의 헤엄 감점은 R3 를 합칠 때 4.1 의 ×0.7 을 지우고 R3 S15(×0.5) 하나로 한다(12절, R3 §3.7 — 정본 R3 S15).
+**R3(분야별 대응 교본)** — R3 는 `METHOD` 표의 행을 늘리고(R3 §3.7), 교본 배율을 점수에 곱한다: `chooseMethod` 의 마지막 인자 `dc: DocCtx | null`(3.2) — 실행부는 `docCtx(…, 'self')`, `methodFit` 은 안에서 `docCtx(…, 'report', w)` 를 만든다(인자는 그대로라 `fitFor`·B3 `anyCapable` 은 고치지 않는다). `chooseMethod` 는 `{ ...dc, m: { reach, flow, weak, tile } }` 사본으로 `docMethodMul` 을 부르고(받은 `dc` 는 고치지 않는다), 공기·탄약·짝·부상 같은 '상태'는 `MethodCtx.dc` 로 읽는다. 동요는 `caution` 에 +0.2(R3 G02b, 상한 1.1). 까닭 여섯(`hurt`·`alone`·`lowAir`·`lowAmmo`·`shaken`·`tired`)은 3.4 의 순서·3.8 의 `WHY_TEXT` 에 더한다. 이송·교통 통제·해체의 방법도 R3 몫이다(실행은 R3 의 `doctrineRun.ts` — 2절). 상공 호이스트가 있을 때의 헤엄 감점은 R3 를 합칠 때 4.1 의 ×0.7 을 지우고 R3 S15(×0.5) 하나로 한다(12절, R3 §3.7 — 정본 R3 S15). 폭파 진입을 언제 고르는가(인질 위치를 모르면 쓰지 않는다·진입 순간 ×1.2)는 R3 S26 이 `charge` 에 배율로 얹는다 — 그 줄이 문을 알도록 `DocCtx.m` 에 `tile`(3.2)을 채운다.
+
+**I1(인과관계)** — 폭파 진입의 `blast` 는 I1 의 `blast` 신호를 보내지 않는다(`noSignal = true` — I1 §3.4 의 신호 표 `blast` 줄에 한 구절로 적었다). 문 하나를 여는 반경 1.5 의 폭발이 변전소 정전 같은 세계 상태 규칙의 원인이 되지 않게 한다. 사건 안의 원인 사슬은 그대로 잇는다(완료 기록 → `blast` 의 `ev` → 피해 기록).
 
 ## 11. `CLAUDE.md` 에 들어갈 줄 (합친 뒤에 고친다)
 
@@ -1131,6 +1182,7 @@ npm run check                                           # 단계를 끝낼 때 �
 - **접은 방법은 대원이 기억한다**(`a.mfail` — 실패 60초, 조건 상실 15초, 고장은 끝까지). `t.tried` 는 임무가 바뀌면 사라지므로 이것이 없으면 헤엄 사고 뒤 뭍에 오르자마자 다시 뛰어들고, 자리를 못 잡는 저격수가 조준 → 실패를 되풀이한다.
 - **방법을 바꾸는 때는 셋뿐**(실패·고장·조건 상실 3초), 그리고 한 번의 **도착 재선택**과 **예정된 전환**(방법 안의 단계). "더 좋은 방법이 보이면 바꾼다"를 넣으면 대원이 두 방법 사이를 오간다(한 임무에 이동 목표 둘과 같은 증상).
 - **R1 이 하는 행동을 다시 만들지 않는다.** 호이스트·테이저·방패·열화상은 R1 의 코드다. R2 는 그 자리에 기록(`recordMethod`·`recordAir`)만 더한다. 기록 전용 분기는 `recordMethod` 에 자기 방법 이름을 넘긴다(`t.method` 는 비어 있다).
+- **폭파 진입은 믿음으로 고르고 진실로 터진다.** `charge` 의 조건(문 2.5칸 안의 사람, 가스·분진·구조 조짐, 살아 있는 장치)은 믿음만 본다. 폭발은 `hazards.blast` 로 진실의 모든 사람·창·가구·X6 의 가스와 구조에 걸린다 — 못 본 사람이 문 뒤에 있으면 다친다(그때 `ESCALATION` 한 줄). 카운트는 반경 안에 동료가 없을 때만, 10초 넘게 비지 않으면 다른 방법으로. 폭파의 `blast` 는 I1 신호를 보내지 않는다(`noSignal`). 장약은 폭발할 때만 줄인다.
 
 ## 12. 알려진 위험과 확인할 것
 
@@ -1150,6 +1202,7 @@ npm run check                                           # 단계를 끝낼 때 �
 - **성능**: `fitFor` 가 수난 현장에서 `methodFit` 을 생각 주기마다 부른다. `reachOf` 는 믿음 위치 둘레 반경 4칸만 훑고(못 찾을 때만 넓힌다), `landComp` 는 `s.staticVersion` 이 바뀔 때만 다시 칠한다(`WeakMap<Scene, …>`). 느려지면 대원별로 0.5초 동안 결과를 담아 둔다. R1 로 대원 수가 1.9배쯤 늘어나는 것과 겹친다.
 - **구조정은 바닷가에만 출동한다**(`dispatcher.pickUnit`). 일반 하천에서 보트 방법은 구조 공작차의 고무보트로만 나온다.
 - **방법 문장의 길이**: 보고서의 분석 문장은 11~12줄에서 잘린다. 문제가 많은 사건에서는 방법 문장이 빠질 수 있다(의도 — 문제 설명이 먼저).
+- **폭파 진입과 농성 문 잠금(4.2a — 사용자 결정 2026-11-15)은 무장 사건의 흐름을 바꾼다.** 잠긴 방 문은 방 진입을 늦추고(25초 상한), 폭파는 문 뒤의 못 본 사람을 다치게 할 수 있으며, 막힌 방의 용의자는 나가지 못한다(도주가 줄고 대치가 길어질 수 있다). `--force armed/hostage`·`armed/siege` 로 투항 비율·한계 시간·인질 부상을 함께 보고, 넘치면 `BARRICADE_P` 를 낮춘다(0 이면 지금과 같다). 반대로 특공대가 거의 오지 않는 쉬운 난이도에서는 폭파가 드물다(의도 — 장비와 부대가 방법을 정한다). 잠긴 문이 있는 다른 현장(화재·가스·응급·승강기)에 특공대·폭발물 처리반이 가는 일은 드물어 그쪽의 폭파는 거의 없다 — 장면 시험(시험 10)으로 확인한다.
 
 ## 검토 메모
 
@@ -1162,3 +1215,4 @@ npm run check                                           # 단계를 끝낼 때 �
 - `aerial` 에 사다리 추락 위험을 넣지 않았다 — 대원이 사다리에 오르지 않는 방법으로 정의했다(H1 의 "R2 의 사다리·창문 추락" 줄은 비워 두면 된다고 10절에 적었다 — 정합성 점검에서 H1 쪽을 고쳤다, 반영됨).
 - `reachOf` 가 건너편 둔치를 고르는 문제는 같은 뭍 성분 조건만 더하고 이동 거리 감점은 넣지 않았다 — 다리로 돌아가 구하는 것도 실제로 있는 일이고, 점수에 이동 거리를 넣으면 고르는 규칙이 경로 계산에 묶인다. 알려진 위험으로 적었다(12절).
 - H1 문서의 연관 표 R2 줄("H1 이 있으면 하한 18 을 두지 않고")과 H1 의 결정 표 "대원의 익수" 줄이 이 문서의 결정과 어긋났다 — 정합성 점검에서 H1 의 두 줄을 이 문서(§3.5)에 맞춰 고쳤다(반영됨).
+- **사용자 결정(2026-11-15, "전부 추천대로") — 폭파 진입을 실제 방법으로**: 그때까지 G5 가 그림 이름(`BreachHow 'charge'`)만 예약했고 시뮬레이션에는 없었다. 4.2a 에 방법 한 줄(누가·조건·속도·위험·소모·기록·그림·소리)을 넣고, 장약은 R1 의 장비 표에(`charge`), 고르는 때의 교본은 R3 S26 에 두었다. 이름만 있는 방법이 되지 않도록 그것이 나올 자리 둘(무장 현장의 농성 문 잠금 세계 규칙, 방 진입의 잠긴 문을 방법으로 여는 하위 작업)을 함께 정했다 — 그래서 4.2 의 "방 진입은 지금 코드 그대로 문을 연다"를 잠긴 문에 한해 고쳤다(동시 진입은 그대로). 불발·위력의 흔들림은 두지 않았다(난수 없이 같은 상황 = 같은 결과).

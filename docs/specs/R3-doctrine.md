@@ -263,7 +263,7 @@ export interface DocCtx {
   dng: number;                                   // brain 의 위험 점수 (② 자리에서 brain 이 넘긴다. 다른 자리에서는 0)
   has: (id: KitId) => boolean;                   // gear.kitHas — 들었는가 (알려진 고장 제외, 수량 무관). kits·noKits 가 이것으로 본다
   kit: (id: KitId) => number;                    // gear.kitCount (R2 — scba 는 0/1, 수량 장비는 남은 수). 수량을 보는 when 이 쓴다
-  m?: { reach: number; flow: number; weak: boolean };      // ③ 방법 자리: R2 chooseMethod 가 MethodCtx 를 만든 뒤 dc 의 사본에 채운다 (부르는 쪽은 채우지 않는다 — R2 §3.2)
+  m?: { reach: number; flow: number; weak: boolean; tile: number };      // ③ 방법 자리: R2 chooseMethod 가 MethodCtx 를 만든 뒤 dc 의 사본에 채운다 (부르는 쪽은 채우지 않는다 — R2 §3.2). tile = 문·잔해 대상의 칸(R2 MTarget.tile, 없으면 -1) — S26 이 쓴다
 }
 // doctrine.ts
 export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report', w: WorkItem | null = null, sense: Sense = ZERO_SENSE, dng = 0): DocCtx;
@@ -568,7 +568,7 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
 |---|---|---|---|---|---|---|---|---|
 | S01 | 특공 | 동시 진입 | 방패 | 방패수가 진입조에 있고 중상·동요가 아님 | 방패수가 주 출입구 첫째(R1). R3: 다른 진입조원은 방패수가 문을 지난 뒤 0.6초 간격으로 들어간다(줄 서기) (판단 `breach` — `choose 'stack'`, `breach()` 의 출입구 반복 안 — 3.1 끝) | 0.6초 | "방패 선두 — 진입!" (지금의 진입 문구를 바꾼다) | 새로 (배치는 R1) |
 | S02 | 저격·관측수 | 무장 대치 | 저격 소총 | — | 진입조에 들지 않는다(`engage ×0.3`) — **단 R2 의 결정적 저격 조건일 때는 깎지 않는다**(저격은 `engage` 임무 안의 R2 방법이라, 그때 저격수가 `engage` 를 맡아야 고를 수 있다). 봉쇄 자리 가운데 가장 먼 자리를 먼저(`perimeter +0.1`) (`fit`) | — | — | 새로 (선호는 R1) |
-| S03 | 진입대원(파괴) | 잠긴 문 | 파괴 장비 | 대치 중 | 조용히(R2 `irons`) / 진입 순간(R2 `ram`) | R2 | R2 | 있음(R2) |
+| S03 | 진입대원(파괴) | 잠긴 문 | 파괴 장비 | 대치 중 | 조용히(R2 `irons`) / 진입 순간(R2 `ram` — 장약이 있고 S26 이 막지 않으면 R2 `charge`) | R2 | R2 | 있음(R2) |
 | S04 | (지휘관) | 두 문 동시 진입 문턱 | — | 쓸 수 있는 경찰 < 4 (특공 결원·중상 포함) | 한 문 진입 (문턱을 머릿수에서 "쓸 수 있는 경찰"로) | 4 | — | 새로 — 지휘 CP1 |
 | S05 | 특공·기동 | 진입이 결정됨 | 섬광탄 | — | 섬광탄을 가진 사람이 진입조를 먼저 맡는다(`engage +0.1`) (`fit`) | — | — | 새로 |
 | S06 | 폭발물 처리반 | 살아 있는 장치(믿음) | 로봇(작동 — 알려진 고장 아님) | — | **로봇 먼저**(`robotDefuse` `×1.3` — 3.7): 로봇 조작 요원이 8칸 밖에서 원격 확인·무력화. 로봇 고장이 드러나면 로봇 조작 요원은 고를 방법이 없어 임무를 놓고, 처리 요원이 `suitDefuse` 로 맡는다(3.7). **기본 자격을 고친다**: R1 의 `defuse` 자격(eodKit)에 "작동하는 로봇을 든 대원 — `robotDefuse` 로만"을 더한다(`fitFor` 의 `defuse` — 11.1). 교본은 0 인 자격을 열 수 없기 때문이다(2.6). **배정은 S06b**(`fit`): 방법 배율은 한 사람이 가진 방법끼리만 견주므로(로봇은 로봇 조작 요원만, 방호복은 처리 요원만 든다) S06 의 `×1.3` 은 누가 맡는지를 바꾸지 못한다 — 처리 요원(R1 선호 +0.3)이 늘 먼저 배정된다. 그래서 현장에 작동하는 로봇을 든 활동 동료가 있으면 처리 요원의 `defuse` 적합도를 `×0.4` 로 낮춘다(S06b). S06 의 방법 줄은 기록·까닭용으로 남는다 (방법 + `fit`) | 8칸 | "로봇 먼저 투입합니다." / 고장 "로봇이 작동하지 않습니다 — 방호복 착용 후 수동 해체." | 새로 |
@@ -591,6 +591,7 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
 | S23 | 폭발물 처리 요원 | 살아 있는 장치 | — | **중상** 또는 **동요** | 손으로 하는 해체(`suitDefuse`·`bareDefuse`) `×0` — 작동하는 로봇이 현장에 있으면 로봇 조작 요원이 `robotDefuse` 로, 없으면 고를 방법이 없어 맡지 않는다(해체 `WORK_MODE` — 3.7) → B3 블록이 폭발물 처리반을 더 부른다 (방법, rank 1) | band 1 | "손이 떨립니다 — 해체를 넘기겠습니다." (처음 한 번, 놓을 때) | 새로 |
 | S24 | 저격·관측수 | 결정적 저격 조건(R2 `sniper`) | 저격 소총 | **동요** 또는 **중상** | 저격 `×0` — 인질 곁 한 발은 흔들리는 손으로 쏘지 않는다. 엄폐 사격·봉쇄는 그대로 (방법, rank 1) | — | R2 SAY (까닭 `shaken`·`hurt`) | 새로 |
 | S25 | 수난·항공 구조대원 | 수난 구조 | — | 지구력 < 30 | 헤엄 `×0` — 보트·줄·장대만 (방법, rank 1) | 30 | R2 SAY (까닭 `tired`) | 새로 |
+| S26 | 진입대원(파괴)·폭발물 처리 요원 (장약을 든 사람) | 잠긴 문·막힌 문(문을 막은 잔해) — 폭파 진입(R2 `charge`, **사용자 결정 2026-11-15**, R2 §4.2a) | 폭파 장약 | — | **인질 위치를 모르면 쓰지 않는다**: 믿음에 인질을 잡은 용의자(`hos` 사실의 `hostage`)가 있는데 그 용의자 믿음이 10초보다 낡았거나 그 위치가 대상 문(`dc.m.tile`)에서 4칸 안이면 `charge ×0` — 인질은 그 곁에 있으므로 "문 뒤에 있을지 모른다"를 믿음의 나이와 거리로 본다(R2 `can` 의 구조 대상 2.5칸보다 넓게). 진입 결정 전(협상·대치)은 R2 의 조건 ⑤ 가 이미 막는다. 그 밖이고 진입 순간(`sit.entryOrdered`)이면 `×1.2` — 문이 한 번에 열려 인질 곁의 용의자에게 닿는 틈이 짧다 (방법, rank 0) | 10초 · 4칸 | (막을 때) R2 SAY 앞말 "인질 위치를 몰라 — " (까닭 `hostage` → `danger`) | 새로 |
 
 ### 3.5 공통 (`common` — 모든 분야)
 
@@ -682,6 +683,7 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
 | S23 | method | roles bombTech | `defuse` · `suitDefuse`·`bareDefuse` | — | `st.band ≥ 1` ‖ `st.shaken` | mul 0 | 1 | hurt |
 | S24 | method | roles marksman | `engage` · `sniper` | — | `st.shaken` ‖ `st.band ≥ 1` | mul 0 | 1 | shaken |
 | S25 | method | groups water·rescue | `waterRescue` · `swim` | — | `st.stamina < 30` | mul 0 | 1 | tired |
+| S26 | method | roles breacher·bombTech | `force`·`clear` · `charge` | kits charge | 믿음 `hos` 가운데 `hostage` 인 용의자가 있음 | mul 0 [when 그 용의자 믿음의 나이 > 10초 ‖ `dist(그 위치, dc.m.tile) ≤ 4`] · mul 1.2 [when 그 밖 && `sit.entryOrdered`] | 0 | hostage |
 
 **행동 줄끼리의 순서**(한 판단에 교본 후보 하나 — 2.6): 의무는 F01 > F02(둘 다 rank 0, 등록 순서). 점수 후보는 P09(0) > P08 = P10 = P16(1 — 등록 순서 P08 > P10 > P16) > G08(2). P08 과 P10 은 `underFire` 로 서로 겹치지 않는다(P08 의 위급 갈래는 `!underFire`, 평소 갈래는 교전 없음). P11 은 이 경쟁에 들지 않는다(후퇴 후보를 바꿔 끼울 뿐 — `swap`).
 
@@ -1002,7 +1004,7 @@ npm run check                                                             # 단�
 | **2 경찰** | 탄약(2.9: `KitDef` 세 칸·총기 `uses`·명부 복사·`shootAt`·`reloadTick`·`rearm`·`ammoBox`·집에서 채움, R2 저격의 탄 소모), 엄폐(2.10: `coverSpot`·임무에 담는 자리·`cover` 임무·`engage` 마지막 분기), 판단 지점 `closeIn`(**`arrest`** 의 P01~P03, `engage` 인질 갈래의 P14)·`coverFire`·`roomEntry`·`breach`(`breachExit` 로 꺼내기)·`bangUse`, `docRetreat`(P11)·`docDrop`(P22), `assign` 의 교본 임무 건너뛰기, P 줄 전부, CP1~CP4, `request` 의 기록 id(`commander.ts`·`sceneRegistry.ts`), D2·D3·D6, 추격 D7(`trackBy`·`reportedPrev`·`reportedNodeAt`·`chaseRoles`), `TaskKind` 의 `cover`·`rearm` | 2-a·2-b·2-d·2-h·2-j, 4(엄폐 왕복 — `armed/hostage` 강제), 6(`armed/dispute`·`armed/hostage`), 8(경찰 ≥ 12) | 무장 강제 묶음의 표, 대원 부상 목표, `npx vitest run tests/sim.test.ts -t 생활`·`npx vitest run tests/crime.test.ts -t 폭동` 통과(11.2-12) |
 | **3 소방** | 짝(`PAIRS`·`pairUp`·`rebuddy`·`pair` 임무·G08), `interiorEntry` 판단 지점, `airOut`·`pairOut` 의무와 실행(5.7), `AIR_IN`, R1 공기통 교체 후보의 문턱, `feel`·`pulse` 방법 행, `sparePump`, F 줄 전부, CF1~CF7(CF5·CF6 은 X6 `DANGER_RULES` 두 줄), D4·D5, `TaskKind` 의 `airOut`·`pairOut`·`pair` | 2-c·2-f, 3(숨은 고장 — 열화상·`fitFor(waterRescue)` 의 남의 몸), 4(공기 왕복·짝 동행 경계 — `fire/std` 강제), 6(`fire/std`), 7(공기 부분), 8(소방 ≥ 12), 9 | 화재 강제 묶음의 표, 8.2 의 화재 범위 |
 | **4 의료** | `WorkKind 'triage'`(`workLabel` '다수 사상자 분류', `fitFor`: 구급만, 실행: 믿음 속 환자마다 2초 서서 `casFact` 강제 보고 → `s.triageAt`), CE1 의 band 1 미루기·거두기, 경계 밖 처치소(E05 — `fitFor treat` 기본 규칙), `carryHold`·`laneTreat` 판단 지점, 처치 넘겨받기(CE2 — 실행기 `treat` 의 `handover`), E 줄 전부(E13·E14 는 6단계), CE1~CE5 | 2-g, 8(의료 ≥ 12) | 응급·교통 강제 묶음, 응급 대응 지연이 늘지 않는다 |
-| **5 특수** | 줄 서기 진입(S01), 저격·섬광탄 가산(S02·S05), 해체 방법 셋과 `WORK_MODE`(3.7 — `fitFor defuse` 에 로봇 자격, `bareDefuse` 의 방호 끄기), 장치 반경(S08·CS1, `agentCost` +20), 화학 짝·대기조(S10·S11), 수난·헬기 줄(S13·S15·S25), 사다리 조작원(S19), S21~S24, CS2, D1 | 2-i, 8(특수 ≥ 12 — 이제 네 분야 모두) | 폭발물·가스·수난 강제 묶음 |
+| **5 특수** | 줄 서기 진입(S01), 저격·섬광탄 가산(S02·S05), 해체 방법 셋과 `WORK_MODE`(3.7 — `fitFor defuse` 에 로봇 자격, `bareDefuse` 의 방호 끄기), 장치 반경(S08·CS1, `agentCost` +20), 화학 짝·대기조(S10·S11), 수난·헬기 줄(S13·S15·S25), 사다리 조작원(S19), S21~S24, 폭파 진입의 교본(S26 — R2 §4.2a 의 `charge` 가 먼저 있어야 한다), CS2, D1 | 2-i, 8(특수 ≥ 12 — 이제 네 분야 모두) | 폭발물·가스·수난 강제 묶음, `armed/hostage`·`armed/siege`(S26) |
 | **6 이송·교통 방법** | R2 방법 행 `pack`·`drag`·`litter`(기록 전용)·`post`·`blockLane`, `s.laneShield` 와 `hazards.tickLane` 의 배율 한 줄, 판단 지점 `carryStart`, R1 척추 고정판 효과의 조건(`c.immob`), P20·F18·E13·E14 | 2-k | 교통 강제 묶음, 2차 사고 수가 늘지 않는다(`blockLane` 이 쓰인 사건에서는 준다) |
 | **7 화면** | 7.1·7.2 전부 | 5(해시 불변 — 시드 20개) | 6단계 끝의 기록 해시와 **같다**, 스크린샷 직접 확인(`?seed=S7&force=fire/std`, `armed/hostage`, `traffic/bus`, `armed/bomb`), 콘솔 오류 0건 |
 | **8 균형과 문서** | 8.2 최종 확인, 이 문서 끝에 구현 메모, (합칠 때) `README.md`·`CLAUDE.md`(11.5)·`docs/ROADMAP.md` | — | 보고 |
@@ -1160,6 +1162,7 @@ npm run check                                                             # 단�
 14. **교본은 기본 자격을 열지 않는다**(2.6). 열어야 하면 `fitFor` 의 그 `case` 를 고치고 교본 줄은 기록만 맡는다(E05·S06).
 15. **지휘관은 교본 임무 중인 대원을 빼 가지 않는다**(2.6). 그 대신 교본 임무는 짧고 스스로 끝난다(엄폐 12초 상한 등).
 16. **짝은 역할 쌍으로 적고, 부대가 내린 뒤 한 번 맺는다**(5.1). R1 의 `crew` 는 압축 배열이고 `makeAgent` 에는 현장 인자가 없다.
+17. **폭파 진입은 R2 의 방법, 고르는 때는 S26**(사용자 결정 2026-11-15 — "전부 추천대로"). 장약은 R1 의 장비(`charge` — 진입대원(파괴)·폭발물 처리 요원), 효과·조건은 R2 §4.2a. 교본은 "인질 위치를 모르면 쓰지 않는다"와 "진입 순간에 쓴다"만 얹는다 — 문 둘레의 사람·가스·장치·구조 조건은 R2 의 `can` 이 이미 믿음으로 본다(두 곳에서 같은 조건을 따로 깎지 않는다).
 
 ### 11.4 확인 필요 목록
 

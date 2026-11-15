@@ -98,10 +98,10 @@
 | `tacOfficer` | 기동대원 | officer | .05 · .22 · .22 · s+.06 | rifle, plate, flashbang | engage +.15, arrest +.1 |
 | `swatLead` | 특공 팀장 | lead | .05 · .25 · .25 · s+.12 | pistol, plate, flashbang | negotiate +.05 |
 | `shield` | 방패수 | shield | .05 · .22 · .22 · s+.1 | pistol, plate, shield | engage +.2 |
-| `breacher` | 진입대원(파괴) | entry | .05 · .35 · .22 · s+.1 | rifle, plate, breachKit, flashbang | force +.3, engage +.1 |
+| `breacher` | 진입대원(파괴) | entry | .05 · .35 · .22 · s+.1 | rifle, plate, breachKit, flashbang, charge | force +.3, engage +.1 |
 | `assaulter` | 진입대원 | officer | .05 · .22 · .22 · s+.12 | rifle, plate, flashbang | engage +.15 |
 | `marksman` | 저격·관측수 | marksman | .05 · .2 · .2 · s+.15 | sniper, plate | perimeter +.3, engage −.15 |
-| `bombTech` | 폭발물 처리 요원 | bomb | .05 · .3 · .22 · s−.15 | bombSuit, eodKit | defuse +.3 |
+| `bombTech` | 폭발물 처리 요원 | bomb | .05 · .3 · .22 · s−.15 | bombSuit, eodKit, charge | defuse +.3 |
 | `robotOp` | 로봇 조작 요원 | bomb | .05 · .25 · .22 · s−.05 | robot, pistol, vest | perimeter +.1 |
 | `eodGuard` | 경계 요원 | officer | .05 · .22 · .22 · s | pistol, vest, megaphone | perimeter +.2 |
 | `observer` | 전술 관측관 (내림 ✕) | observer | .05 · .2 · .2 · s | flir, searchlight | — (경험 .4~.9) |
@@ -151,7 +151,8 @@ export type KitId =
   | 'pumpPanel' | 'plugKit' | 'gasMeter'
   | 'bag' | 'alsBag' | 'doctorKit' | 'aed' | 'stretcher' | 'spineBoard'
   | 'pistol' | 'rifle' | 'sniper' | 'taser' | 'flashbang' | 'vest' | 'plate' | 'shield' | 'bombSuit' | 'eodKit' | 'robot' | 'megaphone' | 'baton'
-  | 'flir' | 'searchlight';
+  | 'flir' | 'searchlight'
+  | 'charge';            // 폭파 장약 — R1 은 들려 두기만 한다. 쓰는 것은 R2 §4.2a (사용자 결정 2026-11-15)
 /** 대원 한 사람이 든 장비 하나 */
 export interface KitItem {
   id: KitId;
@@ -257,6 +258,7 @@ export interface KitDef {
 | `shield` | 방탄 방패 | `engage`·`perimeter` 중 armor +.3, 그 동안 이동 ×0.9 | — |
 | `bombSuit` | 폭발물 방호복 | armor .6, 폭발 피해 ×0.35, 이동 ×0.75 | — |
 | `eodKit` | 해체 공구 | `defuse` 자격 | `u.caps.eod ≥ 0.9` |
+| `charge` | 폭파 장약 | **R1 에서는 효과 없음**(`tool` 값을 두지 않는다 — 두면 `toolFor('force')` 가 진입대원(파괴)의 문 개방 속도를 바꾼다). `uses` 2(명부가 테이저처럼 채운다). 고장 추첨 없음(`faultable` 아님 — `kit` 흐름이 그대로다). `group: 'police'`. R2 의 폭파 진입 방법(`MethodId 'charge'`, R2 §4.2a)이 쓴다 — **사용자 결정(2026-11-15)**: 특공대·폭발물 처리반이 잠긴 문·막힌 문을 폭약으로 연다 | — (새로) |
 | `robot` | 원격 로봇 | 현장에 이 장비를 든 대원이 활동 중이면: 가짜 장치 확인 10 → 5초, 진짜 장치 해체 실수 확률 ×0.6. 고장 추첨 | — |
 | `megaphone` | 확성기 | 협상 진행 ×1.2 | — |
 | `baton` | 경광봉 | 교통 통제 시간 ×0.85 | — |
@@ -341,7 +343,7 @@ export const AIR_KIND: Set<UnitKind>;                                    // new 
 - **이름**: 처음 20줄의 0·1번 자리는 지금처럼 `NAMES[di * 2 + k]`. 나머지 자리는 새 목록 `EXTRA_NAMES` 를 (줄 순서 × 자리 순서)로 차례로 쓴다(표준 편성 기준 35개 필요, 모두 달라야 하고 `NAMES`·`AID_NAMES` 와도 겹치지 않는다). **첨자는 표준 표(`STAFF[kind].std`)의 자리로 고정한다** — 편성되지 않은 줄, 최소 인원에서 빠진 자리도 자기 번호를 차지한 채 건너뛴다(앞으로 당기지 않는다). 그래야 `roster-v2:<호출부호>:<자리>` 의 능력치와 이름이 부대 규모와 상관없이 언제나 같은 사람을 가리킨다(테스트 ⑦). 가상의 이름 예: `구본호 나윤슬 도해찬 마서율 반지성 백승아 사공진 선우람 설하윤 성도진 손예찬 송하람 심지율 양태호 염소희 오세린 우지환 원채린 유건희 윤다온 이로하 임하준 장세아 전도하 정이든 제갈윤 조서하 주원석 지예솔 진태경 천소율 최한결 태은호 편서우 하도율 허은재`. 자리를 끼워 넣으면 뒤쪽 이름이 밀리므로 **새 자리는 표의 끝에 붙인다**.
 - 대원에 `role`, `kit`(역할의 기본 장비를 `{ id }` 로 복사) 를 채운다. `senior = (slot === 0)`.
 - **섬광탄 나눔**: 부대 몫(기동 = `tn.flashbangs`, 특공 = `tn.flashbangs + 2`, 지원 기동 = `min(2, tn.flashbangs)`)을 `flashbang` 장비를 든 사람에게 자리 순서대로 하나씩 돌려 나눈다(기본 2 → 기동대원 1·1, 특공 4 → 팀장 1·진입(파괴) 1·진입 1 … 순서대로). 0 개인 사람의 `flashbang` 항목은 남기되 `uses: 0`. `u.flashbangs` = 합.
-- **테이저** `uses: 2`. **공기호흡기**는 단계 6 전에는 `uses` 를 두지 않는다(없으면 공기가 줄지 않는 것으로 본다). 단계 6 에서 `tn.airFull` 로 채운다(9절).
+- **테이저** `uses: 2`, **폭파 장약** `uses: 2`(진입대원(파괴)·폭발물 처리 요원 — R2 §4.2a 가 쓴다). **공기호흡기**는 단계 6 전에는 `uses` 를 두지 않는다(없으면 공기가 줄지 않는 것으로 본다). 단계 6 에서 `tn.airFull` 로 채운다(9절).
 - **고장 추첨**(단계 6): `sim.rng.fork('kit')` 하나로, 대원 순서(`rid`) × 장비 순서대로 `faultable` 장비마다 `tn.kitFault` 확률. 편성된 대원만 뽑는다(교대 시드에서 나오는 흐름이라 편성 여부에 묶여도 된다).
 - 펌프 상태(`equipment` 흐름)는 그대로: 새 두 줄은 소방이 아니므로 뽑지 않는다 → 기존 소방 부대의 `pumpCond` 순서가 바뀌지 않는다.
 - 부대에: `seats`, `hoist`, `bucket = bucketMax`, `fuel = fuelMax`, `spareAir`, `air = AIR_KIND.has(kind)`(`AIR_KIND` 는 `crews.ts` 에 있다 — `src/sim` 이 `src/view` 를 import 하지 않는다). 헬기의 집 자리는 7.1.
@@ -876,6 +878,7 @@ diff /scratch/hash-before.txt /scratch/hash-after.txt      # 출력이 없어야
 14. **테이저의 대기 시간은 따로 둔다**(`FieldAgent.taserAt`). `a.cooldown` 을 `arrest` 에서도 줄이게 하면 사격 결과는 그대로지만 대기 시간의 뜻이 섞이고, 그림이 쏜 뒤의 남은 값에 매인다.
 15. **B3 의 "맡을 사람이 없는 작업" 블록을 고쳐 쓴다**(6.4). 같은 일을 하는 블록을 하나 더 두지 않는다.
 16. **펌프차 팀장(`fireLead`)에게 가스 측정기를 주지 않는다**(X6 §3.4·§12.3 의 질문). R1 은 역할 표대로 측정기를 화학대(`hazLead`·`decon`)에만 둔다 — 가스 누출 현장의 조짐을 화학 구조대가 올 때까지 냄새로만 아는 것이 X6 가 드러내려는 결과다. X6 의 균형(X6 §8)에서 가스 단계를 너무 늦게 알아 결과가 기준을 벗어나면 X6 구현자가 `ROLES.fireLead` 기본 장비 **끝에** `gasMeter` 를 붙이는 손잡이로 쓴다(장비 순서가 고장 추첨 순서이므로 끝에만 붙이고, 14절 ③ 을 다시 돌린다).
+17. **폭파 장약(`charge`)은 R1 의 장비 표에 두되 효과는 R2 가 만든다**(사용자 결정 2026-11-15 — 폭파 진입은 R2 의 실제 방법, R2 §4.2a). 진입대원(파괴)·폭발물 처리 요원의 기본 장비 **끝에** 붙이고 `tool` 값·고장 추첨을 두지 않으므로, R1 단계에서는 `toolFor`·`kit` 흐름·결과가 한 건도 바뀌지 않는다(대원 정보창의 장비 줄에만 보인다).
 
 **알려진 위험**
 

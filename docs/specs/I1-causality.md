@@ -695,7 +695,7 @@ export function chainDepth(sim: Sim, incId: number): number;              // = m
 
 | 신호 | 보내는 자리 | `size`·`data` |
 |---|---|---|
-| `blast` | `hazards.blast` 에서 원인이 `'blast'` 이고 X6 의 `catastrophe.ts` 가 부른 것이 아닐 때만(X6 이 대체하지 않은 폭발 — 폭발물 `rules/crime.ts`). H1·X6 뒤에는 무너짐도 `blast(…, cause 'crush')` 를 지나고 X6 의 가스·용기 폭발은 `catastrophe`(data 0)를 따로 보내므로, 그 둘에서는 보내지 않는다(같은 폭발이 두 번 들어오지 않게, 원인 사슬이 EXPLOSION 기록을 가리키게) | `size` = 반경(칸) |
+| `blast` | `hazards.blast` 에서 원인이 `'blast'` 이고 X6 의 `catastrophe.ts` 가 부른 것이 아닐 때만(X6 이 대체하지 않은 폭발 — 폭발물 `rules/crime.ts`). H1·X6 뒤에는 무너짐도 `blast(…, cause 'crush')` 를 지나고 X6 의 가스·용기 폭발은 `catastrophe`(data 0)를 따로 보내므로, 그 둘에서는 보내지 않는다(같은 폭발이 두 번 들어오지 않게, 원인 사슬이 EXPLOSION 기록을 가리키게). R2 의 폭파 진입(`charge` — 사용자 결정 2026-11-15, 반경 1.5)도 `noSignal = true` 로 부른다 — 문 하나를 여는 작은 폭발은 정전·통제 같은 세계 상태 규칙의 원인이 아니다(R2 §4.2a) | `size` = 반경(칸) |
 | `collapse` | `hazards.tickCollapse` 의 2차 붕괴, 크레인·가스 폭발·산사태의 발생(`onCreate`), 지진 여진의 붕괴 | `size` = 무너진 칸 수 |
 | `fireBig` | `hazards.tickFire` 끝: 불 칸(`fire > 0.2`) 수가 처음 30을 넘을 때(현장마다 한 번) | `size` = 불 칸 수 |
 | `delivered` | `resources.tickUnits` 의 병원 인계 완료(그 인계 기록) | `place` = 병원 시설 id, `data` = 산 환자 수(구조 대상만). H1 의 부상 대원·용의자 인계(`aboard`)는 `data` 에 넣지 않고 응급실 체류(`stays`)에는 넣는다(병상을 쓴다) — 같은 신호 한 번에 `size` = `aboard` 의 수 |

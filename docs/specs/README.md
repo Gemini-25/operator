@@ -19,7 +19,7 @@
 | `R1-crews.md` | 부대 편성·개인 장비·헬기 | `wf/crews` | 부대마다 2~5명의 역할, 사람마다 장비(공기·탄·고장), 경찰·소방·의료 헬기 | 다음 구현 세션 (1) |
 | `H1-injuries.md` | 부상과 사망 | `wf/injuries` | 대원·용의자·구조 대상이 한 모델로 다치고 숨진다 — 원인·방호·문턱·후송·결원·보고서 | 다음 구현 세션 (2) |
 | `X6-catastrophe.md` | 위험의 현실화 | `wf/catastrophe` | 조짐 → 막는 조치·철수·외부 방어 → 실제 붕괴·폭발·전소 → 사상자·지도·보고서 | 다음 구현 세션 (3) |
-| `R2-methods.md` | 대응 방식 다양화 | `wf/methods` | 같은 임무를 장비·능력·상황에 따라 여러 방법으로(헤엄 구조·보트·소화기·비살상탄·저격 …) | 다음 구현 세션 (4) |
+| `R2-methods.md` | 대응 방식 다양화 | `wf/methods` | 같은 임무를 장비·능력·상황에 따라 여러 방법으로(헤엄 구조·보트·소화기·비살상탄·저격·폭파 진입 …) | 다음 구현 세션 (4) |
 | `R3-doctrine.md` | 분야별 대응 교본 | `wf/doctrine` | 경찰·소방·의료·특수의 상황 × 장비 × 상태 교본 줄, 짝 규칙, 탄약·엄폐 | 다음 구현 세션 (5) |
 | `I2-persistence.md` | 교대 간 지속 | `wf/persist` | 대원 상태·장비·건물·도로를 "이어받은 상태"로 다음 교대의 입력에 | 다음 구현 세션 (7 — I1-b 가 6) |
 
@@ -56,6 +56,7 @@
 | 부상 필드·피해 경로(`InjuryCause`·`Injury`·`hurt*`·`protection`·`bandOf`·`MateBelief`·`outShifts`·`RosterOut`·`crewReady`/`crewOk`·`seatsUsed`·결원 규칙) | H1 §2·§3 |
 | 물 위 대원의 피해 하한 18 | R2 §3.5 |
 | 방법(`MethodId`·`MethodWhy`(평소 = `usual`)·`MethodUse`·`METHOD`·`chooseMethod(…, dc)`·`methodFit`·`WORK_MODE`) | R2 §3 (R3 §3.7 이 행과 까닭 사상 표를 더한다) |
+| 폭파 진입 — 사용자 결정(2026-11-15). 방법 `MethodId 'charge'` = G5 `BreachHow 'charge'`(그림 이름), 장약 `KitId 'charge'`, 농성 문 잠금 `BARRICADE_P` | R2 §4.2a (장약은 R1 §4 표·진입대원(파괴)·폭발물 처리 요원, 고르는 때는 R3 S26, 그림·소리는 R2 가 G5 의 진입 그림 자리에 갈래로 더한다). 같은 날의 다른 결정: H1 자해 끔(`SELF_HARM = 0`)·최소 편성 부대의 결원 규칙 확정(H1 §3.6·§12.3), 문 그림은 G5 기본값 그대로 |
 | 교본(`DocCtx`·`docCtx`·`DocWhy`·`crew` 사실·`docMethodMul`·`PAIRS`·탄약 `fireRound`) | R3 §2 |
 | 위험 상태(`CatState`·`OpsState`·`SignBelief`·`PlaceMark`·`Sim.placeMarks`·`DANGER_RULES`·`trapped`·경계 1칸 갇힘의 `cat:` 흐름) | X6 §2·§4 |
 | 세계 상태·신호(`WorldState`·`SignalKind`·`signal()`·`placeState`·**`knownBuildingAt`**·`I.blockEv`·`blast` 신호의 범위) | I1 §3.3·§3.4 |

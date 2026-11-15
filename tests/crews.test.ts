@@ -2,7 +2,7 @@
 // 이 파일은 90초 안에 끝나야 한다: 끝까지 돌린 교대는 shiftOf 로 한 번만 돌리고 여러 단언이 나눠 쓴다(읽기만 한다).
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { AIR_KIND, AIR_LOW, AIR_MIN, EXTRA_NAMES, KITS, ROLES, STAFF, airShort, armorOf, blastFactor, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, heliPad, isHovering, kitLive, kitUses, kitWorks, medLevelOf, minCrew, minField, roleOf, seatsOf, skillsOf, slotsOf, stays, toolFor, toolUse, useKit } from '../src/sim/crews';
+import { AIR_KIND, AIR_LOW, AIR_MIN, EXTRA_NAMES, KITS, ROLES, STAFF, airShort, armorOf, blastFactor, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, heliPad, isHovering, kitLive, kitUses, kitWorks, medLevelOf, minCrew, minField, roleOf, seatsOf, seatsUsed, skillsOf, slotsOf, stays, toolFor, toolUse, useKit } from '../src/sim/crews';
 import { NORMAL, parseDifficulty } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { airFit, kitBonus, tickDispatch } from '../src/sim/dispatch/dispatcher';
@@ -20,7 +20,7 @@ import { isIndoor, los, staticPass, tileOf } from '../src/sim/field/grid';
 import { blast } from '../src/sim/field/hazards';
 import { agentHealth, tickScene, unitArrived } from '../src/sim/field/sceneManager';
 import { closeIncident, createIncident } from '../src/sim/incidents';
-import { airRtb, createAidUnit, crewNames, crewReady, dispatchUnit, etaFor, startTransport, tickUnits } from '../src/sim/resources';
+import { airRtb, createAidUnit, crewNames, crewOk, crewReady, dispatchUnit, etaFor, startTransport, tickUnits } from '../src/sim/resources';
 import { Rng } from '../src/sim/rng';
 import { T } from '../src/sim/types';
 import type { AirOp, Assessment, CasBelief, FieldAgent, Incident, IncidentType, KitId, Needs, RoleId, Scene, TaskKind, Unit, UnitKind, WorkItem, WorkKind } from '../src/sim/types';
@@ -148,10 +148,9 @@ function patrol(seed: string, d: Difficulty, force: string | null): Patrol {
     if (storm) { p.stormTicks++; if (sim.airStats.sorties !== sorties) note('강풍 속에 헬기가 출동했다'); }
     sorties = sim.airStats.sorties;
     for (const u of sim.units) {
-      if (u.patients.length) {
-        p.loaded.set(u.kind, Math.max(p.loaded.get(u.kind) ?? 0, u.patients.length));
-        if (u.patients.length > seatsOf(u) && p.seats.length < 12) p.seats.push(`${seed} t=${sim.t.toFixed(1)} ${u.callsign}: 환자 ${u.patients.length}명 / 자리 ${seatsOf(u)}`);
-      }
+      if (u.patients.length) p.loaded.set(u.kind, Math.max(p.loaded.get(u.kind) ?? 0, u.patients.length));
+      // (H1 4b) 쓰인 자리 = 환자 + 다른 부대의 다친 대원·용의자. 다친 대원만 태운 차도 본다
+      if (seatsUsed(sim, u) > seatsOf(u) && p.seats.length < 12) p.seats.push(`${seed} t=${sim.t.toFixed(1)} ${u.callsign}: 쓰인 자리 ${seatsUsed(sim, u)} (환자 ${u.patients.length}명) / 자리 ${seatsOf(u)}`);
       if (u.air && storm) { if (u.grounded === null) note(`${u.callsign} 강풍인데 뜰 수 있다`); if (u.state === 'enroute' || u.state === 'turnout') note(`${u.callsign} 강풍 속에 출동 중`); }
       if (u.air && (u.fuel ?? 0) < 0) note(`${u.callsign} 연료가 0 밑으로`);
       if (u.state === 'hospital' && u.patients.length) p.hospital.add(u.kind);
@@ -323,9 +322,11 @@ describe('① 편성표대로 만들어진다', () => {
     expect(boat.crew.length).toBe(3); expect(fieldCrew(sim, boat).length).toBe(2);
     expect(crewNames(sim, heli).split('·').length).toBe(2);
     expect(heli.air).toBe(true); expect(AIR_KIND.has(heli.kind)).toBe(true); expect(boat.air).toBe(false);
-    // 다친 대원은 내릴 수 있는 수에서 빠진다. 조종사가 다쳐도 내릴 수 있는 수는 그대로다
-    sim.responders[heli.crew[0]].status = 'injured'; expect(crewReady(sim, heli)).toBe(1);
-    sim.responders[heli.crew[2]].status = 'injured'; expect(crewReady(sim, heli)).toBe(1);
+    // 쓰러진 대원은 내릴 수 있는 수에서 빠진다. 조종사가 다쳐도 내릴 수 있는 수는 그대로다
+    // (H1 4b — 사용자 결정 2026-11-15: 걸을 수 있는 다친 대원은 내려 가벼운 일을 한다. crewReady = 걸을 수 있는 대원, crewOk = 온전한 대원)
+    sim.responders[heli.crew[0]].status = 'injured'; expect(crewReady(sim, heli)).toBe(2); expect(crewOk(sim, heli)).toBe(1);
+    sim.responders[heli.crew[0]].status = 'down'; expect(crewReady(sim, heli)).toBe(1);
+    sim.responders[heli.crew[2]].status = 'injured'; expect(crewReady(sim, heli)).toBe(1); expect(crewOk(sim, heli)).toBe(1);
   });
   it('섬광탄·테이저·장약은 사람 몫이고, 부대의 섬광탄 수는 그 합이다', () => {
     for (const eq of [1, 3, 5]) for (const lv of [1, 3]) {
@@ -712,7 +713,7 @@ describe('⑨ 환자 자리', () => {
       for (const [kind, n] of p.loaded) most.set(kind, Math.max(most.get(kind) ?? 0, n));
       // 출발 기록: 헬기가 환자 둘을 싣고 떠난 적이 없고, 어느 부대도 자리보다 많이 싣고 떠나지 않았다
       for (const e of p.sim.events) {
-        const m = /^(\S+) 환자 (\d+)명 싣고/.exec(e.text);
+        const m = /^(\S+) 환자 (\d+)명(?:·부상 대원 \d+명)? 싣고/.exec(e.text);      // (H1 4b) 다친 대원을 함께 태운 출발 문구
         if (!m) continue;
         const u = p.sim.units.find((q) => q.callsign === m[1])!;
         expect(+m[2], e.text).toBeLessThanOrEqual(seatsOf(u));

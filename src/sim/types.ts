@@ -361,7 +361,8 @@ export type WorkKind =
   | 'traffic' | 'mitigate' | 'perimeter' | 'negotiate' | 'engage' | 'arrest' | 'interview' | 'clearRoad' | 'rescueMate' | 'escort' | 'waterRescue'
   | 'defuse'        // 폭발물 해체 (폭발물 처리반만)
   | 'overhaul'      // 잔불 정리: 불이 꺼졌다고 본 방을 다시 돌며 남은 불씨를 찾아 적신다 (소방만)
-  | 'hoist' | 'airDrop';      // (R1) 공중 임무: 호이스트 인양 · 공중 물 투하. 지휘관이 작업판에 올리고 field/rules/air.ts 가 가져간다. 지상 대원은 맡지 않는다(fitFor = 0)
+  | 'hoist' | 'airDrop'      // (R1) 공중 임무: 호이스트 인양 · 공중 물 투하. 지휘관이 작업판에 올리고 field/rules/air.ts 가 가져간다. 지상 대원은 맡지 않는다(fitFor = 0)
+  | 'treatMate';      // (H1) 다친 대원 처치. 태울 차(prop)가 정해져 있고 병원이 필요하면 이어서 그 차에 태운다 (구급 분야, 또는 의료 가방을 든 대원)
 export type TaskKind = WorkKind | 'retreat' | 'rehab' | 'resupply' | 'board' | 'standby' | 'moveSignal' | 'swapAir';      // swapAir = 공기통 교체 (R1 9절)
 
 export interface WorkItem {

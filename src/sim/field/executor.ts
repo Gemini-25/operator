@@ -15,7 +15,7 @@ import { applyWater, flashbang, hostageNear, hostileActive, isHeld, placeAtSafe,
 import { coverRoll, fireShot } from './damage';
 import { breachHowFor, lastFx, noteCollateral, noteHit, noteShot, recBreach, recCuff, recTaser, weaponOf } from './fxlog';
 import { detonate } from './rules/crime';
-import { hurtCas, initialCause, injuryRng, mustRetreat, noteHostileHurt, treatEffect, treatPlan } from './injury';
+import { careResponder, hurtCas, initialCause, injuryRng, mustRetreat, needsHospital, noteHostileHurt, treatEffect, treatPlan } from './injury';
 
 export function makeTask(kind: TaskKind, label: string, w: WorkItem | null = null): Task {
   return {
@@ -55,7 +55,7 @@ export function finishTask(sim: Sim, s: Scene, a: FieldAgent, ok: boolean, reaso
       if (reason && reason !== 'preempt') {
         const r = resp(sim, a);
         const txt: Record<string, string> = { nopath: '진입 경로를 찾지 못했습니다', fire: '화염으로 접근할 수 없습니다', equip: '장비 문제로 임무를 계속할 수 없습니다', gone: '대상이 더 이상 그 위치에 없습니다', unsafe: '위협이 해소되지 않아 접근할 수 없습니다', full: '차에 환자 자리가 없습니다' };
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'radio', imp: 1, causes: [a.lastBlockEvent], text: `${workLabel(s, w)} 중단 — ${txt[reason] ?? reason}. 재지시 요청.` });
+        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'radio', imp: 1, causes: [a.lastBlockEvent], text: `${workLabel(s, w, sim)} 중단 — ${txt[reason] ?? reason}. 재지시 요청.` });
         w.note = txt[reason] ?? reason;
       }
     }
@@ -300,7 +300,7 @@ function relieve(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, x: number, y: n
   const I = sim.incidents[s.incidentId];
   const rw = resp(sim, worst);
   finishTask(sim, s, worst, false, 'preempt');
-  if (newest !== worst) { const by = resp(sim, newest); emit(sim, { inc: I.id, role: 'RESPONDER', actor: by.name, rid: by.id, kind: 'action', imp: 1, text: `${josa(rw.name, '과/와')} 교대합니다. ${workLabel(s, w)}, 제가 이어서 하겠습니다.` }); }
+  if (newest !== worst) { const by = resp(sim, newest); emit(sim, { inc: I.id, role: 'RESPONDER', actor: by.name, rid: by.id, kind: 'action', imp: 1, text: `${josa(rw.name, '과/와')} 교대합니다. ${workLabel(s, w, sim)}, 제가 이어서 하겠습니다.` }); }
   return worst === a;
 }
 
@@ -1079,7 +1079,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (!b || b.status !== 'down') {
         // 더는 쓰러져 있지 않다(누가 먼저 옮겼다, 자기 부대와 함께 떠났다): 지휘관의 믿음이 낡아 다시 지시한 것이므로 본 대로 다시 알린다 (소리 없이, 강제로)
         if (b) {
-          const f = mateFact(sim, s, b, mateStatus(b), r.name, dist(a.x, a.y, b.x, b.y));
+          const f = mateFact(sim, s, b, mateStatus(sim, b), r.name, dist(a.x, a.y, b.x, b.y));
           const cur = a.beliefs.val<MateBelief>('mate', b.rid);
           if (cur && cur.dead) { f.value.dead = true; f.value.band = 3; }      // 숨진 줄 알던 것을 먼 관찰로 되돌리지 않는다
           reportDone(sim, a, f);
@@ -1108,6 +1108,78 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: br.dead ? `순직한 ${br.name} 대원을 안전 구역으로 옮겼습니다.` : `쓰러진 ${br.name} 대원을 안전 구역으로 옮겼습니다.` });
         finishTask(sim, s, a, true);
       }
+      return;
+    }
+    case 'treatMate': {
+      // 다친 동료의 처치와 후송 (H1 §3.4-2). 처치는 구조 대상과 같은 식(injury.treatEffect)이다.
+      // 태울 차(w.prop)가 내 차이고 자리가 있고 그 동료가 병원이 필요하면, 처치에 이어 차까지 데려가 태운다 — 물러난 대원은 스스로 움직이지 않으므로 내가 끌고 간다.
+      // 병원이 필요 없는 동료는 태우지 않는다: 그래야 그 대원이 가벼운 일로 돌아온다 (§3.6a)
+      const b = agentById(s, t.mate);
+      const br = b ? sim.responders[b.rid] : null;
+      // 처치할 수 없는 상태 — 차에 탔다 · 숨졌다 · 아직 쓰러져 있다(구조가 먼저다) · 걸어 다닌다(가벼운 일로 돌아왔다): 지휘관의 믿음이 낡았으므로 본 대로 다시 알리고 끝낸다
+      if (!b || !br || b.status === 'left' || br.dead || b.status === 'down' || (b.status === 'active' && !mustRetreat(br))) {
+        if (b) reportDone(sim, a, mateFact(sim, s, b, mateStatus(sim, b), r.name, dist(a.x, a.y, b.x, b.y) <= 2 ? 0 : dist(a.x, a.y, b.x, b.y)));
+        finishTask(sim, s, a, true); return;
+      }
+      if (b.status === 'active') {
+        // 아직 걸어서 물러나는 중이다: 대기 지점 곁에서 기다린다 (움직이는 사람을 쫓지 않는다)
+        a.label = '부상 대원 대기';
+        if (moveTo(sim, s, a, s.staging.x, s.staging.y, 2.5) === 'nopath') finishTask(sim, s, a, false, 'nopath');
+        return;
+      }
+      if (t.phase === 0) {
+        // ① 처치. 이미 받은 처치보다 0.15 넘게 나은 처치를 할 수 있을 때만 다시 한다 (구조 대상의 처치와 같다)
+        const had = (br.treatQ ?? 0) > 0;
+        if (had && treatPlan(sim, s, a.rid, br.health) <= (br.treatQ ?? 0) + 0.15) { t.phase = 1; t.progress = 0; return; }
+        const m = moveTo(sim, s, a, b.x, b.y, 1.3);
+        if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+        if (m !== 'arrived') return;
+        a.fx = b.x - a.x; a.fy = b.y - a.y;
+        t.need = 4.5 + (br.health < 40 ? 4 : br.health < 70 ? 2 : 0);
+        t.progress += Math.max(0.1, r.skills.medical * (0.5 + 0.5 * medLevelOf(sim, a.rid))) * staminaF(r) * dt; a.ring = t.progress / t.need; drain(sim, a, 0.3);
+        if (t.progress < t.need) return;
+        const fx = treatEffect(sim, s, I, a.rid, br.health, had ? (br.treatQ ?? 0) : -1);
+        if (fx) {
+          careResponder(br, fx);
+          learnQuiet(sim, a, mateFact(sim, s, b, 'safe', r.name, 0));      // 처치한 대원은 곁에서 본다 (중증도·출혈·처치 수준까지)
+          emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, causes: [b.hurtEv ?? -1], text: `${br.name} 대원 응급 처치 완료.` });
+          r.xpGained += 0.003;
+        }
+        t.phase = 1; t.progress = 0;
+        return;
+      }
+      if (t.phase === 1) {
+        // ② 태울 것인가: 병원이 필요하고, 태울 차가 내 차이고, 자리가 남았을 때만
+        if (!needsHospital(br) || !w || w.prop !== a.unitId || seatsUsed(sim, u) >= seatsOf(u)) {
+          reportDone(sim, a, mateFact(sim, s, b, 'safe', r.name, 0));
+          finishTask(sim, s, a, true); return;
+        }
+        const m = moveTo(sim, s, a, b.x, b.y, 1.3);
+        if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+        if (m !== 'arrived') return;
+        t.progress += dt;
+        if (t.progress >= 1.2) { t.phase = 2; t.progress = 0; a.path = null; a.pathGoal = -1; if (br.tDown !== undefined) a.carrying = -(b.rid + 2); }      // 쓰러졌던 대원은 들것으로
+        return;
+      }
+      // ③ 차까지 데려가 태운다
+      a.label = '부상 대원 후송';
+      const m = moveTo(sim, s, a, s.staging.x, s.staging.y, 1.2);
+      b.x = a.x - a.fx * 0.5; b.y = a.y - a.fy * 0.5;
+      if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+      if (m !== 'arrived') return;
+      t.progress += dt;
+      if (t.progress < 1.2) return;
+      a.carrying = -1;
+      // 실을 때 자리를 다시 본다 (그 사이에 다른 환자가 실렸다): 대기 지점 곁에 그대로 두고 지휘관에게 알린다
+      if (seatsUsed(sim, u) >= seatsOf(u)) { reportDone(sim, a, mateFact(sim, s, b, 'safe', r.name, 0)); finishTask(sim, s, a, false, 'full'); return; }
+      b.status = 'left'; b.task = null; b.label = ''; br.care = 'aboard';
+      (u.aboard ??= []).push({ kind: 'mate', id: b.rid, inc: I.id, t: sim.t });
+      u.firstLoadAt ??= sim.t;
+      reportDone(sim, a, mateFact(sim, s, b, 'evac', r.name, 0));      // 강제 보고 (무전 문구는 아래 기록이 대신한다)
+      emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, causes: [b.hurtEv ?? -1], text: `${br.name} 대원 ${u.callsign}에 탑승 — 병원 후송.` });
+      // 그 대원이 자기 부대에서 현장에 남은 마지막 사람이었으면 그 부대를 철수시킨다. 그러지 않으면 그 차량은 지시를 받을 사람이 없어 교대 끝까지 현장에 남는다
+      if (!s.agents.some((q) => q.unitId === b.unitId && q.status !== 'left')) { const bu = sim.units[b.unitId]; if (!bu.boardOrder) bu.boardOrder = 'release'; }
+      finishTask(sim, s, a, true);
       return;
     }
     case 'retreat': {
@@ -1204,8 +1276,8 @@ function isCoverTile(s: Scene, x: number, y: number): boolean {
 export function act(sim: Sim, s: Scene, a: FieldAgent): void {
   a.px = a.x; a.py = a.y;
   if (a.status === 'left' || a.status === 'down') return;
-  if (a.status === 'withdrawn' && (!a.task || a.task.kind !== 'board')) { a.label = sim.responders[a.rid].dead ? '' : '부상 — 후송 대기'; return; }
-  if (!a.task) { a.label = '지시 대기'; a.ring = 0; a.inCover = false; return; }
+  if (a.status === 'withdrawn' && (!a.task || a.task.kind !== 'board')) { const r = sim.responders[a.rid]; a.label = r.dead ? '' : (r.treatQ ?? 0) > 0 ? '처치 받음 — 후송 대기' : '부상 — 후송 대기'; return; }
+  if (!a.task) { a.label = sim.responders[a.rid].status === 'injured' ? '부상 — 가벼운 일' : '지시 대기'; a.ring = 0; a.inCover = false; return; }
   const bx = a.x, by = a.y;
   runTask(sim, s, a, a.task);
   const moved = Math.abs(a.x - bx) + Math.abs(a.y - by) > 0.001;

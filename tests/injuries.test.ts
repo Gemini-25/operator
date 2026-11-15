@@ -9,8 +9,8 @@ import { NORMAL, PRESETS } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
 import { closeIncident, createIncident } from '../src/sim/incidents';
-import { createAidUnit } from '../src/sim/resources';
-import { armorOf } from '../src/sim/crews';
+import { createAidUnit, crewOk, crewReady } from '../src/sim/resources';
+import { armorOf, fieldCrew, minField, seatsOf, seatsUsed } from '../src/sim/crews';
 import { PROBLEM_LABEL } from '../src/sim/debrief';
 import { emit } from '../src/sim/events';
 import { TRAP_R, TRAP_WORK, band, blast, tickCasualties, tickCollapse, tickGas, tickHostiles, tickLane, tickWater } from '../src/sim/field/hazards';
@@ -18,18 +18,20 @@ import { MISHAP, act, makeTask, moveSpeed } from '../src/sim/field/executor';
 import { commanderThink, outstanding } from '../src/sim/field/commander';
 import { think } from '../src/sim/field/brain';
 import { WALK_STOP } from '../src/sim/field/rules/injury';
+import { SELF_EVAC_WAIT } from '../src/sim/field/orders/injury';
+import { PHRASE, checkC5, sysOf } from '../scripts/metrics';
 import { fmtSec, josa } from '../src/sim/util';
 import { detonate } from '../src/sim/field/rules/crime';
 import {
-  BLEED_PER_DMG, CAUSE_NAME, DOWN_AT, DOWN_BLEED_CAP, HURT_AT, MATE_BLEED_MAX, MATE_FLOOR, MATE_LETHAL_FROM, MATE_RETREAT_BLEED, MATE_RETREAT_HP,
-  bandOf, hurtCas, hurtCasTo, hurtCauseNow, hurtF, hurtResponder, initialCause, injuryRng, mainCause, mustRetreat, noteCasHurt, noteHostileHurt, noteInjury, protection, smokeCause, woundTick,
+  BLEED_PER_DMG, CAUSE_NAME, DOWN_AT, DOWN_BLEED_CAP, HOSPITAL_BLEED, HURT_AT, LIGHT_WORK, MATE_BLEED_MAX, MATE_FLOOR, MATE_LETHAL_FROM, MATE_RETREAT_BLEED, MATE_RETREAT_HP,
+  bandOf, canDeploy, hurtCas, hurtCasTo, hurtCauseNow, hurtF, hurtResponder, initialCause, injuryRng, mainCause, mateNeedsHospital, mustRetreat, needsHospital, noteCasHurt, noteHostileHurt, noteInjury, protection, smokeCause, woundTick,
 } from '../src/sim/field/injury';
 import { fitFor, makeAgent, mateFact, mateStatus, perceive, staminaF } from '../src/sim/field/agents';
 import { addCas, addHostile } from '../src/sim/field/kit';
 import { mkFact } from '../src/sim/field/beliefs';
-import { agentHealth, settleInjuries, tickScene, unitArrived } from '../src/sim/field/sceneManager';
+import { SAFE_BLEED, agentHealth, settleInjuries, tickScene, unitArrived } from '../src/sim/field/sceneManager';
 import { T } from '../src/sim/types';
-import type { Casualty, FieldAgent, Hostile, Incident, IncidentType, Injury, InjuryCause, MateBelief, Prop, Responder, RoleId, Scene, SimEvent, UnitKind, WorkItem } from '../src/sim/types';
+import type { Casualty, FieldAgent, Hostile, Incident, IncidentType, Injury, InjuryCause, MateBelief, Prop, Responder, RoleId, Scene, SimEvent, Unit, UnitKind, WorkItem } from '../src/sim/types';
 import { CameraDirector } from '../src/view/camera';
 import { TRIAGE, TRIAGE_EDGE, TRIAGE_NAME, TRIAGE_TEXT, agentStateText, careName, casBand, casDrawn, casInfo, casSheet, hostileBand, hostileDrawn, hostileInfo, hostileSheet, hurtPose, injuryLine, isLoss, respBand, respLying, respSheet, respStateText } from '../src/view/triage';
 import { fakeCtx, withFakeDom } from './fakeCanvas';
@@ -306,16 +308,23 @@ describe('장부 — 깎인 체력은 모두 원인과 함께 적힌다', () => 
     }
     expect(hurt).toBeGreaterThan(3);
   });
-  it('대원: Σ(기록) = 100 − 체력. 순직한 대원은 넘친 만큼만 더 크다 (체력 하한 1 은 단계 4a 에서 없어졌다)', () => {
-    let hurt = 0;
-    for (const sim of all()) for (const r of sim.responders) {
-      const sum = sumDmg(r.injuries), want = 100 - r.health, tag = `${sim.seed} ${r.name}`;
-      if (r.dead) { expect(sum, tag).toBeGreaterThanOrEqual(100 - 1e-6); expect(sum, tag).toBeLessThan(160); }
-      else expect(Math.abs(sum - want), tag).toBeLessThan(1e-6);
-      if (r.health < 100) hurt++;
-      for (const j of r.injuries ?? []) expect(j.sev, tag).toBeLessThanOrEqual(r.dead ? 3 : 2);      // 사망(3)은 숨진 대원의 기록에만
+  it('대원: Σ(기록) = 100 − 체력. 순직한 대원은 넘친 만큼만 더 크다 (체력 하한 1 은 단계 4a 에서 없어졌다). 처치를 받은 대원은 오른 만큼 더 크다 (단계 4b)', () => {
+    let hurt = 0, treated = 0;
+    for (const sim of all()) {
+      // 처치를 받은 대원 (처치는 체력을 올린다 — 기록은 깎인 것만 센다): 그 처치를 남긴 기록의 이름으로 가린다
+      const healed = new Set<string>();
+      for (const e of sim.events) { const m = /^(\S+) 대원 응급 처치 완료\.$/.exec(e.text); if (m) healed.add(m[1]); }
+      for (const r of sim.responders) {
+        const sum = sumDmg(r.injuries), want = 100 - r.health, tag = `${sim.seed} ${r.name}`;
+        if (r.dead) { expect(sum, tag).toBeGreaterThanOrEqual(100 - 1e-6); expect(sum, tag).toBeLessThan(160); }
+        else if (healed.has(r.name)) { treated++; expect(sum, tag).toBeGreaterThanOrEqual(want - 1e-6); }
+        else expect(Math.abs(sum - want), tag).toBeLessThan(1e-6);
+        if (r.health < 100) hurt++;
+        for (const j of r.injuries ?? []) expect(j.sev, tag).toBeLessThanOrEqual(r.dead ? 3 : 2);      // 사망(3)은 숨진 대원의 기록에만
+      }
     }
     expect(hurt).toBeGreaterThan(20);
+    expect(treated, '처치를 받은 대원이 있다 (단계 4b — 표본 확인)').toBeGreaterThan(0);
   });
   it('살아 있는데 악화 중인 사람은 그 악화의 원인을 안다 (출혈 원인이 빈 채로 피를 흘리는 사람이 없다)', () => {
     for (const sim of all()) for (const s of scenesOf(sim)) for (const c of s.casualties) if (c.bleed > 0) expect(c.bleedCause, `${sim.seed} ${sim.incidents[s.incidentId].code} ${c.label}`).toBeTruthy();
@@ -1392,7 +1401,7 @@ describe('대원의 상태 전이 — 부상 · 쓰러짐 · 순직은 agentHeal
     expect(I.result!.analysis.indexOf(line), '순직은 분석의 앞머리에 온다 (잘리지 않게)').toBeLessThanOrEqual(1);
     expect(PROBLEM_LABEL.RESPONDER_KILLED).toBe('대원 순직');
   });
-  it('상처 악화: 현장에 있는 동안 출혈이 체력을 깎는다(쓰러져 있어도). 안전 구역으로 물러난 대원의 출혈은 멈춰 둔다 — 단계 4b 가 푼다', () => {
+  it('상처 악화: 현장에 있는 동안 출혈이 체력을 깎는다(쓰러져 있어도, 안전 구역에서 기다려도). 처치를 받고 안전 구역에 있으면 0.6배 (§2.6 — 단계 4b 가 4a 의 임시 정지를 풀었다)', () => {
     const { sim, s, I, of } = crewScene('INJ-wound', 'medical', undefined, ['als']);
     const a = of('als', 'emt'), r = fresh(sim, a, 80);
     r.bleed = 0.05; r.bleedCause = 'stab';
@@ -1406,7 +1415,17 @@ describe('대원의 상태 전이 — 부상 · 쓰러짐 · 순직은 agentHeal
     a.status = 'withdrawn';
     const h2 = r.health;
     for (let k = 0; k < 50; k++) agentHealth(sim, s, I, a);
-    expect(r.health).toBe(h2);
+    rel(h2 - r.health, 0.05 * 10, '안전 구역 — 처치 전');
+    r.treatQ = 0.5;
+    const h3 = r.health;
+    for (let k = 0; k < 50; k++) agentHealth(sim, s, I, a);
+    rel(h3 - r.health, 0.05 * SAFE_BLEED * 10, '안전 구역 — 처치 뒤');
+    expect(SAFE_BLEED).toBe(0.6);
+    a.status = 'left';
+    const h4 = r.health;
+    for (let k = 0; k < 50; k++) agentHealth(sim, s, I, a);
+    expect(r.health, '차에 타면(후송 중·병원) 멈춘다').toBe(h4);
+    a.status = 'withdrawn';
     // woundTick: 출혈 원인을 모르면 지금까지의 가장 큰 원인으로 적는다
     const q = { health: 50, bleed: 0.1, injuries: noteInjury(undefined, 'vehicle', 50, 0, 1), dead: undefined, bleedCause: undefined } as unknown as Responder;
     expect(woundTick(sim, q, 1)).toBeCloseTo(0.1 * sim.dt, 12);
@@ -1533,7 +1552,9 @@ describe('동료의 상태 — 본 대원의 보고와 다친 본인의 보고�
     const b = of('als', 'emt'), r = fresh(sim, b, 55);
     const val = (status: MateBelief['status'], d: number): MateBelief => mateFact(sim, s, b, status, '시험', d).value as MateBelief;
     expect(val('hurt', 0)).toEqual({ x: Math.round(b.x), y: Math.round(b.y), status: 'hurt', band: 1, bleeding: false, tq: 0, dead: false, wasDown: false, since: sim.t });
-    r.bleed = 0.05; r.treatQ = 0.3; r.tDown = 3;
+    r.bleed = HOSPITAL_BLEED - 0.001; r.treatQ = 0.3; r.tDown = 3;
+    expect(val('safe', 0).bleeding, '병원이 필요한 문턱(HOSPITAL_BLEED) 아래의 출혈은 bleeding 이 아니다 (단계 4b)').toBe(false);
+    r.bleed = HOSPITAL_BLEED;
     expect(val('safe', 3)).toMatchObject({ band: 1, bleeding: true, tq: 1, wasDown: true });
     expect(val('safe', 3.1)).toMatchObject({ band: 1, bleeding: false });      // 3칸 밖: 쓰러지지 않았으면 중상으로 적는다
     expect(val('down', 3.1).band).toBe(2);                                    // 쓰러졌으면 위중으로 적는다
@@ -1547,8 +1568,11 @@ describe('동료의 상태 — 본 대원의 보고와 다친 본인의 보고�
     r.dead = undefined; r.health = 10;
     expect(mateFact(sim, s, b, 'down', '시험', 5).text).toBe(`${r.name} 대원 쓰러짐 — 구조 필요`);
     // 지금 상태 → 사실의 status
-    const st = (x: FieldAgent['status']): string => { const keep = b.status; b.status = x; const v = mateStatus(b); b.status = keep; return v; };
-    expect([st('down'), st('withdrawn'), st('left'), st('active')]).toEqual(['down', 'safe', 'evac', 'hurt']);
+    const st = (x: FieldAgent['status']): string => { const keep = b.status; b.status = x; const v = mateStatus(sim, b); b.status = keep; return v; };
+    expect([st('down'), st('withdrawn'), st('left'), st('active')]).toEqual(['down', 'safe', 'evac', 'hurt']);      // 체력 10: 걷고 있으면 물러나는 중이다
+    r.health = 60; r.bleed = 0; expect(st('active'), '물러날 몸이 아닌 채 걷는 다친 대원은 가벼운 일을 하는 중이다').toBe('light');
+    r.bleed = MATE_RETREAT_BLEED; expect(st('active'), '출혈이 커서 물러나는 중').toBe('hurt');
+    r.health = 10;
   });
   it('perceive: 쓰러진 동료는 시야 안이면 보고, 숨진 것은 곁(2칸)에서만 안다. 숨진 줄 안 뒤에는 먼 관찰로 되돌리지 않는다', () => {
     const { sim, s, of } = crewScene('INJ-see', 'medical', undefined, ['als']);
@@ -2001,4 +2025,414 @@ describe('11. 재현성 — 대원이 다치는 교대', () => {
     expect(dump(b)).toBe(dump(a));
     expect(a.responders.some((r) => (r.injuries ?? []).length > 0)).toBe(true);
   }, 60000);
+});
+
+// ═════════════════════════ 단계 4b: 대원 — 후송 ═════════════════════════
+/** crewScene 의 부대를 그 사건에 배정된 현장 부대로 만든다 (관제가 보낸 것처럼 — 5)번 블록·countUnits 가 그 부대를 본다) */
+function assignAll(sim: Sim, I: Incident, kinds: UnitKind[]): void {
+  for (const k of kinds) { const u = sim.units.find((q) => q.kind === k)!; u.state = 'onscene'; u.incidentId = I.id; if (I.assigned.indexOf(u.id) < 0) I.assigned.push(u.id); if (I.everAssigned.indexOf(u.id) < 0) I.everAssigned.push(u.id); }
+}
+/** 지휘관의 믿음에 동료의 상태를 넣는다 */
+function mateKnown(sim: Sim, cmd: FieldAgent, b: FieldAgent, over: Partial<MateBelief>): void {
+  cmd.beliefs.merge(mkFact('mate', b.rid, { x: Math.round(b.x), y: Math.round(b.y), status: 'safe', band: 1, bleeding: true, tq: 0, dead: false, wasDown: false, since: sim.t, ...over }, '시험', sim.t, 1, true, ''));
+}
+const liveTM = (s: Scene, rid: number): WorkItem[] => s.board.filter((w) => w.kind === 'treatMate' && w.mate === rid && (w.status === 'open' || w.status === 'active'));
+/** 집에 있는 부대 하나를 복귀시켜 도착하게 한다 (resources.arrive 의 복귀 갈래) */
+function homeArrive(seed: string, kind: UnitKind, setup: (sim: Sim, u: Unit) => void): { sim: Sim; u: Unit; texts: SimEvent[] } {
+  const sim = new Sim(seed, NORMAL, 1200);
+  const u = sim.units.find((q) => q.kind === kind)!;
+  setup(sim, u);
+  u.state = 'returning'; u.destNode = u.homeNode;
+  const n0 = sim.events.length;
+  sim.step();
+  return { sim, u, texts: sim.events.slice(n0).filter((e) => e.actor === u.callsign) };
+}
+
+describe('단계 4b — 병원이 필요한 몸과 걸을 수 있는 대원 (§2.7 · §3.6)', () => {
+  it('needsHospital(진실): 쓰러진 적 · 큰 출혈(HOSPITAL_BLEED) · 체력 40 이하. 숨졌거나 후송 중·인계됐으면 아니다. mateNeedsHospital(믿음)도 같은 판단이다', () => {
+    const r = { health: 60, bleed: 0, dead: undefined, care: undefined, tDown: undefined, status: 'injured' } as unknown as Responder;
+    expect(needsHospital(r)).toBe(false);
+    r.bleed = HOSPITAL_BLEED; expect(needsHospital(r)).toBe(true);
+    r.bleed = HOSPITAL_BLEED - 1e-6; expect(needsHospital(r)).toBe(false);
+    r.health = HURT_AT; expect(needsHospital(r)).toBe(true);
+    r.health = HURT_AT + 0.01; expect(needsHospital(r)).toBe(false);
+    r.tDown = 5; expect(needsHospital(r)).toBe(true);
+    r.care = 'aboard'; expect(needsHospital(r)).toBe(false);
+    r.care = undefined; r.dead = true; expect(needsHospital(r)).toBe(false);
+    const v = (o: Partial<MateBelief>): MateBelief => ({ x: 0, y: 0, status: 'safe', band: 1, bleeding: false, tq: 0, dead: false, wasDown: false, since: 0, ...o });
+    expect([v({}), v({ band: 2 }), v({ bleeding: true }), v({ wasDown: true }), v({ band: 2, status: 'evac' }), v({ band: 2, dead: true })].map(mateNeedsHospital)).toEqual([false, true, true, true, false, false]);
+    expect(HOSPITAL_BLEED).toBe(MATE_RETREAT_BLEED);      // 출혈로 물러난 대원은 처치를 받으면(출혈 × (1 − 0.9q)) 병원이 필요 없는 몸이 된다
+  });
+  it('canDeploy · crewReady(걸을 수 있는 대원) · crewOk(온전한 대원) — 2인 순찰차, 헬기·구조정은 내리지 않는 자리를 세지 않는다 (시험 12 ②③④⑤)', () => {
+    const sim = new Sim('INJ-crew', NORMAL, 1200);
+    const p = sim.units.find((q) => q.kind === 'patrol')!;
+    const fc = fieldCrew(sim, p), [r0, r1] = fc.map((rid) => sim.responders[rid]);
+    expect(fc.length).toBe(2); expect(minField('patrol')).toBe(2);
+    expect([crewReady(sim, p), crewOk(sim, p)]).toEqual([2, 2]);
+    r0.status = 'injured'; r0.health = 55;
+    expect([crewReady(sim, p), crewOk(sim, p)], '② 부상 한 명').toEqual([2, 1]);
+    r1.status = 'injured'; r1.health = 55;
+    expect([crewReady(sim, p), crewOk(sim, p)], '③ 둘 다 걸을 수 있는 부상').toEqual([2, 0]);
+    r0.status = 'down'; r0.dead = true; r0.health = 0;
+    expect(crewReady(sim, p), '① 순직 한 명 — 남은 대원으로 나간다').toBe(1);
+    r1.status = 'down'; r1.dead = true; r1.health = 0;
+    expect(crewReady(sim, p), '④ 전원 순직').toBe(0);
+    r0.dead = undefined; r1.dead = undefined; r0.health = 10; r1.health = 10;
+    expect(crewReady(sim, p), '살아 있는 대원이 모두 쓰러졌다(후송 전)').toBe(0);
+    r0.status = 'injured'; r1.status = 'injured'; r0.health = 50; r1.health = 50; r0.care = 'hospital'; r1.care = 'hospital';
+    expect([crewReady(sim, p), crewOk(sim, p)], '⑤ 모두 병원으로 후송됐다').toEqual([0, 0]);
+    expect([canDeploy(r0), canDeploy({ ...r0, care: undefined } as Responder)]).toEqual([false, true]);
+    for (const kind of ['heli', 'boat'] as UnitKind[]) {
+      const u = sim.units.find((q) => q.kind === kind);
+      if (!u) continue;
+      expect(crewReady(sim, u), kind).toBe(fieldCrew(sim, u).length);
+      expect(fieldCrew(sim, u).length, kind).toBeLessThan(u.crew.length);      // 조종사·정장은 내리지 않는다
+    }
+  });
+  it('복귀해 기지에 닿았을 때: 걸을 수 있는 대원이 하나라도 있으면 운용을 멈추지 않는다. 멈추는 까닭은 셋 — 전원 순직 · 남은 대원 모두 병원 이송 · 걸을 수 있는 대원 없음', () => {
+    const mk = (f: (r: Responder, k: number) => void) => (sim: Sim, u: Unit): void => { fieldCrew(sim, u).forEach((rid, k) => f(sim.responders[rid], k)); };
+    const one = homeArrive('S1', 'patrol', mk((r, k) => { if (k === 0) { r.status = 'down'; r.dead = true; r.health = 0; } }));
+    expect(one.u.state, '① 순직 한 명').toBe('available'); expect(one.texts.some((e) => /운용 중단/.test(e.text))).toBe(false);
+    const hurt = homeArrive('S1', 'patrol', mk((r) => { r.status = 'injured'; r.health = 55; }));
+    expect(hurt.u.state, '③ 둘 다 다쳤지만 걷는다').toBe('available'); expect(hurt.texts.some((e) => /운용 중단/.test(e.text))).toBe(false);
+    const dead = homeArrive('S1', 'patrol', (sim, u) => { mk((r) => { r.status = 'down'; r.dead = true; r.health = 0; })(sim, u); u.oosEv = 3; });
+    expect(dead.u.state).toBe('oos');
+    const de = dead.texts.find((e) => /운용 중단/.test(e.text))!;
+    expect(de.text).toBe(`${dead.u.callsign} 대원 전원 순직 — 운용 중단.`); expect(de.causes).toEqual([3]);
+    const hosp = homeArrive('S1', 'patrol', mk((r, k) => { if (k === 0) { r.status = 'down'; r.dead = true; r.health = 0; } else { r.status = 'injured'; r.care = 'hospital'; } }));
+    expect(hosp.u.state).toBe('oos'); expect(hosp.texts.map((e) => e.text)).toContain(`${hosp.u.callsign} 남은 대원 모두 병원 이송 — 운용 중단.`);
+    const down = homeArrive('S1', 'patrol', mk((r) => { r.status = 'down'; r.health = 10; r.tDown = 0; }));
+    expect(down.u.state).toBe('oos'); expect(down.texts.map((e) => e.text)).toContain(`${down.u.callsign} 걸을 수 있는 대원이 없어 운용 중단.`);
+    for (const x of [dead, hosp, down]) { const e = x.texts.find((q) => /운용 중단/.test(q.text))!; expect(PHRASE.T6.test(e.text), e.text).toBe(true); expect(sysOf(e)).toBe('crew'); }
+    expect(dead.sim.events.some((e) => /전원 부상/.test(e.text))).toBe(false);
+  });
+  it('④ 전원 순직한 부대: 실제로 숨지게 하면 그 뒤 어느 사건에도 배정되지 않고, 기지에 닿으면 운용 중단 기록의 원인이 마지막 순직 기록(= u.oosEv)이다', () => {
+    const { sim, s, I } = crewScene('INJ-alldead', 'traffic', 'std', ['patrol']);
+    const p = sim.units.find((q) => q.kind === 'patrol')!;
+    assignAll(sim, I, ['patrol']);
+    const crew = s.agents.filter((a) => a.unitId === p.id);
+    expect(crew.length).toBe(2);
+    for (const a of crew) { fresh(sim, a, 30); hurtResponder(sim, s, I, a, 200, 'gunshot'); agentHealth(sim, s, I, a); }
+    expect(crew.every((a) => sim.responders[a.rid].dead)).toBe(true);
+    const kills = sim.events.filter((e) => e.problem === 'RESPONDER_KILLED');
+    expect(kills.length).toBe(2);
+    expect(p.oosEv).toBe(kills[1].id);
+    expect(crewReady(sim, p)).toBe(0);
+    const t0 = sim.t;
+    for (let n = 0; n < 6000 && p.state !== 'oos'; n++) sim.step();
+    expect(p.state).toBe('oos');
+    for (const J of sim.incidents) if (J.createdAt > t0) expect(J.everAssigned.indexOf(p.id), J.code).toBe(-1);
+    const e = sim.events.find((q) => q.actor === p.callsign && /운용 중단/.test(q.text))!;
+    expect(e.text).toBe(`${p.callsign} 대원 전원 순직 — 운용 중단.`);
+    expect(e.causes).toEqual([kills[1].id]);
+  }, 60000);
+  it('쓰인 자리(seatsUsed): 실은 구조 대상 + 다른 부대의 다친 대원. 자기 부대의 다친 대원은 원래 자리에 탄다', () => {
+    const sim = new Sim('INJ-seat', NORMAL, 1200);
+    const als = sim.units.find((q) => q.kind === 'als')!, p = sim.units.find((q) => q.kind === 'patrol')!;
+    expect(seatsUsed(sim, als)).toBe(0);
+    als.aboard = [{ kind: 'mate', id: als.crew[0], inc: 0, t: 0 }];
+    expect(seatsUsed(sim, als), '자기 부대 대원').toBe(0);
+    als.aboard.push({ kind: 'mate', id: p.crew[0], inc: 0, t: 0 });
+    expect(seatsUsed(sim, als), '다른 부대 대원').toBe(1);
+    als.patients = [0];
+    expect(seatsUsed(sim, als)).toBe(2); expect(seatsUsed(sim, als) >= seatsOf(als)).toBe(true);
+    p.aboard = [{ kind: 'mate', id: p.crew[1], inc: 0, t: 0 }];
+    expect([seatsOf(p), seatsUsed(sim, p)], '자기 대원을 태운 순찰차는 "자리 0" 에 걸리지 않는다').toEqual([0, 0]);
+  });
+});
+
+describe('단계 4b — 다친 대원은 가벼운 일만 (§2.5 · §3.6 · 시험 12 ③)', () => {
+  it('fitFor: 걸을 수 있는 다친 대원(injured)에게 무거운 일은 0, 가벼운 일(교통 통제)은 맡는다. 처치 보조는 대상이 안전 구역에 있을 때만. 목록은 injury.LIGHT_WORK 한 곳', () => {
+    const { sim, s, of } = crewScene('INJ-lw', 'traffic', 'std', ['patrol', 'als']);
+    const a = of('patrol'), r = fresh(sim, a, 55);
+    expect([...LIGHT_WORK].sort()).toEqual(['hookup', 'interview', 'negotiate', 'perimeter', 'traffic', 'treat', 'treatMate']);
+    const tw = workItem(s, 'traffic', sim.t, { tile: 0 });
+    expect(fitFor(sim, s, a, tw)).toBeGreaterThan(0);
+    r.status = 'injured';
+    expect(fitFor(sim, s, a, tw), '교통 통제는 가벼운 일').toBeGreaterThan(0);
+    const heavy: WorkItem['kind'][] = ['search', 'engage', 'arrest', 'carry', 'load', 'rescueMate', 'extricate', 'suppress', 'clearRoad'];
+    for (const kind of heavy) expect(fitFor(sim, s, a, workItem(s, kind, sim.t, { region: 0, cas: 0, hostile: 0, mate: of('als').rid, prop: -1 })), kind).toBe(0);
+    // 처치 보조는 대상이 안전 구역에 나와 있을 때만 (다친 구급대원)
+    const m = of('als'), mr = fresh(sim, m, 50);
+    mr.status = 'injured'; m.status = 'withdrawn';
+    const b2 = s.agents.find((q) => q.unitId === m.unitId && q !== m)!;
+    fresh(sim, b2, 55); sim.responders[b2.rid].status = 'injured';
+    const tm = workItem(s, 'treatMate', sim.t, { mate: m.rid, max: 1 });
+    b2.beliefs.merge(mkFact('mate', m.rid, { x: 1, y: 1, status: 'hurt', band: 1, bleeding: true, tq: 0, dead: false, wasDown: false, since: sim.t }, '시험', sim.t, 1, true, ''));
+    expect(fitFor(sim, s, b2, tm), '후퇴 중인 동료는 다친 구급대원이 보지 않는다').toBe(0);
+    b2.beliefs.merge(mkFact('mate', m.rid, { x: 1, y: 1, status: 'safe', band: 1, bleeding: true, tq: 0, dead: false, wasDown: false, since: sim.t + 1 }, '시험', sim.t + 1, 1, true, ''));
+    expect(fitFor(sim, s, b2, tm), '안전 구역의 동료는 다친 구급대원도 처치를 돕는다').toBeGreaterThan(0);
+  });
+  it('다친 채 내린 대원: 이름표 "부상 — 가벼운 일", 본인이 소리 없이 알린다(mate 사실 light)', () => {
+    const { sim, s } = sceneOf('INJ-arrive', 'traffic', 'std');
+    const I = sim.incidents[s.incidentId];
+    const p = sim.units.find((q) => q.kind === 'patrol')!;
+    for (const rid of fieldCrew(sim, p)) { const r = sim.responders[rid]; r.status = 'injured'; r.health = 55; }
+    unitArrived(sim, I, p);
+    const crew = s.agents.filter((a) => a.unitId === p.id);
+    expect(crew.length).toBe(2);
+    for (const a of crew) {
+      expect(a.label).toBe('부상 — 가벼운 일');
+      expect(a.beliefs.val<MateBelief>('mate', a.rid)?.status).toBe('light');
+      expect(a.outbox.some((f) => f.type === 'mate' && f.id === a.rid)).toBe(true);
+    }
+  });
+  it('③ 걸을 수 있는 다친 대원만 남은 순찰차는 배정에서 빠지지 않는다 — 다른 경찰 부대가 모두 멈춘 교대에서 경찰 사건에 나가 내리고, 맡는 일은 가벼운 일뿐이다(지휘관의 현장 평가는 예외)', () => {
+    const sim = new Sim('INJ-light', NORMAL, 1200);
+    const p = sim.units.find((q) => q.kind === 'patrol')!;
+    for (const q of sim.units) if (q !== p && q.dept === 'police') q.state = 'oos';
+    for (const rid of fieldCrew(sim, p)) { const r = sim.responders[rid]; r.status = 'injured'; r.health = 55; }
+    expect([crewReady(sim, p), crewOk(sim, p)]).toEqual([2, 0]);
+    const crew = new Set(fieldCrew(sim, p));
+    createIncident(sim, { type: 'armed', variant: 'domestic', rng: sim.rng.fork('t4b') });
+    let landed = 0, checks = 0;
+    for (let n = 0; n < 5000 && !sim.ended; n++) {
+      sim.step();
+      if (n % 100 !== 0) continue;
+      for (const s of scenesOf(sim)) for (const a of s.agents) {
+        if (!crew.has(a.rid) || a.status !== 'active') continue;
+        landed++;
+        if (a.task && a.task.workId >= 0 && a.task.kind !== 'sizeup') { checks++; expect(LIGHT_WORK.has(a.task.kind as WorkItem['kind']), `${a.task.kind} (t=${sim.t})`).toBe(true); }
+      }
+    }
+    expect(sim.incidents.some((J) => J.everAssigned.indexOf(p.id) >= 0), '배정됐다').toBe(true);
+    expect(landed, '현장에 내렸다').toBeGreaterThan(0);
+    expect(checks, '일을 맡았다').toBeGreaterThan(0);
+  }, 60000);
+});
+
+describe('단계 4b — 다친 동료의 처치와 후송 (§3.4-2 · orders/injury.ts)', () => {
+  it('지휘관: 대상당 한 항목(우선도 0.8 + 0.06 × band, 태울 차 = 자리가 남은 구급차). 자리가 차면 처치만, 가벼운 일로 돌아왔다·후송됐다고 알면 거둔다', () => {
+    const { sim, s, I, of } = crewScene('INJ-tm', 'traffic', 'std', ['patrol', 'als']);
+    assignAll(sim, I, ['patrol', 'als']);
+    const cmd = s.agents.find((a) => a.isCommander)!;
+    const als = sim.units.find((q) => q.kind === 'als')!;
+    const b = s.agents.find((a) => a.unitId !== als.id && a !== cmd)!;
+    s.sizeupDone = true; s.mismatchLogged = true;
+    for (const q of s.agents) { q.nextThink = 1e9; q.task = null; }
+    const r = fresh(sim, b, 55); r.status = 'injured'; r.bleed = 0.1; b.status = 'withdrawn';
+    mateKnown(sim, cmd, b, {});
+    // 아직 끝낼 수 없는 현장으로 둔다 (실을 구조 대상이 남았다 — 시험 도중 종료가 선언되지 않게)
+    cmd.beliefs.merge(mkFact('cas', s.casualties[0].id, { x: 3, y: 3, mob: 'immobile', band: 1, where: 'scene', treated: false, trappedDone: true, tq: 0 }, '시험', sim.t, 1, true, ''));
+    commanderThink(sim, s, cmd);
+    commanderThink(sim, s, cmd);
+    const items = liveTM(s, b.rid);
+    expect(items.length, '대상당 한 항목').toBe(1);
+    expect(items[0].priority).toBeCloseTo(0.86, 12); expect([items[0].max, items[0].prop]).toEqual([1, als.id]);
+    // 맡을 사람: 구급대원 (경찰은 의료 가방이 없다), 다친 본인은 아니다
+    expect(fitFor(sim, s, of('als'), items[0])).toBeGreaterThan(0);
+    expect(fitFor(sim, s, b, items[0])).toBe(0);
+    if (cmd.unitId !== als.id) expect(fitFor(sim, s, cmd, items[0])).toBe(0);
+    // 자리가 찼다: 처치만 (열린 항목의 태울 차를 고쳐 쓴다 — 새 항목을 만들지 않는다)
+    items[0].status = 'open'; items[0].assignees.length = 0;
+    als.patients = [0, 1];
+    commanderThink(sim, s, cmd);
+    expect(liveTM(s, b.rid).map((w) => [w.id, w.prop])).toEqual([[items[0].id, -1]]);
+    als.patients = []; als.boardOrder = null;      // (자리가 찬 구급차에는 지휘관이 출발 지시를 냈다 — 시험을 위해 되돌린다)
+    // 가벼운 일로 돌아왔다고 알면 거둔다
+    sim.t += 1; mateKnown(sim, cmd, b, { status: 'light', bleeding: false, band: 1, tq: 2 });
+    commanderThink(sim, s, cmd);
+    expect(liveTM(s, b.rid).length).toBe(0);
+    // 다시 후송이 필요하다고 알면 열고, 후송됐다고 알면 거둔다
+    sim.t += 1; mateKnown(sim, cmd, b, {}); commanderThink(sim, s, cmd); expect(liveTM(s, b.rid).length).toBe(1);
+    sim.t += 1; mateKnown(sim, cmd, b, { status: 'evac' }); commanderThink(sim, s, cmd); expect(liveTM(s, b.rid).length).toBe(0);
+  });
+  it('맡을 사람이 없으면 항목을 열지 않고 구급 부대를 부른다. 20초 넘게 기다렸고 구급 부대가 없으면 그 대원의 부대가 직접 싣고 간다(주관 분야의 마지막 부대는 아니다)', () => {
+    const { sim, s, I } = crewScene('INJ-self', 'traffic', 'std', ['patrol', 'tactical']);
+    assignAll(sim, I, ['patrol', 'tactical']);
+    const cmd = s.agents.find((a) => a.isCommander)!;
+    const b = s.agents.find((a) => a.unitId !== cmd.unitId)!;
+    const bu = sim.units[b.unitId];
+    s.sizeupDone = true; s.mismatchLogged = true;
+    for (const q of s.agents) { q.nextThink = 1e9; q.task = null; }
+    const r = fresh(sim, b, 55); r.status = 'injured'; r.bleed = 0.1; b.status = 'withdrawn';
+    mateKnown(sim, cmd, b, {});
+    commanderThink(sim, s, cmd);
+    expect(liveTM(s, b.rid).length, '맡을 사람이 없다 — 열어 두면 종료를 막는다').toBe(0);
+    expect(s.requests.some((q) => q.need === 'ems' && q.reason === '부상 대원 후송')).toBe(true);
+    expect(bu.boardOrder, '아직 20초가 지나지 않았다').toBeFalsy();
+    sim.t += SELF_EVAC_WAIT + 1;
+    const n0 = sim.events.length;
+    commanderThink(sim, s, cmd);
+    expect(bu.boardOrder).toBe('transport');
+    expect(sim.events.slice(n0).map((e) => e.text)).toContain(`${bu.callsign}, 부상 대원을 태우고 병원으로 이동하라.`);
+    expect(sim.units[cmd.unitId].boardOrder, '지휘관의 부대는 남는다').toBeFalsy();
+    // 그 부대가 현장의 마지막 주관 분야 부대면 빼지 않는다 (교통사고의 주관 분야는 소방이다 — 경찰이 주관하는 무장 현장, 안전 확보 뒤)
+    expect(s.leadDept).not.toBe('police');
+    const solo = crewScene('INJ-self2', 'armed', 'domestic', ['patrol']);
+    assignAll(solo.sim, solo.I, ['patrol']);
+    expect(solo.s.leadDept).toBe('police');
+    solo.s.secureAt = 0;
+    const c2 = solo.s.agents.find((a) => a.isCommander)!, b2 = solo.s.agents.find((a) => a !== c2)!;
+    solo.s.sizeupDone = true; solo.s.mismatchLogged = true;
+    for (const q of solo.s.agents) { q.nextThink = 1e9; q.task = null; }
+    const r2 = fresh(solo.sim, b2, 55); r2.status = 'injured'; r2.bleed = 0.1; b2.status = 'withdrawn';
+    mateKnown(solo.sim, c2, b2, {});
+    solo.sim.t += SELF_EVAC_WAIT + 1;
+    commanderThink(solo.sim, solo.s, c2);
+    expect(solo.sim.units[b2.unitId].boardOrder).toBeFalsy();
+  });
+  it('실행기: 처치를 마친 뒤 병원이 필요 없으면 태우지 않고(가벼운 일로 돌아온다), 필요하면 끌고 가 태운다 — 쓰러졌던 대원은 들것으로. 남은 사람이 없는 부대는 철수시킨다', () => {
+    const run = (wasDown: boolean, lastOfUnit: boolean) => {
+      const { sim, s, I } = crewScene('INJ-exe', 'medical', undefined, ['als', 'patrol']);
+      assignAll(sim, I, ['als', 'patrol']);
+      const als = sim.units.find((q) => q.kind === 'als')!, p = sim.units.find((q) => q.kind === 'patrol')!;
+      for (const q of s.agents) { q.nextThink = 1e9; q.task = null; q.planT = 1e9; }
+      const medic = s.agents.find((a) => a.unitId === als.id)!;
+      const [b, other] = s.agents.filter((a) => a.unitId === p.id);
+      const r = fresh(sim, b, 60); r.status = wasDown ? 'down' : 'injured'; r.bleed = 0.1; r.bleed0 = 0.1; r.bleedCause = 'gunshot'; if (wasDown) r.tDown = sim.t - 30;
+      b.status = 'withdrawn'; b.x = s.staging.x + 1; b.y = s.staging.y;
+      if (lastOfUnit) other.status = 'left';
+      const w = workItem(s, 'treatMate', sim.t, { mate: b.rid, prop: als.id, max: 1 });
+      medic.task = makeTask('treatMate', '시험', w); w.status = 'active'; w.assignees.push(medic.rid);
+      const n0 = sim.events.length;
+      let dragged = false;
+      for (let n = 0; n < 600 && medic.task; n++) { tickOnce(sim, s); if (medic.carrying === -(b.rid + 2)) dragged = true; }
+      return { sim, s, als, p, b, r, medic, texts: sim.events.slice(n0).map((e) => e.text), dragged };
+    };
+    const lite = run(false, false);
+    expect(lite.texts).toContain(`${lite.r.name} 대원 응급 처치 완료.`);
+    expect(lite.r.treatQ ?? 0).toBeGreaterThan(0); expect(lite.r.bleed ?? 0).toBeLessThan(HOSPITAL_BLEED);
+    expect(lite.b.status, '병원이 필요 없으면 태우지 않는다 — 가벼운 일로 돌아온다').toBe('active');
+    expect(lite.texts).toContain('처치 받음. 가벼운 임무로 복귀합니다.');
+    expect(lite.als.aboard ?? []).toEqual([]);
+    const evac = run(true, true);
+    expect(evac.texts).toContain(`${evac.r.name} 대원 ${evac.als.callsign}에 탑승 — 병원 후송.`);
+    expect(evac.dragged, '쓰러졌던 대원은 들것으로').toBe(true);
+    expect([evac.b.status, evac.r.care]).toEqual(['left', 'aboard']);
+    expect(evac.als.aboard!.map((e) => [e.kind, e.id])).toEqual([['mate', evac.b.rid]]);
+    expect(evac.als.firstLoadAt).toBeDefined(); expect(seatsUsed(evac.sim, evac.als)).toBe(1);
+    expect(evac.medic.carrying).toBe(-1);
+    expect(evac.medic.beliefs.val<MateBelief>('mate', evac.b.rid)?.status).toBe('evac');
+    expect(evac.p.state, '현장에 남은 사람이 없는 부대는 철수한다 (고아 부대)').toBe('returning');
+    expect(evac.texts).toContain(`${evac.p.callsign} 현장 철수, 복귀합니다.`);
+    expect(lite.p.state, '남은 동료가 있으면 그대로').toBe('onscene');
+  });
+  it('출발: 다친 대원만 태운 구급차도 떠난다(10초 뒤). 지휘관은 실은 사람의 진실을 읽지 않는다 — 부대의 기록(firstLoadAt·aboard)으로 정한다', () => {
+    const { sim, s, I } = crewScene('INJ-go', 'medical', undefined, ['als', 'patrol']);
+    assignAll(sim, I, ['als', 'patrol']);
+    const cmd = s.agents.find((a) => a.isCommander)!;
+    const als = sim.units.find((q) => q.kind === 'als')!, p = sim.units.find((q) => q.kind === 'patrol')!;
+    s.sizeupDone = true;
+    for (const q of s.agents) { q.nextThink = 1e9; q.task = null; }
+    const b = s.agents.find((a) => a.unitId === p.id)!;
+    b.status = 'left'; sim.responders[b.rid].care = 'aboard';
+    als.aboard = [{ kind: 'mate', id: b.rid, inc: I.id, t: sim.t }]; als.firstLoadAt = sim.t;
+    for (const c of s.casualties) cmd.beliefs.merge(mkFact('cas', c.id, { x: 3, y: 3, mob: 'immobile', band: 1, where: 'scene', treated: false, trappedDone: true, tq: 0 }, '시험', sim.t, 1, true, ''));
+    commanderThink(sim, s, cmd);
+    expect(als.boardOrder, '방금 태웠다 — 실을 사람이 남았으면 기다린다').toBeFalsy();
+    sim.t += 11;
+    const n0 = sim.events.length;
+    commanderThink(sim, s, cmd);
+    expect(als.boardOrder).toBe('transport');
+    expect(sim.events.slice(n0).map((e) => e.text)).toContain(`${als.callsign}, 부상 대원 1명 병원 이송 출발하라.`);
+    // 정보 격리: commander.ts 에는 구조 대상·용의자의 진실 읽기가 남지 않았다 (firstLoad·redAboard 를 부대 기록과 믿음으로 바꿨다 — 시험 8 의 4b 줄)
+    const src = readFileSync('src/sim/field/commander.ts', 'utf8').split('\n').filter((l) => !/^\s*\/\//.test(l)).join('\n');
+    expect(src).not.toMatch(/s\.casualties/); expect(src).not.toMatch(/s\.hostiles/);
+  });
+  it('부대가 떠날 때(5번 블록): 병원이 필요한 대원은 그 차에 실려 병원부터 간다 — 숨진 대원은 싣지 않는다. 병원에서 인계되고, 사람이 남지 않은 부대는 운용을 멈춘다', () => {
+    const { sim, s, I } = crewScene('INJ-depart', 'medical', undefined, ['als', 'patrol']);
+    assignAll(sim, I, ['als', 'patrol']);
+    const p = sim.units.find((q) => q.kind === 'patrol')!;
+    const [b, c] = s.agents.filter((a) => a.unitId === p.id);
+    const rb = fresh(sim, b, 35); rb.status = 'injured'; b.status = 'withdrawn';
+    const rc = fresh(sim, c, 0); rc.dead = true; rc.status = 'down'; rc.tDead = sim.t; c.status = 'down';
+    closeIncident(sim, I, 'resolved');
+    for (let n = 0; n < 3000 && p.state === 'onscene'; n++) tickOnce(sim, s);
+    expect(p.state).toBe('transport');
+    expect([rb.care, rc.care]).toEqual(['aboard', undefined]);
+    expect(p.aboard!.map((e) => e.id)).toEqual([b.rid]);
+    const dep = sim.events.find((e) => e.actor === p.callsign && /싣고/.test(e.text))!;
+    expect(dep.text).toMatch(new RegExp(`^${p.callsign} 부상 대원 1명 싣고 .+(으로|로) 출발\\.$`));
+    expect(PHRASE.T3.test(dep.text)).toBe(true);
+    for (let n = 0; n < 8000 && p.state !== 'oos' && p.state !== 'available'; n++) sim.step();
+    expect([rb.care, rb.bleed]).toEqual(['hospital', 0]);
+    expect(p.aboard).toEqual([]); expect(p.firstLoadAt).toBeUndefined();
+    const hand = sim.events.find((e) => e.actor === p.callsign && /인계 완료/.test(e.text))!;
+    expect(hand.text).toMatch(/: .+ 도착, 부상 대원 1명 인계 완료\.$/);
+    expect(PHRASE.T4.test(hand.text)).toBe(true); expect(sysOf(hand)).toBe('hospital');
+    expect(checkC5(sim.events).bad).toBe(0);
+    expect(p.state, '숨지지 않은 대원이 모두 병원으로 갔다').toBe('oos');
+    expect(sim.events.some((e) => e.text === `${p.callsign} 남은 대원 모두 병원 이송 — 운용 중단.`)).toBe(true);
+  }, 60000);
+  it('안전장치: 이 현장에 내렸던 부대의 대원이 모두 차에 탔는데 떠나라는 지시가 없으면 철수시킨다 (사건이 아직 열려 있어도)', () => {
+    const { sim, s, I } = crewScene('INJ-orphan', 'medical', undefined, ['als', 'patrol']);
+    assignAll(sim, I, ['als', 'patrol']);
+    const p = sim.units.find((q) => q.kind === 'patrol')!;
+    for (const a of s.agents) if (a.unitId === p.id) a.status = 'left';
+    tickOnce(sim, s);
+    expect(p.state).toBe('returning');
+    expect(I.phase).not.toBe('closed');
+  });
+  it('가벼운 일로 복귀(§3.6a, 시험 12 ⑥): 출혈로 물러난 대원이 병원이 필요 없는 몸이 되면 한 번 돌아온다. 다시 물러나면 그 현장에서는 돌아오지 않는다. 병원이 필요하면 남는다', () => {
+    const { sim, s, I, of } = crewScene('INJ-back', 'medical', undefined, ['als', 'patrol']);
+    assignAll(sim, I, ['als', 'patrol']);
+    for (const q of s.agents) { q.nextThink = 1e9; q.planT = 1e9; q.task = null; }
+    const b = of('patrol'), r = fresh(sim, b, 60);
+    r.bleed = 0.1; r.bleedCause = 'gunshot';
+    agentHealth(sim, s, I, b);
+    expect(r.status).toBe('injured');
+    b.task = null; b.status = 'withdrawn';
+    tickOnce(sim, s);
+    expect(b.status, '출혈이 남은(병원이 필요한) 대원은 기다린다').toBe('withdrawn');
+    r.bleed = 0.005;
+    const n0 = sim.events.length;
+    tickOnce(sim, s);
+    expect(b.status).toBe('active'); expect(b.lightBack).toBe(true);
+    expect(sim.events.slice(n0).filter((e) => e.text === '처치 받음. 가벼운 임무로 복귀합니다.').length).toBe(1);
+    expect(b.beliefs.val<MateBelief>('mate', b.rid)?.status).toBe('light');
+    // 지휘관이 알게 되면 그 대원의 처치를 열지 않는다
+    const cmd = s.agents.find((a) => a.isCommander)!;
+    for (let k = 0; k < 40; k++) tickOnce(sim, s);
+    if (cmd !== b) { s.sizeupDone = true; commanderThink(sim, s, cmd); expect(cmd.beliefs.val<MateBelief>('mate', b.rid)?.status).toBe('light'); }
+    expect(liveTM(s, b.rid).length).toBe(0);
+    // 다시 물러나면 돌아오지 않는다
+    b.status = 'withdrawn'; b.task = null; r.health = 35;
+    tickOnce(sim, s);
+    r.health = 60; r.bleed = 0;
+    for (let k = 0; k < 5; k++) tickOnce(sim, s);
+    expect(b.status).toBe('withdrawn');
+  });
+});
+
+describe('6 · 13. 쓰러진 대원은 구조되고 후송된다 · 고아 부대 없음', () => {
+  it('6. 응급 현장에서 구급차 대원 하나를 쓰러뜨리면: 동료가 안전 구역으로 옮기고 → 처치하고 → 차에 태워 → 병원에 인계한다 (숨지면 RESPONDER_KILLED). 끝에 그 대원은 차에 탔다', () => {
+    let checked = 0;
+    for (let k = 0; k < 8 && checked < 2; k++) {
+      const sim = new Sim('INJ-evac' + k, NORMAL, 1200, { force: 'medical' });
+      let victim: FieldAgent | null = null, I: Incident | undefined;
+      for (let n = 0; n < 4000 && !victim && !sim.ended; n++) {
+        sim.step();
+        I ??= sim.incidents.find((J) => J.truth.type === 'medical' && J.createdAt >= 15 && J.createdAt < 16);
+        if (!I || I.phase === 'closed') continue;
+        const s = sim.scenes[I.id]!;
+        for (const a of s.agents) {
+          const u = sim.units[a.unitId];
+          if (a.status !== 'active' || a.isCommander || (u.kind !== 'als' && u.kind !== 'bls') || u.boardOrder) continue;
+          if (!s.agents.some((q) => q !== a && q.unitId === a.unitId && q.status === 'active')) continue;
+          victim = a; break;
+        }
+        if (victim) { victim.hpTick = sim.responders[victim.rid].health; hurtResponder(sim, s, I, victim, 500, 'blunt'); }
+      }
+      if (!victim || !I) continue;
+      sim.runToEnd(40000);
+      checked++;
+      const r = sim.responders[victim.rid];
+      const tag = `${sim.seed} ${r.name}`;
+      expect(victim.status, tag).toBe('left');
+      expect(sim.events.some((e) => e.text === `쓰러진 ${r.name} 대원을 안전 구역으로 옮겼습니다.` || e.text === `순직한 ${r.name} 대원을 안전 구역으로 옮겼습니다.`), `${tag} 구조`).toBe(true);
+      if (r.dead) expect(sim.events.filter((e) => e.problem === 'RESPONDER_KILLED' && e.rid === r.id).length, tag).toBe(1);
+      else {
+        expect(r.care, `${tag} 후송`).toBe('hospital');
+        expect(sim.events.some((e) => /부상 대원 \d+명 인계 완료/.test(e.text)), `${tag} 인계 기록`).toBe(true);
+      }
+    }
+    expect(checked).toBeGreaterThanOrEqual(2);
+  }, 120000);
+  it('13. 교대가 끝났을 때 이미 닫혀 보관된 사건에 남아 있는 부대가 없다 (총격범 둘 · 보통 둘)', () => {
+    for (const sim of [shooter[0], shooter[1], plain[0], plain[1]]) {
+      const stuck = sim.units.filter((u) => u.state === 'onscene' && u.incidentId !== null && sim.incidents[u.incidentId].phase === 'closed' && sim.scenes[u.incidentId]?.archived);
+      expect(stuck.map((u) => u.callsign), sim.seed).toEqual([]);
+    }
+  });
 });

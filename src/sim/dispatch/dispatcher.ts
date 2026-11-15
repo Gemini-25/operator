@@ -7,7 +7,7 @@ import { transmit } from '../field/agents';
 import { mkFact } from '../field/beliefs';
 import { nodeName } from '../city';
 import { crewHasKit, fieldCrew } from '../crews';
-import { coastal, createAidUnit, crewReady, dispatchUnit, etaFor, sendUnitTo } from '../resources';
+import { coastal, createAidUnit, crewOk, crewReady, dispatchUnit, etaFor, sendUnitTo } from '../resources';
 import type { Claim, Incident, Needs, RadioMsg, Scene, Unit } from '../types';
 import { TYPE_NAME, fmtSec, josa } from '../util';
 import { assess, emptyNeeds, needsText, sevName } from './analyst';
@@ -53,6 +53,8 @@ function priorityOf(sim: Sim, I: Incident): number {
 }
 
 interface Cand { u: Unit; score: number; eta: number; fit: number; divertFrom: Incident | null }
+/** 무거운 일이 필요한 수요: 걸을 수 있는 다친 대원만 남은 부대가 1순위로 가지 않는다 (경찰·교통 통제 수요는 봉쇄·협상·면담·교통 통제로 할 수 있어 넣지 않는다) */
+const HEAVY_NEED: ReadonlySet<keyof Needs> = new Set<keyof Needs>(['suppression', 'rescue', 'ems', 'tactical', 'search', 'eod']);
 
 /**
  * 장비 가산: 그 사건에 맞는 장비를 든 대원이 있는 부대를 조금 앞세운다 — 수난 사고의 구조 수요에는 구조 로프·구명환(+12),
@@ -143,7 +145,12 @@ function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { be
     let stamina = 0; for (const rid of fc) stamina += sim.responders[rid].stamina; stamina /= fc.length;
     let score = fit * 100 - eta * (0.45 + 0.22 * sev) - (100 - stamina) * 0.22;
     if (key === 'suppression' && u.pumpCond < 0.4) score -= 10;
-    if (crewReady(sim, u) < fc.length) score -= 18;
+    // 결원: 온전한 대원이 정원보다 적으면 한 번 감점한다 (다쳤거나 일부가 숨진 부대도 계속 나간다 — H1 §3.6).
+    // 걸을 수 있는 다친 대원만 남은 부대는 가벼운 일만 할 수 있으므로 무거운 일이 필요한 수요에는 더 뒤로 미룬다 — 빼지는 않는다(다른 후보가 없으면 간다).
+    // 관제가 읽는 것은 자기 조직의 대원 상태(명부)뿐이다
+    const ok = crewOk(sim, u);
+    if (ok < fc.length) score -= 18;
+    if (ok === 0 && HEAVY_NEED.has(key)) score -= 25;
     score += kitBonus(sim, u, I, key);
     if (divertFrom) score -= 28;
     // 같은 부서의 마지막 가용 부대라면, 위험도가 낮은 사건에는 아껴 둔다.
@@ -208,7 +215,7 @@ function firstResponder(sim: Sim, I: Incident): void {
   let best: Unit | null = null, be = 1e9, beta = 0;
   for (const u of sim.units) {
     if (u.kind !== 'engine' && u.kind !== 'ladder' && u.kind !== 'rescue') continue;      // 소방의 지상 부대만 (특수 부대 — 화학·헬기·구조정 — 는 아껴 둔다)
-    if (u.aid || (u.state !== 'available' && u.state !== 'returning') || crewReady(sim, u) === 0 || I.assigned.indexOf(u.id) >= 0) continue;
+    if (u.aid || (u.state !== 'available' && u.state !== 'returning') || crewOk(sim, u) === 0 || I.assigned.indexOf(u.id) >= 0) continue;      // 선착 대응은 집 안의 환자를 처치하는 일이다 — 온전한 대원이 있는 부대만
     const spare = sim.units.some((q) => q.id !== u.id && q.dept === u.dept && !q.air && !q.sea && (q.state === 'available' || q.state === 'returning') && crewReady(sim, q) > 0);
     if (!spare) continue;
     const eta = etaFor(sim, u, I.reportedNode);

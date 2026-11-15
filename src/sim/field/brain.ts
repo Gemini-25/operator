@@ -4,10 +4,10 @@
 
 import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
-import type { Candidate, CasBelief, FieldAgent, Scene, WorkItem } from '../types';
+import type { Candidate, CasBelief, FieldAgent, MateBelief, Scene, WorkItem } from '../types';
 import { dist } from '../util';
 import { AIR_LOW, hasKit, kitUses } from '../crews';
-import { failedRecently, fitFor, flushOutbox, perceive, pumpOperatorOn, resp, shareNearby, workLabel } from './agents';
+import { failedRecently, fitFor, flushOutbox, learnQuiet, mateFact, perceive, pumpOperatorOn, resp, shareNearby, workLabel } from './agents';
 import { commanderThink } from './commander';
 import { finishTask, makeTask } from './executor';
 import { tileOf } from './grid';
@@ -19,7 +19,7 @@ const hurtTold = new WeakSet<FieldAgent>();
 
 function takeWork(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, self: boolean): void {
   if (a.task) finishTask(sim, s, a, false, 'preempt');
-  const t = makeTask(w.kind, workLabel(s, w), w);
+  const t = makeTask(w.kind, workLabel(s, w, sim), w);
   t.startedAt = sim.t; t.selfAssigned = self;
   a.task = t; a.orderWork = w.id;
   if (w.assignees.indexOf(a.rid) < 0) w.assignees.push(a.rid);
@@ -92,6 +92,8 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
     // 맡고 있던 작업은 위험해서 내려놓은 것으로 기록한다: 지휘관이 곧바로 같은 대원에게 다시 맡기지 않는다
     if (cur && cur.workId >= 0) finishTask(sim, s, a, false, 'danger');
     setTask(sim, s, a, 'retreat', '후퇴');
+    // 가벼운 일을 한다고 알렸던 다친 대원이 다시 물러난다: 지휘관이 더는 일을 맡기지 않게 자기 상태를 소리 없이 다시 알린다 (처음 다칠 때는 agentHealth 가 알린다)
+    if (hurt) { const me = a.beliefs.val<MateBelief>('mate', a.rid); if (me !== undefined && me.status === 'light') learnQuiet(sim, a, mateFact(sim, s, a, 'hurt', r.name, 0)); }
     // 부상 후퇴는 상태가 바뀌는 이 한 번만 알린다(위의 붙잡기로 다시 고르지 않는다 — 길 위의 불을 끄다 물이 떨어져 후퇴를 다시 시작해도 되풀이하지 않는다), 위험 회피는 20초에 한 번
     if (hurt) { if (hurtTold.has(a)) return; hurtTold.add(a); }
     else if (sim.t - a.lastRetreatLog < 20) return;
@@ -118,7 +120,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
   if (!swapping && a.orderWork >= 0 && (!cur || cur.workId !== a.orderWork)) {
     const w = s.board[a.orderWork];
     if (w && (w.status === 'open' || w.status === 'active') && fitFor(sim, s, a, w) > 0) {
-      opts.push({ label: `지시 수행: ${workLabel(s, w)}`, score: 0.56 + 0.4 * w.priority, apply: () => takeWork(sim, s, a, w, false) });
+      opts.push({ label: `지시 수행: ${workLabel(s, w, sim)}`, score: 0.56 + 0.4 * w.priority, apply: () => takeWork(sim, s, a, w, false) });
     } else a.orderWork = -1;
   }
   // 4) 장비 문제: 예비 펌프 교체와 소화전 급수 연결은 그 부대에서 펌프를 맡은 대원(기관원·사다리 조작원)이 활동 중이면 그 사람만 나선다
@@ -189,9 +191,9 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
   }
   if (bestW && !swapping) {
     const w = bestW;
-    opts.push({ label: `자체 판단: ${workLabel(s, w)}`, score: bestS, apply: () => {
+    opts.push({ label: `자체 판단: ${workLabel(s, w, sim)}`, score: bestS, apply: () => {
       takeWork(sim, s, a, w, true);
-      if (!a.isCommander) emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 0, text: `${workLabel(s, w)}, 제가 맡겠습니다.` });
+      if (!a.isCommander) emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 0, text: `${workLabel(s, w, sim)}, 제가 맡겠습니다.` });
     } });
   }
   // 8) 대기

@@ -16,14 +16,14 @@
 | `G5-combat-fx.md` | 교전 연출 | `wf/g5` | 총구 섬광·예광선·탄착, 섬광탄, 폭발, 진입, 대치, 검거, 교전 소리, 결정적 순간의 자동 감속 — 결과 불변 | **구현됨** (`9ab7fdb` — 문서 끝 "구현 메모") |
 | `I1-causality.md` | 인과관계·시스템 통합 | `wf/i1a` · `wf/causality` | I1-a 측정 도구(지표 여덟 가지·일치 검사·관문), I1-b 인과 규칙·세계 상태 결합(신호·규칙 11개·조건부 연쇄) | **I1-a 구현됨** (`48dba83`) · I1-b 다음 구현 세션 |
 | `G4-scene-legibility.md` | 현장 가독성 | `wf/g4` | 무너진 건물·가스가 찬 범위·되살아난 불·폭발 자리·붙잡힌 인질이 한눈에 — 결과 불변 | **구현됨** (`7d5a5e8` — 문서 끝 구현 결과) |
-| `R1-crews.md` | 부대 편성·개인 장비·헬기 | `wf/crews` | 부대마다 2~5명의 역할, 사람마다 장비(공기·탄·고장), 경찰·소방·의료 헬기 | **구현 중** (2026-11-15 — 단계 0~7 과 독립 검토가 주 브랜치에 있다 `dc8a823`, 단계 8(균형과 문서) 진행 중. 설계서 끝 "구현 메모 (진행 중)") |
-| `H1-injuries.md` | 부상과 사망 | `wf/injuries` | 대원·용의자·구조 대상이 한 모델로 다치고 숨진다 — 원인·방호·문턱·후송·결원·보고서 | 다음 구현 세션 (2) |
+| `R1-crews.md` | 부대 편성·개인 장비·헬기 | `wf/crews` | 부대마다 2~5명의 역할, 사람마다 장비(공기·섬광탄·테이저의 수량과 고장), 경찰·소방·의료 헬기 | **구현됨** (2026-11-15, 마지막 코드 커밋 `7b211c8` — 문서 끝 "구현 메모"가 정본) |
+| `H1-injuries.md` | 부상과 사망 | `wf/injuries` | 대원·용의자·구조 대상이 한 모델로 다치고 숨진다 — 원인·방호·문턱·후송·결원·보고서 | **구현 중** (2026-11-15 — 단계 1·2(기록만·화면)가 주 브랜치에 있다, 단계 0·3~7 진행 중. 설계서 끝 "구현 메모 (진행 중)") |
 | `X6-catastrophe.md` | 위험의 현실화 | `wf/catastrophe` | 조짐 → 막는 조치·철수·외부 방어 → 실제 붕괴·폭발·전소 → 사상자·지도·보고서 | 다음 구현 세션 (3) |
 | `R2-methods.md` | 대응 방식 다양화 | `wf/methods` | 같은 임무를 장비·능력·상황에 따라 여러 방법으로(헤엄 구조·보트·소화기·비살상탄·저격·폭파 진입 …) | 다음 구현 세션 (4) |
 | `R3-doctrine.md` | 분야별 대응 교본 | `wf/doctrine` | 경찰·소방·의료·특수의 상황 × 장비 × 상태 교본 줄, 짝 규칙, 탄약·엄폐 | 다음 구현 세션 (5) |
 | `I2-persistence.md` | 교대 간 지속 | `wf/persist` | 대원 상태·장비·건물·도로를 "이어받은 상태"로 다음 교대의 입력에 | 다음 구현 세션 (7 — I1-b 가 6) |
 
-합치는 순서: M1 → N7 → N4b → N5 → N6 → T1 → U1 — **일곱 묶음 모두 구현돼 합쳐졌다(2026-11-14).** 그 뒤 같은 날 U2·I1-a·G5 를 구현해 합쳤다(설계서 없이 진행한 B1·B3·P1·Q1·Z1 도 합쳐졌다). 남은 설계서의 순서는 아래 "구현 순서" 절이다. 아래의 규칙은 다음에 묶음을 더할 때 그대로 쓴다. 각 설계서 끝의 구현 메모(또는 앞머리의 "구현 상태")가 실제 코드와 맞는 최신 내용이다.
+합치는 순서: M1 → N7 → N4b → N5 → N6 → T1 → U1 — **일곱 묶음 모두 구현돼 합쳐졌다(2026-11-14).** 그 뒤 같은 날 U2·I1-a·G5 를 구현해 합쳤다(설계서 없이 진행한 B1·B3·P1·Q1·Z1 도 합쳐졌다). 2026-11-15 에 R1 을 아래 "실행 방법"대로 구현했다. 남은 설계서의 순서는 아래 "구현 순서" 절이다. 아래의 규칙은 다음에 묶음을 더할 때 그대로 쓴다. 각 설계서 끝의 구현 메모(또는 앞머리의 "구현 상태")가 실제 코드와 맞는 최신 내용이다.
 
 ## 구현 순서 (남은 설계서)
 
@@ -31,13 +31,15 @@
 
 | 단계 | 묶음 | 앞 단계에 기대는 것 | 앞 단계 없이 먼저 하면 (대체) |
 |---|---|---|---|
-| 1 | R1 | 지금 HEAD(B1·B3·P1·Q1·Z1·U2·I1-a·G5 를 합친 상태). B1 뒤에 기준을 잰다 | — (첫 단계) |
+| 1 | R1 — **끝남** | 지금 HEAD(B1·B3·P1·Q1·Z1·U2·I1-a·G5 를 합친 상태). B1 뒤에 기준을 잰다 | — (첫 단계) |
 | 2 | H1 | R1 의 `armorOf`·`blastFactor`·`kitWorks`·`kitUses`·`medLevelOf`·`seatsOf`·`fieldCrew`·`makeAgent`·`startTransport` 의 병원 이름, G5 가 지운 피·'hit'. H1 은 `minField` 를 쓰지 않는다(결원 규칙 — 아래 정본 표) | H1 §12.2-5 (방호는 §2.4 의 "지금"·"새로" 열, `crewOk`·`crewReady` 는 `u.crew`, 자리는 구급차 2·헬기 1) |
 | 3 | X6 | H1 의 `hurt*`(`{ ev }`)·문턱·`agentHealth` 전이·`mateFact`·`MateBelief`, R1 의 `hasKit`·`kitWorks`·`kitLive`·`toolUse`·`makeAgent`·`briefFacts`. G4 가 먼저 합쳐졌으면 그 그림·시험 둘을 함께 고친다 | X6 §12.1 의 "R1·H1 이 먼저 합쳐지지 않았으면" 줄, §3.4 의 "R1 이 없을 때" 열, §7.2 의 "G4 가 아직이면" |
 | 4 | R2 | R1 의 `KitId`·`KITS`·명부 고장 추첨·`hoist`, H1 의 `hurt*`·`protection('drown')`, X6 의 `exteriorSpot`·`spray(eff, wmul)`·`ops` 사실·`s.fan` 자리 | R2 §3.3 끝의 `gear.ts` 대체, §10 "R1 이 아직 없을 때" |
 | 5 | R3 | R2 의 `chooseMethod(…, dc)`·`METHOD`·`WORK_MODE`·`gear.ts`, R1 의 `ROLES`·`KITS`·`capableOf`, H1 의 `bandOf`·`hurtF`·`treatMate`, X6 의 `DANGER_RULES`·`evacuate` | 대체를 두지 않는다 — 함수 이름이 다르면 실제 코드를 따른다(R3 §11.2-7). 순서를 지킨다 |
 | 6 | I1-b | X6 의 `catastrophe` 신호·`placeMarks`·`I.blockEv`, R1 단계 3 의 출발 문구(C5 관문), H1 의 넓힌 문구 규칙(T4·T6)·`u.oosEv` | I1 §3.10(X6 와 함께 넣을 부분 — 빈 `world/consequence.ts`), §3.11 1단계(R1 이 출발 문구를 안 고쳤으면 b1 에서) |
 | 7 | I2 | H1 의 `outShifts`·`RosterOut`, R1 의 `minField`·`skillsOf`·`STAFF`, X6 의 `placeMarks`·`placeUsable` 로 옮길 세 검사, I1-b 의 `knownBuildingAt`·`placeState`·`WorldTag`·`rubble` | I2 §3.2 의 "H1 이 아직 합쳐지지 않았으면", §11.1-3("앞 묶음의 이름" — 구현 전에 실제 이름 확인) |
+
+**R1 이 끝난 뒤의 확인(2026-11-15)**: 위 표와 아래 "정본" 표가 R1 에 기대하는 이름은 **모두 그 이름으로 있다** — `src/sim/crews.ts` 의 `KitId`·`KITS`·`ROLES`·`STAFF`·`hasKit`·`kitWorks`·`kitLive`·`kitUses`·`useKit`·`toolFor`·`toolUse`·`medLevelOf`·`armorOf(sim, rid, engaging)`·`blastFactor`·`seatsOf`·`fieldCrew`·`minField`·`minCrew`·`skillsOf`·`capableOf`, `field/agents.ts` 의 `makeAgent`·`briefFacts`, `resources.ts` 의 `startTransport`(고른 병원 `Facility` 를 돌려준다)·명부 고장 추첨(`crews.drawFaults`), `Unit.hoist`·`WorkKind 'hoist'`, 측정 도구의 C5 관문(켜져 있다). 본문과 서명이 다른 것은 둘뿐이다: `kitRng(sim, s)`(본문은 `kitRng(s)`), `heliPad(sim, f)` 가 `[x, y]` 를 돌려준다. 본문에 없이 더해진 것(`fitFor` 의 다섯째 인자 `afterSwap`, `airShort`·`scbaReady`·`AIR_MIN`, `anyCapable`, `airFit`, 구출 교대, 헬기만 왔던 현장의 마무리)과 뒤 묶음마다 알아야 할 것은 `R1-crews.md` 끝 "구현 메모"의 "뒤 묶음이 쓰는 이름"·"뒤 묶음마다 알아야 할 것"에 있다. **H1 부터는 0단계의 기준을 R1 을 합친 뒤에 다시 잰다**(R1 이 모든 시드의 결과를 바꿨다 — 보통 성공률 76 → 81%).
 
 ### 실행 방법 — 묶음 하나를 단계로 나눠 돌리기 (2026-11-15 부터 이렇게 한다)
 
@@ -85,7 +87,7 @@
 
 | 공유하는 것 | 정본 |
 |---|---|
-| 편성·역할·개인 장비(`KitId`·`Responder.kit`·`hasKit`·`kitWorks`·`kitLive`·`toolUse`·`fieldCrew`·**`minField`**·`seatsOf`·`skillsOf`·`makeAgent`·`briefFacts`) | R1 §3·§4 |
+| 편성·역할·개인 장비(`KitId`·`Responder.kit`·`hasKit`·`kitWorks`·`kitLive`·`toolUse`·`fieldCrew`·**`minField`**·`seatsOf`·`skillsOf`·`makeAgent`·`briefFacts`) | R1 §3·§4 — 구현됨: 코드(`src/sim/crews.ts`, `field/agents.ts`)와 R1 구현 메모가 정본 |
 | 장비를 감싼 판단 층(`gear.ts` — `kitCount`·`bestTool`, R3 의 `kitHas`·`kitQty`·`gunOf`·`roleIdOf`·`groupOf`·`crewHas`) | R2 §3.3 (R3 §2.4 가 더한다) |
 | 부상 필드·피해 경로(`InjuryCause`·`Injury`·`hurt*`·`protection`·`bandOf`·`MateBelief`·`outShifts`·`RosterOut`·`crewReady`/`crewOk`·`seatsUsed`·결원 규칙) | H1 §2·§3. 결원 규칙은 사용자 최종 결정(2026-11-15): **부대의 운용 중단은 그 부대 대원이 전부 숨졌을 때만** — 다치거나 일부가 숨진 부대는 −18 감점만 받고 계속 출동한다. 배정에서 빠지는 것은 걸을 수 있는 대원이 하나도 없을 때(전원 순직·모두 쓰러짐·모두 후송 — 규칙이 아니라 사람이 없어서)뿐이고, `crewReady` 는 걸을 수 있는 대원 수, `crewOk` 는 온전한 대원 수다(H1 §3.6·§6.4·§12.3). I2 의 예비 인력도 같은 정신(나올 대원이 한 명도 없을 때만 `oos` — I2 §3.2) |
 | 다친 대원의 일 — 사용자 결정(2026-11-15, "가벼운 일은 계속"): 걸을 수 있는 다친 대원(`injured`, 후송되지 않음)은 부대에 남아 다음 현장에도 내리고 가벼운 일만 맡는다. 목록 `LIGHT_WORK`(`traffic`·`perimeter`·`negotiate`·`interview`·`hookup`, 안전 구역의 `treat`·`treatMate`) | H1 §2.5·§2.7·§3.6a (R3 의 부상 줄 P12·F14·E11·G01 이 같은 목록을 쓴다. R2 는 다친 대원이 `risk > 0` 인 방법을 고르지 않는다 — R2 §3.4. 교대를 넘는 결장은 그대로 `outShifts` — I2 §3.2 끝) |

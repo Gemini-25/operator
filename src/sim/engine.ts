@@ -18,6 +18,7 @@ import { tickScene } from './field/sceneManager';
 import { closeIncident, initGenerator, tickIncidents } from './incidents';
 import type { GenState } from './incidents';
 import { createRoster, tickUnits } from './resources';
+import type { PlaceMark } from './types';      // (X6)
 import { Rng, hashStr } from './rng';
 import type { AirStats, Call, City, Incident, Responder, Scene, ShiftReport, SimEvent, Unit, Weather } from './types';
 import { WEATHER_NAME } from './util';
@@ -56,6 +57,9 @@ export class Sim {
   gen: GenState;
   /** 재난 (없으면 null). disaster.ts 가 만들고 굴린다 */
   disaster: DisasterState | null = null;
+  /** 지도에 남는 건물 상태 (X6): 건물 id → 그을림·폭발 흔적·구획 붕괴·전소·전체 붕괴. 교대마다 새 Sim 이므로 이어지지 않는다 — 도시 지도(city.places)는 고치지 않는다.
+   *  채우는 것은 field/catastrophe.ts 의 상태를 바꾸는 자리(단계 3 부터) */
+  placeMarks = new Map<number, PlaceMark>();
   /** 시험·확인용: 이 시나리오('유형/변형')를 교대 초반에 한 번 일으킨다 */
   readonly force: string | null;
   /** 교대 조건: 난이도 손잡이와 거기서 나온 수치 */

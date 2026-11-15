@@ -190,7 +190,9 @@ export interface Unit {
 
 // ───────────────────────── 정보(Belief) ─────────────────────────
 export type FactType = 'cas' | 'fire' | 'srch' | 'blk' | 'hos' | 'haz' | 'occ' | 'ctl' | 'clue' | 'seen' | 'type' | 'secure' | 'mate' | 'evid'
-  | 'ovh';         // 구역별 잔불 정리를 마친 시각 (값 1)
+  | 'ovh'          // 구역별 잔불 정리를 마친 시각 (값 1)
+  | 'sign'         // (X6) 조짐: 구조 약화·가스 농도·용기 가열·불꽃 역류·분진, 그리고 붕괴·폭발 소리 (값 SignBelief)
+  | 'ops';         // (X6) 지휘 상태: id 0 = 전술 모드와 진입 금지 구역, id 100 + rid = 그 대원의 인원 점검 응답
 export interface Fact {
   key: string; type: FactType; id: number;
   value: any;
@@ -349,7 +351,8 @@ export interface FxInfo {
 export interface Fx { c?: FxInfo }
 export interface Fx { kind: 'shot' | 'spray' | 'radio' | 'text' | 'boom' | 'hit' | 'flash' | 'glass' | 'debris' | 'melee' | 'breach' | 'cuff' | 'taser'
   | 'collapse'       // (G4) 무너짐: field/ruins.ts 의 recordFall 만 남긴다. 그림은 Scene.falls 로 그리고, 이 효과는 카메라·자동 감속·소리만 본다
-  | 'drop';          // (R1) 헬기의 물 투하: field/rules/air.ts 가 남긴다 (x,y → x2,y2 = 물이 떨어진 띠의 두 끝)
+  | 'drop'           // (R1) 헬기의 물 투하: field/rules/air.ts 가 남긴다 (x,y → x2,y2 = 물이 떨어진 띠의 두 끝)
+  | 'horn';          // (X6) 철수 신호 (소리·카메라·자동 감속이 본다). 남기는 것은 단계 5 의 지휘 규칙
   t: number; x: number; y: number; x2?: number; y2?: number; text?: string; color?: string; ttl: number }
 
 export type WorkKind =
@@ -524,6 +527,7 @@ export interface Assessment {
 }
 
 export type ProblemCode =
+  | 'DANGER_SIGN' | 'WITHDRAWAL' | 'STRUCT_COLLAPSE' | 'EXPLOSION' | 'BURNOUT'      // (X6) 위험 조짐(막으면 복구) · 전원 철수(다시 들어가면 복구) · 구조물 붕괴 · 폭발(지휘관이 몰랐던 위험이면 HIDDEN_HAZARD) · 건물 전소
   | 'CALL_QUEUE' | 'CALL_MISINFO' | 'CALL_VAGUE' | 'MISJUDGE_TYPE' | 'UNDERESTIMATE' | 'OVERESTIMATE'
   | 'NO_UNIT' | 'UNDER_DISPATCH' | 'DIVERTED' | 'ROUTE_BLOCKED' | 'TRAFFIC_DELAY'
   | 'PATH_BLOCKED' | 'VICTIM_MISSED' | 'EQUIP_FAIL' | 'WATER_OUT' | 'RESPONDER_HURT' | 'COMM_FAIL'
@@ -646,4 +650,121 @@ export interface ShiftReport {
 export interface FallRecord {
   t: number; x: number; y: number; r: number; region: number;
   cause: 'zone' | 'secondary' | 'ceiling'      // 마지막 줄에 둔다 — X6 가 끝에 새 줄로 | 'partial' | 'total' 을 덧붙인다
+}
+
+// ───────────────────────── 위험의 현실화 (X6) ─────────────────────────
+/** 현장의 위험 상태 (진실). field/catastrophe.ts 만 만들고 바꾼다.
+ *  지휘관·대원의 판단부·관제는 읽지 않는다 — 조짐(sign 사실)으로만 안다 */
+export interface CatState {
+  struct: boolean;              // 구조 규칙을 쓰는 건물 현장인가 (전소·전체 붕괴·지도의 건물 상태도 이 현장만)
+  foot: Uint8Array;             // 칸별 (ops.ts 의 footprint(s) 가 처음 생김새로 한 번 계산한 같은 배열):
+                                //   0 바깥 · 1 건물 안(실내 칸과 안쪽 벽) · 2 바깥벽·창(바깥과 맞닿은 벽) · 3 층 경계(VOID 와 맞닿은 벽·창 — 어떤 붕괴도 바꾸지 않는다)
+  integ: Float32Array;          // 구획(s.regions 번호)별 구조 건전도 1(멀쩡) … 0. 실내 구획만 뜻이 있다
+  loss: Float32Array;           // 구획 × 6 원인(LOSS_FIRE · BURN · CREEP · IMPACT · BLAST · QUAKE)의 누적 손실 — 보고서의 원인 문장
+  hotT: Float32Array;           // 구획별 '불에 휩싸인'(칸의 30% 이상이 불 0.3 이상) 누적 초 — 원인 문장
+  l3Since: Float32Array;        // 구획별 '붕괴 임박'(integ < L3)이 시작된 시각 (-1)
+  damage0: Uint8Array;          // 처음(현장 생성 때)의 s.damage 사본 — 사건 중에 무너진 칸만 재산 피해로 센다
+  hits: { t: number; x: number; y: number }[];   // 최근의 충격(blast·구획 붕괴·전체 붕괴) 자리 — 가스 점화용.
+                                //   통째로 비우지 않고 매초 t ≥ sim.t − 1.2 인 것만 남긴다
+  gasN: number; vesselN: number; dustN: number;  // X6 가 일으킨 폭발 수 (종류별 — 기록 수와 견준다. 폭발물은 세지 않는다)
+  fallen: Uint8Array;           // 구획별 무너짐 (1)
+  bldg: number;                 // 건물 전체 건전도 (서 있는 구획의 칸 수 가중 평균, 무너진 구획은 0 으로 센다)
+  bldgL3Since: number;
+  gas: Float32Array | null;     // 칸별 가연성 가스 (1 = 폭발 하한 LEL). 밸브가 있는 현장만 만든다
+  gasTmp: Float32Array | null;
+  cloudSince: number;           // LEL 구름(N ≥ 3)이 생겨 이어진 시작 시각 (-1) — 스파크의 나이 항
+  fuelMask: Uint8Array;         // catOf 때 건물 칸(foot ≥ 1)이고 연료가 있던 칸 (1) — 전소 비율의 분모·분자를 이 칸으로만 센다
+  fuel0: number;                // fuelMask 의 칸 수 (30 미만이면 전소 판정을 하지 않는다)
+  burntAt: number;              // 전소 판정 시각 (-1)
+  totalAt: number;              // 전체 붕괴 시각 (-1)
+  lastFall: { t: number; x: number; y: number; region: number } | null;
+  events: number;               // 붕괴·폭발이 일어난 수 (소리 사실의 번호)
+  shakeSeen: number;            // 반영한 지진 흔들림 수 (sim.disaster.shakes 의 길이). 처음 값은 catOf 를 만들 때의 길이
+                                //   (안 그러면 본진 뒤에 생긴 현장이 지난 흔들림을 한꺼번에 소급해 받는다)
+  shored: number[];             // 보강을 이미 반영한 균열 id
+  limitBonus: number;           // 세계 쪽 한계 시간 보탬(붕괴마다). 지휘 쪽 보탬은 OpsState.limitBonus — 7번 블록이 둘을 합친다
+  dustRegion: number; dustDone: boolean;   // 분진이 쌓인 구획 (-1)과 이미 터졌는가 (선택)
+  flashed: number[];            // 플래시오버가 난 구획 (선택)
+  utilityAt: number;            // 도시가스 공급이 끊길 시각 (-1 아직 요청 없음, -2 이미 끊김)
+  causeEv: Int32Array;          // 구획별 손실을 가장 크게 만든 마지막 기록 (붕괴 기록의 causes)
+}
+/** 지휘 상태: 전술 모드와 진입 금지 구역. 지휘관이 정하고 모두가 읽는다 (s.entryOrdered 와 같은 자격 — 조직이 아는 것) */
+export interface OpsState {
+  mode: 'interior' | 'withdraw' | 'defensive' | 'rubble';
+  since: number; reason: string; ev: number;     // 마지막 전환 시각 · 까닭 · 기록
+  zones: NoGoZone[];
+  parAt: number; parAsked: number[]; parOk: number[]; parTries: number;   // 인원 점검 (parAsked 에는 명령 때 active 인 대원만)
+  parDue: number;                                // 인원 점검 시한 (parAt + 70). 이 시각까지만 'withdraw' 가 종료를 막는다
+  burnSince: Record<number, number>;             // 지휘관의 기억: 구역별로 센 불(믿음 ≥ 0.5)을 처음 본 시각 (0.3 아래로 내려가면 지운다)
+  everHot: number[];                             // 한 번이라도 burnSince 에 들어간 구역 (지우지 않는다 — 외부 확인 종료가 쓴다)
+  quietSince: number;                            // 마지막으로 위험 단계가 오른 뒤 조용해진 시각
+  calmSince: Record<string, number>;             // DANGER_SIGN 키별로 조짐이 1 이하로 가라앉은 시각
+  utilityAsked: number;                          // 도시가스 차단을 요청한 시각 (-1)
+  concluded: boolean;                            // 외부 확인 종료를 결정했다
+  reentries: number;
+  rubble: number[];                              // 무너진 뒤 잔해 수색을 허락한 구역
+  entry: Record<string, { until: number; n: number; last: number }>;   // 구역 키별 제한적 구조 진입: 끝 시각 · 횟수 · 마지막 시각
+  gated: number;                                 // 지난 계획 주기에 문(registerGate)이 막은 want 수 — 0 보다 크면 종료를 막는다
+  noExt: number[];                               // 외부 방수 자리를 두 번 찾지 못한 구역 — 외부 방수를 다시 내지 않는다
+  cleared: Record<string, number>;               // 해제한 구역 키 → 해제 때 그 조짐 사실의 시각. 그 뒤의 새 사실로만 다시 올린다
+  limitBonus: number;                            // 지휘 쪽 한계 시간 보탬 (외부 방어로 처음 바꿀 때 +150)
+}
+export interface NoGoZone {
+  key: string;                                   // 'struct:3' · 'gas:5' · 'vessel:12' · 'bldg' · 'fire:4' · 'dust:2'
+  kind: 'struct' | 'gas' | 'vessel' | 'fire' | 'bldg' | 'dust';
+  level: 2 | 3;                                  // 2 = 새 진입 금지(허락된 일만) · 3 = 전원 철수
+  regions: number[]; x: number; y: number; r: number;   // 구역 목록과 원 (r = 0 이면 원 없음)
+  since: number; why: string; ev: number;
+}
+/** 조짐 사실(sign)의 값 */
+export interface SignBelief {
+  kind: 'struct' | 'bldg' | 'gas' | 'vessel' | 'fire' | 'dust' | 'event';
+  level: number;                                 // 0 없음 · 1 조짐 · 2 위험 · 3 임박 (event 는 3)
+  region: number; x: number; y: number;
+  lel?: number;                                  // 가스: 측정값 (% LEL, 5 단위). 냄새로만 안 것은 없음
+  prop?: number;                                 // 용기 id
+  what?: 'partial' | 'total' | 'gas' | 'vessel' | 'dust' | 'burnout' | 'flashover'
+    | 'utility';                                 // event 의 종류. 'utility' = 도시가스사의 공급 차단 완료 통보 (level 0, id 5001)
+  down?: boolean;                                // 확인된 하향: 앞 단계를 알아챌 수 있는 감각 범위 안에서 그 단계가 사라진 것을 본 보고.
+                                                 //   믿음을 합칠 때 단계가 내려가는 사실은 이것이 참일 때만 덮는다
+}
+/** 지도에 남는 건물 상태 (이 교대 동안). Sim.placeMarks */
+export interface PlaceMark { placeId: number; state: 'scorched' | 'blasted' | 'partial' | 'burnt' | 'collapsed'; t: number; incidentId: number; burnFrac: number; ruinFrac: number }
+
+// (X6) 있는 자료형에 더하는 칸 — 모두 선택 칸이다. 인터페이스 합치기로 여기 한곳에 모았다 (G5 의 Fx.c 와 같은 방식. 뜻은 각 인터페이스의 끝에 붙인 것과 같다).
+// 객체 모양: 그 칸을 쓰기 시작하는 단계가 생성 리터럴에도 undefined 로 넣는다 — Scene·Prop 은 kit.ts(baseScene·PROP_BLANK), FieldAgent 는 agents.makeAgent 에 넣었다.
+// WorkItem.risky(commander.want 의 리터럴)·Incident.fieldRisk(incidents.createIncident 의 리터럴)는 그 칸을 쓰기 시작하는 단계 5 가 넣는다.
+export interface Scene {
+  cat?: CatState;
+  ops?: OpsState;
+}
+export interface Prop {
+  vessel?: 'cylinder' | 'drum' | 'cng' | 'jet';   // 열을 받으면 터지는 용기. gas 소품은 없으면 cylinder (catOf 가 처음 한 번 적는다)
+  heatLoad?: number;                               // 용기가 받은 열 0..1 (1 이면 터진다)
+  heatK?: number;                                  // 용기마다 다른 열 배율 (0.8~1.25, 처음 볼 때 정한다)
+}
+export interface MateBelief {
+  trapped?: boolean;                               // 깔린 동료 (mate 사실의 값 — 본 사람이 알린다)
+}
+export interface FieldAgent {
+  trapped?: number;                                // 잔해에 깔린 대원의 남은 구출 작업량 (없거나 0 = 깔리지 않음)
+  trapEv?: number;                                 // 깔리게 한 붕괴 기록 (agentHealth 의 쓰러짐 기록 causes)
+  avoid?: { regions: number[]; x: number; y: number; r: number; until: number };   // 조짐을 보고 물러난 대원이 한동안 피하는 곳
+  opsSeen?: number;                                // 마지막으로 따른 철수 명령의 시각 (기록 중복 방지)
+  signObs?: Record<number, number>;                // 조짐 사실 id → 이 대원이 자기 감각으로 마지막에 관찰한 단계 (전달받은 믿음과 견주지 않는다)
+  extSeen?: { hot: Float32Array; cov: Float32Array; cov0: Float32Array };   // 벽 너머 외부 관찰의 기억 (perceive 의 throughWalls 갈래가 쓴다):
+                                                   //   구획별 마지막으로 불 ≥ 0.25 를 본 시각 · 마지막으로 관찰 범위에 든 시각 · 처음 범위에 든 시각 (-1)
+}
+export interface WorkItem {
+  risky?: boolean;                                 // 제한적 구조 진입 — 건강한 소방 대원만 맡는다
+}
+export interface Incident {
+  fieldRisk?: { sev: number; risks: string[] };    // 현장 상황 보고(sitrep)로 관제가 올린 위험도와 위험 문자열 — assess 가 다시 평가할 때 합친다
+}
+export interface IncidentResult {
+  catastrophe?: { burnout: boolean; total: boolean; partial: number; explosions: number; withdrew: boolean; averted: number; crewCaught: number };
+}
+export interface ShiftReport {
+  catastrophe?: { burnouts: number; totals: number; partials: number; explosions: number; withdrawals: number; averted: number; crewCaught: number };
+  placeMarks?: PlaceMark[];
 }

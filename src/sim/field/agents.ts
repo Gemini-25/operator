@@ -32,6 +32,7 @@ export function makeAgent(sim: Sim, rid: number, unitId: number, x: number, y: n
     status: 'active', candidates: [], label: '도착', ring: 0, arrivedAt: sim.t, lastBlockEvent: -1, idleSince: sim.t,
     stuckT: 0, lastX: 0, lastY: 0, rng, planT: 0, equipIssue: 'none', smokeT: 0, climb: 0, rehabLogAt: -99,
     pendingBlock: -1, underFireT: -99, spot: -1, quiet: new Set(), lastRetreatLog: -99, equipRetryAt: -99,
+    trapped: undefined, trapEv: undefined, avoid: undefined, opsSeen: undefined, signObs: undefined, extSeen: undefined,      // (X6) 깔림·피하는 곳·철수 명령·조짐 관찰의 기억 — 쓰는 것은 단계 2 부터
     aloft: false, taserAt: -99,      // (R1) 공중 관측자가 아니다(관측자는 air.ts 가 true 로 바꾼다) · 테이저를 쏜 적이 없다
     hurtEv: undefined, hpTick: undefined, lastTile: undefined, fellOnce: undefined, lightBack: undefined,      // (H1) 부상 — 쓰는 것은 단계 4a 부터
   };

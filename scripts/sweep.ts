@@ -6,6 +6,7 @@
 //   npm run sweep -- 40 --check          불변 조건을 어기면 종료 코드 1 (커밋 전 관문)
 //   npm run sweep -- 1 --log S7          시드 S7 의 전체 이벤트 기록과 보고서
 //   npm run sweep -- 30 --scen           시나리오(유형/변형)별 결과 표
+//   npm run sweep -- 30 --cat            위험의 현실화(scripts/catstats.ts): 사건이 닫힐 때의 위험 상태(건전도·가스·용기의 열·전소 비율) 줄을 더 낸다
 //   npm run sweep -- 20 --force armed/bomb --scen    교대마다 그 시나리오를 초반에 한 번 일으킨다 (새 시나리오 확인용)
 //   npm run sweep -- 20 --disaster typhoon           재난을 정해서 (none|random|typhoon|flood|quake|wildfire|tsunami)
 //   npm run sweep -- 40 --metrics        측정 지표(scripts/metrics.ts)의 시나리오별 표와 모든 후보 줄
@@ -13,6 +14,8 @@
 //   npm run sweep -- 1 --log S7 --metrics            한 교대의 사건마다 가장 긴 원인 사슬과 확산 길
 import { NORMAL, difficultyKey, difficultyLabel, parseDifficulty, parseDisaster } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
+import { catJson, catLine, catShadowLine, catStats, sumCat } from './catstats';
+import type { CatCount } from './catstats';
 import { OUTCOME_NAME, TYPE_NAME, fmtClock } from '../src/sim/util';
 import { chainReport, checkMetrics, formatLines, metricsJson, runWithProbe, shiftMetrics, summarize } from './metrics';
 import type { Probe, ShiftMetrics } from './metrics';
@@ -61,6 +64,7 @@ if (logSeed) {
 
 const out: Record<string, number> = { success: 0, partial: 0, delayed: 0, unresolved: 0, failed: 0 };
 const byType: Record<string, Record<string, number>> = {};
+const catList: CatCount[] = [];      // (X6) 교대별 위험의 현실화 집계
 const prob: Record<string, number> = {};
 const closeReasons: Record<string, number> = {};
 let benignN = 0, realGood = 0, realRespSum = 0, realRespN = 0;
@@ -78,6 +82,7 @@ for (let k = 0; k < n; k++) {
   const r = sim.report;
   if (!r) { console.log(`seed ${seed}: 보고서 없음 (t=${sim.t})`); errors++; continue; }
   for (const I of sim.incidents) if (I.phase !== 'closed' || !I.result) open++;
+  catList.push(catStats(sim));
   for (const inc of r.incidents) {
     incN++;
     out[inc.result.outcome]++;
@@ -106,10 +111,12 @@ for (let k = 0; k < n; k++) {
     catch (e) { shiftList.push(null); console.error(`seed ${seed} 지표 계산 오류:`, (e as Error).stack); }
   }
 }
+const catSum = sumCat(catList);
 const share = (k: string): number => (incN ? out[k] / incN : 0);
 const timeoutShare = incN ? ((closeReasons.timeout ?? 0) + (closeReasons.noresponse ?? 0) + (closeReasons.abandoned ?? 0)) / incN : 0;
 const summary = {
   difficulty: difficultyKey(diff), label: difficultyLabel(diff), seeds: n, errors, incidents: incN, perShift: +(incN / n).toFixed(2), msPerShift: Math.round(ms / n),
+  catastrophe: catJson(catSum),      // (X6)
   outcomes: out, good: +(share('success') + share('delayed')).toFixed(3), bad: +(share('failed') + share('unresolved')).toFixed(3),
   closeReasons, timeoutShare: +timeoutShare.toFixed(3), avgResponse: Math.round(respSum / Math.max(1, respN)), avgDuration: Math.round(durSum / Math.max(1, incN)),
   casualties: { total: casT, saved: casS, lost: casL, undiscovered: casU, savedRate: +(casS / Math.max(1, casT)).toFixed(3) },
@@ -134,6 +141,8 @@ else {
     for (const k of Object.keys(byScen).sort()) { const b = byScen[k]; console.log(`  ${k.padEnd(20)} ${String(b.n).padStart(4)} · ${b.success ?? 0} · ${b.partial ?? 0} · ${b.delayed ?? 0} · ${b.unresolved ?? 0} · ${b.failed ?? 0} | ${b.timeout ?? 0}·${b.noresponse ?? 0}·${b.abandoned ?? 0} | ${Math.round(b.dur / b.n)}s · ${(b.units / b.n).toFixed(1)}`); }
   }
   console.log('problems (incidents affected):', Object.entries(prob).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', '));
+  console.log(catLine(catSum));
+  if (flag('--cat')) console.log(catShadowLine(catSum));
   if (metrics) for (const line of formatLines(metrics, metricsAll)) console.log(line);
 }
 if (flag('--check')) {

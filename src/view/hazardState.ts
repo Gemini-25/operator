@@ -3,6 +3,7 @@
 // 상태를 바꾸지 않는다. 비싼 계산은 캐시한다: 현장별 WeakMap<Scene, …>(staticVersion·tick 이 바뀔 때만), 무전 기록은 WeakMap<Sim, …>.
 
 import type { Sim } from '../sim/engine';
+import { CAT, gasClouds } from '../sim/field/catastrophe';
 import { isIndoor } from '../sim/field/grid';
 import { isHeld } from '../sim/field/hazards';
 import { SCENARIOS } from '../sim/scenarios';
@@ -129,10 +130,12 @@ export function seenSecondary(sim: Sim, I: Incident, truth: boolean): { n: numbe
 export interface GasView {
   gas: Uint8Array | null;   // 칸별 가스 (1). 연두로 그린다. null = 가스 없음
   leaking: boolean;         // 새는 밸브가 있다 (가스 규칙이 도는 현장)
-  dense: number;            // 실내 칸 가운데 smoke > 0.6 인 칸 수 (tickGas 의 폭발 판정과 같은 식)
+  dense: number;            // 폭발 위험 칸 수 — (X6) 위험 상태가 있으면 폭발 하한을 넘은 구름(가스 ≥ 1, 셋 이상 이어진 덩어리)의 칸, 없으면 실내 칸 가운데 smoke > 0.6 인 칸 (G4 의 옛 식)
   denseMask: Uint8Array;
   edges: number[];          // denseMask 경계 선분 [x0, y0, x1, y1, …] (칸 모서리 좌표)
   cx: number; cy: number;   // 짙은 칸의 무게중심
+  danger: boolean;          // 폭발 위험 표지를 붙일 만한가 (X6: 구름이 있다 · 옛 식: 새는 밸브가 있고 짙은 칸이 10 이상)
+  label: string;            // 그 표지의 글자
 }
 const gasCache = new WeakMap<Scene, { tick: number; view: GasView }>();
 /** 가스가 찬 칸과 폭발 판정 범위. tick 이 바뀔 때만 다시 센다 (가스 확산은 1초에 한 번) */
@@ -143,6 +146,17 @@ export function gasView(s: Scene, tick: number): GasView {
   const valves = s.props.filter((p) => p.kind === 'valve');
   const leakV = valves.filter((p) => !p.mitigated && !p.ignited && !!p.leakRate);
   const gasRule = s.kind === 'hazmat' || (!!s.rules && s.rules.indexOf('gas') >= 0);
+  if (s.cat && s.cat.gas) {
+    // (X6 §7.3) 가스만의 격자: 가스 칸 = 가스 ≥ 0.25, 폭발 위험 = 폭발 하한을 넘은 구름 (읽기만 한다)
+    const cg = s.cat.gas, gas = new Uint8Array(n), denseMask = new Uint8Array(n);
+    let any = false;
+    for (let i = 0; i < n; i++) if (cg[i] >= 0.25) { gas[i] = 1; any = true; }
+    let dense = 0, sx = 0, sy = 0;
+    for (const cl of gasClouds(s.cat, s)) { if (cl.length < CAT.CLOUD_MIN) continue; for (const i of cl) { denseMask[i] = 1; dense++; sx += i % s.w; sy += (i / s.w) | 0; } }
+    const view: GasView = { gas: any ? gas : null, leaking: leakV.length > 0, dense, denseMask, edges: dense ? maskEdges(s, denseMask) : [], cx: dense ? sx / dense : 0, cy: dense ? sy / dense : 0, danger: dense > 0, label: '가스 LEL 초과 — 폭발 위험' };
+    gasCache.set(s, { tick, view });
+    return view;
+  }
   let gas: Uint8Array | null = null;
   if (s.kind === 'hazmat' && !valves.some((p) => p.ignited)) {
     gas = new Uint8Array(n);
@@ -167,15 +181,18 @@ export function gasView(s: Scene, tick: number): GasView {
   const denseMask = new Uint8Array(n);
   let dense = 0, sx = 0, sy = 0;
   for (let i = 0; i < n; i++) if (s.smoke[i] > 0.6 && isIndoor(s.tiles[i])) { denseMask[i] = 1; dense++; sx += i % s.w; sy += (i / s.w) | 0; }
-  const edges: number[] = [];
-  if (dense && gasRule && leakV.length) {
-    const m = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < s.w && y < s.h && denseMask[y * s.w + x] === 1;
-    for (let y = 0; y <= s.h; y++) { let run = -1; for (let x = 0; x <= s.w; x++) { const on = x < s.w && m(x, y - 1) !== m(x, y); if (on && run < 0) run = x; if (!on && run >= 0) { edges.push(run, y, x, y); run = -1; } } }
-    for (let x = 0; x <= s.w; x++) { let run = -1; for (let y = 0; y <= s.h; y++) { const on = y < s.h && m(x - 1, y) !== m(x, y); if (on && run < 0) run = y; if (!on && run >= 0) { edges.push(x, run, x, y); run = -1; } } }
-  }
-  const view: GasView = { gas, leaking: gasRule && leakV.length > 0, dense, denseMask, edges, cx: dense ? sx / dense : 0, cy: dense ? sy / dense : 0 };
+  const edges: number[] = dense && gasRule && leakV.length ? maskEdges(s, denseMask) : [];
+  const view: GasView = { gas, leaking: gasRule && leakV.length > 0, dense, denseMask, edges, cx: dense ? sx / dense : 0, cy: dense ? sy / dense : 0, danger: gasRule && leakV.length > 0 && dense >= 10, label: '가스 고임 — 폭발 위험' };
   gasCache.set(s, { tick, view });
   return view;
+}
+/** 칸 마스크의 경계 선분 [x0, y0, x1, y1, …] (칸 모서리 좌표) */
+function maskEdges(s: Scene, mask: Uint8Array): number[] {
+  const edges: number[] = [];
+  const m = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < s.w && y < s.h && mask[y * s.w + x] === 1;
+  for (let y = 0; y <= s.h; y++) { let run = -1; for (let x = 0; x <= s.w; x++) { const on = x < s.w && m(x, y - 1) !== m(x, y); if (on && run < 0) run = x; if (!on && run >= 0) { edges.push(run, y, x, y); run = -1; } } }
+  for (let x = 0; x <= s.w; x++) { let run = -1; for (let y = 0; y <= s.h; y++) { const on = y < s.h && m(x - 1, y) !== m(x, y); if (on && run < 0) run = y; if (!on && run >= 0) { edges.push(x, run, x, y); run = -1; } } }
+  return edges;
 }
 
 // ───────────────────────── 되살아난 불 ─────────────────────────
@@ -287,7 +304,8 @@ export function hazardChips(sim: Sim, I: Incident, truth: boolean): HazardChip[]
   // 가스
   if (truth) {
     const gv = gasView(s, sim.tick);
-    if (gv.leaking) out.push(gv.dense >= 10 ? { key: 'gasDense', mark: HAZARD_MARK.gas, text: '가스 고임 — 폭발 위험', color: '#ff5d5d', tone: 'bad' } : { key: 'gas', mark: HAZARD_MARK.gas, text: '가스 누출', color: '#d6f06a', tone: 'info' });
+    if (gv.danger) out.push({ key: 'gasDense', mark: HAZARD_MARK.gas, text: gv.label, color: '#ff5d5d', tone: 'bad' });
+    else if (gv.leaking) out.push({ key: 'gas', mark: HAZARD_MARK.gas, text: '가스 누출', color: '#d6f06a', tone: 'info' });
   } else if (haz.some((f) => { const p = s.props[f.id]; return !!p && p.kind === 'valve' && f.value.active; })) out.push({ key: 'gas', mark: HAZARD_MARK.gas, text: '가스 누출', color: '#d6f06a', tone: 'info' });
   // 불
   {

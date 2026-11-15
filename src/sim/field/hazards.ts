@@ -12,9 +12,10 @@ import { armorOf } from '../crews';
 import { addProp } from './kit';
 import { casFact, exitName } from './agents';
 import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, truthWalkable } from './grid';
-import { coverRoll, fireShot, heatGlass, shatter } from './damage';
+import { acrossVoid, coverRoll, fireShot, heatGlass, shatter } from './damage';
+import { catOnBlast } from './catastrophe';
 import { lastFx, noteBoom, noteFlash, noteHit, noteShot, recHarm, recMelee } from './fxlog';
-import { RUIN_CEILING, RUIN_SECONDARY, markRuin, recordFall } from './ruins';
+import { RUIN_SECONDARY, markRuin, recordFall } from './ruins';
 import { CAUSE_NAME, DOWN_AT, SELF_HARM, SELF_HARM_HIT, bandOf, decayCause, hurtCas, hurtCasTo, hurtHostile, hurtResponder, injuryRng, noteDecay, noteInjury, settleHostile } from './injury';
 
 export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2, c?: FxInfo): void {
@@ -72,38 +73,8 @@ export function tickFire(sim: Sim, s: Scene, I: Incident): void {
   let smoky = burning > 0;
   if (!smoky) { const sm = s.smoke; for (let i = 0; i < n; i++) if (sm[i] !== 0) { smoky = true; break; } }
   if (smoky) smokeSpread(s, w, h);
-  // 가스 용기 폭발 (숨겨진 추가 위험)
-  for (const p of s.props) {
-    if (p.kind !== 'gas' || p.exploded) continue;
-    let hot = s.fire[tidx(s, p.x, p.y)] > 0.3;
-    for (let d = 0; d < 4 && !hot; d++) { const nx = p.x + NB[d * 2], ny = p.y + NB[d * 2 + 1]; if (nx >= 0 && ny >= 0 && nx < w && ny < h && s.fire[ny * w + nx] > 0.6) hot = true; }
-    if (!hot) continue;
-    p.exploded = true;
-    for (let y = Math.max(0, p.y - 2); y <= Math.min(h - 1, p.y + 2); y++) for (let x = Math.max(0, p.x - 2); x <= Math.min(w - 1, p.x + 2); x++) {
-      const j = y * w + x;
-      if (s.fuel[j] > 0 && dist(x, y, p.x, p.y) <= 2.3) s.fire[j] = Math.max(s.fire[j], 0.85);
-    }
-    const ev = raiseProblem(sim, I, 'HIDDEN_HAZARD', '보관 중이던 가스 용기 폭발', { role: 'SYSTEM', actor: '현장', text: '폭발! 건물 내부에 보관되어 있던 가스 용기가 화염에 노출되어 폭발했습니다.', imp: 3, truth: s.arrivedAt < 0 }, false);
-    blast(sim, s, I, p.x, p.y, 3.6, 34, ev);
-    pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.6);
-    noteBoom(lastFx(sim, s, 'boom'), 3.6, 'tank');
-  }
-  // 붕괴
-  for (const r of s.regions) {
-    if (!r.indoor || r.kind !== 'room' || s.collapseDone.has(r.id)) continue;
-    let b = 0; if (s.burnedTiles > 0) for (const i of r.tiles) if (s.burned[i]) b++;      // 탄 칸이 하나도 없으면 셀 것도 없다
-    if (b / r.tiles.length < 0.55) continue;
-    s.collapseDone.add(r.id);
-    if (!s.rng.chance(0.55)) continue;
-    const cands = r.tiles.filter((i) => s.propAt[i] < 0 && s.tiles[i] !== T.DOOR);
-    if (!cands.length) continue;
-    const k = Math.min(cands.length, s.rng.int(1, 2));
-    for (let q = 0; q < k; q++) { const i = s.rng.pick(cands); if (s.propAt[i] < 0) { addProp(s, 'debris', i % w, (i / w) | 0, { blocking: true, hp: s.rng.range(9, 14) }); markRuin(s, i, RUIN_CEILING); } }
-    s.staticVersion++;
-    const ev = raiseProblem(sim, I, 'ESCALATION', `${r.name} 천장 일부 붕괴`, { role: 'SYSTEM', actor: '현장', text: `${r.name} 천장 일부가 무너졌습니다.`, imp: 2, truth: s.arrivedAt < 0 }, false);
-    blast(sim, s, I, r.cx, r.cy, 2.2, 22, ev, 'crush');
-    recordFall(sim, s, r.cx, r.cy, 2.2, 'ceiling');      // (G4) 그림용 기록
-  }
+  // (X6 단계 4) 예전의 '가스 용기 폭발'(불이 닿으면 그 자리에서 터짐)은 지웠다 — 용기의 열이 쌓여야 터진다 (field/catastrophe.ts 의 ruptureVessel)
+  // (X6 단계 3) 예전의 '천장 일부 붕괴'(탄 방을 한 번 판정해 s.rng 로 잔해·충격)는 지웠다 — 구조 건전도가 낮아진 구획의 붕괴(field/catastrophe.ts 의 collapseRegion)가 대신한다
   s.burning = burning;
   if (burning === 0 && s.fireOutAt < 0 && s.kind === 'fire' && sim.t - s.startedAt > 5) s.fireOutAt = sim.t;
   if (burning > 0) s.fireOutAt = -1;
@@ -143,27 +114,29 @@ function smokeSpread(s: Scene, w: number, h: number): void {
  * 세 부류를 고르게 친다 (H1 §5.1): 대원(방호를 뺀다), 구조 대상·용의자(×0.8). 용의자는 예전에 건너뛰었다 — 쓰러지지 않은 용의자는 문턱 때문에 한 번에 숨지지 않는다(hurtHostile).
  */
 export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, radius: number, dmg: number, ev: number, cause: InjuryCause = 'blast'): void {
+  const bx = Math.round(x), by = Math.round(y);      // (X6 §12.1) 빈 공간(층 사이) 너머의 사람은 다치지 않는다 — 나란히 놓인 다른 층
   for (const a of s.agents) {
     if (a.status === 'left' || sim.responders[a.rid].dead) continue;      // 숨진 대원은 더 다치지 않는다
     const d = dist(a.x, a.y, x, y);
-    if (d > radius) continue;
+    if (d > radius || acrossVoid(s, bx, by, Math.round(a.x), Math.round(a.y))) continue;
     hurtResponder(sim, s, I, a, dmg * (1 - d / (radius + 1)), cause, { ev });      // 폭발물 방호복·방화복이 줄인다 (injury.protection — blastFactor)
     a.lastBlockEvent = ev;
   }
   for (const c of s.casualties) {
     if (c.dead || c.where !== 'scene') continue;
     const d = dist(c.x, c.y, x, y);
-    if (d > radius) continue;
+    if (d > radius || acrossVoid(s, bx, by, Math.round(c.x), Math.round(c.y))) continue;
     hurtCas(sim, s, I, c, dmg * 0.8 * (1 - d / (radius + 1)), cause, { ev });
     if (cause === 'blast' && c.health < 80) hurtCas(sim, s, I, c, 0, 'blast', { bleed: (0.09 + 0.09 * (1 - d / radius)) * sim.tune.bleedMul, immobile: true });
   }
   for (const h of s.hostiles) {
     if (h.dead || h.state === 'escaped' || (h.where !== undefined && h.where !== 'scene')) continue;
     const d = dist(h.x, h.y, x, y);
-    if (d > radius) continue;
+    if (d > radius || acrossVoid(s, bx, by, Math.round(h.x), Math.round(h.y))) continue;
     hurtHostile(sim, s, I, h, dmg * 0.8 * (1 - d / (radius + 1)), cause, { ev });
   }
   shatter(sim, s, x, y, radius + 1.5, Math.min(2.5, radius), 3);      // 반경 안의 창과 가구가 부서진다
+  catOnBlast(sim, s, I, x, y, radius, dmg, ev, cause);      // (X6 §2.4) 구조 충격과 가스 점화용 충격 자리 — 위험 상태가 없는 현장에서는 아무것도 하지 않는다
 }
 
 /** 물(또는 소화 약제)을 뿌린다. 대원의 진압 행동이 호출한다. */
@@ -694,7 +667,7 @@ export function tickCollapse(sim: Sim, s: Scene, I: Incident): void {
   }
 }
 
-/** 가스 누출: 차단하지 않은 배관은 계속 가스를 내뿜고(연기 격자로 퍼진다), 짙게 고이면 불이 붙어 터질 수 있다 (1초에 한 번). */
+/** 가스 누출: 차단하지 않은 배관은 계속 가스를 내뿜는다(연기 격자로 퍼진다 — 시야·건강 피해용). 폭발은 X6 의 가스 격자가 맡는다(field/catastrophe.ts) (1초에 한 번). */
 export function tickGas(sim: Sim, s: Scene, I: Incident): void {
   let leaking = false;
   for (const p of s.props) {
@@ -729,20 +702,7 @@ export function tickGas(sim: Sim, s: Scene, I: Incident): void {
       c.injuries = noteInjury(c.injuries, 'toxic', 100 - c.health, sim.t, bandOf(c.health), -1, 'world', c.causeEvent); c.bleedCause = 'toxic';      // (H1) 사건 중에 붙는 사람은 만드는 자리가 원인을 적는다
     });
   }
-  let dense = 0;
-  for (let i = 0; i < s.smoke.length; i++) if (s.smoke[i] > 0.6 && isIndoor(s.tiles[i])) dense++;
-  if (dense < 10 || !s.rng.chance(Math.min(0.007, 0.00015 * dense * sim.tune.hazardMul))) return;
-  const p = s.props.find((q) => q.kind === 'valve' && !q.mitigated && !q.ignited)!;
-  p.ignited = true;
-  for (let y = Math.max(0, p.y - 2); y <= Math.min(s.h - 1, p.y + 2); y++) for (let x = Math.max(0, p.x - 2); x <= Math.min(s.w - 1, p.x + 2); x++) {
-    const j = tidx(s, x, y);
-    if (s.fuel[j] > 0 && dist(x, y, p.x, p.y) <= 1.9) s.fire[j] = Math.max(s.fire[j], 0.6);
-  }
-  for (let i = 0; i < s.smoke.length; i++) s.smoke[i] *= 0.45;      // 고여 있던 가스가 타 버린다
-  const ev = raiseProblem(sim, I, 'HIDDEN_HAZARD', '누출된 가스에 불이 붙어 폭발', { role: 'SYSTEM', actor: '현장', text: '폭발! 고여 있던 가스에 불이 붙었습니다. 화재가 발생했습니다.', imp: 3, truth: s.arrivedAt < 0 }, false);
-  blast(sim, s, I, p.x, p.y, 3.8, 32, ev);
-  pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.6);
-  noteBoom(lastFx(sim, s, 'boom'), 3.8, 'gas');
+  // (X6 단계 4) 예전의 폭발 판정(짙은 연기 칸 수로 s.rng)은 지웠다 — 가스만의 격자에 폭발 하한을 넘은 구름이 생기고 점화원이 닿아야 터진다 (field/catastrophe.ts 의 explodeGas)
 }
 
 // ───────────────────────── 배회하는 실종자 ─────────────────────────

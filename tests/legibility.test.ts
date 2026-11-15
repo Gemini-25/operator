@@ -7,6 +7,7 @@ import { Sim } from '../src/sim/engine';
 import { RUIN_LOG, RUIN_WALL, markRuin } from '../src/sim/field/ruins';
 import { addProp, baseScene, set } from '../src/sim/field/kit';
 import { tickCollapse } from '../src/sim/field/hazards';
+import { catOf } from '../src/sim/field/catastrophe';
 import { createIncident } from '../src/sim/incidents';
 import { T } from '../src/sim/types';
 import type { Incident, Scene } from '../src/sim/types';
@@ -253,7 +254,7 @@ describe('시점 규칙', () => {
 
 // ───────────────────────── 7. 가스 ─────────────────────────
 describe('가스', () => {
-  it('가스 누출 현장(불붙은 밸브 없음)은 연기 칸 전부가 가스, 가스 폭발 현장의 새는 밸브 칸은 가스, dense 는 폭발 판정 식과 같다', () => {
+  it('위험 상태가 아직 없는 현장(첫 틱 전): 가스 누출 현장(불붙은 밸브 없음)은 연기 칸 전부가 가스, 가스 폭발 현장의 새는 밸브 칸은 가스, dense 는 G4 의 옛 식과 같다', () => {
     const sim = new Sim('G4-GAS');
     const I = createIncident(sim, { type: 'hazmat', variant: 'std', rng: sim.rng.fork('g4') });
     const s = sim.scenes[I.id]!;
@@ -261,7 +262,7 @@ describe('가스', () => {
     const gv = gasView(s, 1);
     expect(s.props.some((p) => p.kind === 'valve' && p.ignited)).toBe(false);
     for (let i = 0; i < s.smoke.length; i++) expect(gv.gas![i]).toBe(s.smoke[i] >= 0.06 ? 1 : 0);
-    let dense = 0; for (let i = 0; i < s.smoke.length; i++) if (s.smoke[i] > 0.6 && isIndoor(s.tiles[i])) dense++;      // hazards.tickGas 의 판정
+    let dense = 0; for (let i = 0; i < s.smoke.length; i++) if (s.smoke[i] > 0.6 && isIndoor(s.tiles[i])) dense++;      // G4 의 옛 식 (예전 tickGas 의 폭발 판정 — X6 단계 4 가 지웠다)
     expect(gv.dense).toBe(dense);
     expect(gv.leaking).toBe(true);
     expect(gv.edges.length).toBeGreaterThan(0);
@@ -275,6 +276,40 @@ describe('가스', () => {
     // 불붙은 뒤에는 가스로 칠하지 않는다 (새는 밸브가 없다)
     v.ignited = true;
     expect(gasView(gb, 2).gas).toBeNull();
+  });
+  it('(X6 §7.3) 위험 상태가 생긴 현장은 가스만의 격자로 그린다: 가스 칸 = 가스 ≥ 0.25, 폭발 위험(dense) = 폭발 하한을 넘은 구름(셋 이상 이어진 칸) — 밸브를 잠근 뒤에도 남은 구름은 위험이다', () => {
+    const sim = new Sim('G4-GAS');
+    const I = createIncident(sim, { type: 'hazmat', variant: 'std', rng: sim.rng.fork('g4') });
+    const s = sim.scenes[I.id]!;
+    const c = catOf(sim, s)!;
+    const g = c.gas!;
+    g.fill(0);
+    const floor: number[] = [];
+    for (let i = s.w; i < g.length - s.w && floor.length < 3; i++) if (s.tiles[i] === T.FLOOR && s.tiles[i + 1] === T.FLOOR && s.tiles[i + 2] === T.FLOOR && (i % s.w) + 2 < s.w) floor.push(i, i + 1, i + 2);
+    for (const i of floor) g[i] = 1.4;      // 구름 셋
+    let lone = -1;
+    for (let i = g.length - 1; i > 0 && lone < 0; i--) if (s.tiles[i] === T.FLOOR && Math.abs(i - floor[0]) > 2 * s.w) lone = i;
+    g[lone] = 1.2;      // 혼자 떨어진 하한 위의 칸 (구름이 아니다)
+    g[lone - 1] = 0.3;      // 가스 칸 (≥ 0.25)
+    const gv = gasView(s, 7);
+    for (let i = 0; i < g.length; i++) expect(gv.gas![i], `칸 ${i}`).toBe(g[i] >= 0.25 ? 1 : 0);
+    expect(gv.dense).toBe(3);
+    for (const i of floor) expect(gv.denseMask[i]).toBe(1);
+    expect(gv.denseMask[lone]).toBe(0);
+    expect(gv.danger).toBe(true);
+    expect(gv.label).toBe('가스 LEL 초과 — 폭발 위험');
+    expect(gv.edges.length).toBeGreaterThan(0);
+    expect(hazardChips(sim, I, true).find((q) => q.key === 'gasDense')?.text).toBe('가스 LEL 초과 — 폭발 위험');
+    // 밸브를 모두 잠가도 구름이 남으면 위험이다
+    for (const p of s.props) if (p.kind === 'valve') p.mitigated = true;
+    const g2 = gasView(s, 8);
+    expect(g2.leaking).toBe(false);
+    expect(g2.danger).toBe(true);
+    // 구름이 사라지면 위험 표지도 없다
+    for (const i of floor) g[i] = 0.5;
+    const g3 = gasView(s, 9);
+    expect(g3.dense).toBe(0); expect(g3.danger).toBe(false);
+    expect(hazardChips(sim, I, true).some((q) => q.key === 'gasDense')).toBe(false);
   });
 });
 

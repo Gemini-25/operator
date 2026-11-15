@@ -12,7 +12,7 @@ import { BeliefStore, mkFact } from './beliefs';
 import type { CostFn } from './grid';
 import { doorAt, isIndoor, los, staticPass, tileOf } from './grid';
 import { BAND_NAME, band, isHeld, pushFx } from './hazards';
-import { HURT_AT, bandOf, hurtF } from './injury';
+import { HOSPITAL_BLEED, HURT_AT, LIGHT_WORK, bandOf, hurtF, mustRetreat, treatPlan } from './injury';
 
 export const resp = (sim: Sim, a: FieldAgent): Responder => sim.responders[a.rid];
 /** 지친 정도와 다친 정도가 이동·작업 진도·사격에 함께 곱해진다 (다친 대원은 느려진다 — injury.hurtF: 체력 70 이상은 1, 40 에서 0.75) */
@@ -141,7 +141,7 @@ export function mateFact(sim: Sim, s: Scene, b: FieldAgent, status: MateBelief['
   const near = d <= 3;
   const band = dead ? 3 : near ? Math.min(2, bandOf(r.health)) : status === 'down' ? 2 : 1;      // 숨진 줄 모르면 사망(3)으로 적지 않는다
   const v: MateBelief = {
-    x: Math.round(b.x), y: Math.round(b.y), status, band, bleeding: near && (r.bleed ?? 0) >= 0.01,
+    x: Math.round(b.x), y: Math.round(b.y), status, band, bleeding: near && (r.bleed ?? 0) >= HOSPITAL_BLEED,      // 병원이 필요할 만큼 피를 흘린다 (injury.needsHospital 과 같은 문턱)
     tq: (r.treatQ ?? 0) >= 0.6 ? 2 : (r.treatQ ?? 0) > 0 ? 1 : 0, dead, wasDown: r.tDown !== undefined, since: sim.t,
   };
   const text = dead ? `${r.name} 대원 생체 반응 없음`
@@ -152,9 +152,12 @@ export function mateFact(sim: Sim, s: Scene, b: FieldAgent, status: MateBelief['
     : `${r.name} 대원 가벼운 임무로 복귀`;
   return mkFact('mate', b.rid, v, src, sim.t, 1, true, text);
 }
-/** 그 동료의 지금 상태를 mate 사실의 status 로: 쓰러져 있으면 down, 안전 구역에 있으면 safe, 차에 탔으면 evac, 걷고 있으면 hurt */
-export function mateStatus(b: FieldAgent): MateBelief['status'] {
-  return b.status === 'down' ? 'down' : b.status === 'withdrawn' ? 'safe' : b.status === 'left' ? 'evac' : 'hurt';
+/**
+ * 그 동료의 지금 상태를 mate 사실의 status 로: 쓰러져 있으면 down, 안전 구역에 있으면 safe, 차에 탔으면 evac.
+ * 걷고 있으면 — 물러나야 하는 몸이면 hurt(후퇴 중), 아니면 light(가벼운 일을 하는 다친 대원). 곁에서 본 대원(실행기)이 부른다
+ */
+export function mateStatus(sim: Sim, b: FieldAgent): MateBelief['status'] {
+  return b.status === 'down' ? 'down' : b.status === 'withdrawn' ? 'safe' : b.status === 'left' ? 'evac' : mustRetreat(sim.responders[b.rid]) ? 'hurt' : 'light';
 }
 
 /** 보고할 가치가 있는 변화인가 (위치만 바뀐 것은 조용히 갱신) */
@@ -457,7 +460,8 @@ export function failedRecently(sim: Sim, w: WorkItem, rid: number): boolean { co
 /** 부상으로 더는 임무를 맡을 수 없는 체력 (injury.HURT_AT — 후퇴 기준은 injury.mustRetreat: 이 체력 아래이거나 출혈이 클 때) */
 export const HURT_HEALTH = HURT_AT;
 
-export function workLabel(s: Scene, w: WorkItem): string {
+/** sim 을 주면 다친 동료의 이름을 넣는다 ('○○ 대원 응급 처치') — 지시·기록을 남기는 시뮬레이션 쪽이 준다. 화면은 주지 않아도 된다 */
+export function workLabel(s: Scene, w: WorkItem, sim?: Sim): string {
   const reg = w.region >= 0 ? s.regions[w.region].name : '';
   const cas = w.cas >= 0 ? `구조 대상 ${s.casualties[w.cas].label}` : '';
   const hos = w.hostile >= 0 && s.hostiles[w.hostile] ? s.hostiles[w.hostile].label : '용의자';      // 용의자가 여럿인 현장에서 지시가 누구를 가리키는지 (구조 대상의 이름표와 같이)
@@ -468,6 +472,7 @@ export function workLabel(s: Scene, w: WorkItem): string {
     perimeter: s.kind === 'hazmat' ? `${w.tile === 0 ? '앞쪽' : '뒤쪽'} 출입구 통제` : `${exitName(s, w.tile)} 봉쇄`, negotiate: `${hos} 협상`, engage: `${hos} 대응`, arrest: `${hos} 검거`, interview: '목격자 면담', clearRoad: '도로 정리', rescueMate: '동료 구조', waterRescue: `${cas} 수난 구조`, escort: `${cas} 동행`,
     defuse: '폭발물 해체', overhaul: `${reg} 잔불 정리`,
     hoist: `${cas} 호이스트 인양`, airDrop: `${reg} 공중 물 투하`,
+    treatMate: sim && w.mate >= 0 && sim.responders[w.mate] ? `${sim.responders[w.mate].name} 대원 응급 처치` : '부상 대원 응급 처치',
   };
   return names[w.kind];
 }
@@ -505,6 +510,17 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
   const r = resp(sim, a), u = sim.units[a.unitId], rid = a.rid;
   const hot = s.kind === 'armed' && s.secureAt < 0;
   const fireRisk = (regionId: number): boolean => regionId >= 0 && ((a.beliefs.val<number>('fire', regionId) ?? 0) > 0.25 || s.kind === 'fire' || s.kind === 'hazmat' || s.kind === 'collapse');      // 불이 났거나, 가스가 찼거나, 무너질 수 있는 건물 안은 공기호흡기를 멘 대원만 들어간다
+  // 걸을 수 있는 다친 대원은 가벼운 일만 맡는다 (H1 §2.5 — 사용자 결정 2026-11-15 "가벼운 일은 계속"). 조직이 아는 상태(status — RESPONDER_HURT 로 알렸다)만 본다:
+  // 남에게도 불리는 함수라 체력·출혈은 읽지 않는다. 목록(injury.LIGHT_WORK) 안의 일도 자리가 위험 구역(불·가스·붕괴의 건물 안, 안전 확보 전의 무장 현장 건물 안)이면 맡지 않고,
+  // 처치는 대상이 안전 구역에 나와 있을 때만 돕는다. 현장 평가는 지휘의 일이라 다친 지휘관도 한다(위험 구역 밖에서 본다 — 못 하면 그 현장은 끝나지 않는다)
+  if (r.status === 'injured' && w.kind !== 'sizeup') {
+    if (!LIGHT_WORK.has(w.kind)) return 0;
+    const risky = (x: number, y: number): boolean => { const rg = s.region[tileOf(s, x, y)]; return rg >= 0 && s.regions[rg].indoor && (hot || fireRisk(rg)); };
+    if (w.kind === 'treat') { const cb = a.beliefs.val<CasBelief>('cas', w.cas); if (!cb || cb.where !== 'safe') return 0; }
+    else if (w.kind === 'treatMate') { const mb = a.beliefs.val<MateBelief>('mate', w.mate); if (!mb || mb.status !== 'safe') return 0; }
+    else if (w.kind === 'perimeter') { const e = s.exits[w.tile]; if (e && risky(e.x, e.y)) return 0; }
+    else if (w.kind === 'interview') { const p = s.props[w.prop]; if (p && risky(p.x, p.y)) return 0; }
+  }
   switch (w.kind) {
     case 'sizeup': return a.isCommander ? 1 : 0;
     case 'search':
@@ -567,6 +583,21 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
     case 'defuse': return hasKit(sim, rid, 'eodKit') ? 0.6 + 0.4 * r.skill : 0;      // 해체 공구를 든 처리 요원만 손댄다
     case 'overhaul': return hasKit(sim, rid, 'hose') && airOk(sim, rid, afterSwap) ? 0.4 + 0.6 * r.skills.fire : 0;      // 불씨를 만나면 분사한다: 관창을 든 사람만 (공기가 문턱 아래면 통을 바꾼 뒤에)
     case 'hoist': case 'airDrop': return 0;      // 공중 임무: 지상 대원은 맡지 않는다 (상공의 헬기가 field/rules/air.ts 에서 가져간다)
+    case 'treatMate': {
+      if (rid === w.mate) return 0;      // 다쳐 물러나는 구급대원이 자기 자신을 맡지 않는다
+      // 구급 분야이거나 의료 가방을 든 대원 (항공 구조대원 …)
+      if (r.dept !== 'ems' && !hasKit(sim, rid, 'bag') && !hasKit(sim, rid, 'alsBag') && !hasKit(sim, rid, 'doctorKit')) return 0;
+      const mb = a.beliefs.val<MateBelief>('mate', w.mate);
+      if (hot && !(mb && mb.status === 'safe')) return 0;      // 안전 확보 전의 무장 현장: 안전 구역에 나와 있는 동료만 본다 (교전 중인 건물 안으로 구급대원을 보내지 않는다)
+      // 불·가스·붕괴 위험 구역 안의 동료: 공기호흡기를 멘 대원만 들어간다 (구역은 믿음 속 위치로 본다 — 동료 구조와 같다)
+      if (mb) { const rg = s.region[mb.y * s.w + mb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg) && !scbaOk(sim, rid, afterSwap)) return 0; }
+      // 태울 차가 정해진 일: 이미 처치를 받은 동료를 그 차로 옮기는 것은 그 차의 대원만 한다 (다른 부대의 대원은 처치까지만)
+      const own = w.prop >= 0 && a.unitId === w.prop;
+      if (w.prop >= 0 && !own && (!mb || mb.tq >= 1)) return 0;
+      // 기본 처치를 이미 받은 동료를 다시 보는 것은 전문 처치를 할 수 있는 대원만 (자기 능력과 든 장비로 어림한다). 자기 차에 태우러 가는 일이면 처치 수준과 상관없다
+      if (mb && mb.tq >= 1 && !own && treatPlan(sim, s, rid, 100) < 0.6) return 0;
+      return Math.max(0.08, r.skills.medical * (0.5 + 0.5 * medLevelOf(sim, rid))) * (w.prop >= 0 && !own ? 0.7 : 1);
+    }
   }
 }
 

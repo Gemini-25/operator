@@ -6,12 +6,13 @@
 //
 // 피해는 한 길로만 준다: 구조 대상은 hurtCas·hurtCasTo(단계 3), 대원은 hurtResponder·woundTick(단계 4a). 용의자(hurtHostile)는 단계 5 — 그때까지는 noteHostileHurt 가 기록만 한다.
 // 이 파일의 함수는 기록(emit)을 남기지 않는다: 문구는 피해를 준 자리(상태를 바꾸는 그 코드)가 남기고 그 id 를 o.ev 로 넘긴다. 대원의 상태 전이(부상·쓰러짐·순직)는 sceneManager.agentHealth 가 한다.
-// 뒤 단계가 여기에 더한다: hurtHostile·treatEffect·needsHospital·mateNeedsHospital·threatOverAt·outShifts·LIGHT_WORK.
+// 단계 4b 가 더한 것: careResponder·needsHospital·mateNeedsHospital·canDeploy·LIGHT_WORK·HOSPITAL_BLEED (처치 식 treatPlan·treatEffect 는 4b 의 준비 커밋).
+// 뒤 단계가 여기에 더한다: hurtHostile·threatOverAt·outShifts.
 
 import { armorOf, blastFactor, hasKit, kitUses, kitWorks, medLevelOf } from '../crews';
 import type { Sim } from '../engine';
 import type { Rng } from '../rng';
-import type { Casualty, FieldAgent, Hostile, Incident, Injury, InjuryCause, Responder, Scene, Unit } from '../types';
+import type { Casualty, FieldAgent, Hostile, Incident, Injury, InjuryCause, MateBelief, Responder, Scene, Unit, WorkKind } from '../types';
 import { clamp } from '../util';
 
 export const CAUSE_NAME: Record<InjuryCause, string> = {
@@ -267,6 +268,50 @@ export function treatEffect(sim: Sim, s: Scene, I: Incident, rid: number, health
   const doc = kitWorks(sim, rid, 'doctorKit', I);      // 의사 장비(약물·수혈): 위중한 사람을 더 끌어올리고 악화를 더 늦춘다
   return { q, heal: doc && health < 40 ? 15 : had < 0 ? 8 * q : 0, bleedK: 1 - (doc ? 0.95 : 0.9) * q };
 }
+
+/** 처치를 받은 대원: 체력이 오르고(heal), 출혈은 처치 전 값 × bleedK, 받은 처치의 질을 적는다. 대원의 체력을 고치는 줄은 이 파일에만 둔다 */
+export function careResponder(r: Responder, fx: { q: number; heal: number; bleedK: number }): void {
+  if (fx.heal > 0) r.health = Math.min(100, r.health + fx.heal);
+  r.treatQ = fx.q; r.bleed = (r.bleed0 ?? r.bleed ?? 0) * fx.bleedK;
+}
+
+// ───────────────────────── 후송 (단계 4b — §3.4) ─────────────────────────
+/**
+ * 병원이 필요한 상처의 출혈(초당). 이보다 적게 흘리는 상처는 현장에서 처치하고 일을 계속한다. 균형 손잡이.
+ * 설계서의 처음 값은 0.01 — "피가 멎었는가"였다. 재 보니(60교대) 흉기에 한 번 베인 경관(0.015~0.03)과 총알 한 발을 맞은 대원(0.03~0.09)이
+ * 사건이 끝날 때마다 모두 병원으로 실려 가(보통 1.5 · 어려움 2.9 · 극한 5.4명/교대), 가벼운 일로 돌아오는 대원이 180교대에 한 명도 없었다 —
+ * 처치를 받아도 출혈이 0.01 아래로 내려가지 않는다(0.09 × (1 − 0.9q)).
+ * 그래서 출혈로 물러나는 문턱(MATE_RETREAT_BLEED)과 같은 값으로 둔다: 출혈로 물러난 대원은 처치(출혈 × (1 − 0.9q))를 받으면 병원이 필요 없는 몸이 되어
+ * 가벼운 일로 돌아오고(§3.6a), 물러날 만큼 흘리지 않는 상처(흉기 한두 번, 방호복 위의 총상 한 발)는 일을 계속한다. 병원으로 가는 것은
+ * 쓰러졌던 대원 · 체력 40 이하 · 처치를 받지 못한 큰 출혈이다.
+ */
+export const HOSPITAL_BLEED = MATE_RETREAT_BLEED;
+/**
+ * 병원이 필요한 몸인가 — **진실**. 쓰러진 적이 있거나, 상처에서 피가 많이 나거나(HOSPITAL_BLEED 이상), 체력이 40 이하다. 숨졌거나 이미 후송 중·병원 인계된 사람은 아니다.
+ * sceneManager(부대가 떠날 때 태울 사람, 가벼운 일로 돌아올 수 있는가)·실행기(처치 뒤 태울 것인가)·보고서·화면만 쓴다.
+ * 지휘 쪽(commander.ts·orders/*·dispatch/*)은 부르지 않는다 — 같은 판단을 믿음으로 하는 mateNeedsHospital 을 쓴다.
+ */
+export function needsHospital(r: Responder): boolean {
+  return !r.dead && r.care === undefined && (r.tDown !== undefined || (r.bleed ?? 0) >= HOSPITAL_BLEED || r.health <= HURT_AT);
+}
+/** 병원이 필요한 동료인가 — **믿음**. 'mate' 사실의 값만 본다: 위중이거나, 피를 많이 흘리거나(bleeding — 곁에서 본 사람이 HOSPITAL_BLEED 로 가린다), 쓰러졌던 동료. 숨졌거나 이미 후송된 동료는 아니다 */
+export function mateNeedsHospital(v: MateBelief): boolean {
+  return !v.dead && v.status !== 'evac' && (v.band >= 2 || v.bleeding || v.wasDown);
+}
+/**
+ * 현장에 내릴 수 있는 대원인가 = 걸을 수 있는 대원 (§3.6 — 사용자 결정 2026-11-15): 온전한 대원과 걸을 수 있는 다친 대원(status 'injured').
+ * 쓰러진 대원('down' — 순직 포함), 병원으로 후송된 대원(care), I2 의 결장('off')은 아니다. 조직이 아는 상태다(명부·후송 기록).
+ * 배정(resources.crewReady)과 내리는 사람(sceneManager.unitArrived)이 같은 술어를 쓴다 — 따로 적으면 "배정은 됐는데 아무도 내리지 않는 부대"가 생긴다.
+ */
+export function canDeploy(r: Responder): boolean {
+  return !r.dead && r.care === undefined && (r.status === 'ok' || r.status === 'injured');
+}
+/**
+ * 걸을 수 있는 다친 대원(status 'injured')이 맡을 수 있는 가벼운 일 — 정본 (사용자 결정 2026-11-15 "가벼운 일은 계속", §2.5).
+ * 교통 통제 · 출입구 봉쇄·통제 · 협상 · 목격자 면담 · 바깥의 소화전 연결, 그리고 대상이 안전 구역에 있는 처치(treat·treatMate — fitFor 가 본다).
+ * R3 의 부상 줄이 같은 목록을 쓴다.
+ */
+export const LIGHT_WORK: ReadonlySet<WorkKind> = new Set<WorkKind>(['traffic', 'perimeter', 'negotiate', 'interview', 'hookup', 'treat', 'treatMate']);
 
 // ───────────────────────── 한 번 피해의 기록 (단계 1) ─────────────────────────
 // 피해를 주는 자리는 식을 그대로 두고, 바꾸기 전의 값(hp0, bleed0)을 잡아 두었다가 바꾼 뒤에 아래 함수를 한 줄 부른다.

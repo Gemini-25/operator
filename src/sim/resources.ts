@@ -5,6 +5,7 @@ import { AIR_KIND, EXTRA_NAMES, ROLES, STAFF, dealFlashbangs, drawFaults, fieldC
 import { recomputeUnmet } from './dispatch/dispatcher';      // 함수 안에서만 부른다 (dispatcher 가 이 파일을 import 한다 — 모듈 맨 위에서 쓰지 않는다)
 import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
+import { canDeploy } from './field/injury';
 import { unitArrived } from './field/sceneManager';
 import { Rng } from './rng';
 import { gateWait, reportObstacle, stopAhead } from './traffic';
@@ -219,10 +220,20 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
 
 /** 현장에 내리는 대원의 이름 (조종사·정장처럼 내리지 않는 자리는 뺀다) */
 export function crewNames(sim: Sim, u: Unit): string { return fieldCrew(sim, u).map((r) => sim.responders[r].name).join('·'); }
-/** 지금 현장에 내릴 수 있는 대원 수: 내리는 자리(fieldCrew) 가운데 상태가 'ok' 인 사람 */
+/** 온전한 대원 수: 내리는 자리(fieldCrew) 가운데 다치지 않았고(status 'ok') 병원으로 후송되지 않은 사람 (H1 §3.6) */
+export function crewOk(sim: Sim, u: Unit): number {
+  const fc = fieldCrew(sim, u);
+  let n = 0; for (let k = 0; k < fc.length; k++) { const r = sim.responders[fc[k]]; if (r.status === 'ok' && r.care === undefined) n++; }
+  return n;
+}
+/**
+ * 걸을 수 있는 대원 수 = 지금 현장에 내릴 수 있는 대원 수 (온전한 대원 + 걸을 수 있는 다친 대원). 0 이면 배정에서 빠진다 —
+ * 운용 중단 규칙이 아니라 움직일 사람이 없어서다: 전원 순직, 또는 살아 있는 대원이 모두 쓰러졌거나 병원으로 후송됐다 (H1 §3.6, 사용자 결정 2026-11-15:
+ * 부대는 대원이 모두 숨졌을 때만 운용을 멈춘다 — 다치거나 일부가 숨진 부대는 배정 점수만 깎인다). sceneManager.unitArrived 가 내리는 사람과 같은 술어다(injury.canDeploy)
+ */
 export function crewReady(sim: Sim, u: Unit): number {
   const fc = fieldCrew(sim, u);
-  let n = 0; for (let k = 0; k < fc.length; k++) if (sim.responders[fc[k]].status === 'ok') n++;
+  let n = 0; for (let k = 0; k < fc.length; k++) if (canDeploy(sim.responders[fc[k]])) n++;
   return n;
 }
 
@@ -395,8 +406,9 @@ function arrive(sim: Sim, u: Unit): void {
   } else if (u.state === 'transport') {
     // 응급실이 붐비면(먼저 온 구급차가 인계 중이면) 인계가 늦어진다
     const waiting = sim.units.filter((q) => q.id !== u.id && q.state === 'hospital' && q.nodeId === u.nodeId).length;
-    u.state = 'hospital'; u.timer = 8 + waiting * 9 + Math.max(0, u.patients.length - 1) * 3;
-    if (waiting > 0) emit(sim, { inc: u.patientsIncident ?? -1, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign}: 응급실이 붐벼 환자 인계가 늦어집니다 (앞에 ${waiting}대).` });
+    const riders = u.aboard ? u.aboard.length : 0;      // 다친 대원도 인계에 시간이 든다
+    u.state = 'hospital'; u.timer = 8 + waiting * 9 + Math.max(0, u.patients.length + riders - 1) * 3;
+    if (waiting > 0) emit(sim, { inc: u.patientsIncident ?? (riders > 0 ? u.aboard![0].inc : -1), role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign}: 응급실이 붐벼 환자 인계가 늦어집니다 (앞에 ${waiting}대).` });
   } else if (u.state === 'returning') {
     u.water = u.waterMax; u.hydrant = false;
     if (u.air) { u.fuel = u.fuelMax; u.bucket = u.bucketMax; }      // 집에 닿은 헬기는 연료와 물 바구니를 채운다
@@ -406,7 +418,15 @@ function arrive(sim: Sim, u: Unit): void {
     if (u.pumpFailed) { u.pumpFailed = false; u.pumpCond = 0.55; }
     u.state = crewReady(sim, u) === 0 || u.aid ? 'oos' : 'available';
     if (u.aid) emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', text: `${u.callsign}: 지원 임무를 마치고 관할로 복귀했습니다.`, imp: 1 });
-    else if (u.state === 'oos') emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', text: `${u.callsign} 대원 전원 부상으로 운용 중단.`, imp: 2 });
+    else if (u.state === 'oos') {
+      // 걸을 수 있는 대원이 한 명도 없다 (crewReady 0). 까닭은 그 자리의 상태로 가린다: 모두 숨졌다 / 숨지지 않은 대원이 모두 병원으로 갔다 / (드물게) 쓰러진 채 남았다.
+      // 다쳐도 걸을 수 있으면 나가므로 '전원 부상'은 더는 까닭이 아니다. 원인은 그 부대의 마지막 부상·순직 기록(u.oosEv)
+      const fc = fieldCrew(sim, u);
+      let alive = 0, cared = 0;
+      for (let k = 0; k < fc.length; k++) { const r = sim.responders[fc[k]]; if (!r.dead) { alive++; if (r.care !== undefined) cared++; } }
+      const why = alive === 0 ? '대원 전원 순직 — 운용 중단.' : cared === alive ? '남은 대원 모두 병원 이송 — 운용 중단.' : '걸을 수 있는 대원이 없어 운용 중단.';
+      emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', text: `${u.callsign} ${why}`, imp: 2, causes: [u.oosEv ?? -1] });
+    }
   }
 }
 
@@ -417,7 +437,7 @@ export function tickUnits(sim: Sim): void {
     if (u.state !== 'available' && u.state !== 'oos') u.busyTime += dt;
     if (u.state === 'available' || u.state === 'returning') {
       const rate = u.state === 'available' ? 0.55 : 0.2;
-      for (let ci = 0; ci < u.crew.length; ci++) { const r = sim.responders[u.crew[ci]]; if (r.status === 'ok') r.stamina = Math.min(100, r.stamina + rate * dt); }
+      for (let ci = 0; ci < u.crew.length; ci++) { const r = sim.responders[u.crew[ci]]; if (r.status === 'ok' || (r.status === 'injured' && r.care === undefined)) r.stamina = Math.min(100, r.stamina + rate * dt); }      // 걸을 수 있는 다친 대원도 쉰다 (H1 §3.6 — 부대에 남아 다음 현장에 내린다)
     }
     if (u.state === 'transport' && u.patientsIncident !== null) {
       // 이송 중 처치: 탑승 후 몇 초 뒤 구급대원이 차 안에서 응급 처치를 마친다
@@ -460,14 +480,24 @@ export function tickUnits(sim: Sim): void {
       if (u.timer <= 0) {
         const I = u.patientsIncident !== null ? sim.incidents[u.patientsIncident] : null;
         const scene = I ? sim.scenes[I.id] : null;
+        const parts: string[] = [];
         if (scene) {
           for (const cid of u.patients) {
             const c = scene.casualties[cid];
             if (!c.dead) { c.where = 'hospital'; c.tHospital = sim.t; }
           }
-          const alive = u.patients.filter((cid) => !scene.casualties[cid].dead).length;
-          emit(sim, { inc: I!.id, role: 'UNIT', actor: u.callsign, kind: 'casualty', text: `${u.callsign}: ${sim.city.facilities.find((f) => f.kind === 'hospital' && f.nodeId === u.nodeId)?.name ?? '병원'} 도착, 환자 ${alive}명 인계 완료.`, imp: 1 });
+          parts.push(`환자 ${u.patients.filter((cid) => !scene.casualties[cid].dead).length}명`);
         }
+        // 구조 대상이 아닌 환자(다친 대원)의 인계 — 그 사람들만 태운 차량은 patientsIncident 가 없으므로 위의 갈래 밖에서 한다 (H1 §3.4-4)
+        const ab = u.aboard;
+        let mates = 0, abInc = -1;
+        if (ab && ab.length) {
+          abInc = ab[0].inc;
+          for (let k = 0; k < ab.length; k++) if (ab[k].kind === 'mate') { const r = sim.responders[ab[k].id]; r.care = 'hospital'; r.bleed = 0; mates++; }
+          ab.length = 0;
+        }
+        if (mates > 0) parts.push(`부상 대원 ${mates}명`);
+        if (parts.length) emit(sim, { inc: I ? I.id : abInc, role: 'UNIT', actor: u.callsign, kind: 'casualty', text: `${u.callsign}: ${sim.city.facilities.find((f) => f.kind === 'hospital' && f.nodeId === u.nodeId)?.name ?? '병원'} 도착, ${parts.join('·')} 인계 완료.`, imp: 1 });
         u.patients = []; u.patientsIncident = null; u.firstLoadAt = undefined;
         releaseUnit(sim, u);
       }

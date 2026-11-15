@@ -165,7 +165,7 @@ function tellDispatch(sim: Sim, s: Scene, I: Incident, op: AirOp, u: Unit): void
   for (const f of op.eye.beliefs.list('cas')) { const c = f.value as CasBelief; if (c.where === 'scene' && c.mob === 'trapped' && c.band < 3) { stuck = true; break; } }
   const need: keyof Needs = o.hostile ? 'law' : o.fire ? 'suppression' : stuck ? 'rescue' : 'ems';
   I.unmet[need] = Math.max(I.unmet[need] ?? 0, 1); I.unmetSince = sim.t; I.noUnitLogged = false;
-  emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: `사건 ${I.code}: ${josa(u.callsign, '이/가')} 떠난 현장에 아직 ${o.hostile ? '용의자가' : o.fire ? '불이' : o.patients > 0 ? '구조 대상이' : '쓰러진 대원이'} 남아 있습니다. 지상 부대를 찾습니다.` });
+  emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: `사건 ${I.code}: ${josa(u.callsign, '이/가')} 떠난 현장에 아직 ${o.hostile ? '용의자가' : o.fire ? '불이' : o.patients > 0 ? '구조 대상이' : o.matesDown > 0 ? '쓰러진 대원이' : '후송을 기다리는 다친 대원이'} 남아 있습니다. 지상 부대를 찾습니다.` });
 }
 
 /** (tx, ty) 쪽으로 한 틱 움직인다. 돌려주는 값 = 남은 거리(칸) */

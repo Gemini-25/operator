@@ -4,7 +4,7 @@ import { PROBLEM_LABEL } from '../src/sim/debrief';
 import { NORMAL, parseDifficulty, parseDisaster } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
-import type { EventKind, Incident, Role, SimEvent } from '../src/sim/types';
+import type { EventKind, Incident, Responder, Role, SimEvent, Unit } from '../src/sim/types';
 import {
   PHRASE, PROBLEM_SYS, Probe, SAMPLE_EVERY, STALL_ALLOW, STALL_SEC, SYSTEMS, causeDepths, causesDepthByIncident, checkC5, checkMetrics,
   divertAnalysis, eventSystems, formatLines, linkCounts, metricsJson, runWithProbe, shiftMetrics, spreadByIncident, spreadDistinct,
@@ -155,19 +155,35 @@ describe('대응표가 문구를 아직 잡는다', () => {
     expect(hit(PHRASE.T4).every((e) => sysOf(e) === 'hospital')).toBe(true);
     expect(hit(PHRASE.T7).every((e) => sysOf(e) === 'dispatch')).toBe(true);
   });
-  it('T6(결원 운용 중단)이 내리는 대원이 모두 다친 부대가 복귀할 때 남는 기록과 맞는다', () => {
-    // R1 뒤로 부대가 2~5명이라 한 부대의 전원이 다치는 교대는 드물다(극한 60교대에 1건 — S28 의 순찰3). 시드에 기대지 않고 그 상태를 직접 만든다.
-    // 기록은 실제 코드(resources.arrive 의 복귀 갈래)가 남긴다
-    const s = new Sim('S1', NORMAL, 1200);
-    const u = s.units.find((q) => q.kind === 'patrol')!;
-    for (const rid of u.crew) s.responders[rid].status = 'injured';
-    u.state = 'returning'; u.destNode = u.homeNode;
-    s.step();
-    expect(u.state).toBe('oos');
-    const found = s.events.find((e) => PHRASE.T6.test(e.text)) ?? null;
-    expect(found).not.toBe(null);
-    expect(found!.actor).toBe(u.callsign);
-    expect(sysOf(found!)).toBe('crew');
+  it('T6(결원 운용 중단)이 걸을 수 있는 대원이 남지 않은 부대가 복귀할 때 남는 기록과 맞는다 — 전원 순직 · 남은 대원 모두 병원 이송 · 걸을 수 있는 대원 없음', () => {
+    // H1 4b(사용자 결정 2026-11-15): 다쳐도 걸을 수 있으면 부대는 계속 나간다 — '대원 전원 부상으로 운용 중단'은 없어졌다.
+    // 사람이 없어 빠지는 부대는 드물어 시드에 기대지 않고 그 상태를 직접 만든다. 기록은 실제 코드(resources.arrive 의 복귀 갈래)가 남긴다
+    const arrive = (set: (r: Responder, k: number) => void): { u: Unit; s: Sim } => {
+      const s = new Sim('S1', NORMAL, 1200);
+      const u = s.units.find((q) => q.kind === 'patrol')!;
+      u.crew.forEach((rid, k) => set(s.responders[rid], k));
+      u.state = 'returning'; u.destNode = u.homeNode;
+      s.step();
+      return { u, s };
+    };
+    const cases: [string, (r: Responder, k: number) => void][] = [
+      ['대원 전원 순직 — 운용 중단.', (r) => { r.status = 'down'; r.dead = true; r.health = 0; }],
+      ['남은 대원 모두 병원 이송 — 운용 중단.', (r, k) => { if (k === 0) { r.status = 'down'; r.dead = true; r.health = 0; } else { r.status = 'injured'; r.care = 'hospital'; } }],
+      ['걸을 수 있는 대원이 없어 운용 중단.', (r) => { r.status = 'down'; r.health = 10; }],
+    ];
+    for (const [text, set] of cases) {
+      const { u, s } = arrive(set);
+      expect(u.state, text).toBe('oos');
+      const found = s.events.find((e) => PHRASE.T6.test(e.text)) ?? null;
+      expect(found, text).not.toBe(null);
+      expect(found!.text).toBe(`${u.callsign} ${text}`);
+      expect(found!.actor).toBe(u.callsign);
+      expect(sysOf(found!)).toBe('crew');
+    }
+    // 둘 다 다쳤지만 걸을 수 있으면 운용을 멈추지 않는다 (기록 없음)
+    const { u, s } = arrive((r) => { r.status = 'injured'; r.health = 55; });
+    expect(u.state).toBe('available');
+    expect(s.events.some((e) => PHRASE.T6.test(e.text) || /운용 중단/.test(e.text))).toBe(false);
   });
   it.skip('T5(지난 교대에서 이어받은 상태) — I2 뒤에 켠다', () => {});
   it('태그(I1-b·I2): carry 는 다른 규칙보다 먼저, 표에 없는 태그는 건너뛴다', () => {

@@ -520,6 +520,17 @@ export function fitFor(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap
   const fit = fitBase(sim, s, a, w, afterSwap);
   return docFit(sim, s, a, w, fit > 0 ? Math.max(0.02, fit + (roleOf(sim, a.rid).prefer[w.kind] ?? 0)) : fit);      // (R3) 교본은 맨 끝에서 좁히기만 한다 (늘 보고 모드 — 줄이 없으면 그대로)
 }
+/**
+ * (N8 §5.3.3) 유관 기관 대원이 맡는 일: 시설물 복구(repair — 대상의 생김새에 맞는 장비: 전선 = 절연 장비, 관·밸브 = 밸브 키 또는 누출 차단 장비)와 견인(towAway — 견인 장비).
+ * 그 밖은 0 (그대로 두면 수색·이송·처치를 맡는다). 오는 쪽의 판정 crews.capableOf(…, what) 와 같은 조건이다. 생김새(skin, 없으면 kind)는 판단부가 읽어도 되는 것이다
+ */
+function civilFit(sim: Sim, s: Scene, rid: number, w: WorkItem): number {
+  if (w.kind === 'towAway') return hasKit(sim, rid, 'towKit') ? 0.8 : 0;
+  if (w.kind !== 'repair') return 0;
+  const p = w.prop >= 0 ? s.props[w.prop] : undefined, what = p ? p.skin ?? p.kind : undefined;
+  const ok = what === 'wire' ? hasKit(sim, rid, 'insulKit') : what === 'pipe' || what === 'valve' ? hasKit(sim, rid, 'valveKey') || hasKit(sim, rid, 'plugKit') : false;
+  return ok ? 0.7 + 0.3 * sim.responders[rid].skills.rescue : 0;
+}
 /** 공기가 되는가: 문턱 아래가 아니다 (공기호흡기가 없는 대원은 해당 없음). afterSwap 이면 통을 바꾼 뒤로 보고 따지지 않는다 */
 const airOk = (sim: Sim, rid: number, afterSwap: boolean): boolean => afterSwap || !airShort(sim, rid);
 /** 연기 속에 들어갈 수 있는가: 공기호흡기를 멨고 공기가 된다 */
@@ -527,6 +538,7 @@ const scbaOk = (sim: Sim, rid: number, afterSwap: boolean): boolean => hasKit(si
 /** afterSwap = 공기통을 바꾼 뒤라면 (공기 문턱을 보지 않는다 — 지휘관이 "예비 공기통으로 바꾸면 맡을 수 있는 사람이 있는가"를 볼 때만 쓴다) */
 function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: boolean): number {
   const r = resp(sim, a), u = sim.units[a.unitId], rid = a.rid;
+  if (r.dept === 'civil') return r.status === 'injured' ? 0 : civilFit(sim, s, rid, w);      // (N8 §5.3.3) 유관 기관은 자기 일만 (다치면 가벼운 일도 없다 — 그 목록에 자기 일이 없다)
   const hot = s.kind === 'armed' && s.secureAt < 0;
   const indoorRisk = TYPE_DEFS[s.kind].indoorRisk;      // 위험한 건물의 유형 (incidentTypes — 화재·가스 누출·붕괴)
   const fireRisk = (regionId: number): boolean => regionId >= 0 && ((a.beliefs.val<number>('fire', regionId) ?? 0) > 0.25 || indoorRisk);      // 불이 났거나, 가스가 찼거나, 무너질 수 있는 건물 안은 공기호흡기를 멘 대원만 들어간다

@@ -401,7 +401,7 @@ export class Probe {
     let busy = 0, denom = 0;
     for (let ui = 0; ui < units.length; ui++) {
       const u = units[ui];
-      if (u.state !== 'oos') { denom++; if (u.state !== 'available') busy++; }
+      if (u.state !== 'oos' && u.dept !== 'civil') { denom++; if (u.state !== 'available') busy++; }      // (N8 §5.3.4) 유관 기관은 가동 최고치에서 뺀다 (한가한 부대가 늘어 숫자가 내려가지 않게 — 기준과 견줄 수 있게)
       const cur = u.incidentId ?? -1;
       if (ui < this.uInc.length) {
         if (this.uInc[ui] !== cur && this.uInc[ui] >= 0) this.etaLog.push({ unit: ui, t: now, fromInc: this.uInc[ui], fromEta: this.uEta[ui] });

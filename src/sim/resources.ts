@@ -421,6 +421,8 @@ export function airRtb(sim: Sim, u: Unit, reason: 'fuel' | 'storm'): void {
 }
 
 const CURB_SPEED = 42;      // 길가로 붙을 때의 속도 (지도 단위/초)
+/** (N8) 통제 부대를 기다린다고 알린 유관 기관 차량과 그 사건 (기록을 한 번만 남기는 표시 — 부대 객체의 모양을 바꾸지 않으려고 따로 둔다) */
+const civilHeld = new WeakMap<Unit, Incident>();
 function curbPos(sim: Sim, u: Unit): void {
   const n = sim.city.nodes[u.nodeId], k = u.curbT ?? 0;
   u.x = n.x + (u.curb!.x - n.x) * k; u.y = n.y + (u.curb!.y - n.y) * k;
@@ -456,13 +458,21 @@ function arrive(sim: Sim, u: Unit): void {
       if (len > 8) { u.curb = { x: pl.cx, y: pl.cy, len }; u.curbT = 0; u.parking = true; return; }
     }
     const took = sim.t - u.dispatchedAt, est = u.estArrive - u.dispatchedAt;
-    if (took > est * 1.35 + 6 && !I.pursuit) {
+    const held = u.dept === 'civil' && civilHeld.get(u) === I;      // (N8) 길가에서 기다리다 들어가는 유관 기관 차량 — 늦음은 처음 닿았을 때 한 번만 본다
+    if (!held && took > est * 1.35 + 6 && !I.pursuit) {
       // (I1-b 0단계) 지나온 구간은 여기서 알 수 없다(경로는 이미 지웠다). 이번 출동에서 이 부대가 남긴 마지막 ROUTE_BLOCKED 가 있으면 그것을 원인으로 잇고 구간·막은 사건을 이어받는다 (없으면 혼잡만으로 늦은 것 — 비워 둔다)
       let rb: Problem | null = null;
       for (let k = I.problems.length - 1; k >= 0; k--) { const p = I.problems[k]; if (p.code === 'ROUTE_BLOCKED' && p.ref !== undefined && p.ref.unit === u.id && p.t >= u.dispatchedAt) { rb = p; break; } }
       raiseProblem(sim, I, 'TRAFFIC_DELAY', `${u.callsign} 도착이 예상보다 ${fmtSec(took - est)} 지연`, {
         role: 'UNIT', actor: u.callsign, text: `${u.callsign}: 교통 상황으로 예상보다 ${fmtSec(took - est)} 늦게 도착.`, imp: 1, causes: rb ? [rb.eventId] : undefined,
       }, true, rb ? { inc: rb.ref!.inc, unit: u.id, edge: rb.ref!.edge } : { unit: u.id });
+    }
+    // (N8 §5.3.2) 유관 기관(civil)이 혼자 먼저 닿았다: 지휘관이 없으면 작업판이 없어 할 일이 없다. 현장에 들어가지 않고 길가에서 통제 부대(소방·경찰)를 기다린다 —
+    // 상태는 enroute 그대로라 tickUnits 가 매 틱 이 함수를 다시 부르고, 지상 대원이 처음 내린 다음 틱(또는 상공 도착이 있으면)에 들어간다. 기록은 한 번만
+    if (u.dept === 'civil' && I.firstArrivalAt < 0 && (sim.scenes[I.id]?.airAt ?? -1) < 0) {
+      if (!held) { civilHeld.set(u, I); emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign}: 현장 도착 — 통제 부대를 기다립니다.` }); }
+      if (u.curb) u.parking = true;      // 길가에 선 채로 (tickUnits 의 길가 갈래가 다음 틱에 다시 이 함수를 부른다 — 떠나는 갈래로 빠지지 않게)
+      return;
     }
     u.state = 'onscene';
     unitArrived(sim, I, u);

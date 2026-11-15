@@ -8,7 +8,7 @@ import { mkFact } from '../field/beliefs';
 import { nodeName } from '../city';
 import { crewHasKit, fieldCrew } from '../crews';
 import { coastal, createAidUnit, crewOk, crewReady, dispatchUnit, etaFor, sendUnitTo } from '../resources';
-import type { Claim, Incident, Needs, Problem, RadioMsg, Scene, Unit } from '../types';
+import type { Claim, Incident, KitId, Needs, Problem, RadioMsg, Scene, Unit, UnitKind } from '../types';
 import { TYPE_NAME, fmtSec, josa } from '../util';
 import { assess, emptyNeeds, needsText, sevName } from './analyst';
 
@@ -63,12 +63,50 @@ const HEAVY_NEED: ReadonlySet<keyof Needs> = new Set<keyof Needs>(['suppression'
  * 붕괴의 구조 수요에는 탐지 장비(+8). 관제가 아는 것만 본다: 평가한 유형과 자기 조직의 편성·장비(hasKit — 숨은 고장은 모른다).
  */
 export function kitBonus(sim: Sim, u: Unit, I: Incident, key: keyof Needs): number {
-  if (key !== 'rescue') return 0;
-  const type = I.assessment!.type;
-  if (type === 'water') return crewHasKit(sim, u, 'rope') || crewHasKit(sim, u, 'ring') ? 12 : 0;
-  if (type === 'collapse') return crewHasKit(sim, u, 'searchKit') ? 8 : 0;
-  return 0;
+  let b = 0;
+  if (key === 'rescue') {
+    const type = I.assessment!.type;
+    if (type === 'water') b = crewHasKit(sim, u, 'rope') || crewHasKit(sim, u, 'ring') ? 12 : 0;
+    else if (type === 'collapse') b = crewHasKit(sim, u, 'searchKit') ? 8 : 0;
+  }
+  // (N8 §5.3.4) 이름표 가점: 관제가 붙인 이름표(신고자가 정확한 말을 했을 때만)와 수요 열쇠가 맞으면 그 종류·그 장비의 부대를 앞세운다
+  if (LABEL_BONUS.length) {
+    const label = I.assessment!.label;
+    if (label !== undefined) for (const row of LABEL_BONUS) if (row.label === label && row.key === key && (row.kind === undefined || row.kind === u.kind) && (row.kit === undefined || crewHasKit(sim, u, row.kit))) b += row.bonus;
+  }
+  return b;
 }
+/**
+ * (N8 §5.3.4) 이름표 가점의 표 — 단계 2b 에는 비어 있다(줄을 내는 시나리오가 없다). 줄은 그 시나리오를 넣는 단계가 끝에 붙인다:
+ * '떨어질 듯한 간판'·'외벽 작업자 고립'·'멈춘 놀이기구' → suppression · ladder +12 · '가축 탈출' → traffic · trafficPol +8 · '날치기' → search · k9 +10, law · detective +10 ·
+ * '수거책 잠복' → law · detective +15 · '치매 노인 실종' → search · k9 +10 · '출산 임박' → ems · alsBag +8 · '위기자' → rescue · jumpMat +20 · '싱크홀' → rescue · rescue(부대) +15 ·
+ * '떨어질 듯한 간판' → rescue · rope +10. 기존 두 줄(수난·붕괴의 구조 수요)은 위에 글자 그대로 둔다
+ */
+export const LABEL_BONUS: { label: string; key: keyof Needs; kind?: UnitKind; kit?: KitId; bonus: number }[] = [];
+
+/** (N8 §5.3.4) 일을 kindFit 으로 좁히는 새 부대 — 관제 기준을 넘는 보조 능력이 평소 사건의 수요에 끼어들지 않게 */
+export const KIND_AUX: ReadonlySet<UnitKind> = new Set<UnitKind>(['animalCtl', 'detective', 'trafficPol', 'k9']);
+/** 경찰견이 나가는 수색 수요의 평가 유형 (보호·치안은 그 유형이 생기는 단계 6a·7 부터 걸린다 — 글자로 둔다) */
+const K9_TYPES: ReadonlySet<string> = new Set<string>(['search', 'welfare', 'disturb']);
+/** 형사가 나가는 경찰 수요의 평가 유형 (치안 — 단계 6a 부터) */
+const DETECTIVE_TYPES: ReadonlySet<string> = new Set<string>(['disturb']);
+/**
+ * (N8 §5.3.4) 새 부대를 이 사건의 이 수요에 보내는가 — 0 이면 보내지 않고, 아니면 적합도에 곱하는 값 (airFit 과 같은 꼴). 관제가 아는 것(평가 유형)만 읽는다.
+ *  형사: 평가 유형이 치안인 사건의 경찰 수요만 · 경찰견: 실종·보호·치안의 수색 수요만(응급의 선착 대응·무장의 경찰 수요에 나가지 않는다)
+ *  교통 경찰: 교통 수요만(모든 유형 — 교통 통제는 그 부대의 본래 일이다) · 동물 포획팀: 동물 포획 수요만. 유관 기관은 자기 열쇠 말고는 능력이 0 이라 따로 거르지 않는다
+ */
+export function kindFit(_sim: Sim, u: Unit, I: Incident, key: keyof Needs): number {
+  const type: string = I.assessment!.type;
+  switch (u.kind) {
+    case 'detective': return key === 'law' && DETECTIVE_TYPES.has(type) ? 1 : 0;
+    case 'k9': return key === 'search' && K9_TYPES.has(type) ? 1 : 0;
+    case 'trafficPol': return key === 'traffic' ? 1 : 0;
+    case 'animalCtl': return key === 'capture' ? 1 : 0;
+    default: return 1;
+  }
+}
+/** (N8 §5.3.4) 예비 부대 셈에서 빼는 부대: 유관 기관과 일을 좁힌 새 부대 (포획팀이 소방 예비로 세어져 마지막 펌프차가 나가지 않게) */
+export const notSpare = (u: Unit): boolean => u.dept === 'civil' || KIND_AUX.has(u.kind);
 
 /** 추격전으로 평가한 사건의 관제 이름 (scenarios 의 납치·도주 차량) */
 const CHASE_LABEL: Record<string, boolean> = { '납치': true, '도주 차량': true };
@@ -132,6 +170,7 @@ function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { be
     if (u.sea && !((I.assessment!.type === 'water' || I.assessment!.label === '선박 화재') && coastal(sim, I.reportedNode))) continue;      // 구조정은 바닷가의 수난 사고와 선박 화재에만 나간다
     if (I.assigned.indexOf(u.id) >= 0) continue;
     if (u.air) { const m = airFit(sim, u, I, key); if (m <= 0) continue; fit *= m; }      // 헬기는 종류마다 맡는 수요가 다르다 (airFit)
+    if (KIND_AUX.has(u.kind)) { const m = kindFit(sim, u, I, key); if (m <= 0) continue; fit *= m; }      // (N8) 새 부대는 자기 일만 (kindFit)
     let divertFrom: Incident | null = null;
     if (u.state === 'enroute' || u.state === 'turnout') {
       const J = u.incidentId !== null ? sim.incidents[u.incidentId] : null;
@@ -157,8 +196,8 @@ function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { be
     if (divertFrom) score -= 28;
     // 같은 부서의 마지막 가용 부대라면, 위험도가 낮은 사건에는 아껴 둔다.
     // 헬기는 '남은 부대'로 세지 않고(경찰·의료 헬기가 남아 있다고 지상 부대를 다 내보내지 않게), 헬기 자신에게도 걸지 않는다
-    if (!u.air && sev < 1.9) {
-      const others = sim.units.filter((q) => q.dept === u.dept && q.id !== u.id && !q.air && (q.state === 'available' || q.state === 'returning') && crewReady(sim, q) > 0).length;
+    if (!u.air && sev < 1.9 && !notSpare(u)) {      // (N8) 유관 기관·새 부대는 감점하지 않고 남은 부대로도 세지 않는다
+      const others = sim.units.filter((q) => q.dept === u.dept && q.id !== u.id && !q.air && !notSpare(q) && (q.state === 'available' || q.state === 'returning') && crewReady(sim, q) > 0).length;
       if (others === 0) score -= 9;
     }
     cands.push({ u, score, eta, fit, divertFrom });
@@ -219,7 +258,7 @@ function firstResponder(sim: Sim, I: Incident): void {
   for (const u of sim.units) {
     if (u.kind !== 'engine' && u.kind !== 'ladder' && u.kind !== 'rescue') continue;      // 소방의 지상 부대만 (특수 부대 — 화학·헬기·구조정 — 는 아껴 둔다)
     if (u.aid || (u.state !== 'available' && u.state !== 'returning') || crewOk(sim, u) === 0 || I.assigned.indexOf(u.id) >= 0) continue;      // 선착 대응은 집 안의 환자를 처치하는 일이다 — 온전한 대원이 있는 부대만
-    const spare = sim.units.some((q) => q.id !== u.id && q.dept === u.dept && !q.air && !q.sea && (q.state === 'available' || q.state === 'returning') && crewReady(sim, q) > 0);
+    const spare = sim.units.some((q) => q.id !== u.id && q.dept === u.dept && !q.air && !q.sea && !notSpare(q) && (q.state === 'available' || q.state === 'returning') && crewReady(sim, q) > 0);      // (N8) 포획팀을 소방 예비로 세지 않는다
     if (!spare) continue;
     const eta = etaFor(sim, u, I.reportedNode);
     if (eta < be) { be = eta; best = u; beta = eta; }

@@ -119,11 +119,28 @@ const josaLocal = (w: string): string => `${w}으로`;
 /** 관제가 그 능력의 부대로 치는 최소 적합도 (dispatcher.ts 의 MINCAP 과 같다) */
 const NEED_MIN: Record<keyof UnitCaps, number> = { suppression: 0.7, rescue: 0.5, ems: 0.7, law: 0.5, tactical: 0.9, search: 0.3, traffic: 0.4, eod: 0.9, utilPower: 0.7, utilGas: 0.7, utilWater: 0.7, tow: 0.7, capture: 0.7 };
 
-/** 이 작업을 할 수 있는 대원을 보내 줄 부대의 능력. 아무나 할 수 있는 일이면 null */
-function needFor(s: Scene, w: WorkItem, hotArmed: boolean): keyof UnitCaps | null {
+/**
+ * 이 작업을 할 수 있는 대원을 보내 줄 부대의 능력. 아무나 할 수 있는 일이면 null.
+ * a = 지휘관 (N8 §5.3.5 — 시설물 복구의 수요는 믿음 속 시설물의 종류·관의 갈래로 정한다). 소품의 생김새(kind·skin)는 읽어도 되고 진실 칸은 읽지 않는다
+ */
+function needFor(s: Scene, w: WorkItem, hotArmed: boolean, a: FieldAgent): keyof UnitCaps | null {
   switch (w.kind) {
     case 'suppress': case 'hookup': case 'overhaul': return 'suppression';
-    case 'mitigate': return w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? 'rescue' : 'suppression';
+    case 'mitigate': {
+      // 균열부, (N8) 간판·구멍·매트 터는 구조 부대(최소 인원에서도 로프·유압 대원이 있다). 그 밖(밸브 …)은 진압
+      const p = w.prop >= 0 ? s.props[w.prop] : undefined;
+      return p && (p.kind === 'unstable' || p.skin === 'sign' || p.skin === 'hole' || p.skin === 'matSite') ? 'rescue' : 'suppression';
+    }
+    case 'repair': {
+      // (N8) 믿음의 시설물: 전선 → 전력 복구, 가스 관·가스 누출 현장의 밸브(공급 차단 확인) → 가스 복구, 그 밖(물 관·모름) → 수도 복구
+      const hz = w.prop >= 0 ? a.beliefs.val<{ kind?: string; pipe?: string }>('haz', w.prop) : undefined;
+      if (hz && hz.kind === 'wire') return 'utilPower';
+      if ((hz && hz.kind === 'pipe' && hz.pipe === 'gas') || (w.prop >= 0 && s.props[w.prop] && s.props[w.prop].kind === 'valve')) return 'utilGas';
+      return 'utilWater';
+    }
+    case 'towAway': return 'tow';
+    case 'capture': return w.prop >= 0 && s.props[w.prop] && s.props[w.prop].skin === 'hive' ? 'suppression' : 'capture';      // 벌집은 보호복을 든 관창수 (진압 수요)
+    case 'persuade': case 'cordon': return 'law';
     case 'extricate': case 'waterRescue': case 'clear': case 'force': return 'rescue';
     case 'treat': case 'load': return 'ems';
     case 'carry': case 'escort': return hotArmed ? 'law' : 'rescue';      // 위험한 건물 안은 소방만, 안전 확보 전의 무장 현장은 경찰만
@@ -146,9 +163,12 @@ export function anyCapable(sim: Sim, s: Scene, I: Incident, w: WorkItem, need: k
   // 공기도 예비도 없으면 아니다 (그때는 그 일을 할 부대를 부른다). 공기 잔량과 예비 공기통은 자기 조직의 장비 상태다
   if (s.agents.some((b) => b.status === 'active' && !sim.units[b.unitId].boardOrder && !failedRecently(sim, w, b.rid)
     && (fitFor(sim, s, b, w) > 0 || (airShort(sim, b.rid) && (sim.units[b.unitId].spareAir ?? 0) > 0 && fitFor(sim, s, b, w, true) > 0)))) return true;
+  // (N8 §5.3.3) 소품을 대상으로 하는 일은 대상의 생김새(skin, 없으면 kind)까지 넘긴다 — 같은 임무라도 대상마다 맡는 장비가 다르다 (간판·구멍·매트 터·벌집·전선·관)
+  const p = (w.kind === 'mitigate' || w.kind === 'repair' || w.kind === 'capture' || w.kind === 'towAway') && w.prop >= 0 ? s.props[w.prop] : undefined;
+  const what = p ? p.skin ?? p.kind : undefined;
   return I.assigned.some((uid) => {
     const u = sim.units[uid];
-    return (u.state === 'enroute' || u.state === 'turnout') && u.caps[need] >= NEED_MIN[need] && fieldCrew(sim, u).some((rid) => sim.responders[rid].status === 'ok' && capableOf(sim, rid, w.kind));
+    return (u.state === 'enroute' || u.state === 'turnout') && u.caps[need] >= NEED_MIN[need] && fieldCrew(sim, u).some((rid) => sim.responders[rid].status === 'ok' && capableOf(sim, rid, w.kind, what));
   });
 }
 
@@ -493,7 +513,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   // (예: 헬기 대원만 있는 가스 누출 현장의 밸브 차단, 경찰이 모두 떠난 무장 현장의 수색)
   for (const w of s.board) {
     if (w.status !== 'open' || w.assignees.length || sim.t - w.createdAt < 20 || sim.t < w.holdUntil) continue;
-    const need = needFor(s, w, hotArmed);
+    const need = needFor(s, w, hotArmed, a);
     if (!need) continue;
     if (w.kind === 'rescueMate' && B.val<MateBelief>('mate', w.mate)?.dead) continue;      // 숨진 동료의 수습 때문에 다른 곳의 부대를 부르지 않는다 (맡을 사람이 생기면 하고, 없으면 종료도 막지 않는다 — recoveryStuck)
     if (anyCapable(sim, s, I, w, need)) continue;

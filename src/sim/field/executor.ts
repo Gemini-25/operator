@@ -15,7 +15,7 @@ import { applyWater, flashbang, hostageNear, hostileActive, isHeld, placeAtSafe,
 import { coverRoll, fireShot } from './damage';
 import { breachHowFor, lastFx, noteCollateral, noteHit, noteShot, recBreach, recCuff, recTaser, weaponOf } from './fxlog';
 import { detonate } from './rules/crime';
-import { careResponder, hurtCas, initialCause, injuryRng, mustRetreat, needsHospital, noteHostileHurt, treatEffect, treatPlan } from './injury';
+import { careResponder, hurtCas, hurtResponder, initialCause, injuryRng, mustRetreat, needsHospital, noteHostileHurt, treatEffect, treatPlan } from './injury';
 
 export function makeTask(kind: TaskKind, label: string, w: WorkItem | null = null): Task {
   return {
@@ -373,6 +373,23 @@ export function rangeFactor(sim: Sim, rid: number, d: number): number {
 const TASER = { range: 4, hit: 0.72, stun: 3.2, wait: 4 };
 /** 구출 중 사고 (H1 §5.1): 붕괴 현장에서 구출을 마칠 때의 확률(× 위험 배율 × (1.2 − 쓴 장비의 값))과 그때 잃는 체력. 붕괴 현장이 너무 어려워지면 확률을 줄인다 (§9.3-4) */
 export const MISHAP = { p: 0.06, hit: [6, 14] };
+/** 덮쳐 제압할 때의 몸싸움 (H1 §4.2 — 단계 4c): 붙잡는 순간 맞서던(state 'fight', 무력화되지 않은) 상대와 양쪽이 이만큼 다친다(타박상). 흉기·몸싸움 손잡이 (§12.2-2) */
+export const FIGHT_HIT: readonly [number, number] = [3, 8];
+/** 붙잡는 순간 상대가 맞서는가: 맞서던(fight) 상대가 섬광탄·테이저로 무력화되지 않았다. 사건이 끝난 뒤에는 다치지 않는다 */
+const fights = (sim: Sim, I: Incident, h: Hostile, was: Hostile['state']): boolean => was === 'fight' && sim.t >= h.stunUntil && I.phase !== 'closed';
+/**
+ * 몸싸움 끝의 검거 (§4.2): 기록 '○○이 저항해 몸싸움 끝에 검거.'(검거 문구를 대신한다)를 먼저 남기고, 난수는 injury:<현장>:fight 에서 대원 몫 → 용의자 몫 순서로 뽑는다.
+ * 대원은 hurtResponder(타박상, 가해자 = 그 용의자). 용의자의 피해는 단계 5 가 hurtHostile 로 바꿀 때까지 기록 줄(noteHostileHurt)과 함께 직접 깎는다
+ */
+function scuffle(sim: Sim, s: Scene, I: Incident, a: FieldAgent, h: Hostile): void {
+  const rng = injuryRng(sim, s, 'fight');
+  const toMe = rng.range(FIGHT_HIT[0], FIGHT_HIT[1]), toHim = rng.range(FIGHT_HIT[0], FIGHT_HIT[1]);
+  const r = resp(sim, a);
+  const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${josa(h.label, '이/가')} 저항해 몸싸움 끝에 검거.` });
+  hurtResponder(sim, s, I, a, toMe, 'blunt', { by: h.id, byKind: 'hostile', ev });
+  const hp0 = h.health; h.health -= toHim;      // (H1) 단계 5 가 hurtHostile 로 바꾼다
+  noteHostileHurt(h, 'blunt', hp0, sim.t, a.rid, 'responder', ev);      // (H1)
+}
 function tryTaser(sim: Sim, s: Scene, a: FieldAgent, h: Hostile): boolean {
   if (h.weapon === 'gun' || h.state !== 'fight' || sim.t < h.stunUntil) return false;
   if (sim.t - (a.taserAt ?? -99) < TASER.wait || kitUses(sim, a.rid, 'taser') <= 0 || !hasKit(sim, a.rid, 'taser')) return false;
@@ -898,7 +915,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
             const was = h.state;
             h.state = 'arrested'; h.path = null;
             learnQuiet(sim, a, hosFact(sim, s, h, r.name));
-            emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${h.label} 검거!` });
+            if (fights(sim, I, h, was)) scuffle(sim, s, I, a, h);      // 맞서던 상대: 몸싸움 끝에 (H1 단계 4c)
+            else emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${h.label} 검거!` });
             recCuff(sim, s, h, a, was === 'flee' ? 'chase' : 'tackle');
             r.xpGained += 0.006;
             finishTask(sim, s, a, true);
@@ -1033,7 +1051,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         const was = h.state;
         h.state = 'arrested';
         learnQuiet(sim, a, hosFact(sim, s, h, r.name));
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${h.label} 검거 완료.` });
+        if (fights(sim, I, h, was)) scuffle(sim, s, I, a, h);      // 맞서던 상대: 몸싸움 끝에 (H1 단계 4c)
+        else emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${h.label} 검거 완료.` });
         recCuff(sim, s, h, a, was === 'surrendered' ? 'surrender' : 'tackle');
         r.xpGained += 0.005;
         finishTask(sim, s, a, true);

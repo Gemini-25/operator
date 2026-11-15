@@ -14,10 +14,11 @@ import { armorOf, fieldCrew, minField, seatsOf, seatsUsed } from '../src/sim/cre
 import { PROBLEM_LABEL } from '../src/sim/debrief';
 import { emit } from '../src/sim/events';
 import { TRAP_R, TRAP_WORK, band, blast, tickCasualties, tickCollapse, tickGas, tickHostiles, tickLane, tickWater } from '../src/sim/field/hazards';
-import { MISHAP, act, makeTask, moveSpeed } from '../src/sim/field/executor';
+import { FIGHT_HIT, MISHAP, act, makeTask, moveSpeed } from '../src/sim/field/executor';
+import { tileOf } from '../src/sim/field/grid';
 import { commanderThink, outstanding } from '../src/sim/field/commander';
 import { think } from '../src/sim/field/brain';
-import { WALK_STOP } from '../src/sim/field/rules/injury';
+import { FALL_HIT, FALL_P, HEAT_DMG, HEAT_STAMINA, WALK_STOP, responderHazards } from '../src/sim/field/rules/injury';
 import { SELF_EVAC_WAIT } from '../src/sim/field/orders/injury';
 import { PHRASE, checkC5, sysOf } from '../scripts/metrics';
 import { fmtSec, josa } from '../src/sim/util';
@@ -2479,3 +2480,122 @@ describe('단계 4b — 고친 곳 (다친 경관이 지키는 출입구 · 가�
   });
 });
 
+/** 붕괴 현장에 구조·진압 부대를 내려 세운다 */
+const collapseCrew = (): { sim: Sim; s: Scene; I: Incident } => { const { sim, s, I } = crewScene('INJ-rubble', 'collapse', 'std', ['rescue', 'engine']); for (const q of s.agents) { q.nextThink = 1e9; q.task = null; } return { sim, s, I }; };
+describe('단계 4c — 대원의 새 규칙: 열 탈진 · 잔해 바닥 추락 · 몸싸움 (§2.3 · §4.2)', () => {
+  it('열 탈진: 지친(지구력 ≤ 10) 소방 대원이 열 속(곁 1칸의 불 ≥ 0.3 또는 선 칸의 연기 ≥ 0.4)에 있으면 초당 0.5. 쓰러질 체력(15) 아래로는 가지 않는다. 경찰·지치지 않은 대원·열 밖은 아니다', () => {
+    const { sim, s, I, of } = crewScene('INJ-heat', 'fire', undefined, ['engine', 'patrol']);
+    for (const q of s.agents) { q.nextThink = 1e9; q.task = null; }
+    const f = of('engine'), rf = fresh(sim, f, 80), p = of('patrol'), rp = fresh(sim, p, 80);
+    expect(rf.dept).toBe('fire');
+    rf.stamina = 5; rp.stamina = 5;
+    const fi = tileOf(s, f.x, f.y), pi = tileOf(s, p.x, p.y);
+    s.fire.fill(0); s.smoke.fill(0);
+    responderHazards(sim, s, I);
+    expect([rf.health, rp.health], '열 밖').toEqual([80, 80]);
+    s.smoke[fi] = 0.45; s.smoke[pi] = 0.45;
+    for (let k = 0; k < 10; k++) responderHazards(sim, s, I);
+    rel(80 - rf.health, HEAT_DMG * sim.dt * 10, '연기 속 탈진');
+    expect(rp.health, '경찰은 열 탈진 규칙의 대상이 아니다').toBe(80);
+    expect(rf.injuries!.map((j) => j.cause)).toEqual(['exhaustion']);
+    // 곁 1칸의 불도 열이다
+    s.smoke[fi] = 0; const h1 = rf.health;
+    const nb = fi + 1 < s.w * s.h ? fi + 1 : fi - 1; s.fire[nb] = 0.35;
+    responderHazards(sim, s, I);
+    rel(h1 - rf.health, HEAT_DMG * sim.dt, '곁의 불');
+    // 지치지 않았으면 아니다
+    rf.stamina = HEAT_STAMINA + 1; const h2 = rf.health;
+    responderHazards(sim, s, I);
+    expect(rf.health).toBe(h2);
+    // 쓰러질 체력 아래로는 가지 않는다 (탈진으로 숨지지 않는다)
+    rf.stamina = 5; rf.health = DOWN_AT + 0.05;
+    for (let k = 0; k < 20; k++) responderHazards(sim, s, I);
+    expect(rf.health).toBe(DOWN_AT);
+  });
+  it('잔해 바닥 추락: 붕괴 현장의 잔해 칸에 새로 들어설 때만 추첨한다(흐름 injury:<현장>:fall). 걸리면 기록이 먼저 남고 그 기록이 원인이다. 대원마다 사건당 한 번', () => {
+    const { sim, s, I } = collapseCrew();
+    const a = s.agents.find((q) => q.status === 'active')!;
+    const r = fresh(sim, a, 90);
+    const here = tileOf(s, a.x, a.y);
+    // 처음 본 칸은 들어선 것으로 치지 않는다
+    s.damage[here] = 1; a.lastTile = undefined;
+    sim.tune.hazardMul = 1e6;      // 확률을 1 로 (시험)
+    responderHazards(sim, s, I);
+    expect(a.fellOnce).toBeFalsy(); expect(a.lastTile).toBe(here);
+    responderHazards(sim, s, I);
+    expect(a.fellOnce, '같은 칸에 서 있으면 추첨하지 않는다').toBeFalsy();
+    // 다른 칸에서 잔해 칸으로 들어선다
+    a.lastTile = here + 1;
+    const n0 = sim.events.length;
+    responderHazards(sim, s, I);
+    expect(a.fellOnce).toBe(true);
+    const e = sim.events.slice(n0).find((q) => q.text === `${r.name} 대원 잔해 위에서 미끄러져 다침.`)!;
+    expect(e).toBeDefined(); expect(e.kind).toBe('hazard'); expect(e.importance).toBe(1);
+    const fall = r.injuries!.find((j) => j.cause === 'fall')!;
+    const prot = protection(sim, r, sim.units[a.unitId], 'fall');
+    expect(fall.dmg).toBeGreaterThanOrEqual(FALL_HIT[0] * (1 - prot) - 1e-9); expect(fall.dmg).toBeLessThanOrEqual(FALL_HIT[1] * (1 - prot) + 1e-9);
+    expect([fall.ev, a.hurtEv]).toEqual([e.id, e.id]);
+    // 사건당 한 번
+    a.lastTile = here + 1; const h = r.health;
+    responderHazards(sim, s, I);
+    expect(r.health).toBe(h);
+    // 활동 중이 아닌 대원(끌려가는 쓰러진 대원)·잔해가 아닌 칸은 추첨하지 않는다
+    const b = s.agents.find((q) => q !== a && q.status === 'active')!;
+    fresh(sim, b, 90); b.lastTile = here + 1; b.x = a.x; b.y = a.y; b.status = 'down';
+    responderHazards(sim, s, I);
+    expect(b.fellOnce).toBeFalsy();
+    b.status = 'active'; s.damage[here] = 0; b.lastTile = here + 1;
+    responderHazards(sim, s, I);
+    expect(b.fellOnce).toBeFalsy();
+    expect(FALL_P).toBe(0.002);
+  });
+  it('잔해 바닥 추락은 붕괴 현장에만 있다 — 다른 현장의 잔해 칸(무너진 자리)은 추첨하지 않는다', () => {
+    const { sim, s, I, of } = crewScene('INJ-nofall', 'fire', undefined, ['engine']);
+    const a = of('engine'); fresh(sim, a, 90);
+    const here = tileOf(s, a.x, a.y);
+    s.damage[here] = 1; a.lastTile = here + 1; sim.tune.hazardMul = 1e6;
+    responderHazards(sim, s, I);
+    expect(a.fellOnce).toBeFalsy();
+  });
+  const fightScene = (seed: string, kind: 'engage' | 'arrest', state: 'fight' | 'surrendered', stunned: boolean) => {
+    const { sim, s, I, of } = crewScene(seed, 'armed', 'domestic', ['patrol']);
+    for (const q of s.agents) { q.nextThink = 1e9; q.task = null; q.planT = 1e9; }
+    const a = of('patrol'), r = fresh(sim, a, 90);
+    const h = s.hostiles[0];
+    h.weapon = 'knife'; h.state = state; h.stunUntil = stunned ? sim.t + 30 : -1; h.health = 100; h.injuries = undefined;
+    a.x = h.x; a.y = h.y; a.taserAt = sim.t;      // 테이저는 막 쏜 뒤다 (몸싸움만 본다)
+    const w = workItem(s, kind, sim.t, { hostile: h.id, max: 1 });
+    a.task = makeTask(kind, '시험', w); w.status = 'active'; w.assignees.push(a.rid);
+    const n0 = sim.events.length;
+    for (let k = 0; k < 60 && a.task; k++) act(sim, s, a);
+    return { sim, s, I, a, r, h, texts: sim.events.slice(n0).map((e) => e.text) };
+  };
+  it('몸싸움: 맞서던(fight) 상대를 덮쳐 검거하면 양쪽이 타박상 3~8 (흐름 injury:<현장>:fight — 대원 몫, 용의자 몫 순서). 기록은 "…가 저항해 몸싸움 끝에 검거." 가 검거 문구를 대신한다 — engage 와 arrest', () => {
+    for (const kind of ['engage', 'arrest'] as const) {
+      const x = fightScene('INJ-fight-' + kind, kind, 'fight', false);
+      const tag = kind;
+      expect(x.h.state, tag).toBe('arrested');
+      const line = `${josa(x.h.label, '이/가')} 저항해 몸싸움 끝에 검거.`;
+      expect(x.texts, tag).toContain(line);
+      expect(x.texts.some((t) => t === `${x.h.label} 검거!` || t === `${x.h.label} 검거 완료.`), tag).toBe(false);
+      // 같은 흐름을 새로 갈라 뽑으면 같은 값이다 (대원 몫 → 용의자 몫)
+      const ref = x.sim.rng.fork('injury:' + x.s.id + ':fight');
+      const toMe = ref.range(FIGHT_HIT[0], FIGHT_HIT[1]), toHim = ref.range(FIGHT_HIT[0], FIGHT_HIT[1]);
+      const mine = x.r.injuries!.find((j) => j.cause === 'blunt')!;
+      rel(mine.dmg, toMe, `${tag} 대원`); expect([mine.by, mine.byKind]).toEqual([x.h.id, 'hostile']);
+      const his = x.h.injuries!.find((j) => j.cause === 'blunt')!;
+      rel(his.dmg, toHim, `${tag} 용의자`); expect([his.by, his.byKind]).toEqual([x.r.id, 'responder']);
+      rel(100 - x.h.health, toHim, `${tag} 용의자 체력`);
+      const ev = x.sim.events.find((e) => e.text === line)!;
+      expect([ev.kind, ev.importance, mine.ev, his.ev]).toEqual(['resolve', 3, ev.id, ev.id]);
+    }
+  });
+  it('몸싸움이 없는 검거: 무력화된(섬광탄·테이저) 상대, 투항한 상대는 맞서지 않는다 — 예전 검거 문구 그대로, 아무도 다치지 않는다', () => {
+    const stun = fightScene('INJ-fight-stun', 'engage', 'fight', true);
+    expect(stun.texts).toContain(`${stun.h.label} 검거!`);
+    expect(stun.r.injuries ?? []).toEqual([]); expect(stun.h.health).toBe(100);
+    const sur = fightScene('INJ-fight-sur', 'arrest', 'surrendered', false);
+    expect(sur.texts).toContain(`${sur.h.label} 검거 완료.`);
+    expect(sur.r.injuries ?? []).toEqual([]); expect(sur.h.health).toBe(100);
+  });
+});

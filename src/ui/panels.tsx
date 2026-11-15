@@ -498,7 +498,7 @@ export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel 
             <div className="tile"><b style={{ color: r.casLost ? '#ff5d5d' : undefined }}>{r.casLost}{r.casUndiscovered ? <small> +미발견 {r.casUndiscovered}</small> : null}</b><span>시민 피해</span></div>
             <div className="tile"><b>{r.respondersHurt.filter((x) => !x.dead).length}</b><span>대원 부상</span></div>
             {(r.respondersKilled?.length ?? 0) >= 1 && <div className="tile loss"><b style={{ color: LOSS_COLOR }}>{r.respondersKilled!.length}</b><span>대원 순직</span></div>}
-            {(r.suspectsHurt ?? 0) >= 1 && <div className="tile"><b>다침 {r.suspectsHurt} · 사망 {r.suspectsDead ?? 0}</b><span>용의자 사상</span></div>}
+            {(r.suspectsHurt ?? 0) >= 1 && <div className="tile"><b>{r.suspectsHurt}<small> 다침 · 사망 {r.suspectsDead ?? 0}</small></b><span>용의자 사상</span></div>}
             <div className="tile"><b>{r.equipFailures}</b><span>장비 고장</span></div>
           </div>
           <div className="cols">

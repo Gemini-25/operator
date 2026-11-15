@@ -66,15 +66,66 @@ export function kitBonus(sim: Sim, u: Unit, I: Incident, key: keyof Needs): numb
   return 0;
 }
 
+/** 추격전으로 평가한 사건의 관제 이름 (scenarios 의 납치·도주 차량) */
+const CHASE_LABEL: Record<string, boolean> = { '납치': true, '도주 차량': true };
+/** 의료 헬기를 띄우는 문턱: 가용 지상 구급 부대 가운데 가장 빠른 것의 예상 도착이 이보다 늦다 (초). 너무 자주 뜨면 올린다 */
+const MED_HELI_ETA = 100;
+/**
+ * 헬기를 이 사건의 이 수요에 보내는가 — 0 이면 보내지 않고, 아니면 적합도에 곱하는 값 (설계서 R1 7.2).
+ * 헬기의 일은 이 함수가 정한다: u.air 만 보고 보내면 경찰 헬기가 환자를 싣거나 의료 헬기가 수색에 뜬다.
+ * 관제가 아는 것만 읽는다: 평가(I.assessment), 날씨, 자기 조직의 부대 상태(뜰 수 없는 이유·연료·위치), 헬기가 알린 '상공 임무 종료'(I.airDone), 접수한 현장 요청.
+ *  - 모든 헬기: 뜰 수 없거나(안개·밤·강풍), 연료가 다녀올 만큼 남지 않았거나, 이 사건에서 이미 상공 임무를 마치고 돌아갔으면 0
+ *  - 경찰 헬기: 추격전(납치·도주 차량)의 수색 수요만. 무장·실종 현장 상공의 감시는 상공의 일(관측·탐조등)이 생기는 단계 5 에서 연다
+ *  - 소방 헬기: 수색 수요는 실종·수난·붕괴·화재(산불은 낮 1.2, 밤에는 뜨지 않는다), 구조 수요는 위험도 2.3 이상이거나 수난 사고.
+ *    구급 수요는 의료 헬기가 없는 편성(부대 규모 1·2 — 그때만 구급 능력이 기준을 넘는다)에서만, 큰 사건이거나 구급차를 60초 넘게 기다렸을 때
+ *  - 의료 헬기: 구급 수요 — 밤이 아니고, 위험도 2.3 이상이거나 구급차를 60초 넘게 기다렸거나 현장이 급히 구급을 요청했거나 지상 구급차가 멀 때
+ */
+export function airFit(sim: Sim, u: Unit, I: Incident, key: keyof Needs): number {
+  if (u.grounded) return 0;
+  if (sim.disaster !== null && sim.disaster.kind === 'typhoon' && sim.disaster.phase === 'impact') return 0;      // 강풍이 닥친 바로 그 틱 (u.grounded 는 이 뒤의 tickUnits 가 적는다)
+  if ((u.fuel ?? 0) < etaFor(sim, u, I.reportedNode) * 2 + 90) return 0;
+  if (I.airDone && I.airDone.indexOf(u.kind) >= 0) return 0;
+  const as = I.assessment!, type = as.type, night = sim.weather === 'night';
+  if (u.kind === 'policeHeli') {
+    if (key !== 'search') return 0;
+    if (CHASE_LABEL[as.label ?? '']) return 1;
+    return 0;      // 단계 5: 유형이 armed·search 면 1, water·collapse·fire 면 0.5 (관제 이름이 '산불'이면 0)
+  }
+  if (u.kind === 'heli') {      // 소방 헬기
+    if (key === 'search') {
+      if (type !== 'search' && type !== 'water' && type !== 'collapse' && type !== 'fire') return 0;      // 무장 사건·응급 환자의 선착 대응에는 뜨지 않는다
+      return as.label === '산불' ? (night ? 0 : 1.2) : 1;
+    }
+    if (key === 'rescue') return as.severity >= 2.3 || type === 'water' ? 1 : 0;
+    // 구급 수요: 의료 헬기가 편성돼 있으면 그쪽의 일이다(소방 헬기의 구급 능력은 기준 밑이라 여기까지 오지 않는다).
+    // 의료 헬기가 없는 편성(부대 규모 1·2)에서만 예전 규칙대로 — 큰 사건이거나 구급차를 60초 넘게 기다린 환자에게 뜬다
+    if (key === 'ems') return u.caps.ems >= MINCAP.ems && (as.severity >= 2.3 || sim.t - I.unmetSince > 60) ? 1 : 0;
+    return 0;
+  }
+  if (u.kind === 'medHeli') {
+    if (key !== 'ems' || night) return 0;
+    if (as.severity >= 2.3 || sim.t - I.unmetSince > 60) return 1;
+    const s = sim.scenes[I.id];
+    if (s) for (let k = 0; k < I.fieldNeedsSeen && k < s.requests.length; k++) { const q = s.requests[k]; if (q.need === 'ems' && q.urgent && q.fulfilled < q.count) return 1; }      // 관제가 접수한 급한 구급 요청이 아직 채워지지 않았다
+    let near = Infinity;
+    for (const q of sim.units) {
+      if (q.air || q.caps.ems < MINCAP.ems || (q.state !== 'available' && q.state !== 'returning') || crewReady(sim, q) === 0 || I.assigned.indexOf(q.id) >= 0) continue;
+      near = Math.min(near, etaFor(sim, q, I.reportedNode));
+    }
+    return near > MED_HELI_ETA ? 1 : 0;      // 지금 보낼 수 있는 지상 구급차가 없거나 멀다
+  }
+  return 0;
+}
+
 function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { best: Cand | null; nearest: Cand | null } {
   const sev = I.assessment!.severity;
   const cands: Cand[] = [];
   for (const u of sim.units) {
-    const fit = u.caps[key];
+    let fit = u.caps[key];
     if (fit < minCap || crewReady(sim, u) === 0 || u.state === 'oos') continue;
     if (u.sea && !((I.assessment!.type === 'water' || I.assessment!.label === '선박 화재') && coastal(sim, I.reportedNode))) continue;      // 구조정은 바닷가의 수난 사고와 선박 화재에만 나간다
-    if (u.air && key !== 'search' && sev < 2.3 && !(key === 'ems' && sim.t - I.unmetSince > 60)) continue;      // 헬기는 수색이나 큰 사건에만 뜬다 (구급차를 한참 기다리는 환자에게는 뜬다)
     if (I.assigned.indexOf(u.id) >= 0) continue;
+    if (u.air) { const m = airFit(sim, u, I, key); if (m <= 0) continue; fit *= m; }      // 헬기는 종류마다 맡는 수요가 다르다 (airFit)
     let divertFrom: Incident | null = null;
     if (u.state === 'enroute' || u.state === 'turnout') {
       const J = u.incidentId !== null ? sim.incidents[u.incidentId] : null;
@@ -93,9 +144,12 @@ function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { be
     if (crewReady(sim, u) < fc.length) score -= 18;
     score += kitBonus(sim, u, I, key);
     if (divertFrom) score -= 28;
-    // 같은 부서의 마지막 가용 부대라면, 위험도가 낮은 사건에는 아껴 둔다
-    const others = sim.units.filter((q) => q.dept === u.dept && q.id !== u.id && (q.state === 'available' || q.state === 'returning') && crewReady(sim, q) > 0).length;
-    if (others === 0 && sev < 1.9) score -= 9;
+    // 같은 부서의 마지막 가용 부대라면, 위험도가 낮은 사건에는 아껴 둔다.
+    // 헬기는 '남은 부대'로 세지 않고(경찰·의료 헬기가 남아 있다고 지상 부대를 다 내보내지 않게), 헬기 자신에게도 걸지 않는다
+    if (!u.air && sev < 1.9) {
+      const others = sim.units.filter((q) => q.dept === u.dept && q.id !== u.id && !q.air && (q.state === 'available' || q.state === 'returning') && crewReady(sim, q) > 0).length;
+      if (others === 0) score -= 9;
+    }
     cands.push({ u, score, eta, fit, divertFrom });
   }
   if (!cands.length) return { best: null, nearest: null };
@@ -115,6 +169,7 @@ function sendUnit(sim: Sim, I: Incident, key: keyof Needs, c: Cand, nearest: Can
   }
   const first = I.firstDispatchAt < 0;
   dispatchUnit(sim, u, I, c.eta);
+  if (u.air) u.airNeed = key;      // 헬기가 이번 출동에서 맡은 수요: 연료·강풍으로 돌아가면 resources.airRtb 가 이 수요를 되돌린다
   let why = `${I.assessment!.type === 'medical' && key === 'search' ? '선착 대응' : NEED_LABEL[key]} 수요, 적합도 ${Math.round(c.fit * 100)}%, 예상 도착 ${fmtSec(c.eta)}`;
   if (nearest && nearest.u.id !== u.id && nearest.eta < c.eta - 5) why += `. 더 가까운 ${nearest.u.callsign}(${fmtSec(nearest.eta)})보다 ${c.fit > nearest.fit ? '전문성이 높아' : '상태가 좋아'} 선택`;
   const ev = emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: `출동 지령: ${u.callsign} → 사건 ${I.code} (${TYPE_NAME[I.assessment!.type]}, 위험도 ${sevName(I.assessment!.severity)}). ${why}.` });

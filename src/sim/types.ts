@@ -128,7 +128,8 @@ export interface AirOp {
 }
 export interface AirStats { sorties: number; byKind: Record<string, number>; hoists: number; drops: number; airLifts: number; rtb: number; tracked: number; grounded: string | null }
 
-export type UnitKind = 'engine' | 'rescue' | 'als' | 'bls' | 'patrol' | 'tactical' | 'ladder' | 'hazmat' | 'swat' | 'eod' | 'heli' | 'boat';
+export type UnitKind = 'engine' | 'rescue' | 'als' | 'bls' | 'patrol' | 'tactical' | 'ladder' | 'hazmat' | 'swat' | 'eod' | 'heli' | 'boat'
+  | 'policeHeli' | 'medHeli';      // (R1) 경찰 헬기 · 의료 헬기. 'heli' 는 그대로 소방 헬기다
 /** 부대의 분야 (편성표와 화면의 묶음) */
 export type UnitField = 'police' | 'fire' | 'rescue' | 'special';
 export type UnitState = 'available' | 'turnout' | 'enroute' | 'onscene' | 'transport' | 'hospital' | 'returning' | 'oos';

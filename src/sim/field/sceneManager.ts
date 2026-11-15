@@ -7,11 +7,11 @@ import { emit, raiseProblem } from '../events';
 import { closeIncident } from '../incidents';
 import { releaseUnit, startTransport } from '../resources';
 import { scenarioOf } from '../scenarios';
-import { fieldCrew, hasKit, roleOf } from '../crews';
+import { fieldCrew, hasKit, isHovering, roleOf } from '../crews';
 import './scenes';
 import { SCENE_RULES } from './sceneRegistry';
 import type { Fact, FieldAgent, Incident, Scene, Unit } from '../types';
-import { TYPE_NAME } from '../util';
+import { TYPE_NAME, josa } from '../util';
 import { BeliefStore, mkFact } from './beliefs';
 import { learn } from './agents';
 import { think } from './brain';
@@ -52,7 +52,14 @@ export function briefFacts(sim: Sim, I: Incident): Fact[] {
 
 export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
   const s = sim.scenes[I.id]!;
-  // 현장 도착 시각은 지상 대원이 처음 내릴 때 정한다 (상공 부대의 도착은 단계 4 에서 s.airAt 으로 따로 둔다 — 설계서 R1 6.1)
+  if (isHovering(u, s)) {
+    // 상공에 머무는 부대(경찰 헬기 …): 아무도 내리지 않는다. 지휘관이 되지 않고, 현장 도착 시각(s.arrivedAt·I.firstArrivalAt)도 정하지 않는다 —
+    // 상공 도착은 s.airAt 에만 적는다. 한계 시간과 방치는 둘 가운데 먼저인 시각부터 재고(onAt), 무대응 종료는 둘 다 없을 때만이다
+    if ((s.airAt ?? -1) < 0) s.airAt = sim.t;
+    emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'arrive', imp: 2, text: `${u.callsign} 현장 상공 도착.` });
+    return;
+  }
+  // 현장 도착 시각은 지상 대원이 처음 내릴 때 정한다 (설계서 R1 6.1)
   const firstGround = s.arrivedAt < 0;
   if (firstGround) { s.arrivedAt = sim.t; I.firstArrivalAt = sim.t; I.phase = 'onscene'; }
   const node = sim.city.nodes[I.truth.nodeId];
@@ -168,6 +175,14 @@ export function agentHealth(sim: Sim, s: Scene, I: Incident, a: FieldAgent): voi
 }
 
 const LIMIT: Record<string, number> = { fire: 430, traffic: 400, search: 470, armed: 400, medical: 300, collapse: 470, hazmat: 430, water: 380 };
+/** 부대가 처음 닿은 시각: 지상 대원이 처음 내린 시각(s.arrivedAt)과 상공 부대가 처음 닿은 시각(s.airAt) 가운데 먼저. 둘 다 없으면 -1 */
+function onAt(s: Scene): number { const g = s.arrivedAt, a = s.airAt ?? -1; return g < 0 ? a : a < 0 ? g : Math.min(g, a); }
+/** 이 사건 상공에서 대상이 있는 호이스트·물 투하 작업 중인 부대가 있는가 (감시만 하는 헬기는 치지 않는다 — 치면 종료·추가 요청·방치가 모두 막힌다) */
+function airBusy(s: Scene): boolean {
+  const air = s.air;
+  if (air) for (let k = 0; k < air.length; k++) if ((air[k].mode === 'hoist' || air[k].mode === 'bucket') && air[k].idleSince < 0) return true;
+  return false;
+}
 
 export function tickScene(sim: Sim, s: Scene): void {
   if (s.archived) return;
@@ -214,17 +229,25 @@ export function tickScene(sim: Sim, s: Scene): void {
     }
   }
   // 5) 부대 출발 (철수 / 병원 이송)
-  if (I.phase === 'closed') for (const a of s.agents) { const u = sim.units[a.unitId]; if (a.status !== 'left' && !u.boardOrder) u.boardOrder = u.patients.length ? 'transport' : 'release'; }
+  if (I.phase === 'closed') {
+    for (const a of s.agents) { const u = sim.units[a.unitId]; if (a.status !== 'left' && !u.boardOrder) u.boardOrder = u.patients.length ? 'transport' : 'release'; }
+    // 대원이 남지 않은 채 이 사건에 와 있는 부대(상공의 헬기 등)도 떠나보낸다 — 대원이 없다고 닫힌 사건 위에 영영 남지 않게
+    for (let ui = 0; ui < sim.units.length; ui++) { const u = sim.units[ui];
+      if (u.state === 'onscene' && u.incidentId === I.id && !u.boardOrder && !s.agents.some((b) => b.unitId === u.id && b.status !== 'left')) u.boardOrder = u.patients.length ? 'transport' : 'release';
+    }
+  }
   for (let ui = 0; ui < sim.units.length; ui++) { const u = sim.units[ui];
     if (u.state !== 'onscene' || u.incidentId !== I.id || !u.boardOrder) continue;
     const mates = s.agents.filter((b) => b.unitId === u.id && b.status !== 'left');
     if (mates.some((b) => b.status === 'active')) continue;
     for (const b of mates) { b.status = 'left'; b.task = null; b.label = ''; }
+    // 상공에 있던 부대면 그 상공 작업(AirOp)도 지운다 (사건이 닫힌 뒤에는 세계 규칙이 돌지 않아 air.ts 가 스스로 치우지 못한다)
+    if (s.air && s.air.length) for (let k = s.air.length - 1; k >= 0; k--) if (s.air[k].unitId === u.id) s.air.splice(k, 1);
     if (u.boardOrder === 'transport' || u.patients.length > 0) {      // 철수 지시 뒤에 환자를 태웠어도 병원부터 간다
       const k = I.assigned.indexOf(u.id); if (k >= 0) I.assigned.splice(k, 1);
-      emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign} 환자 ${u.patients.length}명 싣고 시립병원으로 출발.` });
       u.boardOrder = null; u.incidentId = null;
-      startTransport(sim, u);
+      const hosp = startTransport(sim, u);      // 가장 빨리 닿는 병원을 고른다 — 기록에는 실제로 가는 그 병원을 쓴다
+      emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign} 환자 ${u.patients.length}명 싣고 ${josa(hosp.name, '으로/로')} 출발.` });
     } else {
       emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 0, text: `${u.callsign} 현장 철수, 복귀합니다.` });
       releaseUnit(sim, u);
@@ -236,9 +259,10 @@ export function tickScene(sim: Sim, s: Scene): void {
     if (s.controlDone.every(Boolean) && !e.closed) { e.closed = true; e.closedReason = 'incident'; emit(sim, { inc: I.id, role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 0, text: '사고 구간 전면 통제. 주변 차량은 우회합니다.' }); }
   }
   // 7) 한계 시간 / 방치
-  if (I.phase !== 'closed' && s.arrivedAt >= 0) {
-    const anyActive = s.agents.some((a) => a.status === 'active');
-    if (sim.t - s.arrivedAt > LIMIT[s.kind] + (s.variant === 'bus' ? 170 : 0) + (scenarioOf(I.truth.type, I.truth.variant)?.limit ?? 0)) {      // 다수 사상자 사고는 이송에 시간이 더 걸린다
+  const on = onAt(s);      // 지상이든 상공이든 부대가 처음 닿은 때부터 잰다 — 헬기만 떠 있어도 사건은 반드시 끝난다
+  if (I.phase !== 'closed' && on >= 0) {
+    const anyActive = s.agents.some((a) => a.status === 'active') || airBusy(s);
+    if (sim.t - on > LIMIT[s.kind] + (s.variant === 'bus' ? 170 : 0) + (scenarioOf(I.truth.type, I.truth.variant)?.limit ?? 0)) {      // 다수 사상자 사고는 이송에 시간이 더 걸린다
       emit(sim, { inc: I.id, role: 'COMMANDER', actor: s.commanderRid >= 0 ? sim.responders[s.commanderRid].name : '현장', kind: 'command', imp: 2, text: '대응 한계 시간을 넘겼습니다. 현 상태로 현장을 인계하고 철수합니다.' });
       closeIncident(sim, I, 'timeout');
     } else if (!anyActive && !I.assigned.some((uid) => sim.units[uid].state === 'enroute' || sim.units[uid].state === 'turnout')) {
@@ -261,5 +285,7 @@ export function tickScene(sim: Sim, s: Scene): void {
   }
   // 8) 정리
   if (s.fx.length && sim.t - s.fx[0].t > 4) s.fx.shift();
-  if (I.phase === 'closed' && s.agents.every((a) => a.status === 'left')) s.archived = true;
+  // 이 사건에 아직 와 있는 부대가 있으면 보관하지 않는다: 7)번이 이 틱에 사건을 닫았으면 5)번은 이미 지나갔다.
+  // 지상 대원이 없으면 여기서 곧바로 보관되고, 다음 틱부터는 5)번이 돌지 않아 상공의 헬기가 닫힌 사건 위에 남는다
+  if (I.phase === 'closed' && s.agents.every((a) => a.status === 'left') && !sim.units.some((u) => u.state === 'onscene' && u.incidentId === I.id)) s.archived = true;
 }

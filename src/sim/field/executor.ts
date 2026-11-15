@@ -7,7 +7,7 @@ import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
 import type { Fact, FieldAgent, Hostile, Incident, KitId, Prop, Scene, Task, TaskKind, WorkItem } from '../types';
 import { clamp, dist, josa, pct } from '../util';
-import { hasKit, kitRng, kitUses, kitWorks, medLevelOf, toolUse, useKit } from '../crews';
+import { hasKit, kitRng, kitUses, kitWorks, medLevelOf, seatsOf, toolUse, useKit } from '../crews';
 import { RETRY_AFTER, agentCost, casFact, debrisText, detectRadius, exitName, fitFor, hosFact, learn, learnQuiet, perceive, regionNameAt, resp, staminaF, visionOf, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { astar, doorAt, isIndoor, los, staticPass, tileOf, walkableCount } from './grid';
@@ -52,7 +52,7 @@ export function finishTask(sim: Sim, s: Scene, a: FieldAgent, ok: boolean, reaso
       if (!w.assignees.length) w.status = 'open';
       if (reason && reason !== 'preempt') {
         const r = resp(sim, a);
-        const txt: Record<string, string> = { nopath: '진입 경로를 찾지 못했습니다', fire: '화염으로 접근할 수 없습니다', equip: '장비 문제로 임무를 계속할 수 없습니다', gone: '대상이 더 이상 그 위치에 없습니다', unsafe: '위협이 해소되지 않아 접근할 수 없습니다' };
+        const txt: Record<string, string> = { nopath: '진입 경로를 찾지 못했습니다', fire: '화염으로 접근할 수 없습니다', equip: '장비 문제로 임무를 계속할 수 없습니다', gone: '대상이 더 이상 그 위치에 없습니다', unsafe: '위협이 해소되지 않아 접근할 수 없습니다', full: '차에 환자 자리가 없습니다' };
         emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'radio', imp: 1, causes: [a.lastBlockEvent], text: `${workLabel(s, w)} 중단 — ${txt[reason] ?? reason}. 재지시 요청.` });
         w.note = txt[reason] ?? reason;
       }
@@ -693,6 +693,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const c = s.casualties[t.cas];
       if (c.dead || c.where === 'loaded' || c.where === 'hospital') { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }      // 이미 실려 갔다: 지휘관의 믿음이 낡았으므로 다시 알린다
       if (c.where !== 'safe' && a.carrying !== c.id) { finishTask(sim, s, a, false, 'gone'); return; }
+      // 실을 자리가 없다(그 사이에 다른 환자가 먼저 실렸다): 데리러 가지 않는다. 옮기던 중이면 차 앞에서 다시 본다(아래)
+      if (a.carrying !== c.id && u.patients.length >= seatsOf(u)) { finishTask(sim, s, a, false, 'full'); return; }
       if (a.carrying !== c.id) {
         const m = moveTo(sim, s, a, c.x, c.y, 1.3);
         if (m !== 'arrived') return;
@@ -705,6 +707,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (m !== 'arrived') return;
       t.progress += dt;
       if (t.progress >= 1.2) {
+        // 실을 때 자리를 다시 본다: 환자 자리(seatsOf — 구급차 2, 헬기 1)가 찼으면 안전 구역에 도로 눕히고 지휘관에게 알린다
+        if (u.patients.length >= seatsOf(u)) { c.where = 'safe'; placeAtSafe(s, c); a.carrying = -1; finishTask(sim, s, a, false, 'full'); return; }
         c.where = 'loaded'; c.tLoaded = sim.t; a.carrying = -1; u.patients.push(c.id); u.patientsIncident = I.id;
         learnQuiet(sim, a, casFact(sim, s, c, r.name));
         emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `구조 대상 ${c.label} ${u.callsign}에 탑승 완료.` });

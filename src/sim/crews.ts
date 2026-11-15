@@ -15,7 +15,7 @@
 import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
 import type { Rng } from './rng';
-import type { Incident, KitId, KitItem, Responder, RoleGroup, RoleId, Scene, Skills, Unit, UnitKind, WorkKind } from './types';
+import type { Facility, Incident, KitId, KitItem, Responder, RoleGroup, RoleId, Scene, Skills, Unit, UnitKind, WorkKind } from './types';
 import { clamp, josa } from './util';
 
 // ───────────────────────── 개인 장비 ─────────────────────────
@@ -140,7 +140,7 @@ export interface StaffDef {
  * 부대 종류별 자리. 처음 20줄(UNIT_DEFS)의 0·1번 자리는 R1 전의 선임·후임이다(이름·기본 능력이 그대로다).
  * 2번 자리부터는 roster-v2:<호출부호>:<자리> 흐름과 EXTRA_NAMES 를 쓰므로 **새 자리는 끝에 붙인다**(끼워 넣으면 뒤의 사람이 바뀐다).
  * 최소 인원에서 빼는 자리는 "능력(caps)이 기준을 넘는 부대에는 그 일을 할 장비를 가진 대원이 있다"(tests/crews.test.ts ③)를 깨지 않게 골랐다.
- * 단계 4 에서 두 줄을 더한다: policeHeli { std: ['pilot', 'copilot', 'observer'], minDrop: [1] }, medHeli { std: ['doctor', 'flightNurse', 'pilot', 'copilot'], minDrop: [3] }.
+ * 경찰 헬기는 전원이 내리지 않는 부대다(기장·부기장·관측관) — 현장 상공에 머문다(isHovering).
  */
 export const STAFF: Record<UnitKind, StaffDef> = {
   patrol: { std: ['patrolLead', 'officer'], minDrop: [] },
@@ -155,9 +155,20 @@ export const STAFF: Record<UnitKind, StaffDef> = {
   hazmat: { std: ['hazLead', 'hazTech', 'hazTech', 'decon'], minDrop: [2] },
   boat: { std: ['boatRescuer', 'boatRescuer', 'boatLead'], minDrop: [] },
   eod: { std: ['bombTech', 'robotOp', 'eodGuard'], minDrop: [2] },
+  policeHeli: { std: ['pilot', 'copilot', 'observer'], minDrop: [1] },
+  medHeli: { std: ['doctor', 'flightNurse', 'pilot', 'copilot'], minDrop: [3] },
 };
-/** 항공 부대의 종류. 명부(createRoster)와 지도 표식(view)이 함께 쓴다. 단계 4 에서 'policeHeli'·'medHeli' 를 더한다 */
-export const AIR_KIND: Set<UnitKind> = new Set<UnitKind>(['heli']);
+/** 항공 부대의 종류 (소방 · 경찰 · 의료 헬기). 명부(createRoster)와 지도 표식(view)이 함께 쓴다 */
+export const AIR_KIND: Set<UnitKind> = new Set<UnitKind>(['heli', 'policeHeli', 'medHeli']);
+/**
+ * 이 부대는 그 현장의 상공에 머무는가 (내려앉지 않는다 — 아무도 내리지 않는 '대원 없는 현장 부대'). 종류와 현장만 본다: 상태는 부르는 쪽이 따로 본다.
+ * 경찰 헬기는 언제나 상공에 머문다. 의료 헬기와 소방 헬기는 내려앉아 대원이 일한다.
+ * (단계 5 에서 소방 헬기의 물·산불 현장을 더한다 — 호이스트·물 투하가 생길 때:
+ *   || (u.kind === 'heli' && (s.kind === 'water' || (s.rules !== undefined && s.rules.indexOf('water') >= 0) || (s.kind === 'fire' && s.variant === 'wild'))) )
+ */
+export function isHovering(u: Unit, _s: Scene): boolean { return u.kind === 'policeHeli'; }
+/** 그 시설의 헬기 착륙 자리 (지도 좌표). 병원은 부지 안의 착륙장, 그 밖(항공대·경찰서)은 건물 옆 */
+export function heliPad(_sim: Sim, f: Facility): [number, number] { return f.kind === 'hospital' ? [f.x - 5, f.y - 3] : [f.x + 30, f.y - 20]; }
 
 /**
  * 처음 20줄의 0·1번 자리 말고 모든 자리의 이름. (편성표의 줄 순서 × 표준 표의 자리 순서)로 차례로 쓴다.

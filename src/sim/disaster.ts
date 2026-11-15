@@ -531,7 +531,7 @@ function tickWildfire(sim: Sim, d: DisasterState): void {
   const f = d.front!;
   if (d.stopped) return;
   let heli = false, good = 0;
-  for (const u of sim.units) if (u.air && u.state === 'onscene' && u.incidentId !== null && d.spawned.indexOf(u.incidentId) >= 0) { heli = true; break; }
+  for (const u of sim.units) if ((u.bucketMax ?? 0) > 0 && u.state === 'onscene' && u.incidentId !== null && d.spawned.indexOf(u.incidentId) >= 0) { heli = true; break; }      // 물 바구니를 단 헬기(소방 헬기)만 — 경찰·의료 헬기는 불머리를 늦추지 못한다
   for (const id of d.spawned) { const I = sim.incidents[id]; if (I.truth.variant === 'wild' && I.result && (I.result.outcome === 'success' || I.result.outcome === 'partial' || I.result.outcome === 'delayed')) good++; }
   // 헬기가 산불 현장에 떠 있으면 느려지고, 산불 현장을 하나 막아 낼 때마다 조금씩 더 느려진다
   const step = d.speed! * (heli ? 0.7 : 1) * 0.85 ** good * sim.dt;

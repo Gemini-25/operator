@@ -3,7 +3,8 @@
 // 이 파일은 진실(용의자·구조 대상의 실제 자리)을 읽지만 판단하지 않는다: 그림과 소리에 쓸 꼬리표만 남긴다.
 import type { Sim } from '../engine';
 import type { ArrestHow, BreachHow, Casualty, FieldAgent, Fx, FxInfo, FxWeapon, Hostile, Scene } from '../types';
-import { coverTile, rayEnd } from './damage';
+import { MISS_OVER, rayEnd } from './damage';
+import type { ShotEnd } from './damage';
 
 /** 시험용 스위치: 끄면 꼬리표와 새 기록을 남기지 않는다. 켜고 끈 두 실행의 결과가 같아야 한다(tests/combatfx.test.ts) */
 export const FXLOG = { on: true };
@@ -38,27 +39,20 @@ export function weaponOf(sim: Sim, a: FieldAgent): FxWeapon {
 
 /**
  * 사격 기록에 꼬리표. tx,ty = 사격을 받은 사람의 자리(흔들기 전).
- *  맞음        → res 'hit',   ix,iy = f.x2,f.y2,  stop 'body'
- *  빗나감+엄폐 → coverTile(s, tx, ty, f.x, f.y) 가 있으면 res 'cover', ix,iy = 그 칸 가운데에서 쏜 쪽으로 0.45칸, stop 'furn'
- *  빗나감      → res 'miss',  rayEnd(s, f.x, f.y, f.x2, f.y2, 3) 의 자리와 stop ('wall' | 'door' | 'far')
+ * end = 탄이 실제로 멈춘 자리(damage.fireShot 의 결과). 탄착점은 그대로 그 자리다 — 그림의 선과 탄도(깨진 창·닳은 가구)가 같은 선이 된다.
+ *  맞음                → res 'hit',   stop 'body'
+ *  빗나가 가구에 박힘   → res 'cover', stop 'furn' (그 가구 칸에 들어서는 자리)
+ *  빗나감              → res 'miss',  stop 'wall' | 'door' (그 칸에 들어서는 자리, 벽면) | 'far' (끝점) | 'body' (인질 — noteCollateral)
+ * end 를 주지 않으면(탄도 없이 그림만 남기는 옛 호출) 맞음은 f.x2,f.y2 의 'body', 빗나감은 rayEnd(s, f.x, f.y, f.x2, f.y2, MISS_OVER) 다 — 이때는 창이 깨지지 않는다.
  */
-export function noteShot(sim: Sim, s: Scene, f: Fx | null, o: { side: 0 | 1; by: number; wpn: FxWeapon; hit: boolean; cover: boolean; tx: number; ty: number; tk: 0 | 1 | 2; target: number; arm?: number }): void {
+export function noteShot(sim: Sim, s: Scene, f: Fx | null, o: { side: 0 | 1; by: number; wpn: FxWeapon; hit: boolean; end?: ShotEnd; tx: number; ty: number; tk: 0 | 1 | 2; target: number; arm?: number }): void {
   if (!FXLOG.on || !f) return;
   const ex = f.x2 ?? o.tx, ey = f.y2 ?? o.ty;
   const c: FxInfo = { side: o.side, by: o.by, wpn: o.wpn, tk: o.tk, target: o.target };
   if (o.arm !== undefined) c.arm = o.arm;
-  if (o.hit) { c.res = 'hit'; c.ix = ex; c.iy = ey; c.stop = 'body'; }
-  else {
-    const ct = o.cover ? coverTile(s, o.tx, o.ty, f.x, f.y) : -1;
-    if (ct >= 0) {
-      const cx = ct % s.w, cy = (ct / s.w) | 0, d = Math.hypot(f.x - cx, f.y - cy);
-      c.res = 'cover'; c.stop = 'furn';
-      c.ix = d > 0.01 ? cx + ((f.x - cx) / d) * 0.45 : cx; c.iy = d > 0.01 ? cy + ((f.y - cy) / d) * 0.45 : cy;
-    } else {
-      const e = rayEnd(s, f.x, f.y, ex, ey, 3);
-      c.res = 'miss'; c.ix = e.x; c.iy = e.y; c.stop = e.stop;
-    }
-  }
+  const e: ShotEnd = o.end ?? (o.hit ? { x: ex, y: ey, stop: 'body' } : rayEnd(s, f.x, f.y, ex, ey, MISS_OVER));
+  c.res = o.hit ? 'hit' : e.stop === 'furn' ? 'cover' : 'miss';
+  c.ix = e.x; c.iy = e.y; c.stop = o.hit ? 'body' : e.stop;
   f.c = c;
 }
 
@@ -93,19 +87,22 @@ export function noteBoom(f: Fx | null, r: number, src: NonNullable<FxInfo['src']
 
 /**
  * 기존 사격 줄이 없는 새 사격 코드(R2 의 비살상탄·저격, R1 의 저격 소총이 따로 쏘는 경우)를 위한 한 줄짜리 기록:
- * 'shot'(색은 side 로) + noteShot + 맞았으면 'hit' + noteHit. 판정(hit)은 부른 쪽이 이미 정한 값을 넘긴다 — 여기서 난수를 쓰지 않고, bulletPath 도 부르지 않는다.
- * 빗나간 탄의 그림 끝점은 목표 옆으로 0.6칸 비킨 자리(틱의 홀짝으로 좌우를 정한다).
- * hostage: 빗나간 탄이 인질을 다치게 했으면 그 인질. 주면 noteCollateral 까지 한다.
+ * 'shot'(색은 side 로) + noteShot + 맞았으면 'hit' + noteHit. 판정(hit)은 부른 쪽이 이미 정한 값을 넘긴다 — 여기서 난수를 쓰지 않는다.
+ * 이 파일은 상태를 바꾸지 않으므로 창을 깨지 않는다. 탄이 지나는 창을 깨고 그림을 그 탄도에 맞추려면 부른 쪽이 먼저
+ * damage.fireShot(sim, s, a.x, a.y, 겨눈 점, 'body' | 'miss' | 엄폐 칸) 을 부르고 그 결과를 end 로 넘긴다(G5c — 탄의 선과 깨지는 창이 어긋나지 않게).
+ * end 를 주지 않으면 빗나간 탄의 그림 끝점은 목표 옆으로 0.6칸 비킨 자리(틱의 홀짝으로 좌우를 정한다)를 지나 rayEnd 로 정한다.
+ * hostage: 빗나간 탄이 인질을 다치게 했으면 그 인질. 주면 noteCollateral 까지 한다(이때 end 는 fireShot(…, 인질 자리, 'body') 의 결과).
  */
-export function recShot(sim: Sim, s: Scene, a: FieldAgent, wpn: FxWeapon, tx: number, ty: number, hit: boolean, tk: 0 | 1 | 2, target: number, hostage?: Casualty | null): void {
+export function recShot(sim: Sim, s: Scene, a: FieldAgent, wpn: FxWeapon, tx: number, ty: number, hit: boolean, tk: 0 | 1 | 2, target: number, hostage?: Casualty | null, end?: ShotEnd): void {
   if (!FXLOG.on) return;
   let ex = tx, ey = ty;
-  if (!hit) {
+  if (end) { ex = end.x; ey = end.y; }
+  else if (!hit) {
     const d = Math.hypot(tx - a.x, ty - a.y) || 1, side = sim.tick % 2 ? 0.6 : -0.6;
     ex = tx - ((ty - a.y) / d) * side; ey = ty + ((tx - a.x) / d) * side;
   }
   const shot = recFx(sim, s, 'shot', a.x, a.y, ex, ey, 0.25, {}, '#ffe08a');
-  noteShot(sim, s, shot, { side: 0, by: a.rid, wpn, hit, cover: false, tx, ty, tk, target });
+  noteShot(sim, s, shot, { side: 0, by: a.rid, wpn, hit, end, tx, ty, tk, target });
   if (hit) noteHit(recFx(sim, s, 'hit', tx, ty, undefined, undefined, 1.2, {}), { side: 0, ox: a.x, oy: a.y, tk, target });
   if (hostage) noteCollateral(sim, s, shot, hostage, a.x, a.y);
 }
@@ -136,7 +133,7 @@ export function recMelee(sim: Sim, s: Scene, h: Hostile, ta: FieldAgent): void {
   recFx(sim, s, 'melee', h.x, h.y, ta.x, ta.y, 0.4, { side: 1, by: h.id, wpn: h.weapon === 'knife' ? 'knife' : 'blunt', res: 'hit', tk: 0, target: ta.rid });
 }
 
-/** 시한이 지나 인질을 다치게 함: 총이면 'shot'(용의자 → 인질, 색 '#ff8a5c', ttl 0.25, res 'hit', stop 'body') + 'hit', 아니면 'melee' + 'hit' */
+/** 시한이 지나 인질을 다치게 함: 총이면 'shot'(용의자 → 인질, 색 '#ff8a5c', ttl 0.25, res 'hit', stop 'body') + 'hit', 아니면 'melee' + 'hit'. 총이면 부른 쪽이 같은 선으로 fireShot(…, 'body') 을 부른다(지나는 창이 깨진다) */
 export function recHarm(sim: Sim, s: Scene, h: Hostile, c: Casualty): void {
   if (!FXLOG.on) return;
   if (h.weapon === 'gun') recFx(sim, s, 'shot', h.x, h.y, c.x, c.y, 0.25, { side: 1, by: h.id, wpn: 'hgun', res: 'hit', ix: c.x, iy: c.y, stop: 'body', tk: 2, target: c.id }, '#ff8a5c');

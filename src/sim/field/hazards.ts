@@ -11,7 +11,7 @@ import { clamp, dist, josa } from '../util';
 import { addProp } from './kit';
 import { casFact, exitName } from './agents';
 import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, truthWalkable } from './grid';
-import { bulletPath, heatGlass, hitCover, shatter } from './damage';
+import { coverRoll, fireShot, heatGlass, shatter } from './damage';
 import { lastFx, noteBoom, noteFlash, noteHit, noteShot, recHarm, recMelee } from './fxlog';
 
 export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2, c?: FxInfo): void {
@@ -324,8 +324,8 @@ export function panicShot(sim: Sim, s: Scene, I: Incident, x: number, y: number)
     c.health -= s.rng.range(26, 40); c.mob = 'immobile'; c.bleed = Math.max(c.bleed, 0.18); c.bleed0 = c.bleed; c.walking = false;
     h.state = 'fight'; h.cooldown = 1;
     pushFx(sim, s, 'shot', h.x, h.y, c.x, c.y, undefined, '#ff8a5c', 0.25); pushFx(sim, s, 'hit', c.x, c.y);
-    noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit: true, cover: false, tx: c.x, ty: c.y, tk: 2, target: c.id }); noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 2, target: c.id });
-    bulletPath(sim, s, h.x, h.y, c.x, c.y, 0);
+    noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit: true, tx: c.x, ty: c.y, tk: 2, target: c.id }); noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 2, target: c.id });
+    fireShot(sim, s, h.x, h.y, c.x, c.y, 'body');
     c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '진입 순간 인질 피격', { role: 'SYSTEM', actor: '현장', imp: 3, text: `진입에 놀란 ${h.label}가 인질(구조 대상 ${c.label})을 쐈습니다!` }, false);
   }
 }
@@ -391,6 +391,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
         c.health -= s.rng.range(28, 42); c.mob = 'immobile'; c.bleed = Math.max(c.bleed, 0.18); c.bleed0 = c.bleed; c.walking = false;
         c.causeEvent = raiseProblem(sim, I, 'ESCALATION', '시한이 지나 인질이 다침', { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `${h.label}가 요구가 받아들여지지 않자 인질을 다치게 했습니다!` }, false);
         recHarm(sim, s, h, c);
+        if (h.weapon === 'gun') fireShot(sim, s, h.x, h.y, c.x, c.y, 'body');      // (G5c) 그려진 탄의 선이 지나는 창도 깨진다
       }
     }
     // 사기 변화: 포위될수록, 부상당할수록 떨어진다
@@ -439,8 +440,8 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
         if (td <= 6.5 && los(s, h.x, h.y, target.x, target.y)) {
           h.facing = Math.atan2(target.y - h.y, target.x - h.x); h.moveAt = sim.t + s.rng.range(24, 38);
           pushFx(sim, s, 'shot', h.x, h.y, target.x, target.y, undefined, '#ff8a5c', 0.25); pushFx(sim, s, 'hit', target.x, target.y);
-          noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit: true, cover: false, tx: target.x, ty: target.y, tk: 2, target: target.id }); noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 2, target: target.id });
-          bulletPath(sim, s, h.x, h.y, target.x, target.y, 0);
+          noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit: true, tx: target.x, ty: target.y, tk: 2, target: target.id }); noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 2, target: target.id });
+          fireShot(sim, s, h.x, h.y, target.x, target.y, 'body');
           target.health -= s.rng.range(20, 32); target.mob = 'immobile'; target.bleed = Math.max(target.bleed, 0.13); target.bleed0 = target.bleed; target.walking = false; target.path = null;
           target.causeEvent = raiseProblem(sim, I, 'ESCALATION', `총격범의 추가 범행 (구조 대상 ${target.label})`, { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `총성! ${h.label}가 건물 안의 시민을 쐈습니다.` }, false);
           continue;
@@ -494,10 +495,11 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
           h.cooldown = s.rng.range(1.5, 2.6);
           const hit = s.rng.chance(p);
           ta.underFireT = sim.t;
-          pushFx(sim, s, 'shot', h.x, h.y, ta.x + (hit ? 0 : s.rng.range(-0.8, 0.8)), ta.y + (hit ? 0 : s.rng.range(-0.8, 0.8)), undefined, '#ff8a5c', 0.25);
-          noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit, cover: ta.inCover, tx: ta.x, ty: ta.y, tk: 0, target: ta.rid, arm: u.armor });
-          bulletPath(sim, s, h.x, h.y, ta.x, ta.y, hit ? 0 : 3);      // 탄이 지나간 창이 깨진다
-          if (!hit && ta.inCover) hitCover(sim, s, ta.x, ta.y, h.x, h.y);      // 빗나간 탄에 대원의 엄폐 가구가 닳는다
+          const mx = ta.x + (hit ? 0 : s.rng.range(-0.8, 0.8)), my = ta.y + (hit ? 0 : s.rng.range(-0.8, 0.8));      // 빗나간 탄이 겨눈 점 (판정 흐름에서 x 다음 y — 예전 그림 줄과 같은 순서)
+          const ct = !hit && ta.inCover ? coverRoll(sim, s, ta.x, ta.y, h.x, h.y) : -1;      // 빗나간 탄이 대원의 엄폐 가구에 맞는가 (파손용 흐름)
+          const end = hit || ct >= 0 ? fireShot(sim, s, h.x, h.y, ta.x, ta.y, hit ? 'body' : ct) : fireShot(sim, s, h.x, h.y, mx, my, 'miss');      // 탄이 실제로 간 선: 지나간 창이 깨지고 엄폐 가구가 닳는다
+          pushFx(sim, s, 'shot', h.x, h.y, end.x, end.y, undefined, '#ff8a5c', 0.25);
+          noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit, end, tx: ta.x, ty: ta.y, tk: 0, target: ta.rid, arm: u.armor });
           if (!I.problems.some((q) => q.code === 'ESCALATION' && q.detail === '용의자 발포')) {
             raiseProblem(sim, I, 'ESCALATION', '용의자 발포', { role: 'SYSTEM', actor: '현장', text: `${h.label}가 대원을 향해 발포했습니다!`, imp: 3 }, false);
           }

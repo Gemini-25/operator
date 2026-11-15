@@ -11,7 +11,7 @@ import { RETRY_AFTER, agentCost, casFact, debrisText, detectRadius, exitName, ho
 import { mkFact } from './beliefs';
 import { astar, doorAt, isIndoor, los, staticPass, tileOf, walkableCount } from './grid';
 import { applyWater, flashbang, hostageNear, hostileActive, isHeld, placeAtSafe, pushFx, panicShot } from './hazards';
-import { bulletPath, hitCover } from './damage';
+import { coverRoll, fireShot } from './damage';
 import { breachHowFor, lastFx, noteCollateral, noteHit, noteShot, recBreach, recCuff, weaponOf } from './fxlog';
 import { detonate } from './rules/crime';
 
@@ -298,18 +298,22 @@ function shootAt(sim: Sim, s: Scene, a: FieldAgent, hid: number): void {
   const p = 0.36 * (0.55 + 0.7 * r.skills.law) * (0.7 + 0.5 * r.composure) * clamp(1.3 - d / 14, 0.4, 1.1) * staminaF(r) * (covered ? 0.55 : 1) * (moving ? 0.6 : 1);
   const hit = s.rng.chance(p);
   h.shotAt = sim.t;
-  pushFx(sim, s, 'shot', a.x, a.y, h.x + (hit ? 0 : s.rng.range(-0.8, 0.8)), h.y + (hit ? 0 : s.rng.range(-0.8, 0.8)), undefined, '#ffe08a', 0.25);
-  const shot = lastFx(sim, s, 'shot'); noteShot(sim, s, shot, { side: 0, by: a.rid, wpn: weaponOf(sim, a), hit, cover: covered, tx: h.x, ty: h.y, tk: 1, target: h.id });
-  bulletPath(sim, s, a.x, a.y, h.x, h.y, hit ? 0 : 3);      // 탄이 지나간 창이 깨진다 (빗나간 탄은 용의자를 지나쳐 더 나아간다)
-  if (!hit && covered) hitCover(sim, s, h.x, h.y, a.x, a.y);      // 빗나간 탄에 용의자의 엄폐 가구가 닳는다
+  // 빗나간 탄이 겨눈 점 (판정 흐름에서 x 다음 y — 예전 그림 줄과 같은 호출 순서)
+  const mx = h.x + (hit ? 0 : s.rng.range(-0.8, 0.8)), my = h.y + (hit ? 0 : s.rng.range(-0.8, 0.8));
+  const hc = hostageNear(s, h);
+  const struck = !hit && hc && s.rng.chance(0.2) ? hc : null;      // 인질 곁의 용의자를 향해 쏜 빗나간 탄이 인질에게 간다 (판정 흐름의 순서는 예전과 같다: 흔들기 다음)
+  const ct = !hit && covered ? coverRoll(sim, s, h.x, h.y, a.x, a.y) : -1;      // 빗나간 탄이 용의자의 엄폐 가구에 맞는가 (파손용 흐름)
+  // 탄이 실제로 간 선: 지나간 창이 깨지고 엄폐 가구가 닳는다. 그림은 같은 선을 그 끝(end)까지 그린다
+  const end = hit ? fireShot(sim, s, a.x, a.y, h.x, h.y, 'body') : struck ? fireShot(sim, s, a.x, a.y, struck.x, struck.y, 'body') : ct >= 0 ? fireShot(sim, s, a.x, a.y, h.x, h.y, ct) : fireShot(sim, s, a.x, a.y, mx, my, 'miss');
+  pushFx(sim, s, 'shot', a.x, a.y, end.x, end.y, undefined, '#ffe08a', 0.25);
+  const shot = lastFx(sim, s, 'shot'); noteShot(sim, s, shot, { side: 0, by: a.rid, wpn: weaponOf(sim, a), hit, end, tx: h.x, ty: h.y, tk: 1, target: h.id });
   h.morale -= 0.015;
   if (sim.t >= h.stunUntil) { h.alertUntil = sim.t + 6; h.facing = Math.atan2(a.y - h.y, a.x - h.x); }
-  const hc = hostageNear(s, h);
-  if (!hit && hc && s.rng.chance(0.2)) {
+  if (struck) {
     // 인질 곁의 용의자를 향해 쏜 빗나간 탄
-    hc.health -= s.rng.range(22, 34); hc.mob = 'immobile'; hc.bleed = Math.max(hc.bleed, 0.15); hc.bleed0 = hc.bleed; hc.walking = false;
-    hc.causeEvent = raiseProblem(sim, I, 'ESCALATION', '교전 중 인질 피격', { role: 'SYSTEM', actor: '현장', rid: r.id, imp: 3, text: `교전 중 빗나간 탄에 인질(구조 대상 ${hc.label})이 다쳤습니다!` }, false);
-    noteCollateral(sim, s, shot, hc, a.x, a.y);
+    struck.health -= s.rng.range(22, 34); struck.mob = 'immobile'; struck.bleed = Math.max(struck.bleed, 0.15); struck.bleed0 = struck.bleed; struck.walking = false;
+    struck.causeEvent = raiseProblem(sim, I, 'ESCALATION', '교전 중 인질 피격', { role: 'SYSTEM', actor: '현장', rid: r.id, imp: 3, text: `교전 중 빗나간 탄에 인질(구조 대상 ${struck.label})이 다쳤습니다!` }, false);
+    noteCollateral(sim, s, shot, struck, a.x, a.y);
   }
   if (!I.problems.some((q) => q.detail === '교전 발생')) {
     I.problems.push({ code: 'ESCALATION', t: sim.t, eventId: emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 3, text: '교전 발생! 대응 사격합니다.' }), detail: '교전 발생', recovered: true, recoveryText: '' });

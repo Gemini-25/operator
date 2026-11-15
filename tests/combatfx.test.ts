@@ -1,15 +1,16 @@
-// G5 교전 연출 (docs/specs/G5-combat-fx.md): 기록 고리(fxlog)가 결과를 바꾸지 않는다, 꼬리표가 빠짐없이 붙는다, 그림·소리의 받아들이기와 묶음 규칙
+// G5 교전 연출 (docs/specs/G5-combat-fx.md): 기록 고리(fxlog)가 결과를 바꾸지 않는다, 꼬리표가 빠짐없이 붙는다, 탄의 선 = 깨진 창·맞은 칸(G5c), 그림·소리의 받아들이기와 묶음 규칙
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { NORMAL, parseDifficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
-import { rayEnd } from '../src/sim/field/damage';
+import { MISS_OVER, WRECKED, coverTile, fireShot, rayEnd, traceShot } from '../src/sim/field/damage';
+import type { ShotEnd } from '../src/sim/field/damage';
 import { FXLOG } from '../src/sim/field/fxlog';
 import { addProp, baseScene, set } from '../src/sim/field/kit';
 import { detonate } from '../src/sim/field/rules/crime';
 import { createIncident } from '../src/sim/incidents';
-import { T } from '../src/sim/types';
+import { DECOR, T } from '../src/sim/types';
 import type { Fx, Incident, Scene } from '../src/sim/types';
 import { TOKEN_CAP, isGunClass, newPlanState, planCues } from '../src/view/audioCombat';
 import { drawCombatPin } from '../src/view/city/combatPin';
@@ -225,6 +226,190 @@ describe('그림용 탄착점 rayEnd', () => {
     expect(s.staticVersion).toBe(ver);
     for (let i = 0; i < tiles.length; i++) if (i !== 8 * s.w + 10) expect(s.tiles[i]).toBe(tiles[i]);
   });
+});
+
+// ───────────────────────── 4b. 탄의 선 = 깨진 창 · 맞은 칸 (G5c) ─────────────────────────
+// 사용자 결정(2026-11-15): 빗나간 탄의 그림 선과 실제로 깨지는 창이 어긋나면 안 된다.
+// 그림의 선 = 기록의 자리(f.x, f.y) → 탄착점(c.ix, c.iy) (combat.shotLine). 칸 (cx,cy) 는 [cx−0.5, cx+0.5]².
+/** 선분 (x0,y0)→(x1,y1) 이 상자 [bx0,bx1]×[by0,by1] 와 겹치는 매개변수 구간의 길이(겹치지 않으면 −1) */
+function segBox(x0: number, y0: number, x1: number, y1: number, bx0: number, by0: number, bx1: number, by1: number): number {
+  let t0 = 0, t1 = 1;
+  const dx = x1 - x0, dy = y1 - y0;
+  for (const [p, q] of [[-dx, x0 - bx0], [dx, bx1 - x0], [-dy, y0 - by0], [dy, by1 - y0]] as [number, number][]) {
+    if (Math.abs(p) < 1e-12) { if (q < 0) return -1; continue; }
+    const r = q / p;
+    if (p < 0) { if (r > t1) return -1; if (r > t0) t0 = r; } else { if (r < t0) return -1; if (r < t1) t1 = r; }
+  }
+  return t1 - t0;
+}
+/** 선분이 칸의 안쪽을 지나는가(꼭짓점·변만 스치면 아니다) */
+const crossesCell = (x0: number, y0: number, x1: number, y1: number, cx: number, cy: number): boolean => segBox(x0, y0, x1, y1, cx - 0.5 + 1e-6, cy - 0.5 + 1e-6, cx + 0.5 - 1e-6, cy + 0.5 - 1e-6) > 0;
+/** 선분이 칸에 닿는가(변·꼭짓점 포함) */
+const touchesCell = (x0: number, y0: number, x1: number, y1: number, cx: number, cy: number): boolean => segBox(x0, y0, x1, y1, cx - 0.5 - 1e-6, cy - 0.5 - 1e-6, cx + 0.5 + 1e-6, cy + 0.5 + 1e-6) >= 0;
+/** 선분이 안쪽을 지나는 칸들 (시작 칸 포함) */
+function cellsOn(s: Scene, x0: number, y0: number, x1: number, y1: number): number[] {
+  const out: number[] = [];
+  const ax = Math.max(0, Math.floor(Math.min(x0, x1) - 1)), bx = Math.min(s.w - 1, Math.ceil(Math.max(x0, x1) + 1));
+  const ay = Math.max(0, Math.floor(Math.min(y0, y1) - 1)), by = Math.min(s.h - 1, Math.ceil(Math.max(y0, y1) + 1));
+  for (let y = ay; y <= by; y++) for (let x = ax; x <= bx; x++) if (crossesCell(x0, y0, x1, y1, x, y)) out.push(y * s.w + x);
+  return out;
+}
+const BLOCK = (t: number): boolean => t === T.WALL || t === T.ROCK || t === T.VOID;
+
+describe('탄의 선 = 깨진 창 · 맞은 칸 (G5c)', () => {
+  function room(): { sim: Sim; s: Scene; at: (x: number, y: number) => number } {
+    const sim = new Sim('SHOTLINE');
+    const s = baseScene(sim, { id: 0, truth: { type: 'armed', variant: 'test' } } as never, sim.rng.fork('room'));
+    for (let y = 4; y <= 14; y++) for (let x = 4; x <= 20; x++) set(s, x, y, x === 4 || x === 20 || y === 4 || y === 14 ? T.WALL : T.FLOOR);
+    return { sim, s, at: (x, y) => y * s.w + x };
+  }
+  /** 이 탄도로 깨져야 할 창 = 선분이 안쪽을 지나는 창 (시작 칸 제외). 그 밖의 창은 깨지지 않았다 */
+  function expectGlassOnLine(s: Scene, x0: number, y0: number, e: ShotEnd, before: Uint8Array): void {
+    const start = Math.round(y0) * s.w + Math.round(x0);
+    const on = new Set(cellsOn(s, x0, y0, e.x, e.y).filter((i) => i !== start && s.tiles[i] === T.WINDOW));
+    for (let i = 0; i < s.tiles.length; i++) {
+      if (s.tiles[i] !== T.WINDOW) continue;
+      const broke = s.glass[i] === 1 && before[i] === 0;
+      if (on.has(i)) expect(s.glass[i], `선 위의 창 (${i % s.w},${(i / s.w) | 0})`).toBe(1);
+      else expect(broke, `선 밖의 창 (${i % s.w},${(i / s.w) | 0}) 이 깨졌다`).toBe(false);
+    }
+  }
+
+  it('비스듬한 탄: 선분이 지나는 창만 깨지고, 꼭짓점만 스친 창은 그대로, 끝은 벽면', () => {
+    const { sim, s, at } = room();
+    // 선 y = x − 2 는 (8.5,6.5)·(9.5,7.5)… 꼭짓점을 지난다: (9,6)·(8,7) 은 꼭짓점만 스치고, (10,8) 은 가운데를 지난다
+    for (const [x, y] of [[9, 6], [8, 7], [10, 8], [13, 10], [12, 11], [15, 12]]) set(s, x, y, T.WINDOW);
+    const before = s.glass.slice();
+    const e = fireShot(sim, s, 8, 6, 11, 9, 'miss');
+    expect(s.glass[at(9, 6)]).toBe(0);
+    expect(s.glass[at(8, 7)]).toBe(0);
+    expect(s.glass[at(10, 8)]).toBe(1);
+    expect(e.stop).toBe('far');                                   // 겨눈 점 (11,9) 에서 3칸 더: 벽에 닿기 전에 끝난다
+    expect(e.x).toBeCloseTo(11 + 3 / Math.SQRT2); expect(e.y).toBeCloseTo(9 + 3 / Math.SQRT2);
+    expectGlassOnLine(s, 8, 6, e, before);
+    // 칸 가운데가 아닌 자리에서 쏜 비스듬한 탄 — 반올림한 정수 격자 걷기와 달리 선분이 지나는 칸을 그대로 따른다
+    const b2 = s.glass.slice();
+    const e2 = fireShot(sim, s, 6.42, 12.31, 16.7, 9.05, 'miss');
+    expect(e2.stop).toBe('wall');
+    expect(Math.abs(e2.x - 19.5)).toBeLessThan(1e-9);               // 동쪽 벽(20, y)의 벽면
+    expectGlassOnLine(s, 6.42, 12.31, e2, b2);
+    expect(s.tiles[at(Math.round(e2.x + 0.01), Math.round(e2.y - 0.01 * (12.31 - 9.05) / (16.7 - 6.42)))]).toBe(T.WALL);
+  });
+
+  it('엄폐 가구로 간 탄: 그 칸에 들어서는 자리에서 멈추고 가구가 닳는다. 그 앞의 창은 깨진다', () => {
+    const { sim, s, at } = room();
+    const sofa = at(10, 8); s.tiles[sofa] = T.FURN; s.decor[sofa] = DECOR.SOFA; s.fuel[sofa] = 1;
+    set(s, 12, 8, T.WINDOW);
+    expect(coverTile(s, 9, 8, 14, 8)).toBe(sofa);
+    const e = fireShot(sim, s, 14, 8, 9, 8, sofa);
+    expect(e.stop).toBe('furn');
+    expect(e.x).toBeCloseTo(10.5); expect(e.y).toBeCloseTo(8);
+    expect(s.decorHp[sofa]).toBe(1);
+    expect(s.glass[at(12, 8)]).toBe(1);
+    // 가구 앞이 벽이면 벽에서 멈추고 가구는 그대로
+    set(s, 11, 8, T.WALL);
+    const e2 = fireShot(sim, s, 14, 8, 9, 8, sofa);
+    expect(e2.stop).toBe('wall'); expect(e2.x).toBeCloseTo(11.5);
+    expect(s.decorHp[sofa]).toBe(1);
+  });
+
+  it('맞은 탄은 맞은 사람에서 끝난다: 벽 모서리를 스쳐도 멈추지 않고, 그 너머의 창은 깨지지 않는다', () => {
+    const { sim, s, at } = room();
+    const x0 = 6, y0 = 6, x1 = 9.4, y1 = 8.6;
+    const mid = cellsOn(s, x0, y0, x1, y1).find((i) => i !== at(6, 6) && i !== at(9, 9))!;
+    set(s, mid % s.w, (mid / s.w) | 0, T.WALL);
+    set(s, 12, 11, T.WINDOW);
+    const e = fireShot(sim, s, x0, y0, x1, y1, 'body');
+    expect(e).toEqual({ x: x1, y: y1, stop: 'body' });
+    expect(s.glass[at(12, 11)]).toBe(0);
+    expect(traceShot(s, x0, y0, x1, y1, { over: MISS_OVER }).stop).toBe('wall');      // 빗나간 탄이었다면 그 벽에서 멈춘다
+  });
+
+  it('교전 기록: 모든 사격의 끝점이 탄을 멈춘 칸이고, 선 위의 창은 깨지며, 깨진 창과 닳은 가구는 모두 그 틱 사격의 선 위에 있다', () => {
+    const got = { shots: 0, miss: 0, cover: 0, wall: 0, door: 0, far: 0, glass: 0, worn: 0 };
+    let runs = 0;
+    for (let k = 0; k < 12; k++) {
+      for (const force of ['armed/shooter', 'armed/siege', 'armed/hostage']) {
+        runs++;
+        const sim = new Sim('G5C-' + k, HOT, 1200, { force });
+        const seen = new WeakSet<Fx>();
+        const [ft, fv] = force.split('/');
+        let I: Incident | null = null, closedAt = -1, n = 0;
+        while (!sim.ended && n < 20000) {
+          // 사격이 나는 현장(용의자가 있는 현장)만 틱 전 상태를 적어 둔다
+          const pre = new Map<number, { glass: Uint8Array; hp: Uint8Array }>();
+          for (const s of sim.scenes) if (s && !s.archived && s.hostiles.length) pre.set(s.id, { glass: s.glass.slice(), hp: s.decorHp.slice() });
+          sim.step(); n++;
+          for (const s of sim.scenes) {
+            if (!s) continue;
+            const news: Fx[] = [];
+            for (const f of s.fx) if (!seen.has(f)) { seen.add(f); news.push(f); }
+            const p = pre.get(s.id);
+            if (!p) continue;
+            const shots = news.filter((f) => f.kind === 'shot');
+            const blast = news.some((f) => f.kind === 'flash' || f.kind === 'boom') || s.fire.some((v) => v > 0.05);
+            const coverCells: number[] = [];
+            for (const f of shots) {
+              const c = f.c!;
+              expect(c, `${sim.seed}: 꼬리표 없는 사격`).toBeTruthy();
+              got.shots++;
+              const ix = c.ix!, iy = c.iy!;
+              // 기록의 끝점(x2,y2)과 꼬리표의 탄착점이 같다: 꼬리표가 없어도 그림이 같은 선을 그린다
+              expect(f.x2!, `${sim.seed}: 기록 끝점 x`).toBeCloseTo(ix, 9); expect(f.y2!, `${sim.seed}: 기록 끝점 y`).toBeCloseTo(iy, 9);
+              const d = Math.hypot(ix - f.x, iy - f.y) || 1, ux = (ix - f.x) / d, uy = (iy - f.y) / d;
+              const start = Math.round(f.y) * s.w + Math.round(f.x);
+              const on = cellsOn(s, f.x, f.y, ix, iy);
+              // 선 위의 창은 모두 깨져 있다 (멈춘 칸 앞까지)
+              const stopCell = c.stop === 'wall' || c.stop === 'door' || c.stop === 'furn' ? Math.round(iy + uy * 1e-7) * s.w + Math.round(ix + ux * 1e-7) : -1;
+              for (const i of on) if (i !== start && i !== stopCell && s.tiles[i] === T.WINDOW) expect(s.glass[i], `${sim.seed} t=${sim.t}: 선 위의 창 (${i % s.w},${(i / s.w) | 0}) 이 그대로다`).toBe(1);
+              if (c.res === 'hit') { expect(c.stop).toBe('body'); continue; }
+              got.miss++;
+              if (c.stop === 'body') continue;                                    // 인질이 맞은 빗나간 탄 (끝점 = 인질)
+              // 빗나간 탄은 끝점 앞에서 벽을 지나지 않는다
+              for (const i of on) if (i !== start && i !== stopCell) expect(BLOCK(s.tiles[i]), `${sim.seed} t=${sim.t}: 빗나간 탄이 벽 (${i % s.w},${(i / s.w) | 0}) 을 지났다`).toBe(false);
+              if (c.stop === 'far') { got.far++; expect(ix >= -0.5 - 1e-9 && iy >= -0.5 - 1e-9 && ix <= s.w - 0.5 + 1e-9 && iy <= s.h - 0.5 + 1e-9).toBe(true); continue; }
+              // 끝점은 멈춘 칸의 가장자리이고, 그 칸이 탄을 멈춘 것이다
+              const sx = stopCell % s.w, sy = (stopCell / s.w) | 0;
+              expect(Math.abs(Math.max(Math.abs(ix - sx), Math.abs(iy - sy)) - 0.5), `${sim.seed}: 끝점이 칸 가장자리에 있지 않다`).toBeLessThan(1e-6);
+              if (c.stop === 'wall') { got.wall++; expect(BLOCK(s.tiles[stopCell]), `${sim.seed}: 'wall' 끝의 칸`).toBe(true); }
+              else if (c.stop === 'door') { got.door++; expect(s.tiles[stopCell]).toBe(T.DOOR); }
+              else {
+                got.cover++;
+                expect(c.res).toBe('cover');
+                expect(s.tiles[stopCell] === T.FURN || s.decorHp[stopCell] === WRECKED, `${sim.seed}: 'furn' 끝의 칸이 가구가 아니다`).toBe(true);
+                expect(s.decorHp[stopCell] > p.hp[stopCell] || s.decorHp[stopCell] === 200, `${sim.seed} t=${sim.t}: 탄이 박힌 가구가 닳지 않았다`).toBe(true);
+                coverCells.push(stopCell);
+              }
+            }
+            // 거꾸로: 이 틱에 깨진 창과 닳은 가구는 모두 이 틱 사격의 선 위에 있다 (섬광탄·폭발·불이 없는 틱)
+            if (blast) continue;
+            for (let i = 0; i < s.glass.length; i++) {
+              if (!s.glass[i] || p.glass[i]) continue;
+              got.glass++;
+              const x = i % s.w, y = (i / s.w) | 0;
+              expect(shots.some((f) => touchesCell(f.x, f.y, f.c!.ix!, f.c!.iy!, x, y)), `${sim.seed} t=${sim.t}: 창 (${x},${y}) 이 어느 탄의 선 위에도 없다`).toBe(true);
+            }
+            for (let i = 0; i < s.decorHp.length; i++) {
+              if (s.decorHp[i] === p.hp[i]) continue;
+              got.worn++;
+              expect(coverCells.includes(i), `${sim.seed} t=${sim.t}: 가구 (${i % s.w},${(i / s.w) | 0}) 가 탄착점 없이 닳았다`).toBe(true);
+            }
+          }
+          if (!I) I = sim.incidents.find((q) => q.truth.type === ft && (!fv || q.truth.variant === fv) && q.createdAt >= 15 && q.createdAt < 15.5) ?? null;
+          if (I && I.phase === 'closed' && closedAt < 0) closedAt = n;
+          if (closedAt >= 0 && n >= closedAt + 150) break;
+        }
+      }
+      if (k >= 2 && got.cover && got.wall && got.far && got.glass && got.worn) break;
+    }
+    expect(got.miss, '빗나간 탄').toBeGreaterThan(20);
+    expect(got.cover, '가구에 박힌 탄').toBeGreaterThan(0);
+    expect(got.wall, '벽에 박힌 탄').toBeGreaterThan(0);
+    expect(got.far, '멀리 간 탄').toBeGreaterThan(0);
+    expect(got.glass, '사격에 깨진 창').toBeGreaterThan(0);
+    expect(got.worn, '사격에 닳은 가구').toBeGreaterThan(0);
+    console.log(`G5c 탄도 ${runs}교대: ${JSON.stringify(got)}`);
+  }, 240000);
 });
 
 // ───────────────────────── 5. 연출 기억 FxBook ─────────────────────────

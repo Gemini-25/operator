@@ -280,9 +280,9 @@ const AID_WAIT = 30, AID_DELAY = 18;
  * 막힌 수요를 채울 수 있는(능력이 기준 이상인) 지상 부대 가운데 다른 사건에 묶인 것: 그 사건을 I.blockedBy 에, 그 사건의 마지막 출동 지령을 원인에.
  * 결원으로 운용을 멈춘 부대(oos, 지원 부대 제외): ref.unit 과 그 부대의 운용 중단 기록(문구 규칙 T6)을 원인에 — 그 기록 id 는 어디에도 두지 않으므로
  * 기록을 끝에서부터 그 부대의 마지막 부상·순직 기록(u.oosEv, H1)까지만 거슬러 찾는다(NO_UNIT 이 날 때만이라 드물다).
- * 관제가 아는 것만 쓴다: 자기 조직의 부대 상태·배정, 자기가 낸 지령과 받은 운용 중단 보고.
+ * 관제가 아는 것만 쓴다: 자기 조직의 부대 상태·배정, 자기가 낸 지령과 받은 운용 중단 보고. export 는 시험용
  */
-function blockersOf(sim: Sim, I: Incident, keys: (keyof Needs)[]): { causes: number[]; ref: Problem['ref'] } {
+export function blockersOf(sim: Sim, I: Incident, keys: (keyof Needs)[]): { causes: number[]; ref: Problem['ref'] } {
   const causes: number[] = [];
   let inc = -1, oos = -1;
   for (const u of sim.units) {

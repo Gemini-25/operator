@@ -5,22 +5,28 @@
 // 지금과 기록 해시가 한 글자도 다르지 않다(설계서 §8 의 0단계 해시 목록).
 //
 // 단계 1 (틀): 자료형(CarryState·CarryNote) · readCarryover(검사하며 새 객체로) · carryKey · cityKey · 빈 initCarry · tickCarry(첫 줄 반환) ·
-//   makeCarryover 의 뼈대(조직 명부의 모든 열쇠 — 앞 상태를 그대로 옮긴다) · shiftStartCounts · 생성자의 자리 applyCrewCarry(빈 함수)·announceCarry(요약 줄과 버린 것).
-// 뒤 단계가 채운다: 2 대원(crewNext·applyCrewCarry·결장 상한·예비 인력) · 3 장비(펌프·정비·섬광탄 창고) · 4 도로(복구 공사) ·
+//   makeCarryover 의 뼈대 · shiftStartCounts · 생성자의 자리 applyCrewCarry·announceCarry(요약 줄과 버린 것).
+// 단계 2 (대원): crewNext(끝 상태 → 다음 교대 — 행의 순서·결장·체력·성장·신임·개인 장비 점검) · applyCrewCarry 의 대원 몫(신임·성장·결장 off·결장 상한·
+//   예비 인력 — minField·내리지 않는 자리, 모자라면 short·나올 사람이 없으면 empty) · operable · announceCarry 의 대원 줄.
+// 뒤 단계가 채운다: 3 장비(펌프·정비·섬광탄 창고) · 4 도로(복구 공사) ·
 //   5 건물(placeOutcome·placeUsable·placeCond·applyPlaceWear·noteWearIncident) · 7 보고서(carrySummary·carryLines).
 //
-// import: types · rng · events · resources(함수만 — 부를 때만 쓴다. resources → sceneManager → … 순환에서 모듈 맨 위의 표를 읽지 않는다) ·
-//   crews(잎 모듈 — KITS) · field/injury(잎 모듈 — CAUSE_NAME) · difficulty(잎 모듈 — 이름표). incidents · dispatch/* · debrief 와 그 밖의 field/* 는 import 하지 않는다.
+// import: types · rng · events · util · resources(함수만 — 부를 때만 쓴다. resources → sceneManager → … 순환에서 모듈 맨 위의 표를 읽지 않는다) ·
+//   crews(잎 모듈 — KITS·ROLES·STAFF·역할 식·장비) · field/injury(잎 모듈 — CAUSE_NAME·outShifts·mainCause) · difficulty(잎 모듈 — 이름표).
+//   incidents · dispatch/* · debrief 와 그 밖의 field/* 는 import 하지 않는다.
 // 브라우저 저장은 표현 계층(view/runner.ts — 단계 6)에서만 한다 — src/sim 은 저장소를 모른다 (원칙 8, 시험 9 가 글자로 본다).
 
-import { KITS } from './crews';
+import { KITS, ROLES, STAFF, dealFlashbangs, kitFor, minField, skillsOf, slotsOf, stays } from './crews';
 import { difficultyLabel } from './difficulty';
 import type { Sim } from './engine';
 import { emit } from './events';
-import { CAUSE_NAME } from './field/injury';
-import { rosterKeys } from './resources';
+import { CAUSE_NAME, mainCause, outShifts } from './field/injury';
+import { crewReady, rosterKeys, traitOf } from './resources';
+import type { RosterKey } from './resources';
 import { hashStr } from './rng';
-import type { Carryover, City, CrewCarry, PlaceCarry, RecruitBase, RoadCarry, StockId, UnitCarry } from './types';
+import type { Rng } from './rng';
+import type { Carryover, City, CrewCarry, InjuryCause, PlaceCarry, RecruitBase, Responder, RoadCarry, StockId, Unit, UnitCarry, UnitKind } from './types';
+import { clamp, josa } from './util';
 
 // ───────────────────────── 상수 (설계서 §6.1 — 처음 값. 바꾸면 구현 메모에 적는다) ─────────────────────────
 /** 이어받은 상태의 판. 칸의 뜻이 바뀌면 올리고 readCarryover 에 옮기는 함수를 둔다 (선택 칸을 더하는 것은 올리지 않는다) */
@@ -36,6 +42,28 @@ export const STOCK_CAP = 10;
 export const PLACE_CAP = 24;
 export const CLOSED_CAP = 12;
 export const ROAD_CAP = 6;
+// ── 대원 (단계 2 — §3.2·§6.1) ──
+/** 휴식 한 번에 오르는 체력 (교대 끝 체력 + REST_HEAL, 100 까지) */
+export const REST_HEAL = 40;
+/** 결장을 마치고 돌아올 때의 체력 */
+export const BACK_HEALTH = 85;
+/** 결장 상한에 걸려 일찍 돌아오는 대원의 체력 */
+export const EARLY_BACK_HEALTH = 70;
+/** 성장: gain = min(GAIN_CAP, xpGained × GAIN_K) × (1 − 경험), 숙련은 그 SKILL_K 배 (설계서 §3.2 의 처음 값 — 측정은 단계 8) */
+export const GAIN_K = 0.5;
+export const GAIN_CAP = 0.02;
+export const SKILL_K = 0.6;
+/** 결장 상한 = max(ABSENT_FLOOR, floor(ABSENT_SHARE × 편성 인원)) — 넘는 만큼 남은 결장이 짧은 사람부터 조기 복귀 (큰 재난 뒤에도 조직의 4/5 는 나온다) */
+export const ABSENT_SHARE = 0.2;
+export const ABSENT_FLOOR = 2;
+export function absentCap(fielded: number): number { return Math.max(ABSENT_FLOOR, Math.floor(ABSENT_SHARE * fielded)); }
+/** 한 교대에 붙일 수 있는 본부 예비 인력 */
+export const RELIEF_MAX = 4;
+/** 신임 대원의 이름 (가상의 이름 — 명부 NAMES·EXTRA_NAMES·지원 AID_NAMES·예비 RELIEF_NAMES 와 겹치지 않는다). 모두 쓰면 이름 뒤에 숫자 */
+export const RECRUIT_NAMES = ['강유찬', '고다솜', '구민결', '권하랑', '김새벽', '나지오', '류다현', '박서온', '배윤호', '성하빈', '신도하', '안예준',
+  '양서림', '오지환', '유하엘', '이도담', '임가온', '전시후', '정라엘', '조윤슬', '최다올', '한이현', '허지담', '황시온'];
+/** 본부 예비 인력의 이름 (교대마다 차례로 — 이어받지 않는다) */
+export const RELIEF_NAMES = ['문재희', '백하준', '신태건', '오윤재', '장미르', '차도건', '표서진', '하민규'];
 
 // ───────────────────────── 실행 중 상태 (§2.2) ─────────────────────────
 export interface CarryState {
@@ -47,14 +75,14 @@ export interface CarryState {
   event: number;                                 // 이어받은 상태 요약 기록의 id (-1 = 없음). 원인으로 잇는다
   applied: CarryNote[];                          // ①·② 가 실제로 적용한 항목 (적용한 순서) — announceCarry 가 이것만 기록한다
   dropped: string[];                             // 적용하지 못한 것 (도시가 끊길 통제, 지도 지문 불일치, 조직 명부에 없는 열쇠, 상한을 넘은 항목) — announceCarry 가 적는다
-  stats: { relief: number; serviced: number; reopened: number; markedInc: string[]; fbShort: number; early: number };
+  stats: { relief: number; serviced: number; reopened: number; markedInc: string[]; fbShort: number; early: number; grown: number };      // grown (단계 2): 이번 교대에 나온 대원 가운데 기본 능력보다 숙련이 오른 사람 수 (요약 줄)
 }
 /** 적용한 항목 하나 (기록 한 줄의 재료). 상태를 바꾼 함수가 그 자리에서 push 한다 */
 export type CarryNote =
   | { what: 'absent'; unit: string; names: string[]; cause: string | null; left: number }
   | { what: 'vacant'; unit: string; name: string; left: number }
   | { what: 'recruit'; unit: string; name: string; seat: string }
-  | { what: 'early'; name: string }
+  | { what: 'early'; unit: string; name: string }                    // (단계 2) 기록의 주인(호출부호)을 알려고 unit 을 더했다
   | { what: 'relief'; unit: string; name: string; role?: string }
   | { what: 'short'; unit: string; n: number }                       // 예비 인력이 모자라 최소 편성보다 적은 n명(내리는 대원)으로 운용 — oos 가 아니다(결원 감점만)
   | { what: 'empty'; unit: string; why: 'crew' | 'pilot' }          // 나올 내리는 대원이 한 명도 없거나(crew) 조종·조타할 사람이 없어(pilot) oos '결원'
@@ -291,15 +319,162 @@ export function readCarryover(x: unknown, city: City): { carry: Carryover; dropp
 export function initCarry(sim: Sim, dropped: string[]): CarryState {
   return {
     on: sim.carry !== null, places: new Map(), roads: [], slowed: [], svc: 0, event: -1, applied: [], dropped: dropped.slice(),
-    stats: { relief: 0, serviced: 0, reopened: 0, markedInc: [], fbShort: 0, early: 0 },
+    stats: { relief: 0, serviced: 0, reopened: 0, markedInc: [], fbShort: 0, early: 0, grown: 0 },
   };
 }
+// ───────────────────────── 대원의 적용 (단계 2 — §3.2 의 "다음 교대에 적용") ─────────────────────────
+/** 조종·조타하는 역할 (기장·부기장·정장 — 그림 묶음 'pilot'). 이 자리가 있는 부대는 그 가운데 한 명이라도 나와야 움직인다 (헬기가 조종사 없이 뜨지 않게) */
+const steers = (r: Responder): boolean => r.role !== undefined && ROLES[r.role].group === 'pilot';
+const kindSteers = (kind: UnitKind): boolean => STAFF[kind].std.some((role) => ROLES[role].group === 'pilot');
+/** 내리는 자리와 내리지 않는 자리가 섞인 부대 (소방·의료 헬기, 구조정) — 내리지 않는 자리를 따로 본다 (경찰 헬기는 모두 내리지 않아 fieldCrew 가 전원이다) */
+const mixedKind = (kind: UnitKind): boolean => { const std = STAFF[kind].std; return std.some((role) => ROLES[role].stays === true) && std.some((role) => !ROLES[role].stays); };
+/** 최소 편성의 내리지 않는 자리 수 */
+const staysMin = (kind: UnitKind): number => { const std = STAFF[kind].std; let n = 0; for (const k of slotsOf(kind, true)) if (ROLES[std[k]].stays) n++; return n; };
+/** 나온(off 가 아닌) 내리지 않는 자리의 사람 수 */
+function staysPresent(sim: Sim, u: Unit): number { let n = 0; for (const rid of u.crew) if (sim.responders[rid].status !== 'off' && stays(sim, rid)) n++; return n; }
+/** 조종·조타할 사람이 나와 있는가 (그런 자리가 없는 부대는 언제나 참) */
+function pilotOk(sim: Sim, u: Unit): boolean {
+  if (!kindSteers(u.kind)) return true;
+  for (const rid of u.crew) { const r = sim.responders[rid]; if (r.status !== 'off' && steers(r)) return true; }
+  return false;
+}
 /**
- * ② 대원·부대·재고의 적용 (engine 생성자 — createRoster 가 모든 난수를 뽑은 뒤 값만 바꾼다). 단계 2(결장·성장·예비 인력)·3(펌프·정비·섬광탄)이 채운다.
- * 이어받은 상태가 없으면 첫 줄에서 돌아간다
+ * 이 부대가 움직일 수 있는가 (§3.2 적용 6 의 운용 판정 — 최소 편성까지 찼는지는 보지 않는다): 걸을 수 있는 내리는 대원이 한 명 이상이고(crewReady > 0),
+ * 조종·조타할 자리가 있는 부대면 그 사람이 나와 있다. 정비를 마친 부대의 운용 복귀(tickCarry — 단계 3)도 같은 판정을 쓴다
+ */
+export function operable(sim: Sim, u: Unit): boolean { return crewReady(sim, u) > 0 && pilotOk(sim, u); }
+
+/** 본부 예비 인력 한 명: 그 자리의 역할·기본 장비, 능력은 createAidUnit 의 후임 식(경험 0.15~0.55). 대원 객체는 createRoster 의 글자와 같은 칸·같은 순서 */
+function makeRelief(sim: Sim, u: Unit, seat: Responder, rng: Rng, name: string): Responder {
+  const role = seat.role!, tn = sim.tune;
+  const st = (): number => clamp(rng.range(0.3, 0.9), 0, 1);
+  const exp = rng.range(0.15, 0.55);
+  const skill = clamp(st() * 0.6 + exp * 0.4 + 0.05, 0.3, 0.95);
+  const kit = kitFor(role, tn.airFull, (seat.kit ?? []).map((it) => it.id));      // 그 자리의 기본 장비(복구반장처럼 부대마다 다른 장비도 그 자리의 것) — 고장 추첨은 하지 않는다
+  for (const it of kit) if (it.id === 'flashbang') it.uses = 0;                       // 섬광탄은 아래에서 부대 몫을 나눈다 (R1 — 0 개를 받은 사람의 항목도 남긴다)
+  const r: Responder = {
+    id: sim.responders.length, name, dept: u.dept, unitId: u.id, senior: false,
+    skill, judgment: clamp(st() * 0.65 + exp * 0.35, 0.2, 0.95), composure: st(), fitness: st(), teamwork: st() * 0.85, experience: exp,
+    skills: skillsOf(role, skill),
+    trait: '', health: 100, stamina: tn.startStamina, status: 'ok', xpGained: 0, incidentsWorked: 0,
+    role, kit,
+    injuries: undefined, bleed: undefined, bleed0: undefined, treatQ: undefined, dead: undefined, tDown: undefined, tDead: undefined, care: undefined, deathCause: undefined, bleedCause: undefined,      // (H1) createRoster 의 대원과 같은 칸, 같은 순서
+    seat: undefined, relief: true, carryOut: undefined, carryCause: undefined,      // (I2) 예비 인력 — 이번 교대만 (이어받지 않는다)
+  };
+  r.trait = traitOf(r);
+  return r;
+}
+
+/**
+ * ② 대원·부대·재고의 적용 (engine 생성자 — createRoster 가 모든 난수를 뽑은 뒤 값만 바꾼다). 이어받은 상태가 없으면 첫 줄에서 돌아간다.
+ * 단계 2 (대원 — §3.2 의 1~7): 열쇠(createRoster 가 붙인 이름 = 명부 자리)로 항목을 찾아 ① 신임 대원이면 같은 rid 그대로 사람을 바꾸고(role·kit 은 그 자리의 것)
+ * ② 성장(경험·숙련·판단, 역할 식의 skills, 특성)을 더하고 ③ 결장·공석이면 status 'off'(지구력 100), 아니면 이어받은 체력 ④ 점검에서 드러나지 않은 장비 고장(kitFault)을
+ * 명부의 고장 추첨 뒤에 더한다. 그다음 결장 상한(조기 복귀), 예비 인력(minField·내리지 않는 자리 — 모자라면 short, 나올 사람이 없으면 empty → oos '결원').
+ * 바꾼 것은 모두 carryState.applied 에 적고 announceCarry 가 그것만 기록한다. 난수는 예비 인력의 relief:<호출부호> 흐름 하나뿐이다.
+ * 단계 3(펌프·정비·섬광탄 창고)이 부대 몫을 더한다 — 정비는 예비 인력 앞(정비 중인 부대에는 붙이지 않는다: u.readyAt), 창고 지급은 끝에.
  */
 export function applyCrewCarry(sim: Sim): void {
-  if (!sim.carryState.on) return;
+  const cs = sim.carryState, co = sim.carry;
+  if (!cs.on || !co) return;
+  const byKey = new Map<string, CrewCarry>();
+  for (const c of co.crew) byKey.set(c.seat ?? c.name, c);
+  const n0 = sim.responders.length;                      // 편성된 조직 대원 (예비 인력·지원 대원 전)
+  const entry: (CrewCarry | undefined)[] = new Array(n0);
+  // 1~4. 사람마다: 신임 · 성장 · 체력 · 장비 고장 (결장은 상한을 본 뒤에 정한다)
+  for (let i = 0; i < n0; i++) {
+    const r = sim.responders[i], c = byKey.get(r.name);    // createRoster 가 붙인 이름 = 명부 자리 (seat 는 아직 없다)
+    entry[i] = c;
+    if (!c) continue;                                    // 항목이 없으면 그대로 (새 사람)
+    const rb = c.recruit;
+    if (rb) {                                            // 신임 대원: 같은 rid 그대로 — sim.responders 의 순서·현장 개체 흐름(agent:<사건>:<rid>)이 그대로다
+      if (c.seat !== undefined) r.seat = c.seat;
+      r.name = c.name;
+      r.skill = rb.skill; r.judgment = rb.judgment; r.composure = rb.composure; r.fitness = rb.fitness; r.teamwork = rb.teamwork; r.experience = rb.experience;
+    }
+    if (rb || c.dExp > 0 || c.dSkill > 0) {              // 성장: 기본 능력(조직 시드 · 신임은 recruit)에 누적을 더한다 (createRoster 의 식에서 경험의 몫)
+      const be = r.experience, bs = r.skill, bj = r.judgment;
+      r.experience = Math.min(0.97, be + c.dExp);
+      r.skill = clamp(bs + c.dSkill, 0.3, 0.98);
+      r.judgment = clamp(bj + 0.35 * c.dExp, 0.2, 0.98);
+      if (r.role !== undefined) r.skills = skillsOf(r.role, r.skill);
+      r.trait = traitOf(r);
+    }
+    if (c.out === 0) r.health = c.health;
+    if (c.kitFault) for (const id of c.kitFault) { const it = r.kit?.find((q) => q.id === id); if (it) it.fault = true; }      // (R1) 명부의 고장 추첨(kit 흐름 — 그대로 다 뽑았다) 뒤에 더한다
+  }
+  // 5. 결장 상한: 결장(공석 제외)이 상한을 넘으면 남은 결장이 짧은 사람부터(같으면 이름 순) 일찍 돌아온다
+  const away: number[] = [];
+  for (let i = 0; i < n0; i++) { const c = entry[i]; if (c && c.out > 0) away.push(i); }
+  const early = new Set<number>();
+  const cap = absentCap(n0);
+  if (away.length > cap) {
+    const nm = (i: number): string => sim.responders[i].name;
+    const order = away.slice().sort((a, b) => entry[a]!.out - entry[b]!.out || (nm(a) < nm(b) ? -1 : nm(a) > nm(b) ? 1 : 0));
+    for (let k = 0; k < away.length - cap; k++) early.add(order[k]);
+  }
+  for (let i = 0; i < n0; i++) {
+    const c = entry[i], r = sim.responders[i];
+    if (!c || c.out === 0) continue;
+    if (early.has(i)) { r.health = EARLY_BACK_HEALTH; continue; }
+    r.status = 'off'; r.carryOut = c.out; r.carryCause = c.cause; r.stamina = 100;      // 결장자는 회복하지 않으므로(지구력은 ok 만 오른다) 100 — 배정의 평균 지구력에 감점을 남기지 않게 (§3.2 적용 4)
+  }
+  // 적용 목록: 부대마다 신임 → 결장(같은 원인·같은 남은 교대끼리 한 줄) → 공석, 그다음 조기 복귀
+  for (const u of sim.units) {
+    const groups: Extract<CarryNote, { what: 'absent' }>[] = [], vac: CarryNote[] = [];
+    for (const rid of u.crew) {
+      if (rid >= n0) continue;
+      const c = entry[rid], r = sim.responders[rid];
+      if (!c) continue;
+      if (c.recruit && c.out === 0 && c.shifts === 0) cs.applied.push({ what: 'recruit', unit: u.callsign, name: r.name, seat: r.seat ?? r.name });      // 처음 오는 교대
+      if (r.status !== 'off') continue;
+      if (c.out === -1) { vac.push({ what: 'vacant', unit: u.callsign, name: r.name, left: c.replaceIn ?? REPLACE_AFTER }); continue; }
+      const g = groups.find((q) => q.cause === c.cause && q.left === c.out);
+      if (g) g.names.push(r.name); else groups.push({ what: 'absent', unit: u.callsign, names: [r.name], cause: c.cause, left: c.out });
+    }
+    for (const g of groups) cs.applied.push(g);
+    for (const v of vac) cs.applied.push(v);
+  }
+  for (let i = 0; i < n0; i++) if (early.has(i)) { const r = sim.responders[i]; cs.stats.early++; cs.applied.push({ what: 'early', unit: sim.units[r.unitId].callsign, name: r.name }); }
+  for (let i = 0; i < n0; i++) { const c = entry[i]; if (c && (c.dExp > 0 || c.dSkill > 0) && sim.responders[i].status !== 'off') cs.stats.grown++; }
+  // (단계 3 이 여기에 부대 몫 — 펌프 범위·정비(oos '정비 중', u.readyAt) — 을 넣는다. 정비 중인 부대에는 아래의 예비 인력을 붙이지 않는다)
+  // 6. 예비 인력 — 결장으로 빈 자리를 최소 편성(내리는 자리 minField · 내리지 않는 자리)까지 채운다. 모자라도 나온 대원이 있으면 그 인원으로 운용한다
+  for (const u of sim.units) {
+    if (u.aid || u.readyAt !== undefined) continue;
+    if (!u.crew.some((rid) => sim.responders[rid].status === 'off')) continue;      // 결장이 없으면 아무 일도 없다 (§3.2 — 표준·최소 편성은 늘 기준을 채운다)
+    const need = minField(u.kind), mixed = mixedKind(u.kind), sMin = mixed ? staysMin(u.kind) : 0;
+    const allStay = !mixed && u.crew.every((rid) => stays(sim, rid));      // 경찰 헬기: fieldCrew 가 전원이다
+    const filled = new Set<number>();
+    let rng: Rng | null = null;
+    for (;;) {
+      const lackStay = mixed && staysPresent(sim, u) < sMin;               // ⓑ 조종사·정장 자리가 먼저
+      const lackField = crewReady(sim, u) < need;                          // ⓐ 내리는 자리 (crewReady 와 같은 단위)
+      if ((!lackStay && !lackField) || cs.stats.relief >= RELIEF_MAX) break;
+      let seat = -1;
+      for (const rid of u.crew) {
+        const q = sim.responders[rid];
+        if (q.status !== 'off' || filled.has(rid)) continue;
+        if (lackStay ? stays(sim, rid) : allStay || !stays(sim, rid)) { seat = rid; break; }
+      }
+      if (seat < 0) break;
+      filled.add(seat);
+      rng ??= sim.rng.fork('relief:' + u.callsign);
+      const r = makeRelief(sim, u, sim.responders[seat], rng, RELIEF_NAMES[cs.stats.relief % RELIEF_NAMES.length]);
+      sim.responders.push(r); u.crew.push(r.id);                            // 끝에 붙인다 — 기존 rid 는 그대로
+      cs.stats.relief++;
+      cs.applied.push({ what: 'relief', unit: u.callsign, name: r.name, role: ROLES[r.role!].name });
+    }
+    // 결장한 사람이 든 섬광탄은 나온 사람(예비 인력 포함)에게 다시 나눈다 — 부대의 합(u.flashbangs)은 그대로, 결장자의 몫은 0 (현장에 없는 사람의 섬광탄을 세지 않게)
+    if (u.flashbangs > 0) {
+      const present: Responder[] = [];
+      for (const rid of u.crew) { const q = sim.responders[rid]; if (q.status === 'off') { for (const it of q.kit ?? []) if (it.id === 'flashbang') it.uses = 0; } else present.push(q); }
+      u.flashbangs = dealFlashbangs(present, u.flashbangs);
+    }
+    const ready = crewReady(sim, u);
+    if (ready === 0 || !pilotOk(sim, u)) {
+      u.state = 'oos'; u.oosWhy = '결원';                                   // 이번 교대 내내 — 나올 내리는 대원이 한 명도 없거나 조종·조타할 사람이 없다
+      cs.applied.push({ what: 'empty', unit: u.callsign, why: ready === 0 ? 'crew' : 'pilot' });
+    } else if (ready < need) cs.applied.push({ what: 'short', unit: u.callsign, n: ready });      // oos 가 아니다 — 배정의 결원 감점(−18)만 (H1 §3.6 의 사용자 결정과 같은 정신)
+  }
 }
 /**
  * '교대 시작' 기록의 가용 인원 (이어받은 상태가 있을 때만 engine 이 쓴다 — 없으면 지금 문구 그대로):
@@ -319,7 +494,7 @@ export function shiftStartCounts(sim: Sim): string {
 export function announceCarry(sim: Sim): void {
   const cs = sim.carryState, co = sim.carry;
   if (!cs.on || !co) return;
-  // 요약의 몫 — 지금 상태에서 센다 (적용한 것만 상태에 있다). '숙련이 오른 대원'은 성장을 적용하는 단계 2 가 더한다
+  // 요약의 몫 — 지금 상태에서 센다 (적용한 것만 상태에 있다)
   let absent = 0, vacant = 0, closed = 0, ruin = 0, roads = 0;
   for (const r of sim.responders) if (r.status === 'off') { if (r.carryOut === -1) vacant++; else absent++; }
   for (const p of cs.places.values()) if (p.state !== 'marked') { closed++; if (p.state === 'ruin') ruin++; }
@@ -330,9 +505,29 @@ export function announceCarry(sim: Sim): void {
   if (cs.svc) parts.push(`정비 중 ${cs.svc}대`);
   if (closed) parts.push(`출입 통제 건물 ${closed}곳${ruin ? `(무너짐 ${ruin})` : ''}`);
   if (roads) parts.push(`복구 공사 도로 ${roads}구간`);
+  if (cs.stats.grown) parts.push(`숙련이 오른 대원 ${cs.stats.grown}명`);
   cs.event = emit(sim, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 2, text: `지난 교대에서 이어받은 상태 — 조직의 ${co.shift}번째 교대 (지문 ${carryKey(co)}). ${parts.join(' · ') || '남은 피해 없음'}.` });
-  // 적용한 항목의 기록 (적용한 순서대로 한 항목에 한 줄)은 단계 2~5 가 여기 더한다
-  for (const d of cs.dropped) emit(sim, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 0, causes: [cs.event], text: d });
+  // 적용한 항목의 기록: 적용한 순서대로 한 항목에 한 줄 (원칙 5 — 목록에 없는 것은 기록하지 않고, 목록의 항목은 모두 기록한다. 시험 10 이 일대일을 본다)
+  const ev = [cs.event];
+  for (const n of cs.applied) {
+    const t = carryNoteText(n);
+    if (t === null) continue;      // 뒤 단계의 항목(정비·재고·건물·도로)은 그 단계가 문구를 더한다
+    emit(sim, { role: t.unit ? 'UNIT' : 'SYSTEM', actor: t.actor, kind: t.kind, imp: t.imp, causes: ev, text: t.text });
+  }
+  for (const d of cs.dropped) emit(sim, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 0, causes: ev, text: d });
+}
+/** 적용 항목 하나의 기록 문구 (§3.7 의 2~4). 부대 줄은 호출부호가 주인이다. 문구가 아직 없는 항목(단계 3~5)은 null */
+function carryNoteText(n: CarryNote): { unit: boolean; actor: string; kind: 'unit' | 'shift' | 'traffic'; imp: number; text: string } | null {
+  switch (n.what) {
+    case 'recruit': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `신임 ${n.name} 대원이 ${n.seat} 대원의 자리에 배치됐습니다.` };
+    case 'absent': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `${josa(n.names.join('·') + ' 대원', '이/가')} 결장합니다 (${n.cause !== null && Object.prototype.hasOwnProperty.call(CAUSE_NAME, n.cause) ? CAUSE_NAME[n.cause as InjuryCause] + ' · ' : ''}${n.left}교대 남음).` };
+    case 'vacant': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `순직한 ${n.name} 대원의 자리가 비어 있습니다 (신임 배치까지 ${n.left}교대).` };
+    case 'early': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `결장 대원이 많아 ${n.name} 대원이 경상으로 일찍 복귀합니다.` };
+    case 'relief': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `${n.unit} 결원 — 본부 예비 인력 ${n.name} 대원이 ${n.role ?? '빈'} 자리에 대신 탑니다.` };
+    case 'short': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `${n.unit} 결원 — 예비 인력이 없어 ${n.n}명으로 운용합니다.` };
+    case 'empty': return { unit: true, actor: n.unit, kind: 'unit', imp: 2, text: `${n.unit} 결원으로 이번 교대 운용 중단 (${n.why === 'pilot' ? '조종·조타할 사람' : '나올 대원'}·예비 인력 없음).` };
+    default: return null;
+  }
 }
 
 // ───────────────────────── 교대 중 (§3.7) ─────────────────────────
@@ -354,22 +549,108 @@ function copyCrew(c: CrewCarry): CrewCarry {
 /**
  * 끝난 교대에서 다음 교대가 이어받을 상태를 만든다 (sim.ended 일 때만 — 아니면 예외). **순수 함수다**: sim·sim.carry·carryState·현장·기록을 고치지 않고,
  * emit 하지 않으며, 돌려주는 객체는 모두 새로 만든다(앞 상태의 항목을 그대로 넣지 않고 복사한다). buildReport 안(마지막 기록·해시 전)에서도 불린다(단계 7).
- * 단계 1 은 뼈대다: 조직 명부(rosterKeys)의 모든 열쇠마다 한 항목 — 앞 상태에 있으면 그대로 옮기고, 없으면 처음 상태.
- * 끝 상태 읽기·휴식(결장·체력·성장·신임)은 단계 2(crewNext), 펌프·정비·재고는 3, 도로는 4, 건물은 5 가 채운다
+ * 대원(단계 2 — crewNext)은 조직 명부(rosterKeys)의 모든 열쇠마다 한 항목. 펌프·정비·재고는 단계 3, 도로는 4, 건물은 5 가 채운다
  */
 export function makeCarryover(sim: Sim): Carryover {
   if (!sim.ended) throw new Error('makeCarryover: 끝난 교대에서만 이어받을 상태를 만든다');
   const prev = sim.carry;
-  const prevCrew = new Map<string, CrewCarry>();
-  if (prev) for (const c of prev.crew) prevCrew.set(c.seat ?? c.name, c);
-  const crew: CrewCarry[] = [];
-  for (const k of rosterKeys()) {
-    const p = prevCrew.get(k.name);
-    crew.push(p ? copyCrew(p) : { name: k.name, callsign: k.callsign, out: 0, cause: null, health: 100, dExp: 0, dSkill: 0, shifts: 0, incidents: 0 });
-  }
   return {
     v: CARRY_VERSION, shift: (prev ? prev.shift : 1) + 1, city: cityKey(sim.city),
     from: { seed: sim.seed, hash: sim.report ? sim.report.hash : '', diff: difficultyLabel(sim.difficulty) },
-    crew, units: [], stock: {}, places: [], roads: [],
+    crew: crewNext(sim), units: [], stock: {}, places: [], roads: [],
   };
+}
+
+// ───────────────────────── 대원의 끝 상태 → 다음 교대 (단계 2 — §3.2 의 표) ─────────────────────────
+const round4 = (v: number): number => Math.round(v * 1e4) / 1e4;
+const freshCrew = (k: RosterKey): CrewCarry => ({ name: k.name, callsign: k.callsign, out: 0, cause: null, health: 100, dExp: 0, dSkill: 0, shifts: 0, incidents: 0 });
+/** 신임 대원의 기본 능력 — createRoster 와 같은 식(경험 0.1~0.3, st() 범위 0.3~0.85). 흐름 recruit:<자리> (교대 시드에서 갈라진다 — 몇 번 불러도 같다) */
+function recruitBase(sim: Sim, seat: string): RecruitBase {
+  const rng = sim.rng.fork('recruit:' + seat);
+  const st = (): number => clamp(rng.range(0.3, 0.85), 0, 1);
+  const experience = rng.range(0.1, 0.3);
+  const skill = clamp(st() * 0.6 + experience * 0.4 + 0.05, 0.3, 0.98);
+  const judgment = clamp(st() * 0.65 + experience * 0.35, 0.2, 0.98);
+  const composure = st(), fitness = st(), teamwork = st();
+  return { skill: round4(skill), judgment: round4(judgment), composure: round4(composure), fitness: round4(fitness), teamwork: round4(teamwork), experience: round4(experience) };
+}
+/**
+ * 개인 장비의 점검 (R1 뒤 — §3.2 의 kitFault): 드러난 고장(faultKnown)은 점검에서 고치고(넣지 않는다), 드러나지 않은 고장은 절반을 찾는다 —
+ * hashStr(자리 + ':' + 장비 + ':' + 교대) 가 짝수면 고치고 홀수면 남긴다 (난수 흐름을 쓰지 않는다). 교대 = 끝난 교대의 조직 번호
+ */
+const missed = (seat: string, id: string, shiftNo: number): boolean => hashStr(seat + ':' + id + ':' + shiftNo) % 2 !== 0;
+function setKitFault(c: CrewCarry, ids: string[]): void { if (ids.length) c.kitFault = ids; else delete c.kitFault; }
+/**
+ * 끝 상태에서 다음 교대의 대원 항목 (지원 대원·예비 인력은 넣지 않는다). 대상은 조직 명부의 모든 열쇠(편성되지 않은 사람 포함), 열쇠마다 위에서부터 첫 번째로 맞는 행:
+ *   1 앞 상태가 공석(out −1) — 언제나: −1, replaceIn − 1 (0 이 되면 신임 대원)
+ *   2 편성되었고 결장(off): out − 1, 체력 그대로, 성장 없음
+ *   3 편성되지 않음: max(0, out − 1), 나올 수 있던 사람(out 0)은 체력 + REST_HEAL, 성장 없음
+ *   4~6 편성되어 나온 사람 — 결장 표는 H1 의 outShifts(r) 하나: −1 순직(공석, replaceIn = REPLACE_AFTER) · >0 결장(체력 BACK_HEALTH) · 0 (끝 체력 + REST_HEAL). 5·6 은 성장
+ * 한 휴식에서 여러 자리가 신임이 되면 명부 순서대로 RECRUIT_NAMES 가운데 새 상태에 없는 첫 이름을 나눠 준다. 숫자는 소수 넷째 자리로 반올림한다(JSON 왕복·지문).
+ * 순수하다: sim 을 고치지 않고, 앞 상태의 항목을 복사해 쓴다
+ */
+function crewNext(sim: Sim): CrewCarry[] {
+  const prev = sim.carry, shiftNo = prev ? prev.shift : 1;
+  const prevCrew = new Map<string, CrewCarry>();
+  if (prev) for (const c of prev.crew) prevCrew.set(c.seat ?? c.name, c);
+  const here = new Map<string, Responder>();
+  for (const r of sim.responders) if (!r.relief && !sim.units[r.unitId].aid) here.set(r.seat ?? r.name, r);
+  const out: CrewCarry[] = [], pending: number[] = [];
+  for (const k of rosterKeys()) {
+    const p = prevCrew.get(k.name), r = here.get(k.name);
+    let c: CrewCarry;
+    if (p && p.out === -1) {                                                      // 1 공석
+      c = copyCrew(p); delete c.kitFault;
+      const left = (p.replaceIn ?? REPLACE_AFTER) - 1;
+      if (left <= 0) pending.push(out.length); else c.replaceIn = left;
+    } else if (r && r.status === 'off') {                                         // 2 결장 (이번 교대에 나오지 않았다)
+      c = p ? copyCrew(p) : freshCrew(k);
+      c.out = Math.max(0, (p ? p.out : r.carryOut ?? 1) - 1);
+      if (c.out === 0) c.cause = null;
+      const kf: string[] = [];
+      for (const it of r.kit ?? []) if (it.fault && !it.faultKnown && missed(k.name, it.id, shiftNo)) kf.push(it.id);
+      setKitFault(c, kf);
+    } else if (!r) {                                                              // 3 편성되지 않음
+      c = p ? copyCrew(p) : freshCrew(k);
+      if (p) {
+        if (p.out === 0) c.health = round4(Math.min(100, p.health + REST_HEAL));
+        else { c.out = Math.max(0, p.out - 1); if (c.out === 0) c.cause = null; }
+        setKitFault(c, (p.kitFault ?? []).filter((id) => missed(k.name, id, shiftNo)));
+      }
+    } else {                                                                      // 4~6 편성되어 나온 사람
+      c = p ? copyCrew(p) : freshCrew(k);
+      c.name = r.name;
+      const o = outShifts(r);
+      if (o < 0) {                                                                // 4 순직 — 자리가 빈다
+        c.out = -1; c.replaceIn = REPLACE_AFTER; c.cause = r.deathCause ?? mainCause(r.injuries); c.health = 100;
+        delete c.kitFault;
+      } else {
+        if (o > 0) { c.out = o; c.cause = mainCause(r.injuries); c.health = BACK_HEALTH; }      // 5 결장
+        else { c.out = 0; c.cause = null; c.health = round4(clamp(r.health + REST_HEAL, 1, 100)); }      // 6 나온다
+        const gain = Math.min(GAIN_CAP, r.xpGained * GAIN_K) * (1 - r.experience);       // 성장 (K1): 이미 노련한 사람은 덜 는다
+        c.dExp = round4(Math.min(EXP_CAP, c.dExp + gain));
+        c.dSkill = round4(Math.min(SKILL_CAP, c.dSkill + gain * SKILL_K));
+        c.shifts += 1; c.incidents += r.incidentsWorked;
+        const kf: string[] = [];
+        for (const it of r.kit ?? []) if (it.fault && !it.faultKnown && missed(k.name, it.id, shiftNo)) kf.push(it.id);
+        setKitFault(c, kf);
+      }
+    }
+    out.push(c);
+  }
+  // 신임 대원: 명부 순서대로, 새 상태에 이미 있는 이름(앞에서 배치된 신임 포함 — 바뀌기 전 공석의 이름도)을 뺀 첫 이름
+  if (pending.length) {
+    const used = new Set<string>();
+    for (const c of out) used.add(c.name);
+    const keys = rosterKeys();
+    let j = 0;
+    for (const at of pending) {
+      let name = '';
+      for (;; j++) { name = RECRUIT_NAMES[j % RECRUIT_NAMES.length] + (j >= RECRUIT_NAMES.length ? String(Math.floor(j / RECRUIT_NAMES.length) + 1) : ''); if (!used.has(name)) break; }
+      used.add(name);
+      const k = keys[at];
+      out[at] = { name, seat: k.name, callsign: k.callsign, out: 0, cause: null, health: 100, dExp: 0, dSkill: 0, shifts: 0, incidents: 0, recruit: recruitBase(sim, k.name) };
+    }
+  }
+  return out;
 }

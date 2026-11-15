@@ -49,11 +49,13 @@ export function createScene(sim: Sim, I: Incident): Scene {
 
 export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
   const s = sim.scenes[I.id]!;
+  // (I2) 결원 도착: 지난 교대에서 이어받은 결장(off)이 있는 부대면 도착 기록의 원인을 이어받은 상태 요약 기록으로 잇는다 (문구 그대로 — causes 는 해시에 들지 않는다. 이어받은 상태가 없으면 off 가 없다)
+  const shortEv = sim.carryState.on && u.crew.some((rid) => sim.responders[rid].status === 'off') ? [sim.carryState.event] : undefined;
   if (isHovering(u, s)) {
     // 상공에 머무는 부대(경찰 헬기 …): 아무도 내리지 않는다. 지휘관이 되지 않고, 현장 도착 시각(s.arrivedAt·I.firstArrivalAt)도 정하지 않는다 —
     // 상공 도착은 s.airAt 에만 적는다. 한계 시간과 방치는 둘 가운데 먼저인 시각부터 재고(onAt), 무대응 종료는 둘 다 없을 때만이다
     if ((s.airAt ?? -1) < 0) s.airAt = sim.t;
-    emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'arrive', imp: 2, text: `${u.callsign} 현장 상공 도착.` });
+    emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'arrive', imp: 2, causes: shortEv, text: `${u.callsign} 현장 상공 도착.` });
     return;
   }
   // 현장 도착 시각은 지상 대원이 처음 내릴 때 정한다 (설계서 R1 6.1). 유관 기관(civil — N8 §5.3.2)은 첫 도착으로 세지 않는다:
@@ -87,7 +89,7 @@ export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
   // 누가 내렸는가: 실제로 내린 사람의 첫째(역할과 이름)와 나머지 인원. 한 명이면 이름만
   const names = crew.length > 1 ? `${roleOf(sim, crew[0]).name} ${sim.responders[crew[0]].name} 외 ${crew.length - 1}명` : crew.length ? sim.responders[crew[0]].name : '';
   const took = I.reportedAt >= 0 ? Math.round(sim.t - I.reportedAt) : 0;
-  emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'arrive', imp: firstGround ? 3 : 2, text: firstGround ? `${u.callsign} 현장 도착 (${names}). 신고 접수 후 ${took}초.` : `${u.callsign} 현장 합류 (${names}).` });
+  emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'arrive', imp: firstGround ? 3 : 2, causes: shortEv, text: firstGround ? `${u.callsign} 현장 도착 (${names}). 신고 접수 후 ${took}초.` : `${u.callsign} 현장 합류 (${names}).` });
   if (!crew.length) return;
   // 다친 채 내린 대원은 자기 상태를 알린다(소리 없이): 지휘관이 가벼운 일만 맡길 수 있는 대원임을 안다
   for (const rid of crew) if (sim.responders[rid].status === 'injured') { const b = s.agents.find((q) => q.rid === rid)!; learnQuiet(sim, b, mateFact(sim, s, b, 'light', sim.responders[rid].name, 0)); }

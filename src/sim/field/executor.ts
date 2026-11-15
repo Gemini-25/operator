@@ -1219,7 +1219,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       }
       // 처치할 수 없는 상태 — 숨졌다 · 차에 실렸다 · 달아났다 · 아직 맞서고 있다: 지휘관의 믿음이 낡았으므로 본 대로 다시 알리고 끝낸다
       if (h.dead || (h.where ?? 'scene') !== 'scene' || h.state === 'escaped' || h.state === 'hold' || h.state === 'fight' || h.state === 'flee') {
-        if ((h.where ?? 'scene') === 'scene') reportDone(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)));
+        // 차에 실려 간 용의자도 알린다(있는 곳 where 가 '차에 실림'으로 간다): 실은 대원의 보고가 늦게 닿거나 음영 구역에서 사라지면, 알리지 않고 끝내는 한 지휘관은 같은 지시를 되풀이한다 (CLAUDE.md "이미 끝나 있던 일은 조용히 + 강제로 보고한다")
+        reportDone(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)));
         finishTask(sim, s, a, true); return;
       }
       if (t.phase === 0) {

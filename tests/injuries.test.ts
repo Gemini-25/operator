@@ -31,7 +31,7 @@ import {
 } from '../src/sim/field/injury';
 import { fitFor, hosFact, makeAgent, mateFact, mateStatus, perceive, staminaF } from '../src/sim/field/agents';
 import { addCas, addHostile } from '../src/sim/field/kit';
-import { mkFact } from '../src/sim/field/beliefs';
+import { BeliefStore, mkFact } from '../src/sim/field/beliefs';
 import { SAFE_BLEED, agentHealth, settleInjuries, tickScene, unitArrived } from '../src/sim/field/sceneManager';
 import { T } from '../src/sim/types';
 import type { Casualty, FieldAgent, Hostile, Incident, IncidentType, Injury, InjuryCause, MateBelief, Prop, Responder, RoleId, Scene, SimEvent, Unit, UnitKind, WorkItem } from '../src/sim/types';
@@ -3007,6 +3007,101 @@ describe('단계 5 — 고침: 숨진 용의자는 가서 보고 알린다 · �
     }
     expect(liveTS(s, h.id).length, '상한').toBe(0);
     expect(s.board.filter((w) => w.kind === 'treatSuspect' && w.hostile === h.id && w.status === 'done').length).toBe(TS_MAX_DONE);
+  });
+});
+
+// ═════════════════════════ 검토에서 고친 것 ═════════════════════════
+describe('검토 — 멀리서 다시 본 쓰러진 용의자는 곁에서 본 보고를 덮지 않는다 (숨진 용의자에게 처치 지시가 되풀이되던 것)', () => {
+  /** 2칸 밖에서 보이는 자리에 쓰러진 용의자를 둔다 */
+  const setup = (seed: string) => {
+    const { sim, s, h, of } = suspectScene(seed, 'hostage', ['patrol']);
+    const cop = of('patrol');
+    for (const q of s.agents) { q.nextThink = 1e9; q.task = null; q.planT = 1e9; }
+    cop.x = s.staging.x; cop.y = s.staging.y;
+    h.x = s.staging.x + 6; h.y = s.staging.y;
+    return { sim, s, h, cop };
+  };
+  it('지휘관이 6칸 밖에서 쓰러진 용의자를 매 틱 다시 보고 있어도, 곁에서 숨진 것을 본 대원의 무전 보고(1.2초 늦게 닿는다)를 받아들인다', () => {
+    const { sim, s, h, cop } = setup('INJ-rv-far');
+    expect(los(s, cop.x, cop.y, h.x, h.y)).toBe(true);
+    h.state = 'down'; h.tDown = sim.t; h.health = 5;
+    perceive(sim, s, cop);
+    expect(cop.beliefs.val<any>('hos', h.id)).toMatchObject({ state: 'down', dead: false });
+    sim.t += 1;
+    h.dead = true; h.health = 0; h.tDead = sim.t;
+    const near = hosFact(sim, s, h, '곁의 대원', 1);      // 곁(2칸 안)에서 본 대원의 보고 — 숨진 것을 안다
+    expect(near.value.dead).toBe(true);
+    for (let k = 0; k < 6; k++) { sim.t += 0.2; perceive(sim, s, cop); }      // 무전이 닿는 동안 지휘관은 멀리서 계속 본다 (숨진 것은 보이지 않는다)
+    expect(cop.beliefs.val<any>('hos', h.id)?.dead).toBe(false);
+    cop.beliefs.merge(BeliefStore.relay(near));      // 무전이 닿는다 (deliverRadio 와 같은 합치기)
+    expect(cop.beliefs.val<any>('hos', h.id)?.dead, '곁에서 본 보고가 이긴다 — 예전에는 먼 관찰의 새 시각에 밀려 버려졌다').toBe(true);
+    sim.t += 0.2; perceive(sim, s, cop);
+    expect(cop.beliefs.val<any>('hos', h.id)?.dead, '먼 관찰로 되돌리지 않는다').toBe(true);
+  });
+  it('검거된 채 숨진 용의자도 같다. 달라진 것(처치·상태)이 보이면 멀리서도 새로 안다', () => {
+    const { sim, s, h, cop } = setup('INJ-rv-arr');
+    h.state = 'arrested'; h.tDown = sim.t; h.health = 6;
+    perceive(sim, s, cop);
+    const t0 = cop.beliefs.get('hos', h.id)!.t;
+    sim.t += 2; perceive(sim, s, cop);
+    expect(cop.beliefs.get('hos', h.id)!.t, '달라진 것이 없으면 시각을 덮지 않는다').toBe(t0);
+    h.treatQ = 0.3; h.tTreated = sim.t;
+    sim.t += 0.2; perceive(sim, s, cop);
+    expect(cop.beliefs.val<any>('hos', h.id)?.tq, '받은 처치는 멀리서도 보인다').toBe(1);
+  });
+  it('맡은 용의자가 이미 차에 실려 갔으면(실은 대원의 보고가 아직 닿지 않았다) 본 대로 강제로 알리고 끝낸다 — 알리지 않고 끝내면 지휘관이 같은 지시를 되풀이한다', () => {
+    const { sim, s, h, cop } = setup('INJ-rv-abd');
+    h.state = 'arrested'; h.tDown = sim.t; h.health = 20; h.treatQ = 0.7; h.where = 'aboard';
+    const w = workItem(s, 'treatSuspect', sim.t, { hostile: h.id, max: 1 });
+    cop.task = makeTask('treatSuspect', '시험', w); w.status = 'active'; w.assignees.push(cop.rid);
+    act(sim, s, cop);
+    expect(cop.task).toBeNull(); expect(w.status).toBe('done');
+    expect(cop.beliefs.val<any>('hos', h.id)?.where).toBe('aboard');
+    expect(cop.outbox.some((f) => f.type === 'hos' && f.id === h.id && f.value.where === 'aboard'), '강제 보고가 대기열에 있다').toBe(true);
+    expect(hosNeedsCare(cop.beliefs.val<any>('hos', h.id)), '그 보고를 받은 지휘관은 더 내지 않는다').toBe(false);
+  });
+  it('맞서는 용의자는 멀리서 볼 때마다 새로 안다 (자리·시각) — 이 규칙은 쓰러졌거나 붙잡혀 움직이지 않는 용의자만', () => {
+    const { sim, s, h, cop } = setup('INJ-rv-act');
+    h.state = 'hold';
+    perceive(sim, s, cop);
+    const t0 = cop.beliefs.get('hos', h.id)!.t;
+    sim.t += 2;
+    perceive(sim, s, cop);
+    expect(cop.beliefs.get('hos', h.id)!.t).toBeGreaterThan(t0);
+  });
+});
+
+describe('검토 — 보지 못한 용의자를 부상자로 세지 않는다 (풀려난 인질의 제보)', () => {
+  it('hosNeedsCare: 중증도를 모르는 맞서는 용의자(제보뿐)는 아니다. 보고 알게 된 중상 이상·쓰러짐·붙잡힘(모르면 위중)은 그대로', () => {
+    expect(hosNeedsCare({ state: 'hold' }), '풀려난 인질의 말 — 다쳤는지 모른다').toBe(false);
+    expect(hosNeedsCare({ state: 'fight' })).toBe(false);
+    expect(hosNeedsCare({ state: 'hold', band: 1 }), '다친 채 맞서는 것을 보았다').toBe(true);
+    expect(hosNeedsCare({ state: 'arrested' }), '붙잡힌 용의자는 모르면 위중').toBe(true);
+    expect(hosNeedsCare({ state: 'down' })).toBe(true);
+  });
+  it('다수 사상자 다시 세기: 대형 인질극에서 풀려난 인질이 알린 용의자는 부상자 수에 들지 않는다', () => {
+    const { sim, s, I } = suspectScene('INJ-rv-mci', 'siege', ['patrol']);
+    const cmd = s.agents.find((a) => a.isCommander)!;
+    for (const q of s.agents) { q.nextThink = 1e9; q.task = null; }
+    s.sizeupDone = true; s.mismatchLogged = true;
+    // 구급차 두 대가 오는 중이다 (지휘관의 다른 구급 요청 규칙 — 구급 부대 없음 · 한 대로 감당 불가 — 이 먼저 나가 이 규칙을 가리지 않게)
+    for (const u of sim.units.filter((q) => q.kind === 'als' || q.kind === 'bls').slice(0, 2)) { u.state = 'enroute'; u.incidentId = I.id; I.assigned.push(u.id); }
+    expect(I.assigned.filter((uid) => sim.units[uid].caps.ems >= 0.7).length).toBe(2);
+    // 구조 대상 넷(중상)을 알고, 용의자 둘은 풀려난 인질의 말로만 안다 (rules/crime.ts 의 사실 — 중증도 칸이 없다)
+    for (let k = 0; k < 4; k++) cmd.beliefs.merge(mkFact('cas', 100 + k, { x: s.staging.x, y: s.staging.y, mob: 'immobile', band: 1, where: 'safe', treated: true, trappedDone: true, tq: 1, water: false }, '시험', sim.t, 1, true, ''));
+    for (const h of s.hostiles.slice(0, 2)) cmd.beliefs.merge(mkFact('hos', h.id, { x: Math.round(h.x), y: Math.round(h.y), weapon: 'gun', state: 'hold', hostage: false, facing: 0 }, '풀려난 인질', sim.t, 0.8, false, ''));
+    const n0 = sim.events.length;
+    commanderThink(sim, s, cmd);
+    expect(sim.events.slice(n0).some((e) => /대원·용의자 포함/.test(e.text)), '보지 못한 용의자를 세면 넷 + 둘 = 여섯이라 구급을 더 부른다').toBe(false);
+    void I;
+  });
+});
+
+describe('검토 — 시험 8 의 빠졌던 줄: orders/injury.ts 는 명부에서 소속·분야·이름만 읽는다 (§11-8 셋째 줄)', () => {
+  it('sim.responders[…] 뒤에는 .unitId · .dept · .name 만 온다 (변수에 담아 읽는 것도 막힌다)', () => {
+    const src = readFileSync('src/sim/field/orders/injury.ts', 'utf8').split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+    expect(/responders\[[^\]]*\](?!\.(unitId|dept|name)\b)/.test(src)).toBe(false);
+    expect(/responders\[[^\]]*\]\.unitId/.test(src), '이 파일은 실제로 명부를 읽는다 — 검사가 헛돌지 않는다').toBe(true);
   });
 });
 

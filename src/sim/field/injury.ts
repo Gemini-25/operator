@@ -406,7 +406,10 @@ export function careHostile(sim: Sim, h: Hostile, fx: { q: number; heal: number;
  */
 export function hosNeedsCare(v: { state: string; dead?: boolean; band?: number; where?: string }): boolean {
   if (v.dead || (v.where !== undefined && v.where !== 'scene') || v.state === 'escaped') return false;
-  return v.state === 'down' || (v.band ?? 2) >= 1;
+  // 중증도를 모르는 사실은 대원이 직접 보지 못한 제보뿐이다(풀려난 인질의 말 — rules/crime.ts, 늘 '대치 중'). 맞서는 용의자를 그런 말만으로 다친 사람으로 세지 않는다 —
+  // 세면 다수 사상자 다시 세기(orders/injury.ts)가 보지도 못한 용의자를 부상자로 넣어 구급 부대를 더 부른다 (H1 검토). 쓰러졌거나 붙잡힌 용의자는 모르면 위중으로 본다(§4.3)
+  const active = v.state === 'hold' || v.state === 'fight' || v.state === 'flee';
+  return v.state === 'down' || (v.band ?? (active ? 0 : 2)) >= 1;
 }
 /**
  * 위협이 끝난 시각: 무장 현장은 지휘관의 안전 확보 선언(s.secureAt), 그 밖의 현장(추격전·음주 운전 — secureAt 이 정해지지 않는다)은 첫 도착(s.arrivedAt). 없으면 −1.

@@ -2248,6 +2248,25 @@ describe('화면 (설계서 10절) — 읽기만 한다', () => {
       hoist.mode = 'bucket'; expect(airOpLabel(S, hoist)).toBe('공중 물 투하');
       hoist.mode = 'watch'; expect(airOpLabel(S, hoist)).toBe('상공 감시 · 탐조등');
       S.light = null; expect(airOpLabel(S, hoist)).toBe('상공 감시');
+      // 두 헬기가 같은 자리에 떠도 몸체가 겹치지 않는다: 일하는 헬기는 제자리, 살피는 헬기는 옆으로 비켜 그린다 (그림만 — AirOp 의 자리는 그대로)
+      hoist.mode = 'hoist'; hoist.phase = 'work'; hoist.x = hoist.px = 10; hoist.y = hoist.py = 8;
+      let watch = S.air!.find((op) => op !== hoist);
+      if (!watch) {
+        const pu = Q.units.find((u) => u.kind === 'policeHeli')!;
+        pu.state = 'onscene'; pu.incidentId = S.incidentId;
+        watch = { ...hoist, unitId: pu.id, eye: { ...hoist.eye, rid: pu.crew[pu.crew.length - 1] } };
+        S.air!.push(watch);
+      }
+      watch.mode = 'watch'; watch.phase = 'hover'; watch.x = watch.px = 10; watch.y = watch.py = 8;
+      const settle = (): void => { for (let k = 1; k <= 14; k++) drawScene(ctx, Q, S, 1200, 800, { alpha: 1, timeMs: 5000 + k * 200, selectedRid: -1, truth: true }); };
+      settle();
+      expect(at(10 - 0.77, 8 - 0.92).rid, '일하는 헬기는 제자리').toBe(eyeRid);
+      expect(at(10 - 0.77 + 2.4, 8 - 0.92 + 1.8).rid, '살피는 헬기는 세 칸 비켜 그린다').toBe(watch.eye.rid);
+      expect([watch.x, watch.y, hoist.x, hoist.y], '시뮬레이션의 자리는 그대로').toEqual([10, 8, 10, 8]);
+      // 현장 맨 위에 뜬 헬기는 낮춰 그린다 (몸체가 현장 밖 — 화면 위의 덧글 밑 — 으로 나가지 않는다)
+      watch.x = watch.px = 24; watch.y = watch.py = 14; hoist.y = hoist.py = 0;
+      settle();
+      expect(at(10 + 1.0, 0.2).rid, '맨 윗줄의 헬기 몸체는 현장 안에 있다').toBe(eyeRid);
     });
   }, 60000);
 

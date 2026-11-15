@@ -181,6 +181,77 @@ function hasLitter(sim: Sim, s: Scene, carrier: FieldAgent): boolean {
 /** 떠 있는 높이: 몸체를 이만큼(칸) 왼쪽 위로 올려 그린다. 그림자가 땅 위의 제 자리(AirOp.x, y)에 떨어진다 */
 const ALT_X = 0.77, ALT_Y = 0.92;
 const airHeading = new WeakMap<AirOp, number>();
+/** 몸체 가운데가 이 줄(칸)보다 위로 올라가지 않는다 — 현장 맨 위쪽에 뜬 헬기가 화면 위의 덧글 밑으로 들어가지 않게 높이를 줄인다 */
+const AIR_TOP = 0.2;
+/** 두 헬기의 몸체 사이에 두는 거리(칸) */
+const AIR_SEP = 3.0;
+/** 화면 위쪽의 덧글(시점·사건 제목 두 줄)이 가리는 높이(화소) — 그 밑에 들어갈 상공 헬기의 이름표는 몸체 아래에 단다 */
+const TOP_UI = 104;
+type AirDraw = { op: AirOp; u: Unit; gx: number; gy: number; bx: number; by: number; lift: number };
+/** 헬기마다 지금 그린 자리(칸)와 비켜 그린 정도 — 그림만의 상태다(시뮬레이션의 AirOp 는 고치지 않는다). 누르기(hitScene)가 같은 자리를 쓴다 */
+const airDrawn = new WeakMap<AirOp, { dx: number; dy: number; at: number; bx: number; by: number }>();
+/**
+ * 가까이 뜬 헬기의 몸체가 겹치지 않게 한 대를 옆으로 비켜 그린다.
+ * 일하는 헬기(호이스트·물 투하)는 제자리, 살피는 헬기가 비킨다(같으면 번호가 큰 쪽). 그림자도 함께 옮긴다.
+ * 갑자기 튀지 않게 실제 시간으로 따라간다.
+ */
+function spreadAirs(airs: AirDraw[], ts: number, timeMs: number): void {
+  const order = airs.length > 1 ? airs.slice().sort((a, b) => (a.op.mode === 'watch' ? 1 : 0) - (b.op.mode === 'watch' ? 1 : 0) || a.u.id - b.u.id) : airs;
+  for (let i = 0; i < order.length; i++) {
+    const A = order[i];
+    let wx = 0, wy = 0;
+    for (let j = 0; j < i; j++) {
+      const P = order[j];
+      const vx = (A.bx - P.bx) / ts + wx, vy = (A.by - P.by) / ts + wy, d = Math.hypot(vx, vy);
+      if (d >= AIR_SEP) continue;
+      const ux = d > 0.05 ? vx / d : 0.8, uy = d > 0.05 ? vy / d : 0.6;
+      wx += ux * (AIR_SEP - d); wy += uy * (AIR_SEP - d);
+    }
+    let m = airDrawn.get(A.op);
+    if (!m) { m = { dx: wx, dy: wy, at: timeMs, bx: 0, by: 0 }; airDrawn.set(A.op, m); }
+    else { const k = 1 - Math.exp(-Math.max(0, Math.min(200, timeMs - m.at)) / 160); m.dx += (wx - m.dx) * k; m.dy += (wy - m.dy) * k; m.at = timeMs; }
+    if (m.dx || m.dy) {
+      const sy = Math.max(m.dy * ts, (AIR_TOP + 0.5) * ts - A.by);      // 비켜도 현장 위쪽 밖으로는 나가지 않는다
+      A.bx += m.dx * ts; A.gx += m.dx * ts; A.by += sy; A.gy += sy;
+    }
+    m.bx = A.bx / ts - 0.5; m.by = A.by / ts - 0.5;
+  }
+}
+type SceneLabel = { x: number; y: number; text: string; col: string };
+/**
+ * 같은 글자의 이름표가 겹치면 하나로 모은다 (대기 지점에 여럿이 모이면 "대기"가 겹겹이 쌓여 읽을 수 없다).
+ * 자리는 모인 것들의 가운데·맨 위. 분야가 섞였으면 글자색을 중립색으로 쓴다(이름표의 색 = 분야).
+ */
+function mergeLabels(ctx: G, labels: SceneLabel[], fs: number, ts: number): SceneLabel[] {
+  if (MINI || labels.length < 2) return labels;
+  ctx.font = `600 ${fs}px ${FONT}`;
+  type M = SceneLabel & { w: number; n: number };
+  let out: M[] = labels.map((l) => ({ x: l.x, y: l.y, text: l.text, col: l.col, w: ctx.measureText(l.text).width + fs * 0.8, n: 1 }));
+  const near = ts * 0.45;      // 겹치지 않아도 바로 곁(반 칸)의 같은 이름표는 한 무리로 본다
+  for (let pass = 0; pass < 4; pass++) {      // 모으면 자리가 옮겨져 새로 겹칠 수 있다 — 몇 번 되풀이한다
+    const next: M[] = [];
+    let merged = false;
+    for (const l of out) {
+      let hit: M | null = null;
+      for (const q of next) if (q.text === l.text && Math.abs(q.x - l.x) < (q.w + l.w) / 2 + near && Math.abs(q.y - l.y) < fs * 1.5 + near) { hit = q; break; }
+      if (hit) { hit.x = (hit.x * hit.n + l.x * l.n) / (hit.n + l.n); hit.y = Math.min(hit.y, l.y); hit.n += l.n; if (hit.col !== l.col) hit.col = '#d6e2ee'; merged = true; }
+      else next.push(l);
+    }
+    out = next;
+    if (!merged) break;
+  }
+  // 글자가 다른 이름표끼리 겹치면 뒤의 것을 한 줄 위로 올린다 (많아야 두 줄)
+  for (let i = 1; i < out.length; i++) {
+    const l = out[i];
+    for (let up = 0; up < 2; up++) {
+      let clash = false;
+      for (let j = 0; j < i; j++) { const q = out[j]; if (Math.abs(q.x - l.x) < (q.w + l.w) / 2 && Math.abs(q.y - l.y) < fs * 1.5) { clash = true; break; } }
+      if (!clash) break;
+      l.y -= fs * 1.6;
+    }
+  }
+  return out;
+}
 /** 상공 작업의 할 일을 사람이 읽는 말로 (현장의 이름표와 대원 정보창이 함께 쓴다) */
 export function airOpLabel(s: Scene, op: AirOp): string {
   if (op.phase === 'away') return '물 뜨러 감';
@@ -562,13 +633,15 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
 
   // ── 상공의 헬기 (R1): 이 사건에 와 있는 부대의 상공 작업만 그린다. 물을 뜨러 간 동안(away)은 현장에 없다 ──
   // 땅 위의 자리(AirOp.x, y)에 그림자가 떨어지고 몸체는 높이만큼 왼쪽 위에 뜬다. 호이스트 줄·물 바구니는 몸체에서 땅 위의 자리로 내려온다
-  const airs: { op: AirOp; u: Unit; gx: number; gy: number; bx: number; by: number }[] = [];
+  const airs: AirDraw[] = [];
   if (s.air) for (const op of s.air) {
     const u = sim.units[op.unitId];
     if (u.state !== 'onscene' || u.incidentId !== s.incidentId || op.phase === 'away') continue;
-    const gx = cx(op.px + (op.x - op.px) * o.alpha), gy = cy(op.py + (op.y - op.py) * o.alpha);
-    airs.push({ op, u, gx, gy, bx: gx - ALT_X * ts, by: gy - ALT_Y * ts });
+    const tx = op.px + (op.x - op.px) * o.alpha, ty = op.py + (op.y - op.py) * o.alpha;
+    const lift = Math.max(0, Math.min(1, (ty - AIR_TOP) / ALT_Y));      // 현장 맨 위쪽에서는 낮게 뜬 것으로 그린다 (몸체가 현장 밖으로 나가지 않게)
+    airs.push({ op, u, gx: cx(tx), gy: cy(ty), bx: cx(tx - ALT_X * lift), by: cy(ty - ALT_Y * lift), lift });
   }
+  spreadAirs(airs, ts, o.timeMs);
   for (const A of airs) {
     const op = A.op, u = A.u;
     // 기수: 움직이는 쪽을 본다 (멈춰 있으면 마지막으로 보던 쪽)
@@ -589,11 +662,12 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     } else if ((u.bucketMax ?? 0) > 0 && op.mode === 'bucket') {
       // 물 바구니: 몸체 밑에 줄로 매달려 흔들린다. 물이 차 있으면 파랗다
       const sw = Math.sin(time * 2.2 + u.id) * ts * 0.14;
-      const px = A.bx + ALT_X * ts * 0.62 + sw, py = A.by + ALT_Y * ts * 0.62;
+      const hang = 0.62 * Math.max(0.4, A.lift);
+      const px = A.bx + ALT_X * ts * hang + sw, py = A.by + ALT_Y * ts * hang;
       ctx.lineCap = 'round'; ctx.strokeStyle = '#cfd6dc'; ctx.lineWidth = Math.max(1, ts * 0.03); ctx.beginPath(); ctx.moveTo(A.bx, A.by); ctx.lineTo(px, py); ctx.stroke();
       disc(ctx, px, py, ts * 0.27, '#8f3a14'); disc(ctx, px, py, ts * 0.22, '#f07a2a'); disc(ctx, px, py, ts * 0.15, (u.bucket ?? 0) > 0 ? '#58b6ff' : '#3a2416');
     }
-    drawHeli(ctx, A.bx, A.by, ang, ts, true, o.timeMs, u.kind, ALT_X);
+    drawHeli(ctx, A.bx, A.by, ang, ts, true, o.timeMs, u.kind, ALT_X * A.lift);
     const picked = o.selectedRid >= 0 && sim.responders[o.selectedRid] && sim.responders[o.selectedRid].unitId === u.id;
     if (picked && !MINI) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(2, ts * 0.07); ctx.setLineDash([ts * 0.2, ts * 0.14]); ctx.beginPath(); ctx.arc(A.bx, A.by, ts * 1.75, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
   }
@@ -827,14 +901,16 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   }
   if (cv) timed(() => { drawNegotiation(cv); drawCuffs(cv); });      // (G5) 말풍선, 수갑 기호
   for (const l of hzLabels) pill(ctx, l.text, l.x, l.y, Math.max(10, ts * 0.3), l.color);      // (G4) 새 글자 표지: 가스 고임·되살아난 불
-  for (const l of labels) pill(ctx, l.text, l.x, l.y, Math.max(10, ts * 0.28), l.col);
+  for (const l of mergeLabels(ctx, labels, Math.max(10, ts * 0.28), ts)) pill(ctx, l.text, l.x, l.y, Math.max(10, ts * 0.28), l.col);      // (R1) 같은 이름표가 겹치면 하나로
   // (R1) 상공의 헬기: 호출부호와 하는 일. 두 헬기가 한 자리에 떠 있으면 이름표를 위로 쌓는다(겹쳐 읽히지 않게)
   if (!MINI) {
     const fs = Math.max(10, ts * 0.3), put: { x: number; y: number; w: number }[] = [];
     ctx.font = `600 ${fs}px ${FONT}`;
+    const topEdge = TOP_UI - L.oy;      // 이보다 위는 화면 위쪽의 덧글에 가린다 (현장 좌표)
     for (const A of airs) {
       const text = `${A.u.callsign} · ${airOpLabel(s, A.op)}`, w = ctx.measureText(text).width + fs * 0.8;
       let y = A.by - ts * 1.2;
+      if (y - fs * 0.8 < topEdge) y = A.by + ts * 1.3;      // 위에 자리가 없으면 몸체 아래에
       for (let pass = 0; pass < 3; pass++) for (const q of put) if (Math.abs(q.x - A.bx) < (q.w + w) / 2 + 4 && Math.abs(q.y - y) < fs * 1.6) y = q.y - fs * 1.7;
       put.push({ x: A.bx, y, w });
       pill(ctx, text, A.bx, y, fs, DEPT_COLOR[A.u.dept]);
@@ -863,7 +939,8 @@ export function hitScene(sim: Sim, s: Scene, w: number, h: number, px: number, p
   if (rid < 0 && s.air) for (const op of s.air) {
     const u = sim.units[op.unitId];
     if (u.state !== 'onscene' || u.incidentId !== s.incidentId || op.phase === 'away') continue;
-    if (Math.hypot(op.x - ALT_X - tx, op.y - ALT_Y - ty) < 1.3) rid = op.eye.rid;
+    const b = airDrawn.get(op);      // 마지막으로 그린 몸체 자리 (가장자리에서 낮춰 그리거나 옆으로 비켜 그렸을 수 있다)
+    if (Math.hypot((b ? b.bx : op.x - ALT_X) - tx, (b ? b.by : op.y - ALT_Y) - ty) < 1.3) rid = op.eye.rid;
   }
   let cas = -1, cd = 0.6;
   for (const c of s.casualties) { if (c.where === 'loaded' || c.where === 'hospital') continue; const d = Math.hypot(c.x - tx, c.y - ty); if (d < cd) { cd = d; cas = c.id; } }

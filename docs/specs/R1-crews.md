@@ -284,8 +284,8 @@ export function stays(sim: Sim, rid: number): boolean;                   // 현�
 export function fieldCrew(sim: Sim, u: Unit): number[];                  // 내리는 자리만 (전원이 내리지 않으면 전원)
 export function crewHasKit(sim: Sim, u: Unit, id: KitId, okOnly = true): boolean;
 export function seatsOf(u: Unit): number;                                // u.seats ?? 0
-export function minCrew(kind: UnitKind): number;                         // 최소 인원 표의 인원 (내리지 않는 자리까지 센다 — 편성 인원의 설명·테스트용. H1·I2 의 결원 판정은 minField 를 쓴다)
-export function minField(kind: UnitKind): number;                        // 내리는 자리의 최소 수: 최소 편성(std 에서 minDrop 을 뺀 것) 가운데 stays 가 아닌 역할의 수. 모두 stays 면(경찰 헬기) 최소 편성의 자리 수 — fieldCrew 와 같은 규칙. H1 의 crewReady·I2 의 결원 기준이 이것과 견준다
+export function minCrew(kind: UnitKind): number;                         // 최소 인원 표의 인원 (내리지 않는 자리까지 센다 — 편성 인원의 설명·테스트용. I2 의 예비 인력 기준은 minField 를 쓴다)
+export function minField(kind: UnitKind): number;                        // 내리는 자리의 최소 수: 최소 편성(std 에서 minDrop 을 뺀 것) 가운데 stays 가 아닌 역할의 수. 모두 stays 면(경찰 헬기) 최소 편성의 자리 수 — fieldCrew 와 같은 규칙. I2 의 예비 인력 기준(결장한 자리를 어디까지 채우나)이 이것과 견준다. H1 의 crewReady 는 견주지 않는다 — 부대의 운용 중단은 그 부대 대원이 전부 숨졌을 때만이고 부분 결원은 −18 감점만이다(H1 §3.6, 사용자 최종 결정 2026-11-15)
 export function skillsOf(role: RoleId, skill: number): Skills;            // 역할의 skills 식(2절 표)에 skill 을 넣은 값(0..1 로 자른다). createRoster 와 I2 의 성장(persist.ts)이 함께 쓴다
 export function isHovering(u: Unit, s: Scene): boolean;                  // 7.3 (종류와 현장만 본다 — 상태는 부르는 쪽이 따로 본다)
 export function capableOf(sim: Sim, rid: number, kind: WorkKind): boolean;   // 6.4. 장비·부서와 알려진 공기 상태만
@@ -710,7 +710,7 @@ diff /scratch/hash-before.txt /scratch/hash-after.txt      # 출력이 없어야
   - 성공률(`outcomes.success / incidents` — `good` 은 성공+대응 지연이라 다른 값이다) 73% ± 5%p, 실패+미해결(`bad`) 12% 이하, 한계 시간+방치(`closeReasons.timeout + closeReasons.abandoned`) 4건 이하(지금 3), 평균 대응(`avgResponse`) 55초 이하(지금 50).
   - 유형별 성공률이 50% 아래로 떨어지는 유형이 없다(지금 가장 낮은 화재 54%). 무장은 지금 82% ± 8%p.
   - 프리셋 순서(쉬움 > 보통 > 어려움 > 극한)와 간격(테스트 `프리셋`이 본다) 유지.
-  - 부대 규모 1(최소 인원) 이 3 보다 어렵다(성공률이 낮다). 이 비교는 **H1 을 합친 뒤 다시 잰다** — H1 의 결원 규칙(H1 §3.6, `crewOk < minField`)이 최소 편성 부대에 걸리는 방식에 따라 부대 규모 1·2 의 결과가 다시 바뀐다.
+  - 부대 규모 1(최소 인원) 이 3 보다 어렵다(성공률이 낮다). H1 은 인원 문턱으로 운용을 멈추지 않으므로(부분 결원은 −18 감점만, 운용 중단은 부대 대원이 전부 숨졌을 때뿐 — H1 §3.6, 사용자 최종 결정 2026-11-15) 최소 편성 부대에만 따로 걸리는 규칙은 없다. 작은 부대일수록 다친 대원이 다시 내리지 않는 만큼 손이 먼저 모자라므로 H1 을 합친 뒤 이 비교를 H1 §9 의 측정과 함께 한 번 더 본다(규칙 때문이 아니라 부상 빈도 때문에 바뀐다).
   - 각 `--force` 20교대에서 한계 시간·방치 2건 이하.
   - 교대당 시간: 지금(P1 이후, 단계 0 에서 잰 값)의 1.8배를 넘으면 원인(대개 대원 수 × `perceive`·A*)을 재서 보고에 적는다. 테스트가 시간 초과로 깨지면 원인을 먼저 재고, 그래도 넘는 테스트만 제한 시간을 늘리고 보고에 적는다.
 - **기준을 벗어나면 고치는 차례**:
@@ -891,7 +891,7 @@ diff /scratch/hash-before.txt /scratch/hash-after.txt      # 출력이 없어야
 - **부대 규모 1·2 의 추격전.** 경찰 헬기가 없고 소방 헬기는 무장 사건에 가지 않으므로 하늘의 눈이 없다. 놓침이 늘면 `airFit` 에서 경찰 헬기가 없을 때만 소방 헬기의 무장 `search` 를 0.5 로 허용한다.
 - **의료 헬기의 쏠림.** 적합도 1.2·빠른 직선 비행이라 낮의 위험도 높은 구급 수요를 거의 다 가져갈 수 있다. 교대당 출동 수를 본다(12절).
 - **같은 파일을 고치는 다른 설계서.** H1(부상·사망)은 `agentHealth`·`hazards` 의 피해 식을, X6(위험의 현실화)는 `blast` 의 구조 충격·층 너머, `agentHealth` 의 깔림 조각, 장비 판정(`fitFor`·`agentCost`·`detectRadius`·`rescueMate`·`spray`)을, R2(대응 방식)는 `waterRescue`·`toolFor` 를 고친다. 순서는 R1 → H1 → X6 → R2(`docs/specs/README.md` "구현 순서")이므로 R1 은 식의 "방호·장비" 부분만 함수(`armorOf`·`blastFactor`·`toolFor`)로 꺼내 두어 H1(피해 식)과 X6 가 그 함수만 고치게 한다.
-- **다른 설계서와 이름 맞추기**(같은 날 따로 쓴 `H1-injuries.md`·`R2-methods.md` 는 R1 의 이름을 가정으로 적었다 — R1 이 먼저 합쳐지므로 R1 의 이름이 기준이다): 개인 장비 칸은 `Responder.kit: KitItem[]`, 판정은 `hasKit`(배정)·`kitWorks`(효과)·`kitUses`/`useKit`(수량)·`toolFor`(성능). R2 의 `gearOf`·`hasGear` 는 이 함수들과 부대 칸(`Unit.hoist`·`bucketMax`·`seats`)을 감싸면 되고, R2 의 장비 이름이 R1 에 없으면 `KitId` 에 **추가**한다(예: 구명조끼·드론). H1 의 `protection()` 은 `armorOf`·`blastFactor` 와 `scba`·`turnout` 판정을 읽고, H1(결원 운용 중단)·I2(결원 기준)가 말한 최소 인원은 **내리는 자리 단위의 `minField(kind)`** 다(4절). `crewReady` 가 내리는 자리(`fieldCrew`)만 세므로 내리지 않는 자리까지 센 `minCrew(kind)`(`STAFF[kind].std.length − minDrop.length`)와 견주면 소방 헬기·의료 헬기·구조정이 늘 결원이 된다. 기본 응급 가방은 `bag`, 테이저 무력화 시간(R1 3.2초)은 H1 이 바꿀 수 있다. R2 가 말한 "몸과 다른 곳에서 보는 눈"(드론)은 R1 의 공중 관측자(`aloft` 인 `FieldAgent`, `s.agents` 밖)와 같은 방식으로 만들 수 있다.
+- **다른 설계서와 이름 맞추기**(같은 날 따로 쓴 `H1-injuries.md`·`R2-methods.md` 는 R1 의 이름을 가정으로 적었다 — R1 이 먼저 합쳐지므로 R1 의 이름이 기준이다): 개인 장비 칸은 `Responder.kit: KitItem[]`, 판정은 `hasKit`(배정)·`kitWorks`(효과)·`kitUses`/`useKit`(수량)·`toolFor`(성능). R2 의 `gearOf`·`hasGear` 는 이 함수들과 부대 칸(`Unit.hoist`·`bucketMax`·`seats`)을 감싸면 되고, R2 의 장비 이름이 R1 에 없으면 `KitId` 에 **추가**한다(예: 구명조끼·드론). H1 의 `protection()` 은 `armorOf`·`blastFactor` 와 `scba`·`turnout` 판정을 읽고, I2(결원 기준 — 예비 인력을 붙이는 문턱)가 말한 최소 인원은 **내리는 자리 단위의 `minField(kind)`** 다(4절). (H1 도 처음에는 결원 운용 중단에 이것을 썼으나, 사용자 최종 결정(2026-11-15 — 부대 대원이 전부 숨졌을 때만 운용 중단)으로 H1 은 인원 문턱을 쓰지 않는다. `minField` 는 I2 가 계속 쓰므로 남긴다.) `crewReady` 가 내리는 자리(`fieldCrew`)만 세므로 내리지 않는 자리까지 센 `minCrew(kind)`(`STAFF[kind].std.length − minDrop.length`)와 견주면 소방 헬기·의료 헬기·구조정이 늘 결원이 된다. 기본 응급 가방은 `bag`, 테이저 무력화 시간(R1 3.2초)은 H1 이 바꿀 수 있다. R2 가 말한 "몸과 다른 곳에서 보는 눈"(드론)은 R1 의 공중 관측자(`aloft` 인 `FieldAgent`, `s.agents` 밖)와 같은 방식으로 만들 수 있다.
 - **확인한 것**(검토에서 코드로 확인): `perceive`·`discover`·`learn`·`flushOutbox`·`transmit` 은 `s.agents` 밖의 개체로 불러도 동작한다. `assign()` 은 담당자 없는 작업을 예외 없이 `open` 으로 되돌리고 `fitFor` 0 인 작업은 건너뛴다. 병원 착륙장은 `(f.x − 5, f.y − 3)`(7.1). 산불 현장의 A~E 구역은 모두 `indoor = false`(`field/scenes/disaster.ts` 의 `addRegion(…, false, true)`) — 물 투하 대상이다.
 - **확인하지 못한 것** (구현하며 확인할 것): 내리는 자리 15칸이 벽에 걸리는 현장이 있는지(걸리면 `staging` 그대로라 겹칠 뿐 막히지는 않는다).
 

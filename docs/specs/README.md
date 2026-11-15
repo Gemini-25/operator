@@ -32,7 +32,7 @@
 | 단계 | 묶음 | 앞 단계에 기대는 것 | 앞 단계 없이 먼저 하면 (대체) |
 |---|---|---|---|
 | 1 | R1 | 지금 HEAD(B1·B3·P1·Q1·Z1·U2·I1-a·G5 를 합친 상태). B1 뒤에 기준을 잰다 | — (첫 단계) |
-| 2 | H1 | R1 의 `armorOf`·`blastFactor`·`kitWorks`·`kitUses`·`medLevelOf`·`seatsOf`·`minField`·`makeAgent`·`startTransport` 의 병원 이름, G5 가 지운 피·'hit' | H1 §12.2-5 (방호는 §2.4 의 "지금"·"새로" 열, 결원은 1, 자리는 구급차 2·헬기 1) |
+| 2 | H1 | R1 의 `armorOf`·`blastFactor`·`kitWorks`·`kitUses`·`medLevelOf`·`seatsOf`·`fieldCrew`·`makeAgent`·`startTransport` 의 병원 이름, G5 가 지운 피·'hit'. H1 은 `minField` 를 쓰지 않는다(결원 규칙 — 아래 정본 표) | H1 §12.2-5 (방호는 §2.4 의 "지금"·"새로" 열, `crewOk`·`crewLeft` 는 `u.crew`, 자리는 구급차 2·헬기 1) |
 | 3 | X6 | H1 의 `hurt*`(`{ ev }`)·문턱·`agentHealth` 전이·`mateFact`·`MateBelief`, R1 의 `hasKit`·`kitWorks`·`kitLive`·`toolUse`·`makeAgent`·`briefFacts`. G4 가 먼저 합쳐졌으면 그 그림·시험 둘을 함께 고친다 | X6 §12.1 의 "R1·H1 이 먼저 합쳐지지 않았으면" 줄, §3.4 의 "R1 이 없을 때" 열, §7.2 의 "G4 가 아직이면" |
 | 4 | R2 | R1 의 `KitId`·`KITS`·명부 고장 추첨·`hoist`, H1 의 `hurt*`·`protection('drown')`, X6 의 `exteriorSpot`·`spray(eff, wmul)`·`ops` 사실·`s.fan` 자리 | R2 §3.3 끝의 `gear.ts` 대체, §10 "R1 이 아직 없을 때" |
 | 5 | R3 | R2 의 `chooseMethod(…, dc)`·`METHOD`·`WORK_MODE`·`gear.ts`, R1 의 `ROLES`·`KITS`·`capableOf`, H1 의 `bandOf`·`hurtF`·`treatMate`, X6 의 `DANGER_RULES`·`evacuate` | 대체를 두지 않는다 — 함수 이름이 다르면 실제 코드를 따른다(R3 §11.2-7). 순서를 지킨다 |
@@ -53,10 +53,10 @@
 |---|---|
 | 편성·역할·개인 장비(`KitId`·`Responder.kit`·`hasKit`·`kitWorks`·`kitLive`·`toolUse`·`fieldCrew`·**`minField`**·`seatsOf`·`skillsOf`·`makeAgent`·`briefFacts`) | R1 §3·§4 |
 | 장비를 감싼 판단 층(`gear.ts` — `kitCount`·`bestTool`, R3 의 `kitHas`·`kitQty`·`gunOf`·`roleIdOf`·`groupOf`·`crewHas`) | R2 §3.3 (R3 §2.4 가 더한다) |
-| 부상 필드·피해 경로(`InjuryCause`·`Injury`·`hurt*`·`protection`·`bandOf`·`MateBelief`·`outShifts`·`RosterOut`·`crewReady`/`crewOk`·`seatsUsed`·결원 규칙) | H1 §2·§3 |
+| 부상 필드·피해 경로(`InjuryCause`·`Injury`·`hurt*`·`protection`·`bandOf`·`MateBelief`·`outShifts`·`RosterOut`·`crewReady`/`crewOk`/`crewLeft`·`seatsUsed`·결원 규칙) | H1 §2·§3. 결원 규칙은 사용자 최종 결정(2026-11-15): **부대의 운용 중단은 그 부대 대원이 전부 숨졌을 때만** — 다치거나 일부가 숨진 부대는 −18 감점만 받고 계속 출동하고, 모두 후송돼 빈 부대가 빠지는 것은 규칙이 아니라 사람이 없어서다(H1 §3.6·§12.3). I2 의 예비 인력도 같은 정신(나올 대원이 한 명도 없을 때만 `oos` — I2 §3.2) |
 | 물 위 대원의 피해 하한 18 | R2 §3.5 |
 | 방법(`MethodId`·`MethodWhy`(평소 = `usual`)·`MethodUse`·`METHOD`·`chooseMethod(…, dc)`·`methodFit`·`WORK_MODE`) | R2 §3 (R3 §3.7 이 행과 까닭 사상 표를 더한다) |
-| 폭파 진입 — 사용자 결정(2026-11-15). 방법 `MethodId 'charge'` = G5 `BreachHow 'charge'`(그림 이름), 장약 `KitId 'charge'`, 농성 문 잠금 `BARRICADE_P` | R2 §4.2a (장약은 R1 §4 표·진입대원(파괴)·폭발물 처리 요원, 고르는 때는 R3 S26, 그림·소리는 R2 가 G5 의 진입 그림 자리에 갈래로 더한다). 같은 날의 다른 결정: H1 자해 끔(`SELF_HARM = 0`)·최소 편성 부대의 결원 규칙 확정(H1 §3.6·§12.3), 문 그림은 G5 기본값 그대로 |
+| 폭파 진입 — 사용자 결정(2026-11-15). 방법 `MethodId 'charge'` = G5 `BreachHow 'charge'`(그림 이름), 장약 `KitId 'charge'`, 농성 문 잠금 `BARRICADE_P` | R2 §4.2a (장약은 R1 §4 표·진입대원(파괴)·폭발물 처리 요원, 고르는 때는 R3 S26, 그림·소리는 R2 가 G5 의 진입 그림 자리에 갈래로 더한다). 같은 날의 다른 결정: H1 자해 끔(`SELF_HARM = 0`), 문 그림은 G5 기본값 그대로. 결원 규칙은 그 뒤 사용자 최종 결정으로 바뀌었다(위 H1 줄 — 최소 편성 부대의 결원 중단 안은 쓰지 않는다) |
 | 교본(`DocCtx`·`docCtx`·`DocWhy`·`crew` 사실·`docMethodMul`·`PAIRS`·탄약 `fireRound`) | R3 §2 |
 | 위험 상태(`CatState`·`OpsState`·`SignBelief`·`PlaceMark`·`Sim.placeMarks`·`DANGER_RULES`·`trapped`·경계 1칸 갇힘의 `cat:` 흐름) | X6 §2·§4 |
 | 세계 상태·신호(`WorldState`·`SignalKind`·`signal()`·`placeState`·**`knownBuildingAt`**·`I.blockEv`·`blast` 신호의 범위) | I1 §3.3·§3.4 |

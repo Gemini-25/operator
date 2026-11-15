@@ -32,7 +32,9 @@ export function detonate(sim: Sim, s: Scene, I: Incident, p: Prop): void {
     if (d > 3.4) continue;
     if (c.mob === 'mobile') c.mob = 'immobile';
     c.walking = false; c.path = null;
+    const bl0 = c.bleed;
     c.bleed = Math.max(c.bleed, (0.09 + 0.09 * (1 - d / 3.4)) * sim.tune.bleedMul); c.bleed0 = c.bleed;
+    if (c.bleed > bl0) c.bleedCause = 'blast';      // (H1) 기록만 — 체력 피해는 위의 blast 가 이미 적었다
   }
   // 불: 둘레 두 칸의 바닥과 가구 (벽 너머로는 번지지 않는다)
   for (let y = Math.max(0, p.y - 2); y <= Math.min(s.h - 1, p.y + 2); y++) for (let x = Math.max(0, p.x - 2); x <= Math.min(s.w - 1, p.x + 2); x++) {

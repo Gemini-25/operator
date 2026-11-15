@@ -31,6 +31,7 @@ export function makeAgent(sim: Sim, rid: number, unitId: number, x: number, y: n
     stuckT: 0, lastX: 0, lastY: 0, rng, planT: 0, equipIssue: 'none', smokeT: 0, climb: 0, rehabLogAt: -99,
     pendingBlock: -1, underFireT: -99, spot: -1, quiet: new Set(), lastRetreatLog: -99, equipRetryAt: -99,
     aloft: false, taserAt: -99,      // (R1) 공중 관측자가 아니다(관측자는 air.ts 가 true 로 바꾼다) · 테이저를 쏜 적이 없다
+    hurtEv: undefined, hpTick: undefined, lastTile: undefined, fellOnce: undefined, lightBack: undefined,      // (H1) 부상 — 쓰는 것은 단계 4a 부터
   };
 }
 

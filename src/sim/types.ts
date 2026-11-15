@@ -89,6 +89,14 @@ export interface Responder {
   // ── 역할과 개인 장비 (R1, crews.ts) ──
   role?: RoleId;                      // 부대 안의 자리 (crews.ts ROLES)
   kit?: KitItem[];                    // 이 사람이 든 장비. 순서 = 역할의 기본 장비 순서 (고장 추첨도 이 순서로 한다)
+  // ── 부상 (H1, field/injury.ts) ── 교대 내내 유지되는 상태. 없으면 "다친 적 없음"
+  injuries?: Injury[];                // 원인마다 한 줄
+  bleed?: number; bleed0?: number;    // 상처로 인한 초당 체력 감소, 처치 전 값
+  treatQ?: number;                    // 받은 처치 (0 없음 … 1 전문)
+  dead?: boolean;                     // 순직. status 는 'down' 그대로 둔다
+  tDown?: number; tDead?: number;     // 쓰러진 시각, 숨진 시각
+  care?: 'aboard' | 'hospital';       // 후송 중 / 병원 인계됨
+  deathCause?: InjuryCause;
 }
 
 // ── 대원의 역할과 개인 장비 (R1) ──
@@ -173,6 +181,10 @@ export interface Unit {
   grounded?: 'fog' | 'night' | 'storm' | null;      // 지금 뜰 수 없는 이유
   spareAir?: number;                  // 차에 실은 예비 공기통 수
   airNeed?: keyof Needs;              // 헬기가 이번 출동에서 맡은 수요 (dispatcher.sendUnit 이 적는다. airRtb 가 되돌린다)
+  // ── 부상 대원·용의자의 후송 (H1) ──
+  aboard?: { kind: 'mate' | 'suspect'; id: number; inc: number; t: number }[];   // 구조 대상이 아닌 환자 (대원 rid · 용의자 id). 자리 셈에는 다른 부대의 대원과 용의자만 넣는다
+  firstLoadAt?: number;               // 이번 이송에 처음 사람을 태운 시각 (부대 자신의 기록)
+  oosEv?: number;                     // 이 부대의 마지막 RESPONDER_HURT·RESPONDER_KILLED 기록 — 운용 중단 기록의 원인으로 쓴다
 }
 
 // ───────────────────────── 정보(Belief) ─────────────────────────
@@ -188,6 +200,31 @@ export interface Fact {
   text: string;       // 사람이 읽을 수 있는 내용
 }
 export interface CasBelief { x: number; y: number; mob: Mobility; band: number; where: CasWhere; treated: boolean; trappedDone: boolean; tq: number }   // tq: 0 미처치, 1 기본 처치, 2 전문 처치
+/** (H1) 지휘관이 아는 동료의 상태 ('mate' 사실의 값). X6 가 끝에 trapped?: boolean 을 더한다 */
+export interface MateBelief { x: number; y: number; status: 'down' | 'hurt' | 'safe' | 'evac' | 'light'; band: number; bleeding: boolean; tq: 0 | 1 | 2; dead: boolean; wasDown: boolean; since: number }
+//   'light' = 처치 뒤 가벼운 일로 돌아온 다친 동료 — 처치·후송·구조의 대상이 아니다
+
+// ───────────────────────── 부상 (H1, field/injury.ts) ─────────────────────────
+/** 다친 원인 (세 부류 공통). 화면·보고서의 이름은 injury.ts 의 CAUSE_NAME */
+export type InjuryCause =
+  | 'gunshot' | 'stab' | 'blunt'                 // 총상 · 자상(흉기) · 타박상(맨손, 제압 중 맞섬)
+  | 'burn' | 'smoke' | 'toxic'                   // 화상 · 연기 흡입 · 유독 가스 흡입(가스 누출 현장)
+  | 'fall' | 'crush' | 'blast'                   // 추락·미끄러짐 · 잔해 깔림·낙하물 · 폭발
+  | 'drown' | 'electric' | 'exhaustion'          // 익수 · 감전 · 탈진(열 탈진)
+  | 'vehicle' | 'exposure' | 'illness';          // 차량 충격 · 실외 노출(저체온·탈수) · 급성 질환
+/** 한 사람이 한 원인으로 입은 피해. 원인마다 한 줄로 합친다 (연기처럼 매 틱 더해지는 피해가 배열을 늘리지 않게) */
+export interface Injury {
+  cause: InjuryCause;
+  dmg: number;        // 이 원인으로 깎인 체력의 합 (방호를 뺀 뒤)
+  sev: number;        // 이 원인으로 다친 뒤 닿은 가장 나쁜 중증도 (0 경상 · 1 중상 · 2 위중 · 3 사망)
+  t: number;          // 처음 다친 시각
+  last: number;       // 마지막으로 더해진 시각
+  by: number;         // 가해자 (byKind 에 따라 용의자 id 또는 대원 rid). 없으면 -1
+  byKind: 'hostile' | 'responder' | 'world' | 'initial';
+  ev: number;         // 이 부상을 처음 남긴 기록 (없으면 -1)
+}
+/** 교대 끝의 명부 상태 — I2(교대 간 지속)가 다음 교대의 입력을 만들 때 읽는다. I2 는 name 을 열쇠로 쓴다(rid 는 부대 규모 손잡이에 따라 바뀐다) */
+export interface RosterOut { rid: number; name: string; health: number; band: number; dead: boolean; hospital: boolean; out: number; cause: InjuryCause | null }
 
 // ───────────────────────── 현장 ─────────────────────────
 export const T = { VOID: 0, GROUND: 1, ROAD: 2, FLOOR: 3, WALL: 4, WINDOW: 5, TREE: 6, WATER: 7, ROCK: 8, DOOR: 9, TRAIL: 10, FURN: 11, STAIR: 12 } as const;
@@ -243,6 +280,11 @@ export interface Casualty {
   tDiscovered: number; tFreed: number; tTreated: number; tSafe: number; tLoaded: number; tDead: number; tHospital: number;
   discoveredBy: number;
   causeEvent: number;       // 상태 악화의 주된 원인 이벤트
+  // ── 부상 기록 (H1) ──
+  injuries?: Injury[];
+  bleedCause?: InjuryCause;       // 지금의 bleed 를 만든 원인 (매 틱 악화를 이 원인으로 적는다). 없으면 그 항은 기록하지 않는다
+  deathCause?: InjuryCause;       // 숨지게 한 원인. 한 번 정해지면 바꾸지 않는다
+  lost?: boolean;                 // 물살에 휩쓸려 현장 밖으로 떠내려갔다 (tickWater 가 세운다 — 화면이 그리지 않을 사람을 가린다)
 }
 export interface Hostile {
   id: number; label: string;
@@ -263,6 +305,14 @@ export interface Hostile {
   dragging: boolean;        // 지금 인질을 끌고 옮기는 중
   path: number[] | null; pathI: number; negot: number; seenOfficers: number;
   targetRid: number;
+  // ── 부상 (H1) ──
+  injuries?: Injury[];
+  bleed?: number; bleed0?: number; treatQ?: number; tTreated?: number;
+  dead?: boolean;                 // state 는 그대로('down' 또는 'arrested') 두고 따로 표시한다
+  tDown?: number; tDead?: number;
+  where?: 'scene' | 'aboard' | 'hospital';      // 없으면 scene
+  bleedCause?: InjuryCause; deathCause?: InjuryCause;
+  selfHarmRolled?: boolean;       // 자해 추첨을 이미 했다 (용의자마다 한 번)
 }
 export interface PassingCar { x: number; px: number; row: number; dir: number; speed: number; distracted: boolean; stopped: boolean; hit: boolean }
 // ── 교전 연출 기록 (G5) ── 시뮬레이션은 이 칸들을 읽지 않는다. 그림(view/scene/fxBook.ts)과 소리(view/audioCombat.ts)만 읽는다.
@@ -366,6 +416,12 @@ export interface FieldAgent {
   // ── R1 ──
   aloft?: boolean;                            // 공중 관측자 (AirOp.eye). 걷지 않고 무전 음영을 받지 않는다
   taserAt?: number;                           // 마지막으로 테이저를 쏜 시각 (사격 대기 a.cooldown 과 따로)
+  // ── 부상 (H1) ──
+  hurtEv?: number;                            // 마지막으로 다친 기록 — RESPONDER_HURT 의 원인으로 쓴다 (lastBlockEvent 대신)
+  hpTick?: number;                            // 이 틱이 시작될 때의 체력 — 대원 문턱의 기준
+  lastTile?: number;                          // 마지막으로 서 있던 칸 — 잔해 바닥에 "새로 들어섰는가"
+  fellOnce?: boolean;                         // 이 현장에서 잔해 바닥 추락을 이미 겪었다 (대원당 사건당 한 번)
+  lightBack?: boolean;                        // 이 현장에서 가벼운 일로 이미 한 번 돌아왔다 (다시 물러나면 다시 돌아오지 않는다)
 }
 
 export interface RadioMsg {
@@ -487,6 +543,9 @@ export interface IncidentResult {
   duration: number;                // 발생 → 종료
   analysis: string[];              // 원인·경과 설명 문장
   headline: string;
+  // ── 부상과 사망 (H1) ──
+  respondersDown?: number; respondersKilled?: number; suspectsHurt?: number; suspectsDead?: number;
+  deathCauses?: Partial<Record<InjuryCause, number>>;      // 숨진 구조 대상의 원인 집계
 }
 /** 추격전: 도주 차량이 도로망을 달리는 동안의 상태 (pursuit.ts) */
 export interface Pursuit {
@@ -565,7 +624,8 @@ export interface ShiftReport {
   avgResponse: number; avgDispatch: number;
   utilization: number; unitUtil: { callsign: string; util: number; runs: number }[];
   casTotal: number; casSaved: number; casLost: number; casUndiscovered: number;
-  respondersHurt: { name: string; callsign: string; status: string; role?: string }[];      // role = 역할 이름 (R1)
+  respondersHurt: { name: string; callsign: string; status: string; role?: string;      // role = 역할 이름 (R1)
+    rid?: number; band?: number; cause?: InjuryCause | null; dead?: boolean; hospital?: boolean; out?: number }[];      // (H1) 교대 끝의 중증도·주된 원인·순직·병원 인계·다음 교대 결장 예상
   equipFailures: number;
   delayCauses: { code: ProblemCode; label: string; count: number }[];
   incidents: { id: number; code: string; type: IncidentType; name?: string; reportedType: IncidentType | null; label: string; result: IncidentResult; start: number; end: number }[];
@@ -574,6 +634,9 @@ export interface ShiftReport {
   traffic?: { jams: number; closures: number; obstacles: number; detours: number; delaySec: number; gateWaits: number };      // 교통 통계 (traffic.ts)
   disaster?: { name: string; lines: string[] };      // 재난이 있었던 교대의 요약 (disaster.ts)
   air?: AirStats;                  // (R1) 헬기 통계
+  respondersKilled?: { name: string; callsign: string; cause: InjuryCause | null; incident: string }[];      // (H1) 순직
+  suspectsHurt?: number; suspectsDead?: number;      // (H1)
+  roster?: RosterOut[];            // (H1) 교대 끝의 명부 상태 (인근 도시 지원 대원 제외)
   hash: string;
 }
 

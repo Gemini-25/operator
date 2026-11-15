@@ -15,6 +15,7 @@ import { applyWater, flashbang, hostageNear, hostileActive, isHeld, placeAtSafe,
 import { coverRoll, fireShot } from './damage';
 import { breachHowFor, lastFx, noteCollateral, noteHit, noteShot, recBreach, recCuff, recTaser, weaponOf } from './fxlog';
 import { detonate } from './rules/crime';
+import { bandOf, noteCasHurt, noteHostileHurt, noteInjury } from './injury';
 
 export function makeTask(kind: TaskKind, label: string, w: WorkItem | null = null): Task {
   return {
@@ -403,15 +404,19 @@ function shootAt(sim: Sim, s: Scene, a: FieldAgent, hid: number): void {
   if (sim.t >= h.stunUntil) { h.alertUntil = sim.t + 6; h.facing = Math.atan2(a.y - h.y, a.x - h.x); }
   if (struck) {
     // 인질 곁의 용의자를 향해 쏜 빗나간 탄
+    const hp0 = struck.health, bl0 = struck.bleed;
     struck.health -= s.rng.range(22, 34); struck.mob = 'immobile'; struck.bleed = Math.max(struck.bleed, 0.15); struck.bleed0 = struck.bleed; struck.walking = false;
     struck.causeEvent = raiseProblem(sim, I, 'ESCALATION', '교전 중 인질 피격', { role: 'SYSTEM', actor: '현장', rid: r.id, imp: 3, text: `교전 중 빗나간 탄에 인질(구조 대상 ${struck.label})이 다쳤습니다!` }, false);
+    noteCasHurt(struck, 'gunshot', hp0, bl0, sim.t, r.id, 'responder', struck.causeEvent);      // (H1) 기록만
     noteCollateral(sim, s, shot, struck, a.x, a.y);
   }
   if (!I.problems.some((q) => q.detail === '교전 발생')) {
     I.problems.push({ code: 'ESCALATION', t: sim.t, eventId: emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 3, text: '교전 발생! 대응 사격합니다.' }), detail: '교전 발생', recovered: true, recoveryText: '' });
   }
   if (hit) {
+    const hp0 = h.health;
     h.health -= s.rng.range(30, 48); h.morale -= 0.12;
+    noteHostileHurt(h, 'gunshot', hp0, sim.t, r.id, 'responder');      // (H1) 기록만
     pushFx(sim, s, 'hit', h.x, h.y);
     noteHit(lastFx(sim, s, 'hit'), { side: 0, ox: a.x, oy: a.y, tk: 1, target: h.id });
     if (h.health <= 0) r.xpGained += 0.004;
@@ -684,7 +689,9 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       c.x = a.x - a.fx * 0.45; c.y = a.y - a.fy * 0.45;
       // 척추 고정판: 차·잔해에서 꺼낸 사람(교통사고·붕괴)을 고정판 없이 옮기면 옮기는 동안 더 나빠진다 (악화 ×1.12).
       // 옮기는 사람이나 곁에서 돕는 사람이 고정판을 가졌으면 괜찮다
+      const hpC = c.health;
       if ((s.kind === 'traffic' || s.kind === 'collapse') && c.tFreed >= 0 && !c.dead && !carryHas(sim, s, a, 'spineBoard')) c.health -= c.bleed * 0.12 * dt;
+      if (c.health < hpC && c.bleedCause !== undefined) c.injuries = noteInjury(c.injuries, c.bleedCause, hpC - c.health, sim.t, bandOf(c.health));      // (H1) 기록만: 더해진 악화를 그 상처의 원인으로
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m === 'arrived') {
         c.where = 'safe'; c.tSafe = sim.t; placeAtSafe(s, c); a.carrying = -1;

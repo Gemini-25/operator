@@ -35,6 +35,7 @@ export function baseScene(sim: Sim, I: Incident, rng: Rng): Scene {
     cat: undefined, ops: undefined,      // (X6) 위험 상태(진실 — field/catastrophe.ts 의 catOf 가 첫 틱에 채운다)와 지휘 상태(지휘 규칙이 채운다)
     triageAt: -1, laneShield: null,      // (R3) 분류가 끝난 시각(4단계)·차량으로 막은 통제 지점(6단계) — 단계 0 에는 아무도 바꾸지 않는다
     animals: undefined, exitKind: undefined, kinds: undefined,      // (N8) 동물·출구의 종류·N8 시나리오의 진실 — 채우는 것은 그 시나리오의 현장 생성기(단계 4a~)
+    kinds2: undefined, windDir: undefined, flowSpots: undefined,      // (N9) N9 시나리오의 진실 · 바람의 방향 · 군중의 흐름 자리(둘 다 생김새) — 채우는 것은 그 시나리오의 현장 생성기(단계 4~9)
   };
 }
 
@@ -98,6 +99,7 @@ export function addHostile(s: Scene, x: number, y: number, weapon: Hostile['weap
     injuries: undefined, bleed: undefined, bleed0: undefined, treatQ: undefined, tTreated: undefined, dead: undefined, tDown: undefined, tDead: undefined,
     where: undefined, bleedCause: undefined, deathCause: undefined, selfHarmRolled: undefined,
     group: undefined, hideUntil: undefined, asleep: undefined,      // (N8) 폭행 시비의 무리 · 날치기가 숨은 자리에서 나갈 시각 · 잠든 취객 (단계 6a)
+    crowdRole: undefined, dispersed: undefined,      // (N9) 시위의 주최자·선동자 · 해산해 걸어 나감 (단계 4)
   };
   s.hostiles.push(h);
   return h;

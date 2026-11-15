@@ -144,6 +144,16 @@ export const METHOD: Record<MethodId, MethodDef> = {
   air: row('air', ['search'], '공중 수색', '공중 수색', '공중 수색', '상공에서', [], 0, 0, false, REC),      // R1 경찰 헬기의 관측자 — 기록 전용
   drone: row('drone', ['search'], '드론 열화상', '드론', '드론 수색', '드론으로', [], 0.8, 0, false),      // 장비가 생기면 kits 를 채운다
   dog: row('dog', ['search'], '탐지견', '탐지견', '탐지견 수색', '탐지견으로', [], 0.85, 0, false),      // 부대가 생기면 needUnit 을 채운다
+  // ── (N9 §5.12) 새 방법 다섯 — 단계 1 은 줄만(can = NOT_YET). 수치(pref·risk)는 시작값이고, 조건·배율·장비는 그 방법을 쓰는 단계가 채운다 ──
+  // 잠수: 물에 잠긴 차·선실 안의 사람(믿음 sunk · haz sunk)에게 3칸 안에서 25초 (단계 5). 장비는 diveKit(단계 2 에 생긴다)으로 바꾼다 — 지금은 있는 드라이슈트만 적어 둔다
+  dive: row('dive', ['waterRescue', 'extricate', 'search'], '잠수 구조', '잠수', '잠수 구조', '잠수해 들어가', ['drysuit'], 0.8, 0.1, false),
+  // 오일펜스: 기름 유출의 펜스 자리(boomSite)에 편다 (단계 9). 장비 oilBoom 은 단계 2 에 생긴다 — 그때 kits 를 채운다
+  boom: row('boom', ['mitigate'], '오일펜스 전개', '오일펜스', '오일펜스 전개', '오일펜스를 펼쳐', [], 0.85, 0, false),
+  // 방패 저지선: 군중의 흐름 자리를 막는 cordon (N8 의 임무 — 막는 정도 0.8, 단계 4)
+  shieldLine: row('shieldLine', ['cordon'], '방패 저지선', '방패 저지선', '방패 저지선', '방패로 줄을 지어', ['shield'], 0.85, 0, false),
+  // 제독 텐트 · 물 세척: 오염된 구조 대상의 제독 15초 · 45초 (단계 6). 제독 장비 deconKit 은 단계 2 에 생긴다 — 그때 deconTent 의 kits 를 채운다
+  deconTent: row('deconTent', ['decontam'], '제독 텐트', '제독 텐트', '제독 텐트', '제독 텐트에서 씻어', [], 0.9, 0, false),
+  hoseWash: row('hoseWash', ['decontam'], '물 세척 제독', '물 세척', '물 세척 제독', '호스로 씻어 내', ['hose'], 0.5, 0, false),
 };
 /** 표의 순서 (같은 점수면 앞이 이긴다) */
 export const METHOD_ORDER: MethodId[] = Object.keys(METHOD) as MethodId[];
@@ -168,6 +178,7 @@ export const WORK_MODE: Partial<Record<WorkKind, 'refuse' | 'always' | 'optional
   waterRescue: 'refuse',
   force: 'always', clear: 'always', extricate: 'always', search: 'always', treat: 'always', mitigate: 'always', perimeter: 'always',
   suppress: 'optional', engage: 'optional', arrest: 'optional', load: 'optional', hoist: 'optional',
+  cordon: 'always', decontam: 'always',      // (N9 §5.12) 방패가 없어도 통제는 맡는다 · 물 세척이 늘 남는다 — 단계 1 은 표의 값만 (methodRun 을 부르는 곳이 아직 없다)
 };
 /** 대상 믿음이 없으면(아직 못 봤다) 후보가 없는 임무 (R3 가 해체를 더한다) */
 const NEEDS_CAS: Partial<Record<WorkKind, boolean>> = { waterRescue: true, extricate: true };
@@ -191,6 +202,7 @@ export const SAY: Record<MethodId, string> = {
   stay: '현장에서 처치하겠습니다.', rush: '즉시 이송합니다. 최소한만 처치하겠습니다.', airlift: '',
   seal: '누출을 막겠습니다.', ventFirst: '먼저 환기한 뒤 차단하겠습니다.', cordon: '출입구를 통제하겠습니다.', announce: '주변에 대피 방송을 합니다.',
   air: '', drone: '드론을 띄우겠습니다.', dog: '탐지견을 풀겠습니다.',
+  dive: '잠수해 들어가겠습니다.', boom: '오일펜스를 펼치겠습니다.', shieldLine: '방패로 저지선을 치겠습니다.', deconTent: '제독 텐트에서 씻기겠습니다.', hoseWash: '호스로 씻어 내겠습니다.',      // (N9)
 };
 /** 까닭을 먼저 말하는 한 문장 (없으면 빈 글). failed·broken·tooFar·team 으로 바꿀 때의 말은 실행부(switchMethod)가 사유로 만든다 */
 function whySay(why: MethodWhy, missing: KitId | undefined): string {

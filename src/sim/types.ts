@@ -42,7 +42,8 @@ export type PlaceKind =
   | 'fireStation' | 'police' | 'hospital' | 'cityHall' | 'school' | 'logistics'
   | 'park' | 'forest' | 'riverside' | 'reservoir' | 'parking' | 'playground' | 'runway' | 'farmland'
   | 'station' | 'stadium' | 'university' | 'deptStore' | 'cathedral' | 'temple' | 'powerPlant' | 'broadcast' | 'prison' | 'museum' | 'library' | 'busTerminal' | 'ferry' | 'fishMarket'
-  | 'lighthouse' | 'amusement' | 'dam' | 'substation' | 'beach' | 'pier' | 'containerYard' | 'campsite' | 'lookout' | 'workshop' | 'clinic' | 'cafe';
+  | 'lighthouse' | 'amusement' | 'dam' | 'substation' | 'beach' | 'pier' | 'containerYard' | 'campsite' | 'lookout' | 'workshop' | 'clinic' | 'cafe'
+  | 'subway' | 'concertHall' | 'bankHQ';      // (N9 §4.9) 지하철역 출입구 · 공연장 · 은행 본점 — cityPlan.LATE_LANDMARKS 로 덧붙인다(단계 3). 단계 1 은 이름표만 (사건 장소 표에 넣는 것은 그 종류를 쓰는 단계 4·5·6·7)
 /** 지도 위의 건물 한 채 또는 터 하나. 모든 건물에 종류·이름·주소가 있고, 사건은 이 중 한 곳에서 일어난다. */
 export interface Place extends Building {
   id: number; kind: PlaceKind; name: string; addr: string;
@@ -376,7 +377,8 @@ export type WorkKind =
   | 'hoist' | 'airDrop'      // (R1) 공중 임무: 호이스트 인양 · 공중 물 투하. 지휘관이 작업판에 올리고 field/rules/air.ts 가 가져간다. 지상 대원은 맡지 않는다(fitFor = 0)
   | 'treatMate'      // (H1) 다친 대원 처치. 태울 차(prop)가 정해져 있고 병원이 필요하면 이어서 그 차에 태운다 (구급 분야, 또는 의료 가방을 든 대원)
   | 'treatSuspect'      // (H1) 쓰러진·다친 용의자 처치. 태울 차(prop)가 내 차이고 자리가 있으면 이어서 그 차에 태운다 (경찰은 언제든, 구급대원은 안전 확보 뒤)
-  | 'repair' | 'towAway' | 'capture' | 'persuade' | 'cordon';      // (N8) 시설물 복구(유관 기관) · 견인 · 동물 포획 · 위기자 설득 · 통제(위협이 없는 현장에서 한 칸을 지킨다 — tile = 격자 칸 번호). 단계 2a 에는 자리만 (fitFor 0, 실행부는 빈 갈래)
+  | 'repair' | 'towAway' | 'capture' | 'persuade' | 'cordon'      // (N8) 시설물 복구(유관 기관) · 견인 · 동물 포획 · 위기자 설득 · 통제(위협이 없는 현장에서 한 칸을 지킨다 — tile = 격자 칸 번호). 단계 2a 에는 자리만 (fitFor 0, 실행부는 빈 갈래)
+  | 'decontam';      // (N9 §5.5) 오염된 구조 대상 제독 (대상 = cas). 단계 1 에는 자리만 (workLabel '제독' · fitFor 0 · 실행부는 빈 갈래) — 맡는 사람·실행은 단계 6
 export type TaskKind = WorkKind | 'retreat' | 'rehab' | 'resupply' | 'board' | 'standby' | 'moveSignal' | 'swapAir';      // swapAir = 공기통 교체 (R1 9절)
 
 export interface WorkItem {
@@ -456,7 +458,7 @@ export interface ResourceRequest { t: number; need: keyof UnitCaps; count: numbe
 
 export interface Scene {
   outdoor?: boolean;        // 건물이 아니라 길 위의 현장 (출입구 대신 길목)
-  rules?: ('collapse' | 'gas' | 'water' | 'perch')[];      // 유형의 규칙에 더해 돌릴 세계 규칙 (예: 가스 폭발 현장 = 붕괴 + 가스, 선박 화재 = 화재 + 표류). (N8) 'perch' = 높은 자리가 있는 현장 — sceneManager 는 보지 않고 N8 의 규칙·crews.isHovering 이 본다
+  rules?: ('collapse' | 'gas' | 'water' | 'perch' | 'sightline')[];      // 유형의 규칙에 더해 돌릴 세계 규칙 (예: 가스 폭발 현장 = 붕괴 + 가스, 선박 화재 = 화재 + 표류). (N8) 'perch' = 높은 자리가 있는 현장 — sceneManager 는 보지 않고 N8 의 규칙·crews.isHovering 이 본다. (N9 §5.4) 'sightline' = 사선이 열린 바깥 현장(옥상 총격·수송차 — 무장 용의자의 위험 반경) — 생김새, 단계 8 부터 생성기가 넣는다
   glass: Uint8Array;                  // 깨진 창 (1 = 깨짐). 창 칸에만 뜻이 있다
   decorHp: Uint8Array;                // 가구가 받은 피해 (0 = 멀쩡하거나 가구가 아님 · 1…200 = 닳음 · 255 = 부서져 바닥이 됨). field/damage.ts
   id: number; incidentId: number; kind: IncidentType; variant: string;
@@ -553,7 +555,8 @@ export type ProblemCode =
   | 'TIMEOUT' | 'FATIGUE' | 'HIDDEN_HAZARD' | 'RECOUNT' | 'WRONG_ADDRESS' | 'FALSE_ALARM'
   | 'RESPONDER_KILLED'      // (H1) 대원 순직
   | 'SUSPECT_DIED'      // (H1) 용의자 사망
-  | 'UTIL_LATE' | 'ANIMAL_LOST';      // (N8) 유관 기관이 오지 못해 대신한 조치로 끝냄 (원격 차단·제수밸브) · 동물을 찻길로 놓침
+  | 'UTIL_LATE' | 'ANIMAL_LOST'      // (N8) 유관 기관이 오지 못해 대신한 조치로 끝냄 (원격 차단·제수밸브) · 동물을 찻길로 놓침
+  | 'DECON_LATE';      // (N9 §5.5) 제독 지연 — 제독차가 오지 못해 대체 제독으로 했다(복구됨) · 노출자가 격리 구역을 벗어나 오염이 번졌다. 단계 1 은 이름표·order 의 자리·PROBLEM_SYS 만 (남기는 것·문장 틀은 단계 6)
 export interface Problem { code: ProblemCode; t: number; eventId: number; detail: string; recovered: boolean; recoveryText: string }
 
 export type IncidentPhase = 'unreported' | 'call' | 'pending' | 'dispatched' | 'onscene' | 'closed';
@@ -684,7 +687,8 @@ export type MethodId =
   | 'chase' | 'breach' | 'bang' | 'tackle' | 'cover' | 'taser' | 'shield' | 'beanbag' | 'sniper'       // 무장 (engage · arrest)
   | 'stay' | 'rush' | 'airlift'                                                                         // 응급 (treat · 이송 수단)
   | 'seal' | 'ventFirst' | 'cordon' | 'announce'                                                        // 누출 조치·통제 (mitigate · perimeter)
-  | 'air' | 'drone' | 'dog';                                                                            // 야외 수색 (기록 전용·7단계)
+  | 'air' | 'drone' | 'dog'                                                                             // 야외 수색 (기록 전용·7단계)
+  | 'dive' | 'boom' | 'shieldLine' | 'deconTent' | 'hoseWash';      // (N9 §5.12) 잠수 · 오일펜스 · 방패 저지선(cordon) · 제독 텐트 · 물 세척(decontam). 단계 1 은 표의 줄만 (can = NOT_YET)
 /** 왜 이 방법을 골랐는가 (기록 문구·보고서 문장이 쓴다). usual = 평소 선택(교본 줄과 무관) */
 export type MethodWhy = 'usual' | 'near' | 'noGear' | 'tooFar' | 'weak' | 'fast' | 'failed' | 'broken' | 'danger' | 'quiet' | 'team';      // R3 가 이 줄 끝에 상태 까닭 여섯을 더한다 (R3 §2.1·§3.7)
 /** 방법을 쓴 기록 한 줄 (보고서는 이것과 Problem 으로만 방법을 말한다). field/methodRun.ts 의 recordMethod·recordAir 만 만든다 */
@@ -834,7 +838,8 @@ export interface Scene {
   ops?: OpsState;
 }
 export interface Prop {
-  vessel?: 'cylinder' | 'drum' | 'cng' | 'jet';   // 열을 받으면 터지는 용기. gas 소품은 없으면 cylinder (catOf 가 처음 한 번 적는다)
+  vessel?: 'cylinder' | 'drum' | 'cng' | 'jet'    // 열을 받으면 터지는 용기. gas 소품은 없으면 cylinder (catOf 가 처음 한 번 적는다)
+    | 'tank';      // (N9 §5.12) 탱크로리의 탱크 — 단계 1 은 이름만 (VESSEL_HEAT 의 값·이름은 그것을 놓는 단계 6)
   heatLoad?: number;                               // 용기가 받은 열 0..1 (1 이면 터진다)
   heatK?: number;                                  // 용기마다 다른 열 배율 (0.8~1.25, 처음 볼 때 정한다)
 }
@@ -1107,3 +1112,56 @@ export interface Incident {
 // commander.request 의 이름표·NEED_MIN·needFor · scripts/metrics.ts NEED_KEYS (빠뜨리면 복구반만 기다리는 사건이 '잊힌 사건'으로 잡힌다)
 export interface UnitCaps { utilPower: number; utilGas: number; utilWater: number; tow: number; capture: number }      // 전력 복구 · 가스 복구 · 수도 복구 · 견인 · 동물 포획
 export interface Needs { utilPower: number; utilGas: number; utilWater: number; tow: number; capture: number }
+
+// ───────────────────────── 사건 종류 다양화 ② 큰 사건·새 장소 (N9 단계 1 — 자료형만) ─────────────────────────
+// docs/specs/N9-major-kinds.md §5.4~§5.7·§5.10·§5.14·§5.16. 새 진실의 자리는 Scene.kinds2(Kinds2State)와 용의자의 crowdRole·dispersed 다 —
+// 판단 파일(commander·brain 판단부·orders/*·dispatch/analyst·dispatcher·screening·methods·airDecide·doctrine/kinds2)은 읽지 않는다
+// (tests/kinds2.test.ts 시험 4 — 글자 .kinds2·kinds2?·.contamIds·.underIds·.deconned·crowdRole·dispersed …). 믿음에 옮겨 적을 때는 진실 칸과 다른 이름
+// (CasBelief.dirty·sunk, HosBelief.tag·threw). 생김새(누구나 본다 — 판단부도 읽는다): Scene.windDir·Scene.flowSpots·s.rules 의 'sightline'.
+// 단계 1 에는 아무도 채우지 않는다(N9 의 현장이 없다) — 그래서 결과가 바뀌지 않는다. 객체 모양: Scene 은 kit.baseScene, Hostile 은 kit.addHostile 의 리터럴 끝에 undefined 로 넣었다.
+// 합집합에 더한 줄(같은 파일 위쪽): PlaceKind 셋 · WorkKind 'decontam' · ProblemCode 'DECON_LATE' · MethodId 다섯 · Scene.rules 'sightline' · Prop.vessel 'tank'.
+// 새 유형(crowd — 단계 4)·부대·역할·장비·수요 열쇠(decon — 단계 2)는 뒤 단계.
+/** 생김새: 군중 현장의 흐름 자리 — 이 칸에 서면 from 구역에서 into 구역으로 가는 흐름을 막는다 (계단·통로 입구·가운데 띠의 가장자리). 판단부도 읽는다 */
+export interface FlowSpot { tile: number; into: number; from: number }      // tile = 격자 칸 번호, into·from = 현장 구역 id (-1 = 현장 밖)
+/** 진실: 군중 구역 하나의 사람 수와 흐름 (s.kinds2.crowd.zones) */
+export interface CrowdZone {
+  region: number;                                 // 현장 구역 id (배치는 s.regions·s.flowSpots — 생김새)
+  count: number; cap: number; press: number;      // 사람 수 · 편히 설 수 있는 수 · count / cap
+  links: { to: number; gate: number; rate: number }[];   // to = 다른 군중 구역의 번호(-1 = 현장 밖으로), gate = 문 소품 id(-1 = 문 없음), rate = 초당 사람
+  fallen: number;                                 // 여기서 넘어진 사람 수
+  side: '' | 'A' | 'B' | 'M';                     // 시위의 편 (M = 가운데 띠)
+}
+/** 진실: 군중 현장의 상태. heat = 시위의 기세 (압사·행사장은 0) */
+export interface CrowdState { zones: CrowdZone[]; spawned: number; maxSpawn: number; heat: number }
+/**
+ * Scene.kinds2 — N9 시나리오의 진실 (판단 파일은 읽지 않는다). 시나리오가 쓰는 칸만 채우고 나머지는 undefined.
+ * 시나리오 하나에만 있는 칸(train·tilt·oil·flood·plane·drone·escapeAt·highPos·tunnelEdge — 설계서 §4)은 그 시나리오의 단계가 이 인터페이스에 더한다(인터페이스 합치기)
+ */
+export interface Kinds2State {
+  tox?: Float32Array;                             // 독성 공기의 칸별 농도 0..1.5 (0.3 넘으면 위험) — 불이 붙지 않는다, 가스 모델과 따로 (§5.4 — 단계 6)
+  crowd?: CrowdState;                             // 군중 (§5.6 — 단계 4)
+  contamIds?: Set<number>;                        // 오염된 구조 대상 id (§5.5 — 구조 대상의 모양을 바꾸지 않으려고 현장 쪽 집합에 둔다, 단계 6)
+  deconned?: Set<number>;                         // 제독을 마친 구조 대상 id
+  underIds?: Set<number>;                         // 물에 잠긴 차·선실 안의 구조 대상 id — 잠수(dive)로만 닿는다. inWater 가 아니다 (§5.10 — 단계 5)
+  floorHp?: number;                               // 구조 대상 체력 하한의 장면 값 (§5.14 — 돌진·지하철 20). 읽는 곳은 incidentTypes.floorOf 하나
+}
+/** 'hos' 사실의 값 — agents.hosFact 가 채우는 모양에 이름을 붙였다(지금 칸 그대로 + N9 의 믿음 칸 둘). hosFact 에 칸을 더하면 여기에도 더한다 */
+export interface HosBelief {
+  x: number; y: number; weapon: Hostile['weapon']; state: Hostile['state']; hostage: boolean; facing: number;
+  dead: boolean; band: number; tq: number; where: NonNullable<Hostile['where']>;
+  tag?: 'organizer' | 'agitator';                 // (N9) 본 역할 — 주최자의 완장·확성기, 선동자의 행동 (진실 crowdRole 과 다른 이름). 채우는 것은 단계 4 의 hosFact
+  threw?: boolean;                                // (N9) 던지는 것을 보았다 — 세계 규칙이 본 대원들에게 강제로 넣는다 (단계 4)
+}
+export interface Scene {
+  kinds2?: Kinds2State;                           // N9 시나리오의 진실
+  windDir?: number;                               // 생김새: 그 현장의 고정된 바람·환기 방향(라디안 — 터널·탱크로리). 깃발·연기로 누구나 본다 — 판단부도 읽는다 (§5.7)
+  flowSpots?: FlowSpot[];                         // 생김새: 군중 현장의 흐름 자리 (§5.6)
+}
+export interface Hostile {
+  crowdRole?: 'organizer' | 'agitator';           // 시위의 주최자 · 선동자 — 진실 (단계 4)
+  dispersed?: boolean;                            // 해산해 무리와 함께 걸어 나간다 — 판정의 용의자 셈·위험 판정에서 빠진다 (debrief.evaluate — §5.15)
+}
+export interface CasBelief {
+  dirty?: boolean;                                // 오염돼 보인다 (2칸 안에서 본 그대로 · 믿음 속 오염 구역 안에서 본 사람 — 진실 contamIds 와 다른 이름, 단계 6)
+  sunk?: boolean;                                 // 물에 잠긴 차·선실 안 (잠수 대원이 찾았다 — 진실 underIds 와 다른 이름, 단계 5)
+}

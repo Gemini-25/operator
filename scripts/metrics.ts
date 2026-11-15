@@ -54,6 +54,7 @@ export const PROBLEM_SYS: ReadonlyMap<string, SystemId> = (() => {
   put('hospital', 'HOSPITAL_FULL');
   put('infra', 'INFRA_FAIL');
   put('infra', 'UTIL_LATE');      // (N8) 유관 기관이 오지 못해 대신한 조치로 끝냄
+  put('hazard', 'DECON_LATE');      // (N9 §5.5) 제독 지연 — 대체 제독으로 했거나 오염이 번졌다
   put('field', 'PATH_BLOCKED VICTIM_MISSED COMM_FAIL SCENE_MISMATCH LATE_DISCOVERY RECOUNT TIMEOUT METHOD_FAIL DANGER_SIGN WITHDRAWAL');
   put('field', 'ANIMAL_LOST');      // (N8) 동물을 찻길로 놓침
   return m;

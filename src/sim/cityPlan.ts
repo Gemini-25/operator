@@ -213,6 +213,7 @@ export const KIND_NAME: Record<PlaceKind, string> = {
   station: '기차역', stadium: '경기장', university: '대학교', deptStore: '백화점', cathedral: '성당', temple: '사찰', powerPlant: '발전소', broadcast: '방송국', prison: '교도소',
   museum: '박물관', library: '도서관', busTerminal: '버스 터미널', ferry: '여객선 터미널', fishMarket: '수산시장', lighthouse: '등대', amusement: '놀이공원', dam: '댐', substation: '변전소',
   beach: '해수욕장', pier: '부두', containerYard: '컨테이너 부두', campsite: '캠핑장', lookout: '전망대', workshop: '공업사', clinic: '의원', cafe: '카페',
+  subway: '지하철역', concertHall: '공연장', bankHQ: '은행 본점',      // (N9 §4.9) 덧붙이는 장소(LATE_LANDMARKS — 단계 3)의 종류. 이름표일 뿐 사건 장소 표(INCIDENT_PLACES·시나리오 places)에는 없다
 };
 
 /** 건물 종류마다 쓰임새로 본 구역 (블록의 쓰임새와 다를 때만) */
@@ -224,6 +225,7 @@ export const KIND_DISTRICT: Partial<Record<PlaceKind, District>> = {
   workshop: 'industrial', powerPlant: 'industrial', substation: 'industrial', fishMarket: 'commercial', clinic: 'commercial', cafe: 'commercial',
   station: 'commercial', deptStore: 'commercial', busTerminal: 'commercial', ferry: 'commercial', museum: 'commercial', library: 'commercial', broadcast: 'commercial',
   university: 'commercial', cathedral: 'commercial', stadium: 'commercial', temple: 'outskirts', prison: 'commercial',
+  subway: 'commercial', concertHall: 'commercial', bankHQ: 'commercial',      // (N9 §4.9)
 };
 
 type W = Partial<Record<PlaceKind, number>>;

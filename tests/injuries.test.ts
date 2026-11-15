@@ -2288,6 +2288,7 @@ describe('단계 4b — 다친 동료의 처치와 후송 (§3.4-2 · orders/inj
       const n0 = sim.events.length;
       let dragged = false;
       for (let n = 0; n < 600 && medic.task; n++) { tickOnce(sim, s); if (medic.carrying === -(b.rid + 2)) dragged = true; }
+      for (let n = 0; n < 3; n++) tickOnce(sim, s);      // 가벼운 일로 돌아오는 것은 처치가 끝난 틱의 다음 틱부터다
       return { sim, s, als, p, b, r, medic, texts: sim.events.slice(n0).map((e) => e.text), dragged };
     };
     const lite = run(false, false);
@@ -2436,3 +2437,45 @@ describe('6 · 13. 쓰러진 대원은 구조되고 후송된다 · 고아 부�
     }
   });
 });
+
+describe('단계 4b — 고친 곳 (다친 경관이 지키는 출입구 · 가벼운 일 보고의 순서)', () => {
+  it('진입이 정해진 무장 현장: 다친 경관 몫으로 더한 출입구 자리는 우선도가 낮아(0.5 −) 그 자리를 잡은 온전한 경관을 진입(0.9)이 빼 올 수 있다 — 0.22 규칙의 교착을 피한다', () => {
+    const { sim, s, I } = crewScene('INJ-posts', 'armed', 'robbery', ['patrol', 'tactical']);
+    assignAll(sim, I, ['patrol', 'tactical']);
+    const cmd = s.agents.find((a) => a.isCommander)!;
+    s.sizeupDone = true; s.mismatchLogged = true; s.entryOrdered = true;
+    for (const q of s.agents) { q.nextThink = 1e9; q.task = null; }
+    const h = s.hostiles[0];
+    cmd.beliefs.merge(mkFact('hos', h.id, { x: Math.round(h.x), y: Math.round(h.y), weapon: 'gun', state: 'hold', hostage: false, facing: 0 }, '시험', sim.t, 1, true, ''));
+    const cops = s.agents.filter((a) => sim.responders[a.rid].dept === 'police');
+    expect(cops.length).toBeGreaterThanOrEqual(5);
+    const hurt = cops.filter((a) => a !== cmd).slice(0, cops.length - 2);      // 온전한 경관 둘만 남긴다
+    for (const b of hurt) { const r = fresh(sim, b, 60); r.status = 'injured'; }
+    const posts = (): [number, number][] => s.board.filter((w) => w.kind === 'perimeter' && (w.status === 'open' || w.status === 'active')).map((w) => [w.tile, +w.priority.toFixed(2)]);
+    // 지휘관이 그 경관들이 가벼운 일을 한다고 모르면(후퇴 중·안전 구역) 예전처럼: 온전한 경관 둘은 진입조라 출입구를 비운다
+    for (const b of hurt) mateKnown(sim, cmd, b, { status: 'safe', bleeding: false });
+    commanderThink(sim, s, cmd);
+    expect(posts()).toEqual([]);
+    // 가벼운 일을 한다고 알면: 다친 경관 몫의 자리가 낮은 우선도로 열린다
+    sim.t += 1;
+    for (const b of hurt) mateKnown(sim, cmd, b, { status: 'light', bleeding: false });
+    commanderThink(sim, s, cmd);
+    const p = posts();
+    expect(p.length).toBe(Math.min(s.exits.length, hurt.length));
+    for (const [, pri] of p) { expect(pri).toBeLessThanOrEqual(0.5); expect(0.9 - pri).toBeGreaterThanOrEqual(0.22); }
+  });
+  it('가벼운 일로 돌아오는 것은 처치가 끝난 틱의 다음 틱부터다 (처치한 대원의 "안전 구역" 보고보다 늦은 시각이라야 지휘관의 믿음에서 이긴다)', () => {
+    const { sim, s, I, of } = crewScene('INJ-order', 'medical', undefined, ['als', 'patrol']);
+    assignAll(sim, I, ['als', 'patrol']);
+    for (const q of s.agents) { q.nextThink = 1e9; q.task = null; q.planT = 1e9; }
+    const b = of('patrol'), r = fresh(sim, b, 60);
+    r.status = 'injured'; r.bleed = 0.005; b.status = 'withdrawn';
+    const w = workItem(s, 'treatMate', sim.t, { mate: b.rid, max: 1 });
+    w.status = 'done'; w.doneAt = sim.t + sim.dt;      // 다음 틱에 끝난 처치
+    tickOnce(sim, s);
+    expect(b.status, '처치가 끝난 그 틱에는 돌아오지 않는다').toBe('withdrawn');
+    tickOnce(sim, s);
+    expect(b.status).toBe('active');
+  });
+});
+

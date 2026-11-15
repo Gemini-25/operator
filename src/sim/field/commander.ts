@@ -160,7 +160,8 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   // 걸을 수 있는 다친 경관(조직이 아는 상태)은 문턱에 넣지 않는다: 봉쇄는 서도 진입·검거는 맡지 못한다 (가벼운 일만 — agents.fitFor)
   const armedCops = s.agents.filter((b) => b.status === 'active' && sim.responders[b.rid].dept === 'police' && hasFirearm(sim, b.rid) && roleOf(sim, b.rid).group !== 'bomb');
   const police = armedCops.filter((b) => sim.responders[b.rid].status !== 'injured');
-  const lightCops = armedCops.length - police.length;
+  let lightCops = 0;      // 가벼운 일을 한다고 알린 다친 경관 (본인의 보고 — mate 사실 light. 후퇴 중·안전 구역의 경관은 출입구를 지키지 못한다)
+  for (const b of armedCops) if (sim.responders[b.rid].status === 'injured' && lightDuty(a, b)) lightCops++;
   if (!s.sizeupDone) want(sim, s, 'sizeup', {}, 0.96);
   // 이 사건 상공에 머무는 헬기가 할 수 있는 일 (자기 조직의 부대 상태): 호이스트 인양, 공중 물 투하(밤에는 뿌리지 않는다).
   // 공중 임무(hoist·airDrop)는 지상 대원이 맡지 못한다(fitFor 0) — 상공에 그 일을 할 부대가 있을 때만 작업판에 올리고, 없어지면 거둔다.
@@ -202,8 +203,11 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     if (h.value.state === 'flee') { want(sim, s, 'engage', { hostile: h.id }, 0.95, 2); continue; }
     // 진입이 결정되면 진입조 둘을 먼저 채우고, 남는 경찰만 출입구를 지킨다
     // (봉쇄에 묶인 대원은 진입 지시보다 봉쇄를 계속하므로, 경찰이 둘뿐이면 아무도 들어가지 않는다)
-    const posts = s.entryOrdered ? Math.min(s.exits.length, Math.max(0, police.length - 2) + lightCops) : s.exits.length;      // 다친 경관은 진입조에 들지 못하므로 출입구를 지킨다
-    s.exits.forEach((_, k) => { if (k < posts) want(sim, s, 'perimeter', { tile: k }, 0.76 - k * 0.05); });
+    // 다친 경관은 진입조에 들지 못하므로 출입구를 지킨다: 진입이 정해지면 온전한 경관이 맡을 자리(okPosts)는 예전 그대로이고, 다친 경관 몫으로 더한 자리는 우선도를 낮춘다 —
+    // 그 자리를 온전한 경관이 잡고 있으면 진입(0.9)이 0.22 넘게 높아 빼 오고, 빈자리는 손이 빈 다친 경관이 맡는다 (우선도 차이 0.22 규칙의 교착을 피한다)
+    const okPosts = s.entryOrdered ? Math.min(s.exits.length, Math.max(0, police.length - 2)) : s.exits.length;
+    const posts = Math.min(s.exits.length, okPosts + (s.entryOrdered ? lightCops : 0));
+    s.exits.forEach((_, k) => { if (k < posts) want(sim, s, 'perimeter', { tile: k }, k < okPosts ? 0.76 - k * 0.05 : 0.5 - k * 0.02); });
     if (posts < s.exits.length) cancel(s, (w) => w.kind === 'perimeter' && w.tile >= posts);
     const gun = h.value.weapon === 'gun';
     if (s.negotStart < 0) s.negotStart = sim.t;

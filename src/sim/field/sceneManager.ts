@@ -191,7 +191,8 @@ function settle(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     // 물러나는 대원은 말할 수 있다: 자기 상태를 알린다. 보고 대기열을 거치므로 음영 구역이면 재전송 경로를 탄다. 무전 문구는 남기지 않는다(위 기록이 이미 알렸다)
     if (a.status === 'active') learnQuiet(sim, a, mateFact(sim, s, a, 'hurt', r.name, 0));
   } else if (a.status === 'withdrawn' && r.status === 'injured' && !a.lightBack && I.phase !== 'closed' && !needsHospital(r)
-    && !sim.units[a.unitId].boardOrder && !s.board.some((w) => w.kind === 'treatMate' && w.mate === a.rid && w.status === 'active')) {
+    && !sim.units[a.unitId].boardOrder && !s.board.some((w) => w.kind === 'treatMate' && w.mate === a.rid && (w.status === 'active' || (w.status === 'done' && w.doneAt >= sim.t)))) {
+    // (처치가 방금 이 틱에 끝났으면 다음 틱에 돌아온다 — 처치한 대원의 보고('안전 구역')와 같은 시각이면 늦게 닿은 그 보고가 '가벼운 일' 보고를 덮어쓴다)
     // 가벼운 일로 복귀 (§3.6a — 사용자 결정 "가벼운 일은 계속"): 대기 지점으로 물러났던 다친 대원이 병원이 필요 없는 몸이 되면
     // (쓰러진 적 없음 · 출혈이 병원 문턱 아래 · 체력 40 초과 — 물러날 때는 늘 병원이 필요한 몸이므로 대개 처치를 받은 뒤다) 그 현장에서 한 번 가벼운 일로 돌아온다.
     // 다시 물러나면 그 현장에서는 돌아오지 않는다(a.lightBack).

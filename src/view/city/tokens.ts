@@ -3,6 +3,7 @@
 // 부대의 돌은 색(분야) · 흰 기호(종류, `view/marks.ts`) · 아래쪽 점(같은 종류 안의 번호) · 테(상태)로 읽는다. 글자는 쓰지 않는다.
 // 좁은 도로 위에서도 가려지지 않는다. 현장 화면의 차량 그림과는 별개다.
 
+import { AIR_KIND } from '../../sim/crews';
 import type { UnitField, UnitKind } from '../../sim/types';
 import { FACILITY_MARK, STATE_MARK, UNIT_MARK, drawMark } from '../marks';
 import { mix, shade } from '../scene/common';
@@ -37,7 +38,7 @@ export function drawToken(ctx: CanvasRenderingContext2D, x: number, y: number, r
   const col = FIELD_COLOR[o.field];
   if (o.mini) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832); ctx.fill(); return; }
   const moving = o.state === 'enroute' || o.state === 'transport' || o.state === 'returning';
-  const flying = o.kind === 'heli' && o.state !== 'available' && o.state !== 'oos';
+  const flying = AIR_KIND.has(o.kind) && o.state !== 'available' && o.state !== 'oos';      // 헬기 세 종류 (TokenOpts 에는 부대의 air 칸이 없다 — 종류로 본다)
   const n = Math.max(0, Math.min(5, Math.round(o.no ?? 0)));
   const lw = Math.max(1.5, r * 0.19), gap = lw * 0.5 + r * 0.16;      // 테의 굵기와 돌에서 떨어진 거리: 돌 크기에 비례
   ctx.save();
@@ -75,7 +76,7 @@ export function drawToken(ctx: CanvasRenderingContext2D, x: number, y: number, r
     drawMark(ctx, STATE_MARK.transport, bx, by, br * 1.36, STATE_RING.transport);
   }
   // 헬기의 회전 날개
-  if (o.kind === 'heli') { const a = flying ? (o.timeMs / 70) % 6.2832 : 0.6; ctx.strokeStyle = 'rgba(235,240,245,0.85)'; ctx.lineWidth = Math.max(1.4, r * 0.16); for (let k = 0; k < 2; k++) { ctx.beginPath(); ctx.arc(x, y, r + (flying ? gap + lw + r * 0.26 : r * 0.24), a + k * Math.PI, a + k * Math.PI + 1.5); ctx.stroke(); } }
+  if (AIR_KIND.has(o.kind)) { const a = flying ? (o.timeMs / 70) % 6.2832 : 0.6; ctx.strokeStyle = 'rgba(235,240,245,0.85)'; ctx.lineWidth = Math.max(1.4, r * 0.16); for (let k = 0; k < 2; k++) { ctx.beginPath(); ctx.arc(x, y, r + (flying ? gap + lw + r * 0.26 : r * 0.24), a + k * Math.PI, a + k * Math.PI + 1.5); ctx.stroke(); } }
   if (o.selected) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(x, y, r + gap + lw + r * 0.3, 0, 6.2832); ctx.stroke(); }
   ctx.restore();
 }

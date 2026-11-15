@@ -102,16 +102,24 @@ export function tickPursuits(sim: Sim): void {
     p.x = A.x + (B.x - A.x) * Math.min(1, p.t); p.y = A.y + (B.y - A.y) * Math.min(1, p.t); p.angle = Math.atan2(B.y - A.y, B.x - A.x);
     I.truth.x = p.x; I.truth.y = p.y; I.truth.nodeId = p.t > 0.5 ? p.to : p.from;
     // 시야: 순찰차는 가까이에서, 헬기는 멀리서도 본다. 보고 있는 동안에는 위치가 계속 전해진다
-    let near = 0, closest: Unit | null = null, cd = Infinity;
+    let near = 0, closest: Unit | null = null, cd = Infinity, eye: Unit | null = null;
     p.tracked = false;
     for (const uid of I.assigned) {
       const u = sim.units[uid];
       if (u.state !== 'enroute' || !(ground(u) || u.air)) continue;
       const d = Math.hypot(u.x - p.x, u.y - p.y);
-      if (d < (u.air ? 430 : 175)) p.tracked = true;
+      if (d < (u.air ? 430 : 175)) { p.tracked = true; if (u.air && !eye) eye = u; }
       if (ground(u)) { if (d < 42) near++; if (d < cd) { cd = d; closest = u; } }
     }
-    if (p.tracked) { if (p.seenAt < 0) I.lastEvent = emit(sim, { inc: I.id, role: 'UNIT', actor: closest && cd < 175 ? closest.callsign : '헬기', kind: 'unit', imp: 2, causes: [I.lastEvent], text: `${WHO[p.kind]} 발견 — ${edgeName(city, e)}에서 추격을 시작합니다.` }); p.seenAt = sim.t; I.reportedNode = p.to; I.locationKnown = true; }
+    if (p.tracked) {
+      if (p.seenAt < 0) {
+        // 처음 발견: 175 안에 지상 부대가 없으면 하늘에서 헬기가 찾은 것이다 (통계는 추적 상태를 바꾸는 바로 이 자리에서 센다)
+        const byAir = !(closest && cd < 175) && eye !== null;
+        if (byAir) sim.airStats.tracked++;
+        I.lastEvent = emit(sim, { inc: I.id, role: 'UNIT', actor: closest && cd < 175 ? closest.callsign : eye ? eye.callsign : '헬기', kind: 'unit', imp: 2, causes: [I.lastEvent], text: `${WHO[p.kind]} 발견 — ${edgeName(city, e)}에서 추격을 시작합니다.` });
+      }
+      p.seenAt = sim.t; I.reportedNode = p.to; I.locationKnown = true;
+    }
     else if (sim.t >= p.nextSight) {
       // 시민의 목격 신고: 방금 지나간 길을 알려 온다
       p.nextSight = sim.t + rng.range(9, 19);

@@ -160,7 +160,8 @@ export function tickIncidents(sim: Sim): void {
     open++;
     if (I.phase === 'unreported' && sim.t >= I.firstCallAt) startCall(sim, I, false);
     if (sim.t >= I.followupAt && I.phase !== 'unreported') { I.followupAt = Infinity; startCall(sim, I, true); }
-    if (I.firstArrivalAt < 0 && I.reportedAt >= 0 && sim.t - I.reportedAt > 330) closeIncident(sim, I, 'noresponse');
+    // 무대응 종료: 지상 부대도, 상공의 헬기도 닿지 못했을 때만 (헬기가 현장 위에 떠 있는데 '어떤 부대도 닿지 못했다'고 닫지 않는다)
+    if (I.firstArrivalAt < 0 && I.reportedAt >= 0 && sim.t - I.reportedAt > 330 && !((sim.scenes[I.id]?.airAt ?? -1) >= 0)) closeIncident(sim, I, 'noresponse');
   }
   const tn = sim.tune;
   // 사건과 무관한 비긴급 전화: 접수 회선을 잠시 점유한다

@@ -1,6 +1,7 @@
 // 현장의 움직이는 대상: 사람(대원·시민·용의자), 쓰러진 사람, 차량, 소품.
 // 모두 이 프로젝트를 위해 직접 그린 벡터 도형이다. 위에서 내려다본 모습으로, 타일 한 칸 = 1 단위.
 
+import { AIR_KIND } from '../../sim/crews';
 import type { Dept, UnitKind } from '../../sim/types';
 import { disc, hash2, oval, rr, seg, shade } from './common';
 import type { G } from './common';
@@ -34,7 +35,7 @@ const PANTS = ['#2f3a4f', '#3a3f47', '#4a4238', '#28303c'];
 export function responderLook(dept: Dept, kind: UnitKind, seed: number): PersonLook {
   const skin = SKIN[(hash2(seed, 1) * SKIN.length) | 0];
   if (dept === 'fire') {
-    const rescue = kind === 'rescue' || kind === 'heli' || kind === 'boat';
+    const rescue = kind === 'rescue' || kind === 'heli' || kind === 'boat';      // 'heli' = 소방 헬기의 항공 구조대원 (경찰·의료 헬기의 대원은 부서가 다르다)
     if (kind === 'hazmat') return { ...responderLook('fire', 'engine', seed), top: '#cfc23a', arm: '#c2b534', leg: '#b3a72e', trimCol: '#3a3f45' };
     return { top: rescue ? '#d9742a' : '#b08f3e', trim: 'stripes', trimCol: '#e6f04a', arm: rescue ? '#c96824' : '#a2833a', hand: '#2a2d31', leg: rescue ? '#b85e20' : '#8f7434', shoe: '#1c1e21', head: 'helmet', headCol: rescue ? '#f2f2ee' : '#d63a2c', headCol2: '#f4d24a', skin, pack: 'scba', packCol: '#e9c53c' };
   }
@@ -217,7 +218,7 @@ export function drawLying(g: G, x: number, y: number, ang: number, ts: number, k
 }
 
 // ───────────────────────── 차량 ─────────────────────────
-export const VEH_SIZE: Record<UnitKind, [number, number]> = { engine: [3.1, 1.14], rescue: [2.9, 1.14], als: [2.5, 1.06], bls: [2.4, 1.04], patrol: [2.05, 0.96], tactical: [2.6, 1.08], ladder: [3.7, 1.16], hazmat: [3.0, 1.14], swat: [2.85, 1.16], eod: [2.7, 1.12], heli: [3.0, 1.0], boat: [2.7, 0.96] };
+export const VEH_SIZE: Record<UnitKind, [number, number]> = { engine: [3.1, 1.14], rescue: [2.9, 1.14], als: [2.5, 1.06], bls: [2.4, 1.04], patrol: [2.05, 0.96], tactical: [2.6, 1.08], ladder: [3.7, 1.16], hazmat: [3.0, 1.14], swat: [2.85, 1.16], eod: [2.7, 1.12], heli: [3.0, 1.0], boat: [2.7, 0.96], policeHeli: [2.8, 0.95], medHeli: [3.0, 1.0] };
 
 function wheels(g: G, L: number, W: number): void {
   for (const wx of [-L * 0.3, L * 0.3]) { rr(g, wx - 0.17, -W / 2 - 0.035, 0.34, 0.1, 0.03, '#0e1114'); rr(g, wx - 0.17, W / 2 - 0.065, 0.34, 0.1, 0.03, '#0e1114'); }
@@ -234,7 +235,7 @@ export function beaconColors(dept: Dept): [string, string] { return BEACON[dept]
 /** 위에서 본 긴급 차량. 앞이 +x. */
 export function drawEmergency(g: G, x: number, y: number, ang: number, ts: number, kind: UnitKind, dept: Dept, lights: boolean, timeMs: number): void {
   const [L, W] = VEH_SIZE[kind];
-  if (kind === 'heli') { drawHeli(g, x, y, ang, ts, lights, timeMs); return; }
+  if (AIR_KIND.has(kind)) { drawHeli(g, x, y, ang, ts, lights, timeMs); return; }      // 헬기 세 종류 (종류별 도색은 R1 단계 7)
   if (kind === 'boat') { drawBoat(g, x, y, ang, ts, lights, timeMs); return; }
   g.save(); g.translate(x, y); g.scale(ts, ts);
   g.save(); g.translate(0.08, 0.12); g.rotate(ang); rr(g, -L / 2, -W / 2, L, W, 0.14, 'rgba(0,0,0,0.38)'); g.restore();

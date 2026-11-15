@@ -12,9 +12,9 @@ import { FacilityBadge, Token } from './Mark';
 
 const LS_LEGEND = 'ar.legend.v1';
 const FIELDS: [UnitField, UnitKind[]][] = [
-  ['police', ['patrol', 'tactical']],
+  ['police', ['patrol', 'tactical', 'policeHeli']],
   ['fire', ['engine', 'ladder']],
-  ['rescue', ['rescue', 'als', 'bls']],
+  ['rescue', ['rescue', 'als', 'bls', 'medHeli']],
   ['special', ['swat', 'eod', 'hazmat', 'heli', 'boat']],
 ];
 const STATES: [string, string, string][] = [

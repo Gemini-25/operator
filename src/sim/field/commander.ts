@@ -8,7 +8,7 @@ import { closeIncident } from '../incidents';
 import { T } from '../types';
 import type { CasBelief, FieldAgent, Incident, Scene, UnitCaps, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, dist, josa } from '../util';
-import { capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, kitUses, roleOf, seatsOf } from '../crews';
+import { capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, isHovering, kitUses, roleOf, seatsOf } from '../crews';
 import { HURT_HEALTH, canCarryPatients, exitName, failedRecently, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { losWalls } from './grid';
@@ -48,13 +48,16 @@ function capOnScene(sim: Sim, s: Scene, need: keyof UnitCaps): number {
   let m = 0; for (const uid of unitsOnScene(sim, s)) m = Math.max(m, sim.units[uid].caps[need]);
   return m;
 }
-function countUnits(sim: Sim, s: Scene, I: Incident, need: keyof UnitCaps, min: number): number {
+/** 그 능력의 부대가 현장에 와 있거나 오고 있는 수 (자기 조직의 부대 상태만 본다). export 는 시험용 */
+export function countUnits(sim: Sim, s: Scene, I: Incident, need: keyof UnitCaps, min: number): number {
   let n = 0;
   const on = unitsOnScene(sim, s);
   for (const uid of I.assigned) {
     const u = sim.units[uid];
     if (u.caps[need] < min) continue;
-    if (u.state === 'enroute' || u.state === 'turnout' || on.indexOf(uid) >= 0) n++;
+    // 현장 상공에 머무는 헬기는 대원이 없는 부대다: 수색 인력으로만 센다
+    // (넓게 세면 상공의 헬기가 '구조 장비 없음'·'구급 부대 없음' 요청을 막는다 — 헬기는 잔해를 들추지도 건물에 들어가지도 못한다)
+    if (u.state === 'enroute' || u.state === 'turnout' || on.indexOf(uid) >= 0 || (need === 'search' && u.state === 'onscene' && isHovering(u, s))) n++;
   }
   return n;
 }

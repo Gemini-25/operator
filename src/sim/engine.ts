@@ -19,7 +19,7 @@ import { closeIncident, initGenerator, tickIncidents } from './incidents';
 import type { GenState } from './incidents';
 import { createRoster, tickUnits } from './resources';
 import { Rng, hashStr } from './rng';
-import type { Call, City, Incident, Responder, Scene, ShiftReport, SimEvent, Unit, Weather } from './types';
+import type { AirStats, Call, City, Incident, Responder, Scene, ShiftReport, SimEvent, Unit, Weather } from './types';
 import { WEATHER_NAME } from './util';
 
 export const CITY_SEED = 0xc17e5eed;
@@ -40,6 +40,8 @@ export class Sim {
   traffic: TrafficState;
   units: Unit[] = [];
   aidUsed = 0;                 // 이번 교대에 받은 인근 도시 지원 횟수
+  /** 헬기 통계 (R1). 통계는 상태를 바꾸는 바로 그 코드에서 센다: 출동(resources.dispatchUnit), 공중 이송(startTransport), 연료 복귀(airRtb), 추적 시작(pursuit.ts) */
+  airStats: AirStats = { sorties: 0, byKind: {}, hoists: 0, drops: 0, airLifts: 0, rtb: 0, tracked: 0, grounded: null };
   responders: Responder[] = [];
   incidents: Incident[] = [];
   scenes: (Scene | null)[] = [];
@@ -82,6 +84,9 @@ export class Sim {
     this.gen.majorAt = this.rngMajor.chance(this.tune.majorProb) ? this.rngMajor.range(0.18, 0.7) * shiftLen : Infinity;
     this.disaster = initDisaster(this);
     emit(this, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 2, text: `교대 시작. 날씨: ${WEATHER_NAME[this.weather]}. 난이도: ${difficultyLabel(this.difficulty)}. 가용 부대 ${this.units.length}대, 대원 ${this.responders.length}명. 시드 ${seed}.` });
+    // 헬기가 뜨지 못하는 날씨 (createRoster 가 u.grounded 를 정했다 — 기록은 교대 시작 기록 뒤에 남긴다)
+    if (this.units.some((u) => u.grounded === 'fog')) emit(this, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 1, text: '안개로 오늘 헬기는 뜨지 못합니다.' });
+    else if (this.units.some((u) => u.grounded === 'night')) emit(this, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 1, text: '의료 헬기는 야간에 운항하지 않습니다.' });
   }
 
   /** 화면에 표시하는 시각 (하루 기준 초) */

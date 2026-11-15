@@ -114,7 +114,7 @@ export function createRoster(sim: Sim): void {
         skills: skillsOf(role, skill),      // 능력은 역할의 식으로만 정한다 (추가 난수 없음)
         trait: '', health: 100, stamina: tn.startStamina, status: 'ok', xpGained: 0, incidentsWorked: 0,
         role, kit: kitFor(role, tn.airFull),      // 공기통은 장비 손잡이의 용량으로 가득 채워 나간다
-        injuries: undefined, bleed: undefined, bleed0: undefined, treatQ: undefined, dead: undefined, tDown: undefined, tDead: undefined, care: undefined, deathCause: undefined,      // (H1) 부상 — 없으면 "다친 적 없음"
+        injuries: undefined, bleed: undefined, bleed0: undefined, treatQ: undefined, dead: undefined, tDown: undefined, tDead: undefined, care: undefined, deathCause: undefined, bleedCause: undefined,      // (H1) 부상 — 없으면 "다친 적 없음"
       };
       r.trait = traitOf(r);
       if (include && !(minimal && staff.minDrop.indexOf(k) >= 0)) { crew.push(r.id); sim.responders.push(r); members.push(r); }
@@ -189,7 +189,7 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
       skills: skillsOf(role, skill),
       trait: '', health: 100, stamina: 88, status: 'ok', xpGained: 0, incidentsWorked: 0,
       role, kit: kitFor(role, tn.airFull),
-      injuries: undefined, bleed: undefined, bleed0: undefined, treatQ: undefined, dead: undefined, tDown: undefined, tDead: undefined, care: undefined, deathCause: undefined,      // (H1) 편성표 대원과 같은 칸, 같은 순서
+      injuries: undefined, bleed: undefined, bleed0: undefined, treatQ: undefined, dead: undefined, tDown: undefined, tDead: undefined, care: undefined, deathCause: undefined, bleedCause: undefined,      // (H1) 편성표 대원과 같은 칸, 같은 순서
     };
     r.trait = traitOf(r);
     crew.push(r.id); sim.responders.push(r); members.push(r);
@@ -423,7 +423,7 @@ export function tickUnits(sim: Sim): void {
       // 이송 중 처치: 탑승 후 몇 초 뒤 구급대원이 차 안에서 응급 처치를 마친다
       const sc = sim.scenes[u.patientsIncident];
       // 차 안의 처치 수준은 함께 탄 대원(내리는 자리) 가운데 가장 좋은 의료 장비를 든 사람의 것이다
-      let med = 0; if (sc && u.patients.length) { const fc = fieldCrew(sim, u); for (let k = 0; k < fc.length; k++) med = Math.max(med, medLevelOf(sim, fc[k])); }
+      let med = 0; if (sc && u.patients.length) { const fc = fieldCrew(sim, u); for (let k = 0; k < fc.length; k++) if (!sim.responders[fc[k]].dead) med = Math.max(med, medLevelOf(sim, fc[k])); }      // 순직한 대원은 처치하지 못한다 (H1)
       if (sc) for (const cid of u.patients) {
         const c = sc.casualties[cid];
         const q = Math.min(1, med * 0.95);

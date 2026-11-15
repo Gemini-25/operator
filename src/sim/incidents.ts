@@ -6,7 +6,7 @@ import { evaluate } from './debrief';
 import { startCall, startNuisanceCall } from './dispatch/callSystem';
 import type { Sim } from './engine';
 import { emit } from './events';
-import { createScene } from './field/sceneManager';
+import { createScene, settleInjuries } from './field/sceneManager';
 import { releaseUnit } from './resources';
 import type { Rng } from './rng';
 import { INCIDENT_PLACES } from './cityPlan';
@@ -207,6 +207,7 @@ export function tickIncidents(sim: Sim): void {
 export function closeIncident(sim: Sim, I: Incident, reason: 'resolved' | 'timeout' | 'noresponse' | 'abandoned' | 'shiftend'): void {
   if (I.phase === 'closed') return;
   const s = sim.scenes[I.id]!;
+  settleInjuries(sim, s, I);      // (H1) 판정 직전에 밀린 대원의 상태 전이를 마친다 — 판정 뒤에는 전이가 없다
   I.phase = 'closed'; I.closedAt = sim.t; I.closeReason = reason;
   s.closing = true;
   I.unmet = {};

@@ -8,14 +8,14 @@ import { T } from '../types';
 import type { Casualty, FieldAgent, FxInfo, Hostile, Incident, InjuryCause, Prop, Scene } from '../types';
 import type { Rng } from '../rng';
 import { clamp, dist, josa } from '../util';
-import { armorOf, blastFactor } from '../crews';
+import { armorOf } from '../crews';
 import { addProp } from './kit';
 import { casFact, exitName } from './agents';
 import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, truthWalkable } from './grid';
 import { coverRoll, fireShot, heatGlass, shatter } from './damage';
 import { lastFx, noteBoom, noteFlash, noteHit, noteShot, recHarm, recMelee } from './fxlog';
 import { RUIN_CEILING, RUIN_SECONDARY, markRuin, recordFall } from './ruins';
-import { CAUSE_NAME, bandOf, decayCause, hurtCas, hurtCasTo, injuryRng, noteDecay, noteInjury, noteRespHurt } from './injury';
+import { CAUSE_NAME, bandOf, decayCause, hurtCas, hurtCasTo, hurtResponder, injuryRng, noteDecay, noteInjury } from './injury';
 
 export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2, c?: FxInfo): void {
   s.fx.push({ kind, t: sim.t, x, y, x2, y2, text, color, ttl, c });
@@ -143,14 +143,11 @@ function smokeSpread(s: Scene, w: number, h: number): void {
  */
 export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, radius: number, dmg: number, ev: number, cause: InjuryCause = 'blast'): void {
   for (const a of s.agents) {
-    if (a.status === 'left') continue;
+    if (a.status === 'left' || sim.responders[a.rid].dead) continue;      // 숨진 대원은 더 다치지 않는다
     const d = dist(a.x, a.y, x, y);
     if (d > radius) continue;
-    const r = sim.responders[a.rid];
-    const hp0 = r.health;
-    r.health -= dmg * (1 - d / (radius + 1)) * blastFactor(sim, a.rid);      // 폭발물 방호복·방화복이 줄인다
+    hurtResponder(sim, s, I, a, dmg * (1 - d / (radius + 1)), cause, { ev });      // 폭발물 방호복·방화복이 줄인다 (injury.protection — blastFactor)
     a.lastBlockEvent = ev;
-    noteRespHurt(r, cause, hp0, sim.t, -1, 'world', ev);      // (H1) 기록만
   }
   for (const c of s.casualties) {
     if (c.dead || c.where !== 'scene') continue;
@@ -518,7 +515,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
           const moving = Math.abs(ta.x - ta.px) + Math.abs(ta.y - ta.py) > 0.05;
           const p = 0.32 * (0.6 + h.skill * 0.6) * (ta.inCover ? 0.3 : moving ? 0.6 : 1) * clamp(1.25 - see.nearestD / 16, 0.4, 1.1);
           h.cooldown = s.rng.range(1.5, 2.6);
-          const hit = s.rng.chance(p);
+          const hit = s.rng.chance(p) && I.phase !== 'closed';      // 판정 뒤에는 누구도 더 다치지 않는다 (§2.6) — 다치지 않는 피격을 기록하지 않는다
           ta.underFireT = sim.t;
           const mx = ta.x + (hit ? 0 : s.rng.range(-0.8, 0.8)), my = ta.y + (hit ? 0 : s.rng.range(-0.8, 0.8));      // 빗나간 탄이 겨눈 점 (판정 흐름에서 x 다음 y — 예전 그림 줄과 같은 순서)
           const ct = !hit && ta.inCover ? coverRoll(sim, s, ta.x, ta.y, h.x, h.y) : -1;      // 빗나간 탄이 대원의 엄폐 가구에 맞는가 (파손용 흐름)
@@ -529,19 +526,22 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
             raiseProblem(sim, I, 'ESCALATION', '용의자 발포', { role: 'SYSTEM', actor: '현장', text: `${h.label}가 대원을 향해 발포했습니다!`, imp: 3 }, false);
           }
           if (hit) {
-            const dmg = s.rng.range(25, 41) * (1 - armor * 0.6);
-            r.health -= dmg; h.morale = Math.min(1, h.morale + 0.05);
+            const raw = s.rng.range(25, 41);      // 판정 흐름에서 뽑는 자리는 그대로 — 방호(armorOf × 0.6)는 hurtResponder 가 뺀다
+            h.morale = Math.min(1, h.morale + 0.05);
             pushFx(sim, s, 'hit', ta.x, ta.y);
             noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 0, target: ta.rid, arm: armor });
             ta.lastBlockEvent = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'hazard', text: `${r.name} 피격${ta.inCover ? ' (엄폐 중)' : ' (엄폐 없이 노출)'}.`, imp: 2, causes: [I.lastEvent] });
-            noteRespHurt(r, 'gunshot', r.health + dmg, sim.t, h.id, 'hostile', ta.lastBlockEvent);      // (H1) 기록만 — dmg 는 방호를 뺀 뒤의 값
+            hurtResponder(sim, s, I, ta, raw, 'gunshot', { by: h.id, byKind: 'hostile', ev: ta.lastBlockEvent });
           }
         } else {
           h.cooldown = 1.8;
-          const hp0 = r.health;
-          if (see.nearestD < 1.8) { r.health -= s.rng.range(8, 16) * (h.weapon === 'knife' ? 1.4 : 0.6); pushFx(sim, s, 'hit', ta.x, ta.y); }
-          if (see.nearestD < 1.8) { noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 0, target: ta.rid }); recMelee(sim, s, h, ta); }      // (G5) 위 줄과 같은 조건: 기존 줄을 바꾸지 않으려고 따로 둔다
-          noteRespHurt(r, h.weapon === 'knife' ? 'stab' : 'blunt', hp0, sim.t, h.id, 'hostile');      // (H1) 기록만 — 흉기는 자상, 맨손은 타박상
+          if (see.nearestD < 1.8 && I.phase !== 'closed') {
+            const raw = s.rng.range(8, 16) * (h.weapon === 'knife' ? 1.4 : 0.6); pushFx(sim, s, 'hit', ta.x, ta.y);
+            noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 0, target: ta.rid }); recMelee(sim, s, h, ta);      // (G5)
+            // 흉기·맨손 피습: 흉기는 자상, 맨손은 타박상. 이 기록이 그 부상의 원인 기록이 된다 (예전에는 기록도 원인도 남지 않았다)
+            const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'hazard', text: `${r.name} 피습 (${h.weapon === 'knife' ? '흉기' : '맨손'}).`, imp: 2, causes: [I.lastEvent] });
+            hurtResponder(sim, s, I, ta, raw, h.weapon === 'knife' ? 'stab' : 'blunt', { by: h.id, byKind: 'hostile', ev });
+          }
         }
         h.targetRid = ta.rid;
       }
@@ -605,20 +605,21 @@ export function tickLane(sim: Sim, s: Scene, I: Incident): void {
     if (c.hit) continue;
     for (const a of s.agents) {
       if (a.status !== 'active' && a.status !== 'down') continue;
+      if (sim.responders[a.rid].dead) continue;      // 숨진 대원은 더 다치지 않는다 (시신을 친 차가 "작업 중인 대원을 충격" 이라는 기록을 남기지 않게)
       if (Math.round(a.y) !== c.row) continue;
       const ahead = (a.x - c.x) * c.dir;
       if (ahead < -0.3 || ahead > 3.5) continue;
       if (!c.distracted) { c.speed = Math.max(1.2, c.speed - 9 * dt); if (ahead < 1.2 && !c.stopped) { c.stopped = true; pushFx(sim, s, 'text', c.x, c.row - 0.8, undefined, undefined, '급정거!', '#ffd166', 1.2); } continue; }
       if (ahead > 0.6) continue;
+      if (I.phase === 'closed') continue;      // 판정 뒤에는 누구도 더 다치지 않는다 (§2.6) — 다치지 않는 2차 사고를 기록하지 않는다
       const r = sim.responders[a.rid];
-      const hp0 = r.health;
-      r.health -= s.rng.range(28, 44);
+      const raw = s.rng.range(28, 44);
       c.hit = true;
       pushFx(sim, s, 'hit', a.x, a.y);
       a.lastBlockEvent = raiseProblem(sim, I, 'SECONDARY_COLLISION', `통제되지 않은 차로에서 ${r.name} 2차 사고`, {
         role: 'SYSTEM', actor: '현장', rid: r.id, imp: 3, text: `2차 사고! 통제되지 않은 차로를 지나던 차량이 작업 중인 ${r.name} 대원을 충격했습니다.`,
       }, false);
-      noteRespHurt(r, 'vehicle', hp0, sim.t, -1, 'world', a.lastBlockEvent);      // (H1) 기록만
+      hurtResponder(sim, s, I, a, raw, 'vehicle', { ev: a.lastBlockEvent });
       break;
     }
   }

@@ -97,6 +97,7 @@ export interface Responder {
   tDown?: number; tDead?: number;     // 쓰러진 시각, 숨진 시각
   care?: 'aboard' | 'hospital';       // 후송 중 / 병원 인계됨
   deathCause?: InjuryCause;
+  bleedCause?: InjuryCause;           // 지금의 bleed 를 만든 원인 (상처 악화를 이 원인으로 적는다 — 구조 대상·용의자의 같은 칸과 같다)
 }
 
 // ── 대원의 역할과 개인 장비 (R1) ──
@@ -527,7 +528,8 @@ export type ProblemCode =
   | 'NO_UNIT' | 'UNDER_DISPATCH' | 'DIVERTED' | 'ROUTE_BLOCKED' | 'TRAFFIC_DELAY'
   | 'PATH_BLOCKED' | 'VICTIM_MISSED' | 'EQUIP_FAIL' | 'WATER_OUT' | 'RESPONDER_HURT' | 'COMM_FAIL'
   | 'ESCALATION' | 'BACKUP_LATE' | 'SCENE_MISMATCH' | 'SUSPECT_FLED' | 'SECONDARY_COLLISION' | 'LATE_DISCOVERY'
-  | 'TIMEOUT' | 'FATIGUE' | 'HIDDEN_HAZARD' | 'RECOUNT' | 'WRONG_ADDRESS' | 'FALSE_ALARM';
+  | 'TIMEOUT' | 'FATIGUE' | 'HIDDEN_HAZARD' | 'RECOUNT' | 'WRONG_ADDRESS' | 'FALSE_ALARM'
+  | 'RESPONDER_KILLED';      // (H1) 대원 순직
 export interface Problem { code: ProblemCode; t: number; eventId: number; detail: string; recovered: boolean; recoveryText: string }
 
 export type IncidentPhase = 'unreported' | 'call' | 'pending' | 'dispatched' | 'onscene' | 'closed';

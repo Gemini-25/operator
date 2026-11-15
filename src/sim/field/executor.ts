@@ -5,17 +5,17 @@
 import type { Sim } from '../engine';
 import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
-import type { Fact, FieldAgent, Hostile, Incident, KitId, Prop, Scene, Task, TaskKind, WorkItem } from '../types';
+import type { Fact, FieldAgent, Hostile, Incident, KitId, MateBelief, Prop, Scene, Task, TaskKind, WorkItem } from '../types';
 import { clamp, dist, josa, pct } from '../util';
 import { hasKit, kitRng, kitUses, kitWorks, medLevelOf, refillAir, seatsOf, toolUse, useKit } from '../crews';
-import { RETRY_AFTER, agentCost, casFact, debrisText, detectRadius, exitName, fitFor, hosFact, learn, learnQuiet, perceive, regionNameAt, resp, staminaF, visionOf, workLabel } from './agents';
+import { RETRY_AFTER, agentCost, casFact, debrisText, detectRadius, exitName, fitFor, flushOutbox, hosFact, learn, learnQuiet, mateFact, mateStatus, perceive, regionNameAt, resp, staminaF, visionOf, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { astar, doorAt, isIndoor, los, staticPass, tileOf, walkableCount } from './grid';
 import { applyWater, flashbang, hostageNear, hostileActive, isHeld, placeAtSafe, pushFx, panicShot } from './hazards';
 import { coverRoll, fireShot } from './damage';
 import { breachHowFor, lastFx, noteCollateral, noteHit, noteShot, recBreach, recCuff, recTaser, weaponOf } from './fxlog';
 import { detonate } from './rules/crime';
-import { hurtCas, initialCause, injuryRng, noteHostileHurt } from './injury';
+import { hurtCas, initialCause, injuryRng, mustRetreat, noteHostileHurt } from './injury';
 
 export function makeTask(kind: TaskKind, label: string, w: WorkItem | null = null): Task {
   return {
@@ -98,13 +98,18 @@ export function moveSpeed(sim: Sim, s: Scene, a: FieldAgent): number {
   return v;
 }
 
-function moveTo(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, range: number, needLos = false): MoveRes {
+/**
+ * escape = 물러나는 길: 불에 막혀 길이 없으면 불길을 뚫고 나가는 길을 찾고, 길 위의 불 앞에서 멈추지 않는다 (관창을 든 대원은 지금처럼 끄며 지나간다).
+ * 다친 채 제자리에 서서 타는 것보다 불길을 지나 나오는 편이 낫다 — 지나는 동안의 화상은 그대로 입는다 (sceneManager.agentHealth).
+ */
+function moveTo(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, range: number, needLos = false, escape = false): MoveRes {
   const t = a.task!;
   const I = sim.incidents[s.incidentId];
   const r = resp(sim, a);
   const goalKey = Math.round(tx) + Math.round(ty) * 64 + Math.round(range * 10) * 4096 + (needLos ? 1 << 20 : 0);
   if (!a.path || a.pathGoal !== goalKey || sim.t >= t.repathAt) {
     a.path = astar(s, a.x, a.y, Math.round(tx), Math.round(ty), range, agentCost(sim, s, a), needLos);
+    if (!a.path && escape) a.path = astar(s, a.x, a.y, Math.round(tx), Math.round(ty), range, agentCost(sim, s, a, true, true), needLos);
     a.pathI = 0; a.pathGoal = goalKey; t.repathAt = sim.t + 5;
     if (a.pendingBlock >= 0) {
       // 방금 발견한 장애물에 대한 결정: 우회 / 제거 / 포기
@@ -141,9 +146,11 @@ function moveTo(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, range
       const sub = makeTask('suppress', '진입로 화재 진압'); sub.tile = next; t.sub = sub;
       return 'busy';
     }
-    a.path = null; a.pathGoal = -1;
-    t.fails++;
-    return t.fails > 3 ? 'nopath' : 'moving';
+    if (!escape) {
+      a.path = null; a.pathGoal = -1;
+      t.fails++;
+      return t.fails > 3 ? 'nopath' : 'moving';
+    }
   }
   const nx = next % s.w, ny = (next / s.w) | 0;
   if (s.stairTo[tileOf(s, a.x, a.y)] === next) {
@@ -1072,7 +1079,18 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     }
     case 'rescueMate': {
       const b = agentById(s, t.mate);
-      if (!b || b.status !== 'down') { finishTask(sim, s, a, true); return; }
+      if (!b || b.status !== 'down') {
+        // 더는 쓰러져 있지 않다(누가 먼저 옮겼다, 자기 부대와 함께 떠났다): 지휘관의 믿음이 낡아 다시 지시한 것이므로 본 대로 다시 알린다 (소리 없이, 강제로)
+        if (b) {
+          const f = mateFact(sim, s, b, mateStatus(b), r.name, dist(a.x, a.y, b.x, b.y));
+          const cur = a.beliefs.val<MateBelief>('mate', b.rid);
+          if (cur && cur.dead) { f.value.dead = true; f.value.band = 3; }      // 숨진 줄 알던 것을 먼 관찰로 되돌리지 않는다
+          reportDone(sim, a, f);
+        }
+        finishTask(sim, s, a, true); return;
+      }
+      // 물 위의 동료는 끌어낼 수 없다: 뭍으로 옮겨질 때까지 기다린다 (실패로 끝내면 보류와 재지시가 되풀이된다 — R2 의 규칙이 뭍으로 옮긴다)
+      if (s.tiles[tileOf(s, b.x, b.y)] === T.WATER) { a.label = '물가 대기'; return; }
       if (a.carrying !== -(b.rid + 2)) {
         const m = moveTo(sim, s, a, b.x, b.y, 1.3);
         if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
@@ -1087,17 +1105,32 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (m === 'arrived') {
         b.status = 'withdrawn'; a.carrying = -1;
         b.x = s.safe.x + 1.2; b.y = s.safe.y + 1 + (b.rid % 3) * 0.6;
-        learnQuiet(sim, a, mkFact('mate', b.rid, { x: Math.round(b.x), y: Math.round(b.y), status: 'safe' }, r.name, sim.t, 1, true, `${sim.responders[b.rid].name} 대원 안전 구역으로 구조`));
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: `쓰러진 ${sim.responders[b.rid].name} 대원을 안전 구역으로 옮겼습니다.` });
+        const br = sim.responders[b.rid];
+        if (br.dead) b.label = '';
+        learnQuiet(sim, a, mateFact(sim, s, b, 'safe', r.name, 0));      // 끌고 온 대원은 곁에서 본다 (숨졌는지·중증도까지)
+        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: br.dead ? `순직한 ${br.name} 대원을 안전 구역으로 옮겼습니다.` : `쓰러진 ${br.name} 대원을 안전 구역으로 옮겼습니다.` });
         finishTask(sim, s, a, true);
       }
       return;
     }
     case 'retreat': {
-      const m = moveTo(sim, s, a, s.staging.x, s.staging.y, 2);
-      if (m === 'arrived' || m === 'nopath') {
-        if (r.health < 40) { a.status = 'withdrawn'; a.label = '부상 — 후송 대기'; }
+      const m = moveTo(sim, s, a, s.staging.x, s.staging.y, 2, false, true);      // 물러나는 길은 불길도 뚫는다
+      if (m === 'arrived') {
+        // 물러나야 하는 몸(체력 40 아래, 또는 출혈이 크고 70 아래)이면 대기 지점에서 후송을 기다린다. 안전 구역에 닿았음을 스스로 알린다 —
+        // 물러난 대원은 더 판단하지 않으므로(think 를 돌지 않는다) 보고 대기열을 이 자리에서 비운다
+        const out = mustRetreat(r);
+        if (out) { a.status = 'withdrawn'; a.label = '부상 — 후송 대기'; }
         finishTask(sim, s, a, true);
+        if (out) { learnQuiet(sim, a, mateFact(sim, s, a, 'safe', r.name, 0)); flushOutbox(sim, s, a); }
+      } else if (m === 'nopath') {
+        // 불길을 뚫는 길조차 없다(사방이 막혔다). 위험해서 물러나던 대원은 예전처럼 그만두고 다시 판단한다.
+        // 다친 대원은 그 자리에서 길이 열리기를 기다리며 5초마다 다시 찾는다 — 제자리에서 '후송 대기'가 되지 않는다(그곳은 안전 구역이 아니다)
+        if (!mustRetreat(r)) { finishTask(sim, s, a, true); return; }
+        if (t.phase === 0) {
+          t.phase = 1;
+          emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'radio', imp: 2, causes: [a.hurtEv ?? -1], text: '퇴로가 막혀 나갈 수 없습니다. 길이 열리기를 기다립니다.' });
+        }
+        t.wait = 5;
       }
       return;
     }
@@ -1174,7 +1207,7 @@ function isCoverTile(s: Scene, x: number, y: number): boolean {
 export function act(sim: Sim, s: Scene, a: FieldAgent): void {
   a.px = a.x; a.py = a.y;
   if (a.status === 'left' || a.status === 'down') return;
-  if (a.status === 'withdrawn' && (!a.task || a.task.kind !== 'board')) { a.label = '부상 — 후송 대기'; return; }
+  if (a.status === 'withdrawn' && (!a.task || a.task.kind !== 'board')) { a.label = sim.responders[a.rid].dead ? '' : '부상 — 후송 대기'; return; }
   if (!a.task) { a.label = '지시 대기'; a.ring = 0; a.inCover = false; return; }
   const bx = a.x, by = a.y;
   runTask(sim, s, a, a.task);

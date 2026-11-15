@@ -153,8 +153,8 @@ function tellDispatch(sim: Sim, s: Scene, I: Incident, op: AirOp, u: Unit): void
   if (I.phase === 'closed' || (s.air !== undefined && s.air.length > 0)) return;
   for (const a of s.agents) if (a.status === 'active') return;
   for (const uid of I.assigned) { const q = sim.units[uid]; if (q.state === 'enroute' || q.state === 'turnout') return; }
-  const o = outstanding(op.eye, sim.t);      // 대피 중이라던 사람의 소식이 오래 끊겼으면 남은 일로 센다 (H1 §5.2)
-  if (!(o.patients > 0 || o.fire || o.hostile)) {
+  const o = outstanding(op.eye, sim.t, s);      // 대피 중이라던 사람의 소식이 오래 끊겼으면 남은 일로 센다 (H1 §5.2). 쓰러진 채 남은 지상 대원도 남은 일이다 (§3.5)
+  if (!(o.patients > 0 || o.fire || o.hostile || o.mates > 0)) {
     if (allAboard(s, op.eye)) {
       emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 2, causes: [I.lastEvent], text: `${u.callsign}: 확인한 구조 대상은 모두 실려 갔습니다. 현장에 남은 사람이 없어 상황을 종료합니다.` });
       closeIncident(sim, I, 'resolved');
@@ -165,7 +165,7 @@ function tellDispatch(sim: Sim, s: Scene, I: Incident, op: AirOp, u: Unit): void
   for (const f of op.eye.beliefs.list('cas')) { const c = f.value as CasBelief; if (c.where === 'scene' && c.mob === 'trapped' && c.band < 3) { stuck = true; break; } }
   const need: keyof Needs = o.hostile ? 'law' : o.fire ? 'suppression' : stuck ? 'rescue' : 'ems';
   I.unmet[need] = Math.max(I.unmet[need] ?? 0, 1); I.unmetSince = sim.t; I.noUnitLogged = false;
-  emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: `사건 ${I.code}: ${josa(u.callsign, '이/가')} 떠난 현장에 아직 ${o.hostile ? '용의자가' : o.fire ? '불이' : '구조 대상이'} 남아 있습니다. 지상 부대를 찾습니다.` });
+  emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: `사건 ${I.code}: ${josa(u.callsign, '이/가')} 떠난 현장에 아직 ${o.hostile ? '용의자가' : o.fire ? '불이' : o.patients > 0 ? '구조 대상이' : '쓰러진 대원이'} 남아 있습니다. 지상 부대를 찾습니다.` });
 }
 
 /** (tx, ty) 쪽으로 한 틱 움직인다. 돌려주는 값 = 남은 거리(칸) */

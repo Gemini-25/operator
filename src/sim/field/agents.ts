@@ -4,7 +4,7 @@
 import type { Sim } from '../engine';
 import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
-import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Incident, RadioMsg, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
+import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Incident, MateBelief, RadioMsg, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, clamp, dist, josa, pct } from '../util';
 import type { Rng } from '../rng';
 import { airShort, hasFirearm, hasKit, kitLive, kitWorks, medLevelOf, roleOf, seatsOf, toolFor } from '../crews';
@@ -12,9 +12,11 @@ import { BeliefStore, mkFact } from './beliefs';
 import type { CostFn } from './grid';
 import { doorAt, isIndoor, los, staticPass, tileOf } from './grid';
 import { BAND_NAME, band, isHeld, pushFx } from './hazards';
+import { HURT_AT, bandOf, hurtF } from './injury';
 
 export const resp = (sim: Sim, a: FieldAgent): Responder => sim.responders[a.rid];
-export const staminaF = (r: Responder): number => 0.55 + 0.45 * clamp(r.stamina / 60, 0, 1);
+/** 지친 정도와 다친 정도가 이동·작업 진도·사격에 함께 곱해진다 (다친 대원은 느려진다 — injury.hurtF: 체력 70 이상은 1, 40 에서 0.75) */
+export const staminaF = (r: Responder): number => (0.55 + 0.45 * clamp(r.stamina / 60, 0, 1)) * hurtF(r);
 
 /**
  * 현장의 개체 하나를 만든다 — 차에서 내리는 대원(sceneManager.unitArrived)과 상공의 관측자(field/rules/air.ts)가 함께 쓴다.
@@ -123,12 +125,40 @@ export function hosFact(sim: Sim, s: Scene, h: Hostile, src: string): Fact {
   return mkFact('hos', h.id, { x: Math.round(h.x), y: Math.round(h.y), weapon: h.weapon, state: h.state, hostage: hold, facing: Math.round(h.facing * 4) / 4 }, src, sim.t, 1, true, `${h.label}: ${wt}${hold ? ' · 인질을 붙잡고 있음' : ''} · ${st} (${regionNameAt(s, h.x, h.y)})`);
 }
 
+/**
+ * 동료의 상태 ('mate' 사실 — 값은 MateBelief). 본 대원·끌고 가는 대원·다친 본인이 만든다.
+ * d = 관찰자와 그 동료 사이의 거리 (본인의 보고, 끌고 가는 대원은 0). 멀리서는 쓰러진 것만 보인다:
+ *   숨졌는지는 2칸 안에서만 알 수 있고, 중증도는 3칸 안에서만 실제 값이다 (그보다 멀면 쓰러졌으면 위중, 아니면 중상으로 적는다).
+ * 칸 이름이 bleed 가 아니라 bleeding 인 것은 지휘 쪽의 진실 읽기 검사(.bleed)에 걸리지 않게 하려는 것이다.
+ */
+export function mateFact(sim: Sim, s: Scene, b: FieldAgent, status: MateBelief['status'], src: string, d: number): Fact {
+  const r = sim.responders[b.rid];
+  const dead = r.dead === true && d <= 2;
+  const near = d <= 3;
+  const band = dead ? 3 : near ? Math.min(2, bandOf(r.health)) : status === 'down' ? 2 : 1;      // 숨진 줄 모르면 사망(3)으로 적지 않는다
+  const v: MateBelief = {
+    x: Math.round(b.x), y: Math.round(b.y), status, band, bleeding: near && (r.bleed ?? 0) >= 0.01,
+    tq: (r.treatQ ?? 0) >= 0.6 ? 2 : (r.treatQ ?? 0) > 0 ? 1 : 0, dead, wasDown: r.tDown !== undefined, since: sim.t,
+  };
+  const text = dead ? `${r.name} 대원 생체 반응 없음`
+    : status === 'down' ? `${r.name} 대원 쓰러짐 — 구조 필요`
+    : status === 'hurt' ? `${r.name} 대원 부상 — 후퇴 중`
+    : status === 'safe' ? `${r.name} 대원 안전 구역 — 후송 대기`
+    : status === 'evac' ? `${r.name} 대원 현장 이탈`
+    : `${r.name} 대원 가벼운 임무로 복귀`;
+  return mkFact('mate', b.rid, v, src, sim.t, 1, true, text);
+}
+/** 그 동료의 지금 상태를 mate 사실의 status 로: 쓰러져 있으면 down, 안전 구역에 있으면 safe, 차에 탔으면 evac, 걷고 있으면 hurt */
+export function mateStatus(b: FieldAgent): MateBelief['status'] {
+  return b.status === 'down' ? 'down' : b.status === 'withdrawn' ? 'safe' : b.status === 'left' ? 'evac' : 'hurt';
+}
+
 /** 보고할 가치가 있는 변화인가 (위치만 바뀐 것은 조용히 갱신) */
 function significant(f: Fact, old: any): boolean {
   const v = f.value;
   if (f.type === 'cas') return v.where !== 'carried' && (old.mob !== v.mob || old.band !== v.band || old.where !== v.where || old.treated !== v.treated || old.tq !== v.tq);
   if (f.type === 'hos') return old.state !== v.state || old.weapon !== v.weapon || old.hostage !== v.hostage;
-  if (f.type === 'mate') return old.status !== v.status;
+  if (f.type === 'mate') return old.status !== v.status || old.dead !== v.dead || old.band !== v.band || old.tq !== v.tq;
   return true;
 }
 function sameSig(a: Fact, b: Fact): boolean { return a.key === b.key && !significant(a, b.value); }
@@ -297,12 +327,18 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
       if (!a.beliefs.get('evid', p.id) && d <= v) learn(sim, a, mkFact('evid', p.id, { kind: 'witness', done: !!p.interviewed }, me, sim.t, 1, true, '현장에 목격자 대기 중'), false);
     }
   }
-  for (const b of s.agents) {
-    if (b === a || b.status !== 'down') continue;
-    if (dist(a.x, a.y, b.x, b.y) <= v && sees(b.x, b.y)) {
-      const cur = a.beliefs.get('mate', b.rid);
-      if (!cur || cur.value.status !== 'down') learn(sim, a, mkFact('mate', b.rid, { x: Math.round(b.x), y: Math.round(b.y), status: 'down' }, me, sim.t, 1, true, `${sim.responders[b.rid].name} 대원 쓰러짐 — 구조 필요`));
-    }
+  // 동료: 쓰러진 동료는 시야 안이면 본다. 안전 구역으로 물러난 동료는 바로 곁(2칸)에서만 살핀다 — 거기서 숨진 동료를 곁의 대원이 알아본다
+  for (let bi = 0; bi < s.agents.length; bi++) { const b = s.agents[bi];
+    if (b === a || (b.status !== 'down' && b.status !== 'withdrawn')) continue;
+    const d = dist(a.x, a.y, b.x, b.y);
+    if (d > v || (b.status === 'withdrawn' && d > 2) || !sees(b.x, b.y)) continue;
+    const cur = a.beliefs.get('mate', b.rid);
+    if (cur && cur.value.dead) continue;      // 숨진 줄 안다 — 멀리서 다시 본 것으로 되돌리지 않는다
+    const f = mateFact(sim, s, b, b.status === 'down' ? 'down' : 'safe', me, d);
+    // 3칸 밖에서는 중증도·사망을 알 수 없다: 상태(쓰러짐·안전 구역)가 달라졌을 때만 새 소식이다 (가까이서 본 동료의 보고를 먼 관찰이 덮어쓰지 않는다)
+    if (cur && !(d <= 3 ? significant(f, cur.value) : cur.value.status !== f.value.status)) continue;
+    // 쓰러진 것·숨진 것은 말로 알린다. 안전 구역에 있는 동료의 상태는 믿음과 무전 자료로만 보낸다 (물러날 때 본인이 이미 알렸다)
+    if (b.status === 'down' || f.value.dead) learn(sim, a, f); else learnQuiet(sim, a, f);
   }
 }
 
@@ -367,7 +403,8 @@ export function shareNearby(sim: Sim, s: Scene, a: FieldAgent): void {
 }
 
 /** 대원의 믿음에 근거한 이동 비용. 모르는 장애물은 비용에 반영되지 않는다(가다가 발견한다). */
-export function agentCost(sim: Sim, s: Scene, a: FieldAgent, allowBlockers = true): CostFn {
+/** escape = 물러나는 길(executor.moveTo): 끌 수 없는 불도 막힌 칸으로 치지 않고 비싼 칸으로 친다 — 불길을 뚫고 나가는 길 */
+export function agentCost(sim: Sim, s: Scene, a: FieldAgent, allowBlockers = true, escape = false): CostFn {
   const r = resp(sim, a);
   const u = sim.units[a.unitId];
   // 연기·불을 지나는 값은 부서가 아니라 든 장비가 정한다: 공기호흡기(연기), 방화복(약한 불), 관창(센 불을 끄며 지나간다)
@@ -398,7 +435,7 @@ export function agentCost(sim: Sim, s: Scene, a: FieldAgent, allowBlockers = tru
     const dx = x - ax, dy = y - ay;
     if (dx * dx + dy * dy <= v * v) {
       const f = s.fire[i];
-      if (f > 0.5) { if (!canSuppress) return -1; c += 16; } else if (f > 0.12) c += turnout ? 2 : 6;
+      if (f > 0.5) { if (!canSuppress && !escape) return -1; c += 16; } else if (f > 0.12) c += turnout ? 2 : 6;
       c += s.smoke[i] * (scba ? 0.8 : 3);
     }
     return c;
@@ -413,8 +450,8 @@ export function hasWork(a: FieldAgent): boolean { return a.task !== null && a.ta
  */
 export const RETRY_AFTER = 25;
 export function failedRecently(sim: Sim, w: WorkItem, rid: number): boolean { const t = w.failedAt[rid]; return t !== undefined && sim.t - t < RETRY_AFTER; }
-/** 부상으로 더는 임무를 맡을 수 없는 대원 (brain.dangerScore 의 후퇴 기준과 같다) */
-export const HURT_HEALTH = 40;
+/** 부상으로 더는 임무를 맡을 수 없는 체력 (injury.HURT_AT — 후퇴 기준은 injury.mustRetreat: 이 체력 아래이거나 출혈이 클 때) */
+export const HURT_HEALTH = HURT_AT;
 
 export function workLabel(s: Scene, w: WorkItem): string {
   const reg = w.region >= 0 ? s.regions[w.region].name : '';
@@ -514,7 +551,14 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
     case 'negotiate': return r.dept === 'police' ? 0.3 + r.composure * 0.35 + r.experience * 0.35 : 0;
     case 'interview': return r.dept === 'police' ? 1 : 0.6;
     case 'clearRoad': return r.dept === 'ems' ? 0 : 0.4 + r.skills.rescue * 0.4;
-    case 'rescueMate': return 0.5 + r.fitness * 0.3 + r.teamwork * 0.2;
+    case 'rescueMate': {
+      if (rid === w.mate) return 0;      // 자기 자신을 구조하지 못한다
+      if (hot && r.dept !== 'police') return 0;      // 안전 확보 전의 무장 현장: 경찰만 들어간다
+      // 불·가스·붕괴 위험 구역 안에 쓰러진 동료: 공기호흡기를 멘 대원만 들어간다 (구하러 들어간 대원이 다시 쓰러지는 연쇄를 막는다). 구역은 믿음 속 위치로 본다
+      const mb = a.beliefs.val<MateBelief>('mate', w.mate);
+      if (mb) { const rg = s.region[mb.y * s.w + mb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg) && !scbaOk(sim, rid, afterSwap)) return 0; }
+      return 0.5 + r.fitness * 0.3 + r.teamwork * 0.2;
+    }
     case 'waterRescue': return 0.22 + r.skills.rescue * 0.5 + toolFor(sim, rid, 'water') * 0.28;
     case 'defuse': return hasKit(sim, rid, 'eodKit') ? 0.6 + 0.4 * r.skill : 0;      // 해체 공구를 든 처리 요원만 손댄다
     case 'overhaul': return hasKit(sim, rid, 'hose') && airOk(sim, rid, afterSwap) ? 0.4 + 0.6 * r.skills.fire : 0;      // 불씨를 만나면 분사한다: 관창을 든 사람만 (공기가 문턱 아래면 통을 바꾼 뒤에)

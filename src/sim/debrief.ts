@@ -18,6 +18,7 @@ export const PROBLEM_LABEL: Record<ProblemCode, string> = {
   PATH_BLOCKED: '현장 진입로 차단', VICTIM_MISSED: '수색에서 대상 누락', EQUIP_FAIL: '장비 고장', WATER_OUT: '용수 소진', RESPONDER_HURT: '대원 부상', COMM_FAIL: '무전 전달 실패',
   ESCALATION: '상황 악화', BACKUP_LATE: '지원 지연', SCENE_MISMATCH: '신고와 다른 현장 상황', SUSPECT_FLED: '용의자 도주', SECONDARY_COLLISION: '2차 사고', LATE_DISCOVERY: '구조 대상 발견 지연',
   TIMEOUT: '대응 시간 초과', FATIGUE: '대원 체력 고갈', HIDDEN_HAZARD: '숨겨진 위험 발현', RECOUNT: '인원 불일치 재수색', WRONG_ADDRESS: '신고 위치 오류', FALSE_ALARM: '허위·오인 신고',
+  RESPONDER_KILLED: '대원 순직',
 };
 
 const RESP_LIMIT: Record<string, number> = { fire: 95, armed: 95, traffic: 105, search: 125, medical: 80, collapse: 100, hazmat: 100, water: 90 };
@@ -98,9 +99,11 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   // 헬기만 왔던 사건: 상공 도착은 현장 도착(대응 시간)에 넣지 않는다 — 지상 대원이 내린 적이 없으면 그렇게 적는다
   else if ((s.airAt ?? -1) >= 0 && I.reportedAt >= 0) A.push(`헬기가 신고 접수 ${fmtSec(Math.max(0, s.airAt! - I.reportedAt))} 만에 현장 상공에 도착했지만, 지상 부대는 현장에 닿지 못했습니다.`);
   if (wrongNotes.length && firstCall) A.push(`최초 신고자(${personaName(firstCall.caller.persona)})의 정보가 실제와 달랐습니다: ${wrongNotes.slice(0, 2).join('; ')}.`);
-  const order: ProblemCode[] = ['CALL_QUEUE', 'CALL_VAGUE', 'MISJUDGE_TYPE', 'UNDERESTIMATE', 'OVERESTIMATE', 'NO_UNIT', 'DIVERTED', 'ROUTE_BLOCKED', 'TRAFFIC_DELAY', 'SCENE_MISMATCH', 'UNDER_DISPATCH', 'BACKUP_LATE',
+  // 순직은 맨 앞에 둔다: 분석 문장이 9줄에서 잘려도 빠지지 않는다 (H1 §3.8)
+  const order: ProblemCode[] = ['RESPONDER_KILLED', 'CALL_QUEUE', 'CALL_VAGUE', 'MISJUDGE_TYPE', 'UNDERESTIMATE', 'OVERESTIMATE', 'NO_UNIT', 'DIVERTED', 'ROUTE_BLOCKED', 'TRAFFIC_DELAY', 'SCENE_MISMATCH', 'UNDER_DISPATCH', 'BACKUP_LATE',
     'WRONG_ADDRESS', 'FALSE_ALARM', 'PATH_BLOCKED', 'COMM_FAIL', 'RECOUNT', 'VICTIM_MISSED', 'EQUIP_FAIL', 'WATER_OUT', 'HIDDEN_HAZARD', 'ESCALATION', 'SECONDARY_COLLISION', 'RESPONDER_HURT', 'FATIGUE', 'SUSPECT_FLED', 'LATE_DISCOVERY', 'TIMEOUT'];
   const T: Partial<Record<ProblemCode, (ps: Problem[]) => string>> = {
+    RESPONDER_KILLED: (ps) => `순직: ${ps.map((p) => p.detail).join(' / ')}.`,      // 원인과 경과는 숨지는 그 자리에서 상태로 만든 detail 에 들어 있다 (sceneManager.agentHealth)
     CALL_QUEUE: (ps) => `신고 전화가 다른 통화 처리 때문에 ${ps[0].detail} 대기했습니다.`,
     CALL_VAGUE: () => '신고자가 상황을 제대로 설명하지 못해 초기 정보가 불확실했습니다.',
     MISJUDGE_TYPE: (ps) => `상황 분석 단계에서 사건 유형을 잘못 판단했습니다 — ${ps[0].detail}${ps[0].recovered ? ` (${ps[0].recoveryText})` : ''}.`,

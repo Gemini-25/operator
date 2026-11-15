@@ -7,12 +7,15 @@ import { emit, raiseProblem } from '../events';
 import type { Candidate, CasBelief, FieldAgent, Scene, WorkItem } from '../types';
 import { dist } from '../util';
 import { AIR_LOW, hasKit, kitUses } from '../crews';
-import { HURT_HEALTH, failedRecently, fitFor, flushOutbox, perceive, pumpOperatorOn, resp, shareNearby, workLabel } from './agents';
+import { failedRecently, fitFor, flushOutbox, perceive, pumpOperatorOn, resp, shareNearby, workLabel } from './agents';
 import { commanderThink } from './commander';
 import { finishTask, makeTask } from './executor';
 import { tileOf } from './grid';
+import { mustRetreat } from './injury';
 
 interface Option { label: string; score: number; apply: (() => void) | null }
+/** 부상 후퇴를 이미 알린 대원 (현장의 개체마다 한 번 — 대원 개체의 모양을 바꾸지 않으려고 따로 둔다) */
+const hurtTold = new WeakSet<FieldAgent>();
 
 function takeWork(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, self: boolean): void {
   if (a.task) finishTask(sim, s, a, false, 'preempt');
@@ -33,7 +36,7 @@ function setTask(sim: Sim, s: Scene, a: FieldAgent, kind: Parameters<typeof make
 
 function dangerScore(sim: Sim, s: Scene, a: FieldAgent): number {
   const r = resp(sim, a);
-  if (r.health < 40) return 1.4;
+  if (mustRetreat(r)) return 1.4;      // 다쳤다: 체력 40 아래, 또는 상처 출혈이 크고 체력이 70 아래 (자기 몸이다 — injury.mustRetreat)
   let u = 0;
   const ax = Math.round(a.x), ay = Math.round(a.y);
   let f = 0;
@@ -79,7 +82,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
 
   // 부상: 한번 후퇴를 시작하면 대기 지점에 닿을 때까지 다른 일(지시·자체 판단)에 끌려 나가지 않는다.
   // 끌려 나가면 다시 위험 점수가 이겨 후퇴 → 다른 일 → 후퇴를 되풀이하며 같은 무전을 반복한다
-  const hurt = r.health < HURT_HEALTH;
+  const hurt = mustRetreat(r);
   if (hurt && cur && cur.kind === 'retreat') { a.candidates = [{ label: '계속: 후퇴 (부상)', score: 1.4, chosen: true }]; return; }
 
   const opts: Option[] = [];
@@ -89,10 +92,11 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
     // 맡고 있던 작업은 위험해서 내려놓은 것으로 기록한다: 지휘관이 곧바로 같은 대원에게 다시 맡기지 않는다
     if (cur && cur.workId >= 0) finishTask(sim, s, a, false, 'danger');
     setTask(sim, s, a, 'retreat', '후퇴');
-    // 부상 후퇴는 상태가 바뀌는 이 한 번만 알린다(위의 붙잡기로 다시 고르지 않는다), 위험 회피는 20초에 한 번
-    if (!hurt && sim.t - a.lastRetreatLog < 20) return;
+    // 부상 후퇴는 상태가 바뀌는 이 한 번만 알린다(위의 붙잡기로 다시 고르지 않는다 — 길 위의 불을 끄다 물이 떨어져 후퇴를 다시 시작해도 되풀이하지 않는다), 위험 회피는 20초에 한 번
+    if (hurt) { if (hurtTold.has(a)) return; hurtTold.add(a); }
+    else if (sim.t - a.lastRetreatLog < 20) return;
     a.lastRetreatLog = sim.t;
-    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: hurt ? 2 : 1, causes: [a.lastBlockEvent], text: hurt ? '부상으로 더 이상 임무 수행 불가. 후퇴합니다.' : '위험 수준이 너무 높습니다. 일단 물러나 재평가합니다.' });
+    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: hurt ? 2 : 1, causes: [hurt && a.hurtEv !== undefined ? a.hurtEv : a.lastBlockEvent], text: hurt ? '부상으로 더 이상 임무 수행 불가. 후퇴합니다.' : '위험 수준이 너무 높습니다. 일단 물러나 재평가합니다.' });
   } });
   // 2) 현재 임무 계속
   if (cur && cur.kind !== 'standby') {

@@ -376,7 +376,12 @@ export function tickUnits(sim: Sim): void {
     if (u.state === 'available' || u.state === 'oos' || u.state === 'onscene') continue;
     if (u.state === 'turnout') {
       u.timer -= dt;
-      if (u.timer <= 0) { u.state = 'enroute'; setRoute(sim, u, u.destNode!); if (!u.route && u.nodeId === u.destNode) arrive(sim, u); }
+      if (u.timer <= 0) {
+        u.state = 'enroute';
+        // 헬기·구조정은 길로 다니지 않는다: 도로 경로를 잡지 않는다 (잡아도 움직임에는 쓰이지 않고 지도에 도로 점선만 잘못 그려졌다)
+        if (u.air || u.sea) sendUnitTo(sim, u, u.destNode!); else setRoute(sim, u, u.destNode!);
+        if (!u.route && u.nodeId === u.destNode) arrive(sim, u);
+      }
       continue;
     }
     if (u.state === 'hospital') {

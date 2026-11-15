@@ -13,6 +13,7 @@ import type { Incident, IncidentResult, Outcome, Problem, ProblemCode, ShiftRepo
 import { TYPE_NAME, fmtSec, josa, pct } from './util';
 
 export const PROBLEM_LABEL: Record<ProblemCode, string> = {
+  DANGER_SIGN: '위험 조짐', WITHDRAWAL: '전원 철수', STRUCT_COLLAPSE: '구조물 붕괴', EXPLOSION: '폭발', BURNOUT: '건물 전소',      // (X6) 이름표만 — order 의 자리와 문장 틀은 단계 7
   CALL_QUEUE: '신고 대기', CALL_MISINFO: '신고자의 잘못된 정보', CALL_VAGUE: '불명확한 신고', MISJUDGE_TYPE: '사건 유형 오판', UNDERESTIMATE: '위험도 과소평가', OVERESTIMATE: '위험도 과대평가',
   NO_UNIT: '가용 부대 부족', UNDER_DISPATCH: '전문 부대 없이 대응 시작', DIVERTED: '부대 전환 배정', ROUTE_BLOCKED: '이동 경로 통제', TRAFFIC_DELAY: '교통 지연',
   PATH_BLOCKED: '현장 진입로 차단', VICTIM_MISSED: '수색에서 대상 누락', EQUIP_FAIL: '장비 고장', WATER_OUT: '용수 소진', RESPONDER_HURT: '대원 부상', COMM_FAIL: '무전 전달 실패',

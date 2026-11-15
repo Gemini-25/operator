@@ -3,21 +3,23 @@
 // "관찰자 시점"에서는 AI 가 아직 모르는 진실(미발견 구조 대상, 숨은 위험)도 흐리게 보여 준다.
 //
 // 그리는 순서: 정적 층(바닥·벽·가구) → 바닥 흔적 → 소품·차량 → 연기(아래) → 사람 → 불 → 나무 수관 → 연기(위)
-//             → 어둠과 빛 → 날씨 → 효과·표지·글자.
+//             → 상공의 헬기 → 어둠과 빛 → 날씨 → 효과·표지·글자.
 
 import { drawDisasterScene } from './city/disasterLayer';
 import { SKINS } from './scene/skins';
+// (R1) 장비는 읽기만 한다: 고장을 드러내거나 수량을 줄이는 함수는 여기서 부르지 않는다 — 그리는 것만으로 기록이 바뀌면 안 된다 (tests/crews.test.ts ⑬)
+import { AIR_LOW, hasKit, isHovering, kitUses } from '../sim/crews';
 import type { Sim } from '../sim/engine';
 import { visionOf } from '../sim/field/agents';
 import { HOSTILE_FOV } from '../sim/field/hazards';
 import { T } from '../sim/types';
-import type { Casualty, FieldAgent, Fx, Hostile, Prop, Scene, Unit } from '../sim/types';
+import type { AirOp, Casualty, FieldAgent, Fx, Hostile, Prop, Scene, Unit } from '../sim/types';
 import { DEPT_COLOR, FONT } from './renderCity';
 import { alpha, disc, hash2, oval, rr, seg, visPoly } from './scene/common';
 import type { G } from './scene/common';
 import { beginDark, drawFire, drawFog, drawLight, drawRain, drawScorch, drawSmoke, drawSpray, drawVignette, hole, holePoly, smokeLayer } from './scene/fx';
-import { drawDebrisFx, drawGlassFx } from './scene/fx';
-import { CAR_COLORS, VEH_SIZE, beaconColors, civilianLook, drawCar, drawClue, drawCone, drawDebris, drawDoorLeaf, drawEmergency, drawGasTank, drawHydrant, drawLying, drawPerson, drawRoadDebris, drawBus, drawSwimmer, drawUnstable, drawValve, hostileLook, responderLook } from './scene/sprites';
+import { drawDebrisFx, drawDropFx, drawGlassFx } from './scene/fx';
+import { CAR_COLORS, VEH_SIZE, beaconColors, civilianLook, drawCar, drawClue, drawCone, drawDebris, drawDoorLeaf, drawEmergency, drawGasTank, drawHeli, drawHydrant, drawLying, drawPerson, drawRoadDebris, drawBus, drawSwimmer, drawUnstable, drawValve, hostileLook, responderLook } from './scene/sprites';
 import type { ArmPose, Item, PersonLook } from './scene/sprites';
 import { buildStatic, doorHorizontal, staticSig } from './scene/staticLayer';
 import type { StaticLayer } from './scene/staticLayer';
@@ -126,27 +128,65 @@ const ipos = (o: { x: number; y: number; px: number; py: number }, a: number): {
 const lookCache = new Map<string, PersonLook>();
 function lookOf(key: string, make: () => PersonLook): PersonLook { let l = lookCache.get(key); if (!l) { l = make(); lookCache.set(key, l); if (lookCache.size > 400) lookCache.clear(); } return l; }
 
-function agentPose(a: FieldAgent, u: Unit, moving: boolean): { arms: ArmPose; item: Item } {
+/**
+ * 대원의 자세와 손에 든 것. 손에 든 것은 부대 종류가 아니라 그 대원이 든 장비에서 고른다 (R1 10절):
+ * 읽기만 한다 — hasKit(알려진 고장이 아닌 장비)만 보고 kitWorks 는 부르지 않는다(그리는 것만으로 고장이 드러나면 안 된다).
+ * 총은 저격 소총 > 소총 > 권총. 방패수는 교전·봉쇄·이동 때 방패를 앞세운다. 테이저를 쏜 직후 1초는 테이저를 겨눈다.
+ */
+function agentPose(sim: Sim, s: Scene, a: FieldAgent, moving: boolean): { arms: ArmPose; item: Item } {
   const tk = a.task ? a.task.kind : 'standby';
-  const gun: Item = u.kind === 'tactical' || u.kind === 'swat' ? 'rifle' : 'pistol';
+  const rid = a.rid;
+  const gun: Item = hasKit(sim, rid, 'sniper') ? 'sniper' : hasKit(sim, rid, 'rifle') ? 'rifle' : 'pistol';
+  // 문을 여는 도구: 파괴 장비면 공성추, 할리건·도끼 묶음이면 할리건, 그 밖에는 도끼
+  const opener: Item = hasKit(sim, rid, 'breachKit') ? 'ram' : hasKit(sim, rid, 'irons') ? 'halligan' : 'axe';
   if (a.carrying >= 0 || a.carrying <= -2) return { arms: 'drag', item: 'none' };
-  // (G5) 길 위의 잠긴 문을 강제로 여는 중(하위 작업): 도구를 든다 — 경찰은 공성추, 그 밖은 도끼
-  if (a.task && a.task.sub && a.task.sub.kind === 'force' && !moving) return { arms: 'work', item: u.dept === 'police' ? 'ram' : 'axe' };
-  if (tk === 'engage' || tk === 'perimeter') return { arms: 'aim', item: gun };
+  if (sim.t - (a.taserAt ?? -99) < 1) return { arms: 'aim', item: 'taser' };
+  // (G5) 길 위의 잠긴 문을 강제로 여는 중(하위 작업): 도구를 든다
+  if (a.task && a.task.sub && a.task.sub.kind === 'force' && !moving) return { arms: 'work', item: opener };
+  const shield = hasKit(sim, rid, 'shield');
+  if (tk === 'engage' || tk === 'perimeter') return { arms: 'aim', item: shield ? 'shield' : gun };
   if (tk === 'suppress' || (tk === 'overhaul' && !moving)) return { arms: 'hose', item: 'none' };
-  if (moving) return { arms: 'side', item: 'none' };
+  // 연기 속에서 수색하거나 움직이는 동안 열화상 카메라를 든 대원은 그것을 들여다본다
+  if ((moving || tk === 'search') && hasKit(sim, rid, 'tic') && s.smoke[Math.round(a.y) * s.w + Math.round(a.x)] > 0.3) return { arms: 'megaphone', item: 'tic' };
+  if (moving) return shield && s.kind === 'armed' ? { arms: 'aim', item: 'shield' } : { arms: 'side', item: 'none' };
   const busy = a.ring > 0.01;
   switch (tk) {
-    case 'treat': case 'rescueMate': case 'carry': case 'load': return { arms: busy ? 'kneel' : 'side', item: 'none' };
-    case 'force': return { arms: busy ? 'work' : 'side', item: busy && u.dept === 'police' ? 'ram' : 'axe' };
-    case 'clear': case 'clearRoad': return { arms: busy ? 'work' : 'side', item: 'axe' };
-    case 'extricate': return { arms: busy ? 'work' : 'side', item: 'spreader' };
+    case 'treat': {
+      // 처치: 제세동기를 쓸 환자(심정지·건강 25 미만)면 주황 상자, 전문 응급 가방·의사 장비면 큰 빨간 가방, 그 밖에는 작은 구급 상자
+      const c = a.task && a.task.cas >= 0 ? s.casualties[a.task.cas] : undefined;
+      const shock = !!c && hasKit(sim, rid, 'aed') && ((s.kind === 'medical' && s.variant === 'arrest') || c.health < 25);
+      return { arms: busy ? 'kneel' : 'side', item: !busy ? 'none' : shock ? 'aed' : hasKit(sim, rid, 'alsBag') || hasKit(sim, rid, 'doctorKit') ? 'bigbag' : 'none' };
+    }
+    case 'rescueMate': case 'carry': case 'load': return { arms: busy ? 'kneel' : 'side', item: 'none' };
+    case 'force': return { arms: busy ? 'work' : 'side', item: busy ? opener : 'none' };
+    case 'clear': case 'clearRoad': return { arms: busy ? 'work' : 'side', item: hasKit(sim, rid, 'irons') ? 'halligan' : 'axe' };
+    case 'extricate': return { arms: busy ? 'work' : 'side', item: hasKit(sim, rid, 'spreader') ? 'spreader' : hasKit(sim, rid, 'irons') ? 'halligan' : 'none' };      // 유압 구조기는 든 사람만 — 없으면 할리건이나 맨손
     case 'traffic': return { arms: 'baton', item: 'none' };
     case 'negotiate': return { arms: 'megaphone', item: 'none' };
     case 'arrest': return { arms: busy ? 'work' : 'aim', item: busy ? 'none' : gun };
-    case 'hookup': case 'mitigate': return { arms: busy ? 'work' : 'side', item: 'none' };
+    case 'hookup': case 'mitigate': case 'swapAir': return { arms: busy ? 'work' : 'side', item: 'none' };
     default: return { arms: 'side', item: 'none' };
   }
+}
+
+/** 옮기는 사람이나 곁(2칸 안)에서 같은 이송을 돕는 사람이 들것을 가졌는가 (실행기의 판정과 같다 — 들것이 있을 때만 들것을 그린다) */
+function hasLitter(sim: Sim, s: Scene, carrier: FieldAgent): boolean {
+  if (hasKit(sim, carrier.rid, 'stretcher')) return true;
+  const t = carrier.task;
+  if (t) for (const b of s.agents) if (b !== carrier && b.status === 'active' && b.task && b.task.kind === t.kind && b.task.workId === t.workId && Math.hypot(b.x - carrier.x, b.y - carrier.y) < 2 && hasKit(sim, b.rid, 'stretcher')) return true;
+  return false;
+}
+
+// ── 상공의 헬기 (R1) ──
+/** 떠 있는 높이: 몸체를 이만큼(칸) 왼쪽 위로 올려 그린다. 그림자가 땅 위의 제 자리(AirOp.x, y)에 떨어진다 */
+const ALT_X = 0.77, ALT_Y = 0.92;
+const airHeading = new WeakMap<AirOp, number>();
+/** 상공 작업의 할 일을 사람이 읽는 말로 (현장의 이름표와 대원 정보창이 함께 쓴다) */
+export function airOpLabel(s: Scene, op: AirOp): string {
+  if (op.phase === 'away') return '물 뜨러 감';
+  if (op.mode === 'hoist') return op.phase === 'work' ? '호이스트 인양 중' : '인양 위치로 이동';
+  if (op.mode === 'bucket') return '공중 물 투하';
+  return s.light ? '상공 감시 · 탐조등' : '상공 감시';
 }
 
 export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: SceneOpts): void {
@@ -309,7 +349,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   }
 
   // ── 현장에 도착해 있는 출동 차량 ──
-  const parked = sim.units.filter((u) => u.incidentId === s.incidentId && u.state === 'onscene');
+  const parked = sim.units.filter((u) => u.incidentId === s.incidentId && u.state === 'onscene' && !isHovering(u, s));      // 상공에 머무는 헬기는 줄에 서지 않는다 (아래 '상공의 헬기')
   const rowY = parkY(s) * ts;
   const vpos: { u: Unit; x: number; y: number; L: number; W: number }[] = [];
   let cursor = s.kind === 'search' || s.kind === 'traffic' ? 0.35 : s.staging.x + 1.35;      // 건물 현장: 대원이 내리는 자리(대기 지점) 바로 앞쪽에 줄지어 선다
@@ -376,7 +416,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       drawPerson(ctx, x, y, ang, ts, lk, { step: time * 10 + c.id, moving: mv, arms: captive ? 'back' : c.panic && mv ? 'up' : 'side', t: time, scale: captive ? 0.9 : 0.96, ghost, flinch: cv ? casualtyFlinch(cv, c.id, c.x, c.y) : undefined });
     } else {
       const ang = carrier ? Math.atan2(carrier.fy, carrier.fx) : hash2(c.id * 7, s.id) * 6.28;
-      drawLying(ctx, x, y, ang, ts, lk, { variant: hash2(c.id, 5), sheet: c.dead, stretcher: c.where === 'carried', bandage: c.treated && !c.dead, ghost });
+      drawLying(ctx, x, y, ang, ts, lk, { variant: hash2(c.id, 5), sheet: c.dead, stretcher: c.where === 'carried' && !!carrier && hasLitter(sim, s, carrier), bandage: c.treated && !c.dead, ghost });      // 들것은 가진 사람이 옮길 때만 (없으면 끌어서 옮긴다)
       if (c.mob === 'trapped' && !c.dead && c.where === 'scene') {
         // 깔려 있다: 다리 쪽에 잔해
         ctx.save(); ctx.translate(x - Math.cos(ang) * ts * 0.3, y - Math.sin(ang) * ts * 0.3); ctx.scale(ts * 0.62, ts * 0.62); ctx.globalAlpha = ghost; drawDebris(ctx, c.id + 50); ctx.restore();
@@ -455,17 +495,19 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     ctx.fillStyle = alpha(col, 0.14); ctx.strokeStyle = sel ? '#ffffff' : alpha(col, 0.85); ctx.lineWidth = sel ? Math.max(2, ts * 0.08) : Math.max(1.5, ts * 0.05);
     ctx.beginPath(); ctx.arc(x, y, ts * 0.44, 0, 7); ctx.fill(); ctx.stroke();
     if (a.isCommander) { ctx.strokeStyle = '#ffd166'; ctx.lineWidth = Math.max(1.5, ts * 0.05); ctx.setLineDash([ts * 0.14, ts * 0.1]); ctx.beginPath(); ctx.arc(x, y, ts * 0.54, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
-    const lk = lookOf('a' + a.rid + ':' + u.kind, () => responderLook(rsp.dept, u.kind, a.rid * 13 + 7));
+    const lk = lookOf('a' + a.rid + ':' + u.kind + ':' + (rsp.role ?? ''), () => responderLook(rsp.dept, u.kind, a.rid * 13 + 7, rsp.role));
     if (a.status === 'down') {
       drawLying(ctx, x, y, hash2(a.rid, 77) * 6.28, ts, lk, { variant: hash2(a.rid, 5) });
       ctx.strokeStyle = `rgba(255,93,93,${0.5 + 0.4 * Math.abs(Math.sin(time * 4))})`; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x, y, ts * 0.56, 0, 7); ctx.stroke();
     } else {
-      const pose = agentPose(a, u, moving);
+      const pose = agentPose(sim, s, a, moving);
       if (af && af.throwAct !== undefined) { pose.arms = 'throw'; pose.item = 'none'; }
       else if (af && af.ram) { pose.arms = 'work'; pose.item = 'ram'; }
       const off = af ? { x: (af.flinch?.x ?? 0) + (af.jitter?.x ?? 0), y: (af.flinch?.y ?? 0) + (af.jitter?.y ?? 0) } : undefined;
       drawPerson(ctx, x, y, ang, ts, lk, { step: time * 11 + a.rid, moving, arms: pose.arms, item: pose.item, t: time + a.rid * 0.37, recoil: af?.recoil, act: af?.throwAct, crouch: a.inCover && s.kind === 'armed' && !moving && pose.arms === 'aim', flinch: off && (off.x || off.y) ? off : undefined });
       if (a.inCover && s.kind === 'armed') drawCoverBadge(ctx, x + ts * 0.36, y + ts * 0.34, ts);      // (G5) 엄폐: 반쪽 벽 기호
+      // (R1) 공기 잔량 60초 아래: 머리 위 왼쪽의 작은 주황 점 (깜박이지 않는다)
+      if (hasKit(sim, a.rid, 'scba') && kitUses(sim, a.rid, 'scba') < AIR_LOW) { disc(ctx, x - ts * 0.36, y - ts * 0.38, ts * 0.115, '#0b1219'); disc(ctx, x - ts * 0.36, y - ts * 0.38, ts * 0.08, kitUses(sim, a.rid, 'scba') <= 0 ? '#ff5d5d' : '#ff9f43'); }
       if (a.ring > 0.01) {
         ctx.strokeStyle = 'rgba(8,13,18,0.6)'; ctx.lineWidth = Math.max(3, ts * 0.11); ctx.beginPath(); ctx.arc(x, y, ts * 0.62, 0, 7); ctx.stroke();
         ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(2, ts * 0.07); ctx.lineCap = 'round'; ctx.beginPath(); ctx.arc(x, y, ts * 0.62, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.min(1, a.ring)); ctx.stroke();
@@ -517,6 +559,44 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   // ── 연기 (위층): 사람 위로 옅게 한 겹 더 ──
   if (smoke) { ctx.globalAlpha = 0.4; ctx.drawImage(smoke, 0, 0, W, H); ctx.globalAlpha = 1; }
 
+  // ── 상공의 헬기 (R1): 이 사건에 와 있는 부대의 상공 작업만 그린다. 물을 뜨러 간 동안(away)은 현장에 없다 ──
+  // 땅 위의 자리(AirOp.x, y)에 그림자가 떨어지고 몸체는 높이만큼 왼쪽 위에 뜬다. 호이스트 줄·물 바구니는 몸체에서 땅 위의 자리로 내려온다
+  const airs: { op: AirOp; u: Unit; gx: number; gy: number; bx: number; by: number }[] = [];
+  if (s.air) for (const op of s.air) {
+    const u = sim.units[op.unitId];
+    if (u.state !== 'onscene' || u.incidentId !== s.incidentId || op.phase === 'away') continue;
+    const gx = cx(op.px + (op.x - op.px) * o.alpha), gy = cy(op.py + (op.y - op.py) * o.alpha);
+    airs.push({ op, u, gx, gy, bx: gx - ALT_X * ts, by: gy - ALT_Y * ts });
+  }
+  for (const A of airs) {
+    const op = A.op, u = A.u;
+    // 기수: 움직이는 쪽을 본다 (멈춰 있으면 마지막으로 보던 쪽)
+    const mvx = op.x - op.px, mvy = op.y - op.py;
+    let ang = airHeading.get(op) ?? 0;
+    if (Math.abs(mvx) + Math.abs(mvy) > 0.02) { ang = Math.atan2(mvy, mvx); airHeading.set(op, ang); }
+    if (op.mode === 'hoist' && op.phase === 'work') {
+      // 호이스트 줄과 매달린 구조대원: 내려가서(앞 35%) 사람을 붙들고, 끝에(뒤 20%) 함께 올라온다
+      const c = op.target >= 0 ? s.casualties[op.target] : undefined;
+      const tx = c ? cx(c.px + (c.x - c.px) * o.alpha) : A.gx, ty = c ? cy(c.py + (c.y - c.py) * o.alpha) : A.gy;
+      const q = op.need > 0 ? Math.min(1, op.progress / op.need) : 0;
+      const along = q < 0.35 ? q / 0.35 : q > 0.8 ? 1 - ((q - 0.8) / 0.2) * 0.75 : 1;
+      const hx = A.bx + (tx - A.bx) * along, hy = A.by + (ty - A.by) * along;
+      ctx.lineCap = 'round'; ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = Math.max(2, ts * 0.07); ctx.beginPath(); ctx.moveTo(A.bx, A.by); ctx.lineTo(hx, hy); ctx.stroke();
+      ctx.strokeStyle = '#e8edf2'; ctx.lineWidth = Math.max(1, ts * 0.035); ctx.stroke();
+      if (!MINI) { disc(ctx, hx, hy, ts * 0.2, '#0b1219'); disc(ctx, hx, hy, ts * 0.16, '#d9742a'); disc(ctx, hx, hy, ts * 0.08, '#f2f2ee'); }      // 주황 구조복과 흰 헬멧
+      if (!MINI) { ctx.strokeStyle = 'rgba(8,13,18,0.6)'; ctx.lineWidth = Math.max(3, ts * 0.1); ctx.beginPath(); ctx.arc(tx, ty, ts * 0.62, 0, 7); ctx.stroke(); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(2, ts * 0.06); ctx.beginPath(); ctx.arc(tx, ty, ts * 0.62, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * q); ctx.stroke(); }
+    } else if ((u.bucketMax ?? 0) > 0 && op.mode === 'bucket') {
+      // 물 바구니: 몸체 밑에 줄로 매달려 흔들린다. 물이 차 있으면 파랗다
+      const sw = Math.sin(time * 2.2 + u.id) * ts * 0.14;
+      const px = A.bx + ALT_X * ts * 0.62 + sw, py = A.by + ALT_Y * ts * 0.62;
+      ctx.lineCap = 'round'; ctx.strokeStyle = '#cfd6dc'; ctx.lineWidth = Math.max(1, ts * 0.03); ctx.beginPath(); ctx.moveTo(A.bx, A.by); ctx.lineTo(px, py); ctx.stroke();
+      disc(ctx, px, py, ts * 0.27, '#8f3a14'); disc(ctx, px, py, ts * 0.22, '#f07a2a'); disc(ctx, px, py, ts * 0.15, (u.bucket ?? 0) > 0 ? '#58b6ff' : '#3a2416');
+    }
+    drawHeli(ctx, A.bx, A.by, ang, ts, true, o.timeMs, u.kind, ALT_X);
+    const picked = o.selectedRid >= 0 && sim.responders[o.selectedRid] && sim.responders[o.selectedRid].unitId === u.id;
+    if (picked && !MINI) { ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(2, ts * 0.07); ctx.setLineDash([ts * 0.2, ts * 0.14]); ctx.beginPath(); ctx.arc(A.bx, A.by, ts * 1.75, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
+  }
+
   // ── 어둠과 빛 ──
   // 밤에는 손전등·불빛·차량·가로등 주변만 밝다. AI 시점의 무장 사건에서는 대원이 지금 보고 있는 곳만 밝다.
   const fog = !o.truth && s.kind === 'armed' && s.agents.some((a) => a.status !== 'left');
@@ -545,6 +625,9 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       }
     }
     for (const v of vpos) { hole(dg, v.x * k, v.y * k, ts * 3.2 * k, 0.85); if (night) hole(dg, (v.x + ts * (v.L / 2 + 2.2)) * k, v.y * k, ts * 2.8 * k, 0.7); }
+    // (R1) 상공의 헬기와 탐조등이 비추는 원: 원 안은 환하다
+    for (const A of airs) hole(dg, A.bx * k, A.by * k, ts * 2.4 * k, 0.8);
+    if (s.light && airs.length) hole(dg, cx(s.light.x) * k, cy(s.light.y) * k, ts * (s.light.r + 0.9) * k, 0.95);
     if (night) for (const l of layer.lamps) hole(dg, cx(l.x) * k, cy(l.y) * k, ts * 3.8 * k, 0.85);
     hole(dg, (s.safe.x + 0.45) * ts * k, (s.safe.y + 0.4) * ts * k, ts * 3 * k, 0.7);
     for (let i = 0; i < s.fire.length; i++) if (s.fire[i] > 0.2) hole(dg, cx(i % s.w) * k, cy((i / s.w) | 0) * k, ts * (1.9 + 2.5 * s.fire[i]) * k, 0.65);
@@ -567,6 +650,19 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       const lx = v.x + ts * v.L * 0.12;
       drawLight(ctx, lx + Math.cos(ph) * ts * 0.7, v.y + Math.sin(ph) * ts * 0.7, ts * 2.5, ca, 0.5 * nk * (0.55 + 0.45 * Math.sin(ph * 1.7)));
       drawLight(ctx, lx - Math.cos(ph) * ts * 0.7, v.y - Math.sin(ph) * ts * 0.7, ts * 2.5, cb, 0.5 * nk * (0.55 - 0.45 * Math.sin(ph * 1.7)));
+    }
+    // (R1) 헬기의 항법등과 탐조등: 몸체에서 땅 위의 원까지 옅은 원뿔, 원 안의 흰 빛
+    for (const A of airs) {
+      const on = Math.floor(o.timeMs / 420) % 2 === 0;
+      drawLight(ctx, A.bx, A.by, ts * 1.3, on ? '#ff5d5d' : '#7dffb0', 0.35 * nk);
+    }
+    if (s.light && airs.length) {
+      const src = airs.find((A) => A.u.kind === 'policeHeli') ?? airs[0];
+      const lx = cx(s.light.x), ly = cy(s.light.y), lr = s.light.r * ts;
+      const d = Math.hypot(lx - src.bx, ly - src.by) || 1, ux = (lx - src.bx) / d, uy = (ly - src.by) / d;
+      ctx.fillStyle = 'rgba(255,248,214,0.07)'; ctx.beginPath(); ctx.moveTo(src.bx, src.by); ctx.lineTo(lx - uy * lr, ly + ux * lr); ctx.lineTo(lx + uy * lr, ly - ux * lr); ctx.closePath(); ctx.fill();
+      drawLight(ctx, lx, ly, lr * 1.15, '#fff6d8', 0.2);
+      ctx.strokeStyle = 'rgba(255,246,216,0.28)'; ctx.lineWidth = Math.max(1, ts * 0.04); ctx.beginPath(); ctx.arc(lx, ly, lr, 0, 7); ctx.stroke();
     }
     if (night) {
       for (const l of layer.lamps) drawLight(ctx, cx(l.x), cy(l.y), ts * 3.4, '#ffd9a0', 0.2);
@@ -720,6 +816,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       if (!MINI) drawGlassFx(ctx, f, ts, k);
     } else if (f.kind === 'debris') {
       if (!MINI) drawDebrisFx(ctx, s, f, ts, k);
+    } else if (f.kind === 'drop') {
+      drawDropFx(ctx, f, ts, k, MINI);      // (R1) 헬기의 물 투하: 쏟아지는 물 띠와 물보라
     } else if (f.kind === 'text') {
       ctx.globalAlpha = Math.min(1, (1 - k) * 2);
       pill(ctx, f.text ?? '', cx(f.x), cy(f.y) - ts * (0.5 + 0.9 * k), ts * 0.34, f.color ?? '#ffffff', 'rgba(8,13,18,0.9)');
@@ -729,6 +827,18 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   if (cv) timed(() => { drawNegotiation(cv); drawCuffs(cv); });      // (G5) 말풍선, 수갑 기호
   for (const l of hzLabels) pill(ctx, l.text, l.x, l.y, Math.max(10, ts * 0.3), l.color);      // (G4) 새 글자 표지: 가스 고임·되살아난 불
   for (const l of labels) pill(ctx, l.text, l.x, l.y, Math.max(10, ts * 0.28), l.col);
+  // (R1) 상공의 헬기: 호출부호와 하는 일. 두 헬기가 한 자리에 떠 있으면 이름표를 위로 쌓는다(겹쳐 읽히지 않게)
+  if (!MINI) {
+    const fs = Math.max(10, ts * 0.3), put: { x: number; y: number; w: number }[] = [];
+    ctx.font = `600 ${fs}px ${FONT}`;
+    for (const A of airs) {
+      const text = `${A.u.callsign} · ${airOpLabel(s, A.op)}`, w = ctx.measureText(text).width + fs * 0.8;
+      let y = A.by - ts * 1.2;
+      for (let pass = 0; pass < 3; pass++) for (const q of put) if (Math.abs(q.x - A.bx) < (q.w + w) / 2 + 4 && Math.abs(q.y - y) < fs * 1.6) y = q.y - fs * 1.7;
+      put.push({ x: A.bx, y, w });
+      pill(ctx, text, A.bx, y, fs, DEPT_COLOR[A.u.dept]);
+    }
+  }
 
   // 지도 가장자리를 배경으로 녹인다
   if (!MINI) {
@@ -748,6 +858,12 @@ export function hitScene(sim: Sim, s: Scene, w: number, h: number, px: number, p
   const tx = (px - L.ox) / L.ts - 0.5, ty = (py - L.oy) / L.ts - 0.5;
   let rid = -1, bd = 0.75;
   for (const a of s.agents) { if (a.status === 'left') continue; const d = Math.hypot(a.x - tx, a.y - ty); if (d < bd) { bd = d; rid = a.rid; } }
+  // (R1) 상공의 헬기를 누르면 그 관측자를 고른다 (지상 대원이 더 가까우면 그 대원). 몸체는 땅 위의 자리보다 왼쪽 위에 떠 있다
+  if (rid < 0 && s.air) for (const op of s.air) {
+    const u = sim.units[op.unitId];
+    if (u.state !== 'onscene' || u.incidentId !== s.incidentId || op.phase === 'away') continue;
+    if (Math.hypot(op.x - ALT_X - tx, op.y - ALT_Y - ty) < 1.3) rid = op.eye.rid;
+  }
   let cas = -1, cd = 0.6;
   for (const c of s.casualties) { if (c.where === 'loaded' || c.where === 'hospital') continue; const d = Math.hypot(c.x - tx, c.y - ty); if (d < cd) { cd = d; cas = c.id; } }
   return { rid, cas };

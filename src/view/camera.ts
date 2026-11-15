@@ -11,7 +11,7 @@ export interface CityCam { x: number; y: number; zoom: number }
 export interface SceneView { x: number; y: number; zoom: number }
 const SCENE_W = 30, SCENE_H = 20;
 /** 현장 자동 확대가 따라가는 효과 기록과 무게. G4 는 'collapse'(2.5), X6 는 'horn'(2)을 한 단어씩 더한다 */
-const ACTION_W: Record<string, number> = { shot: 2.5, boom: 2.5, flash: 2.5, hit: 2.5, spray: 0.6, breach: 2.5, melee: 1.5, taser: 2.0, cuff: 1.0, collapse: 2.5 };
+const ACTION_W: Record<string, number> = { shot: 2.5, boom: 2.5, flash: 2.5, hit: 2.5, spray: 0.6, breach: 2.5, melee: 1.5, taser: 2.0, cuff: 1.0, collapse: 2.5, drop: 1.5 };      // drop = (R1) 헬기의 물 투하
 
 export class CameraDirector {
   mode: 'city' | 'scene' = 'city';
@@ -176,10 +176,12 @@ export class CameraDirector {
     for (const a of s.agents) {
       if (a.status === 'left') continue;
       const tk = a.task ? a.task.kind : 'standby';
-      if (tk === 'standby' || tk === 'board' || tk === 'rehab' || tk === 'resupply') continue;
+      if (tk === 'standby' || tk === 'board' || tk === 'rehab' || tk === 'resupply' || tk === 'swapAir') continue;
       add(a.x, a.y, tk === 'perimeter' || tk === 'traffic' ? 0.5 : 1.2);
     }
     for (const c of s.casualties) if (c.tDiscovered >= 0 && c.where === 'scene' && !c.dead) add(c.x, c.y, 0.8);
+    // (R1) 상공에서 일하는 헬기(호이스트 인양·물 투하)도 화면에 든다. 살피며 도는 헬기는 넣지 않는다(현장을 훑고 다녀 화면이 넓어진다)
+    for (const op of s.air ?? []) if (op.phase !== 'away' && op.mode !== 'watch' && op.idleSince < 0) add(op.x, op.y, 1.5);
     for (let i = 0; i < s.fire.length; i += 3) if (s.fire[i] > 0.3) add(i % s.w, (i / s.w) | 0, 0.25);
     let ws = 0, mx = 0, my = 0;
     for (let i = 0; i < pts.length; i += 3) { ws += pts[i + 2]; mx += pts[i] * pts[i + 2]; my += pts[i + 1] * pts[i + 2]; }

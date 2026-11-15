@@ -2,22 +2,28 @@
 // 모두 이 프로젝트를 위해 직접 그린 벡터 도형이다. 위에서 내려다본 모습으로, 타일 한 칸 = 1 단위.
 
 import { AIR_KIND } from '../../sim/crews';
-import type { Dept, UnitKind } from '../../sim/types';
+import type { Dept, RoleId, UnitKind } from '../../sim/types';
 import { disc, hash2, oval, rr, seg, shade } from './common';
 import type { G } from './common';
 
 // ───────────────────────── 사람 ─────────────────────────
-export type HeadKind = 'helmet' | 'cap' | 'hair' | 'hood' | 'tac';
+export type HeadKind = 'helmet' | 'cap' | 'hair' | 'hood' | 'tac'
+  | 'visor';                              // (R1) 폭발물 방호복의 얼굴 가리개
 export interface PersonLook {
-  top: string; trim?: 'stripes' | 'vest' | 'cross' | 'none'; trimCol?: string;
+  top: string; trim?: 'stripes' | 'vest' | 'cross' | 'none'
+    | 'plus' | 'lifevest';                // (R1) 등판의 십자(의사·간호사) · 구명조끼(수난 구조대원)
+  trimCol?: string;
   arm: string; hand: string; leg: string; shoe: string;
   head: HeadKind; headCol: string; headCol2?: string; skin: string;
   pack?: 'scba' | 'bag' | 'none'; packCol?: string;
+  band?: string;                          // (R1) 헬멧을 가로지르는 띠 (팀장)
+  bulk?: number;                          // (R1) 몸통 배율 (폭발물 방호복 1.25)
 }
 export type ArmPose = 'side' | 'aim' | 'hose' | 'work' | 'kneel' | 'up' | 'back' | 'drag' | 'carry' | 'baton' | 'megaphone'
   | 'throw';                              // (G5) 섬광탄 던지기: act 0→1 동안 한 팔을 뒤로 젖혔다 앞으로
 export type Item = 'rifle' | 'pistol' | 'knife' | 'axe' | 'spreader' | 'none'
-  | 'ram';                                // (G5) 공성추
+  | 'ram'                                 // (G5) 공성추
+  | 'sniper' | 'taser' | 'shield' | 'tic' | 'halligan' | 'bigbag' | 'aed';      // (R1) 든 장비에서 고른다: 저격 소총 · 테이저 · 방탄 방패(+권총) · 열화상 카메라 · 할리건 · 전문 응급 가방 · 제세동기
 export interface PersonPose {
   step: number; moving: boolean; arms: ArmPose; t: number; item?: Item; scale?: number; ghost?: number;
   recoil?: number;                        // (G5) 반동 0..1: 겨눈 반대쪽으로 0.06칸, 총을 0.04칸 더
@@ -32,17 +38,36 @@ const HAIR = ['#211a14', '#3b2a1c', '#5a4028', '#2c2c30', '#8a8d92'];
 const CLOTH = ['#b7654a', '#5f8fb0', '#8a6fae', '#c2a14a', '#6fa37a', '#b3b7bd', '#d98ca1', '#4f6fa8'];
 const PANTS = ['#2f3a4f', '#3a3f47', '#4a4238', '#28303c'];
 
-export function responderLook(dept: Dept, kind: UnitKind, seed: number): PersonLook {
+/**
+ * 대원의 겉모습. 부서·부대 종류가 바탕이고, 역할이 그 위에 덧입힌다 (R1 10절):
+ * 팀장은 흰 헬멧에 붉은 띠, 기관원·사다리 조작원은 주황 조끼, 의사는 흰 상의에 붉은 십자, 간호사는 남색 비행복,
+ * 구급 운전원은 가방이 없고, 폭발물 처리 요원은 부피 큰 방호복과 얼굴 가리개, 수난 구조대원은 구명조끼.
+ * 방패수·저격수 같은 그 밖의 역할은 손에 든 것으로 가린다(renderScene.agentPose).
+ */
+export function responderLook(dept: Dept, kind: UnitKind, seed: number, role?: RoleId): PersonLook {
+  const k = baseLook(dept, kind, seed);
+  switch (role) {
+    case 'fireLead': case 'ladderLead': case 'rescueLead': case 'hazLead': return { ...k, headCol: '#f2f2ee', headCol2: '#d63a2c', band: '#d63a2c' };
+    case 'engineer': case 'ladderOp': return { ...k, trim: 'vest', trimCol: '#f08a2a' };
+    case 'doctor': return { ...k, top: '#f4f6f7', arm: '#f4f6f7', trim: 'plus', trimCol: '#d8423a', pack: 'none' };
+    case 'flightNurse': return { ...k, top: '#27375e', arm: '#27375e', leg: '#1f2c4c', trim: 'plus', trimCol: '#ffffff' };
+    case 'emsDriver': return { ...k, pack: 'none' };
+    case 'bombTech': return { ...k, top: '#5b664d', arm: '#5b664d', leg: '#4a553f', trim: 'none', head: 'visor', headCol: '#4a553f', headCol2: '#a9d4ea', bulk: 1.25 };
+    case 'boatRescuer': return { ...k, trim: 'lifevest', trimCol: '#f07a2a', pack: 'none' };
+    default: return k;
+  }
+}
+function baseLook(dept: Dept, kind: UnitKind, seed: number): PersonLook {
   const skin = SKIN[(hash2(seed, 1) * SKIN.length) | 0];
   if (dept === 'fire') {
     const rescue = kind === 'rescue' || kind === 'heli' || kind === 'boat';      // 'heli' = 소방 헬기의 항공 구조대원 (경찰·의료 헬기의 대원은 부서가 다르다)
-    if (kind === 'hazmat') return { ...responderLook('fire', 'engine', seed), top: '#cfc23a', arm: '#c2b534', leg: '#b3a72e', trimCol: '#3a3f45' };
+    if (kind === 'hazmat') return { ...baseLook('fire', 'engine', seed), top: '#cfc23a', arm: '#c2b534', leg: '#b3a72e', trimCol: '#3a3f45' };
     return { top: rescue ? '#d9742a' : '#b08f3e', trim: 'stripes', trimCol: '#e6f04a', arm: rescue ? '#c96824' : '#a2833a', hand: '#2a2d31', leg: rescue ? '#b85e20' : '#8f7434', shoe: '#1c1e21', head: 'helmet', headCol: rescue ? '#f2f2ee' : '#d63a2c', headCol2: '#f4d24a', skin, pack: 'scba', packCol: '#e9c53c' };
   }
   if (dept === 'ems') {
     return { top: '#27a583', trim: 'cross', trimCol: '#ffffff', arm: '#e9eef2', hand: '#7fc0ee', leg: '#28353f', shoe: '#1c1e21', head: 'hair', headCol: HAIR[(hash2(seed, 2) * HAIR.length) | 0], skin, pack: 'bag', packCol: '#d8423a' };
   }
-  if (kind === 'eod') return { ...responderLook('police', 'tactical', seed), top: '#4a5540', arm: '#4a5540', leg: '#3f4936', headCol: '#3a4433', headCol2: '#e0b83a' };
+  if (kind === 'eod') return { ...baseLook('police', 'tactical', seed), top: '#4a5540', arm: '#4a5540', leg: '#3f4936', headCol: '#3a4433', headCol2: '#e0b83a' };
   if (kind === 'tactical' || kind === 'swat') {
     return { top: '#2c323b', trim: 'vest', trimCol: '#191d23', arm: '#2c323b', hand: '#15181c', leg: '#262b33', shoe: '#121416', head: 'tac', headCol: '#1f242b', headCol2: '#5aa9ff', skin, pack: 'none' };
   }
@@ -65,6 +90,14 @@ function head(g: G, k: PersonLook): void {
       disc(g, hx, 0, 0.138, k.headCol);
       seg(g, hx - 0.11, 0, hx + 0.12, 0, 0.04, shade(k.headCol, 0.35));
       rr(g, hx + 0.085, -0.045, 0.05, 0.09, 0.015, k.headCol2 ?? '#f4d24a');
+      if (k.band) seg(g, hx - 0.015, -0.125, hx - 0.015, 0.125, 0.04, k.band);      // 팀장: 헬멧을 가로지르는 띠
+      break;
+    case 'visor':
+      // 폭발물 방호복: 깃이 높은 큰 헬멧과 넓은 얼굴 가리개
+      oval(g, hx - 0.06, 0, 0.2, 0.19, shade(k.headCol, -0.3));
+      disc(g, hx, 0, 0.15, k.headCol);
+      rr(g, hx + 0.04, -0.105, 0.105, 0.21, 0.04, k.headCol2 ?? '#a9d4ea');
+      rr(g, hx + 0.06, -0.085, 0.03, 0.17, 0.015, 'rgba(255,255,255,0.45)');
       break;
     case 'tac':
       disc(g, hx, 0, 0.138, k.headCol);
@@ -114,7 +147,8 @@ export function drawPerson(g: G, x: number, y: number, ang: number, ts: number, 
   let hx = 0.3, hy = 0;                                   // 손에 든 물건의 기준점
   switch (p.arms) {
     case 'aim':
-      if (p.item === 'rifle') { arm(0.02, 0.24, 0.2, 0.07); arm(0.02, -0.24, 0.36, -0.03); }
+      if (p.item === 'rifle' || p.item === 'sniper') { arm(0.02, 0.24, 0.2, 0.07); arm(0.02, -0.24, 0.36, -0.03); }
+      else if (p.item === 'shield') { arm(0.02, -0.24, 0.3, -0.12); arm(0.02, 0.24, 0.3, 0.2); }      // 한 팔로 방패를 받치고 다른 손에 권총
       else { arm(0.02, 0.24, 0.31, 0.03); arm(0.02, -0.24, 0.31, -0.03); }
       break;
     case 'hose': arm(0.02, 0.24, 0.17, 0.1); arm(0.02, -0.24, 0.31, -0.03); break;
@@ -148,10 +182,19 @@ export function drawPerson(g: G, x: number, y: number, ang: number, ts: number, 
       oval(g, sw * 0.09, 0.275, 0.09, 0.066, k.arm); disc(g, sw * 0.17 + 0.05, 0.285, 0.048, k.hand);
     }
   }
-  // 몸통
+  // 몸통 (폭발물 방호복은 부피가 크다)
+  const bulk = k.bulk ?? 1;
+  if (bulk !== 1) { g.save(); g.scale(bulk, bulk); }
   rr(g, -0.135, -0.275, 0.27, 0.55, 0.115, shade(k.top, -0.25));
   rr(g, -0.12, -0.265, 0.245, 0.53, 0.11, k.top);
-  if (k.trim === 'stripes') {
+  if (bulk !== 1) { rr(g, -0.1, -0.21, 0.2, 0.42, 0.08, shade(k.top, 0.14)); seg(g, -0.1, -0.07, 0.1, -0.07, 0.02, shade(k.top, -0.3)); seg(g, -0.1, 0.07, 0.1, 0.07, 0.02, shade(k.top, -0.3)); }      // 덧댄 방호판
+  if (k.trim === 'plus') {
+    g.fillStyle = k.trimCol ?? '#d8423a'; g.fillRect(-0.04, -0.105, 0.07, 0.21); g.fillRect(-0.085, -0.035, 0.16, 0.07);
+  } else if (k.trim === 'lifevest') {
+    rr(g, -0.125, -0.24, 0.245, 0.48, 0.09, k.trimCol ?? '#f07a2a');
+    g.fillStyle = '#f4d24a'; g.fillRect(-0.125, -0.15, 0.245, 0.045); g.fillRect(-0.125, 0.105, 0.245, 0.045);
+    g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(-0.01, -0.24, 0.02, 0.48);
+  } else if (k.trim === 'stripes') {
     g.fillStyle = k.trimCol ?? '#e6f04a'; g.fillRect(-0.035, -0.262, 0.05, 0.524);
     g.fillStyle = '#d7dde2'; g.fillRect(-0.02, -0.262, 0.02, 0.524);
   } else if (k.trim === 'vest') {
@@ -160,6 +203,7 @@ export function drawPerson(g: G, x: number, y: number, ang: number, ts: number, 
   } else if (k.trim === 'cross') {
     g.fillStyle = 'rgba(255,255,255,0.9)'; g.fillRect(-0.03, -0.262, 0.04, 0.524);
   }
+  if (bulk !== 1) g.restore();
   if (k.pack === 'scba') { seg(g, -0.1, -0.11, 0.09, -0.15, 0.03, '#23272c'); seg(g, -0.1, 0.11, 0.09, 0.15, 0.03, '#23272c'); }
   // 손에 든 것
   if (p.recoil && p.arms === 'aim') g.translate(-0.04 * p.recoil, 0);
@@ -167,7 +211,20 @@ export function drawPerson(g: G, x: number, y: number, ang: number, ts: number, 
     rr(g, 0.14, -0.08, 0.5, 0.16, 0.04, '#1d2329'); rr(g, 0.6, -0.095, 0.08, 0.19, 0.03, '#3a434c'); rr(g, 0.16, -0.06, 0.46, 0.04, 0.02, 'rgba(255,255,255,0.12)');
     seg(g, 0.24, -0.1, 0.24, 0.1, 0.03, '#c84a2c'); seg(g, 0.46, -0.1, 0.46, 0.1, 0.03, '#c84a2c');
   } else if (p.arms === 'aim' && p.item === 'rifle') { rr(g, 0.04, 0.035, 0.16, 0.06, 0.015, '#1c2026'); rr(g, 0.18, 0.02, 0.26, 0.075, 0.015, '#14171b'); rr(g, 0.42, 0.04, 0.24, 0.032, 0.01, '#0f1114'); rr(g, 0.26, 0.085, 0.05, 0.07, 0.01, '#1c2026'); }
+  else if (p.arms === 'aim' && p.item === 'sniper') {
+    // 저격 소총: 긴 총열, 조준경, 양각대
+    rr(g, 0.0, 0.035, 0.2, 0.06, 0.015, '#2a2f26'); rr(g, 0.18, 0.02, 0.3, 0.075, 0.015, '#1a1e18'); rr(g, 0.46, 0.042, 0.46, 0.028, 0.01, '#0f1114');
+    rr(g, 0.24, -0.015, 0.2, 0.045, 0.02, '#0f1114'); disc(g, 0.44, 0.008, 0.026, '#7fc4ee');
+    seg(g, 0.74, 0.056, 0.8, 0.0, 0.016, '#3a4046'); seg(g, 0.74, 0.056, 0.8, 0.112, 0.016, '#3a4046');
+  }
   else if (p.arms === 'aim' && p.item === 'pistol') { rr(g, 0.3, -0.024, 0.17, 0.048, 0.01, '#14171b'); }
+  else if (p.arms === 'aim' && p.item === 'taser') { rr(g, 0.3, -0.03, 0.15, 0.06, 0.012, '#e8c53c'); rr(g, 0.43, -0.03, 0.03, 0.06, 0.008, '#14171b'); rr(g, 0.3, 0.02, 0.05, 0.05, 0.01, '#14171b'); }
+  else if (p.arms === 'aim' && p.item === 'shield') {
+    // 방탄 방패: 몸 앞을 가리는 넓은 판, 가로 시야 창. 옆으로 권총이 나온다
+    rr(g, 0.3, 0.17, 0.17, 0.048, 0.01, '#14171b');
+    rr(g, 0.36, -0.34, 0.1, 0.56, 0.035, '#0e1114'); rr(g, 0.375, -0.325, 0.07, 0.53, 0.028, '#2c333c');
+    rr(g, 0.385, -0.22, 0.05, 0.13, 0.015, '#7fb4d8'); rr(g, 0.375, -0.02, 0.07, 0.025, 0.006, 'rgba(255,255,255,0.14)');
+  }
   else if (p.arms === 'aim' && p.item === 'knife') { g.fillStyle = '#d7dde2'; g.beginPath(); g.moveTo(0.33, -0.02); g.lineTo(0.52, 0); g.lineTo(0.33, 0.025); g.closePath(); g.fill(); }
   else if (p.arms === 'hose') {
     g.strokeStyle = '#c7a03a'; g.lineWidth = 0.065; g.lineCap = 'round'; g.beginPath(); g.moveTo(0.14, 0.07); g.quadraticCurveTo(-0.1, 0.36, -0.42, 0.34 + Math.sin(p.t * 1.3) * 0.02); g.quadraticCurveTo(-0.7, 0.32, -0.86, 0.42); g.stroke();
@@ -178,8 +235,21 @@ export function drawPerson(g: G, x: number, y: number, ang: number, ts: number, 
   } else if (p.arms === 'work' && p.item === 'spreader') {
     rr(g, 0.22, -0.055, 0.22, 0.11, 0.025, '#e07b2a'); rr(g, 0.26, -0.03, 0.1, 0.06, 0.01, '#22262b');
     seg(g, 0.44, -0.02, 0.64, -0.05 - o * 1.2, 0.04, '#aab2b9'); seg(g, 0.44, 0.02, 0.64, 0.05 + o * 1.2, 0.04, '#aab2b9');
+  } else if (p.arms === 'work' && p.item === 'halligan') {
+    // 할리건: 긴 쇠막대 끝의 갈퀴와 쐐기
+    seg(g, 0.18, 0, 0.6 + o, 0, 0.032, '#b9c0c6'); seg(g, 0.6 + o, -0.075, 0.6 + o, 0.05, 0.036, '#8f979e'); seg(g, 0.6 + o, -0.075, 0.67 + o, -0.095, 0.03, '#8f979e'); rr(g, 0.16, -0.03, 0.05, 0.06, 0.01, '#d63a2c');
+  } else if (p.arms === 'megaphone' && p.item === 'tic') {
+    // 열화상 카메라: 손에 든 노란 몸체와 화면
+    rr(g, 0.17, 0.04, 0.17, 0.12, 0.03, '#e8c53c'); rr(g, 0.19, 0.06, 0.1, 0.08, 0.015, '#1a2a22'); rr(g, 0.2, 0.07, 0.05, 0.035, 0.008, '#ff8a3c'); rr(g, 0.33, 0.07, 0.04, 0.06, 0.012, '#23272c');
   } else if (p.arms === 'megaphone') {
     g.fillStyle = '#eceff1'; g.beginPath(); g.moveTo(0.2, 0.06); g.lineTo(0.42, -0.02); g.lineTo(0.42, 0.2); g.closePath(); g.fill(); rr(g, 0.4, -0.03, 0.035, 0.24, 0.01, '#d63a2c');
+  } else if (p.arms === 'kneel' && p.item === 'bigbag') {
+    // 전문 응급 가방·의사 장비: 큰 빨간 가방
+    rr(g, 0.28, -0.13, 0.2, 0.26, 0.035, '#a8281f'); rr(g, 0.29, -0.12, 0.18, 0.24, 0.03, '#d8423a'); g.fillStyle = '#ffffff'; g.fillRect(0.365, -0.05, 0.03, 0.1); g.fillRect(0.33, -0.015, 0.1, 0.03); seg(g, 0.3, -0.07, 0.3, 0.07, 0.016, '#23272c');
+  } else if (p.arms === 'kneel' && p.item === 'aed') {
+    // 제세동기: 주황 상자와 전극 줄
+    rr(g, 0.3, -0.075, 0.14, 0.15, 0.025, '#f08a2a'); rr(g, 0.325, -0.045, 0.06, 0.05, 0.01, '#1a2a22'); disc(g, 0.405, 0.035, 0.018, '#7dffb0');
+    g.strokeStyle = '#23272c'; g.lineWidth = 0.014; g.beginPath(); g.moveTo(0.44, -0.03); g.quadraticCurveTo(0.52, -0.1, 0.56, -0.02); g.stroke();
   } else if (p.arms === 'kneel') { rr(g, 0.3, -0.05, 0.1, 0.1, 0.02, '#f4f6f7'); g.fillStyle = '#d8423a'; g.fillRect(0.34, -0.03, 0.02, 0.06); g.fillRect(0.32, -0.01, 0.06, 0.02); }
   void hx; void hy;
   head(g, k);
@@ -235,7 +305,7 @@ export function beaconColors(dept: Dept): [string, string] { return BEACON[dept]
 /** 위에서 본 긴급 차량. 앞이 +x. */
 export function drawEmergency(g: G, x: number, y: number, ang: number, ts: number, kind: UnitKind, dept: Dept, lights: boolean, timeMs: number): void {
   const [L, W] = VEH_SIZE[kind];
-  if (AIR_KIND.has(kind)) { drawHeli(g, x, y, ang, ts, lights, timeMs); return; }      // 헬기 세 종류 (종류별 도색은 R1 단계 7)
+  if (AIR_KIND.has(kind)) { drawHeli(g, x, y, ang, ts, lights, timeMs, kind); return; }      // 헬기 세 종류: 종류마다 도색이 다르다
   if (kind === 'boat') { drawBoat(g, x, y, ang, ts, lights, timeMs); return; }
   g.save(); g.translate(x, y); g.scale(ts, ts);
   g.save(); g.translate(0.08, 0.12); g.rotate(ang); rr(g, -L / 2, -W / 2, L, W, 0.14, 'rgba(0,0,0,0.38)'); g.restore();
@@ -510,16 +580,29 @@ export function drawSwimmer(g: G, x: number, y: number, ts: number, k: PersonLoo
   g.restore();
 }
 
-/** 위에서 본 구조 헬기. 앞이 +x. 떠 있으므로 그림자가 멀리 떨어진다. */
-export function drawHeli(g: G, x: number, y: number, ang: number, ts: number, lights: boolean, timeMs: number): void {
+/** 헬기 세 종류의 도색: 소방 = 빨강·흰색, 경찰 = 남색·흰색에 하늘색 띠, 의료 = 흰색에 초록 띠와 빨간 십자 */
+const HELI_PAINT: Record<string, { edge: string; body: string; roof: string; band: string; tail: string; fin: string; cross?: string }> = {
+  heli: { edge: '#8f2a20', body: '#d64b3a', roof: '#f1ede2', band: '#d64b3a', tail: '#c0392b', fin: '#e9e4d8' },
+  policeHeli: { edge: '#0f1728', body: '#1f2f55', roof: '#eef1f4', band: '#5ab4ff', tail: '#1f2f55', fin: '#5ab4ff' },
+  medHeli: { edge: '#8d98a3', body: '#f4f6f8', roof: '#ffffff', band: '#23b386', tail: '#e3e8ec', fin: '#23b386', cross: '#d8423a' },
+};
+/**
+ * 위에서 본 헬기. 앞이 +x. 떠 있으므로 그림자가 멀리 떨어진다.
+ * kind = 도색(소방 · 경찰 · 의료). lift = 그림자가 떨어지는 거리(칸) — 주지 않으면 날개가 도는 동안 0.55, 서 있으면 0.12.
+ * 현장 상공에 머무는 헬기(renderScene)는 더 높이 띄운다.
+ */
+export function drawHeli(g: G, x: number, y: number, ang: number, ts: number, lights: boolean, timeMs: number, kind: UnitKind = 'heli', liftBy?: number): void {
+  const c = HELI_PAINT[kind] ?? HELI_PAINT.heli;
   g.save(); g.translate(x, y); g.scale(ts, ts);
-  const lift = lights ? 0.55 : 0.12;
+  const lift = liftBy ?? (lights ? 0.55 : 0.12);
   g.save(); g.translate(lift, lift * 1.2); g.rotate(ang); oval(g, -0.1, 0, 0.95, 0.42, 'rgba(0,0,0,0.3)'); rr(g, -1.6, -0.07, 1.1, 0.14, 0.05, 'rgba(0,0,0,0.3)'); if (lights) disc(g, 0.05, 0, 1.5, 'rgba(0,0,0,0.07)'); g.restore();
   g.rotate(ang);
   rr(g, -0.7, -0.52, 1.3, 0.06, 0.02, '#3a4046'); rr(g, -0.7, 0.46, 1.3, 0.06, 0.02, '#3a4046');      // 착륙 스키드
-  rr(g, -1.75, -0.06, 1.25, 0.12, 0.05, '#c0392b'); rr(g, -1.8, -0.3, 0.1, 0.6, 0.03, '#c0392b'); rr(g, -1.86, -0.2, 0.05, 0.4, 0.02, '#e9e4d8');      // 꼬리
-  oval(g, 0, 0, 0.95, 0.44, '#8f2a20'); oval(g, 0, 0, 0.9, 0.4, '#d64b3a'); oval(g, -0.2, 0, 0.5, 0.36, '#f1ede2');
-  g.fillStyle = '#d64b3a'; g.fillRect(-0.24, -0.4, 0.14, 0.8);
+  rr(g, -1.75, -0.06, 1.25, 0.12, 0.05, c.tail); rr(g, -1.8, -0.3, 0.1, 0.6, 0.03, c.tail); rr(g, -1.86, -0.2, 0.05, 0.4, 0.02, c.fin);      // 꼬리
+  oval(g, 0, 0, 0.95, 0.44, c.edge); oval(g, 0, 0, 0.9, 0.4, c.body); oval(g, -0.2, 0, 0.5, 0.36, c.roof);
+  g.fillStyle = c.band; g.fillRect(-0.24, -0.4, 0.14, 0.8);
+  if (kind === 'policeHeli') { g.fillStyle = c.band; g.fillRect(-1.3, -0.06, 0.5, 0.12); }      // 꼬리의 하늘색 띠
+  if (c.cross) { g.fillStyle = c.cross; g.fillRect(0.0, -0.18, 0.11, 0.36); g.fillRect(-0.125, -0.055, 0.36, 0.11); }      // 지붕의 빨간 십자
   oval(g, 0.52, 0, 0.36, 0.3, '#182734'); oval(g, 0.6, -0.08, 0.16, 0.1, 'rgba(160,210,240,0.4)');
   disc(g, -0.05, 0, 0.13, '#39424a');
   const a = (timeMs / (lights ? 26 : 600)) % 6.2832;

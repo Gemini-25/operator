@@ -31,7 +31,7 @@ function queued(s: Scene, uid: number, skip: WorkItem | null): number {
 /** 자격을 물어볼 때 쓰는 빈 작업 항목 (작업판에 올리지 않는다 — 맡을 사람이 있는지 본 뒤에만 올린다) */
 const PROBE: WorkItem = {
   id: -1, kind: 'treatMate', region: -1, cas: -1, prop: -1, hostile: -1, tile: -1, mate: -1, priority: 0, status: 'open', assignees: [], max: 1,
-  createdAt: 0, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough: false, orderSentAt: {}, cause: -1, failedAt: {},
+  createdAt: 0, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough: false, orderSentAt: {}, cause: -1, failedAt: {}, animal: -1,      // animal: (N8) commander.want 의 리터럴과 같은 모양
 };
 /** 이 동료의 처치·후송을 맡을 수 있는 활동 대원이 현장에 있는가 (장비 자격 — fitFor. 떠나라는 지시를 받은 부대의 대원은 치지 않는다) */
 function anyMedic(sim: Sim, s: Scene, rid: number, prop: number): boolean {

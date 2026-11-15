@@ -1273,6 +1273,12 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       finishTask(sim, s, a, true);
       return;
     }
+    // (N8 단계 2a) 새 임무 다섯의 빈 갈래 — 실행은 그 임무를 쓰는 단계가 채운다(repair·cordon 4a · capture 5 · towAway 6b · persuade 7, 설계서 §4·§5.9·§5.10).
+    // 지금은 아무도 이 작업을 만들지 않고 fitFor 가 0 이라 닿지 않는다. 닿으면 내려놓는다 (임무를 쥔 채 제자리에 서 있지 않게)
+    case 'repair': case 'towAway': case 'capture': case 'persuade': case 'cordon': {
+      finishTask(sim, s, a, false, 'preempt');
+      return;
+    }
     case 'retreat': {
       const m = moveTo(sim, s, a, s.staging.x, s.staging.y, 2, false, true);      // 물러나는 길은 불길도 뚫는다
       if (m === 'arrived') {

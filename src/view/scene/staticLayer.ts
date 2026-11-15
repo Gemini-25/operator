@@ -15,7 +15,9 @@ export interface StaticLayer {
   lamps: { x: number; y: number }[];   // 가로등 (야간 조명용, 타일 좌표)
 }
 
-const S = { VOID: 0, GRASS: 1, FOREST: 2, PAVER: 3, CONCRETE: 4, ASPHALT: 5, DIRT: 6, WATER: 7, WOOD: 8, TILE: 9, SLAB: 10, GRAVEL: 11, WALL: 255 } as const;
+const S = { VOID: 0, GRASS: 1, FOREST: 2, PAVER: 3, CONCRETE: 4, ASPHALT: 5, DIRT: 6, WATER: 7, WOOD: 8, TILE: 9, SLAB: 10, GRAVEL: 11, WALL: 255,
+  LEDGE: 12,      // (N8) 높은 자리 T.LEDGE — 난간 밖 좁은 턱 · 외벽 띠 · 놀이기구 좌석 줄의 바탕 (모습은 현장의 스킨이 덧그린다)
+} as const;
 
 const isWallish = (t: number): boolean => t === T.WALL || t === T.WINDOW;
 const isBuilding = (t: number): boolean => t === T.FLOOR || t === T.FURN || t === T.DOOR || t === T.WALL || t === T.WINDOW || t === T.STAIR;
@@ -46,6 +48,7 @@ function surfaceMap(s: Scene, district: string): Uint8Array {
     else if (isWallish(t)) v = s.decor[i] === DECOR.SHELF ? floor : S.WALL;
     else if (t === T.ROAD) v = S.ASPHALT;
     else if (t === T.VOID) v = S.VOID;
+    else if (t === T.LEDGE) v = S.LEDGE;      // (N8) 아직 어느 현장도 쓰지 않는다 (처음 쓰는 것은 단계 7 의 위기자)
     else {
       v = ground;
       if (s.kind !== 'search') {
@@ -180,6 +183,13 @@ function paintTile(g: G, kind: number, tx: number, ty: number, R: number): void 
     case S.GRAVEL: {
       g.fillStyle = '#65645e'; g.fillRect(px, py, R + 0.6, R + 0.6);
       dots(g, tx, ty, R, 18, 71, ['rgba(150,148,140,0.6)', 'rgba(52,52,48,0.5)', 'rgba(120,118,110,0.6)', 'rgba(88,86,80,0.6)'], 0.045);
+      break;
+    }
+    case S.LEDGE: {
+      // (N8 단계 2a) 빈 그림 — 어두운 콘크리트 턱과 바깥쪽 모서리 선. 현장마다의 모습(난간·외벽·좌석)은 단계 7·8 의 스킨이 덧그린다
+      g.fillStyle = '#4a5058'; g.fillRect(px, py, R + 0.6, R + 0.6);
+      g.fillStyle = 'rgba(230,234,238,0.22)'; g.fillRect(px, py, R, Math.max(1, R * 0.06));
+      g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(px, py + R - Math.max(1, R * 0.08), R, Math.max(1, R * 0.08));
       break;
     }
     case S.WATER: {

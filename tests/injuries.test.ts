@@ -133,7 +133,8 @@ describe('2. 기록의 모양', () => {
     // 대원의 피해는 단계 4a 부터 hurtResponder 가, 용의자의 피해는 단계 5 부터 hurtHostile 이 적는다 — 아래 "4. 대원" · "단계 5"
   });
   it('원인의 이름이 모두 있다', () => {
-    const causes: InjuryCause[] = ['gunshot', 'stab', 'blunt', 'burn', 'smoke', 'toxic', 'fall', 'crush', 'blast', 'drown', 'electric', 'exhaustion', 'vehicle', 'exposure', 'illness'];
+    const causes: InjuryCause[] = ['gunshot', 'stab', 'blunt', 'burn', 'smoke', 'toxic', 'fall', 'crush', 'blast', 'drown', 'electric', 'exhaustion', 'vehicle', 'exposure', 'illness',
+      'animal'];      // (N8 단계 2a) 동물·벌 피해
     for (const k of causes) expect(CAUSE_NAME[k], k).toBeTruthy();
     expect(Object.keys(CAUSE_NAME).length).toBe(causes.length);
   });

@@ -1217,3 +1217,66 @@ npm run check                                           # 단계를 끝낼 때 �
 - `reachOf` 가 건너편 둔치를 고르는 문제는 같은 뭍 성분 조건만 더하고 이동 거리 감점은 넣지 않았다 — 다리로 돌아가 구하는 것도 실제로 있는 일이고, 점수에 이동 거리를 넣으면 고르는 규칙이 경로 계산에 묶인다. 알려진 위험으로 적었다(12절).
 - H1 문서의 연관 표 R2 줄("H1 이 있으면 하한 18 을 두지 않고")과 H1 의 결정 표 "대원의 익수" 줄이 이 문서의 결정과 어긋났다 — 정합성 점검에서 H1 의 두 줄을 이 문서(§3.5)에 맞춰 고쳤다(반영됨).
 - **사용자 결정(2026-11-15, "전부 추천대로") — 폭파 진입을 실제 방법으로**: 그때까지 G5 가 그림 이름(`BreachHow 'charge'`)만 예약했고 시뮬레이션에는 없었다. 4.2a 에 방법 한 줄(누가·조건·속도·위험·소모·기록·그림·소리)을 넣고, 장약은 R1 의 장비 표에(`charge`), 고르는 때의 교본은 R3 S26 에 두었다. 이름만 있는 방법이 되지 않도록 그것이 나올 자리 둘(무장 현장의 농성 문 잠금 세계 규칙, 방 진입의 잠긴 문을 방법으로 여는 하위 작업)을 함께 정했다 — 그래서 4.2 의 "방 진입은 지금 코드 그대로 문을 연다"를 잠긴 문에 한해 고쳤다(동시 진입은 그대로). 불발·위력의 흔들림은 두지 않았다(난수 없이 같은 상황 = 같은 결과).
+
+## 구현 메모 (진행 중 — 단계를 끝낸 작업자가 덧붙인다)
+
+**코드가 정본이고, 이 절이 본문보다 우선한다.** 다음 작업자는 본문(0~12절)과 함께 이 절의 "실제 이름"·"본문과 다른 곳"·"이어받을 자리"를 먼저 읽는다.
+
+### 단계 0 (틀) — 2026-11-15, 준비 실행
+
+**상태: 구현됨, 결과 불변.** 브랜치 `wf/methods`(작업자 브랜치 `wf/methods-s0`), 시작점 `d34ba4b`(주 브랜치 — R1 전체 · H1 단계 0~3 · X6 단계 1 까지 합쳐진 자리). 이 단계는 `docs/specs/README.md` "겹쳐 돌리기"의 **준비 줄**로 먼저 했다: H1 의 단계 4a~7 과 X6 의 단계 0·2~10 이 아직 주 브랜치에 없다. 그래서 0단계의 **기준 재기(6절 — `before-*` sweep)는 하지 않았다** — R1·H1·X6 가 다 합쳐진 뒤 단계 1a 의 작업자가 맨 먼저 잰다. 여기서 확인한 것은 "틀이 결과를 한 글자도 바꾸지 않는다" 하나다(아래 "해시 확인").
+
+| 커밋 | 내용 |
+|---|---|
+| `4b9d749` | 자료형, 장비 아홉 줄, `gear.ts`, `methods.ts`, `methodRun.ts`, `executor` 의 `XK`·생성 리터럴, `rules/methods.ts`·`orders/methods.ts`·`scenes/index.ts`, `PROBLEM_LABEL` |
+| `2c3daba` | `casFact` 의 `water`, `debrief` 의 문장·집계(`field/methodReport.ts`), 패널(`ui/MethodRows.tsx`), `sweep --methods`(`scripts/methodstats.ts`) |
+| `1d6a4ec` | `tests/methods.test.ts` 44개 |
+| 그다음 커밋 | 이 메모 |
+
+#### 실제 이름 (단계 0 에 생긴 것)
+
+| 이름 | 어디 | 서명·뜻 |
+|---|---|---|
+| `MethodId`(55가지) · `MethodWhy` · `MethodUse` | `types.ts` 의 R2 블록(G4 의 `FallRecord` 다음, X6 블록 앞) | 본문 §3.1 그대로 |
+| 선택 칸: `Task.method`·`mwhy`·`missing`·`tried`·`entryDoor`·`mtry`·`mbad`·`mt0`·`marr`·`mcands` · `FieldAgent.afloat`·`mrng`·`mfail`·`msaid`·`wetSince`·`wetTired` · `Casualty.freedHow`·`freedBy`·`rush` · `CasBelief.water`·`drift`·`veh`·`pit`·`rush` · `Hostile.stunHow` · `Problem.times` · `Scene.flow`·`quay`·`fan` · `Incident.methods` · `ShiftReport.methods` | 같은 블록 — **인터페이스 합치기**(X6 블록과 같은 방식) | 생성 리터럴에도 `undefined` 로 넣었다: `executor.makeTask`·`agents.makeAgent`·`kit.addCas`·`kit.addHostile`·`kit.baseScene`·`hazards` 의 주변 시민·`incidents.createIncident`·`events.raiseProblem` |
+| `KitId` 아홉(`pole`·`pfd`·`drysuit`·`raft`·`extinguisher`·`fan`·`airbag`·`shoring`·`beanbag`) · `ProblemCode 'METHOD_FAIL'` | `types.ts` | `KitId` 는 `'flir' \| 'searchlight'` 줄 다음의 새 줄, `METHOD_FAIL` 은 합집합 가운데의 새 줄 |
+| `KitDef.uses?` · `KitDef.batch?: 'r2'` · `KITS` 아홉 줄 | `crews.ts` | 역할에는 붙이지 않았다. `extinguisher.uses 1` · `beanbag.uses 3` · `raft`·`fan`·`airbag` 는 `faultable` + `batch 'r2'` · `pole.tool { water: 0.7 }` |
+| `kitCount(sim, rid, id)` · `kitName(id)` · `swimBonus(sim, rid)` · `seatsLeft(sim, u)` · `SHARED`(false) · `isQty(id)` · `SCBA_MIN`(60) | `field/gear.ts` — **판단용** | `kitCount`: 없거나 알려진 고장이면 0 · 수량 장비는 남은 수(수량을 채우지 않았으면 `Infinity` — "0 보다 큰가"로만 쓴다) · `scba` 는 공기를 세지 않거나 60초 이상이면 1 · 그 밖 1 |
+| `kitTool(sim, id, use)` · `bestTool(sim, rid, use, I)` · `kitWorks(sim, rid, id, I?)` · `useKit(sim, rid, id, n)` · `BARE_HANDS`(0.12) | `field/gear.ts` — **효과용**(실행부만) | `bestTool` = R1 `toolUse`, 나머지는 R1 그대로 |
+| `METHOD: Record<MethodId, MethodDef>` · `METHOD_ORDER` · `methodsOf(work)` · `NOT_YET` · `WORK_MODE`(`'refuse' \| 'always' \| 'optional'`) · `SAY` · `sayStart(m, why, missing?)` · `whyNote(why, missing?)` | `field/methods.ts` | 표의 모든 줄이 있고 **`can` 은 전부 `NOT_YET`** 이다 — 방법을 구현하는 단계가 그 줄의 `can`·`situ`·`skill` 을 채운다 |
+| `chooseMethod(sim, s, a, work, tg, t, sense, dc = null): MethodPick \| null` · `methodFit(sim, s, a, w)` · `targetOfWork(w)` · `targetKey(work, tg)` · `Sense` · `MTarget` · `MethodPick` · `MethodDef` · `DocCtx`(자리만 — `Record<string, unknown>`) · `NO_SENSE` · `FAST_FLOW`(0.07) · `THROW_REACH`(3.6) | `field/methods.ts` | `MethodCtx` 는 내보내지 않는다. `canUse` 도 안쪽 함수다 |
+| `landComp(s)` · `reachOf(s, x, y, maxR = 4, from = null)` · `catchPoint(s, x, y, from = null, span = 8)` · `onWater(s, a)` · `swimOf(sim, a)` | `field/methods.ts` | `reachOf`·`catchPoint` 는 `{ x, y, d }`(`catchPoint` 의 d = 하류로 몇 칸) |
+| `ExecKit` · `senseOf(s, a)` · `mrng(sim, s, a)` · `targetOf(t)` · `startMethod(sim, s, I, a, t, work, tg)` · `recheckOnArrive(…)` · `switchMethod(sim, s, I, a, t, why, detail, next = true, opt = {})` · `recordMethod(sim, I, a, t, method, why, ok, eventId, tg?)` · `recordAir(sim, I, u, c, eventId, t0 = sim.t)` · `rememberFail(sim, a, key, m, why)` · `FAIL_KEEP` | `field/methodRun.ts` | 아직 부르는 곳이 없다(시험만 부른다) |
+| `XK: ExecKit` | `field/executor.ts` 파일 끝 (`export`) | `{ moveTo, finish: finishTask, drain, spray, makeTask }` |
+| `methodsRule` · `FLOW_MIN`(0.02) | `field/rules/methods.ts` | 물 현장(`s.kind === 'water'` 또는 `s.rules` 에 `'water'`)에서만 `s.quay`(처음 한 번)·`s.flow`(1초마다, 오르기만) |
+| `methodFailLine(ps)` · `methodLines(sim, I, s, max = 2)` · `methodTally(sim)` · `methodSummary(tally)` · `whyText(u)` · `WORK_DONE` | **새 파일** `field/methodReport.ts` | `debrief.ts` 에는 부르는 줄만 |
+| `MethodRows` | **새 파일** `ui/MethodRows.tsx` | 대원 정보창 "행동 후보와 점수" 다음의 한 덩어리: `대응 방법` 제목 · 방법 — 까닭 · 방법 후보 막대. 방법이 없으면 `null` |
+| `methodStats(sim)` · `sumMethods(list)` · `methodJson(c)` · `methodTables(c)` | **새 파일** `scripts/methodstats.ts` | `sweep --methods`(표 셋), `--json` 요약의 `methods` 칸 |
+
+#### 본문과 다른 곳
+
+1. **`TaskKind 'ashore'` 를 넣지 않았다 → 단계 1b.** `TaskKind` 줄이 `WorkKind` 의 끝 줄과 맞닿아 있고 H1 단계 4b 가 그 끝에 `'treatMate'` 를 더한다(X6 준비 작업자가 `'evacuate'` 를 같은 까닭으로 미뤘다). 쓰는 곳이 1b(`case 'ashore'`)뿐이다.
+2. **`casFact` 는 `water` 만 채운다 — `drift` 는 단계 1a.** 본문 §6 의 예측대로였다: `drift` 를 넣어 재 보니 물 위주 64교대 가운데 1교대(`V0` 홍수)의 현장 요약(무전 수)이 달라졌다 — 떠내려가던 사람이 걸려 멈추는 순간 그 값만 달라져 `beliefs.merge` 가 새 소식으로 보고, 조용히 알린 사실(`a.quiet`)이면 무전 자료가 한 번 더 오간다. `water` 는 늘 `mob`·`band` 와 함께 바뀐다(개울에 빠짐 `tickWander` · 건져 냄 `waterRescue`·호이스트 · 휩쓸려 숨짐 `tickWater` · 해일 `swamp` — 다섯 자리를 확인했다. 해안 대피 현장의 사람은 휩쓸리기 전에 `trapped` 가 아니다)라 "새 소식" 판정이 그대로다. 그래서 `MethodCtx.flow`(`cb.drift ?? 0`)는 1a 가 `drift` 를 더하기 전까지 0 이다.
+3. **합집합·표의 자리**(H1·X6 가 같은 줄을 고친다): `METHOD_FAIL` 은 `ProblemCode` 의 가운데 새 줄, `PROBLEM_LABEL` 도 가운데 새 줄. `debrief.evaluate` 의 `order`·`T` 글자는 고치지 않고 **표 `T` 다음 줄에서 끼운다**(`order.splice(order.indexOf('EQUIP_FAIL') + 1, 0, 'METHOD_FAIL'); T.METHOD_FAIL = methodFailLine;`) — H1 이 `order` 의 첫 줄과 `T` 의 첫 항목을 고치고 있다. 합쳐진 뒤 글자 안으로 옮겨도 된다(순서는 같다 — 장비 고장 바로 다음).
+4. **보고서의 문장·집계는 새 파일 `field/methodReport.ts`** 에 두었다(`debrief.ts` 는 여러 묶음이 함께 고친다). `WORK_DONE` 에 본문에 없는 `arrest: '검거했습니다'` 를 더했다 — `case 'arrest'` 의 기록(테이저·비살상탄·덮치기)은 임무 종류가 `arrest` 다. 요약 줄은 `대응 방법: 헤엄 2 · 구명환 3.`(마침표 — 다른 요약 줄과 같게), `buildReport` 의 요약에서 "모든 사건을 목표대로…" 다음·교통 줄 앞에 온다.
+5. **패널은 새 파일 `ui/MethodRows.tsx`**, `panels.tsx` 에는 import 와 한 줄. "방법" 줄과 "방법 후보" 를 `대응 방법` 제목 아래 한 덩어리로 묶어 "행동 후보와 점수" 다음에 두었다(본문은 두 줄이라고만 했다). 문·잔해 하위 작업 중이면 그 하위 작업의 방법을 보여 준다. 스타일은 있는 것(`.kv`·`.cand`·`.bar`)만 쓴다 — `styles.css` 는 고치지 않았다.
+6. **`sweep` 의 집계는 새 파일 `scripts/methodstats.ts`**(X6 의 `catstats.ts` 와 같은 방식). 표 ①은 묶음(수난·문·구출·수색·화재·무장·응급·누출)별로 건수·가짓수·가장 많이 쓰인 방법의 비중을 함께 낸다(6절의 다양성 목표를 그대로 읽게). 표 ③에 `METHOD_FAIL` 수를 더했다. `--json` 의 `methods` 는 늘 들어간다.
+7. **`switchMethod` 의 아홉째 인자 `opt: { say?: string; k?: ExecKit }`**. 본문의 서명에는 기록 문구가 없는데 예(§5 예 4)의 문구는 사유(`detail`)와 다르다 — `opt.say` 가 기록 문구(없으면 `` `${detail}.` ``), 뒤에 다음 방법의 `SAY` 가 붙는다. 본문은 "맡지 않는" 임무에서 다음 방법이 없으면 `switchMethod` 가 `finish(false, 'nomethod')` 를 부른다고 했는데 `methodRun.ts` 는 실행기를 import 하지 못한다 — **`opt.k`(실행 도구)를 받았을 때만** 끝내고, 안 받았으면 `false` 를 돌려주므로 부른 쪽이 끝낸다. 선택 임무·늘 남는 임무는 방법을 비우고 `false`.
+8. **`recordAir` 의 여섯째 인자 `t0`**(인양을 시작한 시각 — 부르는 쪽이 `sim.t - op.progress` 를 넘긴다. 표 ②의 시간), 그리고 같은 구조 대상의 **지상 수난 구조가 막혀 있었으면 그 문제도 복구 처리**한다(임무 종류가 `hoist` 라 `recordMethod` 의 대상 열쇠로는 맞지 않는다. 복구 문구 `헬기1이 호이스트로 끌어올려 다시 시도해 성공`). `methodLines` 도 그런 대상의 호이스트 문장은 뺀다.
+9. **시작 문구의 규칙**: 본문 §3.6 의 표 첫 줄("평소 방법이 아니거나 까닭이 `usual`·`near` 가 아닐 때")과 그 아래 글머리표("`plain: true` 인 방법 전부는 알리지 않는다")가 평소 방법 + `noGear` 에서 어긋난다. **글머리표를 따랐다**(평소 방법은 까닭이 무엇이든 알리지 않는다 — 문·잔해의 기록량이 늘지 않게). 예외는 본문대로 "같은 대상에 아직 복구되지 않은 실패가 있을 때". 실제로 줄을 가진 대원의 구명줄도 까닭이 `noGear`(더 좋은 장대가 없어서)가 될 수 있다 — 기록 칸에는 남고 문구는 내지 않는다.
+10. **표의 줄에서 정한 것**: `rapid`·`tunnel` 의 `risk` 는 본문에 "0 보다 크다"만 있어 0.05·0.1 을 시작값으로 두었다(단계 3 이 정한다). `hoist.work = ['hoist']`. `drone`·`dog` 은 기록 전용이 아니라 꺼진 줄(장비·부대가 생기면 켠다), `air` 만 기록 전용. 기록 전용 줄의 `kits`(`bang`·`taser`·`shield`)는 정보용이다. 라벨은 지금의 머리 위 글자에 맞췄다(`rope` → '구조 줄 투척').
+11. **`methods.ts` 에 더한 것**: `MethodCtx.caution`(한 번만 셈한다), `mates` 는 "같은 임무 종류 + 같은 대상"으로 가린다(`chooseMethod` 는 작업 id 를 받지 않는다). `chooseMethod` 의 까닭 2~10 을 묶음 표(`WHY_WEAK`·`WHY_DANGER`·`WHY_QUIET`+`LOUD`·`WHY_FAST`·`WHY_FAR`·`WHY_NEAR`·`WHY_TEAM`)로 구현했다 — 방법을 켜는 단계는 표만 맞으면 까닭이 저절로 나온다. `swimCost`·`boatCost`(1b)·`searchMul`(3)은 그 단계 몫으로 남겼다(`matesUsing` 은 있다 — `SHARED` 가 false 라 쓰이지 않는다).
+12. **`rules/methods.ts`**: 물이 없는 현장은 `s.quay` 도 정하지 않는다(첫 줄에서 돌아간다 — 본문은 "한 번 정한다"만). 판정 뒤(`I.phase === 'closed'`)에는 `s.flow` 를 고치지 않는다. `scenes/index.ts` 에서는 본문대로 `rules/air` 다음 맨 끝이다(R1 의 주석 "마지막에 돈다"보다 뒤).
+13. **`executor.ts` 의 `XK` 는 `export`**(시험이 쓴다), `import type { ExecKit }` 를 파일 끝에 두었다(위의 import 묶음을 H1 이 고치고 있다 — 타입만 가져오므로 실행 순서와 무관하다. 합쳐진 뒤 위로 옮겨도 된다).
+14. **`tests/crews.test.ts` 한 곳**(본문 §9 가 허락한 줄): 고장 나는 장비의 목록을 "R1 의 흐름(`batch` 없음) 일곱" / "`batch 'r2'` 셋(`airbag`·`fan`·`raft`)"으로 나눠 본다.
+15. **건드리지 않은 것**(본문이 0단계에 적지 않았거나 1a 로 적은 것): `crews.kitFor` 의 수량 복사, `drawFaults` 의 `batch` 건너뛰기, `resources.ts`, `agents.fitFor`, `finishTask` 의 `nomethod` 문구, `rules/air.ts`, `styles.css`, `difficulty.ts`.
+
+#### 해시 확인 (결과 불변)
+
+도구는 저장소 밖 scratchpad `wf-methods/` 에 있다(세션 폴더 — 없으면 시작점 `d34ba4b` 를 따로 풀어 다시 잰다). X6 준비 작업자의 `wf-catastrophe/xhashes.ts`·`xdiff.mjs` 를 베껴 목록 둘과 칸 하나를 더했다:
+
+- `xhashes.ts <소스 폴더> narrow|wide|methods|water` — 한 줄 = 시드·난이도·강제·재난·**기록 해시·상태 요약·현장(격자·소품·작업판·무전 수)·난수 흐름**·날씨·사건 수·**`k=` 장비 요약**(모든 대원의 장비 종류·수량·고장·알려짐과 부대의 섬광탄·펌프·예비 공기통·연료 — `KITS` 에 줄을 더해도 명부와 고장 추첨이 그대로인지).
+  - `narrow` 28교대(X6 의 것 그대로) · `wide` 92교대(같다) · **`methods` 25교대**(강제 `water/std`·`water/evac`·`armed/hostage`·`armed/siege`·`collapse/elevator`·`traffic/std`·`medical/trauma` × `M0`~`M2`, 부대 규모 1 수난 × 2, 장비 1 수난 × 2) · **`water` 64교대**(`water/std` × 20, `search/wander` × 10, `fire/ship` × 10, `water/evac` × 6, 해일 × 6, 홍수 × 6, 어려움 `water/std` × 6).
+- 기준 = 시작점 `d34ba4b` 를 따로 푼 사본(`wf-methods/base-src`), 견준 것 = 이 단계의 마지막 코드 커밋. 목록마다 `npx tsx xhashes.ts <폴더> <목록>` 을 두 폴더에서 돌려 `node xdiff.mjs <기준> <지금>` 으로 견준다(같으면 종료 코드 0).
+
+결과: **네 목록 209교대 모두 한 글자도 같다**(기록 해시·상태·현장·난수·장비 요약 — 다른 교대 0). `casFact` 에 `drift` 를 넣은 시험판은 `water` 목록의 1교대가 달랐고(위 2번), `water` 만 넣은 판은 같다. `tests/methods.test.ts` 의 "틀은 결과를 바꾸지 않는다" 묶음이 같은 것을 작게 다시 본다(세계 규칙을 뺀 교대와 같다 · 방법 기록이 없다 · 모든 줄이 꺼져 있다).

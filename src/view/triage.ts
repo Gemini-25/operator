@@ -60,7 +60,7 @@ export function reportHurtText(x: { status: string; band?: number; cause?: Injur
     parts.push('순직');
     if (x.cause) parts.push(CAUSE_NAME[x.cause]);
     const k = killed.find((q) => q.name === x.name);
-    if (k && k.incident) parts.push(k.incident);
+    if (k && k.incident) parts.push(`사건 ${k.incident}`);      // (단계 7) 번호만 쓰면 '· 17' 이 무엇인지 읽히지 않았다
     return parts.join(' · ');
   }
   parts.push(x.band !== undefined ? TRIAGE_NAME[Math.min(2, x.band)] : x.status);

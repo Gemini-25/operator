@@ -3202,7 +3202,7 @@ describe('단계 6 — 교대 보고서 (§3.7 · §7.3)', () => {
     expect(rep.roster!.find((x) => x.rid === a.id)).toMatchObject({ dead: true, health: 0, band: 3, cause: 'burn', name: a.name });
     // 보고서 화면의 줄
     expect(reportHurtText(row(b), rep.respondersKilled)).toBe('위중 · 총상 · 병원 이송 · 결장 예상 2');
-    expect(reportHurtText(row(a), rep.respondersKilled)).toBe(`순직 · 화상 · ${I0.code}`);
+    expect(reportHurtText(row(a), rep.respondersKilled)).toBe(`순직 · 화상 · 사건 ${I0.code}`);
     expect(reportHurtText(row(c), rep.respondersKilled)).toBe('중상 · 자상 · 결장 예상 1');
   });
   it('용의자 줄과 구조 대상의 원인 집계: 다친 용의자·숨진 용의자는 사건 판정의 합, 숨진 구조 대상의 원인은 큰 것부터', () => {

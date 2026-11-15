@@ -531,7 +531,7 @@ export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel 
               <h4>부대별 활용률</h4>
               {r.unitUtil.map((u) => <div key={u.callsign} className="prob"><span>{u.callsign}</span><Bar v={u.util} color="#7cc4ff" w={90} /><span className="num">{pct(u.util)} · {u.runs}회</span></div>)}
               <h4>대원 부상·순직</h4>
-              {r.respondersHurt.length === 0 ? <div className="empty">없음</div> : r.respondersHurt.map((x) => <div key={x.name} className="kv"><span>{x.name} ({x.role ? `${x.role} · ` : ''}{x.callsign})</span><span className={x.dead ? 'loss' : `warn${x.band !== undefined ? ` band-${Math.min(2, x.band)}` : ''}`}>{reportHurtText(x, r.respondersKilled)}</span></div>)}
+              {r.respondersHurt.length === 0 ? <div className="empty">없음</div> : r.respondersHurt.map((x) => <div key={x.name} className="kv hurt-row"><span>{x.name} ({x.role ? `${x.role} · ` : ''}{x.callsign})</span><span className={x.dead ? 'loss' : `warn${x.band !== undefined ? ` band-${Math.min(2, x.band)}` : ''}`}>{reportHurtText(x, r.respondersKilled)}</span></div>)}
               {hist.length > 0 && (<><h4>이전 교대 기록</h4>{hist.map((x, k) => <div key={k} className="kv small"><span className="dim">시드 {x.seed}</span><span>{x.difficulty ? `${x.difficulty} · ` : ''}{x.incidents}건 · 성공 {x.counts.success ?? 0} · 실패 {x.counts.failed ?? 0}</span></div>)}</>)}
             </div>
           </div>

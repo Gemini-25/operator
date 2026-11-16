@@ -49,13 +49,50 @@ export function recordDoc(sim: Sim, I: Incident, a: FieldAgent | null, rule: str
  */
 export function docBegin(sim: Sim, s: Scene, a: FieldAgent, pick: DocPick, k: Pick<ExecKit, 'finish' | 'makeTask'>): void {
   const was: WorkKind | null = a.task && a.task.workId >= 0 && s.board[a.task.workId] ? s.board[a.task.workId].kind : null;      // 이 행동이 대신한 작업판 일 (split 의 열쇠)
+  const hostile = a.task !== null && a.task.hostile >= 0 ? a.task.hostile : -1;      // (2단계) 하던 임무의 용의자 — 엄폐가 그 위협을 본다 (P16 의 협상 상대)
   if (a.task) k.finish(sim, s, a, false, 'preempt');
-  const t = k.makeTask(pick.act as string as TaskKind, pick.rule.short);
-  t.startedAt = sim.t; t.docRule = pick.rule.id;
+  const t = k.makeTask(pick.act as string as TaskKind, ACT_LABEL[pick.act] ?? pick.rule.short);      // TaskKind 에는 그 행동을 쓰는 단계가 이름을 더한다 (2단계 cover·rearm, 3단계 airOut·pairOut·pair)
+  t.startedAt = sim.t; t.docRule = pick.rule.id; t.hostile = hostile;
   a.task = t;
   a.doc = { rule: pick.rule.id, act: pick.act, since: sim.t };
   splitBegin(sim, s, a, was);
-  recordDoc(sim, sim.incidents[s.incidentId], a, pick.rule.id, pick.rule.hook, { act: pick.act });
+  const I = sim.incidents[s.incidentId];
+  ACT_DOC.set(t, recordDoc(sim, I, a, pick.rule.id, pick.rule.hook, { act: pick.act, tgt: hostile >= 0 ? 'h:' + hostile : '' }, docNote(sim, s, a, pick.rule), pick.rule.report !== undefined));
+}
+/** 교본 행동 임무의 기록 한 줄 (끝날 때 t1 을 닫는다 — 평균 길이·보고서의 {n}) */
+const ACT_DOC = new WeakMap<Task, DocUse>();
+/** 교본 행동 임무가 끝났다: 그 기록의 끝 시각을 적고 따르는 교본을 비운다 */
+export function actEnd(sim: Sim, a: FieldAgent, t: Task): void { const d = ACT_DOC.get(t); if (d !== undefined) d.t1 = sim.t; a.doc = null; }
+/** (2단계) 교본 행동 임무의 머리 위 라벨 (§7.2) */
+export const ACT_LABEL: Partial<Record<DocActId, string>> = { cover: '엄폐', rearm: '탄약 보급', airOut: '공기 탈출', pairOut: '짝 따라 나감', pair: '짝 동행' };
+/** 같은 대원·같은 줄의 교본 행동 문구를 다시 남기지 않는 시간 (초 — 지금의 후퇴 문구와 같다) */
+export const NOTE_GAP = 20;
+/** 대원마다 줄별 마지막 문구 시각 (대원 개체의 모양을 바꾸지 않으려 WeakMap — 되감기는 Sim 을 새로 만든다) */
+const NOTE_AT = new WeakMap<FieldAgent, Map<string, number>>();
+/**
+ * (2단계) 교본 행동·놓기의 기록 문구 (§2.7): 그 줄의 note 를 대원의 말로 한 번 (imp 1, 같은 대원·같은 줄은 20초에 한 번). 돌려주는 값 = 기록 id (남기지 않았으면 -1).
+ * {name} = 그 대원, {mate} = 짝(없으면 빈 말) — 줄의 note 가 없으면 기록 없이 센다
+ */
+export function docNote(sim: Sim, s: Scene, a: FieldAgent, rule: DoctrineRule, imp = 1, text?: string): number {
+  const tpl = text ?? rule.note;
+  if (tpl === undefined) return -1;
+  let m = NOTE_AT.get(a);
+  if (m === undefined) { m = new Map(); NOTE_AT.set(a, m); }
+  const key = text === undefined ? rule.id : rule.id + '|' + text;
+  const at = m.get(key);
+  if (at !== undefined && sim.t - at < NOTE_GAP) return -1;
+  m.set(key, sim.t);
+  const r = sim.responders[a.rid];
+  const mate = mateName(sim, s, a);
+  return emit(sim, { inc: s.incidentId, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp, text: tpl.replace(/\{name\}/g, r.name).replace(/\{mate\}, /g, mate ? mate + ', ' : '').replace(/\{mate\}/g, mate || '동료') });
+}
+/** 문구의 {mate}: 짝(3단계), 없으면 6칸 안의 같은 부서 활동 대원 가운데 가장 가까운 사람, 없으면 빈 말 */
+function mateName(sim: Sim, s: Scene, a: FieldAgent): string {
+  if (a.buddy !== undefined && a.buddy >= 0) return sim.responders[a.buddy].name;
+  const dept = sim.responders[a.rid].dept;
+  let best = '', bd: number = DOC.MATE_R;
+  for (const b of s.agents) { if (b === a || b.status !== 'active' || sim.responders[b.rid].dept !== dept) continue; const d = dist(a.x, a.y, b.x, b.y); if (d <= bd) { bd = d; best = sim.responders[b.rid].name; } }
+  return best;
 }
 
 // ───────────────────────── (1단계) 교본이 바꾼 배정 (§2.7) ─────────────────────────
@@ -187,3 +224,183 @@ export function splitSettle(sim: Sim, a: FieldAgent): void {
 }
 /** 이 교대의 split 표본 (없으면 undefined) — debrief.buildReport 가 ShiftReport.docSplit 에 담는다 */
 export function docSplitOf(sim: Sim): Record<string, Record<string, number>> | undefined { const v = SPLIT.get(sim); return v !== undefined && Object.keys(v).length ? v : undefined; }
+
+// ───────────────────────── (2단계) 탄약 (§2.9) ─────────────────────────
+// 총기(권총 30발·탄창 15 · 소총 90발·탄창 30·두 발 사격 · 저격 소총 15발·탄창 5)는 탄을 센다. 탄창이 비면 재장전(2.0·2.5·3.0초) 동안 쏘지 않는다.
+// 판정은 결정적이다(난수 없음). 소모·재장전은 쏘는 그 자리(executor.shootAt · methodRun 의 저격)에서만 — 판단부(doctrine.ts)는 gear.gunOf 로 읽기만 한다.
+/** 쏘는 총: gun 을 주면 그것, 아니면 가진 총 가운데 저격 소총 > 소총 > 권총 (G5 weaponOf · gear.gunOf 와 같은 순서). 없으면 null */
+function gunItem(sim: Sim, rid: number, gun?: KitId): KitItem | null {
+  const kit = sim.responders[rid].kit;
+  if (!kit) return null;
+  for (const id of gun !== undefined ? [gun] : GUN_ORDER) for (let k = 0; k < kit.length; k++) if (kit[k].id === id && !kit[k].faultKnown) return kit[k];
+  return null;
+}
+const GUN_ORDER: KitId[] = ['sniper', 'rifle', 'pistol'];
+/** 지금 쏠 수 있는가 (재장전 중이 아니고 탄창에 탄이 있다). 총이 없거나 탄을 세지 않는 총이면 true — 상태를 바꾸지 않는다 */
+export function gunReady(sim: Sim, a: FieldAgent, gun?: KitId): boolean {
+  if (a.reloadUntil !== undefined && a.reloadUntil > sim.t) return false;
+  const it = gunItem(sim, a.rid, gun);
+  if (it === null || it.uses === undefined || it.mag === undefined) return true;
+  return it.mag > 0 || (a.reloadUntil !== undefined && it.uses > 0);      // 재장전이 막 끝났다 (reloadTick 이 아직 돌지 않았다) — 쏠 때 채운다
+}
+/**
+ * 한 번 쏜다 (§2.9 — executor.shootAt 의 첫머리, R2 저격의 판정 직후): 재장전 중이거나 탄창이 비었으면 쏘지 않고 false (부르는 쪽은 난수를 부르기 전에 돌아간다).
+ * 쏘면 가진 탄에서 perShot 을 쓰고(crews.useKit) 탄창도 줄인다. 탄창이 비고 탄이 남았으면 재장전을 시작한다(a.reloadUntil — 그 시각에 reloadTick 이 채운다).
+ * 총이 없거나 탄을 세지 않는 총(손으로 만든 명부)이면 세지 않고 true
+ */
+export function fireRound(sim: Sim, a: FieldAgent, gun?: KitId): boolean {
+  if (a.reloadUntil !== undefined) { if (a.reloadUntil > sim.t) return false; reloadTick(sim, a); }
+  const it = gunItem(sim, a.rid, gun);
+  if (it === null || it.uses === undefined || it.mag === undefined) return true;
+  const d = KITS[it.id], per = d.perShot ?? 1;
+  if (it.mag <= 0) { if (it.uses > 0) a.reloadUntil = sim.t + (d.reload ?? 0); return false; }
+  crewUseKit(sim, a.rid, it.id, per);
+  it.mag = Math.max(0, it.mag - per);
+  if (it.mag <= 0 && it.uses > 0) a.reloadUntil = sim.t + (d.reload ?? 0);
+  return true;
+}
+/** 재장전이 끝났다 (executor.act 의 첫머리 — a.reloadUntil 이 지났을 때): 빈 탄창을 남은 탄으로 채운다 (탄창 크기까지) */
+export function reloadTick(sim: Sim, a: FieldAgent): void {
+  a.reloadUntil = undefined;
+  const kit = sim.responders[a.rid].kit;
+  if (kit) for (let k = 0; k < kit.length; k++) { const it = kit[k], d = KITS[it.id]; if (d.mag !== undefined && it.mag !== undefined && it.uses !== undefined && it.mag < (d.perShot ?? 1)) it.mag = Math.min(d.mag, it.uses); }
+}
+// (import 를 이 절에 둔 것은 위의 import 묶음을 다른 단계가 함께 고치고 있어서다)
+import { KITS, useKit as crewUseKit } from '../crews';
+import type { KitId, KitItem } from '../types';
+
+// ───────────────────────── (2단계) 판단 지점의 기다림 (§2.7·§4.4) ─────────────────────────
+/** 예외·상한으로 지나간 판단 지점 (그 임무 동안 다시 묻지 않는다 — 막고 풀고 다시 막는 왕복을 막는다. 임무의 모양을 바꾸지 않으려 WeakMap) */
+const PASSED = new WeakMap<Task, DocGateId[]>();
+/** 그 임무가 그 판단 지점을 예외·상한으로 이미 지나갔는가 */
+export function gatePassed(t: Task, g: DocGateId): boolean { const v = PASSED.get(t); return v !== undefined && v.indexOf(g) >= 0; }
+function passGate(t: Task, g: DocGateId): void { const v = PASSED.get(t); if (v === undefined) PASSED.set(t, [g]); else if (v.indexOf(g) < 0) v.push(g); }
+const ruleById = (id: string | null): DoctrineRule | undefined => { if (id === null) return undefined; for (let k = 0; k < DOCTRINE.length; k++) if (DOCTRINE[k].id === id) return DOCTRINE[k]; return undefined; };
+/**
+ * 판단 지점의 공통 처리 — 실행기의 그 분기가 docGate 의 답(ans)을 받아 부른다. 판단은 교본 함수가, 기다림·기록은 이 함수가, 이동은 실행기가 한다.
+ *  막혔다     처음이면 t.gateAt·gateId·docRule 을 적고 그 줄의 note 를 한 번(t.gateSaid — 임무마다 한 번), 기록(recordDoc — 기다리는 동안 t1 이 늘어난다).
+ *             상한(ans.wait)에 닿으면 그 줄의 outNote 를 남기고 'timeout' — 부르는 쪽이 줄마다 정한 갈래로(대개 지금 동작). 상한이 없는 판단 지점은 없다
+ *  막히지 않았다  막혀 있던 것이 풀렸으면 판단 지점 칸을 비운다. 예외(ans.exc — unless)가 처음 결정을 바꿨으면 그 줄의 excNote(imp 2) 한 번과 기록
+ * 예외·상한으로 지나간 판단 지점은 그 임무 동안 다시 묻지 않는다(gatePassed). 돌려주는 값: 'wait' 이 틱은 기다린다 · 'go' 지금 동작으로 · 'timeout' 상한
+ */
+export function gateStep(sim: Sim, s: Scene, a: FieldAgent, t: Task, gate: DocGateId, ans: DocGateAns): 'wait' | 'go' | 'timeout' {
+  if (gatePassed(t, gate)) return 'go';
+  const I = sim.incidents[s.incidentId];
+  const tgt = t.hostile >= 0 ? 'h:' + t.hostile : t.workId >= 0 ? 'w:' + t.workId : '';
+  if (ans.ok) {
+    if (ans.exc !== null) {
+      const r = ruleById(ans.exc);
+      const ev = r !== undefined && r.excNote !== undefined ? docNote(sim, s, a, r, 2, r.excNote) : -1;
+      recordDoc(sim, I, a, ans.exc, 'gate', { gate, tgt }, ev, r !== undefined && r.report !== undefined);
+      passGate(t, gate);
+    }
+    if (t.gateId === gate) { if (t.docRule !== undefined) recordDoc(sim, I, a, t.docRule, 'gate', { gate, tgt }); clearGate(t); }
+    return 'go';
+  }
+  const rule = ruleById(ans.rule);
+  if (t.gateId !== gate || (t.gateAt ?? -1) < 0) { t.gateAt = sim.t; t.gateId = gate; t.gateSaid = false; }
+  t.docRule = ans.rule ?? undefined;
+  let ev = -1;
+  if (!t.gateSaid) { t.gateSaid = true; if (rule !== undefined) ev = docNote(sim, s, a, rule); }
+  if (ans.rule !== null) recordDoc(sim, I, a, ans.rule, 'gate', { gate, tgt }, ev, rule !== undefined && rule.report !== undefined);
+  if (sim.t - (t.gateAt ?? sim.t) + 1e-9 < ans.wait) return 'wait';
+  if (rule !== undefined && rule.outNote !== undefined) docNote(sim, s, a, rule, 1, rule.outNote);
+  passGate(t, gate); clearGate(t);
+  return 'timeout';
+}
+/** 판단 지점 칸을 비운다 (풀렸거나 상한) */
+function clearGate(t: Task): void { t.gateAt = -1; t.gateId = undefined; t.gateSaid = false; if (t.kind !== 'cover' && t.kind !== 'rearm') t.docRule = undefined; }
+
+// ───────────────────────── (2단계) 교본 행동의 실행 — 엄폐 · 탄약 보급 (§2.9·§2.10) ─────────────────────────
+type HosV = { x: number; y: number; state: string; weapon: string };
+/** 믿음 속 가장 가까운 활동 용의자의 id (없으면 -1) */
+function nearestThreat(a: FieldAgent): number {
+  let best = -1, bd = Infinity;
+  for (const f of a.beliefs.list('hos')) { const v = f.value as HosV; if (v.state !== 'hold' && v.state !== 'fight' && v.state !== 'flee') continue; const d = dist(a.x, a.y, v.x, v.y); if (d < bd) { bd = d; best = f.id; } }
+  return best;
+}
+/**
+ * 엄폐 (TaskKind 'cover', 라벨 '엄폐' — §2.10): 믿음 속 위협에서 벽에 가려 보이지 않는 대원 둘레 4칸의 자리(coverSpot 숨기)로 가서 쏘지 않고 기다린다.
+ * 자리는 임무에 담고(t.cvX·cvY, 그때의 위협 자리 t.cvTx·cvTy) 위협이 2칸 넘게 움직였을 때만 다시 고른다. 자리가 없으면 대기 지점으로 물러난다(지금의 후퇴).
+ * 끝: 12초 · 믿음 속 위협이 교전(fight) 중이 아님 · (재장전 엄폐 P10 · 탄 위급 엄폐 P09 · 탄 위급) 재장전이 끝났고 4초 동안 피격이 없음.
+ * 끝나면 그 줄을 그 위협에 20초 동안 다시 걸지 않는다(docMem — 엄폐 ↔ 교전 왕복을 늦춘다). 탄 위급이면 그다음 판단에 P08 이 보급으로 잇는다
+ */
+export function runCover(sim: Sim, s: Scene, a: FieldAgent, t: Task, k: ExecKit): void {
+  if (t.hostile < 0) t.hostile = nearestThreat(a);
+  const th = t.hostile >= 0 ? a.beliefs.val<HosV>('hos', t.hostile) : undefined;
+  const reloading = a.reloadUntil !== undefined && a.reloadUntil > sim.t;
+  const calm = sim.t - a.underFireT >= DOC.CALM;
+  const g = gunOf(sim, a.rid);
+  const crit = g !== null && g.ammo !== Infinity && g.ammo <= 2 * g.perShot;
+  const rule = t.docRule ?? '';
+  if (th === undefined || th.state !== 'fight' || sim.t - t.startedAt >= DOC.COVER_CAP || (calm && !reloading && (rule === 'P09' || rule === 'P10' || crit))) {
+    if (t.hostile >= 0 && rule) docRemember(sim, a, rule, 'h:' + t.hostile, DOC.COVER_MEM);
+    actEnd(sim, a, t);
+    k.finish(sim, s, a, true);
+    return;
+  }
+  if (t.cvX === undefined || t.cvTx === undefined || t.cvTy === undefined || dist(th.x, th.y, t.cvTx, t.cvTy) > 2) {
+    const sp = coverSpot(s, a.x, a.y, th.x, th.y, false);
+    t.cvTx = th.x; t.cvTy = th.y; t.cvX = sp !== null ? sp.x : NaN; t.cvY = sp !== null ? sp.y : NaN;
+    a.path = null; a.pathGoal = -1;
+  }
+  a.label = '엄폐';
+  if (Number.isNaN(t.cvX)) { k.moveTo(sim, s, a, s.staging.x, s.staging.y, 2); return; }      // 숨을 자리가 없다: 지금의 후퇴 (대기 지점으로)
+  const m = k.moveTo(sim, s, a, t.cvX, t.cvY ?? t.cvX, 0.4);
+  if (m === 'nopath') { t.cvX = NaN; t.cvY = NaN; return; }
+  if (m === 'arrived') { a.fx = th.x - a.x; a.fy = th.y - a.y; }
+}
+/** 탄약 보급의 시간 (초 — 대기 지점의 차에서) */
+export const REARM_TIME = 6;
+/**
+ * 탄약 보급 (TaskKind 'rearm', 라벨 '탄약 보급' — §2.9): 대기 지점(3칸 안)까지 가서 6초 → 자기 부대에 탄약 상자가 남았으면 가진 총기를 모두 처음 값으로, 상자 하나를 쓴다.
+ * 상자가 없으면(오는 동안 동료가 마지막 상자를 썼다) '보급할 탄약이 없습니다.' 를 한 번 남기고 이 사건 동안 그 줄(P08)을 다시 걸지 않는다. 닿지 못하면 25초 동안 다시 걸지 않는다
+ */
+export function runRearm(sim: Sim, s: Scene, a: FieldAgent, t: Task, k: ExecKit): void {
+  a.label = '탄약 보급';
+  const m = k.moveTo(sim, s, a, s.staging.x, s.staging.y, 3);
+  if (m === 'moving' || m === 'busy') return;
+  const rule = t.docRule ?? 'P08';
+  if (m === 'nopath') { docRemember(sim, a, rule, '*', 25); actEnd(sim, a, t); k.finish(sim, s, a, false); return; }
+  t.need = REARM_TIME; t.progress += sim.dt; a.ring = t.progress / t.need;
+  if (t.progress + 1e-9 < t.need) return;
+  const u = sim.units[a.unitId], r = sim.responders[a.rid];
+  if ((u.ammoBox ?? 0) > 0) {
+    u.ammoBox = (u.ammoBox ?? 0) - 1;
+    refillGuns(sim, a.rid); a.reloadUntil = undefined;
+    emit(sim, { inc: s.incidentId, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 0, text: `탄약 보급 완료 (${u.callsign} 탄약 상자 ${u.ammoBox}개).` });
+  } else {
+    emit(sim, { inc: s.incidentId, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'radio', imp: 1, text: '보급할 탄약이 없습니다.' });
+    docRemember(sim, a, rule, '*', 1e9);      // 이 사건 끝까지 (현장 대원은 현장마다 새로 만든다)
+  }
+  actEnd(sim, a, t);
+  k.finish(sim, s, a, true);
+}
+/** 교본 행동 임무의 계속 점수 (brain 의 "현재 임무 계속" — §4.4 끝). 교본 행동이 아니면 undefined */
+export function docContinue(sim: Sim, a: FieldAgent, t: Task): number | undefined {
+  if (t.kind === 'cover') return 0.97;      // 교전 지시 0.92·교전 계속 0.94·후퇴 0.95 보다 높게 — 12초 상한과 끝나는 조건으로 스스로 끝난다
+  if (t.kind === 'rearm') { const g = gunOf(sim, a.rid); return g !== null && g.ammo !== Infinity && g.ammo <= 2 * g.perShot ? 0.96 : 0.86; }
+  return undefined;
+}
+// (import 를 이 절에 둔 것은 위의 import 묶음을 다른 단계가 함께 고치고 있어서다)
+import { emit } from '../events';
+import { refillGuns } from '../crews';
+import { dist } from '../util';
+import { DOCTRINE } from './doctrine/registry';
+import type { DocGateAns } from './doctrine/registry';
+import { coverSpot } from './doctrine';
+import type { DocActId, DocGateId } from '../types';
+/** 판단 지점 칸을 손으로 비운다 (지금 동작으로 넘어간 자리 — 막혀 있던 것이 다른 까닭으로 풀렸을 때. 기록의 t1 을 닫는다) */
+export function gateClear(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
+  if ((t.gateAt ?? -1) < 0 && t.gateId === undefined) return;
+  if (t.docRule !== undefined && t.gateId !== undefined) recordDoc(sim, sim.incidents[s.incidentId], a, t.docRule, 'gate', { gate: t.gateId, tgt: t.hostile >= 0 ? 'h:' + t.hostile : t.workId >= 0 ? 'w:' + t.workId : '' });
+  clearGate(t);
+}
+/** 줄의 짧은 이름 (머리 위 라벨 — 판단 지점에서 기다리는 동안) */
+export function ruleShort(id: string | null): string | undefined { const r = ruleById(id); return r !== undefined ? r.short : undefined; }
+/** 교본 줄이 막지 않고 갈래만 고른 자리의 기록 (choose — P05 엄폐 사격 자리 · P15 섬광탄 아끼기): 그 줄의 note 를 한 번(같은 대원 20초) 남기고 I.docs 에 한 줄 */
+export function docMark(sim: Sim, s: Scene, a: FieldAgent, ruleId: string, hook: DocHook, extra: Partial<Pick<DocUse, 'act' | 'gate' | 'method' | 'work' | 'mate' | 'tgt'>> = {}, noteImp = 1): void {
+  const r = ruleById(ruleId);
+  if (r === undefined) return;
+  recordDoc(sim, sim.incidents[s.incidentId], a, ruleId, hook, extra, docNote(sim, s, a, r, noteImp), r.report !== undefined);
+}

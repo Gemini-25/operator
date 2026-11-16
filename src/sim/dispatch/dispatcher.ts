@@ -11,6 +11,10 @@ import { coastal, createAidUnit, crewOk, crewReady, dispatchUnit, etaFor, sendUn
 import type { Claim, Incident, KitId, Needs, Problem, RadioMsg, Scene, Unit, UnitKind } from '../types';
 import { TYPE_NAME, fmtSec, josa } from '../util';
 import { assess, emptyNeeds, needsText, sevName } from './analyst';
+import { dispatchPref } from './doctrine';      // (R3 §6.2) 관제 교본의 부대 고르기 가산
+import { recordDoc } from '../field/doctrineRun';
+/** (R3) 이번 고르기에서 교본 가산을 받은 부대와 그 줄 (pickUnit 안에서만 — 부대 객체의 모양을 바꾸지 않으려 WeakMap) */
+const prefOf = new WeakMap<Unit, string>();
 
 const ORDER: (keyof Needs)[] = ['eod', 'tactical', 'law', 'suppression', 'rescue', 'ems', 'traffic', 'search',
   'utilPower', 'utilGas', 'utilWater', 'tow', 'capture',      // (N8 §5.3.5) 새 수요 다섯은 끝에 — 기존 배정 순서 그대로
@@ -55,7 +59,7 @@ function priorityOf(sim: Sim, I: Incident): number {
   return (I.assessment ? I.assessment.severity : 1) + (urgent ? 0.6 : 0) + Math.min(0.5, (sim.t - Math.max(0, I.reportedAt)) / 240) + starve;
 }
 
-interface Cand { u: Unit; score: number; eta: number; fit: number; divertFrom: Incident | null }
+interface Cand { u: Unit; score: number; eta: number; fit: number; divertFrom: Incident | null; doc?: string }      // doc: (R3 §6.2) 관제 교본의 가산이 이 부대를 고르게 했다 (그 줄 — sendUnit 이 지령 기록과 함께 센다)
 /** 무거운 일이 필요한 수요: 걸을 수 있는 다친 대원만 남은 부대가 1순위로 가지 않는다 (경찰·교통 통제 수요는 봉쇄·협상·면담·교통 통제로 할 수 있어 넣지 않는다) */
 const HEAVY_NEED: ReadonlySet<keyof Needs> = new Set<keyof Needs>(['suppression', 'rescue', 'ems', 'tactical', 'search', 'eod']);
 
@@ -227,6 +231,8 @@ function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { be
     if (ok === 0 && HEAVY_NEED.has(key)) score -= 25;
     score += kitBonus(sim, u, I, key);
     if (divertFrom) score -= 28;
+    const pref = dispatchPref(sim, I, u, key);      // (R3 §6.2) 관제 교본의 가산 (D2)
+    if (pref.add !== 0) { score += pref.add; prefOf.set(u, pref.rule!); } else prefOf.delete(u);
     // 같은 부서의 마지막 가용 부대라면, 위험도가 낮은 사건에는 아껴 둔다.
     // 헬기는 '남은 부대'로 세지 않고(경찰·의료 헬기가 남아 있다고 지상 부대를 다 내보내지 않게), 헬기 자신에게도 걸지 않는다
     if (!u.air && sev < 1.9 && !notSpare(u)) {      // (N8) 유관 기관·새 부대는 감점하지 않고 남은 부대로도 세지 않는다
@@ -236,8 +242,14 @@ function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { be
     cands.push({ u, score, eta, fit, divertFrom });
   }
   if (!cands.length) return { best: null, nearest: null };
-  let best = cands[0], nearest = cands[0];
-  for (const c of cands) { if (c.score > best.score) best = c; if (c.eta < nearest.eta) nearest = c; }
+  let best = cands[0], nearest = cands[0], base = cands[0], baseS = -Infinity;
+  for (const c of cands) {
+    if (c.score > best.score) best = c; if (c.eta < nearest.eta) nearest = c;
+    const r = prefOf.get(c.u), s0 = r !== undefined ? c.score - dispatchPref(sim, I, c.u, key).add : c.score;      // 교본 가산 전의 점수
+    if (s0 > baseS) { baseS = s0; base = c; }
+  }
+  // (R3 §2.7 의 '쓰였다') 교본 가산이 고른 부대를 바꾸었으면: 밀려난 부대에 걸린 줄(감점) 또는 뽑힌 부대에 걸린 줄(가산)
+  if (base !== best) { const r = prefOf.get(base.u) ?? prefOf.get(best.u); if (r !== undefined) best.doc = r; }
   return { best, nearest };
 }
 
@@ -258,6 +270,7 @@ function sendUnit(sim: Sim, I: Incident, key: keyof Needs, c: Cand, nearest: Can
   if (nearest && nearest.u.id !== u.id && nearest.eta < c.eta - 5) why += `. 더 가까운 ${nearest.u.callsign}(${fmtSec(nearest.eta)})보다 ${c.fit > nearest.fit ? '전문성이 높아' : '상태가 좋아'} 선택`;
   const ev = emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: `출동 지령: ${u.callsign} → 사건 ${I.code} (${TYPE_NAME[I.assessment!.type]}, 위험도 ${sevName(I.assessment!.severity)}). ${why}.` });
   I.dispatchLog.push(ev);
+  if (c.doc !== undefined) recordDoc(sim, I, null, c.doc, 'dispatch', {}, ev);      // (R3 §6.2) 관제 교본이 바꾼 고르기
   if (first) {
     I.firstDispatchAt = sim.t;
     I.firstAssess = { type: I.assessment!.type, severity: I.assessment!.severity, t: sim.t, eventId: ev };

@@ -63,6 +63,10 @@ function withRules<V>(rules: DoctrineRule[], fn: () => V): V {
 }
 /** 단계 1 에 등록된 줄 (공통 다섯 — 등록 순서) */
 const STAGE1 = ['G01', 'G02', 'G02b', 'G03', 'G04'];
+/** 단계 2 까지 등록된 줄 (공통 다섯 + 경찰 열넷 — 등록 순서. P17·P17b 는 3단계, P20 은 6단계) */
+const STAGE2 = [...STAGE1, 'P01', 'P02', 'P03', 'P05', 'P07', 'P08', 'P09', 'P10', 'P11', 'P12', 'P14', 'P15', 'P16', 'P22'];
+/** 단계 2 까지의 지휘·관제·추격 줄 */
+const CMD2 = ['CP1', 'CP2', 'CP3', 'CP4', 'D3', 'D6', 'D7', 'D2'];
 /** 자기 신고를 손으로 넣는다 (그 대원의 믿음 — 남이 아는 그 대원의 몸) */
 const report = (sim: Sim, a: FieldAgent, v: Partial<CrewBelief>): void => { a.beliefs.merge(mkFact('crew', a.rid, { band: 0, air: 0, ammo: 0, shaken: false, t: sim.t, ...v }, '시험', sim.t, 1, true, '시험')); docForget(a); };
 /** 엔진의 갈래를 모두 지나가는 시험용 줄 (번호 G91~G98 — 표에 없는 번호, 시험이 끝나면 지운다) */
@@ -137,30 +141,39 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
   it('같은 시드 두 번의 report.hash 가 같다 — 보통 교대, fire/std·armed/hostage 강제', () => {
     for (let q = 0; q < cases.length; q++) expect(shift(cases[q][0], cases[q][1]).report!.hash, cases[q][0]).toBe(first[q].report!.hash);
   });
-  it('단계 1: 줄은 공통 다섯(G01·G02·G02b·G03·G04)뿐이고 지휘·관제 줄은 없다. 기록은 fit·method 자리뿐, 2단계 뒤의 상태 칸(짝·교본 행동·판단 지점·탄약·예비 펌프·추격·분류·차량 차단)은 비어 있다', () => {
-    expect(DOCTRINE.map((r) => r.id)).toEqual(STAGE1);
-    expect(CMD_ROWS.length).toBe(0);
-    expect(hasDoc('fit')).toBe(true); expect(hasDoc('method')).toBe(true);
-    for (const h of ['duty', 'act', 'gate'] as const) expect(hasDoc(h), h).toBe(false);
+  it('단계 2: 줄은 공통 다섯과 경찰 열넷, 지휘·관제 줄은 경찰 일곱과 D2. 의무(duty) 줄은 아직 없다. 3단계 뒤의 상태 칸(짝·예비 펌프·분류·차량 차단)은 비어 있다', () => {
+    expect(DOCTRINE.map((r) => r.id)).toEqual(STAGE2);
+    expect(CMD_ROWS.map((c) => c.id)).toEqual(CMD2);
+    expect(DOC_DEPTS_DONE).toEqual(['police']);
+    for (const h of ['fit', 'method', 'act', 'gate'] as const) expect(hasDoc(h), h).toBe(true);
+    expect(hasDoc('duty')).toBe(false);
     let docs = 0, sig = 0, split = 0;
     for (const sim of first) {
       const sp = sim.report!.docSplit;
       expect(sp).toBeDefined();
       for (const key of Object.keys(sp!)) { expect(key).toMatch(/^(police|fire|ems|special|common)\|[a-z]+\|[A-Za-z]+$/); for (const v of Object.values(sp![key])) { expect(v).toBeGreaterThan(0); split += v; } }
       for (const I of sim.incidents) {
-        expect(I.trackBy).toBeUndefined(); expect(I.reportedPrev).toBeUndefined();
-        for (const d of I.docs ?? []) { docs++; expect(['fit', 'method']).toContain(d.hook); expect(STAGE1).toContain(d.rule); expect(d.act).toBeUndefined(); expect(d.gate).toBeUndefined(); }
+        if (!I.pursuit) { expect(I.trackBy).toBeUndefined(); expect(I.reportedPrev).toBeUndefined(); }
+        for (const d of I.docs ?? []) {
+          docs++;
+          expect(['fit', 'method', 'act', 'gate', 'cmd', 'dispatch', 'chase']).toContain(d.hook);
+          expect([...STAGE2, ...CMD2]).toContain(d.rule);
+          if (d.hook === 'act') expect(['cover', 'rearm']).toContain(d.act); else expect(d.act).toBeUndefined();
+          if (d.hook === 'gate') expect(['closeIn', 'roomEntry', 'breach', 'coverFire', 'bangUse']).toContain(d.gate); else expect(d.gate).toBeUndefined();
+          if (d.hook === 'cmd' || d.hook === 'dispatch' || d.hook === 'chase') expect(d.rid).toBe(-1);
+        }
       }
       for (const s of sim.scenes) if (s) {
         expect(s.triageAt).toBe(-1); expect(s.laneShield).toBeNull();
         for (const a of s.agents) {
-          expect(a.buddy).toBe(-1); expect(a.doc).toBeNull(); expect(a.docMem).toBeUndefined(); expect(a.reloadUntil).toBeUndefined();
-          if (a.crewSig !== undefined) { sig++; expect(a.crewSig).toMatch(/^[0-2][0-2]0[01]$/); }      // 탄을 세지 않는 동안(2단계 전) 탄 칸은 늘 0
-          if (a.task) { expect(a.task.docRule).toBeUndefined(); expect(a.task.gateAt).toBe(-1); }
+          expect(a.buddy).toBe(-1);      // 짝 맺기는 3단계
+          if (a.doc) expect(['cover', 'rearm']).toContain(a.doc.act);
+          if (a.crewSig !== undefined) { sig++; expect(a.crewSig).toMatch(/^[0-2][0-2][0-2][01]$/); }      // 2단계부터 탄을 센다
+          if (a.task && a.task.gateAt !== -1) expect(['closeIn', 'roomEntry', 'breach']).toContain(a.task.gateId);
         }
       }
-      for (const u of sim.units) { expect(u.ammoBox).toBeUndefined(); expect(u.sparePump).toBeUndefined(); }
-      if (sim.report!.doctrine) expect(Object.keys(sim.report!.doctrine).every((k) => STAGE1.indexOf(k) >= 0 || k === 'G02')).toBe(true);
+      for (const u of sim.units) { expect(typeof u.ammoBox).toBe('number'); expect(u.ammoBox).toBeGreaterThanOrEqual(0); expect(u.ammoBox).toBeLessThanOrEqual(u.ammoBoxMax!); expect(u.sparePump).toBeUndefined(); }
+      if (sim.report!.doctrine) expect(Object.keys(sim.report!.doctrine).every((k) => [...STAGE2, ...CMD2].some((id) => id.startsWith(k)))).toBe(true);
     }
     expect(sig).toBeGreaterThan(0);      // 자기 신고가 있었다 (공기·부상)
     expect(split).toBeGreaterThan(0);
@@ -175,7 +188,7 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
       for (const w of works) { const d = docFitRules(sim, s, a, w, 0.5); expect(d).toEqual({ fit: 0.5, base: 0.5, hits: [] }); }
       expect(docDuty(sim, s, a)).toBeNull(); expect(docAct(sim, s, a, ZERO_SENSE, 0.5)).toBeNull(); expect(docRetreat(sim, s, a, 0.9)).toBeNull();
       a.task = makeTask('search', '시험', works[0]); expect(docDrop(sim, s, a)).toBeNull(); a.task = null;
-      expect(docGate(sim, s, a, 'closeIn')).toEqual({ ok: true, rule: null, wait: 0, opt: null });
+      expect(docGate(sim, s, a, 'closeIn')).toEqual({ ok: true, rule: null, wait: 0, opt: null, exc: null });
       for (const m of ['interior', 'defensive', 'swim', 'rope'] as const) expect(docMethodMul(docCtx(sim, s, a, 'self'), m)).toBe(1);
       expect(buddyOf(sim, s, a)).toBeNull();      // 단계 1 까지는 짝을 맺지 않는다 (makeAgent 의 -1 — pairUp 은 3단계)
     }
@@ -219,14 +232,14 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
       expect(docAct(sim, s, nozzle)!.act).toBe('pair');
       expect(docRetreat(sim, s, nozzle, 0.7)).toMatchObject({ act: 'cover', score: 0.7 });
       expect(docGate(sim, s, nozzle, 'closeIn')).toMatchObject({ ok: false, rule: 'G95' });
-      expect(docGate(sim, s, nozzle, 'coverFire')).toEqual({ ok: true, rule: null, wait: 0, opt: 'cover' });
+      expect(docGate(sim, s, nozzle, 'coverFire')).toEqual({ ok: true, rule: null, wait: 0, opt: 'cover', exc: null });
       expect(docMethodMul(docCtx(sim, s, nozzle, 'self'), 'interior')).toBe(0.5);
       expect(docMethodMul(docCtx(sim, s, nozzle, 'self'), 'swim')).toBe(1);
       expect(buddyOf(sim, s, nozzle)).toBe(fl);
     });
-    // 시험용 줄을 빼면 다시 그대로다 (단계 1 의 공통 줄은 멀쩡한 관창수에게 걸리지 않는다)
+    // 시험용 줄을 빼면 다시 그대로다 (공통 줄·경찰 줄은 멀쩡한 관창수의 수색에 걸리지 않는다)
     expect(docFit(sim, s, nozzle, wSearch, 0.6)).toBe(0.6);
-    expect(DOCTRINE.map((r) => r.id)).toEqual(STAGE1);
+    expect(DOCTRINE.map((r) => r.id)).toEqual(STAGE2);
   });
   it('두 모드: 보고 모드는 남의 체력·출혈을 쓰지 않고(-1·false) 맞고 있는지 모른다, 자기 모드는 자기 몸이다', () => {
     const { sim, s } = sceneWith('R3-MODE', 'armed/hostage', ['patrol', 'tactical']);
@@ -241,13 +254,16 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
     // 조직 정보는 두 모드가 같다 (지구력·장비·짝·지원)
     for (const k of ['stamina', 'hasScba', 'air', 'gun', 'ammo', 'buddy', 'mates', 'alone', 'backup'] as const) expect(rep[k], k).toEqual(self[k]);
   });
-  it('gear 의 판단용 감싼 함수: 알려진 고장만 반영하고, 탄을 세지 않는 동안(2단계 전)은 무한이다', () => {
+  it('gear 의 판단용 감싼 함수: 알려진 고장만 반영한다. 총기는 2단계부터 탄을 센다(권총 30·탄창 15 · 소총 90·30·두 발 · 저격 15·5), 수량이 없는 총(손으로 만든 명부)은 무한이다', () => {
     const { sim, s } = sceneWith('R3-GEAR', 'armed/hostage', ['patrol', 'tactical', 'swat', 'engine']);
     const role = (id: string): FieldAgent => s.agents.find((a) => sim.responders[a.rid].role === id)!;
     const off = role('officer'), tac = role('tacOfficer'), mk = role('marksman'), noz = role('nozzle');
-    expect(gunOf(sim, off.rid)).toMatchObject({ id: 'pistol', ammo: Infinity });
-    expect(gunOf(sim, tac.rid)!.id).toBe('rifle');
-    expect(gunOf(sim, mk.rid)!.id).toBe('sniper');
+    expect(gunOf(sim, off.rid)).toEqual({ id: 'pistol', ammo: 30, mag: 15, magSize: 15, perShot: 1, reload: 2 });
+    expect(gunOf(sim, tac.rid)).toEqual({ id: 'rifle', ammo: 90, mag: 30, magSize: 30, perShot: 2, reload: 2.5 });
+    expect(gunOf(sim, mk.rid)).toEqual({ id: 'sniper', ammo: 15, mag: 5, magSize: 5, perShot: 1, reload: 3 });
+    const pi = sim.responders[off.rid].kit!.find((k) => k.id === 'pistol')!;
+    pi.uses = undefined; pi.mag = undefined;
+    expect(gunOf(sim, off.rid)).toMatchObject({ id: 'pistol', ammo: Infinity, mag: Infinity });
     expect(gunOf(sim, noz.rid)).toBeNull();
     const scba = sim.responders[noz.rid].kit!.find((k) => k.id === 'scba')!;
     expect(kitHas(sim, noz.rid, 'scba')).toBe(true); expect(kitQty(sim, noz.rid, 'scba')).toBe(scba.uses);

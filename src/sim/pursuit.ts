@@ -12,6 +12,8 @@ import { sendUnitTo } from './resources';
 import type { Rng } from './rng';
 import type { Incident, Unit } from './types';
 import { josa } from './util';
+import { chaseRoles } from './dispatch/doctrine';      // (R3 §6.2 D7) 관제의 추격 역할 — 따라가기·앞막기
+import { recordDoc } from './field/doctrineRun';
 
 const rngOf = new WeakMap<Incident, Rng>();
 const WHO: Record<string, string> = { kidnap: '납치 차량', drunk: '난폭 운전 차량', getaway: '도주 차량' };
@@ -80,12 +82,35 @@ function stop(sim: Sim, I: Incident, nodeId: number, how: 'caught' | 'block' | '
   p.state = 'stopped'; p.how = how; p.x = n.x; p.y = n.y;
   I.truth.nodeId = nodeId; I.truth.x = n.x; I.truth.y = n.y; I.truth.placeId = -1; I.truth.placeKind = null; I.truth.district = n.district;
   I.truth.label = `${nodeName(sim.city, nodeId)} ${how === 'crash' ? '사고 현장' : '검거 현장'}`;
-  I.reportedNode = nodeId; I.locationKnown = true;
+  setReported(sim, I, nodeId); I.locationKnown = true;
   createScene(sim, I);      // 세운 자리의 현장을 이제 만든다 (사고로 멈췄으면 다친 사람이 있다)
   const who = WHO[p.kind];
   const text = how === 'crash' ? `${josa(who, '이/가')} ${nodeName(sim.city, nodeId)}에서 사고를 내고 멈췄습니다.` : how === 'block' ? `${by!.callsign}: 앞을 막아 ${josa(who, '을/를')} 세웠습니다 — ${nodeName(sim.city, nodeId)}.` : `${by!.callsign}: ${by!.air ? '하늘에서 놓치지 않고 쫓아' : '바짝 붙어'} ${josa(who, '을/를')} 세웠습니다 — ${nodeName(sim.city, nodeId)}.`;
   I.lastEvent = emit(sim, { inc: I.id, role: how === 'crash' ? 'SYSTEM' : 'UNIT', actor: how === 'crash' ? '교통정보' : by!.callsign, kind: 'unit', imp: 3, causes: [I.lastEvent], text });
   for (const uid of I.assigned) { const u = sim.units[uid]; if (u.state === 'enroute') sendUnitTo(sim, u, nodeId); else if (u.state === 'turnout') u.destNode = nodeId; }
+}
+
+/**
+ * (R3 §6.2 D7) 알려진 위치를 고친다 — 보고가 일어나는 세 자리(추적 중의 위치·시민 목격 신고·차가 선 자리)가 부른다. 그 전 위치(reportedPrev)는 값이 실제로 바뀔 때만 적는다
+ * (보고 있는 동안 틱마다 같은 값이 들어오므로 덮으면 방향을 잃는다). 마지막 보고 시각(reportedNodeAt)은 보고마다 적는다
+ */
+function setReported(sim: Sim, I: Incident, node: number): void {
+  if (I.reportedNode !== node) { I.reportedPrev = I.reportedNode; I.reportedNode = node; }
+  I.reportedNodeAt = sim.t;
+}
+/** 추격 역할을 알린 부대와 그 역할 (사건마다 — 사건 객체의 모양을 바꾸지 않으려 WeakMap) */
+const chaseSaid = new WeakMap<Incident, Map<number, 'follow' | 'block'>>();
+/** 앞막기로 정해지거나(처음·바뀜) 앞막기에서 따라가기로 돌아온 부대마다 관제 문구 한 줄 (앞막기는 교본 줄 D7 로 센다). 처음부터 따라가는 부대는 지금과 같아 알리지 않는다 */
+function chaseTold(sim: Sim, I: Incident, u: Unit, role: 'follow' | 'block'): void {
+  let m = chaseSaid.get(I);
+  if (m === undefined) { m = new Map(); chaseSaid.set(I, m); }
+  const was = m.get(u.id) ?? 'follow';
+  if (was === role) return;
+  m.set(u.id, role);
+  if (role === 'block') {
+    const ev = emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 1, causes: [I.lastEvent], text: I.trackBy === 'air' ? `헬기가 보고 있다 — ${u.callsign}, 앞을 막아라.` : `${u.callsign}, 앞 교차로로 돌아가라.` });
+    recordDoc(sim, I, null, 'D7', 'chase', { tgt: 'u:' + u.id }, ev);
+  } else emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 0, causes: [I.lastEvent], text: `${u.callsign}, 알려진 위치로 따라가라.` });
 }
 
 export function tickPursuits(sim: Sim): void {
@@ -111,6 +136,8 @@ export function tickPursuits(sim: Sim): void {
       if (d < (u.air ? 430 : 175)) { p.tracked = true; if (u.air && !eye) eye = u; }
       if (ground(u)) { if (d < 42) near++; if (d < cd) { cd = d; closest = u; } }
     }
+    // (R3 §6.2 D7) 지금 차를 보고 있는 쪽 (공개 정보 — 보고 있는 부대가 위치를 알려 온다): 지상 부대가 175 안이면 지상, 헬기뿐이면 하늘, 아무도 없으면 없음
+    I.trackBy = !p.tracked ? null : closest && cd < 175 ? 'ground' : 'air';
     if (p.tracked) {
       if (p.seenAt < 0) {
         // 처음 발견: 175 안에 지상 부대가 없으면 하늘에서 헬기가 찾은 것이다 (통계는 추적 상태를 바꾸는 바로 이 자리에서 센다)
@@ -118,18 +145,25 @@ export function tickPursuits(sim: Sim): void {
         if (byAir) sim.airStats.tracked++;
         I.lastEvent = emit(sim, { inc: I.id, role: 'UNIT', actor: closest && cd < 175 ? closest.callsign : eye ? eye.callsign : '헬기', kind: 'unit', imp: 2, causes: [I.lastEvent], text: `${WHO[p.kind]} 발견 — ${edgeName(city, e)}에서 추격을 시작합니다.` });
       }
-      p.seenAt = sim.t; I.reportedNode = p.to; I.locationKnown = true;
+      p.seenAt = sim.t; setReported(sim, I, p.to); I.locationKnown = true;
     }
     else if (sim.t >= p.nextSight) {
       // 시민의 목격 신고: 방금 지나간 길을 알려 온다
       p.nextSight = sim.t + rng.range(9, 19);
-      if (I.reportedAt >= 0 && rng.chance(0.62)) { I.reportedNode = p.to; I.locationKnown = true; emit(sim, { inc: I.id, role: 'CALL_TAKER', actor: '신고 접수 AI', kind: 'call', imp: 1, causes: [I.lastEvent], text: `목격 신고: ${josa(WHO[p.kind], '이/가')} ${edgeName(city, e)}을 지나 ${nodeName(city, p.to)} 쪽으로 달리고 있습니다.` }); }
+      if (I.reportedAt >= 0 && rng.chance(0.62)) { setReported(sim, I, p.to); I.locationKnown = true; emit(sim, { inc: I.id, role: 'CALL_TAKER', actor: '신고 접수 AI', kind: 'call', imp: 1, causes: [I.lastEvent], text: `목격 신고: ${josa(WHO[p.kind], '이/가')} ${edgeName(city, e)}을 지나 ${nodeName(city, p.to)} 쪽으로 달리고 있습니다.` }); }
     }
     // 따라붙은 순찰차가 버티면 차를 세운다 (둘이 붙으면 더 빨리)
     if (near > 0) p.pressure += dt * (near >= 2 ? 2.2 : 1); else p.pressure = Math.max(0, p.pressure - dt * 0.5);
     if (p.pressure >= (p.kind === 'drunk' ? 5 : 8)) { stop(sim, I, nearestNode(sim, p.x, p.y), 'caught', closest); continue; }
-    // 출동한 부대는 알려진 위치로 방향을 바꾼다
-    for (const uid of I.assigned) { const u = sim.units[uid]; if (u.state === 'enroute' && u.destNode !== I.reportedNode) sendUnitTo(sim, u, I.reportedNode); else if (u.state === 'turnout') u.destNode = I.reportedNode; }
+    // 출동한 부대는 알려진 위치로 방향을 바꾼다 — (R3 §6.2 D7) 관제의 추격 역할: 따라가는 부대는 알려진 위치로, 앞막기 부대는 예상 교차로로 (dispatch/doctrine.chaseRoles — 공개 정보만)
+    const roles = chaseRoles(sim, I);
+    for (const uid of I.assigned) {
+      const u = sim.units[uid];
+      const cr = roles.get(uid);
+      const dest = cr !== undefined ? cr.node : I.reportedNode;
+      if (cr !== undefined) chaseTold(sim, I, u, cr.role);
+      if (u.state === 'enroute' && u.destNode !== dest) sendUnitTo(sim, u, dest); else if (u.state === 'turnout') u.destNode = I.reportedNode;
+    }
     if (p.t < 1) continue;
     // 교차로에 닿았다
     p.trail.push([B.x, B.y]); if (p.trail.length > 14) p.trail.shift();

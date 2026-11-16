@@ -2,6 +2,11 @@
 // 줄은 DocCtx 만 읽는다 (믿음·자기 몸·자기 장비 — tests/doctrine.test.ts 시험 1). 이 파일은 ./registry 와 타입·util 만 import 한다.
 // 새 줄은 이 파일의 끝에 registerDoctrine({ id, dept, who, hook, works/gate/methods, kits/noKits, when, effect, rank, why, note, report }) 로 붙인다 (등록 순서가 결과를 바꾼다).
 //
-// 단계 0 (틀): 아직 줄이 없다.
+// 단계 0 (틀): 아직 개인 줄이 없다 (S 줄은 5단계).
+// 단계 2: 관제 줄 D2(폭발물 처리반을 인질극 진입조로 보내지 않는다 — 코드는 dispatch/doctrine.ts)의 이름표만 둔다 (§6.2 표의 분야가 특수다).
 
-export {};
+import { CMD_ROWS } from './registry';
+
+CMD_ROWS.push(
+  { id: 'D2', dept: 'special', hook: 'dispatch', name: '폭발물 처리반을 경찰 수요에 아낀다', short: '처리반 아낌', why: 'protocol' },
+);

@@ -78,20 +78,17 @@ export function useKit(sim: Sim, rid: number, id: KitId, n = 1): void { crewUseK
 // R2 의 kitCount('scba') 는 60초를 넘는지만 0/1 로 돌려주므로, 공기 비율·짝의 공기·총의 탄은 아래 함수로 구한다.
 // (import 를 이 절에 둔 것은 위의 import 줄을 다른 묶음이 함께 고치고 있어서다 — 같은 모듈의 값만 더 가져온다)
 import { ROLES, crewHasKit, roleOf } from '../crews';
-import type { KitDef } from '../crews';
 import type { RoleGroup } from '../types';
 /** 들었는가 (R1 hasKit — 알려진 고장이면 false, 수량 무관) */
 export function kitHas(sim: Sim, rid: number, id: KitId): boolean { return hasKit(sim, rid, id); }
 /** 쓸 수 있는 수량: 들었으면 남은 수(공기호흡기는 남은 초, 총기는 가진 탄 — 수량을 세지 않으면 Infinity), 아니면 0 */
 export function kitQty(sim: Sim, rid: number, id: KitId): number { return hasKit(sim, rid, id) ? kitUses(sim, rid, id) : 0; }
-/** 총기의 탄창·재장전 칸 (R3 2단계가 crews.ts 의 KitDef 에 mag·reload·perShot 을 더한다 — 그 전에는 없다) */
-type GunDef = KitDef & { mag?: number; reload?: number; perShot?: number };
 /** 총기를 고르는 순서: 저격 소총 > 소총 > 권총 (G5 fxlog.weaponOf 와 같은 순서) */
 const GUNS: KitId[] = ['sniper', 'rifle', 'pistol'];
 /**
  * 가진 총 (알려진 고장이 아닌 것 가운데 GUNS 순서의 첫째)과 그 탄. 없으면 null.
  * ammo = 가진 탄 전부(탄창 포함), mag = 지금 탄창, magSize = 탄창 크기, perShot = 한 번 쏠 때 쓰는 탄, reload = 재장전 초.
- * 탄을 세지 않는 동안(2단계 전 — 총기의 uses 가 없다)은 ammo = mag = magSize = Infinity 다.
+ * 수량을 세지 않는 총기(손으로 만든 명부 — uses 가 없다)는 ammo = mag = Infinity 다 (R3 2단계부터 명부의 총기는 탄을 센다 — crews.KITS 의 uses·mag).
  */
 export function gunOf(sim: Sim, rid: number): { id: KitId; ammo: number; mag: number; magSize: number; perShot: number; reload: number } | null {
   const kit = sim.responders[rid].kit;
@@ -101,10 +98,10 @@ export function gunOf(sim: Sim, rid: number): { id: KitId; ammo: number; mag: nu
     for (let k = 0; k < kit.length; k++) {
       const it = kit[k];
       if (it.id !== id || it.faultKnown) continue;
-      const d = KITS[id] as GunDef;
+      const d = KITS[id];
       const ammo = it.uses === undefined ? Infinity : it.uses;
       const magSize = d.mag ?? Infinity;
-      return { id, ammo, mag: it.mag ?? Math.min(magSize, ammo), magSize, perShot: d.perShot ?? 1, reload: d.reload ?? 0 };
+      return { id, ammo, mag: ammo === Infinity ? Infinity : it.mag ?? Math.min(magSize, ammo), magSize, perShot: d.perShot ?? 1, reload: d.reload ?? 0 };
     }
   }
   return null;

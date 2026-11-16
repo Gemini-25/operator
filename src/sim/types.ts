@@ -386,7 +386,8 @@ export type WorkKind =
   | 'decontam';      // (N9 §5.5) 오염된 구조 대상 제독 (대상 = cas). 단계 1 에는 자리만 (workLabel '제독' · fitFor 0 · 실행부는 빈 갈래) — 맡는 사람·실행은 단계 6
 export type TaskKind = WorkKind | 'retreat' | 'rehab' | 'resupply' | 'board' | 'standby' | 'moveSignal' | 'swapAir'      // swapAir = 공기통 교체 (R1 9절)
   | 'evacuate'      // (X6) 철수 이동: 단계 3 구역 밖, 대개 대기 지점으로 (철수 명령·자기 감각의 임박 조짐 — brain.think 의 의무)
-  | 'ashore';      // (R2 1b) 물 위의 대원(헤엄 중·보트 위)이 뭍으로 돌아간다 (brain.think 의 물 위 가드 · 헤엄 사고 뒤)
+  | 'ashore'      // (R2 1b) 물 위의 대원(헤엄 중·보트 위)이 뭍으로 돌아간다 (brain.think 의 물 위 가드 · 헤엄 사고 뒤)
+  | 'cover' | 'rearm';      // (R3 2단계) 교본 행동: 엄폐(숨기 — 쏘지 않고 엄폐 자리에서 기다림) · 탄약 보급(대기 지점의 차에서 탄약 상자). 실행은 doctrineRun
 
 export interface WorkItem {
   id: number; kind: WorkKind;

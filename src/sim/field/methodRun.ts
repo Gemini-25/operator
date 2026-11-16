@@ -1476,6 +1476,7 @@ export function runSniper(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Tas
     return true;
   }
   a.fx = h.x - a.x; a.fy = h.y - a.y;
+  if (!gunReady(sim, a, 'sniper')) { AIM.delete(t); a.label = '재장전'; return true; }      // (R3 §2.9) 재장전 중이면 조준을 멈춘다 (끝나면 처음부터 다시 조준한다). 탄이 다 떨어지면 조건 상실(armedLost)로 놓는다
   const t0 = AIM.get(t);
   if (t0 === undefined) { AIM.set(t, sim.t); return true; }
   a.ring = (sim.t - t0) / SNIPER.aim;
@@ -1484,6 +1485,7 @@ export function runSniper(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Tas
   const r = sim.responders[a.rid], rng = mrng(sim, s, a);
   const moving = Math.abs(h.x - h.px) + Math.abs(h.y - h.py) > 0.05;
   const hit = rng.chance(clamp(0.55 + 0.4 * r.skills.law - (moving ? 0.2 : 0), 0.3, 0.95));
+  fireRound(sim, a, 'sniper');      // (R3 §2.9) 판정 직후 한 발 — 탄창·재장전은 그 함수가 맡는다
   const hc = hit ? null : hostageNear(s, h);
   const struck = hc !== null && rng.chance(SNIPER.collateral) && I.phase !== 'closed' ? hc : null;
   const mp = missAim(sim, a, h);
@@ -1570,3 +1572,5 @@ export function runVentFirst(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: 
   t.phase = 7; t.progress = 0;
   return false;
 }
+// (R3 §2.9) 저격의 탄 소모 — 탄창·재장전은 교본의 실행부가 맡는다 (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다)
+import { fireRound, gunReady } from './doctrineRun';

@@ -11,7 +11,8 @@ import { TYPE_NAME, dist, josa } from '../util';
 import { TYPE_DEFS } from '../incidentTypes';
 import { airShort, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, isHovering, kitUses, roleOf, seatsOf, seatsUsed } from '../crews';
 import { canCarryPatients, exitName, failedRecently, fitFor, fitParts, hasWork, learn, resp, transmit, workLabel } from './agents';
-import { docAssignRecord, docAssignWhy } from './doctrineRun';      // (R3 §2.7) 교본이 바꾼 배정의 까닭 말과 기록
+import { docAssignRecord, docAssignWhy, recordDoc } from './doctrineRun';      // (R3 §2.7) 교본이 바꾼 배정의 까닭 말과 기록 · 지휘 교본 줄의 기록
+import { copUsable, docHolds } from './doctrine';      // (R3 §2.6·§6.1) 교본 임무 중인 대원 건너뛰기 · 쓸 수 있는 경찰 (CP1)
 import type { DocFitAns } from './doctrine/registry';
 import { heardEv, mkFact } from './beliefs';
 import { losWalls } from './grid';
@@ -80,14 +81,31 @@ export function countUnits(sim: Sim, s: Scene, I: Incident, need: keyof UnitCaps
   return n;
 }
 
-function request(sim: Sim, s: Scene, I: Incident, a: FieldAgent, need: keyof UnitCaps, reason: string, urgent: boolean): void {
-  if (s.requests.some((q) => q.need === need && (q.fulfilled < q.count || sim.t - q.t < 70))) return;
+/**
+ * 지원 요청 (R3 §6.1 끝: 보낸 무전의 기록 id 를 돌려준다 — 같은 능력의 요청이 70초 안이거나 아직 채워지지 않아 버렸거나, 음영 구역이라 못 보냈으면 -1.
+ * 지휘 교본 줄은 0 이상일 때만 '쓰였다'로 센다)
+ */
+function request(sim: Sim, s: Scene, I: Incident, a: FieldAgent, need: keyof UnitCaps, reason: string, urgent: boolean): number {
+  if (s.requests.some((q) => q.need === need && (q.fulfilled < q.count || sim.t - q.t < 70))) return -1;
   const label: Record<string, string> = { suppression: '진압 부대', rescue: '구조 장비 부대', ems: '구급 부대', law: '경찰 부대', tactical: '경찰 기동 부대', search: '수색 인력', traffic: '교통 통제 인력', eod: '폭발물 처리반',
     utilPower: '전력 복구반', utilGas: '가스 복구반', utilWater: '수도 복구반', tow: '견인차', capture: '동물 포획팀', decon: '제독 부대' };      // (N8 §5.3.5) · (N9 §5.3.1) 제독차 또는 화학 구조차
   const ev = transmit(sim, s, a, -2, 'request', [], `관제, ${label[need]} 추가 지원 요청. 사유: ${reason}.`, -1, 2, [I.lastEvent]);
-  if (ev < 0) return;     // 음영 구역 — 다음 계획 주기에 재시도
+  if (ev < 0) return -1;     // 음영 구역 — 다음 계획 주기에 재시도
   s.requests.push({ t: sim.t, need, count: 1, reason, eventId: ev, fulfilled: 0, urgent });
+  return ev;
 }
+/** (R3 §6.1) 섬광탄 없는 인질 진입 금지 (CP4 — 확인 필요: 균형. 끄면 125초 줄이 지금처럼 진입한다 — §8.4 의 2번 손잡이) */
+const CP4_ON = true;
+/** (R3 CP4) 인질이 다쳤다고 믿는가 (현장 기록의 문제 — 지휘관 코드가 이미 읽는 자격) */
+const hostHurt = (I: Incident): boolean => I.problems.some((p) => p.detail === '시한이 지나 인질이 다침' || p.detail === '교전 중 인질 피격' || p.detail === '저격 중 인질 피격');
+/** (R3 §6.1 CP1) 이 사건으로 오는 경찰 부대의 수 (자기 조직의 부대 상태 — 현장에 닿은 부대는 세지 않는다) */
+function lawComing(sim: Sim, I: Incident): number {
+  let n = 0;
+  for (const uid of I.assigned) { const u = sim.units[uid]; if (u.caps.law >= 0.5 && (u.state === 'enroute' || u.state === 'turnout')) n++; }
+  return n;
+}
+/** (R3 §6.1) 지휘 교본 줄이 요청·결정을 실제로 바꾼 자리의 기록 (지휘관 줄 — 대원 없음. 같은 줄은 30초 안이면 한 줄로 잇는다) */
+function docCmd(sim: Sim, I: Incident, rule: string, ev: number): void { recordDoc(sim, I, null, rule, 'cmd', {}, ev); }
 
 function expectedPersons(a: FieldAgent): number {
   let n = 0;
@@ -201,6 +219,11 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   // 걸을 수 있는 다친 경관(조직이 아는 상태)은 문턱에 넣지 않는다: 봉쇄는 서도 진입·검거는 맡지 못한다 (가벼운 일만 — agents.fitFor)
   const armedCops = s.agents.filter((b) => b.status === 'active' && sim.responders[b.rid].dept === 'police' && hasFirearm(sim, b.rid) && roleOf(sim, b.rid).group !== 'bomb');
   const police = armedCops.filter((b) => sim.responders[b.rid].status !== 'injured');
+  // (R3 §6.1 CP1) 쓸 수 있는 경찰: 머릿수에서 중상 신고·탄 위급인 대원을 뺀 수 — 흉기 검거 문턱·진입 결정(100초 시간 예비 규칙 빼고)·두 문 진입에 쓴다.
+  // 시간 예비 규칙(다친 경찰 둘만 남아도 언젠가는 들어가게 — 모든 사건은 끝난다)과 봉쇄 자리 수(출렁이면 봉쇄를 거뒀다 다시 내는 왕복)는 머릿수 그대로
+  let usable = 0;
+  for (const b of police) if (copUsable(sim, a, b)) usable++;
+  const cp1 = usable !== police.length;      // CP1 이 문턱의 수를 바꾸었다 (그 문턱이 결정을 바꾸었을 때만 센다 — docCmd)
   let lightCops = 0;      // 가벼운 일을 한다고 알린 다친 경관 (본인의 보고 — mate 사실 light. 후퇴 중·안전 구역의 경관은 출입구를 지키지 못한다)
   for (const b of armedCops) if (sim.responders[b.rid].status === 'injured' && lightDuty(a, b)) lightCops++;
   if (!s.sizeupDone) want(sim, s, 'sizeup', {}, 0.96);
@@ -259,7 +282,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     if (s.negotStart < 0) s.negotStart = sim.t;
     const waited = sim.t - s.negotStart;
     if (!gun) {
-      if (h.value.state === 'fight' && police.length >= 2) {
+      if (h.value.state === 'fight' && usable >= 2) {
         // 흉기를 휘두르는 상대와는 말이 통하지 않는다 — 협상을 접고 둘이 붙어 제압한다
         // (협상을 붙들고 있으면 봉쇄·협상에 손이 다 묶여 검거할 사람이 남지 않는다)
         cancel(s, (w) => w.kind === 'negotiate' && w.hostile === h.id);
@@ -279,21 +302,26 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       let why = '';
       if (hostage) {
         // 인질 사건: 섣불리 들어가지 않는다. 섬광탄을 가진 부대가 오거나, 인질이 다쳤거나, 협상이 한계에 이르렀을 때만
-        if (I.problems.some((p) => p.detail === '시한이 지나 인질이 다침') && police.length >= 2) why = '인질이 다쳐 더 기다릴 수 없음';
-        else if (hasBang && police.length >= 3 && waited > 18) why = '섬광탄을 가진 기동대가 도착해 진입 조건이 갖춰짐';
-        else if (waited > 125 && police.length >= 3) why = '협상이 길어져 시한이 임박';
+        if (I.problems.some((p) => p.detail === '시한이 지나 인질이 다침') && usable >= 2) why = '인질이 다쳐 더 기다릴 수 없음';
+        else if (hasBang && usable >= 3 && waited > 18) why = '섬광탄을 가진 기동대가 도착해 진입 조건이 갖춰짐';
+        else if (waited > 125 && usable >= 3) {
+          // (R3 §6.1 CP4) 섬광탄 없는 인질 진입을 하지 않는다: 섬광탄을 가진 사람이 있거나 인질이 다쳤다고 믿을 때만. 그 밖에는 협상을 잇고 기동대를 부른다(아래 지금 규칙)
+          if (!CP4_ON || hasBang || hostHurt(I)) why = '협상이 길어져 시한이 임박';
+          else docCmd(sim, I, 'CP4', -1);
+        }
         if (!I.assigned.some((uid) => sim.units[uid].caps.tactical >= 0.9)) request(sim, s, I, a, 'tactical', '인질 사건 — 섬광탄을 가진 기동대 필요', true);
-      } else if (crit && police.length >= 2 && waited > 12) why = '내부에 위중한 부상자가 있어 더 기다릴 수 없음';
-      else if (fighting && police.length >= 2 && waited > 8 && cas.some((c) => c.value.where === 'scene' && c.value.band >= 1 && c.value.band < 3)) why = '총격이 이어지고 내부에 부상자가 있음';
-      else if (fighting && police.length >= 3 && waited > 22) why = '용의자가 계속 발포하고 협상에 응하지 않음';
-      else if (waited > 60 && police.length >= 3) why = '협상에 진전이 없고 진입 인원이 확보됨';
-      else if (waited > 100 && police.length >= 2) why = '장시간 대치로 더 이상의 지연은 위험';
+      } else if (crit && usable >= 2 && waited > 12) why = '내부에 위중한 부상자가 있어 더 기다릴 수 없음';
+      else if (fighting && usable >= 2 && waited > 8 && cas.some((c) => c.value.where === 'scene' && c.value.band >= 1 && c.value.band < 3)) why = '총격이 이어지고 내부에 부상자가 있음';
+      else if (fighting && usable >= 3 && waited > 22) why = '용의자가 계속 발포하고 협상에 응하지 않음';
+      else if (waited > 60 && usable >= 3) why = '협상에 진전이 없고 진입 인원이 확보됨';
+      else if (waited > 100 && police.length >= 2) why = '장시간 대치로 더 이상의 지연은 위험';      // 시간 예비 규칙 — 머릿수 그대로 (CP1)
       if (why) {
         s.entryOrdered = true; s.breachAt = sim.t + 9; s.breachDone = false;
         const plan = planEntry(s, h.value);
         s.entryExit = plan.exit;
         // 인원이 넉넉하면 두 문으로 나눠 동시에 들어간다 (용의자는 한쪽만 볼 수 있다)
-        const two = police.length >= 4 && s.exits.length >= 2;
+        const two = usable >= 4 && s.exits.length >= 2;
+        if (cp1 && (police.length >= 4) !== two && s.exits.length >= 2) docCmd(sim, I, 'CP1', -1);      // 쓸 수 있는 경찰이 모자라 한 문으로 들어간다
         s.entryExit2 = two ? (plan.exit === 0 ? 1 : 0) : -1;
         if (two) s.breachAt = sim.t + 15;
         const name = (k: number): string => exitName(s, k);
@@ -525,6 +553,8 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   if (B.list('mate').some((f) => f.value.status === 'down' && !f.value.dead && onScene(s, f.id)) && emsUnits === 0) request(sim, s, I, a, 'ems', '대원 부상', true);
   const gunActive = active.some((h) => h.value.weapon === 'gun');
   const lawUnits = countUnits(sim, s, I, 'law', 0.5);
+  // (R3 §6.1 CP1) 쓸 수 있는 경찰이 이 사건의 가장 낮은 문턱(흉기·총기 둘)보다 적고 오는 경찰 부대가 없으면 제압 인력을 부른다
+  if (active.length > 0 && usable < 2 && police.length > usable && lawComing(sim, I) === 0) { const ev = request(sim, s, I, a, 'law', '제압 가능 인력 부족', true); if (ev >= 0) docCmd(sim, I, 'CP1', ev); }
   if (gunActive && lawUnits < 2) request(sim, s, I, a, lawUnits === 0 ? 'law' : 'tactical', '총기를 소지한 용의자와 대치 중, 인원 부족', true);
   else if (active.length > 0 && lawUnits === 0) request(sim, s, I, a, 'law', '용의자 대응 인력 없음', true);
   else if (active.length > 0 && lawUnits === 1 && s.negotStart >= 0 && sim.t - s.negotStart > 22) request(sim, s, I, a, 'law', '한 팀으로는 말을 걸면서 붙잡을 수 없음', false);      // 한 사람은 말을 걸고 한 사람은 길목을 지키면 붙잡을 손이 없다
@@ -600,6 +630,7 @@ export function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         if (b.task && b.task.kind === 'rehab' && sim.responders[b.rid].stamina < 40) continue;      // 지친 대원은 어느 정도 회복할 때까지 지시를 받지 않는다 (brain.ts 의 휴식 붙잡기)
         if (b.task && (b.task.kind === 'resupply' || b.task.kind === 'swapAir')) continue;      // 예비 장비·공기통으로 바꾸는 중(8~11초 남짓): 끝날 때까지 기다린다. 지시로 빼 오면 교체를 처음부터 다시 시작하며 같은 말을 되풀이한다
         if (b.task && b.task.kind === 'evacuate') continue;      // (X6) 철수 중인 대원은 밖에 닿을 때까지 지시를 받지 않는다 (think 가 철수를 붙잡으므로 지시가 '응답 없음'으로 끝난다)
+        if (b.task && docHolds(s, b)) continue;      // (R3 §2.6) 교본 임무(엄폐·탄약 보급·공기 탈출·짝 따라 나가기, 짝이 위험 실내에 있는 동안의 짝 동행) 중인 대원은 빼 오지 않는다 — 짧고 스스로 끝난다
         if (sim.responders[b.rid].status === 'injured' && !lightDuty(a, b)) continue;      // 부상을 알린 대원은 후퇴 중이다 (brain.ts 의 부상 후퇴 붙잡기) — 지시해도 받지 못하고 재지시만 되풀이된다. 가벼운 일을 한다고 알린 다친 대원에게는 지시한다(맡을 수 있는 일은 fitFor 가 거른다). 조직이 아는 상태와 믿음만 본다 — 남의 체력을 읽지 않는다
         if (failedRecently(sim, w, b.rid)) continue;      // 이 작업에 닿지 못했거나 위험해서 물러난 대원: 한동안 다른 대원에게 맡기거나 기다린다
         const fp = fitParts(sim, s, b, w);      // fit = fitFor 와 같은 값, base = 교본 전의 값 (R3)

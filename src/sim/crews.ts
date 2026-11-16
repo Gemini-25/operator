@@ -31,6 +31,9 @@ export interface KitDef {
   batch?: 'r2'                        // (R2) 고장 추첨을 R1 의 흐름(kit·aid:<n>) 밖에서 따로 받는 장비 — drawFaults 가 건너뛰고 drawBatchFaults 가 kit-r2·aid-r2:<n> 에서 뽑는다 (OWN_DRAW)
     | 'n8'                            // (N8 §4.9) 마취총 — 따로 kit-n8 흐름 (R2 단계 1a 가 넣는 건너뛰기 조건에 'n8' 을 더한다. 단계 2b 에는 그 장비를 든 부대가 편성되지 않는다)
     | 'n9';                           // (N9 §4.8) 잠수 장비 — drawFaults 가 건너뛰고 drawBatchFaults 가 따로 kit-n9 흐름에서 뽑는다 (OWN_DRAW)
+  mag?: number;                       // (R3 §2.9) 총기: 탄창 크기 — 명부가 KitItem.mag 로 채운다 (uses 는 가진 탄 전부)
+  reload?: number;                    // (R3 §2.9) 총기: 탄창이 비었을 때 재장전에 걸리는 초 (그동안 쏘지 않는다 — doctrineRun.fireRound·reloadTick)
+  perShot?: number;                   // (R3 §2.9) 총기: 한 번 쏠 때 쓰는 탄 (소총은 두 발 사격)
 }
 /**
  * 장비 표. 효과의 내용은 설계서 4절 표에 있고, 여기에는 여러 장비가 같은 식으로 견주는 값(tool·med·armor)과 고장 추첨 여부만 둔다.
@@ -57,9 +60,9 @@ export const KITS: Record<KitId, KitDef> = {
   aed: { name: '제세동기', group: 'med', faultable: true },
   stretcher: { name: '들것', group: 'med' },
   spineBoard: { name: '척추 고정판', group: 'med' },
-  pistol: { name: '권총', group: 'police' },
-  rifle: { name: '소총', group: 'police' },
-  sniper: { name: '저격 소총', group: 'police' },
+  pistol: { name: '권총', group: 'police', uses: 30, mag: 15, perShot: 1, reload: 2.0 },      // (R3 §2.9) 탄약 — 30발 = 쏠 수 있는 횟수 30
+  rifle: { name: '소총', group: 'police', uses: 90, mag: 30, perShot: 2, reload: 2.5 },       // 두 발 사격 — 쏠 수 있는 횟수 45
+  sniper: { name: '저격 소총', group: 'police', uses: 15, mag: 5, perShot: 1, reload: 3.0 },
   taser: { name: '테이저', group: 'police', faultable: true },
   flashbang: { name: '섬광탄', group: 'police' },
   vest: { name: '방검·방탄 조끼', group: 'police', armor: 0.25 },
@@ -283,7 +286,7 @@ export function skillsOf(role: RoleId, skill: number): Skills {
  * air = 공기호흡기 한 통의 공기(초, tn.airFull). 주지 않으면 공기를 세지 않는다(줄지 않는다 — 손으로 만든 명부·시험용).
  */
 export function kitFor(role: RoleId, air?: number, ids: KitId[] = ROLES[role].kit): KitItem[] {
-  return ids.map((id) => ({ id, uses: id === 'scba' ? air : KIT_USES[id] ?? KITS[id].uses, fault: false, faultKnown: false }));      // (R2 1a) 표의 처음 수량(KitDef.uses)도 복사한다 — 소화기·비살상탄·잠수 장비의 공기·오일펜스
+  return ids.map((id) => ({ id, uses: id === 'scba' ? air : KIT_USES[id] ?? KITS[id].uses, mag: KITS[id].mag, fault: false, faultKnown: false }));      // (R2 1a) 표의 처음 수량(KitDef.uses)도 복사한다 — 소화기·비살상탄·잠수 장비의 공기·오일펜스. (R3 §2.9) 총기는 탄창도 가득 (그 밖은 mag 가 비어 있다 — 모든 항목이 같은 모양)
 }
 /** (N8) 그 부대 종류의 그 자리가 드는 장비: 자리별 장비(STAFF.kit)가 있으면 그것, 없으면 역할의 기본 장비 (지금은 복구반장만 부대마다 다르다) */
 export function kitIdsOf(kind: UnitKind, slot: number): KitId[] { const st = STAFF[kind]; return st.kit?.[slot] ?? ROLES[st.std[slot]].kit; }
@@ -465,6 +468,11 @@ export function airShort(sim: Sim, rid: number): boolean { const it = itemOf(sim
 export function scbaReady(sim: Sim, rid: number): boolean { return hasKit(sim, rid, 'scba') && !airShort(sim, rid); }
 /** 공기통을 가득 채운다 (예비 공기통으로 바꿨거나, 부대가 집에 돌아왔다). 공기를 세지 않는 대원은 그대로다 */
 export function refillAir(sim: Sim, rid: number): void { const it = itemOf(sim, rid, 'scba'); if (it !== null && it.uses !== undefined) it.uses = sim.tune.airFull; }
+/** (R3 §2.9) 총기의 탄을 처음 값으로 (탄약 보급 — doctrineRun 의 rearm, 집에 닿은 부대 — resources.arrive). 수량을 세지 않는 총기(손으로 만든 명부)는 그대로 */
+export function refillGuns(sim: Sim, rid: number): void {
+  const kit = sim.responders[rid].kit;
+  if (kit) for (let k = 0; k < kit.length; k++) { const it = kit[k], d = KITS[it.id]; if (d.mag !== undefined && it.uses !== undefined) { it.uses = d.uses ?? it.uses; it.mag = d.mag; } }
+}
 /**
  * 이 대원이 그 일을 할 장비를 갖췄는가 — 장비·부서와 **알려진 장비 상태**만 본다(숨은 고장은 모른다. 공기 잔량과 예비 공기통은 자기 조직의 상태다).
  * 오고 있는 부대에 그 일을 할 사람이 있는지 볼 때 쓴다(commander.anyCapable). 현장의 대원은 fitFor 가 본다.

@@ -53,9 +53,25 @@ export const DOC = {
   CIV_R: 2,             // 시민이 위험하다: 위협 곁의 거리
   BOMB_NEAR: 2,         // 해체 중: 장치 곁의 거리
   W_MEM: 30,            // 판단 지점 timeout 뒤 그 작업을 맡지 않는 초 (docMem 'w:')
+  PACK_R: 2.6,          // (2단계) 같은 용의자를 맡은 동료가 곁에 있다 (P01·P03·P07·P14)
+  COVER_MEM: 20,        // (2단계) 엄폐가 끝난 뒤 같은 위협에 그 줄을 다시 걸지 않는 초 (엄폐 ↔ 교전 왕복을 늦춘다)
+  COVER_CAP: 12,        // (2단계) 엄폐 임무의 상한 (초)
+  CALM: 4,              // (2단계) 이만큼 피격이 없으면 엄폐를 끝낸다 (재장전 끝 · 탄 위급)
 } as const;
 /** 공기 탈출·짝 따라 나가기 — brain 의 의무 자리가 그 임무 중이면 다른 것을 보지 않는다 (TaskKind 에는 3단계가 더한다) */
 export const DOC_DUTY_TASKS: ReadonlySet<string> = new Set<string>(['airOut', 'pairOut']);
+/** (2단계) 지휘관이 빼 가지 않는 교본 임무 (§2.6 — commander.assign 의 건너뛰기) */
+const DOC_HOLD_TASKS: ReadonlySet<string> = new Set<string>(['cover', 'rearm', 'airOut', 'pairOut']);
+/** 그 대원이 지휘관이 빼 가지 않는 교본 임무 중인가 (동료의 겉 — 임무 종류와 짝의 자리): 엄폐·탄약 보급·공기 탈출·짝 따라 나가기, 짝이 위험 실내에 있는 동안의 짝 동행 */
+export function docHolds(s: Scene, b: FieldAgent): boolean {
+  const t = b.task;
+  if (t === null) return false;
+  const k: string = t.kind;
+  if (DOC_HOLD_TASKS.has(k)) return true;
+  if (k !== 'pair' || b.buddy === undefined || b.buddy < 0) return false;
+  const m = agentOf(s, b.buddy, b);
+  return m !== null && riskyAt(s, b, m.x, m.y);
+}
 /** 짝으로 쓸 수 없는 임무 (§5.2) */
 const BUDDY_BUSY: ReadonlySet<string> = new Set<string>(['cover', 'rearm', 'airOut', 'pairOut', 'retreat', 'evacuate', 'rehab']);
 /** 밖 대기조로 세지 않는 임무 (§5.6) */
@@ -222,6 +238,16 @@ export function outsideWatch(sim: Sim, s: Scene, a: FieldAgent, ex: Pt): number 
   }
   return n;
 }
+/**
+ * (2단계 — 지휘 CP1) 쓸 수 있는 경찰인가 (지휘관 a 의 믿음과 조직 정보로): 그 대원의 자기 신고(지휘관 믿음 속 'crew' 사실)가 중상 이상이 아니고,
+ * 가진 총의 탄이 위급(발사 2회 이하)이 아니다. 동요는 빼지 않는다(6~26초로 오가므로 빼면 문턱이 출렁인다). 머릿수(총기 · 역할 묶음 bomb 아님 · 걸을 수 있는 다친 대원 아님)는 부르는 쪽이 먼저 거른다
+ */
+export function copUsable(sim: Sim, a: FieldAgent, b: FieldAgent): boolean {
+  const v = a.beliefs.val<CrewBelief>('crew', b.rid);
+  if (v !== undefined && v.band >= 1) return false;
+  const g = gunOf(sim, b.rid);
+  return !(g !== null && g.ammo !== Infinity && g.ammo <= 2 * g.perShot);
+}
 /** 밖 대기조의 필요한 수: 2, 같은 사건으로 공기호흡기 대원을 태운 소방 부대가 오는 중이면 1 (조직 정보) */
 export function watchNeed(sim: Sim, s: Scene): number {
   const I = sim.incidents[s.incidentId];
@@ -351,11 +377,18 @@ export function docSit(sim: Sim, s: Scene, a: FieldAgent): DocSit {
   let lanes2nd = false;
   for (let k = 0; k < I.problems.length; k++) if (I.problems[k].code === 'SECONDARY_COLLISION') { lanes2nd = true; break; }
   const danger = opsLevel(s, a, myRg, tileOf(s, a.x, a.y));
+  // (2단계) 총기·교전 위협 (믿음), 섬광탄 (동료의 장비·오는 부대 — 조직 정보)
+  let gunThreat = false, fightThreat = false;
+  for (let k = 0; k < hs.length; k++) { const v = hs[k].value as { weapon: string; state: string }; if (v.state !== 'hold' && v.state !== 'fight' && v.state !== 'flee') continue; if (v.weapon === 'gun') gunThreat = true; if (v.state === 'fight') fightThreat = true; }
+  let bangOnScene = false, bangComing = false;
+  for (let k = 0; k < s.agents.length && !bangOnScene; k++) { const b = s.agents[k]; if (b.status === 'active' && sim.responders[b.rid].dept === 'police' && kitCount(sim, b.rid, 'flashbang') > 0) bangOnScene = true; }
+  for (let k = 0; k < I.assigned.length; k++) { const q = sim.units[I.assigned[k]]; if ((q.state === 'enroute' || q.state === 'turnout') && q.dept === 'police' && q.flashbangs > 0) { bangComing = true; break; } }
   return {
     kind: s.kind, label: I.assessment ? I.assessment.label ?? '' : '', phase: phaseOf(sim, s, a),
     hot: s.kind === 'armed' && s.secureAt < 0, outdoor: s.outdoor === true, secure: s.secureAt >= 0,
     threat, civAtRisk, inHazard: riskyRegion(s, a, myRg), victimInside, danger, wDanger: danger, ctlDone, liveBomb, defusing,
     patients, seatsLeft: seats, negotSec: s.negotStart >= 0 ? sim.t - s.negotStart : 0, entryOrdered: s.entryOrdered, lanes2nd,
+    gunThreat, fightThreat, bangOnScene, bangComing,
   };
 }
 /** 가벼운 일인가 (H1 LIGHT_WORK 의 정본 그대로 — 처치는 믿음 속 대상이 안전 구역에 나와 있을 때만, 동료 처치는 그 동료가 안전 구역일 때만) */
@@ -377,7 +410,7 @@ function cacheOf(sim: Sim, a: FieldAgent): DocCache {
 /** 담아 둔 상태를 버린다 (같은 틱 안에서 대원의 상태를 손으로 바꾼 시험이 쓴다). a 가 없으면 모두 — 줄 목록의 색인도 (시험이 줄을 바꿔 끼울 때) */
 export function docForget(a?: FieldAgent): void { if (a === undefined) { CACHE = new WeakMap(); IDX_N = -1; } else CACHE.delete(a); }
 /** 교본 줄이 받는 입력을 만든다. mode = 'self'(자기 몸) | 'report'(남이 아는 만큼). w = 대상 작업, sense = 대원이 선 칸의 감각, dng = brain 의 위험 점수 */
-export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report', w: WorkItem | null = null, sense: Sense = ZERO_SENSE, dng = 0): DocCtx {
+export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report', w: WorkItem | null = null, sense: Sense = ZERO_SENSE, dng = 0, dngSign = 0): DocCtx {
   const ch = cacheOf(sim, a);
   const st = mode === 'self' ? (ch.self ??= stateSelf(sim, s, a)) : (ch.rep ??= stateReported(sim, s, a));
   let sit = (ch.sit ??= docSit(sim, s, a));
@@ -391,17 +424,37 @@ export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report
     light = lightWork(a, w);
   }
   const rid = a.rid;
+  // (2단계) 대상 용의자: 대상 작업의 용의자 → 지금 임무의 용의자 → 가장 가까운 활동 용의자. 같은 용의자를 맡은 동료 (동료의 겉)
+  const hid = w !== null && w.hostile >= 0 ? w.hostile : a.task !== null && a.task.hostile >= 0 ? a.task.hostile : -1;
+  const tg = hid >= 0 ? threatOf(a, hid) ?? sit.threat : sit.threat;
+  const pack = { n: 0, near: 0, far: 0 };
+  if (tg !== null) for (let k = 0; k < s.agents.length; k++) {
+    const b = s.agents[k];
+    if (b === a || b.status !== 'active' || b.task === null || b.task.hostile !== tg.id || (b.task.kind !== 'arrest' && b.task.kind !== 'engage')) continue;
+    pack.n++; if (dist(a.x, a.y, b.x, b.y) <= DOC.PACK_R) pack.near++; else pack.far++;
+  }
+  let hide: { x: number; y: number } | null | undefined;
+  const hideSpot = (): { x: number; y: number } | null => {
+    if (hide === undefined) hide = mode === 'self' && tg !== null ? coverSpot(s, a.x, a.y, tg.x, tg.y, false) : null;
+    return hide;
+  };
   return {
     sim, s, a, u: sim.units[a.unitId], dept: docDeptOf(sim, rid), role: roleIdOf(sim, rid), group: groupOf(sim, rid),
     mode, w, hz, wRisky, light, st, sit, sense, dng,
     has: (id: KitId) => kitHas(sim, rid, id), kit: (id: KitId) => kitCount(sim, rid, id),
     m: undefined, see: undefined,
+    tg, pack, dngSign, hideSpot, solo: (() => { const role = roleIdOf(sim, rid); return role !== null && SOLO_OK.has(role); })(),
   };
+}
+/** (2단계) 그 용의자의 믿음을 위협의 모양으로 (모르면 undefined) */
+function threatOf(a: FieldAgent, id: number): DocThreat | undefined {
+  const v = a.beliefs.val<{ x: number; y: number; weapon: 'gun' | 'knife' | 'none'; state: string; hostage: boolean; facing: number }>('hos', id);
+  return v === undefined ? undefined : { id, x: v.x, y: v.y, d: dist(a.x, a.y, v.x, v.y), weapon: v.weapon, state: v.state, hostage: v.hostage, facing: v.facing };
 }
 
 // ───────────────────────── 줄 고르기 ─────────────────────────
 const EMPTY: DoctrineRule[] = [];
-const GATE_OK: DocGateAns = Object.freeze({ ok: true, rule: null, wait: 0, opt: null }) as DocGateAns;
+const GATE_OK: DocGateAns = Object.freeze({ ok: true, rule: null, wait: 0, opt: null, exc: null }) as DocGateAns;
 /** (자리, 일) 별로 나눈 줄 목록. 등록이 바뀌면(시험이 줄을 잠깐 넣고 빼면) 다시 만든다 */
 let IDX_N = -1;
 let IDX = new Map<string, DoctrineRule[]>();
@@ -437,7 +490,14 @@ export function applies(c: DocCtx, r: DoctrineRule): boolean {
   if (!whoOk(c, r)) return false;
   if (r.kits && !r.kits.some((id) => usable(c, id))) return false;
   if (r.noKits && r.noKits.some((id) => usable(c, id))) return false;
-  return r.when(c);
+  return r.when(c) && !(r.unless !== undefined && r.unless(c));
+}
+/** (2단계) 예외(unless) 때문에만 걸리지 않는가 — 판단 지점의 "예외가 처음 결정을 바꾼 때" 기록용 */
+function exceptedBy(c: DocCtx, r: DoctrineRule): boolean {
+  if (r.unless === undefined || !whoOk(c, r)) return false;
+  if (r.kits && !r.kits.some((id) => usable(c, id))) return false;
+  if (r.noKits && r.noKits.some((id) => usable(c, id))) return false;
+  return r.when(c) && r.unless(c);
 }
 /** 교본 기억: 그 작업을 맡지 않는다 ('w:<작업 id>' — 판단 지점 timeout 뒤 30초) */
 function memWork(sim: Sim, a: FieldAgent, wid: number): boolean {
@@ -455,7 +515,7 @@ function memRule(sim: Sim, a: FieldAgent, rule: string, tgt: string): boolean {
   return false;
 }
 /** 행동 줄의 기본 대상 열쇠: 믿음 속 가장 가까운 위협 ('h:<id>'), 없으면 '' */
-export function docTarget(c: DocCtx): string { return c.sit.threat !== null ? 'h:' + c.sit.threat.id : ''; }
+export function docTarget(c: DocCtx): string { const t = c.tg ?? c.sit.threat; return t !== null ? 'h:' + t.id : ''; }
 
 // ───────────────────────── ① fit ─────────────────────────
 /**
@@ -517,7 +577,7 @@ export function docDrop(sim: Sim, s: Scene, a: FieldAgent): DoctrineRule | null 
 
 // ───────────────────────── ② duty · act ─────────────────────────
 /** 한 판단에 교본 후보 하나: 걸리는 줄 가운데 rank 가 가장 작은 것, 같으면 등록 순서 (§2.6) */
-function pickAct(sim: Sim, s: Scene, a: FieldAgent, hook: 'duty' | 'act', swap: boolean, sense: Sense, dng: number): DocPick | null {
+function pickAct(sim: Sim, s: Scene, a: FieldAgent, hook: 'duty' | 'act', swap: boolean, sense: Sense, dng: number, dngSign = 0): DocPick | null {
   if (DOCTRINE.length === 0) return null;
   const rules = rulesFor(hook);
   if (!rules.length || a.carrying !== -1) return null;      // 업고 있는 대원에게는 의무·행동을 걸지 않는다 — 그 운반이 곧 나가는 길이다 (G07)
@@ -525,9 +585,10 @@ function pickAct(sim: Sim, s: Scene, a: FieldAgent, hook: 'duty' | 'act', swap: 
   for (let k = 0; k < rules.length; k++) {
     const r = rules[k];
     if ((r.swap === 'retreat') !== swap || (best !== null && r.rank >= best.rule.rank)) continue;
-    c ??= docCtx(sim, s, a, 'self', null, sense, dng);
+    c ??= docCtx(sim, s, a, 'self', null, sense, dng, dngSign);
     if (!applies(c, r) || memRule(sim, a, r.id, docTarget(c))) continue;
     for (const e of effectsOf(r)) {
+      if ((e.kind === 'duty' || e.kind === 'act') && a.task !== null && (a.task.kind as string) === e.act) continue;      // (2단계) 이미 그 행동을 하는 중이다 — 다시 시작하지 않는다
       if (hook === 'duty' && e.kind === 'duty') { best = { rule: r, act: e.act, score: Infinity }; break; }
       if (hook === 'act' && e.kind === 'act') { best = { rule: r, act: e.act, score: typeof e.score === 'function' ? e.score(c) : e.score }; break; }
     }
@@ -539,7 +600,7 @@ export function docDuty(sim: Sim, s: Scene, a: FieldAgent, sense: Sense = ZERO_S
 /** 교본 행동 후보 하나 (brain 의 점수 후보 — 공기통 교체 다음). 없으면 null */
 export function docAct(sim: Sim, s: Scene, a: FieldAgent, sense: Sense = ZERO_SENSE, dng = 0): DocPick | null { return pickAct(sim, s, a, 'act', false, sense, dng); }
 /** 후퇴 후보를 바꿔 끼우는 줄 (P11 — swap 'retreat'). 걸리면 그 행동, 없으면 null(후퇴 그대로) */
-export function docRetreat(sim: Sim, s: Scene, a: FieldAgent, dng: number, sense: Sense = ZERO_SENSE): DocPick | null { return pickAct(sim, s, a, 'act', true, sense, dng); }
+export function docRetreat(sim: Sim, s: Scene, a: FieldAgent, dng: number, sense: Sense = ZERO_SENSE, dngSign = 0): DocPick | null { return pickAct(sim, s, a, 'act', true, sense, dng, dngSign); }
 
 // ───────────────────────── ③ method ─────────────────────────
 /** R2 방법 점수에 곱하는 교본 배율 (0 = 후보에서 뺀다). 받은 dc 를 고치지 않는다. 줄이 없으면 1 */
@@ -610,21 +671,21 @@ export function docGate(sim: Sim, s: Scene, a: FieldAgent, gate: DocGateId, sens
   if (!rules.length) return GATE_OK;
   const t = a.task;
   let c: DocCtx | null = null;
-  let blocker: DoctrineRule | null = null, wait = 0, opt: string | null = null, optRank = 9;
+  let blocker: DoctrineRule | null = null, wait = 0, opt: string | null = null, optRank = 9, exc: DoctrineRule | null = null;
   for (let k = 0; k < rules.length; k++) {
     const r = rules[k];
     const g = r.gate;
     if (g === undefined || (Array.isArray(g) ? g.indexOf(gate) < 0 : g !== gate)) continue;
     if (r.works && (t === null || r.works.indexOf(t.kind as WorkKind) < 0)) continue;
     if (c === null) { c = docCtx(sim, s, a, 'self', t !== null && t.workId >= 0 ? s.board[t.workId] ?? null : null, sense); c.see = see; }
-    if (!applies(c, r)) continue;
+    if (!applies(c, r)) { if (exc === null && exceptedBy(c, r) && effectsOf(r).some((e) => e.kind === 'block')) exc = r; continue; }
     for (const e of effectsOf(r)) {
       if (e.kind === 'block') { const mw = typeof e.maxWait === 'function' ? e.maxWait(c) : e.maxWait; if (mw > wait) wait = mw; if (blocker === null || r.rank < blocker.rank) blocker = r; }
       else if (e.kind === 'choose' && r.rank < optRank) { opt = e.opt; optRank = r.rank; }
     }
   }
-  if (blocker === null && opt === null) return GATE_OK;
-  return { ok: blocker === null, rule: blocker !== null ? blocker.id : null, wait, opt };
+  if (blocker === null && opt === null && exc === null) return GATE_OK;
+  return { ok: blocker === null, rule: blocker !== null ? blocker.id : null, wait, opt, exc: blocker === null && exc !== null ? exc.id : null };
 }
 
 // ───────────────────────── 바탕: 엄폐 자리 (§2.10) ─────────────────────────

@@ -927,13 +927,20 @@ export function stackSpot(s: Scene, door: number, a: FieldAgent): { x: number; y
   const w = s.w, n = s.w * s.h, dx = door % w, dy = (door / w) | 0;
   const wallX = (dx > 0 && !staticPass(s.tiles[door - 1])) || (dx < w - 1 && !staticPass(s.tiles[door + 1]));      // 좌우가 벽이면 가로 벽의 문 — 통로의 축은 세로(x = 문 x)
   const start = tileOf(s, a.x, a.y);
+  // 다른 대원이 이미 물러설 자리로 정한 칸은 비켜 고른다 (폭파하는 대원과 기다리는 진입조가 한 칸에 겹치지 않게 — 임무의 tx·ty, 자리를 정한 표시 range 1)
+  const taken = new Set<number>();
+  for (const b of s.agents) {
+    if (b === a || b.status !== 'active' || b.task === null) continue;
+    const bt = b.task.sub !== null && b.task.sub.method === 'charge' ? b.task.sub : b.task;
+    if (bt.range === 1 && (bt.method === 'charge' || bt.entryDoor !== undefined)) taken.add(Math.round(bt.ty) * w + Math.round(bt.tx));
+  }
   const steps = new Map<number, number>([[start, 0]]);
   const q = [start];
   let best = -1, bs = Infinity, any = -1, as = Infinity;
   for (let h = 0; h < q.length; h++) {
     const i = q[h], st = steps.get(i)!;
     const x = i % w, y = (i / w) | 0, d = Math.hypot(x - dx, y - dy);
-    if (walkTile(s, i)) {
+    if (walkTile(s, i) && !taken.has(i)) {
       const onAxis = wallX ? x === dx : y === dy;
       if (d >= CHARGE.back0 && d <= CHARGE.back1 && !onAxis && st < bs) { bs = st; best = i; }
       if (d > CHARGE.back0 && st < as) { as = st; any = i; }

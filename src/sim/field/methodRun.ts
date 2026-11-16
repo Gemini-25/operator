@@ -113,9 +113,26 @@ function openFails(I: Incident, key: string): Problem[] {
  */
 const SAY_ONCE: ReadonlySet<MethodId> = new Set<MethodId>(['listen', 'hail', 'thermal', 'rush']);
 /**
+ * (검토) 같은 대원이 같은 대상에 같은 방법을 다시 고른 시작 문구는 이 시간(초) 안이면 다시 알리지 않는다 — 다시 고를 때마다 시계를 새로 잰다.
+ * 임무를 다시 받을 때마다 방법을 처음부터 고르므로(새 Task) 대원이 곁의 두 일 사이를 오가거나(brain 의 자체 판단 — 지휘관이 고립자 셋 사이를 0.6초마다)
+ * 지휘관이 꺼졌다 되살아나는 불에 같은 진압을 5초마다 다시 내면 같은 말이 수십 번 쏟아졌다(측정 도구의 반복 최대 6 → 26). 기록만 줄인다 — 고르는 것은 그대로다
+ */
+export const SAY_AGAIN = 20;
+/** 대원마다 (대상 열쇠|방법) → 마지막으로 그 시작 문구를 고른 시각 (현장 대원 객체의 모양을 바꾸지 않으려 WeakMap — 되감기는 Sim 을 새로 만든다) */
+const SAID = new WeakMap<FieldAgent, Map<string, number>>();
+/** 이번 시작 문구가 같은 대원·같은 대상·같은 방법의 되풀이인가 (SAY_AGAIN 안). 부를 때마다 그 시각을 적는다 */
+function sayRepeat(sim: Sim, a: FieldAgent, key: string): boolean {
+  let m = SAID.get(a);
+  if (m === undefined) { m = new Map(); SAID.set(a, m); }
+  const last = m.get(key);
+  m.set(key, sim.t);
+  return last !== undefined && sim.t - last < SAY_AGAIN;
+}
+/**
  * 방법을 정한 순간의 시작 문구 (§3.6). 알리지 않는 것: 기록 전용 방법, 평소 방법(plain) — 문·잔해처럼 자주 일어나는 일은 완료 문구만 방법별로 바뀐다.
  * 다만 같은 대상에 아직 복구되지 않은 방법 실패가 있으면 평소 방법이라도 알린다(관찰자가 "다른 방법으로 다시"를 보게).
- * 탐지 방법은 한 대원이 한 사건에서 처음 고를 때만. 돌려주는 값 = 남긴 기록 id (알리지 않았으면 -1).
+ * 탐지 방법은 한 대원이 한 사건에서 처음 고를 때만. 같은 대원·같은 대상·같은 방법을 SAY_AGAIN 초 안에 다시 고르면 알리지 않는다.
+ * 돌려주는 값 = 남긴 기록 id (알리지 않았으면 -1).
  */
 function announce(sim: Sim, I: Incident, a: FieldAgent, t: Task, work: WorkKind, tg: MTarget): number {
   const m = t.method;
@@ -131,6 +148,7 @@ function announce(sim: Sim, I: Incident, a: FieldAgent, t: Task, work: WorkKind,
     if (SAY_ONCE.has(m)) { const said = (a.msaid ??= []); if (said.indexOf(m) >= 0) return -1; said.push(m); }
     text = sayStart(m, t.mwhy ?? 'usual', t.missing);
   }
+  if (sayRepeat(sim, a, targetKey(work, tg) + '|' + m)) return -1;
   const r = sim.responders[a.rid];
   return emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text });
 }

@@ -1187,8 +1187,9 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (m !== 'arrived') return;
       // (R2 §4.8) 출입구 통제 자리에 처음 닿으면 방법을 고른다 — 출입구 통제(평소) · 대피 방송(가스 현장의 경찰 · 확성기: 시작할 때 한 번 알리고 방법 기록. 효과는 hazards.tickGas)
       if (t.kind === 'perimeter' && t.method === undefined && t.mt0 === undefined) {
+        const ev0 = I.lastEvent;      // (검토) 방법 기록은 그 알림을 가리킨다 — 같은 말의 되풀이라 알리지 않았으면(methodRun.SAY_AGAIN) 가리킬 기록이 없다(-1). 남의 기록을 가리키지 않게
         startMethod(sim, s, I, a, t, 'perimeter', { cas: -1, prop: -1, hostile: -1, region: -1, tile: t.tile });
-        if (t.method === 'announce') recordMethod(sim, I, a, t, 'announce', t.mwhy ?? 'usual', true, I.lastEvent, { cas: -1, prop: -1, hostile: -1, region: -1, tile: t.tile });
+        if (t.method === 'announce') recordMethod(sim, I, a, t, 'announce', t.mwhy ?? 'usual', true, I.lastEvent !== ev0 ? I.lastEvent : -1, { cas: -1, prop: -1, hostile: -1, region: -1, tile: t.tile });
       }
       // 위치 사수: 교전 중인 용의자가 보이면 엄폐 상태에서 응사
       a.cooldown -= dt;

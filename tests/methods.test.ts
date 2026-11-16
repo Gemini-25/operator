@@ -731,6 +731,20 @@ describe('R2 실행부의 공통 함수 (methodRun.ts) — 시험이 줄을 켜�
       expect(lead.msaid).toEqual(['listen']);
     });
   });
+  it('(검토) 같은 대원이 같은 대상에 같은 방법을 20초 안에 다시 고르면 시작을 다시 알리지 않는다 — 다시 고를 때마다 시계를 새로 잰다. 다른 대원은 알린다', () => {
+    const { sim, I, s, c, tg, cop, lead } = setup();
+    sim.t = 100;
+    withRows({ improvise: ON }, () => {
+      const w = work(sim, s, 'waterRescue', { cas: c.id });
+      const say = (a: FieldAgent): string[] => { const n = sim.events.length; startMethod(sim, s, I, a, taskFor(a, w), 'waterRescue', tg); return texts(sim, n); };
+      expect(say(cop)).toEqual(['옷을 이어 던지겠습니다.']);
+      sim.t = 110; expect(say(cop), '10초 뒤 같은 대상·같은 방법 (임무를 다시 받았다)').toEqual([]);
+      sim.t = 125; expect(say(cop), '마지막으로 고른 때(110)부터 15초').toEqual([]);
+      sim.t = 146; expect(say(cop), '마지막으로 고른 때(125)부터 21초').toEqual(['옷을 이어 던지겠습니다.']);
+      expect(say(lead), '다른 대원').toEqual(['옷을 이어 던지겠습니다.']);
+      expect(cop.task!.method, '고르는 것은 그대로다').toBe('improvise');
+    });
+  });
   it('recordAir: 호이스트로 건진 사람에 방법을 적고, 지상의 수난 구조가 막혀 있던 대상이면 그 문제도 닫는다', () => {
     const { sim, I, s, c, tg, cop } = setup();
     const heli = sim.units.find((u) => u.kind === 'heli')!;

@@ -83,7 +83,7 @@ registerDoctrine(
   },
   {
     id: 'P08', dept: 'police', name: '탄약 보급', short: '탄약 보급',
-    hook: 'act',
+    who: { dept: ['police'] }, hook: 'act',
     when: (c) => gun(c) && c.st.ammoBox > 0 && ((c.st.ammoLow && !c.sit.fightThreat) || (c.st.ammoCrit && !c.st.underFire)),
     effect: { kind: 'act', act: 'rearm', score: (c) => (c.st.ammoCrit ? 0.97 : 0.78) },
     th: { score: 0.78, crit: 0.97 }, rank: 1, why: 'lowAmmo',
@@ -91,7 +91,7 @@ registerDoctrine(
   },
   {
     id: 'P09', dept: 'police', name: '탄약 바닥 — 엄폐', short: '탄약 바닥 — 엄폐',
-    hook: 'act',
+    who: { dept: ['police'] }, hook: 'act',
     when: (c) => gun(c) && gunFight(c) && c.st.ammoCrit && (c.st.underFire || c.st.ammoBox === 0) && c.hideSpot() !== null,
     effect: { kind: 'act', act: 'cover', score: 0.97 },
     th: { score: 0.97 }, rank: 0, why: 'lowAmmo',
@@ -99,7 +99,7 @@ registerDoctrine(
   },
   {
     id: 'P10', dept: 'police', name: '재장전은 엄폐해서', short: '재장전 — 엄폐',
-    hook: 'act',
+    who: { dept: ['police'] }, hook: 'act',
     when: (c) => gun(c) && c.st.reloading && c.st.underFire && !c.st.inCover && tgt(c) !== null,
     effect: { kind: 'act', act: 'cover', score: 0.97 },
     th: { score: 0.97 }, rank: 1, why: 'lowAmmo',
@@ -144,7 +144,7 @@ registerDoctrine(
   },
   {
     id: 'P16', dept: 'police', name: '협상 중 교전 — 엄폐', short: '협상 중단 — 엄폐',
-    hook: 'act',
+    who: { dept: ['police'] }, hook: 'act',
     // 이미 엄폐한 협상 자리(executor 'negotiate' 의 '위치 사수 — 엄폐 상태에서 응사')에서는 걸리지 않는다: 그 자리를 떠나 숨으면 응사가 끊겨 총격범이 다른 대원을 쏜다
     // (2단계 측정 — 강제 armed/siege 의 다친 대원이 이 줄 하나로 26 → 36). 본문 §3.1 은 그 자리에서 '서 있기만 한다'고 보았다
     when: (c) => { const t = tgt(c); return c.a.task !== null && c.a.task.kind === 'negotiate' && t !== null && t.state === 'fight' && !c.st.inCover && c.hideSpot() !== null; },
@@ -154,7 +154,7 @@ registerDoctrine(
   },
   {
     id: 'P22', dept: 'police', name: '탄약 위급 — 총기 상대 위치를 넘긴다', short: '탄약 부족',
-    hook: 'fit', works: ['engage', 'perimeter', 'traffic', 'interview'],
+    who: { dept: ['police'] }, hook: 'fit', works: ['engage', 'perimeter', 'traffic', 'interview'],
     when: (c) => gun(c) && c.st.ammoCrit && c.sit.gunThreat,
     effect: [
       { kind: 'fitMul', mul: 0, works: ['engage', 'perimeter'], drop: true, when: (c) => c.w === null || c.w.kind !== 'engage' || (c.tg !== null && c.tg.weapon === 'gun') },

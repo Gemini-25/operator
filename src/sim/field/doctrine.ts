@@ -407,6 +407,23 @@ function cacheOf(sim: Sim, a: FieldAgent): DocCache {
   if (c === undefined || c.tick !== sim.tick) { c = { tick: sim.tick, self: null, rep: null, sit: null }; CACHE.set(a, c); }
   return c;
 }
+/**
+ * 대원마다 한 번 만드는 장비 읽기 (c.has · c.kit). docCtx 는 fit 마다 불리므로 부를 때마다 닫힘을 새로 만들지 않는다 —
+ * 헤드리스 실행기(tsx)는 이름을 붙이는 닫힘마다 __name 을 한 번 더 부른다(2단계 측정: 교대당 시간의 몇 %). 값은 부를 때마다 읽으므로 결과는 같다
+ */
+const KIT_FN = new WeakMap<FieldAgent, { has: (id: KitId) => boolean; kit: (id: KitId) => number }>();
+function kitFnsOf(sim: Sim, a: FieldAgent): { has: (id: KitId) => boolean; kit: (id: KitId) => number } {
+  let f = KIT_FN.get(a);
+  if (f === undefined) { const rid = a.rid; f = { has: (id: KitId) => kitHas(sim, rid, id), kit: (id: KitId) => kitCount(sim, rid, id) }; KIT_FN.set(a, f); }
+  return f;
+}
+/** 숨을 자리가 없는 입력(보고 모드 · 위협 없음)이 함께 쓰는 답 */
+const NO_HIDE = (): { x: number; y: number } | null => null;
+/** 숨을 자리를 한 번만 재는 함수 (자기 모드이고 대상 위협이 있을 때 — 늦게, 처음 물을 때) */
+function hideOf(s: Scene, a: FieldAgent, tg: DocThreat): () => { x: number; y: number } | null {
+  let hide: { x: number; y: number } | null | undefined;
+  return () => { if (hide === undefined) hide = coverSpot(s, a.x, a.y, tg.x, tg.y, false); return hide; };
+}
 /** 담아 둔 상태를 버린다 (같은 틱 안에서 대원의 상태를 손으로 바꾼 시험이 쓴다). a 가 없으면 모두 — 줄 목록의 색인도 (시험이 줄을 바꿔 끼울 때) */
 export function docForget(a?: FieldAgent): void { if (a === undefined) { CACHE = new WeakMap(); IDX_N = -1; } else CACHE.delete(a); }
 /** 교본 줄이 받는 입력을 만든다. mode = 'self'(자기 몸) | 'report'(남이 아는 만큼). w = 대상 작업, sense = 대원이 선 칸의 감각, dng = brain 의 위험 점수 */
@@ -433,17 +450,13 @@ export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report
     if (b === a || b.status !== 'active' || b.task === null || b.task.hostile !== tg.id || (b.task.kind !== 'arrest' && b.task.kind !== 'engage')) continue;
     pack.n++; if (dist(a.x, a.y, b.x, b.y) <= DOC.PACK_R) pack.near++; else pack.far++;
   }
-  let hide: { x: number; y: number } | null | undefined;
-  const hideSpot = (): { x: number; y: number } | null => {
-    if (hide === undefined) hide = mode === 'self' && tg !== null ? coverSpot(s, a.x, a.y, tg.x, tg.y, false) : null;
-    return hide;
-  };
+  const kf = kitFnsOf(sim, a);
   return {
     sim, s, a, u: sim.units[a.unitId], dept: docDeptOf(sim, rid), role, group: groupOf(sim, rid),
     mode, w, hz, wRisky, light, st, sit, sense, dng,
-    has: (id: KitId) => kitHas(sim, rid, id), kit: (id: KitId) => kitCount(sim, rid, id),
+    has: kf.has, kit: kf.kit,
     m: undefined, see: undefined,
-    tg, pack, dngSign, hideSpot, solo: role !== null && SOLO_OK.has(role),
+    tg, pack, dngSign, hideSpot: mode === 'self' && tg !== null ? hideOf(s, a, tg) : NO_HIDE, solo: role !== null && SOLO_OK.has(role),
   };
 }
 /** (2단계) 그 용의자의 믿음을 위협의 모양으로 (모르면 undefined) */
@@ -483,6 +496,21 @@ function whoOk(c: DocCtx, r: DoctrineRule): boolean {
   if (w.roles && (c.role === null || w.roles.indexOf(c.role) < 0)) return false;
   if (w.groups && (c.group === null || w.groups.indexOf(c.group) < 0)) return false;
   if (w.units && w.units.indexOf(c.u.kind) < 0) return false;
+  return true;
+}
+/**
+ * 입력(docCtx)을 만들기 전에 '누구' 칸만 본다 — docCtx 가 채우는 dept·role·group·u 와 같은 값이라 whoOk 와 답이 같다.
+ * 걸릴 수 없는 줄만 있으면 입력을 만들지 않는다 (2단계: 행동·fit 줄이 경찰 줄로 늘어 소방·구급 대원의 판단마다 입력을 만들던 시간을 던다 — 결과는 같다)
+ */
+function whoMay(sim: Sim, a: FieldAgent, r: DoctrineRule): boolean {
+  const w = r.who;
+  if (!w) return true;
+  const rid = a.rid;
+  if (w.dept && w.dept.indexOf(sim.responders[rid].dept) < 0) return false;
+  if (w.doc && w.doc.indexOf(docDeptOf(sim, rid)) < 0) return false;
+  if (w.roles) { const ro = roleIdOf(sim, rid); if (ro === null || w.roles.indexOf(ro) < 0) return false; }
+  if (w.groups) { const g = groupOf(sim, rid); if (g === null || w.groups.indexOf(g) < 0) return false; }
+  if (w.units && w.units.indexOf(sim.units[a.unitId].kind) < 0) return false;
   return true;
 }
 /** 그 줄이 이 입력에 걸리는가: 누구 · 장비(kits·noKits) · 상황·상태(when) */
@@ -528,10 +556,12 @@ export function docFitRules(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, fit:
   if (memWork(sim, a, w.id)) { out.fit = 0; return out; }
   const rules = rulesFor('fit', w.kind);
   if (!rules.length) return out;
-  const c = docCtx(sim, s, a, 'report', w);
+  let c: DocCtx | null = null;
   let mul = 1, add = 0;
   for (let k = 0; k < rules.length; k++) {
     const r = rules[k];
+    if (!whoMay(sim, a, r)) continue;
+    c ??= docCtx(sim, s, a, 'report', w);
     if (!applies(c, r)) continue;
     let rm = 1, ra = 0, drop = false, any = false;
     for (const e of effectsOf(r)) {
@@ -567,7 +597,7 @@ export function docDrop(sim: Sim, s: Scene, a: FieldAgent): DoctrineRule | null 
   for (let k = 0; k < rules.length; k++) {
     const r = rules[k];
     const drops = effectsOf(r).filter((e) => e.kind === 'fitMul' && e.drop === true && e.mul === 0 && (!e.works || e.works.indexOf(w.kind) >= 0));
-    if (!drops.length) continue;
+    if (!drops.length || !whoMay(sim, a, r)) continue;
     c ??= docCtx(sim, s, a, 'report', w);
     if (!applies(c, r)) continue;
     for (const e of drops) if (!(e as { when?: (c: DocCtx) => boolean }).when || (e as { when: (c: DocCtx) => boolean }).when(c)) return r;
@@ -584,7 +614,7 @@ function pickAct(sim: Sim, s: Scene, a: FieldAgent, hook: 'duty' | 'act', swap: 
   let c: DocCtx | null = null, best: DocPick | null = null;
   for (let k = 0; k < rules.length; k++) {
     const r = rules[k];
-    if ((r.swap === 'retreat') !== swap || (best !== null && r.rank >= best.rule.rank)) continue;
+    if ((r.swap === 'retreat') !== swap || (best !== null && r.rank >= best.rule.rank) || !whoMay(sim, a, r)) continue;
     c ??= docCtx(sim, s, a, 'self', null, sense, dng, dngSign);
     if (!applies(c, r) || memRule(sim, a, r.id, docTarget(c))) continue;
     for (const e of effectsOf(r)) {

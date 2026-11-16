@@ -913,8 +913,8 @@ describe('R3 시험 2-d: 탄약 — 탄 위급에 피격 중이면 엄폐, 피�
   });
 });
 
-// ───────────────────────── 측정 묶음에서 쓰이지 않은 줄 (§9 완료 조건 1 — 측정 ∪ 시험 = 100%): P10 · CP2 · CP3 ─────────────────────────
-describe('R3 시험 2-d (덧붙임): 측정 묶음에서 한 번도 쓰이지 않은 경찰 줄을 장면이 쓴다 — 재장전 엄폐(P10)·2인 제압 요청(CP2)·탄약 보급 요청(CP3)', () => {
+// ───────────────────────── 측정 묶음에서 쓰이지 않은 줄 (§9 완료 조건 1 — 측정 ∪ 시험 = 100%): P10 · P11 · CP2 · CP3 (P09·P22 는 시험 2-d) ─────────────────────────
+describe('R3 시험 2-d (덧붙임): 측정 묶음에서 한 번도 쓰이지 않은 경찰 줄을 장면이 쓴다 — 재장전 엄폐(P10)·피격 엄폐(P11)·2인 제압 요청(CP2)·탄약 보급 요청(CP3)', () => {
   /** 지휘 교본(orders/doctrine.ts — 현장 등록의 마지막 registerOrders)을 시험용 도구로 한 번 부른다. 요청은 적어 두고 기록 id 77 을 돌려준다 */
   function orders(sim: Sim, s: Scene, I: Incident, a: FieldAgent, onScene: number[]): string[] {
     const asked: string[] = [];
@@ -944,6 +944,17 @@ describe('R3 시험 2-d (덧붙임): 측정 묶음에서 한 번도 쓰이지 �
     expect(A.task === null || A.task.kind !== 'cover').toBe(true);
     const d = I.docs!.find((q) => q.rule === 'P10' && q.rid === A.rid)!;
     expect(d.t1).toBeGreaterThan(d.t);
+  });
+  it('P11: 피격 중인 경찰(체력 40~70 · 출혈 없음 · 엄폐 아님)은 후퇴 대신 숨을 자리로 엄폐한다 (후퇴 후보를 바꿔 끼운다 — swap)', () => {
+    const { sim, I, s, h, A, B } = copsScene('R3-P11', 'armed/hostage', ['patrol'], 'gun', 'fight');
+    B.status = 'withdrawn';
+    put(A, spotAt(s, h.x, h.y, 3, 7, true, (x, y) => coverSpot(s, x, y, Math.round(h.x), Math.round(h.y), false) !== null)!);
+    const r = sim.responders[A.rid];
+    r.health = 60; r.composure = 0.1;      // 침착함이 낮아야 경찰의 피격 위험 점수가 후퇴 문턱(0.3)을 넘는다 (brain.dangerScore)
+    A.underFireT = sim.t; A.inCover = false;
+    think(sim, s, A);
+    expect(A.task!.kind).toBe('cover'); expect(A.task!.docRule).toBe('P11');
+    expect(I.docs!.some((d) => d.rule === 'P11' && d.rid === A.rid && d.hook === 'act')).toBe(true);
   });
   it('CP2: 맞서는 흉기 용의자 · 쓸 수 있는 경찰 하나 · 오는 경찰 부대 없음 → 22초를 기다리지 않고 2인 제압 인력을 부른다 (기록 id 가 기록에 남는다). 경찰이 둘이면 부르지 않는다', () => {
     const { sim, I, s, A, B } = copsScene('R3-CP2', 'armed/dispute', ['patrol'], 'knife', 'fight');

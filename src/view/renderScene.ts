@@ -34,6 +34,7 @@ import { ruinZones, strokeRuinEdges } from './scene/ruins';
 import { drawCatOver, drawCatUnder, drawTrappedDebris } from './scene/catLayer';
 import { TRIAGE, TRIAGE_EDGE, TRIAGE_TEXT, casBand, casDrawn, casSheet, hostileBand, hostileDrawn, hostileSheet, hurtPose, respBand, respLying, respSheet } from './triage';
 import { THROW_RELEASE, drawBarricades, drawBoats, drawCharges, drawMethodFx, inBoat, swimming } from './scene/methodsLayer';      // (R2 1d) 대응 방법의 그림 — 수난: 줄·장대·보트·헤엄치는 대원
+import { drawMethodGround, drawMethodOver, drawPowder, sniperSet } from './scene/methodsLayer';      // (R2 단계 4·5·6) 송풍기·바람·고가 사다리·저격 자리와 조준선·대피 방송·소화기 분말
 
 /** 현장 화면의 시점: 중심(타일 좌표)과 배율(1 = 현장 전체가 보인다) */
 export interface SceneCam { x: number; y: number; zoom: number }
@@ -188,6 +189,19 @@ function agentPose(sim: Sim, s: Scene, a: FieldAgent, moving: boolean): { arms: 
   if (sim.t - (a.taserAt ?? -99) < 1) return { arms: 'aim', item: 'taser' };
   // (G5) 길 위의 잠긴 문을 강제로 여는 중(하위 작업): 도구를 든다
   if (a.task && a.task.sub && a.task.sub.kind === 'force' && !moving) return { arms: 'work', item: opener };
+  // (R2 단계 4·5·6) 화재·무장·누출·통제의 방법: 소화기는 허리에 받친 소화기를 겨눈다(다가가는 동안에도 — 관창이 없다). 배연·환기 후 차단은 출입구로 가는 동안과
+  // 밸브 곁에서 환기를 기다리는 동안 빈손, 설치하는 동안(phase 5) 맨손 작업. 비살상탄은 주황 발사기를 두 손으로 겨눈다(상대가 무력화되면 지금처럼 덮쳐 제압).
+  // 대피 방송은 출입구 통제 자리에서 확성기. 저격은 지금처럼 저격 소총 — 저격 자리에서 몸을 낮추는 것은 drawPerson 의 crouch(methodsLayer.sniperSet)
+  const mt = a.task;
+  if (mt && mt.method) {
+    switch (mt.method) {
+      case 'extinguisher': if (mt.kind === 'suppress') return { arms: 'aim', item: 'extinguisher' }; break;
+      case 'ventilate': if (mt.kind === 'suppress') return mt.phase === 5 && !moving ? { arms: 'work', item: 'none' } : { arms: 'side', item: 'none' }; break;
+      case 'ventFirst': if (mt.kind === 'mitigate' && mt.phase < 7) return mt.phase === 5 && !moving ? { arms: 'work', item: 'none' } : { arms: 'side', item: 'none' }; break;
+      case 'beanbag': { const h = s.hostiles[mt.hostile]; if ((mt.kind === 'engage' || mt.kind === 'arrest') && h && sim.t >= h.stunUntil) return { arms: 'aim', item: 'launcher' }; break; }
+      case 'announce': if (mt.kind === 'perimeter' && a.spot >= 0 && !moving) return { arms: 'megaphone', item: 'none' }; break;
+    }
+  }
   const shield = hasKit(sim, rid, 'shield');
   if (tk === 'engage' || tk === 'perimeter') return { arms: 'aim', item: shield ? 'shield' : gun };
   if (tk === 'suppress' || (tk === 'overhaul' && !moving)) return { arms: 'hose', item: 'none' };
@@ -505,6 +519,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   // (R2 1d) 물에 띄운 보트 (사람보다 먼저 — 보트 안에 실린 사람과 앉은 대원이 그 위에)
   if (!MINI) drawBoats(ctx, sim, s, ts, o.alpha, time);
   if (!MINI) drawBarricades(ctx, s, ts);      // (R2 단계 2) 농성 문 안쪽에 쌓은 가구
+  if (!MINI) drawMethodGround(ctx, sim, s, ts, o.alpha, time);      // (R2 단계 4·5·6) 송풍기와 바람 · 사다리차 회전대 · 저격 자리
   // ── 사람: 구조 대상 → 용의자 → 대원 ──
   const carrierOf = new Map<number, FieldAgent>();
   for (const a of s.agents) if (a.carrying >= 0 && a.status !== 'left') carrierOf.set(a.carrying, a);
@@ -657,7 +672,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
         // (R2 1d) 헤엄치는 대원: 헬멧·공기호흡기를 벗은 모습(머리카락), 구명조끼를 입었으면 주황 조끼. 끌고 오는 사람은 바로 뒤에서 함께 헤엄친다(구조 대상 그림)
         const sk = lookOf('sw' + a.rid + ':' + u.kind + ':' + (rsp.role ?? ''), () => ({ ...lk, headCol: '#2b2420', headCol2: undefined, band: undefined, pack: 'none' }));
         drawSwimmer(ctx, x, y, ts, sk, time + a.rid * 0.37, 1, hasKit(sim, a.rid, 'pfd') ? '#f07a2a' : undefined);
-      } else drawPerson(ctx, x, y, ang, ts, lk, { step: time * 11 + a.rid, moving, arms: pose.arms, item: pose.item, t: time + a.rid * 0.37, recoil: af?.recoil, act: af?.throwAct ?? (pose.arms === 'throw' ? Math.min(1, a.ring / THROW_RELEASE) : undefined), crouch: sit || inBoat(a) || (a.inCover && s.kind === 'armed' && !moving && pose.arms === 'aim'), flinch: off && (off.x || off.y) ? off : undefined, hurt: hurt > 0 ? hurt : undefined });
+      } else drawPerson(ctx, x, y, ang, ts, lk, { step: time * 11 + a.rid, moving, arms: pose.arms, item: pose.item, t: time + a.rid * 0.37, recoil: af?.recoil, act: af?.throwAct ?? (pose.arms === 'throw' ? Math.min(1, a.ring / THROW_RELEASE) : undefined), crouch: sit || inBoat(a) || (a.inCover && s.kind === 'armed' && !moving && pose.arms === 'aim') || (!moving && sniperSet(a)), flinch: off && (off.x || off.y) ? off : undefined, hurt: hurt > 0 ? hurt : undefined });
       if (a.inCover && s.kind === 'armed') drawCoverBadge(ctx, x + ts * 0.36, y + ts * 0.34, ts);      // (G5) 엄폐: 반쪽 벽 기호
       // (R1) 공기 잔량 60초 아래: 머리 위 왼쪽의 작은 주황 점 (깜박이지 않는다)
       if (hasKit(sim, a.rid, 'scba') && kitUses(sim, a.rid, 'scba') < AIR_LOW) { disc(ctx, x - ts * 0.36, y - ts * 0.38, ts * 0.115, '#0b1219'); disc(ctx, x - ts * 0.36, y - ts * 0.38, ts * 0.08, kitUses(sim, a.rid, 'scba') <= 0 ? '#ff5d5d' : '#ff9f43'); }
@@ -674,6 +689,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   // (R2 1d) 대응 방법의 줄·장대: 구명줄·구명환·즉석 부력물·갈고리 장대·줄 확보 (scene/methodsLayer.ts)
   if (!MINI) drawMethodFx(ctx, s, ts, o.alpha);
   if (!MINI) drawCharges(ctx, s, ts, time);      // (R2 단계 2) 문에 붙인 장약·3-2-1
+  if (!MINI) drawMethodOver(ctx, sim, s, ts, o.alpha, time, o.truth);      // (R2 단계 4·5·6) 고가 사다리 · 저격 조준선(관찰자 시점) · 대피 방송의 호
 
   // ── 불 ──
   drawFire(ctx, s, ts, time, MINI);
@@ -955,7 +971,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
         ctx.fillStyle = '#ffb347'; ctx.beginPath(); ctx.arc(0, 0, sz * 0.3, 0, 7); ctx.fill(); ctx.restore();
       }
     } else if (f.kind === 'spray') {
-      drawSpray(ctx, cx(f.x), cy(f.y), cx(f.x2!), cy(f.y2!), ts, k, time);
+      if (f.color !== undefined) drawPowder(ctx, cx(f.x), cy(f.y), cx(f.x2!), cy(f.y2!), ts, k, time);      // (R2 단계 4) 색이 있는 분사 = 소화기의 흰 분말 (물줄기는 색이 없다)
+      else drawSpray(ctx, cx(f.x), cy(f.y), cx(f.x2!), cy(f.y2!), ts, k, time);
     } else if (f.kind === 'radio') {
       if (MINI) continue;
       ctx.strokeStyle = 'rgba(124,196,255,0.85)'; ctx.globalAlpha = 1 - k; ctx.lineWidth = 1.5;

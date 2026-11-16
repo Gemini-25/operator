@@ -26,7 +26,8 @@ export type ArmPose = 'side' | 'aim' | 'hose' | 'work' | 'kneel' | 'up' | 'back'
 export type Item = 'rifle' | 'pistol' | 'knife' | 'axe' | 'spreader' | 'none'
   | 'ram'                                 // (G5) 공성추
   | 'sniper' | 'taser' | 'shield' | 'tic' | 'halligan' | 'bigbag' | 'aed'      // (R1) 든 장비에서 고른다: 저격 소총 · 테이저 · 방탄 방패(+권총) · 열화상 카메라 · 할리건 · 전문 응급 가방 · 제세동기
-  | 'rope' | 'ring' | 'pole' | 'cloth';   // (R2) 수난 구조: 감긴 구명줄 · 구명환 · 갈고리 장대(손잡이 — 뻗은 장대는 methodsLayer) · 이은 옷(즉석 부력물)
+  | 'rope' | 'ring' | 'pole' | 'cloth'    // (R2) 수난 구조: 감긴 구명줄 · 구명환 · 갈고리 장대(손잡이 — 뻗은 장대는 methodsLayer) · 이은 옷(즉석 부력물)
+  | 'extinguisher' | 'launcher';          // (R2 단계 4·5) 'aim' 과 함께: 허리에 받친 빨간 소화기와 앞으로 겨눈 분사구 · 두 손으로 겨눈 주황 비살상탄 발사기
 export interface PersonPose {
   step: number; moving: boolean; arms: ArmPose; t: number; item?: Item; scale?: number; ghost?: number;
   recoil?: number;                        // (G5) 반동 0..1: 겨눈 반대쪽으로 0.06칸, 총을 0.04칸 더
@@ -163,7 +164,8 @@ export function drawPerson(g: G, x: number, y: number, ang: number, ts: number, 
   let hx = 0.3, hy = 0;                                   // 손에 든 물건의 기준점
   switch (p.arms) {
     case 'aim':
-      if (p.item === 'rifle' || p.item === 'sniper') { arm(0.02, 0.24, 0.2, 0.07); arm(0.02, -0.24, 0.36, -0.03); }
+      if (p.item === 'rifle' || p.item === 'sniper' || p.item === 'launcher') { arm(0.02, 0.24, 0.2, 0.07); arm(0.02, -0.24, 0.36, -0.03); }
+      else if (p.item === 'extinguisher') { arm(0.02, 0.24, 0.12, 0.2); arm(0.02, -0.24, 0.34, -0.04); }      // (R2) 한 손은 허리의 소화기 손잡이, 다른 손은 분사구
       else if (p.item === 'shield') { arm(0.02, -0.24, 0.3, -0.12); arm(0.02, 0.24, 0.3, 0.2); }      // 한 팔로 방패를 받치고 다른 손에 권총
       else { arm(0.02, 0.24, 0.31, 0.03); arm(0.02, -0.24, 0.31, -0.03); }
       break;
@@ -244,6 +246,18 @@ export function drawPerson(g: G, x: number, y: number, ang: number, ts: number, 
     seg(g, 0.74, 0.056, 0.8, 0.0, 0.016, '#3a4046'); seg(g, 0.74, 0.056, 0.8, 0.112, 0.016, '#3a4046');
   }
   else if (p.arms === 'aim' && p.item === 'pistol') { rr(g, 0.3, -0.024, 0.17, 0.048, 0.01, '#14171b'); }
+  else if (p.arms === 'aim' && p.item === 'launcher') {
+    // (R2 단계 5) 비살상탄 발사기: 주황 총몸과 개머리, 굵고 짧은 검은 총열(넓은 총구)
+    rr(g, 0.0, 0.03, 0.2, 0.07, 0.02, '#c85a1e'); rr(g, 0.18, 0.012, 0.24, 0.095, 0.02, '#f07a2a'); rr(g, 0.4, 0.022, 0.2, 0.075, 0.015, '#1a1e22'); rr(g, 0.57, 0.012, 0.05, 0.095, 0.012, '#2c3238');
+    rr(g, 0.22, 0.02, 0.16, 0.025, 0.01, 'rgba(255,255,255,0.28)'); rr(g, 0.27, 0.1, 0.05, 0.07, 0.01, '#c85a1e');
+  }
+  else if (p.arms === 'aim' && p.item === 'extinguisher') {
+    // (R2 단계 4) 소화기: 허리 옆의 빨간 통(손잡이·압력계), 손잡이에서 앞손의 분사구까지 검은 호스
+    rr(g, 0.04, 0.17, 0.2, 0.13, 0.05, '#a82a20'); rr(g, 0.05, 0.18, 0.18, 0.11, 0.045, '#d63a2c'); rr(g, 0.07, 0.19, 0.12, 0.03, 0.012, 'rgba(255,255,255,0.32)');
+    rr(g, 0.21, 0.2, 0.05, 0.07, 0.012, '#23272c'); disc(g, 0.13, 0.235, 0.022, '#f4f6f7');
+    g.strokeStyle = '#23272c'; g.lineWidth = 0.03; g.lineCap = 'round'; g.beginPath(); g.moveTo(0.25, 0.22); g.quadraticCurveTo(0.36, 0.14, 0.36, -0.04); g.stroke();
+    rr(g, 0.34, -0.065, 0.12, 0.05, 0.015, '#23272c'); rr(g, 0.44, -0.075, 0.04, 0.07, 0.012, '#4d555d');
+  }
   else if (p.arms === 'aim' && p.item === 'taser') { rr(g, 0.3, -0.03, 0.15, 0.06, 0.012, '#e8c53c'); rr(g, 0.43, -0.03, 0.03, 0.06, 0.008, '#14171b'); rr(g, 0.3, 0.02, 0.05, 0.05, 0.01, '#14171b'); }
   else if (p.arms === 'aim' && p.item === 'shield') {
     // 방탄 방패: 몸 앞을 가리는 넓은 판, 가로 시야 창. 옆으로 권총이 나온다

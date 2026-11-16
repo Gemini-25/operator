@@ -1578,7 +1578,7 @@ describe('X6 단계 2: 현장 위의 위험 그림 (catLayer)', () => {
 import { agentCost, fitFor, workLabel } from '../src/sim/field/agents';
 import { commanderThink } from '../src/sim/field/commander';
 import { think } from '../src/sim/field/brain';
-import { dangerMap } from '../src/sim/field/orders/catastrophe';
+import { DANGER_RULES, dangerMap } from '../src/sim/field/orders/catastrophe';
 import { OPS_ID, OPS_PAR, exteriorSpots, gateBlocks, nearBuilding, newOps, opsExterior, zoneMask } from '../src/sim/field/ops';
 import type { OpsFact } from '../src/sim/field/ops';
 import { fieldReport } from '../src/sim/dispatch/dispatcher';
@@ -2534,6 +2534,18 @@ describe('X6 검토: 끝나지 않던 외부 방어 · 되풀이되던 냉각', 
     cmd.beliefs.merge(mkFact('fire', rg, 0.8, '시험', m.sim.t, 1, true, ''));      // 그 구역의 새 불 소식
     commanderThink(m.sim, m.s, cmd);
     expect(cools().filter((q) => q.status === 'open' || q.status === 'active').length).toBe(1);
+  });
+  it('(R3 의 자리) 위험 단계 표의 줄에 id 가 있으면 dangerMap 이 그 키의 가장 높은 단계를 낸 줄의 id 를 알려 준다 — id 가 없는 줄은 비워 둔다', () => {
+    const m = make('X6-DR', 'fire', 'std');
+    const cmd = withCmd(m, fireRids(m.sim)[0]);
+    const r = m.s.regions.find((q) => q.indoor && q.kind === 'room')!;
+    cmd.beliefs.merge(mkFact('sign', SIGN_BASE.struct + r.id, { kind: 'struct', level: 2, region: r.id, x: r.cx, y: r.cy } as SignBelief, '시험', m.sim.t, 1, true, ''));
+    expect(dangerMap(m.sim, m.s, cmd, newOps(0)).hits.get(`struct:${r.id}`)!.rule).toBeUndefined();      // 표의 기본 줄에는 id 가 없다
+    DANGER_RULES.push({ id: 'T9', run: (_cx, out) => { out.push({ key: `struct:${r.id}`, kind: 'struct', level: 3, regions: [r.id], x: -1, y: -1, r: 0, why: '시험 줄', t: m.sim.t, rule: undefined }); } });
+    try {
+      const h = dangerMap(m.sim, m.s, cmd, newOps(0)).hits.get(`struct:${r.id}`)!;
+      expect([h.level, h.rule, h.why]).toEqual([3, 'T9', '시험 줄']);
+    } finally { DANGER_RULES.pop(); }
   });
   it('잔해 구역을 세 번 수색해도 확인율이 모자라면 그 구역의 수색을 마친다 — "정밀 수색 → 71% 에 그침 → 다시"를 끝없이 되풀이하지 않는다', () => {
     const m = make('X6-RS', 'fire', 'std');

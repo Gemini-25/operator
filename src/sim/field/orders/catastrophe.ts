@@ -24,7 +24,8 @@ import type { CommandKit } from '../sceneRegistry';
 // ───────────────────────── 위험 단계 (§5.2) ─────────────────────────
 
 /** 위험 단계 표의 한 줄이 낸 것: 구역 키·종류·단계(1~3)·구역 목록·원·까닭·근거 사실의 시각(해제한 키를 다시 올릴 때 견준다) */
-export interface DangerHit { key: string; kind: NoGoZone['kind']; level: number; regions: number[]; x: number; y: number; r: number; why: string; t: number }
+export interface DangerHit { key: string; kind: NoGoZone['kind']; level: number; regions: number[]; x: number; y: number; r: number; why: string; t: number;
+  rule?: string }      // (검토) 그 단계를 낸 줄의 id (줄에 id 가 있을 때만 — dangerMap 이 적는다. 같은 키의 줄이 여럿이면 가장 높은 단계를 낸 줄 — R3 §11.4 의 CF5·CF6 이 센다)
 /** 표가 읽는 것 (믿음과 기억만) */
 export interface DangerCtx {
   sim: Sim; s: Scene; a: FieldAgent; ops: OpsState;
@@ -37,7 +38,7 @@ export interface DangerCtx {
 /** 위험 단계 표의 줄 (R3 가 줄을 늘리고, 이긴 줄을 세려고 id 를 붙인다 — 모양을 바꾸지 않는 선택 칸) */
 export interface DangerRule { id?: string; run: (cx: DangerCtx, out: DangerHit[]) => void }
 
-const hit = (out: DangerHit[], key: string, kind: NoGoZone['kind'], level: number, regions: number[], why: string, t: number, x = -1, y = -1, r = 0): void => { out.push({ key, kind, level, regions, x, y, r, why, t }); };
+const hit = (out: DangerHit[], key: string, kind: NoGoZone['kind'], level: number, regions: number[], why: string, t: number, x = -1, y = -1, r = 0): void => { out.push({ key, kind, level, regions, x, y, r, why, t, rule: undefined }); };
 const signsOf = (cx: DangerCtx, kind: SignBelief['kind']): Fact[] => cx.signs.filter((f) => (f.value as SignBelief).kind === kind);
 
 /** '다 탄 듯한 건물' 줄의 문턱: 센 불(믿음 ≥ 0.6)이 이 초 넘게 이어진 구역이 실내 구역의 이 몫 이상 (단계 8 — 본문 120초·50%) */
@@ -129,12 +130,12 @@ export function dangerMap(sim: Sim, s: Scene, a: FieldAgent, ops: OpsState): { h
     rooms: (r) => { const out = [r]; for (const n of nb[r] ?? []) if (s.regions[n].kind === 'room') out.push(n); return out; },
   };
   const list: DangerHit[] = [];
-  for (const rule of DANGER_RULES) rule.run(cx, list);
+  for (const rule of DANGER_RULES) { const n0 = list.length; rule.run(cx, list); if (rule.id !== undefined) for (let q = n0; q < list.length; q++) list[q].rule = rule.id; }
   const hits = new Map<string, DangerHit>(), raw = new Map<string, number>();
   for (const h of list) {
     const cur = hits.get(h.key);
     if (!cur) { hits.set(h.key, { ...h, regions: h.regions.slice() }); continue; }
-    if (h.level > cur.level) { cur.level = h.level; cur.why = h.why; if (h.r > 0) { cur.x = h.x; cur.y = h.y; cur.r = h.r; } }
+    if (h.level > cur.level) { cur.level = h.level; cur.why = h.why; cur.rule = h.rule; if (h.r > 0) { cur.x = h.x; cur.y = h.y; cur.r = h.r; } }
     for (const r of h.regions) if (cur.regions.indexOf(r) < 0) cur.regions.push(r);
     cur.t = Math.max(cur.t, h.t);
   }

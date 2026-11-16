@@ -199,6 +199,7 @@ function significant(f: Fact, old: any): boolean {
   if (f.type === 'hos') return old.state !== v.state || old.weapon !== v.weapon || old.hostage !== v.hostage || !!old.dead !== !!v.dead || (old.tq ?? 0) !== (v.tq ?? 0) || (old.where ?? 'scene') !== (v.where ?? 'scene');
   if (f.type === 'mate') return old.status !== v.status || old.dead !== v.dead || old.band !== v.band || old.tq !== v.tq || !!old.trapped !== !!v.trapped;
   if (f.type === 'sign') return old.level !== v.level;      // (X6) 조짐은 단계가 바뀔 때만 알린다 — 측정값(lel)만 바뀐 것은 믿음에 합치되 보고하지 않는다
+  if (f.type === 'crew') return old.band !== v.band || old.air !== v.air || old.ammo !== v.ammo || old.shaken !== v.shaken;      // (R3 §4.1) 자기 신고는 서명이 바뀔 때만
   return true;
 }
 function sameSig(a: Fact, b: Fact): boolean { return a.key === b.key && !significant(a, b.value); }
@@ -401,6 +402,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
     if (d > v || (b.status === 'withdrawn' && d > 2) || !sees(b.x, b.y)) continue;
     const cur = a.beliefs.get('mate', b.rid);
     if (cur && cur.value.dead) continue;      // 숨진 줄 안다 — 멀리서 다시 본 것으로 되돌리지 않는다
+    if (b.status === 'down' && d <= SHAKE.mateR && (!cur || cur.value.status !== 'down')) shake(sim, a);      // (R3 §4.3) 6칸 안에서 동료가 쓰러진 것을 처음 본다 — 동요
     const f = mateFact(sim, s, b, b.status === 'down' ? 'down' : 'safe', me, d);
     // 3칸 밖에서는 중증도·사망을 알 수 없다: 상태(쓰러짐·안전 구역)가 달라졌을 때만 새 소식이다 (가까이서 본 동료의 보고를 먼 관찰이 덮어쓰지 않는다)
     if (cur && !(d <= 3 ? significant(f, cur.value) : cur.value.status !== f.value.status)) continue;
@@ -411,7 +413,8 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
 
 const IMPORTANT: Record<string, boolean> = { cas: true, blk: true, hos: true, haz: true, mate: true, evid: true, clue: true, seen: true, secure: true };
 /** 바로 알리고 무전 문구에 싣는 사실: IMPORTANT 의 종류, 그리고 (X6 §3.2) 단계 2 이상의 조짐 — 단계 1(삐걱임·냄새)은 묶음 보고(5초)로 보낸다 */
-const hot = (f: Fact): boolean => IMPORTANT[f.type] === true || (f.type === 'sign' && f.value.level >= 2);
+const hot = (f: Fact): boolean => IMPORTANT[f.type] === true || (f.type === 'sign' && f.value.level >= 2)
+  || (f.type === 'crew' && crewAlert(f.text) && (f.value.air === 2 || f.value.ammo === 2 || f.value.band >= 1));      // (R3 §4.1) 자기 신고의 공기 위급·탄 위급·중상 — 나빠졌을 때의 글만(나아짐·동요는 글 없이)
 
 /** 무전 송신. 음영 구역에서는 실패한다. */
 export function transmit(sim: Sim, s: Scene, a: FieldAgent | null, to: number, kind: RadioMsg['kind'], facts: Fact[], text: string, workId = -1, imp = 1, causes: number[] = [], silent = false): number {
@@ -591,6 +594,15 @@ export function fitFor(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap
   return docFit(sim, s, a, w, fit > 0 ? Math.max(0.02, fit + (roleOf(sim, a.rid).prefer[w.kind] ?? 0)) : fit);      // (R3) 교본은 맨 끝에서 좁히기만 한다 (늘 보고 모드 — 줄이 없으면 그대로)
 }
 /**
+ * (R3 §2.7) fitFor 와 같은 값(fit)에 더해 교본 전의 값(base)과 걸린 교본 줄(hits) — 지휘관의 배정(commander.assign)이 "교본이 배정을 바꿨는가"를 1등 둘로 견줄 때 쓴다.
+ * 상태를 바꾸지 않는다. fit 은 늘 fitFor(sim, s, a, w) 와 같다
+ */
+export function fitParts(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): DocFitAns {
+  if ((a.afloat !== undefined || onWater(s, a)) && !(w.kind === 'waterRescue' && a.task !== null && a.task.workId === w.id)) return { fit: 0, base: 0, hits: [] };
+  const fit = fitBase(sim, s, a, w, false);
+  return docFitRules(sim, s, a, w, fit > 0 ? Math.max(0.02, fit + (roleOf(sim, a.rid).prefer[w.kind] ?? 0)) : fit);
+}
+/**
  * (N8 §5.3.3) 유관 기관 대원이 맡는 일: 시설물 복구(repair — 대상의 생김새에 맞는 장비: 전선 = 절연 장비, 관·밸브 = 밸브 키 또는 누출 차단 장비)와 견인(towAway — 견인 장비).
  * 그 밖은 0 (그대로 두면 수색·이송·처치를 맡는다). 오는 쪽의 판정 crews.capableOf(…, what) 와 같은 조건이다. 생김새(skin, 없으면 kind)는 판단부가 읽어도 되는 것이다
  */
@@ -754,7 +766,9 @@ export function nearDoor(s: Scene, i: number): boolean { return doorAt(s, i) !==
 
 // ── (R3) 대응 교본의 판단부 (field/doctrine.ts) — fitFor 의 맨 끝이 부른다. doctrine.ts 는 이 파일을 import 하지 않는다(순환 없음).
 //    (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다) ──
-import { docFit } from './doctrine';
+import { docFit, docFitRules } from './doctrine';
+import type { DocFitAns } from './doctrine/registry';
+import { SHAKE, crewAlert, shake } from './doctrineRun';      // (R3 1단계) 쓰러진 동료를 본 동요
 // (R2 1a) 대응 방법의 판단부 — 수난 구조의 배정(fitFor)이 methodFit 을 쓴다. methods.ts 는 이 파일을 import 하지 않는다 (순환 없음)
 import { methodFit, onWater, searchMul } from './methods';
 // (X6) 조짐 관찰 (field/catastrophe.ts — 그 파일도 이 파일의 learn·regionNameAt 을 쓴다. 함수 안에서만 서로 부르므로 순환 import 는 문제없다)

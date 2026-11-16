@@ -1297,3 +1297,111 @@ npm run check                                                             # 단�
 - **교대 하나의 시간**(§9 끝, `time npx vitest run tests/sim.test.ts -t 재현성` — 부하 평균 9.8): 26.5초 중 시험 5.7초 / 교대 10개 ≈ **교대당 0.6초**. 강제 교대를 따로 재면(교대당 벽시계 · 사용자 CPU) `fire/std` 0.77 · 1.37초, `armed/hostage` 0.52 · 0.81초, 최소 인원 `fire/std` 0.61 · 0.96초, `armed/dispute` 0.55 · 0.79초, `armed/hostage` 0.37 · 0.55초. 시험 4(강제 12교대) + 시험 6(최소 인원 18교대)을 더하면 ≈ 17초로 60초 아래다 — **6교대 그대로 둔다**(3교대로 줄이지 않는다).
 - **`npm run check` 통과**(`2818efd` 의 코드): 시험 파일 16 · 477개 통과 + 건너뜀 1(시작점 459 + 이 단계 18). 벽시계 7분 31초(vitest 422초 · 사용자 CPU 15분 26초) — 같은 기계에서 다른 묶음의 작업자가 함께 돌아 부하 평균이 8~14 였다. 이 단계가 관문에 더하는 몫은 `tests/doctrine.test.ts` 하나(단독 8.4초, 그중 시험 2.2초)뿐이다. `sweep 40 --check`: 성공 79% · 부분 10% · 지연 5% · 미해결 2% · 실패 5%, 닫힌 까닭 `resolved 565 · abandoned 2` — 해시가 같으므로 시작점과 같은 분포다.
 - **화면**: 개발 서버(5219)에서 대원 정보창을 여섯 번 띄움 — 콘솔 오류 0, 교본 칸은 그려지지 않는다(단계 0).
+
+### 단계 1 (공통) — 2026-11-16
+
+**상태: 구현됨, 결과 바뀜(의도 — 교본 줄이 생겼다).** 작업자 브랜치 `wf/doctrine-s1`, 시작점 `97869b1`(주 브랜치 — R1·H1·X6·R2 전부, R3 단계 0, I1-a·I1-b b0, I2 1·2·3, N8 1·2a·2b, N9 1·2·3). 시작할 때 주 브랜치를 받았다(이미 같았다 — 충돌 없음).
+
+**0단계 기준(§8.3)을 이 시작점에서 처음 쟀다** — scratchpad `wf-doctrine/base97/`: `r3-base.json`·`r3-base.txt`(보통 60 `--scen --methods --doctrine`), `r3-base-{easy,hard,extreme}.json`(60), 강제 묶음 20교대씩 `f-<유형>_<변형>.txt`(2단계 경찰 일곱 · 3단계 소방 다섯 · 4단계 의료 넷 · 5단계 `armed/bomb`·`armed/package`, `--scen --methods --doctrine`), `d-tsunami.txt`, `min-crew.txt`(`--diff 3,3,3,3,3,1`), `poor-kit.txt`(`--diff 3,3,3,1,3,3`). 다시 재는 대본은 `wf-doctrine/runbase.sh <저장소 뿌리> <출력 폴더>`, 견주는 대본은 `wf-doctrine/cmp.cjs <기준 폴더> <뒤 폴더>`, 교대당 시간은 `wf-doctrine/timing.sh <뒤 폴더>`(기준 `b0` 와 번갈아 세 번). 시작점 소스는 `wf-doctrine/b0.tar`·`b0/`, 단계 1 의 결과는 `after1/`. scratchpad 가 비었으면 `97869b1` 을 `git archive` 로 풀어 같은 대본으로 다시 잰다.
+
+| 커밋 | 내용 |
+|---|---|
+| `631a534` | 단계 1 의 코드와 시험 전부 (아래) |
+| 그다음 커밋 | 이 메모 |
+
+#### 실제 이름 (단계 1 에 생긴 것)
+
+| 이름 | 어디 | 서명·뜻 |
+|---|---|---|
+| `FactType 'crew'` · `MethodWhy` 여섯(`hurt`·`alone`·`lowAir`·`lowAmmo`·`shaken`·`tired`) | `types.ts` (각 합집합 끝의 새 줄) | 본문 §2.1 |
+| `DocCtx.hz`·`wRisky`·`light` | `doctrine/registry.ts` | 줄 파일은 `injury`·엔진을 import 할 수 없어서, 엔진이 `w` 마다 채운다: `hz` = 위험 실내 일(엔진의 `hazWork`), `wRisky` = 대상 구역이 위험 건물 실내(종류 무관 — G01 의 위험 구역 동료 구조), `light` = H1 `LIGHT_WORK`(처치·동료 처치는 대상이 안전 구역일 때만 — `fitBase` 의 다친 대원 규칙과 같은 판정). `w` 가 없으면 모두 false |
+| `reported(b)` · `WHY_METHOD` · `docMethodWhy(dc, top, plain)` | `field/doctrine.ts` | `reported` 를 내보냈다(시험이 쓴다). `docMethodWhy`: 교본 전후 1등이 다를 때 그 둘에 배율(≠ 1)을 준 줄 가운데 rank 가 가장 작은 줄, 없으면 두 방법에 걸린 기록 전용 줄(배율 1 — G02b) → `{ rule, why: MethodWhy, missing }` (§3.7 사상 표). `opsLevel(s, a, rg, ti)` 는 구획 구역(`regionLevel`)과 칸(`zoneLevelAt` — 원 구역)을 함께 본다(X6 검토가 넘긴 것) — 작업의 칸은 `tileOfWork` |
+| `CREW_TEXT` · `crewNow(sim, a)` · `selfReport(sim, s, a)` · `crewAlert(text)` | `field/doctrineRun.ts` | 아래 "자기 신고" |
+| `SHAKE`(`base 20 · top 1.3 · immune 10 · mateR 6 · blastPad 3`) · `shake(sim, a)` | 같은 파일 | 동요. 부르는 곳 셋: `hazards.tickHostiles` 의 `underFireT` 줄(총격 — 맞든 빗나가든)과 흉기·맨손 피습 줄, `agents.perceive` 의 쓰러진 동료(6칸 안, 그 동료를 'down' 으로 처음 알 때), `hazards.blast`(반경 + 3칸, 다치기 전에) |
+| `docRemember(sim, a, rule, key, sec)` | 같은 파일 | 교본 기억의 두 뜻(`'w:<작업 id>'` = 그 작업 `fit` 0 / 대상 열쇠·`'*'` = 그 행동 줄을 그 대상에 다시 걸지 않는다). 지난 기억을 지우고, 같은 (줄, 열쇠)면 늦은 쪽으로 늘린다. 단계 1 에는 부르는 줄이 없다(쓰는 단계가 2·3) |
+| `WHY_WORD` · `docAssignWhy(pickAns)` · `docAssignRecord(sim, I, pick, pickAns, base, baseAns, w, ev)` | 같은 파일 | 배정의 1등 비교(§2.7) — 아래 |
+| `splitBegin(sim, s, a, replaced?)` · `splitSettle(sim, a)` · `docSplitOf(sim)` | 같은 파일 | split 의 표본(§8.2) — 아래 |
+| `fitParts(sim, s, a, w): DocFitAns` | `field/agents.ts` (`fitFor` 바로 다음) | `fit` 은 늘 `fitFor(sim, s, a, w)` 와 같다 + 교본 전의 값(`base`) + 걸린 줄(`hits`) |
+| `assign` 내보냄 | `field/commander.ts` | 시험 2-e 가 직접 부른다 (이름·몸은 그대로) |
+| `docLines(sim, I, s, max = 2)` · `docTally(sim)` · `docSummary(tally)` · `fillDoc` · `docNum` · `WHY_DOC` | **새 파일 `field/doctrineReport.ts`** | 보고서 문장·집계 (R2 의 `methodReport.ts` 와 같은 나눔 — `debrief.ts` 에는 부르는 줄만) |
+| `MethodPick.doc`·`skip` · `SHAKEN_CAUTION`(0.2) | `field/methods.ts` | 교본이 1등을 바꿨으면 그 줄 id 와 교본이 없었다면 골랐을 방법 |
+| `StatusChips` (안쪽) · `DoctrineRows({ …, truth })` | `ui/DoctrineRows.tsx` · `panels.tsx` 의 `truth={truth}` · `styles.css` 끝 `/* ── R3 doctrine ── */` | 상태 칩 한 줄 — 아래 |
+
+#### 등록한 줄 (공통 다섯 — `doctrine/common.ts`, 등록 순서 그대로)
+
+| id | 자리 | who | works | when | effect | rank | why |
+|---|---|---|---|---|---|---|---|
+| G01 | fit | doc special | 무거운 일 아홉 + 가벼운 일 일곱 | `st.band ≥ 1` | mul .35 [engage·waterRescue·`c.hz`·(rescueMate && `c.wRisky`)] · add .15 [`c.light`] | 1 | hurt (short '가벼운 임무') |
+| G02 | fit | — | engage + HZ 여섯 | `st.shaken` && (engage ? `entryOrdered` : `c.hz`) | mul .6 | 1 | shaken |
+| G02b | method | — | methods `swim`·`boat`·`charge`·`rapid`·`tunnel`·`dive` | `st.shaken` | 기록 전용 mul 1 (조심성 +0.2 는 `methods.makeCtx`) | 1 | shaken |
+| G03 | fit | — | HZ 여섯 | `c.hz` && `stamina < 30` && 새로 맡는 일 | mul 0 | 1 | tired |
+| G04 | fit | — | rescueMate | `w.mate === a.buddy` (`≥ 0`) | add .2 | 2 | buddy |
+
+`DOC_DEPTS_DONE` 은 그대로 빈 배열이다(공통은 시험 8 의 "12줄"에서 빠지고, 분야는 2단계부터 더한다).
+
+#### 걸리는 자리 (단계 1)
+
+- **자기 신고**(§4.1): `brain.think` 의 `perceive` 다음·`shareNearby` 앞에 `selfReport`. 서명(`crewSigOf`)이 지난 신고와 다를 때만 'crew' 사실을 자기 믿음에 넣는다. 나빠진 것만 글이 있고 무전 문구에 실린다 — 공기 위급 '공기 30% 미만.'·탄 위급 '탄약 소진.'·중상 '부상 — 체력 저하.'(이 셋은 `agents.hot` 이 `crewAlert` 로 알아보아 바로·중요로), 공기 낮음 '공기 50% 미만.'·마지막 탄창 '탄약 마지막 탄창.'(묶음 보고). 나아진 것·동요·위중(0·1 → 2)은 `learnQuiet` 로 무전 문구 없이 믿음·무전 자료로만 간다(믿음 속 글은 '상태 보고: 몸 중상 · 공기 낮음 …' — 정보창의 '알고 있는 정보'에만 보인다). 처음 판단이고 멀쩡하면(`'0000'`) 알리지 않는다. `significant` 에 'crew' 갈래. 동요가 끝나면 `selfReport` 가 `a.shaken` 을 비우고 `a.shakenOff` 에 끝난 시각을 적는다.
+- **fit**: G01~G04 가 `docFit` 으로 걸린다(늘 보고 모드 — 몸은 'crew' 신고, 지구력은 조직 정보). `commander.assign` 의 후보 반복이 `fitFor` 대신 `fitParts` 를 불러 교본을 넣은 점수의 1등(`best`)과 교본 전의 값으로 센 1등(`baseBest` — 같은 거리·지구력·경험·하던 일 항, 같은 `taken`)을 함께 센다. 다르면 `docAssignWhy` 가 뽑힌 대원의 중립 아닌 줄 가운데 rank 가 가장 작은 줄로 까닭 말을 만들어 지시 무전 끝에 붙이고("김도윤, 출입구 봉쇄 맡아라 (부상 — 가벼운 임무)." — 줄의 short 가 까닭 낱말로 시작하면 short 만: "(지침 — 진입 제외)"), `docAssignRecord` 가 뽑힌 대원의 중립 아닌 줄과 밀려난 대원의 금지·감점 줄(배율 < 1)을 `hook 'fit'`·`tgt 'w:<작업 id>'`·`eventId = 그 지시` 로 남긴다. 아무도 뽑히지 않았으면(모두 금지) 밀려난 쪽만 `eventId -1` 로. 같으면 아무것도 남기지 않는다. 지휘관이 자기에게 맡긴 것은 `eventId -1`.
+- **method**: `methods.makeCtx` 의 조심성에 동요 +0.2(상한 1.1 — G02b). `chooseMethod` 가 교본 배율이 1 이 아닌 후보가 있었거나 동요 중이면(`rankDocHit`·`dc.st.shaken` — 아니면 다시 세지 않는다) 교본 전(배율 1·조심성 원래 값)의 1등을 다시 세어, 다르면 `docMethodWhy` 의 까닭으로 돌려준다(noGear 앞). 실행부(`startMethod`·`recheckOnArrive`·`switchMethod`)가 `pick.doc` 이면 `recordDoc(…, 'method', { method, work, tgt })` — 시작 문구의 기록 id 와 함께. 시작 문구는 "손이 떨려 헤엄은 못 합니다. 하류에서 기다렸다 붙잡겠습니다."(`skip` 이 없으면 "…방법을 바꿉니다."), 평소 방법(plain)은 R2 대로 알리지 않는다. `whyNote`·`methodReport.whyText` 에 여섯.
+- **R2 외부 방어의 몸 상태 조건**(§3.7 끝 — 단계 0 이 남긴 것): `r.health < 50` → `bandOfCtx(c) ≥ 1`(교본 입력이 있으면 그 상태 — 자기 모드 자기 몸·보고 모드 신고, 없으면 실행부(`t` 가 있을 때)는 같은 간격으로 자기 몸, 배정은 0). 배연 뒤의 예정된 전환(`ventilate → interior`)은 `methodStillFits`(교본 배율을 보지 않는다)라 3단계(F03b·F04b·F05b 가 실내 진압을 뺄 때)가 고친다.
+- **보고서**: `debrief.evaluate` 끝(R2 방법 문장 다음) `docLines(…, min(2, 3 − 방법 문장 수))`(A < 12 일 때), `buildReport` 의 `doctrine`(= `docTally`)·`docSplit`(= `docSplitOf`)·요약 줄 '교본: …'(`docSummary` — 줄의 short, 많은 순 다섯). 단계 1 의 줄은 `report` 템플릿이 없어 사건 문장은 아직 나오지 않는다(시험이 시험용 줄로 문장을 본다).
+- **split 표본**: `brain` 의 `takeWork`·`setTask` 끝과 `docBegin`(대신한 작업판 일을 열쇠로)에서 `splitBegin` — 열쇠 `분야|국면|임무`. 고른 것은 그 대원의 **다음 판단 첫머리**(`splitSettle` — `think` 의 첫 줄)에 그 임무에 적힌 값으로 적는다: 판단 지점에서 막혀 있으면 줄 번호, 교본 행동이면 그 행동, 방법이 있으면 방법, 아니면 'none'.
+- **패널**: '대응 교본' 칸이 현장 대원이면 늘 나온다(상태 칩). 칩: 공기(공기호흡기를 들었을 때 — 막대에 30·50% 눈금, 50% 아래 노랑·30% 아래 주황), 탄(탄을 세는 총이 있을 때 — 2단계부터), 짝(이름·거리 / '짝 없음' — 3단계 전에는 늘 '짝 없음'), 몸(중증도 색), 동요(동요 중일 때만). 시점: 관찰자(`truth`)는 진실(몸 = `respBand`, 동요 = `a.shaken`), AI 시점은 지휘관 믿음 속 그 대원의 'crew' 신고(지휘관이 없거나 그 대원이 지휘관이면 자기 신고). 공기·탄은 장비 수량(조직 정보)이라 같다.
+
+#### 본문과 다르게 한 곳
+
+1. **중요 신고의 무전 `imp` 는 1** 이다(본문 §4.1 은 2). `flushOutbox` 가 바로 알리는 사실(`hot`)을 담은 무전을 늘 `imp 1` 로 남기기 때문이다(X6 의 단계 2 조짐과 같다) — 무전 함수를 고치지 않았다.
+2. **위중(→ band 2)은 글 없이**: 중상(0 → 1)만 '부상 — 체력 저하.' 를 말한다. 체력 40 아래·출혈은 H1 의 부상 후퇴("부상으로 더 이상 임무 수행 불가…")와 'mate' 사실이 이미 알린다(CLAUDE.md 함정 "로그 중복").
+3. **글 없는 신고도 믿음 속 글이 있다**('상태 보고: …' — `learnQuiet` 라 무전 문구에는 실리지 않는다). 본문은 `text: ''`. 그래서 '중요'의 판정은 글이 비었는가가 아니라 `crewAlert`(나빠짐의 세 글)로 한다.
+4. **처음 판단의 멀쩡한 상태는 신고하지 않는다**(도착마다 빈 무전이 나가지 않게). 걸을 수 있는 다친 대원은 현장마다 새 현장 대원이라 그 현장의 첫 판단에 '부상 — 체력 저하.' 를 한 번 말한다.
+5. **G01 은 특수 표 대원에게만**(`who.doc: ['special']` — 본문대로). 그래서 시험 2-e 는 경찰 둘이 아니라 **특공 대원 둘(역할·능력·장비·자리를 똑같이 맞춘 쌍둥이)** 로 했다 — 경찰의 P12 가 들어오는 2단계가 경찰판을 더한다.
+6. **G02b 의 `methods`** 를 위험(risk > 0)이 있는 방법 여섯으로 적었다(본문 §3.6 은 '—'). 시험 8 이 method 줄에 방법 목록을 요구한다.
+7. **split 의 고른 것은 다음 판단에서 적는다**(본문: 시작한 틱의 `startMethod` 값). 첫 틱에 고르는 방법은 같고, 그 사이에 방법을 바꾼 드문 경우만 다르다. 도착해서 고르는 방법(처치의 현장 안정 등)은 둘 다 'none' 이다.
+8. **`docLines`·`docTally`·`docSummary` 는 새 파일 `field/doctrineReport.ts`** (본문 §11.1 은 `debrief.ts`). R2 의 `methodReport.ts` 와 같은 까닭.
+9. **`assign` 을 내보냈다** — 시험 2-e 가 지휘관 배정을 직접 부른다. `commanderThink` 를 거치면 `syncBoard` 가 시험의 작업판을 바꾼다.
+10. **`docForget()`(인자 없이)는 줄 목록 색인도 버린다** — 시험이 줄을 바꿔 끼울 때 색인이 줄 수로만 낡음을 알았다(같은 수면 낡은 색인을 썼다). 시험의 `withRules` 는 이제 등록된 줄을 빼 두고 시험용 줄만 넣는다(끝나면 되돌린다).
+11. **동요는 총격마다**(본문 §4.3 "대원 피격 줄(underFireT 를 정하는 곳)") — 그 줄은 맞든 빗나가든 정해지므로 쏜 총에 노출된 것으로 걸린다. 폭발은 R2 의 폭파 진입(`runCharge` 의 `blast`)도 포함한다 — 진입조가 동요한다(아래 알려진 문제).
+12. **X6 원 구역**(가스 용기 둘레)을 `docSit.danger`·`wDanger` 에 넣었다(X6 독립 검토가 R3 로 넘긴 것 — 엔진만, 단계 1 의 줄은 읽지 않는다).
+
+#### 설계서 밖에서 고친 공용 파일
+
+- `field/methodRun.ts` `announce`(인자 `skip`)·`startMethod`·`recheckOnArrive`·`switchMethod`(교본이 바꾼 방법의 `recordDoc` — `docPick`) — 본문 §11.1 은 2·3단계만 적었다.
+- `field/methodReport.ts` `whyText` — 본문은 `debrief.ts` 의 `WHY_TEXT` 라고 적었지만 실제 자리는 이 파일이다.
+- `field/agents.ts` `fitParts`(새 함수)·import 둘, `field/commander.ts` `assign` 의 `export`.
+- `field/doctrine.ts` 가 `./ops`(`OPS_ID`·`regionLevel`·`zoneLevelAt`, `OpsFact` 타입)와 `injury.LIGHT_WORK` 를 import 한다(시험 1 의 금지 목록 밖).
+
+#### 이어받을 자리
+
+- **2단계**: P12(경찰판 부상 줄)를 넣으면 시험 2-e 에 경찰 쌍(본문 그대로)을 더한다. `selfReport` 의 탄 칸(`crewNow` — `gunOf` 의 `ammo` 가 `Infinity` 면 0)은 `KitDef.mag/reload/perShot` 과 총기 `uses` 가 생기면 저절로 돈다(시험 5 의 "탄 칸은 늘 0" 단언 `/^[0-2][0-2]0[01]$/` 을 고친다). `docRemember` 를 엄폐·보급의 기억에 쓴다. `finishTask` 사유 표의 `'doctrine'`·`'handover'`, `docBegin` 의 캐스트·기록 문구는 단계 0 메모 그대로 남아 있다.
+- **3단계**: G04 는 짝이 없어 아직 한 번도 쓰이지 않았다(`pairUp` 뒤에 쓰인다). G08 을 `common.ts` 끝에. `methodStillFits` 가 교본 배율을 보지 않으므로 배연 뒤 전환(§3.7 끝)을 그 단계에서 고친다. `bandOfCtx` 는 이미 중상 문턱이다.
+- **시험 5 의 '단계 1' 묶음**(공통 다섯 줄만 있다 · 2단계 뒤의 상태 칸이 비어 있다)은 줄을 더하는 단계가 자기 뜻으로 고친다(`STAGE1` 목록·`hasDoc` 단언·`crewSig` 의 탄 칸).
+- 시험이 고른 시드(G02b 의 `W1~W4` 수난 장면, 시험 7 의 `fire/std` 강제 교대 S3 부터)는 줄이 늘면 맞는 시드가 바뀔 수 있다 — 시험은 "맞는 쌍이 하나 이상", "교본이 쓰인 교대를 찾을 때까지"로 써 두었다.
+
+#### 수치 (기준 `97869b1` → 단계 1 `631a534`, 같은 명령 — 성공+지연 = good)
+
+| 묶음 | 기준 | 단계 1 | §8.2 |
+|---|---|---|---|
+| 보통 60 — 성공 · 부분 · 지연 · 미해결 · 실패 (850건) | 669 · 84 · 32 · 18 · 47 | 668 · 85 · 31 · 18 · 48 | |
+| 보통 60 — 성공률 · 성공+지연 · 실패+미해결 | 78.7 · 82.5 · 7.6% | 78.6 · 82.2 · 7.8% | 성공률 ±3%p ✓ |
+| 보통 60 — 한계 시간 · 방치 | 1 · 2 | 1 · 2 | + 2 이하 ✓ |
+| 보통 60 — 유형별 성공 | 화재 118 · 무장 97 · 응급 95 · 교통 133 · 붕괴 51 · 가스 50 · 실종 96 · 수난 29 | 118 · 97 · 94 · 133 · 51 · 50 · 96 · 29 | 유형별 ✓ |
+| 보통 60 — 다친 대원/교대 · 평균 대응 | 0.20 · 49초 | 0.217 · 49초 | (부상 목표는 2단계부터) |
+| 보통 60 — 행동 엔트로피 · 방법 엔트로피 · 교착 후보 · 잊힌 사건 · 반복 최대 · 기록 일치 C1~C5 | 2.51 · 0.56 · 0 · 0 · 6 · 0 | 2.51 · 0.56 · 0 · 0 · 6 · 0 | ✓ |
+| 보통 60 — 교본 | — | 쓰인 줄 G03 70 · G01 12 · G02(G02b 포함) 12 · G04 0, split 0.36(표본 10 이상 열쇠 89) | split ≥ 0.5 는 8단계 목표 |
+| 쉬움 · 어려움 · 극한 60 — 성공+지연 | 88.3 · 65.6 · 43.8% | 88.3 · 65.9 · 43.1% | 순서 유지 |
+| 쉬움 · 어려움 · 극한 — 한계 시간 + 방치 + 출동 없음 | 1 · 17 · 51 | 1 · 15 · 58 (극한 timeout 18 → 23) | 아래 |
+| 강제 20 (스물 묶음 — `base97/f-*.txt` 와 `after1/f-*.txt`) | 예: `armed/shooter` 194 · `armed/siege` 197 · `fire/std` 211 · `armed/hostage` 220 성공 | 195 · 193 · 210 · 219, 한계 시간 + 방치는 묶음마다 ±1 | 결과 ±2건 안팎 |
+| 최소 인원 20 · 장비 불량 20 (성공) | 134 · 177 | 134 · 178 | |
+| 교대당 시간 (`sweep 20`, 기준과 번갈아 세 번) | 694 · 698 · 721ms, 사용자 CPU 34.0 · 35.9 · 35.3초 | 787 · 765 · 718ms, 36.5 · 38.0 · 39.4초 | 평균 1.08배(사용자 CPU 1.08배) — 1.15배 안 ✓ |
+
+관문: `npm run check` 통과(시험 파일 19 · 805개 통과 + 건너뜀 1 — 시작점 793 + 이 단계 12, 벽시계 6분 59초, `sweep 40 --check` "검증 통과"). `npm run ui-check` 8/8 통과(130초). `tests/doctrine.test.ts` 30개(단독 7초 안팎).
+
+**화면**: 개발 서버(5219)에서 `?seed=S7&force=fire/std`·`armed/hostage` 를 15배속으로 28초 돌린 뒤 대원 점을 눌러 정보창을 열었다 — 상태 칩이 나온다("공기 ▬ 95% · 짝 없음 · 몸 경상", 인질극에서 "… · 동요"), 콘솔 오류 0. 스크린샷 `wf-doctrine/r3-s1-chips-fire-12.png`.
+
+#### 알려진 문제
+
+- **극한의 한계 시간이 18 → 23**(60교대, 한계 + 방치 + 출동 없음 51 → 58 — 4.3%). 극한은 R2 가 단계마다 8 ↔ 18 을 오갔던 묶음이라 이 단계만의 까닭인지 가르지 못했다. 2단계에서 극한을 다시 볼 때 이것부터 본다(`--diff extreme --log` 로 한계 시간 사건을 읽는다).
+- **폭파 진입의 진입조가 동요한다**: R2 의 `runCharge` 도 `hazards.blast` 를 부르므로 반경 + 3칸 안의 진입조가 6~26초 동요한다(G02 의 진입 ×0.6 은 새로 맡는 일만이라 진행 중인 진입은 그대로). 의도한 폭발을 빼려면 `blast` 에 인자 하나가 필요하다(I1-b 의 `noSignal` 과 같은 자리) — 5단계(S26)와 함께 정한다.
+- **split 0.36**: 표본에 철수·휴식·탑승처럼 늘 'none' 인 임무가 들어 있다(본문의 표본 정의 그대로). 8단계 목표 0.5 는 교본 행동·판단 지점이 생기는 2~6단계 뒤에 잰다.
+- 걸을 수 있는 다친 대원이 현장마다 '부상 — 체력 저하.' 를 한 번 말한다(새 현장 대원 — 4번).

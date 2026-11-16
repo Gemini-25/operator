@@ -18,11 +18,13 @@
 
 import type { Sim } from '../engine';
 import { T } from '../types';
-import type { CasBelief, CrewBelief, DocActId, DocDept, DocGateId, DocHook, FactType, FieldAgent, KitId, MethodId, Pt, RoleId, Scene, UnitKind, WorkItem, WorkKind } from '../types';
+import type { CasBelief, CrewBelief, DocActId, DocDept, DocGateId, DocHook, DocWhy, FieldAgent, KitId, MateBelief, MethodId, MethodWhy, Pt, RoleId, Scene, UnitKind, WorkItem, WorkKind } from '../types';
 import { dist } from '../util';
 import { crewHas, gunOf, groupOf, kitCount, kitHas, kitQty, roleIdOf, seatsLeft } from './gear';
 import { losWalls, staticPass, tileOf } from './grid';
-import { bandOf } from './injury';
+import { LIGHT_WORK, bandOf } from './injury';
+import { OPS_ID, regionLevel, zoneLevelAt } from './ops';
+import type { OpsFact } from './ops';      // (X6) 진입 금지 구역의 단계 — 구획 구역과 원 구역(가스 용기 둘레)을 칸으로 (생김새·믿음만)
 import { DOCTRINE } from './doctrine/registry';
 import type { DocCtx, DocEffect, DocFitAns, DocGateAns, DocPhase, DocPick, DocSit, DocState, DocThreat, DoctrineRule } from './doctrine/registry';
 import type { Sense } from './methods';
@@ -60,8 +62,6 @@ const BUDDY_BUSY: ReadonlySet<string> = new Set<string>(['cover', 'rearm', 'airO
 const WATCH_BUSY: ReadonlySet<string> = new Set<string>(['airOut', 'pairOut', 'retreat', 'evacuate', 'rehab', 'pair', 'board']);
 /** 위험 실내 일의 종류 (fitFor 의 공기호흡기 제한과 같은 범위 — 대상 구역이 위험 건물 실내일 때) */
 const HZ_WORKS: ReadonlySet<WorkKind> = new Set<WorkKind>(['search', 'carry', 'escort', 'extricate', 'mitigate', 'overhaul']);
-/** 'crew' 사실 (1단계가 FactType 에 더한다 — 그 전에는 믿음에 없다) */
-const CREW_FACT = 'crew' as string as FactType;
 
 // ───────────────────────── 누구: 분야 · 짝 ─────────────────────────
 /** 대원의 교본 분야 = 역할로 정한다 (§2.2). 사다리차의 팀장·조작원은 특수 표 */
@@ -126,7 +126,7 @@ export function crewSigOf(v: CrewBelief): string { return `${v.band}${v.air}${v.
 /** 서명에서 지난 신고의 중증도 (신고한 적이 없으면 0) */
 export function sigBand(sig: string | undefined): number { return sig === undefined || !sig.length ? 0 : +sig[0]; }
 /** 남이 아는 그 대원의 몸: 'crew' 자기 신고 (없으면 멀쩡한 것으로) */
-function reported(b: FieldAgent): CrewBelief | undefined { return b.beliefs.val<CrewBelief>(CREW_FACT, b.rid); }
+export function reported(b: FieldAgent): CrewBelief | undefined { return b.beliefs.val<CrewBelief>('crew', b.rid); }
 
 // ───────────────────────── 믿음으로 본 자리 ─────────────────────────
 /** 불이 났거나 가스·붕괴 현장의 건물 안 (agents.fitFor 의 fireRisk 와 같은 믿음 판정) */
@@ -153,14 +153,23 @@ function regionsNear(s: Scene, r1: number, r2: number): boolean {
   const p = s.regions[r1], q = s.regions[r2];
   return p !== undefined && q !== undefined && p.x0 <= q.x1 + 1 && q.x0 <= p.x1 + 1 && p.y0 <= q.y1 + 1 && q.y0 <= p.y1 + 1;
 }
-/** (X6) 믿음 속 지휘 상태(ops 사실 id 0)의 진입 금지 구역에서 그 구역의 단계 (없으면 0) */
-function opsLevel(a: FieldAgent, rg: number): number {
-  if (rg < 0) return 0;
-  const ops = a.beliefs.val<{ zones?: { regions: number[]; level: number }[] }>('ops', 0);
-  if (!ops || !ops.zones) return 0;
-  let lv = 0;
-  for (let k = 0; k < ops.zones.length; k++) { const z = ops.zones[k]; if (z.level > lv && z.regions.indexOf(rg) >= 0) lv = z.level; }
-  return lv;
+/**
+ * (X6) 믿음 속 지휘 상태(ops 사실 id 0)의 진입 금지 구역에서 그 자리의 단계 (없으면 0): 구획 구역은 구획 rg 로, 원 구역(가스 용기 둘레 — regions 가 빈 구역)은 칸 ti 로 본다.
+ * (X6 독립 검토: 구획만 보면 원 구역이 빠졌다 — ops.zoneLevelAt 의 칸 판정으로 둘 다 넣는다)
+ */
+function opsLevel(s: Scene, a: FieldAgent, rg: number, ti: number): number {
+  const ops = a.beliefs.val<OpsFact>('ops', OPS_ID);
+  if (!ops || !ops.zones || !ops.zones.length) return 0;
+  return Math.max(regionLevel(ops.zones, rg), ti >= 0 ? zoneLevelAt(s, ops.zones, ti) : 0);
+}
+/** 작업의 대상 칸 (믿음 속 구조 대상·동료·위험물의 자리 → 칸 → 구역 가운데). 모르면 -1 */
+function tileOfWork(s: Scene, a: FieldAgent, w: WorkItem): number {
+  if (w.cas >= 0) { const cb = a.beliefs.val<CasBelief>('cas', w.cas); if (cb) return tileOf(s, cb.x, cb.y); }
+  if (w.mate >= 0) { const mb = a.beliefs.val<{ x: number; y: number }>('mate', w.mate); if (mb) return tileOf(s, mb.x, mb.y); }
+  if (w.prop >= 0 && w.kind !== 'hookup' && w.kind !== 'load' && w.kind !== 'treatSuspect') { const hb = a.beliefs.val<{ x: number; y: number }>('haz', w.prop); if (hb) return tileOf(s, hb.x, hb.y); }
+  if (w.tile >= 0 && w.kind !== 'traffic' && w.kind !== 'perimeter') return w.tile;
+  if (w.region >= 0 && s.regions[w.region]) return tileOf(s, s.regions[w.region].cx, s.regions[w.region].cy);
+  return -1;
 }
 const airOf = (sim: Sim, rid: number): number => (kitHas(sim, rid, 'scba') ? Math.min(1, kitQty(sim, rid, 'scba') / sim.tune.airFull) : 1);
 
@@ -341,13 +350,20 @@ export function docSit(sim: Sim, s: Scene, a: FieldAgent): DocSit {
   for (let k = 0; k < I.assigned.length; k++) { const u = sim.units[I.assigned[k]]; if (u.state === 'onscene' && u.incidentId === I.id) seats += seatsLeft(sim, u); }
   let lanes2nd = false;
   for (let k = 0; k < I.problems.length; k++) if (I.problems[k].code === 'SECONDARY_COLLISION') { lanes2nd = true; break; }
-  const danger = opsLevel(a, myRg);
+  const danger = opsLevel(s, a, myRg, tileOf(s, a.x, a.y));
   return {
     kind: s.kind, label: I.assessment ? I.assessment.label ?? '' : '', phase: phaseOf(sim, s, a),
     hot: s.kind === 'armed' && s.secureAt < 0, outdoor: s.outdoor === true, secure: s.secureAt >= 0,
     threat, civAtRisk, inHazard: riskyRegion(s, a, myRg), victimInside, danger, wDanger: danger, ctlDone, liveBomb, defusing,
     patients, seatsLeft: seats, negotSec: s.negotStart >= 0 ? sim.t - s.negotStart : 0, entryOrdered: s.entryOrdered, lanes2nd,
   };
+}
+/** 가벼운 일인가 (H1 LIGHT_WORK 의 정본 그대로 — 처치는 믿음 속 대상이 안전 구역에 나와 있을 때만, 동료 처치는 그 동료가 안전 구역일 때만) */
+function lightWork(a: FieldAgent, w: WorkItem): boolean {
+  if (!LIGHT_WORK.has(w.kind)) return false;
+  if (w.kind === 'treat') { const cb = a.beliefs.val<CasBelief>('cas', w.cas); return cb !== undefined && cb.where === 'safe'; }
+  if (w.kind === 'treatMate') { const mb = a.beliefs.val<MateBelief>('mate', w.mate); return mb !== undefined && mb.status === 'safe'; }
+  return true;
 }
 /** 틱마다 한 번 만든 상태·상황 (모드별로 따로 — 같은 틱에 지휘관이 보고 모드로, 본인이 자기 모드로 불러도 서로 덮지 않는다).
  *  부르는 쪽이 넘기는 값(sense·dng·w)은 담지 않는다 — DocCtx 의 칸이다 */
@@ -358,18 +374,26 @@ function cacheOf(sim: Sim, a: FieldAgent): DocCache {
   if (c === undefined || c.tick !== sim.tick) { c = { tick: sim.tick, self: null, rep: null, sit: null }; CACHE.set(a, c); }
   return c;
 }
-/** 담아 둔 상태를 버린다 (같은 틱 안에서 대원의 상태를 손으로 바꾼 시험이 쓴다). a 가 없으면 모두 */
-export function docForget(a?: FieldAgent): void { if (a === undefined) CACHE = new WeakMap(); else CACHE.delete(a); }
+/** 담아 둔 상태를 버린다 (같은 틱 안에서 대원의 상태를 손으로 바꾼 시험이 쓴다). a 가 없으면 모두 — 줄 목록의 색인도 (시험이 줄을 바꿔 끼울 때) */
+export function docForget(a?: FieldAgent): void { if (a === undefined) { CACHE = new WeakMap(); IDX_N = -1; } else CACHE.delete(a); }
 /** 교본 줄이 받는 입력을 만든다. mode = 'self'(자기 몸) | 'report'(남이 아는 만큼). w = 대상 작업, sense = 대원이 선 칸의 감각, dng = brain 의 위험 점수 */
 export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report', w: WorkItem | null = null, sense: Sense = ZERO_SENSE, dng = 0): DocCtx {
   const ch = cacheOf(sim, a);
   const st = mode === 'self' ? (ch.self ??= stateSelf(sim, s, a)) : (ch.rep ??= stateReported(sim, s, a));
   let sit = (ch.sit ??= docSit(sim, s, a));
-  if (w !== null) { const wd = opsLevel(a, regionOfWork(s, a, w)); if (wd !== sit.wDanger) sit = { ...sit, wDanger: wd }; }
+  let hz = false, wRisky = false, light = false;
+  if (w !== null) {
+    const wr = regionOfWork(s, a, w);
+    const wd = opsLevel(s, a, wr, tileOfWork(s, a, w));
+    if (wd !== sit.wDanger) sit = { ...sit, wDanger: wd };
+    wRisky = riskyRegion(s, a, wr);
+    hz = wRisky && HZ_WORKS.has(w.kind);
+    light = lightWork(a, w);
+  }
   const rid = a.rid;
   return {
     sim, s, a, u: sim.units[a.unitId], dept: docDeptOf(sim, rid), role: roleIdOf(sim, rid), group: groupOf(sim, rid),
-    mode, w, st, sit, sense, dng,
+    mode, w, hz, wRisky, light, st, sit, sense, dng,
     has: (id: KitId) => kitHas(sim, rid, id), kit: (id: KitId) => kitCount(sim, rid, id),
     m: undefined, see: undefined,
   };
@@ -539,6 +563,40 @@ export function docMethodMul(dc: DocCtx, m: MethodId): number {
     }
   }
   return mul;
+}
+
+/** 교본 줄의 까닭 → R2 의 방법 까닭 (§3.7 의 사상 표 — t.mwhy·MethodUse.why 는 MethodWhy 라 DocWhy 를 그대로 넣을 수 없다) */
+export const WHY_METHOD: Record<DocWhy, MethodWhy> = {
+  hurt: 'hurt', alone: 'alone', lowAir: 'lowAir', lowAmmo: 'lowAmmo', shaken: 'shaken', tired: 'tired', danger: 'danger', team: 'team',
+  noKit: 'noGear', outside: 'alone', kit: 'usual', protocol: 'usual', buddy: 'team', backup: 'team', civ: 'danger', hostage: 'danger', triage: 'usual',
+};
+/**
+ * 교본이 방법의 1등을 바꿨을 때 그 까닭 (R2 chooseMethod 가 부른다 — 까닭 순서의 1(switchMethod 가 넘긴 것) 다음·2(noGear) 앞, §3.7).
+ * top = 교본을 넣고 셈한 1등, plain = 교본을 빼고 셈한 1등(둘이 다를 때만 부른다). dc 는 방법 자리의 사본(m 이 채워진 것).
+ * 그 둘 가운데 하나에 배율(≠ 1)을 준 줄 가운데 rank 가 가장 작은 줄(같으면 등록 순서), 없으면 그 둘에 걸린 기록 전용 줄(배율 1 — G02b 처럼 점수 밖의 조심성으로 바꾼 줄).
+ * 그런 줄이 없으면 null. noKit 이면 빠진 장비 = 그 줄의 noKits[0]
+ */
+export function docMethodWhy(dc: DocCtx, top: MethodId, plain: MethodId): { rule: DoctrineRule; why: MethodWhy; missing: KitId | undefined } | null {
+  if (DOCTRINE.length === 0) return null;
+  const rules = rulesFor('method');
+  let strong: DoctrineRule | null = null, weak: DoctrineRule | null = null;
+  for (let k = 0; k < rules.length; k++) {
+    const r = rules[k];
+    if (r.works && dc.w !== null && r.works.indexOf(dc.w.kind) < 0) continue;
+    let ok: boolean | null = null;
+    for (const e of effectsOf(r)) {
+      if (e.kind !== 'methodMul') continue;
+      const ms = e.methods ?? r.methods;
+      if (ms && ms.indexOf(top) < 0 && ms.indexOf(plain) < 0) continue;
+      if (ok === null) ok = applies(dc, r);
+      if (!ok) break;
+      if (e.when && !e.when(dc)) continue;
+      if (e.mul !== 1) { if (strong === null || r.rank < strong.rank) strong = r; }
+      else if (weak === null || r.rank < weak.rank) weak = r;
+    }
+  }
+  const r = strong ?? weak;
+  return r === null ? null : { rule: r, why: WHY_METHOD[r.why], missing: r.why === 'noKit' && r.noKits ? r.noKits[0] : undefined };
 }
 
 // ───────────────────────── ④ gate ─────────────────────────

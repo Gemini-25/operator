@@ -10,7 +10,9 @@ import type { CasBelief, FieldAgent, Incident, MateBelief, Scene, UnitCaps, Work
 import { TYPE_NAME, dist, josa } from '../util';
 import { TYPE_DEFS } from '../incidentTypes';
 import { airShort, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, isHovering, kitUses, roleOf, seatsOf, seatsUsed } from '../crews';
-import { canCarryPatients, exitName, failedRecently, fitFor, hasWork, learn, resp, transmit, workLabel } from './agents';
+import { canCarryPatients, exitName, failedRecently, fitFor, fitParts, hasWork, learn, resp, transmit, workLabel } from './agents';
+import { docAssignRecord, docAssignWhy } from './doctrineRun';      // (R3 §2.7) 교본이 바꾼 배정의 까닭 말과 기록
+import type { DocFitAns } from './doctrine/registry';
 import { heardEv, mkFact } from './beliefs';
 import { losWalls } from './grid';
 import { opsCordon } from './ops';
@@ -558,7 +560,8 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
 }
 
 /** 작업 배정 */
-function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
+/** 작업판의 일을 대원에게 맡긴다 (commanderThink 가 판단마다 부른다. 내보낸 것은 시험 — R3 시험 2-e 의 교본 전후 1등 비교 — 이 직접 부르기 위해서다) */
+export function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   const me = resp(sim, a);
   // 응답 없는 지시 확인
   for (const w of s.board) {
@@ -590,6 +593,7 @@ function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       if (pass === 0 && w.assignees.length > 0) continue;
       if (pass === 1 && (w.assignees.length === 0 || w.assignees.length >= w.max)) continue;
       let best: FieldAgent | null = null, bs = 0;
+      let bestAns: DocFitAns | null = null, baseBest: FieldAgent | null = null, bsB = 0, baseAns: DocFitAns | null = null;      // (R3 §2.7) 교본 전의 적합도로 센 1등도 함께 센다
       for (const b of s.agents) {
         if (b.status !== 'active' || taken.has(b.rid) || w.assignees.indexOf(b.rid) >= 0) continue;
         if (sim.units[b.unitId].boardOrder) continue;
@@ -598,8 +602,9 @@ function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         if (b.task && b.task.kind === 'evacuate') continue;      // (X6) 철수 중인 대원은 밖에 닿을 때까지 지시를 받지 않는다 (think 가 철수를 붙잡으므로 지시가 '응답 없음'으로 끝난다)
         if (sim.responders[b.rid].status === 'injured' && !lightDuty(a, b)) continue;      // 부상을 알린 대원은 후퇴 중이다 (brain.ts 의 부상 후퇴 붙잡기) — 지시해도 받지 못하고 재지시만 되풀이된다. 가벼운 일을 한다고 알린 다친 대원에게는 지시한다(맡을 수 있는 일은 fitFor 가 거른다). 조직이 아는 상태와 믿음만 본다 — 남의 체력을 읽지 않는다
         if (failedRecently(sim, w, b.rid)) continue;      // 이 작업에 닿지 못했거나 위험해서 물러난 대원: 한동안 다른 대원에게 맡기거나 기다린다
-        const fit = fitFor(sim, s, b, w);
-        if (fit <= 0) continue;
+        const fp = fitParts(sim, s, b, w);      // fit = fitFor 와 같은 값, base = 교본 전의 값 (R3)
+        const fit = fp.fit;
+        if (fp.base <= 0) continue;
         // 이미 일하는 중이면 우선순위 차이가 클 때만 빼 온다
         let curPr = -1;
         const curW = b.task && b.task.workId >= 0 ? s.board[b.task.workId] : b.orderWork >= 0 ? s.board[b.orderWork] : null;
@@ -612,15 +617,22 @@ function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         const d = dist(b.x, b.y, targetX(s, w, a), targetY(s, w, a));
         let sc = fit * 0.5 + (1 - Math.min(1, d / 34)) * 0.22 + (r.stamina / 100) * 0.1 + r.experience * 0.08 + (curPr < 0 ? 0.12 : 0);
         if (b === a && w.kind !== 'sizeup') sc -= 0.18;      // 지휘관은 가급적 지휘에 집중
-        if (sc > bs) { bs = sc; best = b; }
+        if (fit > 0 && sc > bs) { bs = sc; best = b; bestAns = fp; }
+        let scB = sc;      // 교본 전의 점수 (적합도만 교본 전의 값으로 — 교본이 바꾸지 않았으면 sc 그대로)
+        if (fp.base !== fit) { scB = fp.base * 0.5 + (1 - Math.min(1, d / 34)) * 0.22 + (r.stamina / 100) * 0.1 + r.experience * 0.08 + (curPr < 0 ? 0.12 : 0); if (b === a && w.kind !== 'sizeup') scB -= 0.18; }
+        if (scB > bsB) { bsB = scB; baseBest = b; baseAns = fp; }
       }
-      if (!best) continue;
+      // (R3 §2.7) 교본이 배정을 바꿨는가: 교본을 넣은 1등과 교본 전의 1등이 다르면 지시 무전 끝에 까닭 말을 붙이고 바꾼 줄을 기록한다 (같으면 아무것도 남기지 않는다)
+      const docChanged = best !== baseBest;
+      if (!best) { if (docChanged) docAssignRecord(sim, I, null, null, baseBest, baseAns, w, -1); continue; }
       taken.add(best.rid);
       w.assignees.push(best.rid); w.status = 'active'; w.orderSentAt[best.rid] = sim.t;
       const br = sim.responders[best.rid];
-      if (best === a) { a.orderWork = w.id; continue; }
+      if (best === a) { a.orderWork = w.id; if (docChanged) docAssignRecord(sim, I, best, bestAns, baseBest, baseAns, w, -1); continue; }
       const redo = w.fails > 0 ? ' (재지시)' : '';
-      transmit(sim, s, a, best.rid, 'order', [], `${br.name}, ${workLabel(s, w, sim)}${w.kind === 'search' || w.kind === 'suppress' || w.kind === 'carry' ? ' 실시' : ' 맡아라'}${redo}.`, w.id, w.priority > 0.8 ? 1 : 0, w.cause >= 0 ? [w.cause] : []);
+      const docWhy = docChanged ? docAssignWhy(bestAns) : '';
+      const ordEv = transmit(sim, s, a, best.rid, 'order', [], `${br.name}, ${workLabel(s, w, sim)}${w.kind === 'search' || w.kind === 'suppress' || w.kind === 'carry' ? ' 실시' : ' 맡아라'}${redo}${docWhy ? ' ' + docWhy : ''}.`, w.id, w.priority > 0.8 ? 1 : 0, w.cause >= 0 ? [w.cause] : []);
+      if (docChanged) docAssignRecord(sim, I, best, bestAns, baseBest, baseAns, w, ordEv);
     }
   }
   // 교대: 구출을 맡은 사람이 다 찼는데(먼저 닿은 대원이 맨손으로 붙들고 있다), 손이 빈 대원 가운데 훨씬 나은 장비를 든 사람이 있으면

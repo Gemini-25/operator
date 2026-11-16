@@ -205,7 +205,8 @@ export type FactType = 'cas' | 'fire' | 'srch' | 'blk' | 'hos' | 'haz' | 'occ' |
   | 'ovh'          // 구역별 잔불 정리를 마친 시각 (값 1)
   | 'sign'         // (X6) 조짐: 구조 약화·가스 농도·용기 가열·불꽃 역류·분진, 그리고 붕괴·폭발 소리 (값 SignBelief)
   | 'ops'          // (X6) 지휘 상태: id 0 = 전술 모드와 진입 금지 구역, id 100 + rid = 그 대원의 인원 점검 응답
-  | 'ani';         // (N8) 본 동물: id = Animal.id, 값 AniBelief (시야 밖으로 나가면 마지막 자리가 남는다)
+  | 'ani'          // (N8) 본 동물: id = Animal.id, 값 AniBelief (시야 밖으로 나가면 마지막 자리가 남는다)
+  | 'crew';        // (R3 1단계) 대원 자신의 몸 상태 신고: id = rid, 값 CrewBelief (지휘관·동료는 남의 몸을 이것으로만 안다)
 export interface Fact {
   key: string; type: FactType; id: number;
   value: any;
@@ -697,7 +698,8 @@ export type MethodId =
   | 'air' | 'drone' | 'dog'                                                                             // 야외 수색 (기록 전용·7단계)
   | 'dive' | 'boom' | 'shieldLine' | 'deconTent' | 'hoseWash';      // (N9 §5.12) 잠수 · 오일펜스 · 방패 저지선(cordon) · 제독 텐트 · 물 세척(decontam). 단계 1 은 표의 줄만 (can = NOT_YET)
 /** 왜 이 방법을 골랐는가 (기록 문구·보고서 문장이 쓴다). usual = 평소 선택(교본 줄과 무관) */
-export type MethodWhy = 'usual' | 'near' | 'noGear' | 'tooFar' | 'weak' | 'fast' | 'failed' | 'broken' | 'danger' | 'quiet' | 'team';      // R3 가 이 줄 끝에 상태 까닭 여섯을 더한다 (R3 §2.1·§3.7)
+export type MethodWhy = 'usual' | 'near' | 'noGear' | 'tooFar' | 'weak' | 'fast' | 'failed' | 'broken' | 'danger' | 'quiet' | 'team'      // R3 가 이 줄 끝에 상태 까닭 여섯을 더한다 (R3 §2.1·§3.7)
+  | 'hurt' | 'alone' | 'lowAir' | 'lowAmmo' | 'shaken' | 'tired';      // (R3 1단계) 교본 줄이 1등을 바꾼 까닭 (field/doctrine.ts 의 docWhyMethod — §3.7 의 사상 표)
 /** 방법을 쓴 기록 한 줄 (보고서는 이것과 Problem 으로만 방법을 말한다). field/methodRun.ts 의 recordMethod·recordAir 만 만든다 */
 export interface MethodUse {
   t0: number;                                     // 이 방법을 시작한 시각 (구출 시간 = t − t0)

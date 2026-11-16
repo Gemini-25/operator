@@ -12,6 +12,7 @@ import { methodFailLine, methodLines, methodSummary, methodTally } from './field
 import { roleOf } from './crews';
 import { CAUSE_NAME, bandOf, mainCause, outShifts, threatOverAt } from './field/injury';
 import { VERDICT_RULES } from './field/sceneRegistry';      // (N8) 판정 등록 — 묶음의 세계 규칙이 새 위험을 등급에 넣는다
+import { X6_BOOM_DETAIL, catHazardActive, catSummary, propertyLossOf } from './field/catastrophe';      // (X6 단계 7) 재산 피해·남은 위험·요약
 import type { Sim } from './engine';
 import type { Incident, IncidentResult, InjuryCause, Outcome, Problem, ProblemCode, RosterOut, ShiftReport } from './types';
 import { TYPE_NAME, fmtSec, josa, pct } from './util';
@@ -44,7 +45,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
     else if (c.where === 'safe' || c.where === 'loaded' || c.where === 'hospital' || c.walking) { saved++; if (c.health < 40) critical++; }
     else left++;
   }
-  const propertyLoss = s.kind === 'fire' ? s.burnedTiles / Math.max(1, s.totalFuelTiles) : s.props.some((p) => p.ignited) ? 0.4 : 0;
+  const propertyLoss = propertyLossOf(s);      // (X6 §6.5) 전소·전체 붕괴 1, 그 밖은 탄 비율·무너진 몫·폭발의 최댓값 — 위험 상태가 없으면 예전 식(화재는 탄 비율, 그 밖은 불붙은 소품 0.4)
   // 대원 피해 (H1 §7.1): 순직은 이 사건의 RESPONDER_KILLED 기록으로 따로 센다 — 문턱 때문에 순직한 대원에게는 대개 앞선 RESPONDER_HURT 가 있지만, 집계는 그 가정에 기대지 않는다.
   // 쓰러짐 = RESPONDER_HURT 가 난 대원 가운데 순직하지 않고 쓰러져 있는 대원, 부상 = 나머지
   const hurtRids = new Set<number>(), killed = new Set<number>();
@@ -73,7 +74,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   let flames = 0; for (let i = 0; i < s.fire.length; i++) if (s.fire[i] > 0.2) flames++;      // 꺼져 가는 잔불은 제외
   // (N9 §5.15) 해산한 용의자(dispersed)는 대치·교전으로 세지 않는다
   let hazardActive = flames > 0 || s.hostiles.some((h) => (h.state === 'hold' || h.state === 'fight') && h.dispersed !== true) || s.props.some((p) => p.kind === 'valve' && !p.mitigated && !p.ignited)
-    || s.props.some((p) => p.kind === 'bomb' && p.real && !p.mitigated && !p.exploded);      // 처리되지 않은 진짜 폭발물
+    || s.props.some((p) => p.kind === 'bomb' && p.real && !p.mitigated && !p.exploded)      // 처리되지 않은 진짜 폭발물
+    || catHazardActive(s);      // (X6 §6.5) 서 있는 건물의 보강하지 않은 균열 · 달궈진 채 곁에 불이 있는 용기 · 폭발 하한 구름
   // (N8) 판정 등록(field/sceneRegistry.registerVerdict): 살아 있는 시설물·풀린 동물처럼 위의 식이 모르는 위험. open 이면 위험이 남은 것으로(벌점 1.5 와 목표 미완이 아래 식 그대로 따라온다),
   // bad 는 벌점에 더하고, delayed 는 대응 지연으로 센다. 등록된 줄이 없으면 아무것도 바뀌지 않는다
   let vBad = 0, vDelayed = false;
@@ -138,7 +140,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   if (wrongNotes.length && firstCall) A.push(`최초 신고자(${personaName(firstCall.caller.persona)})의 정보가 실제와 달랐습니다: ${wrongNotes.slice(0, 2).join('; ')}.`);
   // 순직은 맨 앞에 둔다: 분석 문장이 9줄에서 잘려도 빠지지 않는다 (H1 §3.8)
   const order: ProblemCode[] = ['RESPONDER_KILLED', 'CALL_QUEUE', 'CALL_VAGUE', 'MISJUDGE_TYPE', 'UNDERESTIMATE', 'OVERESTIMATE', 'NO_UNIT', 'DIVERTED', 'ROUTE_BLOCKED', 'TRAFFIC_DELAY', 'SCENE_MISMATCH', 'UNDER_DISPATCH', 'BACKUP_LATE',
-    'WRONG_ADDRESS', 'FALSE_ALARM', 'PATH_BLOCKED', 'COMM_FAIL', 'RECOUNT', 'VICTIM_MISSED', 'EQUIP_FAIL', 'WATER_OUT', 'HIDDEN_HAZARD', 'ESCALATION', 'SUSPECT_DIED', 'SECONDARY_COLLISION', 'RESPONDER_HURT', 'FATIGUE', 'SUSPECT_FLED', 'LATE_DISCOVERY', 'TIMEOUT'];
+    'WRONG_ADDRESS', 'FALSE_ALARM', 'PATH_BLOCKED', 'COMM_FAIL', 'RECOUNT', 'VICTIM_MISSED', 'EQUIP_FAIL', 'WATER_OUT', 'BURNOUT', 'STRUCT_COLLAPSE', 'EXPLOSION', 'HIDDEN_HAZARD', 'ESCALATION', 'SUSPECT_DIED', 'SECONDARY_COLLISION', 'RESPONDER_HURT',
+    'WITHDRAWAL', 'DANGER_SIGN', 'FATIGUE', 'SUSPECT_FLED', 'LATE_DISCOVERY', 'TIMEOUT'];      // (X6 §5.10) 결과 문장(전소·붕괴·폭발)은 숨겨진 위험 앞, 철수·조짐은 대원 피해 뒤 — 9줄 컷에서 H1 의 문장이 밀리지 않게
   const T: Partial<Record<ProblemCode, (ps: Problem[]) => string>> = {
     RESPONDER_KILLED: (ps) => `순직: ${ps.map((p) => p.detail).join(' / ')}.`,      // 원인과 경과는 숨지는 그 자리에서 상태로 만든 detail 에 들어 있다 (sceneManager.agentHealth)
     CALL_QUEUE: (ps) => `신고 전화가 다른 통화 처리 때문에 ${ps[0].detail} 대기했습니다.`,
@@ -182,6 +185,34 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
     SUSPECT_FLED: (ps) => `${ps.map((p) => p.detail).join(', ')}${s.arrivedAt < 0 || ps[0].t < s.arrivedAt ? ' — 부대 도착 전이었습니다' : ' — 출입구 봉쇄가 완성되기 전이었습니다'}.`,
     LATE_DISCOVERY: (ps) => `${ps[0].detail}.`,
     TIMEOUT: (ps) => `${ps[0].detail}.`,
+    // (X6 §6.6) 위험의 현실화 — 기록된 문제에서만 만든다
+    DANGER_SIGN: (ps) => {
+      const rec = ps.filter((p) => p.recovered), open = ps.filter((p) => !p.recovered), out: string[] = [];
+      const more = (n: number): string => (n > 2 ? ` 외 ${n - 2}건` : '');
+      if (rec.length) out.push(`위험 조짐을 보고 막았습니다: ${rec.slice(0, 2).map((p) => `${p.detail} → ${p.recoveryText}`).join(', ')}${more(rec.length)}.`);
+      if (open.length) out.push(`조짐이 있었지만 막지 못했습니다: ${open.slice(0, 2).map((p) => p.detail).join(', ')}${more(open.length)}.`);
+      return out.join(' ');
+    },
+    WITHDRAWAL: (ps) => {
+      const one = (p: Problem): string => `${p.detail} — ${p.recovered ? p.recoveryText : '끝까지 밖에서 대응했습니다'}`;
+      return ps.length > 1 ? `전원 철수가 ${ps.length}번 있었습니다: ${ps.slice(0, 2).map(one).join(' / ')}.` : `${one(ps[0])}.`;
+    },
+    BURNOUT: (ps) => `${ps[0].detail}.`,
+    STRUCT_COLLAPSE: (ps) => {
+      let line = `구조물이 무너졌습니다: ${ps.slice(0, 3).map((p) => p.detail).join(', ')}${ps.length > 3 ? ` 외 ${ps.length - 3}건` : ''}.`;
+      // 같은 구역의 막지 못한 붕괴 조짐: 조짐을 안 지 얼마 뒤였는가 (첫 붕괴)
+      const p0 = ps[0], total = p0.detail.startsWith('건물 전체 붕괴'), where = total ? '' : p0.detail.split(' 천장·바닥 붕괴')[0];
+      const sign = I.problems.find((q) => q.code === 'DANGER_SIGN' && !q.recovered && q.t <= p0.t && (q.detail.startsWith('건물 붕괴 조짐') || (q.detail.startsWith('붕괴 조짐') && (total || q.detail.includes(where)))));
+      if (sign) line += ` 붕괴 조짐이 확인된 지 ${fmtSec(p0.t - sign.t)} 뒤였습니다.`;
+      return line;
+    },
+    EXPLOSION: (ps) => {
+      let line = `폭발이 일어났습니다: ${ps.slice(0, 3).map((p) => p.detail).join(', ')}${ps.length > 3 ? ` 외 ${ps.length - 3}건` : ''}.`;
+      const p0 = ps[0], gas = p0.detail.startsWith('누출된 가스');
+      const sign = I.problems.find((q) => q.code === 'DANGER_SIGN' && !q.recovered && q.t <= p0.t && q.detail.startsWith(gas ? '가스 농도' : '용기 가열'));
+      if (sign) line += ` 위험을 알고 있었지만 ${josa(gas ? '차단·환기' : '냉각', '이/가')} 끝나기 전이었습니다.`;
+      return line;
+    },
   };
   // (R2) 대응 방법 실패·변경: 장비 고장 바로 다음 자리. 위의 order·T 글자를 다른 묶음(H1·X6)이 함께 고치고 있어 여기서 끼운다 — 합쳐진 뒤에는 글자 안으로 옮겨도 된다
   order.splice(order.indexOf('EQUIP_FAIL') + 1, 0, 'METHOD_FAIL'); T.METHOD_FAIL = methodFailLine;
@@ -196,7 +227,12 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   for (const c of cas) {
     if (A.length >= 11) break;
     if (c.dead) {
-      const why = c.deathCause ? ` (${CAUSE_NAME[c.deathCause]})` : '';      // 숨지게 한 원인 — 사망 기록에 적힌 그 원인 (H1 §7.2)
+      // (X6 §6.6) 무너짐·폭발로 숨졌으면 그 기록의 상세를 짧게 붙인다 (그 사람의 원인 기록이 그 붕괴·폭발이다 — hurtCas 가 넘겨받은 ev 로 적는다)
+      //  숨짐 기록이 그 원인 기록을 causes 로 잇는 경우가 있어(원인 기록이 숨짐 기록으로 바뀐다) 한 단계 거슬러 본다
+      const x6Of = (ev: number) => I.problems.find((p) => p.eventId === ev && (p.code === 'STRUCT_COLLAPSE' || p.code === 'EXPLOSION' || (p.code === 'HIDDEN_HAZARD' && X6_BOOM_DETAIL.test(p.detail))));
+      let x6 = c.deathCause === 'crush' || c.deathCause === 'blast' ? x6Of(c.causeEvent) : undefined;
+      if (!x6 && (c.deathCause === 'crush' || c.deathCause === 'blast') && c.causeEvent >= 0 && sim.events[c.causeEvent]) for (const k of sim.events[c.causeEvent].causes) { x6 = x6Of(k); if (x6) break; }
+      const why = c.deathCause ? ` (${CAUSE_NAME[c.deathCause]}${x6 ? ` — ${x6.detail.split(' — ')[0]}` : ''})` : '';      // 숨지게 한 원인 — 사망 기록에 적힌 그 원인 (H1 §7.2)
       if (s.arrivedAt < 0 || c.tDead < s.arrivedAt) A.push(`구조 대상 ${josa(c.label, '은/는')} 첫 부대가 도착하기 전에 이미 숨졌습니다${why}${responseTime > limit ? ' — 도착 지연이 결정적이었습니다' : ''}.`);
       else if (c.tDiscovered < 0 || c.tDiscovered > c.tDead) A.push(`구조 대상 ${josa(c.label, '은/는')} 도착 ${fmtSec(c.tDead - s.arrivedAt)} 뒤, 발견되기 전에 숨졌습니다${why}.`);
       else {
@@ -212,7 +248,9 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   if (benign) hl.push(truth.variant === 'prank' ? '장난 전화 — 실제 사건 없음' : '오인 신고 — 실제 화재 없음');
   else if (cas.length) hl.push(`요구조자 ${cas.length}명 중 ${saved}명 구조${lost ? `, ${lost}명 사망` : ''}${undiscovered ? `, ${undiscovered}명 미발견` : ''}${left ? `, ${left}명 구조 미완료` : ''}`);
   else hl.push('인명 피해 없음');
-  if (s.kind === 'fire') hl.push(`소실률 ${pct(propertyLoss)}`);
+  const cs = catSummary(sim, s, I, hazardActive);      // (X6 §6.5·§6.6) 건물 전소 · 건물 붕괴 · 폭발 n회, 소실률은 화재가 아니어도 재산 피해가 있으면
+  if (cs) { if (cs.burnout) hl.push('건물 전소'); if (cs.total) hl.push('건물 붕괴'); else if (cs.partial) hl.push(`일부 붕괴 ${cs.partial}곳`); if (cs.explosions) hl.push(`폭발 ${cs.explosions}회`); }
+  if (s.kind === 'fire' || propertyLoss > 0) hl.push(`소실률 ${pct(propertyLoss)}`);
   if (suspectsTotal) hl.push(`용의자 ${suspectsTotal}명 중 ${caught}명 검거${suspectsDead ? ` (사망 ${suspectsDead})` : ''}`);
   { const hurtN = downCount + hurtOnly; if (hurtN) hl.push(`대원 ${hurtN}명 부상${killed.size ? `, ${killed.size}명 순직` : ''}`); else if (killed.size) hl.push(`대원 ${killed.size}명 순직`); }
   const troubles = I.problems.filter((p) => p.code !== 'CALL_MISINFO' && p.code !== 'OVERESTIMATE' && p.code !== 'LATE_DISCOVERY' && p.code !== 'FALSE_ALARM').length;
@@ -224,6 +262,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
     propertyLoss, respondersHurt: hurtRids.size, suspectsTotal, suspectsCaught: caught, suspectsEscaped: escaped,
     responseTime, dispatchTime, duration: sim.t - I.createdAt, analysis: A, headline: hl.join(' · ') + '.',
     respondersDown: downCount, respondersKilled: killed.size, suspectsHurt, suspectsDead, deathCauses,      // (H1)
+    catastrophe: cs,      // (X6) 위험 상태도 지휘 상태도 없는 현장은 undefined
   };
 }
 
@@ -276,6 +315,16 @@ export function buildReport(sim: Sim): ShiftReport {
     susHurt += res.suspectsHurt ?? 0; susDead += res.suspectsDead ?? 0;
     if (res.deathCauses) for (const k of Object.keys(res.deathCauses) as InjuryCause[]) causeTally[k] = (causeTally[k] ?? 0) + (res.deathCauses[k] ?? 0);
   }
+  // (X6 §6.6) 위험의 현실화: 사건 결과의 요약을 더한다
+  const cat = { burnouts: 0, totals: 0, partials: 0, explosions: 0, withdrawals: 0, averted: 0, crewCaught: 0 };
+  for (const I of sim.incidents) {
+    const k = I.result?.catastrophe;
+    if (!k) continue;
+    if (k.burnout) cat.burnouts++;
+    if (k.total) cat.totals++;
+    cat.partials += k.partial; cat.explosions += k.explosions; cat.averted += k.averted; cat.crewCaught += k.crewCaught;
+    for (const p of I.problems) if (p.code === 'WITHDRAWAL') cat.withdrawals++;
+  }
   const equip = sim.events.filter((e) => e.problem === 'EQUIP_FAIL').length;
   const delayCauses = Array.from(causeCount.entries()).map(([code, count]) => ({ code, label: PROBLEM_LABEL[code], count })).sort((a, b) => b.count - a.count || (a.code < b.code ? -1 : 1));
   const n = incidents.length;
@@ -292,6 +341,7 @@ export function buildReport(sim: Sim): ShiftReport {
   if (susHurt) summary.push(susDead ? `용의자 ${susHurt}명이 다쳤고 그중 ${susDead}명이 숨졌습니다.` : `용의자 ${susHurt}명이 다쳤습니다.`);
   if (delayCauses.length) summary.push(`가장 자주 발생한 문제: ${delayCauses.slice(0, 3).map((c) => `${c.label}(${c.count}건)`).join(', ')}.`);
   if (n && good === n) summary.push('모든 사건을 목표대로 해결한 교대였습니다.');
+  if (cat.burnouts + cat.totals + cat.explosions + cat.withdrawals + cat.averted > 0) summary.push(`이번 교대에 건물 ${cat.burnouts}곳이 전소되고 ${cat.totals}곳이 무너졌습니다. 폭발 ${cat.explosions}건. 위험 조짐을 보고 전원 철수한 것이 ${cat.withdrawals}번, 막아 낸 조짐이 ${cat.averted}건입니다.`);      // (X6)
   const methods = methodTally(sim);      // (R2) 성공한 방법별 횟수 (평소 방법 포함). 요약 줄은 평소 방법이 아닌 것만, 하나도 없으면 넣지 않는다
   { const line = methodSummary(methods); if (line) summary.push(line); }
   // 교통: 기록된 통계로만 쓴다 (traffic.ts)
@@ -312,6 +362,7 @@ export function buildReport(sim: Sim): ShiftReport {
     avgResponse: rN ? rSum / rN : -1, avgDispatch: dN ? dSum / dN : -1, utilization, unitUtil,
     casTotal, casSaved, casLost, casUndiscovered: casUnd, respondersHurt: hurt, equipFailures: equip, delayCauses, incidents, summary,
     respondersKilled: killedList, suspectsHurt: susHurt, suspectsDead: susDead, roster,      // (H1)
+    catastrophe: cat, placeMarks: sim.placeMarks.size ? Array.from(sim.placeMarks.values()).map((m) => ({ ...m })) : undefined,      // (X6) 건물 상태는 이 교대의 자료 — 이어받는 것은 I2
     hash: sim.logHash.toString(16),
   };
 }

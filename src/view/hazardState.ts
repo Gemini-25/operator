@@ -8,7 +8,7 @@ import { isIndoor } from '../sim/field/grid';
 import { isHeld } from '../sim/field/hazards';
 import { SCENARIOS } from '../sim/scenarios';
 import { T } from '../sim/types';
-import type { Casualty, Incident, Scene } from '../sim/types';
+import type { Casualty, Incident, PlaceMark, Scene } from '../sim/types';
 import { dist } from '../sim/util';
 import { ICON_PATH } from './icons';
 import { HAZARD_MARK, RUIN_MARK } from './marks';
@@ -17,7 +17,7 @@ import { HAZARD_MARK, RUIN_MARK } from './marks';
 export const HOSTAGE_VARIANTS = ['hostage', 'siege'];
 
 // ───────────────────────── 무너진 건물 ─────────────────────────
-/** 무너진 규모. 열린 값이다(X6 가 열쇠를 더한다) — 모르는 값은 'major' 처럼 그린다 */
+/** 무너진 규모. 열린 값이다 — (X6) 'total'(전체 붕괴) · 'burnt'(전소) · 'blasted'(폭발 흔적) · 'scorched'(그을림)를 더했다. 모르는 값은 'major' 처럼 그린다 */
 export type RuinLevel = 'partial' | 'major' | (string & {});
 export interface RuinInfo {
   frac: number;             // 무너진 칸 / 건물 칸 (벽 포함)
@@ -28,15 +28,28 @@ export interface RuinInfo {
   material: 'concrete' | 'earth' | 'crane';
 }
 const isBuildingTile = (t: number): boolean => t === T.FLOOR || t === T.FURN || t === T.DOOR || t === T.STAIR || t === T.WALL || t === T.WINDOW;
-const ruinCache = new WeakMap<Scene, { ver: number; nf: number; info: RuinInfo | null }>();
+const ruinCache = new WeakMap<Scene, { ver: number; nf: number; mark: string; info: RuinInfo | null }>();
 
-/** 무너진 정도 (진실). 건물 칸이 0 이거나 무너진 칸이 0 이면 null (산사태: 건물 칸이 없다) */
+/** (X6 §7.1) 이 사건이 남긴 건물 상태 (Sim.placeMarks — 그 건물의 가장 무거운 상태가 이 사건의 것일 때만) */
+export function placeMarkOf(sim: Sim, I: Incident): PlaceMark | undefined {
+  if (I.truth.placeId < 0 || !sim.placeMarks.size) return undefined;
+  const pm = sim.placeMarks.get(I.truth.placeId);
+  return pm && pm.incidentId === I.id ? pm : undefined;
+}
+/** (X6 §7.2) 건물 상태 → 규모 열쇠: 전체 붕괴 'total' · 전소 'burnt' · 구획 붕괴는 G4 의 비율 규칙 · 폭발 'blasted' · 그을림 'scorched' */
+const MARK_LEVEL: Record<PlaceMark['state'], RuinLevel | null> = { collapsed: 'total', burnt: 'burnt', partial: null, blasted: 'blasted', scorched: 'scorched' };
+
+/**
+ * 무너진 정도 (진실). 건물 칸이 0 이거나 무너진 칸이 0 이면 null (산사태: 건물 칸이 없다).
+ * (X6) 건물 상태(placeMarks)가 있는 사건은 무너진 칸이 0 이어도 값을 돌려준다(frac = 그 상태의 잔해 비율) — 전소·폭발 흔적·그을림은 s.damage 를 쓰지 않는다
+ */
 export function ruinInfo(sim: Sim, I: Incident): RuinInfo | null {
   const s = sim.scenes[I.id];
   if (!s) return null;
   const nf = s.falls ? s.falls.length : 0;
+  const pm = placeMarkOf(sim, I), mk = pm ? pm.state : '';
   const hit = ruinCache.get(s);
-  if (hit && hit.ver === s.staticVersion && hit.nf === nf) return hit.info;
+  if (hit && hit.ver === s.staticVersion && hit.nf === nf && hit.mark === mk) return hit.info;
   let info: RuinInfo | null = null;
   let bld = 0, dmg = 0, sx = 0, sy = 0;
   for (let i = 0; i < s.tiles.length; i++) {
@@ -65,7 +78,13 @@ export function ruinInfo(sim: Sim, I: Incident): RuinInfo | null {
       material: s.variant === 'landslide' ? 'earth' : s.variant === 'crane' ? 'crane' : 'concrete',
     };
   }
-  ruinCache.set(s, { ver: s.staticVersion, nf, info });
+  // (X6) 건물 상태: 무거운 상태면 그 열쇠로 (구획 붕괴는 위의 비율 규칙 그대로). 무너진 칸이 없으면 그 상태의 잔해 비율과 건물 가운데로
+  if (pm && bld > 0) {
+    const lv = MARK_LEVEL[pm.state];
+    if (!info) info = { frac: pm.ruinFrac, u: 0.5, v: 0.5, level: lv ?? (pm.ruinFrac >= 0.22 ? 'major' : 'partial'), secondary: 0, lastFall: s.falls && s.falls.length ? s.falls[s.falls.length - 1].t : pm.t, material: 'concrete' };
+    else if (lv) info.level = lv;
+  }
+  ruinCache.set(s, { ver: s.staticVersion, nf, mark: mk, info });
   return info;
 }
 
@@ -90,12 +109,14 @@ export function pinIcon(I: Incident, truth: boolean): string {
 
 /** 이 사건의 무너진 건물이 지금 보이는가. 'confirmed' = 무너진 모습을 안다, 'reported' = 붕괴 신고만 (AI 시점) */
 export function ruinSeen(sim: Sim, I: Incident, truth: boolean): 'confirmed' | 'reported' | 'none' {
-  if (I.truth.type !== 'collapse' || I.truth.placeId < 0) return 'none';
+  if (I.truth.placeId < 0) return 'none';
+  const pm = placeMarkOf(sim, I);      // (X6 §7.2) 건물 상태를 남긴 사건(화재·가스·붕괴 …)도 — 관찰자 시점은 상태가 생긴 순간부터, AI 시점은 부대가 도착했던 사건만
+  if (I.truth.type !== 'collapse' && !pm) return 'none';
   const s = sim.scenes[I.id];
   if (!s || !ruinInfo(sim, I)) return 'none';
   if (truth) return 'confirmed';
   if (I.firstArrivalAt >= 0) return 'confirmed';
-  if (I.phase === 'closed') return 'none';      // 끝난 사건: AI 시점은 도착했던 사건만 남는다
+  if (I.phase === 'closed' || I.truth.type !== 'collapse') return 'none';      // 끝난 사건: AI 시점은 도착했던 사건만 남는다 (붕괴 신고가 아닌 사건은 신고만으로 보이지 않는다)
   const as = I.assessment;
   if (as && as.type === 'collapse' && I.locationKnown && I.reportedNode === I.truth.nodeId && shownVariant(I, false) !== 'elevator') return 'reported';
   return 'none';
@@ -111,12 +132,18 @@ export function ruinLine(sim: Sim, placeId: number, truth: boolean): string | nu
     if (seen === 'reported') return '붕괴 신고 — 아직 확인 전';
     const r = ruinInfo(sim, I)!;
     const p = Math.round(r.frac * 100);
+    if (r.level === 'total') return '건물 전체 붕괴 — 잔해 더미';      // (X6)
+    if (r.level === 'burnt') return '건물 전소';
+    if (r.level === 'blasted') return '폭발 흔적 — 깨진 유리';
+    if (r.level === 'scorched') return '불에 그을린 건물';
     return r.level === 'partial' ? `무너짐 — 건물의 약 ${p}%` : `크게 무너짐 — 약 ${p}%${r.secondary ? ` · 2차 붕괴 ${r.secondary}회` : ''}`;
   }
   return null;
 }
-/** 규모 열쇠 → 기호 (모르는 열쇠는 major) */
-export const ruinMark = (level: RuinLevel): string => RUIN_MARK[level] ?? RUIN_MARK.major;
+/** 규모 열쇠 → 기호 (모르는 열쇠는 가장 가까운 것 — 그을림은 전소, 폭발 흔적은 일부 무너짐, 그 밖은 major) */
+export const ruinMark = (level: RuinLevel): string => RUIN_MARK[level] ?? (level === 'scorched' ? RUIN_MARK.burnt : level === 'blasted' ? RUIN_MARK.partial : RUIN_MARK.major);
+/** (X6) 규모 열쇠의 칩·마우스 글 */
+export const RUIN_TEXT: Record<string, string> = { partial: '일부 붕괴', major: '크게 붕괴', total: '전체 붕괴', burnt: '전소', blasted: '폭발 흔적', scorched: '그을림' };
 /** AI 시점에서 볼 수 있는 2차 붕괴 횟수 (첫 도착 뒤의 것만) */
 export function seenSecondary(sim: Sim, I: Incident, truth: boolean): { n: number; last: number } {
   const s = sim.scenes[I.id];
@@ -289,7 +316,7 @@ export function hazardChips(sim: Sim, I: Incident, truth: boolean): HazardChip[]
   if (info) {
     if (seen === 'reported') out.push({ key: 'ruin', mark: RUIN_MARK.partial, text: '붕괴 신고', color: '#d6a878', tone: 'info' });
     else {
-      out.push({ key: 'ruin', mark: ruinMark(info.level), text: info.level === 'partial' ? '일부 붕괴' : '크게 붕괴', color: '#d6a878', tone: 'info' });
+      out.push({ key: 'ruin', mark: ruinMark(info.level), text: RUIN_TEXT[info.level] ?? '크게 붕괴', color: info.level === 'burnt' || info.level === 'total' ? '#ff8a5c' : '#d6a878', tone: info.level === 'burnt' || info.level === 'total' ? 'bad' : 'info' });
       const sec = seenSecondary(sim, I, truth);
       if (sec.n > 0) out.push({ key: 'secondary', mark: RUIN_MARK.major, text: `2차 붕괴 ${sec.n}회`, color: '#ff5d5d', tone: 'bad' });
     }

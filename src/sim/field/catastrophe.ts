@@ -17,7 +17,7 @@ import { emit, raiseProblem } from '../events';
 import { TYPE_DEFS } from '../incidentTypes';
 import type { Rng } from '../rng';
 import { T } from '../types';
-import type { CatState, Fact, FieldAgent, FxInfo, Incident, PlaceMark, Prop, Region, Scene, SignBelief } from '../types';
+import type { CatState, Fact, FieldAgent, FxInfo, Incident, IncidentResult, PlaceMark, Prop, Region, Scene, SignBelief } from '../types';
 import { dist, fmtSec, josa, pct } from '../util';
 import { hasKit, kitLive, kitWorks } from '../crews';
 import { signal } from '../world/consequence';
@@ -113,6 +113,8 @@ function syncProps(s: Scene, w: CatWork): void {
 }
 const WORK = new WeakMap<CatState, CatWork>();
 const NONE = new WeakSet<Scene>();
+/** (단계 6) 전체 붕괴의 사건 사실 (현장 전원이 들은 그것) — 늦게 닿은 대원이 잔해 더미를 보고 같은 사실을 배운다 */
+const TOTAL_EV = new WeakMap<CatState, Fact>();
 
 /**
  * 이 현장의 위험 상태. 대상이 아니면 null. 처음 부를 때 만든다 — 규칙·blast·perceive·debrief 어느 입구에서 처음 불려도 같은 결과여야 하므로
@@ -989,6 +991,7 @@ export function collapseBuilding(sim: Sim, s: Scene, I: Incident, c: CatState, b
     signFact(sim, SIGN_BASE.event + c.events++, { kind: 'event', level: 3, region: -1, x: bx, y: by, what: 'total' }, '굉음! 건물 전체 무너짐'),
     signFact(sim, SIGN_BASE.bldg, { kind: 'bldg', level: 3, region: -1, x: bx, y: by }, '건물 전체 붕괴'),
   ];
+  TOTAL_EV.set(c, facts[0]);      // (단계 6) 소리를 듣지 못한 대원도 잔해 더미를 보면 이 사건을 안다 (perceiveSigns)
   for (const r of was) facts.push(signFact(sim, SIGN_BASE.struct + r, { kind: 'struct', level: 0, region: r, x: regs[r].cx, y: regs[r].cy, down: true }, fallenText(regs[r].name)));
   hearAll(sim, s, ev, facts);
   markPlace(sim, s, I, c, 'collapsed');
@@ -1455,6 +1458,10 @@ export function perceiveSigns(sim: Sim, s: Scene, a: FieldAgent, v: number): voi
         const [bx, by] = bldgCenter(s), down = o[1] === 1;
         reportSign(sim, a, me, id, { kind: 'bldg', level: o[0], region: -1, x: bx, y: by, down: down || undefined }, c.totalAt >= 0 ? '건물 전체 붕괴 — 잔해 더미' : bldgText(o[0], down));
       }
+      // (단계 6) 이미 무너진 건물: 무너지는 소리를 듣지 못한 대원(늦게 닿은 부대·그때 음영 구역에 있던 대원)도 잔해 더미를 보면(바깥벽 셋 이상이 보이거나 잔해 위에 서 있으면)
+      // 그 사건(전체 붕괴)을 안다 — 지휘 규칙의 잔해 수색 국면(§6.1)이 이 사실을 읽는다. 시각은 본 때다 (언제 무너졌는지는 모른다)
+      const tf = c.totalAt >= 0 ? TOTAL_EV.get(c) : undefined;
+      if (tf && (cond[2] || c.foot[ai] >= FOOT_IN) && !a.beliefs.get('sign', tf.id)) learn(sim, a, mkFact('sign', tf.id, tf.value, me, sim.t, 1, true, '건물이 무너져 있음 — 잔해 더미'));
     }
   }
   // ── 가스 (구획) ──
@@ -1516,4 +1523,76 @@ export function perceiveSigns(sim: Sim, s: Scene, a: FieldAgent, v: number): voi
       reportSign(sim, a, me, id, { kind: 'vessel', level: o[0], region: regionOfProp(s, p), x: p.x, y: p.y, prop: p.id, down: down || undefined }, vesselText(p, regionNameAt(s, p.x, p.y), o[0], down));
     }
   }
+}
+
+// ───────────────────────── (단계 7) 판정·보고서·지도 — 설계서 §6.5·§6.6·§7.1 ─────────────────────────
+// 판정(debrief.evaluate)이 부른다 — 진실로 판정한다. 위험 상태는 만들지 않고 읽기만 한다(s.cat 이 없는 현장은 예전 식 그대로):
+// 세계 규칙이 사건이 열려 있는 동안 매 틱 catOf 를 부르므로 대상 현장에는 이미 있다. 판정 자리에서 catOf 를 부르면 드럼통을 놓는 등 현장을 바꿀 수 있다.
+
+/** X6 가 남긴 폭발 기록의 상세 (HIDDEN_HAZARD 가운데 X6 의 것을 가린다 — 측정 도구·시험과 같은 글귀) */
+export const X6_BOOM_DETAIL = /^(누출된 가스 폭발 — |보관 중이던 가스 용기 폭발$|화학 드럼 파열$|CNG 버스 가스 용기 폭발$|항공유 폭발$|분진 폭발)/;
+
+/**
+ * 재산 피해 (§6.5): 전소·전체 붕괴 = 1. 그 밖은 max(탄 비율, 사건 중에 무너진 칸의 몫 × 1.2, 폭발이 있었으면 0.3) — 화재가 아니면 불붙은 소품 0.4 도 (예전 식).
+ * 탄 비율은 화재 유형이면 지금처럼 탄 칸 / 탈 수 있는 칸, 그 밖의 유형은 실제 건물(c.struct)이면 건물 칸의 탄 비율, 아니면 0. 상한 1.
+ * 화재 유형에서 X6 일이 없었으면 예전 식(탄 비율)과 같다. 위험 상태가 없는 현장은 예전 식 그대로
+ */
+export function propertyLossOf(s: Scene): number {
+  const fire = s.kind === 'fire';
+  const old = fire ? s.burnedTiles / Math.max(1, s.totalFuelTiles) : s.props.some((p) => p.ignited) ? 0.4 : 0;
+  const c = s.cat;
+  if (!c) return old;
+  if (c.burntAt >= 0 || c.totalAt >= 0) return 1;
+  const burn = fire ? s.burnedTiles / Math.max(1, s.totalFuelTiles) : c.struct ? burnFracOf(c, s) : 0;
+  const ruin = c.struct ? ruinFracOf(c, s) * 1.2 : 0;
+  const boom = c.gasN + c.vesselN + c.dustN > 0 ? 0.3 : 0;
+  const ign = !fire && s.props.some((p) => p.ignited) ? 0.4 : 0;
+  return Math.min(1, Math.max(burn, ruin, boom, ign));
+}
+
+/** 위험이 남았는가 (§6.5 — debrief.evaluate 의 hazardActive 에 더한다): 서 있는 건물의 보강하지 않은 균열 · 열 0.3 이상이고 곁에 불이 있는 용기 · 폭발 하한 구름(가스 ≥ 1 칸) */
+export function catHazardActive(s: Scene): boolean {
+  const c = s.cat;
+  if (!c) return false;
+  for (const p of s.props) {
+    if (p.removed) continue;
+    if (p.kind === 'unstable' && !p.mitigated && c.struct && c.totalAt < 0) return true;
+    if (p.vessel && !p.exploded && (p.heatLoad ?? 0) >= 0.3 && vesselNear(s, p) >= 0.1) return true;
+  }
+  if (c.gas) { const g = c.gas; for (let i = 0; i < g.length; i++) if (g[i] >= CAT.LEL) return true; }
+  return false;
+}
+
+/**
+ * 사건 결과의 위험의 현실화 요약 (IncidentResult.catastrophe — §6.5): 전소·전체 붕괴 · 구획 붕괴 수 · 폭발 수 · 철수했는가 · 막아 낸 조짐(DANGER_SIGN 복구) ·
+ * 휘말린 대원 (붕괴·폭발 기록이 원인인 RESPONDER_HURT ∪ RESPONDER_KILLED 의 대원 수 — 숨진 대원은 순직 기록만 남을 수 있어 합쳐 센다) · 위험이 남았는가(판정의 값).
+ * 위험 상태도 지휘 상태도 없는 현장은 undefined
+ */
+export function catSummary(sim: Sim, s: Scene, I: Incident, hazard: boolean): NonNullable<IncidentResult['catastrophe']> | undefined {
+  const c = s.cat;
+  if (!c && !s.ops) return undefined;
+  let partial = 0, withdrew = false, averted = 0;
+  const x6 = new Set<number>();
+  for (const p of I.problems) {
+    if (p.code === 'STRUCT_COLLAPSE') { x6.add(p.eventId); if (!p.detail.startsWith('건물 전체 붕괴')) partial++; }
+    else if (p.code === 'EXPLOSION' || (p.code === 'HIDDEN_HAZARD' && X6_BOOM_DETAIL.test(p.detail))) x6.add(p.eventId);
+    else if (p.code === 'WITHDRAWAL') withdrew = true;
+    else if (p.code === 'DANGER_SIGN' && p.recovered) averted++;
+  }
+  const caught = new Set<number>();
+  if (x6.size) for (const e of sim.events) {
+    if (e.incidentId !== I.id || e.rid < 0 || (e.problem !== 'RESPONDER_HURT' && e.problem !== 'RESPONDER_KILLED')) continue;
+    for (const k of e.causes) if (x6.has(k)) { caught.add(e.rid); break; }
+  }
+  return { burnout: !!c && c.burntAt >= 0, total: !!c && c.totalAt >= 0, partial, explosions: c ? c.gasN + c.vesselN + c.dustN : 0, withdrew, averted, crewCaught: caught.size, hazard };
+}
+
+/** 사건이 닫힐 때 (§7.1 — incidents.closeIncident 끝): 실제 건물의 화재가 닫혔고 건물 상태가 아직 없는데 탄 비율이 0.15 이상이면 '그을린 건물' */
+export function noteClosedPlace(sim: Sim, I: Incident): void {
+  if (I.truth.type !== 'fire' || I.truth.placeId < 0) return;
+  const s = sim.scenes[I.id], c = s ? s.cat : undefined;
+  if (!s || !c || !c.struct) return;
+  const pm = sim.placeMarks.get(I.truth.placeId);
+  if (pm && pm.incidentId === I.id) return;
+  if (burnFracOf(c, s) >= 0.15) markPlace(sim, s, I, c, 'scorched');
 }

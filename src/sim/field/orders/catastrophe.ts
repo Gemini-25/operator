@@ -5,7 +5,7 @@
 //   단계 2 위험: 진입 금지 구역 (허락된 일만 — ops.ts 의 문 gateBlocks)
 //   단계 3 임박: 전원 철수 (명령 + 공기 경적 + 인원 점검) · 건물 단위면 외부 방어
 //   다시 들어가는 조건(§5.7) · 제한적 구조 진입(§5.6) · 냉각·가스 재측정·도시가스 차단 요청(§5.8) · 위험 조짐 기록(DANGER_SIGN) · 지원 요청·상황 보고(§5.9)
-// 잔해 수색 국면·외부 확인 종료·종료를 막는 것(registerBlocker)은 단계 6 이 이 파일에 더한다.
+// (단계 6) 사건의 끝 — 잔해 수색 국면(rubbleStep: 전체 붕괴 30초 · 구획 붕괴 25초 뒤), 다 탄 현장의 외부 확인 종료(extClose), 종료를 막는 것(registerBlocker) — 파일 끝.
 
 import type { Sim } from '../../engine';
 import { emit, markRecoveredBy, raiseProblem } from '../../events';
@@ -18,7 +18,7 @@ import { mkFact } from '../beliefs';
 import { pushFx } from '../hazards';
 import { OPS_ID, OPS_PAR, SIGN_BASE, bumpZones, gateBlocks, newOps, opsExterior, regionAt, regionNbrs, structScene, zoneLevelAt, zoneMask, zonesVer } from '../ops';
 import type { OpsFact } from '../ops';
-import { registerGate, registerOrders } from '../sceneRegistry';
+import { registerBlocker, registerGate, registerOrders } from '../sceneRegistry';
 import type { CommandKit } from '../sceneRegistry';
 
 // ───────────────────────── 위험 단계 (§5.2) ─────────────────────────
@@ -141,12 +141,29 @@ export function dangerMap(sim: Sim, s: Scene, a: FieldAgent, ops: OpsState): { h
   // 구조 안정 (§5.2 마지막 줄): 건물 단계 3 인데 모든 구역의 불 ≤ 0.3 이고 90초 동안 새 사건·조짐 상승이 없다 → 2
   const bh = hits.get('bldg');
   if (bh && bh.level >= 3 && sim.t - ops.quietSince >= 90 && indoor.every((r) => cx.fire(r) <= 0.3)) { bh.level = 2; bh.why = '구조 안정 — 허락된 일만'; }
+  // (단계 6 — §6.1·§5.7) 무너진 건물: 전체 붕괴를 안 지 30초가 지나면 더 무너질 것이 없다 — 구조·건물 단계를 내지 않는다 (잔해 수색 국면).
+  // 그 전 30초는 건물 전체가 철수 구역이다 (재붕괴 위험). 잔해 수색을 허락한 구획(ops.rubble)도 구조 단계(센 불 260초 줄 등)를 내지 않는다 — 이미 무너진 구획이다
+  const tAll = totalKnownAt(cx.signs);
+  for (const [k, h] of hits) {
+    if (h.kind !== 'struct' && h.kind !== 'bldg') continue;
+    if (tAll >= 0 && sim.t - tAll >= RUBBLE_TOTAL) hits.delete(k);
+    else if (h.kind === 'struct' && ops.rubble.length && ops.rubble.indexOf(+k.slice(7)) >= 0) hits.delete(k);
+    else if (h.kind === 'bldg' && tAll >= 0) { h.level = 3; h.why = '붕괴 직후 — 2차 붕괴 위험'; h.t = Math.max(h.t, tAll); }
+  }
   for (const [k, h] of hits) raw.set(k, h.level);
   // 해제한 키는 그 뒤에 새로 들어온 사실로만 다시 올린다 (같은 낡은 믿음으로 곧바로 다시 단계 3 이 되지 않게 — §5.7)
   for (const [k, h] of hits) { const c = ops.cleared[k]; if (c !== undefined && h.t <= c) hits.delete(k); }
   // 제한적 구조 진입 중인 구역은 40초 동안 단계 2 (§5.6). 그 뒤의 새 조짐이 오르면 끝난다
   for (const [k, h] of hits) { const e = ops.entry[k]; if (e && sim.t < e.until && h.level >= 3 && h.t <= e.last) h.level = 2; }
   return { hits, raw };
+}
+/** 전체 붕괴 뒤 잔해 수색까지 기다리는 초 (§6.1) · 구획 붕괴 뒤 그 구획의 잔해 수색까지 (이웃에서 새 무너짐이 없어야 한다) */
+const RUBBLE_TOTAL = 30, RUBBLE_PART = 25;
+/** 전체 붕괴(사건 소리, 또는 늦게 닿아 본 잔해 더미)를 안 시각 (-1 = 모른다) */
+function totalKnownAt(signs: Fact[]): number {
+  let t = -1;
+  for (const f of signs) { const v = f.value as SignBelief; if (v.kind === 'event' && v.what === 'total' && (t < 0 || f.t < t)) t = f.t; }
+  return t;
 }
 /** 원천 차단을 안 시각 (-1 = 모른다): 도시가스 차단 완료 통보, 또는 아는 누출이 모두 멈췄다(멈춘 것을 하나 이상 안다) */
 function cutoffAt(a: FieldAgent): number {
@@ -167,11 +184,12 @@ interface OpsWork {
   evSeen: number;                                  // 상황 보고에 실은 마지막 사건 번호
   resendAt: number;                                // 인원 점검의 마지막 재송신 시각
   reqT: Map<string, number>;                       // 구역 키별 지원 요청 시각
+  rubbleAll: boolean;                              // (단계 6) 전체 붕괴의 잔해 수색을 시작했다 (믿음 고치기·기록은 한 번)
 }
 const WORK = new WeakMap<OpsState, OpsWork>();
 function workOf(ops: OpsState): OpsWork {
   let w = WORK.get(ops);
-  if (!w) { w = { sent: 0, lowSince: new Map(), lastT: new Map(), told: new Set(), danger: new Map(), evSeen: -1, resendAt: -1, reqT: new Map() }; WORK.set(ops, w); }
+  if (!w) { w = { sent: 0, lowSince: new Map(), lastT: new Map(), told: new Set(), danger: new Map(), evSeen: -1, resendAt: -1, reqT: new Map(), rubbleAll: false }; WORK.set(ops, w); }
   return w;
 }
 /** 구역 목록을 실어 보낼 지휘 상태 사실 (id 0) */
@@ -214,6 +232,8 @@ registerOrders((sim, s, I, a, k) => {
   }
   // 2) 사건 소리(붕괴·폭발): 조용해진 시각을 다시 재고, 지원을 부르고, 관제에 상황을 보고한다 (§5.9)
   noteEvents(sim, s, I, a, k, ops, wk);
+  // 2b) (단계 6) 무너진 뒤 잠잠해진 곳의 잔해 수색 (§6.1): 전체 붕괴 30초 뒤 잔해 수색 국면, 구획 붕괴 25초 뒤 그 구획 — 수색 믿음을 낮추고 안에 있던 사람을 '매몰 추정'으로
+  rubbleStep(sim, s, I, a, ops, wk);
   // 3) 위험 단계
   const { hits, raw } = dangerMap(sim, s, a, ops);
   dangerSigns(sim, s, I, a, ops, wk, hits, raw);
@@ -221,6 +241,8 @@ registerOrders((sim, s, I, a, k) => {
   syncZones(sim, s, I, a, k, ops, wk, hits);
   // 5) 인원 점검 (§5.4)
   if (ops.mode === 'withdraw') parCheck(sim, s, I, a, ops, wk);
+  // 5b) (단계 6) 다 탄 현장의 외부 확인 종료 (§6.2)
+  extClose(sim, s, I, a, k, ops);
   // 6) 단계 1: 그 구역의 진압·수색은 한 사람씩 (동시에 들어가는 인원을 2명으로)
   for (const h of hits.values()) if (h.level === 1) for (const w of s.board) if ((w.kind === 'suppress' || w.kind === 'search') && (w.status === 'open' || w.status === 'active') && h.regions.indexOf(w.region) >= 0) w.max = 1;
   // 7) 막는 조치 (§5.8)
@@ -365,7 +387,9 @@ function syncZones(sim: Sim, s: Scene, I: Incident, a: FieldAgent, k: CommandKit
       else if (el >= 20) { go = true; why = '안전밸브 소리가 멎음'; }
     } else if (z.kind === 'fire' || z.kind === 'dust') { go = true; why = '불길이 잦아듦'; }
     else if (z.kind === 'bldg') {
-      if (want === 0 && el >= 40) { go = true; why = '건물 붕괴 조짐이 가라앉음'; }
+      const tAll = totalKnownAt(a.beliefs.list('sign'));
+      if (tAll >= 0 && sim.t - tAll >= RUBBLE_TOTAL) { go = true; why = '붕괴가 멎음 — 잔해 수색'; }      // (단계 6) 무너진 건물은 잔해 수색 국면으로 (§6.1)
+      else if (want === 0 && el >= 40) { go = true; why = '건물 붕괴 조짐이 가라앉음'; }
       else if (want === 2 && z.level === 3) { go = true; why = '구조 안정'; }
     }
     if (!go) continue;
@@ -389,10 +413,10 @@ function cap180(sim: Sim, s: Scene, a: FieldAgent, z: NoGoZone, h: DangerHit): b
   if (z.r > 0) { const rg = regionAt(s, Math.round(z.y) * s.w + Math.round(z.x)); if (rg >= 0 && (B.val<number>('fire', rg) ?? 0) > 0.3) return false; }
   return true;
 }
-/** 구획 구역의 구역이 무너졌다 (사건 소리) */
+/** 구획 구역의 구역이 무너졌다 (사건 소리 — 그 구획의 무너짐, 또는 (단계 6) 건물 전체 붕괴) */
 function fallenIn(a: FieldAgent, z: NoGoZone): boolean {
   const r0 = +z.key.slice(z.key.indexOf(':') + 1);
-  for (const f of a.beliefs.list('sign')) { const v = f.value as SignBelief; if (v.kind === 'event' && v.what === 'partial' && v.region === r0) return true; }
+  for (const f of a.beliefs.list('sign')) { const v = f.value as SignBelief; if (v.kind === 'event' && (v.what === 'total' || (v.what === 'partial' && v.region === r0))) return true; }
   return false;
 }
 /** 구역이 생겼다: 남은 구조 대상을 알리고(한 번), 건물 단위면 외부 방어(처음 바꿀 때 한계 시간 +150 — 지휘 쪽 보탬)와 방수 부대 */
@@ -477,10 +501,11 @@ function setMode(sim: Sim, s: Scene, I: Incident, a: FieldAgent, ops: OpsState, 
   if (ops.mode === mode) return;
   const was = ops.mode;
   ops.mode = mode; ops.since = sim.t; ops.reason = why; bumpZones(ops);
-  if (mode === 'interior') { ops.noExt = []; if (was === 'defensive') emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 2, text: `외부 방어를 풀고 내부 진입을 재개합니다 — ${why}.` }); }
+  if (mode === 'interior' || mode === 'rubble') ops.noExt = [];
+  if (mode === 'interior') { if (was === 'defensive') emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 2, text: `외부 방어를 풀고 내부 진입을 재개합니다 — ${why}.` }); }
   if (mode === 'defensive') emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 3, text: `외부 방어로 전환합니다 — ${why}. 건물 밖에서 방수하라.` });
   // 모드가 바뀌면 관제에 상황 보고 (§5.9 — 사건 사실이 없으므로 관제의 위험도는 바뀌지 않는다)
-  if (mode === 'defensive' || (mode === 'withdraw' && was === 'interior')) sitrepX(sim, s, I, a, ops, mode === 'defensive' ? '건물 전체 붕괴 위험' : `${why}`, []);
+  if (mode === 'defensive' || (mode === 'withdraw' && was === 'interior') || mode === 'rubble') sitrepX(sim, s, I, a, ops, mode === 'defensive' ? '건물 전체 붕괴 위험' : mode === 'rubble' ? '건물 붕괴가 멎음' : `${why}`, []);
 }
 
 /**
@@ -498,7 +523,11 @@ function parCheck(sim: Sim, s: Scene, I: Incident, a: FieldAgent, ops: OpsState,
   for (const rid of ops.parAsked) { const f = B.get('ops', OPS_PAR + rid); if (f && (f.value as { t: number }).t >= ops.parAt && ops.parOk.indexOf(rid) < 0) ops.parOk.push(rid); }
   const missing = ops.parAsked.filter((rid) => ops.parOk.indexOf(rid) < 0);
   const names = (l: number[]): string => l.map((rid) => sim.responders[rid].name).join(', ');
-  const done = (): void => { setMode(sim, s, I, a, ops, ops.zones.some((z) => z.kind === 'bldg' && z.level === 3) ? 'defensive' : 'interior', ops.reason || '인원 점검 완료'); };
+  const done = (): void => {
+    if (ops.zones.some((z) => z.kind === 'bldg' && z.level === 3)) setMode(sim, s, I, a, ops, 'defensive', ops.reason || '인원 점검 완료');
+    else if (rubbleReady(sim, a)) enterRubble(sim, s, I, a, ops, wk);      // (단계 6) 무너진 건물이면 잔해 수색 국면으로
+    else setMode(sim, s, I, a, ops, 'interior', ops.reason || '인원 점검 완료');
+  };
   if (!missing.length) {
     emit(sim, { inc: I.id, role: 'COMMANDER', actor: me, rid: a.rid, kind: 'command', imp: 1, text: `인원 점검 완료 — 철수 대원 ${ops.parOk.length}명 전원 확인.` });
     done(); return;
@@ -618,16 +647,152 @@ function threshold(s: Scene, ops: OpsState, r: number): number {
   const reg = s.regions[r];
   if (!reg) return -1;
   const w = s.w, n = w * s.h, zm = zoneMask(s, ops.zones);
-  let door = -1, floor = -1;
+  let door = -1, floor = -1, own = -1;
   for (const i of reg.tiles) {
     const x = i % w;
     for (let d = 0; d < 4; d++) {
       const j = d === 0 ? (x + 1 < w ? i + 1 : -1) : d === 1 ? (x > 0 ? i - 1 : -1) : d === 2 ? (i + w < n ? i + w : -1) : i - w;
-      if (j < 0 || s.region[j] === r || zm[j] >= 3) continue;
+      if (j < 0 || s.region[j] === r) continue;
       const t = s.tiles[j];
+      // (단계 6) 그 구획의 문 칸이 구획 안에 들어 있는 건물: 바깥과 맞닿은 그 문 칸 자체가 문턱이다 (단계 2 구역 칸은 재측정이 허락된 자리다 — 철수 구역 칸만 뺀다)
+      if (s.tiles[i] === T.DOOR && zm[i] < 3 && (t === T.FLOOR || t === T.DOOR || t === T.STAIR) && (own < 0 || i < own)) own = i;      // 계단참과 맞닿은 문도 (측정기는 서 있는 칸의 구획을 읽는다 — 계단 칸에서는 이 구획을 읽지 못한다)
+      if (zm[j] >= 3) continue;
       if (t === T.DOOR && (door < 0 || j < door)) door = j;
       else if (t === T.FLOOR && (floor < 0 || j < floor)) floor = j;
     }
   }
-  return door >= 0 ? door : floor;
+  return door >= 0 ? door : floor >= 0 ? floor : own;
 }
+
+// ───────────────────────── (단계 6) 사건의 끝 — 잔해 수색 국면 · 외부 확인 종료 · 종료를 막는 것 (§6.1·§6.2) ─────────────────────────
+
+/** 전체 붕괴를 안 지 30초가 지났는가 (잔해 수색 국면으로 갈 때) */
+const rubbleReady = (sim: Sim, a: FieldAgent): boolean => { const t = totalKnownAt(a.beliefs.list('sign')); return t >= 0 && sim.t - t >= RUBBLE_TOTAL; };
+
+/**
+ * 무너진 뒤의 믿음을 고친다 (§6.1 — 낡은 믿음 함정): 그 구획들의 수색 확인율을 0.3 으로 낮추고(그 위였으면), 그 안에 있던 것으로 아는 구조 대상(현장·위중 이하)을
+ * '매몰 추정'(갇힘)으로 바꾼다. 지휘 쪽이 덮는 사실은 확인된(verified) 사실 · 지금 시각이다 (아니면 merge 가 거부한다). 대원들에게 조용히 보낸다.
+ * 실제로 갇히지 않았으면 구출(extricate)을 시작할 때 실행기가 강제 보고로 바로잡는다
+ */
+function rubbleBeliefs(sim: Sim, s: Scene, a: FieldAgent, regions: number[]): void {
+  const B = a.beliefs, me = resp(sim, a).name, out: Fact[] = [];
+  for (const r of regions) {
+    const f = B.get('srch', r);
+    if (!f || f.value <= 0.3) continue;
+    const nf = mkFact('srch', r, 0.3, me, sim.t, 0.5, true, `${s.regions[r].name} 붕괴 후 재수색`);
+    B.merge(nf); out.push(nf);
+  }
+  for (const f of B.list('cas')) {
+    const c = f.value as CasBelief;
+    if (c.where !== 'scene' || c.band >= 3 || c.water || c.mob === 'trapped') continue;
+    const rg = regionAt(s, c.y * s.w + c.x);
+    if (rg < 0 || regions.indexOf(rg) < 0) continue;
+    const nf = mkFact('cas', f.id, { ...c, mob: 'trapped', trappedDone: false }, me, sim.t, 0.5, true, `구조 대상: ${s.regions[rg].name} — 붕괴 후 매몰 추정`);
+    B.merge(nf); out.push(nf);
+  }
+  if (out.length) transmit(sim, s, a, -1, 'report', out, '', -1, 0, [], true);
+}
+/** 전체 붕괴의 잔해 수색 국면으로 (§6.1): 모드 · 기록 · 모든 실내 구획의 믿음 고치기 (한 번) */
+function enterRubble(sim: Sim, s: Scene, I: Incident, a: FieldAgent, ops: OpsState, wk: OpsWork): void {
+  setMode(sim, s, I, a, ops, 'rubble', '붕괴가 멎음');
+  if (wk.rubbleAll) return;
+  wk.rubbleAll = true;
+  emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 3, causes: [I.lastEvent], text: '붕괴가 멎었습니다. 잔해 수색을 시작한다 — 소방·구조 대원만 진입.' });
+  const all: number[] = [];
+  for (const r of s.regions) if (r.indoor) all.push(r.id);
+  rubbleBeliefs(sim, s, a, all);
+}
+/**
+ * 잔해 수색 (§6.1): 전체 붕괴를 안 지 30초 → 잔해 수색 국면(인원 점검 중이면 그 끝에서). 구획 붕괴는 그 구획과 이웃 구획에서 25초 동안 새 무너짐이 없으면
+ * 그 구획을 ops.rubble 에 넣는다 (잔해 구역 — 소방·구조만 들어간다, agents.fitFor 의 inRubble). 둘 다 수색 믿음을 고친다
+ */
+function rubbleStep(sim: Sim, s: Scene, I: Incident, a: FieldAgent, ops: OpsState, wk: OpsWork): void {
+  const signs = a.beliefs.list('sign');
+  const tAll = totalKnownAt(signs);
+  if (tAll >= 0) {
+    if (sim.t - tAll >= RUBBLE_TOTAL && ops.mode !== 'rubble' && ops.mode !== 'withdraw') enterRubble(sim, s, I, a, ops, wk);
+    return;      // 건물이 통째로 무너졌으면 구획마다 따로 하지 않는다 (잔해 수색 국면이 모든 실내 구획을 덮는다)
+  }
+  let last: Map<number, number> | null = null;      // 구획 → 그 구획의 마지막 무너짐 시각
+  for (const f of signs) {
+    const v = f.value as SignBelief;
+    if (v.kind !== 'event' || v.what !== 'partial' || v.region < 0) continue;
+    if (!last) last = new Map();
+    last.set(v.region, Math.max(last.get(v.region) ?? -1, f.t));
+  }
+  if (!last) return;
+  const nb = regionNbrs(s), fresh: number[] = [];
+  for (const [r, t0] of last) {
+    if (ops.rubble.indexOf(r) >= 0) continue;
+    let t = t0;
+    for (const n of nb[r] ?? []) { const tn = last.get(n); if (tn !== undefined && tn > t) t = tn; }
+    if (sim.t - t >= RUBBLE_PART) fresh.push(r);
+  }
+  if (!fresh.length) return;
+  fresh.sort((p, q) => p - q);
+  for (const r of fresh) ops.rubble.push(r);
+  const names = fresh.map((r) => s.regions[r].name).join('·');
+  emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 3, causes: [I.lastEvent], text: `${names} 붕괴가 멎었습니다. 잔해 수색을 시작한다 — 소방·구조 대원만 진입.` });
+  rubbleBeliefs(sim, s, a, fresh);
+}
+
+/**
+ * 외부 확인 종료 (§6.2): 다 탄 건물은 안쪽 구역이 철수 구역으로 남아 들어가 불이 꺼진 것을 확인할 수 없다. 그래서 지휘관이 밖에서 확인한다 — 조건(모두):
+ *   외부 방어 중이거나 단계 3 구역이 있다 · 다 탔다고 볼 근거(건물 조짐 2 이상, 또는 센 불을 본 적이 있는 구역이 실내 구역의 60% 이상) ·
+ *   그 안에 살아 있는 구조 대상을 모른다 · 지휘관 자신의 외부 관찰 기억(extSeen)이 대상 구역 모두에서 "60초 동안 센 불 없음"(마지막 7초 관찰이 덮었고, 60초 넘게 관찰해 왔다).
+ * 그러면 그 구역들의 불 믿음을 0(확인된 사실 · 신뢰도 0.6 · 지금)으로 합치고 남은 수색·잔불 정리·진압을 거둔 뒤 ops.concluded — 종료 차단이 풀리고 canClose 가 판단한다.
+ * 판정은 진실로 한다(남은 불·미발견 사람은 그대로 드러난다). 전체 붕괴한 현장은 이 길이 아니라 잔해 수색으로 간다
+ */
+function extClose(sim: Sim, s: Scene, I: Incident, a: FieldAgent, k: CommandKit, ops: OpsState): void {
+  if (ops.concluded || ops.mode === 'rubble' || !structScene(s)) return;
+  const l3 = ops.zones.filter((z) => z.level === 3);
+  if (ops.mode !== 'defensive' && !l3.length) return;
+  const B = a.beliefs, e = a.extSeen;
+  if (!e) return;
+  if (totalKnownAt(B.list('sign')) >= 0) return;
+  const indoor: number[] = [];
+  for (const r of s.regions) if (r.indoor) indoor.push(r.id);
+  const bs = B.get('sign', SIGN_BASE.bldg);
+  const burnt = (bs !== undefined && bs.verified && (bs.value as SignBelief).level >= 2) || (indoor.length > 0 && ops.everHot.length >= 0.6 * indoor.length);
+  if (!burnt) return;
+  // 대상 구역: 단계 3 구역과 센 불을 본 적이 있는 구역 (외부 방어 중이면 건물 전체)
+  const targets: number[] = [];
+  for (const z of l3) for (const r of z.regions) if (s.regions[r] && s.regions[r].indoor && targets.indexOf(r) < 0) targets.push(r);
+  for (const r of ops.everHot) if (targets.indexOf(r) < 0) targets.push(r);
+  if (ops.mode === 'defensive') for (const r of indoor) if (targets.indexOf(r) < 0) targets.push(r);
+  if (!targets.length) return;
+  for (const f of B.list('cas')) { const c = f.value as CasBelief; if (c.where === 'scene' && c.band < 3 && targets.indexOf(regionAt(s, c.y * s.w + c.x)) >= 0) return; }
+  for (const r of targets) {
+    if (e.hot[r] >= sim.t - 60) return;              // 60초 안에 센 불을 보았다
+    if (e.cov[r] < sim.t - 8) return;                // 마지막 7초 관찰이 그 구역을 덮지 못했다
+    if (e.cov0[r] < 0 || e.cov0[r] > sim.t - 60) return;      // 아직 60초 넘게 지켜보지 못했다
+  }
+  const me = resp(sim, a).name, out: Fact[] = [];
+  for (const r of targets) {
+    if ((B.val<number>('fire', r) ?? 0) <= 0) continue;
+    const nf = mkFact('fire', r, 0, me, sim.t, 0.6, true, `${s.regions[r].name} 외부 관찰 — 불길 없음(추정)`);
+    B.merge(nf); out.push(nf);
+  }
+  k.cancel((w) => (w.kind === 'search' || w.kind === 'overhaul' || w.kind === 'suppress') && targets.indexOf(w.region) >= 0);
+  ops.concluded = true; bumpZones(ops);
+  if (out.length) transmit(sim, s, a, -1, 'report', out, '', -1, 0, [], true);
+  emit(sim, { inc: I.id, role: 'COMMANDER', actor: me, rid: a.rid, kind: 'command', imp: 3, causes: [I.lastEvent], text: '건물이 전소되어 내부 확인이 불가합니다. 외부에서 불길이 없음을 확인했습니다. 현장을 경계 인력에 인계하고 철수합니다.' });
+}
+
+/**
+ * 종료를 막는 것 (§6.2): 지휘 상태가 있고 외부 확인 종료를 정하지 않았으면 —
+ *   인원 점검 중(시한까지만) · 단계 3 구역이 있다 · 지난 계획 주기에 문이 막은 일이 있다(수색하지 않은 진입 금지 구역을 남긴 채 끝내지 않는다) ·
+ *   가스 조짐 2 이상을 90초 안에 읽었다 (오래된 측정값으로는 막지 않는다 — 아무도 다시 재지 않으면 영영 막히므로).
+ * 구역 해제(§5.7 — 단계 2 의 180초 상한 포함)·외부 확인 종료·한계 시간이 끝을 보장한다
+ */
+registerBlocker((sim, s, a) => {
+  const ops = s.ops;
+  if (!ops || ops.concluded) return false;
+  if (ops.mode === 'withdraw' && sim.t < ops.parDue) return true;
+  for (const z of ops.zones) if (z.level === 3) return true;
+  if (ops.gated > 0) return true;
+  // 가스: 원천을 막았다고 알면(밸브 차단·도시가스 차단 완료 — 아는 누출이 모두 멈췄다) 남은 가스는 빠지는 중이다 — 측정값으로 막지 않는다
+  // (막으면 원천을 잠근 뒤 위험 수준 아래로 내려가기를 기다리며 대원 모두가 90초 동안 손을 놓는다 — 측정 도구의 교착 후보)
+  if (cutoffAt(a) < 0) for (const f of a.beliefs.list('sign')) { const v = f.value as SignBelief; if (v.kind === 'gas' && v.level >= 2 && v.region >= 0 && f.verified && sim.t - f.t <= 90) return true; }
+  return false;
+});

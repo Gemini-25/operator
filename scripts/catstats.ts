@@ -17,7 +17,7 @@ export interface CatCount {
   known: number;                                    // 그 가운데 지휘관이 위험을 알았던 것 (EXPLOSION 기록). 나머지가 hidden(HIDDEN_HAZARD)
   withdrawals: number; reentries: number;           // 전원 철수(WITHDRAWAL)와 그 가운데 다시 들어간 것(복구)
   defensive: number;                                // 외부 방어로 바꾼 건물 화재 (지휘 쪽 한계 시간 보탬이 있는 현장)
-  extClose: number; extWrong: number;               // 외부 확인 종료와 그 가운데 미발견이 남은 것
+  extClose: number; extWrong: number;               // 외부 확인 종료와 그 가운데 미발견이 남았거나 위험이 남은 것(판정의 hazardActive — IncidentResult.catastrophe.hazard)
   crewCaught: number;                               // 붕괴·폭발에 휘말린 대원 (IncidentResult.catastrophe — 단계 7)
   signs: number; averted: number;                   // 위험 조짐(DANGER_SIGN)과 그 가운데 막은 것(복구)
   gaps: number[];                                   // 조짐을 안 시각 → 붕괴·폭발 시각의 간격(초)
@@ -58,7 +58,7 @@ export function catStats(sim: Sim): CatCount {
     const ops = s.ops;
     if (ops) {
       if (fire && ops.limitBonus > 0) o.defensive++;
-      if (ops.concluded) { o.extClose++; if ((I.result?.casUndiscovered ?? 0) > 0) o.extWrong++; }
+      if (ops.concluded) { o.extClose++; if ((I.result?.casUndiscovered ?? 0) > 0 || I.result?.catastrophe?.hazard) o.extWrong++; }      // (단계 7) 틀림 = 미발견이 남았거나 판정에서 위험이 남음
     }
     if (!c) continue;
     o.scenes++;

@@ -868,7 +868,8 @@ export interface Incident {
   fieldRisk?: { sev: number; risks: string[] };    // 현장 상황 보고(sitrep)로 관제가 올린 위험도와 위험 문자열 — assess 가 다시 평가할 때 합친다
 }
 export interface IncidentResult {
-  catastrophe?: { burnout: boolean; total: boolean; partial: number; explosions: number; withdrew: boolean; averted: number; crewCaught: number };
+  catastrophe?: { burnout: boolean; total: boolean; partial: number; explosions: number; withdrew: boolean; averted: number; crewCaught: number;
+    hazard?: boolean };      // (단계 7) hazard = 판정에서 위험이 남았는가 (외부 확인 종료의 정확도를 잰다 — 측정 줄 ext-close 의 wrong)
 }
 export interface ShiftReport {
   catastrophe?: { burnouts: number; totals: number; partials: number; explosions: number; withdrawals: number; averted: number; crewCaught: number };

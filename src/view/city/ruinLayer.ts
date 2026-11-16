@@ -41,23 +41,31 @@ export function drawRuinsWorld(ctx: CanvasRenderingContext2D, sim: Sim, o: World
   const night = sim.weather === 'night';
   const col = (c: string): string => (night ? shade(c, -0.35) : c);
   for (const I of sim.incidents) {
-    if (I.truth.type === 'fire' && I.phase === 'closed' && I.truth.placeId >= 0) { paintScorchedRoof(ctx, sim, I, o.truth, o.scale, col); continue; }
-    if (I.truth.type !== 'collapse' || I.truth.placeId < 0) continue;
-    const seen = ruinSeen(sim, I, o.truth);
-    if (seen !== 'confirmed') continue;
-    const info = ruinInfo(sim, I);
-    if (!info) continue;
+    if (I.truth.placeId < 0) continue;
+    // (X6 §7.2) 건물 상태(placeMarks)를 남긴 사건도 — 붕괴 유형이 아니어도. 상태가 없는 끝난 화재는 G4 의 그을린 지붕
+    const seen = I.truth.type === 'collapse' || I.truth.type === 'fire' || sim.placeMarks.size ? ruinSeen(sim, I, o.truth) : 'none';
+    const info = seen === 'confirmed' ? ruinInfo(sim, I) : null;
+    const closedFire = I.truth.type === 'fire' && I.phase === 'closed';
+    if (!info) { if (closedFire) paintScorchedRoof(ctx, sim, I, o.truth, o.scale, col); continue; }
+    if (closedFire && info.level !== 'burnt' && info.level !== 'total') paintScorchedRoof(ctx, sim, I, o.truth, o.scale, col);      // 그을림 위에 무너진 모습
+    if (info.level === 'scorched') continue;
     const q = sim.city.places[I.truth.placeId];
     const faint = o.truth && I.phase === 'unreported' ? 0.55 : 1;
     ctx.save();
     local(ctx, q);
     if (ruinOverlayVisible(q, o.scale)) {
       ctx.globalAlpha = faint;
-      if (info.material === 'crane') paintCrane(ctx, q, o.scale, col); else paintRoofHole(ctx, q, info, o.scale, col);
-      // 먼지: 마지막 무너짐 뒤 90초 동안 0.3 → 0.08, 그 뒤 0.08 로 남는다
-      const age = sim.t - info.lastFall, a = age < 90 ? 0.3 - 0.22 * (age / 90) : 0.08;
-      ctx.globalAlpha = faint * a; ctx.fillStyle = col('#c4b292');
-      ctx.beginPath(); ctx.arc(0, 0, 0.9 * Math.max(q.w, q.h), 0, 6.2832); ctx.fill();
+      const fell = info.level !== 'burnt' && info.level !== 'blasted';
+      if (info.level === 'total') paintTotal(ctx, q, o.scale, col);
+      else if (info.level === 'burnt') paintBurnt(ctx, q, o.scale, col);
+      else if (info.level === 'blasted') paintBlasted(ctx, q, o.scale, col, o.timeMs);
+      else if (info.material === 'crane') paintCrane(ctx, q, o.scale, col); else paintRoofHole(ctx, q, info, o.scale, col);
+      // 먼지: 마지막 무너짐 뒤 90초 동안 0.3 → 0.08, 그 뒤 0.08 로 남는다 (무너진 것만)
+      if (fell) {
+        const age = sim.t - info.lastFall, a = age < 90 ? 0.3 - 0.22 * (age / 90) : 0.08;
+        ctx.globalAlpha = faint * a; ctx.fillStyle = col('#c4b292');
+        ctx.beginPath(); ctx.arc(0, 0, 0.9 * Math.max(q.w, q.h), 0, 6.2832); ctx.fill();
+      }
     }
     // 무너지는 순간: 무너짐마다 6초 동안 건물 위로 먼지가 핀다 (배율과 무관하게). AI 시점은 첫 도착 뒤의 것만
     const s = sim.scenes[I.id];
@@ -161,6 +169,58 @@ function paintScorchedRoof(ctx: CanvasRenderingContext2D, sim: Sim, I: Incident,
   ctx.globalAlpha = 0.45;
   for (let k = 0; k < 4; k++) { const a = hash2(q.id, 300 + k) * 6.2832, d = 0.5 * hash2(q.id, 310 + k); ctx.beginPath(); ctx.arc(Math.cos(a) * ax * d, Math.sin(a) * ay * d, Math.min(q.w, q.h) * (0.06 + 0.06 * hash2(q.id, 320 + k)), 0, 6.2832); ctx.fill(); }
   ctx.restore();
+}
+
+/** (X6 §7.2) 전체 붕괴: 지붕 대신 건물 윤곽 전체가 잔해 더미 — 지붕을 덮는 잔해 바탕, 조각을 붕괴 덧그림의 두 배쯤, 끊긴 외곽선, 둘레로 쏟아진 조각 */
+function paintTotal(ctx: CanvasRenderingContext2D, q: Place, scale: number, col: (c: string) => string): void {
+  const w = q.w, h = q.h, M = Math.max(w, h), m = Math.min(w, h), id = q.id, base = ctx.globalAlpha;
+  ctx.globalAlpha = base * 0.92; ctx.fillStyle = col('#5d574f');
+  ctx.beginPath();      // 바탕: 윤곽보다 조금 들쭉날쭉하게
+  for (let k = 0; k < 16; k++) { const a = (k / 16) * 6.2832, ex = Math.cos(a), ey = Math.sin(a), t = Math.min(Math.abs(ex) > 1e-6 ? w / 2 / Math.abs(ex) : Infinity, Math.abs(ey) > 1e-6 ? h / 2 / Math.abs(ey) : Infinity) * (0.92 + 0.14 * hash2(id, 400 + k)); if (k) ctx.lineTo(ex * t, ey * t); else ctx.moveTo(ex * t, ey * t); }
+  ctx.closePath(); ctx.fill();
+  ctx.globalAlpha = base;
+  const n = 2 * (10 + Math.floor(hash2(id, 410) * 9)), cr = m * 0.075;
+  for (let k = 0; k < n; k++) chunk(ctx, (hash2(id, 420 + k) - 0.5) * w * 0.94, (hash2(id, 460 + k) - 0.5) * h * 0.94, cr * (0.55 + 0.8 * hash2(id, 500 + k)), id * 41 + k, col(RUBBLE[k % RUBBLE.length]));
+  for (let k = 0; k < 8; k++) { const a = hash2(id, 540 + k) * 6.2832, d = 0.5 + 0.18 * hash2(id, 550 + k); chunk(ctx, Math.cos(a) * w * d, Math.sin(a) * h * d, cr * (0.4 + 0.5 * hash2(id, 560 + k)), id * 43 + k, col(RUBBLE[(k + 1) % RUBBLE.length])); }
+  // 끊긴 외곽선: 남은 벽 그루터기
+  ctx.globalAlpha = base * 0.8; ctx.strokeStyle = col('#2a2622'); ctx.lineWidth = Math.max(1, 1.6 / scale); ctx.setLineDash([M * 0.09, M * 0.07]);
+  ctx.strokeRect(-w / 2, -h / 2, w, h); ctx.setLineDash([]);
+  ctx.globalAlpha = base;
+}
+/** (X6 §7.2) 전소: 지붕 전체 그을음 + 뚫린 구멍 두셋(속에 탄 잔해) + 타다 남은 들보. 밤에도 창 불빛이 비치지 않게 덮는다 */
+function paintBurnt(ctx: CanvasRenderingContext2D, q: Place, scale: number, col: (c: string) => string): void {
+  const w = q.w, h = q.h, m = Math.min(w, h), id = q.id, base = ctx.globalAlpha;
+  ctx.globalAlpha = base * 0.7; ctx.fillStyle = col('#0e0a08'); ctx.fillRect(-w / 2, -h / 2, w, h);
+  const nH = 2 + (hash2(id, 600) > 0.5 ? 1 : 0);
+  for (let k = 0; k < nH; k++) {
+    const hx = (hash2(id, 610 + k) - 0.5) * w * 0.6, hy = (hash2(id, 620 + k) - 0.5) * h * 0.6, rx = m * (0.14 + 0.08 * hash2(id, 630 + k)), ry = rx * (0.7 + 0.4 * hash2(id, 640 + k));
+    ctx.globalAlpha = base * 0.85; ctx.fillStyle = col('#050302'); ctx.beginPath(); ctx.ellipse(hx, hy, rx, ry, hash2(id, 650 + k) * 3, 0, 6.2832); ctx.fill();
+    ctx.globalAlpha = base;
+    for (let j = 0; j < 4; j++) chunk(ctx, hx + (hash2(id, 660 + k * 7 + j) - 0.5) * rx, hy + (hash2(id, 700 + k * 7 + j) - 0.5) * ry, rx * 0.25, id * 47 + k * 7 + j, col(j % 2 ? '#2b241f' : '#3a302a'));
+  }
+  // 타다 남은 들보 (지붕을 가로지르는 검은 선 셋)
+  ctx.globalAlpha = base * 0.75; ctx.strokeStyle = col('#1b1410'); ctx.lineWidth = Math.max(1, m * 0.05); ctx.lineCap = 'round';
+  for (let k = 0; k < 3; k++) { const y = (-0.3 + 0.3 * k + (hash2(id, 740 + k) - 0.5) * 0.08) * h; ctx.beginPath(); ctx.moveTo(-w * 0.45, y); ctx.lineTo(w * (0.15 + 0.3 * hash2(id, 750 + k)), y + (hash2(id, 760 + k) - 0.5) * h * 0.08); ctx.stroke(); }
+  ctx.lineCap = 'butt'; ctx.globalAlpha = base;
+  void scale;
+}
+/** (X6 §7.2) 폭발 흔적: 건물 둘레에 깨진 유리가 반짝이는 고리와 지붕의 검은 그을음 자국 하나 */
+function paintBlasted(ctx: CanvasRenderingContext2D, q: Place, scale: number, col: (c: string) => string, timeMs: number): void {
+  const w = q.w, h = q.h, m = Math.min(w, h), id = q.id, base = ctx.globalAlpha;
+  const bx = (hash2(id, 800) - 0.5) * w * 0.5, by = (hash2(id, 801) - 0.5) * h * 0.5, br = m * 0.22;
+  ctx.globalAlpha = base * 0.6; ctx.fillStyle = col('#0e0a08'); ctx.beginPath();
+  for (let k = 0; k < 10; k++) { const a = (k / 10) * 6.2832, r = br * (0.7 + 0.5 * hash2(id, 810 + k)); if (k) ctx.lineTo(bx + Math.cos(a) * r, by + Math.sin(a) * r); else ctx.moveTo(bx + Math.cos(a) * r, by + Math.sin(a) * r); }
+  ctx.closePath(); ctx.fill();
+  // 유리 조각: 외벽 밖 둘레 띠에 작은 마름모, 시간에 따라 몇 개씩 반짝인다
+  const n = 22, sz = Math.max(0.8 / scale, m * 0.035);
+  for (let k = 0; k < n; k++) {
+    const a = hash2(id, 820 + k) * 6.2832, ex = Math.cos(a), ey = Math.sin(a);
+    const t = Math.min(Math.abs(ex) > 1e-6 ? w / 2 / Math.abs(ex) : Infinity, Math.abs(ey) > 1e-6 ? h / 2 / Math.abs(ey) : Infinity) + m * (0.04 + 0.16 * hash2(id, 860 + k));
+    const x = ex * t, y = ey * t, tw = 0.5 + 0.5 * Math.sin(timeMs / 300 + k * 1.7);
+    ctx.globalAlpha = base * (0.35 + 0.6 * tw); ctx.fillStyle = col(tw > 0.85 ? '#f4fbff' : '#9fd6ea');
+    ctx.beginPath(); ctx.moveTo(x, y - sz); ctx.lineTo(x + sz * 0.6, y); ctx.lineTo(x, y + sz); ctx.lineTo(x - sz * 0.6, y); ctx.closePath(); ctx.fill();
+  }
+  ctx.globalAlpha = base;
 }
 
 /** 크레인: 공사장을 가로질러 길까지 쓰러진 팔 (노란 트러스, 격자 눈금, 끝의 갈고리) */

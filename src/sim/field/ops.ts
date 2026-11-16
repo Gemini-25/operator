@@ -4,7 +4,7 @@
 //
 // 단계 1 에는 생김새 도움 함수 둘만 있었다. 단계 2 가 조짐·지휘 상태 사실의 id 공간(SIGN_BASE·OPS_ID·OPS_PAR)과 지휘 상태 사실의 값(OpsFact)을 더했다.
 // 단계 5 가 지휘 상태 쪽(newOps·zoneMask·zoneLevelAt·regionLevel·reachMask·gateBlocks·opsExterior·opsCordon·evacPoint·exteriorSpots)을 더했다.
-// 잔해 수색 국면의 inRubble·isRubbleMode 는 단계 6 이 더한다.
+// 단계 6 이 잔해 수색 국면의 inRubble·isRubbleMode 를 더했다.
 
 import type { Sim } from '../engine';
 import { T } from '../types';
@@ -290,13 +290,24 @@ export function opsExterior(s: Scene, region: number): boolean {
   if (!ops.zones.length || region < 0) return false;
   return regionLevel(ops.zones, region) >= 2 || !regionReachable(s, ops, region);
 }
-/** 출입구 통제가 필요한가 (§5.3): 건물·가스·용기 구역 가운데 단계 3 이 있거나 외부 방어 중 (통제 자리가 있는 현장만) */
+/** 출입구 통제가 필요한가 (§5.3): 건물·가스·용기 구역 가운데 단계 3 이 있거나 외부 방어 중 (통제 자리가 있는 현장만). 외부 확인으로 끝내기로 했으면(§6.2 — 경계 인력에 인계) 아니다 */
 export function opsCordon(s: Scene): boolean {
   const ops = s.ops;
-  if (!ops || !s.spots.length) return false;      // 출입구 통제 자리(s.spots)가 있는 현장만 — 없으면 봉쇄 임무가 설 곳을 찾지 못해 '진입 경로를 찾지 못했습니다'를 되풀이한다 (평면 생성기의 화재·붕괴 현장)
+  if (!ops || !s.spots.length || ops.concluded) return false;      // 출입구 통제 자리(s.spots)가 있는 현장만 — 없으면 봉쇄 임무가 설 곳을 찾지 못해 '진입 경로를 찾지 못했습니다'를 되풀이한다 (평면 생성기의 화재·붕괴 현장)
   if (ops.mode === 'defensive') return true;
   for (const z of ops.zones) if (z.level === 3 && (z.kind === 'bldg' || z.kind === 'gas' || z.kind === 'vessel')) return true;
   return false;
+}
+
+// ───────────────────────── (단계 6) 잔해 수색 국면 — 설계서 §6.1 ─────────────────────────
+/** 건물 전체가 무너진 뒤의 잔해 수색 국면인가 (지휘 상태 — 조직이 안다). 화면(detectRadius)도 부르므로 순수하다 */
+export const isRubbleMode = (s: Scene): boolean => s.ops !== undefined && s.ops.mode === 'rubble';
+/** 그 구획이 무너진 잔해 구역인가: 전체 붕괴의 잔해 수색 국면이면 모든 실내 구획, 아니면 지휘관이 잔해 수색을 허락한 구획(ops.rubble). 소방·구조(공기호흡기)만 들어간다 */
+export function inRubble(s: Scene, region: number): boolean {
+  const ops = s.ops;
+  if (!ops || region < 0) return false;
+  if (ops.mode === 'rubble') return s.regions[region] !== undefined && s.regions[region].indoor;
+  return ops.rubble.length > 0 && ops.rubble.indexOf(region) >= 0;
 }
 
 const NEAR = new WeakMap<Scene, Uint8Array>();

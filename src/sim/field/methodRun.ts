@@ -1054,7 +1054,7 @@ function detonateCharge(sim: Sim, s: Scene, I: Incident, a: FieldAgent, tk: Task
   for (const c of s.casualties) if (!c.dead && c.where === 'scene' && dist(c.x, c.y, dx, dy) <= CHARGE.radius + 0.5) near.push({ label: `구조 대상 ${c.label}`, hp: () => c.health, was: c.health });
   for (const h of s.hostiles) if (!h.dead && h.state !== 'escaped' && (h.where === undefined || h.where === 'scene') && dist(h.x, h.y, dx, dy) <= CHARGE.radius + 0.5) near.push({ label: h.label, hp: () => h.health, was: h.health });
   const ev = k.unblock(sim, s, a, tile, 'charge');
-  blast(sim, s, I, dx, dy, CHARGE.radius, CHARGE.dmg, ev, 'blast');
+  blast(sim, s, I, dx, dy, CHARGE.radius, CHARGE.dmg, ev, 'blast', true);      // (R3 5단계) 계획된 폭파 — 진입조에 동요를 걸지 않는다
   const hurt = near.filter((q) => q.hp() < q.was - 1e-9).map((q) => q.label);
   if (hurt.length) {
     const who = hurt.join('·');

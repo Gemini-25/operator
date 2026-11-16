@@ -53,6 +53,9 @@ export interface DocSit {
   fightThreat: boolean;                          // (2단계) 믿음: 교전(fight) 중인 용의자가 있다 (P08)
   bangOnScene: boolean;                          // (2단계) 동료의 장비(조직 정보): 현장의 활동 경찰 가운데 섬광탄을 가진 사람이 있다 (P14)
   bangComing: boolean;                           // (2단계) 조직 정보: 섬광탄을 실은 경찰 부대가 이 사건으로 오는 중 (P14 의 기다림 상한 40초)
+  robotOn: boolean;                              // (5단계) 동료의 장비(조직 정보): 살아 있는 장치(liveBomb)가 있고 현장의 활동 대원 가운데 작동하는 로봇(알려진 고장 아님)을 든 사람이 있다 (S06b)
+  bombPinned: boolean;                           // (5단계) 믿음: 살아 있는 장치 6칸 안에 옮길 수 없는 사람(거동 불가·갇힌 구조 대상, 인질을 붙든 용의자)이 있다 (S07)
+  scbaOn: number;                                // (5단계) 동료의 장비(조직 정보): 화재 현장의 활동 대원 가운데 공기호흡기를 든 사람의 수 (자기 포함 — 화재 현장이 아니면 0. S19)
 }
 export type DocPhase = 'arrive' | 'sizeup' | 'standoff' | 'entry' | 'assault' | 'interior' | 'care' | 'transport' | 'traffic' | 'withdraw' | 'idle';
 /** 교본 줄이 받는 단 하나의 입력. 줄의 when 은 이것만 읽는다 */
@@ -75,6 +78,7 @@ export interface DocCtx {
   dngSign: number;                               // (2단계) brain 의 위험 점수 가운데 X6 조짐의 몫 (act 자리에서 brain 이 넘긴다 — P11. 다른 자리에서는 0)
   hideSpot: () => { x: number; y: number } | null;   // (2단계) 숨을 자리 (자기 모드에서만 — 엔진의 coverSpot(…, 숨기)를 tg 에 대해 한 번만 잰다. 보고 모드·위협이 없으면 null)
   solo: boolean;                                 // (2단계) 혼자 규칙에서 빠지는 역할인가 (엔진의 SOLO_OK — 저격·관측수·처리 요원·기관원·사다리 조작원·구급 운전원·관측관 …)
+  wBomb: number;                                 // (5단계) 대상 작업 w 의 자리(믿음)에서 가장 가까운 살아 있는 장치(믿음)까지의 거리 (w·장치가 없거나 자리를 모르면 Infinity — S08)
 }
 
 /** 효과 하나. fit·method 효과는 자기 works·methods·when 을 더 가질 수 있다 (한 줄이 일마다 다른 배율을 줄 때) */
@@ -123,7 +127,7 @@ export const CMD_ROWS: { id: string; dept: DocDept; hook: 'cmd' | 'dispatch' | '
  */
 export const DOC_SWITCH = { CP4: true, D6: true, D7: true };
 /** 줄이 다 들어간 분야 — 시험 8 의 "분야마다 12줄 이상"은 여기 든 분야만 본다 (단계마다 그 분야를 더한다 — 2단계 경찰) */
-export const DOC_DEPTS_DONE: DocDept[] = ['police'];
+export const DOC_DEPTS_DONE: DocDept[] = ['police', 'special'];      // (5단계) 특수
 
 /** 판단 지점의 답: ok = 그 걸음을 해도 된다 · rule = 막은(알릴) 줄 · wait = 막은 줄들의 maxWait 가운데 가장 긴 값 · opt = choose 줄이 고른 갈래 */
 export interface DocGateAns { ok: boolean; rule: string | null; wait: number; opt: string | null; exc: string | null }      // exc = (2단계) 예외(unless)가 아니었다면 막았을 줄 (막는 줄이 없을 때만)

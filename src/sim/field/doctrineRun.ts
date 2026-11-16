@@ -408,3 +408,82 @@ export function docMark(sim: Sim, s: Scene, a: FieldAgent, ruleId: string, hook:
   if (r === undefined) return;
   recordDoc(sim, sim.incidents[s.incidentId], a, ruleId, hook, extra, docNote(sim, s, a, r, noteImp), r.report !== undefined);
 }
+
+// ───────────────────────── (5단계) 해체 방법 셋 (§3.7 — 로봇 원격 · 방호복 · 맨몸) ─────────────────────────
+/** 로봇 원격 해체: 필요 시간 ×1.6 · 실수 확률 ×0.3 (R1 의 로봇 곁 효과 대신). 맨몸 해체: 필요 시간 ×0.75 */
+export const DEFUSE = { robotTime: 1.6, robotSlip: 0.3, bareTime: 0.75 } as const;
+/**
+ * 해체 (executor 의 case 'defuse' — 장치가 이미 처리·폭발했는지는 실행기가 먼저 본다). 처음 돌 때 방법을 고른다(R2 startMethod — 고를 것이 없으면 맡지 않는다: WORK_MODE 'refuse').
+ *   robotDefuse  로봇 조작 요원이 장치 2.5~8칸·벽에 가리지 않는 자리(methods.robotSpot — 처음 한 번 정해 t.tx·ty)에서 원격으로. 그 자리에 닿아 처음 시작할 때 로봇 작동 확인
+ *                (kitWorks — 숨은 고장이면 EQUIP_FAIL 이 남고 'broken' → 로봇 조작 요원에게는 다음 방법이 없어 놓는다). 필요 시간 ×1.6 · 실수 ×0.3 — R1 의 로봇 곁 효과는 곱하지 않는다
+ *   suitDefuse   지금의 해체 (장치 곁 1.6칸 — 같은 현장에 작동하는 로봇을 든 대원이 있으면 R1 의 로봇 효과: 실수 ×0.6 · 가짜 확인 10 → 5초)
+ *   bareDefuse   방호복을 벗고 한다: 필요 시간 ×0.75. 그동안 방호(crews.armorOf·blastFactor)가 방호복을 세지 않는다 (injury.protection · hazards — a.task.method)
+ * (S23) 손으로 하는 해체 중에 다치거나 동요하면(자기 몸 — 그 줄이 걸리면) 해체를 넘기고 놓는다: 1초마다 본다, 문구 한 번, 그 작업은 30초 동안 맡지 않는다(교본 기억 'w:').
+ * 돌려주는 값: 'slip' = 해체 중 장치가 반응했다 (부르는 쪽이 터뜨리고 끝낸다) · 'done' = 끝났다(처리·확인) · undefined = 이어 간다(또는 놓았다)
+ */
+export function runDefuse(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, k: ExecKit): 'slip' | 'done' | undefined {
+  const p = s.props[t.prop], r = sim.responders[a.rid], dt = sim.dt;
+  const tg = { cas: -1, prop: t.prop, hostile: -1, region: -1, tile: -1 };
+  if (t.method === undefined && t.mt0 === undefined && !startMethod(sim, s, I, a, t, 'defuse', tg)) { k.finish(sim, s, a, false, 'nomethod'); return undefined; }
+  const m = t.method;
+  if (m === undefined) { k.finish(sim, s, a, false, 'nomethod'); return undefined; }      // 방법을 비운 채로는 해체하지 않는다 (맡지 않는 임무)
+  if (m !== 'robotDefuse' && !hasKit(sim, a.rid, 'eodKit')) { k.finish(sim, s, a, false, 'equip'); return undefined; }      // 해체 공구를 든 처리 요원만 손댄다 (fitFor 가 먼저 막는다)
+  // (S23) 손으로 하는 해체 중에 다치거나 동요했다 — 해체를 넘긴다 (1초마다, 자기 몸)
+  if (m !== 'robotDefuse' && sim.tick % 5 === 0) {
+    const s23 = ruleById('S23');
+    if (s23 !== undefined && applies(docCtx(sim, s, a, 'self', t.workId >= 0 ? s.board[t.workId] ?? null : null), s23)) {
+      const ev = docNote(sim, s, a, s23);
+      recordDoc(sim, I, a, 'S23', 'method', { method: m, work: 'defuse', tgt: 'p' + t.prop }, ev, s23.report !== undefined);
+      if (t.workId >= 0) docRemember(sim, a, 'S23', 'w:' + t.workId, DOC.W_MEM);
+      k.finish(sim, s, a, false, 'doctrine');
+      return undefined;
+    }
+  }
+  if (m === 'robotDefuse') {
+    // 로봇을 부릴 자리 (처음 한 번 — 한 임무에 이동 목표 하나)
+    if (!t.range) {
+      const sp = robotSpot(s, p.x, p.y, a.x, a.y);
+      if (sp === null) { switchMethod(sim, s, I, a, t, 'tooFar', '로봇을 부릴 자리가 없음', true, { k }); return undefined; }
+      t.tx = sp.x; t.ty = sp.y; t.range = 1;
+    }
+    a.label = METHOD.robotDefuse.label;
+    const mv = k.moveTo(sim, s, a, t.tx, t.ty, 0.5);
+    if (mv === 'nopath') { switchMethod(sim, s, I, a, t, 'tooFar', '로봇을 부릴 자리로 갈 길이 없음', true, { k }); return undefined; }
+    if (mv !== 'arrived') return undefined;
+    a.fx = p.x - a.x; a.fy = p.y - a.y;
+    if (t.phase === 0) {
+      t.phase = 1;
+      if (!kitWorks(sim, a.rid, 'robot', I)) { switchMethod(sim, s, I, a, t, 'broken', '원격 로봇 고장', true, { say: '로봇이 작동하지 않습니다 — 방호복 착용 후 수동 해체.', k }); return undefined; }      // 숨은 고장은 쓰려 할 때 드러난다
+    }
+    t.need = (p.real ? 26 : 10) * DEFUSE.robotTime / (0.5 + r.skill);
+    t.progress += dt; a.ring = t.progress / t.need;
+    if (p.real && a.rng.chance(0.004 * (1 - r.skill) * DEFUSE.robotSlip * dt)) return 'slip';
+  } else {
+    const mv = k.moveTo(sim, s, a, p.x, p.y, 1.6);
+    if (mv === 'nopath') { k.finish(sim, s, a, false, 'nopath'); return undefined; }
+    if (mv !== 'arrived') return undefined;
+    a.fx = p.x - a.x; a.fy = p.y - a.y;
+    if (m === 'bareDefuse') a.label = METHOD.bareDefuse.label;
+    // 원격 로봇: 그것을 든 대원이 현장에서 활동 중이면 가짜 장치를 빨리 확인하고(10 → 5초), 진짜 장치의 해체 실수가 준다(×0.6) — R1 (방호복·맨몸 해체에만)
+    const op = s.agents.find((b) => b.status === 'active' && hasKit(sim, b.rid, 'robot'));
+    const robot = op !== undefined && kitWorks(sim, op.rid, 'robot', I);      // 숨은 고장은 쓰려 할 때 드러난다
+    t.need = (p.real ? 26 : robot ? 5 : 10) * (m === 'bareDefuse' ? DEFUSE.bareTime : 1) / (0.5 + r.skill);
+    t.progress += dt; a.ring = t.progress / t.need;
+    if (p.real && a.rng.chance(0.004 * (1 - r.skill) * (robot ? 0.6 : 1) * dt)) return 'slip';      // 실수: 숙련도가 낮을수록 잦다
+  }
+  if (t.progress < t.need) return undefined;
+  p.mitigated = true; p.blocking = false; s.propAt[p.y * s.w + p.x] = -1; s.staticVersion++;      // 처리된 물건은 더 이상 길을 막지 않는다
+  learnQuiet(sim, a, mkFact('haz', p.id, { kind: 'bomb', active: false, x: p.x, y: p.y }, r.name, sim.t, 1, true, '폭발물 위험 해소'));
+  const done = p.real ? (m === 'robotDefuse' ? '로봇으로 폭발물 해체 완료. 위험이 사라졌습니다.' : '폭발물 해체 완료. 위험이 사라졌습니다.') : (m === 'robotDefuse' ? '로봇으로 확인한 결과 폭발물이 아닙니다.' : '확인 결과 폭발물이 아닙니다.');
+  const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 3, text: done });
+  recordMethod(sim, I, a, t, m, t.mwhy ?? 'usual', true, ev, tg);
+  r.xpGained += p.real ? 0.006 : 0.002;
+  k.finish(sim, s, a, true);
+  return 'done';
+}
+// (import 를 이 절에 둔 것은 위의 import 묶음을 다른 단계가 함께 고치고 있어서다)
+import { hasKit } from '../crews';
+import { kitWorks } from './gear';
+import { METHOD, robotSpot } from './methods';
+import { recordMethod, startMethod, switchMethod } from './methodRun';
+import { applies, docCtx } from './doctrine';

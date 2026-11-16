@@ -73,6 +73,9 @@ const STAGE1 = ['G01', 'G02', 'G02b', 'G03', 'G04'];
 const STAGE2 = [...STAGE1, 'P01', 'P02', 'P03', 'P05', 'P07', 'P08', 'P09', 'P10', 'P11', 'P12', 'P14', 'P15', 'P16', 'P22'];
 /** 단계 2 까지의 지휘·관제·추격 줄 */
 const CMD2 = ['CP1', 'CP2', 'CP3', 'CP4', 'D3', 'D6', 'D7', 'D2'];
+/** (5단계 — 특수, 3·4단계와 나란히) 특수 열일곱(§3.6 순서, S03 은 끝 — S10·S11 은 짝 맺기 위에 서므로 합치는 작업자 몫)과 지휘·관제 셋 */
+const STAGE5 = ['S01', 'S02', 'S05', 'S06', 'S06b', 'S07', 'S08', 'S13', 'S15', 'S19', 'S21', 'S22', 'S23', 'S24', 'S25', 'S26', 'S03'];
+const CMD5 = ['CS1', 'CS2', 'D1'];
 /** 자기 신고를 손으로 넣는다 (그 대원의 믿음 — 남이 아는 그 대원의 몸) */
 const report = (sim: Sim, a: FieldAgent, v: Partial<CrewBelief>): void => { a.beliefs.merge(mkFact('crew', a.rid, { band: 0, air: 0, ammo: 0, shaken: false, t: sim.t, ...v }, '시험', sim.t, 1, true, '시험')); docForget(a); };
 /** 엔진의 갈래를 모두 지나가는 시험용 줄 (번호 G91~G98 — 표에 없는 번호, 시험이 끝나면 지운다) */
@@ -148,9 +151,9 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
     for (let q = 0; q < cases.length; q++) expect(shift(cases[q][0], cases[q][1]).report!.hash, cases[q][0]).toBe(first[q].report!.hash);
   });
   it('단계 2: 줄은 공통 다섯과 경찰 열넷, 지휘·관제 줄은 경찰 일곱과 D2. 의무(duty) 줄은 아직 없다. 3단계 뒤의 상태 칸(짝·예비 펌프·분류·차량 차단)은 비어 있다', () => {
-    expect(DOCTRINE.map((r) => r.id)).toEqual(STAGE2);
-    expect(CMD_ROWS.map((c) => c.id)).toEqual(CMD2);
-    expect(DOC_DEPTS_DONE).toEqual(['police']);
+    expect(DOCTRINE.map((r) => r.id)).toEqual([...STAGE2, ...STAGE5]);
+    expect(CMD_ROWS.map((c) => c.id)).toEqual([...CMD2, ...CMD5]);
+    expect(DOC_DEPTS_DONE).toEqual(['police', 'special']);
     for (const h of ['fit', 'method', 'act', 'gate'] as const) expect(hasDoc(h), h).toBe(true);
     expect(hasDoc('duty')).toBe(false);
     let docs = 0, sig = 0, split = 0;
@@ -163,9 +166,9 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
         for (const d of I.docs ?? []) {
           docs++;
           expect(['fit', 'method', 'act', 'gate', 'cmd', 'dispatch', 'chase']).toContain(d.hook);
-          expect([...STAGE2, ...CMD2]).toContain(d.rule);
+          expect([...STAGE2, ...CMD2, ...STAGE5, ...CMD5]).toContain(d.rule);
           if (d.hook === 'act') expect(['cover', 'rearm']).toContain(d.act); else expect(d.act).toBeUndefined();
-          if (d.hook === 'gate') expect(['closeIn', 'roomEntry', 'breach', 'coverFire', 'bangUse']).toContain(d.gate); else expect(d.gate).toBeUndefined();
+          if (d.hook === 'gate') expect(['closeIn', 'roomEntry', 'breach', 'coverFire', 'bangUse', 'forceDoor']).toContain(d.gate); else expect(d.gate).toBeUndefined();
           if (d.hook === 'cmd' || d.hook === 'dispatch' || d.hook === 'chase') expect(d.rid).toBe(-1);
         }
       }
@@ -175,11 +178,11 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
           expect(a.buddy).toBe(-1);      // 짝 맺기는 3단계
           if (a.doc) expect(['cover', 'rearm']).toContain(a.doc.act);
           if (a.crewSig !== undefined) { sig++; expect(a.crewSig).toMatch(/^[0-2][0-2][0-2][01]$/); }      // 2단계부터 탄을 센다
-          if (a.task && a.task.gateAt !== -1) expect(['closeIn', 'roomEntry', 'breach']).toContain(a.task.gateId);
+          if (a.task && a.task.gateAt !== -1) expect(['closeIn', 'roomEntry', 'breach', 'forceDoor']).toContain(a.task.gateId);
         }
       }
       for (const u of sim.units) { expect(typeof u.ammoBox).toBe('number'); expect(u.ammoBox).toBeGreaterThanOrEqual(0); expect(u.ammoBox).toBeLessThanOrEqual(u.ammoBoxMax!); expect(u.sparePump).toBeUndefined(); }
-      if (sim.report!.doctrine) expect(Object.keys(sim.report!.doctrine).every((k) => [...STAGE2, ...CMD2].some((id) => id.startsWith(k)))).toBe(true);
+      if (sim.report!.doctrine) expect(Object.keys(sim.report!.doctrine).every((k) => [...STAGE2, ...CMD2, ...STAGE5, ...CMD5].some((id) => id.startsWith(k)))).toBe(true);
     }
     expect(sig).toBeGreaterThan(0);      // 자기 신고가 있었다 (공기·부상)
     expect(split).toBeGreaterThan(0);
@@ -245,7 +248,7 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
     });
     // 시험용 줄을 빼면 다시 그대로다 (공통 줄·경찰 줄은 멀쩡한 관창수의 수색에 걸리지 않는다)
     expect(docFit(sim, s, nozzle, wSearch, 0.6)).toBe(0.6);
-    expect(DOCTRINE.map((r) => r.id)).toEqual(STAGE2);
+    expect(DOCTRINE.map((r) => r.id)).toEqual([...STAGE2, ...STAGE5]);
   });
   it('두 모드: 보고 모드는 남의 체력·출혈을 쓰지 않고(-1·false) 맞고 있는지 모른다, 자기 모드는 자기 몸이다', () => {
     const { sim, s } = sceneWith('R3-MODE', 'armed/hostage', ['patrol', 'tactical']);

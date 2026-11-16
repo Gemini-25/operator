@@ -368,7 +368,7 @@ export function docSit(sim: Sim, s: Scene, a: FieldAgent): DocSit {
   const hz = a.beliefs.list('haz');
   for (let k = 0; k < hz.length; k++) { const v = hz[k].value as { kind: string; active: boolean; x: number; y: number }; if (v.kind !== 'bomb' || !v.active) continue; const d = dist(a.x, a.y, v.x, v.y); if (liveBomb === null || d < liveBomb.d) liveBomb = { x: v.x, y: v.y, d }; }
   let defusing = false;
-  if (liveBomb !== null) for (let k = 0; k < s.agents.length; k++) { const b = s.agents[k]; if (b.status === 'active' && b.task !== null && b.task.kind === 'defuse' && dist(b.x, b.y, liveBomb.x, liveBomb.y) <= DOC.BOMB_NEAR) { defusing = true; break; } }
+  if (liveBomb !== null) for (let k = 0; k < s.agents.length; k++) { const b = s.agents[k]; if (b.status === 'active' && b.task !== null && b.task.kind === 'defuse' && (dist(b.x, b.y, liveBomb.x, liveBomb.y) <= DOC.BOMB_NEAR || (b.task.method === 'robotDefuse' && b.task.phase >= 1))) { defusing = true; break; } }      // (5단계) 로봇 원격 해체도 (조작 요원이 자리에 닿아 시작한 뒤)
   // 통제 지점·환자 자리·기록의 2차 사고
   const ctlDone: boolean[] = [];
   for (let k = 0; k < s.controlPts.length; k++) ctlDone.push(a.beliefs.val<boolean>('ctl', k) === true);
@@ -389,7 +389,39 @@ export function docSit(sim: Sim, s: Scene, a: FieldAgent): DocSit {
     threat, civAtRisk, inHazard: riskyRegion(s, a, myRg), victimInside, danger, wDanger: danger, ctlDone, liveBomb, defusing,
     patients, seatsLeft: seats, negotSec: s.negotStart >= 0 ? sim.t - s.negotStart : 0, entryOrdered: s.entryOrdered, lanes2nd,
     gunThreat, fightThreat, bangOnScene, bangComing,
+    robotOn: liveBomb !== null && robotOnScene(sim, s), bombPinned: liveBomb !== null && pinnedNear(a, liveBomb, BOMB_R), scbaOn: s.kind === 'fire' ? scbaCount(sim, s) : 0,
   };
+}
+/** (5단계 S08·S07 — §3.4) 장치 반경 (칸) */
+export const BOMB_R = 6;
+/** (5단계 S06b) 현장의 활동 대원 가운데 작동하는 로봇(알려진 고장 아님 — gear.kitHas)을 든 사람이 있다 (동료의 장비 — 조직 정보) */
+function robotOnScene(sim: Sim, s: Scene): boolean {
+  for (let k = 0; k < s.agents.length; k++) { const b = s.agents[k]; if (b.status === 'active' && kitHas(sim, b.rid, 'robot')) return true; }
+  return false;
+}
+/** (5단계 S19) 현장의 활동 대원 가운데 공기호흡기(알려진 고장 아님)를 든 사람의 수 (조직 정보) */
+function scbaCount(sim: Sim, s: Scene): number {
+  let n = 0;
+  for (let k = 0; k < s.agents.length; k++) { const b = s.agents[k]; if (b.status === 'active' && kitHas(sim, b.rid, 'scba')) n++; }
+  return n;
+}
+/** (5단계 S07) 믿음: 장치(믿음 위치) R 칸 안에 옮길 수 없는 사람 — 현장에 있는 거동 불가·갇힌 구조 대상, 또는 인질을 붙든 활동 용의자(인질은 그 곁에 있다) */
+function pinnedNear(a: FieldAgent, b: { x: number; y: number }, R: number): boolean {
+  const cs = a.beliefs.list('cas');
+  for (let k = 0; k < cs.length; k++) { const c = cs[k].value as CasBelief; if (c.band < 3 && c.where === 'scene' && c.mob !== 'mobile' && dist(c.x, c.y, b.x, b.y) <= R) return true; }
+  const hs = a.beliefs.list('hos');
+  for (let k = 0; k < hs.length; k++) { const v = hs[k].value as { x: number; y: number; state: string; hostage: boolean }; if (v.hostage && (v.state === 'hold' || v.state === 'fight') && dist(v.x, v.y, b.x, b.y) <= R) return true; }
+  return false;
+}
+/** (5단계 S08) 작업의 대상 자리(믿음 — tileOfWork)에서 가장 가까운 살아 있는 장치(믿음)까지의 거리. 없으면 Infinity */
+function bombDistOfWork(s: Scene, a: FieldAgent, w: WorkItem): number {
+  const ti = tileOfWork(s, a, w);
+  if (ti < 0) return Infinity;
+  const x = ti % s.w, y = (ti / s.w) | 0;
+  let best = Infinity;
+  const hz = a.beliefs.list('haz');
+  for (let k = 0; k < hz.length; k++) { const v = hz[k].value as { kind: string; active: boolean; x: number; y: number }; if (v.kind === 'bomb' && v.active) best = Math.min(best, dist(x, y, v.x, v.y)); }
+  return best;
 }
 /** 가벼운 일인가 (H1 LIGHT_WORK 의 정본 그대로 — 처치는 믿음 속 대상이 안전 구역에 나와 있을 때만, 동료 처치는 그 동료가 안전 구역일 때만) */
 function lightWork(a: FieldAgent, w: WorkItem): boolean {
@@ -457,6 +489,7 @@ export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report
     has: kf.has, kit: kf.kit,
     m: undefined, see: undefined,
     tg, pack, dngSign, hideSpot: mode === 'self' && tg !== null ? hideOf(s, a, tg) : NO_HIDE, solo: role !== null && SOLO_OK.has(role),
+    wBomb: w !== null && sit.liveBomb !== null ? bombDistOfWork(s, a, w) : Infinity,
   };
 }
 /** (2단계) 그 용의자의 믿음을 위협의 모양으로 (모르면 undefined) */
@@ -756,4 +789,22 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
     best = { x, y }; bd = da;
   }
   return best;
+}
+
+// ───────────────────────── (5단계 — 특수) 지휘 CS2: 특공이 현장에 있으면 진입조는 특공·기동대 (배정 점수 가산 — fit 이 아니다) ─────────────────────────
+/** CS2 의 배정 점수 가산 */
+export const CS2_ADD = 0.1;
+/** 현장에 활동 중인 특공 대원이 있다 (조직 정보 — commander.assign 이 배정 한 번에 한 번 센다) */
+export function swatOnScene(sim: Sim, s: Scene): boolean {
+  for (let k = 0; k < s.agents.length; k++) { const b = s.agents[k]; if (b.status === 'active' && sim.units[b.unitId].kind === 'swat') return true; }
+  return false;
+}
+/**
+ * (§6.1 CS2) 특공이 현장에 있을 때 배정 점수에 더하는 값 (명부의 역할·부대 — 조직 정보): 교전(engage)에 역할 묶음 방패·진입과 기동대원 +0.1,
+ * 출입구 봉쇄(perimeter)에 순찰 경관 +0.1 (순찰은 봉쇄 쪽으로). 그 밖 0
+ */
+export function cs2Add(sim: Sim, b: FieldAgent, w: WorkItem): number {
+  if (w.kind === 'engage') { const g = groupOf(sim, b.rid); return g === 'shield' || g === 'entry' || roleIdOf(sim, b.rid) === 'tacOfficer' ? CS2_ADD : 0; }
+  if (w.kind === 'perimeter') return sim.units[b.unitId].kind === 'patrol' && roleIdOf(sim, b.rid) === 'officer' ? CS2_ADD : 0;
+  return 0;
 }

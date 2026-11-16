@@ -500,12 +500,14 @@ export function agentCost(sim: Sim, s: Scene, a: FieldAgent, allowBlockers = tru
     if (!exempt) { const m = zoneMask(s, opsV.zones); if (m[tileOf(s, a.x, a.y)] < 3) zm = m; }
   }
   const av = a.avoid !== undefined && a.avoid.until > sim.t ? a.avoid : null;
+  const bz = bombZone(s, a);      // (R3 5단계 S08) 해체가 진행 중인 장치의 반경 (해체·출입 통제·반경 밖으로 옮기는 일이 아니면 +20)
   return (i: number): number => {
     const t = s.tiles[i];
     if (!staticPass(t)) return -1;
     if (zm !== null && zm[i] >= 3) return -1;
     let c = t === T.TREE ? 0.7 : 0;
     if (av !== null && inAvoid(s, av, i)) c += 20;
+    if (bz !== null) { const dx = (i % s.w) - bz.x, dy = ((i / s.w) | 0) - bz.y; if (dx * dx + dy * dy <= bz.r * bz.r) c += 20; }
     if (shun) { const rg = s.region[i]; if (rg >= 0 && s.regions[rg].indoor) c += 6; }
     const b = a.beliefs.get('blk', i);
     if (b && b.value !== 'none') {
@@ -526,6 +528,21 @@ export function agentCost(sim: Sim, s: Scene, a: FieldAgent, allowBlockers = tru
   };
 }
 
+/**
+ * (R3 §3.4 S08 — 5단계) 해체가 진행 중인 장치의 반경: 믿음 속 살아 있는 장치 곁(2칸)에서 동료의 해체 임무가 진행 중이면(동료의 겉) 그 장치 둘레 6칸.
+ * 해체·출입 통제를 맡았거나 사람을 반경 밖으로 옮기는 중(이송·대피 안내·동료 구조)이면 없다(null). 걸어서 지나가는 비용에 +20 (교본 doctrine.ts 의 sit.defusing 과 같은 판정)
+ */
+function bombZone(s: Scene, a: FieldAgent): { x: number; y: number; r: number } | null {
+  const tk = a.task;
+  if (tk !== null && (tk.kind === 'defuse' || tk.kind === 'perimeter' || tk.kind === 'carry' || tk.kind === 'escort' || tk.kind === 'rescueMate')) return null;
+  const hz = a.beliefs.list('haz');
+  for (let k = 0; k < hz.length; k++) {
+    const v = hz[k].value as { kind: string; active: boolean; x: number; y: number };
+    if (v.kind !== 'bomb' || !v.active) continue;
+    for (let j = 0; j < s.agents.length; j++) { const b = s.agents[j]; if (b !== a && b.status === 'active' && b.task !== null && b.task.kind === 'defuse' && (dist(b.x, b.y, v.x, v.y) <= 2 || (b.task.method === 'robotDefuse' && b.task.phase >= 1))) return { x: v.x, y: v.y, r: 6 }; }
+  }
+  return null;
+}
 /** (X6 §5.1) 칸 i 가 피하는 곳(구획 목록 또는 원) 안인가 */
 export function inAvoid(s: Scene, av: NonNullable<FieldAgent['avoid']>, i: number): boolean {
   if (i < 0) return false;
@@ -721,7 +738,8 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
       const best = methodFit(sim, s, a, w);
       return best > 0 ? 0.22 + r.skills.rescue * 0.5 + Math.min(1, best) * 0.28 : 0;
     }
-    case 'defuse': return hasKit(sim, rid, 'eodKit') ? 0.6 + 0.4 * r.skill : 0;      // 해체 공구를 든 처리 요원만 손댄다
+    // (R3 §3.7 S06 — 5단계) 해체 공구를 든 처리 요원 · 작동하는 로봇을 든 로봇 조작 요원(로봇 원격 해체로만). 쓸 해체 방법이 있을 때만 (WORK_MODE 'refuse' — 다친·동요한 처리 요원, 로봇이 고장 난 조작 요원은 맡지 않는다)
+    case 'defuse': return (hasKit(sim, rid, 'eodKit') || hasKit(sim, rid, 'robot')) && methodFit(sim, s, a, w) > 0 ? 0.6 + 0.4 * r.skill : 0;
     case 'overhaul': return hasKit(sim, rid, 'hose') && airOk(sim, rid, afterSwap) ? 0.4 + 0.6 * r.skills.fire : 0;      // 불씨를 만나면 분사한다: 관창을 든 사람만 (공기가 문턱 아래면 통을 바꾼 뒤에)
     case 'hoist': case 'airDrop': return 0;      // 공중 임무: 지상 대원은 맡지 않는다 (상공의 헬기가 field/rules/air.ts 에서 가져간다)
     case 'treatMate': {

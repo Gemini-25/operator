@@ -26,6 +26,7 @@ import { BeliefStore, mkFact } from '../beliefs';
 import { isIndoor } from '../grid';
 import { applyWater, placeAtSafe, pushFx } from '../hazards';
 import { registerRule } from '../sceneRegistry';
+import { recordAir } from '../methodRun';      // (R2 1a) 호이스트 완료의 방법 기록
 
 /** 균형 상수 */
 export const AIR = {
@@ -212,7 +213,8 @@ function hoistDone(sim: Sim, s: Scene, I: Incident, op: AirOp, u: Unit): void {
   if (seatsUsed(sim, u) < seatsOf(u)) { c.where = 'loaded'; c.tLoaded = sim.t; c.x = op.x; c.y = op.y; c.px = c.x; c.py = c.y; u.patients.push(c.id); u.patientsIncident = I.id; u.firstLoadAt ??= sim.t; }
   else { c.where = 'safe'; c.tSafe = sim.t; placeAtSafe(s, c); }      // 자리가 없으면 안전 구역에 내려놓는다
   learnQuiet(sim, eye, casFact(sim, s, c, name));
-  emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'recovery', imp: 2, text: `${u.callsign}: 호이스트로 구조 대상 ${c.label} 인양 완료.` });
+  const ev = emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'recovery', imp: 2, text: `${u.callsign}: 호이스트로 구조 대상 ${c.label} 인양 완료.` });
+  recordAir(sim, I, u, c, ev, sim.t - op.progress);      // (R2 1a) 구한 방법(호이스트)과 방법 기록 — 기록 전용 방법 (methodRun.recordAir)
   sim.airStats.hoists++;
   sim.responders[eye.rid].xpGained += 0.005;
   finishWork(sim, s, op);

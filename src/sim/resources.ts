@@ -206,6 +206,8 @@ export function createRoster(sim: Sim): void {
   drawFaults(sim.rng.fork('kit'), sim.responders, tn.kitFault);
   // (N9 §5.12) 잠수 장비(batch 'n9')는 kit 의 추첨 순서에 끼지 않고 그 뒤에 따로 kit-n9 흐름에서 같은 순서·같은 확률로 뽑는다 (든 대원이 편성되지 않으면 한 번도 뽑지 않는다)
   drawBatchFaults(sim.rng.fork('kit-n9'), sim.responders, tn.kitFault, 'n9');
+  // (R2 §3.3) 대응 방법의 고장 나는 장비(batch 'r2' — 고무보트·송풍기·에어백)도 따로 kit-r2 흐름에서 (역할 장비 끝에 붙여도 kit 의 뒤 장비 고장이 밀리지 않는다)
+  drawBatchFaults(sim.rng.fork('kit-r2'), sim.responders, tn.kitFault, 'r2');
 }
 
 // 지원 부대의 이름: 지원 한 번에 네 칸씩 쓴다(지원 종류의 최소 인원은 많아야 4명). 지원은 교대당 많아야 5회, 재난 때 3회 더(disaster.ts) — 8회 × 4칸
@@ -280,6 +282,7 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
   if (HEAVY[kind]) u.heavy = true;
   drawFaults(rng, members, tn.kitFault);      // 펌프 상태 다음에 뽑는다 (같은 흐름 aid:<n> 의 끝)
   drawBatchFaults(sim.rng.fork('aid-n9:' + sim.aidUsed), members, tn.kitFault, 'n9');      // (N9) 잠수 장비는 따로 (지원 종류에는 그 장비를 든 자리가 없다 — 지금은 한 번도 뽑지 않는다)
+  drawBatchFaults(sim.rng.fork('aid-r2:' + sim.aidUsed), members, tn.kitFault, 'r2');      // (R2 §3.3) 대응 방법의 고장 나는 장비도 따로 (지원 구조대의 로프 대원이 든 고무보트)
   sim.units.push(u);
   return u;
 }

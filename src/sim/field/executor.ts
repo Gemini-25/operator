@@ -55,7 +55,7 @@ export function finishTask(sim: Sim, s: Scene, a: FieldAgent, ok: boolean, reaso
       if (!w.assignees.length) w.status = 'open';
       if (reason && reason !== 'preempt') {
         const r = resp(sim, a);
-        const txt: Record<string, string> = { nopath: '진입 경로를 찾지 못했습니다', fire: '화염으로 접근할 수 없습니다', equip: '장비 문제로 임무를 계속할 수 없습니다', gone: '대상이 더 이상 그 위치에 없습니다', unsafe: '위협이 해소되지 않아 접근할 수 없습니다', full: '차에 환자 자리가 없습니다' };
+        const txt: Record<string, string> = { nopath: '진입 경로를 찾지 못했습니다', fire: '화염으로 접근할 수 없습니다', equip: '장비 문제로 임무를 계속할 수 없습니다', gone: '대상이 더 이상 그 위치에 없습니다', unsafe: '위협이 해소되지 않아 접근할 수 없습니다', full: '차에 환자 자리가 없습니다', nomethod: '쓸 수 있는 방법이 없습니다' };      // nomethod: (R2) 고를 대응 방법이 남지 않았다
         emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'radio', imp: 1, causes: [a.lastBlockEvent], text: `${workLabel(s, w, sim)} 중단 — ${txt[reason] ?? reason}. 재지시 요청.` });
         w.note = txt[reason] ?? reason;
       }
@@ -725,27 +725,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       return;
     }
     case 'waterRescue': {
-      const c = s.casualties[t.cas];
-      if (c.dead || !c.inWater) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
-      // 물가에서 구조 대상이 보이는 가장 가까운 자리로 간다 (떠내려가면 따라 옮긴다). 네 칸 안이면 줄을 던질 수 있다
-      const m = moveTo(sim, s, a, c.x, c.y, 3.6, true);
-      if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
-      a.label = m === 'arrived' ? '구조 줄 투척' : '물가로 이동';
-      if (m !== 'arrived') { t.progress = Math.max(0, t.progress - dt * 0.5); return; }
-      a.fx = c.x - a.x; a.fy = c.y - a.y;
-      t.need = 9 / (0.4 + r.skills.rescue * 0.8 + toolUse(sim, a.rid, 'water', I) * 0.5);
-      t.progress += dt * staminaF(r); a.ring = t.progress / t.need;
-      drain(sim, a, 0.5);
-      if (t.progress >= t.need) {
-        c.inWater = false; c.drift = 0; c.mob = 'immobile'; c.trapWork = 0; c.tFreed = sim.t;
-        c.x = Math.round(a.x); c.y = Math.round(a.y); c.px = c.x; c.py = c.y;
-        c.bleed *= 0.35; c.bleed0 = c.bleed;      // 물 밖으로 나오면 악화가 느려진다 (저체온은 남는다)
-        c.bleedCause = 'exposure';      // 남은 악화는 익수가 아니라 실외 노출(저체온)로 적는다 (H1 §2.3)
-        learnQuiet(sim, a, casFact(sim, s, c, r.name));
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: `구조 대상 ${c.label}를 물에서 끌어냈습니다. 처치와 이송이 필요합니다.` });
-        r.xpGained += 0.005;
-        finishTask(sim, s, a, true);
-      }
+      // (R2 1a) 방법(손·장대·구명환·구명줄·즉석 부력물·하류 차단 …)을 골라 실행한다 — 고르는 것은 판단부(methods.chooseMethod), 효과·판정·완료 기록은 실행부(methodRun)
+      runWaterRescue(sim, s, I, a, t, XK);
       return;
     }
     case 'extricate': {
@@ -1533,9 +1514,10 @@ export function reportFact(sim: Sim, a: FieldAgent, f: Fact): void { learn(sim, 
 export { isIndoor };
 
 // ── (R2) 방법의 실행부(field/methodRun.ts)에 건네는 도구 — methodRun 은 이 파일을 import 하지 않는다(순환). 지휘 규칙의 CommandKit 과 같은 방식이다.
-//    단계 0 에는 아직 건네는 곳이 없다: 단계 1a 가 case 'waterRescue' 에서 runWaterRescue(sim, s, I, a, t, XK) 로 처음 쓴다.
-//    (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다 — 타입만 가져오므로 실행 순서와 무관하다) ──
+//    단계 1a: case 'waterRescue' 가 runWaterRescue(sim, s, I, a, t, XK) 로 쓴다.
+//    (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다 — methodRun 의 함수는 실행할 때만 부르므로 순서와 무관하다) ──
 import type { ExecKit } from './methodRun';
+import { runWaterRescue } from './methodRun';
 export const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask };
 
 // ── (R3) 대응 교본의 판단 지점 (field/doctrine.ts 의 docGate — 자기 모드). 판단은 교본 함수가, 효과(이동·기다림)는 이 파일이 한다 ──

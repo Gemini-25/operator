@@ -149,7 +149,9 @@ export function crewNow(sim: Sim, a: FieldAgent): CrewBelief {
 export function selfReport(sim: Sim, s: Scene, a: FieldAgent): void {
   if (a.aloft) return;
   if (a.shaken !== undefined && a.shaken <= sim.t) { a.shakenOff = a.shaken; a.shaken = undefined; }      // 동요가 끝났다 (끝난 시각 — 10초 면역)
-  const v = crewNow(sim, a), sig = crewSigOf(v), prev = a.crewSig;
+  const v = crewNow(sim, a), prev = a.crewSig;
+  if (prev !== undefined && sameSig(prev, v)) return;      // (속도) 서명이 그대로면 글자를 만들지 않는다 (crewSigOf 와 같은 비교)
+  const sig = crewSigOf(v);
   if (sig === prev) return;
   a.crewSig = sig;
   if (prev === undefined && sig === '0000') return;
@@ -159,6 +161,10 @@ export function selfReport(sim: Sim, s: Scene, a: FieldAgent): void {
   const f = mkFact('crew', a.rid, v, sim.responders[a.rid].name, sim.t, 1, true, alert || crewQuietText(v));
   if (alert) learn(sim, a, f); else learnQuiet(sim, a, f);
   void s;
+}
+/** 지난 서명 prev 가 v 의 서명(crewSigOf — 한 자리 수 넷)과 같은가 — 글자를 만들지 않고 견준다 */
+function sameSig(prev: string, v: CrewBelief): boolean {
+  return prev.length === 4 && v.band >= 0 && v.band <= 9 && prev.charCodeAt(0) === 48 + v.band && prev.charCodeAt(1) === 48 + v.air && prev.charCodeAt(2) === 48 + v.ammo && prev.charCodeAt(3) === (v.shaken ? 49 : 48);
 }
 /** 글 없이 보내는 신고의 믿음 속 글 (무전 문구에는 실리지 않는다 — 정보창의 '알고 있는 정보'에만 보인다) */
 function crewQuietText(v: CrewBelief): string {

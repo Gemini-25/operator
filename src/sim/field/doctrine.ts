@@ -18,7 +18,7 @@
 
 import type { Sim } from '../engine';
 import { T } from '../types';
-import type { CasBelief, CrewBelief, DocActId, DocDept, DocGateId, DocHook, DocWhy, FieldAgent, KitId, MateBelief, MethodId, MethodWhy, Pt, RoleId, Scene, UnitKind, WorkItem, WorkKind } from '../types';
+import type { CasBelief, CrewBelief, DocActId, DocDept, DocGateId, DocHook, DocWhy, FieldAgent, KitId, MateBelief, MethodId, MethodWhy, Pt, RoleGroup, RoleId, Scene, UnitKind, WorkItem, WorkKind } from '../types';
 import { dist } from '../util';
 import { crewHas, gunOf, groupOf, kitCount, kitHas, kitQty, roleIdOf, seatsLeft } from './gear';
 import { losWalls, staticPass, tileOf } from './grid';
@@ -449,9 +449,12 @@ export function docSit(sim: Sim, s: Scene, a: FieldAgent): DocSit {
   // 믿음 속 가장 가까운 활동 용의자
   let threat: DocThreat | null = null;
   const hs = a.beliefs.list('hos');
+  let gunThreat = false, fightThreat = false;      // (2단계) 총기·교전 위협 (믿음) — (속도) 위협 고르기와 같은 반복에서 센다 (같은 거름)
   for (let k = 0; k < hs.length; k++) {
     const v = hs[k].value as { x: number; y: number; weapon: 'gun' | 'knife' | 'none'; state: string; hostage: boolean; facing: number };
     if (v.state !== 'hold' && v.state !== 'fight' && v.state !== 'flee') continue;
+    if (v.weapon === 'gun') gunThreat = true;
+    if (v.state === 'fight') fightThreat = true;
     const d = dist(a.x, a.y, v.x, v.y);
     if (threat === null || d < threat.d) threat = { id: hs[k].id, x: v.x, y: v.y, d, weapon: v.weapon, state: v.state, hostage: v.hostage, facing: v.facing };
   }
@@ -480,8 +483,28 @@ export function docSit(sim: Sim, s: Scene, a: FieldAgent): DocSit {
   let liveBomb: { x: number; y: number; d: number } | null = null;
   const hz = a.beliefs.list('haz');
   for (let k = 0; k < hz.length; k++) { const v = hz[k].value as { kind: string; active: boolean; x: number; y: number }; if (v.kind !== 'bomb' || !v.active) continue; const d = dist(a.x, a.y, v.x, v.y); if (liveBomb === null || d < liveBomb.d) liveBomb = { x: v.x, y: v.y, d }; }
-  let defusing = false;
-  if (liveBomb !== null) for (let k = 0; k < s.agents.length; k++) { const b = s.agents[k]; if (b.status === 'active' && b.task !== null && b.task.kind === 'defuse' && (dist(b.x, b.y, liveBomb.x, liveBomb.y) <= DOC.BOMB_NEAR || (b.task.method === 'robotDefuse' && b.task.phase >= 1))) { defusing = true; break; } }      // (5단계) 로봇 원격 해체도 (조작 요원이 자리에 닿아 시작한 뒤)
+  // (속도) 동료의 겉·장비를 보는 반복을 하나로: 해체 중(살아 있는 장치가 있을 때 — (5단계) 로봇 원격 해체도 조작 요원이 자리에 닿아 시작한 뒤) · 섬광탄을 가진 경찰 ·
+  //   다른 구급 대원(수·1급 응급구조사·의사·곁에 앉아 처치하는 대상) · 작동하는 로봇(살아 있는 장치가 있을 때) · 공기호흡기(화재 현장). 활동 대원만, 순서 그대로 (값이 같다)
+  let defusing = false, bangOnScene = false, robotOn = false, scbaOn = 0, medics = 0, alsOn = false;
+  const tendCas: number[] = [];
+  const fireScene = s.kind === 'fire';
+  for (let k = 0; k < s.agents.length; k++) {
+    const b = s.agents[k];
+    if (b.status !== 'active') continue;
+    const bd = sim.responders[b.rid].dept;
+    if (liveBomb !== null) {
+      if (!defusing && b.task !== null && b.task.kind === 'defuse' && (dist(b.x, b.y, liveBomb.x, liveBomb.y) <= DOC.BOMB_NEAR || (b.task.method === 'robotDefuse' && b.task.phase >= 1))) defusing = true;
+      if (!robotOn && kitHas(sim, b.rid, 'robot')) robotOn = true;
+    }
+    if (!bangOnScene && bd === 'police' && kitCount(sim, b.rid, 'flashbang') > 0) bangOnScene = true;
+    if (b !== a && bd === 'ems') {
+      medics++;
+      const ro = roleIdOf(sim, b.rid);
+      if (ro === 'paramedic' || ro === 'doctor') alsOn = true;
+      if (b.task !== null && b.task.kind === 'treat' && b.task.cas >= 0 && b.ring > 0) tendCas.push(b.task.cas);
+    }
+    if (fireScene && kitHas(sim, b.rid, 'scba')) scbaOn++;
+  }
   // 통제 지점·환자 자리·기록의 2차 사고
   const ctlDone: boolean[] = [];
   for (let k = 0; k < s.controlPts.length; k++) ctlDone.push(a.beliefs.val<boolean>('ctl', k) === true);
@@ -490,23 +513,10 @@ export function docSit(sim: Sim, s: Scene, a: FieldAgent): DocSit {
   let lanes2nd = false;
   for (let k = 0; k < I.problems.length; k++) if (I.problems[k].code === 'SECONDARY_COLLISION') { lanes2nd = true; break; }
   const danger = opsLevel(s, a, myRg, tileOf(s, a.x, a.y));
-  // (2단계) 총기·교전 위협 (믿음), 섬광탄 (동료의 장비·오는 부대 — 조직 정보)
-  let gunThreat = false, fightThreat = false;
-  for (let k = 0; k < hs.length; k++) { const v = hs[k].value as { weapon: string; state: string }; if (v.state !== 'hold' && v.state !== 'fight' && v.state !== 'flee') continue; if (v.weapon === 'gun') gunThreat = true; if (v.state === 'fight') fightThreat = true; }
-  let bangOnScene = false, bangComing = false;
-  for (let k = 0; k < s.agents.length && !bangOnScene; k++) { const b = s.agents[k]; if (b.status === 'active' && sim.responders[b.rid].dept === 'police' && kitCount(sim, b.rid, 'flashbang') > 0) bangOnScene = true; }
+  // (2단계) 섬광탄을 실은 경찰 부대가 오는 중 (조직 정보)
+  let bangComing = false;
   for (let k = 0; k < I.assigned.length; k++) { const q = sim.units[I.assigned[k]]; if ((q.state === 'enroute' || q.state === 'turnout') && q.dept === 'police' && q.flashbangs > 0) { bangComing = true; break; } }
-  // (4단계) 의료 — 동료의 겉: 곁에 앉아 처치하는 구급 동료의 대상(처치 임무이고 손을 쓰는 중 — ring), 다른 활동 구급 대원의 수, 다른 1급 응급구조사·의사(명부의 역할)
-  const tendCas: number[] = [];
-  let medics = 0, alsOn = false;
-  for (let k = 0; k < s.agents.length; k++) {
-    const b = s.agents[k];
-    if (b === a || b.status !== 'active' || sim.responders[b.rid].dept !== 'ems') continue;
-    medics++;
-    const ro = roleIdOf(sim, b.rid);
-    if (ro === 'paramedic' || ro === 'doctor') alsOn = true;
-    if (b.task !== null && b.task.kind === 'treat' && b.task.cas >= 0 && b.ring > 0) tendCas.push(b.task.cas);
-  }
+  // (4단계) 의료 — 동료의 겉: 곁에 앉아 처치하는 구급 동료의 대상(처치 임무이고 손을 쓰는 중 — ring), 다른 활동 구급 대원의 수, 다른 1급 응급구조사·의사(명부의 역할) — 위의 반복에서 센다
   return {
     kind: s.kind, label: I.assessment ? I.assessment.label ?? '' : '', phase: phaseOf(sim, s, a),
     hot: s.kind === 'armed' && s.secureAt < 0, outdoor: s.outdoor === true, secure: s.secureAt >= 0,
@@ -514,22 +524,12 @@ export function docSit(sim: Sim, s: Scene, a: FieldAgent): DocSit {
     patients, seatsLeft: seats, negotSec: s.negotStart >= 0 ? sim.t - s.negotStart : 0, entryOrdered: s.entryOrdered, lanes2nd,
     gunThreat, fightThreat, bangOnScene, bangComing,
     tendCas, medics, alsOn,
-    robotOn: liveBomb !== null && robotOnScene(sim, s), bombPinned: liveBomb !== null && pinnedNear(a, liveBomb, BOMB_R), scbaOn: s.kind === 'fire' ? scbaCount(sim, s) : 0,
+    robotOn, bombPinned: liveBomb !== null && pinnedNear(a, liveBomb, BOMB_R), scbaOn,
   };
 }
 /** (5단계 S08·S07 — §3.4) 장치 반경 (칸) */
 export const BOMB_R = 6;
-/** (5단계 S06b) 현장의 활동 대원 가운데 작동하는 로봇(알려진 고장 아님 — gear.kitHas)을 든 사람이 있다 (동료의 장비 — 조직 정보) */
-function robotOnScene(sim: Sim, s: Scene): boolean {
-  for (let k = 0; k < s.agents.length; k++) { const b = s.agents[k]; if (b.status === 'active' && kitHas(sim, b.rid, 'robot')) return true; }
-  return false;
-}
-/** (5단계 S19) 현장의 활동 대원 가운데 공기호흡기(알려진 고장 아님)를 든 사람의 수 (조직 정보) */
-function scbaCount(sim: Sim, s: Scene): number {
-  let n = 0;
-  for (let k = 0; k < s.agents.length; k++) { const b = s.agents[k]; if (b.status === 'active' && kitHas(sim, b.rid, 'scba')) n++; }
-  return n;
-}
+// (5단계 S06b·S19) 작동하는 로봇을 든 사람이 있는가(robotOn)·공기호흡기를 든 사람의 수(scbaOn)는 docSit 의 동료 반복이 센다 (활동 대원 · 알려진 고장 아님 — gear.kitHas, 조직 정보)
 /**
  * (5단계 S07) 믿음: 장치(믿음 위치) R 칸 안에 옮길 수 없는 사람 — 현장에 있는 갇힌 구조 대상, 다쳐(band ≥ 1) 걷지 못하는 구조 대상, 또는 인질을 붙든 활동 용의자(인질은 그 곁에 있다).
  * 다치지 않고 아직 안내받지 않은 사람(믿음의 mob 은 걷기 전까지 'immobile')은 대피 안내로 옮길 수 있으므로 세지 않는다
@@ -568,14 +568,29 @@ function cacheOf(sim: Sim, a: FieldAgent): DocCache {
   return c;
 }
 /**
- * 대원마다 한 번 만드는 장비 읽기 (c.has · c.kit). docCtx 는 fit 마다 불리므로 부를 때마다 닫힘을 새로 만들지 않는다 —
- * 헤드리스 실행기(tsx)는 이름을 붙이는 닫힘마다 __name 을 한 번 더 부른다(2단계 측정: 교대당 시간의 몇 %). 값은 부를 때마다 읽으므로 결과는 같다
+ * (속도) 대원마다 한 번 만드는 것 — 명부·부대에서 나오는 그 대원의 교본 분야·역할·역할 묶음·혼자 서는 역할인가·장비 읽기(c.has · c.kit),
+ * 그리고 자리(hook)·일(work)마다 '누구' 칸(who)이 걸릴 수 있는 줄만 추린 목록. 역할·부서·부대는 교대 중에 바뀌지 않는다(명부 — 시험이 바꾸면 docForget()).
+ * 장비 읽기는 부를 때마다 읽으므로 결과는 같다 (닫힘을 대원마다 한 번만 만든다 — 헤드리스 실행기(tsx)는 이름을 붙이는 닫힘마다 __name 을 부른다).
+ * 줄 목록은 등록이 바뀌면(GEN) 다시 만든다
  */
-const KIT_FN = new WeakMap<FieldAgent, { has: (id: KitId) => boolean; kit: (id: KitId) => number }>();
-function kitFnsOf(sim: Sim, a: FieldAgent): { has: (id: KitId) => boolean; kit: (id: KitId) => number } {
-  let f = KIT_FN.get(a);
-  if (f === undefined) { const rid = a.rid; f = { has: (id: KitId) => kitHas(sim, rid, id), kit: (id: KitId) => kitCount(sim, rid, id) }; KIT_FN.set(a, f); }
-  return f;
+interface AgentDoc {
+  gen: number; dept: DocDept; role: RoleId | null; group: RoleGroup | null; solo: boolean;
+  has: (id: KitId) => boolean; kit: (id: KitId) => number;
+  byHook: Map<DocHook, DoctrineRule[]>; byWork: Map<DocHook, Map<WorkKind, DoctrineRule[]>>;
+}
+let AGS = new WeakMap<FieldAgent, AgentDoc>();
+/** 등록이 바뀐 세대 (docForget() · 줄 수가 바뀌어 색인을 다시 만들 때 하나씩 늘린다) */
+let GEN = 0;
+function agentDocOf(sim: Sim, a: FieldAgent): AgentDoc {
+  syncIdx();
+  let d = AGS.get(a);
+  if (d === undefined || d.gen !== GEN) {
+    const rid = a.rid, role = roleIdOf(sim, rid);
+    d = { gen: GEN, dept: docDeptOf(sim, rid), role, group: groupOf(sim, rid), solo: role !== null && SOLO_OK.has(role),
+      has: (id: KitId) => kitHas(sim, rid, id), kit: (id: KitId) => kitCount(sim, rid, id), byHook: new Map(), byWork: new Map() };
+    AGS.set(a, d);
+  }
+  return d;
 }
 /** 숨을 자리가 없는 입력(보고 모드 · 위협 없음)이 함께 쓰는 답 */
 const NO_HIDE = (): { x: number; y: number } | null => null;
@@ -584,8 +599,11 @@ function hideOf(s: Scene, a: FieldAgent, tg: DocThreat): () => { x: number; y: n
   let hide: { x: number; y: number } | null | undefined;
   return () => { if (hide === undefined) hide = coverSpot(s, a.x, a.y, tg.x, tg.y, false); return hide; };
 }
-/** 담아 둔 상태를 버린다 (같은 틱 안에서 대원의 상태를 손으로 바꾼 시험이 쓴다). a 가 없으면 모두 — 줄 목록의 색인도 (시험이 줄을 바꿔 끼울 때) */
-export function docForget(a?: FieldAgent): void { if (a === undefined) { CACHE = new WeakMap(); IDX_N = -1; } else CACHE.delete(a); }
+/** 담아 둔 상태를 버린다 (같은 틱 안에서 대원의 상태를 손으로 바꾼 시험이 쓴다). a 가 없으면 모두 — 줄 목록의 색인·대원마다 추린 줄 목록도 (시험이 줄을 바꿔 끼우거나 명부를 고칠 때) */
+export function docForget(a?: FieldAgent): void {
+  if (a === undefined) { CACHE = new WeakMap(); AGS = new WeakMap(); IDX_N = -1; GEN++; }
+  else { CACHE.delete(a); AGS.delete(a); }
+}
 /** 교본 줄이 받는 입력을 만든다. mode = 'self'(자기 몸) | 'report'(남이 아는 만큼). w = 대상 작업, sense = 대원이 선 칸의 감각, dng = brain 의 위험 점수 */
 export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report', w: WorkItem | null = null, sense: Sense = ZERO_SENSE, dng = 0, dngSign = 0): DocCtx {
   const ch = cacheOf(sim, a);
@@ -600,32 +618,37 @@ export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report
     hz = wRisky && HZ_WORKS.has(w.kind);
     light = lightWork(a, w);
   }
-  const rid = a.rid, role = roleIdOf(sim, rid);
+  const ad = agentDocOf(sim, a);
   // (2단계) 대상 용의자: 대상 작업의 용의자 → 지금 임무의 용의자 → 가장 가까운 활동 용의자. 같은 용의자를 맡은 동료 (동료의 겉)
   const hid = w !== null && w.hostile >= 0 ? w.hostile : a.task !== null && a.task.hostile >= 0 ? a.task.hostile : -1;
   const tg = hid >= 0 ? threatOf(a, hid) ?? sit.threat : sit.threat;
-  const pack = { n: 0, near: 0, far: 0 };
-  if (tg !== null) for (let k = 0; k < s.agents.length; k++) {
-    const b = s.agents[k];
-    if (b === a || b.status !== 'active' || b.task === null || b.task.hostile !== tg.id || (b.task.kind !== 'arrest' && b.task.kind !== 'engage')) continue;
-    pack.n++; if (dist(a.x, a.y, b.x, b.y) <= DOC.PACK_R) pack.near++; else pack.far++;
+  let pack = NO_PACK;
+  if (tg !== null) {
+    let n = 0, near = 0, far = 0;
+    for (let k = 0; k < s.agents.length; k++) {
+      const b = s.agents[k];
+      if (b === a || b.status !== 'active' || b.task === null || b.task.hostile !== tg.id || (b.task.kind !== 'arrest' && b.task.kind !== 'engage')) continue;
+      n++; if (dist(a.x, a.y, b.x, b.y) <= DOC.PACK_R) near++; else far++;
+    }
+    if (n > 0) pack = { n, near, far };
   }
-  const kf = kitFnsOf(sim, a);
   // (3단계) 짝·밖 대기조, (합치기 — S11) 자기 부대의 다른 대원 가운데 위험 실내에 선 사람 — 줄이 처음 물을 때 한 번 잰다.
   // (균형 — 속도) 게으른 칸은 이름 없는 닫힘을 돌려주는 함수(lazyPair·lazyWatch·lazyUnitIn)로 만든다: 객체 칸에 바로 쓴 화살표 함수는 헤드리스 실행기(tsx)가
   //   만들 때마다 __name 을 부른다(교대당 시간의 4% — 결과는 같다)
   return {
-    sim, s, a, u: sim.units[a.unitId], dept: docDeptOf(sim, rid), role, group: groupOf(sim, rid),
+    sim, s, a, u: sim.units[a.unitId], dept: ad.dept, role: ad.role, group: ad.group,
     mode, w, hz, wRisky, light, st, sit, sense, dng,
-    has: kf.has, kit: kf.kit,
+    has: ad.has, kit: ad.kit,
     m: undefined, see: undefined,
-    tg, pack, dngSign, hideSpot: mode === 'self' && tg !== null ? hideOf(s, a, tg) : NO_HIDE, solo: role !== null && SOLO_OK.has(role),
+    tg, pack, dngSign, hideSpot: mode === 'self' && tg !== null ? hideOf(s, a, tg) : NO_HIDE, solo: ad.solo,
     pair: lazyPair(sim, s, a, w, st),
     watch: lazyWatch(sim, s, a),
     unitIn: lazyUnitIn(s, a),
     wBomb: w !== null && sit.liveBomb !== null ? bombDistOfWork(s, a, w) : Infinity,
   };
 }
+/** 같은 용의자를 맡은 동료가 없을 때의 pack (모든 입력이 함께 쓴다 — 줄은 읽기만 한다) */
+const NO_PACK: { n: number; near: number; far: number } = Object.freeze({ n: 0, near: 0, far: 0 }) as { n: number; near: number; far: number };
 /** DocCtx 의 게으른 칸 (처음 물을 때 한 번 잰다 — 돌려주는 닫힘에는 이름이 없다) */
 function lazyPair(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem | null, st: DocState): () => DocPair {
   let pr: DocPair | undefined;
@@ -648,26 +671,69 @@ function threatOf(a: FieldAgent, id: number): DocThreat | undefined {
 // ───────────────────────── 줄 고르기 ─────────────────────────
 const EMPTY: DoctrineRule[] = [];
 const GATE_OK: DocGateAns = Object.freeze({ ok: true, rule: null, wait: 0, opt: null, exc: null }) as DocGateAns;
-/** (자리, 일) 별로 나눈 줄 목록. 등록이 바뀌면(시험이 줄을 잠깐 넣고 빼면) 다시 만든다 */
+/** (자리, 일) 별로 나눈 줄 목록. 등록이 바뀌면(시험이 줄을 잠깐 넣고 빼면) 다시 만든다. (속도) 열쇠는 글자를 잇지 않고 자리 → 일의 두 단 Map */
 let IDX_N = -1;
-let IDX = new Map<string, DoctrineRule[]>();
+let IDX = new Map<DocHook, DoctrineRule[]>();
+let IDX_W = new Map<DocHook, Map<WorkKind, DoctrineRule[]>>();
+/** 줄 수가 바뀌었으면 색인과 대원마다 추린 목록을 버린다 */
+function syncIdx(): void { if (IDX_N !== DOCTRINE.length) { IDX = new Map(); IDX_W = new Map(); IDX_N = DOCTRINE.length; GEN++; } }
 function rulesFor(hook: DocHook, work: WorkKind | null = null): DoctrineRule[] {
-  if (IDX_N !== DOCTRINE.length) { IDX = new Map(); IDX_N = DOCTRINE.length; }
-  const key = work === null ? hook : hook + '|' + work;
-  let list = IDX.get(key);
+  syncIdx();
+  if (work === null) {
+    let list = IDX.get(hook);
+    if (list === undefined) {
+      list = [];
+      for (let k = 0; k < DOCTRINE.length; k++) { const r = DOCTRINE[k]; if (r.hook === hook) list.push(r); }
+      if (!list.length) list = EMPTY;
+      IDX.set(hook, list);
+    }
+    return list;
+  }
+  let m = IDX_W.get(hook);
+  if (m === undefined) { m = new Map(); IDX_W.set(hook, m); }
+  let list = m.get(work);
   if (list === undefined) {
     list = [];
-    for (let k = 0; k < DOCTRINE.length; k++) { const r = DOCTRINE[k]; if (r.hook === hook && (work === null || !r.works || r.works.indexOf(work) >= 0)) list.push(r); }
+    for (let k = 0; k < DOCTRINE.length; k++) { const r = DOCTRINE[k]; if (r.hook === hook && (!r.works || r.works.indexOf(work) >= 0)) list.push(r); }
     if (!list.length) list = EMPTY;
-    IDX.set(key, list);
+    m.set(work, list);
+  }
+  return list;
+}
+/**
+ * (속도) rulesFor 가운데 이 대원에게 '누구' 칸(whoMay)이 걸릴 수 있는 줄만, 등록 순서 그대로 (대원마다 한 번 — 명부는 바뀌지 않는다).
+ * 예전 반복이 whoMay 로 건너뛰던 줄만 빠지므로, 입력(docCtx)을 처음 만드는 자리(= 처음 whoMay 가 걸린 줄)도 그대로다
+ */
+function agentRules(sim: Sim, a: FieldAgent, hook: DocHook, work: WorkKind | null): DoctrineRule[] {
+  const ad = agentDocOf(sim, a);
+  let list: DoctrineRule[] | undefined;
+  let m: Map<WorkKind, DoctrineRule[]> | undefined;
+  if (work === null) list = ad.byHook.get(hook);
+  else { m = ad.byWork.get(hook); if (m === undefined) { m = new Map(); ad.byWork.set(hook, m); } list = m.get(work); }
+  if (list === undefined) {
+    const all = rulesFor(hook, work);
+    list = [];
+    for (let k = 0; k < all.length; k++) if (whoMay(sim, a, all[k])) list.push(all[k]);
+    if (!list.length) list = EMPTY;
+    if (m === undefined) ad.byHook.set(hook, list); else m.set(work!, list);
   }
   return list;
 }
 /** 그 자리에 줄이 하나라도 있는가 (없으면 부르는 쪽이 입력을 만들지 않아도 된다) */
 export function hasDoc(hook: DocHook): boolean { return DOCTRINE.length > 0 && rulesFor(hook).length > 0; }
-const effectsOf = (r: DoctrineRule): DocEffect[] => (Array.isArray(r.effect) ? r.effect : [r.effect]);
+/** 줄의 효과를 배열로 (하나면 그 하나를 담은 배열 — 효과 객체마다 한 번 만든다: 부를 때마다 배열을 만들지 않는다) */
+const ONE_EFFECT = new WeakMap<DocEffect, DocEffect[]>();
+const effectsOf = (r: DoctrineRule): DocEffect[] => {
+  const e = r.effect;
+  if (Array.isArray(e)) return e;
+  let one = ONE_EFFECT.get(e);
+  if (one === undefined) { one = [e]; ONE_EFFECT.set(e, one); }
+  return one;
+};
 /** 장비를 쓸 수 있는가 (§2.5 kits): 들었고, 공기호흡기가 아니면 수량이 남았다 (공기호흡기는 들었는지만 — 남은 공기는 when 이 st.air 로) */
 const usable = (c: DocCtx, id: KitId): boolean => (id === 'scba' ? c.has(id) : c.kit(id) > 0);
+/** 그 가운데 하나라도 쓸 수 있는가 (some 의 닫힘을 만들지 않는다 — 앞에서부터 보고 처음 참에서 멈춘다: 같은 순서·같은 답) */
+function anyUsable(c: DocCtx, ids: KitId[]): boolean { for (let k = 0; k < ids.length; k++) if (usable(c, ids[k])) return true; return false; }
 function whoOk(c: DocCtx, r: DoctrineRule): boolean {
   const w = r.who;
   if (!w) return true;
@@ -694,17 +760,18 @@ function whoMay(sim: Sim, a: FieldAgent, r: DoctrineRule): boolean {
   return true;
 }
 /** 그 줄이 이 입력에 걸리는가: 누구 · 장비(kits·noKits) · 상황·상태(when) */
-export function applies(c: DocCtx, r: DoctrineRule): boolean {
-  if (!whoOk(c, r)) return false;
-  if (r.kits && !r.kits.some((id) => usable(c, id))) return false;
-  if (r.noKits && r.noKits.some((id) => usable(c, id))) return false;
+export function applies(c: DocCtx, r: DoctrineRule): boolean { return whoOk(c, r) && appliesKw(c, r); }
+/** (속도) 누구 칸을 이미 본(agentRules 로 추린) 줄: 장비(kits·noKits) · 상황·상태(when · unless) — applies 에서 whoOk 만 뺀 것 */
+function appliesKw(c: DocCtx, r: DoctrineRule): boolean {
+  if (r.kits && !anyUsable(c, r.kits)) return false;
+  if (r.noKits && anyUsable(c, r.noKits)) return false;
   return r.when(c) && !(r.unless !== undefined && r.unless(c));
 }
 /** (2단계) 예외(unless) 때문에만 걸리지 않는가 — 판단 지점의 "예외가 처음 결정을 바꾼 때" 기록용 */
 function exceptedBy(c: DocCtx, r: DoctrineRule): boolean {
   if (r.unless === undefined || !whoOk(c, r)) return false;
-  if (r.kits && !r.kits.some((id) => usable(c, id))) return false;
-  if (r.noKits && r.noKits.some((id) => usable(c, id))) return false;
+  if (r.kits && !anyUsable(c, r.kits)) return false;
+  if (r.noKits && anyUsable(c, r.noKits)) return false;
   return r.when(c) && r.unless(c);
 }
 /** 교본 기억: 그 작업을 맡지 않는다 ('w:<작업 id>' — 판단 지점 timeout 뒤 30초) */
@@ -734,17 +801,17 @@ export function docFitRules(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, fit:
   const out: DocFitAns = { fit, base: fit, hits: [] };
   if (fit <= 0) return out;
   if (memWork(sim, a, w.id)) { out.fit = 0; return out; }
-  const rules = rulesFor('fit', w.kind);
+  const rules = agentRules(sim, a, 'fit', w.kind);
   if (!rules.length) return out;
-  let c: DocCtx | null = null;
+  const c = docCtx(sim, s, a, 'report', w);      // 처음 '누구'가 걸린 줄에서 만든다 — 추린 목록의 첫 줄이 그 줄이다
   let mul = 1, add = 0;
   for (let k = 0; k < rules.length; k++) {
     const r = rules[k];
-    if (!whoMay(sim, a, r)) continue;
-    c ??= docCtx(sim, s, a, 'report', w);
-    if (!applies(c, r)) continue;
+    if (!appliesKw(c, r)) continue;
     let rm = 1, ra = 0, drop = false, any = false;
-    for (const e of effectsOf(r)) {
+    const es = effectsOf(r);
+    for (let j = 0; j < es.length; j++) {
+      const e = es[j];
       if (e.kind !== 'fitMul' && e.kind !== 'fitAdd') continue;
       if (e.works && e.works.indexOf(w.kind) < 0) continue;
       if (e.when && !e.when(c)) continue;
@@ -758,12 +825,51 @@ export function docFitRules(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, fit:
   if (out.hits.length) out.fit = mul > 0 ? Math.max(0.02, fit * mul + add) : 0;
   return out;
 }
-/** agents.fitFor 의 맨 끝: 교본을 넣은 적합도. 줄이 없으면 받은 값을 그대로 돌려준다 */
+/** agents.fitFor 의 맨 끝: 교본을 넣은 적합도. 줄이 없으면 받은 값을 그대로 돌려준다 (docFitRules(…).fit 과 같은 값 — 걸린 줄의 목록을 만들지 않는다) */
 export function docFit(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, fit: number): number {
   if (fit <= 0) return fit;
   if (a.docMem !== undefined && memWork(sim, a, w.id)) return 0;
-  if (DOCTRINE.length === 0 || !rulesFor('fit', w.kind).length) return fit;
-  return docFitRules(sim, s, a, w, fit).fit;
+  if (DOCTRINE.length === 0) return fit;
+  const rules = agentRules(sim, a, 'fit', w.kind);
+  if (!rules.length) return fit;
+  const c = docCtx(sim, s, a, 'report', w);
+  let mul = 1, add = 0, hit = false;
+  for (let k = 0; k < rules.length; k++) {
+    const r = rules[k];
+    if (!appliesKw(c, r)) continue;
+    let rm = 1, ra = 0, any = false;
+    const es = effectsOf(r);
+    for (let j = 0; j < es.length; j++) {
+      const e = es[j];
+      if (e.kind !== 'fitMul' && e.kind !== 'fitAdd') continue;
+      if (e.works && e.works.indexOf(w.kind) < 0) continue;
+      if (e.when && !e.when(c)) continue;
+      any = true;
+      if (e.kind === 'fitMul') rm *= e.mul; else ra += e.add;
+    }
+    if (!any) continue;
+    mul *= rm; add += ra; hit = true;
+  }
+  return hit ? (mul > 0 ? Math.max(0.02, fit * mul + add) : 0) : fit;
+}
+/** (속도) drop 표시 금지 효과가 있는 fit 줄과 그 효과 (일마다 한 번 — 줄의 효과는 바뀌지 않는다). 예전 반복이 drops 가 없어 건너뛰던 줄이 빠진다 */
+let DROP_N = -1;
+let DROPS = new Map<WorkKind, { r: DoctrineRule; drops: DocEffect[] }[]>();
+function dropRules(work: WorkKind): { r: DoctrineRule; drops: DocEffect[] }[] {
+  syncIdx();
+  if (DROP_N !== GEN) { DROPS = new Map(); DROP_N = GEN; }
+  let list = DROPS.get(work);
+  if (list === undefined) {
+    list = [];
+    const rules = rulesFor('fit', work);
+    for (let k = 0; k < rules.length; k++) {
+      const r = rules[k];
+      const drops = effectsOf(r).filter((e) => e.kind === 'fitMul' && e.drop === true && e.mul === 0 && (!e.works || e.works.indexOf(work) >= 0));
+      if (drops.length) list.push({ r, drops });
+    }
+    DROPS.set(work, list);
+  }
+  return list;
 }
 /** 놓기 (§2.6): 지금 임무의 작업에 drop 표시 금지가 걸리는가 (보고 모드). 걸린 줄, 없으면 null */
 export function docDrop(sim: Sim, s: Scene, a: FieldAgent): DoctrineRule | null {
@@ -771,34 +877,42 @@ export function docDrop(sim: Sim, s: Scene, a: FieldAgent): DoctrineRule | null 
   if (DOCTRINE.length === 0 || t === null || t.workId < 0) return null;
   const w = s.board[t.workId];
   if (!w) return null;
-  const rules = rulesFor('fit', w.kind);
-  if (!rules.length) return null;
+  const list = dropRules(w.kind);
+  if (!list.length) return null;
   let c: DocCtx | null = null;
-  for (let k = 0; k < rules.length; k++) {
-    const r = rules[k];
-    const drops = effectsOf(r).filter((e) => e.kind === 'fitMul' && e.drop === true && e.mul === 0 && (!e.works || e.works.indexOf(w.kind) >= 0));
-    if (!drops.length || !whoMay(sim, a, r)) continue;
+  for (let k = 0; k < list.length; k++) {
+    const r = list[k].r, drops = list[k].drops;
+    if (!whoMay(sim, a, r)) continue;
     c ??= docCtx(sim, s, a, 'report', w);
     if (!applies(c, r)) continue;
-    for (const e of drops) if (!(e as { when?: (c: DocCtx) => boolean }).when || (e as { when: (c: DocCtx) => boolean }).when(c)) return r;
+    for (let j = 0; j < drops.length; j++) { const e = drops[j] as { when?: (c: DocCtx) => boolean }; if (!e.when || e.when(c)) return r; }
   }
   return null;
 }
 
 // ───────────────────────── ② duty · act ─────────────────────────
+/**
+ * (속도) 한 판단(brain.think)의 의무·후퇴 바꿔 끼우기·행동 후보가 함께 쓰는 자기 모드 입력 (w 없음). think 가 만들어 셋에 넘긴다 —
+ * 그 사이에 상태를 바꾸는 것은 지휘관 지시가 사라졌을 때의 a.orderWork = -1 하나뿐이라(짝의 일 pairOf 가 읽는다) 그때만 짝 칸을 새로 잰다.
+ * dng·dngSign 은 부를 때마다 그 값으로 바꾼다. 시험처럼 따로 부르면(think 없이) 예전대로 부를 때마다 만든다
+ */
+export interface DocThink { c: DocCtx | null; ow: number }
+export function docThink(): DocThink { return { c: null, ow: 0 }; }
 /** 한 판단에 교본 후보 하나: 걸리는 줄 가운데 rank 가 가장 작은 것, 같으면 등록 순서 (§2.6) */
-function pickAct(sim: Sim, s: Scene, a: FieldAgent, hook: 'duty' | 'act', swap: boolean, sense: Sense, dng: number, dngSign = 0): DocPick | null {
+function pickAct(sim: Sim, s: Scene, a: FieldAgent, hook: 'duty' | 'act', swap: boolean, sense: Sense, dng: number, dngSign: number, th: DocThink | null): DocPick | null {
   if (DOCTRINE.length === 0) return null;
-  const rules = rulesFor(hook);
-  if (!rules.length || a.carrying !== -1) return null;      // 업고 있는 대원에게는 의무·행동을 걸지 않는다 — 그 운반이 곧 나가는 길이다 (G07)
+  if (!rulesFor(hook).length || a.carrying !== -1) return null;      // 업고 있는 대원에게는 의무·행동을 걸지 않는다 — 그 운반이 곧 나가는 길이다 (G07)
+  const rules = agentRules(sim, a, hook, null);
   let c: DocCtx | null = null, best: DocPick | null = null;
   for (let k = 0; k < rules.length; k++) {
     const r = rules[k];
-    if ((r.swap === 'retreat') !== swap || (best !== null && r.rank >= best.rule.rank) || !whoMay(sim, a, r)) continue;
+    if ((r.swap === 'retreat') !== swap || (best !== null && r.rank >= best.rule.rank)) continue;
     if (r.kits && !anyKit(sim, a.rid, r.kits)) continue;      // (합치기 — 속도) 장비 조건이 걸리지 않을 줄 앞에서 DocCtx 를 만들지 않는다 (applies 의 kits 판정과 같은 kitHas — 결과는 같다)
-    c ??= docCtx(sim, s, a, 'self', null, sense, dng, dngSign);
-    if (!applies(c, r) || memRule(sim, a, r.id, docTarget(c))) continue;
-    for (const e of effectsOf(r)) {
+    if (c === null) c = thinkCtx(sim, s, a, sense, dng, dngSign, th);
+    if (!appliesKw(c, r) || memRule(sim, a, r.id, docTarget(c))) continue;
+    const es = effectsOf(r);
+    for (let j = 0; j < es.length; j++) {
+      const e = es[j];
       if ((e.kind === 'duty' || e.kind === 'act') && a.task !== null && (a.task.kind as string) === e.act) continue;      // (2단계) 이미 그 행동을 하는 중이다 — 다시 시작하지 않는다
       if (hook === 'duty' && e.kind === 'duty') { best = { rule: r, act: e.act, score: Infinity }; break; }
       if (hook === 'act' && e.kind === 'act') { best = { rule: r, act: e.act, score: typeof e.score === 'function' ? e.score(c) : e.score }; break; }
@@ -806,14 +920,23 @@ function pickAct(sim: Sim, s: Scene, a: FieldAgent, hook: 'duty' | 'act', swap: 
   }
   return best;
 }
+/** pickAct 의 입력: 한 판단에서 이미 만든 것이 있으면 그것(위험 점수 칸만 이번 값으로, 지시가 바뀌었으면 짝 칸만 새로), 없으면 만들어 담는다 */
+function thinkCtx(sim: Sim, s: Scene, a: FieldAgent, sense: Sense, dng: number, dngSign: number, th: DocThink | null): DocCtx {
+  if (th === null) return docCtx(sim, s, a, 'self', null, sense, dng, dngSign);
+  let c = th.c;
+  if (c === null) { c = docCtx(sim, s, a, 'self', null, sense, dng, dngSign); th.c = c; th.ow = a.orderWork; return c; }
+  c.dng = dng; c.dngSign = dngSign;
+  if (th.ow !== a.orderWork) { c.pair = lazyPair(sim, s, a, null, c.st); th.ow = a.orderWork; }
+  return c;
+}
 /** 그 장비 가운데 하나라도 들었는가 (알려진 고장 제외 — gear.kitHas, 줄의 kits 판정의 앞 조건) */
 function anyKit(sim: Sim, rid: number, ids: KitId[]): boolean { for (let k = 0; k < ids.length; k++) if (kitHas(sim, rid, ids[k])) return true; return false; }
-/** 의무 (brain 의 의무 자리 — X6 철수 다음): 점수 없이 그 자리에서 바꾼다. 없으면 null */
-export function docDuty(sim: Sim, s: Scene, a: FieldAgent, sense: Sense = ZERO_SENSE, dng = 0): DocPick | null { return pickAct(sim, s, a, 'duty', false, sense, dng); }
+/** 의무 (brain 의 의무 자리 — X6 철수 다음): 점수 없이 그 자리에서 바꾼다. 없으면 null. th = 이 판단의 입력 (docThink — 없으면 부를 때마다 만든다) */
+export function docDuty(sim: Sim, s: Scene, a: FieldAgent, sense: Sense = ZERO_SENSE, dng = 0, th: DocThink | null = null): DocPick | null { return pickAct(sim, s, a, 'duty', false, sense, dng, 0, th); }
 /** 교본 행동 후보 하나 (brain 의 점수 후보 — 공기통 교체 다음). 없으면 null */
-export function docAct(sim: Sim, s: Scene, a: FieldAgent, sense: Sense = ZERO_SENSE, dng = 0): DocPick | null { return pickAct(sim, s, a, 'act', false, sense, dng); }
+export function docAct(sim: Sim, s: Scene, a: FieldAgent, sense: Sense = ZERO_SENSE, dng = 0, th: DocThink | null = null): DocPick | null { return pickAct(sim, s, a, 'act', false, sense, dng, 0, th); }
 /** 후퇴 후보를 바꿔 끼우는 줄 (P11 — swap 'retreat'). 걸리면 그 행동, 없으면 null(후퇴 그대로) */
-export function docRetreat(sim: Sim, s: Scene, a: FieldAgent, dng: number, sense: Sense = ZERO_SENSE, dngSign = 0): DocPick | null { return pickAct(sim, s, a, 'act', true, sense, dng, dngSign); }
+export function docRetreat(sim: Sim, s: Scene, a: FieldAgent, dng: number, sense: Sense = ZERO_SENSE, dngSign = 0, th: DocThink | null = null): DocPick | null { return pickAct(sim, s, a, 'act', true, sense, dng, dngSign, th); }
 
 // ───────────────────────── ③ method ─────────────────────────
 /** R2 방법 점수에 곱하는 교본 배율 (0 = 후보에서 뺀다). 받은 dc 를 고치지 않는다. 줄이 없으면 1 */

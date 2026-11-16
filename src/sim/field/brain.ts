@@ -198,15 +198,16 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
 
   // (R3) 교본의 의무와 놓기 — 설계서 R3 §2.6 의 4번 (X6 의 철수(evacuate) 의무가 들어오면 그 바로 뒤에 둔다). 단계 0: 줄이 없어 아무것도 하지 않는다
   const dSense = senseOf(s, a);
+  const dth = docThink();      // (R3 속도) 의무·후퇴 바꿔 끼우기·행동 후보가 이 판단의 입력 하나를 함께 쓴다 (doctrine.docThink)
   if (cur && DOC_DUTY_TASKS.has(cur.kind)) return;
-  { const d = docDuty(sim, s, a, dSense); if (d) { docBegin(sim, s, a, d, XK); return; } }
+  { const d = docDuty(sim, s, a, dSense, 0, dth); if (d) { docBegin(sim, s, a, d, XK); return; } }
   { const dr = docDrop(sim, s, a); if (dr && cur) { const wk = s.board[cur.workId].kind, wid = cur.workId; finishTask(sim, s, a, false, 'doctrine'); recordDoc(sim, I, a, dr.id, 'fit', { work: wk, tgt: 'w:' + wid }, docNote(sim, s, a, dr, 1, dr.dropNote), dr.report !== undefined); return; } }      // (2단계) 놓을 때의 문구 (P22 '탄약이 없어 위치를 넘깁니다.')
 
   const opts: Option[] = [];
   // 1) 위험 회피
   const dng = dangerScore(sim, s, a);
   const sd = sdScore, sdW = sdWhy, sdR = sdRegion;      // (X6) 그 점수 가운데 조짐의 몫 — 그 때문에 물러나면 피하는 곳(30초)과 까닭의 문구
-  const swapR = dng > 0.3 && (!cur || cur.kind !== 'retreat') ? docRetreat(sim, s, a, dng, dSense, sd) : null;      // (R3) P11 — 후퇴 후보를 교본 행동(엄폐)으로 바꿔 끼운다 (조짐 몫 sd 가 있으면 걸리지 않는다)
+  const swapR = dng > 0.3 && (!cur || cur.kind !== 'retreat') ? docRetreat(sim, s, a, dng, dSense, sd, dth) : null;      // (R3) P11 — 후퇴 후보를 교본 행동(엄폐)으로 바꿔 끼운다 (조짐 몫 sd 가 있으면 걸리지 않는다)
   if (swapR) opts.push({ label: `교본 · ${swapR.rule.short}`, score: swapR.score, apply: () => docBegin(sim, s, a, swapR, XK) });
   else if (dng > 0.3 && (!cur || cur.kind !== 'retreat')) opts.push({ label: hurt ? '부상 — 후퇴' : '위험 회피 — 후퇴 후 재평가', score: dng, apply: () => {
     // 맡고 있던 작업은 위험해서 내려놓은 것으로 기록한다: 지휘관이 곧바로 같은 대원에게 다시 맡기지 않는다
@@ -291,7 +292,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
     } });
   }
   // (R3) 교본 행동 후보 하나 (R1 공기통 교체 다음 — 설계서 R3 §2.6 의 5번). 단계 0: 줄이 없어 후보를 내지 않는다 (판단 오차의 a.rng 소비가 그대로)
-  { const p = swapping ? null : docAct(sim, s, a, dSense, dng); if (p) opts.push({ label: `교본 · ${p.rule.short}`, score: p.score, apply: () => docBegin(sim, s, a, p, XK) }); }
+  { const p = swapping ? null : docAct(sim, s, a, dSense, dng, dth); if (p) opts.push({ label: `교본 · ${p.rule.short}`, score: p.score, apply: () => docBegin(sim, s, a, p, XK) }); }
   // 5) 휴식 (공기통을 바꾸는 중이면 바꾼 뒤에 쉰다 — 8초)
   if (r.stamina < 22 && (!cur || (cur.kind !== 'rehab' && cur.kind !== 'swapAir')) && a.carrying === -1) opts.push({ label: '체력 고갈 — 교대 휴식', score: 0.55 + ((22 - r.stamina) / 22) * 0.4, apply: () => {
     setTask(sim, s, a, 'rehab', '휴식');
@@ -344,7 +345,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
 
 // ── (R3) 대응 교본의 자리 (field/doctrine.ts 의 판단 · doctrineRun.ts 의 실행 · R2 의 감각 senseOf · 실행기 도구 XK).
 //    (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다) ──
-import { DOC_DUTY_TASKS, docAct, docDrop, docDuty, docRetreat } from './doctrine';
+import { DOC_DUTY_TASKS, docAct, docDrop, docDuty, docRetreat, docThink } from './doctrine';
 import { docBegin, docContinue, docNote, recordDoc, selfReport, splitBegin, splitSettle } from './doctrineRun';
 import { rebuddy } from './doctrineRun';      // (R3 3단계) 짝 다시 맺기
 import { airShort } from '../crews';      // (R3 3단계 F03) 공기 문턱 (한 통의 50%)

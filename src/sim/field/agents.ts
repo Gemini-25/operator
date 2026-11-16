@@ -575,6 +575,8 @@ export function pumpOperatorOn(sim: Sim, s: Scene, unitId: number): boolean {
  * 역할이 먼저 맡는 일(+)·피하는 일(−)은 맡을 수 있을 때만 더한다. 0 이던 것은 0 으로 남는다(선호가 자격을 만들지 않는다).
  */
 export function fitFor(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap = false): number {
+  // (R2 1b §3.4) 물 위의 대원(헤엄 중·보트 위)은 지금 맡은 수난 구조 말고는 맡지 않는다 — 지시를 받아도 따르지 않으므로(brain 의 물 위 가드) 지시 수신함에 묶여 남이 그 일을 못 맡는 일을 막는다
+  if ((a.afloat !== undefined || onWater(s, a)) && !(w.kind === 'waterRescue' && a.task !== null && a.task.workId === w.id)) return 0;
   const fit = fitBase(sim, s, a, w, afterSwap);
   return docFit(sim, s, a, w, fit > 0 ? Math.max(0.02, fit + (roleOf(sim, a.rid).prefer[w.kind] ?? 0)) : fit);      // (R3) 교본은 맨 끝에서 좁히기만 한다 (늘 보고 모드 — 줄이 없으면 그대로)
 }
@@ -738,7 +740,7 @@ export function nearDoor(s: Scene, i: number): boolean { return doorAt(s, i) !==
 //    (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다) ──
 import { docFit } from './doctrine';
 // (R2 1a) 대응 방법의 판단부 — 수난 구조의 배정(fitFor)이 methodFit 을 쓴다. methods.ts 는 이 파일을 import 하지 않는다 (순환 없음)
-import { methodFit } from './methods';
+import { methodFit, onWater } from './methods';
 // (X6) 조짐 관찰 (field/catastrophe.ts — 그 파일도 이 파일의 learn·regionNameAt 을 쓴다. 함수 안에서만 서로 부르므로 순환 import 는 문제없다)
 import { perceiveSigns, vesselName } from './catastrophe';
 // (X6 단계 5) 지휘 상태의 도움 함수 (진입 금지 구역·문·피하는 곳 — 진실을 읽지 않는다)

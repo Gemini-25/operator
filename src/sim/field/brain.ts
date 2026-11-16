@@ -150,6 +150,14 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
     return;
   }
 
+  // (R2 1b §3.5) 물 위의 대원(헤엄 중·보트 위)은 다른 일로 끌려 나가지 않는다: 하던 수난 구조를 잇거나 뭍으로 간다.
+  // 후퇴·휴식·공기통·다른 지시·X6 의 철수 명령보다 앞 — 물 한가운데서 엉뚱한 목표로 가거나 끌고 오던 대상을 놓치지 않게. 철수 지시는 위에서 먼저 처리된다
+  if (onWater(s, a) || a.afloat !== undefined) {
+    if (!cur || (cur.kind !== 'waterRescue' && cur.kind !== 'ashore')) setTask(sim, s, a, 'ashore', '뭍으로');
+    a.candidates = [{ label: a.task && a.task.kind === 'waterRescue' ? '계속: 수난 구조 (물 위)' : '물 위 — 뭍으로', score: 1.5, chosen: true }];
+    return;
+  }
+
   // 부상: 한번 후퇴를 시작하면 대기 지점에 닿을 때까지 다른 일(지시·자체 판단)에 끌려 나가지 않는다.
   // 끌려 나가면 다시 위험 점수가 이겨 후퇴 → 다른 일 → 후퇴를 되풀이하며 같은 무전을 반복한다
   const hurt = mustRetreat(r);
@@ -289,6 +297,9 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
     let near = 0;
     if (w.cas >= 0) { const c = a.beliefs.val<CasBelief>('cas', w.cas); if (c && dist(a.x, a.y, c.x, c.y) < 4) near = 0.25; else if (!c) continue; }
     if (!free && near === 0) continue;
+    // (R2 1c) 수난 구조를 하는 중에는 곁의 다른 일(다른 수난 구조·이송)로 스스로 옮기지 않는다: 계속 점수(0.5 + 0.4 × 우선순위)와 곁의 일 점수가 비슷해
+    // 판단 오차만으로 두 일 사이를 오가며 그때마다 방법을 다시 고르고 알렸다(해일 — 같은 대원이 1~2초마다). 지휘관의 지시는 그대로 받는다
+    if (!free && cur!.kind === 'waterRescue') continue;
     if (free && near === 0 && !a.isCommander && sim.t - a.idleSince < 2.6) continue;      // 먼저 지휘관 지시를 기다린다
     const sc = (free ? 0.3 : 0.15) + initiative * 0.25 + w.priority * 0.35 + near + fit * 0.1;
     if (sc > bestS) { bestS = sc; bestW = w; }
@@ -320,6 +331,7 @@ import { DOC_DUTY_TASKS, docAct, docDrop, docDuty, docRetreat } from './doctrine
 import { docBegin, recordDoc } from './doctrineRun';
 import { XK } from './executor';
 import { senseOf } from './methodRun';
+import { onWater } from './methods';      // (R2 1b) 물 위의 대원 가드
 // (X6 단계 5) 조짐을 보면 물러난다 — 믿음 속 조짐·지휘 상태(ops 사실)와 생김새(이웃 구획·건물 칸)만 읽는다
 import { ALLOWED2, OPS_ID, SIGN_BASE, footprint, regionAt, regionNbrs, zoneLevelAt } from './ops';
 import type { OpsFact } from './ops';

@@ -116,3 +116,15 @@ export function roleIdOf(sim: Sim, rid: number): RoleId | null {
 export function groupOf(sim: Sim, rid: number): RoleGroup | null { const d = roleOf(sim, rid); return d ? d.group : null; }
 /** 부대에 그 장비를 든(알려진 고장 제외) 일할 수 있는 내리는 대원이 있는가 — 조직 정보 (R1 crewHasKit) */
 export function crewHas(sim: Sim, u: Unit, id: KitId): boolean { return crewHasKit(sim, u, id, true); }
+
+// ───────────────────────── 판단용 (R2 1b — 상공의 호이스트) ─────────────────────────
+// 판단부(methods.ts)는 crews.ts 를 import 하지 않으므로 부대 상태를 묻는 것도 이 층을 거친다. 자기 조직의 부대 상태만 읽는다(지휘관의 hoistUp 과 같은 자격).
+import { isHovering } from '../crews';
+import type { Scene } from '../types';
+/** 이 사건 상공에 호이스트를 단 헬기가 머물고 있는가 (배정되어 현장에 있고 상공에 머무는 부대) — 헤엄 구조의 위험을 덜 지는 까닭 (R2 §4.1) */
+export function hoistOver(sim: Sim, s: Scene): boolean {
+  const I = sim.incidents[s.incidentId];
+  if (!I) return false;
+  for (let k = 0; k < I.assigned.length; k++) { const u = sim.units[I.assigned[k]]; if (u.hoist && u.state === 'onscene' && isHovering(u, s)) return true; }
+  return false;
+}

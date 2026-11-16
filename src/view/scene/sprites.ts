@@ -21,10 +21,12 @@ export interface PersonLook {
 }
 export type ArmPose = 'side' | 'aim' | 'hose' | 'work' | 'kneel' | 'up' | 'back' | 'drag' | 'carry' | 'baton' | 'megaphone'
   | 'throw'                               // (G5) 섬광탄 던지기: act 0→1 동안 한 팔을 뒤로 젖혔다 앞으로
-  | 'clutch';                             // (H1) 다친 사람: 한 팔로 옆구리를 붙든다
+  | 'clutch'                              // (H1) 다친 사람: 한 팔로 옆구리를 붙든다
+  | 'reach' | 'hold';                     // (R2) 무릎 꿇고 두 팔을 앞으로 멀리 뻗음(손 뻗기·장대·하류에서 붙잡기) · 줄을 두 손으로 잡아 버팀(줄 확보)
 export type Item = 'rifle' | 'pistol' | 'knife' | 'axe' | 'spreader' | 'none'
   | 'ram'                                 // (G5) 공성추
-  | 'sniper' | 'taser' | 'shield' | 'tic' | 'halligan' | 'bigbag' | 'aed';      // (R1) 든 장비에서 고른다: 저격 소총 · 테이저 · 방탄 방패(+권총) · 열화상 카메라 · 할리건 · 전문 응급 가방 · 제세동기
+  | 'sniper' | 'taser' | 'shield' | 'tic' | 'halligan' | 'bigbag' | 'aed'      // (R1) 든 장비에서 고른다: 저격 소총 · 테이저 · 방탄 방패(+권총) · 열화상 카메라 · 할리건 · 전문 응급 가방 · 제세동기
+  | 'rope' | 'ring' | 'pole' | 'cloth';   // (R2) 수난 구조: 감긴 구명줄 · 구명환 · 갈고리 장대(손잡이 — 뻗은 장대는 methodsLayer) · 이은 옷(즉석 부력물)
 export interface PersonPose {
   step: number; moving: boolean; arms: ArmPose; t: number; item?: Item; scale?: number; ghost?: number;
   recoil?: number;                        // (G5) 반동 0..1: 겨눈 반대쪽으로 0.06칸, 총을 0.04칸 더
@@ -150,7 +152,7 @@ export function drawPerson(g: G, x: number, y: number, ang: number, ts: number, 
   const sw = (p.moving ? Math.sin(p.step) : 0) * (1 - 0.55 * hurt);      // (H1) 다치면 걸음 폭이 준다
   const AW = 0.1;
   // 다리·발
-  if (p.arms === 'kneel' || p.crouch) { oval(g, -0.15, -0.1, 0.14, 0.07, k.leg); oval(g, -0.15, 0.1, 0.14, 0.07, k.leg); oval(g, -0.27, -0.1, 0.06, 0.055, k.shoe); oval(g, -0.27, 0.1, 0.06, 0.055, k.shoe); }
+  if (p.arms === 'kneel' || p.arms === 'reach' || p.crouch) { oval(g, -0.15, -0.1, 0.14, 0.07, k.leg); oval(g, -0.15, 0.1, 0.14, 0.07, k.leg); oval(g, -0.27, -0.1, 0.06, 0.055, k.shoe); oval(g, -0.27, 0.1, 0.06, 0.055, k.shoe); }
   else { oval(g, 0.02 + sw * 0.13, -0.105, 0.105, 0.062, k.shoe); oval(g, 0.02 - sw * 0.13, 0.105, 0.105, 0.062, k.shoe); }
   // 등짐
   if (k.pack === 'scba') { rr(g, -0.27, -0.08, 0.19, 0.16, 0.07, k.packCol ?? '#e9c53c'); rr(g, -0.25, -0.05, 0.15, 0.05, 0.02, 'rgba(255,255,255,0.35)'); disc(g, -0.27, 0, 0.035, '#555d66'); }
@@ -179,10 +181,15 @@ export function drawPerson(g: G, x: number, y: number, ang: number, ts: number, 
       arm(0.02, -0.24, 0.26, -0.1);
       if (back) arm(0, 0.25, 0.02 - 0.24 * q, 0.3 + 0.06 * q); else arm(0, 0.25, -0.22 + 0.58 * q, 0.36 - 0.26 * q);
       hx = back ? 0.02 - 0.24 * q : -0.22 + 0.58 * q; hy = back ? 0.3 + 0.06 * q : 0.36 - 0.26 * q;
-      if (back) { rr(g, hx - 0.05, hy - 0.03, 0.1, 0.06, 0.02, '#2a2f35'); g.fillStyle = '#c9cfd4'; g.fillRect(hx - 0.01, hy - 0.03, 0.02, 0.06); }
+      if (back && (p.item === undefined || p.item === 'none')) { rr(g, hx - 0.05, hy - 0.03, 0.1, 0.06, 0.02, '#2a2f35'); g.fillStyle = '#c9cfd4'; g.fillRect(hx - 0.01, hy - 0.03, 0.02, 0.06); }      // (G5) 섬광탄
+      else if (back && p.item === 'rope') { g.strokeStyle = '#f2e6c0'; g.lineWidth = 0.03; g.beginPath(); g.arc(hx, hy, 0.07, 0, 6.2832); g.stroke(); g.beginPath(); g.arc(hx, hy, 0.04, 0, 6.2832); g.stroke(); }      // (R2) 감긴 구명줄
+      else if (back && p.item === 'ring') { g.strokeStyle = '#e8532f'; g.lineWidth = 0.035; g.beginPath(); g.arc(hx, hy, 0.08, 0, 6.2832); g.stroke(); }      // (R2) 구명환
+      else if (back && p.item === 'cloth') { rr(g, hx - 0.06, hy - 0.04, 0.12, 0.08, 0.03, '#9c8466'); disc(g, hx + 0.05, hy, 0.035, '#eef1f2'); }      // (R2) 이은 옷과 빈 통
       break;
     }
     case 'drag': arm(0, -0.25, -0.2, -0.17); arm(0, 0.25, -0.2, 0.17); break;
+    case 'reach': arm(0.02, -0.24, 0.44 + o * 0.4, -0.06); arm(0.02, 0.24, 0.44 - o * 0.4, 0.06); hx = 0.44; hy = 0; break;      // (R2) 몸을 숙여 두 팔을 끝까지 뻗는다
+    case 'hold': arm(0.02, -0.24, 0.26, -0.05); arm(0.02, 0.24, 0.12, 0.1); break;      // (R2) 앞손과 허리 손으로 줄을 잡아 버틴다
     case 'carry': arm(0.02, -0.24, 0.25, -0.2); arm(0.02, 0.24, 0.25, 0.2); break;
     case 'baton': {
       const a = 0.9 + Math.sin(p.t * 4) * 0.5; hx = 0.02 + Math.cos(a) * 0.24; hy = 0.25 + Math.sin(a) * 0.2;
@@ -269,6 +276,11 @@ export function drawPerson(g: G, x: number, y: number, ang: number, ts: number, 
     // 제세동기: 주황 상자와 전극 줄
     rr(g, 0.3, -0.075, 0.14, 0.15, 0.025, '#f08a2a'); rr(g, 0.325, -0.045, 0.06, 0.05, 0.01, '#1a2a22'); disc(g, 0.405, 0.035, 0.018, '#7dffb0');
     g.strokeStyle = '#23272c'; g.lineWidth = 0.014; g.beginPath(); g.moveTo(0.44, -0.03); g.quadraticCurveTo(0.52, -0.1, 0.56, -0.02); g.stroke();
+  } else if (p.arms === 'reach' && p.item === 'pole') {
+    seg(g, 0.3, 0, 0.62, 0, 0.035, '#c9b48a');      // (R2) 장대의 손잡이 쪽 (뻗은 장대와 갈고리는 methodsLayer 가 대상 쪽으로)
+  } else if (p.arms === 'hold' && p.item === 'rope') {
+    g.strokeStyle = '#f2e6c0'; g.lineWidth = 0.035; g.lineCap = 'round'; g.beginPath(); g.moveTo(0.12, 0.1); g.lineTo(0.26, -0.05); g.lineTo(0.5, -0.06); g.stroke();      // (R2) 손에서 물 쪽으로 나가는 줄
+    g.beginPath(); g.arc(-0.05, 0.2, 0.07, 0, 6.2832); g.stroke();      // 허리에 사린 줄
   } else if (p.arms === 'kneel') { rr(g, 0.3, -0.05, 0.1, 0.1, 0.02, '#f4f6f7'); g.fillStyle = '#d8423a'; g.fillRect(0.34, -0.03, 0.02, 0.06); g.fillRect(0.32, -0.01, 0.06, 0.02); }
   void hx; void hy;
   head(g, k);
@@ -738,10 +750,11 @@ export function drawBus(g: G, x: number, y: number, ang: number, ts: number, len
   g.restore();
 }
 /** 물에 빠져 허우적거리는 사람: 머리와 팔, 번지는 물결 */
-export function drawSwimmer(g: G, x: number, y: number, ts: number, k: PersonLook, t: number, ghost: number): void {
+export function drawSwimmer(g: G, x: number, y: number, ts: number, k: PersonLook, t: number, ghost: number, vest?: string): void {
   g.save(); g.translate(x, y); g.scale(ts, ts); g.globalAlpha *= ghost;
   for (let q = 0; q < 2; q++) { const ph = (t * 0.7 + q * 0.5) % 1; g.strokeStyle = `rgba(210,240,250,${0.55 * (1 - ph)})`; g.lineWidth = 0.03; g.beginPath(); g.ellipse(0, 0.03, 0.2 + ph * 0.34, 0.14 + ph * 0.22, 0, 0, 6.2832); g.stroke(); }
   oval(g, 0, 0.06, 0.2, 0.13, 'rgba(12,40,56,0.5)');
+  if (vest) { oval(g, 0, 0.07, 0.19, 0.12, vest); g.fillStyle = '#f4d24a'; g.fillRect(-0.15, 0.05, 0.3, 0.025); }      // (R2) 헤엄치는 구조대원의 구명조끼 — 물 위로 보이는 어깨
   const w = Math.sin(t * 7);
   seg(g, -0.1, 0.02, -0.26, -0.12 - w * 0.08, 0.075, k.arm); disc(g, -0.27, -0.13 - w * 0.08, 0.045, k.hand);
   seg(g, 0.1, 0.02, 0.26, -0.12 + w * 0.08, 0.075, k.arm); disc(g, 0.27, -0.13 + w * 0.08, 0.045, k.hand);

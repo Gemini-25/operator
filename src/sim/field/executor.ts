@@ -37,7 +37,12 @@ export function finishTask(sim: Sim, s: Scene, a: FieldAgent, ok: boolean, reaso
   const t = a.task;
   if (!t) return;
   const I = sim.incidents[s.incidentId];
-  if (a.carrying >= 0) { const c = s.casualties[a.carrying]; if (c.where === 'carried') { c.where = 'scene'; c.x = Math.round(a.x); c.y = Math.round(a.y); } a.carrying = -1; }
+  if (a.carrying >= 0) {
+    const c = s.casualties[a.carrying];
+    // (R2 1b) 물에서 끌고 오던 사람: 물 칸이면 그 자리에 놓고(다시 떠내려간다), 뭍이면 뭍에 내려놓으며 완료·방법 기록을 함께 (methodRun.dropWet)
+    if (c.where === 'carried') { if (c.inWater) dropWet(sim, s, I, a, t, c); else { c.where = 'scene'; c.x = Math.round(a.x); c.y = Math.round(a.y); } }
+    a.carrying = -1;
+  }
   if (a.carrying <= -2) a.carrying = -1;
   releaseSpot(s, a);
   if (t.workId >= 0) {
@@ -84,6 +89,12 @@ const SWAP_AIR_TIME = 8;
 export function moveSpeed(sim: Sim, s: Scene, a: FieldAgent): number {
   const r = resp(sim, a);
   const i = tileOf(s, a.x, a.y);
+  // (R2 1b) 물 칸: 보트(구조정 3.0 · 고무보트 2.2칸/초) 또는 헤엄(수영 능력 — 끌고 오면 0.55배). 물살이 깎는다. 물 칸에서는 연기·장비 배율을 보지 않는다
+  if (s.tiles[i] === T.WATER) {
+    const flowK = Math.min(1, (s.flow ?? 0) / 0.1);
+    if (a.afloat === 'boat') return (sim.units[a.unitId].kind === 'boat' ? 3.0 : 2.2) * (1 - 0.25 * flowK);
+    return (0.7 + 1.1 * swimOf(sim, a)) * (a.carrying >= 0 ? 0.55 : 1) * (1 - 0.5 * flowK) * staminaF(r);
+  }
   let v = 2.5 * (0.75 + 0.5 * r.fitness) * staminaF(r);
   if (s.smoke[i] > 0.3) v *= hasKit(sim, a.rid, 'scba') ? 0.8 : 0.6;      // 공기호흡기가 없으면 연기 속에서 더 느리다
   if (hasKit(sim, a.rid, 'bombSuit')) v *= 0.75;      // 폭발물 방호복은 무겁다
@@ -101,6 +112,20 @@ export function moveSpeed(sim: Sim, s: Scene, a: FieldAgent): number {
 }
 
 /**
+ * (R2 1b) 이동 비용: 바탕은 agents.agentCost(믿음의 장애물·불·연기 — 늘 한 번 만든다: 만들 때 a.rng 를 한 번 부르므로 호출 수가 지금과 같다).
+ * 보트 위면 보트 비용(물 칸만 — methods.boatCost, 1c).
+ * 물 위(헤엄 중)·헤엄 구조의 물에 들어간 뒤(phase ≥ 2)·뭍으로 가는 중이면 물 칸을 헤엄쳐 지나는 비용(methods.swimCost).
+ * 헤엄 구조라도 물가로 걸어가는 동안(phase 0)은 뭍 길이다 — 물을 가로질러 진입점에 가지 않게.
+ */
+function costFor(sim: Sim, s: Scene, a: FieldAgent, escape: boolean): CostFn {
+  const base = escape ? agentCost(sim, s, a, true, true) : agentCost(sim, s, a);
+  if (a.afloat === 'boat') return boatCost(s);      // (1c) 보트 위: 물 칸만 (목표는 늘 물 칸 — 뭍에 대는 이동은 뭍 칸을 가운데로 range 1.5)
+  const t = a.task;
+  if (onWater(s, a) || (t !== null && (t.kind === 'ashore' || (t.kind === 'waterRescue' && t.method === 'swim' && t.phase >= 2)))) return swimCost(s, base);
+  return base;
+}
+
+/**
  * escape = 물러나는 길: 불에 막혀 길이 없으면 불길을 뚫고 나가는 길을 찾고, 길 위의 불 앞에서 멈추지 않는다 (관창을 든 대원은 지금처럼 끄며 지나간다).
  * 다친 채 제자리에 서서 타는 것보다 불길을 지나 나오는 편이 낫다 — 지나는 동안의 화상은 그대로 입는다 (sceneManager.agentHealth).
  */
@@ -110,8 +135,8 @@ function moveTo(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, range
   const r = resp(sim, a);
   const goalKey = Math.round(tx) + Math.round(ty) * 64 + Math.round(range * 10) * 4096 + (needLos ? 1 << 20 : 0);
   if (!a.path || a.pathGoal !== goalKey || sim.t >= t.repathAt) {
-    a.path = astar(s, a.x, a.y, Math.round(tx), Math.round(ty), range, agentCost(sim, s, a), needLos);
-    if (!a.path && escape) a.path = astar(s, a.x, a.y, Math.round(tx), Math.round(ty), range, agentCost(sim, s, a, true, true), needLos);
+    a.path = astar(s, a.x, a.y, Math.round(tx), Math.round(ty), range, costFor(sim, s, a, false), needLos);
+    if (!a.path && escape) a.path = astar(s, a.x, a.y, Math.round(tx), Math.round(ty), range, costFor(sim, s, a, true), needLos);
     a.pathI = 0; a.pathGoal = goalKey; t.repathAt = sim.t + 5;
     if (a.pendingBlock >= 0) {
       // 방금 발견한 장애물에 대한 결정: 우회 / 제거 / 포기
@@ -1404,6 +1429,17 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       return;
     }
     case 'evacuate': runEvacuate(sim, s, a, t); return;      // (X6 §5.1) 철수 이동
+    case 'ashore': {
+      // (R2 1b §3.5) 물 위의 대원이 뭍으로: 목표는 처음 한 번 정한다(강 한가운데서 두 기슭 사이를 오가지 않게) — 가장 가까운, 걸어서 닿는 뭍 칸 → 안전 구역 → 대기 지점.
+      // 헤엄 중이면 헤엄 비용(costFor), 보트 위면 보트 비용으로 그 뭍 칸 둘레의 물 칸에서 멈춘 뒤 뭍에 오른다. 길이 없거나 30초가 넘으면 안전장치(pullAshore)
+      if (!onWater(s, a) && a.afloat === undefined) { finishTask(sim, s, a, true); return; }
+      if (t.phase === 0) { const b = reachOf(s, a.x, a.y, 4, a) ?? s.safe ?? s.staging; t.tx = b.x; t.ty = b.y; t.phase = 1; }
+      const m = moveTo(sim, s, a, t.tx, t.ty, a.afloat !== undefined ? 1.5 : 0.3);
+      if (m === 'nopath' || sim.t - t.startedAt > 30) { pullAshore(sim, s, I, a, '경로 없음'); finishTask(sim, s, a, true); return; }
+      if (a.afloat !== undefined && m === 'arrived') { a.x = t.tx; a.y = t.ty; a.afloat = undefined; finishTask(sim, s, a, true); return; }
+      if (!onWater(s, a) && a.afloat === undefined) finishTask(sim, s, a, true);
+      return;
+    }
     case 'retreat': {
       const m = moveTo(sim, s, a, s.staging.x, s.staging.y, 2, false, true);      // 물러나는 길은 불길도 뚫는다
       if (m === 'arrived') {
@@ -1498,6 +1534,8 @@ function isCoverTile(s: Scene, x: number, y: number): boolean {
 export function act(sim: Sim, s: Scene, a: FieldAgent): void {
   a.px = a.x; a.py = a.y;
   if (a.status === 'left' || a.status === 'down') return;
+  // (R2 1b) 물 위의 매 틱 효과는 한 곳에서 (임무가 없어도 — 헤엄·보트·뭍으로·철수 중 모두). 뭍에 오르면 들어간 시각을 지운다
+  if (a.wetSince !== undefined || a.afloat !== undefined || s.tiles[tileOf(s, a.x, a.y)] === T.WATER) waterTick(sim, s, sim.incidents[s.incidentId], a, XK);
   if (a.status === 'withdrawn' && (!a.task || a.task.kind !== 'board')) { const r = sim.responders[a.rid]; a.label = r.dead ? '' : (r.treatQ ?? 0) > 0 ? '처치 받음 — 후송 대기' : '부상 — 후송 대기'; return; }
   if (!a.task) { a.label = sim.responders[a.rid].status === 'injured' ? '부상 — 가벼운 일' : '지시 대기'; a.ring = 0; a.inCover = false; return; }
   const bx = a.x, by = a.y;
@@ -1517,7 +1555,10 @@ export { isIndoor };
 //    단계 1a: case 'waterRescue' 가 runWaterRescue(sim, s, I, a, t, XK) 로 쓴다.
 //    (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다 — methodRun 의 함수는 실행할 때만 부르므로 순서와 무관하다) ──
 import type { ExecKit } from './methodRun';
-import { runWaterRescue } from './methodRun';
+import { dropWet, pullAshore, runWaterRescue, waterTick } from './methodRun';
+// (R2 1b) 물 위의 대원: 헤엄 중인가·헤엄 비용·수영 능력·가장 가까운 뭍 (판단부의 생김새 함수 — methods.ts 는 이 파일을 import 하지 않는다)
+import { boatCost, onWater, reachOf, swimCost, swimOf } from './methods';
+import type { CostFn } from './grid';
 export const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask };
 
 // ── (R3) 대응 교본의 판단 지점 (field/doctrine.ts 의 docGate — 자기 모드). 판단은 교본 함수가, 효과(이동·기다림)는 이 파일이 한다 ──

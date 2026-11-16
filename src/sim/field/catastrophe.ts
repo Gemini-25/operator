@@ -1410,9 +1410,20 @@ const LV_STRUCT = [1, 2, 3] as const, LV_VESSEL = [2, 3] as const, LV_BLDG = [2,
  *   비교는 자기 감각으로 마지막에 관찰한 단계(prev = a.signObs[id])와 한다(전달받은 믿음과 견주지 않는다): 올라가면 보고,
  *   내려갔고 prev 단계의 감각 조건이 지금 맞으면 down(확인된 하향)으로 보고, 그 밖은 보고하지 않는다.
  * cond[l] = 단계 l 의 감각 조건이 지금 맞는가 (매 대원·매 판단마다 도는 길이라 함수를 만들지 않고 배열로 받는다)
+ * gone = 그 대상이 이제 없다 (무너진 구획 · 터진 용기): 어느 단계의 감각 조건이든 맞으면 "없다"(0)를 본다 — 상한 하향(bound)을 쓰지 않는다.
+ *   (검토에서 고침) 터진 용기를 7칸 안에서 듣던 대원이 "안전밸브 소리 멎음 — 불길은 아직 닿아 있음"(단계 2, down)을 보고해 폭발 소리의 단계 0 을 덮고,
+ *   지휘관이 터진 용기 둘레에 진입 금지 구역을 끝까지 남겼다
  */
-function judge(tl: number, prev: number | undefined, levels: readonly number[], cond: readonly boolean[], out: number[]): void {
+function judge(tl: number, prev: number | undefined, levels: readonly number[], cond: readonly boolean[], out: number[], gone = false): void {
   out[0] = -1; out[1] = 0; out[2] = -1;
+  if (gone) {
+    let any = false;
+    for (let k = 0; k < levels.length; k++) if (cond[levels[k]]) { any = true; break; }
+    if (!any) return;
+    if (prev !== undefined && prev > 0) { out[0] = 0; out[1] = 1; }
+    out[2] = 0;
+    return;
+  }
   let ob = -1;
   for (let k = levels.length - 1; k >= 0; k--) { const l = levels[k]; if (l <= tl && cond[l]) { ob = l; break; } }
   if (ob < 0 && tl < levels[0] && cond[levels[0]]) ob = 0;
@@ -1570,7 +1581,7 @@ export function perceiveSigns(sim: Sim, s: Scene, a: FieldAgent, v: number): voi
       cond[3] = d <= SIGN.HEAR_RUMBLE + jb;
       // 눈(2)은 단계 2 가 있거나 전에 2 이상을 보았을 때만 본다 — 그 밖에는 판정에 쓰이지 않는다(judge 의 주석)
       cond[2] = (tl >= 2 || (prev !== undefined && prev >= 2)) && seesRegion(s, a, reg, SIGN.SEE_CRACK + jb);
-      judge(tl, prev, LV_STRUCT, cond, o);
+      judge(tl, prev, LV_STRUCT, cond, o, c.fallen[r] === 1);
       if (o[2] >= 0) setObs(a, id, o[2]);
       if (o[0] < 0) continue;
       const lv = o[0], down = o[1] === 1;
@@ -1646,11 +1657,11 @@ export function perceiveSigns(sim: Sim, s: Scene, a: FieldAgent, v: number): voi
       const d = dist(a.x, a.y, nx, ny);
       cond[3] = d <= SIGN.HEAR_VENT + jb;
       cond[2] = d <= SIGN.SEE_VESSEL + jb && los(s, a.x, a.y, nx, ny);
-      judge(tl, prev, LV_VESSEL, cond, o);
+      judge(tl, prev, LV_VESSEL, cond, o, !!p.exploded);
       if (o[2] >= 0) setObs(a, id, o[2]);
       if (o[0] < 0) continue;
-      const down = o[1] === 1;
-      reportSign(sim, a, me, id, { kind: 'vessel', level: o[0], region: regionOfProp(s, p), x: p.x, y: p.y, prop: p.id, down: down || undefined }, vesselText(p, regionNameAt(s, p.x, p.y), o[0], down));
+      const down = o[1] === 1, where = regionNameAt(s, p.x, p.y);
+      reportSign(sim, a, me, id, { kind: 'vessel', level: o[0], region: regionOfProp(s, p), x: p.x, y: p.y, prop: p.id, down: down || undefined }, p.exploded ? `${where} ${vesselName(p)} 폭발 — 더는 위험 없음` : vesselText(p, where, o[0], down));
     }
     // ── (단계 9, 선택) 롤오버 (방) ── 진실 단계는 플래시오버 단계가 매초 적어 둔 값 (켜지 않으면 늘 0 — 알 것이 없다)
     const rl = wk.rollLv;

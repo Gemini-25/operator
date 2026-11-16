@@ -1402,6 +1402,31 @@ describe('X6 단계 2: 조짐이 사실로 들어온다 (§10-3)', () => {
     expect(Far.beliefs.get('sign', id)!.text).toContain('안전밸브 작동음');
     expect(vesselName(p)).toBe('가스 용기');
   });
+  it('(검토) 안전밸브 소리를 듣던 대원은 용기가 터진 뒤 "없다"(단계 0)를 안다 — "소리 멎음 · 불길은 아직 닿아 있음"(단계 2)으로 폭발 소리를 덮지 않는다. 무너진 구획도 같다', () => {
+    const m = find('X6-G', 'fire', 'std', (q) => q.s.props.some((p) => p.kind === 'gas'));
+    const s = m.s, c = catOf(m.sim, s)!;
+    const p = s.props.find((q) => q.kind === 'gas')!;
+    const [fx, fy] = tileWhere(s, (x, y) => { const d = Math.hypot(x - p.x, y - p.y); return d >= 5 && d <= 6.5 && !los(s, x, y, p.x, p.y); });
+    const Far = agentAt(m, fireRids(m.sim)[1], fx, fy), id = SIGN_BASE.vessel + p.id;
+    for (let i = 0; i < s.fire.length; i++) s.fire[i] = 0;
+    s.fire[p.y * s.w + p.x] = 0.6; p.heatLoad = 0.6;
+    perceive(m.sim, s, Far);
+    expect(signOf(Far, id)!.level).toBe(3);
+    p.exploded = true; p.heatLoad = 1; m.sim.t += 1;
+    perceive(m.sim, s, Far);
+    const f = signOf(Far, id)!;
+    expect([f.level, f.down]).toEqual([0, true]);
+    expect(Far.beliefs.get('sign', id)!.text).toContain('폭발 — 더는 위험 없음');
+    // 무너진 구획: 소리(10칸)로 임박을 듣던 대원도, 그 방을 보는 대원도 "더 무너질 것 없음"(0)을 안다 (상한 2·1 로 말하지 않는다)
+    const L = findLayout('X6-SG'), c2 = catOf(L.sim, L.s)!, { r, b } = L.L;
+    for (let i = 0; i < L.s.fire.length; i++) L.s.fire[i] = 0;
+    const B = agentAt(L, fireRids(L.sim)[0], b[0], b[1]);
+    c2.integ[r.id] = 0.3; perceive(L.sim, L.s, B);
+    expect(signOf(B, r.id)!.level).toBe(3);
+    c2.fallen[r.id] = 1; L.sim.t += 1; perceive(L.sim, L.s, B);
+    expect([signOf(B, r.id)!.level, signOf(B, r.id)!.down]).toEqual([0, true]);
+    void c;
+  });
   it('터진 가스 용기를 아직 살아 있다고 믿는 대원은 본 순간 바로잡는다 (예전에는 영영 active 로 남았다)', () => {
     const m = find('X6-G', 'fire', 'std', (q) => q.s.props.some((p) => p.kind === 'gas'));
     const s = m.s;
@@ -1553,7 +1578,7 @@ describe('X6 단계 2: 현장 위의 위험 그림 (catLayer)', () => {
 import { agentCost, fitFor, workLabel } from '../src/sim/field/agents';
 import { commanderThink } from '../src/sim/field/commander';
 import { think } from '../src/sim/field/brain';
-import { dangerMap } from '../src/sim/field/orders/catastrophe';
+import { DANGER_RULES, dangerMap } from '../src/sim/field/orders/catastrophe';
 import { OPS_ID, OPS_PAR, exteriorSpots, gateBlocks, nearBuilding, newOps, opsExterior, zoneMask } from '../src/sim/field/ops';
 import type { OpsFact } from '../src/sim/field/ops';
 import { fieldReport } from '../src/sim/dispatch/dispatcher';
@@ -2442,5 +2467,112 @@ describe('X6 단계 9: 플래시오버 (선택 — §4.7)', () => {
       expect(signOf(a, SIGN_BASE.fire + r.id)?.level).toBe(2);
       expect(a.beliefs.get('sign', SIGN_BASE.fire + r.id)!.text).toContain('롤오버');
     });
+  });
+});
+
+// ───────────────────────── 독립 검토에서 고친 것 ─────────────────────────
+import { act, makeTask } from '../src/sim/field/executor';
+describe('X6 검토: 끝나지 않던 외부 방어 · 되풀이되던 냉각', () => {
+  /** 외부 방어 중인 건물 화재 (지휘관 하나, 불은 진실에서 다 꺼졌다) — 건물 철수 구역(단계 3)과 그 건물 조짐 */
+  const defensive = (seed: string, bldgLevel: number) => {
+    const m = find(seed, 'fire', 'std', (q) => q.sim.weather === 'clear');
+    const cmd = withCmd(m, fireRids(m.sim)[0]);
+    tickTo(m, 300);
+    m.s.fire.fill(0);
+    const indoor = m.s.regions.filter((r) => r.indoor).map((r) => r.id);
+    const ops = m.s.ops = newOps(m.sim.t);
+    ops.mode = 'defensive';
+    ops.zones.push({ key: 'bldg', kind: 'bldg', level: 3, regions: indoor.slice(), x: -1, y: -1, r: 0, since: m.sim.t - 100, why: '시험', ev: -1 });
+    cmd.beliefs.merge(mkFact('sign', SIGN_BASE.bldg, { kind: 'bldg', level: bldgLevel, region: -1, x: 1, y: 1, down: bldgLevel < 3 || undefined } as SignBelief, '시험', m.sim.t - 50, 1, true, '건물 외벽 (시험)'));
+    return { m, cmd, ops, indoor };
+  };
+  it('건물 조짐이 2(외벽 균열 — 위험 단계 1)로 내려온 건물은 40초 뒤 건물 철수 구역을 풀고 외부 방어를 끝낸다 (구획 둘이 무너진 건물은 진실의 조짐이 2 로 남는다)', () => {
+    const { m, cmd } = defensive('X6-RB', 2);
+    expect(dangerMap(m.sim, m.s, cmd, m.s.ops!).hits.get('bldg')?.level).toBe(1);
+    for (let k = 0; k < 30 && zoneOf(m.s, 'bldg'); k++) { tickTo(m, m.sim.t + 2); commanderThink(m.sim, m.s, cmd); }
+    expect(zoneOf(m.s, 'bldg')).toBeUndefined();
+    expect(m.s.ops!.mode).toBe('interior');
+    expect(m.sim.events.some((e) => e.text.includes('건물 붕괴 조짐이 가라앉음'))).toBe(true);
+  });
+  it('외부 방수 자리를 두 번 찾지 못한 구역도 60초 뒤 진압을 다시 낸다 — 불이 꺼졌으면 밖에서 진압 확인(외부)으로 낡은 불 믿음을 바로잡는다', () => {
+    const { m, cmd, ops, indoor } = defensive('X6-NX', 3);
+    const r = indoor[0];
+    cmd.beliefs.merge(mkFact('fire', r, 0.8, '시험', m.sim.t - 60, 1, true, '(시험) 낡은 불'));
+    ops.noExt.push(r);
+    commanderThink(m.sim, m.s, cmd);
+    const live = () => m.s.board.filter((w) => w.kind === 'suppress' && w.region === r && (w.status === 'open' || w.status === 'active'));
+    expect(live().length).toBe(0);      // 밖에서 닿을 자리가 없던 구역 — 지금은 다시 내지 않는다
+    for (let k = 0; k < 40 && !live().length; k++) { tickTo(m, m.sim.t + 2); cmd.beliefs.merge(bldg3(m.sim.t)); commanderThink(m.sim, m.s, cmd); }
+    expect(ops.noExt).not.toContain(r);
+    expect(live().length).toBe(1);
+    expect(m.sim.t - 300).toBeLessThan(70);
+    // 그 일을 하러 간 대원은 불이 없는 구획을 밖에서 보고 진압 확인을 알린다 (실행기의 외부 방수 — 진실의 불)
+    const w = live()[0];
+    const hose = m.sim.responders.find((q) => q.dept === 'fire' && q.id !== cmd.rid && hasKit(m.sim, q.id, 'hose'))!;
+    const A = agentAt(m, hose.id, m.s.staging.x, m.s.staging.y);
+    m.s.agents.push(A);
+    w.assignees.push(A.rid); w.status = 'active';
+    A.task = makeTask('suppress', '진압', w);
+    for (let k = 0; k < 10 && A.task; k++) { m.sim.tick++; m.sim.t = m.sim.tick * m.sim.dt; act(m.sim, m.s, A); }
+    expect(A.beliefs.val<number>('fire', r)).toBe(0);
+  });
+  it('식힌 용기에는 그 구역의 새 불 소식이 없으면 냉각을 다시 내지 않는다 — 새 소식(불 믿음의 새 사실)이 오면 다시 낸다', () => {
+    const m = find('X6-CL', 'fire', 'std', (q) => q.s.props.some((p) => p.kind === 'gas' && q.s.region[p.y * q.s.w + p.x] >= 0));
+    const p = m.s.props.find((q) => q.kind === 'gas' && m.s.region[q.y * m.s.w + q.x] >= 0)!;
+    const rg = m.s.region[p.y * m.s.w + p.x];
+    const cmd = withCmd(m, fireRids(m.sim)[0]);
+    cmd.beliefs.merge(mkFact('haz', p.id, { kind: 'gas', active: true, x: p.x, y: p.y }, '시험', m.sim.t, 1, true, ''));
+    cmd.beliefs.merge(mkFact('fire', rg, 0.6, '시험', m.sim.t, 1, true, ''));
+    commanderThink(m.sim, m.s, cmd);
+    const cools = () => m.s.board.filter((q) => q.kind === 'mitigate' && q.prop === p.id);
+    const w0 = cools()[0];
+    expect(w0).toBeDefined();
+    w0.status = 'done'; w0.doneAt = m.sim.t;      // 냉각 완료 (곧바로 끝났다 — 용기 곁에는 불이 없었다)
+    cmd.beliefs.merge(mkFact('sign', SIGN_BASE.vessel + p.id, { kind: 'vessel', level: 0, region: rg, x: p.x, y: p.y, prop: p.id, down: true } as SignBelief, '시험', m.sim.t, 1, true, ''));
+    for (let k = 0; k < 30; k++) { m.sim.t += 2; commanderThink(m.sim, m.s, cmd); }
+    expect(cools().length).toBe(1);      // 60초 동안 다시 내지 않았다 (예전에는 30초 뒤 다시 — 곧바로 "냉각 완료"가 되풀이됐다)
+    cmd.beliefs.merge(mkFact('fire', rg, 0.8, '시험', m.sim.t, 1, true, ''));      // 그 구역의 새 불 소식
+    commanderThink(m.sim, m.s, cmd);
+    expect(cools().filter((q) => q.status === 'open' || q.status === 'active').length).toBe(1);
+  });
+  it('(R3 의 자리) 위험 단계 표의 줄에 id 가 있으면 dangerMap 이 그 키의 가장 높은 단계를 낸 줄의 id 를 알려 준다 — id 가 없는 줄은 비워 둔다', () => {
+    const m = make('X6-DR', 'fire', 'std');
+    const cmd = withCmd(m, fireRids(m.sim)[0]);
+    const r = m.s.regions.find((q) => q.indoor && q.kind === 'room')!;
+    cmd.beliefs.merge(mkFact('sign', SIGN_BASE.struct + r.id, { kind: 'struct', level: 2, region: r.id, x: r.cx, y: r.cy } as SignBelief, '시험', m.sim.t, 1, true, ''));
+    expect(dangerMap(m.sim, m.s, cmd, newOps(0)).hits.get(`struct:${r.id}`)!.rule).toBeUndefined();      // 표의 기본 줄에는 id 가 없다
+    DANGER_RULES.push({ id: 'T9', run: (_cx, out) => { out.push({ key: `struct:${r.id}`, kind: 'struct', level: 3, regions: [r.id], x: -1, y: -1, r: 0, why: '시험 줄', t: m.sim.t, rule: undefined }); } });
+    try {
+      const h = dangerMap(m.sim, m.s, cmd, newOps(0)).hits.get(`struct:${r.id}`)!;
+      expect([h.level, h.rule, h.why]).toEqual([3, 'T9', '시험 줄']);
+    } finally { DANGER_RULES.pop(); }
+  });
+  it('잔해 구역을 세 번 수색해도 확인율이 모자라면 그 구역의 수색을 마친다 — "정밀 수색 → 71% 에 그침 → 다시"를 끝없이 되풀이하지 않는다', () => {
+    const m = make('X6-RS', 'fire', 'std');
+    const cmd = withCmd(m, fireRids(m.sim)[0]);
+    tickTo(m, 300);
+    m.s.fire.fill(0);
+    const r = m.s.regions.find((q) => q.indoor && q.searchable && q.kind === 'room')!;
+    m.s.ops = newOps(m.sim.t);
+    cmd.beliefs.merge(mkFact('sign', SIGN_BASE.event, { kind: 'event', level: 3, region: r.id, x: r.cx, y: r.cy, what: 'partial' } as SignBelief, '시험', m.sim.t, 1, true, `굉음! ${r.name} 무너짐 (시험)`));
+    for (let k = 0; k < 20 && m.s.ops.rubble.indexOf(r.id) < 0; k++) { tickTo(m, m.sim.t + 2); commanderThink(m.sim, m.s, cmd); }
+    expect(m.s.ops.rubble).toContain(r.id);
+    const search = () => m.s.board.filter((w) => w.kind === 'search' && w.region === r.id && (w.status === 'open' || w.status === 'active'));
+    // 세 번 수색했고 셋 다 확인율 71% 에 그쳤다
+    for (let n = 0; n < 3; n++) {
+      tickTo(m, m.sim.t + 5);
+      const w = search()[0] ?? m.s.board.find((q) => q.kind === 'search' && q.region === r.id)!;
+      w.status = 'done'; w.doneAt = m.sim.t;
+      cmd.beliefs.merge(mkFact('srch', r.id, 0.71, '시험', m.sim.t, 0.71, true, `${r.name} 수색 완료 (확인율 71%)`));
+      commanderThink(m.sim, m.s, cmd);
+    }
+    expect(cmd.beliefs.val<number>('srch', r.id)).toBeGreaterThanOrEqual(0.9);
+    expect(search().length).toBe(0);
+    expect(m.sim.events.some((e) => e.text.includes(`${r.name} 잔해를 3번 수색했습니다`))).toBe(true);
+    // 늦게 끝난 수색이 낮은 확인율을 다시 보고해도 다시 내지 않는다
+    tickTo(m, m.sim.t + 3);
+    cmd.beliefs.merge(mkFact('srch', r.id, 0.7, '시험', m.sim.t, 0.7, true, ''));
+    commanderThink(m.sim, m.s, cmd); commanderThink(m.sim, m.s, cmd);
+    expect(search().length).toBe(0);
   });
 });

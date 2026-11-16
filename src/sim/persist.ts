@@ -8,7 +8,9 @@
 //   makeCarryover 의 뼈대 · shiftStartCounts · 생성자의 자리 applyCrewCarry·announceCarry(요약 줄과 버린 것).
 // 단계 2 (대원): crewNext(끝 상태 → 다음 교대 — 행의 순서·결장·체력·성장·신임·개인 장비 점검) · applyCrewCarry 의 대원 몫(신임·성장·결장 off·결장 상한·
 //   예비 인력 — minField·내리지 않는 자리, 모자라면 short·나올 사람이 없으면 empty) · operable · announceCarry 의 대원 줄.
-// 뒤 단계가 채운다: 3 장비(펌프·정비·섬광탄 창고) · 4 도로(복구 공사) ·
+// 단계 3 (장비): unitsNext(펌프 — 고장 났으면 정밀 정비(service)·아니면 점검) · stockNext(섬광탄 창고) · applyCrewCarry 의 부대 몫(펌프 범위·정비 oos·
+//   SERVICE_CAP 을 넘으면 급히 정비 완료 · 창고에서 섬광탄 지급) · tickCarry 의 정비 완료(operable) · announceCarry 의 정비·재고 줄.
+// 뒤 단계가 채운다: 4 도로(복구 공사) ·
 //   5 건물(placeOutcome·placeUsable·placeCond·applyPlaceWear·noteWearIncident) · 7 보고서(carrySummary·carryLines).
 //
 // import: types · rng · events · util · resources(함수만 — 부를 때만 쓴다. resources → sceneManager → … 순환에서 모듈 맨 위의 표를 읽지 않는다) ·
@@ -25,7 +27,7 @@ import { crewReady, rosterKeys, traitOf } from './resources';
 import type { RosterKey } from './resources';
 import { hashStr } from './rng';
 import type { Rng } from './rng';
-import type { Carryover, City, CrewCarry, InjuryCause, PlaceCarry, RecruitBase, Responder, RoadCarry, StockId, Unit, UnitCarry, UnitKind } from './types';
+import type { Carryover, City, CrewCarry, InjuryCause, KitItem, PlaceCarry, RecruitBase, Responder, RoadCarry, StockId, Unit, UnitCarry, UnitKind } from './types';
 import { clamp, josa } from './util';
 
 // ───────────────────────── 상수 (설계서 §6.1 — 처음 값. 바꾸면 구현 메모에 적는다) ─────────────────────────
@@ -64,6 +66,18 @@ export const RECRUIT_NAMES = ['강유찬', '고다솜', '구민결', '권하랑'
   '양서림', '오지환', '유하엘', '이도담', '임가온', '전시후', '정라엘', '조윤슬', '최다올', '한이현', '허지담', '황시온'];
 /** 본부 예비 인력의 이름 (교대마다 차례로 — 이어받지 않는다) */
 export const RELIEF_NAMES = ['문재희', '백하준', '신태건', '오윤재', '장미르', '차도건', '표서진', '하민규'];
+// ── 장비 (단계 3 — §3.3·§6.1) ──
+/** 휴식 한 번의 펌프 점검으로 오르는 상태 (고장 나지 않은 펌프: 끝 값 + PUMP_REST, 1 까지) */
+export const PUMP_REST = 0.12;
+/** 이번 교대에 고장 난 펌프는 다음 교대에 정밀 정비를 받고 이 상태로 돌아온다 */
+export const SERVICE_PUMP = 0.7;
+/** 정비 시각의 범위 (교대 시작 뒤 초 — carry 흐름) */
+export const SERVICE_AT: readonly [number, number] = [300, 720];
+/** 한꺼번에 정비하는 부대의 상한 — 넘는 부대는 '급히 정비 완료'(RUSHED_PUMP, 바로 운용) */
+export const SERVICE_CAP = 2;
+export const RUSHED_PUMP = 0.6;
+/** 섬광탄 창고: 휴식 한 번에 채우는 수 (상한은 STOCK_CAP) */
+export const RESUPPLY = 3;
 
 // ───────────────────────── 실행 중 상태 (§2.2) ─────────────────────────
 export interface CarryState {
@@ -76,6 +90,7 @@ export interface CarryState {
   applied: CarryNote[];                          // ①·② 가 실제로 적용한 항목 (적용한 순서) — announceCarry 가 이것만 기록한다
   dropped: string[];                             // 적용하지 못한 것 (도시가 끊길 통제, 지도 지문 불일치, 조직 명부에 없는 열쇠, 상한을 넘은 항목) — announceCarry 가 적는다
   stats: { relief: number; serviced: number; reopened: number; markedInc: string[]; fbShort: number; early: number; grown: number };      // grown (단계 2): 이번 교대에 나온 대원 가운데 기본 능력보다 숙련이 오른 사람 수 (요약 줄)
+  fbStore: number;                               // (단계 3) 교대 시작의 지급 뒤 서(署) 창고에 남은 섬광탄 — makeCarryover 가 다음 창고를 센다 (창고 기록이 없던 상태면 STOCK_CAP − 지급, 음수일 수 있다)
 }
 /** 적용한 항목 하나 (기록 한 줄의 재료). 상태를 바꾼 함수가 그 자리에서 push 한다 */
 export type CarryNote =
@@ -86,7 +101,7 @@ export type CarryNote =
   | { what: 'relief'; unit: string; name: string; role?: string }
   | { what: 'short'; unit: string; n: number }                       // 예비 인력이 모자라 최소 편성보다 적은 n명(내리는 대원)으로 운용 — oos 가 아니다(결원 감점만)
   | { what: 'empty'; unit: string; why: 'crew' | 'pilot' }          // 나올 내리는 대원이 한 명도 없거나(crew) 조종·조타할 사람이 없어(pilot) oos '결원'
-  | { what: 'service'; unit: string; readyAt: number }
+  | { what: 'service'; unit: string; readyAt: number; why: 'pump' | 'vehicle' }      // (단계 3) 문구를 고르려고 why 를 더했다. readyAt 은 짧은 교대면 자른 값
   | { what: 'rushed'; unit: string }                                 // SERVICE_CAP 을 넘어 '급히 정비 완료'
   | { what: 'stock'; unit: string; got: number; want: number }
   | { what: 'place'; id: number }                                    // closed·ruin 건물 (opened 도 이 항목으로)
@@ -320,6 +335,7 @@ export function initCarry(sim: Sim, dropped: string[]): CarryState {
   return {
     on: sim.carry !== null, places: new Map(), roads: [], slowed: [], svc: 0, event: -1, applied: [], dropped: dropped.slice(),
     stats: { relief: 0, serviced: 0, reopened: 0, markedInc: [], fbShort: 0, early: 0, grown: 0 },
+    fbStore: 0,
   };
 }
 // ───────────────────────── 대원의 적용 (단계 2 — §3.2 의 "다음 교대에 적용") ─────────────────────────
@@ -371,7 +387,8 @@ function makeRelief(sim: Sim, u: Unit, seat: Responder, rng: Rng, name: string):
  * ② 성장(경험·숙련·판단, 역할 식의 skills, 특성)을 더하고 ③ 결장·공석이면 status 'off'(지구력 100), 아니면 이어받은 체력 ④ 점검에서 드러나지 않은 장비 고장(kitFault)을
  * 명부의 고장 추첨 뒤에 더한다. 그다음 결장 상한(조기 복귀), 예비 인력(minField·내리지 않는 자리 — 모자라면 short, 나올 사람이 없으면 empty → oos '결원').
  * 바꾼 것은 모두 carryState.applied 에 적고 announceCarry 가 그것만 기록한다. 난수는 예비 인력의 relief:<호출부호> 흐름 하나뿐이다.
- * 단계 3(펌프·정비·섬광탄 창고)이 부대 몫을 더한다 — 정비는 예비 인력 앞(정비 중인 부대에는 붙이지 않는다: u.readyAt), 창고 지급은 끝에.
+ * 단계 3 (부대 몫 — §3.3): 펌프 범위·정비는 예비 인력 앞(정비 중인 부대에는 붙이지 않는다: u.readyAt), 섬광탄 창고의 지급은 끝에(나온 사람에게만).
+ * 적용 목록의 순서: 신임·결장·공석(부대마다) → 조기 복귀 → 정비·급히 정비 완료 → 예비 인력·모자람·운용 중단(부대마다) → 재고 부족
  */
 export function applyCrewCarry(sim: Sim): void {
   const cs = sim.carryState, co = sim.carry;
@@ -436,7 +453,9 @@ export function applyCrewCarry(sim: Sim): void {
   }
   for (let i = 0; i < n0; i++) if (early.has(i)) { const r = sim.responders[i]; cs.stats.early++; cs.applied.push({ what: 'early', unit: sim.units[r.unitId].callsign, name: r.name }); }
   for (let i = 0; i < n0; i++) { const c = entry[i]; if (c && (c.dExp > 0 || c.dSkill > 0) && sim.responders[i].status !== 'off') cs.stats.grown++; }
-  // (단계 3 이 여기에 부대 몫 — 펌프 범위·정비(oos '정비 중', u.readyAt) — 을 넣는다. 정비 중인 부대에는 아래의 예비 인력을 붙이지 않는다)
+  // 5. 펌프·정비 (단계 3 — §3.3): 장비 손잡이는 범위를, 이어받은 상태는 그 안의 위치를 정한다(equipment 흐름은 createRoster 가 그대로 다 뽑았다).
+  //    정비 중인 부대는 readyAt 까지 oos '정비 중' — 한꺼번에 SERVICE_CAP 대까지(이른 순), 넘는 부대는 급히 정비를 마치고 바로 운용한다. 정비 중인 부대에는 아래의 예비 인력을 붙이지 않는다
+  applyUnitCarry(sim, co);
   // 6. 예비 인력 — 결장으로 빈 자리를 최소 편성(내리는 자리 minField · 내리지 않는 자리)까지 채운다. 모자라도 나온 대원이 있으면 그 인원으로 운용한다
   for (const u of sim.units) {
     if (u.aid || u.readyAt !== undefined) continue;
@@ -463,18 +482,84 @@ export function applyCrewCarry(sim: Sim): void {
       cs.stats.relief++;
       cs.applied.push({ what: 'relief', unit: u.callsign, name: r.name, role: ROLES[r.role!].name });
     }
-    // 결장한 사람이 든 섬광탄은 나온 사람(예비 인력 포함)에게 다시 나눈다 — 부대의 합(u.flashbangs)은 그대로, 결장자의 몫은 0 (현장에 없는 사람의 섬광탄을 세지 않게)
-    if (u.flashbangs > 0) {
-      const present: Responder[] = [];
-      for (const rid of u.crew) { const q = sim.responders[rid]; if (q.status === 'off') { for (const it of q.kit ?? []) if (it.id === 'flashbang') it.uses = 0; } else present.push(q); }
-      u.flashbangs = dealFlashbangs(present, u.flashbangs);
-    }
     const ready = crewReady(sim, u);
     if (ready === 0 || !pilotOk(sim, u)) {
       u.state = 'oos'; u.oosWhy = '결원';                                   // 이번 교대 내내 — 나올 내리는 대원이 한 명도 없거나 조종·조타할 사람이 없다
       cs.applied.push({ what: 'empty', unit: u.callsign, why: ready === 0 ? 'crew' : 'pilot' });
     } else if (ready < need) cs.applied.push({ what: 'short', unit: u.callsign, n: ready });      // oos 가 아니다 — 배정의 결원 감점(−18)만 (H1 §3.6 의 사용자 결정과 같은 정신)
   }
+  // 7. 섬광탄 (단계 3 — §3.3): 서(署) 창고에서 기동·특공 부대에 정수만큼, 나온 사람(예비 인력 포함)에게만 나눈다 — 결장자의 몫은 0
+  //    (단계 2 의 "결장자 섬광탄 다시 나누기"를 여기로 옮겼다: 창고 기록이 넉넉하면 부대의 합은 createRoster 의 정수 그대로다)
+  issueFlashbangs(sim, co);
+}
+/** 섬광탄 정수 — createRoster 의 식(기동 tn.flashbangs · 특공 +2). 표를 import 하지 않고 종류와 손잡이로 센다 (§3.4 끝). 지원 부대는 창고와 상관없다 */
+const fbQuota = (sim: Sim, u: Unit): number => (u.aid ? 0 : u.kind === 'tactical' ? sim.tune.flashbangs : u.kind === 'swat' ? sim.tune.flashbangs + 2 : 0);
+const holdsFlashbang = (r: Responder): boolean => r.kit !== undefined && r.kit.some((it) => it.id === 'flashbang');
+/**
+ * 부대 몫의 적용 (단계 3 — §3.3, applyCrewCarry 의 5): 펌프 상태를 장비 손잡이의 범위(pumpMin..pumpMax)로 잘라 넣고, 정비 중인 부대를 oos '정비 중'(readyAt —
+ * 짧은 교대면 shiftLen × 0.75 로 자른다)으로 둔다. 정비는 readyAt 이 이른 순으로 SERVICE_CAP 대까지, 넘는 부대는 '급히 정비 완료'(펌프 RUSHED_PUMP — 역시 범위로 자른다, 바로 운용)
+ */
+function applyUnitCarry(sim: Sim, co: Carryover): void {
+  const cs = sim.carryState, tn = sim.tune;
+  const byCs = new Map<string, UnitCarry>();
+  for (const x of co.units) byCs.set(x.callsign, x);
+  const svc: Unit[] = [];
+  for (const u of sim.units) {
+    if (u.aid) continue;
+    const x = byCs.get(u.callsign);
+    if (!x) continue;                                    // 항목이 없으면 뽑은 값 그대로
+    if (x.pump !== undefined && u.dept === 'fire') u.pumpCond = clamp(x.pump, tn.pumpMin, tn.pumpMax);      // createRoster 가 펌프를 뽑는 부대와 같은 조건
+    if (x.service) svc.push(u);
+  }
+  if (!svc.length) return;
+  const at = (u: Unit): number => byCs.get(u.callsign)!.service!.readyAt;
+  const keep = new Set(svc.slice().sort((a, b) => at(a) - at(b) || a.id - b.id).slice(0, SERVICE_CAP));
+  for (const u of svc) {                                 // 적용 목록은 편성표 순서로
+    const sv = byCs.get(u.callsign)!.service!;
+    if (keep.has(u)) {
+      u.state = 'oos'; u.readyAt = Math.min(sv.readyAt, sim.shiftLen * 0.75); u.oosWhy = '정비 중';
+      cs.svc++;
+      cs.applied.push({ what: 'service', unit: u.callsign, readyAt: u.readyAt, why: sv.why });
+    } else {
+      if (sv.why === 'pump' && u.dept === 'fire') u.pumpCond = clamp(RUSHED_PUMP, tn.pumpMin, tn.pumpMax);
+      cs.applied.push({ what: 'rushed', unit: u.callsign });
+    }
+  }
+}
+/**
+ * 섬광탄 지급 (단계 3 — §3.3, applyCrewCarry 의 7): 편성표 순서(sim.units)로 기동·특공 부대에 정수만큼 창고에서. 창고가 모자라면 있는 만큼,
+ * 단 정수가 1 이상인 부대는 적어도 1개(비상 지급 — 창고에서 빼지 않는다). 모자란 부대마다 적용 목록에 'stock'. 들 사람(나온 사람 가운데 섬광탄 자리)이 없으면
+ * 창고에서 꺼내지 않는다. 창고 기록이 없는 상태(손으로 만든 입력)는 지금처럼 정수 그대로 주고 창고는 가득 찬 것에서 센다
+ */
+function issueFlashbangs(sim: Sim, co: Carryover): void {
+  const cs = sim.carryState;
+  const known = co.stock.flashbang !== undefined;
+  let store = known ? co.stock.flashbang! : STOCK_CAP;
+  for (const u of sim.units) {
+    const want = fbQuota(sim, u);
+    if (want <= 0) continue;
+    const present: Responder[] = [];
+    for (const rid of u.crew) { const q = sim.responders[rid]; if (q.status === 'off') { for (const it of q.kit ?? []) if (it.id === 'flashbang') it.uses = 0; } else present.push(q); }
+    if (!present.some(holdsFlashbang)) { u.flashbangs = 0; continue; }
+    let got = want;
+    if (!known) store -= want;
+    else {
+      got = Math.min(want, store); store -= got;
+      if (got === 0) got = 1;                                                // 비상 지급 (창고에서 빼지 않는다)
+      if (got < want) { cs.stats.fbShort += want - got; cs.applied.push({ what: 'stock', unit: u.callsign, got, want }); }
+    }
+    // R1 의 나눔(정수 그대로 — 사람 몫, 자리 순서의 앞부터)을 한 뒤, 창고에 맞춰 줄일 때는 자리 순서의 뒤에서부터 1개씩 뺀다 (§7 R1 줄). 부대의 합은 사람 몫의 합
+    let total = dealFlashbangs(present, want);
+    if (got < total) {
+      const items: KitItem[] = [];
+      for (const q of present) for (const it of q.kit ?? []) if (it.id === 'flashbang') items.push(it);
+      for (let k = items.length - 1, cut = total - got; cut > 0; k = k > 0 ? k - 1 : items.length - 1) {
+        if ((items[k].uses ?? 0) > 0) { items[k].uses = items[k].uses! - 1; cut--; total--; }
+      }
+    }
+    u.flashbangs = total;
+  }
+  cs.fbStore = store;
 }
 /**
  * '교대 시작' 기록의 가용 인원 (이어받은 상태가 있을 때만 engine 이 쓴다 — 없으면 지금 문구 그대로):
@@ -526,15 +611,38 @@ function carryNoteText(n: CarryNote): { unit: boolean; actor: string; kind: 'uni
     case 'relief': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `${n.unit} 결원 — 본부 예비 인력 ${n.name} 대원이 ${n.role ?? '빈'} 자리에 대신 탑니다.` };
     case 'short': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `${n.unit} 결원 — 예비 인력이 없어 ${n.n}명으로 운용합니다.` };
     case 'empty': return { unit: true, actor: n.unit, kind: 'unit', imp: 2, text: `${n.unit} 결원으로 이번 교대 운용 중단 (${n.why === 'pilot' ? '조종·조타할 사람' : '나올 대원'}·예비 인력 없음).` };
+    // (단계 3) 정비·급히 정비 완료·재고 부족
+    case 'service': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `${n.unit} ${n.why === 'vehicle' ? '차량' : '펌프'} 정비 중 — 약 ${Math.max(1, Math.round(n.readyAt / 60))}분 뒤 운용.` };
+    case 'rushed': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `${n.unit} 정비가 밀려 급히 마쳤습니다 — 바로 운용합니다.` };
+    case 'stock': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `섬광탄 재고 부족 — ${n.unit} ${n.got}개만 지급 (정수 ${n.want}개).` };
     default: return null;
   }
 }
 
 // ───────────────────────── 교대 중 (§3.7) ─────────────────────────
-/** 매 틱 (engine.step 의 tickTraffic 다음). 이어받은 상태가 없거나 남은 일(정비 중 부대·남은 복구 공사)이 없으면 첫 줄에서 돌아간다. 단계 3(정비 완료)·4(개통)가 채운다 */
+/**
+ * 매 틱 (engine.step 의 tickTraffic 다음). 이어받은 상태가 없거나 남은 일(정비 중 부대·남은 복구 공사)이 없으면 첫 줄에서 돌아간다.
+ * 정비 (단계 3): readyAt 이 된 부대를 부대 순서대로 운용에 돌린다 — 움직일 수 있으면(operable) available 과 '정비 완료' 기록, 아니면 oos '결원' 그대로와 그 기록.
+ * 바꾸는 바로 이 자리에서 기록하고 원인은 요약 줄이다. 복구 공사의 개통은 단계 4 가 채운다
+ */
 export function tickCarry(sim: Sim): void {
   const cs = sim.carryState;
   if (!cs.on || (cs.svc === 0 && cs.roads.length === 0)) return;
+  if (cs.svc > 0) {
+    for (let ui = 0; ui < sim.units.length; ui++) {
+      const u = sim.units[ui];
+      if (u.readyAt === undefined || sim.t < u.readyAt) continue;
+      u.readyAt = undefined; cs.svc--;
+      if (u.state !== 'oos') continue;                                   // (방어) 다른 코드가 이미 운용에 넣었다
+      if (operable(sim, u)) {                                            // crewReady > 0 이고 조종·조타할 사람이 있다 (최소 편성까지 찼는지는 보지 않는다)
+        u.state = 'available'; u.oosWhy = undefined; cs.stats.serviced++;
+        emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, causes: [cs.event], text: `${u.callsign} 정비 완료 — 운용 재개.` });
+      } else {
+        u.oosWhy = '결원';
+        emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, causes: [cs.event], text: `${u.callsign} 정비를 마쳤지만 결원으로 운용하지 못합니다.` });
+      }
+    }
+  }
 }
 
 // ───────────────────────── 교대가 끝난 뒤 (§3.1) ─────────────────────────
@@ -549,16 +657,61 @@ function copyCrew(c: CrewCarry): CrewCarry {
 /**
  * 끝난 교대에서 다음 교대가 이어받을 상태를 만든다 (sim.ended 일 때만 — 아니면 예외). **순수 함수다**: sim·sim.carry·carryState·현장·기록을 고치지 않고,
  * emit 하지 않으며, 돌려주는 객체는 모두 새로 만든다(앞 상태의 항목을 그대로 넣지 않고 복사한다). buildReport 안(마지막 기록·해시 전)에서도 불린다(단계 7).
- * 대원(단계 2 — crewNext)은 조직 명부(rosterKeys)의 모든 열쇠마다 한 항목. 펌프·정비·재고는 단계 3, 도로는 4, 건물은 5 가 채운다
+ * 대원(단계 2 — crewNext)은 조직 명부(rosterKeys)의 모든 열쇠마다 한 항목. 펌프·정비(unitsNext)·섬광탄 창고(stockNext)는 단계 3, 도로는 4, 건물은 5 가 채운다.
+ * 난수는 carry 흐름 하나(교대 시드에서 갈라진다 — 몇 번 불러도 같다): 정비 시각을 부대 순서로 먼저 뽑고, 단계 4 의 복구 시각은 그 뒤에 이어 뽑는다
  */
 export function makeCarryover(sim: Sim): Carryover {
   if (!sim.ended) throw new Error('makeCarryover: 끝난 교대에서만 이어받을 상태를 만든다');
   const prev = sim.carry;
+  const rng = sim.rng.fork('carry');
   return {
     v: CARRY_VERSION, shift: (prev ? prev.shift : 1) + 1, city: cityKey(sim.city),
     from: { seed: sim.seed, hash: sim.report ? sim.report.hash : '', diff: difficultyLabel(sim.difficulty) },
-    crew: crewNext(sim), units: [], stock: {}, places: [], roads: [],
+    crew: crewNext(sim), units: unitsNext(sim, rng), stock: stockNext(sim), places: [], roads: [],
   };
+}
+
+// ───────────────────────── 장비의 끝 상태 → 다음 교대 (단계 3 — §3.3 의 표) ─────────────────────────
+/**
+ * 부대 (지원 부대는 넣지 않는다 — 편성표의 호출부호마다 많아야 한 항목, 편성표 순서). 펌프를 뽑는 부대(소방 부서 — createRoster 와 같은 조건)만:
+ *   이번 교대에 펌프가 고장 난 적이 있으면(u.pumpFails > 0, 또는 돌아오지 못한 채 끝나 pumpFailed 인 채) 정밀 정비 — service(readyAt = carry 흐름 SERVICE_AT)·pump SERVICE_PUMP,
+ *   아니면 점검 — pump = min(1, 끝 값 + PUMP_REST). 정비 중인 채로 끝난 부대도 휴식에서 정비를 마친다(service 를 넣지 않는다).
+ *   이번 교대에 편성되지 않은 부대는 앞 상태의 펌프에 휴식만 (정비는 휴식에서 마친다)
+ */
+function unitsNext(sim: Sim, rng: Rng): UnitCarry[] {
+  const prev = new Map<string, UnitCarry>();
+  if (sim.carry) for (const p of sim.carry.units) prev.set(p.callsign, p);
+  const here = new Map<string, Unit>();
+  for (const u of sim.units) if (!u.aid) here.set(u.callsign, u);
+  const out: UnitCarry[] = [], seen = new Set<string>();
+  for (const k of rosterKeys()) {
+    if (seen.has(k.callsign)) continue;
+    seen.add(k.callsign);
+    const u = here.get(k.callsign), p = prev.get(k.callsign);
+    if (!u) {                                                            // 편성되지 않음 — 휴식만
+      if (p && p.pump !== undefined) out.push({ callsign: k.callsign, pump: round4(Math.min(1, p.pump + PUMP_REST)) });
+      continue;
+    }
+    if (u.dept !== 'fire') continue;
+    if ((u.pumpFails ?? 0) > 0 || u.pumpFailed) out.push({ callsign: k.callsign, pump: SERVICE_PUMP, service: { readyAt: Math.round(rng.range(SERVICE_AT[0], SERVICE_AT[1])), why: 'pump' } });
+    else out.push({ callsign: k.callsign, pump: round4(clamp(u.pumpCond + PUMP_REST, 0, 1)) });
+  }
+  return out;
+}
+/**
+ * 섬광탄 창고: min(STOCK_CAP, 교대 시작의 지급 뒤 창고 + 부대에 남은 섬광탄 + RESUPPLY) — 0 아래로 내려가지 않는다.
+ * 이어받은 상태가 없던 교대는 창고가 STOCK_CAP 에서 시작해 createRoster 의 정수(들 사람이 있는 부대만)를 지급한 것으로 센다
+ */
+function stockNext(sim: Sim): Partial<Record<StockId, number>> {
+  let base: number;
+  if (sim.carryState.on) base = sim.carryState.fbStore;
+  else {
+    base = STOCK_CAP;
+    for (const u of sim.units) { const q = fbQuota(sim, u); if (q > 0 && u.crew.some((rid) => holdsFlashbang(sim.responders[rid]))) base -= q; }
+  }
+  let left = 0;
+  for (const u of sim.units) if (!u.aid) left += u.flashbangs;
+  return { flashbang: Math.max(0, Math.min(STOCK_CAP, Math.round(base + left + RESUPPLY))) };
 }
 
 // ───────────────────────── 대원의 끝 상태 → 다음 교대 (단계 2 — §3.2 의 표) ─────────────────────────

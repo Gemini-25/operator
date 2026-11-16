@@ -334,6 +334,7 @@ function spray(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, eff = 
   if (sim.tick % 2 === 0) pushFx(sim, s, 'spray', a.x, a.y, tx + s.rng.range(-0.4, 0.4), ty + s.rng.range(-0.4, 0.4), undefined, undefined, 0.3);
   if (u.pumpCond < 0.2 && !u.pumpFailed) {
     u.pumpFailed = true;
+    u.pumpFails = (u.pumpFails ?? 0) + 1;      // (I2) 이번 교대의 펌프 고장 수 — 다음 교대의 정밀 정비를 정한다(persist.makeCarryover). 결과에 쓰지 않는다
     equipTrouble(sim, s, a, 'pump', raiseProblem(sim, I, 'EQUIP_FAIL', `${u.callsign} 펌프 고장 (출동 전 상태 불량)`, { role: 'RESPONDER', actor: r.name, rid: r.id, imp: 2, text: `${u.callsign} 펌프 압력 저하! 방수가 중단됐습니다.` }, false));
     pushFx(sim, s, 'text', a.x, a.y - 1, undefined, undefined, '펌프 고장', '#ff6b6b', 2);
     return false;

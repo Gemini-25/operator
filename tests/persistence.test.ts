@@ -4,18 +4,21 @@
 // 단계 2 (대원 — 이어받은 상태가 없을 때 결과 불변): 시험 2(다친 대원의 결장 · 교대 안의 부상과 결장의 구별) · 6(짧은 연속 — 대원 몫: 결장 ≤ 상한·요약 줄 하나) ·
 //   7(성장 · 부대 규모 5 → 1 → 5 · 공석 → 신임) · 8 의 결원 부분(헬기·구조정 · 예비 인력 · short · empty) · 10 의 대원 부분(적용 목록과 기록의 일대일 · 결장자는 모두 기록에) ·
 //   이어받은 교대의 재현성(결장·예비 인력이 있는 상태도 같은 입력이면 같은 결과) · off 가 지나가는 곳(결원 도착 기록의 causes · respondersHurt · 출동 준비 시간 · 운용 중단 문구).
-// 뒤 단계가 §9 의 3·4·8(펌프·정비·섬광탄)·11 과 6·10 의 나머지를 이 파일에 더한다(장비·도로·건물을 적용하는 단계).
+// 단계 3 (장비 — 이어받은 상태가 없을 때 결과 불변): 시험 8 의 장비 부분(펌프 범위 · 정비 120초 · 짧은 교대의 정비 · SERVICE_CAP 과 급히 정비 완료 ·
+//   정비를 마쳐도 결원 · 끝 상태 → 정밀 정비/점검 · 편성되지 않은 부대의 휴식 · 섬광탄 창고 1 · 창고 10 → 7 → 4) · 10 의 장비 부분(정비 완료 기록의 일대일·원인) ·
+//   6 에 극한 계보 하나(정비·결장이 자연히 생기는 연속) · 정비·재고 부족이 있는 교대의 재현성.
+// 뒤 단계가 §9 의 3·4·11 과 6·10 의 나머지를 이 파일에 더한다(도로·건물을 적용하는 단계).
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { NORMAL } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
-import { BACK_HEALTH, CLOSED_CAP, EARLY_BACK_HEALTH, GAIN_CAP, PLACE_CAP, RECRUIT_NAMES, RELIEF_MAX, RELIEF_NAMES, REPLACE_AFTER, ROAD_CAP, absentCap, carryKey, cityKey, makeCarryover, readCarryover } from '../src/sim/persist';
+import { BACK_HEALTH, CLOSED_CAP, EARLY_BACK_HEALTH, GAIN_CAP, PLACE_CAP, PUMP_REST, RECRUIT_NAMES, RELIEF_MAX, RELIEF_NAMES, REPLACE_AFTER, RESUPPLY, ROAD_CAP, RUSHED_PUMP, SERVICE_AT, SERVICE_CAP, SERVICE_PUMP, STOCK_CAP, absentCap, carryKey, cityKey, makeCarryover, readCarryover } from '../src/sim/persist';
 import { crewReady, dispatchUnit, rosterKeys, tickUnits } from '../src/sim/resources';
 import { STAFF, fieldCrew, minField } from '../src/sim/crews';
 import { outShifts } from '../src/sim/field/injury';
-import type { Carryover, CrewCarry, Incident, PlaceCarry, RoadCarry, Unit } from '../src/sim/types';
+import type { Carryover, CrewCarry, Incident, PlaceCarry, RoadCarry, Unit, UnitCarry } from '../src/sim/types';
 
 // ───────────────────────── 도구 ─────────────────────────
 const run = (seed: string, carry?: Carryover | null, d: Difficulty = NORMAL, len = 1200): Sim => {
@@ -123,9 +126,10 @@ describe('1. 같은 이어받은 상태 = 같은 해시', () => {
     const oos = s.units.filter((u) => u.state === 'oos').length, avail = s.units.length - oos;
     const off = s.responders.filter((r) => r.status === 'off').length, crew = s.responders.length - off;
     expect(s.events[0].text).toContain(`가용 부대 ${avail}대${oos ? `(정비·결원 ${oos}대 제외)` : ''}, 대원 ${crew}명${off ? `(결장 ${off}명 제외)` : ''}.`);
-    // 결장도 정비도 없는 이어받은 상태면 지금 문구와 같다 (단계 1 의 뜻 — 괄호가 붙지 않는다)
+    // 결장도 정비도 없는 이어받은 상태면 지금 문구와 같다 (단계 1 의 뜻 — 괄호가 붙지 않는다). (단계 3) P1 에서 펌프가 고장 난 부대의 정비도 지운다
     const calm: Carryover = json(co);
     for (const c of calm.crew) { c.out = 0; c.cause = null; delete c.replaceIn; delete c.recruit; }
+    for (const x of calm.units) delete x.service;
     expect(new Sim('P2', NORMAL, 1200, { carry: calm }).events[0].text).toBe(new Sim('P2', NORMAL, 1200).events[0].text);
   });
 });
@@ -337,8 +341,30 @@ function mustSay(n: Sim['carryState']['applied'][number]): string[] {
     case 'relief': return [n.unit, n.name];
     case 'short': return [n.unit, `${n.n}명`];
     case 'empty': return [n.unit];
+    case 'service': return [n.unit, '정비 중'];                       // (단계 3)
+    case 'rushed': return [n.unit, '급히'];
+    case 'stock': return [n.unit, `${n.got}개만`, `정수 ${n.want}개`];
     default: return [];
   }
+}
+/**
+ * 시험 10 (장비 부분): 정비마다 그 부대가 정비를 마친 기록(정비 완료, 또는 나올 대원이 없어 결원)이 readyAt 이 지난 뒤 정확히 하나 — 상태를 바꾼 그 자리(tickCarry)의
+ * 기록이고 요약 줄이 원인이다. 정비 완료 기록의 수 = stats.serviced, 정비 항목이 없는 부대에는 그런 기록이 없다
+ */
+const SERVICE_DONE = /^\S+ (정비 완료 — 운용 재개|정비를 마쳤지만 결원으로 운용하지 못합니다)\.$/;
+function checkServiceLog(s: Sim): void {
+  const cs = s.carryState, ev = cs.event;
+  const done = s.events.filter((e) => e.kind === 'unit' && SERVICE_DONE.test(e.text));
+  for (const e of done) expect(e.causes, e.text).toEqual([ev]);
+  expect(done.filter((e) => e.text.endsWith('정비 완료 — 운용 재개.')).length).toBe(cs.stats.serviced);
+  const svc = cs.applied.filter((n): n is Extract<typeof n, { what: 'service' }> => n.what === 'service');
+  for (const n of svc) {
+    const mine = done.filter((e) => e.actor === n.unit);
+    expect(mine.length, n.unit).toBe(s.t >= n.readyAt ? 1 : 0);
+    if (mine.length) { expect(mine[0].t).toBeGreaterThanOrEqual(n.readyAt - 1e-9); expect(mine[0].t).toBeLessThan(n.readyAt + s.dt); }      // readyAt 이 지난 첫 틱
+  }
+  expect(done.length).toBe(svc.filter((n) => s.t >= n.readyAt).length);
+  expect(cs.svc).toBe(svc.filter((n) => s.t < n.readyAt).length);
 }
 /**
  * 시험 10 (대원 부분): 적용 목록과 기록의 일대일 — 요약 줄 바로 뒤에 항목마다 한 줄(요약 줄이 원인, 항목의 주인공이 문장에), 그 뒤에 버린 것의 줄.
@@ -681,6 +707,198 @@ describe('8. 결원 — 예비 인력·모자라면 그 인원으로·나올 사
   });
 });
 
+// ───────────────────────── 8 (장비 부분). 펌프 범위 · 정비 · 섬광탄 창고 (단계 3) ─────────────────────────
+describe('8. 장비 — 펌프 범위·정비·섬광탄 창고', () => {
+  let co0: Carryover, s0: Sim;
+  beforeAll(() => {
+    const A = new Sim('P1', NORMAL, 60); A.runToEnd();
+    co0 = calmCrew(makeCarryover(A));      // 60초 교대 — 펌프 고장·섬광탄 사용 없음: 정비 없음, 창고 10
+    s0 = new Sim('P2', NORMAL, 1);
+  }, HOOK_MS);
+  /** 부대 항목·창고를 바꾼 상태 (대원은 결장 없이) */
+  const withUnits = (units: UnitCarry[], stock?: number): Carryover => { const co = json(co0); co.units = json(units); if (stock !== undefined) co.stock = { flashbang: stock }; return co; };
+  const svc = (callsign: string, readyAt: number): UnitCarry => ({ callsign, pump: SERVICE_PUMP, service: { readyAt, why: 'pump' } });
+  const bangs = (s: Sim, cs: string): number[] => unitOf(s, cs).crew.map((rid) => s.responders[rid].kit?.find((it) => it.id === 'flashbang')?.uses ?? 0);
+  const sum = (a: number[]): number => a.reduce((x, y) => x + y, 0);
+
+  it('처음 상태: 60초 교대가 만든 상태는 정비 없이 소방 부대마다 펌프 한 항목(편성표 순서), 창고 10 (10 − 처음 지급 6 + 남은 6 + 3 → 상한)', () => {
+    expect(co0.units.map((x) => x.callsign)).toEqual(s0.units.filter((u) => !u.aid && u.dept === 'fire').map((u) => u.callsign));
+    expect(co0.units.every((x) => x.service === undefined && x.pump !== undefined)).toBe(true);
+    expect(co0.stock).toEqual({ flashbang: STOCK_CAP });
+  });
+
+  it('펌프: 장비 손잡이는 범위, 이어받은 값은 그 안의 위치 (장비 1 에 0.95 → 0.55 · 0.1 → 0.21), 항목이 없으면 뽑은 값 그대로, 기록은 남기지 않는다', () => {
+    const E1: Difficulty = { ...NORMAL, equipment: 1 };
+    const base = new Sim('P2', E1, 1);
+    const s = new Sim('P2', E1, 1, { carry: withUnits([{ callsign: '진압1', pump: 0.95 }, { callsign: '진압2', pump: 0.1 }, { callsign: '순찰1', pump: 0.5 }]) });
+    expect(unitOf(s, '진압1').pumpCond).toBe(0.55);
+    expect(unitOf(s, '진압2').pumpCond).toBe(0.21);
+    expect(unitOf(s, '진압3').pumpCond).toBe(unitOf(base, '진압3').pumpCond);      // equipment 흐름은 그대로 다 뽑았다
+    expect(unitOf(s, '순찰1').pumpCond).toBe(1);                                 // 펌프가 없는 부대는 건드리지 않는다
+    expect(s.carryState.applied).toEqual([]);
+    expect(unitOf(new Sim('P2', NORMAL, 1, { carry: withUnits([{ callsign: '진압1', pump: 0.95 }]) }), '진압1').pumpCond).toBe(0.95);      // 보통(0.3~1.0) 안이면 그대로
+  });
+
+  it('정비 중(readyAt 120)인 부대: 120초 전에는 oos 이고 배정되지 않으며, 120초에 정비 완료 기록(요약 줄이 원인)과 함께 운용에 들어간다', () => {
+    const s = new Sim('P2', NORMAL, 1200, { carry: withUnits([svc('진압1', 120)]) });
+    const u = unitOf(s, '진압1'), cs = s.carryState;
+    expect([u.state, u.oosWhy, u.readyAt, cs.svc]).toEqual(['oos', '정비 중', 120, 1]);
+    expect(cs.applied).toEqual([{ what: 'service', unit: '진압1', readyAt: 120, why: 'pump' }]);
+    expect(s.events.some((e) => e.t === 0 && e.text === '진압1 펌프 정비 중 — 약 2분 뒤 운용.')).toBe(true);
+    expect(s.events[cs.event].text).toContain('정비 중 1대');
+    expect(s.events[0].text).toContain('(정비·결원 1대 제외)');
+    checkCarryLog(s);
+    while (s.t + s.dt < 120 - 1e-9) {
+      s.step();
+      expect(u.state, `${s.t}`).toBe('oos');
+    }
+    expect(u.runs).toBe(0);
+    expect(u.dispatchedAt).toBe(-1);
+    expect(s.events.some((e) => SERVICE_DONE.test(e.text))).toBe(false);
+    s.step();
+    const done = s.events.filter((e) => e.text === '진압1 정비 완료 — 운용 재개.');
+    expect(done.length).toBe(1);
+    expect(done[0].causes).toEqual([cs.event]);
+    expect(done[0].t).toBeGreaterThanOrEqual(120 - 1e-9);
+    expect(u.state).not.toBe('oos');
+    expect([u.oosWhy, u.readyAt, cs.svc, cs.stats.serviced]).toEqual([undefined, undefined, 0, 1]);
+    s.runToEnd();
+    checkServiceLog(s);
+  });
+
+  it('짧은 교대에서는 정비 시각을 shiftLen × 0.75 로 자른다 (500초 교대에 900 → 375초)', () => {
+    const s = new Sim('P2', NORMAL, 500, { carry: withUnits([svc('진압2', 900)]) });
+    expect(unitOf(s, '진압2').readyAt).toBe(375);
+    expect(s.carryState.applied).toEqual([{ what: 'service', unit: '진압2', readyAt: 375, why: 'pump' }]);
+    s.runToEnd();
+    checkServiceLog(s);
+    expect(s.carryState.stats.serviced).toBe(1);
+  });
+
+  it('정비는 한꺼번에 두 대까지 (이른 순) — 셋째는 급히 정비를 마치고(펌프 0.6) 바로 운용한다', () => {
+    const s = new Sim('P2', NORMAL, 1200, { carry: withUnits([svc('진압1', 300), svc('진압2', 200), svc('진압3', 500)]) });
+    const cs = s.carryState;
+    expect(cs.applied).toEqual([
+      { what: 'service', unit: '진압1', readyAt: 300, why: 'pump' },
+      { what: 'service', unit: '진압2', readyAt: 200, why: 'pump' },
+      { what: 'rushed', unit: '진압3' },
+    ]);
+    expect(cs.svc).toBe(SERVICE_CAP);
+    const u3 = unitOf(s, '진압3');
+    expect([u3.state, u3.readyAt, u3.oosWhy, u3.pumpCond]).toEqual(['available', undefined, undefined, RUSHED_PUMP]);
+    expect(s.events.some((e) => e.text === '진압3 정비가 밀려 급히 마쳤습니다 — 바로 운용합니다.')).toBe(true);
+    expect(s.events[0].text).toContain('(정비·결원 2대 제외)');
+    checkCarryLog(s);
+  });
+
+  it('정비를 마쳐도 나올 대원이 없으면 결원으로 운용하지 못한다 (정비 중인 부대에는 예비 인력이 붙지 않는다)', () => {
+    const co = withUnits([svc('진압2', 30)]);
+    setOut(co, namesOf(s0, '진압2'));
+    const s = new Sim('P2', NORMAL, 1200, { carry: co });
+    const u = unitOf(s, '진압2'), cs = s.carryState;
+    expect(cs.stats.relief).toBe(0);
+    expect(u.crew.some((rid) => s.responders[rid].relief)).toBe(false);
+    expect(cs.applied.filter((n) => n.what !== 'absent')).toEqual([{ what: 'service', unit: '진압2', readyAt: 30, why: 'pump' }]);
+    checkCarryLog(s);
+    s.run(Math.ceil(30 / s.dt) + 1);
+    expect(s.events.filter((e) => e.text === '진압2 정비를 마쳤지만 결원으로 운용하지 못합니다.').length).toBe(1);
+    expect([u.state, u.oosWhy, u.readyAt, cs.svc, cs.stats.serviced]).toEqual(['oos', '결원', undefined, 0, 0]);
+    checkServiceLog(s);
+  });
+
+  it('끝 상태 → 다음 교대: 고장 난 펌프는 정밀 정비(0.7 · 정비 시각 300~720초), 아니면 점검(+0.12) — 펌프가 없는 부대는 넣지 않는다, 몇 번 불러도 같다', () => {
+    const B = new Sim('P1', NORMAL, 60); B.runToEnd();
+    Object.assign(unitOf(B, '진압1'), { pumpFails: 1, pumpCond: 0.62 });         // 고장 뒤 현장에서 예비 펌프로 바꾼 부대 (pumpFailed 는 풀렸다)
+    Object.assign(unitOf(B, '진압2'), { pumpFailed: true, pumpCond: 0.15 });     // 고장 난 채 돌아오지 못하고 끝난 부대
+    unitOf(B, '진압3').pumpCond = 0.5;
+    unitOf(B, '사다리1').pumpCond = 0.95;
+    const co = makeCarryover(B);
+    const by = (cs: string): UnitCarry | undefined => co.units.find((x) => x.callsign === cs);
+    for (const cs of ['진압1', '진압2']) {
+      const x = by(cs)!;
+      expect(x.pump, cs).toBe(SERVICE_PUMP);
+      expect(x.service!.why).toBe('pump');
+      expect(Number.isInteger(x.service!.readyAt)).toBe(true);
+      expect(x.service!.readyAt).toBeGreaterThanOrEqual(SERVICE_AT[0]);
+      expect(x.service!.readyAt).toBeLessThanOrEqual(SERVICE_AT[1]);
+    }
+    expect(by('진압3')).toEqual({ callsign: '진압3', pump: 0.5 + PUMP_REST });
+    expect(by('사다리1')).toEqual({ callsign: '사다리1', pump: 1 });
+    expect(by('순찰1')).toBeUndefined();
+    expect(makeCarryover(B)).toEqual(co);      // carry 흐름 — 교대 시드에서 갈라진다
+    expect(readCarryover(json(co), B.city)!.carry).toEqual(co);
+    expect(unsafeAt(co)).toBeNull();
+    // 그다음 교대: 정비는 SERVICE_CAP 안이라 둘 다 정비 중, 그 교대가 끝나면 다음 상태에는 정비가 없다 (교대 안에 마쳤다 — 펌프는 점검만)
+    const C = new Sim('P2', NORMAL, 1200, { carry: co });
+    expect(C.carryState.applied.flatMap((n) => (n.what === 'service' ? [n.unit] : []))).toEqual(['진압1', '진압2']);
+    expect(unitOf(C, '진압1').pumpCond).toBe(SERVICE_PUMP);
+  });
+
+  it('편성되지 않은 부대는 휴식만 — 펌프 +0.12, 정비는 휴식에서 마친다', () => {
+    const L1: Difficulty = { ...NORMAL, resources: 1 }, L5: Difficulty = { ...NORMAL, resources: 5 };
+    const small = new Sim('Q1', L1, 60), big = new Sim('Q1', L5, 1);
+    const cs = big.units.find((u) => u.dept === 'fire' && !small.units.some((q) => q.callsign === u.callsign))!.callsign;
+    const s = new Sim('Q1', L1, 60, { carry: withUnits([{ callsign: cs, pump: 0.5, service: { readyAt: 400, why: 'pump' } }]) });
+    expect(s.carryState.applied).toEqual([]);      // 편성되지 않은 부대의 정비는 적용하지 않는다
+    s.runToEnd();
+    expect(makeCarryover(s).units.find((x) => x.callsign === cs)).toEqual({ callsign: cs, pump: 0.5 + PUMP_REST });
+  });
+
+  it('섬광탄 창고 1 (보통): 편성표 순서로 기동1 이 창고에서 1개, 특공1 은 비상 지급 1개 — 모자란 수 4, 부대마다 기록 한 줄', () => {
+    const s = new Sim('P2', NORMAL, 1200, { carry: withUnits(co0.units, 1) });
+    const cs = s.carryState;
+    expect(cs.applied).toEqual([{ what: 'stock', unit: '기동1', got: 1, want: 2 }, { what: 'stock', unit: '특공1', got: 1, want: 4 }]);
+    expect(cs.stats.fbShort).toBe(4);
+    expect(cs.fbStore).toBe(0);
+    for (const c of ['기동1', '특공1']) { expect(unitOf(s, c).flashbangs, c).toBe(1); expect(sum(bangs(s, c)), c).toBe(1); }
+    expect(s.events.some((e) => e.text === '섬광탄 재고 부족 — 기동1 1개만 지급 (정수 2개).')).toBe(true);
+    expect(s.events.some((e) => e.text === '섬광탄 재고 부족 — 특공1 1개만 지급 (정수 4개).')).toBe(true);
+    checkCarryLog(s);
+    // 창고가 넉넉하면 지금과 같은 수·같은 사람 몫, 기록 없음. 창고가 비어도(0) 정수가 1 이상인 부대는 1개씩
+    const full = new Sim('P2', NORMAL, 1, { carry: withUnits(co0.units, STOCK_CAP) });
+    for (const c of ['기동1', '특공1']) { expect(unitOf(full, c).flashbangs).toBe(unitOf(s0, c).flashbangs); expect(bangs(full, c)).toEqual(bangs(s0, c)); }
+    expect(full.carryState.applied).toEqual([]);
+    expect(full.carryState.fbStore).toBe(STOCK_CAP - 6);
+    const empty = new Sim('P2', NORMAL, 1, { carry: withUnits(co0.units, 0) });
+    expect(['기동1', '특공1'].map((c) => unitOf(empty, c).flashbangs)).toEqual([1, 1]);
+    expect(empty.carryState.stats.fbShort).toBe(4);
+  });
+
+  it('창고 = min(10, 지급 뒤 창고 + 남은 섬광탄 + 3): 여섯 개를 다 쓰는 교대가 두 번이면 10 → 7 → 4, 셋째 교대에 특공1 이 2개 덜 받고, 조용한 교대 한 번이면 모자라지 않는다', () => {
+    const useAll = (s: Sim): void => { for (const u of s.units) { u.flashbangs = 0; for (const rid of u.crew) for (const it of s.responders[rid].kit ?? []) if (it.id === 'flashbang') it.uses = 0; } };
+    const s1 = new Sim('P1', NORMAL, 60); s1.runToEnd();
+    useAll(s1);
+    const c2 = makeCarryover(s1);
+    expect(c2.stock.flashbang).toBe(STOCK_CAP - 6 + 0 + RESUPPLY);      // 7
+    const s2 = new Sim('P2', NORMAL, 60, { carry: calmCrew(c2) });
+    expect(s2.carryState.applied.some((n) => n.what === 'stock')).toBe(false);
+    expect(s2.carryState.fbStore).toBe(1);
+    s2.runToEnd(); useAll(s2);
+    const c3 = makeCarryover(s2);
+    expect(c3.stock.flashbang).toBe(4);
+    const s3 = new Sim('P3', NORMAL, 60, { carry: calmCrew(c3) });
+    expect(s3.carryState.applied.filter((n) => n.what === 'stock')).toEqual([{ what: 'stock', unit: '특공1', got: 2, want: 4 }]);
+    // 줄일 때는 자리 순서의 뒤에서부터 1개씩: 정수 4 의 나눔 [팀장 2 · 진입(파괴) 1 · 진입 1] 에서 둘을 빼면 [2 · 0 · 0]
+    expect(bangs(s0, '특공1')).toEqual([2, 0, 1, 1, 0]);
+    expect(bangs(s3, '특공1')).toEqual([2, 0, 0, 0, 0]);
+    s3.runToEnd();
+    const c4 = makeCarryover(s3);
+    expect(c4.stock.flashbang).toBe(0 + 2 + 2 + RESUPPLY);
+    expect(new Sim('P4', NORMAL, 1, { carry: calmCrew(c4) }).carryState.applied.some((n) => n.what === 'stock')).toBe(false);
+  });
+
+  it('정비·재고 부족이 있는 교대도 같은 입력이면 같은 결과 (그대로·JSON 왕복), 정비마다 정비 완료 기록 하나', () => {
+    const co = withUnits([svc('진압1', 200), svc('사다리1', 400)], 2);
+    const a = run('P2', co), b = run('P2', json(co));
+    expect(b.report!.hash).toBe(a.report!.hash);
+    expect(a.report!.hash).not.toBe(run('P2', co0).report!.hash);
+    expect(a.carryState.stats.serviced).toBe(2);
+    checkServiceLog(a);
+    checkShortArrivals(a);
+    expect(makeCarryover(a)).toEqual(makeCarryover(b));
+  });
+});
+
 // ───────────────────────── 6·10. 짧은 연속 (계보 3 × 교대 4) — 대원 몫 ─────────────────────────
 describe('6·10. 짧은 연속 (계보 3 × 교대 4) — 대원 몫', () => {
   const shifts: Sim[] = [], keys: [string, string][] = [];
@@ -711,8 +929,44 @@ describe('6·10. 짧은 연속 (계보 3 × 교대 4) — 대원 몫', () => {
     });
   });
 
-  it('적용 목록과 기록의 일대일, 결장자는 모두 기록에 이름이 있다, 결원 도착에는 요약 줄이 원인', () => {
-    for (const s of shifts) if (s.carryState.on) { checkCarryLog(s); checkShortArrivals(s); }
+  it('적용 목록과 기록의 일대일, 결장자는 모두 기록에 이름이 있다, 결원 도착에는 요약 줄이 원인, 정비마다 정비를 마친 기록 하나', () => {
+    for (const s of shifts) if (s.carryState.on) { checkCarryLog(s); checkShortArrivals(s); checkServiceLog(s); }
+  });
+});
+
+// ───────────────────────── 6·10 (장비 몫). 극한 계보 하나 — 펌프 고장·결장이 자연히 이어지는 연속 (단계 3) ─────────────────────────
+describe('6·10. 극한 계보 (교대 3) — 정비·창고가 자연히 생기는 연속', () => {
+  const EX: Difficulty = { frequency: 5, severity: 5, threat: 5, equipment: 1, info: 1, resources: 3 };
+  const shifts: Sim[] = [], cos: Carryover[] = [];
+  beforeAll(() => {
+    let co: Carryover | null = null;
+    for (let k = 1; k <= 3; k++) {
+      const s = new Sim(`XC.${k}`, EX, 1200, co ? { carry: co } : {});
+      s.runToEnd();
+      shifts.push(s);
+      co = makeCarryover(s);
+      cos.push(co);
+    }
+  }, HOOK_MS);
+
+  it('예외 없이 모든 사건이 닫히고, 펌프가 고장 난 부대는 다음 교대에 정비(상한 2대 — 넘으면 급히 정비 완료)를 받으며 기록이 적용 목록과 일대일이다', () => {
+    let serviced = 0;
+    shifts.forEach((s, i) => {
+      expect(s.incidents.every((I) => I.phase === 'closed'), s.seed).toBe(true);
+      const failed = s.units.filter((u) => !u.aid && u.dept === 'fire' && ((u.pumpFails ?? 0) > 0 || u.pumpFailed)).map((u) => u.callsign);
+      expect(cos[i].units.filter((x) => x.service).map((x) => x.callsign), s.seed).toEqual(failed);
+      expect(cos[i].stock.flashbang).toBeGreaterThanOrEqual(0);
+      expect(cos[i].stock.flashbang).toBeLessThanOrEqual(STOCK_CAP);
+      expect(readCarryover(json(cos[i]), s.city)!.carry).toEqual(cos[i]);
+      if (i === 0) return;
+      const prevSvc = cos[i - 1].units.filter((x) => x.service).length;
+      const notes = s.carryState.applied;
+      expect(notes.filter((n) => n.what === 'service').length).toBe(Math.min(SERVICE_CAP, prevSvc));
+      expect(notes.filter((n) => n.what === 'rushed').length).toBe(Math.max(0, prevSvc - SERVICE_CAP));
+      checkCarryLog(s); checkShortArrivals(s); checkServiceLog(s);
+      serviced += s.carryState.stats.serviced;
+    });
+    expect(serviced).toBeGreaterThan(0);      // 극한(장비 1)에서는 펌프가 자주 고장 난다 — 정비 경로를 실제로 지난다
   });
 });
 

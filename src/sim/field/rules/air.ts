@@ -60,10 +60,11 @@ const activeCmd = (s: Scene): FieldAgent | null => { for (const a of s.agents) i
 
 function makeOp(sim: Sim, s: Scene, I: Incident, u: Unit): AirOp {
   // 관측자: 경찰 헬기는 전술 관측관, 그 밖(소방 헬기)은 내리는 자리의 첫 사람(다쳐 있으면 다음 사람)
+  // (I2) 결장(off)한 사람은 타지 않았다 — 관측자로 고르지 않는다 (결장이 없으면 예전과 같다)
   const fc = fieldCrew(sim, u);
-  let rid = fc[0];
+  let rid = fc.find((q) => sim.responders[q].status !== 'off') ?? fc[0];
   for (const q of fc) if (sim.responders[q].status === 'ok') { rid = q; break; }
-  for (const q of u.crew) if (sim.responders[q].role === 'observer') { rid = q; break; }
+  for (const q of u.crew) if (sim.responders[q].role === 'observer' && sim.responders[q].status !== 'off') { rid = q; break; }
   const x = Math.max(0, Math.min(s.w - 1, s.staging.x)), y = Math.max(0, Math.min(s.h - 1, s.staging.y));
   const eye = makeAgent(sim, rid, u.id, x, y, sim.t, sim.rng.fork('air:' + I.id + ':' + u.id));
   eye.aloft = true; eye.label = '상공 관측';

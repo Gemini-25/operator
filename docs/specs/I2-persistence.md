@@ -1012,3 +1012,51 @@ for (const [seed, d, f] of cases) {
 - **I1-b 의 `knownBuildingAt`·`placeState`·`rubble`**: 아직 없다(grep 으로 확인) → 단계 4(`rubble` → `debris` (나))·단계 5.
 - **단계 2**: `crewNext`·`applyCrewCarry` 의 몸, `announceCarry` 의 대원 줄과 '숙련이 오른 대원', `respondersHurt`·`dispatchUnit`·`arrive` 의 `off`, 결원 도착 기록의 `causes`. 시작할 때 §11.1-2 대로 `grep -n "\.status" src/sim src/ui` 로 `Responder.status` 를 읽는 곳을 다시 본다(`FieldAgent.status` 와 헷갈리지 않게 — 1단계는 이 목록을 고치지 않았다). `Responder.status` 에 `'off'` 를 더해도 `tsc` 는 깨지지 않았다 — 상태별 표(`Record<status, …>`)가 없다. 측정 도구의 `S(I)`(`metrics.ts:634`)는 이미 `'off'` 를 본다.
 - 시험 10(적용 목록과 기록의 일대일)은 적용 항목이 생기는 단계 2 부터 더한다.
+
+### 단계 2 — 대원 (이어받은 상태가 없을 때 결과 불변) · 준비 줄, `wf/persist-s2`
+
+시작점 `632d785`(주 브랜치 — R1·H1 전체, X6 단계 0~5, R2 0, I1-a·I1-b b0, R3 0, I2 1, N8 1·2a·2b, N9 1·2·3). 단계 1 은 그 안에 이미 합쳐져 있었다(`git merge` 가 앞으로 감기만 했다).
+
+**실제 이름** (뒤 단계가 쓴다)
+
+| 파일 | 이름 |
+|---|---|
+| `src/sim/persist.ts` | 상수 `REST_HEAL` 40 · `BACK_HEALTH` 85 · `EARLY_BACK_HEALTH` 70 · `GAIN_K` 0.5 · `GAIN_CAP` 0.02 · `SKILL_K` 0.6 · `ABSENT_SHARE` 0.2 · `ABSENT_FLOOR` 2 · **`absentCap(편성 인원)`**(본문의 `ABSENT_CAP` — 편성 인원에 따라 달라지므로 함수) · `RELIEF_MAX` 4 · `RECRUIT_NAMES`(24) · `RELIEF_NAMES`(8). export 함수 **`operable(sim, u)`** = `crewReady > 0` 이고 조종·조타 자리가 있는 부대면 그 사람이 나와 있다(단계 3 의 정비 뒤 운용 복귀가 쓴다). 안쪽: `crewNext`(끝 상태 → 다음 교대의 대원 항목) · `recruitBase`(흐름 `recruit:<자리>`) · `makeRelief`(흐름 `relief:<호출부호>`) · `carryNoteText`(적용 항목 → 기록 문구, 문구가 아직 없는 항목은 `null` — 단계 3~5 가 `case` 를 더한다) · `pilotOk`·`mixedKind`·`staysMin`·`staysPresent` |
+| `CarryState.stats` | `grown` 을 더했다(요약 줄의 '숙련이 오른 대원') |
+| `CarryNote` | `'early'` 에 `unit` 을 더했다(기록의 주인 = 호출부호) |
+
+**적용의 순서** (`applyCrewCarry` — `createRoster` 뒤, 모든 흐름을 다 뽑은 다음 값만): ① 사람마다 신임(같은 rid — `name`·`seat`·기본 능력 여섯, `role`·`kit` 은 그 자리의 것) → 성장(`experience`·`skill`·`judgment`·`skills = skillsOf(role, skill)`·`trait`) → `out === 0` 이면 이어받은 체력 → `kitFault` 를 명부의 고장 추첨 뒤에 `fault = true` ② 결장 상한(조기 복귀) ③ 결장·공석을 `off`(`carryOut`·`carryCause`·지구력 100) ④ 적용 목록: 부대마다 신임 → 결장 → 공석, 그다음 조기 복귀 ⑤ **(단계 3 의 자리 — 주석으로 표시: 펌프·정비)** ⑥ 예비 인력(부대 순서, 결장이 있는 부대만, `u.readyAt` 이 있는 정비 중 부대는 건너뛴다) → 섬광탄 다시 나누기 → `empty`(oos '결원') / `short`.
+
+**본문과 다르게 한 곳**
+
+1. **`ABSENT_CAP` 은 `absentCap(fielded)` 함수**와 상수 둘(`ABSENT_SHARE`·`ABSENT_FLOOR`). 편성 인원 = 적용할 때의 `sim.responders.length`(예비 인력·지원 대원 전 — 공석 포함).
+2. **결장 줄은 (부대, 원인, 남은 교대)마다 한 줄**이다(본문 "부대마다 한 줄"). `CarryNote 'absent'` 가 원인·남은 교대를 하나씩만 가지므로, 한 부대에 원인이나 남은 교대가 다른 결장자가 있으면 줄이 나뉜다. 대개는 부대마다 한 줄이다.
+3. **문구**: 결장 `김도윤·이서준 대원이 결장합니다 (총상 · 2교대 남음).` — 본문의 `${josa(이름들, '이/가')}` 에 '대원'을 붙였다. 원인이 없으면(`cause null`) `(1교대 남음)`. 예비 인력 줄의 역할 이름은 `ROLES[role].name`. 그 밖의 줄(공석·신임·조기 복귀·모자람·운용 중단)은 본문 §3.7 그대로. 부대 줄은 `role 'UNIT'`·`actor` 호출부호·`kind 'unit'`(운용 중단만 `imp 2`), 원인은 요약 줄. `tag: 'carry'` 는 아직 없다(I1-b b1·b2 의 `SimEvent.tag` 가 없다 — 단계 1 메모의 이어받을 자리 그대로).
+4. **'숙련이 오른 대원 g명'** = 이번 교대에 나온(off 가 아닌) 조직 대원 가운데 누적 `dExp`·`dSkill` 이 0 보다 큰 사람. 누적이라 이어갈수록 거의 모두가 된다(보통 2번째 교대에 41명, 4번째 47명). 상태로는 맞지만 읽을거리는 적다 — 단계 7(보고서)·8(측정)이 문턱(예: `dSkill ≥ 0.01`)을 둘지 정한다.
+5. **결장한 사람이 든 섬광탄은 나온 사람(예비 인력 포함)에게 다시 나눈다**(`crews.dealFlashbangs` — 부대의 합 `u.flashbangs` 은 그대로, 결장자의 항목은 `uses 0`). 본문에 없다. 하지 않으면 현장에 없는 사람의 섬광탄이 `u.flashbangs` 에 남아 관제·지휘관이 쓸 수 없는 섬광탄을 센다(기동1 의 기동대원 한 명이 결장하면 그 몫 1개). **단계 3 의 창고 지급**은 예비 인력 뒤에 두고, 같은 식으로 나온 사람에게만 나눈다.
+6. **`kitFault` 를 단계 2 에 넣었다**(§3.2 의 R1 뒤 줄·적용 7 — §8 의 단계 3 줄에는 없고 `crewNext`·`applyCrewCarry` 의 일부라서). 점검 해시의 '교대' = 끝난 교대의 조직 번호(`prev.shift`, 새 조직의 첫 교대는 1). 나온 사람(5·6행)과 편성되었지만 결장한 사람(2행)은 이번 교대 `r.kit` 의 숨은 고장(`fault && !faultKnown` — 이번 교대 `kit` 흐름의 추첨 + 이어받은 고장)을 점검하고, 편성되지 않은 사람(3행)은 앞 상태의 `kitFault` 를 다시 점검한다(휴식마다 절반). 공석·순직은 넣지 않는다. 예비 인력의 장비는 고장 추첨을 하지 않는다(흐름이 없다). 적용은 기록하지 않는다(숨은 고장은 조직이 모른다 — 기록하면 진실이 샌다).
+7. **본문 밖에서 `off` 를 막은 자리 둘**(§11.1-2 의 훑기에서 찾았다 — 둘 다 결장이 없으면 결과가 같다): `resources.tickUnits` 의 이송 중 처치 수준(차에 타지 않은 결장 구급대원의 장비로 처치하지 않게 — `q.status !== 'off'` 한 조건), `field/rules/air.ts` `makeOp` 의 상공 관측자(결장한 관측관·대원을 관측자로 고르지 않게 — 경찰 헬기의 관측관만 결장하면 예비 인력 없이(crewReady 2 = minField 2) 뜨고 관측자는 기장이 된다).
+8. **결원 도착 `causes` 를 상공 도착(`현장 상공 도착`)에도 붙였다** — 결원 부대가 나간 사건(§5.5)에 헬기도 든다. 지상 도착은 본문 그대로.
+9. **신임 이름**: "아직 쓰지 않은 이름"에서 바뀌기 전 공석의 이름도 뺀다(숨진 신임의 이름이 새 신임에게 다시 가지 않게). 이름을 나누는 것은 모든 열쇠를 지난 뒤 한 번에(명부 순서) — 뒤 열쇠의 기존 신임 이름과 겹치지 않게.
+10. **공석 항목의 `health` 는 100**(`readCarryover` 의 범위 [1, 100] — 왕복이 같도록, 신임이 100 으로 온다). 순직의 `cause` = `r.deathCause ?? mainCause(r.injuries)`. 결장이 끝나 `out 0` 이 되면 `cause null`.
+11. **조종·조타할 사람** = 역할의 그림 묶음 `'pilot'`(기장·부기장·정장). ⓑ(내리지 않는 자리가 모자람)는 섞인 부대(소방·의료 헬기, 구조정)만 — 경찰 헬기(전원 내리지 않음 — `fieldCrew` 가 전원)는 ⓐ 만 보고 첫 빈 자리(0번 기장)부터 채운다. 운용 판정(`operable`)은 모든 부대에 '조종 자리가 있으면 그 사람이 나와 있다'를 건다.
+12. 예비 인력의 지구력은 `tn.startStamina`(본문에 없음 — 명부와 같게), `senior: false`, 장비는 그 자리 사람의 장비 id 를 `kitFor(role, tn.airFull, ids)` 로(복구반장처럼 자리별 장비도 그대로), 섬광탄 `uses 0`.
+13. **예비 인력이 다 찬 부대도 배정의 −18 을 받는다** — `off` 자리가 `u.crew` 에 남아 `crewOk < fieldCrew.length`(본문 §11.2 의 결정 "결원 감점(−18)이 지금 규칙대로 걸린다", `dispatch/*` 는 고치지 않는다). 평균 지구력에는 결장자(100)와 예비 인력(시작 지구력)이 함께 든다.
+14. 2행(편성되었고 결장)의 `out` 은 앞 상태의 값 − 1(앞 상태가 없으면 `r.carryOut`). 결장한 교대는 경력(`shifts`·`incidents`)에 세지 않는다.
+
+**`status 'off'` 를 읽는 자리 (다시 훑은 결과)**: `crewReady`·`crewOk`·`unitArrived` 의 내리는 사람(`canDeploy`)·지구력 회복·`commander` 의 오는 부대 능력(`status === 'ok'`)·`crewHasKit`(기본 `okOnly` — `false` 로 부르는 곳 없음)은 이미 뺀다. 고친 곳: `debrief.buildReport` 의 `respondersHurt`, `resources.dispatchUnit` 의 출동 준비 시간(`fieldCrew` 안에서 off 가 아닌 첫 사람 — 결장이 없으면 `u.crew[0]` 와 같다), `resources.arrive` 의 운용 중단 문구 판정, `unitArrived` 의 도착 기록 `causes`, 위 7 의 둘. **남은 것(단계 6·7)**: 화면 `panels.tsx` 의 대원 칩 `cchip ${r.status}`(off 클래스가 붙는다 — 스타일은 단계 6), 대원 정보창의 부상 칸 조건 `r.status !== 'ok'`(결장자에게도 참 — 단계 6 이 고친다), `view/triage.ts` 의 상태 글(off 는 빈 칸으로 떨어진다), H1 `roster` 의 off 대원 `out`(지금 `outShifts` 가 0 — 단계 7). R3 의 짝 맺기(`doctrine.ts` 주석의 "`u.crew.length === minCrew` 면 min 열" — 3단계 `pairUp`)는 예비 인력이 붙으면 길이가 늘고 결장자가 `u.crew` 에 남는다는 것을 알아야 한다.
+
+**시험** (`tests/persistence.test.ts` 21 → 39개, 혼자 19초쯤 — 다른 묶음과 함께 도는 기계에서 교대 열둘의 짧은 연속이 기본 `hookTimeout` 10초를 넘어 `beforeAll` 마다 `HOOK_MS` 240초를 주었다): 2(결장 교대 수 = `outShifts` 표 — 다침 1·쓰러짐 3·병원 인계 2·후송 중 2 / 다음 교대에 off·지구력 100·현장에 내리지 않음(100틱마다)·crewReady −1·예비 인력 없음·`injured` 로 출근하는 사람 0 / 그다음 X 돌아옴(85)·Y −1 / 기록의 일대일·결원 도착·대원 피해 목록), 7(성장 0 < dExp ≤ 0.02 · 규모 5 → 1 → 5 · 공석 → replaceIn 1 → 신임 → 같은 rid 에 신임과 '배치' 줄 한 번 · 개인 장비 점검), 8 의 결원 부분(결장 없음 → 예비 인력 0 · 헬기 기장 자리 예비 인력 · 예비 인력 넷 → `short`(배정에서 빠지지 않음)·`empty` crew·pilot · 같은 입력 = 같은 해시(그대로·JSON) · 운용 중단 부대는 출동 0 · 출동 준비 시간 · 운용 중단 문구 · 결장 상한 · 섬광탄 다시 나누기), 6·10 의 대원 몫(계보 3 × 교대 4 — 예외 0·사건 모두 닫힘·왕복 지문·결장 ≤ 상한·요약 줄 하나, 적용 목록과 기록의 일대일·결장자 모두 기록에·결원 도착의 원인). 단계 1 의 시험 하나("교대 시작 문구")는 결장이 적용되므로 기대를 바꿨다(괄호의 수까지 보고, 결장·공석이 없는 상태면 지금 문구와 같다). **결과 해시를 숫자로 박은 시험은 없다**(이어받은 교대의 재현성은 같은 입력 두 번으로 본다).
+
+**수치**
+
+- 해시 목록 158교대(scratchpad `wf-persist/hashlist.ts` — 단계 1 과 같은 목록): 기준 `base632-hashes.txt`(`632d785` 를 `git archive` 로 풀어 잰 것) ↔ 변경 뒤 `after2-hashes.txt` — **158줄 모두 한 글자도 다르지 않다**(`report.hash` · `JSON.stringify(report)` 의 FNV · 기록 수 · 명부 지문).
+- 진단(기준 아님 — `wf-persist/chain2.ts`, 계보 × 교대): 보통 4 × 6 — 교대마다 결장 0~0.5명·예비 인력 0~0.25·결원 도착 0~0.75건, 짧음·운용 중단·조기 복귀 0. 극한 3 × 5 — 결장 3~4명·공석 0.3~0.7·예비 인력 1.3~2.3·결원 도착 7~9건·신임 0.3~0.7, 짧음·운용 중단·조기 복귀 0, 예외 0.
+- 성장(K1): 보통 6교대 1512명의 교대당 `xpGained` — 가운데 0.004 · 상위 10% 0.020 · 최대 0.060 · 0 인 비율 0.39(극한: 0.008 · 0.029 · 0.090). 가장 많이 큰 대원의 `dExp` 는 6교대 뒤 0.05(극한 5교대 0.06) — 열 교대면 0.08 쯤으로 본문의 목표("+0.15 안팎")보다 낮다. **단계 8 이 `GAIN_K` 를 올릴지 정한다**(§6.4 의 3번 손잡이의 반대 방향 — 지금 값은 본문의 처음 값 그대로).
+- 관문 `npm run check` 통과(마지막 코드 커밋에서): 파일 19 · 642개 통과 + 건너뜀 1, vitest 432초 · 전체 7분 37초(다른 묶음과 함께 도는 기계). 첫 시도는 짧은 연속의 `beforeAll` 이 기본 `hookTimeout` 10초에 걸려 실패했다 — 예산(`HOOK_MS`)을 준 뒤 통과. `sweep 40 --check` 의 출력은 `632d785` 를 풀어 돌린 같은 명령과 줄마다 같다(교대당 시간 줄만 다르다 — 사용자 CPU 45.9초 / 변경 뒤 44.9초, `applyCrewCarry` 는 첫 줄에서 돌아간다).
+
+**뒤 단계가 이어받을 자리**
+
+- **단계 3**: `applyCrewCarry` 의 주석 자리(⑤)에 펌프 범위·정비(oos '정비 중', `u.readyAt`, `cs.svc`) — 예비 인력은 `u.readyAt !== undefined` 인 부대를 건너뛴다. 정비 뒤 운용 복귀는 `operable(sim, u)`. 창고 지급은 예비 인력 뒤에, 나온 사람에게만(위 5). `carryNoteText` 에 `service`·`rushed`·`stock` 의 `case`, 시험의 `mustSay` 에도. `checkCarryLog` 의 가용 부대 수는 `service` 를 이미 센다. 펌프 고장 수 `u.pumpFails` 는 executor 한 줄.
+- **단계 7**: H1 `roster` 의 off 대원 `out` = `crewNext` 의 값, `CarrySummary.grown`(위 4 의 문턱).
+- I1-b b1·b2 뒤: `carryNoteText` 의 기록에 `tag: 'carry'`(요약 줄 제외).

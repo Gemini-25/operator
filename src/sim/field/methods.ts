@@ -14,12 +14,15 @@
 // 단계 0 (틀)에서 표의 모든 줄을 두고 can 을 NOT_YET(거짓)으로 비워 두었다. 방법을 구현하는 단계가 그 줄의 can·situ·skill 을 채운다
 // (수난 1a~1c · 문 2 · 구출·탐지 3 · 화재 4 · 무장 5 · 응급·가스 6). 켜진 줄: 단계 1a — 수난 구조의 물가 방법 여섯(hand·pole·ring·rope·improvise·catch),
 // 단계 1b — 헤엄(swim)·줄 확보(tend), 단계 1c — 보트(boat). 물 위의 이동 비용 swimCost·boatCost 는 실행기(executor.costFor)가 쓴다.
-// 배정(agents.fitFor 의 waterRescue)이 methodFit 을, 실행부(methodRun.runWaterRescue)가 chooseMethod·methodStillFits 를 부른다.
+// 단계 2 — 문·통로(kick·irons·ram·hydraulic·handClear·toolClear)와 폭파 진입(charge — 조건 chargeOk: 믿음·생김새·동료의 겉만).
+// 단계 3 — 구출(manual·basic·spread·roof·rapid·haul·tunnel·airbag·shore)과 수색·탐지(call·listen·line·hail·thermal — 배율 searchMul).
+// 배정(agents.fitFor 의 waterRescue)이 methodFit 을, 실행부(methodRun.runWaterRescue · executor.workOnBlocker)가 chooseMethod·methodStillFits 를 부른다.
+// 방 진입의 잠긴 문(executor.lockedRoomDoor)은 문 여는 사람을 고를 때 모인 대원마다 chooseMethod 의 1등 점수를 견준다.
 
 import type { Sim } from '../engine';
 import { hashStr } from '../rng';
 import { T } from '../types';
-import type { CasBelief, FieldAgent, KitId, MethodId, MethodWhy, Responder, Scene, Task, Unit, UnitKind, WorkItem, WorkKind } from '../types';
+import type { CasBelief, FieldAgent, KitId, MethodId, MethodWhy, Responder, Scene, SignBelief, Task, Unit, UnitKind, WorkItem, WorkKind } from '../types';
 import { clamp, josa } from '../util';
 import { SHARED, hoistOver, kitCount, kitName, swimBonus } from './gear';
 import { staticPass, tileOf } from './grid';
@@ -108,6 +111,138 @@ function catchEta(c: MethodCtx): number {
   return pt === null ? Infinity : Math.max(0, pt.x - 1 - c.cb.x) / c.flow;
 }
 
+// ── 문·통로의 조건·배율 (§4.2·§4.2a) — 대상 칸(tg.tile)의 생김새와 믿음만 ──
+/** 늘 고를 수 있다 (맨몸·평소 방법과, 장비만 있으면 되는 방법) */
+const ALWAYS = (): boolean => true;
+/** 무장 현장에서 믿음에 대치·교전 중인 용의자가 있으면 시끄러운 방법(발차기·충격기) ×0.7 — 까닭 quiet 는 조용한 방법(할리건·유압)이 이겼을 때 */
+const quietMul = (c: MethodCtx): number => (c.s.kind === 'armed' && hotBelief(c.a) ? 0.7 : 1);
+/** 폭파 진입의 거리 (칸): 믿음 속 사람이 이 안에 없어야 한다 · 가스·분진·구조 조짐과 살아 있는 장치가 이 안에 없어야 한다 */
+export const CHARGE_NEAR = 2.5, CHARGE_FAR = 6;
+/** 그 칸의 네 이웃에 문 칸이 있는가 (문을 막은 잔해 — 생김새) */
+function byDoor(s: Scene, i: number): boolean {
+  const w = s.w, x = i % w;
+  return (x > 0 && s.tiles[i - 1] === T.DOOR) || (x < w - 1 && s.tiles[i + 1] === T.DOOR) || (i >= w && s.tiles[i - w] === T.DOOR) || (i + w < s.tiles.length && s.tiles[i + w] === T.DOOR);
+}
+/** 문(또는 잔해) 칸 양쪽의 구역 (생김새) */
+function sidesOf(s: Scene, i: number): number[] {
+  const w = s.w, out: number[] = [];
+  for (const j of [i, i - 1, i + 1, i - w, i + w]) if (j >= 0 && j < s.region.length && s.region[j] >= 0 && out.indexOf(s.region[j]) < 0) out.push(s.region[j]);
+  return out;
+}
+/**
+ * 폭파 진입을 고를 수 있는가 (§4.2a 의 조건 ①~⑤ — 믿음·생김새·동료의 겉만. 장비는 kits: ['charge']):
+ *   대상: 문은 믿음 blk 'locked', 잔해는 믿음 blk 'debris' 이고 네 이웃에 문 칸(문을 막은 것 — 복도를 가로지른 잔해는 아니다)
+ *   ① 믿음 속 살아 있는 구조 대상(인질 포함)이 2.5칸 안에 없고, 같은 칸을 다른 동료가 맡고 있지 않다(문·잔해 임무나 하위 작업)
+ *   ② 믿음 속 가스·분진 조짐(단계 ≥ 1)이 6칸 안이나 문 양쪽 구역에 없고(자리를 모르는 조짐은 어디든 막는다), 살아 있는 누출이 6칸 안에 없다
+ *   ③ 살아 있는 장치(폭발물)가 6칸 안에 없다 ④ 붕괴 현장이 아니고 구조 조짐(단계 ≥ 1)이 6칸 안에 없다 ⑤ 무장 현장은 진입이 정해진 뒤에만
+ */
+function chargeOk(c: MethodCtx): boolean {
+  const s = c.s, i = c.tg.tile;
+  if (i < 0 || s.kind === 'collapse') return false;
+  if (s.kind === 'armed' && !s.entryOrdered) return false;
+  const blk = c.a.beliefs.val<string>('blk', i);
+  if (c.work === 'force' ? blk !== 'locked' : blk !== 'debris' || !byDoor(s, i)) return false;
+  const x = i % s.w, y = (i / s.w) | 0;
+  const cs = c.a.beliefs.list('cas');
+  for (let k = 0; k < cs.length; k++) { const v = cs[k].value as CasBelief; if (v.band < 3 && v.where === 'scene' && Math.hypot(v.x - x, v.y - y) <= CHARGE_NEAR) return false; }
+  const ag = s.agents;
+  for (let k = 0; k < ag.length; k++) {
+    const b = ag[k], bt = b.task;
+    if (b === c.a || b.status !== 'active' || bt === null) continue;
+    if (((bt.kind === 'force' || bt.kind === 'clear') && bt.tile === i) || (bt.sub !== null && bt.sub.tile === i)) return false;
+  }
+  const sides = sidesOf(s, i);
+  const sg = c.a.beliefs.list('sign');
+  for (let k = 0; k < sg.length; k++) {
+    const v = sg[k].value as SignBelief;
+    if (v.level < 1 || (v.kind !== 'gas' && v.kind !== 'dust' && v.kind !== 'struct' && v.kind !== 'bldg')) continue;
+    if (v.x < 0 || Math.hypot(v.x - x, v.y - y) <= CHARGE_FAR || ((v.kind === 'gas' || v.kind === 'dust') && sides.indexOf(v.region) >= 0)) return false;
+  }
+  const hz = c.a.beliefs.list('haz');
+  for (let k = 0; k < hz.length; k++) {
+    const v = hz[k].value as { kind: string; active: boolean; x: number; y: number };
+    if (v.active && (v.kind === 'bomb' || v.kind === 'leak' || v.kind === 'gas') && Math.hypot(v.x - x, v.y - y) <= CHARGE_FAR) return false;
+  }
+  return true;
+}
+
+// ── 구출의 범주·조건 (§4.3) — 대상 믿음(cb)과 haz 사실의 sub(균열 crack · 밸브 valve · 차량 연료 fuel)만 ──
+/** 믿음: 대상이 차에 갇혔다 */
+const inVeh = (c: MethodCtx): boolean => c.cb !== null && c.cb.veh !== undefined;
+/** 붕괴 현장의 (차량이 아닌) 고립자 */
+const inCollapse = (c: MethodCtx): boolean => c.s.kind === 'collapse' && !inVeh(c);
+/** 믿음: 구덩이(맨홀) 아래 */
+const inPit = (c: MethodCtx): boolean => c.cb !== null && c.cb.pit === true;
+/** 대상 믿음 위치에서 R 칸 안에 살아 있는 누출(haz leak)이 있는가 — sub 가 subs 가운데 하나 */
+function leakNear(c: MethodCtx, subs: readonly string[], R = 4): boolean {
+  if (c.cb === null) return false;
+  const hz = c.a.beliefs.list('haz');
+  for (let k = 0; k < hz.length; k++) {
+    const v = hz[k].value as { kind: string; active: boolean; x: number; y: number; sub?: string };
+    if (v.kind === 'leak' && v.active && v.sub !== undefined && subs.indexOf(v.sub) >= 0 && Math.hypot(v.x - c.cb.x, v.y - c.cb.y) <= R) return true;
+  }
+  return false;
+}
+/** 급박 구출의 조건: 차 곁 4칸 안의 살아 있는 연료·가스 누출, 대상이 있는 구역의 믿음 불 > 0.3, 또는 선 자리의 연기 > 0.3 (도착 재선택에서) */
+function rapidOk(c: MethodCtx): boolean {
+  if (c.cb === null) return false;
+  if (inVeh(c) && leakNear(c, ['fuel', 'valve'])) return true;
+  const i = Math.round(c.cb.y) * c.s.w + Math.round(c.cb.x), rg = i >= 0 && i < c.s.region.length ? c.s.region[i] : -1;
+  if (rg >= 0 && (c.a.beliefs.val<number>('fire', rg) ?? 0) > 0.3) return true;
+  return c.sense.smoke > 0.3;
+}
+/** 지붕 절단의 짝: 같은 작업에 유압 구조기를 든 동료가 2칸 안에 있다 */
+const spreaderMate = (c: MethodCtx): boolean => c.mates.some((b) => kitCount(c.sim, b.rid, 'spreader') > 0 && Math.hypot(b.x - c.a.x, b.y - c.a.y) <= 2);
+/** 같은 차(veh)에 갇혔다고 믿는 사람의 수 */
+function sameVehTrapped(c: MethodCtx): number {
+  if (c.cb === null || c.cb.veh === undefined) return 0;
+  let n = 0;
+  const cs = c.a.beliefs.list('cas');
+  for (let k = 0; k < cs.length; k++) { const v = cs[k].value as CasBelief; if (v.veh === c.cb.veh && v.mob === 'trapped') n++; }
+  return n;
+}
+/**
+ * 지지대를 세울 균열 (§4.3 shore): 대상 믿음 위치 4칸 안의 살아 있는 균열(haz leak · sub crack) 가운데 가장 가까운 것의 id — 그 균열을 동료가 보강(mitigate)하고 있으면 고르지 않는다.
+ * 없으면 -1. 실행부가 지지대를 다 세운 순간 이 균열을 보강한다(executor 의 구출)
+ */
+export function shoreCrack(s: Scene, a: FieldAgent, cb: CasBelief | null): number {
+  if (cb === null) return -1;
+  let best = -1, bd = 4 + 1e-9;
+  const hz = a.beliefs.list('haz');
+  for (let k = 0; k < hz.length; k++) {
+    const f = hz[k], v = f.value as { kind: string; active: boolean; x: number; y: number; sub?: string };
+    if (v.kind !== 'leak' || !v.active || v.sub !== 'crack') continue;
+    const d = Math.hypot(v.x - cb.x, v.y - cb.y);
+    if (d > bd) continue;
+    let busy = false;
+    for (let j = 0; j < s.agents.length; j++) { const b = s.agents[j]; if (b !== a && b.status === 'active' && b.task !== null && b.task.kind === 'mitigate' && b.task.prop === f.id) { busy = true; break; } }
+    if (!busy) { bd = d; best = f.id; }
+  }
+  return best;
+}
+const shoreCrackOf = (c: MethodCtx): number => shoreCrack(c.s, c.a, c.cb);
+/** 그 구역의 칸 가운데 나무 칸의 몫 (생김새) */
+function treeShare(s: Scene, region: number): number {
+  if (region < 0 || region >= s.regions.length) return 0;
+  const ts = s.regions[region].tiles;
+  if (!ts.length) return 0;
+  let n = 0;
+  for (let k = 0; k < ts.length; k++) if (s.tiles[ts[k]] === T.TREE) n++;
+  return n / ts.length;
+}
+/** 수색 방법의 탐지 배율 (§4.4): 경유점에 멈춘 동안(t.wait > 0)만 — 청음 ×0.75 · 확성기 ×0.5 (둘 다 소리를 낼 수 있는 대상만 — voice) · 열화상 ×0.6 */
+const SEARCH_MUL: Partial<Record<MethodId, { k: number; voice: boolean }>> = { listen: { k: 0.75, voice: true }, hail: { k: 0.5, voice: true }, thermal: { k: 0.6, voice: false } };
+const NO_MUL = { k: 1, voice: false };
+/**
+ * 수색 방법이 은폐에 곱하는 값 (agents.perceive 가 구조 대상마다 쓴다 — voice 면 체력 30 넘는 대상에게만). 대원의 임무·방법·멈춤만 본다(순수 함수).
+ * markCovered(수색 완료 판정)와 단서 탐지에는 곱하지 않는다
+ */
+export function searchMul(a: FieldAgent): { k: number; voice: boolean } {
+  const t = a.task;
+  if (t === null || t.kind !== 'search' || t.method === undefined || !(t.wait > 0)) return NO_MUL;
+  return SEARCH_MUL[t.method] ?? NO_MUL;
+}
+
 /**
  * 방법 표 (§4). Record 라 MethodId 를 늘리면 컴파일이 줄을 강제한다. 같은 점수면 이 표의 순서가 이긴다.
  * 수치(pref·risk)는 설계서의 시작값이다. 조건(can)·배율(situ·skill)은 그 방법을 구현하는 단계가 채운다.
@@ -137,30 +272,36 @@ export const METHOD: Record<MethodId, MethodDef> = {
   boat: row('boat', ['waterRescue'], '보트 접근', '보트', '보트 접근', '보트로 다가가', ['raft'], 0.78, 0.08, false,
     { altUnit: ['boat'], can: (c) => !unitBoats(c), situ: (c) => (c.weak ? 1.15 : 1) * (c.flow >= FAST_FLOW ? 1.1 : 1) * (c.reach > THROW_REACH ? 1.2 : 1) }),
   hoist: row('hoist', ['hoist'], '헬기 호이스트', '호이스트', '호이스트 인양', '호이스트로 끌어올려', [], 0, 0, false, REC),      // R1 의 공중 임무 — methodRun.recordAir 가 기록만 한다
-  // ── 문·통로 force·clear, 이동 중 하위 작업 (§4.2·§4.2a) ──
-  kick: row('kick', ['force'], '발로 차기·어깨', '발차기', '문 걷어차기', '발로 차', [], 0.5, 0, false),
-  irons: row('irons', ['force'], '할리건·도끼', '할리건', '문 강제 개방', '할리건으로', ['irons'], 0.85, 0, true),
-  ram: row('ram', ['force'], '충격기', '충격기', '충격기 개방', '충격기로', ['breachKit'], 0.8, 0, false),
-  hydraulic: row('hydraulic', ['force'], '유압 개방기', '유압 개방', '유압 개방', '유압 개방기로', ['spreader'], 0.9, 0, false),
-  handClear: row('handClear', ['clear'], '손으로 치우기', '손 제거', '잔해 제거', '손으로 잔해를 치워', [], 0.55, 0, true),
-  toolClear: row('toolClear', ['clear'], '장비로 절단·지렛대', '장비 제거', '잔해 절단', '장비로 잔해를 잘라', ['spreader', 'irons', 'lightRescue', 'breachKit'], 0.8, 0, true),
-  charge: row('charge', ['force', 'clear'], '폭파 진입', '폭파', '폭파 진입', '폭파 장약으로', ['charge'], 0.8, 0.1, false),      // 사용자 결정 2026-11-15 — 실행부는 단계 2
-  // ── 구출 extricate (§4.3) ──
-  manual: row('manual', ['extricate'], '수동 구출', '수동 구출', '수동 구출', '맨손으로 끌어내', [], 0.5, 0, false),
-  basic: row('basic', ['extricate'], '손 공구 구출', '손 공구', '구조 작업', '손 공구로', ['irons', 'lightRescue'], 0.7, 0, true),
-  spread: row('spread', ['extricate'], '문 벌리기', '문 벌리기', '유압 전개', '유압 구조기로 문을 벌려', ['spreader'], 0.85, 0, true),
-  roof: row('roof', ['extricate'], '지붕 절단', '지붕 절단', '지붕 절단', '지붕을 잘라 내', ['spreader'], 0.8, 0, false),
-  rapid: row('rapid', ['extricate'], '급박 구출', '급박 구출', '급박 구출', '급히 끌어내', [], 0.95, 0.05, false),      // risk 는 "0 보다 크다"만 설계서에 있다 — 값은 단계 3 이 정한다
-  haul: row('haul', ['extricate'], '줄로 끌어올리기', '끌어올리기', '줄로 끌어올리기', '줄로 끌어올려', ['rope'], 0.9, 0, false),
-  tunnel: row('tunnel', ['extricate'], '손으로 파기', '손 파기', '잔해 파내기', '손으로 잔해를 파내', [], 0.5, 0.1, false),      // risk: 위와 같다
-  airbag: row('airbag', ['extricate'], '에어백 들기', '에어백', '에어백 설치', '에어백으로 들어 올려', ['airbag'], 0.85, 0, false),
-  shore: row('shore', ['extricate'], '지지대 먼저', '지지대', '지지대 설치', '지지대를 먼저 세우고', ['shoring'], 0.9, 0, false),
-  // ── 수색·탐지 search (§4.4) ──
-  call: row('call', ['search'], '호출·청취 수색', '호출 수색', '수색', '부르며 훑어', [], 0.6, 0, true),      // 지금의 방법 (실내·붕괴)
-  listen: row('listen', ['search'], '청음 탐지', '청음', '청음 탐지', '청음 장비로', ['searchKit'], 0.85, 0, false),
-  line: row('line', ['search'], '줄 수색', '줄 수색', '수색', '줄지어 훑어', [], 0.6, 0, true),      // 지금의 방법 (야외)
-  hail: row('hail', ['search'], '확성기 호출 수색', '확성기', '확성기 호출', '확성기로 불러', ['megaphone'], 0.75, 0, false),
-  thermal: row('thermal', ['search'], '열화상 수색', '열화상', '열화상 수색', '열화상 카메라로', ['tic'], 0.8, 0, false),
+  // ── 문·통로 force·clear, 이동 중 하위 작업 (§4.2·§4.2a). 단계 2 가 켰다 — 속도는 실행부(methodRun.blockerRate), 폭파 진입은 methodRun.runCharge ──
+  kick: row('kick', ['force'], '발로 차기·어깨', '발차기', '문 걷어차기', '발로 차', [], 0.5, 0, false,      // 맨몸 방법 (늘 남는다)
+    { can: ALWAYS, situ: quietMul }),
+  irons: row('irons', ['force'], '할리건·도끼', '할리건', '문 강제 개방', '할리건으로', ['irons'], 0.85, 0, true, { can: ALWAYS }),      // 조용하다
+  ram: row('ram', ['force'], '충격기', '충격기', '충격기 개방', '충격기로', ['breachKit'], 0.8, 0, false,      // 경찰은 0.9 (교본 선호) — 끝날 때 13칸 안의 용의자가 문 쪽을 돌아본다
+    { can: ALWAYS, situ: (c) => quietMul(c) * (c.r.dept === 'police' ? 0.9 / 0.8 : 1) }),
+  hydraulic: row('hydraulic', ['force'], '유압 개방기', '유압 개방', '유압 개방', '유압 개방기로', ['spreader'], 0.9, 0, false, { can: ALWAYS }),      // 시작할 때 장비 확인 (숨은 고장 → broken)
+  handClear: row('handClear', ['clear'], '손으로 치우기', '손 제거', '잔해 제거', '손으로 잔해를 치워', [], 0.55, 0, true, { can: ALWAYS }),      // 맨몸 방법 (늘 남는다)
+  toolClear: row('toolClear', ['clear'], '장비로 절단·지렛대', '장비 제거', '잔해 절단', '장비로 잔해를 잘라', ['spreader', 'irons', 'lightRescue', 'breachKit'], 0.8, 0, true, { can: ALWAYS }),
+  charge: row('charge', ['force', 'clear'], '폭파 진입', '폭파', '폭파 진입', '폭파 장약으로', ['charge'], 0.8, 0.1, false,      // 사용자 결정 2026-11-15 (§4.2a) — 조건일 때만. 진입 순간 ×1.3 · 문을 막은 잔해 ×1.4 (시끄러운 방법의 ×0.7 은 걸지 않는다)
+    { can: chargeOk, situ: (c) => (c.s.kind === 'armed' && c.s.entryOrdered ? 1.3 : 1) * (c.work === 'clear' ? 1.4 : 1) }),
+  // ── 구출 extricate (§4.3) — 단계 3 이 켰다. 범주는 믿음으로: 차량(veh) · 붕괴(차량 아님) · 구덩이(pit) · 그 밖. 속도 k 는 실행부(methodRun.extricateRate) ──
+  manual: row('manual', ['extricate'], '수동 구출', '수동 구출', '수동 구출', '맨손으로 끌어내', [], 0.5, 0, false, { can: (c) => !inCollapse(c) }),      // 맨몸 방법 (차량·구덩이·그 밖)
+  basic: row('basic', ['extricate'], '손 공구 구출', '손 공구', '구조 작업', '손 공구로', ['irons', 'lightRescue', 'spreader'], 0.7, 0, true, { can: ALWAYS }),      // 지금의 방법 — 속도는 R1 의 식 그대로(가진 가장 좋은 구출 도구). 유압 구조기만 든 대원도 구덩이·그 밖에서 이것으로 한다
+  spread: row('spread', ['extricate'], '문 벌리기', '문 벌리기', '유압 전개', '유압 구조기로 문을 벌려', ['spreader'], 0.85, 0, true, { can: inVeh }),
+  roof: row('roof', ['extricate'], '지붕 절단', '지붕 절단', '지붕 절단', '지붕을 잘라 내', ['spreader'], 0.8, 0, false,      // 같은 차의 고립자가 둘 이상이거나 중상 이상이면 ×1.3 (까닭 team)
+    { can: (c) => inVeh(c) && spreaderMate(c), situ: (c) => (c.cb !== null && (c.cb.band >= 1 || sameVehTrapped(c) >= 2) ? 1.3 : 1) }),
+  rapid: row('rapid', ['extricate'], '급박 구출', '급박 구출', '급박 구출', '급히 끌어내', [], 0.95, 0.05, false, { can: rapidOk }),      // 조건일 때만 (까닭 danger). risk 0.05 — 끝날 때 대상 피해 10(척추 보호 없이)
+  haul: row('haul', ['extricate'], '줄로 끌어올리기', '끌어올리기', '줄로 끌어올리기', '줄로 끌어올려', ['rope'], 0.9, 0, false, { can: inPit }),
+  tunnel: row('tunnel', ['extricate'], '손으로 파기', '손 파기', '잔해 파내기', '손으로 잔해를 파내', [], 0.5, 0.1, false, { can: inCollapse }),      // 붕괴의 맨몸 방법. risk 0.1 — 균열 곁이면 잔해가 다시 흘러내릴 수 있다
+  airbag: row('airbag', ['extricate'], '에어백 들기', '에어백', '에어백 설치', '에어백으로 들어 올려', ['airbag'], 0.85, 0, false, { can: inCollapse }),
+  shore: row('shore', ['extricate'], '지지대 먼저', '지지대', '지지대 설치', '지지대를 먼저 세우고', ['shoring'], 0.9, 0, false,      // 조건일 때만 (까닭 danger) — 대상 4칸 안에 살아 있는 균열, 그 균열을 동료가 보강하고 있지 않다
+    { can: (c) => inCollapse(c) && shoreCrackOf(c) >= 0 }),
+  // ── 수색·탐지 search (§4.4) — 단계 3 이 켰다. 탐지 배율은 perceive 가 searchMul 로 곱한다(경유점에 멈춘 동안) ──
+  call: row('call', ['search'], '호출·청취 수색', '호출 수색', '수색', '부르며 훑어', [], 0.6, 0, true, { can: (c) => c.s.kind !== 'search' }),      // 지금의 방법 (실내·붕괴)
+  listen: row('listen', ['search'], '청음 탐지', '청음', '청음 탐지', '청음 장비로', ['searchKit'], 0.85, 0, false, { can: (c) => c.s.kind === 'collapse' }),
+  line: row('line', ['search'], '줄 수색', '줄 수색', '수색', '줄지어 훑어', [], 0.6, 0, true, { can: (c) => c.s.kind === 'search' }),      // 지금의 방법 (야외)
+  hail: row('hail', ['search'], '확성기 호출 수색', '확성기', '확성기 호출', '확성기로 불러', ['megaphone'], 0.75, 0, false, { can: (c) => c.s.kind === 'search' }),
+  thermal: row('thermal', ['search'], '열화상 수색', '열화상', '열화상 수색', '열화상 카메라로', ['tic'], 0.8, 0, false,      // 조건일 때만: 밤이거나 그 구역의 나무 칸이 30% 넘는다
+    { can: (c) => c.s.kind === 'search' && (c.sim.weather === 'night' || treeShare(c.s, c.tg.region) > 0.3) }),
   // ── 화재 suppress (§4.5): 다섯의 risk 는 모두 0 (노출은 실행의 연기·열 피해로 따로 들어간다) ──
   interior: row('interior', ['suppress'], '내부 공격', '내부 공격', '화재 진압', '안으로 들어가', ['hose'], 0.85, 0, true),      // 지금의 방법
   defensive: row('defensive', ['suppress'], '외부 방어 방수', '외부 방수', '외부 방수', '밖에서 방수해', ['hose'], 0.7, 0, false),

@@ -126,12 +126,20 @@ export function regionNameAt(s: Scene, x: number, y: number): string {
   return isIndoor(s.tiles[i]) ? '건물 내부' : '외부';
 }
 
+/** (R2 단계 3) 그 사람이 열린 맨홀(소품 roadDebris · skin manhole) 칸에 있는가 — 갇힌 사람에게만 묻는다 */
+function inManhole(s: Scene, c: Casualty): boolean {
+  const x = Math.round(c.x), y = Math.round(c.y);
+  for (let k = 0; k < s.props.length; k++) { const p = s.props[k]; if (p.kind === 'roadDebris' && p.skin === 'manhole' && !p.removed && p.x === x && p.y === y) return true; }
+  return false;
+}
 export function casFact(sim: Sim, s: Scene, c: Casualty, src: string): Fact {
   const mob = c.mob === 'trapped' ? 'trapped' : c.walking ? 'mobile' : 'immobile';
   const b = band(c.health);
   // water: (R2) 물속인가 — 본 그대로. 이 값은 늘 mob·band 와 함께 바뀌므로(물에 빠짐·건져 냄·휩쓸려 숨짐) 믿음의 "새 소식" 판정을 바꾸지 않는다.
   // drift: (R2 1a) 떠내려가는 속도 — 본 그대로(물 밖이면 0). 떠내려가는 동안은 그대로이고 걸려 멈추는 순간 0 이 된다 — 그때 보고가 한 번 더 나간다(방법을 고르는 판단부가 물살을 이것으로 본다)
-  const v: CasBelief = { x: Math.round(c.x), y: Math.round(c.y), mob, band: b, where: c.where, treated: c.treated, trappedDone: c.mob !== 'trapped', tq: c.treatQ >= 0.6 ? 2 : c.treated ? 1 : 0, water: c.inWater === true, drift: c.inWater ? c.drift ?? 0 : 0 };
+  // veh·pit: (R2 단계 3) 갇힌 차량의 소품 id · 맨홀 아래 — 본 그대로 (구출 방법의 범주를 대원이 믿음으로 가린다). 늘 mob 과 함께 바뀐다(구출이 끝나면 함께 사라진다)
+  const v: CasBelief = { x: Math.round(c.x), y: Math.round(c.y), mob, band: b, where: c.where, treated: c.treated, trappedDone: c.mob !== 'trapped', tq: c.treatQ >= 0.6 ? 2 : c.treated ? 1 : 0, water: c.inWater === true, drift: c.inWater ? c.drift ?? 0 : 0,
+    veh: c.inVehicle !== null && c.mob === 'trapped' ? c.inVehicle : undefined, pit: c.mob === 'trapped' && inManhole(s, c) ? true : undefined };
   const mobT = c.dead ? '' : mob === 'trapped' ? ' · 고립' : mob === 'mobile' ? ' · 자력 대피 중' : c.where === 'scene' ? ' · 거동 불가' : '';
   const whereT = c.where === 'safe' ? '안전 구역' : c.where === 'loaded' ? '구급차 탑승' : c.where === 'carried' ? '이송 중' : regionNameAt(s, c.x, c.y);
   return mkFact('cas', c.id, v, src, sim.t, 1, true, `구조 대상 ${c.label}: ${whereT}${mobT} · ${BAND_NAME[b]}`);
@@ -249,12 +257,13 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
   const aloft = a.aloft === true;
   const sees = (x: number, y: number): boolean => (aloft ? !isIndoor(s.tiles[tileOf(s, x, y)]) : los(s, a.x, a.y, x, y));
   const meter = hasKit(sim, a.rid, 'gasMeter');      // 가스 측정기: 새는 밸브를 벽 너머 7칸에서 알아챈다
+  const sm = searchMul(a);      // (R2 §4.4) 수색 방법의 탐지 배율 — 경유점에 멈춘 동안(청음·확성기는 소리를 낼 수 있는 대상만)
   for (let ci = 0; ci < s.casualties.length; ci++) { const c = s.casualties[ci];      // 색인 순회: 최적화 전 단계에서 반복자 객체를 만들지 않는다 (순서는 같다)
     if (c.where === 'hospital' || c.where === 'loaded') continue;
     const d = dist(a.x, a.y, c.x, c.y);
     if (d > v) continue;
     const known = c.tDiscovered >= 0;
-    const dr = known ? v : detectRadius(sim, s, a, c.concealment) * boost;
+    const dr = known ? v : detectRadius(sim, s, a, sm.k < 1 && (!sm.voice || c.health > 30) ? c.concealment * sm.k : c.concealment) * boost;
     if (d > dr || !sees(c.x, c.y)) continue;
     let fresh = sim.t - c.tDiscovered < 2.5;      // 방금 누군가 발견을 알렸다면 같은 내용을 되풀이하지 않는다
     if (!known) { discover(sim, s, I, a, c); fresh = true; }
@@ -357,7 +366,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
         const cur = a.beliefs.get('haz', p.id);
         const where = regionNameAt(s, p.x, p.y);
         const text = p.kind === 'valve' ? (active ? `${where} 배관에서 가스 누출 확인 — 밸브 차단 필요` : p.ignited ? '누출 가스 발화' : '가스 밸브 차단 확인') : active ? `${where} 구조물 균열 확인 — 추가 붕괴 위험, 보강 필요` : '균열부 보강 확인';
-        if (!cur || cur.value.active !== active) learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active, x: p.x, y: p.y }, me, sim.t, 1, true, text));
+        if (!cur || cur.value.active !== active) learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active, x: p.x, y: p.y, sub: p.kind === 'valve' ? 'valve' : 'crack' }, me, sim.t, 1, true, text));      // sub: (R2 §4.3) 밸브·균열을 판단부가 가린다
       }
     } else if (p.kind === 'bomb') {
       // 폭발물로 보이는 물건: 가까이에서 직접 봐야 알아본다
@@ -368,7 +377,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
       if (p.leakRate && d <= (r.judgment >= 0.45 ? 2.8 : 1.7)) {
         const active = !p.mitigated && !p.ignited;
         const cur = a.beliefs.get('haz', p.id);
-        if (!cur || cur.value.active !== active) learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active, x: p.x, y: p.y }, me, sim.t, 1, true, active ? '차량 연료 누출 확인 — 발화 위험' : p.ignited ? '누출 연료 발화' : '연료 누출 조치 완료'));
+        if (!cur || cur.value.active !== active) learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active, x: p.x, y: p.y, sub: 'fuel' }, me, sim.t, 1, true, active ? '차량 연료 누출 확인 — 발화 위험' : p.ignited ? '누출 연료 발화' : '연료 누출 조치 완료'));
       }
       if (p.emptySeat && d <= 2 && r.judgment >= 0.33 && !a.beliefs.get('evid', p.id)) learn(sim, a, mkFact('evid', p.id, { kind: 'emptySeat' }, me, sim.t, 0.8, true, '운전석이 비어 있음 — 탑승자가 튕겨 나갔을 가능성'));
     } else if (p.kind === 'clue') {
@@ -740,7 +749,7 @@ export function nearDoor(s: Scene, i: number): boolean { return doorAt(s, i) !==
 //    (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다) ──
 import { docFit } from './doctrine';
 // (R2 1a) 대응 방법의 판단부 — 수난 구조의 배정(fitFor)이 methodFit 을 쓴다. methods.ts 는 이 파일을 import 하지 않는다 (순환 없음)
-import { methodFit, onWater } from './methods';
+import { methodFit, onWater, searchMul } from './methods';
 // (X6) 조짐 관찰 (field/catastrophe.ts — 그 파일도 이 파일의 learn·regionNameAt 을 쓴다. 함수 안에서만 서로 부르므로 순환 import 는 문제없다)
 import { perceiveSigns, vesselName } from './catastrophe';
 // (X6 단계 5) 지휘 상태의 도움 함수 (진입 금지 구역·문·피하는 곳 — 진실을 읽지 않는다)

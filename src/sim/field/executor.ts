@@ -260,31 +260,65 @@ function drain(sim: Sim, a: FieldAgent, rate: number): void {
   r.stamina = Math.max(0, r.stamina - rate * (1.35 - r.fitness) * sim.dt);
 }
 
-function unblock(sim: Sim, s: Scene, a: FieldAgent, tile: number): void {
+/** (R2 §4.2) 문·잔해를 연 방법별 완료 문구 (없으면 지금의 문구) */
+const UNBLOCK_TEXT: Partial<Record<MethodId, string>> = {
+  kick: '문을 걷어차 열었습니다. 진입합니다.', irons: '할리건으로 문을 땄습니다. 진입합니다.', ram: '충격기로 문을 부쉈습니다. 진입합니다.',
+  hydraulic: '유압 개방기로 철문을 열었습니다. 진입합니다.', handClear: '손으로 잔해를 치워 통로를 확보했습니다.', toolClear: '장비로 잔해를 잘라 통로를 확보했습니다.',
+};
+/**
+ * 문·잔해를 연다. method = 연 방법 (R2 §4.2 — 완료 문구·통로 차단 복구 문구에 방법 이름, G5 진입 기록의 how 에 그 방법).
+ * 돌려주는 값 = 완료 기록 id (폭파 진입의 폭발 원인 — §4.2a). 폭파 진입은 막힌 문(문을 막은 잔해)도 진입 기록을 남긴다(문짝 없이 — door -1)
+ */
+function unblock(sim: Sim, s: Scene, a: FieldAgent, tile: number, method?: MethodId): number {
   const I = sim.incidents[s.incidentId];
   const r = resp(sim, a);
   const p = s.props[s.propAt[tile]];
   s.propAt[tile] = -1; p.blocking = false;
   if (p.kind === 'door') { p.locked = false; p.open = true; } else p.removed = true;
-  if (p.kind === 'door') recBreach(sim, s, p.x, p.y, a.x, a.y, { door: p.id, how: breachHowFor(sim, [a], true, false), n: 1, sync: false, by: a.rid, forced: true });
+  const how: BreachHow | null = method === 'kick' || method === 'irons' || method === 'ram' || method === 'hydraulic' || method === 'charge' ? method : null;
+  if (p.kind === 'door') recBreach(sim, s, p.x, p.y, a.x, a.y, { door: p.id, how: how ?? breachHowFor(sim, [a], true, false), n: 1, sync: false, by: a.rid, forced: true });
+  else if (method === 'charge') recBreach(sim, s, p.x, p.y, a.x, a.y, { door: -1, how: 'charge', n: 1, sync: false, by: a.rid, forced: true });
   s.staticVersion++;
   learnQuiet(sim, a, mkFact('blk', tile, 'none', r.name, sim.t, 1, true, p.kind === 'door' ? '문 개방 완료' : '잔해 제거, 통로 확보'));
-  const pe = markRecovered(I, 'PATH_BLOCKED', `${josa(r.name, '이/가')} ${p.kind === 'door' ? '문을 강제 개방' : '잔해를 제거'}해 통로 확보`);
-  emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, causes: [pe], text: p.kind === 'door' ? '문 강제 개방 완료. 진입합니다.' : '잔해 제거 완료. 통로를 확보했습니다.' });
+  const noun = method !== undefined ? METHOD[method].noun : '';
+  const rec = method === undefined ? `${josa(r.name, '이/가')} ${p.kind === 'door' ? '문을 강제 개방' : '잔해를 제거'}해 통로 확보`
+    : p.kind === 'door' ? `${josa(r.name, '이/가')} ${noun} 문을 열어 통로 확보` : method === 'charge' ? `${josa(r.name, '이/가')} ${noun} 막힌 문을 뚫어 통로 확보` : `${josa(r.name, '이/가')} ${noun} 통로 확보`;
+  const pe = markRecovered(I, 'PATH_BLOCKED', rec);
+  const text = method === 'charge' ? (p.kind === 'door' ? '폭파 — 문 개방. 진입합니다.' : '폭파 — 막힌 문을 뚫었습니다. 진입합니다.')
+    : (method !== undefined ? UNBLOCK_TEXT[method] : undefined) ?? (p.kind === 'door' ? '문 강제 개방 완료. 진입합니다.' : '잔해 제거 완료. 통로를 확보했습니다.');
+  const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, causes: [pe], text });
   r.xpGained += 0.003;
+  return ev;
 }
 
-function workOnBlocker(sim: Sim, s: Scene, a: FieldAgent, tile: number, kind: TaskKind): boolean {
+/**
+ * 문·잔해를 깎는다 (본 임무 force·clear 와 이동 중 하위 작업 t.sub — tk 가 그 임무). 돌려주는 값 = 열렸다.
+ * (R2 §4.2) 처음 부를 때 방법을 고른다(판단부 — 발로 차기·할리건·충격기·유압 개방기·폭파 진입 / 손으로·장비로 치우기). 속도는 고른 방법의 장비 값(methodRun.blockerRate),
+ * 유압 개방기는 시작할 때 장비 확인(숨은 고장 → 다른 방법), 폭파 진입은 설치·물러서기·기다림·3-2-1 뒤 폭발(methodRun.runCharge — 문의 hp 와 상관없다).
+ * 연 방법은 완료 문구·G5 진입 기록·방법 기록(I.methods — 대상은 그 칸과 소품)에 남는다. 충격기는 문이 열리는 소리로 둘레의 용의자가 돌아본다
+ */
+function workOnBlocker(sim: Sim, s: Scene, a: FieldAgent, tile: number, kind: TaskKind, tk: Task): boolean {
   const pid = s.propAt[tile];
   if (pid < 0) return true;
   const p = s.props[pid];
   const r = resp(sim, a), I = sim.incidents[s.incidentId];
-  // 효과 자리: 실제로 쓰는 도구의 성능 (숨은 고장은 여기서 드러난다 — crews.toolUse)
-  const rate = kind === 'force' ? 0.6 + r.skills.rescue * 0.6 + toolUse(sim, a.rid, 'force', I) * 0.6 + r.skills.law * 0.3 : 0.5 + r.skills.rescue * 0.8 + toolUse(sim, a.rid, 'clear', I) * 0.5;
-  p.hp -= rate * staminaF(r) * sim.dt;
+  const work = kind === 'force' ? 'force' : 'clear';
+  const tg = { cas: -1, prop: pid, hostile: -1, region: -1, tile };
+  if (tk.method === undefined && tk.mt0 === undefined) { if (tk.workId < 0) tk.prop = pid; startMethod(sim, s, I, a, tk, work, tg); }
+  if (tk.method === 'charge') return runCharge(sim, s, I, a, tk, tile, XK);
+  if (blockerKitFails(sim, s, I, a, tk)) return false;      // 유압 개방기의 숨은 고장이 드러났다 → 다음 방법 (다음 틱부터)
+  if (tk.method !== undefined) a.label = METHOD[tk.method].label;
+  // 효과 자리: 고른 방법의 장비 값 (방법이 없으면 R1 의 식 — 실제로 쓰는 도구의 성능, 숨은 고장은 여기서 드러난다 — crews.toolUse)
+  p.hp -= blockerRate(sim, s, a, tk, I) * staminaF(r) * sim.dt;
   drain(sim, a, 0.7);
   a.ring = clamp(1 - p.hp / 12, 0.05, 1);
-  if (p.hp <= 0) { unblock(sim, s, a, tile); return true; }
+  if (p.hp <= 0) {
+    const m = tk.method;
+    const ev = unblock(sim, s, a, tile, m);
+    if (m !== undefined) recordMethod(sim, I, a, tk, m, tk.mwhy ?? 'usual', true, ev, tg);
+    if (m === 'ram') doorNoise(sim, s, p.x, p.y);
+    return true;
+  }
   return false;
 }
 
@@ -480,9 +514,17 @@ function shootAt(sim: Sim, s: Scene, a: FieldAgent, hid: number): void {
 }
 
 /** 동시 진입: 대기하던 출입문을 열고(잠겼으면 부수고), 섬광탄이 있으면 먼저 던져 넣는다. */
-/** 용의자가 있는 방으로 들어가는, 아직 닫혀 있는 가장 가까운 문 (용의자가 이미 보이거나 같은 방이면 없음) */
-function roomDoorFor(s: Scene, a: FieldAgent, h: Hostile): Prop | null {
+/**
+ * 용의자가 있는 방으로 들어가는, 아직 닫혀 있는 가장 가까운 문 (용의자가 이미 보이거나 같은 방이면 없음).
+ * (R2 §4.2a) 잠긴 방 문을 하위 작업으로 연 진입조는 그 문(t.entryDoor)을 열린 뒤에도 들어가기(entered) 전까지 돌려받는다 — 열린 문 너머로 용의자가 보여도 함께 들어간다
+ */
+function roomDoorFor(s: Scene, a: FieldAgent, h: Hostile, t: Task | null = null): Prop | null {
   const hr = s.region[tileOf(s, h.x, h.y)], ar = s.region[tileOf(s, a.x, a.y)];
+  if (t !== null && t.entryDoor !== undefined) {
+    const p = s.props[t.entryDoor], i = p.y * s.w + p.x;
+    if (!p.entered && hr >= 0 && hr !== ar && (s.region[i] === hr || s.region[i - 1] === hr || s.region[i + 1] === hr || s.region[i - s.w] === hr || s.region[i + s.w] === hr)) return p;
+    t.entryDoor = undefined;
+  }
   if (hr < 0 || hr === ar || s.regions[hr].kind !== 'room' || los(s, a.x, a.y, h.x, h.y)) return null;
   let best: Prop | null = null, bd = 14;
   for (const p of s.props) {
@@ -525,6 +567,78 @@ function breach(sim: Sim, s: Scene, a: FieldAgent): void {
     for (const h of s.hostiles) if ((h.state === 'hold' || h.state === 'fight') && sim.t >= h.stunUntil && dist(h.x, h.y, e.x, e.y) <= 13 && sim.t >= h.alertUntil) { h.facing = Math.atan2(e.y - h.y, e.x - h.x); h.alertUntil = sim.t + 5; }
   });
   emit(sim, { inc: I.id, role: 'RESPONDER', actor: resp(sim, a).name, rid: a.rid, kind: 'action', imp: 3, text: s.bangAt === sim.t ? `진입! 섬광탄을 던져 넣고 들어갑니다${bangs ? ` (용의자 ${bangs}명 무력화)` : ''}.` : '진입! 출입문을 열고 들어갑니다.' });
+}
+
+/** (R2 §4.2a) 잠긴 방 문의 상한 (초): 모인 뒤 이만큼 지나도 안 열리면 지금처럼 바로 연다 (모든 사건은 끝난다) */
+const ROOM_DOOR_CAP = 25;
+/** 잠긴 방 문 앞에 진입조가 처음 모인 시각 (문마다 — 소품의 모양을 바꾸지 않으려 WeakMap. 되감기는 Sim 을 새로 만든다) */
+const roomDoorAt = new WeakMap<Prop, number>();
+/** 그 문을 여는 하위 작업을 맡은 진입조 대원 (없으면 null) */
+function doorOpener(s: Scene, rd: Prop): FieldAgent | null {
+  const i = rd.y * s.w + rd.x;
+  for (const b of s.agents) if (b.status === 'active' && b.task !== null && b.task.kind === 'engage' && b.task.sub !== null && b.task.sub.tile === i) return b;
+  return null;
+}
+/**
+ * (R2 §4.2a) 방 진입의 잠긴 문 (case 'engage' ①-2 — 진입조가 모였을 때). 돌려주는 값 = 아직 기다린다(이 틱은 여기서 끝).
+ *   ① 처음 모인 대원이 손잡이를 돌려 보고 안다 — 지금의 discoverBlock(기록·blk 믿음). 곁의 진입조도 함께 본다
+ *   ② 모인 대원 가운데 그 문의 force 방법 1등 점수가 가장 높은 한 사람(같으면 rid 가 작은 쪽)이 문 여는 하위 작업을 맡는다 — 그 안에서 방법을 고른다(폭파·충격기·할리건·유압·발차기)
+ *   ③ 나머지는 문 앞에서 기다린다 (폭파면 stackForCharge 가 각자의 물러설 자리로)
+ *   ④ 모인 뒤 25초가 지나도 안 열리면 false — 부른 쪽이 지금처럼 바로 연다
+ * 문이 열리면 다음 틱에 지금의 방 진입(섬광탄 → 함께 들어감)이 이어진다(roomDoorFor 가 t.entryDoor 를 돌려준다)
+ */
+function lockedRoomDoor(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, rd: Prop, mates: FieldAgent[]): boolean {
+  const tile = rd.y * s.w + rd.x;
+  t.entryDoor = rd.id;
+  let at = roomDoorAt.get(rd);
+  if (at === undefined) { at = sim.t; roomDoorAt.set(rd, at); }
+  if (sim.t >= at + ROOM_DOOR_CAP) {
+    const r = resp(sim, a);
+    markRecovered(I, 'PATH_BLOCKED', `${josa(r.name, '이/가')} 문을 강제 개방해 통로 확보`);
+    return false;
+  }
+  const team = [a, ...mates];
+  if (a.beliefs.val<string>('blk', tile) !== 'locked') {
+    // 먼저 와서 손잡이를 돌려 본 동료가 있으면 그 사실을 함께 안다 (같은 문을 두 번 "차단"으로 알리지 않는다)
+    let known: Fact | undefined;
+    for (const b of s.agents) if (b !== a && b.status === 'active' && b.beliefs.val<string>('blk', tile) === 'locked') { known = b.beliefs.get('blk', tile); break; }
+    if (known) a.beliefs.merge(known);
+    else {
+      discoverBlock(sim, s, I, a, tile, 'locked');
+      a.pendingBlock = -1;      // 길을 다시 짜며 "우회/강제 개방" 을 따로 정하지 않는다 — 방 진입이 정한다
+      const f = a.beliefs.get('blk', tile);
+      if (f) for (const b of mates) b.beliefs.merge(f);      // 곁에 모인 진입조도 같이 본다
+      return true;
+    }
+  }
+  for (const b of mates) if (b.task !== null) b.task.entryDoor = rd.id;
+  if (doorOpener(s, rd) !== null) return true;      // 이미 누군가 연다
+  const tg = { tile, prop: rd.id, cas: -1, hostile: -1, region: -1 };
+  let best: FieldAgent | null = null, bs = -1;
+  for (const b of team) {
+    if (b.status !== 'active' || b.task === null || b.task.sub !== null) continue;
+    const pk = chooseMethod(sim, s, b, 'force', tg, null, NO_SENSE);
+    const sc = pk !== null ? pk.cands[0].score : 0;
+    if (sc > bs || (sc === bs && best !== null && b.rid < best.rid)) { bs = sc; best = b; }
+  }
+  if (best === a) {
+    const sub = makeTask('force', '문 강제 개방');
+    sub.tile = tile; t.sub = sub; a.path = null;
+  }
+  return true;
+}
+/**
+ * (R2 §4.2a) 잠긴 방 문을 동료가 폭파로 여는 중이다: 이 대원은 자기 물러설 자리(처음 한 번 정해 t.tx, t.ty)로 가 기다린다.
+ * 돌려주는 값 = 이 틱의 일을 했다(물러서는 중·기다리는 중). 폭파가 아니거나 자리가 없으면 false — 문 앞에서 기다린다
+ */
+function stackForCharge(sim: Sim, s: Scene, a: FieldAgent, t: Task, rd: Prop): boolean {
+  const op = doorOpener(s, rd);
+  if (op === null || op === a || op.task!.sub!.method !== 'charge') { t.range = 0; return false; }
+  if (!t.range) { const sp = stackSpot(s, rd.y * s.w + rd.x, a); if (sp === null) return false; t.tx = sp.x; t.ty = sp.y; t.range = 1; }
+  a.label = '폭파 대기';
+  const m = moveTo(sim, s, a, t.tx, t.ty, 0.3);
+  if (m === 'arrived') { a.fx = rd.x - a.x; a.fy = rd.y - a.y; }
+  return m !== 'nopath';
 }
 
 /** (X6 §5.5) 그 대원이 단계 2 구역(외부 방어 아님)인 그 구획 안에 서 있는가 — 거기서 이미 안에서 진압하던 대원은 안에서 잇는다 */
@@ -654,7 +768,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         if (t.kind === 'swapAir') a.equipRetryAt = sim.t + RETRY_AFTER;      // 길의 불을 끄지 못해 대기 지점에 닿지 못했다: 공기통 교체는 한동안 다시 시도하지 않는다 (아래 case 'swapAir' 의 nopath 와 같은 기억)
         finishTask(sim, s, a, false, 'equip');
       }
-    } else if (workOnBlocker(sim, s, a, t.sub.tile, t.sub.kind)) { t.sub = null; a.path = null; }
+    } else if (workOnBlocker(sim, s, a, t.sub.tile, t.sub.kind, t.sub)) { t.sub = null; a.path = null; }
     return;
   }
   if (t.wait > 0) { t.wait -= dt; return; }
@@ -673,6 +787,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     case 'search': {
       const reg = s.regions[t.region];
       if (!t.pts) { t.pts = sweepPoints(sim, s, a, t); t.ptI = 0; t.covered = new Set(); t.fails = 0; }
+      // (R2 §4.4) 방법을 처음 고른다 (호출·청음 / 줄 수색·확성기·열화상) — 경유점마다 다시 고르지 않는다
+      if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'search', { cas: -1, prop: -1, hostile: -1, region: t.region, tile: -1 });
       if (reg.indoor && !hasKit(sim, a.rid, 'turnout')) { let m = 0; for (const i of reg.tiles) if (s.fire[i] > m && dist(a.x, a.y, i % s.w, (i / s.w) | 0) < 4) m = s.fire[i]; if (m > 0.35) { finishTask(sim, s, a, false, 'fire'); return; } }
       if (t.ptI >= t.pts.length) {
         const total = Math.max(1, walkableCount(s, reg.tiles));
@@ -681,6 +797,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         if (conf < 0.72) a.quiet.add('srch:' + reg.id);
         learn(sim, a, mkFact('srch', reg.id, Math.round(conf * 100) / 100, r.name, sim.t, conf, true, `${reg.name} ${t.thorough ? '정밀 ' : ''}수색 완료 (확인율 ${pct(conf)})`), true, true);
         if (conf < 0.72) emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${reg.name} 수색을 마쳤지만 ${s.smoke[tileOf(s, reg.cx, reg.cy)] > 0.3 ? '짙은 연기로' : '시야가 나빠'} 확인율이 ${pct(conf)}에 그쳤습니다.` });
+        if (t.method !== undefined) recordMethod(sim, I, a, t, t.method, t.mwhy ?? 'usual', true, -1, { cas: -1, prop: -1, hostile: -1, region: t.region, tile: -1 });      // (R2) 이 방법으로 그 구역을 마쳤다 (보고서 문장은 찾아낸 사람이 있을 때만 — methodReport)
         r.xpGained += 0.002;
         finishTask(sim, s, a, true);
         return;
@@ -688,7 +805,13 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const p = t.pts[t.ptI];
       a.ring = t.ptI / t.pts.length;
       const m = moveTo(sim, s, a, p % s.w, (p / s.w) | 0, 0.4);
-      if (m === 'arrived') { markCovered(sim, s, a, t); perceive(sim, s, a); t.ptI++; t.wait = 0.5; drain(sim, a, 0.3); }
+      if (m === 'arrived') {
+        // (R2) 그 구역의 첫 경유점: 도착 재선택 한 번 · 멈추는 시간은 방법마다(청음 3 · 확성기 2 · 열화상 1.5초 — 멈춘 동안 perceive 가 탐지 배율을 곱한다)
+        if (t.ptI === 0 && !t.marr) recheckOnArrive(sim, s, I, a, t, 'search', { cas: -1, prop: -1, hostile: -1, region: t.region, tile: -1 });
+        const stop = searchStop(sim, s, I, a, t);
+        markCovered(sim, s, a, t); perceive(sim, s, a); t.ptI++; t.wait = stop; drain(sim, a, 0.3);
+        if (t.method !== undefined && !METHOD[t.method].plain) a.label = METHOD[t.method].label;
+      }
       else if (m === 'nopath') { t.ptI++; t.fails++; a.pathGoal = -1; }
       return;
     }
@@ -744,9 +867,11 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     }
     case 'clear': case 'force': {
       if (s.propAt[t.tile] < 0) { finishTask(sim, s, a, true); return; }
+      // (R2 §4.2a) 폭파 진입의 설치 뒤(물러서기·기다림·3-2-1)는 문 곁으로 가지 않는다 — 이동은 runCharge 안의 한 번뿐 (한 틱에 이동 목표 하나)
+      if (t.method === 'charge' && t.phase >= 1) { if (workOnBlocker(sim, s, a, t.tile, t.kind, t)) finishTask(sim, s, a, true); return; }
       const m = moveTo(sim, s, a, t.tile % s.w, (t.tile / s.w) | 0, 1.5);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
-      if (m === 'arrived' && workOnBlocker(sim, s, a, t.tile, t.kind)) finishTask(sim, s, a, true);
+      if (m === 'arrived' && workOnBlocker(sim, s, a, t.tile, t.kind, t)) finishTask(sim, s, a, true);
       return;
     }
     case 'waterRescue': {
@@ -758,15 +883,21 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const c = s.casualties[t.cas];
       if (c.dead) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
       if (c.mob !== 'trapped') { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
+      // (R2 §4.3) 방법을 처음 고른다 — 차량·붕괴·구덩이·그 밖을 대원의 믿음으로 가려 수동·손 공구·문 벌리기·지붕 절단·급박·줄·손으로 파기·에어백·지지대 가운데
+      if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'extricate', { cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1 });
       if (noAirEntry(sim, s, a, c.x, c.y)) { learn(sim, a, casFact(sim, s, c, r.name), false); finishTask(sim, s, a, false, 'unsafe'); return; }      // 위험한 건물 안: 공기호흡기 없이는 들어가지 않는다
       const m = moveTo(sim, s, a, c.x, c.y, 1.5);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
       if (w && relieve(sim, s, a, w, c.x, c.y)) return;      // 교대: 내가 손을 뗐다
-      const tool = toolUse(sim, a.rid, 'extricate', I);
-      const rate = r.skills.rescue * (0.35 + 0.65 * tool) * staminaF(r) * (s.smoke[tileOf(s, a.x, a.y)] > 0.4 ? 0.7 : 1);
+      if (!t.marr) recheckOnArrive(sim, s, I, a, t, 'extricate', { cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1 });      // (R2) 대상 곁에 처음 닿은 틱 — 선 자리의 연기로 급박 구출을 다시 본다
+      if (extricatePrep(sim, s, I, a, t, c)) return;      // (R2) 준비(문 벌리기·지붕 절단·에어백·지지대·줄 내리기)와 장비 확인
+      const { k, tool } = extricateRate(sim, a, t, I);
+      const rate = r.skills.rescue * k * staminaF(r) * (s.smoke[tileOf(s, a.x, a.y)] > 0.4 ? 0.7 : 1);
       c.trapWork -= rate * dt; drain(sim, a, 0.8);
       a.ring = clamp(1 - c.trapWork / 16, 0.05, 1);
+      if (t.method !== undefined) a.label = METHOD[t.method].label;
+      if (t.method === 'tunnel') tunnelSlide(sim, s, I, a, c);      // (R2) 손으로 파기: 균열 곁이면 잔해가 다시 흘러내릴 수 있다
       if (c.trapWork <= 0) {
         c.mob = 'immobile'; c.tFreed = sim.t;
         if (c.inVehicle !== null) { c.inVehicle = null; c.x = Math.round(a.x); c.y = Math.round(a.y); }
@@ -780,7 +911,9 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
           }
         }
         learnQuiet(sim, a, casFact(sim, s, c, r.name));
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, text: `구조 대상 ${c.label} 구출 완료. 이송이 필요합니다.` });
+        const done = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, text: extricateDoneText(c, t.method) });      // (R2) 방법별 완료 문구 (평소 방법은 지금 그대로)
+        if (t.method === 'rapid' && I.phase !== 'closed') hurtCas(sim, s, I, c, RAPID_HURT, 'blunt', { ev: done });      // (R2) 급박 구출: 척추 보호 없이 끌어냈다
+        if (t.method !== undefined) { c.freedHow = t.method; c.freedBy = a.rid; recordMethod(sim, I, a, t, t.method, t.mwhy ?? 'usual', true, done); }
         r.xpGained += 0.004;
         finishTask(sim, s, a, true);
       }
@@ -916,7 +1049,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const p = s.props[t.prop];
       if (p.kind === 'gas') { runCool(sim, s, I, a, t, p); return; }      // (X6 §5.8) 가스 용기·드럼통의 냉각
       const doneText = p.kind === 'unstable' ? '균열부 보강 완료' : p.kind === 'valve' ? (p.ignited ? '누출 가스 발화' : '가스 밸브 차단 완료') : p.ignited ? '누출 연료 발화' : '연료 누출 조치 완료';
-      if (p.mitigated || p.ignited) { learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y }, r.name, sim.t, 1, true, doneText), true, true); finishTask(sim, s, a, true); return; }
+      const sub = p.kind === 'unstable' ? 'crack' : p.kind === 'valve' ? 'valve' : 'fuel';      // (R2 §4.3) 균열·밸브·차량 연료 — 판단부가 sub 로 가린다
+      if (p.mitigated || p.ignited) { learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y, sub }, r.name, sim.t, 1, true, doneText), true, true); finishTask(sim, s, a, true); return; }
       const m = moveTo(sim, s, a, p.x, p.y, 1.6);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
@@ -925,7 +1059,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       t.progress += dt; a.ring = t.progress / t.need;
       if (t.progress >= t.need) {
         p.mitigated = true;
-        learnQuiet(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y }, r.name, sim.t, 1, true, doneText));
+        learnQuiet(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y, sub }, r.name, sim.t, 1, true, doneText));
         emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: p.kind === 'unstable' ? '균열부에 지지대를 세웠습니다. 추가 붕괴 위험을 줄였습니다.' : p.kind === 'valve' ? '가스 밸브 차단 완료. 누출이 멈췄습니다.' : '연료 누출 차단 완료. 발화 위험을 제거했습니다.' });
         if (p.kind === 'unstable') s.staticVersion++;
         r.xpGained += 0.003;
@@ -1080,18 +1214,21 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         return;
       }
       // ①-2 방 진입: 용의자가 닫힌 문 뒤의 방에 있으면, 문 앞에 모였다가 (섬광탄이 있으면 던져 넣고) 함께 들어간다
-      const rd = sim.t < h.stunUntil ? null : roomDoorFor(s, a, h);
+      const rd = sim.t < h.stunUntil ? null : roomDoorFor(s, a, h, t);
       if (rd) {
         a.label = '방 진입 대기';
+        // (R2 §4.2a) 잠긴 방 문을 동료가 폭파로 여는 중이면 각자의 물러설 자리로 (이 분기의 이동은 이것 하나)
+        if (rd.blocking && t.entryDoor === rd.id && stackForCharge(sim, s, a, t, rd)) return;
         const m0 = moveTo(sim, s, a, rd.x, rd.y, 1.5);
         if (m0 === 'arrived') {
           t.ptI++;
           const mates = s.agents.filter((b) => b !== a && b.status === 'active' && b.task && b.task.kind === 'engage' && dist(b.x, b.y, rd.x, rd.y) <= 2.6);
           if (mates.length >= 1 || t.ptI > 20) {
-            const wasLocked = rd.blocking;
+            if (rd.blocking && lockedRoomDoor(sim, s, I, a, t, rd, mates)) return;      // (R2 §4.2a) 잠긴 방 문: 손잡이를 돌려 보고 → 한 사람이 문을 연다 (25초 상한)
+            const wasLocked = rd.blocking, bySub = t.entryDoor === rd.id;      // bySub: 하위 작업이 이미 열었다 — 진입 기록은 unblock 이 남겼다
             rd.entered = true; rd.open = true; s.staticVersion++;
             if (rd.blocking) { s.propAt[rd.y * s.w + rd.x] = -1; rd.blocking = false; rd.locked = false; }
-            recBreach(sim, s, rd.x, rd.y, a.x, a.y, { door: rd.id, how: breachHowFor(sim, [a, ...mates], wasLocked, false), n: mates.length + 1, sync: false, by: a.rid, forced: wasLocked });
+            if (!bySub || wasLocked) recBreach(sim, s, rd.x, rd.y, a.x, a.y, { door: rd.id, how: breachHowFor(sim, [a, ...mates], wasLocked, false), n: mates.length + 1, sync: false, by: a.rid, forced: wasLocked });
             const thrower = [a, ...mates].find((b) => kitUses(sim, b.rid, 'flashbang') > 0);
             let n = -1;
             if (thrower && sim.t - s.bangAt > 2 && dist(h.x, h.y, rd.x, rd.y) <= 8) {
@@ -1101,7 +1238,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
             panicShot(sim, s, I, rd.x, rd.y);
             const room = s.region[tileOf(s, h.x, h.y)] >= 0 ? s.regions[s.region[tileOf(s, h.x, h.y)]].name : '방';
             emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 3, text: n >= 0 ? `${room} 진입! 섬광탄을 던져 넣고 들어갑니다${n ? ` (용의자 ${n}명 무력화)` : ''}.` : `${room} 진입!` });
-            for (const b of [a, ...mates]) { b.path = null; b.pathGoal = -1; if (b.task) b.task.ptI = 0; }
+            for (const b of [a, ...mates]) { b.path = null; b.pathGoal = -1; if (b.task) { b.task.ptI = 0; b.task.entryDoor = undefined; } }
           }
         } else if (m0 === 'nopath') { rd.entered = true; }
         return;
@@ -1559,7 +1696,11 @@ import { dropWet, pullAshore, runWaterRescue, waterTick } from './methodRun';
 // (R2 1b) 물 위의 대원: 헤엄 중인가·헤엄 비용·수영 능력·가장 가까운 뭍 (판단부의 생김새 함수 — methods.ts 는 이 파일을 import 하지 않는다)
 import { boatCost, onWater, reachOf, swimCost, swimOf } from './methods';
 import type { CostFn } from './grid';
-export const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask };
+export const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask, unblock };
+// (R2 단계 2) 문·통로의 방법: 고르기(startMethod)·속도·장비 확인·소리·폭파 진입·방법 기록 — 고르는 것은 판단부, 효과는 methodRun
+import { RAPID_HURT, blockerKitFails, blockerRate, doorNoise, extricateDoneText, extricatePrep, extricateRate, recheckOnArrive, recordMethod, runCharge, searchStop, stackSpot, startMethod, tunnelSlide } from './methodRun';
+import { METHOD, NO_SENSE, chooseMethod } from './methods';
+import type { BreachHow, MethodId } from '../types';
 
 // ── (R3) 대응 교본의 판단 지점 (field/doctrine.ts 의 docGate — 자기 모드). 판단은 교본 함수가, 효과(이동·기다림)는 이 파일이 한다 ──
 import { docGate } from './doctrine';

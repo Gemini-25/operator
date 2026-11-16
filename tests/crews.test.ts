@@ -2123,8 +2123,9 @@ describe('⑭ 소모와 고장', () => {
       for (const r of b.responders) for (const it of r.kit!) if (KITS[it.id].faultable && !KITS[it.id].batch && rng.chance(b.tune.kitFault)) want.push(r.name + ':' + it.id);
       const r2 = b.rng.fork('kit-r2'), want2: string[] = [];
       for (const r of b.responders) for (const it of r.kit!) if (KITS[it.id].faultable && KITS[it.id].batch === 'r2' && r2.chance(b.tune.kitFault)) want2.push(r.name + ':' + it.id);
-      expect(faults(b).filter((f) => !f.endsWith(':raft'))).toEqual(want);
-      expect(faults(b).filter((f) => f.endsWith(':raft'))).toEqual(want2);
+      const batch = (f: string): boolean => KITS[f.slice(f.lastIndexOf(':') + 1) as KitId].batch === 'r2';      // (R2 단계 3 부터 유압 대원의 에어백도)
+      expect(faults(b).filter((f) => !batch(f))).toEqual(want);
+      expect(faults(b).filter(batch)).toEqual(want2);
     }
     expect(low, '장비 1 의 숨은 고장 > 장비 3 > 장비 5').toBeGreaterThan(mid); expect(mid).toBeGreaterThan(high);
     expect(mid / 30, '보통 난이도에서 교대당 1건 안팎').toBeGreaterThan(0.4); expect(mid / 30).toBeLessThan(2);

@@ -150,7 +150,8 @@ describe('교전 연출 기록 — 꼬리표', () => {
           const sid = sim.incidents[e.incidentId]?.id;
           if (sid === undefined || !sim.scenes[sid]) continue;
           if (e.t > sim.t) continue;
-          const ok = r.recs.some((x) => x.sid === sid && x.t === e.t && x.f.kind === 'breach' && x.f.c && x.f.c.sync === false);
+          // (R2 §4.2a) 잠긴 방 문은 문 여는 하위 작업이 연 그 틱에 진입 기록(forced)을 남기고, 방 진입은 다시 남기지 않는다 — 그 앞의 강제 개방 기록도 센다
+          const ok = r.recs.some((x) => x.sid === sid && x.f.kind === 'breach' && x.f.c && x.f.c.sync === false && (x.t === e.t || (x.t < e.t && x.f.c.forced === true)));
           expect(ok, `${sim.seed}: "${e.text}" 에 방 진입 기록이 없다`).toBe(true);
           got.room++;
         }
@@ -531,6 +532,8 @@ describe('교전 그림 함수가 예외 없이 돈다', () => {
         rec('breach', t, { x: e0.x, y: e0.y, c: { by: a.rid, ox: e0.x, oy: e0.y + 1, door: 0, how: 'ram', n: 2, sync: true, forced: false } }),
         rec('breach', t, { x: 5, y: 5, c: { by: a.rid, ox: 5, oy: 6, door: 1, how: 'irons', n: 1, sync: false, forced: true } }),
         rec('breach', t, { x: 7, y: 5, c: { by: a.rid, ox: 7, oy: 6, door: 2, how: 'hydraulic', n: 1, sync: false, forced: true } }),
+        rec('breach', t, { x: 9, y: 5, c: { by: a.rid, ox: 9, oy: 8, door: 3, how: 'charge', n: 1, sync: false, forced: true } }),      // (R2 §4.2a) 폭파 진입 — 문짝
+        rec('breach', t, { x: 11, y: 5, c: { by: a.rid, ox: 11, oy: 8, door: -1, how: 'charge', n: 1, sync: false, forced: true } }),    // 막힌 문(잔해)의 폭파 — 문짝 없음
         rec('melee', t, { x: h.x, y: h.y, x2: a.x, y2: a.y, c: { side: 1, by: h.id, wpn: 'knife', res: 'hit', tk: 0, target: a.rid } }),
         rec('cuff', t, { x: h.x, y: h.y, c: { by: a.rid, ox: a.x, oy: a.y, arrest: 'tackle', target: h.id } }),
         rec('taser', t, { x: a.x, y: a.y, x2: h.x, y2: h.y, c: { side: 0, by: a.rid, wpn: 'taser', res: 'hit', tk: 1, target: h.id } }),

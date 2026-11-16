@@ -269,6 +269,11 @@ export class CombatVoice {
           if (how === 'ram') { this.tone(out, t, 420, 0.12, 0.04 * k, 'square'); this.tone(out, t, 660, 0.12, 0.04 * k, 'square'); }
           else this.tone(out, t, 900, 0.05, 0.05 * k, 'triangle', 620);
           this.burst(out, t, 0.07, 0.15 * k, 1300, 3, 'bandpass'); this.burst(out, t + 0.12, 0.16, 0.12 * k, 220, 0.7, 'lowpass');
+        } else if (how === 'charge') {      // (R2 §4.2a) 폭파 진입: 낮은 쿵 + 넓은 잡음 (폭발 소리의 결 — 작다)
+          this.tone(out, t, 58, 0.5, 0.36 * k, 'sine', 30);
+          this.burst(out, t, 0.6, 0.26 * k, 520, 0.7, 'lowpass');
+          this.burst(out, t, 0.06, 0.12 * k, 2600, 1, 'bandpass');
+          this.burst(out, t + 0.08, 0.9, 0.06 * k, 180, 0.7, 'lowpass');
         } else if (how === 'hydraulic') {
           const o = c.createOscillator(), lp = c.createBiquadFilter(), g = c.createGain();
           o.type = 'sawtooth'; o.frequency.value = 90; lp.type = 'lowpass'; lp.frequency.value = 400;

@@ -11,7 +11,11 @@
 //   단계 1a  runWaterRescue(수난 구조의 물가 방법 — 손·장대·구명환·구명줄·즉석 부력물·하류 차단) · landCasualty — executor 의 case 'waterRescue' 가 부른다
 //   단계 1b  헤엄(runSwim)·줄 확보(runTend)·끌려가는 대상 기다리기(waitCarried), 물 위의 바탕: waterTick(executor.act)·pullAshore(안전장치 — case 'ashore'·rules/methods)·
 //            dropWet(executor.finishTask 의 내려놓기)·swimTrouble·clutchP, 물 위 피해의 하한 WATER_FLOOR(18)
-//   뒤 단계  보트(1c) · blockerRate(2) · runSuppress(4) …
+//   단계 1c  보트(runBoat)
+//   단계 2   문·통로: blockerRate(방법별 속도)·blockerKitFails(유압 개방기의 장비 확인)·doorNoise(충격기·폭파의 소리), 폭파 진입 runCharge·stackSpot(물러설 자리) — executor.workOnBlocker 가 부른다
+//   단계 3   구출: extricateRate(방법별 k·장비 값)·extricatePrep(준비 시간·장비 확인·지지대의 균열 보강)·tunnelSlide(손으로 파기의 붕락)·extricateDoneText,
+//            수색: searchStop(경유점에 멈추는 시간·탐지 장비 확인) — executor 의 case 'extricate'·'search' 가 부른다
+//   뒤 단계  runSuppress(4) …
 
 import type { Sim } from '../engine';
 import { emit, lastProblemEvent, raiseProblem } from '../events';
@@ -20,10 +24,12 @@ import { T } from '../types';
 import type { CasBelief, Casualty, FieldAgent, Incident, KitId, MethodId, MethodUse, MethodWhy, Problem, Scene, Task, TaskKind, Unit, WorkKind } from '../types';
 import { clamp, dist, josa } from '../util';
 import { casFact, learn, learnQuiet, staminaF } from './agents';
-import { BARE_HANDS, kitCount, kitTool, kitWorks } from './gear';
-import { tileOf } from './grid';
-import { HAND_REACH, METHOD, POLE_REACH, RING_REACH, SAY, THROW_REACH, WORK_MODE, catchPoint, chooseMethod, methodStillFits, onWater, reachOf, sayStart, swimOf, targetKey } from './methods';
-import { hurtResponder } from './injury';
+import { BARE_HANDS, bestTool, kitCount, kitTool, kitWorks, useKit } from './gear';
+import { staticPass, tileOf } from './grid';
+import { blast } from './hazards';
+import { HAND_REACH, METHOD, POLE_REACH, RING_REACH, SAY, THROW_REACH, WORK_MODE, catchPoint, chooseMethod, methodStillFits, onWater, reachOf, sayStart, shoreCrack, swimOf, targetKey } from './methods';
+import { hurtCas, hurtResponder } from './injury';
+import { mkFact } from './beliefs';
 import type { MTarget, MethodPick, Sense } from './methods';
 import { docCtx, hasDoc } from './doctrine';      // (R3) 교본 입력 (자기 모드)
 import type { DocCtx } from './doctrine/registry';
@@ -35,6 +41,8 @@ export interface ExecKit {
   drain(sim: Sim, a: FieldAgent, rate: number): void;
   spray(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, eff?: number, wmul?: number, jitter?: boolean): boolean;
   makeTask(kind: TaskKind, label: string): Task;
+  /** (단계 2) 문·잔해를 연다 — 방법별 완료 문구·G5 진입 기록(how = 방법)·통로 차단 복구. 돌려주는 값 = 완료 기록 id (폭파 진입의 폭발 원인) */
+  unblock(sim: Sim, s: Scene, a: FieldAgent, tile: number, method?: MethodId): number;
 }
 
 /** 대원이 선 칸에서 잰 연기와 열 (몸의 감각 — 판단부에 넘기는 유일한 진실) */
@@ -869,4 +877,250 @@ function runBoat(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Cas
     switchMethod(sim, s, I, a, t, 'tooFar', '보트를 댈 물가가 없음', false);
     k.finish(sim, s, a, false, 'nopath');
   }
+}
+
+// ───────────────────────── 문·통로 (§4.2·§4.2a) — 단계 2 ─────────────────────────
+/** 그 방법이 시작할 때 작동을 확인하는 장비 (숨은 고장이 이때 드러난다 → broken). 장비로 치우기는 bestTool 이 스스로 확인한다 */
+const BLOCK_KIT: Partial<Record<MethodId, KitId>> = { hydraulic: 'spreader' };
+/**
+ * 문·잔해를 깎는 속도 (§4.2 — staminaF 는 부르는 쪽이 곱한다). R1 의 식에서 toolFor 자리에 **고른 방법의 장비 값**을 넣는다:
+ *   문(force)  0.6 + 0.6 × 구조 + 0.6 × 장비 값 + 0.3 × 치안 — 발로 차기 맨손 0.12 · 할리건 · 충격기(+0.3 내리치는 힘) · 유압 개방기(×1.6)
+ *   잔해(clear) 0.5 + 0.8 × 구조 + 0.5 × 장비 값 — 손으로 치우기 맨손 0.12 · 장비로 치우기는 R1 의 toolUse 그대로(bestTool — 숨은 고장이 드러난다)
+ * 방법이 없으면(고르기 전) R1 의 식 그대로. 폭파 진입은 깎지 않는다(runCharge — 문의 hp 와 상관없이 6.5초 + 물러서는 걸음).
+ * I 는 bestTool 이 숨은 고장을 기록할 사건 (본문의 서명에 더한 인자)
+ */
+export function blockerRate(sim: Sim, _s: Scene, a: FieldAgent, tk: Task, I: Incident): number {
+  const r = sim.responders[a.rid], rs = r.skills.rescue;
+  const force = (tool: number): number => 0.6 + 0.6 * rs + 0.6 * tool + 0.3 * r.skills.law;
+  const clear = (tool: number): number => 0.5 + 0.8 * rs + 0.5 * tool;
+  switch (tk.method) {
+    case 'kick': return force(BARE_HANDS);
+    case 'irons': return force(kitTool(sim, 'irons', 'force'));
+    case 'ram': return force(kitTool(sim, 'breachKit', 'force')) + 0.3;
+    case 'hydraulic': return force(kitTool(sim, 'spreader', 'force')) * 1.6;
+    case 'handClear': return clear(BARE_HANDS);
+    case 'toolClear': return clear(bestTool(sim, a.rid, 'clear', I));
+    default: return tk.kind === 'force' ? force(bestTool(sim, a.rid, 'force', I)) : clear(bestTool(sim, a.rid, 'clear', I));
+  }
+}
+/** 문 방법의 첫 틱: 장비가 작동하는지 본다(유압 개방기). 고장이 드러나면 broken 으로 바꾸고 true (부른 쪽은 그 틱에 끝낸다) */
+export function blockerKitFails(sim: Sim, s: Scene, I: Incident, a: FieldAgent, tk: Task): boolean {
+  if (tk.phase !== 0 || tk.method === undefined || tk.method === 'charge') return false;
+  tk.phase = 1;
+  const kid = BLOCK_KIT[tk.method];
+  if (kid === undefined || kitWorks(sim, a.rid, kid, I)) return false;
+  switchMethod(sim, s, I, a, tk, 'broken', `${josa(METHOD[tk.method].name, '이/가')} 장비 고장으로 막힘`);
+  return true;
+}
+/** 문이 열리는 소리 (충격기·폭파): 13칸 안의 무력화되지 않은 용의자가 문 쪽을 돌아보고 5초 경계한다 — 동시 진입(breach)의 그 줄과 같은 코드·같은 반경 */
+export function doorNoise(sim: Sim, s: Scene, x: number, y: number): void {
+  for (const h of s.hostiles) if ((h.state === 'hold' || h.state === 'fight') && sim.t >= h.stunUntil && dist(h.x, h.y, x, y) <= 13 && sim.t >= h.alertUntil) { h.facing = Math.atan2(y - h.y, x - h.x); h.alertUntil = sim.t + 5; }
+}
+
+/** 폭파 진입의 수치 (§4.2a): 설치 5초 · 3-2-1 1.5초 · 반경이 비기를 기다리는 한도 10초 · 폭발 반경 1.5칸·가운데 피해 18 · 카운트 전에 비어 있어야 하는 반경 2.5칸 · 물러설 자리 3~4칸 */
+export const CHARGE = { set: 5, count: 1.5, wait: 10, radius: 1.5, dmg: 18, clear: 2.5, back0: 3, back1: 4.5 };
+/** 건물 안을 걸어서(진실 — 문·잔해·불 칸은 지나지 못한다) 닿는 칸인가 */
+const walkTile = (s: Scene, i: number): boolean => staticPass(s.tiles[i]) && s.tiles[i] !== T.WATER && s.propAt[i] < 0 && s.fire[i] <= 0.5;
+/**
+ * 폭파 진입에서 물러설 자리 (§4.2a): 대원이 선 쪽(문의 바깥쪽)에서 걸어서 닿는 바닥 칸 가운데 문에서 3~4칸이고 문을 정면으로 마주 보지 않는 칸
+ * (문 칸에서 그은 통로의 축 위가 아닌 칸), 대원에게 가장 가까운 것(걸음 수, 같으면 먼저 닿은 칸). 없으면 문에서 3칸 넘는 아무 바닥 칸, 그것도 없으면 null.
+ * 대원의 칸에서 문을 지나지 않는 걸음(최대 12걸음)으로 닿는 칸만 본다 — 실행부라 진실의 칸·소품·불을 읽는다
+ */
+export function stackSpot(s: Scene, door: number, a: FieldAgent): { x: number; y: number } | null {
+  const w = s.w, n = s.w * s.h, dx = door % w, dy = (door / w) | 0;
+  const wallX = (dx > 0 && !staticPass(s.tiles[door - 1])) || (dx < w - 1 && !staticPass(s.tiles[door + 1]));      // 좌우가 벽이면 가로 벽의 문 — 통로의 축은 세로(x = 문 x)
+  const start = tileOf(s, a.x, a.y);
+  // 다른 대원이 이미 물러설 자리로 정한 칸은 비켜 고른다 (폭파하는 대원과 기다리는 진입조가 한 칸에 겹치지 않게 — 임무의 tx·ty, 자리를 정한 표시 range 1)
+  const taken = new Set<number>();
+  for (const b of s.agents) {
+    if (b === a || b.status !== 'active' || b.task === null) continue;
+    const bt = b.task.sub !== null && b.task.sub.method === 'charge' ? b.task.sub : b.task;
+    if (bt.range === 1 && (bt.method === 'charge' || bt.entryDoor !== undefined)) taken.add(Math.round(bt.ty) * w + Math.round(bt.tx));
+  }
+  const steps = new Map<number, number>([[start, 0]]);
+  const q = [start];
+  let best = -1, bs = Infinity, any = -1, as = Infinity;
+  for (let h = 0; h < q.length; h++) {
+    const i = q[h], st = steps.get(i)!;
+    const x = i % w, y = (i / w) | 0, d = Math.hypot(x - dx, y - dy);
+    if (walkTile(s, i) && !taken.has(i)) {
+      const onAxis = wallX ? x === dx : y === dy;
+      if (d >= CHARGE.back0 && d <= CHARGE.back1 && !onAxis && st < bs) { bs = st; best = i; }
+      if (d > CHARGE.back0 && st < as) { as = st; any = i; }
+    }
+    if (st >= 12) continue;
+    const nb = [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w];
+    for (const j of nb) if (j >= 0 && j < n && j !== door && !steps.has(j) && walkTile(s, j)) { steps.set(j, st + 1); q.push(j); }
+  }
+  const pick = best >= 0 ? best : any;
+  return pick < 0 ? null : { x: pick % w, y: (pick / w) | 0 };
+}
+/** 폭파 반경(카운트 전에 비어 있어야 하는 2.5칸) 안에 이 대원 말고 사람이 있는가 — 동료의 겉(현장에 있는 대원, 쓰러진 대원 포함 — 다친다) */
+function radiusBusy(sim: Sim, s: Scene, a: FieldAgent, x: number, y: number): boolean {
+  for (const b of s.agents) if (b !== a && b.status !== 'left' && !sim.responders[b.rid].dead && dist(b.x, b.y, x, y) <= CHARGE.clear) return true;
+  return false;
+}
+/**
+ * 폭파 진입의 실행 (§4.2a) — executor.workOnBlocker 가 부른다(본 임무와 이동 중 하위 작업 모두). 돌려주는 값 = 문·잔해가 열렸다.
+ *   phase 0  설치 5초 (하위 작업이 멈춘 문 곁 칸에서, 제자리)
+ *   phase 1  물러설 자리(stackSpot — 처음 한 번 정해 tk.tx, tk.ty)로. 자리가 없거나 갈 길이 없으면 조건 상실(tooFar)
+ *   phase 2  반경 2.5칸 안에 다른 대원이 없을 때까지 기다린다 (10초 넘게 비지 않으면 조건 상실 team → 다음 방법)
+ *   phase 3  3-2-1 (1.5초 — 그림만, 기록 없음). 그 사이 누가 들어오면 phase 2 로 → 폭발하는 틱에 연다
+ * 난수를 쓰지 않는다 (불발·위력의 흔들림 없음 — 같은 상황 = 같은 결과). 장약은 폭발할 때만 준다. 이동은 한 틱에 한 번(phase 1 의 moveTo)
+ */
+export function runCharge(sim: Sim, s: Scene, I: Incident, a: FieldAgent, tk: Task, tile: number, k: ExecKit): boolean {
+  const dx = tile % s.w, dy = (tile / s.w) | 0, dt = sim.dt;
+  if (tk.phase === 0) {
+    a.label = '장약 설치'; a.fx = dx - a.x; a.fy = dy - a.y;
+    tk.progress += dt; a.ring = tk.progress / CHARGE.set;
+    if (tk.progress + 1e-9 >= CHARGE.set) { tk.phase = 1; tk.progress = 0; tk.range = 0; }
+    return false;
+  }
+  if (tk.phase === 1) {
+    if (!tk.range) {
+      const sp = stackSpot(s, tile, a);
+      if (sp === null) { switchMethod(sim, s, I, a, tk, 'tooFar', '물러설 자리가 없음'); return false; }
+      tk.tx = sp.x; tk.ty = sp.y; tk.range = 1;      // 자리를 정했다 (다시 고르지 않는다 — 한 임무에 이동 목표 하나)
+    }
+    a.label = '물러서는 중';
+    const mv = k.moveTo(sim, s, a, tk.tx, tk.ty, 0.3);
+    if (mv === 'nopath') { switchMethod(sim, s, I, a, tk, 'tooFar', '물러설 자리로 갈 길이 없음'); return false; }
+    if (mv !== 'arrived') return false;
+    tk.phase = 2; tk.progress = 0; tk.mbad = 0;      // 닿은 틱부터 센다 (이 틱에는 더 움직이지 않는다)
+  }
+  a.fx = dx - a.x; a.fy = dy - a.y;
+  if (radiusBusy(sim, s, a, dx, dy)) {
+    a.label = '폭파 대기 — 반경 안에 동료';
+    if (tk.phase === 3) { tk.phase = 2; tk.progress = 0; }
+    tk.mbad = (tk.mbad ?? 0) + dt;
+    if (tk.mbad + 1e-9 >= CHARGE.wait) switchMethod(sim, s, I, a, tk, 'team', '동료가 폭파 반경 안');
+    return false;
+  }
+  tk.phase = 3; tk.progress += dt;
+  a.label = '폭파 3-2-1'; a.ring = tk.progress / CHARGE.count;
+  if (tk.progress + 1e-9 < CHARGE.count) return false;
+  detonateCharge(sim, s, I, a, tk, tile, k);
+  return true;
+}
+/**
+ * 폭발하는 틱 (§4.2a 의 "효과" 순서): 장약 1 → 문·잔해를 연다(unblock — 완료 기록·G5 진입 기록 how 'charge') → 문 자리에 반경 1.5·피해 18 의 폭발(hazards.blast —
+ * 진실의 모든 사람·창·가구·X6 의 가스와 구조에 걸린다) → 문 뒤의 못 본 사람이 다쳤으면 ESCALATION 한 줄(폭파마다 한 줄) → 방법 기록 → 문이 열리는 소리.
+ * I1 의 blast 신호는 보내지 않는다 — 지금의 hazards.blast 는 신호를 보내지 않는다(본문의 noSignal 인자가 아직 없다)
+ */
+function detonateCharge(sim: Sim, s: Scene, I: Incident, a: FieldAgent, tk: Task, tile: number, k: ExecKit): void {
+  const dx = tile % s.w, dy = (tile / s.w) | 0, pid = s.propAt[tile];
+  useKit(sim, a.rid, 'charge', 1);
+  // 폭발 전에 문 둘레의 진실 사람(대원이 아닌 구조 대상·용의자)의 체력을 적어 두고, 폭발 뒤에 줄어든 사람을 센다 (blast 가 누구를 다치게 했는지 그대로)
+  const near: { label: string; hp: () => number; was: number }[] = [];
+  for (const c of s.casualties) if (!c.dead && c.where === 'scene' && dist(c.x, c.y, dx, dy) <= CHARGE.radius + 0.5) near.push({ label: `구조 대상 ${c.label}`, hp: () => c.health, was: c.health });
+  for (const h of s.hostiles) if (!h.dead && h.state !== 'escaped' && (h.where === undefined || h.where === 'scene') && dist(h.x, h.y, dx, dy) <= CHARGE.radius + 0.5) near.push({ label: h.label, hp: () => h.health, was: h.health });
+  const ev = k.unblock(sim, s, a, tile, 'charge');
+  blast(sim, s, I, dx, dy, CHARGE.radius, CHARGE.dmg, ev, 'blast');
+  const hurt = near.filter((q) => q.hp() < q.was - 1e-9).map((q) => q.label);
+  if (hurt.length) {
+    const who = hurt.join('·');
+    raiseProblem(sim, I, 'ESCALATION', `폭파 진입으로 ${who} 부상`, { role: 'SYSTEM', actor: '현장', imp: 2, truth: true, causes: [ev], text: `문 뒤에 있던 ${josa(who, '이/가')} 폭파에 휘말려 다쳤습니다!` }, false);
+  }
+  recordMethod(sim, I, a, tk, 'charge', tk.mwhy ?? 'usual', true, ev, { cas: -1, prop: pid, hostile: -1, region: -1, tile });
+  doorNoise(sim, s, dx, dy);
+  sim.responders[a.rid].xpGained += 0.003;
+}
+
+// ───────────────────────── 구출 (§4.3) — 단계 3 ─────────────────────────
+/** 준비 시간(초): 문 벌리기 3 · 지붕 절단 8 · 에어백 5 · 지지대 8 · 줄 내리기 4 (그동안 구출 작업량은 줄지 않는다) */
+export const EXTRICATE_PREP: Partial<Record<MethodId, number>> = { spread: 3, roof: 8, airbag: 5, shore: 8, haul: 4 };
+/** 준비할 때 작동을 확인하는 장비 (숨은 고장이 이때 드러난다 → broken) */
+const PREP_KIT: Partial<Record<MethodId, KitId>> = { spread: 'spreader', roof: 'spreader', airbag: 'airbag' };
+/** 준비 중의 머리 위 글자 */
+const PREP_LABEL: Partial<Record<MethodId, string>> = { spread: '유압 전개 준비', roof: '지붕 절단 준비', airbag: '에어백 설치', shore: '지지대 설치', haul: '줄 내리는 중' };
+/**
+ * 구출 속도의 k 와 그 방법의 장비 값 (§4.3 — 속도 = 구조 × k × staminaF × 연기 배율은 부르는 쪽). tool 은 H1 의 "구출 중 잔해" 확률(1.2 − tool)에 넘긴다.
+ *   수동 0.35 + 0.65 × 맨손 · 손 공구 0.35 + 0.65 × 가진 가장 좋은 구출 도구(R1 의 식 그대로 — bestTool) · 지지대도 같다 · 문 벌리기 0.35 + 0.65 × 유압 구조기 · 지붕 절단 1.5 · 에어백 1.6 · 줄로 끌어올리기 1.2 ·
+ *   손으로 파기 0.5 · 급박 구출 1.8 × (0.35 + 0.65 × 실제로 쓰는 가장 좋은 도구 — bestTool) · 방법이 없으면 R1 의 식 그대로
+ */
+export function extricateRate(sim: Sim, a: FieldAgent, t: Task, I: Incident): { k: number; tool: number } {
+  const r1 = (tool: number): { k: number; tool: number } => ({ k: 0.35 + 0.65 * tool, tool });
+  switch (t.method) {
+    case 'manual': return r1(BARE_HANDS);
+    case 'basic': case 'shore': return r1(bestTool(sim, a.rid, 'extricate', I));      // R1 의 식 그대로 (실제로 쓰는 가장 좋은 도구 — 숨은 고장은 여기서 드러난다). 지지대는 세운 뒤 손 공구와 같다
+    case 'spread': return r1(kitTool(sim, 'spreader', 'extricate'));
+    case 'roof': return { k: 1.5, tool: kitTool(sim, 'spreader', 'extricate') };
+    case 'airbag': return { k: 1.6, tool: 1 };
+    case 'haul': return { k: 1.2, tool: kitTool(sim, 'rope', 'water') };
+    case 'tunnel': return { k: 0.5, tool: BARE_HANDS };
+    case 'rapid': { const tool = bestTool(sim, a.rid, 'extricate', I); return { k: 1.8 * (0.35 + 0.65 * tool), tool }; }
+    default: return r1(bestTool(sim, a.rid, 'extricate', I));
+  }
+}
+/**
+ * 구출 방법의 준비 (대상 곁에 닿은 뒤 — phase 0). 돌려주는 값 = 아직 준비 중이다(부른 쪽은 그 틱에 끝낸다).
+ * 준비를 시작할 때 장비를 확인하고(유압 구조기·에어백 — 숨은 고장이면 다른 방법으로), 지지대는 다 세운 순간 그 균열을 보강한다
+ * (지금 case 'mitigate' 의 균열 완료와 같은 처리 — p.mitigated · 균열 사실 · 고정 층 · 같은 완료 문구. X6 의 보강 규칙(c.shored)이 그대로 받는다)
+ */
+export function extricatePrep(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Casualty): boolean {
+  if (t.phase !== 0 || t.method === undefined) return false;
+  const need = EXTRICATE_PREP[t.method];
+  if (need === undefined) { t.phase = 1; return false; }
+  const kid = PREP_KIT[t.method];
+  if (t.progress === 0 && kid !== undefined && !kitWorks(sim, a.rid, kid, I)) { switchMethod(sim, s, I, a, t, 'broken', `${josa(METHOD[t.method].name, '이/가')} 장비 고장으로 막힘`); return true; }
+  a.label = PREP_LABEL[t.method] ?? METHOD[t.method].label;
+  a.fx = c.x - a.x; a.fy = c.y - a.y;
+  t.progress += sim.dt; a.ring = t.progress / need;
+  if (t.progress + 1e-9 < need) return true;
+  t.phase = 1; t.progress = 0;
+  if (t.method === 'shore') shoreUp(sim, s, I, a, c);
+  return false;
+}
+/** 지지대: 대원의 믿음이 가리키는 그 균열(methods.shoreCrack)을 보강한다 — 이미 보강됐거나 없으면 아무것도 하지 않는다 */
+function shoreUp(sim: Sim, s: Scene, I: Incident, a: FieldAgent, c: Casualty): void {
+  const id = shoreCrack(s, a, a.beliefs.val<CasBelief>('cas', c.id) ?? null);
+  if (id < 0 || id >= s.props.length) return;
+  const p = s.props[id];
+  if (p.kind !== 'unstable' || p.mitigated) return;
+  const r = sim.responders[a.rid];
+  p.mitigated = true;
+  learnQuiet(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y, sub: 'crack' }, r.name, sim.t, 1, true, '균열부 보강 완료'));
+  emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: '균열부에 지지대를 세웠습니다. 추가 붕괴 위험을 줄였습니다.' });
+  s.staticVersion++;
+}
+/** 손으로 파기의 붕락 확률(초당): 믿음 속 4칸 안에 살아 있는 균열이 있을 때 · 피해: 대상 8 · 대원 6 (잔해 깔림) */
+export const TUNNEL = { p: 0.006, cas: 8, resp: 6 };
+/**
+ * 손으로 파기 중 잔해가 다시 흘러내림 (§4.3 tunnel): 그 대원의 믿음에 대상 4칸 안의 살아 있는 균열이 있으면 mrng.chance(0.006 × dt) — 대상 피해 8, 대원 피해 6(H1, 원인 crush), 기록 한 줄.
+ * 판정 뒤에는 일어나지 않는다
+ */
+export function tunnelSlide(sim: Sim, s: Scene, I: Incident, a: FieldAgent, c: Casualty): void {
+  if (I.phase === 'closed') return;
+  const cb = a.beliefs.val<CasBelief>('cas', c.id) ?? null;
+  if (cb === null) return;
+  let near = false;
+  for (const f of a.beliefs.list('haz')) { const v = f.value as { kind: string; active: boolean; x: number; y: number; sub?: string }; if (v.kind === 'leak' && v.active && v.sub === 'crack' && Math.hypot(v.x - cb.x, v.y - cb.y) <= 4) { near = true; break; } }
+  if (!near || !mrng(sim, s, a).chance(TUNNEL.p * sim.dt)) return;
+  const r = sim.responders[a.rid];
+  const ev = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, text: `파내던 잔해가 다시 흘러내렸습니다 — 구조 대상 ${josa(c.label, '과/와')} ${josa(r.name, '이/가')} 다쳤습니다.` });
+  hurtCas(sim, s, I, c, TUNNEL.cas, 'crush', { ev });
+  hurtResponder(sim, s, I, a, TUNNEL.resp, 'crush', { ev });
+}
+/** 급박 구출의 대상 피해 (척추 보호 없이 끌어냄 — H1 원인 blunt) */
+export const RAPID_HURT = 10;
+/** 구출을 마친 순간의 방법별 완료 문구 (평소 방법은 지금의 문구 그대로) */
+export function extricateDoneText(c: Casualty, m: MethodId | undefined): string {
+  if (m === undefined || METHOD[m].plain) return `구조 대상 ${c.label} 구출 완료. 이송이 필요합니다.`;
+  return `구조 대상 ${c.label}, ${METHOD[m].noun} 구출 완료. 이송이 필요합니다.`;
+}
+
+// ───────────────────────── 수색·탐지 (§4.4) — 단계 3 ─────────────────────────
+/** 경유점마다 멈추는 시간(초): 지금 0.5 · 청음 3 · 확성기 2 · 열화상 1.5 (멈춘 동안 perceive 가 searchMul 을 곱한다) */
+export const SEARCH_STOP: Partial<Record<MethodId, number>> = { listen: 3, hail: 2, thermal: 1.5 };
+/** 경유점에서 처음 멈출 때 작동을 확인하는 장비 (야외에는 연기가 없어 R1 의 자리에서는 열화상 카메라의 고장이 드러나지 않는다) */
+const SEARCH_KIT: Partial<Record<MethodId, KitId>> = { listen: 'searchKit', thermal: 'tic' };
+/**
+ * 수색 경유점에 닿았을 때: 멈출 시간을 돌려준다. 처음 멈출 때 탐지 장비를 확인해 고장이 드러나면 broken 으로 바꾸고(다음 방법 — 호출·줄 수색) 지금의 0.5초
+ */
+export function searchStop(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task): number {
+  const m = t.method;
+  if (m === undefined) return 0.5;
+  const kid = SEARCH_KIT[m];
+  if (kid !== undefined && t.ptI === 0 && !kitWorks(sim, a.rid, kid, I)) { switchMethod(sim, s, I, a, t, 'broken', `${josa(METHOD[m].name, '이/가')} 장비 고장으로 막힘`); return 0.5; }
+  return t.method !== undefined ? SEARCH_STOP[t.method] ?? 0.5 : 0.5;
 }

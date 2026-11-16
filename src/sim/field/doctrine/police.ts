@@ -145,7 +145,9 @@ registerDoctrine(
   {
     id: 'P16', dept: 'police', name: '협상 중 교전 — 엄폐', short: '협상 중단 — 엄폐',
     hook: 'act',
-    when: (c) => { const t = tgt(c); return c.a.task !== null && c.a.task.kind === 'negotiate' && t !== null && t.state === 'fight' && c.hideSpot() !== null; },
+    // 이미 엄폐한 협상 자리(executor 'negotiate' 의 '위치 사수 — 엄폐 상태에서 응사')에서는 걸리지 않는다: 그 자리를 떠나 숨으면 응사가 끊겨 총격범이 다른 대원을 쏜다
+    // (2단계 측정 — 강제 armed/siege 의 다친 대원이 이 줄 하나로 26 → 36). 본문 §3.1 은 그 자리에서 '서 있기만 한다'고 보았다
+    when: (c) => { const t = tgt(c); return c.a.task !== null && c.a.task.kind === 'negotiate' && t !== null && t.state === 'fight' && !c.st.inCover && c.hideSpot() !== null; },
     effect: { kind: 'act', act: 'cover', score: 0.93 },
     th: { score: 0.93 }, rank: 1, why: 'danger',
     note: '교전 — 엄폐하고 계속 부릅니다.',

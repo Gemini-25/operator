@@ -12,6 +12,8 @@ import { casFact, fitFor, fitParts, hosFact, perceive } from '../src/sim/field/a
 import { think } from '../src/sim/field/brain';
 import { chaseRoles, predictNode } from '../src/sim/dispatch/doctrine';
 import { setReported } from '../src/sim/pursuit';
+import { ORDER_RULES } from '../src/sim/field/sceneRegistry';
+import type { CommandKit } from '../src/sim/field/sceneRegistry';
 import { P02_WAIT, P07_WAIT } from '../src/sim/field/doctrine/police';
 import { mkFact } from '../src/sim/field/beliefs';
 import { assign } from '../src/sim/field/commander';
@@ -911,6 +913,58 @@ describe('R3 시험 2-d: 탄약 — 탄 위급에 피격 중이면 엄폐, 피�
   });
 });
 
+// ───────────────────────── 측정 묶음에서 쓰이지 않은 줄 (§9 완료 조건 1 — 측정 ∪ 시험 = 100%): P10 · CP2 · CP3 ─────────────────────────
+describe('R3 시험 2-d (덧붙임): 측정 묶음에서 한 번도 쓰이지 않은 경찰 줄을 장면이 쓴다 — 재장전 엄폐(P10)·2인 제압 요청(CP2)·탄약 보급 요청(CP3)', () => {
+  /** 지휘 교본(orders/doctrine.ts — 현장 등록의 마지막 registerOrders)을 시험용 도구로 한 번 부른다. 요청은 적어 두고 기록 id 77 을 돌려준다 */
+  function orders(sim: Sim, s: Scene, I: Incident, a: FieldAgent, onScene: number[]): string[] {
+    const asked: string[] = [];
+    const k: CommandKit = {
+      want: () => { throw new Error('want 를 부르지 않는다'); }, cancel: () => undefined,
+      request: (need, reason) => { asked.push(`${need}:${reason}`); return 77; }, countUnits: () => 0, unitsOnScene: () => onScene,
+    };
+    ORDER_RULES[ORDER_RULES.length - 1](sim, s, I, a, k);
+    return asked;
+  }
+  it('P10: 재장전 중에 피격되면 숨을 자리로 엄폐하고, 재장전이 끝나고 4초 동안 피격이 없으면 엄폐를 끝낸다', () => {
+    const env = copsScene('R3-RELOAD', 'armed/hostage', ['patrol'], 'gun', 'fight');
+    const { sim, I, s, h, A, B } = env;
+    B.status = 'withdrawn';
+    put(A, spotAt(s, h.x, h.y, 3, 7, true, (x, y) => coverSpot(s, x, y, Math.round(h.x), Math.round(h.y), false) !== null)!);
+    const gun = sim.responders[A.rid].kit!.find((k) => k.id === 'pistol')!;
+    gun.uses = 20; gun.mag = 1;
+    const w = work(sim, s, 'engage', { hostile: h.id, priority: 0.9, max: 3 });
+    giveTask(sim, s, A, w); A.orderWork = w.id;
+    expect(fireRound(sim, A)).toBe(true);      // 마지막 탄 — 재장전 2초 시작 (탄 20 → 19: 위급·마지막 탄창이 아니다 — P08·P09·P22 가 걸리지 않는다)
+    A.underFireT = sim.t; A.inCover = false;
+    think(sim, s, A);
+    expect(A.task!.kind).toBe('cover'); expect(A.task!.docRule).toBe('P10');
+    expect(I.docs!.some((d) => d.rule === 'P10' && d.rid === A.rid && d.hook === 'act')).toBe(true);
+    stepOne(sim, s, A, 7, true);
+    expect(gun.mag).toBe(15);
+    expect(A.task === null || A.task.kind !== 'cover').toBe(true);
+    const d = I.docs!.find((q) => q.rule === 'P10' && q.rid === A.rid)!;
+    expect(d.t1).toBeGreaterThan(d.t);
+  });
+  it('CP2: 맞서는 흉기 용의자 · 쓸 수 있는 경찰 하나 · 오는 경찰 부대 없음 → 22초를 기다리지 않고 2인 제압 인력을 부른다 (기록 id 가 기록에 남는다). 경찰이 둘이면 부르지 않는다', () => {
+    const { sim, I, s, A, B } = copsScene('R3-CP2', 'armed/dispute', ['patrol'], 'knife', 'fight');
+    for (const uid of I.assigned) expect(['enroute', 'turnout']).not.toContain(sim.units[uid].state);
+    expect(orders(sim, s, I, A, [A.unitId]).some((q) => q.startsWith('law:흉기 난동'))).toBe(false);      // 둘 다 쓸 수 있다
+    B.status = 'withdrawn';
+    expect(orders(sim, s, I, A, [A.unitId])).toContain('law:흉기 난동 — 2인 제압 인력 부족');
+    expect(I.docs!.filter((d) => d.rule === 'CP2')).toMatchObject([{ hook: 'cmd', rid: -1, eventId: 77 }]);
+  });
+  it('CP3: 탄 위급 신고가 있는데 현장 경찰 부대의 탄약 상자가 모두 비었다 → 탄약 보급 요청. 상자가 남았으면 부르지 않는다', () => {
+    const { sim, I, s, A } = copsScene('R3-CP3', 'armed/hostage', ['patrol'], 'gun', 'fight');
+    const u = sim.units[A.unitId];
+    report(sim, A, { ammo: 2 });
+    expect(u.ammoBoxMax!).toBeGreaterThan(0);
+    expect(orders(sim, s, I, A, [u.id])).not.toContain('law:탄약 보급 필요');
+    u.ammoBox = 0;
+    expect(orders(sim, s, I, A, [u.id])).toContain('law:탄약 보급 필요');
+    expect(I.docs!.filter((d) => d.rule === 'CP3')).toMatchObject([{ hook: 'cmd', eventId: 77 }]);
+  });
+});
+
 // ───────────────────────── 시험 2-h: 추격 — 따라가기와 앞막기 (D7) ─────────────────────────
 describe('R3 시험 2-h: 추격 역할 — 헬기가 보고 있으면 하나만 따라가고 나머지는 진행 방향의 교차로를 막는다 (D7)', () => {
   it('trackBy air: 지상 부대 셋 가운데 follow 하나 · block 둘, block 의 목적지는 그 전 위치 → 알려진 위치 방향으로 가장 곧은 이웃. 헬기가 없고 둘이 곁에 있으면 셋째만 block', () => {
@@ -1026,11 +1080,12 @@ describe('R3 시험 2-e (경찰판): 경찰 표 대원의 중상 신고 — P12'
 
 // ───────────────────────── 시험 4 (경찰): 엄폐 왕복 없음 — 강제 armed/hostage 6교대 ─────────────────────────
 describe('R3 시험 4 (단계 2): 엄폐·보급 왕복이 없다 · 엄폐 중인 대원에게 교전 지시를 보내지 않는다', () => {
-  it('강제 armed/hostage 6교대: 교본 임무(엄폐·보급)를 떠났다가 10초 안에 다시 들어가는 경우가 0', () => {
+  // P16 이 이미 엄폐한 협상 자리에서는 걸리지 않게 된 뒤(단계 2 — 구현 메모) 인질극 여섯 교대에는 엄폐가 거의 없다: 엄폐가 실제로 생기는 대형 인질극 세 교대를 더한다
+  it('강제 armed/hostage 6교대 + armed/siege 3교대: 교본 임무(엄폐·보급)를 떠났다가 10초 안에 다시 들어가는 경우가 0', () => {
     let doc = 0;
     const bad: string[] = [];
-    for (let k = 0; k < 6; k++) {
-      const sim = new Sim('R3-OSC' + k, NORMAL, 1200, { force: 'armed/hostage' });
+    for (let k = 0; k < 9; k++) {
+      const sim = new Sim('R3-OSC' + (k % 6), NORMAL, 1200, { force: k < 6 ? 'armed/hostage' : 'armed/siege' });
       const flow = new Map<FieldAgent, { kind: string; t: number }[]>();
       while (!sim.ended) {
         sim.step();
@@ -1044,7 +1099,7 @@ describe('R3 시험 4 (단계 2): 엄폐·보급 왕복이 없다 · 엄폐 중�
       for (const [a, f] of flow) for (let q = 0; q + 2 < f.length; q++) {
         const x = f[q], y = f[q + 1], z = f[q + 2];
         if (x.kind === 'cover' || x.kind === 'rearm') doc++;
-        if ((x.kind === 'cover' || x.kind === 'rearm') && z.kind === x.kind && y.kind !== x.kind && z.t - y.t < 10) bad.push(`R3-OSC${k} ${sim.responders[a.rid].name}: ${x.kind}→${y.kind}→${z.kind} @${y.t.toFixed(1)}`);
+        if ((x.kind === 'cover' || x.kind === 'rearm') && z.kind === x.kind && y.kind !== x.kind && z.t - y.t < 10) bad.push(`${sim.seed} ${sim.responders[a.rid].name}: ${x.kind}→${y.kind}→${z.kind} @${y.t.toFixed(1)}`);
       }
     }
     expect(bad).toEqual([]);

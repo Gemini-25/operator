@@ -31,6 +31,9 @@ import { T } from '../src/sim/types';
 import type { CasBelief, Casualty, FieldAgent, Incident, IncidentType, KitId, MethodId, MethodUse, Needs, RoleId, Scene, Task, UnitKind, WorkItem, WorkKind } from '../src/sim/types';
 import { clamp, josa } from '../src/sim/util';
 import { MethodRows } from '../src/ui/MethodRows';
+import { THROW_RELEASE, drawBoats, drawMethodFx, inBoat, swimming } from '../src/view/scene/methodsLayer';
+import { drawPerson, drawSwimmer, responderLook } from '../src/view/scene/sprites';
+import { fakeCtx } from './fakeCanvas';
 
 // ───────────────────────── 도구 ─────────────────────────
 const FULL: Difficulty = { ...NORMAL, resources: 5 };      // 모든 부대가 편성된다
@@ -1721,4 +1724,38 @@ describe('R2 단계 1c: 강제 교대 — 해일에서 보트가 쓰이고, 물 
     expect(bad).toEqual([]);
     expect(boats, '보트로 건진 사람').toBeGreaterThan(0);
   }, 120000);
+});
+
+// ───────────────────────── 단계 1d: 수난 그림 (§3.7 — 화면은 상태를 읽기만 한다) ─────────────────────────
+describe('R2 단계 1d: 수난 그림 (methodsLayer · 헤엄치는 대원 · 보트 · 자세)', () => {
+  it('보트·줄·장대·줄 확보의 그림 함수는 예외 없이 끝나고 시뮬레이션 상태를 바꾸지 않는다 (판단·실행 함수를 부르지 않는다)', () => {
+    const { sim, s, c, of, role } = oneVictim('R2-DRAW', ['patrol', 'rescue', 'boat'], 35);
+    const [cop, cop2] = of('patrol'), rope = role('ropeTech'), boatman = role('boatRescuer'), eng = of('rescue').find((a) => a !== rope)!;
+    const w = work(sim, s, 'waterRescue', { cas: c.id, max: 5 });
+    const top = waterTop(s, 8);
+    // 헤엄치는 대원 · 줄 확보 · 던지는 대원(놓은 뒤) · 장대 · 보트
+    const tw = taskFor(cop, w); tw.method = 'swim'; tw.phase = 2; cop.x = cop.px = 8; cop.y = cop.py = top + 1;
+    const tt = taskFor(rope, w); tt.method = 'tend'; tt.phase = 1; rope.x = rope.px = 8; rope.y = rope.py = top - 1;
+    const tr = taskFor(cop2, w); tr.method = 'improvise'; tr.phase = 0; cop2.ring = 0.9; cop2.x = cop2.px = 9; cop2.y = cop2.py = top - 1;
+    const tp = taskFor(eng, w); tp.method = 'pole'; eng.ring = 0.5; eng.x = eng.px = 7; eng.y = eng.py = top - 1;
+    const tb = taskFor(boatman, w); tb.method = 'boat'; tb.phase = 3; boatman.x = boatman.px = 10; boatman.y = boatman.py = top + 2; boatman.afloat = 'boat';
+    expect(swimming(s, cop)).toBe(true); expect(swimming(s, rope)).toBe(false); expect(inBoat(boatman)).toBe(true); expect(swimming(s, boatman)).toBe(false);
+    const snap = (): string => JSON.stringify([sim.logHash, sim.events.length, peek(sim.rng), peek(s.rng), s.agents.map((a) => [a.x, a.y, a.afloat, a.task && a.task.method, a.ring, a.mrng === undefined]), s.casualties.map((q) => [q.x, q.y, q.where])]);
+    const before = snap();
+    const g = fakeCtx();
+    for (const tr2 of [0.2, THROW_RELEASE + 0.01, 1]) { cop2.ring = tr2; drawBoats(g, sim, s, 24, 0.5, 1.3); drawMethodFx(g, s, 24, 0.5); }
+    tr.phase = 1; drawMethodFx(g, s, 24, 1);      // 다시 감는 중
+    const lk = responderLook('fire', 'engine', 3, 'firefighter');
+    for (const arms of ['reach', 'hold', 'throw'] as const) for (const item of ['rope', 'ring', 'pole', 'cloth', 'none'] as const) drawPerson(g, 10, 10, 0.3, 24, lk, { step: 0, moving: false, arms, item, t: 1, act: 0.3 });
+    drawSwimmer(g, 10, 10, 24, lk, 1, 1, '#f07a2a'); drawSwimmer(g, 10, 10, 24, lk, 1, 1);
+    cop2.ring = 0.9; tr.phase = 0;      // 시험이 바꾼 그림 입력을 되돌린다
+    expect(snap()).toBe(before);
+    void tp; void tb;
+  });
+  it('화면의 그림 파일은 판단·실행 함수와 장비의 효과 함수를 부르지 않는다 (methodsLayer)', () => {
+    const src = code('../src/view/scene/methodsLayer.ts');
+    for (const bad of ['chooseMethod', 'methodFit', 'startMethod', 'switchMethod', 'recordMethod', 'runWaterRescue', 'waterTick', 'pullAshore', 'kitWorks', 'useKit', 'toolUse', 'mrng']) expect(src.includes(bad), bad).toBe(false);
+    const imports = src.split('\n').filter((l) => /^\s*import\b/.test(l)).join('\n');
+    for (const bad of ['methodRun', 'executor', "/methods'", 'agents', 'brain']) expect(imports.includes(bad), bad).toBe(false);
+  });
 });

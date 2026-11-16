@@ -33,6 +33,7 @@ import { gasView, hostageState, rekindledRegions } from './hazardState';
 import { ruinZones, strokeRuinEdges } from './scene/ruins';
 import { drawCatOver, drawCatUnder, drawTrappedDebris } from './scene/catLayer';
 import { TRIAGE, TRIAGE_EDGE, TRIAGE_TEXT, casBand, casDrawn, casSheet, hostileBand, hostileDrawn, hostileSheet, hurtPose, respBand, respLying, respSheet } from './triage';
+import { THROW_RELEASE, drawBoats, drawMethodFx, inBoat, swimming } from './scene/methodsLayer';      // (R2 1d) 대응 방법의 그림 — 수난: 줄·장대·보트·헤엄치는 대원
 
 /** 현장 화면의 시점: 중심(타일 좌표)과 배율(1 = 현장 전체가 보인다) */
 export interface SceneCam { x: number; y: number; zoom: number }
@@ -154,6 +155,21 @@ function agentPose(sim: Sim, s: Scene, a: FieldAgent, moving: boolean): { arms: 
   const gun: Item = hasKit(sim, rid, 'sniper') ? 'sniper' : hasKit(sim, rid, 'rifle') ? 'rifle' : 'pistol';
   // 문을 여는 도구: 파괴 장비면 공성추, 할리건·도끼 묶음이면 할리건, 그 밖에는 도끼
   const opener: Item = hasKit(sim, rid, 'breachKit') ? 'ram' : hasKit(sim, rid, 'irons') ? 'halligan' : 'axe';
+  // (R2 1d) 대응 방법이 자세를 먼저 정한다 (G5 의 하위 작업 분기보다 앞) — 수난 구조: 보트 위는 앉은 자세, 손·하류 차단·장대는 무릎 꿇고 뻗기,
+  // 던지는 방법은 줄을 놓을 때까지 팔을 젖히고(감긴 줄·구명환·이은 옷) 놓은 뒤에는 줄을 잡아 당긴다, 줄 확보는 자리를 잡으면 줄을 잡아 버틴다
+  const wt = a.task && a.task.kind === 'waterRescue' ? a.task : null;
+  if (wt && wt.method === 'boat' && a.afloat === 'boat') return { arms: 'side', item: 'none' };
+  if (wt && wt.method && !moving) {
+    const busy = a.ring > 0.01;
+    switch (wt.method) {
+      case 'hand': case 'catch': if (busy) return { arms: 'reach', item: 'none' }; break;
+      case 'pole': if (busy) return { arms: 'reach', item: 'pole' }; break;
+      case 'rope': case 'ring': case 'improvise':
+        if (busy && wt.phase !== 1) return a.ring < THROW_RELEASE ? { arms: 'throw', item: wt.method === 'improvise' ? 'cloth' : wt.method } : { arms: 'hold', item: 'rope' };
+        break;
+      case 'tend': if (wt.phase >= 1) return { arms: 'hold', item: 'rope' }; break;
+    }
+  }
   if (a.carrying >= 0 || a.carrying <= -2) return { arms: 'drag', item: 'none' };
   if (sim.t - (a.taserAt ?? -99) < 1) return { arms: 'aim', item: 'taser' };
   // (G5) 길 위의 잠긴 문을 강제로 여는 중(하위 작업): 도구를 든다
@@ -472,6 +488,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   const smoke = MINI ? null : smokeLayer(s, ts, time, gv.gas);
   if (MINI) drawSmoke(ctx, s, ts, time, gv.gas); else if (smoke) ctx.drawImage(smoke, 0, 0, W, H);
 
+  // (R2 1d) 물에 띄운 보트 (사람보다 먼저 — 보트 안에 실린 사람과 앉은 대원이 그 위에)
+  if (!MINI) drawBoats(ctx, sim, s, ts, o.alpha, time);
   // ── 사람: 구조 대상 → 용의자 → 대원 ──
   const carrierOf = new Map<number, FieldAgent>();
   for (const a of s.agents) if (a.carrying >= 0 && a.status !== 'left') carrierOf.set(a.carrying, a);
@@ -498,6 +516,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       ctx.strokeStyle = win ? alpha('#ffd166', 0.45 + 0.5 * Math.abs(Math.sin(time * 6))) : 'rgba(255,93,93,0.85)'; ctx.lineWidth = Math.max(1.5, ts * 0.06);
       ctx.beginPath(); ctx.ellipse(x, y + ts * 0.12, ts * 0.4, ts * 0.3, 0, 0, 7); ctx.stroke();
     }
+    // (R2 1d) 보트에 끌어올린 사람: 보트 안 뒤쪽에 눕는다 (끌려가는 동안은 물속 표시 그대로 — inWater)
+    if (c.inWater && carrier && inBoat(carrier)) { const ba = Math.atan2(carrier.fy, carrier.fx); drawLying(ctx, x - Math.cos(ba) * ts * 0.4, y - Math.sin(ba) * ts * 0.4, ba, ts * 0.85, lk, { variant: hash2(c.id, 5), ghost }); continue; }
     if (c.inWater && !c.dead) { drawSwimmer(ctx, x, y, ts, lk, time + c.id, ghost); continue; }
     const upright = !c.dead && c.mob === 'mobile' && c.where !== 'carried' && c.health > 40;
     if (upright) {
@@ -618,7 +638,11 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       // (H1) 다친 자세: 중상(체력 70 이하)부터 걸음이 줄고 몸이 기운다. 손이 비었으면 옆구리를 붙들고, 대기 지점으로 물러난 대원은 앉는다
       const hurt = hurtPose(rsp.health, 70), sit = a.status === 'withdrawn';
       if (hurt > 0 && (pose.arms === 'side' || sit)) { pose.arms = 'clutch'; pose.item = 'none'; }
-      drawPerson(ctx, x, y, ang, ts, lk, { step: time * 11 + a.rid, moving, arms: pose.arms, item: pose.item, t: time + a.rid * 0.37, recoil: af?.recoil, act: af?.throwAct, crouch: sit || (a.inCover && s.kind === 'armed' && !moving && pose.arms === 'aim'), flinch: off && (off.x || off.y) ? off : undefined, hurt: hurt > 0 ? hurt : undefined });
+      if (swimming(s, a)) {
+        // (R2 1d) 헤엄치는 대원: 헬멧·공기호흡기를 벗은 모습(머리카락), 구명조끼를 입었으면 주황 조끼. 끌고 오는 사람은 바로 뒤에서 함께 헤엄친다(구조 대상 그림)
+        const sk = lookOf('sw' + a.rid + ':' + u.kind + ':' + (rsp.role ?? ''), () => ({ ...lk, headCol: '#2b2420', headCol2: undefined, band: undefined, pack: 'none' }));
+        drawSwimmer(ctx, x, y, ts, sk, time + a.rid * 0.37, 1, hasKit(sim, a.rid, 'pfd') ? '#f07a2a' : undefined);
+      } else drawPerson(ctx, x, y, ang, ts, lk, { step: time * 11 + a.rid, moving, arms: pose.arms, item: pose.item, t: time + a.rid * 0.37, recoil: af?.recoil, act: af?.throwAct ?? (pose.arms === 'throw' ? Math.min(1, a.ring / THROW_RELEASE) : undefined), crouch: sit || inBoat(a) || (a.inCover && s.kind === 'armed' && !moving && pose.arms === 'aim'), flinch: off && (off.x || off.y) ? off : undefined, hurt: hurt > 0 ? hurt : undefined });
       if (a.inCover && s.kind === 'armed') drawCoverBadge(ctx, x + ts * 0.36, y + ts * 0.34, ts);      // (G5) 엄폐: 반쪽 벽 기호
       // (R1) 공기 잔량 60초 아래: 머리 위 왼쪽의 작은 주황 점 (깜박이지 않는다)
       if (hasKit(sim, a.rid, 'scba') && kitUses(sim, a.rid, 'scba') < AIR_LOW) { disc(ctx, x - ts * 0.36, y - ts * 0.38, ts * 0.115, '#0b1219'); disc(ctx, x - ts * 0.36, y - ts * 0.38, ts * 0.08, kitUses(sim, a.rid, 'scba') <= 0 ? '#ff5d5d' : '#ff9f43'); }
@@ -632,20 +656,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     else if (sel) labels.push({ x, y: y - ts * 0.82, text: rsp.name, col });
   }
 
-  // 구조 줄: 물가의 대원에서 물속의 사람까지
-  if (!MINI) for (const a of s.agents) {
-    if (a.status !== 'active' || !a.task || a.task.kind !== 'waterRescue' || a.ring <= 0.01) continue;
-    const c = s.casualties[a.task.cas];
-    if (!c || !c.inWater) continue;
-    const p = ipos(a, o.alpha), q = ipos(c, o.alpha);
-    const x0 = cx(p.x), y0 = cy(p.y), x1 = cx(q.x), y1 = cy(q.y), k = Math.min(1, a.ring * 2.2);
-    const ex = x0 + (x1 - x0) * k, ey = y0 + (y1 - y0) * k;
-    ctx.lineCap = 'round'; ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = Math.max(2, ts * 0.07);
-    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.quadraticCurveTo((x0 + ex) / 2 + ts * 0.3, (y0 + ey) / 2 + ts * 0.2, ex, ey); ctx.stroke();
-    ctx.strokeStyle = '#f2e6c0'; ctx.lineWidth = Math.max(1.5, ts * 0.04); ctx.stroke();
-    ctx.strokeStyle = '#e8532f'; ctx.lineWidth = Math.max(2, ts * 0.08); ctx.beginPath(); ctx.arc(ex, ey, ts * 0.16, 0, 7); ctx.stroke();
-    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(1, ts * 0.03); ctx.setLineDash([ts * 0.08, ts * 0.17]); ctx.beginPath(); ctx.arc(ex, ey, ts * 0.16, 0, 7); ctx.stroke(); ctx.setLineDash([]);
-  }
+  // (R2 1d) 대응 방법의 줄·장대: 구명줄·구명환·즉석 부력물·갈고리 장대·줄 확보 (scene/methodsLayer.ts)
+  if (!MINI) drawMethodFx(ctx, s, ts, o.alpha);
 
   // ── 불 ──
   drawFire(ctx, s, ts, time, MINI);

@@ -8,7 +8,7 @@
 //   S08(해체 중 장치 반경 6칸의 일 금지) · S13(구조정 — 보트 먼저·바다에서 헤엄 금지) · S15(호이스트가 같은 대상을 맡으면 헤엄 줄이기) · S19(사다리 조작원은 실내 수색을 덜) ·
 //   S21(로봇이 없는 로봇 조작 요원은 출입 통제) · S22(특공 팀장 — 결정 전 협상, 뒤 진입 지휘) · S23(다치거나 동요한 처리 요원은 손으로 해체하지 않는다) · S24(동요·중상 저격수는 쏘지 않는다) ·
 //   S25(지친 수난·항공 구조대원은 헤엄 금지) · S26(인질 위치를 모르면 폭파 진입을 하지 않는다) · S03(진입 결정 전 무장 현장의 잠긴 문을 함부로 열지 않는다 — 판단 지점 forceDoor).
-//   S10·S11(화학대의 짝·대기조)은 3단계의 짝 맺기(pairUp) 위에 선다 — 합치는 작업자가 이 파일 끝에 붙인다.
+//   S10·S11(화학대의 짝·대기조 — 측정기 대원이 수색을 먼저 · 팀장은 밖 대기조)은 3단계의 짝 맺기(pairUp) 위에 선다 — 합치는 작업자가 S03 다음에 붙였다.
 //   지휘·관제 줄 CS1(해체 반경 비우기 — orders/doctrine.ts)·CS2(특공이 있으면 진입조 가산 — commander.assign)·D1(가스 현장의 화학 구조차 — dispatch/doctrine.ts)의 이름표도 여기 둔다.
 
 import { CMD_ROWS, registerDoctrine } from './registry';
@@ -19,6 +19,8 @@ CMD_ROWS.push(
   { id: 'D2', dept: 'special', hook: 'dispatch', name: '폭발물 처리반을 경찰 수요에 아낀다', short: '처리반 아낌', why: 'protocol' },
 );
 
+/** 위험 실내 일의 종류 (§3 읽는 법의 HZ — 대상 구역이 위험 건물 실내인지는 c.hz 가 본다. S11) */
+const HZ: WorkKind[] = ['search', 'carry', 'escort', 'extricate', 'mitigate', 'overhaul'];
 /** 장치 반경 (칸 — S07·S08, 엔진의 BOMB_R 과 같은 값) */
 const BOMB_R = 6;
 /** 해체 중에 장치 반경 안에서 맡지 않는 일 (S08 — 해체·출입 통제·반경 밖으로 옮기는 일(이송·대피 안내·동료 구조)을 뺀 것). 장치가 나는 현장에서 생기는 일만 적는다 */
@@ -193,6 +195,21 @@ registerDoctrine(
     effect: { kind: 'block', maxWait: (c) => (c.st.backup ? S03_WAIT_BACKUP : S03_WAIT) },
     th: { wait: S03_WAIT, waitBackup: S03_WAIT_BACKUP }, rank: 2, why: 'protocol',
     note: '잠긴 방입니다. 진입 결정 전에는 열지 않습니다.', outNote: '더 기다릴 수 없습니다 — 문을 엽니다.',
+  },
+  // (합치기 — 3단계의 짝 맺기 위에 선다) 화학대의 안쪽 짝·밖 대기조 (§5.1 의 화학 줄: [보호복 대원(첫째), 측정·제독 대원] 안 · [화학 팀장, 보호복 대원(둘째)] 밖)
+  {
+    id: 'S10', dept: 'special', name: '측정기를 든 화학 대원이 가스 현장 실내 수색을 먼저', short: '측정기 수색',
+    who: { units: ['hazmat'] }, hook: 'fit', works: ['search'], kits: ['gasMeter'],
+    when: (c) => c.sit.kind === 'hazmat' && c.hz,
+    effect: { kind: 'fitAdd', add: 0.15 },
+    th: { add: 0.15 }, rank: 3, why: 'kit',
+  },
+  {
+    id: 'S11', dept: 'special', name: '화학 팀장은 밖 대기조로 남는다', short: '팀장 대기조',
+    who: { roles: ['hazLead'] }, hook: 'fit', works: HZ,
+    when: (c) => c.hz && c.unitIn() > 0,      // 자기 부대의 안쪽 짝이 위험 실내에 있다 (동료의 겉) — 짝이 나오면 풀린다. 밖의 팀장은 밖 대기조로 세어진다(엔진의 outsideWatch)
+    effect: { kind: 'fitMul', mul: 0.3 },
+    th: { mul: 0.3 }, rank: 2, why: 'outside',
   },
 );
 

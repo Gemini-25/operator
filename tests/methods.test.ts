@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
+import { DOC_SWITCH } from '../src/sim/field/doctrine/registry';
 import { KITS, ROLES, kitWorks } from '../src/sim/crews';
 import { PROBLEM_LABEL, buildReport, evaluate } from '../src/sim/debrief';
 import { NORMAL, parseDisaster } from '../src/sim/difficulty';
@@ -2549,47 +2550,57 @@ describe('R2 단계 4: 화재 진압의 실행 (장면을 직접 만들어)', ()
     expect(kitCount(q.sim, lead.rid, 'extinguisher')).toBe(1);
   });
   it('배연: 송풍기를 출입구에 6초 설치(s.fan 120초) — 방법 기록 뒤 내부 공격으로 예정된 전환(접은 줄·기억 없음). 송풍기는 실내 연기를 빼고 센 불을 조금 키우며, 끝나면 사라진다', () => {
-    const q = sceneWith('R2-FIRE', 'fire', ['ladder']);
-    const lop = q.role('ladderOp');
-    for (const a of q.s.agents) if (a !== lop) a.status = 'left';
-    const r = roomWith(q.s, false) >= 0 ? roomWith(q.s, false) : roomWith(q.s, true);
-    believeFire(q, r, 0.4);
-    const reg = q.s.regions[r], i0 = reg.tiles[Math.floor(reg.tiles.length / 2)];
-    lop.x = lop.px = i0 % q.s.w; lop.y = lop.py = (i0 / q.s.w) | 0; lop.path = null;
-    q.s.smoke[i0] = 0.8;
-    const t = taskFor(lop, work(q.sim, q.s, 'suppress', { region: r }));
-    const n = q.sim.events.length;
-    soloRun(q.sim, q.s, lop, 60, () => q.s.fan != null);
-    expect(q.s.fan).toMatchObject({ rid: lop.rid, power: 1 });
-    expect(q.s.fan!.until).toBeCloseTo(q.sim.t + 120, 6);
-    expect(q.s.exits.some((e) => e.x === q.s.fan!.x && e.y === q.s.fan!.y)).toBe(true);
-    expect(t.method).toBe('interior');
-    expect(q.I.methods!.map((u) => [u.method, u.ok])).toEqual([['ventilate', true]]);
-    expect(lop.mfail ?? []).toEqual([]);
-    expect(texts(q.sim, n)).toContain('추가 위험이 있습니다. 송풍기를 설치해 연기를 빼겠습니다.');
-    // 세계 규칙: 1초에 한 번 실내 연기 ×0.8 · 센 불 +0.006
-    const ind = reg.tiles[0];
-    q.s.smoke[ind] = 0.5; q.s.fire[ind] = 0.6;
-    q.sim.tick += 5 - ((q.sim.tick + q.s.id) % 5); q.sim.t = q.sim.tick * q.sim.dt;
-    methodsRule(q.sim, q.s, q.I);
-    expect(q.s.smoke[ind]).toBeCloseTo(0.4, 6); expect(q.s.fire[ind]).toBeCloseTo(0.606, 6);
-    q.sim.t = q.s.fan!.until + 0.1; methodsRule(q.sim, q.s, q.I);
-    expect(q.s.fan).toBeNull();
+    // (R3 합치기 — 주 세션 결정 (라)) 혼자인 사다리 조작원으로 R2 의 송풍기 효과만 보는 장면이다 — 혼자 서는 역할의 실내 진압은 교본이 막으므로(F04b → 외부 방어)
+    // 그 줄을 본문 §5.1 의 뜻으로 두고 본다 (교본 쪽은 tests/doctrine.test.ts 의 '혼자 서는 역할의 위험 실내')
+    DOC_SWITCH.SOLO_IN = true;
+    try {
+      const q = sceneWith('R2-FIRE', 'fire', ['ladder']);
+      const lop = q.role('ladderOp');
+      for (const a of q.s.agents) if (a !== lop) a.status = 'left';
+      const r = roomWith(q.s, false) >= 0 ? roomWith(q.s, false) : roomWith(q.s, true);
+      believeFire(q, r, 0.4);
+      const reg = q.s.regions[r], i0 = reg.tiles[Math.floor(reg.tiles.length / 2)];
+      lop.x = lop.px = i0 % q.s.w; lop.y = lop.py = (i0 / q.s.w) | 0; lop.path = null;
+      q.s.smoke[i0] = 0.8;
+      const t = taskFor(lop, work(q.sim, q.s, 'suppress', { region: r }));
+      const n = q.sim.events.length;
+      soloRun(q.sim, q.s, lop, 60, () => q.s.fan != null);
+      expect(q.s.fan).toMatchObject({ rid: lop.rid, power: 1 });
+      expect(q.s.fan!.until).toBeCloseTo(q.sim.t + 120, 6);
+      expect(q.s.exits.some((e) => e.x === q.s.fan!.x && e.y === q.s.fan!.y)).toBe(true);
+      expect(t.method).toBe('interior');
+      expect(q.I.methods!.map((u) => [u.method, u.ok])).toEqual([['ventilate', true]]);
+      expect(lop.mfail ?? []).toEqual([]);
+      expect(texts(q.sim, n)).toContain('추가 위험이 있습니다. 송풍기를 설치해 연기를 빼겠습니다.');
+      // 세계 규칙: 1초에 한 번 실내 연기 ×0.8 · 센 불 +0.006
+      const ind = reg.tiles[0];
+      q.s.smoke[ind] = 0.5; q.s.fire[ind] = 0.6;
+      q.sim.tick += 5 - ((q.sim.tick + q.s.id) % 5); q.sim.t = q.sim.tick * q.sim.dt;
+      methodsRule(q.sim, q.s, q.I);
+      expect(q.s.smoke[ind]).toBeCloseTo(0.4, 6); expect(q.s.fire[ind]).toBeCloseTo(0.606, 6);
+      q.sim.t = q.s.fan!.until + 0.1; methodsRule(q.sim, q.s, q.I);
+      expect(q.s.fan).toBeNull();
+    } finally { DOC_SWITCH.SOLO_IN = false; }
   });
   it('송풍기의 숨은 고장은 설치하러 출입구에 닿았을 때 드러난다 — 장비 고장(EQUIP_FAIL) 뒤 내부 공격으로, 송풍기는 돌지 않는다', () => {
-    const q = sceneWith('R2-FIRE', 'fire', ['ladder']);
-    const lop = q.role('ladderOp');
-    for (const a of q.s.agents) if (a !== lop) a.status = 'left';
-    q.sim.responders[lop.rid].kit!.find((it) => it.id === 'fan')!.fault = true;
-    const r = roomWith(q.s, false) >= 0 ? roomWith(q.s, false) : roomWith(q.s, true);
-    believeFire(q, r, 0.4);
-    const reg = q.s.regions[r], i0 = reg.tiles[0];
-    lop.x = lop.px = i0 % q.s.w; lop.y = lop.py = (i0 / q.s.w) | 0; lop.path = null; q.s.smoke[i0] = 0.8;
-    const t = taskFor(lop, work(q.sim, q.s, 'suppress', { region: r }));
-    soloRun(q.sim, q.s, lop, 60, () => t.method !== 'ventilate' && t.method !== undefined);
-    expect(t.method).toBe('interior'); expect(t.mwhy).toBe('broken');
-    expect(q.s.fan ?? null).toBeNull();
-    expect(q.I.problems.some((p) => p.code === 'EQUIP_FAIL')).toBe(true);
+    // (R3 합치기 — 주 세션 결정 (라)) 혼자인 사다리 조작원으로 R2 의 송풍기 효과만 보는 장면이다 — 혼자 서는 역할의 실내 진압은 교본이 막으므로(F04b → 외부 방어)
+    // 그 줄을 본문 §5.1 의 뜻으로 두고 본다 (교본 쪽은 tests/doctrine.test.ts 의 '혼자 서는 역할의 위험 실내')
+    DOC_SWITCH.SOLO_IN = true;
+    try {
+      const q = sceneWith('R2-FIRE', 'fire', ['ladder']);
+      const lop = q.role('ladderOp');
+      for (const a of q.s.agents) if (a !== lop) a.status = 'left';
+      q.sim.responders[lop.rid].kit!.find((it) => it.id === 'fan')!.fault = true;
+      const r = roomWith(q.s, false) >= 0 ? roomWith(q.s, false) : roomWith(q.s, true);
+      believeFire(q, r, 0.4);
+      const reg = q.s.regions[r], i0 = reg.tiles[0];
+      lop.x = lop.px = i0 % q.s.w; lop.y = lop.py = (i0 / q.s.w) | 0; lop.path = null; q.s.smoke[i0] = 0.8;
+      const t = taskFor(lop, work(q.sim, q.s, 'suppress', { region: r }));
+      soloRun(q.sim, q.s, lop, 60, () => t.method !== 'ventilate' && t.method !== undefined);
+      expect(t.method).toBe('interior'); expect(t.mwhy).toBe('broken');
+      expect(q.s.fan ?? null).toBeNull();
+      expect(q.I.problems.some((p) => p.code === 'EQUIP_FAIL')).toBe(true);
+    } finally { DOC_SWITCH.SOLO_IN = false; }
   });
   it('외부 방수·고가 방수의 물줄기는 s.rng 를 쓰지 않는다 (흔들림은 고정 오프셋) — 지금의 내부 공격은 그대로 s.rng 로 흩뜨린다', () => {
     const q = sceneWith('R2-FIRE', 'fire', ['engine']);

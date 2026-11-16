@@ -303,7 +303,10 @@ function pairOf(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem | null, st: DocSt
   // 짝이 문턱에서 나를 기다리고 있으면(판단 지점 interiorEntry) 예외 없이 따라간다 — 곁의 일을 맡으러 가면 짝은 20초 뒤 일을 놓고 다음 일에서 또 기다렸다(극한 교대에 일곱 번)
   const waiting = b !== null && b.task !== null && b.task.gateId === 'interiorEntry' && (b.task.gateAt ?? -1) >= 0;
   const alt = job !== null && job.hz && canFollow && myP < 0 && !waiting && pairAlt(sim, s, a, job.w);
-  return { raw, rawOut, forW, follows, rookie, job, canFollow, myP, myIn, alt };
+  // (합치기 (나)) 지휘관이 짝 곁의 위험 실내 일을 맡겼다(받은 지시) — 따라가기보다 그 일을 한다 (지시 점수가 짝 동행 계속 점수보다 낮아 지시가 버려졌다)
+  const ow = a.orderWork >= 0 ? s.board[a.orderWork] : undefined;
+  const ordered = job !== null && ow !== undefined && ow !== job.w && (ow.status === 'open' || ow.status === 'active') && inJob(sim, s, a, ow) && regionsNear(s, regionOfWork(s, a, ow), regionOfWork(s, a, job.w));
+  return { raw, rawOut, forW, follows, rookie, job, canFollow, myP, myIn, alt, ordered };
 }
 /**
  * (3단계 — 측정이 찾은 것, G08 의 예외·짝 동행의 끝) 짝의 위험 실내 일 jw 와 같은·이웃 구역에 이 대원이 맡을 수 있는 빈 위험 실내 일이 있다:
@@ -349,6 +352,12 @@ export function copUsable(sim: Sim, a: FieldAgent, b: FieldAgent): boolean {
   if (v !== undefined && v.band >= 1) return false;
   const g = gunOf(sim, b.rid);
   return !(g !== null && g.ammo !== Infinity && g.ammo <= 2 * g.perShot);
+}
+/** (합치기 — 5단계 S11) 자기 부대의 다른 활동 대원 가운데 위험 건물 실내(이 대원의 믿음으로 본 위험 구역)에 선 사람의 수 (동료의 겉) */
+export function unitInside(s: Scene, a: FieldAgent): number {
+  let n = 0;
+  for (let k = 0; k < s.agents.length; k++) { const b = s.agents[k]; if (b !== a && b.status === 'active' && b.unitId === a.unitId && riskyAt(s, a, b.x, b.y)) n++; }
+  return n;
 }
 /** 밖 대기조의 필요한 수: 2, 같은 사건으로 공기호흡기 대원을 태운 소방 부대가 오는 중이면 1 (조직 정보) */
 export function watchNeed(sim: Sim, s: Scene): number {
@@ -601,6 +610,7 @@ export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report
   }
   const kf = kitFnsOf(sim, a);
   let pr: DocPair | undefined, wt: { n: number; need: number } | undefined;      // (3단계) 짝·밖 대기조 — 줄이 처음 물을 때 한 번 잰다
+  let ui: number | undefined;      // (합치기 — S11) 자기 부대의 다른 대원 가운데 위험 실내에 선 사람 — 줄이 처음 물을 때 한 번
   return {
     sim, s, a, u: sim.units[a.unitId], dept: docDeptOf(sim, rid), role, group: groupOf(sim, rid),
     mode, w, hz, wRisky, light, st, sit, sense, dng,
@@ -609,6 +619,7 @@ export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report
     tg, pack, dngSign, hideSpot: mode === 'self' && tg !== null ? hideOf(s, a, tg) : NO_HIDE, solo: role !== null && SOLO_OK.has(role),
     pair: () => (pr ??= pairOf(sim, s, a, w, st)),
     watch: () => (wt ??= { n: outsideWatch(sim, s, a, nearestExit(s, a.x, a.y)), need: watchNeed(sim, s) }),
+    unitIn: () => (ui ??= unitInside(s, a)),
     wBomb: w !== null && sit.liveBomb !== null ? bombDistOfWork(s, a, w) : Infinity,
   };
 }

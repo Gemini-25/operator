@@ -414,7 +414,7 @@ export function docMark(sim: Sim, s: Scene, a: FieldAgent, ruleId: string, hook:
 
 // ───────────────────────── (3단계 — 소방) 짝 맺기 · 다시 맺기 · 공기 탈출 · 짝 따라 나가기 · 짝 동행 (§5) ─────────────────────────
 // 짝(FieldAgent.buddy)은 작업판의 담당자가 아니다(WorkItem.max 그대로 — §5.4): 작업판에는 한 사람, 몸은 둘. 짝은 이 파일만 맺고(pairUp·rebuddy) 판단부는 읽기만 한다.
-import { PAIRS, SOLO_OK, hotSearch, inJob, pairAlt } from './doctrine';
+import { PAIRS, SOLO_OK, hotSearch, inJob, nearWork, pairAlt } from './doctrine';
 import { ROLES, STAFF, refillAir } from '../crews';
 import { roleIdOf } from './gear';
 import { staticPass, tileOf } from './grid';
@@ -481,23 +481,45 @@ function hasBuddy(sim: Sim, s: Scene, a: FieldAgent): boolean {
  */
 export function rebuddy(sim: Sim, s: Scene, a: FieldAgent): void {
   if (a.status !== 'active' || a.aloft) return;
-  if (hasBuddy(sim, s, a)) return;
   const ro = roleIdOf(sim, a.rid);
   if (ro !== null && SOLO_OK.has(ro)) return;
+  // (합치기 — 주 세션 결정 (나)) 짝이 혼자 서는 역할(기관원·사다리 조작원 …)이라 위험 실내에 함께 들어갈 수 없는 공기호흡기 대원은, 손이 비었고 지휘관이 아니면
+  // 부대를 넘어 같은 처지(짝이 없거나 짝이 혼자 서는 역할)의 손 빈 공기호흡기 대원과 다시 맺는다 — 펌프차 둘째 대의 진압 팀장·구조 팀장이 밖에 서 있기만 했다.
+  // 남겨진 혼자 서는 대원은 짝이 없어진다(−1 — 그는 원래 밖에 선다: 밖 대기조로 세어진다)
+  const lost = !hasBuddy(sim, s, a);
+  if (!lost && !soloPaired(sim, s, a)) return;
   const dept = sim.responders[a.rid].dept;
   let best: FieldAgent | null = null, bd = Infinity;
   for (let k = 0; k < s.agents.length; k++) {
     const b = s.agents[k];
     if (b === a || b.status !== 'active' || b.aloft || sim.responders[b.rid].dept !== dept) continue;
     const rb = roleIdOf(sim, b.rid);
-    if ((rb !== null && SOLO_OK.has(rb)) || hasBuddy(sim, s, b)) continue;
+    if (rb !== null && SOLO_OK.has(rb)) continue;
+    if (hasBuddy(sim, s, b) && !(!lost && soloPaired(sim, s, b))) continue;      // 다시 맺는 사람: 짝이 없는 사람, 또는 (짝이 혼자 서는 역할인 사람끼리) 같은 처지의 사람
     const d = dist(a.x, a.y, b.x, b.y);
     if (d < bd || (d === bd && best !== null && b.rid < best.rid)) { bd = d; best = b; }
   }
-  if (best === null) { if (a.buddy !== -1) a.buddy = -1; return; }
+  if (best === null) { if (lost && a.buddy !== -1) a.buddy = -1; return; }
+  unpairSolo(s, a); unpairSolo(s, best);
   a.buddy = best.rid; best.buddy = a.rid;
   const r = sim.responders[a.rid];
   emit(sim, { inc: s.incidentId, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 0, text: `${sim.responders[best.rid].name}, 지금부터 나와 짝이다.` });
+}
+/**
+ * (합치기 — 주 세션 결정 (나)) 짝이 혼자 서는 역할이라 위험 실내에 함께 들어갈 수 없고, 이 대원은 공기호흡기를 멘 손 빈 활동 대원이며 현장 지휘관이 아니다 (다시 맺어도 되는 사람).
+ * 손이 빈 = 임무 없음·대기이고 받은 지시도 없다 (일하는 짝을 떼어 놓지 않는다)
+ */
+function soloPaired(sim: Sim, s: Scene, a: FieldAgent): boolean {
+  if (a.isCommander || a.status !== 'active' || (a.task !== null && a.task.kind !== 'standby') || a.orderWork >= 0 || a.carrying !== -1 || !kitHas(sim, a.rid, 'scba')) return false;
+  if (a.buddy === undefined || a.buddy < 0) return false;
+  const rb = roleIdOf(sim, a.buddy);
+  return rb !== null && SOLO_OK.has(rb);
+}
+/** 다시 맺는 사람의 짝이 혼자 서는 역할이면 그 짝의 짝을 비운다 (짝은 서로 맺는다 — 남겨진 사람이 떠난 사람을 가리키지 않게) */
+function unpairSolo(s: Scene, a: FieldAgent): void {
+  if (a.buddy === undefined || a.buddy < 0) return;
+  const b = agentAt(s, a.buddy, a);
+  if (b !== null && b.buddy === a.rid) b.buddy = -1;
 }
 /** 공기통을 바꾸는 시간 (초 — R1 의 swapAir 와 같다) · 탈출 자리의 연기 문턱 · 출입구 바깥쪽을 찾는 거리 · 짝을 따라가는 거리 · 짝의 위험 실내 일이 끝난 뒤 동행을 잇는 초 · 짝 따라 나가기가 끝나는 연기·출입구 거리 */
 export const AIR_OUT_RUN = { swap: 8, clean: 0.1, exitR: 3, follow: 1.4, linger: 3, lingerIdle: 8, pairOutClear: 0.25, pairOutExit: 2 } as const;
@@ -601,10 +623,18 @@ export function runPair(sim: Sim, s: Scene, a: FieldAgent, t: Task, k: ExecKit):
   if (b.carrying !== -1) { if (!hazIndoorAt(s, a, a.x, a.y) && !hazIndoorAt(s, b, b.x, b.y)) { actEnd(sim, a, t); k.finish(sim, s, a, true); return; } }
   else if (sim.t - (PAIR_HZ.get(t) ?? sim.t) > (b.task === null || b.task.kind === 'standby' ? AIR_OUT_RUN.lingerIdle : AIR_OUT_RUN.linger)) { actEnd(sim, a, t); k.finish(sim, s, a, true); return; }      // 손이 빈 짝(다음 지시를 기다린다)은 조금 더 기다린다
   // (3단계 — 측정이 찾은 것) 짝 곁에 내가 맡을 빈 위험 실내 일(짝의 진압에 남은 자리 포함)이 생기면 따라가기를 끝낸다 — 다음 판단에 그 일을 맡는다(G08 은 alt 로 다시 걸리지 않는다)
+  // (합치기 (나)) 지휘관이 짝 곁의 위험 실내 일을 맡겼으면(받은 지시) 따라가기를 끝낸다 — 다음 판단에 그 지시를 한다 (G08 은 ordered 로 다시 걸리지 않는다)
+  //   그 뒤 10초는 동행 줄을 다시 걸지 않는다(곁의 일로 끝낼 때와 같다 — 지시가 이미 끝나 있던 일이면 그 틱에 끝나 "동행 → 없음 → 동행"이 되었다, 시험 4)
+  if (bw !== undefined && b.carrying === -1 && a.orderWork >= 0 && orderedNear(sim, s, a, bw)) { docRemember(sim, a, t.docRule ?? 'G08', '*', PAIR_ALT_MEM); actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
   if (bw !== undefined && b.carrying === -1 && (sim.tick + a.rid) % 5 === 0 && pairAlt(sim, s, a, bw)) { docRemember(sim, a, t.docRule ?? 'G08', '*', PAIR_ALT_MEM); actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
   const m = followMate(sim, s, a, t, b, k, false);
   if (m === 'nopath') { t.wait = 1; t.range = 0; }
   else if (m === 'arrived') { a.fx = b.x - a.x; a.fy = b.y - a.y; if (bw !== undefined && b.task !== null) pairHelp(sim, s, a, b, b.task, bw.kind, k); }
+}
+/** (합치기 (나)) 받은 지시가 짝의 일 bw 와 같은·이웃 구역의 위험 실내 일인가 (공개 지휘 상태 — 지휘관이 짝에게 곁의 일을 함께 맡겼다) */
+function orderedNear(sim: Sim, s: Scene, a: FieldAgent, bw: WorkItem): boolean {
+  const ow = s.board[a.orderWork];
+  return ow !== undefined && ow !== bw && (ow.status === 'open' || ow.status === 'active') && inJob(sim, s, a, ow) && nearWork(s, a, ow, bw) && fitFor(sim, s, a, ow) > 0;      // 맡을 수 있는 지시만 (맡지 못하는 지시로 끝내면 다음 판단에 지시가 버려지고 다시 짝 동행 — 시험 4 의 "동행 → 없음 → 동행")
 }
 /** 곁의 일을 맡으려고 동행을 끝낸 뒤 그 동행 줄을 다시 걸지 않는 시간 (초 — 그 일을 다른 사람이 먼저 받으면 "동행 → 없음 → 동행"이 1초 안에 되풀이되었다. 짝은 이미 실내라 문턱의 판단 지점이 걸리지 않는다) */
 const PAIR_ALT_MEM = 10;
@@ -636,7 +666,7 @@ function pairHelp(sim: Sim, s: Scene, a: FieldAgent, b: FieldAgent, bt: Task, ki
     for (const i of reg.tiles) { if (bt.covered.has(i)) continue; const x = i % s.w, y = (i / s.w) | 0; if (dist(a.x, a.y, x, y) <= rr && los(s, a.x, a.y, x, y)) bt.covered.add(i); }
   }
 }
-import { detectRadius } from './agents';
+import { detectRadius, fitFor } from './agents';
 import { los } from './grid';
 
 // ───────────────────────── (4단계) 의료 — 분류 · 처치 넘겨받기 · 경계 밖 처치소 · 판단 지점 carryHold·laneTreat (§3.3·§6.1) ─────────────────────────

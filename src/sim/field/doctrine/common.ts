@@ -64,7 +64,7 @@ registerDoctrine(
   {
     id: 'G08', dept: 'common', name: '짝 동행 — 짝의 위험 실내 일에 따라 들어간다', short: '짝 동행',
     hook: 'act',
-    when: (c) => { if (c.solo) return false; const p = c.pair(); return p.job !== null && p.canFollow && !p.alt && (p.myP < 0 || (!p.myIn && p.myP < p.job.p - 0.1)); },      // 하던 일이 바깥 일일 때만 놓는다
+    when: (c) => { if (c.solo) return false; const p = c.pair(); return p.job !== null && p.canFollow && !p.alt && !p.ordered && (p.myP < 0 || (!p.myIn && p.myP < p.job.p - 0.1)); },      // 하던 일이 바깥 일일 때만 놓는다
     effect: { kind: 'act', act: 'pair', score: (c) => { const j = c.pair().job; return 0.5 + 0.4 * (j !== null ? j.p : 0) + 0.12; } },
     th: { gap: 0.1, add: 0.12 }, rank: 2, why: 'buddy',
     note: '{mate}, 같이 들어간다.',

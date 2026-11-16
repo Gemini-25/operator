@@ -9,7 +9,7 @@
 //   F18(교통사고 현장의 소방차 차로 막기)은 방법 blockLane 이 생기는 6단계가 이 파일 끝에 붙인다. F10·F11·F17·F19 는 '있음'(지금·R1·R2·X6) — 등록하지 않는다(F10 의 예비 펌프 수는 brain·executor, 지휘는 CF3).
 // 지휘·관제 줄(CF1~CF7 · D5, 그리고 특수 표의 관제 줄 D4 — 코드가 3단계라 이름표를 여기 둔다)의 이름표도 여기 둔다 (코드는 commander.ts · orders/doctrine.ts · orders/catastrophe.ts · dispatch/doctrine.ts).
 
-import { CMD_ROWS, registerDoctrine } from './registry';
+import { CMD_ROWS, DOC_SWITCH, registerDoctrine } from './registry';
 import type { DocCtx } from './registry';
 import type { CasBelief, WorkKind } from '../../types';
 import { dist } from '../../util';
@@ -77,7 +77,9 @@ registerDoctrine(
     hook: 'fit', works: [...HZ, 'suppress'], kits: ['scba'],
     // (3단계 측정 — 본문은 진압의 fit 을 막지 않고 실내 방법만 뺐다(F04b)) 위험 건물 실내의 진압도 짝이 따라올 수 없으면 맡지 않는다 — 지휘관 판단의 외부 방어(믿음 속 지휘 상태)는 예외.
     //   본문대로 두면 같은 부대의 관창수 둘이 서로 다른 구역의 진압을 받아 둘 다 혼자가 되어 둘 다 밖에서 방수했다(화재 진압이 크게 늦어졌다). 맡지 않은 관창수는 짝 동행(G08)으로 짝의 진압을 함께 한다
-    when: (c) => (c.hz || (c.w !== null && c.w.kind === 'suppress' && c.wRisky && !exteriorMode(c))) && !c.solo && c.pair().forW === null,
+    //   (합치기 — 주 세션 결정 (라)) 혼자 서는 역할(기관원·사다리 조작원 — SOLO_OK)도 짝 없이는 위험 실내 일을 맡지 않는다: 본문 §5.1 은 그들을 F04 에서 뺐으나, 그러면 그들이 혼자 실내로 들어가
+    //   (강제 fire/std 의 장면당 0.27명) 밖 대기조가 비고 F05 가 뒤에 온 진입조를 막았다. 짝(진압 팀장)이 따라오면 둘이 들어간다. 스위치 DOC_SWITCH.SOLO_IN (registry) — 구현 메모의 수치
+    when: (c) => (c.hz || (c.w !== null && c.w.kind === 'suppress' && c.wRisky && !exteriorMode(c))) && (!DOC_SWITCH.SOLO_IN || !c.solo) && c.pair().forW === null,
     unless: carryNear,      // 예외: 믿음 속 구조 대상이 3칸 안이면 그 사람의 이송은 맡는다
     effect: { kind: 'fitMul', mul: 0 },
     th: { near: 3 }, rank: 2, why: 'alone',
@@ -85,14 +87,14 @@ registerDoctrine(
   {
     id: 'F04b', dept: 'fire', name: '짝 없이 실내 진압하지 않는다', short: '짝 없음 — 외부 방수',
     hook: 'method', works: ['suppress'], methods: ['interior', 'pulse'], kits: ['scba'],
-    when: (c) => !c.solo && c.wRisky && c.pair().forW === null,
+    when: (c) => (!DOC_SWITCH.SOLO_IN || !c.solo) && c.wRisky && c.pair().forW === null,      // (합치기 (라)) 혼자 서는 역할도 — F04 와 같다
     effect: { kind: 'methodMul', mul: 0 },
     rank: 2, why: 'alone',
   },
   {
     id: 'F04c', dept: 'fire', name: '짝이 따라올 때까지 문턱에서 기다린다', short: '짝 기다림',
     hook: 'gate', works: [...HZ, 'suppress'], gate: 'interiorEntry', kits: ['scba'],
-    when: (c) => inside(c) && !c.solo && !c.pair().follows,
+    when: (c) => inside(c) && (!DOC_SWITCH.SOLO_IN || !c.solo) && !c.pair().follows,      // (합치기 (라)) 혼자 서는 역할도 — F04 와 같다
     unless: carryNear,
     effect: { kind: 'block', maxWait: entryWait },
     th: { follow: 4, wait: 20, waitBackup: 30 }, rank: 2, why: 'buddy',

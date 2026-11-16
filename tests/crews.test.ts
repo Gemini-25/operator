@@ -462,6 +462,8 @@ describe('④ 장비가 없으면 그 일을 맡지 않는다', () => {
     for (const a of [...agents('patrol'), ...agents('als')]) expect(fitFor(sim, s, a, srch), sim.responders[a.rid].role).toBe(0);
     strip(lead.rid, 'scba'); expect(fitFor(sim, s, lead, srch)).toBe(0);
     // 기관원은 수색을 피하지만(−0.25) 자격은 남는다. 급수 연결은 먼저 맡는다
+    // (R3 합치기 — 주 세션 결정 (라)) 혼자 서는 기관원도 위험 실내 일은 짝이 따라올 때만(F04) — 장비 자격만 보므로 공기호흡기를 멘 관창수와 짝을 맺어 둔다
+    eng.buddy = noz.rid; noz.buddy = eng.rid;
     expect(fitFor(sim, s, eng, srch)).toBeGreaterThan(0);
     const hook = work(sim, 'hookup', { prop: eng.unitId });
     expect(fitFor(sim, s, eng, hook)).toBeCloseTo(1.1, 9);

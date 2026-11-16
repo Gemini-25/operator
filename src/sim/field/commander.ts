@@ -683,6 +683,7 @@ export function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       const ordEv = transmit(sim, s, a, best.rid, 'order', [], `${br.name}, ${workLabel(s, w, sim)}${w.kind === 'search' || w.kind === 'suppress' || w.kind === 'carry' ? ' 실시' : ' 맡아라'}${redo}${docWhy ? ' ' + docWhy : ''}.`, w.id, w.priority > 0.8 ? 1 : 0, w.cause >= 0 ? [w.cause] : []);
       if (docChanged) docAssignRecord(sim, I, best, bestAns, baseBest, baseAns, w, ordEv);
       if (cf7Sc > bs && ordEv >= 0) recordDoc(sim, I, null, 'CF7', 'cmd', { work: w.kind, tgt: 'w:' + w.id }, ordEv);      // (R3 CF7) 지휘관이 1등이었는데 밖에 남았다
+      if (inJob(sim, s, a, w)) pairAssign(sim, s, a, best, w, items, taken);      // (합치기 (나)) 짝에게도 곁의 일을 함께 준다 — 둘째 자리
       if (swatOn && bestNoCs !== null && bestNoCs !== best) recordDoc(sim, I, null, 'CS2', 'cmd', { work: w.kind, tgt: 'w:' + w.id }, ordEv);      // (CS2) 가산이 고른 사람을 바꾸었다
     }
   }
@@ -957,6 +958,39 @@ import { inJob } from './doctrine';
 /** (R3 CF3) 펌프 고장 — 진압 부대 교체를 이미 부른 펌프차 (사건마다 — 교체 한 대면 되므로 같은 차로 다시 부르지 않는다. 관제가 보낼 부대가 없으면 72초마다 같은 요청이 되풀이되었다 — tests/loops.test.ts) */
 const CF3_ASKED = new WeakMap<Incident, Set<number>>();
 function cf3Asked(I: Incident): Set<number> { let m = CF3_ASKED.get(I); if (m === undefined) { m = new Set(); CF3_ASKED.set(I, m); } return m; }
+/**
+ * (합치기 — 주 세션 결정 (나): 짝은 일하면서 함께 다닌다) 위험 실내 일 w 를 best 에게 맡긴 바로 그 자리에서, best 의 짝에게도 같은·이웃 구역의 위험 실내 일을 함께 준다 —
+ * w 에 자리가 남았으면 그 둘째 자리(이송·구출·센 불의 진압은 둘이 맡는다), 아니면 곁의 빈 위험 실내 일(이웃 방의 수색·진압 …) 가운데 우선도가 가장 높은 것.
+ * 짝이 손이 비었거나(짝 동행 포함) 바깥의 낮은 일(w 의 우선도 − 0.1 아래)을 하고 있을 때만. 맡길 일이 없으면 짝은 지금처럼 짝 동행(G08)으로 따라간다.
+ * 짝이 순수한 따라가기로 손을 놓으면 실내의 일손이 절반이 되었다(강제 fire/std — 장면당 짝 동행 1.6명). 작업의 사람 수(max)는 그대로다. 믿음·작업판·동료의 겉·조직 정보만 읽는다
+ */
+/** 짝에게 함께 주는 일의 종류 — 둘이 같은 몫을 하는 일만 (구출·누출 조치는 장비·역할이 갈라 맡을 사람을 정한다: 짝에게 둘째 자리를 주면 유압 구조대원이 밀렸다 — tests/crews.test.ts ⑤) */
+const PAIR_SLOT: ReadonlySet<WorkKind> = new Set<WorkKind>(['search', 'suppress', 'overhaul']);
+function pairAssign(sim: Sim, s: Scene, a: FieldAgent, best: FieldAgent, w: WorkItem, items: WorkItem[], taken: Set<number>): void {
+  const mid = best.buddy;
+  if (mid === undefined || mid < 0 || taken.has(mid)) return;
+  const m = s.agents.find((q) => q.rid === mid && q.status === 'active');
+  if (!m || m === a || sim.units[m.unitId].boardOrder || m.carrying !== -1 || sim.responders[m.rid].status === 'injured') return;
+  if (m.task && m.task.kind !== 'pair' && m.task.kind !== 'standby' && (docHolds(s, m) || m.task.workId < 0)) return;      // 상태 행동·휴식·장비 교체 … 중이면 두고 본다
+  const cur = m.task && m.task.workId >= 0 ? s.board[m.task.workId] : m.orderWork >= 0 ? s.board[m.orderWork] : undefined;
+  if (cur && (cur.status === 'open' || cur.status === 'active') && (inJob(sim, s, a, cur, m.task) || cur.priority >= w.priority - 0.1)) return;      // 자기 위험 실내 일·더 급한 바깥 일은 그대로
+  // 짝이 먼저 맡을 일이 따로 열려 있으면(역할이 앞세우는 일 — 유압 구조대원의 구출 …) 그 일을 두고 짝을 데려가지 않는다 (tests/crews.test.ts ⑤)
+  const pref = roleOf(sim, m.rid).prefer;
+  for (const w3 of items) if ((pref[w3.kind] ?? 0) >= 0.2 && w3.assignees.length < w3.max && !taken.has(m.rid) && fitFor(sim, s, m, w3) > 0) return;
+  let pick: WorkItem | null = null;
+  for (const w2 of items) {
+    if ((w2.status !== 'open' && w2.status !== 'active') || w2.assignees.length >= w2.max || w2.assignees.indexOf(m.rid) >= 0 || sim.t < w2.holdUntil) continue;
+    if (!PAIR_SLOT.has(w2.kind) || !inJob(sim, s, a, w2) || !nearWork(s, a, w, w2) || failedRecently(sim, w2, m.rid)) continue;
+    if (pick !== null && w2.priority <= pick.priority) continue;
+    if (fitFor(sim, s, m, w2) <= 0) continue;
+    pick = w2;
+  }
+  if (pick === null) return;
+  taken.add(m.rid);
+  pick.assignees.push(m.rid); pick.status = 'active'; pick.orderSentAt[m.rid] = sim.t;
+  const mn = sim.responders[m.rid].name, bn = sim.responders[best.rid].name;
+  transmit(sim, s, a, m.rid, 'order', [], `${mn}, ${workLabel(s, pick, sim)}${pick.kind === 'search' || pick.kind === 'suppress' || pick.kind === 'carry' ? ' 실시' : ' 맡아라'} — ${josa(bn, '과/와')} 짝으로.`, pick.id, pick.priority > 0.8 ? 1 : 0, pick.cause >= 0 ? [pick.cause] : []);
+}
 function pairTakes(sim: Sim, s: Scene, a: FieldAgent, b: FieldAgent, w: WorkItem): boolean {
   if (b.task === null || b.task.kind !== 'pair' || b.buddy === undefined || b.buddy < 0 || !inJob(sim, s, a, w)) return false;
   const m = s.agents.find((q) => q.rid === b.buddy && q.status === 'active');

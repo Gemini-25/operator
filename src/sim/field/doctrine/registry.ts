@@ -84,6 +84,7 @@ export interface DocCtx {
   wBomb: number;                                 // (5단계) 대상 작업 w 의 자리(믿음)에서 가장 가까운 살아 있는 장치(믿음)까지의 거리 (w·장치가 없거나 자리를 모르면 Infinity — S08)
   pair: () => DocPair;                           // (3단계) 짝·짝의 일 — 엔진이 처음 물을 때 한 번 잰다(늦게). 줄은 이 함수로만 짝을 본다 (§5)
   watch: () => { n: number; need: number };      // (3단계) 밖 대기조 (§5.6): 대원에게 가장 가까운 출입구의 outsideWatch 수 · 필요한 수 watchNeed (2, 공기호흡기 대원을 태운 소방 부대가 오는 중이면 1) — 늦게 한 번
+  unitIn: () => number;                          // (합치기 — 5단계 S11) 자기 부대의 다른 활동 대원 가운데 위험 건물 실내(이 대원의 믿음으로 본 위험 구역)에 선 사람의 수 (동료의 겉) — 늦게 한 번
 }
 /**
  * (3단계 — 소방) 짝과 밖 대기조 (§5.2·§5.4·§5.6). 엔진(doctrine.ts)이 그 대원의 믿음·동료의 겉·조직 정보로 잰다 — 줄 파일은 엔진을 import 할 수 없어서 값으로 넘긴다
@@ -99,6 +100,7 @@ export interface DocPair {
   myP: number;                                   // 이 대원이 지금 맡은 작업판 일의 우선도 (-1 = 손이 빔 — 임무 없음·대기, 9 = 작업판 밖의 일에 묶여 있다 — 휴식·장비 교체 …)
   myIn: boolean;                                 // 이 대원이 지금 맡은 일이 위험 실내로 들어가는 일이다 (그 일은 짝 동행으로 놓지 않는다 — §3.5 G08 의 "바깥 일")
   alt: boolean;                                  // 짝의 일과 같은·이웃 구역에 이 대원이 맡을 수 있는 빈 위험 실내 일이 있다 (G08 의 예외 — 그 일을 맡으면 §5.4 끝의 "짝이 따라온다"로 센다)
+  ordered: boolean;                              // (합치기 (나)) 이 대원이 받은 지시(공개 지휘 상태)가 짝의 일과 같은·이웃 구역의 위험 실내 일이다 — 짝 동행 대신 그 일을 한다 (G08 의 예외, 짝 동행의 끝)
 }
 
 /** 효과 하나. fit·method 효과는 자기 works·methods·when 을 더 가질 수 있다 (한 줄이 일마다 다른 배율을 줄 때) */
@@ -145,7 +147,8 @@ export const CMD_ROWS: { id: string; dept: DocDept; hook: 'cmd' | 'dispatch' | '
  * (2단계) 지휘·관제 줄 가운데 설계서가 "확인 필요 — 균형"으로 적은 것의 스위치 (§6.1 CP4 · §6.2 D6 · §8.4 의 손잡이 — D7 의 앞막기).
  * 코드는 commander.ts · dispatch/doctrine.ts 에 있고 이 값만 본다 (줄을 끄는 균형 손잡이 — 측정·시험이 바꿔 볼 수 있게 한 곳에 둔다)
  */
-export const DOC_SWITCH = { CP4: true, D6: true, D7: true };
+export const DOC_SWITCH = { CP4: true, D6: true, D7: true,
+  SOLO_IN: false };      // (합치기 — 주 세션 결정 (라)) 혼자 서는 역할(기관원·사다리 조작원)의 위험 실내 단독 작업: false = 하지 않는다 — 짝이 따라올 때만(F04·F04b·F04c), true = 본문 §5.1(그 역할을 F04 에서 뺀다)
 /** 줄이 다 들어간 분야 — 시험 8 의 "분야마다 12줄 이상"은 여기 든 분야만 본다 (단계마다 그 분야를 더한다 — 2단계 경찰) */
 export const DOC_DEPTS_DONE: DocDept[] = ['police',
   'fire',      // (3단계 소방)

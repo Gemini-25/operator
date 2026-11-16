@@ -1909,3 +1909,84 @@ describe('R3 단계 5: 특수 줄의 장면 — 폭파 진입(S26)·잠긴 방(S
     expect(dispatchPref(sim, I, rs, 'rescue').rule).toBeNull();
   });
 });
+
+// ═════════════════════════ 단계 3·4·5 합치기 — 화학 짝·대기조(S10·S11) · 혼자 서는 역할의 실내(주 세션 결정 (라)) · 짝은 일하면서 함께(나) ═════════════════════════
+import { rebuddy } from '../src/sim/field/doctrineRun';
+import { DOC_SWITCH } from '../src/sim/field/doctrine/registry';
+
+describe('R3 합치기: 화학 짝·대기조 (S10·S11)', () => {
+  it('S10: 가스 누출 현장의 위험 실내 수색은 측정기를 든 화학 대원이 먼저(+0.15) — 측정기 없는 보호복 대원에게는 걸리지 않는다', () => {
+    const { sim, s, of } = sceneWith('R3-S10', 'hazmat/std', ['hazmat']);
+    const hz = of('hazmat');
+    const decon = roleIn(sim, hz, 'decon'), tech = roleIn(sim, hz, 'hazTech');
+    const rg = s.regions.findIndex((r) => r.indoor && r.searchable);
+    expect(rg).toBeGreaterThanOrEqual(0);
+    const w = work(sim, s, 'search', { region: rg });
+    for (const b of s.agents) { b.task = null; b.orderWork = -1; }
+    docForget();
+    const dd = docFitRules(sim, s, decon, w, 0.5), dt = docFitRules(sim, s, tech, w, 0.5);
+    expect(dd.hits.some((h) => h.rule.id === 'S10' && h.add === 0.15), JSON.stringify(dd.hits.map((h) => h.rule.id))).toBe(true);
+    expect(dt.hits.some((h) => h.rule.id === 'S10')).toBe(false);
+  });
+  it('S11: 자기 부대의 안쪽 짝이 위험 실내에 있으면 화학 팀장은 위험 실내 일을 덜 맡는다(×0.3) — 짝이 나오면 풀린다', () => {
+    const { sim, s, of } = sceneWith('R3-S11', 'hazmat/std', ['hazmat']);
+    const hz = of('hazmat');
+    const lead = roleIn(sim, hz, 'hazLead'), tech = roleIn(sim, hz, 'hazTech');
+    const rg = s.regions.findIndex((r) => r.indoor && r.searchable);
+    const w = work(sim, s, 'search', { region: rg });
+    for (const b of s.agents) { b.task = null; b.orderWork = -1; }
+    put(tech, s.staging); docForget();
+    expect(docFitRules(sim, s, lead, w, 0.5).hits.some((h) => h.rule.id === 'S11')).toBe(false);
+    put(tech, inSpot(s, rg)); docForget();
+    const h = docFitRules(sim, s, lead, w, 0.5).hits.find((x) => x.rule.id === 'S11');
+    expect(h, '안쪽 짝이 실내 — S11').toBeDefined();
+    expect(h!.mul).toBe(0.3);
+  });
+});
+
+describe('R3 합치기: 혼자 서는 역할의 위험 실내 (주 세션 결정 (라) — DOC_SWITCH.SOLO_IN)', () => {
+  it('기관원(혼자 서는 역할)은 따라올 짝이 없으면 위험 실내 수색을 맡지 않는다(F04) — 스위치를 켜면(본문 §5.1) 맡는다', () => {
+    const { sim, s, op, lead, rg } = fireScene('R3-SOLO', ['engine']);
+    const w = work(sim, s, 'search', { region: rg });
+    for (const b of s.agents) { b.task = null; b.orderWork = -1; }
+    lead.status = 'withdrawn'; op.buddy = -1; docForget();      // 짝(진압 팀장)이 없다
+    expect(SOLO_OK.has('engineer')).toBe(true);
+    expect(DOC_SWITCH.SOLO_IN).toBe(false);
+    expect(fitFor(sim, s, op, w)).toBe(0);
+    DOC_SWITCH.SOLO_IN = true; docForget();
+    try { expect(fitFor(sim, s, op, w)).toBeGreaterThan(0); } finally { DOC_SWITCH.SOLO_IN = false; docForget(); }
+  });
+});
+
+describe('R3 합치기: 짝은 일하면서 함께 다닌다 (주 세션 결정 (나))', () => {
+  it('다시 맺기: 짝이 혼자 서는 역할(기관원)인 손 빈 진압 팀장(지휘관 아님)은 다른 부대의 짝 없는 손 빈 대원과 맺고, 남겨진 기관원은 짝이 없어진다', () => {
+    const { sim, s, of } = sceneWith('R3-REB', 'fire/std', ['engine', 'rescue']);
+    const eng = of('engine'), res = of('rescue');
+    const lead = roleIn(sim, eng, 'fireLead'), op = roleIn(sim, eng, 'engineer'), rl = roleIn(sim, res, 'rescueLead');
+    for (const b of s.agents) { b.task = null; b.orderWork = -1; b.isCommander = false; }
+    expect(lead.buddy).toBe(op.rid); expect(op.buddy).toBe(lead.rid);
+    expect(rl.buddy ?? -1).toBe(-1);
+    rebuddy(sim, s, lead);
+    expect(lead.buddy).toBe(rl.rid); expect(rl.buddy).toBe(lead.rid);
+    expect(op.buddy).toBe(-1);
+    // 지휘관은 다시 맺지 않는다 (밖에 남는다 — CF7)
+    const q = sceneWith('R3-REB2', 'fire/std', ['engine', 'rescue']);
+    const l2 = roleIn(q.sim, q.of('engine'), 'fireLead'), o2 = roleIn(q.sim, q.of('engine'), 'engineer');
+    for (const b of q.s.agents) { b.task = null; b.orderWork = -1; b.isCommander = false; }
+    l2.isCommander = true;
+    rebuddy(q.sim, q.s, l2);
+    expect(l2.buddy).toBe(o2.rid);
+  });
+  it('둘째 자리: 지휘관이 위험 실내 일(센 불의 진압 — 두 자리)을 맡기는 그 자리에서 짝에게도 그 둘째 자리를 함께 준다 ("— …과 짝으로")', () => {
+    const { sim, I, s, noz, ff, lead, rg } = fireScene('R3-PAIRA', ['engine']);
+    nobodyInside(sim, s);
+    for (const w0 of s.board) w0.status = 'done';
+    const w1 = work(sim, s, 'suppress', { region: rg, priority: 0.8, max: 2 });
+    for (const b of s.agents) { b.task = null; b.orderWork = -1; b.isCommander = b === lead; if (b !== noz && b !== ff && b !== lead) b.status = 'withdrawn'; }
+    put(noz, s.staging); put(ff, s.staging); docForget();
+    const ev0 = sim.events.length;
+    assign(sim, s, I, lead);
+    expect(w1.assignees).toContain(noz.rid); expect(w1.assignees).toContain(ff.rid);
+    expect(sim.events.slice(ev0).some((e) => /짝으로\.$/.test(e.text))).toBe(true);
+  });
+});

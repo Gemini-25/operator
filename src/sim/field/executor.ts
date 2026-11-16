@@ -1376,7 +1376,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         if (m0 === 'arrived') {
           t.ptI++;
           const mates = s.agents.filter((b) => b !== a && b.status === 'active' && b.task && b.task.kind === 'engage' && dist(b.x, b.y, rd.x, rd.y) <= 2.6);
-          // (R3 §3.1 P07) 동료 없이 4초를 기다렸으면 교본에 묻는다: 혼자 방에 들어가지 않는다 (예외 — 총격 중이고 시민이 위험하면 · 상한 60초, 지원이 오면 120초)
+          // (R3 §3.1 P07) 동료 없이 4초를 기다렸으면 교본에 묻는다: 혼자 방에 들어가지 않는다 (예외 — 총격 중이고 시민이 위험하면 · 상한 police.P07_WAIT(40초), 지원이 오면 P07_WAIT_BACKUP(120초))
           if (mates.length === 0 && t.ptI > 20 && gateStep(sim, s, a, t, 'roomEntry', docGate(sim, s, a, 'roomEntry')) === 'wait') { a.label = '단독 진입 보류'; return; }
           if (mates.length >= 1 || t.ptI > 20) {
             gateClear(sim, s, a, t);
@@ -1500,8 +1500,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       // (R2 §4.6) 비살상탄 — 테이저 다음 · closeIn 판단 지점 앞. 선택 임무: 처음 닿은 틱과, 방법이 아직 없으면 1초마다 고를 수 있는지 본다(비살상탄을 든 대원만). 쏜 틱·조준·다가가는 틱은 여기서 끝
       if (h.state !== 'surrendered' && t.method === undefined && (t.mt0 === undefined || sim.tick % 5 === 0) && kitCount(sim, a.rid, 'beanbag') > 0) startMethod(sim, s, I, a, t, 'arrest', { cas: -1, prop: -1, hostile: h.id, region: -1, tile: -1 });
       if (h.state !== 'surrendered' && runBeanbag(sim, s, I, a, t, h, XK)) return;
-      // (R3 §3.1 P01~P03) 판단 지점 closeIn — 흉기·맨손 상대에게 붙기 전: 테이저를 든 둘은 무력화될 때까지 1.8칸에서(8초), 혼자면 3칸에서 거리를 두고 지원을(20초 · 지원 옴 30초 —
-      // 시민이 위협 곁이면 바로), 동료가 멀면 3칸에서 기다렸다 함께(6초). 막히면 그 칸까지만 다가가 기다린다 (한 틱에 moveTo 하나), 상한 뒤에는 지금 동작
+      // (R3 §3.1 P01~P03) 판단 지점 closeIn — 흉기·맨손 상대에게 붙기 전: 테이저를 든 둘은 무력화될 때까지 2칸에서(8초), 혼자면 3칸에서 거리를 두고 지원을(police.P02_WAIT 12초 · 지원 옴 18초 —
+      // 시민이 위협 곁이면 바로), 동료가 멀면 3칸에서 기다렸다 함께(P03_WAIT 3초). 막히면 그 칸까지만 다가가 기다린다 (한 틱에 moveTo 하나), 상한 뒤에는 지금 동작
       if (h.state !== 'surrendered') {
         const gq = docGate(sim, s, a, 'closeIn', NO_SENSE, { stunned: sim.t < h.stunUntil });
         if (gateStep(sim, s, a, t, 'closeIn', gq) === 'wait') {

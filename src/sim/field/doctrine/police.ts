@@ -27,6 +27,8 @@ const facingAway = (c: DocCtx): boolean => {
   if (d > Math.PI) d = 2 * Math.PI - d;
   return d > (100 * Math.PI) / 180;
 };
+/** 시야 안에서 대상이 무력화된 것이 보인다 (실행부가 잰 see — 테이저·비살상탄·섬광탄에 맞은 그 몇 초는 붙을 때다: P01~P03 은 이때 막지 않는다) */
+const stunned = (c: DocCtx): boolean => c.see !== undefined && c.see.stunned === true;
 /** 탄을 세는 총을 들었다 */
 const gun = (c: DocCtx): boolean => c.st.gun !== null;
 /**
@@ -39,7 +41,7 @@ registerDoctrine(
   {
     id: 'P01', dept: 'police', name: '테이저 먼저 — 무력화 뒤 둘이 붙는다', short: '테이저 대기',
     who: { dept: ['police'] }, hook: 'gate', works: ['arrest'], gate: 'closeIn', kits: ['taser'],
-    when: (c) => { const t = tgt(c); return melee(c, true) && t !== null && t.d <= 4 && c.pack.near >= 1 && !(c.see !== undefined && c.see.stunned === true); },
+    when: (c) => { const t = tgt(c); return melee(c, true) && t !== null && t.d <= 4 && c.pack.near >= 1 && !stunned(c); },
     effect: { kind: 'block', maxWait: 8 },
     th: { d: 4, near: 2.6, wait: 8 }, rank: 1, why: 'kit',
     note: '테이저 준비 — {mate}, 맞으면 같이 붙는다.', outNote: '테이저가 듣지 않습니다 — 붙습니다.',
@@ -47,7 +49,7 @@ registerDoctrine(
   {
     id: 'P02', dept: 'police', name: '흉기 상대 혼자 — 거리 유지하며 지원 대기', short: '거리 유지',
     who: { dept: ['police'] }, hook: 'gate', works: ['arrest'], gate: 'closeIn', noKits: ['taser', 'beanbag'],
-    when: (c) => melee(c, false) && c.pack.n === 0,
+    when: (c) => melee(c, false) && c.pack.n === 0 && !stunned(c),
     unless: (c) => c.sit.civAtRisk,      // 예외: 시민이 위협 2칸 안 — 바로 덮친다
     effect: { kind: 'block', maxWait: (c) => (c.st.backup ? P02_WAIT_BACKUP : P02_WAIT) },
     th: { stand: 3, wait: P02_WAIT, waitBackup: P02_WAIT_BACKUP }, rank: 1, why: 'alone',
@@ -57,7 +59,7 @@ registerDoctrine(
   {
     id: 'P03', dept: 'police', name: '흉기 상대 — 동료와 동시에 덮친다', short: '동시 제압 대기',
     who: { dept: ['police'] }, hook: 'gate', works: ['arrest'], gate: 'closeIn', noKits: ['taser'],
-    when: (c) => melee(c, true) && c.pack.n >= 1 && c.pack.near === 0,
+    when: (c) => melee(c, true) && c.pack.n >= 1 && c.pack.near === 0 && !stunned(c),
     effect: { kind: 'block', maxWait: P03_WAIT },
     th: { stand: 3, near: 2.6, wait: P03_WAIT }, rank: 2, why: 'buddy',
     note: '둘이 동시에 들어갑니다!',
@@ -76,7 +78,7 @@ registerDoctrine(
     unless: (c) => gunFight(c) && c.sit.civAtRisk,      // 예외: 총격범이 쏘고 있고 시민이 위험하다 — 혼자라도 들어간다
     effect: { kind: 'block', maxWait: (c) => (c.st.backup ? P07_WAIT_BACKUP : P07_WAIT) },
     th: { near: 2.6, wait: P07_WAIT, waitBackup: P07_WAIT_BACKUP }, rank: 2, why: 'alone',
-    note: '혼자 들어가지 않습니다. 동료를 기다립니다.', excNote: '총격이 계속됩니다 — 단독 진입!', outNote: '지원이 오지 않습니다 — 진입합니다.',
+    note: '혼자 들어가지 않습니다. 동료를 기다립니다.', excNote: '총격이 계속됩니다 — 혼자 들어갑니다.', outNote: '지원이 오지 않습니다 — 진입합니다.',
     report: '{name} 대원은 혼자 남아 방에 들어가지 않고 {n}초 동안 동료를 기다렸습니다.',
   },
   {

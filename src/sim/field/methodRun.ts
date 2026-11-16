@@ -41,6 +41,7 @@ import { mkFact } from './beliefs';
 import type { MTarget, MethodPick, Sense } from './methods';
 import { docCtx, hasDoc } from './doctrine';      // (R3) 교본 입력 (자기 모드)
 import type { DocCtx } from './doctrine/registry';
+import { recordDoc } from './doctrineRun';      // (R3 1단계) 교본이 방법의 1등을 바꾼 기록
 
 /** 실행기가 건네는 도구 (executor.ts 의 XK). 지휘 규칙의 CommandKit 과 같은 방식 */
 export interface ExecKit {
@@ -134,7 +135,7 @@ function sayRepeat(sim: Sim, a: FieldAgent, key: string): boolean {
  * 탐지 방법은 한 대원이 한 사건에서 처음 고를 때만. 같은 대원·같은 대상·같은 방법을 SAY_AGAIN 초 안에 다시 고르면 알리지 않는다.
  * 돌려주는 값 = 남긴 기록 id (알리지 않았으면 -1).
  */
-function announce(sim: Sim, I: Incident, a: FieldAgent, t: Task, work: WorkKind, tg: MTarget): number {
+function announce(sim: Sim, I: Incident, a: FieldAgent, t: Task, work: WorkKind, tg: MTarget, skip?: MethodId): number {
   const m = t.method;
   if (m === undefined) return -1;
   const d = METHOD[m];
@@ -146,7 +147,7 @@ function announce(sim: Sim, I: Incident, a: FieldAgent, t: Task, work: WorkKind,
     text = SAY[m];
   } else {
     if (SAY_ONCE.has(m)) { const said = (a.msaid ??= []); if (said.indexOf(m) >= 0) return -1; said.push(m); }
-    text = sayStart(m, t.mwhy ?? 'usual', t.missing);
+    text = sayStart(m, t.mwhy ?? 'usual', t.missing, skip);
   }
   if (sayRepeat(sim, a, targetKey(work, tg) + '|' + m)) return -1;
   const r = sim.responders[a.rid];
@@ -168,8 +169,12 @@ export function startMethod(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: T
   const pick = chooseMethod(sim, s, a, work, tg, t, senseOf(s, a), selfDc(sim, s, a, t));
   if (pick === null) { t.mt0 = sim.t; t.mtry = 0; t.mbad = 0; return WORK_MODE[work] !== 'refuse'; }
   applyPick(sim, t, pick);
-  announce(sim, I, a, t, work, tg);
+  docPick(sim, I, a, pick, work, tg, announce(sim, I, a, t, work, tg, pick.skip));
   return true;
+}
+/** (R3 §3.7) 교본 줄이 방법의 1등을 바꿨으면 그 줄을 사건의 교본 기록에 (ev = 그때 남긴 시작 문구 — 없으면 -1) */
+function docPick(sim: Sim, I: Incident, a: FieldAgent, pick: MethodPick, work: WorkKind, tg: MTarget, ev: number): void {
+  if (pick.doc !== undefined) recordDoc(sim, I, a, pick.doc, 'method', { method: pick.m, work, tgt: targetKey(work, tg) }, ev);
 }
 
 /**
@@ -186,7 +191,7 @@ export function recheckOnArrive(sim: Sim, s: Scene, I: Incident, a: FieldAgent, 
   if (pick === null || pick.m === t.method) return false;
   applyPick(sim, t, pick);
   t.phase = 0; t.progress = 0;
-  announce(sim, I, a, t, work, tg);
+  docPick(sim, I, a, pick, work, tg, announce(sim, I, a, t, work, tg, pick.skip));
   return true;
 }
 
@@ -233,6 +238,7 @@ export function switchMethod(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: 
   // ⑥ 다음 방법
   if (pick !== null) {
     applyPick(sim, t, pick);
+    docPick(sim, I, a, pick, work, tg, ev);
     t.mwhy = why; t.missing = undefined;
     t.phase = 0; t.progress = 0; a.path = null;
     return true;

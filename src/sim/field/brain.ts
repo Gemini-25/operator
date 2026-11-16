@@ -25,6 +25,7 @@ function takeWork(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, self: boolean)
   if (w.assignees.indexOf(a.rid) < 0) w.assignees.push(a.rid);
   if (w.status === 'open') w.status = 'active';
   w.orderSentAt[a.rid] = sim.t;
+  splitBegin(sim, s, a);      // (R3 §8.2) 같은 상황 다른 행동 — 임무가 시작된 자리의 표본
 }
 
 function setTask(sim: Sim, s: Scene, a: FieldAgent, kind: Parameters<typeof makeTask>[0], label: string): void {
@@ -32,6 +33,7 @@ function setTask(sim: Sim, s: Scene, a: FieldAgent, kind: Parameters<typeof make
   const t = makeTask(kind, label);
   t.startedAt = sim.t;
   a.task = t;
+  splitBegin(sim, s, a);      // (R3 §8.2)
 }
 
 function dangerScore(sim: Sim, s: Scene, a: FieldAgent): number {
@@ -129,7 +131,9 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
   const I = sim.incidents[s.incidentId];
   const r = resp(sim, a);
   if (a.status !== 'active') return;
+  splitSettle(sim, a);      // (R3 §8.2) 지난번에 시작한 임무의 표본 — 시작한 틱의 실행이 고른 방법이 적혀 있다
   perceive(sim, s, a);
+  selfReport(sim, s, a);      // (R3 §4.1) 자기 몸 상태가 문턱을 넘었으면 'crew' 사실 — flushOutbox 보다 먼저 두어 같은 판단에 무전이 나간다
   shareNearby(sim, s, a);
   flushOutbox(sim, s, a);
   if (a.isCommander && sim.t >= a.planT) {
@@ -187,7 +191,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
   const dSense = senseOf(s, a);
   if (cur && DOC_DUTY_TASKS.has(cur.kind)) return;
   { const d = docDuty(sim, s, a, dSense); if (d) { docBegin(sim, s, a, d, XK); return; } }
-  { const r = docDrop(sim, s, a); if (r && cur) { const wk = s.board[cur.workId].kind; finishTask(sim, s, a, false, 'doctrine'); recordDoc(sim, I, a, r.id, 'fit', { work: wk }); return; } }
+  { const dr = docDrop(sim, s, a); if (dr && cur) { const wk = s.board[cur.workId].kind; finishTask(sim, s, a, false, 'doctrine'); recordDoc(sim, I, a, dr.id, 'fit', { work: wk }); return; } }
 
   const opts: Option[] = [];
   // 1) 위험 회피
@@ -328,7 +332,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
 // ── (R3) 대응 교본의 자리 (field/doctrine.ts 의 판단 · doctrineRun.ts 의 실행 · R2 의 감각 senseOf · 실행기 도구 XK).
 //    (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다) ──
 import { DOC_DUTY_TASKS, docAct, docDrop, docDuty, docRetreat } from './doctrine';
-import { docBegin, recordDoc } from './doctrineRun';
+import { docBegin, recordDoc, selfReport, splitBegin, splitSettle } from './doctrineRun';
 import { XK } from './executor';
 import { senseOf } from './methodRun';
 import { onWater } from './methods';      // (R2 1b) 물 위의 대원 가드

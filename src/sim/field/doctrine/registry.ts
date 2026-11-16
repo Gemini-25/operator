@@ -56,6 +56,9 @@ export interface DocCtx {
   sim: Sim; s: Scene; a: FieldAgent; u: Unit; dept: DocDept; role: RoleId | null; group: RoleGroup | null;
   mode: 'self' | 'report';                       // 자기 모드(대원 자신의 판단 — duty·act·gate·실행부의 방법 고르기) / 보고 모드(fit · methodFit — 남에게도 불린다)
   w: WorkItem | null;                            // fit·gate 의 대상 작업 (없으면 null)
+  hz: boolean;                                   // (1단계) w 가 위험 실내 일인가 (§3 읽는 법의 HZ — 수색·이송·대피 안내·구출·누출 조치·잔불 정리이고 대상 구역이 위험 건물 실내 — 엔진의 hazWork). w 가 없으면 false
+  wRisky: boolean;                               // (1단계) w 의 대상 구역이 위험 건물 실내인가 (종류와 상관없이 — G01 의 '위험 구역의 동료 구조'). w 가 없으면 false
+  light: boolean;                                // (1단계) w 가 가벼운 일인가 (H1 LIGHT_WORK — 처치·동료 처치는 대상이 안전 구역에 있을 때만, injury.ts 의 정본 그대로). w 가 없으면 false
   st: DocState; sit: DocSit;
   sense: Sense;                                  // R2 의 Sense — 대원이 선 칸의 연기·열 (부르는 쪽이 잰다. 보고 모드에서는 0)
   dng: number;                                   // brain 의 위험 점수 (duty·act 자리에서 brain 이 넘긴다. 다른 자리에서는 0)

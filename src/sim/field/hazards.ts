@@ -17,6 +17,7 @@ import { catOnBlast } from './catastrophe';
 import { lastFx, noteBoom, noteFlash, noteHit, noteShot, recHarm, recMelee } from './fxlog';
 import { RUIN_SECONDARY, markRuin, recordFall } from './ruins';
 import { CAUSE_NAME, DOWN_AT, SELF_HARM, SELF_HARM_HIT, bandOf, decayCause, hurtCas, hurtCasTo, hurtHostile, hurtResponder, injuryRng, noteDecay, noteInjury, settleHostile } from './injury';
+import { SHAKE, shake } from './doctrineRun';      // (R3 1단계) 동요 — 피격·피습·폭발
 
 export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2, c?: FxInfo): void {
   s.fx.push({ kind, t: sim.t, x, y, x2, y2, text, color, ttl, c });
@@ -120,6 +121,7 @@ export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, rad
   for (const a of s.agents) {
     if (a.status === 'left' || sim.responders[a.rid].dead) continue;      // 숨진 대원은 더 다치지 않는다
     const d = dist(a.x, a.y, x, y);
+    if (d <= radius + SHAKE.blastPad && !acrossVoid(s, bx, by, Math.round(a.x), Math.round(a.y))) shake(sim, a);      // (R3 §4.3) 반경 + 3칸 안의 폭발 — 동요 (다치기 전에 건다: 쓰러지면 걸리지 않는다)
     if (d > radius || acrossVoid(s, bx, by, Math.round(a.x), Math.round(a.y))) continue;
     hurtResponder(sim, s, I, a, dmg * (1 - d / (radius + 1)), cause, { ev });      // 폭발물 방호복·방화복이 줄인다 (injury.protection — blastFactor)
     a.lastBlockEvent = ev;
@@ -508,6 +510,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
           h.cooldown = s.rng.range(1.5, 2.6);
           const hit = s.rng.chance(p) && I.phase !== 'closed';      // 판정 뒤에는 누구도 더 다치지 않는다 (§2.6) — 다치지 않는 피격을 기록하지 않는다
           ta.underFireT = sim.t;
+          shake(sim, ta);      // (R3 §4.3) 총격을 받았다 — 동요 (난수를 쓰지 않는다)
           const mx = ta.x + (hit ? 0 : s.rng.range(-0.8, 0.8)), my = ta.y + (hit ? 0 : s.rng.range(-0.8, 0.8));      // 빗나간 탄이 겨눈 점 (판정 흐름에서 x 다음 y — 예전 그림 줄과 같은 순서)
           const ct = !hit && ta.inCover ? coverRoll(sim, s, ta.x, ta.y, h.x, h.y) : -1;      // 빗나간 탄이 대원의 엄폐 가구에 맞는가 (파손용 흐름)
           const end = hit || ct >= 0 ? fireShot(sim, s, h.x, h.y, ta.x, ta.y, hit ? 'body' : ct) : fireShot(sim, s, h.x, h.y, mx, my, 'miss');      // 탄이 실제로 간 선: 지나간 창이 깨지고 엄폐 가구가 닳는다
@@ -531,6 +534,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
             noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 0, target: ta.rid }); recMelee(sim, s, h, ta);      // (G5)
             // 흉기·맨손 피습: 흉기는 자상, 맨손은 타박상. 이 기록이 그 부상의 원인 기록이 된다 (예전에는 기록도 원인도 남지 않았다)
             const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'hazard', text: `${r.name} 피습 (${h.weapon === 'knife' ? '흉기' : '맨손'}).`, imp: 2, causes: [I.lastEvent] });
+            shake(sim, ta);      // (R3 §4.3) 흉기·맨손 피습 — 동요
             hurtResponder(sim, s, I, ta, raw, h.weapon === 'knife' ? 'stab' : 'blunt', { by: h.id, byKind: 'hostile', ev });
           }
         }

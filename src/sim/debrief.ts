@@ -9,6 +9,8 @@ import { sevName } from './dispatch/analyst';
 import { difficultyLabel } from './difficulty';
 import { disasterSummary } from './disaster';
 import { methodFailLine, methodLines, methodSummary, methodTally } from './field/methodReport';      // (R2) 대응 방법의 문장과 집계
+import { docLines, docSummary, docTally } from './field/doctrineReport';      // (R3) 대응 교본의 문장과 집계
+import { docSplitOf } from './field/doctrineRun';
 import { roleOf } from './crews';
 import { CAUSE_NAME, bandOf, mainCause, outShifts, threatOverAt } from './field/injury';
 import { VERDICT_RULES } from './field/sceneRegistry';      // (N8) 판정 등록 — 묶음의 세계 규칙이 새 위험을 등급에 넣는다
@@ -241,7 +243,9 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
       }
     } else if (c.tDiscovered < 0) A.push(`구조 대상 ${josa(c.label, '은/는')} 발견되지 못한 채 현장에 남았습니다 — 지휘관은 이 사실을 모른 채 상황을 종료했습니다.`);
   }
-  for (const line of methodLines(sim, I, s)) if (A.length < 12) A.push(line);      // (R2) 평소와 다른 방법으로 끝낸 것 (최대 2문장 — 기록된 I.methods 에서만)
+  const mLines = methodLines(sim, I, s);
+  for (const line of mLines) if (A.length < 12) A.push(line);      // (R2) 평소와 다른 방법으로 끝낸 것 (최대 2문장 — 기록된 I.methods 에서만)
+  for (const line of docLines(sim, I, s, Math.min(2, 3 - mLines.length))) if (A.length < 12) A.push(line);      // (R3 §7.3) 교본 문장 (최대 2 — 방법과 합쳐 3, 기록된 I.docs 에서만)
   // 한 줄 요약
   const hl: string[] = [];
   { const b = s.props.find((p) => p.kind === 'bomb'); if (noBomb) hl.push(truth.variant === 'bombthreat' ? '허위 협박 — 폭발물 없음' : b && !b.mitigated ? '폭발물은 아니었으나 확인하지 못함' : '확인 결과 폭발물 아님'); else if (b && b.real) hl.push(b.mitigated ? '폭발물 해체' : b.exploded ? '폭발물 폭발' : '폭발물 미처리'); }
@@ -344,6 +348,8 @@ export function buildReport(sim: Sim): ShiftReport {
   if (cat.burnouts + cat.totals + cat.explosions + cat.withdrawals + cat.averted > 0) summary.push(`이번 교대에 건물 ${cat.burnouts}곳이 전소되고 ${cat.totals}곳이 무너졌습니다. 폭발 ${cat.explosions}건. 위험 조짐을 보고 전원 철수한 것이 ${cat.withdrawals}번, 막아 낸 조짐이 ${cat.averted}건입니다.`);      // (X6)
   const methods = methodTally(sim);      // (R2) 성공한 방법별 횟수 (평소 방법 포함). 요약 줄은 평소 방법이 아닌 것만, 하나도 없으면 넣지 않는다
   { const line = methodSummary(methods); if (line) summary.push(line); }
+  const doctrine = docTally(sim);      // (R3 §7.3) 교본 줄이 쓰인 횟수 (번호별). 요약 줄은 많은 순 다섯, 하나도 없으면 넣지 않는다
+  { const line = docSummary(doctrine); if (line) summary.push(line); }
   // 교통: 기록된 통계로만 쓴다 (traffic.ts)
   const tf = { ...sim.traffic.stats };
   if (tf.jams + tf.closures + tf.obstacles + tf.detours + tf.gateWaits === 0) summary.push('교통으로 인한 지연은 없었습니다.');
@@ -359,6 +365,7 @@ export function buildReport(sim: Sim): ShiftReport {
     major: sim.incidents.filter((I) => I.tag === 'major').length, disaster: disasterSummary(sim),
     seed: sim.seed, duration: dur, weather: sim.weather, difficulty: { ...sim.difficulty }, difficultyLabel: difficultyLabel(sim.difficulty), totalCalls: sim.calls.length, totalIncidents: n, counts,
     methods,      // (R2)
+    doctrine, docSplit: docSplitOf(sim),      // (R3) 교본 줄별 횟수 · 같은 상황 다른 행동의 표본 (sweep --doctrine)
     avgResponse: rN ? rSum / rN : -1, avgDispatch: dN ? dSum / dN : -1, utilization, unitUtil,
     casTotal, casSaved, casLost, casUndiscovered: casUnd, respondersHurt: hurt, equipFailures: equip, delayCauses, incidents, summary,
     respondersKilled: killedList, suspectsHurt: susHurt, suspectsDead: susDead, roster,      // (H1)

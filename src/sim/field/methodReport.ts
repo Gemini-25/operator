@@ -23,6 +23,12 @@ export function whyText(u: MethodUse): string {
     case 'danger': return '추가 위험이 있었음';
     case 'quiet': return '용의자에게 들키지 않으려';
     case 'team': return '동료와 짝을 이뤄';
+    case 'hurt': return '다쳐서';      // (R3 §7.3 WHY_DOC 의 말) 교본 줄이 1등을 바꾼 까닭 여섯
+    case 'alone': return '혼자였음';
+    case 'lowAir': return '공기가 부족해';
+    case 'lowAmmo': return '탄약이 떨어져';
+    case 'shaken': return '동요해';
+    case 'tired': return '지쳐서';
     default: return '';
   }
 }

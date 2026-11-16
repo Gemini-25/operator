@@ -28,7 +28,7 @@ import { SCBA_MIN, SHARED, airLow, hoistOver, kitCount, kitHas, kitName, kitQty,
 import { isIndoor, losWalls, staticPass, tileOf } from './grid';
 import { exteriorSpots } from './ops';      // (X6) 외부 방수의 후보 자리 — 생김새만 (진실을 읽지 않는다)
 import type { CostFn } from './grid';
-import { docCtx, docMethodMul, hasDoc } from './doctrine';      // (R3) 교본 배율 — doctrine.ts 는 이 파일을 값으로 import 하지 않는다 (순환 없음)
+import { bandHyst, docCtx, docMethodMul, docMethodWhy, hasDoc, sigBand } from './doctrine';      // (R3) 교본 배율·까닭·중상 간격 — doctrine.ts 는 이 파일을 값으로 import 하지 않는다 (순환 없음)
 import type { DocCtx } from './doctrine/registry';
 
 // ───────────────────────── 자료형 ─────────────────────────
@@ -36,8 +36,8 @@ import type { DocCtx } from './doctrine/registry';
 export interface Sense { smoke: number; heat: number }
 /** 방법의 대상 (없으면 -1) */
 export interface MTarget { cas: number; prop: number; hostile: number; region: number; tile: number }
-/** 고른 결과: 방법 · 까닭 · 후보와 점수(점수 내림차순) · (noGear 면) 빠진 장비 */
-export interface MethodPick { m: MethodId; why: MethodWhy; cands: { m: MethodId; score: number }[]; missing?: KitId }
+/** 고른 결과: 방법 · 까닭 · 후보와 점수(점수 내림차순) · (noGear 면) 빠진 장비 · (R3) 1등을 바꾼 교본 줄과 교본이 없었다면 골랐을 방법 */
+export interface MethodPick { m: MethodId; why: MethodWhy; cands: { m: MethodId; score: number }[]; missing?: KitId; doc?: string; skip?: MethodId }
 /** R3 의 교본 입력 (doctrine.ts 의 docCtx 가 만든다 — 타입은 doctrine/registry.ts). 실행부는 자기 모드로 넘기고, methodFit 은 안에서 보고 모드로 만든다. 없으면 null */
 export type { DocCtx } from './doctrine/registry';
 export const NO_SENSE: Sense = { smoke: 0, heat: 0 };
@@ -265,9 +265,14 @@ export const DEFENSIVE = { big: true, self: true, fire: 0.7, srch: 0.72 };
 function defensiveCond(c: MethodCtx): boolean {
   const rg = c.tg.region;
   if (DEFENSIVE.big && rg >= 0 && (fireOf(c) ?? 0) >= DEFENSIVE.fire && !casInRegion(c, rg) && ((c.a.beliefs.val<number>('srch', rg) ?? 0) >= DEFENSIVE.srch || c.s.kind === 'collapse')) return true;
-  if (DEFENSIVE.self && c.t !== null && (c.r.health < 50 || (kitHas(c.sim, c.a.rid, 'scba') && kitQty(c.sim, c.a.rid, 'scba') < SCBA_MIN))) return true;
+  if (DEFENSIVE.self && (bandOfCtx(c) >= 1 || (c.t !== null && kitHas(c.sim, c.a.rid, 'scba') && kitQty(c.sim, c.a.rid, 'scba') < SCBA_MIN))) return true;
   return c.dc !== null && docMethodMul(c.dc, 'interior') === 0;
 }
+/**
+ * (R3 §3.7) 외부 방어의 몸 상태 조건: 중상(band ≥ 1 — 체력 70 이하, 75 에서 풀림). 교본 입력이 있으면 그 상태(자기 모드는 자기 몸, 보고 모드는 'crew' 자기 신고),
+ * 없으면 실행부(t 가 있을 때 — 자기 몸)는 같은 간격으로 자기 몸을, 배정(methodFit — 남의 몸)은 0. R2 의 '체력 50 아래'를 R3 의 중상 문턱으로 바꿨다
+ */
+function bandOfCtx(c: MethodCtx): number { return c.dc !== null ? c.dc.st.band : c.t !== null ? bandHyst(c.r.health, sigBand(c.a.crewSig)) : 0; }
 const WIN = new WeakMap<Scene, { v: number; has: Uint8Array }>();
 /** 그 구역에 창이 있는가 (구역 칸의 네 이웃에 창 칸 — 생김새. 지형이 바뀔 때만 다시 센다) */
 function regionHasWindow(s: Scene, region: number): boolean {
@@ -550,8 +555,13 @@ export const SAY: Record<MethodId, string> = {
   air: '', drone: '드론을 띄우겠습니다.', dog: '탐지견을 풀겠습니다.',
   dive: '잠수해 들어가겠습니다.', boom: '오일펜스를 펼치겠습니다.', shieldLine: '방패로 저지선을 치겠습니다.', deconTent: '제독 텐트에서 씻기겠습니다.', hoseWash: '호스로 씻어 내겠습니다.',      // (N9)
 };
-/** 까닭을 먼저 말하는 한 문장 (없으면 빈 글). failed·broken·tooFar·team 으로 바꿀 때의 말은 실행부(switchMethod)가 사유로 만든다 */
-function whySay(why: MethodWhy, missing: KitId | undefined): string {
+/** (R3 §3.7) 교본 까닭 여섯의 앞말 */
+const DOC_SAY: Partial<Record<MethodWhy, string>> = { hurt: '부상으로', alone: '혼자라', lowAir: '공기가 부족해', lowAmmo: '탄약이 없어', shaken: '손이 떨려', tired: '지쳐서' };
+/** 까닭을 먼저 말하는 한 문장 (없으면 빈 글). failed·broken·tooFar·team 으로 바꿀 때의 말은 실행부(switchMethod)가 사유로 만든다.
+ *  (R3) 교본 까닭이면 "손이 떨려 헤엄은 못 합니다." — skip = 교본이 없었다면 골랐을 방법 (모르면 "…방법을 바꿉니다.") */
+function whySay(why: MethodWhy, missing: KitId | undefined, skip?: MethodId): string {
+  const pre = DOC_SAY[why];
+  if (pre !== undefined) return skip !== undefined ? `${pre} ${josa(METHOD[skip].short, '은/는')} 못 합니다.` : `${pre} 방법을 바꿉니다.`;
   switch (why) {
     case 'noGear': return missing ? `${josa(kitName(missing), '이/가')} 없습니다.` : '';
     case 'tooFar': return '던져서 닿지 않는 거리입니다.';
@@ -563,8 +573,8 @@ function whySay(why: MethodWhy, missing: KitId | undefined): string {
   }
 }
 /** 시작 문구: "구조 로프가 없습니다. 헤엄쳐 들어가겠습니다." */
-export function sayStart(m: MethodId, why: MethodWhy, missing?: KitId): string {
-  const head = whySay(why, missing);
+export function sayStart(m: MethodId, why: MethodWhy, missing?: KitId, skip?: MethodId): string {
+  const head = whySay(why, missing, skip);
   return head ? `${head} ${SAY[m]}` : SAY[m];
 }
 /** 까닭을 짧게 (패널: "헤엄쳐 접근 — 구조 로프 없음"). 평소 선택·가까움은 빈 글 */
@@ -579,6 +589,12 @@ export function whyNote(why: MethodWhy | undefined, missing?: KitId): string {
     case 'danger': return '추가 위험';
     case 'quiet': return '소리를 내지 않으려';
     case 'team': return '동료와 짝';
+    case 'hurt': return '부상';      // (R3) 교본 까닭 여섯
+    case 'alone': return '혼자';
+    case 'lowAir': return '공기 부족';
+    case 'lowAmmo': return '탄약 부족';
+    case 'shaken': return '동요';
+    case 'tired': return '지침';
     default: return '';
   }
 }
@@ -723,6 +739,8 @@ function remembered(c: MethodCtx, key: string, m: MethodId, brokenOnly: boolean)
   }
   return false;
 }
+/** (R3) 마지막 rank 들에서 교본 배율이 1 이 아닌 후보가 있었는가 — chooseMethod 가 교본 전의 1등을 다시 셀지 정한다(셀 필요가 없으면 건너뛴다) */
+let rankDocHit = false;
 /** 후보와 점수 (점수 내림차순, 같으면 표의 순서). 점수 = pref × situ × skill × (1 − risk × caution) */
 function rank(c: MethodCtx, key: string, tried: MethodId[] | null, brokenOnly: boolean, ignoreKits: boolean): { m: MethodId; score: number }[] {
   const out: { m: MethodId; score: number }[] = [];
@@ -735,7 +753,9 @@ function rank(c: MethodCtx, key: string, tried: MethodId[] | null, brokenOnly: b
     if (tried !== null && tried.indexOf(m) >= 0) continue;
     if (remembered(c, key, m, brokenOnly)) continue;
     if (!canUse(c, m, ignoreKits) || !d.can(c)) continue;
-    const score = d.pref * (d.situ ? d.situ(c) : 1) * (d.skill ? d.skill(c) : 1) * (1 - d.risk * c.caution) * (dm !== null ? docMethodMul(dm, m) : 1);      // (R3) × 교본 배율 (줄이 없으면 1)
+    const dmul = dm !== null ? docMethodMul(dm, m) : 1;
+    if (dmul !== 1) rankDocHit = true;
+    const score = d.pref * (d.situ ? d.situ(c) : 1) * (d.skill ? d.skill(c) : 1) * (1 - d.risk * c.caution) * dmul;      // (R3) × 교본 배율 (줄이 없으면 1)
     if (!(score > 0)) continue;
     let at = out.length;
     while (at > 0 && out[at - 1].score < score) at--;      // 같은 점수면 먼저 온(표에서 앞선) 방법 뒤에 선다
@@ -754,9 +774,13 @@ function makeCtx(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, tg: MTarget,
   const ops = a.beliefs.get('ops', 0);
   return {
     sim, s, a, r, u, work, t, tg, cb, bank, reach: bank ? bank.d : Infinity, flow: cb !== null ? cb.drift ?? 0 : 0, weak: cb !== null && cb.band >= 2,
-    sense, mates, ops: ops ? ops.value : null, dc, caution: clamp(1.1 - 0.3 * r.composure - 0.3 * r.experience, 0.5, 1.1),
+    sense, mates, ops: ops ? ops.value : null, dc, caution: Math.min(1.1, cautionOf(r) + (dc !== null && dc.st.shaken ? SHAKEN_CAUTION : 0)),      // (R3 G02b) 동요하면 +0.2 (상한 1.1)
   };
 }
+/** 위험을 꺼리는 정도 (침착하고 경험 많은 대원은 낮다) */
+const cautionOf = (r: Responder): number => clamp(1.1 - 0.3 * r.composure - 0.3 * r.experience, 0.5, 1.1);
+/** (R3 G02b) 동요한 대원의 조심성 가산 (§3.5 — 상한 1.1) */
+export const SHAKEN_CAUTION = 0.2;
 /** 믿음 속에 대치·교전 중인 용의자가 있는가 (무장 현장의 "조용히") */
 function hotBelief(a: FieldAgent): boolean {
   const hs = a.beliefs.list('hos');
@@ -789,6 +813,7 @@ export function chooseMethod(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, 
   if (!methodsOf(work).length) return null;
   const c = makeCtx(sim, s, a, work, tg, t, sense, dc);
   if (NEEDS_CAS[work] && c.cb === null) return null;      // 대상을 아직 못 봤다 — 지휘관도 믿음으로 본 대상에게만 일을 낸다
+  rankDocHit = false;
   const key = targetKey(work, tg);
   let tried = t !== null && t.tried !== undefined && t.tried.length ? t.tried : null, brokenOnly = false;
   let cands = rank(c, key, tried, false, false);
@@ -799,6 +824,14 @@ export function chooseMethod(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, 
   if (widen && !cands.length && a.mfail !== undefined && a.mfail.length) { brokenOnly = true; cands = rank(c, key, null, true, false); }     // ② 접은 기억을 무시 (고장은 빼고)
   if (!cands.length) return null;
   const top = cands[0].m;
+  // (R3 §3.7) 교본을 빼고(배율 1 · 동요의 조심성 없이) 다시 셈한 1등이 다르면 그 차이를 만든 교본 줄의 까닭 — 까닭 순서에서 noGear 앞
+  if (dc !== null && (rankDocHit || dc.st.shaken)) {
+    const plain = rank({ ...c, dc: null, caution: cautionOf(c.r) }, key, tried, brokenOnly, false)[0];
+    if (plain !== undefined && plain.m !== top) {
+      const dw = docMethodWhy({ ...dc, m: { reach: c.reach, flow: c.flow, weak: c.weak, tile: c.tg.tile } }, top, plain.m);
+      if (dw !== null) return { m: top, why: dw.why, cands, missing: dw.missing, doc: dw.rule.id, skip: plain.m };
+    }
+  }
   const free = rank(c, key, tried, brokenOnly, true)[0];      // 장비를 따지지 않고 다시 셈한 1등 (needUnit 은 그대로 따진다)
   if (free !== undefined && free.m !== top && !canUse(c, free.m)) return { m: top, why: 'noGear', cands, missing: METHOD[free.m].kits[0] };
   let why: MethodWhy = 'usual';

@@ -123,9 +123,10 @@ describe('1. 같은 이어받은 상태 = 같은 해시', () => {
     const oos = s.units.filter((u) => u.state === 'oos').length, avail = s.units.length - oos;
     const off = s.responders.filter((r) => r.status === 'off').length, crew = s.responders.length - off;
     expect(s.events[0].text).toContain(`가용 부대 ${avail}대${oos ? `(정비·결원 ${oos}대 제외)` : ''}, 대원 ${crew}명${off ? `(결장 ${off}명 제외)` : ''}.`);
-    // 결장도 정비도 없는 이어받은 상태면 지금 문구와 같다 (단계 1 의 뜻 — 괄호가 붙지 않는다)
+    // 결장도 정비도 없는 이어받은 상태면 지금 문구와 같다 (단계 1 의 뜻 — 괄호가 붙지 않는다). (단계 3) P1 에서 펌프가 고장 난 부대의 정비도 지운다
     const calm: Carryover = json(co);
     for (const c of calm.crew) { c.out = 0; c.cause = null; delete c.replaceIn; delete c.recruit; }
+    for (const x of calm.units) delete x.service;
     expect(new Sim('P2', NORMAL, 1200, { carry: calm }).events[0].text).toBe(new Sim('P2', NORMAL, 1200).events[0].text);
   });
 });

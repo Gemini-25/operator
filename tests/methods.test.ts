@@ -10,17 +10,17 @@ import { NORMAL, parseDisaster } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
 import { raiseProblem } from '../src/sim/events';
-import { casFact, detectRadius, fitFor, perceive } from '../src/sim/field/agents';
+import { casFact, detectRadius, fitFor, hosFact, perceive } from '../src/sim/field/agents';
 import { mkFact } from '../src/sim/field/beliefs';
 import { XK, act, finishTask, makeTask } from '../src/sim/field/executor';
 import { think } from '../src/sim/field/brain';
 import type { Rng } from '../src/sim/rng';
 import { BARE_HANDS, SHARED, isQty, kitCount, kitName, kitTool, seatsLeft, swimBonus, useKit } from '../src/sim/field/gear';
-import { los, staticPass } from '../src/sim/field/grid';
+import { los, losWalls, staticPass } from '../src/sim/field/grid';
 import { exteriorSpots, newOps } from '../src/sim/field/ops';
 import { catOf, catTick } from '../src/sim/field/catastrophe';
 import { WORK_DONE, methodFailLine, methodLines, methodSummary, methodTally, whyText } from '../src/sim/field/methodReport';
-import { BOAT, FAIL_KEEP, WATER_FLOOR, blockerRate, clutchP, extricateRate, grabP, hitP, mrng, recheckOnArrive, recordAir, recordMethod, senseOf, stackSpot, startMethod, swimTrouble, switchMethod, targetOf, waterTick } from '../src/sim/field/methodRun';
+import { BEANBAG, BOAT, FAIL_KEEP, WATER_FLOOR, arrestMethod, blockerRate, sniperSpot, clutchP, extricateRate, grabP, hitP, mrng, recheckOnArrive, recordAir, recordMethod, senseOf, stackSpot, startMethod, swimTrouble, switchMethod, targetOf, waterTick } from '../src/sim/field/methodRun';
 import { METHOD, METHOD_ORDER, NOT_YET, NO_SENSE, SAY, WORK_MODE, boatCost, catchPoint, chooseMethod, searchMul, landComp, methodFit, methodStillFits, methodsOf, onWater, reachOf, sayStart, swimOf, targetKey, targetOfWork, whyNote } from '../src/sim/field/methods';
 import type { MTarget, MethodDef } from '../src/sim/field/methods';
 import { BARRICADE, FLOW_MIN, methodsRule } from '../src/sim/field/rules/methods';
@@ -29,9 +29,9 @@ import { SCENE_RULES } from '../src/sim/field/sceneRegistry';
 import { tickScene, unitArrived } from '../src/sim/field/sceneManager';
 import { createIncident } from '../src/sim/incidents';
 import { createAidUnit, tickUnits } from '../src/sim/resources';
-import { tickWater } from '../src/sim/field/hazards';
+import { flashbang, tickWater } from '../src/sim/field/hazards';
 import { T } from '../src/sim/types';
-import type { CasBelief, Casualty, FieldAgent, Incident, IncidentType, KitId, MethodId, MethodUse, Needs, Prop, RoleId, Scene, Task, UnitKind, WorkItem, WorkKind } from '../src/sim/types';
+import type { CasBelief, Casualty, FieldAgent, Hostile, Incident, IncidentType, KitId, MethodId, MethodUse, Needs, Prop, RoleId, Scene, Task, UnitKind, WorkItem, WorkKind } from '../src/sim/types';
 import { clamp, josa } from '../src/sim/util';
 import { MethodRows } from '../src/ui/MethodRows';
 import { THROW_RELEASE, drawBarricades, drawBoats, drawCharges, drawMethodFx, inBoat, swimming } from '../src/view/scene/methodsLayer';
@@ -63,10 +63,10 @@ const work = (sim: Sim, s: Scene, kind: WorkKind, tg: Partial<WorkItem> = {}): W
   return w;
 };
 const taskFor = (a: FieldAgent, w: WorkItem): Task => { const t = makeTask(w.kind, '시험', w); a.task = t; a.status = 'active'; return t; };
-/** 방법을 켠 단계가 조건(can)을 채운 줄 — 단계 1a: 수난의 물가 방법 여섯, 단계 1b: 헤엄·줄 확보, 단계 1c: 보트, 단계 2: 문·통로 일곱(폭파 진입 포함), 단계 3: 구출 아홉·수색 다섯, 단계 4: 화재 다섯 */
+/** 방법을 켠 단계가 조건(can)을 채운 줄 — 단계 1a: 수난의 물가 방법 여섯, 단계 1b: 헤엄·줄 확보, 단계 1c: 보트, 단계 2: 문·통로 일곱(폭파 진입 포함), 단계 3: 구출 아홉·수색 다섯, 단계 4: 화재 다섯, 단계 5: 비살상탄·저격 */
 const LIVE: MethodId[] = ['hand', 'pole', 'ring', 'rope', 'improvise', 'catch', 'swim', 'tend', 'boat', 'kick', 'irons', 'ram', 'hydraulic', 'handClear', 'toolClear', 'charge',
   'manual', 'basic', 'spread', 'roof', 'rapid', 'haul', 'tunnel', 'airbag', 'shore', 'call', 'listen', 'line', 'hail', 'thermal',
-  'interior', 'defensive', 'aerial', 'extinguisher', 'ventilate'];
+  'interior', 'defensive', 'aerial', 'extinguisher', 'ventilate', 'beanbag', 'sniper'];
 /** 헤엄을 못 치는 몸으로 둔다 (수영 능력 = 0.15 + 개인차 ±0.15 < 문턱 0.35 — 구명조끼가 없을 때) */
 const noSwim = (sim: Sim, a: FieldAgent): void => { const r = sim.responders[a.rid]; r.fitness = 0; r.skills.rescue = 0; strip(sim, a.rid, 'pfd'); };
 /**
@@ -187,13 +187,13 @@ describe('R2 방법 표 (METHOD)', () => {
 // ───────────────────────── 장비 ─────────────────────────
 describe('R2 장비 아홉 줄과 gear.ts', () => {
   const NEW: KitId[] = ['pole', 'pfd', 'drysuit', 'raft', 'extinguisher', 'fan', 'airbag', 'shoring', 'beanbag'];
-  it('단계 1a·3·4: 수난의 넷(장대·구명조끼·드라이슈트·고무보트)·구출의 둘(에어백·지지대)·화재의 둘(소화기·송풍기)만 설계서의 역할이 기본 장비 끝에 든다 — 비살상탄은 아직 표에만', () => {
+  it('단계 1a·3·4·5: 수난의 넷(장대·구명조끼·드라이슈트·고무보트)·구출의 둘(에어백·지지대)·화재의 둘(소화기·송풍기)·무장의 하나(비살상탄)가 설계서의 역할의 기본 장비 끝에 든다', () => {
     for (const id of NEW) expect(KITS[id].name.length, id).toBeGreaterThan(0);
     // 설계서 §3.3 표의 "누가 든다" (단계 1a 의 넷 · 단계 3 의 둘 · 단계 4 의 둘). 수중 구조대의 두 자리(잠수 팀장·대원)는 N9 §4.8 대로 드라이슈트를 처음부터 든다 — 편성되지 않는 줄(minLevel 6)
     const WHO: Partial<Record<KitId, RoleId[]>> = {
       pole: ['engineer', 'ladderOp', 'boatRescuer'], pfd: ['ropeTech', 'boatRescuer', 'airRescuer'], drysuit: ['ropeTech', 'boatRescuer', 'diveLead', 'diver'], raft: ['ropeTech'],
       airbag: ['extricator'], shoring: ['rescueLead'],
-      extinguisher: ['engineer', 'patrolLead', 'emsDriver', 'eodGuard'], fan: ['engineer', 'ladderOp', 'decon'],
+      extinguisher: ['engineer', 'patrolLead', 'emsDriver', 'eodGuard'], fan: ['engineer', 'ladderOp', 'decon'], beanbag: ['tacLead', 'assaulter'],
     };
     for (const id of NEW) {
       const holders = (Object.keys(ROLES) as RoleId[]).filter((role) => ROLES[role].kit.indexOf(id) >= 0).sort();
@@ -205,14 +205,15 @@ describe('R2 장비 아홉 줄과 gear.ts', () => {
     expect(ROLES.engineer.kit.slice(-3)).toEqual(['pole', 'extinguisher', 'fan']); expect(ROLES.ladderOp.kit.slice(-2)).toEqual(['pole', 'fan']); expect(ROLES.airRescuer.kit.slice(-1)).toEqual(['pfd']);
     expect(ROLES.patrolLead.kit.slice(-1)).toEqual(['extinguisher']); expect(ROLES.emsDriver.kit).toEqual(['stretcher', 'extinguisher']); expect(ROLES.eodGuard.kit.slice(-1)).toEqual(['extinguisher']); expect(ROLES.decon.kit.slice(-1)).toEqual(['fan']);
     expect(ROLES.extricator.kit).toEqual(['scba', 'turnout', 'spreader', 'airbag']); expect(ROLES.rescueLead.kit).toEqual(['scba', 'turnout', 'searchKit', 'irons', 'shoring']);
-    // 교대의 명부: 여덟은 그 역할의 대원이 들고, 비살상탄은 아무도 들지 않는다. 표의 처음 수량은 명부가 복사한다 (kitFor — 소화기 1)
+    // 교대의 명부: 아홉 모두 그 역할의 대원이 든다. 표의 처음 수량은 명부가 복사한다 (kitFor — 소화기 1 · 비살상탄 3)
     const sim = new Sim('R2-KIT', FULL);
-    const LATER: KitId[] = ['beanbag'];
+    const LATER: KitId[] = [];
     for (const r of sim.responders) for (const it of r.kit!) { expect(LATER.indexOf(it.id), `${r.name}: ${it.id}`).toBe(-1); expect(it.uses, `${r.name}: ${it.id}`).toBe(it.id === 'scba' ? sim.tune.airFull : it.id === 'flashbang' ? it.uses : ({ taser: 2, charge: 2 } as Partial<Record<KitId, number>>)[it.id] ?? KITS[it.id].uses); }
     expect(sim.responders.some((r) => r.kit!.some((it) => it.id === 'raft'))).toBe(true);
     expect(sim.responders.some((r) => r.kit!.some((it) => it.id === 'airbag'))).toBe(true); expect(sim.responders.some((r) => r.kit!.some((it) => it.id === 'shoring'))).toBe(true);
     expect(sim.responders.some((r) => r.kit!.some((it) => it.id === 'fan'))).toBe(true);
-    for (const r of sim.responders) for (const it of r.kit!) if (it.id === 'extinguisher') expect(it.uses).toBe(1);
+    for (const r of sim.responders) for (const it of r.kit!) if (it.id === 'extinguisher') expect(it.uses).toBe(1); else if (it.id === 'beanbag') expect(it.uses).toBe(3);
+    expect(ROLES.tacLead.kit.slice(-1)).toEqual(['beanbag']); expect(ROLES.assaulter.kit).toEqual(['rifle', 'plate', 'flashbang', 'beanbag']);
     expect(sim.responders.find((r) => r.role === 'boatRescuer')!.kit!.find((it) => it.id === 'oilBoom')!.uses).toBe(3);
     expect(KITS.extinguisher.uses).toBe(1); expect(KITS.beanbag.uses).toBe(3);
     expect(NEW.filter((id) => KITS[id].batch === 'r2').sort()).toEqual(['airbag', 'fan', 'raft']);
@@ -2569,5 +2570,202 @@ describe('R2 단계 4: 강제 교대 (§8 의 3·6 · 화재 3가지)', () => {
     }
     expect(ok.has('interior')).toBe(true);
     expect([...ok].filter((m) => m === 'defensive' || m === 'aerial' || m === 'ventilate').length).toBeGreaterThanOrEqual(2);
+  }, 90000);
+});
+
+// ───────────────────────── 단계 5: 무장 (§4.6) ─────────────────────────
+const tgH = (id: number): MTarget => ({ cas: -1, prop: -1, hostile: id, region: -1, tile: -1 });
+/** 그 대원의 믿음 속 용의자를 덮어쓴다 */
+const believeHos = (sim: Sim, s: Scene, a: FieldAgent, h: { id: number; label: string }, v: Partial<{ x: number; y: number; weapon: string; state: string; hostage: boolean; dead: boolean }>): void => {
+  const cur = a.beliefs.val<Record<string, unknown>>('hos', h.id) ?? hosFact(sim, s, s.hostiles[h.id], '시험', 0).value;
+  a.beliefs.merge(mkFact('hos', h.id, { ...cur, ...v }, '시험', ++sim.t, 1, true, h.label));
+};
+/** 대원 곁(시야선이 닿는) d 칸 자리에 용의자를 세운다 */
+function hostileNear(s: Scene, a: FieldAgent, h: Hostile, d: number): boolean {
+  for (const dd of [d, d - 1, d + 1, d - 2]) for (const [ux, uy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+    const x = Math.round(a.x + ux * dd / Math.hypot(ux, uy)), y = Math.round(a.y + uy * dd / Math.hypot(ux, uy));
+    if (x < 1 || y < 1 || x >= s.w - 1 || y >= s.h - 1) continue;
+    const i = y * s.w + x;
+    if (!staticPass(s.tiles[i]) || s.tiles[i] === T.WATER || s.propAt[i] >= 0 || !losOk(s, a.x, a.y, x, y) || !losWalls(s, a.x, a.y, x, y)) continue;
+    h.x = h.px = x; h.y = h.py = y; return true;
+  }
+  return false;
+}
+/** 시계를 앞으로 돌린다 (협상 60초 같은 조건을 시각으로 만들 수 있게) */
+const clockAt = (sim: Sim, t: number): void => { sim.tick = Math.round(t / sim.dt); sim.t = sim.tick * sim.dt; };
+
+describe('R2 단계 5: 무장의 새 방법 — 고르는 규칙 (§4.6)', () => {
+  it('비살상탄: 9칸·시야선 안의 흉기 상대(맞섬·대치), 총기 상대는 대치 중일 때만 — 인질 곁이면·멀면 고르지 않는다. 다 쓰면 고르지 않는다', () => {
+    const q = sceneWith('R2-ARM', 'armed/dispute', ['patrol', 'swat']);
+    const as = q.role('assaulter'), h = q.s.hostiles[0];
+    expect(kitCount(q.sim, as.rid, 'beanbag')).toBe(3);
+    expect(hostileNear(q.s, as, h, 5)).toBe(true);
+    const pick = (work: WorkKind) => chooseMethod(q.sim, q.s, as, work, tgH(h.id), null, NO_SENSE);
+    believeHos(q.sim, q.s, as, h, { x: Math.round(h.x), y: Math.round(h.y), weapon: 'knife', state: 'fight', hostage: false });
+    expect(pick('arrest')!.m).toBe('beanbag');
+    believeHos(q.sim, q.s, as, h, { weapon: 'gun', state: 'fight' });
+    expect(pick('engage')).toBeNull();      // 맞서는 총기 상대 — 지금의 분기(엄폐 사격)
+    believeHos(q.sim, q.s, as, h, { weapon: 'gun', state: 'hold' });
+    expect(pick('engage')!.m).toBe('beanbag');
+    believeHos(q.sim, q.s, as, h, { hostage: true });
+    expect(pick('engage')).toBeNull();      // 인질 곁
+    believeHos(q.sim, q.s, as, h, { hostage: false, x: Math.round(as.x) + 12, y: Math.round(as.y) });
+    expect(pick('engage')).toBeNull();      // 9칸 밖
+    believeHos(q.sim, q.s, as, h, { x: Math.round(h.x), y: Math.round(h.y) });
+    useKit(q.sim, as.rid, 'beanbag', 3);
+    expect(pick('engage')).toBeNull();
+    expect(pick('arrest')).toBeNull();
+    // 순찰 경관은 비살상탄이 없다
+    expect(chooseMethod(q.sim, q.s, q.role('officer'), 'arrest', tgH(h.id), null, NO_SENSE)).toBeNull();
+  });
+  it('결정적 저격(저격·관측수): 인질을 붙잡고 교전 중인 총기 용의자, 또는 협상 60초가 넘었는데 대치 중일 때만', () => {
+    const q = sceneWith('R2-ARM', 'armed/hostage', ['swat']);
+    clockAt(q.sim, 200);
+    const mk = q.role('marksman'), h = q.s.hostiles[0];
+    const pick = () => chooseMethod(q.sim, q.s, mk, 'engage', tgH(h.id), null, NO_SENSE);
+    believeHos(q.sim, q.s, mk, h, { weapon: 'gun', state: 'hold', hostage: true });
+    q.s.negotStart = -1;
+    expect(pick()).toBeNull();
+    q.s.negotStart = q.sim.t - 30;
+    expect(pick()).toBeNull();
+    q.s.negotStart = q.sim.t - 61;
+    expect(pick()!.m).toBe('sniper');
+    q.s.negotStart = -1;
+    believeHos(q.sim, q.s, mk, h, { state: 'fight', hostage: true });
+    expect(pick()!.m).toBe('sniper');
+    believeHos(q.sim, q.s, mk, h, { weapon: 'knife' });
+    expect(pick()).toBeNull();
+  });
+  it('무력화 수단을 그 자리에서 적는다: 섬광탄은 bang (hazards.flashbang)', () => {
+    const q = sceneWith('R2-ARM', 'armed/hostage', ['swat']);
+    const h = q.s.hostiles[0];
+    h.state = 'hold'; h.stunHow = undefined;
+    const n = flashbang(q.sim, q.s, h.x, h.y);
+    expect(n).toBeGreaterThan(0);
+    expect(h.stunHow).toBe('bang'); expect(h.stunUntil).toBeGreaterThan(q.sim.t);
+  });
+});
+
+describe('R2 단계 5: 무장의 실행과 기록 (장면을 직접 만들어)', () => {
+  it('비살상탄: 흉기를 휘두르는 상대에게 9칸 안에서 1.5초 조준해 쏘고(mrng · 한 발에 하나), 맞으면 무력화(4초 · stunHow beanbag) — 이어 검거하면 방법 기록이 비살상탄이다', () => {
+    const q = sceneWith('R2-BEAN', 'armed/dispute', ['swat']);
+    const as = q.role('assaulter'), h = q.s.hostiles[0];
+    for (const a of q.s.agents) if (a !== as) a.status = 'left';
+    expect(hostileNear(q.s, as, h, 6)).toBe(true);
+    h.weapon = 'knife'; h.state = 'fight'; h.hostageId = -1; h.stunUntil = -1;
+    for (const c of q.s.casualties) c.hostage = false;
+    believeHos(q.sim, q.s, as, h, { x: Math.round(h.x), y: Math.round(h.y), weapon: 'knife', state: 'fight', hostage: false });
+    q.sim.responders[as.rid].skills.law = 1;      // 명중 0.8 — 시험이 흔들리지 않게
+    const stun0 = BEANBAG.stun; BEANBAG.stun = 9;      // 무력화를 길게 — 첫 명중으로 수갑까지 (검거 5초 · 다가가기 2~3초. 실제 4초면 다시 쏜다 — 그 판정이 시험을 흔든다)
+    const t = taskFor(as, work(q.sim, q.s, 'arrest', { hostile: h.id }));
+    const n = q.sim.events.length, before = kitCount(q.sim, as.rid, 'beanbag');
+    let shots = 0;
+    const st = (): string => h.state;
+    for (let k = 0; k < 40 * 5 && st() !== 'arrested'; k++) {
+      q.sim.tick++; q.sim.t = q.sim.tick * q.sim.dt;
+      const ux = h.x, uy = h.y;
+      act(q.sim, q.s, as);
+      h.x = h.px = ux; h.y = h.py = uy;      // 상대는 그 자리에 서 있다 (용의자 규칙을 돌리지 않는다)
+      if (st() !== 'arrested' && q.sim.t >= h.stunUntil) h.state = 'fight';
+      shots = before - kitCount(q.sim, as.rid, 'beanbag');
+    }
+    expect(t.method === 'beanbag' || as.task === null).toBe(true);
+    expect(shots).toBeGreaterThan(0);
+    expect(texts(q.sim, n).some((x) => x === `비살상탄 명중. ${h.label} 무력화.`)).toBe(true);
+    expect(h.stunHow).toBe('beanbag');
+    expect(h.state).toBe('arrested');
+    expect(q.I.methods!.filter((u) => u.ok), texts(q.sim, n).join(" / ")).toMatchObject([{ method: "beanbag", work: "arrest", hostile: h.id, rid: as.rid }]);
+    expect((h.injuries ?? []).some((j) => j.cause === 'blunt')).toBe(true);
+    BEANBAG.stun = stun0;
+  });
+  it('검거 기록의 이름: 무력화 수단(테이저·섬광탄·비살상탄)이 살아 있으면 그것, 아니면 방패수는 방패, 그 밖은 자리(추격·진입·덮치기) — 투항한 사람의 검거는 적지 않는다', () => {
+    const q = sceneWith('R2-ARM', 'armed/hostage', ['swat', 'patrol']);
+    const h = q.s.hostiles[0], cop = q.role('officer'), sh = q.role('shield');
+    h.stunHow = 'taser'; h.stunUntil = q.sim.t + 2;
+    expect(arrestMethod(q.sim, cop, h, 'tackle')).toBe('taser');
+    q.sim.t = h.stunUntil + 0.5; expect(arrestMethod(q.sim, cop, h, 'tackle')).toBe('taser');      // 막 풀렸다 (1초 안)
+    q.sim.t = h.stunUntil + 2; expect(arrestMethod(q.sim, cop, h, 'tackle')).toBe('tackle');
+    expect(arrestMethod(q.sim, cop, h, 'chase')).toBe('chase');
+    expect(arrestMethod(q.sim, sh, h, 'breach')).toBe('shield');
+    expect(arrestMethod(q.sim, q.role('assaulter'), h, 'breach')).toBe('breach');
+    // 투항한 사람: case 'arrest' 가 검거해도 방법 기록이 없다
+    for (const a of q.s.agents) if (a !== cop) a.status = 'left';
+    h.state = 'surrendered'; h.x = h.px = cop.x + 1; h.y = h.py = cop.y;
+    if (!staticPass(q.s.tiles[Math.round(h.y) * q.s.w + Math.round(h.x)])) { h.x = h.px = cop.x; h.y = h.py = cop.y; }
+    taskFor(cop, work(q.sim, q.s, 'arrest', { hostile: h.id }));
+    for (let k = 0; k < 10 * 5 && (h.state as string) !== 'arrested'; k++) { q.sim.tick++; q.sim.t = q.sim.tick * q.sim.dt; act(q.sim, q.s, cop); }
+    expect(h.state).toBe('arrested');
+    expect((q.I.methods ?? []).length).toBe(0);
+  });
+  it('저격 자리로 갈 길이 없는 저격수: 접고(조건 상실 — 문제가 아니다) 방법 없이 평소 분기로 넘어가며, 같은 대상에게 1분 동안 저격을 다시 고르지 않는다 (§8 시험 4)', () => {
+    const q = sceneWith('R2-ARM', 'armed/hostage', ['swat']);
+    const mk = q.role('marksman'), h = q.s.hostiles[0];
+    for (const a of q.s.agents) if (a !== mk) a.status = 'left';
+    clockAt(q.sim, 200);
+    believeHos(q.sim, q.s, mk, h, { x: Math.round(h.x), y: Math.round(h.y), weapon: 'gun', state: 'hold', hostage: true });
+    q.s.negotStart = q.sim.t - 100; q.s.entryOrdered = true; q.s.breachDone = true;
+    // 저격수를 벽으로 가둔다 (갈 길이 없다)
+    const mx = Math.round(mk.x), my = Math.round(mk.y);
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (dx || dy) q.s.tiles[(my + dy) * q.s.w + mx + dx] = T.WALL;
+    q.s.staticVersion++;
+    const t = taskFor(mk, work(q.sim, q.s, 'engage', { hostile: h.id }));
+    const n = q.sim.events.length;
+    let folded = -1, iters = 0;
+    for (let k = 0; k < 60 * 5 && mk.task === t; k++) {
+      q.sim.tick++; q.sim.t = q.sim.tick * q.sim.dt;
+      act(q.sim, q.s, mk);
+      iters++;
+      if (folded < 0 && texts(q.sim, n).some((x) => x.startsWith('저격 자리로 갈 길이 없습니다.'))) folded = iters;
+      if (folded > 0) expect(t.method, `${iters}틱`).toBeUndefined();      // 접은 뒤에는 다시 고르지 않는다
+    }
+    expect(folded).toBeGreaterThan(0);
+    expect(iters).toBeGreaterThan(folded);      // 접은 뒤에도 같은 교전 임무를 방법 없이 이어 갔다 (갇혀 있어 평소 분기도 곧 길 없음으로 끝난다)
+    expect(mk.mfail!.some((m) => m.m === 'sniper' && m.until >= q.sim.t + 30)).toBe(true);
+    // 같은 대상에게 다시 고르지 않는다 (새 임무를 받아도 — 1분 기억)
+    expect(chooseMethod(q.sim, q.s, mk, 'engage', tgH(h.id), makeTask('engage', '시험'), NO_SENSE)).toBeNull();
+    expect(texts(q.sim, n).filter((x) => x.startsWith('저격 자리를 잡겠습니다.')).length).toBe(1);
+    expect(q.I.problems.some((p) => p.code === 'METHOD_FAIL')).toBe(false);
+    expect(q.I.methods!.map((u) => [u.method, u.ok, u.why])).toEqual([['sniper', false, 'usual']]);
+  });
+  it('결정적 저격: 자리에서 6초 조준한 뒤 한 발 — 맞으면 한 번에 쓰러뜨리고(H1 down) 방법 기록, 판정은 방법 흐름(mrng)', () => {
+    const q = sceneWith('R2-SNIPE', 'armed/hostage', ['swat']);
+    const mk = q.role('marksman'), h = q.s.hostiles[0];
+    for (const a of q.s.agents) if (a !== mk) a.status = 'left';
+    clockAt(q.sim, 200);
+    q.s.negotStart = q.sim.t - 100; q.s.entryOrdered = true; q.s.breachDone = true;
+    for (const p of q.s.props) if (p.kind === 'door' && !p.blocking) p.open = true;      // 진입 뒤 — 문이 열려 있다 (닫힌 문 너머로는 저격 자리가 없다)
+    const spot = sniperSpot(q.s, h);
+    expect(spot).toBeGreaterThanOrEqual(0);
+    mk.x = mk.px = spot % q.s.w; mk.y = mk.py = (spot / q.s.w) | 0; mk.path = null;
+    h.state = 'hold';
+    believeHos(q.sim, q.s, mk, h, { x: Math.round(h.x), y: Math.round(h.y), weapon: 'gun', state: 'hold', hostage: true });
+    q.sim.responders[mk.rid].skills.law = 1;      // 0.95 — 시험이 흔들리지 않게
+    const t = taskFor(mk, work(q.sim, q.s, 'engage', { hostile: h.id }));
+    let firedAt = -1, t0 = -1;
+    for (let k = 0; k < 20 * 5 && firedAt < 0; k++) {
+      q.sim.tick++; q.sim.t = q.sim.tick * q.sim.dt;
+      act(q.sim, q.s, mk);
+      if (t.method === 'sniper' && t0 < 0) t0 = q.sim.t;
+      if (q.sim.events.some((e) => e.text.startsWith('저격 — '))) firedAt = q.sim.t;
+    }
+    expect(firedAt).toBeGreaterThan(0);
+    expect(firedAt - t0).toBeGreaterThanOrEqual(6 - 0.3);
+    expect(mk.mrng).toBeDefined();
+    if (q.sim.events.some((e) => e.text.startsWith(`저격 — ${h.label} 명중`))) {
+      expect(h.state).toBe('down');
+      expect(q.I.methods!.filter((u) => u.ok)).toMatchObject([{ method: 'sniper', hostile: h.id }]);
+    }
+  });
+});
+
+describe('R2 단계 5: 강제 교대 (§8 의 3·6 · 무장 4가지)', () => {
+  it('무장 강제(인질극·대형 인질극·흉기·강도): 검거·무력화의 방법 기록이 4가지 이상이고, 테이저 기록이 있으며, 재현성이 지켜진다', () => {
+    const ok = new Set<MethodId>();
+    for (const [seed, force] of [['A0', 'armed/hostage'], ['A1', 'armed/siege'], ['A2', 'armed/dispute'], ['A3', 'armed/robbery'], ['A4', 'armed/dispute'], ['A5', 'armed/robbery']] as const) {
+      const sim = new Sim(seed, NORMAL, 1200, { force }); sim.runToEnd();
+      for (const I of sim.incidents) for (const u of I.methods ?? []) if (u.ok && (u.work === 'engage' || u.work === 'arrest')) ok.add(u.method);
+      if (seed === 'A1') { const again = new Sim(seed, NORMAL, 1200, { force }); again.runToEnd(); expect(again.report!.hash).toBe(sim.report!.hash); }
+    }
+    expect(ok.size, [...ok].join(',')).toBeGreaterThanOrEqual(4);
   }, 90000);
 });

@@ -298,7 +298,7 @@ export function flashbang(sim: Sim, s: Scene, x: number, y: number, by?: FieldAg
   for (const h of s.hostiles) {
     if (h.state !== 'hold' && h.state !== 'fight') continue;
     if (dist(h.x, h.y, x, y) > 5.2 || !los(s, x, y, h.x, h.y)) continue;      // 벽 너머까지는 미치지 않는다
-    h.stunUntil = sim.t + 3.8; h.morale -= 0.15; n++;
+    h.stunUntil = sim.t + 3.8; h.stunHow = 'bang'; h.morale -= 0.15; n++;      // stunHow: (R2 §4.6) 무력화 수단 — 검거 기록이 쓴다
   }
   pushFx(sim, s, 'flash', x, y, undefined, undefined, undefined, undefined, 0.7);
   noteFlash(lastFx(sim, s, 'flash'), by, n);

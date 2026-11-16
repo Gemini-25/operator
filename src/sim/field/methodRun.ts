@@ -17,20 +17,24 @@
 //            수색: searchStop(경유점에 멈추는 시간·탐지 장비 확인) — executor 의 case 'extricate'·'search' 가 부른다
 //   단계 4   화재: runSuppress(외부 방어 방수·고가 사다리 방수·배연 — 내부 공격은 executor 의 지금 코드)·runExtinguisher(소화기 — 펌프·물을 쓰지 않는다)·confirmOut(진압 확인) —
 //            executor 의 case 'suppress' 가 부른다. 송풍기 s.fan 의 효과는 세계 규칙(rules/methods.ts)과 X6 의 가스 모델(catastrophe.gasStep)
+//   단계 5   무장: runBeanbag(비살상탄)·runSniper(결정적 저격)·sniperSpot, 검거 기록의 이름 arrestMethod·recordArrest·stunMethod(무력화 수단 h.stunHow) —
+//            executor 의 case 'engage'·'arrest' 가 부른다
 
 import type { Sim } from '../engine';
 import { emit, lastProblemEvent, raiseProblem } from '../events';
 import type { Rng } from '../rng';
 import { T } from '../types';
-import type { CasBelief, Casualty, FieldAgent, Incident, KitId, MethodId, MethodUse, MethodWhy, Problem, Scene, Task, TaskKind, Unit, WorkKind } from '../types';
+import type { CasBelief, Casualty, FieldAgent, Hostile, Incident, KitId, MethodId, MethodUse, MethodWhy, Problem, Scene, Task, TaskKind, Unit, WorkKind } from '../types';
 import { clamp, dist, josa } from '../util';
 import { casFact, learn, learnQuiet, staminaF, visionOf } from './agents';
 import { BARE_HANDS, bestTool, kitCount, kitTool, kitWorks, useKit } from './gear';
 import { los, staticPass, tileOf } from './grid';
-import { applyWater, blast, pushFx } from './hazards';
+import { applyWater, blast, hostageNear, pushFx } from './hazards';
+import { fireShot } from './damage';
+import { recShot } from './fxlog';
 import { EXT_RANGE, exteriorSpots, opsExterior } from './ops';
-import { AERIAL_RANGE, HAND_REACH, METHOD, POLE_REACH, aerialSpots, RING_REACH, SAY, THROW_REACH, WORK_MODE, catchPoint, chooseMethod, methodStillFits, onWater, reachOf, sayStart, shoreCrack, swimOf, targetKey } from './methods';
-import { hurtCas, hurtResponder } from './injury';
+import { AERIAL_RANGE, BEANBAG_RANGE, HAND_REACH, METHOD, POLE_REACH, SNIPER_RANGE, aerialSpots, RING_REACH, SAY, THROW_REACH, WORK_MODE, catchPoint, chooseMethod, methodStillFits, onWater, reachOf, sayStart, shoreCrack, swimOf, targetKey } from './methods';
+import { hurtCas, hurtHostile, hurtResponder } from './injury';
 import { mkFact } from './beliefs';
 import type { MTarget, MethodPick, Sense } from './methods';
 import { docCtx, hasDoc } from './doctrine';      // (R3) 교본 입력 (자기 모드)
@@ -1306,4 +1310,151 @@ export function runExtinguisher(sim: Sim, s: Scene, I: Incident, a: FieldAgent, 
   t.progress = 0;
   if (!regionLit(s, t.region)) { confirmOut(sim, s, I, a, t, k, false); return; }
   if (!switchMethod(sim, s, I, a, t, 'tooFar', '소화기 소진', true, { say: '소화기를 다 썼습니다.' })) k.finish(sim, s, a, false, 'preempt');
+}
+
+// ───────────────────────── 무장 (§4.6) — 단계 5 ─────────────────────────
+/** 무력화가 살아 있거나 막 풀렸으면(1초 안) 그 수단 (섬광탄 'bang' · 테이저 'taser' · 비살상탄 'beanbag' — 무력화한 코드가 h.stunHow 에 적는다), 아니면 undefined */
+export function stunMethod(sim: Sim, h: Hostile): MethodId | undefined { return h.stunHow !== undefined && sim.t < h.stunUntil + 1 ? h.stunHow : undefined; }
+/**
+ * 검거 기록의 이름 (§4.6 표 — 기록 전용): 무력화 수단이 살아 있으면 그것, 아니면 검거한 대원이 방패수(방탄 방패)면 방패,
+ * 아니면 자리의 이름 — 추격 검거 'chase' · 동시 진입·방 진입 뒤 'breach' · 덮치기 'tackle'
+ */
+export function arrestMethod(sim: Sim, a: FieldAgent, h: Hostile, site: 'chase' | 'breach' | 'tackle'): MethodId {
+  const st = stunMethod(sim, h);
+  if (st !== undefined) return st;
+  if (kitCount(sim, a.rid, 'shield') > 0) return 'shield';
+  return site;
+}
+/** 검거한 그 자리에서 방법 기록 한 줄 (대상 = 그 용의자). 고른 방법(비살상탄)이면 그 까닭, 기록 전용이면 'usual' */
+export function recordArrest(sim: Sim, I: Incident, a: FieldAgent, t: Task, h: Hostile, site: 'chase' | 'breach' | 'tackle', ev: number): void {
+  const m = arrestMethod(sim, a, h, site);
+  recordMethod(sim, I, a, t, m, m === t.method ? t.mwhy ?? 'usual' : 'usual', true, ev, { cas: -1, prop: -1, hostile: h.id, region: -1, tile: -1 });
+}
+/** 비살상탄: 조준 1.5초 · 무력화 4초 · 사기 −0.3 · 타박상 8 */
+export const BEANBAG = { aim: 1.5, stun: 4, morale: 0.3, dmg: 8 };
+/** 결정적 저격: 조준 6초 · 피해 70(쓰러뜨린다) · 빗나간 탄이 곁의 인질에게 갈 확률 0.2 · 용의자에게서 이만큼은 떨어진 자리 */
+export const SNIPER = { aim: 6, dmg: 70, collateral: 0.2, minD: 4 };
+/** 조준을 시작한 시각 (임무마다 — 임무의 모양을 바꾸지 않으려 WeakMap) */
+const AIM = new WeakMap<Task, number>();
+const hosTg = (h: Hostile): MTarget => ({ cas: -1, prop: -1, hostile: h.id, region: -1, tile: -1 });
+/** 빗나간 탄이 겨눈 점: 목표 옆 0.8칸 (틱의 홀짝으로 좌우 — 난수를 쓰지 않는다) */
+function missAim(sim: Sim, a: FieldAgent, h: Hostile): { x: number; y: number } {
+  const d = Math.hypot(h.x - a.x, h.y - a.y) || 1, side = sim.tick % 2 ? 0.8 : -0.8;
+  return { x: h.x - ((h.y - a.y) / d) * side, y: h.y + ((h.x - a.x) / d) * side };
+}
+/** 1초마다 고른 방법을 지금도 쓸 수 있는가 — 3초 넘게 아니면 조건 상실로 바꾼다 (선택 임무: 다음 방법이 없으면 방법 없이 지금 분기로). 돌려주는 값 = 바꿨다 */
+function armedLost(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, h: Hostile, m: MethodId, detail: string, say: string): boolean {
+  if (sim.tick % 5 !== 0) return false;
+  if (methodStillFits(sim, s, a, t.kind as WorkKind, hosTg(h), t, m, senseOf(s, a))) { t.mbad = 0; return false; }
+  t.mbad = (t.mbad ?? 0) + 1;
+  if (t.mbad < 3) return false;
+  AIM.delete(t);
+  switchMethod(sim, s, I, a, t, 'tooFar', detail, true, { say });
+  return true;
+}
+/**
+ * 비살상탄 (§4.6 beanbag — executor 의 case 'arrest' 테이저 다음 · case 'engage' ①-2 다음에서 부른다). 돌려주는 값 = 이 틱은 여기서 끝 (쏜 틱·조준·다가감).
+ * 무력화된 상대는 지금의 제압 분기가 잡는다(false). 9칸·시야선 밖이면 다가가고, 닿으면 제자리에서 1.5초 조준한 뒤 한 발(useKit) —
+ * 명중 clamp(0.5 + 0.3 × 법 집행, 0.2, 0.85)(mrng): 무력화 4초 · h.stunHow 'beanbag' · 사기 −0.3 · 타박상 8(H1). 탄은 damage.fireShot 의 선 그대로 G5 recShot.
+ * 다 쓰면·조건이 3초 넘게 맞지 않으면·갈 길이 없으면 조건 상실(tooFar) → 선택 임무라 지금 분기로
+ */
+export function runBeanbag(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, h: Hostile, k: ExecKit): boolean {
+  if (t.method !== 'beanbag') return false;
+  if (sim.t < h.stunUntil) { AIM.delete(t); return false; }
+  if (kitCount(sim, a.rid, 'beanbag') <= 0) { AIM.delete(t); switchMethod(sim, s, I, a, t, 'tooFar', '비살상탄 소진', true, { say: '비살상탄을 다 썼습니다.' }); return true; }
+  if (armedLost(sim, s, I, a, t, h, 'beanbag', '비살상탄을 쏠 수 없는 상황', '비살상탄을 쏠 수 없습니다.')) return true;
+  a.label = METHOD.beanbag.label;
+  if (dist(a.x, a.y, h.x, h.y) > BEANBAG_RANGE || !los(s, a.x, a.y, h.x, h.y)) {
+    AIM.delete(t);
+    const mv = k.moveTo(sim, s, a, h.x, h.y, BEANBAG_RANGE - 0.5, true);
+    if (mv === 'nopath') switchMethod(sim, s, I, a, t, 'tooFar', '비살상탄을 쏠 자리로 갈 길이 없음', true, { say: '비살상탄을 쏠 자리가 없습니다.' });
+    return true;
+  }
+  a.fx = h.x - a.x; a.fy = h.y - a.y;
+  const t0 = AIM.get(t);
+  if (t0 === undefined) { AIM.set(t, sim.t); return true; }
+  a.ring = (sim.t - t0) / BEANBAG.aim;
+  if (sim.t - t0 + 1e-9 < BEANBAG.aim) return true;
+  AIM.delete(t);
+  const r = sim.responders[a.rid];
+  useKit(sim, a.rid, 'beanbag', 1); t.mtry = (t.mtry ?? 0) + 1;
+  const hit = mrng(sim, s, a).chance(clamp(0.5 + 0.3 * r.skills.law, 0.2, 0.85));
+  const mp = missAim(sim, a, h);
+  const end = hit ? fireShot(sim, s, a.x, a.y, h.x, h.y, 'body') : fireShot(sim, s, a.x, a.y, mp.x, mp.y, 'miss');
+  recShot(sim, s, a, 'beanbag', h.x, h.y, hit, 1, h.id, null, end);
+  const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, text: hit ? `비살상탄 명중. ${h.label} 무력화.` : '비살상탄 빗나감.' });
+  h.shotAt = sim.t;
+  if (hit) {
+    h.stunUntil = sim.t + BEANBAG.stun; h.stunHow = 'beanbag'; h.morale -= BEANBAG.morale;
+    hurtHostile(sim, s, I, h, BEANBAG.dmg, 'blunt', { by: a.rid, byKind: 'responder', ev });
+  } else if (sim.t >= h.alertUntil) { h.alertUntil = sim.t + 5; h.facing = Math.atan2(a.y - h.y, a.x - h.x); }
+  return true;
+}
+/** 저격 자리 (생김새·진실 — 실행부): 용의자 둘레 16칸 안의 걸을 수 있는 칸 가운데 시야선이 닿고 4칸 넘게 떨어진 칸, 대기 지점에 가까운 것. 없으면 -1 */
+export function sniperSpot(s: Scene, h: Hostile): number {
+  const w = s.w, hx = Math.round(h.x), hy = Math.round(h.y), R = SNIPER_RANGE;
+  let best = -1, bd = Infinity;
+  for (let y = Math.max(0, hy - R); y <= Math.min(s.h - 1, hy + R); y++) for (let x = Math.max(0, hx - R); x <= Math.min(w - 1, hx + R); x++) {
+    const i = y * w + x;
+    if (!staticPass(s.tiles[i]) || s.tiles[i] === T.WATER || s.tiles[i] === T.DOOR || s.propAt[i] >= 0 || s.fire[i] > 0.3) continue;
+    const d = dist(x, y, hx, hy);
+    if (d > R - 0.5 || d < SNIPER.minD || !los(s, x, y, hx, hy)) continue;
+    const ds = dist(x, y, s.staging.x, s.staging.y);
+    if (ds < bd) { bd = ds; best = i; }
+  }
+  return best;
+}
+/**
+ * 결정적 저격 (§4.6 sniper — executor 의 case 'engage' ①-2 다음). 돌려주는 값 = 이 틱은 여기서 끝.
+ * 처음 한 번 저격 자리를 정하고(sniperSpot — 대기 지점 쪽) 그리로 간다. 시야선·16칸이면 제자리에서 6초 조준한 뒤 한 발 —
+ * 명중 clamp(0.55 + 0.4 × 법 집행 − (움직이면 0.2), 0.3, 0.95)(mrng): 피해 70(H1 — 한 번에 쓰러뜨린다) · 방법 기록. 빗나가면 mrng 0.2 로 곁의 인질이 다친다(ESCALATION — shootAt 과 같은 처리).
+ * 자리가 없거나 갈 길이 없으면 조건 상실(tooFar) + 그 대상의 저격을 1분 기억(조준 → 실패를 되풀이하지 않게) → 선택 임무라 지금 분기(엄폐 사격·덮치기)로.
+ * 자리에서 시야선이 세 번 끊기면 같은 처리
+ */
+export function runSniper(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, h: Hostile, k: ExecKit): boolean {
+  if (t.method !== 'sniper') return false;
+  if (sim.t < h.stunUntil) { AIM.delete(t); return false; }
+  if (armedLost(sim, s, I, a, t, h, 'sniper', '저격 조건이 사라짐', '저격 조건이 아닙니다.')) return true;
+  const key = targetKey(t.kind, hosTg(h));
+  const giveUp = (detail: string, say: string): boolean => { AIM.delete(t); switchMethod(sim, s, I, a, t, 'tooFar', detail, true, { say }); rememberFail(sim, a, key, 'sniper', 'failed'); return true; };
+  if (t.range !== 1) {
+    const spot = sniperSpot(s, h);
+    if (spot < 0) return giveUp('저격 자리가 없음', '저격 자리가 없습니다.');
+    t.tx = spot % s.w; t.ty = (spot / s.w) | 0; t.range = 1; a.path = null;
+  }
+  a.label = METHOD.sniper.label;
+  const mv = k.moveTo(sim, s, a, t.tx, t.ty, 0.6);
+  if (mv === 'nopath') return giveUp('저격 자리로 갈 길이 없음', '저격 자리로 갈 길이 없습니다.');
+  if (mv !== 'arrived') return true;
+  if (dist(a.x, a.y, h.x, h.y) > SNIPER_RANGE || !los(s, a.x, a.y, h.x, h.y)) {
+    AIM.delete(t); t.range = 0; t.mtry = (t.mtry ?? 0) + 1;      // 다른 자리를 찾는다 (세 번이면 접는다)
+    if (t.mtry >= 3) return giveUp('저격 자리에서 표적이 보이지 않음', '표적이 보이지 않습니다.');
+    return true;
+  }
+  a.fx = h.x - a.x; a.fy = h.y - a.y;
+  const t0 = AIM.get(t);
+  if (t0 === undefined) { AIM.set(t, sim.t); return true; }
+  a.ring = (sim.t - t0) / SNIPER.aim;
+  if (sim.t - t0 + 1e-9 < SNIPER.aim) return true;
+  AIM.delete(t);
+  const r = sim.responders[a.rid], rng = mrng(sim, s, a);
+  const moving = Math.abs(h.x - h.px) + Math.abs(h.y - h.py) > 0.05;
+  const hit = rng.chance(clamp(0.55 + 0.4 * r.skills.law - (moving ? 0.2 : 0), 0.3, 0.95));
+  const hc = hit ? null : hostageNear(s, h);
+  const struck = hc !== null && rng.chance(SNIPER.collateral) && I.phase !== 'closed' ? hc : null;
+  const mp = missAim(sim, a, h);
+  const end = hit ? fireShot(sim, s, a.x, a.y, h.x, h.y, 'body') : struck ? fireShot(sim, s, a.x, a.y, struck.x, struck.y, 'body') : fireShot(sim, s, a.x, a.y, mp.x, mp.y, 'miss');
+  recShot(sim, s, a, 'sniper', h.x, h.y, hit, 1, h.id, struck, end);
+  const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 3, text: hit ? `저격 — ${h.label} 명중, 제압.` : '저격 — 빗나감.' });
+  h.shotAt = sim.t;
+  if (struck) {
+    const e2 = raiseProblem(sim, I, 'ESCALATION', '저격 중 인질 피격', { role: 'SYSTEM', actor: '현장', rid: r.id, imp: 3, causes: [ev], text: `빗나간 저격탄에 인질(구조 대상 ${struck.label})이 다쳤습니다!` }, false);
+    hurtCas(sim, s, I, struck, rng.range(22, 34), 'gunshot', { by: r.id, byKind: 'responder', ev: e2, bleed: 0.15, immobile: true });
+  }
+  if (hit) {
+    hurtHostile(sim, s, I, h, SNIPER.dmg, 'gunshot', { by: r.id, byKind: 'responder', ev, down: true });
+    recordMethod(sim, I, a, t, 'sniper', t.mwhy ?? 'usual', true, ev, hosTg(h));
+    r.xpGained += 0.004;
+  } else if (sim.t >= h.alertUntil) { h.alertUntil = sim.t + 6; h.facing = Math.atan2(a.y - h.y, a.x - h.x); }
+  return true;
 }

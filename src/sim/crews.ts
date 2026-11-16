@@ -123,12 +123,12 @@ export const ROLES: Record<RoleId, RoleDef> = {
   // ── 경찰 ──
   patrolLead: { name: '순찰 팀장', group: 'lead', skills: (s) => sk(0.05, 0.22, 0.25, s + 0.04), kit: ['pistol', 'taser', 'vest', 'megaphone', 'aed', 'extinguisher'], prefer: { negotiate: 0.15, interview: 0.15 } },      // (R2 단계 4) 소화기는 끝에
   officer: { name: '순찰 경관', group: 'officer', skills: (s) => sk(0.05, 0.22, 0.22, s), kit: ['pistol', 'taser', 'vest', 'baton'], prefer: { traffic: 0.15, perimeter: 0.1, arrest: 0.1 } },
-  tacLead: { name: '기동 조장', group: 'lead', skills: (s) => sk(0.05, 0.22, 0.22, s + 0.06), kit: ['pistol', 'plate', 'megaphone'], prefer: { negotiate: 0.1 } },
+  tacLead: { name: '기동 조장', group: 'lead', skills: (s) => sk(0.05, 0.22, 0.22, s + 0.06), kit: ['pistol', 'plate', 'megaphone', 'beanbag'], prefer: { negotiate: 0.1 } },      // (R2 단계 5) 비살상탄 발사기는 끝에 (3발 — kitFor 가 복사)
   tacOfficer: { name: '기동대원', group: 'officer', skills: (s) => sk(0.05, 0.22, 0.22, s + 0.06), kit: ['rifle', 'plate', 'flashbang'], prefer: { engage: 0.15, arrest: 0.1 } },
   swatLead: { name: '특공 팀장', group: 'lead', skills: (s) => sk(0.05, 0.25, 0.25, s + 0.12), kit: ['pistol', 'plate', 'flashbang'], prefer: { negotiate: 0.05 } },
   shield: { name: '방패수', group: 'shield', skills: (s) => sk(0.05, 0.22, 0.22, s + 0.1), kit: ['pistol', 'plate', 'shield'], prefer: { engage: 0.2 } },
   breacher: { name: '진입대원(파괴)', group: 'entry', skills: (s) => sk(0.05, 0.35, 0.22, s + 0.1), kit: ['rifle', 'plate', 'breachKit', 'flashbang', 'charge'], prefer: { force: 0.3, engage: 0.1 } },
-  assaulter: { name: '진입대원', group: 'officer', skills: (s) => sk(0.05, 0.22, 0.22, s + 0.12), kit: ['rifle', 'plate', 'flashbang'], prefer: { engage: 0.15 } },
+  assaulter: { name: '진입대원', group: 'officer', skills: (s) => sk(0.05, 0.22, 0.22, s + 0.12), kit: ['rifle', 'plate', 'flashbang', 'beanbag'], prefer: { engage: 0.15 } },      // (R2 단계 5) 비살상탄 발사기는 끝에
   marksman: { name: '저격·관측수', group: 'marksman', skills: (s) => sk(0.05, 0.2, 0.2, s + 0.15), kit: ['sniper', 'plate'], prefer: { perimeter: 0.3, engage: -0.15 } },
   bombTech: { name: '폭발물 처리 요원', group: 'bomb', skills: (s) => sk(0.05, 0.3, 0.22, s - 0.15), kit: ['bombSuit', 'eodKit', 'charge'], prefer: { defuse: 0.3 } },
   // 권총을 빼지 않는다: 최소 인원 처리반(처리 요원·로봇 조작 요원)에서 "law ≥ 0.5 ⇒ 총기 대원"을 지키는 사람이 그뿐이다. 무장 사건의 인원 문턱은 묶음 bomb 을 세지 않는다

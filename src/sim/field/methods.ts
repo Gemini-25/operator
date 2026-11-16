@@ -339,6 +339,29 @@ function extCond(c: MethodCtx): boolean {
 /** 배연의 상황 조건 (§4.5 ventilate — 조건일 때만): 쓸 수 있는 공기호흡기, 선 자리의 연기 > 0.5(도착 재선택에서), 이 현장에 송풍기가 없음, 믿음에 그 구역의 불이 있다 */
 const ventCond = (c: MethodCtx): boolean => kitCount(c.sim, c.a.rid, 'scba') > 0 && c.sense.smoke > 0.5 && (fireOf(c) ?? 0) > 0.05 && !fanBusy(c);
 
+// ── 무장의 조건 (§4.6) — 대상 용의자(tg.hostile)의 믿음(자리·무기·상태·인질), 벽에 막히지 않는 시야선(생김새), 협상을 시작한 시각(지휘 상태) ──
+/** 비살상탄이 닿는 거리 (칸) · 저격이 닿는 거리 · 저격을 고르는 협상 경과(초) */
+export const BEANBAG_RANGE = 9, SNIPER_RANGE = 16, SNIPER_NEGOT = 60;
+interface HosB { x: number; y: number; weapon: string; state: string; hostage: boolean; dead: boolean }
+const hosOf = (c: MethodCtx): HosB | null => (c.tg.hostile >= 0 ? c.a.beliefs.val<HosB>('hos', c.tg.hostile) ?? null : null);
+/**
+ * 비살상탄의 조건 (§4.6 beanbag): 믿음 속 용의자가 맞서거나 대치 중이고(총기면 대치 중일 때만), 인질 곁이 아니며, 9칸 안·벽에 막히지 않는 시야선.
+ * 실제로 쏠 때는 실행부가 진실의 시야선·거리로 다시 본다
+ */
+function beanbagOk(c: MethodCtx): boolean {
+  const h = hosOf(c);
+  if (h === null || h.dead || h.hostage) return false;
+  if (h.weapon === 'gun' ? h.state !== 'hold' : h.state !== 'hold' && h.state !== 'fight') return false;
+  return dist(c.a.x, c.a.y, h.x, h.y) <= BEANBAG_RANGE && losWalls(c.s, c.a.x, c.a.y, h.x, h.y);
+}
+/** 결정적 저격의 조건 (§4.6 sniper — 조건일 때만): 믿음 속 총기 용의자가 인질을 붙잡은 채 교전 중이거나, 협상을 시작한 지 60초가 넘었는데 아직 대치 중 */
+function sniperOk(c: MethodCtx): boolean {
+  const h = hosOf(c);
+  if (h === null || h.dead || h.weapon !== 'gun') return false;
+  if (h.hostage && h.state === 'fight') return true;
+  return h.state === 'hold' && c.s.negotStart >= 0 && c.sim.t - c.s.negotStart > SNIPER_NEGOT;
+}
+
 /** 수색 방법의 탐지 배율 (§4.4): 경유점에 멈춘 동안(t.wait > 0)만 — 청음 ×0.75 · 확성기 ×0.5 (둘 다 소리를 낼 수 있는 대상만 — voice) · 열화상 ×0.6 */
 const SEARCH_MUL: Partial<Record<MethodId, { k: number; voice: boolean }>> = { listen: { k: 0.75, voice: true }, hail: { k: 0.5, voice: true }, thermal: { k: 0.6, voice: false } };
 const NO_MUL = { k: 1, voice: false };
@@ -431,8 +454,9 @@ export const METHOD: Record<MethodId, MethodDef> = {
   cover: row('cover', ['engage'], '엄폐 사격', '엄폐 사격', '엄폐 사격', '엄폐 사격으로', [], 0, 0, true, REC),
   taser: row('taser', ['engage', 'arrest'], '테이저', '테이저', '테이저', '테이저로 무력화한 뒤', ['taser'], 0, 0, false, REC),
   shield: row('shield', ['engage', 'arrest'], '방패 밀착 제압', '방패', '방패 제압', '방패로 밀어붙여', ['shield'], 0, 0, false, REC),
-  beanbag: row('beanbag', ['engage', 'arrest'], '비살상탄', '비살상탄', '비살상탄 조준', '비살상탄으로 무력화한 뒤', ['beanbag'], 0.8, 0, false),
-  sniper: row('sniper', ['engage'], '결정적 저격', '저격', '저격 조준', '저격으로', ['sniper'], 0.6, 0, false),
+  // 단계 5 가 켠 둘 (선택 임무 — 고르지 않으면 지금의 분기). 실행은 methodRun.runBeanbag·runSniper (executor 의 case 'engage' ①-2 다음 · case 'arrest' 의 테이저 다음)
+  beanbag: row('beanbag', ['engage', 'arrest'], '비살상탄', '비살상탄', '비살상탄 조준', '비살상탄으로 무력화한 뒤', ['beanbag'], 0.8, 0, false, { can: beanbagOk }),
+  sniper: row('sniper', ['engage'], '결정적 저격', '저격', '저격 조준', '저격으로', ['sniper'], 0.6, 0, false, { can: sniperOk }),      // 조건일 때만 (인질을 붙잡고 교전 · 협상 60초 넘은 대치)
   // ── 응급 treat · 이송 수단 load (§4.7) ──
   stay: row('stay', ['treat'], '현장 안정 후 이송', '현장 처치', '응급 처치', '현장에서 안정시켜', [], 0.8, 0, true),      // 지금의 방법
   rush: row('rush', ['treat'], '즉시 이송', '즉시 이송', '즉시 이송 준비', '최소한만 처치하고 곧바로', ['bag', 'alsBag', 'doctorKit'], 0.9, 0, false),
@@ -736,7 +760,7 @@ export const THROW_REACH = 3.6;
 /**
  * 방법을 고른다. 상태를 바꾸지 않고 난수를 쓰지 않는다 — 같은 상황 = 같은 선택 (다양성은 장비·능력·상황의 차이에서 나온다).
  * 후보: 그 임무의 방법이고, 기록 전용이 아니고, 장비(canUse)와 상황(can)이 맞고, 이 임무에서 접지 않았고(t.tried), 그 대상에 대한 접은 기억(a.mfail)이 없는 것.
- * 하나도 없으면 차례로 넓힌다: ① t.tried 를 무시 ② 고장이 아닌 a.mfail 기억을 무시 ③ null (선택 임무는 null 이 정상이다).
+ * 하나도 없으면 차례로 넓힌다: ① t.tried 를 무시 ② 고장이 아닌 a.mfail 기억을 무시 ③ null. 선택 임무(WORK_MODE 'optional')는 넓히지 않고 바로 null 이다(정상 — 방법 없이 지금 코드로).
  * 까닭은 위에서부터 처음 맞는 것: noGear(장비를 따지지 않은 1등이 장비 때문에 빠졌다) · weak · danger · quiet · fast · tooFar · near · team · usual.
  * 실패·고장·조건 상실로 바꿀 때의 까닭(failed·broken·tooFar·team)은 실행부(switchMethod)가 덮어쓴다.
  * dc: R3 의 교본 입력 — 실행부가 자기 모드 docCtx(…, 'self') 로 넘긴다(없으면 null). 점수에 × docMethodMul(사본, m) — 교본 줄이 없으면 1.
@@ -748,8 +772,11 @@ export function chooseMethod(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, 
   const key = targetKey(work, tg);
   let tried = t !== null && t.tried !== undefined && t.tried.length ? t.tried : null, brokenOnly = false;
   let cands = rank(c, key, tried, false, false);
-  if (!cands.length && tried !== null) { tried = null; cands = rank(c, key, null, false, false); }                                   // ① 다 써 봤으면 처음부터 다시
-  if (!cands.length && a.mfail !== undefined && a.mfail.length) { brokenOnly = true; cands = rank(c, key, null, true, false); }     // ② 접은 기억을 무시 (고장은 빼고)
+  // 넓히기는 늘 남는 임무·맡지 않는 임무만 — 선택 임무(진압·교전·검거 …)는 null 이 정상이라 넓히지 않는다
+  // (단계 5: 넓히면 방금 접은 하나뿐인 방법 — 저격 자리로 갈 길이 없는 저격 — 을 바로 다시 골라 접기를 틱마다 되풀이했다)
+  const widen = WORK_MODE[work] !== 'optional';
+  if (widen && !cands.length && tried !== null) { tried = null; cands = rank(c, key, null, false, false); }                                   // ① 다 써 봤으면 처음부터 다시
+  if (widen && !cands.length && a.mfail !== undefined && a.mfail.length) { brokenOnly = true; cands = rank(c, key, null, true, false); }     // ② 접은 기억을 무시 (고장은 빼고)
   if (!cands.length) return null;
   const top = cands[0].m;
   const free = rank(c, key, tried, brokenOnly, true)[0];      // 장비를 따지지 않고 다시 셈한 1등 (needUnit 은 그대로 따진다)
@@ -786,6 +813,6 @@ export function methodFit(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): numbe
   if (NEEDS_CAS[w.kind] && c.cb === null) return 0;
   const key = targetKey(w.kind, tg);
   let cands = rank(c, key, null, false, false);
-  if (!cands.length && a.mfail !== undefined && a.mfail.length) cands = rank(c, key, null, true, false);
+  if (!cands.length && WORK_MODE[w.kind] !== 'optional' && a.mfail !== undefined && a.mfail.length) cands = rank(c, key, null, true, false);      // 선택 임무는 넓히지 않는다 (chooseMethod 와 같다)
   return cands.length ? cands[0].score : 0;
 }

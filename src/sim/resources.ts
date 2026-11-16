@@ -110,6 +110,8 @@ const fitOf = (d: Fit): Pick<Unit, 'seats' | 'hoist' | 'bucket' | 'bucketMax' | 
  */
 const AMMO_BOX_ADD: Partial<Record<UnitKind, number>> = { patrol: 0, eod: 0, tactical: 1, swat: 2, detective: 0, trafficPol: 0, k9: 0, riotPol: 0 };
 function ammoBoxOf(kind: UnitKind, base: number): number { const add = AMMO_BOX_ADD[kind]; return add === undefined ? 0 : base + add; }
+/** (R3 §3.2 F10) 예비 펌프: 펌프를 단 부대(물탱크가 있는 종류 — 펌프차·사다리차·구조 공작차·화학 구조차·제독차)만 장비 손잡이의 수, 그 밖은 undefined(펌프가 없다) */
+export function sparePumpOf(kind: UnitKind, base: number): number | undefined { return KIND[kind].waterMax > 0 ? base : undefined; }
 
 /** 조직 명부의 열쇠 한 자리 (I2 — 교대 간 지속): 그 자리의 원래 이름, 소속 호출부호, 표준 자리 번호 */
 export interface RosterKey { name: string; callsign: string; slot: number }
@@ -196,7 +198,7 @@ export function createRoster(sim: Sim): void {
       aid: undefined, heavy: undefined, backing: undefined, curb: undefined, curbT: undefined, parking: undefined,      // 나중에 붙는 칸을 미리 비워 둔다: 모든 부대가 같은 모양의 객체가 된다
       ...fitOf(d),
       aboard: undefined, firstLoadAt: undefined, oosEv: undefined,      // (H1) 부상 대원·용의자의 후송 — 쓰는 것은 단계 4b 부터
-      ammoBox: ammoBoxOf(d.kind, tn.ammoBox), ammoBoxMax: ammoBoxOf(d.kind, tn.ammoBox), sparePump: undefined,      // (R3) 탄약 상자(2단계 — 장비 손잡이)·예비 펌프(3단계가 채운다)
+      ammoBox: ammoBoxOf(d.kind, tn.ammoBox), ammoBoxMax: ammoBoxOf(d.kind, tn.ammoBox), sparePump: sparePumpOf(d.kind, tn.sparePump),      // (R3) 탄약 상자(2단계 — 장비 손잡이)·예비 펌프(3단계 — 장비 손잡이, 물탱크가 있는 부대만)
       readyAt: undefined, oosWhy: undefined, pumpFails: 0,      // (I2) 정비 중인 부대의 운용 시각·oos 의 이유(단계 3·2)·이번 교대의 펌프 고장 수(단계 3)
     };
     if (u.sea) { u.x = u.px = f.x + 30; u.y = u.py = coastY(f.x + 30) + SEA_OFF; }
@@ -283,7 +285,7 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
     field: undefined, air: undefined, sea: undefined, aid: true, heavy: undefined, backing: undefined, curb: undefined, curbT: undefined, parking: undefined,      // 편성표 부대와 같은 칸, 같은 순서
     ...fitOf(d),      // 환자 자리·예비 공기통도 편성표 부대와 같게 (빠뜨리면 지원 구급차가 환자를 싣지 못한다)
     aboard: undefined, firstLoadAt: undefined, oosEv: undefined,      // (H1) 편성표 부대와 같은 칸, 같은 순서
-    ammoBox: ammoBoxOf(kind, tn.ammoBox), ammoBoxMax: ammoBoxOf(kind, tn.ammoBox), sparePump: undefined,      // (R3) 편성표 부대와 같은 칸, 같은 순서
+    ammoBox: ammoBoxOf(kind, tn.ammoBox), ammoBoxMax: ammoBoxOf(kind, tn.ammoBox), sparePump: sparePumpOf(kind, tn.sparePump),      // (R3) 편성표 부대와 같은 칸, 같은 순서
     readyAt: undefined, oosWhy: undefined, pumpFails: 0,      // (I2) 편성표 부대와 같은 칸, 같은 순서
   };
   if (HEAVY[kind]) u.heavy = true;
@@ -521,6 +523,7 @@ function arrive(sim: Sim, u: Unit): void {
     for (let ci = 0; ci < u.crew.length; ci++) refillAir(sim, u.crew[ci]);
     // (R3 §2.9) 탄약 상자를 다시 싣고 대원의 총기도 가득 (공기통과 같은 자리)
     if (u.ammoBoxMax !== undefined) u.ammoBox = u.ammoBoxMax;
+    if (u.sparePump !== undefined) u.sparePump = sparePumpOf(u.kind, sim.tune.sparePump);      // (R3 F10) 예비 펌프도 다시 싣는다
     for (let ci = 0; ci < u.crew.length; ci++) refillGuns(sim, u.crew[ci]);
     if (u.pumpFailed) { u.pumpFailed = false; u.pumpCond = 0.55; }
     u.state = crewReady(sim, u) === 0 || u.aid ? 'oos' : 'available';

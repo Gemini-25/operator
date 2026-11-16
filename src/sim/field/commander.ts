@@ -536,7 +536,14 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   // 현장의 진압 부대가 모두 물이 떨어졌거나 펌프가 멈췄고 오는 부대도 없다 (길 위의 현장에는 소화전이 없다)
   const dry = fireUnits > 0 && !I.assigned.some((uid) => { const u = sim.units[uid]; return u.caps.suppression >= 0.7 && (u.state === 'enroute' || u.state === 'turnout' || (!u.pumpFailed && (u.water > 0 || u.hydrant))); });
   if (fireRegions > 0 && fireUnits === 0) request(sim, s, I, a, 'suppression', '화재가 확인됐으나 진압 부대가 없음', true);
-  else if (fireRegions > 0 && dry) request(sim, s, I, a, 'suppression', '진압 부대의 용수가 떨어짐', true);
+  else if (fireRegions > 0 && dry) {
+    // (R3 §6.1 CF3) 펌프 고장이고 그 부대의 예비 펌프가 바닥났다 → '펌프 고장 — 진압 부대 교체' (교본 줄로 센다). 물이 떨어졌으면 지금 문구.
+    // 펌프가 멈췄어도 예비 펌프가 남았으면 부르지 않는다 — 펌프를 맡은 대원이 바꾼다 (brain 의 예비 펌프 교체 — F10). 예비를 세지 않는 부대(undefined)는 지금처럼 부른다
+    let pumpDead = false, waterOut = false;
+    for (const uid of I.assigned) { const q = sim.units[uid]; if (q.caps.suppression < 0.7 || q.state !== 'onscene' || q.incidentId !== I.id) continue; if (q.pumpFailed) { if (q.sparePump !== undefined && q.sparePump <= 0) pumpDead = true; else if (q.sparePump === undefined) waterOut = true; } else if (q.water <= 0 && !q.hydrant) waterOut = true; }
+    if (pumpDead) { const ev = request(sim, s, I, a, 'suppression', '펌프 고장 — 진압 부대 교체', true); if (ev >= 0) docCmd(sim, I, 'CF3', ev); }
+    else if (waterOut) request(sim, s, I, a, 'suppression', '진압 부대의 용수가 떨어짐', true);
+  }
   else if ((fireSum >= 2.0 || fireRegions >= 3) && fireUnits < 2) request(sim, s, I, a, 'suppression', `화재가 ${fireRegions}개 구역으로 확대`, true);
   if (cas.some((f) => f.value.mob === 'trapped' && f.value.band < 3 && f.value.where === 'scene') && countUnits(sim, s, I, 'rescue', 0.5) === 0) request(sim, s, I, a, 'rescue', '고립된 구조 대상이 있으나 구조 장비가 없음', true);
   // 가스가 찼거나 무너질 수 있는 건물: 공기호흡기를 멘 대원이 현장에도, 오는 부대에도 없으면 아무도 들어갈 수 없다 (자기 조직의 편성·장비만 본다)
@@ -618,19 +625,24 @@ export function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   const items = s.board.filter((w) => (w.status === 'open' || w.status === 'active') && w.assignees.length < w.max && sim.t >= w.holdUntil);
   items.sort((x, y) => y.priority - x.priority || x.id - y.id);
   const taken = new Set<number>();
+  // (R3 §6.1 CF7) 현장에 다른 공기호흡기 대원(알려진 고장 아님 — 조직 정보)이 둘 이상이면 지휘관 자신은 위험 실내 일을 맡지 않는다 (지휘관 감점 −0.18 위에 그 일만 뺀다)
+  let scbaOthers = 0;
+  for (const b of s.agents) if (b !== a && b.status === 'active' && hasKit(sim, b.rid, 'scba')) scbaOthers++;
   for (let pass = 0; pass < 2; pass++) {
     for (const w of items) {
       if (pass === 0 && w.assignees.length > 0) continue;
       if (pass === 1 && (w.assignees.length === 0 || w.assignees.length >= w.max)) continue;
       let best: FieldAgent | null = null, bs = 0;
       let bestAns: DocFitAns | null = null, baseBest: FieldAgent | null = null, bsB = 0, baseAns: DocFitAns | null = null;      // (R3 §2.7) 교본 전의 적합도로 센 1등도 함께 센다
+      let cf7Sc = -1;      // (R3 CF7) 위험 실내 일에서 뺀 지휘관 자신의 점수 (그가 1등이었으면 CF7 이 배정을 바꾼 것이다)
+      const cf7 = scbaOthers >= 2 && inJob(sim, s, a, w);
       for (const b of s.agents) {
         if (b.status !== 'active' || taken.has(b.rid) || w.assignees.indexOf(b.rid) >= 0) continue;
         if (sim.units[b.unitId].boardOrder) continue;
         if (b.task && b.task.kind === 'rehab' && sim.responders[b.rid].stamina < 40) continue;      // 지친 대원은 어느 정도 회복할 때까지 지시를 받지 않는다 (brain.ts 의 휴식 붙잡기)
         if (b.task && (b.task.kind === 'resupply' || b.task.kind === 'swapAir')) continue;      // 예비 장비·공기통으로 바꾸는 중(8~11초 남짓): 끝날 때까지 기다린다. 지시로 빼 오면 교체를 처음부터 다시 시작하며 같은 말을 되풀이한다
         if (b.task && b.task.kind === 'evacuate') continue;      // (X6) 철수 중인 대원은 밖에 닿을 때까지 지시를 받지 않는다 (think 가 철수를 붙잡으므로 지시가 '응답 없음'으로 끝난다)
-        if (b.task && docHolds(s, b)) continue;      // (R3 §2.6) 교본 임무(엄폐·탄약 보급·공기 탈출·짝 따라 나가기, 짝이 위험 실내에 있는 동안의 짝 동행) 중인 대원은 빼 오지 않는다 — 짧고 스스로 끝난다
+        if (b.task && docHolds(s, b) && !pairTakes(sim, s, a, b, w)) continue;      // (R3 §2.6) 교본 임무(엄폐·탄약 보급·공기 탈출·짝 따라 나가기, 짝이 위험 실내에 있는 동안의 짝 동행) 중인 대원은 빼 오지 않는다 — 짧고 스스로 끝난다 (3단계: 짝 동행이 짝의 이웃 구역 위험 실내 일을 받는 것은 된다 — 둘이 붙어 일한다)
         if (sim.responders[b.rid].status === 'injured' && !lightDuty(a, b)) continue;      // 부상을 알린 대원은 후퇴 중이다 (brain.ts 의 부상 후퇴 붙잡기) — 지시해도 받지 못하고 재지시만 되풀이된다. 가벼운 일을 한다고 알린 다친 대원에게는 지시한다(맡을 수 있는 일은 fitFor 가 거른다). 조직이 아는 상태와 믿음만 본다 — 남의 체력을 읽지 않는다
         if (failedRecently(sim, w, b.rid)) continue;      // 이 작업에 닿지 못했거나 위험해서 물러난 대원: 한동안 다른 대원에게 맡기거나 기다린다
         const fp = fitParts(sim, s, b, w);      // fit = fitFor 와 같은 값, base = 교본 전의 값 (R3)
@@ -648,6 +660,7 @@ export function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         const d = dist(b.x, b.y, targetX(s, w, a), targetY(s, w, a));
         let sc = fit * 0.5 + (1 - Math.min(1, d / 34)) * 0.22 + (r.stamina / 100) * 0.1 + r.experience * 0.08 + (curPr < 0 ? 0.12 : 0);
         if (b === a && w.kind !== 'sizeup') sc -= 0.18;      // 지휘관은 가급적 지휘에 집중
+        if (b === a && cf7) { if (fit > 0) cf7Sc = Math.max(cf7Sc, sc); continue; }      // (R3 CF7) 지휘관은 밖에 — 위험 실내 일은 다른 대원에게
         if (fit > 0 && sc > bs) { bs = sc; best = b; bestAns = fp; }
         let scB = sc;      // 교본 전의 점수 (적합도만 교본 전의 값으로 — 교본이 바꾸지 않았으면 sc 그대로)
         if (fp.base !== fit) { scB = fp.base * 0.5 + (1 - Math.min(1, d / 34)) * 0.22 + (r.stamina / 100) * 0.1 + r.experience * 0.08 + (curPr < 0 ? 0.12 : 0); if (b === a && w.kind !== 'sizeup') scB -= 0.18; }
@@ -664,6 +677,7 @@ export function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       const docWhy = docChanged ? docAssignWhy(bestAns) : '';
       const ordEv = transmit(sim, s, a, best.rid, 'order', [], `${br.name}, ${workLabel(s, w, sim)}${w.kind === 'search' || w.kind === 'suppress' || w.kind === 'carry' ? ' 실시' : ' 맡아라'}${redo}${docWhy ? ' ' + docWhy : ''}.`, w.id, w.priority > 0.8 ? 1 : 0, w.cause >= 0 ? [w.cause] : []);
       if (docChanged) docAssignRecord(sim, I, best, bestAns, baseBest, baseAns, w, ordEv);
+      if (cf7Sc > bs && ordEv >= 0) recordDoc(sim, I, null, 'CF7', 'cmd', { work: w.kind, tgt: 'w:' + w.id }, ordEv);      // (R3 CF7) 지휘관이 1등이었는데 밖에 남았다
     }
   }
   // 교대: 구출을 맡은 사람이 다 찼는데(먼저 닿은 대원이 맨손으로 붙들고 있다), 손이 빈 대원 가운데 훨씬 나은 장비를 든 사람이 있으면
@@ -902,3 +916,18 @@ export function commanderThink(sim: Sim, s: Scene, a: FieldAgent): void {
     } else if (s.closedCheckAt <= 0) s.closedCheckAt = sim.t;
   } else s.closedCheckAt = 0;
 }
+
+// (R3 3단계 CF7) 위험 실내로 들어가는 일인가 (판단부 — 믿음만)
+import { inJob } from './doctrine';
+/**
+ * (R3 3단계 — 측정이 찾은 것) 짝 동행 중인 대원 b 에게 위험 실내 일 w 를 줄 수 있는가: w 가 위험 실내로 들어가는 일이고 그 구역이 b 의 짝이 맡은 일의 구역과 같거나 이웃이다
+ * (짝이 곁의 방에서 일한다 — 짝 규칙(buddyOf)이 짝으로 치는 자리). 그러지 않으면 짝을 따라 들어간 대원이 그 자리에 묶여 실내의 손이 절반이 되었다. 믿음·작업판·동료의 겉만 읽는다
+ */
+function pairTakes(sim: Sim, s: Scene, a: FieldAgent, b: FieldAgent, w: WorkItem): boolean {
+  if (b.task === null || b.task.kind !== 'pair' || b.buddy === undefined || b.buddy < 0 || !inJob(sim, s, a, w)) return false;
+  const m = s.agents.find((q) => q.rid === b.buddy && q.status === 'active');
+  if (!m || !m.task || m.task.workId < 0) return false;
+  const mw = s.board[m.task.workId];
+  return mw !== undefined && nearWork(s, a, mw, w);
+}
+import { nearWork } from './doctrine';

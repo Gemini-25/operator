@@ -58,3 +58,15 @@ registerDoctrine(
     th: { add: 0.2 }, rank: 2, why: 'buddy',
   },
 );
+
+// ── (3단계) 짝 동행 (G08 — §3.5·§5.4): 짝이 위험 실내 일(또는 확보 전 무장 현장의 수색)을 맡았고 나는 손이 비었거나 그보다 0.1 넘게 낮은 일을 하면 따라 들어간다 ──
+registerDoctrine(
+  {
+    id: 'G08', dept: 'common', name: '짝 동행 — 짝의 위험 실내 일에 따라 들어간다', short: '짝 동행',
+    hook: 'act',
+    when: (c) => { if (c.solo) return false; const p = c.pair(); return p.job !== null && p.canFollow && !p.alt && (p.myP < 0 || (!p.myIn && p.myP < p.job.p - 0.1)); },      // 하던 일이 바깥 일일 때만 놓는다
+    effect: { kind: 'act', act: 'pair', score: (c) => { const j = c.pair().job; return 0.5 + 0.4 * (j !== null ? j.p : 0) + 0.12; } },
+    th: { gap: 0.1, add: 0.12 }, rank: 2, why: 'buddy',
+    note: '{mate}, 같이 들어간다.',
+  },
+);

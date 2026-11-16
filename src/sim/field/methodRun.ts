@@ -45,7 +45,7 @@ import { recordDoc } from './doctrineRun';      // (R3 1단계) 교본이 방법
 
 /** 실행기가 건네는 도구 (executor.ts 의 XK). 지휘 규칙의 CommandKit 과 같은 방식 */
 export interface ExecKit {
-  moveTo(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, range: number, needLos?: boolean): 'arrived' | 'moving' | 'nopath' | 'busy';
+  moveTo(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, range: number, needLos?: boolean, escape?: boolean): 'arrived' | 'moving' | 'nopath' | 'busy';      // escape (R3 3단계 — 공기 탈출): 물러나는 길은 불길도 뚫는다 (executor.moveTo 그대로)
   finish(sim: Sim, s: Scene, a: FieldAgent, ok: boolean, reason?: string): void;
   drain(sim: Sim, a: FieldAgent, rate: number): void;
   spray(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, eff?: number, wmul?: number, jitter?: boolean): boolean;
@@ -1150,7 +1150,7 @@ export function extricateDoneText(c: Casualty, m: MethodId | undefined): string 
 
 // ───────────────────────── 수색·탐지 (§4.4) — 단계 3 ─────────────────────────
 /** 경유점마다 멈추는 시간(초): 지금 0.5 · 청음 3 · 확성기 2 · 열화상 1.5 (멈춘 동안 perceive 가 searchMul 을 곱한다) */
-export const SEARCH_STOP: Partial<Record<MethodId, number>> = { listen: 3, hail: 2, thermal: 1.5 };
+export const SEARCH_STOP: Partial<Record<MethodId, number>> = { listen: 3, hail: 2, thermal: 1.5, feel: 0.8 };      // (R3 3단계) 벽 더듬기 — 경유점마다 0.8초
 /** 경유점에서 처음 멈출 때 작동을 확인하는 장비 (야외에는 연기가 없어 R1 의 자리에서는 열화상 카메라의 고장이 드러나지 않는다) */
 const SEARCH_KIT: Partial<Record<MethodId, KitId>> = { listen: 'searchKit', thermal: 'tic' };
 /**
@@ -1235,7 +1235,7 @@ function runOutside(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, k: 
   if (sim.tick % 5 === 0) {
     const tg = { cas: -1, prop: -1, hostile: -1, region: t.region, tile: -1 }, sense = senseOf(s, a);
     if (methodStillFits(sim, s, a, 'suppress', tg, t, m, sense)) t.mbad = 0;
-    else if ((t.mbad = (t.mbad ?? 0) + 1) >= 3 && methodStillFits(sim, s, a, 'suppress', tg, t, 'interior', sense)) {
+    else if ((t.mbad = (t.mbad ?? 0) + 1) >= 3 && methodStillFits(sim, s, a, 'suppress', tg, t, 'interior', sense, selfDc(sim, s, a, t))) {      // (R3) 교본이 실내 진압을 뺐으면(짝·대기조·공기) 밖에서 잇는다
       const r = sim.responders[a.rid];
       emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${s.regions[t.region].name} 불길이 잡혔습니다. 안으로 들어가 마무리하겠습니다.` });
       t.method = 'interior'; t.mwhy = 'usual'; t.missing = undefined; t.mt0 = sim.t; t.mtry = 0; t.mbad = 0;
@@ -1299,7 +1299,8 @@ function runVentilate(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, k
   recordMethod(sim, I, a, t, 'ventilate', t.mwhy ?? 'usual', true, ev, { cas: -1, prop: -1, hostile: -1, region: t.region, tile: -1 });
   // 예정된 전환: 내부 공격 (고를 수 없으면 외부 방수 — R3 의 교본이 실내 진압을 빼는 경우 등 — 그것도 아니면 손을 뗀다)
   const tg = { cas: -1, prop: -1, hostile: -1, region: t.region, tile: -1 }, sense = senseOf(s, a);
-  const nx: MethodId | null = methodStillFits(sim, s, a, 'suppress', tg, t, 'interior', sense) ? 'interior' : methodStillFits(sim, s, a, 'suppress', tg, t, 'defensive', sense) ? 'defensive' : null;
+  const dcv = selfDc(sim, s, a, t);      // (R3 3단계) 교본이 실내 진압을 뺐으면(F03b·F04b·F05b) 내부 공격으로 바꾸지 않는다 — 외부 방수, 그것도 아니면 손을 뗀다 (§3.7 끝)
+  const nx: MethodId | null = methodStillFits(sim, s, a, 'suppress', tg, t, 'interior', sense, dcv) ? 'interior' : methodStillFits(sim, s, a, 'suppress', tg, t, 'defensive', sense, dcv) ? 'defensive' : null;
   if (nx === null) { k.finish(sim, s, a, false, 'preempt'); return; }
   t.method = nx; t.mwhy = nx === 'defensive' ? 'danger' : 'usual'; t.missing = undefined; t.mt0 = sim.t; t.mtry = 0; t.mbad = 0;
   t.phase = 0; t.progress = 0; t.range = 0; t.tile = -1; a.path = null;

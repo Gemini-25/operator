@@ -75,6 +75,23 @@ export interface DocCtx {
   dngSign: number;                               // (2단계) brain 의 위험 점수 가운데 X6 조짐의 몫 (act 자리에서 brain 이 넘긴다 — P11. 다른 자리에서는 0)
   hideSpot: () => { x: number; y: number } | null;   // (2단계) 숨을 자리 (자기 모드에서만 — 엔진의 coverSpot(…, 숨기)를 tg 에 대해 한 번만 잰다. 보고 모드·위협이 없으면 null)
   solo: boolean;                                 // (2단계) 혼자 규칙에서 빠지는 역할인가 (엔진의 SOLO_OK — 저격·관측수·처리 요원·기관원·사다리 조작원·구급 운전원·관측관 …)
+  pair: () => DocPair;                           // (3단계) 짝·짝의 일 — 엔진이 처음 물을 때 한 번 잰다(늦게). 줄은 이 함수로만 짝을 본다 (§5)
+  watch: () => { n: number; need: number };      // (3단계) 밖 대기조 (§5.6): 대원에게 가장 가까운 출입구의 outsideWatch 수 · 필요한 수 watchNeed (2, 공기호흡기 대원을 태운 소방 부대가 오는 중이면 1) — 늦게 한 번
+}
+/**
+ * (3단계 — 소방) 짝과 밖 대기조 (§5.2·§5.4·§5.6). 엔진(doctrine.ts)이 그 대원의 믿음·동료의 겉·조직 정보로 잰다 — 줄 파일은 엔진을 import 할 수 없어서 값으로 넘긴다
+ */
+export interface DocPair {
+  raw: FieldAgent | null;                        // 짝(a.buddy) — 쓸 수 있는가와 상관없이 (F02: 짝이 나가면 따라 나간다). 같은 현장에 없으면 null
+  rawOut: boolean;                               // 그 짝이 나가는 중이다: 공기 탈출·짝 따라 나가기·후퇴·철수 임무, 또는 물러나 후송을 기다린다(withdrawn) (F02)
+  forW: FieldAgent | null;                       // 쓸 수 있는 짝 가운데 대상 작업 w 에 따라올 수 있는 짝 (§5.2 의 buddyOf(w) — F04·P17. w 가 없으면 buddyOf())
+  follows: boolean;                              // 짝이 따라온다 (§5.4 끝 — F04c·P17b): 짝의 임무가 나를 따르는 짝 동행이거나 같은·이웃 구역의 위험 실내 일이고, 4칸 안
+  rookie: boolean;                               // 쓸 수 있는 짝이 신입이다 (경험 < 0.3 — 명부, F16)
+  job: { w: WorkItem; p: number; hz: boolean; hot: boolean } | null;   // 쓸 수 있는 짝이 맡은 작업판 일 (G08): 우선도 · 위험 실내 일인가 · 확보 전 무장 현장의 수색인가 (이 대원의 믿음으로)
+  canFollow: boolean;                            // 이 대원이 그 일에 따라 들어갈 수 있다: 위험 실내면 공기호흡기(공기 AIR_IN 이상), 확보 전 수색이면 총을 든 경찰, 걸을 수 있는 다친 대원이 아니다 (조직 정보·자기 장비)
+  myP: number;                                   // 이 대원이 지금 맡은 작업판 일의 우선도 (-1 = 손이 빔 — 임무 없음·대기, 9 = 작업판 밖의 일에 묶여 있다 — 휴식·장비 교체 …)
+  myIn: boolean;                                 // 이 대원이 지금 맡은 일이 위험 실내로 들어가는 일이다 (그 일은 짝 동행으로 놓지 않는다 — §3.5 G08 의 "바깥 일")
+  alt: boolean;                                  // 짝의 일과 같은·이웃 구역에 이 대원이 맡을 수 있는 빈 위험 실내 일이 있다 (G08 의 예외 — 그 일을 맡으면 §5.4 끝의 "짝이 따라온다"로 센다)
 }
 
 /** 효과 하나. fit·method 효과는 자기 works·methods·when 을 더 가질 수 있다 (한 줄이 일마다 다른 배율을 줄 때) */
@@ -123,7 +140,8 @@ export const CMD_ROWS: { id: string; dept: DocDept; hook: 'cmd' | 'dispatch' | '
  */
 export const DOC_SWITCH = { CP4: true, D6: true, D7: true };
 /** 줄이 다 들어간 분야 — 시험 8 의 "분야마다 12줄 이상"은 여기 든 분야만 본다 (단계마다 그 분야를 더한다 — 2단계 경찰) */
-export const DOC_DEPTS_DONE: DocDept[] = ['police'];
+export const DOC_DEPTS_DONE: DocDept[] = ['police',
+  'fire'];      // (3단계 소방)
 
 /** 판단 지점의 답: ok = 그 걸음을 해도 된다 · rule = 막은(알릴) 줄 · wait = 막은 줄들의 maxWait 가운데 가장 긴 값 · opt = choose 줄이 고른 갈래 */
 export interface DocGateAns { ok: boolean; rule: string | null; wait: number; opt: string | null; exc: string | null }      // exc = (2단계) 예외(unless)가 아니었다면 막았을 줄 (막는 줄이 없을 때만)

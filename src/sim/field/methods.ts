@@ -505,7 +505,15 @@ export const METHOD: Record<MethodId, MethodDef> = {
   // 제독 텐트 · 물 세척: 오염된 구조 대상의 제독 15초 · 45초 (단계 6). 제독 장비 deconKit 은 단계 2 에 생긴다 — 그때 deconTent 의 kits 를 채운다
   deconTent: row('deconTent', ['decontam'], '제독 텐트', '제독 텐트', '제독 텐트', '제독 텐트에서 씻어', [], 0.9, 0, false),
   hoseWash: row('hoseWash', ['decontam'], '물 세척 제독', '물 세척', '물 세척 제독', '호스로 씻어 내', ['hose'], 0.5, 0, false),
+  // ── (R3 3단계 §3.7) 교본이 더하는 방법 — 벽 더듬기 수색(열화상 없이 짙은 연기 속 실내: F07 ×1.6 → 0.80 > 호출 수색 0.6) · 끊어 쏘기(용수 30% 아래: F08 ×1.6 → 0.96 > 내부 공격 0.85).
+  //    효과는 R2 의 실행부 자리 — 벽 더듬기는 executor 의 수색 경유점(벽과 이웃한 칸·간격 ×0.75·경유점마다 0.8초), 끊어 쏘기는 executor 의 내부 진압 분사(효과 ×0.85·물 ×0.65) ──
+  feel: row('feel', ['search'], '벽 더듬기 수색', '벽 더듬기', '벽 더듬기 수색', '벽을 따라 더듬어', [], 0.5, 0, false,
+    { can: (c) => c.tg.region >= 0 && c.s.regions[c.tg.region] !== undefined && c.s.regions[c.tg.region].indoor && c.sense.smoke > FEEL_SMOKE }),
+  pulse: row('pulse', ['suppress'], '끊어 쏘기', '끊어 쏘기', '끊어 쏘기 진압', '끊어 쏘며', ['hose'], 0.6, 0, false,
+    { can: (c) => hoseReady(c) && !opsOutside(c) && !airLow(c.sim, c.a.rid) && !c.u.hydrant && c.u.waterMax > 0 && c.u.water < PULSE_WATER * c.u.waterMax }),
 };
+/** (R3 §3.7) 벽 더듬기를 고르는 선 자리의 연기 (F07 과 같은 문턱) · 끊어 쏘기를 고르는 부대 물의 몫 (F08 과 같은 문턱) */
+export const FEEL_SMOKE = 0.5, PULSE_WATER = 0.3;
 /** 표의 순서 (같은 점수면 앞이 이긴다) */
 export const METHOD_ORDER: MethodId[] = Object.keys(METHOD) as MethodId[];
 let byWork: Partial<Record<WorkKind, MethodId[]>> | null = null;
@@ -554,6 +562,7 @@ export const SAY: Record<MethodId, string> = {
   seal: '누출을 막겠습니다.', ventFirst: '먼저 환기한 뒤 차단하겠습니다.', cordon: '출입구를 통제하겠습니다.', announce: '주변에 대피 방송을 합니다.',
   air: '', drone: '드론을 띄우겠습니다.', dog: '탐지견을 풀겠습니다.',
   dive: '잠수해 들어가겠습니다.', boom: '오일펜스를 펼치겠습니다.', shieldLine: '방패로 저지선을 치겠습니다.', deconTent: '제독 텐트에서 씻기겠습니다.', hoseWash: '호스로 씻어 내겠습니다.',      // (N9)
+  feel: '앞이 안 보입니다. 벽을 따라 더듬어 찾겠습니다.', pulse: '끊어 쏘며 물을 아끼겠습니다.',      // (R3 3단계)
 };
 /** (R3 §3.7) 교본 까닭 여섯의 앞말 */
 const DOC_SAY: Partial<Record<MethodWhy, string>> = { hurt: '부상으로', alone: '혼자라', lowAir: '공기가 부족해', lowAmmo: '탄약이 없어', shaken: '손이 떨려', tired: '지쳐서' };
@@ -848,10 +857,11 @@ export function chooseMethod(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, 
  * 실행부의 1초 재확인 (§4.1): 고른 방법을 지금도 쓸 수 있는가 — 장비(canUse)와 상황 조건(can)만 본다(점수·다른 방법은 보지 않는다 — "더 좋은 방법이 보이면 바꾼다"는 없다).
  * 대상 믿음이 없으면 참이다(믿음을 잃은 것만으로 바꾸지 않는다). 상태를 바꾸지 않는다.
  */
-export function methodStillFits(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, tg: MTarget, t: Task | null, m: MethodId, sense: Sense = NO_SENSE): boolean {
-  const c = makeCtx(sim, s, a, work, tg, t, sense, null);
+export function methodStillFits(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, tg: MTarget, t: Task | null, m: MethodId, sense: Sense = NO_SENSE, dc: DocCtx | null = null): boolean {
+  const c = makeCtx(sim, s, a, work, tg, t, sense, dc);
   if (NEEDS_CAS[work] && c.cb === null) return true;
-  return canUse(c, m) && METHOD[m].can(c);
+  // (R3 3단계) 교본 입력을 받았으면 교본이 뺀 방법(배율 0)도 맞지 않는 것으로 본다 — 배연·외부 방수 뒤의 예정된 전환(→ 내부 공격)이 짝·대기조·공기의 교본을 따른다
+  return canUse(c, m) && METHOD[m].can(c) && (dc === null || docMethodMul({ ...dc, m: { reach: c.reach, flow: c.flow, weak: c.weak, tile: c.tg.tile } }, m) > 0);
 }
 /** 작업 항목의 대상 */
 export function targetOfWork(w: WorkItem): MTarget { return { cas: w.cas, prop: w.prop, hostile: w.hostile, region: w.region, tile: w.tile }; }

@@ -559,7 +559,8 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
 
 function startFlee(sim: Sim, s: Scene, h: Hostile, exitK: number): void {
   const e = s.exits[exitK];
-  const cost = (i: number) => (staticPass(s.tiles[i]) && (s.propAt[i] < 0 || s.props[s.propAt[i]].kind === 'door') ? 0 : -1);
+  // (R2 §4.2a) 농성 문 잠금으로 막은 문(skin 'barricade')은 그 용의자도 지나지 못한다 — 막은 방을 나가지 않는다
+  const cost = (i: number) => (staticPass(s.tiles[i]) && (s.propAt[i] < 0 || (s.props[s.propAt[i]].kind === 'door' && s.props[s.propAt[i]].skin !== 'barricade')) ? 0 : -1);
   const p1 = astar(s, h.x, h.y, e.x, e.y, 0, cost);
   if (!p1) return;
   // 출구를 나선 뒤 가장 가까운 지도 가장자리로

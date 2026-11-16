@@ -514,9 +514,17 @@ function shootAt(sim: Sim, s: Scene, a: FieldAgent, hid: number): void {
 }
 
 /** 동시 진입: 대기하던 출입문을 열고(잠겼으면 부수고), 섬광탄이 있으면 먼저 던져 넣는다. */
-/** 용의자가 있는 방으로 들어가는, 아직 닫혀 있는 가장 가까운 문 (용의자가 이미 보이거나 같은 방이면 없음) */
-function roomDoorFor(s: Scene, a: FieldAgent, h: Hostile): Prop | null {
+/**
+ * 용의자가 있는 방으로 들어가는, 아직 닫혀 있는 가장 가까운 문 (용의자가 이미 보이거나 같은 방이면 없음).
+ * (R2 §4.2a) 잠긴 방 문을 하위 작업으로 연 진입조는 그 문(t.entryDoor)을 열린 뒤에도 들어가기(entered) 전까지 돌려받는다 — 열린 문 너머로 용의자가 보여도 함께 들어간다
+ */
+function roomDoorFor(s: Scene, a: FieldAgent, h: Hostile, t: Task | null = null): Prop | null {
   const hr = s.region[tileOf(s, h.x, h.y)], ar = s.region[tileOf(s, a.x, a.y)];
+  if (t !== null && t.entryDoor !== undefined) {
+    const p = s.props[t.entryDoor], i = p.y * s.w + p.x;
+    if (!p.entered && hr >= 0 && hr !== ar && (s.region[i] === hr || s.region[i - 1] === hr || s.region[i + 1] === hr || s.region[i - s.w] === hr || s.region[i + s.w] === hr)) return p;
+    t.entryDoor = undefined;
+  }
   if (hr < 0 || hr === ar || s.regions[hr].kind !== 'room' || los(s, a.x, a.y, h.x, h.y)) return null;
   let best: Prop | null = null, bd = 14;
   for (const p of s.props) {
@@ -559,6 +567,78 @@ function breach(sim: Sim, s: Scene, a: FieldAgent): void {
     for (const h of s.hostiles) if ((h.state === 'hold' || h.state === 'fight') && sim.t >= h.stunUntil && dist(h.x, h.y, e.x, e.y) <= 13 && sim.t >= h.alertUntil) { h.facing = Math.atan2(e.y - h.y, e.x - h.x); h.alertUntil = sim.t + 5; }
   });
   emit(sim, { inc: I.id, role: 'RESPONDER', actor: resp(sim, a).name, rid: a.rid, kind: 'action', imp: 3, text: s.bangAt === sim.t ? `진입! 섬광탄을 던져 넣고 들어갑니다${bangs ? ` (용의자 ${bangs}명 무력화)` : ''}.` : '진입! 출입문을 열고 들어갑니다.' });
+}
+
+/** (R2 §4.2a) 잠긴 방 문의 상한 (초): 모인 뒤 이만큼 지나도 안 열리면 지금처럼 바로 연다 (모든 사건은 끝난다) */
+const ROOM_DOOR_CAP = 25;
+/** 잠긴 방 문 앞에 진입조가 처음 모인 시각 (문마다 — 소품의 모양을 바꾸지 않으려 WeakMap. 되감기는 Sim 을 새로 만든다) */
+const roomDoorAt = new WeakMap<Prop, number>();
+/** 그 문을 여는 하위 작업을 맡은 진입조 대원 (없으면 null) */
+function doorOpener(s: Scene, rd: Prop): FieldAgent | null {
+  const i = rd.y * s.w + rd.x;
+  for (const b of s.agents) if (b.status === 'active' && b.task !== null && b.task.kind === 'engage' && b.task.sub !== null && b.task.sub.tile === i) return b;
+  return null;
+}
+/**
+ * (R2 §4.2a) 방 진입의 잠긴 문 (case 'engage' ①-2 — 진입조가 모였을 때). 돌려주는 값 = 아직 기다린다(이 틱은 여기서 끝).
+ *   ① 처음 모인 대원이 손잡이를 돌려 보고 안다 — 지금의 discoverBlock(기록·blk 믿음). 곁의 진입조도 함께 본다
+ *   ② 모인 대원 가운데 그 문의 force 방법 1등 점수가 가장 높은 한 사람(같으면 rid 가 작은 쪽)이 문 여는 하위 작업을 맡는다 — 그 안에서 방법을 고른다(폭파·충격기·할리건·유압·발차기)
+ *   ③ 나머지는 문 앞에서 기다린다 (폭파면 stackForCharge 가 각자의 물러설 자리로)
+ *   ④ 모인 뒤 25초가 지나도 안 열리면 false — 부른 쪽이 지금처럼 바로 연다
+ * 문이 열리면 다음 틱에 지금의 방 진입(섬광탄 → 함께 들어감)이 이어진다(roomDoorFor 가 t.entryDoor 를 돌려준다)
+ */
+function lockedRoomDoor(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, rd: Prop, mates: FieldAgent[]): boolean {
+  const tile = rd.y * s.w + rd.x;
+  t.entryDoor = rd.id;
+  let at = roomDoorAt.get(rd);
+  if (at === undefined) { at = sim.t; roomDoorAt.set(rd, at); }
+  if (sim.t >= at + ROOM_DOOR_CAP) {
+    const r = resp(sim, a);
+    markRecovered(I, 'PATH_BLOCKED', `${josa(r.name, '이/가')} 문을 강제 개방해 통로 확보`);
+    return false;
+  }
+  const team = [a, ...mates];
+  if (a.beliefs.val<string>('blk', tile) !== 'locked') {
+    // 먼저 와서 손잡이를 돌려 본 동료가 있으면 그 사실을 함께 안다 (같은 문을 두 번 "차단"으로 알리지 않는다)
+    let known: Fact | undefined;
+    for (const b of s.agents) if (b !== a && b.status === 'active' && b.beliefs.val<string>('blk', tile) === 'locked') { known = b.beliefs.get('blk', tile); break; }
+    if (known) a.beliefs.merge(known);
+    else {
+      discoverBlock(sim, s, I, a, tile, 'locked');
+      a.pendingBlock = -1;      // 길을 다시 짜며 "우회/강제 개방" 을 따로 정하지 않는다 — 방 진입이 정한다
+      const f = a.beliefs.get('blk', tile);
+      if (f) for (const b of mates) b.beliefs.merge(f);      // 곁에 모인 진입조도 같이 본다
+      return true;
+    }
+  }
+  for (const b of mates) if (b.task !== null) b.task.entryDoor = rd.id;
+  if (doorOpener(s, rd) !== null) return true;      // 이미 누군가 연다
+  const tg = { tile, prop: rd.id, cas: -1, hostile: -1, region: -1 };
+  let best: FieldAgent | null = null, bs = -1;
+  for (const b of team) {
+    if (b.status !== 'active' || b.task === null || b.task.sub !== null) continue;
+    const pk = chooseMethod(sim, s, b, 'force', tg, null, NO_SENSE);
+    const sc = pk !== null ? pk.cands[0].score : 0;
+    if (sc > bs || (sc === bs && best !== null && b.rid < best.rid)) { bs = sc; best = b; }
+  }
+  if (best === a) {
+    const sub = makeTask('force', '문 강제 개방');
+    sub.tile = tile; t.sub = sub; a.path = null;
+  }
+  return true;
+}
+/**
+ * (R2 §4.2a) 잠긴 방 문을 동료가 폭파로 여는 중이다: 이 대원은 자기 물러설 자리(처음 한 번 정해 t.tx, t.ty)로 가 기다린다.
+ * 돌려주는 값 = 이 틱의 일을 했다(물러서는 중·기다리는 중). 폭파가 아니거나 자리가 없으면 false — 문 앞에서 기다린다
+ */
+function stackForCharge(sim: Sim, s: Scene, a: FieldAgent, t: Task, rd: Prop): boolean {
+  const op = doorOpener(s, rd);
+  if (op === null || op === a || op.task!.sub!.method !== 'charge') { t.range = 0; return false; }
+  if (!t.range) { const sp = stackSpot(s, rd.y * s.w + rd.x, a); if (sp === null) return false; t.tx = sp.x; t.ty = sp.y; t.range = 1; }
+  a.label = '폭파 대기';
+  const m = moveTo(sim, s, a, t.tx, t.ty, 0.3);
+  if (m === 'arrived') { a.fx = rd.x - a.x; a.fy = rd.y - a.y; }
+  return m !== 'nopath';
 }
 
 /** (X6 §5.5) 그 대원이 단계 2 구역(외부 방어 아님)인 그 구획 안에 서 있는가 — 거기서 이미 안에서 진압하던 대원은 안에서 잇는다 */
@@ -1116,18 +1196,21 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         return;
       }
       // ①-2 방 진입: 용의자가 닫힌 문 뒤의 방에 있으면, 문 앞에 모였다가 (섬광탄이 있으면 던져 넣고) 함께 들어간다
-      const rd = sim.t < h.stunUntil ? null : roomDoorFor(s, a, h);
+      const rd = sim.t < h.stunUntil ? null : roomDoorFor(s, a, h, t);
       if (rd) {
         a.label = '방 진입 대기';
+        // (R2 §4.2a) 잠긴 방 문을 동료가 폭파로 여는 중이면 각자의 물러설 자리로 (이 분기의 이동은 이것 하나)
+        if (rd.blocking && t.entryDoor === rd.id && stackForCharge(sim, s, a, t, rd)) return;
         const m0 = moveTo(sim, s, a, rd.x, rd.y, 1.5);
         if (m0 === 'arrived') {
           t.ptI++;
           const mates = s.agents.filter((b) => b !== a && b.status === 'active' && b.task && b.task.kind === 'engage' && dist(b.x, b.y, rd.x, rd.y) <= 2.6);
           if (mates.length >= 1 || t.ptI > 20) {
-            const wasLocked = rd.blocking;
+            if (rd.blocking && lockedRoomDoor(sim, s, I, a, t, rd, mates)) return;      // (R2 §4.2a) 잠긴 방 문: 손잡이를 돌려 보고 → 한 사람이 문을 연다 (25초 상한)
+            const wasLocked = rd.blocking, bySub = t.entryDoor === rd.id;      // bySub: 하위 작업이 이미 열었다 — 진입 기록은 unblock 이 남겼다
             rd.entered = true; rd.open = true; s.staticVersion++;
             if (rd.blocking) { s.propAt[rd.y * s.w + rd.x] = -1; rd.blocking = false; rd.locked = false; }
-            recBreach(sim, s, rd.x, rd.y, a.x, a.y, { door: rd.id, how: breachHowFor(sim, [a, ...mates], wasLocked, false), n: mates.length + 1, sync: false, by: a.rid, forced: wasLocked });
+            if (!bySub || wasLocked) recBreach(sim, s, rd.x, rd.y, a.x, a.y, { door: rd.id, how: breachHowFor(sim, [a, ...mates], wasLocked, false), n: mates.length + 1, sync: false, by: a.rid, forced: wasLocked });
             const thrower = [a, ...mates].find((b) => kitUses(sim, b.rid, 'flashbang') > 0);
             let n = -1;
             if (thrower && sim.t - s.bangAt > 2 && dist(h.x, h.y, rd.x, rd.y) <= 8) {
@@ -1137,7 +1220,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
             panicShot(sim, s, I, rd.x, rd.y);
             const room = s.region[tileOf(s, h.x, h.y)] >= 0 ? s.regions[s.region[tileOf(s, h.x, h.y)]].name : '방';
             emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 3, text: n >= 0 ? `${room} 진입! 섬광탄을 던져 넣고 들어갑니다${n ? ` (용의자 ${n}명 무력화)` : ''}.` : `${room} 진입!` });
-            for (const b of [a, ...mates]) { b.path = null; b.pathGoal = -1; if (b.task) b.task.ptI = 0; }
+            for (const b of [a, ...mates]) { b.path = null; b.pathGoal = -1; if (b.task) { b.task.ptI = 0; b.task.entryDoor = undefined; } }
           }
         } else if (m0 === 'nopath') { rd.entered = true; }
         return;
@@ -1597,8 +1680,8 @@ import { boatCost, onWater, reachOf, swimCost, swimOf } from './methods';
 import type { CostFn } from './grid';
 export const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask, unblock };
 // (R2 단계 2) 문·통로의 방법: 고르기(startMethod)·속도·장비 확인·소리·폭파 진입·방법 기록 — 고르는 것은 판단부, 효과는 methodRun
-import { blockerKitFails, blockerRate, doorNoise, recordMethod, runCharge, startMethod } from './methodRun';
-import { METHOD } from './methods';
+import { blockerKitFails, blockerRate, doorNoise, recordMethod, runCharge, stackSpot, startMethod } from './methodRun';
+import { METHOD, NO_SENSE, chooseMethod } from './methods';
 import type { BreachHow, MethodId } from '../types';
 
 // ── (R3) 대응 교본의 판단 지점 (field/doctrine.ts 의 docGate — 자기 모드). 판단은 교본 함수가, 효과(이동·기다림)는 이 파일이 한다 ──

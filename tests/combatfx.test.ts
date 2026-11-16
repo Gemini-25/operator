@@ -150,7 +150,8 @@ describe('교전 연출 기록 — 꼬리표', () => {
           const sid = sim.incidents[e.incidentId]?.id;
           if (sid === undefined || !sim.scenes[sid]) continue;
           if (e.t > sim.t) continue;
-          const ok = r.recs.some((x) => x.sid === sid && x.t === e.t && x.f.kind === 'breach' && x.f.c && x.f.c.sync === false);
+          // (R2 §4.2a) 잠긴 방 문은 문 여는 하위 작업이 연 그 틱에 진입 기록(forced)을 남기고, 방 진입은 다시 남기지 않는다 — 그 앞의 강제 개방 기록도 센다
+          const ok = r.recs.some((x) => x.sid === sid && x.f.kind === 'breach' && x.f.c && x.f.c.sync === false && (x.t === e.t || (x.t < e.t && x.f.c.forced === true)));
           expect(ok, `${sim.seed}: "${e.text}" 에 방 진입 기록이 없다`).toBe(true);
           got.room++;
         }

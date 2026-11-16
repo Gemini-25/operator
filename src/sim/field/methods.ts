@@ -14,7 +14,9 @@
 // 단계 0 (틀)에서 표의 모든 줄을 두고 can 을 NOT_YET(거짓)으로 비워 두었다. 방법을 구현하는 단계가 그 줄의 can·situ·skill 을 채운다
 // (수난 1a~1c · 문 2 · 구출·탐지 3 · 화재 4 · 무장 5 · 응급·가스 6). 켜진 줄: 단계 1a — 수난 구조의 물가 방법 여섯(hand·pole·ring·rope·improvise·catch),
 // 단계 1b — 헤엄(swim)·줄 확보(tend), 단계 1c — 보트(boat). 물 위의 이동 비용 swimCost·boatCost 는 실행기(executor.costFor)가 쓴다.
-// 배정(agents.fitFor 의 waterRescue)이 methodFit 을, 실행부(methodRun.runWaterRescue)가 chooseMethod·methodStillFits 를 부른다.
+// 단계 2 — 문·통로(kick·irons·ram·hydraulic·handClear·toolClear)와 폭파 진입(charge — 조건 chargeOk: 믿음·생김새·동료의 겉만).
+// 배정(agents.fitFor 의 waterRescue)이 methodFit 을, 실행부(methodRun.runWaterRescue · executor.workOnBlocker)가 chooseMethod·methodStillFits 를 부른다.
+// 방 진입의 잠긴 문(executor.lockedRoomDoor)은 문 여는 사람을 고를 때 모인 대원마다 chooseMethod 의 1등 점수를 견준다.
 
 import type { Sim } from '../engine';
 import { hashStr } from '../rng';

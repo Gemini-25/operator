@@ -878,6 +878,9 @@ describe('8. 장비 — 펌프 범위·정비·섬광탄 창고', () => {
     expect(c3.stock.flashbang).toBe(4);
     const s3 = new Sim('P3', NORMAL, 60, { carry: calmCrew(c3) });
     expect(s3.carryState.applied.filter((n) => n.what === 'stock')).toEqual([{ what: 'stock', unit: '특공1', got: 2, want: 4 }]);
+    // 줄일 때는 자리 순서의 뒤에서부터 1개씩: 정수 4 의 나눔 [팀장 2 · 진입(파괴) 1 · 진입 1] 에서 둘을 빼면 [2 · 0 · 0]
+    expect(bangs(s0, '특공1')).toEqual([2, 0, 1, 1, 0]);
+    expect(bangs(s3, '특공1')).toEqual([2, 0, 0, 0, 0]);
     s3.runToEnd();
     const c4 = makeCarryover(s3);
     expect(c4.stock.flashbang).toBe(0 + 2 + 2 + RESUPPLY);

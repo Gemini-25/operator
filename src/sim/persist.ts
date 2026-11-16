@@ -27,7 +27,7 @@ import { crewReady, rosterKeys, traitOf } from './resources';
 import type { RosterKey } from './resources';
 import { hashStr } from './rng';
 import type { Rng } from './rng';
-import type { Carryover, City, CrewCarry, InjuryCause, PlaceCarry, RecruitBase, Responder, RoadCarry, StockId, Unit, UnitCarry, UnitKind } from './types';
+import type { Carryover, City, CrewCarry, InjuryCause, KitItem, PlaceCarry, RecruitBase, Responder, RoadCarry, StockId, Unit, UnitCarry, UnitKind } from './types';
 import { clamp, josa } from './util';
 
 // ───────────────────────── 상수 (설계서 §6.1 — 처음 값. 바꾸면 구현 메모에 적는다) ─────────────────────────
@@ -548,7 +548,16 @@ function issueFlashbangs(sim: Sim, co: Carryover): void {
       if (got === 0) got = 1;                                                // 비상 지급 (창고에서 빼지 않는다)
       if (got < want) { cs.stats.fbShort += want - got; cs.applied.push({ what: 'stock', unit: u.callsign, got, want }); }
     }
-    u.flashbangs = dealFlashbangs(present, got);                             // R1 — 사람 몫으로 나눈다(자리 순서의 앞부터). 부대의 합은 그 몫의 합
+    // R1 의 나눔(정수 그대로 — 사람 몫, 자리 순서의 앞부터)을 한 뒤, 창고에 맞춰 줄일 때는 자리 순서의 뒤에서부터 1개씩 뺀다 (§7 R1 줄). 부대의 합은 사람 몫의 합
+    let total = dealFlashbangs(present, want);
+    if (got < total) {
+      const items: KitItem[] = [];
+      for (const q of present) for (const it of q.kit ?? []) if (it.id === 'flashbang') items.push(it);
+      for (let k = items.length - 1, cut = total - got; cut > 0; k = k > 0 ? k - 1 : items.length - 1) {
+        if ((items[k].uses ?? 0) > 0) { items[k].uses = items[k].uses! - 1; cut--; total--; }
+      }
+    }
+    u.flashbangs = total;
   }
   cs.fbStore = store;
 }

@@ -611,19 +611,33 @@ export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report
     pack.n++; if (dist(a.x, a.y, b.x, b.y) <= DOC.PACK_R) pack.near++; else pack.far++;
   }
   const kf = kitFnsOf(sim, a);
-  let pr: DocPair | undefined, wt: { n: number; need: number } | undefined;      // (3단계) 짝·밖 대기조 — 줄이 처음 물을 때 한 번 잰다
-  let ui: number | undefined;      // (합치기 — S11) 자기 부대의 다른 대원 가운데 위험 실내에 선 사람 — 줄이 처음 물을 때 한 번
+  // (3단계) 짝·밖 대기조, (합치기 — S11) 자기 부대의 다른 대원 가운데 위험 실내에 선 사람 — 줄이 처음 물을 때 한 번 잰다.
+  // (균형 — 속도) 게으른 칸은 이름 없는 닫힘을 돌려주는 함수(lazyPair·lazyWatch·lazyUnitIn)로 만든다: 객체 칸에 바로 쓴 화살표 함수는 헤드리스 실행기(tsx)가
+  //   만들 때마다 __name 을 부른다(교대당 시간의 4% — 결과는 같다)
   return {
     sim, s, a, u: sim.units[a.unitId], dept: docDeptOf(sim, rid), role, group: groupOf(sim, rid),
     mode, w, hz, wRisky, light, st, sit, sense, dng,
     has: kf.has, kit: kf.kit,
     m: undefined, see: undefined,
     tg, pack, dngSign, hideSpot: mode === 'self' && tg !== null ? hideOf(s, a, tg) : NO_HIDE, solo: role !== null && SOLO_OK.has(role),
-    pair: () => (pr ??= pairOf(sim, s, a, w, st)),
-    watch: () => (wt ??= { n: outsideWatch(sim, s, a, nearestExit(s, a.x, a.y)), need: watchNeed(sim, s) }),
-    unitIn: () => (ui ??= unitInside(s, a)),
+    pair: lazyPair(sim, s, a, w, st),
+    watch: lazyWatch(sim, s, a),
+    unitIn: lazyUnitIn(s, a),
     wBomb: w !== null && sit.liveBomb !== null ? bombDistOfWork(s, a, w) : Infinity,
   };
+}
+/** DocCtx 의 게으른 칸 (처음 물을 때 한 번 잰다 — 돌려주는 닫힘에는 이름이 없다) */
+function lazyPair(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem | null, st: DocState): () => DocPair {
+  let pr: DocPair | undefined;
+  return () => (pr ??= pairOf(sim, s, a, w, st));
+}
+function lazyWatch(sim: Sim, s: Scene, a: FieldAgent): () => { n: number; need: number } {
+  let wt: { n: number; need: number } | undefined;
+  return () => (wt ??= { n: outsideWatch(sim, s, a, nearestExit(s, a.x, a.y)), need: watchNeed(sim, s) });
+}
+function lazyUnitIn(s: Scene, a: FieldAgent): () => number {
+  let ui: number | undefined;
+  return () => (ui ??= unitInside(s, a));
 }
 /** (2단계) 그 용의자의 믿음을 위협의 모양으로 (모르면 undefined) */
 function threatOf(a: FieldAgent, id: number): DocThreat | undefined {

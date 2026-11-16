@@ -60,8 +60,8 @@ const work = (sim: Sim, s: Scene, kind: WorkKind, tg: Partial<WorkItem> = {}): W
   return w;
 };
 const taskFor = (a: FieldAgent, w: WorkItem): Task => { const t = makeTask(w.kind, '시험', w); a.task = t; a.status = 'active'; return t; };
-/** 방법을 켠 단계가 조건(can)을 채운 줄 — 단계 1a: 수난의 물가 방법 여섯, 단계 1b: 헤엄·줄 확보, 단계 1c: 보트 */
-const LIVE: MethodId[] = ['hand', 'pole', 'ring', 'rope', 'improvise', 'catch', 'swim', 'tend', 'boat'];
+/** 방법을 켠 단계가 조건(can)을 채운 줄 — 단계 1a: 수난의 물가 방법 여섯, 단계 1b: 헤엄·줄 확보, 단계 1c: 보트, 단계 2: 문·통로 일곱(폭파 진입 포함) */
+const LIVE: MethodId[] = ['hand', 'pole', 'ring', 'rope', 'improvise', 'catch', 'swim', 'tend', 'boat', 'kick', 'irons', 'ram', 'hydraulic', 'handClear', 'toolClear', 'charge'];
 /** 헤엄을 못 치는 몸으로 둔다 (수영 능력 = 0.15 + 개인차 ±0.15 < 문턱 0.35 — 구명조끼가 없을 때) */
 const noSwim = (sim: Sim, a: FieldAgent): void => { const r = sim.responders[a.rid]; r.fitness = 0; r.skills.rescue = 0; strip(sim, a.rid, 'pfd'); };
 /**
@@ -888,7 +888,7 @@ describe('R2 단계 1a: 물가 방법의 조건과 점수 (켜진 줄 그대로 
     const set = (a: FieldAgent, v: Partial<CasBelief>): void => { const f = casFact(q.sim, q.s, c, '시험'); const cur = a.beliefs.val<CasBelief>('cas', c.id) ?? f.value; a.beliefs.merge(mkFact('cas', c.id, { ...cur, ...v }, '시험', q.sim.t + 1, 1, true, f.text)); q.sim.t += 1; };
     return { ...q, c, tg: tgCas(c), set, rope: q.role('ropeTech'), cop: q.role('officer'), eng: q.role('engineer') };
   };
-  it('켜진 줄은 수난의 물가 방법 여섯과 헤엄·줄 확보(1b)·보트(1c)이고, 나머지는 아직 꺼져 있다', () => {
+  it('켜진 줄은 수난의 물가 방법 여섯과 헤엄·줄 확보(1b)·보트(1c), 문·통로 일곱(2)이고, 나머지는 아직 꺼져 있다', () => {
     for (const m of METHOD_ORDER) expect(METHOD[m].can !== NOT_YET, m).toBe(LIVE.indexOf(m) >= 0);
   });
   it('닿는 거리: 손 1.2(안벽이면 못 쓴다) · 장대 2.0 · 구명환 2.8 · 구명줄·즉석 부력물 3.6 — 그 밖이면 수난 구조를 맡지 않는다(methodFit 0)', () => {

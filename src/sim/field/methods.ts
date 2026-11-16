@@ -19,7 +19,7 @@
 import type { Sim } from '../engine';
 import { hashStr } from '../rng';
 import { T } from '../types';
-import type { CasBelief, FieldAgent, KitId, MethodId, MethodWhy, Responder, Scene, Task, Unit, UnitKind, WorkItem, WorkKind } from '../types';
+import type { CasBelief, FieldAgent, KitId, MethodId, MethodWhy, Responder, Scene, SignBelief, Task, Unit, UnitKind, WorkItem, WorkKind } from '../types';
 import { clamp, josa } from '../util';
 import { SHARED, hoistOver, kitCount, kitName, swimBonus } from './gear';
 import { staticPass, tileOf } from './grid';
@@ -108,6 +108,61 @@ function catchEta(c: MethodCtx): number {
   return pt === null ? Infinity : Math.max(0, pt.x - 1 - c.cb.x) / c.flow;
 }
 
+// ── 문·통로의 조건·배율 (§4.2·§4.2a) — 대상 칸(tg.tile)의 생김새와 믿음만 ──
+/** 늘 고를 수 있다 (맨몸·평소 방법과, 장비만 있으면 되는 방법) */
+const ALWAYS = (): boolean => true;
+/** 무장 현장에서 믿음에 대치·교전 중인 용의자가 있으면 시끄러운 방법(발차기·충격기) ×0.7 — 까닭 quiet 는 조용한 방법(할리건·유압)이 이겼을 때 */
+const quietMul = (c: MethodCtx): number => (c.s.kind === 'armed' && hotBelief(c.a) ? 0.7 : 1);
+/** 폭파 진입의 거리 (칸): 믿음 속 사람이 이 안에 없어야 한다 · 가스·분진·구조 조짐과 살아 있는 장치가 이 안에 없어야 한다 */
+export const CHARGE_NEAR = 2.5, CHARGE_FAR = 6;
+/** 그 칸의 네 이웃에 문 칸이 있는가 (문을 막은 잔해 — 생김새) */
+function byDoor(s: Scene, i: number): boolean {
+  const w = s.w, x = i % w;
+  return (x > 0 && s.tiles[i - 1] === T.DOOR) || (x < w - 1 && s.tiles[i + 1] === T.DOOR) || (i >= w && s.tiles[i - w] === T.DOOR) || (i + w < s.tiles.length && s.tiles[i + w] === T.DOOR);
+}
+/** 문(또는 잔해) 칸 양쪽의 구역 (생김새) */
+function sidesOf(s: Scene, i: number): number[] {
+  const w = s.w, out: number[] = [];
+  for (const j of [i, i - 1, i + 1, i - w, i + w]) if (j >= 0 && j < s.region.length && s.region[j] >= 0 && out.indexOf(s.region[j]) < 0) out.push(s.region[j]);
+  return out;
+}
+/**
+ * 폭파 진입을 고를 수 있는가 (§4.2a 의 조건 ①~⑤ — 믿음·생김새·동료의 겉만. 장비는 kits: ['charge']):
+ *   대상: 문은 믿음 blk 'locked', 잔해는 믿음 blk 'debris' 이고 네 이웃에 문 칸(문을 막은 것 — 복도를 가로지른 잔해는 아니다)
+ *   ① 믿음 속 살아 있는 구조 대상(인질 포함)이 2.5칸 안에 없고, 같은 칸을 다른 동료가 맡고 있지 않다(문·잔해 임무나 하위 작업)
+ *   ② 믿음 속 가스·분진 조짐(단계 ≥ 1)이 6칸 안이나 문 양쪽 구역에 없고(자리를 모르는 조짐은 어디든 막는다), 살아 있는 누출이 6칸 안에 없다
+ *   ③ 살아 있는 장치(폭발물)가 6칸 안에 없다 ④ 붕괴 현장이 아니고 구조 조짐(단계 ≥ 1)이 6칸 안에 없다 ⑤ 무장 현장은 진입이 정해진 뒤에만
+ */
+function chargeOk(c: MethodCtx): boolean {
+  const s = c.s, i = c.tg.tile;
+  if (i < 0 || s.kind === 'collapse') return false;
+  if (s.kind === 'armed' && !s.entryOrdered) return false;
+  const blk = c.a.beliefs.val<string>('blk', i);
+  if (c.work === 'force' ? blk !== 'locked' : blk !== 'debris' || !byDoor(s, i)) return false;
+  const x = i % s.w, y = (i / s.w) | 0;
+  const cs = c.a.beliefs.list('cas');
+  for (let k = 0; k < cs.length; k++) { const v = cs[k].value as CasBelief; if (v.band < 3 && v.where === 'scene' && Math.hypot(v.x - x, v.y - y) <= CHARGE_NEAR) return false; }
+  const ag = s.agents;
+  for (let k = 0; k < ag.length; k++) {
+    const b = ag[k], bt = b.task;
+    if (b === c.a || b.status !== 'active' || bt === null) continue;
+    if (((bt.kind === 'force' || bt.kind === 'clear') && bt.tile === i) || (bt.sub !== null && bt.sub.tile === i)) return false;
+  }
+  const sides = sidesOf(s, i);
+  const sg = c.a.beliefs.list('sign');
+  for (let k = 0; k < sg.length; k++) {
+    const v = sg[k].value as SignBelief;
+    if (v.level < 1 || (v.kind !== 'gas' && v.kind !== 'dust' && v.kind !== 'struct' && v.kind !== 'bldg')) continue;
+    if (v.x < 0 || Math.hypot(v.x - x, v.y - y) <= CHARGE_FAR || ((v.kind === 'gas' || v.kind === 'dust') && sides.indexOf(v.region) >= 0)) return false;
+  }
+  const hz = c.a.beliefs.list('haz');
+  for (let k = 0; k < hz.length; k++) {
+    const v = hz[k].value as { kind: string; active: boolean; x: number; y: number };
+    if (v.active && (v.kind === 'bomb' || v.kind === 'leak' || v.kind === 'gas') && Math.hypot(v.x - x, v.y - y) <= CHARGE_FAR) return false;
+  }
+  return true;
+}
+
 /**
  * 방법 표 (§4). Record 라 MethodId 를 늘리면 컴파일이 줄을 강제한다. 같은 점수면 이 표의 순서가 이긴다.
  * 수치(pref·risk)는 설계서의 시작값이다. 조건(can)·배율(situ·skill)은 그 방법을 구현하는 단계가 채운다.
@@ -137,14 +192,17 @@ export const METHOD: Record<MethodId, MethodDef> = {
   boat: row('boat', ['waterRescue'], '보트 접근', '보트', '보트 접근', '보트로 다가가', ['raft'], 0.78, 0.08, false,
     { altUnit: ['boat'], can: (c) => !unitBoats(c), situ: (c) => (c.weak ? 1.15 : 1) * (c.flow >= FAST_FLOW ? 1.1 : 1) * (c.reach > THROW_REACH ? 1.2 : 1) }),
   hoist: row('hoist', ['hoist'], '헬기 호이스트', '호이스트', '호이스트 인양', '호이스트로 끌어올려', [], 0, 0, false, REC),      // R1 의 공중 임무 — methodRun.recordAir 가 기록만 한다
-  // ── 문·통로 force·clear, 이동 중 하위 작업 (§4.2·§4.2a) ──
-  kick: row('kick', ['force'], '발로 차기·어깨', '발차기', '문 걷어차기', '발로 차', [], 0.5, 0, false),
-  irons: row('irons', ['force'], '할리건·도끼', '할리건', '문 강제 개방', '할리건으로', ['irons'], 0.85, 0, true),
-  ram: row('ram', ['force'], '충격기', '충격기', '충격기 개방', '충격기로', ['breachKit'], 0.8, 0, false),
-  hydraulic: row('hydraulic', ['force'], '유압 개방기', '유압 개방', '유압 개방', '유압 개방기로', ['spreader'], 0.9, 0, false),
-  handClear: row('handClear', ['clear'], '손으로 치우기', '손 제거', '잔해 제거', '손으로 잔해를 치워', [], 0.55, 0, true),
-  toolClear: row('toolClear', ['clear'], '장비로 절단·지렛대', '장비 제거', '잔해 절단', '장비로 잔해를 잘라', ['spreader', 'irons', 'lightRescue', 'breachKit'], 0.8, 0, true),
-  charge: row('charge', ['force', 'clear'], '폭파 진입', '폭파', '폭파 진입', '폭파 장약으로', ['charge'], 0.8, 0.1, false),      // 사용자 결정 2026-11-15 — 실행부는 단계 2
+  // ── 문·통로 force·clear, 이동 중 하위 작업 (§4.2·§4.2a). 단계 2 가 켰다 — 속도는 실행부(methodRun.blockerRate), 폭파 진입은 methodRun.runCharge ──
+  kick: row('kick', ['force'], '발로 차기·어깨', '발차기', '문 걷어차기', '발로 차', [], 0.5, 0, false,      // 맨몸 방법 (늘 남는다)
+    { can: ALWAYS, situ: quietMul }),
+  irons: row('irons', ['force'], '할리건·도끼', '할리건', '문 강제 개방', '할리건으로', ['irons'], 0.85, 0, true, { can: ALWAYS }),      // 조용하다
+  ram: row('ram', ['force'], '충격기', '충격기', '충격기 개방', '충격기로', ['breachKit'], 0.8, 0, false,      // 경찰은 0.9 (교본 선호) — 끝날 때 13칸 안의 용의자가 문 쪽을 돌아본다
+    { can: ALWAYS, situ: (c) => quietMul(c) * (c.r.dept === 'police' ? 0.9 / 0.8 : 1) }),
+  hydraulic: row('hydraulic', ['force'], '유압 개방기', '유압 개방', '유압 개방', '유압 개방기로', ['spreader'], 0.9, 0, false, { can: ALWAYS }),      // 시작할 때 장비 확인 (숨은 고장 → broken)
+  handClear: row('handClear', ['clear'], '손으로 치우기', '손 제거', '잔해 제거', '손으로 잔해를 치워', [], 0.55, 0, true, { can: ALWAYS }),      // 맨몸 방법 (늘 남는다)
+  toolClear: row('toolClear', ['clear'], '장비로 절단·지렛대', '장비 제거', '잔해 절단', '장비로 잔해를 잘라', ['spreader', 'irons', 'lightRescue', 'breachKit'], 0.8, 0, true, { can: ALWAYS }),
+  charge: row('charge', ['force', 'clear'], '폭파 진입', '폭파', '폭파 진입', '폭파 장약으로', ['charge'], 0.8, 0.1, false,      // 사용자 결정 2026-11-15 (§4.2a) — 조건일 때만. 진입 순간 ×1.3 · 문을 막은 잔해 ×1.4 (시끄러운 방법의 ×0.7 은 걸지 않는다)
+    { can: chargeOk, situ: (c) => (c.s.kind === 'armed' && c.s.entryOrdered ? 1.3 : 1) * (c.work === 'clear' ? 1.4 : 1) }),
   // ── 구출 extricate (§4.3) ──
   manual: row('manual', ['extricate'], '수동 구출', '수동 구출', '수동 구출', '맨손으로 끌어내', [], 0.5, 0, false),
   basic: row('basic', ['extricate'], '손 공구 구출', '손 공구', '구조 작업', '손 공구로', ['irons', 'lightRescue'], 0.7, 0, true),

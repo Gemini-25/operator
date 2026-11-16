@@ -260,31 +260,65 @@ function drain(sim: Sim, a: FieldAgent, rate: number): void {
   r.stamina = Math.max(0, r.stamina - rate * (1.35 - r.fitness) * sim.dt);
 }
 
-function unblock(sim: Sim, s: Scene, a: FieldAgent, tile: number): void {
+/** (R2 §4.2) 문·잔해를 연 방법별 완료 문구 (없으면 지금의 문구) */
+const UNBLOCK_TEXT: Partial<Record<MethodId, string>> = {
+  kick: '문을 걷어차 열었습니다. 진입합니다.', irons: '할리건으로 문을 땄습니다. 진입합니다.', ram: '충격기로 문을 부쉈습니다. 진입합니다.',
+  hydraulic: '유압 개방기로 철문을 열었습니다. 진입합니다.', handClear: '손으로 잔해를 치워 통로를 확보했습니다.', toolClear: '장비로 잔해를 잘라 통로를 확보했습니다.',
+};
+/**
+ * 문·잔해를 연다. method = 연 방법 (R2 §4.2 — 완료 문구·통로 차단 복구 문구에 방법 이름, G5 진입 기록의 how 에 그 방법).
+ * 돌려주는 값 = 완료 기록 id (폭파 진입의 폭발 원인 — §4.2a). 폭파 진입은 막힌 문(문을 막은 잔해)도 진입 기록을 남긴다(문짝 없이 — door -1)
+ */
+function unblock(sim: Sim, s: Scene, a: FieldAgent, tile: number, method?: MethodId): number {
   const I = sim.incidents[s.incidentId];
   const r = resp(sim, a);
   const p = s.props[s.propAt[tile]];
   s.propAt[tile] = -1; p.blocking = false;
   if (p.kind === 'door') { p.locked = false; p.open = true; } else p.removed = true;
-  if (p.kind === 'door') recBreach(sim, s, p.x, p.y, a.x, a.y, { door: p.id, how: breachHowFor(sim, [a], true, false), n: 1, sync: false, by: a.rid, forced: true });
+  const how: BreachHow | null = method === 'kick' || method === 'irons' || method === 'ram' || method === 'hydraulic' || method === 'charge' ? method : null;
+  if (p.kind === 'door') recBreach(sim, s, p.x, p.y, a.x, a.y, { door: p.id, how: how ?? breachHowFor(sim, [a], true, false), n: 1, sync: false, by: a.rid, forced: true });
+  else if (method === 'charge') recBreach(sim, s, p.x, p.y, a.x, a.y, { door: -1, how: 'charge', n: 1, sync: false, by: a.rid, forced: true });
   s.staticVersion++;
   learnQuiet(sim, a, mkFact('blk', tile, 'none', r.name, sim.t, 1, true, p.kind === 'door' ? '문 개방 완료' : '잔해 제거, 통로 확보'));
-  const pe = markRecovered(I, 'PATH_BLOCKED', `${josa(r.name, '이/가')} ${p.kind === 'door' ? '문을 강제 개방' : '잔해를 제거'}해 통로 확보`);
-  emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, causes: [pe], text: p.kind === 'door' ? '문 강제 개방 완료. 진입합니다.' : '잔해 제거 완료. 통로를 확보했습니다.' });
+  const noun = method !== undefined ? METHOD[method].noun : '';
+  const rec = method === undefined ? `${josa(r.name, '이/가')} ${p.kind === 'door' ? '문을 강제 개방' : '잔해를 제거'}해 통로 확보`
+    : p.kind === 'door' ? `${josa(r.name, '이/가')} ${noun} 문을 열어 통로 확보` : method === 'charge' ? `${josa(r.name, '이/가')} ${noun} 막힌 문을 뚫어 통로 확보` : `${josa(r.name, '이/가')} ${noun} 통로 확보`;
+  const pe = markRecovered(I, 'PATH_BLOCKED', rec);
+  const text = method === 'charge' ? (p.kind === 'door' ? '폭파 — 문 개방. 진입합니다.' : '폭파 — 막힌 문을 뚫었습니다. 진입합니다.')
+    : (method !== undefined ? UNBLOCK_TEXT[method] : undefined) ?? (p.kind === 'door' ? '문 강제 개방 완료. 진입합니다.' : '잔해 제거 완료. 통로를 확보했습니다.');
+  const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, causes: [pe], text });
   r.xpGained += 0.003;
+  return ev;
 }
 
-function workOnBlocker(sim: Sim, s: Scene, a: FieldAgent, tile: number, kind: TaskKind): boolean {
+/**
+ * 문·잔해를 깎는다 (본 임무 force·clear 와 이동 중 하위 작업 t.sub — tk 가 그 임무). 돌려주는 값 = 열렸다.
+ * (R2 §4.2) 처음 부를 때 방법을 고른다(판단부 — 발로 차기·할리건·충격기·유압 개방기·폭파 진입 / 손으로·장비로 치우기). 속도는 고른 방법의 장비 값(methodRun.blockerRate),
+ * 유압 개방기는 시작할 때 장비 확인(숨은 고장 → 다른 방법), 폭파 진입은 설치·물러서기·기다림·3-2-1 뒤 폭발(methodRun.runCharge — 문의 hp 와 상관없다).
+ * 연 방법은 완료 문구·G5 진입 기록·방법 기록(I.methods — 대상은 그 칸과 소품)에 남는다. 충격기는 문이 열리는 소리로 둘레의 용의자가 돌아본다
+ */
+function workOnBlocker(sim: Sim, s: Scene, a: FieldAgent, tile: number, kind: TaskKind, tk: Task): boolean {
   const pid = s.propAt[tile];
   if (pid < 0) return true;
   const p = s.props[pid];
   const r = resp(sim, a), I = sim.incidents[s.incidentId];
-  // 효과 자리: 실제로 쓰는 도구의 성능 (숨은 고장은 여기서 드러난다 — crews.toolUse)
-  const rate = kind === 'force' ? 0.6 + r.skills.rescue * 0.6 + toolUse(sim, a.rid, 'force', I) * 0.6 + r.skills.law * 0.3 : 0.5 + r.skills.rescue * 0.8 + toolUse(sim, a.rid, 'clear', I) * 0.5;
-  p.hp -= rate * staminaF(r) * sim.dt;
+  const work = kind === 'force' ? 'force' : 'clear';
+  const tg = { cas: -1, prop: pid, hostile: -1, region: -1, tile };
+  if (tk.method === undefined && tk.mt0 === undefined) { if (tk.workId < 0) tk.prop = pid; startMethod(sim, s, I, a, tk, work, tg); }
+  if (tk.method === 'charge') return runCharge(sim, s, I, a, tk, tile, XK);
+  if (blockerKitFails(sim, s, I, a, tk)) return false;      // 유압 개방기의 숨은 고장이 드러났다 → 다음 방법 (다음 틱부터)
+  if (tk.method !== undefined) a.label = METHOD[tk.method].label;
+  // 효과 자리: 고른 방법의 장비 값 (방법이 없으면 R1 의 식 — 실제로 쓰는 도구의 성능, 숨은 고장은 여기서 드러난다 — crews.toolUse)
+  p.hp -= blockerRate(sim, s, a, tk, I) * staminaF(r) * sim.dt;
   drain(sim, a, 0.7);
   a.ring = clamp(1 - p.hp / 12, 0.05, 1);
-  if (p.hp <= 0) { unblock(sim, s, a, tile); return true; }
+  if (p.hp <= 0) {
+    const m = tk.method;
+    const ev = unblock(sim, s, a, tile, m);
+    if (m !== undefined) recordMethod(sim, I, a, tk, m, tk.mwhy ?? 'usual', true, ev, tg);
+    if (m === 'ram') doorNoise(sim, s, p.x, p.y);
+    return true;
+  }
   return false;
 }
 
@@ -654,7 +688,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         if (t.kind === 'swapAir') a.equipRetryAt = sim.t + RETRY_AFTER;      // 길의 불을 끄지 못해 대기 지점에 닿지 못했다: 공기통 교체는 한동안 다시 시도하지 않는다 (아래 case 'swapAir' 의 nopath 와 같은 기억)
         finishTask(sim, s, a, false, 'equip');
       }
-    } else if (workOnBlocker(sim, s, a, t.sub.tile, t.sub.kind)) { t.sub = null; a.path = null; }
+    } else if (workOnBlocker(sim, s, a, t.sub.tile, t.sub.kind, t.sub)) { t.sub = null; a.path = null; }
     return;
   }
   if (t.wait > 0) { t.wait -= dt; return; }
@@ -744,9 +778,11 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     }
     case 'clear': case 'force': {
       if (s.propAt[t.tile] < 0) { finishTask(sim, s, a, true); return; }
+      // (R2 §4.2a) 폭파 진입의 설치 뒤(물러서기·기다림·3-2-1)는 문 곁으로 가지 않는다 — 이동은 runCharge 안의 한 번뿐 (한 틱에 이동 목표 하나)
+      if (t.method === 'charge' && t.phase >= 1) { if (workOnBlocker(sim, s, a, t.tile, t.kind, t)) finishTask(sim, s, a, true); return; }
       const m = moveTo(sim, s, a, t.tile % s.w, (t.tile / s.w) | 0, 1.5);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
-      if (m === 'arrived' && workOnBlocker(sim, s, a, t.tile, t.kind)) finishTask(sim, s, a, true);
+      if (m === 'arrived' && workOnBlocker(sim, s, a, t.tile, t.kind, t)) finishTask(sim, s, a, true);
       return;
     }
     case 'waterRescue': {
@@ -1559,7 +1595,11 @@ import { dropWet, pullAshore, runWaterRescue, waterTick } from './methodRun';
 // (R2 1b) 물 위의 대원: 헤엄 중인가·헤엄 비용·수영 능력·가장 가까운 뭍 (판단부의 생김새 함수 — methods.ts 는 이 파일을 import 하지 않는다)
 import { boatCost, onWater, reachOf, swimCost, swimOf } from './methods';
 import type { CostFn } from './grid';
-export const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask };
+export const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask, unblock };
+// (R2 단계 2) 문·통로의 방법: 고르기(startMethod)·속도·장비 확인·소리·폭파 진입·방법 기록 — 고르는 것은 판단부, 효과는 methodRun
+import { blockerKitFails, blockerRate, doorNoise, recordMethod, runCharge, startMethod } from './methodRun';
+import { METHOD } from './methods';
+import type { BreachHow, MethodId } from '../types';
 
 // ── (R3) 대응 교본의 판단 지점 (field/doctrine.ts 의 docGate — 자기 모드). 판단은 교본 함수가, 효과(이동·기다림)는 이 파일이 한다 ──
 import { docGate } from './doctrine';

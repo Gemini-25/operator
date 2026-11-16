@@ -31,7 +31,7 @@ import { drawBlastScars, drawDangerZones, drawFallMoments, drawFallRing, drawGas
 import type { HazardLabel } from './scene/hazardFx';
 import { gasView, hostageState, rekindledRegions } from './hazardState';
 import { ruinZones, strokeRuinEdges } from './scene/ruins';
-import { drawCatOver, drawCatUnder } from './scene/catLayer';
+import { drawCatOver, drawCatUnder, drawTrappedDebris } from './scene/catLayer';
 import { TRIAGE, TRIAGE_EDGE, TRIAGE_TEXT, casBand, casDrawn, casSheet, hostileBand, hostileDrawn, hostileSheet, hurtPose, respBand, respLying, respSheet } from './triage';
 
 /** 현장 화면의 시점: 중심(타일 좌표)과 배율(1 = 현장 전체가 보인다) */
@@ -608,6 +608,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       drawLying(ctx, x, y, dragger ? Math.atan2(dragger.fy, dragger.fx) : hash2(a.rid, 77) * 6.28, ts, lk, { variant: hash2(a.rid, 5), sheet: shroud, stretcher: !!dragger && hasLitter(sim, s, dragger), bandage: (rsp.treatQ ?? 0) > 0 && !shroud });
       // 아직 구조되지 못한 쓰러진 대원: 빨간 맥박 고리 (숨졌으면 없다)
       if (a.status === 'down' && !rsp.dead) { ctx.strokeStyle = `rgba(255,93,93,${0.5 + 0.4 * Math.abs(Math.sin(time * 4))})`; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x, y, ts * 0.56, 0, 7); ctx.stroke(); }
+      if ((a.trapped ?? 0) > 0) drawTrappedDebris(ctx, x, y, ts, a.rid);      // (X6 §7.3) 잔해에 깔린 대원: 몸 위의 잔해 조각
     } else {
       const pose = agentPose(sim, s, a, moving);
       if (af && af.throwAct !== undefined) { pose.arms = 'throw'; pose.item = 'none'; }
@@ -838,15 +839,11 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   drawCatUnder(ctx, sim, s, ts, catView);      // (X6) 구획 건전도 빗금·가스 등고선·용기의 열 고리 (관찰자: 진실 · AI: 지휘관이 아는 조짐)
   drawFallRing(ctx, sim, s, ts, o.alpha, MINI);
   const hzLabels: HazardLabel[] = [];
-  const catPills: LabelBox[] = [];      // (X6) 대원 이름표가 피해 가는 자리 (mergeLabels 의 pinned)
-  for (const l of drawCatOver(sim, s, ts, catView)) {      // (X6) 붕괴 임박·LEL·안전밸브 표지 — 새 글자 표지 단계에서 그린다
-    hzLabels.push(l);
-    const fs = Math.max(10, ts * 0.3);
-    ctx.font = `600 ${fs}px ${FONT}`;
-    catPills.push({ x: l.x, y: l.y, w: ctx.measureText(l.text).width + fs * 0.8, h: fs * 1.5 });
-  }
+  for (const l of drawCatOver(sim, s, ts, catView)) hzLabels.push(l);      // (X6) 붕괴 임박·LEL·안전밸브·진입 금지 표지 — 새 글자 표지 단계에서 그린다
   if (o.truth) for (const l of drawGasEdge(ctx, ts, o.timeMs, gv, MINI)) hzLabels.push(l);      // 짙은 가스 경계 (관찰자 시점)
   for (const l of drawRekindle(ctx, s, ts, o.timeMs, MINI ? [] : rekindledRegions(sim, s, o.truth), o.truth, MINI)) hzLabels.push(l);      // 되살아난 불
+  const catPills: LabelBox[] = [];      // (X6) 대원 이름표가 피해 가는 자리 (mergeLabels 의 pinned) — (단계 10) G4 의 가스·되살아난 불 표지도
+  { const fs = Math.max(10, ts * 0.3); ctx.font = `600 ${fs}px ${FONT}`; for (const l of hzLabels) catPills.push({ x: l.x, y: l.y, w: ctx.measureText(l.text).width + fs * 0.8, h: fs * 1.5 }); }
 
   // 지휘관이 정한 진입 지점
   if (!MINI && s.entryOrdered && !s.breachDone) for (const [k, label] of [[s.entryExit, s.entryExit2 >= 0 ? '1조 진입' : '진입 지점'], [s.entryExit2, '2조 진입']] as [number, string][]) {

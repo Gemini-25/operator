@@ -11,15 +11,15 @@
 // 단계 2 (§4.2a — 사용자 결정 2026-11-15): 농성 문 잠금. 무장 현장에서 총을 든 용의자가 인질을 잡은 채 방에 있고 그 방의 (출입구가 아닌) 문이 하나뿐이며
 //   그 방에 붙잡히지 않은 구조 대상이 없으면, 첫 대원이 내린 뒤 15~40초에 한 번 BARRICADE.p × 심각도 손잡이(상한 0.8) 확률로 그 문을 닫고 가구로 막는다
 //   (plans.lockDoor 와 같은 처리 + p.skin = 'barricade'). 흐름은 barricade:<사건 id> 하나(결정 → 시각 → hp). 대원은 모른다 — 가서 막히면 지금의 discoverBlock 이 알린다
-// 뒤 단계가 여기에 채운다:
-//   단계 4  송풍기 s.fan (실내 연기 감쇠·불 키움) — 그때 첫 줄의 "해당 없는 현장" 조건에 s.fan 을 더한다
+// 단계 4 (§3.5·§4.5): 송풍기 s.fan — 돌고 있는 동안 1초에 한 번 실내 칸의 연기를 빼고(×(1 − 0.2 × power)), 센 불(0.5 이상)은 공기가 들어가 조금 커진다(+0.006 × power).
+//   끝나면(120초) 지운다. 가스(X6 의 가스 격자)에는 catastrophe.gasStep 이 출입구 3칸 안 × (1 − 0.3 × power) 로 따로 읽는다. 기록·난수 없음
 
 import { emit } from '../../events';
 import { T } from '../../types';
 import type { Incident, Prop, Scene } from '../../types';
 import { dist, josa } from '../../util';
 import type { Sim } from '../../engine';
-import { tileOf } from '../grid';
+import { isIndoor, tileOf } from '../grid';
 import { hostileActive, isHeld } from '../hazards';
 import { pullAshore } from '../methodRun';
 import { lockDoor } from '../plans';
@@ -82,6 +82,22 @@ function barricadeRule(sim: Sim, s: Scene, I: Incident): void {
   }
 }
 
+/** 송풍기 (§3.5 — 단계 4): 1초에 실내 연기 × (1 − smoke × power), 불 0.5 이상인 칸 + fire × power */
+export const FAN = { smoke: 0.2, fire: 0.006 };
+/** 돌고 있는 송풍기의 효과 (1초에 한 번 — 화재·연기와 같은 박자, 그 틱의 연기 확산 다음). 끝나면 지운다 */
+function fanRule(sim: Sim, s: Scene): void {
+  const f = s.fan;
+  if (!f) return;
+  if (sim.t >= f.until) { s.fan = null; return; }
+  if ((sim.tick + s.id) % 5 !== 0) return;
+  const k = 1 - FAN.smoke * f.power, up = FAN.fire * f.power, tiles = s.tiles, sm = s.smoke, fire = s.fire, n = tiles.length;
+  for (let i = 0; i < n; i++) {
+    if (!isIndoor(tiles[i])) continue;
+    if (sm[i] > 0) { const v = sm[i] * k; sm[i] = v < 0.01 ? 0 : v; }
+    if (fire[i] >= 0.5) fire[i] = Math.min(1, fire[i] + up);
+  }
+}
+
 /** 물살의 바닥값 (칸/초): 떠내려가는 사람이 없어도 강물은 이만큼 흐른다 */
 export const FLOW_MIN = 0.02;
 
@@ -95,6 +111,7 @@ export const methodsRule: SceneRule = (sim, s, I) => {
     if (a.status === 'down' && s.tiles[tileOf(s, a.x, a.y)] === T.WATER) pullAshore(sim, s, I, a, '쓰러짐');
   }
   barricadeRule(sim, s, I);      // (단계 2) 무장 현장의 농성 문 잠금 — 물이 없는 현장이라 아래의 첫 줄보다 먼저
+  fanRule(sim, s);      // (단계 4) 송풍기 — 화재·가스 현장 (물이 없는 현장이라 아래의 첫 줄보다 먼저)
   if (s.kind !== 'water' && (s.rules === undefined || s.rules.indexOf('water') < 0)) return;      // 물이 없는 현장 (매 틱 모든 현장에서 도는 길 — 칸 둘만 읽는다)
   if (s.quay === undefined) s.quay = s.variant === 'ship';
   if ((sim.tick + s.id) % 5 !== 0 || I.phase === 'closed') return;      // 1초에 한 번. 현장 환경은 첫 부대가 오기 전부터 돌므로 처음 떠내려가는 속도를 놓치지 않는다

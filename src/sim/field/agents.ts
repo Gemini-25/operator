@@ -138,8 +138,9 @@ export function casFact(sim: Sim, s: Scene, c: Casualty, src: string): Fact {
   // water: (R2) 물속인가 — 본 그대로. 이 값은 늘 mob·band 와 함께 바뀌므로(물에 빠짐·건져 냄·휩쓸려 숨짐) 믿음의 "새 소식" 판정을 바꾸지 않는다.
   // drift: (R2 1a) 떠내려가는 속도 — 본 그대로(물 밖이면 0). 떠내려가는 동안은 그대로이고 걸려 멈추는 순간 0 이 된다 — 그때 보고가 한 번 더 나간다(방법을 고르는 판단부가 물살을 이것으로 본다)
   // veh·pit: (R2 단계 3) 갇힌 차량의 소품 id · 맨홀 아래 — 본 그대로 (구출 방법의 범주를 대원이 믿음으로 가린다). 늘 mob 과 함께 바뀐다(구출이 끝나면 함께 사라진다)
+  // rush: (R2 단계 6) 구급 대원이 즉시 이송을 정했다 — 처치와 함께 바뀐다(treated·tq). 지휘관이 처치를 더 내지 않고 탑승을 먼저 한다
   const v: CasBelief = { x: Math.round(c.x), y: Math.round(c.y), mob, band: b, where: c.where, treated: c.treated, trappedDone: c.mob !== 'trapped', tq: c.treatQ >= 0.6 ? 2 : c.treated ? 1 : 0, water: c.inWater === true, drift: c.inWater ? c.drift ?? 0 : 0,
-    veh: c.inVehicle !== null && c.mob === 'trapped' ? c.inVehicle : undefined, pit: c.mob === 'trapped' && inManhole(s, c) ? true : undefined };
+    veh: c.inVehicle !== null && c.mob === 'trapped' ? c.inVehicle : undefined, pit: c.mob === 'trapped' && inManhole(s, c) ? true : undefined, rush: c.rush ? true : undefined };
   const mobT = c.dead ? '' : mob === 'trapped' ? ' · 고립' : mob === 'mobile' ? ' · 자력 대피 중' : c.where === 'scene' ? ' · 거동 불가' : '';
   const whereT = c.where === 'safe' ? '안전 구역' : c.where === 'loaded' ? '구급차 탑승' : c.where === 'carried' ? '이송 중' : regionNameAt(s, c.x, c.y);
   return mkFact('cas', c.id, v, src, sim.t, 1, true, `구조 대상 ${c.label}: ${whereT}${mobT} · ${BAND_NAME[b]}`);
@@ -640,7 +641,13 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
       if (hot && !(r.dept === 'police' && hasFirearm(sim, rid))) return 0;
       if (s.regions[w.region].indoor && fireRisk(w.region) && !scbaOk(sim, rid, afterSwap)) return 0;
       return 0.45 + 0.3 * r.experience + 0.25 * r.judgment + (r.dept === 'police' && s.kind !== 'fire' && s.kind !== 'medical' ? 0.1 : 0) + (r.dept === 'ems' && s.kind === 'medical' ? 0.15 : 0);
-    case 'suppress': return hasKit(sim, rid, 'hose') && airOk(sim, rid, afterSwap) && !u.pumpFailed && (u.water > 0 || u.hydrant) ? r.skills.fire : 0;      // 관창을 든 사람만 물을 쏜다 (공기가 문턱 아래면 통을 바꾼 뒤에)
+    case 'suppress': {
+      // 관창을 든 사람만 물을 쏜다 (공기가 문턱 아래면 통을 바꾼 뒤에) — 이때는 내부 공격(외부 방어면 외부 방수)을 늘 고를 수 있다 (R2 methodFit 과 같은 답 — 계산을 아낀다)
+      const hose = hasKit(sim, rid, 'hose') && !u.pumpFailed && (u.water > 0 || u.hydrant);
+      if (hose && airOk(sim, rid, afterSwap)) return r.skills.fire;
+      // (R2 §4.5) 그 밖은 그 사람이 지금 고를 수 있는 진압 방법으로: 공기가 문턱 아래인 관창수의 외부 방수(사람이 없다고 확인된 큰 불), 관창이 없는 대원(경찰·구급·기관원)의 소화기(작은 불) 0.25
+      return methodFit(sim, s, a, w) > 0 ? (hose ? r.skills.fire : 0.25) : 0;
+    }
     case 'hookup':
       if (r.dept !== 'fire' || a.unitId !== w.prop) return 0;
       // 그 부대에서 펌프를 맡은 대원(기관원·사다리 조작원)이 활동 중이면 급수 연결은 그 사람의 일이다. 없거나 쓰러졌으면 그 부대의 누구나 한다

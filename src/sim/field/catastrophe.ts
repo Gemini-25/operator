@@ -581,6 +581,7 @@ function gasStep(sim: Sim, s: Scene, c: CatState, w: CatWork): number[][] | null
   }
   // 손실과 환기, 상한
   let peak = 0;
+  const fan = s.fan && sim.t < s.fan.until ? s.fan : null;      // (R2 §4.8·§10) 돌고 있는 송풍기 — 그 출입구 3칸 안의 가스 칸 × (1 − 0.3 × power)
   for (let q = 0; q < M; q++) {
     const i = cells[q], ki = kind[i];
     if (!holdsGas(ki)) { g[i] = 0; continue; }
@@ -592,6 +593,7 @@ function gasStep(sim: Sim, s: Scene, c: CatState, w: CatWork): number[][] | null
     if (!vent && i + W < n) { const kj = kind[i + W]; vent = kj === G_BROKEN || kj === G_EXIT; }
     if (!vent && i >= W) { const kj = kind[i - W]; vent = kj === G_BROKEN || kj === G_EXIT; }
     if (vent) v *= 1 - CAT.GAS_VENT;
+    if (fan !== null) { const fx = x - fan.x, fy = ((i / W) | 0) - fan.y; if (fx * fx + fy * fy <= 9) v *= 1 - 0.3 * fan.power; }
     if (v > CAT.GAS_MAX) v = CAT.GAS_MAX; else if (v < 1e-5) v = 0;
     g[i] = v;
     if (v > peak) peak = v;

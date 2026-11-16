@@ -1682,16 +1682,19 @@ describe('X6 단계 5: 지휘관이 철수를 명령한다 (§10-4)', () => {
   });
 
   it('지휘관이 무전 음영 구역에 있으면 철수 기록도 경적도 남기지 않고, 음영을 벗어난 뒤 남긴다', () => {
-    const { sim, s, I, cmd, r } = liveInside('X6-WS');
+    const { sim, s, I, cmd, b, r } = liveInside('X6-WS');
     s.shadow.fill(1);
     cmd.beliefs.merge(struct3(sim, r));
     let horn = false;
-    for (let k = 0; k < 8 * 5; k++) { sim.step(); if (s.fx.some((f) => f.kind === 'horn')) horn = true; }
+    // 철수 명령이 나갈 때까지 그 대원을 방 안에 붙들어 둔다 — "안에 대원이 있는 구역"이라는 시험의 전제 (R2 단계 4 뒤: 그 대원이 다른 일로 8초 안에 방을 나가 구역이 명령 없이 생기는 교대가 있었다)
+    const x0 = b.x, y0 = b.y;
+    const pin = (): void => { if (!I.problems.some((p) => p.code === 'WITHDRAWAL')) { b.x = b.px = x0; b.y = b.py = y0; b.path = null; } };
+    for (let k = 0; k < 8 * 5; k++) { sim.step(); pin(); if (s.fx.some((f) => f.kind === 'horn')) horn = true; }
     expect(I.problems.some((p) => p.code === 'WITHDRAWAL')).toBe(false);
     expect(horn).toBe(false);
     expect(zoneOf(s, `struct:${r.id}`)).toBeUndefined();      // 안에 대원이 있는 철수 구역은 명령이 나간 뒤에만 만든다
     s.shadow.fill(0);
-    for (let k = 0; k < 8 * 5; k++) { sim.step(); if (s.fx.some((f) => f.kind === 'horn')) horn = true; }
+    for (let k = 0; k < 8 * 5; k++) { sim.step(); pin(); if (s.fx.some((f) => f.kind === 'horn')) horn = true; }
     expect(I.problems.some((p) => p.code === 'WITHDRAWAL')).toBe(true);
     expect(horn).toBe(true);
   });

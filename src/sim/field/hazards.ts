@@ -24,6 +24,8 @@ export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?:
 }
 
 export const band = bandOf;      // 중증도 단계는 세 부류가 함께 쓴다 (field/injury.ts)
+/** (R2 §4.8) 대피 방송 중의 주변 시민 노출 확률 배율 */
+export const ANNOUNCE_MUL = 0.4;
 export const BAND_NAME = ['경상', '중상', '위중', '사망'];
 
 const NB = [1, 0, -1, 0, 0, 1, 0, -1];
@@ -298,7 +300,7 @@ export function flashbang(sim: Sim, s: Scene, x: number, y: number, by?: FieldAg
   for (const h of s.hostiles) {
     if (h.state !== 'hold' && h.state !== 'fight') continue;
     if (dist(h.x, h.y, x, y) > 5.2 || !los(s, x, y, h.x, h.y)) continue;      // 벽 너머까지는 미치지 않는다
-    h.stunUntil = sim.t + 3.8; h.morale -= 0.15; n++;
+    h.stunUntil = sim.t + 3.8; h.stunHow = 'bang'; h.morale -= 0.15; n++;      // stunHow: (R2 §4.6) 무력화 수단 — 검거 기록이 쓴다
   }
   pushFx(sim, s, 'flash', x, y, undefined, undefined, undefined, undefined, 0.7);
   noteFlash(lastFx(sim, s, 'flash'), by, n);
@@ -684,9 +686,11 @@ export function tickGas(sim: Sim, s: Scene, I: Incident): void {
   if (!leaking) return;
   // 통제되지 않은 출입구로 다가온 주변 시민이 가스를 마신다 (경찰이 출입구를 지키면 일어나지 않는다)
   if (s.arrivedAt >= 0 && I.phase !== 'closed' && s.casualties.filter((c) => c.bystander2).length < 3) {      // 판정 뒤에 다친 사람이 새로 생기지 않는다 (§2.6)
+    // (R2 §4.8) 출입구 통제 자리에서 대피 방송을 하는 경찰이 있다 (대원의 임무·방법 — 세계 규칙이라 읽어도 된다)
+    const announcing = s.agents.some((a) => a.status === 'active' && a.task !== null && a.task.kind === 'perimeter' && a.task.method === 'announce' && a.spot >= 0);
     s.exits.forEach((e, k) => {
       if (s.smoke[tidx(s, Math.max(0, Math.min(s.w - 1, e.x)), Math.max(0, Math.min(s.h - 1, e.y)))] < 0.12 || exitCovered(sim, s, k)) return;
-      if (!s.rng.chance(Math.min(0.03, 0.011 * sim.tune.hazardMul))) return;
+      if (!s.rng.chance(Math.min(0.03, 0.011 * sim.tune.hazardMul) * (announcing ? ANNOUNCE_MUL : 1))) return;      // (R2 §4.8) 대피 방송 중이면 ×0.4 — 확률만 곱하고 판정 호출은 그대로
       const id = s.casualties.length;
       const c: Casualty = {
         id, label: String.fromCharCode(65 + id), x: e.x, y: e.y, px: e.x, py: e.y, health: s.rng.range(60, 80), bleed: s.rng.range(0.05, 0.09), mob: 'immobile', trapWork: 0, concealment: 0.05, inVehicle: null,

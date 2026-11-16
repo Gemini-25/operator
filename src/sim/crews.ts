@@ -121,19 +121,19 @@ export interface RoleDef {
 const sk = (fire: number, rescue: number, medical: number, law: number): Skills => ({ fire, rescue, medical, law });
 export const ROLES: Record<RoleId, RoleDef> = {
   // ── 경찰 ──
-  patrolLead: { name: '순찰 팀장', group: 'lead', skills: (s) => sk(0.05, 0.22, 0.25, s + 0.04), kit: ['pistol', 'taser', 'vest', 'megaphone', 'aed'], prefer: { negotiate: 0.15, interview: 0.15 } },
+  patrolLead: { name: '순찰 팀장', group: 'lead', skills: (s) => sk(0.05, 0.22, 0.25, s + 0.04), kit: ['pistol', 'taser', 'vest', 'megaphone', 'aed', 'extinguisher'], prefer: { negotiate: 0.15, interview: 0.15 } },      // (R2 단계 4) 소화기는 끝에
   officer: { name: '순찰 경관', group: 'officer', skills: (s) => sk(0.05, 0.22, 0.22, s), kit: ['pistol', 'taser', 'vest', 'baton'], prefer: { traffic: 0.15, perimeter: 0.1, arrest: 0.1 } },
-  tacLead: { name: '기동 조장', group: 'lead', skills: (s) => sk(0.05, 0.22, 0.22, s + 0.06), kit: ['pistol', 'plate', 'megaphone'], prefer: { negotiate: 0.1 } },
+  tacLead: { name: '기동 조장', group: 'lead', skills: (s) => sk(0.05, 0.22, 0.22, s + 0.06), kit: ['pistol', 'plate', 'megaphone', 'beanbag'], prefer: { negotiate: 0.1 } },      // (R2 단계 5) 비살상탄 발사기는 끝에 (3발 — kitFor 가 복사)
   tacOfficer: { name: '기동대원', group: 'officer', skills: (s) => sk(0.05, 0.22, 0.22, s + 0.06), kit: ['rifle', 'plate', 'flashbang'], prefer: { engage: 0.15, arrest: 0.1 } },
   swatLead: { name: '특공 팀장', group: 'lead', skills: (s) => sk(0.05, 0.25, 0.25, s + 0.12), kit: ['pistol', 'plate', 'flashbang'], prefer: { negotiate: 0.05 } },
   shield: { name: '방패수', group: 'shield', skills: (s) => sk(0.05, 0.22, 0.22, s + 0.1), kit: ['pistol', 'plate', 'shield'], prefer: { engage: 0.2 } },
   breacher: { name: '진입대원(파괴)', group: 'entry', skills: (s) => sk(0.05, 0.35, 0.22, s + 0.1), kit: ['rifle', 'plate', 'breachKit', 'flashbang', 'charge'], prefer: { force: 0.3, engage: 0.1 } },
-  assaulter: { name: '진입대원', group: 'officer', skills: (s) => sk(0.05, 0.22, 0.22, s + 0.12), kit: ['rifle', 'plate', 'flashbang'], prefer: { engage: 0.15 } },
+  assaulter: { name: '진입대원', group: 'officer', skills: (s) => sk(0.05, 0.22, 0.22, s + 0.12), kit: ['rifle', 'plate', 'flashbang', 'beanbag'], prefer: { engage: 0.15 } },      // (R2 단계 5) 비살상탄 발사기는 끝에
   marksman: { name: '저격·관측수', group: 'marksman', skills: (s) => sk(0.05, 0.2, 0.2, s + 0.15), kit: ['sniper', 'plate'], prefer: { perimeter: 0.3, engage: -0.15 } },
   bombTech: { name: '폭발물 처리 요원', group: 'bomb', skills: (s) => sk(0.05, 0.3, 0.22, s - 0.15), kit: ['bombSuit', 'eodKit', 'charge'], prefer: { defuse: 0.3 } },
   // 권총을 빼지 않는다: 최소 인원 처리반(처리 요원·로봇 조작 요원)에서 "law ≥ 0.5 ⇒ 총기 대원"을 지키는 사람이 그뿐이다. 무장 사건의 인원 문턱은 묶음 bomb 을 세지 않는다
   robotOp: { name: '로봇 조작 요원', group: 'bomb', skills: (s) => sk(0.05, 0.25, 0.22, s - 0.05), kit: ['robot', 'pistol', 'vest'], prefer: { perimeter: 0.1 } },
-  eodGuard: { name: '경계 요원', group: 'officer', skills: (s) => sk(0.05, 0.22, 0.22, s), kit: ['pistol', 'vest', 'megaphone'], prefer: { perimeter: 0.2 } },
+  eodGuard: { name: '경계 요원', group: 'officer', skills: (s) => sk(0.05, 0.22, 0.22, s), kit: ['pistol', 'vest', 'megaphone', 'extinguisher'], prefer: { perimeter: 0.2 } },      // (R2 단계 4) 소화기는 끝에
   observer: { name: '전술 관측관', group: 'observer', skills: (s) => sk(0.05, 0.2, 0.2, s), kit: ['flir', 'searchlight'], prefer: {}, stays: true, exp: [0.4, 0.9] },
   pilot: { name: '기장', group: 'pilot', skills: () => sk(0.05, 0.2, 0.2, 0.05), kit: [], prefer: {}, stays: true, exp: [0.55, 0.95] },
   copilot: { name: '부기장', group: 'pilot', skills: () => sk(0.05, 0.2, 0.2, 0.05), kit: [], prefer: {}, stays: true, exp: [0.3, 0.8] },
@@ -141,9 +141,9 @@ export const ROLES: Record<RoleId, RoleDef> = {
   fireLead: { name: '진압 팀장', group: 'lead', skills: (s) => sk(s, s * 0.7, 0.35, 0.05), kit: ['scba', 'turnout', 'tic', 'irons', 'aed'], prefer: { search: 0.1, force: 0.1 } },
   nozzle: { name: '관창수', group: 'nozzle', skills: (s) => sk(s + 0.05, s * 0.55, 0.3, 0.05), kit: ['scba', 'turnout', 'hose'], prefer: { suppress: 0.15, overhaul: 0.1 } },
   firefighter: { name: '진입대원', group: 'entry', skills: (s) => sk(s * 0.95, s * 0.7, 0.3, 0.05), kit: ['scba', 'turnout', 'hose', 'irons', 'rope'], prefer: { search: 0.1, force: 0.1, carry: 0.05 } },
-  engineer: { name: '기관원', group: 'engineer', skills: (s) => sk(s * 0.8, s * 0.5, 0.3, 0.05), kit: ['scba', 'turnout', 'pumpPanel', 'pole'], prefer: { hookup: 0.3, traffic: 0.1, clearRoad: 0.1, search: -0.25 } },
+  engineer: { name: '기관원', group: 'engineer', skills: (s) => sk(s * 0.8, s * 0.5, 0.3, 0.05), kit: ['scba', 'turnout', 'pumpPanel', 'pole', 'extinguisher', 'fan'], prefer: { hookup: 0.3, traffic: 0.1, clearRoad: 0.1, search: -0.25 } },      // (R2 단계 4) 소화기·송풍기는 끝에 (송풍기는 batch r2 — 고장 추첨은 kit-r2)
   ladderLead: { name: '사다리 팀장', group: 'lead', skills: (s) => sk(s, s * 0.7, 0.35, 0.05), kit: ['scba', 'turnout', 'tic', 'irons'], prefer: { search: 0.1, force: 0.1 } },
-  ladderOp: { name: '사다리 조작원', group: 'engineer', skills: (s) => sk(s * 0.85, s * 0.5, 0.3, 0.05), kit: ['scba', 'turnout', 'pumpPanel', 'hose', 'pole'], prefer: { hookup: 0.3, search: -0.2 } },
+  ladderOp: { name: '사다리 조작원', group: 'engineer', skills: (s) => sk(s * 0.85, s * 0.5, 0.3, 0.05), kit: ['scba', 'turnout', 'pumpPanel', 'hose', 'pole', 'fan'], prefer: { hookup: 0.3, search: -0.2 } },      // (R2 단계 4) 송풍기는 끝에
   // ── 구조·화학·항공·수난 ──
   rescueLead: { name: '구조 팀장', group: 'lead', skills: (s) => sk(s * 0.7, s, 0.4, 0.05), kit: ['scba', 'turnout', 'searchKit', 'irons', 'shoring'], prefer: { search: 0.1 } },      // (R2 단계 3) 지지대는 끝에
   extricator: { name: '구조대원(유압)', group: 'rescue', skills: (s) => sk(s * 0.7, s + 0.04, 0.35, 0.05), kit: ['scba', 'turnout', 'spreader', 'airbag'], prefer: { extricate: 0.25, clear: 0.15 } },      // (R2 단계 3) 에어백은 끝에 (batch r2 — 고장 추첨은 kit-r2)
@@ -151,14 +151,14 @@ export const ROLES: Record<RoleId, RoleDef> = {
   ropeTech: { name: '구조대원(로프)', group: 'water', skills: (s) => sk(s * 0.6, s, 0.35, 0.05), kit: ['scba', 'turnout', 'rope', 'ring', 'hose', 'pfd', 'drysuit', 'raft'], prefer: { waterRescue: 0.3 } },
   hazLead: { name: '화학 팀장', group: 'lead', skills: (s) => sk(s * 0.7, s * 0.92, 0.4, 0.05), kit: ['scba', 'turnout', 'gasMeter', 'irons'], prefer: { search: 0.05 } },
   hazTech: { name: '화학 보호복 대원', group: 'hazmat', skills: (s) => sk(s * 0.7, s * 0.9, 0.4, 0.05), kit: ['scba', 'turnout', 'plugKit'], prefer: { mitigate: 0.3 } },
-  decon: { name: '측정·제독 대원', group: 'hazmat', skills: (s) => sk(s * 0.6, s * 0.85, 0.4, 0.05), kit: ['scba', 'turnout', 'gasMeter', 'hose'], prefer: { search: 0.1, escort: 0.1 } },
+  decon: { name: '측정·제독 대원', group: 'hazmat', skills: (s) => sk(s * 0.6, s * 0.85, 0.4, 0.05), kit: ['scba', 'turnout', 'gasMeter', 'hose', 'fan'], prefer: { search: 0.1, escort: 0.1 } },      // (R2 단계 4) 송풍기는 끝에
   airRescuer: { name: '항공 구조대원', group: 'rescue', skills: (s) => sk(0.15, s, 0.55, 0.05), kit: ['scba', 'turnout', 'lightRescue', 'bag', 'rope', 'pfd'], prefer: {} },
   boatRescuer: { name: '수난 구조대원', group: 'water', skills: (s) => sk(0.1, s, 0.45, 0.05), kit: ['rope', 'ring', 'oilBoom', 'pole', 'pfd', 'drysuit'], prefer: { waterRescue: 0.3 } },      // (N9 §4.8) 오일펜스는 끝에 (고장 나지 않는다 — 추첨 순서 그대로). (R2 1a) 그 뒤에 장대·구명조끼·드라이슈트
   boatLead: { name: '정장', group: 'pilot', skills: () => sk(0.1, 0.3, 0.3, 0.05), kit: [], prefer: {}, stays: true, exp: [0.5, 0.95] },
   // ── 구급·의료 ──
   paramedic: { name: '1급 응급구조사', group: 'medic', skills: (s) => sk(0.05, 0.25, s + 0.08, 0.05), kit: ['alsBag', 'aed'], prefer: { treat: 0.15 } },
   emt: { name: '응급구조사', group: 'medic', skills: (s) => sk(0.05, 0.25, s, 0.05), kit: ['bag', 'spineBoard'], prefer: { treat: 0.1, carry: 0.05 } },
-  emsDriver: { name: '구급 운전원', group: 'medic', skills: (s) => sk(0.05, 0.3, s * 0.85, 0.05), kit: ['stretcher'], prefer: { load: 0.2, carry: 0.1 } },
+  emsDriver: { name: '구급 운전원', group: 'medic', skills: (s) => sk(0.05, 0.3, s * 0.85, 0.05), kit: ['stretcher', 'extinguisher'], prefer: { load: 0.2, carry: 0.1 } },      // (R2 단계 4) 소화기는 끝에
   doctor: { name: '의사', group: 'doctor', skills: (s) => sk(0.05, 0.2, Math.min(1, s + 0.2), 0.05), kit: ['doctorKit', 'aed'], prefer: { treat: 0.3, carry: -0.2 }, exp: [0.5, 0.9] },
   flightNurse: { name: '항공 간호사', group: 'medic', skills: (s) => sk(0.05, 0.25, s + 0.1, 0.05), kit: ['alsBag', 'stretcher'], prefer: { treat: 0.15, load: 0.15 } },
   // ── (N8 §4.9) 유관 기관 · 동물 포획 · 경찰의 새 자리. 복구반장의 장비는 부대마다 다르다(전력·가스 복구반장은 STAFF 의 자리별 장비 kit 가 덮는다 — 아래 kitIdsOf) ──

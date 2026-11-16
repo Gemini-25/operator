@@ -378,8 +378,11 @@ export function pumpTended(sim: Sim, s: Scene, unitId: number): boolean {
   return false;
 }
 
-/** eff = 효과 배율(물이 불에 닿는 양), wmul = 물 소모 배율 — (X6 §5.5) 외부 방수는 0.7·1.4 (R2 의 defensive 가 같은 인자를 쓴다) */
-function spray(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, eff = 1, wmul = 1): boolean {
+/**
+ * eff = 효과 배율(물이 불에 닿는 양), wmul = 물 소모 배율 — (X6 §5.5) 외부 방수는 0.7·1.4 (R2 의 defensive 가 같은 인자를 쓴다).
+ * jitter = (R2 §3.5) 물줄기 그림의 끝점을 s.rng 로 흩뜨리는가 — 지금의 호출은 그대로(true), R2 의 외부 방수·고가 방수는 false(고정 오프셋 — s.rng 는 명중·용의자 행동의 흐름이다)
+ */
+function spray(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, eff = 1, wmul = 1, jitter = true): boolean {
   const I = sim.incidents[s.incidentId];
   const r = resp(sim, a), u = sim.units[a.unitId];
   if (u.pumpFailed) { equipTrouble(sim, s, a, 'pump'); return false; }
@@ -390,7 +393,10 @@ function spray(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, eff = 
   if (!u.hydrant) u.water = Math.max(0, u.water - 1.5 * (tended ? 0.9 : 1) * wmul * sim.dt);
   u.pumpCond -= 0.0042 * sim.tune.pumpWearMul * (tended ? 0.6 : 1) * sim.dt;
   drain(sim, a, 0.55);
-  if (sim.tick % 2 === 0) pushFx(sim, s, 'spray', a.x, a.y, tx + s.rng.range(-0.4, 0.4), ty + s.rng.range(-0.4, 0.4), undefined, undefined, 0.3);
+  if (sim.tick % 2 === 0) {
+    if (jitter) pushFx(sim, s, 'spray', a.x, a.y, tx + s.rng.range(-0.4, 0.4), ty + s.rng.range(-0.4, 0.4), undefined, undefined, 0.3);
+    else { const o = ((sim.tick % 3) - 1) * 0.3; pushFx(sim, s, 'spray', a.x, a.y, tx + o, ty - o, undefined, undefined, 0.3); }
+  }
   if (u.pumpCond < 0.2 && !u.pumpFailed) {
     u.pumpFailed = true;
     u.pumpFails = (u.pumpFails ?? 0) + 1;      // (I2) 이번 교대의 펌프 고장 수 — 다음 교대의 정밀 정비를 정한다(persist.makeCarryover). 결과에 쓰지 않는다
@@ -443,13 +449,14 @@ const fights = (sim: Sim, I: Incident, h: Hostile, was: Hostile['state']): boole
  * 몸싸움 끝의 검거 (§4.2): 기록 '○○이 저항해 몸싸움 끝에 검거.'(검거 문구를 대신한다)를 먼저 남기고, 난수는 injury:<현장>:fight 에서 대원 몫 → 용의자 몫 순서로 뽑는다.
  * 대원은 hurtResponder(타박상, 가해자 = 그 용의자), 용의자는 hurtHostile(타박상, 가해자 = 그 대원)
  */
-function scuffle(sim: Sim, s: Scene, I: Incident, a: FieldAgent, h: Hostile): void {
+function scuffle(sim: Sim, s: Scene, I: Incident, a: FieldAgent, h: Hostile): number {
   const rng = injuryRng(sim, s, 'fight');
   const toMe = rng.range(FIGHT_HIT[0], FIGHT_HIT[1]), toHim = rng.range(FIGHT_HIT[0], FIGHT_HIT[1]);
   const r = resp(sim, a);
   const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${josa(h.label, '이/가')} 저항해 몸싸움 끝에 검거.` });
   hurtResponder(sim, s, I, a, toMe, 'blunt', { by: h.id, byKind: 'hostile', ev });
   hurtHostile(sim, s, I, h, toHim, 'blunt', { by: a.rid, byKind: 'responder', ev });
+  return ev;      // (R2 단계 5) 검거 기록 id — 방법 기록(recordArrest)이 가리킨다
 }
 /** 테이저에 맞은 용의자 (§4.2): 감전 2 를 기록한다 — 체력을 1 아래로 내리지 않는다 (무력화가 목적이지 다치게 하는 것이 아니다) */
 const TASER_HIT = 2;
@@ -462,7 +469,7 @@ function tryTaser(sim: Sim, s: Scene, a: FieldAgent, h: Hostile): boolean {
   useKit(sim, a.rid, 'taser'); a.taserAt = sim.t;
   a.fx = h.x - a.x; a.fy = h.y - a.y;
   const hit = kitRng(sim, s).chance(TASER.hit);
-  if (hit) h.stunUntil = sim.t + TASER.stun;
+  if (hit) { h.stunUntil = sim.t + TASER.stun; h.stunHow = 'taser'; }      // (R2 §4.6) 무력화 수단 — 검거 기록이 쓴다
   recTaser(sim, s, a, h.x, h.y, hit, 1, h.id);
   const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, text: hit ? `테이저 발사 — ${h.label} 무력화.` : '테이저 발사 — 빗나감.' });
   if (hit && h.health > 1) hurtHostile(sim, s, I, h, Math.min(TASER_HIT, h.health - 1), 'electric', { by: a.rid, byKind: 'responder', ev });      // 기록만 남길 만큼 (H1 §4.2)
@@ -562,7 +569,7 @@ function breach(sim: Sim, s: Scene, a: FieldAgent): void {
       useKit(sim, thrower.rid, 'flashbang'); s.bangAt = sim.t;
       bangs += flashbang(sim, s, inX, inY, thrower);
     }
-    for (const b of team) { b.path = null; b.pathGoal = -1; }
+    for (const b of team) { b.path = null; b.pathGoal = -1; if (b.task) ENTERED.add(b.task); }      // ENTERED: (R2 §4.6) 진입 뒤의 검거는 'breach' 로 적는다
     // 문이 열리는 소리: 무력화되지 않은 용의자는 그쪽을 돌아본다
     for (const h of s.hostiles) if ((h.state === 'hold' || h.state === 'fight') && sim.t >= h.stunUntil && dist(h.x, h.y, e.x, e.y) <= 13 && sim.t >= h.alertUntil) { h.facing = Math.atan2(e.y - h.y, e.x - h.x); h.alertUntil = sim.t + 5; }
   });
@@ -670,6 +677,7 @@ function runExterior(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, re
   for (const i of reg.tiles) if (s.fire[i] > 0.05) { lit = true; break; }
   if (!lit) {      // 그 구획에 불이 없다: 안에서의 진압 확인과 같다 (밖에서 본 대로 알린다)
     learn(sim, a, mkFact('fire', reg.id, 0, r.name, sim.t, 1, true, `${reg.name} 화재 진압 확인 (외부)`), true, true);
+    if (t.method !== undefined) recordMethod(sim, I, a, t, t.method === 'aerial' ? 'aerial' : 'defensive', t.mwhy ?? 'usual', true, -1, { cas: -1, prop: -1, hostile: -1, region, tile: -1 });      // (R2 §4.5) 지휘관이 정한 외부 방어 — 고른 방법과 관계없이 밖에서 끈 것이다
     r.xpGained += 0.003; finishTask(sim, s, a, true); return true;
   }
   const zm = ops.zones.length ? zoneMask(s, ops.zones) : null;
@@ -816,9 +824,17 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       return;
     }
     case 'suppress': {
+      // (R2 §4.5) 방법을 처음 고른다 — 선택 임무: 고를 것이 없으면 방법 없이 지금 코드(내부 공격)로. 소화기는 펌프·물을 쓰지 않으므로 그 검사보다 먼저
+      const sg = { cas: -1, prop: -1, hostile: -1, region: t.region, tile: -1 };
+      if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'suppress', sg);
+      if (t.method === 'extinguisher') { runExtinguisher(sim, s, I, a, t, XK); return; }
+      if (!hasKit(sim, a.rid, 'hose')) { finishTask(sim, s, a, false, 'nomethod'); return; }      // 관창이 없는 대원(소화기를 다 썼거나 고를 수 없게 됐다)은 할 것이 없다
       if (u.pumpFailed || (u.water <= 0 && !u.hydrant)) { equipTrouble(sim, s, a, u.pumpFailed ? 'pump' : 'water'); finishTask(sim, s, a, false, 'equip'); return; }
-      // (X6 §5.5) 외부 방어·진입 금지 구역·단계 3 구역 너머: 밖에서 방수한다. 단계 2 구역 안에서 이미 진압하던 대원은 안에서 잇는다
-      if (opsExterior(s, t.region) && !(t.phase === 2 && insideLevel2(s, a, t.region))) { if (runExterior(sim, s, I, a, t, t.region)) return; }
+      // (X6 §5.5) 외부 방어·진입 금지 구역·단계 3 구역 너머: 밖에서 방수한다. 단계 2 구역 안에서 이미 진압하던 대원은 안에서 잇는다 — R2 의 방법 선택보다 먼저다(현장 모드가 우선)
+      const ext = opsExterior(s, t.region);
+      if (ext && !(t.phase === 2 && insideLevel2(s, a, t.region))) { if (runExterior(sim, s, I, a, t, t.region)) return; }
+      // (R2 §4.5) 외부 방어 방수·고가 사다리 방수·배연 (내부 공격과 방법 없음은 아래 지금 코드)
+      if (!ext && runSuppress(sim, s, I, a, t, XK)) return;
       if (t.phase === 1) { t.tile = -1; a.path = null; }      // 밖에서 하다 안으로 (구역이 풀렸거나, 단계 2 구역인데 밖에서 닿을 자리가 없다)
       t.phase = 2;      // 안에서 한다
       if (t.tile < 0 || s.fire[t.tile] <= 0.05 || sim.t > t.progress) { t.tile = nearestFireTile(sim, s, a, t.region); t.progress = sim.t + 1.6; }
@@ -828,7 +844,11 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         if (m === 'arrived' || m === 'nopath') {
           perceive(sim, s, a);
           let any = false; for (const i of reg.tiles) if (s.fire[i] > 0.05) { any = true; break; }
-          if (!any) { learn(sim, a, mkFact('fire', reg.id, 0, r.name, sim.t, 1, true, `${reg.name} 화재 진압 확인`), true, true); r.xpGained += 0.003; finishTask(sim, s, a, true); }
+          if (!any) {
+            learn(sim, a, mkFact('fire', reg.id, 0, r.name, sim.t, 1, true, `${reg.name} 화재 진압 확인`), true, true); r.xpGained += 0.003;
+            if (t.method !== undefined) recordMethod(sim, I, a, t, t.method, t.mwhy ?? 'usual', true, -1, sg);      // (R2) 이 방법으로 그 구역의 불을 잡았다
+            finishTask(sim, s, a, true);
+          }
           else if (m === 'arrived') {
             // 구역 안에 불은 남아 있는데 연기로 보이지 않는다 → 가장 가까운 화점으로 더듬어 접근
             let bd = 1e9;
@@ -842,6 +862,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const m = moveTo(sim, s, a, tx, ty, 3.2, true);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
+      // (R2 §3.2-2) 화점 곁에 처음 닿은 틱: 선 자리의 연기로 한 번 더 고른다(배연 — 연기 0.5 넘음, 외부 방수 — 자기 몸). 바꿨으면 다음 틱부터 그 방법
+      if (!t.marr && t.method !== undefined && !ext && recheckOnArrive(sim, s, I, a, t, 'suppress', sg, true)) return;
       a.fx = tx - a.x; a.fy = ty - a.y;
       a.ring = 1 - s.fire[t.tile];
       if (!spray(sim, s, a, tx, ty)) finishTask(sim, s, a, false, 'equip');
@@ -928,21 +950,26 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       // 이미 처치를 받은 환자는 더 나은 처치를 할 수 있는 대원만 다시 본다
       if (c.dead || c.where === 'loaded' || c.where === 'hospital' || (c.treated && qPlan <= c.treatQ + 0.15)) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
       if (c.where === 'carried') return;
+      // (R2 §4.7) 방법을 처음 고른다 — 현장 안정 후 이송(평소) · 즉시 이송(위중 · 환자 자리가 남은 부대 · 구급 장비)
+      if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'treat', { cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1 });
+      const rush = t.method === 'rush';
       if (c.treated && t.phase === 0) { t.phase = 1; c.treatProg = 0; }
       const m = moveTo(sim, s, a, c.x, c.y, 1.3);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
       const rate = Math.max(0.1, r.skills.medical * (0.5 + 0.5 * med)) * staminaF(r);
-      t.need = 4.5 + (c.health < 40 ? 4 : c.health < 70 ? 2 : 0);
+      t.need = rush ? 3.0 : 4.5 + (c.health < 40 ? 4 : c.health < 70 ? 2 : 0);      // 즉시 이송: 최소한만 (3초)
       c.treatProg += rate * dt; a.ring = c.treatProg / t.need; drain(sim, a, 0.3);
       if (c.treatProg >= t.need) {
         const fx = treatEffect(sim, s, I, a.rid, c.health, c.treated ? c.treatQ : -1);
         // 제세동기가 듣지 않아 앞선 처치보다 나아진 것이 없다: 상태만 다시 알리고 끝낸다 (처치의 수준을 낮추지 않는다)
         if (!fx) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
         if (fx.heal > 0) c.health = Math.min(100, c.health + fx.heal);
-        c.treated = true; if (c.tTreated < 0) c.tTreated = sim.t; c.treatQ = fx.q; c.bleed = c.bleed0 * fx.bleedK; c.bystander = false;
+        c.treated = true; if (c.tTreated < 0) c.tTreated = sim.t; c.treatQ = fx.q * (rush ? 0.7 : 1); c.bleed = c.bleed0 * fx.bleedK; c.bystander = false;      // 즉시 이송은 품질 ×0.7
+        if (rush) c.rush = true;      // (R2 §4.7) 지휘관은 이 환자에게 처치를 더 내지 않고 탑승을 먼저 한다 (casFact 가 믿음에 싣는다)
         learnQuiet(sim, a, casFact(sim, s, c, r.name));
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: fx.q < 0.6 ? `구조 대상 ${c.label} 기본 응급 처치 완료. 전문 처치가 필요합니다.` : `구조 대상 ${c.label} 전문 응급 처치 완료.` });
+        const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: rush ? `구조 대상 ${c.label} 최소한만 처치했습니다. 즉시 이송합니다.` : fx.q < 0.6 ? `구조 대상 ${c.label} 기본 응급 처치 완료. 전문 처치가 필요합니다.` : `구조 대상 ${c.label} 전문 응급 처치 완료.` });
+        if (t.method !== undefined) recordMethod(sim, I, a, t, t.method, t.mwhy ?? 'usual', true, ev);      // (R2) 이 방법으로 처치했다
         r.xpGained += 0.003;
         finishTask(sim, s, a, true);
       }
@@ -1014,7 +1041,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         c.where = 'loaded'; c.tLoaded = sim.t; a.carrying = -1; u.patients.push(c.id); u.patientsIncident = I.id;
         u.firstLoadAt ??= sim.t;      // 이번 이송에 처음 사람을 태운 시각 (지휘관의 출발 판단이 읽는다 — commander.manageAmbulances)
         learnQuiet(sim, a, casFact(sim, s, c, r.name));
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `구조 대상 ${c.label} ${u.callsign}에 탑승 완료.` });
+        const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `구조 대상 ${c.label} ${u.callsign}에 탑승 완료.` });
+        if (u.air) recordMethod(sim, I, a, t, 'airlift', 'usual', true, ev, { cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1 });      // (R2 §4.7) 헬기 이송 — 기록 전용 (위중 환자의 헬기 먼저는 R1 의 지휘관 탑승 배정)
         finishTask(sim, s, a, true);
       }
       return;
@@ -1051,16 +1079,22 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const doneText = p.kind === 'unstable' ? '균열부 보강 완료' : p.kind === 'valve' ? (p.ignited ? '누출 가스 발화' : '가스 밸브 차단 완료') : p.ignited ? '누출 연료 발화' : '연료 누출 조치 완료';
       const sub = p.kind === 'unstable' ? 'crack' : p.kind === 'valve' ? 'valve' : 'fuel';      // (R2 §4.3) 균열·밸브·차량 연료 — 판단부가 sub 로 가린다
       if (p.mitigated || p.ignited) { learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y, sub }, r.name, sim.t, 1, true, doneText), true, true); finishTask(sim, s, a, true); return; }
+      // (R2 §4.8) 방법을 처음 고른다 (누출 조치 — 평소), 밸브 곁에 처음 닿은 틱에 선 자리의 가스로 한 번 더 (환기 후 차단). 환기 후 차단은 환기·기다림 뒤 지금의 차단을 ×0.8 로
+      const mg = { cas: -1, prop: p.id, hostile: -1, region: -1, tile: -1 };
+      if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'mitigate', mg);
+      if (runVentFirst(sim, s, I, a, t, p, XK)) return;
       const m = moveTo(sim, s, a, p.x, p.y, 1.6);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
+      if (!t.marr && t.progress === 0 && t.phase === 0 && recheckOnArrive(sim, s, I, a, t, 'mitigate', mg)) return;
       // 누출 차단 장비가 있으면 밸브·연료 누출 조치가 빠르다 (균열부 보강에는 쓰지 않는다)
-      t.need = p.kind === 'unstable' ? 13 / (0.5 + r.skills.rescue) : (p.kind === 'valve' ? 9 : 7) / (0.5 + r.skills.fire) / (kitWorks(sim, a.rid, 'plugKit', I) ? 1.6 : 1);
+      t.need = (p.kind === 'unstable' ? 13 / (0.5 + r.skills.rescue) : (p.kind === 'valve' ? 9 : 7) / (0.5 + r.skills.fire) / (kitWorks(sim, a.rid, 'plugKit', I) ? 1.6 : 1)) * (t.method === 'ventFirst' ? 0.8 : 1);
       t.progress += dt; a.ring = t.progress / t.need;
       if (t.progress >= t.need) {
         p.mitigated = true;
         learnQuiet(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y, sub }, r.name, sim.t, 1, true, doneText));
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: p.kind === 'unstable' ? '균열부에 지지대를 세웠습니다. 추가 붕괴 위험을 줄였습니다.' : p.kind === 'valve' ? '가스 밸브 차단 완료. 누출이 멈췄습니다.' : '연료 누출 차단 완료. 발화 위험을 제거했습니다.' });
+        const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: p.kind === 'unstable' ? '균열부에 지지대를 세웠습니다. 추가 붕괴 위험을 줄였습니다.' : p.kind === 'valve' ? '가스 밸브 차단 완료. 누출이 멈췄습니다.' : '연료 누출 차단 완료. 발화 위험을 제거했습니다.' });
+        if (t.method !== undefined) recordMethod(sim, I, a, t, t.method, t.mwhy ?? 'usual', true, ev, mg);      // (R2) 이 방법으로 막았다
         if (p.kind === 'unstable') s.staticVersion++;
         r.xpGained += 0.003;
         finishTask(sim, s, a, true);
@@ -1151,6 +1185,11 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const m = moveTo(sim, s, a, sp.x, sp.y, 0.3);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
+      // (R2 §4.8) 출입구 통제 자리에 처음 닿으면 방법을 고른다 — 출입구 통제(평소) · 대피 방송(가스 현장의 경찰 · 확성기: 시작할 때 한 번 알리고 방법 기록. 효과는 hazards.tickGas)
+      if (t.kind === 'perimeter' && t.method === undefined && t.mt0 === undefined) {
+        startMethod(sim, s, I, a, t, 'perimeter', { cas: -1, prop: -1, hostile: -1, region: -1, tile: t.tile });
+        if (t.method === 'announce') recordMethod(sim, I, a, t, 'announce', t.mwhy ?? 'usual', true, I.lastEvent, { cas: -1, prop: -1, hostile: -1, region: -1, tile: t.tile });
+      }
       // 위치 사수: 교전 중인 용의자가 보이면 엄폐 상태에서 응사
       a.cooldown -= dt;
       const vis = s.hostiles.find((h) => (h.state === 'fight') && dist(a.x, a.y, h.x, h.y) <= 13 && los(s, a.x, a.y, h.x, h.y));
@@ -1165,7 +1204,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         if (t.phase === 0) { t.phase = 1; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${josa(h.label, '과/와')} 협상을 시도합니다.` }); }
         else if (t.phase === 1 && h.morale < 0.42) { t.phase = 2; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${josa(h.label, '이/가')} 동요하고 있습니다. 협상을 계속합니다.` }); }
         else if (t.phase === 1 && t.progress > 30 && h.aggression > 0.6) { t.phase = 3; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'radio', imp: 1, text: `${josa(h.label, '이/가')} 협상에 응하지 않습니다.` }); }
-      } else a.label = s.kind === 'hazmat' ? '출입구 통제' : `${exitName(s, t.tile)} 봉쇄`;
+      } else a.label = t.method === 'announce' ? METHOD.announce.label : s.kind === 'hazmat' ? '출입구 통제' : `${exitName(s, t.tile)} 봉쇄`;
       return;
     }
     case 'engage': {
@@ -1184,8 +1223,9 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
             const was = h.state;
             h.state = 'arrested'; h.path = null;
             learnQuiet(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)));
-            if (fights(sim, I, h, was)) scuffle(sim, s, I, a, h);      // 맞서던 상대: 몸싸움 끝에 (H1 단계 4c)
-            else emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${h.label} 검거!` });
+            const ev = fights(sim, I, h, was) ? scuffle(sim, s, I, a, h)      // 맞서던 상대: 몸싸움 끝에 (H1 단계 4c)
+              : emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${h.label} 검거!` });
+            recordArrest(sim, I, a, t, h, was === 'flee' ? 'chase' : s.breachDone || ENTERED.has(t) ? 'breach' : 'tackle', ev);      // (R2 §4.6) 기록 전용 — 추격 검거·진입·덮치기 (무력화 수단·방패가 먼저)
             recCuff(sim, s, h, a, was === 'flee' ? 'chase' : 'tackle');
             r.xpGained += 0.006;
             finishTask(sim, s, a, true);
@@ -1238,11 +1278,15 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
             panicShot(sim, s, I, rd.x, rd.y);
             const room = s.region[tileOf(s, h.x, h.y)] >= 0 ? s.regions[s.region[tileOf(s, h.x, h.y)]].name : '방';
             emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 3, text: n >= 0 ? `${room} 진입! 섬광탄을 던져 넣고 들어갑니다${n ? ` (용의자 ${n}명 무력화)` : ''}.` : `${room} 진입!` });
-            for (const b of [a, ...mates]) { b.path = null; b.pathGoal = -1; if (b.task) { b.task.ptI = 0; b.task.entryDoor = undefined; } }
+            for (const b of [a, ...mates]) { b.path = null; b.pathGoal = -1; if (b.task) { b.task.ptI = 0; b.task.entryDoor = undefined; ENTERED.add(b.task); } }
           }
         } else if (m0 === 'nopath') { rd.entered = true; }
         return;
       }
+      // (R2 §4.6) 총기 상대의 새 방법 — ①-2 다음 · ② 섬광탄 앞. 선택 임무: 처음 닿은 틱과, 방법이 아직 없으면 1초마다 고를 수 있는지 본다(비살상탄·저격 소총을 든 대원만 —
+      // 9칸·협상 60초 같은 조건은 다가가는 동안에 맞게 된다). 고르지 않으면 지금의 분기 그대로. 쏜 틱·조준·다가가는 틱은 여기서 끝(한 틱에 moveTo 하나)
+      if (t.method === undefined && (t.mt0 === undefined || sim.tick % 5 === 0) && (kitCount(sim, a.rid, 'beanbag') > 0 || hasKit(sim, a.rid, 'sniper'))) startMethod(sim, s, I, a, t, 'engage', { cas: -1, prop: -1, hostile: h.id, region: -1, tile: -1 });
+      if (runBeanbag(sim, s, I, a, t, h, XK) || runSniper(sim, s, I, a, t, h, XK)) return;
       const stunned = sim.t < h.stunUntil;
       const d = dist(a.x, a.y, h.x, h.y);
       // ② 섬광탄: 용의자 가까이 다가갔을 때 던져 넣는다
@@ -1263,7 +1307,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
           if (t.progress >= 1.2) {
             h.state = 'arrested'; h.path = null;
             learnQuiet(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)));
-            emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `무력화된 ${h.label} 제압·검거!` });
+            const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `무력화된 ${h.label} 제압·검거!` });
+            recordArrest(sim, I, a, t, h, s.breachDone || ENTERED.has(t) ? 'breach' : 'tackle', ev);      // (R2 §4.6) 무력화 수단(섬광탄·테이저·비살상탄)이 먼저
             recCuff(sim, s, h, a, 'stunned');
             r.xpGained += 0.006;
             finishTask(sim, s, a, true);
@@ -1292,7 +1337,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
           if (t.progress >= 2.2) {
             h.state = 'arrested'; h.path = null;
             learnQuiet(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)));
-            emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${josa(h.label, '을/를')} 곁에서 덮쳐 제압·검거!` });
+            const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${josa(h.label, '을/를')} 곁에서 덮쳐 제압·검거!` });
+            recordArrest(sim, I, a, t, h, s.breachDone || ENTERED.has(t) ? 'breach' : 'tackle', ev);      // (R2 §4.6) 기록 전용
             recCuff(sim, s, h, a, 'tackle');
             r.xpGained += 0.006;
             finishTask(sim, s, a, true);
@@ -1306,7 +1352,11 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (m !== 'arrived') { a.label = '진입'; return; }
       a.fx = h.x - a.x; a.fy = h.y - a.y;
       a.label = '교전';
-      if (a.cooldown <= 0 && los(s, a.x, a.y, h.x, h.y)) shootAt(sim, s, a, h.id);
+      if (a.cooldown <= 0 && los(s, a.x, a.y, h.x, h.y)) {
+        const up = h.state !== 'down';
+        shootAt(sim, s, a, h.id);
+        if (up && h.state === 'down') recordMethod(sim, I, a, t, 'cover', 'usual', true, -1, { cas: -1, prop: -1, hostile: h.id, region: -1, tile: -1 });      // (R2 §4.6) 엄폐 사격으로 쓰러뜨렸다 — 기록 전용
+      }
       else if (!los(s, a.x, a.y, h.x, h.y)) a.pathGoal = -1;
       return;
     }
@@ -1315,6 +1365,9 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (h.state === 'arrested' || h.state === 'escaped' || h.state === 'down') { learn(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)), true, true); finishTask(sim, s, a, true); return; }
       if (h.state !== 'surrendered' && h.weapon === 'gun') { finishTask(sim, s, a, false, 'unsafe'); return; }
       if (tryTaser(sim, s, a, h)) { a.label = '테이저 발사'; return; }      // 덤벼드는 상대(총이 아닌)에게 테이저 — 쏜 틱에는 움직이지 않는다
+      // (R2 §4.6) 비살상탄 — 테이저 다음 · closeIn 판단 지점 앞. 선택 임무: 처음 닿은 틱과, 방법이 아직 없으면 1초마다 고를 수 있는지 본다(비살상탄을 든 대원만). 쏜 틱·조준·다가가는 틱은 여기서 끝
+      if (h.state !== 'surrendered' && t.method === undefined && (t.mt0 === undefined || sim.tick % 5 === 0) && kitCount(sim, a.rid, 'beanbag') > 0) startMethod(sim, s, I, a, t, 'arrest', { cas: -1, prop: -1, hostile: h.id, region: -1, tile: -1 });
+      if (h.state !== 'surrendered' && runBeanbag(sim, s, I, a, t, h, XK)) return;
       if (!docGate(sim, s, a, 'closeIn').ok) return;      // (R3) 판단 지점 closeIn — 단계 0 은 줄이 없어 늘 통과. 2단계가 기다리는 자리(1.8·3칸)·상한·기록을 채운다
       const m = moveTo(sim, s, a, h.x, h.y, 1.3);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
@@ -1324,8 +1377,9 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         const was = h.state;
         h.state = 'arrested';
         learnQuiet(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)));
-        if (fights(sim, I, h, was)) scuffle(sim, s, I, a, h);      // 맞서던 상대: 몸싸움 끝에 (H1 단계 4c)
-        else emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${h.label} 검거 완료.` });
+        const ev = fights(sim, I, h, was) ? scuffle(sim, s, I, a, h)      // 맞서던 상대: 몸싸움 끝에 (H1 단계 4c)
+          : emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${h.label} 검거 완료.` });
+        if (was !== 'surrendered') recordArrest(sim, I, a, t, h, 'tackle', ev);      // (R2 §4.6) 테이저·비살상탄으로 무력화했으면 그 수단, 아니면 덮치기(방패수면 방패). 투항한 사람의 검거는 적지 않는다
         recCuff(sim, s, h, a, was === 'surrendered' ? 'surrender' : 'tackle');
         r.xpGained += 0.005;
         finishTask(sim, s, a, true);
@@ -1698,7 +1752,10 @@ import { boatCost, onWater, reachOf, swimCost, swimOf } from './methods';
 import type { CostFn } from './grid';
 export const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask, unblock };
 // (R2 단계 2) 문·통로의 방법: 고르기(startMethod)·속도·장비 확인·소리·폭파 진입·방법 기록 — 고르는 것은 판단부, 효과는 methodRun
-import { RAPID_HURT, blockerKitFails, blockerRate, doorNoise, extricateDoneText, extricatePrep, extricateRate, recheckOnArrive, recordMethod, runCharge, searchStop, stackSpot, startMethod, tunnelSlide } from './methodRun';
+import { RAPID_HURT, blockerKitFails, blockerRate, doorNoise, extricateDoneText, extricatePrep, extricateRate, recheckOnArrive, recordArrest, recordMethod, runBeanbag, runCharge, runExtinguisher, runSniper, runSuppress, runVentFirst, searchStop, stackSpot, startMethod, tunnelSlide } from './methodRun';
+import { kitCount } from './gear';
+/** (R2 §4.6) 동시 진입·방 진입을 함께 한 임무 — 그 뒤의 검거는 'breach' 로 적는다 (임무의 모양을 바꾸지 않으려 WeakSet) */
+const ENTERED = new WeakSet<Task>();
 import { METHOD, NO_SENSE, chooseMethod } from './methods';
 import type { BreachHow, MethodId } from '../types';
 

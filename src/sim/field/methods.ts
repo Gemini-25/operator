@@ -23,9 +23,10 @@ import type { Sim } from '../engine';
 import { hashStr } from '../rng';
 import { T } from '../types';
 import type { CasBelief, FieldAgent, KitId, MethodId, MethodWhy, Responder, Scene, SignBelief, Task, Unit, UnitKind, WorkItem, WorkKind } from '../types';
-import { clamp, josa } from '../util';
-import { SHARED, hoistOver, kitCount, kitName, swimBonus } from './gear';
-import { staticPass, tileOf } from './grid';
+import { clamp, dist, josa } from '../util';
+import { SCBA_MIN, SHARED, airLow, hoistOver, kitCount, kitHas, kitName, kitQty, seatsLeft, swimBonus } from './gear';
+import { isIndoor, losWalls, staticPass, tileOf } from './grid';
+import { exteriorSpots } from './ops';      // (X6) 외부 방수의 후보 자리 — 생김새만 (진실을 읽지 않는다)
 import type { CostFn } from './grid';
 import { docCtx, docMethodMul, hasDoc } from './doctrine';      // (R3) 교본 배율 — doctrine.ts 는 이 파일을 값으로 import 하지 않는다 (순환 없음)
 import type { DocCtx } from './doctrine/registry';
@@ -230,6 +231,155 @@ function treeShare(s: Scene, region: number): number {
   for (let k = 0; k < ts.length; k++) if (s.tiles[ts[k]] === T.TREE) n++;
   return n / ts.length;
 }
+// ── 화재 진압의 조건·배율 (§4.5) — 대상 구역(tg.region)의 믿음(불·수색 확인율·구조 대상·지휘 상태 ops), 생김새(창·실내), 부대의 물·펌프(조직이 아는 것), 자기 몸 ──
+/** 부대의 물과 펌프가 된다 (R1 의 진압 자격 가운데 부대 몫 — 관창은 kits 에) */
+const hoseReady = (c: MethodCtx): boolean => !c.u.pumpFailed && (c.u.water > 0 || c.u.hydrant);
+/** 믿음 속 그 구역의 불 (모르면 undefined) */
+const fireOf = (c: MethodCtx): number | undefined => (c.tg.region >= 0 ? c.a.beliefs.val<number>('fire', c.tg.region) : undefined);
+/**
+ * (X6) 지휘관이 정한 외부 방어: 믿음 속 지휘 상태(ops 사실)가 외부 방어이거나 그 구역이 단계 3 위험 구역이면 진압 후보를 외부 방수·고가 방수로만 좁힌다
+ * (X6 "R2 의 선택과 관계없이 외부 방수만" — 실행기는 진실의 지휘 상태로 X6 의 외부 방수를 먼저 돈다)
+ */
+function opsOutside(c: MethodCtx): boolean {
+  const o = c.ops as { mode?: string; zones?: { level: number; regions: number[] }[] } | null;
+  if (!o) return false;
+  if (o.mode === 'defensive') return true;
+  const rg = c.tg.region, zs = o.zones;
+  if (rg < 0 || !zs) return false;
+  for (let k = 0; k < zs.length; k++) if (zs[k].level >= 3 && zs[k].regions.indexOf(rg) >= 0) return true;
+  return false;
+}
+/** 믿음 속 그 구역에 살아 있는 구조 대상(현장에 있는)이 있는가 */
+function casInRegion(c: MethodCtx, rg: number): boolean {
+  const cs = c.a.beliefs.list('cas'), w = c.s.w;
+  for (let k = 0; k < cs.length; k++) { const v = cs[k].value as CasBelief; if (v.band < 3 && v.where === 'scene' && c.s.region[v.y * w + v.x] === rg) return true; }
+  return false;
+}
+/**
+ * 외부 방어 방수의 상황 조건 (§4.5 defensive — 까닭 danger): 사람이 없다고 확인된 큰 불(믿음 불 ≥ 0.7, 그 구역에 믿음상 구조 대상이 없고, 수색 확인율 ≥ 0.72 이거나 붕괴 현장).
+ * 또는 자기 판단(실행부가 부를 때만 — t 가 있을 때. 배정의 methodFit 은 남의 몸을 읽지 않는다): 체력 50 아래 · 공기 60초 아래(공기호흡기를 멨는데).
+ * 또는 (R3) 교본이 실내 진압을 뺐다
+ */
+/** 외부 방어 방수의 자발 조건 손잡이 (§6): big = 사람이 없다고 확인된 큰 불, self = 자기 몸(체력·공기) — 시험·균형 확인이 끈다 */
+export const DEFENSIVE = { big: true, self: true, fire: 0.7, srch: 0.72 };
+function defensiveCond(c: MethodCtx): boolean {
+  const rg = c.tg.region;
+  if (DEFENSIVE.big && rg >= 0 && (fireOf(c) ?? 0) >= DEFENSIVE.fire && !casInRegion(c, rg) && ((c.a.beliefs.val<number>('srch', rg) ?? 0) >= DEFENSIVE.srch || c.s.kind === 'collapse')) return true;
+  if (DEFENSIVE.self && c.t !== null && (c.r.health < 50 || (kitHas(c.sim, c.a.rid, 'scba') && kitQty(c.sim, c.a.rid, 'scba') < SCBA_MIN))) return true;
+  return c.dc !== null && docMethodMul(c.dc, 'interior') === 0;
+}
+const WIN = new WeakMap<Scene, { v: number; has: Uint8Array }>();
+/** 그 구역에 창이 있는가 (구역 칸의 네 이웃에 창 칸 — 생김새. 지형이 바뀔 때만 다시 센다) */
+function regionHasWindow(s: Scene, region: number): boolean {
+  let c = WIN.get(s);
+  if (!c || c.v !== s.staticVersion) {
+    const has = new Uint8Array(s.regions.length), w = s.w, n = s.tiles.length;
+    for (let i = 0; i < n; i++) {
+      if (s.tiles[i] !== T.WINDOW) continue;
+      const x = i % w;
+      for (const j of [x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, i - w, i + w]) if (j >= 0 && j < n && s.region[j] >= 0) has[s.region[j]] = 1;
+    }
+    c = { v: s.staticVersion, has };
+    WIN.set(s, c);
+  }
+  return region >= 0 && region < c.has.length && c.has[region] === 1;
+}
+/** 같은 부대에서 그 방법을 쓰는 동료가 있다 (부대마다 하나뿐인 장치 — 사다리차의 고가 사다리) */
+const unitUses = (c: MethodCtx, m: MethodId): boolean => {
+  const ag = c.s.agents;
+  for (let k = 0; k < ag.length; k++) { const b = ag[k]; if (b !== c.a && b.unitId === c.a.unitId && b.status === 'active' && b.task !== null && b.task.method === m) return true; }
+  return false;
+};
+/** 이 현장에 돌고 있는 송풍기가 있거나 동료가 설치하러 가고 있다 (송풍기 s.fan 은 눈에 보이는 장비 — 지휘 상태와 같은 자격) */
+function fanBusy(c: MethodCtx): boolean {
+  const f = c.s.fan;
+  if (f && f.until > c.sim.t) return true;
+  const ag = c.s.agents;
+  for (let k = 0; k < ag.length; k++) { const b = ag[k]; if (b !== c.a && b.status === 'active' && b.task !== null && (b.task.method === 'ventilate' || b.task.method === 'ventFirst')) return true; }
+  return false;
+}
+/** 고가 사다리 방수의 닿는 거리 (칸) — 대기 지점 쪽 실외 칸에서 */
+export const AERIAL_RANGE = 7.5;
+const AERIAL = new WeakMap<Scene, Map<number, { sv: number; list: Int32Array }>>();
+/**
+ * 고가 사다리 방수의 후보 자리 (생김새만): 실내가 아니고 지나갈 수 있는 칸 가운데 그 구역 칸 하나에 벽에 막히지 않는 시야선(창·문 너머)이 7.5칸 안에서 닿는 칸.
+ * 대기 지점(사다리차)에 가까운 순서 — 같으면 칸 번호. 구역마다 처음 한 번 계산하고 지형이 바뀌면 다시 (X6 의 exteriorSpots 와 같은 방식)
+ */
+export function aerialSpots(s: Scene, region: number): Int32Array {
+  let m = AERIAL.get(s);
+  if (!m) { m = new Map(); AERIAL.set(s, m); }
+  const hit = m.get(region);
+  if (hit && hit.sv === s.staticVersion) return hit.list;
+  const reg = s.regions[region], w = s.w, h = s.h, R = AERIAL_RANGE, out: number[] = [];
+  if (reg) {
+    const tl = reg.tiles;
+    for (let y = Math.max(0, Math.floor(reg.y0 - R)); y <= Math.min(h - 1, Math.ceil(reg.y1 + R)); y++) for (let x = Math.max(0, Math.floor(reg.x0 - R)); x <= Math.min(w - 1, Math.ceil(reg.x1 + R)); x++) {
+      const i = y * w + x, ti = s.tiles[i];
+      if (!staticPass(ti) || isIndoor(ti) || ti === T.WATER) continue;
+      for (let q = 0; q < tl.length; q++) {
+        const j = tl[q], jx = j % w, jy = (j / w) | 0;
+        if (dist(x, y, jx, jy) <= R && losWalls(s, x, y, jx, jy)) { out.push(i); break; }
+      }
+    }
+  }
+  const sx = s.staging.x, sy = s.staging.y;
+  out.sort((p, q) => dist(sx, sy, p % w, (p / w) | 0) - dist(sx, sy, q % w, (q / w) | 0) || p - q);
+  const list = Int32Array.from(out);
+  m.set(region, { sv: s.staticVersion, list });
+  return list;
+}
+/** 고가 사다리 방수의 상황 조건 (§4.5 aerial): 그 구역에 창이 있고 믿음 불 ≥ 0.5, 같은 부대의 사다리를 다른 대원이 쓰고 있지 않다, 밖에서 그 구역이 보이는 자리가 있다(생김새) */
+const aerialCond = (c: MethodCtx): boolean => c.tg.region >= 0 && (fireOf(c) ?? 0) >= 0.5 && regionHasWindow(c.s, c.tg.region) && !unitUses(c, 'aerial') && aerialSpots(c.s, c.tg.region).length > 0;
+/** 소화기의 상황 조건 (§4.5 extinguisher): 믿음 속 그 구역의 불이 작고(0 초과 0.35 이하 — 모르면 아니다), 실외 구역이거나 화재·가스·붕괴 현장이 아니다 (차량 화재·작은 불의 초기 진압) */
+function extCond(c: MethodCtx): boolean {
+  const f = fireOf(c), rg = c.tg.region;
+  if (f === undefined || !(f > 0) || f > 0.35 || rg < 0 || rg >= c.s.regions.length) return false;
+  return !c.s.regions[rg].indoor || (c.s.kind !== 'fire' && c.s.kind !== 'hazmat' && c.s.kind !== 'collapse');
+}
+/** 배연의 상황 조건 (§4.5 ventilate — 조건일 때만): 쓸 수 있는 공기호흡기, 선 자리의 연기 > 0.5(도착 재선택에서), 이 현장에 송풍기가 없음, 믿음에 그 구역의 불이 있다 */
+const ventCond = (c: MethodCtx): boolean => kitCount(c.sim, c.a.rid, 'scba') > 0 && c.sense.smoke > 0.5 && (fireOf(c) ?? 0) > 0.05 && !fanBusy(c);
+
+// ── 무장의 조건 (§4.6) — 대상 용의자(tg.hostile)의 믿음(자리·무기·상태·인질), 벽에 막히지 않는 시야선(생김새), 협상을 시작한 시각(지휘 상태) ──
+/** 비살상탄이 닿는 거리 (칸) · 저격이 닿는 거리 · 저격을 고르는 협상 경과(초) */
+export const BEANBAG_RANGE = 9, SNIPER_RANGE = 16, SNIPER_NEGOT = 60;
+interface HosB { x: number; y: number; weapon: string; state: string; hostage: boolean; dead: boolean }
+const hosOf = (c: MethodCtx): HosB | null => (c.tg.hostile >= 0 ? c.a.beliefs.val<HosB>('hos', c.tg.hostile) ?? null : null);
+/**
+ * 비살상탄의 조건 (§4.6 beanbag): 믿음 속 용의자가 맞서거나 대치 중이고(총기면 대치 중일 때만), 인질 곁이 아니며, 9칸 안·벽에 막히지 않는 시야선.
+ * 실제로 쏠 때는 실행부가 진실의 시야선·거리로 다시 본다
+ */
+function beanbagOk(c: MethodCtx): boolean {
+  const h = hosOf(c);
+  if (h === null || h.dead || h.hostage) return false;
+  if (h.weapon === 'gun' ? h.state !== 'hold' : h.state !== 'hold' && h.state !== 'fight') return false;
+  return dist(c.a.x, c.a.y, h.x, h.y) <= BEANBAG_RANGE && losWalls(c.s, c.a.x, c.a.y, h.x, h.y);
+}
+/** 결정적 저격의 조건 (§4.6 sniper — 조건일 때만): 믿음 속 총기 용의자가 인질을 붙잡은 채 교전 중이거나, 협상을 시작한 지 60초가 넘었는데 아직 대치 중 */
+function sniperOk(c: MethodCtx): boolean {
+  const h = hosOf(c);
+  if (h === null || h.dead || h.weapon !== 'gun') return false;
+  if (h.hostage && h.state === 'fight') return true;
+  return h.state === 'hold' && c.s.negotStart >= 0 && c.sim.t - c.s.negotStart > SNIPER_NEGOT;
+}
+
+// ── 응급·누출·통제의 조건 (§4.7·§4.8) — 대상 믿음(band · haz sub), 자기 조직의 부대 상태(환자 자리), 선 자리의 감각, 현장의 송풍기 ──
+/** 즉시 이송의 조건: 믿음 속 대상이 위중(band 2)이고, 이 사건에 현장에 와 있는 부대 가운데 환자 자리가 남은 부대가 있다 (조직이 아는 부대 상태) */
+function rushOk(c: MethodCtx): boolean {
+  if (c.cb === null || c.cb.band !== 2) return false;
+  const I = c.sim.incidents[c.s.incidentId];
+  if (!I) return false;
+  for (let k = 0; k < I.assigned.length; k++) { const u = c.sim.units[I.assigned[k]]; if (u.state === 'onscene' && !u.boardOrder && seatsLeft(c.sim, u) > 0) return true; }
+  return false;
+}
+/** 환기 후 차단의 조건 (§4.8 ventFirst — 조건일 때만): 믿음 속 그 소품이 살아 있는 가스 밸브(haz sub valve), 쓸 수 있는 공기호흡기, 선 자리의 가스(연기) > 0.6(도착 재선택), 현장에 송풍기가 없음 */
+function ventFirstOk(c: MethodCtx): boolean {
+  if (c.tg.prop < 0 || !(c.sense.smoke > 0.6) || kitCount(c.sim, c.a.rid, 'scba') <= 0 || fanBusy(c)) return false;
+  const v = c.a.beliefs.val<{ kind: string; active: boolean; sub?: string }>('haz', c.tg.prop);
+  return v !== undefined && v.kind === 'leak' && v.active && v.sub === 'valve';
+}
+/** 대피 방송의 조건 (§4.8 announce): 경찰이고 가스 현장(가스 누출 유형이거나 가스 규칙이 얹힌 현장) — 확성기는 kits */
+const announceOk = (c: MethodCtx): boolean => c.r.dept === 'police' && (c.s.kind === 'hazmat' || (c.s.rules !== undefined && c.s.rules.indexOf('gas') >= 0));
+
 /** 수색 방법의 탐지 배율 (§4.4): 경유점에 멈춘 동안(t.wait > 0)만 — 청음 ×0.75 · 확성기 ×0.5 (둘 다 소리를 낼 수 있는 대상만 — voice) · 열화상 ×0.6 */
 const SEARCH_MUL: Partial<Record<MethodId, { k: number; voice: boolean }>> = { listen: { k: 0.75, voice: true }, hail: { k: 0.5, voice: true }, thermal: { k: 0.6, voice: false } };
 const NO_MUL = { k: 1, voice: false };
@@ -302,12 +452,18 @@ export const METHOD: Record<MethodId, MethodDef> = {
   hail: row('hail', ['search'], '확성기 호출 수색', '확성기', '확성기 호출', '확성기로 불러', ['megaphone'], 0.75, 0, false, { can: (c) => c.s.kind === 'search' }),
   thermal: row('thermal', ['search'], '열화상 수색', '열화상', '열화상 수색', '열화상 카메라로', ['tic'], 0.8, 0, false,      // 조건일 때만: 밤이거나 그 구역의 나무 칸이 30% 넘는다
     { can: (c) => c.s.kind === 'search' && (c.sim.weather === 'night' || treeShare(c.s, c.tg.region) > 0.3) }),
-  // ── 화재 suppress (§4.5): 다섯의 risk 는 모두 0 (노출은 실행의 연기·열 피해로 따로 들어간다) ──
-  interior: row('interior', ['suppress'], '내부 공격', '내부 공격', '화재 진압', '안으로 들어가', ['hose'], 0.85, 0, true),      // 지금의 방법
-  defensive: row('defensive', ['suppress'], '외부 방어 방수', '외부 방수', '외부 방수', '밖에서 방수해', ['hose'], 0.7, 0, false),
-  aerial: row('aerial', ['suppress'], '고가 사다리 방수', '고가 방수', '고가 방수', '고가 사다리에서 방수해', ['hose'], 0.8, 0, false, { needUnit: ['ladder'] }),
-  extinguisher: row('extinguisher', ['suppress'], '소화기', '소화기', '소화기 분사', '소화기로', ['extinguisher'], 0.6, 0, false),
-  ventilate: row('ventilate', ['suppress'], '배연(송풍기)', '배연', '배연 설치', '송풍기로 연기를 빼고', ['fan'], 0.75, 0, false),
+  // ── 화재 suppress (§4.5): 다섯의 risk 는 모두 0 (노출은 실행의 연기·열 피해로 따로 들어간다). 단계 4 가 켰다 — 실행은 executor 의 case 'suppress'(내부 공격 = 지금 코드)·methodRun.runSuppress·runExtinguisher ──
+  // (X6) 지휘관이 외부 방어를 정했으면(opsOutside) 외부 방수·고가 방수만 — 실내 진압·소화기·배연은 고르지 않는다
+  interior: row('interior', ['suppress'], '내부 공격', '내부 공격', '화재 진압', '안으로 들어가', ['hose'], 0.85, 0, true,      // 지금의 방법 — 공기 문턱은 R1 의 crews.airShort 한 곳(gear.airLow)
+    { can: (c) => hoseReady(c) && !opsOutside(c) && !airLow(c.sim, c.a.rid) }),
+  defensive: row('defensive', ['suppress'], '외부 방어 방수', '외부 방수', '외부 방수', '밖에서 방수해', ['hose'], 0.7, 0, false,      // 조건이면 ×1.4 (까닭 danger). 외부 방어로 좁혀졌으면 조건 없이도 고른다(배율 없이)
+    { can: (c) => hoseReady(c) && (opsOutside(c) || (defensiveCond(c) && exteriorSpots(c.s, c.tg.region, false).length > 0)), situ: (c) => (defensiveCond(c) ? 1.4 : 1) }),      // 밖에서 그 구역이 보이는 자리(X6 의 exteriorSpots — 생김새)가 있어야 한다
+  aerial: row('aerial', ['suppress'], '고가 사다리 방수', '고가 방수', '고가 방수', '고가 사다리에서 방수해', ['hose'], 0.8, 0, false,      // 조건이면 ×1.3 — 조건일 때만 고를 수 있다
+    { needUnit: ['ladder'], can: (c) => hoseReady(c) && aerialCond(c), situ: () => 1.3 }),
+  extinguisher: row('extinguisher', ['suppress'], '소화기', '소화기', '소화기 분사', '소화기로', ['extinguisher'], 0.6, 0, false,      // 펌프·물을 쓰지 않는다 — 경찰·구급·기관원의 작은 불 초기 진압
+    { can: (c) => !opsOutside(c) && extCond(c) }),
+  ventilate: row('ventilate', ['suppress'], '배연(송풍기)', '배연', '배연 설치', '송풍기로 연기를 빼고', ['fan'], 0.75, 0, false,      // 조건일 때만, 그때 ×1.3 (까닭 danger). 설치가 끝나면 같은 대원은 내부 공격으로 (예정된 전환)
+    { can: (c) => !opsOutside(c) && ventCond(c), situ: () => 1.3 }),
   // ── 무장 engage·arrest (§4.6): 지금의 분기와 R1 의 행동은 기록 전용, 새 방법은 비살상탄·저격 둘 ──
   chase: row('chase', ['engage'], '추격 검거', '추격', '추격', '뒤쫓아', [], 0, 0, true, REC),
   breach: row('breach', ['engage'], '진입 제압', '진입', '진입', '진입해', [], 0, 0, true, REC),
@@ -316,17 +472,20 @@ export const METHOD: Record<MethodId, MethodDef> = {
   cover: row('cover', ['engage'], '엄폐 사격', '엄폐 사격', '엄폐 사격', '엄폐 사격으로', [], 0, 0, true, REC),
   taser: row('taser', ['engage', 'arrest'], '테이저', '테이저', '테이저', '테이저로 무력화한 뒤', ['taser'], 0, 0, false, REC),
   shield: row('shield', ['engage', 'arrest'], '방패 밀착 제압', '방패', '방패 제압', '방패로 밀어붙여', ['shield'], 0, 0, false, REC),
-  beanbag: row('beanbag', ['engage', 'arrest'], '비살상탄', '비살상탄', '비살상탄 조준', '비살상탄으로 무력화한 뒤', ['beanbag'], 0.8, 0, false),
-  sniper: row('sniper', ['engage'], '결정적 저격', '저격', '저격 조준', '저격으로', ['sniper'], 0.6, 0, false),
+  // 단계 5 가 켠 둘 (선택 임무 — 고르지 않으면 지금의 분기). 실행은 methodRun.runBeanbag·runSniper (executor 의 case 'engage' ①-2 다음 · case 'arrest' 의 테이저 다음)
+  beanbag: row('beanbag', ['engage', 'arrest'], '비살상탄', '비살상탄', '비살상탄 조준', '비살상탄으로 무력화한 뒤', ['beanbag'], 0.8, 0, false, { can: beanbagOk }),
+  sniper: row('sniper', ['engage'], '결정적 저격', '저격', '저격 조준', '저격으로', ['sniper'], 0.6, 0, false, { can: sniperOk }),      // 조건일 때만 (인질을 붙잡고 교전 · 협상 60초 넘은 대치)
   // ── 응급 treat · 이송 수단 load (§4.7) ──
-  stay: row('stay', ['treat'], '현장 안정 후 이송', '현장 처치', '응급 처치', '현장에서 안정시켜', [], 0.8, 0, true),      // 지금의 방법
-  rush: row('rush', ['treat'], '즉시 이송', '즉시 이송', '즉시 이송 준비', '최소한만 처치하고 곧바로', ['bag', 'alsBag', 'doctorKit'], 0.9, 0, false),
+  // 단계 6 이 켰다 — 실행은 executor 의 case 'treat'(즉시 이송: 필요 시간 3초 · 품질 ×0.7 · c.rush)·'load'(헬기 이송 기록)·'mitigate'(methodRun.runVentFirst)·'perimeter'(대피 방송)
+  stay: row('stay', ['treat'], '현장 안정 후 이송', '현장 처치', '응급 처치', '현장에서 안정시켜', [], 0.8, 0, true, { can: ALWAYS }),      // 지금의 방법
+  rush: row('rush', ['treat'], '즉시 이송', '즉시 이송', '즉시 이송 준비', '최소한만 처치하고 곧바로', ['bag', 'alsBag', 'doctorKit'], 0.9, 0, false, { can: rushOk }),      // 조건일 때만 (위중 · 환자 자리가 남은 부대)
   airlift: row('airlift', ['load'], '헬기 이송', '헬기 이송', '헬기 탑승', '헬기로', [], 0, 0, false, REC),
   // ── 누출 조치 mitigate · 통제 perimeter (§4.8) ──
-  seal: row('seal', ['mitigate'], '누출 조치', '누출 조치', '위험 요소 조치', '직접', [], 0.8, 0, true),      // 지금의 방법 (밸브 차단·균열 보강·연료 차단)
-  ventFirst: row('ventFirst', ['mitigate'], '환기 후 차단', '환기 후 차단', '환기 후 차단', '먼저 환기한 뒤', [], 0.75, 0, false),
-  cordon: row('cordon', ['perimeter'], '출입구 통제', '출입 통제', '출입구 통제', '출입구를 막아', [], 0.7, 0, true),      // 지금의 방법
-  announce: row('announce', ['perimeter'], '대피 방송', '대피 방송', '대피 방송', '확성기로', ['megaphone'], 0.8, 0, false),
+  seal: row('seal', ['mitigate'], '누출 조치', '누출 조치', '위험 요소 조치', '직접', [], 0.8, 0, true, { can: ALWAYS }),      // 지금의 방법 (밸브 차단·균열 보강·연료 차단)
+  ventFirst: row('ventFirst', ['mitigate'], '환기 후 차단', '환기 후 차단', '환기 후 차단', '먼저 환기한 뒤', [], 0.75, 0, false,      // 조건일 때만, 그때 ×1.3 (까닭 danger). 송풍기가 있으면 송풍기, 없으면 맨몸으로 문·창을 연다
+    { can: ventFirstOk, situ: () => 1.3 }),
+  cordon: row('cordon', ['perimeter'], '출입구 통제', '출입 통제', '출입구 통제', '출입구를 막아', [], 0.7, 0, true, { can: ALWAYS }),      // 지금의 방법
+  announce: row('announce', ['perimeter'], '대피 방송', '대피 방송', '대피 방송', '확성기로', ['megaphone'], 0.8, 0, false, { can: announceOk }),      // 가스 현장의 경찰 — tickGas 의 주변 시민 확률 ×0.4
   // ── 야외 수색 (§4.9 — 7단계, 선택) ──
   air: row('air', ['search'], '공중 수색', '공중 수색', '공중 수색', '상공에서', [], 0, 0, false, REC),      // R1 경찰 헬기의 관측자 — 기록 전용
   drone: row('drone', ['search'], '드론 열화상', '드론', '드론 수색', '드론으로', [], 0.8, 0, false),      // 장비가 생기면 kits 를 채운다
@@ -621,7 +780,7 @@ export const THROW_REACH = 3.6;
 /**
  * 방법을 고른다. 상태를 바꾸지 않고 난수를 쓰지 않는다 — 같은 상황 = 같은 선택 (다양성은 장비·능력·상황의 차이에서 나온다).
  * 후보: 그 임무의 방법이고, 기록 전용이 아니고, 장비(canUse)와 상황(can)이 맞고, 이 임무에서 접지 않았고(t.tried), 그 대상에 대한 접은 기억(a.mfail)이 없는 것.
- * 하나도 없으면 차례로 넓힌다: ① t.tried 를 무시 ② 고장이 아닌 a.mfail 기억을 무시 ③ null (선택 임무는 null 이 정상이다).
+ * 하나도 없으면 차례로 넓힌다: ① t.tried 를 무시 ② 고장이 아닌 a.mfail 기억을 무시 ③ null. 선택 임무(WORK_MODE 'optional')는 넓히지 않고 바로 null 이다(정상 — 방법 없이 지금 코드로).
  * 까닭은 위에서부터 처음 맞는 것: noGear(장비를 따지지 않은 1등이 장비 때문에 빠졌다) · weak · danger · quiet · fast · tooFar · near · team · usual.
  * 실패·고장·조건 상실로 바꿀 때의 까닭(failed·broken·tooFar·team)은 실행부(switchMethod)가 덮어쓴다.
  * dc: R3 의 교본 입력 — 실행부가 자기 모드 docCtx(…, 'self') 로 넘긴다(없으면 null). 점수에 × docMethodMul(사본, m) — 교본 줄이 없으면 1.
@@ -633,8 +792,11 @@ export function chooseMethod(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, 
   const key = targetKey(work, tg);
   let tried = t !== null && t.tried !== undefined && t.tried.length ? t.tried : null, brokenOnly = false;
   let cands = rank(c, key, tried, false, false);
-  if (!cands.length && tried !== null) { tried = null; cands = rank(c, key, null, false, false); }                                   // ① 다 써 봤으면 처음부터 다시
-  if (!cands.length && a.mfail !== undefined && a.mfail.length) { brokenOnly = true; cands = rank(c, key, null, true, false); }     // ② 접은 기억을 무시 (고장은 빼고)
+  // 넓히기는 늘 남는 임무·맡지 않는 임무만 — 선택 임무(진압·교전·검거 …)는 null 이 정상이라 넓히지 않는다
+  // (단계 5: 넓히면 방금 접은 하나뿐인 방법 — 저격 자리로 갈 길이 없는 저격 — 을 바로 다시 골라 접기를 틱마다 되풀이했다)
+  const widen = WORK_MODE[work] !== 'optional';
+  if (widen && !cands.length && tried !== null) { tried = null; cands = rank(c, key, null, false, false); }                                   // ① 다 써 봤으면 처음부터 다시
+  if (widen && !cands.length && a.mfail !== undefined && a.mfail.length) { brokenOnly = true; cands = rank(c, key, null, true, false); }     // ② 접은 기억을 무시 (고장은 빼고)
   if (!cands.length) return null;
   const top = cands[0].m;
   const free = rank(c, key, tried, brokenOnly, true)[0];      // 장비를 따지지 않고 다시 셈한 1등 (needUnit 은 그대로 따진다)
@@ -671,6 +833,6 @@ export function methodFit(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): numbe
   if (NEEDS_CAS[w.kind] && c.cb === null) return 0;
   const key = targetKey(w.kind, tg);
   let cands = rank(c, key, null, false, false);
-  if (!cands.length && a.mfail !== undefined && a.mfail.length) cands = rank(c, key, null, true, false);
+  if (!cands.length && WORK_MODE[w.kind] !== 'optional' && a.mfail !== undefined && a.mfail.length) cands = rank(c, key, null, true, false);      // 선택 임무는 넓히지 않는다 (chooseMethod 와 같다)
   return cands.length ? cands[0].score : 0;
 }

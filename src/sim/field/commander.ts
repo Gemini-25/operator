@@ -453,12 +453,12 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       const indoorHazard = s.kind === 'fire' || s.kind === 'hazmat' || s.kind === 'collapse' || (rg >= 0 && (B.val<number>('fire', rg) ?? 0) > 0.1);
       const hasMedic = s.agents.some((b) => b.status === 'active' && sim.responders[b.rid].dept === 'ems');
       // 처치가 필요한가: 아직 아무 처치도 못 받았거나, 기본 처치만 받았는데 구급대원이 와 있다
-      const needTreat = c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedic && treatsDone(f.id) < 2));
+      const needTreat = !c.rush && c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedic && treatsDone(f.id) < 2));      // !c.rush: (R2 §4.7) 즉시 이송을 정한 환자는 처치를 더 내지 않는다
       const treatHere = hasMedic || (s.kind === 'medical' && c.tq === 0);      // 응급 환자는 누구든 먼저 손을 쓴다
       if (!indoorHazard && needTreat && treatHere && !hotArmed) { want(sim, s, 'treat', { cas: f.id }, 0.8 + urg, 1, false, cev); want(sim, s, 'carry', { cas: f.id }, 0.5, 2, false, cev); }
       else { cancel(s, (w) => w.kind === 'treat' && w.cas === f.id && w.status === 'open'); want(sim, s, 'carry', { cas: f.id }, 0.84 + urg, 2, false, cev); }
     } else if (c.where === 'safe') {
-      if (c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedicAny && treatsDone(f.id) < 2))) want(sim, s, 'treat', { cas: f.id }, 0.72 + urg, 1, false, cev);
+      if (!c.rush && c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedicAny && treatsDone(f.id) < 2))) want(sim, s, 'treat', { cas: f.id }, 0.72 + urg, 1, false, cev);      // !c.rush: (R2 §4.7)
       else cancel(s, (w) => w.kind === 'treat' && w.cas === f.id && w.status === 'open');
       if (c.band >= 1 && ambulances.length) {
         const already = s.board.some((w) => w.kind === 'load' && w.cas === f.id && (w.status === 'open' || w.status === 'active'));
@@ -471,7 +471,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
             if ((!!q.air === airFirst) !== (pass === 0)) continue;
             if (seatsUsed(sim, q) + loadsQueued(uid) < seatsOf(q)) { best = uid; break; }
           }
-          if (best >= 0) want(sim, s, 'load', { cas: f.id, prop: best }, (c.treated ? 0.7 : 0.5) + urg, 1, false, cev);
+          if (best >= 0) want(sim, s, 'load', { cas: f.id, prop: best }, c.rush ? 0.97 : (c.treated ? 0.7 : 0.5) + urg, 1, false, cev);      // (R2 §4.7) 즉시 이송이면 탑승이 먼저 (0.97)
         }
       }
     }

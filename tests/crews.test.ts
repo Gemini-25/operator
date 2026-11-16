@@ -85,7 +85,8 @@ function watch(seed: string, d: Difficulty, force: string | null): Watched {
         for (const k of kinds) {
           let m = w.held.get(k); if (!m) { m = new Map(); w.held.set(k, m); }
           m.set(s.id + ':' + a.rid, r.role!);
-          if ((k === 'suppress' || k === 'overhaul') && !hasKit(sim, a.rid, 'hose')) note(`${who} 관창 없이 ${k}`);
+          // (R2 단계 4) 소화기를 든 대원(경찰·구급·기관원)은 작은 불의 진압을 소화기로 맡는다 — 그 방법이거나 아직 고르기 전(첫 틱)만
+          if ((k === 'suppress' || k === 'overhaul') && !hasKit(sim, a.rid, 'hose') && !(k === 'suppress' && k === a.task.kind && hasKit(sim, a.rid, 'extinguisher') && (a.task.method === 'extinguisher' || a.task.mt0 === undefined))) note(`${who} 관창 없이 ${k}`);
           if (k === 'defuse' && !hasKit(sim, a.rid, 'eodKit')) note(`${who} 해체 공구 없이 해체`);
           if ((k === 'engage' || k === 'perimeter') && !hasFirearm(sim, a.rid)) note(`${who} 총기 없이 ${k}`);
         }

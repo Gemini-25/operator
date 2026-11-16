@@ -640,7 +640,13 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
       if (hot && !(r.dept === 'police' && hasFirearm(sim, rid))) return 0;
       if (s.regions[w.region].indoor && fireRisk(w.region) && !scbaOk(sim, rid, afterSwap)) return 0;
       return 0.45 + 0.3 * r.experience + 0.25 * r.judgment + (r.dept === 'police' && s.kind !== 'fire' && s.kind !== 'medical' ? 0.1 : 0) + (r.dept === 'ems' && s.kind === 'medical' ? 0.15 : 0);
-    case 'suppress': return hasKit(sim, rid, 'hose') && airOk(sim, rid, afterSwap) && !u.pumpFailed && (u.water > 0 || u.hydrant) ? r.skills.fire : 0;      // 관창을 든 사람만 물을 쏜다 (공기가 문턱 아래면 통을 바꾼 뒤에)
+    case 'suppress': {
+      // 관창을 든 사람만 물을 쏜다 (공기가 문턱 아래면 통을 바꾼 뒤에) — 이때는 내부 공격(외부 방어면 외부 방수)을 늘 고를 수 있다 (R2 methodFit 과 같은 답 — 계산을 아낀다)
+      const hose = hasKit(sim, rid, 'hose') && !u.pumpFailed && (u.water > 0 || u.hydrant);
+      if (hose && airOk(sim, rid, afterSwap)) return r.skills.fire;
+      // (R2 §4.5) 그 밖은 그 사람이 지금 고를 수 있는 진압 방법으로: 공기가 문턱 아래인 관창수의 외부 방수(사람이 없다고 확인된 큰 불), 관창이 없는 대원(경찰·구급·기관원)의 소화기(작은 불) 0.25
+      return methodFit(sim, s, a, w) > 0 ? (hose ? r.skills.fire : 0.25) : 0;
+    }
     case 'hookup':
       if (r.dept !== 'fire' || a.unitId !== w.prop) return 0;
       // 그 부대에서 펌프를 맡은 대원(기관원·사다리 조작원)이 활동 중이면 급수 연결은 그 사람의 일이다. 없거나 쓰러졌으면 그 부대의 누구나 한다

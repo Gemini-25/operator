@@ -10,7 +10,7 @@
 //
 // 이 파일은 crews.ts 와 타입만 import 한다. agents.ts·executor.ts·hazards.ts 를 import 하지 않는다 (agents → methods → gear → crews 에 순환을 만들지 않는다).
 
-import { KITS, hasKit, kitUses, kitWorks as crewKitWorks, seatsOf, toolUse, useKit as crewUseKit } from '../crews';
+import { KITS, airShort, hasKit, kitUses, kitWorks as crewKitWorks, seatsOf, toolUse, useKit as crewUseKit } from '../crews';
 import type { ToolUse } from '../crews';
 import type { Sim } from '../engine';
 import type { Incident, KitId, RoleId, Unit } from '../types';
@@ -34,6 +34,11 @@ export function kitCount(sim: Sim, rid: number, id: KitId): number {
   if (id === 'scba') return kitUses(sim, rid, id) >= SCBA_MIN ? 1 : 0;
   return isQty(id) ? kitUses(sim, rid, id) : 1;      // 수량이 없는 장비에는 남은 수를 묻지 않는다 (R1 이 그 값을 정하지 않았다)
 }
+/**
+ * (R2 단계 4) 공기가 모자란가 — R1 의 crews.airShort 그대로(공기호흡기를 멨는데 남은 공기가 문턱 AIR_MIN 아래). 공기 문턱은 이 한 곳이다:
+ * 현장의 배정(agents.fitFor)·오는 부대(crews.capableOf)·지휘관의 "바꾸고 와서 맡을 사람"(commander.anyCapable)이 같은 문턱을 본다. 자기 장비의 알려진 상태다
+ */
+export function airLow(sim: Sim, rid: number): boolean { return airShort(sim, rid); }
 /** 장비의 화면 이름 ('구조 로프') */
 export function kitName(id: KitId): string { return KITS[id].name; }
 /** 역할별 수영 보정 (R2 §3.3 표). 표에 없는 역할(경찰·구급·의사·간호사, 내리지 않는 자리)은 0 */

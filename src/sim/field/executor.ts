@@ -378,8 +378,11 @@ export function pumpTended(sim: Sim, s: Scene, unitId: number): boolean {
   return false;
 }
 
-/** eff = 효과 배율(물이 불에 닿는 양), wmul = 물 소모 배율 — (X6 §5.5) 외부 방수는 0.7·1.4 (R2 의 defensive 가 같은 인자를 쓴다) */
-function spray(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, eff = 1, wmul = 1): boolean {
+/**
+ * eff = 효과 배율(물이 불에 닿는 양), wmul = 물 소모 배율 — (X6 §5.5) 외부 방수는 0.7·1.4 (R2 의 defensive 가 같은 인자를 쓴다).
+ * jitter = (R2 §3.5) 물줄기 그림의 끝점을 s.rng 로 흩뜨리는가 — 지금의 호출은 그대로(true), R2 의 외부 방수·고가 방수는 false(고정 오프셋 — s.rng 는 명중·용의자 행동의 흐름이다)
+ */
+function spray(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, eff = 1, wmul = 1, jitter = true): boolean {
   const I = sim.incidents[s.incidentId];
   const r = resp(sim, a), u = sim.units[a.unitId];
   if (u.pumpFailed) { equipTrouble(sim, s, a, 'pump'); return false; }
@@ -390,7 +393,10 @@ function spray(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, eff = 
   if (!u.hydrant) u.water = Math.max(0, u.water - 1.5 * (tended ? 0.9 : 1) * wmul * sim.dt);
   u.pumpCond -= 0.0042 * sim.tune.pumpWearMul * (tended ? 0.6 : 1) * sim.dt;
   drain(sim, a, 0.55);
-  if (sim.tick % 2 === 0) pushFx(sim, s, 'spray', a.x, a.y, tx + s.rng.range(-0.4, 0.4), ty + s.rng.range(-0.4, 0.4), undefined, undefined, 0.3);
+  if (sim.tick % 2 === 0) {
+    if (jitter) pushFx(sim, s, 'spray', a.x, a.y, tx + s.rng.range(-0.4, 0.4), ty + s.rng.range(-0.4, 0.4), undefined, undefined, 0.3);
+    else { const o = ((sim.tick % 3) - 1) * 0.3; pushFx(sim, s, 'spray', a.x, a.y, tx + o, ty - o, undefined, undefined, 0.3); }
+  }
   if (u.pumpCond < 0.2 && !u.pumpFailed) {
     u.pumpFailed = true;
     u.pumpFails = (u.pumpFails ?? 0) + 1;      // (I2) 이번 교대의 펌프 고장 수 — 다음 교대의 정밀 정비를 정한다(persist.makeCarryover). 결과에 쓰지 않는다
@@ -670,6 +676,7 @@ function runExterior(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, re
   for (const i of reg.tiles) if (s.fire[i] > 0.05) { lit = true; break; }
   if (!lit) {      // 그 구획에 불이 없다: 안에서의 진압 확인과 같다 (밖에서 본 대로 알린다)
     learn(sim, a, mkFact('fire', reg.id, 0, r.name, sim.t, 1, true, `${reg.name} 화재 진압 확인 (외부)`), true, true);
+    if (t.method !== undefined) recordMethod(sim, I, a, t, t.method === 'aerial' ? 'aerial' : 'defensive', t.mwhy ?? 'usual', true, -1, { cas: -1, prop: -1, hostile: -1, region, tile: -1 });      // (R2 §4.5) 지휘관이 정한 외부 방어 — 고른 방법과 관계없이 밖에서 끈 것이다
     r.xpGained += 0.003; finishTask(sim, s, a, true); return true;
   }
   const zm = ops.zones.length ? zoneMask(s, ops.zones) : null;
@@ -816,9 +823,17 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       return;
     }
     case 'suppress': {
+      // (R2 §4.5) 방법을 처음 고른다 — 선택 임무: 고를 것이 없으면 방법 없이 지금 코드(내부 공격)로. 소화기는 펌프·물을 쓰지 않으므로 그 검사보다 먼저
+      const sg = { cas: -1, prop: -1, hostile: -1, region: t.region, tile: -1 };
+      if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'suppress', sg);
+      if (t.method === 'extinguisher') { runExtinguisher(sim, s, I, a, t, XK); return; }
+      if (!hasKit(sim, a.rid, 'hose')) { finishTask(sim, s, a, false, 'nomethod'); return; }      // 관창이 없는 대원(소화기를 다 썼거나 고를 수 없게 됐다)은 할 것이 없다
       if (u.pumpFailed || (u.water <= 0 && !u.hydrant)) { equipTrouble(sim, s, a, u.pumpFailed ? 'pump' : 'water'); finishTask(sim, s, a, false, 'equip'); return; }
-      // (X6 §5.5) 외부 방어·진입 금지 구역·단계 3 구역 너머: 밖에서 방수한다. 단계 2 구역 안에서 이미 진압하던 대원은 안에서 잇는다
-      if (opsExterior(s, t.region) && !(t.phase === 2 && insideLevel2(s, a, t.region))) { if (runExterior(sim, s, I, a, t, t.region)) return; }
+      // (X6 §5.5) 외부 방어·진입 금지 구역·단계 3 구역 너머: 밖에서 방수한다. 단계 2 구역 안에서 이미 진압하던 대원은 안에서 잇는다 — R2 의 방법 선택보다 먼저다(현장 모드가 우선)
+      const ext = opsExterior(s, t.region);
+      if (ext && !(t.phase === 2 && insideLevel2(s, a, t.region))) { if (runExterior(sim, s, I, a, t, t.region)) return; }
+      // (R2 §4.5) 외부 방어 방수·고가 사다리 방수·배연 (내부 공격과 방법 없음은 아래 지금 코드)
+      if (!ext && runSuppress(sim, s, I, a, t, XK)) return;
       if (t.phase === 1) { t.tile = -1; a.path = null; }      // 밖에서 하다 안으로 (구역이 풀렸거나, 단계 2 구역인데 밖에서 닿을 자리가 없다)
       t.phase = 2;      // 안에서 한다
       if (t.tile < 0 || s.fire[t.tile] <= 0.05 || sim.t > t.progress) { t.tile = nearestFireTile(sim, s, a, t.region); t.progress = sim.t + 1.6; }
@@ -828,7 +843,11 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         if (m === 'arrived' || m === 'nopath') {
           perceive(sim, s, a);
           let any = false; for (const i of reg.tiles) if (s.fire[i] > 0.05) { any = true; break; }
-          if (!any) { learn(sim, a, mkFact('fire', reg.id, 0, r.name, sim.t, 1, true, `${reg.name} 화재 진압 확인`), true, true); r.xpGained += 0.003; finishTask(sim, s, a, true); }
+          if (!any) {
+            learn(sim, a, mkFact('fire', reg.id, 0, r.name, sim.t, 1, true, `${reg.name} 화재 진압 확인`), true, true); r.xpGained += 0.003;
+            if (t.method !== undefined) recordMethod(sim, I, a, t, t.method, t.mwhy ?? 'usual', true, -1, sg);      // (R2) 이 방법으로 그 구역의 불을 잡았다
+            finishTask(sim, s, a, true);
+          }
           else if (m === 'arrived') {
             // 구역 안에 불은 남아 있는데 연기로 보이지 않는다 → 가장 가까운 화점으로 더듬어 접근
             let bd = 1e9;
@@ -842,6 +861,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const m = moveTo(sim, s, a, tx, ty, 3.2, true);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
+      // (R2 §3.2-2) 화점 곁에 처음 닿은 틱: 선 자리의 연기로 한 번 더 고른다(배연 — 연기 0.5 넘음, 외부 방수 — 자기 몸). 바꿨으면 다음 틱부터 그 방법
+      if (!t.marr && t.method !== undefined && !ext && recheckOnArrive(sim, s, I, a, t, 'suppress', sg, true)) return;
       a.fx = tx - a.x; a.fy = ty - a.y;
       a.ring = 1 - s.fire[t.tile];
       if (!spray(sim, s, a, tx, ty)) finishTask(sim, s, a, false, 'equip');
@@ -1698,7 +1719,7 @@ import { boatCost, onWater, reachOf, swimCost, swimOf } from './methods';
 import type { CostFn } from './grid';
 export const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask, unblock };
 // (R2 단계 2) 문·통로의 방법: 고르기(startMethod)·속도·장비 확인·소리·폭파 진입·방법 기록 — 고르는 것은 판단부, 효과는 methodRun
-import { RAPID_HURT, blockerKitFails, blockerRate, doorNoise, extricateDoneText, extricatePrep, extricateRate, recheckOnArrive, recordMethod, runCharge, searchStop, stackSpot, startMethod, tunnelSlide } from './methodRun';
+import { RAPID_HURT, blockerKitFails, blockerRate, doorNoise, extricateDoneText, extricatePrep, extricateRate, recheckOnArrive, recordMethod, runCharge, runExtinguisher, runSuppress, searchStop, stackSpot, startMethod, tunnelSlide } from './methodRun';
 import { METHOD, NO_SENSE, chooseMethod } from './methods';
 import type { BreachHow, MethodId } from '../types';
 

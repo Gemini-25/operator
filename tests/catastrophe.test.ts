@@ -2268,3 +2268,172 @@ describe('X6 단계 7: 지도의 건물 상태·소리·카메라 (§7.2·§7.4 
     expect(DECISIVE.has('horn')).toBe(true);
   });
 });
+
+// ───────────────────────── 단계 9 (선택): 분진 폭발 §4.5 · 플래시오버 §4.7 ─────────────────────────
+/** CAT 의 선택 규칙을 잠시 켜고(또는 끄고) 돌린 뒤 되돌린다 */
+function withFlags<R>(dust: boolean, flashover: boolean, fn: () => R): R {
+  const d0 = CAT.dust, f0 = CAT.flashover;
+  CAT.dust = dust; CAT.flashover = flashover;
+  try { return fn(); } finally { CAT.dust = d0; CAT.flashover = f0; }
+}
+/** 공장·창고에서 난 화재 (건물을 정해 일으킨다) */
+function factoryFire(seed: string, k = 0, placeId = -1): Made {
+  const sim = new Sim(seed);
+  const places = sim.city.places.filter((p) => p.kind === 'factory' || p.kind === 'warehouse' || p.kind === 'storage' || p.kind === 'workshop');
+  const I = createIncident(sim, { type: 'fire', variant: 'std', placeId: placeId >= 0 ? placeId : places[k % places.length].id, rng: sim.rng.fork('t') });
+  return { sim, I, s: sim.scenes[I.id]! };
+}
+/** 분진 구획이 정해지는 공장 화재를 찾는다 */
+function dustScene(prefix: string): Made {
+  for (let k = 0; k < 40; k++) {
+    const m = factoryFire(prefix + k, k);
+    const c = catOf(m.sim, m.s);
+    if (c && c.dustRegion >= 0) return m;
+  }
+  throw new Error('분진 구획이 있는 현장을 찾지 못함');
+}
+
+describe('X6 단계 9: 분진 폭발 (선택 — §4.5)', () => {
+  it('분진 구획은 공장·창고 화재의 가장 큰 실내 구획이고 catinit 흐름의 맨 뒤에 뽑는다 — 용기 열 배율·드럼통은 꺼져 있을 때와 같고, 어느 입구로 처음 만들어도 같다', () => {
+    withFlags(true, false, () => {
+      const m = dustScene('X6-D');
+      const c = m.s.cat!;
+      const big = Math.max(...indoorRegs(m.s).map((r) => r.tiles.length));
+      expect(m.s.regions[c.dustRegion].tiles.length).toBe(big);
+      expect(['factory', 'warehouse', 'storage', 'workshop']).toContain(m.I.truth.placeKind);
+      // 꺼져 있으면 분진 구획이 없고, 용기의 열 배율·드럼통 자리는 같다
+      const off = factoryFire(m.sim.seed, 0, m.I.truth.placeId);
+      const offC = withFlags(false, false, () => catOf(off.sim, off.s))!;
+      expect(offC.dustRegion).toBe(-1);
+      const v1 = m.s.props.filter((p) => p.vessel).map((p) => [p.x, p.y, p.vessel, p.heatK]);
+      const v2 = off.s.props.filter((p) => p.vessel).map((p) => [p.x, p.y, p.vessel, p.heatK]);
+      expect(v2).toEqual(v1);
+      // 판단 입구(perceive)로 처음 만들어도 같은 구획
+      const third = factoryFire(m.sim.seed, 0, m.I.truth.placeId);
+      const a = agentAt(third, fireRids(third.sim)[0], third.s.staging.x, third.s.staging.y);
+      perceive(third.sim, third.s, a);
+      expect(third.s.cat!.dustRegion).toBe(c.dustRegion);
+    });
+  });
+  it('그 구획 칸의 15% 이상이 센 불(0.6)이면 초당 4% 로 터진다 — 기록이 먼저(그 기록이 사람 피해의 원인), 구획의 연료 칸에 불, 폭발 흔적, 현장 전원이 듣는다. 지휘관이 분진을 몰랐으면 HIDDEN_HAZARD', () => {
+    withFlags(true, false, () => {
+      const m = dustScene('X6-D2');
+      const c = m.s.cat!, reg = m.s.regions[c.dustRegion];
+      const near = agentAt(m, fireRids(m.sim)[0], Math.round(reg.cx), Math.round(reg.cy));
+      m.s.agents.push(near);
+      const hot = reg.tiles.slice(0, Math.ceil(reg.tiles.length * 0.2));
+      for (let t = 0; t < 300 && !c.dustDone; t++) { for (const i of hot) { m.s.fire[i] = 0.8; m.s.fuel[i] = Math.max(m.s.fuel[i], 0.5); } stepCat(m, c); }
+      expect(c.dustDone).toBe(true);
+      expect(c.dustN).toBe(1);
+      const rec = m.I.problems.find((p) => p.detail.startsWith('분진 폭발'))!;
+      expect(rec.code).toBe('HIDDEN_HAZARD');
+      expect(rec.detail).toContain('불길이 쌓인 분진에 닿음');
+      expect(x6Count(m.I).boom).toBe(c.gasN + c.vesselN + c.dustN);
+      expect(near.hurtEv ?? -1).toBe(rec.eventId);
+      for (const i of reg.tiles) if (m.s.fuel[i] > 0) expect(m.s.fire[i]).toBeGreaterThanOrEqual(0.6 - 1e-6);
+      expect(m.sim.placeMarks.get(m.I.truth.placeId)).toBeDefined();
+      expect(m.s.fx.some((f) => f.kind === 'boom' && f.c?.src === 'dust')).toBe(true);
+      expect(m.s.radio.some((r) => r.facts.some((f) => f.type === 'sign' && (f.value as SignBelief).what === 'dust'))).toBe(true);
+      // 다시는 터지지 않는다
+      for (let k = 0; k < 30; k++) stepCat(m, c);
+      expect(c.dustN).toBe(1);
+    });
+  });
+  it('충격은 50% 로 점화한다(같은 충격 자리를 두 번 굴리지 않는다). 지휘관이 분진 조짐을 알았으면 EXPLOSION', () => {
+    withFlags(true, false, () => {
+      let boom = 0;
+      for (let k = 0; k < 8; k++) {
+        const m = dustScene('X6-D3-' + k);
+        const c = m.s.cat!, reg = m.s.regions[c.dustRegion];
+        const cmd = withCmd(m, fireRids(m.sim)[0]);
+        cmd.beliefs.merge(mkFact('sign', SIGN_BASE.dust + reg.id, { kind: 'dust', level: 1, region: reg.id, x: reg.cx, y: reg.cy }, '시험', m.sim.t, 1, true, '분진'));
+        for (let i = 0; i < m.s.fire.length; i++) m.s.fire[i] = 0;
+        stepCat(m, c);
+        expect(c.dustDone).toBe(false);
+        c.hits.push({ t: m.sim.t + 0.2, x: reg.cx, y: reg.cy });
+        stepCat(m, c);
+        const once = c.dustDone;
+        if (!once) { stepCat(m, c); expect(c.dustDone).toBe(false); }      // 같은 충격 자리는 한 번만 굴린다
+        if (once) {
+          boom++;
+          const rec = m.I.problems.find((p) => p.detail.startsWith('분진 폭발'))!;
+          expect(rec.code).toBe('EXPLOSION');
+          expect(rec.detail).toContain('폭발 충격');
+        }
+      }
+      expect(boom).toBeGreaterThan(0);
+      expect(boom).toBeLessThan(8);
+    });
+  });
+  it('분진 조짐: 그 구획을 보는 대원은 단계 1(분진 폭발 위험)을 알고, 터진 뒤에는 하향으로 바로잡는다. 꺼져 있으면 분진 구획이 없다', () => {
+    withFlags(true, false, () => {
+      const m = dustScene('X6-D4');
+      const c = m.s.cat!, reg = m.s.regions[c.dustRegion];
+      const a = agentAt(m, fireRids(m.sim)[0], Math.round(reg.cx), Math.round(reg.cy));
+      perceive(m.sim, m.s, a);
+      expect(signOf(a, SIGN_BASE.dust + reg.id)?.level).toBe(1);
+      expect(a.beliefs.get('sign', SIGN_BASE.dust + reg.id)!.text).toContain('분진 폭발 위험');
+      c.dustDone = true;
+      perceive(m.sim, m.s, a);
+      expect(signOf(a, SIGN_BASE.dust + reg.id)?.level).toBe(0);
+      expect(signOf(a, SIGN_BASE.dust + reg.id)?.down).toBe(true);
+    });
+    withFlags(false, false, () => {
+      const m = factoryFire('X6-D5', 1);
+      expect(catOf(m.sim, m.s)!.dustRegion).toBe(-1);
+    });
+  });
+});
+
+describe('X6 단계 9: 플래시오버 (선택 — §4.7)', () => {
+  /** 실내 방 하나를 "불 몫 30% · 짙은 연기 · 마름"으로 맞춘다 */
+  function roomOnFire(m: Made, r: Region, wet = 0): void {
+    const s = m.s, n = Math.ceil(r.tiles.length * 0.3);
+    for (let q = 0; q < r.tiles.length; q++) { const i = r.tiles[q]; s.smoke[i] = 0.85; s.wet[i] = wet; if (q < n) { s.fire[i] = 0.6; s.fuel[i] = Math.max(s.fuel[i], 0.5); } }
+  }
+  const roomOf = (s: Scene): Region => indoorRegs(s).filter((r) => r.kind === 'room').sort((a, b) => b.tiles.length - a.tiles.length)[0];
+  it('불 몫 0.25·연기 0.7 이상인 마른 방은 초당 5% 로 플래시오버 — 기록(ESCALATION)이 먼저, 불 없던 연료 칸이 모두 0.45, 다시는 나지 않고 현장 전원이 듣는다', () => {
+    withFlags(false, true, () => {
+      const m = make('X6-F1', 'fire', 'std');
+      const c = catOf(m.sim, m.s)!, r = roomOf(m.s);
+      for (let i = 0; i < m.s.fire.length; i++) m.s.fire[i] = 0;
+      for (const i of r.tiles) m.s.fuel[i] = Math.max(m.s.fuel[i], 0.3);
+      for (let t = 0; t < 200 && c.flashed.indexOf(r.id) < 0; t++) { roomOnFire(m, r); stepCat(m, c); }
+      expect(c.flashed).toContain(r.id);
+      expect(m.I.problems.filter((p) => p.code === 'ESCALATION' && p.detail === `${r.name} 플래시오버`).length).toBe(1);
+      for (const i of r.tiles) if (m.s.fuel[i] > 0) expect(m.s.fire[i]).toBeGreaterThanOrEqual(0.45 - 1e-6);
+      expect(m.s.radio.some((q) => q.facts.some((f) => f.type === 'sign' && (f.value as SignBelief).what === 'flashover'))).toBe(true);
+      for (let k = 0; k < 40; k++) { roomOnFire(m, r); stepCat(m, c); }
+      expect(m.I.problems.filter((p) => p.code === 'ESCALATION' && p.detail === `${r.name} 플래시오버`).length).toBe(1);
+    });
+  });
+  it('안에서 물을 뿌린 방(젖음 0.08 이상)은 플래시오버가 나지 않는다. 꺼져 있으면 계산하지 않는다', () => {
+    withFlags(false, true, () => {
+      const m = make('X6-F2', 'fire', 'std');
+      const c = catOf(m.sim, m.s)!, r = roomOf(m.s);
+      for (let i = 0; i < m.s.fire.length; i++) m.s.fire[i] = 0;
+      for (let t = 0; t < 200; t++) { roomOnFire(m, r, 0.2); stepCat(m, c); }
+      expect(c.flashed).toEqual([]);
+    });
+    withFlags(false, false, () => {
+      const m = make('X6-F3', 'fire', 'std');
+      const c = catOf(m.sim, m.s)!, r = roomOf(m.s);
+      for (let t = 0; t < 200; t++) { roomOnFire(m, r); stepCat(m, c); }
+      expect(c.flashed).toEqual([]);
+    });
+  });
+  it('롤오버 조짐: 그 방을 보는 대원은 불 몫 0.15·연기 0.7 이면 단계 2(플래시오버 임박)를 바로 안다', () => {
+    withFlags(false, true, () => {
+      const m = make('X6-F4', 'fire', 'std');
+      const c = catOf(m.sim, m.s)!, r = roomOf(m.s);
+      for (let i = 0; i < m.s.fire.length; i++) m.s.fire[i] = 0;
+      const n = Math.ceil(r.tiles.length * 0.18);
+      for (let q = 0; q < r.tiles.length; q++) { const i = r.tiles[q]; m.s.smoke[i] = 0.75; m.s.wet[i] = 0.3; if (q < n) m.s.fire[i] = 0.5; }
+      stepCat(m, c);
+      const a = agentAt(m, fireRids(m.sim)[0], Math.round(r.cx), Math.round(r.cy));
+      perceive(m.sim, m.s, a);
+      expect(signOf(a, SIGN_BASE.fire + r.id)?.level).toBe(2);
+      expect(a.beliefs.get('sign', SIGN_BASE.fire + r.id)!.text).toContain('롤오버');
+    });
+  });
+});

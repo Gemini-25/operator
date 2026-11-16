@@ -58,6 +58,16 @@ export const CAT = {
   VESSEL_WET: 0.7, VESSEL_COOL: 0.05, VESSEL_IDLE: 0.012,      // 젖은 용기는 덜 달궈진다 · 물을 맞으면 식는다 · 불이 없으면 저절로 식는다
   VENT_AT: 0.55,                  // 안전밸브 소리(조짐 3)
   BURNOUT: 0.7, BURNOUT_MIN: 30,  // 전소 문턱 · 이보다 연료 칸이 적은 건물은 전소 판정을 하지 않는다
+  // (단계 9, 선택) 분진 폭발 §4.5 — dust 가 거짓이면 분진 구획을 정하지 않는다(그러면 아무것도 일어나지 않는다)
+  dust: false,
+  DUST_P: 0.25, DUST_CAP: 0.9,    // 공장·창고·보관 창고·작업장 화재·붕괴의 분진 구획 확률 min(CAP, P × hazardMul) — catinit 흐름
+  DUST_FALL: 0.5, DUST_HIT: 0.5, DUST_HIT_R: 4,      // 점화: 그 구획·이웃 구획이 무너짐 · 충격이 구획 가운데 4칸 안 (확률)
+  DUST_FIRE: 0.04, DUST_FIRE_AT: 0.6, DUST_FIRE_SHARE: 0.15,      // 점화: 구획 칸의 15% 이상이 불 0.6 이상이면 초당 0.04
+  DUST_DMG: 30,                   // 피해 (반경 3.2 + 0.15 √칸 수)
+  // (단계 9, 선택) 플래시오버 §4.7 — flashover 가 거짓이면 계산하지 않는다(롤오버 조짐도 없다)
+  flashover: false,
+  FO_FIRE: 0.25, FO_SMOKE: 0.7, FO_WET: 0.08, FO_P: 0.05, FO_SET: 0.45,      // 방의 불 몫(불 0.3 이상) ≥ 0.25 · 연기 평균 ≥ 0.7 · 젖음 평균 < 0.08 → 초당 0.05 × fireSpreadMul → 연료 칸 불 0.45
+  ROLL_L1: 0.08, ROLL_L1_SMOKE: 0.6, ROLL_L2: 0.15, ROLL_L2_SMOKE: 0.7,     // 롤오버 조짐 1·2: 불 몫 · 연기 평균
 };
 /** CatState.loss 의 원인 칸 (구획 × LOSS_N) */
 export const LOSS_FIRE = 0, LOSS_BURN = 1, LOSS_CREEP = 2, LOSS_IMPACT = 3, LOSS_BLAST = 4, LOSS_QUAKE = 5, LOSS_N = 6;
@@ -96,6 +106,10 @@ interface CatWork {
   propN: number;            // 아래 세 목록을 만든 때의 s.props 길이 — 소품이 늘면(잔해 …) 다시 훑는다
   vessels: Prop[]; cracks: Prop[]; valves: Prop[];      // 용기 · 균열(unstable) · 밸브 (매초 모든 소품을 훑지 않으려고 따로 둔다)
   leaks: Prop[];            // 연료가 새는 차량 (단계 4 — 곁의 불이 누출 연료에 불을 붙인다)
+  dustFell: number;         // (단계 9) 분진 구획과 그 이웃 가운데 무너진 구획 수 (마지막으로 본 때) — 새 무너짐이 점화 ①
+  dustHitT: number;         // (단계 9) 분진 점화 ②에서 이미 본 마지막 충격 시각
+  rollLv: Int8Array;        // (단계 9) 방마다 롤오버 조짐의 진실 단계 0·1·2 (플래시오버 단계가 매초 쓰고 perceiveSigns 가 읽는다 — 켜지 않으면 늘 0)
+  rollOn: boolean;          // rollLv 에 0 아닌 값이 있다 (불이 꺼지면 한 번 비운다)
 }
 /** 소품 목록이 늘었으면 용기·균열·밸브를 다시 고른다 (소품은 지워지지 않고 끝에 붙기만 한다) */
 function syncProps(s: Scene, w: CatWork): void {
@@ -209,8 +223,10 @@ export function catOf(sim: Sim, s: Scene): CatState | null {
   if (valve) { const list: number[] = []; for (let i = 0; i < n; i++) if (foot[i] >= 1) list.push(i); cells = Int16Array.from(list); }
   WORK.set(c, {
     extDoor, kind: valve ? new Uint8Array(n) : extDoor, cells, burnSeen: -1, burnFrac: 0, structBurn: -1, burnR: new Float32Array(R), crackN: new Int16Array(R), shoreN: new Int16Array(R),
-    propN: -1, vessels: [], cracks: [], valves: [], leaks: [],
+    propN: -1, vessels: [], cracks: [], valves: [], leaks: [], dustFell: 0, dustHitT: -1, rollLv: new Int8Array(R), rollOn: false,
   });
+  // (단계 9, 선택) 분진 구획 (§4.5) — catinit 흐름에서 용기 열 배율 → 드럼통 다음 차례 (Rng.fork 는 부모를 소비하지 않으므로 앞의 추첨은 그대로다)
+  if (CAT.dust) c.dustRegion = pickDust(sim, s, I, init);
   s.cat = c;
   return c;
 }
@@ -239,6 +255,20 @@ function placeDrums(sim: Sim, s: Scene, I: Incident, init: Rng): void {
     p.heatK = init.range(0.8, 1.25); p.heatLoad = 0;
     taken[i] = 1;
   }
+}
+
+/** 분진이 쌓이는 건물 종류 (§4.5) */
+const DUST_KIND = ['factory', 'warehouse', 'storage', 'workshop'];
+/**
+ * (단계 9, 선택) 분진 구획 (§4.5): 화재·붕괴 유형이고 공장·창고·보관 창고·작업장이면 min(0.9, 0.25 × hazardMul) 로 가장 큰 실내 구획 하나 (없으면 -1).
+ * catinit 흐름 — 드럼통 다음 차례
+ */
+function pickDust(sim: Sim, s: Scene, I: Incident, init: Rng): number {
+  if ((I.truth.type !== 'fire' && I.truth.type !== 'collapse') || DUST_KIND.indexOf(I.truth.placeKind ?? '') < 0) return -1;
+  if (!init.chance(Math.min(CAT.DUST_CAP, CAT.DUST_P * sim.tune.hazardMul))) return -1;
+  let best = -1, bn = 0;
+  for (const r of s.regions) if (r.indoor && r.tiles.length > bn) { best = r.id; bn = r.tiles.length; }
+  return best;
 }
 
 /** 건물 전체 건전도와 무너진 몫: 서 있는 실내 구획의 칸 수 가중 평균(무너진 구획은 0 으로 센다) · 무너진 구획의 칸 수 몫 */
@@ -344,8 +374,12 @@ export function catTick(sim: Sim, s: Scene, I: Incident, c: CatState): void {
     ruptureVessel(sim, s, I, c, p);
     boom = `${vesselName(p)} 폭발`;
   }
+  // (단계 9, 선택) 분진 폭발 — 분진 구획이 있을 때만 (CAT.dust 가 거짓이면 catOf 가 정하지 않는다)
+  if (c.dustRegion >= 0 && !c.dustDone && dustStep(sim, s, I, c, w)) boom = boom || '분진 폭발';
   if (c.struct && c.totalAt < 0) fallStep(sim, s, I, c, boom);
-  // 8) (단계 9, 선택) 플래시오버
+  // 8) (단계 9, 선택) 플래시오버 — 타는 칸이 있을 때만. 켜지 않으면 롤오버 조짐도 늘 0 이다
+  if (CAT.flashover && s.burning > 0) flashStep(sim, s, I, c, w);
+  else if (w.rollOn) { w.rollLv.fill(0); w.rollOn = false; }
   // 9) 지도 기록: Sim.placeMarks 의 탄 비율·잔해 비율 (건물 상태가 있는 현장만)
   if (c.struct && I.truth.placeId >= 0) {
     const pm = sim.placeMarks.get(I.truth.placeId);
@@ -1196,6 +1230,100 @@ export function ruptureVessel(sim: Sim, s: Scene, I: Incident, c: CatState, p: P
   return ev;
 }
 
+// ───────────────────────── (단계 9, 선택) 분진 폭발 §4.5 · 플래시오버 §4.7 ─────────────────────────
+
+const DUST_TEXT = ['', '무너지며 날린 분진에 불이 붙음', '폭발 충격에 날린 분진에 불이 붙음', '불길이 쌓인 분진에 닿음'];
+/**
+ * 분진 점화 (§4.5) — 한 초에 한 번. ① 그 구획이나 이웃 구획이 새로 무너짐 → 0.5, ② 새 충격(c.hits)이 구획 가운데 4칸 안 → 0.5 (①로 굴린 초에는
+ * 같은 무너짐의 충격 자리를 다시 굴리지 않는다), ③ 구획 칸의 15% 이상이 불 0.6 이상 → 초당 0.04. 터지면 참
+ */
+function dustStep(sim: Sim, s: Scene, I: Incident, c: CatState, w: CatWork): boolean {
+  const r = c.dustRegion, reg = s.regions[r];
+  if (!reg || !reg.tiles.length) return false;
+  const rng = catRng(sim, s), nb = regionNbrs(s)[r] ?? [];
+  let fell = c.fallen[r];
+  for (let k = 0; k < nb.length; k++) fell += c.fallen[nb[k]];
+  let hitNew = false, lastT = w.dustHitT;
+  for (let k = 0; k < c.hits.length; k++) {
+    const h = c.hits[k];
+    if (h.t <= w.dustHitT) continue;
+    if (h.t > lastT) lastT = h.t;
+    if (dist(h.x, h.y, reg.cx, reg.cy) <= CAT.DUST_HIT_R) hitNew = true;
+  }
+  w.dustHitT = lastT;
+  let how = 0;
+  if (fell > w.dustFell) { w.dustFell = fell; if (rng.chance(CAT.DUST_FALL)) how = 1; }
+  else if (hitNew && rng.chance(CAT.DUST_HIT)) how = 2;
+  if (!how && s.burning > 0) {
+    const tl = reg.tiles, f = s.fire;
+    let hot = 0;
+    for (let q = 0; q < tl.length; q++) if (f[tl[q]] >= CAT.DUST_FIRE_AT) hot++;
+    if (hot >= CAT.DUST_FIRE_SHARE * tl.length && rng.chance(CAT.DUST_FIRE)) how = 3;
+  }
+  if (!how) return false;
+  explodeDust(sim, s, I, c, how);
+  return true;
+}
+/**
+ * 분진 폭발 (§4.5): 구획 가운데에서 반경 3.2 + 0.15 √칸 수 · 피해 30, 구획의 연료 칸에 불 0.6. 지휘관이 분진 조짐을 알았으면 EXPLOSION, 몰랐으면 HIDDEN_HAZARD.
+ * 기록이 먼저다 (blast 와 그 안의 hurt* 가 이 ev 를 받는다). 돌려주는 값은 기록 id
+ */
+export function explodeDust(sim: Sim, s: Scene, I: Incident, c: CatState, how: number): number {
+  const r = c.dustRegion, reg = s.regions[r], n = reg.tiles.length;
+  const rad = 3.2 + 0.15 * Math.sqrt(n), cx = reg.cx, cy = reg.cy;
+  const cmd = commanderOf(s);
+  const v = cmd ? cmd.beliefs.val<SignBelief>('sign', SIGN_BASE.dust + r) : undefined;
+  const ev = raiseProblem(sim, I, v && v.level >= 1 ? 'EXPLOSION' : 'HIDDEN_HAZARD', `분진 폭발 — ${DUST_TEXT[how]}`,
+    { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `폭발! ${reg.name}에 쌓여 있던 분진이 터졌습니다.` }, false);
+  c.dustDone = true; c.dustN++;
+  const tl = reg.tiles;
+  for (let q = 0; q < tl.length; q++) { const i = tl[q]; if (s.fuel[i] > 0 && s.fire[i] < 0.6) s.fire[i] = 0.6; }
+  blowDoors(s, cx, cy, rad);
+  blast(sim, s, I, cx, cy, rad, CAT.DUST_DMG, ev, 'blast');
+  pushFx(sim, s, 'boom', cx, cy, undefined, undefined, undefined, undefined, 1.6);
+  noteBoom(lastFx(sim, s, 'boom'), rad, 'dust');
+  s.staticVersion++;
+  hearAll(sim, s, ev, [
+    signFact(sim, SIGN_BASE.event + c.events++, { kind: 'event', level: 3, region: r, x: cx, y: cy, what: 'dust' }, `폭발! ${reg.name} 분진 폭발`),
+    signFact(sim, SIGN_BASE.dust + r, { kind: 'dust', level: 0, region: r, x: cx, y: cy, down: true }, `${reg.name} 분진 폭발 — 남은 분진 없음`),
+  ]);
+  markPlace(sim, s, I, c, 'blasted');
+  signal(sim, 'catastrophe', { inc: I.id, ev, x: cx, y: cy, size: rad, place: I.truth.placeId, data: 0 });
+  return ev;
+}
+/**
+ * 플래시오버 (§4.7) — 한 초에 한 번, 타는 칸이 있을 때만. 방(실내 'room')마다 불 몫(불 0.3 이상 칸)·연기 평균·젖음 평균을 세어
+ * 롤오버 조짐의 진실 단계(w.rollLv — 1: 불 몫 ≥ 0.08·연기 ≥ 0.6, 2: ≥ 0.15·≥ 0.7, 이미 일어난 방은 0)를 적고,
+ * 불 몫 ≥ 0.25 · 연기 ≥ 0.7 · 젖음 < 0.08 (안에서 물을 뿌리면 일어나지 않는다) 이면 초당 0.05 × fireSpreadMul 로 그 방의 불 없는 연료 칸이 모두 불 0.45
+ */
+function flashStep(sim: Sim, s: Scene, I: Incident, c: CatState, w: CatWork): void {
+  const regs = s.regions, fire = s.fire, smoke = s.smoke, wet = s.wet, lv = w.rollLv;
+  let on = false;
+  for (let r = 0; r < regs.length; r++) {
+    const reg = regs[r];
+    if (!reg.indoor || reg.kind !== 'room' || c.fallen[r]) { lv[r] = 0; continue; }
+    const tl = reg.tiles, m = tl.length;
+    if (!m || c.flashed.indexOf(r) >= 0) { lv[r] = 0; continue; }
+    let f3 = 0, sm = 0, wt = 0;
+    for (let q = 0; q < m; q++) { const i = tl[q]; if (fire[i] >= 0.3) f3++; sm += smoke[i]; wt += wet[i]; }
+    const share = f3 / m, smk = sm / m, wa = wt / m;
+    lv[r] = share >= CAT.ROLL_L2 && smk >= CAT.ROLL_L2_SMOKE ? 2 : share >= CAT.ROLL_L1 && smk >= CAT.ROLL_L1_SMOKE ? 1 : 0;
+    if (lv[r]) on = true;
+    if (share < CAT.FO_FIRE || smk < CAT.FO_SMOKE || wa >= CAT.FO_WET) continue;
+    if (!catRng(sim, s).chance(CAT.FO_P * sim.tune.fireSpreadMul)) continue;
+    // 기록 (먼저) — 방 안 대원은 agentHealth 의 불 피해를 그대로 받는다 (따로 주지 않는다)
+    const ev = raiseProblem(sim, I, 'ESCALATION', `${reg.name} 플래시오버`,
+      { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `${reg.name} 전체가 한순간에 불길에 휩싸였습니다 (플래시오버)!` }, false);
+    for (let q = 0; q < m; q++) { const i = tl[q]; if (s.fuel[i] > 0 && fire[i] <= 0) { fire[i] = CAT.FO_SET; s.heat[i] = 0; } }
+    c.flashed.push(r); lv[r] = 0;
+    hearAll(sim, s, ev, [
+      signFact(sim, SIGN_BASE.event + c.events++, { kind: 'event', level: 3, region: r, x: reg.cx, y: reg.cy, what: 'flashover' }, `${reg.name} 플래시오버!`),
+      signFact(sim, SIGN_BASE.fire + r, { kind: 'fire', level: 0, region: r, x: reg.cx, y: reg.cy, down: true }, `${reg.name} 플래시오버 — 방 전체 연소`),
+    ]);
+  }
+  w.rollOn = on;
+}
+
 /**
  * 도시가스 공급 차단 (§2.3-2): 지휘관이 요청하면(s.ops.utilityAsked — 단계 5) 90~150초 뒤 한 번만 살아 있는 밸브를 모두 차단하고,
  * 현장 전원에게 차단 완료 사실(sign 5001)을 알린다. 밸브마다 haz 를 알리지 않는다 — 아직 모르는 밸브의 위치가 새어 나간다
@@ -1227,6 +1355,8 @@ export const SIGN = {
   VESSEL_HEAT2: 0.3, VESSEL_FIRE2: 0.5, SEE_VESSEL: 4,      // 용기 2: 열 ≥ 0.3 이고 곁 불 ≥ 0.5 — 4칸 안·시야
   HEAR_VENT: 7,                   // 용기 3(안전밸브 = CAT.VENT_AT): 7칸 안 (벽 너머도)
   SEE_SHELL: 3,                   // 건물 2·3: 건물 바깥 칸에서 바깥벽 칸이 이만큼 보인다
+  SEE_ROLL: 6,                    // (단계 9) 롤오버 1·2: 그 방 칸이 이 칸 안·시야 안에 (구획 칸의 SEE_SHARE 몫)
+  SEE_DUST: 5,                    // (단계 9) 분진: 그 구획 칸이 이 칸 안·시야 안에 (구획 칸의 SEE_SHARE 몫)
 };
 
 /** 구조 조짐 단계(진실 쪽): 0 · 1 삐걱임 · 2 균열·처짐 · 3 임박. 무너진 구획은 0 (더 무너질 것이 없다). tic = 열화상으로 불타는 구획을 본다(1·2 를 0.7·0.5 에서) */
@@ -1270,7 +1400,7 @@ export function vesselName(p: Prop): string {
   return v === 'drum' || p.skin === 'drum' ? '드럼통' : v === 'cng' ? 'CNG 용기' : v === 'jet' ? '항공유 탱크' : '가스 용기';
 }
 
-const LV_STRUCT = [1, 2, 3] as const, LV_VESSEL = [2, 3] as const, LV_BLDG = [2, 3] as const;
+const LV_STRUCT = [1, 2, 3] as const, LV_VESSEL = [2, 3] as const, LV_BLDG = [2, 3] as const, LV_ROLL = [1, 2] as const, LV_DUST = [1] as const;
 /**
  * 관찰·보고 규칙 (설계서 §3.1) — 사실 id 하나에 대해. 결과는 out 에 [보고할 단계(-1 = 없음), down(1), 새 관찰 단계(-1 = 그대로)].
  *   obs = 진실 단계(tl) 이하의 단계 가운데 그 단계를 알아채는 감각 조건(cond)이 지금 맞는 가장 높은 단계.
@@ -1522,7 +1652,40 @@ export function perceiveSigns(sim: Sim, s: Scene, a: FieldAgent, v: number): voi
       const down = o[1] === 1;
       reportSign(sim, a, me, id, { kind: 'vessel', level: o[0], region: regionOfProp(s, p), x: p.x, y: p.y, prop: p.id, down: down || undefined }, vesselText(p, regionNameAt(s, p.x, p.y), o[0], down));
     }
+    // ── (단계 9, 선택) 롤오버 (방) ── 진실 단계는 플래시오버 단계가 매초 적어 둔 값 (켜지 않으면 늘 0 — 알 것이 없다)
+    const rl = wk.rollLv;
+    if (wk.rollOn || obs) for (let r = 0; r < R; r++) {
+      const tl = rl[r], id = SIGN_BASE.fire + r, prev = obs ? obs[id] : undefined;
+      if (tl === 0 && !(prev !== undefined && prev > 0)) continue;
+      const reg = regs[r];
+      cond[1] = cond[2] = seesRegion(s, a, reg, SIGN.SEE_ROLL + jb);
+      judge(tl, prev, LV_ROLL, cond, o);
+      if (o[2] >= 0) setObs(a, id, o[2]);
+      if (o[0] < 0) continue;
+      const down = o[1] === 1;
+      reportSign(sim, a, me, id, { kind: 'fire', level: o[0], region: r, x: reg.cx, y: reg.cy, down: down || undefined }, rollText(reg.name, o[0], down));
+    }
   }
+  // ── (단계 9, 선택) 분진 ── 분진 구획이 있을 때만 (터진 뒤에는 단계 0 — 본 적이 있으면 하향)
+  if (c.dustRegion >= 0) {
+    const r = c.dustRegion, reg = regs[r], id = SIGN_BASE.dust + r, prev = obs ? obs[id] : undefined;
+    const tl = c.dustDone ? 0 : 1;
+    if (reg && (tl > 0 || (prev !== undefined && prev > 0))) {
+      cond[1] = seesRegion(s, a, reg, SIGN.SEE_DUST + jb);
+      judge(tl, prev, LV_DUST, cond, o);
+      if (o[2] >= 0) setObs(a, id, o[2]);
+      if (o[0] >= 0) reportSign(sim, a, me, id, { kind: 'dust', level: o[0], region: r, x: reg.cx, y: reg.cy, down: o[1] === 1 || undefined },
+        o[0] >= 1 ? `${reg.name} 분진이 두껍게 쌓여 있음 — 분진 폭발 위험` : `${reg.name} 분진 폭발 — 남은 분진 없음`);
+    }
+  }
+}
+/** (단계 9) 방의 롤오버 조짐 진실 단계 0·1·2 (읽기 함수 — 관찰자 시점 그림이 부른다. 플래시오버를 켜지 않으면 늘 0) */
+export function rollLevel(c: CatState, r: number): number { const w = WORK.get(c); return w ? w.rollLv[r] ?? 0 : 0; }
+/** 롤오버 조짐 문구 (§3.1 표의 fire 줄) */
+function rollText(name: string, level: number, down: boolean): string {
+  if (level >= 2) return `${name} 천장 연기층에 불꽃(롤오버) — 플래시오버 임박`;
+  if (level === 1) return down ? `${name} 롤오버 징후 가라앉음 — 짙은 연기는 남아 있음` : `${name} 짙은 검은 연기가 맥동하며 뿜어 나옴`;
+  return `${name} 롤오버 징후 없음`;
 }
 
 // ───────────────────────── (단계 7) 판정·보고서·지도 — 설계서 §6.5·§6.6·§7.1 ─────────────────────────

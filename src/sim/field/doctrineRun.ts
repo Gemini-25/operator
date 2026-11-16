@@ -627,9 +627,29 @@ export function runPair(sim: Sim, s: Scene, a: FieldAgent, t: Task, k: ExecKit):
   //   그 뒤 10초는 동행 줄을 다시 걸지 않는다(곁의 일로 끝낼 때와 같다 — 지시가 이미 끝나 있던 일이면 그 틱에 끝나 "동행 → 없음 → 동행"이 되었다, 시험 4)
   if (bw !== undefined && b.carrying === -1 && a.orderWork >= 0 && orderedNear(sim, s, a, bw)) { docRemember(sim, a, t.docRule ?? 'G08', '*', PAIR_ALT_MEM); actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
   if (bw !== undefined && b.carrying === -1 && (sim.tick + a.rid) % 5 === 0 && pairAlt(sim, s, a, bw)) { docRemember(sim, a, t.docRule ?? 'G08', '*', PAIR_ALT_MEM); actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
+  // (균형 — 측정이 찾은 것) 불이 번져 온 칸에 서 있으면 짝 곁의 불 없는 칸으로 비킨다: 짝 동행은 짝 곁(1.4칸)에 닿으면 서 있으므로 불이 그 칸까지 번져도
+  //   그대로 섰다가 화상을 입었다(보통 120교대 — 소방 대원의 화상 넷이 모두 짝 동행 중, 기본에는 0). 비킨 칸이 짝 곁이면 그대로 동행을 잇는다
+  if (s.fire[tileOf(s, a.x, a.y)] > PAIR_FIRE) {
+    const sp = clearNear(s, b.x, b.y, a.x, a.y);
+    if (sp !== null) { if (t.range !== 2 || t.tx !== sp.x || t.ty !== sp.y) { t.tx = sp.x; t.ty = sp.y; t.range = 2; a.path = null; a.pathGoal = -1; } k.moveTo(sim, s, a, sp.x, sp.y, 0.4); return; }
+  }
   const m = followMate(sim, s, a, t, b, k, false);
   if (m === 'nopath') { t.wait = 1; t.range = 0; }
   else if (m === 'arrived') { a.fx = b.x - a.x; a.fy = b.y - a.y; if (bw !== undefined && b.task !== null) pairHelp(sim, s, a, b, b.task, bw.kind, k); }
+}
+/** 짝 동행이 비키는 불의 세기 (sceneManager.agentHealth 가 화상을 주는 0.4 보다 조금 아래) */
+const PAIR_FIRE = 0.3;
+/** 짝(bx,by) 곁 2.5칸 안의 걸을 수 있고 불이 없는(0.1 아래) 칸 가운데 짝에게 1.4칸 안을 먼저, 그다음 나에게 가까운 칸. 없으면 null */
+function clearNear(s: Scene, bx: number, by: number, ax: number, ay: number): { x: number; y: number } | null {
+  let best: { x: number; y: number } | null = null, bc = Infinity;
+  const x0 = Math.max(0, Math.floor(bx - 2.5)), x1 = Math.min(s.w - 1, Math.ceil(bx + 2.5)), y0 = Math.max(0, Math.floor(by - 2.5)), y1 = Math.min(s.h - 1, Math.ceil(by + 2.5));
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    const i = y * s.w + x, db = dist(x, y, bx, by);
+    if (db > 2.5 || !staticPass(s.tiles[i]) || s.propAt[i] >= 0 || s.fire[i] >= 0.1) continue;
+    const c = (db <= AIR_OUT_RUN.follow ? 0 : 100) + dist(x, y, ax, ay);
+    if (c < bc) { bc = c; best = { x, y }; }
+  }
+  return best;
 }
 /** (합치기 (나)) 받은 지시가 짝의 일 bw 와 같은·이웃 구역의 위험 실내 일인가 (공개 지휘 상태 — 지휘관이 짝에게 곁의 일을 함께 맡겼다) */
 function orderedNear(sim: Sim, s: Scene, a: FieldAgent, bw: WorkItem): boolean {

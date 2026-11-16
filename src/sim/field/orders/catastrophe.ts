@@ -16,7 +16,7 @@ import { hasKit } from '../../crews';
 import { inShadow, regionNameAt, resp, transmit } from '../agents';
 import { mkFact } from '../beliefs';
 import { pushFx } from '../hazards';
-import { OPS_ID, OPS_PAR, SIGN_BASE, bumpZones, gateBlocks, newOps, opsExterior, regionAt, regionNbrs, structScene, zoneLevelAt, zoneMask, zonesVer } from '../ops';
+import { OPS_ID, OPS_PAR, SIGN_BASE, bumpZones, gateBlocks, inRubble, newOps, opsExterior, regionAt, regionNbrs, structScene, zoneLevelAt, zoneMask, zonesVer } from '../ops';
 import type { OpsFact } from '../ops';
 import { registerBlocker, registerGate, registerOrders } from '../sceneRegistry';
 import type { CommandKit } from '../sceneRegistry';
@@ -188,11 +188,18 @@ interface OpsWork {
   resendAt: number;                                // 인원 점검의 마지막 재송신 시각
   reqT: Map<string, number>;                       // 구역 키별 지원 요청 시각
   rubbleAll: boolean;                              // (단계 6) 전체 붕괴의 잔해 수색을 시작했다 (믿음 고치기·기록은 한 번)
+  noExtAt: Map<number, number>;                    // (검토) 구역 → 외부 방수 자리를 두 번 찾지 못해 ops.noExt 에 넣은 시각 (NOEXT_RETRY 뒤 다시 낸다)
+  rubbleAt: Map<number, number>;                   // (검토) 잔해 구역 → 잔해 수색을 시작한 시각 (그 뒤 마친 수색을 센다)
+  srchCapped: Set<number>;                         // (검토) 잔해 수색을 RUBBLE_SEARCHES 번 마쳐 더 내지 않는 구역
 }
+/** (검토) 잔해 구역 하나를 몇 번 수색하면 확인율이 모자라도 그만두는가 · 그때 적는 확인율 (지휘관의 수색 문턱 0.72·0.9 을 넘는다) */
+const RUBBLE_SEARCHES = 3, RUBBLE_SRCH_DONE = 0.9;
+/** (검토) 외부 방수 자리를 두 번 찾지 못한 구역의 진압을 다시 내기까지의 초 */
+const NOEXT_RETRY = 60;
 const WORK = new WeakMap<OpsState, OpsWork>();
 function workOf(ops: OpsState): OpsWork {
   let w = WORK.get(ops);
-  if (!w) { w = { sent: 0, lowSince: new Map(), lastT: new Map(), told: new Set(), danger: new Map(), evSeen: -1, resendAt: -1, reqT: new Map(), rubbleAll: false }; WORK.set(ops, w); }
+  if (!w) { w = { sent: 0, lowSince: new Map(), lastT: new Map(), told: new Set(), danger: new Map(), evSeen: -1, resendAt: -1, reqT: new Map(), rubbleAll: false, noExtAt: new Map(), rubbleAt: new Map(), srchCapped: new Set() }; WORK.set(ops, w); }
   return w;
 }
 /** 구역 목록을 실어 보낼 지휘 상태 사실 (id 0) */
@@ -237,6 +244,7 @@ registerOrders((sim, s, I, a, k) => {
   noteEvents(sim, s, I, a, k, ops, wk);
   // 2b) (단계 6) 무너진 뒤 잠잠해진 곳의 잔해 수색 (§6.1): 전체 붕괴 30초 뒤 잔해 수색 국면, 구획 붕괴 25초 뒤 그 구획 — 수색 믿음을 낮추고 안에 있던 사람을 '매몰 추정'으로
   rubbleStep(sim, s, I, a, ops, wk);
+  rubbleSearchCap(sim, s, I, a, k, ops, wk);
   // 3) 위험 단계
   const { hits, raw } = dangerMap(sim, s, a, ops);
   dangerSigns(sim, s, I, a, ops, wk, hits, raw);
@@ -256,9 +264,15 @@ registerOrders((sim, s, I, a, k) => {
     if ((w.kind === 'carry' || w.kind === 'rescueMate' || w.kind === 'load') && w.status === 'active' && s.agents.some((b) => w.assignees.indexOf(b.rid) >= 0 && b.carrying !== -1)) continue;
     if (gateBlocks(sim, s, a, w.kind, w)) w.status = 'cancelled';
   }
-  // 9) 외부 방수 자리를 두 번 찾지 못한 구역은 외부 방어가 이어지는 동안 다시 내지 않는다 (§5.5). 밖에서만 하던 까닭이 사라진 구역(구역이 풀렸다)은 기억에서 지운다
-  if (ops.noExt.length) { const keep = ops.noExt.filter((r) => opsExterior(s, r)); if (keep.length !== ops.noExt.length) { ops.noExt = keep; bumpZones(ops); } }
-  for (const w of s.board) if (w.kind === 'suppress' && (w.status === 'open' || w.status === 'active') && w.fails >= 2 && opsExterior(s, w.region) && ops.noExt.indexOf(w.region) < 0) { ops.noExt.push(w.region); w.status = 'cancelled'; bumpZones(ops); }
+  // 9) 외부 방수 자리를 두 번 찾지 못한 구역은 외부 방어가 이어지는 동안 다시 내지 않는다 (§5.5). 밖에서만 하던 까닭이 사라진 구역(구역이 풀렸다)은 기억에서 지운다.
+  //    (검토에서 고침) 그 기억은 NOEXT_RETRY 초 동안만이다 (실패 기억 — CLAUDE.md): 영영 다시 내지 않으면 불이 꺼진 뒤에도 그 구역의 불 믿음이 낡은 채 남아
+  //    외부 방어·철수 구역·종료 차단이 한계 시간까지 갔다. 다시 낸 외부 방수는 그 구획에 불이 없으면 곧바로 "진압 확인(외부)"으로 끝난다 (executor.runExterior)
+  if (ops.noExt.length) {
+    for (const r of ops.noExt) if (!wk.noExtAt.has(r)) wk.noExtAt.set(r, sim.t);
+    const keep = ops.noExt.filter((r) => opsExterior(s, r) && sim.t - wk.noExtAt.get(r)! < NOEXT_RETRY);
+    if (keep.length !== ops.noExt.length) { for (const r of ops.noExt) if (keep.indexOf(r) < 0) wk.noExtAt.delete(r); ops.noExt = keep; bumpZones(ops); }
+  }
+  for (const w of s.board) if (w.kind === 'suppress' && (w.status === 'open' || w.status === 'active') && w.fails >= 2 && opsExterior(s, w.region) && ops.noExt.indexOf(w.region) < 0) { ops.noExt.push(w.region); wk.noExtAt.set(w.region, sim.t); w.status = 'cancelled'; bumpZones(ops); }
   // 10) 구역 목록이 바뀌었으면 지휘 상태 사실을 다시 보낸다 (음영이면 다음 주기에)
   broadcast(sim, s, a, ops, wk, me);
 });
@@ -392,7 +406,9 @@ function syncZones(sim: Sim, s: Scene, I: Incident, a: FieldAgent, k: CommandKit
     else if (z.kind === 'bldg') {
       const tAll = totalKnownAt(a.beliefs.list('sign'));
       if (tAll >= 0 && sim.t - tAll >= RUBBLE_TOTAL) { go = true; why = '붕괴가 멎음 — 잔해 수색'; }      // (단계 6) 무너진 건물은 잔해 수색 국면으로 (§6.1)
-      else if (want === 0 && el >= 40) { go = true; why = '건물 붕괴 조짐이 가라앉음'; }
+      // (검토에서 고침) 원하는 단계가 1(건물 조짐 2 — 외벽 균열, 구역 없음)이어도 푼다. 0 만 보면 구획 둘이 무너져(무너진 몫 25%) 진실의 건물 조짐이 2 로 남는 건물은
+      // 철수 구역(단계 3)이 끝내 풀리지 않아 외부 방어·종료 차단이 한계 시간까지 갔다
+      else if (want < 2 && el >= 40) { go = true; why = '건물 붕괴 조짐이 가라앉음'; }
       else if (want === 2 && z.level === 3) { go = true; why = '구조 안정'; }
     }
     if (!go) continue;
@@ -603,8 +619,13 @@ function prevention(sim: Sim, s: Scene, I: Incident, a: FieldAgent, k: CommandKi
     if (!v.active) { k.cancel((w) => w.kind === 'mitigate' && w.prop === f.id); delete ops.calmSince[key]; continue; }
     const rg = regionAt(s, Math.round(v.y) * s.w + Math.round(v.x));
     const vs = B.val<SignBelief>('sign', SIGN_BASE.vessel + f.id), lv = vs ? vs.level : 0;
-    // 방금 식혔다(냉각 완료 — 용기 조짐 0 을 받았다): 조짐이 다시 오르기 전에는 30초 동안 다시 내지 않는다 (같은 구역의 먼 불 때문에 식은 용기에 냉각을 되풀이하지 않게)
-    const cooled = s.board.some((w) => w.kind === 'mitigate' && w.prop === f.id && w.status === 'done' && sim.t - w.doneAt < 30);
+    // 방금 식혔다(냉각 완료 — 용기 조짐 0 을 받았다): 조짐이 다시 오르기 전에는 30초 동안 다시 내지 않는다 (같은 구역의 먼 불 때문에 식은 용기에 냉각을 되풀이하지 않게).
+    // (검토에서 고침) 30초가 지나도 그 구역의 불 소식이 냉각 뒤에 새로 오지 않았으면 다시 내지 않는다 — 넓은 구역의 먼 불(또는 낡은 불 믿음) 때문에
+    // "냉각 맡아라 → 곧바로 냉각 완료"가 30초마다 되풀이됐다(극한 한 사건에 48번 — 그 지시가 멈춘 현장을 측정 도구의 교착 후보에서 가렸다)
+    let lastCool = -1;
+    for (const w of s.board) if (w.kind === 'mitigate' && w.prop === f.id && w.status === 'done' && w.doneAt > lastCool) lastCool = w.doneAt;
+    const fireT = rg >= 0 ? a.beliefs.get('fire', rg)?.t ?? -1 : -1;
+    const cooled = lastCool >= 0 && (sim.t - lastCool < 30 || fireT <= lastCool);
     if (((rg >= 0 && fire(rg) >= 0.2) || lv >= 2) && !(cooled && lv < 2)) {
       delete ops.calmSince[key];
       k.want('mitigate', { prop: f.id }, 0.9 + 0.03 * lv, 1);
@@ -703,6 +724,7 @@ function enterRubble(sim: Sim, s: Scene, I: Incident, a: FieldAgent, ops: OpsSta
   emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 3, causes: [I.lastEvent], text: '붕괴가 멎었습니다. 잔해 수색을 시작한다 — 소방·구조 대원만 진입.' });
   const all: number[] = [];
   for (const r of s.regions) if (r.indoor) all.push(r.id);
+  for (const r of all) if (!wk.rubbleAt.has(r)) wk.rubbleAt.set(r, sim.t);
   rubbleBeliefs(sim, s, a, all);
 }
 /**
@@ -733,10 +755,40 @@ function rubbleStep(sim: Sim, s: Scene, I: Incident, a: FieldAgent, ops: OpsStat
   }
   if (!fresh.length) return;
   fresh.sort((p, q) => p - q);
-  for (const r of fresh) ops.rubble.push(r);
+  for (const r of fresh) { ops.rubble.push(r); if (!wk.rubbleAt.has(r)) wk.rubbleAt.set(r, sim.t); }
   const names = fresh.map((r) => s.regions[r].name).join('·');
   emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 3, causes: [I.lastEvent], text: `${names} 붕괴가 멎었습니다. 잔해 수색을 시작한다 — 소방·구조 대원만 진입.` });
   rubbleBeliefs(sim, s, a, fresh);
+}
+/**
+ * (검토에서 고침) 잔해 수색의 끝: 잔해 구역 하나를 잔해 수색 국면에 들어선 뒤 RUBBLE_SEARCHES 번 수색해 마쳤는데도 확인율이 지휘관의 문턱에 못 미치면
+ * (잔해와 먼지가 시야를 가려 같은 확인율만 되풀이된다) 그 구역의 수색을 마친 것으로 적고(확인된 사실 · 신뢰도 0.6) 더 내지 않는다.
+ * 없으면 "정밀 수색 실시 → 확인율 71% 에 그침 → 다시 정밀 수색"이 4초마다 되풀이되며 교대 끝까지 갔다(어려움 한 사건에 70번).
+ * 판정은 진실로 한다 — 찾지 못한 사람은 미발견으로 드러난다. 지휘관이 아는 것(작업판의 마친 수색·자기 믿음)만 읽는다
+ */
+function rubbleSearchCap(sim: Sim, s: Scene, I: Incident, a: FieldAgent, k: CommandKit, ops: OpsState, wk: OpsWork): void {
+  if (!wk.rubbleAt.size) return;
+  const B = a.beliefs;
+  for (const [r, t0] of wk.rubbleAt) {
+    if (!inRubble(s, r)) continue;
+    const reg = s.regions[r];
+    if (!reg || !reg.searchable) continue;
+    const c = B.val<number>('srch', r) ?? -1;
+    if (c >= RUBBLE_SRCH_DONE) continue;
+    const capped = wk.srchCapped.has(r);
+    if (!capped) {
+      let n = 0;
+      for (const w of s.board) if (w.kind === 'search' && w.region === r && w.status === 'done' && w.doneAt >= t0) n++;
+      if (n < RUBBLE_SEARCHES) continue;
+      wk.srchCapped.add(r);
+      emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 1, causes: [I.lastEvent], text: `${reg.name} 잔해를 ${n}번 수색했습니다 — 더 볼 수 없어 그 구역의 수색을 마칩니다.` });
+    }
+    // 마친 뒤 늦게 끝난 수색이 낮은 확인율을 다시 보고해도 같은 사실로 덮는다 (기록 없이)
+    const nf = mkFact('srch', r, RUBBLE_SRCH_DONE, resp(sim, a).name, sim.t, 0.6, true, `${reg.name} 잔해 수색 — 더 볼 수 없음`);
+    B.merge(nf);
+    k.cancel((w) => w.kind === 'search' && w.region === r);
+    if (!capped) transmit(sim, s, a, -1, 'report', [nf], '', -1, 0, [], true);
+  }
 }
 
 /**

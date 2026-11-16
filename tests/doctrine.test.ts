@@ -1944,17 +1944,17 @@ describe('R3 합치기: 화학 짝·대기조 (S10·S11)', () => {
   });
 });
 
-describe('R3 합치기: 혼자 서는 역할의 위험 실내 (주 세션 결정 (라) — DOC_SWITCH.SOLO_IN)', () => {
-  it('기관원(혼자 서는 역할)은 따라올 짝이 없으면 위험 실내 수색을 맡지 않는다(F04) — 스위치를 켜면(본문 §5.1) 맡는다', () => {
+describe('R3 균형: 혼자 서는 역할의 위험 실내 (본문 §5.1 — DOC_SWITCH.SOLO_IN 기본 true, 합치기 (라)는 false)', () => {
+  it('기관원(혼자 서는 역할)은 따라올 짝이 없어도 위험 실내 수색을 맡는다(F04 에서 빠진다 — 본문 §5.1) — 스위치를 끄면(합치기 (라)) 맡지 않는다', () => {
     const { sim, s, op, lead, rg } = fireScene('R3-SOLO', ['engine']);
     const w = work(sim, s, 'search', { region: rg });
     for (const b of s.agents) { b.task = null; b.orderWork = -1; }
     lead.status = 'withdrawn'; op.buddy = -1; docForget();      // 짝(진압 팀장)이 없다
     expect(SOLO_OK.has('engineer')).toBe(true);
-    expect(DOC_SWITCH.SOLO_IN).toBe(false);
-    expect(fitFor(sim, s, op, w)).toBe(0);
-    DOC_SWITCH.SOLO_IN = true; docForget();
-    try { expect(fitFor(sim, s, op, w)).toBeGreaterThan(0); } finally { DOC_SWITCH.SOLO_IN = false; docForget(); }
+    expect(DOC_SWITCH.SOLO_IN).toBe(true);
+    expect(fitFor(sim, s, op, w)).toBeGreaterThan(0);
+    DOC_SWITCH.SOLO_IN = false; docForget();
+    try { expect(fitFor(sim, s, op, w)).toBe(0); } finally { DOC_SWITCH.SOLO_IN = true; docForget(); }
   });
 });
 

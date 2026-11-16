@@ -1384,4 +1384,22 @@ describe('R3 시험 2-g: 의료 — 처치 넘겨받기 · 처치 중 이송 막
     expect(m2.task === null || m2.task.gateId === undefined).toBe(true);
     expect(env.s.casualties[0].treatProg > 0 || env.s.casualties[0].treated).toBe(true);
   });
+
+  it('E04: 의사 — 위중하지만 걸을 수 있는 환자(제세동기 줄 E02·E03 이 걸리지 않는다)에게 즉시 이송 대신 현장 전문 처치를 고르고, 실행부가 그 줄을 기록한다. 교본이 없으면 즉시 이송이다', () => {
+    const { sim, I, s, of } = sceneWith('R3-G8', 'medical/trauma', ['medHeli', 'als']);
+    const doc = s.agents.find((b) => roleIdOf(sim, b.rid) === 'doctor')!;
+    expect(doc).toBeDefined();
+    for (const b of s.agents) { b.task = null; b.orderWork = -1; if (b !== doc) b.status = 'withdrawn'; }
+    const amb = sim.units[of('als')[0].unitId]; amb.state = 'onscene'; if (I.assigned.indexOf(amb.id) < 0) I.assigned.push(amb.id);      // 환자 자리가 남은 부대가 와 있다 (즉시 이송의 조건)
+    const c = s.casualties[0];
+    c.health = 30; c.where = 'scene'; c.mob = 'mobile'; c.walking = true; c.treated = false; c.treatQ = 0;
+    doc.beliefs.merge(casFact(sim, s, c, '시험')); docForget();
+    const w = work(sim, s, 'treat', { cas: c.id });
+    const tg = { cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1 };
+    expect(chooseMethod(sim, s, doc, 'treat', tg, null, NO_SENSE)!.m).toBe('rush');      // 교본 없이 (R2 의 즉시 이송 조건)
+    giveTask(sim, s, doc, w); put(doc, { x: Math.round(c.x), y: Math.round(c.y) });
+    act(sim, s, doc);
+    expect(doc.task!.method).toBe('stay');
+    expect((I.docs ?? []).some((d) => d.rule === 'E04' && d.hook === 'method' && d.method === 'stay')).toBe(true);
+  });
 });

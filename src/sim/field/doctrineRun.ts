@@ -408,3 +408,138 @@ export function docMark(sim: Sim, s: Scene, a: FieldAgent, ruleId: string, hook:
   if (r === undefined) return;
   recordDoc(sim, sim.incidents[s.incidentId], a, ruleId, hook, extra, docNote(sim, s, a, r, noteImp), r.report !== undefined);
 }
+
+// ───────────────────────── (4단계) 의료 — 분류 · 처치 넘겨받기 · 경계 밖 처치소 · 판단 지점 carryHold·laneTreat (§3.3·§6.1) ─────────────────────────
+// (import 를 이 절에 둔 것은 위의 import 묶음을 다른 단계가 함께 고치고 있어서다 — 3·4·5 단계를 나란히 돌린다)
+import { casFact } from './agents';
+import { staticPass, tileOf } from './grid';
+import { TYPE_DEFS } from '../incidentTypes';
+import { docGate } from './doctrine';
+import type { CasBelief, Casualty } from '../types';
+import type { Sense } from './methods';
+
+/** 분류의 수치: 환자 곁에 서는 시간(초) · 닿는 거리(칸) · 분류 한 번의 상한(초 — 모든 사건은 끝난다) */
+export const TRIAGE = { stand: 2, reach: 1.4, cap: 90 } as const;
+/**
+ * 분류 작업 하나의 진행 (본 환자 · 지금 가는 환자 · 본 중증도의 수 — 작업의 모양을 바꾸지 않으려 WeakMap). 작업판의 작업에 매단다:
+ * 분류하던 대원이 자기 구급차를 타고 떠나 다른 대원이 이어받아도 이미 본 환자를 다시 보지 않는다 (작업이 없는 임무는 임무에)
+ */
+interface TriageRun { seen: number[]; cur: number; bands: number[] }
+const TRIAGE_RUN = new WeakMap<object, TriageRun>();
+/** 그 대원의 믿음 속 다음 분류 대상: 숨지지 않았고 현장·안전 구역에 있으며(실려 가지 않았다) 물속·위험 건물 실내가 아닌 사람 가운데 가장 가까운 사람 (없으면 -1) */
+function nextTriage(s: Scene, a: FieldAgent, seen: number[]): number {
+  let best = -1, bd = Infinity;
+  const risky = TYPE_DEFS[s.kind].indoorRisk;
+  for (const f of a.beliefs.list('cas')) {
+    const v = f.value as CasBelief;
+    if (v.band >= 3 || (v.where !== 'scene' && v.where !== 'safe') || v.water === true || seen.indexOf(f.id) >= 0) continue;
+    const rg = s.region[tileOf(s, v.x, v.y)];
+    if (v.where === 'scene' && rg >= 0 && s.regions[rg].indoor && (risky || (a.beliefs.val<number>('fire', rg) ?? 0) > 0.25)) continue;      // 위험 건물 안은 소방이 데려온다 (E07 — 지금 규칙)
+    const d = dist(a.x, a.y, v.x, v.y);
+    if (d < bd) { bd = d; best = f.id; }
+  }
+  return best;
+}
+/**
+ * 다수 사상자 분류 (WorkKind 'triage', 라벨 '분류' — §3.3 E01·§6.1 CE1): 믿음 속 환자마다 곁(1.4칸)에 2초 서서 그 사람의 상태를 바로잡아 알린다
+ * (casFact 강제 보고 — 지휘관의 믿음 속 중증도가 실제와 같아진다. 무전 문구는 환자마다 내지 않고 끝에 한 줄로). 더 볼 사람이 없거나 90초가 지나면
+ * s.triageAt 을 적고 '분류 완료: 위중 n · 중상 m · 경상 k.' 를 남긴 뒤 작업을 끝낸다(done). 닿지 못하거나 그 사이 실려 간 사람은 건너뛴다
+ */
+export function runTriage(sim: Sim, s: Scene, a: FieldAgent, t: Task, k: ExecKit): void {
+  const r = sim.responders[a.rid];
+  a.label = '분류';
+  const key: object = (t.workId >= 0 ? s.board[t.workId] : undefined) ?? t;
+  let st = TRIAGE_RUN.get(key);
+  if (st === undefined) { st = { seen: [], cur: -1, bands: [0, 0, 0] }; TRIAGE_RUN.set(key, st); }
+  if (t.phase === 0) {
+    t.phase = 1; st.cur = -1;      // 이 대원이 분류를 맡았다 (이어받았으면 앞사람이 가던 환자부터 다시 고른다)
+    const rule = ruleById('E01');
+    if (rule !== undefined) docNote(sim, s, a, rule);      // '다수 사상자 — 먼저 분류합니다.' (같은 대원 20초에 한 번)
+  }
+  if (st.cur < 0 || st.seen.indexOf(st.cur) >= 0) { st.cur = nextTriage(s, a, st.seen); t.progress = 0; }
+  const w0 = t.workId >= 0 ? s.board[t.workId] : undefined;
+  if (st.cur < 0 || sim.t - (w0 !== undefined ? w0.createdAt : t.startedAt) >= TRIAGE.cap) {
+    s.triageAt = sim.t;
+    emit(sim, { inc: s.incidentId, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `분류 완료: 위중 ${st.bands[2]} · 중상 ${st.bands[1]} · 경상 ${st.bands[0]}.` });
+    k.finish(sim, s, a, true);
+    return;
+  }
+  const c: Casualty = s.casualties[st.cur];
+  if (c.dead || c.where === 'loaded' || c.where === 'hospital' || c.where === 'carried' || c.inWater) { st.seen.push(c.id); st.cur = -1; return; }
+  const m = k.moveTo(sim, s, a, c.x, c.y, TRIAGE.reach);
+  if (m === 'nopath') { st.seen.push(c.id); st.cur = -1; return; }
+  if (m !== 'arrived') return;
+  t.need = TRIAGE.stand; t.progress += sim.dt; a.ring = t.progress / t.need;
+  if (t.progress + 1e-9 < t.need) return;
+  const f = casFact(sim, s, c, r.name);
+  a.quiet.add(f.key); learn(sim, a, f, true, true);      // 강제 보고 (같은 값이어도 보낸다 — 무전 문구는 끝의 한 줄이 대신한다)
+  const b = (f.value as CasBelief).band;
+  if (b < 3) st.bands[Math.min(2, b)]++;
+  st.seen.push(c.id); st.cur = -1; t.progress = 0; a.ring = 0;
+}
+/** 처치를 넘겨받는 거리 (칸 — 그 작업을 맡은 구급 대원이 환자에게서 이 안에 오면 비구급 대원이 손을 뗀다) */
+export const HANDOVER_R = 1.5;
+/**
+ * 처치 넘겨받기 (§6.1 CE2 — 실행기 case 'treat' 의 비구급 대원): 지휘관이 같은 처치 작업을 맡긴 구급 대원이 환자 곁(1.5칸)에 왔으면
+ * 손을 떼고 임무를 놓는다(finishTask 사유 'handover' — 실패 기록·w.fails·holdUntil 없음, 작업은 구급 대원에게 남는다). 지휘관 코드는 남의 임무를 끝내지 않는다.
+ * 돌려주는 값 = 넘겼다 (부른 쪽은 그 틱에 돌아간다)
+ */
+export function tryHandover(sim: Sim, s: Scene, a: FieldAgent, t: Task, c: Casualty, k: ExecKit): boolean {
+  if (t.workId < 0) return false;
+  const w = s.board[t.workId];
+  if (!w) return false;
+  for (let q = 0; q < w.assignees.length; q++) {
+    const rid = w.assignees[q];
+    if (rid === a.rid || sim.responders[rid].dept !== 'ems') continue;
+    let b: FieldAgent | null = null;
+    for (const x of s.agents) if (x.rid === rid && x.status === 'active') { b = x; break; }
+    if (b === null || b.task === null || b.task.workId !== w.id || dist(b.x, b.y, c.x, c.y) > HANDOVER_R) continue;
+    const r = sim.responders[a.rid];
+    emit(sim, { inc: s.incidentId, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 0, text: `구조 대상 ${c.label} 처치를 ${sim.responders[rid].name} 대원에게 넘깁니다.` });
+    k.finish(sim, s, a, false, 'handover');
+    return true;
+  }
+  return false;
+}
+/**
+ * 경계 밖 처치소 (§3.3 E05 — 기록 전용 줄): 안전 확보 전의 무장 현장에서 구급 대원이 안전 구역의 환자를 처치하기 시작했다 — 그 현장에서 처음 한 번
+ * 그 줄의 문구('경계 밖 처치소에서 처치합니다.')와 기록 (자격은 agents.fitFor 의 treat 기본 규칙이 연다)
+ */
+export function careMark(sim: Sim, s: Scene, a: FieldAgent, t: Task, c: Casualty): void {
+  if (s.kind !== 'armed' || s.secureAt >= 0 || c.where !== 'safe' || sim.responders[a.rid].dept !== 'ems') return;
+  const I = sim.incidents[s.incidentId];
+  if (I.docs !== undefined && I.docs.some((d) => d.rule === 'E05')) return;
+  docMark(sim, s, a, 'E05', 'fit', { work: 'treat', tgt: t.workId >= 0 ? 'w:' + t.workId : '' });
+}
+/** 차로 위 환자의 곁에서 기다리는 칸: 그 환자의 칸에서 위·아래로 차로 줄이 아닌 지나갈 수 있는 첫 칸 (없으면 그 칸) */
+function laneWaitSpot(s: Scene, x: number, y: number): { x: number; y: number } {
+  const cx = Math.round(x), cy = Math.round(y);
+  for (const dy of [1, -1, 2, -2]) {
+    const ny = cy + dy;
+    if (ny < 0 || ny >= s.h || s.laneRows.indexOf(ny) >= 0) continue;
+    if (staticPass(s.tiles[ny * s.w + cx])) return { x: cx, y: ny };
+  }
+  return { x: cx, y: cy };
+}
+/**
+ * 판단 지점 laneTreat (§3.3 E12 — 실행기 case 'treat' 의 이동 앞): 차로 줄 위의 환자이고 그 차로가 통제됐다고 모르면 차로 밖의 곁 칸에서 기다린다
+ * (옮겨지기를 — 지휘관의 carry — 또는 통제를). 상한 20초가 지나면 그 자리에서 처치한다(지금 동작). 돌려주는 값 = 이 틱은 기다린다
+ */
+export function laneHold(sim: Sim, s: Scene, a: FieldAgent, t: Task, c: Casualty, k: ExecKit): boolean {
+  if (gatePassed(t, 'laneTreat')) return false;
+  if (gateStep(sim, s, a, t, 'laneTreat', docGate(sim, s, a, 'laneTreat')) !== 'wait') return false;
+  a.label = ruleShort(t.docRule ?? null) ?? '차로 통제 대기';
+  const p = laneWaitSpot(s, c.x, c.y);
+  k.moveTo(sim, s, a, p.x, p.y, 1.0);
+  return true;
+}
+/**
+ * 판단 지점 carryHold (§3.3 E08 — 실행기 case 'carry' 의 들기 직전): 구급 동료가 곁에 앉아 그 환자를 처치하는 중이면 들지 않고 곁에서 기다린다.
+ * 연기·열이 짙거나 위험 건물 실내·X6 단계 2 이상이면 줄의 예외로 먼저 옮긴다. 상한 15초가 지나면 옮긴다(지금 동작). 돌려주는 값 = 이 틱은 기다린다
+ */
+export function carryHold(sim: Sim, s: Scene, a: FieldAgent, t: Task, sense: Sense): boolean {
+  if (gatePassed(t, 'carryHold')) return false;
+  if (gateStep(sim, s, a, t, 'carryHold', docGate(sim, s, a, 'carryHold', sense)) !== 'wait') return false;
+  a.label = ruleShort(t.docRule ?? null) ?? '처치 대기';
+  return true;
+}

@@ -105,12 +105,12 @@ export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
   }
 }
 
-function setCommander(sim: Sim, s: Scene, I: Incident, a: FieldAgent, text: string): void {
+function setCommander(sim: Sim, s: Scene, I: Incident, a: FieldAgent, text: string): number {
   for (const b of s.agents) b.isCommander = false;
   a.isCommander = true; s.commanderRid = a.rid; a.planT = sim.t + 0.6;
   // 현장 평가는 지휘관 본인이 한다. 이전 지휘관이 하던 평가는 중단시킨다.
   if (!s.sizeupDone) for (const w of s.board) if (w.kind === 'sizeup' && (w.status === 'open' || w.status === 'active')) w.status = 'cancelled';
-  emit(sim, { inc: I.id, role: 'COMMANDER', actor: sim.responders[a.rid].name, rid: a.rid, kind: 'command', imp: 2, text });
+  return emit(sim, { inc: I.id, role: 'COMMANDER', actor: sim.responders[a.rid].name, rid: a.rid, kind: 'command', imp: 2, text });      // 기록 id (R3 CE5 의 교본 기록이 쓴다)
 }
 
 const ROLL_CALL: Record<string, boolean> = { cas: true, hos: true, haz: true, mate: true, fire: true, srch: true, ovh: true, ctl: true, evid: true, sign: true };
@@ -311,9 +311,12 @@ export function tickScene(sim: Sim, s: Scene): void {
   // 4) 지휘권 승계
   if (I.phase !== 'closed' && s.agents.length) {
     const cmd = s.agents.find((a) => a.rid === s.commanderRid);
-    if (!cmd || cmd.status !== 'active') {
-      const cands = s.agents.filter((a) => a.status === 'active' && sim.responders[a.rid].dept !== 'civil');      // (N8) 유관 기관 대원은 지휘권을 승계하지 않는다
-      if (cands.length) {
+    // (R3 CE5) 지휘관의 부대에 철수·이송 지시가 섰다: 타기 전에 지휘를 넘긴다 — 후보는 그런 지시가 선 부대의 대원(지휘관 자신 포함)을 뺀 활동 대원, 없으면 넘기지 않는다(떠난 뒤 지금 경로)
+    const leaving = cmd !== undefined && cmd.status === 'active' && sim.units[cmd.unitId].boardOrder !== null;
+    if (!cmd || cmd.status !== 'active' || leaving) {
+      const cands = s.agents.filter((a) => a.status === 'active' && sim.responders[a.rid].dept !== 'civil' && !(leaving && sim.units[a.unitId].boardOrder !== null));      // (N8) 유관 기관 대원은 지휘권을 승계하지 않는다
+      if (leaving && cands.length) { cmdHandover(sim, s, I, cmd!, cands); }
+      else if (!leaving && cands.length) {
         cands.sort((x, y) => (sim.responders[y.rid].dept === s.leadDept ? 1 : 0) - (sim.responders[x.rid].dept === s.leadDept ? 1 : 0) || sim.responders[y.rid].experience - sim.responders[x.rid].experience || x.rid - y.rid);
         if (cmd) for (const f of cmd.beliefs.all()) cands[0].beliefs.merge(BeliefStore.relay(f));
         // 승계자가 옛 지휘관의 상태를 알고 있으면(본 사람의 보고, 물러나며 본인이 알린 것) 그 까닭을 말한다. 모르면 예전 문구
@@ -423,4 +426,15 @@ export function tickScene(sim: Sim, s: Scene): void {
   // 이 사건에 아직 와 있는 부대가 있으면 보관하지 않는다: 7)번이 이 틱에 사건을 닫았으면 5)번은 이미 지나갔다.
   // 지상 대원이 없으면 여기서 곧바로 보관되고, 다음 틱부터는 5)번이 돌지 않아 상공의 헬기가 닫힌 사건 위에 남는다
   if (I.phase === 'closed' && s.agents.every((a) => a.status === 'left') && !sim.units.some((u) => u.state === 'onscene' && u.incidentId === I.id)) s.archived = true;
+}
+
+// ── (R3 4단계 CE5) 이송 출발 전에 지휘를 넘긴다 — 4번 블록이 부른다. 고르는 순서는 지금의 승계(주관 부서 → 경험 → rid)와 같다 ──
+import { recordDoc } from './doctrineRun';
+function cmdHandover(sim: Sim, s: Scene, I: Incident, cmd: FieldAgent, cands: FieldAgent[]): void {
+  cands.sort((x, y) => (sim.responders[y.rid].dept === s.leadDept ? 1 : 0) - (sim.responders[x.rid].dept === s.leadDept ? 1 : 0) || sim.responders[y.rid].experience - sim.responders[x.rid].experience || x.rid - y.rid);
+  const nw = cands[0];
+  for (const f of cmd.beliefs.all()) nw.beliefs.merge(BeliefStore.relay(f));
+  const was = sim.responders[cmd.rid].name, now = sim.responders[nw.rid].name;
+  const ev = setCommander(sim, s, I, nw, `${was} → ${now}: 지휘 넘김 — ${sim.units[cmd.unitId].callsign} ${sim.units[cmd.unitId].boardOrder === 'transport' ? '이송 출발' : '철수'}. ${now} 지휘권 인수.`);
+  recordDoc(sim, I, null, 'CE5', 'cmd', {}, ev);
 }

@@ -685,6 +685,31 @@ export function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     w.assignees.push(best.rid); w.orderSentAt[best.rid] = sim.t;
     transmit(sim, s, a, best.rid, 'order', [], `${sim.responders[best.rid].name}, ${workLabel(s, w, sim)} 넘겨받아라 — 장비를 갖춘 대원으로 교대한다.`, w.id, 1, w.cause >= 0 ? [w.cause] : []);
   }
+  handoverCare(sim, s, I, a, taken);
+}
+/**
+ * (R3 §6.1 CE2) 처치 넘겨받기: 처치를 맡은 사람이 모두 구급 분야가 아닌데(선착한 소방·경찰의 기본 처치) 손이 빈 구급 대원이 있으면 그 대원에게 같은 작업을 지시한다
+ * (담당자 둘을 잠깐 허락 — 작업의 사람 수 max 를 넘긴다). 지휘관 코드는 비구급 대원의 임무를 끝내지 않는다: 구급 대원이 환자 곁(1.5칸)에 오면
+ * 비구급 대원이 스스로 손을 뗀다(실행기 case 'treat' — doctrineRun.tryHandover). 적합도는 든 장비·명부로만 본다(fitFor)
+ */
+function handoverCare(sim: Sim, s: Scene, I: Incident, a: FieldAgent, taken: Set<number>): void {
+  for (const w of s.board) {
+    if (w.kind !== 'treat' || w.status !== 'active' || !w.assignees.length || sim.t < w.holdUntil) continue;
+    if (w.assignees.some((rid) => sim.responders[rid].dept === 'ems')) continue;
+    let best: FieldAgent | null = null, bf = 0;
+    for (const b of s.agents) {
+      if (b === a || b.status !== 'active' || taken.has(b.rid) || w.assignees.indexOf(b.rid) >= 0 || sim.units[b.unitId].boardOrder) continue;
+      const r = sim.responders[b.rid];
+      if (r.dept !== 'ems' || r.status === 'injured' || hasWork(b) || b.orderWork >= 0 || b.carrying !== -1 || failedRecently(sim, w, b.rid)) continue;      // 손이 빈 구급 대원만
+      const fit = fitFor(sim, s, b, w);
+      if (fit > bf) { bf = fit; best = b; }
+    }
+    if (!best) continue;
+    taken.add(best.rid);
+    w.assignees.push(best.rid); w.orderSentAt[best.rid] = sim.t;
+    const ev = transmit(sim, s, a, best.rid, 'order', [], `${sim.responders[best.rid].name}, ${workLabel(s, w, sim)} 넘겨받아라.`, w.id, 1, w.cause >= 0 ? [w.cause] : []);
+    if (ev >= 0) docCmd(sim, I, 'CE2', ev);
+  }
 }
 /** 그 다친 대원이 가벼운 일을 하고 있다고 지휘관이 아는가 (본인의 보고 — mate 사실 'light'. 후퇴 중·안전 구역이면 아니다) */
 function lightDuty(a: FieldAgent, b: FieldAgent): boolean {

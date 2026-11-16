@@ -563,6 +563,7 @@ export function workLabel(s: Scene, w: WorkItem, sim?: Sim): string {
     treatSuspect: `${hos} 응급 처치`,
     repair: '시설물 복구', towAway: '차량 견인', capture: '동물 포획', persuade: `${cas} 설득`, cordon: '통제',      // (N8) 이름만 — 대상의 글자는 그 임무를 쓰는 단계가 다듬는다
     decontam: '제독',      // (N9 §5.5) 이름만 — 대상의 글자는 그 임무를 쓰는 단계 6 이 다듬는다
+    triage: '다수 사상자 분류',      // (R3 4단계 E01·CE1)
   };
   return names[w.kind];
 }
@@ -678,7 +679,8 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
       return f >= 0.2 || sim.t - w.createdAt > 25 ? Math.max(0.05, f) : 0;
     }
     case 'treat': {
-      if (hot && r.dept !== 'police') return 0;
+      // (R3 E05) 안전 확보 전의 무장 현장: 현장 안의 환자는 경찰만 — 안전 구역(경계 밖 처치소)에 나와 있다고 믿는 환자는 누구나 처치한다 (교본은 0 인 자격을 열 수 없어 기본 규칙을 고친다)
+      if (hot && r.dept !== 'police' && a.beliefs.val<CasBelief>('cas', w.cas)?.where !== 'safe') return 0;
       const cb = a.beliefs.val<CasBelief>('cas', w.cas);
       if (cb && cb.tq >= 1 && r.dept !== 'ems') return 0;      // 기본 처치가 끝난 환자는 구급대원만 더 손볼 수 있다
       return Math.max(0.08, r.skills.medical * (0.5 + 0.5 * medLevelOf(sim, rid)));
@@ -758,6 +760,8 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
     case 'repair': case 'towAway': case 'capture': case 'persuade': case 'cordon': return 0;
     // (N9 단계 1) 제독의 자리 — 맡는 사람(제독 장비 1.0 · 역할 decon 0.7 · 120초 뒤 호스를 든 소방 0.4)은 단계 6 이 정한다(설계서 §5.3.5). 지금은 아무도 이 작업을 만들지 않는다
     case 'decontam': return 0;
+    // (R3 4단계 E01·CE1) 다수 사상자 분류: 구급 대원만 (안전 확보 전의 무장 현장에서는 내지 않는다 — 지휘 교본 CE1 과 같은 자격, doctrine.triageMedic). 다친 대원은 가벼운 일 목록 밖이라 위에서 0
+    case 'triage': return !hot && triageMedic(sim, rid) ? Math.max(0.08, r.skills.medical * (0.5 + 0.5 * medLevelOf(sim, rid))) : 0;
   }
 }
 
@@ -767,6 +771,7 @@ export function nearDoor(s: Scene, i: number): boolean { return doorAt(s, i) !==
 // ── (R3) 대응 교본의 판단부 (field/doctrine.ts) — fitFor 의 맨 끝이 부른다. doctrine.ts 는 이 파일을 import 하지 않는다(순환 없음).
 //    (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다) ──
 import { docFit, docFitRules } from './doctrine';
+import { triageMedic } from './doctrine';      // (R3 4단계) 분류를 맡을 수 있는 대원 — 지휘 교본 CE1 과 같은 자격
 import type { DocFitAns } from './doctrine/registry';
 import { SHAKE, crewAlert, shake } from './doctrineRun';      // (R3 1단계) 쓰러진 동료를 본 동요
 // (R2 1a) 대응 방법의 판단부 — 수난 구조의 배정(fitFor)이 methodFit 을 쓴다. methods.ts 는 이 파일을 import 하지 않는다 (순환 없음)

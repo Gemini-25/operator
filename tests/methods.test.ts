@@ -16,7 +16,7 @@ import { XK, act, finishTask, makeTask } from '../src/sim/field/executor';
 import { think } from '../src/sim/field/brain';
 import type { Rng } from '../src/sim/rng';
 import { BARE_HANDS, SHARED, isQty, kitCount, kitName, kitTool, seatsLeft, swimBonus, useKit } from '../src/sim/field/gear';
-import { los, losWalls, staticPass } from '../src/sim/field/grid';
+import { isIndoor, los, losWalls, staticPass } from '../src/sim/field/grid';
 import { exteriorSpots, newOps } from '../src/sim/field/ops';
 import { catOf, catTick } from '../src/sim/field/catastrophe';
 import { WORK_DONE, methodFailLine, methodLines, methodSummary, methodTally, whyText } from '../src/sim/field/methodReport';
@@ -36,8 +36,9 @@ import type { CasBelief, Casualty, FieldAgent, Hostile, Incident, IncidentType, 
 import { clamp, josa } from '../src/sim/util';
 import { MethodRows } from '../src/ui/MethodRows';
 import { THROW_RELEASE, drawBarricades, drawBoats, drawCharges, drawMethodFx, inBoat, swimming } from '../src/view/scene/methodsLayer';
+import { drawFanMachine, drawMethodGround, drawMethodOver, drawPowder, fanDir, sniperSet } from '../src/view/scene/methodsLayer';
 import { drawPerson, drawSwimmer, responderLook } from '../src/view/scene/sprites';
-import { fakeCtx } from './fakeCanvas';
+import { fakeCtx, withFakeDom } from './fakeCanvas';
 
 // ───────────────────────── 도구 ─────────────────────────
 const FULL: Difficulty = { ...NORMAL, resources: 5 };      // 모든 부대가 편성된다
@@ -2996,4 +2997,110 @@ describe('R2 단계 6: 강제 교대 (§8 의 3·6)', () => {
     for (const m of ['stay', 'seal'] as MethodId[]) expect(ok.has(m), m).toBe(true);
     expect([...ok].filter((m) => m === 'rush' || m === 'airlift' || m === 'ventFirst' || m === 'announce').length, [...ok].join(',')).toBeGreaterThanOrEqual(3);
   }, 90000);
+});
+
+// ───────────────────────── 단계 4·5·6 의 그림 (§3.7 — 화면만, 결과 불변) ─────────────────────────
+/** 부른 그리기 명령을 세는 가짜 맥락 (fakeCtx 를 감싼다) */
+function countingCtx(): { g: CanvasRenderingContext2D; n: Record<string, number> } {
+  const n: Record<string, number> = {}, base = fakeCtx() as unknown as Record<string | symbol, unknown>;
+  const g = new Proxy({}, {
+    get(_t, k) { const v = base[k]; if (typeof v === 'function' && typeof k === 'string') return (...args: unknown[]) => { n[k] = (n[k] ?? 0) + 1; return (v as (...a: unknown[]) => unknown)(...args); }; return v; },
+    set(_t, k, v) { base[k] = v; return true; },
+  }) as CanvasRenderingContext2D;
+  return { g, n };
+}
+describe('R2 단계 4·5·6: 화재·무장·누출·통제 방법의 그림 (methodsLayer · 자세 · 분말 — 화면은 상태를 읽기만 한다)', () => {
+  /** 그림 입력을 갖춘 두 현장: 화재(고가 사다리·배연 설치·소화기·송풍기)와 인질극(저격 자리·비살상탄·대피 방송) */
+  const scenes = (): { f: ReturnType<typeof sceneWith>; m: ReturnType<typeof sceneWith>; lad: FieldAgent; eng: FieldAgent; cop: FieldAgent; mk: FieldAgent; tac: FieldAgent; ann: FieldAgent; h: Hostile } => {
+    const f = sceneWith('R2-DRAW4', 'fire/std', ['engine', 'ladder', 'patrol']);
+    const lad = f.role('ladderOp'), eng = f.role('engineer'), cop = f.role('patrolLead');
+    const room = f.s.regions.findIndex((r) => r.indoor), fireTile = f.s.regions[room].tiles[0], e0 = f.s.exits[0];
+    const ta = taskFor(lad, work(f.sim, f.s, 'suppress', { region: room })); ta.method = 'aerial'; ta.phase = 1; ta.tx = lad.x; ta.ty = lad.y; ta.tile = fireTile;
+    const tv = taskFor(eng, work(f.sim, f.s, 'suppress', { region: room })); tv.method = 'ventilate'; tv.phase = 5; tv.tx = e0.x; tv.ty = e0.y; eng.ring = 0.4;
+    const tx = taskFor(cop, work(f.sim, f.s, 'suppress', { region: room })); tx.method = 'extinguisher'; cop.ring = 0.3;
+    f.s.fan = { x: e0.x, y: e0.y, until: f.sim.t + 100, rid: eng.rid, power: 1 };
+    f.s.fx.push({ kind: 'spray', t: f.sim.t, x: cop.x, y: cop.y, x2: cop.x + 1.5, y2: cop.y, color: '#f2f2ee', ttl: 0.3 });
+    f.s.fx.push({ kind: 'spray', t: f.sim.t, x: lad.x, y: lad.y, x2: fireTile % f.s.w, y2: (fireTile / f.s.w) | 0, ttl: 0.3 });
+    const m = sceneWith('R2-DRAW5', 'armed/hostage', ['swat', 'tactical', 'patrol']);
+    const mk = m.role('marksman'), tac = m.role('tacLead'), ann = m.role('patrolLead'), h = m.s.hostiles[0];
+    h.state = 'hold'; h.stunUntil = -1;
+    const ts = taskFor(mk, work(m.sim, m.s, 'engage', { hostile: h.id })); ts.method = 'sniper'; ts.range = 1; ts.tx = mk.x; ts.ty = mk.y; mk.ring = 0.6;
+    const tb = taskFor(tac, work(m.sim, m.s, 'arrest', { hostile: h.id })); tb.method = 'beanbag'; tac.ring = 0.5;
+    const tp = taskFor(ann, work(m.sim, m.s, 'perimeter', { tile: 0 })); tp.method = 'announce'; ann.spot = 0; ann.px = ann.x; ann.py = ann.y;
+    return { f, m, lad, eng, cop, mk, tac, ann, h };
+  };
+  const snap = (q: ReturnType<typeof sceneWith>): string => JSON.stringify([q.sim.logHash, q.sim.events.length, peek(q.sim.rng), peek(q.s.rng), q.s.fan, q.s.fx.length,
+    q.s.agents.map((a) => [a.x, a.y, a.px, a.py, a.ring, a.spot, a.label, a.task && [a.task.kind, a.task.method, a.task.phase, a.task.range, a.task.tx, a.task.ty, a.task.tile], a.mrng === undefined, a.path === null]),
+    q.s.hostiles.map((h) => [h.x, h.y, h.state, h.stunUntil]), q.sim.responders.map((r) => r.kit!.map((it) => [it.id, it.uses, it.fault, it.faultKnown]))]);
+
+  it('그림 함수와 drawScene(관찰자·AI 시점·작은 창·밤)은 예외 없이 끝나고 기록·난수·장비·임무를 바꾸지 않는다', async () => {
+    const q = scenes();
+    const b4 = snap(q.f), b5 = snap(q.m);
+    await withFakeDom(async () => {
+      const { drawScene } = await import('../src/view/renderScene');
+      for (const [x, truth, mini] of [[q.f, true, false], [q.f, false, false], [q.f, true, true], [q.m, true, false], [q.m, false, false], [q.m, false, true]] as const) {
+        for (const tm of [0, 370, 1250]) drawScene(fakeCtx(), x.sim, x.s, 1600, 900, { truth, alpha: 0.5, timeMs: tm, selectedRid: -1, mini });
+      }
+      const ws = q.m.sim as unknown as { weather: string }, w0 = ws.weather;
+      ws.weather = 'night'; drawScene(fakeCtx(), q.m.sim, q.m.s, 1600, 900, { truth: true, alpha: 1, timeMs: 10, selectedRid: q.mk.rid }); ws.weather = w0;
+    });
+    const g = fakeCtx();
+    for (const p of [0, 0.5, 1]) {
+      drawMethodGround(g, q.f.sim, q.f.s, 24, p, p * 3); drawMethodOver(g, q.f.sim, q.f.s, 24, p, p * 3, true);
+      drawMethodGround(g, q.m.sim, q.m.s, 12, p, p * 3); drawMethodOver(g, q.m.sim, q.m.s, 12, p, p * 3, p > 0.4);
+      drawPowder(g, 10, 10, 60, 30, 24, p, p * 2); drawFanMachine(g, 10, 10, 13, p, p * 5, 1 - p / 2);
+    }
+    q.f.s.fan!.power = 0.5; drawMethodGround(g, q.f.sim, q.f.s, 16, 1, 0.2); q.f.s.fan!.power = 1;      // 맨몸 환기: 바람만
+    const lk = responderLook('police', 'tactical', 3, 'tacLead');
+    for (const item of ['extinguisher', 'launcher'] as const) for (const moving of [false, true]) drawPerson(g, 10, 10, 0.4, 24, lk, { step: 1, moving, arms: 'aim', item, t: 1, recoil: 0.5 });
+    expect(snap(q.f)).toBe(b4);
+    expect(snap(q.m)).toBe(b5);
+  });
+
+  it('송풍기의 바람은 건물 출입구 앞에서 문 안쪽(실내 칸)을 향하고, 방 문(실내)에서는 더 작은 구역 쪽이다', () => {
+    const { s } = sceneWith('R2-DRAW6', 'fire/std', ['engine']);
+    for (const e of s.exits) {
+      const [dx, dy] = fanDir(s, e.x, e.y);
+      expect(Math.abs(dx) + Math.abs(dy)).toBe(1);
+      const near = [1, 2].map((k) => s.tiles[(e.y + dy * k) * s.w + (e.x + dx * k)]);
+      expect(near.some((t) => isIndoor(t)), `${e.x},${e.y}`).toBe(true);
+    }
+    // 방 문: 양쪽이 실내 — 구역이 더 작은 쪽
+    const door = s.props.find((p) => p.kind === 'door' && isIndoor(s.tiles[(p.y - 1) * s.w + p.x]) && isIndoor(s.tiles[(p.y + 1) * s.w + p.x]) && s.region[(p.y - 1) * s.w + p.x] >= 0 && s.region[(p.y + 1) * s.w + p.x] >= 0);
+    if (door) {
+      const [dx, dy] = fanDir(s, door.x, door.y), up = s.regions[s.region[(door.y - 1) * s.w + door.x]].tiles.length, down = s.regions[s.region[(door.y + 1) * s.w + door.x]].tiles.length;
+      if (up !== down) expect([dx, dy]).toEqual(up < down ? [0, -1] : [0, 1]);
+    }
+  });
+
+  it('저격 조준선은 관찰자 시점에서만 그리고(G5 의 겨누는 선은 저격수를 건너뛴다), 저격 자리 표시·대피 방송의 호는 두 시점 모두 그린다', () => {
+    const q = scenes();
+    expect(sniperSet(q.mk)).toBe(true);
+    const only = (keep: FieldAgent): void => { for (const a of q.m.s.agents) if (a !== keep) a.status = 'left'; };
+    const arcs = (truth: boolean): number => { const c = countingCtx(); drawMethodOver(c.g, q.m.sim, q.m.s, 24, 1, 0.3, truth); return c.n.arc ?? 0; };
+    const keep = q.m.s.agents.map((a) => a.status);
+    only(q.mk);
+    expect(arcs(true)).toBeGreaterThan(0);      // 좁혀지는 조준 고리
+    expect(arcs(false)).toBe(0);
+    const ground = countingCtx(); drawMethodGround(ground.g, q.m.sim, q.m.s, 24, 1, 0.3);
+    expect(ground.n.arc ?? 0).toBeGreaterThan(0);      // 저격 자리 원 (시점과 상관없다)
+    q.m.s.agents.forEach((a, k) => { a.status = keep[k]; });
+    only(q.ann);
+    expect(arcs(false)).toBe(3);      // 대피 방송: 호 셋
+    q.m.s.agents.forEach((a, k) => { a.status = keep[k]; });
+    // G5 의 겨누는 선: 저격수를 건너뛴다 (combat.ts)
+    const src = readFileSync(new URL('../src/view/scene/combat.ts', import.meta.url), 'utf8');
+    expect(src).toContain("a.task.method === 'sniper'");
+  });
+
+  it('소화기 분사(색이 있는 분사 기록)는 흰 분말로, 물줄기(색이 없다)는 지금처럼 그린다 — 실행부가 남기는 기록의 색과 맞는다', () => {
+    const rs = readFileSync(new URL('../src/view/renderScene.ts', import.meta.url), 'utf8');
+    expect(rs).toContain('if (f.color !== undefined) drawPowder(');
+    const run = readFileSync(new URL('../src/sim/field/methodRun.ts', import.meta.url), 'utf8');
+    expect(run).toMatch(/pushFx\(sim, s, 'spray', a\.x, a\.y, tx, ty, undefined, '#[0-9a-f]{6}'/);      // 소화기는 색을 준다
+    const ex = readFileSync(new URL('../src/sim/field/executor.ts', import.meta.url), 'utf8');
+    for (const l of ex.split('\n').filter((x) => x.includes("pushFx(sim, s, 'spray'"))) expect(l).toContain('undefined, undefined');      // 물줄기는 색이 없다
+    const src = code('../src/view/scene/methodsLayer.ts');
+    for (const bad of ['kitWorks', 'useKit', 'toolUse', 'mrng', 'kitCount', 'chooseMethod', 'methodFit', 'runSuppress', 'runSniper']) expect(src.includes(bad), bad).toBe(false);
+  });
 });

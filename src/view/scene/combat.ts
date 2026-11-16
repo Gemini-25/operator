@@ -121,6 +121,7 @@ export function drawAimLines(cv: CombatView): void {
   const COS25 = Math.cos((25 * Math.PI) / 180);
   for (const a of s.agents) {
     if (a.status !== 'active' || !a.task || (a.task.kind !== 'engage' && a.task.kind !== 'perimeter')) continue;
+    if (a.task.method === 'sniper') continue;      // (R2 §3.7) 저격수의 조준선은 R2 가 그린다 (methodsLayer.drawMethodOver — 관찰자 시점만)
     if (Math.abs(a.x - a.px) + Math.abs(a.y - a.py) > 0.01) continue;
     const fl = Math.hypot(a.fx, a.fy); if (fl < 1e-3) continue;
     let best: Hostile | null = null, bd = 13;

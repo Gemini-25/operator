@@ -2017,3 +2017,63 @@ npm run check                                                             # 단�
 **관문** (`npm run check`, `2b9638d`, 다른 작업이 없는 기계): **통과** — `tsc` 통과, vitest 19 파일 869 통과·건너뜀 1, `sweep 40 --check` '검증 통과'. 같은 코드의 문턱 0(`4deca5a`)에서는 `tests/sim.test.ts` 둘이 깨졌다('추격전' 놓침 > 0 · '선착 대응' — 뒤의 것은 위 3-d 로 고쳤다). 1단계(`SOLO_IN` true 만)에서는 `tests/crews.test.ts` ⑤ '구출은 유압 구조대원이'(0.475 < 0.5 — 그 넷의 교대가 다른 사건으로 바뀐 몫)가 깨졌고, 지금은 통과한다(시드에 기대는 시험이다 — 문턱 0 코드에서 0.61).
 
 **이어받을 자리**: ① 화재 범위(−6)를 넓힐지, 짝 구조를 더 덜어 낼지(예: 짝 동행이 짝 곁의 다른 방 일을 함께 맡기 — 지금은 같은·이웃 구역의 빈 일만 `pairAlt`·`pairAssign`) 사용자 결정. ② 장비 불량(장비 1)의 예비 펌프 0 을 1 로 할지(§2.1 의 표 — 보통 교대는 바뀌지 않는다). ③ 속도(≤ 1.15)는 판단 입력(docCtx)의 재사용이 다음 손이다 — 같은 틱의 `docDuty`·`docAct` 가 같은 자기 모드 입력을 두 번 만든다.
+
+
+### 속도 — 2026-11-16
+
+브랜치 `wf/doctrine-speed`(시작 `255c3a4`) → `wf/doctrine` 가리킴. **결과를 바꾸지 않는 최적화만** — 아래 해시 목록이 커밋마다 시작점과 한 글자도 같다(`a.rng`·`s.rng` 를 포함한 모든 난수의 소비 순서도 같다 — 같지 않으면 교대 해시가 갈린다). 측정 도구는 scratchpad `wf-doctrine/fix/spd/`(`hl.ts`·`hlall.sh` 해시 목록 · `timing.sh` 교대당 시간 · `bundle.sh` 줄 단위 프로파일용 묶음 · `lines.cjs`·`cmp.cjs`·`callers.cjs` 프로파일 읽기 · `load.ts` 일의 양 · `count.ts` 계측 사본의 docCtx 횟수 · `union.cjs`·`outer.cjs` 교본 파일의 몫과 입구 · `pershift.cjs`·`compcmp.cjs` JIT 컴파일·탈최적화 · `diag2.tpl`·`diag3.tpl` 객체의 V8 지도), 기준 사본은 `wf-doctrine/par/fire/b34`(3·4·5 작업자와 같은 `34d30a3` 의 git archive), 시작점 사본은 `fix/spd/ref`.
+
+| 커밋 | 내용 |
+|---|---|
+| `7d84fbc` | 자주 도는 함수 안의 이름 붙은 닫힘을 모듈 함수로 — `agents.fitBase`(fireRisk·risky)·`perceive`(sees)·`grid.astar`(cost·isGoal·hfn)·`commander.syncBoard`(loadsQueued·treatsDone·clear, 지휘 규칙 도구 `CommandKit` 는 지휘관마다 한 번)·`executor.interiorStep`(inside)·`ops.targetTile`(at) |
+| `4c5dad4` | 교본 엔진 — 대원마다 한 번 추린 줄 목록(`AgentDoc`) · 한 판단의 입력 함께 쓰기(`docThink`) · `docFit` 의 값만 셈 · `docDrop` 의 drop 줄 색인 · 색인 열쇠·효과 배열·장비 판정의 할당 없애기 · `docSit` 의 동료 반복 다섯을 하나로 · `selfReport` 의 서명 글자 |
+| 그다음 커밋 | 이 메모 |
+
+**해시 목록** (`hl.ts` — 교대마다 `report.hash` · `JSON.stringify(report)` 의 FNV · `logHash` · 끝난 틱): 보통 S0~S39 · 어려움 S0~S19 · 극한 S0~S19 · 재난 다섯(태풍·홍수·지진·산불·해일) × S0~S2 · 강제 여덟(fire/std·hazmat/std·armed/hostage·armed/siege·armed/bomb·medical/trauma·traffic/bus·water/std) × S0~S2 · 부대 규모 1·5 × S0~S2 = **125교대**. 시작점(`h-ref`) ↔ 첫 커밋(`h-g1`) ↔ 엔진(`h-e1`) ↔ docSit·selfReport(`h-e2`, 둘째 커밋의 코드): `diff` 0줄.
+
+**찾은 것** (측정 — 고치기 전에):
+1. **일의 양 자체가 늘었다 — 결과의 몫이라 줄일 수 없다.** 보통 S0~S19(`sweep 20` 과 같은 교대)의 (활동 대원 × 틱) 1,161,747 → 1,540,850 (**1.33×**), 열린 현장 × 틱 1.09×, 열린 작업 × 틱 1.20× (`load.ts`, 기준 ↔ 시작점). D8 의 펌프차·짝 동행·길어진 화재로 현장에 대원이 더 오래·더 많이 있다. 대원 한 명의 판단·실행 비용이 기준과 같아도 교대당 시간은 1.2~1.3× 가 된다 — §8.2 의 1.15× 는 교본의 판단 비용만 줄여서는 닿지 않는다.
+2. **헤드리스 실행기(tsx)의 `__name`**: esbuild 의 keepNames 가 함수 **안에서** 이름 붙은 닫힘(`const f = () => …`, 객체 칸의 화살표)을 만들 때마다 `__name` → `Object.defineProperty(f, 'name')` 를 불러 함수 객체를 사전 모드로 바꾼다 — 보통 3교대 실행(한 번의 도시 생성 포함)에 43만 번(`node --log-maps` 의 `NormalizeCached`, 거의 모두 이것 — 교대 중에는 초당 약 2만 5천 번), 프로파일 자기 시간 3.9%(6교대). 브라우저 빌드에는 없는 비용이지만 `sweep`·`npm run check` 는 tsx 로 돈다. 2단계·균형 작업자가 DocCtx 의 게으른 칸에서 찾은 것과 같은 원인이 교본 밖의 자주 도는 함수에도 있었다.
+3. **사용자 CPU 의 절반 이상은 JIT 의 다시 컴파일이다**: `node --single-threaded`(컴파일을 주 스레드에서)로 돌리면 벽시계가 사용자 CPU 와 같아진다(묶음 6교대 8.3 → 22초). TurboFan 컴파일 시간·탈최적화(`--trace-opt --trace-deopt`, 보통 3교대): 기준 6.9초·550번 → 시작점 9.9초·842번 → 이 작업 뒤 10.3초·834번. 탈최적화는 대부분 'wrong map' — 현장·대원·작업·구조 대상·부대 객체의 숫자 칸이 Smi 로 만들어졌다가 시각(`sim.t`)·소수가 들어가며 Double 로 바뀌어 지도가 낡는다(deprecated — `diag3` 의 `%DebugPrint`: 낡은 지도의 객체가 남는다) · 새 사건 종류가 교대 중간에 처음 나와 새 길을 탄다(7번째 교대에도 311번). 교본의 작은 함수도(agentOf 17번 …) 대원 지도가 바뀔 때마다 다시 컴파일된다. 키 목록·순서는 모든 객체가 같다(`diag.tpl` — "자주 도는 객체의 모양" 규칙은 지켜져 있다). **이 작업은 고치지 않았다**(아래 남은 큰 몫).
+4. 교본 판단의 횟수 (계측 사본 `count.ts`, 보통 4교대): docCtx 26.6만 번(fit 8.4만 · act 8.4만 · duty 5.5만 · methodFit 3.4만 · 판단 지점 0.8만), 틱마다 담는 상황(`docSit`) 10.7만 · 자기 몸(`stateSelf`) 9.1만 · 보고 모드(`stateReported`) 4.2만 번.
+
+**한 것**:
+- **이름 붙은 닫힘을 모듈 함수로** (`7d84fbc` — 교본 밖 공용 파일, 식과 부르는 순서는 그대로): `agents.fitBase` 의 `fireRisk`·`risky` → `fitRisk`·`fitRiskyAt`, `perceive` 의 `sees` → `seesAt`, `grid.astar` 의 `cost`·`isGoal`·`hfn` → 모듈 변수에 이번 탐색의 값을 두는 `aCost`·`aGoal`·`aH`(astar 는 재진입하지 않는다 — 모듈 버퍼), `commander.syncBoard` 의 `loadsQueued`·`treatsDone`·`clear` → `loadsQueued(s, uid)`·`treatsDone(s, cid)`·`clearCas(s, cid, kinds)`, 묶음별 지휘 규칙에 넘기는 `CommandKit` 은 `commandKitOf` 가 지휘관(현장 대원 객체)마다 한 번 만든다(닫힘이 잡는 sim·s·I·a 가 그 대원에게 늘 같다), `executor.interiorStep` 의 `inside` → `regionIndoor`, `ops.targetTile` 의 `at` → `tileAtPt`.
+- **교본 엔진** (`4c5dad4` — `doctrine.ts`·`brain.ts`·`doctrineRun.ts`):
+  - **틱마다 담는 상태·상황(ch.self·rep·sit)이 계산되는 순간을 바꾸지 않는다** — 이 값은 그 틱에 그 대원의 입력을 처음 만드는 순간의 것이고, 그 뒤 같은 틱의 다른 부름(지휘관의 배정·실행기의 판단 지점)이 함께 쓴다. 사이에 다른 대원·자기 판단이 상태를 바꾸므로, 입력을 만드는 자리를 늦추거나 건너뛰면 결과가 바뀔 수 있다. 그래서 아래의 줄이기는 모두 "예전에 입력을 만들던 바로 그 자리에서 만든다"를 지킨다.
+  - **`AgentDoc`** (대원마다 한 번 — `agentDocOf`): 교본 분야·역할·역할 묶음·혼자 서는 역할·장비 읽기(c.has·c.kit — 2단계의 KIT_FN 을 옮겼다), 그리고 자리·일마다 '누구' 칸(`whoMay`)이 걸릴 수 있는 줄만 추린 목록(`agentRules`). 명부의 역할·부서·부대는 교대 중에 바뀌지 않는다(시험이 바꾸면 `docForget()`), 등록이 바뀌면(줄 수 · `docForget()`) 세대 `GEN` 으로 다시 만든다. 예전 반복이 `whoMay` 로 건너뛰던 줄만 빠지므로 입력을 처음 만드는 자리(= 처음 '누구'가 걸린 줄)도 그대로다. `docFitRules`·`docFit`·`pickAct` 가 쓴다. 이미 추린 줄에는 `applies` 대신 '누구'를 다시 보지 않는 `appliesKw`.
+  - **`docThink`** (한 판단의 입력 함께 쓰기): `brain.think` 의 의무(`docDuty`)·후퇴 바꿔 끼우기(`docRetreat`)·행동 후보(`docAct`)가 자기 모드 입력(w 없음) 하나를 함께 쓴다. 그 사이에 상태를 바꾸는 것은 지휘관 지시가 사라질 때의 `a.orderWork = -1` 하나뿐이라(짝의 일 `pairOf` 의 ordered 가 읽는다) 그때만 짝 칸을 새로 잰다. dng·dngSign 은 부를 때마다 그 값으로 덮는다. 시험처럼 think 밖에서 부르면(th 없음) 예전대로 부를 때마다 만든다.
+  - `docFit` 은 걸린 줄 목록(`hits`)을 만들지 않고 값만 센다(`docFitRules(…).fit` 과 같은 식·같은 곱셈 순서). `docDrop` 은 drop 효과가 있는 fit 줄을 일마다 한 번 추린다(`dropRules` — 예전에는 부를 때마다 줄마다 `effectsOf(r).filter(…)` 배열을 만들었다).
+  - 할당 줄이기: 줄 색인의 열쇠를 글자 잇기(`hook + '|' + work`)에서 두 단 Map 으로, 효과가 하나인 줄의 배열을 효과 객체마다 한 번(`ONE_EFFECT`), 장비 판정의 `some((id) => …)` 닫힘 대신 `anyUsable`, 같은 용의자를 맡은 동료가 없으면 얼린 공용 `NO_PACK`(줄은 읽기만 한다).
+  - `docSit`: 동료를 보는 반복 다섯(해체 중 · 섬광탄을 가진 경찰 · 다른 구급 대원(수·1급·곁의 처치 대상) · 작동하는 로봇 · 공기호흡기)을 하나로, 위협 고르기 반복에서 총기·교전 위협도 센다 — 같은 거름·같은 순서라 값이 같다(`robotOnScene`·`scbaCount` 는 지웠다).
+  - `selfReport`: 서명이 그대로면 서명 글자를 만들지 않고 견준다(`sameSig` — `crewSigOf` 와 같은 비교).
+
+**수치**:
+
+| | 기준 `34d30a3` | 시작점 `255c3a4` | 이 작업 뒤 | §8.2 |
+|---|---|---|---|---|
+| 교대당 시간 (`sweep 20 --no-metrics`, 셋을 번갈아 3번씩 — 벽시계 / 사용자 CPU) | 12.73초 / 31.72초 | 19.37초 / 41.83초 (**1.52× / 1.32×**) | 17.47초 / 39.42초 (**1.37× / 1.24×**) | ≤ 1.15 ✗ |
+| 줄인 몫 (시작점 대비) | — | — | 벽시계 −9.8% · 사용자 CPU −5.8% | |
+| 묶음 20교대 (esbuild `--keep-names` 한 파일, tsx 없이 — 교대별 벽시계 합) | 11.9초 | 19.2초 (1.61×) | 17.4초 (1.46×) | |
+| 그 가운데 뒤 10교대 (S10~S19 — JIT 가 데워진 뒤) | 4.5초 | 7.5초 (1.67×) | 6.2초 (1.38×) | |
+
+같은 날 균형 작업자가 잰 값(1.46× / 1.26×)과 시작점 열이 조금 다른 것은 기계의 상태 차이다 — 위 표는 같은 시각에 셋을 번갈아 돌린 값이다.
+
+프로파일 (묶음, 보통 S0~S5, `node --cpu-prof` — 포함 시간 ms, 시작점 → 이 작업 뒤; 기준은 `step` 4742):
+- 전체 `step` 8550 → 7386 · `think` 4137 → 3539 · `act` 2002 → 1696 · `commanderThink` 1093 → 1005.
+- 교본: `pickAct` 670 → 495(그 가운데 입력 만들기 `thinkCtx` 329 — `stateSelf` 101 · `docSit` 208 은 다른 부름과 함께 · `pairOf` 136) · `docCtx` 757 → 533 · `fitFor` 765 → 439(`docFit` 378 → 237) · `docFitRules` 453 → 127 · `applies` 280 → `appliesKw` 231 · `docSit` 252 → 208 · `baseState` 149 → 109 · `methodFit` 167 → 99 · `runPair` 255 → 200.
+- 닫힘: `__name` 409 → 118 · `fitBase` 410 → 185 · `astar` 391 → 315 · `syncBoard` 575 → 495 · `interiorStep` 46 → 5.
+- **교본 파일(`field/doctrine*`·`orders/doctrine`·`dispatch/doctrine`)의 함수가 쌓임에 있는 표본의 합** (`union.cjs` — 겹치지 않는 포함 시간, 그 함수가 부른 이동·믿음 읽기도 든다): 기준 452ms(`step` 의 9.5%) → 시작점 1932ms(22.6%) → 이 작업 뒤 1525ms(20.6%). 입구별(`outer.cjs` — 가장 바깥 교본 함수 ← 부른 곳): `docDuty` ← think 306(그 판단의 입력을 처음 만드는 곳 — 틱마다 담는 상태·상황이 여기서 계산된다) · `docFit` ← fitFor 234 · `docAct` ← think 227 · `runPair` ← runTask 199 · `docFitRules` ← 배정 127 · 지휘 교본 54 · selfReport 46 · rebuddy 42 · interiorEntry 판단 지점 38 · laneHold 38 · splitSettle 37 · methodFit 의 입력 27.
+
+**남은 큰 몫** (1.15× 에 닿지 못한 까닭 — 크기 순):
+1. **일의 양 1.33×** (찾은 것 1 — 결과의 몫). 대원 한 명당 비용이 기준과 같아져도 1.2~1.3× 다. 위 프로파일에서 교본 파일의 몫(1525ms)을 통째로 빼도 `step` 은 5861ms — 기준 4742ms 의 1.24× 다.
+2. **JIT 다시 컴파일** (찾은 것 3): 사용자 CPU 의 절반 이상이고 기준보다 +3.4초/3교대. 교본이 더한 함수·분기가 많아 컴파일할 것이 늘었고, 객체의 숫자 칸이 Smi → Double 로 바뀌며 지도가 낡을 때마다 큰 함수(perceive 1052ms·tickUnits 757·tickScene 688 — 3교대의 컴파일 시간)가 다시 컴파일된다. 고치려면 자주 도는 객체(대원·작업·임무·구조 대상·부대·현장)의 시각 칸이 처음부터 같은 표현으로 시작하게 해야 한다(예: 시각 칸의 처음 값) — 결과와 무관하지만 공용 객체 여럿을 건드리므로 이번에는 하지 않았다.
+3. **틱마다 담는 교본 상태** (`docSit` 208 · `stateSelf` 101 · `baseState` 109 · `stateReported`): 그 틱에 입력을 처음 만드는 순간에 계산해야 결과가 같다(위 '한 것'의 첫 줄) — 게으르게 미루거나 건너뛸 수 없다. 남은 손은 계산 자체를 싸게 하는 것뿐이다(믿음 목록 `beliefs.list` 의 배열 할당 · 사건 종류마다 쓰이지 않는 칸).
+4. 교본의 나머지: `pickAct` 의 줄 술어 평가(`appliesKw` 231 — G08·F02 의 `pairOf` 136), 짝 동행 실행 `runPair` 200(`followMate` → `moveTo` — 짝이 1칸 넘게 움직이면 경로를 다시 짠다), 배정의 `docFitRules` 127, 지휘 교본 ~60, 판단 지점 77.
+5. 교본 밖(기준에도 있는 비용, 일의 양만큼 늘었다): `perceive` 809(불 칸 훑기의 칸마다 시야선) · `moveTo`/`astar` 579/315 · `syncBoard` 495 · `tickUnits` 287 · X6 위험 규칙 ~450.
+
+**설계서 밖에서 고친 공용 파일** (모두 결과 같음 — 해시 목록): `agents.ts`(`fitBase` 의 닫힘 → `fitRisk`·`fitRiskyAt`, `perceive` 의 `sees` → `seesAt`), `grid.ts`(`astar` 의 닫힘 → `aCost`·`aGoal`·`aH` 와 모듈 변수), `commander.ts`(`loadsQueued`·`treatsDone`·`clearCas`·`commandKitOf`), `executor.ts`(`regionIndoor`), `ops.ts`(`tileAtPt`), `brain.ts`(`docThink` 를 의무·후퇴·행동 후보에 넘긴다). 시험은 고치지 않았다.
+
+**관문** (`npm run check`, `4c5dad4`, 다른 작업이 없는 기계 — 10분): **통과** — `tsc` 통과, vitest 19 파일 869 통과·건너뜀 1, `sweep 40 --check` '검증 통과'(한계 시간 3 · 방치 1 · 교착 후보 0 · 잊힌 사건 0 · 기록 일치 0).
+
+**이어받을 자리**: ① JIT — 자주 도는 객체의 시각·소수 칸을 처음부터 Double 로 시작하게 하면(만드는 리터럴 한 곳씩) 지도가 낡는 일이 줄어 사용자 CPU 의 큰 몫이 줄 것이다(측정: `fix/spd` 의 `pershift.cjs`·`compcmp.cjs`·`diag3.tpl`). ② `docSit` 의 칸 가운데 그 사건 종류의 줄만 읽는 것(섬광탄·로봇·공기호흡기 수 …)을 종류마다 셀지 — 그 칸을 읽는 줄·엔진이 다른 종류에서 읽지 않는다는 것을 먼저 확인해야 한다. ③ think 의 후보(`opts`)의 `apply` 닫힘도 tsx 의 `__name` 을 부른다(17ms/6교대 — 작다).

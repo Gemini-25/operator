@@ -383,7 +383,8 @@ export type WorkKind =
   | 'treatMate'      // (H1) 다친 대원 처치. 태울 차(prop)가 정해져 있고 병원이 필요하면 이어서 그 차에 태운다 (구급 분야, 또는 의료 가방을 든 대원)
   | 'treatSuspect'      // (H1) 쓰러진·다친 용의자 처치. 태울 차(prop)가 내 차이고 자리가 있으면 이어서 그 차에 태운다 (경찰은 언제든, 구급대원은 안전 확보 뒤)
   | 'repair' | 'towAway' | 'capture' | 'persuade' | 'cordon'      // (N8) 시설물 복구(유관 기관) · 견인 · 동물 포획 · 위기자 설득 · 통제(위협이 없는 현장에서 한 칸을 지킨다 — tile = 격자 칸 번호). 단계 2a 에는 자리만 (fitFor 0, 실행부는 빈 갈래)
-  | 'decontam';      // (N9 §5.5) 오염된 구조 대상 제독 (대상 = cas). 단계 1 에는 자리만 (workLabel '제독' · fitFor 0 · 실행부는 빈 갈래) — 맡는 사람·실행은 단계 6
+  | 'decontam'      // (N9 §5.5) 오염된 구조 대상 제독 (대상 = cas). 단계 1 에는 자리만 (workLabel '제독' · fitFor 0 · 실행부는 빈 갈래) — 맡는 사람·실행은 단계 6
+  | 'triage';      // (R3 4단계 §3.3 E01·§6.1 CE1) 다수 사상자 분류 — 대상 없음(현장 전체). 구급 대원만, 믿음 속 환자마다 곁에 2초 서서 상태를 바로잡아 알린다 → s.triageAt
 export type TaskKind = WorkKind | 'retreat' | 'rehab' | 'resupply' | 'board' | 'standby' | 'moveSignal' | 'swapAir'      // swapAir = 공기통 교체 (R1 9절)
   | 'evacuate'      // (X6) 철수 이동: 단계 3 구역 밖, 대개 대기 지점으로 (철수 명령·자기 감각의 임박 조짐 — brain.think 의 의무)
   | 'ashore'      // (R2 1b) 물 위의 대원(헤엄 중·보트 위)이 뭍으로 돌아간다 (brain.think 의 물 위 가드 · 헤엄 사고 뒤)

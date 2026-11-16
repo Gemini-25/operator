@@ -1059,6 +1059,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       // 이미 처치를 받은 환자는 더 나은 처치를 할 수 있는 대원만 다시 본다
       if (c.dead || c.where === 'loaded' || c.where === 'hospital' || (c.treated && qPlan <= c.treatQ + 0.15)) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
       if (c.where === 'carried') return;
+      if (r.dept !== 'ems' && tryHandover(sim, s, a, t, c, XK)) return;      // (R3 CE2) 지휘관이 같은 처치를 맡긴 구급 대원이 곁에 왔다 — 손을 떼고 넘긴다 (finishTask 'handover')
+      if (s.laneRows.length && laneHold(sim, s, a, t, c, XK)) return;      // (R3 E12) 차로 위 환자 — 통제 전에는 차로 밖 곁 칸에서 기다린다 (상한 20초)
       // (R2 §4.7) 방법을 처음 고른다 — 현장 안정 후 이송(평소) · 즉시 이송(위중 · 환자 자리가 남은 부대 · 구급 장비)
       if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'treat', { cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1 });
       const rush = t.method === 'rush';
@@ -1066,6 +1068,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const m = moveTo(sim, s, a, c.x, c.y, 1.3);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
+      careMark(sim, s, a, t, c);      // (R3 E05) 안전 확보 전의 무장 현장 — 경계 밖 처치소 (그 현장에서 처음 한 번 기록)
       const rate = Math.max(0.1, r.skills.medical * (0.5 + 0.5 * med)) * staminaF(r);
       t.need = rush ? 3.0 : 4.5 + (c.health < 40 ? 4 : c.health < 70 ? 2 : 0);      // 즉시 이송: 최소한만 (3초)
       c.treatProg += rate * dt; a.ring = c.treatProg / t.need; drain(sim, a, 0.3);
@@ -1107,6 +1110,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         const m = moveTo(sim, s, a, c.x, c.y, 1.3);
         if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
         if (m !== 'arrived') return;
+        if (t.kind === 'carry' && carryHold(sim, s, a, t, senseOf(s, a))) return;      // (R3 E08) 구급 동료가 처치 중인 환자 — 들지 않고 곁에서 기다린다 (상한 15초)
         t.progress += dt;
         if (t.progress >= 1.2) { c.where = 'carried'; c.inVehicle = null; a.carrying = c.id; a.path = null; a.pathGoal = -1; learn(sim, a, casFact(sim, s, c, r.name), false); }
         return;
@@ -1875,6 +1879,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     case 'pairOut': runPairOut(sim, s, a, t, XK); return;      // (R3 §5.7) 짝 따라 나가기
     case 'pair': runPair(sim, s, a, t, XK); return;      // (R3 §5.4) 짝 동행 — 위험 실내 일을 맡은 짝을 따라간다
     case 'rearm': runRearm(sim, s, a, t, XK); return;      // (R3 §2.9) 탄약 보급 — 대기 지점의 차에서
+    case 'triage': runTriage(sim, s, a, t, XK); return;      // (R3 4단계 E01·CE1) 다수 사상자 분류 — 환자마다 곁에서 2초, 끝나면 s.triageAt
     case 'standby': {
       a.label = '대기';
       if (dist(a.x, a.y, s.staging.x, s.staging.y) > 5 && s.kind !== 'armed') moveTo(sim, s, a, s.staging.x, s.staging.y, 3);
@@ -1980,3 +1985,5 @@ function interiorGate(sim: Sim, s: Scene, a: FieldAgent, t: Task): 'wait' | 'go'
   if (w !== undefined) { w.holdUntil = Math.max(w.holdUntil, sim.t + 10); docRemember(sim, a, ans.rule ?? 'F04c', 'w:' + w.id, DOC.W_MEM); }
   return 'dropped';
 }
+// ── (R3 4단계) 의료 교본의 실행 (doctrineRun.ts — 분류·처치 넘겨받기·경계 밖 처치소·판단 지점 carryHold·laneTreat) ──
+import { careMark, carryHold, laneHold, runTriage, tryHandover } from './doctrineRun';

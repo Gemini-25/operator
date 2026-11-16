@@ -53,6 +53,9 @@ export interface DocSit {
   fightThreat: boolean;                          // (2단계) 믿음: 교전(fight) 중인 용의자가 있다 (P08)
   bangOnScene: boolean;                          // (2단계) 동료의 장비(조직 정보): 현장의 활동 경찰 가운데 섬광탄을 가진 사람이 있다 (P14)
   bangComing: boolean;                           // (2단계) 조직 정보: 섬광탄을 실은 경찰 부대가 이 사건으로 오는 중 (P14 의 기다림 상한 40초)
+  tendCas: number[];                             // (4단계) 동료의 겉: 다른 활동 구급 대원이 곁에 앉아 처치하고 있는 구조 대상 id (E08)
+  medics: number;                                // (4단계) 동료의 겉: 다른 활동 구급 대원의 수 (E11 — 혼자면 배율을 걸지 않는다)
+  alsOn: boolean;                                // (4단계) 명부: 다른 활동 대원 가운데 1급 응급구조사·의사가 있다 (E19)
 }
 export type DocPhase = 'arrive' | 'sizeup' | 'standoff' | 'entry' | 'assault' | 'interior' | 'care' | 'transport' | 'traffic' | 'withdraw' | 'idle';
 /** 교본 줄이 받는 단 하나의 입력. 줄의 when 은 이것만 읽는다 */
@@ -156,3 +159,6 @@ export function ruleName(id: string): { name: string; short: string } | null {
   for (let k = 0; k < CMD_ROWS.length; k++) if (CMD_ROWS[k].id === id) return CMD_ROWS[k];
   return null;
 }
+
+// (4단계 의료) 줄이 다 들어간 분야에 의료를 더한다 — 3·4·5 단계를 나란히 돌려 합치므로 위의 배열 글자를 고치지 않고 파일 끝에 줄을 더한다
+DOC_DEPTS_DONE.push('ems');

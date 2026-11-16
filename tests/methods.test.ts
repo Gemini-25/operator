@@ -2843,7 +2843,9 @@ describe('R2 단계 5: 강제 교대 (§8 의 3·6 · 무장 4가지)', () => {
   it('무장 강제(인질극·대형 인질극·흉기·강도): 검거·무력화의 방법 기록이 4가지 이상이고, 테이저·비살상탄 기록이 있으며(§8 시험 3 의 5단계 몫), 재현성이 지켜진다', () => {
     const ok = new Set<MethodId>();
     // (검토) A16 흉기 대치를 더했다 — 비살상탄 검거는 흉기·강도 강제 교대 28번에 한 번꼴이라(A0~A19) 시험이 그 기록이 실제로 남는 교대를 하나 갖게
-    for (const [seed, force] of [['A0', 'armed/hostage'], ['A1', 'armed/siege'], ['A2', 'armed/dispute'], ['A3', 'armed/robbery'], ['A4', 'armed/dispute'], ['A5', 'armed/robbery'], ['A16', 'armed/dispute'], ['A21', 'armed/robbery']] as const) {      // (R3 3단계) 교본(P17·짝)으로 결과가 바뀌어 A2 의 테이저 검거가 A21 로 옮겨 갔다 (A0~A29 에서 테이저는 그전 3교대 · 지금 2교대)
+    // (R3 4단계) A6 가정 폭력을 더했다 — 의료 교본이 배경 사건의 부대 배치를 바꿔 A2 의 가정 폭력 테이저 검거가 맨손 제압으로 바뀌었다(테이저 검거는 이 표본의 유일한 것이었다). A6 에서 테이저 검거가 남는다
+    // (R3 3단계) 교본(P17·짝)으로 결과가 바뀌어 A2 의 테이저 검거가 A21 로 옮겨 갔다 — 3·4단계를 합친 표본은 둘 다 둔다
+    for (const [seed, force] of [['A0', 'armed/hostage'], ['A1', 'armed/siege'], ['A2', 'armed/dispute'], ['A3', 'armed/robbery'], ['A4', 'armed/dispute'], ['A5', 'armed/robbery'], ['A16', 'armed/dispute'], ['A21', 'armed/robbery'], ['A6', 'armed/domestic']] as const) {
       const sim = new Sim(seed, NORMAL, 1200, { force }); sim.runToEnd();
       for (const I of sim.incidents) for (const u of I.methods ?? []) if (u.ok && (u.work === 'engage' || u.work === 'arrest')) ok.add(u.method);
       if (seed === 'A1') { const again = new Sim(seed, NORMAL, 1200, { force }); again.runToEnd(); expect(again.report!.hash).toBe(sim.report!.hash); }
@@ -2901,6 +2903,7 @@ describe('R2 단계 6: 응급·누출·통제의 실행 (장면을 직접 만들
   it('즉시 이송: 3초 최소 처치(품질 ×0.7) 뒤 c.rush — 믿음에 실리고, 지휘관은 처치를 더 내지 않고 탑승을 0.97 로 낸다. 방법 기록', () => {
     const q = sceneWith('R2-MED', 'medical', ['als']);
     const pm = q.role('paramedic'), c = q.s.casualties[0];
+    { const r = q.sim.responders[pm.rid]; r.kit = r.kit!.filter((k) => k.id !== 'aed'); }      // (R3 4단계 E02·E03) 제세동기를 든 대원은 위중·거동 불가 환자에게 현장 소생(stay)을 먼저 — 즉시 이송은 제세동기가 없을 때(E03 ×1.5)
     for (const a of q.s.agents) if (a !== pm) a.status = 'left';
     const amb = q.sim.units[pm.unitId]; amb.state = 'onscene'; if (q.I.assigned.indexOf(amb.id) < 0) q.I.assigned.push(amb.id);
     c.health = 30; c.where = 'scene'; c.mob = 'immobile'; c.treated = false; c.treatQ = 0;

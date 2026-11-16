@@ -485,12 +485,24 @@ export function docSit(sim: Sim, s: Scene, a: FieldAgent): DocSit {
   let bangOnScene = false, bangComing = false;
   for (let k = 0; k < s.agents.length && !bangOnScene; k++) { const b = s.agents[k]; if (b.status === 'active' && sim.responders[b.rid].dept === 'police' && kitCount(sim, b.rid, 'flashbang') > 0) bangOnScene = true; }
   for (let k = 0; k < I.assigned.length; k++) { const q = sim.units[I.assigned[k]]; if ((q.state === 'enroute' || q.state === 'turnout') && q.dept === 'police' && q.flashbangs > 0) { bangComing = true; break; } }
+  // (4단계) 의료 — 동료의 겉: 곁에 앉아 처치하는 구급 동료의 대상(처치 임무이고 손을 쓰는 중 — ring), 다른 활동 구급 대원의 수, 다른 1급 응급구조사·의사(명부의 역할)
+  const tendCas: number[] = [];
+  let medics = 0, alsOn = false;
+  for (let k = 0; k < s.agents.length; k++) {
+    const b = s.agents[k];
+    if (b === a || b.status !== 'active' || sim.responders[b.rid].dept !== 'ems') continue;
+    medics++;
+    const ro = roleIdOf(sim, b.rid);
+    if (ro === 'paramedic' || ro === 'doctor') alsOn = true;
+    if (b.task !== null && b.task.kind === 'treat' && b.task.cas >= 0 && b.ring > 0) tendCas.push(b.task.cas);
+  }
   return {
     kind: s.kind, label: I.assessment ? I.assessment.label ?? '' : '', phase: phaseOf(sim, s, a),
     hot: s.kind === 'armed' && s.secureAt < 0, outdoor: s.outdoor === true, secure: s.secureAt >= 0,
     threat, civAtRisk, inHazard: riskyRegion(s, a, myRg), victimInside, danger, wDanger: danger, ctlDone, liveBomb, defusing,
     patients, seatsLeft: seats, negotSec: s.negotStart >= 0 ? sim.t - s.negotStart : 0, entryOrdered: s.entryOrdered, lanes2nd,
     gunThreat, fightThreat, bangOnScene, bangComing,
+    tendCas, medics, alsOn,
   };
 }
 /** 가벼운 일인가 (H1 LIGHT_WORK 의 정본 그대로 — 처치는 믿음 속 대상이 안전 구역에 나와 있을 때만, 동료 처치는 그 동료가 안전 구역일 때만) */
@@ -862,3 +874,10 @@ export function coverSpot(s: Scene, ax: number, ay: number, tx: number, ty: numb
   }
   return best;
 }
+
+// ───────────────────────── (4단계) 의료 ─────────────────────────
+/**
+ * 다수 사상자 분류(triage)를 맡을 수 있는 대원 (§3.3 E01·§6.1 CE1 — 조직 정보): 구급 분야이고 걸을 수 있는 다친 대원이 아니다.
+ * agents.fitFor 의 triage 와 지휘 교본 CE1(분류 작업을 내고 거두는 조건)이 같은 함수를 쓴다 — 한쪽만 넓으면 맡을 사람 없는 분류가 열린 채 남아 종료를 막는다
+ */
+export function triageMedic(sim: Sim, rid: number): boolean { const r = sim.responders[rid]; return r.dept === 'ems' && r.status !== 'injured'; }

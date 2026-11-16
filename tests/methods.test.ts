@@ -1965,6 +1965,20 @@ describe('R2 단계 2: 폭파 진입 (§4.2a — 사용자 결정, 시험 10)', 
     expect(q.br.mfail!.some((f) => f.m === 'charge' && f.k === targetKey('force', tgTile(q)))).toBe(true);
     expect(q.I.methods!.map((u) => [u.method, u.ok])).toEqual([['charge', false]]);
   });
+  it('(검토) 이동 중 하위 작업의 폭파를 접고 다른 방법(충격기)으로 바꾸면 물러선 자리에서 문 곁으로 돌아가 연다 — 3~4칸 밖에서 문을 깎지 않는다', () => {
+    const q = charger();
+    const other = q.s.agents.find((a) => a !== q.br)!;
+    other.status = 'active'; other.task = null; other.x = other.px = q.door.x + 1; other.y = other.py = q.door.y + 2;      // 문 2칸 앞 옆 (돌아가는 길은 막지 않는다)
+    const t = makeTask('search', '시험');
+    const sub = makeTask('force', '문 강제 개방'); sub.tile = q.tile; t.sub = sub;
+    q.br.task = t;
+    let at = -1;
+    soloDoor(q, q.br, 40, () => q.s.propAt[q.tile] < 0, () => { if (at < 0 && sub.method === 'ram') at = q.sim.t; });
+    expect(at, '폭파를 접고 충격기로').toBeGreaterThan(0);
+    expect(q.s.propAt[q.tile], '열었다').toBe(-1);
+    expect(Math.hypot(q.br.x - q.door.x, q.br.y - q.door.y), '문 곁에서 열었다').toBeLessThanOrEqual(1.6 + 1e-6);
+    expect(q.I.methods!.filter((u) => u.ok).map((u) => u.method)).toEqual(['ram']);
+  });
   it('stackSpot: 대원 쪽의 걸어서 닿는 바닥 칸 가운데 문에서 3~4칸, 통로의 축 위가 아닌 칸', () => {
     const q = charger();
     const sp = stackSpot(q.s, q.tile, q.br)!;
@@ -2480,6 +2494,24 @@ describe('R2 단계 4: 화재 진압의 실행 (장면을 직접 만들어)', ()
     expect(texts(q.sim, n).some((x) => x.startsWith('소화기를 다 썼습니다.'))).toBe(true);
     expect(w.status === 'open' || w.status === 'active').toBe(true);
     expect(q.I.methods!.some((u) => u.method === 'extinguisher' && !u.ok)).toBe(true);
+  });
+  it('(검토) X6 의 외부 방어 구역에는 소화기를 들고 들어가지 않는다 — 대원의 믿음에 지휘 상태가 없어도 현장 모드가 먼저: 관창이 없으면 위험해서 내려놓는다', () => {
+    const q = sceneWith('R2-TRAF', 'traffic', ['patrol']);
+    const lead = q.role('patrolLead');
+    for (const a of q.s.agents) if (a !== lead) a.status = 'left';
+    q.s.fire.fill(0);
+    const { r, tiles } = smallFire(q.s, lead, 0.25);
+    believeFire(q, r, 0.2);
+    q.s.ops = { ...newOps(q.sim.t), mode: 'defensive' };      // 진실의 지휘 상태 (대원은 아직 모른다 — 믿음에 ops 사실이 없다)
+    expect(lead.beliefs.get('ops', 0)).toBeUndefined();
+    const w = work(q.sim, q.s, 'suppress', { region: r }), t = taskFor(lead, w);
+    soloRun(q.sim, q.s, lead, 10, () => lead.task !== t);
+    expect(t.method, '믿음으로는 소화기를 고른다').toBe('extinguisher');
+    expect(lead.task).not.toBe(t);
+    expect(q.s.fire[tiles[0]], '불에 다가가 뿜지 않았다').toBeGreaterThan(0.2);
+    expect(q.s.fx.some((f) => f.kind === 'spray' && f.color === '#f2f2ee')).toBe(false);
+    expect(w.failedAt[lead.rid], '위험해서 내려놓은 기억 (한동안 다시 맡기지 않는다)').toBeDefined();
+    expect(kitCount(q.sim, lead.rid, 'extinguisher')).toBe(1);
   });
   it('배연: 송풍기를 출입구에 6초 설치(s.fan 120초) — 방법 기록 뒤 내부 공격으로 예정된 전환(접은 줄·기억 없음). 송풍기는 실내 연기를 빼고 센 불을 조금 키우며, 끝나면 사라진다', () => {
     const q = sceneWith('R2-FIRE', 'fire', ['ladder']);

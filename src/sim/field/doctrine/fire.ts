@@ -193,4 +193,6 @@ CMD_ROWS.push(
   { id: 'CF7', dept: 'fire', hook: 'cmd', name: '지휘관은 위험 실내 일을 맡지 않는다', short: '지휘관 밖에', why: 'protocol' },
   { id: 'D5', dept: 'fire', hook: 'dispatch', name: '바닷가가 아닌 수난 — 구조 공작차', short: '수난 구조 공작차', why: 'kit' },
   { id: 'D4', dept: 'special', hook: 'dispatch', name: '2층 화재 — 사다리차', short: '2층 화재 사다리차', why: 'kit' },
+  // (균형 — 사용자 결정 2026-11-16) 2인 진입 + 밖 2인 대기로 줄어든 실내의 손을 첫 출동으로 메운다 (코드는 dispatch/doctrine.ts docNeeds)
+  { id: 'D8', dept: 'fire', hook: 'dispatch', name: '건물 화재 — 첫 출동에 펌프차 하나 더', short: '건물 화재 펌프차 더', why: 'team' },
 );

@@ -92,7 +92,7 @@ const SPECIAL5 = [...STAGE5, 'S10', 'S11'];
 /** 3·4·5 단계를 합친 뒤의 등록 순서 전체 (줄 파일 다섯의 import 순서 common → police → fire → ems → special) */
 const STAGE_ALL = [...STAGE3, ...EMS4, ...SPECIAL5];
 /** 3·4·5 단계를 합친 뒤의 지휘·관제 줄 (경찰 파일의 지휘 줄 → 소방 → 의료 → 특수(D2 가 특수 파일의 첫 줄)) */
-const CMD_ALL = [...CMD3.filter((id) => id !== 'D2'), 'CE1', 'CE2', 'CE3', 'CE4', 'CE5', 'D2', ...CMD5];
+const CMD_ALL = [...CMD3.filter((id) => id !== 'D2'), 'D8', 'CE1', 'CE2', 'CE3', 'CE4', 'CE5', 'D2', ...CMD5];      // (균형) D8 — 소방 파일의 관제 줄 D4 다음
 /** 자기 신고를 손으로 넣는다 (그 대원의 믿음 — 남이 아는 그 대원의 몸) */
 const report = (sim: Sim, a: FieldAgent, v: Partial<CrewBelief>): void => { a.beliefs.merge(mkFact('crew', a.rid, { band: 0, air: 0, ammo: 0, shaken: false, t: sim.t, ...v }, '시험', sim.t, 1, true, '시험')); docForget(a); };
 /** 엔진의 갈래를 모두 지나가는 시험용 줄 (번호 G91~G98 — 표에 없는 번호, 시험이 끝나면 지운다) */
@@ -1988,5 +1988,94 @@ describe('R3 합치기: 짝은 일하면서 함께 다닌다 (주 세션 결정 
     assign(sim, s, I, lead);
     expect(w1.assignees).toContain(noz.rid); expect(w1.assignees).toContain(ff.rid);
     expect(sim.events.slice(ev0).some((e) => /짝으로\.$/.test(e.text))).toBe(true);
+  });
+});
+
+// ═════════════════════════ 균형 (사용자 결정 2026-11-16) — 건물 화재 첫 출동의 펌프차 하나 더(D8) · 허락된 일을 하는 짝의 동행 ═════════════════════════
+import { FIRST_PLUS } from '../src/sim/dispatch/doctrine';
+import { SIGN_BASE } from '../src/sim/field/ops';
+import type { SignBelief } from '../src/sim/types';
+
+describe('R3 균형: D8 건물 화재의 첫 출동 — 펌프차 하나 더 (관제가 아는 것만)', () => {
+  const fresh = (): Sim => new Sim('R3-D8', FULL);
+  const sup = (sim: Sim, type: IncidentType, place: Parameters<typeof docNeeds>[6], label?: string, base = 1): { used: string[]; n: number } => {
+    const n: Needs = emptyNeeds(); n.suppression = base;
+    const used = docNeeds(sim, type, 1.8, false, label, n, place);
+    return { used, n: n.suppression };
+  };
+  it('위치 신고가 건물(현장 틀이 있는 종류)인 화재면 진압 수요 +1 — 기본 2(센 불)이면 3', () => {
+    const sim = fresh();
+    expect(FIRST_PLUS.reserve).toBe(0);
+    expect(sup(sim, 'fire', 'houseS')).toEqual({ used: ['D8'], n: 2 });
+    expect(sup(sim, 'fire', 'apartment', '방화', 2)).toEqual({ used: ['D8'], n: 3 });
+  });
+  it('건물이 아니거나(교차로·공원·숲·위치 모름) 관제가 산불·비행기 추락·선박 화재로 이름 붙였거나 화재가 아니면 걸지 않는다', () => {
+    const sim = fresh();
+    for (const p of ['intersection', 'park', 'forest', undefined] as const) expect(sup(sim, 'fire', p).used).toEqual([]);
+    for (const l of ['산불', '비행기 추락', '선박 화재']) expect(sup(sim, 'fire', 'pension', l).used).toEqual([]);
+    expect(sup(sim, 'hazmat', 'factory').used).not.toContain('D8');
+    expect(sup(sim, 'collapse', 'villa').used).not.toContain('D8');
+  });
+  it('나갈 수 있는 펌프차(진압 펌프차·사다리차 — 이 사건에 배정된 것 포함)가 기본 수요 + 1 대에 못 미치면 걸지 않는다 (없는 부대를 기다리는 수요를 만들지 않는다)', () => {
+    const sim = fresh();
+    const pumps = sim.units.filter((u) => u.kind === 'engine' || u.kind === 'ladder');
+    expect(pumps.length).toBeGreaterThanOrEqual(2);
+    for (const u of pumps.slice(1)) u.state = 'onscene';
+    expect(sup(sim, 'fire', 'houseS').used).toEqual([]);
+    pumps[1].state = 'returning';
+    expect(sup(sim, 'fire', 'houseS').used).toEqual(['D8']);
+  });
+  it('스위치(DOC_SWITCH.D8)를 끄면 걸지 않는다 · 관제 줄 이름표가 소방 분야에 있다', () => {
+    const sim = fresh();
+    DOC_SWITCH.D8 = false;
+    try { expect(sup(sim, 'fire', 'houseS').used).toEqual([]); } finally { DOC_SWITCH.D8 = true; }
+    expect(CMD_ROWS.find((c) => c.id === 'D8')).toMatchObject({ dept: 'fire', hook: 'dispatch' });
+  });
+  it('관제 평가(assess)가 건물 화재 신고에 D8 을 기록하고 진압 수요를 둘 이상으로 둔다', () => {
+    const sim = new Sim('R3-D8b', NORMAL, 600, { force: 'fire/std' });
+    let I: Incident | undefined;
+    while (sim.t < 240 && I === undefined) { sim.step(); I = sim.incidents.find((x) => x.truth.type === 'fire' && (x.docs ?? []).some((d) => d.rule === 'D8')); }
+    expect(I, 'D8 이 쓰인 건물 화재').toBeDefined();
+    expect(I!.assessment!.needs.suppression).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('R3 균형: 허락된 일(밸브 차단)을 하는 짝을 따라 들어간 동행은 가스 단계 3 에 물러나지 않는다 (짝 따라 나가기가 밸브를 잠그던 짝까지 데리고 나오던 고리)', () => {
+  it('짝이 밸브 차단(허락된 일)이면 동행은 남고, 짝의 일이 수색(허락되지 않은 일)이면 동행은 철수 의무로 물러난다', () => {
+    const { sim, s, of } = sceneWith('R3-GASPAIR', 'hazmat/std', ['engine']);
+    const eng = of('engine');
+    const noz = roleIn(sim, eng, 'nozzle'), ff = roleIn(sim, eng, 'firefighter');
+    const rg = s.regions.findIndex((r) => r.indoor && r.searchable);
+    const reg = s.regions[rg];
+    for (const b of s.agents) { b.task = null; b.orderWork = -1; b.isCommander = false; if (b !== noz && b !== ff) b.status = 'withdrawn'; }
+    noz.buddy = ff.rid; ff.buddy = noz.rid;
+    const spot = inSpot(s, rg);
+    put(noz, spot); put(ff, spot);
+    const g3 = mkFact('sign', SIGN_BASE.gas + rg, { kind: 'gas', level: 3, region: rg, x: reg.cx, y: reg.cy, lel: 70 } as SignBelief, '시험', sim.t, 1, true, '');
+    noz.beliefs.merge(g3); ff.beliefs.merge(g3);
+    const wM = work(sim, s, 'mitigate', { region: rg });
+    noz.task = makeTask('mitigate', '시험', wM); wM.assignees.push(noz.rid);
+    ff.task = makeTask('pair', '짝 동행');
+    think(sim, s, ff);
+    expect(ff.task?.kind, '허락된 일의 동행').toBe('pair');
+    const wS = work(sim, s, 'search', { region: rg });
+    noz.task = makeTask('search', '시험', wS); wS.assignees.push(noz.rid);
+    ff.task = makeTask('pair', '짝 동행');
+    think(sim, s, ff);
+    expect(ff.task?.kind, '허락되지 않은 일의 동행').toBe('evacuate');
+  });
+});
+
+describe('R3 균형: 밖 대기조는 출입구 곁 또는 대기 지점 곁의 손 빈 대원 (WATCH_STAGE — 대기 지점이 출입구에서 먼 현장)', () => {
+  it('출입구에서 멀어도 대기 지점 4칸 안의 손 빈 공기호흡기 대원은 대기조로 센다 — 둘 다 먼 대원은 세지 않는다', () => {
+    const { sim, s, noz, ff, lead, op } = fireScene('R3-WSTAGE', ['engine']);
+    for (const b of s.agents) { b.task = null; b.orderWork = -1; }
+    const st = s.staging;
+    const far = { x: st.x + 40, y: st.y };      // 대기 지점에서 먼 가상의 출입구 (WATCH_R 12 밖)
+    put(noz, far); put(ff, far); lead.status = 'withdrawn';
+    put(op, st);
+    expect(outsideWatch(sim, s, noz, far), '대기 지점의 기관원').toBe(1);
+    put(op, { x: st.x + 20, y: st.y });
+    expect(outsideWatch(sim, s, noz, far), '대기 지점에서도 출입구에서도 먼 기관원').toBe(0);
   });
 });

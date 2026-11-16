@@ -120,7 +120,15 @@ function evacDuty(sim: Sim, s: Scene, a: FieldAgent): string {
  * 가스 단계 3 은 지휘관에게 단계 2(새 진입 금지 — 허락된 일만)다: 밸브를 잠그러 들어간 대원이 측정값을 읽자마자 스스로 나오면 밸브는 끝내 잠기지 않는다
  */
 function allowedHere(s: Scene, a: FieldAgent): boolean {
-  const t = a.task;
+  let t = a.task;
+  // (R3 균형) 짝 동행(G08 — 'pair')은 짝이 하는 일의 일부다: 짝이 허락된 일(밸브 차단 …)을 하고 있으면 동행도 허락된 일로 본다.
+  //   아니면 동행이 가스 측정값을 읽자마자 물러나고, 짝 따라 나가기(F02)가 밸브를 잠그던 짝까지 데리고 나와 "들어감 → 물러남 → 따라 나감"을 1분마다 되풀이했다
+  //   (강제 hazmat/std — 한 대원의 '가스 농도가 위험합니다. 물러납니다.' 11번, 측정 도구의 반복 최대). 짝의 일은 동료의 겉(받은 임무)이다
+  if (t && t.kind === 'pair' && a.buddy !== undefined && a.buddy >= 0) {
+    let b: FieldAgent | null = null;
+    for (let k = 0; k < s.agents.length; k++) if (s.agents[k].rid === a.buddy && s.agents[k] !== a) { b = s.agents[k]; break; }
+    t = b !== null && b.status === 'active' ? b.task : null;
+  }
   if (!t || t.workId < 0) return false;
   const w = s.board[t.workId];
   return !!w && ALLOWED2.has(w.kind);

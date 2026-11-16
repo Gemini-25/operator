@@ -10,7 +10,7 @@ import { TYPE_NAME, clamp } from '../util';
 import { NATURE_LIK } from './callSystem';
 import { TYPE_DEFS, TYPE_ORDER, likRow, typeIdx } from '../incidentTypes';
 import { recomputeUnmet } from './dispatcher';
-import { docNeeds } from './doctrine';      // (R3 §6.2) 관제 교본의 수요 보정 (D3·D6)
+import { docNeeds } from './doctrine';      // (R3 §6.2) 관제 교본의 수요 보정 (D1·D3·D6·D8)
 import { recordDoc } from '../field/doctrineRun';
 
 const TYPES = TYPE_ORDER;      // 가설의 순서 = likRow 의 열 순서 (incidentTypes.TYPE_ORDER — 새 유형은 끝에만)
@@ -198,7 +198,10 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
   let label: string | undefined;
   for (const c of claims) { if (c.topic !== 'nature') continue; const l = natureLabel(c.value as string, type); if (l) label = l; }
   // (R3 §6.2) 관제 교본의 수요 보정 — D3(흉기 신고 경찰 둘)·D6(인질극 기동대 둘). 장난 전화로 본 신고에는 걸지 않는다
-  if (!(type === 'armed' && prank)) for (const rule of docNeeds(sim, type, sev, !!(wpn.c && wpn.c.value === 'knife'), label, needs)) recordDoc(sim, I, null, rule, 'dispatch');
+  // (균형) D8 은 위치 신고의 건물 종류를 본다 — 유형 추정에 쓴 것과 같은 첫 위치 신고
+  let place: Claim['placeKind'];
+  for (const c of claims) if (c.topic === 'location' && c.placeKind) { place = c.placeKind; break; }
+  if (!(type === 'armed' && prank)) for (const rule of docNeeds(sim, type, sev, !!(wpn.c && wpn.c.value === 'knife'), label, needs, place, I)) recordDoc(sim, I, null, rule, 'dispatch');
   const rev = prev ? prev.revision + 1 : 0;
   const summary = `${TYPE_NAME[type]} (${Math.round(typeConf * 100)}%) · 위험도 ${sevName(sev)}`;
   const as: Assessment = { type, typeConf, probs, severity: sev, confidence, needs, risks, summary, t: sim.t, revision: rev, label };

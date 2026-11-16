@@ -4,9 +4,10 @@
 //
 // 단계 2 (경찰): D2(경찰 수요에 폭발물 처리반을 아낀다) · D3(흉기 신고 — 경찰 둘) · D6(인질극 — 특공이 없으면 기동대 둘, 확인 필요: 균형) · D7(추격 — 따라가기와 앞막기 = 표의 P18·P19).
 // 뒤 단계가 더한다: D1(가스 현장의 화학 구조차 — 5단계) · D4(2층 화재의 사다리차)·D5(바닷가가 아닌 수난의 구조 공작차 — 3단계).
+// 균형(사용자 결정 2026-11-16): D8(건물 화재의 첫 출동에 펌프차 하나 더 — 2인 진입 + 밖 2인 대기로 줄어든 실내의 손을 메운다, 파일 끝).
 
 import type { Sim } from '../engine';
-import type { Incident, IncidentType, Needs, Unit } from '../types';
+import type { Incident, IncidentType, Needs, PlaceKind, Unit } from '../types';
 import { edgeTime, weatherSpeedFactor } from '../city';
 import { crewReady, etaFor } from '../resources';
 import { DOC_SWITCH } from '../field/doctrine/registry';      // 확인 필요 줄의 스위치 (D6·D7)
@@ -39,9 +40,11 @@ function swatFree(sim: Sim): boolean {
  *  D3 무장이고 접수한 무기 주제가 흉기면 경찰 수요 2 (둘이 함께 붙는다 — 경찰 교본 P02·P03)
  *  D6 무장 위험도 ≥ 2.4 이고 이름표가 인질극이며 특공이 나갈 수 없으면 기동 수요 2 (진입이 예상된다 — 확인 필요: 균형)
  */
-export function docNeeds(sim: Sim, type: IncidentType, sev: number, knife: boolean, label: string | undefined, needs: Needs): string[] {
+export function docNeeds(sim: Sim, type: IncidentType, sev: number, knife: boolean, label: string | undefined, needs: Needs, place?: PlaceKind | 'intersection', I?: Incident): string[] {
   const used: string[] = [];
   if (type === 'hazmat' && sev >= D1_SEV && needs.rescue < 1) { needs.rescue = 1; used.push('D1'); }      // (5단계 D1) 위험도 1.6 부터 구조 수요 1 (전에는 2.1) — 화학대가 가스 현장에 온다
+  // (균형) D8 건물 화재의 첫 출동 — 진압 수요 하나 더 (펌프차가 남을 때만 — FIRST_PLUS)
+  if (DOC_SWITCH.D8 && type === 'fire' && buildingClaim(place) && (label === undefined || !OPEN_FIRE.has(label)) && pumpPool(sim, I) >= needs.suppression + 1 + FIRST_PLUS.reserve) { needs.suppression += 1; used.push('D8'); }
   if (type !== 'armed') return used;
   if (knife && needs.law < 2) { needs.law = 2; used.push('D3'); }
   if (DOC_SWITCH.D6 && sev >= 2.4 && label !== undefined && HOSTAGE_LABEL.test(label) && needs.tactical === 1 && !swatFree(sim)) { needs.tactical = 2; used.push('D6'); }
@@ -125,4 +128,29 @@ export const D5_RESCUE = 8;
 function tallClaim(I: Incident): boolean {
   for (const c of I.claims) if (c.topic === 'location' && c.placeKind && c.placeKind !== 'intersection') { const k = KIND_SCENE[c.placeKind]; if (k !== undefined && k.tall >= D4_TALL) return true; }
   return false;
+}
+
+// ───────────────────────── (균형 — 사용자 결정 2026-11-16) D8 건물 화재 첫 출동의 펌프차 하나 더 ─────────────────────────
+// "2인 진입 + 밖 2인 대기"(F04·F04c·F05 — 짝·대기조) 교본은 그대로 두고, 그 교본이 줄인 실내의 손을 첫 출동의 부대로 메운다 (실제 소방의 첫 출동 편성과 같은 생각).
+// 관제가 아는 것만: 평가한 유형·이름표와 위치 신고의 건물 종류(공개 지도 — cityPlan.KIND_SCENE 에 현장 틀이 있는 종류가 건물이다).
+// 수요는 부대 수 단위다 — 진압 능력이 기준(0.7)을 넘는 펌프차·사다리차·구조 공작차가 그 자리를 채운다(모두 공기호흡기를 멘 대원이 내린다).
+/** 건물이 아닌 화재로 관제가 이름 붙인 것 (산불·비행기 추락·선박 화재 — 시나리오 needs 가 따로 부대를 정한다) */
+const OPEN_FIRE: ReadonlySet<string> = new Set(['산불', '비행기 추락', '선박 화재']);
+/**
+ * 첫 출동의 하나 더는 펌프차(진압 펌프차·사다리차)가 남을 때만 건다: 이 사건에 이미 배정된 것과 나갈 수 있는 것(집에 있거나 돌아가는 중, 걸을 수 있는 대원)을 세어
+ * 기본 수요 + 1 + reserve 이상이어야 한다 — 없는 부대를 기다리는 수요(NO_UNIT·BACKUP_LATE)를 만들지 않고, 다음 사건의 펌프차를 남겨 둔다 (조직 정보만)
+ */
+export const FIRST_PLUS = { reserve: 0 };      // (균형 측정 — 보통 120교대) 0: 화재 56.9 → 59.0%·전체 74.5 → 76.0% (1 과 견줘), 남겨 두는 펌프차를 두지 않는다
+const PUMP: ReadonlySet<string> = new Set(['engine', 'ladder']);
+function pumpPool(sim: Sim, I: Incident | undefined): number {
+  let n = 0;
+  for (const u of sim.units) {
+    if (!PUMP.has(u.kind) || u.state === 'oos' || crewReady(sim, u) === 0) continue;
+    if ((I !== undefined && I.assigned.indexOf(u.id) >= 0) || u.state === 'available' || u.state === 'returning') n++;
+  }
+  return n;
+}
+/** 위치 신고(관제가 받은 말)의 장소가 건물인가 — 교차로·공원·숲·부두처럼 현장 틀이 없는 곳은 아니다 */
+function buildingClaim(place: PlaceKind | 'intersection' | undefined): boolean {
+  return place !== undefined && place !== 'intersection' && KIND_SCENE[place] !== undefined;
 }

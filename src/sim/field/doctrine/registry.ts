@@ -148,6 +148,7 @@ export const CMD_ROWS: { id: string; dept: DocDept; hook: 'cmd' | 'dispatch' | '
  * 코드는 commander.ts · dispatch/doctrine.ts 에 있고 이 값만 본다 (줄을 끄는 균형 손잡이 — 측정·시험이 바꿔 볼 수 있게 한 곳에 둔다)
  */
 export const DOC_SWITCH = { CP4: true, D6: true, D7: true,
+  D8: true,      // (균형 — 사용자 결정 2026-11-16) 건물 화재의 첫 출동에 펌프차 하나 더 (dispatch/doctrine.ts D8)
   SOLO_IN: true };      // 혼자 서는 역할(기관원·사다리 조작원)의 위험 실내 단독 작업: true = 본문 §5.1(그 역할을 F04·F04b·F04c 에서 뺀다 — 균형 작업의 기본값, 사용자 결정 2026-11-16),
                         //   false = 합치기 (라)(짝이 따라올 때만 — 보통 60 화재 −22.6%p·가스 누출 −33.1%p 로 범위 밖이었다)
 /** 줄이 다 들어간 분야 — 시험 8 의 "분야마다 12줄 이상"은 여기 든 분야만 본다 (단계마다 그 분야를 더한다 — 2단계 경찰) */

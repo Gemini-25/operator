@@ -45,6 +45,8 @@ export const DOC = {
   BUDDY_GAP: 0.1,       // 짝이 따라올 수 있는 우선도 차 (§5.2)
   FOLLOW_R: 4,          // 짝이 따라온다 (§5.4 끝)
   WATCH_R: 12,          // 밖 대기조: 출입구에서 이 거리 안 (§5.6 의 8 — 3단계 측정: 화재 현장의 대기 지점이 가장 가까운 출입구에서 7.6~18.6칸(가운데 10)이라 8 이면 대기 지점의 대원이 세어지지 않았다)
+  WATCH_STAGE: 4,       // (균형) 밖 대기조: 또는 대기 지점(s.staging)에서 이 거리 안 — 대기 지점이 출입구에서 12칸 넘게 떨어진 현장(15~19칸)에서는 대기 지점에 모인 손 빈 대원이
+                        //   하나도 세어지지 않아 F05 가 불을 끈 뒤의 잔불 정리 진입을 끝까지 막았다(보통 120교대의 화재 한계 시간 6건 가운데 4건 — '대기조가 갖춰지지 않습니다' 뒤 작업판에 잔불 정리만 남음)
   WATCH_NEED: 1,        // 밖 대기조의 수 (scba 대원을 태운 소방 부대가 오는 중이면 하나 적게). §5.6 의 2 → 1 — §8.4 손잡이 1 의 둘째(3단계 측정: 화재 성공률이 범위 밖)
   STAMINA_NEW: 30,      // 위험 실내 새 일을 맡지 않는 지구력
   COVER_MIN: 3, COVER_MAX: 7.5, COVER_REACH: 12,     // 엄폐 사격 자리: 위협 둘레의 고리, 대원에게서의 거리
@@ -325,7 +327,7 @@ export function pairAlt(sim: Sim, s: Scene, a: FieldAgent, jw: WorkItem): boolea
   return false;
 }
 /**
- * 밖 대기조의 수 (§5.6): 들어서려는 출입구 ex 에서 8칸 안의, 위험 건물 실내 밖에 선 다른 활동 대원 가운데 공기호흡기를 멨고 공기가 AIR_IN 이상이며
+ * 밖 대기조의 수 (§5.6): 들어서려는 출입구 ex 에서 8칸(WATCH_R — 측정 뒤 12) 안 또는 대기 지점 곁(WATCH_STAGE — 균형)의, 위험 건물 실내 밖에 선 다른 활동 대원 가운데 공기호흡기를 멨고 공기가 AIR_IN 이상이며
  * 업고 있지 않고 탈출·후퇴·철수·휴식·짝 동행·탑승 중이 아니고 위험 실내 일을 맡지 않은 사람. a 의 짝과 a 를 따르는 짝 동행은 세지 않는다.
  */
 export function outsideWatch(sim: Sim, s: Scene, a: FieldAgent, ex: Pt): number {
@@ -337,7 +339,7 @@ export function outsideWatch(sim: Sim, s: Scene, a: FieldAgent, ex: Pt): number 
     if (bk === 'pair' && b.buddy === a.rid) continue;
     if (bk !== null && WATCH_BUSY.has(bk)) continue;
     if (!kitHas(sim, b.rid, 'scba') || airOf(sim, b.rid) < DOC.AIR_IN) continue;
-    if (riskyAt(s, a, b.x, b.y) || dist(b.x, b.y, ex.x, ex.y) > DOC.WATCH_R) continue;
+    if (riskyAt(s, a, b.x, b.y) || (dist(b.x, b.y, ex.x, ex.y) > DOC.WATCH_R && dist(b.x, b.y, s.staging.x, s.staging.y) > DOC.WATCH_STAGE)) continue;
     if (b.task !== null && b.task.workId >= 0) { const bw = s.board[b.task.workId]; if (bw && inJob(sim, s, a, bw, b.task)) continue; }
     n++;
   }

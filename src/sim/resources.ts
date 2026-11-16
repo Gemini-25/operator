@@ -1,7 +1,7 @@
 // ResourceManager — 부대·대원 명부, 차량 상태와 도시 지도 위 이동.
 
 import { coastY, edgeName, edgeTime, findRoute, nodeName, weatherSpeedFactor } from './city';
-import { AIR_KIND, EXTRA_NAMES, ROLES, STAFF, dealFlashbangs, drawBatchFaults, drawFaults, fieldCrew, heliPad, isHovering, kitFor, kitIdsOf, medLevelOf, refillAir, skillsOf, slotsOf } from './crews';
+import { AIR_KIND, EXTRA_NAMES, ROLES, STAFF, dealFlashbangs, drawBatchFaults, drawFaults, fieldCrew, heliPad, isHovering, kitFor, kitIdsOf, medLevelOf, refillAir, refillGuns, skillsOf, slotsOf } from './crews';
 import { recomputeUnmet } from './dispatch/dispatcher';      // 함수 안에서만 부른다 (dispatcher 가 이 파일을 import 한다 — 모듈 맨 위에서 쓰지 않는다)
 import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
@@ -104,6 +104,13 @@ const LEGACY_ROWS = 20;
 const fitOf = (d: Fit): Pick<Unit, 'seats' | 'hoist' | 'bucket' | 'bucketMax' | 'fuel' | 'fuelMax' | 'grounded' | 'spareAir' | 'airNeed'> =>
   ({ seats: d.seats, hoist: !!d.hoist, bucket: d.bucketMax ?? 0, bucketMax: d.bucketMax ?? 0, fuel: d.fuelMax ?? 0, fuelMax: d.fuelMax ?? 0, grounded: null, spareAir: d.spareAir, airNeed: undefined });
 
+/**
+ * (R3 §2.9) 차에 실은 탄약 상자 (한 상자 = 한 사람의 총기를 가득): 순찰·폭발물 처리반 = 장비 손잡이의 값, 기동 +1, 특공 +2.
+ * 경찰 헬기는 0(내리는 사람이 없다), 총을 들지 않는 부대도 0. (N8·N9 의 경찰 부대 — 형사·교통 경찰·경찰견·기동대 버스 — 는 순찰과 같다)
+ */
+const AMMO_BOX_ADD: Partial<Record<UnitKind, number>> = { patrol: 0, eod: 0, tactical: 1, swat: 2, detective: 0, trafficPol: 0, k9: 0, riotPol: 0 };
+function ammoBoxOf(kind: UnitKind, base: number): number { const add = AMMO_BOX_ADD[kind]; return add === undefined ? 0 : base + add; }
+
 /** 조직 명부의 열쇠 한 자리 (I2 — 교대 간 지속): 그 자리의 원래 이름, 소속 호출부호, 표준 자리 번호 */
 export interface RosterKey { name: string; callsign: string; slot: number }
 let rosterKeyList: RosterKey[] | null = null;
@@ -189,7 +196,7 @@ export function createRoster(sim: Sim): void {
       aid: undefined, heavy: undefined, backing: undefined, curb: undefined, curbT: undefined, parking: undefined,      // 나중에 붙는 칸을 미리 비워 둔다: 모든 부대가 같은 모양의 객체가 된다
       ...fitOf(d),
       aboard: undefined, firstLoadAt: undefined, oosEv: undefined,      // (H1) 부상 대원·용의자의 후송 — 쓰는 것은 단계 4b 부터
-      ammoBox: undefined, ammoBoxMax: undefined, sparePump: undefined,      // (R3) 탄약 상자(2단계)·예비 펌프(3단계) — 그 단계가 값을 채운다
+      ammoBox: ammoBoxOf(d.kind, tn.ammoBox), ammoBoxMax: ammoBoxOf(d.kind, tn.ammoBox), sparePump: undefined,      // (R3) 탄약 상자(2단계 — 장비 손잡이)·예비 펌프(3단계가 채운다)
       readyAt: undefined, oosWhy: undefined, pumpFails: 0,      // (I2) 정비 중인 부대의 운용 시각·oos 의 이유(단계 3·2)·이번 교대의 펌프 고장 수(단계 3)
     };
     if (u.sea) { u.x = u.px = f.x + 30; u.y = u.py = coastY(f.x + 30) + SEA_OFF; }
@@ -276,7 +283,7 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
     field: undefined, air: undefined, sea: undefined, aid: true, heavy: undefined, backing: undefined, curb: undefined, curbT: undefined, parking: undefined,      // 편성표 부대와 같은 칸, 같은 순서
     ...fitOf(d),      // 환자 자리·예비 공기통도 편성표 부대와 같게 (빠뜨리면 지원 구급차가 환자를 싣지 못한다)
     aboard: undefined, firstLoadAt: undefined, oosEv: undefined,      // (H1) 편성표 부대와 같은 칸, 같은 순서
-    ammoBox: undefined, ammoBoxMax: undefined, sparePump: undefined,      // (R3) 편성표 부대와 같은 칸, 같은 순서
+    ammoBox: ammoBoxOf(kind, tn.ammoBox), ammoBoxMax: ammoBoxOf(kind, tn.ammoBox), sparePump: undefined,      // (R3) 편성표 부대와 같은 칸, 같은 순서
     readyAt: undefined, oosWhy: undefined, pumpFails: 0,      // (I2) 편성표 부대와 같은 칸, 같은 순서
   };
   if (HEAVY[kind]) u.heavy = true;
@@ -512,6 +519,9 @@ function arrive(sim: Sim, u: Unit): void {
     // 집에 닿으면 예비 공기통을 다시 싣고 대원의 공기통도 가득 채운다
     if (KIND[u.kind].spareAir > 0) u.spareAir = KIND[u.kind].spareAir;
     for (let ci = 0; ci < u.crew.length; ci++) refillAir(sim, u.crew[ci]);
+    // (R3 §2.9) 탄약 상자를 다시 싣고 대원의 총기도 가득 (공기통과 같은 자리)
+    if (u.ammoBoxMax !== undefined) u.ammoBox = u.ammoBoxMax;
+    for (let ci = 0; ci < u.crew.length; ci++) refillGuns(sim, u.crew[ci]);
     if (u.pumpFailed) { u.pumpFailed = false; u.pumpCond = 0.55; }
     u.state = crewReady(sim, u) === 0 || u.aid ? 'oos' : 'available';
     if (u.aid) emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', text: `${u.callsign}: 지원 임무를 마치고 관할로 복귀했습니다.`, imp: 1 });

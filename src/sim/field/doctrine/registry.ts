@@ -49,6 +49,10 @@ export interface DocSit {
   seatsLeft: number;                             // 현장 부대의 남은 환자 자리 합 (gear.seatsLeft — 조직 정보)
   negotSec: number; entryOrdered: boolean;       // s.negotStart 부터의 초(협상 전이면 0), s.entryOrdered
   lanes2nd: boolean;                             // 이 현장 기록에 2차 사고가 있었다 (I.problems 의 SECONDARY_COLLISION)
+  gunThreat: boolean;                            // (2단계) 믿음: 활동 중인 총기 용의자가 있다 (P22)
+  fightThreat: boolean;                          // (2단계) 믿음: 교전(fight) 중인 용의자가 있다 (P08)
+  bangOnScene: boolean;                          // (2단계) 동료의 장비(조직 정보): 현장의 활동 경찰 가운데 섬광탄을 가진 사람이 있다 (P14)
+  bangComing: boolean;                           // (2단계) 조직 정보: 섬광탄을 실은 경찰 부대가 이 사건으로 오는 중 (P14 의 기다림 상한 40초)
 }
 export type DocPhase = 'arrive' | 'sizeup' | 'standoff' | 'entry' | 'assault' | 'interior' | 'care' | 'transport' | 'traffic' | 'withdraw' | 'idle';
 /** 교본 줄이 받는 단 하나의 입력. 줄의 when 은 이것만 읽는다 */
@@ -66,6 +70,11 @@ export interface DocCtx {
   kit: (id: KitId) => number;                    // gear.kitCount (R2 — scba 는 0/1, 수량 장비는 남은 수)
   m?: { reach: number; flow: number; weak: boolean; tile: number };      // 방법 자리: R2 chooseMethod 가 사본에 채운다 (부르는 쪽은 채우지 않는다)
   see?: { stunned?: boolean };                   // 판단 지점 자리: 실행부가 시야 안에서 잰 것 (docGate 의 see — 용의자가 무력화된 것이 보인다)
+  tg: DocThreat | null;                          // (2단계) 대상 용의자의 믿음: 대상 작업(없으면 지금 임무)의 용의자, 그것이 없으면 가장 가까운 활동 용의자(sit.threat)
+  pack: { n: number; near: number; far: number };   // (2단계) 같은 용의자(tg)의 검거·교전을 맡은 다른 활동 동료의 수 · 그 가운데 2.6칸 안 · 2.6칸 밖 (동료의 겉 — P01~P03·P07·P14)
+  dngSign: number;                               // (2단계) brain 의 위험 점수 가운데 X6 조짐의 몫 (act 자리에서 brain 이 넘긴다 — P11. 다른 자리에서는 0)
+  hideSpot: () => { x: number; y: number } | null;   // (2단계) 숨을 자리 (자기 모드에서만 — 엔진의 coverSpot(…, 숨기)를 tg 에 대해 한 번만 잰다. 보고 모드·위협이 없으면 null)
+  solo: boolean;                                 // (2단계) 혼자 규칙에서 빠지는 역할인가 (엔진의 SOLO_OK — 저격·관측수·처리 요원·기관원·사다리 조작원·구급 운전원·관측관 …)
 }
 
 /** 효과 하나. fit·method 효과는 자기 works·methods·when 을 더 가질 수 있다 (한 줄이 일마다 다른 배율을 줄 때) */
@@ -90,7 +99,12 @@ export interface DoctrineRule {
   methods?: MethodId[];  // method 줄이 배율을 주는 방법 (효과의 methods 가 있으면 그것)
   kits?: KitId[];        // 이 가운데 하나라도 쓸 수 있어야 걸린다 (scba 는 들었는지만 — 남은 공기는 when 이 st.air 로)
   noKits?: KitId[];      // 이 가운데 아무것도 쓸 수 없어야 걸린다 — '장비 때문에'를 센다 (까닭 noKit)
-  when: (c: DocCtx) => boolean;      // 상황·상태 술어. DocCtx 만 읽는다. 예외는 여기에 넣는다 (§2.6 — "허락" 줄을 따로 두지 않는다)
+  when: (c: DocCtx) => boolean;      // 상황·상태 술어. DocCtx 만 읽는다. 예외는 여기 또는 아래 unless 에 넣는다 (§2.6 — "허락" 줄을 따로 두지 않는다)
+  unless?: (c: DocCtx) => boolean;   // (2단계) 같은 줄의 예외: 참이면 이 줄이 걸리지 않는다 (when 의 '그리고 아니다'와 같다). 따로 두는 까닭은 기록뿐이다 —
+                                     //   판단 지점이 "예외가 처음 결정을 바꾼 때"(§2.7)를 알고 excNote 를 한 번 남긴다
+  excNote?: string;                  // (2단계) 예외로 막지 않았을 때의 기록 문구 (판단 지점 — 임무마다 한 번)
+  outNote?: string;                  // (2단계) 기다림이 상한에 닿았을 때의 기록 문구 (판단 지점 — §4.4 의 timeout 갈래)
+  dropNote?: string;                 // (2단계) drop 금지가 하던 임무를 놓게 했을 때의 기록 문구 (brain 의 docDrop 자리 — 같은 대원·같은 줄 20초에 한 번)
   effect: DocEffect | DocEffect[];
   th?: Record<string, number>;       // 문턱 상수 (when 이 읽는 수 — 표·패널·테스트가 같은 값을 본다)
   rank: 0 | 1 | 2 | 3;               // 0 생명 · 1 보호 · 2 짝·지원·절차 · 3 장비·효율
@@ -103,11 +117,16 @@ export const DOCTRINE: DoctrineRule[] = [];
 export function registerDoctrine(...rules: DoctrineRule[]): void { for (const r of rules) DOCTRINE.push(r); }
 /** 지휘·관제·추격 줄의 이름표 (코드는 orders/doctrine.ts · dispatch/doctrine.ts · orders/catastrophe.ts 에 있다. 기록·측정만 이 표로 이름을 찾는다) */
 export const CMD_ROWS: { id: string; dept: DocDept; hook: 'cmd' | 'dispatch' | 'chase'; name: string; short: string; why: DocWhy }[] = [];
-/** 줄이 다 들어간 분야 — 시험 8 의 "분야마다 12줄 이상"은 여기 든 분야만 본다 (단계마다 그 분야를 더한다) */
-export const DOC_DEPTS_DONE: DocDept[] = [];
+/**
+ * (2단계) 지휘·관제 줄 가운데 설계서가 "확인 필요 — 균형"으로 적은 것의 스위치 (§6.1 CP4 · §6.2 D6 · §8.4 의 손잡이 — D7 의 앞막기).
+ * 코드는 commander.ts · dispatch/doctrine.ts 에 있고 이 값만 본다 (줄을 끄는 균형 손잡이 — 측정·시험이 바꿔 볼 수 있게 한 곳에 둔다)
+ */
+export const DOC_SWITCH = { CP4: true, D6: true, D7: true };
+/** 줄이 다 들어간 분야 — 시험 8 의 "분야마다 12줄 이상"은 여기 든 분야만 본다 (단계마다 그 분야를 더한다 — 2단계 경찰) */
+export const DOC_DEPTS_DONE: DocDept[] = ['police'];
 
 /** 판단 지점의 답: ok = 그 걸음을 해도 된다 · rule = 막은(알릴) 줄 · wait = 막은 줄들의 maxWait 가운데 가장 긴 값 · opt = choose 줄이 고른 갈래 */
-export interface DocGateAns { ok: boolean; rule: string | null; wait: number; opt: string | null }
+export interface DocGateAns { ok: boolean; rule: string | null; wait: number; opt: string | null; exc: string | null }      // exc = (2단계) 예외(unless)가 아니었다면 막았을 줄 (막는 줄이 없을 때만)
 /** 의무·행동 후보 하나 (한 판단에 하나 — §2.6) */
 export interface DocPick { rule: DoctrineRule; act: DocActId; score: number }
 /** fit 자리의 자세한 답: fit = 교본을 넣은 값, base = 교본 전의 값, hits = 걸린 줄과 그 줄이 준 배율·가산 (assign 의 1등 비교가 쓴다 — §2.7) */

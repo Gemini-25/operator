@@ -26,7 +26,7 @@ export interface WorkTarget { region?: number; cas?: number; prop?: number; host
 export interface CommandKit {
   want: (kind: WorkKind, tg: WorkTarget, priority: number, max?: number, thorough?: boolean) => WorkItem;
   cancel: (pred: (w: WorkItem) => boolean) => void;
-  request: (need: keyof UnitCaps, reason: string, urgent: boolean) => void;
+  request: (need: keyof UnitCaps, reason: string, urgent: boolean) => number;      // (R3 §6.1) 보낸 무전의 기록 id (버렸거나 못 보냈으면 -1)
   countUnits: (need: keyof UnitCaps, min: number) => number;      // 오고 있거나 와 있는 부대 수
   unitsOnScene: () => number[];
 }

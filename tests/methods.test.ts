@@ -1131,7 +1131,9 @@ describe('R2 단계 1a: 강제 교대 (§8 의 2·3·4·5·6·7·9)', () => {
     expect(back.some((u) => u.why === 'noGear' && u.missing !== undefined)).toBe(true);
   });
   it('3. 방법마다 쓰인 교대가 있다: 수난 강제 + 장비를 뺀 교대에서 구명줄·장대·즉석 부력물, 선박 화재에서는 손이 없다(안벽). 호이스트로 건진 사람은 그렇게 적힌다', () => {
-    const set = new Set(rescued(usesOf([...W20().slice(0, 12), ...STRIPPED()])).map((u) => u.method));
+    // (R3 단계 2) 표본을 W0~W11 에서 이미 돈 W20 전체로 넓혔다(기준은 그대로 — 방법마다 한 번 이상). 경찰 교본이 배경 사건의 부대 배치를 바꿔
+    // W1 #11 의 장대 구조(그 12교대의 유일한 장대)가 즉석 부력물로 바뀌었다. 장대는 W12·W14 에서 쓰인다
+    const set = new Set(rescued(usesOf([...W20(), ...STRIPPED()])).map((u) => u.method));
     for (const m of ['rope', 'pole', 'improvise'] as MethodId[]) expect(set.has(m), m).toBe(true);
     const ships = SHIPS();
     let shore = 0;

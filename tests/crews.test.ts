@@ -2188,7 +2188,7 @@ describe('⑭ 소모와 고장', () => {
       expect(w.bad, w.bad.join('\n')).toEqual([]);      // 공기·예비 공기통이 0 밑으로 내려간 적이 없다 (watch)
       swappers += w.held.get('swapAir')?.size ?? 0;
       const count = (re: RegExp): number => sim.events.filter((e) => re.test(e.text)).length;
-      swaps += count(/^공기통 교체 완료/); warned += count(/공기 잔량 60초 미만/);
+      swaps += count(/^공기통 교체 완료/); warned += count(/공기 잔량 60초 미만|^공기 (30|50)% 미만/);      // (R3 3단계) 교본의 공기 문턱(50% 신고·30% 탈출)이 60초보다 먼저 온다 — 그 신고도 공기 잔량 경고다
       // 드러난 고장마다 기록 하나 (같은 대원·같은 장비는 한 번만), 드러나지 않은 고장은 기록이 없다
       let known = 0;
       for (const r of sim.responders) for (const it of r.kit!) if (it.faultKnown) { known++; expect(it.fault, `${r.name} ${it.id}`).toBe(true); }

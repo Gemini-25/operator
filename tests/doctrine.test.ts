@@ -171,7 +171,7 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
         if (!I.pursuit) { expect(I.trackBy).toBeUndefined(); expect(I.reportedPrev).toBeUndefined(); }
         for (const d of I.docs ?? []) {
           docs++;
-          expect(['fit', 'method', 'act', 'gate', 'cmd', 'dispatch', 'chase']).toContain(d.hook);
+          expect(['fit', 'method', 'act', 'gate', 'cmd', 'dispatch', 'chase', 'duty']).toContain(d.hook);
           expect(DOCTRINE.some((r) => r.id === d.rule) || CMD_ROWS.some((c) => c.id === d.rule), d.rule).toBe(true);
           if (d.hook === 'act' || d.hook === 'duty') expect(['cover', 'rearm', 'airOut', 'pairOut', 'pair', 'triage']).toContain(d.act); else expect(d.act).toBeUndefined();
           if (d.hook === 'gate') expect(['closeIn', 'roomEntry', 'breach', 'coverFire', 'bangUse', 'interiorEntry']).toContain(d.gate); else expect(d.gate).toBeUndefined();

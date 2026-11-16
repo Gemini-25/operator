@@ -1745,7 +1745,7 @@ describe('R2 단계 1c: 강제 교대 — 해일에서 보트가 쓰이고, 물 
   it('해일 교대에서 보트로 건진 사람이 있고, 교대가 끝나면 보트 위·물 칸 위에 아무도 없다', () => {
     let boats = 0;
     const bad: string[] = [];
-    for (const seed of ['S3', 'S4', 'S8']) {
+    for (const seed of ['S3', 'S4', 'S8', 'S12']) {      // (R3 3단계) 교본으로 결과가 바뀌어 S4 의 보트 구조가 없어졌다 — 보트 구조는 드물다(그전 S0~S11 에 S4·S10, 지금 S0~S15 에 S1·S11·S12(2)·S15). S12 를 더한다
       const sim = new Sim(seed, { ...NORMAL, disaster: parseDisaster('tsunami')! }, 1200);
       sim.runToEnd();
       boats += usesOf([sim]).filter((u) => u.ok && u.method === 'boat').length;
@@ -2061,7 +2061,7 @@ describe('R2 단계 2: 농성 문 잠금과 방 진입의 잠긴 문 (§4.2a)', 
 describe('R2 단계 2: 강제 교대 (§8 의 3·6·10)', () => {
   it('3. 문: 유압 개방·할리건·발로 차기 성공이 각각 있다 (승강기 갇힘·건물 화재 강제)', () => {
     const us: MethodUse[] = [];
-    for (const [seed, force] of [['D0', 'collapse/elevator'], ['D1', 'collapse/elevator'], ['D2', 'fire/std'], ['D3', 'fire/std'], ['D4', 'fire/std']] as const) {
+    for (const [seed, force] of [['D0', 'collapse/elevator'], ['D1', 'collapse/elevator'], ['D2', 'fire/std'], ['D3', 'fire/std'], ['D4', 'fire/std'], ['D5', 'collapse/elevator']] as const) {      // (R3 3단계) 교본으로 결과가 바뀌어 유압 개방이 D5 승강기로 옮겨 갔다
       const sim = new Sim(seed, NORMAL, 1200, { force }); sim.runToEnd();
       for (const I of sim.incidents) us.push(...(I.methods ?? []));
     }

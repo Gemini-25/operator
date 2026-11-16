@@ -298,12 +298,17 @@ function pairOf(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem | null, st: DocSt
   const t = a.task;
   let myP = -1, myIn = false;
   if (t !== null && t.kind !== 'standby') { const mw = t.workId >= 0 ? s.board[t.workId] : undefined; myP = mw !== undefined ? mw.priority : 9; myIn = mw !== undefined && (inJob(sim, s, a, mw, t) || hotSearch(s, mw)); }
-  const alt = job !== null && job.hz && canFollow && myP < 0 && pairAlt(sim, s, a, job.w);
+  // G08 의 예외 (3단계 측정): 짝 곁(같은·이웃 구역)에 내가 맡을 빈 위험 실내 일이 있으면 따라가지 않고 그 일을 맡는다 — 둘 다 일하면서 짝이 따라온다(§5.4 끝)
+  // (따라만 가면 관창 둘이 하나가 되고, 유압 구조대원 둘이 짝인 구조 공작차는 구출을 맨손의 다른 대원이 맡았다)
+  // 짝이 문턱에서 나를 기다리고 있으면(판단 지점 interiorEntry) 예외 없이 따라간다 — 곁의 일을 맡으러 가면 짝은 20초 뒤 일을 놓고 다음 일에서 또 기다렸다(극한 교대에 일곱 번)
+  const waiting = b !== null && b.task !== null && b.task.gateId === 'interiorEntry' && (b.task.gateAt ?? -1) >= 0;
+  const alt = job !== null && job.hz && canFollow && myP < 0 && !waiting && pairAlt(sim, s, a, job.w);
   return { raw, rawOut, forW, follows, rookie, job, canFollow, myP, myIn, alt };
 }
 /**
  * (3단계 — 측정이 찾은 것, G08 의 예외·짝 동행의 끝) 짝의 위험 실내 일 jw 와 같은·이웃 구역에 이 대원이 맡을 수 있는 빈 위험 실내 일이 있다:
- * 수색·진압·잔불 정리(진압·잔불 정리는 관창을 든 사람만), 자리가 남았고 보류 중이 아님 — 짝의 진압에 남은 둘째 자리도 센다.
+ * 수색·진압·잔불 정리·구출·이송(진압·잔불 정리는 관창을 든 사람만), 자리가 남았고 보류 중이 아님 — 짝의 진압·이송에 남은 둘째 자리도 센다
+ * (구조 공작차의 유압 구조대원 둘이 짝이라 한 사람이 따라만 가면 구출을 맨손의 다른 대원이 맡았다 — tests/crews.test.ts ⑤).
  * 그 일을 맡으면 둘 다 일하면서 짝이 따라온다(§5.4 끝의 buddyFollowing). 따라만 가면 관창 둘이 하나가 되어 진압이 절반으로 느려졌다.
  */
 export function pairAlt(sim: Sim, s: Scene, a: FieldAgent, jw: WorkItem): boolean {
@@ -311,7 +316,7 @@ export function pairAlt(sim: Sim, s: Scene, a: FieldAgent, jw: WorkItem): boolea
   for (let k = 0; k < s.board.length; k++) {
     const w2 = s.board[k];
     if ((w2.status !== 'open' && w2.status !== 'active') || w2.assignees.length >= w2.max || w2.assignees.indexOf(a.rid) >= 0 || w2.holdUntil > sim.t) continue;
-    if ((w2.kind !== 'search' && w2.kind !== 'suppress' && w2.kind !== 'overhaul') || (w2.kind !== 'search' && !hose)) continue;
+    if ((w2.kind !== 'search' && w2.kind !== 'suppress' && w2.kind !== 'overhaul' && w2.kind !== 'extricate' && w2.kind !== 'carry') || ((w2.kind === 'suppress' || w2.kind === 'overhaul') && !hose)) continue;
     if (inJob(sim, s, a, w2) && nearWork(s, a, w2, jw)) return true;
   }
   return false;

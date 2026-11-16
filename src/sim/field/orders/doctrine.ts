@@ -76,7 +76,7 @@ function selfWatch(sim: Sim, s: Scene, a: FieldAgent, ex: Pt): boolean {
 /** (3단계) 소방의 지휘 줄 CF1·CF2·CF4 — 위의 지휘 교본 등록 끝에서 부른다 */
 function fireOrders(sim: Sim, s: Scene, I: Incident, a: FieldAgent, k: CommandKit): void {
   // CF1: 위험 실내 일이 열려 있고 그 출입구의 밖 대기조 < 필요한 수, 오는 진압 부대 0 → 진압 부대 요청 (사건마다 한 번)
-  if (!CF1_DONE.has(I) && fireComing(sim, I) === 0 && s.agents.some((b) => b.status === 'active' && b.task !== null && b.task.gateId === 'interiorEntry' && (b.task.gateAt ?? -1) >= 0 && b.task.docRule === 'F05')) {      // (3단계 측정) 대기조 때문에 문턱에서 기다리는 대원이 있을 때만 (본문은 열린 위험 실내 일만 보았다 — 진압 부대를 너무 자주 불러 다른 사건이 늦어졌다)
+  if (!CF1_DONE.has(I) && fireComing(sim, I) === 0) {      // 본문 그대로 (3단계 측정: 문턱에서 기다리는 대원이 있을 때만 부르게 좁혔더니 2층 화재의 구조가 줄었다 — 되돌렸다)
     let ex: Pt | null = null;
     for (const w of s.board) {
       if ((w.status !== 'open' && w.status !== 'active') || !inJob(sim, s, a, w)) continue;

@@ -539,10 +539,10 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   else if (fireRegions > 0 && dry) {
     // (R3 §6.1 CF3) 펌프 고장이고 그 부대의 예비 펌프가 바닥났다 → '펌프 고장 — 진압 부대 교체' (교본 줄로 센다). 물이 떨어졌으면 지금 문구.
     // 펌프가 멈췄어도 예비 펌프가 남았으면 부르지 않는다 — 펌프를 맡은 대원이 바꾼다 (brain 의 예비 펌프 교체 — F10). 예비를 세지 않는 부대(undefined)는 지금처럼 부른다
-    let pumpDead = false, waterOut = false;
-    for (const uid of I.assigned) { const q = sim.units[uid]; if (q.caps.suppression < 0.7 || q.state !== 'onscene' || q.incidentId !== I.id) continue; if (q.pumpFailed) { if (q.sparePump !== undefined && q.sparePump <= 0) pumpDead = true; else if (q.sparePump === undefined) waterOut = true; } else if (q.water <= 0 && !q.hydrant) waterOut = true; }
+    let pumpDead = false, waterOut = false, asked = false;      // asked = 교체를 이미 부른 펌프차가 있다 (그 교체가 용수 부족도 푼다 — 용수 요청을 따로 내지 않는다)
+    for (const uid of I.assigned) { const q = sim.units[uid]; if (q.caps.suppression < 0.7 || q.state !== 'onscene' || q.incidentId !== I.id) continue; if (q.pumpFailed) { if (q.sparePump !== undefined && q.sparePump <= 0) { if (!cf3Asked(I).has(q.id)) { pumpDead = true; cf3Asked(I).add(q.id); } else asked = true; } else if (q.sparePump === undefined) waterOut = true; } else if (q.water <= 0 && !q.hydrant) waterOut = true; }
     if (pumpDead) { const ev = request(sim, s, I, a, 'suppression', '펌프 고장 — 진압 부대 교체', true); if (ev >= 0) docCmd(sim, I, 'CF3', ev); }
-    else if (waterOut) request(sim, s, I, a, 'suppression', '진압 부대의 용수가 떨어짐', true);
+    else if (waterOut && !asked) request(sim, s, I, a, 'suppression', '진압 부대의 용수가 떨어짐', true);
   }
   else if ((fireSum >= 2.0 || fireRegions >= 3) && fireUnits < 2) request(sim, s, I, a, 'suppression', `화재가 ${fireRegions}개 구역으로 확대`, true);
   if (cas.some((f) => f.value.mob === 'trapped' && f.value.band < 3 && f.value.where === 'scene') && countUnits(sim, s, I, 'rescue', 0.5) === 0) request(sim, s, I, a, 'rescue', '고립된 구조 대상이 있으나 구조 장비가 없음', true);
@@ -923,6 +923,9 @@ import { inJob } from './doctrine';
  * (R3 3단계 — 측정이 찾은 것) 짝 동행 중인 대원 b 에게 위험 실내 일 w 를 줄 수 있는가: w 가 위험 실내로 들어가는 일이고 그 구역이 b 의 짝이 맡은 일의 구역과 같거나 이웃이다
  * (짝이 곁의 방에서 일한다 — 짝 규칙(buddyOf)이 짝으로 치는 자리). 그러지 않으면 짝을 따라 들어간 대원이 그 자리에 묶여 실내의 손이 절반이 되었다. 믿음·작업판·동료의 겉만 읽는다
  */
+/** (R3 CF3) 펌프 고장 — 진압 부대 교체를 이미 부른 펌프차 (사건마다 — 교체 한 대면 되므로 같은 차로 다시 부르지 않는다. 관제가 보낼 부대가 없으면 72초마다 같은 요청이 되풀이되었다 — tests/loops.test.ts) */
+const CF3_ASKED = new WeakMap<Incident, Set<number>>();
+function cf3Asked(I: Incident): Set<number> { let m = CF3_ASKED.get(I); if (m === undefined) { m = new Set(); CF3_ASKED.set(I, m); } return m; }
 function pairTakes(sim: Sim, s: Scene, a: FieldAgent, b: FieldAgent, w: WorkItem): boolean {
   if (b.task === null || b.task.kind !== 'pair' || b.buddy === undefined || b.buddy < 0 || !inJob(sim, s, a, w)) return false;
   const m = s.agents.find((q) => q.rid === b.buddy && q.status === 'active');

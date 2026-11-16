@@ -294,7 +294,7 @@ export function gateStep(sim: Sim, s: Scene, a: FieldAgent, t: Task, gate: DocGa
   if (ans.ok) {
     if (ans.exc !== null) {
       const r = ruleById(ans.exc);
-      const ev = r !== undefined && r.excNote !== undefined ? docNote(sim, s, a, r, 2, r.excNote) : -1;
+      const ev = r !== undefined && r.excNote !== undefined ? docNote(sim, s, a, r, again(a, gate, r.id + '|' + r.excNote) ? 0 : 2, r.excNote) : -1;
       recordDoc(sim, I, a, ans.exc, 'gate', { gate, tgt }, ev, r !== undefined && r.report !== undefined);
       passGate(t, gate);
     }
@@ -305,13 +305,15 @@ export function gateStep(sim: Sim, s: Scene, a: FieldAgent, t: Task, gate: DocGa
   if (t.gateId !== gate || (t.gateAt ?? -1) < 0) { t.gateAt = sim.t; t.gateId = gate; t.gateSaid = false; }
   t.docRule = ans.rule ?? undefined;
   let ev = -1;
-  if (!t.gateSaid) { t.gateSaid = true; if (rule !== undefined) ev = docNote(sim, s, a, rule); }
+  if (!t.gateSaid) { t.gateSaid = true; if (rule !== undefined) ev = docNote(sim, s, a, rule, again(a, gate, rule.id) ? 0 : 1); }
   if (ans.rule !== null) recordDoc(sim, I, a, ans.rule, 'gate', { gate, tgt }, ev, rule !== undefined && rule.report !== undefined);
   if (sim.t - (t.gateAt ?? sim.t) + 1e-9 < ans.wait) return 'wait';
-  if (rule !== undefined && rule.outNote !== undefined) docNote(sim, s, a, rule, 1, rule.outNote);
+  if (rule !== undefined && rule.outNote !== undefined) docNote(sim, s, a, rule, again(a, gate, rule.id + '|' + rule.outNote) ? 0 : 1, rule.outNote);
   passGate(t, gate); clearGate(t);
   return 'timeout';
 }
+/** (3단계) 실내 첫걸음(interiorEntry)의 문구를 이 대원이 이 교대에 이미 말했는가 — 방마다 다시 묻는 판단 지점이라 두 번째부터는 낮은 중요도(0)로 남긴다 (극한 교대에 한 대원이 여덟 번) */
+function again(a: FieldAgent, gate: DocGateId, key: string): boolean { return gate === 'interiorEntry' && NOTE_AT.get(a)?.has(key) === true; }
 /** 판단 지점 칸을 비운다 (풀렸거나 상한) */
 function clearGate(t: Task): void { t.gateAt = -1; t.gateId = undefined; t.gateSaid = false; if (t.kind !== 'cover' && t.kind !== 'rearm') t.docRule = undefined; }
 

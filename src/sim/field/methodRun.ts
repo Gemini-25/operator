@@ -112,7 +112,7 @@ function openFails(I: Incident, key: string): Problem[] {
  * 한 대원이 한 사건에서 처음 고를 때만 알리는 방법 (구역마다 수색 임무가 따로 나와 여러 번 고른다 — §3.6).
  * (단계 6) 즉시 이송도: 처치 임무는 환자 둘 사이를 오가며 다시 받는 일이 잦아(점수가 비슷한 두 후보) 받을 때마다 알리면 같은 말이 쏟아졌다
  */
-const SAY_ONCE: ReadonlySet<MethodId> = new Set<MethodId>(['listen', 'hail', 'thermal', 'rush']);
+const SAY_ONCE: ReadonlySet<MethodId> = new Set<MethodId>(['listen', 'hail', 'thermal', 'rush', 'feel']);      // (R3 3단계) 벽 더듬기도 탐지 방법 — 방마다 알리면 한 대원이 한 사건에서 열 번 넘게 같은 말을 했다
 /**
  * (검토) 같은 대원이 같은 대상에 같은 방법을 다시 고른 시작 문구는 이 시간(초) 안이면 다시 알리지 않는다 — 다시 고를 때마다 시계를 새로 잰다.
  * 임무를 다시 받을 때마다 방법을 처음부터 고르므로(새 Task) 대원이 곁의 두 일 사이를 오가거나(brain 의 자체 판단 — 지휘관이 고립자 셋 사이를 0.6초마다)

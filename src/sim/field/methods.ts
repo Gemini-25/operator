@@ -12,7 +12,8 @@
 // "더 좋은 방법이 보이면 바꾼다"는 없다 (대원이 두 방법 사이를 오간다). 실행부는 methodRun.ts.
 //
 // 단계 0 (틀)에서 표의 모든 줄을 두고 can 을 NOT_YET(거짓)으로 비워 두었다. 방법을 구현하는 단계가 그 줄의 can·situ·skill 을 채운다
-// (수난 1a~1c · 문 2 · 구출·탐지 3 · 화재 4 · 무장 5 · 응급·가스 6). 켜진 줄: 단계 1a — 수난 구조의 물가 방법 여섯(hand·pole·ring·rope·improvise·catch).
+// (수난 1a~1c · 문 2 · 구출·탐지 3 · 화재 4 · 무장 5 · 응급·가스 6). 켜진 줄: 단계 1a — 수난 구조의 물가 방법 여섯(hand·pole·ring·rope·improvise·catch),
+// 단계 1b — 헤엄(swim)·줄 확보(tend). 물 위의 이동 비용 swimCost 는 실행기(executor.costFor)가 쓴다.
 // 배정(agents.fitFor 의 waterRescue)이 methodFit 을, 실행부(methodRun.runWaterRescue)가 chooseMethod·methodStillFits 를 부른다.
 
 import type { Sim } from '../engine';
@@ -20,8 +21,9 @@ import { hashStr } from '../rng';
 import { T } from '../types';
 import type { CasBelief, FieldAgent, KitId, MethodId, MethodWhy, Responder, Scene, Task, Unit, UnitKind, WorkItem, WorkKind } from '../types';
 import { clamp, josa } from '../util';
-import { SHARED, kitCount, kitName, swimBonus } from './gear';
+import { SHARED, hoistOver, kitCount, kitName, swimBonus } from './gear';
 import { staticPass, tileOf } from './grid';
+import type { CostFn } from './grid';
 import { docCtx, docMethodMul, hasDoc } from './doctrine';      // (R3) 교본 배율 — doctrine.ts 는 이 파일을 값으로 import 하지 않는다 (순환 없음)
 import type { DocCtx } from './doctrine/registry';
 
@@ -79,6 +81,8 @@ const REC: Extra = { record: true };
 // ── 수난 구조의 조건·배율 (§4.1) — 대상의 위치·물살·위중은 모두 믿음에서(MethodCtx 의 reach·flow·weak) ──
 /** 닿는 거리 (칸): 손 1.2 · 장대 2.0 · 구명환 2.8 · 구명줄·즉석 부력물 3.6(THROW_REACH) */
 export const HAND_REACH = 1.2, POLE_REACH = 2.0, RING_REACH = 2.8;
+/** 헤엄쳐 들어갈 수 있는 수영 능력의 문턱 (구명조끼를 입으면 낮다 — §4.1 swim) */
+export const SWIM_MIN = 0.35, SWIM_MIN_PFD = 0.25;
 /** 하류 차단: 대상이 기다릴 자리에 닿는 예상(초)이 이 안이면 그대로, 늦은 쪽(SOON~LATE)은 점수 ×0.5, 넘으면 고르지 않는다 */
 export const CATCH_SOON = 40, CATCH_LATE = 90;
 /** 같은 대상에게 헤엄쳐 들어간 동료가 있다 — 던지는 방법은 그 동료에게 걸린다 */
@@ -116,8 +120,13 @@ export const METHOD: Record<MethodId, MethodDef> = {
     { can: (c) => c.reach <= THROW_REACH && !mateSwims(c), situ: (c) => (c.weak ? 0.35 : 1) * (c.reach > 2.4 ? 0.6 : 1) * (c.sim.weather !== 'clear' ? 0.9 : 1), skill: throwSkill }),
   catch: row('catch', ['waterRescue'], '하류에서 기다렸다 붙잡기', '하류 차단', '하류에서 대기', '하류에서 기다렸다 붙잡아', [], 0.8, 0, false,
     { can: (c) => catchEta(c) <= CATCH_LATE, situ: (c) => (catchEta(c) > CATCH_SOON ? 0.5 : 1) * (c.weak ? 0.8 : 1) * (c.flow >= FAST_FLOW ? 1.3 : 1) }),
-  swim: row('swim', ['waterRescue'], '헤엄쳐 접근', '헤엄', '헤엄쳐 접근', '헤엄쳐 들어가', [], 0.45, 0.3, false),
-  tend: row('tend', ['waterRescue'], '구조자 줄 확보', '줄 확보', '구조자 줄 확보', '헤엄치는 동료의 줄을 잡아', ['rope'], 0.9, 0, false),
+  // 단계 1b: 헤엄과 줄 확보. 헤엄은 수영 능력이 문턱(구명조끼가 있으면 낮다)을 넘고 손이 닿지 않는 대상에게 — 구명조끼는 "있어야 하는" 장비가 아니라 kits 에 넣지 않는다(실제 소지로 본다)
+  swim: row('swim', ['waterRescue'], '헤엄쳐 접근', '헤엄', '헤엄쳐 접근', '헤엄쳐 들어가', [], 0.45, 0.3, false,
+    { can: (c) => c.reach > HAND_REACH && !mateSwims(c) && swimOf(c.sim, c.a) >= (kitCount(c.sim, c.a.rid, 'pfd') > 0 ? SWIM_MIN_PFD : SWIM_MIN),      // 한 대상에 헤엄은 한 사람 (§4.1 "동료와의 조건": 줄이 있으면 줄 확보, 없으면 손·장대만 남는다)
+      situ: (c) => (c.weak ? 1.15 : 1) * (c.flow >= FAST_FLOW ? 0.6 : 1) * (c.reach > THROW_REACH ? 1.3 : 1) * (c.s.quay ? 0.8 : 1) * (hoistOver(c.sim, c.s) ? 0.7 : 1),      // 상공 헬기 ×0.7 — R3 를 합칠 때 지운다(R3 S15 가 대신한다)
+      skill: (c) => 0.5 + swimOf(c.sim, c.a) }),
+  tend: row('tend', ['waterRescue'], '구조자 줄 확보', '줄 확보', '구조자 줄 확보', '헤엄치는 동료의 줄을 잡아', ['rope'], 0.9, 0, false,
+    { can: mateSwims }),      // 같은 대상에게 헤엄쳐 들어가는 동료가 있다 (줄을 잡아 주면 그 동료의 사고율 ×0.5)
   boat: row('boat', ['waterRescue'], '보트 접근', '보트', '보트 접근', '보트로 다가가', ['raft'], 0.78, 0.08, false, { altUnit: ['boat'] }),
   hoist: row('hoist', ['hoist'], '헬기 호이스트', '호이스트', '호이스트 인양', '호이스트로 끌어올려', [], 0, 0, false, REC),      // R1 의 공중 임무 — methodRun.recordAir 가 기록만 한다
   // ── 문·통로 force·clear, 이동 중 하위 작업 (§4.2·§4.2a) ──
@@ -309,6 +318,13 @@ function nearestLand(s: Scene, x: number, y: number, R: number, comp: Int32Array
 }
 /** 대원이 물 칸에 서 있다 (보트 위가 아니다) — "헤엄 중" */
 export function onWater(s: Scene, a: FieldAgent): boolean { return a.afloat === undefined && s.tiles[tileOf(s, a.x, a.y)] === T.WATER; }
+/** 물 칸을 헤엄쳐 지나는 값 (걷는 칸의 바탕 값 0 보다 비싸다 — 돌아갈 뭍 길이 가까우면 걷는다) */
+export const SWIM_COST = 2.2;
+/**
+ * 헤엄 비용 (§3.5 executor.costFor): 물 칸은 SWIM_COST, 그 밖은 바탕 비용(agents.agentCost — 믿음의 장애물·불·연기) 그대로.
+ * 칸마다 한 번만 불린다(astar 의 비용 함수는 순수해야 한다) — 바탕 비용은 물이 아닌 칸에서만 부른다
+ */
+export function swimCost(s: Scene, base: CostFn): CostFn { const tiles = s.tiles; return (i: number): number => (tiles[i] === T.WATER ? SWIM_COST : base(i)); }
 /**
  * (x, y) 에서 가장 가까운 뭍 칸과 그 거리 d. from 이 있으면 from 과 같은 뭍 성분의 칸만
  * (from 이 물 위면 from 에서 가장 가까운 뭍 칸의 성분 — 다리로 이어진 건너편 둔치도 같은 성분이다).

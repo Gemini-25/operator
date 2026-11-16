@@ -9,7 +9,9 @@
 //
 // 단계 0 (틀)이 공통 함수를 두었고, 방법별 실행은 그 방법을 구현하는 단계가 이 파일에 더한다:
 //   단계 1a  runWaterRescue(수난 구조의 물가 방법 — 손·장대·구명환·구명줄·즉석 부력물·하류 차단) · landCasualty — executor 의 case 'waterRescue' 가 부른다
-//   뒤 단계  waterTick·pullAshore(1b) · 보트(1c) · blockerRate(2) · runSuppress(4) …
+//   단계 1b  헤엄(runSwim)·줄 확보(runTend)·끌려가는 대상 기다리기(waitCarried), 물 위의 바탕: waterTick(executor.act)·pullAshore(안전장치 — case 'ashore'·rules/methods)·
+//            dropWet(executor.finishTask 의 내려놓기)·swimTrouble·clutchP, 물 위 피해의 하한 WATER_FLOOR(18)
+//   뒤 단계  보트(1c) · blockerRate(2) · runSuppress(4) …
 
 import type { Sim } from '../engine';
 import { emit, lastProblemEvent, raiseProblem } from '../events';
@@ -20,7 +22,8 @@ import { clamp, dist, josa } from '../util';
 import { casFact, learn, learnQuiet, staminaF } from './agents';
 import { BARE_HANDS, kitCount, kitTool, kitWorks } from './gear';
 import { tileOf } from './grid';
-import { HAND_REACH, METHOD, POLE_REACH, RING_REACH, SAY, THROW_REACH, WORK_MODE, catchPoint, chooseMethod, methodStillFits, reachOf, sayStart, targetKey } from './methods';
+import { HAND_REACH, METHOD, POLE_REACH, RING_REACH, SAY, THROW_REACH, WORK_MODE, catchPoint, chooseMethod, methodStillFits, onWater, reachOf, sayStart, swimOf, targetKey } from './methods';
+import { hurtResponder } from './injury';
 import type { MTarget, MethodPick, Sense } from './methods';
 import { docCtx, hasDoc } from './doctrine';      // (R3) 교본 입력 (자기 모드)
 import type { DocCtx } from './doctrine/registry';
@@ -114,6 +117,7 @@ function announce(sim: Sim, I: Incident, a: FieldAgent, t: Task, work: WorkKind,
 function applyPick(sim: Sim, t: Task, pick: MethodPick): void {
   t.method = pick.m; t.mwhy = pick.why; t.missing = pick.missing; t.mcands = pick.cands;
   t.mt0 = sim.t; t.mtry = 0; t.mbad = 0;
+  t.range = 0;      // (1b) 헤엄·줄 확보의 "물가 자리를 정했다" 표시 — 새 방법은 자리를 다시 정한다
   if (t.tried !== undefined && t.tried.indexOf(pick.m) >= 0) t.tried = [];      // 다 써 봐서 처음부터 다시 고른 것이다 (판단부의 넓히기 ①)
 }
 
@@ -303,7 +307,21 @@ function foldedBefore(a: FieldAgent, key: string, m: MethodId): boolean {
 }
 /** 방법을 접을 때의 사유 (조건 상실) */
 function lostText(m: MethodId, team: boolean): string {
-  return team ? '동료가 헤엄쳐 들어감' : `대상이 떠내려가 ${josa(METHOD[m].short, '이/가')} 닿지 않음`;
+  if (m === 'tend') return '헤엄치던 동료가 물에서 나옴';
+  if (team) return '동료가 헤엄쳐 들어감';
+  if (m === 'swim') return '대상이 물가 가까이 떠밀려 옴';      // 손이 닿는 거리가 됐다(헤엄의 조건 reach > 1.2) — 또는 수영 능력의 문턱(구명조끼를 잃음)
+  return `대상이 떠내려가 ${josa(METHOD[m].short, '이/가')} 닿지 않음`;
+}
+/**
+ * 뭍에 내려놓고 방법별 완료 문구·방법 기록을 남긴다 (상태를 바꾸는 그 자리에서 — 규칙 5). 물가 방법의 성공, 헤엄·보트로 끌고 나온 끝,
+ * 끌고 오던 사람을 뭍에서 내려놓게 된 임무 종료(executor.finishTask → dropWet)가 같은 줄을 쓴다
+ */
+function landed(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Casualty, how: MethodId, x: number, y: number): void {
+  const r = sim.responders[a.rid];
+  landCasualty(sim, s, I, a, c, how, x, y);
+  const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: `구조 대상 ${c.label}, ${METHOD[how].noun} 끌어냈습니다. 처치와 이송이 필요합니다.` });
+  recordMethod(sim, I, a, t, how, t.mwhy ?? 'usual', true, ev);
+  r.xpGained += 0.005;
 }
 /** 같은 대상에게 헤엄쳐 들어간 동료가 있다 (던지는 방법이 그 동료에게 걸린다) */
 function mateSwimming(s: Scene, a: FieldAgent, cas: number): boolean {
@@ -318,24 +336,30 @@ function mateSwimming(s: Scene, a: FieldAgent, cas: number): boolean {
  */
 export function runWaterRescue(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, k: ExecKit): void {
   const c = s.casualties[t.cas], r = sim.responders[a.rid], dt = sim.dt;
-  // 이미 물 밖이거나 숨졌다: 낡은 믿음 대비 — 강제로 보고하고 끝낸다 (지휘관이 같은 지시를 되풀이하지 않게)
+  // 이미 물 밖이거나 숨졌다: 낡은 믿음 대비 — 강제로 보고하고 끝낸다 (지휘관이 같은 지시를 되풀이하지 않게). 물 위에 있으면 다음 판단에서 뭍으로(brain 의 물 위 가드)
   if (c.dead || !c.inWater) { learn(sim, a, casFact(sim, s, c, r.name), true, true); k.finish(sim, s, a, true); return; }
-  // 다른 대원이 끌고 오는 중이다 (헤엄·보트 — 단계 1b·1c): 그 일이 끝나기를 기다린다
-  if (c.where === 'carried' && a.carrying !== c.id) { a.label = '구조 지원 대기'; t.progress = 0; return; }
+  // 다른 대원이 끌고 오는 중이다 (헤엄·보트): 헤엄치는 동료면 줄을 가진 대원은 줄 확보로 바꾸고, 아니면 곁의 물가에서 기다린다
+  if (c.where === 'carried' && a.carrying !== c.id) { if (t.method === 'tend') runTend(sim, s, I, a, t, c, k); else waitCarried(sim, s, I, a, t, c, k); return; }
   const tg = targetOf(t);
   if (t.method === undefined && !startMethod(sim, s, I, a, t, 'waterRescue', tg)) { k.finish(sim, s, a, false, 'nomethod'); return; }
   const m = t.method;
-  if (m === undefined || (SHORE_REACH[m] === undefined && m !== 'catch')) { k.finish(sim, s, a, false, 'nomethod'); return; }      // 이 단계에 실행부가 없는 방법 (고르지 않으므로 오지 않는다)
-  // 1초마다 고른 방법을 지금도 쓸 수 있는지 다시 본다 — 3초 넘게 맞지 않으면 조건 상실로 바꾼다. 하류 차단은 기다릴 자리에 나선 뒤에는 따로 본다(runCatch)
-  if (sim.tick % 5 === 0 && t.mt0 !== sim.t && !(m === 'catch' && t.phase >= 1)) {
+  if (m === undefined || (SHORE_REACH[m] === undefined && !OWN_RUN.has(m))) { k.finish(sim, s, a, false, 'nomethod'); return; }      // 이 단계에 실행부가 없는 방법 (고르지 않으므로 오지 않는다)
+  // 물 위의 대원은 물가 방법을 하지 않는다 (헤엄을 접고 다른 방법이 됐다): 그 일을 내려놓는다 — 다음 판단에서 뭍으로 간다(brain 의 물 위 가드)
+  if ((a.afloat !== undefined || onWater(s, a)) && !inWaterPhase(m, t)) { k.finish(sim, s, a, false, 'preempt'); return; }
+  // 1초마다 고른 방법을 지금도 쓸 수 있는지 다시 본다 — 3초 넘게 맞지 않으면 조건 상실로 바꾼다.
+  // 하류 차단은 기다릴 자리에 나선 뒤에는 따로 본다(runCatch). 헤엄은 물에 들어간 뒤, 줄 확보는 자리를 잡은 뒤 다시 보지 않는다 — 몸이 이미 그 일에 들어가 있다
+  if (sim.tick % 5 === 0 && t.mt0 !== sim.t && !(m === 'catch' && t.phase >= 1) && !(m === 'swim' && t.phase >= 2) && !(m === 'tend' && t.phase >= 1)) {
     t.mbad = methodStillFits(sim, s, a, 'waterRescue', tg, t, m) ? 0 : (t.mbad ?? 0) + 1;
     if (t.mbad >= 3) {
-      const team = THROWS.has(m) && mateSwimming(s, a, c.id);
-      switchMethod(sim, s, I, a, t, team ? 'team' : 'tooFar', lostText(m, team), true, { k });
+      const team = ((THROWS.has(m) || m === 'swim') && mateSwimming(s, a, c.id)) || m === 'tend';
+      // 동료가 헤엄쳐 들어가 이 대원에게 남은 방법이 없으면 그 동료에게 맡기고 손을 뗀다 (실패가 아니다 — 실패 횟수를 올리지 않는다)
+      if (!switchMethod(sim, s, I, a, t, team ? 'team' : 'tooFar', lostText(m, team), true, team ? {} : { k }) && team && a.task === t) k.finish(sim, s, a, false, 'preempt');
       return;
     }
   }
   if (m === 'catch') { runCatch(sim, s, I, a, t, c, k); return; }
+  if (m === 'swim') { runSwim(sim, s, I, a, t, c, k); return; }
+  if (m === 'tend') { runTend(sim, s, I, a, t, c, k); return; }
   // ── 물가 방법 ──
   const mv = k.moveTo(sim, s, a, c.x, c.y, SHORE_REACH[m]!, true);      // 물가에서 대상이 보이는 가장 가까운 자리 (떠내려가면 따라 옮긴다)
   if (mv === 'nopath') {
@@ -377,10 +401,7 @@ function attempt(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Cas
   }
   const roll = mrng(sim, s, a).next();
   if (roll < hit * grab) {
-    landCasualty(sim, s, I, a, c, m, a.x, a.y);
-    const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: `구조 대상 ${c.label}, ${METHOD[m].noun} 끌어냈습니다. 처치와 이송이 필요합니다.` });
-    recordMethod(sim, I, a, t, m, t.mwhy ?? 'usual', true, ev);
-    r.xpGained += 0.005;
+    landed(sim, s, I, a, t, c, m, a.x, a.y);
     k.finish(sim, s, a, true);
     return;
   }
@@ -432,4 +453,289 @@ function runCatch(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Ca
   k.drain(sim, a, 0.5);
   if (t.progress < t.need) return;
   attempt(sim, s, I, a, t, c, 'catch', k);
+}
+
+// ───────────────────────── 수난 구조 (§4.1·§3.5) — 단계 1b: 헤엄 · 줄 확보 · 물 위의 바탕 ─────────────────────────
+/** 물가 방법 밖에서 자기 실행부를 가진 수난 방법 (하류 차단 1a · 헤엄·줄 확보 1b) */
+const OWN_RUN: ReadonlySet<MethodId> = new Set<MethodId>(['catch', 'swim', 'tend']);
+/** 몸이 물 위에 있어도 되는 방법의 단계: 헤엄은 물에 들어간 뒤(phase ≥ 2) */
+function inWaterPhase(m: MethodId, t: Task): boolean { return m === 'swim' && t.phase >= 2; }
+/**
+ * 헤엄의 수치 (§4.1 swim·§3.5): 물가 진입점에서 멈추는 거리(칸) · 준비(초 — 소방은 방화복·공기호흡기 벗기 6, 그 밖 2, 구명조끼를 입으면 +3) ·
+ * 붙잡는 거리(칸)·벌어지면 다시 헤엄쳐 가는 거리(칸)·붙잡는 시간(초) · 끌고 오는 대상이 놓이는 자리(대원 뒤 칸) · 물 위에 이 시간(초) 넘게 있으면 안전장치가 물가로 옮긴다
+ */
+export const SWIM = { entry: 0.5, prepFire: 6, prep: 2, prepPfd: 3, reach: 0.9, grabFar: 1.4, grab: 1.5, tow: 0.45, stuck: 150 };
+/** 줄 확보: 헤엄 동료가 들어간 물가에서 이만큼 안에 선다 (칸) */
+export const TEND_RANGE = 1.0;
+/** 물 위의 피해(R2 — 익수·사고·붙잡힘)는 체력을 이 아래로 내리지 않는다 (§3.5 — H1 이 있든 없든). 쓰러짐 문턱(15)보다 위 */
+export const WATER_FLOOR = 18;
+/** 헤엄 중 익수 피해(초당 — 구명조끼 ×0.5 · 드라이슈트 ×0.7), 사고 한 번의 피해 범위(줄 확보면 ×0.5)·지구력 손실, 지구력 소모(초당 — 끌고 오면 더) */
+export const SWIM_HURT = { tick: 1.2, mishap: [8, 18] as const, stamina: 25, drain: 1.6, drainTow: 2.4 };
+
+/** R2 의 물 위 피해: 체력 하한 18 을 지켜 H1 의 hurtResponder 로 (원인 익수 — 방호 0. 구명조끼·드라이슈트는 부르는 쪽의 식이 이미 줄였다) */
+function wetHurt(sim: Sim, s: Scene, I: Incident, a: FieldAgent, raw: number, tick: boolean, ev = -1): void {
+  const r = sim.responders[a.rid];
+  const v = Math.min(raw, r.health - WATER_FLOOR);
+  if (v > 0) hurtResponder(sim, s, I, a, v, 'drown', tick ? { tick: true } : { ev });
+}
+/** 같은 대상에게 줄을 잡아 주는(자리를 잡은) 동료 */
+function tenderFor(s: Scene, a: FieldAgent, cas: number): FieldAgent | null {
+  for (let k = 0; k < s.agents.length; k++) { const b = s.agents[k], q = b.task; if (b !== a && b.status === 'active' && q !== null && q.kind === 'waterRescue' && q.cas === cas && q.method === 'tend' && q.phase >= 1) return b; }
+  return null;
+}
+/** 같은 대상에게 헤엄쳐 들어가는 동료 (헤엄을 고른 뒤 — 아직 물가로 걷는 중이어도) */
+function swimmerFor(s: Scene, a: FieldAgent, cas: number): FieldAgent | null {
+  for (let k = 0; k < s.agents.length; k++) { const b = s.agents[k], q = b.task; if (b !== a && b.status === 'active' && q !== null && q.kind === 'waterRescue' && q.cas === cas && q.method === 'swim') return b; }
+  return null;
+}
+
+/**
+ * 헤엄 중 사고율 (초당, §3.5): 0.010 × (1.5 − 수영 능력) × (1 + 1.5 × 물살) × (밤 1.3) × (구명조끼 0.45) × (드라이슈트 0.7) × (줄 확보 0.5)
+ * × (지구력 30 아래면 2) × (끌고 오는 중 1.5). flowK = 물살 / 0.1 (최대 1). 순수 함수 — 시험이 부른다
+ */
+export function swimTrouble(swim: number, flowK: number, pfd: boolean, drysuit: boolean, tended: boolean, tired: boolean, towing: boolean, night: boolean): number {
+  return 0.010 * (1.5 - swim) * (1 + 1.5 * flowK) * (night ? 1.3 : 1) * (pfd ? 0.45 : 1) * (drysuit ? 0.7 : 1) * (tended ? 0.5 : 1) * (tired ? 2 : 1) * (towing ? 1.5 : 1);
+}
+/** 허우적대는 대상에게 붙잡힐 확률 (붙잡는 순간 한 번 — 대상의 체력이 40 넘게 남아 허우적댈 힘이 있을 때만) */
+export function clutchP(swim: number, pfd: boolean, health: number): number { return health > 40 ? 0.15 * (1.2 - swim) * (pfd ? 0.5 : 1) : 0; }
+
+type Mishap = 'flow' | 'tired' | 'crisis' | 'swept' | 'clutch';
+/** 헤엄 구조 중 사고의 문제 상세 (METHOD_FAIL) */
+const MISHAP_DETAIL: Record<Mishap, string> = {
+  flow: '헤엄 구조 중 물살에 밀림', tired: '헤엄 구조 중 힘이 빠짐', crisis: '헤엄 구조 중 물을 많이 먹음', swept: '헤엄 구조 중 하류로 떠밀림', clutch: '헤엄 구조 중 허우적대는 대상에게 붙잡힘',
+};
+/** 사고의 무전 (헤엄 구조 중 — towing = 끌고 오던 사람을 놓쳤다) */
+function mishapSay(kind: Mishap, towing: boolean): string {
+  switch (kind) {
+    case 'flow': return towing ? '물살에 밀려 대상을 놓쳤습니다. 뭍으로 돌아갑니다.' : '물살에 휩쓸렸습니다. 뭍으로 돌아갑니다.';
+    case 'tired': return towing ? '힘이 빠졌습니다. 대상을 놓치고 뭍으로 돌아갑니다.' : '힘이 빠졌습니다. 뭍으로 돌아갑니다.';
+    case 'crisis': return towing ? '물을 많이 먹었습니다. 대상을 놓치고 뭍으로 돌아갑니다.' : '물을 많이 먹었습니다. 뭍으로 돌아갑니다.';
+    case 'swept': return '하류로 떠밀렸습니다! 뭍으로 붙겠습니다.';
+    case 'clutch': return '허우적대는 대상에게 붙잡혀 함께 가라앉을 뻔했습니다. 뭍으로 돌아갑니다.';
+  }
+}
+/** 끌고 오던 사람을 그 자리 물에 놓는다 (inWater 그대로 — 다시 떠내려간다). 대원이 선 물 칸에 둔다 */
+function dropInWater(sim: Sim, s: Scene, a: FieldAgent): void {
+  if (a.carrying < 0) return;
+  const c = s.casualties[a.carrying];
+  a.carrying = -1;
+  if (c.where !== 'carried') return;
+  c.where = 'scene'; c.x = Math.round(a.x); c.y = Math.round(a.y);
+  learnQuiet(sim, a, casFact(sim, s, c, sim.responders[a.rid].name));
+}
+/**
+ * 헤엄 중 사고 (§3.5·§4.1): 한 번 피해(체력 하한 18), 지구력 −25, 끌던 사람을 놓친다, 기록 한 줄.
+ * 헤엄 구조 중이면 방법을 접고(실패 — METHOD_FAIL) 임무를 내려놓은 뒤 뭍으로 간다. 그 대상의 헤엄·보트는 60초 동안 다시 고르지 않는다(a.mfail).
+ * 그 밖의 임무(뭍으로·철수 — 물을 건너는 중)면 피해·기록만.
+ */
+function swimMishap(sim: Sim, s: Scene, I: Incident, a: FieldAgent, k: ExecKit, kind: Mishap): void {
+  const r = sim.responders[a.rid], t = a.task;
+  const rescue = t !== null && t.kind === 'waterRescue' && t.method === 'swim';
+  const towing = a.carrying >= 0;
+  const tended = rescue && tenderFor(s, a, t!.cas) !== null;
+  const raw = mrng(sim, s, a).range(SWIM_HURT.mishap[0], SWIM_HURT.mishap[1]) * (tended ? 0.5 : 1);
+  dropInWater(sim, s, a);
+  let ev: number;
+  if (rescue) {
+    const key = targetKey('waterRescue', targetOf(t!));
+    switchMethod(sim, s, I, a, t!, 'failed', MISHAP_DETAIL[kind], false, { say: mishapSay(kind, towing) });
+    rememberFail(sim, a, key, 'boat', 'failed');      // 헤엄은 switchMethod 가 기억한다 — 보트로도 곧바로 다시 나서지 않는다
+    const ms = I.methods!;
+    ev = ms[ms.length - 1].eventId;
+    k.finish(sim, s, a, false, 'preempt');
+    const nt = k.makeTask('ashore', '뭍으로');
+    nt.startedAt = sim.t;
+    a.task = nt;
+  } else ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, text: kind === 'tired' ? '힘이 빠졌습니다.' : '물살에 휩쓸려 물을 먹었습니다.' });
+  wetHurt(sim, s, I, a, raw, false, ev);
+  r.stamina = Math.max(0, r.stamina - SWIM_HURT.stamina);
+}
+
+/**
+ * 물 위 대원의 매 틱 효과 — 한 곳 (§3.5). executor.act 가 left·down 검사 바로 다음(임무가 없어도) 부른다: 헤엄·보트 방법만이 아니라
+ * 뭍으로·철수 중인 대원, 보트가 뒤집혀 헤엄 중이 된 대원 모두에게 같은 규칙이 걸린다. 뭍 칸에 서면 들어간 시각을 지운다.
+ *   헤엄 중: 물살에 떠밀림(물살 × 0.7 — 끌고 오는 사람도 함께) · 지구력 소모 · 익수 피해(초당 1.2, 하한 18) · 사고 판정(mrng)과 강제 사고 셋
+ *            (지침은 물에 한 번 들어갈 때 한 번, 위기·떠밀림은 헤엄 구조 중에만 — 뭍으로 가는 중에 되풀이되지 않게)
+ *   물 위에 150초 넘게 있으면 안전장치(pullAshore)
+ * 판정 뒤(사건이 닫힌 뒤)에는 피해·사고가 없다 (§2.6 — 떠밀림·지구력만).
+ */
+export function waterTick(sim: Sim, s: Scene, I: Incident, a: FieldAgent, k: ExecKit): void {
+  if (s.tiles[tileOf(s, a.x, a.y)] !== T.WATER) { a.wetSince = undefined; a.wetTired = undefined; return; }
+  a.wetSince ??= sim.t;
+  if (a.afloat === undefined) {
+    const r = sim.responders[a.rid], dt = sim.dt;
+    const flow = s.flow ?? 0, flowK = Math.min(1, flow / 0.1);
+    // 떠밀림: 다음 칸이 물이 아니면(선체·바위·다리 기둥) 멈춘다. 현장 끝 1.5칸 앞에서 자른다
+    if (flow > 0) {
+      const nx = Math.min(a.x + flow * 0.7 * dt, s.w - 1.5);
+      if (nx > a.x && s.tiles[tileOf(s, nx + 0.4, a.y)] === T.WATER) {
+        const dx = nx - a.x;
+        a.x = nx;
+        if (a.carrying >= 0) s.casualties[a.carrying].x += dx;
+      }
+    }
+    const towing = a.carrying >= 0;
+    k.drain(sim, a, towing ? SWIM_HURT.drainTow : SWIM_HURT.drain);
+    if (I.phase !== 'closed') {
+      const pfd = kitCount(sim, a.rid, 'pfd') > 0, dry = kitCount(sim, a.rid, 'drysuit') > 0;
+      wetHurt(sim, s, I, a, SWIM_HURT.tick * dt * (pfd ? 0.5 : 1) * (dry ? 0.7 : 1), true);
+      const t = a.task, rescue = t !== null && t.kind === 'waterRescue' && t.method === 'swim';
+      const tended = rescue && tenderFor(s, a, t!.cas) !== null;
+      let kind: Mishap | null = null;
+      if (mrng(sim, s, a).chance(swimTrouble(swimOf(sim, a), flowK, pfd, dry, tended, r.stamina < 30, towing, sim.weather === 'night') * dt)) kind = 'flow';
+      else if (r.stamina <= 8 && !a.wetTired) { kind = 'tired'; a.wetTired = true; }
+      else if (rescue && r.health < 30) kind = 'crisis';
+      else if (rescue && a.x >= s.w - 2) kind = 'swept';
+      if (kind !== null) swimMishap(sim, s, I, a, k, kind);
+    }
+  }
+  if (a.wetSince !== undefined && sim.t - a.wetSince > SWIM.stuck) pullAshore(sim, s, I, a, '오래 갇힘');
+}
+
+/**
+ * 안전장치 (§3.5): 대원을 가장 가까운 뭍 칸으로 옮긴다 (못 찾으면 안전 구역, 그다음 대기 지점). 보트에서 내리고, 끌던 사람은 그 자리 물에 놓는다.
+ * 다른 피해원(연기·불·폭발)이나 경로 문제로 물 위에 남는 경우를 위한 마지막 장치다 — 물리적으로 너그러운 처리라 기록(truth)으로 드러낸다.
+ * 부르는 곳: case 'ashore' 의 경로 없음·30초 초과, waterTick 의 150초, rules/methods.ts 의 "물 칸 위에 쓰러진(숨진) 대원". why 는 기록하지 않는 사유(시험·읽는 사람용)
+ */
+export function pullAshore(sim: Sim, s: Scene, I: Incident, a: FieldAgent, why: string): void {
+  void why;
+  const b = reachOf(s, a.x, a.y, 4, null) ?? s.safe ?? s.staging;
+  dropInWater(sim, s, a);
+  a.x = a.px = b.x; a.y = a.py = b.y;
+  a.afloat = undefined; a.path = null; a.pathGoal = -1; a.wetSince = undefined; a.wetTired = undefined;
+  const r = sim.responders[a.rid];
+  emit(sim, { inc: I.id, truth: true, role: 'SYSTEM', actor: '현장', kind: 'action', imp: 1, text: `물살에 밀려 ${r.name} 대원이 물가에 걸렸습니다.` });
+}
+
+/**
+ * executor.finishTask 의 내려놓기 — 업고 있던 사람이 물에서 끌고 오던 사람(c.inWater)일 때 (§3.5).
+ * 대원이 선 칸이 물이면 지금처럼 그 자리에 놓는다(다시 떠내려간다). 뭍이면 뭍에 내려놓고 완료 기록·방법 기록을 함께 남긴다(숨진 사람은 내려놓기만).
+ */
+export function dropWet(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Casualty): void {
+  const x = Math.round(a.x), y = Math.round(a.y);
+  if (s.tiles[tileOf(s, x, y)] === T.WATER) { c.where = 'scene'; c.x = x; c.y = y; return; }
+  if (c.dead) { c.where = 'scene'; c.inWater = false; c.drift = 0; c.x = c.px = x; c.y = c.py = y; return; }
+  landed(sim, s, I, a, t, c, t.method ?? 'hand', x, y);
+}
+
+/**
+ * 다른 대원이 끌고 오는 대상 (§4.1): 끌고 오는 대원이 헤엄 중이고 이 대원이 구명줄을 들었으면 예정된 전환으로 줄 확보(실패가 아니다 — 접은 줄을 남기지 않는다).
+ * 아니면 끄는 동료 가까운 물가로 가서 기다린다('구조 지원 대기'). 물 위에서 기다리지는 않는다 — 내려놓고 뭍으로(brain 의 물 위 가드).
+ */
+function waitCarried(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Casualty, k: ExecKit): void {
+  let carrier: FieldAgent | null = null;
+  for (let q = 0; q < s.agents.length; q++) if (s.agents[q].carrying === c.id) { carrier = s.agents[q]; break; }
+  if (carrier === null) { c.where = 'scene'; return; }      // 끄는 사람이 없는 '끌려가는 중' (지금의 이송 보조와 같은 처리)
+  if (a.afloat !== undefined || onWater(s, a)) { k.finish(sim, s, a, false, 'preempt'); return; }
+  const swimming = carrier.task !== null && carrier.task.method === 'swim';
+  if (swimming && kitCount(sim, a.rid, 'rope') > 0) {
+    t.method = 'tend'; t.mwhy = 'team'; t.missing = undefined; t.mcands = undefined; t.mt0 = sim.t; t.mtry = 0; t.mbad = 0;
+    t.phase = 0; t.progress = 0; t.range = 0; a.path = null;
+    announce(sim, I, a, t, 'waterRescue', targetOf(t));
+    return;
+  }
+  a.label = '구조 지원 대기'; t.progress = 0;
+  k.moveTo(sim, s, a, carrier.x, carrier.y, 2.5);      // 길이 없으면 그 자리에서 기다린다
+}
+
+/**
+ * 줄 확보 (§4.1 tend): 헤엄 동료가 들어간 물가 칸(그 동료가 정한 진입점 — 아직 정하지 않았으면 대상에서 가장 가까운 뭍)으로 가서 줄을 잡는다.
+ * 자리를 잡으면(phase 1) 그 동료의 사고율과 사고 피해가 반으로 준다(waterTick·swimMishap 이 이 대원을 찾는다). 끌고 나올 때 그 동료는 이 대원 쪽으로 온다.
+ * 헤엄 동료가 없어지면(사고로 접었거나 뭍으로) 대상이 아직 물속이므로 조건 상실(team)로 바꾼다 — 대상이 물 밖이 되면 첫 줄에서 끝난다.
+ */
+function runTend(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Casualty, k: ExecKit): void {
+  const sw = swimmerFor(s, a, c.id);
+  if (sw === null) { switchMethod(sim, s, I, a, t, 'team', lostText('tend', true), true, { k }); return; }
+  if (t.range === 0) {
+    const q = sw.task!;
+    const e = q.range > 0 ? { x: q.tx, y: q.ty } : reachOf(s, c.x, c.y, 4, a);
+    if (e === null) { switchMethod(sim, s, I, a, t, 'tooFar', '줄을 잡을 물가가 없음', true, { k }); return; }
+    t.tx = e.x; t.ty = e.y; t.range = TEND_RANGE;
+  }
+  const mv = k.moveTo(sim, s, a, t.tx, t.ty, TEND_RANGE);
+  if (mv === 'nopath') {
+    if (!(t.tried && t.tried.length) && switchMethod(sim, s, I, a, t, 'tooFar', '줄을 잡을 물가로 갈 길이 없음')) return;
+    k.finish(sim, s, a, false, 'nopath'); return;
+  }
+  a.label = METHOD.tend.label;
+  if (mv !== 'arrived') return;
+  if (t.phase === 0) t.phase = 1;
+  a.fx = sw.x - a.x; a.fy = sw.y - a.y;      // 헤엄치는 동료를 바라본다
+}
+
+/**
+ * 헤엄쳐 접근 (§4.1 swim). 물 칸 위의 매 틱 효과(떠밀림·지구력·익수 피해·사고)는 이 함수가 아니라 waterTick 이 준다.
+ *   phase 0  물가 진입점 E(대상에서 가장 가까운, 대원이 걸어서 닿는 뭍 칸 — 실행부라 진실 위치로. 처음 한 번)로 걸어간다
+ *   phase 1  준비 (제자리 — 소방은 방화복·공기호흡기를 벗고, 구명조끼를 입는다)
+ *   phase 2  헤엄쳐 접근 (executor.costFor 가 물 칸을 지나게 한다)
+ *   phase 3  붙잡기 1.5초 → 붙잡힘 판정(mrng) → 붙잡으면 끌려가는 중(c.where = 'carried' — inWater 는 그대로)
+ *   phase 4  끌고 나오기: 뭍 칸 B(줄을 잡은 동료가 선 칸, 없으면 가장 가까운 뭍)로. 뭍 칸에 서면 내려놓고 끝
+ * 한 틱에 moveTo 는 한 번.
+ */
+function runSwim(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Casualty, k: ExecKit): void {
+  const r = sim.responders[a.rid], dt = sim.dt;
+  if (t.phase === 0) {
+    if (t.range === 0) {
+      const e = reachOf(s, c.x, c.y, 4, a);
+      if (e === null) { switchMethod(sim, s, I, a, t, 'tooFar', '헤엄쳐 들어갈 물가가 없음', true, { k }); return; }
+      t.tx = e.x; t.ty = e.y; t.range = SWIM.entry;
+    }
+    const mv = k.moveTo(sim, s, a, t.tx, t.ty, SWIM.entry);
+    if (mv === 'nopath') {
+      if (!(t.tried && t.tried.length) && switchMethod(sim, s, I, a, t, 'tooFar', '물가로 갈 길이 없음')) return;
+      k.finish(sim, s, a, false, 'nopath'); return;
+    }
+    a.label = '물가로 이동';
+    if (mv !== 'arrived') return;
+    t.phase = 1; t.progress = 0;
+    return;
+  }
+  if (t.phase === 1) {
+    const pfd = kitCount(sim, a.rid, 'pfd') > 0, fire = r.dept === 'fire';
+    t.need = (fire ? SWIM.prepFire : SWIM.prep) + (pfd ? SWIM.prepPfd : 0);
+    a.label = fire ? '방화복 벗는 중' : pfd ? '구명조끼 착용' : '입수 준비';
+    a.fx = c.x - a.x; a.fy = c.y - a.y;
+    t.progress += dt; a.ring = t.progress / t.need;
+    if (t.progress >= t.need) { t.phase = 2; t.progress = 0; a.path = null; }
+    return;
+  }
+  if (t.phase === 2) {
+    a.label = '헤엄쳐 접근';
+    const mv = k.moveTo(sim, s, a, c.x, c.y, SWIM.reach);
+    if (mv === 'nopath') { switchMethod(sim, s, I, a, t, 'tooFar', '헤엄쳐 닿을 길이 없음', false); k.finish(sim, s, a, false, 'nopath'); return; }
+    if (mv !== 'arrived' && dist(a.x, a.y, c.x, c.y) > SWIM.reach) return;
+    t.phase = 3; t.progress = 0;
+    return;
+  }
+  if (t.phase === 3) {
+    if (dist(a.x, a.y, c.x, c.y) > SWIM.grabFar) { t.phase = 2; t.progress = 0; return; }      // 그 사이 물살에 벌어졌다 — 다시 헤엄쳐 간다
+    a.label = '붙잡는 중';
+    a.fx = c.x - a.x; a.fy = c.y - a.y;
+    t.progress += dt; a.ring = t.progress / SWIM.grab;
+    if (t.progress < SWIM.grab) return;
+    // 붙잡힘 (H1 이 R2 몫으로 남긴 "구조 대상이 구조자를 붙잡음"): 허우적댈 힘이 남은 대상은 구조자를 끌어내릴 수 있다 — 던지기를 먼저 하는 까닭
+    if (mrng(sim, s, a).chance(clutchP(swimOf(sim, a), kitCount(sim, a.rid, 'pfd') > 0, c.health))) { swimMishap(sim, s, I, a, k, 'clutch'); return; }
+    c.where = 'carried'; a.carrying = c.id; a.path = null; a.pathGoal = -1;
+    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `구조 대상 ${josa(c.label, '을/를')} 붙잡았습니다. 물가로 끌고 갑니다.` });
+    learnQuiet(sim, a, casFact(sim, s, c, r.name));
+    // 끌고 나올 뭍 칸 B (한 번): 줄을 잡은 동료가 선 물가 칸, 없으면 가장 가까운 뭍
+    const tn = tenderFor(s, a, c.id);
+    const b = tn !== null ? { x: Math.round(tn.x), y: Math.round(tn.y) } : reachOf(s, a.x, a.y, 4, a) ?? s.safe;
+    t.tx = b.x; t.ty = b.y; t.phase = 4; t.progress = 0;
+    return;
+  }
+  // phase 4: 끌고 나온다 (대상은 대원 바로 뒤 — 이송과 같은 식)
+  a.label = '끌고 나오는 중';
+  const mv = k.moveTo(sim, s, a, t.tx, t.ty, 0.3);
+  c.x = a.x - a.fx * SWIM.tow; c.y = a.y - a.fy * SWIM.tow;
+  if (!onWater(s, a)) {      // 뭍 칸에 섰다
+    landed(sim, s, I, a, t, c, 'swim', a.x, a.y);
+    k.finish(sim, s, a, true);
+    return;
+  }
+  if (mv === 'nopath') {
+    dropInWater(sim, s, a);
+    switchMethod(sim, s, I, a, t, 'tooFar', '끌고 나올 물가가 없음', false);
+    k.finish(sim, s, a, false, 'nopath');
+  }
 }

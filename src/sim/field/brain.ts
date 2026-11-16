@@ -150,6 +150,14 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
     return;
   }
 
+  // (R2 1b §3.5) 물 위의 대원(헤엄 중·보트 위)은 다른 일로 끌려 나가지 않는다: 하던 수난 구조를 잇거나 뭍으로 간다.
+  // 후퇴·휴식·공기통·다른 지시·X6 의 철수 명령보다 앞 — 물 한가운데서 엉뚱한 목표로 가거나 끌고 오던 대상을 놓치지 않게. 철수 지시는 위에서 먼저 처리된다
+  if (onWater(s, a) || a.afloat !== undefined) {
+    if (!cur || (cur.kind !== 'waterRescue' && cur.kind !== 'ashore')) setTask(sim, s, a, 'ashore', '뭍으로');
+    a.candidates = [{ label: a.task && a.task.kind === 'waterRescue' ? '계속: 수난 구조 (물 위)' : '물 위 — 뭍으로', score: 1.5, chosen: true }];
+    return;
+  }
+
   // 부상: 한번 후퇴를 시작하면 대기 지점에 닿을 때까지 다른 일(지시·자체 판단)에 끌려 나가지 않는다.
   // 끌려 나가면 다시 위험 점수가 이겨 후퇴 → 다른 일 → 후퇴를 되풀이하며 같은 무전을 반복한다
   const hurt = mustRetreat(r);
@@ -320,6 +328,7 @@ import { DOC_DUTY_TASKS, docAct, docDrop, docDuty, docRetreat } from './doctrine
 import { docBegin, recordDoc } from './doctrineRun';
 import { XK } from './executor';
 import { senseOf } from './methodRun';
+import { onWater } from './methods';      // (R2 1b) 물 위의 대원 가드
 // (X6 단계 5) 조짐을 보면 물러난다 — 믿음 속 조짐·지휘 상태(ops 사실)와 생김새(이웃 구획·건물 칸)만 읽는다
 import { ALLOWED2, OPS_ID, SIGN_BASE, footprint, regionAt, regionNbrs, zoneLevelAt } from './ops';
 import type { OpsFact } from './ops';

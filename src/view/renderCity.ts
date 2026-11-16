@@ -20,6 +20,7 @@ import { facilityMarkKey } from './marks';
 import { combatPinJitter, drawCombatPin } from './city/combatPin';
 import type { FxBook } from './scene/fxBook';
 import { drawRuinBadge, drawRuinsWorld, ruinGlyphAt } from './city/ruinLayer';
+import { paintKinds2Static } from './city/kinds2Layer';
 import { pinIcon, ruinLine } from './hazardState';
 import { TYPE_COLOR, respLimitOf } from './typeStyle';
 
@@ -115,7 +116,7 @@ function label(ctx: CanvasRenderingContext2D, text: string, x: number, y: number
 }
 
 export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, w: number, h: number, o: CityOpts): void {
-  if (!staticLayer || staticFor !== sim) { staticLayer = buildCityStatic(sim); staticFor = sim; }
+  if (!staticLayer || staticFor !== sim) { staticLayer = buildCityStatic(sim); paintKinds2Static(staticLayer.c, sim); staticFor = sim; }      // (N9) 덧붙인 장소의 그림은 고정 층 위에 한 번
   const night = sim.weather === 'night';
   const xf = cityXf(sim, cam, w, h);
   const city = sim.city;

@@ -289,7 +289,7 @@ export function buildReport(sim: Sim): ShiftReport {
   const utilization = counted.reduce((x, y) => x + y.util, 0) / counted.length;
   // 대원 피해 (H1 §7.3): 상태 글은 순직 · 쓰러짐 · 부상 (예전에는 쓰러짐을 '중상'으로 적어 중증도 이름과 겹쳤다).
   // 교대 끝의 중증도·주된 원인·순직·병원 이송(후송 중 포함)·다음 교대 결장 예상(outShifts)을 함께 적는다
-  const hurt = sim.responders.filter((r) => r.status !== 'ok').map((r) => ({
+  const hurt = sim.responders.filter((r) => r.status !== 'ok' && r.status !== 'off').map((r) => ({      // (I2) 결장(off)은 이번 교대에 다친 사람이 아니다
     name: r.name, callsign: sim.units[r.unitId].callsign, status: r.dead ? '순직' : r.status === 'down' ? '쓰러짐' : '부상', role: roleOf(sim, r.id).name,
     rid: r.id, band: r.dead ? 3 : Math.min(2, bandOf(r.health)), cause: r.dead ? r.deathCause ?? mainCause(r.injuries) : mainCause(r.injuries), dead: r.dead === true, hospital: r.care !== undefined, out: outShifts(r),
   }));

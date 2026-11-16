@@ -68,14 +68,6 @@ export const VERDICT_RULES: VerdictRule[] = [];
 /** debrief.evaluate 가 위험 판정(hazardActive) 바로 뒤에 돈다 */
 export function registerVerdict(fn: VerdictRule): void { VERDICT_RULES.push(fn); }
 
-// ───────────────────────── (X6 §5.3) 일이 다시 생기지 않게 막는 문 ─────────────────────────
-// 진입 금지 구역의 작업을 지휘 규칙이 거두기만 하면 다음 계획 주기에 syncBoard 가 같은 작업을 다시 만든다(작업판이 불어난다).
-// 그래서 commander.want 가 **새 작업을 만들기 직전**에 이 문을 묻는다: 참을 돌려주는 줄이 하나라도 있으면 작업판에 넣지 않고 빈 작업(GHOST, id −1)을 돌려준다.
-// a = 지휘관 (믿음만 읽는다 — 지휘 규칙과 같은 자격). 문이 막은 수는 Scene.ops.gated 에 남는다 (종료를 막는 것은 단계 6 — §6.2)
-export type WorkGate = (sim: Sim, s: Scene, a: FieldAgent, kind: WorkKind, tg: WorkTarget) => boolean;
-export const WORK_GATES: WorkGate[] = [];
-export function registerGate(fn: WorkGate): void { WORK_GATES.push(fn); }
-
 // ───────────────────────── (N9 단계 1) 등록 자리 하나 — docs/specs/N9-major-kinds.md §5.6 ─────────────────────────
 // 줄은 그것을 쓰는 단계(4 — 시위의 주최자·던지지 않은 선동자)가 field/orders/kinds2.ts(믿음만)에 등록한다.
 // 등록된 줄이 없으면 부르는 자리(commander.syncBoard 의 용의자 고리 둘)가 아무것도 바꾸지 않는다 (단계 1 은 결과 불변 — 해시 목록).
@@ -88,3 +80,11 @@ export function registerGate(fn: WorkGate): void { WORK_GATES.push(fn); }
 export type HosHold = (sim: Sim, s: Scene, a: FieldAgent, id: number, h: HosBelief) => boolean;
 export const HOS_HOLDS: HosHold[] = [];
 export function registerHosHold(fn: HosHold): void { HOS_HOLDS.push(fn); }
+
+// ───────────────────────── (X6 §5.3) 일이 다시 생기지 않게 막는 문 ─────────────────────────
+// 진입 금지 구역의 작업을 지휘 규칙이 거두기만 하면 다음 계획 주기에 syncBoard 가 같은 작업을 다시 만든다(작업판이 불어난다).
+// 그래서 commander.want 가 **새 작업을 만들기 직전**에 이 문을 묻는다: 참을 돌려주는 줄이 하나라도 있으면 작업판에 넣지 않고 빈 작업(GHOST, id −1)을 돌려준다.
+// a = 지휘관 (믿음만 읽는다 — 지휘 규칙과 같은 자격). 문이 막은 수는 Scene.ops.gated 에 남는다 (종료를 막는 것은 단계 6 — §6.2)
+export type WorkGate = (sim: Sim, s: Scene, a: FieldAgent, kind: WorkKind, tg: WorkTarget) => boolean;
+export const WORK_GATES: WorkGate[] = [];
+export function registerGate(fn: WorkGate): void { WORK_GATES.push(fn); }

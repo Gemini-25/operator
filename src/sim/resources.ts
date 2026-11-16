@@ -383,7 +383,11 @@ export function dispatchUnit(sim: Sim, u: Unit, I: Incident, eta: number): void 
   u.incidentId = I.id; u.dispatchedAt = sim.t; u.estArrive = sim.t + eta; u.runs++;
   u.boardOrder = null;
   if (wasMoving) { u.state = 'enroute'; sendUnitTo(sim, u, I.reportedNode); }
-  else { u.state = 'turnout'; u.timer = 5 + (1 - sim.responders[u.crew[0]].experience) * 3; u.destNode = I.reportedNode; }
+  else {
+    // 출동 준비 시간은 부대장(내리는 자리의 첫 사람)의 경험으로 — (I2) 결장(off)한 사람이면 나온 첫 사람. 결장이 없으면 fieldCrew 의 첫 사람 = u.crew[0] (0번 자리는 내리는 자리)
+    const lead = fieldCrew(sim, u).find((rid) => sim.responders[rid].status !== 'off') ?? u.crew[0];
+    u.state = 'turnout'; u.timer = 5 + (1 - sim.responders[lead].experience) * 3; u.destNode = I.reportedNode;
+  }
   if (I.assigned.indexOf(u.id) < 0) I.assigned.push(u.id);
   if (I.everAssigned.indexOf(u.id) < 0) I.everAssigned.push(u.id);
   if (u.air) { sim.airStats.sorties++; sim.airStats.byKind[u.kind] = (sim.airStats.byKind[u.kind] ?? 0) + 1; }      // 헬기 출동 횟수 (보고서)
@@ -511,9 +515,10 @@ function arrive(sim: Sim, u: Unit): void {
     else if (u.state === 'oos') {
       // 걸을 수 있는 대원이 한 명도 없다 (crewReady 0). 까닭은 그 자리의 상태로 가린다: 모두 숨졌다 / 숨지지 않은 대원이 모두 병원으로 갔다 / (드물게) 쓰러진 채 남았다.
       // 다쳐도 걸을 수 있으면 나가므로 '전원 부상'은 더는 까닭이 아니다. 원인은 그 부대의 마지막 부상·순직 기록(u.oosEv)
+      // (I2) 결장(off)한 사람은 '숨진 대원'도 '남은 대원'도 아니다 — 이번 교대에 나온 사람만 본다 (문구는 그대로)
       const fc = fieldCrew(sim, u);
       let alive = 0, cared = 0;
-      for (let k = 0; k < fc.length; k++) { const r = sim.responders[fc[k]]; if (!r.dead) { alive++; if (r.care !== undefined) cared++; } }
+      for (let k = 0; k < fc.length; k++) { const r = sim.responders[fc[k]]; if (r.status === 'off') continue; if (!r.dead) { alive++; if (r.care !== undefined) cared++; } }
       const why = alive === 0 ? '대원 전원 순직 — 운용 중단.' : cared === alive ? '남은 대원 모두 병원 이송 — 운용 중단.' : '걸을 수 있는 대원이 없어 운용 중단.';
       emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', text: `${u.callsign} ${why}`, imp: 2, causes: [u.oosEv ?? -1] });
     }
@@ -533,7 +538,7 @@ export function tickUnits(sim: Sim): void {
       // 이송 중 처치: 탑승 후 몇 초 뒤 구급대원이 차 안에서 응급 처치를 마친다
       const sc = sim.scenes[u.patientsIncident];
       // 차 안의 처치 수준은 함께 탄 대원(내리는 자리) 가운데 가장 좋은 의료 장비를 든 사람의 것이다
-      let med = 0; if (sc && u.patients.length) { const fc = fieldCrew(sim, u); for (let k = 0; k < fc.length; k++) if (!sim.responders[fc[k]].dead) med = Math.max(med, medLevelOf(sim, fc[k])); }      // 순직한 대원은 처치하지 못한다 (H1)
+      let med = 0; if (sc && u.patients.length) { const fc = fieldCrew(sim, u); for (let k = 0; k < fc.length; k++) { const q = sim.responders[fc[k]]; if (!q.dead && q.status !== 'off') med = Math.max(med, medLevelOf(sim, fc[k])); } }      // 순직한 대원은 처치하지 못한다 (H1). (I2) 결장한 대원은 차에 타지 않았다
       if (sc) for (const cid of u.patients) {
         const c = sc.casualties[cid];
         const q = Math.min(1, med * 0.95);

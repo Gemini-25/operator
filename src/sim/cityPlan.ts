@@ -294,6 +294,8 @@ export const KIND_SCENE: Partial<Record<PlaceKind, KindScene>> = {
   powerPlant: { arch: [0.4, 0, 0.6], tall: 0.3 },
   substation: { arch: [0.5, 0.5, 0], tall: 0 },
   stadium: { arch: [0.3, 0, 0.7], tall: 0 },
+  concertHall: { arch: [0, 0, 1], tall: 0.5 },      // (N9 §4.9) 공연장 — 큰 홀 틀. 군중 사건의 현장은 venueFrame(단계 4)이 따로 짓는다
+  bankHQ: { arch: [0.3, 0.3, 0.4], tall: 0.6, venue: 'bank' },      // (N9 §4.9) 은행 본점 — 은행 사건(단계 7)의 현장은 bankFrame 이 짓는다. 지하철역은 틀이 없다(교통 유형 — subwayFrame)
 };
 
 // ── 이름 ──
@@ -304,3 +306,19 @@ export const RESTAURANTS = ['할매국밥', '동네분식', '청기와갈비', '
 export const SHOPS = ['금은방', '약국', '철물점', '문구점', '꽃집', '안경원', '빵집', '세탁소', '미용실', '서점', '전자상가', '옷가게', '카페', '휴대폰 매장'];
 export const FACTORIES = ['정밀', '금속', '식품', '전자', '제지', '섬유', '기계', '플라스틱'];
 export const PENSIONS = ['솔바람', '별헤는', '물안개', '산들', '달맞이', '숲속'];
+
+/**
+ * (N9 §4.9·§5.8) 결과를 바꾸지 않고 덧붙인 장소. city.ts 의 buildPlaces 가 길가·블록 안쪽을 다 채운 뒤("4)"와 "5)" 사이)
+ * 이 순서대로 놓는다 — 앞 건물의 id·자리·주소·tone 이 그대로라 기록 해시가 바뀌지 않는다. 꼴은 LANDMARKS 와 같다(가운데·크기·각도는 도).
+ * 조건: ① 종류가 아직 어떤 사건 장소 표에도 없다(INCIDENT_PLACES·시나리오 places·traffic.VENUES·재난·은신처·방화·폭발물의 표) —
+ * 그 종류를 표에 넣는 단계(공연장 4 · 지하철역 5 · 은행 본점 6·7)에서 비로소 결과가 바뀐다 ② 기존 건물·도로·철길·골목과 겹치지 않는다
+ * (tests/kinds2.test.ts 시험 2 와 tests/sim.test.ts "건물마다 정해진 도시"가 본다) ③ 도로를 고치지 않는다 ④ 출동 시설 번호(facility)를 붙이지 않는다.
+ */
+export const LATE_LANDMARKS: LandmarkDef[] = [
+  // 지하철역 출입구(지붕 덮인 계단 — 승강장은 현장에만 있다). 세 역은 지도에서 땅 밑 노선 점선으로 잇는다(view/city/kinds2Layer.ts)
+  L('subway', '시청역', 1986, 840, 14, 10, { rot: 162, floors: 1, rank: 2 }),
+  L('subway', '중앙역', 1548, 996, 14, 10, { rot: -156, floors: 1, rank: 2 }),
+  L('subway', '남문역', 1644, 1368, 14, 10, { rot: 61, floors: 1, rank: 2 }),
+  L('concertHall', '가온아트홀', 1846, 366, 64, 46, { rot: 93, floors: 2, rank: 3 }),
+  L('bankHQ', '가람은행 본점', 2094, 918, 30, 26, { rot: 78, floors: 4, rank: 2 }),
+];

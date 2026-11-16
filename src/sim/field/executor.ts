@@ -306,6 +306,10 @@ function workOnBlocker(sim: Sim, s: Scene, a: FieldAgent, tile: number, kind: Ta
   const tg = { cas: -1, prop: pid, hostile: -1, region: -1, tile };
   if (tk.method === undefined && tk.mt0 === undefined) { if (tk.workId < 0) tk.prop = pid; startMethod(sim, s, I, a, tk, work, tg); }
   if (tk.method === 'charge') return runCharge(sim, s, I, a, tk, tile, XK);
+  // (검토) 문·잔해는 그 곁에서만 깎는다: 폭파를 접고(동료가 반경 안·물러설 자리 없음) 다른 방법으로 바꾼 대원은 물러선 자리(3~4칸)에 서 있다.
+  // 본 임무는 case 'force'·'clear' 가 곁(1.5칸)으로 데려오지만 이동 중 하위 작업(t.sub — 방 진입의 잠긴 문)에는 이동이 없으므로 여기서 돌아간다 (이 분기의 이동은 이것 하나).
+  // 닿았다고 하거나 길이 없으면 그 자리에서 잇는다(지금처럼 — 막히지 않게). 하위 작업이 생기는 자리는 늘 문 곁이라 폭파를 접은 뒤에만 걸린다
+  { const dx = tile % s.w, dy = (tile / s.w) | 0; if (Math.hypot(a.x - dx, a.y - dy) > 1.6) { const mv = moveTo(sim, s, a, dx, dy, 1.5); if (mv === 'moving' || mv === 'busy') return false; } }
   if (blockerKitFails(sim, s, I, a, tk)) return false;      // 유압 개방기의 숨은 고장이 드러났다 → 다음 방법 (다음 틱부터)
   if (tk.method !== undefined) a.label = METHOD[tk.method].label;
   // 효과 자리: 고른 방법의 장비 값 (방법이 없으면 R1 의 식 — 실제로 쓰는 도구의 성능, 숨은 고장은 여기서 드러난다 — crews.toolUse)
@@ -827,7 +831,13 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       // (R2 §4.5) 방법을 처음 고른다 — 선택 임무: 고를 것이 없으면 방법 없이 지금 코드(내부 공격)로. 소화기는 펌프·물을 쓰지 않으므로 그 검사보다 먼저
       const sg = { cas: -1, prop: -1, hostile: -1, region: t.region, tile: -1 };
       if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'suppress', sg);
-      if (t.method === 'extinguisher') { runExtinguisher(sim, s, I, a, t, XK); return; }
+      if (t.method === 'extinguisher') {
+        // (검토) X6 가 정한 현장 모드가 R2 의 선택보다 먼저다: 외부 방어 구역(진입 금지·단계 3 너머)에는 소화기를 들고 들어가지 않는다 — 대원의 믿음에 지휘 상태가
+        // 아직 없어도. 관창이 없으면 밖에서 할 일이 없으므로 위험해서 내려놓고(한동안 이 대원에게 다시 맡기지 않는다), 관창수는 아래의 외부 방수로 간다
+        if (!opsExterior(s, t.region)) { runExtinguisher(sim, s, I, a, t, XK); return; }
+        if (!hasKit(sim, a.rid, 'hose')) { finishTask(sim, s, a, false, 'danger'); return; }
+        t.method = undefined; t.mwhy = undefined;
+      }
       if (!hasKit(sim, a.rid, 'hose')) { finishTask(sim, s, a, false, 'nomethod'); return; }      // 관창이 없는 대원(소화기를 다 썼거나 고를 수 없게 됐다)은 할 것이 없다
       if (u.pumpFailed || (u.water <= 0 && !u.hydrant)) { equipTrouble(sim, s, a, u.pumpFailed ? 'pump' : 'water'); finishTask(sim, s, a, false, 'equip'); return; }
       // (X6 §5.5) 외부 방어·진입 금지 구역·단계 3 구역 너머: 밖에서 방수한다. 단계 2 구역 안에서 이미 진압하던 대원은 안에서 잇는다 — R2 의 방법 선택보다 먼저다(현장 모드가 우선)
@@ -1187,8 +1197,9 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (m !== 'arrived') return;
       // (R2 §4.8) 출입구 통제 자리에 처음 닿으면 방법을 고른다 — 출입구 통제(평소) · 대피 방송(가스 현장의 경찰 · 확성기: 시작할 때 한 번 알리고 방법 기록. 효과는 hazards.tickGas)
       if (t.kind === 'perimeter' && t.method === undefined && t.mt0 === undefined) {
+        const ev0 = I.lastEvent;      // (검토) 방법 기록은 그 알림을 가리킨다 — 같은 말의 되풀이라 알리지 않았으면(methodRun.SAY_AGAIN) 가리킬 기록이 없다(-1). 남의 기록을 가리키지 않게
         startMethod(sim, s, I, a, t, 'perimeter', { cas: -1, prop: -1, hostile: -1, region: -1, tile: t.tile });
-        if (t.method === 'announce') recordMethod(sim, I, a, t, 'announce', t.mwhy ?? 'usual', true, I.lastEvent, { cas: -1, prop: -1, hostile: -1, region: -1, tile: t.tile });
+        if (t.method === 'announce') recordMethod(sim, I, a, t, 'announce', t.mwhy ?? 'usual', true, I.lastEvent !== ev0 ? I.lastEvent : -1, { cas: -1, prop: -1, hostile: -1, region: -1, tile: t.tile });
       }
       // 위치 사수: 교전 중인 용의자가 보이면 엄폐 상태에서 응사
       a.cooldown -= dt;

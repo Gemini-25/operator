@@ -26,7 +26,7 @@ import type { Sim } from '../engine';
 import { emit, lastProblemEvent, raiseProblem } from '../events';
 import type { Rng } from '../rng';
 import { T } from '../types';
-import type { CasBelief, Casualty, FieldAgent, Hostile, Incident, KitId, MethodId, MethodUse, MethodWhy, Problem, Prop, Scene, Task, TaskKind, Unit, WorkKind } from '../types';
+import type { CasBelief, Casualty, FieldAgent, Hostile, Incident, KitId, KitItem, MethodId, MethodUse, MethodWhy, Problem, Prop, Scene, Task, TaskKind, Unit, WorkKind } from '../types';
 import { clamp, dist, josa } from '../util';
 import { casFact, learn, learnQuiet, staminaF, visionOf } from './agents';
 import { BARE_HANDS, bestTool, kitCount, kitTool, kitWorks, useKit } from './gear';
@@ -113,9 +113,26 @@ function openFails(I: Incident, key: string): Problem[] {
  */
 const SAY_ONCE: ReadonlySet<MethodId> = new Set<MethodId>(['listen', 'hail', 'thermal', 'rush']);
 /**
+ * (검토) 같은 대원이 같은 대상에 같은 방법을 다시 고른 시작 문구는 이 시간(초) 안이면 다시 알리지 않는다 — 다시 고를 때마다 시계를 새로 잰다.
+ * 임무를 다시 받을 때마다 방법을 처음부터 고르므로(새 Task) 대원이 곁의 두 일 사이를 오가거나(brain 의 자체 판단 — 지휘관이 고립자 셋 사이를 0.6초마다)
+ * 지휘관이 꺼졌다 되살아나는 불에 같은 진압을 5초마다 다시 내면 같은 말이 수십 번 쏟아졌다(측정 도구의 반복 최대 6 → 26). 기록만 줄인다 — 고르는 것은 그대로다
+ */
+export const SAY_AGAIN = 20;
+/** 대원마다 (대상 열쇠|방법) → 마지막으로 그 시작 문구를 고른 시각 (현장 대원 객체의 모양을 바꾸지 않으려 WeakMap — 되감기는 Sim 을 새로 만든다) */
+const SAID = new WeakMap<FieldAgent, Map<string, number>>();
+/** 이번 시작 문구가 같은 대원·같은 대상·같은 방법의 되풀이인가 (SAY_AGAIN 안). 부를 때마다 그 시각을 적는다 */
+function sayRepeat(sim: Sim, a: FieldAgent, key: string): boolean {
+  let m = SAID.get(a);
+  if (m === undefined) { m = new Map(); SAID.set(a, m); }
+  const last = m.get(key);
+  m.set(key, sim.t);
+  return last !== undefined && sim.t - last < SAY_AGAIN;
+}
+/**
  * 방법을 정한 순간의 시작 문구 (§3.6). 알리지 않는 것: 기록 전용 방법, 평소 방법(plain) — 문·잔해처럼 자주 일어나는 일은 완료 문구만 방법별로 바뀐다.
  * 다만 같은 대상에 아직 복구되지 않은 방법 실패가 있으면 평소 방법이라도 알린다(관찰자가 "다른 방법으로 다시"를 보게).
- * 탐지 방법은 한 대원이 한 사건에서 처음 고를 때만. 돌려주는 값 = 남긴 기록 id (알리지 않았으면 -1).
+ * 탐지 방법은 한 대원이 한 사건에서 처음 고를 때만. 같은 대원·같은 대상·같은 방법을 SAY_AGAIN 초 안에 다시 고르면 알리지 않는다.
+ * 돌려주는 값 = 남긴 기록 id (알리지 않았으면 -1).
  */
 function announce(sim: Sim, I: Incident, a: FieldAgent, t: Task, work: WorkKind, tg: MTarget): number {
   const m = t.method;
@@ -131,6 +148,7 @@ function announce(sim: Sim, I: Incident, a: FieldAgent, t: Task, work: WorkKind,
     if (SAY_ONCE.has(m)) { const said = (a.msaid ??= []); if (said.indexOf(m) >= 0) return -1; said.push(m); }
     text = sayStart(m, t.mwhy ?? 'usual', t.missing);
   }
+  if (sayRepeat(sim, a, targetKey(work, tg) + '|' + m)) return -1;
   const r = sim.responders[a.rid];
   return emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text });
 }
@@ -1281,8 +1299,19 @@ function runVentilate(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, k
   t.phase = 0; t.progress = 0; t.range = 0; t.tile = -1; a.path = null;
 }
 /**
+ * (검토) 소화기 한 개에서 이미 뿜은 시간(초) — 임무가 바뀌어도 이어서 센다(한 개 = 12초, §4.5). 장비 항목마다 (KitItem 의 모양을 바꾸지 않으려 WeakMap).
+ * 임무의 진행도로만 세면 꺼졌다 되살아나는 작은 불에 짧은 진압을 거듭 받는 대원의 소화기가 끝내 비지 않았다
+ */
+const EXT_USED = new WeakMap<KitItem, number>();
+/** 그 대원이 지금 뿜는 소화기 (남은 것 — 알려진 고장 제외). 수량을 세지 않는 손으로 만든 명부면 undefined */
+function extItem(sim: Sim, rid: number): KitItem | undefined {
+  const kit = sim.responders[rid].kit;
+  if (kit) for (const it of kit) if (it.id === 'extinguisher' && !it.faultKnown && it.uses !== undefined && it.uses > 0) return it;
+  return undefined;
+}
+/**
  * 소화기 (§4.5 extinguisher — executor 의 case 'suppress' 가 펌프·물 검사보다 먼저 부른다): 시야선이 닿는 1.8칸 안으로 가서 applyWater 를 직접(초당 0.10) — 그림은 흰 분말 줄기(흩뜨리지 않는다).
- * 12초 쓰면 하나를 다 쓴다(useKit). 그 구역의 불이 꺼지면 진압 확인 · 방법 기록. 다 썼는데 불이 남았거나, 믿음 속 불이 커져(0.35 넘게) 3초가 지나면 조건 상실 → 다음 방법(없으면 손을 뗀다)
+ * 12초 쓰면 하나를 다 쓴다(useKit — 뿜은 시간은 임무가 바뀌어도 그 소화기에 이어서 센다). 그 구역의 불이 꺼지면 진압 확인 · 방법 기록. 다 썼는데 불이 남았거나, 믿음 속 불이 커져(0.35 넘게) 3초가 지나면 조건 상실 → 다음 방법(없으면 손을 뗀다)
  */
 export function runExtinguisher(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, k: ExecKit): void {
   const reg = s.regions[t.region];
@@ -1307,11 +1336,15 @@ export function runExtinguisher(sim: Sim, s: Scene, I: Incident, a: FieldAgent, 
   if (mv !== 'arrived') return;
   a.fx = tx - a.x; a.fy = ty - a.y; a.label = METHOD.extinguisher.label;
   applyWater(s, tx, ty, SUPPRESS.extAmount * sim.dt);
-  t.progress += sim.dt; a.ring = t.progress / SUPPRESS.extNeed;
+  const bottle = extItem(sim, a.rid);
+  t.progress = (bottle !== undefined ? EXT_USED.get(bottle) ?? 0 : t.progress) + sim.dt;      // 이 소화기에서 뿜은 시간 (앞선 임무에서 뿜은 것까지)
+  if (bottle !== undefined) EXT_USED.set(bottle, t.progress);
+  a.ring = t.progress / SUPPRESS.extNeed;
   k.drain(sim, a, 0.4);
   if (sim.tick % 2 === 0) pushFx(sim, s, 'spray', a.x, a.y, tx, ty, undefined, '#f2f2ee', 0.3);      // 흰 분말 줄기 — 자리를 흩뜨리지 않는다(s.rng 를 쓰지 않는다)
   if (t.progress + 1e-9 < SUPPRESS.extNeed) return;
   useKit(sim, a.rid, 'extinguisher', 1);
+  if (bottle !== undefined) EXT_USED.delete(bottle);
   t.progress = 0;
   if (!regionLit(s, t.region)) { confirmOut(sim, s, I, a, t, k, false); return; }
   if (!switchMethod(sim, s, I, a, t, 'tooFar', '소화기 소진', true, { say: '소화기를 다 썼습니다.' })) k.finish(sim, s, a, false, 'preempt');

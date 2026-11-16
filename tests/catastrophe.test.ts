@@ -1566,11 +1566,42 @@ describe('X6 단계 2: 현장 위의 위험 그림 (catLayer)', () => {
     expect([worldDigest(m.sim, s), worldDigest(g.sim, g.s), JSON.stringify([Array.from(c.integ), p.heatLoad, Array.from(gc.gas!)])]).toEqual(before);
     expect(out).toContain('T:붕괴 임박');
     expect(out.some((t) => t.startsWith('T:구조 약화'))).toBe(true);
-    expect(out).toContain('T:LEL 초과');
+    // (단계 10) 폭발 하한 구름(셋 이상)의 관찰자 표지는 G4 의 가스 경계 표지 하나 — catLayer 는 같은 자리에 'LEL 초과' 를 겹쳐 내지 않는다
+    expect(gasView(g.s, g.sim.tick).danger).toBe(true);
+    expect(gasView(g.s, g.sim.tick).label).toBe('가스 LEL 초과 — 폭발 위험');
+    expect(out).not.toContain('T:LEL 초과');
+    // 구름이 되지 못한 한두 칸이 하한을 넘으면 catLayer 의 'LEL 초과' 가 나간다 (G4 의 경계 표지는 없다)
+    const g2 = make('X6-SG2', 'hazmat', 'std'), gc2 = catOf(g2.sim, g2.s)!;
+    gc2.gas![indoorRegs(g2.s)[0].tiles[0]] = 1.2;
+    const lone = await withFakeDom(() => drawCatOver(g2.sim, g2.s, 24, { truth: true, timeMs: 0, mini: false, cmd: undefined }));
+    expect(gasView(g2.s, g2.sim.tick).danger).toBe(false);
+    expect(lone.map((l) => l.text)).toContain('LEL 초과');
     expect(out).toContain('A:붕괴 임박');
     expect(out).toContain('A:LEL 35%');
     // 작은 창(mini)은 표지를 내지 않는다
     expect(drawCatOver(m.sim, s, 24, { truth: true, timeMs: 0, mini: true, cmd })).toEqual([]);
+  });
+
+  it('(단계 10) 진입 금지 구역의 표지는 구역 이름·수색% 글자를 덮지 않고, 건물 전체 구역과 외부 방어는 건물 위 벽 줄에 한 표지로 그린다', async () => {
+    const m = make('X6-ZL', 'fire', 'std'), s = m.s, ts = 24;
+    const rs = indoorRegs(s);
+    const ops = newOps(0);
+    const zone = (key: string, kind: NoGoZone['kind'], level: 2 | 3, regions: number[]): NoGoZone => ({ key, kind, level, regions, x: 0, y: 0, r: 0, since: 0, why: '', ev: -1 });
+    ops.zones.push(zone('struct:' + rs[0].id, 'struct', 3, [rs[0].id]), zone('gas:' + rs[0].id, 'gas', 2, [rs[0].id]), zone('bldg', 'bldg', 3, rs.map((r) => r.id)));
+    ops.mode = 'defensive';
+    s.ops = ops;
+    const out = await withFakeDom(() => drawCatOver(m.sim, s, ts, { truth: false, timeMs: 0, mini: false, cmd: undefined }));
+    // 건물 전체 구역 + 외부 방어 = 표지 하나, 맨 윗 구역보다 위(벽 줄)
+    const b = out.filter((l) => l.text.includes('외부 방어'));
+    expect(b.map((l) => l.text)).toEqual(['철수 · 외부 방어']);
+    expect(b[0].y).toBeLessThan(Math.min(...rs.map((r) => r.y0)) * ts);
+    // 구획 구역의 표지 둘은 '수색 n%'(가운데 + 0.36칸 — renderScene, 글자 높이 0.3칸) 아래, 서로 겹치지 않게 한 줄씩
+    const zl = out.filter((l) => l.text === '철수' || l.text === '진입 금지');
+    expect(zl).toHaveLength(2);
+    const srchBottom = (rs[0].cy + 0.5) * ts + ts * (0.36 + 0.15);
+    for (const l of zl) expect(l.y - ts * 0.225).toBeGreaterThanOrEqual(srchBottom);
+    expect(Math.abs(zl[0].y - zl[1].y)).toBeGreaterThanOrEqual(ts * 0.5);
+    s.ops = undefined;
   });
 });
 
@@ -2133,7 +2164,7 @@ import { hurtCas } from '../src/sim/field/injury';
 import { INCIDENT_PLACES } from '../src/sim/cityPlan';
 import { raiseProblem } from '../src/sim/events';
 import { placeGone } from '../src/sim/incidents';
-import { ruinInfo, ruinMark, ruinSeen } from '../src/view/hazardState';
+import { gasView, ruinInfo, ruinMark, ruinSeen } from '../src/view/hazardState';
 import { drawRuinsWorld } from '../src/view/city/ruinLayer';
 import { RUIN_MARK } from '../src/view/marks';
 import { DECISIVE } from '../src/view/scene/fxBook';

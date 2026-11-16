@@ -12,6 +12,7 @@ import { CAT, rollLevel, structLevel } from '../../sim/field/catastrophe';
 import type { FieldAgent, NoGoZone, Prop, Region, Scene, SignBelief } from '../../sim/types';
 import type { G } from './common';
 import type { HazardLabel } from './hazardFx';
+import { gasView } from '../hazardState';
 
 export interface CatView { truth: boolean; timeMs: number; mini: boolean; cmd: FieldAgent | undefined }
 
@@ -100,10 +101,45 @@ function tapeZone(g: G, s: Scene, z: NoGoZone, ts: number): void {
   g.setLineDash([]);
   g.restore();
 }
-/** 구역 표지의 자리 (첫 구역의 가운데, 원이면 원 위) */
+/** 구역 표지의 자리 (첫 구역의 가운데 아래 — 구역 이름·'수색 n%' 글자 밑, 원이면 원 위).
+ *  (단계 10) 예전에는 가운데 + 0.6 이라 표지가 '수색 n%' 글자(가운데 + 0.36칸, renderScene)를 덮었다 */
 function zoneAnchor(s: Scene, z: NoGoZone): [number, number] {
-  if (z.regions.length && s.regions[z.regions[0]]) { const reg = s.regions[z.regions[0]]; return [reg.cx, reg.cy + 0.6]; }
+  if (z.regions.length && s.regions[z.regions[0]]) { const reg = s.regions[z.regions[0]]; return [reg.cx, reg.cy + (reg.kind === 'zone' ? 1.25 : 0.9)]; }
   return [z.x, z.y - Math.max(1, z.r * 0.7)];
+}
+/** 건물 전체의 표지 자리: 실내 구역들의 가운데 줄, 맨 윗 구역의 바로 위 벽 줄 (방 안의 구역 이름·수색% 글자와 겹치지 않게).
+ *  위가 현장 끝이면 맨 아래 구역의 바로 아래 */
+function bldgAnchor(s: Scene): [number, number] | null {
+  let bx = 0, n = 0, y0 = Infinity, y1 = -Infinity;
+  for (const r of s.regions) if (r.indoor) { bx += r.cx; n++; if (r.y0 < y0) y0 = r.y0; if (r.y1 > y1) y1 = r.y1; }
+  if (!n) return null;
+  return [bx / n, y0 >= 1.5 ? y0 - 1 : y1 + 1];
+}
+
+/** (§7.3, 단계 10) 잔해에 깔린 대원: 누운 사람 그림 위에 잔해 조각 셋(판 하나·덩어리 둘). 피는 그리지 않는다 — 이름표 '잔해에 깔림'과 빨간 맥박 고리가 함께 읽힌다.
+ *  x, y 는 화면 좌표(사람 가운데), seed 는 대원마다 고정 (a.rid) */
+export function drawTrappedDebris(g: G, x: number, y: number, ts: number, seed: number): void {
+  const h = (k: number): number => { let v = (Math.imul(seed + 101 * k, 374761393) ^ 0x5bd1e995) | 0; v = Math.imul(v ^ (v >>> 13), 1274126177); return ((v ^ (v >>> 16)) >>> 0) / 4294967296; };
+  g.save();
+  g.translate(x, y); g.scale(ts, ts);
+  g.setLineDash([]);
+  // 넘어진 판(들보) 하나 — 몸을 비스듬히 가로지른다
+  const a = -0.6 + h(1) * 1.2;
+  g.save(); g.rotate(a);
+  g.fillStyle = 'rgba(0,0,0,0.35)'; g.fillRect(-0.4, -0.05, 0.84, 0.18);
+  g.fillStyle = '#6b543a'; g.fillRect(-0.42, -0.1, 0.84, 0.16);
+  g.strokeStyle = '#2a2018'; g.lineWidth = 0.025; g.strokeRect(-0.42, -0.1, 0.84, 0.16);
+  g.restore();
+  // 콘크리트 덩어리 둘
+  const cols = ['#8d857a', '#a39a8c'];
+  for (let k = 0; k < 2; k++) {
+    const cx = (k ? 0.18 : -0.2) + (h(2 + k) - 0.5) * 0.12, cy = (k ? -0.14 : 0.16) + (h(4 + k) - 0.5) * 0.1, r = 0.11 + 0.05 * h(6 + k);
+    g.fillStyle = cols[k]; g.strokeStyle = '#2b2a28'; g.lineWidth = 0.022;
+    g.beginPath();
+    for (let q = 0; q < 6; q++) { const t = (q / 6) * 6.2832 + h(8 + k) * 3, rad = r * (0.72 + 0.45 * h(10 + k * 7 + q)); if (q) g.lineTo(cx + Math.cos(t) * rad, cy + Math.sin(t) * rad); else g.moveTo(cx + Math.cos(t) * rad, cy + Math.sin(t) * rad); }
+    g.closePath(); g.fill(); g.stroke();
+  }
+  g.restore();
 }
 
 /** 지휘관이 아는 조짐 (AI 시점) */
@@ -152,12 +188,32 @@ export function drawCatUnder(g: G, sim: Sim, s: Scene, ts: number, o: CatView): 
 
 /** 새 글자 표지 단계의 표지 (renderScene 이 pill 로 그린다) */
 export function drawCatOver(sim: Sim, s: Scene, ts: number, o: CatView): HazardLabel[] {
-  void sim;
   const c = s.cat, out: HazardLabel[] = [];
   if (o.mini) return out;
   const t = o.timeMs / 1000, at = (x: number, y: number): [number, number] => [(x + 0.5) * ts, (y + 0.5) * ts];
-  if (s.ops) for (const z of s.ops.zones) { const [zx, zy] = zoneAnchor(s, z); const [x, y] = at(zx, zy); out.push({ x, y, text: z.level === 3 ? '철수' : '진입 금지', color: z.level === 3 ? '#ff5d5d' : '#ffb347' }); }
-  if (s.ops && s.ops.mode === 'defensive' && s.regions.length) { let bx = 0, by = 0, n = 0; for (const r of s.regions) if (r.indoor) { bx += r.cx; by += r.cy; n++; } if (n) { const [x, y] = at(bx / n, by / n - 1.4); out.push({ x, y, text: '외부 방어', color: '#ff7a59' }); } }
+  if (s.ops) {
+    // 건물 전체(bldg) 구역과 외부 방어는 건물 위 벽 줄에 한 표지로, 그 밖의 구역은 첫 구역 가운데 아래 — 같은 자리에 둘이면 한 줄씩 내린다
+    const defensive = s.ops.mode === 'defensive', ba = bldgAnchor(s);
+    let bldgDone = false;
+    const used: [number, number][] = [];
+    for (const z of s.ops.zones) {
+      const lab = z.level === 3 ? '철수' : '진입 금지', col = z.level === 3 ? '#ff5d5d' : '#ffb347';
+      if (z.kind === 'bldg' && ba) {
+        if (bldgDone) continue;
+        bldgDone = true;
+        const [x, y] = at(ba[0], ba[1]);
+        out.push({ x, y, text: defensive ? `${lab} · 외부 방어` : lab, color: col });
+        continue;
+      }
+      const [zx, zy0] = zoneAnchor(s, z);
+      let zy = zy0;
+      while (used.some(([ux, uy]) => Math.abs(ux - zx) < 1.5 && Math.abs(uy - zy) < 0.5)) zy += 0.55;
+      used.push([zx, zy]);
+      const [x, y] = at(zx, zy);
+      out.push({ x, y, text: lab, color: col });
+    }
+    if (defensive && !bldgDone && ba) { const [x, y] = at(ba[0], ba[1]); out.push({ x, y, text: '외부 방어', color: '#ff7a59' }); }
+  }
   if (!c) return out;
   if (o.truth) {
     if (c.struct) for (const reg of s.regions) {
@@ -167,8 +223,9 @@ export function drawCatOver(sim: Sim, s: Scene, ts: number, o: CatView): HazardL
       if (lv === 3) out.push({ x, y, text: '붕괴 임박', color: '#ff5d5d' });
       else if (lv === 2) out.push({ x, y, text: `구조 약화 · 건전도 ${Math.round(c.integ[reg.id] * 100)}%`, color: '#ffb066' });
     }
-    if (c.gas) {
-      // LEL 을 넘은 칸이 있으면 그 칸들의 가운데에 한 번
+    if (c.gas && !gasView(s, sim.tick).danger) {
+      // LEL 을 넘은 칸이 있으면 그 칸들의 가운데에 한 번. (단계 10) 폭발 하한 구름(셋 이상)이면 G4 의 가스 경계 표지
+      // '가스 LEL 초과 — 폭발 위험'(hazardFx.drawGasEdge — 같은 c.gas 기준)이 같은 자리에 나가므로 겹쳐 내지 않는다
       let n = 0, sx = 0, sy = 0;
       for (let i = 0; i < c.gas.length; i++) if (c.gas[i] >= CAT.LEL) { n++; sx += i % s.w; sy += (i / s.w) | 0; }
       if (n) { const [x, y] = at(sx / n, sy / n); out.push({ x, y, text: 'LEL 초과', color: GAS_LEL }); }

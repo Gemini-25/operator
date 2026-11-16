@@ -50,6 +50,8 @@ export function methodLines(sim: Sim, I: Incident, s: Scene, max = 2): string[] 
     if (d.plain || failed.has(key) || out.length >= max) continue;
     // 호이스트는 임무 종류가 달라 열쇠가 다르다: 같은 구조 대상의 지상 수난 구조가 막혔었다면 그쪽 문제 문장이 말한다
     if (u.work === 'hoist' && failed.has(targetKey('waterRescue', u))) continue;
+    // (단계 3) 수색은 그 방법으로 그 구역을 훑는 동안 그 대원이 누군가를 찾아냈을 때만 말한다 ("찾아냈습니다")
+    if (u.work === 'search' && !s.casualties.some((c) => c.discoveredBy === u.rid && c.tDiscovered >= u.t0 && c.tDiscovered <= u.t)) continue;
     const wt = whyText(u), why = wt ? ` (${wt})` : '';
     const who = u.work === 'hoist' ? josa(sim.units[u.unitId].callsign, '이/가') : `${sim.responders[u.rid].name} 대원이`;
     const c = u.cas >= 0 ? s.casualties[u.cas] : undefined;

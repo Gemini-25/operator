@@ -10,7 +10,7 @@ import { NORMAL, parseDisaster } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
 import { raiseProblem } from '../src/sim/events';
-import { casFact, fitFor, perceive } from '../src/sim/field/agents';
+import { casFact, detectRadius, fitFor, perceive } from '../src/sim/field/agents';
 import { mkFact } from '../src/sim/field/beliefs';
 import { XK, act, finishTask, makeTask } from '../src/sim/field/executor';
 import { think } from '../src/sim/field/brain';
@@ -18,8 +18,8 @@ import type { Rng } from '../src/sim/rng';
 import { BARE_HANDS, SHARED, isQty, kitCount, kitName, kitTool, seatsLeft, swimBonus, useKit } from '../src/sim/field/gear';
 import { staticPass } from '../src/sim/field/grid';
 import { WORK_DONE, methodFailLine, methodLines, methodSummary, methodTally, whyText } from '../src/sim/field/methodReport';
-import { BOAT, FAIL_KEEP, WATER_FLOOR, blockerRate, clutchP, grabP, hitP, mrng, recheckOnArrive, recordAir, recordMethod, senseOf, stackSpot, startMethod, swimTrouble, switchMethod, targetOf, waterTick } from '../src/sim/field/methodRun';
-import { METHOD, METHOD_ORDER, NOT_YET, NO_SENSE, SAY, WORK_MODE, boatCost, catchPoint, chooseMethod, landComp, methodFit, methodStillFits, methodsOf, onWater, reachOf, sayStart, swimOf, targetKey, targetOfWork, whyNote } from '../src/sim/field/methods';
+import { BOAT, FAIL_KEEP, WATER_FLOOR, blockerRate, clutchP, extricateRate, grabP, hitP, mrng, recheckOnArrive, recordAir, recordMethod, senseOf, stackSpot, startMethod, swimTrouble, switchMethod, targetOf, waterTick } from '../src/sim/field/methodRun';
+import { METHOD, METHOD_ORDER, NOT_YET, NO_SENSE, SAY, WORK_MODE, boatCost, catchPoint, chooseMethod, searchMul, landComp, methodFit, methodStillFits, methodsOf, onWater, reachOf, sayStart, swimOf, targetKey, targetOfWork, whyNote } from '../src/sim/field/methods';
 import type { MTarget, MethodDef } from '../src/sim/field/methods';
 import { BARRICADE, FLOW_MIN, methodsRule } from '../src/sim/field/rules/methods';
 import { lockDoor } from '../src/sim/field/plans';
@@ -61,8 +61,9 @@ const work = (sim: Sim, s: Scene, kind: WorkKind, tg: Partial<WorkItem> = {}): W
   return w;
 };
 const taskFor = (a: FieldAgent, w: WorkItem): Task => { const t = makeTask(w.kind, '시험', w); a.task = t; a.status = 'active'; return t; };
-/** 방법을 켠 단계가 조건(can)을 채운 줄 — 단계 1a: 수난의 물가 방법 여섯, 단계 1b: 헤엄·줄 확보, 단계 1c: 보트, 단계 2: 문·통로 일곱(폭파 진입 포함) */
-const LIVE: MethodId[] = ['hand', 'pole', 'ring', 'rope', 'improvise', 'catch', 'swim', 'tend', 'boat', 'kick', 'irons', 'ram', 'hydraulic', 'handClear', 'toolClear', 'charge'];
+/** 방법을 켠 단계가 조건(can)을 채운 줄 — 단계 1a: 수난의 물가 방법 여섯, 단계 1b: 헤엄·줄 확보, 단계 1c: 보트, 단계 2: 문·통로 일곱(폭파 진입 포함), 단계 3: 구출 아홉·수색 다섯 */
+const LIVE: MethodId[] = ['hand', 'pole', 'ring', 'rope', 'improvise', 'catch', 'swim', 'tend', 'boat', 'kick', 'irons', 'ram', 'hydraulic', 'handClear', 'toolClear', 'charge',
+  'manual', 'basic', 'spread', 'roof', 'rapid', 'haul', 'tunnel', 'airbag', 'shore', 'call', 'listen', 'line', 'hail', 'thermal'];
 /** 헤엄을 못 치는 몸으로 둔다 (수영 능력 = 0.15 + 개인차 ±0.15 < 문턱 0.35 — 구명조끼가 없을 때) */
 const noSwim = (sim: Sim, a: FieldAgent): void => { const r = sim.responders[a.rid]; r.fitness = 0; r.skills.rescue = 0; strip(sim, a.rid, 'pfd'); };
 /**
@@ -183,11 +184,12 @@ describe('R2 방법 표 (METHOD)', () => {
 // ───────────────────────── 장비 ─────────────────────────
 describe('R2 장비 아홉 줄과 gear.ts', () => {
   const NEW: KitId[] = ['pole', 'pfd', 'drysuit', 'raft', 'extinguisher', 'fan', 'airbag', 'shoring', 'beanbag'];
-  it('단계 1a: 수난의 넷(장대·구명조끼·드라이슈트·고무보트)만 설계서의 역할이 기본 장비 끝에 든다 — 나머지 다섯은 아직 표에만', () => {
+  it('단계 1a·3: 수난의 넷(장대·구명조끼·드라이슈트·고무보트)과 구출의 둘(에어백·지지대)만 설계서의 역할이 기본 장비 끝에 든다 — 나머지 셋은 아직 표에만', () => {
     for (const id of NEW) expect(KITS[id].name.length, id).toBeGreaterThan(0);
-    // 설계서 §3.3 표의 "누가 든다" (단계 1a 의 넷). 수중 구조대의 두 자리(잠수 팀장·대원)는 N9 §4.8 대로 드라이슈트를 처음부터 든다 — 편성되지 않는 줄(minLevel 6)
+    // 설계서 §3.3 표의 "누가 든다" (단계 1a 의 넷 · 단계 3 의 둘). 수중 구조대의 두 자리(잠수 팀장·대원)는 N9 §4.8 대로 드라이슈트를 처음부터 든다 — 편성되지 않는 줄(minLevel 6)
     const WHO: Partial<Record<KitId, RoleId[]>> = {
       pole: ['engineer', 'ladderOp', 'boatRescuer'], pfd: ['ropeTech', 'boatRescuer', 'airRescuer'], drysuit: ['ropeTech', 'boatRescuer', 'diveLead', 'diver'], raft: ['ropeTech'],
+      airbag: ['extricator'], shoring: ['rescueLead'],
     };
     for (const id of NEW) {
       const holders = (Object.keys(ROLES) as RoleId[]).filter((role) => ROLES[role].kit.indexOf(id) >= 0).sort();
@@ -197,11 +199,13 @@ describe('R2 장비 아홉 줄과 gear.ts', () => {
     expect(ROLES.ropeTech.kit).toEqual(['scba', 'turnout', 'rope', 'ring', 'hose', 'pfd', 'drysuit', 'raft']);
     expect(ROLES.boatRescuer.kit).toEqual(['rope', 'ring', 'oilBoom', 'pole', 'pfd', 'drysuit']);
     expect(ROLES.engineer.kit.slice(-1)).toEqual(['pole']); expect(ROLES.ladderOp.kit.slice(-1)).toEqual(['pole']); expect(ROLES.airRescuer.kit.slice(-1)).toEqual(['pfd']);
-    // 교대의 명부: 넷은 그 역할의 대원이 들고, 나머지 다섯은 아무도 들지 않는다. 표의 처음 수량은 명부가 복사한다 (kitFor)
+    expect(ROLES.extricator.kit).toEqual(['scba', 'turnout', 'spreader', 'airbag']); expect(ROLES.rescueLead.kit).toEqual(['scba', 'turnout', 'searchKit', 'irons', 'shoring']);
+    // 교대의 명부: 여섯은 그 역할의 대원이 들고, 나머지 셋은 아무도 들지 않는다. 표의 처음 수량은 명부가 복사한다 (kitFor)
     const sim = new Sim('R2-KIT', FULL);
-    const LATER: KitId[] = ['extinguisher', 'fan', 'airbag', 'shoring', 'beanbag'];
+    const LATER: KitId[] = ['extinguisher', 'fan', 'beanbag'];
     for (const r of sim.responders) for (const it of r.kit!) { expect(LATER.indexOf(it.id), `${r.name}: ${it.id}`).toBe(-1); expect(it.uses, `${r.name}: ${it.id}`).toBe(it.id === 'scba' ? sim.tune.airFull : it.id === 'flashbang' ? it.uses : ({ taser: 2, charge: 2 } as Partial<Record<KitId, number>>)[it.id] ?? KITS[it.id].uses); }
     expect(sim.responders.some((r) => r.kit!.some((it) => it.id === 'raft'))).toBe(true);
+    expect(sim.responders.some((r) => r.kit!.some((it) => it.id === 'airbag'))).toBe(true); expect(sim.responders.some((r) => r.kit!.some((it) => it.id === 'shoring'))).toBe(true);
     expect(sim.responders.find((r) => r.role === 'boatRescuer')!.kit!.find((it) => it.id === 'oilBoom')!.uses).toBe(3);
     expect(KITS.extinguisher.uses).toBe(1); expect(KITS.beanbag.uses).toBe(3);
     expect(NEW.filter((id) => KITS[id].batch === 'r2').sort()).toEqual(['airbag', 'fan', 'raft']);
@@ -889,7 +893,7 @@ describe('R2 단계 1a: 물가 방법의 조건과 점수 (켜진 줄 그대로 
     const set = (a: FieldAgent, v: Partial<CasBelief>): void => { const f = casFact(q.sim, q.s, c, '시험'); const cur = a.beliefs.val<CasBelief>('cas', c.id) ?? f.value; a.beliefs.merge(mkFact('cas', c.id, { ...cur, ...v }, '시험', q.sim.t + 1, 1, true, f.text)); q.sim.t += 1; };
     return { ...q, c, tg: tgCas(c), set, rope: q.role('ropeTech'), cop: q.role('officer'), eng: q.role('engineer') };
   };
-  it('켜진 줄은 수난의 물가 방법 여섯과 헤엄·줄 확보(1b)·보트(1c), 문·통로 일곱(2)이고, 나머지는 아직 꺼져 있다', () => {
+  it('켜진 줄은 수난의 물가 방법 여섯과 헤엄·줄 확보(1b)·보트(1c), 문·통로 일곱(2), 구출·수색(3)이고, 나머지는 아직 꺼져 있다', () => {
     for (const m of METHOD_ORDER) expect(METHOD[m].can !== NOT_YET, m).toBe(LIVE.indexOf(m) >= 0);
   });
   it('닿는 거리: 손 1.2(안벽이면 못 쓴다) · 장대 2.0 · 구명환 2.8 · 구명줄·즉석 부력물 3.6 — 그 밖이면 수난 구조를 맡지 않는다(methodFit 0)', () => {
@@ -1153,7 +1157,7 @@ describe('R2 단계 1a: 강제 교대 (§8 의 2·3·4·5·6·7·9)', () => {
     expect(armed()).toBe(armed());
   });
   it('6. R2 장비의 고장 추첨(kit-r2 · aid-r2:<n>)은 R1 의 흐름 결과를 바꾸지 않는다 — 편성표와 인근 도시 지원 부대 모두', () => {
-    const ADDED: Partial<Record<RoleId, KitId[]>> = { engineer: ['pole'], ladderOp: ['pole'], ropeTech: ['pfd', 'drysuit', 'raft'], airRescuer: ['pfd'], boatRescuer: ['pole', 'pfd', 'drysuit'] };
+    const ADDED: Partial<Record<RoleId, KitId[]>> = { engineer: ['pole'], ladderOp: ['pole'], ropeTech: ['pfd', 'drysuit', 'raft'], airRescuer: ['pfd'], boatRescuer: ['pole', 'pfd', 'drysuit'], extricator: ['airbag'], rescueLead: ['shoring'] };      // 단계 1a · 단계 3
     const r1Only = <V>(fn: () => V): V => {
       const saved: Partial<Record<RoleId, KitId[]>> = {};
       for (const role of Object.keys(ADDED) as RoleId[]) { saved[role] = ROLES[role].kit; ROLES[role].kit = ROLES[role].kit.filter((id) => ADDED[role]!.indexOf(id) < 0); }
@@ -1178,7 +1182,7 @@ describe('R2 단계 1a: 강제 교대 (§8 의 2·3·4·5·6·7·9)', () => {
       for (const r of withR2.responders.slice(0, rosterN)) for (const it of r.kit!) if (KITS[it.id].batch === 'r2') { rafts++; const want = rg.chance(withR2.tune.kitFault); expect(!!it.fault, `${seed} ${r.name} ${it.id}`).toBe(want); if (want) raftFaults++; }
     }
     expect(rafts).toBeGreaterThan(5);
-    // 지원 구조대의 로프 대원이 든 고무보트는 그 지원 부대의 흐름 aid-r2:<n> 에서 뽑는다
+    // 지원 구조대의 로프 대원이 든 고무보트·유압 대원의 에어백(단계 3)은 그 지원 부대의 흐름 aid-r2:<n> 에서 뽑는다
     const sim = new Sim('RK0', { ...FULL, equipment: 1 });
     const I = createIncident(sim, { type: 'water', rng: sim.rng.fork('t') });
     sim.aidUsed = 3;
@@ -1186,7 +1190,8 @@ describe('R2 단계 1a: 강제 교대 (§8 의 2·3·4·5·6·7·9)', () => {
     const rg = sim.rng.fork('aid-r2:3');
     let seen = 0;
     for (const rid of u.crew) for (const it of sim.responders[rid].kit!) if (KITS[it.id].batch === 'r2') { seen++; expect(!!it.fault).toBe(rg.chance(sim.tune.kitFault)); }
-    expect(seen).toBe(1);
+    expect(seen).toBe(u.crew.reduce((n, rid) => n + sim.responders[rid].kit!.filter((it) => KITS[it.id].batch === 'r2').length, 0));
+    expect(seen).toBeGreaterThanOrEqual(2);
     void raftFaults;
   });
   it('7. 기록과 보고서: 평소와 다른 방법으로 구한 사건의 분석 문장에 그 방법이 실리고, 막혔다가 다시 시도해 건진 문제는 복구로 남으며, 교대 요약에 "대응 방법:" 줄이 있다', () => {
@@ -2054,4 +2059,220 @@ describe('R2 단계 2: 폭파 진입의 그림 (§4.2a — 화면은 상태를 �
     t.phase = 0; t.progress = 0; t.method = undefined;
     expect(snap()).toBe(before.replace('"charge",0', 'null,0'));
   });
+});
+
+// ───────────────────────── 단계 3: 구출·탐지 (§4.3·§4.4) ─────────────────────────
+/** 갇힌 구조 대상 하나 (없으면 시험이 실패한다) */
+const trappedOf = (s: Scene): Casualty => s.casualties.find((c) => c.mob === 'trapped')!;
+/** 구출 장면을 한 대원만 돌린다 (눈과 임무만) */
+function soloRun(sim: Sim, s: Scene, a: FieldAgent, sec: number, until: () => boolean): void {
+  for (let k = 0; k < sec * 5 && !until(); k++) { sim.tick++; sim.t = sim.tick * sim.dt; perceive(sim, s, a); act(sim, s, a); }
+}
+/** 대원을 대상 곁에 세운다 (구출을 바로 시작하게) */
+const beside = (s: Scene, a: FieldAgent, c: Casualty): void => {
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [-1, -1], [1, -1], [-1, 1]]) {
+    const x = Math.round(c.x) + dx, y = Math.round(c.y) + dy;
+    if (staticPass(s.tiles[y * s.w + x]) && s.propAt[y * s.w + x] < 0) { a.x = a.px = x; a.y = a.py = y; a.path = null; a.status = 'active'; return; }
+  }
+};
+
+describe('R2 단계 3: 구출의 방법 (§4.3 — 믿음으로 차량·붕괴·구덩이·그 밖을 가린다)', () => {
+  it('casFact: 갇힌 차량(veh)과 맨홀 아래(pit)를 본 그대로 싣는다 — 풀려나면 사라진다', () => {
+    const t1 = sceneWith('R2-TRA1', 'traffic', ['rescue']);
+    const cv = t1.s.casualties.find((c) => c.inVehicle !== null && c.mob === 'trapped');
+    if (cv) { expect(casFact(t1.sim, t1.s, cv, '시험').value.veh).toBe(cv.inVehicle); cv.mob = 'immobile'; expect(casFact(t1.sim, t1.s, cv, '시험').value.veh).toBeUndefined(); }
+    const m = sceneWith('R2-PIT', 'traffic/manhole', ['rescue']);
+    const cp = trappedOf(m.s);
+    expect(casFact(m.sim, m.s, cp, '시험').value.pit).toBe(true);
+    for (const c of m.s.casualties) if (c !== cp) expect(casFact(m.sim, m.s, c, '시험').value.pit).toBeUndefined();
+  });
+  it('고르는 규칙: 차량은 문 벌리기(유압)·수동, 붕괴는 에어백·손 공구·손으로 파기, 구덩이는 줄로 끌어올리기 — 다친 대원은 위험한 방법(손으로 파기·급박)을 고르지 않는다', () => {
+    const t1 = sceneWith('R2-TRA1', 'traffic', ['rescue', 'patrol']);
+    const cv = t1.s.casualties.find((c) => c.inVehicle !== null && c.mob === 'trapped')!;
+    expect(cv).toBeDefined();
+    const pk = (q: { sim: Sim; s: Scene }, a: FieldAgent, c: Casualty): MethodId | undefined => chooseMethod(q.sim, q.s, a, 'extricate', tgCas(c), null, NO_SENSE)?.m;
+    expect(pk(t1, t1.role('extricator'), cv)).toBe('spread');
+    expect(pk(t1, t1.role('officer'), cv)).toBe('manual');
+    expect(pk(t1, t1.role('rescueLead'), cv)).toBe('basic');
+    const co = sceneWith('R2-COL0', 'collapse', ['rescue', 'patrol']);
+    const cc = trappedOf(co.s);
+    expect(pk(co, co.role('extricator'), cc)).toBe('airbag');
+    expect(pk(co, co.role('rescueLead'), cc)).toBe('basic');
+    expect(pk(co, co.role('officer'), cc)).toBe('tunnel');
+    co.sim.responders[co.role('officer').rid].status = 'injured';
+    expect(pk(co, co.role('officer'), cc)).toBeUndefined();      // 손으로 파기(risk 0.1)를 빼면 남는 방법이 없다 — 늘 남는 임무라 실행부는 R1 의 식으로 간다
+    const m = sceneWith('R2-PIT', 'traffic/manhole', ['rescue']);
+    const cp = trappedOf(m.s);
+    expect(pk(m, m.role('ropeTech'), cp)).toBe('haul');
+    expect(pk(m, m.role('extricator'), cp)).toBe('basic');      // 유압 구조기만 든 대원도 손 공구 구출(R1 의 식 — 가진 가장 좋은 도구)
+  });
+  it('급박 구출: 차 곁 4칸 안의 살아 있는 연료 누출(sub fuel)이나 선 자리의 짙은 연기면 고른다 (까닭 danger). 지지대: 4칸 안의 살아 있는 균열(sub crack)을 동료가 보강하지 않을 때 (까닭 danger)', () => {
+    const t1 = sceneWith('R2-TRA1', 'traffic', ['rescue']);
+    const cv = t1.s.casualties.find((c) => c.inVehicle !== null && c.mob === 'trapped')!, ext = t1.role('extricator');
+    ext.beliefs.merge(mkFact('haz', 900, { kind: 'leak', active: true, x: Math.round(cv.x) + 1, y: Math.round(cv.y), sub: 'fuel' }, '시험', t1.sim.t, 1, true, '연료 누출'));
+    const p1 = chooseMethod(t1.sim, t1.s, ext, 'extricate', tgCas(cv), null, NO_SENSE)!;
+    expect(p1.m).toBe('rapid'); expect(p1.why).toBe('danger');
+    const lead = t1.role('rescueLead');
+    expect(chooseMethod(t1.sim, t1.s, lead, 'extricate', tgCas(cv), null, { smoke: 0.5, heat: 0 })!.m).toBe('rapid');
+    expect(chooseMethod(t1.sim, t1.s, lead, 'extricate', tgCas(cv), null, NO_SENSE)!.m).toBe('basic');
+    const co = sceneWith('R2-COL0', 'collapse', ['rescue']);
+    const cc = trappedOf(co.s), rl = co.role('rescueLead');
+    rl.beliefs.merge(mkFact('haz', 901, { kind: 'leak', active: true, x: Math.round(cc.x) + 2, y: Math.round(cc.y), sub: 'crack' }, '시험', co.sim.t, 1, true, '균열'));
+    const p2 = chooseMethod(co.sim, co.s, rl, 'extricate', tgCas(cc), null, NO_SENSE)!;
+    expect(p2.m).toBe('shore'); expect(p2.why).toBe('danger');
+    // 그 균열을 동료가 보강(mitigate)하고 있으면 지지대를 고르지 않는다
+    const mate = co.role('extricator'); const tm = makeTask('mitigate', '시험'); tm.prop = 901; mate.task = tm; mate.status = 'active';
+    expect(chooseMethod(co.sim, co.s, rl, 'extricate', tgCas(cc), null, NO_SENSE)!.m).toBe('basic');
+    // 밸브(sub valve)를 균열로 잘못 보지 않는다
+    const rl2 = sceneWith('R2-COL0', 'collapse', ['rescue']);
+    const cc2 = trappedOf(rl2.s), l2 = rl2.role('rescueLead');
+    l2.beliefs.merge(mkFact('haz', 902, { kind: 'leak', active: true, x: Math.round(cc2.x) + 1, y: Math.round(cc2.y), sub: 'valve' }, '시험', rl2.sim.t, 1, true, '밸브'));
+    expect(chooseMethod(rl2.sim, rl2.s, l2, 'extricate', tgCas(cc2), null, NO_SENSE)!.m).toBe('basic');
+  });
+  it('줄로 끌어올리기: 맨홀 아래 사람을 로프 대원이 줄을 내리고(4초) 끌어올린다 — 방법별 완료 문구·구한 방법·방법 기록', () => {
+    const m = sceneWith('R2-PIT', 'traffic/manhole', ['rescue']);
+    const cp = trappedOf(m.s), rope = m.role('ropeTech');
+    for (const a of m.s.agents) if (a !== rope) a.status = 'left';
+    beside(m.s, rope, cp);
+    const t = taskFor(rope, work(m.sim, m.s, 'extricate', { cas: cp.id }));
+    const n = m.sim.events.length, t0 = m.sim.t;
+    soloRun(m.sim, m.s, rope, 10, () => t.phase === 1);
+    const prepEnd = m.sim.t - t0;
+    soloRun(m.sim, m.s, rope, 120, () => cp.mob !== 'trapped');
+    expect(cp.mob).not.toBe('trapped');
+    expect(t.method).toBe('haul');
+    expect(prepEnd).toBeGreaterThanOrEqual(4 - 1e-6);
+    expect(cp.freedHow).toBe('haul'); expect(cp.freedBy).toBe(rope.rid);
+    expect(texts(m.sim, n)).toContain(`구조 대상 ${cp.label}, 줄로 끌어올려 구출 완료. 이송이 필요합니다.`);
+    expect(m.I.methods!.filter((u) => u.ok && u.work === 'extricate')).toMatchObject([{ method: 'haul', cas: cp.id, rid: rope.rid }]);
+  });
+  it('지지대 먼저: 8초 동안 세운 뒤 그 균열을 보강한다(p.mitigated — X6 의 보강 규칙이 받는다), 그 뒤 손 공구로 구출', () => {
+    const co = sceneWith('R2-COL0', 'collapse', ['rescue']);
+    const cc = trappedOf(co.s), rl = co.role('rescueLead');
+    for (const a of co.s.agents) if (a !== rl) a.status = 'left';
+    // 대상 곁 4칸 안의 진짜 균열부 하나 (없으면 만든다)
+    let crack = co.s.props.find((p) => p.kind === 'unstable' && !p.mitigated && Math.hypot(p.x - cc.x, p.y - cc.y) <= 4);
+    if (!crack) { crack = { ...co.s.props[0], id: co.s.props.length, kind: 'unstable', x: Math.round(cc.x) + 2, y: Math.round(cc.y), blocking: false, mitigated: false }; co.s.props.push(crack); }
+    rl.beliefs.merge(mkFact('haz', crack.id, { kind: 'leak', active: true, x: crack.x, y: crack.y, sub: 'crack' }, '시험', co.sim.t, 1, true, '균열'));
+    beside(co.s, rl, cc); co.s.smoke.fill(0);      // 먼지·연기가 없는 자리 (도착 재선택이 급박 구출로 바꾸지 않게)
+    const t = taskFor(rl, work(co.sim, co.s, 'extricate', { cas: cc.id }));
+    const n = co.sim.events.length, sv = co.s.staticVersion;
+    soloRun(co.sim, co.s, rl, 9, () => crack!.mitigated === true);
+    expect(t.method).toBe('shore'); expect(t.mwhy).toBe('danger');
+    expect(crack.mitigated).toBe(true);
+    expect(co.s.staticVersion).toBeGreaterThan(sv);
+    expect(texts(co.sim, n)).toContain('균열부에 지지대를 세웠습니다. 추가 붕괴 위험을 줄였습니다.');
+    expect(rl.beliefs.val<{ active: boolean; sub?: string }>('haz', crack.id)).toMatchObject({ active: false, sub: 'crack' });
+  });
+  it('에어백의 숨은 고장 → 장비 고장 기록 뒤 다른 방법으로 (손 공구 — 유압 구조기)', () => {
+    const co = sceneWith('R2-COL0', 'collapse', ['rescue']);
+    const cc = trappedOf(co.s), ext = co.role('extricator');
+    for (const a of co.s.agents) if (a !== ext) a.status = 'left';
+    co.sim.responders[ext.rid].kit!.find((it) => it.id === 'airbag')!.fault = true;
+    beside(co.s, ext, cc); co.s.smoke.fill(0);
+    const t = taskFor(ext, work(co.sim, co.s, 'extricate', { cas: cc.id }));
+    soloRun(co.sim, co.s, ext, 3, () => t.method !== undefined && t.method !== 'airbag');
+    expect(t.method).toBe('basic'); expect(t.mwhy).toBe('broken');
+    expect(co.I.problems.some((p) => p.code === 'EQUIP_FAIL')).toBe(true);
+    expect(co.I.methods!.map((u) => [u.method, u.ok])).toEqual([['airbag', false]]);
+  });
+  it('급박 구출을 마치면 대상이 척추 보호 없이 끌려 나와 다친다(타박상 10)', () => {
+    const t1 = sceneWith('R2-TRA1', 'traffic', ['rescue']);
+    const cv = t1.s.casualties.find((c) => c.inVehicle !== null && c.mob === 'trapped')!, ext = t1.role('extricator');
+    for (const a of t1.s.agents) if (a !== ext) a.status = 'left';
+    ext.beliefs.merge(mkFact('haz', 900, { kind: 'leak', active: true, x: Math.round(cv.x) + 1, y: Math.round(cv.y), sub: 'fuel' }, '시험', t1.sim.t, 1, true, '연료 누출'));
+    beside(t1.s, ext, cv); cv.health = 90; cv.bleed = 0;
+    const t = taskFor(ext, work(t1.sim, t1.s, 'extricate', { cas: cv.id }));
+    soloRun(t1.sim, t1.s, ext, 120, () => cv.mob !== 'trapped');
+    expect(t.method).toBe('rapid');
+    expect((cv.injuries ?? []).some((j) => j.cause === 'blunt')).toBe(true);
+    expect(cv.freedHow).toBe('rapid');
+  });
+  it('속도 k: 수동 맨손 · 손 공구는 R1 의 식 · 지붕 절단 1.5 · 에어백 1.6 · 줄 1.2 · 손으로 파기 0.5 · 급박 1.8 배', () => {
+    const co = sceneWith('R2-COL0', 'collapse', ['rescue']);
+    const ext = co.role('extricator'), t = makeTask('extricate', '시험');
+    const tm = co.sim.tune.toolMul;
+    for (const [m, k] of [['manual', 0.35 + 0.65 * BARE_HANDS], ['basic', 0.35 + 0.65 * Math.min(1.15, 1.0 * tm)], ['roof', 1.5], ['airbag', 1.6], ['haul', 1.2], ['tunnel', 0.5], ['rapid', 1.8 * (0.35 + 0.65 * Math.min(1.15, 1.0 * tm))]] as [MethodId, number][]) {
+      t.method = m; expect(extricateRate(co.sim, ext, t, co.I).k, m).toBeCloseTo(k, 9);
+    }
+  });
+});
+
+describe('R2 단계 3: 수색·탐지의 방법 (§4.4)', () => {
+  it('고르는 규칙: 실내·붕괴는 호출(붕괴에서 탐지 장비가 있으면 청음), 야외는 줄 수색 — 확성기를 들었으면 확성기, 열화상은 밤이거나 나무 칸이 30% 넘는 구역에서만', () => {
+    const co = sceneWith('R2-COL0', 'collapse', ['rescue', 'patrol']);
+    const reg = co.s.regions.findIndex((r) => r.indoor);
+    const tgR = (r: number): MTarget => ({ cas: -1, prop: -1, hostile: -1, region: r, tile: -1 });
+    expect(chooseMethod(co.sim, co.s, co.role('searcher'), 'search', tgR(reg), null, NO_SENSE)!.m).toBe('listen');
+    expect(chooseMethod(co.sim, co.s, co.role('officer'), 'search', tgR(reg), null, NO_SENSE)!.m).toBe('call');
+    const se = sceneWith('R2-SRCH', 'search', ['patrol', 'engine']);
+    const lead = se.role('patrolLead'), fl = se.role('fireLead'), cop = se.role('officer');
+    const treeR = (want: (share: number) => boolean): number => se.s.regions.findIndex((r) => { let n = 0; for (const i of r.tiles) if (se.s.tiles[i] === T.TREE) n++; return want(n / Math.max(1, r.tiles.length)); });
+    const open = treeR((x) => x < 0.3), woods = treeR((x) => x > 0.3);
+    expect(chooseMethod(se.sim, se.s, lead, 'search', tgR(open), null, NO_SENSE)!.m).toBe('hail');
+    expect(chooseMethod(se.sim, se.s, cop, 'search', tgR(open), null, NO_SENSE)!.m).toBe('line');
+    if (se.sim.weather !== 'night') expect(chooseMethod(se.sim, se.s, fl, 'search', tgR(open), null, NO_SENSE)!.m).toBe('line');
+    if (woods >= 0) expect(chooseMethod(se.sim, se.s, fl, 'search', tgR(woods), null, NO_SENSE)!.m).toBe('thermal');
+    const w0 = se.sim.weather; Object.assign(se.sim, { weather: 'night' });
+    expect(chooseMethod(se.sim, se.s, fl, 'search', tgR(open), null, NO_SENSE)!.m).toBe('thermal');
+    Object.assign(se.sim, { weather: w0 });
+  });
+  it('searchMul 은 경유점에 멈춘 동안만: 청음 ×0.75 · 확성기 ×0.5 (소리를 낼 수 있는 대상만) · 열화상 ×0.6 — 순수 함수', () => {
+    const se = sceneWith('R2-SRCH', 'search', ['patrol']);
+    const a = se.role('officer'), t = makeTask('search', '시험'); a.task = t;
+    expect(searchMul(a)).toEqual({ k: 1, voice: false });
+    for (const [m, k, voice] of [['listen', 0.75, true], ['hail', 0.5, true], ['thermal', 0.6, false], ['line', 1, false], ['call', 1, false]] as [MethodId, number, boolean][]) {
+      t.method = m; t.wait = 0; expect(searchMul(a).k).toBe(1);
+      t.wait = 1; expect(searchMul(a), m).toEqual({ k, voice });
+    }
+  });
+  it('확성기 호출 수색: 경유점마다 2초 멈추고, 멈춘 동안 대답할 수 있는 숨은 사람을 더 멀리서 찾는다', () => {
+    const se = sceneWith('R2-SRCH', 'search', ['patrol']);
+    const lead = se.role('patrolLead');
+    for (const a of se.s.agents) if (a !== lead) a.status = 'left';
+    const c = se.s.casualties[0];
+    const reg = se.s.region[Math.round(c.y) * se.s.w + Math.round(c.x)];
+    const t = taskFor(lead, work(se.sim, se.s, 'search', { region: reg }));
+    lead.x = lead.px = se.s.regions[reg].cx; lead.y = lead.py = se.s.regions[reg].cy; lead.path = null;
+    let stopped = 0;
+    for (let k = 0; k < 40 * 5 && t.ptI < 2 && lead.task === t; k++) { se.sim.tick++; se.sim.t = se.sim.tick * se.sim.dt; perceive(se.sim, se.s, lead); act(se.sim, se.s, lead); if (t.wait > 0.6) stopped++; }
+    expect(t.method).toBe('hail');
+    expect(stopped).toBeGreaterThan(3);      // 0.5 초보다 길게 멈춘다
+    // 탐지 배율: 같은 자리에서 은폐가 큰 사람 — 멈춘 동안은 더 멀리서 보인다
+    c.concealment = 0.8; c.health = 80;
+    t.wait = 1; const far = detectRadius(se.sim, se.s, lead, c.concealment * searchMul(lead).k);
+    t.wait = 0; const near = detectRadius(se.sim, se.s, lead, c.concealment);
+    expect(far).toBeGreaterThan(near);
+  });
+  it('열화상 수색은 처음 멈출 때 카메라의 숨은 고장을 드러내고 줄 수색으로 바꾼다', () => {
+    const se = sceneWith('R2-SRCH', 'search', ['engine']);
+    const fl = se.role('fireLead');
+    for (const a of se.s.agents) if (a !== fl) a.status = 'left';
+    Object.assign(se.sim, { weather: 'night' });
+    se.sim.responders[fl.rid].kit!.find((it) => it.id === 'tic')!.fault = true;
+    const reg = se.s.regions.findIndex((r) => !r.indoor && r.tiles.length > 10);
+    const t = taskFor(fl, work(se.sim, se.s, 'search', { region: reg }));
+    fl.x = fl.px = se.s.regions[reg].cx; fl.y = fl.py = se.s.regions[reg].cy; fl.path = null;
+    for (let k = 0; k < 30 * 5 && t.method !== 'line' && fl.task === t; k++) { se.sim.tick++; se.sim.t = se.sim.tick * se.sim.dt; act(se.sim, se.s, fl); }
+    expect(t.method).toBe('line'); expect(t.mwhy).toBe('broken');
+    expect(se.I.problems.some((p) => p.code === 'EQUIP_FAIL')).toBe(true);
+  });
+});
+
+describe('R2 단계 3: 강제 교대 (§8 의 3 · 구출 시간)', () => {
+  it('3. 구출: 문 벌리기·에어백·손 공구·수동·급박 구출 가운데 넷 이상이 성공하고, 끌어낸 사람은 그 방법이 적혀 있다 (교통사고·붕괴 강제)', () => {
+    const us: MethodUse[] = [];
+    let freed = 0;
+    for (const [seed, force] of [['E0', 'traffic/std'], ['E1', 'traffic/std'], ['E2', 'collapse/std'], ['E3', 'collapse/std']] as const) {
+      const sim = new Sim(seed, NORMAL, 1200, { force }); sim.runToEnd();
+      for (const I of sim.incidents) {
+        us.push(...(I.methods ?? []));
+        const s = sim.scenes[I.id];
+        if (s) for (const c of s.casualties) if (c.tFreed >= 0 && c.freedHow !== undefined && METHOD[c.freedHow].work.indexOf('extricate') >= 0) { freed++; expect(us.some((u) => u.ok && u.work === 'extricate' && u.cas === c.id && u.method === c.freedHow), `${seed} #${I.id} ${c.label}`).toBe(true); }
+      }
+    }
+    const ok = new Set(us.filter((u) => u.ok && u.work === 'extricate').map((u) => u.method));
+    expect([...ok].filter((m) => ['spread', 'airbag', 'basic', 'manual', 'rapid', 'roof', 'tunnel'].includes(m)).length).toBeGreaterThanOrEqual(4);
+    expect(freed).toBeGreaterThan(0);
+  }, 60000);
 });

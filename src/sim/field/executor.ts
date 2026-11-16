@@ -787,6 +787,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     case 'search': {
       const reg = s.regions[t.region];
       if (!t.pts) { t.pts = sweepPoints(sim, s, a, t); t.ptI = 0; t.covered = new Set(); t.fails = 0; }
+      // (R2 §4.4) 방법을 처음 고른다 (호출·청음 / 줄 수색·확성기·열화상) — 경유점마다 다시 고르지 않는다
+      if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'search', { cas: -1, prop: -1, hostile: -1, region: t.region, tile: -1 });
       if (reg.indoor && !hasKit(sim, a.rid, 'turnout')) { let m = 0; for (const i of reg.tiles) if (s.fire[i] > m && dist(a.x, a.y, i % s.w, (i / s.w) | 0) < 4) m = s.fire[i]; if (m > 0.35) { finishTask(sim, s, a, false, 'fire'); return; } }
       if (t.ptI >= t.pts.length) {
         const total = Math.max(1, walkableCount(s, reg.tiles));
@@ -795,6 +797,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         if (conf < 0.72) a.quiet.add('srch:' + reg.id);
         learn(sim, a, mkFact('srch', reg.id, Math.round(conf * 100) / 100, r.name, sim.t, conf, true, `${reg.name} ${t.thorough ? '정밀 ' : ''}수색 완료 (확인율 ${pct(conf)})`), true, true);
         if (conf < 0.72) emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${reg.name} 수색을 마쳤지만 ${s.smoke[tileOf(s, reg.cx, reg.cy)] > 0.3 ? '짙은 연기로' : '시야가 나빠'} 확인율이 ${pct(conf)}에 그쳤습니다.` });
+        if (t.method !== undefined) recordMethod(sim, I, a, t, t.method, t.mwhy ?? 'usual', true, -1, { cas: -1, prop: -1, hostile: -1, region: t.region, tile: -1 });      // (R2) 이 방법으로 그 구역을 마쳤다 (보고서 문장은 찾아낸 사람이 있을 때만 — methodReport)
         r.xpGained += 0.002;
         finishTask(sim, s, a, true);
         return;
@@ -802,7 +805,13 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const p = t.pts[t.ptI];
       a.ring = t.ptI / t.pts.length;
       const m = moveTo(sim, s, a, p % s.w, (p / s.w) | 0, 0.4);
-      if (m === 'arrived') { markCovered(sim, s, a, t); perceive(sim, s, a); t.ptI++; t.wait = 0.5; drain(sim, a, 0.3); }
+      if (m === 'arrived') {
+        // (R2) 그 구역의 첫 경유점: 도착 재선택 한 번 · 멈추는 시간은 방법마다(청음 3 · 확성기 2 · 열화상 1.5초 — 멈춘 동안 perceive 가 탐지 배율을 곱한다)
+        if (t.ptI === 0 && !t.marr) recheckOnArrive(sim, s, I, a, t, 'search', { cas: -1, prop: -1, hostile: -1, region: t.region, tile: -1 });
+        const stop = searchStop(sim, s, I, a, t);
+        markCovered(sim, s, a, t); perceive(sim, s, a); t.ptI++; t.wait = stop; drain(sim, a, 0.3);
+        if (t.method !== undefined && !METHOD[t.method].plain) a.label = METHOD[t.method].label;
+      }
       else if (m === 'nopath') { t.ptI++; t.fails++; a.pathGoal = -1; }
       return;
     }
@@ -874,15 +883,21 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const c = s.casualties[t.cas];
       if (c.dead) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
       if (c.mob !== 'trapped') { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
+      // (R2 §4.3) 방법을 처음 고른다 — 차량·붕괴·구덩이·그 밖을 대원의 믿음으로 가려 수동·손 공구·문 벌리기·지붕 절단·급박·줄·손으로 파기·에어백·지지대 가운데
+      if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'extricate', { cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1 });
       if (noAirEntry(sim, s, a, c.x, c.y)) { learn(sim, a, casFact(sim, s, c, r.name), false); finishTask(sim, s, a, false, 'unsafe'); return; }      // 위험한 건물 안: 공기호흡기 없이는 들어가지 않는다
       const m = moveTo(sim, s, a, c.x, c.y, 1.5);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
       if (w && relieve(sim, s, a, w, c.x, c.y)) return;      // 교대: 내가 손을 뗐다
-      const tool = toolUse(sim, a.rid, 'extricate', I);
-      const rate = r.skills.rescue * (0.35 + 0.65 * tool) * staminaF(r) * (s.smoke[tileOf(s, a.x, a.y)] > 0.4 ? 0.7 : 1);
+      if (!t.marr) recheckOnArrive(sim, s, I, a, t, 'extricate', { cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1 });      // (R2) 대상 곁에 처음 닿은 틱 — 선 자리의 연기로 급박 구출을 다시 본다
+      if (extricatePrep(sim, s, I, a, t, c)) return;      // (R2) 준비(문 벌리기·지붕 절단·에어백·지지대·줄 내리기)와 장비 확인
+      const { k, tool } = extricateRate(sim, a, t, I);
+      const rate = r.skills.rescue * k * staminaF(r) * (s.smoke[tileOf(s, a.x, a.y)] > 0.4 ? 0.7 : 1);
       c.trapWork -= rate * dt; drain(sim, a, 0.8);
       a.ring = clamp(1 - c.trapWork / 16, 0.05, 1);
+      if (t.method !== undefined) a.label = METHOD[t.method].label;
+      if (t.method === 'tunnel') tunnelSlide(sim, s, I, a, c);      // (R2) 손으로 파기: 균열 곁이면 잔해가 다시 흘러내릴 수 있다
       if (c.trapWork <= 0) {
         c.mob = 'immobile'; c.tFreed = sim.t;
         if (c.inVehicle !== null) { c.inVehicle = null; c.x = Math.round(a.x); c.y = Math.round(a.y); }
@@ -896,7 +911,9 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
           }
         }
         learnQuiet(sim, a, casFact(sim, s, c, r.name));
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, text: `구조 대상 ${c.label} 구출 완료. 이송이 필요합니다.` });
+        const done = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, text: extricateDoneText(c, t.method) });      // (R2) 방법별 완료 문구 (평소 방법은 지금 그대로)
+        if (t.method === 'rapid' && I.phase !== 'closed') hurtCas(sim, s, I, c, RAPID_HURT, 'blunt', { ev: done });      // (R2) 급박 구출: 척추 보호 없이 끌어냈다
+        if (t.method !== undefined) { c.freedHow = t.method; c.freedBy = a.rid; recordMethod(sim, I, a, t, t.method, t.mwhy ?? 'usual', true, done); }
         r.xpGained += 0.004;
         finishTask(sim, s, a, true);
       }
@@ -1032,7 +1049,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const p = s.props[t.prop];
       if (p.kind === 'gas') { runCool(sim, s, I, a, t, p); return; }      // (X6 §5.8) 가스 용기·드럼통의 냉각
       const doneText = p.kind === 'unstable' ? '균열부 보강 완료' : p.kind === 'valve' ? (p.ignited ? '누출 가스 발화' : '가스 밸브 차단 완료') : p.ignited ? '누출 연료 발화' : '연료 누출 조치 완료';
-      if (p.mitigated || p.ignited) { learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y }, r.name, sim.t, 1, true, doneText), true, true); finishTask(sim, s, a, true); return; }
+      const sub = p.kind === 'unstable' ? 'crack' : p.kind === 'valve' ? 'valve' : 'fuel';      // (R2 §4.3) 균열·밸브·차량 연료 — 판단부가 sub 로 가린다
+      if (p.mitigated || p.ignited) { learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y, sub }, r.name, sim.t, 1, true, doneText), true, true); finishTask(sim, s, a, true); return; }
       const m = moveTo(sim, s, a, p.x, p.y, 1.6);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
@@ -1041,7 +1059,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       t.progress += dt; a.ring = t.progress / t.need;
       if (t.progress >= t.need) {
         p.mitigated = true;
-        learnQuiet(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y }, r.name, sim.t, 1, true, doneText));
+        learnQuiet(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y, sub }, r.name, sim.t, 1, true, doneText));
         emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: p.kind === 'unstable' ? '균열부에 지지대를 세웠습니다. 추가 붕괴 위험을 줄였습니다.' : p.kind === 'valve' ? '가스 밸브 차단 완료. 누출이 멈췄습니다.' : '연료 누출 차단 완료. 발화 위험을 제거했습니다.' });
         if (p.kind === 'unstable') s.staticVersion++;
         r.xpGained += 0.003;
@@ -1680,7 +1698,7 @@ import { boatCost, onWater, reachOf, swimCost, swimOf } from './methods';
 import type { CostFn } from './grid';
 export const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask, unblock };
 // (R2 단계 2) 문·통로의 방법: 고르기(startMethod)·속도·장비 확인·소리·폭파 진입·방법 기록 — 고르는 것은 판단부, 효과는 methodRun
-import { blockerKitFails, blockerRate, doorNoise, recordMethod, runCharge, stackSpot, startMethod } from './methodRun';
+import { RAPID_HURT, blockerKitFails, blockerRate, doorNoise, extricateDoneText, extricatePrep, extricateRate, recheckOnArrive, recordMethod, runCharge, searchStop, stackSpot, startMethod, tunnelSlide } from './methodRun';
 import { METHOD, NO_SENSE, chooseMethod } from './methods';
 import type { BreachHow, MethodId } from '../types';
 

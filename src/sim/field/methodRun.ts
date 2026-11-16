@@ -13,6 +13,8 @@
 //            dropWet(executor.finishTask 의 내려놓기)·swimTrouble·clutchP, 물 위 피해의 하한 WATER_FLOOR(18)
 //   단계 1c  보트(runBoat)
 //   단계 2   문·통로: blockerRate(방법별 속도)·blockerKitFails(유압 개방기의 장비 확인)·doorNoise(충격기·폭파의 소리), 폭파 진입 runCharge·stackSpot(물러설 자리) — executor.workOnBlocker 가 부른다
+//   단계 3   구출: extricateRate(방법별 k·장비 값)·extricatePrep(준비 시간·장비 확인·지지대의 균열 보강)·tunnelSlide(손으로 파기의 붕락)·extricateDoneText,
+//            수색: searchStop(경유점에 멈추는 시간·탐지 장비 확인) — executor 의 case 'extricate'·'search' 가 부른다
 //   뒤 단계  runSuppress(4) …
 
 import type { Sim } from '../engine';
@@ -25,8 +27,9 @@ import { casFact, learn, learnQuiet, staminaF } from './agents';
 import { BARE_HANDS, bestTool, kitCount, kitTool, kitWorks, useKit } from './gear';
 import { staticPass, tileOf } from './grid';
 import { blast } from './hazards';
-import { HAND_REACH, METHOD, POLE_REACH, RING_REACH, SAY, THROW_REACH, WORK_MODE, catchPoint, chooseMethod, methodStillFits, onWater, reachOf, sayStart, swimOf, targetKey } from './methods';
-import { hurtResponder } from './injury';
+import { HAND_REACH, METHOD, POLE_REACH, RING_REACH, SAY, THROW_REACH, WORK_MODE, catchPoint, chooseMethod, methodStillFits, onWater, reachOf, sayStart, shoreCrack, swimOf, targetKey } from './methods';
+import { hurtCas, hurtResponder } from './injury';
+import { mkFact } from './beliefs';
 import type { MTarget, MethodPick, Sense } from './methods';
 import { docCtx, hasDoc } from './doctrine';      // (R3) 교본 입력 (자기 모드)
 import type { DocCtx } from './doctrine/registry';
@@ -1021,4 +1024,103 @@ function detonateCharge(sim: Sim, s: Scene, I: Incident, a: FieldAgent, tk: Task
   recordMethod(sim, I, a, tk, 'charge', tk.mwhy ?? 'usual', true, ev, { cas: -1, prop: pid, hostile: -1, region: -1, tile });
   doorNoise(sim, s, dx, dy);
   sim.responders[a.rid].xpGained += 0.003;
+}
+
+// ───────────────────────── 구출 (§4.3) — 단계 3 ─────────────────────────
+/** 준비 시간(초): 문 벌리기 3 · 지붕 절단 8 · 에어백 5 · 지지대 8 · 줄 내리기 4 (그동안 구출 작업량은 줄지 않는다) */
+export const EXTRICATE_PREP: Partial<Record<MethodId, number>> = { spread: 3, roof: 8, airbag: 5, shore: 8, haul: 4 };
+/** 준비할 때 작동을 확인하는 장비 (숨은 고장이 이때 드러난다 → broken) */
+const PREP_KIT: Partial<Record<MethodId, KitId>> = { spread: 'spreader', roof: 'spreader', airbag: 'airbag' };
+/** 준비 중의 머리 위 글자 */
+const PREP_LABEL: Partial<Record<MethodId, string>> = { spread: '유압 전개 준비', roof: '지붕 절단 준비', airbag: '에어백 설치', shore: '지지대 설치', haul: '줄 내리는 중' };
+/**
+ * 구출 속도의 k 와 그 방법의 장비 값 (§4.3 — 속도 = 구조 × k × staminaF × 연기 배율은 부르는 쪽). tool 은 H1 의 "구출 중 잔해" 확률(1.2 − tool)에 넘긴다.
+ *   수동 0.35 + 0.65 × 맨손 · 손 공구 0.35 + 0.65 × 가진 가장 좋은 구출 도구(R1 의 식 그대로 — bestTool) · 지지대도 같다 · 문 벌리기 0.35 + 0.65 × 유압 구조기 · 지붕 절단 1.5 · 에어백 1.6 · 줄로 끌어올리기 1.2 ·
+ *   손으로 파기 0.5 · 급박 구출 1.8 × (0.35 + 0.65 × 실제로 쓰는 가장 좋은 도구 — bestTool) · 방법이 없으면 R1 의 식 그대로
+ */
+export function extricateRate(sim: Sim, a: FieldAgent, t: Task, I: Incident): { k: number; tool: number } {
+  const r1 = (tool: number): { k: number; tool: number } => ({ k: 0.35 + 0.65 * tool, tool });
+  switch (t.method) {
+    case 'manual': return r1(BARE_HANDS);
+    case 'basic': case 'shore': return r1(bestTool(sim, a.rid, 'extricate', I));      // R1 의 식 그대로 (실제로 쓰는 가장 좋은 도구 — 숨은 고장은 여기서 드러난다). 지지대는 세운 뒤 손 공구와 같다
+    case 'spread': return r1(kitTool(sim, 'spreader', 'extricate'));
+    case 'roof': return { k: 1.5, tool: kitTool(sim, 'spreader', 'extricate') };
+    case 'airbag': return { k: 1.6, tool: 1 };
+    case 'haul': return { k: 1.2, tool: kitTool(sim, 'rope', 'water') };
+    case 'tunnel': return { k: 0.5, tool: BARE_HANDS };
+    case 'rapid': { const tool = bestTool(sim, a.rid, 'extricate', I); return { k: 1.8 * (0.35 + 0.65 * tool), tool }; }
+    default: return r1(bestTool(sim, a.rid, 'extricate', I));
+  }
+}
+/**
+ * 구출 방법의 준비 (대상 곁에 닿은 뒤 — phase 0). 돌려주는 값 = 아직 준비 중이다(부른 쪽은 그 틱에 끝낸다).
+ * 준비를 시작할 때 장비를 확인하고(유압 구조기·에어백 — 숨은 고장이면 다른 방법으로), 지지대는 다 세운 순간 그 균열을 보강한다
+ * (지금 case 'mitigate' 의 균열 완료와 같은 처리 — p.mitigated · 균열 사실 · 고정 층 · 같은 완료 문구. X6 의 보강 규칙(c.shored)이 그대로 받는다)
+ */
+export function extricatePrep(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Casualty): boolean {
+  if (t.phase !== 0 || t.method === undefined) return false;
+  const need = EXTRICATE_PREP[t.method];
+  if (need === undefined) { t.phase = 1; return false; }
+  const kid = PREP_KIT[t.method];
+  if (t.progress === 0 && kid !== undefined && !kitWorks(sim, a.rid, kid, I)) { switchMethod(sim, s, I, a, t, 'broken', `${josa(METHOD[t.method].name, '이/가')} 장비 고장으로 막힘`); return true; }
+  a.label = PREP_LABEL[t.method] ?? METHOD[t.method].label;
+  a.fx = c.x - a.x; a.fy = c.y - a.y;
+  t.progress += sim.dt; a.ring = t.progress / need;
+  if (t.progress + 1e-9 < need) return true;
+  t.phase = 1; t.progress = 0;
+  if (t.method === 'shore') shoreUp(sim, s, I, a, c);
+  return false;
+}
+/** 지지대: 대원의 믿음이 가리키는 그 균열(methods.shoreCrack)을 보강한다 — 이미 보강됐거나 없으면 아무것도 하지 않는다 */
+function shoreUp(sim: Sim, s: Scene, I: Incident, a: FieldAgent, c: Casualty): void {
+  const id = shoreCrack(s, a, a.beliefs.val<CasBelief>('cas', c.id) ?? null);
+  if (id < 0 || id >= s.props.length) return;
+  const p = s.props[id];
+  if (p.kind !== 'unstable' || p.mitigated) return;
+  const r = sim.responders[a.rid];
+  p.mitigated = true;
+  learnQuiet(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y, sub: 'crack' }, r.name, sim.t, 1, true, '균열부 보강 완료'));
+  emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: '균열부에 지지대를 세웠습니다. 추가 붕괴 위험을 줄였습니다.' });
+  s.staticVersion++;
+}
+/** 손으로 파기의 붕락 확률(초당): 믿음 속 4칸 안에 살아 있는 균열이 있을 때 · 피해: 대상 8 · 대원 6 (잔해 깔림) */
+export const TUNNEL = { p: 0.006, cas: 8, resp: 6 };
+/**
+ * 손으로 파기 중 잔해가 다시 흘러내림 (§4.3 tunnel): 그 대원의 믿음에 대상 4칸 안의 살아 있는 균열이 있으면 mrng.chance(0.006 × dt) — 대상 피해 8, 대원 피해 6(H1, 원인 crush), 기록 한 줄.
+ * 판정 뒤에는 일어나지 않는다
+ */
+export function tunnelSlide(sim: Sim, s: Scene, I: Incident, a: FieldAgent, c: Casualty): void {
+  if (I.phase === 'closed') return;
+  const cb = a.beliefs.val<CasBelief>('cas', c.id) ?? null;
+  if (cb === null) return;
+  let near = false;
+  for (const f of a.beliefs.list('haz')) { const v = f.value as { kind: string; active: boolean; x: number; y: number; sub?: string }; if (v.kind === 'leak' && v.active && v.sub === 'crack' && Math.hypot(v.x - cb.x, v.y - cb.y) <= 4) { near = true; break; } }
+  if (!near || !mrng(sim, s, a).chance(TUNNEL.p * sim.dt)) return;
+  const r = sim.responders[a.rid];
+  const ev = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, text: `파내던 잔해가 다시 흘러내렸습니다 — 구조 대상 ${josa(c.label, '과/와')} ${josa(r.name, '이/가')} 다쳤습니다.` });
+  hurtCas(sim, s, I, c, TUNNEL.cas, 'crush', { ev });
+  hurtResponder(sim, s, I, a, TUNNEL.resp, 'crush', { ev });
+}
+/** 급박 구출의 대상 피해 (척추 보호 없이 끌어냄 — H1 원인 blunt) */
+export const RAPID_HURT = 10;
+/** 구출을 마친 순간의 방법별 완료 문구 (평소 방법은 지금의 문구 그대로) */
+export function extricateDoneText(c: Casualty, m: MethodId | undefined): string {
+  if (m === undefined || METHOD[m].plain) return `구조 대상 ${c.label} 구출 완료. 이송이 필요합니다.`;
+  return `구조 대상 ${c.label}, ${METHOD[m].noun} 구출 완료. 이송이 필요합니다.`;
+}
+
+// ───────────────────────── 수색·탐지 (§4.4) — 단계 3 ─────────────────────────
+/** 경유점마다 멈추는 시간(초): 지금 0.5 · 청음 3 · 확성기 2 · 열화상 1.5 (멈춘 동안 perceive 가 searchMul 을 곱한다) */
+export const SEARCH_STOP: Partial<Record<MethodId, number>> = { listen: 3, hail: 2, thermal: 1.5 };
+/** 경유점에서 처음 멈출 때 작동을 확인하는 장비 (야외에는 연기가 없어 R1 의 자리에서는 열화상 카메라의 고장이 드러나지 않는다) */
+const SEARCH_KIT: Partial<Record<MethodId, KitId>> = { listen: 'searchKit', thermal: 'tic' };
+/**
+ * 수색 경유점에 닿았을 때: 멈출 시간을 돌려준다. 처음 멈출 때 탐지 장비를 확인해 고장이 드러나면 broken 으로 바꾸고(다음 방법 — 호출·줄 수색) 지금의 0.5초
+ */
+export function searchStop(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task): number {
+  const m = t.method;
+  if (m === undefined) return 0.5;
+  const kid = SEARCH_KIT[m];
+  if (kid !== undefined && t.ptI === 0 && !kitWorks(sim, a.rid, kid, I)) { switchMethod(sim, s, I, a, t, 'broken', `${josa(METHOD[m].name, '이/가')} 장비 고장으로 막힘`); return 0.5; }
+  return t.method !== undefined ? SEARCH_STOP[t.method] ?? 0.5 : 0.5;
 }

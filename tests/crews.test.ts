@@ -2109,7 +2109,7 @@ describe('⑭ 소모와 고장', () => {
   it('고장 추첨: 추첨을 받는 장비만, 장비 손잡이가 낮을수록 많이 고장 난다. 같은 교대는 같은 고장이고, 지원 부대는 자기 흐름에서 뽑는다', () => {
     const faults = (sim: Sim): string[] => { const out: string[] = []; for (const r of sim.responders) for (const it of r.kit!) if (it.fault) out.push(r.name + ':' + it.id); return out; };
     expect((Object.keys(KITS) as KitId[]).filter((id) => KITS[id].faultable && !KITS[id].batch).sort()).toEqual(['aed', 'robot', 'searchKit', 'searchlight', 'spreader', 'taser', 'tic']);
-    // (R2) 대응 방법의 고장 나는 장비는 따로 뽑는 묶음이다 — 교대 흐름 kit 의 추첨 순서에 끼지 않는다 (R2 §3.3. 단계 0 에는 어느 역할도 들지 않는다)
+    // (R2) 대응 방법의 고장 나는 장비는 따로 뽑는 묶음이다 — 교대 흐름 kit 의 추첨 순서에 끼지 않는다 (R2 §3.3. 단계 1a 부터 로프 대원이 고무보트를 든다 — kit-r2 흐름)
     expect((Object.keys(KITS) as KitId[]).filter((id) => KITS[id].faultable && KITS[id].batch === 'r2').sort()).toEqual(['airbag', 'fan', 'raft']);
     expect([1, 2, 3, 4, 5].map((eq) => new Sim('KIT', { ...NORMAL, equipment: eq }).tune.kitFault)).toEqual([0.12, 0.07, 0.03, 0.015, 0.005]);
     let low = 0, mid = 0, high = 0;
@@ -2118,10 +2118,13 @@ describe('⑭ 소모와 고장', () => {
       low += faults(a).length; mid += faults(b).length; high += faults(c).length;
       for (const sim of [a, b, c]) for (const r of sim.responders) for (const it of r.kit!) { if (it.fault) expect(KITS[it.id].faultable, it.id).toBe(true); expect(it.faultKnown, '교대가 시작될 때는 드러나 있지 않다').toBe(false); }
       expect(faults(new Sim('F' + k)), '같은 시드 = 같은 고장').toEqual(faults(b));
-      // 추첨의 순서: 교대 흐름 kit 하나로, 대원 순서 × 든 장비의 순서
+      // 추첨의 순서: 교대 흐름 kit 하나로, 대원 순서 × 든 장비의 순서 (따로 뽑는 묶음 batch 는 빼고 — 그 묶음은 자기 흐름 kit-<묶음> 에서 같은 순서로)
       const rng = b.rng.fork('kit'), want: string[] = [];
-      for (const r of b.responders) for (const it of r.kit!) if (KITS[it.id].faultable && rng.chance(b.tune.kitFault)) want.push(r.name + ':' + it.id);
-      expect(faults(b)).toEqual(want);
+      for (const r of b.responders) for (const it of r.kit!) if (KITS[it.id].faultable && !KITS[it.id].batch && rng.chance(b.tune.kitFault)) want.push(r.name + ':' + it.id);
+      const r2 = b.rng.fork('kit-r2'), want2: string[] = [];
+      for (const r of b.responders) for (const it of r.kit!) if (KITS[it.id].faultable && KITS[it.id].batch === 'r2' && r2.chance(b.tune.kitFault)) want2.push(r.name + ':' + it.id);
+      expect(faults(b).filter((f) => !f.endsWith(':raft'))).toEqual(want);
+      expect(faults(b).filter((f) => f.endsWith(':raft'))).toEqual(want2);
     }
     expect(low, '장비 1 의 숨은 고장 > 장비 3 > 장비 5').toBeGreaterThan(mid); expect(mid).toBeGreaterThan(high);
     expect(mid / 30, '보통 난이도에서 교대당 1건 안팎').toBeGreaterThan(0.4); expect(mid / 30).toBeLessThan(2);
@@ -2141,7 +2144,7 @@ describe('⑭ 소모와 고장', () => {
         const rng = sim.rng.fork('aid:' + sim.aidUsed);
         for (let q = 0; q < u.crew.length * 6; q++) rng.next();
         if (u.dept === 'fire') rng.next();
-        for (const rid of u.crew) for (const it of sim.responders[rid].kit!) if (KITS[it.id].faultable) { aidItems++; const want = rng.chance(sim.tune.kitFault); expect(!!it.fault, `${u.callsign} ${sim.responders[rid].name} ${it.id}`).toBe(want); if (want) aidFaults++; }
+        for (const rid of u.crew) for (const it of sim.responders[rid].kit!) if (KITS[it.id].faultable && !KITS[it.id].batch) { aidItems++; const want = rng.chance(sim.tune.kitFault); expect(!!it.fault, `${u.callsign} ${sim.responders[rid].name} ${it.id}`).toBe(want); if (want) aidFaults++; }
         sim.aidUsed++;
       }
     }

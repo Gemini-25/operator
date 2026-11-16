@@ -690,7 +690,8 @@ describe('5. 문구와 원인 — 사망 기록의 원인, 물에서 건진 뒤�
   });
   it('물에서 건져 낸 사람에게 남는 악화는 익수가 아니라 실외 노출(저체온)이다 — 물가의 구조 줄과 헬기의 호이스트 모두', () => {
     let hoists = 0, freed = 0;
-    for (const seed of ['S5', 'S8']) {
+    // (R2 1a) S7 을 더했다: 물가 방법이 갈린 뒤 S5·S8 의 물가 구조는 헬기의 호이스트가 먼저 끝난다 (줄이 없는 구급대원의 즉석 부력물이 구명줄보다 느리다)
+    for (const seed of ['S5', 'S8', 'S7']) {
       const sim = shift(seed, NORMAL, 'water/std');
       hoists += sim.airStats.hoists;
       for (const s of scenesOf(sim)) if (s.kind === 'water') for (const c of s.casualties) {

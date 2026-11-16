@@ -130,8 +130,8 @@ export function casFact(sim: Sim, s: Scene, c: Casualty, src: string): Fact {
   const mob = c.mob === 'trapped' ? 'trapped' : c.walking ? 'mobile' : 'immobile';
   const b = band(c.health);
   // water: (R2) 물속인가 — 본 그대로. 이 값은 늘 mob·band 와 함께 바뀌므로(물에 빠짐·건져 냄·휩쓸려 숨짐) 믿음의 "새 소식" 판정을 바꾸지 않는다.
-  // 떠내려가는 속도(drift)는 단계 1a 가 더한다 — 걸려 멈추는 순간 그 값만 달라져 보고가 한 번 더 나간다 (재 보니 64교대 가운데 1교대의 무전 수가 달라졌다)
-  const v: CasBelief = { x: Math.round(c.x), y: Math.round(c.y), mob, band: b, where: c.where, treated: c.treated, trappedDone: c.mob !== 'trapped', tq: c.treatQ >= 0.6 ? 2 : c.treated ? 1 : 0, water: c.inWater === true };
+  // drift: (R2 1a) 떠내려가는 속도 — 본 그대로(물 밖이면 0). 떠내려가는 동안은 그대로이고 걸려 멈추는 순간 0 이 된다 — 그때 보고가 한 번 더 나간다(방법을 고르는 판단부가 물살을 이것으로 본다)
+  const v: CasBelief = { x: Math.round(c.x), y: Math.round(c.y), mob, band: b, where: c.where, treated: c.treated, trappedDone: c.mob !== 'trapped', tq: c.treatQ >= 0.6 ? 2 : c.treated ? 1 : 0, water: c.inWater === true, drift: c.inWater ? c.drift ?? 0 : 0 };
   const mobT = c.dead ? '' : mob === 'trapped' ? ' · 고립' : mob === 'mobile' ? ' · 자력 대피 중' : c.where === 'scene' ? ' · 거동 불가' : '';
   const whereT = c.where === 'safe' ? '안전 구역' : c.where === 'loaded' ? '구급차 탑승' : c.where === 'carried' ? '이송 중' : regionNameAt(s, c.x, c.y);
   return mkFact('cas', c.id, v, src, sim.t, 1, true, `구조 대상 ${c.label}: ${whereT}${mobT} · ${BAND_NAME[b]}`);
@@ -686,7 +686,11 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
       if (mb && mb.trapped && r.skills.rescue < 0.3) return 0;      // (X6 §4.8) 잔해에 깔린 동료: 잔해를 들어낼 줄 아는 대원만 (구출 능력 0.3 이상)
       return 0.5 + r.fitness * 0.3 + r.teamwork * 0.2;
     }
-    case 'waterRescue': return 0.22 + r.skills.rescue * 0.5 + toolFor(sim, rid, 'water') * 0.28;
+    case 'waterRescue': {
+      // (R2 1a) 장비 항은 그 사람이 지금 쓸 수 있는 가장 좋은 방법의 점수 (methodFit — 알려진 고장만 본다). 쓸 방법이 없으면 맡지 않는다
+      const best = methodFit(sim, s, a, w);
+      return best > 0 ? 0.22 + r.skills.rescue * 0.5 + Math.min(1, best) * 0.28 : 0;
+    }
     case 'defuse': return hasKit(sim, rid, 'eodKit') ? 0.6 + 0.4 * r.skill : 0;      // 해체 공구를 든 처리 요원만 손댄다
     case 'overhaul': return hasKit(sim, rid, 'hose') && airOk(sim, rid, afterSwap) ? 0.4 + 0.6 * r.skills.fire : 0;      // 불씨를 만나면 분사한다: 관창을 든 사람만 (공기가 문턱 아래면 통을 바꾼 뒤에)
     case 'hoist': case 'airDrop': return 0;      // 공중 임무: 지상 대원은 맡지 않는다 (상공의 헬기가 field/rules/air.ts 에서 가져간다)
@@ -733,6 +737,8 @@ export function nearDoor(s: Scene, i: number): boolean { return doorAt(s, i) !==
 // ── (R3) 대응 교본의 판단부 (field/doctrine.ts) — fitFor 의 맨 끝이 부른다. doctrine.ts 는 이 파일을 import 하지 않는다(순환 없음).
 //    (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다) ──
 import { docFit } from './doctrine';
+// (R2 1a) 대응 방법의 판단부 — 수난 구조의 배정(fitFor)이 methodFit 을 쓴다. methods.ts 는 이 파일을 import 하지 않는다 (순환 없음)
+import { methodFit } from './methods';
 // (X6) 조짐 관찰 (field/catastrophe.ts — 그 파일도 이 파일의 learn·regionNameAt 을 쓴다. 함수 안에서만 서로 부르므로 순환 import 는 문제없다)
 import { perceiveSigns, vesselName } from './catastrophe';
 // (X6 단계 5) 지휘 상태의 도움 함수 (진입 금지 구역·문·피하는 곳 — 진실을 읽지 않는다)

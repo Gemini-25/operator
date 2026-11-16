@@ -11,8 +11,9 @@
 // 고르는 때 (§3.2): 처음(startMethod) · 도착 재선택 한 번(recheckOnArrive) · 바꿀 때 셋(실패 · 고장 · 조건 상실 3초 — switchMethod) · 예정된 전환.
 // "더 좋은 방법이 보이면 바꾼다"는 없다 (대원이 두 방법 사이를 오간다). 실행부는 methodRun.ts.
 //
-// 단계 0 (틀): 표의 모든 줄은 있지만 실행부가 없으므로 can 이 모두 NOT_YET(거짓)이다 — 아무것도 고르지 않고, 아무도 이 파일을 부르지 않는다(결과 불변).
-// 방법을 구현하는 단계가 그 줄의 can·situ·skill 을 채운다 (수난 1a~1c · 문 2 · 구출·탐지 3 · 화재 4 · 무장 5 · 응급·가스 6).
+// 단계 0 (틀)에서 표의 모든 줄을 두고 can 을 NOT_YET(거짓)으로 비워 두었다. 방법을 구현하는 단계가 그 줄의 can·situ·skill 을 채운다
+// (수난 1a~1c · 문 2 · 구출·탐지 3 · 화재 4 · 무장 5 · 응급·가스 6). 켜진 줄: 단계 1a — 수난 구조의 물가 방법 여섯(hand·pole·ring·rope·improvise·catch).
+// 배정(agents.fitFor 의 waterRescue)이 methodFit 을, 실행부(methodRun.runWaterRescue)가 chooseMethod·methodStillFits 를 부른다.
 
 import type { Sim } from '../engine';
 import { hashStr } from '../rng';
@@ -75,18 +76,46 @@ const row = (id: MethodId, work: WorkKind[], name: string, short: string, label:
   ({ id, work, name, short, label, noun, kits, altUnit: x.altUnit, needUnit: x.needUnit, pref, risk, plain, record: x.record, can: x.can ?? NOT_YET, situ: x.situ, skill: x.skill });
 const REC: Extra = { record: true };
 
+// ── 수난 구조의 조건·배율 (§4.1) — 대상의 위치·물살·위중은 모두 믿음에서(MethodCtx 의 reach·flow·weak) ──
+/** 닿는 거리 (칸): 손 1.2 · 장대 2.0 · 구명환 2.8 · 구명줄·즉석 부력물 3.6(THROW_REACH) */
+export const HAND_REACH = 1.2, POLE_REACH = 2.0, RING_REACH = 2.8;
+/** 하류 차단: 대상이 기다릴 자리에 닿는 예상(초)이 이 안이면 그대로, 늦은 쪽(SOON~LATE)은 점수 ×0.5, 넘으면 고르지 않는다 */
+export const CATCH_SOON = 40, CATCH_LATE = 90;
+/** 같은 대상에게 헤엄쳐 들어간 동료가 있다 — 던지는 방법은 그 동료에게 걸린다 */
+const mateSwims = (c: MethodCtx): boolean => { for (let k = 0; k < c.mates.length; k++) if (c.mates[k].task!.method === 'swim') return true; return false; };
+/** 던지는 방법(구명환·구명줄)의 상황 배율: 위중 ×0.35 · 빠른 물살 ×0.85 · 밤·비·안개 ×0.9 */
+const throwSitu = (c: MethodCtx): number => (c.weak ? 0.35 : 1) * (c.flow >= FAST_FLOW ? 0.85 : 1) * (c.sim.weather !== 'clear' ? 0.9 : 1);
+/** 사람 배율: 던지기 0.8 + 0.4 × 구조 능력, 뻗기 0.9 + 0.2 × 구조 능력 */
+const throwSkill = (c: MethodCtx): number => 0.8 + 0.4 * c.r.skills.rescue;
+const reachSkill = (c: MethodCtx): number => 0.9 + 0.2 * c.r.skills.rescue;
+/**
+ * 하류 차단의 예상 시간(초): 믿음 속 대상이 떠내려가고 있고(drift > 0) 같은 줄 하류 8칸 안에 대원이 걸어서 닿는 뭍(다리·굽은 물가)이 있으면
+ * 대상이 그 앞 칸에 닿기까지 (점 − 1 − x) / drift. 아니면 Infinity
+ */
+function catchEta(c: MethodCtx): number {
+  if (c.cb === null || !(c.flow > 0)) return Infinity;
+  const pt = catchPoint(c.s, c.cb.x, c.cb.y, c.a);
+  return pt === null ? Infinity : Math.max(0, pt.x - 1 - c.cb.x) / c.flow;
+}
+
 /**
  * 방법 표 (§4). Record 라 MethodId 를 늘리면 컴파일이 줄을 강제한다. 같은 점수면 이 표의 순서가 이긴다.
  * 수치(pref·risk)는 설계서의 시작값이다. 조건(can)·배율(situ·skill)은 그 방법을 구현하는 단계가 채운다.
  */
 export const METHOD: Record<MethodId, MethodDef> = {
-  // ── 수난 구조 waterRescue (§4.1): 뻗기 → 던지기 → 배로 → 들어가기 ──
-  hand: row('hand', ['waterRescue'], '손 뻗어 붙잡기', '손', '손 뻗어 붙잡기', '손을 뻗어 붙잡아', [], 1.0, 0, true),
-  pole: row('pole', ['waterRescue'], '장대 뻗기', '장대', '장대 뻗기', '갈고리 장대로', ['pole'], 0.92, 0, true),
-  ring: row('ring', ['waterRescue'], '구명환 투척', '구명환', '구명환 투척', '구명환을 던져', ['ring'], 0.84, 0, false),
-  rope: row('rope', ['waterRescue'], '구명줄 투척', '구명줄', '구조 줄 투척', '구명줄로', ['rope'], 0.85, 0, true),      // 지금의 방법
-  improvise: row('improvise', ['waterRescue'], '즉석 부력물', '즉석 부력물', '즉석 부력물 투척', '옷과 끈을 이어 던져', [], 0.5, 0, false),
-  catch: row('catch', ['waterRescue'], '하류에서 기다렸다 붙잡기', '하류 차단', '하류에서 대기', '하류에서 기다렸다 붙잡아', [], 0.8, 0, false),
+  // ── 수난 구조 waterRescue (§4.1): 뻗기 → 던지기 → 배로 → 들어가기. 단계 1a 가 물가 방법 여섯(hand·pole·ring·rope·improvise·catch)을 켰다 ──
+  hand: row('hand', ['waterRescue'], '손 뻗어 붙잡기', '손', '손 뻗어 붙잡기', '손을 뻗어 붙잡아', [], 1.0, 0, true,
+    { can: (c) => c.reach <= HAND_REACH && !c.s.quay, situ: (c) => (c.weak ? 0.7 : 1), skill: reachSkill }),      // 안벽(선박 화재의 부두)에서는 손이 물에 닿지 않는다
+  pole: row('pole', ['waterRescue'], '장대 뻗기', '장대', '장대 뻗기', '갈고리 장대로', ['pole'], 0.92, 0, true,
+    { can: (c) => c.reach <= POLE_REACH, situ: (c) => (c.weak ? 0.8 : 1), skill: reachSkill }),
+  ring: row('ring', ['waterRescue'], '구명환 투척', '구명환', '구명환 투척', '구명환을 던져', ['ring'], 0.84, 0, false,
+    { can: (c) => c.reach <= RING_REACH && !mateSwims(c), situ: throwSitu, skill: throwSkill }),
+  rope: row('rope', ['waterRescue'], '구명줄 투척', '구명줄', '구조 줄 투척', '구명줄로', ['rope'], 0.85, 0, true,      // 지금의 방법
+    { can: (c) => c.reach <= THROW_REACH && !mateSwims(c), situ: throwSitu, skill: throwSkill }),
+  improvise: row('improvise', ['waterRescue'], '즉석 부력물', '즉석 부력물', '즉석 부력물 투척', '옷과 끈을 이어 던져', [], 0.5, 0, false,      // 누구나 고를 수 있는 맨몸 방법 (옷·끈을 이은 줄과 빈 통)
+    { can: (c) => c.reach <= THROW_REACH && !mateSwims(c), situ: (c) => (c.weak ? 0.35 : 1) * (c.reach > 2.4 ? 0.6 : 1) * (c.sim.weather !== 'clear' ? 0.9 : 1), skill: throwSkill }),
+  catch: row('catch', ['waterRescue'], '하류에서 기다렸다 붙잡기', '하류 차단', '하류에서 대기', '하류에서 기다렸다 붙잡아', [], 0.8, 0, false,
+    { can: (c) => catchEta(c) <= CATCH_LATE, situ: (c) => (catchEta(c) > CATCH_SOON ? 0.5 : 1) * (c.weak ? 0.8 : 1) * (c.flow >= FAST_FLOW ? 1.3 : 1) }),
   swim: row('swim', ['waterRescue'], '헤엄쳐 접근', '헤엄', '헤엄쳐 접근', '헤엄쳐 들어가', [], 0.45, 0.3, false),
   tend: row('tend', ['waterRescue'], '구조자 줄 확보', '줄 확보', '구조자 줄 확보', '헤엄치는 동료의 줄을 잡아', ['rope'], 0.9, 0, false),
   boat: row('boat', ['waterRescue'], '보트 접근', '보트', '보트 접근', '보트로 다가가', ['raft'], 0.78, 0.08, false, { altUnit: ['boat'] }),
@@ -449,6 +478,15 @@ export function chooseMethod(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, 
   else if (WHY_NEAR.has(top)) why = 'near';
   else if (WHY_TEAM.has(top)) why = 'team';
   return { m: top, why, cands, missing: undefined };
+}
+/**
+ * 실행부의 1초 재확인 (§4.1): 고른 방법을 지금도 쓸 수 있는가 — 장비(canUse)와 상황 조건(can)만 본다(점수·다른 방법은 보지 않는다 — "더 좋은 방법이 보이면 바꾼다"는 없다).
+ * 대상 믿음이 없으면 참이다(믿음을 잃은 것만으로 바꾸지 않는다). 상태를 바꾸지 않는다.
+ */
+export function methodStillFits(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, tg: MTarget, t: Task | null, m: MethodId, sense: Sense = NO_SENSE): boolean {
+  const c = makeCtx(sim, s, a, work, tg, t, sense, null);
+  if (NEEDS_CAS[work] && c.cb === null) return true;
+  return canUse(c, m) && METHOD[m].can(c);
 }
 /** 작업 항목의 대상 */
 export function targetOfWork(w: WorkItem): MTarget { return { cas: w.cas, prop: w.prop, hostile: w.hostile, region: w.region, tile: w.tile }; }

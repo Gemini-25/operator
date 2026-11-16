@@ -288,7 +288,7 @@ describe('3 새 부대 — 편성되지 않는 넷 · 표 · 관제의 틀 (단�
     expect(KITS.diveKit.faultable).toBe(true); expect(KITS.diveKit.batch).toBe('n9'); expect(KITS.diveKit.uses).toBe(900);
     for (const id of ['mtnKit', 'deconKit', 'oilBoom'] as KitId[]) { expect(!!KITS[id].faultable, id).toBe(false); expect(KITS[id].batch, id).toBeUndefined(); }
     expect(KITS.oilBoom.uses).toBe(3);
-    expect(ROLES.boatRescuer.kit).toEqual(['rope', 'ring', 'oilBoom']);
+    expect(ROLES.boatRescuer.kit.slice(0, 3)).toEqual(['rope', 'ring', 'oilBoom']);      // (R2 1a) 그 뒤에 장대·구명조끼·드라이슈트가 붙는다 (R2 §3.3 — 끝에 붙여 추첨 순서가 그대로다)
     // 새 역할 아홉: 그림 묶음은 지금 묶음에서 · 방패 대원은 총기가 없다 · 기동대의 최소 인원에도 총기 대원(소대장)이 남는다(경찰 0.9 ⇒ 총기)
     const groups: Record<string, string> = { mtnLead: 'lead', mtnRescuer: 'rescue', diveLead: 'water', diver: 'water', deconLead: 'lead', deconTech: 'hazmat', riotLead: 'lead', riotShield: 'shield', riotGrab: 'officer' };
     for (const [role, g] of Object.entries(groups)) expect(ROLES[role as RoleId].group, role).toBe(g);
@@ -327,13 +327,16 @@ describe('3 새 부대 — 편성되지 않는 넷 · 표 · 관제의 틀 (단�
     for (const seed of ['F1', 'F2', 'F3', 'F4', 'F5', 'F6']) {
       const full = fullOrg(seed, 1), now = new Sim(seed, { ...NORMAL, resources: 5, equipment: 1 });
       const p = full.tune.kitFault;
-      const rk = full.rng.fork('kit'), r9 = full.rng.fork('kit-n9'), want: string[] = [], want9: string[] = [], got: string[] = [], got9: string[] = [];
+      // (R2 1a) R2 의 고장 나는 장비(batch r2 — 로프 대원의 고무보트)도 따로 뽑는 묶음이다 (kit-r2 흐름) — 교대 흐름 kit 의 순서에서 뺀다
+      const own = (id: KitId): boolean => KITS[id].batch === 'n9' || KITS[id].batch === 'r2';
+      const rk = full.rng.fork('kit'), r9 = full.rng.fork('kit-n9'), r2 = full.rng.fork('kit-r2'), want: string[] = [], want9: string[] = [], want2: string[] = [], got: string[] = [], got9: string[] = [], got2: string[] = [];
       for (const r of full.responders) for (const it of r.kit!) {
-        if (KITS[it.id].faultable && KITS[it.id].batch !== 'n9' && rk.chance(p)) want.push(r.name + ':' + it.id);
-        if (it.fault) (KITS[it.id].batch === 'n9' ? got9 : got).push(r.name + ':' + it.id);
+        if (KITS[it.id].faultable && !own(it.id) && rk.chance(p)) want.push(r.name + ':' + it.id);
+        if (it.fault) (KITS[it.id].batch === 'n9' ? got9 : KITS[it.id].batch === 'r2' ? got2 : got).push(r.name + ':' + it.id);
       }
       for (const r of full.responders) for (const it of r.kit!) if (KITS[it.id].batch === 'n9' && r9.chance(p)) want9.push(r.name + ':' + it.id);
-      expect(got, seed).toEqual(want); expect(got9, seed).toEqual(want9);
+      for (const r of full.responders) for (const it of r.kit!) if (KITS[it.id].faultable && KITS[it.id].batch === 'r2' && r2.chance(p)) want2.push(r.name + ':' + it.id);
+      expect(got, seed).toEqual(want); expect(got9, seed).toEqual(want9); expect(got2, seed).toEqual(want2);
       n9 += full.responders.reduce((m, r) => m + r.kit!.filter((it) => it.id === 'diveKit').length, 0);
       const k = now.responders.length;
       expect(full.responders.slice(0, k).map((r) => r.name)).toEqual(now.responders.map((r) => r.name));

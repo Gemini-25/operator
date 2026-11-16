@@ -427,12 +427,12 @@ export function medLevelOf(sim: Sim, rid: number): number {
 }
 /** 방패가 교전·봉쇄 중에 더하는 방호 */
 const SHIELD_ARMOR = 0.3;
-/** 총격 방호: 가장 좋은 방호 장비 (교전·봉쇄 중이면 + 방패) × 장비 손잡이(armorMul), 상한 0.8 */
-export function armorOf(sim: Sim, rid: number, engaging: boolean): number {
+/** 총격 방호: 가장 좋은 방호 장비 (교전·봉쇄 중이면 + 방패) × 장비 손잡이(armorMul), 상한 0.8. bare = (R3 §3.7) 방호복을 벗고 맨몸 해체 중 — 폭발물 방호복을 세지 않는다 */
+export function armorOf(sim: Sim, rid: number, engaging: boolean, bare = false): number {
   const kit = sim.responders[rid].kit;
   let m = 0, shield = false;
   if (kit) for (let k = 0; k < kit.length; k++) {
-    if (kit[k].faultKnown) continue;
+    if (kit[k].faultKnown || (bare && kit[k].id === 'bombSuit')) continue;
     const v = KITS[kit[k].id].armor;
     if (v !== undefined && v > m) m = v;
     if (kit[k].id === 'shield') shield = true;
@@ -440,8 +440,8 @@ export function armorOf(sim: Sim, rid: number, engaging: boolean): number {
   if (engaging && shield) m += SHIELD_ARMOR;
   return Math.min(0.8, m * sim.tune.armorMul);
 }
-/** 폭발 피해에 곱하는 값: 폭발물 방호복 .35 · 방화복 .7 · 그 밖 1 */
-export function blastFactor(sim: Sim, rid: number): number { return hasKit(sim, rid, 'bombSuit') ? 0.35 : hasKit(sim, rid, 'turnout') ? 0.7 : 1; }
+/** 폭발 피해에 곱하는 값: 폭발물 방호복 .35 · 방화복 .7 · 그 밖 1. bare = (R3 §3.7) 방호복을 벗고 맨몸 해체 중 — 방호복을 세지 않는다 */
+export function blastFactor(sim: Sim, rid: number, bare = false): number { return !bare && hasKit(sim, rid, 'bombSuit') ? 0.35 : hasKit(sim, rid, 'turnout') ? 0.7 : 1; }
 /** 환자 자리 (구급차 2, 소방·의료 헬기 1, 나머지 0) */
 export function seatsOf(u: Unit): number { return u.seats ?? 0; }
 /**
@@ -460,10 +460,15 @@ export const AIR_MIN = 45;
 /** 공기 잔량 경고(초): 이 밑으로 떨어지면 기록을 남기고, 예비 공기통이 있으면 바꾸러 나간다 (brain.ts) */
 export const AIR_LOW = 60;
 /**
- * 공기가 모자란가: 공기호흡기를 멨는데 남은 공기가 문턱(AIR_MIN) 아래다. 공기호흡기가 없거나 공기를 세지 않는 대원은 해당 없음(false).
- * 자기 장비의 상태라 배정·판단(fitFor)이 읽어도 된다.
+ * (R3 §3.2 F03 · §11.1) 위험 실내 일을 새로 맡는 공기의 비율 문턱 — 한 통(tn.airFull)의 이 몫 아래면 모자라다. 교본 판단부의 DOC.AIR_IN 과 같은 값이다
+ * (tests/doctrine.test.ts 가 둘이 같은지 본다). R1 의 초 문턱 AIR_MIN(45초)을 대신한다 — 공기 30% 아래의 탈출(F01)과 0.20 의 간격을 둔다
  */
-export function airShort(sim: Sim, rid: number): boolean { const it = itemOf(sim, rid, 'scba'); return it !== null && it.uses !== undefined && it.uses < AIR_MIN; }
+export const AIR_IN_FRAC = 0.5;
+/**
+ * 공기가 모자란가: 공기호흡기를 멨는데 남은 공기가 한 통의 AIR_IN_FRAC(50%) 아래다 (R3 3단계 — R1 은 45초 AIR_MIN). 공기호흡기가 없거나 공기를 세지 않는 대원은 해당 없음(false).
+ * 자기 장비의 상태라 배정·판단(fitFor)이 읽어도 된다. 공기 문턱은 이 한 곳이다 — 현장의 배정(fitFor)·오는 부대(capableOf)·지휘관의 "바꾸고 와서 맡을 사람"(anyCapable)·R2 의 내부 공격(gear.airLow)
+ */
+export function airShort(sim: Sim, rid: number): boolean { const it = itemOf(sim, rid, 'scba'); return it !== null && it.uses !== undefined && it.uses < AIR_IN_FRAC * sim.tune.airFull; }
 /** 공기호흡기로 연기 속에 들어갈 수 있는가: 메고 있고(알려진 고장이 아니다) 공기가 문턱 이상 남았다 */
 export function scbaReady(sim: Sim, rid: number): boolean { return hasKit(sim, rid, 'scba') && !airShort(sim, rid); }
 /** 공기통을 가득 채운다 (예비 공기통으로 바꿨거나, 부대가 집에 돌아왔다). 공기를 세지 않는 대원은 그대로다 */

@@ -349,7 +349,8 @@ describe('탄의 선 = 깨진 창 · 맞은 칸 (G5c)', () => {
             const p = pre.get(s.id);
             if (!p) continue;
             const shots = news.filter((f) => f.kind === 'shot');
-            const blast = news.some((f) => f.kind === 'flash' || f.kind === 'boom') || s.fire.some((v) => v > 0.05);
+            // (R3 3단계) 폭파 진입(R2 charge — 기록은 'breach', how 'charge')도 폭발이다: 곁의 창을 깬다. 교본으로 결과가 바뀌어 농성 G5C-2 에서 그 틱이 처음 나왔다
+            const blast = news.some((f) => f.kind === 'flash' || f.kind === 'boom' || (f.kind === 'breach' && f.c !== undefined && f.c.how === 'charge')) || s.fire.some((v) => v > 0.05);
             const coverCells: number[] = [];
             for (const f of shots) {
               const c = f.c!;

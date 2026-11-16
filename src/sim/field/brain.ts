@@ -120,7 +120,15 @@ function evacDuty(sim: Sim, s: Scene, a: FieldAgent): string {
  * 가스 단계 3 은 지휘관에게 단계 2(새 진입 금지 — 허락된 일만)다: 밸브를 잠그러 들어간 대원이 측정값을 읽자마자 스스로 나오면 밸브는 끝내 잠기지 않는다
  */
 function allowedHere(s: Scene, a: FieldAgent): boolean {
-  const t = a.task;
+  let t = a.task;
+  // (R3 균형) 짝 동행(G08 — 'pair')은 짝이 하는 일의 일부다: 짝이 허락된 일(밸브 차단 …)을 하고 있으면 동행도 허락된 일로 본다.
+  //   아니면 동행이 가스 측정값을 읽자마자 물러나고, 짝 따라 나가기(F02)가 밸브를 잠그던 짝까지 데리고 나와 "들어감 → 물러남 → 따라 나감"을 1분마다 되풀이했다
+  //   (강제 hazmat/std — 한 대원의 '가스 농도가 위험합니다. 물러납니다.' 11번, 측정 도구의 반복 최대). 짝의 일은 동료의 겉(받은 임무)이다
+  if (t && t.kind === 'pair' && a.buddy !== undefined && a.buddy >= 0) {
+    let b: FieldAgent | null = null;
+    for (let k = 0; k < s.agents.length; k++) if (s.agents[k].rid === a.buddy && s.agents[k] !== a) { b = s.agents[k]; break; }
+    t = b !== null && b.status === 'active' ? b.task : null;
+  }
   if (!t || t.workId < 0) return false;
   const w = s.board[t.workId];
   return !!w && ALLOWED2.has(w.kind);
@@ -143,6 +151,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
     a.planT = sim.t + (a.task && a.task.kind !== 'standby' && a.task.kind !== 'sizeup' ? 3.4 : 2);
   }
   if (I.phase === 'closed' && !sim.units[a.unitId].boardOrder) sim.units[a.unitId].boardOrder = 'release';
+  rebuddy(sim, s, a);      // (R3 §5.3 — 0번) 짝이 없거나 잃었으면 다시 맺는다 (혼자 서는 역할은 하지 않는다)
   const u = sim.units[a.unitId];
   const cur = a.task;
 
@@ -189,15 +198,16 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
 
   // (R3) 교본의 의무와 놓기 — 설계서 R3 §2.6 의 4번 (X6 의 철수(evacuate) 의무가 들어오면 그 바로 뒤에 둔다). 단계 0: 줄이 없어 아무것도 하지 않는다
   const dSense = senseOf(s, a);
+  const dth = docThink();      // (R3 속도) 의무·후퇴 바꿔 끼우기·행동 후보가 이 판단의 입력 하나를 함께 쓴다 (doctrine.docThink)
   if (cur && DOC_DUTY_TASKS.has(cur.kind)) return;
-  { const d = docDuty(sim, s, a, dSense); if (d) { docBegin(sim, s, a, d, XK); return; } }
+  { const d = docDuty(sim, s, a, dSense, 0, dth); if (d) { docBegin(sim, s, a, d, XK); return; } }
   { const dr = docDrop(sim, s, a); if (dr && cur) { const wk = s.board[cur.workId].kind, wid = cur.workId; finishTask(sim, s, a, false, 'doctrine'); recordDoc(sim, I, a, dr.id, 'fit', { work: wk, tgt: 'w:' + wid }, docNote(sim, s, a, dr, 1, dr.dropNote), dr.report !== undefined); return; } }      // (2단계) 놓을 때의 문구 (P22 '탄약이 없어 위치를 넘깁니다.')
 
   const opts: Option[] = [];
   // 1) 위험 회피
   const dng = dangerScore(sim, s, a);
   const sd = sdScore, sdW = sdWhy, sdR = sdRegion;      // (X6) 그 점수 가운데 조짐의 몫 — 그 때문에 물러나면 피하는 곳(30초)과 까닭의 문구
-  const swapR = dng > 0.3 && (!cur || cur.kind !== 'retreat') ? docRetreat(sim, s, a, dng, dSense, sd) : null;      // (R3) P11 — 후퇴 후보를 교본 행동(엄폐)으로 바꿔 끼운다 (조짐 몫 sd 가 있으면 걸리지 않는다)
+  const swapR = dng > 0.3 && (!cur || cur.kind !== 'retreat') ? docRetreat(sim, s, a, dng, dSense, sd, dth) : null;      // (R3) P11 — 후퇴 후보를 교본 행동(엄폐)으로 바꿔 끼운다 (조짐 몫 sd 가 있으면 걸리지 않는다)
   if (swapR) opts.push({ label: `교본 · ${swapR.rule.short}`, score: swapR.score, apply: () => docBegin(sim, s, a, swapR, XK) });
   else if (dng > 0.3 && (!cur || cur.kind !== 'retreat')) opts.push({ label: hurt ? '부상 — 후퇴' : '위험 회피 — 후퇴 후 재평가', score: dng, apply: () => {
     // 맡고 있던 작업은 위험해서 내려놓은 것으로 기록한다: 지휘관이 곧바로 같은 대원에게 다시 맡기지 않는다
@@ -243,7 +253,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
   //    (공기통을 바꾸는 중에는 이 둘도 내지 않고, 이 둘을 하는 중에는 공기통 교체를 내지 않는다 — 시작한 것을 끝낸 뒤 다음 것을 한다)
   const panel = hasKit(sim, a.rid, 'pumpPanel');
   const pumpMine = panel || !pumpOperatorOn(sim, s, a.unitId);
-  if (pumpMine && a.equipIssue === 'pump' && (!cur || cur.kind !== 'resupply') && !swapping) {
+  if (pumpMine && a.equipIssue === 'pump' && (!cur || cur.kind !== 'resupply') && !swapping && (u.sparePump === undefined || u.sparePump > 0)) {      // (R3 F10) 예비 펌프가 남았을 때만 (0 이면 지휘관이 진압 부대 교체를 부른다 — CF3)
     const someoneFixing = s.agents.some((b) => b !== a && b.unitId === a.unitId && b.task && b.task.kind === 'resupply');
     if (!someoneFixing) opts.push({ label: '장비 교체 (예비 펌프)', score: 0.84, apply: () => {
       setTask(sim, s, a, 'resupply', '장비 교체');
@@ -271,16 +281,18 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
   //      후퇴 중이거나 지쳐서 물러나는 중(체력 40 까지의 붙잡기)에는 내지 않는다 — 둘 다 대기 지점으로 가는 길이고, 닿은 뒤에 바꾼다
   //      (점수가 비슷해 후퇴·휴식과 교체를 오가며 같은 말을 되풀이했다)
   const tied = cur !== null && (cur.kind === 'swapAir' || cur.kind === 'resupply' || cur.kind === 'hookup' || cur.kind === 'retreat' || (cur.kind === 'rehab' && r.stamina < 40));
-  if (hasKit(sim, a.rid, 'scba') && kitUses(sim, a.rid, 'scba') < AIR_LOW && !tied && a.carrying === -1 && sim.t >= a.equipRetryAt) {
+  // (R3 F03) 공기가 위험 실내 일의 문턱(한 통의 50% — crews.airShort) 아래인데 바깥에서 손이 비었으면 미리 바꾼다 (0.7 — 60초 아래의 교체보다 낮게)
+  const airEarly = kitUses(sim, a.rid, 'scba') >= AIR_LOW && (!cur || cur.kind === 'standby') && airShort(sim, a.rid) && !indoorAt(s, a);
+  if (hasKit(sim, a.rid, 'scba') && (kitUses(sim, a.rid, 'scba') < AIR_LOW || airEarly) && !tied && a.carrying === -1 && sim.t >= a.equipRetryAt) {
     let taken = 0;
     for (const b of s.agents) if (b !== a && b.unitId === a.unitId && b.status === 'active' && b.task && b.task.kind === 'swapAir') taken++;
-    if ((u.spareAir ?? 0) > taken) opts.push({ label: '공기통 교체', score: s.smoke[tileOf(s, a.x, a.y)] > 0.25 ? 0.95 : 0.9, apply: () => {
+    if ((u.spareAir ?? 0) > taken) opts.push({ label: '공기통 교체', score: airEarly ? 0.7 : s.smoke[tileOf(s, a.x, a.y)] > 0.25 ? 0.95 : 0.9, apply: () => {
       setTask(sim, s, a, 'swapAir', '공기통 교체');
       emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: '공기통을 교체하러 대기 지점으로 갑니다.' });
     } });
   }
   // (R3) 교본 행동 후보 하나 (R1 공기통 교체 다음 — 설계서 R3 §2.6 의 5번). 단계 0: 줄이 없어 후보를 내지 않는다 (판단 오차의 a.rng 소비가 그대로)
-  { const p = swapping ? null : docAct(sim, s, a, dSense, dng); if (p) opts.push({ label: `교본 · ${p.rule.short}`, score: p.score, apply: () => docBegin(sim, s, a, p, XK) }); }
+  { const p = swapping ? null : docAct(sim, s, a, dSense, dng, dth); if (p) opts.push({ label: `교본 · ${p.rule.short}`, score: p.score, apply: () => docBegin(sim, s, a, p, XK) }); }
   // 5) 휴식 (공기통을 바꾸는 중이면 바꾼 뒤에 쉰다 — 8초)
   if (r.stamina < 22 && (!cur || (cur.kind !== 'rehab' && cur.kind !== 'swapAir')) && a.carrying === -1) opts.push({ label: '체력 고갈 — 교대 휴식', score: 0.55 + ((22 - r.stamina) / 22) * 0.4, apply: () => {
     setTask(sim, s, a, 'rehab', '휴식');
@@ -305,6 +317,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
     // (R2 1c) 수난 구조를 하는 중에는 곁의 다른 일(다른 수난 구조·이송)로 스스로 옮기지 않는다: 계속 점수(0.5 + 0.4 × 우선순위)와 곁의 일 점수가 비슷해
     // 판단 오차만으로 두 일 사이를 오가며 그때마다 방법을 다시 고르고 알렸다(해일 — 같은 대원이 1~2초마다). 지휘관의 지시는 그대로 받는다
     if (!free && cur!.kind === 'waterRescue') continue;
+    if (!free && cur!.kind === 'triage') continue;      // (R3 4단계) 분류 중에는 곁의 환자 일(구출·이송·처치 — 분류하며 늘 곁을 지난다)로 스스로 옮기지 않는다: 옮기면 분류가 대원 사이를 돌며 끊긴다. 지휘관의 지시는 그대로 받는다
     if (free && near === 0 && !a.isCommander && sim.t - a.idleSince < 2.6) continue;      // 먼저 지휘관 지시를 기다린다
     const sc = (free ? 0.3 : 0.15) + initiative * 0.25 + w.priority * 0.35 + near + fit * 0.1;
     if (sc > bestS) { bestS = sc; bestW = w; }
@@ -332,8 +345,12 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
 
 // ── (R3) 대응 교본의 자리 (field/doctrine.ts 의 판단 · doctrineRun.ts 의 실행 · R2 의 감각 senseOf · 실행기 도구 XK).
 //    (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다) ──
-import { DOC_DUTY_TASKS, docAct, docDrop, docDuty, docRetreat } from './doctrine';
+import { DOC_DUTY_TASKS, docAct, docDrop, docDuty, docRetreat, docThink } from './doctrine';
 import { docBegin, docContinue, docNote, recordDoc, selfReport, splitBegin, splitSettle } from './doctrineRun';
+import { rebuddy } from './doctrineRun';      // (R3 3단계) 짝 다시 맺기
+import { airShort } from '../crews';      // (R3 3단계 F03) 공기 문턱 (한 통의 50%)
+/** (R3 3단계) 선 자리가 실내 구역인가 (생김새 — 미리 하는 공기통 교체는 바깥에서만) */
+const indoorAt = (s: Scene, a: FieldAgent): boolean => { const rg = s.region[tileOf(s, a.x, a.y)]; return rg >= 0 && s.regions[rg] !== undefined && s.regions[rg].indoor; };
 import { XK } from './executor';
 import { senseOf } from './methodRun';
 import { onWater } from './methods';      // (R2 1b) 물 위의 대원 가드

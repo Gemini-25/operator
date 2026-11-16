@@ -103,7 +103,7 @@ export function moveSpeed(sim: Sim, s: Scene, a: FieldAgent): number {
   if (s.kind === 'search') v *= s.tiles[i] === T.TRAIL ? 0.9 : s.tiles[i] === T.TREE ? 0.42 : 0.6;      // 험한 지형
   else if (s.tiles[i] === T.TREE) v *= 0.62;
   if (a.carrying !== -1) {
-    const helper = s.agents.find((b) => b !== a && b.status === 'active' && b.task && b.task.kind === a.task?.kind && b.task.workId === a.task?.workId && dist(a.x, a.y, b.x, b.y) < 2);
+    const helper = s.agents.find((b) => b !== a && b.status === 'active' && b.task && ((b.task.kind === a.task?.kind && b.task.workId === a.task?.workId) || (b.task.kind === 'pair' && b.buddy === a.rid)) && dist(a.x, a.y, b.x, b.y) < 2);      // (R3 3단계) 따라온 짝(짝 동행)도 함께 든다
     const walk = a.carrying >= 0 && s.casualties[a.carrying].mob === 'mobile';
     // 옮기는 사람이나 곁에서 돕는 사람이 들것을 가졌으면 더 빨리 옮긴다 (둘 0.78 → 0.88, 혼자 0.48 → 0.55)
     const litter = !walk && (hasKit(sim, a.rid, 'stretcher') || (helper !== undefined && hasKit(sim, helper.rid, 'stretcher')));
@@ -164,6 +164,8 @@ function moveTo(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, range
     if (!kind) { a.path = null; return 'moving'; }
     const known = a.beliefs.val<string>('blk', next);
     if (!known || known === 'none') { discoverBlock(sim, s, I, a, next, kind); a.path = null; return 'moving'; }
+    // (R3 5단계 S03) 진입 결정 전 무장 현장의 잠긴 문: 교본에 묻는다 — 막히면 문 앞에서 기다린다(상한 30초 · 지원이 오면 45초 뒤에는 지금처럼 연다). 진입이 정해지면 풀린다
+    if (kind === 'locked' && gateStep(sim, s, a, t, 'forceDoor', docGate(sim, s, a, 'forceDoor')) === 'wait') { a.label = ruleShort(t.docRule ?? null) ?? '잠긴 방 — 진입 보류'; return 'busy'; }
     const sub = makeTask(kind === 'locked' ? 'force' : 'clear', kind === 'locked' ? '문 강제 개방' : '잔해 제거');
     sub.tile = next; t.sub = sub;
     return 'busy';
@@ -179,6 +181,11 @@ function moveTo(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, range
       t.fails++;
       return t.fails > 3 ? 'nopath' : 'moving';
     }
+  }
+  // (R3 §4.4·§5 — 판단 지점 interiorEntry) 위험 실내로 들어서는 첫걸음: 짝이 따라오는가·밖 대기조가 있는가를 교본에 묻는다. 막히면 문턱에 선 채 기다린다 (상한 뒤 임무를 놓는다)
+  if (INTERIOR_KINDS.has(t.kind) && !gatePassed(t, 'interiorEntry') && interiorStep(s, a, t, next)) {
+    const g = interiorGate(sim, s, a, t);
+    if (g !== 'go') return 'moving';
   }
   const nx = next % s.w, ny = (next / s.w) | 0;
   if (s.stairTo[tileOf(s, a.x, a.y)] === next) {
@@ -215,7 +222,7 @@ function markCovered(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
 }
 
 /** 수색 경유점. 시야가 나쁠수록 촘촘해야 하지만, 경험이 부족하면 간격을 넓게 잡아 빈틈이 생긴다. */
-function sweepPoints(sim: Sim, s: Scene, a: FieldAgent, t: Task): number[] {
+function sweepPoints(sim: Sim, s: Scene, a: FieldAgent, t: Task, feel = false): number[] {
   const reg = s.regions[t.region];
   const r = resp(sim, a);
   const ci = tileOf(s, reg.cx, reg.cy);
@@ -225,14 +232,16 @@ function sweepPoints(sim: Sim, s: Scene, a: FieldAgent, t: Task): number[] {
   if (r.experience < 0.4 && !t.thorough) spacing *= 1.25;
   // 정밀 재수색을 거듭할수록 간격을 더 좁힌다 (잘 숨겨진 대상은 "다 보았다"고 여긴 거리보다 가까이 가야 보인다)
   if (t.thorough && s.kind === 'search' && s.researchRound >= 2) spacing = Math.max(1.0, rr * (1.1 - 0.25 * (s.researchRound - 1)));
+  if (feel) spacing *= FEEL_SPACING;      // (R3 §3.7 feel) 벽 더듬기: 간격 ×0.75, 경유점은 벽과 이웃한 바닥 칸만
   const pts: number[] = [];
   const inReg = new Set(reg.tiles);
   const snap = (x: number, y: number): number => {
-    let best = -1, bd = 2.3;
-    for (let yy = Math.round(y) - 2; yy <= Math.round(y) + 2; yy++) for (let xx = Math.round(x) - 2; xx <= Math.round(x) + 2; xx++) {
+    let best = -1, bd = feel ? 3.3 : 2.3;
+    for (let yy = Math.round(y) - 3; yy <= Math.round(y) + 3; yy++) for (let xx = Math.round(x) - 3; xx <= Math.round(x) + 3; xx++) {
       if (xx < 0 || yy < 0 || xx >= s.w || yy >= s.h) continue;
       const i = yy * s.w + xx;
       if (!inReg.has(i) || !staticPass(s.tiles[i]) || s.tiles[i] === T.DOOR) continue;
+      if (feel && !wallNext(s, xx, yy)) continue;
       if (s.propAt[i] >= 0 && s.props[s.propAt[i]].kind === 'vehicle') continue;
       const d = dist(xx, yy, x, y); if (d < bd) { bd = d; best = i; }
     }
@@ -555,17 +564,34 @@ function breach(sim: Sim, s: Scene, a: FieldAgent): void {
   s.breachDone = true;
   let bangs = 0;
   const by: FieldAgent[] = [];
+  let stacked: FieldAgent | null = null;      // (R3 S01) 줄 서기로 들어간 문의 방패수
   s.exits.forEach((e, k) => {
     const team = s.agents.filter((b) => b.status === 'active' && b.task && b.task.kind === 'engage' && dist(b.x, b.y, e.x, e.y) <= 2.6);
     if (!team.length) return;
     // (R3 §3.1 P07) 그 출입구의 진입조가 한 명이면 교본에 묻는다: 막히면 그 출입구만 건너뛴다 — 그 대원은 문 곁에 남고(t.gateId 'breach'), 풀리면 자기 문만 연다 (case 'engage' ①)
     if (team.length === 1 && team[0].task !== null && gateStep(sim, s, team[0], team[0].task, 'breach', docGate(sim, s, team[0], 'breach')) === 'wait') return;
+    // (R3 5단계 S01) 그 문의 진입조에 방패를 든 특공 대원이 있으면 그 사람에게 묻는다: 줄 서기면 방패수가 먼저 들어가고 나머지는 0.6초 간격으로 따른다
+    const sh = team.length >= 2 ? team.find((b) => hasKit(sim, b.rid, 'shield')) : undefined;
+    if (sh !== undefined && docGate(sim, s, sh, 'breach').opt === 'stack') { stackTeam(sim, team, sh); stacked = sh; }
     bangs += breachExit(sim, s, k, team);
     by.push(team.indexOf(a) >= 0 ? a : team[0]);
   });
   // 진입 문구는 실제로 들어간 진입조의 대원이 말한다 (부른 대원의 문이 건너뛰어졌으면 그 대원이 아니다). 아무 문도 열리지 않았으면 남기지 않는다
   const who: FieldAgent | null = by.indexOf(a) >= 0 ? a : by.length ? by[0] : null;
-  if (who !== null) emit(sim, { inc: I.id, role: 'RESPONDER', actor: resp(sim, who).name, rid: who.rid, kind: 'action', imp: 3, text: s.bangAt === sim.t ? `진입! 섬광탄을 던져 넣고 들어갑니다${bangs ? ` (용의자 ${bangs}명 무력화)` : ''}.` : '진입! 출입문을 열고 들어갑니다.' });
+  // (R3 S01) 줄 서기로 들어갔으면 방패 선두를 말한다 (문구는 '진입!' 으로 시작한다 — 동시 진입의 기록으로 읽힌다)
+  const bangText = `섬광탄을 던져 넣고 들어갑니다${bangs ? ` (용의자 ${bangs}명 무력화)` : ''}.`;
+  const entryText = stacked !== null ? (s.bangAt === sim.t ? `진입! 방패 선두, ${bangText}` : '진입! 방패 선두로 들어갑니다.') : s.bangAt === sim.t ? `진입! ${bangText}` : '진입! 출입문을 열고 들어갑니다.';
+  const ev = who !== null ? emit(sim, { inc: I.id, role: 'RESPONDER', actor: resp(sim, who).name, rid: who.rid, kind: 'action', imp: 3, text: entryText }) : -1;
+  if (stacked !== null) recordDoc(sim, I, stacked, 'S01', 'gate', { gate: 'breach' }, ev);
+}
+/** (R3 S01) 줄 서기의 간격 (초) */
+const STACK_GAP = 0.6;
+/** 줄 서기로 뒤따르는 진입조의 임무 → 들어가기 시작하는 시각 (임무의 모양을 바꾸지 않으려 WeakMap) */
+const STACK_AT = new WeakMap<Task, number>();
+/** 방패수(sh)가 먼저, 나머지 진입조는 출입구에 가까운 순으로 0.6초 간격 (같으면 rid 가 작은 쪽) */
+function stackTeam(sim: Sim, team: FieldAgent[], sh: FieldAgent): void {
+  const rest = team.filter((b) => b !== sh).sort((p, q) => dist(p.x, p.y, sh.x, sh.y) - dist(q.x, q.y, sh.x, sh.y) || p.rid - q.rid);
+  rest.forEach((b, k) => { if (b.task) STACK_AT.set(b.task, sim.t + STACK_GAP * (k + 1)); });
 }
 /**
  * (R3 §3.1 P01~P03) 흉기·맨손 상대에게 붙기 전에 기다리는 거리: 테이저를 든 둘은 2칸(본문 1.8칸 — 흉기가 닿는 거리가 1.8칸 미만이라 그 경계에 서지 않게 조금 물렸다),
@@ -604,7 +630,7 @@ function waitSpot(s: Scene, a: FieldAgent, t: Task, h: Hostile, ox: number, oy: 
  * 출입구 곁의 문을 열고(잠겼으면 부수고) 문 바로 안쪽에 용의자가 있다고 알면 섬광탄을 던져 넣는다. 돌려주는 값 = 섬광탄으로 무력화한 수
  * (본문 §11.1 은 doctrineRun.breachExit 라고 적었지만, 진입 뒤의 검거를 'breach' 로 적는 ENTERED 가 이 파일의 것이라 여기에 둔다)
  */
-function breachExit(sim: Sim, s: Scene, k: number, team: FieldAgent[]): number {
+function breachExit(sim: Sim, s: Scene, k: number, team: FieldAgent[], sync = true): number {      // sync = 동시 진입의 그 틱 (3단계: 늦게 자기 문만 여는 진입조는 false — 연출 기록의 동시 진입은 breachDone 이 참이 된 틱에만)
   const e = s.exits[k];
   let bangs = 0;
   {
@@ -617,9 +643,9 @@ function breachExit(sim: Sim, s: Scene, k: number, team: FieldAgent[]): number {
       if (p.blocking) { s.propAt[p.y * s.w + p.x] = -1; p.blocking = false; p.locked = false; }
       if (!p.open) { p.open = true; s.staticVersion++; }
       inX = e.x + (p.x - e.x) * 3; inY = e.y + (p.y - e.y) * 3;      // 문을 지나 세 칸 안쪽
-      recBreach(sim, s, p.x, p.y, e.x, e.y, { door: p.id, how: breachHowFor(sim, team, wasLocked, wasOpen), n: team.length, sync: true, by: team[0].rid, forced: wasLocked }); doorSeen = true;
+      recBreach(sim, s, p.x, p.y, e.x, e.y, { door: p.id, how: breachHowFor(sim, team, wasLocked, wasOpen), n: team.length, sync, by: team[0].rid, forced: wasLocked }); doorSeen = true;
     }
-    if (!doorSeen) recBreach(sim, s, e.x, e.y, e.x, e.y, { door: -1, how: 'open', n: team.length, sync: true, by: team[0].rid, forced: false });
+    if (!doorSeen) recBreach(sim, s, e.x, e.y, e.x, e.y, { door: -1, how: 'open', n: team.length, sync, by: team[0].rid, forced: false });
     // 문 바로 안쪽에 용의자가 있다고 알고 있을 때만 섬광탄을 쓴다(없으면 방 진입 때를 위해 아낀다). 섬광탄은 사람 몫이다: 가진 사람이 던진다
     // (R3 §3.1 P15) 마지막 한 개를 든 대원은 동시 진입에서 쓰지 않고 방 진입용으로 아낀다 (용의자가 3칸 안이면 쓴다 — docGate 'bangUse' 의 고르기)
     let thrower: FieldAgent | undefined;
@@ -667,6 +693,8 @@ function toCoverSpot(sim: Sim, s: Scene, a: FieldAgent, t: Task, h: Hostile): Mo
   return m;
 }
 
+/** (R3 5단계) 잠긴 방 문을 여는 사람을 고르는 거리 — 그 문으로 오고 있는 진입조도 센다 (칸) */
+const OPENER_NEAR = 6;
 /** (R2 §4.2a) 잠긴 방 문의 상한 (초): 모인 뒤 이만큼 지나도 안 열리면 지금처럼 바로 연다 (모든 사건은 끝난다) */
 const ROOM_DOOR_CAP = 25;
 /** 잠긴 방 문 앞에 진입조가 처음 모인 시각 (문마다 — 소품의 모양을 바꾸지 않으려 WeakMap. 되감기는 Sim 을 새로 만든다) */
@@ -711,6 +739,9 @@ function lockedRoomDoor(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task,
   }
   for (const b of mates) if (b.task !== null) b.task.entryDoor = rd.id;
   if (doorOpener(s, rd) !== null) return true;      // 이미 누군가 연다
+  // (R3 5단계 — S26·S03) 문 여는 사람은 모인 진입조와 그 문으로 오고 있는 진입조(같은 용의자의 교전 · 문에서 6칸 안) 가운데서 고른다:
+  // 장약을 든 진입대원(파괴)이 조금 늦게 와도 그 사람이 연다 — 그 사람이 닿아 스스로 맡을 때까지 모인 사람은 기다린다 (모인 뒤 25초 상한은 그대로)
+  for (const b of s.agents) if (b !== a && mates.indexOf(b) < 0 && b.status === 'active' && b.task !== null && b.task.kind === 'engage' && b.task.hostile === t.hostile && b.task.sub === null && dist(b.x, b.y, rd.x, rd.y) <= OPENER_NEAR) team.push(b);
   const tg = { tile, prop: rd.id, cas: -1, hostile: -1, region: -1 };
   let best: FieldAgent | null = null, bs = -1;
   for (const b of team) {
@@ -888,6 +919,10 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (!t.pts) { t.pts = sweepPoints(sim, s, a, t); t.ptI = 0; t.covered = new Set(); t.fails = 0; }
       // (R2 §4.4) 방법을 처음 고른다 (호출·청음 / 줄 수색·확성기·열화상) — 경유점마다 다시 고르지 않는다
       if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'search', { cas: -1, prop: -1, hostile: -1, region: t.region, tile: -1 });
+      if ((t.method === 'feel') !== FEEL_PTS.has(t)) {      // (R3 §3.7) 벽 더듬기를 골랐거나(도착 재선택 포함) 그만두었다: 남은 경유점을 그 방식으로 다시 짠다 (본 칸은 그대로)
+        if (t.method === 'feel') FEEL_PTS.add(t); else FEEL_PTS.delete(t);
+        t.pts = sweepPoints(sim, s, a, t, t.method === 'feel'); t.ptI = 0; a.path = null; a.pathGoal = -1;
+      }
       if (reg.indoor && !hasKit(sim, a.rid, 'turnout')) { let m = 0; for (const i of reg.tiles) if (s.fire[i] > m && dist(a.x, a.y, i % s.w, (i / s.w) | 0) < 4) m = s.fire[i]; if (m > 0.35) { finishTask(sim, s, a, false, 'fire'); return; } }
       if (t.ptI >= t.pts.length) {
         const total = Math.max(1, walkableCount(s, reg.tiles));
@@ -963,7 +998,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (!t.marr && t.method !== undefined && !ext && recheckOnArrive(sim, s, I, a, t, 'suppress', sg, true)) return;
       a.fx = tx - a.x; a.fy = ty - a.y;
       a.ring = 1 - s.fire[t.tile];
-      if (!spray(sim, s, a, tx, ty)) finishTask(sim, s, a, false, 'equip');
+      const pulse = t.method === 'pulse';      // (R3 §3.7 pulse) 끊어 쏘기: 진압 효과 ×0.85, 물 소모 ×0.65
+      if (!spray(sim, s, a, tx, ty, pulse ? PULSE_MUL[0] : 1, pulse ? PULSE_MUL[1] : 1)) finishTask(sim, s, a, false, 'equip');
       return;
     }
     case 'hookup': {
@@ -1047,6 +1083,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       // 이미 처치를 받은 환자는 더 나은 처치를 할 수 있는 대원만 다시 본다
       if (c.dead || c.where === 'loaded' || c.where === 'hospital' || (c.treated && qPlan <= c.treatQ + 0.15)) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
       if (c.where === 'carried') return;
+      if (r.dept !== 'ems' && tryHandover(sim, s, a, t, c, XK)) return;      // (R3 CE2) 지휘관이 같은 처치를 맡긴 구급 대원이 곁에 왔다 — 손을 떼고 넘긴다 (finishTask 'handover')
+      if (s.laneRows.length && laneHold(sim, s, a, t, c, XK)) return;      // (R3 E12) 차로 위 환자 — 통제 전에는 차로 밖 곁 칸에서 기다린다 (상한 20초)
       // (R2 §4.7) 방법을 처음 고른다 — 현장 안정 후 이송(평소) · 즉시 이송(위중 · 환자 자리가 남은 부대 · 구급 장비)
       if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'treat', { cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1 });
       const rush = t.method === 'rush';
@@ -1054,6 +1092,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const m = moveTo(sim, s, a, c.x, c.y, 1.3);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
+      careMark(sim, s, a, t, c);      // (R3 E05) 안전 확보 전의 무장 현장 — 경계 밖 처치소 (그 현장에서 처음 한 번 기록)
       const rate = Math.max(0.1, r.skills.medical * (0.5 + 0.5 * med)) * staminaF(r);
       t.need = rush ? 3.0 : 4.5 + (c.health < 40 ? 4 : c.health < 70 ? 2 : 0);      // 즉시 이송: 최소한만 (3초)
       c.treatProg += rate * dt; a.ring = c.treatProg / t.need; drain(sim, a, 0.3);
@@ -1095,6 +1134,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         const m = moveTo(sim, s, a, c.x, c.y, 1.3);
         if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
         if (m !== 'arrived') return;
+        if (t.kind === 'carry' && carryHold(sim, s, a, t, senseOf(s, a))) return;      // (R3 E08) 구급 동료가 처치 중인 환자 — 들지 않고 곁에서 기다린다 (상한 15초)
         t.progress += dt;
         if (t.progress >= 1.2) { c.where = 'carried'; c.inVehicle = null; a.carrying = c.id; a.path = null; a.pathGoal = -1; learn(sim, a, casFact(sim, s, c, r.name), false); }
         return;
@@ -1246,26 +1286,11 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const p = s.props[t.prop];
       const gone = (text: string): Fact => mkFact('haz', p.id, { kind: 'bomb', active: false, x: p.x, y: p.y }, r.name, sim.t, 1, true, text);
       if (p.mitigated || p.exploded) { learn(sim, a, gone(p.exploded ? '장치가 이미 터졌습니다 — 해체할 것이 남아 있지 않음' : '폭발물 위험 해소'), true, true); finishTask(sim, s, a, true); return; }
-      if (!hasKit(sim, a.rid, 'eodKit')) { finishTask(sim, s, a, false, 'equip'); return; }      // 해체 공구를 든 처리 요원만 손댄다 (fitFor 가 먼저 막는다)
-      const m = moveTo(sim, s, a, p.x, p.y, 1.6);
-      if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
-      if (m !== 'arrived') return;
-      a.fx = p.x - a.x; a.fy = p.y - a.y;
-      // 원격 로봇: 그것을 든 대원이 현장에서 활동 중이면 가짜 장치를 빨리 확인하고(10 → 5초), 진짜 장치의 해체 실수가 준다(×0.6)
-      const op = s.agents.find((b) => b.status === 'active' && hasKit(sim, b.rid, 'robot'));
-      const robot = op !== undefined && kitWorks(sim, op.rid, 'robot', I);      // 숨은 고장은 쓰려 할 때 드러난다
-      t.need = (p.real ? 26 : robot ? 5 : 10) / (0.5 + r.skill);
-      t.progress += dt; a.ring = t.progress / t.need;
-      if (p.real && a.rng.chance(0.004 * (1 - r.skill) * (robot ? 0.6 : 1) * dt)) {      // 실수: 숙련도가 낮을수록 잦다
+      // (R3 §3.7 — 5단계) 해체 방법 셋(로봇 원격·방호복·맨몸): 고르기(R2 startMethod — 고를 것이 없으면 맡지 않는다)·이동·장비 확인·필요 시간·실수 판정·끝은 doctrineRun.runDefuse.
+      // 장치가 반응하면 'slip' — 터뜨리는 것(rules/crime.detonate)은 여기서 (doctrineRun 이 rules/ 를 import 하면 규칙의 등록 순서가 바뀐다)
+      if (runDefuse(sim, s, I, a, t, XK) === 'slip') {
         emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'hazard', imp: 2, text: '해체 중 장치가 반응했습니다!' });
-        detonate(sim, s, I, p); finishTask(sim, s, a, true); return;
-      }
-      if (t.progress >= t.need) {
-        p.mitigated = true; p.blocking = false; s.propAt[p.y * s.w + p.x] = -1; s.staticVersion++;      // 처리된 물건은 더 이상 길을 막지 않는다
-        learnQuiet(sim, a, gone('폭발물 위험 해소'));
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 3, text: p.real ? '폭발물 해체 완료. 위험이 사라졌습니다.' : '확인 결과 폭발물이 아닙니다.' });
-        r.xpGained += p.real ? 0.006 : 0.002;
-        finishTask(sim, s, a, true);
+        detonate(sim, s, I, p); finishTask(sim, s, a, true);
       }
       return;
     }
@@ -1355,7 +1380,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
             return;
           }
           const team = s.agents.filter((b) => b.status === 'active' && b.task && b.task.kind === 'engage' && dist(b.x, b.y, e.x, e.y) <= 2.6);
-          const n = breachExit(sim, s, t.tile, team.indexOf(a) >= 0 ? team : [a, ...team]);
+          const n = breachExit(sim, s, t.tile, team.indexOf(a) >= 0 ? team : [a, ...team], false);
           gateClear(sim, s, a, t);
           emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 3, text: s.bangAt === sim.t ? `진입! 섬광탄을 던져 넣고 들어갑니다${n ? ` (용의자 ${n}명 무력화)` : ''}.` : '진입! 출입문을 열고 들어갑니다.' });
           return;
@@ -1366,6 +1391,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         if ((ready && sim.t >= s.breachAt) || sim.t >= s.breachAt + 8) breach(sim, s, a);
         return;
       }
+      // (R3 S01) 줄 서기: 방패수가 먼저 들어가고 뒤따르는 진입조는 자기 차례(0.6초 간격)까지 출입구에서 기다린다
+      { const at = STACK_AT.get(t); if (at !== undefined) { if (sim.t < at) { a.label = '줄 서기'; return; } STACK_AT.delete(t); } }
       // ①-2 방 진입: 용의자가 닫힌 문 뒤의 방에 있으면, 문 앞에 모였다가 (섬광탄이 있으면 던져 넣고) 함께 들어간다
       const rd = sim.t < h.stunUntil ? null : roomDoorFor(s, a, h, t);
       if (rd) {
@@ -1812,6 +1839,11 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (m === 'moving' || m === 'busy') return;
       t.need = 11 * (1.5 - r.skill); t.progress += dt; a.ring = t.progress / t.need;
       if (t.progress >= t.need) {
+        // (R3 F10) 예비 펌프를 하나 쓴다 (셀 때만 — 오는 동안 마지막 하나를 다른 대원이 썼으면 바꾸지 못한다: 지휘관이 진압 부대 교체를 부른다 — CF3)
+        if (u.sparePump !== undefined) {
+          if (u.sparePump <= 0) { emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'radio', imp: 1, text: `${u.callsign} 예비 펌프가 없습니다.` }); finishTask(sim, s, a, false); return; }
+          u.sparePump--;
+        }
         u.pumpFailed = false; u.pumpCond = 0.62;
         for (const b of s.agents) if (b.unitId === a.unitId && b.equipIssue === 'pump') b.equipIssue = 'none';
         // 복구하는 것은 이 부대의 펌프 고장이다. 개인 장비의 고장도 같은 문제 코드라서, 가장 최근 것을 그냥 복구 처리하면
@@ -1854,7 +1886,11 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       return;
     }
     case 'cover': runCover(sim, s, a, t, XK); return;      // (R3 §2.10) 엄폐 — 숨을 자리에서 쏘지 않고 기다린다
+    case 'airOut': runAirOut(sim, s, a, t, XK); return;      // (R3 §5.7) 공기 탈출 — 밖으로 나가 공기통 교체
+    case 'pairOut': runPairOut(sim, s, a, t, XK); return;      // (R3 §5.7) 짝 따라 나가기
+    case 'pair': runPair(sim, s, a, t, XK); return;      // (R3 §5.4) 짝 동행 — 위험 실내 일을 맡은 짝을 따라간다
     case 'rearm': runRearm(sim, s, a, t, XK); return;      // (R3 §2.9) 탄약 보급 — 대기 지점의 차에서
+    case 'triage': runTriage(sim, s, a, t, XK); return;      // (R3 4단계 E01·CE1) 다수 사상자 분류 — 환자마다 곁에서 2초, 끝나면 s.triageAt
     case 'standby': {
       a.label = '대기';
       if (dist(a.x, a.y, s.staging.x, s.staging.y) > 5 && s.kind !== 'armed') moveTo(sim, s, a, s.staging.x, s.staging.y, 3);
@@ -1913,8 +1949,54 @@ import type { BreachHow, MethodId } from '../types';
 // ── (R3) 대응 교본의 판단 지점 (field/doctrine.ts 의 docGate — 자기 모드). 판단은 교본 함수가, 효과(이동·기다림)는 이 파일이 한다 ──
 import { docGate } from './doctrine';
 import { actEnd, docMark, fireRound, gateClear, gateStep, reloadTick, ruleShort, runCover, runRearm } from './doctrineRun';
+import { recordDoc, runDefuse } from './doctrineRun';      // (R3 5단계) 해체 방법 셋 · 줄 서기(S01)의 기록
 import { coverSpot } from './doctrine';
 
 // ── (X6 단계 5) 지휘 상태의 도움 함수 (진입 금지 구역·외부 방수 자리·철수 지점 — ops.ts 는 진실을 읽지 않는다. 불을 고르는 것은 이 파일이다) ──
 import { EXT_RANGE, OPS_ID, OPS_PAR, SIGN_BASE, evacPoint, exteriorSpots, opsExterior, regionAt, regionLevel, regionReachable, zoneMask } from './ops';
 import type { OpsFact, ZoneLike } from './ops';
+
+// ── (R3 3단계 — 소방) 짝 동행·공기 탈출·짝 따라 나가기의 실행, 위험 실내 첫걸음의 판단 지점(interiorEntry), 벽 더듬기·끊어 쏘기의 효과 ──
+import { gatePassed, runAirOut, runPair, runPairOut, docRemember } from './doctrineRun';
+import { DOC, hasDoc } from './doctrine';
+import { senseOf } from './methodRun';
+/** (R3 §3.7) 벽 더듬기의 경유점 간격 배율 · 끊어 쏘기의 효과·물 배율 */
+const FEEL_SPACING = 0.75, PULSE_MUL = [0.85, 0.65] as const;
+/** 벽 더듬기로 경유점을 짠 수색 임무 (임무의 모양을 바꾸지 않으려 WeakSet) */
+const FEEL_PTS = new WeakSet<Task>();
+/** 벽(창)과 맞닿은 칸인가 (네 이웃) — 벽 더듬기의 경유점 */
+function wallNext(s: Scene, x: number, y: number): boolean {
+  for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= s.w || ny >= s.h) return true; const tt = s.tiles[ny * s.w + nx]; if (tt === T.WALL || tt === T.WINDOW) return true; }
+  return false;
+}
+/** 판단 지점 interiorEntry 를 묻는 임무 (§11.1 — 위험 실내 일 여섯과 진압) */
+const INTERIOR_KINDS: ReadonlySet<string> = new Set<string>(['search', 'carry', 'escort', 'extricate', 'mitigate', 'overhaul', 'suppress']);
+/**
+ * 위험 실내로 들어서는 첫걸음인가: 지금 칸이 실내 구역이 아니고 다음 칸이 실내 구역이다 (판단은 교본이 한다 — 위험 실내·확보 전 무장 현장인지는 줄이 믿음으로 본다).
+ * 진압은 실내 방법(내부 공격·끊어 쏘기·방법 없음)일 때만 — 교본이 실내 진압을 뺀 대원은 외부 방수라 여기 오지 않는다
+ */
+function interiorStep(s: Scene, a: FieldAgent, t: Task, next: number): boolean {
+  if (!hasDoc('gate')) return false;
+  if (t.kind === 'suppress' && t.method !== undefined && t.method !== 'interior' && t.method !== 'pulse') return false;
+  if (t.kind === 'carry' && a.carrying !== -1) return false;      // 업고 나오는 길
+  const here = s.region[tileOf(s, a.x, a.y)], there = s.region[next];
+  return !regionIndoor(s, here) && regionIndoor(s, there);
+}
+/** 실내 구역인가 (R3 속도 — interiorStep 의 닫힘을 모듈 함수로: tsx 의 __name) */
+function regionIndoor(s: Scene, rg: number): boolean { return rg >= 0 && s.regions[rg] !== undefined && s.regions[rg].indoor; }
+/**
+ * 판단 지점 interiorEntry (F04c 짝이 따라오지 않음 · F05 밖 대기조 모자람 · P17b 확보 전 수색의 짝): 막히면 문턱에서 기다린다('wait').
+ * 상한(20초, 지원이 오면 30초)이면 임무를 놓는다 — finishTask(…, 'doctrine')(실패 기록·w.fails 없음), 작업에 holdUntil +10초, 대원에게 그 작업을 30초 맡지 않는 기억('w:<작업 id>')
+ */
+function interiorGate(sim: Sim, s: Scene, a: FieldAgent, t: Task): 'wait' | 'go' | 'dropped' {
+  const ans = docGate(sim, s, a, 'interiorEntry', senseOf(s, a));
+  const st = gateStep(sim, s, a, t, 'interiorEntry', ans);
+  if (st === 'go') return 'go';
+  if (st === 'wait') { a.label = ruleShort(ans.rule) ?? a.label; return 'wait'; }
+  const w = t.workId >= 0 ? s.board[t.workId] : undefined;
+  finishTask(sim, s, a, false, 'doctrine');
+  if (w !== undefined) { w.holdUntil = Math.max(w.holdUntil, sim.t + 10); docRemember(sim, a, ans.rule ?? 'F04c', 'w:' + w.id, DOC.W_MEM); }
+  return 'dropped';
+}
+// ── (R3 4단계) 의료 교본의 실행 (doctrineRun.ts — 분류·처치 넘겨받기·경계 밖 처치소·판단 지점 carryHold·laneTreat) ──
+import { careMark, carryHold, laneHold, runTriage, tryHandover } from './doctrineRun';

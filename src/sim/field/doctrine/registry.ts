@@ -53,6 +53,12 @@ export interface DocSit {
   fightThreat: boolean;                          // (2단계) 믿음: 교전(fight) 중인 용의자가 있다 (P08)
   bangOnScene: boolean;                          // (2단계) 동료의 장비(조직 정보): 현장의 활동 경찰 가운데 섬광탄을 가진 사람이 있다 (P14)
   bangComing: boolean;                           // (2단계) 조직 정보: 섬광탄을 실은 경찰 부대가 이 사건으로 오는 중 (P14 의 기다림 상한 40초)
+  tendCas: number[];                             // (4단계) 동료의 겉: 다른 활동 구급 대원이 곁에 앉아 처치하고 있는 구조 대상 id (E08)
+  medics: number;                                // (4단계) 동료의 겉: 다른 활동 구급 대원의 수 (E11 — 혼자면 배율을 걸지 않는다)
+  alsOn: boolean;                                // (4단계) 명부: 다른 활동 대원 가운데 1급 응급구조사·의사가 있다 (E19)
+  robotOn: boolean;                              // (5단계) 동료의 장비(조직 정보): 살아 있는 장치(liveBomb)가 있고 현장의 활동 대원 가운데 작동하는 로봇(알려진 고장 아님)을 든 사람이 있다 (S06b)
+  bombPinned: boolean;                           // (5단계) 믿음: 살아 있는 장치 6칸 안에 옮길 수 없는 사람(거동 불가·갇힌 구조 대상, 인질을 붙든 용의자)이 있다 (S07)
+  scbaOn: number;                                // (5단계) 동료의 장비(조직 정보): 화재 현장의 활동 대원 가운데 공기호흡기를 든 사람의 수 (자기 포함 — 화재 현장이 아니면 0. S19)
 }
 export type DocPhase = 'arrive' | 'sizeup' | 'standoff' | 'entry' | 'assault' | 'interior' | 'care' | 'transport' | 'traffic' | 'withdraw' | 'idle';
 /** 교본 줄이 받는 단 하나의 입력. 줄의 when 은 이것만 읽는다 */
@@ -75,6 +81,26 @@ export interface DocCtx {
   dngSign: number;                               // (2단계) brain 의 위험 점수 가운데 X6 조짐의 몫 (act 자리에서 brain 이 넘긴다 — P11. 다른 자리에서는 0)
   hideSpot: () => { x: number; y: number } | null;   // (2단계) 숨을 자리 (자기 모드에서만 — 엔진의 coverSpot(…, 숨기)를 tg 에 대해 한 번만 잰다. 보고 모드·위협이 없으면 null)
   solo: boolean;                                 // (2단계) 혼자 규칙에서 빠지는 역할인가 (엔진의 SOLO_OK — 저격·관측수·처리 요원·기관원·사다리 조작원·구급 운전원·관측관 …)
+  wBomb: number;                                 // (5단계) 대상 작업 w 의 자리(믿음)에서 가장 가까운 살아 있는 장치(믿음)까지의 거리 (w·장치가 없거나 자리를 모르면 Infinity — S08)
+  pair: () => DocPair;                           // (3단계) 짝·짝의 일 — 엔진이 처음 물을 때 한 번 잰다(늦게). 줄은 이 함수로만 짝을 본다 (§5)
+  watch: () => { n: number; need: number };      // (3단계) 밖 대기조 (§5.6): 대원에게 가장 가까운 출입구의 outsideWatch 수 · 필요한 수 watchNeed (2, 공기호흡기 대원을 태운 소방 부대가 오는 중이면 1) — 늦게 한 번
+  unitIn: () => number;                          // (합치기 — 5단계 S11) 자기 부대의 다른 활동 대원 가운데 위험 건물 실내(이 대원의 믿음으로 본 위험 구역)에 선 사람의 수 (동료의 겉) — 늦게 한 번
+}
+/**
+ * (3단계 — 소방) 짝과 밖 대기조 (§5.2·§5.4·§5.6). 엔진(doctrine.ts)이 그 대원의 믿음·동료의 겉·조직 정보로 잰다 — 줄 파일은 엔진을 import 할 수 없어서 값으로 넘긴다
+ */
+export interface DocPair {
+  raw: FieldAgent | null;                        // 짝(a.buddy) — 쓸 수 있는가와 상관없이 (F02: 짝이 나가면 따라 나간다). 같은 현장에 없으면 null
+  rawOut: boolean;                               // 그 짝이 나가는 중이다: 공기 탈출·짝 따라 나가기·후퇴·철수 임무, 또는 물러나 후송을 기다린다(withdrawn) (F02)
+  forW: FieldAgent | null;                       // 쓸 수 있는 짝 가운데 대상 작업 w 에 따라올 수 있는 짝 (§5.2 의 buddyOf(w) — F04·P17. w 가 없으면 buddyOf())
+  follows: boolean;                              // 짝이 따라온다 (§5.4 끝 — F04c·P17b): 짝의 임무가 나를 따르는 짝 동행이거나 같은·이웃 구역의 위험 실내 일이고, 4칸 안
+  rookie: boolean;                               // 쓸 수 있는 짝이 신입이다 (경험 < 0.3 — 명부, F16)
+  job: { w: WorkItem; p: number; hz: boolean; hot: boolean } | null;   // 쓸 수 있는 짝이 맡은 작업판 일 (G08): 우선도 · 위험 실내 일인가 · 확보 전 무장 현장의 수색인가 (이 대원의 믿음으로)
+  canFollow: boolean;                            // 이 대원이 그 일에 따라 들어갈 수 있다: 위험 실내면 공기호흡기(공기 AIR_IN 이상), 확보 전 수색이면 총을 든 경찰, 걸을 수 있는 다친 대원이 아니다 (조직 정보·자기 장비)
+  myP: number;                                   // 이 대원이 지금 맡은 작업판 일의 우선도 (-1 = 손이 빔 — 임무 없음·대기, 9 = 작업판 밖의 일에 묶여 있다 — 휴식·장비 교체 …)
+  myIn: boolean;                                 // 이 대원이 지금 맡은 일이 위험 실내로 들어가는 일이다 (그 일은 짝 동행으로 놓지 않는다 — §3.5 G08 의 "바깥 일")
+  alt: boolean;                                  // 짝의 일과 같은·이웃 구역에 이 대원이 맡을 수 있는 빈 위험 실내 일이 있다 (G08 의 예외 — 그 일을 맡으면 §5.4 끝의 "짝이 따라온다"로 센다)
+  ordered: boolean;                              // (합치기 (나)) 이 대원이 받은 지시(공개 지휘 상태)가 짝의 일과 같은·이웃 구역의 위험 실내 일이다 — 짝 동행 대신 그 일을 한다 (G08 의 예외, 짝 동행의 끝)
 }
 
 /** 효과 하나. fit·method 효과는 자기 works·methods·when 을 더 가질 수 있다 (한 줄이 일마다 다른 배율을 줄 때) */
@@ -121,9 +147,14 @@ export const CMD_ROWS: { id: string; dept: DocDept; hook: 'cmd' | 'dispatch' | '
  * (2단계) 지휘·관제 줄 가운데 설계서가 "확인 필요 — 균형"으로 적은 것의 스위치 (§6.1 CP4 · §6.2 D6 · §8.4 의 손잡이 — D7 의 앞막기).
  * 코드는 commander.ts · dispatch/doctrine.ts 에 있고 이 값만 본다 (줄을 끄는 균형 손잡이 — 측정·시험이 바꿔 볼 수 있게 한 곳에 둔다)
  */
-export const DOC_SWITCH = { CP4: true, D6: true, D7: true };
+export const DOC_SWITCH = { CP4: true, D6: true, D7: true,
+  D8: true,      // (균형 — 사용자 결정 2026-11-16) 건물 화재의 첫 출동에 펌프차 하나 더 (dispatch/doctrine.ts D8)
+  SOLO_IN: true };      // 혼자 서는 역할(기관원·사다리 조작원)의 위험 실내 단독 작업: true = 본문 §5.1(그 역할을 F04·F04b·F04c 에서 뺀다 — 균형 작업의 기본값, 사용자 결정 2026-11-16),
+                        //   false = 합치기 (라)(짝이 따라올 때만 — 보통 60 화재 −22.6%p·가스 누출 −33.1%p 로 범위 밖이었다)
 /** 줄이 다 들어간 분야 — 시험 8 의 "분야마다 12줄 이상"은 여기 든 분야만 본다 (단계마다 그 분야를 더한다 — 2단계 경찰) */
-export const DOC_DEPTS_DONE: DocDept[] = ['police'];
+export const DOC_DEPTS_DONE: DocDept[] = ['police',
+  'fire',      // (3단계 소방)
+  'special'];      // (5단계 특수) — 의료(4단계)는 파일 끝에서 push 한다
 
 /** 판단 지점의 답: ok = 그 걸음을 해도 된다 · rule = 막은(알릴) 줄 · wait = 막은 줄들의 maxWait 가운데 가장 긴 값 · opt = choose 줄이 고른 갈래 */
 export interface DocGateAns { ok: boolean; rule: string | null; wait: number; opt: string | null; exc: string | null }      // exc = (2단계) 예외(unless)가 아니었다면 막았을 줄 (막는 줄이 없을 때만)
@@ -138,3 +169,6 @@ export function ruleName(id: string): { name: string; short: string } | null {
   for (let k = 0; k < CMD_ROWS.length; k++) if (CMD_ROWS[k].id === id) return CMD_ROWS[k];
   return null;
 }
+
+// (4단계 의료) 줄이 다 들어간 분야에 의료를 더한다 — 3·4·5 단계를 나란히 돌려 합치므로 위의 배열 글자를 고치지 않고 파일 끝에 줄을 더한다
+DOC_DEPTS_DONE.push('ems');

@@ -110,6 +110,27 @@ let costGen = 0;
 export const STAIR_COST = 3;
 export type CostFn = (i: number) => number;   // 추가 비용 (음수 = 통과 불가)
 
+// (R3 속도) A* 의 비용·목표·추정 함수는 모듈 함수로 둔다 — 부를 때마다 이름 붙은 닫힘 셋을 만들면 헤드리스 실행기(tsx)가 그때마다 __name 을 불러
+// 함수 객체를 사전 모드로 바꾼다. astar 는 재진입하지 않으므로(모듈 버퍼) 이번 탐색의 값을 모듈 변수에 둔다. 식은 그대로다 (결과 같음)
+let aS: Scene, aCostFn: CostFn, aGen = 0, aW = 0, aTx = 0, aTy = 0, aR2 = 0, aRange = 0, aLos = false;
+function aCost(i: number): number {
+  if (costStamp[i] === aGen) return costMemo[i];
+  const v = aCostFn(i);
+  costMemo[i] = v; costStamp[i] = aGen;
+  return v;
+}
+function aGoal(i: number): boolean {
+  const x = i % aW, y = (i / aW) | 0;
+  const dx = x - aTx, dy = y - aTy;
+  if (dx * dx + dy * dy > aR2) return false;
+  if (aLos && !los(aS, x, y, aTx, aTy)) return false;
+  return true;
+}
+function aH(i: number): number {
+  const dx = Math.abs((i % aW) - aTx), dy = Math.abs(((i / aW) | 0) - aTy);
+  const o = Math.max(dx, dy) + 0.414 * Math.min(dx, dy) - aRange;
+  return o > 0 ? o : 0;
+}
 /**
  * (sx,sy) 에서 (tx,ty) 로부터 range 이내의 통행 가능 타일까지의 경로.
  * 반환: 시작 타일을 제외한 타일 인덱스 배열. 이미 도달해 있으면 빈 배열. 경로가 없으면 null.
@@ -121,26 +142,8 @@ export function astar(s: Scene, sx: number, sy: number, tx: number, ty: number, 
   state.fill(0, 0, n);
   heapN = 0;
   if (++costGen > 0x3fffffff) { costStamp.fill(0); costGen = 1; }
-  const gen = costGen;
-  const cost = (i: number): number => {
-    if (costStamp[i] === gen) return costMemo[i];
-    const v = costFn(i);
-    costMemo[i] = v; costStamp[i] = gen;
-    return v;
-  };
-  const r2 = range * range + 0.01;
-  const isGoal = (i: number): boolean => {
-    const x = i % w, y = (i / w) | 0;
-    const dx = x - tx, dy = y - ty;
-    if (dx * dx + dy * dy > r2) return false;
-    if (needLos && !los(s, x, y, tx, ty)) return false;
-    return true;
-  };
-  const hfn = (i: number): number => {
-    const dx = Math.abs((i % w) - tx), dy = Math.abs(((i / w) | 0) - ty);
-    const o = Math.max(dx, dy) + 0.414 * Math.min(dx, dy) - range;
-    return o > 0 ? o : 0;
-  };
+  aS = s; aCostFn = costFn; aGen = costGen; aW = w; aTx = tx; aTy = ty; aR2 = range * range + 0.01; aRange = range; aLos = needLos;
+  const cost = aCost, isGoal = aGoal, hfn = aH;
   gArr[start] = 0; fArr[start] = hfn(start); came[start] = -1; state[start] = 1; hpush(start);
   while (heapN > 0) {
     const cur = hpop();

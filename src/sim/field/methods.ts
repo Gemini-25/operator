@@ -24,7 +24,7 @@ import { hashStr } from '../rng';
 import { T } from '../types';
 import type { CasBelief, FieldAgent, KitId, MethodId, MethodWhy, Responder, Scene, SignBelief, Task, Unit, UnitKind, WorkItem, WorkKind } from '../types';
 import { clamp, dist, josa } from '../util';
-import { SCBA_MIN, SHARED, airLow, hoistOver, kitCount, kitHas, kitName, kitQty, seatsLeft, swimBonus } from './gear';
+import { SCBA_MIN, SHARED, airLow, kitCount, kitHas, kitName, kitQty, seatsLeft, swimBonus } from './gear';
 import { isIndoor, losWalls, staticPass, tileOf } from './grid';
 import { exteriorSpots } from './ops';      // (X6) 외부 방수의 후보 자리 — 생김새만 (진실을 읽지 않는다)
 import type { CostFn } from './grid';
@@ -398,6 +398,36 @@ export function searchMul(a: FieldAgent): { k: number; voice: boolean } {
   return SEARCH_MUL[t.method] ?? NO_MUL;
 }
 
+// ── (R3 §3.7 — 5단계) 해체의 조건 — 대상 장치의 믿음(haz bomb)과 생김새만 ──
+/** 대상 장치의 믿음 (살아 있을 때만, 아니면 null) */
+function bombOf(c: MethodCtx): { x: number; y: number } | null {
+  if (c.tg.prop < 0) return null;
+  const v = c.a.beliefs.val<{ kind: string; active: boolean; x: number; y: number }>('haz', c.tg.prop);
+  return v !== undefined && v.kind === 'bomb' && v.active ? v : null;
+}
+/** 로봇을 부리는 자리의 거리 (칸): 장치에서 이 안 (R3 §3.7 S06 — 8칸) */
+export const ROBOT_REACH = 8;
+/**
+ * 로봇을 부릴 자리 (생김새만 — 판단부·실행부가 같이 쓴다): 장치(bx, by)에서 2.5~8칸, 지나갈 수 있고, 벽에 가리지 않고 장치가 보이는 칸 가운데 대원(ax, ay)에게 가장 가까운 것 (같으면 칸 번호가 작은 쪽).
+ * 없으면 null. 갈 길이 있는지는 실행부가 걸어 보며 안다(없으면 다른 방법으로)
+ */
+export function robotSpot(s: Scene, bx: number, by: number, ax: number, ay: number): { x: number; y: number } | null {
+  let best: { x: number; y: number } | null = null, bd = Infinity;
+  const x0 = Math.max(0, Math.floor(bx - ROBOT_REACH)), x1 = Math.min(s.w - 1, Math.ceil(bx + ROBOT_REACH));
+  const y0 = Math.max(0, Math.floor(by - ROBOT_REACH)), y1 = Math.min(s.h - 1, Math.ceil(by + ROBOT_REACH));
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    const i = y * s.w + x;
+    if (!staticPass(s.tiles[i]) || s.tiles[i] === T.WATER) continue;
+    const d = Math.hypot(x - bx, y - by);
+    if (d < 2.5 || d > ROBOT_REACH) continue;
+    const da = Math.hypot(x - ax, y - ay);
+    if (da >= bd || !losWalls(s, x, y, bx, by)) continue;
+    best = { x, y }; bd = da;
+  }
+  return best;
+}
+const robotSpotOf = (c: MethodCtx): { x: number; y: number } | null => { const b = bombOf(c); return b === null ? null : robotSpot(c.s, b.x, b.y, c.a.x, c.a.y); };
+
 /**
  * 방법 표 (§4). Record 라 MethodId 를 늘리면 컴파일이 줄을 강제한다. 같은 점수면 이 표의 순서가 이긴다.
  * 수치(pref·risk)는 설계서의 시작값이다. 조건(can)·배율(situ·skill)은 그 방법을 구현하는 단계가 채운다.
@@ -419,7 +449,7 @@ export const METHOD: Record<MethodId, MethodDef> = {
   // 단계 1b: 헤엄과 줄 확보. 헤엄은 수영 능력이 문턱(구명조끼가 있으면 낮다)을 넘고 손이 닿지 않는 대상에게 — 구명조끼는 "있어야 하는" 장비가 아니라 kits 에 넣지 않는다(실제 소지로 본다)
   swim: row('swim', ['waterRescue'], '헤엄쳐 접근', '헤엄', '헤엄쳐 접근', '헤엄쳐 들어가', [], 0.45, 0.3, false,
     { can: (c) => c.reach > HAND_REACH && !mateSwims(c) && swimOf(c.sim, c.a) >= (kitCount(c.sim, c.a.rid, 'pfd') > 0 ? SWIM_MIN_PFD : SWIM_MIN),      // 한 대상에 헤엄은 한 사람 (§4.1 "동료와의 조건": 줄이 있으면 줄 확보, 없으면 손·장대만 남는다)
-      situ: (c) => (c.weak ? 1.15 : 1) * (c.flow >= FAST_FLOW ? 0.6 : 1) * (c.reach > THROW_REACH ? 1.3 : 1) * (c.s.quay ? 0.8 : 1) * (hoistOver(c.sim, c.s) ? 0.7 : 1),      // 상공 헬기 ×0.7 — R3 를 합칠 때 지운다(R3 S15 가 대신한다)
+      situ: (c) => (c.weak ? 1.15 : 1) * (c.flow >= FAST_FLOW ? 0.6 : 1) * (c.reach > THROW_REACH ? 1.3 : 1) * (c.s.quay ? 0.8 : 1),      // (R3 5단계) 상공 호이스트 헬기의 ×0.7 은 지웠다 — 교본 S15(같은 대상의 호이스트 작업이 열려 있으면 헤엄 ×0.5)가 대신한다
       skill: (c) => 0.5 + swimOf(c.sim, c.a) }),
   tend: row('tend', ['waterRescue'], '구조자 줄 확보', '줄 확보', '구조자 줄 확보', '헤엄치는 동료의 줄을 잡아', ['rope'], 0.9, 0, false,
     { can: mateSwims }),      // 같은 대상에게 헤엄쳐 들어가는 동료가 있다 (줄을 잡아 주면 그 동료의 사고율 ×0.5)
@@ -495,6 +525,10 @@ export const METHOD: Record<MethodId, MethodDef> = {
   air: row('air', ['search'], '공중 수색', '공중 수색', '공중 수색', '상공에서', [], 0, 0, false, REC),      // R1 경찰 헬기의 관측자 — 기록 전용
   drone: row('drone', ['search'], '드론 열화상', '드론', '드론 수색', '드론으로', [], 0.8, 0, false),      // 장비가 생기면 kits 를 채운다
   dog: row('dog', ['search'], '탐지견', '탐지견', '탐지견 수색', '탐지견으로', [], 0.85, 0, false),      // 부대가 생기면 needUnit 을 채운다
+  // ── (R3 §3.7 — 5단계) 해체 defuse: 로봇 원격 → 방호복 → 맨몸. 실행은 doctrineRun.runDefuse (executor 의 case 'defuse'). 대상은 믿음 속 살아 있는 장치. N9 의 다섯 앞에 둔다(tests/kinds2 가 그 다섯을 표의 끝으로 본다) ──
+  robotDefuse: row('robotDefuse', ['defuse'], '로봇 원격 해체', '로봇 해체', '로봇 원격 해체', '원격 로봇으로', ['robot'], 0.9, 0, false, { can: (c) => bombOf(c) !== null && robotSpotOf(c) !== null }),      // 로봇 조작 요원이 장치 8칸 안·벽에 가리지 않는 자리에서
+  suitDefuse: row('suitDefuse', ['defuse'], '방호복 해체', '방호복 해체', '폭발물 해체', '방호복을 입고', ['bombSuit'], 0.75, 0, true, { can: (c) => bombOf(c) !== null }),      // 지금의 해체 (해체 자격 eodKit 은 fitFor 가 본다)
+  bareDefuse: row('bareDefuse', ['defuse'], '맨몸 해체', '맨몸 해체', '맨몸 해체', '방호복 없이', ['eodKit'], 0.5, 0.15, false, { can: (c) => bombOf(c) !== null }),      // 언제 고르는가는 교본 S07 — 방호복이 없거나 옮길 수 없는 사람이 곁에 있을 때만
   // ── (N9 §5.12) 새 방법 다섯 — 단계 1 은 줄만(can = NOT_YET). 수치(pref·risk)는 시작값이고, 조건·배율·장비는 그 방법을 쓰는 단계가 채운다 ──
   // 잠수: 물에 잠긴 차·선실 안의 사람(믿음 sunk · haz sunk)에게 3칸 안에서 25초 (단계 5). 장비는 diveKit(단계 2 에 생긴다)으로 바꾼다 — 지금은 있는 드라이슈트만 적어 둔다
   dive: row('dive', ['waterRescue', 'extricate', 'search'], '잠수 구조', '잠수', '잠수 구조', '잠수해 들어가', ['drysuit'], 0.8, 0.1, false),
@@ -505,7 +539,15 @@ export const METHOD: Record<MethodId, MethodDef> = {
   // 제독 텐트 · 물 세척: 오염된 구조 대상의 제독 15초 · 45초 (단계 6). 제독 장비 deconKit 은 단계 2 에 생긴다 — 그때 deconTent 의 kits 를 채운다
   deconTent: row('deconTent', ['decontam'], '제독 텐트', '제독 텐트', '제독 텐트', '제독 텐트에서 씻어', [], 0.9, 0, false),
   hoseWash: row('hoseWash', ['decontam'], '물 세척 제독', '물 세척', '물 세척 제독', '호스로 씻어 내', ['hose'], 0.5, 0, false),
+  // ── (R3 3단계 §3.7) 교본이 더하는 방법 — 벽 더듬기 수색(열화상 없이 짙은 연기 속 실내: F07 ×1.6 → 0.80 > 호출 수색 0.6) · 끊어 쏘기(용수 30% 아래: F08 ×1.6 → 0.96 > 내부 공격 0.85).
+  //    효과는 R2 의 실행부 자리 — 벽 더듬기는 executor 의 수색 경유점(벽과 이웃한 칸·간격 ×0.75·경유점마다 0.8초), 끊어 쏘기는 executor 의 내부 진압 분사(효과 ×0.85·물 ×0.65) ──
+  feel: row('feel', ['search'], '벽 더듬기 수색', '벽 더듬기', '벽 더듬기 수색', '벽을 따라 더듬어', [], 0.5, 0, false,
+    { can: (c) => c.tg.region >= 0 && c.s.regions[c.tg.region] !== undefined && c.s.regions[c.tg.region].indoor && c.sense.smoke > FEEL_SMOKE }),
+  pulse: row('pulse', ['suppress'], '끊어 쏘기', '끊어 쏘기', '끊어 쏘기 진압', '끊어 쏘며', ['hose'], 0.6, 0, false,
+    { can: (c) => hoseReady(c) && !opsOutside(c) && !airLow(c.sim, c.a.rid) && !c.u.hydrant && c.u.waterMax > 0 && c.u.water < PULSE_WATER * c.u.waterMax }),
 };
+/** (R3 §3.7) 벽 더듬기를 고르는 선 자리의 연기 (F07 과 같은 문턱) · 끊어 쏘기를 고르는 부대 물의 몫 (F08 과 같은 문턱) */
+export const FEEL_SMOKE = 0.5, PULSE_WATER = 0.3;
 /** 표의 순서 (같은 점수면 앞이 이긴다) */
 export const METHOD_ORDER: MethodId[] = Object.keys(METHOD) as MethodId[];
 let byWork: Partial<Record<WorkKind, MethodId[]>> | null = null;
@@ -529,7 +571,8 @@ export const WORK_MODE: Partial<Record<WorkKind, 'refuse' | 'always' | 'optional
   waterRescue: 'refuse',
   force: 'always', clear: 'always', extricate: 'always', search: 'always', treat: 'always', mitigate: 'always', perimeter: 'always',
   suppress: 'optional', engage: 'optional', arrest: 'optional', load: 'optional', hoist: 'optional',
-  cordon: 'always', decontam: 'always',      // (N9 §5.12) 방패가 없어도 통제는 맡는다 · 물 세척이 늘 남는다 — 단계 1 은 표의 값만 (methodRun 을 부르는 곳이 아직 없다)
+  cordon: 'always', decontam: 'always',
+  defuse: 'refuse',      // (R3 5단계 §3.7) 쓸 해체 방법이 없으면 맡지 않는다 (fitFor 의 defuse = 기본 자격 × methodFit > 0) — 다친·동요한 처리 요원(S23)·로봇이 고장 난 로봇 조작 요원      // (N9 §5.12) 방패가 없어도 통제는 맡는다 · 물 세척이 늘 남는다 — 단계 1 은 표의 값만 (methodRun 을 부르는 곳이 아직 없다)
 };
 /** 대상 믿음이 없으면(아직 못 봤다) 후보가 없는 임무 (R3 가 해체를 더한다) */
 const NEEDS_CAS: Partial<Record<WorkKind, boolean>> = { waterRescue: true, extricate: true };
@@ -554,6 +597,8 @@ export const SAY: Record<MethodId, string> = {
   seal: '누출을 막겠습니다.', ventFirst: '먼저 환기한 뒤 차단하겠습니다.', cordon: '출입구를 통제하겠습니다.', announce: '주변에 대피 방송을 합니다.',
   air: '', drone: '드론을 띄우겠습니다.', dog: '탐지견을 풀겠습니다.',
   dive: '잠수해 들어가겠습니다.', boom: '오일펜스를 펼치겠습니다.', shieldLine: '방패로 저지선을 치겠습니다.', deconTent: '제독 텐트에서 씻기겠습니다.', hoseWash: '호스로 씻어 내겠습니다.',      // (N9)
+  feel: '앞이 안 보입니다. 벽을 따라 더듬어 찾겠습니다.', pulse: '끊어 쏘며 물을 아끼겠습니다.',      // (R3 3단계)
+  robotDefuse: '로봇 먼저 투입합니다.', suitDefuse: '방호복을 입고 해체하겠습니다.', bareDefuse: '방호복 없이 바로 해체합니다.',      // (R3 5단계)
 };
 /** (R3 §3.7) 교본 까닭 여섯의 앞말 */
 const DOC_SAY: Partial<Record<MethodWhy, string>> = { hurt: '부상으로', alone: '혼자라', lowAir: '공기가 부족해', lowAmmo: '탄약이 없어', shaken: '손이 떨려', tired: '지쳐서' };
@@ -848,10 +893,11 @@ export function chooseMethod(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, 
  * 실행부의 1초 재확인 (§4.1): 고른 방법을 지금도 쓸 수 있는가 — 장비(canUse)와 상황 조건(can)만 본다(점수·다른 방법은 보지 않는다 — "더 좋은 방법이 보이면 바꾼다"는 없다).
  * 대상 믿음이 없으면 참이다(믿음을 잃은 것만으로 바꾸지 않는다). 상태를 바꾸지 않는다.
  */
-export function methodStillFits(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, tg: MTarget, t: Task | null, m: MethodId, sense: Sense = NO_SENSE): boolean {
-  const c = makeCtx(sim, s, a, work, tg, t, sense, null);
+export function methodStillFits(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, tg: MTarget, t: Task | null, m: MethodId, sense: Sense = NO_SENSE, dc: DocCtx | null = null): boolean {
+  const c = makeCtx(sim, s, a, work, tg, t, sense, dc);
   if (NEEDS_CAS[work] && c.cb === null) return true;
-  return canUse(c, m) && METHOD[m].can(c);
+  // (R3 3단계) 교본 입력을 받았으면 교본이 뺀 방법(배율 0)도 맞지 않는 것으로 본다 — 배연·외부 방수 뒤의 예정된 전환(→ 내부 공격)이 짝·대기조·공기의 교본을 따른다
+  return canUse(c, m) && METHOD[m].can(c) && (dc === null || docMethodMul({ ...dc, m: { reach: c.reach, flow: c.flow, weak: c.weak, tile: c.tg.tile } }, m) > 0);
 }
 /** 작업 항목의 대상 */
 export function targetOfWork(w: WorkItem): MTarget { return { cas: w.cas, prop: w.prop, hostile: w.hostile, region: w.region, tile: w.tile }; }

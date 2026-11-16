@@ -383,11 +383,13 @@ export type WorkKind =
   | 'treatMate'      // (H1) 다친 대원 처치. 태울 차(prop)가 정해져 있고 병원이 필요하면 이어서 그 차에 태운다 (구급 분야, 또는 의료 가방을 든 대원)
   | 'treatSuspect'      // (H1) 쓰러진·다친 용의자 처치. 태울 차(prop)가 내 차이고 자리가 있으면 이어서 그 차에 태운다 (경찰은 언제든, 구급대원은 안전 확보 뒤)
   | 'repair' | 'towAway' | 'capture' | 'persuade' | 'cordon'      // (N8) 시설물 복구(유관 기관) · 견인 · 동물 포획 · 위기자 설득 · 통제(위협이 없는 현장에서 한 칸을 지킨다 — tile = 격자 칸 번호). 단계 2a 에는 자리만 (fitFor 0, 실행부는 빈 갈래)
-  | 'decontam';      // (N9 §5.5) 오염된 구조 대상 제독 (대상 = cas). 단계 1 에는 자리만 (workLabel '제독' · fitFor 0 · 실행부는 빈 갈래) — 맡는 사람·실행은 단계 6
+  | 'decontam'      // (N9 §5.5) 오염된 구조 대상 제독 (대상 = cas). 단계 1 에는 자리만 (workLabel '제독' · fitFor 0 · 실행부는 빈 갈래) — 맡는 사람·실행은 단계 6
+  | 'triage';      // (R3 4단계 §3.3 E01·§6.1 CE1) 다수 사상자 분류 — 대상 없음(현장 전체). 구급 대원만, 믿음 속 환자마다 곁에 2초 서서 상태를 바로잡아 알린다 → s.triageAt
 export type TaskKind = WorkKind | 'retreat' | 'rehab' | 'resupply' | 'board' | 'standby' | 'moveSignal' | 'swapAir'      // swapAir = 공기통 교체 (R1 9절)
   | 'evacuate'      // (X6) 철수 이동: 단계 3 구역 밖, 대개 대기 지점으로 (철수 명령·자기 감각의 임박 조짐 — brain.think 의 의무)
   | 'ashore'      // (R2 1b) 물 위의 대원(헤엄 중·보트 위)이 뭍으로 돌아간다 (brain.think 의 물 위 가드 · 헤엄 사고 뒤)
-  | 'cover' | 'rearm';      // (R3 2단계) 교본 행동: 엄폐(숨기 — 쏘지 않고 엄폐 자리에서 기다림) · 탄약 보급(대기 지점의 차에서 탄약 상자). 실행은 doctrineRun
+  | 'cover' | 'rearm'      // (R3 2단계) 교본 행동: 엄폐(숨기 — 쏘지 않고 엄폐 자리에서 기다림) · 탄약 보급(대기 지점의 차에서 탄약 상자). 실행은 doctrineRun
+  | 'airOut' | 'pairOut' | 'pair';      // (R3 3단계) 교본 행동: 공기 탈출(밖으로 나가 공기통 교체) · 짝 따라 나가기 · 짝 동행(위험 실내 일을 맡은 짝을 따라간다). 실행은 doctrineRun
 
 export interface WorkItem {
   id: number; kind: WorkKind;
@@ -697,7 +699,9 @@ export type MethodId =
   | 'stay' | 'rush' | 'airlift'                                                                         // 응급 (treat · 이송 수단)
   | 'seal' | 'ventFirst' | 'cordon' | 'announce'                                                        // 누출 조치·통제 (mitigate · perimeter)
   | 'air' | 'drone' | 'dog'                                                                             // 야외 수색 (기록 전용·7단계)
-  | 'dive' | 'boom' | 'shieldLine' | 'deconTent' | 'hoseWash';      // (N9 §5.12) 잠수 · 오일펜스 · 방패 저지선(cordon) · 제독 텐트 · 물 세척(decontam). 단계 1 은 표의 줄만 (can = NOT_YET)
+  | 'dive' | 'boom' | 'shieldLine' | 'deconTent' | 'hoseWash'      // (N9 §5.12) 잠수 · 오일펜스 · 방패 저지선(cordon) · 제독 텐트 · 물 세척(decontam). 단계 1 은 표의 줄만 (can = NOT_YET)
+  | 'feel' | 'pulse'      // (R3 3단계 §3.7) 벽 더듬기 수색(search — 열화상 없이 짙은 연기) · 끊어 쏘기(suppress — 용수 30% 아래)
+  | 'robotDefuse' | 'suitDefuse' | 'bareDefuse';      // (R3 5단계 §3.7) 해체 defuse: 로봇 원격 · 방호복 · 맨몸 (실행은 doctrineRun.runDefuse)
 /** 왜 이 방법을 골랐는가 (기록 문구·보고서 문장이 쓴다). usual = 평소 선택(교본 줄과 무관) */
 export type MethodWhy = 'usual' | 'near' | 'noGear' | 'tooFar' | 'weak' | 'fast' | 'failed' | 'broken' | 'danger' | 'quiet' | 'team'      // R3 가 이 줄 끝에 상태 까닭 여섯을 더한다 (R3 §2.1·§3.7)
   | 'hurt' | 'alone' | 'lowAir' | 'lowAmmo' | 'shaken' | 'tired';      // (R3 1단계) 교본 줄이 1등을 바꾼 까닭 (field/doctrine.ts 의 docWhyMethod — §3.7 의 사상 표)
@@ -905,7 +909,8 @@ export type DocHook = 'fit' | 'duty' | 'act' | 'method' | 'gate' | 'cmd' | 'disp
 /** 교본이 내는 상태 행동 (같은 이름의 TaskKind 로 실행한다 — 그 행동을 쓰는 단계가 TaskKind 에 더한다) */
 export type DocActId = 'airOut' | 'pairOut' | 'cover' | 'rearm' | 'pair';
 /** 실행기가 교본에 묻는 판단 지점 (§2.3 ④) */
-export type DocGateId = 'interiorEntry' | 'roomEntry' | 'breach' | 'closeIn' | 'coverFire' | 'bangUse' | 'carryHold' | 'carryStart' | 'laneTreat';
+export type DocGateId = 'interiorEntry' | 'roomEntry' | 'breach' | 'closeIn' | 'coverFire' | 'bangUse' | 'carryHold' | 'carryStart' | 'laneTreat'
+  | 'forceDoor';      // (R3 5단계 S03) 진입 결정 전 무장 현장의 잠긴 문을 열려는 걸음 (executor.moveTo 의 문 강제 개방 하위 작업 앞)
 /** 교본 행동의 까닭 — 보고서·패널의 말 (§7.3 의 WHY_DOC) */
 export type DocWhy = 'alone' | 'buddy' | 'outside' | 'hurt' | 'tired' | 'shaken' | 'lowAir' | 'lowAmmo' | 'noKit' | 'kit' | 'civ' | 'hostage' | 'danger' | 'triage' | 'backup' | 'protocol' | 'team';
 /** 대원 자신의 몸 상태 신고 ('crew' 사실의 값 — 1단계). 지휘관·동료는 남의 몸을 이것으로만 안다 (§2.4) */

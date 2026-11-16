@@ -2,7 +2,7 @@
 // 이 파일은 90초 안에 끝나야 한다: 끝까지 돌린 교대는 shiftOf 로 한 번만 돌리고 여러 단언이 나눠 쓴다(읽기만 한다).
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { AIR_KIND, AIR_LOW, AIR_MIN, EXTRA_NAMES, KITS, ROLES, STAFF, airShort, armorOf, blastFactor, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, heliPad, isHovering, kitLive, kitUses, kitWorks, medLevelOf, minCrew, minField, roleOf, seatsOf, seatsUsed, skillsOf, slotsOf, stays, toolFor, toolUse, useKit } from '../src/sim/crews';
+import { AIR_IN_FRAC, AIR_KIND, AIR_LOW, AIR_MIN, EXTRA_NAMES, KITS, ROLES, STAFF, airShort, armorOf, blastFactor, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, heliPad, isHovering, kitLive, kitUses, kitWorks, medLevelOf, minCrew, minField, roleOf, seatsOf, seatsUsed, skillsOf, slotsOf, stays, toolFor, toolUse, useKit } from '../src/sim/crews';
 import { NORMAL, parseDifficulty } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { airFit, kitBonus, tickDispatch } from '../src/sim/dispatch/dispatcher';
@@ -87,7 +87,8 @@ function watch(seed: string, d: Difficulty, force: string | null): Watched {
           m.set(s.id + ':' + a.rid, r.role!);
           // (R2 단계 4) 소화기를 든 대원(경찰·구급·기관원)은 작은 불의 진압을 소화기로 맡는다 — 그 방법이거나 아직 고르기 전(첫 틱)만
           if ((k === 'suppress' || k === 'overhaul') && !hasKit(sim, a.rid, 'hose') && !(k === 'suppress' && k === a.task.kind && hasKit(sim, a.rid, 'extinguisher') && (a.task.method === 'extinguisher' || a.task.mt0 === undefined))) note(`${who} 관창 없이 ${k}`);
-          if (k === 'defuse' && !hasKit(sim, a.rid, 'eodKit')) note(`${who} 해체 공구 없이 해체`);
+          // (R3 단계 5 S06) 작동하는 로봇을 든 로봇 조작 요원은 로봇 원격 해체로 맡는다 — 그 방법이거나 아직 고르기 전(첫 틱)만
+          if (k === 'defuse' && !hasKit(sim, a.rid, 'eodKit') && !(k === a.task.kind && hasKit(sim, a.rid, 'robot') && (a.task.method === 'robotDefuse' || a.task.mt0 === undefined))) note(`${who} 해체 공구 없이 해체`);
           if ((k === 'engage' || k === 'perimeter') && !hasFirearm(sim, a.rid)) note(`${who} 총기 없이 ${k}`);
         }
         const k = a.task.kind;
@@ -455,11 +456,14 @@ describe('④ 장비가 없으면 그 일을 맡지 않는다', () => {
     expect(fitFor(sim, s, noz, sup)).toBeCloseTo(sim.responders[noz.rid].skills.fire + 0.15, 9);
     strip(noz.rid, 'hose');
     expect(fitFor(sim, s, noz, sup)).toBe(0); expect(fitFor(sim, s, noz, ovh)).toBe(0);
-    // 위험한 건물 안: 공기호흡기
+    // 위험한 건물 안: 공기호흡기. (R3 3단계) 팀장의 짝은 혼자 서는 기관원이라 위험 실내 일에 따라오지 않는다(F04 — 쓸 수 있는 짝 없음) — 이 시험은 장비 자격만 보므로 진입대원과 짝을 맺어 둔다
+    const ffr = roleAgent(sim, agents('engine'), 'firefighter'); lead.buddy = ffr.rid; ffr.buddy = lead.rid;
     expect(fitFor(sim, s, lead, srch)).toBeGreaterThan(0);
     for (const a of [...agents('patrol'), ...agents('als')]) expect(fitFor(sim, s, a, srch), sim.responders[a.rid].role).toBe(0);
     strip(lead.rid, 'scba'); expect(fitFor(sim, s, lead, srch)).toBe(0);
     // 기관원은 수색을 피하지만(−0.25) 자격은 남는다. 급수 연결은 먼저 맡는다
+    // (R3 합치기 — 주 세션 결정 (라)) 혼자 서는 기관원도 위험 실내 일은 짝이 따라올 때만(F04) — 장비 자격만 보므로 공기호흡기를 멘 관창수와 짝을 맺어 둔다
+    eng.buddy = noz.rid; noz.buddy = eng.rid;
     expect(fitFor(sim, s, eng, srch)).toBeGreaterThan(0);
     const hook = work(sim, 'hookup', { prop: eng.unitId });
     expect(fitFor(sim, s, eng, hook)).toBeCloseTo(1.1, 9);
@@ -470,12 +474,20 @@ describe('④ 장비가 없으면 그 일을 맡지 않는다', () => {
     const tech = roleAgent(sim, agents('eod'), 'bombTech'), robot = roleAgent(sim, agents('eod'), 'robotOp'), cop = roleAgent(sim, agents('patrol'), 'officer');
     const per = work(sim, 'perimeter', { tile: 0 }), arr = work(sim, 'arrest', { hostile: 0 }), def = work(sim, 'defuse', { prop: 0 });
     expect(fitFor(sim, s, tech, per), '처리 요원은 총기가 없다').toBe(0); expect(fitFor(sim, s, tech, arr)).toBe(0);
-    expect(fitFor(sim, s, tech, def)).toBeGreaterThan(0); expect(fitFor(sim, s, robot, def)).toBe(0); expect(fitFor(sim, s, robot, per)).toBeGreaterThan(0);
+    // (R3 단계 5) 해체는 믿음 속 살아 있는 장치에만(쓸 해체 방법이 있을 때만 — WORK_MODE 'refuse'): 모르면 처리 요원도 0.
+    // 알면 처리 요원(방호복 해체)과 작동하는 로봇을 든 로봇 조작 요원(로봇 원격 해체 — S06: 장치 8칸 안·가리지 않는 자리)
+    expect(fitFor(sim, s, tech, def)).toBe(0); expect(fitFor(sim, s, robot, def)).toBe(0);
+    const at = { x: Math.round(robot.x), y: Math.round(robot.y) };
+    expect(robotSpot(s, at.x, at.y, robot.x, robot.y), '로봇을 부릴 자리').not.toBeNull();
+    for (const b of [tech, robot]) b.beliefs.merge(mkFact('haz', 0, { kind: 'bomb', active: true, x: at.x, y: at.y }, '시험', sim.t, 1, true, '시험'));
+    docForget();
+    expect(fitFor(sim, s, tech, def)).toBeGreaterThan(0); expect(fitFor(sim, s, robot, def)).toBeGreaterThan(0); expect(fitFor(sim, s, robot, per)).toBeGreaterThan(0);
     expect(fitFor(sim, s, cop, per)).toBeGreaterThan(0);
     strip(cop.rid, 'pistol');
     expect(fitFor(sim, s, cop, per)).toBe(0); expect(fitFor(sim, s, cop, arr), '테이저로 검거는 맡는다').toBeGreaterThan(0);
     strip(cop.rid, 'taser'); expect(fitFor(sim, s, cop, arr)).toBe(0);
     strip(tech.rid, 'eodKit'); expect(fitFor(sim, s, tech, def)).toBe(0);
+    strip(robot.rid, 'robot'); expect(fitFor(sim, s, robot, def), '(R3 단계 5) 로봇이 없으면 조작 요원은 해체를 맡지 않는다').toBe(0);
     // 처치: 든 의료 장비의 수준 (없으면 부서의 기본 교육)
     const para = roleAgent(sim, agents('als'), 'paramedic'), drv = roleAgent(sim, agents('als'), 'emsDriver');
     expect(medLevelOf(sim, para.rid)).toBe(1); expect(medLevelOf(sim, drv.rid)).toBe(0.5); expect(medLevelOf(sim, cop.rid)).toBe(0.25); expect(medLevelOf(sim, lead.rid)).toBe(0.35);
@@ -546,9 +558,9 @@ describe('⑤ 역할이 배정에 쓰인다', () => {
       for (const e of w.sim.events) if (e.text.includes('교대합니다')) { reliefs++; expect(toolFor(w.sim, e.rid, 'extricate'), `${e.text} — 넘겨받는 사람은 구조 장비를 들었다`).toBeGreaterThan(0.4); }
     }
     expect(reliefs, '구출을 넘겨받은 횟수').toBeGreaterThan(0);
-    // 해체: 처리 요원만
+    // 해체: 처리 요원만 — (R3 단계 5 S06) 로봇 조작 요원은 로봇 원격 해체로 (그 방법인지는 위의 watch 가 본다)
     let defusers = 0;
-    for (const w of [watch('K1', NORMAL, 'armed/bomb'), watch('K2', NORMAL, 'armed/bomb')]) for (const role of (w.held.get('defuse') ?? new Map<string, RoleId>()).values()) { defusers++; expect(role).toBe('bombTech'); }
+    for (const w of [watch('K1', NORMAL, 'armed/bomb'), watch('K2', NORMAL, 'armed/bomb')]) for (const role of (w.held.get('defuse') ?? new Map<string, RoleId>()).values()) { defusers++; expect(['bombTech', 'robotOp']).toContain(role); }
     expect(defusers).toBeGreaterThan(0);
   }, 60000);
 });
@@ -618,12 +630,12 @@ describe('⑧ 장비 공백 요청', () => {
     taser.faultKnown = true; expect(capableOf(sim, cop.id, 'arrest')).toBe(false);
     // 표에 없는 일은 누구나
     for (const k of ['search', 'carry', 'treat', 'mitigate', 'extricate', 'traffic'] as WorkKind[]) expect(capableOf(sim, of('officer'), k), k).toBe(true);
-    // 공기: 문턱(45초) 아래로 떨어졌고 예비 공기통도 없으면 진압을 맡을 수 없다 (공기를 세지 않는 장비면 된다)
+    // 공기: 문턱(R1 의 45초 → R3 의 한 통의 50%) 아래로 떨어졌고 예비 공기통도 없으면 진압을 맡을 수 없다 (공기를 세지 않는 장비면 된다)
     const noz = sim.responders[of('nozzle')], air = noz.kit!.find((it) => it.id === 'scba')!, eng = sim.units[noz.unitId];
     expect(air.uses).toBe(sim.tune.airFull); expect(AIR_MIN).toBe(45);
     air.uses = 30; expect(capableOf(sim, noz.id, 'suppress'), '예비 공기통이 있다').toBe(true);
     eng.spareAir = 0; expect(capableOf(sim, noz.id, 'suppress')).toBe(false);
-    air.uses = 45; expect(capableOf(sim, noz.id, 'suppress')).toBe(true);
+    air.uses = AIR_IN_FRAC * sim.tune.airFull; expect(capableOf(sim, noz.id, 'suppress')).toBe(true);      // (R3 3단계) 문턱은 한 통의 50%(AIR_IN_FRAC — R1 의 45초를 넓혔다)
     air.uses = undefined; expect(capableOf(sim, noz.id, 'suppress')).toBe(true);
   });
   it('anyCapable: 순찰차만 있는 현장에는 진압을 맡을 사람이 없고, 펌프차가 오는 중이면 있다', () => {
@@ -660,7 +672,7 @@ describe('⑧ 장비 공백 요청', () => {
     expect(anyCapable(sim, s, I, sup, 'suppression'), '예비 공기통으로 바꾸면 맡는다').toBe(true);
     eng.spareAir = 0;
     expect(anyCapable(sim, s, I, sup, 'suppression'), '공기도 예비도 없다').toBe(false);
-    tanks[0].uses = 45;
+    tanks[0].uses = AIR_IN_FRAC * sim.tune.airFull;      // (R3 3단계) 문턱 = 한 통의 50%
     expect(anyCapable(sim, s, I, sup, 'suppression')).toBe(true);
     for (const it of tanks) it.uses = sim.tune.airFull;
     eng.water = 0; eng.hydrant = false;
@@ -1792,12 +1804,16 @@ describe('장비의 특색 (설계서 4절·6.3)', () => {
     const fake = b.s.props.find((p) => p.kind === 'bomb' && !p.real && !p.mitigated)!;
     expect(fake, '수상한 물건 현장의 가짜 장치').toBeTruthy();
     const bt = roleAgent(b.sim, b.agents('eod'), 'bombTech'), op = roleAgent(b.sim, b.agents('eod'), 'robotOp'), skill = b.sim.responders[bt.rid].skill;
+    // (R3 단계 5) 해체는 믿음 속 살아 있는 장치에만 — 처리 요원이 그 물건을 안다
+    const knows = (): void => { bt.beliefs.merge(mkFact('haz', fake.id, { kind: 'bomb', active: true, x: fake.x, y: fake.y }, '시험', b.sim.t, 1, true, '시험')); docForget(); };
+    knows();
     put(bt, standBy(b.s, fake.x, fake.y));
     near(drive(b.sim, b.s, bt, 'defuse', { prop: fake.id }), 5 / (0.5 + skill));
     expect(fake.mitigated).toBe(true);
     // 로봇이 고장 나 있으면(숨은 고장) 쓰려 할 때 드러나고, 손으로 확인한다
     fake.mitigated = false; fake.blocking = true; b.s.propAt[fake.y * b.s.w + fake.x] = fake.id;
     kitItem(b.sim, op.rid, 'robot').fault = true;
+    knows();
     put(bt, standBy(b.s, fake.x, fake.y));
     near(drive(b.sim, b.s, bt, 'defuse', { prop: fake.id }), 10 / (0.5 + skill));
     expect(kitItem(b.sim, op.rid, 'robot').faultKnown).toBe(true);
@@ -2017,13 +2033,15 @@ describe('⑭ 소모와 고장', () => {
     const fits = (a: FieldAgent, list: WorkItem[]): number[] => list.map((w) => fitFor(sim, s, a, w));
     const full = fits(noz, smoky), fullOther = fits(noz, other);
     for (const f of full) expect(f).toBeGreaterThan(0);
-    tankOf(sim, noz.rid).uses = 45;
+    const th = AIR_IN_FRAC * sim.tune.airFull;      // (R3 3단계) 문턱은 한 통의 50% (R1 의 45초를 넓혔다 — 공기 30% 아래의 탈출 F01 과 0.20 의 간격)
+    tankOf(sim, noz.rid).uses = th;
     expect(airShort(sim, noz.rid)).toBe(false); expect(fits(noz, smoky), '문턱에서는 맡는다').toEqual(full);
-    tankOf(sim, noz.rid).uses = 44.9;
+    tankOf(sim, noz.rid).uses = th - 0.1;
     expect(airShort(sim, noz.rid)).toBe(true); expect(fits(noz, smoky)).toEqual([0, 0, 0, 0, 0]);
     expect(fits(noz, other), '연기 속이 아닌 일은 그대로').toEqual(fullOther);
     expect(smoky.map((w) => fitFor(sim, s, noz, w, true)), '통을 바꾼 뒤라면(지휘관의 어림)').toEqual(full);
-    // 관창이 없는 팀장도 건물 안의 수색·이송·구출은 같다
+    // 관창이 없는 팀장도 건물 안의 수색·이송·구출은 같다 (R3 3단계: 팀장의 짝 기관원은 따라 들어오지 않으므로 공기가 가득한 진입대원과 짝을 맺어 둔다 — F04)
+    const ffm = roleAgent(sim, agents('engine'), 'firefighter'); lead.buddy = ffm.rid; ffm.buddy = lead.rid;
     const leadFull = fits(lead, [srch, carry, ext]);
     for (const f of leadFull) expect(f).toBeGreaterThan(0);
     tankOf(sim, lead.rid).uses = 10;
@@ -2044,9 +2062,13 @@ describe('⑭ 소모와 고장', () => {
     const labelOf = (a: FieldAgent): string | undefined => a.task?.label;
     s.smoke.fill(0); s.fire.fill(0);
     for (const a of s.agents) put(a, s.staging);
-    // 60초 이상이면 나서지 않는다
-    tank.uses = 60; think(sim, s, noz);
+    // 공기 문턱(한 통의 50% — R3 F03) 이상이면 나서지 않는다. 그 아래 60초까지는 바깥에서 손이 비었을 때 0.7 로 미리 바꾼다(R3 F03 의 바탕)
+    tank.uses = AIR_IN_FRAC * sim.tune.airFull; think(sim, s, noz);
     expect(labels(noz)).not.toContain('공기통 교체');
+    noz.task = null; tank.uses = 60; think(sim, s, noz);
+    const sw = noz.candidates.find((c) => c.label === '공기통 교체')!.score;
+    expect(sw).toBeGreaterThan(0.6); expect(sw).toBeLessThan(0.8);      // 0.7 (+ 판단 오차)
+    noz.task = null; for (const b of s.agents) if (b !== noz && b.task && b.task.kind === 'swapAir') b.task = null;
     // 60초 아래: 스스로 고르고, 고르는 그때 알린다
     noz.task = null; tank.uses = 59.9;
     const ev = sim.events.length;
@@ -2181,7 +2203,7 @@ describe('⑭ 소모와 고장', () => {
       expect(w.bad, w.bad.join('\n')).toEqual([]);      // 공기·예비 공기통이 0 밑으로 내려간 적이 없다 (watch)
       swappers += w.held.get('swapAir')?.size ?? 0;
       const count = (re: RegExp): number => sim.events.filter((e) => re.test(e.text)).length;
-      swaps += count(/^공기통 교체 완료/); warned += count(/공기 잔량 60초 미만/);
+      swaps += count(/^공기통 교체 완료/); warned += count(/공기 잔량 60초 미만|^공기 (30|50)% 미만/);      // (R3 3단계) 교본의 공기 문턱(50% 신고·30% 탈출)이 60초보다 먼저 온다 — 그 신고도 공기 잔량 경고다
       // 드러난 고장마다 기록 하나 (같은 대원·같은 장비는 한 번만), 드러나지 않은 고장은 기록이 없다
       let known = 0;
       for (const r of sim.responders) for (const it of r.kit!) if (it.faultKnown) { known++; expect(it.fault, `${r.name} ${it.id}`).toBe(true); }
@@ -2397,3 +2419,7 @@ describe('⑮ 재현성', () => {
     }
   }, 60000);
 });
+
+// (R3 단계 5) 해체 방법 — 로봇을 부릴 자리 · 교본의 틱 기억 지우기
+import { robotSpot } from '../src/sim/field/methods';
+import { docForget } from '../src/sim/field/doctrine';

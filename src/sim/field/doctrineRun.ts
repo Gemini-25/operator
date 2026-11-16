@@ -61,7 +61,7 @@ export function docBegin(sim: Sim, s: Scene, a: FieldAgent, pick: DocPick, k: Pi
   a.doc = { rule: pick.rule.id, act: pick.act, since: sim.t };
   splitBegin(sim, s, a, was);
   const I = sim.incidents[s.incidentId];
-  ACT_DOC.set(t, recordDoc(sim, I, a, pick.rule.id, pick.rule.hook, { act: pick.act, tgt: hostile >= 0 ? 'h:' + hostile : '' }, docNote(sim, s, a, pick.rule), pick.rule.report !== undefined));
+  ACT_DOC.set(t, recordDoc(sim, I, a, pick.rule.id, pick.rule.hook, { act: pick.act, tgt: hostile >= 0 ? 'h:' + hostile : '', mate: PAIR_ACTS.has(pick.act) && a.buddy !== undefined ? a.buddy : -1 }, docNote(sim, s, a, pick.rule, pick.act === 'pair' && NOTE_AT.get(a)?.has(pick.rule.id) ? 0 : 1), pick.rule.report !== undefined));      // (3단계) 짝 동행은 방을 옮길 때마다 다시 시작한다 — 두 번째부터는 낮은 중요도(0)로
 }
 /** 교본 행동 임무의 기록 한 줄 (끝날 때 t1 을 닫는다 — 평균 길이·보고서의 {n}) */
 const ACT_DOC = new WeakMap<Task, DocUse>();
@@ -149,7 +149,9 @@ export function crewNow(sim: Sim, a: FieldAgent): CrewBelief {
 export function selfReport(sim: Sim, s: Scene, a: FieldAgent): void {
   if (a.aloft) return;
   if (a.shaken !== undefined && a.shaken <= sim.t) { a.shakenOff = a.shaken; a.shaken = undefined; }      // 동요가 끝났다 (끝난 시각 — 10초 면역)
-  const v = crewNow(sim, a), sig = crewSigOf(v), prev = a.crewSig;
+  const v = crewNow(sim, a), prev = a.crewSig;
+  if (prev !== undefined && sameSig(prev, v)) return;      // (속도) 서명이 그대로면 글자를 만들지 않는다 (crewSigOf 와 같은 비교)
+  const sig = crewSigOf(v);
   if (sig === prev) return;
   a.crewSig = sig;
   if (prev === undefined && sig === '0000') return;
@@ -159,6 +161,10 @@ export function selfReport(sim: Sim, s: Scene, a: FieldAgent): void {
   const f = mkFact('crew', a.rid, v, sim.responders[a.rid].name, sim.t, 1, true, alert || crewQuietText(v));
   if (alert) learn(sim, a, f); else learnQuiet(sim, a, f);
   void s;
+}
+/** 지난 서명 prev 가 v 의 서명(crewSigOf — 한 자리 수 넷)과 같은가 — 글자를 만들지 않고 견준다 */
+function sameSig(prev: string, v: CrewBelief): boolean {
+  return prev.length === 4 && v.band >= 0 && v.band <= 9 && prev.charCodeAt(0) === 48 + v.band && prev.charCodeAt(1) === 48 + v.air && prev.charCodeAt(2) === 48 + v.ammo && prev.charCodeAt(3) === (v.shaken ? 49 : 48);
 }
 /** 글 없이 보내는 신고의 믿음 속 글 (무전 문구에는 실리지 않는다 — 정보창의 '알고 있는 정보'에만 보인다) */
 function crewQuietText(v: CrewBelief): string {
@@ -294,7 +300,7 @@ export function gateStep(sim: Sim, s: Scene, a: FieldAgent, t: Task, gate: DocGa
   if (ans.ok) {
     if (ans.exc !== null) {
       const r = ruleById(ans.exc);
-      const ev = r !== undefined && r.excNote !== undefined ? docNote(sim, s, a, r, 2, r.excNote) : -1;
+      const ev = r !== undefined && r.excNote !== undefined ? docNote(sim, s, a, r, again(a, gate, r.id + '|' + r.excNote) ? 0 : 2, r.excNote) : -1;
       recordDoc(sim, I, a, ans.exc, 'gate', { gate, tgt }, ev, r !== undefined && r.report !== undefined);
       passGate(t, gate);
     }
@@ -305,13 +311,15 @@ export function gateStep(sim: Sim, s: Scene, a: FieldAgent, t: Task, gate: DocGa
   if (t.gateId !== gate || (t.gateAt ?? -1) < 0) { t.gateAt = sim.t; t.gateId = gate; t.gateSaid = false; }
   t.docRule = ans.rule ?? undefined;
   let ev = -1;
-  if (!t.gateSaid) { t.gateSaid = true; if (rule !== undefined) ev = docNote(sim, s, a, rule); }
+  if (!t.gateSaid) { t.gateSaid = true; if (rule !== undefined) ev = docNote(sim, s, a, rule, again(a, gate, rule.id) ? 0 : 1); }
   if (ans.rule !== null) recordDoc(sim, I, a, ans.rule, 'gate', { gate, tgt }, ev, rule !== undefined && rule.report !== undefined);
   if (sim.t - (t.gateAt ?? sim.t) + 1e-9 < ans.wait) return 'wait';
-  if (rule !== undefined && rule.outNote !== undefined) docNote(sim, s, a, rule, 1, rule.outNote);
+  if (rule !== undefined && rule.outNote !== undefined) docNote(sim, s, a, rule, again(a, gate, rule.id + '|' + rule.outNote) ? 0 : 1, rule.outNote);
   passGate(t, gate); clearGate(t);
   return 'timeout';
 }
+/** (3단계) 실내 첫걸음(interiorEntry)의 문구를 이 대원이 이 교대에 이미 말했는가 — 방마다 다시 묻는 판단 지점이라 두 번째부터는 낮은 중요도(0)로 남긴다 (극한 교대에 한 대원이 여덟 번) */
+function again(a: FieldAgent, gate: DocGateId, key: string): boolean { return gate === 'interiorEntry' && NOTE_AT.get(a)?.has(key) === true; }
 /** 판단 지점 칸을 비운다 (풀렸거나 상한) */
 function clearGate(t: Task): void { t.gateAt = -1; t.gateId = undefined; t.gateSaid = false; if (t.kind !== 'cover' && t.kind !== 'rearm') t.docRule = undefined; }
 
@@ -382,6 +390,7 @@ export function runRearm(sim: Sim, s: Scene, a: FieldAgent, t: Task, k: ExecKit)
 }
 /** 교본 행동 임무의 계속 점수 (brain 의 "현재 임무 계속" — §4.4 끝). 교본 행동이 아니면 undefined */
 export function docContinue(sim: Sim, a: FieldAgent, t: Task): number | undefined {
+  if (t.kind === 'pair') return PAIR_P.get(t) ?? 0.62;      // (3단계 §4.4 끝) 짝 동행: 0.5 + 0.4 × 짝 일의 우선도 + 0.12 (runPair 가 적는다)
   if (t.kind === 'cover') return 0.97;      // 교전 지시 0.92·교전 계속 0.94·후퇴 0.95 보다 높게 — 12초 상한과 끝나는 조건으로 스스로 끝난다
   if (t.kind === 'rearm') { const g = gunOf(sim, a.rid); return g !== null && g.ammo !== Infinity && g.ammo <= 2 * g.perShot ? 0.96 : 0.86; }
   return undefined;
@@ -408,3 +417,492 @@ export function docMark(sim: Sim, s: Scene, a: FieldAgent, ruleId: string, hook:
   if (r === undefined) return;
   recordDoc(sim, sim.incidents[s.incidentId], a, ruleId, hook, extra, docNote(sim, s, a, r, noteImp), r.report !== undefined);
 }
+
+// ───────────────────────── (3단계 — 소방) 짝 맺기 · 다시 맺기 · 공기 탈출 · 짝 따라 나가기 · 짝 동행 (§5) ─────────────────────────
+// 짝(FieldAgent.buddy)은 작업판의 담당자가 아니다(WorkItem.max 그대로 — §5.4): 작업판에는 한 사람, 몸은 둘. 짝은 이 파일만 맺고(pairUp·rebuddy) 판단부는 읽기만 한다.
+import { PAIRS, SOLO_OK, hotSearch, inJob, nearWork, pairAlt } from './doctrine';
+import { ROLES, STAFF, refillAir } from '../crews';
+import { roleIdOf } from './gear';
+import { staticPass, tileOf } from './grid';
+import type { RoleId, Unit } from '../types';
+/** 짝을 기록에 싣는 교본 행동 (기록의 mate — 보고서의 {mate}) */
+const PAIR_ACTS: ReadonlySet<string> = new Set<string>(['airOut', 'pairOut', 'pair']);
+/**
+ * 최소 인원 부대인가 (§5.1 — PAIRS 의 min 열을 쓰는 때): 내린 대원 가운데 최소 인원에서 빠지는 자리(STAFF.minDrop)의 역할이 표준 편성보다 적다.
+ * u.crew 의 길이를 세지 않는다 — I2 의 결장자(status 'off')가 u.crew 에 남고 예비 인력이 붙으면 u.crew 가 길어지며, 후송된 대원은 내리지 않는다.
+ * 내리지 않는 자리(조종사·부기장 — ROLES.stays)는 세지 않는다 (그 자리가 빠져도 짝은 같다)
+ */
+export function minUnit(kind: Unit['kind'], roles: (RoleId | null)[]): boolean {
+  const st = STAFF[kind];
+  for (let k = 0; k < st.minDrop.length; k++) {
+    const role = st.std[st.minDrop[k]];
+    if (ROLES[role] !== undefined && ROLES[role].stays) continue;
+    let want = 0, have = 0;
+    for (const r of st.std) if (r === role) want++;
+    for (const r of roles) if (r === role) have++;
+    if (have < want) return true;
+  }
+  return false;
+}
+/**
+ * 짝 맺기 (§5.1 — sceneManager.unitArrived 가 그 부대의 대원을 내린 뒤 한 번): PAIRS 의 쌍을 순서대로 보며, 그 부대의 이 현장 활동 대원 가운데 아직 짝이 없는 첫째 역할 A 와
+ * (다른 사람인) 첫째 역할 B 를 서로 맺는다(a.buddy = b.rid, b.buddy = a.rid). 같은 역할이 둘이면 내린 순서(crew 순서)로 가린다. 한쪽이 없으면 그 쌍은 건너뛴다 —
+ * 남은 사람은 −1 이고 다음 판단에 rebuddy 가 본다. 최소 인원 부대는 min 열(minUnit). 기록은 남기지 않는다 (편성에서 바로 나오는 짝이다)
+ * 쓰는 법: pairUp(sim, s, u) — 돌려주는 값 없음. 짝을 기억하는 칸은 FieldAgent.buddy 하나(rid, 없으면 -1)
+ */
+export function pairUp(sim: Sim, s: Scene, u: Unit): void {
+  const def = PAIRS[u.kind];
+  if (def === undefined) return;
+  const mine: FieldAgent[] = [];
+  for (const b of s.agents) if (b.unitId === u.id && b.status === 'active' && !b.aloft) mine.push(b);
+  if (mine.length < 2) return;
+  const roles = mine.map((b) => roleIdOf(sim, b.rid));
+  const cols = minUnit(u.kind, roles) ? def.min : def.std;
+  for (const [p, q] of cols) {
+    let A = -1, B = -1;
+    for (let k = 0; k < mine.length && A < 0; k++) if ((mine[k].buddy ?? -1) < 0 && roles[k] === p) A = k;
+    if (A < 0) continue;
+    for (let k = 0; k < mine.length && B < 0; k++) if (k !== A && (mine[k].buddy ?? -1) < 0 && roles[k] === q) B = k;
+    if (B < 0) continue;
+    mine[A].buddy = mine[B].rid; mine[B].buddy = mine[A].rid;
+  }
+}
+/** 같은 현장에서 그 rid 의 대원 (상태와 상관없이 — 짝을 잃었는지 본다) */
+function agentAt(s: Scene, rid: number, not: FieldAgent): FieldAgent | null {
+  let best: FieldAgent | null = null;
+  for (let k = 0; k < s.agents.length; k++) { const b = s.agents[k]; if (b === not || b.rid !== rid) continue; if (best === null || (b.status === 'active' && best.status !== 'active')) best = b; }
+  return best;
+}
+/** 짝이 아직 있는가 (활동 중이거나 쓰러져 있다 — 쓰러진 짝은 G04 가 가리키게 두고 다시 맺지 않는다). 떠났거나 물러나 후송을 기다리거나 숨졌으면 잃었다 */
+function hasBuddy(sim: Sim, s: Scene, a: FieldAgent): boolean {
+  if (a.buddy === undefined || a.buddy < 0) return false;
+  const b = agentAt(s, a.buddy, a);
+  if (b === null || sim.responders[b.rid].dead) return false;
+  return b.status === 'active' || b.status === 'down';
+}
+/**
+ * 짝 다시 맺기 (§5.3 — brain.think 의 무전 다음, 1번(철수·이송 지시) 앞): 짝이 없거나(−1) 짝이 떠났다·물러났다·숨졌으면, 같은 현장의 같은 부서 활동 대원 가운데
+ * 혼자 서는 역할이 아니고 짝이 없는(또는 잃은) 가장 가까운 사람(같으면 rid 가 작은 쪽)과 서로 맺는다. 기록 "{mate}, 지금부터 나와 짝이다." (imp 0).
+ * 없으면 −1 로 둔다(혼자). 혼자 서는 역할(SOLO_OK)은 하지 않는다. 대원 순서대로 판단하므로 결정적이다. 쓰는 법: rebuddy(sim, s, a)
+ */
+export function rebuddy(sim: Sim, s: Scene, a: FieldAgent): void {
+  if (a.status !== 'active' || a.aloft) return;
+  const ro = roleIdOf(sim, a.rid);
+  if (ro !== null && SOLO_OK.has(ro)) return;
+  // (합치기 — 주 세션 결정 (나)) 짝이 혼자 서는 역할(기관원·사다리 조작원 …)이라 위험 실내에 함께 들어갈 수 없는 공기호흡기 대원은, 손이 비었고 지휘관이 아니면
+  // 부대를 넘어 같은 처지(짝이 없거나 짝이 혼자 서는 역할)의 손 빈 공기호흡기 대원과 다시 맺는다 — 펌프차 둘째 대의 진압 팀장·구조 팀장이 밖에 서 있기만 했다.
+  // 남겨진 혼자 서는 대원은 짝이 없어진다(−1 — 그는 원래 밖에 선다: 밖 대기조로 세어진다)
+  const lost = !hasBuddy(sim, s, a);
+  if (!lost && !soloPaired(sim, s, a)) return;
+  const dept = sim.responders[a.rid].dept;
+  let best: FieldAgent | null = null, bd = Infinity;
+  for (let k = 0; k < s.agents.length; k++) {
+    const b = s.agents[k];
+    if (b === a || b.status !== 'active' || b.aloft || sim.responders[b.rid].dept !== dept) continue;
+    const rb = roleIdOf(sim, b.rid);
+    if (rb !== null && SOLO_OK.has(rb)) continue;
+    if (hasBuddy(sim, s, b) && !(!lost && soloPaired(sim, s, b))) continue;      // 다시 맺는 사람: 짝이 없는 사람, 또는 (짝이 혼자 서는 역할인 사람끼리) 같은 처지의 사람
+    const d = dist(a.x, a.y, b.x, b.y);
+    if (d < bd || (d === bd && best !== null && b.rid < best.rid)) { bd = d; best = b; }
+  }
+  if (best === null) { if (lost && a.buddy !== -1) a.buddy = -1; return; }
+  unpairSolo(s, a); unpairSolo(s, best);
+  a.buddy = best.rid; best.buddy = a.rid;
+  const r = sim.responders[a.rid];
+  emit(sim, { inc: s.incidentId, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 0, text: `${sim.responders[best.rid].name}, 지금부터 나와 짝이다.` });
+}
+/**
+ * (합치기 — 주 세션 결정 (나)) 짝이 혼자 서는 역할이라 위험 실내에 함께 들어갈 수 없고, 이 대원은 공기호흡기를 멘 손 빈 활동 대원이며 현장 지휘관이 아니다 (다시 맺어도 되는 사람).
+ * 손이 빈 = 임무 없음·대기이고 받은 지시도 없다 (일하는 짝을 떼어 놓지 않는다)
+ */
+function soloPaired(sim: Sim, s: Scene, a: FieldAgent): boolean {
+  if (a.isCommander || a.status !== 'active' || (a.task !== null && a.task.kind !== 'standby') || a.orderWork >= 0 || a.carrying !== -1 || !kitHas(sim, a.rid, 'scba')) return false;
+  if (a.buddy === undefined || a.buddy < 0) return false;
+  const rb = roleIdOf(sim, a.buddy);
+  return rb !== null && SOLO_OK.has(rb);
+}
+/** 다시 맺는 사람의 짝이 혼자 서는 역할이면 그 짝의 짝을 비운다 (짝은 서로 맺는다 — 남겨진 사람이 떠난 사람을 가리키지 않게) */
+function unpairSolo(s: Scene, a: FieldAgent): void {
+  if (a.buddy === undefined || a.buddy < 0) return;
+  const b = agentAt(s, a.buddy, a);
+  if (b !== null && b.buddy === a.rid) b.buddy = -1;
+}
+/** 공기통을 바꾸는 시간 (초 — R1 의 swapAir 와 같다) · 탈출 자리의 연기 문턱 · 출입구 바깥쪽을 찾는 거리 · 짝을 따라가는 거리 · 짝의 위험 실내 일이 끝난 뒤 동행을 잇는 초 · 짝 따라 나가기가 끝나는 연기·출입구 거리 */
+export const AIR_OUT_RUN = { swap: 8, clean: 0.1, exitR: 3, follow: 1.4, linger: 3, lingerIdle: 8, pairOutClear: 0.25, pairOutExit: 2 } as const;
+/** 위험 건물 실내인가 (실행부 — 공기호흡기 없이 들어가지 않는 자리와 같은 판정: 화재·가스·붕괴 현장의 실내, 또는 불이 났다고 아는 실내) */
+function hazIndoorAt(s: Scene, a: FieldAgent, x: number, y: number): boolean {
+  const rg = s.region[tileOf(s, x, y)];
+  return rg >= 0 && s.regions[rg] !== undefined && s.regions[rg].indoor && (s.kind === 'fire' || s.kind === 'hazmat' || s.kind === 'collapse' || (a.beliefs.val<number>('fire', rg) ?? 0) > 0.25);
+}
+/**
+ * 공기 탈출이 나가는 자리 (§5.7 — 처음 한 번): 대기 지점 칸의 연기가 0.1 아래면 거기, 아니면 대원에게 가장 가까운 출입구의 바깥쪽 3칸 안에서 연기 0.1 아래인 첫 칸
+ * (실행부라 칸의 연기를 읽는다 — 연기 찬 대기 지점에 서서 공기 탈출이 다시 걸리지 않게). 그런 칸이 없으면 대기 지점
+ */
+function airOutSpot(s: Scene, a: FieldAgent): { x: number; y: number } {
+  const st = s.staging;
+  if (s.smoke[tileOf(s, st.x, st.y)] < AIR_OUT_RUN.clean) return { x: st.x, y: st.y };
+  let ex = -1, ed = Infinity;
+  for (let k = 0; k < s.exits.length; k++) { const e = s.exits[k], d = dist(a.x, a.y, e.x, e.y); if (d < ed) { ed = d; ex = k; } }
+  if (ex < 0) return { x: st.x, y: st.y };
+  const e = s.exits[ex], R = AIR_OUT_RUN.exitR;
+  let best: { x: number; y: number } | null = null, bd = Infinity;
+  for (let y = Math.max(0, Math.round(e.y) - R); y <= Math.min(s.h - 1, Math.round(e.y) + R); y++) for (let x = Math.max(0, Math.round(e.x) - R); x <= Math.min(s.w - 1, Math.round(e.x) + R); x++) {
+    const i = y * s.w + x, d = dist(x, y, e.x, e.y);
+    if (d > R || d >= bd || !staticPass(s.tiles[i]) || s.smoke[i] >= AIR_OUT_RUN.clean) continue;
+    const rg = s.region[i];
+    if (rg >= 0 && s.regions[rg] !== undefined && s.regions[rg].indoor) continue;
+    best = { x, y }; bd = d;
+  }
+  return best ?? { x: st.x, y: st.y };
+}
+/**
+ * 공기 탈출 (TaskKind 'airOut', 라벨 '공기 탈출' — §5.7, F01 의 의무): 나갈 자리(airOutSpot)로 간다(물러나는 길 — 불길도 뚫는다). 닿으면 자기 부대에 예비 공기통이 있으면
+ * 8초 교체(R1 swapAir 의 효과 — 공기 가득, 예비 하나, R1 의 교체 문구) 뒤 끝. 예비가 없으면 닿는 순간 끝(그 뒤 F03 이 위험 실내 일을 막고, 지휘관은 CF2 로 부른다).
+ * 길이 없으면 1초 뒤 다시 찾고, 여섯 번 넘게 막히면 놓고 15초 동안 다시 걸지 않는다 (후퇴가 이어받는다 — 모든 일은 끝난다)
+ */
+export function runAirOut(sim: Sim, s: Scene, a: FieldAgent, t: Task, k: ExecKit): void {
+  a.label = '공기 탈출';
+  if (t.range !== 1) { const p = airOutSpot(s, a); t.tx = p.x; t.ty = p.y; t.range = 1; a.path = null; a.pathGoal = -1; }
+  const u = sim.units[a.unitId], r = sim.responders[a.rid];
+  if (t.phase === 0) {
+    const m = k.moveTo(sim, s, a, t.tx, t.ty, 0.6, false, true);
+    if (m === 'moving' || m === 'busy') return;
+    if (m === 'nopath') {
+      if (++t.fails > 6) { docRemember(sim, a, t.docRule ?? 'F01', '*', 15); actEnd(sim, a, t); k.finish(sim, s, a, false); return; }
+      t.wait = 1; return;
+    }
+    if ((u.spareAir ?? 0) <= 0) { actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
+    t.phase = 1; t.progress = 0;
+  }
+  a.label = '공기통 교체';
+  t.progress += sim.dt; a.ring = t.progress / AIR_OUT_RUN.swap;
+  if (t.progress + 1e-9 < AIR_OUT_RUN.swap) return;
+  if ((u.spareAir ?? 0) > 0) {
+    u.spareAir = (u.spareAir ?? 0) - 1; refillAir(sim, a.rid);
+    emit(sim, { inc: s.incidentId, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 0, text: `공기통 교체 완료 (${u.callsign} 예비 ${u.spareAir}개).` });
+  }
+  actEnd(sim, a, t);
+  k.finish(sim, s, a, true);
+}
+/** 짝을 따라가는 걸음 (짝 따라 나가기·짝 동행): 목표는 짝의 지금 자리 — 짝이 1칸 넘게 움직였을 때만 다시 짠다(한 틱에 moveTo 하나 — t.tx·ty 에 담는다) */
+function followMate(sim: Sim, s: Scene, a: FieldAgent, t: Task, b: FieldAgent, k: ExecKit, escape: boolean): 'arrived' | 'moving' | 'nopath' | 'busy' {
+  if (t.range !== 1 || dist(t.tx, t.ty, b.x, b.y) > 1) { t.tx = b.x; t.ty = b.y; t.range = 1; a.path = null; a.pathGoal = -1; }
+  if (dist(a.x, a.y, b.x, b.y) <= AIR_OUT_RUN.follow) return 'arrived';
+  return k.moveTo(sim, s, a, t.tx, t.ty, AIR_OUT_RUN.follow, false, escape);
+}
+/**
+ * 짝 따라 나가기 (TaskKind 'pairOut', 라벨 '짝 따라 나감' — §5.7, F02 의 의무): 나가는 짝을 1.4칸 안에서 따라 나온다(물러나는 길).
+ * 끝: 위험 실내 밖이고 선 칸의 연기 0.25 아래이며 출입구에서 2칸 넘게 떨어짐 · 짝의 공기 탈출이 끝남 · 짝이 활동 중이 아님(쓰러짐·떠남). 끝나면 그 줄을 10초 다시 걸지 않는다
+ */
+export function runPairOut(sim: Sim, s: Scene, a: FieldAgent, t: Task, k: ExecKit): void {
+  a.label = '짝 따라 나감';
+  const b = a.buddy !== undefined && a.buddy >= 0 ? agentAt(s, a.buddy, a) : null;
+  const bk: string | null = b !== null && b.task !== null ? b.task.kind : null;
+  let ex = Infinity;
+  for (let q = 0; q < s.exits.length; q++) ex = Math.min(ex, dist(a.x, a.y, s.exits[q].x, s.exits[q].y));
+  const outside = !hazIndoorAt(s, a, a.x, a.y) && s.smoke[tileOf(s, a.x, a.y)] < AIR_OUT_RUN.pairOutClear && ex > AIR_OUT_RUN.pairOutExit;
+  const mateDone = b === null || (b.status !== 'active' && b.status !== 'withdrawn') || (b.status === 'active' && bk !== 'airOut' && bk !== 'retreat' && bk !== 'evacuate');
+  if (outside || mateDone) { docRemember(sim, a, t.docRule ?? 'F02', '*', 10); actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
+  const m = followMate(sim, s, a, t, b!, k, true);
+  if (m === 'nopath') { t.wait = 1; t.range = 0; }
+}
+/** 짝 동행 임무의 계속 점수 (docContinue — 짝 일의 우선도로 runPair 가 적는다) */
+const PAIR_P = new WeakMap<Task, number>();
+/** 짝의 일이 위험 실내 일이었던 마지막 시각 (짝 동행 — 방을 옮기는 사이에 끊기지 않게 3초를 잇는다) */
+const PAIR_HZ = new WeakMap<Task, number>();
+/**
+ * 짝 동행 (TaskKind 'pair', 라벨 '짝 동행' — §5.4, G08): 위험 실내 일(또는 확보 전 무장 현장의 수색)을 맡은 짝을 1.4칸 안에서 따라간다. 관찰은 perceive 가 한다(둘이 본 것이 모두 보고된다).
+ * 끝: 짝이 활동 중이 아님(쓰러지면 G04 의 동료 구조가 먼저 잡힌다) · 짝이 업고 나가면 그 뒤를 따라 나와 둘 다 위험 실내 밖에 닿았을 때 · 짝의 임무가 위험 실내 일이 아니게 된 뒤 3초
+ * (방 하나의 수색이 끝나 다음 방을 받는 사이에 끊지 않는다). 계속 점수 0.5 + 0.4 × 짝 일의 우선도 + 0.12
+ */
+export function runPair(sim: Sim, s: Scene, a: FieldAgent, t: Task, k: ExecKit): void {
+  a.label = '짝 동행';
+  const b = a.buddy !== undefined && a.buddy >= 0 ? agentAt(s, a.buddy, a) : null;
+  if (b === null || b.status !== 'active') { actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
+  if (!PAIR_HZ.has(t)) PAIR_HZ.set(t, sim.t);
+  const bw = b.task !== null && b.task.workId >= 0 ? s.board[b.task.workId] : undefined;
+  if (bw !== undefined && (bw.status === 'open' || bw.status === 'active') && (inJob(sim, s, a, bw, b.task) || hotSearch(s, bw))) { PAIR_HZ.set(t, sim.t); PAIR_P.set(t, 0.5 + 0.4 * bw.priority + 0.12); }
+  else if (bw !== undefined && bw.kind === 'suppress' && (bw.status === 'open' || bw.status === 'active') && inJob(sim, s, a, bw)) PAIR_HZ.set(t, sim.t);      // 위험 건물의 진압을 밖에서 잠깐 하는 동안(외부 방어 ↔ 내부 공격의 재선택)은 끊지 않는다
+  // (3단계 — 측정이 찾은 것) 방 하나를 끝낸 짝이 위험 실내에 선 채 손이 비었거나(다음 지시를 기다린다) 이미 받은 지시가 위험 실내 일이면 동행을 잇는다 —
+  // 3초로는 다음 방의 지시가 오기 전에 끊겨 "짝 동행 → 없음 → 짝 동행"이 1초 안에 되풀이되었다(강제 fire/std 6교대에 63번). 짝이 밖으로 나오거나 바깥 일을 맡으면 3초 뒤 끝난다
+  else if (b.carrying === -1 && (b.task === null || b.task.kind === 'standby') && (hazIndoorAt(s, b, b.x, b.y) || nextHz(sim, s, a, b))) PAIR_HZ.set(t, sim.t);
+  if (b.carrying !== -1) { if (!hazIndoorAt(s, a, a.x, a.y) && !hazIndoorAt(s, b, b.x, b.y)) { actEnd(sim, a, t); k.finish(sim, s, a, true); return; } }
+  else if (sim.t - (PAIR_HZ.get(t) ?? sim.t) > (b.task === null || b.task.kind === 'standby' ? AIR_OUT_RUN.lingerIdle : AIR_OUT_RUN.linger)) { actEnd(sim, a, t); k.finish(sim, s, a, true); return; }      // 손이 빈 짝(다음 지시를 기다린다)은 조금 더 기다린다
+  // (3단계 — 측정이 찾은 것) 짝 곁에 내가 맡을 빈 위험 실내 일(짝의 진압에 남은 자리 포함)이 생기면 따라가기를 끝낸다 — 다음 판단에 그 일을 맡는다(G08 은 alt 로 다시 걸리지 않는다)
+  // (합치기 (나)) 지휘관이 짝 곁의 위험 실내 일을 맡겼으면(받은 지시) 따라가기를 끝낸다 — 다음 판단에 그 지시를 한다 (G08 은 ordered 로 다시 걸리지 않는다)
+  //   그 뒤 10초는 동행 줄을 다시 걸지 않는다(곁의 일로 끝낼 때와 같다 — 지시가 이미 끝나 있던 일이면 그 틱에 끝나 "동행 → 없음 → 동행"이 되었다, 시험 4)
+  if (bw !== undefined && b.carrying === -1 && a.orderWork >= 0 && orderedNear(sim, s, a, bw)) { docRemember(sim, a, t.docRule ?? 'G08', '*', PAIR_ALT_MEM); actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
+  if (bw !== undefined && b.carrying === -1 && (sim.tick + a.rid) % 5 === 0 && pairAlt(sim, s, a, bw)) { docRemember(sim, a, t.docRule ?? 'G08', '*', PAIR_ALT_MEM); actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
+  // (균형 — 측정이 찾은 것) 불이 번져 온 칸에 서 있으면 짝 곁의 불 없는 칸으로 비킨다: 짝 동행은 짝 곁(1.4칸)에 닿으면 서 있으므로 불이 그 칸까지 번져도
+  //   그대로 섰다가 화상을 입었다(보통 120교대 — 소방 대원의 화상 넷이 모두 짝 동행 중, 기본에는 0). 비킨 칸이 짝 곁이면 그대로 동행을 잇는다
+  if (s.fire[tileOf(s, a.x, a.y)] > PAIR_FIRE) {
+    const sp = clearNear(s, b.x, b.y, a.x, a.y);
+    if (sp !== null) { if (t.range !== 2 || t.tx !== sp.x || t.ty !== sp.y) { t.tx = sp.x; t.ty = sp.y; t.range = 2; a.path = null; a.pathGoal = -1; } k.moveTo(sim, s, a, sp.x, sp.y, 0.4); return; }
+  }
+  const m = followMate(sim, s, a, t, b, k, false);
+  if (m === 'nopath') { t.wait = 1; t.range = 0; }
+  else if (m === 'arrived') { a.fx = b.x - a.x; a.fy = b.y - a.y; if (bw !== undefined && b.task !== null) pairHelp(sim, s, a, b, b.task, bw.kind, k); }
+}
+/** 짝 동행이 비키는 불의 세기 (sceneManager.agentHealth 가 화상을 주는 0.4 보다 조금 아래) */
+const PAIR_FIRE = 0.3;
+/** 짝(bx,by) 곁 2.5칸 안의 걸을 수 있고 불이 없는(0.1 아래) 칸 가운데 짝에게 1.4칸 안을 먼저, 그다음 나에게 가까운 칸. 없으면 null */
+function clearNear(s: Scene, bx: number, by: number, ax: number, ay: number): { x: number; y: number } | null {
+  let best: { x: number; y: number } | null = null, bc = Infinity;
+  const x0 = Math.max(0, Math.floor(bx - 2.5)), x1 = Math.min(s.w - 1, Math.ceil(bx + 2.5)), y0 = Math.max(0, Math.floor(by - 2.5)), y1 = Math.min(s.h - 1, Math.ceil(by + 2.5));
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    const i = y * s.w + x, db = dist(x, y, bx, by);
+    if (db > 2.5 || !staticPass(s.tiles[i]) || s.propAt[i] >= 0 || s.fire[i] >= 0.1) continue;
+    const c = (db <= AIR_OUT_RUN.follow ? 0 : 100) + dist(x, y, ax, ay);
+    if (c < bc) { bc = c; best = { x, y }; }
+  }
+  return best;
+}
+/** (합치기 (나)) 받은 지시가 짝의 일 bw 와 같은·이웃 구역의 위험 실내 일인가 (공개 지휘 상태 — 지휘관이 짝에게 곁의 일을 함께 맡겼다) */
+function orderedNear(sim: Sim, s: Scene, a: FieldAgent, bw: WorkItem): boolean {
+  const ow = s.board[a.orderWork];
+  return ow !== undefined && ow !== bw && (ow.status === 'open' || ow.status === 'active') && inJob(sim, s, a, ow) && nearWork(s, a, ow, bw) && fitFor(sim, s, a, ow) > 0;      // 맡을 수 있는 지시만 (맡지 못하는 지시로 끝내면 다음 판단에 지시가 버려지고 다시 짝 동행 — 시험 4 의 "동행 → 없음 → 동행")
+}
+/** 곁의 일을 맡으려고 동행을 끝낸 뒤 그 동행 줄을 다시 걸지 않는 시간 (초 — 그 일을 다른 사람이 먼저 받으면 "동행 → 없음 → 동행"이 1초 안에 되풀이되었다. 짝은 이미 실내라 문턱의 판단 지점이 걸리지 않는다) */
+const PAIR_ALT_MEM = 10;
+/** 손이 빈 짝이 이미 받은 지시(작업판의 담당자·받은 지시 번호 — 공개 지휘 상태)가 위험 실내 일인가 */
+function nextHz(sim: Sim, s: Scene, a: FieldAgent, b: FieldAgent): boolean {
+  const w = b.orderWork >= 0 ? s.board[b.orderWork] : undefined;
+  return w !== undefined && (w.status === 'open' || w.status === 'active') && (inJob(sim, s, a, w) || hotSearch(s, w));
+}
+/** 짝 동행이 짝의 진압을 거드는 거리 (짝의 화점에서 — 실내 진압의 분사 거리 3.2 + 따라가는 거리 1.4 + 여유. 3.2 로는 뒤에 선 짝이 거의 닿지 않았다 — 3단계 측정) */
+const HELP_SPRAY = 4.8;
+/**
+ * (3단계 — 본문 밖, 측정이 찾은 것) 짝 동행은 짝의 일을 거든다 — 2인 진입은 한 사람이 일을 맡고 둘이 함께 한다(작업판의 담당자는 한 사람 그대로 — §5.4).
+ *   진압: 관창을 들었고 부대의 물·펌프가 되면 짝이 겨눈 화점에 함께 분사한다(물줄기 그림을 흩뜨리지 않는다 — s.rng 를 쓰지 않는다)
+ *   수색: 짝 동행이 본 칸(탐지 반경·시야)을 짝의 수색 확인에 더한다 (발견은 지금처럼 perceive 가 한다)
+ * 그러지 않으면 짝을 따라 들어간 대원이 손을 놓아 실내의 손이 절반이 된다 (3단계 측정 — 강제 fire/std 의 성공이 크게 줄었다)
+ */
+function pairHelp(sim: Sim, s: Scene, a: FieldAgent, b: FieldAgent, bt: Task, kind: WorkKind, k: ExecKit): void {
+  if (kind === 'suppress' && bt.phase === 2 && bt.tile >= 0 && s.fire[bt.tile] > 0.05 && kitHas(sim, a.rid, 'hose')) {
+    const u = sim.units[a.unitId];
+    if (u.pumpFailed || (u.water <= 0 && !u.hydrant)) return;
+    const tx = bt.tile % s.w, ty = (bt.tile / s.w) | 0;
+    if (dist(a.x, a.y, tx, ty) > HELP_SPRAY || !los(s, a.x, a.y, tx, ty)) return;
+    a.fx = tx - a.x; a.fy = ty - a.y; a.label = '짝 동행 — 함께 방수';
+    k.spray(sim, s, a, tx, ty, bt.method === 'pulse' ? 0.85 : 1, bt.method === 'pulse' ? 0.65 : 1, false);
+    return;
+  }
+  if (kind === 'search' && bt.covered && bt.region >= 0 && s.regions[bt.region] !== undefined) {
+    const reg = s.regions[bt.region], rr = detectRadius(sim, s, a, 0.45);
+    for (const i of reg.tiles) { if (bt.covered.has(i)) continue; const x = i % s.w, y = (i / s.w) | 0; if (dist(a.x, a.y, x, y) <= rr && los(s, a.x, a.y, x, y)) bt.covered.add(i); }
+  }
+}
+import { detectRadius, fitFor } from './agents';
+import { los } from './grid';
+
+// ───────────────────────── (4단계) 의료 — 분류 · 처치 넘겨받기 · 경계 밖 처치소 · 판단 지점 carryHold·laneTreat (§3.3·§6.1) ─────────────────────────
+// (import 를 이 절에 둔 것은 위의 import 묶음을 다른 단계가 함께 고치고 있어서다 — 3·4·5 단계를 나란히 돌린다)
+import { casFact } from './agents';
+import { TYPE_DEFS } from '../incidentTypes';
+import { docGate } from './doctrine';
+import type { CasBelief, Casualty } from '../types';
+import type { Sense } from './methods';
+
+/** 분류의 수치: 환자 곁에 서는 시간(초) · 닿는 거리(칸) · 분류 한 번의 상한(초 — 모든 사건은 끝난다) */
+export const TRIAGE = { stand: 2, reach: 1.4, cap: 90 } as const;
+/**
+ * 분류 작업 하나의 진행 (본 환자 · 지금 가는 환자 · 본 중증도의 수 — 작업의 모양을 바꾸지 않으려 WeakMap). 작업판의 작업에 매단다:
+ * 분류하던 대원이 자기 구급차를 타고 떠나 다른 대원이 이어받아도 이미 본 환자를 다시 보지 않는다 (작업이 없는 임무는 임무에)
+ */
+interface TriageRun { seen: number[]; cur: number; bands: number[] }
+const TRIAGE_RUN = new WeakMap<object, TriageRun>();
+/** 그 대원의 믿음 속 다음 분류 대상: 숨지지 않았고 현장·안전 구역에 있으며(실려 가지 않았다) 물속·위험 건물 실내가 아닌 사람 가운데 가장 가까운 사람 (없으면 -1) */
+function nextTriage(s: Scene, a: FieldAgent, seen: number[]): number {
+  let best = -1, bd = Infinity;
+  const risky = TYPE_DEFS[s.kind].indoorRisk;
+  for (const f of a.beliefs.list('cas')) {
+    const v = f.value as CasBelief;
+    if (v.band >= 3 || (v.where !== 'scene' && v.where !== 'safe') || v.water === true || seen.indexOf(f.id) >= 0) continue;
+    const rg = s.region[tileOf(s, v.x, v.y)];
+    if (v.where === 'scene' && rg >= 0 && s.regions[rg].indoor && (risky || (a.beliefs.val<number>('fire', rg) ?? 0) > 0.25)) continue;      // 위험 건물 안은 소방이 데려온다 (E07 — 지금 규칙)
+    const d = dist(a.x, a.y, v.x, v.y);
+    if (d < bd) { bd = d; best = f.id; }
+  }
+  return best;
+}
+/**
+ * 다수 사상자 분류 (WorkKind 'triage', 라벨 '분류' — §3.3 E01·§6.1 CE1): 믿음 속 환자마다 곁(1.4칸)에 2초 서서 그 사람의 상태를 바로잡아 알린다
+ * (casFact 강제 보고 — 지휘관의 믿음 속 중증도가 실제와 같아진다. 무전 문구는 환자마다 내지 않고 끝에 한 줄로). 더 볼 사람이 없거나 90초가 지나면
+ * s.triageAt 을 적고 '분류 완료: 위중 n · 중상 m · 경상 k.' 를 남긴 뒤 작업을 끝낸다(done). 닿지 못하거나 그 사이 실려 간 사람은 건너뛴다
+ */
+export function runTriage(sim: Sim, s: Scene, a: FieldAgent, t: Task, k: ExecKit): void {
+  const r = sim.responders[a.rid];
+  a.label = '분류';
+  const key: object = (t.workId >= 0 ? s.board[t.workId] : undefined) ?? t;
+  let st = TRIAGE_RUN.get(key);
+  if (st === undefined) { st = { seen: [], cur: -1, bands: [0, 0, 0] }; TRIAGE_RUN.set(key, st); }
+  if (t.phase === 0) {
+    t.phase = 1; st.cur = -1;      // 이 대원이 분류를 맡았다 (이어받았으면 앞사람이 가던 환자부터 다시 고른다)
+    const rule = ruleById('E01');
+    if (rule !== undefined) docNote(sim, s, a, rule);      // '다수 사상자 — 먼저 분류합니다.' (같은 대원 20초에 한 번)
+  }
+  if (st.cur < 0 || st.seen.indexOf(st.cur) >= 0) { st.cur = nextTriage(s, a, st.seen); t.progress = 0; }
+  const w0 = t.workId >= 0 ? s.board[t.workId] : undefined;
+  if (st.cur < 0 || sim.t - (w0 !== undefined ? w0.createdAt : t.startedAt) >= TRIAGE.cap) {
+    s.triageAt = sim.t;
+    emit(sim, { inc: s.incidentId, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `분류 완료: 위중 ${st.bands[2]} · 중상 ${st.bands[1]} · 경상 ${st.bands[0]}.` });
+    k.finish(sim, s, a, true);
+    return;
+  }
+  const c: Casualty = s.casualties[st.cur];
+  if (c.dead || c.where === 'loaded' || c.where === 'hospital' || c.where === 'carried' || c.inWater) { st.seen.push(c.id); st.cur = -1; return; }
+  const m = k.moveTo(sim, s, a, c.x, c.y, TRIAGE.reach);
+  if (m === 'nopath') { st.seen.push(c.id); st.cur = -1; return; }
+  if (m !== 'arrived') return;
+  t.need = TRIAGE.stand; t.progress += sim.dt; a.ring = t.progress / t.need;
+  if (t.progress + 1e-9 < t.need) return;
+  const f = casFact(sim, s, c, r.name);
+  a.quiet.add(f.key); learn(sim, a, f, true, true);      // 강제 보고 (같은 값이어도 보낸다 — 무전 문구는 끝의 한 줄이 대신한다)
+  const b = (f.value as CasBelief).band;
+  if (b < 3) st.bands[Math.min(2, b)]++;
+  st.seen.push(c.id); st.cur = -1; t.progress = 0; a.ring = 0;
+}
+/** 처치를 넘겨받는 거리 (칸 — 그 작업을 맡은 구급 대원이 환자에게서 이 안에 오면 비구급 대원이 손을 뗀다) */
+export const HANDOVER_R = 1.5;
+/**
+ * 처치 넘겨받기 (§6.1 CE2 — 실행기 case 'treat' 의 비구급 대원): 지휘관이 같은 처치 작업을 맡긴 구급 대원이 환자 곁(1.5칸)에 왔으면
+ * 손을 떼고 임무를 놓는다(finishTask 사유 'handover' — 실패 기록·w.fails·holdUntil 없음, 작업은 구급 대원에게 남는다). 지휘관 코드는 남의 임무를 끝내지 않는다.
+ * 돌려주는 값 = 넘겼다 (부른 쪽은 그 틱에 돌아간다)
+ */
+export function tryHandover(sim: Sim, s: Scene, a: FieldAgent, t: Task, c: Casualty, k: ExecKit): boolean {
+  if (t.workId < 0) return false;
+  const w = s.board[t.workId];
+  if (!w) return false;
+  for (let q = 0; q < w.assignees.length; q++) {
+    const rid = w.assignees[q];
+    if (rid === a.rid || sim.responders[rid].dept !== 'ems') continue;
+    let b: FieldAgent | null = null;
+    for (const x of s.agents) if (x.rid === rid && x.status === 'active') { b = x; break; }
+    if (b === null || b.task === null || b.task.workId !== w.id || dist(b.x, b.y, c.x, c.y) > HANDOVER_R) continue;
+    const r = sim.responders[a.rid];
+    emit(sim, { inc: s.incidentId, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 0, text: `구조 대상 ${c.label} 처치를 ${sim.responders[rid].name} 대원에게 넘깁니다.` });
+    k.finish(sim, s, a, false, 'handover');
+    return true;
+  }
+  return false;
+}
+/**
+ * 경계 밖 처치소 (§3.3 E05 — 기록 전용 줄): 안전 확보 전의 무장 현장에서 구급 대원이 안전 구역의 환자를 처치하기 시작했다 — 그 현장에서 처음 한 번
+ * 그 줄의 문구('경계 밖 처치소에서 처치합니다.')와 기록 (자격은 agents.fitFor 의 treat 기본 규칙이 연다)
+ */
+export function careMark(sim: Sim, s: Scene, a: FieldAgent, t: Task, c: Casualty): void {
+  if (s.kind !== 'armed' || s.secureAt >= 0 || c.where !== 'safe' || sim.responders[a.rid].dept !== 'ems') return;
+  const I = sim.incidents[s.incidentId];
+  if (I.docs !== undefined && I.docs.some((d) => d.rule === 'E05')) return;
+  docMark(sim, s, a, 'E05', 'fit', { work: 'treat', tgt: t.workId >= 0 ? 'w:' + t.workId : '' });
+}
+/** 차로 위 환자의 곁에서 기다리는 칸: 그 환자의 칸에서 위·아래로 차로 줄이 아닌 지나갈 수 있는 첫 칸 (없으면 그 칸) */
+function laneWaitSpot(s: Scene, x: number, y: number): { x: number; y: number } {
+  const cx = Math.round(x), cy = Math.round(y);
+  for (const dy of [1, -1, 2, -2]) {
+    const ny = cy + dy;
+    if (ny < 0 || ny >= s.h || s.laneRows.indexOf(ny) >= 0) continue;
+    if (staticPass(s.tiles[ny * s.w + cx])) return { x: cx, y: ny };
+  }
+  return { x: cx, y: cy };
+}
+/**
+ * 판단 지점 laneTreat (§3.3 E12 — 실행기 case 'treat' 의 이동 앞): 차로 줄 위의 환자이고 그 차로가 통제됐다고 모르면 차로 밖의 곁 칸에서 기다린다
+ * (옮겨지기를 — 지휘관의 carry — 또는 통제를). 상한 20초가 지나면 그 자리에서 처치한다(지금 동작). 돌려주는 값 = 이 틱은 기다린다
+ */
+export function laneHold(sim: Sim, s: Scene, a: FieldAgent, t: Task, c: Casualty, k: ExecKit): boolean {
+  if (gatePassed(t, 'laneTreat')) return false;
+  if (gateStep(sim, s, a, t, 'laneTreat', docGate(sim, s, a, 'laneTreat')) !== 'wait') return false;
+  a.label = ruleShort(t.docRule ?? null) ?? '차로 통제 대기';
+  const p = laneWaitSpot(s, c.x, c.y);
+  k.moveTo(sim, s, a, p.x, p.y, 1.0);
+  return true;
+}
+/**
+ * 판단 지점 carryHold (§3.3 E08 — 실행기 case 'carry' 의 들기 직전): 구급 동료가 곁에 앉아 그 환자를 처치하는 중이면 들지 않고 곁에서 기다린다.
+ * 연기·열이 짙거나 위험 건물 실내·X6 단계 2 이상이면 줄의 예외로 먼저 옮긴다. 상한 15초가 지나면 옮긴다(지금 동작). 돌려주는 값 = 이 틱은 기다린다
+ */
+export function carryHold(sim: Sim, s: Scene, a: FieldAgent, t: Task, sense: Sense): boolean {
+  if (gatePassed(t, 'carryHold')) return false;
+  if (gateStep(sim, s, a, t, 'carryHold', docGate(sim, s, a, 'carryHold', sense)) !== 'wait') return false;
+  a.label = ruleShort(t.docRule ?? null) ?? '처치 대기';
+  return true;
+}
+// ───────────────────────── (5단계) 해체 방법 셋 (§3.7 — 로봇 원격 · 방호복 · 맨몸) ─────────────────────────
+/** 로봇 원격 해체: 필요 시간 ×1.6 · 실수 확률 ×0.3 (R1 의 로봇 곁 효과 대신). 맨몸 해체: 필요 시간 ×0.75 */
+export const DEFUSE = { robotTime: 1.6, robotSlip: 0.3, bareTime: 0.75 } as const;
+/**
+ * 해체 (executor 의 case 'defuse' — 장치가 이미 처리·폭발했는지는 실행기가 먼저 본다). 처음 돌 때 방법을 고른다(R2 startMethod — 고를 것이 없으면 맡지 않는다: WORK_MODE 'refuse').
+ *   robotDefuse  로봇 조작 요원이 장치 2.5~8칸·벽에 가리지 않는 자리(methods.robotSpot — 처음 한 번 정해 t.tx·ty)에서 원격으로. 그 자리에 닿아 처음 시작할 때 로봇 작동 확인
+ *                (kitWorks — 숨은 고장이면 EQUIP_FAIL 이 남고 'broken' → 로봇 조작 요원에게는 다음 방법이 없어 놓는다). 필요 시간 ×1.6 · 실수 ×0.3 — R1 의 로봇 곁 효과는 곱하지 않는다
+ *   suitDefuse   지금의 해체 (장치 곁 1.6칸 — 같은 현장에 작동하는 로봇을 든 대원이 있으면 R1 의 로봇 효과: 실수 ×0.6 · 가짜 확인 10 → 5초)
+ *   bareDefuse   방호복을 벗고 한다: 필요 시간 ×0.75. 그동안 방호(crews.armorOf·blastFactor)가 방호복을 세지 않는다 (injury.protection · hazards — a.task.method)
+ * (S23) 손으로 하는 해체 중에 다치거나 동요하면(자기 몸 — 그 줄이 걸리면) 해체를 넘기고 놓는다: 1초마다 본다, 문구 한 번, 그 작업은 30초 동안 맡지 않는다(교본 기억 'w:').
+ * 돌려주는 값: 'slip' = 해체 중 장치가 반응했다 (부르는 쪽이 터뜨리고 끝낸다) · 'done' = 끝났다(처리·확인) · undefined = 이어 간다(또는 놓았다)
+ */
+export function runDefuse(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, k: ExecKit): 'slip' | 'done' | undefined {
+  const p = s.props[t.prop], r = sim.responders[a.rid], dt = sim.dt;
+  const tg = { cas: -1, prop: t.prop, hostile: -1, region: -1, tile: -1 };
+  if (t.method === undefined && t.mt0 === undefined && !startMethod(sim, s, I, a, t, 'defuse', tg)) { k.finish(sim, s, a, false, 'nomethod'); return undefined; }
+  const m = t.method;
+  if (m === undefined) { k.finish(sim, s, a, false, 'nomethod'); return undefined; }      // 방법을 비운 채로는 해체하지 않는다 (맡지 않는 임무)
+  if (m !== 'robotDefuse' && !hasKit(sim, a.rid, 'eodKit')) { k.finish(sim, s, a, false, 'equip'); return undefined; }      // 해체 공구를 든 처리 요원만 손댄다 (fitFor 가 먼저 막는다)
+  // (S23) 손으로 하는 해체 중에 다치거나 동요했다 — 해체를 넘긴다 (1초마다, 자기 몸)
+  if (m !== 'robotDefuse' && sim.tick % 5 === 0) {
+    const s23 = ruleById('S23');
+    if (s23 !== undefined && applies(docCtx(sim, s, a, 'self', t.workId >= 0 ? s.board[t.workId] ?? null : null), s23)) {
+      const ev = docNote(sim, s, a, s23);
+      recordDoc(sim, I, a, 'S23', 'method', { method: m, work: 'defuse', tgt: 'p' + t.prop }, ev, s23.report !== undefined);
+      if (t.workId >= 0) docRemember(sim, a, 'S23', 'w:' + t.workId, DOC.W_MEM);
+      k.finish(sim, s, a, false, 'doctrine');
+      return undefined;
+    }
+  }
+  if (m === 'robotDefuse') {
+    // 로봇을 부릴 자리 (처음 한 번 — 한 임무에 이동 목표 하나)
+    if (!t.range) {
+      const sp = robotSpot(s, p.x, p.y, a.x, a.y);
+      if (sp === null) { switchMethod(sim, s, I, a, t, 'tooFar', '로봇을 부릴 자리가 없음', true, { k }); return undefined; }
+      t.tx = sp.x; t.ty = sp.y; t.range = 1;
+    }
+    a.label = METHOD.robotDefuse.label;
+    const mv = k.moveTo(sim, s, a, t.tx, t.ty, 0.5);
+    if (mv === 'nopath') { switchMethod(sim, s, I, a, t, 'tooFar', '로봇을 부릴 자리로 갈 길이 없음', true, { k }); return undefined; }
+    if (mv !== 'arrived') return undefined;
+    a.fx = p.x - a.x; a.fy = p.y - a.y;
+    if (t.phase === 0) {
+      t.phase = 1;
+      if (!kitWorks(sim, a.rid, 'robot', I)) { switchMethod(sim, s, I, a, t, 'broken', '원격 로봇 고장', true, { say: '로봇이 작동하지 않습니다 — 방호복 착용 후 수동 해체.', k }); return undefined; }      // 숨은 고장은 쓰려 할 때 드러난다
+    }
+    t.need = (p.real ? 26 : 10) * DEFUSE.robotTime / (0.5 + r.skill);
+    t.progress += dt; a.ring = t.progress / t.need;
+    if (p.real && a.rng.chance(0.004 * (1 - r.skill) * DEFUSE.robotSlip * dt)) return 'slip';
+  } else {
+    const mv = k.moveTo(sim, s, a, p.x, p.y, 1.6);
+    if (mv === 'nopath') { k.finish(sim, s, a, false, 'nopath'); return undefined; }
+    if (mv !== 'arrived') return undefined;
+    a.fx = p.x - a.x; a.fy = p.y - a.y;
+    if (m === 'bareDefuse') a.label = METHOD.bareDefuse.label;
+    // 원격 로봇: 그것을 든 대원이 현장에서 활동 중이면 가짜 장치를 빨리 확인하고(10 → 5초), 진짜 장치의 해체 실수가 준다(×0.6) — R1 (방호복·맨몸 해체에만)
+    const op = s.agents.find((b) => b.status === 'active' && hasKit(sim, b.rid, 'robot'));
+    const robot = op !== undefined && kitWorks(sim, op.rid, 'robot', I);      // 숨은 고장은 쓰려 할 때 드러난다
+    t.need = (p.real ? 26 : robot ? 5 : 10) * (m === 'bareDefuse' ? DEFUSE.bareTime : 1) / (0.5 + r.skill);
+    t.progress += dt; a.ring = t.progress / t.need;
+    if (p.real && a.rng.chance(0.004 * (1 - r.skill) * (robot ? 0.6 : 1) * dt)) return 'slip';      // 실수: 숙련도가 낮을수록 잦다
+  }
+  if (t.progress < t.need) return undefined;
+  p.mitigated = true; p.blocking = false; s.propAt[p.y * s.w + p.x] = -1; s.staticVersion++;      // 처리된 물건은 더 이상 길을 막지 않는다
+  learnQuiet(sim, a, mkFact('haz', p.id, { kind: 'bomb', active: false, x: p.x, y: p.y }, r.name, sim.t, 1, true, '폭발물 위험 해소'));
+  const done = p.real ? (m === 'robotDefuse' ? '로봇으로 폭발물 해체 완료. 위험이 사라졌습니다.' : '폭발물 해체 완료. 위험이 사라졌습니다.') : (m === 'robotDefuse' ? '로봇으로 확인한 결과 폭발물이 아닙니다.' : '확인 결과 폭발물이 아닙니다.');
+  const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 3, text: done });
+  recordMethod(sim, I, a, t, m, t.mwhy ?? 'usual', true, ev, tg);
+  r.xpGained += p.real ? 0.006 : 0.002;
+  k.finish(sim, s, a, true);
+  return 'done';
+}
+// (import 를 이 절에 둔 것은 위의 import 묶음을 다른 단계가 함께 고치고 있어서다)
+import { hasKit } from '../crews';
+import { kitWorks } from './gear';
+import { METHOD, robotSpot } from './methods';
+import { recordMethod, startMethod, switchMethod } from './methodRun';
+import { applies, docCtx } from './doctrine';

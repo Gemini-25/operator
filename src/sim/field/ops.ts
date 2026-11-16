@@ -239,18 +239,19 @@ const NO_TARGET: ReadonlySet<WorkKind> = new Set<WorkKind>(['sizeup', 'hookup', 
 /** 지휘관(또는 그 대원)이 그 소품을 가스 용기·드럼통(haz gas)으로 아는가 — 냉각은 외부에서도 할 수 있다 */
 export const gasPropKnown = (a: FieldAgent, prop: number): boolean => prop >= 0 && a.beliefs.val<{ kind?: string }>('haz', prop)?.kind === 'gas';
 
+/** 믿음 속 자리의 칸 (없으면 −1) — targetTile 의 닫힘을 모듈 함수로 (R3 속도: tsx 의 __name) */
+function tileAtPt(w: number, v: { x: number; y: number } | undefined): number { return v ? Math.round(v.y) * w + Math.round(v.x) : -1; }
 /** 작업 대상의 칸 (믿음 속 위치). 구획 대상이면 −2 (구획으로 본다), 알 수 없거나 현장 밖이면 −1 */
 export function targetTile(s: Scene, a: FieldAgent, kind: WorkKind, tg: WorkTarget): number {
   const B = a.beliefs, w = s.w;
-  const at = (v: { x: number; y: number } | undefined): number => (v ? Math.round(v.y) * w + Math.round(v.x) : -1);
   if (kind === 'mitigate' && (tg.prop ?? -1) < 0 && (tg.tile ?? -1) >= 0) return tg.tile!;      // 가스 재측정: 그 문턱 칸
   if ((tg.region ?? -1) >= 0) return -2;
   if (kind === 'perimeter' && (tg.tile ?? -1) >= 0) { const e = s.exits[tg.tile!]; return e ? Math.round(e.y) * w + Math.round(e.x) : -1; }      // 출입구 통제: 그 출입구 칸 (철수 구역이 덮으면 갈 수 없다)
   if (NO_TARGET.has(kind)) return -1;
-  if (kind === 'treatMate' || (tg.mate ?? -1) >= 0) { const m = B.val<MateBelief>('mate', tg.mate ?? -1); return m && m.status !== 'safe' && m.status !== 'evac' ? at(m) : -1; }
-  if (kind === 'treatSuspect' || (tg.hostile ?? -1) >= 0) return at(B.val<{ x: number; y: number }>('hos', tg.hostile ?? -1));
-  if ((tg.cas ?? -1) >= 0) { const c = B.val<CasBelief>('cas', tg.cas!); return c && (c.where === 'scene' || c.where === 'carried') ? at(c) : -1; }
-  if ((tg.prop ?? -1) >= 0) return at(B.val<{ x: number; y: number }>('haz', tg.prop!));
+  if (kind === 'treatMate' || (tg.mate ?? -1) >= 0) { const m = B.val<MateBelief>('mate', tg.mate ?? -1); return m && m.status !== 'safe' && m.status !== 'evac' ? tileAtPt(w, m) : -1; }
+  if (kind === 'treatSuspect' || (tg.hostile ?? -1) >= 0) return tileAtPt(w, B.val<{ x: number; y: number }>('hos', tg.hostile ?? -1));
+  if ((tg.cas ?? -1) >= 0) { const c = B.val<CasBelief>('cas', tg.cas!); return c && (c.where === 'scene' || c.where === 'carried') ? tileAtPt(w, c) : -1; }
+  if ((tg.prop ?? -1) >= 0) return tileAtPt(w, B.val<{ x: number; y: number }>('haz', tg.prop!));
   return -1;
 }
 

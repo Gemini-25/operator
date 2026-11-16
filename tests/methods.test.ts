@@ -68,7 +68,9 @@ const taskFor = (a: FieldAgent, w: WorkItem): Task => { const t = makeTask(w.kin
 /** 방법을 켠 단계가 조건(can)을 채운 줄 — 단계 1a: 수난의 물가 방법 여섯, 단계 1b: 헤엄·줄 확보, 단계 1c: 보트, 단계 2: 문·통로 일곱(폭파 진입 포함), 단계 3: 구출 아홉·수색 다섯, 단계 4: 화재 다섯, 단계 5: 비살상탄·저격 */
 const LIVE: MethodId[] = ['hand', 'pole', 'ring', 'rope', 'improvise', 'catch', 'swim', 'tend', 'boat', 'kick', 'irons', 'ram', 'hydraulic', 'handClear', 'toolClear', 'charge',
   'manual', 'basic', 'spread', 'roof', 'rapid', 'haul', 'tunnel', 'airbag', 'shore', 'call', 'listen', 'line', 'hail', 'thermal',
-  'interior', 'defensive', 'aerial', 'extinguisher', 'ventilate', 'beanbag', 'sniper', 'stay', 'rush', 'seal', 'ventFirst', 'cordon', 'announce'];
+  'interior', 'defensive', 'aerial', 'extinguisher', 'ventilate', 'beanbag', 'sniper', 'stay', 'rush', 'seal', 'ventFirst', 'cordon', 'announce',
+  'feel', 'pulse',      // (R3 3단계) 벽 더듬기 수색·끊어 쏘기 — 교본 F07·F08 이 고른다
+  'robotDefuse', 'suitDefuse', 'bareDefuse'];      // (R3 단계 5) 폭발물 해체 셋
 /** 헤엄을 못 치는 몸으로 둔다 (수영 능력 = 0.15 + 개인차 ±0.15 < 문턱 0.35 — 구명조끼가 없을 때) */
 const noSwim = (sim: Sim, a: FieldAgent): void => { const r = sim.responders[a.rid]; r.fitness = 0; r.skills.rescue = 0; strip(sim, a.rid, 'pfd'); };
 /**
@@ -131,7 +133,7 @@ describe('R2 시험 1: 판단부(methods.ts)는 진실을 읽지 않는다', () 
 describe('R2 방법 표 (METHOD)', () => {
   const ids = Object.keys(METHOD) as MethodId[];
   it('모든 줄이 온전하다: 이름·짧은 이름·라벨(12자 안)·문장에 끼우는 말, 장비는 표에 있는 것, 임무가 하나 이상', () => {
-    expect(ids.length).toBe(60);      // R2 의 55 + N9 단계 1 의 다섯(dive·boom·shieldLine·deconTent·hoseWash — can 은 NOT_YET)
+    expect(ids.length).toBe(65);      // R2 의 55 + N9 단계 1 의 다섯(dive·boom·shieldLine·deconTent·hoseWash — can 은 NOT_YET) + R3 단계 5 의 셋(robotDefuse·suitDefuse·bareDefuse — N9 다섯 앞) + R3 3단계의 둘(feel·pulse — 표 끝)
     expect(METHOD_ORDER).toEqual(ids);
     for (const m of ids) {
       const d = METHOD[m];
@@ -148,7 +150,7 @@ describe('R2 방법 표 (METHOD)', () => {
   });
   it('평소 방법(시작을 알리지 않고 보고서에 넣지 않는다)과 기록 전용 방법의 목록이 설계서와 같다', () => {
     const plain = ids.filter((m) => METHOD[m].plain && !METHOD[m].record).sort();
-    expect(plain).toEqual(['rope', 'pole', 'hand', 'irons', 'handClear', 'toolClear', 'basic', 'spread', 'call', 'line', 'interior', 'stay', 'seal', 'cordon'].sort());
+    expect(plain).toEqual(['rope', 'pole', 'hand', 'irons', 'handClear', 'toolClear', 'basic', 'spread', 'call', 'line', 'interior', 'stay', 'seal', 'cordon', 'suitDefuse'].sort());      // (R3 단계 5) 방호복 해체가 평소 방법
     const rec = ids.filter((m) => METHOD[m].record).sort();
     expect(rec).toEqual(['hoist', 'chase', 'breach', 'bang', 'tackle', 'cover', 'taser', 'shield', 'airlift', 'air'].sort());
     // 기록 전용 가운데 보고서에 싣는 것(평소 방법이 아닌 것)
@@ -1744,7 +1746,7 @@ describe('R2 단계 1c: 강제 교대 — 해일에서 보트가 쓰이고, 물 
   it('해일 교대에서 보트로 건진 사람이 있고, 교대가 끝나면 보트 위·물 칸 위에 아무도 없다', () => {
     let boats = 0;
     const bad: string[] = [];
-    for (const seed of ['S3', 'S4', 'S8']) {
+    for (const seed of ['S3', 'S4', 'S8', 'S12']) {      // (R3 3단계) 교본으로 결과가 바뀌어 S4 의 보트 구조가 없어졌다 — 보트 구조는 드물다(그전 S0~S11 에 S4·S10, 지금 S0~S15 에 S1·S11·S12(2)·S15). S12 를 더한다
       const sim = new Sim(seed, { ...NORMAL, disaster: parseDisaster('tsunami')! }, 1200);
       sim.runToEnd();
       boats += usesOf([sim]).filter((u) => u.ok && u.method === 'boat').length;
@@ -2060,7 +2062,7 @@ describe('R2 단계 2: 농성 문 잠금과 방 진입의 잠긴 문 (§4.2a)', 
 describe('R2 단계 2: 강제 교대 (§8 의 3·6·10)', () => {
   it('3. 문: 유압 개방·할리건·발로 차기 성공이 각각 있다 (승강기 갇힘·건물 화재 강제)', () => {
     const us: MethodUse[] = [];
-    for (const [seed, force] of [['D0', 'collapse/elevator'], ['D1', 'collapse/elevator'], ['D2', 'fire/std'], ['D3', 'fire/std'], ['D4', 'fire/std']] as const) {
+    for (const [seed, force] of [['D0', 'collapse/elevator'], ['D1', 'collapse/elevator'], ['D2', 'fire/std'], ['D3', 'fire/std'], ['D4', 'fire/std'], ['D5', 'collapse/elevator']] as const) {      // (R3 3단계) 교본으로 결과가 바뀌어 유압 개방이 D5 승강기로 옮겨 갔다
       const sim = new Sim(seed, NORMAL, 1200, { force }); sim.runToEnd();
       for (const I of sim.incidents) us.push(...(I.methods ?? []));
     }
@@ -2378,7 +2380,8 @@ describe('R2 단계 4: 화재 진압의 방법 — 고르는 규칙 (§4.5)', ()
     const noz = q.role('nozzle'), scba = q.sim.responders[noz.rid].kit!.find((it) => it.id === 'scba')!;
     believeFire(q, r, 0.6);
     const t = makeTask('suppress', '시험'); t.region = r;
-    scba.uses = 55;      // 60초 아래 (R1 의 문턱 45 보다는 위 — 내부 공격도 된다)
+    q.sim.tune.airFull = 100;      // (R3 3단계) 공기 문턱이 한 통의 50%(AIR_IN)가 되었다 — 한 통을 100초로 두어 55초가 문턱(50초) 위에 오게 한다
+    scba.uses = 55;      // 60초 아래 (공기 문턱 50초 보다는 위 — 내부 공격도 된다)
     expect(chooseMethod(q.sim, q.s, noz, 'suppress', tgR4(r), t, NO_SENSE)!.m).toBe('defensive');
     expect(chooseMethod(q.sim, q.s, noz, 'suppress', tgR4(r), null, NO_SENSE)!.m).toBe('interior');
     scba.uses = 300; q.sim.responders[noz.rid].health = 45;
@@ -2442,7 +2445,8 @@ describe('R2 단계 4: 화재 진압의 방법 — 고르는 규칙 (§4.5)', ()
     rr.kit!.find((it) => it.id === 'scba')!.uses = 30;
     const w = work(q.sim, q.s, 'suppress', { region: r });
     believeFire(q, r, 0.6);
-    expect(fitFor(q.sim, q.s, noz, w)).toBe(0);
+    // (R3 3단계 F03b) 공기 50% 아래면 교본이 실내 방법만 뺀다 — §3.7 끝의 조각으로 외부 방어가 남아 맡는다
+    expect(fitFor(q.sim, q.s, noz, w)).toBeGreaterThan(0);
     expect(fitFor(q.sim, q.s, noz, w, true)).toBeCloseTo(rr.skills.fire + (ROLES.nozzle.prefer.suppress ?? 0), 9);
     believeFire(q, r, 1.0, 0.9); clearCasIn(q, r);
     expect(fitFor(q.sim, q.s, noz, w)).toBeCloseTo(rr.skills.fire + (ROLES.nozzle.prefer.suppress ?? 0), 9);
@@ -2840,7 +2844,10 @@ describe('R2 단계 5: 강제 교대 (§8 의 3·6 · 무장 4가지)', () => {
   it('무장 강제(인질극·대형 인질극·흉기·강도): 검거·무력화의 방법 기록이 4가지 이상이고, 테이저·비살상탄 기록이 있으며(§8 시험 3 의 5단계 몫), 재현성이 지켜진다', () => {
     const ok = new Set<MethodId>();
     // (검토) A16 흉기 대치를 더했다 — 비살상탄 검거는 흉기·강도 강제 교대 28번에 한 번꼴이라(A0~A19) 시험이 그 기록이 실제로 남는 교대를 하나 갖게
-    for (const [seed, force] of [['A0', 'armed/hostage'], ['A1', 'armed/siege'], ['A2', 'armed/dispute'], ['A3', 'armed/robbery'], ['A4', 'armed/dispute'], ['A5', 'armed/robbery'], ['A16', 'armed/dispute']] as const) {
+    // (R3 4단계) A6 가정 폭력을 더했다 — 의료 교본이 배경 사건의 부대 배치를 바꿔 A2 의 가정 폭력 테이저 검거가 맨손 제압으로 바뀌었다(테이저 검거는 이 표본의 유일한 것이었다). A6 에서 테이저 검거가 남는다
+    // (R3 3단계) 교본(P17·짝)으로 결과가 바뀌어 A2 의 테이저 검거가 A21 로 옮겨 갔다 — 3·4단계를 합친 표본은 둘 다 둔다
+    for (const [seed, force] of [['A0', 'armed/hostage'], ['A1', 'armed/siege'], ['A2', 'armed/dispute'], ['A3', 'armed/robbery'], ['A4', 'armed/dispute'], ['A5', 'armed/robbery'], ['A16', 'armed/dispute'], ['A21', 'armed/robbery'], ['A6', 'armed/domestic'], ['A29', 'armed/dispute']] as const) {
+      // (R3 단계 5) A29 흉기 대치를 더했다 — 특수 교본이 켜지며 A2 의 배경 사건 #09 의 테이저 검거가 비살상탄 검거로 바뀌었다 (합친 표본은 셋 단계의 시드를 모두 둔다)
       const sim = new Sim(seed, NORMAL, 1200, { force }); sim.runToEnd();
       for (const I of sim.incidents) for (const u of I.methods ?? []) if (u.ok && (u.work === 'engage' || u.work === 'arrest')) ok.add(u.method);
       if (seed === 'A1') { const again = new Sim(seed, NORMAL, 1200, { force }); again.runToEnd(); expect(again.report!.hash).toBe(sim.report!.hash); }
@@ -2898,6 +2905,7 @@ describe('R2 단계 6: 응급·누출·통제의 실행 (장면을 직접 만들
   it('즉시 이송: 3초 최소 처치(품질 ×0.7) 뒤 c.rush — 믿음에 실리고, 지휘관은 처치를 더 내지 않고 탑승을 0.97 로 낸다. 방법 기록', () => {
     const q = sceneWith('R2-MED', 'medical', ['als']);
     const pm = q.role('paramedic'), c = q.s.casualties[0];
+    { const r = q.sim.responders[pm.rid]; r.kit = r.kit!.filter((k) => k.id !== 'aed'); }      // (R3 4단계 E02·E03) 제세동기를 든 대원은 위중·거동 불가 환자에게 현장 소생(stay)을 먼저 — 즉시 이송은 제세동기가 없을 때(E03 ×1.5)
     for (const a of q.s.agents) if (a !== pm) a.status = 'left';
     const amb = q.sim.units[pm.unitId]; amb.state = 'onscene'; if (q.I.assigned.indexOf(amb.id) < 0) q.I.assigned.push(amb.id);
     c.health = 30; c.where = 'scene'; c.mob = 'immobile'; c.treated = false; c.treatQ = 0;

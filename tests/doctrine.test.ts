@@ -2005,7 +2005,7 @@ describe('R3 균형: D8 건물 화재의 첫 출동 — 펌프차 하나 더 (�
   };
   it('위치 신고가 건물(현장 틀이 있는 종류)인 화재면 진압 수요 +1 — 기본 2(센 불)이면 3', () => {
     const sim = fresh();
-    expect(FIRST_PLUS.reserve).toBe(0);
+    expect(FIRST_PLUS.reserve).toBe(1);
     expect(sup(sim, 'fire', 'houseS')).toEqual({ used: ['D8'], n: 2 });
     expect(sup(sim, 'fire', 'apartment', '방화', 2)).toEqual({ used: ['D8'], n: 3 });
   });
@@ -2016,14 +2016,16 @@ describe('R3 균형: D8 건물 화재의 첫 출동 — 펌프차 하나 더 (�
     expect(sup(sim, 'hazmat', 'factory').used).not.toContain('D8');
     expect(sup(sim, 'collapse', 'villa').used).not.toContain('D8');
   });
-  it('나갈 수 있는 펌프차(진압 펌프차·사다리차 — 이 사건에 배정된 것 포함)가 기본 수요 + 1 대에 못 미치면 걸지 않는다 (없는 부대를 기다리는 수요를 만들지 않는다)', () => {
+  it('나갈 수 있는 펌프차(진압 펌프차·사다리차 — 이 사건에 배정된 것 포함)가 기본 수요 + 1 대 + 남겨 둘 한 대(FIRST_PLUS.reserve)에 못 미치면 걸지 않는다 (없는 부대를 기다리는 수요를 만들지 않는다)', () => {
     const sim = fresh();
     const pumps = sim.units.filter((u) => u.kind === 'engine' || u.kind === 'ladder');
-    expect(pumps.length).toBeGreaterThanOrEqual(2);
-    for (const u of pumps.slice(1)) u.state = 'onscene';
+    expect(pumps.length).toBeGreaterThanOrEqual(3);
+    for (const u of pumps.slice(2)) u.state = 'onscene';
     expect(sup(sim, 'fire', 'houseS').used).toEqual([]);
-    pumps[1].state = 'returning';
+    pumps[2].state = 'returning';
     expect(sup(sim, 'fire', 'houseS').used).toEqual(['D8']);
+    pumps[2].state = 'onscene'; pumps[1].state = 'enroute';      // 다른 사건으로 가는 펌프차는 세지 않는다 (이 사건에 배정된 것만)
+    expect(sup(sim, 'fire', 'houseS').used).toEqual([]);
   });
   it('스위치(DOC_SWITCH.D8)를 끄면 걸지 않는다 · 관제 줄 이름표가 소방 분야에 있다', () => {
     const sim = fresh();

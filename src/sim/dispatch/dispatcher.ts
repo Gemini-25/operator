@@ -416,6 +416,9 @@ export function fieldReport(sim: Sim, I: Incident, s: Scene, m: RadioMsg): void 
   if (tb && tb.verified && I.assessment && tb.value !== I.assessment.type) {
     I.fieldType = tb.value;
     assess(sim, I, '현장 지휘관 보고');
+    // (R3 균형) 응급 환자로 보고 함께 보낸 선착 대응 부대(coResp)는 현장이 응급이 아니라고 알리면 보통의 배정 부대다 —
+    //   선착 대응으로 남겨 두면 우선순위가 그 사건을 '구급대원이 닿지 않은 사건'으로 계속 셌다(쓰러진 사람이 있다던 가스 누출). 이미 닿은 뒤라 다시 붙지 않는다(firstArrivalAt)
+    if (I.coResp !== undefined && I.assessment.type !== 'medical') I.coResp = undefined;
   }
   // (X6 §5.9) 현장 상황 보고에 붕괴·폭발·전소 사실이 실려 왔다: 위험도를 다음 문턱까지 올리고 위험을 더한 뒤 다시 평가한다 (지휘관이 보낸 것만 — 진실 아님)
   if (m.kind === 'sitrep') {

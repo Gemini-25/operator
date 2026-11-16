@@ -140,7 +140,8 @@ const OPEN_FIRE: ReadonlySet<string> = new Set(['산불', '비행기 추락', '�
  * 첫 출동의 하나 더는 펌프차(진압 펌프차·사다리차)가 남을 때만 건다: 이 사건에 이미 배정된 것과 나갈 수 있는 것(집에 있거나 돌아가는 중, 걸을 수 있는 대원)을 세어
  * 기본 수요 + 1 + reserve 이상이어야 한다 — 없는 부대를 기다리는 수요(NO_UNIT·BACKUP_LATE)를 만들지 않고, 다음 사건의 펌프차를 남겨 둔다 (조직 정보만)
  */
-export const FIRST_PLUS = { reserve: 0 };      // (균형 측정 — 보통 120교대) 0: 화재 56.9 → 59.0%·전체 74.5 → 76.0% (1 과 견줘), 남겨 두는 펌프차를 두지 않는다
+export const FIRST_PLUS = { reserve: 1 };      // 다음 신고의 펌프차 한 대를 남긴다. (균형 측정 — 보통 120교대, 마지막 코드) 0 이면 화재 58.8%·전체 76.9%, 1 이면 57.7%·76.2% — 잡음 안이다.
+                                              //   0 에서는 tests/sim.test.ts '추격전'(50교대의 놓침이 한 건뿐 — 0 이면 깨진다)이 깨졌다 (구현 메모 '균형')
 const PUMP: ReadonlySet<string> = new Set(['engine', 'ladder']);
 function pumpPool(sim: Sim, I: Incident | undefined): number {
   let n = 0;

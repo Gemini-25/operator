@@ -525,6 +525,10 @@ export const METHOD: Record<MethodId, MethodDef> = {
   air: row('air', ['search'], '공중 수색', '공중 수색', '공중 수색', '상공에서', [], 0, 0, false, REC),      // R1 경찰 헬기의 관측자 — 기록 전용
   drone: row('drone', ['search'], '드론 열화상', '드론', '드론 수색', '드론으로', [], 0.8, 0, false),      // 장비가 생기면 kits 를 채운다
   dog: row('dog', ['search'], '탐지견', '탐지견', '탐지견 수색', '탐지견으로', [], 0.85, 0, false),      // 부대가 생기면 needUnit 을 채운다
+  // ── (R3 §3.7 — 5단계) 해체 defuse: 로봇 원격 → 방호복 → 맨몸. 실행은 doctrineRun.runDefuse (executor 의 case 'defuse'). 대상은 믿음 속 살아 있는 장치. N9 의 다섯 앞에 둔다(tests/kinds2 가 그 다섯을 표의 끝으로 본다) ──
+  robotDefuse: row('robotDefuse', ['defuse'], '로봇 원격 해체', '로봇 해체', '로봇 원격 해체', '원격 로봇으로', ['robot'], 0.9, 0, false, { can: (c) => bombOf(c) !== null && robotSpotOf(c) !== null }),      // 로봇 조작 요원이 장치 8칸 안·벽에 가리지 않는 자리에서
+  suitDefuse: row('suitDefuse', ['defuse'], '방호복 해체', '방호복 해체', '폭발물 해체', '방호복을 입고', ['bombSuit'], 0.75, 0, true, { can: (c) => bombOf(c) !== null }),      // 지금의 해체 (해체 자격 eodKit 은 fitFor 가 본다)
+  bareDefuse: row('bareDefuse', ['defuse'], '맨몸 해체', '맨몸 해체', '맨몸 해체', '방호복 없이', ['eodKit'], 0.5, 0.15, false, { can: (c) => bombOf(c) !== null }),      // 언제 고르는가는 교본 S07 — 방호복이 없거나 옮길 수 없는 사람이 곁에 있을 때만
   // ── (N9 §5.12) 새 방법 다섯 — 단계 1 은 줄만(can = NOT_YET). 수치(pref·risk)는 시작값이고, 조건·배율·장비는 그 방법을 쓰는 단계가 채운다 ──
   // 잠수: 물에 잠긴 차·선실 안의 사람(믿음 sunk · haz sunk)에게 3칸 안에서 25초 (단계 5). 장비는 diveKit(단계 2 에 생긴다)으로 바꾼다 — 지금은 있는 드라이슈트만 적어 둔다
   dive: row('dive', ['waterRescue', 'extricate', 'search'], '잠수 구조', '잠수', '잠수 구조', '잠수해 들어가', ['drysuit'], 0.8, 0.1, false),
@@ -535,10 +539,6 @@ export const METHOD: Record<MethodId, MethodDef> = {
   // 제독 텐트 · 물 세척: 오염된 구조 대상의 제독 15초 · 45초 (단계 6). 제독 장비 deconKit 은 단계 2 에 생긴다 — 그때 deconTent 의 kits 를 채운다
   deconTent: row('deconTent', ['decontam'], '제독 텐트', '제독 텐트', '제독 텐트', '제독 텐트에서 씻어', [], 0.9, 0, false),
   hoseWash: row('hoseWash', ['decontam'], '물 세척 제독', '물 세척', '물 세척 제독', '호스로 씻어 내', ['hose'], 0.5, 0, false),
-  // ── (R3 §3.7 — 5단계) 해체 defuse: 로봇 원격 → 방호복 → 맨몸. 실행은 doctrineRun.runDefuse (executor 의 case 'defuse'). 대상은 믿음 속 살아 있는 장치 ──
-  robotDefuse: row('robotDefuse', ['defuse'], '로봇 원격 해체', '로봇 해체', '로봇 원격 해체', '원격 로봇으로', ['robot'], 0.9, 0, false, { can: (c) => bombOf(c) !== null && robotSpotOf(c) !== null }),      // 로봇 조작 요원이 장치 8칸 안·벽에 가리지 않는 자리에서
-  suitDefuse: row('suitDefuse', ['defuse'], '방호복 해체', '방호복 해체', '폭발물 해체', '방호복을 입고', ['bombSuit'], 0.75, 0, true, { can: (c) => bombOf(c) !== null }),      // 지금의 해체 (해체 자격 eodKit 은 fitFor 가 본다)
-  bareDefuse: row('bareDefuse', ['defuse'], '맨몸 해체', '맨몸 해체', '맨몸 해체', '방호복 없이', ['eodKit'], 0.5, 0.15, false, { can: (c) => bombOf(c) !== null }),      // 언제 고르는가는 교본 S07 — 방호복이 없거나 옮길 수 없는 사람이 곁에 있을 때만
 };
 /** 표의 순서 (같은 점수면 앞이 이긴다) */
 export const METHOD_ORDER: MethodId[] = Object.keys(METHOD) as MethodId[];

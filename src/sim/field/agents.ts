@@ -243,6 +243,8 @@ function discover(sim: Sim, s: Scene, I: Incident, a: FieldAgent, c: Casualty): 
 }
 
 /** 시야 안의 진실을 관찰해 믿음을 갱신한다. boost 는 관측 범위 배율(현장 평가 등). */
+/** perceive 의 시야: 공중 관측(aloft)은 실내가 아닌 칸, 지상은 시야선 */
+function seesAt(s: Scene, a: FieldAgent, aloft: boolean, x: number, y: number): boolean { return aloft ? !isIndoor(s.tiles[tileOf(s, x, y)]) : los(s, a.x, a.y, x, y); }
 export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWalls = false): void {
   const I = sim.incidents[s.incidentId];
   const r = resp(sim, a);
@@ -257,7 +259,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
   // 상공의 관측자(a.aloft): 지붕 밑(실내 칸)은 보지 못하고, 바깥 칸은 벽·나무에 가리지 않는다(시야선을 보지 않는다).
   // 사람을 움직이지 않고(대피 안내·인질 유도 없음), 소품(문·밸브·단서 …)은 살피지 않는다
   const aloft = a.aloft === true;
-  const sees = (x: number, y: number): boolean => (aloft ? !isIndoor(s.tiles[tileOf(s, x, y)]) : los(s, a.x, a.y, x, y));
+  // (R3 속도) 보이는가는 모듈 함수 seesAt (함수 안의 이름 붙은 닫힘은 tsx 가 부를 때마다 __name 을 부른다 — 결과 같음)
   const meter = hasKit(sim, a.rid, 'gasMeter');      // 가스 측정기: 새는 밸브를 벽 너머 7칸에서 알아챈다
   const sm = searchMul(a);      // (R2 §4.4) 수색 방법의 탐지 배율 — 경유점에 멈춘 동안(청음·확성기는 소리를 낼 수 있는 대상만)
   for (let ci = 0; ci < s.casualties.length; ci++) { const c = s.casualties[ci];      // 색인 순회: 최적화 전 단계에서 반복자 객체를 만들지 않는다 (순서는 같다)
@@ -266,7 +268,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
     if (d > v) continue;
     const known = c.tDiscovered >= 0;
     const dr = known ? v : detectRadius(sim, s, a, sm.k < 1 && (!sm.voice || c.health > 30) ? c.concealment * sm.k : c.concealment) * boost;
-    if (d > dr || !sees(c.x, c.y)) continue;
+    if (d > dr || !seesAt(s, a, aloft, c.x, c.y)) continue;
     let fresh = sim.t - c.tDiscovered < 2.5;      // 방금 누군가 발견을 알렸다면 같은 내용을 되풀이하지 않는다
     if (!known) { discover(sim, s, I, a, c); fresh = true; }
     // 하늘에서 먼저 본 사람을 지상 대원이 처음 만났다: 걸을 수 있으면 대피를 안내한다 (발견한 대원이 하는 것과 같다)
@@ -280,7 +282,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
     const range = aloft ? (h.hidden ? v * 0.4 : v) : h.hidden ? 4.2 : 13;      // 지상은 시야와 상관없이 13칸(숨은 용의자 4.2칸). 상공은 관측 거리만큼 — 밤의 4칸이 용의자에게도 걸린다
     const cur = a.beliefs.get('hos', h.id);
     if (cur && cur.value.dead) continue;      // 숨진 줄 안 뒤에는 더 바뀌지 않는다 — 먼 관찰로 되돌리지 않는다 (H1)
-    if (d <= range && sees(h.x, h.y)) {
+    if (d <= range && seesAt(s, a, aloft, h.x, h.y)) {
       const wasHidden = h.hidden;
       if (h.hidden) {
         h.hidden = false;
@@ -399,7 +401,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
   for (let bi = 0; bi < s.agents.length; bi++) { const b = s.agents[bi];
     if (b === a || (b.status !== 'down' && b.status !== 'withdrawn')) continue;
     const d = dist(a.x, a.y, b.x, b.y);
-    if (d > v || (b.status === 'withdrawn' && d > 2) || !sees(b.x, b.y)) continue;
+    if (d > v || (b.status === 'withdrawn' && d > 2) || !seesAt(s, a, aloft, b.x, b.y)) continue;
     const cur = a.beliefs.get('mate', b.rid);
     if (cur && cur.value.dead) continue;      // 숨진 줄 안다 — 멀리서 다시 본 것으로 되돌리지 않는다
     if (b.status === 'down' && d <= SHAKE.mateR && (!cur || cur.value.status !== 'down')) shake(sim, a);      // (R3 §4.3) 6칸 안에서 동료가 쓰러진 것을 처음 본다 — 동요
@@ -639,6 +641,10 @@ const airOk = (sim: Sim, rid: number, afterSwap: boolean): boolean => afterSwap 
 /** 연기 속에 들어갈 수 있는가: 공기호흡기를 멨고 공기가 된다 */
 const scbaOk = (sim: Sim, rid: number, afterSwap: boolean): boolean => hasKit(sim, rid, 'scba') && airOk(sim, rid, afterSwap);
 /** afterSwap = 공기통을 바꾼 뒤라면 (공기 문턱을 보지 않는다 — 지휘관이 "예비 공기통으로 바꾸면 맡을 수 있는 사람이 있는가"를 볼 때만 쓴다) */
+/** fitBase 의 위험 구역: 불이 났거나, 가스가 찼거나, 무너질 수 있는 건물 안, (X6 §6.1) 무너진 잔해 구역은 공기호흡기를 멘 대원만 들어간다 (이 대원의 믿음) */
+function fitRisk(s: Scene, a: FieldAgent, indoorRisk: boolean, regionId: number): boolean { return regionId >= 0 && ((a.beliefs.val<number>('fire', regionId) ?? 0) > 0.25 || indoorRisk || inRubble(s, regionId)); }
+/** fitBase 의 걸을 수 있는 다친 대원: 그 자리가 위험 구역(안전 확보 전 무장 현장 · 위험 건물)의 실내인가 */
+function fitRiskyAt(s: Scene, a: FieldAgent, hot: boolean, indoorRisk: boolean, x: number, y: number): boolean { const rg = s.region[tileOf(s, x, y)]; return rg >= 0 && s.regions[rg].indoor && (hot || fitRisk(s, a, indoorRisk, rg)); }
 function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: boolean): number {
   const r = resp(sim, a), u = sim.units[a.unitId], rid = a.rid;
   if (r.dept === 'civil') return r.status === 'injured' ? 0 : civilFit(sim, s, rid, w);      // (N8 §5.3.3) 유관 기관은 자기 일만 (다치면 가벼운 일도 없다 — 그 목록에 자기 일이 없다)
@@ -656,23 +662,22 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
   }
   const hot = s.kind === 'armed' && s.secureAt < 0;
   const indoorRisk = TYPE_DEFS[s.kind].indoorRisk;      // 위험한 건물의 유형 (incidentTypes — 화재·가스 누출·붕괴)
-  const fireRisk = (regionId: number): boolean => regionId >= 0 && ((a.beliefs.val<number>('fire', regionId) ?? 0) > 0.25 || indoorRisk || inRubble(s, regionId));      // 불이 났거나, 가스가 찼거나, 무너질 수 있는 건물 안, (X6 §6.1) 무너진 잔해 구역은 공기호흡기를 멘 대원만 들어간다
+  // (R3 속도) 불·가스·붕괴 위험 구역 판정은 모듈 함수 fitRisk 로 (함수 안에 이름 붙은 닫힘을 만들면 헤드리스 실행기(tsx)가 부를 때마다 __name 을 불러 함수 객체를 사전 모드로 바꾼다 — 결과 같음)
   // 걸을 수 있는 다친 대원은 가벼운 일만 맡는다 (H1 §2.5 — 사용자 결정 2026-11-15 "가벼운 일은 계속"). 조직이 아는 상태(status — RESPONDER_HURT 로 알렸다)만 본다:
   // 남에게도 불리는 함수라 체력·출혈은 읽지 않는다. 목록(injury.LIGHT_WORK) 안의 일도 자리가 위험 구역(불·가스·붕괴의 건물 안, 안전 확보 전의 무장 현장 건물 안)이면 맡지 않고,
   // 처치는 대상이 안전 구역에 나와 있을 때만 돕는다. 현장 평가는 지휘의 일이라 다친 지휘관도 한다(위험 구역 밖에서 본다 — 못 하면 그 현장은 끝나지 않는다)
   if (r.status === 'injured' && w.kind !== 'sizeup') {
     if (!LIGHT_WORK.has(w.kind)) return 0;
-    const risky = (x: number, y: number): boolean => { const rg = s.region[tileOf(s, x, y)]; return rg >= 0 && s.regions[rg].indoor && (hot || fireRisk(rg)); };
     if (w.kind === 'treat') { const cb = a.beliefs.val<CasBelief>('cas', w.cas); if (!cb || cb.where !== 'safe') return 0; }
     else if (w.kind === 'treatMate') { const mb = a.beliefs.val<MateBelief>('mate', w.mate); if (!mb || mb.status !== 'safe') return 0; }
-    else if (w.kind === 'perimeter') { const e = s.exits[w.tile]; if (e && risky(e.x, e.y)) return 0; }
-    else if (w.kind === 'interview') { const p = s.props[w.prop]; if (p && risky(p.x, p.y)) return 0; }
+    else if (w.kind === 'perimeter') { const e = s.exits[w.tile]; if (e && fitRiskyAt(s, a, hot, indoorRisk, e.x, e.y)) return 0; }
+    else if (w.kind === 'interview') { const p = s.props[w.prop]; if (p && fitRiskyAt(s, a, hot, indoorRisk, p.x, p.y)) return 0; }
   }
   switch (w.kind) {
     case 'sizeup': return a.isCommander ? 1 : 0;
     case 'search':
       if (hot && !(r.dept === 'police' && hasFirearm(sim, rid))) return 0;
-      if (s.regions[w.region].indoor && fireRisk(w.region) && !scbaOk(sim, rid, afterSwap)) return 0;
+      if (s.regions[w.region].indoor && fitRisk(s, a, indoorRisk, w.region) && !scbaOk(sim, rid, afterSwap)) return 0;
       return 0.45 + 0.3 * r.experience + 0.25 * r.judgment + (r.dept === 'police' && s.kind !== 'fire' && s.kind !== 'medical' ? 0.1 : 0) + (r.dept === 'ems' && s.kind === 'medical' ? 0.15 : 0);
     case 'suppress': {
       // 관창을 든 사람만 물을 쏜다 (공기가 문턱 아래면 통을 바꾼 뒤에) — 이때는 내부 공격(외부 방어면 외부 방수)을 늘 고를 수 있다 (R2 methodFit 과 같은 답 — 계산을 아낀다)
@@ -693,7 +698,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
         // 불이 난 건물 안에 갇힌 사람도 같다: 믿음 속 자리가 위험한 건물 안이면 공기호흡기를 멘 대원만 들어가 구출한다 (수색·이송과 같은 검사)
         const cb = a.beliefs.val<CasBelief>('cas', w.cas);
         if (!cb && (s.kind === 'fire' || isRubbleMode(s))) return 0;      // 어디에 있는지 아직 전달받지 못했다 — 불이 난 건물 안(X6 §6.1: 무너진 잔해 속)일 수 있다
-        if (cb) { const rg = s.region[cb.y * s.w + cb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg)) return 0; }
+        if (cb) { const rg = s.region[cb.y * s.w + cb.x]; if (rg >= 0 && s.regions[rg].indoor && fitRisk(s, a, indoorRisk, rg)) return 0; }
       }
       const f = r.skills.rescue * (0.35 + 0.65 * toolFor(sim, rid, 'extricate'));
       return f >= 0.2 || sim.t - w.createdAt > 25 ? Math.max(0.05, f) : 0;
@@ -710,7 +715,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
       const cb = a.beliefs.val<CasBelief>('cas', w.cas);
       if (!cb && indoorRisk && !scbaOk(sim, rid, afterSwap)) return 0;      // 어디에 있는지 아직 전달받지 못했다 — 위험한 건물 안일 수 있다
       // 누가 옮기는 중('carried')이어도 믿음 속 자리로 같은 검사를 한다: 공기호흡기 없는 대원이 이송 보조로 위험한 건물 안에 따라 들어가지 않게
-      if (cb && (cb.where === 'scene' || cb.where === 'carried')) { const rg = s.region[cb.y * s.w + cb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg) && !scbaOk(sim, rid, afterSwap)) return 0; }
+      if (cb && (cb.where === 'scene' || cb.where === 'carried')) { const rg = s.region[cb.y * s.w + cb.x]; if (rg >= 0 && s.regions[rg].indoor && fitRisk(s, a, indoorRisk, rg) && !scbaOk(sim, rid, afterSwap)) return 0; }
       return 0.4 + 0.4 * r.fitness + (hasKit(sim, rid, 'stretcher') ? 0.1 : 0);
     }
     case 'load': return canCarryPatients(sim, u) && a.unitId === w.prop ? 1 : 0;
@@ -734,7 +739,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
       if (hot && r.dept !== 'police') return 0;      // 안전 확보 전의 무장 현장: 경찰만 들어간다
       // 불·가스·붕괴 위험 구역 안에 쓰러진 동료: 공기호흡기를 멘 대원만 들어간다 (구하러 들어간 대원이 다시 쓰러지는 연쇄를 막는다). 구역은 믿음 속 위치로 본다
       const mb = a.beliefs.val<MateBelief>('mate', w.mate);
-      if (mb) { const rg = s.region[mb.y * s.w + mb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg) && !scbaOk(sim, rid, afterSwap)) return 0; }
+      if (mb) { const rg = s.region[mb.y * s.w + mb.x]; if (rg >= 0 && s.regions[rg].indoor && fitRisk(s, a, indoorRisk, rg) && !scbaOk(sim, rid, afterSwap)) return 0; }
       if (mb && mb.trapped && r.skills.rescue < 0.3) return 0;      // (X6 §4.8) 잔해에 깔린 동료: 잔해를 들어낼 줄 아는 대원만 (구출 능력 0.3 이상)
       return 0.5 + r.fitness * 0.3 + r.teamwork * 0.2;
     }
@@ -754,7 +759,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
       const mb = a.beliefs.val<MateBelief>('mate', w.mate);
       if (hot && !(mb && mb.status === 'safe')) return 0;      // 안전 확보 전의 무장 현장: 안전 구역에 나와 있는 동료만 본다 (교전 중인 건물 안으로 구급대원을 보내지 않는다)
       // 불·가스·붕괴 위험 구역 안의 동료: 공기호흡기를 멘 대원만 들어간다 (구역은 믿음 속 위치로 본다 — 동료 구조와 같다)
-      if (mb) { const rg = s.region[mb.y * s.w + mb.x]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg) && !scbaOk(sim, rid, afterSwap)) return 0; }
+      if (mb) { const rg = s.region[mb.y * s.w + mb.x]; if (rg >= 0 && s.regions[rg].indoor && fitRisk(s, a, indoorRisk, rg) && !scbaOk(sim, rid, afterSwap)) return 0; }
       // 태울 차가 정해진 일: 이미 처치를 받은 동료를 그 차로 옮기는 것은 그 차의 대원만 한다 (다른 부대의 대원은 처치까지만)
       const own = w.prop >= 0 && a.unitId === w.prop;
       if (w.prop >= 0 && !own && (!mb || mb.tq >= 1)) return 0;
@@ -767,7 +772,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
       if (r.dept !== 'police' && !(r.dept === 'ems' && !hot)) return 0;
       const hv = a.beliefs.val<{ x: number; y: number; tq?: number }>('hos', w.hostile);
       // 불·가스·붕괴 위험 구역 안의 용의자: 공기호흡기를 멘 대원만 들어간다 (구역은 믿음 속 위치로 본다 — 동료 구조와 같다)
-      if (hv) { const rg = s.region[tileOf(s, hv.x, hv.y)]; if (rg >= 0 && s.regions[rg].indoor && fireRisk(rg) && !scbaOk(sim, rid, afterSwap)) return 0; }
+      if (hv) { const rg = s.region[tileOf(s, hv.x, hv.y)]; if (rg >= 0 && s.regions[rg].indoor && fitRisk(s, a, indoorRisk, rg) && !scbaOk(sim, rid, afterSwap)) return 0; }
       // 태울 차가 정해진 일: 이미 처치를 받은 용의자를 그 차로 옮기는 것은 그 차의 대원만 한다 (다른 부대의 대원은 처치까지만)
       const own = w.prop >= 0 && a.unitId === w.prop;
       const tq = hv ? hv.tq ?? 0 : 0;

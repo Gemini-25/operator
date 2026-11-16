@@ -58,6 +58,12 @@ function want(sim: Sim, s: Scene, kind: WorkKind, tg: Target, priority: number, 
 function cancel(s: Scene, pred: (w: WorkItem) => boolean): void {
   for (const w of s.board) if ((w.status === 'open' || w.status === 'active') && pred(w)) w.status = 'cancelled';
 }
+/** (R3 속도 — syncBoard) 그 부대에 이미 내려진 탑승 지시의 수 (다친 대원·용의자의 후송 — treatMate·treatSuspect 의 prop — 도 자리를 맡아 둔다) */
+function loadsQueued(s: Scene, uid: number): number { let n = 0; for (const w of s.board) if ((w.kind === 'load' || w.kind === 'treatMate' || w.kind === 'treatSuspect') && w.prop === uid && (w.status === 'open' || w.status === 'active')) n++; return n; }
+/** (R3 속도 — syncBoard) 그 사람의 끝난 처치 작업 수 */
+function treatsDone(s: Scene, cid: number): number { let n = 0; for (const w of s.board) if (w.kind === 'treat' && w.cas === cid && w.status === 'done') n++; return n; }
+/** (R3 속도 — syncBoard) 그 사람의 그 종류 작업을 거둔다 (업고 나오는 중인 이송은 두고) */
+function clearCas(s: Scene, cid: number, kinds: WorkKind[]): void { cancel(s, (w) => w.cas === cid && kinds.indexOf(w.kind) >= 0 && !(w.kind === 'carry' && w.status === 'active' && s.agents.some((b) => b.carrying === cid))); }
 
 const unitsOnScene = (sim: Sim, s: Scene): number[] => {
   const out: number[] = [];
@@ -446,17 +452,15 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   // 환자를 싣고 병원으로 갈 수 있는 부대: 환자 자리가 남은 부대 (seatsOf — 구급차 2명, 헬기 1명)
   const ambulances = unitsOnScene(sim, s).filter((uid) => canCarryPatients(sim, sim.units[uid]) && !sim.units[uid].boardOrder);
   // 그 부대에 이미 내려진 탑승 지시의 수 (실린 환자 + 이것이 자리 수를 넘지 않게 한다)
-  const loadsQueued = (uid: number): number => { let n = 0; for (const w of s.board) if ((w.kind === 'load' || w.kind === 'treatMate' || w.kind === 'treatSuspect') && w.prop === uid && (w.status === 'open' || w.status === 'active')) n++; return n; };      // 다친 대원·용의자의 후송(treatMate·treatSuspect 의 prop)도 자리를 맡아 둔다
+  // (R3 속도) 그 부대에 내려진 탑승 지시의 수(loadsQueued)·그 사람의 끝난 처치 수(treatsDone)·작업 거두기(clearCas)는 모듈 함수 — 부를 때마다 이름 붙은 닫힘을 만들지 않는다 (tsx 의 __name)
   // 처치를 두 번 마쳤는데(기본 처치 + 구급대원이 다시 봄) 아직 기본 처치로 보고된다: 현장의 구급대원이 더 해 줄 수 있는 처치가 없다.
   // (구급대원은 자기가 더 낫게 할 수 없으면 손대지 않고 상태만 다시 보고한다 — 그대로 두면 같은 처치 지시와 같은 보고를 끝없이 주고받는다)
-  const treatsDone = (cid: number): number => { let n = 0; for (const w of s.board) if (w.kind === 'treat' && w.cas === cid && w.status === 'done') n++; return n; };
   for (const f of cas) {
     const c = f.value as CasBelief;
     if (CAS_HOLDS.length && CAS_HOLDS.some((h) => h(sim, s, a, f.id, c))) continue;      // (N8) 보류: 묶음 규칙이 맡은 사람(위험 반경 안·높은 자리)에게는 핵심 규칙이 일을 내지 않는다 — 줄이 없으면 그대로
     const dead = c.band === 3;
-    const clear = (kinds: WorkKind[]) => cancel(s, (w) => w.cas === f.id && kinds.indexOf(w.kind) >= 0 && !(w.kind === 'carry' && w.status === 'active' && s.agents.some((b) => b.carrying === f.id)));
     if (dead || c.where === 'loaded' || c.where === 'hospital') {
-      clear(['extricate', 'treat', 'carry', 'load', 'hoist']);
+      clearCas(s, f.id, ['extricate', 'treat', 'carry', 'load', 'hoist']);
       // 호이스트로 물에서 곧바로 실려 간 사람: 지상의 수난 구조 지시도 거둔다 (지상에서 건진 사람은 그 작업이 이미 끝나 있다)
       if (!dead) cancel(s, (w) => w.kind === 'waterRescue' && w.cas === f.id);
       continue;
@@ -466,7 +470,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     const afloat =c.where === 'scene' && c.mob === 'trapped' && s.tiles[c.y * s.w + c.x] === T.WATER;      // 물속에 있다고 믿는다
     if (hoistUp && !afloat) cancel(s, (w) => w.kind === 'hoist' && w.cas === f.id);      // 물 밖으로 나왔다
     // 총을 든 용의자 바로 곁에 있는 사람(인질)은 위협이 사라지기 전에는 손댈 수 없다
-    if (c.where === 'scene' && active.some((h) => h.value.weapon === 'gun' && Math.hypot(h.value.x - c.x, h.value.y - c.y) <= 3.6)) { clear(['treat', 'carry', 'extricate']); continue; }
+    if (c.where === 'scene' && active.some((h) => h.value.weapon === 'gun' && Math.hypot(h.value.x - c.x, h.value.y - c.y) <= 3.6)) { clearCas(s, f.id, ['treat', 'carry', 'extricate']); continue; }
     if (c.where === 'scene') {
       if (afloat) {
         want(sim, s, 'waterRescue', { cas: f.id }, 0.9 + urg, 2, false, cev);      // 물속: 물가에서 줄을 던져 끌어낸다
@@ -474,7 +478,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         continue;
       }
       // 갇혀 있다: 구출이 먼저다. 갇히기 전에 낸 이송·동행 지시는 거둔다 (2차 붕괴로 다시 갇힌 사람 — 두면 '대상이 그 위치에 없다'는 실패가 구출이 끝날 때까지 되풀이된다)
-      if (c.mob === 'trapped') { clear(['carry', 'escort']); want(sim, s, 'extricate', { cas: f.id }, 0.82 + urg, 2, false, cev); continue; }
+      if (c.mob === 'trapped') { clearCas(s, f.id, ['carry', 'escort']); want(sim, s, 'extricate', { cas: f.id }, 0.82 + urg, 2, false, cev); continue; }
       if (c.mob === 'mobile') {                // 스스로 대피 중 — 한참 지나도 도착 보고가 없으면 확인하러 보낸다
         if (sim.t - f.t > 32) want(sim, s, 'escort', { cas: f.id }, 0.62 + urg, 1, false, cev);
         continue;
@@ -483,12 +487,12 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       const indoorHazard = s.kind === 'fire' || s.kind === 'hazmat' || s.kind === 'collapse' || (rg >= 0 && (B.val<number>('fire', rg) ?? 0) > 0.1);
       const hasMedic = s.agents.some((b) => b.status === 'active' && sim.responders[b.rid].dept === 'ems');
       // 처치가 필요한가: 아직 아무 처치도 못 받았거나, 기본 처치만 받았는데 구급대원이 와 있다
-      const needTreat = !c.rush && c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedic && treatsDone(f.id) < 2));      // !c.rush: (R2 §4.7) 즉시 이송을 정한 환자는 처치를 더 내지 않는다
+      const needTreat = !c.rush && c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedic && treatsDone(s, f.id) < 2));      // !c.rush: (R2 §4.7) 즉시 이송을 정한 환자는 처치를 더 내지 않는다
       const treatHere = hasMedic || (s.kind === 'medical' && c.tq === 0);      // 응급 환자는 누구든 먼저 손을 쓴다
       if (!indoorHazard && needTreat && treatHere && !hotArmed) { want(sim, s, 'treat', { cas: f.id }, 0.8 + urg, 1, false, cev); want(sim, s, 'carry', { cas: f.id }, 0.5, 2, false, cev); }
       else { cancel(s, (w) => w.kind === 'treat' && w.cas === f.id && w.status === 'open'); want(sim, s, 'carry', { cas: f.id }, 0.84 + urg, 2, false, cev); }
     } else if (c.where === 'safe') {
-      if (!c.rush && c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedicAny && treatsDone(f.id) < 2))) want(sim, s, 'treat', { cas: f.id }, 0.72 + urg, 1, false, cev);      // !c.rush: (R2 §4.7)
+      if (!c.rush && c.band >= 1 && (c.tq === 0 || (c.tq === 1 && hasMedicAny && treatsDone(s, f.id) < 2))) want(sim, s, 'treat', { cas: f.id }, 0.72 + urg, 1, false, cev);      // !c.rush: (R2 §4.7)
       else cancel(s, (w) => w.kind === 'treat' && w.cas === f.id && w.status === 'open');
       if (c.band >= 1 && ambulances.length) {
         const already = s.board.some((w) => w.kind === 'load' && w.cas === f.id && (w.status === 'open' || w.status === 'active'));
@@ -499,7 +503,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
           for (let pass = 0; pass < 2 && best < 0; pass++) for (const uid of ambulances) {
             const q = sim.units[uid];
             if ((!!q.air === airFirst) !== (pass === 0)) continue;
-            if (seatsUsed(sim, q) + loadsQueued(uid) < seatsOf(q)) { best = uid; break; }
+            if (seatsUsed(sim, q) + loadsQueued(s, uid) < seatsOf(q)) { best = uid; break; }
           }
           if (best >= 0) want(sim, s, 'load', { cas: f.id, prop: best }, c.rush ? 0.97 : (c.treated ? 0.7 : 0.5) + urg, 1, false, cev);      // (R2 §4.7) 즉시 이송이면 탑승이 먼저 (0.97)
         }
@@ -583,19 +587,32 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   }
   // ── 묶음별 지휘 규칙 (field/orders/*) ──
   if (ORDER_RULES.length) {
-    const kit: CommandKit = {
-      want: (kind, tg, priority, max = 1, thorough = false) => want(sim, s, kind, tg, priority, max, thorough),
-      cancel: (pred) => cancel(s, pred),
-      request: (need, reason, urgent) => request(sim, s, I, a, need, reason, urgent),
-      countUnits: (need, min) => countUnits(sim, s, I, need, min),
-      unitsOnScene: () => unitsOnScene(sim, s),
-    };
+    const kit = commandKitOf(sim, s, I, a);
     for (const rule of ORDER_RULES) rule(sim, s, I, a, kit);
   }
   if (s.ops) s.ops.gated = gateHits;      // (X6 §5.3) 지난 계획 주기에 문이 막은 수 — 종료를 막는 것(단계 6)이 읽는다
   gateCmd = null;
 }
 
+/**
+ * (R3 속도) 묶음별 지휘 규칙에 넘기는 도구 — 지휘관(현장 대원 객체)마다 한 번 만든다. 닫힘이 잡는 sim·s·I·a 는 그 대원에게 늘 같으므로 결과는 같다
+ * (계획 주기마다 이름 붙은 닫힘 다섯을 새로 만들면 헤드리스 실행기(tsx)가 그때마다 __name 을 부른다)
+ */
+const KITS = new WeakMap<FieldAgent, CommandKit>();
+function commandKitOf(sim: Sim, s: Scene, I: Incident, a: FieldAgent): CommandKit {
+  let kit = KITS.get(a);
+  if (kit === undefined) {
+    kit = {
+      want: (kind, tg, priority, max = 1, thorough = false) => want(sim, s, kind, tg, priority, max, thorough),
+      cancel: (pred) => cancel(s, pred),
+      request: (need, reason, urgent) => request(sim, s, I, a, need, reason, urgent),
+      countUnits: (need, min) => countUnits(sim, s, I, need, min),
+      unitsOnScene: () => unitsOnScene(sim, s),
+    };
+    KITS.set(a, kit);
+  }
+  return kit;
+}
 /** 작업 배정 */
 /** 작업판의 일을 대원에게 맡긴다 (commanderThink 가 판단마다 부른다. 내보낸 것은 시험 — R3 시험 2-e 의 교본 전후 1등 비교 — 이 직접 부르기 위해서다) */
 export function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {

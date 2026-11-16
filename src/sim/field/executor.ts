@@ -1980,9 +1980,10 @@ function interiorStep(s: Scene, a: FieldAgent, t: Task, next: number): boolean {
   if (t.kind === 'suppress' && t.method !== undefined && t.method !== 'interior' && t.method !== 'pulse') return false;
   if (t.kind === 'carry' && a.carrying !== -1) return false;      // 업고 나오는 길
   const here = s.region[tileOf(s, a.x, a.y)], there = s.region[next];
-  const inside = (rg: number): boolean => rg >= 0 && s.regions[rg] !== undefined && s.regions[rg].indoor;
-  return !inside(here) && inside(there);
+  return !regionIndoor(s, here) && regionIndoor(s, there);
 }
+/** 실내 구역인가 (R3 속도 — interiorStep 의 닫힘을 모듈 함수로: tsx 의 __name) */
+function regionIndoor(s: Scene, rg: number): boolean { return rg >= 0 && s.regions[rg] !== undefined && s.regions[rg].indoor; }
 /**
  * 판단 지점 interiorEntry (F04c 짝이 따라오지 않음 · F05 밖 대기조 모자람 · P17b 확보 전 수색의 짝): 막히면 문턱에서 기다린다('wait').
  * 상한(20초, 지원이 오면 30초)이면 임무를 놓는다 — finishTask(…, 'doctrine')(실패 기록·w.fails 없음), 작업에 holdUntil +10초, 대원에게 그 작업을 30초 맡지 않는 기억('w:<작업 id>')

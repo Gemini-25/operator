@@ -700,7 +700,8 @@ export type MethodId =
   | 'seal' | 'ventFirst' | 'cordon' | 'announce'                                                        // 누출 조치·통제 (mitigate · perimeter)
   | 'air' | 'drone' | 'dog'                                                                             // 야외 수색 (기록 전용·7단계)
   | 'dive' | 'boom' | 'shieldLine' | 'deconTent' | 'hoseWash'      // (N9 §5.12) 잠수 · 오일펜스 · 방패 저지선(cordon) · 제독 텐트 · 물 세척(decontam). 단계 1 은 표의 줄만 (can = NOT_YET)
-  | 'feel' | 'pulse';      // (R3 3단계 §3.7) 벽 더듬기 수색(search — 열화상 없이 짙은 연기) · 끊어 쏘기(suppress — 용수 30% 아래)
+  | 'feel' | 'pulse'      // (R3 3단계 §3.7) 벽 더듬기 수색(search — 열화상 없이 짙은 연기) · 끊어 쏘기(suppress — 용수 30% 아래)
+  | 'robotDefuse' | 'suitDefuse' | 'bareDefuse';      // (R3 5단계 §3.7) 해체 defuse: 로봇 원격 · 방호복 · 맨몸 (실행은 doctrineRun.runDefuse)
 /** 왜 이 방법을 골랐는가 (기록 문구·보고서 문장이 쓴다). usual = 평소 선택(교본 줄과 무관) */
 export type MethodWhy = 'usual' | 'near' | 'noGear' | 'tooFar' | 'weak' | 'fast' | 'failed' | 'broken' | 'danger' | 'quiet' | 'team'      // R3 가 이 줄 끝에 상태 까닭 여섯을 더한다 (R3 §2.1·§3.7)
   | 'hurt' | 'alone' | 'lowAir' | 'lowAmmo' | 'shaken' | 'tired';      // (R3 1단계) 교본 줄이 1등을 바꾼 까닭 (field/doctrine.ts 의 docWhyMethod — §3.7 의 사상 표)
@@ -908,7 +909,8 @@ export type DocHook = 'fit' | 'duty' | 'act' | 'method' | 'gate' | 'cmd' | 'disp
 /** 교본이 내는 상태 행동 (같은 이름의 TaskKind 로 실행한다 — 그 행동을 쓰는 단계가 TaskKind 에 더한다) */
 export type DocActId = 'airOut' | 'pairOut' | 'cover' | 'rearm' | 'pair';
 /** 실행기가 교본에 묻는 판단 지점 (§2.3 ④) */
-export type DocGateId = 'interiorEntry' | 'roomEntry' | 'breach' | 'closeIn' | 'coverFire' | 'bangUse' | 'carryHold' | 'carryStart' | 'laneTreat';
+export type DocGateId = 'interiorEntry' | 'roomEntry' | 'breach' | 'closeIn' | 'coverFire' | 'bangUse' | 'carryHold' | 'carryStart' | 'laneTreat'
+  | 'forceDoor';      // (R3 5단계 S03) 진입 결정 전 무장 현장의 잠긴 문을 열려는 걸음 (executor.moveTo 의 문 강제 개방 하위 작업 앞)
 /** 교본 행동의 까닭 — 보고서·패널의 말 (§7.3 의 WHY_DOC) */
 export type DocWhy = 'alone' | 'buddy' | 'outside' | 'hurt' | 'tired' | 'shaken' | 'lowAir' | 'lowAmmo' | 'noKit' | 'kit' | 'civ' | 'hostage' | 'danger' | 'triage' | 'backup' | 'protocol' | 'team';
 /** 대원 자신의 몸 상태 신고 ('crew' 사실의 값 — 1단계). 지휘관·동료는 남의 몸을 이것으로만 안다 (§2.4) */

@@ -116,12 +116,12 @@ function smokeSpread(s: Scene, w: number, h: number): void {
  * 가스 용기·누출 가스·폭발물이 같은 규칙이다(예전에는 폭발물만 그랬다). 무너져 내린 것(crush)에는 걸지 않는다.
  * 세 부류를 고르게 친다 (H1 §5.1): 대원(방호를 뺀다), 구조 대상·용의자(×0.8). 용의자는 예전에 건너뛰었다 — 쓰러지지 않은 용의자는 문턱 때문에 한 번에 숨지지 않는다(hurtHostile).
  */
-export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, radius: number, dmg: number, ev: number, cause: InjuryCause = 'blast'): void {
+export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, radius: number, dmg: number, ev: number, cause: InjuryCause = 'blast', planned = false): void {      // planned = (R3 5단계) 대원이 일으킨 계획된 폭파(폭파 진입 — 미리 알리고 물러섰다): 대원에게 동요를 걸지 않는다 (I1-b 의 noSignal 도 이 자리에)
   const bx = Math.round(x), by = Math.round(y);      // (X6 §12.1) 빈 공간(층 사이) 너머의 사람은 다치지 않는다 — 나란히 놓인 다른 층
   for (const a of s.agents) {
     if (a.status === 'left' || sim.responders[a.rid].dead) continue;      // 숨진 대원은 더 다치지 않는다
     const d = dist(a.x, a.y, x, y);
-    if (d <= radius + SHAKE.blastPad && !acrossVoid(s, bx, by, Math.round(a.x), Math.round(a.y))) shake(sim, a);      // (R3 §4.3) 반경 + 3칸 안의 폭발 — 동요 (다치기 전에 건다: 쓰러지면 걸리지 않는다)
+    if (!planned && d <= radius + SHAKE.blastPad && !acrossVoid(s, bx, by, Math.round(a.x), Math.round(a.y))) shake(sim, a);      // (R3 §4.3) 반경 + 3칸 안의 폭발 — 동요 (다치기 전에 건다: 쓰러지면 걸리지 않는다)
     if (d > radius || acrossVoid(s, bx, by, Math.round(a.x), Math.round(a.y))) continue;
     hurtResponder(sim, s, I, a, dmg * (1 - d / (radius + 1)), cause, { ev });      // 폭발물 방호복·방화복이 줄인다 (injury.protection — blastFactor)
     a.lastBlockEvent = ev;
@@ -504,7 +504,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
         const r = sim.responders[ta.rid];
         if (h.weapon === 'gun') {
           // 맞은 사람이 입은 방호 (부대 값이 아니라 사람 값). 방패는 교전·봉쇄 임무 중에만 세운다
-          const armor = armorOf(sim, ta.rid, ta.task !== null && (ta.task.kind === 'engage' || ta.task.kind === 'perimeter'));
+          const armor = armorOf(sim, ta.rid, ta.task !== null && (ta.task.kind === 'engage' || ta.task.kind === 'perimeter'), ta.task !== null && ta.task.method === 'bareDefuse');      // (R3 §3.7) 맨몸 해체 중에는 방호복을 벗었다
           const moving = Math.abs(ta.x - ta.px) + Math.abs(ta.y - ta.py) > 0.05;
           const p = 0.32 * (0.6 + h.skill * 0.6) * (ta.inCover ? 0.3 : moving ? 0.6 : 1) * clamp(1.25 - see.nearestD / 16, 0.4, 1.1);
           h.cooldown = s.rng.range(1.5, 2.6);

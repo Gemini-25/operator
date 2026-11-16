@@ -69,7 +69,8 @@ const taskFor = (a: FieldAgent, w: WorkItem): Task => { const t = makeTask(w.kin
 const LIVE: MethodId[] = ['hand', 'pole', 'ring', 'rope', 'improvise', 'catch', 'swim', 'tend', 'boat', 'kick', 'irons', 'ram', 'hydraulic', 'handClear', 'toolClear', 'charge',
   'manual', 'basic', 'spread', 'roof', 'rapid', 'haul', 'tunnel', 'airbag', 'shore', 'call', 'listen', 'line', 'hail', 'thermal',
   'interior', 'defensive', 'aerial', 'extinguisher', 'ventilate', 'beanbag', 'sniper', 'stay', 'rush', 'seal', 'ventFirst', 'cordon', 'announce',
-  'feel', 'pulse'];      // (R3 3단계) 벽 더듬기 수색·끊어 쏘기 — 교본 F07·F08 이 고른다
+  'feel', 'pulse',      // (R3 3단계) 벽 더듬기 수색·끊어 쏘기 — 교본 F07·F08 이 고른다
+  'robotDefuse', 'suitDefuse', 'bareDefuse'];      // (R3 단계 5) 폭발물 해체 셋
 /** 헤엄을 못 치는 몸으로 둔다 (수영 능력 = 0.15 + 개인차 ±0.15 < 문턱 0.35 — 구명조끼가 없을 때) */
 const noSwim = (sim: Sim, a: FieldAgent): void => { const r = sim.responders[a.rid]; r.fitness = 0; r.skills.rescue = 0; strip(sim, a.rid, 'pfd'); };
 /**
@@ -132,7 +133,7 @@ describe('R2 시험 1: 판단부(methods.ts)는 진실을 읽지 않는다', () 
 describe('R2 방법 표 (METHOD)', () => {
   const ids = Object.keys(METHOD) as MethodId[];
   it('모든 줄이 온전하다: 이름·짧은 이름·라벨(12자 안)·문장에 끼우는 말, 장비는 표에 있는 것, 임무가 하나 이상', () => {
-    expect(ids.length).toBe(62);      // R2 의 55 + N9 단계 1 의 다섯(dive·boom·shieldLine·deconTent·hoseWash — can 은 NOT_YET) + R3 3단계의 둘(feel·pulse)
+    expect(ids.length).toBe(65);      // R2 의 55 + N9 단계 1 의 다섯(dive·boom·shieldLine·deconTent·hoseWash — can 은 NOT_YET) + R3 단계 5 의 셋(robotDefuse·suitDefuse·bareDefuse — N9 다섯 앞) + R3 3단계의 둘(feel·pulse — 표 끝)
     expect(METHOD_ORDER).toEqual(ids);
     for (const m of ids) {
       const d = METHOD[m];
@@ -149,7 +150,7 @@ describe('R2 방법 표 (METHOD)', () => {
   });
   it('평소 방법(시작을 알리지 않고 보고서에 넣지 않는다)과 기록 전용 방법의 목록이 설계서와 같다', () => {
     const plain = ids.filter((m) => METHOD[m].plain && !METHOD[m].record).sort();
-    expect(plain).toEqual(['rope', 'pole', 'hand', 'irons', 'handClear', 'toolClear', 'basic', 'spread', 'call', 'line', 'interior', 'stay', 'seal', 'cordon'].sort());
+    expect(plain).toEqual(['rope', 'pole', 'hand', 'irons', 'handClear', 'toolClear', 'basic', 'spread', 'call', 'line', 'interior', 'stay', 'seal', 'cordon', 'suitDefuse'].sort());      // (R3 단계 5) 방호복 해체가 평소 방법
     const rec = ids.filter((m) => METHOD[m].record).sort();
     expect(rec).toEqual(['hoist', 'chase', 'breach', 'bang', 'tackle', 'cover', 'taser', 'shield', 'airlift', 'air'].sort());
     // 기록 전용 가운데 보고서에 싣는 것(평소 방법이 아닌 것)
@@ -2845,7 +2846,8 @@ describe('R2 단계 5: 강제 교대 (§8 의 3·6 · 무장 4가지)', () => {
     // (검토) A16 흉기 대치를 더했다 — 비살상탄 검거는 흉기·강도 강제 교대 28번에 한 번꼴이라(A0~A19) 시험이 그 기록이 실제로 남는 교대를 하나 갖게
     // (R3 4단계) A6 가정 폭력을 더했다 — 의료 교본이 배경 사건의 부대 배치를 바꿔 A2 의 가정 폭력 테이저 검거가 맨손 제압으로 바뀌었다(테이저 검거는 이 표본의 유일한 것이었다). A6 에서 테이저 검거가 남는다
     // (R3 3단계) 교본(P17·짝)으로 결과가 바뀌어 A2 의 테이저 검거가 A21 로 옮겨 갔다 — 3·4단계를 합친 표본은 둘 다 둔다
-    for (const [seed, force] of [['A0', 'armed/hostage'], ['A1', 'armed/siege'], ['A2', 'armed/dispute'], ['A3', 'armed/robbery'], ['A4', 'armed/dispute'], ['A5', 'armed/robbery'], ['A16', 'armed/dispute'], ['A21', 'armed/robbery'], ['A6', 'armed/domestic']] as const) {
+    for (const [seed, force] of [['A0', 'armed/hostage'], ['A1', 'armed/siege'], ['A2', 'armed/dispute'], ['A3', 'armed/robbery'], ['A4', 'armed/dispute'], ['A5', 'armed/robbery'], ['A16', 'armed/dispute'], ['A21', 'armed/robbery'], ['A6', 'armed/domestic'], ['A29', 'armed/dispute']] as const) {
+      // (R3 단계 5) A29 흉기 대치를 더했다 — 특수 교본이 켜지며 A2 의 배경 사건 #09 의 테이저 검거가 비살상탄 검거로 바뀌었다 (합친 표본은 셋 단계의 시드를 모두 둔다)
       const sim = new Sim(seed, NORMAL, 1200, { force }); sim.runToEnd();
       for (const I of sim.incidents) for (const u of I.methods ?? []) if (u.ok && (u.work === 'engage' || u.work === 'arrest')) ok.add(u.method);
       if (seed === 'A1') { const again = new Sim(seed, NORMAL, 1200, { force }); again.runToEnd(); expect(again.report!.hash).toBe(sim.report!.hash); }

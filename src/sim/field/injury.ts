@@ -161,16 +161,16 @@ export function mustRetreat(r: Responder): boolean {
  *   타박상·차량·익수·탈진·실외 노출·질환에는 방호가 없다 (익수는 R2 의 사고 식이 구명조끼·드라이슈트로 이미 줄인다)
  * u 는 지금 쓰지 않는다 (R1 이 부대 값을 사람 장비로 옮겼다) — 서명은 설계서 그대로 둔다.
  */
-export function protection(sim: Sim, r: Responder, u: Unit, cause: InjuryCause, engaging = false): number {
+export function protection(sim: Sim, r: Responder, u: Unit, cause: InjuryCause, engaging = false, bare = false): number {      // bare = (R3 §3.7) 맨몸 해체 중 — 폭발물 방호복을 세지 않는다
   const rid = r.id;
   switch (cause) {
-    case 'gunshot': return armorOf(sim, rid, engaging) * 0.6;
-    case 'stab': return armorOf(sim, rid, engaging) * 0.5;
+    case 'gunshot': return armorOf(sim, rid, engaging, bare) * 0.6;
+    case 'stab': return armorOf(sim, rid, engaging, bare) * 0.5;
     case 'burn': return hasKit(sim, rid, 'turnout') ? 1 - 2.6 / 9 : 0;
     case 'smoke': return hasKit(sim, rid, 'scba') && kitUses(sim, rid, 'scba') > 0 ? 1 - 0.1 / 1.3 : 0;
     case 'toxic': return hasKit(sim, rid, 'scba') && kitUses(sim, rid, 'scba') > 0 ? (r.role === 'hazTech' ? 0.95 : 1 - 0.1 / 1.3) : 0;
-    case 'blast': return 1 - blastFactor(sim, rid);
-    case 'crush': return Math.max(1 - blastFactor(sim, rid), hasKit(sim, rid, 'vest') || hasKit(sim, rid, 'plate') ? 0.1 : 0);
+    case 'blast': return 1 - blastFactor(sim, rid, bare);
+    case 'crush': return Math.max(1 - blastFactor(sim, rid, bare), hasKit(sim, rid, 'vest') || hasKit(sim, rid, 'plate') ? 0.1 : 0);
     case 'fall': return hasKit(sim, rid, 'turnout') ? 0.2 : 0;
     case 'electric': return hasKit(sim, rid, 'insulKit') ? 0.9 : hasKit(sim, rid, 'turnout') ? 0.4 : 0;      // (N8) 절연 장비 0.9 (복구반의 전력 일 — 단계 2b 에는 그 장비를 든 부대가 편성되지 않는다)
     case 'animal': return hasKit(sim, rid, 'beeSuit') ? 0.95 : hasKit(sim, rid, 'turnout') ? 0.3 : 0;      // (N8) 벌 보호복 0.95 · 방화복이 물림·쏘임을 조금 막는다
@@ -207,7 +207,7 @@ export function hurtResponder(sim: Sim, s: Scene, I: Incident, a: FieldAgent, ra
   if (r.dead || I.phase === 'closed' || a.status === 'left') return 0;
   const tick = o !== undefined && o.tick === true;
   const engaging = a.task !== null && (a.task.kind === 'engage' || a.task.kind === 'perimeter');      // 방패는 교전·봉쇄 임무 중에만 세운다
-  const dmg = raw * (1 - protection(sim, r, sim.units[a.unitId], cause, engaging));
+  const dmg = raw * (1 - protection(sim, r, sim.units[a.unitId], cause, engaging, a.task !== null && a.task.method === 'bareDefuse'));      // (R3 §3.7) 맨몸 해체 중에는 방호복을 벗었다
   let after = r.health - dmg;
   if (!tick) {
     if (o !== undefined && o.down === true && after > DOWN_AT) after = DOWN_AT;

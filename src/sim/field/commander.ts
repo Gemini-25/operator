@@ -12,7 +12,7 @@ import { TYPE_DEFS } from '../incidentTypes';
 import { airShort, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, isHovering, kitUses, roleOf, seatsOf, seatsUsed } from '../crews';
 import { canCarryPatients, exitName, failedRecently, fitFor, fitParts, hasWork, learn, resp, transmit, workLabel } from './agents';
 import { docAssignRecord, docAssignWhy, recordDoc } from './doctrineRun';      // (R3 §2.7) 교본이 바꾼 배정의 까닭 말과 기록 · 지휘 교본 줄의 기록
-import { copUsable, docHolds } from './doctrine';      // (R3 §2.6·§6.1) 교본 임무 중인 대원 건너뛰기 · 쓸 수 있는 경찰 (CP1)
+import { copUsable, cs2Add, docHolds, swatOnScene } from './doctrine';      // (R3 §2.6·§6.1) 교본 임무 중인 대원 건너뛰기 · 쓸 수 있는 경찰 (CP1)
 import { DOC_SWITCH } from './doctrine/registry';
 import type { DocFitAns } from './doctrine/registry';
 import { heardEv, mkFact } from './beliefs';
@@ -628,6 +628,7 @@ export function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   // (R3 §6.1 CF7) 현장에 다른 공기호흡기 대원(알려진 고장 아님 — 조직 정보)이 둘 이상이면 지휘관 자신은 위험 실내 일을 맡지 않는다 (지휘관 감점 −0.18 위에 그 일만 뺀다)
   let scbaOthers = 0;
   for (const b of s.agents) if (b !== a && b.status === 'active' && hasKit(sim, b.rid, 'scba')) scbaOthers++;
+  const swatOn = swatOnScene(sim, s);      // (R3 §6.1 CS2 — 5단계) 특공이 현장에 있으면 진입조는 특공·기동대, 순찰은 봉쇄 쪽으로 (배정 점수 가산)
   for (let pass = 0; pass < 2; pass++) {
     for (const w of items) {
       if (pass === 0 && w.assignees.length > 0) continue;
@@ -636,6 +637,7 @@ export function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       let bestAns: DocFitAns | null = null, baseBest: FieldAgent | null = null, bsB = 0, baseAns: DocFitAns | null = null;      // (R3 §2.7) 교본 전의 적합도로 센 1등도 함께 센다
       let cf7Sc = -1;      // (R3 CF7) 위험 실내 일에서 뺀 지휘관 자신의 점수 (그가 1등이었으면 CF7 이 배정을 바꾼 것이다)
       const cf7 = scbaOthers >= 2 && inJob(sim, s, a, w);
+      let bestNoCs: FieldAgent | null = null, bsN = 0;      // (CS2) 가산 없이 센 1등
       for (const b of s.agents) {
         if (b.status !== 'active' || taken.has(b.rid) || w.assignees.indexOf(b.rid) >= 0) continue;
         if (sim.units[b.unitId].boardOrder) continue;
@@ -661,9 +663,12 @@ export function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         let sc = fit * 0.5 + (1 - Math.min(1, d / 34)) * 0.22 + (r.stamina / 100) * 0.1 + r.experience * 0.08 + (curPr < 0 ? 0.12 : 0);
         if (b === a && w.kind !== 'sizeup') sc -= 0.18;      // 지휘관은 가급적 지휘에 집중
         if (b === a && cf7) { if (fit > 0) cf7Sc = Math.max(cf7Sc, sc); continue; }      // (R3 CF7) 지휘관은 밖에 — 위험 실내 일은 다른 대원에게
+        const cs2 = swatOn ? cs2Add(sim, b, w) : 0;      // (CS2) 적합도 교본의 1등 비교(아래 scB)와 따로 센다
+        if (fit > 0 && sc > bsN) { bsN = sc; bestNoCs = b; }
+        sc += cs2;
         if (fit > 0 && sc > bs) { bs = sc; best = b; bestAns = fp; }
         let scB = sc;      // 교본 전의 점수 (적합도만 교본 전의 값으로 — 교본이 바꾸지 않았으면 sc 그대로)
-        if (fp.base !== fit) { scB = fp.base * 0.5 + (1 - Math.min(1, d / 34)) * 0.22 + (r.stamina / 100) * 0.1 + r.experience * 0.08 + (curPr < 0 ? 0.12 : 0); if (b === a && w.kind !== 'sizeup') scB -= 0.18; }
+        if (fp.base !== fit) { scB = fp.base * 0.5 + (1 - Math.min(1, d / 34)) * 0.22 + (r.stamina / 100) * 0.1 + r.experience * 0.08 + (curPr < 0 ? 0.12 : 0) + cs2; if (b === a && w.kind !== 'sizeup') scB -= 0.18; }
         if (scB > bsB) { bsB = scB; baseBest = b; baseAns = fp; }
       }
       // (R3 §2.7) 교본이 배정을 바꿨는가: 교본을 넣은 1등과 교본 전의 1등이 다르면 지시 무전 끝에 까닭 말을 붙이고 바꾼 줄을 기록한다 (같으면 아무것도 남기지 않는다)
@@ -678,6 +683,7 @@ export function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       const ordEv = transmit(sim, s, a, best.rid, 'order', [], `${br.name}, ${workLabel(s, w, sim)}${w.kind === 'search' || w.kind === 'suppress' || w.kind === 'carry' ? ' 실시' : ' 맡아라'}${redo}${docWhy ? ' ' + docWhy : ''}.`, w.id, w.priority > 0.8 ? 1 : 0, w.cause >= 0 ? [w.cause] : []);
       if (docChanged) docAssignRecord(sim, I, best, bestAns, baseBest, baseAns, w, ordEv);
       if (cf7Sc > bs && ordEv >= 0) recordDoc(sim, I, null, 'CF7', 'cmd', { work: w.kind, tgt: 'w:' + w.id }, ordEv);      // (R3 CF7) 지휘관이 1등이었는데 밖에 남았다
+      if (swatOn && bestNoCs !== null && bestNoCs !== best) recordDoc(sim, I, null, 'CS2', 'cmd', { work: w.kind, tgt: 'w:' + w.id }, ordEv);      // (CS2) 가산이 고른 사람을 바꾸었다
     }
   }
   // 교대: 구출을 맡은 사람이 다 찼는데(먼저 닿은 대원이 맨손으로 붙들고 있다), 손이 빈 대원 가운데 훨씬 나은 장비를 든 사람이 있으면

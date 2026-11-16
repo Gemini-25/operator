@@ -427,12 +427,12 @@ export function medLevelOf(sim: Sim, rid: number): number {
 }
 /** 방패가 교전·봉쇄 중에 더하는 방호 */
 const SHIELD_ARMOR = 0.3;
-/** 총격 방호: 가장 좋은 방호 장비 (교전·봉쇄 중이면 + 방패) × 장비 손잡이(armorMul), 상한 0.8 */
-export function armorOf(sim: Sim, rid: number, engaging: boolean): number {
+/** 총격 방호: 가장 좋은 방호 장비 (교전·봉쇄 중이면 + 방패) × 장비 손잡이(armorMul), 상한 0.8. bare = (R3 §3.7) 방호복을 벗고 맨몸 해체 중 — 폭발물 방호복을 세지 않는다 */
+export function armorOf(sim: Sim, rid: number, engaging: boolean, bare = false): number {
   const kit = sim.responders[rid].kit;
   let m = 0, shield = false;
   if (kit) for (let k = 0; k < kit.length; k++) {
-    if (kit[k].faultKnown) continue;
+    if (kit[k].faultKnown || (bare && kit[k].id === 'bombSuit')) continue;
     const v = KITS[kit[k].id].armor;
     if (v !== undefined && v > m) m = v;
     if (kit[k].id === 'shield') shield = true;
@@ -440,8 +440,8 @@ export function armorOf(sim: Sim, rid: number, engaging: boolean): number {
   if (engaging && shield) m += SHIELD_ARMOR;
   return Math.min(0.8, m * sim.tune.armorMul);
 }
-/** 폭발 피해에 곱하는 값: 폭발물 방호복 .35 · 방화복 .7 · 그 밖 1 */
-export function blastFactor(sim: Sim, rid: number): number { return hasKit(sim, rid, 'bombSuit') ? 0.35 : hasKit(sim, rid, 'turnout') ? 0.7 : 1; }
+/** 폭발 피해에 곱하는 값: 폭발물 방호복 .35 · 방화복 .7 · 그 밖 1. bare = (R3 §3.7) 방호복을 벗고 맨몸 해체 중 — 방호복을 세지 않는다 */
+export function blastFactor(sim: Sim, rid: number, bare = false): number { return !bare && hasKit(sim, rid, 'bombSuit') ? 0.35 : hasKit(sim, rid, 'turnout') ? 0.7 : 1; }
 /** 환자 자리 (구급차 2, 소방·의료 헬기 1, 나머지 0) */
 export function seatsOf(u: Unit): number { return u.seats ?? 0; }
 /**

@@ -87,7 +87,8 @@ function watch(seed: string, d: Difficulty, force: string | null): Watched {
           m.set(s.id + ':' + a.rid, r.role!);
           // (R2 단계 4) 소화기를 든 대원(경찰·구급·기관원)은 작은 불의 진압을 소화기로 맡는다 — 그 방법이거나 아직 고르기 전(첫 틱)만
           if ((k === 'suppress' || k === 'overhaul') && !hasKit(sim, a.rid, 'hose') && !(k === 'suppress' && k === a.task.kind && hasKit(sim, a.rid, 'extinguisher') && (a.task.method === 'extinguisher' || a.task.mt0 === undefined))) note(`${who} 관창 없이 ${k}`);
-          if (k === 'defuse' && !hasKit(sim, a.rid, 'eodKit')) note(`${who} 해체 공구 없이 해체`);
+          // (R3 단계 5 S06) 작동하는 로봇을 든 로봇 조작 요원은 로봇 원격 해체로 맡는다 — 그 방법이거나 아직 고르기 전(첫 틱)만
+          if (k === 'defuse' && !hasKit(sim, a.rid, 'eodKit') && !(k === a.task.kind && hasKit(sim, a.rid, 'robot') && (a.task.method === 'robotDefuse' || a.task.mt0 === undefined))) note(`${who} 해체 공구 없이 해체`);
           if ((k === 'engage' || k === 'perimeter') && !hasFirearm(sim, a.rid)) note(`${who} 총기 없이 ${k}`);
         }
         const k = a.task.kind;
@@ -471,12 +472,20 @@ describe('④ 장비가 없으면 그 일을 맡지 않는다', () => {
     const tech = roleAgent(sim, agents('eod'), 'bombTech'), robot = roleAgent(sim, agents('eod'), 'robotOp'), cop = roleAgent(sim, agents('patrol'), 'officer');
     const per = work(sim, 'perimeter', { tile: 0 }), arr = work(sim, 'arrest', { hostile: 0 }), def = work(sim, 'defuse', { prop: 0 });
     expect(fitFor(sim, s, tech, per), '처리 요원은 총기가 없다').toBe(0); expect(fitFor(sim, s, tech, arr)).toBe(0);
-    expect(fitFor(sim, s, tech, def)).toBeGreaterThan(0); expect(fitFor(sim, s, robot, def)).toBe(0); expect(fitFor(sim, s, robot, per)).toBeGreaterThan(0);
+    // (R3 단계 5) 해체는 믿음 속 살아 있는 장치에만(쓸 해체 방법이 있을 때만 — WORK_MODE 'refuse'): 모르면 처리 요원도 0.
+    // 알면 처리 요원(방호복 해체)과 작동하는 로봇을 든 로봇 조작 요원(로봇 원격 해체 — S06: 장치 8칸 안·가리지 않는 자리)
+    expect(fitFor(sim, s, tech, def)).toBe(0); expect(fitFor(sim, s, robot, def)).toBe(0);
+    const at = { x: Math.round(robot.x), y: Math.round(robot.y) };
+    expect(robotSpot(s, at.x, at.y, robot.x, robot.y), '로봇을 부릴 자리').not.toBeNull();
+    for (const b of [tech, robot]) b.beliefs.merge(mkFact('haz', 0, { kind: 'bomb', active: true, x: at.x, y: at.y }, '시험', sim.t, 1, true, '시험'));
+    docForget();
+    expect(fitFor(sim, s, tech, def)).toBeGreaterThan(0); expect(fitFor(sim, s, robot, def)).toBeGreaterThan(0); expect(fitFor(sim, s, robot, per)).toBeGreaterThan(0);
     expect(fitFor(sim, s, cop, per)).toBeGreaterThan(0);
     strip(cop.rid, 'pistol');
     expect(fitFor(sim, s, cop, per)).toBe(0); expect(fitFor(sim, s, cop, arr), '테이저로 검거는 맡는다').toBeGreaterThan(0);
     strip(cop.rid, 'taser'); expect(fitFor(sim, s, cop, arr)).toBe(0);
     strip(tech.rid, 'eodKit'); expect(fitFor(sim, s, tech, def)).toBe(0);
+    strip(robot.rid, 'robot'); expect(fitFor(sim, s, robot, def), '(R3 단계 5) 로봇이 없으면 조작 요원은 해체를 맡지 않는다').toBe(0);
     // 처치: 든 의료 장비의 수준 (없으면 부서의 기본 교육)
     const para = roleAgent(sim, agents('als'), 'paramedic'), drv = roleAgent(sim, agents('als'), 'emsDriver');
     expect(medLevelOf(sim, para.rid)).toBe(1); expect(medLevelOf(sim, drv.rid)).toBe(0.5); expect(medLevelOf(sim, cop.rid)).toBe(0.25); expect(medLevelOf(sim, lead.rid)).toBe(0.35);
@@ -547,9 +556,9 @@ describe('⑤ 역할이 배정에 쓰인다', () => {
       for (const e of w.sim.events) if (e.text.includes('교대합니다')) { reliefs++; expect(toolFor(w.sim, e.rid, 'extricate'), `${e.text} — 넘겨받는 사람은 구조 장비를 들었다`).toBeGreaterThan(0.4); }
     }
     expect(reliefs, '구출을 넘겨받은 횟수').toBeGreaterThan(0);
-    // 해체: 처리 요원만
+    // 해체: 처리 요원만 — (R3 단계 5 S06) 로봇 조작 요원은 로봇 원격 해체로 (그 방법인지는 위의 watch 가 본다)
     let defusers = 0;
-    for (const w of [watch('K1', NORMAL, 'armed/bomb'), watch('K2', NORMAL, 'armed/bomb')]) for (const role of (w.held.get('defuse') ?? new Map<string, RoleId>()).values()) { defusers++; expect(role).toBe('bombTech'); }
+    for (const w of [watch('K1', NORMAL, 'armed/bomb'), watch('K2', NORMAL, 'armed/bomb')]) for (const role of (w.held.get('defuse') ?? new Map<string, RoleId>()).values()) { defusers++; expect(['bombTech', 'robotOp']).toContain(role); }
     expect(defusers).toBeGreaterThan(0);
   }, 60000);
 });
@@ -1793,12 +1802,16 @@ describe('장비의 특색 (설계서 4절·6.3)', () => {
     const fake = b.s.props.find((p) => p.kind === 'bomb' && !p.real && !p.mitigated)!;
     expect(fake, '수상한 물건 현장의 가짜 장치').toBeTruthy();
     const bt = roleAgent(b.sim, b.agents('eod'), 'bombTech'), op = roleAgent(b.sim, b.agents('eod'), 'robotOp'), skill = b.sim.responders[bt.rid].skill;
+    // (R3 단계 5) 해체는 믿음 속 살아 있는 장치에만 — 처리 요원이 그 물건을 안다
+    const knows = (): void => { bt.beliefs.merge(mkFact('haz', fake.id, { kind: 'bomb', active: true, x: fake.x, y: fake.y }, '시험', b.sim.t, 1, true, '시험')); docForget(); };
+    knows();
     put(bt, standBy(b.s, fake.x, fake.y));
     near(drive(b.sim, b.s, bt, 'defuse', { prop: fake.id }), 5 / (0.5 + skill));
     expect(fake.mitigated).toBe(true);
     // 로봇이 고장 나 있으면(숨은 고장) 쓰려 할 때 드러나고, 손으로 확인한다
     fake.mitigated = false; fake.blocking = true; b.s.propAt[fake.y * b.s.w + fake.x] = fake.id;
     kitItem(b.sim, op.rid, 'robot').fault = true;
+    knows();
     put(bt, standBy(b.s, fake.x, fake.y));
     near(drive(b.sim, b.s, bt, 'defuse', { prop: fake.id }), 10 / (0.5 + skill));
     expect(kitItem(b.sim, op.rid, 'robot').faultKnown).toBe(true);
@@ -2404,3 +2417,7 @@ describe('⑮ 재현성', () => {
     }
   }, 60000);
 });
+
+// (R3 단계 5) 해체 방법 — 로봇을 부릴 자리 · 교본의 틱 기억 지우기
+import { robotSpot } from '../src/sim/field/methods';
+import { docForget } from '../src/sim/field/doctrine';

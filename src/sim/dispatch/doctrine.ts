@@ -11,6 +11,8 @@ import { edgeTime, weatherSpeedFactor } from '../city';
 import { crewReady, etaFor } from '../resources';
 import { DOC_SWITCH } from '../field/doctrine/registry';      // 확인 필요 줄의 스위치 (D6·D7)
 
+/** (5단계) D1: 가스 누출(평가 유형 hazmat)의 구조 수요에 화학 구조차 가산 · 구조 수요 1 을 내는 위험도 (전에는 2.1 — analyst) */
+export const D1_HAZMAT = 30, D1_SEV = 1.6;
 /** D2: 경찰 수요에서 폭발물 처리반을 덜 고르는 감점 (이 사건에 폭발물 처리 수요가 없을 때 — 처리반을 인질극 진입조로 보내지 않는다) */
 export const D2_EOD = -40;
 /**
@@ -22,6 +24,7 @@ export function dispatchPref(_sim: Sim, I: Incident, u: Unit, need: keyof Needs)
   // (3단계) D4: 화재이고 위치 신고의 건물 종류가 2층일 몫 ≥ 0.5 → 진압 수요에 사다리차 +25 · D5: 바닷가가 아닌 수난 → 구조 수요에 구조 공작차 +8 (R1 kitBonus 의 +12 에 더해 +20)
   if (need === 'suppression' && u.kind === 'ladder' && I.assessment && I.assessment.type === 'fire' && tallClaim(I)) return { add: D4_LADDER, rule: 'D4' };
   if (need === 'rescue' && u.kind === 'rescue' && I.assessment && I.assessment.type === 'water' && I.reportedNode >= 0 && !coastal(_sim, I.reportedNode)) return { add: D5_RESCUE, rule: 'D5' };
+  if (need === 'rescue' && u.kind === 'hazmat' && I.assessment && I.assessment.type === 'hazmat') return { add: D1_HAZMAT, rule: 'D1' };      // (5단계 D1) 가스 누출의 구조 수요에는 화학 구조차
   return { add: 0, rule: null };
 }
 /** 인질극 이름표 (관제가 붙이는 이름 — analyst 의 label) */
@@ -38,6 +41,7 @@ function swatFree(sim: Sim): boolean {
  */
 export function docNeeds(sim: Sim, type: IncidentType, sev: number, knife: boolean, label: string | undefined, needs: Needs): string[] {
   const used: string[] = [];
+  if (type === 'hazmat' && sev >= D1_SEV && needs.rescue < 1) { needs.rescue = 1; used.push('D1'); }      // (5단계 D1) 위험도 1.6 부터 구조 수요 1 (전에는 2.1) — 화학대가 가스 현장에 온다
   if (type !== 'armed') return used;
   if (knife && needs.law < 2) { needs.law = 2; used.push('D3'); }
   if (DOC_SWITCH.D6 && sev >= 2.4 && label !== undefined && HOSTAGE_LABEL.test(label) && needs.tactical === 1 && !swatFree(sim)) { needs.tactical = 2; used.push('D6'); }

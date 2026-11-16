@@ -56,6 +56,9 @@ export interface DocSit {
   tendCas: number[];                             // (4단계) 동료의 겉: 다른 활동 구급 대원이 곁에 앉아 처치하고 있는 구조 대상 id (E08)
   medics: number;                                // (4단계) 동료의 겉: 다른 활동 구급 대원의 수 (E11 — 혼자면 배율을 걸지 않는다)
   alsOn: boolean;                                // (4단계) 명부: 다른 활동 대원 가운데 1급 응급구조사·의사가 있다 (E19)
+  robotOn: boolean;                              // (5단계) 동료의 장비(조직 정보): 살아 있는 장치(liveBomb)가 있고 현장의 활동 대원 가운데 작동하는 로봇(알려진 고장 아님)을 든 사람이 있다 (S06b)
+  bombPinned: boolean;                           // (5단계) 믿음: 살아 있는 장치 6칸 안에 옮길 수 없는 사람(거동 불가·갇힌 구조 대상, 인질을 붙든 용의자)이 있다 (S07)
+  scbaOn: number;                                // (5단계) 동료의 장비(조직 정보): 화재 현장의 활동 대원 가운데 공기호흡기를 든 사람의 수 (자기 포함 — 화재 현장이 아니면 0. S19)
 }
 export type DocPhase = 'arrive' | 'sizeup' | 'standoff' | 'entry' | 'assault' | 'interior' | 'care' | 'transport' | 'traffic' | 'withdraw' | 'idle';
 /** 교본 줄이 받는 단 하나의 입력. 줄의 when 은 이것만 읽는다 */
@@ -78,6 +81,7 @@ export interface DocCtx {
   dngSign: number;                               // (2단계) brain 의 위험 점수 가운데 X6 조짐의 몫 (act 자리에서 brain 이 넘긴다 — P11. 다른 자리에서는 0)
   hideSpot: () => { x: number; y: number } | null;   // (2단계) 숨을 자리 (자기 모드에서만 — 엔진의 coverSpot(…, 숨기)를 tg 에 대해 한 번만 잰다. 보고 모드·위협이 없으면 null)
   solo: boolean;                                 // (2단계) 혼자 규칙에서 빠지는 역할인가 (엔진의 SOLO_OK — 저격·관측수·처리 요원·기관원·사다리 조작원·구급 운전원·관측관 …)
+  wBomb: number;                                 // (5단계) 대상 작업 w 의 자리(믿음)에서 가장 가까운 살아 있는 장치(믿음)까지의 거리 (w·장치가 없거나 자리를 모르면 Infinity — S08)
   pair: () => DocPair;                           // (3단계) 짝·짝의 일 — 엔진이 처음 물을 때 한 번 잰다(늦게). 줄은 이 함수로만 짝을 본다 (§5)
   watch: () => { n: number; need: number };      // (3단계) 밖 대기조 (§5.6): 대원에게 가장 가까운 출입구의 outsideWatch 수 · 필요한 수 watchNeed (2, 공기호흡기 대원을 태운 소방 부대가 오는 중이면 1) — 늦게 한 번
 }
@@ -144,7 +148,8 @@ export const CMD_ROWS: { id: string; dept: DocDept; hook: 'cmd' | 'dispatch' | '
 export const DOC_SWITCH = { CP4: true, D6: true, D7: true };
 /** 줄이 다 들어간 분야 — 시험 8 의 "분야마다 12줄 이상"은 여기 든 분야만 본다 (단계마다 그 분야를 더한다 — 2단계 경찰) */
 export const DOC_DEPTS_DONE: DocDept[] = ['police',
-  'fire'];      // (3단계 소방)
+  'fire',      // (3단계 소방)
+  'special'];      // (5단계 특수) — 의료(4단계)는 파일 끝에서 push 한다
 
 /** 판단 지점의 답: ok = 그 걸음을 해도 된다 · rule = 막은(알릴) 줄 · wait = 막은 줄들의 maxWait 가운데 가장 긴 값 · opt = choose 줄이 고른 갈래 */
 export interface DocGateAns { ok: boolean; rule: string | null; wait: number; opt: string | null; exc: string | null }      // exc = (2단계) 예외(unless)가 아니었다면 막았을 줄 (막는 줄이 없을 때만)

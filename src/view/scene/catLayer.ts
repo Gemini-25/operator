@@ -8,7 +8,7 @@
 // (G4 의 2차 붕괴 위험 범위 #ffd166 점선과 모양으로 가른다), 구역 위 '진입 금지' / '철수' 표지. 철수 중인 대원의 이름표 '철수'는 실행기가 정한다(a.label)
 
 import type { Sim } from '../../sim/engine';
-import { CAT, structLevel } from '../../sim/field/catastrophe';
+import { CAT, rollLevel, structLevel } from '../../sim/field/catastrophe';
 import type { FieldAgent, NoGoZone, Prop, Region, Scene, SignBelief } from '../../sim/types';
 import type { G } from './common';
 import type { HazardLabel } from './hazardFx';
@@ -17,7 +17,7 @@ export interface CatView { truth: boolean; timeMs: number; mini: boolean; cmd: F
 
 /** 구조 조짐 단계별 빗금 색: 1 삐걱임(옅은 모래색) · 2 균열·처짐(주황) · 3 임박(빨강, 맥박) */
 const HATCH = ['', '#d9c38a', '#ff9a3d', '#ff4d4d'];
-const GAS_WARN = '#f4d35e', GAS_LEL = '#ff5d5d';
+const GAS_WARN = '#f4d35e', GAS_LEL = '#ff5d5d', DUST = '#d9b26f';
 
 /** 그 구획 칸만큼 오린 영역에 사선 빗금 */
 function hatchRegion(g: G, s: Scene, reg: Region, ts: number, col: string, a: number): void {
@@ -178,6 +178,9 @@ export function drawCatOver(sim: Sim, s: Scene, ts: number, o: CatView): HazardL
       const [x, y] = at(p.x + (p.w - 1) / 2, p.y - 0.4);
       out.push({ x, y: y - ts * 0.5, text: '안전밸브 작동', color: '#ff7a59' });
     }
+    // (단계 9, 선택) 분진 구획 · 롤오버 — 켜져 있을 때만 생긴다
+    if (c.dustRegion >= 0 && !c.dustDone) { const reg = s.regions[c.dustRegion]; if (reg) { const [x, y] = at(reg.cx, reg.cy - 1.1); out.push({ x, y, text: '분진 쌓임', color: DUST }); } }
+    for (const reg of s.regions) if (rollLevel(c, reg.id) >= 2) { const [x, y] = at(reg.cx, reg.cy - 1.1); out.push({ x, y, text: '롤오버', color: '#ff5d5d' }); }
     return out;
   }
   for (const v of cmdSigns(o)) {
@@ -196,6 +199,11 @@ export function drawCatOver(sim: Sim, s: Scene, ts: number, o: CatView): HazardL
       if (!p || p.removed) continue;
       const [x, y] = at(p.x + (p.w - 1) / 2, p.y - 0.4);
       out.push({ x, y: y - ts * 0.5, text: '안전밸브 작동', color: '#ff7a59' });
+    } else if ((v.kind === 'dust' && v.level >= 1) || (v.kind === 'fire' && v.level >= 2)) {
+      const reg = s.regions[v.region];
+      if (!reg) continue;
+      const [x, y] = at(reg.cx, reg.cy - 1.1);
+      out.push({ x, y, text: v.kind === 'dust' ? '분진 폭발 위험' : '롤오버', color: v.kind === 'dust' ? DUST : '#ff5d5d' });
     }
   }
   return out;

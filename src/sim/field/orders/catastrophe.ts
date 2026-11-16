@@ -40,6 +40,8 @@ export interface DangerRule { id?: string; run: (cx: DangerCtx, out: DangerHit[]
 const hit = (out: DangerHit[], key: string, kind: NoGoZone['kind'], level: number, regions: number[], why: string, t: number, x = -1, y = -1, r = 0): void => { out.push({ key, kind, level, regions, x, y, r, why, t }); };
 const signsOf = (cx: DangerCtx, kind: SignBelief['kind']): Fact[] => cx.signs.filter((f) => (f.value as SignBelief).kind === kind);
 
+/** '다 탄 듯한 건물' 줄의 문턱: 센 불(믿음 ≥ 0.6)이 이 초 넘게 이어진 구역이 실내 구역의 이 몫 이상 (단계 8 — 본문 120초·50%) */
+const ENGULF_T = 90, ENGULF_SHARE = 0.4;
 /** 위험 단계 표 (§5.2) — 믿음 → 구역별 단계 */
 export const DANGER_RULES: DangerRule[] = [
   // 구조 조짐: 1 기록만 · 2 → 1 · 3 → 3 (그 구역과 이웃 방)
@@ -92,12 +94,13 @@ export const DANGER_RULES: DangerRule[] = [
     for (const f of signsOf(cx, 'struct')) if ((f.value as SignBelief).level >= 3) { n++; t = Math.max(t, f.t); }
     if (n >= 2) hit(out, 'bldg', 'bldg', 3, cx.indoor, `붕괴 임박 구역 ${n}곳`, t);
   } },
-  // 다 탄 듯한 건물: 실내 구역의 50% 이상이 불 ≥ 0.6 이고 그 구역들의 센 불이 120초 넘음 → 3 (살아 있는 구조 대상을 알면 2) 건물 전체
+  // 다 탄 듯한 건물: 실내 구역의 40% 이상이 불 ≥ 0.6 이고 그 구역들의 센 불이 90초 넘음 → 3 (살아 있는 구조 대상을 알면 2) 건물 전체.
+  // (단계 8 — §8.4-2) 본문의 50%·120초에서 낮췄다: 그대로는 보통 120교대의 건물 화재 전소가 1.8%(목표 2~6%)였다 — 대부분 불길에 휩싸인 건물은 밖에서 막는다
   { run: (cx, out) => {
     if (!cx.indoor.length) return;
     let n = 0, t = -1;
-    for (const r of cx.indoor) { const b = cx.ops.burnSince[r]; if (cx.fire(r) >= 0.6 && b !== undefined && cx.sim.t - b > 120) { n++; t = Math.max(t, b + 120); } }
-    if (n * 2 >= cx.indoor.length) hit(out, 'bldg', 'bldg', cx.liveCas(cx.indoor) ? 2 : 3, cx.indoor, '건물 대부분이 불길에 휩싸임', t);
+    for (const r of cx.indoor) { const b = cx.ops.burnSince[r]; if (cx.fire(r) >= 0.6 && b !== undefined && cx.sim.t - b > ENGULF_T) { n++; t = Math.max(t, b + ENGULF_T); } }
+    if (n >= ENGULF_SHARE * cx.indoor.length - 1e-9) hit(out, 'bldg', 'bldg', cx.liveCas(cx.indoor) ? 2 : 3, cx.indoor, '건물 대부분이 불길에 휩싸임', t);
   } },
 ];
 

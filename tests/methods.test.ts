@@ -29,7 +29,8 @@ import { SCENE_RULES } from '../src/sim/field/sceneRegistry';
 import { tickScene, unitArrived } from '../src/sim/field/sceneManager';
 import { createIncident } from '../src/sim/incidents';
 import { createAidUnit, tickUnits } from '../src/sim/resources';
-import { flashbang, tickWater } from '../src/sim/field/hazards';
+import { ANNOUNCE_MUL, flashbang, tickGas, tickWater } from '../src/sim/field/hazards';
+import { commanderThink } from '../src/sim/field/commander';
 import { T } from '../src/sim/types';
 import type { CasBelief, Casualty, FieldAgent, Hostile, Incident, IncidentType, KitId, MethodId, MethodUse, Needs, Prop, RoleId, Scene, Task, UnitKind, WorkItem, WorkKind } from '../src/sim/types';
 import { clamp, josa } from '../src/sim/util';
@@ -66,7 +67,7 @@ const taskFor = (a: FieldAgent, w: WorkItem): Task => { const t = makeTask(w.kin
 /** 방법을 켠 단계가 조건(can)을 채운 줄 — 단계 1a: 수난의 물가 방법 여섯, 단계 1b: 헤엄·줄 확보, 단계 1c: 보트, 단계 2: 문·통로 일곱(폭파 진입 포함), 단계 3: 구출 아홉·수색 다섯, 단계 4: 화재 다섯, 단계 5: 비살상탄·저격 */
 const LIVE: MethodId[] = ['hand', 'pole', 'ring', 'rope', 'improvise', 'catch', 'swim', 'tend', 'boat', 'kick', 'irons', 'ram', 'hydraulic', 'handClear', 'toolClear', 'charge',
   'manual', 'basic', 'spread', 'roof', 'rapid', 'haul', 'tunnel', 'airbag', 'shore', 'call', 'listen', 'line', 'hail', 'thermal',
-  'interior', 'defensive', 'aerial', 'extinguisher', 'ventilate', 'beanbag', 'sniper'];
+  'interior', 'defensive', 'aerial', 'extinguisher', 'ventilate', 'beanbag', 'sniper', 'stay', 'rush', 'seal', 'ventFirst', 'cordon', 'announce'];
 /** 헤엄을 못 치는 몸으로 둔다 (수영 능력 = 0.15 + 개인차 ±0.15 < 문턱 0.35 — 구명조끼가 없을 때) */
 const noSwim = (sim: Sim, a: FieldAgent): void => { const r = sim.responders[a.rid]; r.fitness = 0; r.skills.rescue = 0; strip(sim, a.rid, 'pfd'); };
 /**
@@ -2767,5 +2768,155 @@ describe('R2 단계 5: 강제 교대 (§8 의 3·6 · 무장 4가지)', () => {
       if (seed === 'A1') { const again = new Sim(seed, NORMAL, 1200, { force }); again.runToEnd(); expect(again.report!.hash).toBe(sim.report!.hash); }
     }
     expect(ok.size, [...ok].join(',')).toBeGreaterThanOrEqual(4);
+  }, 90000);
+});
+
+// ───────────────────────── 단계 6: 응급·누출·통제 (§4.7·§4.8) ─────────────────────────
+describe('R2 단계 6: 응급·누출·통제의 방법 — 고르는 규칙', () => {
+  it('즉시 이송: 구급 장비를 든 대원이 믿음 속 위중(band 2) 환자에게, 이 사건에 환자 자리가 남은 부대가 와 있을 때만 — 그 밖은 현장 안정 후 이송(평소)', () => {
+    const q = sceneWith('R2-MED', 'medical', ['als', 'patrol']);
+    const pm = q.role('paramedic'), cop = q.role('officer'), c = q.s.casualties[0];
+    const amb = q.sim.units[pm.unitId];
+    q.I.assigned.push(...[...new Set(q.s.agents.map((a) => a.unitId))].filter((u) => q.I.assigned.indexOf(u) < 0));
+    amb.state = 'onscene';
+    const set = (band: number): void => { const f = casFact(q.sim, q.s, c, '시험'); pm.beliefs.merge(mkFact('cas', c.id, { ...f.value, band }, '시험', ++q.sim.t, 1, true, f.text)); cop.beliefs.merge(mkFact('cas', c.id, { ...f.value, band }, '시험', q.sim.t, 1, true, f.text)); };
+    const pick = (a: FieldAgent) => chooseMethod(q.sim, q.s, a, 'treat', tgCas(c), null, NO_SENSE);
+    set(1);
+    expect(pick(pm)!.m).toBe('stay');
+    set(2);
+    expect(pick(pm)!.m).toBe('rush');
+    expect(pick(cop)!.m).toBe('stay');      // 구급 장비가 없다
+    amb.patients.push(98, 99);      // 자리가 다 찼다
+    expect(pick(pm)!.m).toBe('stay');
+    amb.patients.length = 0; amb.state = 'enroute';      // 와 있지 않다
+    expect(pick(pm)!.m).toBe('stay');
+  });
+  it('환기 후 차단: 공기호흡기를 멘 대원이 믿음 속 살아 있는 가스 밸브(sub valve) 곁에서 선 자리의 가스 0.6 넘음에 — 송풍기가 돌면 고르지 않는다. 대피 방송: 가스 현장의 경찰(확성기)', () => {
+    const q = sceneWith('R2-HAZ', 'hazmat', ['hazmat', 'patrol']);
+    const v = q.s.props.find((p) => p.kind === 'valve')!, ht = q.role('hazTech');
+    ht.beliefs.merge(mkFact('haz', v.id, { kind: 'leak', active: true, x: v.x, y: v.y, sub: 'valve' }, '시험', ++q.sim.t, 1, true, '밸브'));
+    const tgP = { cas: -1, prop: v.id, hostile: -1, region: -1, tile: -1 };
+    expect(chooseMethod(q.sim, q.s, ht, 'mitigate', tgP, null, NO_SENSE)!.m).toBe('seal');
+    const pv = chooseMethod(q.sim, q.s, ht, 'mitigate', tgP, null, { smoke: 0.7, heat: 0 })!;
+    expect(pv.m).toBe('ventFirst'); expect(pv.why).toBe('danger');
+    q.s.fan = { x: 0, y: 0, until: q.sim.t + 50, rid: -1, power: 1 };
+    expect(chooseMethod(q.sim, q.s, ht, 'mitigate', tgP, null, { smoke: 0.7, heat: 0 })!.m).toBe('seal');
+    q.s.fan = null;
+    // 균열(sub crack)에는 환기 후 차단을 고르지 않는다
+    ht.beliefs.merge(mkFact('haz', v.id, { kind: 'leak', active: true, x: v.x, y: v.y, sub: 'crack' }, '시험', ++q.sim.t, 1, true, '균열'));
+    expect(chooseMethod(q.sim, q.s, ht, 'mitigate', tgP, null, { smoke: 0.7, heat: 0 })!.m).toBe('seal');
+    // 대피 방송
+    const tgE = { cas: -1, prop: -1, hostile: -1, region: -1, tile: 0 };
+    expect(chooseMethod(q.sim, q.s, q.role('patrolLead'), 'perimeter', tgE, null, NO_SENSE)!.m).toBe('announce');
+    expect(chooseMethod(q.sim, q.s, q.role('officer'), 'perimeter', tgE, null, NO_SENSE)!.m).toBe('cordon');      // 확성기가 없다
+    const ar = sceneWith('R2-ARM', 'armed/hostage', ['patrol']);
+    expect(chooseMethod(ar.sim, ar.s, ar.role('patrolLead'), 'perimeter', tgE, null, NO_SENSE)!.m).toBe('cordon');      // 가스 현장이 아니다
+  });
+});
+
+describe('R2 단계 6: 응급·누출·통제의 실행 (장면을 직접 만들어)', () => {
+  it('즉시 이송: 3초 최소 처치(품질 ×0.7) 뒤 c.rush — 믿음에 실리고, 지휘관은 처치를 더 내지 않고 탑승을 0.97 로 낸다. 방법 기록', () => {
+    const q = sceneWith('R2-MED', 'medical', ['als']);
+    const pm = q.role('paramedic'), c = q.s.casualties[0];
+    for (const a of q.s.agents) if (a !== pm) a.status = 'left';
+    const amb = q.sim.units[pm.unitId]; amb.state = 'onscene'; if (q.I.assigned.indexOf(amb.id) < 0) q.I.assigned.push(amb.id);
+    c.health = 30; c.where = 'scene'; c.mob = 'immobile'; c.treated = false; c.treatQ = 0;
+    pm.beliefs.merge(casFact(q.sim, q.s, c, '시험'));
+    beside(q.s, pm, c);
+    const t = taskFor(pm, work(q.sim, q.s, 'treat', { cas: c.id }));
+    const n = q.sim.events.length, t0 = q.sim.t;
+    soloRun(q.sim, q.s, pm, 20, () => pm.task !== t);
+    expect(t.method).toBe('rush');
+    expect(c.rush).toBe(true); expect(c.treated).toBe(true);
+    expect(q.sim.t - t0).toBeLessThan(4.5 / 0.1);      // (필요 3초 / 속도) — 평소(4.5 + 4)보다 짧다
+    expect(texts(q.sim, n)).toContain(`구조 대상 ${c.label} 최소한만 처치했습니다. 즉시 이송합니다.`);
+    expect(pm.beliefs.val<CasBelief>('cas', c.id)!.rush).toBe(true);
+    expect(q.I.methods!.filter((u) => u.ok)).toMatchObject([{ method: 'rush', work: 'treat', cas: c.id }]);
+    // 지휘관: 안전 구역의 즉시 이송 환자 — 처치를 내지 않고 탑승 0.97
+    pm.status = 'active'; pm.isCommander = true; q.s.commanderRid = pm.rid; q.s.sizeupDone = true; q.s.mismatchLogged = true;
+    c.where = 'safe'; pm.beliefs.merge(casFact(q.sim, q.s, c, '시험'));
+    q.s.board.length = 0;
+    commanderThink(q.sim, q.s, pm);
+    expect(q.s.board.some((w) => w.kind === 'treat' && w.cas === c.id && (w.status === 'open' || w.status === 'active'))).toBe(false);
+    const ld = q.s.board.find((w) => w.kind === 'load' && w.cas === c.id);
+    expect(ld).toBeDefined(); expect(ld!.priority).toBe(0.97);
+  });
+  it('환기 후 차단: 송풍기가 없는 대원은 맨몸으로 문·창을 12초 열고(power 0.5) 기다렸다가 밸브를 ×0.8 시간에 잠근다 — 방법 기록', () => {
+    const q = sceneWith('R2-HAZ', 'hazmat', ['hazmat']);
+    const v = q.s.props.find((p) => p.kind === 'valve')!, ht = q.role('hazTech');
+    for (const a of q.s.agents) if (a !== ht) a.status = 'left';
+    expect(kitCount(q.sim, ht.rid, 'fan')).toBe(0);
+    ht.beliefs.merge(mkFact('haz', v.id, { kind: 'leak', active: true, x: v.x, y: v.y, sub: 'valve' }, '시험', ++q.sim.t, 1, true, '밸브'));
+    // 밸브 곁 (가스가 짙은 자리)
+    let placed = false;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const x = v.x + dx, y = v.y + dy, i = y * q.s.w + x; if (staticPass(q.s.tiles[i]) && q.s.propAt[i] < 0) { ht.x = ht.px = x; ht.y = ht.py = y; ht.path = null; q.s.smoke[i] = 0.9; placed = true; break; } }
+    expect(placed).toBe(true);
+    const t = taskFor(ht, work(q.sim, q.s, 'mitigate', { prop: v.id }));
+    const n = q.sim.events.length;
+    soloRun(q.sim, q.s, ht, 90, () => v.mitigated === true);
+    expect(t.method).toBe('ventFirst'); expect(t.mwhy).toBe('danger');
+    expect(q.s.fan).toMatchObject({ rid: ht.rid, power: 0.5 });
+    expect(texts(q.sim, n)).toContain('문과 창을 열어 환기합니다. 농도가 내려가면 밸브를 잠급니다.');
+    expect(v.mitigated).toBe(true);
+    expect(q.I.methods!.filter((u) => u.ok)).toMatchObject([{ method: 'ventFirst', work: 'mitigate', prop: v.id }]);
+  });
+  it('대피 방송: 확성기를 든 경찰이 출입구 통제 자리에 닿으면 한 번 알리고 방법 기록 — 그동안 통제되지 않은 출입구로 시민이 다가오는 확률이 ×0.4 (같은 난수에서 첫 노출이 늦거나 같다)', () => {
+    const q = sceneWith('R2-HAZ', 'hazmat', ['patrol']);
+    const lead = q.role('patrolLead');
+    for (const a of q.s.agents) if (a !== lead) a.status = 'left';
+    const t = taskFor(lead, work(q.sim, q.s, 'perimeter', { tile: 0 }));
+    const n = q.sim.events.length;
+    soloRun(q.sim, q.s, lead, 60, () => t.method !== undefined);
+    expect(t.method).toBe('announce');
+    expect(texts(q.sim, n)).toContain('주변에 대피 방송을 합니다.');
+    expect(q.I.methods!.filter((u) => u.ok)).toMatchObject([{ method: 'announce', work: 'perimeter' }]);
+    // 세계 규칙: 같은 씨앗의 두 현장 — 하나는 대피 방송 중 (다른 출입구를 지킨다), 하나는 아무도 없다
+    //   판정 호출(s.rng.chance)에 넘어간 확률을 모아 본다 — 방송 중이면 같은 자리의 확률이 ×0.4 이고, 판정 호출의 수는 같다(난수 순서 불변)
+    const firstSpawn = (announce: boolean, seed: string): { k: number; ps: number[]; p0: number } => {
+      const sim = new Sim(seed, { ...NORMAL, severity: 5, resources: 5 });
+      const I = createIncident(sim, { type: 'hazmat', rng: sim.rng.fork('t') }), s = sim.scenes[I.id]!;
+      s.arrivedAt = 0;
+      if (announce) {
+        unitArrived(sim, I, sim.units.find((u) => u.kind === 'patrol')!);
+        const a = s.agents.find((b) => sim.responders[b.rid].role === 'patrolLead')!;
+        const tk = makeTask('perimeter', '시험'); tk.method = 'announce'; a.task = tk; a.status = 'active'; a.spot = 0;
+        a.x = a.px = -50; a.y = a.py = -50;      // 출입구를 지키지는 않는다 (방송만)
+        for (const b of s.agents) if (b !== a) b.status = 'left';
+      }
+      const ps: number[] = [], orig = s.rng.chance.bind(s.rng);
+      s.rng.chance = (p: number) => { ps.push(p); return orig(p); };
+      const p0 = Math.min(0.03, 0.011 * sim.tune.hazardMul);
+      for (let k = 1; k <= 400; k++) {
+        sim.tick = k * 5; sim.t = k;
+        for (const e of s.exits) s.smoke[e.y * s.w + e.x] = Math.max(s.smoke[e.y * s.w + e.x], 0.3);      // 가스가 출입구까지 번졌다
+        tickGas(sim, s, I);
+        if (s.casualties.some((c) => c.bystander2)) return { k, ps, p0 };
+      }
+      return { k: 9999, ps, p0 };
+    };
+    let checked = 0;
+    for (const seed of ['G0', 'G1', 'G2']) {
+      const off = firstSpawn(false, seed), on = firstSpawn(true, seed);
+      expect(on.k, seed).toBeGreaterThanOrEqual(off.k);
+      const nOff = off.ps.filter((p) => p === off.p0).length, nOn = on.ps.filter((p) => p === on.p0 * ANNOUNCE_MUL).length;
+      if (nOff > 0) checked++;
+      expect(on.ps.filter((p) => p === on.p0).length, seed).toBe(0);      // 방송 중에는 ×1 판정이 없다
+      expect(nOn, seed).toBeGreaterThan(0);
+    }
+    expect(checked).toBeGreaterThan(0);
+    expect(ANNOUNCE_MUL).toBe(0.4);
+  });
+});
+
+describe('R2 단계 6: 강제 교대 (§8 의 3·6)', () => {
+  it('응급·가스 강제: 즉시 이송·헬기 이송·환기 후 차단·대피 방송이 성공 방법에 있고, 재현성이 지켜진다', () => {
+    const ok = new Set<MethodId>();
+    for (const [seed, force] of [['H0', 'medical/trauma'], ['H1', 'medical/trauma'], ['H2', 'hazmat/std'], ['H3', 'hazmat/std']] as const) {
+      const sim = new Sim(seed, NORMAL, 1200, { force }); sim.runToEnd();
+      for (const I of sim.incidents) for (const u of I.methods ?? []) if (u.ok) ok.add(u.method);
+      if (seed === 'H2') { const again = new Sim(seed, NORMAL, 1200, { force }); again.runToEnd(); expect(again.report!.hash).toBe(sim.report!.hash); }
+    }
+    for (const m of ['stay', 'seal'] as MethodId[]) expect(ok.has(m), m).toBe(true);
+    expect([...ok].filter((m) => m === 'rush' || m === 'airlift' || m === 'ventFirst' || m === 'announce').length, [...ok].join(',')).toBeGreaterThanOrEqual(3);
   }, 90000);
 });

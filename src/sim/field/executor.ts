@@ -950,21 +950,26 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       // 이미 처치를 받은 환자는 더 나은 처치를 할 수 있는 대원만 다시 본다
       if (c.dead || c.where === 'loaded' || c.where === 'hospital' || (c.treated && qPlan <= c.treatQ + 0.15)) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
       if (c.where === 'carried') return;
+      // (R2 §4.7) 방법을 처음 고른다 — 현장 안정 후 이송(평소) · 즉시 이송(위중 · 환자 자리가 남은 부대 · 구급 장비)
+      if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'treat', { cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1 });
+      const rush = t.method === 'rush';
       if (c.treated && t.phase === 0) { t.phase = 1; c.treatProg = 0; }
       const m = moveTo(sim, s, a, c.x, c.y, 1.3);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
       const rate = Math.max(0.1, r.skills.medical * (0.5 + 0.5 * med)) * staminaF(r);
-      t.need = 4.5 + (c.health < 40 ? 4 : c.health < 70 ? 2 : 0);
+      t.need = rush ? 3.0 : 4.5 + (c.health < 40 ? 4 : c.health < 70 ? 2 : 0);      // 즉시 이송: 최소한만 (3초)
       c.treatProg += rate * dt; a.ring = c.treatProg / t.need; drain(sim, a, 0.3);
       if (c.treatProg >= t.need) {
         const fx = treatEffect(sim, s, I, a.rid, c.health, c.treated ? c.treatQ : -1);
         // 제세동기가 듣지 않아 앞선 처치보다 나아진 것이 없다: 상태만 다시 알리고 끝낸다 (처치의 수준을 낮추지 않는다)
         if (!fx) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
         if (fx.heal > 0) c.health = Math.min(100, c.health + fx.heal);
-        c.treated = true; if (c.tTreated < 0) c.tTreated = sim.t; c.treatQ = fx.q; c.bleed = c.bleed0 * fx.bleedK; c.bystander = false;
+        c.treated = true; if (c.tTreated < 0) c.tTreated = sim.t; c.treatQ = fx.q * (rush ? 0.7 : 1); c.bleed = c.bleed0 * fx.bleedK; c.bystander = false;      // 즉시 이송은 품질 ×0.7
+        if (rush) c.rush = true;      // (R2 §4.7) 지휘관은 이 환자에게 처치를 더 내지 않고 탑승을 먼저 한다 (casFact 가 믿음에 싣는다)
         learnQuiet(sim, a, casFact(sim, s, c, r.name));
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: fx.q < 0.6 ? `구조 대상 ${c.label} 기본 응급 처치 완료. 전문 처치가 필요합니다.` : `구조 대상 ${c.label} 전문 응급 처치 완료.` });
+        const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: rush ? `구조 대상 ${c.label} 최소한만 처치했습니다. 즉시 이송합니다.` : fx.q < 0.6 ? `구조 대상 ${c.label} 기본 응급 처치 완료. 전문 처치가 필요합니다.` : `구조 대상 ${c.label} 전문 응급 처치 완료.` });
+        if (t.method !== undefined) recordMethod(sim, I, a, t, t.method, t.mwhy ?? 'usual', true, ev);      // (R2) 이 방법으로 처치했다
         r.xpGained += 0.003;
         finishTask(sim, s, a, true);
       }
@@ -1036,7 +1041,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         c.where = 'loaded'; c.tLoaded = sim.t; a.carrying = -1; u.patients.push(c.id); u.patientsIncident = I.id;
         u.firstLoadAt ??= sim.t;      // 이번 이송에 처음 사람을 태운 시각 (지휘관의 출발 판단이 읽는다 — commander.manageAmbulances)
         learnQuiet(sim, a, casFact(sim, s, c, r.name));
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `구조 대상 ${c.label} ${u.callsign}에 탑승 완료.` });
+        const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `구조 대상 ${c.label} ${u.callsign}에 탑승 완료.` });
+        if (u.air) recordMethod(sim, I, a, t, 'airlift', 'usual', true, ev, { cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1 });      // (R2 §4.7) 헬기 이송 — 기록 전용 (위중 환자의 헬기 먼저는 R1 의 지휘관 탑승 배정)
         finishTask(sim, s, a, true);
       }
       return;
@@ -1073,16 +1079,22 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const doneText = p.kind === 'unstable' ? '균열부 보강 완료' : p.kind === 'valve' ? (p.ignited ? '누출 가스 발화' : '가스 밸브 차단 완료') : p.ignited ? '누출 연료 발화' : '연료 누출 조치 완료';
       const sub = p.kind === 'unstable' ? 'crack' : p.kind === 'valve' ? 'valve' : 'fuel';      // (R2 §4.3) 균열·밸브·차량 연료 — 판단부가 sub 로 가린다
       if (p.mitigated || p.ignited) { learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y, sub }, r.name, sim.t, 1, true, doneText), true, true); finishTask(sim, s, a, true); return; }
+      // (R2 §4.8) 방법을 처음 고른다 (누출 조치 — 평소), 밸브 곁에 처음 닿은 틱에 선 자리의 가스로 한 번 더 (환기 후 차단). 환기 후 차단은 환기·기다림 뒤 지금의 차단을 ×0.8 로
+      const mg = { cas: -1, prop: p.id, hostile: -1, region: -1, tile: -1 };
+      if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'mitigate', mg);
+      if (runVentFirst(sim, s, I, a, t, p, XK)) return;
       const m = moveTo(sim, s, a, p.x, p.y, 1.6);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
+      if (!t.marr && t.progress === 0 && t.phase === 0 && recheckOnArrive(sim, s, I, a, t, 'mitigate', mg)) return;
       // 누출 차단 장비가 있으면 밸브·연료 누출 조치가 빠르다 (균열부 보강에는 쓰지 않는다)
-      t.need = p.kind === 'unstable' ? 13 / (0.5 + r.skills.rescue) : (p.kind === 'valve' ? 9 : 7) / (0.5 + r.skills.fire) / (kitWorks(sim, a.rid, 'plugKit', I) ? 1.6 : 1);
+      t.need = (p.kind === 'unstable' ? 13 / (0.5 + r.skills.rescue) : (p.kind === 'valve' ? 9 : 7) / (0.5 + r.skills.fire) / (kitWorks(sim, a.rid, 'plugKit', I) ? 1.6 : 1)) * (t.method === 'ventFirst' ? 0.8 : 1);
       t.progress += dt; a.ring = t.progress / t.need;
       if (t.progress >= t.need) {
         p.mitigated = true;
         learnQuiet(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y, sub }, r.name, sim.t, 1, true, doneText));
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: p.kind === 'unstable' ? '균열부에 지지대를 세웠습니다. 추가 붕괴 위험을 줄였습니다.' : p.kind === 'valve' ? '가스 밸브 차단 완료. 누출이 멈췄습니다.' : '연료 누출 차단 완료. 발화 위험을 제거했습니다.' });
+        const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: p.kind === 'unstable' ? '균열부에 지지대를 세웠습니다. 추가 붕괴 위험을 줄였습니다.' : p.kind === 'valve' ? '가스 밸브 차단 완료. 누출이 멈췄습니다.' : '연료 누출 차단 완료. 발화 위험을 제거했습니다.' });
+        if (t.method !== undefined) recordMethod(sim, I, a, t, t.method, t.mwhy ?? 'usual', true, ev, mg);      // (R2) 이 방법으로 막았다
         if (p.kind === 'unstable') s.staticVersion++;
         r.xpGained += 0.003;
         finishTask(sim, s, a, true);
@@ -1173,6 +1185,11 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const m = moveTo(sim, s, a, sp.x, sp.y, 0.3);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
+      // (R2 §4.8) 출입구 통제 자리에 처음 닿으면 방법을 고른다 — 출입구 통제(평소) · 대피 방송(가스 현장의 경찰 · 확성기: 시작할 때 한 번 알리고 방법 기록. 효과는 hazards.tickGas)
+      if (t.kind === 'perimeter' && t.method === undefined && t.mt0 === undefined) {
+        startMethod(sim, s, I, a, t, 'perimeter', { cas: -1, prop: -1, hostile: -1, region: -1, tile: t.tile });
+        if (t.method === 'announce') recordMethod(sim, I, a, t, 'announce', t.mwhy ?? 'usual', true, I.lastEvent, { cas: -1, prop: -1, hostile: -1, region: -1, tile: t.tile });
+      }
       // 위치 사수: 교전 중인 용의자가 보이면 엄폐 상태에서 응사
       a.cooldown -= dt;
       const vis = s.hostiles.find((h) => (h.state === 'fight') && dist(a.x, a.y, h.x, h.y) <= 13 && los(s, a.x, a.y, h.x, h.y));
@@ -1187,7 +1204,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         if (t.phase === 0) { t.phase = 1; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${josa(h.label, '과/와')} 협상을 시도합니다.` }); }
         else if (t.phase === 1 && h.morale < 0.42) { t.phase = 2; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${josa(h.label, '이/가')} 동요하고 있습니다. 협상을 계속합니다.` }); }
         else if (t.phase === 1 && t.progress > 30 && h.aggression > 0.6) { t.phase = 3; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'radio', imp: 1, text: `${josa(h.label, '이/가')} 협상에 응하지 않습니다.` }); }
-      } else a.label = s.kind === 'hazmat' ? '출입구 통제' : `${exitName(s, t.tile)} 봉쇄`;
+      } else a.label = t.method === 'announce' ? METHOD.announce.label : s.kind === 'hazmat' ? '출입구 통제' : `${exitName(s, t.tile)} 봉쇄`;
       return;
     }
     case 'engage': {
@@ -1735,7 +1752,7 @@ import { boatCost, onWater, reachOf, swimCost, swimOf } from './methods';
 import type { CostFn } from './grid';
 export const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask, unblock };
 // (R2 단계 2) 문·통로의 방법: 고르기(startMethod)·속도·장비 확인·소리·폭파 진입·방법 기록 — 고르는 것은 판단부, 효과는 methodRun
-import { RAPID_HURT, blockerKitFails, blockerRate, doorNoise, extricateDoneText, extricatePrep, extricateRate, recheckOnArrive, recordArrest, recordMethod, runBeanbag, runCharge, runExtinguisher, runSniper, runSuppress, searchStop, stackSpot, startMethod, tunnelSlide } from './methodRun';
+import { RAPID_HURT, blockerKitFails, blockerRate, doorNoise, extricateDoneText, extricatePrep, extricateRate, recheckOnArrive, recordArrest, recordMethod, runBeanbag, runCharge, runExtinguisher, runSniper, runSuppress, runVentFirst, searchStop, stackSpot, startMethod, tunnelSlide } from './methodRun';
 import { kitCount } from './gear';
 /** (R2 §4.6) 동시 진입·방 진입을 함께 한 임무 — 그 뒤의 검거는 'breach' 로 적는다 (임무의 모양을 바꾸지 않으려 WeakSet) */
 const ENTERED = new WeakSet<Task>();

@@ -489,7 +489,8 @@ describe('I1-b 0단계: 기록만 잇기', () => {
       for (const w of s.board) if (w.cause >= 0) {
         n++;
         const ce = sim.events[w.cause];
-        expect(ce.kind).toBe('radio');
+        // 대원의 무전, 또는 현장 자체가 무전 자료로 알린 기록(SYSTEM — 스스로 대피해 안전 구역에 닿은 사람 'casualty' 등, hazards.ts)
+        if (ce.kind !== 'radio') expect(ce.role, ce.text).toBe('SYSTEM');
         expect(ce.incidentId).toBe(I.id);
         expect(ce.t).toBeLessThanOrEqual(w.createdAt);
       }

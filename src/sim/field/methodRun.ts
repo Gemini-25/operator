@@ -19,12 +19,14 @@
 //            executor 의 case 'suppress' 가 부른다. 송풍기 s.fan 의 효과는 세계 규칙(rules/methods.ts)과 X6 의 가스 모델(catastrophe.gasStep)
 //   단계 5   무장: runBeanbag(비살상탄)·runSniper(결정적 저격)·sniperSpot, 검거 기록의 이름 arrestMethod·recordArrest·stunMethod(무력화 수단 h.stunHow) —
 //            executor 의 case 'engage'·'arrest' 가 부른다
+//   단계 6   누출: runVentFirst(환기 후 차단 — 송풍기 또는 맨몸으로 문·창 열기 → s.fan → 기다림 → 차단 ×0.8) — executor 의 case 'mitigate' 가 부른다.
+//            즉시 이송(rush)·헬기 이송 기록(airlift)·대피 방송(announce)은 executor 의 case 'treat'·'load'·'perimeter' 와 hazards.tickGas 에 한 줄씩
 
 import type { Sim } from '../engine';
 import { emit, lastProblemEvent, raiseProblem } from '../events';
 import type { Rng } from '../rng';
 import { T } from '../types';
-import type { CasBelief, Casualty, FieldAgent, Hostile, Incident, KitId, MethodId, MethodUse, MethodWhy, Problem, Scene, Task, TaskKind, Unit, WorkKind } from '../types';
+import type { CasBelief, Casualty, FieldAgent, Hostile, Incident, KitId, MethodId, MethodUse, MethodWhy, Problem, Prop, Scene, Task, TaskKind, Unit, WorkKind } from '../types';
 import { clamp, dist, josa } from '../util';
 import { casFact, learn, learnQuiet, staminaF, visionOf } from './agents';
 import { BARE_HANDS, bestTool, kitCount, kitTool, kitWorks, useKit } from './gear';
@@ -105,8 +107,11 @@ function openFails(I: Incident, key: string): Problem[] {
   }
   return out;
 }
-/** 한 대원이 한 사건에서 처음 고를 때만 알리는 방법 (구역마다 수색 임무가 따로 나와 여러 번 고른다 — §3.6) */
-const SAY_ONCE: ReadonlySet<MethodId> = new Set<MethodId>(['listen', 'hail', 'thermal']);
+/**
+ * 한 대원이 한 사건에서 처음 고를 때만 알리는 방법 (구역마다 수색 임무가 따로 나와 여러 번 고른다 — §3.6).
+ * (단계 6) 즉시 이송도: 처치 임무는 환자 둘 사이를 오가며 다시 받는 일이 잦아(점수가 비슷한 두 후보) 받을 때마다 알리면 같은 말이 쏟아졌다
+ */
+const SAY_ONCE: ReadonlySet<MethodId> = new Set<MethodId>(['listen', 'hail', 'thermal', 'rush']);
 /**
  * 방법을 정한 순간의 시작 문구 (§3.6). 알리지 않는 것: 기록 전용 방법, 평소 방법(plain) — 문·잔해처럼 자주 일어나는 일은 완료 문구만 방법별로 바뀐다.
  * 다만 같은 대상에 아직 복구되지 않은 방법 실패가 있으면 평소 방법이라도 알린다(관찰자가 "다른 방법으로 다시"를 보게).
@@ -1457,4 +1462,72 @@ export function runSniper(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Tas
     r.xpGained += 0.004;
   } else if (sim.t >= h.alertUntil) { h.alertUntil = sim.t + 6; h.facing = Math.atan2(a.y - h.y, a.x - h.x); }
   return true;
+}
+
+// ───────────────────────── 누출 조치·통제 (§4.8) — 단계 6 ─────────────────────────
+/** 환기 후 차단: 송풍기 설치 6초(power 1) · 맨몸으로 문·창 열기 12초(power 0.5) · 송풍기 120초 · 차단 전에 기다리는 상한 20초 · 그 아래면 기다리지 않는 선 자리의 가스 0.4 · 차단 시간 ×0.8 */
+export const VENT_FIRST = { setFan: 6, setHand: 12, fanFor: 120, wait: 20, clear: 0.4, sealMul: 0.8, near: 1.5 };
+/** 그 밸브가 있는 방의 문 가운데 대원에게 가장 가까운 것 (문 소품 — 방 칸에 맞닿은). 없으면 대원에게 가장 가까운 건물 출입구 */
+function ventSpot(s: Scene, a: FieldAgent, vx: number, vy: number): { x: number; y: number } | null {
+  const w = s.w, rg = s.region[Math.round(vy) * w + Math.round(vx)];
+  let best: { x: number; y: number } | null = null, bd = Infinity;
+  if (rg >= 0) for (const p of s.props) {
+    if (p.kind !== 'door' || p.removed) continue;
+    const i = p.y * w + p.x;
+    if (s.region[i] !== rg && s.region[i - 1] !== rg && s.region[i + 1] !== rg && s.region[i - w] !== rg && s.region[i + w] !== rg) continue;
+    const d = dist(a.x, a.y, p.x, p.y);
+    if (d < bd) { bd = d; best = { x: p.x, y: p.y }; }
+  }
+  if (best !== null) return best;
+  for (const e of s.exits) { const d = dist(a.x, a.y, e.x, e.y); if (d < bd) { bd = d; best = { x: e.x, y: e.y }; } }
+  return best;
+}
+/**
+ * 환기 후 차단 (§4.8 ventFirst — executor 의 case 'mitigate' 가 밸브 차단 앞에서 부른다). 돌려주는 값 = 이 틱은 여기서 끝 (false 면 지금의 밸브 차단 — 필요 시간 ×0.8).
+ *   phase 0  밸브가 있는 방의 문(없으면 출입구)으로 가서, 송풍기가 있으면 작동을 확인하고(kitWorks — 숨은 고장 → broken → 누출 조치) 6초 설치(power 1),
+ *            없으면 맨몸으로 문·창을 12초 연다(power 0.5) → s.fan(120초) · 기록 한 줄
+ *   phase 6  밸브 곁으로 돌아가 선 자리의 가스가 0.4 아래가 되거나 20초가 지날 때까지 기다린다 → phase 7(차단 — 지금 코드)
+ * 다른 대원의 송풍기가 먼저 돌면(설치 전) 조건 상실(team) → 누출 조치
+ */
+export function runVentFirst(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, p: Prop, k: ExecKit): boolean {
+  if (t.method !== 'ventFirst' || t.phase >= 7) return false;
+  const r = sim.responders[a.rid];
+  if (t.phase === 0 || t.phase === 5) {
+    const f = s.fan;
+    if (t.phase === 0 && f && f.until > sim.t && f.rid !== a.rid) { switchMethod(sim, s, I, a, t, 'team', '다른 대원이 이미 환기 중', true, { say: '이미 환기 중입니다.' }); return true; }
+    const fan = kitCount(sim, a.rid, 'fan') > 0;
+    if (t.phase === 0) {
+      if (t.range !== 1) {      // 자리는 처음 한 번 (정했다는 표시는 t.range — 1b 와 같다)
+        const sp = ventSpot(s, a, p.x, p.y);
+        if (sp === null) { switchMethod(sim, s, I, a, t, 'tooFar', '환기할 문이 없음', true, { say: '열 문이 없습니다.' }); return true; }
+        t.tx = sp.x; t.ty = sp.y; t.range = 1; a.path = null;
+      }
+      a.label = fan ? '송풍기 설치하러' : '문·창 열러';
+      const mv = k.moveTo(sim, s, a, t.tx, t.ty, VENT_FIRST.near);
+      if (mv === 'nopath') { switchMethod(sim, s, I, a, t, 'tooFar', '환기할 문으로 갈 길이 없음', true, { say: '문으로 갈 길이 없습니다.' }); return true; }
+      if (mv !== 'arrived') return true;
+      if (fan && !kitWorks(sim, a.rid, 'fan', I)) { switchMethod(sim, s, I, a, t, 'broken', '송풍기가 장비 고장으로 막힘'); return true; }
+      t.phase = 5; t.progress = 0;
+    }
+    // 설치 (phase 5) — 송풍기가 고장이 드러나면 phase 0 에서 이미 바꿨다. 송풍기를 쓰는지는 설치를 시작할 때의 장비로 (그 사이에 바뀌지 않는다)
+    const need = fan ? VENT_FIRST.setFan : VENT_FIRST.setHand;
+    a.label = fan ? METHOD.ventilate.label : '문·창 개방';
+    t.progress += sim.dt; a.ring = t.progress / need;
+    k.drain(sim, a, 0.4);
+    if (t.progress + 1e-9 < need) return true;
+    s.fan = { x: t.tx, y: t.ty, until: sim.t + VENT_FIRST.fanFor, rid: a.rid, power: fan ? 1 : 0.5 };
+    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: fan ? '송풍기 가동 — 가스를 빼냅니다. 농도가 내려가면 밸브를 잠급니다.' : '문과 창을 열어 환기합니다. 농도가 내려가면 밸브를 잠급니다.' });
+    t.phase = 6; t.progress = 0; t.mtry = sim.t; a.path = null;      // mtry: 기다리기 시작한 시각
+    return true;
+  }
+  // 기다림 (phase 6): 밸브 곁에서
+  const mv = k.moveTo(sim, s, a, p.x, p.y, 1.6);
+  if (mv === 'nopath') { k.finish(sim, s, a, false, 'nopath'); return true; }
+  if (mv !== 'arrived') { a.label = '밸브로'; return true; }
+  a.label = '환기 대기'; a.fx = p.x - a.x; a.fy = p.y - a.y;
+  const waited = sim.t - (t.mtry ?? sim.t);
+  a.ring = waited / VENT_FIRST.wait;
+  if (waited + 1e-9 < VENT_FIRST.wait && senseOf(s, a).smoke >= VENT_FIRST.clear) return true;
+  t.phase = 7; t.progress = 0;
+  return false;
 }

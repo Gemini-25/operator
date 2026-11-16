@@ -138,8 +138,9 @@ export function casFact(sim: Sim, s: Scene, c: Casualty, src: string): Fact {
   // water: (R2) 물속인가 — 본 그대로. 이 값은 늘 mob·band 와 함께 바뀌므로(물에 빠짐·건져 냄·휩쓸려 숨짐) 믿음의 "새 소식" 판정을 바꾸지 않는다.
   // drift: (R2 1a) 떠내려가는 속도 — 본 그대로(물 밖이면 0). 떠내려가는 동안은 그대로이고 걸려 멈추는 순간 0 이 된다 — 그때 보고가 한 번 더 나간다(방법을 고르는 판단부가 물살을 이것으로 본다)
   // veh·pit: (R2 단계 3) 갇힌 차량의 소품 id · 맨홀 아래 — 본 그대로 (구출 방법의 범주를 대원이 믿음으로 가린다). 늘 mob 과 함께 바뀐다(구출이 끝나면 함께 사라진다)
+  // rush: (R2 단계 6) 구급 대원이 즉시 이송을 정했다 — 처치와 함께 바뀐다(treated·tq). 지휘관이 처치를 더 내지 않고 탑승을 먼저 한다
   const v: CasBelief = { x: Math.round(c.x), y: Math.round(c.y), mob, band: b, where: c.where, treated: c.treated, trappedDone: c.mob !== 'trapped', tq: c.treatQ >= 0.6 ? 2 : c.treated ? 1 : 0, water: c.inWater === true, drift: c.inWater ? c.drift ?? 0 : 0,
-    veh: c.inVehicle !== null && c.mob === 'trapped' ? c.inVehicle : undefined, pit: c.mob === 'trapped' && inManhole(s, c) ? true : undefined };
+    veh: c.inVehicle !== null && c.mob === 'trapped' ? c.inVehicle : undefined, pit: c.mob === 'trapped' && inManhole(s, c) ? true : undefined, rush: c.rush ? true : undefined };
   const mobT = c.dead ? '' : mob === 'trapped' ? ' · 고립' : mob === 'mobile' ? ' · 자력 대피 중' : c.where === 'scene' ? ' · 거동 불가' : '';
   const whereT = c.where === 'safe' ? '안전 구역' : c.where === 'loaded' ? '구급차 탑승' : c.where === 'carried' ? '이송 중' : regionNameAt(s, c.x, c.y);
   return mkFact('cas', c.id, v, src, sim.t, 1, true, `구조 대상 ${c.label}: ${whereT}${mobT} · ${BAND_NAME[b]}`);

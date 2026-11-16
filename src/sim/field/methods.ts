@@ -24,7 +24,7 @@ import { hashStr } from '../rng';
 import { T } from '../types';
 import type { CasBelief, FieldAgent, KitId, MethodId, MethodWhy, Responder, Scene, SignBelief, Task, Unit, UnitKind, WorkItem, WorkKind } from '../types';
 import { clamp, dist, josa } from '../util';
-import { SCBA_MIN, SHARED, airLow, hoistOver, kitCount, kitHas, kitName, kitQty, swimBonus } from './gear';
+import { SCBA_MIN, SHARED, airLow, hoistOver, kitCount, kitHas, kitName, kitQty, seatsLeft, swimBonus } from './gear';
 import { isIndoor, losWalls, staticPass, tileOf } from './grid';
 import { exteriorSpots } from './ops';      // (X6) 외부 방수의 후보 자리 — 생김새만 (진실을 읽지 않는다)
 import type { CostFn } from './grid';
@@ -362,6 +362,24 @@ function sniperOk(c: MethodCtx): boolean {
   return h.state === 'hold' && c.s.negotStart >= 0 && c.sim.t - c.s.negotStart > SNIPER_NEGOT;
 }
 
+// ── 응급·누출·통제의 조건 (§4.7·§4.8) — 대상 믿음(band · haz sub), 자기 조직의 부대 상태(환자 자리), 선 자리의 감각, 현장의 송풍기 ──
+/** 즉시 이송의 조건: 믿음 속 대상이 위중(band 2)이고, 이 사건에 현장에 와 있는 부대 가운데 환자 자리가 남은 부대가 있다 (조직이 아는 부대 상태) */
+function rushOk(c: MethodCtx): boolean {
+  if (c.cb === null || c.cb.band !== 2) return false;
+  const I = c.sim.incidents[c.s.incidentId];
+  if (!I) return false;
+  for (let k = 0; k < I.assigned.length; k++) { const u = c.sim.units[I.assigned[k]]; if (u.state === 'onscene' && !u.boardOrder && seatsLeft(c.sim, u) > 0) return true; }
+  return false;
+}
+/** 환기 후 차단의 조건 (§4.8 ventFirst — 조건일 때만): 믿음 속 그 소품이 살아 있는 가스 밸브(haz sub valve), 쓸 수 있는 공기호흡기, 선 자리의 가스(연기) > 0.6(도착 재선택), 현장에 송풍기가 없음 */
+function ventFirstOk(c: MethodCtx): boolean {
+  if (c.tg.prop < 0 || !(c.sense.smoke > 0.6) || kitCount(c.sim, c.a.rid, 'scba') <= 0 || fanBusy(c)) return false;
+  const v = c.a.beliefs.val<{ kind: string; active: boolean; sub?: string }>('haz', c.tg.prop);
+  return v !== undefined && v.kind === 'leak' && v.active && v.sub === 'valve';
+}
+/** 대피 방송의 조건 (§4.8 announce): 경찰이고 가스 현장(가스 누출 유형이거나 가스 규칙이 얹힌 현장) — 확성기는 kits */
+const announceOk = (c: MethodCtx): boolean => c.r.dept === 'police' && (c.s.kind === 'hazmat' || (c.s.rules !== undefined && c.s.rules.indexOf('gas') >= 0));
+
 /** 수색 방법의 탐지 배율 (§4.4): 경유점에 멈춘 동안(t.wait > 0)만 — 청음 ×0.75 · 확성기 ×0.5 (둘 다 소리를 낼 수 있는 대상만 — voice) · 열화상 ×0.6 */
 const SEARCH_MUL: Partial<Record<MethodId, { k: number; voice: boolean }>> = { listen: { k: 0.75, voice: true }, hail: { k: 0.5, voice: true }, thermal: { k: 0.6, voice: false } };
 const NO_MUL = { k: 1, voice: false };
@@ -458,14 +476,16 @@ export const METHOD: Record<MethodId, MethodDef> = {
   beanbag: row('beanbag', ['engage', 'arrest'], '비살상탄', '비살상탄', '비살상탄 조준', '비살상탄으로 무력화한 뒤', ['beanbag'], 0.8, 0, false, { can: beanbagOk }),
   sniper: row('sniper', ['engage'], '결정적 저격', '저격', '저격 조준', '저격으로', ['sniper'], 0.6, 0, false, { can: sniperOk }),      // 조건일 때만 (인질을 붙잡고 교전 · 협상 60초 넘은 대치)
   // ── 응급 treat · 이송 수단 load (§4.7) ──
-  stay: row('stay', ['treat'], '현장 안정 후 이송', '현장 처치', '응급 처치', '현장에서 안정시켜', [], 0.8, 0, true),      // 지금의 방법
-  rush: row('rush', ['treat'], '즉시 이송', '즉시 이송', '즉시 이송 준비', '최소한만 처치하고 곧바로', ['bag', 'alsBag', 'doctorKit'], 0.9, 0, false),
+  // 단계 6 이 켰다 — 실행은 executor 의 case 'treat'(즉시 이송: 필요 시간 3초 · 품질 ×0.7 · c.rush)·'load'(헬기 이송 기록)·'mitigate'(methodRun.runVentFirst)·'perimeter'(대피 방송)
+  stay: row('stay', ['treat'], '현장 안정 후 이송', '현장 처치', '응급 처치', '현장에서 안정시켜', [], 0.8, 0, true, { can: ALWAYS }),      // 지금의 방법
+  rush: row('rush', ['treat'], '즉시 이송', '즉시 이송', '즉시 이송 준비', '최소한만 처치하고 곧바로', ['bag', 'alsBag', 'doctorKit'], 0.9, 0, false, { can: rushOk }),      // 조건일 때만 (위중 · 환자 자리가 남은 부대)
   airlift: row('airlift', ['load'], '헬기 이송', '헬기 이송', '헬기 탑승', '헬기로', [], 0, 0, false, REC),
   // ── 누출 조치 mitigate · 통제 perimeter (§4.8) ──
-  seal: row('seal', ['mitigate'], '누출 조치', '누출 조치', '위험 요소 조치', '직접', [], 0.8, 0, true),      // 지금의 방법 (밸브 차단·균열 보강·연료 차단)
-  ventFirst: row('ventFirst', ['mitigate'], '환기 후 차단', '환기 후 차단', '환기 후 차단', '먼저 환기한 뒤', [], 0.75, 0, false),
-  cordon: row('cordon', ['perimeter'], '출입구 통제', '출입 통제', '출입구 통제', '출입구를 막아', [], 0.7, 0, true),      // 지금의 방법
-  announce: row('announce', ['perimeter'], '대피 방송', '대피 방송', '대피 방송', '확성기로', ['megaphone'], 0.8, 0, false),
+  seal: row('seal', ['mitigate'], '누출 조치', '누출 조치', '위험 요소 조치', '직접', [], 0.8, 0, true, { can: ALWAYS }),      // 지금의 방법 (밸브 차단·균열 보강·연료 차단)
+  ventFirst: row('ventFirst', ['mitigate'], '환기 후 차단', '환기 후 차단', '환기 후 차단', '먼저 환기한 뒤', [], 0.75, 0, false,      // 조건일 때만, 그때 ×1.3 (까닭 danger). 송풍기가 있으면 송풍기, 없으면 맨몸으로 문·창을 연다
+    { can: ventFirstOk, situ: () => 1.3 }),
+  cordon: row('cordon', ['perimeter'], '출입구 통제', '출입 통제', '출입구 통제', '출입구를 막아', [], 0.7, 0, true, { can: ALWAYS }),      // 지금의 방법
+  announce: row('announce', ['perimeter'], '대피 방송', '대피 방송', '대피 방송', '확성기로', ['megaphone'], 0.8, 0, false, { can: announceOk }),      // 가스 현장의 경찰 — tickGas 의 주변 시민 확률 ×0.4
   // ── 야외 수색 (§4.9 — 7단계, 선택) ──
   air: row('air', ['search'], '공중 수색', '공중 수색', '공중 수색', '상공에서', [], 0, 0, false, REC),      // R1 경찰 헬기의 관측자 — 기록 전용
   drone: row('drone', ['search'], '드론 열화상', '드론', '드론 수색', '드론으로', [], 0.8, 0, false),      // 장비가 생기면 kits 를 채운다

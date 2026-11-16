@@ -29,6 +29,11 @@ const facingAway = (c: DocCtx): boolean => {
 };
 /** 탄을 세는 총을 들었다 */
 const gun = (c: DocCtx): boolean => c.st.gun !== null;
+/**
+ * 기다림의 상한 (초). 본문 §3.6 의 시작값은 P02 20(지원 옴 30) · P03 6 · P07 60(지원 옴 120)이다. 2단계 측정에서 무장 강제 묶음(총격범)의 한계 시간이 늘어
+ * §8.4 의 2번 손잡이를 그 순서로 돌렸다: P02 20 → 12초(지원 옴 30 → 18) → P03 6 → 3초 → P07 의 지원 없음 60 → 40초 (설계서 끝 구현 메모 '단계 2')
+ */
+export const P02_WAIT = 12, P02_WAIT_BACKUP = 18, P03_WAIT = 3, P07_WAIT = 40, P07_WAIT_BACKUP = 120;
 
 registerDoctrine(
   {
@@ -44,8 +49,8 @@ registerDoctrine(
     who: { dept: ['police'] }, hook: 'gate', works: ['arrest'], gate: 'closeIn', noKits: ['taser', 'beanbag'],
     when: (c) => melee(c, false) && c.pack.n === 0,
     unless: (c) => c.sit.civAtRisk,      // 예외: 시민이 위협 2칸 안 — 바로 덮친다
-    effect: { kind: 'block', maxWait: (c) => (c.st.backup ? 30 : 20) },
-    th: { stand: 3, wait: 20, waitBackup: 30 }, rank: 1, why: 'alone',
+    effect: { kind: 'block', maxWait: (c) => (c.st.backup ? P02_WAIT_BACKUP : P02_WAIT) },
+    th: { stand: 3, wait: P02_WAIT, waitBackup: P02_WAIT_BACKUP }, rank: 1, why: 'alone',
     note: '흉기 소지 — 거리 유지하며 지원 기다립니다.', excNote: '시민이 위험합니다 — 바로 제압!', outNote: '더 기다릴 수 없습니다 — 제압합니다.',
     report: '{name} 대원은 테이저가 없어 흉기를 든 용의자와 거리를 두고 {n}초 동안 지원을 기다렸습니다.',
   },
@@ -53,8 +58,8 @@ registerDoctrine(
     id: 'P03', dept: 'police', name: '흉기 상대 — 동료와 동시에 덮친다', short: '동시 제압 대기',
     who: { dept: ['police'] }, hook: 'gate', works: ['arrest'], gate: 'closeIn', noKits: ['taser'],
     when: (c) => melee(c, true) && c.pack.n >= 1 && c.pack.near === 0,
-    effect: { kind: 'block', maxWait: 6 },
-    th: { stand: 3, near: 2.6, wait: 6 }, rank: 2, why: 'buddy',
+    effect: { kind: 'block', maxWait: P03_WAIT },
+    th: { stand: 3, near: 2.6, wait: P03_WAIT }, rank: 2, why: 'buddy',
     note: '둘이 동시에 들어갑니다!',
   },
   {
@@ -69,8 +74,8 @@ registerDoctrine(
     who: { dept: ['police'] }, hook: 'gate', works: ['engage'], gate: ['roomEntry', 'breach'],
     when: (c) => !c.solo && c.pack.near === 0,
     unless: (c) => gunFight(c) && c.sit.civAtRisk,      // 예외: 총격범이 쏘고 있고 시민이 위험하다 — 혼자라도 들어간다
-    effect: { kind: 'block', maxWait: (c) => (c.st.backup ? 120 : 60) },
-    th: { near: 2.6, wait: 60, waitBackup: 120 }, rank: 2, why: 'alone',
+    effect: { kind: 'block', maxWait: (c) => (c.st.backup ? P07_WAIT_BACKUP : P07_WAIT) },
+    th: { near: 2.6, wait: P07_WAIT, waitBackup: P07_WAIT_BACKUP }, rank: 2, why: 'alone',
     note: '혼자 들어가지 않습니다. 동료를 기다립니다.', excNote: '총격이 계속됩니다 — 단독 진입!', outNote: '지원이 오지 않습니다 — 진입합니다.',
     report: '{name} 대원은 혼자 남아 방에 들어가지 않고 {n}초 동안 동료를 기다렸습니다.',
   },

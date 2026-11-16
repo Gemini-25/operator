@@ -9,6 +9,7 @@ import type { Sim } from '../engine';
 import type { Incident, IncidentType, Needs, Unit } from '../types';
 import { edgeTime, weatherSpeedFactor } from '../city';
 import { crewReady, etaFor } from '../resources';
+import { DOC_SWITCH } from '../field/doctrine/registry';      // 확인 필요 줄의 스위치 (D6·D7)
 
 /** D2: 경찰 수요에서 폭발물 처리반을 덜 고르는 감점 (이 사건에 폭발물 처리 수요가 없을 때 — 처리반을 인질극 진입조로 보내지 않는다) */
 export const D2_EOD = -40;
@@ -36,11 +37,10 @@ export function docNeeds(sim: Sim, type: IncidentType, sev: number, knife: boole
   const used: string[] = [];
   if (type !== 'armed') return used;
   if (knife && needs.law < 2) { needs.law = 2; used.push('D3'); }
-  if (D6_ON && sev >= 2.4 && label !== undefined && HOSTAGE_LABEL.test(label) && needs.tactical === 1 && !swatFree(sim)) { needs.tactical = 2; used.push('D6'); }
+  if (DOC_SWITCH.D6 && sev >= 2.4 && label !== undefined && HOSTAGE_LABEL.test(label) && needs.tactical === 1 && !swatFree(sim)) { needs.tactical = 2; used.push('D6'); }
   return used;
 }
-/** D6 을 켜 둘지 (설계서 §6.2 "확인 필요 — 균형") */
-const D6_ON = true;
+
 
 // ───────────────────────── D7 추격 — 따라가기와 앞막기 (= 표의 P18·P19) ─────────────────────────
 export type ChaseRole = { role: 'follow' | 'block'; node: number };
@@ -95,7 +95,8 @@ export function chaseRoles(sim: Sim, I: Incident): Map<number, ChaseRole> {
     if (eid !== undefined) carEta = edgeTime(city.edges[eid], weatherSpeedFactor(sim)) - (sim.t - (I.reportedNodeAt ?? sim.t));
   }
   let from = Infinity;
-  if (I.trackBy === 'air') from = 1;
+  if (!DOC_SWITCH.D7) from = Infinity;
+  else if (I.trackBy === 'air') from = 1;
   else { let near = 0; for (const u of units) if (Math.hypot(u.x - K.x, u.y - K.y) < CHASE_NEAR) near++; if (near >= 2) from = 2; }
   for (let k = 0; k < units.length; k++) {
     const u = units[k];

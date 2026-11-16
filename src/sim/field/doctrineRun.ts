@@ -48,9 +48,13 @@ export function recordDoc(sim: Sim, I: Incident, a: FieldAgent | null, rule: str
  * 그 행동의 TaskKind 와 실행 case·계속 점수·기록 문구는 그 행동을 쓰는 단계가 더한다(2단계 cover·rearm, 3단계 airOut·pairOut·pair) — 그 전에는 줄이 없어 불리지 않는다.
  */
 export function docBegin(sim: Sim, s: Scene, a: FieldAgent, pick: DocPick, k: Pick<ExecKit, 'finish' | 'makeTask'>): void {
-  const was: WorkKind | null = a.task && a.task.workId >= 0 && s.board[a.task.workId] ? s.board[a.task.workId].kind : null;      // 이 행동이 대신한 작업판 일 (split 의 열쇠)
+  const wasW = a.task && a.task.workId >= 0 ? s.board[a.task.workId] : undefined;
+  const was: WorkKind | null = wasW ? wasW.kind : null;      // 이 행동이 대신한 작업판 일 (split 의 열쇠)
   const hostile = a.task !== null && a.task.hostile >= 0 ? a.task.hostile : -1;      // (2단계) 하던 임무의 용의자 — 엄폐가 그 위협을 본다 (P16 의 협상 상대)
   if (a.task) k.finish(sim, s, a, false, 'preempt');
+  // (2단계 P16) 협상자가 교전 때문에 엄폐하면 그 협상은 엄폐의 상한(12초) 동안 다른 대원에게 넘기지 않는다 — 넘기면 손이 빈 대원이 차례로 협상을 받아 차례로 엄폐한다.
+  // 작업은 열린 채 남는다: 교전이 그쳐 엄폐가 끝나면 지휘관이 협상을 다시 준다 (§3.1 P16)
+  if (wasW !== undefined && wasW.kind === 'negotiate' && pick.act === 'cover' && (wasW.status === 'open' || wasW.status === 'active')) wasW.holdUntil = Math.max(wasW.holdUntil, sim.t + DOC.COVER_CAP);
   const t = k.makeTask(pick.act as string as TaskKind, ACT_LABEL[pick.act] ?? pick.rule.short);      // TaskKind 에는 그 행동을 쓰는 단계가 이름을 더한다 (2단계 cover·rearm, 3단계 airOut·pairOut·pair)
   t.startedAt = sim.t; t.docRule = pick.rule.id; t.hostile = hostile;
   a.task = t;

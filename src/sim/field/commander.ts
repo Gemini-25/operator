@@ -13,6 +13,7 @@ import { airShort, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, isHover
 import { canCarryPatients, exitName, failedRecently, fitFor, fitParts, hasWork, learn, resp, transmit, workLabel } from './agents';
 import { docAssignRecord, docAssignWhy, recordDoc } from './doctrineRun';      // (R3 §2.7) 교본이 바꾼 배정의 까닭 말과 기록 · 지휘 교본 줄의 기록
 import { copUsable, docHolds } from './doctrine';      // (R3 §2.6·§6.1) 교본 임무 중인 대원 건너뛰기 · 쓸 수 있는 경찰 (CP1)
+import { DOC_SWITCH } from './doctrine/registry';
 import type { DocFitAns } from './doctrine/registry';
 import { heardEv, mkFact } from './beliefs';
 import { losWalls } from './grid';
@@ -94,8 +95,7 @@ function request(sim: Sim, s: Scene, I: Incident, a: FieldAgent, need: keyof Uni
   s.requests.push({ t: sim.t, need, count: 1, reason, eventId: ev, fulfilled: 0, urgent });
   return ev;
 }
-/** (R3 §6.1) 섬광탄 없는 인질 진입 금지 (CP4 — 확인 필요: 균형. 끄면 125초 줄이 지금처럼 진입한다 — §8.4 의 2번 손잡이) */
-const CP4_ON = true;
+
 /** (R3 CP4) 인질이 다쳤다고 믿는가 (현장 기록의 문제 — 지휘관 코드가 이미 읽는 자격) */
 const hostHurt = (I: Incident): boolean => I.problems.some((p) => p.detail === '시한이 지나 인질이 다침' || p.detail === '교전 중 인질 피격' || p.detail === '저격 중 인질 피격');
 /** (R3 §6.1 CP1) 이 사건으로 오는 경찰 부대의 수 (자기 조직의 부대 상태 — 현장에 닿은 부대는 세지 않는다) */
@@ -306,7 +306,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         else if (hasBang && usable >= 3 && waited > 18) why = '섬광탄을 가진 기동대가 도착해 진입 조건이 갖춰짐';
         else if (waited > 125 && usable >= 3) {
           // (R3 §6.1 CP4) 섬광탄 없는 인질 진입을 하지 않는다: 섬광탄을 가진 사람이 있거나 인질이 다쳤다고 믿을 때만. 그 밖에는 협상을 잇고 기동대를 부른다(아래 지금 규칙)
-          if (!CP4_ON || hasBang || hostHurt(I)) why = '협상이 길어져 시한이 임박';
+          if (!DOC_SWITCH.CP4 || hasBang || hostHurt(I)) why = '협상이 길어져 시한이 임박';      // (CP4 — 확인 필요: 균형. 끄면 125초 줄이 지금처럼 진입한다 — §8.4 의 2번 손잡이)
           else docCmd(sim, I, 'CP4', -1);
         }
         if (!I.assigned.some((uid) => sim.units[uid].caps.tactical >= 0.9)) request(sim, s, I, a, 'tactical', '인질 사건 — 섬광탄을 가진 기동대 필요', true);

@@ -94,7 +94,7 @@ function stop(sim: Sim, I: Incident, nodeId: number, how: 'caught' | 'block' | '
  * (R3 §6.2 D7) 알려진 위치를 고친다 — 보고가 일어나는 세 자리(추적 중의 위치·시민 목격 신고·차가 선 자리)가 부른다. 그 전 위치(reportedPrev)는 값이 실제로 바뀔 때만 적는다
  * (보고 있는 동안 틱마다 같은 값이 들어오므로 덮으면 방향을 잃는다). 마지막 보고 시각(reportedNodeAt)은 보고마다 적는다
  */
-function setReported(sim: Sim, I: Incident, node: number): void {
+export function setReported(sim: Sim, I: Incident, node: number): void {
   if (I.reportedNode !== node) { I.reportedPrev = I.reportedNode; I.reportedNode = node; }
   I.reportedNodeAt = sim.t;
 }

@@ -423,7 +423,7 @@ export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report
     hz = wRisky && HZ_WORKS.has(w.kind);
     light = lightWork(a, w);
   }
-  const rid = a.rid;
+  const rid = a.rid, role = roleIdOf(sim, rid);
   // (2단계) 대상 용의자: 대상 작업의 용의자 → 지금 임무의 용의자 → 가장 가까운 활동 용의자. 같은 용의자를 맡은 동료 (동료의 겉)
   const hid = w !== null && w.hostile >= 0 ? w.hostile : a.task !== null && a.task.hostile >= 0 ? a.task.hostile : -1;
   const tg = hid >= 0 ? threatOf(a, hid) ?? sit.threat : sit.threat;
@@ -439,11 +439,11 @@ export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report
     return hide;
   };
   return {
-    sim, s, a, u: sim.units[a.unitId], dept: docDeptOf(sim, rid), role: roleIdOf(sim, rid), group: groupOf(sim, rid),
+    sim, s, a, u: sim.units[a.unitId], dept: docDeptOf(sim, rid), role, group: groupOf(sim, rid),
     mode, w, hz, wRisky, light, st, sit, sense, dng,
     has: (id: KitId) => kitHas(sim, rid, id), kit: (id: KitId) => kitCount(sim, rid, id),
     m: undefined, see: undefined,
-    tg, pack, dngSign, hideSpot, solo: (() => { const role = roleIdOf(sim, rid); return role !== null && SOLO_OK.has(role); })(),
+    tg, pack, dngSign, hideSpot, solo: role !== null && SOLO_OK.has(role),
   };
 }
 /** (2단계) 그 용의자의 믿음을 위협의 모양으로 (모르면 undefined) */

@@ -553,15 +553,51 @@ function roomDoorFor(s: Scene, a: FieldAgent, h: Hostile, t: Task | null = null)
 function breach(sim: Sim, s: Scene, a: FieldAgent): void {
   const I = sim.incidents[s.incidentId];
   s.breachDone = true;
-  let bangs = 0, opened = 0;
+  let bangs = 0;
+  const by: FieldAgent[] = [];
   s.exits.forEach((e, k) => {
     const team = s.agents.filter((b) => b.status === 'active' && b.task && b.task.kind === 'engage' && dist(b.x, b.y, e.x, e.y) <= 2.6);
     if (!team.length) return;
-    // (R3 §3.1 P07) 그 출입구의 진입조가 한 명이면 교본에 묻는다: 막히면 그 출입구만 건너뛴다 — 그 대원은 문 앞에 남고(t.gateId 'breach'), 풀리면 자기 문만 연다 (case 'engage' ①)
+    // (R3 §3.1 P07) 그 출입구의 진입조가 한 명이면 교본에 묻는다: 막히면 그 출입구만 건너뛴다 — 그 대원은 문 곁에 남고(t.gateId 'breach'), 풀리면 자기 문만 연다 (case 'engage' ①)
     if (team.length === 1 && team[0].task !== null && gateStep(sim, s, team[0], team[0].task, 'breach', docGate(sim, s, team[0], 'breach')) === 'wait') return;
-    bangs += breachExit(sim, s, k, team); opened++;
+    bangs += breachExit(sim, s, k, team);
+    by.push(team.indexOf(a) >= 0 ? a : team[0]);
   });
-  if (opened) emit(sim, { inc: I.id, role: 'RESPONDER', actor: resp(sim, a).name, rid: a.rid, kind: 'action', imp: 3, text: s.bangAt === sim.t ? `진입! 섬광탄을 던져 넣고 들어갑니다${bangs ? ` (용의자 ${bangs}명 무력화)` : ''}.` : '진입! 출입문을 열고 들어갑니다.' });
+  // 진입 문구는 실제로 들어간 진입조의 대원이 말한다 (부른 대원의 문이 건너뛰어졌으면 그 대원이 아니다). 아무 문도 열리지 않았으면 남기지 않는다
+  const who: FieldAgent | null = by.indexOf(a) >= 0 ? a : by.length ? by[0] : null;
+  if (who !== null) emit(sim, { inc: I.id, role: 'RESPONDER', actor: resp(sim, who).name, rid: who.rid, kind: 'action', imp: 3, text: s.bangAt === sim.t ? `진입! 섬광탄을 던져 넣고 들어갑니다${bangs ? ` (용의자 ${bangs}명 무력화)` : ''}.` : '진입! 출입문을 열고 들어갑니다.' });
+}
+/**
+ * (R3 §3.1 P01~P03) 흉기·맨손 상대에게 붙기 전에 기다리는 거리: 테이저를 든 둘은 2칸(본문 1.8칸 — 흉기가 닿는 거리가 1.8칸 미만이라 그 경계에 서지 않게 조금 물렸다),
+ * 혼자이거나 동료가 멀면 3칸
+ */
+const STAND_TASER = 2, STAND_KNIFE = 3;
+/** 용의자에게서 R 칸쯤 떨어진, 대원에게 가장 가까운 빈 칸 (거리 유지의 자리). 없으면 null */
+function standOffSpot(s: Scene, a: FieldAgent, h: Hostile, R: number): { x: number; y: number } | null {
+  let best: { x: number; y: number } | null = null, bd = Infinity;
+  const hx = Math.round(h.x), hy = Math.round(h.y), k = Math.ceil(R + 1);
+  for (let y = Math.max(0, hy - k); y <= Math.min(s.h - 1, hy + k); y++) for (let x = Math.max(0, hx - k); x <= Math.min(s.w - 1, hx + k); x++) {
+    const i = y * s.w + x;
+    if (!staticPass(s.tiles[i]) || s.propAt[i] >= 0) continue;
+    const dh = dist(x, y, h.x, h.y);
+    if (dh < R - 0.4 || dh > R + 0.6) continue;
+    const da = dist(x, y, a.x, a.y);
+    if (da < bd) { bd = da; best = { x, y }; }
+  }
+  return best;
+}
+/** (R3 §3.1 P07) 혼자라 동시 진입에서 빠진 대원이 기다리는 자리 (임무마다 한 번 정한다 — 출입구 곁 4칸 안에서 믿음 속 용의자에게 벽으로 가려지는 칸, 없으면 null = 출입구 앞) */
+const WAIT_AT = new WeakMap<Task, { x: number; y: number } | null>();
+/** (R3 P05) 그 교전 임무가 엄폐 사격 자리를 쓰는가 (판단 지점 coverFire 의 고르기 — 1초마다 다시 묻는다) */
+const COVER_FIRE = new WeakMap<Task, boolean>();
+function waitSpot(s: Scene, a: FieldAgent, t: Task, h: Hostile, ox: number, oy: number): { x: number; y: number } | null {
+  let w = WAIT_AT.get(t);
+  if (w === undefined) {
+    const hb = a.beliefs.val<{ x: number; y: number }>('hos', h.id);
+    w = coverSpot(s, ox, oy, hb !== undefined ? hb.x : h.x, hb !== undefined ? hb.y : h.y, false);
+    WAIT_AT.set(t, w);
+  }
+  return w;
 }
 /**
  * 출입구 하나의 동시 진입 (R3 — breach 의 출입구 반복 몸을 꺼낸 것. 혼자라 빠졌던 진입조가 나중에 자기 문만 열 때도 쓴다):
@@ -609,8 +645,9 @@ function breachExit(sim: Sim, s: Scene, k: number, team: FieldAgent[]): number {
  * 자리가 없으면(NaN) 그 셋 가운데 하나가 될 때까지 다시 찾지 않고 null — 부르는 쪽이 지금 동작으로 간다. 한 틱에 moveTo 하나 (갈 길이 없으면 'nopath' — 이 틱은 끝)
  */
 function toCoverSpot(sim: Sim, s: Scene, a: FieldAgent, t: Task, h: Hostile): MoveRes | null {
-  const hb = a.beliefs.val<{ x: number; y: number }>('hos', h.id);
-  const tx = hb !== undefined ? hb.x : h.x, ty = hb !== undefined ? hb.y : h.y;
+  // 위협의 자리는 이 교전 분기가 쫓는 대상의 자리(h) 그대로다 — 지금의 "7.5칸·시야 아무 자리"(moveTo(h…))와 같은 자격.
+  // 믿음의 낡은 자리로 고르면 움직이는 총격범을 놓쳐 교전이 길어졌다 (2단계 측정 — 강제 armed/shooter 의 한계 시간)
+  const tx = h.x, ty = h.y;
   let again = t.cvX === undefined || t.cvTx === undefined || t.cvTy === undefined || dist(tx, ty, t.cvTx, t.cvTy) > 2;
   if (!again && t.cvX !== undefined && t.cvY !== undefined && !Number.isNaN(t.cvX) && dist(a.x, a.y, t.cvX, t.cvY) <= 0.6) {
     if (los(s, a.x, a.y, h.x, h.y)) t.cvLost = -1;
@@ -618,7 +655,9 @@ function toCoverSpot(sim: Sim, s: Scene, a: FieldAgent, t: Task, h: Hostile): Mo
     else if (sim.t - (t.cvLost ?? sim.t) > 2) again = true;
   }
   if (again) {
-    const sp = coverSpot(s, a.x, a.y, tx, ty, true);
+    let sp = coverSpot(s, a.x, a.y, tx, ty, true);
+    // 판단부는 벽만 보고 고른다(losWalls — 문은 열려 있다고 본다). 닫힌 문 너머의 자리는 서 보아야 아무것도 보이지 않으므로 실행기가 그 자리를 받지 않는다 — 지금 동작으로
+    if (sp !== null && !los(s, sp.x, sp.y, tx, ty)) sp = null;
     t.cvTx = tx; t.cvTy = ty; t.cvX = sp !== null ? sp.x : NaN; t.cvY = sp !== null ? sp.y : NaN; t.cvLost = -1;
     a.path = null; a.pathGoal = -1;
   }
@@ -1307,16 +1346,22 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
           } else { let bd = 1e9; s.exits.forEach((e, k) => { const d0 = dist(a.x, a.y, e.x, e.y); if (d0 < bd) { bd = d0; t.tile = k; } }); }
         }
         const e = s.exits[t.tile];
-        const m0 = moveTo(sim, s, a, e.x, e.y, 1.4);
-        a.label = '진입 대기';
         if (s.breachDone) {
-          if (gateStep(sim, s, a, t, 'breach', docGate(sim, s, a, 'breach')) === 'wait') { a.label = '단독 진입 보류'; return; }
+          // 혼자 기다리는 동안은 출입구 곁 4칸 안에서 믿음 속 용의자에게 벽으로 가려지는 자리에 선다 (없으면 출입구 앞) — 한 틱에 moveTo 하나
+          if (gateStep(sim, s, a, t, 'breach', docGate(sim, s, a, 'breach')) === 'wait') {
+            a.label = '단독 진입 보류';
+            const ws = waitSpot(s, a, t, h, e.x, e.y);
+            moveTo(sim, s, a, ws !== null ? ws.x : e.x, ws !== null ? ws.y : e.y, ws !== null ? 0.4 : 1.4);
+            return;
+          }
           const team = s.agents.filter((b) => b.status === 'active' && b.task && b.task.kind === 'engage' && dist(b.x, b.y, e.x, e.y) <= 2.6);
           const n = breachExit(sim, s, t.tile, team.indexOf(a) >= 0 ? team : [a, ...team]);
           gateClear(sim, s, a, t);
           emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 3, text: s.bangAt === sim.t ? `진입! 섬광탄을 던져 넣고 들어갑니다${n ? ` (용의자 ${n}명 무력화)` : ''}.` : '진입! 출입문을 열고 들어갑니다.' });
           return;
         }
+        const m0 = moveTo(sim, s, a, e.x, e.y, 1.4);
+        a.label = '진입 대기';
         const ready = m0 === 'arrived' || m0 === 'nopath';
         if ((ready && sim.t >= s.breachAt) || sim.t >= s.breachAt + 8) breach(sim, s, a);
         return;
@@ -1427,7 +1472,9 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       t.progress = 0;
       // (R3 §3.1 P05) 엄폐 사격: 지금의 "7.5칸·시야 아무 자리" 대신 위협 둘레 고리의 엄폐 자리로 가서 쏜다 (자리는 임무에 담는다 — 없으면 지금대로)
       let viaCover = false, m: MoveRes = 'moving';
-      if (docGate(sim, s, a, 'coverFire').opt === 'cover') {
+      let cf = COVER_FIRE.get(t);
+      if (cf === undefined || sim.tick % 5 === 0) { cf = docGate(sim, s, a, 'coverFire').opt === 'cover'; COVER_FIRE.set(t, cf); }      // 교본의 고르기는 1초마다 다시 묻는다 (매 틱 묻지 않는다 — 속도)
+      if (cf) {
         const had = t.cvX !== undefined && !Number.isNaN(t.cvX);
         const cm = toCoverSpot(sim, s, a, t, h);
         if (cm !== null) { viaCover = true; m = cm === 'nopath' ? 'moving' : cm; if (!had) docMark(sim, s, a, 'P05', 'gate', { gate: 'coverFire', tgt: 'h:' + h.id }); }
@@ -1458,9 +1505,15 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (h.state !== 'surrendered') {
         const gq = docGate(sim, s, a, 'closeIn', NO_SENSE, { stunned: sim.t < h.stunUntil });
         if (gateStep(sim, s, a, t, 'closeIn', gq) === 'wait') {
-          const R = gq.rule === 'P01' ? 1.8 : 3;
+          const R = gq.rule === 'P01' ? STAND_TASER : STAND_KNIFE;
           a.label = ruleShort(gq.rule) ?? '거리 유지'; a.fx = h.x - a.x; a.fy = h.y - a.y;
-          if (dist(a.x, a.y, h.x, h.y) > R + 0.3 && moveTo(sim, s, a, h.x, h.y, R) === 'nopath') finishTask(sim, s, a, false, 'nopath');
+          const d0 = dist(a.x, a.y, h.x, h.y);
+          if (d0 > R + 0.3) { if (moveTo(sim, s, a, h.x, h.y, R) === 'nopath') finishTask(sim, s, a, false, 'nopath'); }
+          else if (d0 < R - 0.5) {
+            // 거리 유지: 이미 그보다 가까우면(맞서기 시작한 상대 곁에 서 있었다) 그 거리의 자리로 물러난다 — 흉기가 닿는 곳(1.8칸 안)에 선 채 기다리지 않는다
+            const sp = standOffSpot(s, a, h, R);
+            if (sp !== null) moveTo(sim, s, a, sp.x, sp.y, 0.3);
+          }
           return;
         }
       }

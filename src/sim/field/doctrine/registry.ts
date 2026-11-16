@@ -117,6 +117,11 @@ export const DOCTRINE: DoctrineRule[] = [];
 export function registerDoctrine(...rules: DoctrineRule[]): void { for (const r of rules) DOCTRINE.push(r); }
 /** 지휘·관제·추격 줄의 이름표 (코드는 orders/doctrine.ts · dispatch/doctrine.ts · orders/catastrophe.ts 에 있다. 기록·측정만 이 표로 이름을 찾는다) */
 export const CMD_ROWS: { id: string; dept: DocDept; hook: 'cmd' | 'dispatch' | 'chase'; name: string; short: string; why: DocWhy }[] = [];
+/**
+ * (2단계) 지휘·관제 줄 가운데 설계서가 "확인 필요 — 균형"으로 적은 것의 스위치 (§6.1 CP4 · §6.2 D6 · §8.4 의 손잡이 — D7 의 앞막기).
+ * 코드는 commander.ts · dispatch/doctrine.ts 에 있고 이 값만 본다 (줄을 끄는 균형 손잡이 — 측정·시험이 바꿔 볼 수 있게 한 곳에 둔다)
+ */
+export const DOC_SWITCH = { CP4: true, D6: true, D7: true };
 /** 줄이 다 들어간 분야 — 시험 8 의 "분야마다 12줄 이상"은 여기 든 분야만 본다 (단계마다 그 분야를 더한다 — 2단계 경찰) */
 export const DOC_DEPTS_DONE: DocDept[] = ['police'];
 

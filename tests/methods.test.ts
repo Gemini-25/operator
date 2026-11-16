@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import { KITS, ROLES, kitWorks } from '../src/sim/crews';
 import { PROBLEM_LABEL, buildReport, evaluate } from '../src/sim/debrief';
-import { NORMAL } from '../src/sim/difficulty';
+import { NORMAL, parseDisaster } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
 import { raiseProblem } from '../src/sim/events';
@@ -18,14 +18,14 @@ import type { Rng } from '../src/sim/rng';
 import { BARE_HANDS, SHARED, isQty, kitCount, kitName, kitTool, seatsLeft, swimBonus, useKit } from '../src/sim/field/gear';
 import { staticPass } from '../src/sim/field/grid';
 import { WORK_DONE, methodFailLine, methodLines, methodSummary, methodTally, whyText } from '../src/sim/field/methodReport';
-import { FAIL_KEEP, WATER_FLOOR, clutchP, grabP, hitP, mrng, recheckOnArrive, recordAir, recordMethod, senseOf, startMethod, swimTrouble, switchMethod, targetOf, waterTick } from '../src/sim/field/methodRun';
-import { METHOD, METHOD_ORDER, NOT_YET, NO_SENSE, SAY, WORK_MODE, catchPoint, chooseMethod, landComp, methodFit, methodStillFits, methodsOf, onWater, reachOf, sayStart, swimOf, targetKey, targetOfWork, whyNote } from '../src/sim/field/methods';
+import { BOAT, FAIL_KEEP, WATER_FLOOR, clutchP, grabP, hitP, mrng, recheckOnArrive, recordAir, recordMethod, senseOf, startMethod, swimTrouble, switchMethod, targetOf, waterTick } from '../src/sim/field/methodRun';
+import { METHOD, METHOD_ORDER, NOT_YET, NO_SENSE, SAY, WORK_MODE, boatCost, catchPoint, chooseMethod, landComp, methodFit, methodStillFits, methodsOf, onWater, reachOf, sayStart, swimOf, targetKey, targetOfWork, whyNote } from '../src/sim/field/methods';
 import type { MTarget, MethodDef } from '../src/sim/field/methods';
 import { FLOW_MIN, methodsRule } from '../src/sim/field/rules/methods';
 import { SCENE_RULES } from '../src/sim/field/sceneRegistry';
-import { unitArrived } from '../src/sim/field/sceneManager';
+import { tickScene, unitArrived } from '../src/sim/field/sceneManager';
 import { createIncident } from '../src/sim/incidents';
-import { createAidUnit } from '../src/sim/resources';
+import { createAidUnit, tickUnits } from '../src/sim/resources';
 import { tickWater } from '../src/sim/field/hazards';
 import { T } from '../src/sim/types';
 import type { CasBelief, Casualty, FieldAgent, Incident, IncidentType, KitId, MethodId, MethodUse, Needs, RoleId, Scene, Task, UnitKind, WorkItem, WorkKind } from '../src/sim/types';
@@ -57,8 +57,8 @@ const work = (sim: Sim, s: Scene, kind: WorkKind, tg: Partial<WorkItem> = {}): W
   return w;
 };
 const taskFor = (a: FieldAgent, w: WorkItem): Task => { const t = makeTask(w.kind, '시험', w); a.task = t; a.status = 'active'; return t; };
-/** 방법을 켠 단계가 조건(can)을 채운 줄 — 단계 1a: 수난의 물가 방법 여섯, 단계 1b: 헤엄·줄 확보 */
-const LIVE: MethodId[] = ['hand', 'pole', 'ring', 'rope', 'improvise', 'catch', 'swim', 'tend'];
+/** 방법을 켠 단계가 조건(can)을 채운 줄 — 단계 1a: 수난의 물가 방법 여섯, 단계 1b: 헤엄·줄 확보, 단계 1c: 보트 */
+const LIVE: MethodId[] = ['hand', 'pole', 'ring', 'rope', 'improvise', 'catch', 'swim', 'tend', 'boat'];
 /** 헤엄을 못 치는 몸으로 둔다 (수영 능력 = 0.15 + 개인차 ±0.15 < 문턱 0.35 — 구명조끼가 없을 때) */
 const noSwim = (sim: Sim, a: FieldAgent): void => { const r = sim.responders[a.rid]; r.fitness = 0; r.skills.rescue = 0; strip(sim, a.rid, 'pfd'); };
 /**
@@ -885,7 +885,7 @@ describe('R2 단계 1a: 물가 방법의 조건과 점수 (켜진 줄 그대로 
     const set = (a: FieldAgent, v: Partial<CasBelief>): void => { const f = casFact(q.sim, q.s, c, '시험'); const cur = a.beliefs.val<CasBelief>('cas', c.id) ?? f.value; a.beliefs.merge(mkFact('cas', c.id, { ...cur, ...v }, '시험', q.sim.t + 1, 1, true, f.text)); q.sim.t += 1; };
     return { ...q, c, tg: tgCas(c), set, rope: q.role('ropeTech'), cop: q.role('officer'), eng: q.role('engineer') };
   };
-  it('켜진 줄은 수난의 물가 방법 여섯과 헤엄·줄 확보(1b)이고, 나머지는 아직 꺼져 있다', () => {
+  it('켜진 줄은 수난의 물가 방법 여섯과 헤엄·줄 확보(1b)·보트(1c)이고, 나머지는 아직 꺼져 있다', () => {
     for (const m of METHOD_ORDER) expect(METHOD[m].can !== NOT_YET, m).toBe(LIVE.indexOf(m) >= 0);
   });
   it('닿는 거리: 손 1.2(안벽이면 못 쓴다) · 장대 2.0 · 구명환 2.8 · 구명줄·즉석 부력물 3.6 — 그 밖이면 수난 구조를 맡지 않는다(methodFit 0)', () => {
@@ -897,7 +897,7 @@ describe('R2 단계 1a: 물가 방법의 조건과 점수 (켜진 줄 그대로 
     set(rope, { x, y: top, band: 0, drift: 0 }); set(cop, { x, y: top, band: 0, drift: 0 }); set(eng, { x, y: top, band: 0, drift: 0 });
     expect(picks(cop)).toEqual(['hand', 'improvise']);
     expect(picks(eng)).toEqual(['hand', 'pole', 'improvise']);
-    expect(picks(rope)).toEqual(['hand', 'rope', 'ring', 'improvise']);
+    expect(picks(rope).sort()).toEqual(['boat', 'hand', 'improvise', 'ring', 'rope']);      // (1c) 로프 대원은 고무보트를 든다 — 거리 조건이 없다
     expect(chooseMethod(sim, s, cop, 'waterRescue', tg, null, NO_SENSE)!).toMatchObject({ m: 'hand', why: 'near' });
     // 안벽: 손이 빠진다 → 장대가 있는 기관원은 장대, 없는 순찰 경관은 즉석 부력물 (장비를 따지지 않은 1등은 장대 — noGear)
     s.quay = true;
@@ -909,10 +909,10 @@ describe('R2 단계 1a: 물가 방법의 조건과 점수 (켜진 줄 그대로 
     for (let y = top; s.tiles[y * s.w + x] === T.WATER; y++) {
       set(rope, { x, y }); set(cop, { x, y }); set(eng, { x, y });
       const d = reachOf(s, x, y, 4, cop)!.d;
-      const want = (a: FieldAgent, kits: MethodId[]): MethodId[] => [...(['hand', 'pole', 'ring', 'rope', 'improvise'] as MethodId[]).filter((m) => kits.indexOf(m) >= 0 && d <= ({ hand: 1.2, pole: 2, ring: 2.8, rope: 3.6, improvise: 3.6 } as Record<string, number>)[m]), ...(d > 1.2 && swims(a) ? ['swim' as MethodId] : [])].sort();
+      const want = (a: FieldAgent, kits: MethodId[]): MethodId[] => [...(['hand', 'pole', 'ring', 'rope', 'improvise'] as MethodId[]).filter((m) => kits.indexOf(m) >= 0 && d <= ({ hand: 1.2, pole: 2, ring: 2.8, rope: 3.6, improvise: 3.6 } as Record<string, number>)[m]), ...(d > 1.2 && swims(a) ? ['swim' as MethodId] : []), ...(kits.indexOf('boat') >= 0 ? ['boat' as MethodId] : [])].sort();
       expect(picks(cop).sort(), `y ${y} d ${d}`).toEqual(want(cop, ['hand', 'improvise']));
       expect(picks(eng).sort(), `y ${y} d ${d}`).toEqual(want(eng, ['hand', 'pole', 'improvise']));
-      expect(picks(rope).sort(), `y ${y} d ${d}`).toEqual(want(rope, ['hand', 'ring', 'rope', 'improvise']));
+      expect(picks(rope).sort(), `y ${y} d ${d}`).toEqual(want(rope, ['hand', 'ring', 'rope', 'improvise', 'boat']));
     }
     // 즉석 부력물은 2.4칸 넘게 멀면 ×0.6 (그런 물 칸을 현장 전체에서 찾는다)
     let fx = -1, fy = -1;
@@ -936,7 +936,7 @@ describe('R2 단계 1a: 물가 방법의 조건과 점수 (켜진 줄 그대로 
     const r0 = score(rope, 'rope'), p0 = score(eng, 'pole');
     set(rope, { band: 2 }); set(eng, { band: 2 });
     expect(score(rope, 'rope')).toBeCloseTo(r0 * 0.35, 9); expect(score(eng, 'pole')).toBeCloseTo(p0 * 0.8, 9);
-    expect(chooseMethod(sim, s, eng, 'waterRescue', tg, null, NO_SENSE)!).toMatchObject({ m: 'pole', why: 'weak' });
+    expect(chooseMethod(sim, s, eng, 'waterRescue', tg, null, NO_SENSE)!).toMatchObject({ m: 'pole', why: 'noGear', missing: 'raft' });      // (1c) 장비를 따지지 않은 1등은 보트(위중 ×1.15) — 고무보트가 없다
     set(rope, { band: 0, drift: 0.09 });
     expect(score(rope, 'rope')).toBeCloseTo(r0 * 0.85, 9);
   });
@@ -1036,7 +1036,7 @@ describe('R2 단계 1a: 물가 방법의 실행 (장면을 직접 만들어 — 
     runAlone(sim, s, I, cop, 90, () => (I.methods ?? []).some((u) => !u.ok));
     expect(t.method).toBe('improvise');
     const fold = I.methods!.find((u) => !u.ok)!;
-    expect(fold).toMatchObject({ method: 'improvise', why: 'noGear', missing: 'rope' });
+    expect(fold).toMatchObject({ method: 'improvise', why: 'noGear', missing: 'raft' });      // (1c) 위중한 대상: 장비를 따지지 않은 1등은 보트
     const p = I.problems.find((q) => q.code === 'METHOD_FAIL')!;
     expect(p.detail).toBe('즉석 부력물이 두 차례 빗나감'); expect(p.eventId).toBe(fold.eventId);
     expect(w.fails).toBe(1);
@@ -1585,4 +1585,140 @@ describe('R2 단계 1b: 강제 교대 — 물 위의 대원은 끝내 나온다 
     const set = new Set(rescued(usesOf([...W20().slice(0, 12), ...STRIPPED()])).map((u) => u.method));
     expect(set.has('swim')).toBe(true);
   });
+});
+
+// ───────────────────────── 단계 1c: 수난 구조 — 보트 (§4.1 boat, §8 시험 3 의 보트 장면) ─────────────────────────
+describe('R2 단계 1c: 보트 (구조정·고무보트)', () => {
+  /** 보트 장면: 위중한 대상(band 2) 하나를 강 가운데 줄(물가에서 3칸)에, 그 부대의 대원 하나만 움직인다 */
+  const boatScene = (seed: string, kind: UnitKind, role: RoleId) => {
+    const q = oneVictim(seed, [kind], 35);
+    const a = q.role(role);
+    const w = work(q.sim, q.s, 'waterRescue', { cas: q.c.id });
+    const t = taskFor(a, w);
+    return { ...q, a, w, t };
+  };
+  for (const [kind, role, launch] of [['boat', 'boatRescuer', BOAT.launchUnit], ['rescue', 'ropeTech', BOAT.launchRaft]] as [UnitKind, RoleId, number][]) {
+    it(`${kind === 'boat' ? '구조정 대원' : '고무보트를 든 로프 대원'}: 위중한 대상에게 보트를 고르고, 띄운 틱에 물 칸 위 보트에 있고, 대상을 뭍에 내린 뒤 뭍 칸에 서서 보트에서 내린다`, () => {
+      const { sim, I, s, c, a, w, t } = boatScene(`R2-BOAT-${kind}`, kind, role);
+      const n = sim.events.length;
+      let launchedAt = -1, launchWet = false, launchAfloat = false, carriedInBoat = false;
+      runMany(sim, s, I, [a], 120, () => !c.inWater || a.task === null, () => {
+        if (launchedAt < 0 && a.afloat === 'boat') { launchedAt = sim.t; launchWet = onW(s, a); launchAfloat = true; }
+        if (c.where === 'carried' && a.afloat === 'boat' && Math.abs(c.x - a.x) < 1e-9 && Math.abs(c.y - a.y) < 1e-9) carriedInBoat = true;
+      });
+      expect(t.method).toBe('boat'); expect(t.mwhy).toBe('weak');
+      expect(launchAfloat).toBe(true); expect(launchWet, '띄운 틱에 물 칸 위').toBe(true);
+      expect(carriedInBoat, '끌어올린 사람은 보트 안에').toBe(true);
+      expect(c.inWater).toBe(false); expect(c.freedHow).toBe('boat'); expect(c.freedBy).toBe(a.rid);
+      expect(s.tiles[Math.round(c.y) * s.w + Math.round(c.x)]).not.toBe(T.WATER);
+      expect(a.afloat).toBeUndefined(); expect(onW(s, a), '대원은 뭍 칸에').toBe(false);
+      const lines = texts(sim, n);
+      expect(lines[0]).toBe('대상이 줄을 잡을 힘이 없습니다. 보트를 띄우겠습니다.');
+      expect(lines).toContain('보트를 띄웠습니다.');
+      expect(lines).toContain(`구조 대상 ${josa(c.label, '을/를')} 보트에 끌어올렸습니다. 물가로 돌아갑니다.`);
+      expect(lines).toContain(`구조 대상 ${c.label}, 보트로 다가가 끌어냈습니다. 처치와 이송이 필요합니다.`);
+      expect(I.methods!.filter((u) => u.ok)).toMatchObject([{ method: 'boat', why: 'weak', cas: c.id, rid: a.rid }]);
+      expect(w.status).toBe('done');
+      // 진수 시간: 진수 지점에 닿은 뒤 (구조정 8초 · 고무보트 14초) — 띄운 시각은 방법을 고른 뒤 그 시간보다 늦다
+      expect(launchedAt - t.mt0!).toBeGreaterThanOrEqual(launch - 1e-9);
+    });
+  }
+  it('보트 비용: 물 칸만 지난다(뭍 칸 -1) — 보트로 뭍에 대는 이동은 뭍 칸 둘레의 물 칸에서 멈춘다', () => {
+    const { s, x, top } = oneVictim('R2-BCOST', ['rescue']);
+    const f = boatCost(s);
+    expect(f(top * s.w + x)).toBe(0); expect(f((top - 1) * s.w + x)).toBe(-1);
+  });
+  it('한 부대에 보트는 한 척: 같은 부대의 동료가 보트를 쓰는 중이면 보트를 고르지 않는다. 다친 대원은 고르지 않는다(위험 0.08)', () => {
+    const { sim, s, c, of } = oneVictim('R2-BONE', ['boat'], 35);
+    const [b1, b2] = of('boat');
+    const tg = tgCas(c);
+    const has = (a: FieldAgent): boolean => (chooseMethod(sim, s, a, 'waterRescue', tg, null, NO_SENSE)?.cands ?? []).some((q) => q.m === 'boat');
+    expect(has(b2)).toBe(true);
+    const w = work(sim, s, 'waterRescue', { cas: c.id });
+    taskFor(b1, w).method = 'boat';
+    expect(has(b2)).toBe(false);
+    b1.task!.method = 'rope';
+    expect(has(b2)).toBe(true);
+    sim.responders[b2.rid].status = 'injured';
+    expect(has(b2)).toBe(false);
+  });
+  it('고무보트의 숨은 고장은 띄우기 시작할 때 드러난다 — 장비 고장(EQUIP_FAIL) 뒤 다른 방법으로, 고장의 기억은 끝까지', () => {
+    const { sim, I, s, c, a, t } = boatScene('R2-BFAULT', 'rescue', 'ropeTech');
+    sim.responders[a.rid].kit!.find((it) => it.id === 'raft')!.fault = true;
+    runMany(sim, s, I, [a], 60, () => t.method !== undefined && t.method !== 'boat');
+    expect(I.problems.some((p) => p.code === 'EQUIP_FAIL')).toBe(true);
+    expect(I.methods![0]).toMatchObject({ method: 'boat', ok: false });
+    expect(t.mwhy).toBe('broken'); expect(t.method).not.toBe('boat');
+    expect(a.mfail!.find((q) => q.m === 'boat')!.until).toBe(Infinity);
+    expect(kitCount(sim, a.rid, 'raft')).toBe(0);
+    void c;
+  });
+  it('보트 전복: 보트에서 떨어져 그 자리 물에 빠지고(다음 틱부터 헤엄 중), 실은 사람을 놓치며, 보트 구조를 접고 뭍으로 간다', () => {
+    const { sim, I, s, c, a, t } = boatScene('R2-BFLIP', 'boat', 'boatRescuer');
+    t.method = 'boat'; t.mt0 = sim.t; t.phase = 3; t.range = 0.5; t.tx = 8; t.ty = waterTop(s, 8) - 1;
+    a.x = a.px = 8; a.y = a.py = waterTop(s, 8) + 2; a.afloat = 'boat';
+    c.x = a.x; c.y = a.y; c.where = 'carried'; a.carrying = c.id;
+    a.mrng = { next: () => 0.5, chance: () => true, range: (lo: number) => lo } as unknown as Rng;
+    sim.tick++; sim.t = sim.tick * sim.dt;
+    waterTick(sim, s, I, a, XK);
+    expect(a.afloat).toBeUndefined(); expect(onWater(s, a)).toBe(true);
+    expect(c.where).toBe('scene'); expect(c.inWater).toBe(true); expect(a.carrying).toBe(-1);
+    expect(I.problems.find((p) => p.code === 'METHOD_FAIL')!.detail).toBe('보트 구조 중 보트 전복');
+    expect(sim.events.some((e) => e.text === '보트가 뒤집혔습니다! 물에 빠졌습니다.')).toBe(true);
+    expect(a.task!.kind).toBe('ashore');
+    const key = targetKey('waterRescue', tgCas(c));
+    expect(a.mfail!.filter((q) => q.k === key).map((q) => q.m).sort()).toEqual(['boat', 'swim']);
+  });
+  it('물 위의 보트 대원이 다른 임무 중이면 뭍으로(case ashore 의 보트 갈래): 뭍 칸 둘레의 물 칸까지 와서 뭍에 오르고 보트에서 내린다', () => {
+    const { sim, I, s, a } = boatScene('R2-BASHORE', 'boat', 'boatRescuer');
+    a.task = null;
+    a.x = a.px = 8; a.y = a.py = waterTop(s, 8) + 2; a.afloat = 'boat';
+    a.nextThink = 0;
+    think(sim, s, a);
+    expect(a.task!.kind).toBe('ashore');
+    runMany(sim, s, I, [a], 30, () => a.task === null);
+    expect(a.task).toBeNull(); expect(a.afloat).toBeUndefined(); expect(onW(s, a)).toBe(false);
+  });
+  it('상공의 호이스트는 헤엄·보트 대원이 끌고 오는 대상을 기다린다 (진행하지 않고 그 위에서), 놓으면 다시 끌어올린다', () => {
+    let seed = '';
+    for (let k = 0; k < 40 && !seed; k++) { const q = new Sim('R2-AIR' + k, FULL); if (q.weather === 'clear') seed = 'R2-AIR' + k; }
+    const sim = new Sim(seed, FULL);
+    const I = createIncident(sim, { type: 'water', rng: sim.rng.fork('t') });
+    const s = sim.scenes[I.id]!;
+    I.reportedAt = sim.t; I.phase = 'dispatched';
+    const heli = sim.units.find((u) => u.kind === 'heli')!;
+    heli.state = 'onscene'; heli.incidentId = I.id; I.assigned.push(heli.id); I.everAssigned.push(heli.id); unitArrived(sim, I, heli);
+    const step = (): void => { sim.tick++; sim.t = sim.tick * sim.dt; tickUnits(sim); tickScene(sim, s); };
+    for (let k = 0; k < 5 * 60 && !(s.air && s.air[0] && s.air[0].mode === 'hoist' && s.air[0].phase === 'work' && s.air[0].progress > 1); k++) step();
+    const op = s.air![0];
+    expect(op.mode).toBe('hoist');
+    const c = s.casualties[op.target];
+    op.eye.nextThink = sim.t + 1000;      // 관측자가 다시 고르지 않게 (기다리는 줄만 본다)
+    c.where = 'carried';
+    const p0 = op.progress;
+    for (let k = 0; k < 25; k++) step();
+    expect(op.phase).toBe('hover'); expect(op.progress).toBeLessThan(p0); expect(sim.airStats.hoists).toBe(0);
+    expect(c.where).toBe('carried'); expect(c.inWater).toBe(true);
+    c.where = 'scene';
+    for (let k = 0; k < 5 * 60 && sim.airStats.hoists === 0; k++) step();
+    expect(sim.airStats.hoists).toBe(1); expect(c.freedHow).toBe('hoist');
+  });
+});
+
+describe('R2 단계 1c: 강제 교대 — 해일에서 보트가 쓰이고, 물 위의 대원은 끝내 나온다', () => {
+  it('해일 교대에서 보트로 건진 사람이 있고, 교대가 끝나면 보트 위·물 칸 위에 아무도 없다', () => {
+    let boats = 0;
+    const bad: string[] = [];
+    for (const seed of ['S3', 'S4', 'S8']) {
+      const sim = new Sim(seed, { ...NORMAL, disaster: parseDisaster('tsunami')! }, 1200);
+      sim.runToEnd();
+      boats += usesOf([sim]).filter((u) => u.ok && u.method === 'boat').length;
+      for (const s of sim.scenes) if (s) for (const a of s.agents) {
+        if (a.afloat) bad.push(`${seed} ${sim.responders[a.rid].name} 보트 위`);
+        if (a.status !== 'left' && onW(s, a)) bad.push(`${seed} ${sim.responders[a.rid].name} 물 칸`);
+      }
+    }
+    expect(bad).toEqual([]);
+    expect(boats, '보트로 건진 사람').toBeGreaterThan(0);
+  }, 120000);
 });

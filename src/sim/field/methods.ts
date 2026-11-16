@@ -13,7 +13,7 @@
 //
 // 단계 0 (틀)에서 표의 모든 줄을 두고 can 을 NOT_YET(거짓)으로 비워 두었다. 방법을 구현하는 단계가 그 줄의 can·situ·skill 을 채운다
 // (수난 1a~1c · 문 2 · 구출·탐지 3 · 화재 4 · 무장 5 · 응급·가스 6). 켜진 줄: 단계 1a — 수난 구조의 물가 방법 여섯(hand·pole·ring·rope·improvise·catch),
-// 단계 1b — 헤엄(swim)·줄 확보(tend). 물 위의 이동 비용 swimCost 는 실행기(executor.costFor)가 쓴다.
+// 단계 1b — 헤엄(swim)·줄 확보(tend), 단계 1c — 보트(boat). 물 위의 이동 비용 swimCost·boatCost 는 실행기(executor.costFor)가 쓴다.
 // 배정(agents.fitFor 의 waterRescue)이 methodFit 을, 실행부(methodRun.runWaterRescue)가 chooseMethod·methodStillFits 를 부른다.
 
 import type { Sim } from '../engine';
@@ -87,6 +87,12 @@ export const SWIM_MIN = 0.35, SWIM_MIN_PFD = 0.25;
 export const CATCH_SOON = 40, CATCH_LATE = 90;
 /** 같은 대상에게 헤엄쳐 들어간 동료가 있다 — 던지는 방법은 그 동료에게 걸린다 */
 const mateSwims = (c: MethodCtx): boolean => { for (let k = 0; k < c.mates.length; k++) if (c.mates[k].task!.method === 'swim') return true; return false; };
+/** 같은 부대에서 보트를 쓰는 동료가 있다 (부대마다 보트는 한 척 — 고무보트·구조정) */
+const unitBoats = (c: MethodCtx): boolean => {
+  const ag = c.s.agents;
+  for (let k = 0; k < ag.length; k++) { const b = ag[k]; if (b !== c.a && b.unitId === c.a.unitId && b.status === 'active' && b.task !== null && b.task.method === 'boat') return true; }
+  return false;
+};
 /** 던지는 방법(구명환·구명줄)의 상황 배율: 위중 ×0.35 · 빠른 물살 ×0.85 · 밤·비·안개 ×0.9 */
 const throwSitu = (c: MethodCtx): number => (c.weak ? 0.35 : 1) * (c.flow >= FAST_FLOW ? 0.85 : 1) * (c.sim.weather !== 'clear' ? 0.9 : 1);
 /** 사람 배율: 던지기 0.8 + 0.4 × 구조 능력, 뻗기 0.9 + 0.2 × 구조 능력 */
@@ -127,7 +133,9 @@ export const METHOD: Record<MethodId, MethodDef> = {
       skill: (c) => 0.5 + swimOf(c.sim, c.a) }),
   tend: row('tend', ['waterRescue'], '구조자 줄 확보', '줄 확보', '구조자 줄 확보', '헤엄치는 동료의 줄을 잡아', ['rope'], 0.9, 0, false,
     { can: mateSwims }),      // 같은 대상에게 헤엄쳐 들어가는 동료가 있다 (줄을 잡아 주면 그 동료의 사고율 ×0.5)
-  boat: row('boat', ['waterRescue'], '보트 접근', '보트', '보트 접근', '보트로 다가가', ['raft'], 0.78, 0.08, false, { altUnit: ['boat'] }),
+  // 단계 1c: 보트 — 고무보트(로프 대원)를 들었거나 구조정의 대원이면. 같은 부대에서 보트를 쓰는 동료가 없을 때 (한 부대에 보트 한 척)
+  boat: row('boat', ['waterRescue'], '보트 접근', '보트', '보트 접근', '보트로 다가가', ['raft'], 0.78, 0.08, false,
+    { altUnit: ['boat'], can: (c) => !unitBoats(c), situ: (c) => (c.weak ? 1.15 : 1) * (c.flow >= FAST_FLOW ? 1.1 : 1) * (c.reach > THROW_REACH ? 1.2 : 1) }),
   hoist: row('hoist', ['hoist'], '헬기 호이스트', '호이스트', '호이스트 인양', '호이스트로 끌어올려', [], 0, 0, false, REC),      // R1 의 공중 임무 — methodRun.recordAir 가 기록만 한다
   // ── 문·통로 force·clear, 이동 중 하위 작업 (§4.2·§4.2a) ──
   kick: row('kick', ['force'], '발로 차기·어깨', '발차기', '문 걷어차기', '발로 차', [], 0.5, 0, false),
@@ -325,6 +333,11 @@ export const SWIM_COST = 2.2;
  * 칸마다 한 번만 불린다(astar 의 비용 함수는 순수해야 한다) — 바탕 비용은 물이 아닌 칸에서만 부른다
  */
 export function swimCost(s: Scene, base: CostFn): CostFn { const tiles = s.tiles; return (i: number): number => (tiles[i] === T.WATER ? SWIM_COST : base(i)); }
+/**
+ * 보트 비용 (§3.5 executor.costFor — 단계 1c): 물 칸 0, 그 밖은 지나갈 수 없다(-1). 그래서 보트의 이동 목표는 늘 물 칸이어야 한다 —
+ * 뭍에 대는 이동은 뭍 칸을 가운데로 range 1.5 를 주어 둘레의 물 칸에서 멈춘다(astar 는 목표 칸의 비용이 0 이상이어야 끝난다). 다리 밑은 지나지 못한다(다리 칸은 뭍이다)
+ */
+export function boatCost(s: Scene): CostFn { const tiles = s.tiles; return (i: number): number => (tiles[i] === T.WATER ? 0 : -1); }
 /**
  * (x, y) 에서 가장 가까운 뭍 칸과 그 거리 d. from 이 있으면 from 과 같은 뭍 성분의 칸만
  * (from 이 물 위면 from 에서 가장 가까운 뭍 칸의 성분 — 다리로 이어진 건너편 둔치도 같은 성분이다).

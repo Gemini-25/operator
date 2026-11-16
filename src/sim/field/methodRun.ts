@@ -255,6 +255,11 @@ const SHORE_KIT: Partial<Record<MethodId, KitId>> = { pole: 'pole', ring: 'ring'
 const THROWN: Partial<Record<MethodId, string>> = { ring: '구명환', rope: '줄', improvise: '이은 줄' };
 /** 줄 다시 감기(초) · 하류 차단의 붙잡는 거리(칸)·붙잡는 시간(초)·걸려 멈춘 대상을 기다리는 한도(초 — 1초 재확인의 횟수) */
 export const REWIND = 4, CATCH_GRAB = 1.3, CATCH_NEED = 2, CATCH_STUCK = 6;
+/**
+ * 즉석 부력물(옷·끈을 이은 줄과 빈 통)의 명중·잡기 배율 — 설계서 §4.1 의 시작값 그대로. 수난 균형의 손잡이(§6)다:
+ * 단계 1c 에서 0.85 도 재 보았으나 선박 화재 60교대의 성공률이 같아(방법 실패만 반) 시작값을 두었다 (구현 메모)
+ */
+export const IMPROVISE_MUL = 0.7;
 
 /** 대상이 줄을 잡을 수 있는가 (체력 — 진실). 55 넘게 1 · 40 넘게 .75 · 25 넘게 .4 · 그 밖 .15 */
 export function grabP(health: number): number { return health > 55 ? 1 : health > 40 ? 0.75 : health > 25 ? 0.4 : 0.15; }
@@ -308,6 +313,7 @@ function foldedBefore(a: FieldAgent, key: string, m: MethodId): boolean {
 /** 방법을 접을 때의 사유 (조건 상실) */
 function lostText(m: MethodId, team: boolean): string {
   if (m === 'tend') return '헤엄치던 동료가 물에서 나옴';
+  if (m === 'boat') return '같은 부대의 보트를 동료가 씀';      // 보트의 조건은 "부대의 보트가 비어 있다" 하나다 (고무보트의 고장이 알려진 것도 여기로 온다)
   if (team) return '동료가 헤엄쳐 들어감';
   if (m === 'swim') return '대상이 물가 가까이 떠밀려 옴';      // 손이 닿는 거리가 됐다(헤엄의 조건 reach > 1.2) — 또는 수영 능력의 문턱(구명조끼를 잃음)
   return `대상이 떠내려가 ${josa(METHOD[m].short, '이/가')} 닿지 않음`;
@@ -348,7 +354,7 @@ export function runWaterRescue(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t
   if ((a.afloat !== undefined || onWater(s, a)) && !inWaterPhase(m, t)) { k.finish(sim, s, a, false, 'preempt'); return; }
   // 1초마다 고른 방법을 지금도 쓸 수 있는지 다시 본다 — 3초 넘게 맞지 않으면 조건 상실로 바꾼다.
   // 하류 차단은 기다릴 자리에 나선 뒤에는 따로 본다(runCatch). 헤엄은 물에 들어간 뒤, 줄 확보는 자리를 잡은 뒤 다시 보지 않는다 — 몸이 이미 그 일에 들어가 있다
-  if (sim.tick % 5 === 0 && t.mt0 !== sim.t && !(m === 'catch' && t.phase >= 1) && !(m === 'swim' && t.phase >= 2) && !(m === 'tend' && t.phase >= 1)) {
+  if (sim.tick % 5 === 0 && t.mt0 !== sim.t && !(m === 'catch' && t.phase >= 1) && !(m === 'swim' && t.phase >= 2) && !(m === 'tend' && t.phase >= 1) && !(m === 'boat' && t.phase >= 1)) {
     t.mbad = methodStillFits(sim, s, a, 'waterRescue', tg, t, m) ? 0 : (t.mbad ?? 0) + 1;
     if (t.mbad >= 3) {
       const team = ((THROWS.has(m) || m === 'swim') && mateSwimming(s, a, c.id)) || m === 'tend';
@@ -360,6 +366,7 @@ export function runWaterRescue(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t
   if (m === 'catch') { runCatch(sim, s, I, a, t, c, k); return; }
   if (m === 'swim') { runSwim(sim, s, I, a, t, c, k); return; }
   if (m === 'tend') { runTend(sim, s, I, a, t, c, k); return; }
+  if (m === 'boat') { runBoat(sim, s, I, a, t, c, k); return; }
   // ── 물가 방법 ──
   const mv = k.moveTo(sim, s, a, c.x, c.y, SHORE_REACH[m]!, true);      // 물가에서 대상이 보이는 가장 가까운 자리 (떠내려가면 따라 옮긴다)
   if (mv === 'nopath') {
@@ -397,7 +404,7 @@ function attempt(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Cas
   else {
     hit = hitP(sim, s, a.rid, dist(a.x, a.y, c.x, c.y));
     if (m === 'ring') { hit = Math.min(1, hit * 1.08); grab = Math.min(1, grab * 1.15); }
-    else if (m === 'improvise') { hit *= 0.7; grab *= 0.7; }
+    else if (m === 'improvise') { hit *= IMPROVISE_MUL; grab *= IMPROVISE_MUL; }
   }
   const roll = mrng(sim, s, a).next();
   if (roll < hit * grab) {
@@ -456,10 +463,10 @@ function runCatch(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Ca
 }
 
 // ───────────────────────── 수난 구조 (§4.1·§3.5) — 단계 1b: 헤엄 · 줄 확보 · 물 위의 바탕 ─────────────────────────
-/** 물가 방법 밖에서 자기 실행부를 가진 수난 방법 (하류 차단 1a · 헤엄·줄 확보 1b) */
-const OWN_RUN: ReadonlySet<MethodId> = new Set<MethodId>(['catch', 'swim', 'tend']);
-/** 몸이 물 위에 있어도 되는 방법의 단계: 헤엄은 물에 들어간 뒤(phase ≥ 2) */
-function inWaterPhase(m: MethodId, t: Task): boolean { return m === 'swim' && t.phase >= 2; }
+/** 물가 방법 밖에서 자기 실행부를 가진 수난 방법 (하류 차단 1a · 헤엄·줄 확보 1b · 보트 1c) */
+const OWN_RUN: ReadonlySet<MethodId> = new Set<MethodId>(['catch', 'swim', 'tend', 'boat']);
+/** 몸이 물 위에 있어도 되는 방법의 단계: 헤엄은 물에 들어간 뒤(phase ≥ 2), 보트는 띄운 뒤(phase ≥ 1) */
+function inWaterPhase(m: MethodId, t: Task): boolean { return (m === 'swim' && t.phase >= 2) || (m === 'boat' && t.phase >= 1); }
 /**
  * 헤엄의 수치 (§4.1 swim·§3.5): 물가 진입점에서 멈추는 거리(칸) · 준비(초 — 소방은 방화복·공기호흡기 벗기 6, 그 밖 2, 구명조끼를 입으면 +3) ·
  * 붙잡는 거리(칸)·벌어지면 다시 헤엄쳐 가는 거리(칸)·붙잡는 시간(초) · 끌고 오는 대상이 놓이는 자리(대원 뒤 칸) · 물 위에 이 시간(초) 넘게 있으면 안전장치가 물가로 옮긴다
@@ -588,6 +595,10 @@ export function waterTick(sim: Sim, s: Scene, I: Incident, a: FieldAgent, k: Exe
       else if (rescue && a.x >= s.w - 2) kind = 'swept';
       if (kind !== null) swimMishap(sim, s, I, a, k, kind);
     }
+  } else if (I.phase !== 'closed') {
+    // (1c) 보트 위: 전복 판정 (초당 0.0015 × (1 + 2 × 물살)) — 뒤집히면 그 자리 물 칸에서 다음 틱부터 헤엄 중이다
+    const flowK = Math.min(1, (s.flow ?? 0) / 0.1);
+    if (mrng(sim, s, a).chance(BOAT.capsize * (1 + 2 * flowK) * sim.dt)) boatCapsize(sim, s, I, a, k);
   }
   if (a.wetSince !== undefined && sim.t - a.wetSince > SWIM.stuck) pullAshore(sim, s, I, a, '오래 갇힘');
 }
@@ -736,6 +747,126 @@ function runSwim(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Cas
   if (mv === 'nopath') {
     dropInWater(sim, s, a);
     switchMethod(sim, s, I, a, t, 'tooFar', '끌고 나올 물가가 없음', false);
+    k.finish(sim, s, a, false, 'nopath');
+  }
+}
+
+// ───────────────────────── 수난 구조 (§4.1·§3.5) — 단계 1c: 보트 ─────────────────────────
+/**
+ * 보트의 수치 (§4.1 boat): 진수 지점에서 멈추는 거리(칸) · 진수 시간(초 — 구조정 8, 고무보트 14) · 붙잡는 거리(칸)·벌어지면 다시 다가가는 거리 ·
+ * 끌어올리는 시간(초) · 뭍에 대는 거리(칸 — 뭍 칸을 가운데로, 둘레의 물 칸에서 멈춘다) · 전복(초당, 물살 배율 전)
+ */
+export const BOAT = { entry: 0.5, launchUnit: 8, launchRaft: 14, reach: 0.9, grabFar: 1.4, haul: 2.5, dock: 1.5, capsize: 0.0015 };
+/** 구조정의 대원인가 (보트를 장비 없이 쓰는 부대 — METHOD.boat.altUnit) */
+const boatUnit = (sim: Sim, a: FieldAgent): boolean => (METHOD.boat.altUnit ?? []).indexOf(sim.units[a.unitId].kind) >= 0;
+
+/**
+ * 보트 전복 (§3.5): 보트에서 떨어져 그 자리 물 칸에 빠진다(다음 틱부터 헤엄 중 — waterTick 의 익수·사고가 걸린다). 실은 사람은 그 자리 물에 놓친다.
+ * 보트 구조 중이면 방법을 접고(실패) 임무를 내려놓은 뒤 뭍으로 간다 — 그 대상의 보트·헤엄은 60초 동안 다시 고르지 않는다.
+ */
+function boatCapsize(sim: Sim, s: Scene, I: Incident, a: FieldAgent, k: ExecKit): void {
+  const r = sim.responders[a.rid], t = a.task;
+  a.afloat = undefined;
+  dropInWater(sim, s, a);
+  const say = '보트가 뒤집혔습니다! 물에 빠졌습니다.';
+  if (t !== null && t.kind === 'waterRescue' && t.method === 'boat') {
+    const key = targetKey('waterRescue', targetOf(t));
+    switchMethod(sim, s, I, a, t, 'failed', '보트 구조 중 보트 전복', false, { say });
+    rememberFail(sim, a, key, 'swim', 'failed');
+    k.finish(sim, s, a, false, 'preempt');
+    const nt = k.makeTask('ashore', '뭍으로');
+    nt.startedAt = sim.t;
+    a.task = nt;
+  } else emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, text: say });
+}
+
+/**
+ * 보트 접근 (§4.1 boat): 고무보트(로프 대원) 또는 구조정(대원이 장비 없이). 한 틱에 moveTo 는 한 번.
+ *   phase 0  진수 지점 L(대상에서 가장 가까운, 대원이 걸어서 닿는 뭍 칸 — 처음 한 번)로 걸어간다 → 도착하면 고무보트의 작동 확인(kitWorks — 숨은 고장이면 broken)
+ *            → 진수(구조정 8초·고무보트 14초) → L 의 여덟 이웃 가운데 대상(믿음 위치)에 가장 가까운 물 칸으로 대원을 옮기고 a.afloat = 'boat'
+ *            (뭍 칸 위에서 켜면 다음 틱 세계 규칙이 풀어 버린다)
+ *   phase 1  보트로 다가간다 (executor.costFor 의 보트 비용 — 물 칸만)
+ *   phase 2  끌어올리기 2.5초 → 끌려가는 중(c.where = 'carried' — inWater 는 그대로, 보트 안에 눕는다)
+ *   phase 3  L 둘레의 물 칸까지 와서 대원을 L 에 올리고 보트에서 내린다 → 뭍에 내려놓고 끝
+ * 도중에 대상이 물 밖이 되면(호이스트가 먼저 끝났다) 첫 줄에서 끝난다 — 다음 판단에서 뭍으로(brain 의 물 위 가드 → case 'ashore' 의 보트 갈래가 뭍에 댄다).
+ * 전복은 waterTick 이 판정한다.
+ */
+function runBoat(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Casualty, k: ExecKit): void {
+  const r = sim.responders[a.rid], dt = sim.dt;
+  if (t.phase === 0) {
+    if (t.range === 0) {
+      const l = reachOf(s, c.x, c.y, 4, a);
+      if (l === null) { switchMethod(sim, s, I, a, t, 'tooFar', '보트를 띄울 물가가 없음', true, { k }); return; }
+      t.tx = l.x; t.ty = l.y; t.range = BOAT.entry;
+    }
+    const mv = k.moveTo(sim, s, a, t.tx, t.ty, BOAT.entry);
+    if (mv === 'nopath') {
+      if (!(t.tried && t.tried.length) && switchMethod(sim, s, I, a, t, 'tooFar', '진수 지점으로 갈 길이 없음')) return;
+      k.finish(sim, s, a, false, 'nopath'); return;
+    }
+    if (mv !== 'arrived') { a.label = '진수 지점으로'; t.progress = 0; return; }
+    const unit = boatUnit(sim, a);
+    // 고무보트는 띄우기 시작할 때 작동을 확인한다 (숨은 고장이 이때 드러난다 — EQUIP_FAIL 은 kitWorks 가 남긴다)
+    if (!unit && t.progress === 0 && !kitWorks(sim, a.rid, 'raft', I)) { switchMethod(sim, s, I, a, t, 'broken', '고무보트가 장비 고장으로 막힘', true, { k }); return; }
+    a.label = '보트 띄우는 중';
+    t.need = unit ? BOAT.launchUnit : BOAT.launchRaft;
+    t.progress += dt; a.ring = t.progress / t.need;
+    a.fx = c.x - a.x; a.fy = c.y - a.y;
+    if (t.progress < t.need) return;
+    // 물에 띄운다: 진수 지점의 여덟 이웃 가운데 대상(믿음 위치 — 없으면 본 자리)에 가장 가까운 물 칸
+    const cb = a.beliefs.val<CasBelief>('cas', c.id);
+    const gx = cb ? cb.x : c.x, gy = cb ? cb.y : c.y;
+    let wx = -1, wy = -1, wd = Infinity;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const x = t.tx + dx, y = t.ty + dy;
+      if ((dx === 0 && dy === 0) || x < 0 || y < 0 || x >= s.w || y >= s.h || s.tiles[y * s.w + x] !== T.WATER) continue;
+      const d = (x - gx) * (x - gx) + (y - gy) * (y - gy);
+      if (d < wd) { wd = d; wx = x; wy = y; }
+    }
+    if (wx < 0) { switchMethod(sim, s, I, a, t, 'tooFar', '보트를 띄울 물이 없음', true, { k }); return; }
+    a.x = a.px = wx; a.y = a.py = wy; a.afloat = 'boat'; a.path = null; a.pathGoal = -1;
+    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: '보트를 띄웠습니다.' });
+    t.phase = 1; t.progress = 0;
+    return;
+  }
+  if (a.afloat === undefined) { k.finish(sim, s, a, false, 'preempt'); return; }      // 보트에서 내렸다(해일이 뭍으로 옮겼다 등) — 내려놓고 다시 판단한다
+  if (t.phase === 1) {
+    a.label = METHOD.boat.label;
+    const mv = k.moveTo(sim, s, a, c.x, c.y, BOAT.reach);
+    if (mv === 'nopath') { switchMethod(sim, s, I, a, t, 'tooFar', '보트로 닿을 길이 없음', false); k.finish(sim, s, a, false, 'nopath'); return; }
+    if (mv !== 'arrived' && dist(a.x, a.y, c.x, c.y) > BOAT.reach) return;
+    t.phase = 2; t.progress = 0;
+    return;
+  }
+  if (t.phase === 2) {
+    if (dist(a.x, a.y, c.x, c.y) > BOAT.grabFar) { t.phase = 1; t.progress = 0; return; }
+    a.label = '보트로 끌어올리는 중';
+    a.fx = c.x - a.x; a.fy = c.y - a.y;
+    t.progress += dt; a.ring = t.progress / BOAT.haul;
+    if (t.progress < BOAT.haul) return;
+    c.where = 'carried'; a.carrying = c.id; a.path = null; a.pathGoal = -1;
+    c.x = a.x; c.y = a.y;
+    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `구조 대상 ${josa(c.label, '을/를')} 보트에 끌어올렸습니다. 물가로 돌아갑니다.` });
+    learnQuiet(sim, a, casFact(sim, s, c, r.name));
+    t.phase = 3; t.progress = 0;
+    return;
+  }
+  // phase 3: 진수 지점(뭍 칸)을 가운데로 둘레의 물 칸까지 와서 대원을 뭍에 올린다
+  a.label = '물가로 돌아가는 중';
+  const mv = k.moveTo(sim, s, a, t.tx, t.ty, BOAT.dock);
+  c.x = a.x; c.y = a.y;      // 보트 안에 누워 있다
+  if (mv === 'arrived') {
+    a.x = t.tx; a.y = t.ty; a.afloat = undefined; a.path = null; a.pathGoal = -1;
+    landed(sim, s, I, a, t, c, 'boat', t.tx, t.ty);
+    k.finish(sim, s, a, true);
+    return;
+  }
+  if (mv === 'nopath') {
+    // 진수 지점으로 돌아갈 물길이 없다(드묾): 가장 가까운 뭍을 다시 찾아 그쪽에 댄다. 그래도 없으면 놓치고 접는다
+    const l = reachOf(s, a.x, a.y, 4, null);
+    if (l !== null && (l.x !== t.tx || l.y !== t.ty)) { t.tx = l.x; t.ty = l.y; return; }
+    dropInWater(sim, s, a);
+    switchMethod(sim, s, I, a, t, 'tooFar', '보트를 댈 물가가 없음', false);
     k.finish(sim, s, a, false, 'nopath');
   }
 }

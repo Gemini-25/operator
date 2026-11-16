@@ -113,11 +113,13 @@ export function moveSpeed(sim: Sim, s: Scene, a: FieldAgent): number {
 
 /**
  * (R2 1b) 이동 비용: 바탕은 agents.agentCost(믿음의 장애물·불·연기 — 늘 한 번 만든다: 만들 때 a.rng 를 한 번 부르므로 호출 수가 지금과 같다).
+ * 보트 위면 보트 비용(물 칸만 — methods.boatCost, 1c).
  * 물 위(헤엄 중)·헤엄 구조의 물에 들어간 뒤(phase ≥ 2)·뭍으로 가는 중이면 물 칸을 헤엄쳐 지나는 비용(methods.swimCost).
  * 헤엄 구조라도 물가로 걸어가는 동안(phase 0)은 뭍 길이다 — 물을 가로질러 진입점에 가지 않게.
  */
 function costFor(sim: Sim, s: Scene, a: FieldAgent, escape: boolean): CostFn {
   const base = escape ? agentCost(sim, s, a, true, true) : agentCost(sim, s, a);
+  if (a.afloat === 'boat') return boatCost(s);      // (1c) 보트 위: 물 칸만 (목표는 늘 물 칸 — 뭍에 대는 이동은 뭍 칸을 가운데로 range 1.5)
   const t = a.task;
   if (onWater(s, a) || (t !== null && (t.kind === 'ashore' || (t.kind === 'waterRescue' && t.method === 'swim' && t.phase >= 2)))) return swimCost(s, base);
   return base;
@@ -1555,7 +1557,7 @@ export { isIndoor };
 import type { ExecKit } from './methodRun';
 import { dropWet, pullAshore, runWaterRescue, waterTick } from './methodRun';
 // (R2 1b) 물 위의 대원: 헤엄 중인가·헤엄 비용·수영 능력·가장 가까운 뭍 (판단부의 생김새 함수 — methods.ts 는 이 파일을 import 하지 않는다)
-import { onWater, reachOf, swimCost, swimOf } from './methods';
+import { boatCost, onWater, reachOf, swimCost, swimOf } from './methods';
 import type { CostFn } from './grid';
 export const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask };
 

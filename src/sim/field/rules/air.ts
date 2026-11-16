@@ -305,6 +305,8 @@ registerRule((sim, s, I) => {
     if (op.mode === 'hoist') {
       const c = s.casualties[op.target];
       if (op.workId >= 0 && !liveWork(s.board[op.workId])) { reset(sim, op, st); continue; }      // 지휘관이 그 작업을 거뒀다
+      // (R2 1c) 헤엄·보트 대원이 끌고 오는 중: 진행하지 않고 그 위에서 기다린다 (끌던 대원이 놓치면 다시 — 끌려가는 사람을 '실림'으로 바꾸면 그림과 기록이 어긋난다)
+      if (c && !c.dead && c.inWater && c.where === 'carried') { op.phase = 'hover'; op.progress = Math.max(0, op.progress - sim.dt * 0.5); continue; }
       if (!c || c.dead || !c.inWater || c.where !== 'scene') {
         // 이미 물 밖으로 나왔거나 숨졌다: 낡은 믿음으로 같은 일을 되풀이하지 않게 강제로 보고하고 그 작업을 끝낸다
         if (c) learn(sim, eye, casFact(sim, s, c, sim.responders[eye.rid].name), true, true);

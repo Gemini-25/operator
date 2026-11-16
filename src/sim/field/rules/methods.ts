@@ -5,7 +5,7 @@
 //   s.quay  물가가 높은 안벽인가 (선박 화재의 부두 — 손이 물에 닿지 않는다). 처음 한 번 정한다. 세계 규칙이라 시나리오 변형을 읽어도 된다 — 판단부는 이 표시만 본다 (methods.ts 의 hand)
 //   s.flow  물살(칸/초). 물속 사람이 떠내려가는 속도의 최댓값을 따라 오르고, 내려가지는 않는다(사람이 걸려 멈춰도 강물은 흐른다). 실행부의 투척 명중이 읽는다 (methodRun.hitP)
 // 단계 1b (물 위의 대원 — 모든 현장: 개울이 있는 수색 현장도):
-//   보트 대원이 뭍 칸에 놓이면(해일이 옮긴 경우 등 — 보트 방법은 스스로 푼다) a.afloat 를 푼다
+//   보트 대원이 뭍 칸에 놓이면(해일이 옮긴 경우 등 — 보트 방법은 스스로 푼다)·보트로 철수하면(left) a.afloat 를 푼다
 //   물 칸 위에 쓰러진(숨진) 대원을 물가로 옮긴다(methodRun.pullAshore — 기록 truth). agentHealth 는 act 보다 먼저 돌고 이 규칙은 다음 틱 첫 단계에서 돌므로
 //   쓰러진 대원은 한 틱 동안 물 칸에 있을 수 있다. H1 의 동료 구조(rescueMate)는 물 칸의 동료를 물가에서 기다린다 — 이 규칙은 물 칸에서만 옮긴다
 // 뒤 단계가 여기에 채운다:
@@ -27,7 +27,7 @@ export const methodsRule: SceneRule = (sim, s, I) => {
   const ag = s.agents;
   for (let k = 0; k < ag.length; k++) {
     const a = ag[k];
-    if (a.afloat !== undefined && s.tiles[tileOf(s, a.x, a.y)] !== T.WATER) a.afloat = undefined;
+    if (a.afloat !== undefined && (a.status === 'left' || s.tiles[tileOf(s, a.x, a.y)] !== T.WATER)) a.afloat = undefined;      // 철수(보트로 떠남 — case 'board' 의 길 없음)도 내린다
     if (a.status === 'down' && s.tiles[tileOf(s, a.x, a.y)] === T.WATER) pullAshore(sim, s, I, a, '쓰러짐');
   }
   if (s.kind !== 'water' && (s.rules === undefined || s.rules.indexOf('water') < 0)) return;      // 물이 없는 현장 (매 틱 모든 현장에서 도는 길 — 칸 둘만 읽는다)

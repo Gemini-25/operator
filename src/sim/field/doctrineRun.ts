@@ -498,7 +498,7 @@ export function rebuddy(sim: Sim, s: Scene, a: FieldAgent): void {
   emit(sim, { inc: s.incidentId, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 0, text: `${sim.responders[best.rid].name}, 지금부터 나와 짝이다.` });
 }
 /** 공기통을 바꾸는 시간 (초 — R1 의 swapAir 와 같다) · 탈출 자리의 연기 문턱 · 출입구 바깥쪽을 찾는 거리 · 짝을 따라가는 거리 · 짝의 위험 실내 일이 끝난 뒤 동행을 잇는 초 · 짝 따라 나가기가 끝나는 연기·출입구 거리 */
-export const AIR_OUT_RUN = { swap: 8, clean: 0.1, exitR: 3, follow: 1.4, linger: 3, pairOutClear: 0.25, pairOutExit: 2 } as const;
+export const AIR_OUT_RUN = { swap: 8, clean: 0.1, exitR: 3, follow: 1.4, linger: 3, lingerIdle: 8, pairOutClear: 0.25, pairOutExit: 2 } as const;
 /** 위험 건물 실내인가 (실행부 — 공기호흡기 없이 들어가지 않는 자리와 같은 판정: 화재·가스·붕괴 현장의 실내, 또는 불이 났다고 아는 실내) */
 function hazIndoorAt(s: Scene, a: FieldAgent, x: number, y: number): boolean {
   const rg = s.region[tileOf(s, x, y)];
@@ -592,13 +592,24 @@ export function runPair(sim: Sim, s: Scene, a: FieldAgent, t: Task, k: ExecKit):
   if (!PAIR_HZ.has(t)) PAIR_HZ.set(t, sim.t);
   const bw = b.task !== null && b.task.workId >= 0 ? s.board[b.task.workId] : undefined;
   if (bw !== undefined && (bw.status === 'open' || bw.status === 'active') && (inJob(sim, s, a, bw, b.task) || hotSearch(s, bw))) { PAIR_HZ.set(t, sim.t); PAIR_P.set(t, 0.5 + 0.4 * bw.priority + 0.12); }
+  else if (bw !== undefined && bw.kind === 'suppress' && (bw.status === 'open' || bw.status === 'active') && inJob(sim, s, a, bw)) PAIR_HZ.set(t, sim.t);      // 위험 건물의 진압을 밖에서 잠깐 하는 동안(외부 방어 ↔ 내부 공격의 재선택)은 끊지 않는다
+  // (3단계 — 측정이 찾은 것) 방 하나를 끝낸 짝이 위험 실내에 선 채 손이 비었거나(다음 지시를 기다린다) 이미 받은 지시가 위험 실내 일이면 동행을 잇는다 —
+  // 3초로는 다음 방의 지시가 오기 전에 끊겨 "짝 동행 → 없음 → 짝 동행"이 1초 안에 되풀이되었다(강제 fire/std 6교대에 63번). 짝이 밖으로 나오거나 바깥 일을 맡으면 3초 뒤 끝난다
+  else if (b.carrying === -1 && (b.task === null || b.task.kind === 'standby') && (hazIndoorAt(s, b, b.x, b.y) || nextHz(sim, s, a, b))) PAIR_HZ.set(t, sim.t);
   if (b.carrying !== -1) { if (!hazIndoorAt(s, a, a.x, a.y) && !hazIndoorAt(s, b, b.x, b.y)) { actEnd(sim, a, t); k.finish(sim, s, a, true); return; } }
-  else if (sim.t - (PAIR_HZ.get(t) ?? sim.t) > AIR_OUT_RUN.linger) { actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
+  else if (sim.t - (PAIR_HZ.get(t) ?? sim.t) > (b.task === null || b.task.kind === 'standby' ? AIR_OUT_RUN.lingerIdle : AIR_OUT_RUN.linger)) { actEnd(sim, a, t); k.finish(sim, s, a, true); return; }      // 손이 빈 짝(다음 지시를 기다린다)은 조금 더 기다린다
   // (3단계 — 측정이 찾은 것) 짝 곁에 내가 맡을 빈 위험 실내 일(짝의 진압에 남은 자리 포함)이 생기면 따라가기를 끝낸다 — 다음 판단에 그 일을 맡는다(G08 은 alt 로 다시 걸리지 않는다)
-  if (bw !== undefined && b.carrying === -1 && (sim.tick + a.rid) % 5 === 0 && pairAlt(sim, s, a, bw)) { actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
+  if (bw !== undefined && b.carrying === -1 && (sim.tick + a.rid) % 5 === 0 && pairAlt(sim, s, a, bw)) { docRemember(sim, a, t.docRule ?? 'G08', '*', PAIR_ALT_MEM); actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
   const m = followMate(sim, s, a, t, b, k, false);
   if (m === 'nopath') { t.wait = 1; t.range = 0; }
   else if (m === 'arrived') { a.fx = b.x - a.x; a.fy = b.y - a.y; if (bw !== undefined && b.task !== null) pairHelp(sim, s, a, b, b.task, bw.kind, k); }
+}
+/** 곁의 일을 맡으려고 동행을 끝낸 뒤 그 동행 줄을 다시 걸지 않는 시간 (초 — 그 일을 다른 사람이 먼저 받으면 "동행 → 없음 → 동행"이 1초 안에 되풀이되었다. 짝은 이미 실내라 문턱의 판단 지점이 걸리지 않는다) */
+const PAIR_ALT_MEM = 10;
+/** 손이 빈 짝이 이미 받은 지시(작업판의 담당자·받은 지시 번호 — 공개 지휘 상태)가 위험 실내 일인가 */
+function nextHz(sim: Sim, s: Scene, a: FieldAgent, b: FieldAgent): boolean {
+  const w = b.orderWork >= 0 ? s.board[b.orderWork] : undefined;
+  return w !== undefined && (w.status === 'open' || w.status === 'active') && (inJob(sim, s, a, w) || hotSearch(s, w));
 }
 /** 짝 동행이 짝의 진압을 거드는 거리 (짝의 화점에서 — 실내 진압의 분사 거리 3.2 + 따라가는 거리 1.4 + 여유. 3.2 로는 뒤에 선 짝이 거의 닿지 않았다 — 3단계 측정) */
 const HELP_SPRAY = 4.8;

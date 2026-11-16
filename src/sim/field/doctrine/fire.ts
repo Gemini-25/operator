@@ -105,7 +105,7 @@ registerDoctrine(
     when: (c) => inside(c) && c.watch().n < c.watch().need,
     unless: maybeInside,      // 예외: 믿음 속 요구조자(구조 대상·신고 인원 > 찾은 수) 또는 신고 인원 불명 — 짝만 있으면 들어간다
     effect: { kind: 'block', maxWait: entryWait },
-    th: { need: 2, watchR: 8, wait: 20, waitBackup: 30 }, rank: 2, why: 'outside',
+    th: { need: 1, watchR: 12, wait: 20, waitBackup: 30 }, rank: 2, why: 'outside',      // (3단계 측정) need 2 → 1·watchR 8 → 12 — DOC.WATCH_NEED·WATCH_R 의 메모
     note: '대기조 확인 전 진입 보류.', excNote: '요구조자 있음 — 대기조 없이 진입합니다.', outNote: '대기조가 갖춰지지 않습니다 — 진입을 거둡니다.',
     report: '{name} 대원은 밖에 대기조가 없어 진입을 {n}초 미뤘습니다.',
   },

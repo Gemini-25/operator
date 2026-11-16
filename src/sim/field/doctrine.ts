@@ -405,10 +405,13 @@ function scbaCount(sim: Sim, s: Scene): number {
   for (let k = 0; k < s.agents.length; k++) { const b = s.agents[k]; if (b.status === 'active' && kitHas(sim, b.rid, 'scba')) n++; }
   return n;
 }
-/** (5단계 S07) 믿음: 장치(믿음 위치) R 칸 안에 옮길 수 없는 사람 — 현장에 있는 거동 불가·갇힌 구조 대상, 또는 인질을 붙든 활동 용의자(인질은 그 곁에 있다) */
+/**
+ * (5단계 S07) 믿음: 장치(믿음 위치) R 칸 안에 옮길 수 없는 사람 — 현장에 있는 갇힌 구조 대상, 다쳐(band ≥ 1) 걷지 못하는 구조 대상, 또는 인질을 붙든 활동 용의자(인질은 그 곁에 있다).
+ * 다치지 않고 아직 안내받지 않은 사람(믿음의 mob 은 걷기 전까지 'immobile')은 대피 안내로 옮길 수 있으므로 세지 않는다
+ */
 function pinnedNear(a: FieldAgent, b: { x: number; y: number }, R: number): boolean {
   const cs = a.beliefs.list('cas');
-  for (let k = 0; k < cs.length; k++) { const c = cs[k].value as CasBelief; if (c.band < 3 && c.where === 'scene' && c.mob !== 'mobile' && dist(c.x, c.y, b.x, b.y) <= R) return true; }
+  for (let k = 0; k < cs.length; k++) { const c = cs[k].value as CasBelief; if (c.band < 3 && c.where === 'scene' && (c.mob === 'trapped' || (c.mob === 'immobile' && c.band >= 1)) && dist(c.x, c.y, b.x, b.y) <= R) return true; }
   const hs = a.beliefs.list('hos');
   for (let k = 0; k < hs.length; k++) { const v = hs[k].value as { x: number; y: number; state: string; hostage: boolean }; if (v.hostage && (v.state === 'hold' || v.state === 'fight') && dist(v.x, v.y, b.x, b.y) <= R) return true; }
   return false;

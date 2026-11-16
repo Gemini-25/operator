@@ -2,7 +2,7 @@
 // 이 파일은 90초 안에 끝나야 한다: 끝까지 돌린 교대는 shiftOf 로 한 번만 돌리고 여러 단언이 나눠 쓴다(읽기만 한다).
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { AIR_KIND, AIR_LOW, AIR_MIN, EXTRA_NAMES, KITS, ROLES, STAFF, airShort, armorOf, blastFactor, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, heliPad, isHovering, kitLive, kitUses, kitWorks, medLevelOf, minCrew, minField, roleOf, seatsOf, seatsUsed, skillsOf, slotsOf, stays, toolFor, toolUse, useKit } from '../src/sim/crews';
+import { AIR_IN_FRAC, AIR_KIND, AIR_LOW, AIR_MIN, EXTRA_NAMES, KITS, ROLES, STAFF, airShort, armorOf, blastFactor, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, heliPad, isHovering, kitLive, kitUses, kitWorks, medLevelOf, minCrew, minField, roleOf, seatsOf, seatsUsed, skillsOf, slotsOf, stays, toolFor, toolUse, useKit } from '../src/sim/crews';
 import { NORMAL, parseDifficulty } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { airFit, kitBonus, tickDispatch } from '../src/sim/dispatch/dispatcher';
@@ -455,7 +455,8 @@ describe('④ 장비가 없으면 그 일을 맡지 않는다', () => {
     expect(fitFor(sim, s, noz, sup)).toBeCloseTo(sim.responders[noz.rid].skills.fire + 0.15, 9);
     strip(noz.rid, 'hose');
     expect(fitFor(sim, s, noz, sup)).toBe(0); expect(fitFor(sim, s, noz, ovh)).toBe(0);
-    // 위험한 건물 안: 공기호흡기
+    // 위험한 건물 안: 공기호흡기. (R3 3단계) 팀장의 짝은 혼자 서는 기관원이라 위험 실내 일에 따라오지 않는다(F04 — 쓸 수 있는 짝 없음) — 이 시험은 장비 자격만 보므로 진입대원과 짝을 맺어 둔다
+    const ffr = roleAgent(sim, agents('engine'), 'firefighter'); lead.buddy = ffr.rid; ffr.buddy = lead.rid;
     expect(fitFor(sim, s, lead, srch)).toBeGreaterThan(0);
     for (const a of [...agents('patrol'), ...agents('als')]) expect(fitFor(sim, s, a, srch), sim.responders[a.rid].role).toBe(0);
     strip(lead.rid, 'scba'); expect(fitFor(sim, s, lead, srch)).toBe(0);
@@ -618,12 +619,12 @@ describe('⑧ 장비 공백 요청', () => {
     taser.faultKnown = true; expect(capableOf(sim, cop.id, 'arrest')).toBe(false);
     // 표에 없는 일은 누구나
     for (const k of ['search', 'carry', 'treat', 'mitigate', 'extricate', 'traffic'] as WorkKind[]) expect(capableOf(sim, of('officer'), k), k).toBe(true);
-    // 공기: 문턱(45초) 아래로 떨어졌고 예비 공기통도 없으면 진압을 맡을 수 없다 (공기를 세지 않는 장비면 된다)
+    // 공기: 문턱(R1 의 45초 → R3 의 한 통의 50%) 아래로 떨어졌고 예비 공기통도 없으면 진압을 맡을 수 없다 (공기를 세지 않는 장비면 된다)
     const noz = sim.responders[of('nozzle')], air = noz.kit!.find((it) => it.id === 'scba')!, eng = sim.units[noz.unitId];
     expect(air.uses).toBe(sim.tune.airFull); expect(AIR_MIN).toBe(45);
     air.uses = 30; expect(capableOf(sim, noz.id, 'suppress'), '예비 공기통이 있다').toBe(true);
     eng.spareAir = 0; expect(capableOf(sim, noz.id, 'suppress')).toBe(false);
-    air.uses = 45; expect(capableOf(sim, noz.id, 'suppress')).toBe(true);
+    air.uses = AIR_IN_FRAC * sim.tune.airFull; expect(capableOf(sim, noz.id, 'suppress')).toBe(true);      // (R3 3단계) 문턱은 한 통의 50%(AIR_IN_FRAC — R1 의 45초를 넓혔다)
     air.uses = undefined; expect(capableOf(sim, noz.id, 'suppress')).toBe(true);
   });
   it('anyCapable: 순찰차만 있는 현장에는 진압을 맡을 사람이 없고, 펌프차가 오는 중이면 있다', () => {
@@ -660,7 +661,7 @@ describe('⑧ 장비 공백 요청', () => {
     expect(anyCapable(sim, s, I, sup, 'suppression'), '예비 공기통으로 바꾸면 맡는다').toBe(true);
     eng.spareAir = 0;
     expect(anyCapable(sim, s, I, sup, 'suppression'), '공기도 예비도 없다').toBe(false);
-    tanks[0].uses = 45;
+    tanks[0].uses = AIR_IN_FRAC * sim.tune.airFull;      // (R3 3단계) 문턱 = 한 통의 50%
     expect(anyCapable(sim, s, I, sup, 'suppression')).toBe(true);
     for (const it of tanks) it.uses = sim.tune.airFull;
     eng.water = 0; eng.hydrant = false;
@@ -2017,13 +2018,15 @@ describe('⑭ 소모와 고장', () => {
     const fits = (a: FieldAgent, list: WorkItem[]): number[] => list.map((w) => fitFor(sim, s, a, w));
     const full = fits(noz, smoky), fullOther = fits(noz, other);
     for (const f of full) expect(f).toBeGreaterThan(0);
-    tankOf(sim, noz.rid).uses = 45;
+    const th = AIR_IN_FRAC * sim.tune.airFull;      // (R3 3단계) 문턱은 한 통의 50% (R1 의 45초를 넓혔다 — 공기 30% 아래의 탈출 F01 과 0.20 의 간격)
+    tankOf(sim, noz.rid).uses = th;
     expect(airShort(sim, noz.rid)).toBe(false); expect(fits(noz, smoky), '문턱에서는 맡는다').toEqual(full);
-    tankOf(sim, noz.rid).uses = 44.9;
+    tankOf(sim, noz.rid).uses = th - 0.1;
     expect(airShort(sim, noz.rid)).toBe(true); expect(fits(noz, smoky)).toEqual([0, 0, 0, 0, 0]);
     expect(fits(noz, other), '연기 속이 아닌 일은 그대로').toEqual(fullOther);
     expect(smoky.map((w) => fitFor(sim, s, noz, w, true)), '통을 바꾼 뒤라면(지휘관의 어림)').toEqual(full);
-    // 관창이 없는 팀장도 건물 안의 수색·이송·구출은 같다
+    // 관창이 없는 팀장도 건물 안의 수색·이송·구출은 같다 (R3 3단계: 팀장의 짝 기관원은 따라 들어오지 않으므로 공기가 가득한 진입대원과 짝을 맺어 둔다 — F04)
+    const ffm = roleAgent(sim, agents('engine'), 'firefighter'); lead.buddy = ffm.rid; ffm.buddy = lead.rid;
     const leadFull = fits(lead, [srch, carry, ext]);
     for (const f of leadFull) expect(f).toBeGreaterThan(0);
     tankOf(sim, lead.rid).uses = 10;
@@ -2044,9 +2047,13 @@ describe('⑭ 소모와 고장', () => {
     const labelOf = (a: FieldAgent): string | undefined => a.task?.label;
     s.smoke.fill(0); s.fire.fill(0);
     for (const a of s.agents) put(a, s.staging);
-    // 60초 이상이면 나서지 않는다
-    tank.uses = 60; think(sim, s, noz);
+    // 공기 문턱(한 통의 50% — R3 F03) 이상이면 나서지 않는다. 그 아래 60초까지는 바깥에서 손이 비었을 때 0.7 로 미리 바꾼다(R3 F03 의 바탕)
+    tank.uses = AIR_IN_FRAC * sim.tune.airFull; think(sim, s, noz);
     expect(labels(noz)).not.toContain('공기통 교체');
+    noz.task = null; tank.uses = 60; think(sim, s, noz);
+    const sw = noz.candidates.find((c) => c.label === '공기통 교체')!.score;
+    expect(sw).toBeGreaterThan(0.6); expect(sw).toBeLessThan(0.8);      // 0.7 (+ 판단 오차)
+    noz.task = null; for (const b of s.agents) if (b !== noz && b.task && b.task.kind === 'swapAir') b.task = null;
     // 60초 아래: 스스로 고르고, 고르는 그때 알린다
     noz.task = null; tank.uses = 59.9;
     const ev = sim.events.length;
@@ -2181,7 +2188,7 @@ describe('⑭ 소모와 고장', () => {
       expect(w.bad, w.bad.join('\n')).toEqual([]);      // 공기·예비 공기통이 0 밑으로 내려간 적이 없다 (watch)
       swappers += w.held.get('swapAir')?.size ?? 0;
       const count = (re: RegExp): number => sim.events.filter((e) => re.test(e.text)).length;
-      swaps += count(/^공기통 교체 완료/); warned += count(/공기 잔량 60초 미만/);
+      swaps += count(/^공기통 교체 완료/); warned += count(/공기 잔량 60초 미만|^공기 (30|50)% 미만/);      // (R3 3단계) 교본의 공기 문턱(50% 신고·30% 탈출)이 60초보다 먼저 온다 — 그 신고도 공기 잔량 경고다
       // 드러난 고장마다 기록 하나 (같은 대원·같은 장비는 한 번만), 드러나지 않은 고장은 기록이 없다
       let known = 0;
       for (const r of sim.responders) for (const it of r.kit!) if (it.faultKnown) { known++; expect(it.fault, `${r.name} ${it.id}`).toBe(true); }

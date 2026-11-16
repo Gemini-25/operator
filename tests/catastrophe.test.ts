@@ -1194,6 +1194,18 @@ function agentAt(m: Made, rid: number, x: number, y: number): FieldAgent {
   m.sim.responders[rid].judgment = 0.5;
   return makeAgent(m.sim, rid, m.sim.responders[rid].unitId, x, y, m.sim.t, m.sim.rng.fork('ta:' + rid));
 }
+/**
+ * (R3 3단계) 위험 실내 일은 쓸 수 있는 짝이 있어야 맡는다(소방 교본 F04 — 짝 맺기는 부대가 내릴 때 pairUp). 손으로 세운 대원에게 짝을 붙인다:
+ * 같은 현장에 서 있는, 공기호흡기를 멘 다른 소방 대원(혼자 서는 역할 제외) 한 명을 세워 서로 짝으로 맺는다
+ */
+function withMate(m: Made, a: FieldAgent): FieldAgent {
+  const solo = ['engineer', 'ladderOp', 'marksman', 'bombTech', 'emsDriver', 'observer'];
+  const r = m.sim.responders.find((q) => q.id !== a.rid && q.dept === 'fire' && hasKit(m.sim, q.id, 'scba') && solo.indexOf(q.role ?? '') < 0 && !m.s.agents.some((b) => b.rid === q.id))!;
+  const b = agentAt(m, r.id, a.x, a.y);
+  if (m.s.agents.indexOf(a) < 0) m.s.agents.push(a);
+  m.s.agents.push(b); a.buddy = b.rid; b.buddy = a.rid;
+  return a;
+}
 /** 조건에 맞는 걸을 수 있는 칸 (위에서부터 첫 칸) */
 function tileWhere(s: Scene, ok: (x: number, y: number, i: number) => boolean): [number, number] {
   for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) { const i = y * s.w + x; if (staticPass(s.tiles[i]) && s.propAt[i] < 0 && ok(x, y, i)) return [x, y]; }
@@ -1244,6 +1256,7 @@ describe('X6 단계 2: 조짐이 사실로 들어온다 (§10-3)', () => {
           const r = s.region[tileOf(s, a.x, a.y)];
           if (r < 0 || s.regions[r].kind !== 'room' || s.cat.fallen[r] || s.cat.integ[r] < CAT.L1 || cmd.beliefs.get('sign', r)) continue;
           if (seenShare(s, s.regions[r], Math.round(a.x), Math.round(a.y)) < 0.4) continue;      // 넉넉히 30% 를 넘게 보는 자리
+          if (s.regions[r].tiles.some((i) => Math.hypot(i % s.w - cmd.x, ((i / s.w) | 0) - cmd.y) < 7)) continue;      // (R3 3단계) 지휘관이 그 방을 직접 보지 않는 자리 — 곁에서 본 지휘관 자신의 관찰(단계 1)이 무전 보고를 덮지 않게 (짝 규칙으로 대원의 자리가 바뀌어 그런 장면이 골라졌다)
           pick = { s, a, cmd, r }; break;
         }
         if (pick) break;
@@ -1855,7 +1868,7 @@ describe('X6 단계 5: 막는 조치·가스·관제 (§5.7·§5.8·§5.9)', () 
     expect(w).toBeDefined();
     expect(m.s.region[w.tile]).not.toBe(rg);
     expect(workLabel(m.s, w)).toMatch(/가스 재측정/);
-    expect(fitFor(m.sim, m.s, cmd, w)).toBeGreaterThan(0);
+    expect(fitFor(m.sim, m.s, withMate(m, cmd), w)).toBeGreaterThan(0);
     const plain = m.sim.responders.find((r) => r.dept === 'fire' && !hasKit(m.sim, r.id, 'gasMeter'))!;
     expect(fitFor(m.sim, m.s, agentAt(m, plain.id, 3, 17), w)).toBe(0);
     // 가스 조짐 2 이상인데 밸브 위치를 모른다 → 도시가스 차단 요청 (한 사건에 한 번)
@@ -2103,7 +2116,7 @@ describe('X6 단계 6: 무너진 현장 — 잔해 수색 국면 (§6.1)', () =>
     const police = m.sim.responders.find((q) => q.dept === 'police' && !hasKit(m.sim, q.id, 'scba'))!;
     const scba = m.sim.responders.find((q) => q.dept === 'fire' && hasKit(m.sim, q.id, 'scba'))!;
     expect(fitFor(m.sim, m.s, agentAt(m, police.id, 3, 17), searchItem(r.id))).toBe(0);
-    expect(fitFor(m.sim, m.s, agentAt(m, scba.id, 3, 17), searchItem(r.id))).toBeGreaterThan(0);
+    expect(fitFor(m.sim, m.s, withMate(m, agentAt(m, scba.id, 3, 17)), searchItem(r.id))).toBeGreaterThan(0);
   });
 
   it('통째로 무너진 건물 위의 대원은 건물 조짐 3 으로 물러나지 않는다 (무너진 지 30초 뒤). 그 전에는 물러난다', () => {

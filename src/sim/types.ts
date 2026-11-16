@@ -387,7 +387,8 @@ export type WorkKind =
 export type TaskKind = WorkKind | 'retreat' | 'rehab' | 'resupply' | 'board' | 'standby' | 'moveSignal' | 'swapAir'      // swapAir = 공기통 교체 (R1 9절)
   | 'evacuate'      // (X6) 철수 이동: 단계 3 구역 밖, 대개 대기 지점으로 (철수 명령·자기 감각의 임박 조짐 — brain.think 의 의무)
   | 'ashore'      // (R2 1b) 물 위의 대원(헤엄 중·보트 위)이 뭍으로 돌아간다 (brain.think 의 물 위 가드 · 헤엄 사고 뒤)
-  | 'cover' | 'rearm';      // (R3 2단계) 교본 행동: 엄폐(숨기 — 쏘지 않고 엄폐 자리에서 기다림) · 탄약 보급(대기 지점의 차에서 탄약 상자). 실행은 doctrineRun
+  | 'cover' | 'rearm'      // (R3 2단계) 교본 행동: 엄폐(숨기 — 쏘지 않고 엄폐 자리에서 기다림) · 탄약 보급(대기 지점의 차에서 탄약 상자). 실행은 doctrineRun
+  | 'airOut' | 'pairOut' | 'pair';      // (R3 3단계) 교본 행동: 공기 탈출(밖으로 나가 공기통 교체) · 짝 따라 나가기 · 짝 동행(위험 실내 일을 맡은 짝을 따라간다). 실행은 doctrineRun
 
 export interface WorkItem {
   id: number; kind: WorkKind;
@@ -697,7 +698,8 @@ export type MethodId =
   | 'stay' | 'rush' | 'airlift'                                                                         // 응급 (treat · 이송 수단)
   | 'seal' | 'ventFirst' | 'cordon' | 'announce'                                                        // 누출 조치·통제 (mitigate · perimeter)
   | 'air' | 'drone' | 'dog'                                                                             // 야외 수색 (기록 전용·7단계)
-  | 'dive' | 'boom' | 'shieldLine' | 'deconTent' | 'hoseWash';      // (N9 §5.12) 잠수 · 오일펜스 · 방패 저지선(cordon) · 제독 텐트 · 물 세척(decontam). 단계 1 은 표의 줄만 (can = NOT_YET)
+  | 'dive' | 'boom' | 'shieldLine' | 'deconTent' | 'hoseWash'      // (N9 §5.12) 잠수 · 오일펜스 · 방패 저지선(cordon) · 제독 텐트 · 물 세척(decontam). 단계 1 은 표의 줄만 (can = NOT_YET)
+  | 'feel' | 'pulse';      // (R3 3단계 §3.7) 벽 더듬기 수색(search — 열화상 없이 짙은 연기) · 끊어 쏘기(suppress — 용수 30% 아래)
 /** 왜 이 방법을 골랐는가 (기록 문구·보고서 문장이 쓴다). usual = 평소 선택(교본 줄과 무관) */
 export type MethodWhy = 'usual' | 'near' | 'noGear' | 'tooFar' | 'weak' | 'fast' | 'failed' | 'broken' | 'danger' | 'quiet' | 'team'      // R3 가 이 줄 끝에 상태 까닭 여섯을 더한다 (R3 §2.1·§3.7)
   | 'hurt' | 'alone' | 'lowAir' | 'lowAmmo' | 'shaken' | 'tired';      // (R3 1단계) 교본 줄이 1등을 바꾼 까닭 (field/doctrine.ts 의 docWhyMethod — §3.7 의 사상 표)

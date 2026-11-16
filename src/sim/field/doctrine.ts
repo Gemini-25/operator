@@ -26,7 +26,7 @@ import { LIGHT_WORK, bandOf } from './injury';
 import { OPS_ID, regionLevel, zoneLevelAt } from './ops';
 import type { OpsFact } from './ops';      // (X6) 진입 금지 구역의 단계 — 구획 구역과 원 구역(가스 용기 둘레)을 칸으로 (생김새·믿음만)
 import { DOCTRINE } from './doctrine/registry';
-import type { DocCtx, DocEffect, DocFitAns, DocGateAns, DocPhase, DocPick, DocSit, DocState, DocThreat, DoctrineRule } from './doctrine/registry';
+import type { DocCtx, DocEffect, DocFitAns, DocGateAns, DocPair, DocPhase, DocPick, DocSit, DocState, DocThreat, DoctrineRule } from './doctrine/registry';
 import type { Sense } from './methods';
 
 // ───────────────────────── 상수 ─────────────────────────
@@ -44,8 +44,8 @@ export const DOC = {
   BUDDY_NEAR: 2.5,      // 짝이 곁에 있다
   BUDDY_GAP: 0.1,       // 짝이 따라올 수 있는 우선도 차 (§5.2)
   FOLLOW_R: 4,          // 짝이 따라온다 (§5.4 끝)
-  WATCH_R: 8,           // 밖 대기조: 출입구에서 이 거리 안 (§5.6)
-  WATCH_NEED: 2,        // 밖 대기조의 수 (scba 대원을 태운 소방 부대가 오는 중이면 1)
+  WATCH_R: 12,          // 밖 대기조: 출입구에서 이 거리 안 (§5.6 의 8 — 3단계 측정: 화재 현장의 대기 지점이 가장 가까운 출입구에서 7.6~18.6칸(가운데 10)이라 8 이면 대기 지점의 대원이 세어지지 않았다)
+  WATCH_NEED: 1,        // 밖 대기조의 수 (scba 대원을 태운 소방 부대가 오는 중이면 하나 적게). §5.6 의 2 → 1 — §8.4 손잡이 1 의 둘째(3단계 측정: 화재 성공률이 범위 밖)
   STAMINA_NEW: 30,      // 위험 실내 새 일을 맡지 않는 지구력
   COVER_MIN: 3, COVER_MAX: 7.5, COVER_REACH: 12,     // 엄폐 사격 자리: 위협 둘레의 고리, 대원에게서의 거리
   HIDE_R: 4,            // 숨기 자리: 대원 둘레
@@ -162,6 +162,14 @@ export function regionOfWork(s: Scene, a: FieldAgent, w: WorkItem): number {
 }
 /** 위험 실내 일인가 (§3 읽는 법의 HZ — 종류가 수색·이송·대피 안내·구출·누출 조치·잔불 정리이고 대상 구역이 위험 건물 실내) */
 export function hazWork(_sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): boolean { return HZ_WORKS.has(w.kind) && riskyRegion(s, a, regionOfWork(s, a, w)); }
+/**
+ * (3단계) 위험 실내로 들어가는 일인가 — 짝·밖 대기조가 보는 범위 (§5): 위험 실내 일(HZ), 또는 대상 구역이 위험 건물 실내인 진압의 실내 방법
+ * (내부 공격·끊어 쏘기·아직 정하지 않음 — t 는 그 일을 하는 임무. 외부 방어·고가 방수는 밖이다)
+ */
+export function inJob(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, t: { method?: string } | null = null): boolean {
+  if (hazWork(sim, s, a, w)) return true;
+  return w.kind === 'suppress' && riskyRegion(s, a, regionOfWork(s, a, w)) && (t === null || t.method === undefined || t.method === 'interior' || t.method === 'pulse');
+}
 /** 같은 구역이거나 맞닿은 구역 (상자가 1칸 안에서 겹친다) */
 function regionsNear(s: Scene, r1: number, r2: number): boolean {
   if (r1 < 0 || r2 < 0) return false;
@@ -211,13 +219,107 @@ export function buddyOf(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem | null = 
   const rb = reported(b);
   if (rb !== undefined && rb.band >= 2) return null;
   if (w === null) return b;
-  if (hazWork(sim, s, a, w) && (!kitHas(sim, b.rid, 'scba') || airOf(sim, b.rid) < DOC.AIR_IN)) return null;
-  if (bt === null || bk === 'standby' || (bk === 'pair' && b.buddy === a.rid)) return b;
-  const bw = bt.workId >= 0 ? s.board[bt.workId] ?? null : null;
-  if (bw === null) return null;
-  if (bw.priority < w.priority - DOC.BUDDY_GAP) return b;
-  if (hazWork(sim, s, a, bw) && regionsNear(s, regionOfWork(s, a, bw), regionOfWork(s, a, w))) return b;
+  // (3단계) 따라 들어가는 일이면 짝도 그 일을 할 수 있어야 한다: 위험 실내는 공기호흡기(AIR_IN), 확보 전 무장 현장의 수색은 총을 든 경찰. 걸을 수 있는 다친 대원은 가벼운 일만 (조직이 아는 상태 — 명부)
+  const hz = inJob(sim, s, a, w), hot = hotSearch(s, w);
+  if ((hz || hot) && sim.responders[b.rid].status === 'injured') return null;
+  if (hz && (!kitHas(sim, b.rid, 'scba') || airOf(sim, b.rid) < DOC.AIR_IN)) return null;
+  if (hot && (sim.responders[b.rid].dept !== 'police' || gunOf(sim, b.rid) === null)) return null;
+  if (bk === 'pair' && b.buddy === a.rid) return b;
+  // 짝이 맡은 작업판 일: 지금 임무의 일, 손이 비었으면 이미 받은 지시(작업판의 담당자 · 받은 지시 — 공개 지휘 상태). 작업판 밖의 일에 묶여 있으면 따라올 수 없다
+  const bw = committedWork(s, b);
+  if (bw === undefined) return null;
+  // 혼자 서는 역할(기관원·사다리 조작원 …)은 짝 동행을 하지 않는다(G08) — 이미 가까운 위험 실내 일을 맡은 것이 아니면 따라 들어오지 않는다
+  const ro = roleIdOf(sim, b.rid), solo = (hz || hot) && ro !== null && SOLO_OK.has(ro);
+  if (bw === null) return solo ? null : b;
+  if (bw.id === w.id) return b;
+  // 짝의 지금 일이 바깥 일이고 우선도가 0.1 넘게 낮다 — 짝 동행(G08)이 그 일을 놓고 따라온다 (위험 실내 일은 놓지 않는다 — G08 과 같은 조건)
+  if (!solo && !(inJob(sim, s, a, bw, bt) || hotSearch(s, bw)) && bw.priority < w.priority - DOC.BUDDY_GAP) return b;
+  if ((inJob(sim, s, a, bw, bt) || hotSearch(s, bw)) && regionsNear(s, regionOfWork(s, a, bw), regionOfWork(s, a, w))) return b;
   return null;
+}
+/** (3단계) 두 작업의 대상 구역이 같거나 이웃이다 (이 대원의 믿음으로 — 짝이 붙어 일하는 자리) */
+export function nearWork(s: Scene, a: FieldAgent, w1: WorkItem, w2: WorkItem): boolean { return w1.id === w2.id || regionsNear(s, regionOfWork(s, a, w1), regionOfWork(s, a, w2)); }
+/** (3단계) 확보 전 무장 현장의 실내 수색 (P17 — 경찰은 짝과 함께 들어간다) */
+export function hotSearch(s: Scene, w: WorkItem): boolean { return w.kind === 'search' && s.kind === 'armed' && s.secureAt < 0 && w.region >= 0 && s.regions[w.region] !== undefined && s.regions[w.region].indoor; }
+/**
+ * (3단계) 그 대원이 맡은 작업판 일 (동료의 겉·공개 지휘 상태): 지금 임무의 일, 손이 비었으면(임무 없음·대기) 이미 받은 지시(작업판의 담당자·받은 지시 번호).
+ * 손이 비었고 받은 지시도 없으면 null, 작업판 밖의 일(휴식·장비 교체·급수 연결 …)에 묶여 있거나 지금 일이 작업판에서 사라졌으면 undefined
+ */
+function committedWork(s: Scene, b: FieldAgent): WorkItem | null | undefined {
+  const bt = b.task;
+  if (bt !== null && bt.kind !== 'standby') {
+    if (bt.workId < 0) return undefined;
+    const w = s.board[bt.workId];
+    return w !== undefined && (w.status === 'open' || w.status === 'active') ? w : undefined;
+  }
+  if (b.orderWork >= 0) { const w = s.board[b.orderWork]; if (w !== undefined && (w.status === 'open' || w.status === 'active')) return w; }
+  for (let k = 0; k < s.board.length; k++) { const w = s.board[k]; if ((w.status === 'open' || w.status === 'active') && w.assignees.indexOf(b.rid) >= 0) return w; }
+  return null;
+}
+/** (3단계) 대원에게 가장 가까운 출입구 (밖 대기조를 세는 출입구 — §5.6: 넘으려는 문턱에서 가장 가까운 출입구) */
+export function nearestExit(s: Scene, x: number, y: number): Pt {
+  let best: Pt = s.staging, bd = Infinity;
+  for (let k = 0; k < s.exits.length; k++) { const e = s.exits[k], d = dist(x, y, e.x, e.y); if (d < bd) { bd = d; best = e; } }
+  return best;
+}
+/**
+ * (3단계) 짝과 짝의 일 (§5 — DocCtx.pair). w = 대상 작업(없으면 null). st = 그 대원의 상태(쓸 수 있는 짝 st.buddy). 동료의 겉·조직 정보·이 대원의 믿음만 읽는다
+ */
+function pairOf(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem | null, st: DocState): DocPair {
+  const raw = a.buddy !== undefined && a.buddy >= 0 ? agentOf(s, a.buddy, a) : null;
+  const rk: string | null = raw !== null && raw.task !== null ? raw.task.kind : null;
+  const rawOut = raw !== null && (raw.status === 'withdrawn' || rk === 'airOut' || rk === 'pairOut' || rk === 'retreat' || rk === 'evacuate');
+  const forW = w !== null ? buddyOf(sim, s, a, w) : st.buddy;
+  let follows = false;
+  if (raw !== null && raw.status === 'active') {
+    const near = dist(a.x, a.y, raw.x, raw.y) <= DOC.FOLLOW_R;
+    if (rk === 'pair' && raw.buddy === a.rid) follows = near;
+    else if (raw.task !== null && raw.task.workId >= 0 && w !== null) {
+      const bw = s.board[raw.task.workId];
+      if (bw !== undefined && (bw.id === w.id || ((inJob(sim, s, a, bw, raw.task) || hotSearch(s, bw)) && regionsNear(s, regionOfWork(s, a, bw), regionOfWork(s, a, w))))) {
+        // 짝이 곁(4칸)에 있거나, 이미 이웃한 위험 실내에 들어가 있거나, 자기 문턱에서 나를 기다린다(동료의 겉 — 판단 지점의 기다림): 둘이 함께 들어간다.
+        // (3단계 측정: 이웃한 방을 맡은 짝 둘이 서로 다른 문턱에서 서로를 기다리다 둘 다 상한으로 일을 놓았다)
+        follows = near || riskyAt(s, a, raw.x, raw.y) || (raw.task.gateId === 'interiorEntry' && (raw.task.gateAt ?? -1) >= 0);
+      }
+    }
+  }
+  const b = st.buddy;
+  const rookie = b !== null && sim.responders[b.rid].experience < DOC.ROOKIE;
+  let job: DocPair['job'] = null;
+  if (b !== null && b.task !== null && b.task.workId >= 0) {
+    const bw = s.board[b.task.workId];
+    if (bw !== undefined && (bw.status === 'open' || bw.status === 'active')) {
+      const hz = inJob(sim, s, a, bw, b.task), hot = hotSearch(s, bw);
+      if (hz || hot) job = { w: bw, p: bw.priority, hz, hot };
+    }
+  }
+  const r = sim.responders[a.rid];
+  const canFollow = job !== null && r.status !== 'injured' && st.band < 1 && (!job.hz || (st.hasScba && st.air >= DOC.AIR_IN)) && (!job.hot || (r.dept === 'police' && st.gun !== null));
+  const t = a.task;
+  let myP = -1, myIn = false;
+  if (t !== null && t.kind !== 'standby') { const mw = t.workId >= 0 ? s.board[t.workId] : undefined; myP = mw !== undefined ? mw.priority : 9; myIn = mw !== undefined && (inJob(sim, s, a, mw, t) || hotSearch(s, mw)); }
+  // G08 의 예외 (3단계 측정): 짝 곁(같은·이웃 구역)에 내가 맡을 빈 위험 실내 일이 있으면 따라가지 않고 그 일을 맡는다 — 둘 다 일하면서 짝이 따라온다(§5.4 끝)
+  // (따라만 가면 관창 둘이 하나가 되고, 유압 구조대원 둘이 짝인 구조 공작차는 구출을 맨손의 다른 대원이 맡았다)
+  // 짝이 문턱에서 나를 기다리고 있으면(판단 지점 interiorEntry) 예외 없이 따라간다 — 곁의 일을 맡으러 가면 짝은 20초 뒤 일을 놓고 다음 일에서 또 기다렸다(극한 교대에 일곱 번)
+  const waiting = b !== null && b.task !== null && b.task.gateId === 'interiorEntry' && (b.task.gateAt ?? -1) >= 0;
+  const alt = job !== null && job.hz && canFollow && myP < 0 && !waiting && pairAlt(sim, s, a, job.w);
+  return { raw, rawOut, forW, follows, rookie, job, canFollow, myP, myIn, alt };
+}
+/**
+ * (3단계 — 측정이 찾은 것, G08 의 예외·짝 동행의 끝) 짝의 위험 실내 일 jw 와 같은·이웃 구역에 이 대원이 맡을 수 있는 빈 위험 실내 일이 있다:
+ * 수색·진압·잔불 정리·구출·이송(진압·잔불 정리는 관창을 든 사람만), 자리가 남았고 보류 중이 아님 — 짝의 진압·이송에 남은 둘째 자리도 센다
+ * (구조 공작차의 유압 구조대원 둘이 짝이라 한 사람이 따라만 가면 구출을 맨손의 다른 대원이 맡았다 — tests/crews.test.ts ⑤).
+ * 그 일을 맡으면 둘 다 일하면서 짝이 따라온다(§5.4 끝의 buddyFollowing). 따라만 가면 관창 둘이 하나가 되어 진압이 절반으로 느려졌다.
+ */
+export function pairAlt(sim: Sim, s: Scene, a: FieldAgent, jw: WorkItem): boolean {
+  const hose = kitHas(sim, a.rid, 'hose');
+  for (let k = 0; k < s.board.length; k++) {
+    const w2 = s.board[k];
+    if ((w2.status !== 'open' && w2.status !== 'active') || w2.assignees.length >= w2.max || w2.assignees.indexOf(a.rid) >= 0 || w2.holdUntil > sim.t) continue;
+    if ((w2.kind !== 'search' && w2.kind !== 'suppress' && w2.kind !== 'overhaul' && w2.kind !== 'extricate' && w2.kind !== 'carry') || ((w2.kind === 'suppress' || w2.kind === 'overhaul') && !hose)) continue;
+    if (inJob(sim, s, a, w2) && nearWork(s, a, w2, jw)) return true;
+  }
+  return false;
 }
 /**
  * 밖 대기조의 수 (§5.6): 들어서려는 출입구 ex 에서 8칸 안의, 위험 건물 실내 밖에 선 다른 활동 대원 가운데 공기호흡기를 멨고 공기가 AIR_IN 이상이며
@@ -233,7 +335,7 @@ export function outsideWatch(sim: Sim, s: Scene, a: FieldAgent, ex: Pt): number 
     if (bk !== null && WATCH_BUSY.has(bk)) continue;
     if (!kitHas(sim, b.rid, 'scba') || airOf(sim, b.rid) < DOC.AIR_IN) continue;
     if (riskyAt(s, a, b.x, b.y) || dist(b.x, b.y, ex.x, ex.y) > DOC.WATCH_R) continue;
-    if (b.task !== null && b.task.workId >= 0) { const bw = s.board[b.task.workId]; if (bw && hazWork(sim, s, a, bw)) continue; }
+    if (b.task !== null && b.task.workId >= 0) { const bw = s.board[b.task.workId]; if (bw && inJob(sim, s, a, bw, b.task)) continue; }
     n++;
   }
   return n;
@@ -251,7 +353,7 @@ export function copUsable(sim: Sim, a: FieldAgent, b: FieldAgent): boolean {
 /** 밖 대기조의 필요한 수: 2, 같은 사건으로 공기호흡기 대원을 태운 소방 부대가 오는 중이면 1 (조직 정보) */
 export function watchNeed(sim: Sim, s: Scene): number {
   const I = sim.incidents[s.incidentId];
-  for (let k = 0; k < I.assigned.length; k++) { const u = sim.units[I.assigned[k]]; if ((u.state === 'enroute' || u.state === 'turnout') && u.dept === 'fire' && crewHas(sim, u, 'scba')) return 1; }
+  for (let k = 0; k < I.assigned.length; k++) { const u = sim.units[I.assigned[k]]; if ((u.state === 'enroute' || u.state === 'turnout') && u.dept === 'fire' && crewHas(sim, u, 'scba')) return DOC.WATCH_NEED - 1; }
   return DOC.WATCH_NEED;
 }
 
@@ -451,12 +553,15 @@ export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report
     pack.n++; if (dist(a.x, a.y, b.x, b.y) <= DOC.PACK_R) pack.near++; else pack.far++;
   }
   const kf = kitFnsOf(sim, a);
+  let pr: DocPair | undefined, wt: { n: number; need: number } | undefined;      // (3단계) 짝·밖 대기조 — 줄이 처음 물을 때 한 번 잰다
   return {
     sim, s, a, u: sim.units[a.unitId], dept: docDeptOf(sim, rid), role, group: groupOf(sim, rid),
     mode, w, hz, wRisky, light, st, sit, sense, dng,
     has: kf.has, kit: kf.kit,
     m: undefined, see: undefined,
     tg, pack, dngSign, hideSpot: mode === 'self' && tg !== null ? hideOf(s, a, tg) : NO_HIDE, solo: role !== null && SOLO_OK.has(role),
+    pair: () => (pr ??= pairOf(sim, s, a, w, st)),
+    watch: () => (wt ??= { n: outsideWatch(sim, s, a, nearestExit(s, a.x, a.y)), need: watchNeed(sim, s) }),
   };
 }
 /** (2단계) 그 용의자의 믿음을 위협의 모양으로 (모르면 undefined) */

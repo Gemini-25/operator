@@ -42,7 +42,7 @@ export const KNOBS: { key: keyof Difficulty; name: string; low: string; high: st
   { key: 'frequency', name: '사건 빈도', low: '드묾', high: '쉴 틈 없음', harderWhen: 'high', desc: '사건 사이 간격, 교대당 사건 수, 동시에 진행되는 사건 수' },
   { key: 'severity', name: '사건 심각도', low: '가벼움', high: '대형', harderWhen: 'high', desc: '규모 분포, 숨은 위험(잔해·잠긴 문·가스·누출), 부상 악화 속도, 화재 확산 속도' },
   { key: 'threat', name: '용의자 위협', low: '약함', high: '중무장', harderWhen: 'high', desc: '무장 사건 비중, 총격범 비중, 용의자 수·공격성·사격 실력, 숨은 공범, 도주 시점' },
-  { key: 'equipment', name: '대원 장비 상태', low: '불량', high: '최상', harderWhen: 'low', desc: '차량 주행 속도, 펌프 상태와 마모, 용수 탱크, 구조 장비, 의료 장비, 방호 장비, 출근 시 체력, 개인 장비의 고장, 공기통 용량, 탄약 상자' },
+  { key: 'equipment', name: '대원 장비 상태', low: '불량', high: '최상', harderWhen: 'low', desc: '차량 주행 속도, 펌프 상태와 마모, 용수 탱크, 구조 장비, 의료 장비, 방호 장비, 출근 시 체력, 개인 장비의 고장, 공기통 용량, 탄약 상자, 예비 펌프' },
   { key: 'info', name: '신고 신뢰도', low: '엉망', high: '정확', harderWhen: 'low', desc: '침착한 신고자 비율, 위치를 틀리게 말할 확률, 허위·오인 신고와 비긴급 전화의 빈도, 목격자 정확도' },
   { key: 'resources', name: '부대 규모', low: '12팀', high: '22팀', harderWhen: 'low', desc: '출동 부대 수 (12 · 15 · 19 · 21 · 22팀)와 인원. 경찰·소방·구조·특수 네 분야에 3~6팀씩이고, 3 이 기본 편성이다. 1·2 는 최소 인원(펌프차 3명, 구조대 4명, 특공대 4명 …)으로 나간다. 인근 도시 지원 횟수도 함께 늘어난다 (2 · 2 · 3 · 4 · 5회).' },
   { key: 'traffic', name: '교통 상황', low: '한산', high: '극심', harderWhen: 'high', desc: '도로의 교통량, 정체·공사·고장 차량·낙하물의 빈도, 골목의 불법 주차' },
@@ -61,6 +61,7 @@ export interface Tuning {
   airFull: number;             // 공기호흡기 한 통의 공기(초) — 연기 속에서만 준다
   kitFault: number;            // 개인 장비 하나(고장 추첨을 받는 종류)가 이번 교대에 고장 나 있을 확률
   ammoBox: number;             // (R3 §2.9) 순찰차·폭발물 처리반에 실은 탄약 상자 (기동대 +1, 특공 +2) — 한 상자 = 한 사람의 총기를 가득
+  sparePump: number;           // (R3 §3.2 F10) 펌프를 단 부대(물탱크가 있는 부대)에 실은 예비 펌프 — 펌프 고장 때 하나를 쓴다 (지금까지는 무제한)
   // 신고
   personaWeights: [number, number, number, number, number]; witnessAcc: number; wrongAddressProb: number; falseAlarmProb: number; nuisanceGap: number;
   // 부대
@@ -113,6 +114,7 @@ export function tuningOf(d: Difficulty): Tuning {
     airFull: [220, 250, 280, 300, 320][e],
     kitFault: [0.12, 0.07, 0.03, 0.015, 0.005][e],
     ammoBox: [1, 1, 2, 2, 3][e],
+    sparePump: [0, 1, 1, 1, 2][e],
 
     //                 침착   공황   혼란   일부   오인
     personaWeights: ([[0.14, 0.26, 0.2, 0.18, 0.22], [0.22, 0.25, 0.17, 0.18, 0.18], [0.3, 0.24, 0.15, 0.17, 0.14], [0.42, 0.22, 0.12, 0.15, 0.09], [0.56, 0.18, 0.09, 0.12, 0.05]] as [number, number, number, number, number][])[i],

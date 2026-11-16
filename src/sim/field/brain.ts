@@ -143,6 +143,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
     a.planT = sim.t + (a.task && a.task.kind !== 'standby' && a.task.kind !== 'sizeup' ? 3.4 : 2);
   }
   if (I.phase === 'closed' && !sim.units[a.unitId].boardOrder) sim.units[a.unitId].boardOrder = 'release';
+  rebuddy(sim, s, a);      // (R3 §5.3 — 0번) 짝이 없거나 잃었으면 다시 맺는다 (혼자 서는 역할은 하지 않는다)
   const u = sim.units[a.unitId];
   const cur = a.task;
 
@@ -243,7 +244,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
   //    (공기통을 바꾸는 중에는 이 둘도 내지 않고, 이 둘을 하는 중에는 공기통 교체를 내지 않는다 — 시작한 것을 끝낸 뒤 다음 것을 한다)
   const panel = hasKit(sim, a.rid, 'pumpPanel');
   const pumpMine = panel || !pumpOperatorOn(sim, s, a.unitId);
-  if (pumpMine && a.equipIssue === 'pump' && (!cur || cur.kind !== 'resupply') && !swapping) {
+  if (pumpMine && a.equipIssue === 'pump' && (!cur || cur.kind !== 'resupply') && !swapping && (u.sparePump === undefined || u.sparePump > 0)) {      // (R3 F10) 예비 펌프가 남았을 때만 (0 이면 지휘관이 진압 부대 교체를 부른다 — CF3)
     const someoneFixing = s.agents.some((b) => b !== a && b.unitId === a.unitId && b.task && b.task.kind === 'resupply');
     if (!someoneFixing) opts.push({ label: '장비 교체 (예비 펌프)', score: 0.84, apply: () => {
       setTask(sim, s, a, 'resupply', '장비 교체');
@@ -271,10 +272,12 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
   //      후퇴 중이거나 지쳐서 물러나는 중(체력 40 까지의 붙잡기)에는 내지 않는다 — 둘 다 대기 지점으로 가는 길이고, 닿은 뒤에 바꾼다
   //      (점수가 비슷해 후퇴·휴식과 교체를 오가며 같은 말을 되풀이했다)
   const tied = cur !== null && (cur.kind === 'swapAir' || cur.kind === 'resupply' || cur.kind === 'hookup' || cur.kind === 'retreat' || (cur.kind === 'rehab' && r.stamina < 40));
-  if (hasKit(sim, a.rid, 'scba') && kitUses(sim, a.rid, 'scba') < AIR_LOW && !tied && a.carrying === -1 && sim.t >= a.equipRetryAt) {
+  // (R3 F03) 공기가 위험 실내 일의 문턱(한 통의 50% — crews.airShort) 아래인데 바깥에서 손이 비었으면 미리 바꾼다 (0.7 — 60초 아래의 교체보다 낮게)
+  const airEarly = kitUses(sim, a.rid, 'scba') >= AIR_LOW && (!cur || cur.kind === 'standby') && airShort(sim, a.rid) && !indoorAt(s, a);
+  if (hasKit(sim, a.rid, 'scba') && (kitUses(sim, a.rid, 'scba') < AIR_LOW || airEarly) && !tied && a.carrying === -1 && sim.t >= a.equipRetryAt) {
     let taken = 0;
     for (const b of s.agents) if (b !== a && b.unitId === a.unitId && b.status === 'active' && b.task && b.task.kind === 'swapAir') taken++;
-    if ((u.spareAir ?? 0) > taken) opts.push({ label: '공기통 교체', score: s.smoke[tileOf(s, a.x, a.y)] > 0.25 ? 0.95 : 0.9, apply: () => {
+    if ((u.spareAir ?? 0) > taken) opts.push({ label: '공기통 교체', score: airEarly ? 0.7 : s.smoke[tileOf(s, a.x, a.y)] > 0.25 ? 0.95 : 0.9, apply: () => {
       setTask(sim, s, a, 'swapAir', '공기통 교체');
       emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: '공기통을 교체하러 대기 지점으로 갑니다.' });
     } });
@@ -334,6 +337,10 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
 //    (import 를 파일 끝에 둔 것은 위의 import 묶음을 다른 묶음이 함께 고치고 있어서다) ──
 import { DOC_DUTY_TASKS, docAct, docDrop, docDuty, docRetreat } from './doctrine';
 import { docBegin, docContinue, docNote, recordDoc, selfReport, splitBegin, splitSettle } from './doctrineRun';
+import { rebuddy } from './doctrineRun';      // (R3 3단계) 짝 다시 맺기
+import { airShort } from '../crews';      // (R3 3단계 F03) 공기 문턱 (한 통의 50%)
+/** (R3 3단계) 선 자리가 실내 구역인가 (생김새 — 미리 하는 공기통 교체는 바깥에서만) */
+const indoorAt = (s: Scene, a: FieldAgent): boolean => { const rg = s.region[tileOf(s, a.x, a.y)]; return rg >= 0 && s.regions[rg] !== undefined && s.regions[rg].indoor; };
 import { XK } from './executor';
 import { senseOf } from './methodRun';
 import { onWater } from './methods';      // (R2 1b) 물 위의 대원 가드

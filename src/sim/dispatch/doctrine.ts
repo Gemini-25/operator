@@ -19,6 +19,9 @@ export const D2_EOD = -40;
  */
 export function dispatchPref(_sim: Sim, I: Incident, u: Unit, need: keyof Needs): { add: number; rule: string | null } {
   if (need === 'law' && u.kind === 'eod' && !(I.assessment && (I.assessment.needs.eod ?? 0) > 0)) return { add: D2_EOD, rule: 'D2' };
+  // (3단계) D4: 화재이고 위치 신고의 건물 종류가 2층일 몫 ≥ 0.5 → 진압 수요에 사다리차 +25 · D5: 바닷가가 아닌 수난 → 구조 수요에 구조 공작차 +8 (R1 kitBonus 의 +12 에 더해 +20)
+  if (need === 'suppression' && u.kind === 'ladder' && I.assessment && I.assessment.type === 'fire' && tallClaim(I)) return { add: D4_LADDER, rule: 'D4' };
+  if (need === 'rescue' && u.kind === 'rescue' && I.assessment && I.assessment.type === 'water' && I.reportedNode >= 0 && !coastal(_sim, I.reportedNode)) return { add: D5_RESCUE, rule: 'D5' };
   return { add: 0, rule: null };
 }
 /** 인질극 이름표 (관제가 붙이는 이름 — analyst 의 label) */
@@ -105,4 +108,17 @@ export function chaseRoles(sim: Sim, I: Incident): Map<number, ChaseRole> {
     out.set(u.id, { role, node: role === 'block' ? pred : known });
   }
   return out;
+}
+
+// ───────────────────────── (3단계) D4 · D5 ─────────────────────────
+import { KIND_SCENE } from '../cityPlan';
+import { coastal } from '../resources';
+/** D4: 2층 화재의 사다리차 가산 · 건물 종류의 2층 몫 문턱 (cityPlan.KIND_SCENE[…].tall — 지도에서 공개된 건물 종류의 성질) */
+export const D4_LADDER = 25, D4_TALL = 0.5;
+/** D5: 바닷가가 아닌 수난의 구조 공작차 가산 (R1 kitBonus 의 수난 +12 와 합쳐 +20) */
+export const D5_RESCUE = 8;
+/** 위치 신고(관제가 받은 말)의 건물 종류가 2층일 몫이 문턱 이상인가 */
+function tallClaim(I: Incident): boolean {
+  for (const c of I.claims) if (c.topic === 'location' && c.placeKind && c.placeKind !== 'intersection') { const k = KIND_SCENE[c.placeKind]; if (k !== undefined && k.tall >= D4_TALL) return true; }
+  return false;
 }

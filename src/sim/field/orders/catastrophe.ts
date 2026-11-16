@@ -103,7 +103,46 @@ export const DANGER_RULES: DangerRule[] = [
     for (const r of cx.indoor) { const b = cx.ops.burnSince[r]; if (cx.fire(r) >= 0.6 && b !== undefined && cx.sim.t - b > ENGULF_T) { n++; t = Math.max(t, b + ENGULF_T); } }
     if (n >= ENGULF_SHARE * cx.indoor.length - 1e-9) hit(out, 'bldg', 'bldg', cx.liveCas(cx.indoor) ? 2 : 3, cx.indoor, '건물 대부분이 불길에 휩싸임', t);
   } },
+  // (R3 CF5 — 소방 교본) 측정기 없는 가스: 가스 조짐이 냄새뿐(미확인 — 측정기가 없으면 단계 1 만 안다)이고 현장·오는 부대에 측정기를 든 대원이 없으며 같은 구역·이웃 구역의 불 믿음 ≥ 0.1 → 단계 2 (새 진입 금지).
+  //   위의 가스 줄(1·2 → 1)보다 한 단계 높다 — 불씨 곁의 잴 수 없는 가스에는 들어가지 않는다
+  { id: 'CF5', run: (cx, out) => {
+    let meter: boolean | null = null;
+    for (const f of signsOf(cx, 'gas')) {
+      const v = f.value as SignBelief;
+      if (f.verified || v.region < 0 || v.level < 1) continue;
+      let fire = cx.fire(v.region) >= CF5_FIRE;
+      if (!fire) for (const nb of regionNbrs(cx.s)[v.region] ?? []) if (cx.fire(nb) >= CF5_FIRE) { fire = true; break; }
+      if (!fire) continue;
+      meter ??= meterOn(cx);
+      if (!meter) hit(out, `gas:${v.region}`, 'gas', 2, [v.region], '측정기 없는 가스와 불씨', f.t);
+    }
+  } },
+  // (R3 CF6 — 소방 교본) 예비 공기 없는 센 불: 센 불(믿음 ≥ 0.5)이 100초 넘음 + 현장 공기호흡기 부대의 예비 공기통 합 0 → 단계 1 (위의 150초 줄보다 50초 이르다 — 교체할 공기가 없으면 진입 인원을 먼저 줄인다)
+  { id: 'CF6', run: (cx, out) => {
+    let dry: boolean | null = null;
+    for (const k in cx.ops.burnSince) {
+      const r = +k, el = cx.sim.t - cx.ops.burnSince[k];
+      if (el <= CF6_BURN) continue;
+      dry ??= noSpareAir(cx);
+      if (dry) hit(out, `struct:${r}`, 'struct', 1, [r], '예비 공기 없는 장시간 연소', cx.ops.burnSince[k] + CF6_BURN);
+    }
+  } },
 ];
+/** (R3 CF5·CF6) 문턱: 가스 곁 불씨의 불 믿음 · 예비 공기 없는 센 불의 초 */
+const CF5_FIRE = 0.1, CF6_BURN = 100;
+/** (R3 CF5) 이 사건의 현장·오는 부대에 측정기(알려진 고장 아님)를 든 대원이 있는가 (조직 정보) */
+function meterOn(cx: DangerCtx): boolean {
+  const I = cx.sim.incidents[cx.s.incidentId];
+  for (const uid of I.assigned) { const u = cx.sim.units[uid]; if (((u.state === 'onscene' && u.incidentId === I.id) || u.state === 'enroute' || u.state === 'turnout') && crewHas(cx.sim, u, 'gasMeter')) return true; }
+  return false;
+}
+/** (R3 CF6) 현장의 공기호흡기 부대(대원이 공기호흡기를 든 부대)가 있고 그 예비 공기통의 합이 0 이다 (조직 정보) */
+function noSpareAir(cx: DangerCtx): boolean {
+  const I = cx.sim.incidents[cx.s.incidentId];
+  let any = false, spare = 0;
+  for (const uid of I.assigned) { const u = cx.sim.units[uid]; if (u.state !== 'onscene' || u.incidentId !== I.id || !crewHas(cx.sim, u, 'scba')) continue; any = true; spare += u.spareAir ?? 0; }
+  return any && spare === 0;
+}
 
 /** 구역 키의 이름 (기록 문구) */
 function zoneName(s: Scene, h: { key: string; kind: NoGoZone['kind']; regions: number[]; x: number; y: number }): string {
@@ -257,6 +296,7 @@ registerOrders((sim, s, I, a, k) => {
   extClose(sim, s, I, a, k, ops);
   // 6) 단계 1: 그 구역의 진압·수색은 한 사람씩 (동시에 들어가는 인원을 2명으로)
   for (const h of hits.values()) if (h.level === 1) for (const w of s.board) if ((w.kind === 'suppress' || w.kind === 'search') && (w.status === 'open' || w.status === 'active') && h.regions.indexOf(w.region) >= 0) w.max = 1;
+  for (const h of hits.values()) if (h.level === 1 && h.rule !== undefined) docZone(sim, I, h, -1);      // (R3 CF6) 교본 줄이 낸 단계 1 (구역 기록이 없다 — 30초 안이면 한 줄로 잇는다)
   // 7) 막는 조치 (§5.8)
   prevention(sim, s, I, a, k, ops, hits);
   // 8) 진입 금지 구역 안의 열린 작업을 거둔다 (문이 새로 만들지 않는다). 업고 나오는 중인 운반·동료 구조는 거두지 않는다
@@ -385,7 +425,7 @@ function syncZones(sim: Sim, s: Scene, I: Incident, a: FieldAgent, k: CommandKit
     const nz: NoGoZone = { key: h.key, kind: h.kind, level: h.level as 2 | 3, regions: h.regions.slice(), x: h.x, y: h.y, r: h.r, since: sim.t, why: h.why, ev: -1 };
     if (h.level >= 3) { if (!withdraw(sim, s, I, a, k, ops, wk, nz, h)) continue; }
     ops.zones.push(nz); bumpZones(ops);
-    if (nz.level === 2) emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 2, causes: [I.lastEvent], text: `${zoneName(s, nz)} 진입 금지 — ${h.why}. 허락된 일만 들어간다.` });
+    if (nz.level === 2) { const zev = emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 2, causes: [I.lastEvent], text: `${zoneName(s, nz)} 진입 금지 — ${h.why}. 허락된 일만 들어간다.` }); if (h.rule !== undefined) docZone(sim, I, h, zev); }
     onNewZone(sim, s, I, a, k, ops, wk, nz);
   }
   // 낮아졌거나 사라진 구역: 다시 들어가는 조건 (§5.7)
@@ -498,6 +538,7 @@ function withdraw(sim: Sim, s: Scene, I: Incident, a: FieldAgent, k: CommandKit,
 function raise(sim: Sim, s: Scene, I: Incident, a: FieldAgent, k: CommandKit, ops: OpsState, wk: OpsWork, z: NoGoZone, h: DangerHit): void {
   if (h.level >= 3 && !withdraw(sim, s, I, a, k, ops, wk, z, h)) return;
   z.level = h.level as 2 | 3; z.why = h.why; bumpZones(ops);
+  if (h.rule !== undefined) docZone(sim, I, h, z.ev >= 0 ? z.ev : I.lastEvent);      // (R3 CF5·CF6) 교본 줄이 단계를 올렸다
   ops.quietSince = sim.t;
   onNewZone(sim, s, I, a, k, ops, wk, z);
 }
@@ -852,3 +893,9 @@ registerBlocker((sim, s, a) => {
   if (cutoffAt(a) < 0) for (const f of a.beliefs.list('sign')) { const v = f.value as SignBelief; if (v.kind === 'gas' && v.level >= 2 && v.region >= 0 && f.verified && sim.t - f.t <= 90) return true; }
   return false;
 });
+
+// ── (R3 3단계 — 소방 교본 CF5·CF6) 위험 단계 표의 교본 줄: 측정기(조직 정보)·예비 공기통(조직 정보), 그 줄 때문에 구역이 생기거나 단계가 오른 때의 기록 ──
+import { crewHas } from '../gear';
+import { recordDoc } from '../doctrineRun';
+/** 교본 줄(DangerHit.rule — dangerMap 이 적는다. 같은 키의 X6 줄이 같거나 높은 단계를 내면 X6 줄이 이긴다)이 낸 단계를 기록한다 (ev = 그 구역 기록, 없으면 -1) */
+function docZone(sim: Sim, I: Incident, h: DangerHit, ev: number): void { recordDoc(sim, I, null, h.rule!, 'cmd', { tgt: h.key }, ev); }

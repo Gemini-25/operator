@@ -86,6 +86,7 @@ export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
     s.agents.push(a);
     r.incidentsWorked++;
   });
+  pairUp(sim, s, u);      // (R3 §5.1) 짝 맺기 — 부대가 내린 뒤 한 번 (역할 쌍, 최소 인원 부대는 min 열)
   // 누가 내렸는가: 실제로 내린 사람의 첫째(역할과 이름)와 나머지 인원. 한 명이면 이름만
   const names = crew.length > 1 ? `${roleOf(sim, crew[0]).name} ${sim.responders[crew[0]].name} 외 ${crew.length - 1}명` : crew.length ? sim.responders[crew[0]].name : '';
   const took = I.reportedAt >= 0 ? Math.round(sim.t - I.reportedAt) : 0;
@@ -424,3 +425,6 @@ export function tickScene(sim: Sim, s: Scene): void {
   // 지상 대원이 없으면 여기서 곧바로 보관되고, 다음 틱부터는 5)번이 돌지 않아 상공의 헬기가 닫힌 사건 위에 남는다
   if (I.phase === 'closed' && s.agents.every((a) => a.status === 'left') && !sim.units.some((u) => u.state === 'onscene' && u.incidentId === I.id)) s.archived = true;
 }
+
+// (R3 3단계) 짝 맺기 — 부대가 내린 뒤 한 번 (doctrineRun.pairUp)
+import { pairUp } from './doctrineRun';

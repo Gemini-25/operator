@@ -33,7 +33,9 @@ import { crewHas, gunOf, groupOf, kitHas, kitQty, roleIdOf } from '../src/sim/fi
 import { los, staticPass } from '../src/sim/field/grid';
 import { unitArrived } from '../src/sim/field/sceneManager';
 import { createIncident } from '../src/sim/incidents';
-import { STAFF, minCrew } from '../src/sim/crews';
+import { AIR_IN_FRAC, STAFF, minCrew } from '../src/sim/crews';
+import { F_AIR_IN, F_AIR_OUT } from '../src/sim/field/doctrine/fire';
+import { tileOf } from '../src/sim/field/grid';
 import type { CrewBelief, DocDept, FieldAgent, Incident, IncidentType, MethodUse, Scene, UnitKind, WorkItem, WorkKind } from '../src/sim/types';
 
 // ───────────────────────── 도구 ─────────────────────────
@@ -73,6 +75,13 @@ const STAGE1 = ['G01', 'G02', 'G02b', 'G03', 'G04'];
 const STAGE2 = [...STAGE1, 'P01', 'P02', 'P03', 'P05', 'P07', 'P08', 'P09', 'P10', 'P11', 'P12', 'P14', 'P15', 'P16', 'P22'];
 /** 단계 2 까지의 지휘·관제·추격 줄 */
 const CMD2 = ['CP1', 'CP2', 'CP3', 'CP4', 'D3', 'D6', 'D7', 'D2'];
+/** 단계 3 (소방)이 더한 줄 — 공통 G08 은 공통 파일 끝, P17·P17b 는 경찰 파일 끝, F 줄은 소방 파일 (등록 순서) */
+const FIRE3 = ['F01', 'F02', 'F03', 'F03b', 'F04', 'F04b', 'F04c', 'F05', 'F05b', 'F06', 'F07', 'F08', 'F09', 'F12', 'F13', 'F14', 'F16'];
+const STAGE3 = [...STAGE1, 'G08', ...STAGE2.slice(STAGE1.length), 'P17', 'P17b', ...FIRE3];
+/** 단계 3 까지의 지휘·관제 줄 (소방 표의 지휘 줄은 경찰 줄 다음, 관제 D2 앞) */
+const CMD3 = ['CP1', 'CP2', 'CP3', 'CP4', 'D3', 'D6', 'D7', 'CF1', 'CF2', 'CF3', 'CF4', 'CF5', 'CF6', 'CF7', 'D5', 'D4', 'D2'];
+/** 다른 분야의 단계(4 의료·5 특수)가 나란히 줄을 더해도 깨지지 않게: 이 단계까지의 줄만 골라 순서를 본다 */
+const mine = (ids: string[], known: string[]): string[] => ids.filter((id) => known.indexOf(id) >= 0);
 /** 자기 신고를 손으로 넣는다 (그 대원의 믿음 — 남이 아는 그 대원의 몸) */
 const report = (sim: Sim, a: FieldAgent, v: Partial<CrewBelief>): void => { a.beliefs.merge(mkFact('crew', a.rid, { band: 0, air: 0, ammo: 0, shaken: false, t: sim.t, ...v }, '시험', sim.t, 1, true, '시험')); docForget(a); };
 /** 엔진의 갈래를 모두 지나가는 시험용 줄 (번호 G91~G98 — 표에 없는 번호, 시험이 끝나면 지운다) */
@@ -147,12 +156,12 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
   it('같은 시드 두 번의 report.hash 가 같다 — 보통 교대, fire/std·armed/hostage 강제', () => {
     for (let q = 0; q < cases.length; q++) expect(shift(cases[q][0], cases[q][1]).report!.hash, cases[q][0]).toBe(first[q].report!.hash);
   });
-  it('단계 2: 줄은 공통 다섯과 경찰 열넷, 지휘·관제 줄은 경찰 일곱과 D2. 의무(duty) 줄은 아직 없다. 3단계 뒤의 상태 칸(짝·예비 펌프·분류·차량 차단)은 비어 있다', () => {
-    expect(DOCTRINE.map((r) => r.id)).toEqual(STAGE2);
-    expect(CMD_ROWS.map((c) => c.id)).toEqual(CMD2);
-    expect(DOC_DEPTS_DONE).toEqual(['police']);
-    for (const h of ['fit', 'method', 'act', 'gate'] as const) expect(hasDoc(h), h).toBe(true);
-    expect(hasDoc('duty')).toBe(false);
+  it('단계 3: 줄은 공통 여섯·경찰 열여섯·소방 열일곱, 지휘·관제 줄은 경찰 일곱·소방 아홉·D2. 의무(duty) 줄이 생겼다(F01·F02). 짝을 맺고 펌프차에 예비 펌프가 있다. 뒤 단계의 상태 칸(분류·차량 차단)은 비어 있다', () => {
+    expect(mine(DOCTRINE.map((r) => r.id), STAGE3)).toEqual(STAGE3);
+    expect(mine(CMD_ROWS.map((c) => c.id), CMD3)).toEqual(CMD3);
+    expect(DOC_DEPTS_DONE).toEqual(expect.arrayContaining(['police', 'fire']));
+    for (const h of ['fit', 'method', 'act', 'gate', 'duty'] as const) expect(hasDoc(h), h).toBe(true);
+    let paired = 0;
     let docs = 0, sig = 0, split = 0;
     for (const sim of first) {
       const sp = sim.report!.docSplit;
@@ -162,27 +171,32 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
         if (!I.pursuit) { expect(I.trackBy).toBeUndefined(); expect(I.reportedPrev).toBeUndefined(); }
         for (const d of I.docs ?? []) {
           docs++;
-          expect(['fit', 'method', 'act', 'gate', 'cmd', 'dispatch', 'chase']).toContain(d.hook);
-          expect([...STAGE2, ...CMD2]).toContain(d.rule);
-          if (d.hook === 'act') expect(['cover', 'rearm']).toContain(d.act); else expect(d.act).toBeUndefined();
-          if (d.hook === 'gate') expect(['closeIn', 'roomEntry', 'breach', 'coverFire', 'bangUse']).toContain(d.gate); else expect(d.gate).toBeUndefined();
+          expect(['fit', 'method', 'act', 'gate', 'cmd', 'dispatch', 'chase', 'duty']).toContain(d.hook);
+          expect(DOCTRINE.some((r) => r.id === d.rule) || CMD_ROWS.some((c) => c.id === d.rule), d.rule).toBe(true);
+          if (d.hook === 'act' || d.hook === 'duty') expect(['cover', 'rearm', 'airOut', 'pairOut', 'pair', 'triage']).toContain(d.act); else expect(d.act).toBeUndefined();
+          if (d.hook === 'gate') expect(['closeIn', 'roomEntry', 'breach', 'coverFire', 'bangUse', 'interiorEntry']).toContain(d.gate); else expect(d.gate).toBeUndefined();
           if (d.hook === 'cmd' || d.hook === 'dispatch' || d.hook === 'chase') expect(d.rid).toBe(-1);
         }
       }
       for (const s of sim.scenes) if (s) {
         expect(s.triageAt).toBe(-1); expect(s.laneShield).toBeNull();
         for (const a of s.agents) {
-          expect(a.buddy).toBe(-1);      // 짝 맺기는 3단계
-          if (a.doc) expect(['cover', 'rearm']).toContain(a.doc.act);
+          expect(a.buddy === -1 || sim.responders[a.buddy!] !== undefined).toBe(true);      // 짝 맺기는 3단계 (pairUp — 부대가 내린 뒤)
+          if (a.buddy !== undefined && a.buddy >= 0) { paired++; expect(a.buddy).not.toBe(a.rid); }
+          if (a.doc) expect(['cover', 'rearm', 'airOut', 'pairOut', 'pair', 'triage']).toContain(a.doc.act);
           if (a.crewSig !== undefined) { sig++; expect(a.crewSig).toMatch(/^[0-2][0-2][0-2][01]$/); }      // 2단계부터 탄을 센다
-          if (a.task && a.task.gateAt !== -1) expect(['closeIn', 'roomEntry', 'breach']).toContain(a.task.gateId);
+          if (a.task && a.task.gateAt !== -1) expect(['closeIn', 'roomEntry', 'breach', 'interiorEntry']).toContain(a.task.gateId);
         }
       }
-      for (const u of sim.units) { expect(typeof u.ammoBox).toBe('number'); expect(u.ammoBox).toBeGreaterThanOrEqual(0); expect(u.ammoBox).toBeLessThanOrEqual(u.ammoBoxMax!); expect(u.sparePump).toBeUndefined(); }
-      if (sim.report!.doctrine) expect(Object.keys(sim.report!.doctrine).every((k) => [...STAGE2, ...CMD2].some((id) => id.startsWith(k)))).toBe(true);
+      for (const u of sim.units) {
+        expect(typeof u.ammoBox).toBe('number'); expect(u.ammoBox).toBeGreaterThanOrEqual(0); expect(u.ammoBox).toBeLessThanOrEqual(u.ammoBoxMax!);
+        if (u.water !== undefined && u.waterMax > 0) { expect(typeof u.sparePump).toBe('number'); expect(u.sparePump!).toBeGreaterThanOrEqual(0); expect(u.sparePump!).toBeLessThanOrEqual(sim.tune.sparePump); } else expect(u.sparePump).toBeUndefined();      // (3단계) 물을 싣는 부대만
+      }
+      if (sim.report!.doctrine) expect(Object.keys(sim.report!.doctrine).every((k) => DOCTRINE.some((r) => r.id.startsWith(k)) || CMD_ROWS.some((c) => c.id.startsWith(k)))).toBe(true);
     }
     expect(sig).toBeGreaterThan(0);      // 자기 신고가 있었다 (공기·부상)
     expect(split).toBeGreaterThan(0);
+    expect(paired).toBeGreaterThan(0);      // (3단계) 짝을 맺었다
     void docs;
   });
   it('줄을 모두 빼면 걸리는 자리가 그대로 돌려준다 — docFit 은 받은 값, 의무·행동·놓기는 null, 방법 배율 1, 판단 지점은 통과', () => withRules([], () => {
@@ -196,7 +210,7 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
       a.task = makeTask('search', '시험', works[0]); expect(docDrop(sim, s, a)).toBeNull(); a.task = null;
       expect(docGate(sim, s, a, 'closeIn')).toEqual({ ok: true, rule: null, wait: 0, opt: null, exc: null });
       for (const m of ['interior', 'defensive', 'swim', 'rope'] as const) expect(docMethodMul(docCtx(sim, s, a, 'self'), m)).toBe(1);
-      expect(buddyOf(sim, s, a)).toBeNull();      // 단계 1 까지는 짝을 맺지 않는다 (makeAgent 의 -1 — pairUp 은 3단계)
+      const bd = buddyOf(sim, s, a); expect(bd === null || bd.rid === a.buddy).toBe(true);      // (3단계) 짝은 줄이 아니라 엔진이 맺는다(pairUp) — 줄이 없어도 쓸 수 있는 짝은 그 짝이다
     }
   }));
   it('docCtx·docFit·docAct·docDuty·docGate·docMethodMul·coverSpot·buddyOf·outsideWatch 를 백 번 불러도 상태가 바뀌지 않는다 — 시험용 줄이 있어도', () => {
@@ -212,6 +226,7 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
     air.uses = 0.2 * sim.tune.airFull;
     nozzle.task = makeTask('suppress', '시험', wSup);
     const ex = s.exits[0];
+    const fitBefore = docFit(sim, s, nozzle, wSearch, 0.6), idsBefore = DOCTRINE.map((r) => r.id);      // (3단계) 등록된 줄(소방 줄 포함)이 걸린 값 — 시험용 줄을 뺀 뒤 그대로 돌아오는지 본다
     withRules(PROBE, () => {
       const snap = (): string => JSON.stringify([
         sim.responders.map((r) => r.kit), sim.responders.map((r) => [r.health, r.stamina, r.status]), peek(sim.rng), peek(s.rng),
@@ -243,9 +258,9 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
       expect(docMethodMul(docCtx(sim, s, nozzle, 'self'), 'swim')).toBe(1);
       expect(buddyOf(sim, s, nozzle)).toBe(fl);
     });
-    // 시험용 줄을 빼면 다시 그대로다 (공통 줄·경찰 줄은 멀쩡한 관창수의 수색에 걸리지 않는다)
-    expect(docFit(sim, s, nozzle, wSearch, 0.6)).toBe(0.6);
-    expect(DOCTRINE.map((r) => r.id)).toEqual(STAGE2);
+    // 시험용 줄을 빼면 다시 그대로다 (3단계: 짝(팀장)의 공기가 20% 라 관창수의 위험 실내 수색은 짝 없음(F04) — 시험 전의 값과 같다)
+    expect(docFit(sim, s, nozzle, wSearch, 0.6)).toBe(fitBefore);
+    expect(DOCTRINE.map((r) => r.id)).toEqual(idsBefore);
   });
   it('두 모드: 보고 모드는 남의 체력·출혈을 쓰지 않고(-1·false) 맞고 있는지 모른다, 자기 모드는 자기 몸이다', () => {
     const { sim, s } = sceneWith('R3-MODE', 'armed/hostage', ['patrol', 'tactical']);
@@ -1153,5 +1168,249 @@ describe('R3 시험 6 (단계 2): 최소 인원 강제 묶음 armed/dispute·arm
       for (const s of sim.scenes) if (s && !s.archived) expect(recent(s.incidentId), `${f} R3-MIN${k} 현장 ${s.incidentId}`).toBe(true);
     }
     expect(timeout).toBeLessThanOrEqual(1); expect(abandoned).toBeLessThanOrEqual(1);
+  });
+});
+
+// ═════════════════════════ 3단계 (소방) — 짝·밖 대기조·공기 탈출 (§5·§3.3·§10) ═════════════════════════
+const roleIn = (sim: Sim, list: FieldAgent[], role: string): FieldAgent => list.find((a) => sim.responders[a.rid].role === role)!;
+const tankOf = (sim: Sim, a: FieldAgent): { uses?: number; fault?: boolean; faultKnown?: boolean } => sim.responders[a.rid].kit!.find((k) => k.id === 'scba')!;
+/** 화재 현장: 펌프차(관창수·진입대원 = 안쪽 짝, 진압 팀장·기관원 = 밖)와 다른 부대를 내리고, 위험 건물의 실내 구역 하나와 그 구역에서 가장 가까운 출입구 */
+function fireScene(seed: string, kinds: UnitKind[] = ['engine', 'ladder']) {
+  const q = sceneWith(seed, 'fire/std', kinds);
+  const eng = q.of('engine');
+  const noz = roleIn(q.sim, eng, 'nozzle'), ff = roleIn(q.sim, eng, 'firefighter'), lead = roleIn(q.sim, eng, 'fireLead'), op = roleIn(q.sim, eng, 'engineer');
+  const rg = q.s.regions.findIndex((r) => r.indoor && r.searchable);
+  const reg = q.s.regions[rg];
+  let ex = q.s.exits[0], bd = Infinity;
+  for (const e of q.s.exits) { const d = Math.hypot(e.x - reg.cx, e.y - reg.cy); if (d < bd) { bd = d; ex = e; } }
+  return { ...q, noz, ff, lead, op, rg, ex };
+}
+/** 바깥(실내 구역이 아닌) 걸을 수 있는 칸 — 출입구에서 dmin~dmax */
+const outSpot = (s: Scene, x: number, y: number, dmin: number, dmax: number): { x: number; y: number } => spotAt(s, x, y, dmin, dmax, false, (tx, ty) => { const r = s.region[ty * s.w + tx]; return r < 0 || !s.regions[r].indoor; })!;
+/** 그 구역 안의 걸을 수 있는 칸 */
+const inSpot = (s: Scene, rg: number): { x: number; y: number } => { const i = s.regions[rg].tiles.find((t) => staticPass(s.tiles[t]) && s.propAt[t] < 0)!; return { x: i % s.w, y: (i / s.w) | 0 }; };
+/** 믿음 속 구조 대상을 모두 밖(안전 구역)에 있다고 바꾸고 신고 인원을 n 으로 둔다 — 안에 남은 사람이 없다고 믿는 상태 (F05 의 예외가 걸리지 않게) */
+function nobodyInside(sim: Sim, s: Scene, n = s.casualties.length): void {
+  for (const a of s.agents) {
+    for (const c of s.casualties) { const f = casFact(sim, s, c, '시험'); a.beliefs.merge(mkFact('cas', c.id, { ...f.value, where: 'safe' }, '시험', sim.t + 0.01, 1, true, f.text)); }
+    a.beliefs.merge(mkFact('occ', 0, { count: n }, '시험', sim.t + 0.01, 1, true, '시험'));
+  }
+  docForget();
+}
+
+describe('R3 시험 2-c: 화재 실내 수색 — 짝·밖 대기조·요구조자 (F04·F05·F05b)', () => {
+  it('짝 있음·대기조 둘 → 맡고 문턱을 넘는다. 짝을 withdrawn 으로 → fitFor 0 (F04)', () => {
+    const { sim, s, noz, ff, lead, op, rg, ex } = fireScene('R3-F2C');
+    expect(noz.buddy).toBe(ff.rid); expect(ff.buddy).toBe(noz.rid); expect(lead.buddy).toBe(op.rid);      // 펌프차의 표준 짝 (pairUp)
+    const w = work(sim, s, 'search', { region: rg });
+    for (const a of [lead, op]) put(a, outSpot(s, ex.x, ex.y, 1.5, 4));
+    put(noz, ex); put(ff, outSpot(s, ex.x, ex.y, 0.8, 2));
+    nobodyInside(sim, s);
+    expect(fitFor(sim, s, noz, w)).toBeGreaterThan(0);
+    giveTask(sim, s, noz, w); giveTask(sim, s, ff, w);
+    expect(outsideWatch(sim, s, noz, ex)).toBeGreaterThanOrEqual(2);
+    expect(docGate(sim, s, noz, 'interiorEntry')).toMatchObject({ ok: true });
+    noz.task = null; ff.task = null; w.assignees = [];
+    ff.status = 'withdrawn'; docForget();
+    expect(buddyOf(sim, s, noz, w)).toBeNull();
+    expect(fitFor(sim, s, noz, w)).toBe(0);
+    expect(fitParts(sim, s, noz, w).hits.map((h) => h.rule.id)).toContain('F04');
+  });
+  it('밖 대기조 0 · 믿음 구조 대상 없음 → 문턱에서 기다림(F05), 같은 조건의 진압은 실내 방법이 빠진다(F05b). 신고 인원이 찾은 수보다 많음 → 진입(예외)', () => {
+    const { sim, s, noz, ff, rg, ex } = fireScene('R3-F2C2', ['engine']);
+    for (const a of s.agents) if (a !== noz && a !== ff) a.status = 'left';
+    const w = work(sim, s, 'search', { region: rg }), wSup = work(sim, s, 'suppress', { region: rg, max: 2 });
+    put(noz, ex); put(ff, outSpot(s, ex.x, ex.y, 0.8, 2));
+    nobodyInside(sim, s);
+    expect(watchNeed(sim, s)).toBe(DOC.WATCH_NEED);
+    giveTask(sim, s, noz, w); giveTask(sim, s, ff, w);
+    expect(outsideWatch(sim, s, noz, ex)).toBe(0);
+    expect(docGate(sim, s, noz, 'interiorEntry')).toMatchObject({ ok: false, rule: 'F05' });
+    noz.task = makeTask('suppress', '시험', wSup);
+    expect(docMethodMul(docCtx(sim, s, noz, 'self', wSup), 'interior')).toBe(0);
+    expect(docMethodMul(docCtx(sim, s, noz, 'self', wSup), 'defensive')).toBe(1);
+    // 신고 인원이 찾은 수보다 둘 많다: 안에 사람이 있을 수 있다 → 짝만 있으면 들어간다 (예외 F05)
+    for (const a of s.agents) a.beliefs.merge(mkFact('occ', 0, { count: s.casualties.length + 2 }, '시험', sim.t + 0.02, 1, true, '시험'));
+    docForget();
+    noz.task = null; w.assignees = [ff.rid]; giveTask(sim, s, noz, w);
+    const g = docGate(sim, s, noz, 'interiorEntry');
+    expect(g.ok).toBe(true); expect(g.exc).toBe('F05');
+    expect(docMethodMul(docCtx(sim, s, noz, 'self', wSup), 'interior')).toBe(1);
+  });
+});
+
+describe('R3 시험 2-f: 공기 — 공기 탈출(F01)·짝 따라 나가기(F02)·문턱 50%(F03)', () => {
+  it('실내의 scba 대원 uses = 0.25 × airFull → 다음 판단에 airOut, 짝은 pairOut. 바깥에서 교체 뒤 uses = airFull, 예비 하나 줄어듦', () => {
+    const { sim, s, I, noz, ff, rg } = fireScene('R3-F2F', ['engine']);
+    const p = inSpot(s, rg);
+    put(noz, p); put(ff, p);
+    const u = sim.units[noz.unitId], spare = u.spareAir!;
+    tankOf(sim, noz).uses = 0.25 * sim.tune.airFull; docForget();
+    expect(docDuty(sim, s, noz)).toMatchObject({ act: 'airOut' });
+    think(sim, s, noz);
+    expect(noz.task!.kind).toBe('airOut'); expect(noz.task!.docRule).toBe('F01');
+    think(sim, s, ff);
+    expect(ff.task!.kind).toBe('pairOut'); expect(ff.task!.docRule).toBe('F02');
+    expect(I.docs!.some((d) => d.rule === 'F01' && d.rid === noz.rid)).toBe(true);
+    for (let k = 0; k < 600 && noz.task && noz.task.kind === 'airOut'; k++) stepOne(sim, s, [noz, ff], 0.2);
+    expect(tankOf(sim, noz).uses).toBe(sim.tune.airFull);
+    expect(u.spareAir).toBe(spare - 1);
+    const ri = s.region[tileOf(s, noz.x, noz.y)];
+    expect(ri < 0 || !s.regions[ri].indoor).toBe(true);      // 밖에서 바꿨다
+  });
+  it('uses = 50 (장비 손잡이 1 의 한 통 220초에서 23% — R2 의 kitCount 가 0 인 구간)에서도 airOut. uses = 0.4 × airFull 이면 위험 실내 일의 fitFor 가 0 (F03)', () => {
+    const { sim, s, noz, rg } = fireScene('R3-F2F2', ['engine']);
+    put(noz, inSpot(s, rg));
+    tankOf(sim, noz).uses = 50; docForget();
+    expect(docDuty(sim, s, noz)).toMatchObject({ act: 'airOut' });
+    const w = work(sim, s, 'search', { region: rg });
+    tankOf(sim, noz).uses = 0.4 * sim.tune.airFull; docForget();
+    expect(docDuty(sim, s, noz)).toBeNull();
+    expect(fitFor(sim, s, noz, w)).toBe(0);
+    expect(fitParts(sim, s, noz, w).base).toBe(0);      // R1 의 공기 문턱(airShort)이 같은 수(AIR_IN_FRAC)로 먼저 막는다 — F03 은 그 문턱의 교본 이름이다
+    expect(AIR_IN_FRAC).toBe(DOC.AIR_IN);      // R1 의 공기 문턱(airShort)과 교본의 문턱이 같은 수
+    expect(F_AIR_IN).toBe(DOC.AIR_IN); expect(F_AIR_OUT).toBe(DOC.AIR_OUT);
+  });
+});
+
+describe('R3 시험 3 (소방): 숨은 고장은 교본 판단에 새지 않는다 — 열화상·유압 장비·로봇', () => {
+  it('숨은 고장(fault, faultKnown 아님)이 있는 대원과 없는 대원의 docFit·docAct·docMethodMul 이 같다', () => {
+    const { sim, s, rg } = fireScene('R3-F3', ['engine', 'rescue', 'eod', 'ladder']);
+    for (const a of s.agents) a.beliefs.merge(mkFact('fire', rg, 0.6, '시험', sim.t + 0.01, 1, true, '시험'));      // 연기 찬 구역 (F06 이 걸리는 자리)
+    const ws = (['search', 'extricate', 'suppress', 'carry', 'defuse'] as WorkKind[]).map((k) => work(sim, s, k, { region: rg, cas: k === 'extricate' || k === 'carry' ? 0 : -1 }));
+    const val = (): string => JSON.stringify(s.agents.map((a) => [ws.map((w) => docFit(sim, s, a, w, 0.6)), docAct(sim, s, a)?.act ?? null, docMethodMul(docCtx(sim, s, a, 'report', ws[0]), 'thermal'), docMethodMul(docCtx(sim, s, a, 'report', ws[2]), 'interior')]));
+    docForget();
+    const before = val();
+    let n = 0;
+    for (const r of sim.responders) for (const it of r.kit ?? []) if (it.id === 'tic' || it.id === 'spreader' || it.id === 'robot') { it.fault = true; it.faultKnown = false; n++; }
+    expect(n).toBeGreaterThan(0);
+    docForget();
+    expect(val()).toBe(before);
+  });
+});
+
+describe('R3 시험 4 (소방): 왕복 없음 — 공기 문턱·짝 동행 경계·강제 fire/std', () => {
+  it('AIR_OUT ≤ 공기 < AIR_IN 인 대원은 위험 실내 일을 맡지 않는다 (탈출 뒤 교체 없이 다시 들어가지 않는다)', () => {
+    const { sim, s, noz, rg } = fireScene('R3-F4A', ['engine']);
+    const w = work(sim, s, 'search', { region: rg });
+    for (const q of [DOC.AIR_OUT, (DOC.AIR_OUT + DOC.AIR_IN) / 2, DOC.AIR_IN - 0.001]) { tankOf(sim, noz).uses = q * sim.tune.airFull; docForget(); expect(fitFor(sim, s, noz, w), String(q)).toBe(0); }
+    tankOf(sim, noz).uses = DOC.AIR_IN * sim.tune.airFull; docForget();
+    expect(fitFor(sim, s, noz, w)).toBeGreaterThan(0);
+  });
+  it('짝 동행 경계: 짝의 바깥 일 우선도가 대상 일보다 0.05 낮으면(0.1 문턱 안) buddyOf 는 null — 앞장설 대원이 맡지 않는다. 0.15 낮으면 짝이 따라온다', () => {
+    const { sim, s, noz, ff, rg, ex } = fireScene('R3-F4B', ['engine']);
+    const out = work(sim, s, 'traffic', { tile: ex.y * s.w + ex.x, priority: 0.6 });
+    put(ff, outSpot(s, ex.x, ex.y, 1, 3));
+    giveTask(sim, s, ff, out);
+    const near = work(sim, s, 'search', { region: rg, priority: 0.65 }), far = work(sim, s, 'search', { region: rg, priority: 0.75 });
+    docForget();
+    expect(buddyOf(sim, s, noz, near)).toBeNull();
+    expect(fitFor(sim, s, noz, near)).toBe(0);
+    expect(buddyOf(sim, s, noz, far)).toBe(ff);
+    expect(fitFor(sim, s, noz, far)).toBeGreaterThan(0);
+  });
+  it('강제 fire/std 6교대: 교본 임무(공기 탈출·짝 따라 나가기·짝 동행)를 떠났다가 10초 안에 다시 들어가는 경우가 0. 판단 지점 상한으로 놓은 작업을 같은 대원이 30초 안에 다시 맡지 않는다', () => {
+    const DOCK = new Set(['cover', 'rearm', 'airOut', 'pairOut', 'pair']);
+    let doc = 0;
+    const bad: string[] = [];
+    for (let k = 0; k < 6; k++) {
+      const sim = new Sim('R3-OSC' + k, NORMAL, 1200, { force: 'fire/std' });
+      const flow = new Map<FieldAgent, { kind: string; t: number }[]>();
+      while (!sim.ended) {
+        sim.step();
+        for (const s of sim.scenes) if (s) for (const a of s.agents) {
+          const kind = a.task ? a.task.kind : '-';
+          let f = flow.get(a);
+          if (f === undefined) { f = []; flow.set(a, f); }
+          // 임무 없음이 1.2초 안이면 흐름에 넣지 않는다 (받은 지시가 이미 끝나 있어 그 틱에 바로 끝난 경우 — 다른 일을 한 것이 아니다)
+          if (f.length >= 2 && f[f.length - 1].kind === '-' && f[f.length - 2].kind === kind && sim.t - f[f.length - 1].t < 1.2) { f.pop(); continue; }
+          if (!f.length || f[f.length - 1].kind !== kind) f.push({ kind, t: sim.t });
+          // 판단 지점 상한으로 놓은 작업(w:<id> 기억이 남은 동안)을 다시 맡았는가
+          if (a.task && a.task.workId >= 0 && a.docMem) for (const m of a.docMem) if (m.rule === 'w:' + a.task.workId && m.until > sim.t) bad.push(`${sim.seed} ${sim.responders[a.rid].name}: 놓은 작업 #${a.task.workId} 을 다시 맡았다`);
+        }
+      }
+      for (const [a, f] of flow) for (let q = 0; q + 2 < f.length; q++) {
+        const x = f[q], y = f[q + 1], z = f[q + 2];
+        if (DOCK.has(x.kind)) doc++;
+        if (DOCK.has(x.kind) && z.kind === x.kind && y.kind !== x.kind && z.t - y.t < 10) bad.push(`${sim.seed} ${sim.responders[a.rid].name}: ${x.kind}→${y.kind}→${z.kind} @${y.t.toFixed(1)}`);
+      }
+    }
+    expect(bad).toEqual([]);
+    expect(doc).toBeGreaterThan(0);
+  }, 120000);
+});
+
+describe('R3 시험 6 (소방): 최소 인원 강제 fire/std 3교대 — 닫히지 않은 사건·남은 부대 0, 한계 시간·방치 각 1건 이하', () => {
+  it('fire/std', () => {
+    let timeout = 0, abandoned = 0;
+    for (let k = 0; k < 3; k++) {
+      const sim = new Sim('R3-MIN' + k, { ...NORMAL, resources: 1 }, 1200, { force: 'fire/std' });
+      sim.runToEnd();
+      for (const I of sim.incidents) {
+        expect(I.phase, `R3-MIN${k} ${I.code}`).toBe('closed');
+        if (`${I.truth.type}/${I.truth.variant ?? ''}` !== 'fire/std') continue;
+        if (I.closeReason === 'timeout') timeout++;
+        if (I.closeReason === 'abandoned') abandoned++;
+      }
+      const recent = (id: number | null): boolean => id !== null && sim.t - sim.incidents[id].closedAt <= 90;
+      for (const u of sim.units) if (u.state === 'onscene') expect(recent(u.incidentId), `R3-MIN${k} ${u.callsign}`).toBe(true);
+      for (const s of sim.scenes) if (s && !s.archived) expect(recent(s.incidentId), `R3-MIN${k} 현장 ${s.incidentId}`).toBe(true);
+    }
+    expect(timeout).toBeLessThanOrEqual(1); expect(abandoned).toBeLessThanOrEqual(1);
+  }, 60000);
+});
+
+describe('R3 시험 7 (소방): 공기 탈출의 보고서 문장', () => {
+  // 공기 탈출은 평소 교대에 드물다(한 통 280초 — 실내에 오래 머무는 사건에서만 30% 아래로 떨어진다). 장면에서 일으키고 그 사건의 보고서 문장을 본다
+  it('공기 탈출(F01)이 있었던 사건의 보고서 문장(docLines)에 "공기" 가 든 문장, 기록 문구는 그 대원의 말로 한 번', () => {
+    const { sim, s, I, noz, ff, rg } = fireScene('R3-F7', ['engine']);
+    const p = inSpot(s, rg);
+    put(noz, p); put(ff, p);
+    tankOf(sim, noz).uses = 0.25 * sim.tune.airFull; docForget();
+    const ev = sim.events.length;
+    think(sim, s, noz); think(sim, s, ff);
+    for (let k = 0; k < 600 && noz.task && noz.task.kind === 'airOut'; k++) stepOne(sim, s, [noz, ff], 0.2);
+    const name = sim.responders[noz.rid].name;
+    expect(sim.events.slice(ev).filter((e) => e.rid === noz.rid && e.text.startsWith('공기 30% 미만 —')).length).toBe(1);      // (자기 신고 '공기 30% 미만.' 은 따로 한 번)
+    expect(docLines(sim, I, s).some((l) => l.includes('공기') && l.includes(name))).toBe(true);
+  });
+});
+
+describe('R3 시험 8 (소방): 표 — 소방 줄 12개 이상, 짝 표, pairUp', () => {
+  it('소방 줄(개인 F + 지휘 CF·D4·D5)이 12개 이상이고 DOC_DEPTS_DONE 에 fire. 펌프차·사다리차의 짝 표가 §5.1 그대로, 혼자 서는 역할', () => {
+    const fire = DOCTRINE.filter((r) => r.dept === 'fire').length + CMD_ROWS.filter((c) => c.dept === 'fire').length;
+    expect(fire).toBeGreaterThanOrEqual(12);
+    expect(DOC_DEPTS_DONE).toContain('fire');
+    expect(PAIRS.engine!.std).toEqual([['nozzle', 'firefighter'], ['fireLead', 'engineer']]);
+    expect(PAIRS.engine!.min).toEqual([['nozzle', 'fireLead']]);
+    expect(PAIRS.ladder!.std).toEqual([['nozzle', 'ladderLead']]);
+    for (const r of ['engineer', 'ladderOp', 'marksman', 'bombTech', 'emsDriver', 'observer'] as const) expect(SOLO_OK.has(r), r).toBe(true);
+  });
+  it('pairUp: 부대가 내린 뒤 표의 쌍을 순서대로 맺는다 — 최소 인원 펌프차는 [관창수, 진압 팀장], 기관원은 짝이 없다(-1)', () => {
+    const sim = new Sim('R3-PAIRUP', { ...NORMAL, resources: 1 });
+    for (const r of sim.responders) for (const it of r.kit!) it.fault = false;
+    const I = createIncident(sim, { type: 'fire', variant: 'std', rng: sim.rng.fork('t') });
+    const s = sim.scenes[I.id]!;
+    const u = sim.units.find((q) => q.kind === 'engine')!;
+    expect(u.crew.length).toBe(minCrew('engine'));
+    unitArrived(sim, I, u);
+    const ag = s.agents.filter((a) => a.unitId === u.id);
+    const noz = roleIn(sim, ag, 'nozzle'), lead = roleIn(sim, ag, 'fireLead'), op = roleIn(sim, ag, 'engineer');
+    expect([noz.buddy, lead.buddy, op.buddy]).toEqual([lead.rid, noz.rid, -1]);
+  });
+});
+
+describe('R3 시험 9 (소방): 의무의 순서 — 업고 있으면 공기 탈출이 걸리지 않고, 철수·탑승 지시가 먼저다', () => {
+  it('업고 있는 대원에게 airOut 이 걸리지 않는다 · boardOrder 가 선 대원은 공기 30% 미만이어도 airOut 을 고르지 않는다', () => {
+    const { sim, s, noz, rg } = fireScene('R3-F9', ['engine']);
+    put(noz, inSpot(s, rg));
+    tankOf(sim, noz).uses = 0.2 * sim.tune.airFull; docForget();
+    expect(docDuty(sim, s, noz)).toMatchObject({ act: 'airOut' });
+    noz.carrying = 0; docForget();
+    expect(docDuty(sim, s, noz)).toBeNull();
+    noz.carrying = -1; docForget();
+    sim.units[noz.unitId].boardOrder = 'release';
+    think(sim, s, noz);
+    expect(noz.task?.kind).not.toBe('airOut');
   });
 });

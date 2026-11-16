@@ -175,3 +175,22 @@ CMD_ROWS.push(
   { id: 'D6', dept: 'police', hook: 'dispatch', name: '인질극 — 특공이 없으면 기동대 둘', short: '기동대 둘', why: 'hostage' },
   { id: 'D7', dept: 'police', hook: 'chase', name: '추격 — 따라가기와 앞막기', short: '추격 앞막기', why: 'team' },
 );
+
+// ── (3단계) 확보 전 무장 현장의 실내 수색은 짝과 함께 (P17 — 짝 맺기 pairUp·판단 지점 interiorEntry 가 3단계에 생겼다. §3.1·§3.6) ──
+registerDoctrine(
+  {
+    id: 'P17', dept: 'police', name: '확보 전 건물 수색은 짝과 함께', short: '짝 없음 — 수색 제외',
+    who: { dept: ['police'] }, hook: 'fit', works: ['search'],
+    when: (c) => c.sit.hot && !c.solo && c.w !== null && c.w.region >= 0 && c.s.regions[c.w.region] !== undefined && c.s.regions[c.w.region].indoor && c.pair().forW === null,
+    effect: { kind: 'fitMul', mul: 0 },
+    rank: 2, why: 'alone',
+  },
+  {
+    id: 'P17b', dept: 'police', name: '확보 전 건물 — 짝이 따라올 때까지 문턱에서', short: '짝 기다림',
+    who: { dept: ['police'] }, hook: 'gate', works: ['search'], gate: 'interiorEntry',
+    when: (c) => c.sit.hot && !c.solo && !c.pair().follows,
+    effect: { kind: 'block', maxWait: (c) => (c.st.backup ? 30 : 20) },
+    th: { follow: 4, wait: 20, waitBackup: 30 }, rank: 2, why: 'buddy',
+    note: '짝을 기다립니다.', outNote: '짝이 오지 않습니다 — 수색을 넘깁니다.',
+  },
+);

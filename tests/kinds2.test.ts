@@ -159,7 +159,9 @@ describe('1 틀 A — 자료형과 등록 자리 (결과 불변 — 해시는 �
   it('새 방법 다섯(R2 표의 끝): 줄이 온전하고 아직 고르지 않는다(can = NOT_YET) — 임무별 갈래(cordon·decontam 은 always)', () => {
     const five: MethodId[] = ['dive', 'boom', 'shieldLine', 'deconTent', 'hoseWash'];
     const ids = Object.keys(METHOD) as MethodId[];
-    expect(ids.slice(-5), '표의 끝에 같은 순서로').toEqual(five);
+    const at = ids.indexOf('dive');      // (R3 3단계) 그 뒤에 교본의 방법(feel·pulse)이 붙는다 — 다섯은 붙어서 같은 순서로
+    expect(ids.slice(at, at + 5), '표의 끝에 같은 순서로').toEqual(five);
+    expect(ids.slice(at + 5).every((m) => m === 'feel' || m === 'pulse'), 'N9 다섯 뒤에는 R3 의 방법만').toBe(true);
     for (const m of five) {
       const d = METHOD[m];
       expect(d.can, m).toBe(NOT_YET);

@@ -61,7 +61,7 @@ export function docBegin(sim: Sim, s: Scene, a: FieldAgent, pick: DocPick, k: Pi
   a.doc = { rule: pick.rule.id, act: pick.act, since: sim.t };
   splitBegin(sim, s, a, was);
   const I = sim.incidents[s.incidentId];
-  ACT_DOC.set(t, recordDoc(sim, I, a, pick.rule.id, pick.rule.hook, { act: pick.act, tgt: hostile >= 0 ? 'h:' + hostile : '', mate: PAIR_ACTS.has(pick.act) && a.buddy !== undefined ? a.buddy : -1 }, docNote(sim, s, a, pick.rule), pick.rule.report !== undefined));
+  ACT_DOC.set(t, recordDoc(sim, I, a, pick.rule.id, pick.rule.hook, { act: pick.act, tgt: hostile >= 0 ? 'h:' + hostile : '', mate: PAIR_ACTS.has(pick.act) && a.buddy !== undefined ? a.buddy : -1 }, docNote(sim, s, a, pick.rule, pick.act === 'pair' && NOTE_AT.get(a)?.has(pick.rule.id) ? 0 : 1), pick.rule.report !== undefined));      // (3단계) 짝 동행은 방을 옮길 때마다 다시 시작한다 — 두 번째부터는 낮은 중요도(0)로
 }
 /** 교본 행동 임무의 기록 한 줄 (끝날 때 t1 을 닫는다 — 평균 길이·보고서의 {n}) */
 const ACT_DOC = new WeakMap<Task, DocUse>();

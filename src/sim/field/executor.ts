@@ -611,7 +611,7 @@ function waitSpot(s: Scene, a: FieldAgent, t: Task, h: Hostile, ox: number, oy: 
  * 출입구 곁의 문을 열고(잠겼으면 부수고) 문 바로 안쪽에 용의자가 있다고 알면 섬광탄을 던져 넣는다. 돌려주는 값 = 섬광탄으로 무력화한 수
  * (본문 §11.1 은 doctrineRun.breachExit 라고 적었지만, 진입 뒤의 검거를 'breach' 로 적는 ENTERED 가 이 파일의 것이라 여기에 둔다)
  */
-function breachExit(sim: Sim, s: Scene, k: number, team: FieldAgent[]): number {
+function breachExit(sim: Sim, s: Scene, k: number, team: FieldAgent[], sync = true): number {      // sync = 동시 진입의 그 틱 (3단계: 늦게 자기 문만 여는 진입조는 false — 연출 기록의 동시 진입은 breachDone 이 참이 된 틱에만)
   const e = s.exits[k];
   let bangs = 0;
   {
@@ -624,9 +624,9 @@ function breachExit(sim: Sim, s: Scene, k: number, team: FieldAgent[]): number {
       if (p.blocking) { s.propAt[p.y * s.w + p.x] = -1; p.blocking = false; p.locked = false; }
       if (!p.open) { p.open = true; s.staticVersion++; }
       inX = e.x + (p.x - e.x) * 3; inY = e.y + (p.y - e.y) * 3;      // 문을 지나 세 칸 안쪽
-      recBreach(sim, s, p.x, p.y, e.x, e.y, { door: p.id, how: breachHowFor(sim, team, wasLocked, wasOpen), n: team.length, sync: true, by: team[0].rid, forced: wasLocked }); doorSeen = true;
+      recBreach(sim, s, p.x, p.y, e.x, e.y, { door: p.id, how: breachHowFor(sim, team, wasLocked, wasOpen), n: team.length, sync, by: team[0].rid, forced: wasLocked }); doorSeen = true;
     }
-    if (!doorSeen) recBreach(sim, s, e.x, e.y, e.x, e.y, { door: -1, how: 'open', n: team.length, sync: true, by: team[0].rid, forced: false });
+    if (!doorSeen) recBreach(sim, s, e.x, e.y, e.x, e.y, { door: -1, how: 'open', n: team.length, sync, by: team[0].rid, forced: false });
     // 문 바로 안쪽에 용의자가 있다고 알고 있을 때만 섬광탄을 쓴다(없으면 방 진입 때를 위해 아낀다). 섬광탄은 사람 몫이다: 가진 사람이 던진다
     // (R3 §3.1 P15) 마지막 한 개를 든 대원은 동시 진입에서 쓰지 않고 방 진입용으로 아낀다 (용의자가 3칸 안이면 쓴다 — docGate 'bangUse' 의 고르기)
     let thrower: FieldAgent | undefined;
@@ -1367,7 +1367,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
             return;
           }
           const team = s.agents.filter((b) => b.status === 'active' && b.task && b.task.kind === 'engage' && dist(b.x, b.y, e.x, e.y) <= 2.6);
-          const n = breachExit(sim, s, t.tile, team.indexOf(a) >= 0 ? team : [a, ...team]);
+          const n = breachExit(sim, s, t.tile, team.indexOf(a) >= 0 ? team : [a, ...team], false);
           gateClear(sim, s, a, t);
           emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 3, text: s.bangAt === sim.t ? `진입! 섬광탄을 던져 넣고 들어갑니다${n ? ` (용의자 ${n}명 무력화)` : ''}.` : '진입! 출입문을 열고 들어갑니다.' });
           return;

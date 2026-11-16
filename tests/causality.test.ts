@@ -150,9 +150,10 @@ describe('대응표가 문구를 아직 잡는다', () => {
   it('모든 문제 코드가 대응표에 있다', () => {
     for (const code of Object.keys(PROBLEM_LABEL)) expect(PROBLEM_SYS.has(code), code).toBe(true);
   });
-  it('T1·T2·T3·T4·T7 이 보통 S7 의 기록과 맞고, 그 기록의 시스템이 맞다', () => {
-    // 시드는 다섯 문구가 모두 나오는 교대로 고른다 (R1 에서 대원 수가 바뀌어 모든 시드의 결과가 달라졌다: S1 에는 응급실 대기가 없어졌고 S7 에는 5건 있다)
-    const { sim } = probedShift('S7');
+  it('T1·T2·T3·T4·T7 이 보통 S1 의 기록과 맞고, 그 기록의 시스템이 맞다', () => {
+    // 시드는 다섯 문구가 모두 나오는 교대로 고른다 (R1 에서 대원 수가 바뀌어 모든 시드의 결과가 달라졌다: S1 에는 응급실 대기가 없어졌고 S7 에는 5건 있다.
+    // R3 3단계(짝·2인 진입)로 다시 바뀌어 S7 의 응급실 대기가 없어지고 S1 에 5건 있다)
+    const { sim } = probedShift('S1');
     const hit = (re: RegExp): SimEvent[] => sim.events.filter((e) => re.test(e.text));
     for (const k of ['T1', 'T2', 'T3', 'T4', 'T7'] as const) expect(hit(PHRASE[k]).length, k).toBeGreaterThan(0);
     expect(hit(PHRASE.T1).every((e) => sysOf(e) === 'aid')).toBe(true);

@@ -50,6 +50,7 @@ registerOrders((sim, s, I, a, k) => {
       if (ev >= 0) recordDoc(sim, I, null, 'CP3', 'cmd', {}, ev);
     }
   }
+  fireOrders(sim, s, I, a, k);      // (3단계) 소방의 지휘 줄 — 이 등록 하나가 지휘 교본 전체다(시험이 마지막 registerOrders 를 부른다)
 });
 
 // ── 단계 3 (소방): CF1(2인 대기조 확보 — 위험 실내 일이 열려 있는데 그 출입구의 밖 대기조가 모자라고 오는 진압 부대가 없다, 사건마다 한 번) ·
@@ -58,6 +59,7 @@ registerOrders((sim, s, I, a, k) => {
 import type { CasBelief as CasB, Pt } from '../../types';
 import { docSit, inJob, nearestExit, outsideWatch, regionOfWork, watchNeed } from '../doctrine';
 import { crewHas, kitHas, kitQty } from '../gear';
+import type { CommandKit } from '../sceneRegistry';
 /** CF1 을 이미 부른 사건 (사건마다 한 번 — 사건의 모양을 바꾸지 않으려 WeakSet) */
 const CF1_DONE = new WeakSet<Incident>();
 /** 이 사건으로 오는 진압 부대의 수 (조직 정보) */
@@ -71,7 +73,8 @@ function selfWatch(sim: Sim, s: Scene, a: FieldAgent, ex: Pt): boolean {
   if (!kitHas(sim, a.rid, 'scba') || kitQty(sim, a.rid, 'scba') < 0.5 * sim.tune.airFull || a.carrying !== -1) return false;
   return !docSit(sim, s, a).inHazard && Math.hypot(a.x - ex.x, a.y - ex.y) <= 8;
 }
-registerOrders((sim, s, I, a, k) => {
+/** (3단계) 소방의 지휘 줄 CF1·CF2·CF4 — 위의 지휘 교본 등록 끝에서 부른다 */
+function fireOrders(sim: Sim, s: Scene, I: Incident, a: FieldAgent, k: CommandKit): void {
   // CF1: 위험 실내 일이 열려 있고 그 출입구의 밖 대기조 < 필요한 수, 오는 진압 부대 0 → 진압 부대 요청 (사건마다 한 번)
   if (!CF1_DONE.has(I) && fireComing(sim, I) === 0 && s.agents.some((b) => b.status === 'active' && b.task !== null && b.task.gateId === 'interiorEntry' && (b.task.gateAt ?? -1) >= 0 && b.task.docRule === 'F05')) {      // (3단계 측정) 대기조 때문에 문턱에서 기다리는 대원이 있을 때만 (본문은 열린 위험 실내 일만 보았다 — 진압 부대를 너무 자주 불러 다른 사건이 늦어졌다)
     let ex: Pt | null = null;
@@ -105,4 +108,4 @@ registerOrders((sim, s, I, a, k) => {
     }
     if (!has) { const ev = k.request('rescue', '쓸 수 있는 유압 장비 없음 — 구조 장비 필요', true); if (ev >= 0) recordDoc(sim, I, null, 'CF4', 'cmd', {}, ev); }
   }
-});
+}

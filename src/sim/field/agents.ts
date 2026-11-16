@@ -591,7 +591,10 @@ export function fitFor(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap
   // (R2 1b §3.4) 물 위의 대원(헤엄 중·보트 위)은 지금 맡은 수난 구조 말고는 맡지 않는다 — 지시를 받아도 따르지 않으므로(brain 의 물 위 가드) 지시 수신함에 묶여 남이 그 일을 못 맡는 일을 막는다
   if ((a.afloat !== undefined || onWater(s, a)) && !(w.kind === 'waterRescue' && a.task !== null && a.task.workId === w.id)) return 0;
   const fit = fitBase(sim, s, a, w, afterSwap);
-  return docFit(sim, s, a, w, fit > 0 ? Math.max(0.02, fit + (roleOf(sim, a.rid).prefer[w.kind] ?? 0)) : fit);      // (R3) 교본은 맨 끝에서 좁히기만 한다 (늘 보고 모드 — 줄이 없으면 그대로)
+  const f = fit > 0 ? Math.max(0.02, fit + (roleOf(sim, a.rid).prefer[w.kind] ?? 0)) : fit;
+  // (R3) 교본은 맨 끝에서 좁히기만 한다 (늘 보고 모드 — 줄이 없으면 그대로). (3단계) afterSwap(지휘관의 "예비 공기통으로 바꾸면 맡을 사람이 있는가" — anyCapable)은
+  // 교본을 보지 않는다: 공기 50% 문턱(F03)과 짝의 공기(F04)가 통을 바꾼 뒤의 어림까지 막아 관창수가 통을 바꾸러 나간 사이에 진압 부대를 더 불렀다
+  return afterSwap ? f : docFit(sim, s, a, w, f);
 }
 /**
  * (R3 §2.7) fitFor 와 같은 값(fit)에 더해 교본 전의 값(base)과 걸린 교본 줄(hits) — 지휘관의 배정(commander.assign)이 "교본이 배정을 바꿨는가"를 1등 둘로 견줄 때 쓴다.

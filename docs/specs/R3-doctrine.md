@@ -1885,3 +1885,59 @@ npm run check                                                             # 단�
 - **R3 의 새 방법 줄은 N9 의 다섯 앞에 넣는다**(`tests/kinds2.test.ts` '새 방법 다섯(R2 표의 끝)'이 `Object.keys(METHOD).slice(-5)` 를 본다). 소방(`feel`·`pulse`)·6단계의 줄도 같다.
 - 공유 파일에서 겹칠 수 있는 곳: `types.ts` 의 `MethodId`·`DocGateId` 끝(다른 단계도 덧붙인다), `doctrine/registry.ts` 의 `DocSit`·`DocCtx`·`DOC_DEPTS_DONE`, `doctrine.ts` 의 `docSit`·`docCtx` 반환 리터럴, `methods.ts` 의 `METHOD` 표 끝·`WORK_MODE`·`SAY`, `tests/methods.test.ts` 의 줄 수(63 + 다른 단계의 줄), `executor.ts` 의 import 한 줄, `commander.ts` 의 `doctrine` import.
 - 다친 대원 하나하나·폭파 진입을 읽는 도구: scratchpad `wf-doctrine/par/special/tools/`(`charge.mts` 폭파 진입 진단 · `door2.mts` 잠긴 문을 찾은 때의 요약 · `gap.mts` 해체 지시와 믿음의 틈 · `none.mts` 해체 임무의 방법 흐름 · `arm.mts` 무장 강제의 검거 방법 기록).
+
+### 단계 3·4·5 합치기 — 2026-11-16
+
+브랜치 `wf/doctrine-int`(시작 34d30a3) → `wf/doctrine` 가리킴. 합친 순서: **소방 `wf/doctrine-f3`(58b1c6c — 관문 미통과) → 의료 `wf/doctrine-e4`(a43f320) → 특수 `wf/doctrine-s5`(ef3bfaf) → 주 브랜치**(3d02832 — 워크플로 대본만). 소방이 관문을 통과하지 못했지만 짝 맺기가 다른 둘의 바탕이라 다섯 커밋을 모두 합쳤다.
+
+**충돌과 푼 법** (모두 "양쪽이 끝에 덧붙인 것" — 둘 다 남겼다):
+- `doctrineRun.ts`·`executor.ts`·`orders/doctrine.ts`·`sceneManager.ts`·`commander.ts`·`doctrine.ts`·`registry.ts`·`types.ts`·`methods.ts`(SAY)·`dispatch/doctrine.ts`·시험 셋·이 설계서: 파일 끝 절을 단계 순서(3 → 4 → 5)로 이어 붙였다. 같은 이름을 두 번 들여온 줄은 지웠다(`grid` 의 `staticPass·tileOf`, `methodRun` 의 `senseOf`, `orders/doctrine` 5단계 절의 `emit`·`WorkItem`·`CommandKit`).
+- `commander.assign`: CF7(지휘관은 밖에)과 CS2(특공 진입조 가산)를 같은 반복에 둘 다 — CF7 의 `continue` 가 CS2 가산보다 앞이다(위험 실내 일과 교전·봉쇄는 겹치지 않는다).
+- 지휘 교본의 등록: 경찰 등록 안에서 `fireOrders`(3) → `cs1`(5), 의료(4)는 같은 파일의 둘째 `registerOrders`. CS1 시험은 이제 `ORDER_RULES` 의 마지막이 아니라 `CP2` 를 품은 등록을 찾아 부른다(의료 시험이 쓰던 방법).
+- `MethodId`: `feel·pulse`(3, 표 끝) + 해체 셋(5, N9 다섯 앞) — `METHOD` 65줄. `DOC_DEPTS_DONE` = `['police','fire','special']` + 파일 끝의 `push('ems')`.
+- 시험 5 는 합친 등록 순서 전체(`STAGE_ALL`·`CMD_ALL` — 줄 77 + 지휘·관제 24)를 같은지로 본다(4단계의 `LATER_*` 목록은 지웠다). 판단 지점 목록에 `carryHold·laneTreat·forceDoor`.
+- methods 무장 표본: 세 단계가 따로 더한 시드(A21·A6·A29)를 모두 둔다.
+
+**화학 짝·대기조 (S10·S11 — 5단계가 남긴 몫)**: `special.ts` 의 S03 다음. S10 = 가스 누출 현장의 위험 실내 수색에 측정기(`gasMeter`)를 든 화학 대원 `+0.15`(`units: hazmat`). S11 = 화학 팀장(`hazLead`)의 위험 실내 일 `×0.3`, 자기 부대의 다른 대원이 위험 실내에 서 있는 동안(`DocCtx.unitIn()` — 새 게으른 칸, 엔진 `unitInside`, 동료의 겉). 짝은 0단계의 `PAIRS.hazmat`(안 [보호복, 측정·제독] · 밖 [팀장, 보호복]) 그대로 `pairUp` 이 맺는다. 시험 8 의 특수 = 줄 19 + 관제·지휘 넷(D2·CS1·CS2·D1) + D4 ≥ 12.
+
+**주 세션의 소방 균형 결정을 따른 것**:
+- (가) 밖 대기조: `outsideWatch` 는 이미 같은 현장의 모든 부대(`s.agents`)를 센다 — 지휘관·기관원·사다리 조작원·급수·교통 통제 포함, 공기호흡기·공기 50% 이상·위험 실내 일이 아닌 사람. 고칠 것이 없었다(3단계의 `WATCH_R` 12 는 그대로).
+- (나) 짝은 일하면서 함께 다닌다: ① `commander.pairAssign` — 위험 실내 일을 맡기는 그 자리에서 짝에게 그 일의 둘째 자리나 같은·이웃 구역의 빈 위험 실내 일을 함께 준다(지시 문구 끝 "— {짝}과 짝으로."). 수색·진압·잔불 정리만, 짝이 앞세우는 일(역할 선호 ≥ 0.2 — 유압 구조대원의 구출)이 열려 있으면 두지 않는다(`tests/crews.test.ts` ⑤ — 구출이 유압 구조대원에게서 밀렸다). ② `DocPair.ordered` — 받은 지시가 짝 곁의 위험 실내 일이면 G08 이 걸리지 않고 `runPair` 가 끝난다(지시 점수 0.56+0.4p 가 짝 동행 계속 점수 0.62+0.4p 보다 낮아 지시가 버려졌다). 맡을 수 있는 지시만(`fitFor > 0`), 끝낸 뒤 G08 10초 기억(시험 4 의 "동행 → 없음 → 동행"). ③ `rebuddy` 넓히기 — 짝이 혼자 서는 역할(기관원 …)인 손 빈 공기호흡기 대원(지휘관 아님)은 부대를 넘어 짝이 없거나 같은 처지인 손 빈 대원과 다시 맺고, 남겨진 혼자 서는 대원은 −1(밖에 선다).
+- (다) §8.4 의 1번 손잡이: 3단계가 첫째(F05 예외에 신고 인원 불명)·둘째(`WATCH_NEED` 1, 오는 부대가 있으면 0)를 돌려 둔 그대로, 셋째(`AIR_OUT` 0.25)는 3단계 측정에서 효과 0 이라 되돌린 그대로.
+- (라) **혼자 서는 역할(기관원·사다리 조작원)의 실내 단독 작업을 막았다** — 3단계 코드는 본문 §5.1 대로 그들을 F04·F04b·F04c 에서 빼 두어 실제로 혼자 들어갔다(강제 fire/std 의 장면당 0.27명, 가스 누출에서는 송풍기를 든 그들이 환기 후 차단을 했다). 이제 짝이 따라올 때만 들어간다. 스위치 `DOC_SWITCH.SOLO_IN`(`registry.ts` — false = 주 세션 결정, true = 본문 §5.1).
+- (마) 범위에 들지 못해 **더 깎지 않고 멈췄다** — 아래 수치.
+
+**맞물림 점검**: 같은 TaskKind·finishTask 사유를 두 단계가 따로 더한 것은 없다(소방 `airOut·pairOut·pair`·사유 `doctrine`, 의료 WorkKind `triage`·사유 `handover`, 특수 MethodId 셋·판단 지점 `forceDoor`). 줄 id 겹침 없음(시험 8). 의무(duty)는 F01·F02 뿐이라 의무끼리 겨루지 않는다. `moveTo` 의 두 판단 지점(`forceDoor` — 잠긴 문, `interiorEntry` — 실내 첫걸음)은 같은 임무 칸(`gateAt·gateId`)을 쓰지만 `gateStep` 이 판단 지점이 바뀌면 다시 센다. S08(해체 반경)·S11 은 fit 배율이라 F04 와 곱해진다. CE5(이송 전 지휘 넘김)로 지휘관이 바뀌면 `rebuddy` 의 지휘관 제외가 새 지휘관에게 걸린다. 측정 도구: 교착 후보 0·잊힌 사건 0(보통·프리셋 셋 모두 — 기준과 같다), **반복 최대는 늘었다**(보통 6 → 11, 쉬움 8 → 12, 어려움 9 → 11, 극한 8 → 11).
+
+**속도 (pickAct 의 장비 앞 조건)**: `docDuty·docAct` 가 장비 조건(`kits`)이 걸리지 않을 줄 앞에서 DocCtx 를 만들지 않는다(결과 같음 — 12교대 reportHash 같다).
+
+**전체 수치** (기준 34d30a3 의 git archive 사본 — 3·4·5 작업자의 기준 파일과 같은 사본, 같은 명령. 뒤 = 이 합치기의 마지막 코드):
+
+| | 기준 | 합친 직후(셋만) | 합치기 끝 (라 켬 — 주 세션 결정) | 참고: 라 끔(`SOLO_IN`) |
+|---|---|---|---|---|
+| 보통 60 성공 | 665/849 (78.3%) | 620/844 (73.5%) | 578/844 (68.5%) **−9.8%p** | 622/844 (73.7%) −4.6%p |
+| 한계 시간 + 방치 | 1 + 3 | 10 + 3 | 20 + 2 | 5 + 3 |
+| 화재 | 114/175 (65.1%) | 87/171 (50.9%) | 74/174 (42.5%) −22.6%p | 91/173 (52.6%) −12.5%p |
+| 가스 누출 | 50/62 (80.6%) | 44/62 (71.0%) | 29/61 (47.5%) −33.1%p | 44/61 (72.1%) −8.5%p |
+| 붕괴 · 수난 · 무장 · 응급 · 교통 | 72.5 · 78.4 · 75.6 · 82.3 · 82.2% | — | 66.7 · 75.7 · 73.8 · 77.9 · 75.9% | 72.9 · 78.4 · 73.3 · 76.8 · 82.2% |
+| 대원 부상/교대 · 순직 | 0.183 · 0 | 0.28 | 0.40 · 0 | 0.317 · 0.017 |
+| split | 0.367 | 0.42 | 0.412 | 0.406 |
+| 방법 엔트로피 | 0.57 | 0.97 | 0.98 | 0.95 |
+| 교대당 시간 (20교대 — 번갈아 둘씩, 벽시계 / 사용자 CPU) | 14.1초 / 34.7초 | 24.5초 / 52.2초 | 26.6초 / 54.6초 (1.88× / 1.57×) | 24.4초 / 52.2초 |
+
+프리셋 60 (성공): 쉬움 85.2 → 78.3%(−6.9, 가스 누출 93.8 → 50.0), 어려움 59.1 → 47.8%(−11.4, 한계 시간 6 → 34), 극한 31.9 → 25.7%(−6.2, 한계 시간 17 → 49).
+강제 20 (그 시나리오 — n·성공·한계): fire/std 69·37·0 → 66·28·4(264 → 367초) · fire/arson 44·23·1 → 42·17·0 · collapse/std 37·26·0 → 36·22·0 · **hazmat/std 43·35·0 → 42·15·5** · water/std 30·21·0 → 30·23·0 · medical/arrest 27·22 → 27·22 · medical/trauma 43·35 → 43·36 · traffic/bus 26·20 → 26·21 · traffic/std 57·44 → 57·44 · traffic/pileup 22·13 → 22·13 · armed/dispute 25·20 → 25·20 · armed/domestic 26·18 → 26·19 · armed/shooter 23·12 → 23·15(그 시나리오 대원 부상 6 → 3) · armed/hostage 20·17 → 20·15(부상 3 → 5) · armed/siege 22·11 → 22·10(부상 10 → 11) · armed/kidnap·getaway 같다 · armed/bomb 21·21 → 21·20 · armed/package 20·20 → 20·20 · 해일 20교대 전체 59.4 → 50.3%. 강제 묶음의 전체 성공은 배경 사건(화재·가스 누출)으로 모두 −6~−19%p. 라를 끈 강제 fire/std 68·31·1(333초) · hazmat/std 43·30·4.
+최소 인원(3,3,3,3,3,1) 20교대 50.8 → 43.0% · 장비 1(3,3,3,1,3,3) 63.0 → 46.2%.
+**폭파 진입**: 강제 armed/hostage·armed/siege 20교대씩 장약 0건(기준과 같다 — R2 의 목표 ≥ 2 는 못 맞췄다. 5단계 메모의 까닭 그대로: 잠긴 문마다 인질을 잡은 용의자가 4.1칸 안이거나 모른다 → S26 이 막는다).
+**쓰인 줄** (측정 묶음 전체 — 보통 60·프리셋 셋·강제 스물·최소 인원·장비 1): 경찰 17/22(77%) · 소방 21/21(100%) · 의료 14/16(88%) · 특수 18/23(78%) — 네 분야 모두 75% 이상. 안 쓰인 줄(P09·P10·P11·P22·CP3 — 시험 2-d, E04·E20 — 시험 2-g, S07·S21·S23·S24·S25 — 5단계 장면 시험)은 모두 장면 시험이 쓴다(측정 ∪ 시험 = 100%).
+
+**못 맞춘 목표** (§8.2 — 주 세션이 사용자에게 물을 것):
+1. 전체 −9.8%p(범위 ±3), 화재 −22.6%p(−6~+3), 가스 누출 −33.1%p(±5), 한계 시간+방치 22(기준+2 = 6), 강제 hazmat/std 한계 시간 5(≤ 2), 대원 부상 0.183 → 0.40/교대(기준 이하가 목표), 강제 armed/siege·fire/std 의 부상 −10% 못 함, split 0.412(≥ 0.5), 교대당 시간 1.88×(≤ 1.15×), 반복 최대 증가.
+2. 원인 셋: ① **(라)** — 라를 끄면 전체 −4.6%p·가스 누출 −8.5%p 로 돌아온다(가스 누출의 환기 후 차단을 송풍기를 든 기관원·사다리 조작원이 혼자 하던 몫, 화재의 실내 손 0.27명). 짝을 붙여 들여보내는 안(혼자 서는 역할도 손 빈 사람과 다시 맺기)은 재 보니 나아지지 않아 넣지 않았다. ② 3단계의 짝·대기조 자체(합친 직후 이미 −4.8%p — 3단계 메모의 원인 그대로: 짝 동행이 실내의 일손을 줄인다). (나)의 셋은 q 표본(보통 60)에서 +2.4%p 였으나 sweep 60 에서는 잡음 안이다. ③ 교대당 시간은 셋을 합친 직후 이미 1.7× — 교본 판단(docCtx·docDuty·fitFor 의 짝 계산)이 판단마다·배정마다 돈다(프로파일: docCtx 포함 14%, pickAct 11%, fitFor 11%).
+3. 관문(`npm run check`): 아래 "관문" 줄.
+
+**설계서 밖에서 고친 공용 파일** (합치기에서): `commander.ts`(assign 끝의 `pairAssign` 호출 한 줄, 파일 끝 `PAIR_SLOT`·`pairAssign`), `doctrine.ts`(DocCtx 의 `unitIn` 게으른 칸, `unitInside`, `pairOf` 의 `ordered`, `pickAct` 의 `anyKit` 앞 조건), `doctrine/registry.ts`(`DocCtx.unitIn`, `DocPair.ordered`, `DOC_SWITCH.SOLO_IN`, `DOC_DEPTS_DONE` 에 special), `doctrine/common.ts`(G08 when 에 `!p.ordered`), `doctrine/fire.ts`(F04·F04b·F04c 의 혼자 서는 역할 — `DOC_SWITCH.SOLO_IN`), `doctrine/special.ts`(S10·S11), `doctrineRun.ts`(`rebuddy` 넓히기·`soloPaired`·`unpairSolo`, `runPair` 의 지시 끝·`orderedNear`), 시험 셋(`doctrine`·`crews`·`methods` — 위).
+
+**관문** (`npm run check`, 다른 작업이 없는 기계): **통과하지 못한다** — `tsc` 통과, vitest 863 가운데 861 통과·건너뜀 1·**실패 1**: `tests/sim.test.ts` '2층 건물'(`saved2F > on2F × 0.5` — 9 > 9.5 아님, 화재 균형의 결과. 시험은 고치지 않았다 — `DOC_SWITCH.SOLO_IN = true` 이면 통과한다). `sweep 40 --check` 는 따로 돌려 '검증 통과'. 3단계가 깨뜨렸던 '인근 도시 지원'(goneHome)은 지금 통과한다. 짐이 많은 기계에서는 시간 초과 셋(crews ⑨·sim 프리셋·sim 빈 곳 채우기)이 더 나왔다 — 교대당 시간이 늘어서다.
+
+**이어받을 자리**: 사용자 결정 둘 — ① (라)를 그대로 둘지(`SOLO_IN` false) 본문 §5.1 로 돌릴지(true), ② 둘 다 §8.2 의 화재 범위 밖이므로 범위를 넓힐지 교본을 덜어 낼지(3단계 메모의 후보 — 짝 동행을 작업판의 둘째 담당자로 세기, 밖 대기조 1명). 측정 도구는 scratchpad `wf-doctrine/int/`(`run.sh` 묶음 측정 · `cmp.py` 두 출력 견주기 · `usage.mts` 측정 묶음의 쓰인 줄 · `q.mts` 유형별 빠른 표본(`OFF=줄,줄` 로 줄 빼기) · `hands.mts` 화재·가스 현장의 역할별 손(장면 표본) · `tr.mts` 한 대원의 임무 흐름 · `per.mts` 교대별 강제 사건 결과), 기준 사본 `wf-doctrine/par/fire/b34`, 수치 `int/base`·`int/finout`·`int/finout2`(라 켬)·`int/finxout`·`int/finxout2`(라 끔).

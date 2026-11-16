@@ -779,6 +779,7 @@ function pickAct(sim: Sim, s: Scene, a: FieldAgent, hook: 'duty' | 'act', swap: 
   for (let k = 0; k < rules.length; k++) {
     const r = rules[k];
     if ((r.swap === 'retreat') !== swap || (best !== null && r.rank >= best.rule.rank) || !whoMay(sim, a, r)) continue;
+    if (r.kits && !anyKit(sim, a.rid, r.kits)) continue;      // (합치기 — 속도) 장비 조건이 걸리지 않을 줄 앞에서 DocCtx 를 만들지 않는다 (applies 의 kits 판정과 같은 kitHas — 결과는 같다)
     c ??= docCtx(sim, s, a, 'self', null, sense, dng, dngSign);
     if (!applies(c, r) || memRule(sim, a, r.id, docTarget(c))) continue;
     for (const e of effectsOf(r)) {
@@ -789,6 +790,8 @@ function pickAct(sim: Sim, s: Scene, a: FieldAgent, hook: 'duty' | 'act', swap: 
   }
   return best;
 }
+/** 그 장비 가운데 하나라도 들었는가 (알려진 고장 제외 — gear.kitHas, 줄의 kits 판정의 앞 조건) */
+function anyKit(sim: Sim, rid: number, ids: KitId[]): boolean { for (let k = 0; k < ids.length; k++) if (kitHas(sim, rid, ids[k])) return true; return false; }
 /** 의무 (brain 의 의무 자리 — X6 철수 다음): 점수 없이 그 자리에서 바꾼다. 없으면 null */
 export function docDuty(sim: Sim, s: Scene, a: FieldAgent, sense: Sense = ZERO_SENSE, dng = 0): DocPick | null { return pickAct(sim, s, a, 'duty', false, sense, dng); }
 /** 교본 행동 후보 하나 (brain 의 점수 후보 — 공기통 교체 다음). 없으면 null */

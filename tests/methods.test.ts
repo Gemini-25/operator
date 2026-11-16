@@ -2495,6 +2495,34 @@ describe('R2 단계 4: 화재 진압의 실행 (장면을 직접 만들어)', ()
     expect(w.status === 'open' || w.status === 'active').toBe(true);
     expect(q.I.methods!.some((u) => u.method === 'extinguisher' && !u.ok)).toBe(true);
   });
+  it('(검토) 소화기 한 개의 12초는 임무가 바뀌어도 이어서 센다 — 7초 뿜고 임무를 놓은 뒤 새 진압 임무에서 6초를 더 뿜으면 하나를 다 쓴다', () => {
+    const q = sceneWith('R2-TRAF', 'traffic', ['patrol']);
+    const lead = q.role('patrolLead');
+    for (const a of q.s.agents) if (a !== lead) a.status = 'left';
+    q.s.fire.fill(0);
+    const { r, tiles } = smallFire(q.s, lead, 0.35, 6);
+    for (const i of tiles) q.s.fuel[i] = 1;
+    believeFire(q, r, 0.2);
+    const w = work(q.sim, q.s, 'suppress', { region: r });
+    /** 불을 되살리며 돌리고, 소화기를 뿜은 시간(초)을 돌려준다 */
+    const run = (t: Task, sec: number): number => {
+      let sprayed = 0;
+      for (let k = 0; k < 60 * 5 && lead.task === t && sprayed + 1e-9 < sec; k++) {
+        q.sim.tick++; q.sim.t = q.sim.tick * q.sim.dt;
+        for (const i of tiles) q.s.fire[i] = Math.max(q.s.fire[i], 0.3);
+        const p0 = t.progress; act(q.sim, q.s, lead); if (t.progress > p0) sprayed += q.sim.dt;
+      }
+      return sprayed;
+    };
+    const t1 = taskFor(lead, w);
+    expect(run(t1, 7)).toBeCloseTo(7, 6);
+    expect(t1.method).toBe('extinguisher');
+    finishTask(q.sim, q.s, lead, false, 'preempt');
+    expect(kitCount(q.sim, lead.rid, 'extinguisher'), '7초 — 아직 남았다').toBe(1);
+    const t2 = taskFor(lead, w);
+    run(t2, 6);
+    expect(kitCount(q.sim, lead.rid, 'extinguisher'), '7 + 5초 남짓 — 다 썼다 (임무의 진행도로만 세면 새 임무에서 12초를 다시 뿜는다)').toBe(0);
+  });
   it('(검토) X6 의 외부 방어 구역에는 소화기를 들고 들어가지 않는다 — 대원의 믿음에 지휘 상태가 없어도 현장 모드가 먼저: 관창이 없으면 위험해서 내려놓는다', () => {
     const q = sceneWith('R2-TRAF', 'traffic', ['patrol']);
     const lead = q.role('patrolLead');
@@ -2806,14 +2834,17 @@ describe('R2 단계 5: 무장의 실행과 기록 (장면을 직접 만들어)',
 });
 
 describe('R2 단계 5: 강제 교대 (§8 의 3·6 · 무장 4가지)', () => {
-  it('무장 강제(인질극·대형 인질극·흉기·강도): 검거·무력화의 방법 기록이 4가지 이상이고, 테이저 기록이 있으며, 재현성이 지켜진다', () => {
+  it('무장 강제(인질극·대형 인질극·흉기·강도): 검거·무력화의 방법 기록이 4가지 이상이고, 테이저·비살상탄 기록이 있으며(§8 시험 3 의 5단계 몫), 재현성이 지켜진다', () => {
     const ok = new Set<MethodId>();
-    for (const [seed, force] of [['A0', 'armed/hostage'], ['A1', 'armed/siege'], ['A2', 'armed/dispute'], ['A3', 'armed/robbery'], ['A4', 'armed/dispute'], ['A5', 'armed/robbery']] as const) {
+    // (검토) A16 흉기 대치를 더했다 — 비살상탄 검거는 흉기·강도 강제 교대 28번에 한 번꼴이라(A0~A19) 시험이 그 기록이 실제로 남는 교대를 하나 갖게
+    for (const [seed, force] of [['A0', 'armed/hostage'], ['A1', 'armed/siege'], ['A2', 'armed/dispute'], ['A3', 'armed/robbery'], ['A4', 'armed/dispute'], ['A5', 'armed/robbery'], ['A16', 'armed/dispute']] as const) {
       const sim = new Sim(seed, NORMAL, 1200, { force }); sim.runToEnd();
       for (const I of sim.incidents) for (const u of I.methods ?? []) if (u.ok && (u.work === 'engage' || u.work === 'arrest')) ok.add(u.method);
       if (seed === 'A1') { const again = new Sim(seed, NORMAL, 1200, { force }); again.runToEnd(); expect(again.report!.hash).toBe(sim.report!.hash); }
     }
     expect(ok.size, [...ok].join(',')).toBeGreaterThanOrEqual(4);
+    expect(ok.has('taser'), `테이저 기록 — ${[...ok].join(',')}`).toBe(true);      // (검토) 제목에만 있고 단언이 없었다
+    expect(ok.has('beanbag'), `비살상탄 기록 — ${[...ok].join(',')}`).toBe(true);
   }, 90000);
 });
 

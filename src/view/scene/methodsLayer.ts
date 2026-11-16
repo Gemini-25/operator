@@ -159,7 +159,8 @@ export function drawCharges(g: G, s: Scene, ts: number, time: number): void {
     }
     if (t.phase === 3) {
       const n = Math.max(1, 3 - Math.floor(t.progress / 0.5));
-      const fs = Math.max(11, ts * 0.7), tx = (dx + 0.5) * ts, ty = (dy - 0.5) * ts;
+      // 숫자는 장약을 붙인 쪽(진입조가 물러선 쪽)으로 한 칸 — 문 안쪽에 그리면 방 안의 사람·이름표를 덮는다. 카운트는 반경(CHARGE.clear 2.5칸)에 동료가 없을 때만 돌므로 그 자리에 대원은 없다
+      const fs = Math.max(11, ts * 0.7), tx = (dx + 0.5 + ox * 1.05) * ts, ty = (dy + 0.5 + oy * 1.05) * ts;
       g.font = `800 ${fs}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
       g.lineWidth = Math.max(2, fs * 0.16); g.strokeStyle = 'rgba(8,13,18,0.9)'; g.strokeText(String(n), tx, ty);
       g.fillStyle = n === 1 ? '#ff6b5c' : '#ffd166'; g.fillText(String(n), tx, ty);

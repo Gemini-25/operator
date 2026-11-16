@@ -369,13 +369,14 @@ describe('X6 단계 1: 틱은 계산만 한다 — 손 계산', () => {
     expect(c.integ[r.id]).toBe(v);
     expect(c.hotT[r.id]).toBe(2);
   });
-  it('탄 몫이 상한을 내린다: 방의 절반이 타면 0.5 를 넘지 못하고, 불이 꺼져도 되돌아오지 않는다', () => {
+  it('탄 몫이 상한을 내린다: 방의 절반이 타면 1 − K_BURN × 0.5 를 넘지 못하고, 불이 꺼져도 되돌아오지 않는다', () => {
     const { m, c, r } = quiet('X6-H2');
     const half = r.tiles.slice(0, Math.floor(r.tiles.length / 2));
     for (const i of half) m.s.burned[i] = 1;
     m.s.burnedTiles = half.length;
     stepCat(m, c);
-    const cap = 1 - half.length / r.tiles.length;
+    const cap = 1 - CAT.K_BURN * half.length / r.tiles.length;      // (단계 8) K_BURN 0.78 — 82% 넘게 탄 구획만 임박 문턱(0.36) 아래가 된다
+    expect(1 - CAT.K_BURN * 0.82).toBeLessThan(CAT.L3 + 0.005);
     expect(c.integ[r.id]).toBeCloseTo(cap, 6);
     expect(c.loss[r.id * LOSS_N + LOSS_BURN]).toBeCloseTo(1 - cap, 6);
     for (let k = 0; k < 5; k++) stepCat(m, c);
@@ -973,7 +974,7 @@ describe('X6 단계 4: 세계 — 가스가 쌓이고 점화원이 닿으면 터
     const v = m.s.props.find((p) => p.kind === 'valve')!;
     const r = propRegion(m.s, v);
     expect(r).toBeGreaterThanOrEqual(0);
-    for (const i of m.s.regions[r].tiles) if (isIndoor(m.s.tiles[i])) expect(c.gas![i]).toBeGreaterThanOrEqual(CAT.GASBLAST_INIT);
+    for (const i of m.s.regions[r].tiles) if (isIndoor(m.s.tiles[i])) expect(c.gas![i]).toBeGreaterThanOrEqual(Math.fround(CAT.GASBLAST_INIT));      // 가스 격자는 Float32
     expect(peek(m.sim.rng)).toBe(peek(make('X6-E4', 'collapse', 'gasblast').sim.rng));
   });
   it('도시가스 공급 차단: 요청(지휘 상태)한 뒤 90~150초에 한 번만 살아 있는 밸브를 모두 잠그고, 차단 완료 사실을 현장 전원에게 알린다 (밸브마다 알리지 않는다)', () => {
@@ -1094,7 +1095,8 @@ describe('X6 단계 4: 세계 — 용기·차량·드럼통 (§2.6·§4.4)', () 
 describe('X6 단계 2: 교대 — 재현성과 아직 일어나지 않는 일', () => {
   // 단계 1 의 "세계 규칙을 뺀 교대와 같다"는 단계 2 에서 끝났다: 조짐이 사실로 들어오면 무전 문구(기록)가 바뀐다 (perceive 가 조짐을 보므로 규칙을 빼도 같지 않다).
   // 대신 §10-6(재현성)과 "세계는 아직 아무것도 일으키지 않는다"(단계 3·4 가 뒤집는다)를 본다
-  const cases: [string, Difficulty, string | null][] = [['S1', NORMAL, null], ['F0', NORMAL, 'fire/std'], ['F1', NORMAL, 'collapse/gasblast'], ['F2', NORMAL, 'hazmat/std'], ['X0', { ...NORMAL, frequency: 5, severity: 5, threat: 5, equipment: 1, info: 5, resources: 1 }, null]];
+  const cases: [string, Difficulty, string | null][] = [['S1', NORMAL, null], ['F0', NORMAL, 'fire/std'], ['F1', NORMAL, 'collapse/gasblast'], ['F2', NORMAL, 'hazmat/std'], ['X0', { ...NORMAL, frequency: 5, severity: 5, threat: 5, equipment: 1, info: 5, resources: 1 }, null],
+    ['V0', { ...NORMAL, severity: 5 }, 'fire/std']];      // (단계 8) §10-6 의 글자 그대로: 심각도 5 · 강제 화재 — 전소나 붕괴가 일어나는 교대
   const shift = (seed: string, d: Difficulty, force: string | null): Sim => { const sim = new Sim(seed, d, 1200, { force }); sim.runToEnd(); return sim; };
   const state = (sim: Sim): string => JSON.stringify([
     sim.report!.hash, sim.events.length, sim.tick,
@@ -1109,6 +1111,9 @@ describe('X6 단계 2: 교대 — 재현성과 아직 일어나지 않는 일', 
       expect(again.report!.hash, cases[q][0]).toBe(runs[q].report!.hash);
       expect(state(again), cases[q][0]).toBe(state(runs[q]));
     }
+    // §10-6: 전소나 붕괴가 일어나는 교대가 하나 이상 들어 있다 (심각도 5 · 강제 화재 교대)
+    const v = runs[cases.findIndex((k) => k[0] === 'V0')];
+    expect(v.incidents.some((I) => I.problems.some((p) => p.code === 'BURNOUT' || p.code === 'STRUCT_COLLAPSE'))).toBe(true);
   });
   it('그 교대들에서 조짐은 지휘관에게까지 들어왔고, 세계는 실제로 무너뜨리고 터뜨린다 — 기록·건물 상태·집계가 서로 맞고(§10-8), 지휘관이 조짐으로 판단한 기록(위험 조짐·철수)이 지휘 상태와 맞는다 (단계 5)', () => {
     let signs = 0, cmdSigns = 0, scenes = 0, moved = 0, radio = 0, fell = 0, booms = 0, withdrew = 0, dsigns = 0, opsScenes = 0;

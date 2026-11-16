@@ -2,12 +2,13 @@
 // renderScene 이 부른다: 사람을 그리기 전에 보트(drawBoats), 사람을 그린 뒤에 줄·장대(drawMethodFx).
 //   단계 1d (수난): 구명줄(끝의 빨간 투척 가방) · 구명환(빨강·흰 고리) · 즉석 부력물(회갈색 점선 줄 끝의 흰 통) · 장대(갈고리) · 줄 확보(헤엄치는 동료까지의 줄) ·
 //                   보트(주황 고무보트 1.4×0.7칸 / 구조정이면 회색 단단한 배 1.8×0.8칸)
+//   단계 2 (폭파 진입): 문에 붙인 장약·3-2-1 카운트(drawCharges — 사람 뒤), 농성 문 안쪽의 쌓은 가구(drawBarricades — 사람 앞). 폭발은 G5 combat.ts 의 'charge' 갈래
 //   뒤 단계가 더한다: 송풍기·지지대·에어백(3·4) …
 // 대원의 자세와 손에 든 것은 renderScene.agentPose, 헤엄치는 대원은 sprites.drawSwimmer 가 그린다.
 
 import type { Sim } from '../../sim/engine';
 import { T } from '../../sim/types';
-import type { FieldAgent, Scene } from '../../sim/types';
+import type { FieldAgent, Scene, Task } from '../../sim/types';
 import { disc, rr } from './common';
 import type { G } from './common';
 
@@ -120,4 +121,75 @@ function ropeLine(g: G, x0: number, y0: number, x1: number, y1: number, ts: numb
   if (dashed) g.setLineDash([ts * 0.12, ts * 0.07]);
   g.stroke();
   if (dashed) g.setLineDash([]);
+}
+
+// ───────────────────────── 단계 2: 폭파 진입 (§4.2a) ─────────────────────────
+/** 장약을 다루는 문·잔해 임무 (본 임무 force·clear 또는 이동 중 하위 작업) — 없으면 null */
+function chargeTask(a: FieldAgent): Task | null {
+  const t = a.task;
+  if (!t || a.status === 'left') return null;
+  const k = t.sub && (t.sub.kind === 'force' || t.sub.kind === 'clear') ? t.sub : t.kind === 'force' || t.kind === 'clear' ? t : null;
+  return k && k.method === 'charge' && k.tile >= 0 ? k : null;
+}
+/**
+ * 문에 붙인 장약(작은 회색 띠 + 깜박이는 빨간 점 — 설치하는 동안은 띠가 진행도만큼 자란다)과 3-2-1 카운트(문 위의 숫자, 0.5초씩).
+ * 사람을 그린 뒤에 그린다. 폭발 그림은 G5 의 진입 효과('breach' 의 'charge' 갈래 — combat.ts)
+ */
+export function drawCharges(g: G, s: Scene, ts: number, time: number): void {
+  for (const a of s.agents) {
+    const t = chargeTask(a);
+    if (t === null) continue;
+    const dx = t.tile % s.w, dy = (t.tile / s.w) | 0;
+    const placing = t.phase === 0, frac = placing ? Math.min(1, t.progress / 5) : 1;
+    if (placing && frac <= 0) continue;
+    // 대원이 선 쪽의 문 면 (설치한 쪽): 가로 벽의 문(좌우가 벽)이면 위·아래 면, 세로 벽의 문이면 좌·우 면
+    const wallAt = (i: number): boolean => s.tiles[i] === T.WALL || s.tiles[i] === T.WINDOW;
+    const wallLR = dx > 0 && dx < s.w - 1 && wallAt(t.tile - 1) && wallAt(t.tile + 1);
+    const ox = wallLR ? 0 : Math.sign(a.x - dx) || 1, oy = wallLR ? Math.sign(a.y - dy) || 1 : 0;
+    const side = placing ? 0.32 : 0.3;
+    const cx = (dx + 0.5 + ox * side) * ts, cy = (dy + 0.5 + oy * side) * ts;
+    const L = ts * 0.5 * frac, W = Math.max(2, ts * 0.1);
+    g.fillStyle = 'rgba(0,0,0,0.45)';
+    if (ox === 0) g.fillRect(cx - L / 2 - 1, cy - W / 2 - 1, L + 2, W + 2); else g.fillRect(cx - W / 2 - 1, cy - L / 2 - 1, W + 2, L + 2);
+    g.fillStyle = '#8e969c';
+    if (ox === 0) g.fillRect(cx - L / 2, cy - W / 2, L, W); else g.fillRect(cx - W / 2, cy - L / 2, W, L);
+    if (!placing || frac > 0.6) {
+      const on = Math.floor(time * (t.phase === 3 ? 8 : 3)) % 2 === 0;
+      disc(g, cx, cy, Math.max(1.5, ts * 0.06), on ? '#ff3b30' : '#6a1a16');
+    }
+    if (t.phase === 3) {
+      const n = Math.max(1, 3 - Math.floor(t.progress / 0.5));
+      const fs = Math.max(11, ts * 0.7), tx = (dx + 0.5) * ts, ty = (dy - 0.5) * ts;
+      g.font = `800 ${fs}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.lineWidth = Math.max(2, fs * 0.16); g.strokeStyle = 'rgba(8,13,18,0.9)'; g.strokeText(String(n), tx, ty);
+      g.fillStyle = n === 1 ? '#ff6b5c' : '#ffd166'; g.fillText(String(n), tx, ty);
+    }
+  }
+}
+/**
+ * 농성 문 잠금으로 막은 문(skin 'barricade', 아직 막혀 있다): 문 안쪽 칸에 쌓은 가구 몇 개 (관찰자에게만 보이는 진실 — 대원의 믿음에는 그냥 잠긴 문이다).
+ * 안쪽 = 문 양쪽 가운데 구역이 더 작은 쪽(인질을 붙잡은 방). 사람보다 먼저 그린다
+ */
+export function drawBarricades(g: G, s: Scene, ts: number): void {
+  for (const p of s.props) {
+    if (p.kind !== 'door' || p.skin !== 'barricade' || !p.blocking) continue;
+    let bx = 0, by = 0, bn = Infinity;
+    for (const [ox, oy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) {
+      const j = (p.y + oy) * s.w + (p.x + ox), r = s.region[j];
+      if (r === undefined || r < 0) continue;
+      const n = s.regions[r].tiles.length;
+      if (n < bn) { bn = n; bx = ox; by = oy; }
+    }
+    if (bn === Infinity) continue;
+    const px = -by, py = bx;      // 문 면을 따라
+    const boxes: [number, number, number, number, string][] = [[0.62, 0, 0.7, 0.3, '#8a6440'], [0.98, 0.3, 0.36, 0.34, '#a07a4e'], [0.95, -0.36, 0.32, 0.3, '#6b4f34']];
+    for (const [d, o, w, h, col] of boxes) {
+      const x = (p.x + 0.5 + bx * d + px * o) * ts, y = (p.y + 0.5 + by * d + py * o) * ts;
+      const W = (bx === 0 ? w : h) * ts, H = (bx === 0 ? h : w) * ts;
+      g.fillStyle = 'rgba(0,0,0,0.35)'; g.fillRect(x - W / 2 + 1.5, y - H / 2 + 1.5, W, H);
+      rr(g, x - W / 2, y - H / 2, W, H, Math.max(1, ts * 0.04), col);
+      g.fillStyle = 'rgba(255,235,200,0.25)'; g.fillRect(x - W / 2 + 1, y - H / 2 + 1, W - 2, Math.max(1, H * 0.22));      // 윗면의 밝은 띠
+      g.strokeStyle = 'rgba(0,0,0,0.45)'; g.lineWidth = 1; g.strokeRect(x - W / 2 + 0.5, y - H / 2 + 0.5, W - 1, H - 1);
+    }
+  }
 }

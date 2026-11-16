@@ -32,7 +32,7 @@ import { T } from '../src/sim/types';
 import type { CasBelief, Casualty, FieldAgent, Incident, IncidentType, KitId, MethodId, MethodUse, Needs, Prop, RoleId, Scene, Task, UnitKind, WorkItem, WorkKind } from '../src/sim/types';
 import { clamp, josa } from '../src/sim/util';
 import { MethodRows } from '../src/ui/MethodRows';
-import { THROW_RELEASE, drawBoats, drawMethodFx, inBoat, swimming } from '../src/view/scene/methodsLayer';
+import { THROW_RELEASE, drawBarricades, drawBoats, drawCharges, drawMethodFx, inBoat, swimming } from '../src/view/scene/methodsLayer';
 import { drawPerson, drawSwimmer, responderLook } from '../src/view/scene/sprites';
 import { fakeCtx } from './fakeCanvas';
 
@@ -2038,4 +2038,20 @@ describe('R2 단계 2: 강제 교대 (§8 의 3·6·10)', () => {
       }
     } finally { BARRICADE.p = saved; }
   }, 60000);
+});
+
+describe('R2 단계 2: 폭파 진입의 그림 (§4.2a — 화면은 상태를 읽기만 한다)', () => {
+  it('문에 붙인 장약·3-2-1·농성 문의 가구 그림은 예외 없이 끝나고 시뮬레이션 상태를 바꾸지 않는다', () => {
+    const q = doorScene('R2-DOOR', ['swat']);
+    const br = q.role('breacher');
+    q.place(br); q.know(br); q.door.skin = 'barricade';
+    const t = taskFor(br, work(q.sim, q.s, 'force', { tile: q.tile }));
+    t.method = 'charge';
+    const snap = (): string => JSON.stringify([q.sim.logHash, q.sim.events.length, peek(q.sim.rng), peek(q.s.rng), q.s.agents.map((a) => [a.x, a.y, a.task && a.task.method, a.task && a.task.phase]), q.s.props.map((p) => [p.open, p.blocking, p.skin])]);
+    const before = snap();
+    const g = fakeCtx();
+    for (const [ph, pr] of [[0, 0], [0, 2.5], [1, 0], [2, 0], [3, 0.2], [3, 0.7], [3, 1.3]] as [number, number][]) { t.phase = ph; t.progress = pr; drawBarricades(g, q.s, 24); drawCharges(g, q.s, 24, ph + pr); }
+    t.phase = 0; t.progress = 0; t.method = undefined;
+    expect(snap()).toBe(before.replace('"charge",0', 'null,0'));
+  });
 });

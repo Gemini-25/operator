@@ -33,7 +33,7 @@ import { gasView, hostageState, rekindledRegions } from './hazardState';
 import { ruinZones, strokeRuinEdges } from './scene/ruins';
 import { drawCatOver, drawCatUnder, drawTrappedDebris } from './scene/catLayer';
 import { TRIAGE, TRIAGE_EDGE, TRIAGE_TEXT, casBand, casDrawn, casSheet, hostileBand, hostileDrawn, hostileSheet, hurtPose, respBand, respLying, respSheet } from './triage';
-import { THROW_RELEASE, drawBoats, drawMethodFx, inBoat, swimming } from './scene/methodsLayer';      // (R2 1d) 대응 방법의 그림 — 수난: 줄·장대·보트·헤엄치는 대원
+import { THROW_RELEASE, drawBarricades, drawBoats, drawCharges, drawMethodFx, inBoat, swimming } from './scene/methodsLayer';      // (R2 1d) 대응 방법의 그림 — 수난: 줄·장대·보트·헤엄치는 대원
 
 /** 현장 화면의 시점: 중심(타일 좌표)과 배율(1 = 현장 전체가 보인다) */
 export interface SceneCam { x: number; y: number; zoom: number }
@@ -100,6 +100,7 @@ function kickOpen(how: string, age: number): number | null {
   if (how === 'open' || age < 0) return null;
   if (how === 'push') return age < 0.15 ? Math.min(1, age * 9) : null;
   if (how === 'hydraulic') return age < 0.4 ? Math.min(1, age * 6) : null;
+  if (how === 'charge') return age < 0.6 ? 1 : null;      // (R2 §4.2a) 폭파: 문짝이 바로 끝까지 (날아간 문)
   const peak = how === 'kick' ? 1.12 : 1.18, rise = peak / 22, end = how === 'kick' ? 0.3 : 0.35;
   if (age < rise) return age * 22;
   if (age < end) return peak - (peak - 1) * ((age - rise) / (end - rise));
@@ -170,6 +171,19 @@ function agentPose(sim: Sim, s: Scene, a: FieldAgent, moving: boolean): { arms: 
       case 'tend': if (wt.phase >= 1) return { arms: 'hold', item: 'rope' }; break;
     }
   }
+  // (R2 단계 2) 문·통로의 방법 (본 임무 force·clear 와 이동 중 하위 작업): 폭파는 설치할 때 맨손 작업, 물러서면 웅크린다. 할리건·충격기·유압 개방기는 그 도구, 발로 차기·손으로 치우기는 맨손
+  const bt = a.task ? (a.task.sub && (a.task.sub.kind === 'force' || a.task.sub.kind === 'clear') ? a.task.sub : a.task.kind === 'force' || a.task.kind === 'clear' ? a.task : null) : null;
+  if (bt && bt.method && !moving) {
+    switch (bt.method) {
+      case 'charge': return bt.phase === 0 ? { arms: 'work', item: 'none' } : { arms: 'kneel', item: 'none' };
+      case 'kick': case 'handClear': return { arms: 'work', item: 'none' };
+      case 'irons': return { arms: 'work', item: 'halligan' };
+      case 'ram': return { arms: 'work', item: 'ram' };
+      case 'hydraulic': return { arms: 'work', item: 'spreader' };
+    }
+  }
+  // 동료가 잠긴 방 문을 폭파로 여는 동안 물러선 자리(t.range = 1)에서 기다리는 진입조는 웅크린다
+  if (a.task && a.task.kind === 'engage' && a.task.entryDoor !== undefined && a.task.range === 1 && !moving) return { arms: 'kneel', item: 'none' };
   if (a.carrying >= 0 || a.carrying <= -2) return { arms: 'drag', item: 'none' };
   if (sim.t - (a.taserAt ?? -99) < 1) return { arms: 'aim', item: 'taser' };
   // (G5) 길 위의 잠긴 문을 강제로 여는 중(하위 작업): 도구를 든다
@@ -490,6 +504,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
 
   // (R2 1d) 물에 띄운 보트 (사람보다 먼저 — 보트 안에 실린 사람과 앉은 대원이 그 위에)
   if (!MINI) drawBoats(ctx, sim, s, ts, o.alpha, time);
+  if (!MINI) drawBarricades(ctx, s, ts);      // (R2 단계 2) 농성 문 안쪽에 쌓은 가구
   // ── 사람: 구조 대상 → 용의자 → 대원 ──
   const carrierOf = new Map<number, FieldAgent>();
   for (const a of s.agents) if (a.carrying >= 0 && a.status !== 'left') carrierOf.set(a.carrying, a);
@@ -658,6 +673,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
 
   // (R2 1d) 대응 방법의 줄·장대: 구명줄·구명환·즉석 부력물·갈고리 장대·줄 확보 (scene/methodsLayer.ts)
   if (!MINI) drawMethodFx(ctx, s, ts, o.alpha);
+  if (!MINI) drawCharges(ctx, s, ts, time);      // (R2 단계 2) 문에 붙인 장약·3-2-1
 
   // ── 불 ──
   drawFire(ctx, s, ts, time, MINI);

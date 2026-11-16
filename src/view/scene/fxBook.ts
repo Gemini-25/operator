@@ -309,10 +309,11 @@ export class FxBook {
     const l = this.lives.get(sid); if (!l || ts <= 0) return { x: 0, y: 0 };
     let x = 0, y = 0;
     for (const e of l) {
-      if (e.kind !== 'boom') continue;
+      const charge = e.kind === 'breach' && e.f?.c?.how === 'charge';      // (R2 §4.2a) 폭파 진입도 흔든다 (반경 1.5칸의 폭발 — 충격기에는 흔들림이 없다)
+      if (e.kind !== 'boom' && !charge) continue;
       const t = this.age(e);
       if (t < 0 || t > 0.6) continue;
-      const r = e.f?.c?.r ?? 3;
+      const r = charge ? 1.5 : e.f?.c?.r ?? 3;
       const near = v ? Math.max(0, 1 - Math.hypot(e.x - v.cx, e.y - v.cy) / (2 * Math.max(1, v.hw))) : 1;
       const A = Math.min(6, 2 + r) * near * Math.exp(-t / 0.18);
       const ph = t * 28 * 6.2832 + e.seed * 6.2832;

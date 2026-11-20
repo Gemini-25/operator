@@ -708,7 +708,8 @@ export function drawNegotiation(cv: CombatView): void {
     if (!h || (h.state !== 'hold' && h.state !== 'fight')) continue;
     if (broke && h.state !== 'fight') continue;      // 엄폐 중에는 말풍선을 주고받지 않는다 — 끊긴 표시만
     const ap = ipos(a, alpha), hp = ipos(h, alpha), r = ts * 0.2;
-    const hx = P(hp.x, ts) + ts * 0.5, hy = P(hp.y, ts) - ts * 1.05;
+    // (R3 단계 8 — 그림만) 용의자 쪽 풍선은 용의자 알약(renderScene 의 '용의자 n·총 · 교전' — 머리 위 0.6~1.0칸) 위에 둔다: 1.05칸이면 뾰족한 테가 알약의 글자를 덮었다
+    const hx = P(hp.x, ts) + ts * 0.5, hy = P(hp.y, ts) - ts * 1.4;
     if (h.state === 'fight') {
       if (h.hidden && !truth) continue;
       // 뾰족한 붉은 테 + 번개

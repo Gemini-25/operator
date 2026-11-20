@@ -39,7 +39,7 @@ const FACILITIES: [string, string][] = [['fireStation', '소방서'], ['police',
 const ROADS: [string, string, boolean][] = [['서행', '#f2c94c', false], ['정체', '#ff9f43', false], ['극심', '#ff5d5d', false], ['통제', '#ff5d5d', true]];
 
 /** 길 위의 장애물 (교통 묶음이 지도에 그리는 표식과 같다: 어두운 바탕 + 노란 테 + 그림 기호) */
-const OBSTACLES: [keyof typeof OBSTACLE_ICON, string][] = [['roadwork', '공사'], ['breakdown', '고장 차량'], ['debris', '낙하물'], ['parked', '불법 주차']];
+const OBSTACLES: [keyof typeof OBSTACLE_ICON, string][] = [['roadwork', '공사'], ['breakdown', '고장 차량'], ['debris', '낙하물'], ['parked', '불법 주차'], ['rubble', '건물 잔해']];      // 건물 잔해: (I1-b C2) 무너지거나 터진 건물의 잔해가 길에 남은 것
 function ObstacleSample({ kind, unknown = false, size = 20 }: { kind: keyof typeof OBSTACLE_ICON; unknown?: boolean; size?: number }) {
   const c = size / 2, r = size / 2 - 1.5, g = r * 1.36;
   return (

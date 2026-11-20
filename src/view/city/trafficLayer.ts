@@ -141,6 +141,8 @@ export const OBSTACLE_ICON: Record<ObstacleKind, string> = {
   debris: 'M3 8.4L12 4L21 8.4V17.1L12 21.6L3 17.1ZM4.3 8.8L12 12.6L19.7 8.8V10.2L12.7 13.7V20.5H11.3V13.7L4.3 10.2Z',
   // 불법 주차 = 차 (그 위에 사선을 따로 긋는다)
   parked: 'M3 14.5L5 9.2Q5.4 8 6.6 8H17.4Q18.6 8 19 9.2L21 14.5V18.5H18.4V17H5.6V18.5H3ZM6.4 13.2H17.6L16.5 10H7.5Z',
+  // (I1-b C2) 건물 잔해 = 깨진 덩어리 셋이 쌓인 더미 (낙하물의 반듯한 상자와 윤곽이 다르다)
+  rubble: 'M1.8 20.6L4.2 13L9.4 11.4L11.8 16.2L10.2 20.6ZM11.8 20.6L13.4 14.4L18.8 13.2L22.2 20.6ZM8.8 10L11.4 3.8L16.6 5.8L16.2 11.6L12.6 13.2Z',
 };
 const iconCache = new Map<string, Path2D>();
 function glyph(ctx: G, kind: ObstacleKind, x: number, y: number, size: number, color: string): void {

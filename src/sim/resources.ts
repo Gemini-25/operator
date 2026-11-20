@@ -10,7 +10,7 @@ import { erLoad, hospitalOf, knownHospital } from './world/state';      // (I1-b
 import { canDeploy } from './field/injury';
 import { unitArrived } from './field/sceneManager';
 import { Rng } from './rng';
-import { gateWait, reportObstacle, stopAhead } from './traffic';
+import { gateWait, obstacleOnEdge, reportObstacle, stopAhead } from './traffic';
 import type { Obstacle } from './traffic';
 import type { Dept, Facility, Incident, Needs, Problem, Responder, RoadEdge, Unit, UnitCaps, UnitField, UnitKind } from './types';
 import { clamp, fmtSec, josa } from './util';
@@ -354,7 +354,14 @@ export function etaFor(sim: Sim, u: Unit, destNode: number): number {
 function blockRef(sim: Sim, u: Unit, e: RoadEdge): { ref: Problem['ref']; causes: number[] } {
   let J: Incident | null = null;
   if (e.closedReason === 'incident') for (let k = sim.incidents.length - 1; k >= 0; k--) { const q = sim.incidents[k]; if (q.blockedEdge === e.id && q.phase !== 'closed') { J = q; break; } }
-  return { ref: { inc: J ? J.id : undefined, unit: u.id, edge: e.id }, causes: J && J.blockEv !== undefined ? [J.blockEv] : [] };
+  if (J) return { ref: { inc: J.id, unit: u.id, edge: e.id }, causes: J.blockEv !== undefined ? [J.blockEv] : [] };
+  // (I1-b C2) 길을 막은 것이 기록과 함께 놓인 장애물(건물 잔해)이면 그 기록을 원인으로 잇는다. 막은 사건 = 그 기록의 원인(종료 기록·폭발 기록)이 가리키는 사건
+  const o = obstacleOnEdge(sim, e.id);
+  if (!o || o.ev === undefined) return { ref: { inc: undefined, unit: u.id, edge: e.id }, causes: [] };
+  let inc: number | undefined;
+  const cs = sim.events[o.ev].causes;
+  for (let k = 0; k < cs.length; k++) if (sim.events[cs[k]].incidentId >= 0) { inc = sim.events[cs[k]].incidentId; break; }
+  return { ref: { inc, unit: u.id, edge: e.id }, causes: [o.ev] };
 }
 
 function setRoute(sim: Sim, u: Unit, to: number): void {

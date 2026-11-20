@@ -10,3 +10,4 @@
 // 그 밖의 규칙("X 면 확률 p 로 사건 Y" 꼴)은 설계를 다시 쓰는 중이다 (docs/ROADMAP.md "진행 중").
 import './record';
 import './hospital';
+import './structure';

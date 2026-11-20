@@ -16,7 +16,11 @@ import { CSQ_SPAWN_CAP, registerConsequence, signal, spawnConsequence, tickWorld
 import type { CsqCtx } from '../src/sim/world/consequence';
 import { DIVERT_LATE_MIN, divertArrived, divertUnmet, noteDivert } from '../src/sim/world/rules/record';
 import { ER } from '../src/sim/world/rules/hospital';
-import { ER_PENALTY, etaFor, startTransport, transportWhy } from '../src/sim/resources';
+import { RUBBLE } from '../src/sim/world/rules/structure';
+import { catOf, collapseBuilding } from '../src/sim/field/catastrophe';
+import { unitArrived } from '../src/sim/field/sceneManager';
+import { OBSTACLE_LABEL, addObstacle, reallyLinked, tickTraffic } from '../src/sim/traffic';
+import { ER_PENALTY, dispatchUnit, etaFor, sendUnitTo, startTransport, tickUnits, transportWhy } from '../src/sim/resources';
 import { HOSPITAL_CAP, ZONE_DEFAULT, erLoad, hospitalOf, initWorld, knownBuildingAt, knownHospital, knownZone, knownZoneOfIncident, placeState, setZone, zoneOfPlace, zoneOfXY } from '../src/sim/world/state';
 import { findRoute } from '../src/sim/city';
 import type { EventKind, Incident, Responder, Role, Signal, SimEvent, Unit, ZoneField } from '../src/sim/types';
@@ -1205,5 +1209,196 @@ describe('I1-b b3-2: C3 hospitalLoad — 응급실 포화', () => {
     expect(reroutes, '이송 중 목적지 변경').toBeGreaterThan(0);
     expect(departs, '먼 병원으로 출발').toBeGreaterThan(0);
     expect(waits).toBeGreaterThan(0);
+  });
+});
+
+describe('I1-b b3-3: C2 rubbleRoad — 잔해는 사건이 끝나도 남는다', () => {
+  const KNOWN = /^(.+) 건물 잔해로 (전면|한 차로) 통제\.$/, HIDDEN = /^(.+)에 건물 잔해가 쏟아져 (길이 막혔습니다|한 차로가 막혔습니다)\. 아직 아무도 신고하지 않았습니다\.$/;
+  /** 건물에서 난 화재 하나만 있는 교대 (평소 생성기를 건드리지 않는 흐름으로) — 그 건물이 면한 구간이 있는 것 */
+  function fireAt(seed: string): { sim: Sim; I: Incident; edge: number } {
+    for (let k = 0; k < 40; k++) {
+      const sim = new Sim(seed + k, NORMAL, 1200);
+      sim.traffic.nextEvent = Infinity;      // 무작위 교통 사건은 끈다 (장애물을 직접 본다)
+      const I = createIncident(sim, { type: 'fire', variant: 'std', rng: sim.rng.fork('t') });
+      const pl = sim.city.places[I.truth.placeId];
+      if (pl && pl.edgeId !== undefined && !sim.traffic.obstacles.some((o) => o.edge === pl.edgeId) && catOf(sim, sim.scenes[I.id]!)?.struct) return { sim, I, edge: pl.edgeId };
+    }
+    throw new Error('면한 구간이 있는 건물 화재를 찾지 못함');
+  }
+  /** 도시가 끊기지 않았다: 모든 시설에서 사건 교차로와 그 구간의 양 끝으로, 실제 상태(모르는 통제까지 막힌 것으로)에서 큰 차도 간다 */
+  function expectLinked(sim: Sim, I: Incident, edge: number): void {
+    const e = sim.city.edges[edge];
+    for (const f of sim.city.facilities) for (const to of [I.truth.nodeId, e.a, e.b]) expect(reallyLinked(sim, f.nodeId, to, -1, true), `${f.name} → 교차로 ${to}`).toBe(true);
+  }
+  const rubbles = (sim: Sim) => sim.traffic.obstacles.filter((o) => o.kind === 'rubble');
+
+  it('(가) 통째로 무너진 건물: 사건 동안의 통제(X6)가 끝나면 그 구간에 잔해가 이어서 남는다 — 알려진 전면 통제, 기록의 원인은 종료 기록, 도시는 끊기지 않는다', () => {
+    const { sim, I } = fireAt('C2-A');
+    const s = sim.scenes[I.id]!;
+    collapseBuilding(sim, s, I, catOf(sim, s)!);
+    const edge = I.blockedEdge, e = sim.city.edges[edge];
+    expect(edge).toBeGreaterThanOrEqual(0);
+    expect([e.closed, e.closedReason]).toEqual([true, 'incident']);
+    expect(sim.placeMarks.get(I.truth.placeId)!.state).toBe('collapsed');
+    tickWorld(sim);      // 붕괴의 신호(catastrophe · 붕괴)는 잔해를 남기지 않는다 — 사건 동안은 X6 의 통제다
+    expect(rubbles(sim).length).toBe(0);
+    closeIncident(sim, I, 'resolved');
+    expect(e.closed, '사건이 끝나면 X6 의 통제는 풀린다').toBe(false);
+    const closeEv = sim.events.find((x) => x.incidentId === I.id && x.kind === 'resolve')!;
+    sim.tick++; sim.t += sim.dt; tickWorld(sim);      // 다음 틱
+    const [ob] = rubbles(sim);
+    expect(rubbles(sim).length).toBe(1);
+    expect([ob.edge, ob.full, ob.known, ob.label]).toEqual([edge, true, true, OBSTACLE_LABEL.rubble]);
+    expect(ob.until - sim.t).toBeGreaterThanOrEqual(RUBBLE.DUR[0]);
+    expect(ob.until - sim.t).toBeLessThanOrEqual(RUBBLE.DUR[1]);
+    expect([e.closed, e.closedReason, e.known]).toEqual([true, 'obstacle', undefined]);
+    const rec = sim.events[ob.ev!];
+    expect([rec.kind, rec.actor, rec.truth, rec.incidentId, rec.importance]).toEqual(['traffic', '교통정보', false, -1, 1]);
+    expect(KNOWN.exec(rec.text)![2]).toBe('전면');
+    expect(rec.causes).toEqual([closeEv.id]);
+    expect(sysOf(rec)).toBe('road');
+    expect(sim.world.log.filter((l) => l.rule === 'rubbleRoad')).toEqual([{ rule: 'rubbleRoad', t: sim.t, ev: closeEv.id, inc: I.id, made: -1, depth: 0 }]);
+    expectLinked(sim, I, edge);
+    // 치워지면 길이 열린다 (교통 모델이 한다)
+    sim.t = ob.until + 1; sim.tick = Math.round(sim.t * 5); tickTraffic(sim);
+    expect(rubbles(sim).length).toBe(0);
+    expect([e.closed, e.closedReason]).toEqual([false, null]);
+    expect(sim.events[sim.events.length - 1].text).toMatch(/통행 재개\.$/);
+  });
+  it('(가) 전면 통제가 도시를 끊으면 한 차로만 — 앞 사건이 남긴 건물 상태로는 잔해를 또 남기지 않는다', () => {
+    const { sim, I } = fireAt('C2-B');
+    const s = sim.scenes[I.id]!;
+    collapseBuilding(sim, s, I, catOf(sim, s)!);
+    const edge = I.blockedEdge, e = sim.city.edges[edge];
+    // 그 구간의 한쪽 끝에 닿는 다른 길을 모두 막는다: 이 구간을 전면 통제하면 그 교차로가 끊긴다
+    const shut: number[] = [];
+    for (const id of sim.city.nodes[e.a].edges) if (id !== edge && !sim.city.edges[id].closed) { sim.city.edges[id].closed = true; sim.city.edges[id].closedReason = 'disaster'; shut.push(id); }
+    closeIncident(sim, I, 'resolved');
+    sim.tick++; sim.t += sim.dt; tickWorld(sim);
+    const [ob] = rubbles(sim);
+    expect(ob.full).toBe(false);
+    expect(e.closed).toBe(false);
+    expect(KNOWN.exec(sim.events[ob.ev!].text)![2]).toBe('한 차로');
+    for (const id of shut) { sim.city.edges[id].closed = false; sim.city.edges[id].closedReason = null; }
+    expectLinked(sim, I, edge);
+    // 같은 건물의 뒤 사건: 건물 상태를 적은 것이 앞 사건이면 닫혀도 잔해를 남기지 않는다 (쿨다운이 지난 뒤에도)
+    sim.traffic.obstacles.length = 0;
+    const J = createIncident(sim, { type: 'medical', variant: 'faint', placeId: I.truth.placeId, rng: sim.rng.fork('t2') });
+    sim.t += RUBBLE.COOLDOWN + 5; sim.tick = Math.round(sim.t * 5);
+    if (J.truth.placeId === I.truth.placeId) {      // (무너진 건물에는 새 사건이 나지 않는다 — placeGone 이 다른 건물로 돌리면 이 갈래는 건너뛴다)
+      closeIncident(sim, J, 'resolved');
+      sim.tick++; sim.t += sim.dt; tickWorld(sim);
+      expect(rubbles(sim).length).toBe(0);
+    }
+    // 건물 상태가 무너짐·폭발이 아니면(그을림·일부 붕괴) 남기지 않는다
+    const K = fireAt('C2-B2');
+    K.sim.placeMarks.set(K.I.truth.placeId, { placeId: K.I.truth.placeId, state: 'partial', t: 0, incidentId: K.I.id, burnFrac: 0.2, ruinFrac: 0.2 });
+    closeIncident(K.sim, K.I, 'resolved');
+    K.sim.tick++; K.sim.t += K.sim.dt; tickWorld(K.sim);
+    expect(rubbles(K.sim).length).toBe(0);
+    // 폭발한 건물(blasted)은 X6 의 통제가 없어도 면한 구간에 남는다
+    const B = fireAt('C2-B3');
+    B.sim.placeMarks.set(B.I.truth.placeId, { placeId: B.I.truth.placeId, state: 'blasted', t: 0, incidentId: B.I.id, burnFrac: 0.1, ruinFrac: 0 });
+    closeIncident(B.sim, B.I, 'resolved');
+    B.sim.tick++; B.sim.t += B.sim.dt; tickWorld(B.sim);
+    expect(rubbles(B.sim).map((o) => [o.edge, o.known])).toEqual([[B.edge, true]]);
+  });
+  it('(나) 큰 폭발: 현장에 대원이 있으면 알려진 통제, 없으면 아무도 모르는 잔해(진실 기록) — 부대가 가서 보고 되돌아 나오며 그 기록을 원인으로 잇는다', () => {
+    // 1) 대원이 없는 현장의 폭발: 진실만 바뀐다
+    const { sim, I, edge } = fireAt('C2-C');
+    const e = sim.city.edges[edge];
+    const boom = raiseProblem(sim, I, 'EXPLOSION', '보관 중이던 가스 용기 폭발', { role: 'SYSTEM', actor: '현장', truth: true, text: '시험: 가스 용기 폭발' }, false);
+    signal(sim, 'catastrophe', { inc: I.id, ev: boom, size: 2.8, data: 0 });
+    sim.tick++; sim.t += sim.dt; tickWorld(sim);
+    const [ob] = rubbles(sim);
+    expect([ob.edge, ob.full, ob.known]).toEqual([edge, true, false]);
+    expect([e.closed, e.closedReason, e.known]).toEqual([true, 'obstacle', false]);
+    expect(ob.tipAt - sim.t).toBeGreaterThanOrEqual(RUBBLE.TIP[0]);
+    expect(ob.tipAt - sim.t).toBeLessThanOrEqual(RUBBLE.TIP[1]);
+    const rec = sim.events[ob.ev!];
+    expect([rec.kind, rec.actor, rec.truth, rec.causes]).toEqual(['traffic', '도시', true, [boom]]);
+    expect(HIDDEN.test(rec.text)).toBe(true);
+    expectLinked(sim, I, edge);
+    // 그 구간으로 오던 부대: 가 보아야 안다 — 보고(알려짐)와 ROUTE_BLOCKED 가 그 잔해 기록을 원인으로, 막은 사건은 그 폭발의 사건
+    const u = sim.units.find((q) => q.kind === 'engine')!;
+    const from = e.a, to = e.b, n = sim.city.nodes[from];
+    u.nodeId = from; u.x = u.px = n.x; u.y = u.py = n.y; u.route = null; u.seg = 0; u.segT = 0; u.pendingDest = null; u.curb = null; u.backing = false;
+    u.state = 'enroute'; u.incidentId = I.id; u.dispatchedAt = sim.t;
+    sendUnitTo(sim, u, to);
+    expect(u.route!.edges[0], '아직 모르는 통제는 경로가 피하지 않는다').toBe(edge);
+    let rb = I.problems.find((p) => p.code === 'ROUTE_BLOCKED');
+    for (let k = 0; k < 600 && !rb; k++) { sim.tick++; sim.t = sim.tick * sim.dt; tickUnits(sim); rb = I.problems.find((p) => p.code === 'ROUTE_BLOCKED'); }
+    expect(rb).toBeDefined();
+    expect(ob.known).toBe(true);
+    expect(e.known).toBe(true);
+    expect(sim.events[rb!.eventId].causes).toEqual([ob.ev]);
+    expect(rb!.ref).toEqual({ inc: I.id, unit: u.id, edge });
+    expect(rb!.detail).toContain('건물 잔해');
+    const report = sim.events.find((x) => x.id > ob.ev! && x.kind === 'traffic' && x.actor === u.callsign)!;
+    expect(report.causes).toEqual([ob.ev]);
+    expect(report.text).toContain('건물 잔해');
+    // 2) 대원이 있는 현장의 폭발: 곧바로 알려진다. 폭발물(blast)은 반경 3.2 칸부터, X6 가 길을 막고 있는 사건(전체 붕괴)에는 더 놓지 않는다
+    const A = fireAt('C2-D');
+    const eng = A.sim.units.find((q) => q.kind === 'engine')!;
+    dispatchUnit(A.sim, eng, A.I, 0); eng.state = 'onscene'; eng.nodeId = A.I.truth.nodeId;
+    unitArrived(A.sim, A.I, eng);
+    expect(A.sim.scenes[A.I.id]!.agents.some((a) => a.status === 'active')).toBe(true);
+    const b0 = raiseProblem(A.sim, A.I, 'HIDDEN_HAZARD', '폭발물 폭발', { role: 'SYSTEM', actor: '현장', text: '시험: 폭발' }, false);
+    signal(A.sim, 'blast', { inc: A.I.id, ev: b0, size: RUBBLE.BLAST_R - 0.2 });
+    A.sim.tick++; A.sim.t += A.sim.dt; tickWorld(A.sim);
+    expect(rubbles(A.sim).length, '작은 폭발은 잔해를 쏟지 않는다').toBe(0);
+    signal(A.sim, 'blast', { inc: A.I.id, ev: b0, size: 3.4 });
+    A.sim.tick++; A.sim.t += A.sim.dt; tickWorld(A.sim);
+    const [oa] = rubbles(A.sim);
+    expect([oa.edge, oa.known, oa.tipAt]).toEqual([A.edge, true, Infinity]);
+    expect(A.sim.events[oa.ev!].causes).toEqual([b0]);
+    expect(KNOWN.test(A.sim.events[oa.ev!].text)).toBe(true);
+    expectLinked(A.sim, A.I, A.edge);
+    // 같은 건물: 쿨다운(600초) 안에는 닫혀도 또 남기지 않는다
+    A.sim.placeMarks.set(A.I.truth.placeId, { placeId: A.I.truth.placeId, state: 'blasted', t: 0, incidentId: A.I.id, burnFrac: 0, ruinFrac: 0 });
+    A.sim.traffic.obstacles.length = 0; A.sim.city.edges[A.edge].closed = false; A.sim.city.edges[A.edge].closedReason = null;
+    signal(A.sim, 'catastrophe', { inc: A.I.id, ev: b0, size: 3.6, data: 0 });
+    A.sim.tick++; A.sim.t += A.sim.dt; tickWorld(A.sim);
+    expect(rubbles(A.sim).length).toBe(0);
+    // X6 가 이미 길을 막은 사건(전체 붕괴)의 폭발
+    const X = fireAt('C2-E');
+    collapseBuilding(X.sim, X.sim.scenes[X.I.id]!, X.I, catOf(X.sim, X.sim.scenes[X.I.id]!)!);
+    X.sim.tick++; X.sim.t += X.sim.dt; tickWorld(X.sim);
+    signal(X.sim, 'catastrophe', { inc: X.I.id, ev: X.I.blockEv!, size: 4, data: 0 });
+    X.sim.tick++; X.sim.t += X.sim.dt; tickWorld(X.sim);
+    expect(rubbles(X.sim).length).toBe(0);
+  });
+  it('실제 교대(보통 S0·S3·S7): 잔해 기록마다 원인이 그 사건의 폭발 기록이거나 종료 기록이고, 건물 상태(X6)와 맞는다', () => {
+    let boom = 0, after = 0;
+    for (const seed of ['S0', 'S3', 'S7']) {
+      const { sim, m } = probedShift(seed);
+      const recs = sim.events.filter((e) => e.kind === 'traffic' && (KNOWN.test(e.text) || HIDDEN.test(e.text)));
+      expect(recs.length, seed).toBe(sim.world.log.filter((l) => l.rule === 'rubbleRoad').length);
+      expect(recs.length).toBeLessThanOrEqual(RUBBLE.CAP);
+      for (const r of recs) {
+        expect(r.causes.length).toBe(1);
+        const c = sim.events[r.causes[0]], I = sim.incidents[c.incidentId], pm = sim.placeMarks.get(I.truth.placeId)!;
+        expect(I.truth.placeId).toBeGreaterThanOrEqual(0);
+        if (c.kind === 'resolve') { after++; expect(r.actor).toBe('교통정보'); expect(['collapsed', 'blasted']).toContain(pm.state); expect(pm.incidentId).toBe(I.id); expect(r.t - I.closedAt).toBeLessThan(0.5); }
+        else { boom++; expect(['EXPLOSION', 'HIDDEN_HAZARD']).toContain(c.problem); expect(r.truth).toBe(r.actor === '도시'); }
+      }
+      const c = m.consistency;
+      expect([c.C1, c.C2, c.C3, c.C4, c.C5], seed).toEqual([0, 0, 0, 0, 0]);
+    }
+    expect(boom, '폭발의 잔해').toBeGreaterThan(0);
+    expect(after, '사건 뒤에 남은 잔해').toBeGreaterThan(0);
+  });
+  it('장애물의 기록(ev)은 인과 규칙이 놓은 것에만 있다 — 교통 모델이 놓은 것은 그대로이고, quiet 가 아니면 addObstacle 이 알린다', () => {
+    const sim = new Sim('C2-F', NORMAL, 1200);
+    sim.traffic.nextEvent = Infinity;
+    for (const o of sim.traffic.obstacles) expect(o.ev).toBeUndefined();
+    const e = sim.city.edges.find((q) => q.cls === 'street' && !q.closed && !sim.traffic.obstacles.some((o) => o.edge === q.id))!;
+    const n0 = sim.events.length;
+    const a = addObstacle(sim, { edge: e.id, kind: 'rubble', full: false, dur: 60, known: true, quiet: true })!;
+    expect(sim.events.length, 'quiet: 놓은 쪽이 기록한다').toBe(n0);
+    expect([a.kind, a.label, a.ev]).toEqual(['rubble', '건물 잔해', undefined]);
+    sim.traffic.obstacles.length = 0;
+    addObstacle(sim, { edge: e.id, kind: 'debris', full: false, dur: 60, known: true });
+    expect(sim.events.length).toBe(n0 + 1);
   });
 });

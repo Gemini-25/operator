@@ -11,6 +11,8 @@
 
 import { weatherSpeedFactor } from '../src/sim/city';
 import type { Sim } from '../src/sim/engine';
+import { roadFlow, roadParts } from '../src/sim/traffic';
+import type { RoadPart } from '../src/sim/traffic';
 
 export interface HazLawCount { cells: number; crossed: number; made: number; waitingEnd: number }
 export interface HazRoad {
@@ -37,8 +39,23 @@ export class HazProbe {
     this.seenDrift = tr.driftAt;
     this.sampleRoad();
   }
-  /** (b3-5 ① 가 채운다) 도로의 초과 — 교통 모델이 적어 둔 배열만 읽는다 */
-  protected sampleRoad(): void { /* 뼈대 */ }
+  /** 도로의 초과 — 교통 모델이 drift 에서 적어 둔 배열과 몫 목록만 읽는다. 가중은 L1 의 식 그대로: 통행량 V = 0.4 + 1.6 × flow · 노면·시야 S · 길이 ℓ = clamp(len / 150, 0.5, 2), dt = 12 */
+  private buf: RoadPart[] = [];
+  protected sampleRoad(): void {
+    const sim = this.sim, tr = sim.traffic, edges = sim.city.edges, r = this.road, flow = roadFlow(sim), S = roadSurface(sim), dt = 12;
+    r.drifts++;
+    for (let id = 0; id < edges.length; id++) {
+      const e = edges[id];
+      if (e.closed) { r.closedDrifts++; continue; }
+      const x = tr.excess[id];
+      if (!(x > 0)) continue;
+      const w = (0.4 + 1.6 * flow[id]) * S * Math.min(2, Math.max(0.5, e.len / 150)) * dt;
+      r.edgeDrifts++;
+      r.own += tr.exOwn[id] * w; r.bump += tr.exBump[id] * w; r.queue += tr.exQueue[id] * w; r.div += tr.exDiv[id] * w; r.raw += x * dt;
+      const np = roadParts(sim, id, this.buf);
+      for (let k = 0; k < np; k++) { const p = this.buf[k]; r.byWhat[p.what] = (r.byWhat[p.what] ?? 0) + p.x * w; if (p.ev < 0) r.unledgered += p.x * w; }
+    }
+  }
   done(): HazCount {
     const sim = this.sim, hz = sim.world.hz;
     const laws: Record<string, HazLawCount> = {};

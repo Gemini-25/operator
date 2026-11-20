@@ -18,7 +18,7 @@ import { createIncident } from './incidents';
 import type { SpawnOpts } from './incidents';
 import type { Rng } from './rng';
 import { scenarioOf } from './scenarios';
-import { reallyLinked } from './traffic';
+import { canBlock, noteBump, noteRoadCause, unnoteBump } from './traffic';      // (I1-b b3-5) 우회로 판정과 교통의 장부
 import type { Incident, IncidentType, Place, PlaceKind, RoadEdge, RoadNode } from './types';
 import { clamp, fmtClock, josa } from './util';
 
@@ -63,6 +63,7 @@ export interface DisasterState {
   swept?: number;                // 물에 휩쓸린 사람 수
   // ── 인과 기록 (I1-b) ──
   lastEv: number;                // 마지막 재난 알림 기록 (-1). 재난이 일으킨 사건의 발생 기록이 원인으로 가리킨다 — 판단은 읽지 않는다
+  darkBump: number;              // (b3-5) 정전이 얹은 혼잡의 장부 줄 (traffic.noteBump 의 id, -1 = 없다)
 }
 
 /** 재난 하나가 일으키는 사건 수의 상한 */
@@ -89,7 +90,7 @@ function plan(sim: Sim, kind: DisasterKind, rng: Rng): DisasterState {
   const d: DisasterState = {
     kind, name: DISASTER_NAME[kind], phase: 'calm', tWarn: 0, tImpact: 0, tEnd: 0, intensity: 0, rng,
     spawned: [], closedEdges: [], nextAt: Infinity, log: [], closedTotal: 0, queue: [], timed: [], done: {},
-    lastEv: -1,
+    lastEv: -1, darkBump: -1,
   };
   if (kind === 'typhoon') { d.tWarn = L * rng.range(0.1, 0.18); d.tImpact = d.tWarn + rng.range(90, 120); d.tEnd = d.tImpact + 420; }
   else if (kind === 'flood') {
@@ -162,25 +163,15 @@ function raise(sim: Sim, d: DisasterState, what: What): Incident | null {
   return opts ? spawn(sim, d, opts) : null;
 }
 
-/**
- * 이 구간을 막아도 양 끝이 다른 길로 이어지는가. 진행 중인 사건이 곧 막을 구간도 막힌 것으로 본다.
- * 재난은 세계이므로 **실제 상태**로 본다: 아직 아무도 모르는 낙하물이 놓인 길(경로 계산은 지나갈 수 있다고 본다)은 돌아갈 길이 아니다.
- * dry = 다리를 건너지 않고도 이어져야 한다 (강가의 길을 닫을 때: 다리 하나에만 매달린 교차로를 만들지 않는다)
- */
-function detour(sim: Sim, e: RoadEdge, dry = false): boolean {
-  const c = sim.city, held: RoadEdge[] = [];
-  for (const I of sim.incidents) { if (I.phase === 'closed' || I.blockedEdge < 0 || I.blockedEdge === e.id) continue; const b = c.edges[I.blockedEdge]; if (!b.closed) { b.closed = true; held.push(b); } }
-  if (dry) for (const b of c.edges) if (b.bridge && !b.closed && b.id !== e.id) { b.closed = true; held.push(b); }
-  const ok = reallyLinked(sim, e.a, e.b, e.id);
-  for (const b of held) b.closed = false;
-  return ok;
-}
+/** 이 구간을 막아도 양 끝이 다른 길로 이어지는가 — (I1-b b3-5) 그 판정은 traffic.canBlock 으로 옮겼다(L1 이 낸 사고가 구간을 잡을 때도 같은 것을 본다). 재난은 그것을 부른다 */
+function detour(sim: Sim, e: RoadEdge, dry = false): boolean { return canBlock(sim, e, dry); }
 /** 구간을 통제한다. 우회로가 있을 때만(강 서쪽이 고립되거나 막다른 길이 끊기지 않게) */
 function closeEdge(sim: Sim, d: DisasterState, e: RoadEdge, why: string, dry = false): boolean {
   if (e.closed || !detour(sim, e, dry)) return false;
   e.closed = true; e.closedReason = 'disaster';
   d.closedEdges.push(e.id); d.closedTotal++;
-  emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 1, text: `${edgeName(sim.city, e)} 통제 — ${why}.` });
+  const ev = emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 1, text: `${edgeName(sim.city, e)} 통제 — ${why}.` });
+  noteRoadCause(sim, e.id, 'close', ev);      // (I1-b b3-5) 교통의 장부: 닫힘의 주인 = 이 통제 기록 (주인 사건은 없다 — 재난은 사건이 아니다)
   return true;
 }
 /** 재난이 통제한 구간을 연다 (사건이나 공사가 통제한 구간은 건드리지 않는다). pred 를 주면 그 구간만 */
@@ -200,12 +191,15 @@ const DARK_BUMP = 0.4;
 function lightsOut(sim: Sim, d: DisasterState): void {
   d.dark = true; d.done.dark = sim.t;
   for (const e of sim.city.edges) e.bump = (e.bump ?? 0) + DARK_BUMP;
-  tell(sim, d, '강풍에 송전선이 끊겨 도시 곳곳이 정전됐습니다. 신호등이 꺼져 도로가 밀립니다.');
+  const ev = tell(sim, d, '강풍에 송전선이 끊겨 도시 곳곳이 정전됐습니다. 신호등이 꺼져 도로가 밀립니다.');
+  // (I1-b b3-5) 얹은 혼잡의 장부 한 줄 — 산술은 위 그대로 두고 줄만 (d.lastEv 는 보고서에 남기지 않는 알림에도 덮이므로 이 자리의 기록을 쓴다)
+  d.darkBump = noteBump(sim, sim.city.edges.map((e) => e.id), DARK_BUMP, ev, 1);
 }
 function lightsOn(sim: Sim, d: DisasterState, quiet = false): void {
   if (!d.dark) return;
   d.dark = false;
   for (const e of sim.city.edges) { const v = (e.bump ?? 0) - DARK_BUMP; e.bump = v < 1e-9 ? 0 : v; }
+  if (d.darkBump >= 0) { unnoteBump(sim, d.darkBump); d.darkBump = -1; }      // (I1-b b3-5) 장부 줄도 함께 거둔다
   if (!quiet) tell(sim, d, '전력이 복구됐습니다. 신호등이 다시 켜집니다.', '재난안전본부', false);
 }
 
@@ -488,12 +482,17 @@ function floodLevel(d: DisasterState, t: number): number {
   if (u < FLOOD_RISE + FLOOD_HOLD + FLOOD_FALL) return 1 - (0.7 * (u - FLOOD_RISE - FLOOD_HOLD)) / FLOOD_FALL;
   return Math.max(0, 0.3 * (1 - (t - d.tEnd) / AFTERMATH));
 }
+/**
+ * (I1-b b3-5) 구간이 잠기는 수위(문턱) — 다리 0.9, 그 밖은 강까지의 거리 ÷ 80 (plan 이 d.thr 에 적어 둔 값). 수위가 그 0.7 을 넘으면 느려지고 문턱을 넘으면 잠긴다.
+ * 문턱을 읽는 자리를 한 함수로 뽑아 둔다: N9 가 지하차도 구간에 낮은 문턱을 주는 한 줄을 여기에 더한다 (설계서 I1 §3.7 L6 — 시드에 따라 달라지는 값은 sim.world 안에 둔다)
+ */
+export function roadSill(_sim: Sim, d: DisasterState, e: RoadEdge): number { return d.thr![e.id]; }
 function floodRoads(sim: Sim, d: DisasterState): void {
   const lv = (d.level = floodLevel(d, sim.t));
   if (sim.tick % 10 !== 0) return;      // 2초마다 살핀다
-  const thr = d.thr!, slowed = d.slowed!;
+  const slowed = d.slowed!;
   for (const e of sim.city.edges) {
-    const th = thr[e.id];
+    const th = roadSill(sim, d, e);
     if (th > 1.45) continue;      // 강에서 먼 구간
     const k = slowed.indexOf(e.id);
     if (k < 0 && lv > th * 0.7) { e.slow += FLOOD_SLOW; slowed.push(e.id); }

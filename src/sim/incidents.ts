@@ -14,6 +14,7 @@ import { startPursuit } from './pursuit';
 import { disasterGapMul } from './disaster';
 import { DEPTH_MAX, chainDepth } from './chain';
 import { signal } from './world/consequence';      // (I1-b) 사건의 발생(붕괴)·종료를 세계에 알린다
+import { noteRoadCause } from './traffic';      // (I1-b b3-5) 길을 닫거나 느리게 한 기록을 교통의 장부에
 import { divertUnmet } from './world/rules/record';      // (I1-b C6)
 import { SCENARIOS, scenarioName, scenarioOf } from './scenarios';
 import type { Scenario } from './scenarios';
@@ -186,12 +187,15 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
       e.closed = true; e.closedReason = 'incident';
       for (const k of node.edges) if (k !== e.id) sim.city.edges[k].cong = Math.min(3, sim.city.edges[k].cong + 0.7);
       I.blockEv = emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(sim.city, e)} 통행 불가 — 쓰러진 나무가 길을 막았습니다.`, imp: 1, truth: true });      // (I1-b) 통제 기록: 다른 사건의 ROUTE_BLOCKED 가 원인으로 가리킨다
+      noteRoadCause(sim, e.id, 'close', I.blockEv, I.id);      // (I1-b b3-5) 닫힘의 주인 = 통제 기록 (감속의 주인은 아래의 발생 기록 — 항이 달라 서로 덮지 않는다)
     }
   }
   const what = variant === 'false' ? '실제 화재는 없음 — 오인 신고가 들어올 예정' : variant === 'prank' ? '실제 사건은 없음 — 장난 전화가 걸려 올 예정' : scenarioName(type, variant) === TYPE_NAME[type] ? TYPE_NAME[type] : `${TYPE_NAME[type]} · ${scenarioName(type, variant)}`;
   if (variant === 'kidnap' || variant === 'drunk' || variant === 'getaway') startPursuit(sim, I, variant);
   special?.onCreate?.(sim, I);
   I.rootEvent = emit(sim, { inc: id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: special?.tag === 'major' ? 3 : 1, truth: true, causes: I.cause !== undefined ? (opts.causes ? [I.cause, ...opts.causes] : [I.cause]) : opts.causes, text:chainNote ? `${chainNote} — ${I.truth.label}.` : `사건 발생 — ${I.truth.label} (${what}). 아직 신고되지 않았습니다.` });
+  // (I1-b b3-5) 교통사고가 느리게 한 구간(slow += 1.4): 감속의 주인 = 발생 기록 — 그 구간이 뿌리가 된 밀림이 이 사건의 것이 된다 (기록 id 를 담기만 한다)
+  if (type === 'traffic' && I.blockedEdge >= 0) noteRoadCause(sim, I.blockedEdge, 'slow', I.rootEvent, I.id);
   // (I1-b §3.4) 무너진 채로 시작하는 사건(크레인 붕괴·가스 폭발·산사태): 발생이 곧 붕괴다 — 신호의 기록은 발생 기록, 크기는 처음부터 무너져 있는 칸 수
   if (type === 'collapse' && COLLAPSE_AT_START.has(variant)) {
     const dm = sim.scenes[id]?.damage; let fell = 0;

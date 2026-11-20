@@ -5,6 +5,7 @@ import { fieldReport } from '../dispatch/dispatcher';
 import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import { closeIncident } from '../incidents';
+import { noteRoadCause } from '../traffic';      // (I1-b b3-5) 통제 기록을 교통의 장부에
 import { noteDeparture, releaseUnit, startTransport, transportWhy } from '../resources';
 import { scenarioOf } from '../scenarios';
 import { TYPE_DEFS } from '../incidentTypes';
@@ -377,7 +378,7 @@ export function tickScene(sim: Sim, s: Scene): void {
   // 6) 사고 현장 도로 통제 반영
   if (s.laneRows.length && I.blockedEdge >= 0 && I.phase !== 'closed') {
     const e = sim.city.edges[I.blockedEdge];
-    if (s.controlDone.every(Boolean) && !e.closed) { e.closed = true; e.closedReason = 'incident'; I.blockEv = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 0, text: '사고 구간 전면 통제. 주변 차량은 우회합니다.' }); }      // (I1-b) 통제 기록 id
+    if (s.controlDone.every(Boolean) && !e.closed) { e.closed = true; e.closedReason = 'incident'; I.blockEv = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 0, text: '사고 구간 전면 통제. 주변 차량은 우회합니다.' }); noteRoadCause(sim, e.id, 'close', I.blockEv, I.id); }      // (I1-b) 통제 기록 id — 교통의 장부에도 (닫힘의 주인)
   }
   // 7) 한계 시간 / 방치
   const on = onAt(s);      // 지상이든 상공이든 부대가 처음 닿은 때부터 잰다 — 헬기만 떠 있어도 사건은 반드시 끝난다

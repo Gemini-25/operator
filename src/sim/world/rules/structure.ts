@@ -15,7 +15,7 @@
 import { edgeName } from '../../city';
 import type { Sim } from '../../engine';
 import { emit } from '../../events';
-import { addObstacle, obstacleOnEdge } from '../../traffic';
+import { addObstacle, noteRoadCause, obstacleOnEdge } from '../../traffic';
 import type { Signal } from '../../types';
 import { registerConsequence } from '../consequence';
 
@@ -68,5 +68,6 @@ registerConsequence({
       ob.tipAt = sim.t + c.rng.range(RUBBLE.TIP[0], RUBBLE.TIP[1]);
       ob.ev = emit(sim, { role: 'SYSTEM', actor: '도시', kind: 'traffic', imp: 1, truth: true, causes: [sig.ev], text: `${name}에 건물 잔해가 쏟아져 ${ob.full ? '길이 막혔습니다' : '한 차로가 막혔습니다'}. 아직 아무도 신고하지 않았습니다.` });
     }
+    if (ob.full) noteRoadCause(sim, edge, 'close', ob.ev, sig.inc);      // (b3-5) 교통의 장부: 닫힘의 주인 = 잔해 기록, 주인 사건 = 그 건물의 사건 (닫힌 사건이어도 된다). 한 차로 잔해의 주인은 장애물의 ev 로 읽힌다
   },
 });

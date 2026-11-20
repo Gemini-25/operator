@@ -1402,7 +1402,7 @@ describe('I1-b b3-3: C2 rubbleRoad — 잔해는 사건이 끝나도 남는다',
     expect(boom, '폭발의 잔해').toBeGreaterThan(0);
     expect(after, '사건 뒤에 남은 잔해').toBeGreaterThan(0);
   });
-  it('장애물의 기록(ev)은 인과 규칙이 놓은 것에만 있다 — 교통 모델이 놓은 것은 그대로이고, quiet 가 아니면 addObstacle 이 알린다', () => {
+  it('장애물의 기록(ev): 인과 규칙이 놓은 것(quiet)은 놓은 쪽이 넣고, 교통 모델이 놓은 것은 그 알림 기록이다 (b3-5 — 초과 혼잡의 주인). 교대 내내 있는 불법 주차에는 없다', () => {
     const sim = new Sim('C2-F', NORMAL, 1200);
     sim.traffic.nextEvent = Infinity;
     for (const o of sim.traffic.obstacles) expect(o.ev).toBeUndefined();
@@ -1412,7 +1412,9 @@ describe('I1-b b3-3: C2 rubbleRoad — 잔해는 사건이 끝나도 남는다',
     expect(sim.events.length, 'quiet: 놓은 쪽이 기록한다').toBe(n0);
     expect([a.kind, a.label, a.ev]).toEqual(['rubble', '건물 잔해', undefined]);
     sim.traffic.obstacles.length = 0;
-    addObstacle(sim, { edge: e.id, kind: 'debris', full: false, dur: 60, known: true });
+    const b = addObstacle(sim, { edge: e.id, kind: 'debris', full: false, dur: 60, known: true })!;
     expect(sim.events.length).toBe(n0 + 1);
+    expect(b.ev, '알림 기록이 그 장애물의 기록이 된다').toBe(n0);
+    expect(sim.events[n0].text).toContain('낙하물');
   });
 });

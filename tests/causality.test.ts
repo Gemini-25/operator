@@ -1007,6 +1007,11 @@ describe('I1-b b3-1: C6 divertRecord — 전환 배정의 실제 영향', () => 
     expect(J.divertWait).toBeUndefined();
     expect(s.events.slice(n0 + 1).some((e) => LATE.test(e.text))).toBe(false);
   });
+  it('정보 격리: 관제(dispatcher)가 부르는 C6 의 파일은 세계 상태를 읽지 않는다 — 관제 자신의 결정과 도착 보고만 (소스 글자)', () => {
+    const src = readFileSync('src/sim/world/rules/record.ts', 'utf8');
+    for (const w of ['sim.world', 'world.zones', 'world.hospitals', 'world.signals', 'world.log', 'placeMarks', 'carryState', '.truth', 'sim.scenes']) expect(src.includes(w), `record.ts 에 ${w}`).toBe(false);
+    expect(readFileSync('src/sim/dispatch/dispatcher.ts', 'utf8')).toContain("from '../world/rules/record'");
+  });
 });
 
 describe('I1-b b3-2: C3 hospitalLoad — 응급실 포화', () => {

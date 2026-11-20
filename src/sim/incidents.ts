@@ -14,7 +14,7 @@ import { startPursuit } from './pursuit';
 import { disasterGapMul } from './disaster';
 import { DEPTH_MAX, chainDepth } from './chain';
 import { signal } from './world/consequence';      // (I1-b) 사건의 발생(붕괴)·종료를 세계에 알린다
-import { noteRoadCause } from './traffic';      // (I1-b b3-5) 길을 닫거나 느리게 한 기록을 교통의 장부에
+import { canBlock, noteRoadCause } from './traffic';      // (I1-b b3-5) 길을 닫거나 느리게 한 기록을 교통의 장부에
 import { divertUnmet } from './world/rules/record';      // (I1-b C6)
 import { SCENARIOS, scenarioName, scenarioOf } from './scenarios';
 import type { Scenario } from './scenarios';
@@ -180,7 +180,16 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
     // 사고 지점 도로는 느려지고, 통제가 끝나면 전면 차단된다(우회로가 있는 도로만)
     const es = node.edges.map((e) => sim.city.edges[e]).filter((e) => !e.closed && e.cls !== 'highway');
     es.sort((a, b) => (b.arterial ? 1 : 0) - (a.arterial ? 1 : 0) || a.id - b.id);
-    for (const e of es) { if (findRoute(sim.city, e.a, e.b, 1, e.id)) { I.blockedEdge = e.id; e.slow += 1.4; break; } }
+    // (I1-b §3.6b (다)) 사고가 난 구간을 정해 주었으면(법칙이 낸 사고 — 차가 몰린 바로 그 구간) 그 구간을 먼저 본다: 이 교차로에 닿아 있고, 닫히지 않았고, 고속도로가 아니며,
+    // 다른 열린 사건이 잡은 구간이 아니고(둘이 같은 구간을 잡으면 먼저 닫히는 사건이 감속과 통제를 풀어 남은 사건의 기록과 도로 상태가 어긋난다),
+    // 막아도 도시가 끊기지 않는다(canBlock — 실제 상태에서, 열린 사건들이 잡은 구간도 막힌 것으로 치고). 아니면 지금 규칙(간선 먼저 · 번호 작은 것)으로 고르되,
+    // 법칙이 낸 사고는 그때도 같은 두 조건을 본다 — 통제 하나의 이웃·우회로에 사고가 잇달아 나므로 알려진 통제만 보는 findRoute 로는 교차로 하나의 구간들이 차례로 닫혀 끊길 수 있다.
+    // 평소 추첨은 구간을 정해 주지 않으므로 그대로다
+    const law = opts.edgeId !== undefined;
+    const held = (eid: number): boolean => { for (const J of sim.incidents) if (J !== I && J.phase !== 'closed' && J.blockedEdge === eid) return true; return false; };
+    const pre = law ? sim.city.edges[opts.edgeId!] : undefined;
+    if (pre && !pre.closed && pre.cls !== 'highway' && (pre.a === node.id || pre.b === node.id) && !held(pre.id) && canBlock(sim, pre)) { I.blockedEdge = pre.id; pre.slow += 1.4; }
+    else for (const e of es) { if (findRoute(sim.city, e.a, e.b, 1, e.id) && (!law || (!held(e.id) && canBlock(sim, e)))) { I.blockedEdge = e.id; e.slow += 1.4; break; } }
     if (variant === 'tree' && I.blockedEdge >= 0) {
       // 쓰러진 나무가 길을 막았다: 치울 때까지 그 구간은 지나갈 수 없다. 이웃한 길이 밀리고 우회로에 차가 몰리는 것은 교통 모델의 일반 규칙이 한다
       // (I1-b §3.6b — 예전에는 여기서 이웃 구간의 혼잡에 0.7 을 손으로 더했다. 닫힌 까닭이 무엇이든 같은 규칙이다)

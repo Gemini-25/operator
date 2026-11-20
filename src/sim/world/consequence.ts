@@ -44,6 +44,8 @@ export interface Consequence {
                                            //   상태도 바꾸고 사건도 만드는 규칙은 거짓으로 두고 apply 안에서 spawnConsequence 를 부른다(예약마다 따로 거절된다)
   test: (c: CsqCtx) => boolean;            // 조건 (세계 상태를 읽어도 된다 — 진실 쪽)
   apply: (c: CsqCtx) => void;              // 상태를 바꾸고 emit — 사건은 spawnConsequence 로만
+  /** (선택) 참이면 world.log 에 줄을 남기지 않는다 — 상태만 쌓는 규칙(인계마다 도는 응급실 체류). 쿨다운·상한·시도 번호는 그대로 센다 */
+  silent?: boolean;
   /** (선택) 구역 값이 회복 시각을 지나 처음 값으로 돌아갈 때 — 복구 기록을 남기고 자기가 얹은 것(혼잡·음영)을 거둔다. 모든 규칙이 등록 순서로 받는다 */
   recover?: (sim: Sim, z: number, f: ZoneField, cause: number, known: boolean) => void;
 }
@@ -105,7 +107,7 @@ function fire(sim: Sim, c: Consequence, sig: Signal | null): void {
   w.last[lk] = sim.t;
   w.count[c.id] = (w.count[c.id] ?? 0) + 1;
   c.apply(ctx);
-  if (ctx.spawns === 0) w.log.push({ rule: c.id, t: sim.t, ev: sig ? sig.ev : -1, inc: src, made: -1, depth: ctx.depth });      // 사건을 예약한 발동의 줄은 spawnConsequence 가 예약마다 남긴다
+  if (ctx.spawns === 0 && !c.silent) w.log.push({ rule: c.id, t: sim.t, ev: sig ? sig.ev : -1, inc: src, made: -1, depth: ctx.depth });      // 사건을 예약한 발동의 줄은 spawnConsequence 가 예약마다 남긴다
 }
 
 /**

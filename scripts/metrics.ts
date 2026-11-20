@@ -64,6 +64,7 @@ export const PROBLEM_SYS: ReadonlyMap<string, SystemId> = (() => {
  * 문구 규칙 — 칸이 없어 문구로만 가릴 수 있는 곳. 기록 문구를 바꾸면 tests/causality.test.ts 가 깨진다.
  * T1 지원 요청(dispatcher) · T2 응급실 대기(resources.arrive) · T3 이송 출발(sceneManager 5) 블록) · T4 병원 인계(resources.tickUnits)
  * T5 이어받은 상태 요약(I2) · T6 결원 운용 중단(resources.arrive) · T7 출동 지령(dispatcher.sendUnit)
+ * T8 이송 중 목적지 변경(I1-b C3 — world/rules/hospital.ts 의 reroute. 일치 검사 C5 가 출발로 친다)
  */
 export const PHRASE = {
   T1: /인근 도시에 지원 요청/,
@@ -73,6 +74,7 @@ export const PHRASE = {
   T5: /^지난 교대에서 이어받은 상태/,
   T6: /(?:대원 전원 순직 —|남은 대원 모두 병원 이송 —|걸을 수 있는 대원이 없어) 운용 중단/,      // 사람이 없어 빠진 부대 (H1 §3.6 — '전원 부상'은 더는 까닭이 아니다)
   T7: /^출동 지령: (\S+) → 사건/,
+  T8: /^(\S+): .+? 포화 소식 — (.+?)(?:으로|로) 목적지 변경/,
 } as const;
 
 /** 기록 하나의 시스템 (§2.3 의 규칙, 위에서부터 첫 번째로 맞는 것) */
@@ -87,7 +89,7 @@ export function sysOf(e: SimEvent): SysOf {
     case 'traffic': return 'road';
     case 'hazard': return e.incidentId < 0 ? 'disaster' : 'hazard';
     case 'casualty': return PHRASE.T4.test(e.text) ? 'hospital' : 'field';
-    case 'unit': return PHRASE.T2.test(e.text) ? 'hospital' : PHRASE.T6.test(e.text) ? 'crew' : 'field';
+    case 'unit': return PHRASE.T2.test(e.text) || PHRASE.T8.test(e.text) ? 'hospital' : PHRASE.T6.test(e.text) ? 'crew' : 'field';      // T8: 환자의 사건이 없는 목적지 변경(다친 대원만 실은 차) — 사건이 있으면 HOSPITAL_FULL 문제 기록이라 위에서 잡힌다
     case 'incident': return 'origin';
     case 'shift': return PHRASE.T5.test(e.text) ? 'carry' : 'none';
     default: return 'field';
@@ -280,7 +282,10 @@ export function waitState(I: WaitInc, liveCall: boolean): 'forgot' | 'unloc' | n
 }
 
 // ───────────────────────── 일치 검사 (§2.12) ─────────────────────────
-/** C5: 이송 출발 문구(T3)의 병원 = 같은 부대의 다음 인계 문구(T4)의 병원. 다음 T4 가 없거나 환자 0명 출발은 건너뛴다 */
+/**
+ * C5: 같은 부대의 마지막 이송 출발(T3) **또는 이송 중 목적지 변경(T8 — I1-b C3)** 의 병원 = 그 부대의 다음 인계 문구(T4)의 병원.
+ * 다음 T4 가 없거나 환자 0명 출발은 건너뛴다. 목적지 변경은 열린 출발이 있을 때만 그 병원을 바꾼다(환자 0명 출발은 그대로 건너뛴다)
+ */
 export function checkC5(events: readonly SimEvent[]): { bad: number; n: number } {
   let bad = 0, n = 0;
   const open = new Map<string, string | null>();      // 부대 → 출발 문구의 병원 (null = 비교하지 않는 출발)
@@ -291,6 +296,8 @@ export function checkC5(events: readonly SimEvent[]): { bad: number; n: number }
       open.set(e.actor, zero ? null : t3[1]);
       continue;
     }
+    const t8 = PHRASE.T8.exec(e.text);
+    if (t8) { if (open.get(e.actor) != null) open.set(e.actor, t8[2]); continue; }
     const t4 = PHRASE.T4.exec(e.text);
     if (t4 && open.has(e.actor)) {
       const h = open.get(e.actor)!;

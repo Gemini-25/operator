@@ -746,6 +746,9 @@ describe('⑨ 환자 자리', () => {
       for (const e of p.sim.events) {
         const dep = /^(\S+) 환자 [1-9]\d*명 싣고 (.+?)(?:으로|로) 출발\.$/.exec(e.text);
         if (dep) { open.set(dep[1], dep[2]); expect(p.sim.city.facilities.some((f) => f.kind === 'hospital' && f.name === dep[2]), e.text).toBe(true); continue; }
+        // (I1-b C3) 이송 중 목적지 변경: 응급실 포화 소식에 병원을 바꾼 부대는 그 기록의 병원이 실제로 가는 병원이다 (측정 도구의 C5 와 같은 규칙 — 문구 규칙 T8)
+        const re = /^(\S+): .+? 포화 소식 — (.+?)(?:으로|로) 목적지 변경\.$/.exec(e.text);
+        if (re) { if (open.has(re[1])) open.set(re[1], re[2]); expect(p.sim.city.facilities.some((f) => f.kind === 'hospital' && f.name === re[2]), e.text).toBe(true); continue; }
         const arr = /^(\S+): (.+?) 도착, 환자/.exec(e.text);
         if (arr && open.has(arr[1])) { expect(arr[2], `${arr[1]} 의 출발 기록과 인계 기록`).toBe(open.get(arr[1])); open.delete(arr[1]); used.add(arr[2]); pairs++; }
       }

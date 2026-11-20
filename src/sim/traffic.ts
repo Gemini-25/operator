@@ -14,7 +14,8 @@ import type { Rng } from './rng';
 import type { City, PlaceKind, RoadEdge, Unit } from './types';
 import { clamp, josa } from './util';
 
-export type ObstacleKind = 'roadwork' | 'breakdown' | 'debris' | 'parked';
+export type ObstacleKind = 'roadwork' | 'breakdown' | 'debris' | 'parked'
+  | 'rubble';      // (I1-b C2) 무너지거나 터진 건물의 잔해 — 인과 규칙 world/rules/structure.ts 가 놓는다 (이 파일의 교통 사건 추첨에는 없다)
 export interface Obstacle {
   id: number; edge: number; t: number;          // 구간 위의 위치 (a→b 로 0..1)
   kind: ObstacleKind; full: boolean;            // 전면 차단인가 (아니면 한 차로만 — 느려질 뿐)
@@ -22,7 +23,8 @@ export interface Obstacle {
   since: number; until: number;                 // 생긴 시각, 치워지는 시각 (불법 주차는 교대 끝까지 = Infinity)
   known: boolean; knownAt: number;              // 관제가 아는가, 언제 알았는가
   tipAt: number;                                // 시민 제보가 들어올 시각 (그 전에 부대가 보면 그때 알려진다. 제보가 없으면 Infinity)
-  label: string;                                // '낙하물' · '고장 차량' · '도로 공사' · '불법 주차'
+  label: string;                                // '낙하물' · '고장 차량' · '도로 공사' · '불법 주차' · '건물 잔해'
+  ev?: number;                                  // (I1-b C2) 놓을 때 남긴 기록 — 놓은 쪽(인과 규칙)이 넣는다. 이 장애물을 알리는 보고와 그 앞에서 되돌아선 부대의 ROUTE_BLOCKED 가 원인으로 가리킨다
 }
 export interface Train { pos: number; ppos: number; dir: 1 | -1; speed: number; len: number; dwell: number; called: boolean }      // pos = 철길 위 머리의 위치(화소), ppos = 한 틱 전(그림 보간용), dwell = 역에 서 있는 남은 초, called = 역에 이미 섰는가
 export interface Crossing { edge: number; s: number; down: boolean; downAt: number }                // s = 철길 위의 위치
@@ -44,7 +46,7 @@ export interface TrafficState {
   announced: boolean;             // 교대 시작 뒤의 안내(시간대, 불법 주차)를 했는가
 }
 
-export const OBSTACLE_LABEL: Record<ObstacleKind, string> = { roadwork: '도로 공사', breakdown: '고장 차량', debris: '낙하물', parked: '불법 주차' };
+export const OBSTACLE_LABEL: Record<ObstacleKind, string> = { roadwork: '도로 공사', breakdown: '고장 차량', debris: '낙하물', parked: '불법 주차', rubble: '건물 잔해' };
 const TRAIN_SPEED = 26, TRAIN_LEN = 110, STATION_DWELL = 14, GATE_AHEAD = 400, GATE_BEHIND = 30;
 /** 차단기 앞에서 서는 거리, 장애물 앞에서 서는 거리 (지도 단위) */
 const GATE_STOP = 14, OBSTACLE_STOP = 10;
@@ -90,6 +92,8 @@ export function timeOfDay(startTod: number): { tod: number; peak: number; name: 
 // ───────────────────────── 도로망 ─────────────────────────
 
 const obstacleOn = (tr: TrafficState, edge: number): Obstacle | null => { for (const o of tr.obstacles) if (o.edge === edge) return o; return null; };
+/** 그 구간에 놓인 장애물 (없으면 null — 구간마다 많아야 하나다) */
+export function obstacleOnEdge(sim: Sim, edge: number): Obstacle | null { return obstacleOn(sim.traffic, edge); }
 
 /**
  * 실제 상태(알려졌든 아니든)에서, 큰 차도 a 에서 b 로 갈 수 있는가. skip 구간은 없는 것으로 본다.
@@ -191,7 +195,8 @@ export function passable(e: RoadEdge, heavy: boolean, _sim?: Sim): boolean {
 
 // ───────────────────────── 장애물 ─────────────────────────
 
-interface ObstacleOpts { edge: number; t?: number; kind: ObstacleKind; full: boolean; heavyOnly?: boolean; dur: number; known: boolean }
+interface ObstacleOpts { edge: number; t?: number; kind: ObstacleKind; full: boolean; heavyOnly?: boolean; dur: number; known: boolean;
+  quiet?: boolean }      // (I1-b C2) 참이면 addObstacle 이 알림 기록을 남기지 않는다 — 놓은 쪽이 그 자리에서 원인과 함께 기록하고 Obstacle.ev 에 넣는다
 
 /** 장애물을 놓는다 (기록은 남기지 않는다). 놓을 수 없으면 null: 이미 장애물이 있는 구간, 이미 막힌 구간, 막으면 도시가 끊기는 구간 (불법 주차는 우회로가 두 갈래인 골목에만) */
 function place(sim: Sim, tr: TrafficState, o: ObstacleOpts): Obstacle | null {
@@ -204,6 +209,7 @@ function place(sim: Sim, tr: TrafficState, o: ObstacleOpts): Obstacle | null {
   const ob: Obstacle = {
     id: tr.nextObstacleId++, edge: e.id, t: clamp(o.t ?? 0.5, 0.08, 0.92), kind: o.kind, full: o.full, heavyOnly,
     since: sim.t, until: sim.t + o.dur, known: o.known, knownAt: o.known ? sim.t : -1, tipAt: Infinity, label: OBSTACLE_LABEL[o.kind],
+    ev: undefined,      // (I1-b C2) 모든 장애물이 같은 모양 (교통 모델이 1초마다 훑는다)
   };
   tr.obstacles.push(ob);
   if (ob.full) { e.closed = true; e.closedReason = o.kind === 'roadwork' ? 'roadwork' : 'obstacle'; e.known = o.known ? undefined : false; }
@@ -235,7 +241,7 @@ export function addObstacle(sim: Sim, o: ObstacleOpts): Obstacle | null {
   if (!ob) return null;
   if (ob.full && ob.kind === 'roadwork') sim.traffic.stats.closures++;
   else if (!ob.heavyOnly || ob.known) sim.traffic.stats.obstacles++;      // 아직 모르는 불법 주차는 발견됐을 때 센다 (reportObstacle)
-  announce(sim, ob);
+  if (!o.quiet) announce(sim, ob);
   return ob;
 }
 
@@ -256,7 +262,7 @@ export function reportObstacle(sim: Sim, o: Obstacle, by: string): void {
   if (o.full) e.known = true;
   if (o.heavyOnly) { e.noHeavy = true; sim.traffic.stats.obstacles++; }      // 불법 주차는 발견됐을 때 장애물로 센다
   const unit = by !== '교통정보';
-  emit(sim, { role: unit ? 'UNIT' : 'SYSTEM', actor: by, kind: 'traffic', imp: 1, text: (unit ? '' : '시민 제보: ') + noticeText(sim, o) });
+  emit(sim, { role: unit ? 'UNIT' : 'SYSTEM', actor: by, kind: 'traffic', imp: 1, causes: o.ev !== undefined ? [o.ev] : undefined, text: (unit ? '' : '시민 제보: ') + noticeText(sim, o) });      // (I1-b C2) 원인 = 그것을 놓을 때의 기록(있으면)
 }
 
 /**

@@ -14,6 +14,7 @@ import { startPursuit } from './pursuit';
 import { disasterGapMul } from './disaster';
 import { DEPTH_MAX, chainDepth } from './chain';
 import { signal } from './world/consequence';      // (I1-b) 사건의 발생(붕괴)·종료를 세계에 알린다
+import { divertUnmet } from './world/rules/record';      // (I1-b C6)
 import { SCENARIOS, scenarioName, scenarioOf } from './scenarios';
 import type { Scenario } from './scenarios';
 import type { Incident, IncidentType, Place, PlaceKind } from './types';
@@ -265,6 +266,7 @@ export function closeIncident(sim: Sim, I: Incident, reason: 'resolved' | 'timeo
   const s = sim.scenes[I.id]!;
   settleInjuries(sim, s, I);      // (H1) 판정 직전에 밀린 대원의 상태 전이를 마친다 — 판정 뒤에는 전이가 없다
   I.phase = 'closed'; I.closedAt = sim.t; I.closeReason = reason;
+  divertUnmet(sim, I);      // (I1-b C6) 빼앗긴 부대의 자리를 끝내 아무도 메우지 못했다: 닫힌 시각까지를 DIVERTED 의 ref.lost 에 (기록은 남기지 않는다)
   s.closing = true;
   I.unmet = {};
   if (I.blockedEdge >= 0) {

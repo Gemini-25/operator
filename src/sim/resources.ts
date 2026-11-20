@@ -6,10 +6,11 @@ import { recomputeUnmet } from './dispatch/dispatcher';      // 함수 안에서
 import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
 import { signal } from './world/consequence';      // (I1-b) 병원 인계를 세계에 알린다
+import { erLoad, hospitalOf, knownHospital } from './world/state';      // (I1-b C3) 응급실 포화 — startTransport 는 알려진 것(knownHospital)만, arrive 의 응급실 대기는 진실(hospitalOf)
 import { canDeploy } from './field/injury';
 import { unitArrived } from './field/sceneManager';
 import { Rng } from './rng';
-import { gateWait, reportObstacle, stopAhead } from './traffic';
+import { gateWait, obstacleOnEdge, reportObstacle, stopAhead } from './traffic';
 import type { Obstacle } from './traffic';
 import type { Dept, Facility, Incident, Needs, Problem, Responder, RoadEdge, Unit, UnitCaps, UnitField, UnitKind } from './types';
 import { clamp, fmtSec, josa } from './util';
@@ -353,7 +354,14 @@ export function etaFor(sim: Sim, u: Unit, destNode: number): number {
 function blockRef(sim: Sim, u: Unit, e: RoadEdge): { ref: Problem['ref']; causes: number[] } {
   let J: Incident | null = null;
   if (e.closedReason === 'incident') for (let k = sim.incidents.length - 1; k >= 0; k--) { const q = sim.incidents[k]; if (q.blockedEdge === e.id && q.phase !== 'closed') { J = q; break; } }
-  return { ref: { inc: J ? J.id : undefined, unit: u.id, edge: e.id }, causes: J && J.blockEv !== undefined ? [J.blockEv] : [] };
+  if (J) return { ref: { inc: J.id, unit: u.id, edge: e.id }, causes: J.blockEv !== undefined ? [J.blockEv] : [] };
+  // (I1-b C2) 길을 막은 것이 기록과 함께 놓인 장애물(건물 잔해)이면 그 기록을 원인으로 잇는다. 막은 사건 = 그 기록의 원인(종료 기록·폭발 기록)이 가리키는 사건
+  const o = obstacleOnEdge(sim, e.id);
+  if (!o || o.ev === undefined) return { ref: { inc: undefined, unit: u.id, edge: e.id }, causes: [] };
+  let inc: number | undefined;
+  const cs = sim.events[o.ev].causes;
+  for (let k = 0; k < cs.length; k++) if (sim.events[cs[k]].incidentId >= 0) { inc = sim.events[cs[k]].incidentId; break; }
+  return { ref: { inc, unit: u.id, edge: e.id }, causes: [o.ev] };
 }
 
 function setRoute(sim: Sim, u: Unit, to: number): void {
@@ -419,14 +427,41 @@ export function releaseUnit(sim: Sim, u: Unit): void {
   sendUnitTo(sim, u, u.homeNode);
 }
 
-/** 환자를 싣고 병원으로 떠난다. 고른 병원을 돌려준다 — 출발 기록이 그 이름을 쓴다(기록의 병원 = 실제로 가는 병원) */
+/** (I1-b C3) 알려진 포화 병원의 예상 도착에 더해 견주는 초 — 훨씬 가까우면 그래도 간다. world/rules/hospital.ts 의 ER.PENALTY 와 같은 값(그 파일이 이 파일을 불러서 여기에 둔다) */
+export const ER_PENALTY = 240;
+/** (I1-b C3) 이번 이송의 기록 전용 꼬리표 — 부대 객체의 모양을 바꾸지 않으려 따로 둔다 (판단은 읽지 않는다). tripWhy = 먼 병원을 고른 까닭이 된 기록들, tripEv = 출발 기록 */
+const tripWhy = new WeakMap<Unit, number[]>(), tripEv = new WeakMap<Unit, number>();
+/** 이번 출발의 원인 기록 (포화로 먼 병원을 골랐을 때만 — 그 알림과 HOSPITAL_FULL 기록). 출발 기록의 causes 에 넣는다 */
+export function transportWhy(u: Unit): number[] | undefined { return tripWhy.get(u); }
+/** 출발 기록을 남긴 자리가 알린다 — 응급실에서 이 부대 뒤에 선 부대의 대기 기록이 원인으로 가리킨다 */
+export function noteDeparture(u: Unit, ev: number): void { tripEv.set(u, ev); }
+
+/**
+ * 환자를 싣고 병원으로 떠난다. 고른 병원을 돌려준다 — 출발 기록이 그 이름을 쓴다(기록의 병원 = 실제로 가는 병원).
+ * 관제 쪽 결정이다: 병원의 상태는 병원이 알린 것만 안다(knownHospital — 세계 상태를 직접 읽지 않는다. tests/causality.test.ts 가 이 함수의 본문을 글자로 본다)
+ */
 export function startTransport(sim: Sim, u: Unit): Facility {
-  // 가장 빨리 닿는 병원으로 간다
-  let hosp = sim.city.facilities.find((f) => f.kind === 'hospital')!, bt = Infinity;
-  for (const f of sim.city.facilities) { if (f.kind !== 'hospital') continue; const t = etaFor(sim, u, f.nodeId); if (t < bt) { bt = t; hosp = f; } }
+  // 가장 빨리 닿는 병원으로 간다. (I1-b C3) 포화를 알린 병원은 ER_PENALTY 초만큼 멀리 본다
+  let hosp = sim.city.facilities.find((f) => f.kind === 'hospital')!, bt = Infinity, near = hosp, nt = Infinity, ht = Infinity, full = -1;
+  for (const f of sim.city.facilities) {
+    if (f.kind !== 'hospital') continue;
+    const t = etaFor(sim, u, f.nodeId), kh = knownHospital(sim, f.id), pen = kh !== null && kh.divert ? ER_PENALTY : 0;
+    if (t < nt) { nt = t; near = f; full = pen > 0 ? kh!.ev : -1; }      // near = 포화가 아니었다면 갔을 병원
+    if (t + pen < bt) { bt = t + pen; hosp = f; ht = t; }
+  }
   u.state = 'transport';
   sendUnitTo(sim, u, hosp.nodeId);
   if (u.air) sim.airStats.airLifts += u.patients.length;      // 공중 이송 = 헬기가 병원으로 싣고 간 환자 수. 세는 곳은 여기 하나다 (어느 길로 떠나든 이 함수를 지난다)
+  tripWhy.delete(u); tripEv.delete(u);
+  if (hosp !== near && full >= 0) {
+    // 포화 알림 때문에 더 먼 병원을 골랐다: 그 환자의 사건에 남긴다 (원인 = 그 알림). 출발 기록이 이 기록을 원인으로 잇는다
+    const why = [full], add = Math.max(0, Math.round(ht - nt));
+    const inc = u.patientsIncident ?? (u.aboard && u.aboard.length ? u.aboard[0].inc : -1);
+    if (inc >= 0) why.push(raiseProblem(sim, sim.incidents[inc], 'HOSPITAL_FULL', `${near.name} 포화로 ${josa(hosp.name, '으로/로')} 이송 (약 +${add}초)`, {
+      role: 'DISPATCH', actor: '배정 AI', imp: 1, causes: [full], text: `${near.name} 응급실 포화 — ${josa(u.callsign, '은/는')} ${josa(hosp.name, '으로/로')} 갑니다 (약 +${add}초).`,
+    }, false, { fac: near.id, unit: u.id, lost: add }));
+    tripWhy.set(u, why);
+  }
   return hosp;
 }
 
@@ -455,6 +490,10 @@ export function airRtb(sim: Sim, u: Unit, reason: 'fuel' | 'storm'): void {
 }
 
 const CURB_SPEED = 42;      // 길가로 붙을 때의 속도 (지도 단위/초)
+/** (I1-b C3) 붐빔: 응급실 체류가 한도의 절반을 넘는 한 명마다 인계가 이만큼 늦어진다 (world/rules/hospital.ts 의 ER.CROWD_SEC 와 같은 값) */
+export const ER_CROWD_SEC = 3;
+/** (I1-b C3) 앞에 선 차 없이 체류만으로 늦어질 때, 이만큼(초) 넘게 늦어져야 응급실 대기 기록을 남긴다 */
+const ER_CROWD_NOTE = 9;
 /** (N8) 통제 부대를 기다린다고 알린 유관 기관 차량과 그 사건 (기록을 한 번만 남기는 표시 — 부대 객체의 모양을 바꾸지 않으려고 따로 둔다) */
 const civilHeld = new WeakMap<Unit, Incident>();
 function curbPos(sim: Sim, u: Unit): void {
@@ -512,10 +551,21 @@ function arrive(sim: Sim, u: Unit): void {
     unitArrived(sim, I, u);
   } else if (u.state === 'transport') {
     // 응급실이 붐비면(먼저 온 구급차가 인계 중이면) 인계가 늦어진다
-    const waiting = sim.units.filter((q) => q.id !== u.id && q.state === 'hospital' && q.nodeId === u.nodeId).length;
+    const ahead = sim.units.filter((q) => q.id !== u.id && q.state === 'hospital' && q.nodeId === u.nodeId), waiting = ahead.length;
     const riders = u.aboard ? u.aboard.length : 0;      // 다친 대원도 인계에 시간이 든다
-    u.state = 'hospital'; u.timer = 8 + waiting * 9 + Math.max(0, u.patients.length + riders - 1) * 3;
-    if (waiting > 0) emit(sim, { inc: u.patientsIncident ?? (riders > 0 ? u.aboard![0].inc : -1), role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign}: 응급실이 붐벼 환자 인계가 늦어집니다 (앞에 ${waiting}대).` });
+    // (I1-b C3 결과 1) 응급실에 머무는 환자가 한도의 절반을 넘으면 넘는 한 명마다 ER_CROWD_SEC 초 — 세계 규칙 쪽이라 병원의 진실(체류)을 읽는다
+    const hf = sim.city.facilities.find((f) => f.kind === 'hospital' && f.nodeId === u.nodeId), H = hf ? hospitalOf(sim, hf.id) : null;
+    const load = H ? erLoad(H, sim.t) : 0, crowd = H ? Math.max(0, Math.ceil(load - H.cap / 2)) : 0;
+    u.state = 'hospital'; u.timer = 8 + waiting * 9 + Math.max(0, u.patients.length + riders - 1) * 3 + crowd * ER_CROWD_SEC;
+    if (waiting > 0 || crowd * ER_CROWD_SEC >= ER_CROWD_NOTE) {
+      // (I1-b C3 결과 5) 원인: 앞에서 인계 중인 부대의 출발 기록(다른 사건의 구급차 → 이 사건의 대기), 체류로 늦어졌으면 그 병원의 마지막 인계 기록.
+      // 앞에 선 차가 없을 때는 체류만으로 ER_CROWD_NOTE 초(앞에 한 대가 있는 것과 같은 지연) 넘게 늦어질 때만 알린다 — 몇 초의 지연마다 기록하지 않는다
+      const why: number[] = [];
+      for (const q of ahead) { const dv = tripEv.get(q); if (dv !== undefined) why.push(dv); }
+      if (crowd > 0) why.push(H!.lastEv);
+      emit(sim, { inc: u.patientsIncident ?? (riders > 0 ? u.aboard![0].inc : -1), role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, causes: why,
+        text: waiting > 0 ? `${u.callsign}: 응급실이 붐벼 환자 인계가 늦어집니다 (앞에 ${waiting}대).` : `${u.callsign}: 응급실이 붐벼 환자 인계가 늦어집니다 (응급실에 환자 ${load}명).` });
+    }
   } else if (u.state === 'returning') {
     u.water = u.waterMax; u.hydrant = false;
     if (u.air) { u.fuel = u.fuelMax; u.bucket = u.bucketMax; }      // 집에 닿은 헬기는 연료와 물 바구니를 채운다

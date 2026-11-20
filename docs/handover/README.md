@@ -28,7 +28,7 @@
 | I2 교대 간 지속 | 준비 단계 1·2·3 만(결과 불변). 남은 것 0·4 → 5 → 6·7 → 검토 → 8 | `docs/specs/I2-persistence.md`(머리의 "I1-b 가 다시 설계됐다" 알림 · 끝의 구현 메모) |
 | N8 일상 사건 · N9 큰 사건 | 준비 단계만(N8 1·2a·2b · N9 1·2·3 — 결과 불변). 구현 전부 남음 | `docs/specs/N8-incident-kinds.md`·`N9-major-kinds.md`(머리의 알림 — 조건부 연쇄는 구현할 때 "자연스러운 인과" 방향으로 다시 본다) |
 
-**`h2` 의 상태(2026-11-20 23:25 UTC)**: 작업자가 우회 몰림(`354cf22`)·`createIncident` 의 `opts.edgeId`(`de176e8`)·법칙 L1 `roadCrash`(`a44f22a` — `world/laws/road.ts`)까지 커밋하고, 전체 관문에서 걸린 시드 의존 시험(`tests/sim.test.ts`·`tests/methods.test.ts`)을 고치며 `A_ROAD` 를 맞추던 중이었다. 그 순간의 변경 전부(커밋 셋 + 커밋하지 않은 것)가 **`docs/handover/I1b-h2-wip.patch`**(주 브랜치 `45579d7` 기준, 코드·시험만 — 파일 8개)에 있다. 확인한 것은 주 브랜치 위에 충돌 없이 얹힌다는 것뿐이다(`git apply --check --3way`). 관문·균형(평균 대응 +3초 안 · 교대당 사건 수 × 1.08 안 · `roadCrash` 교대당 0.2~0.5건)·개입 시험·구현 메모는 확인되지 않았다. `args/I1-b-next.json` 의 첫 덩어리 `h2` 가 `pre` 에서 그 패치를 얹고 남은 것부터 한다. 다 쓰면 패치 파일을 지운다(`git rm docs/handover/I1b-h2-wip.patch`).
+**`h2` 의 상태(2026-11-20 23:36 UTC)**: 작업자가 우회 몰림(`354cf22`)·`createIncident` 의 `opts.edgeId`(`de176e8`)·법칙 L1 `roadCrash`(`a44f22a` — `world/laws/road.ts`)·법칙이 흐름을 바꾼 정해진 시드 시험 둘의 수정(`b2c90ab`)까지 커밋하고 전체 관문(`npm run check`)을 돌리던 중이었다. 그 순간의 변경 전부(커밋 넷)가 **`docs/handover/I1b-h2-wip.patch`**(주 브랜치 `45579d7` 기준, 코드·시험만 — 파일 8개)에 있다. 확인한 것은 주 브랜치 위에 충돌 없이 얹힌다는 것뿐이다(`git apply --check --3way`). 관문·균형(평균 대응 +3초 안 · 교대당 사건 수 × 1.08 안 · `roadCrash` 교대당 0.2~0.5건)·개입 시험·구현 메모는 확인되지 않았다. `args/I1-b-next.json` 의 첫 덩어리 `h2` 가 `pre` 에서 그 패치를 얹고 남은 것부터 한다. 다 쓰면 패치 파일을 지운다(`git rm docs/handover/I1b-h2-wip.patch`).
 
 ## 2. 바로 이어서 할 일 — I1-b 의 남은 덩어리
 

@@ -9,7 +9,7 @@
 | 부분 | 누가 | 결과가 바뀌는가 | 내용 |
 |---|---|---|---|
 | **I1-a 측정 도구** | **구현됨**(이 세션 — 브랜치 `wf/i1a`, 합침 `48dba83`. 고정한 기준 커밋에서 만들었다, §2.15) | **바뀌지 않는다** — `src/` 를 한 줄도 고치지 않는다 | 지표 여덟 가지와 기록·상태 일치 검사, `sweep` 의 새 줄과 `--json` 키, 관문 조건, `tests/causality.test.ts` |
-| **I1-b 인과 규칙과 세계 상태 결합** | **구현 중**(2026-11-20 — b0·b1·b2·b3-1 이 `wf/causality` 에 있다. R1 → H1 → X6 → R2 → R3 다음, §3.10 의 표시한 부분은 X6 와 함께) | 바뀐다(b0·b2·b3-4 는 해시 불변) | 세계 상태 자료, 상태 결합 규칙의 틀(`registerConsequence` — C6·C3·C2 와 구역 상태), **초과 위험 과정(`registerHazard` — 상태가 평소의 발생률과 물리 모델을 바꾸는 일반 법칙 여덟, §3.6a·§3.7)**, 교통 모델의 우회 몰림(§3.6b), 조건으로 일어나는 연쇄, 무한 연쇄 막기, 보고서의 내력 문장 |
+| **I1-b 인과 규칙과 세계 상태 결합** | **구현 중**(2026-11-20 — b0·b1·b2·b3-1·b3-2·b3-3 이 `wf/causality` 에 있다. R1 → H1 → X6 → R2 → R3 다음, §3.10 의 표시한 부분은 X6 와 함께) | 바뀐다(b0·b2·b3-4 는 해시 불변) | 세계 상태 자료, 상태 결합 규칙의 틀(`registerConsequence` — C6·C3·C2 와 구역 상태), **초과 위험 과정(`registerHazard` — 상태가 평소의 발생률과 물리 모델을 바꾸는 일반 법칙 일곱, §3.6a·§3.7)**, 교통 모델의 우회 몰림(§3.6b), 조건으로 일어나는 연쇄, 무한 연쇄 막기, 보고서의 내력 문장 |
 
 ## 구현 상태 (이 세션에서 구현·합침 — I1-a, §2)
 
@@ -40,6 +40,7 @@
 - **화재 → 붕괴는 X6 가 이미 그렇게 한다**(불이 구획의 건전도를 깎고, 건전도가 붕괴의 위험률을 정한다 — §3.12 ③). 바꾸지 않는다.
 - **바뀌지 않는 것**: C6(전환·부족 기록)·C3(응급실 포화)·C2(잔해) 세 절(이미 상태 결합이고 구현 중이다 — 글자를 고치지 않았다), 이야기 연쇄(재범·도주 차량·은신처·연쇄 방화 — 사용자 결정으로 그대로), 연쇄 상한(한 사슬 3건 · 한 교대 6건 — `chain.canChain`), b0~b2 의 틀(`signal`·`registerConsequence`·`tickWorld`·`spawnConsequence`·`gen.chain` 의 `when`/`until`·`gen.dropped`), I2·N8·N9 가 기대하는 이름(§3.7 끝 "뒤 묶음이 기대하는 이름").
 - 예전 규칙 번호(C1~C12)와 새 법칙(L1~L8)의 대응은 §3.7 의 표, 무엇이 왜 바뀌었는지는 §10 끝 "방향 전환 메모".
+- **같은 날 밤 독립 검토 세 갈래(결정성·되먹임·비용 / 자연스러움·정보 격리·정직한 기록 / 실현성·균형·단계)를 반영해 가장자리를 고쳤다** — 틀의 뼈대는 그대로다. 무엇을 받아들이고 무엇을 버렸는지는 §10 끝 "검토 반영 메모", 남은 구현의 덩어리 계획은 §5.
 
 ## 원칙
 
@@ -573,9 +574,9 @@ time npx tsx scripts/sweep.ts 10 && time npx tsx scripts/sweep.ts 10 --no-metric
 
 1. **원인은 상태를 바꾸고, 결과는 상태에서 나온다.** 규칙은 "X 면 Y 를 만든다"고 쓰지 않는다. 원인(사건·교통 사건·재난·대응의 실패)은 세계 상태를 물리적으로 바꾼다 — 구간의 통제·혼잡, 건물의 열 노출·구조 손상·배관 손상·침수, 구역의 전력·통신·수압·연기, 응급실 체류. 결과는 그 상태가 **일반 법칙**을 지나 생긴다: 평소의 발생률을 올리거나(초과 위험 과정, §3.6a), 이미 있는 물리 모델의 입력이 된다(교통 모델의 혼잡, X6 의 건전도와 가스, 현장 생성기의 처음 상태).
 2. **법칙은 원인을 모른다.** 법칙은 상태의 값만 읽는다. 어떤 사건·어떤 변형·어떤 재난이 그 상태를 만들었는지를 식에 쓰지 않는다(테스트가 법칙 파일의 글자를 본다 — §6). 그래서 한 법칙에는 그 상태를 만드는 원인이 여럿이다(§3.7 의 법칙마다 "원인들" 줄). 원인은 **귀속**에만 쓴다: 사건이 나는 순간 그 상태를 이루고 있던 몫마다의 기록.
-3. **틱마다 주사위를 굴리지 않는다.** 난수는 대상마다 한 번 뽑아 두는 문턱(그 건물이 얼마나 타기 쉬운가, 그 구간에서 몇 번째 사고가 얼마만큼의 위험이 쌓였을 때 나는가)뿐이다. 문턱은 경로와 무관하므로 **같은 시드에서 윗 원인을 없애면 아랫 사건은 늦어지거나 없어질 뿐, 빨라지거나 새로 생기지 않는다**(그 대상 하나를 놓고 볼 때 — §3.6a "개입 시험").
+3. **틱마다 주사위를 굴리지 않는다.** 난수는 대상마다 한 번 뽑아 두는 문턱(그 건물이 얼마나 타기 쉬운가, 그 구간에서 몇 번째 사고가 얼마만큼의 위험이 쌓였을 때 나는가)뿐이다. 문턱은 경로와 무관하므로 **같은 시드에서 윗 원인을 없애면, 그 원인이 올리던 대상에서 문턱을 넘는 때가 늦어지거나 없어진다**(사건 단위로는 상한·대기에 걸러져 성립하지 않고, 풀린 구간 자신과 그 구간으로 우회로가 바뀌는 다른 통제의 길은 따로다 — §3.6a "개입 시험이 성립하는 까닭과 그 한계").
 4. **평소와 같은 상태는 아무것도 바꾸지 않는다.** 초과는 "평소면 정확히 0"이 되게 원인 항으로 잰다(잡음이 낀 값끼리의 차로 재지 않는다). 초과가 없는 대상의 적분은 늘지 않고, 문턱을 넘기 전에는 기록도 난수도 남기지 않는다. 평소 생성기(`sim.rngGen`)는 건드리지 않는다.
-5. **되먹임은 실제로 생기고, 상한이 끊는다.** 혼잡 → 사고 → 통제 → 혼잡, 불 → 옆 건물의 불 → 그 옆 건물. 초과 위험에서 난 사건은 원인 기록을 반드시 갖고, 그 상태의 주인이 사건이면 그 사건을 부모로 가져 사용자 결정의 상한(한 사슬 3건 · 한 교대 6건 — `chain.canChain`)에 든다(§3.6).
+5. **되먹임은 실제로 생기고, 상한이 끊는다.** 혼잡 → 사고 → 통제 → 혼잡, 불 → 옆 건물의 불 → 그 옆 건물. 초과 위험에서 난 사건은 원인 기록을 반드시 갖고, 그 상태의 주인이 사건이면 그 사건을 부모로 가져 사용자 결정의 상한(한 사슬 3건 · 한 교대 6건 — `chain.canChain`)에 든다. 부모가 없는 것(공사·정체·재난에서 온 초과)도 같은 6건 안에서 세고, 한 뿌리에서 난 가지의 수도 묶는다(§3.6 — 기본값은 모두 상한의 안쪽이다).
 6. **증거는 개입 시험이다.** "같은 시드에서 쓰러진 나무의 통제를 지우면 몰린 길의 사고가 나지 않는다"를 테스트로 둔다(§6). 측정 도구는 스크립트 없이 난 인과 사건의 수를 따로 센다(§4 `hazard` 줄).
 7. **보고서는 법칙 이름이 아니라 상태의 내력으로 쓴다**: "○○로 통제(쓰러진 나무) 뒤 △△로에 차량이 몰린 동안 난 사고". 사건이 날 때 그 자리에서 적어 둔 내력(`Incident.hz`)과 원인 기록에서만 만든다(§3.9).
 
@@ -590,8 +591,8 @@ time npx tsx scripts/sweep.ts 10 && time npx tsx scripts/sweep.ts 10 --no-metric
 
 | 영역 | 이미 있는 것 (그대로 쓴다) | 새로 둘 것 |
 |---|---|---|
-| 도시 | 구간의 `closed`·`closedReason`·`known`·`slow`·`cong`·`bump`·`wait`, 장애물(`traffic.obstacles`), 밀림(`traffic.queue`) | 교통 모델(`sim.traffic`)에: 우회 몰림 `divert`, 초과 혼잡의 네 몫 `exOwn`·`exBump`·`exQueue`·`exDiv`, 원인 장부 `srcEv`·`bumpEv`(§3.6b). `sim.world` 에: 구역 위험 `zones[z].risk` |
-| 건물 | 사건별 `Scene` 의 파손·탄 자리. (X6) 교대 안의 건물 상태 `Sim.placeMarks` — **그 건물에서 난 사건이 남긴** 가장 무거운 상태 하나. (I2) 지난 교대의 겹침 표 `sim.carryState.places` | **`sim.world.expo`**(§3.6c) — 사건이 없던 건물이 이웃에서 받은 것: 구조 손상 `shake`·가스 배관 손상 `pipe`·침수 `wet`. 열 노출과 잔열은 초과 위험의 적분 칸(`world.hz`)에. X6 의 `placeMarks` 는 넓히지 않는다(읽는 곳 일곱 남짓이 `state` 다섯 값을 가정한다). 읽는 문은 `placeState(sim, placeId)` 하나 |
+| 도시 | 구간의 `closed`·`closedReason`·`known`·`slow`·`cong`·`bump`·`wait`, 장애물(`traffic.obstacles`), 밀림(`traffic.queue`) | 교통 모델(`sim.traffic`)에: 우회 몰림 `divert`, 초과 혼잡의 네 몫 `exOwn`·`exBump`·`exQueue`·`exDiv`, 항마다의 원인 장부(`closeEv`·`slowEv`·`levelEv`·`bumps`·`qEv` — §3.6b). `sim.world` 에: 구역 위험 `zones[z].risk` |
+| 건물 | 사건별 `Scene` 의 파손·탄 자리. (X6) 교대 안의 건물 상태 `Sim.placeMarks` — **그 건물에서 난 사건이 남긴** 가장 무거운 상태 하나. (I2) 지난 교대의 겹침 표 `sim.carryState.places` | **`sim.world.expo`**(§3.6c) — 사건이 없던 건물이 이웃에서 받은 것: 구조 손상 `shake`·가스 배관 손상 `pipe`(+ 배관의 문턱)·침수 `wet`, 지하의 문턱 높이 `world.sills`. 열 노출과 잔열은 초과 위험의 적분 칸(`world.hz`)에. X6 의 `placeMarks` 는 넓히지 않는다(읽는 곳 일곱 남짓이 `state` 다섯 값을 가정한다). 읽는 문은 `placeState(sim, placeId)` 하나 |
 | 기반 시설 | 재난의 `d.dark`(정전 — 도시 전체, 전 구간 `bump`), 현장 격자의 `s.shadow`(무전 음영), `u.hydrant`(급수 연결 — 참/거짓) | `zones[z].power`·`comms`·`water` 와 회복 시각·알려짐·원인(b2), 국지 값의 자리 `zones[z].at`(§3.6c — 건물 하나의 붕괴가 동네 전체를 끄지 않게) |
 | 의료 | 응급실 대기(같은 교차로의 `hospital` 부대 수) | `hospitals[h]`: 수용 한도·응급실 체류 환자·포화(`divert`)·알려짐 (C3) |
 | 조직 | 부대 상태·대원 `health`·`stamina`·`status`, 장비, 인근 도시 지원 | 없음(R1·H1 이 만든다). I1-b 는 원인 연결만(§3.11) |
@@ -626,7 +627,7 @@ export interface HospitalState {
   divert: boolean;             // 포화 — 중증만 받는다 (병원이 알린다)
   known: boolean; since: number; cause: number;
 }
-export type SignalKind = 'blast' | 'collapse' | 'fireBig' | 'delivered' | 'fled' | 'closed' | 'catastrophe';
+export type SignalKind = 'blast' | 'collapse' | 'fireBig' | 'delivered' | 'fled' | 'closed' | 'catastrophe';      // (b3-4) 끝에 | 'quake' | 'blackout' — 아래 "초과 위험 과정과 건물 노출의 자료형"
 // ↑ X6 가 먼저 빈 world/consequence.ts 에 같은 합집합을 만들어 두었으면(§3.10) b2 에서 그 정의를 여기로 옮기고,
 //   consequence.ts 는 `export type { SignalKind } from '../types'` 로 다시 내보낸다 (X6 쪽 import 는 그대로 컴파일된다)
 /** 상태를 바꾸는 자리가 world 에 알리는 사실 한 줄. tickWorld 가 다음 틱에 규칙에 건넨다 */
@@ -680,15 +681,15 @@ parent?: number; children?: number[]; chain?: string[];
 
 ```ts
 // ───────────────────────── 초과 위험 과정 (I1-b §3.6a) ─────────────────────────
-/** 일반 법칙의 이름 — Incident.csq 와 흐름 이름에 쓴다. 새 법칙은 끝에 새 줄로 */
-export type HazardLawId = 'roadCrash' | 'heatSpread' | 'structFail' | 'pipeLeak' | 'rekindle' | 'liftStall' | 'smokeIll' | 'floodLow';
+/** 일반 법칙의 이름 — Incident.csq 와 흐름 이름에 쓴다. 새 법칙은 끝에 새 줄로 (L6 floodLow 는 사건을 만들지 않는 상태 규칙이라 여기에 없다) */
+export type HazardLawId = 'roadCrash' | 'heatSpread' | 'structFail' | 'pipeLeak' | 'rekindle' | 'liftStall' | 'smokeIll';
 /** 초과를 이루는 상태의 갈래 — 보고서가 내력 문장을, 발생 기록이 첫머리를 고른다 */
 export type HzWhat = 'divert' | 'queue' | 'lane' | 'jam' | 'crowd' | 'dark' | 'haze'      // 도로: 우회 몰림 · 뒤로 밀림 · 한 차로 막힘 · 정체 · 인파 · 꺼진 신호 · 연기
-  | 'heat' | 'ember' | 'shake' | 'pipe' | 'residual' | 'outage' | 'smoke' | 'level';         // 건물: 열 · 불티 · 구조 손상 · 배관 손상 · 잔열 · 정전 · 연기 · 수위
+  | 'heat' | 'ember' | 'shake' | 'pipe' | 'residual' | 'outage' | 'smoke' | 'level';         // 건물: 열 · 불티 · 구조 손상 · 배관 손상 · 잔열 · 정전 · 연기 / 수위(도로: 차오르는 물 · 건물: 잠긴 지하)
 /** 사건이 나는 순간 그 대상의 초과를 이루던 몫 하나 */
-export interface HzSrc { ev: number; inc: number; w: number; what: HzWhat; ref: number }
-//   ev = 그 상태를 만든 기록 · inc = 그 상태의 주인 사건(-1 = 사건이 아니다: 공사·정체·인파·재난) · w = 그 순간의 몫(초당 위험, 충격이면 충격량)
-//   ref = 관련 대상 (통제된 구간 · 불난 건물 · 정전 구역 … -1)
+export interface HzSrc { ev: number; inc: number; w: number; what: HzWhat; ref: number; since: number }
+//   ev = 그 상태를 만든 기록(-1 = 장부의 구멍) · inc = 그 상태의 주인 사건(-1 = 사건이 아니다: 공사·정체·인파·재난) · w = 그 순간의 몫(초당 위험, 충격이면 충격량)
+//   ref = 관련 대상 (통제된 구간 · 불난 건물 · 정전 구역 … -1) · since = 그 몫이 이 대상에 처음 걸린 시각 = max(칸의 since, 그 기록의 시각)
 /** 대상 하나의 적분 칸 — 초과가 처음 생길 때 만든다 */
 export interface HzCell {
   H: number;        // 쌓인 초과 위험 (무차원 — 기대 사건 수). 초과가 0 인 동안에는 늘지도 줄지도 않는다
@@ -696,38 +697,47 @@ export interface HzCell {
   u2: number;       // 같은 흐름의 둘째 값 — 사건의 내용(버스가 끼었는가 따위)을 정할 때만 쓴다
   n: number;        // 이 대상에서 문턱을 넘은 횟수 (다음 문턱의 흐름 번호)
   since: number;    // 지금의 초과가 시작된 시각 (-1 = 지금은 초과가 없다)
-  wait: number;     // 문턱을 넘었지만 자리가 없어 기다리는 마감 시각 (-1 = 기다리지 않는다)
+  done: boolean;    // once 법칙의 대상이 한 번 넘었다 — 그 뒤로 적분도 충격도 받지 않는다
 }
+/** 문턱을 넘었지만 자리가 없어 기다리는 줄 — 넘는 순간의 몫을 적어 둔다 (자리가 났을 때는 원인이 이미 사라져 있을 수 있다) */
+export interface HzWait { law: HazardLawId; target: number; n: number; until: number; parts: HzSrc[]; total: number }
 /** 사건에 적어 두는 내력 — 보고서 문장의 재료 (§3.9). 사건을 예약하는 그 자리에서 적는다 */
-export interface HzNote { law: HazardLawId; target: number; since: number; at: number; src: HzSrc[] }      // src 는 몫이 큰 것부터 많아야 3
+export interface HzNote { law: HazardLawId; target: number; at: number; src: HzSrc[] }      // src 는 몫이 큰 것부터 많아야 3
 export interface HzState {
   cells: Partial<Record<HazardLawId, Record<number, HzCell>>>;      // 법칙 → 대상 id → 칸 (드문드문)
   live: Partial<Record<HazardLawId, number[]>>;                     // 지난 주기에 초과가 있던 대상 (초과가 끝난 것을 알아채는 데 쓴다)
-  made: Partial<Record<HazardLawId, number>>;                       // 법칙이 예약한 사건 수 (법칙별 상한)
+  waiting: HzWait[];                                                // 기다리는 줄 (넣은 순서 — 1초마다 다시 본다)
   roadAt: number;                                                   // 도로 법칙이 마지막으로 본 traffic.driftAt
-  holes: number;                                                    // 원인 기록이 없는 초과가 문턱을 넘은 횟수 — 장부의 구멍 (0 이어야 한다, 테스트)
+  holes: number;                                                    // 원인 기록이 없는 큰 몫(전체의 1/3 이상)이 낀 채 문턱을 넘은 횟수 — 장부의 구멍 (0 이어야 한다, 테스트·관문)
 }
+//   법칙별·부모 없는 사건의 수는 따로 세지 않는다 — world.log 와 gen.chain·waiting 으로 센다 (hazard.ruleLoad, §3.6a)
 /** 사건이 없던 건물이 이웃에서 받은 것 (§3.6c) — 처음 받을 때 만든다 */
 export interface PlaceExpo {
   shake: number; shakeEv: number; shakeInc: number;      // 구조 손상 0..1 (받은 충격의 합) · 가장 크게 보탠 기록 · 그 사건
-  pipe: boolean; pipeEv: number;                         // 가스 배관이 손상됐는가 · 그 기록
+  pipe: boolean; pipeEv: number; pipeThr: number;        // 가스 배관이 손상됐는가 · 그 기록 · 배관의 문턱(만들 때 한 번 — 흐름 hz:pipe:<건물>)
   wet: boolean; wetEv: number;                           // 지하가 잠겼는가 (홍수) · 그 기록
   dark: number;                                          // 이 건물만의 정전이 시작된 시각 (-1 = 아니다. 구역 전력과 따로 — 잠긴 전기실)
 }
 // WorldState 에 (initWorld 의 리터럴에도 같은 순서로)
-hz: HzState;                               // { cells: {}, live: {}, made: {}, roadAt: -1, holes: 0 }
+hz: HzState;                               // { cells: {}, live: {}, waiting: [], roadAt: -1, holes: 0 }
 expo: Record<number, PlaceExpo>;           // 건물 id → 노출 (드문드문)
+sills: Record<number, number>;             // 건물 id → 지하의 문턱 높이 (L6 — 처음 볼 때 채운다. 시드에 따라 달라지는 값은 sim.world 안에만 — §3.6c)
+spans: { f: ZoneField; cause: number; inc: number; bump: number }[];      // 정전·연기 한 건마다의 장부 — 얹은 bump 의 id (그 건이 끝날 때 한 번 거둔다)
 // ZoneState 에 (선택 칸 — 국지 값의 자리, §3.6c)
 at?: Partial<Record<ZoneField, { x: number; y: number; r: number }>>;
+// SignalKind 끝에 새 줄로 (N8 이 더하는 신호는 그 뒤)
+| 'quake' | 'blackout'                     // 재난이 틀을 지나는 길 — 지진의 본진·여진, 태풍 정전의 시작·끝 (§3.4)
 // Signal 에 (signal() 의 리터럴에 mag: s.mag ?? 0)
-mag: number;                               // 크기 — 폭발이면 피해량(dmg), 붕괴면 무너진 몫 0..1 (건물 전체 = 1)
+mag: number;                               // 크기 — 폭발이면 피해량(dmg), collapseBuilding 1 · collapseRegion 은 이번에 무너진 몫(< 1), 지진이면 본진 1 · 여진 0.6
 // Incident 에 (createIncident 리터럴에 hz: undefined)
 hz?: HzNote;
+// Scene 에 (I2 가 정해 둔 칸을 I1-b 가 먼저 연다 — createScene·baseScene 리터럴에 wear: undefined)
+wear?: { dmg: number; soot: number; cause: string; inc: string; pre: number };      // I1-b 는 cause 'shock' 으로만 채운다. 진실 전용 — 판단부는 읽지 않는다
 // WorldTag 끝에 새 줄로 (I2 의 'carry' 는 그 뒤)
 | 'struct'                                 // 이웃 건물의 구조·배관 손상 기록 — 측정 도구의 TAG_SYS 가 'building' 으로 센다
 ```
 
-`incidents.ts` 의 `SpawnOpts` 에 세 칸: `edgeId?: number`(교통사고가 난 구간 — 막히는 구간 `I.blockedEdge` 를 이 구간으로 먼저 본다, 닫혔거나 고속도로거나 우회로가 없으면 지금 규칙), `causes?: number[]`(원인이 하나가 아닐 때 — `cause` 다음에 발생 기록의 `causes` 로 들어간다. 음수·중복은 `emit` 이 거른다), `hz?: HzNote`. `traffic.ts` 의 `TrafficState` 에 더하는 칸은 §3.6b.
+`incidents.ts` 의 `SpawnOpts` 에 세 칸: `edgeId?: number`(교통사고가 난 구간 — 막히는 구간 `I.blockedEdge` 를 이 구간으로 먼저 본다. 조건은 §3.6b (다)), `causes?: number[]`(원인이 하나가 아닐 때 — `cause` 다음에 발생 기록의 `causes` 로 들어간다. 음수·중복은 `emit` 이 거른다), `hz?: HzNote`. `traffic.ts` 의 `TrafficState` 에 더하는 칸은 §3.6b(정체 객체의 `ev` 포함).
 
 ### 3.4 인과 규칙의 틀 — `registerConsequence`
 
@@ -783,14 +793,17 @@ export function chainDepth(sim: Sim, incId: number): number;              // = m
 | `delivered` | `resources.tickUnits` 의 병원 인계 완료(그 인계 기록) | `place` = 병원 시설 id, `data` = 산 환자 수(구조 대상만). H1 의 부상 대원·용의자 인계(`aboard`)는 `data` 에 넣지 않고 응급실 체류(`stays`)에는 넣는다(병상을 쓴다) — 같은 신호 한 번에 `size` = `aboard` 의 수 |
 | `fled` | `hazards.ts` 도주 블록의 SUSPECT_FLED (총을 든 경우만) | `data` = 용의자 id |
 | `closed` | `closeIncident` 의 종료 기록 다음 | |
-| `catastrophe` | X6 의 실제 폭발·붕괴·전소 순간(§3.10) | `data` = 0 폭발 · 1 붕괴 · 2 전소 |
+| `catastrophe` | X6 의 실제 폭발·붕괴·전소 순간(§3.10) | `data` = 0 폭발 · 1 붕괴 · 2 전소. (b3-8) `mag` = 폭발의 피해량 · `collapseBuilding` 1 · `collapseRegion` 은 이번에 무너진 몫(< 1) |
+| `quake` (b3-10) | `disaster.onImpact` 의 지진 본진(`mag 1`) · `tickQuake` 의 여진(`mag 0.6`) | `ev` = 그 자리의 `tell` 반환값, `x`·`y` = 진앙 `d.epi`. 재난이 틀(쿨다운·상한·`world.log`·`recover`)을 지나는 길이다 — 상태 규칙은 신호나 world tick 으로만 걸리고, `onImpact` 안에서는 `d.intensity` 가 아직 0 이다 |
+| `blackout` (b3-10) | `disaster.lightsOut`(`data 1`) · `lightsOn`(`data 0`) | `ev` = 그 자리의 `tell` 반환값 |
 
 X6 은 `tickFire` 의 천장 붕괴를 지우고 `blast` 에 `catOnBlast` 를 더한다(X6 §9 단계 3). 같은 일을 두 신호로 보내지 않는다: X6 이 대체한 자리(천장 붕괴, 2차 붕괴가 X6 의 `collapseRegion` 으로 옮겨진 경우)에서는 `collapse` 신호를 지우고 `catastrophe` 만 남긴다. 규칙은 `collapse`·`catastrophe(data 1)` 를 같은 것으로, `blast`·`catastrophe(data 0)` 를 같은 것으로 받는다. X6 이 부르는 `blast` 에서 신호를 끄는 방법은 §7 의 `hazards.ts` 줄(선택 인자).
 
 - **`spawnConsequence`** — 규칙이 사건을 만드는 유일한 길. `gen.chain` 에 `{ at: t + rng.range(…delay), until: at + wait, when, opts: { ...opts, parent?, cause: sig.ev, csq: id, rng: sim.rng.fork('csq-spawn:' + id + ':' + n) } }` 를 넣는다(평소 생성기의 흐름을 건드리지 않는다). `n` = 늘리기 전의 `world.spawned`(이번 교대에 규칙이 예약한 사건의 순번 — 한 발동이 둘을 예약해도 서로 다르다. 거절된 것은 세지 않는다). 거절(깊이·상한)도 `gen.dropped` 에 남긴다.
 - `createIncident` 는 `opts.cause` 가 있으면 발생 기록(`rootEvent`)의 `causes: [opts.cause]`, `I.cause = opts.cause`, `I.csq = opts.csq`.
 - 규칙 파일: `src/sim/world/rules/{record,hospital,structure,infra}.ts`(상태 규칙 — 사건을 낳는 법칙은 `world/laws/`, 아래), 모으는 `src/sim/world/rules/index.ts` 를 `engine.ts` 가 import 한다(`sceneManager.ts` 의 `import './scenes'` 처럼). **import 순서 = 규칙 등록 순서 = 결과**다. 순서를 바꾸면 결과가 바뀐다는 주석을 둔다.
-- **(2026-11-20) 초과 위험 과정은 이 틀 옆에 따로 둔다**(§3.6a — `world/hazard.ts`). `registerConsequence` 는 신호를 받아 **상태를 바꾸는** 규칙(C3·C2 와 구역 상태 C4·C5·C8·C10·C11, 충격을 건물에 적는 L3 의 앞부분)에 쓰고, **사건을 낳는 것은 `registerHazard` 의 법칙**이 한다. 지금 틀로 적분기를 쓰면 `test` 를 부작용 있는 적분 함수로 써야 하고(쿨다운·상한을 `test` **앞**에서 보므로 걸리는 동안 적분이 멎는다), 열쇠가 초마다 하나뿐이라 대상별 상태를 규칙이 스스로 가져야 하며, 시도 번호 흐름(`csq:…:<n>`)은 경로에 따라 달라 문턱으로 쓸 수 없다. `tickWorld` 의 1초 블록은 `on: 'tick'` 규칙 → **`tickHazards(sim)`** → `recoverWorld` 순서가 된다(법칙이 없으면 `tickHazards` 는 곧바로 돌아온다 — 해시 불변). 법칙 파일은 `src/sim/world/laws/{index,road,heat,shock,ember,power,smoke,flood}.ts`, `engine.ts` 가 `import './world/rules'` 다음 줄에 `import './world/laws'`(**import 순서 = 법칙 등록 순서 = 결과**).
+- **(2026-11-20) 초과 위험 과정은 이 틀 옆에 따로 둔다**(§3.6a — `world/hazard.ts`). `registerConsequence` 는 신호를 받아 **상태를 바꾸는** 규칙(C3·C2 와 구역 상태 C4·C5·C8·C10·C11, 충격을 건물에 적는 L3 의 앞부분 `shockSpread`, 수위 문턱의 L6)에 쓰고, **사건을 낳는 것은 `registerHazard` 의 법칙**이 한다. 지금 틀로 적분기를 쓰면 `test` 를 부작용 있는 적분 함수로 써야 하고(쿨다운·상한을 `test` **앞**에서 보므로 걸리는 동안 적분이 멎는다), 열쇠가 초마다 하나뿐이라 대상별 상태를 규칙이 스스로 가져야 하며, 시도 번호 흐름(`csq:…:<n>`)은 경로에 따라 달라 문턱으로 쓸 수 없다. `tickWorld` 의 1초 블록은 `on: 'tick'` 규칙 → **`tickHazards(sim)`** → `recoverWorld` 순서가 된다(법칙이 없으면 `tickHazards` 는 곧바로 돌아온다 — 해시 불변). 법칙 파일은 `src/sim/world/laws/{index,road,heat,shock,ember,power,smoke}.ts`, `engine.ts` 가 `import './world/rules'` 다음 줄에 `import './world/laws'`(**import 순서 = 법칙 등록 순서 = 결과**).
+- **등록하는 파일(`world/rules/*`·`world/laws/*`)은 모음 파일(`index.ts`)만 import 한다.** `engine.ts` 는 `./disaster`·`./field/sceneManager` 를 `./world/rules`·`./world/laws` 보다 먼저 import 하므로, 그 모듈들이 법칙·규칙 파일의 함수를 직접 부르면(예: `createScene` → `laws/shock.ts` 의 `applyExpo`) 그 파일의 `registerConsequence`·`registerHazard` 가 모음 파일의 차례보다 먼저 실행된다 — 결정적이기는 해도 실제 등록 순서가 `index.ts` 에 적힌 순서와 달라지고(상한이 걸릴 때 어느 법칙이 먼저 자리를 쓰는가가 바뀐다), 다른 파일의 import 한 줄이 결과를 바꾼다. 그래서 다른 모듈이 부르는 함수는 **등록이 없는 파일**에 둔다: `world/state.ts`·`world/hazard.ts`·`world/expo.ts`(`applyExpo`·`expoOf`·`neighborsOf`·`darkened`)·`world/rules/record.ts`(b3-1 — 등록이 없다). **법칙 파일에는 `registerHazard` 만 둔다** — 신호를 받아 충격을 주거나 상태를 거두는 자리(폭발의 불티 · 닫힌 화재의 잔열 · 잠근 밸브의 `expo.pipe`)는 상태 규칙으로 `world/rules/structure.ts` 에 두고 `hazard.hazardImpulse` 를 부른다(등록 순서가 두 모음 파일의 차례 그대로 읽힌다). 테스트: `src/sim` 에서 `world/rules/`·`world/laws/` 를 import 하는 줄은 `engine.ts` 와 두 모음 파일, 그리고 `rules/record.ts` 를 부르는 곳뿐이다(소스 글자).
 - **`spawnConsequence` 를 부르는 I1 의 규칙은 없다**(C6·C3·C2 와 구역 상태 규칙은 사건을 만들지 않는다). 함수는 그대로 둔다 — N8·N9 의 조건부 연쇄(`world/rules/kinds.ts`·`kinds2.ts`)가 쓴다. 전체 상한을 세는 법만 하나로 맞춘다(§3.6).
 
 ### 3.5 `gen.chain` 을 조건으로 일어나게 넓히기
@@ -815,18 +828,20 @@ chain: { at: number; opts: SpawnOpts; when?: (sim: Sim) => boolean; until?: numb
 
 | 장치 | 값 | 어디서 |
 |---|---|---|
-| **연쇄 상한 (사용자 결정 — 바꾸지 않는다)** | 한 사슬 3건(`CHAIN_MAX` — 뿌리 포함, 깊이 2 까지) · 한 교대 6건(`CHAIN_SHIFT_MAX`). 정본 `chain.canChain` | **부모가 있는 초과 사건은 모두 여기에 든다** — 이야기 연쇄(재범·도주 차량·은신처·방화)와 같은 6건을 나눠 쓴다. 나무(0) → 몰린 길의 사고(1) → 그 사고의 통제로 난 사고(2)에서 끊긴다. `hazard.hazardRoom` 이 본다 |
-| 전체 상한 `CSQ_SPAWN_CAP` | 규칙·법칙이 만든 사건 교대당 6(부모가 있든 없든) | `hazardRoom`·`spawnConsequence`. **세는 법을 하나로**: `hazard.ruleLoad(sim)` = `world.log` 가운데 실제로 사건이 된 줄(`made ≥ 0`) + `gen.chain` 에서 기다리는 줄(`log` 가 있는 예약). b2 의 `spawnRoom` 은 `world.spawned ≥ CSQ_SPAWN_CAP` 을 `ruleLoad(sim) ≥ CSQ_SPAWN_CAP` 으로 바꾼다(`world.spawned` 는 `csq-spawn` 흐름의 순번으로만 남는다) — 예약이 `'busy'`·`'late'`·`'expired'` 로 버려지면 자리가 돌아온다(지금은 사건을 만드는 규칙이 없어 결과는 그대로다) |
-| 부모 없는 초과 사건의 상한 `HZ.ORPHAN_CAP` | 교대당 3 | 그 상태의 주인이 사건이 아닌 것(공사·정체·인파·재난의 통제와 정전)에서 난 사건. 부모가 없어 `canChain` 이 세지 못한다(b2 의 `chainedInShift` 는 부모 있는 것만 센다 — 이야기 연쇄의 자리를 먹지 않게). 그래서 따로 묶는다. **사용자에게 물을 것**(§9): 이것도 "한 교대 6건"에 넣을지 — 기본값은 넣지 않고 3건 |
-| 법칙별 상한 | §3.7 의 법칙마다(교대당 2~3) | `HazardLaw.cap` — 만든 것 + 기다리는 것 |
-| 대상마다 한 번 | 건물의 발화·붕괴·누출·재발화·승강기 멈춤은 건물마다 교대에 한 번(`once`) | 문턱 흐름에 번호가 없다 |
-| 시간 | 교대 끝 150초 전부터 만들지 않는다 | `tickHazards`(`'late'`), `tickIncidents`(지금과 같다) |
-| 부하 | 열린 사건이 `maxConcurrent` 를 넘으면 **기다린다**(60초 — §3.6a "문턱을 넘었는데 만들 수 없을 때") | `tickHazards` |
-| 포화되는 상태 | 혼잡 ≤ 3 · 밀림 ≤ 1 · 우회 몰림 ≤ `DIV_MAX` · 구조 손상 ≤ 1 · 구역 값은 덮어쓰기(`min`/`max`)지 누적이 아니다. 모든 값에 회복이 있다 | 각 모델 |
+| **연쇄 상한 (사용자 결정 — 바꾸지 않는다)** | 한 사슬 3건(`CHAIN_MAX` — 뿌리 포함, 깊이 2 까지) · 한 교대 6건(`CHAIN_SHIFT_MAX`). 정본 `chain.canChain` | **부모가 있는 초과 사건은 모두 여기에 든다** — 이야기 연쇄(재범·도주 차량·은신처·방화)와 같은 6건을 나눠 쓴다. 나무(0) → 몰린 길의 사고(1) → 그 사고의 통제로 난 사고(2)에서 끊긴다. `hazard.hazardRoom` 이 본다(§3.6a 의 표) |
+| **한 뿌리의 가지 `HZ.ROOT_MAX`** | 같은 뿌리(부모를 끝까지 거슬러 올라간 사건)를 가진 법칙 사건은 2건까지 — 뿌리 포함 3건(만든 것 + 예약 + 기다리는 것). 넘으면 `'depth'` 로 버린다 | `hazardRoom`. `canChain` 은 사슬의 **길이**만 본다. 이야기 연쇄는 한 사건이 하나를 낳아 드러나지 않았지만, 법칙은 한 뿌리에서 여러 대상이 함께 넘는다 — 큰 불 곁의 이웃 여덟 채, 통제 하나의 이웃·우회로 구간들, 거기에 연기 환자. 길이만 보면 불 하나가 옮겨붙은 불 셋과 연기 환자 둘을 모두 깊이 1 로 가질 수 있다. **"한 사슬 3건"을 길이로만 볼지 한 뿌리에서 난 사건 전체로 볼지는 사용자에게 물을 것**(§9) — 기본값은 좁은 쪽이다 |
+| **부모 없는 초과 사건** | **한 교대 6건 안에서 센다**: `chainedInShift` + 부모 없는 법칙 사건 `≥ CHAIN_SHIFT_MAX` 면 `'cap'`. 그 안에서 부모 없는 것은 3건까지(`HZ.ORPHAN_CAP`) | 그 상태의 주인이 사건이 아닌 것(공사·정체·인파·재난의 통제와 정전)에서 난 사건. 부모가 없어 `canChain` 이 세지 못한다(b2 의 `chainedInShift` 는 부모 있는 것만 센다). 초안은 이것을 6건 **밖에** 따로 3건 두었는데, 그러면 한 교대에 인과로 난 사건이 9건까지 된다 — 사용자 결정은 6건이다. **사용자에게 물을 것**(§9): 따로 세어도 되는가 — 답을 받기 전 기본값은 상한 안쪽이다(안쪽이면 극한에서 이야기 연쇄가 길 위의 사고와 자리를 나눈다) |
+| 전체 상한 `CSQ_SPAWN_CAP` | 규칙·법칙이 만든 사건 교대당 6(부모가 있든 없든). `hazard.ts` 로 옮긴다 | `hazardRoom`·`spawnConsequence`. **세는 법을 하나로**: `hazard.ruleLoad(sim)` = `world.log` 가운데 실제로 사건이 된 줄(`made ≥ 0`) + `gen.chain` 에서 기다리는 줄(`log` 가 있는 예약) + 법칙의 기다리는 줄. b2 의 `spawnRoom` 은 `world.spawned ≥ CSQ_SPAWN_CAP` 을 `ruleLoad(sim) ≥ CSQ_SPAWN_CAP` 으로 바꾼다(`world.spawned` 는 `csq-spawn` 흐름의 순번으로만 남는다) — 예약이 `'busy'`·`'late'`·`'expired'` 로 버려지면 자리가 돌아온다(지금은 사건을 만드는 규칙이 없어 결과는 그대로다) |
+| 법칙별 상한 | §3.7 의 법칙마다(교대당 2~3) | `HazardLaw.cap` — `ruleLoad(sim, law.id)`(만든 것 + 예약 + 기다리는 줄). 따로 세는 칸을 두지 않는다 |
+| 대상마다 한 번 | 건물의 발화·붕괴·누출·재발화·승강기 멈춤은 건물마다 교대에 한 번(`once` — 한 번 넘으면 끝, `HzCell.done`) | 문턱 흐름에 번호가 없다 |
+| 시간 | 교대 끝 150초 전부터 만들지 않는다 | `hazardRoom`(`'late'`), `tickIncidents`(지금과 같다) |
+| 부하 · 자리 | 열린 사건이 `maxConcurrent` 를 넘거나 그 자리에 사건을 낼 수 없으면 **기다리는 줄**(기본 60초 — §3.6a) | `tickHazards` |
+| 쓸 수 없는 건물 | 전소·전체 붕괴 건물에는 법칙 사건을 내지 않는다(다른 건물로 옮겨 내지도 않는다) | 틀의 공통 조건, `tickIncidents` 의 한 줄 |
+| 포화되는 상태 | 혼잡 ≤ 3 · 밀림 ≤ 1 · 우회 몰림 ≤ `DIV_MAX` · 구조 손상 ≤ 1 · 구역 값은 덮어쓰기(`min`/`max`)지 누적이 아니다. 모든 값에 회복이 있다(정전은 원인이 끝나지 않아도 600초 — C4. 금 `shake` 만 교대 안에서 남는다) | 각 모델 |
 | 순환 금지 | 구역 상태끼리는 한 방향만: 정전 → 통신(C4 → C8). 통신·연기는 정전·화재를 만들지 않는다 | §3.7 |
 | 이야기 연쇄 | 그대로(`canChain`) | Z1 |
 
-**되먹임의 크기(조사 2026-11-20 — 어림)**: 사고 하나가 만드는 초과 혼잡은 약 2,000~2,600 구간·초이고 평소 교대 전체가 약 18,000(태풍 33,000)이다. L1 의 세기를 "평소 교대에 사고 0.3건"으로 맞추면 사고 하나가 다음 사고를 낳을 기대값은 0.03~0.17 — **1 아래라 상한 없이도 잦아드는 고리**이고, 상한은 꼬리만 자른다. 불의 번짐(L2)은 사슬마다 건물 셋까지, 충격(L3)은 붕괴·폭발 한 번에 벽을 맞댄 0.8~1.4채만 닿는다(§3.6c). b5 가 이 기대값을 실제로 잰다(§4 `hazard.gain`).
+**되먹임의 크기(조사 2026-11-20 — 어림)**: 사고 하나가 만드는 초과 혼잡은 약 2,000~2,600 구간·초이고 평소 교대 전체가 약 18,000(태풍 33,000)이다. L1 의 세기를 "평소 교대에 사고 0.4건"(`A_ROAD = 2.5e-5`)으로 두면 사고 하나가 다음 사고를 낳을 기대값은 0.04~0.08 — **1 아래라 상한 없이도 잦아드는 고리**이고, 상한은 꼬리만 자른다. 불의 번짐(L2)은 한 뿌리에서 뿌리 포함 건물 셋까지, 충격(L3)은 전체 붕괴 한 번에 틈 15 안의 1.4채, 폭발 한 번에 벽을 맞댄 0.8~1.4채만 닿는다(§3.6c). b5 가 이 기대값을 실제로 잰다(§4 `hazard.gain`).
 
 테스트(§6)와 I1-a 관문 M-G3(I1-b 뒤 3으로 낮춘다 — 실제 최대 깊이는 2)이 지킨다.
 
@@ -834,19 +849,22 @@ chain: { at: number; opts: SpawnOpts; when?: (sim: Sim) => boolean; until?: numb
 
 **생각.** 평소 생성기는 그대로 둔다(자기 흐름 `sim.rngGen`, 그 호출 순서를 건드리지 않는다). 상태가 평소 수준보다 올린 만큼의 **초과 위험률** `λ(t)`(초당 기대 사건 수)를 대상(구간·건물)마다 따로 적분하고(`H = ∫λ dt`), 대상마다 한 번 뽑아 둔 문턱 `E = −ln(1 − u)` 를 넘으면 사건이 난다. 이것은 위험률 `λ(t)` 의 비균질 푸아송 과정을 역변환으로 뽑는 것과 같다 — 평소 과정에 독립인 과정을 겹친 것이라 "혼잡할수록 사고가 잦다"와 같은 말이고, 틱마다 주사위가 없다. 양이 쌓여 넘는 꼴(열 노출이 그 건물의 발화 문턱을 넘는다)과 한 번의 충격(폭발의 불티, 정전 순간 운행 중이던 승강기)도 같은 칸에 `H` 를 더해 같은 문턱과 견준다.
 
-**틀** — 새 파일 `src/sim/world/hazard.ts`(진실 쪽. `types`·`chain`·`rng`·`incidents` 의 형만 import 한다 — `consequence.ts` 가 이 파일을 import 한다):
+**틀** — 새 파일 `src/sim/world/hazard.ts`(진실 쪽. **등록이 없는 파일**이다 — §3.4. `types`·`chain`·`rng`·`world/state` 와 `incidents` 의 **형만** import 한다: `incidents.ts` 의 함수를 import 하면 순환이 생긴다 — 쓸 수 있는 건물인가는 `placeState().usable` 로 본다. `consequence.ts` 가 이 파일을 import 하므로 `CSQ_SPAWN_CAP` 은 이 파일로 옮기고 `consequence.ts` 가 다시 내보낸다):
 
 ```ts
-export const HZ = { HOLD: 60, PARENT_SHARE: 1 / 3, ORPHAN_CAP: 3, SRC_MAX: 3, LATE: 150 };      // 모두 첫 값
+export const CSQ_SPAWN_CAP = 6;                                  // b2 의 것을 옮긴다 (consequence.ts: export { CSQ_SPAWN_CAP } from './hazard')
+export const HZ = { HOLD: 60, PARENT_SHARE: 1 / 3, ORPHAN_CAP: 3, ROOT_MAX: 2, SRC_MAX: 3, LATE: 150 };      // 모두 첫 값
 /** 이번 주기에 한 대상의 초과를 이루는 몫 하나. rate = 초당 초과 위험 (≥ 0) */
 export interface HzPart { rate: number; ev: number; inc: number; what: HzWhat; ref: number }
 export interface HazardLaw {
   id: HazardLawId; label: string;            // 'roadCrash' · '몰린 길의 사고' (보고서의 교대 요약이 label 을 쓴다)
   every: 1 | 12;                             // 1 = world tick(1초)마다 · 12 = 교통 모델이 혼잡을 다시 계산한 뒤 한 번(traffic.driftAt 이 바뀌었을 때)
-  once: boolean;                             // 대상마다 교대에 한 번 — 넘은 대상은 다시 적분하지 않는다
-  cap: number;                               // 이 법칙이 만든 사건의 교대 상한 (만든 것 + 기다리는 것)
-  /** 초과가 있는 대상을 내놓는다. put 은 대상마다 한 번, parts 는 다시 쓰는 버퍼여도 된다(틀이 필요할 때 복사한다). 초과가 0 인 대상은 내놓지 않는다 */
-  scan: (sim: Sim, put: (target: number, parts: HzPart[]) => void) => void;
+  once: boolean;                             // 대상마다 교대에 한 번 — 한 번 넘은 대상은 끝이다(아래 "once 법칙")
+  cap: number;                               // 이 법칙이 만든 사건의 교대 상한 (만든 것 + 예약 + 기다리는 것)
+  hold?: number;                             // 문턱을 넘고 자리를 기다리는 마감(초). 없으면 HZ.HOLD
+  /** 초과가 있는 대상을 내놓는다. put 은 대상마다 한 번, parts 는 다시 쓰는 버퍼여도 된다(틀이 필요할 때 복사한다). 초과가 0 인 대상은 내놓지 않는다.
+   *  충격만 받는 법칙(L5·L7)은 scan 이 없다 */
+  scan?: (sim: Sim, put: (target: number, parts: HzPart[]) => void) => void;
   /** 문턱을 넘은 대상에서 날 사건의 유형·변형·규모·자리·첫머리. null = 지금은 만들 수 없다(그 자리에 열린 사건이 있다 따위 — 기다린다).
    *  parent·cause·causes·csq·hz·rng 는 틀이 채운다. 난수를 쓰지 않는다 — 내용이 갈리는 곳은 cell.u2 로 */
   spawn: (sim: Sim, target: number, cell: HzCell, main: HzPart, total: number) => SpawnOpts | null;
@@ -855,45 +873,71 @@ export function registerHazard(law: HazardLaw): () => void;      // 등록 순�
 export function hazardLaws(): readonly HazardLaw[];
 export function hazardLabel(id: string): string | null;          // b4 의 보고서 — consequenceLabel 이 null 이면 이것을 본다
 export function tickHazards(sim: Sim): void;                     // tickWorld 의 1초 블록에서: 'tick' 규칙 다음, recoverWorld 앞
-/** 한 번의 충격을 같은 칸에 더한다 (폭발의 불티 · 정전 순간 · 침수 순간). 넘으면 그 자리에서 사건을 예약한다 */
+/** 한 번의 충격을 같은 칸에 더한다 (폭발의 불티 · 정전 순간 · 닫힌 화재의 잔열). 넘으면 그 자리에서 아래 "넘은 자리의 처리"를 한다 */
 export function hazardImpulse(sim: Sim, law: HazardLawId, target: number, dH: number, part: HzPart, delay = 0): void;      // delay = 넘었을 때 사건까지 미루는 초 (L7 의 닫힌 꼴)
 export function hazardCell(sim: Sim, law: HazardLawId, target: number): HzCell | null;      // 읽기 (시험·측정)
-export function ruleLoad(sim: Sim): number;                      // 규칙·법칙이 만든 사건 + 기다리는 예약 (§3.6)
+export function ruleLoad(sim: Sim, rule?: string): number;       // 규칙·법칙이 만든 사건 + gen.chain 의 예약 + 기다리는 줄 (§3.6). rule 을 주면 그 규칙·법칙의 것만
 export function hazardRoom(sim: Sim, law: HazardLaw, parent: number | undefined): DroppedChain['why'] | null;
 ```
 
-**한 주기** — `tickHazards` 는 법칙을 등록 순서로 돈다(`every: 12` 인 법칙은 `sim.traffic.driftAt !== world.hz.roadAt` 일 때만, `dt = 12`):
+**한 주기** — `tickHazards` 는 1초마다 ① 기다리는 줄을 먼저 보고 ② 법칙을 등록 순서로 돈다(`every: 12` 인 법칙은 `sim.traffic.driftAt !== world.hz.roadAt` 일 때만, `dt = 12`):
 
-1. `law.scan` 이 내놓는 대상마다 칸을 찾는다. 없으면 만든다: `r = sim.rng.fork('hz:' + law.id + ':' + target + (law.once ? '' : ':' + n))`, `thr = −Math.log(1 − r.next())`, `u2 = r.next()`, `H = 0`, `n = 0`. **문턱의 흐름 이름에는 경로에 따라 달라지는 것(시각·시도 횟수·전역 순번)이 없다.**
-2. `since < 0` 이면 `since = sim.t`. `rate = Σ parts.rate`, `dH = rate × dt`.
-3. 기다리는 중(`wait ≥ 0`)이면 `H = thr` 에 묶어 두고 5번으로.
-4. `H + dH < thr` 면 `H += dH` 하고 끝. 아니면 **넘었다**: 넘은 시각 `at = sim.t + dt × (thr − H) / dH`(주기 안에서 보간 — 주사위가 더 필요 없다. `every: 1` 이면 `at = sim.t`), 5번으로. 넘친 몫 `H + dH − thr` 는 버리지 않고 다음 문턱(`n + 1` 의 흐름)을 향해 남긴다.
-5. **넘은 자리의 처리**(아래 "귀속"·"문턱을 넘었는데 만들 수 없을 때").
-6. 지난 주기에는 초과가 있었는데(`world.hz.live[law]`) 이번에 나오지 않은 대상: `since = −1`. **`H` 는 그대로 둔다**(초과가 0 이면 적분이 멎을 뿐이다 — 식지 않는다. 푸아송 과정의 누적 위험과 같다). 기다리던 것이면 `'expired'` 로 버린다.
+1. **기다리는 줄**(`world.hz.waiting` — 아래 "기다리는 줄")을 넣은 순서로 훑는다. `every: 12` 인 법칙과 `scan` 이 없는 충격 법칙의 것도 이 길로 1초마다 다시 본다.
+2. `law.scan` 이 내놓는 대상마다 칸을 찾는다. 없으면 만든다: `r = sim.rng.fork('hz:' + law.id + ':' + target + (law.once ? '' : ':' + n))`, `thr = −Math.log(1 − r.next())`, `u2 = r.next()`, `H = 0`, `n = 0`, `done = false`. **문턱의 흐름 이름에는 경로에 따라 달라지는 것(시각·시도 횟수·전역 순번)이 없다.** `cell.done` 이거나 그 대상에 기다리는 줄이 있으면 건너뛴다(적분하지 않는다 — 위험은 이미 실현돼 자리를 기다리는 중이다).
+3. `since < 0` 이면 `since = sim.t`. `rate = Σ parts.rate`, `dH = rate × dt`.
+4. `H + dH < thr` 면 `H += dH` 하고 끝. 아니면 **넘었다** → 아래 "넘은 자리의 처리". **넘은 시각은 보간하지 않는다 — `at = sim.t`**(12초 눈금은 관찰에 드러나지 않고, 귀속에 쓴 몫과 사건의 시각이 같아지며, 예약과 사건 사이에 그 자리의 사정이 바뀌는 틈이 없다). `once` 가 아닌 법칙은 넘친 몫 `H + dH − thr` 를 다음 문턱(`n + 1` 의 흐름)을 향해 남긴다(`H = H + dH − thr`, `n++`, 새 문턱 — 사건을 예약했든 버렸든 기다리게 했든 같다).
+5. 지난 주기에는 초과가 있었는데(`world.hz.live[law]`) 이번에 나오지 않은 대상: `since = −1`. **`H` 는 그대로 둔다**(초과가 0 이면 적분이 멎을 뿐이다 — 식지 않는다. 푸아송 과정의 누적 위험과 같다).
+
+**once 법칙은 한 번 넘으면 끝이다.** 사건을 예약했든, 상한·교대 끝으로 버렸든, 기다리다 마감이 지났든, 원인 기록이 없어 구멍으로 셌든 `cell.done = true` 이고 그 뒤로 그 대상은 적분도 충격도 받지 않는다(흐름 이름에 번호가 없어 다시 뽑아도 같은 문턱이다 — L7 처럼 `H` 가 문턱의 몇 배면 `H −= thr` 뒤에도 곧바로 다시 넘는다). 아래 표의 "`H −= thr`, `n++`, 다음 문턱"은 `once` 가 아닌 법칙에만 해당한다.
+
+**넘은 자리의 처리** — 이 순서로:
+
+1. **귀속**(아래). 모든 몫의 `ev < 0` 이면 사건을 만들지 않고 `holes++` — 버린 것과 같게 끝낸다(같은 문턱에 걸려 주기마다 구멍이 늘지 않게).
+2. `hazardRoom(sim, law, parent)` 이 까닭을 주면 버린다(`gen.dropped` 에 그 까닭 — 기록은 남기지 않는다).
+3. 열린 사건이 `tune.maxConcurrent` 를 넘거나 `law.spawn(…)` 이 `null` 이면 **기다리는 줄**에 넣는다.
+4. **건물에 내는 사건의 공통 조건**(틀이 본다 — 법칙마다 쓰지 않는다): `law.spawn` 이 `placeId` 를 돌려주면 ① `placeState(sim, placeId)?.usable === false`(전소·전체 붕괴)면 버린다(`'expired'`), ② 그 건물에 열린 사건이 있으면(`I.phase !== 'closed' && I.truth.placeId === placeId`) `spawn` 이 `null` 을 준 것과 같게 기다린다. 까닭: `createIncident` 는 정해 준 건물이 `placeGone` 이면 그 유형의 다른 건물을 다시 고른다(X6 §7.1) — 그 갈래를 법칙 사건이 타면 원인은 옆 건물의 불·정전인데 자리는 무관한 건물인 기록이 남는다(가짜 기록). 그래서 `tickIncidents` 가 예약을 꺼낼 때도 `c.opts.hz !== undefined && c.opts.placeId !== undefined && placeGone(sim, c.opts.placeId)` 면 만들지 않고 `'expired'` 로 버린다. **건물 법칙이 만든 사건의 `truth.placeId` 는 언제나 `hz.target` 이다**(시험).
+5. 예약(아래 "귀속"의 끝 줄).
+
+**`hazardRoom`** — 위에서부터, 걸리는 첫 줄의 까닭을 돌려준다:
+
+| 순서 | 조건 | 까닭 |
+|---|---|---|
+| 1 | 교대 끝 `HZ.LATE`(150초) 안 | `'late'` |
+| 2 | `ruleLoad(sim) ≥ CSQ_SPAWN_CAP`(규칙·법칙이 만든 사건 + 기다리는 예약) · `ruleLoad(sim, law.id) ≥ law.cap` | `'cap'` |
+| 3 | 부모가 있고 `chainLen(부모) ≥ CHAIN_MAX`(한 사슬 3건 — `chain.canChain` 의 첫 조건) | `'depth'` |
+| 4 | 부모가 있고, 그 부모의 뿌리(부모를 끝까지 거슬러 올라간 사건)를 뿌리로 둔 법칙 사건(만든 것 + 예약 + 기다리는 것)이 `HZ.ROOT_MAX`(2) 이상 | `'depth'` |
+| 5 | `chainedInShift(sim)`(부모 있는 사건 — 이야기 연쇄와 부모 있는 법칙 사건, 예약 포함) + 부모 없는 법칙 사건(만든 것 + 예약) + 기다리는 줄 전부 `≥ CHAIN_SHIFT_MAX`(한 교대 6건) | `'cap'` |
+| 6 | 부모가 없고 부모 없는 법칙 사건이 `HZ.ORPHAN_CAP`(3) 이상 | `'cap'` |
+
+세는 법은 모두 `ruleLoad` 와 같다(`world.log` 에서 `made ≥ 0` 인 줄 + `gen.chain` 에 남은 그 법칙의 예약 + `world.hz.waiting`) — 따로 세는 칸을 두지 않는다. 그래서 `tickIncidents` 가 `'busy'`·`'late'` 로 버린 예약의 자리는 전체에서도 법칙별로도 돌아온다.
 
 **평소 수준과 초과.** 초과는 법칙마다 "평소면 정확히 0"인 식으로 잰다: 도로는 혼잡 값끼리의 차가 아니라 원인 항(통제에서 온 밀림·우회 몰림·병목·인파·꺼진 신호 — §3.6b), 건물은 문턱 유속을 넘는 열(§3.7 L2), 평소 응급률에 곱하는 상대 위험에서 1 을 뺀 값(L4). 잡음(`drift` 의 ±0.1)과 뒤처짐(×0.35)이 낀 `e.cong − 기준` 으로 재면 0 이 되지 않아 교대 내내 모든 구간이 위험을 쌓는다. **그래도 평소 교대에 초과는 늘 있다**(조사: 보통 S7 에서 12초 표본마다 평균 18구간 — 정체·공사·평소 사고의 감속에서 온 밀림). 그것은 평소의 교통 사건이 만든 **상태**이고 법칙은 원인을 가리지 않으므로, L1 은 재난도 대형 사고도 없는 교대에서도 드물게 사고를 낸다(목표: 교대당 0.2~0.5건). 그래서 보장은 교대 단위가 아니라 대상 단위다 — "초과가 0 인 대상의 적분은 늘지 않는다", "문턱을 넘지 않은 법칙은 기록도 난수도 남기지 않는다".
 
 **귀속 — 사건의 `cause`·`causes`·`parent`.** 겹친 푸아송 과정에서 난 사건이 몫 i 의 것일 확률은 **그 순간의** `λᵢ / Σλ` 다(쌓인 양의 비가 아니다 — 오래전에 지나간 통제가 지금의 사고를 낳았다고 쓰지 않는다). 그래서 내력은 **넘는 순간의 몫**(`scan` 이 그 주기에 내놓은 `parts`)으로 정한다. 주사위를 굴리지 않고 가장 큰 몫을 주된 원인으로 둔다:
 
-- 몫을 `rate` 큰 순(같으면 `ev` 작은 순)으로 줄 세운다. `ev < 0` 인 몫(원인 기록을 못 찾은 상태)은 뒤로 보낸다.
-- **`cause`** = 첫 몫의 `ev`. **`causes`** = 그다음 몫들의 `ev`(많아야 `SRC_MAX − 1`) — "통제 + 꺼진 신호"가 둘 다 발생 기록의 원인으로 이어진다. 모든 몫이 `ev < 0` 이면 **사건을 만들지 않고** `world.hz.holes++`(장부의 구멍 — 원인 없는 인과 사건은 만들지 않는다. 테스트가 0 을 지킨다).
-- **`parent`** = 주인 사건이 있는(`inc ≥ 0`) 몫 가운데 가장 큰 것의 사건 — 다만 그 몫이 전체의 `PARENT_SHARE`(1/3) 이상일 때만. 아니면 부모가 없다(정체·공사·인파·재난에서 온 초과가 대부분인 사고에 지나가던 사건을 부모로 붙이지 않는다). 부모는 닫힌 사건이어도 된다(사건 뒤에 남은 잔해가 길을 막은 동안의 사고).
-- **`csq`** = 법칙 id. **`hz`** = `{ law, target, since, at, src: 큰 몫부터 SRC_MAX 개 }`.
-- 예약: `sim.gen.chain.push({ at, opts: { ...law.spawn(…), parent, cause, causes, csq: law.id, hz, rng: sim.rng.fork('hz-spawn:' + law.id + ':' + target + ':' + cell.n) }, log })` — `log` 는 `world.log` 에 넣은 줄 `{ rule: law.id, t, ev: cause, inc: parent ?? −1, made: −1, depth }`(사건이 되면 `tickIncidents` 가 `made` 를 채운다 — b2 그대로). **사건을 만드는 흐름 이름도 전역 순번이 아니라 (법칙, 대상, 몇 번째)** 다 — 앞의 다른 사건이 사라져도 이 사건의 내용은 같다(`spawnConsequence` 의 `csq-spawn:<규칙>:<world.spawned>` 는 그렇지 못해 법칙에는 쓰지 않는다).
-- `tickWorld` 바로 다음이 `tickIncidents` 라 `at ≤ sim.t` 인 예약은 같은 틱에 사건이 된다. 교대 끝·부하·깊이의 마지막 확인과 `gen.dropped` 는 `tickIncidents` 가 지금처럼 한다.
+- 몫을 **`rate` 큰 순으로만**(같으면 `ev` 작은 순) 줄 세운다. 기록이 없는 몫(`ev < 0`)을 뒤로 보내지 않는다 — 초과의 80% 가 장부 없는 상태인데 20% 짜리 기록을 주된 원인으로 쓰면 틀린 내력이다.
+- **`cause`** = `ev ≥ 0` 인 가장 큰 몫의 기록. **`causes`** = 그 밖의 `ev ≥ 0` 인 몫들의 기록(많아야 `SRC_MAX − 1`) — "통제 + 꺼진 신호"가 둘 다 발생 기록의 원인으로 이어진다.
+- **장부의 구멍 `world.hz.holes`**: 전체의 `PARENT_SHARE`(1/3) 이상인 몫 가운데 하나라도 `ev < 0` 이면 `holes++` 한다. 사건은 만든다 — `hz.src` 에 그 몫을 `ev: −1` 그대로 남기고 보고서 문장에 "(까닭이 기록되지 않은 혼잡도 겹쳤습니다)"가 붙는다. **모든** 몫이 `ev < 0` 이면 사건을 만들지 않는다(원인 없는 인과 사건은 만들지 않는다). 테스트와 관문이 `holes = 0` 을 지킨다.
+- **`parent`** = 주인 사건이 있는(`inc ≥ 0`) 몫 가운데 가장 큰 것의 사건 — 다만 그 몫이 전체의 `PARENT_SHARE` 이상일 때만. 아니면 부모가 없다(정체·공사·인파·재난에서 온 초과가 대부분인 사고에 지나가던 사건을 부모로 붙이지 않는다). 부모는 닫힌 사건이어도 된다(사건 뒤에 남은 잔해가 길을 막은 동안의 사고, 통제가 풀린 뒤 아직 밀려 있던 길의 사고).
+- **`csq`** = 법칙 id. **`hz`** = `{ law, target, at, src }` — `src` 는 큰 몫부터 `SRC_MAX` 개의 `{ ev, inc, w: rate, what, ref, since }`. **`since` 는 몫마다 따로다**: 그 몫이 이 대상에 처음 걸린 시각 = `max(cell.since, 그 기록의 시각 sim.events[ev].t)`(`ev < 0` 이면 `cell.since`). 문장의 "약 N초"는 그 몫의 `at − since` 다 — 정체로 200초 전부터 초과가 있던 구간에 50초 전 통제가 생겨 우회 몰림이 주된 몫이 됐을 때 "통제 뒤 250초"라고 쓰지 않는다.
+- 예약: `sim.gen.chain.push({ at: sim.t, opts: { ...law.spawn(…), parent, cause, causes, csq: law.id, hz, rng: sim.rng.fork('hz-spawn:' + law.id + ':' + target + ':' + n) }, log })` — `n` 은 넘은 순번(늘리기 전의 `cell.n`), `log` 는 `world.log` 에 넣은 줄 `{ rule: law.id, t, ev: cause, inc: parent ?? −1, made: −1, depth }`(사건이 되면 `tickIncidents` 가 `made` 를 채운다 — b2 그대로). **사건을 만드는 흐름 이름도 전역 순번이 아니라 (법칙, 대상, 몇 번째)** 다 — 앞의 다른 사건이 사라져도 이 사건의 내용은 같다(`spawnConsequence` 의 `csq-spawn:<규칙>:<world.spawned>` 는 그렇지 못해 법칙에는 쓰지 않는다).
+- `tickWorld` 바로 다음이 `tickIncidents` 라 예약은 같은 틱에 사건이 된다. 교대 끝·부하·깊이의 마지막 확인과 `gen.dropped` 는 `tickIncidents` 가 지금처럼 한다.
 
 **문턱을 넘었는데 만들 수 없을 때 — 버리는가 미루는가.**
 
-| 까닭 | 하는 일 | 적분값 |
+| 까닭 | 하는 일 | 적분값 (`once` 가 아닌 법칙 — `once` 면 그 대상은 끝) |
 |---|---|---|
-| 사슬 길이(`'depth'` — 부모의 `chainLen ≥ CHAIN_MAX`) | **버린다.** `gen.dropped` 에 `'depth'`(기록은 남기지 않는다). 되먹임의 고리가 끊기는 자리다 — 다른 몫으로 부모를 바꿔 달아 상한을 비켜 가지 않는다 | `H −= thr`, `n++`, 다음 문턱을 새로 뽑는다(사건이 난 것과 같게 — 같은 문턱에 걸려 주기마다 다시 버려지지 않게) |
-| 교대 상한(`'cap'` — `canChain` 의 6건 · `CSQ_SPAWN_CAP` · `ORPHAN_CAP` · 법칙 상한) | **버린다.** `'cap'` | 같다. `ruleLoad` 가운데 실제로 사건이 된 수만으로 `CSQ_SPAWN_CAP` 에 닿았으면 그 교대의 `tickHazards` 는 첫 줄에서 돌아온다(자리는 다시 나지 않는다) |
+| 사슬 길이·한 뿌리의 가지(`'depth'` — `hazardRoom` 3·4) | **버린다.** `gen.dropped` 에 `'depth'`(기록은 남기지 않는다). 되먹임의 고리가 끊기는 자리다 — 다른 몫으로 부모를 바꿔 달아 상한을 비켜 가지 않는다 | `H −= thr`, `n++`, 다음 문턱을 새로 뽑는다(사건이 난 것과 같게) |
+| 교대 상한(`'cap'` — `hazardRoom` 2·5·6) | **버린다.** `'cap'` | 같다. 실제로 사건이 된 수만으로 `CSQ_SPAWN_CAP` 에 닿았으면 그 교대의 `tickHazards` 는 첫 줄에서 돌아온다(자리는 다시 나지 않는다) |
 | 교대 끝 150초 안(`'late'`) | **버린다.** | 같다 |
-| 부하(열린 사건 > `tune.maxConcurrent`) · 그 자리에 지금은 사건을 낼 수 없음(`law.spawn` 이 `null` — 양 끝 교차로에 열린 사건이 있다, 그 건물에 열린 사건이 있다) | **미룬다.** `wait = sim.t + HZ.HOLD`(60초). 주기마다 다시 본다 — 자리가 나면 그때의 `parts` 로 귀속해 사건을 만든다(`at = sim.t`) | `H` 는 `thr` 에 묶여 더 쌓이지 않는다. 마감이 지나거나 그 대상의 초과가 끝나면 `'expired'` 로 버리고 `H −= thr`, `n++` |
+| 쓸 수 없는 건물(전소·전체 붕괴 — `'expired'`) | **버린다.** | 같다 |
+| 부하(열린 사건 > `tune.maxConcurrent`) · 그 자리에 지금은 사건을 낼 수 없음(`law.spawn` 이 `null`, 그 건물에 열린 사건이 있다) | **기다리는 줄에 넣는다**(아래) | 넘은 것으로 친다(같다). 줄에 있는 동안 그 대상은 적분하지 않는다 |
 
-미루는 까닭: 부하와 "그 자리가 바쁘다"는 물리가 아니라 시뮬레이션의 처리 한도다. 재난의 충격 단계에는 열린 사건이 한도를 넘는 일이 잦아(재난 큐는 +4 까지 연다) 버리기만 하면 법칙의 사건이 거의 다 사라진다. 60초 안에 자리가 나지 않으면 그 위험은 실현되지 않은 것으로 친다(초과가 이어지는 한 다음 문턱을 향해 다시 쌓인다). 상한에 걸린 것을 미루지 않는 까닭: 상한은 사용자 결정이고 교대 안에서 다시 열리지 않는다 — 쌓아 두면 교대 끝에 몰려 터진다.
+**기다리는 줄** — `world.hz.waiting: HzWait[]`(§3.3). 한 줄은 `{ law, target, n, until: sim.t + (law.hold ?? HZ.HOLD), parts: 넘는 순간의 몫의 사본, total }`. `tickHazards` 는 1초마다 법칙을 돌기 전에 이 줄을 넣은 순서로 훑는다: `hazardRoom` 이 까닭을 주면 버리고(그 까닭), `until` 이 지났으면 `'expired'`, 부하가 풀렸고 `law.spawn` 이 사건을 주고 건물 조건을 지나면 **적어 둔 사본으로** 귀속해 예약한다(`at = sim.t`). **그 대상의 초과가 끝났다는 것만으로는 버리지 않는다** — 위험은 넘는 순간에 실현됐고, 기다림은 시뮬레이션의 자리 문제다(불이 꺼진 뒤 원인 사건이 닫히기를 기다리는 옮겨붙은 불이 그 예다 — 자리가 났을 때는 원인이 이미 사라져 `scan` 의 몫이 비어 있다). 한 대상에는 줄이 하나뿐이다. 줄을 다시 볼 때의 `hazardRoom` 은 **그 줄 자신을 빼고** 센다(자기 자리 때문에 상한에 걸려 버려지지 않게).
 
-**충격**(`hazardImpulse`): 칸을 찾아(없으면 만든다) `H += dH`, 넘으면 그 `part` 하나를 내력으로 위의 5번을 그 자리에서 한다(`at = sim.t`). 기다릴 때는 마감까지만 기다린다(이어지는 초과가 없으므로 "초과가 끝남"으로 버리지 않는다). `delay` 를 주면 예약의 `at = sim.t + delay` 이고, 그때 `law.spawn` 이 `null` 이면 `gen.chain` 의 `when`(§3.5 — `() => law.spawn(…) !== null`)으로 `HZ.HOLD` 초까지 다시 본다.
+미루는 까닭: 부하와 "그 자리가 바쁘다"는 물리가 아니라 시뮬레이션의 처리 한도다. 재난의 충격 단계에는 열린 사건이 한도를 넘는 일이 잦아(재난 큐는 +4 까지 연다) 버리기만 하면 법칙의 사건이 거의 다 사라진다. 마감(기본 60초) 안에 자리가 나지 않으면 그 위험은 실현되지 않은 것으로 친다. 상한에 걸린 것을 미루지 않는 까닭: 상한은 사용자 결정이고 교대 안에서 다시 열리지 않는다 — 쌓아 두면 교대 끝에 몰려 터진다.
+
+**충격**(`hazardImpulse`): 칸을 찾아(없으면 만든다. `done` 이면 돌아온다) `H += dH`, 넘으면 그 `part` 하나를 몫으로(`rate` 자리에는 틀이 `dH` 를 넣는다 — 몫의 비를 따질 것이 하나뿐이다) "넘은 자리의 처리"를 그 자리에서 한다. `delay` 를 주면 예약의 `at = sim.t + delay` 이고 `when: () => law.spawn(…) !== null && 건물 조건`, `until: at + (law.hold ?? HZ.HOLD)` 를 붙인다(§3.5 — 미룬 동안 그 자리의 사정이 바뀔 수 있다).
 
 **주기와 비용.** 한 주기에 훑는 대상의 상한(법칙이 `scan` 안에서 지킨다 — 가까운 것부터 자른다):
 
@@ -902,12 +946,13 @@ export function hazardRoom(sim: Sim, law: HazardLaw, parent: number | undefined)
 | L1 `roadCrash` | 12초(교대당 100번) | 구간 257 | 몫은 교통 모델이 `drift` 에서 이미 계산해 둔 배열을 읽는다 |
 | L2 `heatSpread` | 1초 | 큰 불 현장(≤ 6) × 이웃 건물(≤ 8) = 48 | 이웃 목록은 건물마다 처음 한 번(0.14ms) 만들어 모듈에 둔다 |
 | L3 `structFail`·`pipeLeak` | 1초 | 손상된 건물 ≤ 16 | |
-| L4 `smokeIll` | 1초 | 연기 자리(≤ 3) × 주거 건물(≤ 40) = 120 | |
-| L7 `rekindle` · L5 `liftStall` · L6 `floodLow` | 사건이 있을 때만 | — | 닫힌 꼴의 식과 충격이라 매초 도는 것이 없다 |
+| L4 `smokeIll` | 1초 | 연기 자리(≤ 3) × 주거 건물(≤ 40) = 120 | **연기 자리가 생기거나 반경이 바뀔 때만** 그 자리의 대상 목록(건물 id·거리)을 만들어 그 자리의 상태에 둔다. 농도는 건물마다 `zoneAt` 을 부르지 않고 그 자리의 세기 × (1 − 거리 / r) 로 바로 계산한다(매초 1,262채에서 고르면 큰 불이 이어지는 교대에 10ms 안팎 — 예산의 절반이다) |
+| L7 `rekindle` · L5 `liftStall` | 사건이 있을 때만 | — | 닫힌 꼴의 식과 충격이라 매초 도는 것이 없다 |
+| 기다리는 줄 | 1초 | 보통 0~3 | `law.spawn` 한 번씩 |
 
-합쳐 **1초에 200 대상·몫 계산 아래**(곱셈 몇 번씩)다. 목표: 교대당 시간 +2% 이하(R3 뒤 이미 1.55배다 — `sweep 12 --no-metrics` 를 앞 단계와 번갈아 세 번, 사용자 CPU 로 본다). 법칙이 하나도 등록되지 않았거나 `CSQ_SPAWN_CAP` 이 찼으면 첫 줄에서 돌아온다. `tickHazards` 안에서 `findRoute`·`astar` 를 부르지 않는다(모듈 버퍼 — CLAUDE.md "공유 버퍼").
+합쳐 **1초에 200 대상·몫 계산 아래**(곱셈 몇 번씩)다. 예산은 §4 의 "교대당 시간" 줄(틀과 교통의 몫 × 1.03 이하 — `sweep 12 --no-metrics` 를 앞 단계와 번갈아 세 번, 사용자 CPU 로 본다). 법칙이 하나도 등록되지 않았거나 실제로 만든 사건이 `CSQ_SPAWN_CAP` 에 닿았으면 첫 줄에서 돌아온다. `tickHazards` 안에서 `findRoute`·`astar` 를 부르지 않는다(모듈 버퍼 — CLAUDE.md "공유 버퍼").
 
-**개입 시험이 성립하는 까닭.** 문턱 `thr` 은 (시드, 법칙, 대상, 몇 번째)만의 함수다. 한 대상의 k 번째 사건은 누적 위험이 `thr₁ + … + thr_k` 에 닿는 때 나므로, 그 대상의 위험률을 모든 시각에서 줄이면(원인 하나를 지우면) k 번째 사건은 **늦어지거나 없어질 뿐 빨라지지 않는다.** 다만 교대 전체로는 사건 하나가 사라지면 사건 번호가 밀려(`scene:<I.id>`·`call:<I.id>` 흐름) 뒤 현장이 달라지고, 평소 생성기의 간격(`avail`·열린 사건 수)도 달라진다 — 그래서 시험은 **사건을 지우지 않고 상태만 지운다**: 같은 시드의 두 `Sim` 을 같은 틱까지 돌린 뒤 한쪽에서만 `e.closed`·`closedReason`·그 구간의 원인 장부를 되돌리고, 정해 둔 창(≤ 300초) 동안 그 대상들의 `hazardCell` 과 만들어진 사건의 `cause` 를 견준다(§6).
+**개입 시험이 성립하는 까닭과 그 한계.** 문턱 `thr` 은 (시드, 법칙, 대상, 몇 번째)만의 함수다. 한 대상에서 k 번째로 **문턱을 넘는 시각**은 누적 위험이 `thr₁ + … + thr_k` 에 닿는 때이므로, 그 대상의 위험률이 모든 시각에서 줄어드는 한 그 시각은 **늦어지거나 없어질 뿐 빨라지지 않는다.** 한계 셋: ① 사건 단위로는 성립하지 않는다 — 상한·대기에 걸러지므로, 원인이 있는 쪽에서 상한에 버려진 넘음이 원인을 지운 쪽에서는 사건이 될 수 있다. ② 원인을 지운다고 모든 대상의 위험률이 줄지는 않는다 — 통제를 풀면 그 구간 자신은 닫힌 구간(초과 0)에서 차가 다니는 구간이 되어 다른 원인의 초과를 받고, 다른 통제의 우회로가 그 구간을 지나게 바뀐다. ③ 교대 전체로는 사건 하나가 사라지면 사건 번호가 밀려(`scene:<I.id>`·`call:<I.id>` 흐름) 뒤 현장이 달라지고, 평소 생성기의 간격(`avail`·열린 사건 수)과 교통 사건의 후보(`!e.closed`)도 달라진다. 그래서 시험은 **사건을 지우지 않고 상태만 지우고, 다른 원인을 얼리고, 그 원인이 올리던 대상만 견준다**: 같은 시드의 두 `Sim` 을 같은 틱까지 돌린 뒤 한쪽에서만 그 원인이 길에 만든 상태(`e.closed`·`closedReason`·`e.slow`)를 되돌린다. **원인 장부는 손대지 않는다** — 장부는 상태를 보고 스스로 비워져야 하고, 장부를 지우면 "그 원인의 사건이 없다"가 위험이 그대로여도 참이 된다(§6 I1-b 10).
 
 ### 3.6b 교통 모델에 넣는 일반 규칙 (`traffic.ts`) — 우회 몰림과 초과 혼잡의 장부
 
@@ -926,61 +971,89 @@ detours: Map<number, number[]>; detourSig: string;  // 닫힌 구간 → 우회�
 - `target = clamp(press + 1.2 × queue + min(DIV_MAX, divert), 1, 3)`. **`divert` 는 `press` 가 아니라 `target` 에 더한다** — `press` 에 넣으면 2.4 를 넘겨 새 밀림의 뿌리가 되고 밀림이 밀림을 낳는다. `divert` 는 `drift` 마다 지금 닫힌 구간에서 다시 계산한다(상태를 쌓지 않는다 — 통제가 풀리면 다음 `drift` 에 0 이고 `cong` 은 35%씩 따라 내려간다).
 - 우회로가 없는 구간(257 가운데 19)은 몰리는 길이 없다. 난수 호출 수는 그대로다(구간마다 `rng.range` 한 번).
 - **쓰러진 나무의 `+0.7` 한 줄을 지운다.**
-- **결과가 바뀌는 범위**: `cong` → `edgeTime` → 대응 시간이 **닫힌 구간이 있는 모든 교대**에서 바뀐다(사실상 전부. 한 번에 닫힌 구간은 평균 0.6(보통)~1.7(태풍)개). 긴급 차량도 몰린 우회로에서 늦어진다 — 의도한 결과다(사용자에게 확인할 것, §9). 한 단계로 떼어 기준을 다시 잰다(b3-5). 상수는 추측이다 — 재는 법: 읽기 전용 표본으로 닫힌 구간마다 우회로 구간의 `cong` 최댓값과 지속 시간을 찍고, `sweep 60` 의 평균 대응이 기준 +3초 안, `TRAFFIC_DELAY` 가 기준 × 1.3 안이 되게 `DIV_K`·`DIV_MAX` 를 맞춘다.
+- **결과가 바뀌는 범위**: `cong` → `edgeTime` → 대응 시간이 **닫힌 구간이 있는 모든 교대**에서 바뀐다(사실상 전부. 한 번에 닫힌 구간은 평균 0.6(보통)~1.7(태풍)개). 긴급 차량도 몰린 우회로에서 늦어진다 — 의도한 결과다(사용자에게 확인할 것, §9). 한 단계로 떼어 기준을 다시 잰다(b3-5 ②). 상수는 추측이다 — 재는 법: 읽기 전용 표본으로 닫힌 구간마다 우회로 구간의 `cong` 최댓값과 지속 시간을 찍고, `sweep 60` 의 평균 대응이 기준 +3초 안, `TRAFFIC_DELAY` 가 기준 × 1.3 안이 되게 `DIV_K`·`DIV_MAX` 를 맞춘다.
 
-**(나) 초과 혼잡과 그 장부** — 같은 `drift` 가 구간마다 적어 둔다(읽는 곳은 L1 과 측정뿐 — 이 칸들만으로는 결과가 바뀌지 않는다):
+**(나) 초과 혼잡과 그 장부** — 같은 `drift` 가 구간마다 적어 둔다(읽는 곳은 L1 과 측정뿐 — 이 칸들만으로는 결과가 바뀌지 않는다). **장부는 구간마다 한 칸이 아니라 초과의 항마다 주인을 둔다** — 한 칸이면 쓰러진 나무의 통제 기록을 뒤에 남는 발생 기록의 감속이 덮고, 사고 감속이 걸린 구간의 한 차로 장애물이 사고가 끝난 뒤에도 그 사고를 주인으로 갖는다.
 
 ```ts
-base: Float32Array;                                  // 평소 수준 = clamp(baseCong × tod × trafficMul + 불법 주차의 병목 0.4, 1, 3) — 교대 내내 상수
+base: Float32Array;                                  // 평소 수준 = clamp(baseCong × tod × trafficMul + 불법 주차의 병목 0.4, 1, 3). 불법 주차가 치워지면(하나 남은 길을 막게 돼 견인 — tickTraffic 의 last 갈래) 그 drift 에서 다시 적는다. 그 밖에는 교대 내내 같다
 exOwn: Float32Array; exBump: Float32Array; exQueue: Float32Array; exDiv: Float32Array;   // 초과의 네 몫
 excess: Float32Array;                                // 네 몫의 합 (닫힌 구간은 0)
-qBy: Int32Array;                                     // 이 구간의 밀림을 만든 뿌리 구간 (-1)
-srcEv: Int32Array; srcInc: Int32Array;               // 이 구간 자신의 상태(통제·감속·병목·정체)를 만든 기록 · 그 주인 사건 (-1)
-bumpEv: Int32Array; bumpInc: Int32Array; bumpWhat: Uint8Array;   // 밖에서 얹은 혼잡(bump)을 만든 기록 · 주인 사건 · 갈래(0 인파 · 1 꺼진 신호 · 2 연기)
+// 항마다의 주인 (기록 · 주인 사건, 없으면 -1)
+closeEv: Int32Array; closeInc: Int32Array;           // 닫힘의 주인 — e.closed 가 거짓인 구간은 drift 가 지운다
+slowEv: Int32Array; slowInc: Int32Array;             // 사건의 현장 감속(slow ≥ 1)의 주인 — slow < 1 이면 drift 가 지운다
+levelEv: Int32Array;                                 // 물이 차올라 느려진 구간(재난의 slow 0.8)의 기록 — floodRoads 가 느림을 걸 때 적고 거둘 때 지운다
+//   한 차로 병목의 주인은 그 장애물의 Obstacle.ev (b3-3 의 칸 — announce 가 기록 id 를 돌려주게 해서 모든 장애물에 채운다), 정체의 주인은 tr.jams[k].ev (정체 객체에 칸을 더한다 — 리터럴에 함께)
+// 밖에서 얹은 혼잡(bump) — 얹은 건마다 한 줄
+bumps: { id: number; edges: number[]; add: number; ev: number; inc: number; what: 0 | 1 | 2 }[];      // what: 0 인파 · 1 꺼진 신호 · 2 연기
+// 밀림의 내력 — 밀린 구간 쪽에 복사해 둔다
+qBy: Int32Array; qEv: Int32Array; qInc: Int32Array;  // 이 구간의 밀림을 만든 뿌리 구간 · 그 뿌리의 기록 · 주인 사건 (-1)
 driftAt: number;                                     // 마지막으로 다시 계산한 시각 (L1 이 한 번만 적분하게)
-export function noteRoadCause(sim: Sim, edge: number, ev: number, inc?: number): void;                 // 구간의 상태를 바꾸는 자리가 부른다
-export function noteBump(sim: Sim, edge: number, ev: number, what: 0 | 1 | 2, inc?: number): void;     // bump 를 얹는 자리가 부른다
-export function roadFlow(sim: Sim): Float32Array;                                                      // = throughFlow (지금은 모듈 안 함수 — 내보낸다)
+export function noteRoadCause(sim: Sim, edge: number, term: 'close' | 'slow' | 'level', ev: number, inc?: number): void;   // 구간의 상태를 바꾸는 자리가 부른다 (ev −1 = 지운다 — 'level' 만 쓴다)
+export function noteBump(sim: Sim, edges: number[], add: number, ev: number, what: 0 | 1 | 2, inc?: number): number;        // 장부 한 줄만 (id 를 돌려준다) — e.bump 는 고치지 않는다
+export function unnoteBump(sim: Sim, id: number): void;                                                                    // 그 줄을 지운다 (한 번만 — 없는 id 면 아무 일도 없다)
+export function addBump(sim: Sim, edges: number[], add: number, ev: number, what: 0 | 1 | 2, inc?: number): number;         // 구간마다 e.bump += add 하고 noteBump
+export function removeBump(sim: Sim, id: number): void;                                                                    // 그 줄의 구간·양 그대로 빼고(1e-6 아래는 0) unnoteBump
+export function roadFlow(sim: Sim): Float32Array;                                                                          // = throughFlow (지금은 모듈 안 함수 — 내보낸다)
+export function canBlock(sim: Sim, e: RoadEdge, dry?: boolean): boolean;                                                   // disaster.detour 를 옮긴 것 — (다)
 ```
 
 | 몫 | 값 | 평소에 0 인 까닭 | 내력(`HzPart`) |
 |---|---|---|---|
-| `exOwn` | 한 차로 장애물의 병목 0.9(공사·고장 차량) + 정체 중이면 `max(0, 2.8 − 정체 없는 press)` | 불법 주차의 0.4 는 교대 내내 있어 `base` 에 넣었다 | `srcEv[e]`·`srcInc[e]`, `what` = `'lane'`/`'jam'`, `ref` = e |
-| `exBump` | `e.bump`(행사 인파 0.8 · 태풍 정전 0.4 · C4 의 꺼진 신호 · C5 의 연기) | 얹은 것이 없으면 0 | `bumpEv[e]`·`bumpInc[e]`, `'crowd'`/`'dark'`/`'haze'` |
-| `exQueue` | `qBy[e] ≥ 0` 이면 `1.2 × queue[e]`, 아니면 0 | **원인이 있는 뿌리**(닫힘·`slow ≥ 1`·정체·병목·`bump`)에서 온 밀림만 센다. 수요만으로 `press ≥ 2.4` 인 구간(교통 손잡이가 높을 때의 상업 간선)이 만든 밀림은 그 교대의 평소다 | `srcEv[qBy]`·`srcInc[qBy]`(뿌리가 `bump` 로만 꽉 찼으면 `bumpEv`), `'queue'`, `ref` = 뿌리 구간 |
-| `exDiv` | `min(DIV_MAX, divert[e])` | 닫힌 구간이 없으면 0 | `srcEv[divertBy]`·`srcInc[divertBy]`, `'divert'`, `ref` = 닫힌 구간 |
+| `exOwn` | 한 차로 장애물의 병목 0.9(공사·고장 차량·한 차로 잔해) + 정체 중이면 `max(0, 2.8 − 정체 없는 press)` + 물이 차올라 느려진 구간(`levelEv ≥ 0`)이면 0.8 | 불법 주차의 0.4 는 교대 내내 있어 `base` 에 넣었다 | 항마다 하나: `'lane'` = 그 장애물의 `ev`(주인 사건은 잔해면 그 기록의 원인이 가리키는 사건 — b3-3 의 `blockRef` 와 같은 길, 그 밖에는 −1) · `'jam'` = 그 정체의 `ev` · `'level'` = `levelEv`. `ref` = e |
+| `exBump` | `e.bump`(행사 인파 0.8 · 태풍 정전 0.4 · C4 의 꺼진 신호 · C5 의 연기) | 얹은 것이 없으면 0 | **그 구간을 담은 `bumps` 줄마다 하나**(`rate` 는 `add` 의 비로 나눈다): 그 줄의 `ev`·`inc`, `'crowd'`/`'dark'`/`'haze'` |
+| `exQueue` | `qBy[e] ≥ 0` 이면 `1.2 × queue[e]`, 아니면 0 | **원인이 있는 뿌리**에서 온 밀림만 센다(아래) | `qEv[e]`·`qInc[e]`, `'queue'`, `ref` = `qBy[e]`(뿌리 구간) |
+| `exDiv` | `min(DIV_MAX, divert[e])` | 닫힌 구간이 없으면 0 | `closeEv[divertBy]`·`closeInc[divertBy]`, `'divert'`, `ref` = 닫힌 구간 |
 
 - 네 몫의 합이 `3 − base[e]`(혼잡의 상한까지의 여유)를 넘으면 같은 비로 줄인다. 닫힌 구간은 차가 다니지 않으므로 네 몫 모두 0.
-- `qBy`: 뿌리에 닿은 구간은 이웃 목록 순서로 처음 만나는 원인 있는 뿌리, 한 다리 건너는 그 많이 밀린 이웃의 `qBy`. `queue` 가 0 이 되면 -1.
-- 장부를 쓰는 자리(모두 **기록 id 를 담기만** 한다 — 해시 불변): `createIncident` 의 교통사고 감속(`noteRoadCause(I.blockedEdge, I.rootEvent, I.id)` — 발생 기록을 남긴 다음)과 쓰러진 나무의 통제(`I.blockEv`), `sceneManager` 6번 블록의 전면 통제, 다중 추돌·산사태의 `onCreate`, X6 `blockRoad`(모두 `I.blockEv`, 주인 = 그 사건), `traffic.spawn` 의 정체(`emit` 의 반환값 — 지금은 버린다)·장애물(`announce` 가 기록 id 를 돌려주게 하고 `Obstacle.ev` 에 — C2 가 만든 칸)·행사 인파(`noteBump(…, 0)`), C2 의 잔해(`o.ev`, 주인 = 무너진 건물의 사건 — 닫힌 사건이어도 된다), `disaster.closeEdge` 의 통제 기록(`tell` 의 반환값)·`lightsOut` 의 정전 기록(`noteBump(…, 1)` — `d.lastEv` 는 보고서에 남기지 않는 알림에도 덮이므로 그 자리의 반환값을 쓴다), C4·C5 의 `bump`.
-- 장부를 지우는 것은 `drift` 가 게으르게 한다: 닫힘·감속·병목·정체가 모두 없는 구간은 `srcEv = srcInc = −1`, `bump ≤ 0` 인 구간은 `bumpEv = −1`.
-- 홍수의 `slow`(0.8 — 뿌리가 아니다)와 차단기 대기(`wait`)는 초과에 넣지 않는다(물에 잠긴 길의 사고는 재난 큐가 직접 일으킨다 — §3.7 L1 "재난과 겹치지 않게").
+- **뿌리의 두 갈래.** 원인 항을 뺀 압력 `p0 = baseCong × tod × trafficMul + 불법 주차의 병목`. **평소의 뿌리** = 닫히지 않았고 `slow < 1` 이며 `p0 ≥ 2.4` 인 구간 — 무엇이 얹혀 있든 그 밀림은 얹힌 것이 없어도 있었다(교통 손잡이가 높을 때의 상업 간선). **원인이 있는 뿌리** = 닫힘 · `slow ≥ 1` · (`p0 < 2.4` 인데 `press ≥ 2.4` — 병목·`bump`·정체가 넘긴 것). 구간의 이웃에 평소의 뿌리가 하나라도 있으면 그 구간의 밀림은 **평소의 것**이다(`exQueue = 0`, `qBy = −1` — 밀림은 뿌리가 하나만 있어도 같은 속도로 찬다. 평소에도 있었을 밀림을 원인 탓으로 돌리지 않는다).
+- **밀림의 내력은 밀린 구간 쪽에 복사해 둔다.** 구간이 원인 있는 뿌리에 닿아 있는 `drift` 마다 `qBy[e]`(이미 정해져 있고 그 뿌리가 아직 뿌리면 바꾸지 않는다 — 먼저 뿌리가 된 쪽. 아니면 이웃 목록 순서로 처음 만나는 원인 있는 뿌리)와 함께 `qEv[e]`·`qInc[e]` = 그 뿌리를 뿌리로 만든 항의 주인(닫힘이면 `closeEv`, 감속이면 `slowEv`, 정체면 그 정체의 `ev`, 병목이면 장애물의 `ev`, `bump` 로만 찼으면 가장 큰 `bumps` 줄)을 적는다 — **뿌리의 값이 −1 이면 앞의 값을 지우지 않는다.** 한 다리 건너는 많이 밀린 그 이웃의 `qBy`·`qEv`·`qInc` 를 물려받는다. `queue[e]` 가 0 이 될 때 셋 다 −1. 까닭: 밀림은 뿌리가 풀린 뒤에도 12초마다 ×0.75 로 줄어 0.01 아래가 될 때까지 14~17번(약 3분) 남는데 뿌리의 주인은 풀린 첫 `drift` 에 지워진다. 뿌리의 장부를 그때그때 읽으면 그 꼬리의 몫이 `ev = −1` 이 되어, 그때 문턱을 넘으면 사건 없이 구멍만 는다(손 계산: 250초 통제면 밀림 위험의 약 14%, 70~130초 정체면 약 40% 가 꼬리에 있다). "통제가 풀린 뒤 아직 밀려 있던 길의 사고"도 그 통제의 결과다(주인 사건은 닫혀 있어도 된다).
+- **장부를 쓰는 자리**(모두 **기록 id 를 담기만** 한다 — 해시 불변):
+  - 닫힘(`'close'`): 쓰러진 나무의 통제(`I.blockEv`, 주인 = 그 사건), `sceneManager` 6번 블록의 전면 통제, 다중 추돌·산사태의 `onCreate`, X6 `blockRoad`(모두 `I.blockEv`), `traffic.spawn` 의 전면 공사·낙하물과 C2 의 전면 잔해(그 장애물의 `ev` — 잔해의 주인은 무너진 건물의 사건, 닫힌 사건이어도 된다), `disaster.closeEdge` 의 통제 기록(**`emit` 의 반환값** — 지금은 버린다. `tell` 이 아니다).
+  - 감속(`'slow'`): `createIncident` 의 교통사고 블록이 `e.slow += 1.4` 를 건 구간(`I.rootEvent`, 주인 = 그 사건 — 발생 기록을 남긴 다음에 부른다). 쓰러진 나무는 한 구간에 닫힘(통제 기록)과 감속(발생 기록) 둘 다 적는다 — 항이 달라 서로 덮지 않고, 닫힌 동안의 뿌리는 닫힘의 주인(`blockEv`)이다.
+  - 물(`'level'`): `disaster.floodRoads` 가 구간을 느리게 할 때(수위가 그 구간 문턱의 0.7 을 넘음 — `e.slow += FLOOD_SLOW`) 수위 알림의 기록(홍수의 충격 알림 `tell` 의 반환값을 `d.levelEv` 에 둔다), 느림을 거둘 때 −1.
+  - 병목·정체: `announce` 가 기록 id 를 돌려주게 하고 `Obstacle.ev` 에(C2 가 만든 칸), 정체는 `emit` 의 반환값(지금은 버린다)을 그 정체 객체의 `ev` 에.
+  - `bump`: 행사 인파(`noteBump(…, 0)`)와 태풍의 `lightsOut`(`noteBump(모든 구간, DARK_BUMP, 정전 알림 기록, 1)` — `d.lastEv` 는 보고서에 남기지 않는 알림에도 덮이므로 그 자리의 `tell` 반환값을 쓴다)은 **지금의 덧셈·뺄셈을 그대로 두고 줄만 함께 넣고 뺀다**(두 자리의 반올림 문턱이 서로 달라 산술을 합치면 해시가 바뀔 수 있다). C4·C5 는 `addBump`·`removeBump` 를 쓴다 — 정전·연기 한 건마다 그 `id` 를 자기 상태에 두고 그 건이 끝날 때 한 번 거둔다(`recover` 는 구역·칸마다 불리므로 거기서 구간의 `bump` 를 빼지 않는다 — 동네 셋에 걸친 국지 정전이면 세 번 빼 다른 원인의 `bump` 까지 깎는다).
+  - `src/sim` 에서 `traffic.ts` 와 위의 두 자리(`disaster.lightsOut`·`lightsOn`) 말고는 `.bump +=`·`.bump =` 을 쓰지 않는다(소스 글자 검사 — 장부 없는 `bump` 는 구멍이 된다).
+- 닫힘·감속의 주인은 `drift` 가 상태를 보고 게으르게 지운다(위 주석). `bumps` 줄은 얹은 쪽이 거둔다.
+- 차단기 대기(`wait`)는 초과에 넣지 않는다.
 
-**(다) 사고가 난 구간이 막히게** — `createIncident` 의 교통사고 블록: `opts.edgeId` 가 있고 그 구간이 닫히지 않았고 고속도로가 아니며 우회로가 있으면 그 구간을 `I.blockedEdge` 로 먼저 고른다(지금 규칙 "간선 먼저 · id 작은 것"은 그다음). 평소 추첨은 `edgeId` 를 주지 않으므로 그대로다.
+**(다) 사고가 난 구간이 막히게** — `createIncident` 의 교통사고 블록: `opts.edgeId` 가 있고, 그 구간이 닫히지 않았고, 고속도로가 아니며, **다른 열린 사건의 `blockedEdge` 가 아니고**(두 사건이 같은 구간을 잡으면 먼저 닫히는 사건의 `closeIncident` 가 `slow −1.4` 와 함께 통제를 풀어 남은 사건의 통제 기록과 도로 상태가 어긋난다), **`traffic.canBlock(sim, e)` 를 지나면** 그 구간을 `I.blockedEdge` 로 먼저 고른다. 아니면 지금 규칙("간선 먼저 · id 작은 것"). `canBlock` 은 재난의 `detour` 를 옮긴 것이다(`disaster.ts` 가 그것을 부른다 — 해시 불변): 실제 상태(`reallyLinked`)에서, 열린 사건들이 잡고 있는 `blockedEdge` 도 막힌 것으로 치고 양 끝이 이어지는가. 지금 규칙의 `findRoute` 는 알려진 통제만 피하고 감속 중인 사건 구간을 지나갈 수 있다고 보는데, L1 은 통제 하나의 이웃·우회로에 사고를 잇달아 내므로(나무 → 사고 → 사고) 교차로 하나의 구간 셋이 차례로 닫혀 끊길 수 있다. 평소 추첨은 `edgeId` 를 주지 않으므로 그대로다.
 
 ### 3.6c 건물의 노출 상태 (`world.expo`) · 이웃 · 국지 구역 값
 
 **왜 따로 두는가.** 현장(`Scene`)은 30×20 칸의 건물 하나이고 지도의 건물과 방향·축척이 이어져 있지 않다. 지금 현장 밖으로 나가는 것은 전체 붕괴의 구간 통제, `Sim.placeMarks`(지도 그림과 `placeGone`), 신호, 지진의 흔들림뿐이고 **이웃 건물로 가는 것은 0** 이다. `PlaceMark` 는 "그 건물에서 난 사건이 남긴 가장 무거운 상태 하나"라 사건이 없던 이웃의 노출을 넣으면 읽는 곳 일곱 남짓(`catTick`·`hazardState`·`renderCity`·`placeGone`·`knownBuildingAt`·`debrief`·`metrics`, I2 의 `placeOutcome`)을 고쳐야 하고 그 건물에서 진짜 사건이 나면 덮여 사라진다. 그래서 `sim.world.expo`(§3.3)에 둔다 — §9 의 "건물 상태를 `sim.world` 로 옮기지 않는다"는 "**X6 가 가진 상태는** 옮기지 않는다"로 읽는다.
 
-**`world/state.ts` 에 더하는 것**:
+**새 파일 `world/expo.ts`**(등록이 없는 파일 — §3.4: `sceneManager`·`disaster`·`catastrophe` 가 부르는 함수는 법칙·규칙 파일에 두지 않는다. `hazard.ts`·`state.ts` 를 import 한다)와 **`world/state.ts` 에 더하는 것**:
 
 ```ts
-export function expoOf(sim: Sim, placeId: number): PlaceExpo;                  // 없으면 만든다 { shake: 0, shakeEv: -1, shakeInc: -1, pipe: false, pipeEv: -1, wet: false, wetEv: -1, dark: -1 }
+// world/expo.ts
+export function expoOf(sim: Sim, placeId: number): PlaceExpo;                  // 없으면 만든다 { shake: 0, shakeEv: -1, shakeInc: -1, pipe: false, pipeEv: -1, pipeThr, wet: false, wetEv: -1, dark: -1 }
+                                                                               //   pipeThr = 0.2 + 0.6 × sim.rng.fork('hz:pipe:' + placeId).next() — 만들 때 한 번
 export function neighborsOf(sim: Sim, placeId: number): readonly { id: number; gap: number }[];      // 벽-벽 틈 NB_REACH(30) 안의 건물, 가까운 순. 시설·터(open) 제외
 export function neighborsOfPoint(sim: Sim, x: number, y: number): readonly { id: number; gap: number }[];   // 길 위의 사건(차량 화재·폭발물) — 점에서 벽까지
+export function applyExpo(sim: Sim, s: Scene, I: Incident): void;              // 현장 생성기가 노출을 읽는 자리 (아래)
+export function darkened(sim: Sim, placeIds: readonly number[], part: HzPart): void;   // 건물에 정전이 닿은 순간 — 건물마다 hazardImpulse('liftStall') (L5)
+// world/state.ts
 export function zoneAt(sim: Sim, f: ZoneField, x: number, y: number): number;  // 그 점이 겪는 구역 값 (국지 값이면 원 안에서만)
-export function isDark(sim: Sim, placeId: number): boolean;                    // zoneAt(power, 건물 가운데) < 0.5 || expo.dark ≥ 0
+export function isDark(sim: Sim, placeId: number): boolean;                    // zoneAt(power, 건물 가운데) < 0.5 || expo.dark ≥ 0 (expo 는 읽기만 — 없으면 만들지 않는다)
+export function endZoneBy(sim: Sim, cause: number, until: number): void;       // 원인 기록이 cause 인 구역·국지 값의 회복 시각을 min(지금 값, until) 으로 당긴다 (setZone 은 늦추기만 한다 — C4)
+export function knownHazardNear(sim: Sim, node: number, within = 300, age = 180): { fire: boolean; blast: boolean; collapse: boolean };   // 관제 쪽 — §3.8
 // placeState 의 돌려주는 값에 칸을 더한다 (I2 가 읽는 mark·burnFrac·ruinFrac·usable 은 그대로):
-//   { mark, burnFrac, ruinFrac, usable, shake, pipe, wet } — 건물 상태(placeMarks)가 없어도 노출이 있으면 mark: null 로 돌려준다
+//   { mark, burnFrac, ruinFrac, usable, shake, pipe, wet } — 건물 상태(placeMarks)가 없어도 노출이 있으면 mark: null 로 돌려준다 (world.expo 를 읽기만 한다)
 // setZone 의 여덟째 인자 (선택):  at?: { x: number; y: number; r: number }
 export function setZoneArea(sim: Sim, f: ZoneField, v: number, until: number, cause: number, known: boolean, at: { x: number; y: number; r: number }): void;
 //   원이 닿는 동네(동네 가운데까지의 거리 ≤ r + 동네 반지름 × 1.22)마다 같은 자리로 setZone — 동네 경계 너머의 건물도 zoneAt 으로 같은 값을 겪는다
 ```
 
 - **이웃과 거리**(조사 — 도시 3200×2200, 건물 1,262채): 가장 가까운 이웃까지 벽-벽 틈은 최소 2.0 · 중앙값 7.2 · p90 23.4(상가 5~6, 주택 7~8, 농가·창고 12). 틈 8 · 15 · 30 안의 건물 수는 평균 0.77 · 1.43 · 2.85. 같은 편 옆집은 틈 2~12, 길 건너는 20~35 이상이다. **현장 1칸 ≈ 도시 좌표 2.0**(`CELL = 2` — 표본 9건의 범위 1.2~4.0. **확인 필요**: 현장마다 다르다 — 첫 판은 상수로 둔다). 가스 폭발의 최대 반경 6칸은 도시 좌표 12쯤이라 벽을 맞댄 0.8~1.4채만 닿는다(예전 C1 의 `R = 40 + 18 × size` 는 87~148 로 건물 6~20채를 덮어 물리와 맞지 않았다). 이웃 목록은 건물 상자(돌려 놓인 것을 그대로 — `placeAt` 과 같은 변환)의 벽-벽 거리로 **원인 건물마다 처음 한 번** 만들어 `city.places` 를 열쇠로 한 `WeakMap` 에 둔다(도시는 고정 — `disaster.ts` 의 `geoOf` 와 같은 방식. `city.places` 는 고치지 않는다).
-- **불 요약**: `hazards.fireLoad(s): number` — 불 세기 0.5 이상인 칸 수. `tickFire` 가 이미 도는 순회(큰 불 신호의 `big` 을 세는 자리)에 셈 하나를 더해 `WeakMap<Scene, number>` 에 둔다(현장 객체의 모양을 바꾸지 않는다). 건물 화재 표본 9건에서 최댓값 14~59, `≥ 10` 이 38~409초 이어졌다.
-- **현장 생성기가 노출을 읽는 자리** — `sceneManager.createScene` 의 `buildScene` 바로 다음에 `applyExpo(sim, s, I)`(새 함수, `world/laws/shock.ts`): 그 건물의 `expo.shake > 0` 이면 `s.wear = { dmg: shake, soot: 0, cause: 'shock', inc: 원인 사건의 code, pre: 0 }`(I2 가 정해 둔 칸 `Scene.wear` 를 I1-b 가 먼저 연다 — `createScene`·`baseScene` 리터럴에 `wear: undefined`. **확인 필요**: I2 §3.6 의 `cause` 값 목록에 `'shock'` 을 더한다 — I2 의 `applyPlaceWear` 는 이미 채워진 `wear` 와 `dmg` 의 큰 쪽으로 합친다). `catastrophe.catOf` 의 처음 건전도 계산 끝에 I2 §7 이 적어 둔 한 줄 `integ[r] = Math.min(integ[r], 1 − WEAR_INTEG × s.wear.dmg)`(`WEAR_INTEG` 0.5 — 난수가 없어 노출이 없는 교대는 그대로다). `expo.pipe` 면 같은 자리에서 새는 밸브 소품 하나를 놓고 `s.rules` 에 `'gas'` 를 더한다(선례 `scenes/major.ts` 의 가스 폭발 현장·`placeDrums`. 난수는 새 흐름 `expo:<사건>`. 소품은 가구가 있던 자리나 옆 칸이 빈 바닥인 자리에만 — CLAUDE.md "소품은 길을 막는다". **확인 필요**: 화재·붕괴 현장의 지휘관이 그 밸브를 `haz` 로 다루는가 — 다루지 못하면 가스 누출 유형의 현장에만 놓는다).
-- **국지 구역 값**: `setZone(…, at)` 을 주면 그 값은 그 구역 안에서도 `(x, y)` 에서 `r` 안에만 걸린다(`ZoneState.at[f]`). `zoneAt` 은 국지 값이면 원 안에서만 그 값을, 밖에서는 처음 값을 돌려준다. 덮어쓰기는 b2 의 규칙 그대로("더 나쁜 값만")에 한 줄: 같은 값이면 반경이 더 클 때 자리를 바꾼다. 구역 전체 값(`at` 없음)이 오면 `at[f]` 를 지운다. 회복 때 함께 지운다. **한계**: 구역·칸마다 국지 자리는 하나다(둘째 손상은 더 나쁘거나 더 넓을 때만 덮는다). `knownZone` 은 값만 돌려준다(관제는 "그 동네 어딘가 정전"까지만 안다).
+- **시드에 따라 달라지는 값은 `sim.world` 안에만 둔다.** 도시는 모듈에 한 번 만들어 모든 교대가 함께 쓴다 — 건물·동네마다 한 번 뽑는 값을 `city.places`·`city.nodes` 열쇠의 `WeakMap` 이나 모듈 `Map` 에 두면 앞서 돈 시드의 값이 다음 시드에 쓰인다(`sweep 60` 의 S5 와 `--log S5` 가 달라지고, 같은 시드를 두 번 견주는 시험으로는 잡히지 않는다). 그래서: 배관의 문턱은 `PlaceExpo.pipeThr`, 지하의 문턱 높이는 `world.sills`(L6 — 처음 볼 때 채운다), 지진의 동네 문턱 `u_z` 와 전선·수도관의 자리 문턱(C4·C11)은 쓸 때마다 `fork` 로 다시 계산한다(`fork` 는 부모를 쓰지 않는다 — `rng.ts`). 도시 열쇠의 캐시에는 **시드와 무관한 것**(이웃 목록·`riverDist`·`base_p`·`staticCost`·`roadFlow`)만 둔다. 시험: 한 프로세스에서 시드 A 다음에 돌린 B 의 해시가 B 만 돌린 것과 같다(§6 I1-b 1).
+- **불 요약**: `hazards.fireLoad(s): number` — 불 세기 0.5 이상인 칸 수. `tickFire` 가 이미 도는 순회(큰 불 신호의 `big` 을 세는 자리)에 셈 하나를 더해 `WeakMap<Scene, number>` 에 둔다(현장 객체의 모양을 바꾸지 않는다. 현장은 교대마다 새로 만들므로 시드를 넘지 않는다). 건물 화재 표본 9건에서 최댓값 14~59, `≥ 10` 이 38~409초 이어졌다.
+- **현장 생성기가 노출을 읽는 자리** — `sceneManager.createScene` 의 `buildScene` 바로 다음에 `applyExpo(sim, s, I)`. `world.expo[placeId]` 가 없으면 아무것도 하지 않는다(만들지 않는다 — 노출이 없는 교대는 그대로다).
+  - `expo.shake > 0` 이면 `s.wear = { dmg: shake, soot: 0, cause: 'shock', inc: 원인 사건의 code, pre: 0 }`(I2 가 정해 둔 칸 `Scene.wear` 를 I1-b 가 먼저 연다 — `createScene`·`baseScene` 리터럴에 `wear: undefined`. I2 §3.6 의 `cause` 값 목록에 `'shock'` 을 더하고, I2 의 `applyPlaceWear` 는 이미 채워진 `wear` 와 `dmg` 의 큰 쪽으로 합친다 — 주 세션이 I2 설계서에 적는다). `catastrophe.catOf` 의 처음 건전도 계산 끝에 I2 §7 이 적어 둔 한 줄 `integ[r] = Math.min(integ[r], 1 − CAT.WEAR_INTEG × s.wear.dmg)`(`WEAR_INTEG` 0.5 는 `catastrophe.CAT` 에 두고 I2 가 그 값을 읽는다 — I2 §10.1 의 `persist.ts` 상수 줄을 그렇게 고친다. 난수가 없어 노출이 없는 교대는 그대로다).
+  - `expo.pipe` 면 같은 자리에서 **새는 밸브 소품(`valve`, `leakRate` 있음) 하나를 놓는다** — X6 의 가스 격자와 폭발은 밸브 소품만으로 돈다(`catOf` 의 `gas: valve ? … : null` — 확인됨). **`s.rules` 는 고치지 않는다.** 그 칸은 판단부가 생김새로 읽는 칸이고(`methods.announceOk` — 경찰의 확성기 방법, R3 교본 줄의 `c.s.rules`) `injury.smokeCause` 가 연기 피해의 원인을 `'toxic'` 으로 정하는 칸이라, 아무도 보지 못한 이웃의 배관 손상(진실)을 거기 적으면 밸브를 보기 전에 방법 선택이 달라지고(정보 격리) 그 화재의 연기 흡입이 모두 유독 가스로 기록된다. 옛 가스 규칙(`hazards.tickGas` — `s.rules` 의 `'gas'` 로 켜지는 밸브 곁의 연기·주변 시민 노출)은 이 현장에서 돌리지 않는다(첫 판). 지휘관·대원은 밸브를 본 뒤의 `haz` 믿음(`agents.perceive` 는 현장 유형과 무관하게 `valve` 를 '배관에서 가스 누출 확인'으로 배우고, 지휘관은 `haz` 의 누출에 `mitigate` 를 낸다 — 확인됨)과 X6 의 가스 조짐으로만 안다. 난수는 새 흐름 `expo:<사건>`. 소품은 가구가 있던 자리나 옆 칸이 빈 바닥인 자리에만 — CLAUDE.md "소품은 길을 막는다"·"가구 자리에 소품을 놓을 때". 놓은 뒤 모든 바닥에 걸어서 닿는지 본다(시험).
+  - `pipeLeak` 이 낸 사건이 한계 시간·방치가 아닌 사유로 닫히면 `expo.pipe = false`(그 사건의 `hz.law === 'pipeLeak'` — `closed` 신호의 상태 규칙. 밸브를 잠갔는데 그 건물의 다음 사건에 새는 밸브가 또 놓이면 '밸브 차단' 기록과 상태가 어긋난다). `shake` 는 그대로 남는다.
+- **국지 구역 값**: `setZone(…, at)` 을 주면 그 값은 그 구역 안에서도 `(x, y)` 에서 `r` 안에만 걸린다(`ZoneState.at[f]`). `zoneAt` 은 국지 값이면 원 안에서만 그 값을, 밖에서는 처음 값을 돌려준다. 덮어쓰기는 b2 의 규칙 그대로("더 나쁜 값만")에 한 줄: 같은 값이면 반경이 더 클 때 자리를 바꾼다. **자리(`at[f]`)와 원인(`cause[f]`)·회복 시각(`until[f]`)은 한 묶음이다** — 자리를 바꿀 때 셋을 함께 바꾸고(b2 의 `setZone` 은 값이 나빠질 때만 `cause` 를 바꾼다 — 같은 동네의 둘째 폭발이 자리만 가져가면 그 정전이 첫째 폭발을 원인으로 갖고, 첫째 사건이 닫힐 때 둘째 자리의 정전이 함께 풀린다), 앞 자리에 얹었던 `bump` 를 거둔다(`removeBump`). 구역 전체 값(`at` 없음)이 오면 `at[f]` 를 지운다. 회복 때 함께 지운다. **한계**: 구역·칸마다 국지 자리는 하나다(둘째 손상은 더 나쁘거나 더 넓을 때만 덮는다). `knownZone` 은 값만 돌려준다(관제는 "그 동네 어딘가 정전"까지만 안다). 국지 값의 알림 문구는 범위를 부풀리지 않는다 — "{원인 건물} 주변 정전 — 인근 신호등이 꺼졌습니다."(동네 전체일 때만 "○○동 일대").
 
 ### 3.7 일반 법칙과 상태 결합
 
@@ -994,18 +1067,18 @@ export function setZoneArea(sim: Sim, f: ZoneField, v: number, until: number, ca
 | — | (교통 모델) | 닫힌 구간 → 우회로로 몰림, 초과 혼잡의 장부 | 다른 모델의 일반 규칙(§3.6b) | 쓰러진 나무의 `+0.7` 을 대신 | b3-5 |
 | **L1** | `roadCrash` | 구간의 초과 혼잡 × 통행량 × 노면·시야 → 도로 사고(규모는 도로 등급과 초과에서) | 초과 위험 — 구간 | **C4-3(꺼진 신호의 교차로 사고)·C12(빗길 다중 추돌)를 따로 두지 않는다** | b3-6 |
 | **L2** | `heatSpread` | 열과 불티의 노출 → 이웃 건물 발화 | 초과 위험 — 건물(한 번) | **C1 `blastSpread` 를 대신**(폭발의 불티는 한 항이다. 큰 화재의 옆 건물 번짐도 같은 법칙) | b3-7 |
-| **L3** | 충격(상태) + `structFail`·`pipeLeak` | 붕괴·폭발 → 이웃 건물의 구조·가스 배관 손상 → 그 건물의 다음 사건이 크게 시작하고, 손상이 그 건물의 붕괴·누출 위험을 올린다 | 상태 + 초과 위험 — 건물(한 번) | 새로("건물이 붕괴되어 더 큰 사고로") | b3-8 |
+| **L3** | 충격(상태 `shockSpread`) + `structFail`·`pipeLeak` | 전체 붕괴·폭발 → 이웃 건물의 구조·가스 배관 손상 → 그 건물의 다음 사건이 크게 시작하고, 손상이 그 건물의 붕괴·누출 위험을 올린다 | 상태 + 초과 위험 — 건물(한 번) | 새로("건물이 붕괴되어 더 큰 사고로") | b3-8 |
 | **L7** | `rekindle` | 닫힌 화재 현장에 남은 열이 식어 가는 동안의 재발화 | 초과 위험 — 닫힌 꼴 | **C9 의 확률 추첨을 대신**(id 는 그대로) | b3-9 |
 | C10 | `suspectZone` | 무장 용의자 도주 → 구역 위험, 근처의 재범(조건: 주변에 경찰이 없음) | 상태 결합 + 이야기 연쇄 | 그대로(L8 — 아래에 까닭) | b3-9 |
-| C4 | `powerOut` | 변전소·발전소 사고, 태풍, 지진, **붕괴·폭발 자리의 국지 정전** → 구역·국지 전력 → 꺼진 신호(혼잡)·승강기·통신·병원 | 상태 결합 | 승강기·교차로 사고의 확률 추첨을 뺐다(L5·L1 이 한다). 원천을 넓혔다 | b3-10 |
+| C4 | `powerOut` | 변전소·발전소 사고, 태풍(신호 `blackout`), 지진(신호 `quake`), **붕괴·폭발 자리의 끊긴 전선(자리마다 문턱)** → 구역·국지 전력 → 꺼진 신호(혼잡)·승강기·통신·병원 | 상태 결합 | 승강기·교차로 사고의 확률 추첨을 뺐다(L5·L1 이 한다). 원천을 넓혔다 | b3-10 |
 | **L5** | `liftStall` | 건물에 정전이 닿는 순간 운행 중이던 승강기 | 초과 위험 — 충격, 건물(한 번) | **C4-2 · C7 의 지하 주차장을 대신** | b3-10 |
 | C8 | `commsDown` | 방송국·관제탑 사고, 긴 정전, 지진 → 무전 음영 증가 | 상태 결합 | 그대로(지진의 확률만 문턱으로) | b3-10 |
 | C5 | `smokePlume` | 큰 화재·산불 → 연기가 덮은 자리(구역 값 + 국지 자리) → 실외 노출·도로 혼잡 | 상태 결합 | 호흡 곤란 신고의 확률 추첨을 뺐다(L4) | b3-11 |
-| **L4** | `smokeIll` | 연기 농도 × 그 집의 평소 응급률 × 시간 → 호흡기 환자 | 초과 위험 — 건물 | **C5-1 을 대신** | b3-11 |
-| **L6** | `floodLow` | 수위가 건물·구간마다의 문턱 높이를 넘으면 잠긴다 → 잠긴 건물의 정전(L5), 잠기는 길에 있던 차 | 문턱 상태 + 충격 | **C7 의 60초 확률을 대신**(id 는 그대로 — N9 가 이 법칙의 구간 갈래를 고친다) | b3-12 |
+| **L4** | `smokeIll` | 연기 농도 × 그 집의 평소 응급률 × 시간 → 호흡기 환자(변형 `medical/smoke`) | 초과 위험 — 건물 | **C5-1 을 대신** | b3-11 |
+| **L6** | `floodLow` | 수위가 건물마다의 문턱 높이를 넘으면 잠긴다 → 잠긴 건물의 정전(L5). 차오르는 물에 느려진 길은 교통의 초과 한 항(L1) | 문턱 상태(사건을 직접 만들지 않는다) | **C7 의 60초 확률을 대신**(id 는 그대로 — N9 가 지하차도 구간의 문턱을 더한다) | b3-12 |
 | C11 | `waterMain` | 붕괴·폭발·지진 → 수도관 파손 → 소화전 수압 저하 | 상태 결합 (선택) | 그대로(원천을 넓히고 지진의 확률을 문턱으로) | b3-12 |
 
-숫자는 모두 첫 값이다. 단계마다 §4 로 재고 맞춘다. **C6·C3·C2 세 절은 2026-11-20 의 다시 쓰기에서 글자를 바꾸지 않았다**(구현 중이다 — 이미 상태 결합이다).
+숫자는 모두 첫 값이다. 단계마다 §4 로 재고 맞춘다. **C6·C3·C2 세 절은 2026-11-20 의 다시 쓰기와 검토 반영에서 글자를 바꾸지 않았다**(b3-1~b3-3 으로 구현됐다 — 실제 이름은 구현 메모. 이미 상태 결합이다).
 
 #### C6 `divertRecord` — 전환·부족의 실제 영향 (기록 규칙)
 
@@ -1040,78 +1113,79 @@ X6 은 전체 붕괴 때 사건 교차로의 한 구간을 `closedReason 'incide
 
 #### L1 `roadCrash` — 차가 몰린 길에서는 사고가 잦다
 
-- **읽는 상태**: 교통 모델이 `drift` 마다 적어 두는 구간의 초과 혼잡 네 몫 `exOwn`·`exBump`·`exQueue`·`exDiv`(§3.6b), 구간의 통행량(`roadFlow`)·길이·등급, 노면과 시야(`weatherSpeedFactor`·밤).
-- **그 상태를 바꾸는 원인들**(법칙은 가리지 않는다): 평소 교통사고의 현장 감속과 전면 통제 · 쓰러진 나무 · 다중 추돌 · 산사태 · X6 의 전체 붕괴 통제 · C2 의 남은 잔해 · 전면 공사 · 한 차로 공사 · 고장 차량 · 낙하물 · 정체 · 행사 인파 · 태풍의 정전(전 구간 `bump`) · C4 의 꺼진 신호 · C5 의 연기 · 재난의 통제(홍수·산불·지진·해일). 그리고 이 법칙이 낸 사고 자신.
+- **읽는 상태**: 교통 모델이 `drift` 마다 적어 두는 구간의 초과 혼잡 네 몫 `exOwn`·`exBump`·`exQueue`·`exDiv` 와 그 내력(§3.6b), 구간의 통행량(`roadFlow`)·길이·등급, 노면과 시야(`weatherSpeedFactor`·밤). **교통 모델의 배열만 읽는다** — 재난·사건·현장을 읽지 않는다.
+- **그 상태를 바꾸는 원인들**(법칙은 가리지 않는다): 평소 교통사고의 현장 감속과 전면 통제 · 쓰러진 나무 · 다중 추돌 · 산사태 · X6 의 전체 붕괴 통제 · C2 의 남은 잔해 · 전면 공사 · 한 차로 공사 · 고장 차량 · 낙하물 · 정체 · 행사 인파 · 태풍의 정전(전 구간 `bump`) · C4 의 꺼진 신호 · C5 의 연기 · 재난의 통제(홍수·산불·지진·해일) · **홍수의 물이 차올라 느려진 길**(`'level'` — 통제되기 전, 아직 열려 있는 동안). 그리고 이 법칙이 낸 사고 자신.
 - **식**: `λ_e = A_ROAD × x_e × V_e × S × ℓ_e` (초당).
   - `x_e` = 네 몫의 합(0 ~ 2). 닫힌 구간은 0.
   - `V_e = 0.4 + 1.6 × flow_e` — 통행량(간선 평균 1.1 · 고속 0.87 · 일반 0.68 · 이면 0.5).
   - `S` = 노면·시야: `(vehicleSpeedMul / weatherSpeedFactor(sim))²`(비 1.29 · 안개 1.42 · 태풍 충격의 `speedMul 0.85` 면 1.38 — 난이도의 차량 속도 손잡이는 약분해 뺀다) × 밤이면 1.2. **초과분에만 곱한다** — 평소율에 날씨를 곱하면 인과가 아니라 난이도다(§9).
   - `ℓ_e = clamp(len / 150, 0.5, 2)` — 길수록 노출이 크다.
-  - 첫 값 `A_ROAD = 1.0e-4`. **단위**: 구간 하나의 평소 사고율이 약 7 × 10⁻⁶/초(교통 std + 버스 1.88건/교대를 구간 257 로 나눈 값)이므로, 초과 1.0 · 통행량 1 인 구간은 **평소의 약 14배**가 더해진다. 목표: 보통 교대에 0.2~0.5건(교통사고 +10~25%, 전체 사건 +1.5~3.5%), 간선의 전면 통제 한 번(250초)이 우회로·이웃 어딘가에 사고를 낼 확률 5~15%. **재는 법**: 읽기 전용 표본(`scripts/hazstats.ts` — §4)으로 교대의 `Σ_e ∫ x_e V_e S ℓ_e dt` 를 재서 `A_ROAD = 목표 건수 / 그 값의 평균`.
-- **대상·주기·문턱**: 구간 257, 12초(`every: 12` — `drift` 뒤), 흐름 `hz:roadCrash:<구간>:<n>`(구간마다 몇 번이고 날 수 있다). 넘은 시각은 12초 창 안에서 보간한다.
+  - 첫 값 **`A_ROAD = 2.5e-5`**. **단위**: 구간 하나의 평소 사고율이 약 7 × 10⁻⁶/초(교통 std + 버스 1.88건/교대를 구간 257 로 나눈 값)이므로, 초과 1.0 · 통행량 1 인 구간은 **평소의 약 3.5배**가 더해진다. 어림(조사의 노출량 — 보통 교대 전체 약 18,000 구간·초 × 평균 통행량 0.85): 보통 교대 약 0.4건, 간선의 전면 통제 한 번(2,300~3,000 구간·초)이 우회로·이웃 어딘가에 사고를 낼 확률 6~8%, 태풍 교대 1건 안팎. (초안의 `1.0e-4` 는 같은 셈으로 보통 교대 1.5건 — 목표의 4~6배였다.) 목표: 보통 교대에 0.2~0.5건(교통사고 +10~25%, 전체 사건 +1.5~3.5%), 간선 전면 통제 한 번에 5~15%. **재는 법**: 읽기 전용 표본(`scripts/hazstats.ts` — §4)으로 교대의 `Σ_e ∫ x_e V_e S ℓ_e dt` 를 재서 `A_ROAD = 목표 건수 / 그 값의 평균`(§3.6b 의 뿌리 가르기와 밀림의 꼬리 때문에 노출량이 조사 때와 다르다 — 반드시 다시 잰다).
+- **대상·주기·문턱**: 구간 257, 12초(`every: 12` — `drift` 뒤), 흐름 `hz:roadCrash:<구간>:<n>`(구간마다 몇 번이고 날 수 있다). 넘으면 그 `drift` 의 틱에 난다(보간하지 않는다 — §3.6a).
 - **나는 사건**(`spawn` — 상태에서 정한다):
   - 유형 `traffic`. **변형을 반드시 정해 준다** — 비워 두면 `createIncident` 의 시나리오 몫 추첨이 돌아 쓰러진 나무 14%·맨홀 7%·난폭 운전 9% 로 뽑힌다.
   - 규모는 속도와 초과에서: 이면·일반(`speed ≤ 23`)은 `x < 1.2` 면 1, 아니면 2 · 간선은 2, `x ≥ 1.2` 면 3 · 고속은 3.
-  - 변형: 규모 2 이상이고 `cell.u2 <`(규모 3 이면 0.28, 2 면 0.06)이면 `'bus'`(평소 추첨과 같은 몫 — 버스가 그 줄에 끼어 있었는가는 내용이다), 아니면 `'std'`. 고속 구간이고 이번 교대에 이 법칙이 낸 다중 추돌이 없으면 `'pileup'`(교대에 한 번. `tag: 'major'` 가 붙어 보고서의 대형 사고 수에 든다 — 실제로 대형 사고다. **확인 필요**: `createIncident` 의 교통사고 블록은 고속도로를 `blockedEdge` 로 고르지 않고 다중 추돌의 `onCreate` 가 막을 구간을 스스로 고른다 — 그 `onCreate` 가 `I.hz` 의 사고 구간(`hz.target`)을 먼저 보게 한다(`I.hz` 는 `onCreate` 보다 먼저 채운다). 고속 구간은 다섯뿐이고 둘은 우회로가 없어 드물다 — 손이 많이 가면 첫 판은 고속도 `'std'` 규모 3 으로 둔다).
-  - 자리: `nodeId` = 그 구간의 두 끝 가운데 열린 사건이 없고 시설 앞이 아닌 교차로(둘 다 되면 닿은 구간이 많은 쪽, 같으면 id 작은 쪽). 둘 다 안 되면 `null`(기다린다). `edgeId` = 그 구간(§3.6b (다) — 몰린 그 구간이 막힌다).
-  - 첫머리(`note`)는 주된 몫의 갈래로: `divert` '막힌 길을 피해 몰린 차들 사이에서 사고가 났습니다' · `queue` '길게 밀린 차들의 꼬리에서 추돌 사고가 났습니다' · `lane` '한 차로가 막힌 길에서 차가 부딪쳤습니다' · `jam` '정체 구간에서 추돌 사고가 났습니다' · `crowd` '인파로 막힌 길에서 사고가 났습니다' · `dark` '신호등이 꺼진 교차로에서 차가 부딪쳤습니다' · `haze` '연기로 앞이 보이지 않는 길에서 차가 부딪쳤습니다'.
-- **원인 귀속**: 네 몫을 `HzPart` 로 내놓는다(§3.6b 표의 "내력" 열). 통제 + 꺼진 신호처럼 둘이 겹치면 큰 쪽이 `cause`, 다른 쪽이 `causes`. 부모는 주인 사건이 있는 가장 큰 몫(전체의 1/3 이상일 때).
-- **되먹임과 상한**: 낸 사고가 다시 감속·통제의 뿌리가 된다(§3.6 — 기대값 1 아래). 부모가 있으면 `canChain`, 없으면 `ORPHAN_CAP`. 법칙 상한 교대당 3(다중 추돌은 그 안에서 1).
-- **재난과 겹치지 않게**: 태풍의 '비바람에 미끄러진 차'·홍수의 '물에 잠긴 도로의 충돌'·지진의 '여진 충돌'은 재난 큐가 직접 일으킨다(같은 "X 면 Y" 꼴이지만 N6 의 것이다 — 이번에는 건드리지 않는다, §8). L1 은 재난의 종류·세기를 읽지 않고 구간의 상태만 읽는다 — 재난에서는 그 뒤(쓰러진 나무 → 통제 → 몰림, 정전 → 꺼진 신호)를 맡는다. 법칙이 낸 사건은 `d.spawned`·재난 `CAP` 에 넣지 않고 `tag 'disaster:…'` 도 붙이지 않는다(`'disaster:quake'` 는 X6 이 읽는다).
+  - 변형: 규모 2 이상이고 `cell.u2 <`(규모 3 이면 0.28, 2 면 0.06)이면 `'bus'`(평소 추첨과 같은 몫 — 버스가 그 줄에 끼어 있었는가는 내용이다. **`'bus'` 면 규모를 3 으로 올린다** — 평소 추첨과 같게, `createIncident` 의 버스 줄), 아니면 `'std'`. **다중 추돌(`'pileup'`)은 내지 않는다**(첫 판): 그 시나리오는 `tag: 'major'` 이고 "대형 사고는 교대에 많아야 하나"(N5 의 틀 — `sim.rngMajor`·`gen.majorAt`, `tests/major.test.ts` 의 '한 교대에 둘은 없다')와 부딪힌다 — 법칙이 먼저 내고 `gen.majorAt` 이 뒤에 와도 둘이 된다. 고속 구간도 `'std'` 규모 3 으로 낸다. 나중에 켠다면 "이번 교대에 `tag === 'major'` 인 사건이 없고 `sim.gen.majorAt === Infinity` 일 때만".
+  - 자리: `nodeId` = 그 구간의 두 끝 가운데 열린 사건이 없고 시설 앞이 아닌 교차로(둘 다 되면 닿은 구간이 많은 쪽, 같으면 id 작은 쪽). 둘 다 안 되면 `null`(기다린다). `edgeId` = 그 구간(§3.6b (다) — 몰린 그 구간이 막힌다. 조건에 걸리면 지금 규칙으로 고른다).
+  - 첫머리(`note`)는 주된 몫의 갈래로: `divert` '막힌 길을 피해 몰린 차들 사이에서 사고가 났습니다' · `queue` '길게 밀린 차들의 꼬리에서 추돌 사고가 났습니다' · `lane` '한 차로가 막힌 길에서 차가 부딪쳤습니다' · `jam` '정체 구간에서 추돌 사고가 났습니다' · `crowd` '인파로 막힌 길에서 사고가 났습니다' · `dark` '신호등이 꺼진 교차로에서 차가 부딪쳤습니다' · `haze` '연기로 앞이 보이지 않는 길에서 차가 부딪쳤습니다' · `level` '물이 차오르는 길에서 차가 부딪쳤습니다'.
+- **원인 귀속**: 몫들을 `HzPart` 로 내놓는다(§3.6b 표의 "내력" 열 — `exOwn` 과 `exBump` 는 항·줄마다 하나). 통제 + 꺼진 신호처럼 둘이 겹치면 큰 쪽이 `cause`, 다른 쪽이 `causes`. 부모는 주인 사건이 있는 가장 큰 몫(전체의 1/3 이상일 때).
+- **되먹임과 상한**: 낸 사고가 다시 감속·통제의 뿌리가 된다(§3.6 — 기대값 1 아래). `hazardRoom`(사슬 3건 · 한 뿌리의 가지 2 · 한 교대 6건 · 부모 없는 것 3). 법칙 상한 교대당 3.
+- **재난과 겹치지 않게**: 태풍의 '비바람에 미끄러진 차'·홍수의 '물에 잠긴 도로의 충돌'·지진의 '여진 충돌'은 재난 큐가 직접 일으킨다(같은 "X 면 Y" 꼴이지만 N6 의 것이다 — 이번에는 건드리지 않는다, §8). L1 은 재난의 종류·세기를 읽지 않고 구간의 상태만 읽는다 — 재난에서는 그 뒤(쓰러진 나무 → 통제 → 몰림, 정전 → 꺼진 신호, 차오르는 물 → 느려진 길)를 맡는다. 법칙이 낸 사건은 `d.spawned`·재난 `CAP` 에 넣지 않고 `tag 'disaster:…'` 도 붙이지 않는다(`'disaster:quake'` 는 X6 이 읽고, 측정 도구의 `isDisasterTag` 는 그 꼬리표를 재난 큐 사건으로 센다). 수로는 더해진다 — 홍수 20교대의 사건 수가 기준 × 1.1 을 넘으면 `'level'` 항의 0.8 을 줄인다(큐는 건드리지 않는다).
 - **AI 가 아는 길**: 사고는 평소처럼 신고로 알려진다. 몰린 길의 혼잡은 지금도 관제가 읽는 값이다(`edgeTime` — 교통 정보). 까닭(알려지지 않은 통제)은 모른다(§3.8).
 - **기록**: 통제·정체·장애물·정전의 기록은 이미 그 자리에서 남는다(장부는 그 id 를 담는다). 우회 몰림은 연속 값이라 기록하지 않는다. 사고의 발생 기록 `'{첫머리} — {교차로} 교차로.'`(`truth: true`, `causes` = 그 순간의 몫들의 기록).
-- **테스트**: ① 교통 사건·사건·재난을 모두 끈 도로에서 300초 — 모든 구간의 `excess` 가 0 이고 `world.hz.cells.roadCrash` 가 비어 있다. ② 구간 하나를 닫으면 우회로 구간에 `exDiv > 0`·`divertBy = 그 구간`, 이웃에 `exQueue > 0`·`qBy = 그 구간`, 장부 `srcEv` = 통제 기록. ③ **개입 시험**(§6 I1-b 10). ④ 원인을 모른다(소스 글자 — §6 I1-b 12). ⑤ 깊이 2 인 사건의 통제로 몰린 길에서는 `'depth'` 로 버리고 `H` 가 `thr` 만큼 줄며 `n` 이 는다. ⑥ 양 끝 교차로에 열린 사건이 있으면 기다리고(`wait ≥ 0`), 하나가 닫히면 그 틱에 난다.
+- **테스트**: ① 교통 사건·사건·재난을 모두 끈 도로에서 300초 — 모든 구간의 `excess` 가 0 이고 `world.hz.cells.roadCrash` 가 비어 있다. 수요만으로 `p0 ≥ 2.4` 인 구간을 손으로 만들고 그 위에 `bump` 를 얹어도 이웃의 `exQueue` 는 0 이다(평소의 뿌리). ② 구간 하나를 닫으면 우회로 구간에 `exDiv > 0`·`divertBy = 그 구간`, 이웃에 `exQueue > 0`·`qBy = 그 구간`·`qEv` = 통제 기록. 통제를 풀면 `closeEv` 는 다음 `drift` 에 −1 이지만 **이웃의 `qEv` 는 밀림이 0 이 될 때까지 그 기록**이다. ③ **개입 시험**(§6 I1-b 10). ④ 원인을 모른다(소스 글자 — §6 I1-b 12). ⑤ 깊이 2 인 사건의 통제로 몰린 길에서는 `'depth'` 로 버리고 `H` 가 `thr` 만큼 줄며 `n` 이 는다. ⑥ 양 끝 교차로에 열린 사건이 있으면 기다리는 줄에 들어가고, 하나가 닫히면 **다음 1초 블록에** 난다(마감 60초가 지나면 `'expired'`). ⑦ 나무 → 사고 → 사고 사슬을 강제하고(시험 상수로 `A_ROAD` 를 키운다) 통제가 걸릴 때마다 `tests/traffic.test.ts` 의 연결 검사(모든 시설 → 모든 교차로, 큰 차)를 지난다. 법칙이 고른 `edgeId` 가 다른 열린 사건의 `blockedEdge` 면 그 구간을 잡지 않는다. ⑧ 인파와 정전이 겹친 구간에서 정전이 먼저 끝나면 남은 `exBump` 몫의 `what` 이 `crowd` 다.
 
 #### L2 `heatSpread` — 오래 크게 타는 불 곁의 건물은 불이 붙는다
 
 - **읽는 상태**: 열린 현장의 불 요약 `F = hazards.fireLoad(s)`(불 세기 0.5 이상 칸 수), 이웃 건물까지의 벽-벽 틈 `g`(`neighborsOf`), 폭발의 크기(`Signal.size`·`mag`).
-- **원인들**: 건물 화재(평소·방화·오인이 아닌 것) · 대형 화재 · 가스 폭발 뒤의 불 · 차량 화재(길 위 — `neighborsOfPoint`) · 붕괴 현장의 불 · X6 의 가스·용기·분진 폭발 · 폭발물. 산불의 불머리는 열원으로 치지 않는다(번짐은 산불 모델의 것 — 불머리 반경 안 건물은 대상에서 뺀다).
+- **원인들**: 건물 화재(평소·방화·오인이 아닌 것) · 대형 화재 · 가스 폭발 뒤의 불 · 차량 화재(길 위 — `neighborsOfPoint`) · 붕괴 현장의 불 · 산불 사건의 건물 현장 · X6 의 가스·용기·분진 폭발 · 폭발물. **현장의 불이면 무엇이든 같은 열원이다** — 법칙은 변형도 재난도 읽지 않는다(산불의 불머리 `d.front` 는 현장이 아니라서 저절로 열원이 아니다 — 번짐은 산불 모델의 것. 예전 글의 "불머리 반경 안 건물은 뺀다"는 법칙이 재난 상태를 읽어야 해서 뺐다: 이미 불이 난 건물과 쓸 수 없는 건물은 아래의 조건이 거른다).
 - **식**:
   - 유속 `q = F / (1 + g / 6)²`. 문턱 유속 `Q0 = 3` 을 넘는 몫만 쌓인다: `λ = K_HEAT × M[종류] × max(0, q − Q0)`. `F < 10` 인 현장은 훑지 않는다.
   - 첫 값 `K_HEAT = 1.7e-4`, `M` = 시장·창고·작업장·상점 1.3 · 주택·다세대·식당·카페·편의점 1.0 · 공장 1.0 · 아파트·오피스텔·사무용 0.6. 모양: 벽을 맞댄 집(틈 3)이 `F = 30` 의 불 곁에 200초 → `H ≈ 0.35`(불붙을 확률 30%) · 중앙값 틈 7.2 → 0.11(10%) · 길 건너(틈 25)는 `q ≈ 1.1 < Q0` 라 `F` 가 80 을 넘지 않는 한 0 · 가장 큰 불(`F = 59`)이 400초 → 벽을 맞댄 집 `H ≈ 1.6`(80%).
-  - **불티**(충격 — 폭발 순간 한 번): `ΔH = K_EMBER × M × (mag / 50) × (CELL × size)² / (g + 6)²`, 첫 값 `K_EMBER = 0.25`. 반경 6칸·피해 50 의 폭발 → 틈 3 에 0.44(36%) · 틈 7.2 에 0.21(19%) · 틈 25 에 0.04.
+  - **불티**(충격 — 폭발 순간 한 번): `ΔH = K_EMBER × M × (mag / 50) × (CELL × size)² / (g + 6)²`, 첫 값 `K_EMBER = 0.25`. 반경 6칸·피해 50 의 폭발 → 틈 3 에 0.44(36%) · 틈 7.2 에 0.21(19%) · 틈 25 에 0.04. 충격을 주는 자리는 `shockSpread`(L3 (가)의 상태 규칙 — 같은 폭발 신호를 받는다, b3-8 c)다: 이웃마다 `hazardImpulse(sim, 'heatSpread', 이웃, ΔH, { ev: sig.ev, inc: sig.inc, what: 'ember', ref: 원인 건물 })`.
   - **단위**: 건물 한 채의 평소 화재율은 1.8 × 10⁻⁶/초(단독주택 0.9, 공장·시장 43 — 한 채의 몫이 88배 차이 난다)라 "평소의 몇 배"는 단위가 못 된다 — 양과 건물마다의 문턱으로 쓴다. 참고로 위 벽을 맞댄 집의 `λ ≈ 1.75 × 10⁻³/초` 는 평균 건물 평소율의 약 1,000배다(곁에 큰 불이 있는 200초 동안만).
 - **대상·주기·문턱**: 큰 불 현장의 이웃 건물(현장마다 가까운 8채까지), 1초, **건물마다 교대에 한 번**(`once`) — 흐름 `hz:heatSpread:<건물>`("그 건물이 얼마나 타기 쉬운가"). 열원이 둘이면 유속이 더해진다.
-- **대상에서 빼는 건물**: 시설, 터(`open`), `placeState(…).usable === false`(전소·전체 붕괴), 이미 불이 난 적 있는 건물(이번 교대에 화재 사건이 있었던 건물 — 탈 것이 탔다).
-- **나는 사건**: `fire/std`(오인·방화로 뽑히지 않게 변형을 정한다), `placeId` = 그 건물, 규모 = 넘는 순간의 `F ≥ 40` 이거나 불티면 2, 아니면 1(`buildFire` 는 규모로 발화점 수를 정한다). 첫머리: 열 '옆 건물의 불이 옮겨붙었습니다' · 불티 '폭발의 불티가 옮겨붙었습니다'. 그 건물에 열린 사건이 있으면 `null`(기다린다).
-- **원인 귀속**: 몫 = 열원 현장마다 `{ ev: 그 화재의 불 기록(마지막 ESCALATION, 없으면 발생 기록 — 큰 불 신호와 같은 규칙), inc: 그 사건, what: 'heat', ref: 불난 건물 }`, 불티는 `{ ev: 폭발 기록(sig.ev), what: 'ember' }`. 부모 = 그 화재(폭발) 사건.
-- **되먹임과 상한**: 옮겨붙은 건물의 불이 다시 열원이 된다 — 사슬마다 건물 셋까지(`canChain`). 법칙 상한 교대당 3.
-- **같은 교차로의 열린 사건 둘**: 틈 15 안 이웃의 2/3 가 원인 건물과 같은 교차로다. `pickPlace` 의 엄격 추첨은 열린 사건이 있는 교차로를 피하지만 `placeId` 를 정해 주면 비켜 간다. **확인 필요**(b3-7 의 첫 일 — `--force fire/std` 20교대에서 본다): 지도 핀·길가 주차 자리·`knownBuildingAt`(같은 교차로·같은 종류 건물의 닫힌 사건을 찾는다)이 같은 교차로의 두 사건을 가릴 수 있는가. 못 가리면 이 법칙만 "원인 사건이 닫힌 뒤"까지 기다리게 한다(`spawn` 이 그동안 `null`, 이 법칙의 대기 마감만 300초).
-- **AI 가 아는 길**: 새 사건은 신고로. 분석 AI 는 **알려진** 큰 불·폭발(§3.8) 곁의 화재 신고에 '연소 확대' 이름표와 위험도 +0.3.
-- **기록**: 열의 적분은 기록하지 않는다. 사건의 발생 기록 `'옆 건물의 불이 옮겨붙었습니다 — {건물}.'`(원인 = 그 화재의 불 기록).
-- **테스트**: ① 불이 없는 교대에는 칸이 없다. ② 이웃 목록 — 벽-벽 틈이 손 계산과 맞고 돌려 놓인 건물에서도 맞다. ③ **개입 시험**: 같은 시드의 두 `Sim` 에 같은 화재를 강제하고 한쪽만 그 현장의 `s.fire` 를 0 으로 채운다 → 그쪽은 이웃의 `hazardCell` 이 없고 이웃 화재가 없다. 다른 쪽은 문턱을 낮춘 시험 상수에서 이웃 화재가 나고 `parent`·`cause`·`hz.src[0].what === 'heat'`. ④ 길 건너 건물(틈 ≥ 20)은 `F = 59` 에서도 쌓이지 않는다. ⑤ 전소·전체 붕괴 건물, 이미 탔던 건물은 대상이 아니다. ⑥ 건물 셋째에서 사슬이 끊긴다(`'depth'`).
+- **대상에서 빼는 건물**(`scan` 이 내놓지 않는다): 시설, 터(`open`), `placeState(…).usable === false`(전소·전체 붕괴), 이미 불이 난 적 있는 건물(이번 교대에 화재 사건이 있었던 건물 — 탈 것이 탔다). 열린 사건이 있는 건물은 내놓되 틀이 기다리게 한다(§3.6a 의 공통 조건).
+- **나는 사건**: `fire/std`(오인·방화로 뽑히지 않게 변형을 정한다), `placeId` = 그 건물, 규모 = 넘는 순간의 `F ≥ 40` 이거나 불티면 2, 아니면 1(`buildFire` 는 규모로 발화점 수를 정한다). 첫머리: 열 '옆 건물의 불이 옮겨붙었습니다' · 불티 '폭발의 불티가 옮겨붙었습니다'.
+- **원인 귀속**: 몫 = 열원 현장마다 `{ ev, inc: 그 사건, what: 'heat', ref: 불난 건물 }` — **`ev` = 그 사건의 발생 기록(`I.rootEvent`), 그 현장에 X6 의 폭발 기록(`EXPLOSION`·X6 의 폭발 문구인 `HIDDEN_HAZARD`)이나 `BURNOUT` 이 있으면 그 가운데 마지막 것. `ESCALATION` 은 쓰지 않는다** — 그 코드는 2차 붕괴·압궤 증후군·인질 피격·시민의 가스 노출에도 쓰여(`hazards.ts`), 가스 폭발 현장의 불이 옮겨붙었을 때 원인이 "압궤 증후군" 기록이 될 수 있다(그 상태를 만든 기록이 아니다). b2 의 `fireBig` 신호의 `ev` 도 같은 규칙으로 맞춘다(b3-7 — 지금 고르는 기록을 확인하고 다르면 고친다). 불티는 `{ ev: 폭발 기록(sig.ev), what: 'ember' }`. 부모 = 그 화재(폭발) 사건.
+- **되먹임과 상한**: 옮겨붙은 건물의 불이 다시 열원이 된다 — **한 뿌리에서 뿌리 포함 건물 셋까지**(`canChain` 의 길이 3 + `HZ.ROOT_MAX` — 이웃 여덟 채가 함께 문턱을 넘어도 그 불에서 난 법칙 사건은 둘이다, 연기 환자를 합쳐서). 법칙 상한 교대당 3.
+- **같은 교차로의 열린 사건 둘**: 틈 15 안 이웃의 2/3 가 원인 건물과 같은 교차로다. `pickPlace` 의 엄격 추첨은 열린 사건이 있는 교차로를 피하지만 `placeId` 를 정해 주면 비켜 간다. **확인 필요**(b3-7 의 첫 일 — `--force fire/std` 20교대에서 본다): 지도 핀·길가 주차 자리·`knownBuildingAt`(같은 교차로·같은 종류 건물의 닫힌 사건을 찾는다)이 같은 교차로의 두 사건을 가릴 수 있는가. 못 가리면 이 법칙만 **원인 사건이 닫힐 때까지 기다리게 한다**: `spawn` 이 "그 교차로에 열린 사건이 있으면 `null`", `hold: 300`. 기다리는 줄은 초과가 끝나도 버려지지 않으므로(§3.6a) 불이 꺼지고 원인 사건이 닫힌 그 1초 블록에 옮겨붙은 불이 신고된다(넘는 순간의 몫을 적어 둔 사본으로 귀속한다).
+- **AI 가 아는 길**: 새 사건은 신고로. 분석 AI 는 **알려진** 큰 불·폭발(`knownHazardNear` — §3.8) 곁의 화재 신고에 '연소 확대' 이름표와 위험도 +0.3.
+- **기록**: 열의 적분은 기록하지 않는다. 사건의 발생 기록 `'옆 건물의 불이 옮겨붙었습니다 — {건물}.'`(원인 = 위의 `ev`).
+- **테스트**: ① 불이 없는 교대에는 칸이 없다. ② 이웃 목록 — 벽-벽 틈이 손 계산과 맞고 돌려 놓인 건물에서도 맞다. ③ **개입 시험**: 같은 시드의 두 `Sim` 에 같은 화재를 강제하고 한쪽만 그 현장의 `s.fire` 를 0 으로 채운다 → 그쪽은 이웃의 `hazardCell` 이 없고 이웃 화재가 없다. 다른 쪽은 문턱을 낮춘 시험 상수에서 이웃 화재가 나고 `parent`·`cause`·`hz.src[0].what === 'heat'`, 그 사건의 `truth.placeId === hz.target`. ④ 길 건너 건물(틈 ≥ 20)은 `F = 59` 에서도 쌓이지 않는다. ⑤ 전소·전체 붕괴 건물, 이미 탔던 건물은 대상이 아니다. ⑥ 이웃 넷이 모두 문턱을 넘게 한 화재에서 옮겨붙은 불은 둘이고 나머지는 `'depth'`(한 뿌리의 가지), 옮겨붙은 불의 이웃(셋째 세대)도 `'depth'`. ⑦ 원인 기록이 `ESCALATION` 이 아니다(붕괴 현장의 불로).
 
 #### L3 충격 — 붕괴와 폭발은 옆 건물을 흔든다 (`structFail` · `pipeLeak`)
 
 "건물이 붕괴되어서 더 큰 사고로 이어진다"의 길이다. 세 부분: (가) 충격이 이웃 건물에 **손상 상태**를 남긴다, (나) 그 건물에서 나는 다음 사건이 **그만큼 크게 시작한다**, (다) 손상 자체가 그 건물의 **위험률을 올린다**. (다)가 없으면 사용자의 예는 거의 보이지 않는다 — 건물 1,262채에 교대당 사건 14건이라 손상된 이웃 1~3채에서 "나중에 우연히" 사건이 날 확률은 3% 안팎이다(조사).
 
-- **(가) 충격 → 손상** — `world/laws/shock.ts` 의 상태 규칙(`registerConsequence`, 신호 `catastrophe`·`blast`·`collapse`). 난수 없음, 쿨다운·상한 없음(일이 있을 때마다):
+- **(가) 충격 → 손상** — `world/rules/structure.ts` 의 상태 규칙 `shockSpread`(`registerConsequence`, 신호 `catastrophe`·`blast`·`collapse`, `rubbleRoad` 다음에 등록). 난수 없음(배관의 문턱은 `expoOf` 가 건물마다 한 번), 쿨다운·상한 없음(일이 있을 때마다):
   - 폭발(`catastrophe` data 0 · `blast`): 이웃마다 X6 의 현장 안 식을 그대로 밖으로 잇는다 — `Δshake = K_SHOCK × mag / 100 × max(0, 1 − d / (size + 2))`, `d = g / CELL + 2`(칸), `K_SHOCK = 0.8`(X6 의 `K_HIT_BLAST`). 반경 6칸·피해 50 → 틈 3 에 0.22 · 틈 7.2 에 0.12 · 틈 12 넘으면 0.
-  - 붕괴(`catastrophe` data 1): 건물의 절반 가까이가 무너졌을 때만(`mag ≥ 0.45` — 구획 하나의 붕괴는 밖으로 나가지 않는다) 틈 8 안의 이웃에 `Δshake = 0.25 × mag × (1 − g / 8)`. 무너진 채 시작하는 사건(`collapse` 신호, `size ≥ 10` — 크레인·가스 폭발·산사태)은 `0.15 × (1 − g / 8)`.
-  - `expo.shake = min(1, shake + Δ)`, 가장 크게 보탠 기록·사건을 `shakeEv`·`shakeInc` 에. **`shake` 가 처음 0.15(`S_MIN`)를 넘을 때** 기록: `emit({ role: 'SYSTEM', actor: '도시', kind: 'hazard', tag: 'struct', imp: 1, truth: true, causes: [sig.ev], text: '{원인 건물} {붕괴·폭발}의 충격으로 옆 {건물}에 금이 갔습니다.' })`.
-  - **가스 배관**: 도시가스를 쓰는 건물(주택·다세대·아파트·오피스텔·식당·카페·상점·시장·편의점·호텔)마다 배관의 약한 정도 `θ = 0.2 + 0.6 × u`, `u` = 흐름 `hz:pipe:<건물>` 의 첫 값(건물마다 한 번). `shake ≥ θ` 가 되는 순간 `expo.pipe = true`, 기록 `'{건물}의 가스 배관이 충격으로 손상됐습니다.'`(같은 모양, `causes: [shakeEv]`) → `pipeEv`.
-  - 이 신호들에 필요한 크기: `Signal.mag`(§3.3) — X6 의 폭발 셋은 피해량(`dmg`), `collapseRegion`·`collapseBuilding` 은 무너진 몫(전체 붕괴 1), `hazards.blast` 의 폭발물은 피해량.
+  - **붕괴는 건물 전체가 무너졌을 때만**(`catastrophe` data 1 가운데 `collapseBuilding` 이 보낸 것 — `mag = 1`. 구획 하나의 붕괴는 밖으로 나가지 않는다): 틈 **15** 안의 이웃에 `Δshake = 0.6 × (1 − g / 15)`(틈 3 에 0.48 · 중앙값 7.2 에 0.31 · 12 에 0.12). 무너진 채 시작하는 사건(`collapse` 신호, `size ≥ 10` — 크레인·가스 폭발·산사태)은 `0.35 × (1 − g / 15)`(틈 3 에 0.28 · 7.2 에 0.18). **한 번의 충격이 `S_MIN` 과 배관 문턱의 아래쪽을 넘을 수 있어야 한다**는 것이 이 값들의 조건이다 — 초안의 `0.25 × (1 − g / 8)`·`0.15 × (1 − g / 8)` 은 도시에서 가장 좁은 틈(2.0)에서도 0.19·0.11 이라 배관 문턱의 최소(0.2)와 `S_MIN` 에 닿지 못해, 붕괴에서는 금 기록도 `structFail`·`pipeLeak` 도 사실상 0 이었다(사용자의 예 ②가 폭발에서만 돌았다).
+  - `expo.shake = min(1, shake + Δ)`, 가장 크게 보탠 기록·사건을 `shakeEv`·`shakeInc` 에. **`shake` 가 처음 `S_MIN`(0.1)을 넘을 때** 기록: `emit({ role: 'SYSTEM', actor: '도시', kind: 'hazard', tag: 'struct', imp: 1, truth: true, causes: [shakeEv, sig.ev], text: '{원인 건물} {붕괴·폭발}의 충격으로 옆 {건물}에 금이 갔습니다.' })`(충격이 둘 쌓여 넘었을 때 기록의 원인과 `structFail` 의 부모가 서로 다른 사건을 가리키지 않게 둘 다 넣는다 — 중복은 `emit` 이 거른다).
+  - **가스 배관**: 도시가스를 쓰는 건물(주택·다세대·아파트·오피스텔·식당·카페·상점·시장·편의점·호텔)마다 배관의 약한 정도 `expo.pipeThr = 0.2 + 0.6 × u`(`u` = 흐름 `hz:pipe:<건물>` 의 첫 값 — `expoOf` 가 만들 때 한 번, §3.6c). `shake ≥ pipeThr` 가 되는 순간 `expo.pipe = true`, 기록 `'{건물}의 가스 배관이 충격으로 손상됐습니다.'`(같은 모양, `causes: [shakeEv, sig.ev]`) → `pipeEv`.
+  - 이 신호들에 필요한 크기: `Signal.mag`(§3.3) — X6 의 폭발 셋은 피해량(`dmg`), `collapseBuilding` 은 1, `collapseRegion` 은 `min(0.99, 이번에 무너진 칸 ÷ 건물의 실내 칸)`(기록·측정용 — 충격 규칙은 `mag ≥ 1` 만 받는다. 쌓인 몫으로 보내면 구획 붕괴 바로 뒤의 `collapseBuilding` 과 충격이 두 번 더해진다), `hazards.blast` 의 폭발물은 피해량.
+  - 첫 값의 어림: 전체 붕괴 한 번에 틈 15 안 이웃 1.4채, 금 기록 1채쯤 · `structFail` 0.1~0.15건 · 배관 손상 17%(`pipeLeak` 0.2건) — 보통 60교대에 `structFail` + `pipeLeak` 2~5건, `collapse/gasblast` 강제 20교대에 2건 안팎. 수는 `hazstats` 의 `shake` 분포("`S_MIN` 을 넘은 건물 수"와 "배관이 끊긴 건물 수"를 따로 낸다)로 다시 맞춘다.
   - 함께 고친다: X6 `blockRoad` 가 **건물이 면한 길(`Place.edgeId`)을 먼저** 본다(지금은 사건 교차로의 `node.edges` 순서라 면한 길이 아닌 구간이 막히기도 한다 — 표본 S7 #15: 빌라의 `edgeId` 70, 막힌 구간 64. C2 가 그 구간을 이어받으므로 잔해도 다른 길에 남는다). 전체 붕괴가 난 교대만 바뀐다. C2 의 글("X6 이 막았던 구간이 있으면 그 구간")은 그대로다.
-- **(나) 손상된 건물의 다음 사건** — `applyExpo`(§3.6c): `shake` → `s.wear.dmg` → 처음 건전도 `min(…, 1 − 0.5 × dmg)`(불이 나면 삐걱임·균열·임박이 그만큼 빨리 오고 X6 가 실제로 무너뜨린다), `pipe` → 새는 밸브와 가스 규칙(불이 가스에 닿으면 X6 가 폭발시킨다). 법칙이 아니라 처음 상태다 — 평소 추첨이든 법칙이든 그 건물의 모든 사건에 걸린다. (평소 추첨은 이번 교대에 사건이 났던 건물을 피하므로 "다음 사건이 더 크다"는 주로 이웃 건물에서 나타난다.)
-- **(다) 손상이 올리는 위험률** — 두 법칙, 모두 1초·건물마다 한 번(`once`), 대상은 `world.expo` 에서 조건에 맞는 건물(많아야 16):
-  - `structFail`: `shake ≥ S_MIN` 이고 쓸 수 있는 건물. `λ = A_STRUCT × (shake − S_MIN)`, 첫 값 `A_STRUCT = 1.0e-3`(금이 0.4 인 건물은 10분에 14%). 흐름 `hz:structFail:<건물>`. 사건 `collapse/std`, 규모 `shake ≥ 0.45` 면 3 · `≥ 0.3` 이면 2 · 아니면 1, 첫머리 '금이 가 있던 건물이 내려앉았습니다'. 몫 `{ ev: shakeEv, inc: shakeInc, what: 'shake', ref: 건물 }`. **확인 필요**: `buildCollapse` 가 모든 건물 종류의 틀(`KIND_SCENE`)을 받는가 — 받지 않는 종류는 대상에서 뺀다.
-  - `pipeLeak`: `pipe` 이고 쓸 수 있는 건물. `λ = A_PIPE = 1 / 300`(새는 가스는 곧 누군가 맡는다 — 5분 안에 63%). 흐름 `hz:pipeLeak:<건물>`. 사건 `hazmat/std`, 규모 `shake ≥ 0.4` 면 2 · 아니면 1, 첫머리 '충격으로 손상된 배관에서 가스가 샙니다'. 몫 `{ ev: pipeEv, inc: shakeInc, what: 'pipe' }`.
+- **(나) 손상된 건물의 다음 사건** — `applyExpo`(§3.6c): `shake` → `s.wear.dmg` → 처음 건전도 `min(…, 1 − 0.5 × dmg)`(불이 나면 삐걱임·균열·임박이 그만큼 빨리 오고 X6 가 실제로 무너뜨린다), `pipe` → 새는 밸브 소품(X6 의 가스 격자가 돈다 — 불이 가스에 닿으면 X6 가 폭발시킨다. `s.rules` 는 고치지 않는다). 법칙이 아니라 처음 상태다 — 평소 추첨이든 법칙이든 그 건물의 모든 사건에 걸린다. (평소 추첨은 이번 교대에 사건이 났던 건물을 피하므로 "다음 사건이 더 크다"는 주로 이웃 건물에서 나타난다.)
+- **(다) 손상이 올리는 위험률** — 두 법칙(`world/laws/shock.ts`), 모두 1초·건물마다 한 번(`once`), 대상은 `world.expo` 에서 조건에 맞는 건물(많아야 16):
+  - `structFail`: `shake ≥ S_MIN` 이고 쓸 수 있는 건물. `λ = A_STRUCT × (shake − S_MIN)`, 첫 값 `A_STRUCT = 1.0e-3`(금이 0.4 인 건물은 10분에 16%, 0.31 이면 남은 500초에 10%). 흐름 `hz:structFail:<건물>`. 사건 `collapse/std`, 규모 `shake ≥ 0.45` 면 3 · `≥ 0.3` 이면 2 · 아니면 1, 첫머리 '금이 가 있던 건물이 내려앉았습니다'. 몫 `{ ev: shakeEv, inc: shakeInc, what: 'shake', ref: 건물 }`. **확인 필요**: `buildCollapse` 가 모든 건물 종류의 틀(`KIND_SCENE`)을 받는가 — 받지 않는 종류는 대상에서 뺀다.
+  - `pipeLeak`: `pipe` 이고 쓸 수 있는 건물. `λ = A_PIPE = 1 / 300`(새는 가스는 곧 누군가 맡는다 — 5분 안에 63%). 흐름 `hz:pipeLeak:<건물>`. 사건 `hazmat/std`, 규모 `shake ≥ 0.4` 면 2 · 아니면 1, 첫머리 '충격으로 손상된 배관에서 가스가 샙니다'. 몫 `{ ev: pipeEv, inc: shakeInc, what: 'pipe' }`. 이 사건이 한계 시간·방치가 아닌 사유로 닫히면 `expo.pipe = false`(§3.6c — 밸브를 잠갔다).
   - **단위**: 건물 한 채의 평소 붕괴율·누출율은 10⁻⁷/초 자리라 배율로 쓰지 않는다 — 손상의 양에 비례하는 위험률이다.
-- **되먹임과 상한**: 붕괴(0) → 옆 건물의 붕괴·누출(1) → 그 건물의 폭발·붕괴가 다시 흔든 건물(2)에서 끊긴다. 법칙 상한 각 2. 손상 상태에는 회복이 없다(교대 안에서 금은 저절로 붙지 않는다) — 대신 건물마다 한 번이다. 교대 끝의 `shake` 는 I2 의 `PlaceCarry.dmg` 가 이어받는다(§3.7 끝).
-- **AI 가 아는 길**: 손상은 진실이다. 관제는 그 건물의 사건이 신고될 때 평소처럼 알고, 분석 AI 는 **알려진** 붕괴·폭발(§3.8) 곁 60 안의 붕괴·가스 신고에 위험도 +0.3. 지휘관은 X6 의 조짐으로 안다(낮게 시작한 건전도는 삐걱임이 빨리 들릴 뿐이다).
-- **테스트**: ① 폭발 신호 하나 → 틈 안의 이웃에만 `shake`, 손 계산과 같은 값, 기록의 원인이 폭발 기록. ② 구획 하나의 붕괴(`mag < 0.45`)는 밖으로 나가지 않는다. ③ `shake` 가 있는 건물에 화재를 일으키면 `s.wear.dmg` 와 낮아진 처음 건전도, `pipe` 면 밸브 소품과 `'gas'` 규칙, 그리고 모든 바닥에 걸어서 닿는다. ④ **개입 시험**: 같은 시드의 두 `Sim` 에서 한쪽만 붕괴 직후 `world.expo` 를 비운다 → 그쪽에는 `structFail`·`pipeLeak` 사건이 없다. ⑤ 노출이 없는 교대는 해시가 앞 단계와 같다. ⑥ `blockRoad` 가 면한 길을 막고 도시가 끊기지 않는다.
+- **되먹임과 상한**: 붕괴(0) → 옆 건물의 붕괴·누출(1) → 그 건물의 폭발·붕괴가 다시 흔든 건물(2)에서 끊기고, 한 뿌리에서 난 법칙 사건은 둘까지다(`hazardRoom`). 법칙 상한 각 2. 금(`shake`)에는 회복이 없다(교대 안에서 저절로 붙지 않는다) — 대신 건물마다 한 번이다. 교대 끝의 `shake` 는 I2 의 `PlaceCarry.dmg` 가 이어받는다(§3.7 끝).
+- **AI 가 아는 길**: 손상은 진실이다. 관제는 그 건물의 사건이 신고될 때 평소처럼 알고, 분석 AI 는 **알려진** 붕괴·폭발(`knownHazardNear` — §3.8, 두 `reportedNode` 사이 300 안) 곁의 붕괴·가스 신고에 위험도 +0.3. 지휘관은 X6 의 조짐으로 안다(낮게 시작한 건전도는 삐걱임이 빨리 들릴 뿐이다), 새는 밸브는 본 대원의 `haz` 믿음으로.
+- **테스트**: ① 폭발 신호 하나 → 틈 안의 이웃에만 `shake`, 손 계산과 같은 값, 기록의 원인이 폭발 기록. **전체 붕괴 하나(틈 3 의 이웃)만으로 금 기록이 남고 `structFail` 의 칸이 생긴다.** ② 구획 하나의 붕괴(`mag < 1`)는 밖으로 나가지 않는다. ③ `shake` 가 있는 건물에 화재를 일으키면 `s.wear.dmg` 와 낮아진 처음 건전도, `pipe` 면 밸브 소품과 `s.cat.gas` 격자가 있고 **`s.rules` 는 그대로**이며, 모든 바닥에 걸어서 닿는다. ④ **개입 시험**: 같은 시드의 두 `Sim` 에서 한쪽만 붕괴 직후 `world.expo` 를 비운다 → 그쪽에는 `structFail`·`pipeLeak` 사건이 없다. ⑤ 노출이 없는 교대는 해시가 앞 단계와 같다. ⑥ `blockRoad` 가 면한 길을 막고 도시가 끊기지 않는다. ⑦ **정보 격리**: `applyExpo` 앞뒤로 `s.rules`·`s.kind` 가 같고, 밸브에 대한 믿음이 없는 경찰 대원의 `chooseMethod`(순수 함수)가 `expo.pipe` 를 켠 현장과 끈 현장에서 같은 방법을 고른다(검토가 낸 "두 현장의 기록이 같다"는 쓰지 않는다 — 밸브 소품이 칸 하나를 막아 길이 달라지므로 정보 격리가 지켜져도 기록은 갈릴 수 있다). ⑧ `pipeLeak` 사건이 '해결'로 닫히면 `expo.pipe` 가 거짓이고, 그 건물의 다음 현장에 밸브가 놓이지 않는다.
 
 #### L7 `rekindle` — 덜 식은 불 자리는 다시 붙는다
 
 - **읽는 상태**: 닫힌 화재 현장에 **실제로 남은** 불씨와 열 — `e0 = Σ(불 > 0.04 인 칸의 불 세기) + 0.25 × Σ(열 > 0.5 인 칸의 열)`, 젖은 칸은 `× (1 − wet)`. 닫힌 현장의 배열(`fire`·`heat`·`wet`)은 `sim.scenes[id]` 에 남아 있다. 잔불 정리를 마친 구역은 열 0·젖음 0.9 라 저절로 0 이다 — "잔불 정리를 했는가"를 따로 묻지 않는다(상태가 말한다).
 - **원인들**: 한계 시간·방치로 끝난 화재 · 닿지 못해 잔불 정리를 건너뛴 구역 · 진입 금지 구역으로 남긴 구획 · 무너진 구획 밑의 불씨 · 물이 떨어져 접은 진압 · 화재가 아닌 유형의 현장에 남은 불(가스 폭발 뒤, 붕괴 현장).
 - **식**(틱 없이 닫힌 꼴): 남은 열은 `e(Δt) = e0 × exp(−Δt / τ)` 로 식는다(`τ = 180`초, 비가 오면 120). 위험률 `λ = K_RE × e`, 누적 `H(Δt) = K_RE × e0 × τ × (1 − exp(−Δt / τ))`, 끝내 닿는 값 `H∞ = K_RE × e0 × τ`. 닫히는 순간(`closed` 신호) 문턱 `thr` 과 견준다: `H∞ < thr` 면 영영 없다(칸에 `H = H∞` 만 적는다 — 기록 없음), 아니면 `Δt* = −τ × ln(1 − thr / H∞)` 뒤에 다시 붙는다. 첫 값 `K_RE = 1.0e-3`(`e0 = 3` — 불씨 다섯 칸과 뜨거운 칸 여섯쯤 — 이면 `H∞ = 0.54`, 42%).
-- **대상·문턱**: 닫힌 화재 현장의 건물, 건물마다 한 번 — 흐름 `hz:rekindle:<건물>`. `hazardImpulse(sim, 'rekindle', placeId, H∞, part, max(60, Δt*))`(§3.6a 의 충격에 미루는 시간 인자 — 그때 `spawn` 이 `null` 이면 60초까지 기다린다).
+- **대상·문턱**: 닫힌 화재 현장의 건물, 건물마다 한 번 — 흐름 `hz:rekindle:<건물>`. `closed` 신호를 받는 자리는 상태 규칙 `residualHeat`(`world/rules/structure.ts`)이고 법칙 파일 `laws/ember.ts` 에는 `spawn` 만 있다(`scan` 이 없는 법칙). `hazardImpulse(sim, 'rekindle', placeId, H∞, part, max(60, Δt*))`(§3.6a 의 충격에 미루는 시간 인자 — 그때 `spawn` 이 `null` 이면 60초까지 기다린다).
 - **빼는 것**: 교대 끝으로 닫힌 것(`shiftend`), 전소·전체 붕괴 건물(`placeState`), 길 위의 화재(건물이 없다).
 - **나는 사건**: `fire/std`, 같은 건물(`placeId` 를 정해 주므로 `pickPlace` 의 `used` 를 거치지 않는다), 규모 1, 부모 = 닫힌 그 사건, 원인 = 종료 기록, 첫머리 '잔불이 되살아나 다시 불길이 올랐습니다'. 몫 `{ what: 'residual' }`.
 - **상한**: `canChain`, 법칙 상한 2.
 - **정직한 값**(조사 — 불이 났던 현장 15건): 모두 '해결'로 닫혔고 닫힐 때 불 칸 0, 열이 0.2 넘는 칸은 한 건의 한 칸뿐이었다. `s.heat` 는 불붙기 전의 누적값이지 "탄 자리의 잔열"이 아니다. 그래서 **보통 교대의 재발화는 거의 0건**(60교대에 0~2건 — 한계 시간·방치·진입 금지로 끝난 화재에서만)이 이 법칙의 정직한 결과다. 잘 끈 화재에서도 재발화가 나오게 하려면 "물과 잔불 정리가 닿지 않은 탄 칸의 잔열"이라는 새 물리가 필요한데, 그것은 화재 균형에 닿는다 — **N9 뒤 화재 균형을 다시 볼 때 함께 정한다**(사용자 결정 — §9).
-- **AI 가 아는 길**(예전 C9 그대로): 화재 신고의 알려진 위치와 진술의 건물 종류로 `knownBuildingAt(sim, I.reportedNode, placeKind)` 가 이번 교대에 닫힌 화재 사건을 돌려주면 분석 AI 가 '재발화' 이름표와 위험도 +0.3. `I.truth.placeId` 를 읽지 않는다.
+- **AI 가 아는 길**: 새 사건은 신고로. **'재발화' 이름표는 이번에 넣지 않는다** — `knownBuildingAt` 은 건물이 아니라 교차로와 건물 종류로 찾으므로 같은 교차로·같은 종류의 두 번째 화재면 이름표가 붙는데, 이 법칙이 실제로 내는 사건은 보통 60교대에 0~2건이라 붙는 이름표의 거의 전부가 틀린 이름표가 된다. 잘 끈 화재에서도 재발화가 나오는 물리(탄 칸의 잔열 — N9 뒤 화재 균형 때)와 함께 넣는다. b3-9 는 법칙과 C10 만이다.
 - **테스트**: ① 불씨를 남기고 닫은 화재(시험이 한 구역의 `fire`·`heat` 를 채우고 닫는다) → 같은 건물에 예약, 부모·원인, 시각이 식과 맞는다. ② **개입**: 닫기 전에 그 배열을 0 으로 → 예약이 없다. ③ 잔불 정리를 마친 현장은 `e0 = 0`. ④ 전소 건물에는 예약하지 않는다.
 
 #### C10 `suspectZone` — 도주한 무장 용의자 (L8 — 조건으로 움직이는 지금 설계를 둔다)
@@ -1127,33 +1201,35 @@ X6 은 전체 붕괴 때 사건 교차로의 한 구간을 `closedReason 'incide
 
 정전은 **상태**다. 사건을 직접 만들지 않는다 — 꺼진 신호는 혼잡으로 L1 에, 멈춘 승강기는 L5 에, 긴 정전은 C8 에 닿는다.
 
-- **원인들**:
+- **원인들**(등록하는 규칙 셋 — `world/rules/infra.ts`: 사건의 신호를 받는 `powerOut`, 재난의 신호를 받는 `powerOut.grid`, 원인이 끝난 것을 받는 `powerOut.end`):
   - (가) `substation`·`powerPlant` 건물의 사건에서 `fireBig`·`blast`·`collapse`·`catastrophe` → 변전소 700 · 발전소 1100 안에 가운데가 있는 동네 **전체** `power = 0`. 평소에는 거의 나오지 않는다(변전소 27교대에 한 번, 발전소 13교대에 한 번 그 건물에서 사건이 나고, 정전까지 가려면 큰 불이나 폭발로 커져야 한다 — 보통 60교대에 0~3번).
-  - (나) 태풍의 `lightsOut` → 모든 동네 `power = 0`, `until` = `lightsOn` 시각. 지금의 도시 전체 `bump` 는 그대로 두고 아래 1번의 `bump` 는 더하지 않는다(두 번 얹지 않는다).
-  - (다) 지진: 동네마다 흔들림 `d.intensity × max(0, 1 − 거리(진앙, 동네 가운데) / 900)` 이 그 동네 전력망의 문턱 `0.3 + 0.5 × u_z`(`u_z` = 흐름 `grid:power:<z>` 의 첫 값 — 동네마다 한 번) 을 넘으면 `power = 0`, `until = t + 240`. **예전의 "진앙 600 안 동네마다 확률 0.5"를 대신한다.** (**확인 필요**: 재난 상태에서 진앙의 칸 이름. 지진 큐가 이미 승강기 갇힘 3건을 직접 일으킨다 — L5 와 겹치므로 지진 20교대의 승강기 사건이 기준 +1/교대 안인지 본다.)
-  - (라) **흩어진 설비**(새로 — 사용자의 예에 맞는 것은 시설이 아니라 이것이다): 붕괴·폭발 자리의 전선이 끊긴다. `catastrophe` data 0(반경 `30 + 8 × size`) · data 1 가운데 `mag ≥ 0.45`(반경 90) · `blast`(폭발물 — `30 + 8 × size`) · 무너진 채 시작하는 `collapse`(`size ≥ 10` — 70) → 그 자리의 **국지 정전** `setZoneArea(sim, 'power', 0, Infinity, sig.ev, false, { x, y, r })`(§3.6c — 원이 닿는 동네마다 같은 자리로).
-- **결과**: `until` = (가)(라) 원인 사건 종료 + `rng.range(60, 120)`(끝나기 전까지 Infinity — `closed` 신호에서 정한다), (다) `t + 240`. 알림 `emit({ role: 'SYSTEM', actor: '한국전력', kind: 'hazard', tag: 'power', imp: 2, causes: [sig.ev], text: '○○동 일대 정전 — 신호등이 꺼졌습니다.' })` 는 `rng.range(20, 40)` 초 뒤(그때 `known = true`. 그 전에는 진실만 바뀐다 — 진실이 바뀌는 자리의 기록은 원인 기록 자신이다). 복구 때 '… 전력 복구.'(`recover`). (기간과 알림 지연의 난수는 내용이지 "일어나는가"의 주사위가 아니다.)
-  1. **꺼진 신호**: 정전 범위 안에 가운데가 있는 구간 `bump += 0.4`, `noteBump(e, 원인 기록, 1, 원인 사건)`(복구 때 뺀다). → L1.
-  2. **승강기**: 정전 범위 안의 건물에 정전이 닿은 순간을 L5 에 알린다(`darkened` — 아래).
+  - (나) 태풍의 정전 — **신호 `blackout`**(§3.4 — `disaster.lightsOut` 이 `data 1`, `lightsOn` 이 `data 0` 으로 보낸다. `ev` = 그 자리의 `tell` 반환값): `data 1` 이면 모든 동네 `power = 0`, `cause = sig.ev`, **`known = true` 를 곧바로**(재난 알림 '강풍에 송전선이 끊겨 …'가 이미 알렸다). **동네별 알림·복구 기록은 남기지 않는다** — 같은 사실이 서른여섯 줄 더 남는다. 지금의 도시 전체 `bump` 는 그대로 두고(장부 줄만 — §3.6b) 아래 1번의 `bump` 는 더하지 않는다(두 번 얹지 않는다). `data 0` 에서 그 원인의 구역 값을 되돌린다(`endZoneBy(sim, 그 ev, sim.t)`).
+  - (다) 지진 — **신호 `quake`**(`disaster.onImpact` 의 본진 `mag 1` · `tickQuake` 의 여진 `mag 0.6`, `x`·`y` = 진앙 `d.epi`, `ev` = 그 `tell` 의 반환값. 재난의 `d.intensity` 는 `onImpact` 안에서는 아직 0 이라 읽지 않는다): 동네마다 흔들림 `sig.mag × max(0, 1 − 거리(진앙, 동네 가운데) / 900)` 이 그 동네 전력망의 문턱 `0.3 + 0.5 × u_z`(`u_z` = 흐름 `grid:power:<z>` 의 첫 값 — 쓸 때마다 `fork` 로 다시 계산한다, §3.6c)을 넘으면 `power = 0`, `until = t + 240`. 여진은 `mag 0.6` 이라 본진에서 꺼지지 않은 동네 가운데 문턱이 낮은 곳만 끈다(이미 꺼진 동네는 `setZone` 이 "더 나쁜 값만" 받으므로 다시 걸리지 않는다). **예전의 "진앙 600 안 동네마다 확률 0.5"를 대신한다.** (지진 큐가 이미 승강기 갇힘을 직접 일으킨다 — L5 와 수로 겹치므로 지진 20교대의 승강기 사건이 기준 +1/교대 안인지 본다.)
+  - (라) **흩어진 설비**(새로 — 사용자의 예에 맞는 것은 시설이 아니라 이것이다): 붕괴·폭발 자리의 전선이 끊긴다. 그 자리가 받은 충격(L3 (가)의 식에 틈 0 을 넣은 값 — 전체 붕괴 0.6 · 무너진 채 시작하는 사건 0.35 · 폭발 `K_SHOCK × mag / 100 × (1 − 2 / (size + 2))`: 반경 6칸·피해 50 이면 0.3)이 **그 자리 전선의 문턱** `0.15 + 0.6 × u`(`u` = 흐름 `grid:line:<건물>`, 길 위면 `grid:line:n<교차로>` — 쓸 때마다 다시 계산)을 넘을 때만 **국지 정전** `setZoneArea(sim, 'power', 0, t + 600, sig.ev, false, { x, y, r })`(§3.6c — 원이 닿는 동네마다 같은 자리로). 반경: 폭발 `30 + 8 × size` · 전체 붕괴 90 · 무너진 채 시작하는 `collapse`(`size ≥ 10`) 70. 문턱을 두는 까닭: 문턱이 없으면 모든 폭발·큰 붕괴가 **반드시** 국지 정전을 낳아 고정된 순서가 된다(전체 붕괴의 75% · 큰 가스 폭발의 25% 쯤이 끊긴다 — 작은 용기 폭발은 닿지 않는다).
+- **회복 — `until` 을 `Infinity` 로 두지 않는다.** (가)(라)는 처음부터 `t + 600`(상한 — 원인 사건이 끝나지 않아도 복구된다)으로 넣고, 원인 사건의 `closed` 신호는 **따로 등록한 규칙 `powerOut.end`**(열쇠 `inc:<사건>`, 쿨다운 0, 상한 없음, `silent`)가 받아 그 사건의 기록을 원인으로 가진 구역·국지 값의 회복 시각을 `min(지금 값, t + rng.range(60, 120))` 으로 당긴다(`endZoneBy` — `setZone` 은 늦추기만 한다). 정전을 거는 규칙이 `closed` 도 받으면 그 규칙의 쿨다운·상한에 먹혀(틀은 쿨다운과 상한을 `test` **앞**에서 본다) 동네의 전력 0 과 구간의 `bump` 가 교대 끝까지 남고 L1 의 `dark` 몫이 내내 쌓인다. (다)는 `t + 240`. (기간의 난수는 내용이지 "일어나는가"의 주사위가 아니다.)
+- **결과**: 알림 `emit({ role: 'SYSTEM', actor: '한국전력', kind: 'hazard', tag: 'power', imp: 2, causes: [sig.ev], text })` 는 `rng.range(20, 40)` 초 뒤(그때 `known = true`. 그 전에는 진실만 바뀐다 — 진실이 바뀌는 자리의 기록은 원인 기록 자신이다). 문구: 동네 전체면 '○○동 일대 정전 — 신호등이 꺼졌습니다.', 국지면 '{원인 건물} 주변 정전 — 인근 신호등이 꺼졌습니다.'(범위를 부풀리지 않는다). 복구 때 '… 전력 복구.'(`recover`).
+  1. **꺼진 신호**: 정전 범위 안에 가운데가 있는 구간들에 `addBump(sim, 구간들, 0.4, 원인 기록, 1, 원인 사건)` — **정전 한 건마다 한 번**, 돌려받은 id 를 그 건의 장부(`world.spans` — §3.3)에 두고 그 건이 끝날 때 `removeBump` 를 한 번 부른다(`recover` 는 구역·칸마다 불린다 — 거기서 빼지 않는다, §3.6b). → L1.
+  2. **승강기**: 정전 범위 안의 건물에 정전이 닿은 순간을 L5 에 알린다(`expo.darkened` — 아래. 태풍의 `blackout` 도 이 규칙이 부른다 — 재난 코드는 신호만 보낸다).
   3. 120초 넘게 이어지면 C8 에 넘긴다(통신 기지국 예비 전원 소진).
   4. 정전 범위 안의 병원은 `cap − 2`(발전기 운용) — C3 와 맞물린다.
-- 쿨다운: 동네마다 300초. 상한: 교대당 3(태풍 제외) — 상태 규칙의 상한이다. 난수 `csq:powerOut:zone:<z>`.
+- 열쇠·쿨다운·상한: `powerOut` 은 열쇠 `ev:<sig.ev>`(신호마다 — 한 신호가 여러 동네를 끈다), 쿨다운 0, 상한 교대당 6. 같은 동네의 겹침은 `setZone` 이 막는다(이미 꺼진 곳은 다시 걸리지 않고 알림도 다시 남지 않는다). `powerOut.grid`(`quake`·`blackout`)는 상한 없음. 난수 `csq:powerOut:…`(기간·알림 지연).
 - 관제: `knownZone(knownZoneOfIncident(sim, I)).power < 1` 이면 그 교통사고·승강기 신고 위험도 +0.3. 현장의 어둠(시야 반경)은 첫 판에 넣지 않는다.
-- N8 이 더하는 신호 `'powerCut'`(원격 차단 — 그 동네의 `power = 0`)는 이 규칙의 `on` 에 그대로 붙는다.
+- N8 이 더하는 신호 `'powerCut'`(원격 차단 — 그 동네의 `power = 0`)는 `powerOut` 의 `on` 에 그대로 붙는다.
+- **테스트**: 변전소 사건으로 구역이 꺼지고 20~40초 뒤 알려지며 범위 안 구간에 `bump` 와 장부 줄. **사건이 정전 100초 뒤에 닫혀도 60~120초 뒤 복구되고, 닫히지 않아도 600초 뒤에는 복구된다.** 동네 둘에 걸친 국지 정전이 복구된 뒤 그 구간들의 `bump` 가 얹기 전 값과 같다. 붕괴 자리의 국지 정전은 원 밖 건물을 끄지 않고, 문턱이 높은 자리(시험이 고른 시드)는 끊기지 않는다. 같은 동네의 둘째 폭발이 자리를 가져가면 원인·회복 시각도 둘째의 것이다. `blackout` 신호는 동네별 기록을 남기지 않는다.
 
 #### L5 `liftStall` — 정전이 닿는 순간 운행 중이던 승강기
 
-- **읽는 상태**: 건물에 정전이 닿는 **순간**(전이) — 구역·국지 전력이 그 건물을 끄는 때(C4), 태풍의 `lightsOut`, 지하가 잠겨 전기실이 꺼지는 때(L6 `expo.dark`). 그 건물의 층수·종류와 교대의 시간대.
+- **읽는 상태**: 건물에 정전이 닿는 **순간**(전이) — 구역·국지 전력이 그 건물을 끄는 때(C4 — 사건·태풍·지진), 지하가 잠겨 전기실이 꺼지는 때(L6 `expo.dark`). 그 건물의 층수·종류와 교대의 시간대.
 - **원인들**: 변전소·발전소 사고 · 붕괴·폭발 자리의 끊긴 전선 · 태풍 · 지진 · 홍수의 침수 · (N8) 원격 차단.
-- **식**(충격): 승강기가 있는 건물(`floors ≥ 4` — 151채: 아파트 55·사무용 42·오피스텔 39·호텔 7·그 밖 8, 한솔동에 74채)마다 그 순간 사람이 타고 있을 기대값 `ΔH = LIFT_RIDE × min(3, floors / 6) × occ(종류, 시간대)`. 첫 값 `LIFT_RIDE = 0.015`, `occ` = 주거(아파트·오피스텔) 1(출근·퇴근 시간대 1.5, 심야 0.4) · 사무용 1.5(심야 0.1) · 호텔·그 밖 1. 도시 전체 정전이면 기대 약 3건, 한 동네(한솔동)면 1~2건, 국지 정전(반경 90 — 건물 10~20채 가운데 4층 이상 1~3채)이면 0.05 안팎이다. **단위**: 승강기 갇힘의 평소율은 교대당 0.25건(아파트 한 채 0.0013건).
-- **대상·문턱**: 건물, 건물마다 한 번 — 흐름 `hz:liftStall:<건물>`. `world/laws/power.ts` 의 `darkened(sim, placeIds, part)` 가 건물마다 `hazardImpulse` 를 부른다(정전을 거는 자리 셋이 이 함수를 부른다 — 법칙은 누가 껐는지 모른다).
-- **나는 사건**: `collapse/elevator`, 그 건물, 규모 1, 첫머리 '정전으로 승강기가 멈춰 안에 사람이 갇혔습니다'. 원인 = 정전을 만든 기록(구역의 `cause.power` · 태풍의 정전 기록 · 침수 기록), 부모 = 그 기록의 사건(있으면). 몫 `{ what: 'outage' }`(침수면 `'level'`).
-- **상한**: 법칙 상한 3. 부모가 없으면(태풍·지진·홍수) `ORPHAN_CAP`.
-- **테스트**: ① 정전이 없는 교대에는 칸이 없다. ② 시험 상수로 `LIFT_RIDE` 를 키우고 한 동네를 끄면 그 동네의 4층 이상 건물에서만, 건물마다 많아야 한 번. ③ **개입**: 같은 시드에서 정전을 걸지 않은 쪽에는 그 원인의 승강기 사건이 없다. ④ 문턱은 누가 껐는지와 무관하다 — 같은 시드·같은 건물에서 변전소 정전과 태풍 정전의 `thr` 이 같다.
+- **식**(충격): 승강기가 있는 건물마다 그 순간 사람이 타고 있을 기대값 `ΔH = LIFT_RIDE × min(3, floors / 6) × occ(종류, 시간대)`. 첫 값 **`LIFT_RIDE = 0.006`**, `occ` = 주거(아파트·오피스텔) 1(출근·퇴근 시간대 1.5, 심야 0.4) · 사무용 1.5(심야 0.1) · 호텔·그 밖 1. 어림: 도시 전체 정전이면 기대 약 1.2건, 한 동네(한솔동)면 0.5건, 국지 정전(반경 90 — 건물 10~20채 가운데 4층 이상 1~3채)이면 0.02 안팎이다. (초안의 0.015 는 도시 전체 정전에 약 3건 — 태풍 목표 0.5~2건을 넘고 부모 없는 사건의 상한 3 을 혼자 다 써 L1 의 꺼진 신호 몫이 남지 않았다.) **단위**: 승강기 갇힘의 평소율은 교대당 0.25건(아파트 한 채 0.0013건).
+- **대상·문턱**: `floors ≥ 4` 이고 **승강기 갇힘 시나리오가 받는 종류**(`scenarioOf('collapse', 'elevator').places` — 아파트·사무용·오피스텔·호텔·백화점·대학·의원·역. 4층 이상 151채 가운데 그 종류만)이며 **쓸 수 있는 건물**(`placeState().usable`). 건물마다 한 번 — 흐름 `hz:liftStall:<건물>`. `world/expo.ts` 의 `darkened(sim, placeIds, part)` 가 건물마다 `hazardImpulse` 를 부른다(정전을 거는 규칙들이 이 함수를 부른다 — 법칙은 누가 껐는지 모른다. `scan` 이 없는 법칙이다).
+- **나는 사건**: `collapse/elevator`, 그 건물, 규모 1, 첫머리 '정전으로 승강기가 멈춰 안에 사람이 갇혔습니다'. 원인 = 정전을 만든 기록(구역의 `cause.power` · 태풍의 정전 기록 · 침수 기록), 부모 = 그 기록의 사건(있으면). 몫 `{ what: 'outage' }`(침수면 `'level'`). 그 건물에 열린 사건이 있으면 틀이 기다리게 한다(§3.6a — 기다리는 줄, 60초).
+- **상한**: 법칙 상한 3. `hazardRoom`(부모가 없으면 — 태풍·지진·홍수 — 부모 없는 법칙 사건 3건).
+- **테스트**: ① 정전이 없는 교대에는 칸이 없다. ② 시험 상수로 `LIFT_RIDE` 를 키우고 한 동네를 끄면 그 동네의 4층 이상·그 종류의 건물에서만, 건물마다 많아야 한 번, 사건의 `truth.placeId === hz.target`. ③ **개입**: 같은 시드에서 정전을 걸지 않은 쪽에는 그 원인의 승강기 사건이 없다. ④ 문턱은 누가 껐는지와 무관하다 — 같은 시드·같은 건물에서 변전소 정전과 태풍 정전의 `thr` 이 같다. ⑤ 전소 건물과 사건 중인 건물: 앞은 버려지고(`'expired'`) 뒤는 기다린다.
 
 #### C8 `commsDown` — 무전 음영이 늘어난다 (상태 결합)
 
-- **원인들**: (가) `broadcast`·`tower` 건물 사건의 `fireBig`·`blast`·`collapse`·`catastrophe` → 800 안 동네 `comms = 0.4`(관제탑은 어느 유형의 표에도 없어 강제로 일으키지 않으면 걸리지 않고, 방송국도 23교대에 한 번 — 드문 갈래다). (나) C4 의 정전이 120초를 넘김 → 그 범위(국지면 같은 자리) `comms = min(comms, 0.6)`. (다) 지진 → 동네마다 흔들림이 문턱 `0.35 + 0.5 × u_z`(흐름 `grid:comms:<z>`)을 넘으면 0.5 — **예전의 "확률 0.4"를 대신한다.** (라) 태풍 정전 120초 → 모든 동네 0.7.
+- **원인들**: (가) `broadcast`·`tower` 건물 사건의 `fireBig`·`blast`·`collapse`·`catastrophe` → 800 안 동네 `comms = 0.4`(관제탑은 어느 유형의 표에도 없어 강제로 일으키지 않으면 걸리지 않고, 방송국도 23교대에 한 번 — 드문 갈래다). (나) C4 의 정전이 120초를 넘김 → 그 범위(국지면 같은 자리) `comms = min(comms, 0.6)`. (다) 지진(신호 `quake` — 흔들림은 C4 (다)의 식) → 동네마다 흔들림이 문턱 `0.35 + 0.5 × u_z`(흐름 `grid:comms:<z>` — 쓸 때마다 다시 계산)을 넘으면 0.5 — **예전의 "확률 0.4"를 대신한다.** (라) 태풍 정전(신호 `blackout`) 120초 → 모든 동네 0.7(동네별 기록 없이 알림 한 줄).
 - **결과**: `until` = 원인 종료 + 180초(지진 300초). 그 범위의 열린 현장과 이후 만들어지는 현장에 음영을 더한다: 바닥 칸의 `(1 − comms) × 0.3` 만큼을 3~5개 덩어리(반지름 2~3칸)로 골라 `s.shadow = 1`, 고른 칸을 `s.shadowAdd` 에(회복 때 원래 값이 0 이던 칸만 되돌린다). 고르는 난수 `csq:shadow:<현장 id>`. 이 뒤의 COMM_FAIL·재배정은 지금 코드가 한다(재계획 `field`).
   - 알림(`tag: 'comms'`, `known = true`)은 (가)·(다)·(라)는 바로, (나)는 그 범위 현장의 첫 COMM_FAIL 이 나온 때(그 기록을 `causes` 로).
 - 쿨다운: 동네마다 300초. 상한 교대당 3. 사건을 만들지 않는다. 현장 음영을 고치는 것은 현장 진실의 변화라 `world/rules/infra.ts` 가 `sim.scenes` 를 고친다(세계 규칙과 같은 자격). 음영은 매 프레임 그린다 — `staticSig` 는 고치지 않아도 된다.
@@ -1161,45 +1237,46 @@ X6 은 전체 붕괴 때 사건 교차로의 한 구간을 `closedReason 'incide
 #### C5 `smokePlume` — 연기 (상태 결합)
 
 - **원인들**: 큰 불이 이어지는 현장(불 칸 `> 0.2` 가 `FIRE_BIG` 30 이상인 채 45초 — 현장마다 시각을 기억) · 산불의 불머리(`d.front`, 꺼지지 않은 동안) · 전소로 가는 건물.
-- **결과**: 연기가 덮은 자리 = 원인 지점에서 `r = 450 × √min(1, 불 칸 / 60)` 안(산불은 불머리 반지름 + 300), 세기 `0.6 × min(1, 불 칸 / 60)`(산불 0.7). `setZoneArea(sim, 'smoke', 세기, 불이 기준 아래로 내려간 시각 + 120, 알림 기록, true, { x, y, r })`. 처음 한 번 `emit({ role: 'SYSTEM', actor: '재난안전본부', kind: 'hazard', tag: 'smoke', imp: 1, causes: [그 현장의 불 기록], text: '○○ 화재의 연기가 △△동으로 번지고 있습니다. 창문을 닫아 주십시오.' })`, `known = true`(눈에 보인다).
+- **결과**: 연기가 덮은 자리 = 원인 지점에서 `r = 450 × √min(1, 불 칸 / 60)` 안(산불은 불머리 반지름 + 300), 세기 `0.6 × min(1, 불 칸 / 60)`(산불 0.7). `setZoneArea(sim, 'smoke', 세기, 불이 기준 아래로 내려간 시각 + 120, 알림 기록, true, { x, y, r })`. 처음 한 번 `emit({ role: 'SYSTEM', actor: '재난안전본부', kind: 'hazard', tag: 'smoke', imp: 1, causes: [그 현장의 불 기록 — L2 의 `ev` 규칙: 발생 기록 또는 X6 의 폭발·전소 기록. `ESCALATION` 은 쓰지 않는다], text: '○○ 화재의 연기가 △△동으로 번지고 있습니다. 창문을 닫아 주십시오.' })`, `known = true`(눈에 보인다).
   1. **주민**: L4 가 읽는다.
   2. **현장**: 연기 자리의 실외 현장(`s.outdoor`)에 구조 대상 실외 노출 `+0.08 × 세기`(`field/rules/` 에 `registerRule` 로 — 현장 규칙은 그 자리에 둔다).
-  3. **도로**: 연기 자리 안에 가운데가 있는 구간 `bump += 0.2 × 세기`, `noteBump(e, 알림 기록, 2, 원인 사건)`(끝나면 뺀다). → L1(`haze`).
+  3. **도로**: 연기 자리 안에 가운데가 있는 구간들에 `addBump(sim, 구간들, 0.2 × 세기, 알림 기록, 2, 원인 사건)` — 연기 한 건마다 한 번, id 를 그 건의 장부(`world.spans`)에 둔다. 세기나 반경이 달라지면 거두고 다시 얹고, 끝나면 `removeBump` 를 한 번 부른다(`recover` 에서 빼지 않는다 — §3.6b). → L1(`haze`).
 - 사건을 만들지 않는다. 난수 없음.
 
 #### L4 `smokeIll` — 연기를 오래 마신 동네에서는 환자가 난다
 
-- **읽는 상태**: 건물 자리의 연기 `c = zoneAt(sim, 'smoke', 건물 가운데) × (1 − 거리 / r)`, 그 집의 **평소 응급률**.
+- **읽는 상태**: 건물 자리의 연기 `c = 그 연기 자리의 세기 × (1 − 거리 / r)`(= `zoneAt(sim, 'smoke', 건물 가운데) × (1 − 거리 / r)` — 매초 건물마다 `zoneAt` 을 부르지 않고 그 자리의 대상 목록에서 바로 계산한다, §3.6a "주기와 비용"), 그 집의 **평소 응급률**.
 - **원인들**: 건물 화재 · 대형 화재 · 산불 · (N9) 독성 공기를 구역 연기로 올리는 사건 — C5 가 받는 모든 것.
-- **식**: `λ_p = base_p × RR_SMOKE × c`. `base_p`(초당) = 평소 응급의 장소 표에서 그대로 온다 — `교대당 응급 건수 × INCIDENT_PLACES.medical[종류] / 표의 합 ÷ 그 종류의 건물 수 ÷ 1,050초`(교대당 응급 건수는 상수 `MED_PER_SHIFT` — 조사 때의 어림 2.1 로 아래 값이 나왔다. b3-11 이 기준 파일의 보통 60교대에서 다시 읽어 적는다)(아파트 8.3 × 10⁻⁶ · 큰 주택 4.8 · 오피스텔 4.7 · 다세대 4.5 · 작은 주택 1.9 — 모듈에서 한 번 계산한다. 인구의 대용치를 따로 만들지 않는다: 그 표가 이미 "어느 집에서 환자가 나는가"다). 첫 값 `RR_SMOKE = 25` — **단위: 연기가 짙은(c = 1) 집은 평소 응급률의 25배가 더해진다.** 모양: 주택가 13채가 `c = 0.5` 로 300초 → 기대 0.2건, 아파트 단지면 0.4건.
-- **대상·주기·문턱**: 연기 자리마다 가까운 주거 건물 40채까지(응급의 장소 표에 몫이 있는 종류), 1초, 흐름 `hz:smokeIll:<건물>:<n>`.
-- **나는 사건**: `medical/faint`, 그 건물, 규모 1, 첫머리 '연기를 마신 주민이 숨쉬기 힘들어합니다'. (**확인 필요**: 연기 흡입 전용 변형을 둘지 — 응급의 변형은 규모로만 정해지고 `scenarios/life.ts` 에 응급 시나리오가 없다. 첫 판은 `faint` 에 첫머리만.) 원인 = 연기 알림 기록, 부모 = 그 화재 사건(산불이면 없음). 몫 `{ what: 'smoke', ref: 불난 건물 }`.
-- **상한**: 화재 하나에 2건, 법칙 상한 3.
-- **테스트**: ① 연기가 없는 교대에는 칸이 없다. ② `base_p` 의 합이 표에서 손으로 계산한 값과 같다. ③ **개입**: 같은 시드에서 한쪽만 구역 연기를 0 으로 되돌리면 그쪽에는 연기 환자가 없다. ④ 연기 자리 밖의 건물은 쌓이지 않는다.
+- **식**: `λ_p = base_p × RR_SMOKE × c`. `base_p`(초당) = 평소 응급의 장소 표에서 그대로 온다 — `교대당 응급 건수 × INCIDENT_PLACES.medical[종류] / 표의 합 ÷ 그 종류의 건물 수 ÷ 1,050초`(교대당 응급 건수는 상수 `MED_PER_SHIFT` — 조사 때의 어림 2.1 로 아래 값이 나왔다. b3-11 이 기준 파일의 보통 60교대에서 다시 읽어 적는다)(아파트 8.3 × 10⁻⁶ · 큰 주택 4.8 · 오피스텔 4.7 · 다세대 4.5 · 작은 주택 1.9 — 모듈에서 한 번 계산한다(시드와 무관하다). 인구의 대용치를 따로 만들지 않는다: 그 표가 이미 "어느 집에서 환자가 나는가"다). 첫 값 `RR_SMOKE = 25` — **단위: 연기가 짙은(c = 1) 집은 평소 응급률의 25배가 더해진다.** 모양: 주택가 13채가 `c = 0.5` 로 300초 → 기대 0.2건, 아파트 단지면 0.4건.
+- **대상·주기·문턱**: 연기 자리마다 가까운 주거 건물 40채까지(응급의 장소 표에 몫이 있는 종류), 1초, 흐름 `hz:smokeIll:<건물>:<n>`. **불이 난 그 건물과 열린 사건이 있는 건물, 쓸 수 없는 건물은 뺀다** — 가장 가깝고 연기가 가장 짙은 건물은 불이 난 그 건물이다. 그 건물의 연기 환자는 화재 현장의 구조 대상이지 따로 열리는 사건이 아니다(거르지 않으면 같은 건물에 현장이 둘이고 뒤 현장에는 불이 없다).
+- **나는 사건**: **변형 `medical/smoke`**(첫 판부터 따로 둔다), 그 건물, 규모 1, 첫머리 '연기를 마신 주민이 숨쉬기 힘들어합니다'. 현장은 응급 주택 틀 그대로(실신과 같은 틀), 구조 대상의 처음 부상 원인은 `smoke`(`initInjuries` 의 표), **`tickMedical` 의 급변 대상이 아니다**(그 함수는 변형이 `faint`·`trauma`·`arrest` 일 때만 급변을 뽑는다 — 확인됨). `medical/faint` 에 첫머리만 바꿔 쓰지 않는 까닭: 실신 현장은 "실신의 원인은 부정맥이었습니다"로 급변할 수 있어, 발생 기록은 '연기를 마신 주민'인데 같은 환자를 두고 기록 둘이 다른 말을 한다. 변형을 넣을 자리: 응급 현장 생성의 변형 갈래(`builders.ts` — 모르는 변형이 실신의 틀로 가는지 **확인 필요**)·`scenarioName`·신고 문구(호흡 곤란). **변형을 두지 못하면 L4 는 등록하지 않는다**(그 `import` 줄을 빼고 보고에 적는다).
+- 원인 = 연기 알림 기록, 부모 = 그 화재 사건(산불이면 없음). 몫 `{ what: 'smoke', ref: 불난 건물 }`.
+- **상한**: 법칙 상한 3. 화재 하나에서 난 것은 `hazardRoom` 의 "한 뿌리의 가지 2"가 옮겨붙은 불과 합쳐 묶는다.
+- **테스트**: ① 연기가 없는 교대에는 칸이 없다. ② `base_p` 의 합이 표에서 손으로 계산한 값과 같다. ③ **개입**: 같은 시드에서 한쪽만 구역 연기를 0 으로 되돌리면 그쪽에는 연기 환자가 없다. ④ 연기 자리 밖의 건물은 쌓이지 않는다. ⑤ 불이 난 건물은 대상이 아니다. ⑥ `medical/smoke` 현장의 환자는 급변하지 않고 부상 원인이 `smoke` 다.
 
-#### L6 `floodLow` — 수위가 문턱 높이를 넘으면 잠긴다
+#### L6 `floodLow` — 수위가 문턱 높이를 넘으면 잠긴다 (문턱 상태 — 사건은 L5·L1 이 낸다)
 
-홍수의 도로는 이미 이 꼴이다: 구간마다 문턱 `d.thr`(다리 0.9, 그 밖 `max(0.25, 강까지의 거리 / 80)`), 수위가 `0.7 × thr` 을 넘으면 느려지고 `thr` 을 넘으면 통제한다. 같은 법칙을 건물로 넓히고, 잠기는 순간의 결과를 잇는다.
+홍수의 도로는 이미 이 꼴이다: 구간마다 문턱 `d.thr`(다리 0.9, 그 밖 `max(0.25, 강까지의 거리 / 80)`), 수위가 `0.7 × thr` 을 넘으면 느려지고 `thr` 을 넘으면 통제한다. 같은 법칙을 건물로 넓히고, 차오르는 물이 길에 만드는 상태를 교통의 초과로 잇는다. **이 절은 사건을 직접 만들지 않는다**(`HazardLawId` 에 없다) — 상태 규칙 `floodLow`(`world/rules/infra.ts`, `on: 'tick'`, 열쇠 `'flood'`, 쿨다운 5초, `silent`. 재난의 수위 `d.level` 을 읽는 것은 상태 규칙이라 된다 — 법칙 파일은 재난을 읽지 않는다)다.
 
-- **건물 갈래(상태)**: 강에서 가까운 건물(문턱 ≤ 1.15 — 54채: 작은 주택 18·다세대 9·카페 7·큰 주택 6·식당 4·상점 3·오피스텔 2·그 밖 5)마다 문턱 높이 `thrP = max(0.3, riverDist(건물 가운데) / 80) × (0.85 + 0.3 × u_p)`, `u_p` = 흐름 `hz:floodLow:b<건물>` 의 첫 값(건물마다 한 번 — 그 건물의 지하가 얼마나 낮은가). 홍수 중 5초마다 `d.level > thrP` 를 본다. 넘는 순간 `expo.wet = true`, 기록 `emit({ role: 'SYSTEM', actor: '도시', kind: 'hazard', imp: 0, truth: true, causes: [홍수 알림 기록], text: '{건물} 지하가 물에 잠겼습니다.' })` → `wetEv`, 그리고 `expo.dark = sim.t`(전기실) → `darkened(sim, [건물], { ev: wetEv, what: 'level', … })` → **L5**. (예전 C7 의 "지하 주차장이 잠기며 승강기에 사람이 갇혔습니다"는 이 길로 난다 — 4층 이상인 잠긴 건물은 오피스텔 둘뿐이라 드물다.) **잠긴 지하에 갇힌 사람의 구조 현장은 이번에 만들지 않는다** — 그릴 현장 틀이 없다(N9 뒤 — §8). 지금 침수 상태가 하는 일은 정전과 `placeState().wet`(I2·N9 가 읽을 자리)뿐이다. (`riverDist` 를 건물마다 캐시한 `disaster.geoOf` 는 내보내지 않는다 — `city.riverDist` 를 직접 부르고 `WeakMap` 에 둔다.)
-- **구간 갈래(충격)**: `disaster.floodRoads` 가 구간을 **통제하는 순간**(수위가 그 구간의 `thr` 을 넘는 전이 — 문턱 ≤ 1 인 구간 15개) 그때 그 길에 있던 차: `hazardImpulse(sim, 'floodLow', 구간, FLOOD_CAR × V_e, part)`, 첫 값 `FLOOD_CAR = 0.12`, `V_e` 는 L1 의 통행량. 흐름 `hz:floodLow:<구간>`(구간마다 한 번). 홍수 한 번에 기대 약 1건.
-  - 나는 사건: `water/std`, 그 구간의 끝 교차로(L1 과 같은 규칙), 첫머리 '물에 잠긴 길에 차가 갇혔습니다', `tag: 'disaster:flood'`(재난 교대의 집계에 묶이되 `d.spawned`·재난 `CAP` 에는 넣지 않는다). 원인 = 그 구간의 통제 기록(§3.6b 의 장부), 부모 없음. 몫 `{ what: 'level', ref: 구간 }`.
-  - **N9 가 이 갈래를 고친다**(N9 §5.12): 지하차도 구간(`underpassEdges` — 중앙대로 e196)이면 결과를 `water/underpass` + `underpassNode` 로. `spawn` 의 한 줄이다.
-  - **확인 필요**: 홍수 큐의 '물에 잠긴 도로의 충돌'(`floodCar` — 가중 0.30)과 겹친다. 홍수 20교대의 사건 수가 기준 × 1.1 을 넘으면 `FLOOD_CAR` 를 줄인다(큐는 건드리지 않는다).
-- **상한**: 법칙 상한 2, `ORPHAN_CAP`.
-- **테스트**: ① 홍수가 아닌 교대에는 아무것도 없다. ② 수위를 손으로 올리면 문턱 순서대로 잠기고 기록이 건물마다 한 번. ③ **개입**: 수위를 문턱 아래에 묶어 둔 쪽에는 침수도 그 원인의 사건도 없다. ④ 가스 누출을 결과로 삼지 않는다(홍수 큐의 `gasLeak` 이 따로 있다).
+- **건물 갈래(상태)**: 강에서 가까운 건물(문턱 ≤ 1.15 — 54채: 작은 주택 18·다세대 9·카페 7·큰 주택 6·식당 4·상점 3·오피스텔 2·그 밖 5)마다 문턱 높이 `thrP = max(0.3, riverDist(건물 가운데) / 80) × (0.85 + 0.3 × u_p)`, `u_p` = 흐름 `hz:floodLow:b<건물>` 의 첫 값(건물마다 한 번 — 그 건물의 지하가 얼마나 낮은가. **`world.sills[건물]` 에 둔다** — 처음 볼 때 채운다. 시드에 따라 달라지는 값이라 도시 열쇠의 캐시에 두지 않는다, §3.6c. `riverDist` 는 시드와 무관해 `city.places` 열쇠의 `WeakMap` 에 둬도 된다 — `disaster.geoOf` 는 내보내지 않는다). 홍수 중 5초마다 `d.level > thrP` 를 본다. 넘는 순간 `expo.wet = true`(→ `placeState().wet` — I2·N9 가 읽을 자리).
+  - **4층 이상 건물만**(정전이 승강기에 닿는 건물 — 54채 가운데 오피스텔 둘): 기록 `emit({ role: 'SYSTEM', actor: '도시', kind: 'hazard', imp: 0, truth: true, causes: [수위 알림 기록 d.levelEv], text: '{건물} 지하가 물에 잠겨 전기가 끊겼습니다.' })` → `wetEv`, `expo.dark = sim.t`(전기실) → `darkened(sim, [건물], { ev: wetEv, inc: −1, what: 'level', ref: 건물 })` → **L5**. (예전 C7 의 "지하 주차장이 잠기며 승강기에 사람이 갇혔습니다"는 이 길로 난다 — 드물다.)
+  - 그 밖의 건물은 `expo.wet` 만 적고 **기록을 남기지 않는다**(홍수마다 '지하가 물에 잠겼습니다'가 45줄쯤 남는데 뒤따르는 것이 없다 — 결과가 없는 상태 변화로 기록을 불리지 않는다. 교대 요약의 `world` 에 "침수 건물 n채" 숫자만).
+  - **잠긴 지하에 갇힌 사람의 구조 현장은 이번에 만들지 않는다** — 그릴 현장 틀이 없다(N9 뒤 — §8).
+- **구간 갈래 — 따로 두지 않는다.** 초안은 "구간이 통제되는 순간 `FLOOD_CAR × V` 의 충격 → `water/std`"였는데, 그 상태를 만드는 원인이 홍수 하나뿐이고 식이 "통제 순간 한 번"이라 **"홍수가 길을 잠그면 확률 p 로 사건"과 같다 — 이름만 바꾼 스크립트다**(없앤 C7 과 같은 모양이고 홍수 큐의 `floodCar` 와도 겹친다). 또 `water/std` 는 하천 현장(강에 떠내려가는 사람)이라 발생 기록 '물에 잠긴 길에 차가 갇혔습니다'와 현장이 맞지 않는다. 대신: `disaster.floodRoads` 가 구간을 **느리게 하는 동안**(수위가 그 구간 문턱의 0.7 과 1 사이 — 물이 차오르는데 아직 열려 있는 길, `e.slow += FLOOD_SLOW`) 교통 장부의 `exOwn` 에 `'level'` 항 하나(0.8, 원인 = 수위 알림 기록)를 적고 느림을 거둘 때 지운다(§3.6b). **L1 이 그 구간을 다른 몰림과 같은 법칙으로 본다** — 물이 천천히 차오른 길일수록, 통행이 많은 길일수록 사고가 나기 쉽다. 사건은 `traffic/std`, 재난 꼬리표 없음. 통제된 뒤에는 닫힌 구간이라 0 이고, 그 통제가 예 ① 의 길(우회 몰림)을 연다.
+- **N9 가 여기에 대상을 더한다**(N9 §5.12): 지하차도 구간(`underpassEdges` — 중앙대로 e196)은 강에서 400 넘게 떨어져 `d.thr ≥ 5` — `floodRoads` 가 영영 느리게 하지도 닫지도 않는다. I1-b 는 `disaster.ts` 에서 구간의 문턱을 읽는 자리를 함수 하나로 뽑아 둔다 — `roadSill(sim, d, e)`(지금은 `d.thr[e.id]` — 해시 불변). N9 가 그 함수에 한 줄을 더해 지하차도 구간에 낮은 문턱을 준다(`thrU = 0.6 × (0.85 + 0.3 × u)`, `u` = 흐름 `hz:floodLow:u<구간>` — 시드에 따라 달라지는 값이라 `sim.world` 안에 둔다, 칸은 N9 가 정한다). 그러면 물이 차오르는 동안 그 구간이 `'level'` 로 L1 에 들어가고, **N9 는 L1 의 `spawn` 에 "주된 몫이 `level` 이고 그 구간이 지하차도면 결과를 `water/underpass` + `underpassNode` 로" 한 줄**을 더한다(결과의 이름이라 `spawn` 안에 둔다).
+- **테스트**: ① 홍수가 아닌 교대에는 아무것도 없다(`world.sills` 가 비어 있다). ② 수위를 손으로 올리면 문턱 순서대로 잠기고, 기록은 4층 이상 건물에서만 건물마다 한 번. ③ **개입**: 수위를 문턱 아래에 묶어 둔 쪽에는 침수도 그 원인의 사건도 없다. ④ 느려진 구간에 `exOwn` 의 `level` 몫이 있고 통제되면 0, 느림을 거두면 장부가 비워진다. ⑤ 한 프로세스에서 다른 시드를 먼저 돌려도 문턱이 같다(§6 I1-b 1).
 
 #### C11 `waterMain` — 소화전 수압 저하 (상태 결합 — 선택)
 
-- **원인들**: 붕괴·폭발 자리의 관(L3 과 같은 신호 — `catastrophe` data 1 가운데 `mag ≥ 0.45` · data 0 가운데 `size ≥ 4` · 무너진 채 시작하는 `collapse` `size ≥ 10`) → 그 자리 반경 80 의 국지 `water = 0.5`. 지진 → 동네마다 흔들림이 문턱 `0.4 + 0.5 × u_z`(흐름 `grid:water:<z>`)을 넘으면 동네 전체 0.5 — **예전의 "확률 0.3"을 대신한다.** (예전 글의 "신호 `collapse`(size ≥ 10)만"으로는 "화재 → 붕괴 → 수도관"이 걸리지 않는다 — 2차 붕괴의 `size` 는 0~3 이고 X6 의 붕괴는 `catastrophe` 신호다.) N8 의 `'pipeBurst'` 가 이 규칙의 `on` 에 붙는다.
+- **원인들**: 붕괴·폭발 자리의 관(L3·C4 (라)와 같은 신호 — 전체 붕괴 · 폭발 · 무너진 채 시작하는 `collapse` `size ≥ 10`): 그 자리가 받은 충격(C4 (라)와 같은 값)이 **그 자리 수도관의 문턱** `0.15 + 0.6 × u`(흐름 `grid:main:<건물>`, 길 위면 `grid:main:n<교차로>`)을 넘을 때만 반경 80 의 국지 `water = 0.5`. 지진(신호 `quake`) → 동네마다 흔들림(C4 (다)의 식)이 문턱 `0.4 + 0.5 × u_z`(흐름 `grid:water:<z>`)을 넘으면 동네 전체 0.5 — **예전의 "확률 0.3"을 대신한다.** (예전 글의 "신호 `collapse`(size ≥ 10)만"으로는 "화재 → 붕괴 → 수도관"이 걸리지 않는다 — 2차 붕괴의 `size` 는 0~3 이고 X6 의 붕괴는 `catastrophe` 신호다.) N8 의 `'pipeBurst'` 가 이 규칙의 `on` 에 붙는다.
 - **결과**: `until = t + 300`. 그 범위 현장의 급수: `executor.spray` 의 `if (!u.hydrant)` 를 "급수 연결이면 유입 `1.5 × water` 에서 유출을 뺀 만큼 물이 준다"로 바꾼다 — `water = 1` 이면 지금 갈래(줄지 않는다)를 그대로 타야 해시가 남는다. 첫 WATER_OUT 의 문구에 '소화전 수압이 낮습니다' 를 덧붙이고 그때 `known`(그 기록을 `causes` 로 `tag: 'water'` 알림). 관제: 알려지면 그 동네 화재에 `needs.suppression` +1.
 - 사건을 만들지 않는다. 난수 없음(문턱만).
 
 #### 뒤 묶음이 기대하는 이름 (I2 · N8 · N9 — 깨지 않는다)
 
-- **I2**: `knownBuildingAt`·`placeState`·`WorldTag`·`ObstacleKind 'rubble'` 은 그대로다. `placeState` 의 돌려주는 값에 칸(`shake`·`pipe`·`wet`)이 **더해질 뿐**이고, `WorldTag` 끝에 `'struct'` 가 하나 늘어난다(I2 의 `'carry'` 는 그 뒤에). **I2 가 알아야 할 것**: `Scene.wear` 를 I1-b 가 먼저 채운다(`cause: 'shock'`) — `applyPlaceWear` 는 `dmg` 의 큰 쪽으로 합치고, `catOf` 의 `WEAR_INTEG` 줄은 이미 있다. 교대 끝의 `world.expo[p].shake` 는 `PlaceCarry.dmg` 의 원천이 될 수 있다(I2 단계 5 의 `placeOutcome` — 넣을지는 I2 가 정한다).
-- **N8**: `registerConsequence`·`spawnConsequence`·`'closed'`·`gen.chain` 의 `when`/`until`·`canChain`·`PROBLEM_SYS`·`PHRASE`·`WorldTag` 그대로. C4 `powerOut`·C10 `suspectZone`·C11 `waterMain` 은 **같은 id 의 상태 규칙으로 남는다**(N8 의 `'powerCut'`·`'pipeBurst'` 가 그 `on` 에 붙는다). N8 §5.6 의 조건부 연쇄 여덟(K1~K8)은 "X 가 실패하면 Y" 꼴이다 — N8 을 구현할 때 이 문서의 방향(§3.1)에 비춰 초과 위험의 법칙으로 옮길 수 있는지 본다(예: 수도관 → 싱크홀 → 교통사고의 끝 화살표는 L1 이 저절로 한다).
-- **N9**: C3 `hospitalLoad` 그대로. **C1 `blastSpread` 는 이름이 없어졌다** — N9 가 기대하는 "공장 폭발 → 옆 건물 화재가 저절로"는 L2 `heatSpread` 의 불티 항이 한다(N9 가 그 id 를 글자로 쓰는 곳은 연관 표뿐이다 — N9 구현 전에 고친다). C7 `floodLow` 는 id 가 그대로이고, N9 가 고칠 "지하차도 갈래"는 위 L6 의 구간 갈래다.
+- **I2**: `knownBuildingAt`·`placeState`·`WorldTag`·`ObstacleKind 'rubble'` 은 그대로다. `placeState` 의 돌려주는 값에 칸(`shake`·`pipe`·`wet`)이 **더해질 뿐**이고, `WorldTag` 끝에 `'struct'` 가 하나 늘어난다(I2 의 `'carry'` 는 그 뒤에). **I2 가 알아야 할 것**(주 세션이 I2 설계서에 적는다): ① `Scene.wear` 를 I1-b 가 먼저 채운다(`cause: 'shock'`) — `applyPlaceWear` 는 `dmg` 의 큰 쪽으로 합친다. ② `WEAR_INTEG` 는 `catastrophe.CAT` 에 있다 — I2 §10.1 의 `persist.ts` 상수 줄을 "그 값을 읽는다"로. ③ 측정 도구의 `S(I)` 는 `s.wear.cause === 'shock'` 을 `building` 으로, 그 밖을 `carry` 로 센다(§7). ④ 교대 끝의 `world.expo[p].shake` 는 `PlaceCarry.dmg` 의 원천이 될 수 있다(I2 단계 5 의 `placeOutcome` — 넣을지는 I2 가 정한다).
+- **N8**: `registerConsequence`·`spawnConsequence`·`'closed'`·`gen.chain` 의 `when`/`until`·`canChain`·`PROBLEM_SYS`·`PHRASE`·`WorldTag` 그대로. C4 `powerOut`·C10 `suspectZone`·C11 `waterMain` 은 **같은 id 의 상태 규칙으로 남는다**(N8 의 `'powerCut'`·`'pipeBurst'` 가 그 `on` 에 붙는다). `SignalKind` 끝에 `'quake'`·`'blackout'` 이 는다(N8 이 더하는 신호는 그 뒤에). N8 §5.6 의 조건부 연쇄 여덟(K1~K8)은 "X 가 실패하면 Y" 꼴이다 — N8 을 구현할 때 이 문서의 방향(§3.1)에 비춰 초과 위험의 법칙으로 옮길 수 있는지 본다(예: 수도관 → 싱크홀 → 교통사고의 끝 화살표는 L1 이 저절로 한다).
+- **N9**: C3 `hospitalLoad` 그대로. **C1 `blastSpread` 는 이름이 없어졌다** — N9 가 기대하는 "공장 폭발 → 옆 건물 화재가 저절로"는 L2 `heatSpread`(공장 폭발의 불티·큰 불의 열)가 한다. **C7 `floodLow` 는 id 와 자리(`world/rules/infra.ts`)가 그대로지만 사건을 만들지 않는 상태 규칙이 됐다** — N9 가 고칠 "지하차도 갈래"는 위 L6 의 끝 줄(`disaster.roadSill` 에 한 줄 + L1 `spawn` 에 한 줄)이고, 사건에 `'disaster:flood'` 꼬리표는 붙지 않는다. **N9 구현 전에 주 세션이 고칠 N9 설계서의 글자**(줄 번호는 2026-11-20 기준 — 글자로 찾는다): 연관 표 24행 "규칙 C1 `blastSpread`" → "법칙 L2 `heatSpread`(불티 항)" · 81행 "C7 `floodLow` 의 지하차도 갈래를 … 바꾸는 한 줄, C1·C3 은 저절로" → "L6 에 지하차도 구간의 문턱(`roadSill`)과 L1 `spawn` 의 한 줄, L2·C3 은 저절로" · 441행 "I1-b C1 `blastSpread`(저절로 원천)" → "I1-b L2 `heatSpread`" · 598·955행의 "강가 교차로에 `water/std`"·"`opts.tag` 는 C7 의 `'disaster:flood'` 그대로" → 위 끝 줄 · 파일 표 1265행은 `world/rules/infra.ts`(상태)에 더해 `disaster.ts` `roadSill`·`world/laws/road.ts` `spawn`.
 
 ### 3.8 AI 가 아는 길 (정보 격리)
 
@@ -1207,10 +1284,10 @@ X6 은 전체 붕괴 때 사건 교차로의 한 구간을 `closedReason 'incide
 |---|---|---|---|---|
 | 도로 잔해(C2) | 사건 종료(남는 잔해)·큰 폭발 | 남는 잔해는 곧바로(종료 보고), 폭발 잔해는 T1: 제보·부대 보고(`known`) | 부대 무전 | `findRoute`·`etaFor`(이미 알려진 것만) |
 | 응급실 포화(C3) | 체류 ≥ 한도 | 병원 알림(곧바로) | — | `startTransport`, 이송 중 목적지 변경 |
-| 우회 몰림·초과 혼잡(§3.6b) | `drift`(12초)마다 — 닫힌 구간이 있는 동안 | 혼잡 값 자체는 지금처럼 교통 정보로 안다(`edgeTime` 이 `cong` 을 읽는다 — T1 부터 그렇다). **까닭은 모른다**: 알려지지 않은 통제(`known === false`) 때문에 몰린 길도 "막힌다"까지만 보인다. 관제 쪽 코드는 `divert`·`excess`·`srcEv` 를 읽지 않는다 | — | `edgeTime`(지금과 같다) |
+| 우회 몰림·초과 혼잡(§3.6b) | `drift`(12초)마다 — 닫힌 구간이 있는 동안 | 혼잡 값 자체는 지금처럼 교통 정보로 안다(`edgeTime` 이 `cong` 을 읽는다 — T1 부터 그렇다). **까닭은 모른다**: 알려지지 않은 통제(`known === false`) 때문에 몰린 길도 "막힌다"까지만 보인다. 관제 쪽 코드는 `tr.divert`·`excess`·장부(`closeEv`·`slowEv`·`qEv`·`bumps`)를 읽지 않는다 | — | `edgeTime`(지금과 같다) |
 | 몰린 길의 사고(L1) | 문턱을 넘는 순간 | 신고(평소 사고와 같다) | 현장 | 평소의 분석·배정 |
-| 건물의 열 노출·잔열(`world.hz`) | 곁의 불이 타는 동안 · 화재가 닫힐 때 | **알 길이 없다**(진실 전용). 옮겨붙은 불·재발화는 신고로 안다 — 알려진 큰 불·폭발 곁의 화재 신고는 '연소 확대', 같은 건물의 닫힌 화재 뒤면 '재발화'(`knownBuildingAt`) | 자기 현장의 불 | 분석 AI 이름표·위험도 |
-| 이웃 건물의 손상(`world.expo` — 금·배관·침수) | 폭발·붕괴 순간, 수위가 넘는 순간 | 진실 전용(기록은 `truth: true`). 그 건물의 사건이 신고될 때 평소처럼. 알려진 붕괴·폭발 곁의 붕괴·가스 신고는 위험도 +0.3 | 그 건물의 현장에 닿은 뒤 **X6 의 조짐**으로(낮게 시작한 건전도는 삐걱임·균열이 빨리 올 뿐이다 — `s.wear`·`s.cat` 을 읽지 않는다), 새는 밸브는 눈에 보이는 위험 요소로 | X6 의 지휘 규칙 그대로 |
+| 건물의 열 노출·잔열(`world.hz`) | 곁의 불이 타는 동안 · 화재가 닫힐 때 | **알 길이 없다**(진실 전용). 옮겨붙은 불·재발화는 신고로 안다 — 알려진 큰 불·폭발(`knownHazardNear`) 곁의 화재 신고는 '연소 확대'. '재발화' 이름표는 이번에 넣지 않는다(L7) | 자기 현장의 불 | 분석 AI 이름표·위험도 |
+| 이웃 건물의 손상(`world.expo` — 금·배관·침수) | 폭발·붕괴 순간, 수위가 넘는 순간 | 진실 전용(기록은 `truth: true`). 그 건물의 사건이 신고될 때 평소처럼. 알려진 붕괴·폭발 곁의 붕괴·가스 신고는 위험도 +0.3 | 그 건물의 현장에 닿은 뒤 **X6 의 조짐**으로(낮게 시작한 건전도는 삐걱임·균열이 빨리 올 뿐이다 — `s.wear`·`s.cat` 을 읽지 않는다), 새는 밸브는 본 대원의 `haz` 믿음으로(**`s.rules` 는 바뀌지 않는다** — 판단부가 생김새로 읽는 칸에 숨은 손상을 적지 않는다, §3.6c) | X6 의 지휘 규칙·누출 조치 그대로 |
 | 정전(C4) | 원인 직후 | 알림 20~40초 뒤(구역 값 — 국지 정전도 "그 동네 어딘가"까지만) | — | 분석 AI 위험도 |
 | 멈춘 승강기(L5) | 정전이 닿는 순간 | 신고 | 현장 | 평소대로 |
 | 통신 장애(C8) | 원인 직후 | 알림 또는 첫 COMM_FAIL | 자기 현장의 COMM_FAIL | 지금의 재배정 |
@@ -1218,11 +1295,11 @@ X6 은 전체 붕괴 때 사건 교차로의 한 구간을 `closedReason 'incide
 | 연기(C5) | 큰 불 45초 | 알림(곧바로) | 실외 노출을 겪는다 | 호흡 곤란 신고의 유형 판단 |
 | 연기 환자(L4) | 문턱을 넘는 순간 | 신고 | 현장 | 평소대로 |
 | 구역 위험(C10) | 도주 | 도주를 부대가 봤을 때 | — | 분석 AI 위험도·`needs.law` |
-| 건물 상태(X6 `placeMarks`) | 붕괴·폭발·전소, 사건 종료 | 그 건물 사건의 종료 보고, 지난 교대에서 이어받은 것(I2). 관제는 건물 id 를 모르므로 알려진 교차로와 진술의 건물 종류로 찾는다 | — | 재발화 이름표·위험도(`knownBuildingAt`) |
-| 알려진 큰 불·폭발·붕괴 | 그 순간 | 현장 대원이 남긴 **진실이 아닌** `EXPLOSION`·`STRUCT_COLLAPSE`·`DANGER_SIGN` 기록, 그 사건의 `reportedNode`(180초 안, 300 안) | 자기 현장 | 근처 화재·붕괴·가스 신고 위험도 |
+| 건물 상태(X6 `placeMarks`) | 붕괴·폭발·전소, 사건 종료 | 그 건물 사건의 종료 보고, 지난 교대에서 이어받은 것(I2). 관제는 건물 id 를 모르므로 알려진 교차로와 진술의 건물 종류로 찾는다 | — | 위험도(`knownBuildingAt`). '재발화' 이름표는 L7 의 물리와 함께 뒤로 |
+| 알려진 큰 불·폭발·붕괴 | 그 순간 | **`world/state.ts` 의 `knownHazardNear(sim, node, within = 300, age = 180)` 하나로**: 위치를 아는 다른 사건 가운데 (불) 현장이 화재로 확인했고 현장 상황 보고가 위험도를 올린 열린 사건(`I.fieldRisk` — X6 §5.9. **확인 필요**: "현장 확인"의 칸 이름), (폭발·붕괴) **진실이 아닌** `EXPLOSION`·X6 의 폭발 문구인 `HIDDEN_HAZARD`(지휘관이 몰랐던 폭발은 이 코드로 남는다 — `EXPLOSION` 만 찾으면 대부분 놓친다)·`STRUCT_COLLAPSE` 기록이 `age` 안에 있는 것. 거리는 두 사건의 `reportedNode` 사이(관제는 교차로만 안다 — 60 이면 같은 교차로뿐이라 300). 큰 불 신호(`fireBig`)의 기록은 진실인 발생 기록이라 쓰지 않는다 — 길을 정해 두지 않으면 구현이 신호나 현장을 읽게 된다 | 자기 현장 | 근처 화재·붕괴·가스 신고의 이름표·위험도(분석 AI 는 이 함수만 부른다) |
 | 전환·부족(C6) | 배정 | 관제 자신의 결정 | — | (기록만) |
 
-- `dispatch/*`·`field/commander.ts`·`field/brain.ts`·`field/orders/*` 는 `sim.world` 를 직접 읽지 않는다. `knownZone`·`knownHospital`·`knownBuildingAt`·`knownZoneOfIncident` 만 쓴다(b2 의 소스 글자 검사 — `sim.world` 를 통째로 막으므로 `world.hz`·`world.expo` 도 이미 막혀 있다). 여기에 더한다: 그 파일들에 `.hz`·`fireLoad`·`zoneAt`·`isDark`·`tr.divert`·`.excess`·`srcEv`·`bumpEv`·`s.wear` 글자가 없다(§6 I1-b 13).
+- `dispatch/*`·`field/commander.ts`·`field/brain.ts`·`field/orders/*` 는 `sim.world` 를 직접 읽지 않는다. `knownZone`·`knownHospital`·`knownBuildingAt`·`knownZoneOfIncident` 만 쓴다(b2 의 소스 글자 검사 — `sim.world` 를 통째로 막으므로 `world.hz`·`world.expo` 도 이미 막혀 있다). 여기에 더한다(§6 I1-b 13 — 검사 대상에 `field/methods.ts`·`field/ops.ts`·`field/airDecide.ts`·`field/gear.ts`·`field/doctrine/*` 를 더한다): 그 파일들에 `world.hz`·`I.hz`·`fireLoad`·`zoneAt(`·`isDark(`·`.excess`·`.exDiv`·`.exQueue`·`.exOwn`·`.exBump`·`.divertBy`·`closeEv`·`slowEv`·`qEv`·`.bumps`·`.wear`·`expoOf` 글자가 없고(글자 `.hz` 로는 막지 않는다 — R3 교본의 `c.hz` 는 "위험 실내 일인가"라는 다른 칸이다. `/\bhz\.(?:src|law|target|at)\b/` 로 본다), 정규식 `/\b(?:tr|traffic)\.divert\b/` 에 걸리는 줄이 없다(`c.divertFrom`·`u.diverted`·`knownHospital().divert` 는 다른 것이다 — 글자 `.divert` 로 막으면 지금의 `dispatcher.ts` 에서 바로 실패한다). `src/sim/world/` 아래 어떤 파일도 `s.rules` 에 쓰지 않는다(`.rules.push`·`.rules =`).
 - **`Incident.hz`·`cause`·`csq` 는 판단이 읽지 않는다**(b0 의 원칙 그대로 — 기록 전용 칸이다. 관제가 `I.hz` 를 읽으면 "이 사고는 저 통제 때문"을 신고 전에 아는 셈이다).
 - **관제 쪽 위치는 알려진 것만**: 사건의 구역은 `knownZoneOfIncident`(= `zoneOfXY(city.nodes[I.reportedNode])`), 건물은 `knownBuildingAt(sim, I.reportedNode, placeKind)`. 분석 AI 와 배정 AI 는 `I.truth.x`·`y`·`placeId` 를 읽지 않는다. `callSystem.ts` 의 신고자 모델은 지금처럼 진실을 읽는다(신고자가 본 것을 정하는 자리).
 - `resources.startTransport` 는 관제 쪽 결정이므로 `knownHospital` 과 `known` 인 통제만 쓴다.
@@ -1233,7 +1310,7 @@ X6 은 전체 붕괴 때 사건 교차로의 한 구간을 `closedReason 'incide
 `evaluate` 는 사건이 닫힐 때 돌고 그 뒤에 생기는 자식 사건을 모르므로, 문장은 **교대 끝의 `buildReport`** 가 만든다. 모두 기록(`I.parent`·`I.cause`·`I.csq`·`I.hz`·`Problem.ref`·`world.log`·`gen.dropped`)에서만 쓴다. **법칙의 이름으로 쓰지 않고 상태의 내력으로 쓴다** — "몰린 길의 사고 법칙"이 아니라 "○○로 통제(쓰러진 나무) 뒤 △△로에 차량이 몰린 동안 난 사고".
 
 - `ShiftReport.incidents[k]` 에 `parent`, `children`(그 사건을 부모로 둔 사건 id), `chain`(문장 배열, 많아야 4줄):
-  - **`I.hz` 가 있으면**(법칙에서 난 사건) 주된 몫(`hz.src[0]`)의 갈래로 한 문장, 둘째 몫이 있으면 "(… 도 겹쳤습니다)"를 덧붙인다. `{원인}` 은 그 몫의 기록에서 읽는다 — 주인 사건이 있으면 `사건 {코드} {이름}`, 장애물이면 그 라벨(`OBSTACLE_LABEL` — 공사·낙하물·고장 차량·건물 잔해), 재난이면 재난 이름, 정체·인파면 그 말. `{N}` = `hz.at − hz.since`(10초 단위).
+  - **`I.hz` 가 있으면**(법칙에서 난 사건) 주된 몫(`hz.src[0]`)의 갈래로 한 문장, 둘째 몫이 있으면 "(… 도 겹쳤습니다)"를 덧붙인다. `{원인}` 은 그 몫의 기록에서 읽는다 — 주인 사건이 있으면 `사건 {코드} {이름}`, 장애물이면 그 라벨(`OBSTACLE_LABEL` — 공사·낙하물·고장 차량·건물 잔해), 재난이면 재난 이름, 정체·인파면 그 말. `{N}` = **그 몫의** `hz.at − src.since`(10초 단위 — 칸에 초과가 처음 생긴 시각이 아니라 그 원인이 걸린 시각부터다, §3.6a). 큰 몫 가운데 `ev < 0` 인 것이 있으면 "(까닭이 기록되지 않은 혼잡도 겹쳤습니다)"를 덧붙인다(관문이 0 을 지키므로 보통은 나오지 않는다).
 
 | 갈래 | 문장 |
 |---|---|
@@ -1249,10 +1326,10 @@ X6 은 전체 붕괴 때 사건 교차로의 한 구간을 `closedReason 'incide
 | `residual` | "{원인}이 끝난 뒤 남은 불씨가 {N}초 만에 되살아났습니다." |
 | `outage` | "{동네·건물} 정전({원인}) 순간 운행 중이던 승강기가 멈췄습니다." |
 | `smoke` | "{원인}의 연기가 {N}초 동안 덮은 {동네}에서 난 호흡 곤란입니다." |
-| `level` | "불어난 물이 {건물·구간}의 높이를 넘으며 {승강기가 멈췄습니다·차가 갇혔습니다}." |
+| `level` | (도로) "불어난 물이 차오르던 {사고 구간}에서 난 사고입니다({원인})." · (승강기) "불어난 물에 {건물} 지하가 잠겨 전기가 끊긴 순간 승강기가 멈췄습니다." |
 
   - 이야기 연쇄의 부모가 있으면(`csq` 가 `reoffend`·`getaway`·`hideout`·`arson`): "사건 {P코드} {P이름}에서 이어졌습니다 — {연쇄 이름}."
-  - 자식이 있으면: "이 사건에서 이어진 사건: 12 교통사고(몰린 길), 14 화재(옮겨붙음)." — 괄호 안은 자식의 `hz.src[0].what` 을 짧게 읽은 말이다.
+  - 자식이 있으면: "이 사건에서 이어진 사건: 12 교통사고(몰린 길), 14 화재(옮겨붙음)." — 괄호 안은 **그 부모가 주인인 몫**의 `what` 을 짧게 읽은 말이다(자식의 주된 몫이 다른 원인일 수 있다 — 태풍 정전이 주된 몫인 사고를 교통사고의 자식 줄에 "(꺼진 신호)"로 적지 않는다).
   - 그 건물에 `s.wear`(cause `'shock'`)가 있었으면: "이 건물은 사건 {코드}의 충격으로 이미 금이 가 있었습니다." (그 현장의 `wear` 와 `world.expo` 의 `shakeInc` — 왜 빨리 무너졌는가의 답이다.)
   - DIVERTED 에 `ref.lost` 가 있으면: "{부대}가 사건 {코드}({이름})로 돌려져 첫 도착이 약 {lost}초 늦었습니다."
   - `blockedBy` 가 있으면: "{수요} 부대가 사건 {코드들}에 묶여 {N}초 동안 배정하지 못했습니다."
@@ -1261,7 +1338,7 @@ X6 은 전체 붕괴 때 사건 교차로의 한 구간을 `closedReason 'incide
 - 교대 요약(`summary`)에 한 줄(있을 때만): "인과: 상태에서 난 사건 {n}건(몰린 길의 사고 {a} · 옮겨붙은 불 {b} · …, 가장 긴 사슬 {k}단계 — 07 쓰러진 나무 → 09 교통사고 → 11 교통사고), 이야기 연쇄 {s}건, 전환 배정 {m}회(늦어진 시간 합 {t}초), 병원 우회 이송 {h}회, 정전 {p}회, 조건은 맞았지만 상한·부하로 일어나지 않은 것 {d}건." — 법칙의 수는 `hazardLabel` 로 읽는다.
 - `ShiftReport.world` 에 숫자와 줄(`spawned` = 법칙·규칙이 만든 사건 수). 화면은 보고서 패널이 `chain` 을 사건 분석 아래에 그린다(`ui/panels.tsx` 의 보고서 사건 항목 한 곳).
 - 문장 수: 사건 분석(`analysis`)의 9줄 상한과 따로 센다(`chain` 은 4줄).
-- **문장마다 가리키는 기록이 있어야 한다**(테스트): `{원인}` 의 기록 id 가 `sim.events` 에 있고, `hz.src[0].ref` 의 구간·건물이 있고, "통제 뒤 … 몰린 동안"이면 그 통제 기록의 시각 ≤ `hz.since` + 12.
+- **문장마다 가리키는 기록이 있어야 한다**(테스트): `{원인}` 의 기록 id 가 `sim.events` 에 있고, `hz.src[0].ref` 의 구간·건물이 있고, "통제 뒤 … 몰린 동안(약 N초)"이면 그 통제 기록의 시각 ≤ `hz.at` 이고 `N ≤ hz.at − 그 기록의 시각 + 12`.
 
 ### 3.10 X6 와 함께 넣을 부분
 
@@ -1287,7 +1364,7 @@ X6 이 이 한 줄을 넣지 않고 끝났으면 I1-b 가 같은 자리에 넣�
 | L2 열·불티 | 폭발 순간과 반경·피해량(`Signal.size`·`mag` — b3-8 이 `mag` 를 더한다), 열린 현장의 불(`tickFire`) | 같은 |
 | L3 충격 | 폭발·붕괴의 크기, 처음 건전도를 낮추는 자리(`catOf` — I2 가 적어 둔 `WEAR_INTEG` 줄), `blockRoad`(면한 길을 먼저) | X6 의 현장 안 식(`catOnBlast`)을 같은 꼴로 현장 밖에 잇는다 |
 | L7 재발화 | `placeMarks` 의 `burnt`·`collapsed`(그 건물은 재발화를 만들지 않는다) | X6 이 닫은 건물에 사건을 내지 않는다는 X6 의 규칙과 맞춘다 |
-| C4·C8·C11 | 변전소·발전소·방송국 현장의 폭발·전소, 그리고 모든 붕괴·폭발 자리의 국지 손상 | 기반 시설 손상의 가장 큰 원인 |
+| C4·C8·C11 | 변전소·발전소·방송국 현장의 폭발·전소, 그리고 붕괴·폭발 자리에서 그 자리 설비의 문턱을 넘은 국지 손상 | 기반 시설 손상의 가장 큰 원인 |
 
 - X6 의 원인 기록(`cat.causeEv`, 문제 기록의 `causes`)은 이미 사슬을 이루므로 I1-a 의 확산 단계가 그대로 읽는다(붕괴 → 사망 → …).
 - **X6 가 가진 건물 상태**(`placeMarks`·`Scene.cat`)를 `sim.world` 로 옮기지 않는다(§9). 사건이 없던 이웃의 노출만 `world.expo` 에 새로 둔다(§3.6c). G4 의 기록 전용 칸(`markRuin`·`recordFall`)은 신호로 쓰지 않는다 — 신호는 X6 의 상태를 바꾸는 함수 안에서 보낸다.
@@ -1325,15 +1402,15 @@ X6 이 이 한 줄을 넣지 않고 끝났으면 I1-b 가 같은 자리에 넣�
 
 | 화살표 | 무엇이 | 상태 · 법칙 | 기록 |
 |---|---|---|---|
-| 나무가 쓰러진다 | 평소 추첨의 `traffic/tree`(교대당 0.38건) 또는 태풍 큐의 나무 — **원인은 무엇이든 된다** | 그 구간 `closed`·`closedReason 'incident'`, 장부 `srcEv[c] = I.blockEv` | '○○로 통행 불가 — 쓰러진 나무가 길을 막았습니다.'(`I.blockEv` — b0) |
-| 통제 → 차가 몰린다 | 교통 모델(§3.6b): 이웃 구간은 뒤로 밀리고(`queue` — 지금도 있다), **우회로의 구간에 차가 옮겨 온다**(`divert` — 새로). 12초마다 혼잡이 35%씩 따라 오른다 | `exQueue`·`exDiv`, `qBy`·`divertBy` = 그 구간 | 없음(연속 값 — 혼잡의 변화는 지금도 기록하지 않는다) |
-| 몰린 길 → 사고 위험이 는다 | **L1**: `λ = A × 초과 × 통행량 × 노면 × 길이`. 간선 우회로가 초과 1.0 으로 차면 그 구간은 평소의 약 14배 | `world.hz.cells.roadCrash[구간].H` 가 쌓인다 | 없음(문턱을 넘기 전에는 아무것도 남기지 않는다) |
-| (대부분) 아무 일도 없다 | 나무를 치우면 `divert` 가 0 이 되고 적분이 멎는다. 통제 한 번이 사고로 이어질 확률은 5~15% | `since = −1`, `H` 는 그대로 | 없음 |
+| 나무가 쓰러진다 | 평소 추첨의 `traffic/tree`(교대당 0.38건) 또는 태풍 큐의 나무 — **원인은 무엇이든 된다** | 그 구간 `closed`·`closedReason 'incident'`·`slow + 1.4`, 장부 `closeEv[c] = I.blockEv`(닫힘의 주인) | '○○로 통행 불가 — 쓰러진 나무가 길을 막았습니다.'(`I.blockEv` — b0) |
+| 통제 → 차가 몰린다 | 교통 모델(§3.6b): 이웃 구간은 뒤로 밀리고(`queue` — 지금도 있다), **우회로의 구간에 차가 옮겨 온다**(`divert` — 새로). 12초마다 혼잡이 35%씩 따라 오른다 | `exQueue`·`exDiv`, `qBy`·`divertBy` = 그 구간, `qEv` = 통제 기록(밀린 구간 쪽에 복사 — 나무를 치운 뒤 밀림이 빠지는 3분 동안에도 남는다) | 없음(연속 값 — 혼잡의 변화는 지금도 기록하지 않는다) |
+| 몰린 길 → 사고 위험이 는다 | **L1**: `λ = A × 초과 × 통행량 × 노면 × 길이`. 간선 우회로가 초과 1.0 으로 차면 그 구간은 평소의 약 3.5배가 더해진다 | `world.hz.cells.roadCrash[구간].H` 가 쌓인다 | 없음(문턱을 넘기 전에는 아무것도 남기지 않는다) |
+| (대부분) 아무 일도 없다 | 나무를 치우면 `divert` 가 0 이 되고 적분이 멎는다. 간선 통제 한 번이 사고로 이어질 확률은 6~8%(목표 5~15%) | `since = −1`, `H` 는 그대로 | 없음 |
 | (가끔) 사고가 난다 | 그 구간의 문턱(`hz:roadCrash:<구간>:<n>`)을 넘는다 | `traffic/std`(간선이고 초과가 크면 규모 3, 버스가 낄 수 있다), 그 구간의 끝 교차로, `edgeId` = 그 구간 | '막힌 길을 피해 몰린 차들 사이에서 사고가 났습니다 — △△ 교차로.' `causes` = [나무의 통제 기록], `parent` = 나무 사건, `hz = { src: [{ what: 'divert', ref: 나무가 막은 구간 }] }` |
-| 그 사고 → 다시 밀린다 | 사고 현장의 감속(`slow + 1.4`)·통제가 새 뿌리가 된다 → L1 | 되먹임(기대값 0.03~0.17) | 셋째 사고는 사슬 3건 상한으로 버려진다(`gen.dropped 'depth'`) |
+| 그 사고 → 다시 밀린다 | 사고 현장의 감속(`slow + 1.4`)·통제가 새 뿌리가 된다 → L1 | 되먹임(기대값 0.04~0.08) | 셋째 사고는 사슬 3건 상한으로, 같은 나무에서 난 셋째 가지는 한 뿌리의 가지 상한으로 버려진다(`gen.dropped 'depth'`) |
 | 보고서 | `buildReport` | — | "○○로 통제(사건 07 쓰러진 나무) 뒤 △△로에 차량이 몰린 동안(약 140초) 난 사고입니다." |
 
-같은 표가 쓰러진 나무 자리에 사고 통제·전면 공사·낙하물·건물 잔해·홍수 통제를 넣어도 그대로 성립한다(부모는 주인이 사건일 때만 — 공사·낙하물에서 온 사고는 원인 기록만 갖는다). **증거**: 개입 시험(§6 I1-b 10) — 같은 시드에서 통제만 지우면 그 원인의 사고가 없다.
+같은 표가 쓰러진 나무 자리에 사고 통제·전면 공사·낙하물·건물 잔해·홍수 통제를 넣어도 그대로 성립한다(부모는 주인이 사건일 때만 — 공사·낙하물에서 온 사고는 원인 기록만 갖는다). **증거**: 개입 시험(§6 I1-b 10) — 같은 시드에서 나무가 길에 만든 상태(통제와 감속)만 지우고 장부는 그대로 두면 그 원인의 사고가 없고 장부의 구멍도 없다.
 
 **② "건물이 붕괴되어서 더 큰 사고로 이어진다"**
 
@@ -1341,11 +1418,11 @@ X6 이 이 한 줄을 넣지 않고 끝났으면 I1-b 가 같은 자리에 넣�
 |---|---|---|---|
 | 건물이 무너진다 | X6 의 `collapseBuilding`(불·폭발이 깎은 건전도에서) 또는 무너진 채 시작하는 사건 | 신호 `catastrophe`(data 1, `mag` 1) | `STRUCT_COLLAPSE`(X6) |
 | → 길이 막힌다 | X6 `blockRoad`(면한 길을 먼저 — b3-8), 사건 뒤에는 C2 의 잔해 | 구간 `closed` → §3.6b → **L1**(예 ① 의 길) | 통제 기록(`I.blockEv`), 잔해 기록(C2) |
-| → 옆 건물이 흔들린다 | **L3 (가)**: 틈 8 안의 이웃에 `shake += 0.25 × (1 − 틈/8)`. 약한 배관은 끊긴다(`hz:pipe:<건물>` 의 문턱) | `world.expo[이웃].shake`·`pipe` | '○○ 붕괴의 충격으로 옆 △△에 금이 갔습니다.' · '△△의 가스 배관이 충격으로 손상됐습니다.'(`truth`, 원인 = 붕괴 기록) |
-| → 그 자리의 전선·수도관이 끊긴다 | C4 (라)·C11: 반경 90·80 의 국지 정전·수압 저하 | 꺼진 신호 → 혼잡 → **L1**, 정전 순간의 승강기 → **L5**, 그 범위 화재의 급수 | 알림(20~40초 뒤), 복구 기록 |
-| 금 간 건물 → 내려앉는다 | **L3 (다)** `structFail`: `λ = A × (shake − 0.15)` | 문턱을 넘으면 `collapse/std`, 규모는 금의 크기 | '금이 가 있던 건물이 내려앉았습니다 — △△.' `parent` = 처음 붕괴 |
+| → 옆 건물이 흔들린다 | **L3 (가)**: 틈 15 안의 이웃에 `shake += 0.6 × (1 − 틈/15)`(무너진 채 시작하는 사건은 0.35 ×). 약한 배관은 끊긴다(`hz:pipe:<건물>` 의 문턱 — 중앙값 틈의 이웃이면 17%) | `world.expo[이웃].shake`·`pipe` | '○○ 붕괴의 충격으로 옆 △△에 금이 갔습니다.' · '△△의 가스 배관이 충격으로 손상됐습니다.'(`truth`, 원인 = 붕괴 기록) |
+| → 그 자리의 전선·수도관이 끊긴다 | C4 (라)·C11: 그 자리 전선·수도관의 문턱을 넘으면(전체 붕괴의 75% 쯤) 반경 90·80 의 국지 정전·수압 저하 | 꺼진 신호 → 혼잡 → **L1**, 정전 순간의 승강기 → **L5**, 그 범위 화재의 급수 | 알림(20~40초 뒤), 복구 기록 |
+| 금 간 건물 → 내려앉는다 | **L3 (다)** `structFail`: `λ = A × (shake − 0.1)`(전체 붕괴 한 번에 0.1~0.15건) | 문턱을 넘으면 `collapse/std`, 규모는 금의 크기 | '금이 가 있던 건물이 내려앉았습니다 — △△.' `parent` = 처음 붕괴 |
 | 끊긴 배관 → 가스가 샌다 | **L3 (다)** `pipeLeak` | `hazmat/std` | '충격으로 손상된 배관에서 가스가 샙니다 — △△.' |
-| 그 건물에 불이 난다(무엇 때문이든) | **L3 (나)**: 현장이 `wear` 로 낮은 건전도에서 시작하고, 배관이 끊겼으면 새는 밸브가 있다 → X6 의 구조·가스 모델이 그대로 돈다 | 삐걱임이 빨리 오고, 더 빨리·더 크게 무너지거나 가스가 폭발한다("더 큰 사고") | X6 의 `DANGER_SIGN`·`EXPLOSION`·`STRUCT_COLLAPSE`, 보고서 "이 건물은 사건 07 의 충격으로 이미 금이 가 있었습니다." |
+| 그 건물에 불이 난다(무엇 때문이든) | **L3 (나)**: 현장이 `wear` 로 낮은 건전도에서 시작하고, 배관이 끊겼으면 새는 밸브 소품이 있다(`s.rules` 는 그대로 — 대원은 밸브를 봐야 안다) → X6 의 구조·가스 모델이 그대로 돈다 | 삐걱임이 빨리 오고, 더 빨리·더 크게 무너지거나 가스가 폭발한다("더 큰 사고") | X6 의 `DANGER_SIGN`·`EXPLOSION`·`STRUCT_COLLAPSE`, 보고서 "이 건물은 사건 07 의 충격으로 이미 금이 가 있었습니다." |
 | 그 폭발·붕괴 → 다시 옆 건물 | L3 (가) · L2 의 불티 | 사슬 3건에서 끊긴다 | |
 
 **③ "화재가 붕괴를 유발한다" — X6 가 이미 이렇게 한다 (바꾸지 않는다)**
@@ -1366,7 +1443,7 @@ X6 의 붕괴 판정은 초당 확률이지만 **상태(건전도)가 위험률�
 
 | 화살표 | 메커니즘 | 있나 | 기록(`causes`) | 지표 |
 |---|---|---|---|---|
-| 폭우 → 다중 추돌 | **L1**: 재난의 비바람은 노면·시야 항 `S`(태풍 충격 1.38)로 **이미 막힌·몰린 구간의** 위험을 올린다. 간선·고속에서 초과가 크면 규모 3, 고속이면 다중 추돌. 날씨만으로는 사고를 내지 않는다(초과가 0 이면 0 — §9). 재난 큐의 '비바람에 미끄러진 차'는 지금처럼 따로 있다 | I1-b b3-6 | 발생 기록 → 그 순간의 몫들의 기록(통제·정전), `hz` | `hazard.natural`, `crossIncidentLinks`·`worldLinks` |
+| 폭우 → 다중 추돌 | **L1**: 재난의 비바람은 노면·시야 항 `S`(태풍 충격 1.38)로 **이미 막힌·몰린 구간의** 위험을 올린다. 간선·고속에서 초과가 크면 규모 3(버스가 낄 수 있다. 다중 추돌 시나리오는 내지 않는다 — 대형 사고는 교대에 하나라는 N5 의 틀과 부딪힌다, §3.7 L1). 날씨만으로는 사고를 내지 않는다(초과가 0 이면 0 — §9). 재난 큐의 '비바람에 미끄러진 차'는 지금처럼 따로 있다 | I1-b b3-6 | 발생 기록 → 그 순간의 몫들의 기록(통제·정전), `hz` | `hazard.natural`, `crossIncidentLinks`·`worldLinks` |
 | 다중 추돌 → 도로 차단 | `scenarios/major.ts` 의 `onCreate` 가 구간을 막는다 | 있다 | 통제 기록 → 발생 기록. id 를 `I.blockEv` 에(0단계 4번) | `systems.share.road`(`I.blockedEdge`) |
 | 도로 차단 → 다른 사건의 우회·지연 | 통제가 생기기 **전에** 그 구간을 지나기로 경로를 정한 부대는 그 앞에서 ROUTE_BLOCKED '통제'(`resources.ts:420`)로 멈추고 되짚어 다른 길로 간다. 늦으면 도착 때 TRAFFIC_DELAY | 있다 | ROUTE_BLOCKED → `J.blockEv`(다른 사건), TRAFFIC_DELAY → 그 ROUTE_BLOCKED(0단계 4번) | `crossIncidentLinks`, `replan.route`, `replan.fromWorld`, `spread` |
 | (한계 — 일부 풀림) 이미 알려진 통제 → 우회 | 통제를 안 뒤에 출발한 부대는 처음부터 우회로로 경로를 정한다. 늘어난 시간은 예정 도착에 이미 들어가 기록되지 않는다 — **다만 이제 그 우회로가 실제로 몰려 있어**(§3.6b) 늦으면 도착 때 TRAFFIC_DELAY 가 남는다(원인을 통제까지 잇지는 않는다 — 혼잡만으로 늦은 것) | §3.6b | TRAFFIC_DELAY(`ref { unit }`) | `systems.share.road` |
@@ -1390,7 +1467,7 @@ npx tsx scripts/sweep.ts 60 --metrics | tail -16                  # 지표 줄(+
 npx tsx scripts/sweep.ts 30 --diff hard --json > $SCR/b-<단계>-hard.json
 for z in typhoon flood quake wildfire tsunami; do npx tsx scripts/sweep.ts 20 --disaster $z --json > $SCR/b-<단계>-$z.json; done
 npx tsx scripts/sweep.ts 20 --force traffic/tree --scen --metrics --hazard      # §3.6b · L1 (사용자의 예 ①)
-npx tsx scripts/sweep.ts 20 --force traffic/pileup --scen --metrics --hazard    # L1 — 간선·고속의 전면 통제
+npx tsx scripts/sweep.ts 20 --force traffic/pileup --scen --metrics --hazard    # L1 — 간선·고속의 전면 통제에서 난 사고 (강제한 다중 추돌이 원인 쪽이다)
 npx tsx scripts/sweep.ts 20 --force fire/std --scen --metrics --hazard          # L2 · L7 · C5 · L4
 npx tsx scripts/sweep.ts 20 --force collapse/gasblast --scen --metrics --hazard # L2 의 불티 · L3 · C2 · C4 (라) (사용자의 예 ②)
 npx tsx scripts/sweep.ts 20 --force traffic/bus --scen --metrics                # C3
@@ -1399,12 +1476,12 @@ npx tsx scripts/sweep.ts 1 --log <시드> --metrics                             
 
 **측정 도구에 더하는 것**(b3-4 — `scripts/metrics.ts`, 읽기만):
 
-- 지표 줄 `hazard:` 와 `--json` 의 `metrics.hazard = { natural, byLaw, parented, orphan, story, ruleMade, queued, waited, dropped: { depth, cap, late, expired, busy }, holes, gain }`.
+- 지표 줄 `hazard:` 와 `--json` 의 `metrics.hazard = { natural, byLaw, parented, orphan, rootMax, story, ruleMade, queued, waited, dropped: { depth, cap, late, expired, busy }, holes, gain }`(`rootMax` = 한 뿌리에서 난 법칙 사건 수의 최댓값).
   - **`natural` = 스크립트 없이 난 인과 사건의 수** = `I.hz` 가 있는 사건. `byLaw` 는 법칙별.
   - `story` = 이야기 연쇄(`csq` 가 `reoffend`·`getaway`·`hideout`·`arson`), `ruleMade` = `spawnConsequence` 가 만든 사건(I1 에서는 0 — N8·N9 의 조건부 연쇄), `queued` = 재난 큐가 직접 일으킨 사건(`tag 'disaster:…'` 이고 `hz` 가 없다). "스크립트" 쪽의 수다.
   - `gain` = 법칙이 낸 사건을 부모로 둔 법칙 사건 수 ÷ 법칙이 낸 사건 수(되먹임의 기대값 — 1 아래여야 한다).
-  - `holes` = `world.hz.holes` 의 합. **관문**(`checkMetrics`): `holes = 0`, 교대마다 `natural + ruleMade ≤ CSQ_SPAWN_CAP`.
-- `scripts/hazstats.ts`(새로 — `sweep --hazard`, `catstats`·`injurystats` 와 같은 방식): 교대마다 법칙의 **노출량**을 틱 표본으로 재서 낸다 — 도로 `Σ_e ∫ x V S ℓ dt`(네 몫으로 나눠)·우회로의 최대 혼잡과 지속 시간·닫힌 구간 수, 열 `Σ ∫ max(0, q − Q0) dt` 와 노출된 건물 수, 충격을 받은 건물 수와 `shake` 분포, 연기 `Σ ∫ c × base dt`, 정전이 닿은 4층 이상 건물 수, 닫힌 화재의 `e0` 분포. **상수는 이 값으로 맞춘다**: `상수 = 목표 건수 ÷ 노출량의 평균`.
+  - `holes` = `world.hz.holes` 의 합. **관문**(`checkMetrics`): `holes = 0`, 교대마다 `natural + ruleMade ≤ CSQ_SPAWN_CAP` · 이야기 연쇄 + 법칙 사건 ≤ 6 · `rootMax ≤ HZ.ROOT_MAX`.
+- `scripts/hazstats.ts`(새로 — `sweep --hazard`, `catstats`·`injurystats` 와 같은 방식. **b3-4 는 뼈대만, 재는 값은 그 상태가 생기는 단계가 한 줄씩 더한다**): 교대마다 법칙의 **노출량**을 틱 표본으로 재서 낸다 — 도로 `Σ_e ∫ x V S ℓ dt`(네 몫으로 나눠)·우회로의 최대 혼잡과 지속 시간·닫힌 구간 수, 열 `Σ ∫ max(0, q − Q0) dt` 와 노출된 건물 수, 충격을 받은 건물 수와 `shake` 분포(`S_MIN` 을 넘은 건물 수 · 배관이 끊긴 건물 수를 따로), 내력의 `ev` 가 −1 인 초과의 노출량(장부의 구멍 — 0 이어야 한다), 연기 `Σ ∫ c × base dt`, 정전이 닿은 4층 이상 건물 수, 닫힌 화재의 `e0` 분포. **상수는 이 값으로 맞춘다**: `상수 = 목표 건수 ÷ 노출량의 평균`.
 
 **목표**(I1-b 시작 커밋 = R3 뒤 기준 대비. 구현 메모 "0단계" 표의 b1 뒤 줄):
 
@@ -1416,7 +1493,7 @@ npx tsx scripts/sweep.ts 1 --log <시드> --metrics                             
 | 평균 대응 | 기준 + 6초 이하(그 가운데 §3.6b 의 우회 몰림만으로 +3초 이하) |
 | 교대당 사건 수 | 기준 × 1.08 이하(보통 14.1 → 15.2 이하) |
 | **스크립트 없이 난 인과 사건 `hazard.natural`** | 보통 60교대에 15~40건(교대당 0.25~0.7), 그 가운데 부모가 있는 것이 1/3 이상. 재난 다섯 × 20교대는 교대당 1~3건 |
-| 법칙별(강제 20교대) | `traffic/tree`: 나무를 원인으로 한 `roadCrash` 1~4건(통제 하나에 5~20%) · `fire/std`: `heatSpread` 1~4건 · `collapse/gasblast`: 충격을 받은 이웃 10채 이상, `structFail` + `pipeLeak` 1~4건 · 태풍 20: `liftStall` 교대당 0.5~2건 · 보통 60: `rekindle` 0~2건(정직한 값 — §3.7 L7), `smokeIll` 1~5건 |
+| 법칙별(강제 20교대) | `traffic/tree`: 나무를 원인으로 한 `roadCrash` 1~4건(통제 하나에 5~20%) · `fire/std`: `heatSpread` 1~4건 · `collapse/gasblast`: `S_MIN` 을 넘은 이웃 10채 이상, `structFail` + `pipeLeak` 1~4건 · 태풍 20: `liftStall` 교대당 0.5~2건 · 보통 60: `roadCrash` 교대당 0.2~0.5건, `rekindle` 0~2건(정직한 값 — §3.7 L7), `smokeIll` 1~5건, `structFail` + `pipeLeak` 2~5건 |
 | 되먹임 `hazard.gain` | 0.3 이하 |
 | 부모 있는 사건 비율 | 보통 1~5%(기준 0.5%), 재난 교대 3~15% |
 | 확산 3단계 이상(`spread.ge3`) | 기준 이상(보통 60교대 4건 — 이미 넘는다). **도로·건물·기반 시설을 지나는 길**이 예시에 하나 이상(`systems.share` 의 `infra` > 0, `road`·`building` 이 기준 이상) |
@@ -1425,11 +1502,11 @@ npx tsx scripts/sweep.ts 1 --log <시드> --metrics                             
 | 결과 다양성 | `outcomeEntropy` 가 기준 − 0.05 이상, `storyEntropy` 는 기준 이상, `flat` 이 늘지 않는다 |
 | 행동 다양성 | `actions.entropy` 가 기준 이상 |
 | 멈춤 | `stall.candidates = 0`, `forgotten = 0`(보통) |
-| 연쇄 상한 | `maxParentDepth ≤ 2`, 법칙·규칙이 만든 사건 교대당 ≤ `CSQ_SPAWN_CAP`, 부모 있는 사건 교대당 ≤ 6 |
+| 연쇄 상한 | `maxParentDepth ≤ 2`, 한 뿌리의 법칙 사건 ≤ 2(`rootMax`), 이야기 연쇄 + 법칙 사건 교대당 ≤ 6(부모 없는 법칙 사건 ≤ 3), 법칙·규칙이 만든 사건 교대당 ≤ `CSQ_SPAWN_CAP` |
 | 장부 | `hazard.holes = 0` |
-| 교대당 시간 | 기준 × 1.05 이하(R3 뒤 이미 1.55배 — `tickHazards` 와 `drift` 의 우회 계산을 합쳐) |
+| 교대당 시간 | **b3-3 끝 대비 × 1.10 이하**, 그 가운데 틀과 교통의 몫(법칙을 등록한 채 시험 손잡이로 `CSQ_SPAWN_CAP = 0` 을 주어 사건을 막고 잰 값)이 **× 1.03 이하** — 나머지는 늘어난 사건을 도는 시간이다. (초안의 "기준(b1 뒤) × 1.05"는 이미 지나간 예산이다 — b3-1~b3-3 이 사용자 CPU +4% · 교대당 +5% 를 썼다, 구현 메모) |
 
-**범위를 벗어나면 돌리는 손잡이(이 순서로)**: 법칙의 세기 상수(`A_ROAD`·`K_HEAT`·`K_EMBER`·`A_STRUCT`·`A_PIPE`·`K_RE`·`LIFT_RIDE`·`RR_SMOKE`·`FLOOD_CAR` — `world/laws/*.ts` 의 `export const` 한 객체씩, 시험이 키워 쓸 수 있게) → 상태의 크기(`DIV_K`·`DIV_MAX`·`K_SHOCK`·국지 반경) → 법칙별 상한 → `HZ.ORPHAN_CAP` → (선택) `tune.csqMul`(빈도 손잡이 표 `[0.5, 0.75, 1, 1.25, 1.5]` — 세기 상수에 곱한다. `Tuning` 에만 더하고 프리셋 모양은 고치지 않는다). 연쇄 상한(3·6)과 `npm run check` 의 기준 범위는 고치지 않는다.
+**범위를 벗어나면 돌리는 손잡이(이 순서로)**: 법칙의 세기 상수(`A_ROAD`·`K_HEAT`·`K_EMBER`·`A_STRUCT`·`A_PIPE`·`K_RE`·`LIFT_RIDE`·`RR_SMOKE` — `world/laws/*.ts` 의 `export const` 한 객체씩, 시험이 키워 쓸 수 있게) → 상태의 크기(`DIV_K`·`DIV_MAX`·`K_SHOCK`·붕괴 계수와 닿는 틈·`S_MIN`·국지 반경·`'level'` 항의 0.8 — **L3 는 세기 상수보다 상태의 크기를 먼저 본다**: `shake − S_MIN ≤ 0` 이면 `A_STRUCT`·`A_PIPE` 는 듣지 않는다) → 법칙별 상한 → `HZ.ORPHAN_CAP` → (선택) `tune.csqMul`(빈도 손잡이 표 `[0.5, 0.75, 1, 1.25, 1.5]` — 세기 상수에 곱한다. `Tuning` 에만 더하고 프리셋 모양은 고치지 않는다). 연쇄 상한(3·6)과 `npm run check` 의 기준 범위는 고치지 않는다.
 
 ---
 
@@ -1437,7 +1514,7 @@ npx tsx scripts/sweep.ts 1 --log <시드> --metrics                             
 
 **I1-a(이 세션 — 구현됨, `48dba83`)**: §2.17.
 
-**I1-b** — 단계마다 커밋(`wf/causality`, 한국어, 푸시하지 않는다). b0·b1·b2·b3-1 은 끝났다(구현 메모). b3-2·b3-3 은 예전 글 그대로다. **b3-4 부터가 2026-11-20 의 다시 쓰기로 바뀐 단계다.**
+**I1-b** — 단계마다 커밋(`wf/causality`, 한국어, 푸시하지 않는다). b0·b1·b2·b3-1·b3-2·b3-3 은 끝났다(구현 메모 — C6·C3·C2 는 예전 글 그대로 구현됐다). **b3-4 부터가 2026-11-20 의 다시 쓰기로 바뀐 단계다.**
 
 | 단계 | 내용 | 해시 | 확인 |
 |---|---|---|---|
@@ -1445,31 +1522,51 @@ npx tsx scripts/sweep.ts 1 --log <시드> --metrics                             
 | b1 | 어긋난 기록 고치기(§3.11 1단계) — **끝남** | 바뀜 | 기준선 다시 재기 |
 | b2 | 세계 상태·신호·규칙의 틀 — **끝남** | **불변** | 해시 목록 diff 0 |
 | b3-1 | C6 `divertRecord` — **끝남** | 바뀜 | 그 규칙의 테스트 + §4 |
-| b3-2 | C3 `hospitalLoad` | 바뀜 | 같은 |
-| b3-3 | C2 `rubbleRoad` | 바뀜 | 같은 |
-| **b3-4** | **초과 위험 과정의 틀**(§3.6a): `types.ts` 의 새 자료형(§3.3 끝), `world/hazard.ts`, `tickWorld` 의 한 줄, `world/laws/index.ts`(빈 모음)와 `engine.ts` 의 import, `SpawnOpts.edgeId`·`causes`·`hz` 와 `createIncident` 의 세 자리, `ruleLoad` 로 전체 상한 세기, `zoneOfPlace` 를 좌표로, 측정 도구의 `hazard` 줄·`hazstats.ts`·`--hazard`. 법칙은 하나도 없다 | **불변** | 해시 목록 diff 0(b3-3 끝과). 틀의 단위 시험(가짜 법칙으로 — §6 I1-b 9) |
-| **b3-5** | **교통 모델의 일반 규칙**(§3.6b) — 커밋 둘: ① 장부와 초과의 네 몫(`noteRoadCause`·`noteBump`·`base`·`ex*`·`qBy`·`driftAt`, `Obstacle.ev` 채우기 — **불변**) ② 우회 몰림(`divert` 를 `target` 에, 쓰러진 나무의 `+0.7` 삭제 — **바뀜**) | ① 불변 ② 바뀜(닫힌 구간이 있는 모든 교대) | ① 해시 diff 0 ② **기준 다시 재기**(§4 전부 — 이 뒤의 "전"). 평균 대응 +3초 안, `DIV_K`·`DIV_MAX` 맞추기 |
-| **b3-6** | **L1 `roadCrash`**(`world/laws/road.ts`) + `A_ROAD` 맞추기 | 바뀜 | L1 의 테스트(개입 시험 포함), `--force traffic/tree`·`traffic/pileup` 20교대, 보통 60 의 `natural` |
-| **b3-7** | 건물의 노출(§3.6c 의 `expoOf`·`neighborsOf`·`fireLoad`) + **L2 `heatSpread`**(`laws/heat.ts`) — 열 항 먼저, 불티는 b3-8 의 `Signal.mag` 뒤에 켠다(그 전에는 `mag` 대신 `size` 만으로) | 바뀜 | L2 의 테스트, `--force fire/std` 20교대. 같은 교차로의 두 사건(확인 필요) |
-| **b3-8** | **L3 충격**(`laws/shock.ts`): `Signal.mag` 와 X6·`blast` 의 호출, 충격 → `shake`·`pipe`, `applyExpo`·`Scene.wear`·`catOf` 의 한 줄·새는 밸브, `structFail`·`pipeLeak`, `blockRoad` 의 면한 길, L2 의 불티 항 | 바뀜 | L3 의 테스트, `--force collapse/gasblast` 20교대, X6 의 수(120교대 — 전체 붕괴·폭발·전소가 기준 ± 흔들림 안) |
-| **b3-9** | **L7 `rekindle`**(`laws/ember.ts`) + C10 `suspectZone`(`rules/…` — 남은 부분) | 바뀜 | L7·C10 의 테스트, 어려움 30·극한 30(재범이 있는 조건) |
-| **b3-10** | 국지 구역 값(`setZone` 의 `at`·`setZoneArea`·`zoneAt`·`isDark`) + **C4 `powerOut`**(상태) + **L5 `liftStall`**(`laws/power.ts`) + C8 `commsDown` + `PROBLEM_LABEL` 의 `order`·문장(INFRA_FAIL) | 바뀜 | 그 테스트, 태풍·지진 20교대, 변전소 강제 |
-| **b3-11** | **C5 `smokePlume`**(상태) + **L4 `smokeIll`**(`laws/smoke.ts`) | 바뀜 | 그 테스트, `--force fire/std`·산불 20교대 |
-| **b3-12** | **L6 `floodLow`**(`laws/flood.ts`) + (선택) C11 `waterMain` | 바뀜 | 그 테스트, 홍수 20교대 |
-| b4 | 보고서의 내력 문장(§3.9), 보고서 패널 한 곳 | 바뀜(요약 문장) | 화면 확인(포트 5218, 콘솔 오류 0) |
+| b3-2 | C3 `hospitalLoad` — **끝남** | 바뀜 | 같은 |
+| b3-3 | C2 `rubbleRoad` — **끝남** | 바뀜 | 같은 |
+| **b3-4** | **초과 위험 과정의 틀**(§3.6a): `types.ts` 의 새 자료형(§3.3 끝 — `SignalKind` 의 `'quake'`·`'blackout'` 포함), `world/hazard.ts`(`CSQ_SPAWN_CAP` 을 옮긴다), `tickWorld` 의 한 줄, `world/laws/index.ts`(빈 모음)와 `engine.ts` 의 import, `SpawnOpts.edgeId`·`causes`·`hz` 와 `createIncident` 의 자리, `tickIncidents` 의 "법칙 사건이 `placeGone` 건물이면 버린다" 한 줄, `ruleLoad` 로 전체 상한 세기, `zoneOfPlace` 를 좌표로, 측정 도구의 `hazard` 줄과 `scripts/hazstats.ts` 의 **뼈대**(`--hazard` — 재는 값은 뒤 단계가 한 줄씩 더한다: 아직 없는 상태를 잴 수 없다). 법칙은 하나도 없다 | **불변** | 해시 목록 diff 0(b3-3 끝과). 틀의 단위 시험(가짜 법칙으로 — §6 I1-b 9). **b2 의 시험 둘을 함께 고친다**: `placeState` 의 `toEqual({ mark, burnFrac, ruinFrac, usable })` 은 `toMatchObject` 로(b3-7 이 칸을 더한다), 전체 상한 시험은 `world.spawned = CSQ_SPAWN_CAP` 으로 손으로 채우는 대신 `world.log` 에 `made ≥ 0` 인 줄 여섯을 넣어 `ruleLoad` 를 채운다 |
+| **b3-5** | **교통 모델의 일반 규칙**(§3.6b) — 커밋 둘: ① 장부와 초과의 네 몫(항마다의 주인 `closeEv`·`slowEv`·`levelEv`·`Obstacle.ev`·정체의 `ev`, `bumps` 줄, `base`·`ex*`·`qBy`·`qEv`·`qInc`·`driftAt`, `canBlock` 으로 옮기기, `disaster.roadSill` 로 뽑기, `hazstats` 의 도로 줄 — **불변**) ② 우회 몰림(`divert` 를 `target` 에, 쓰러진 나무의 `+0.7` 삭제 — **바뀜**) | ① 불변 ② 바뀜(닫힌 구간이 있는 모든 교대) | ① 해시 diff 0, `drift` 의 난수 호출 수 그대로 ② **기준 다시 재기**(§4 전부 — 이 뒤의 "전"). 평균 대응 +3초 안, `DIV_K`·`DIV_MAX` 맞추기 |
+| **b3-6** | **L1 `roadCrash`**(`world/laws/road.ts`) + `createIncident` 의 `opts.edgeId`(§3.6b (다)) + `A_ROAD` 맞추기 | 바뀜 | L1 의 테스트(개입 시험 포함), `--force traffic/tree` 20교대, 보통 60 의 `natural`·`holes = 0` |
+| **b3-7** | 건물의 노출(`world/expo.ts` 의 `expoOf`·`neighborsOf`, `hazards.fireLoad`, `placeState` 의 새 칸) + **L2 `heatSpread`**(`laws/heat.ts`) — 열 항만(불티는 b3-8c). 따로 커밋: `knownHazardNear` 와 분석 AI 의 '연소 확대' 이름표, `fireBig` 신호의 `ev` 규칙 | 바뀜 | L2 의 테스트, `--force fire/std` 20교대. 같은 교차로의 두 사건(확인 필요 — 이 단계의 첫 일) |
+| **b3-8** | **L3 충격** — 셋으로: **a** `Signal.mag` 와 X6·`blast` 의 호출, 상태 규칙 `shockSpread`(`rules/structure.ts`) → `shake`·`pipe`·금 기록, `blockRoad` 의 면한 길 · **b** `applyExpo`·`Scene.wear`·`catOf` 의 `WEAR_INTEG` 한 줄·새는 밸브(`s.rules` 는 그대로) · **c** `structFail`·`pipeLeak`(`laws/shock.ts`)·`expo.pipe` 를 거두는 규칙·L2 의 불티 항 | 바뀜 | L3 의 테스트, `--force collapse/gasblast` 20교대, X6 의 수(120교대 — 전체 붕괴·폭발·전소가 기준 ± 흔들림 안) |
+| **b3-9** | **L7 `rekindle`**(`laws/ember.ts`) + C10 `suspectZone`(`rules/…` — 남은 부분). **'재발화' 이름표는 넣지 않는다**(§3.7 L7) | 바뀜 | L7·C10 의 테스트, 어려움 30·극한 30(재범이 있는 조건) |
+| **b3-10** | 셋으로: **a** 국지 구역 값(`setZone` 의 `at`·`setZoneArea`·`zoneAt`·`isDark`·`endZoneBy`)과 **C4 `powerOut`**(신호 `quake`·`blackout` 을 보내는 자리, 규칙 셋, `addBump`) · **b** **L5 `liftStall`**(`laws/power.ts`, `expo.darkened`) · **c** C8 `commsDown` + `PROBLEM_LABEL` 의 `order`·문장(INFRA_FAIL) | 바뀜 | 그 테스트, 태풍·지진 20교대, 변전소 강제 |
+| **b3-11** | **C5 `smokePlume`**(상태) + 변형 `medical/smoke` + **L4 `smokeIll`**(`laws/smoke.ts`) | 바뀜 | 그 테스트, `--force fire/std`·산불 20교대 |
+| **b3-12** | **L6 `floodLow`**(상태 규칙 — 건물 침수와 L5, 느려진 길의 `'level'` 장부) + (선택) C11 `waterMain` | 바뀜 | 그 테스트, 홍수 20교대 |
+| b4 | 보고서의 내력 문장(§3.9), 보고서 패널 한 곳, **교대 중에 보이는 표시**(§7 — 금 간 건물·끊긴 배관·국지 정전·연기 자리의 지도 표시, 사건 카드의 내력 칩, 범례) | 바뀜(요약 문장) · 화면은 결과 불변 | 화면 확인(포트 5218, 1600×900, 콘솔 오류 0), `npm run ui-check` |
 | b5 | 균형(§4)과 완료 조건 측정, I1-a 관문을 조인다(M-G1 0, M-G3 3, `holes`) | — | 아래 |
 
-법칙마다 "넣기 전 20교대 강제·보통 60 → 넣기 → 그 법칙이 걸리지 않은 교대의 해시가 그대로인가(`hashrun.sh` — 법칙마다 새 흐름이라 문턱을 넘지 않은 교대는 같아야 한다. b3-5 ② 만 예외) → 상수 맞추기 → 커밋" 순서다. 반쯤 된 법칙은 등록하지 않고(그 `import` 줄을 빼고) 보고에 적는다.
+**단계 안에서 커밋을 둘로 나누고, 확인하는 법이 다르다.** "문턱을 넘지 않은 교대의 해시는 그대로"는 법칙에만 성립한다 — 같은 단계에 묶인 상태 규칙·이름표·기록은 문턱과 상관없이 결과를 바꾼다(b3-7 의 '연소 확대' 이름표와 위험도 +0.3, b3-8 의 금 기록·`applyExpo`·`blockRoad` 의 면한 길, b3-9 의 C10, b3-10 의 국지 정전 `bump`·구역 상태·병원 한도 −2·C8, b3-11 의 연기 `bump`·실외 노출, b3-12 의 `'level'` 초과와 C11). 그대로 믿으면 없는 버그를 찾게 된다.
 
-**완료 조건** — 사용자의 말에서:
+- **(법칙 커밋)** `registerHazard` 한 줄과 그 법칙이 읽는 상태만: 해시 목록에서 바뀐 줄이 `Incident.csq === 그 법칙` 인 사건이 있는 교대와 같아야 한다(`hashrun.sh` + `hazstats` 의 `byLaw`). 법칙마다 새 흐름이라 문턱을 넘지 않은 교대는 같다.
+- **(상태·판단 커밋)** 분석 AI 의 이름표, `blockRoad`, 상태 규칙(`shockSpread`·C4·C5·C8·C10·C11·L6)과 그 기록: 걸리는 조건이 법칙과 달라 위의 확인을 쓰지 않는다 — 바뀐 교대마다 그 조건(알려진 큰 불 곁의 화재 신고가 있었는가, 전체 붕괴·폭발이 있었는가, 태풍 정전·지진이 있었는가, 큰 불이 45초 넘게 이어졌는가)이 있었는지를 기록으로 본다. **그 조건이 하나도 없던 교대의 해시는 그대로여야 한다.**
+- 순서: "넣기 전 20교대 강제·보통 60 → 넣기 → 위의 확인 → 상수 맞추기 → 커밋". 반쯤 된 법칙은 등록하지 않고(그 `import` 줄을 빼고) 보고에 적는다.
 
-1. **사용자의 예 셋이 정해진 시드에서 실제로 난다**(§6 I1-b 8·§6 I1-b 10·§6 I1-b 11): 쓰러진 나무 → 몰린 길의 사고(개입 시험 통과) · 붕괴 → 옆 건물의 금 → 내려앉음 또는 가스 누출, 그리고 금 간 건물의 화재가 더 빨리 무너진다 · 화재 → 붕괴(X6 — 이미 있다. 고치지 않았음을 X6 의 시험과 수로 확인).
-2. **스크립트 없이 난 인과 사건이 실제로 있다**: `hazard.natural` 이 §4 의 범위, `holes = 0`. "X 면 확률 p 로 Y" 꼴이 I1 의 코드에 없다(§6 I1-b 12 의 글자 검사: `world/laws/*.ts`·`world/rules/*.ts` 에 `spawnConsequence`·`.chance(` 가 없다).
-3. **하나의 사건에서 서로 다른 시스템으로 3단계 이상 실제 영향이 퍼지는 사례**: `metrics.systems.spread.ge3` 이 기준 이상이고, 예시 길 가운데 도로·건물·기반 시설을 지나는 것이 있다(§6 I1-b 8).
-4. **AI 가 새 정보로 기존 계획을 바꾸는 사례**: `replan.share` 가 기준 이상이고 `replan.fromWorld` 가 기준 이상. 테스트: 이송 중 목적지 변경(C3).
-5. **부대 부족이 다른 사건에 실제로 영향을 주는 사례**: `contention.divert.hurt ≥ 1` 이고 `lostSec > 0`, `blockedBy` 가 있는 NO_UNIT ≥ 1. 보고서에 그 문장이 있다.
-6. **모든 결과가 이벤트 로그와 실제 상태에 일치**: `consistency.C1~C5` 가 모두 0(보통 60·어려움 30·재난 다섯 × 20). 보고서의 내력 문장마다 가리키는 사건·기록이 있다(테스트).
-7. **여러 시드에서 교착·무한 연쇄·무의미한 반복 없음**: 보통 60 에서 `stall.candidates = 0`, `forgotten = 0`. 어려움·극한·재난에서는 기준선보다 늘지 않는다. 모든 조건에서 `maxParentDepth ≤ 2`, 법칙·규칙이 만든 사건 교대당 ≤ `CSQ_SPAWN_CAP`, `hazard.gain ≤ 0.3`, `repeatMax` 가 기준 이하(극한 S12 #14 의 80 은 따로 본다 — 구현 메모).
+**덩어리**(40~100분짜리. 끝마다 `npm run check` · 어려움·극한 40 `--check` · 구현 메모 한 단락):
+
+| 덩어리 | 단계 | 무엇을 어떤 순서로 | 끝내는 조건에 덧붙일 것 |
+|---|---|---|---|
+| **h1** | b3-4 + b3-5 ① | 틀(자료형 → `hazard.ts` → `tickWorld`·`tickIncidents` 한 줄씩 → 가짜 법칙의 단위 시험 → `hazard` 지표 줄과 `hazstats` 뼈대) → 교통 장부(항마다의 주인 → `bumps` 줄 → 뿌리 가르기와 `qEv` → 네 몫 → `canBlock`·`roadSill` 옮기기 → `hazstats` 의 도로 노출량). 사건을 만드는 것이 하나도 없다 | **해시 목록 diff 0**(b3-3 끝과 — 123줄). `drift` 의 난수 호출 수 그대로. 보통 12교대의 도로 노출량(네 몫으로 나눠)과 "장부 없는 초과"(내력 `ev < 0` 인 몫의 노출량 — 0 이어야 한다)를 보고에 |
+| **h2** | b3-5 ② + b3-6 | 우회 몰림(`divert`·`+0.7` 삭제) → `DIV_K`·`DIV_MAX` 맞추기 → **기준 다시 재기**(§4 의 명령 전부 — 뒤 덩어리들의 "전") → L1 등록 → `A_ROAD` 를 노출량으로 맞추기 → 개입 시험(§6 I1-b 10) | 평균 대응 기준 +3초 안. 보통 60 의 `roadCrash` 교대당 0.2~0.5건 · `holes = 0` · `gain ≤ 0.3`. `--force traffic/tree` 20교대에서 나무를 원인으로 한 사고 1~4건. 새 기준 파일의 절대 경로 |
+| **h3** | b3-7 | 같은 교차로의 두 사건을 먼저 확인(`--force fire/std` 20) → `expo.ts`·`fireLoad`·`placeState` → L2 열 항(법칙 커밋) → `knownHazardNear`·'연소 확대'·`fireBig` 의 `ev`(상태·판단 커밋) | `heatSpread` 가 강제 20교대에 1~4건, 화재 성공률 기준 − 2%p 안. 기다리게 하는 갈래(`hold: 300`)를 썼는지 보고에 |
+| **h4** | b3-8 a + b | `Signal.mag` → `shockSpread` 와 금·배관 기록 → `blockRoad` → `applyExpo`·`wear`·`catOf` 한 줄·밸브. 법칙은 아직 없다(상태·판단 커밋만) | **X6 의 수 120교대**(전체 붕괴·폭발·전소·전원 철수가 기준 ± 흔들림 안), `S_MIN` 을 넘은 건물 수와 배관이 끊긴 건물 수(`hazstats`), 모든 바닥에 닿는다, `s.rules` 글자 검사 |
+| **h5** | b3-8 c + b3-9 | `structFail`·`pipeLeak`(법칙 커밋 둘) → 불티 항 → L7 → C10 | `--force collapse/gasblast` 20교대에 `structFail` + `pipeLeak` 1~4건. 어려움 30·극한 30 에서 재범이 조건으로 걸리는가. 보통 60 의 `rekindle` 수(0~2 — 정직한 값) |
+| **h6** | b3-10 a + b + c | 국지 구역 값 → 신호 `quake`·`blackout` → C4 규칙 셋 → L5 → C8 → INFRA_FAIL | 태풍·지진 20교대(`liftStall` 태풍 교대당 0.5~2건, 지진의 승강기 사건 기준 +1/교대 안), 변전소 강제, 정전이 반드시 복구된다(교대 끝에 `power < 1` 인 동네 0 — 원인이 살아 있는 것 빼고), `bump` 가 얹기 전 값으로 돌아온다 |
+| **h7** | b3-11 + b3-12 | C5 → `medical/smoke` → L4 → L6(건물 침수·`'level'` 장부) → (시간이 남으면) C11 | 산불·홍수 20교대(사건 수 기준 × 1.1 안), 보통 60 의 `smokeIll` 1~5건. C11 을 하지 않았으면 notDone 에 |
+| **h8** | b4 + b5 | 내력 문장 → 보고서 패널 → 지도 표시·칩·범례(읽기만) → §4 의 목표 표 전부 → 완료 조건 → 관문 조이기 | `npm run ui-check`, 화면을 직접 본다(5218). 완료 조건 일곱의 수치와 본 그림의 절대 경로. 못 맞춘 조건은 까닭과 함께 notDone 에 |
+
+**주 세션이 띄우기 전에 고칠 것**(작업자는 고치지 않는다): `docs/specs/workflows/args/I1-b.json` 의 `chunks`(지금은 옛 차례 `b3a`·`b3b` — C9·C10·C1·C12 를 가리킨다)·`title`·`reviewFocus`(교대당 시간의 "× 1.2" → §4 의 줄, "규칙이 만든 사건" → "법칙이 만든 사건", 정보 격리에 `s.rules`·`world.expo`), `docs/specs/README.md` 17·80행("규칙 11개"·"`b3` 규칙 1~6 → 7~11"), N9·I2 설계서의 글자(§3.7 끝).
+
+**완료 조건** — 사용자의 말에서 나온 둘(가·나)과 처음부터 있던 다섯(1~5)을 새 설계의 지표로:
+
+- **(가) 사용자의 예 셋이 정해진 시드에서 실제로 난다**(§6 I1-b 8·10·11): 쓰러진 나무 → 몰린 길의 사고(개입 시험 통과 — 상태만 지우고 장부는 두었을 때 그 원인의 사고가 없고 구멍도 없다) · 붕괴 → 옆 건물의 금 → 내려앉음 또는 가스 누출, 그리고 금 간 건물의 화재가 더 빨리 무너진다(방치 시험) · 화재 → 붕괴(X6 — 이미 있다. 고치지 않았음을 X6 의 시험과 120교대의 수로 확인).
+- **(나) 스크립트 없이 난 인과 사건이 실제로 있다**: `hazard.natural` 이 §4 의 범위, `holes = 0`. "X 면 확률 p 로 Y" 꼴이 I1 의 코드에 없다(§6 I1-b 12 의 글자 검사: `world/laws/*.ts`·`world/rules/*.ts` 에 `spawnConsequence`·`.chance(` 가 없다). 남은 스크립트(이야기 연쇄 · 재난 큐)의 수를 `hazard.story`·`queued` 로 함께 낸다.
+
+1. **하나의 사건에서 서로 다른 시스템으로 3단계 이상 실제 영향이 퍼지는 사례**: `metrics.systems.spread.ge3` 이 기준 이상이고, 예시 길 가운데 **법칙을 지나는 것**(도로·건물·기반 시설 — 사건 → 통제 → 몰린 길의 사고 → 그 사고가 막은 다른 사건의 부대)이 있다(§6 I1-b 8).
+2. **AI 가 새 정보로 기존 계획을 바꾸는 사례**: `replan.share` 와 `replan.fromWorld` 가 기준 이상(b3-3 끝: 보통 60 에서 50.0% · 71). 테스트: 이송 중 목적지 변경(C3 — 끝남), 알려지지 않은 잔해 앞에서 되짚는 부대(C2 — 끝남), 법칙이 낸 사고의 통제를 만난 다른 사건의 부대(ROUTE_BLOCKED 의 원인이 그 사고의 통제 기록).
+3. **부대 부족이 다른 사건에 실제로 영향을 주는 사례**: `contention.divert.hurt ≥ 1` 이고 `lostSec > 0`, `blockedBy` 가 있는 NO_UNIT ≥ 1. 보고서에 그 문장이 있다. 법칙이 사건을 더한 뒤에도 전환의 늦어진 초가 기준 × 1.3 안이다(늘어난 사건이 부족을 키우는 것은 의도한 결과지만 몰리지 않게).
+4. **모든 결과가 이벤트 로그와 실제 상태에 일치**: `consistency.C1~C5` 가 모두 0(보통 60·어려움 30·재난 다섯 × 20). 보고서의 내력 문장마다 가리키는 사건·기록이 있다(테스트). **법칙 사건마다**: `cause` 의 기록이 있고, 건물 법칙이면 `truth.placeId === hz.target`, 문장의 "약 N초"가 그 몫의 `at − since` 이며 그 원인 기록의 시각보다 앞서지 않는다. `holes = 0`.
+5. **여러 시드에서 교착·무한 연쇄·무의미한 반복 없음**: 보통 60 에서 `stall.candidates = 0`, `forgotten = 0`. 어려움·극한·재난에서는 기준선보다 늘지 않는다. 모든 조건에서 `maxParentDepth ≤ 2`, 한 뿌리의 법칙 사건 ≤ 2, 인과로 난 사건(이야기 연쇄 + 법칙 사건) 교대당 ≤ 6, `hazard.gain ≤ 0.3`, `repeatMax` 가 기준 이하(극한 S12 #14 의 80 은 따로 본다 — 구현 메모). 교대 끝에 회복되지 않은 구역 값·남은 `bumps` 줄이 원인이 살아 있는 것뿐이다.
 
 ---
 
@@ -1489,30 +1586,33 @@ npx tsx scripts/sweep.ts 1 --log <시드> --metrics                             
 
 **I1-b**
 
-1. 재현성: 세계 상태가 생긴 뒤에도 같은 시드 두 번의 `report.hash` 가 같다. 규칙·법칙이 하나도 안 걸린 교대의 `world` 는 처음 값 그대로(`hz.cells` 가 비어 있다).
+1. 재현성: 세계 상태가 생긴 뒤에도 같은 시드 두 번의 `report.hash` 가 같다. 규칙·법칙이 하나도 안 걸린 교대의 `world` 는 처음 값 그대로(`hz.cells`·`expo`·`sills`·`spans` 가 비어 있다). **한 프로세스에서 시드 A 다음에 돌린 B 의 해시가 B 만 돌린 것과 같다**(법칙이 걸리는 홍수·가스 폭발 강제 교대로 — 건물·동네마다 한 번 뽑는 문턱이 도시 열쇠의 캐시로 새지 않았다, §3.6c).
 2. C6: 두 사건을 정해서 일으켜 전환 배정을 만든다 → DIVERTED 의 `causes` 가 받는 사건 기록을 가리키고, `ref.lost` 가 채워지고, 보고서 `chain` 에 그 문장.
 3. C3: 병원 체류를 한도까지 채움 → 포화 알림, 새 이송이 다른 병원으로, 이송 중이던 부대의 목적지 변경 기록과 HOSPITAL_FULL, 체류가 빠지면 수용 재개.
 4. C2: X6 의 전체 붕괴가 난 사건을 닫음 → 그 구간에 `rubble` 장애물이 이어서 놓이고(`known`), 규칙이 남긴 잔해 기록(`kind 'traffic'`, §3.7 C2 의 "기록")의 `causes` 가 종료 기록이며 그 장애물의 `ev` 가 그 기록, 도시가 끊기지 않는다(`tests/traffic.test.ts` 의 연결 검사 함수를 다시 쓴다). 큰 폭발 신호만 있는 사건도 같은 검사(알려지지 않은 잔해면 기록은 `truth`, 부대의 ROUTE_BLOCKED 가 그 기록을 `causes` 로).
-5. **교통의 일반 규칙**(§3.6b): 교통 사건·사건·재난을 끈 도로에서는 모든 구간의 `excess` 가 0 이고 `cong` 이 `base` ± 0.3 안. 구간 하나를 닫으면 우회로의 구간들에만 `divert > 0`(막다른 가지에는 없다), 통행량이 큰 구간이 막힐수록 크고, `DIV_MAX` 를 넘지 않으며, 풀면 다음 `drift` 에 0. 우회로가 없는 구간을 닫아도 예외가 없다. 장부: 닫힌 구간·정체·장애물·인파·정전마다 `srcEv`·`bumpEv` 가 -1 이 아니고 그 기록의 문구가 그 상태를 말한다. `drift` 의 난수 호출 수는 그대로다(같은 교대의 `rngTraffic` 다음 값이 장부 커밋 전후로 같다).
-6. 무한 연쇄: 깊이 2 사건을 부모로 한 초과는 `'depth'` 로 버린다 · 부모 있는 사건이 교대에 6건이면 `'cap'` · 부모 없는 법칙 사건은 `ORPHAN_CAP` 에서 멈춘다 · 교대 끝 150초 안에는 만들지 않는다(`'late'`) · 기다리던 것이 60초를 넘기면 `'expired'`. 버릴 때마다 `H` 가 `thr` 만큼 줄고 `n` 이 는다. 버린 일은 기록(`emit`)에 없다.
+5. **교통의 일반 규칙**(§3.6b): 교통 사건·사건·재난을 끈 도로에서는 모든 구간의 `excess` 가 0 이고 `cong` 이 `base` ± 0.3 안. 구간 하나를 닫으면 우회로의 구간들에만 `divert > 0`(막다른 가지에는 없다), 통행량이 큰 구간이 막힐수록 크고, `DIV_MAX` 를 넘지 않으며, 풀면 다음 `drift` 에 0. 우회로가 없는 구간을 닫아도 예외가 없다. 장부: 닫힌 구간(`closeEv`)·사고 감속(`slowEv`)·정체(그 정체의 `ev`)·장애물(`Obstacle.ev`)·인파와 정전(`bumps` 줄)마다 기록이 −1 이 아니고 그 기록의 문구가 그 상태를 말한다. 쓰러진 나무의 구간은 닫힘의 주인이 통제 기록(`blockEv`)이고 감속의 주인이 발생 기록이다(서로 덮지 않는다). **뿌리가 사라진 뒤 밀림이 빠지는 동안에도 `exQueue > 0` 인 구간의 내력 `qEv` 가 −1 이 아니다.** 수요만으로 꽉 찬 구간(`p0 ≥ 2.4`)의 이웃은 `exQueue = 0` 이다. 인파와 정전이 겹친 구간에서 한쪽을 거두면 `e.bump` 와 남은 줄이 맞는다. `drift` 의 난수 호출 수는 그대로다(같은 교대의 `rngTraffic` 다음 값이 장부 커밋 전후로 같다). `src/sim` 에서 `traffic.ts` 와 `disaster.ts` 의 정전 두 자리 말고는 `.bump +=`·`.bump =` 이 없다(소스 글자).
+6. 무한 연쇄: 깊이 2 사건을 부모로 한 초과는 `'depth'` 로 버린다 · **한 뿌리에서 난 법칙 사건이 둘이면 셋째는 `'depth'`**(이웃 넷이 모두 문턱을 넘게 한 화재에서 옮겨붙은 불은 둘이다) · **이야기 연쇄와 법칙 사건(부모가 있든 없든)을 합쳐 교대에 6건이면 `'cap'`** · 부모 없는 법칙 사건은 그 안에서 `ORPHAN_CAP`(3)에서 멈춘다 · 교대 끝 150초 안에는 만들지 않는다(`'late'`) · 기다리는 줄이 마감(60초)을 넘기면 `'expired'`, 그 대상의 초과가 끝난 것만으로는 버려지지 않는다. `once` 가 아닌 법칙은 버릴 때마다 `H` 가 `thr` 만큼 줄고 `n` 이 늘며, `once` 법칙은 버려진 대상이 다시 적분되지 않는다(`done`). 버린 일은 기록(`emit`)에 없다. 교대가 끝날 때 `gen.chain` 과 기다리는 줄에 남은 법칙 사건이 몰려 터지지 않는다.
 7. 정보 격리(소스 글자 검사 — b2 의 것에 더한다):
    - `src/sim/dispatch/*`·`field/commander.ts`·`field/brain.ts`·`field/orders/*` 에 `sim.world`·`world.zones`·`world.hospitals`·`world.signals`·`world.log`·`placeMarks`·`carryState` 글자가 없다(`knownZone`·`knownHospital`·`knownBuildingAt`·`knownZoneOfIncident` 만).
    - `dispatch/analyst.ts`·`dispatch/dispatcher.ts` 에 `truth.placeId` 글자가 없다(`callSystem.ts` 는 신고자 모델이라 뺀다).
    - `resources.ts` 는 **`startTransport` 함수의 본문만** 잘라 같은 글자들을 검사한다.
 8. **3단계 사례**(정해진 시드 — 구현 때 찾아 고정): `spread ≥ 3`(distinct)이고 그 길이 도로나 건물을 지난다. 후보는 §3.12 ④ 끝의 (가)·(나)와, `createIncident(sim, { type: 'hazmat', placeId: 변전소 })` 로 일으킨 정전 → 꺼진 신호의 사고 또는 승강기 → 그 사건의 부족.
-9. **틀의 단위 시험**(가짜 법칙 — 시험이 `registerHazard` 로 넣고 `finally` 에서 거둔다. 등록은 그 파일의 모든 `Sim` 에 걸리므로 자기 `Sim` 만 돌린다):
+9. **틀의 단위 시험**(가짜 법칙 — 시험이 `registerHazard` 로 넣고 `finally` 에서 거둔다. 등록은 그 파일의 모든 `Sim` 에 걸리므로 자기 `Sim` 만 돌린다. **대부분 `sim.step()` 없이 `tickHazards(sim)` 만 부른다** — 빠르고 다른 원인이 끼지 않는다):
    - 문턱은 경로와 무관하다: 같은 시드·같은 대상이면 위험률을 어떻게 주든 `thr`·`u2` 가 같다. `once` 가 아니면 `n` 마다 다르다.
-   - **단조성**: 위험률 `r(t)` 와 `0.5 × r(t)` 로 돌린 두 `Sim` 에서 k 번째로 넘는 시각이 뒤쪽이 늦거나 없다(k = 1..3).
-   - 초과가 0 인 동안 `H` 는 그대로고 `since = −1`. 넘친 몫은 다음 문턱으로 넘어간다.
-   - 평균이 맞다: 시드 200개 × 일정한 위험률 `λ` × 시간 `T` 에서 넘은 횟수의 평균이 `λT` ± 15%(주사위 없이도 푸아송이다).
-   - 귀속: 몫 둘(0.7·0.3, 큰 쪽에 주인 사건)이면 `cause`·`parent` 가 큰 쪽, `causes` 에 둘 다, `hz.src` 가 큰 것부터. 주인 있는 몫이 1/3 아래면 부모가 없다. 모든 몫의 `ev` 가 -1 이면 사건을 만들지 않고 `holes` 가 는다.
-   - `spawn` 이 `null` 이면 기다리고 `H` 가 `thr` 에 묶인다. 사건의 흐름 이름이 (법칙, 대상, 몇 번째)라 앞의 다른 사건을 지워도 그 사건의 현장이 아니라 **선택(유형·규모·자리)** 이 같다.
+   - **단조성**: 위험률 `r(t)` 와 `0.5 × r(t)` 로 돌린 두 `Sim` 에서 k 번째로 **문턱을 넘는 시각**이 뒤쪽이 늦거나 없다(k = 1..3 — `step` 없이 `tickHazards` 만).
+   - 초과가 0 인 동안 `H` 는 그대로고 `since = −1`. `once` 가 아니면 넘친 몫은 다음 문턱으로 넘어간다.
+   - **평균이 맞다**: `Sim` **하나**에 가짜 법칙의 `scan` 이 대상 0..299 를 일정한 위험률 `λ` 로 내놓게 하고 `tickHazards` 만 `T` 번 부른다(상한에 걸려 버려져도 칸의 `n` 은 는다) — `Σ n / 300` 이 `λT` ± 15%(주사위 없이도 푸아송이다. 문턱은 대상마다 독립이라 시드 200개의 `Sim` 을 만들 까닭이 없다 — 그러면 그 시험 하나가 분 단위다).
+   - 귀속: 몫 둘(0.7·0.3, 큰 쪽에 주인 사건)이면 `cause`·`parent` 가 큰 쪽, `causes` 에 둘 다, `hz.src` 가 큰 것부터이고 몫마다 `since` 가 그 기록의 시각보다 앞서지 않는다. 주인 있는 몫이 1/3 아래면 부모가 없다. **큰 몫(0.8)의 `ev` 가 −1 이고 작은 몫(0.2)에 기록이 있으면** 사건은 나되 `holes` 가 늘고 `hz.src[0].ev === −1` 이다(20% 짜리 기록이 주된 원인으로 올라오지 않는다). 모든 몫의 `ev` 가 −1 이면 사건을 만들지 않고 `holes` 가 한 번만 는다(주기마다 늘지 않는다).
+   - **`once` 는 한 번 넘으면 끝**: 예약됐든 `'cap'` 으로 버려졌든 `done` 이고, 그 뒤의 `scan`·`hazardImpulse` 가 그 칸을 바꾸지 않는다. `H` 가 문턱의 세 배가 되는 충격을 줘도 사건은 하나다.
+   - **기다리는 줄**: `spawn` 이 `null` 이면 줄에 들어가고 그 대상은 적분하지 않는다. `spawn` 이 사건을 주게 되면 **다음 1초 블록에** 적어 둔 몫의 사본으로 귀속해 난다(`every: 12` 인 법칙도, `scan` 이 없는 충격 법칙도, 그 사이 `scan` 이 그 대상을 내놓지 않게 됐어도). 마감이 지나면 `'expired'`. `hold: 300` 인 법칙은 300초를 기다린다.
+   - **건물에 내는 사건의 공통 조건**: 가짜 법칙이 전소 건물과 사건 중인 건물을 내놓으면 앞은 버려지고(`'expired'`) 뒤는 기다린다. 예약한 뒤 꺼내기 전에 그 건물이 전소하면 `tickIncidents` 가 만들지 않는다. 건물 법칙이 만든 사건의 `truth.placeId` 는 언제나 `hz.target` 이다.
+   - 사건의 흐름 이름이 (법칙, 대상, 몇 번째)라 앞의 다른 사건을 지워도 그 사건의 현장이 아니라 **선택(유형·규모·자리)** 이 같다.
    - 법칙이 없는 교대의 해시가 틀을 넣기 전과 같다.
-10. **개입 시험 — 쓰러진 나무**(사용자의 예 ①): 같은 시드의 두 `Sim` A·B 를 틱 T 까지 돌린다(그때까지 `logHash` 가 같다). 둘 다 `createIncident(sim, { type: 'traffic', variant: 'tree', nodeId })` 로 간선을 막는다(사건 번호가 같게 — 사건을 지우지 않는다). B 에서만 그 직후 `e.closed = false`·`closedReason` 을 되돌리고 `noteRoadCause(sim, e.id, -1)`. 시험 상수로 `A_ROAD` 를 키우고 300초를 돌린다. 확인: ① A 에는 `csq === 'roadCrash'` 이고 `cause` 가 나무의 `blockEv`, `parent` 가 나무 사건, `hz.src[0].what` 이 `divert` 나 `queue` 인 사건이 있다. ② B 에는 원인이 그 `blockEv` 인 사건이 없다. ③ 그 창 동안 모든 구간에서 `H_B ≤ H_A`(B 의 다른 사건이 달라지기 전까지 — 첫 법칙 사건이 나기 전의 표본으로 견준다). ④ A 의 그 사건의 보고서 문장에 나무 사건의 코드와 두 구간의 이름이 있다.
-11. **개입 시험 — 불과 붕괴**(사용자의 예 ②와 L2): (가) 같은 화재를 강제한 두 `Sim` 에서 한쪽만 원인 현장의 `s.fire` 를 0 으로 → 이웃의 `hazardCell('heatSpread')` 이 없고 옮겨붙은 불이 없다. (나) 같은 가스 폭발을 강제한 두 `Sim` 에서 한쪽만 폭발 직후 `world.expo` 를 비운다 → 그쪽에는 `structFail`·`pipeLeak` 사건이 없고, 다른 쪽은 이웃의 `shake` 가 손 계산과 같다. (다) `shake = 0.4` 를 적어 둔 건물과 아닌 건물에 같은 화재를 일으키면(같은 사건 번호 — 같은 현장) 앞쪽의 처음 건전도가 `1 − 0.5 × 0.4` 이하이고 첫 `DANGER_SIGN` 이 더 이르다.
-12. **법칙은 원인을 모른다**(소스 글자 검사): `src/sim/world/laws/*.ts`(`index.ts` 제외)에 `.chance(`·`spawnConsequence`·`truth.variant`·`.variant ===`·`'tree'`·`'pileup'` 을 뺀 시나리오 변형 이름 비교·`d.kind`·`sim.disaster` 글자가 없다(L1 의 `'pileup'`·`'bus'`·`'std'` 는 **결과**의 이름이라 `spawn` 안에서만 — 검사는 `scan` 함수의 본문만 잘라 본다. L6 은 홍수의 수위를 읽으므로 `flood.ts` 는 `d.level`·`d.thr` 만 허락한다). `world/rules/*.ts` 에 `spawnConsequence` 가 없다(I1 의 상태 규칙은 사건을 만들지 않는다 — N8·N9 의 `kinds*.ts` 는 뺀다).
-13. 정보 격리 2(소스 글자): 7번의 판단 파일들에 `.hz`·`fireLoad`·`zoneAt(`·`isDark(`·`.divert`·`.excess`·`srcEv`·`bumpEv`·`.wear` 가 없다.
-14. 법칙마다의 시험: §3.7 의 법칙 절 끝 "테스트" 줄(L1 ①~⑥ · L2 ①~⑥ · L3 ①~⑥ · L7 ①~④ · L5 ①~④ · L4 ①~④ · L6 ①~④)과 상태 규칙(C4 — 변전소 사건으로 구역이 꺼지고 20~40초 뒤 알려지며 범위 안 구간에 `bump` 와 장부, 복구 때 되돌린다. 붕괴 자리의 국지 정전은 원 밖 건물을 끄지 않는다 · C8 — 음영이 늘고 회복 때 원래 0 이던 칸만 되돌린다 · C10 — 근처에 경찰이 있으면 재범이 `'expired'`).
+10. **개입 시험 — 쓰러진 나무**(사용자의 예 ①): 같은 시드의 두 `Sim` A·B 를 틱 T 까지 돌린다(그때까지 `logHash` 가 같다). **두 쪽 모두 다른 원인을 얼린다** — `sim.traffic.nextEvent = Infinity`(새 교통 사건 없음), `sim.gen.nextAt = sim.gen.majorAt = Infinity`(새 평소·대형 사건 없음), 재난 없음: 얼리지 않으면 `traffic.spawn` 의 후보가 `!e.closed` 를 읽어 같은 난수로도 다른 구간을 고르고 평소 생성기가 열린 사건 수·가용 부대 수를 읽어, 300초 창 안에 두 `Sim` 의 무관한 구간이 갈라진다. 둘 다 `createIncident(sim, { type: 'traffic', variant: 'tree', nodeId })` 로 간선을 막는다(사건 번호가 같게 — 사건을 지우지 않는다). **B 에서만 그 직후 나무가 길에 만든 상태를 모두 되돌린다**: `e.closed = false; e.closedReason = null; e.slow = Math.max(0, e.slow − 1.4); I.blockedEdge = −1`(사건·현장·사건 번호는 그대로. 쓰러진 나무는 통제와 함께 `slow += 1.4` 도 건다 — 닫힘만 되돌리면 그 구간은 B 에서도 밀림의 뿌리라 이웃의 `exQueue` 가 A 와 똑같이 쌓인다). **장부는 손대지 않는다**(`noteRoadCause` 로 지우지 않는다 — 장부는 다음 `drift` 가 상태를 보고 스스로 비워야 하고, 장부를 지우면 ② 가 위험이 그대로여도 참이 된다). 시험 상수로 `A_ROAD` 를 키우고 300초를 돌린다. 확인: ① A 에 `csq === 'roadCrash'` 이고 `hz.src` 에 `ref` 가 그 구간인 몫(`divert`·`queue`)이 있으며 `cause` 가 나무의 `blockEv`, `parent` 가 나무 사건인 사건이 있다. ② B 의 어느 사건도 `hz.src` 에 그 구간(`ref`)이나 그 `blockEv` 가 없다. ③ A 에서 `divertBy`·`qBy` 가 그 구간이던 구간들에서, A 의 첫 법칙 사건 전까지의 표본마다 `H_B ≤ H_A`("모든 구간"이 아니다 — 풀린 구간 자신은 B 에서 차가 다녀 다른 원인의 초과를 받는다). ④ A 의 그 사건의 보고서 문장에 나무 사건의 코드와 두 구간의 이름이 있다. ⑤ 두 쪽 모두 `world.hz.holes === 0`. ⑥ **대조**: 상태는 두고 장부만 지운 셋째 `Sim` 에서는 문턱을 넘을 때 `holes` 가 는다(원인 꼬리표를 지우는 것으로는 위험이 사라지지 않는다 — 초안의 시험은 이 길로 저절로 통과했다).
+11. **개입 시험 — 불과 붕괴**(사용자의 예 ②와 L2): (가) 같은 화재를 강제한 두 `Sim` 에서 한쪽만 원인 현장의 `s.fire` 를 0 으로 → 이웃의 `hazardCell('heatSpread')` 이 없고 옮겨붙은 불이 없다. (나) 같은 가스 폭발을 강제한 두 `Sim` 에서 한쪽만 폭발 직후 `world.expo` 를 비운다 → 그쪽에는 `structFail`·`pipeLeak` 사건이 없고, 다른 쪽은 이웃의 `shake` 가 손 계산과 같다. (다) `shake = 0.4` 를 적어 둔 건물과 아닌 건물에 같은 화재를 일으키고(같은 사건 번호 — 같은 현장) **대원 없이 `tickScene` 만 돌린다**(X6 의 방치 시험): 앞쪽의 처음 건전도가 `1 − 0.5 × 0.4` 이하이고, 첫 구획 붕괴 시각이 앞쪽이 같거나 이르다("첫 `DANGER_SIGN` 이 더 이르다"는 대원의 지각과 도착 시각에 달려 시드에 따라 흔들린다 — 쓰지 않는다). (라) 전체 붕괴 하나만으로(폭발 없이) 틈 3 의 이웃에 금 기록이 남는다.
+12. **법칙은 원인을 모른다**(소스 글자 검사): (가) `src/sim/world/laws/*.ts`(`index.ts` 제외) **파일 통째**: `.chance(`·`spawnConsequence`·`truth.variant`·`.variant ===`·`d.kind`·`sim.disaster`·`.rules` 가 없다(예외가 없다 — 수위를 읽는 L6 은 법칙 파일이 아니라 상태 규칙이다). (나) 법칙마다 **`scan` 함수의 본문만 잘라**: 시나리오 변형 이름의 글자(`'tree'`·`'pileup'`·`'bus'`·`'gasblast'`·`'wild'`·`'std'` …)가 없다 — 결과의 이름은 `spawn` 안에만 있다. (다) `world/rules/*.ts` 에 `spawnConsequence` 가 없다(I1 의 상태 규칙은 사건을 만들지 않는다 — N8·N9 의 `kinds*.ts` 는 뺀다). (라) `src/sim` 에서 `world/rules/`·`world/laws/` 를 import 하는 줄은 `engine.ts` 와 두 모음 파일, `rules/record.ts` 를 부르는 곳뿐이다(§3.4).
+13. 정보 격리 2(소스 글자 — 목록은 §3.8): 7번의 판단 파일들과 **`field/methods.ts`·`field/ops.ts`·`field/airDecide.ts`·`field/gear.ts`·`field/doctrine/*`** 에 `world.hz`·`I.hz`·`fireLoad`·`zoneAt(`·`isDark(`·`.excess`·`.exDiv`·`.exQueue`·`.exOwn`·`.exBump`·`.divertBy`·`closeEv`·`slowEv`·`qEv`·`.bumps`·`.wear`·`expoOf` 가 없고 `/\b(?:tr|traffic)\.divert\b/`·`/\bhz\.(?:src|law|target|at)\b/` 에 걸리는 줄이 없다. `src/sim/world/` 아래 어떤 파일도 `s.rules` 에 쓰지 않는다(`.rules.push`·`.rules =`). `applyExpo` 앞뒤로 `s.rules` 가 같다(L3 시험 ⑦).
+14. 법칙마다의 시험: §3.7 의 법칙 절 끝 "테스트" 줄(L1 ①~⑧ · L2 ①~⑦ · L3 ①~⑧ · L7 ①~④ · L5 ①~⑤ · L4 ①~⑥ · L6 ①~⑤)과 상태 규칙(C4 — 그 절의 "테스트" 줄 · C8 — 음영이 늘고 회복 때 원래 0 이던 칸만 되돌린다 · C10 — 근처에 경찰이 있으면 재범이 `'expired'`).
 15. 보고서: `chain` 문장마다 가리키는 사건 id·기록·구간·건물이 있고(§3.9 끝), 법칙 사건도 이야기 연쇄도 없는 교대에는 요약의 "인과:" 줄이 없다. 문장에 법칙 id(`roadCrash` 따위)나 "법칙"이라는 말이 없다.
 
 ---
@@ -1528,34 +1628,36 @@ npx tsx scripts/sweep.ts 1 --log <시드> --metrics                             
 | `tests/causality.test.ts` (새로) | §6 I1-a |
 | (주 세션이 끝에) `docs/ROADMAP.md`·`README.md`·`CLAUDE.md` | 기준 수치(잰 `src/` 커밋과 함께)와 교착 후보, `sweep` 옵션 설명, 명령 표 한 줄(`--metrics`·`--no-metrics`), 명령 표의 `npm test` 줄(테스트 수·파일 수에 `causality`), 함정 한 줄("측정 도구의 문구 규칙 — 기록 문구를 바꾸면 `tests/causality.test.ts` 가 깨진다. `scripts/metrics.ts` 의 표를 함께 고친다") |
 
-**I1-b** — 자기 파일(새로): `src/sim/world/state.ts`, `src/sim/world/consequence.ts`, `src/sim/world/rules/{index,record,hospital,structure,infra}.ts`(상태 규칙 — C6·C3·C2·C4·C8·C10·C11·C5 의 상태 부분), **`src/sim/world/hazard.ts`(초과 위험 과정의 틀), `src/sim/world/laws/{index,road,heat,shock,ember,power,smoke,flood}.ts`(일반 법칙 — import 순서가 결과다)**, `scripts/hazstats.ts`. 공용 파일은 아래 함수만, 가장 작은 조각으로(b0~b3-1 이 이미 고친 자리는 구현 메모):
+**I1-b** — 자기 파일(새로): `src/sim/world/state.ts`, `src/sim/world/consequence.ts`, `src/sim/world/rules/{index,record,hospital,structure,infra}.ts`(상태 규칙 — C6·C3·C2·C4·C8·C10·C11·C5 의 상태 부분), **`src/sim/world/hazard.ts`(초과 위험 과정의 틀 — 등록이 없는 파일), `src/sim/world/expo.ts`(건물의 노출·이웃·`applyExpo`·`darkened` — 등록이 없는 파일), `src/sim/world/laws/{index,road,heat,shock,ember,power,smoke}.ts`(일반 법칙 — import 순서가 결과다. 다른 모듈은 이 파일들을 import 하지 않는다)**, `scripts/hazstats.ts`, `view/city/zoneLayer.ts`. 공용 파일은 아래 함수만, 가장 작은 조각으로(b0~b3-1 이 이미 고친 자리는 구현 메모):
 
 | 파일 | 함수·자리 | 무엇 | 단계 |
 |---|---|---|---|
 | `types.ts` | "인과 기록" 절 끝 | §3.3 끝의 자료형(`HazardLawId`·`HzWhat`·`HzSrc`·`HzCell`·`HzNote`·`HzState`·`PlaceExpo`, `WorldState.hz`·`expo`, `ZoneState.at`, `Signal.mag`, `Incident.hz`, `WorldTag 'struct'`) | b3-4 (`Signal.mag` 는 b3-8, `ZoneState.at` 은 b3-10 에 써도 자료형은 한 번에) |
-| `world/consequence.ts` | `tickWorld`, `spawnRoom`, `signal` | `tickHazards(sim)` 한 줄('tick' 규칙 다음), 전체 상한을 `ruleLoad` 로, `mag` 복사 | b3-4 · b3-8 |
-| `world/state.ts` | `initWorld`, `zoneOfPlace`, `placeState`, `setZone`, 새 함수 | `hz`·`expo` 의 처음 값, 좌표로 구역 찾기, 돌려주는 값에 `shake`·`pipe`·`wet`, `at` 인자, `expoOf`·`neighborsOf`·`neighborsOfPoint`·`zoneAt`·`isDark`·`setZoneArea` | b3-4 · b3-7 · b3-10 |
+| `world/consequence.ts` | `tickWorld`, `spawnRoom`, `signal` | `tickHazards(sim)` 한 줄('tick' 규칙 다음), 전체 상한을 `ruleLoad` 로, `CSQ_SPAWN_CAP` 은 `hazard.ts` 에서 다시 내보내기, `mag` 복사 | b3-4 · b3-8 |
+| `world/state.ts` | `initWorld`, `zoneOfPlace`, `placeState`, `setZone`, 새 함수 | `hz`·`expo`·`sills`·`spans` 의 처음 값, 좌표로 구역 찾기, 돌려주는 값에 `shake`·`pipe`·`wet`, `at` 인자(자리·원인·회복 시각은 한 묶음), `zoneAt`·`isDark`·`setZoneArea`·`endZoneBy`·`knownHazardNear` | b3-4 · b3-7 · b3-10 |
 | `engine.ts` | import | `import './world/laws'`(`./world/rules` 다음 줄) | b3-4 |
-| `incidents.ts` | `SpawnOpts`, `createIncident` | `edgeId`·`causes`·`hz` 세 칸. 리터럴에 `hz: undefined`, `opts.hz` 를 `I.hz` 로, 발생 기록의 `causes` 에 `opts.causes` 를 덧붙임, 교통사고 블록에서 `opts.edgeId` 를 먼저 보기, **쓰러진 나무의 `cong + 0.7` 한 줄 삭제**(b3-5 ②), 감속·통제의 `noteRoadCause`. `ARMED_BIAS` 를 export(C10) | b3-4 · b3-5 · b3-9 |
-| `traffic.ts` | `TrafficState`·`initTraffic`·`drift`·`spawn`·`announce`·`place` | §3.6b 전부: 새 칸, `staticCost`·우회로 다익스트라와 캐시, `divert` 를 `target` 에, 초과의 네 몫과 `qBy`, 장부(`noteRoadCause`·`noteBump` — export), `announce` 가 기록 id 를 돌려주고 `Obstacle.ev` 에, 정체·인파의 기록 id, `roadFlow` export | b3-5 |
-| `disaster.ts` | `closeEdge`·`lightsOut`·`lightsOn`·`floodRoads`, 지진 충격 | 통제·정전 기록의 id 를 장부에(`noteRoadCause`·`noteBump`), 정전이 닿는 순간 `darkened`(L5)와 구역 전력(C4 나), 구간을 통제하는 순간의 충격(L6), 홍수 알림 기록의 id, 지진의 흔들림 → C4·C8·C11 의 문턱 | b3-5 · b3-10 · b3-12 |
-| `field/sceneManager.ts` | 6) 블록, `createScene` | 전면 통제의 `noteRoadCause`, `buildScene` 다음 `applyExpo(sim, s, I)`, `wear: undefined` | b3-5 · b3-8 |
+| `incidents.ts` | `SpawnOpts`, `createIncident`, `tickIncidents` | `edgeId`·`causes`·`hz` 세 칸. 리터럴에 `hz: undefined`, `opts.hz` 를 `I.hz` 로, 발생 기록의 `causes` 에 `opts.causes` 를 덧붙임, 교통사고 블록에서 `opts.edgeId` 를 먼저 보기(§3.6b (다) — 다른 사건의 `blockedEdge` 가 아니고 `traffic.canBlock`), **쓰러진 나무의 `cong + 0.7` 한 줄 삭제**(b3-5 ②), 닫힘·감속의 `noteRoadCause`(항이 다르다), 예약을 꺼낼 때 법칙 사건(`opts.hz`)의 건물이 `placeGone` 이면 `'expired'`. `ARMED_BIAS` 를 export(C10) | b3-4 · b3-5 · b3-6 · b3-9 |
+| `traffic.ts` | `TrafficState`·`initTraffic`·`drift`·`spawn`·`announce`·`place`·`tickTraffic` | §3.6b 전부: 새 칸, `staticCost`·우회로 다익스트라와 캐시, `divert` 를 `target` 에, 초과의 네 몫, 뿌리의 두 갈래와 `qBy`·`qEv`·`qInc`, 항마다의 장부(`noteRoadCause`·`noteBump`·`unnoteBump`·`addBump`·`removeBump` — export), `announce` 가 기록 id 를 돌려주고 `Obstacle.ev` 에, 정체 객체의 `ev`, 인파의 장부 줄(산술은 그대로), 불법 주차가 치워질 때 `base`, `canBlock`(`disaster.detour` 를 옮긴 것), `roadFlow` export | b3-5 |
+| `disaster.ts` | `closeEdge`·`lightsOut`·`lightsOn`·`floodRoads`·`detour`·`onImpact`·`tickQuake` | 통제 기록의 id(`emit` 의 반환값)를 닫힘의 장부에, 정전 `bump` 의 장부 줄(산술은 그대로), `detour` → `traffic.canBlock`, 구간 문턱을 `roadSill(sim, d, e)` 로 읽기(N9 의 자리), 느려진 구간의 `'level'` 장부와 `d.levelEv`, 신호 `blackout`·`quake` 를 보내는 자리(정전·지진을 건물과 구역에 적는 것은 C4 의 규칙이 한다 — 재난 코드는 신호만) | b3-5 · b3-10 · b3-12 |
+| `field/sceneManager.ts` | 6) 블록, `createScene` | 전면 통제의 `noteRoadCause(…, 'close', …)`, `buildScene` 다음 `expo.applyExpo(sim, s, I)`, `wear: undefined`. **`tickGas` 를 부르는 조건은 고치지 않는다** | b3-5 · b3-8 |
 | `field/kit.ts` | `baseScene` | `wear: undefined`(I2 가 넣기로 한 칸 — 먼저 넣는다) | b3-8 |
-| `scenarios/major.ts`·`scenarios/disaster.ts` | 다중 추돌·산사태 `onCreate` | 통제의 `noteRoadCause`, (확인 필요) 다중 추돌이 `opts.edgeId` 의 구간을 막게 | b3-5 · b3-6 |
-| `field/catastrophe.ts`(X6) | `blockRoad`, 신호 여섯 자리, `catOf` | 통제의 `noteRoadCause`·면한 길 먼저, `mag`, 처음 건전도의 `WEAR_INTEG` 한 줄 | b3-5 · b3-8 |
-| `field/hazards.ts` | `tickFire`, `blast` | `fireLoad`(WeakMap — 큰 불 신호를 세는 순회에 셈 하나), `blast` 신호의 `mag` | b3-7 · b3-8 |
+| `scenarios/major.ts`·`scenarios/disaster.ts` | 다중 추돌·산사태 `onCreate` | 통제의 `noteRoadCause`(닫힘) | b3-5 |
+| `field/catastrophe.ts`(X6) | `blockRoad`, 신호 여섯 자리, `catOf`, `CAT` | 통제의 `noteRoadCause`·면한 길 먼저, `mag`(`collapseBuilding` 1 · `collapseRegion` 이번 몫), 처음 건전도의 `WEAR_INTEG` 한 줄과 그 상수(`CAT.WEAR_INTEG` 0.5) | b3-5 · b3-8 |
+| `field/hazards.ts` | `tickFire`, `blast` | `fireLoad`(WeakMap — 큰 불 신호를 세는 순회에 셈 하나), `fireBig` 신호의 `ev` 를 L2 의 규칙으로(`ESCALATION` 을 쓰고 있으면), `blast` 신호의 `mag` | b3-7 · b3-8 |
 | `field/hazards.ts` | 도주 블록 | C10: 재범의 장소·`when`·`until`(흐름은 b1 이 넣었다) | b3-9 |
 | `resources.ts` | `startTransport`·응급실 대기·병원 인계·이송 중 목적지 변경 | C3(예전 글 그대로) | b3-2 |
-| `dispatch/analyst.ts` | 위험도·이름표 | `knownZone`·`knownZoneOfIncident`·`knownBuildingAt` 과 알려진 큰 불·폭발·붕괴(§3.8 — 진실 위치·`truth.placeId` 금지): '연소 확대'·'재발화', 구역 위험·정전 | b3-7 · b3-9 · b3-10 |
+| `dispatch/analyst.ts` | 위험도·이름표 | `knownZone`·`knownZoneOfIncident`·`knownBuildingAt`·`knownHazardNear`(§3.8 — 진실 위치·`truth.placeId` 금지): '연소 확대', 알려진 붕괴·폭발 곁의 붕괴·가스 신고, 구역 위험·정전. '재발화' 이름표는 넣지 않는다 | b3-7 · b3-8 · b3-9 · b3-10 |
 | `field/executor.ts` | `spray` 의 급수(C11, 선택) | 유입 `1.5 × water` | b3-12 |
 | `field/rules/` 의 새 파일 하나 | `registerRule` | 연기 자리의 실외 노출(C5) | b3-11 |
+| `field/builders.ts`·`incidents.ts`·`scenarios.ts`·`field/injury.ts` | 응급 현장의 변형 갈래, `scenarioName`, `initInjuries` | 변형 `medical/smoke`(실신의 틀 · 부상 원인 `smoke` · 급변 없음 — L4). 넣지 못하면 L4 를 등록하지 않는다 | b3-11 |
 | `debrief.ts` | `PROBLEM_LABEL`·`order`·문장(HOSPITAL_FULL·INFRA_FAIL), `buildReport` 의 내력 문장·`world`·요약 줄 | §3.9 | b3-2 · b3-10 · b4 |
 | `view/city/trafficLayer.ts`, `ui/MapLegend.tsx` | `rubble` 기호 | C2 | b3-3 |
 | `ui/panels.tsx` | 보고서 사건 항목에 `chain` | | b4 |
-| `scripts/metrics.ts`·`scripts/sweep.ts` | `hazard` 줄·`metrics.hazard`·관문(`holes`), `TAG_SYS` 의 `struct → building`, `--hazard`, 새 기록 문구가 `PHRASE` 에 걸리지 않는지(시험 3), 관문 조이기(M-G1 0, M-G3 3), b3-2 의 T8·C5 | | b3-4 · b5 |
+| `view/city/ruinLayer.ts`·`view/city/zoneLayer.ts`(새로)·`ui/HazardStrip.tsx`·`ui/MapLegend.tsx` | 교대 중에 보이는 표시(읽기만) | 금 간 건물(`world.expo` 의 `shake ≥ S_MIN` — 관찰자 시점만, 진실)과 끊긴 배관의 작은 기호 · 국지·구역 정전과 연기 자리의 옅은 테(`ZoneState.at` — 관찰자는 진실, AI 시점은 `known` 인 것만) · 사건 카드의 내력 칩 한 개(관찰자 시점에서 `I.hz` 가 있으면 '몰린 길'·'옮겨붙음'·'금 간 건물'·'끊긴 배관'·'정전'·'연기' — §3.9 의 짧은 말) · 범례 두 줄. 그림은 `world.expo`·`world.zones`·`I.hz` 를 **읽기만** 하고 `expoOf`(없으면 만든다)를 부르지 않는다. 몰린 혼잡은 지금의 혼잡 띠(`e.cong`)로 저절로 보인다. 관찰만 하는 시뮬레이션에서 "나무 → 몰림 → 사고"를 교대 중에 읽을 길이 발생 기록의 첫머리 한 줄뿐이면 안 된다 | b4 |
+| `scripts/metrics.ts`·`scripts/sweep.ts` | `hazard` 줄·`metrics.hazard`·관문(`holes`·`rootMax`·한 교대 6건), `TAG_SYS` 의 `struct → building`, **`S(I)` 의 `wear` 줄: `s.wear.cause === 'shock'` 이면 `building`, 아니면 `carry`**(지금은 `s.wear` 가 있으면 `carry` — L3 가 교대 안의 충격으로 채우면 I2 가 없는데 "교대 간 지속"으로 세어진다), `--hazard`, 새 기록 문구가 `PHRASE` 에 걸리지 않는지(시험 3), 관문 조이기(M-G1 0, M-G3 3), `isDisasterTag` 는 그대로(법칙 사건에는 재난 꼬리표가 없다) | | b3-4 · b3-8 · b5 |
 | `tests/causality.test.ts` | §6 I1-b | 파일이 길어지면 법칙의 시험은 `tests/hazard.test.ts`(새로 — 90초 예산) | 단계마다 |
 
-건드리지 않는다: `city.ts`(읽기만 — `riverDist`·`districtAt`·`weatherSpeedFactor`), `cityPlan.ts`, `view/city/staticCity.ts`, `tests/sim.test.ts`, G4·G5 의 기록 전용 칸을 읽는 코드, **X6 의 `structStep`·`fallStep`·`CAT` 의 수(화재 → 붕괴의 식)**, 재난 큐(`disaster.ts` 의 `queue`·`spawn`·`CAP`), 평소 생성기(`createIncident` 의 추첨·`tickIncidents` 의 간격).
+건드리지 않는다: `city.ts`(읽기만 — `riverDist`·`districtAt`·`weatherSpeedFactor`), `cityPlan.ts`, `view/city/staticCity.ts`, `tests/sim.test.ts`, G4·G5 의 기록 전용 칸을 읽는 코드, **X6 의 `structStep`·`fallStep`·`CAT` 의 지금 있는 수(화재 → 붕괴의 식 — `WEAR_INTEG` 한 칸을 더할 뿐이다)**, `Scene.rules`(읽는 곳도 쓰는 곳도 고치지 않는다), 재난 큐(`disaster.ts` 의 `queue`·`spawn`·`CAP`), 평소 생성기(`createIncident` 의 추첨·`tickIncidents` 의 간격).
 
 ---
 
@@ -1570,7 +1672,7 @@ npx tsx scripts/sweep.ts 1 --log <시드> --metrics                             
 7. **도시 지도는 공유 자료다.** 건물 손상을 `city.places` 에 적으면 다음 교대에도 남는다(I2 의 입력 없이). 교대 안은 X6 의 `Sim.placeMarks`, 교대 사이는 I2 의 `carryState.places` 에만 둔다.
 8. **객체 모양(P1).** `Incident`·`Scene` 에 칸을 더하고 생성 리터럴에 넣지 않으면 결과는 같아도 눈에 띄게 느려진다(V8 의 숨은 클래스). 0단계에서 모두 넣고 교대당 시간을 전후로 잰다.
 9. **병원 포화의 연쇄가 커질 수 있다.** 포화 → 먼 병원 → 구급차가 오래 묶임 → 다른 사건의 구급 부족 → 더 많은 지원 요청. 의도된 사슬이지만 다수 사상자 교대에서 실패가 몰릴 수 있다. 240초 벌점·체류 300초·한도를 §4 순서로 조정한다.
-10. **사건이 늘어난다.** 규칙이 만드는 사건은 평소 생성기의 `g.count` 에 들지 않는다(지금의 연쇄와 같다). 부하 감쇠(`incidents.ts:193-202`)는 열린 사건 수를 보므로 자동으로 평소 사건을 늦추지만, 교대당 사건 수 상한(× 1.12)을 넘으면 규칙의 확률부터 줄인다.
+10. **사건이 늘어난다.** 규칙이 만드는 사건은 평소 생성기의 `g.count` 에 들지 않는다(지금의 연쇄와 같다). 부하 감쇠(`incidents.ts:193-202`)는 열린 사건 수를 보므로 자동으로 평소 사건을 늦추지만, 교대당 사건 수 상한(× 1.08 — §4)을 넘으면 법칙의 세기 상수부터 줄인다.
 11. **재범 연쇄의 난수 수정**은 이 연쇄가 생긴 모든 교대의 결과를 바꾼다(그 뒤 평소 생성기의 흐름이 달라진다). 1단계에서 따로 커밋하고 기준선을 다시 잰다.
 12. **X6 설계서는 아직 검토 중이다.** 이 문서는 X6 초안의 이름(`catastrophe.ts` 의 함수들, `Sim.placeMarks`, `STRUCT_COLLAPSE`·`EXPLOSION`·`BURNOUT`, 전체 붕괴의 구간 통제)에 맞췄다. X6 이 바뀌면 §3.10 의 신호 자리와 C2·C9 를 따라 고친다. X6 이 붕괴·폭발을 더 자주 만들면 C1·C2 의 발동이 늘어난다 — X6 뒤 기준선에서 확률을 다시 본다.
 13. **R1 이 부대·대원 수를 바꾼다**(대원 34명 → 63명 안팎). C3 의 병원 한도, C6 의 전환 빈도, 자원 경쟁 지표의 기준선은 R1~R3 뒤에 다시 잰 값으로 판단한다.
@@ -1578,15 +1680,21 @@ npx tsx scripts/sweep.ts 1 --log <시드> --metrics                             
 15. **엔트로피는 표본이 작으면 낮게 나온다.** 시나리오별 값은 `n ≥ 5` 만 쓰고 `n` 을 함께 찍는다. 교대 수가 다른 측정끼리 비교하지 않는다.
 16. **구역 경계.** `districtAt` 은 가까운 동네를 고르는 함수가 아니다 — 모든 동네의 반지름 × 1.22 밖이면 `null` 이고, 건물의 `Place.dong` 은 그때 `'외곽'`(산이면 `'산촌'`)이 되어 `DISTRICTS` 에 없다(`city.ts:45-53, 318`). 그래서 외곽 건물이 엉뚱한 동네의 상태를 받는 일은 없지만, 대신 **구역 -1** 이 생긴다. 모든 규칙이 -1 을 건너뛰게 했다(§3.2). 범위로 고르는 규칙(C4 (가)·C5·C8 (가) — "원인 지점에서 N 안에 가운데가 있는 동네")은 원인이 외곽이어도 동네 가운데까지 재므로 그대로 돈다. 영향을 받는 것은 **그 점의 구역 하나**를 쓰는 곳뿐이다: C10 의 도주 지점 구역, 관제의 `knownZoneOfIncident`(외곽 신고는 구역 상태로 위험도를 올리지 않는다), 외곽 현장의 음영·연기. 외곽은 밀도가 낮아 잃는 것이 적다고 보고 그대로 둔다.
 17. **(2026-11-20) 평소 교대의 결과가 모두 바뀐다.** 우회 몰림(b3-5 ②)은 닫힌 구간이 있는 모든 교대의 혼잡과 대응 시간을 바꾸고, L1 은 재난도 대형 사고도 없는 교대에서 드물게 사고를 더한다(평소의 정체·공사·사고에서 온 초과가 늘 있다 — 12초 표본마다 평균 18구간). "상태가 평소와 같은 교대는 그대로"는 교대 단위로는 성립하지 않고 대상 단위로만 성립한다(§3.6a). b3-5 ② 뒤에 기준을 통째로 다시 잰다.
-18. **상수는 거의 다 추측이다.** `DIV_K`·`A_ROAD`·`K_HEAT`·`K_EMBER`·`A_STRUCT`·`A_PIPE`·`K_RE`·`LIFT_RIDE`·`RR_SMOKE`·`FLOOD_CAR` 는 조사의 어림(한 교대짜리 표본 둘~셋)에서 나왔다. 초과를 원인 항으로 재면 적분값이 조사 때(혼잡 값의 차로 잰 것)와 달라진다. 법칙마다 `hazstats` 의 노출량으로 다시 맞춘다(§4). 균형은 보통 120교대로 본다(건물 쪽 법칙은 큰 화재·붕괴 몇 건에 흔들린다 — X6 와 같다).
-19. **장부의 구멍.** 구간의 상태를 바꾸는 자리가 열 곳 남짓이라 `noteRoadCause`·`noteBump` 를 빠뜨리기 쉽다. 빠뜨리면 원인 없는 초과가 되어 사건을 만들지 않고 `holes` 만 는다 — 관문(`holes = 0`)이 잡는다. 새로 길을 닫거나 `bump` 를 얹는 코드를 만들면 장부 한 줄을 함께 넣는다(CLAUDE.md 의 "새 교통 사건·장애물" 절차에 더할 것).
+18. **상수는 거의 다 추측이다.** `DIV_K`·`A_ROAD`·`K_HEAT`·`K_EMBER`·`A_STRUCT`·`A_PIPE`·`K_RE`·`LIFT_RIDE`·`RR_SMOKE` 와 충격의 계수(붕괴 0.6·0.35, 닿는 틈 15, `S_MIN`), 자리마다의 문턱 범위는 조사와 검토의 어림(한 교대짜리 표본 둘~셋과 손 계산)에서 나왔다. 초과를 원인 항으로 재면 적분값이 조사 때(혼잡 값의 차로 잰 것)와 달라진다. 법칙마다 `hazstats` 의 노출량으로 다시 맞춘다(§4). 균형은 보통 120교대로 본다(건물 쪽 법칙은 큰 화재·붕괴 몇 건에 흔들린다 — X6 와 같다).
+19. **장부의 구멍.** 구간의 상태를 바꾸는 자리가 열 곳 남짓이라 `noteRoadCause`·`noteBump` 를 빠뜨리기 쉽다. 빠뜨리면 원인 없는 초과가 되어 `holes` 가 는다(그 몫이 전부면 사건도 만들지 않는다) — 관문(`holes = 0`)과 `hazstats` 의 "장부 없는 초과의 노출량"이 잡는다. 새로 길을 닫거나 `bump` 를 얹는 코드를 만들면 장부 한 줄을 함께 넣는다(CLAUDE.md 의 "새 교통 사건·장애물" 절차에 더할 것). **밀림의 꼬리**(뿌리가 풀린 뒤 약 3분)는 밀린 구간 쪽에 복사한 내력(`qEv`)으로 메웠다 — 뿌리의 장부를 그때그때 읽는 구현으로 되돌리면 평소 교대에서 관문이 깨진다.
 20. **현장과 지도의 축척이 이어져 있지 않다.** 폭발 반경(칸)을 도시 좌표로 바꾸는 `CELL = 2` 는 표본의 가운데값이다(범위 1.2~4.0). 이웃에 닿는 범위가 현장마다 조금 어긋난다 — 첫 판은 상수로 두고, 어긋남이 눈에 띄면 현장의 건물 폭 ÷ `Place.w` 로 바꾼다.
-21. **같은 교차로의 열린 사건 둘.** 이웃 건물의 2/3 가 원인 건물과 같은 교차로다. L2·L3·L5 가 `placeId` 를 정해 사건을 만들면 `pickPlace` 의 "사건 중인 교차로를 피한다"를 비켜 간다. 지도 핀·길가 주차·`knownBuildingAt`·`I.reportedNode` 로 사건을 찾는 코드가 둘을 가리는지 b3-7 에서 먼저 본다. 못 가리면 그 법칙들의 `spawn` 이 원인 사건이 닫힐 때까지 `null` 을 돌려준다(대기 마감 300초).
+21. **같은 교차로의 열린 사건 둘.** 이웃 건물의 2/3 가 원인 건물과 같은 교차로다. L2·L3·L5 가 `placeId` 를 정해 사건을 만들면 `pickPlace` 의 "사건 중인 교차로를 피한다"를 비켜 간다. 지도 핀·길가 주차·`knownBuildingAt`·`I.reportedNode` 로 사건을 찾는 코드가 둘을 가리는지 b3-7 에서 먼저 본다. 못 가리면 그 법칙들의 `spawn` 이 그 교차로의 사건이 닫힐 때까지 `null` 을 돌려주고 `hold: 300` 을 준다 — 기다리는 줄은 초과가 끝나도 버려지지 않으므로(§3.6a) 이 갈래에서도 사건이 난다(초안의 규칙으로는 불이 꺼지는 순간 기다리던 것이 모두 버려졌다). **같은 건물**에는 틀이 막는다(열린 사건이 있으면 기다리고, 전소·전체 붕괴면 버린다).
 22. **X6 의 수가 흔들린다.** L3 의 `wear` 는 처음 건전도를 낮추고 새는 밸브는 가스 폭발을 늘린다 — 전체 붕괴·폭발이 X6 의 기준에서 벗어나면 `WEAR_INTEG`·`K_SHOCK` 를 줄인다(X6 의 식은 고치지 않는다). 화재 균형은 사용자 결정으로 N9 뒤에 본다 — L2 가 화재 사건을 교대당 0.05~0.1건 더하는 것은 그 결정의 범위 안에서 받아들인다(화재 성공률이 기준 − 2%p 를 넘게 내려가면 `K_HEAT` 를 줄인다).
 23. **재난 큐와 겹친다.** 태풍·홍수·지진의 큐가 같은 종류의 사건(미끄러진 차·물에 잠긴 도로의 충돌·승강기 3건·여진 붕괴)을 직접 일으킨다. 법칙은 재난의 종류를 읽지 않고 상태만 읽으므로 논리로는 겹치지 않지만 수로는 더해진다 — 재난 교대의 사건 수(기준 × 1.1)와 한계 시간으로 본다. 재난 큐 자체를 상태 법칙으로 옮기는 일은 I1 밖이다(N6 의 다시 쓰기 — ROADMAP 의 새 항목으로).
 24. **재난의 충격 단계에는 열린 사건이 한도를 넘는다.** 법칙의 사건은 60초까지 기다리다 버려진다(§3.6a). 재난 교대의 `hazard.waited`·`dropped.expired` 가 `natural` 보다 훨씬 크면 `HZ.HOLD` 를 늘리는 대신 그대로 둔다(부하가 높을 때 사건을 더 얹지 않는 것이 맞다).
 25. **`Math.log`·`Math.exp`.** 문턱과 닫힌 꼴의 식이 쓴다. `src/sim` 은 이미 `Math.exp` 를 쓴다(`traffic.timeOfDay`) — 같은 기계·같은 런타임에서 결정적이다. 브라우저와 헤드리스의 해시 비교(`npm run ui-check`)가 법칙이 걸린 시드에서도 같은지 b4 에서 한 번 본다.
 26. **N8 의 조건부 연쇄(K1~K8)는 "X 가 실패하면 Y" 꼴로 설계돼 있다**(N8 §5.6 — `spawnConsequence`). 사용자의 방향과 어긋날 수 있다. I1-b 는 그 함수를 남겨 두되, N8 구현 전에 그 여덟을 이 문서의 틀로 옮길 수 있는지 다시 본다(§3.7 끝).
+27. **"한 사슬 3건"의 뜻.** `canChain` 은 사슬의 길이만 본다. 법칙은 한 뿌리에서 가지가 여럿 나므로 `HZ.ROOT_MAX`(한 뿌리의 법칙 사건 2건)로 묶었다 — 사용자 결정을 좁게 읽은 기본값이다(§9 의 질문). 넓게 읽어도 된다는 답을 받으면 `ROOT_MAX` 만 올린다(법칙 상한과 한 교대 6건이 남는다).
+28. **숨은 손상이 판단으로 새는 길.** `Scene.rules`·`s.kind` 처럼 판단부가 "생김새"로 읽는 칸에 세계 규칙이 진실을 적으면 글자 검사에 걸리지 않고 정보 격리가 깨진다(초안의 `applyExpo` 가 `s.rules` 에 `'gas'` 를 더하려 했다). 세계 쪽(`src/sim/world/`)은 `s.rules` 에 쓰지 않는다 — 시험이 글자로 본다. 새 진실 전용 칸은 `s.wear` 처럼 판단 파일의 금지 글자 목록에 함께 넣는다.
+29. **등록 순서가 import 한 줄에 달려 있다.** 법칙·규칙 파일을 다른 모듈이 import 하면 그 파일의 등록이 모음 파일의 차례보다 먼저 실행된다(§3.4). 다른 모듈이 부를 함수는 `world/expo.ts`·`state.ts`·`hazard.ts` 에 둔다 — 시험이 import 줄을 글자로 본다.
+30. **시드가 도시 캐시로 새는 길.** 건물·동네마다 한 번 뽑는 문턱을 `city.places` 열쇠의 `WeakMap` 에 두면 앞 시드의 값이 뒤 시드에 쓰인다 — 같은 시드를 두 번 견주는 시험으로는 잡히지 않는다(§3.6c, §6 I1-b 1 의 "A 다음의 B").
+31. **워크플로 대본이 옛 차례다.** `docs/specs/workflows/args/I1-b.json` 의 덩어리(`b3a`·`b3b`)는 없어진 규칙(C9·C1·C12)을 가리킨다. 주 세션이 §5 의 덩어리 표(h1~h8)로 바꾼 뒤에 띄운다.
+32. **평소 교대의 사고가 는다.** L1 은 평소의 정체·공사·사고에서 온 초과로도 사고를 낸다(교대당 0.2~0.5건 — §9 의 질문). 사용자가 "큰 원인이 있을 때만"을 원하면 `roadCrash` 의 대상을 "주인 사건이 있거나 재난·전면 통제에서 온 몫이 1/3 이상인 구간"으로 좁히는 대신, 세기를 낮추는 쪽이 법칙을 일반 법칙으로 남긴다.
 
 ---
 
@@ -1609,13 +1717,17 @@ npx tsx scripts/sweep.ts 1 --log <시드> --metrics                             
 | **(2026-11-20 사용자 방향) 인과를 어떻게 만드는가** | "인과가 자연스럽게 스크립트대로 말고 생기게" — 규칙이 사건을 직접 만들지 않는다. 원인 → 상태 → 일반 법칙(초과 위험 과정) → 사건(§3.1·§3.6a·§3.7). 사용자의 예 셋은 §3.12 ①~③ | 사용자의 말 그대로 |
 | 평소 교대의 초과(정체·공사·평소 사고의 밀림)에서도 사고가 나는가 | **난다**(기본값 — 사용자에게 확인할 것). 법칙은 원인을 가리지 않는다. 세기는 보통 교대에 0.2~0.5건 | "나무든 사고 통제든 인파든 혼잡이면 같다"가 일반 법칙의 뜻이다. 평소 교통 사건을 빼면 법칙이 원인을 아는 셈이 된다 |
 | 우회 몰림이 긴급 차량도 늦추는가 | **늦춘다**(기본값 — 사용자에게 확인할 것). 평균 대응 +3초 안으로 맞춘다 | 몰린 길은 누구에게나 몰린 길이다 |
-| 초과 사건과 연쇄 상한 | **사용자 결정(한 사슬 3건 · 한 교대 6건)은 그대로.** 부모가 있는 초과 사건은 이야기 연쇄와 같은 6건을 나눠 쓴다. 부모가 없는 것(공사·정체·인파·재난에서 온 초과)은 따로 교대당 3건(`ORPHAN_CAP`), 전체는 6건(`CSQ_SPAWN_CAP`) — **부모 없는 것도 "한 교대 6건"에 넣을지는 사용자에게 확인할 것**(넣으면 극한에서 재범이 길 위의 사고에 자리를 뺏긴다 — 극한 30교대에 상한으로 버린 연쇄가 이미 29건이다) | b2 의 `chainedInShift` 가 부모 있는 것만 세는 까닭과 같다 |
-| 문턱을 넘었는데 상한에 걸리면 | 버린다(적분값에서 문턱만큼 빼고 다음 문턱을 새로 뽑는다). 부하·자리 문제만 60초 미룬다(§3.6a) | 상한은 교대 안에서 다시 열리지 않는다 — 쌓아 두면 교대 끝에 몰린다 |
+| 초과 사건과 연쇄 상한 | **사용자 결정(한 사슬 3건 · 한 교대 6건)은 그대로.** 부모가 있는 초과 사건은 이야기 연쇄와 같은 6건을 나눠 쓴다. **부모가 없는 것(공사·정체·인파·재난에서 온 초과)도 그 6건 안에서 센다**(그 안에서 3건까지 — `ORPHAN_CAP`). 초안은 6건 밖에 따로 3건을 두었는데 그러면 한 교대에 인과로 난 사건이 9건까지 된다 — **따로 세어도 되는지는 사용자에게 확인할 것**(안쪽이면 극한에서 이야기 연쇄가 길 위의 사고와 자리를 나눈다 — 극한 30교대에 상한으로 버린 연쇄가 이미 36건이다) | 답을 받기 전 기본값은 상한의 안쪽이어야 한다 |
+| "한 사슬 3건"의 뜻 | 길이(지금의 `canChain`)에 더해 **한 뿌리에서 난 법칙 사건을 2건까지**(`HZ.ROOT_MAX` — 뿌리 포함 3건)로 묶는다. **길이로만 봐도 되는지는 사용자에게 확인할 것** | 이야기 연쇄는 한 사건이 하나를 낳지만 법칙은 한 뿌리에서 여러 대상이 함께 넘는다(큰 불 곁의 이웃들과 연기 환자). 기본값은 좁은 쪽 |
+| 문턱을 넘었는데 상한에 걸리면 | 버린다(적분값에서 문턱만큼 빼고 다음 문턱을 새로 뽑는다 — 건물마다 한 번인 법칙은 그 대상이 끝난다). 부하·자리 문제만 기다리는 줄에 넣는다(기본 60초, 넘는 순간의 몫을 적어 둔다 — §3.6a) | 상한은 교대 안에서 다시 열리지 않는다 — 쌓아 두면 교대 끝에 몰린다 |
 | 사건의 원인이 여럿일 때 | 넘는 **순간의** 몫으로 정한다(쌓인 양의 비가 아니다). 가장 큰 몫이 `cause`, 나머지가 `causes`, 부모는 주인 사건이 있는 가장 큰 몫(1/3 이상일 때) | 겹친 푸아송 과정에서 사건이 몫 i 의 것일 확률은 그 순간의 `λᵢ/Σλ` 다. 오래전에 지나간 통제를 지금 사고의 원인이라고 쓰지 않는다 |
 | 연속 값의 기록 | 우회 몰림·열 노출 같은 연속 값은 기록하지 않는다. 내력은 사건이 날 때 그 자리에서 `Incident.hz` 에 적는다 | 지금도 혼잡의 변화는 기록하지 않는다. "△△로 밀림" 기록을 `drift` 마다 남기면 통제가 있는 모든 교대의 기록이 불어난다. 발생 기록은 상태(문턱을 넘음)를 바꾸는 그 자리에서 남으므로 가짜 기록이 아니다 |
 | 재발화(L7)의 빈도 | 상태로만 내면 보통 교대에 거의 0건 — **그대로 둔다.** 잘 끈 화재에서도 나오게 하는 새 물리(탄 칸의 잔열)는 N9 뒤 화재 균형 때 | 사용자 결정: 화재 균형은 N9 뒤에 다시 본다 |
 | 도주 용의자의 재범(C10) | 조건으로 움직이는 지금 설계를 둔다(초과 위험으로 바꾸지 않는다) | 행위자의 선택이고 이야기 연쇄다(사용자 결정으로 그대로) |
-| 잠긴 지하의 구조 현장 · 재난 큐의 "X 면 Y" | 이번에 하지 않는다. 침수는 상태(정전 → 승강기)까지만, 재난 큐는 그대로 | 현장 틀이 없다(N9 가 지하차도를 만든다). 재난 큐는 N6 의 것이다 |
+| 잠긴 지하의 구조 현장 · 재난 큐의 "X 면 Y" | 이번에 하지 않는다. 침수는 상태(정전 → 승강기, 느려진 길 → L1)까지만, 재난 큐는 그대로(**사용자에게 알릴 것**: 태풍·홍수·지진이 일으키는 사건 묶음은 아직 "재난이면 이 사건들"이라는 대본이다 — 고치려면 N6 를 다시 써야 한다) | 현장 틀이 없다(N9 가 지하차도를 만든다). 재난 큐는 N6 의 것이다 |
+| 물에 잠긴 길의 사건(L6 의 구간 갈래) | 따로 두지 않는다. 차오르는 물에 느려진 길은 교통의 초과 한 항(`'level'`)으로 L1 에 들어간다 | "통제 순간 한 번의 충격 → `water/std`"는 원인이 홍수 하나뿐이라 이름만 바꾼 스크립트였고, 하천 현장이 기록과 맞지 않았다 |
+| 법칙이 다중 추돌을 내는가 · '재발화' 이름표 · 연기 환자의 변형 | 다중 추돌은 내지 않는다(고속도 `std` 규모 3) · '재발화' 이름표는 L7 의 물리와 함께 뒤로 · 연기 환자는 변형 `medical/smoke` | 대형 사고는 교대에 많아야 하나(N5) · 교차로와 종류로 찾는 이름표는 거의 다 틀린 이름표가 된다 · 실신 현장은 '원인은 부정맥'으로 급변할 수 있어 기록 둘이 다른 말을 한다 |
+| 숨은 배관 손상과 현장의 가스 규칙 | 새는 밸브 소품만 놓는다. `s.rules` 에 `'gas'` 를 더하지 않고 옛 가스 규칙(`tickGas`)도 돌리지 않는다(첫 판) | `s.rules` 는 판단부가 생김새로 읽는 칸이고 연기 피해의 원인을 정한다. X6 의 가스 격자와 폭발은 밸브 소품만으로 돈다 |
 
 ---
 
@@ -1646,6 +1758,27 @@ npx tsx scripts/sweep.ts 1 --log <시드> --metrics                             
 - **초안에서 고친 것**(조사 결과): ① "상태가 평소와 같은 교대는 결과가 바뀌지 않는다"는 교대 단위로는 성립하지 않는다 — 평소에도 초과 혼잡이 늘 있다. 대상 단위의 보장으로 바꿨다. ② "초과 사건은 모두 부모를 갖는다"도 성립하지 않는다 — 공사·정체·인파·재난에는 사건이 없다. 부모 없는 것의 상한을 따로 뒀다. ③ 꺼진 신호를 L1 에 따로 곱하지 않는다 — 정전은 이미 `bump` 로 혼잡에 들어 있다(두 번 센다). ④ 건물 쪽은 "평소의 몇 배"가 단위가 못 된다(한 채의 평소율이 88배까지 차이 나고 너무 낮다) — 양과 건물마다의 문턱으로 썼다. ⑤ 손상된 이웃에서 나중에 우연히 사건이 날 확률은 3% 안팎이라 "다음 사건이 더 커진다"만으로는 보이지 않는다 — 손상이 그 건물의 위험률을 올리는 법칙(`structFail`·`pipeLeak`)을 더했다. ⑥ 잔불(L7)은 지금 물리로는 거의 남지 않는다 — 정직하게 0 에 가깝게 두고 새 물리는 화재 균형 때로 미뤘다. ⑦ 귀속은 쌓인 양이 아니라 넘는 순간의 몫으로 한다. ⑧ 연기·정전은 동네 단위가 너무 굵어 국지 자리를 뒀다. ⑨ 잠긴 지하의 사건은 현장 틀이 없어 상태까지만.
 - **그대로 둔 것**: C6·C3·C2(글자 그대로), C10(조건 + 이야기 연쇄), C4·C8·C5·C11 의 상태 부분(원천을 넓히고 사건을 만드는 가지만 법칙으로 옮김), b0~b2 의 틀과 이름, 연쇄 상한, X6 의 화재 → 붕괴.
 - **틀린 글을 고친 것**: §3.2 의 "'산촌'은 `DISTRICTS` 에 없다"(있다 — `zoneOfPlace` 를 좌표로 바꾼다), C11 의 "신호 `collapse`(size ≥ 10)"(X6 의 붕괴는 `catastrophe` 신호다), §4 의 "부모 있는 사건 2~8%"(지금 0.5% — 목표를 1~5% 로).
+
+**검토 반영 메모 (2026-11-20 밤 — 방향 전환 초안 `867a5dc` 를 독립 검토 세 갈래가 읽었다: 결정성·되먹임·끝남·비용 / 자연스러움·정보 격리·정직한 기록 / 실현성·균형·단계)**
+
+요지: **틀의 뼈대(대상마다 한 번 뽑는 문턱 · 넘는 순간의 몫으로 귀속 · 상한에 걸리면 버림)는 그대로 두고 가장자리를 고쳤다.** 고친 까닭은 넷으로 묶인다. ① **정보 격리와 가짜 기록** — 숨은 배관 손상을 판단부가 읽는 `s.rules` 에 적지 않는다(밸브 소품만), 법칙 사건을 전소 건물 대신 엉뚱한 건물에 내거나 불 난 그 건물에 또 열지 않는다(틀의 공통 조건), 연기 환자를 '원인은 부정맥'으로 급변할 수 있는 실신 현장에 얹지 않는다(`medical/smoke`), 원인 기록으로 `ESCALATION` 을 쓰지 않는다, 내력 문장의 "약 N초"를 몫마다 잰다, 기록 없는 큰 몫을 뒤로 숨기지 않는다. ② **장부** — 구간마다 한 칸이던 장부를 항마다의 주인과 `bump` 줄로 바꾸고, 밀림의 내력을 밀린 구간 쪽에 복사해 뿌리가 풀린 뒤 3분의 꼬리가 구멍이 되지 않게 했으며, 수요만으로 꽉 찬 구간의 밀림은 원인 탓으로 돌리지 않는다. ③ **증거가 증거이게** — 쓰러진 나무의 개입 시험은 장부를 지워서 저절로 통과했다: 상태(통제와 감속)만 되돌리고 장부는 두며 다른 원인을 얼리고, 장부만 지운 대조를 더했다. ④ **균형과 실현** — `A_ROAD` 를 1/4 로(초안 값은 스스로의 목표의 4~6배), `LIFT_RIDE` 를 0.4배로, 붕괴의 충격을 한 번으로도 금과 배관 문턱에 닿게(초안 값으로는 사용자의 예 ②가 붕괴에서 사실상 0 이었다), 다중 추돌·'재발화' 이름표·물에 잠긴 길의 충격 갈래를 뺐고(대형 사고는 교대에 하나 · 틀린 이름표 · 이름만 바꾼 스크립트), 부모 없는 법칙 사건을 한 교대 6건 **안**에서 세고 한 뿌리의 가지를 2건으로 묶었으며(사용자 결정의 좁은 해석 — §9 의 질문), 정전의 회복 시각을 `Infinity` 로 두지 않고, 지진·태풍 정전이 틀을 지나는 신호 둘을 더하고, 등록 파일의 import 규칙·시드가 도시 캐시로 새지 않는 규칙·단계별 해시 확인법·덩어리 계획(h1~h8)·교대 중에 보이는 화면 표시를 정했다.
+
+**받아들인 것**: must 넷(가지로는 셋 — 건물에 내는 사건의 공통 조건 · `s.rules`(두 갈래가 함께 짚었다) · 개입 시험)은 모두, should 는 아래 "다르게"를 빼고 모두(밀림의 꼬리, `once`·기다리는 줄, 한 뿌리의 가지, 시드와 도시 캐시, `bump` 줄, 정전의 회복, 사고 구간의 통제 조건, 평소의 뿌리, 몫마다의 `since`, 귀속의 줄 세우기, 충격의 크기, 원인 기록의 규칙, 국지 값의 묶음, `medical/smoke`, `knownHazardNear`, 한 교대 6건 안쪽, 첫 상수, 글자 검사, 커밋 나누기, 덩어리, 측정 도구의 `wear`, 등록 파일, 재난의 신호, 화면, 시간 예산, 한 `Sim` 의 평균 시험), nit 도 모두(문구·기록 수·상수의 자리·시험의 흔들림).
+
+**다르게 받아들인 것과 까닭**:
+
+- **숨은 배관 손상의 가스 규칙** — 한 검토는 진실 전용 표시(`s.wear.pipe`)를 두고 `tickGas` 와 독성 판정이 그것을 읽게 하자고 했고, 다른 검토는 밸브 소품만 놓고 옛 가스 규칙을 돌리지 말자고 했다. 뒤의 것을 택했다 — X6 의 가스 격자와 폭발은 밸브 소품만으로 돌고, `sceneManager`·`injury.ts` 의 조건을 고치면 화재 현장의 연기 피해가 유독 가스로 바뀌는 것을 다시 막아야 한다. 같은 검토의 시험("밸브를 보기 전까지 두 현장의 기록이 같다")은 쓰지 않았다 — 밸브 소품이 칸 하나를 막아 길이 달라지므로 정보 격리가 지켜져도 기록은 갈린다. 대신 "`applyExpo` 앞뒤로 `s.rules` 가 같다 + 믿음이 없는 대원의 방법 선택(순수 함수)이 같다 + 세계 쪽은 `s.rules` 에 쓰지 않는다(글자)".
+- **기다림** — "초과가 끝난 뒤에도 기다리는 초(`holdPast`)"가 아니라 "기다리는 줄에 넘는 순간의 몫을 적어 두고, 초과가 끝난 것만으로는 버리지 않는다 + 법칙마다 마감(`hold`)"으로 했다. 한 장치로 충격 법칙·12초 법칙·L2 의 대비책이 모두 풀린다. 넘은 시각의 보간은 없앴다(미래 예약에 `when` 을 붙이는 쪽이 아니라).
+- **물에 잠긴 길** — 세 검토가 서로 다른 답을 냈다(충격을 시간 적분으로 · 갈래를 없애고 교통의 초과 한 항으로 · 지하차도에 문턱을 따로 주고 충격). 갈래를 없애고 `'level'` 항으로 L1 에 넣었다 — "통제 순간 한 번"은 무엇으로 바꿔도 원인이 하나뿐인 스크립트이고, 느려진 길을 교통의 상태로 넣으면 시간 적분은 L1 이 저절로 한다. 지하차도의 문턱은 `disaster.roadSill` 한 함수로 N9 의 자리를 남겼다(충격은 주지 않는다).
+- **충격의 수** — 두 검토의 값 가운데 어림이 함께 적힌 쪽(붕괴 0.6 · 0.35, 틈 15, `S_MIN` 0.1, 배관 문턱은 0.2 + 0.6u 그대로)을 택했다. 모두 첫 값이다.
+- **산불 자리의 건물** — `disaster.inWildfire` 를 내보내 빼는 대신 조건 자체를 뺐다(이미 불이 난 건물·쓸 수 없는 건물이 걸러진다). 법칙이 재난을 묻는 함수를 하나라도 부르면 "원인을 모른다"가 흐려진다.
+- **장부** — "한 구간에 원인이 둘이면 통제의 기록을 남긴다"(한 칸을 지키는 안) 대신 항마다 주인을 두어 덮는 순서 문제를 없앴다. "원인 있는 뿌리가 둘이면 다른 쪽을 `causes` 로"는 넣지 않았다 — 밀림의 내력은 먼저 뿌리가 된 쪽 하나만 복사한다(둘째 뿌리가 닫힌 구간이면 어차피 `divert` 몫으로 들어온다).
+- **정전 규칙의 열쇠** — 검토는 정전을 거는 규칙을 동네 열쇠·쿨다운 300초로 둔 채 끝을 받는 규칙만 따로 두자고 했다. 한 신호가 여러 동네를 끄므로 열쇠를 신호(`ev:<기록>`)로 바꾸고 쿨다운을 없앴다 — 같은 동네의 겹침은 `setZone` 의 "더 나쁜 값만"이 막는다.
+- **금지 글자 `.hz`** — 검사 대상을 교본(`doctrine/*`)까지 넓히면 R3 의 `c.hz`("위험 실내 일인가")에 바로 걸린다(코드로 확인). `world.hz`·`I.hz` 와 `hz.(src|law|target|at)` 로 좁혔다.
+
+**버린 것**: 없다(위의 "다르게"가 전부다). 검토가 틀린 곳은 찾지 못했다 — 짚은 코드 사실(`methods.announceOk`·`injury.smokeCause` 가 `s.rules` 를 읽는다, 쓰러진 나무가 `slow += 1.4` 도 건다, 밀림이 ×0.75 로 남는다, `disaster.closeEdge` 가 `emit` 을 쓴다, `dispatcher.ts` 의 `divertFrom`·`diverted`, 측정 도구의 `wear → carry`, `consequence.fire` 가 쿨다운을 `test` 앞에서 본다, `tickMedical` 의 변형 갈래)은 모두 맞았다.
+
+**사용자에게 남은 질문**은 §9 에 모았다: 평소 교대에서도 몰린 길의 사고가 나는가 · 우회 몰림이 긴급 차량도 늦추는가 · 부모 없는 법칙 사건을 한 교대 6건과 따로 세어도 되는가 · "한 사슬 3건"을 길이로만 봐도 되는가. 넷 다 기본값이 상한의 안쪽이라 답을 기다리지 않고 구현해도 사용자 결정을 깨지 않는다. 알릴 것 하나: 재난 큐(태풍·홍수·지진이 일으키는 사건 묶음)는 이번에도 대본 그대로다.
 
 ---
 

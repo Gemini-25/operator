@@ -21,6 +21,7 @@ import type { CatState, Fact, FieldAgent, FxInfo, Incident, IncidentResult, Plac
 import { dist, fmtSec, josa, pct } from '../util';
 import { hasKit, kitLive, kitWorks } from '../crews';
 import { signal } from '../world/consequence';
+import { noteRoadCause } from '../traffic';      // (I1-b b3-5) 통제 기록을 교통의 장부에
 import { learn, regionNameAt } from './agents';
 import { mkFact } from './beliefs';
 import { WRECKED } from './damage';
@@ -860,6 +861,7 @@ function blockRoad(sim: Sim, I: Incident): void {
     e.slow += 1.4; e.closed = true; e.closedReason = 'incident';      // known 은 건드리지 않는다
     I.blockedEdge = e.id;
     I.blockEv = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 1, text: `건물 붕괴 잔해로 ${edgeName(sim.city, e)} 통제` });      // (I1-b) 통제 기록 — 그 구간 앞의 ROUTE_BLOCKED 가 원인으로 가리킨다
+    noteRoadCause(sim, e.id, 'close', I.blockEv, I.id);      // (I1-b b3-5) 교통의 장부: 닫힘의 주인
     return;
   }
 }

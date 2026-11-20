@@ -14,10 +14,11 @@ import { startPursuit } from './pursuit';
 import { disasterGapMul } from './disaster';
 import { DEPTH_MAX, chainDepth } from './chain';
 import { signal } from './world/consequence';      // (I1-b) 사건의 발생(붕괴)·종료를 세계에 알린다
+import { noteRoadCause } from './traffic';      // (I1-b b3-5) 길을 닫거나 느리게 한 기록을 교통의 장부에
 import { divertUnmet } from './world/rules/record';      // (I1-b C6)
 import { SCENARIOS, scenarioName, scenarioOf } from './scenarios';
 import type { Scenario } from './scenarios';
-import type { Incident, IncidentType, Place, PlaceKind } from './types';
+import type { HzNote, Incident, IncidentType, Place, PlaceKind } from './types';
 import { OUTCOME_NAME, TYPE_NAME } from './util';
 import { TYPE_DEFS, TYPE_ORDER } from './incidentTypes';
 import { noteClosedPlace } from './field/catastrophe';      // (X6 단계 7) 끝난 화재의 그을린 건물
@@ -33,10 +34,14 @@ export interface SpawnOpts {
   rng?: Rng;                     // 이 난수 흐름으로 만든다. 주면 평소 생성기의 상태(lastType)를 건드리지 않는다
   cause?: number;                // (I1-b) 이 사건을 낳은 기록 — 예약하는 순간에 이미 있는 기록이어야 한다. 발생 기록의 causes 와 Incident.cause 가 된다
   csq?: string;                  // (I1-b) 이 사건을 만든 연쇄의 이름 → Incident.csq
+  edgeId?: number;               // (I1-b b3-4) 교통사고가 난 구간 — 막히는 구간(I.blockedEdge)을 이 구간으로 먼저 본다 (조건은 설계서 §3.6b (다) — 쓰는 것은 b3-6 의 L1)
+  causes?: number[];             // (I1-b b3-4) 원인이 하나가 아닐 때 — cause 다음에 발생 기록의 causes 로 들어간다 (음수·중복은 emit 이 거른다)
+  hz?: HzNote;                   // (I1-b b3-4) 이 사건을 낳은 초과 위험의 내력 → Incident.hz (world/hazard.ts 가 예약하는 그 자리에서 적는다)
 }
 export interface ChainItem { at: number; opts: SpawnOpts; when?: (sim: Sim) => boolean; until?: number; log?: number }
 /** (I1-b) 예약했지만 일으키지 않은 연쇄 하나. 기록(emit)은 남기지 않는다 — 일어나지 않은 일이다. 보고서·측정 도구가 수로만 쓴다 */
-export interface DroppedChain { t: number; why: 'late' | 'busy' | 'depth' | 'expired' | 'cap'; type?: IncidentType; variant?: string; parent?: number }
+export interface DroppedChain { t: number; why: 'late' | 'busy' | 'depth' | 'expired' | 'cap'; type?: IncidentType; variant?: string; parent?: number;
+  csq?: string }      // (b3-4) 버린 것이 규칙·법칙의 사건이면 그 이름 (측정 도구가 법칙의 것을 가린다)
 export interface GenState {
   nextAt: number; lastType: IncidentType | null; count: number; lastCreated: number;
   nextNuisanceAt: number;                                        // 다음 비긴급 전화
@@ -153,6 +158,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
     pursuit: undefined, tag: undefined, parent: undefined, aidUnit: undefined, coResp: undefined,      // 나중에 붙는 칸을 미리 비워 둔다 (모든 사건이 같은 모양)
     airDone: undefined,      // (R1) "상공 임무 종료"로 풀려난 헬기 종류 — 쓰는 것은 단계 5 부터
     cause: undefined, csq: undefined, blockedBy: undefined, blockEv: undefined, divertWait: undefined,      // (I1-b) 인과 기록 — 판단은 읽지 않는다
+    hz: undefined,      // (I1-b b3-4) 초과 위험의 내력 — 법칙이 낸 사건에만 (기록 전용)
     docs: undefined, trackBy: undefined, reportedPrev: undefined, reportedNodeAt: undefined,      // (R3) 교본 기록(처음 남길 때 배열 — doctrineRun.recordDoc)·추격의 보고 칸(2단계)
     dupOf: undefined,      // (N8) 중복 신고 오인의 원 사건 — 진실 (단계 10)
     fieldRisk: undefined,      // (X6 §5.9) 현장 상황 보고로 관제가 올린 위험도 — dispatcher.fieldReport 가 채운다
@@ -160,6 +166,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
   { const tag = opts.tag ?? special?.tag; if (tag) I.tag = tag; if (opts.parent !== undefined) I.parent = opts.parent; }
   if (opts.cause !== undefined && opts.cause >= 0) I.cause = opts.cause;
   if (opts.csq) I.csq = opts.csq;
+  if (opts.hz) I.hz = opts.hz;
   sim.incidents.push(I);
   createScene(sim, I);
   { const sc = sim.scenes[I.id]; if (sc && sc.placeName && !place) I.truth.label = `${nodeName(sim.city, node.id)} ${sc.placeName}`; }      // 교차로 사고: 현장을 만들면서 정해진 이름
@@ -180,12 +187,15 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
       e.closed = true; e.closedReason = 'incident';
       for (const k of node.edges) if (k !== e.id) sim.city.edges[k].cong = Math.min(3, sim.city.edges[k].cong + 0.7);
       I.blockEv = emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(sim.city, e)} 통행 불가 — 쓰러진 나무가 길을 막았습니다.`, imp: 1, truth: true });      // (I1-b) 통제 기록: 다른 사건의 ROUTE_BLOCKED 가 원인으로 가리킨다
+      noteRoadCause(sim, e.id, 'close', I.blockEv, I.id);      // (I1-b b3-5) 닫힘의 주인 = 통제 기록 (감속의 주인은 아래의 발생 기록 — 항이 달라 서로 덮지 않는다)
     }
   }
   const what = variant === 'false' ? '실제 화재는 없음 — 오인 신고가 들어올 예정' : variant === 'prank' ? '실제 사건은 없음 — 장난 전화가 걸려 올 예정' : scenarioName(type, variant) === TYPE_NAME[type] ? TYPE_NAME[type] : `${TYPE_NAME[type]} · ${scenarioName(type, variant)}`;
   if (variant === 'kidnap' || variant === 'drunk' || variant === 'getaway') startPursuit(sim, I, variant);
   special?.onCreate?.(sim, I);
-  I.rootEvent = emit(sim, { inc: id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: special?.tag === 'major' ? 3 : 1, truth: true, causes: I.cause !== undefined ? [I.cause] : undefined, text:chainNote ? `${chainNote} — ${I.truth.label}.` : `사건 발생 — ${I.truth.label} (${what}). 아직 신고되지 않았습니다.` });
+  I.rootEvent = emit(sim, { inc: id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: special?.tag === 'major' ? 3 : 1, truth: true, causes: I.cause !== undefined ? (opts.causes ? [I.cause, ...opts.causes] : [I.cause]) : opts.causes, text:chainNote ? `${chainNote} — ${I.truth.label}.` : `사건 발생 — ${I.truth.label} (${what}). 아직 신고되지 않았습니다.` });
+  // (I1-b b3-5) 교통사고가 느리게 한 구간(slow += 1.4): 감속의 주인 = 발생 기록 — 그 구간이 뿌리가 된 밀림이 이 사건의 것이 된다 (기록 id 를 담기만 한다)
+  if (type === 'traffic' && I.blockedEdge >= 0) noteRoadCause(sim, I.blockedEdge, 'slow', I.rootEvent, I.id);
   // (I1-b §3.4) 무너진 채로 시작하는 사건(크레인 붕괴·가스 폭발·산사태): 발생이 곧 붕괴다 — 신호의 기록은 발생 기록, 크기는 처음부터 무너져 있는 칸 수
   if (type === 'collapse' && COLLAPSE_AT_START.has(variant)) {
     const dm = sim.scenes[id]?.damage; let fell = 0;
@@ -219,15 +229,18 @@ export function tickIncidents(sim: Sim): void {
       const c = g.chain[k];
       if (c.when && !c.when(sim)) {
         // (I1-b §3.5) 조건으로 일어나는 연쇄: 때가 됐는데 조건이 맞지 않는다 — 기한이 지났으면 버리고, 아니면 5초 뒤 다시 본다 (이번 틱에는 다른 예약도 꺼내지 않는다)
-        if (c.until !== undefined && sim.t >= c.until) { g.chain.splice(k, 1); g.dropped.push({ t: sim.t, why: 'expired', type: c.opts.type, variant: c.opts.variant, parent: c.opts.parent }); }
+        if (c.until !== undefined && sim.t >= c.until) { g.chain.splice(k, 1); g.dropped.push({ t: sim.t, why: 'expired', type: c.opts.type, variant: c.opts.variant, parent: c.opts.parent, csq: c.opts.csq }); }
         else c.at = sim.t + 5;
       } else {
         g.chain.splice(k, 1);
         const late = sim.t >= sim.shiftLen - 150;
         // (I1-b b1) 깊이 상한(chain.DEPTH_MAX — 정본은 canChain): 예약하는 자리가 모두 canChain 을 보므로 지금은 걸리지 않는다. 그 확인 없이 예약한 것이 있어도 사슬이 더 길어지지 않게 꺼낼 때 한 번 더 본다
         const deep = c.opts.parent !== undefined && chainDepth(sim, c.opts.parent) + 1 > DEPTH_MAX;
-        if (!late && open <= tn.maxConcurrent && !deep) { const J = createIncident(sim, c.opts); if (c.log !== undefined) { const rec = sim.world.log[c.log]; if (rec) rec.made = J.id; } }      // 인과 규칙이 예약한 사건: 그 결과 줄에 만든 사건을 적는다
-        else g.dropped.push({ t: sim.t, why: late ? 'late' : open > tn.maxConcurrent ? 'busy' : 'depth', type: c.opts.type, variant: c.opts.variant, parent: c.opts.parent });      // (I1-b) 버린 예약은 배열에만 (기록은 남기지 않는다)
+        // (I1-b b3-4) 법칙이 낸 사건(opts.hz)의 건물이 예약과 꺼냄 사이에 전소·전체 붕괴했다: 만들지 않는다 — createIncident 는 그런 건물이면 그 유형의 다른 건물을 다시 고르는데,
+        // 그 갈래를 타면 원인은 옆 건물의 불·정전인데 자리는 무관한 건물인 기록이 남는다 (§3.6a "건물에 내는 사건의 공통 조건")
+        const gone = c.opts.hz !== undefined && c.opts.placeId !== undefined && placeGone(sim, c.opts.placeId);
+        if (!late && open <= tn.maxConcurrent && !deep && !gone) { const J = createIncident(sim, c.opts); if (c.log !== undefined) { const rec = sim.world.log[c.log]; if (rec) rec.made = J.id; } }      // 인과 규칙이 예약한 사건: 그 결과 줄에 만든 사건을 적는다
+        else g.dropped.push({ t: sim.t, why: late ? 'late' : open > tn.maxConcurrent ? 'busy' : deep ? 'depth' : 'expired', type: c.opts.type, variant: c.opts.variant, parent: c.opts.parent, csq: c.opts.csq });      // (I1-b) 버린 예약은 배열에만 (기록은 남기지 않는다)
       }
     }
   }

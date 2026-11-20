@@ -2,6 +2,7 @@
 // 평소 추첨에는 들어가지 않는다. 교대마다 많아야 한 번, tune.majorProb 로 일어난다 (share 는 대형 사고끼리의 비중).
 import { distSeg, edgeName, findRoute } from '../city';
 import { emit } from '../events';
+import { noteRoadCause } from '../traffic';      // (I1-b b3-5) 통제 기록을 교통의 장부에
 import type { Scenario } from '../scenarios';
 import type { Needs } from '../types';
 
@@ -63,6 +64,7 @@ export const MAJOR: Scenario[] = [
         if (!findRoute(c, e.a, e.b, 1, e.id)) continue;
         I.blockedEdge = e.id; e.slow += 1.4; e.closed = true; e.closedReason = 'incident';
         I.blockEv = emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(c, e)} 전면 통제 — 다중 추돌 사고로 차로가 모두 막혔습니다.`, imp: 2, truth: true });      // (I1-b) 통제 기록
+        noteRoadCause(sim, e.id, 'close', I.blockEv, I.id);      // (I1-b b3-5) 교통의 장부: 닫힘의 주인
         break;
       }
     } },

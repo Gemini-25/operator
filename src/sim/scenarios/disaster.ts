@@ -3,7 +3,7 @@
 import { edgeName, mountainAt } from '../city';
 import { emit } from '../events';
 import type { Scenario } from '../scenarios';
-import { reallyLinked } from '../traffic';
+import { noteRoadCause, reallyLinked } from '../traffic';
 
 export const DISASTER: Scenario[] = [
   { type: 'fire', variant: 'wild', name: '산불', share: 0, nature: 'wildfire', vague: 'smoke', severity: [2, 3], tag: 'disaster', label: '산불',
@@ -28,6 +28,7 @@ export const DISASTER: Scenario[] = [
         if (!reallyLinked(sim, e.a, e.b, e.id)) continue;      // 실제 상태로 본다: 아직 아무도 모르는 낙하물이 놓인 길은 돌아갈 길이 아니다
         I.blockedEdge = e.id; e.slow += 1.4; e.closed = true; e.closedReason = 'incident';
         I.blockEv = emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(sim.city, e)} 통행 불가 — 흙더미가 길을 덮었습니다.`, imp: 1, truth: true });      // (I1-b) 통제 기록
+        noteRoadCause(sim, e.id, 'close', I.blockEv, I.id);      // (I1-b b3-5) 교통의 장부: 닫힘의 주인
         break;
       }
     } },

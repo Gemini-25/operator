@@ -906,7 +906,8 @@ export interface Problem {
 // 모든 칸은 함수가 없는 순수 자료다. 진실 쪽(세계 규칙 world/rules/*·hazards·executor)만 sim.world 를 읽고 바꾼다 —
 // 관제·지휘관·대원의 판단은 world/state.ts 의 knownZone·knownHospital·knownBuildingAt·knownZoneOfIncident 만 쓴다 (§3.8, tests/causality.test.ts 가 소스를 본다).
 /** 세계 상태 알림 기록의 갈래 — 측정 도구(scripts/metrics.ts 의 TAG_SYS)가 시스템을 가린다 */
-export type WorldTag = 'power' | 'comms' | 'water' | 'smoke' | 'risk' | 'hospital';      // I2 가 끝에 새 줄로 | 'carry' 를 더한다 (I2 §3.7)
+export type WorldTag = 'power' | 'comms' | 'water' | 'smoke' | 'risk' | 'hospital'      // I2 가 끝에 새 줄로 | 'carry' 를 더한다 (I2 §3.7)
+  | 'struct';      // (I1-b b3-4) 이웃 건물의 구조·배관 손상 기록 — 측정 도구의 TAG_SYS 가 'building' 으로 센다 (I2 의 'carry' 는 이 뒤에)
 export type ZoneField = 'power' | 'comms' | 'water' | 'smoke' | 'risk';
 /** 동네 하나의 상태 (cityPlan.DISTRICTS 순서). power·comms·water 는 1 = 정상 … 0 = 끊김, smoke·risk 는 0 = 없음 … 1 */
 export interface ZoneState {
@@ -923,7 +924,8 @@ export interface HospitalState {
   known: boolean; since: number; cause: number;      // known = 병원이 알린 적이 있다 · since = 포화·재개가 마지막으로 바뀐 시각(-1) · cause = 지금 상태를 알린 기록(포화 알림·수용 재개, -1)
   lastEv: number;              // (b3-2 C3) 마지막 인계 기록 (-1) — 포화 알림의 원인이 된다
 }
-export type SignalKind = 'blast' | 'collapse' | 'fireBig' | 'delivered' | 'fled' | 'closed' | 'catastrophe';
+export type SignalKind = 'blast' | 'collapse' | 'fireBig' | 'delivered' | 'fled' | 'closed' | 'catastrophe'
+  | 'quake' | 'blackout';      // (I1-b b3-4) 재난이 틀을 지나는 길 — 지진의 본진·여진, 태풍 정전의 시작·끝. 보내는 자리는 b3-10 (N8 이 더하는 신호는 이 뒤에)
 /**
  * 상태를 바꾸는 자리가 세계에 알리는 사실 한 줄 (world/consequence.ts 의 signal). tickWorld 가 다음 틱에 규칙에 건넨다.
  * x·y 는 **도시 좌표**(주지 않으면 그 사건의 자리, 인계는 병원), cx·cy 는 현장의 칸 좌표(-1 = 없음). ev = 그 일을 남긴 기록.
@@ -957,6 +959,65 @@ export interface Scene {
 }
 export interface ShiftReport {
   world?: { outages: number; commsDown: number; hospitalDiverts: number; rerouted: number; spawned: number; lines: string[] };      // (§3.9) 채우는 것은 b4
+}
+
+// ── 초과 위험 과정 (I1-b b3-4 — 틀만: 법칙이 없으면 아무것도 이 칸을 바꾸지 않는다. docs/specs/I1-causality.md §3.3 끝·§3.6a) ──
+// 원인은 세계 상태만 바꾸고, 상태가 원인을 모르는 일반 법칙(world/laws/*.ts — registerHazard)을 지나 초과 위험을 쌓는다.
+// 대상(구간·건물)마다 한 번 뽑아 둔 문턱을 넘을 때만 사건이 난다 — 틱마다 주사위를 굴리지 않는다. 모든 칸은 함수가 없는 순수 자료이고 진실 쪽 전용이다(판단은 읽지 않는다).
+/** 일반 법칙의 이름 — Incident.csq 와 흐름 이름에 쓴다. 새 법칙은 끝에 새 줄로 (L6 floodLow 는 사건을 만들지 않는 상태 규칙이라 여기에 없다) */
+export type HazardLawId = 'roadCrash' | 'heatSpread' | 'structFail' | 'pipeLeak' | 'rekindle' | 'liftStall' | 'smokeIll';
+/** 초과를 이루는 상태의 갈래 — 보고서가 내력 문장을, 발생 기록이 첫머리를 고른다 */
+export type HzWhat = 'divert' | 'queue' | 'lane' | 'jam' | 'crowd' | 'dark' | 'haze'      // 도로: 우회 몰림 · 뒤로 밀림 · 한 차로 막힘 · 정체 · 인파 · 꺼진 신호 · 연기
+  | 'heat' | 'ember' | 'shake' | 'pipe' | 'residual' | 'outage' | 'smoke' | 'level';         // 건물: 열 · 불티 · 구조 손상 · 배관 손상 · 잔열 · 정전 · 연기 / 수위(도로: 차오르는 물 · 건물: 잠긴 지하)
+/** 사건이 나는 순간 그 대상의 초과를 이루던 몫 하나 */
+export interface HzSrc { ev: number; inc: number; w: number; what: HzWhat; ref: number; since: number }
+//   ev = 그 상태를 만든 기록(-1 = 장부의 구멍) · inc = 그 상태의 주인 사건(-1 = 사건이 아니다: 공사·정체·인파·재난) · w = 그 순간의 몫(초당 위험, 충격이면 충격량)
+//   ref = 관련 대상 (통제된 구간 · 불난 건물 · 정전 구역 … -1) · since = 그 몫이 이 대상에 처음 걸린 시각 = max(칸의 since, 그 기록의 시각)
+/** 대상 하나의 적분 칸 — 초과가 처음 생길 때 만든다 */
+export interface HzCell {
+  H: number;        // 쌓인 초과 위험 (무차원 — 기대 사건 수). 초과가 0 인 동안에는 늘지도 줄지도 않는다
+  thr: number;      // 문턱 E = −ln(1 − u₁). 흐름 hz:<법칙>:<대상>:<n> (대상마다 한 번인 법칙은 hz:<법칙>:<대상>)의 첫 값
+  u2: number;       // 같은 흐름의 둘째 값 — 사건의 내용(버스가 끼었는가 따위)을 정할 때만 쓴다
+  n: number;        // 이 대상에서 문턱을 넘은 횟수 (다음 문턱의 흐름 번호)
+  since: number;    // 지금의 초과가 시작된 시각 (-1 = 지금은 초과가 없다)
+  done: boolean;    // once 법칙의 대상이 한 번 넘었다 — 그 뒤로 적분도 충격도 받지 않는다
+}
+/** 문턱을 넘었지만 자리가 없어 기다리는 줄 — 넘는 순간의 몫을 적어 둔다 (자리가 났을 때는 원인이 이미 사라져 있을 수 있다) */
+export interface HzWait { law: HazardLawId; target: number; n: number; until: number; parts: HzSrc[]; total: number }
+/** 사건에 적어 두는 내력 — 보고서 문장의 재료 (§3.9). 사건을 예약하는 그 자리에서 적는다 */
+export interface HzNote { law: HazardLawId; target: number; at: number; src: HzSrc[] }      // src 는 몫이 큰 것부터 많아야 3
+export interface HzState {
+  cells: Partial<Record<HazardLawId, Record<number, HzCell>>>;      // 법칙 → 대상 id → 칸 (드문드문)
+  live: Partial<Record<HazardLawId, number[]>>;                     // 지난 주기에 초과가 있던 대상 (초과가 끝난 것을 알아채는 데 쓴다)
+  waiting: HzWait[];                                                // 기다리는 줄 (넣은 순서 — 1초마다 다시 본다)
+  roadAt: number;                                                   // 도로 법칙이 마지막으로 본 traffic.driftAt
+  holes: number;                                                    // 원인 기록이 없는 큰 몫(전체의 1/3 이상)이 낀 채 문턱을 넘은 횟수 — 장부의 구멍 (0 이어야 한다, 테스트·관문)
+}
+//   법칙별·부모 없는 사건의 수는 따로 세지 않는다 — world.log 와 gen.chain·waiting 으로 센다 (world/hazard.ts 의 ruleLoad, §3.6a)
+/** 사건이 없던 건물이 이웃에서 받은 것 (§3.6c) — 처음 받을 때 만든다. 채우는 것은 b3-7·b3-8·b3-12 */
+export interface PlaceExpo {
+  shake: number; shakeEv: number; shakeInc: number;      // 구조 손상 0..1 (받은 충격의 합) · 가장 크게 보탠 기록 · 그 사건
+  pipe: boolean; pipeEv: number; pipeThr: number;        // 가스 배관이 손상됐는가 · 그 기록 · 배관의 문턱(만들 때 한 번 — 흐름 hz:pipe:<건물>)
+  wet: boolean; wetEv: number;                           // 지하가 잠겼는가 (홍수) · 그 기록
+  dark: number;                                          // 이 건물만의 정전이 시작된 시각 (-1 = 아니다. 구역 전력과 따로 — 잠긴 전기실)
+}
+// 있는 자료형에 더하는 칸 (b3-4). 객체 모양: WorldState 의 네 칸은 world/state.ts initWorld 의 리터럴, Signal.mag 는 world/consequence.ts signal 의 리터럴,
+// Incident.hz 는 incidents.createIncident 의 리터럴에 넣었다. Scene.wear 는 I2 준비 단계가 이미 정해 둔 칸이다(아래 "교대 간 지속" 절 —
+// I1-b 는 b3-8 에서 cause 'shock' 으로 먼저 채운다. 진실 전용: 판단부는 읽지 않는다). ZoneState.at 은 선택 칸이다(국지 값을 처음 넣을 때 생긴다 — b3-10)
+export interface WorldState {
+  hz: HzState;                               // { cells: {}, live: {}, waiting: [], roadAt: -1, holes: 0 }
+  expo: Record<number, PlaceExpo>;           // 건물 id → 노출 (드문드문)
+  sills: Record<number, number>;             // 건물 id → 지하의 문턱 높이 (L6 — 처음 볼 때 채운다. 시드에 따라 달라지는 값은 sim.world 안에만 — §3.6c)
+  spans: { f: ZoneField; cause: number; inc: number; bump: number }[];      // 정전·연기 한 건마다의 장부 — 얹은 bump 의 id (그 건이 끝날 때 한 번 거둔다)
+}
+export interface ZoneState {
+  at?: Partial<Record<ZoneField, { x: number; y: number; r: number }>>;      // 국지 값의 자리 (§3.6c — 건물 하나의 붕괴가 동네 전체를 끄지 않게)
+}
+export interface Signal {
+  mag: number;                               // 크기 — 폭발이면 피해량(dmg), collapseBuilding 1 · collapseRegion 은 이번에 무너진 몫(< 1), 지진이면 본진 1 · 여진 0.6. 보내는 자리가 주지 않으면 0 (채우는 것은 b3-8·b3-10)
+}
+export interface Incident {
+  hz?: HzNote;                               // 이 사건을 낳은 초과 위험의 내력 — 법칙이 낸 사건에만 있다. 기록 전용(판단은 읽지 않는다)
 }
 
 // ───────────────────────── 대응 교본 (R3 0단계 — 틀) ─────────────────────────

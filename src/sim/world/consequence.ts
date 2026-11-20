@@ -12,6 +12,7 @@
 // 이 파일은 진실 쪽이다(세계 규칙과 같은 자격). 관제·지휘관이 아는 길은 world/state.ts 의 known* 함수들이다 (§3.8).
 
 import { CHAIN_MAX, CHAIN_SHIFT_MAX, chainDepth, chainLen, chainedInShift } from '../chain';
+import { CSQ_SPAWN_CAP, ruleLoad, tickHazards } from './hazard';
 import type { Sim } from '../engine';
 import type { DroppedChain, SpawnOpts } from '../incidents';
 import type { Rng } from '../rng';
@@ -21,8 +22,9 @@ import { recoverWorld } from './state';
 export type { Signal, SignalKind } from '../types';      // (X6 가 이 파일에서 SignalKind 를 가져간다 — 정의는 types.ts 로 옮겼다)
 export { chainDepth } from '../chain';                    // 연쇄 깊이(뿌리 0)의 정본은 chain.ts
 
-/** 규칙이 만드는 사건의 교대당 상한 (§3.6 — 부모가 있든 없든 센다). 부모가 있는 사건은 여기에 더해 chain.canChain(한 사슬 3건 · 한 교대 6건)도 본다 */
-export const CSQ_SPAWN_CAP = 6;
+/** 규칙·법칙이 만드는 사건의 교대당 상한 (§3.6 — 부모가 있든 없든 센다). 부모가 있는 사건은 여기에 더해 chain.canChain(한 사슬 3건 · 한 교대 6건)도 본다.
+ *  (b3-4) 정의는 world/hazard.ts 로 옮겼다 — 이 파일이 그 파일을 import 하므로 거기 두고 다시 내보낸다 */
+export { CSQ_SPAWN_CAP } from './hazard';
 
 /** 발동 한 번의 문맥. rng 는 이 발동만의 흐름이다 */
 export interface CsqCtx {
@@ -66,18 +68,19 @@ export function consequenceLabel(id: string): string | null { for (const c of RU
  * x·y(도시 좌표)와 place(건물)를 주지 않으면 그 사건의 것이다. 현장의 칸 좌표는 cx·cy 로 준다. 처리는 다음 틱의 tickWorld 가 한다.
  * 기록을 남기지 않고 난수도 쓰지 않는다 — 규칙이 없으면 결과가 바뀌지 않는다.
  */
-export function signal(sim: Sim, kind: SignalKind, s: { inc: number; ev: number; x?: number; y?: number; size?: number; place?: number; data?: number; cx?: number; cy?: number }): void {
+export function signal(sim: Sim, kind: SignalKind, s: { inc: number; ev: number; x?: number; y?: number; size?: number; place?: number; data?: number; cx?: number; cy?: number; mag?: number }): void {
   const w = sim.world as WorldState | undefined;
   if (!w) return;      // 세계 상태를 만들기 전(생성자 도중)에는 아무것도 하지 않는다
   const I = s.inc >= 0 ? sim.incidents[s.inc] : undefined;      // 주지 않은 자리·건물은 그 사건의 것 (사건이 없으면 -1)
   let x = s.x, y = s.y;
   if (x === undefined || y === undefined) { x = I ? I.truth.x : -1; y = I ? I.truth.y : -1; }
-  w.signals.push({ kind, t: sim.t, inc: s.inc, ev: s.ev, x, y, size: s.size ?? 0, place: s.place ?? (I ? I.truth.placeId : -1), data: s.data ?? 0, cx: s.cx ?? -1, cy: s.cy ?? -1 });
+  w.signals.push({ kind, t: sim.t, inc: s.inc, ev: s.ev, x, y, size: s.size ?? 0, place: s.place ?? (I ? I.truth.placeId : -1), data: s.data ?? 0, cx: s.cx ?? -1, cy: s.cy ?? -1, mag: s.mag ?? 0 });
 }
 
 /** 사건을 하나 더 만들 자리가 있는가 — 없으면 까닭 ('depth' 사슬 길이 · 'cap' 교대 상한). 부모가 있으면 연쇄 상한의 정본(chain.canChain 의 두 조건)을 본다 */
 function spawnRoom(sim: Sim, parent: number | undefined): DroppedChain['why'] | null {
-  if (sim.world.spawned >= CSQ_SPAWN_CAP) return 'cap';
+  // (b3-4) 전체 상한을 세는 법은 하나다 — hazard.ruleLoad: 실제로 사건이 된 것 + 기다리는 예약 + 법칙의 기다리는 줄. 예약이 버려지면 자리가 돌아온다 (world.spawned 는 csq-spawn 흐름의 순번으로만 남는다)
+  if (ruleLoad(sim) >= CSQ_SPAWN_CAP) return 'cap';
   if (parent === undefined || parent < 0) return null;
   const P = sim.incidents[parent];
   if (!P) return null;
@@ -102,7 +105,7 @@ function fire(sim: Sim, c: Consequence, sig: Signal | null): void {
   if (c.spawns) {
     // 조건은 맞았지만 연쇄 상한에 걸렸다: 일어나지 않는다. 기록(emit)은 남기지 않고 gen.dropped 에만 — 같은 열쇠로 되풀이해 쌓이지 않게 쿨다운은 건다
     const why = spawnRoom(sim, src >= 0 ? src : undefined);
-    if (why) { sim.gen.dropped.push({ t: sim.t, why, type: undefined, variant: undefined, parent: src >= 0 ? src : undefined }); w.last[lk] = sim.t; return; }
+    if (why) { sim.gen.dropped.push({ t: sim.t, why, type: undefined, variant: undefined, parent: src >= 0 ? src : undefined, csq: c.id }); w.last[lk] = sim.t; return; }
   }
   w.last[lk] = sim.t;
   w.count[c.id] = (w.count[c.id] ?? 0) + 1;
@@ -113,7 +116,7 @@ function fire(sim: Sim, c: Consequence, sig: Signal | null): void {
 /**
  * 세계 틱 — engine.step 의 tickDisaster 다음, tickIncidents 앞 (틱 순서는 결과를 정한다 — 이 자리를 바꾸지 않는다).
  * 매 틱: 틱이 시작할 때 쌓여 있던 신호만, 들어온 순서대로, 그 종류를 받는 규칙에 등록 순서대로 건넨다.
- * 1초에 한 번(sim.tick % 5 === 1): world tick 규칙, 그리고 회복(회복 시각이 지난 구역 값 · 응급실 체류 환자).
+ * 1초에 한 번(sim.tick % 5 === 1): world tick 규칙 → 초과 위험 과정(tickHazards) → 회복(회복 시각이 지난 구역 값 · 응급실 체류 환자).
  */
 export function tickWorld(sim: Sim): void {
   const w = sim.world, n = w.signals.length;
@@ -126,6 +129,7 @@ export function tickWorld(sim: Sim): void {
   }
   if (sim.tick % 5 !== 1) return;
   for (let k = 0; k < RULES.length; k++) if (RULES[k].on === 'tick') fire(sim, RULES[k], null);
+  tickHazards(sim);      // (b3-4) 초과 위험 과정 — 상태 규칙이 이번 초의 상태를 바꾼 다음, 회복 앞. 법칙이 없으면 곧바로 돌아온다 (world/hazard.ts)
   recoverWorld(sim, RULES.length ? (z, f, cause, known) => { for (let k = 0; k < RULES.length; k++) RULES[k].recover?.(sim, z, f, cause, known); } : undefined);
 }
 
@@ -138,7 +142,7 @@ export function tickWorld(sim: Sim): void {
 export function spawnConsequence(sim: Sim, c: CsqCtx, opts: SpawnOpts, delay: [number, number], when?: (sim: Sim) => boolean, wait = 120): boolean {
   const w = sim.world;
   const why = spawnRoom(sim, opts.parent);
-  if (why) { sim.gen.dropped.push({ t: sim.t, why, type: opts.type, variant: opts.variant, parent: opts.parent }); return false; }
+  if (why) { sim.gen.dropped.push({ t: sim.t, why, type: opts.type, variant: opts.variant, parent: opts.parent, csq: c.rule }); return false; }
   const n = w.spawned++;      // 이번 교대에 규칙이 예약한 사건의 순번 (거절된 것은 세지 않는다 — 한 발동이 둘을 예약해도 서로 다른 흐름)
   const at = sim.t + c.rng.range(delay[0], delay[1]);
   const cause = opts.cause !== undefined && opts.cause >= 0 ? opts.cause : c.sig ? c.sig.ev : undefined;

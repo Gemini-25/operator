@@ -6,12 +6,15 @@
 // - 난수는 sim.rngTraffic 과 거기서 갈라낸 흐름만 쓴다. 사건 생성의 난수를 건드리지 않는다.
 // - 기존 칸의 뜻: cong = 교통량에서 오는 혼잡(1~3, 이 파일이 계산한다), slow = 사건이 얹는 지연(읽기만 한다),
 //   closed·closedReason 의 'incident'·'disaster' 는 다른 곳의 것(건드리지 않는다). 이 파일이 만드는 통제는 'roadwork'·'obstacle' 이다.
+// - (I1-b §3.6b) 초과 혼잡과 그 장부: drift 가 구간마다 "평소 수준을 넘는 몫"을 네 갈래(exOwn·exBump·exQueue·exDiv)로 적고, 몫마다 그 상태를 만든 기록(주인)을 잇는다.
+//   읽는 곳은 일반 법칙 L1(world/laws/road.ts — b3-6)과 측정(scripts/hazstats.ts)뿐이다 — 이 칸들만으로는 결과가 바뀌지 않는다. 판단(관제·지휘관)은 읽지 않는다.
+//   길을 닫거나 느리게 하거나 혼잡을 얹는 자리는 장부 한 줄을 함께 쓴다: noteRoadCause(닫힘·감속·물) · noteBump/addBump(얹은 혼잡). 빠뜨리면 원인 없는 초과(구멍)가 된다.
 
 import { edgeName, segCross } from './city';
 import type { Sim } from './engine';
 import { emit } from './events';
 import type { Rng } from './rng';
-import type { City, PlaceKind, RoadEdge, Unit } from './types';
+import type { City, HzWhat, PlaceKind, RoadEdge, Unit } from './types';
 import { clamp, josa } from './util';
 
 export type ObstacleKind = 'roadwork' | 'breakdown' | 'debris' | 'parked'
@@ -24,14 +27,14 @@ export interface Obstacle {
   known: boolean; knownAt: number;              // 관제가 아는가, 언제 알았는가
   tipAt: number;                                // 시민 제보가 들어올 시각 (그 전에 부대가 보면 그때 알려진다. 제보가 없으면 Infinity)
   label: string;                                // '낙하물' · '고장 차량' · '도로 공사' · '불법 주차' · '건물 잔해'
-  ev?: number;                                  // (I1-b C2) 놓을 때 남긴 기록 — 놓은 쪽(인과 규칙)이 넣는다. 이 장애물을 알리는 보고와 그 앞에서 되돌아선 부대의 ROUTE_BLOCKED 가 원인으로 가리킨다
+  ev?: number;                                  // (I1-b C2 · b3-5) 놓을 때 남긴 기록 — 교통 모델의 것은 announce 가, 인과 규칙의 것(quiet)은 놓은 쪽이 넣는다. 이 장애물을 알리는 보고와 그 앞에서 되돌아선 부대의 ROUTE_BLOCKED 가 원인으로 가리키고, 이 장애물이 만든 초과 혼잡의 주인이 된다 (교대 내내 있는 불법 주차에는 없다 — 평소 수준에 든다)
 }
 export interface Train { pos: number; ppos: number; dir: 1 | -1; speed: number; len: number; dwell: number; called: boolean }      // pos = 철길 위 머리의 위치(화소), ppos = 한 틱 전(그림 보간용), dwell = 역에 서 있는 남은 초, called = 역에 이미 섰는가
 export interface Crossing { edge: number; s: number; down: boolean; downAt: number }                // s = 철길 위의 위치
 export interface TrafficStats { jams: number; closures: number; obstacles: number; detours: number; delaySec: number; gateWaits: number }
 export interface TrafficState {
   queue: Float32Array;            // 구간별 밀린 정도 0..1 (막힌 구간에서 뒤로 번진다)
-  jams: { edge: number; until: number }[];
+  jams: { edge: number; until: number; ev: number }[];      // ev = (I1-b) 그 정체를 알린 기록 — 정체가 만든 초과의 주인
   obstacles: Obstacle[]; nextObstacleId: number;
   trains: Train[]; crossings: Crossing[]; nextTrainAt: number;
   nextDrift: number; nextEvent: number;
@@ -39,12 +42,34 @@ export interface TrafficState {
   stats: TrafficStats;
   // ── 그 밖 ──
   todName: string;                // '출근 시간대' · '퇴근 시간대' · '심야' · '평시'
-  crowds: { edges: number[]; until: number; place: number }[];      // 행사 인파: bump 를 더해 둔 구간들 (끝나면 되돌린다)
+  crowds: { edges: number[]; until: number; place: number; bump: number }[];      // 행사 인파: bump 를 더해 둔 구간들 (끝나면 되돌린다). bump = (I1-b) 그 혼잡의 장부 줄 id
   railLen: number; stationS: number; trainDir: 1 | -1;              // 철길의 길이, 역의 위치, 다음 열차의 방향
   railRng: Rng;                   // 열차 시각표 (교통 사건의 흐름과 따로 — 손잡이를 바꿔도 열차는 같은 시각에 온다)
   atGate: Map<number, number>;    // 차단기 앞에 서 있는 부대 → 구간 (기록을 한 번만 남긴다)
   announced: boolean;             // 교대 시작 뒤의 안내(시간대, 불법 주차)를 했는가
+  driftAt: number;                // (I1-b b3-4) 혼잡을 마지막으로 다시 계산한 시각 (-1 = 아직) — 12초 주기의 법칙(world/hazard.ts)이 한 번만 적분하게
+  // ── (I1-b b3-5 ①) 초과 혼잡과 그 장부 — 모두 구간 수 길이, drift 가 12초마다 다시 적는다 (§3.6b (나)) ──
+  base: Float32Array;             // 평소 수준 = clamp(수요 × 시간대 × 교통량 손잡이 + 불법 주차의 병목 0.4, 1, 3)
+  exOwn: Float32Array; exBump: Float32Array; exQueue: Float32Array; exDiv: Float32Array;      // 초과의 네 몫: 그 구간 자신의 것(한 차로 병목·정체·차오르는 물) · 밖에서 얹은 혼잡 · 원인 있는 뿌리에서 온 밀림 · 우회 몰림
+  excess: Float32Array;           // 네 몫의 합 (닫힌 구간은 0, 혼잡의 상한까지의 여유 3 − base 를 넘지 않는다)
+  divert: Float32Array; divertBy: Int32Array;      // 우회로로 몰린 양 · 가장 크게 보탠 닫힌 구간(-1) — 채우는 것은 b3-5 ② (지금은 0 · -1)
+  // 항마다의 주인 (기록 · 주인 사건, 없으면 -1) — 구간의 상태를 바꾸는 자리가 noteRoadCause 로 적는다
+  closeEv: Int32Array; closeInc: Int32Array;      // 닫힘의 주인 — 닫히지 않은 구간은 drift 가 지운다
+  slowEv: Int32Array; slowInc: Int32Array;        // 사건의 현장 감속(slow ≥ 1)의 주인 — slow < 1 이면 drift 가 지운다
+  levelEv: Int32Array;                            // 물이 차올라 느려진 구간의 기록 — 느림을 걸 때 적고 거둘 때 지운다 (쓰는 것은 b3-12)
+  bumps: BumpRow[]; nextBumpId: number;           // 밖에서 얹은 혼잡(e.bump) — 얹은 건마다 한 줄 (얹은 쪽이 거둔다)
+  // 밀림의 내력 — 밀린 구간 쪽에 복사해 둔다 (뿌리가 풀린 뒤에도 밀림이 0 이 될 때까지 남는다)
+  qBy: Int32Array; qEv: Int32Array; qInc: Int32Array;      // 이 구간의 밀림을 만든 뿌리 구간 · 그 뿌리의 기록 · 주인 사건 (-1 = 평소의 밀림이거나 밀림이 없다)
+  // 구간마다의 몫 목록 (가장 최근 drift 의 것) — parts[partAt[e] .. partAt[e + 1]). 내력은 drift 의 그 순간에 굳힌다(그 뒤 장애물·정체가 사라져도 읽는 쪽이 어긋나지 않는다)
+  parts: RoadPart[]; partAt: Int32Array;
 }
+/** 밖에서 얹은 혼잡 한 건 (§3.6b): what 0 인파 · 1 꺼진 신호 · 2 연기 */
+export interface BumpRow { id: number; edges: number[]; add: number; ev: number; inc: number; what: 0 | 1 | 2 }
+/** 한 구간의 초과를 이루는 몫 하나: x = 초과 혼잡의 양 · ev = 그 상태를 만든 기록(-1 = 장부의 구멍) · inc = 주인 사건(-1) · ref = 관련 구간(뿌리·닫힌 구간, 그 밖에는 자기 자신) */
+export interface RoadPart { x: number; ev: number; inc: number; what: HzWhat; ref: number }
+/** 우회 몰림의 상한 (b3-5 ② 가 DIV_K·차로 수와 함께 맞춘다) · 물이 차올라 느려진 구간의 초과 */
+export const DIV_MAX = 1.0, LEVEL_EX = 0.8;
+const BUMP_WHAT: readonly HzWhat[] = ['crowd', 'dark', 'haze'];
 
 export const OBSTACLE_LABEL: Record<ObstacleKind, string> = { roadwork: '도로 공사', breakdown: '고장 차량', debris: '낙하물', parked: '불법 주차', rubble: '건물 잔해' };
 const TRAIN_SPEED = 26, TRAIN_LEN = 110, STATION_DWELL = 14, GATE_AHEAD = 400, GATE_BEHIND = 30;
@@ -164,6 +189,7 @@ const flowCache = new WeakMap<object, Float32Array>();
  * 차가 많이 다니는 길일수록 짐이 떨어지고 차가 고장 나며, 지름길로 쓰이는 골목일수록 불법 주차가 문제가 된다.
  * 지도는 고정이므로 한 번만 센다(평소의 기준 혼잡으로 — 그 교대의 상태와 무관하다).
  */
+export function roadFlow(sim: Sim): Float32Array { return throughFlow(sim); }
 function throughFlow(sim: Sim): Float32Array {
   const city = sim.city;
   let flow = flowCache.get(city.nodes);
@@ -225,14 +251,21 @@ function noticeText(sim: Sim, o: Obstacle): string {
   return o.kind === 'roadwork' ? `${name} 한 차로 공사 중 — 서행.` : `${name} ${josa(o.label, '으로/로')} 한 차로가 막혔습니다 — 서행.`;
 }
 
-function announce(sim: Sim, o: Obstacle): void {
+/** 장애물을 알린다 — 그 기록 id 를 돌려주고 장애물에 적는다(o.ev: 그 장애물이 만든 초과의 주인). 전면 차단이면 닫힘의 장부에도 */
+function announce(sim: Sim, o: Obstacle): number {
+  const ev = announceEv(sim, o);
+  o.ev = ev;
+  if (o.full) noteRoadCause(sim, o.edge, 'close', ev);
+  return ev;
+}
+function announceEv(sim: Sim, o: Obstacle): number {
   const name = edgeName(sim.city, sim.city.edges[o.edge]);
-  if (o.known) { emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 0, text: noticeText(sim, o) }); return; }
+  if (o.known) return emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 0, text: noticeText(sim, o) });
   const text = o.kind === 'debris' ? `${name}에 화물이 떨어져 ${o.full ? '길이 막혔습니다' : '한 차로가 막혔습니다'}. 아직 아무도 신고하지 않았습니다.`
     : o.kind === 'breakdown' ? `${name}에 고장 난 차량이 ${o.full ? '길을' : '한 차로를'} 막고 서 있습니다. 아직 아무도 신고하지 않았습니다.`
     : o.kind === 'parked' ? `${name}: 불법 주차 차량이 골목을 좁혀 큰 차는 지나갈 수 없습니다. 아직 아무도 모릅니다.`
     : `${name}에서 예고 없이 공사가 시작돼 ${o.full ? '길이 막혔습니다' : '한 차로가 막혔습니다'}. 아직 아무도 신고하지 않았습니다.`;
-  emit(sim, { role: 'SYSTEM', actor: '도시', kind: 'traffic', imp: o.full ? 1 : 0, truth: true, text });
+  return emit(sim, { role: 'SYSTEM', actor: '도시', kind: 'traffic', imp: o.full ? 1 : 0, truth: true, text });
 }
 
 /** 장애물을 놓고 기록한다 (재난·테스트가 쓴다). 전면 차단이나 불법 주차가 도시를 끊으면 null */
@@ -302,7 +335,7 @@ export function gateWait(sim: Sim, u: Unit, e: RoadEdge): void {
 // ───────────────────────── 교대 시작 ─────────────────────────
 
 export function initTraffic(sim: Sim): TrafficState {
-  const city = sim.city, rng = sim.rngTraffic, rail = city.rail ?? [];
+  const city = sim.city, rng = sim.rngTraffic, rail = city.rail ?? [], nE = city.edges.length;
   const day = timeOfDay(sim.startTod);
   const tr: TrafficState = {
     queue: new Float32Array(city.edges.length), jams: [], obstacles: [], nextObstacleId: 0,
@@ -311,6 +344,13 @@ export function initTraffic(sim: Sim): TrafficState {
     tod: day.tod, todName: day.name,
     stats: { jams: 0, closures: 0, obstacles: 0, detours: 0, delaySec: 0, gateWaits: 0 },
     crowds: [], railLen: railLength(rail), stationS: 0, trainDir: 1, railRng: rng.fork('rail'), atGate: new Map(), announced: false,
+    driftAt: -1,
+    base: new Float32Array(nE), exOwn: new Float32Array(nE), exBump: new Float32Array(nE), exQueue: new Float32Array(nE), exDiv: new Float32Array(nE), excess: new Float32Array(nE),
+    divert: new Float32Array(nE), divertBy: new Int32Array(nE).fill(-1),
+    closeEv: new Int32Array(nE).fill(-1), closeInc: new Int32Array(nE).fill(-1), slowEv: new Int32Array(nE).fill(-1), slowInc: new Int32Array(nE).fill(-1), levelEv: new Int32Array(nE).fill(-1),
+    bumps: [], nextBumpId: 0,
+    qBy: new Int32Array(nE).fill(-1), qEv: new Int32Array(nE).fill(-1), qInc: new Int32Array(nE).fill(-1),
+    parts: [], partAt: new Int32Array(nE + 1),
   };
   // 처음의 혼잡: 이 시간대·이 교통량의 평소 수준
   for (const e of city.edges) e.cong = clamp(e.baseCong * tr.tod * sim.tune.trafficMul, 1, 3);
@@ -411,6 +451,168 @@ function drift(sim: Sim): void {
     const target = clamp(press[e.id] + tr.queue[e.id] * 1.2, 1, 3);
     e.cong = clamp(e.cong + (target - e.cong) * 0.35 + rng.range(-0.1, 0.1), 1, 3);
   }
+  ledger(sim, tr, jam, neck, src, ring1, q0);      // (I1-b) 초과 혼잡의 네 몫과 그 내력 — 위의 계산(혼잡·밀림·난수)을 건드리지 않고 읽기만 한다
+  tr.driftAt = sim.t;
+}
+
+// ───────────────────────── 초과 혼잡과 그 장부 (I1-b §3.6b) ─────────────────────────
+
+/**
+ * 구간의 상태를 바꾸는 자리가 부른다: 그 상태(닫힘 · 사건의 현장 감속 · 차오르는 물)를 만든 기록과 주인 사건을 장부에 적는다. 기록 id 를 담기만 한다 — 결과는 바뀌지 않는다.
+ * 닫힘·감속의 주인은 drift 가 상태를 보고 게으르게 지운다(닫히지 않은 구간 · slow < 1). 'level' 은 느림을 거두는 자리가 ev −1 로 지운다
+ */
+export function noteRoadCause(sim: Sim, edge: number, term: 'close' | 'slow' | 'level', ev: number, inc = -1): void {
+  const tr = sim.traffic as TrafficState | undefined;
+  if (!tr || edge < 0 || edge >= tr.closeEv.length) return;      // 교통 모델을 만들기 전(생성자 도중)에는 아무것도 하지 않는다
+  if (term === 'close') { tr.closeEv[edge] = ev; tr.closeInc[edge] = inc; }
+  else if (term === 'slow') { tr.slowEv[edge] = ev; tr.slowInc[edge] = inc; }
+  else tr.levelEv[edge] = ev;
+}
+/** 밖에서 얹은 혼잡의 장부 한 줄만 (id 를 돌려준다) — e.bump 는 고치지 않는다 (산술을 자기 자리에서 하는 행사 인파·태풍 정전이 쓴다) */
+export function noteBump(sim: Sim, edges: number[], add: number, ev: number, what: 0 | 1 | 2, inc = -1): number {
+  const tr = sim.traffic, id = tr.nextBumpId++;
+  tr.bumps.push({ id, edges, add, ev, inc, what });
+  return id;
+}
+/** 그 줄을 지운다 (한 번만 — 없는 id 면 아무 일도 없다) */
+export function unnoteBump(sim: Sim, id: number): void {
+  const bs = sim.traffic.bumps;
+  for (let k = 0; k < bs.length; k++) if (bs[k].id === id) { bs.splice(k, 1); return; }
+}
+/** 구간마다 e.bump += add 하고 장부 한 줄 — 밖에서 혼잡을 얹는 새 코드는 이것을 쓴다 (C4 의 꺼진 신호 · C5 의 연기). 얹은 쪽이 그 id 를 두었다가 그 건이 끝날 때 removeBump 로 한 번 거둔다 */
+export function addBump(sim: Sim, edges: number[], add: number, ev: number, what: 0 | 1 | 2, inc = -1): number {
+  for (const id of edges) { const e = sim.city.edges[id]; e.bump = (e.bump ?? 0) + add; }
+  return noteBump(sim, edges, add, ev, what, inc);
+}
+/** 그 줄의 구간·양 그대로 빼고(1e-6 아래는 0) 줄을 지운다. 없는 id 면 아무 일도 없다 */
+export function removeBump(sim: Sim, id: number): void {
+  const bs = sim.traffic.bumps;
+  for (let k = 0; k < bs.length; k++) {
+    if (bs[k].id !== id) continue;
+    for (const eid of bs[k].edges) { const e = sim.city.edges[eid], v = (e.bump ?? 0) - bs[k].add; e.bump = v < 1e-6 ? 0 : v; }
+    bs.splice(k, 1);
+    return;
+  }
+}
+/** 한 차로를 막은 장애물의 주인 사건: 건물 잔해면 그 기록의 원인이 가리키는 사건(resources.blockRef 와 같은 길), 그 밖에는 없다(-1) */
+function obstacleInc(sim: Sim, o: Obstacle): number {
+  if (o.kind !== 'rubble' || o.ev === undefined || !sim.events[o.ev]) return -1;
+  const cs = sim.events[o.ev].causes;
+  for (let k = 0; k < cs.length; k++) if (sim.events[cs[k]].incidentId >= 0) return sim.events[cs[k]].incidentId;
+  return -1;
+}
+/**
+ * 이 구간을 막아도 양 끝이 다른 길로 이어지는가 (재난의 detour 를 옮긴 것 — disaster.ts 가 이것을 부른다). 진행 중인 사건이 잡고 있는 구간(blockedEdge)도 막힌 것으로 본다.
+ * **실제 상태**로 본다: 아직 아무도 모르는 낙하물이 놓인 길(경로 계산은 지나갈 수 있다고 본다)은 돌아갈 길이 아니다.
+ * dry = 다리를 건너지 않고도 이어져야 한다 (강가의 길을 닫을 때: 다리 하나에만 매달린 교차로를 만들지 않는다)
+ */
+export function canBlock(sim: Sim, e: RoadEdge, dry = false): boolean {
+  const c = sim.city, held: RoadEdge[] = [];
+  for (const I of sim.incidents) { if (I.phase === 'closed' || I.blockedEdge < 0 || I.blockedEdge === e.id) continue; const b = c.edges[I.blockedEdge]; if (!b.closed) { b.closed = true; held.push(b); } }
+  if (dry) for (const b of c.edges) if (b.bridge && !b.closed && b.id !== e.id) { b.closed = true; held.push(b); }
+  const ok = reallyLinked(sim, e.a, e.b, e.id);
+  for (const b of held) b.closed = false;
+  return ok;
+}
+/** 그 구간의 초과를 이루는 몫들 (가장 최근 drift 의 것)을 out 의 앞에서부터 채우고 그 수를 돌려준다 — L1 과 측정이 읽는다 (객체는 장부의 것이다: 고치지 않는다. 몫의 x 를 모두 더하면 excess 다) */
+export function roadParts(sim: Sim, edge: number, out: RoadPart[]): number {
+  const tr = sim.traffic, a = tr.partAt[edge], b = tr.partAt[edge + 1];
+  for (let k = a; k < b; k++) out[k - a] = tr.parts[k];
+  return b - a;
+}
+
+/**
+ * drift 의 끝에서: 구간마다 평소 수준(base)과 초과의 네 몫, 밀림의 내력, 몫 목록을 다시 적는다. 혼잡·밀림·난수를 건드리지 않는다(읽기만).
+ *  · 평소면 정확히 0: 혼잡 값끼리의 차가 아니라 원인 항으로 잰다 — 한 차로 병목 0.9 · 정체 · 차오르는 물 / 얹은 혼잡(bump) / 원인 있는 뿌리에서 온 밀림 / 우회 몰림.
+ *    교대 내내 있는 불법 주차의 병목 0.4 는 평소 수준에 넣는다.
+ *  · 뿌리의 두 갈래: 원인 항을 뺀 압력 p0 만으로 꽉 찬 구간(닫히지 않았고 감속도 없다)은 **평소의 뿌리** — 그 이웃의 밀림은 평소에도 있었다(exQueue 0).
+ *    닫힘 · 사건의 감속 · (p0 는 아닌데 병목·정체·얹은 혼잡이 넘긴 것)이 **원인이 있는 뿌리**다.
+ *  · 밀림의 내력(qBy·qEv·qInc)은 밀린 구간 쪽에 복사해 둔다: 뿌리가 풀린 뒤에도 밀림은 12초마다 ×0.75 로 3분쯤 남는다 — 그 꼬리의 주인이 사라지지 않게.
+ */
+function ledger(sim: Sim, tr: TrafficState, jam: Uint8Array, neck: Float32Array, src: Uint8Array, ring1: Uint8Array, q0: Float32Array): void {
+  const city = sim.city, edges = city.edges, n = edges.length, nb = edgeNeighbors(city), mul = tr.tod * sim.tune.trafficMul;
+  const kind = new Uint8Array(n);      // 0 뿌리가 아니다 · 1 평소의 뿌리 · 2 원인이 있는 뿌리
+  for (let id = 0; id < n; id++) {
+    const e = edges[id];
+    if (!e.closed) { tr.closeEv[id] = -1; tr.closeInc[id] = -1; }
+    if (e.slow < 1) { tr.slowEv[id] = -1; tr.slowInc[id] = -1; }
+    const p0 = e.baseCong * mul + (neck[id] > 0 && neck[id] < 0.5 ? 0.4 : 0);
+    tr.base[id] = clamp(p0, 1, 3);
+    kind[id] = src[id] ? (!e.closed && e.slow < 1 && p0 >= 2.4 ? 1 : 2) : 0;
+  }
+  // 원인이 있는 뿌리 r 을 뿌리로 만든 항의 주인: 닫힘 → 감속 → 정체 → 한 차로 병목 → 얹은 혼잡(가장 큰 줄)
+  let oEv = -1, oInc = -1;
+  const owner = (r: number): void => {
+    const e = edges[r];
+    oEv = -1; oInc = -1;
+    if (e.closed) { oEv = tr.closeEv[r]; oInc = tr.closeInc[r]; return; }
+    if (e.slow >= 1) { oEv = tr.slowEv[r]; oInc = tr.slowInc[r]; return; }
+    if (jam[r]) { for (const j of tr.jams) if (j.edge === r) { oEv = j.ev; return; } }
+    if (neck[r] > 0.5) { const o = obstacleOn(tr, r); if (o) { oEv = o.ev ?? -1; oInc = obstacleInc(sim, o); return; } }
+    let best = 0;
+    for (const b of tr.bumps) if (b.add > best && b.edges.indexOf(r) >= 0) { best = b.add; oEv = b.ev; oInc = b.inc; }
+  };
+  // 밀림의 내력 ① 뿌리에 닿은 구간
+  for (let id = 0; id < n; id++) {
+    if (tr.queue[id] === 0) { tr.qBy[id] = -1; tr.qEv[id] = -1; tr.qInc[id] = -1; continue; }
+    if (!ring1[id]) continue;
+    let usual = false, first = -1;
+    for (let k = nb.start[id], end = nb.start[id + 1]; k < end; k++) { const r = nb.ids[k]; if (kind[r] === 1) { usual = true; break; } if (kind[r] === 2 && first < 0) first = r; }
+    if (usual || first < 0) { tr.qBy[id] = -1; tr.qEv[id] = -1; tr.qInc[id] = -1; continue; }      // 평소에도 있었을 밀림을 원인 탓으로 돌리지 않는다
+    const was = tr.qBy[id], root = was >= 0 && kind[was] === 2 ? was : first;      // 먼저 뿌리가 된 쪽을 지킨다 — 아니면 이웃 목록 순서로 처음 만나는 원인 있는 뿌리
+    owner(root);
+    if (root !== was) { tr.qBy[id] = root; tr.qEv[id] = oEv; tr.qInc[id] = oInc; }
+    else if (oEv >= 0) { tr.qEv[id] = oEv; tr.qInc[id] = oInc; }      // 뿌리의 값이 −1 이면 앞의 값을 지우지 않는다
+  }
+  // ② 한 다리 건너 자라는 구간: 많이 밀린 그 이웃의 내력을 물려받는다. 그 밖(빠지는 중)은 그대로 둔다
+  for (let id = 0; id < n; id++) {
+    if (tr.queue[id] === 0 || ring1[id] || q0[id] >= 0.5) continue;
+    let from = -1, usual = false;
+    for (let k = nb.start[id], end = nb.start[id + 1]; k < end; k++) {
+      const r = nb.ids[k];
+      if (ring1[r] !== 1 || q0[r] < 0.6) continue;
+      if (tr.qBy[r] < 0) { usual = true; break; }
+      if (from < 0) from = r;
+    }
+    if (usual) { tr.qBy[id] = -1; tr.qEv[id] = -1; tr.qInc[id] = -1; continue; }
+    if (from < 0) continue;      // 자라지 않았다 (빠지는 중)
+    const was = tr.qBy[id];
+    if (was >= 0 && kind[was] === 2) continue;
+    tr.qBy[id] = tr.qBy[from]; tr.qEv[id] = tr.qEv[from]; tr.qInc[id] = tr.qInc[from];
+  }
+  // 네 몫과 몫 목록
+  const parts: RoadPart[] = [];      // 주기마다 새 목록 — 앞 주기의 몫을 쥐고 있는 쪽(기다리는 줄의 사본 따위)이 뒤에서 바뀌지 않게
+  const put = (x: number, ev: number, inc: number, what: HzWhat, ref: number): void => { parts.push({ x, ev, inc, what, ref }); };
+  for (let id = 0; id < n; id++) {
+    const e = edges[id];
+    tr.partAt[id] = parts.length;
+    if (e.closed) { tr.exOwn[id] = 0; tr.exBump[id] = 0; tr.exQueue[id] = 0; tr.exDiv[id] = 0; tr.excess[id] = 0; continue; }      // 닫힌 구간에는 차가 다니지 않는다
+    const bump = e.bump ?? 0, lane = neck[id] > 0.5 ? 0.9 : 0;
+    const jamX = jam[id] ? Math.max(0, 2.8 - (e.baseCong * mul + neck[id] + bump)) : 0;
+    const level = tr.levelEv[id] >= 0 ? LEVEL_EX : 0;
+    const que = tr.qBy[id] >= 0 ? 1.2 * tr.queue[id] : 0;
+    const div = Math.min(DIV_MAX, tr.divert[id]);
+    const sum = lane + jamX + level + bump + que + div;
+    if (!(sum > 0)) { tr.exOwn[id] = 0; tr.exBump[id] = 0; tr.exQueue[id] = 0; tr.exDiv[id] = 0; tr.excess[id] = 0; continue; }
+    const room = 3 - tr.base[id], k = sum > room ? Math.max(0, room) / sum : 1;      // 혼잡의 상한까지의 여유를 넘으면 같은 비로 줄인다
+    tr.exOwn[id] = (lane + jamX + level) * k; tr.exBump[id] = bump * k; tr.exQueue[id] = que * k; tr.exDiv[id] = div * k; tr.excess[id] = sum * k;
+    if (!(k > 0)) continue;
+    if (lane > 0) { const o = obstacleOn(tr, id); put(lane * k, o ? o.ev ?? -1 : -1, o ? obstacleInc(sim, o) : -1, 'lane', id); }
+    if (jamX > 0) { let ev = -1; for (const j of tr.jams) if (j.edge === id) { ev = j.ev; break; } put(jamX * k, ev, -1, 'jam', id); }
+    if (level > 0) put(level * k, tr.levelEv[id], -1, 'level', id);
+    if (bump > 0) {
+      // 그 구간을 담은 줄마다 하나 (add 의 비로 나눈다). 줄의 합보다 큰 몫은 장부 없는 혼잡이다 — 기록 없는 몫으로 남긴다(구멍)
+      let rows = 0;
+      for (const b of tr.bumps) if (b.edges.indexOf(id) >= 0) rows += b.add;
+      const f = rows > bump ? bump / rows : 1;
+      for (const b of tr.bumps) if (b.edges.indexOf(id) >= 0) put(b.add * f * k, b.ev, b.inc, BUMP_WHAT[b.what], id);
+      if (bump - rows > 1e-6) put((bump - rows) * k, -1, -1, 'crowd', id);
+    }
+    if (que > 0) put(que * k, tr.qEv[id], tr.qInc[id], 'queue', tr.qBy[id]);
+    if (div > 0) { const c = tr.divertBy[id]; put(div * k, c >= 0 ? tr.closeEv[c] : -1, c >= 0 ? tr.closeInc[c] : -1, 'divert', c); }
+  }
+  tr.partAt[n] = parts.length;
+  tr.parts = parts;
 }
 
 /** 새 교통 사건 하나 */
@@ -431,9 +633,10 @@ function spawn(sim: Sim): void {
     const cands = city.edges.filter((e) => (e.arterial || e.baseCong >= 1.4) && !e.closed && !tr.jams.some((j) => j.edge === e.id));
     if (!cands.length) return;
     const e = rng.pick(cands);
-    tr.jams.push({ edge: e.id, until: sim.t + rng.range(70, 130) });
+    const jm = { edge: e.id, until: sim.t + rng.range(70, 130), ev: -1 };
+    tr.jams.push(jm);
     e.cong = Math.max(e.cong, 2.4); tr.stats.jams++;
-    emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(city, e)} 정체 발생.`, imp: 0 });
+    jm.ev = emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(city, e)} 정체 발생.`, imp: 0 });
   } else if (what === 'workFull') {
     const ob = put(city.edges.filter((e) => free(e) && away(e)), { kind: 'roadwork', full: true, dur: rng.range(70, 120), known: true });
     if (ob) { tr.stats.closures++; announce(sim, ob); }
@@ -452,8 +655,8 @@ function spawn(sim: Sim): void {
     const q = rng.pick(cands), e0 = city.edges[q.edgeId!], edges = [e0.id];
     for (const nid of [e0.a, e0.b]) for (const id of city.nodes[nid].edges) if (edges.indexOf(id) < 0) edges.push(id);
     for (const id of edges) city.edges[id].bump = (city.edges[id].bump ?? 0) + 0.8;
-    tr.crowds.push({ edges, until: sim.t + 180, place: q.id });
-    emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 0, text: `${q.name} 주변에 인파가 몰려 길이 밀립니다.` });
+    const ev = emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 0, text: `${q.name} 주변에 인파가 몰려 길이 밀립니다.` });
+    tr.crowds.push({ edges, until: sim.t + 180, place: q.id, bump: noteBump(sim, edges, 0.8, ev, 0) });      // (I1-b) 산술은 그대로 두고 장부 줄만 함께 넣는다
   }
 }
 
@@ -502,7 +705,7 @@ function tickRail(sim: Sim): void {
  */
 export function endTraffic(sim: Sim): void {
   const tr = sim.traffic, city = sim.city;
-  for (const c of tr.crowds) for (const id of c.edges) { const e = city.edges[id]; e.bump = Math.max(0, (e.bump ?? 0) - 0.8); if (e.bump < 1e-6) e.bump = 0; }
+  for (const c of tr.crowds) { for (const id of c.edges) { const e = city.edges[id]; e.bump = Math.max(0, (e.bump ?? 0) - 0.8); if (e.bump < 1e-6) e.bump = 0; } unnoteBump(sim, c.bump); }
   tr.crowds.length = 0;
 }
 
@@ -521,6 +724,7 @@ export function tickTraffic(sim: Sim): void {
   for (let i = tr.crowds.length - 1; i >= 0; i--) {
     if (sim.t < tr.crowds[i].until) continue;
     for (const id of tr.crowds[i].edges) { const e = city.edges[id]; e.bump = Math.max(0, (e.bump ?? 0) - 0.8); if (e.bump < 1e-6) e.bump = 0; }
+    unnoteBump(sim, tr.crowds[i].bump);
     tr.crowds.splice(i, 1);
   }
   for (let i = tr.obstacles.length - 1; i >= 0; i--) {

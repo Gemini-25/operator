@@ -32,13 +32,16 @@ export function chainDepth(sim: Sim, incId: number): number {
 /**
  * 이번 교대에 이어진 사건의 수 (예약해 두고 아직 일어나지 않은 것 포함).
  * (I1-b b2) 예약은 낳은 사건(parent)이 있는 것만 센다 — 기존 연쇄 넷은 모두 부모가 있어 예전과 같은 수다. 인과 규칙이 부모 없이 만드는 사건
- * (재난·구역이 낳는 것)은 연쇄가 아니라 world/consequence.ts 의 전체 상한(CSQ_SPAWN_CAP)이 따로 묶는다
+ * (재난·구역이 낳는 것)은 연쇄가 아니라 world/consequence.ts 의 전체 상한(CSQ_SPAWN_CAP)이 따로 묶는다.
+ * (I1-b b3-4) **초과 위험의 법칙이 낸 사건(Incident.hz · 예약의 opts.hz)은 부모가 없어도 센다** — 인과로 난 사건은 이야기 연쇄든 법칙 사건이든 한 교대 6건을 나눠 쓴다
+ * (사용자 결정의 상한 안쪽 — 설계서 I1 §3.6·§9). 법칙 쪽(world/hazard.ts 의 hazardRoom)만 이 수를 보면, 부모 없는 법칙 사건이 먼저 나고 이야기 연쇄가 뒤에 올 때
+ * 합이 6건을 넘는다. 법칙이 없으면 hz 가 없어 예전과 같은 수다
  */
 export function chainedInShift(sim: Sim): number {
   let n = 0;
   const ch = sim.gen.chain;
-  for (let k = 0; k < ch.length; k++) if (ch[k].opts.parent !== undefined) n++;
-  for (const J of sim.incidents) if (J.parent !== undefined) n++;
+  for (let k = 0; k < ch.length; k++) { const o = ch[k].opts; if (o.parent !== undefined || o.hz !== undefined) n++; }
+  for (const J of sim.incidents) if (J.parent !== undefined || J.hz !== undefined) n++;
   return n;
 }
 
@@ -52,5 +55,5 @@ export function canChain(sim: Sim, I: Incident): boolean {
  * 기록(emit)은 지금처럼 남기지 않는다(일어나지 않은 일이다). 보고서·측정 도구가 수로만 쓴다. canChain 이 거짓인 자리에서만 부른다
  */
 export function noteChainDrop(sim: Sim, I: Incident, type: IncidentType, variant: string): void {
-  sim.gen.dropped.push({ t: sim.t, why: chainLen(sim, I) >= CHAIN_MAX ? 'depth' : 'cap', type, variant, parent: I.id });
+  sim.gen.dropped.push({ t: sim.t, why: chainLen(sim, I) >= CHAIN_MAX ? 'depth' : 'cap', type, variant, parent: I.id, csq: undefined });      // csq: 규칙·법칙의 거절에만 있다 (같은 모양으로)
 }

@@ -12,6 +12,7 @@
 //   npm run sweep -- 20 --force water/std --methods  대응 방법(scripts/methodstats.ts): 성공한 방법의 가짓수와 비중, 접은 방법, 방법별 평균 시간, 시나리오별 대원 부상
 //   npm run sweep -- 20 --force armed/hostage --doctrine  대응 교본(scripts/doctrinestats.ts): 분야별 등록·쓰인 줄, 줄별 횟수, 판단 지점·교본 행동의 평균 길이, split
 //   npm run sweep -- 40 --metrics        측정 지표(scripts/metrics.ts)의 시나리오별 표와 모든 후보 줄
+//   npm run sweep -- 12 --hazard         초과 위험 과정의 노출량(scripts/hazstats.ts): 법칙별 칸·넘은 횟수, 도로의 초과 혼잡을 네 몫으로 — 법칙의 세기 상수를 맞추는 데 쓴다 (--json 이면 hazard 칸)
 //   (H1) 기본 출력의 injuries: 줄 — 대원 부상·쓰러짐·순직, 용의자 부상·사망(총에 맞아 쓰러진 용의자의 사망 비율·즉사), 잔해 추락, 사람이 없어 멈춘 부대 (scripts/injurystats.ts)
 //   npm run sweep -- 10 --no-metrics     표본을 뜨지 않고 지표 줄을 내지 않는다 (속도 비교용)
 //   npm run sweep -- 1 --log S7 --metrics            한 교대의 사건마다 가장 긴 원인 사슬과 확산 길
@@ -25,6 +26,8 @@ import { doctrineJson, doctrineStats, doctrineTables, sumDoctrine } from './doct
 import { injuryJson, injuryLine, injuryStats, sumInjury } from './injurystats';      // (H1) 부상과 사망 집계
 import type { InjuryCount } from './injurystats';
 import { chainReport, checkMetrics, formatLines, metricsJson, runWithProbe, shiftMetrics, summarize } from './metrics';
+import { HazProbe, hazJson, hazLines, sumHaz } from './hazstats';      // (I1-b) 초과 위험의 노출량
+import type { HazCount } from './hazstats';
 import type { Probe, ShiftMetrics } from './metrics';
 
 const args = process.argv.slice(2);
@@ -43,6 +46,7 @@ const mk = (seed: string): Sim => new Sim(seed, diff!, 1200, { force });
 // 측정 지표: 기본으로 켠다(표본 포함). 표본은 상태를 읽기만 하므로 결과가 바뀌지 않는다
 const metricsOn = !flag('--no-metrics');
 const metricsAll = flag('--metrics');
+const hazardOn = flag('--hazard');      // (I1-b) 틱 표본 하나를 더 뜬다 — 읽기만 한다
 const byScen: Record<string, Record<string, number>> = {};
 
 if (logSeed) {
@@ -77,6 +81,7 @@ const closeReasons: Record<string, number> = {};
 const methodList: ReturnType<typeof methodStats>[] = [];      // (R2) 교대별 대응 방법 집계
 const docList: ReturnType<typeof doctrineStats>[] = [];      // (R3) 교대별 대응 교본 집계
 const injuryList: InjuryCount[] = [];      // (H1) 교대별 부상과 사망 집계
+const hazList: HazCount[] = [];      // (I1-b) 교대별 초과 위험의 노출량 (--hazard)
 let benignN = 0, realGood = 0, realRespSum = 0, realRespN = 0;
 let incN = 0, respSum = 0, respN = 0, durSum = 0, ms = 0, errors = 0, casT = 0, casS = 0, casL = 0, casU = 0, hurt = 0, replan = 0, unitSum = 0, maxUnits = 0, open = 0;
 const shiftList: (ShiftMetrics | null)[] = [];
@@ -86,7 +91,15 @@ for (let k = 0; k < n; k++) {
   const t0 = performance.now();
   let sim: Sim;
   let probe: Probe | null = null;
-  try { sim = mk(seed); if (metricsOn) probe = runWithProbe(sim); else sim.runToEnd(); }
+  let hp: HazProbe | null = null;
+  try {
+    sim = mk(seed);
+    if (hazardOn) hp = new HazProbe(sim);
+    const each = hp ? (): void => hp!.tick() : undefined;
+    if (metricsOn) probe = runWithProbe(sim, 20000, each);
+    else if (each) { let g = 0; while (!sim.ended && g++ < 20000) { sim.step(); each(); } }
+    else sim.runToEnd();
+  }
   catch (e) { errors++; console.log(`seed ${seed} ERROR:`, (e as Error).stack); continue; }
   ms += performance.now() - t0;
   const r = sim.report;
@@ -117,6 +130,7 @@ for (let k = 0; k < n; k++) {
   methodList.push(methodStats(sim));
   docList.push(doctrineStats(sim));
   injuryList.push(injuryStats(sim));
+  if (hp) hazList.push(hp.done());
   reportHashes.push(r.hash);
   // 측정 도구의 오류는 기존 집계를 바꾸지 않는다: 그 교대의 지표만 null 로 두고 metrics.errors 에 센다
   if (metricsOn) {
@@ -129,6 +143,7 @@ const share = (k: string): number => (incN ? out[k] / incN : 0);
 const methodSum = sumMethods(methodList);
 const docSum = sumDoctrine(docList);
 const injurySum = sumInjury(injuryList);
+const hazSum = hazardOn ? sumHaz(hazList) : null;
 const timeoutShare = incN ? ((closeReasons.timeout ?? 0) + (closeReasons.noresponse ?? 0) + (closeReasons.abandoned ?? 0)) / incN : 0;
 const summary = {
   difficulty: difficultyKey(diff), label: difficultyLabel(diff), seeds: n, errors, incidents: incN, perShift: +(incN / n).toFixed(2), msPerShift: Math.round(ms / n),
@@ -144,7 +159,7 @@ const summary = {
 const metrics = metricsOn ? summarize(shiftList) : null;
 /** 시드별 report.hash 를 쉼표로 이어 붙여 FNV-1a (결과 불변 비교용) */
 const reportHash = ((): string => { let h = 0x811c9dc5; const s = reportHashes.join(','); for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return (h >>> 0).toString(16); })();
-if (flag('--json')) console.log(JSON.stringify({ ...summary, ...(flag('--doctrine') ? { doctrine: doctrineJson(docSum) } : {}), problems: prob, reportHash, metrics: metrics ? metricsJson(metrics) : null }));      // (R3) doctrine 칸은 --doctrine 일 때만
+if (flag('--json')) console.log(JSON.stringify({ ...summary, ...(flag('--doctrine') ? { doctrine: doctrineJson(docSum) } : {}), ...(hazSum ? { hazard: hazJson(hazSum) } : {}), problems: prob, reportHash, metrics: metrics ? metricsJson(metrics) : null }));      // (R3) doctrine 칸은 --doctrine 일 때만
 else {
   console.log(`\n난이도 ${summary.label} (${summary.difficulty}) · seeds=${n} errors=${errors} incidents=${incN} (${summary.perShift}/shift) avg ${summary.msPerShift}ms/shift`);
   console.log('outcomes:', Object.entries(out).map(([k, v]) => `${k} ${v} (${Math.round((v / Math.max(1, incN)) * 100)}%)`).join(', '));
@@ -165,6 +180,7 @@ else {
   console.log(catLine(catSum));
   if (flag('--cat')) console.log(catShadowLine(catSum));
   if (metrics) for (const line of formatLines(metrics, metricsAll)) console.log(line);
+  if (hazSum) for (const line of hazLines(hazSum)) console.log(line);
 }
 if (flag('--check')) {
   const fail: string[] = [];

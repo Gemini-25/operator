@@ -6,8 +6,10 @@
 // Probe 는 src/sim 의 함수를 하나도 부르지 않는다(부르면 상태를 바꿀 수 있다 — 공유 버퍼·믿음 갱신).
 // 시간·난수를 쓰지 않으므로 같은 시드면 지표도 같다.
 
+import { CHAIN_SHIFT_MAX } from '../src/sim/chain';
 import type { Sim } from '../src/sim/engine';
-import type { Incident, Needs, Scene, SimEvent, WorkItem } from '../src/sim/types';
+import type { HazardLawId, Incident, Needs, Scene, SimEvent, WorkItem } from '../src/sim/types';
+import { CSQ_SPAWN_CAP, HZ } from '../src/sim/world/hazard';      // 상한의 값만 읽는다 (관문 — 함수는 부르지 않는다)
 import { fmtClock } from '../src/sim/util';
 
 // ───────────────────────── 상수 (§2.2) ─────────────────────────
@@ -38,6 +40,7 @@ export const TAG_SYS: ReadonlyMap<string, SystemId> = new Map<string, SystemId>(
   ['power', 'infra'], ['comms', 'infra'], ['water', 'infra'],
   ['smoke', 'hazard'], ['risk', 'hazard'],
   ['hospital', 'hospital'],
+  ['struct', 'building'],      // (I1-b b3-4) 이웃 건물의 구조·배관 손상 기록
   ['carry', 'carry'],
 ]);
 /** 규칙 1: 문제 코드 → 시스템. 아직 없는 코드(H1·R2·X6·I1-b)도 미리 넣는다. 표에 없는 코드는 field */
@@ -330,6 +333,8 @@ export class Probe {
   readonly otherInc = new Set<number>();
   /** 표본으로 지난 교대의 복구 공사 구간을 지난 출동을 본 사건 (I2) */
   readonly carryInc = new Set<number>();
+  /** (I1-b b3-4) 표본으로 본 초과 위험의 기다리는 줄 — '법칙|대상|몇 번째' (문턱을 넘고 자리를 기다린 것의 수) */
+  readonly hzWaited = new Set<string>();
   // 지표 7: 사건별
   readonly stallBest: (StallBest | null)[] = [];
   readonly forgotBest: number[] = [];
@@ -394,6 +399,9 @@ export class Probe {
     }
     this.prevChain = chain.length ? chain.slice() : [];
     this.prevIncN = nInc;
+    // 2b) 초과 위험의 기다리는 줄 (I1-b b3-4 — 칸이 없는 옛 코드에서도 돌게 읽는다)
+    const wt = (sim.world as { hz?: { waiting?: { law: string; target: number; n: number }[] } } | undefined)?.hz?.waiting;
+    if (wt && wt.length) for (const w of wt) this.hzWaited.add(`${w.law}|${w.target}|${w.n}`);
     // 3) 재난 큐 (근사): 사라진 항목 − 그 사이 재난이 일으킨 사건. 통째로 비운 것(3개 이상이 사라지고 길이 0)은 따로
     const d = sim.disaster;
     if (d) {
@@ -527,12 +535,14 @@ function openWork(board: readonly WorkItem[]): string {
   return n ? `${n} (${kinds.slice(0, 4).join(',')}${kinds.length > 4 ? ',…' : ''})` : '0';
 }
 
-/** runToEnd 와 같은 순서로 step() 만 부르고, SAMPLE_EVERY 틱마다 표본을 뜬다. 표본의 예외는 시뮬레이션을 막지 않는다 */
-export function runWithProbe(sim: Sim, maxTicks = 20000): Probe {
+/** runToEnd 와 같은 순서로 step() 만 부르고, SAMPLE_EVERY 틱마다 표본을 뜬다. 표본의 예외는 시뮬레이션을 막지 않는다.
+ *  each = 매 틱 step() 뒤에 부르는 다른 표본 (scripts/hazstats.ts 의 HazProbe.tick — 읽기만 한다) */
+export function runWithProbe(sim: Sim, maxTicks = 20000, each?: () => void): Probe {
   const probe = new Probe(sim);
   let n = 0;
   while (!sim.ended && n++ < maxTicks) {
     sim.step();
+    if (each) each();
     if (!probe.failed && sim.tick % SAMPLE_EVERY === 0) {
       try { probe.sample(); } catch { probe.failed = true; probe.errors++; }
     }
@@ -578,6 +588,42 @@ export interface ShiftMetrics {
   divert: DivertRow[]; erWaits: number; erCross: number | null;
   consistency: { C1: number; C2: number; C3: number; C4: number; C5: number; C5n: number };
   stall: StallCand[] | null; forgotten: StallCand[] | null; unlocated: StallCand[] | null;
+  hazard: HazardShift;
+}
+/** (I1-b b3-4 §4) 초과 위험 과정이 낸 사건 — 교대 하나. natural = 스크립트 없이 난 인과 사건(Incident.hz), story = 이야기 연쇄, ruleMade = spawnConsequence 가 만든 사건, queued = 재난 큐가 직접 일으킨 사건 */
+export interface HazardShift {
+  natural: number; byLaw: Record<string, number>; parented: number; orphan: number; rootMax: number; lawKids: number;
+  story: number; ruleMade: number; queued: number; waited: number | null;
+  dropped: { depth: number; cap: number; late: number; expired: number; busy: number }; holes: number;
+}
+/** 법칙의 이름 (types.HazardLawId 와 같은 목록 — gen.dropped 의 csq 가 법칙의 것인지 가린다) */
+export const HAZARD_LAWS: readonly HazardLawId[] = ['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle', 'liftStall', 'smokeIll'];
+const STORY_CSQ: ReadonlySet<string> = new Set(['reoffend', 'getaway', 'hideout', 'arson']);
+/** 초과 위험의 집계 (끝난 교대를 읽기만 한다). waited 는 표본이 있을 때만 */
+export function hazardShift(sim: Sim, probe: Probe | null): HazardShift {
+  const incs = sim.incidents;
+  const o: HazardShift = { natural: 0, byLaw: {}, parented: 0, orphan: 0, rootMax: 0, lawKids: 0, story: 0, ruleMade: 0, queued: 0, waited: probe ? probe.hzWaited.size : null, dropped: { depth: 0, cap: 0, late: 0, expired: 0, busy: 0 }, holes: 0 };
+  const perRoot = new Map<number, number>();
+  for (const I of incs) {
+    const hz = (I as { hz?: { law: string } }).hz, csq = (I as { csq?: string }).csq;
+    if (hz) {
+      o.natural++; o.byLaw[hz.law] = (o.byLaw[hz.law] ?? 0) + 1;
+      if (I.parent === undefined) o.orphan++;
+      else {
+        o.parented++;
+        const root = parentDepthOf(incs, I).root.id;
+        perRoot.set(root, (perRoot.get(root) ?? 0) + 1);
+        if ((incs[I.parent] as { hz?: unknown } | undefined)?.hz) o.lawKids++;
+      }
+    } else if (csq && STORY_CSQ.has(csq)) o.story++;
+    else if (csq) o.ruleMade++;
+    if (!hz && isDisasterTag(I)) o.queued++;
+  }
+  for (const v of perRoot.values()) if (v > o.rootMax) o.rootMax = v;
+  const dr = (sim.gen as { dropped?: { why: string; csq?: string }[] }).dropped;
+  if (Array.isArray(dr)) for (const d of dr) if (d.csq !== undefined && (HAZARD_LAWS as readonly string[]).indexOf(d.csq) >= 0 && d.why in o.dropped) o.dropped[d.why as keyof HazardShift['dropped']]++;
+  o.holes = (sim.world as { hz?: { holes?: number } } | undefined)?.hz?.holes ?? 0;
+  return o;
 }
 
 function parentDepthOf(incs: readonly Incident[], I: Incident): { depth: number; root: Incident } {
@@ -642,7 +688,8 @@ export function shiftMetrics(sim: Sim, probe: Probe | null, opts: { texts?: bool
     if (carryPlaces && I.truth.placeId >= 0 && carryPlaces.has(I.truth.placeId)) S.add('carry');
     if (P && P.carryInc.has(I.id)) S.add('carry');
     // I2 §7 ②: 이어받은 건물 손상이 있는 현장, 결장한 대원이 있는 부대가 나간 사건 (칸이 없어도 컴파일되게 읽는다)
-    if ((s as { wear?: unknown } | null | undefined)?.wear) S.add('carry');
+    // (I1-b b3-4) 교대 안의 충격으로 채운 손상(cause 'shock' — L3)은 건물, 그 밖(지난 교대에서 이어받은 것)은 교대 간 지속
+    { const wear = (s as { wear?: { cause?: string } } | null | undefined)?.wear; if (wear) S.add(wear.cause === 'shock' ? 'building' : 'carry'); }
     for (const uid of I.everAssigned) { const u = sim.units[uid]; if (u && u.crew.some((rid) => (sim.responders[rid]?.status as string) === 'off')) { S.add('carry'); break; } }
     const systems = SYSTEMS.filter((x) => S.has(x));
     // 확산
@@ -780,6 +827,7 @@ export function shiftMetrics(sim: Sim, probe: Probe | null, opts: { texts?: bool
     divert: dv.rows, erWaits, erCross: P ? P.erCross : null,
     consistency: { C1, C2, C3, C4: dv.c4, C5: c5.bad, C5n: c5.n },
     stall, forgotten, unlocated,
+    hazard: hazardShift(sim, P),
   };
 }
 
@@ -818,6 +866,12 @@ export interface MetricsSummary {
   };
   variety: { outcomeEntropy: number; storyEntropy: number; storyDistinct: number; flat: string[] };
   consistency: { C1: number; C2: number; C3: number; C4: number; C5: number; C5n: number };
+  /** (I1-b b3-4 §4) 초과 위험 과정: natural = 스크립트 없이 난 인과 사건 수, gain = 법칙 사건을 부모로 둔 법칙 사건 ÷ 법칙 사건 (되먹임 — 1 아래여야 한다),
+   *  maxMadeInShift = 한 교대의 natural + ruleMade 최댓값, maxCausalInShift = 한 교대의 이야기 연쇄 + 법칙 사건 최댓값 (관문) */
+  hazard: {
+    natural: number; byLaw: Record<string, number>; parented: number; orphan: number; rootMax: number; story: number; ruleMade: number; queued: number; waited: number | null;
+    dropped: { depth: number; cap: number; late: number; expired: number; busy: number }; holes: number; gain: number; maxMadeInShift: number; maxCausalInShift: number;
+  };
   /** --metrics 의 시나리오별 표 (JSON 에는 넣지 않는다) */
   scenarios: ScenRow[];
 }
@@ -953,7 +1007,22 @@ export function summarize(list: readonly (ShiftMetrics | null)[]): MetricsSummar
   };
   const consistency = { C1: 0, C2: 0, C3: 0, C4: 0, C5: 0, C5n: 0 };
   for (const m of shifts) { consistency.C1 += m.consistency.C1; consistency.C2 += m.consistency.C2; consistency.C3 += m.consistency.C3; consistency.C4 += m.consistency.C4; consistency.C5 += m.consistency.C5; consistency.C5n += m.consistency.C5n; }
-  return { errors, shifts: shifts.length, incidents: all.length, chain, systems, replan, alt, actions, contention, stall, variety, consistency, scenarios };
+  // 초과 위험 (I1-b)
+  const hazard: MetricsSummary['hazard'] = { natural: 0, byLaw: {}, parented: 0, orphan: 0, rootMax: 0, story: 0, ruleMade: 0, queued: 0, waited: sampled.length ? 0 : null, dropped: { depth: 0, cap: 0, late: 0, expired: 0, busy: 0 }, holes: 0, gain: 0, maxMadeInShift: 0, maxCausalInShift: 0 };
+  let lawKids = 0;
+  for (const m of shifts) {
+    const h = m.hazard;
+    hazard.natural += h.natural; hazard.parented += h.parented; hazard.orphan += h.orphan; hazard.story += h.story; hazard.ruleMade += h.ruleMade; hazard.queued += h.queued; hazard.holes += h.holes;
+    lawKids += h.lawKids;
+    for (const k of Object.keys(h.byLaw)) hazard.byLaw[k] = (hazard.byLaw[k] ?? 0) + h.byLaw[k];
+    for (const k of ['depth', 'cap', 'late', 'expired', 'busy'] as const) hazard.dropped[k] += h.dropped[k];
+    if (h.rootMax > hazard.rootMax) hazard.rootMax = h.rootMax;
+    if (h.natural + h.ruleMade > hazard.maxMadeInShift) hazard.maxMadeInShift = h.natural + h.ruleMade;
+    if (h.story + h.natural > hazard.maxCausalInShift) hazard.maxCausalInShift = h.story + h.natural;
+    if (hazard.waited !== null && h.waited !== null) hazard.waited += h.waited;
+  }
+  hazard.gain = r3(hazard.natural ? lawKids / hazard.natural : 0);
+  return { errors, shifts: shifts.length, incidents: all.length, chain, systems, replan, alt, actions, contention, stall, variety, consistency, hazard, scenarios };
 }
 
 /** --json 의 metrics: 시나리오 표는 빼고, 목록은 20개에서 자른다 */
@@ -973,7 +1042,7 @@ export function stallLine(c: StallCand): string {
   if (c.kind === 'STALL') return `  STALL ${c.seed} ${c.code} ${c.scen} ${c.clock} (t=${c.t}s) ${c.len}s — active ${c.active}, open work ${c.open}, last "${c.last}" → ${c.end}`;
   return `  ${c.kind} ${c.seed} ${c.code} ${c.scen} ${c.len}s (phase ${c.open}) → ${c.end}`;
 }
-/** 글자 출력 줄: 접두어 아홉 개(chain:·systems:·replan:·alt:·actions:·contention:·stall:·variety:·consistency:)와 후보 줄 */
+/** 글자 출력 줄: 접두어 열 개(chain:·systems:·replan:·alt:·actions:·contention:·stall:·variety:·consistency:·hazard:)와 후보 줄 */
 export function formatLines(m: MetricsSummary, verbose: boolean): string[] {
   const out: string[] = [];
   const c = m.chain, pdh = c.parentDepth;
@@ -999,6 +1068,9 @@ export function formatLines(m: MetricsSummary, verbose: boolean): string[] {
   out.push(`variety: outcome ${v.outcomeEntropy} bits · story ${v.storyEntropy} bits · distinct ${v.storyDistinct}/incident · flat ${v.flat.length ? v.flat.join(',') : 'none'}`);
   const k = m.consistency;
   out.push(`consistency: C1 ${k.C1} · C2 ${k.C2} · C3 ${k.C3} · C4 ${k.C4} · C5 ${k.C5}/${k.C5n} · metric errors ${m.errors}`);
+  // (I1-b b3-4) 초과 위험: 스크립트 없이 난 인과 사건(natural)과 스크립트 쪽(story·ruleMade·queued)을 함께 낸다
+  const hzd = m.hazard, laws = Object.entries(hzd.byLaw).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([n, v]) => `${n} ${v}`).join(' ');
+  out.push(`hazard: natural ${hzd.natural} (${laws || '-'}) · parented ${hzd.parented} orphan ${hzd.orphan} · root max ${hzd.rootMax} · gain ${hzd.gain} · waited ${na(hzd.waited)} · dropped depth ${hzd.dropped.depth} cap ${hzd.dropped.cap} late ${hzd.dropped.late} expired ${hzd.dropped.expired} busy ${hzd.dropped.busy} · holes ${hzd.holes} · scripted: story ${hzd.story} rule ${hzd.ruleMade} queued ${hzd.queued} · max/shift made ${hzd.maxMadeInShift} causal ${hzd.maxCausalInShift}`);
   // 후보 줄: STALL·FORGOT 은 언제나 모두, REPEAT·SPREAD 는 기본 3개, UNLOC 은 --metrics 에서만
   for (const x of s.list) if (x.kind !== 'UNLOC') out.push(stallLine(x));
   if (verbose) for (const x of s.list) if (x.kind === 'UNLOC') out.push(stallLine(x));
@@ -1019,6 +1091,12 @@ export function checkMetrics(m: MetricsSummary, opts: { baseline: boolean }): st
   if (m.chain.maxChainedInShift > CHAINED_SHIFT_GATE) f.push(`한 교대의 연쇄 사건 ${m.chain.maxChainedInShift}건 > ${CHAINED_SHIFT_GATE}`);
   // C5(출발 문구의 병원 = 다음 인계의 병원)는 R1 단계 3 이 출발 기록을 실제로 가는 병원으로 고친 뒤부터 관문이다 (I1 §2.12)
   for (const k of ['C1', 'C2', 'C3', 'C4', 'C5'] as const) if (m.consistency[k] > 0) f.push(`기록·상태 불일치 ${k} ${m.consistency[k]}건`);
+  // (I1-b b3-4 §4) 초과 위험: 장부의 구멍 0 · 규칙·법칙이 만든 사건은 교대마다 CSQ_SPAWN_CAP 안 · 이야기 연쇄 + 법칙 사건은 한 교대 6건 안 · 한 뿌리의 법칙 사건은 ROOT_MAX 안
+  const hz = m.hazard;
+  if (hz.holes > 0) f.push(`초과 위험 장부의 구멍 ${hz.holes}건 (원인 기록이 없는 큰 몫)`);
+  if (hz.maxMadeInShift > CSQ_SPAWN_CAP) f.push(`한 교대의 규칙·법칙 사건 ${hz.maxMadeInShift}건 > ${CSQ_SPAWN_CAP}`);
+  if (hz.maxCausalInShift > CHAIN_SHIFT_MAX) f.push(`한 교대의 이야기 연쇄 + 법칙 사건 ${hz.maxCausalInShift}건 > ${CHAIN_SHIFT_MAX}`);
+  if (hz.rootMax > HZ.ROOT_MAX) f.push(`한 뿌리의 법칙 사건 ${hz.rootMax}건 > ${HZ.ROOT_MAX}`);
   if (opts.baseline) {
     const st = m.stall;
     const first = (kind: string): string => st.list.filter((c) => c.kind === kind).slice(0, 3).map((c) => `${c.seed} ${c.code}`).join(', ');

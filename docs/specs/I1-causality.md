@@ -2053,3 +2053,86 @@ npx tsx scripts/sweep.ts 1 --log <시드> --metrics                             
 
 **관문** (마지막 코드 커밋 `bebbb6d`): 보통 40 `--check` 통과(사건 565 · 성공 74% · 대응 지연 4% · 실패+미해결 11% · 한계 시간 0 · 방치 1 · 교착 0 · 잊힘 0 · C1~C5 0 · 최대 깊이 2) · `sweep 40 --diff hard --check` 통과(사건 713 · 성공 51% · 한계 시간 6 · 방치 7 · 출동 없음 1) · `--diff extreme --check` 통과(사건 871 · 성공 28% · 한계 시간 19 · 방치 26 · 출동 없음 7 — 시작점은 25 · 26 · 5, 교착 후보 1 → 0) · 재난 다섯 × 12교대 `--check` 모두 통과(예외 0 · 끝나지 않은 사건 0 — 태풍 279건 · 홍수 246 · 지진 257 · 산불 199 · 해일 224). `npm run ui-check` 모두 통과(8항목, 153초). `npm run check` 의 테스트는 C2 커밋(`4359963`)에서 **한 개가 실패했다** — `tests/crews.test.ts` 의 "출발 기록의 병원은 실제로 가는 병원이다"(R1 의 시험이 이송 중 목적지 변경을 몰랐다 — 시간 초과가 아니라 C3 가 만든 실제 어긋남이라 그 시험을 C5 와 같은 규칙으로 고쳤다, `bebbb6d`). 고친 뒤 **`npm run check` 통과**(`232acec` — 이 메모까지 든 커밋에서: 테스트 913 + 건너뜀 1, 파일 19개 — b2 끝보다 열둘 늘었다: C6 셋 · C3 넷(T8 의 문구 시험 포함) · C2 다섯. 보통 40 검증 통과). 그 뒤의 커밋은 이 줄을 고친 것뿐이다(문서만).
 
+### b3-4 · b3-5 ① — 초과 위험 과정의 틀과 교통의 장부 (2026-11-20 밤, 덩어리 `h1`. 브랜치 `wf/causality-h1` → `wf/causality`, 시작점 `0dff725` = b3-3 끝에 주 브랜치(설계 개정판)를 받은 자리 — `src/`·`scripts/`·`tests/` 는 b3-3 끝 `b43f55e` 와 한 글자도 같다)
+
+커밋: 틀 `5357f83` · 교통 장부 `cb91aa7` · 한 교대 6건을 세는 법 `8a4d077` (+ 이 메모). **셋 다 해시 불변이다** — 법칙은 하나도 등록하지 않았고(`world/laws/index.ts` 는 빈 모음), 사건을 만드는 것이 하나도 없다. 장부를 읽는 곳은 측정(`scripts/hazstats.ts`)뿐이다.
+
+#### 결과 불변 확인
+
+- 해시 목록 123줄이 b3-3 끝(`out-c2/hash.txt`)과 **diff 0** — 틀 커밋 뒤(`h1/hash-a1/`)·장부 커밋 뒤(`h1/hash-b1/`)·마지막 코드 커밋 뒤(`h1/hash-c1/`) 각각. 줄마다 `report.hash`·보고서 JSON 의 FNV·기록 수라, `drift` 의 난수 호출 수(구간마다 한 번)도 그대로다(시험 '평소의 도로'가 한 번 더 센다: 혼잡을 다시 계산할 때마다 `rngTraffic.range` 가 구간 수 257 만큼만 불린다).
+- **한 프로세스에서 시드 A 다음에 돌린 B 의 해시 = B 만 돌린 것**: `h1/ab.mts`(여섯 쌍 — 보통 S39 → S3 · 홍수 S1 → S2 · 지진 S0 → 태풍 S1 · 강제 `traffic/tree` S3 → S0 · 극한 S7 → 강제 `collapse/landslide` S2 · 강제 `traffic/pileup` S1 → 보통 S17)이 모두 해시 목록의 값과 같다(`AB_SAME`). 시험은 `vi.resetModules()` 로 모듈 캐시를 새로 만든 두 그래프에서 견준다(홍수 + 가스 폭발 강제 S4 를 혼자 / S9 다음에).
+- 바뀐 것은 **기록의 원인 간선**뿐이다: 교통 모델이 놓은 장애물(공사·고장 차량·낙하물)에도 `Obstacle.ev` 가 생겨, 그것을 알리는 보고(부대·시민 제보)와 그 앞에서 되돌아선 부대의 ROUTE_BLOCKED 가 그 알림 기록을 원인으로 갖는다(b3-3 까지는 건물 잔해만). `--json` 의 `metrics` 가운데 원인 간선에서 나오는 값(세계 원인·`fromWorld`·확산)이 조금 늘 수 있다 — 아래 수치.
+
+#### 실제 이름과 자리 (h2~h8 이 쓴다)
+
+1. **`types.ts`** "세계 상태와 신호" 소절 끝의 새 소절 "초과 위험 과정": `HazardLawId`·`HzWhat`·`HzSrc`·`HzCell`(`done`)·`HzWait`·`HzNote`·`HzState`·`PlaceExpo`(`pipeThr`), 인터페이스 합치기로 `WorldState.hz`·`expo`·`sills`·`spans` · `ZoneState.at?` · `Signal.mag` · `Incident.hz?`. `SignalKind` 끝에 `'quake' | 'blackout'`, `WorldTag` 끝에 `'struct'`(새 줄). **`Scene.wear` 는 I2 준비 단계가 이미 넣어 둔 칸**(같은 모양 — "교대 간 지속" 절)이라 다시 넣지 않았다. 객체 모양: `initWorld`·`signal`(`mag: s.mag ?? 0`)·`createIncident`(`hz: undefined`)의 리터럴. `kit.baseScene` 의 `wear: undefined` 는 그 칸을 쓰기 시작하는 b3-8 이 넣는다(§7 표).
+2. **`world/hazard.ts`**(등록이 없는 파일. `chain`·`world/state` 와 `incidents`·`engine`·`types` 의 형만 import): `CSQ_SPAWN_CAP`(6 — `consequence.ts` 가 다시 내보낸다) · `HZ { HOLD 60, PARENT_SHARE 1/3, ORPHAN_CAP 3, ROOT_MAX 2, SRC_MAX 3, LATE 150 }` · `HzPart` · `HazardLaw` · `registerHazard`(등록을 거두는 함수를 돌려준다. 같은 id 면 그 자리의 법칙을 바꾼다) · `hazardLaws`·`hazardLabel` · `tickHazards` · `hazardImpulse(sim, law, target, dH, part, delay = 0)` · `hazardCell` · `ruleLoad(sim, rule?)` · **`hazardRoom(sim, law, parent, skip = null)`**.
+   - 한 교대 6건(`hazardRoom` ⑤)은 `chain.chainedInShift` + 기다리는 줄이다 — **`chainedInShift` 가 법칙 사건(`Incident.hz`·예약의 `opts.hz`)을 부모가 없어도 센다**(아래 "다르게 한 곳" 14).
+   - `tickWorld` 의 1초 블록: `'tick'` 규칙 → `tickHazards` → `recoverWorld`. `consequence.spawnRoom` 의 전체 상한은 `ruleLoad(sim) ≥ CSQ_SPAWN_CAP`(`world.spawned` 는 `csq-spawn` 흐름의 순번으로만 남는다).
+   - 흐름 이름: 문턱 `hz:<법칙>:<대상>:<n>`(once 법칙은 `hz:<법칙>:<대상>`) — 첫 값이 `thr = −ln(1 − u)`, 둘째 값이 `u2`. 사건 `hz-spawn:<법칙>:<대상>:<n>`.
+   - **`law.spawn` 이 받는 `cell` 은 넘은 그 문턱의 것**(`n`·`u2`)이다. 기다리던 줄을 다시 볼 때는 그 번호의 흐름을 다시 뽑아 만든 사본을 준다(once 가 아닌 법칙의 실제 칸은 이미 다음 문턱으로 넘어가 있다).
+   - `world.log` 의 줄: 예약마다 `{ rule: 법칙 id, t, ev: cause, inc: parent ?? −1, made: −1, depth }` — `tickIncidents` 가 `made` 를 채운다(b2 그대로). `Incident.csq` = 법칙 id, `Incident.hz` = `{ law, target, at, src }`(`at` = 예약의 `at` — 미룬 충격이면 미룬 시각, 기다리던 줄이면 자리가 난 시각).
+3. **`world/laws/index.ts`**(빈 모음 — 차례의 주석만) · `engine.ts` 가 `import './world/rules'` 다음 줄에 `import './world/laws'`.
+4. **`incidents.ts`**: `SpawnOpts.edgeId`·`causes`·`hz`, 발생 기록의 `causes` = `[cause, ...opts.causes]`, `tickIncidents` 가 꺼낸 예약이 `opts.hz` 이고 그 건물이 `placeGone` 이면 `'expired'`, **`DroppedChain.csq`**(버린 것이 규칙·법칙의 것이면 그 이름 — `consequence`·`hazard`·`tickIncidents` 가 채운다. 이야기 연쇄의 거절에는 없다).
+5. **`world/state.ts`**: `initWorld` 의 리터럴에 `hz`·`expo`·`sills`·`spans`, `zoneOfPlace` = `zoneOfXY(건물 가운데)`.
+6. **`traffic.ts`**(b3-5 ①) — `TrafficState` 의 새 칸: `driftAt` · `base` · `exOwn`·`exBump`·`exQueue`·`exDiv`·`excess` · `divert`·`divertBy`(**자리만 — 0 · −1. 채우는 것은 b3-5 ②**) · `closeEv`·`closeInc`·`slowEv`·`slowInc`·`levelEv` · `bumps: BumpRow[]`·`nextBumpId` · `qBy`·`qEv`·`qInc` · **`parts: RoadPart[]`·`partAt`**(구간마다의 몫 목록 — 아래 "다르게 한 곳" 10). `jams[k].ev`, `crowds[k].bump`. 내보낸 것: `noteRoadCause(sim, edge, 'close' | 'slow' | 'level', ev, inc = −1)` · `noteBump`·`unnoteBump`·`addBump`·`removeBump` · `roadParts(sim, edge, out)` · `roadFlow` · `canBlock(sim, e, dry = false)` · `BumpRow`·`RoadPart` · 상수 `DIV_MAX`(1.0)·`LEVEL_EX`(0.8).
+   - `drift` 의 끝에서 `ledger(sim, tr, jam, neck, src, ring1, q0)` 가 장부를 다시 적는다(혼잡·밀림·난수를 읽기만 한다). 뿌리의 두 갈래는 `kind[e]`(0 뿌리 아님 · 1 평소의 뿌리 = 닫히지 않았고 `slow < 1` 이며 `p0 ≥ 2.4` · 2 원인이 있는 뿌리), `p0 = baseCong × tod × trafficMul + 불법 주차 0.4`.
+   - 원인 있는 뿌리의 주인: 닫힘(`closeEv`) → 감속(`slowEv`) → 정체(`jams[k].ev`) → 한 차로 장애물(`Obstacle.ev`, 주인 사건은 잔해면 그 기록의 원인이 가리키는 사건) → 얹은 혼잡(그 구간을 담은 가장 큰 `bumps` 줄).
+   - **장부를 쓰는 자리**(모두 기록 id 를 담기만): 쓰러진 나무(닫힘 = `I.blockEv` · 감속 = `I.rootEvent` — `createIncident`) · 교통사고의 감속(`createIncident` 끝, 발생 기록 다음 — `type === 'traffic' && I.blockedEdge ≥ 0`) · 사고 구간 전면 통제(`sceneManager` 6번 블록) · 다중 추돌·산사태의 `onCreate` · X6 `blockRoad` · 건물 잔해의 전면 통제(`rules/structure.ts` — 주인 사건 = 신호의 사건) · 교통 모델의 전면 공사·낙하물과 그 밖의 장애물(`announce` 가 `Obstacle.ev` 를 적고 전면이면 닫힘의 장부에도) · 정체(`emit` 의 반환값) · 행사 인파(`noteBump(…, 0)`) · 재난의 통제(`closeEdge` — `emit` 의 반환값) · 태풍 정전(`lightsOut` 의 `tell` 반환값 → `noteBump(모든 구간, 0.4, ev, 1)`, id 는 **`DisasterState.darkBump`**).
+7. **`disaster.ts`**: `detour` 는 이름을 남기고 `traffic.canBlock` 을 부른다 · **`roadSill(sim, d, e)`**(export — 지금은 `d.thr[e.id]`. 첫 인자는 아직 쓰지 않는다: N9 가 지하차도 구간의 문턱을 `sim.world` 에서 읽을 자리) · `floodRoads` 가 그것으로 읽는다.
+8. **측정 도구**: `scripts/metrics.ts` 의 지표 줄이 열 줄이 됐다(끝에 `hazard:`) · `metrics.hazard = { natural, byLaw, parented, orphan, rootMax, story, ruleMade, queued, waited, dropped { depth, cap, late, expired, busy }, holes, gain, maxMadeInShift, maxCausalInShift }` · `hazardShift(sim, probe)`·`HAZARD_LAWS` · 관문(`checkMetrics` — 늘): `holes = 0` · 교대마다 `natural + ruleMade ≤ CSQ_SPAWN_CAP` · 이야기 연쇄 + 법칙 사건 ≤ `CHAIN_SHIFT_MAX` · `rootMax ≤ HZ.ROOT_MAX`. `TAG_SYS` 의 `struct → building`, `S(I)` 의 `wear`: `cause === 'shock'` 이면 `building`, 아니면 `carry`. `runWithProbe(sim, maxTicks, each?)`.
+   - **`scripts/hazstats.ts`**(`sweep --hazard`, `--json` 이면 `hazard` 칸): `HazProbe`(매 틱 `tick()` — 교통 모델이 혼잡을 다시 계산한 틱에만 도로를 읽는다)·`sumHaz`·`hazLines`·`hazJson`·`roadSurface(sim)`(L1 의 `S`). 줄 둘: `hazard-laws:`(법칙마다 칸 수·넘은 횟수·사건이 된 수·교대 끝에 기다리던 줄, `holes`) · `hazard-road:`(노출량 `Σ_e ∫ x·V·S·ℓ dt` 를 네 몫으로 · **`unledgered`** = 기록 없는 몫의 노출량 · 가중 없는 `raw` 구간·초 · 초과가 있던 구간·닫힌 구간의 표본당 수 · 갈래별). 뒤 단계가 더할 줄은 그 파일 머리에 적었다.
+9. **시험**: 새 파일 `tests/hazard.test.ts` 26개(틀 20 — 가짜 법칙으로, 대부분 `tickHazards` 만 · 장부 6), 20초쯤. 가짜 법칙을 넣는 동안에는 등록된 법칙을 모두 치워 둔다(`withLaws` — 뒤 단계가 진짜 법칙을 등록해도 흔들리지 않게). `tests/causality.test.ts` 에서 고친 것: '요약 모양'(열 키) · b2 의 `placeState`(`toMatchObject`)·전체 상한(`world.log` 에 사건이 된 줄을 넣어 `ruleLoad` 를 채운다 — 예약을 빼면 자리가 돌아오는 것도)·거절 기록의 `csq`·세계 상태의 처음 값(`hz.cells`·`expo`·`sills`·`spans`) · b3-3 의 장애물 기록(교통 모델이 놓은 것도 알림 기록을 갖는다).
+
+#### 본문과 다르게 한 곳
+
+1. **부모의 몫은 같은 주인 사건의 몫을 합쳐 본다**(`hazard.parentOf`). 본문은 "주인 사건이 있는 가장 큰 몫 — 그 몫이 전체의 1/3 이상일 때만"(몫 하나)인데, 통제 하나는 한 구간에 `queue` 와 `divert` 두 몫으로 걸린다 — 0.3 + 0.3 이 0.4 짜리 정체와 겹치면 몫 하나로는 부모가 없지만 그 사건의 몫은 60% 다. `cause`(가장 큰 몫의 기록)와 구멍 판정(몫 하나가 1/3 이상이고 기록이 없다)은 본문 그대로 몫 단위다.
+2. `hazardRoom` 의 넷째 인자 `skip`(다시 보는 기다리는 줄 자신 — 본문의 "그 줄 자신을 빼고 센다"). ④ 한 뿌리의 가지에는 법칙 사건의 자식도 든다(뿌리를 끝까지 거슬러 올라가 센다).
+3. 한 주기에 한 대상은 문턱을 하나만 넘는다(넘친 몫이 다음 문턱보다 커도 다음 주기에 넘는다 — 그 대상이 그 주기에도 초과가 있을 때만).
+4. `tickHazards` 가 첫 줄에서 돌아올 때(실제로 사건이 된 수 ≥ `CSQ_SPAWN_CAP`) 기다리던 줄을 `'cap'` 으로 버린다(줄이 남아 `ruleLoad` 를 채운 채 교대가 끝나지 않게).
+5. 모든 몫의 기록이 없어 사건을 만들지 않은 넘음은 `holes` 에만 세고 `gen.dropped` 에는 넣지 않는다(맞는 까닭의 갈래가 없다).
+6. 미룬 충격(`delay > 0`)에서 `spawn` 이 그 자리에서 `null` 이면 기다리는 줄에 넣고 `until − hold`(= 미룬 시각) 전에는 내지 않는다 — `HzWait` 에 칸을 더하지 않았다. 미룬 예약의 `when` 은 `law.spawn(…) !== null && 그 건물에 열린 사건이 없다`(전소·전체 붕괴는 `tickIncidents` 의 한 줄이 본다).
+7. **구간마다의 몫 목록을 `drift` 가 굳혀 둔다**(`tr.parts`·`partAt`·`roadParts`). 본문은 L1 이 `exOwn`·`exBump` 를 읽을 때 항·줄마다 다시 가르게 돼 있는데, `drift`(틱 5k)와 세계 틱(5k + 1) 사이에 장애물·정체·`bumps` 줄이 사라지면 몫과 내력이 어긋난다. 주기마다 새 배열이다(앞 주기의 몫을 쥔 쪽이 뒤에서 바뀌지 않게). `bumps` 줄의 합보다 큰 `e.bump` 는 기록 없는 몫(`ev −1`, `'crowd'`)으로 남긴다 — 장부 없는 혼잡이 구멍으로 드러나게.
+8. **뿌리가 바뀔 때**(앞 뿌리가 더는 뿌리가 아니라 다른 원인 있는 뿌리로 옮길 때)는 새 뿌리의 주인이 −1 이어도 그 값으로 바꾼다. 본문의 "뿌리의 값이 −1 이면 앞의 값을 지우지 않는다"는 같은 뿌리일 때만 지킨다(다른 뿌리의 밀림에 앞 뿌리의 기록을 남기면 틀린 내력이다). 한 다리 건너 자라는 구간은 많이 밀린 이웃 가운데 평소의 밀림(`qBy −1`)이 하나라도 있으면 평소의 것으로 둔다(뿌리에 닿은 구간과 같은 규칙).
+9. **`'level'` 장부를 쓰는 자리는 넣지 않았다**(`disaster.floodRoads` 의 `noteRoadCause(…, 'level', …)` 와 `d.levelEv`): §3.6b 의 "장부를 쓰는 자리" 목록에는 있지만 §5 표와 덩어리 표가 b3-12(h7)의 일로 적었다(그 단계의 "홍수 20교대 사건 수 기준 × 1.1" 로 재야 한다). 틀은 있다 — `levelEv`·`noteRoadCause` 의 `'level'`·`exOwn` 의 `LEVEL_EX` 항·몫 `'level'`(시험이 손으로 건다).
+10. **`createIncident` 의 `opts.edgeId` 를 먼저 보는 갈래는 넣지 않았다**(§5 표의 b3-6 — L1 과 함께). `SpawnOpts.edgeId` 칸과 `traffic.canBlock` 은 있다.
+11. `announce` 가 스스로 `Obstacle.ev` 를 적는다(본문은 "기록 id 를 돌려주게 해서"). 교대 시작 때 놓이는 불법 주차에는 `ev` 가 없다(알림이 없고, 병목 0.4 는 평소 수준에 든다).
+12. `metrics.hazard` 에 `maxMadeInShift`·`maxCausalInShift` 두 칸이 더 있다(관문은 교대마다의 최댓값을 본다). `waited` 는 틱 표본(Probe)이 본 기다리는 줄의 수라 `--no-metrics` 면 `null`. `ruleMade` = `csq` 가 있고 이야기 연쇄도 법칙도 아닌 사건.
+13. `TrafficState.driftAt` 은 틀 커밋에 먼저 넣었다(12초 주기의 법칙이 그것을 본다).
+14. **이야기 연쇄의 `canChain` 도 법칙 사건을 센다**(`chain.chainedInShift` — `8a4d077`). 본문은 법칙 쪽(`hazardRoom` ⑤)만 "이야기 연쇄 + 부모 없는 법칙 사건 ≥ 6" 을 보게 했는데, 그러면 부모 없는 법칙 사건 셋이 먼저 나고 이야기 연쇄 여섯이 뒤에 올 때 인과로 난 사건이 한 교대 9건이 된다 — §4 의 관문 "이야기 연쇄 + 법칙 사건 ≤ 6" 을 틀이 스스로 지키지 못한다. 상한의 값(한 사슬 3건 · 한 교대 6건)은 그대로이고 세는 것만 넓혔다: 인과로 난 사건은 어느 쪽이 먼저 나든 같은 6건을 나눠 쓴다(§9 의 기본값 "상한의 안쪽"). 법칙이 없으면 `hz` 가 없어 예전과 같은 수다. N8·N9 의 `spawnConsequence`(부모 있는 예약)도 같은 수를 본다.
+
+#### 수치
+
+기준 파일은 같은 scratchpad 의 `wf-causality/h1/`(해시 목록 `hash-a1/`·`hash-b1/` · 노출량 `haz1/`(`haz.sh`) · 관문 `gates/`·`check-1.log` · 시간 `timing.txt` · 보통 60 `normal60.json` · 도구 `ab.mts`·`owners.mts`·`haz.sh`·`timing.sh`). **뒤 덩어리의 "전"은 여전히 `out-c2/` 다**(이 덩어리는 결과를 바꾸지 않았다 — h2 가 b3-5 ② 뒤에 새 기준을 잰다).
+
+- **보통 60 `--json`**: `reportHash 1812bf3b` 그대로이고 `out-c2/normal60.json` 과 다른 칸은 셋뿐이다 — `chain.worldLinks` 69 → 78 · `replan.fromWorld` 71 → 80(교통 모델이 놓은 장애물의 알림 기록이 그 앞의 ROUTE_BLOCKED·제보의 원인이 됐다) · 새 칸 `metrics.hazard`(natural 0 · 이야기 연쇄 4 · holes 0).
+- **도로의 노출량**(`sweep N --hazard`, 교대당 — 우회 몰림이 아직 없다: 넷째 몫은 0):
+
+| 조건 | 노출량 `Σ x·V·S·ℓ dt` | 자기(한 차로·정체) | 얹은 혼잡 | 밀림 | 우회 | **장부 없는 초과** | 가중 없는 초과(구간·초) | 초과가 있는 구간 / 표본 | 닫힌 구간 / 표본 |
+|---|---|---|---|---|---|---|---|---|---|
+| **보통 12** | **16,941.8** | 1,399.0 (정체 1,070.8 · 한 차로 328.2) | 710.4 (인파) | 14,832.4 | 0 | **0** | 14,306.8 | 28.5 | 0.6 |
+| 어려움 8 | 27,164.9 | 1,525.5 | 570.7 | 25,068.7 | 0 | 0 | 22,763.9 | 37.5 | 1.2 |
+| 극한 8 | 33,970.3 | 1,639.8 | 590.0 | 31,740.5 | 0 | 0 | 29,903.8 | 46.4 | 1.6 |
+| 태풍 6 | 57,520.0 | 1,596.9 | 17,234.7 (꺼진 신호 16,554.0 · 인파 680.7) | 38,688.4 | 0 | 0 | 43,254.0 | 70.5 | 1.9 |
+| 홍수 6 | 36,101.6 | 1,248.2 | 607.8 | 34,245.7 | 0 | 0 | 30,119.9 | 51.4 | 2.8 |
+| 지진 6 | 54,689.1 | 1,571.3 | 781.1 | 52,336.7 | 0 | 0 | 46,312.0 | 63.0 | 2.8 |
+| 산불 6 | 23,434.7 | 1,303.3 | 583.6 | 21,547.8 | 0 | 0 | 20,271.0 | 36.1 | 1.4 |
+| 해일 6 | 17,243.9 | 1,313.9 | 599.9 | 15,330.0 | 0 | 0 | 15,815.6 | 32.8 | 1.0 |
+| 강제 `traffic/tree` 8 | 21,097.7 | 1,575.3 | 550.8 | 18,971.5 | 0 | 0 | 18,104.6 | 35.1 | 0.9 |
+| 강제 `traffic/pileup` 8 | 20,221.8 | 1,492.9 | 590.8 | 18,138.1 | 0 | 0 | 17,628.4 | 34.6 | 0.9 |
+| 강제 `collapse/landslide` 8 | 19,242.7 | 1,608.6 | 568.6 | 17,065.4 | 0 | 0 | 17,112.7 | 32.5 | 0.8 |
+| 강제 `collapse/gasblast` 8 | 24,911.1 | 1,826.9 | 880.1 | 22,204.1 | 0 | 0 | 21,385.3 | 36.1 | 1.0 |
+
+  - 읽을 것: ① 장부 없는 초과는 열두 조건(94교대) 모두 0 이고 `world.hz.holes` 도 0 이다. ② 보통 교대의 가중 없는 초과는 14,307 구간·초 — 조사 때의 어림(혼잡 값의 차로 잰 약 18,000)과 같은 크기다. ③ **초과의 88% 가 밀림이다**: 그 뿌리를 가르면(`h1/owners.mts`, 보통 12) 주인 사건이 있는 밀림 47.2%(거의 다 평소 교통사고의 현장 감속) · 주인 사건이 없는 밀림 40.4%(정체·공사·낙하물이 뿌리) · 정체 6.3% · 인파 4.2% · 한 차로 1.9%. ④ 보통 12교대에는 수요만으로 꽉 찬 구간(평소의 뿌리)이 없었다 — "평소의 밀림"은 0 이다(교통 손잡이가 높을 때의 갈래다 — 시험이 손으로 만든다). ⑤ 태풍의 꺼진 신호는 전 구간에 0.4 씩 120초라 그것만으로 보통 교대 전체만큼의 노출량이다(L1 의 법칙 상한 3 이 그 교대를 묶는다 — h2 가 본다).
+- **교대당 시간**(`sweep 12 --no-metrics`, 전 `c2/` 와 번갈아 세 번 — `h1/timing.txt`): 사용자 CPU 전 34.5 · 33.2 · 33.0초 / 뒤 33.2 · 34.3 · 33.3초(평균 33.6 / 33.6 — ×1.00), 교대당 1,082 · 1,017 · 1,032 / 1,046 · 1,073 · 1,046ms(+1%). §4 의 "틀과 교통의 몫 × 1.03 이하" 안이다(장부는 12초에 한 번 구간 257개를 세 번 훑는 것이고, 법칙이 없는 `tickHazards` 는 첫 줄에서 돌아온다).
+- **관문**: `npm run check` 통과(`cb91aa7` 과 마지막 코드 커밋 `8a4d077` 에서 각각) — 테스트 939 + 건너뜀 1(파일 20개 — b3-3 끝의 913 에 `tests/hazard.test.ts` 26개), 보통 40 검증 통과(사건 565 · 성공 74% · 대응 지연 4% · 실패+미해결 11% · 한계 시간 0 · 방치 1 · 교착 0 · 잊힘 0 · C1~C5 0 · 최대 깊이 2). `sweep 40 --diff hard --check`(사건 713 · 성공 51% · 한계 시간 6 · 방치 7 · 출동 없음 1) · `--diff extreme --check`(871 · 28% · 19 · 26 · 7) · 재난 다섯 × 12 `--check`(태풍 279건 · 홍수 246 · 지진 257 · 산불 199 · 해일 224) 모두 통과(`cb91aa7` 에서. 어려움·극한 40 은 마지막 코드 커밋 `8a4d077` 에서도 다시 통과 — 같은 수치) — **수치가 b3-3 끝의 관문과 한 건도 다르지 않다**. `hazard` 줄은 모든 조건에서 natural 0 · holes 0 이고, 이야기 연쇄는 보통 40 에 3건 · 어려움 14 · 극한 42(교대 최대 6 — 사용자 결정의 상한 그대로). 화면은 고치지 않았다(`vite build` 통과 — `engine.ts` 의 import 가 한 줄 늘었다).
+
+#### h2 에게 (이어받을 자리)
+
+- **우회 몰림(b3-5 ②)**: `drift` 의 밀림 계산 다음에 `tr.divert`·`tr.divertBy` 를 채우고 `target` 에 `min(DIV_MAX, divert)` 를 더한다(본문 (가) — `detours`·`detourSig`·`staticCost`·`LANES`·`DIV_K` 는 그때 더한다). `ledger` 는 이미 그 두 배열을 읽어 `exDiv` 와 `'divert'` 몫(주인 = `closeEv[divertBy]`·`closeInc[divertBy]`, `ref` = 닫힌 구간)을 낸다 — 지금은 늘 0 이다. 그때 고칠 시험: `tests/hazard.test.ts` 의 "우회 몰림은 b3-5 ② 가 채운다" 줄(`exDiv`·`divert`·`divertBy` = 0 · 0 · −1)과 실제 교대 시험의 `r.div === 0`. 쓰러진 나무의 `cong + 0.7` 은 그대로 있다(`createIncident`).
+- **L1(b3-6)**: `world/laws/road.ts` 에 `registerHazard({ id: 'roadCrash', every: 12, once: false, cap: 3, scan, spawn })`, `laws/index.ts` 에 `import './road';`. `scan` 은 `tr.excess[e] > 0` 인 구간마다 `roadParts(sim, e, buf)` 의 몫(`x`)에 `A_ROAD × V × S × ℓ` 를 곱해 `put(e, parts)` 하면 된다 — 몫의 `ev`·`inc`·`what`·`ref` 는 `HzPart` 와 같은 뜻이다. `V`·`S`·`ℓ` 의 식은 `hazstats.ts` 의 `sampleRoad`·`roadSurface` 와 같아야 한다(그 파일이 법칙 파일의 함수를 import 하게 하면 한 곳이 된다 — 스크립트가 법칙 파일을 import 하는 것은 §3.4 의 규칙(src/sim 안)과 무관하다).
+- **`A_ROAD` 의 첫 어림**: 보통 12교대의 노출량이 16,942(우회 몰림 없이)라 교대당 0.35건이면 `2.1e-5`(본문의 `2.5e-5` 와 같은 크기). 우회 몰림을 넣은 뒤 `sweep 12 --hazard` 로 다시 잰다.
+- **부모가 붙는 비율**: 보통 12교대 노출량의 47% 가 "주인 사건의 몫이 1/3 이상"이다(거의 다 평소 교통사고의 현장 감속에서 온 밀림 — `h1/owners.mts`). L1 이 낸 사고의 절반쯤은 근처에서 먼저 난 사고를 부모로 갖는다는 뜻이다 — §4 의 "부모가 있는 것이 1/3 이상"은 넉넉하고, 한 뿌리의 가지(`ROOT_MAX` 2)와 사슬 길이에 걸리는 수를 `hazard.dropped.depth` 로 본다.
+- **개입 시험(§6 I1-b 10)**: 장부는 손대지 않고 상태만 되돌리면 다음 `drift` 가 스스로 비운다(시험 '닫힌 구간과 밀림의 내력'이 그 길을 본다 — 닫힘·감속을 되돌린 뒤 이웃의 밀림이 0 이 될 때까지 `qEv` 가 그 통제 기록이다).
+- **진짜 법칙을 등록하면 고칠 시험**: `tests/causality.test.ts` '세계 상태는 걸린 규칙이 바꾼 것 말고는 처음 값'의 `hz.cells`(법칙이 걸리면 칸이 생긴다 — 그 교대에 초과가 있었으면), `tests/hazard.test.ts` 의 틀 시험은 `withLaws` 가 등록된 법칙을 치워 두므로 그대로다.
+- **I2 에게**: 지난 교대의 복구 통제(`closedReason 'repair'` — I2 단계 4·6)는 `initTraffic` 앞에서 닫으므로 `noteRoadCause` 가 아직 듣지 않는다(교통 모델이 없다). `initTraffic` 뒤에 그 구간들의 닫힘을 장부에 적어야 구멍이 되지 않는다(원인 기록 = 이어받은 상태의 요약 기록).

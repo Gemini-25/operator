@@ -24,6 +24,7 @@ import type { Carryover, PlaceMark } from './types';      // (X6) · (I2)
 import { tickWorld } from './world/consequence';      // (I1-b) 인과 규칙의 틀
 import { initWorld } from './world/state';
 import './world/rules';      // (I1-b) 인과 규칙을 등록한다 — 그 파일의 import 순서가 규칙의 순서다(= 결과)
+import './world/laws';       // (I1-b b3-4) 일반 법칙(초과 위험 과정)을 등록한다 — 규칙 다음 줄. 그 파일의 import 순서가 법칙의 순서다(= 결과)
 import { Rng, hashStr } from './rng';
 import type { AirStats, Call, City, Incident, Responder, Scene, ShiftReport, SimEvent, Unit, Weather, WorldState } from './types';
 import { WEATHER_NAME } from './util';

@@ -1,5 +1,7 @@
 # I2 — 교대 간 지속
 
+> **I1-b 가 다시 설계됐다(2026-11-20, 사용자 결정 — 스크립트가 아니라 자연스럽게 생기는 인과).** 이 문서가 I1-b 에 기대하는 이름(`knownBuildingAt`·`placeState`·`WorldTag`·`ObstacleKind 'rubble'`)은 그대로다. 알아야 할 것 넷은 `I1-causality.md` §3.7 끝 "뒤 묶음이 기대하는 이름"의 I2 줄: ① `Scene.wear` 를 I1-b 가 먼저 채운다(`cause: 'shock'` — 이웃의 붕괴·폭발이 남긴 금) — `applyPlaceWear` 는 `dmg` 의 큰 쪽으로 합친다 ② `WEAR_INTEG` 는 `catastrophe.CAT` 에 있다(§10.1 의 `persist.ts` 상수 줄은 "그 값을 읽는다"로) ③ 측정 도구의 `S(I)` 는 `s.wear.cause === 'shock'` 을 `building` 으로, 그 밖을 `carry` 로 센다 ④ 교대 끝의 `world.expo[p].shake`(금)·`placeState` 의 새 칸(`shake`·`pipe`·`wet`)을 다음 교대로 이어받을지는 단계 5 에서 정한다. `WorldTag` 끝에 `'struct'` 가 먼저 늘어난다(`'carry'` 는 그 뒤에). I2 를 구현하기 전에 I1-b 의 구현 메모 "최종 요약"으로 실제 이름을 한 번 더 확인한다.
+
 공통 규칙은 `docs/specs/README.md`. 브랜치 `wf/persist`, 개발 서버 포트 **5232**. 본보기: `T1-traffic.md`(도로 통제의 주인과 우회로 검사), `N4b-crime.md`(묶음 파일과 공용 파일 수정의 경계).
 
 **한 줄 요약**: 교대가 끝나면 지금은 모든 것이 사라진다. 이 묶음은 대원 상태·장비·건물·도로 네 가지를 **"이어받은 상태"(`Carryover`)** 라는 자료로 만들어 다음 교대의 `Sim` 생성자에 입력으로 넣는다. 같은 시드 + 같은 난이도 + 같은 이어받은 상태 = 같은 결과. 이어받은 상태가 없으면 지금과 기록 해시가 한 글자도 다르지 않다.

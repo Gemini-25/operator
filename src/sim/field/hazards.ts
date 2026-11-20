@@ -18,6 +18,7 @@ import { lastFx, noteBoom, noteFlash, noteHit, noteShot, recHarm, recMelee } fro
 import { RUIN_SECONDARY, markRuin, recordFall } from './ruins';
 import { CAUSE_NAME, DOWN_AT, SELF_HARM, SELF_HARM_HIT, bandOf, decayCause, hurtCas, hurtCasTo, hurtHostile, hurtResponder, injuryRng, noteDecay, noteInjury, settleHostile } from './injury';
 import { SHAKE, shake } from './doctrineRun';      // (R3 1단계) 동요 — 피격·피습·폭발
+import { dragSmoke, laneShieldMul } from './doctrineRun';      // (R3 6단계) 끌기의 연기 피해 · 차량으로 막은 입구의 부주의
 
 export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2, c?: FxInfo): void {
   s.fx.push({ kind, t: sim.t, x, y, x2, y2, text, color, ttl, c });
@@ -177,10 +178,11 @@ export function tickCasualties(sim: Sim, s: Scene, I: Incident): void {
     let nWound = d, nSmoke = 0, nBurn = 0, nExpo = 0;      // (H1) 항별 기록용: 상처 · 연기(가스) · 불 · 실외 노출. 아래 식은 그대로 두고 같은 항을 따로 잡아 둔다
     if (c.where === 'scene' || c.where === 'carried') {
       const i = tileOf(s, c.x, c.y);
-      d += s.smoke[i] * (s.kind === 'hazmat' ? 0.62 : 0.36);      // 새어 나온 가스는 연기보다 빨리 사람을 쓰러뜨린다
+      const low = c.where === 'carried' && s.smoke[i] > 0 ? dragSmoke(s, c.id) : 1;      // (R3 6단계 — 끌기) 연기 아래로 낮게 끌려 나가는 사람은 연기를 절반만 마신다 (그 밖에는 1 — 값이 그대로다)
+      d += s.smoke[i] * (s.kind === 'hazmat' ? 0.62 : 0.36) * low;      // 새어 나온 가스는 연기보다 빨리 사람을 쓰러뜨린다
       if (s.fire[i] > 0.3) d += 2.6 * s.fire[i];
       if (!isIndoor(s.tiles[i]) && (c.isTarget || s.kind === 'search')) d += s.exposure;
-      nSmoke = s.smoke[i] * (s.kind === 'hazmat' ? 0.62 : 0.36); if (s.fire[i] > 0.3) nBurn = 2.6 * s.fire[i]; if (!isIndoor(s.tiles[i]) && (c.isTarget || s.kind === 'search')) nExpo = s.exposure;
+      nSmoke = s.smoke[i] * (s.kind === 'hazmat' ? 0.62 : 0.36) * low; if (s.fire[i] > 0.3) nBurn = 2.6 * s.fire[i]; if (!isIndoor(s.tiles[i]) && (c.isTarget || s.kind === 'search')) nExpo = s.exposure;
     } else if (c.where === 'loaded') d *= 0.5;
     else if (c.where === 'safe' && c.treated) d *= 0.6;
     if (!open) d = 0;
@@ -589,7 +591,7 @@ export function tickLane(sim: Sim, s: Scene, I: Incident): void {
     const dir = k === 0 ? -1 : 1;
     // 진입 방향의 통제 지점이 설치됐으면 차량이 들어오지 않는다
     const cp = dir > 0 ? 0 : 1;
-    const distracted = s.rng.chance(sim.weather === 'clear' ? 0.2 : 0.3);
+    const distracted = s.rng.chance((sim.weather === 'clear' ? 0.2 : 0.3) * laneShieldMul(sim, s, cp));      // (R3 6단계 — 차량 차단) 차량으로 막은 입구는 통제 전까지 부주의 ×0.4 — 확률만 곱하고 판정 호출은 그대로
     if (!s.controlDone[cp] && I.phase !== 'closed') s.cars.push({ x: dir > 0 ? -1.5 : s.w + 0.5, px: 0, row, dir, speed: s.rng.range(4.2, 5.6), distracted, stopped: false, hit: false });
   }
   for (let k = s.cars.length - 1; k >= 0; k--) {
@@ -704,6 +706,7 @@ export function tickGas(sim: Sim, s: Scene, I: Incident): void {
         tDiscovered: -1, tFreed: -1, tTreated: -1, tSafe: -1, tLoaded: -1, tDead: -1, tHospital: -1, discoveredBy: -1, causeEvent: -1,
         injuries: undefined, bleedCause: undefined, deathCause: undefined, lost: undefined,      // (H1) kit.addCas 와 같은 칸, 같은 순서
         quietLoss: undefined,      // (N8) kit.addCas 와 같은 칸, 같은 순서
+        immob: undefined,      // (R3 6단계) kit.addCas 와 같은 칸, 같은 순서
       };
       c.bleed0 = c.bleed;
       s.casualties.push(c);

@@ -90,7 +90,9 @@ const EMS4 = ['E01', 'E02', 'E03', 'E04', 'E05', 'E08', 'E11', 'E12', 'E18', 'E1
 /** (합치기) 단계 5 에 합치는 작업자가 더한 화학 짝·대기조 (S10·S11 — special.ts 의 S03 다음) */
 const SPECIAL5 = [...STAGE5, 'S10', 'S11'];
 /** 3·4·5 단계를 합친 뒤의 등록 순서 전체 (줄 파일 다섯의 import 순서 common → police → fire → ems → special) */
-const STAGE_ALL = [...STAGE3, ...EMS4, ...SPECIAL5];
+const STAGE345 = [...STAGE3, ...EMS4, ...SPECIAL5];
+/** (6단계) 이송·교통 방법의 줄 넷 — 방법·판단 지점이 6단계에 생겨 그 분야 파일의 끝에 붙었다: P20(경찰 — P17b 다음) · F18(소방 — F16 다음) · E13·E14(의료 — E20 다음) */
+const STAGE_ALL = STAGE345.flatMap((id) => (id === 'P17b' ? [id, 'P20'] : id === 'F16' ? [id, 'F18'] : id === 'E20' ? [id, 'E13', 'E14'] : [id]));
 /** 3·4·5 단계를 합친 뒤의 지휘·관제 줄 (경찰 파일의 지휘 줄 → 소방 → 의료 → 특수(D2 가 특수 파일의 첫 줄)) */
 const CMD_ALL = [...CMD3.filter((id) => id !== 'D2'), 'D8', 'CE1', 'CE2', 'CE3', 'CE4', 'CE5', 'D2', ...CMD5];      // (균형) D8 — 소방 파일의 관제 줄 D4 다음
 /** 자기 신고를 손으로 넣는다 (그 대원의 믿음 — 남이 아는 그 대원의 몸) */
@@ -167,7 +169,8 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
   it('같은 시드 두 번의 report.hash 가 같다 — 보통 교대, fire/std·armed/hostage 강제', () => {
     for (let q = 0; q < cases.length; q++) expect(shift(cases[q][0], cases[q][1]).report!.hash, cases[q][0]).toBe(first[q].report!.hash);
   });
-  it('단계 3·4·5 합친 뒤: 줄은 공통 여섯·경찰 열여섯·소방 열일곱·의료 열하나·특수 열아홉(등록 순서 — index.ts 의 common → police → fire → ems → special), 지휘·관제 줄은 경찰 일곱·소방 아홉·의료 다섯·특수 넷. 의무(duty) 줄이 있다(F01·F02). 짝을 맺고 펌프차에 예비 펌프가 있다. 6단계의 상태 칸(차량 차단)은 비어 있다', () => {
+  it('단계 6 뒤: 줄은 공통 여섯·경찰 열일곱·소방 열여덟·의료 열셋·특수 열아홉(등록 순서 — index.ts 의 common → police → fire → ems → special), 지휘·관제 줄은 경찰 일곱·소방 아홉·의료 다섯·특수 넷. 의무(duty) 줄이 있다(F01·F02). 짝을 맺고 펌프차에 예비 펌프가 있다. 차량 차단(s.laneShield)은 비었거나 통제 지점 번호의 목록이다', () => {
+    expect(STAGE_ALL.length).toBe(STAGE345.length + 4);
     expect(DOCTRINE.map((r) => r.id)).toEqual(STAGE_ALL);
     expect(CMD_ROWS.map((c) => c.id)).toEqual(CMD_ALL);
     expect(DOC_DEPTS_DONE).toEqual(['police', 'fire', 'special', 'ems']);
@@ -185,12 +188,13 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
           expect(['fit', 'method', 'act', 'gate', 'cmd', 'dispatch', 'chase', 'duty']).toContain(d.hook);
           expect(DOCTRINE.some((r) => r.id === d.rule) || CMD_ROWS.some((c) => c.id === d.rule), d.rule).toBe(true);
           if (d.hook === 'act' || d.hook === 'duty') expect(['cover', 'rearm', 'airOut', 'pairOut', 'pair', 'triage']).toContain(d.act); else expect(d.act).toBeUndefined();
-          if (d.hook === 'gate') expect(['closeIn', 'roomEntry', 'breach', 'coverFire', 'bangUse', 'interiorEntry', 'carryHold', 'laneTreat', 'forceDoor']).toContain(d.gate); else expect(d.gate).toBeUndefined();
+          if (d.hook === 'gate') expect(['closeIn', 'roomEntry', 'breach', 'coverFire', 'bangUse', 'interiorEntry', 'carryHold', 'carryStart', 'laneTreat', 'forceDoor']).toContain(d.gate); else expect(d.gate).toBeUndefined();
           if (d.hook === 'cmd' || d.hook === 'dispatch' || d.hook === 'chase') expect(d.rid).toBe(-1);
         }
       }
       for (const s of sim.scenes) if (s) {
-        expect(typeof s.triageAt).toBe('number'); expect(s.laneShield).toBeNull();      // (4단계) 분류가 끝난 시각은 -1 이거나 그 시각 · 차량 차단은 6단계
+        expect(typeof s.triageAt).toBe('number');      // (4단계) 분류가 끝난 시각은 -1 이거나 그 시각
+        if (s.laneShield !== null) { expect(s.laneRows.length).toBeGreaterThan(0); for (const k of s.laneShield!) expect(k === 0 || k === 1).toBe(true); expect(new Set(s.laneShield!).size).toBe(s.laneShield!.length); }      // (6단계) 차량으로 막은 통제 지점 — 차로가 있는 현장만
         for (const a of s.agents) {
           expect(a.buddy === -1 || sim.responders[a.buddy!] !== undefined).toBe(true);      // 짝 맺기는 3단계 (pairUp — 부대가 내린 뒤)
           if (a.buddy !== undefined && a.buddy >= 0) { paired++; expect(a.buddy).not.toBe(a.rid); }
@@ -2079,5 +2083,479 @@ describe('R3 균형: 밖 대기조는 출입구 곁 또는 대기 지점 곁의 
     expect(outsideWatch(sim, s, noz, far), '대기 지점의 기관원').toBe(1);
     put(op, { x: st.x + 20, y: st.y });
     expect(outsideWatch(sim, s, noz, far), '대기 지점에서도 출입구에서도 먼 기관원').toBe(0);
+  });
+});
+
+// ═════════════════════════ 단계 6 (이송·교통 방법) — 시험 2-k · 척추 고정(E13) · 끌기(E14) · 소방차 차단(F18) ═════════════════════════
+import { raiseProblem } from '../src/sim/events';
+import { METHOD, WORK_MODE, methodsOf } from '../src/sim/field/methods';
+import { BLOCK_LANE, CARRY, dragSmoke, dragging, laneShieldMul } from '../src/sim/field/doctrineRun';
+import { moveSpeed } from '../src/sim/field/executor';
+import { tickCasualties, tickLane } from '../src/sim/field/hazards';
+import { agentHealth } from '../src/sim/field/sceneManager';
+import type { MethodId, Weather } from '../src/sim/types';
+import type { Rng } from '../src/sim/rng';
+
+/** 난수 흐름의 사본 (원본은 소비하지 않는다) */
+const cloneRng = (r: Rng): Rng => { const c = Object.create(Object.getPrototypeOf(r)); Object.assign(c, r); return c as Rng; };
+/** 교통사고 현장을 그 날씨로: 대원을 내려 세우고 임무를 비운다 */
+function laneScene(seed: string, weather: Weather, kinds: UnitKind[] = ['patrol', 'engine', 'als']) {
+  const env = sceneWith(seed, 'traffic/std', kinds);
+  (env.sim as unknown as { weather: Weather }).weather = weather;
+  for (const b of env.s.agents) { b.task = null; b.orderWork = -1; b.isCommander = false; const u = env.sim.units[b.unitId]; u.state = 'onscene'; u.incidentId = env.I.id; }      // 부대는 이 현장에 와 있다 (차량 차단은 막은 부대가 현장에 있는 동안만이다)
+  expect(env.s.laneRows.length).toBe(2); expect(env.s.controlPts.length).toBe(2);
+  docForget();
+  return { ...env, cop: env.of('patrol')[0], cop2: env.of('patrol')[1] };
+}
+const usedMethods = (I: Incident, w: WorkKind): MethodId[] => (I.methods ?? []).filter((u) => u.ok && u.work === w).map((u) => u.method);
+
+describe('R3 시험 8 (단계 6): 방법 표 — 이송 셋·교통 통제 둘, 줄 넷(P20·F18·E13·E14)', () => {
+  it('업기·통제는 평소 방법으로 늘 남고, 끌기·차량 차단은 교본 배율이 걸릴 때만 1등이다. 들것은 기록 전용. 다섯 줄은 N9 의 다섯 앞에 있다', () => {
+    const ids = Object.keys(METHOD) as MethodId[];
+    for (const m of ['pack', 'drag', 'litter', 'post', 'blockLane'] as MethodId[]) expect(ids.indexOf(m), m).toBeLessThan(ids.indexOf('dive'));
+    expect(methodsOf('carry')).toEqual(['pack', 'drag', 'litter']); expect(methodsOf('traffic')).toEqual(['post', 'blockLane']);
+    expect(WORK_MODE.carry).toBe('always'); expect(WORK_MODE.traffic).toBe('always');
+    expect([METHOD.pack.pref, METHOD.drag.pref, METHOD.post.pref, METHOD.blockLane.pref]).toEqual([0.7, 0.5, 0.75, 0.6]);
+    expect(METHOD.pack.plain && METHOD.post.plain && METHOD.litter.plain).toBe(true); expect(METHOD.litter.record).toBe(true); expect(METHOD.litter.kits).toEqual(['stretcher']);
+    expect(METHOD.drag.plain || METHOD.blockLane.plain).toBe(false);
+    const rule = (id: string): DoctrineRule => DOCTRINE.find((r) => r.id === id)!;
+    const mul = (id: string): number => { const e = rule(id).effect; const one = Array.isArray(e) ? e[0] : e; return one.kind === 'methodMul' ? one.mul : NaN; };
+    expect(METHOD.drag.pref * mul('E14')).toBeGreaterThan(METHOD.pack.pref);            // 0.80 > 0.70 — 조건이면 끌기가 1등
+    expect(METHOD.blockLane.pref * mul('P20')).toBeGreaterThan(METHOD.post.pref);       // 0.90 > 0.75
+    expect(METHOD.blockLane.pref * mul('F18')).toBeGreaterThan(METHOD.post.pref);
+    expect(rule('P20')).toMatchObject({ dept: 'police', hook: 'method', works: ['traffic'], methods: ['blockLane'], who: { dept: ['police'] }, rank: 3, why: 'danger' });
+    expect(rule('F18')).toMatchObject({ dept: 'fire', hook: 'method', works: ['traffic'], methods: ['blockLane'], who: { units: ['engine', 'ladder'] }, rank: 3, why: 'danger' });
+    expect(rule('E13')).toMatchObject({ dept: 'ems', hook: 'gate', gate: 'carryStart', works: ['carry'], kits: ['spineBoard'], effect: { kind: 'choose', opt: 'immobilize' }, rank: 3, why: 'kit' });
+    expect(rule('E14')).toMatchObject({ dept: 'ems', hook: 'method', works: ['carry'], methods: ['drag'], noKits: ['stretcher'], rank: 1, why: 'danger' });
+    expect(BLOCK_LANE).toEqual({ setup: 3, careless: 0.4 }); expect(CARRY).toEqual({ dragSmoke: 0.5, dragSpeed: 0.85, immobilize: 3 });
+  });
+});
+
+describe('R3 시험 2-k (단계 6): 차량 차단 — 밤·2차 사고 뒤의 경찰(P20), 차량 화재·연료 누출의 소방차(F18). 닿는 순간부터 통제 전까지 그 방향 차의 부주의 ×0.4, 난수 호출 수는 그대로', () => {
+  it('밤이면 경찰이 차량 차단을 고른다(P20 — 시작 문구·교본 기록). 맑으면 통제, 맑아도 그 현장에 2차 사고가 있었으면 차량 차단. 구급 대원은 밤에도 통제', () => {
+    const night = laneScene('R3-K1', 'night');
+    const w = work(night.sim, night.s, 'traffic', { tile: 0 });
+    giveTask(night.sim, night.s, night.cop, w);
+    const from = night.sim.events.length;
+    act(night.sim, night.s, night.cop);
+    expect(night.cop.task!.method).toBe('blockLane');
+    expect(night.cop.task!.mwhy).toBe('danger');
+    expect(said(night.sim, from, night.cop.rid, '차량으로 차로 입구를 막겠습니다')).toBe(true);
+    expect((night.I.docs ?? []).some((d) => d.rule === 'P20' && d.hook === 'method' && d.method === 'blockLane' && d.work === 'traffic')).toBe(true);
+    expect(night.s.laneShield).toBeNull();      // 아직 통제 지점에 닿지 않았다
+    const medic = night.of('als')[0];
+    const w1 = work(night.sim, night.s, 'traffic', { tile: 1, max: 2 }); giveTask(night.sim, night.s, medic, w1);
+    act(night.sim, night.s, medic);
+    expect(medic.task!.method).toBe('post');      // P20 은 경찰에게만
+    // 부대의 차는 한 대다 — 같은 순찰차의 동료가 서측 입구를 차량으로 막으러 가는 동안, 동측을 맡은 경찰은 평소 통제
+    expect(night.cop2.unitId).toBe(night.cop.unitId);
+    giveTask(night.sim, night.s, night.cop2, w1);
+    act(night.sim, night.s, night.cop2);
+    expect(night.cop2.task!.method).toBe('post');
+    // 그 차가 서측 입구를 막고 선 뒤에는(통제가 끝나 임무를 마쳐도) 같은 부대는 다른 입구를 차량으로 막지 못한다
+    put(night.cop, night.s.controlPts[0]);
+    stepOne(night.sim, night.s, night.cop, 12);
+    expect(night.s.controlDone[0]).toBe(true); expect(night.cop.task).toBeNull(); expect(night.s.laneShield).toEqual([0]);
+    const tg1 = { cas: -1, prop: -1, hostile: -1, region: -1, tile: 1 };
+    expect(chooseMethod(night.sim, night.s, night.cop, 'traffic', tg1, null, NO_SENSE, docCtx(night.sim, night.s, night.cop, 'self', w1))!.m).toBe('post');
+    // 맑은 날
+    const day = laneScene('R3-K1', 'clear');
+    const wd = work(day.sim, day.s, 'traffic', { tile: 0 }); giveTask(day.sim, day.s, day.cop, wd);
+    act(day.sim, day.s, day.cop);
+    expect(day.cop.task!.method).toBe('post');
+    expect((day.I.docs ?? []).some((d) => d.rule === 'P20')).toBe(false);
+    // 맑아도 2차 사고가 있었던 현장
+    raiseProblem(day.sim, day.I, 'SECONDARY_COLLISION', '시험', { role: 'SYSTEM', actor: '현장', imp: 3, text: '시험: 2차 사고' }, false);
+    docForget();
+    const wd1 = work(day.sim, day.s, 'traffic', { tile: 1 }); giveTask(day.sim, day.s, day.cop2, wd1);
+    act(day.sim, day.s, day.cop2);
+    expect(day.cop2.task!.method).toBe('blockLane');
+  });
+
+  it('F18: 교통사고 현장에 연료 누출(또는 불)을 믿는 펌프차 대원은 차량 차단, 모르면 통제. 헬기로 온 부대는 차량 차단을 고르지 않는다', () => {
+    const { sim, s, I, of } = laneScene('R3-K2', 'clear');
+    const ff = of('engine')[0], ff2 = of('engine')[1];
+    for (const b of of('engine')) for (const f of [...b.beliefs.list('haz'), ...b.beliefs.list('fire')]) expect(f.type === 'fire' ? (f.value as number) > 0 : f.value.kind === 'leak' && f.value.active, '처음에는 누출·불을 모른다').toBe(false);
+    const w = work(sim, s, 'traffic', { tile: 0 }); giveTask(sim, s, ff, w);
+    act(sim, s, ff);
+    expect(ff.task!.method).toBe('post');
+    ff2.beliefs.merge(mkFact('haz', 90, { kind: 'leak', active: true, x: 5, y: 5, sub: 'fuel' }, '시험', sim.t, 1, true, '차량 연료 누출'));
+    docForget();
+    const w1 = work(sim, s, 'traffic', { tile: 1 }); giveTask(sim, s, ff2, w1);
+    act(sim, s, ff2);
+    expect(ff2.task!.method).toBe('blockLane');
+    expect((I.docs ?? []).some((d) => d.rule === 'F18' && d.hook === 'method' && d.rid === ff2.rid)).toBe(true);
+    // 길로 오지 않은 부대(헬기)는 막을 차가 없다 — 조건(can)이 거른다
+    const u = sim.units[ff2.unitId];
+    const tg = { cas: -1, prop: -1, hostile: -1, region: -1, tile: 1 };
+    const pick = (): MethodId => chooseMethod(sim, s, ff2, 'traffic', tg, null, NO_SENSE, docCtx(sim, s, ff2, 'self', w1))!.m;
+    expect(pick()).toBe('blockLane');
+    u.air = true;
+    expect(pick()).toBe('post');
+    u.air = undefined;
+    // 그 지점이 통제됐다고 알면 차량 차단은 후보가 아니다
+    ff2.beliefs.merge(mkFact('ctl', 1, true, '시험', sim.t, 1, true, '차로 통제 완료'));
+    expect(pick()).toBe('post');
+  });
+
+  it('통제 지점에 닿는 순간 s.laneShield 에 그 지점, 설치 +3초 — 통제가 끝나면 방법 기록(blockLane). 그 방향 차의 부주의 판정은 p × 0.4, s.rng 의 호출 수는 차단이 없을 때와 같다. 막은 부대가 떠나면 차단이 풀린다', () => {
+    const A = laneScene('R3-K3', 'night'), B = laneScene('R3-K3', 'night');
+    // A: 경찰이 서측(0) 입구를 차량으로 막는다
+    const w = work(A.sim, A.s, 'traffic', { tile: 0 });
+    giveTask(A.sim, A.s, A.cop, w);
+    act(A.sim, A.s, A.cop);
+    expect(A.cop.task!.method).toBe('blockLane');
+    expect(A.s.laneShield).toBeNull();
+    put(A.cop, A.s.controlPts[0]);
+    const from = A.sim.events.length;
+    act(A.sim, A.s, A.cop);
+    expect(A.s.laneShield).toEqual([0]);
+    expect(said(A.sim, from, A.cop.rid, '차로 입구를')).toBe(true);
+    expect(A.cop.label).toBe(METHOD.blockLane.label);
+    const base = 6 * (kitHas(A.sim, A.cop.rid, 'baton') ? 0.85 : 1);
+    expect(A.cop.task!.need).toBeCloseTo(base + BLOCK_LANE.setup, 6);
+    expect(laneShieldMul(A.sim, A.s, 0)).toBe(BLOCK_LANE.careless); expect(laneShieldMul(A.sim, A.s, 1)).toBe(1); expect(laneShieldMul(B.sim, B.s, 0)).toBe(1);
+    // 두 현장에서 사람을 모두 차로 밖으로 뺀다(충격이 없어야 난수 소비가 새 차뿐이다) — 차만 굴린다
+    for (const env of [A, B]) for (const b of env.s.agents) b.status = 'withdrawn';
+    const p = 0.3;      // 밤 (맑으면 0.2)
+    let cars = 0, saved = 0, side0 = 0;
+    for (let k = 0; k < 6000 && saved < 2; k++) {
+      for (const env of [A, B]) { env.sim.tick++; env.sim.t = env.sim.tick * env.sim.dt; }
+      const due = A.sim.t >= A.s.nextCarAt;
+      expect(B.sim.t >= B.s.nextCarAt).toBe(due);
+      let v = -1, cp = -1;
+      if (due) { const c = cloneRng(A.s.rng); c.range(5.5, 11); const row = c.int(0, A.s.laneRows.length - 1); cp = row === 0 ? 1 : 0; v = c.next(); }
+      tickLane(A.sim, A.s, A.I); tickLane(B.sim, B.s, B.I);
+      expect(peek(A.s.rng), `호출 수 불변 (틱 ${k})`).toBe(peek(B.s.rng));
+      if (!due) continue;
+      cars++;
+      const carA = A.s.cars[A.s.cars.length - 1], carB = B.s.cars[B.s.cars.length - 1];
+      expect(carB.distracted).toBe(v < p);
+      expect(carA.distracted).toBe(v < p * (cp === 0 ? BLOCK_LANE.careless : 1));
+      if (cp === 0) { side0++; if (carB.distracted && !carA.distracted) saved++; }
+    }
+    expect(cars).toBeGreaterThan(4); expect(side0).toBeGreaterThan(0);
+    expect(saved, '차단이 부주의 차량을 줄인 경우').toBeGreaterThanOrEqual(2);
+    // 막은 부대가 현장을 떠나면 차단이 풀린다 (막은 차가 없다)
+    A.sim.units[A.cop.unitId].state = 'returning';
+    expect(laneShieldMul(A.sim, A.s, 0)).toBe(1);
+    expect(A.s.laneShield).toEqual([]);
+    // 통제를 끝까지: 다른 현장에서 — 설치 시간이 3초 길고, 끝나면 차량 차단으로 기록된다
+    const C = laneScene('R3-K3', 'night');
+    const wc = work(C.sim, C.s, 'traffic', { tile: 1 }); giveTask(C.sim, C.s, C.cop, wc);
+    put(C.cop, C.s.controlPts[1]);
+    stepOne(C.sim, C.s, C.cop, base + BLOCK_LANE.setup - 0.6);
+    expect(C.s.controlDone[1]).toBe(false); expect(C.s.laneShield).toEqual([1]);
+    stepOne(C.sim, C.s, C.cop, 1.2);
+    expect(C.s.controlDone[1]).toBe(true);
+    expect(usedMethods(C.I, 'traffic')).toEqual(['blockLane']);
+    expect(laneShieldMul(C.sim, C.s, 1)).toBe(1);      // 통제가 끝난 입구로는 차가 들어오지 않는다 — 배율은 1
+    // 맑은 날의 평소 통제: 6초(경광봉 ×0.85), 기록은 통제(post), 차단 없음
+    const D = laneScene('R3-K3', 'clear');
+    const wd = work(D.sim, D.s, 'traffic', { tile: 1 }); giveTask(D.sim, D.s, D.cop, wd);
+    put(D.cop, D.s.controlPts[1]);
+    stepOne(D.sim, D.s, D.cop, base + 0.6);
+    expect(D.s.controlDone[1]).toBe(true); expect(D.s.laneShield).toBeNull();
+    expect(usedMethods(D.I, 'traffic')).toEqual(['post']);
+  });
+});
+
+/** 꺼낸 환자 하나(거동 불가·차·잔해에서 꺼냄 — 안전 구역에서 6~9칸의 바깥 자리, 차로 줄 밖)와 그 이송 작업. 연기·불은 지운다 */
+function carryScene(seed: string, what = 'traffic/std', kinds: UnitKind[] = ['als', 'engine']) {
+  const env = sceneWith(seed, what, kinds);
+  const { sim, s } = env;
+  for (const b of s.agents) { b.task = null; b.orderWork = -1; b.isCommander = false; }
+  const at = spotAt(s, s.safe.x, s.safe.y, 6, 9, false, (tx, ty) => { const rg = s.region[ty * s.w + tx]; return (rg < 0 || !s.regions[rg].indoor) && s.laneRows.indexOf(ty) < 0; })!;      // 바깥이고 차로 줄이 아닌 자리
+  setCas(sim, s, 0, 60, 'scene', at);
+  const c = s.casualties[0];
+  c.tFreed = sim.t; c.bleed = 0.2; c.bleed0 = 0.2; c.immob = undefined;
+  for (let i = 0; i < s.smoke.length; i++) { s.smoke[i] = 0; s.fire[i] = 0; }
+  const w = work(sim, s, 'carry', { cas: c.id, max: 2, priority: 0.8 });
+  const role = (id: string): FieldAgent => s.agents.find((a) => roleIdOf(sim, a.rid) === id)!;
+  docForget();
+  return { ...env, c, w, at, role };
+}
+const nearOf = (s: Scene, c: { x: number; y: number }, dmin = 0.9, dmax = 1.3): { x: number; y: number } => spotAt(s, c.x, c.y, dmin, dmax, false, (_tx, ty) => s.laneRows.indexOf(ty) < 0)!;      // 차로 줄이 아닌 곁 칸
+
+describe('R3 단계 6: 척추 고정 (E13 — 판단 지점 carryStart) — 고정판을 든 대원은 들기 전에 3초 고정한다. 고정하지 않고 옮긴 꺼낸 사람은 옮기는 동안 더 나빠진다', () => {
+  it('응급구조사(척추 고정판): 문구 한 번·교본 기록, 3초 동안 들지 않고 → c.immob, 그 뒤 든다. 옮기는 동안 더해지는 악화가 없다', () => {
+    const { sim, I, s, c, w, role } = carryScene('R3-E13');
+    const emt = role('emt');
+    expect(kitHas(sim, emt.rid, 'spineBoard')).toBe(true);
+    giveTask(sim, s, emt, w); put(emt, nearOf(s, c));
+    const from = sim.events.length;
+    stepOne(sim, s, emt, 1);
+    expect(emt.task!.method).toBe('pack');
+    expect(emt.carrying).toBe(-1); expect(c.immob).toBeFalsy();
+    expect(emt.label).toBe('척추 고정');
+    expect(said(sim, from, emt.rid, '척추 고정 후 이송합니다')).toBe(true);
+    expect((I.docs ?? []).filter((d) => d.rule === 'E13' && d.hook === 'gate' && d.gate === 'carryStart' && d.rid === emt.rid).length).toBe(1);
+    stepOne(sim, s, emt, CARRY.immobilize - 1 + 0.2);
+    expect(c.immob).toBe(true); expect(emt.carrying).toBe(-1);      // 고정이 끝났고 이제 든다(1.2초)
+    stepOne(sim, s, emt, 1.4);
+    expect(emt.carrying).toBe(c.id);
+    const hp = c.health;
+    stepOne(sim, s, emt, 2);
+    expect(c.health).toBe(hp);      // 고정했다 — 옮기는 동안의 덧악화 없음 (상처 악화 자체는 세계 규칙 tickCasualties 의 몫이라 이 걸음에는 없다)
+    expect(sim.events.slice(from).filter((e) => e.text.includes('척추 고정 후 이송합니다')).length).toBe(1);
+  });
+
+  it('고정판이 없는 대원은 바로 든다(1.2초) — 고정하지 않고 옮기는 동안 더 나빠진다. 곁에 온 같은 이송의 동료가 고정판을 들었으면 그 동료가 고정한다', () => {
+    const { sim, I, s, c, w, role } = carryScene('R3-E13b');
+    const ff = role('firefighter');
+    expect(kitHas(sim, ff.rid, 'spineBoard')).toBe(false);
+    giveTask(sim, s, ff, w); put(ff, nearOf(s, c));
+    stepOne(sim, s, ff, 1.4);
+    expect(ff.carrying).toBe(c.id); expect(c.immob).toBeFalsy();
+    expect((I.docs ?? []).some((d) => d.rule === 'E13')).toBe(false);
+    const hp = c.health;
+    stepOne(sim, s, ff, 2);
+    expect(c.health).toBeLessThan(hp);
+    expect(hp - c.health).toBeCloseTo(c.bleed * 0.12 * 2, 3);
+    // 곁의 동료가 고정판을 들었다
+    const q = carryScene('R3-E13b');
+    const ff2 = q.role('firefighter'), emt = q.role('emt');
+    giveTask(q.sim, q.s, ff2, q.w); giveTask(q.sim, q.s, emt, q.w);
+    const p = nearOf(q.s, q.c); put(ff2, p); put(emt, p);
+    stepOne(q.sim, q.s, ff2, 1.4);
+    expect(ff2.carrying).toBe(-1); expect(ff2.label).toBe('척추 고정');
+    expect((q.I.docs ?? []).some((d) => d.rule === 'E13' && d.rid === emt.rid)).toBe(true);
+    stepOne(q.sim, q.s, ff2, CARRY.immobilize - 1.4 + 1.6);
+    expect(q.c.immob).toBe(true); expect(ff2.carrying).toBe(q.c.id);
+  });
+
+  it('선 자리의 연기가 짙으면 고정하지 않고 바로 옮긴다(그동안 더 나빠진다 — 고정판을 들고만 있어서는 효과가 없다). 화재 현장·걸을 수 있는 사람에게는 걸리지 않는다', () => {
+    const { sim, I, s, c, w, role } = carryScene('R3-E13c');
+    const emt = role('emt');
+    giveTask(sim, s, emt, w); const p = nearOf(s, c); put(emt, p);
+    s.smoke[tileOf(s, p.x, p.y)] = 0.5;
+    stepOne(sim, s, emt, 1.4);
+    expect(emt.carrying).toBe(c.id); expect(c.immob).toBeFalsy();
+    expect((I.docs ?? []).some((d) => d.rule === 'E13')).toBe(false);
+    const hp = c.health;
+    for (let i = 0; i < s.smoke.length; i++) s.smoke[i] = 0;
+    stepOne(sim, s, emt, 1);
+    expect(c.health).toBeLessThan(hp);
+    // 판단 지점의 답: 교통사고·붕괴 현장의 거동 불가 환자에게만
+    const q = carryScene('R3-E13c');
+    const e2 = q.role('emt');
+    giveTask(q.sim, q.s, e2, q.w);
+    expect(docGate(q.sim, q.s, e2, 'carryStart').opt).toBe('immobilize');
+    expect(docGate(q.sim, q.s, e2, 'carryStart', { smoke: 0, heat: 0.4 }).opt).toBeNull();
+    expect(docGate(q.sim, q.s, q.role('firefighter'), 'carryStart').opt).toBeNull();      // 임무도 고정판도 없다
+    (q.s as { kind: string }).kind = 'fire'; docForget();
+    expect(docGate(q.sim, q.s, e2, 'carryStart').opt).toBeNull();
+    (q.s as { kind: string }).kind = 'collapse'; docForget();
+    expect(docGate(q.sim, q.s, e2, 'carryStart').opt).toBe('immobilize');
+    q.c.walking = true; q.c.mob = 'mobile'; e2.beliefs.merge(casFact(q.sim, q.s, q.c, '시험')); docForget();
+    expect(docGate(q.sim, q.s, e2, 'carryStart').opt).toBeNull();
+    // 통제되지 않은 차로 위의 환자는 고정하지 않고 먼저 차로 밖으로 옮긴다 (E12 와 같은 판정 — 차가 들어오는 차로에 3초 더 서 있지 않는다). 그 차로가 통제됐다고 알면 고정한다
+    const L = carryScene('R3-E13c');
+    const row = L.s.laneRows[0];
+    let lx = -1;
+    for (let tx = 4; tx < L.s.w - 4 && lx < 0; tx++) { const i = row * L.s.w + tx; if (staticPass(L.s.tiles[i]) && L.s.propAt[i] < 0) lx = tx; }
+    expect(lx).toBeGreaterThanOrEqual(0);
+    setCas(L.sim, L.s, 0, 60, 'scene', { x: lx, y: row });
+    const e3 = L.role('emt');
+    giveTask(L.sim, L.s, e3, L.w);
+    expect(docGate(L.sim, L.s, e3, 'carryStart').opt).toBeNull();
+    for (let k = 0; k < L.s.controlPts.length; k++) e3.beliefs.merge(mkFact('ctl', k, true, '시험', L.sim.t, 1, true, '차로 통제 완료'));
+    docForget();
+    expect(docGate(L.sim, L.s, e3, 'carryStart').opt).toBe('immobilize');
+    // 환자는 차로 밖(버스 안)인데 드는 대원이 통제되지 않은 차로 줄에 서 있어도 고정하지 않는다 — 자기가 선 자리
+    const M = carryScene('R3-E13c');
+    const e4 = M.role('emt');
+    giveTask(M.sim, M.s, e4, M.w);
+    expect(M.s.laneRows.indexOf(Math.round(M.c.y))).toBe(-1);
+    put(e4, { x: lx, y: M.s.laneRows[0] }); docForget();
+    expect(docGate(M.sim, M.s, e4, 'carryStart').opt).toBeNull();
+    put(e4, nearOf(M.s, M.c)); docForget();
+    expect(M.s.laneRows.indexOf(Math.round(e4.y))).toBe(-1);
+    expect(docGate(M.sim, M.s, e4, 'carryStart').opt).toBe('immobilize');
+  });
+});
+
+describe('R3 단계 6: 끌기 (E14 — 방법 drag) — 들것 없이 혼자, 환자 곁의 연기가 짙으면 낮게 끌어 나간다. 연기 피해 ×0.5 · 속도 ×0.85', () => {
+  it('맑은 자리에서 맡으면 업기, 연기 짙은 환자 곁에 닿은 틱에 끌기로 바꾼다(도착 재선택 — 시작 문구·E14 기록). 끝까지 옮기면 끌기로 기록된다', () => {
+    const { sim, I, s, c, w, at, role } = carryScene('R3-E14', 'fire/std', ['engine', 'als']);
+    const ff = role('firefighter');
+    for (const b of s.agents) if (b !== ff) b.status = 'withdrawn';
+    docForget();
+    for (let y = at.y - 2; y <= at.y + 2; y++) for (let x = at.x - 2; x <= at.x + 2; x++) if (x >= 0 && y >= 0 && x < s.w && y < s.h) s.smoke[y * s.w + x] = 0.6;
+    const start = outSpot(s, at.x, at.y, 4, 6);
+    expect(s.smoke[tileOf(s, start.x, start.y)]).toBe(0);
+    giveTask(sim, s, ff, w); put(ff, start);
+    const from = sim.events.length;
+    act(sim, s, ff);
+    expect(ff.task!.method).toBe('pack');
+    for (let k = 0; k < 200 && ff.task !== null && ff.task.method !== 'drag' && ff.carrying < 0; k++) stepOne(sim, s, ff, 0.2);
+    expect(ff.task!.method).toBe('drag');
+    expect(ff.task!.mwhy).toBe('danger');
+    expect(said(sim, from, ff.rid, '낮게 끌어 나가겠습니다')).toBe(true);
+    expect((I.docs ?? []).some((d) => d.rule === 'E14' && d.hook === 'method' && d.method === 'drag' && d.work === 'carry')).toBe(true);
+    stepOne(sim, s, ff, 1.6);
+    expect(ff.carrying).toBe(c.id); expect(dragging(ff)).toBe(true);
+    // 속도: 혼자 업기의 ×0.85
+    const vDrag = moveSpeed(sim, s, ff);
+    ff.task!.method = 'pack';
+    expect(vDrag / moveSpeed(sim, s, ff)).toBeCloseTo(CARRY.dragSpeed, 6);
+    // 연기 피해: 끌려 나가는 사람 ×0.5 (세계 규칙) · 끄는 대원 ×0.5 (대원의 몸)
+    const i = tileOf(s, c.x, c.y); s.smoke[i] = 0.6; s.fire[i] = 0;
+    const loss = (m: MethodId): number => { ff.task!.method = m; const h0 = c.health; tickCasualties(sim, s, I); const d = h0 - c.health; c.health = h0; return d; };
+    const dPack = loss('pack'), dDrag = loss('drag');
+    expect(dragSmoke(s, c.id)).toBe(CARRY.dragSmoke);
+    expect(dPack - dDrag).toBeCloseTo(0.6 * 0.36 * (1 - CARRY.dragSmoke) * sim.dt, 6);
+    const r = sim.responders[ff.rid];
+    for (const it of r.kit!) if (it.id === 'scba') it.uses = 0;      // 빈 통 — 연기를 그대로 마신다
+    s.smoke[tileOf(s, ff.x, ff.y)] = 0.6;
+    const hurt = (m: MethodId): number => { ff.task!.method = m; const h0 = r.health; agentHealth(sim, s, I, ff); const d = h0 - r.health; r.health = h0; return d; };
+    const hPack = hurt('pack'), hDrag = hurt('drag');
+    expect(hPack).toBeGreaterThan(0); expect(hDrag).toBeGreaterThan(0);
+    expect(hDrag).toBeLessThan(hPack);
+    // 끝까지 옮기면 끌기로 기록된다
+    ff.task!.method = 'drag'; r.health = 100;
+    for (let k = 0; k < 400 && c.where !== 'safe'; k++) stepOne(sim, s, ff, 0.2);
+    expect(c.where).toBe('safe');
+    expect(usedMethods(I, 'carry')).toEqual(['drag']);
+  });
+
+  it('같은 분야 동료가 6칸 안에 있으면(혼자가 아니다) 업기, 들것을 든 대원은 연기 속에서도 업기 — 들것으로 끝까지 옮기면 들것(기록 전용)으로 남는다', () => {
+    const q = carryScene('R3-E14b', 'fire/std', ['engine', 'als']);
+    const ff = q.role('firefighter'), noz = q.role('nozzle');
+    for (const b of q.s.agents) if (b !== ff && b !== noz) b.status = 'withdrawn';
+    const tg = { cas: q.c.id, prop: -1, hostile: -1, region: -1, tile: -1 };
+    const p = nearOf(q.s, q.c); put(ff, p); put(noz, nearOf(q.s, q.c, 1.5, 3));
+    docForget();
+    giveTask(q.sim, q.s, ff, q.w);
+    const SMOKY = { smoke: 0.6, heat: 0 };
+    const pick = (a: FieldAgent): MethodId => { docForget(); return chooseMethod(q.sim, q.s, a, 'carry', tg, null, SMOKY, docCtx(q.sim, q.s, a, 'self', q.w, SMOKY))!.m; };
+    expect(pick(ff)).toBe('pack');      // 곁에 관창수가 있다
+    noz.status = 'withdrawn';
+    expect(pick(ff)).toBe('drag');      // 혼자다
+    // 들것을 든 구급 운전원은 끌지 않는다 (E14 의 장비 조건)
+    const drv = q.role('emsDriver');
+    expect(kitHas(q.sim, drv.rid, 'stretcher')).toBe(true);
+    drv.status = 'active'; ff.status = 'withdrawn';
+    q.w.assignees.length = 0; ff.task = null;
+    giveTask(q.sim, q.s, drv, q.w); put(drv, p);
+    expect(pick(drv)).toBe('pack');
+    for (let k = 0; k < 400 && q.c.where !== 'safe'; k++) stepOne(q.sim, q.s, drv, 0.2);
+    expect(q.c.where).toBe('safe');
+    expect(usedMethods(q.I, 'carry')).toEqual(['litter']);
+    // 들것 없는 대원이 맑은 곳에서 옮기면 업기
+    const z = carryScene('R3-E14b', 'traffic/std', ['engine']);
+    const f2 = z.role('firefighter');
+    giveTask(z.sim, z.s, f2, z.w); put(f2, nearOf(z.s, z.c));
+    for (let k = 0; k < 400 && z.c.where !== 'safe'; k++) stepOne(z.sim, z.s, f2, 0.2);
+    expect(z.c.where).toBe('safe');
+    expect(usedMethods(z.I, 'carry')).toEqual(['pack']);
+  });
+});
+
+// ═════════════════════════ 단계 7 (화면) — 엄폐 자세 · 짝 끈 · 판단 지점의 머리 위 라벨 · 협상 중단 표시 (그림만 — 결과 불변) ═════════════════════════
+import { buddyLinks, coverCrouch, coverTask, drawBuddyLines, headLabel, headLabelMax, inHazardInterior, laneShieldSpot, talkBrokenCover } from '../src/view/scene/doctrineLayer';
+import { fakeCtx, withFakeDom } from './fakeCanvas';
+
+describe('R3 단계 7: 화면 — 교본의 현장 그림은 읽기만 한다 (엄폐 자세 · 짝 끈 · 머리 위 라벨 · 협상 중단 표시)', () => {
+  it('그림 층(view/scene/doctrineLayer.ts)은 이름표(registry)·유형 표·타입만 가져온다 — 판단·실행 함수를 부르지 않는다', () => {
+    const src = code('../src/view/scene/doctrineLayer.ts');
+    for (const l of importLines(src)) expect(/from '(\.\.\/\.\.\/sim\/field\/doctrine\/registry|\.\.\/\.\.\/sim\/field\/methods|\.\.\/\.\.\/sim\/incidentTypes|\.\.\/\.\.\/sim\/types)'/.test(l), l).toBe(true);
+    expect(importLines(src).find((l) => l.includes('/sim/field/methods'))).toMatch(/^import \{ LANE_SHIELD_BY \} from/);      // 방법 표의 파일에서는 '입구를 막은 부대' 표만 읽는다
+    for (const bad of ['doctrineRun', 'docFit', 'docAct', 'docDuty', 'docGate', 'docCtx', 'recordDoc', 'docBegin', 'kitWorks', 'useKit', 'toolUse', '.rng', 'emit(']) expect(src.includes(bad), bad).toBe(false);
+  });
+
+  it('짝 끈: 서로 짝이고 둘 다 활동 중이며 둘 다 위험 건물 실내에 있을 때만 잇는다 (한 쌍 한 번). 무장 현장의 실내는 위험 건물이 아니다', () => {
+    const { sim, s, noz, ff, rg, ex } = fireScene('R3-V1', ['engine']);
+    expect(noz.buddy).toBe(ff.rid); expect(ff.buddy).toBe(noz.rid);
+    const out = outSpot(s, ex.x, ex.y, 3, 6), inn = inSpot(s, rg);
+    put(noz, out); put(ff, out);
+    expect(inHazardInterior(s, noz)).toBe(false);
+    expect(buddyLinks(s)).toEqual([]);
+    put(noz, inn);
+    expect(inHazardInterior(s, noz)).toBe(true);
+    expect(buddyLinks(s)).toEqual([]);      // 한 사람만 안에 있다
+    const inn2 = s.regions[rg].tiles.map((t) => ({ x: t % s.w, y: (t / s.w) | 0 })).find((p) => staticPass(s.tiles[p.y * s.w + p.x]) && Math.hypot(p.x - inn.x, p.y - inn.y) >= 2) ?? inn;
+    put(ff, inn2);
+    const links = buddyLinks(s);
+    expect(links.length).toBe(1);
+    expect(links[0].map((a) => a.rid).sort()).toEqual([noz.rid, ff.rid].sort());
+    ff.status = 'down';
+    expect(buddyLinks(s)).toEqual([]);      // 쓰러진 짝과는 잇지 않는다
+    ff.status = 'active'; ff.buddy = -1;
+    expect(buddyLinks(s)).toEqual([]);      // 서로 짝이 아니다
+    ff.buddy = noz.rid;
+    // 그려도 상태가 그대로다
+    const before = JSON.stringify([noz.x, noz.y, ff.x, ff.y, noz.buddy, ff.buddy, sim.events.length, peek(s.rng)]);
+    drawBuddyLines(fakeCtx(), s, 24, 0.5);
+    expect(JSON.stringify([noz.x, noz.y, ff.x, ff.y, noz.buddy, ff.buddy, sim.events.length, peek(s.rng)])).toBe(before);
+    // 무장 현장(위험 건물이 아니다)의 실내에 선 경찰 짝은 잇지 않는다
+    const A = sceneWith('R3-V1', 'armed/hostage', ['patrol']);
+    const [c1, c2] = A.of('patrol');
+    const ri = A.s.regions.findIndex((r) => r.indoor);
+    put(c1, inSpot(A.s, ri)); put(c2, inSpot(A.s, ri));
+    c1.buddy = c2.rid; c2.buddy = c1.rid;
+    expect(inHazardInterior(A.s, c1)).toBe(false);
+    expect(buddyLinks(A.s)).toEqual([]);
+  });
+
+  it('엄폐 자세: 교본의 엄폐 임무로 멈춰 선 대원만 몸을 낮춘다. 머리 위 라벨: 판단 지점에서 기다리면 막고 있는 줄의 짧은 이름, 아니면 실행기의 라벨. 협상 중단 표시는 P16 의 엄폐에만', () => {
+    const { sim, s, A, B, h } = copsScene('R3-V2', 'armed/hostage', ['patrol'], 'gun', 'fight');
+    A.task = makeTask('cover', '엄폐'); A.task.docRule = 'P16'; A.task.hostile = h.id; A.label = '엄폐';
+    expect(coverTask(A)).toBe(true);
+    expect(coverCrouch(A, false)).toBe(true); expect(coverCrouch(A, true)).toBe(false);      // 숨을 자리로 가는 동안은 선 채
+    expect(talkBrokenCover(A)).toBe(true);
+    expect(headLabel(A)).toBe('엄폐'); expect(headLabelMax(A)).toBe(13);
+    A.task.docRule = 'P09';
+    expect(talkBrokenCover(A)).toBe(false);      // 탄약이 떨어져 숨은 대원은 협상자가 아니다
+    A.status = 'down';
+    expect(coverCrouch(A, false)).toBe(false);
+    A.status = 'active';
+    // 판단 지점에서 기다리는 대원: 실행기의 라벨이 무엇이든 막고 있는 줄의 짧은 이름
+    const w = work(sim, s, 'engage', { hostile: h.id });
+    B.task = makeTask('engage', '교전', w); B.label = '진입 대기';
+    expect(headLabel(B)).toBe('진입 대기');
+    B.task.gateAt = sim.t; B.task.gateId = 'breach'; B.task.docRule = 'P07';
+    expect(headLabel(B)).toBe(DOCTRINE.find((r) => r.id === 'P07')!.short);
+    expect(headLabelMax(B)).toBe(16);
+    for (const r of DOCTRINE) if (r.hook === 'gate') expect(r.short.length, `${r.id} 의 짧은 이름이 라벨에 잘리지 않는다`).toBeLessThanOrEqual(16);
+    B.task.docRule = 'X99';      // 모르는 줄이면 실행기의 라벨 그대로
+    expect(headLabel(B)).toBe('진입 대기');
+    B.task.gateAt = -1; B.task.docRule = 'P07';
+    expect(headLabel(B)).toBe('진입 대기');      // 막혀 있지 않다
+  });
+
+  it('현장 그림(drawScene)이 교본 임무·판단 지점·짝 끈·분류·차량 차단이 있는 장면을 예외 없이 그리고, 그리는 것만으로 기록·난수·임무가 바뀌지 않는다', async () => {
+    await withFakeDom(async () => {
+      const { drawScene } = await import('../src/view/renderScene');
+      const ctx = fakeCtx();
+      // 인질극: 협상자가 엄폐(P16) · 진입 대기(P07) · 탄약 보급
+      const C = copsScene('R3-V3', 'armed/hostage', ['patrol', 'tactical'], 'gun', 'fight');
+      const [a0, a1, a2] = C.cops;
+      a0.task = makeTask('cover', '엄폐'); a0.task.docRule = 'P16'; a0.task.hostile = C.h.id; a0.label = '엄폐';
+      a1.task = makeTask('engage', '교전', work(C.sim, C.s, 'engage', { hostile: C.h.id })); a1.task.gateAt = C.sim.t; a1.task.gateId = 'breach'; a1.task.docRule = 'P07'; a1.label = '진입 대기';
+      if (a2) { a2.task = makeTask('rearm', '탄약 보급'); a2.label = '탄약 보급'; }
+      // 화재: 실내의 짝(짝 동행) · 공기 탈출
+      const F = fireScene('R3-V3', ['engine']);
+      const inn = inSpot(F.s, F.rg);
+      put(F.noz, inn); put(F.ff, { x: inn.x + 2, y: inn.y });
+      F.ff.task = makeTask('pair', '짝 동행'); F.ff.label = '짝 동행';
+      F.lead.task = makeTask('airOut', '공기 탈출'); F.lead.label = '공기 탈출';
+      // 교통사고: 분류 · 차량 차단
+      const T = laneScene('R3-V3', 'night');
+      const medic = T.of('als')[0];
+      medic.task = makeTask('triage', '분류'); medic.label = '분류'; medic.ring = 0.5;
+      const lw = work(T.sim, T.s, 'traffic', { tile: 0 }); giveTask(T.sim, T.s, T.cop, lw); put(T.cop, T.s.controlPts[0]); act(T.sim, T.s, T.cop);
+      expect(T.s.laneShield).toEqual([0]);
+      // 차로 입구를 막고 선 차는 그 입구에 그린다: 서쪽 입구(통제 지점 0)는 둘째 차로 줄의 왼쪽 끝. 막지 않은 부대는 null
+      const spot = laneShieldSpot(T.s, T.cop.unitId)!;
+      expect(spot.x).toBeLessThan(3); expect(Math.abs(spot.y - T.s.laneRows[1])).toBe(0.5);
+      expect(laneShieldSpot(T.s, medic.unitId)).toBeNull();
+      for (const env of [C, F, T]) {
+        const sig = (): string => JSON.stringify([env.sim.events.length, env.sim.logHash, peek(env.s.rng), env.s.agents.map((a) => [a.x, a.y, a.label, a.task ? a.task.kind : null, a.task ? a.task.gateAt : null, peek(a.rng)])]);
+        const before = sig();
+        for (const o of [{ truth: true }, { truth: false }, { truth: true, mini: true }, { truth: true, cam: { x: 15, y: 10, zoom: 2 } }]) drawScene(ctx, env.sim, env.s, 1200, 800, { alpha: 0.5, timeMs: 1000, selectedRid: env.s.agents[0].rid, ...o });
+        expect(sig()).toBe(before);
+      }
+    });
   });
 });

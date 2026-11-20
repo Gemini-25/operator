@@ -70,7 +70,8 @@ const LIVE: MethodId[] = ['hand', 'pole', 'ring', 'rope', 'improvise', 'catch', 
   'manual', 'basic', 'spread', 'roof', 'rapid', 'haul', 'tunnel', 'airbag', 'shore', 'call', 'listen', 'line', 'hail', 'thermal',
   'interior', 'defensive', 'aerial', 'extinguisher', 'ventilate', 'beanbag', 'sniper', 'stay', 'rush', 'seal', 'ventFirst', 'cordon', 'announce',
   'feel', 'pulse',      // (R3 3단계) 벽 더듬기 수색·끊어 쏘기 — 교본 F07·F08 이 고른다
-  'robotDefuse', 'suitDefuse', 'bareDefuse'];      // (R3 단계 5) 폭발물 해체 셋
+  'robotDefuse', 'suitDefuse', 'bareDefuse',      // (R3 단계 5) 폭발물 해체 셋
+  'pack', 'drag', 'post', 'blockLane'];      // (R3 단계 6) 이송의 업기·끌기 · 교통 통제의 통제·차량 차단 (들것 litter 는 기록 전용)
 /** 헤엄을 못 치는 몸으로 둔다 (수영 능력 = 0.15 + 개인차 ±0.15 < 문턱 0.35 — 구명조끼가 없을 때) */
 const noSwim = (sim: Sim, a: FieldAgent): void => { const r = sim.responders[a.rid]; r.fitness = 0; r.skills.rescue = 0; strip(sim, a.rid, 'pfd'); };
 /**
@@ -133,7 +134,7 @@ describe('R2 시험 1: 판단부(methods.ts)는 진실을 읽지 않는다', () 
 describe('R2 방법 표 (METHOD)', () => {
   const ids = Object.keys(METHOD) as MethodId[];
   it('모든 줄이 온전하다: 이름·짧은 이름·라벨(12자 안)·문장에 끼우는 말, 장비는 표에 있는 것, 임무가 하나 이상', () => {
-    expect(ids.length).toBe(65);      // R2 의 55 + N9 단계 1 의 다섯(dive·boom·shieldLine·deconTent·hoseWash — can 은 NOT_YET) + R3 단계 5 의 셋(robotDefuse·suitDefuse·bareDefuse — N9 다섯 앞) + R3 3단계의 둘(feel·pulse — 표 끝)
+    expect(ids.length).toBe(70);      // R2 의 55 + N9 단계 1 의 다섯(dive·boom·shieldLine·deconTent·hoseWash — can 은 NOT_YET) + R3 단계 5 의 셋(robotDefuse·suitDefuse·bareDefuse — N9 다섯 앞) + R3 3단계의 둘(feel·pulse — 표 끝) + R3 6단계의 다섯(pack·drag·litter·post·blockLane — N9 다섯 앞)
     expect(METHOD_ORDER).toEqual(ids);
     for (const m of ids) {
       const d = METHOD[m];
@@ -150,9 +151,9 @@ describe('R2 방법 표 (METHOD)', () => {
   });
   it('평소 방법(시작을 알리지 않고 보고서에 넣지 않는다)과 기록 전용 방법의 목록이 설계서와 같다', () => {
     const plain = ids.filter((m) => METHOD[m].plain && !METHOD[m].record).sort();
-    expect(plain).toEqual(['rope', 'pole', 'hand', 'irons', 'handClear', 'toolClear', 'basic', 'spread', 'call', 'line', 'interior', 'stay', 'seal', 'cordon', 'suitDefuse'].sort());      // (R3 단계 5) 방호복 해체가 평소 방법
+    expect(plain).toEqual(['rope', 'pole', 'hand', 'irons', 'handClear', 'toolClear', 'basic', 'spread', 'call', 'line', 'interior', 'stay', 'seal', 'cordon', 'suitDefuse', 'pack', 'post'].sort());      // (R3 단계 5) 방호복 해체가 평소 방법 · (R3 단계 6) 업기·통제
     const rec = ids.filter((m) => METHOD[m].record).sort();
-    expect(rec).toEqual(['hoist', 'chase', 'breach', 'bang', 'tackle', 'cover', 'taser', 'shield', 'airlift', 'air'].sort());
+    expect(rec).toEqual(['hoist', 'chase', 'breach', 'bang', 'tackle', 'cover', 'taser', 'shield', 'airlift', 'air', 'litter'].sort());      // (R3 단계 6) 들것 — 평소 방법이라 보고서에 싣지 않는다
     // 기록 전용 가운데 보고서에 싣는 것(평소 방법이 아닌 것)
     expect(rec.filter((m) => !METHOD[m].plain).sort()).toEqual(['hoist', 'airlift', 'bang', 'taser', 'shield', 'air'].sort());
   });
@@ -176,7 +177,9 @@ describe('R2 방법 표 (METHOD)', () => {
       expect(methodsOf(w).some((m) => !METHOD[m].record && METHOD[m].kits.length === 0 && !METHOD[m].needUnit), w).toBe(true);
     }
     expect(methodsOf('waterRescue')).toEqual(['hand', 'pole', 'ring', 'rope', 'improvise', 'catch', 'swim', 'tend', 'boat', 'dive']);      // dive: N9 단계 1 (표의 끝 — can 은 NOT_YET)
-    expect(methodsOf('carry')).toEqual([]); expect(WORK_MODE.carry).toBeUndefined();
+    // (R3 단계 6) 이송·교통 통제에 방법이 생겼다 — 업기·통제가 늘 남는다
+    expect(methodsOf('carry')).toEqual(['pack', 'drag', 'litter']); expect(WORK_MODE.carry).toBe('always');
+    expect(methodsOf('traffic')).toEqual(['post', 'blockLane']); expect(WORK_MODE.traffic).toBe('always');
   });
   it('문구: 시작 문구는 까닭을 먼저 말하고, 패널의 까닭 말은 짧다', () => {
     expect(sayStart('swim', 'noGear', 'rope')).toBe('구조 로프가 없습니다. 헤엄쳐 들어가겠습니다.');
@@ -772,7 +775,7 @@ describe('R2 보고서: 방법 문장과 집계 (기록된 I.methods 와 문제�
   it('문제 이름표와 문장 틀이 있고, 측정 도구가 그 코드를 안다 (tests/causality.test.ts 가 PROBLEM_SYS 를 본다)', () => {
     expect(PROBLEM_LABEL.METHOD_FAIL).toBe('대응 방법 실패·변경');
     expect(methodFailLine([{ code: 'METHOD_FAIL', t: 0, eventId: 1, detail: '가', recovered: false, recoveryText: '', times: 3 }, { code: 'METHOD_FAIL', t: 0, eventId: 2, detail: '나', recovered: false, recoveryText: '' }])).toBe('대응 방법이 4차례 막혔습니다 (가).');
-    expect(Object.keys(WORK_DONE).sort()).toEqual(['arrest', 'clear', 'engage', 'extricate', 'force', 'hoist', 'load', 'mitigate', 'perimeter', 'search', 'suppress', 'treat']);
+    expect(Object.keys(WORK_DONE).sort()).toEqual(['arrest', 'carry', 'clear', 'engage', 'extricate', 'force', 'hoist', 'load', 'mitigate', 'perimeter', 'search', 'suppress', 'traffic', 'treat']);      // (R3 단계 6) 이송(끌기)·교통 통제(차량 차단)의 맺음말
   });
   it('평소와 다른 방법으로 끝낸 것만, 최대 2문장. 까닭 말은 괄호로. 판정의 분석 문장과 교대 요약에 실린다', () => {
     const { sim, I, s, role } = sceneWith('R2-REP', 'water', ['rescue', 'patrol', 'engine']);

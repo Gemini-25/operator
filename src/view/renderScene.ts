@@ -35,6 +35,7 @@ import { drawCatOver, drawCatUnder, drawTrappedDebris } from './scene/catLayer';
 import { TRIAGE, TRIAGE_EDGE, TRIAGE_TEXT, casBand, casDrawn, casSheet, hostileBand, hostileDrawn, hostileSheet, hurtPose, respBand, respLying, respSheet } from './triage';
 import { THROW_RELEASE, drawBarricades, drawBoats, drawCharges, drawMethodFx, inBoat, swimming } from './scene/methodsLayer';      // (R2 1d) 대응 방법의 그림 — 수난: 줄·장대·보트·헤엄치는 대원
 import { drawMethodGround, drawMethodOver, drawPowder, sniperSet } from './scene/methodsLayer';      // (R2 단계 4·5·6) 송풍기·바람·고가 사다리·저격 자리와 조준선·대피 방송·소화기 분말
+import { coverCrouch, coverTask, drawBuddyLines, headLabel, headLabelMax, laneShieldSpot } from './scene/doctrineLayer';      // (R3 7단계 §7.2) 엄폐 자세 · 짝 끈 · 판단 지점의 머리 위 라벨
 
 /** 현장 화면의 시점: 중심(타일 좌표)과 배율(1 = 현장 전체가 보인다) */
 export interface SceneCam { x: number; y: number; zoom: number }
@@ -204,14 +205,18 @@ function agentPose(sim: Sim, s: Scene, a: FieldAgent, moving: boolean): { arms: 
   }
   const shield = hasKit(sim, rid, 'shield');
   if (tk === 'engage' || tk === 'perimeter') return { arms: 'aim', item: shield ? 'shield' : gun };
+  // (R3 §7.2) 교본의 엄폐 임무: 총을 겨눈 채 숨을 자리로 가고, 멈추면 G5 의 엄폐 자세로 몸을 낮춘다(drawPerson 의 crouch — 아래 대원 그리기). 엄폐 사격이 아니어도 같은 자세다.
+  // 탄약 보급·공기 탈출·짝 따라 나감·짝 동행은 기본 자세, 분류는 처치 자세(아래 switch)
+  if (coverTask(a)) return { arms: 'aim', item: shield ? 'shield' : gun };
   if (tk === 'suppress' || (tk === 'overhaul' && !moving)) return { arms: 'hose', item: 'none' };
   // 연기 속에서 수색하거나 움직이는 동안 열화상 카메라를 든 대원은 그것을 들여다본다
   if ((moving || tk === 'search') && hasKit(sim, rid, 'tic') && s.smoke[Math.round(a.y) * s.w + Math.round(a.x)] > 0.3) return { arms: 'megaphone', item: 'tic' };
   if (moving) return shield && s.kind === 'armed' ? { arms: 'aim', item: 'shield' } : { arms: 'side', item: 'none' };
   const busy = a.ring > 0.01;
   switch (tk) {
-    case 'treat': {
+    case 'treat': case 'triage': {
       // 처치: 제세동기를 쓸 환자(심정지·건강 25 미만)면 주황 상자, 전문 응급 가방·의사 장비면 큰 빨간 가방, 그 밖에는 작은 구급 상자
+      // (R3 §7.2) 다수 사상자 분류도 같은 자세 — 환자 곁에 서서 보는 동안(진행 고리) 무릎을 꿇는다 (대상이 정해지지 않은 임무라 제세동기는 꺼내지 않는다)
       const c = a.task && a.task.cas >= 0 ? s.casualties[a.task.cas] : undefined;
       const shock = !!c && hasKit(sim, rid, 'aed') && ((s.kind === 'medical' && s.variant === 'arrest') || c.health < 25);
       return { arms: busy ? 'kneel' : 'side', item: !busy ? 'none' : shock ? 'aed' : hasKit(sim, rid, 'alsBag') || hasKit(sim, rid, 'doctorKit') ? 'bigbag' : 'none' };
@@ -487,7 +492,12 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   const rowY = parkY(s) * ts;
   const vpos: { u: Unit; x: number; y: number; L: number; W: number }[] = [];
   let cursor = s.kind === 'search' || s.kind === 'traffic' ? 0.35 : s.staging.x + 1.35;      // 건물 현장: 대원이 내리는 자리(대기 지점) 바로 앞쪽에 줄지어 선다
-  for (const u of parked) { const [vl, vw] = VEH_SIZE[u.kind]; vpos.push({ u, x: (cursor + vl / 2) * ts, y: rowY, L: vl, W: vw }); cursor += vl + 0.42; }
+  for (const u of parked) {
+    const [vl, vw] = VEH_SIZE[u.kind];
+    const blk = laneShieldSpot(s, u.id);      // (R3 §7.2 — 차량 차단) 차로 입구를 막고 선 차는 대기 줄이 아니라 그 입구에 그린다 (그림만)
+    if (blk) { vpos.push({ u, x: cx(blk.x), y: cy(blk.y), L: vl, W: vw }); continue; }
+    vpos.push({ u, x: (cursor + vl / 2) * ts, y: rowY, L: vl, W: vw }); cursor += vl + 0.42;
+  }
   // 소화전에 연결한 수관
   const hyd = s.props.find((p) => p.kind === 'hydrant');
   if (hyd && !MINI) for (const v of vpos) {
@@ -611,6 +621,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     else if (stunned && mark === 'dots') for (let k = 0; k < 4; k++) { const an = time * 5 + k * 1.57; ctx.fillStyle = '#fff3b0'; const sz = Math.max(2, ts * 0.08); ctx.fillRect(x + Math.cos(an) * ts * 0.34 - sz / 2, y - ts * 0.1 + Math.sin(an) * ts * 0.2 - sz / 2, sz, sz); }
     ctx.globalAlpha = 1;
   }
+  if (!MINI) drawBuddyLines(ctx, s, ts, o.alpha);      // (R3 §7.2) 짝 끈: 둘 다 위험 건물 실내에 있는 짝 사이의 가는 흰 점선 (대원 층 바로 아래)
   const labels: { x: number; y: number; text: string; col: string }[] = [];
   const respChips: { x: number; y: number; b: number; cross: boolean }[] = [];      // (H1) 다친 대원의 딱지
   const draggerOf = new Map<number, FieldAgent>();      // (H1) 쓰러진 대원 rid → 그 대원을 끌고 가는 동료 (carrying = -(rid+2))
@@ -672,7 +683,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
         // (R2 1d) 헤엄치는 대원: 헬멧·공기호흡기를 벗은 모습(머리카락), 구명조끼를 입었으면 주황 조끼. 끌고 오는 사람은 바로 뒤에서 함께 헤엄친다(구조 대상 그림)
         const sk = lookOf('sw' + a.rid + ':' + u.kind + ':' + (rsp.role ?? ''), () => ({ ...lk, headCol: '#2b2420', headCol2: undefined, band: undefined, pack: 'none' }));
         drawSwimmer(ctx, x, y, ts, sk, time + a.rid * 0.37, 1, hasKit(sim, a.rid, 'pfd') ? '#f07a2a' : undefined);
-      } else drawPerson(ctx, x, y, ang, ts, lk, { step: time * 11 + a.rid, moving, arms: pose.arms, item: pose.item, t: time + a.rid * 0.37, recoil: af?.recoil, act: af?.throwAct ?? (pose.arms === 'throw' ? Math.min(1, a.ring / THROW_RELEASE) : undefined), crouch: sit || inBoat(a) || (a.inCover && s.kind === 'armed' && !moving && pose.arms === 'aim') || (!moving && sniperSet(a)), flinch: off && (off.x || off.y) ? off : undefined, hurt: hurt > 0 ? hurt : undefined });
+      } else drawPerson(ctx, x, y, ang, ts, lk, { step: time * 11 + a.rid, moving, arms: pose.arms, item: pose.item, t: time + a.rid * 0.37, recoil: af?.recoil, act: af?.throwAct ?? (pose.arms === 'throw' ? Math.min(1, a.ring / THROW_RELEASE) : undefined), crouch: sit || inBoat(a) || (a.inCover && s.kind === 'armed' && !moving && pose.arms === 'aim') || (!moving && sniperSet(a)) || coverCrouch(a, moving), flinch: off && (off.x || off.y) ? off : undefined, hurt: hurt > 0 ? hurt : undefined });
       if (a.inCover && s.kind === 'armed') drawCoverBadge(ctx, x + ts * 0.36, y + ts * 0.34, ts);      // (G5) 엄폐: 반쪽 벽 기호
       // (R1) 공기 잔량 60초 아래: 머리 위 왼쪽의 작은 주황 점 (깜박이지 않는다)
       if (hasKit(sim, a.rid, 'scba') && kitUses(sim, a.rid, 'scba') < AIR_LOW) { disc(ctx, x - ts * 0.36, y - ts * 0.38, ts * 0.115, '#0b1219'); disc(ctx, x - ts * 0.36, y - ts * 0.38, ts * 0.08, kitUses(sim, a.rid, 'scba') <= 0 ? '#ff5d5d' : '#ff9f43'); }
@@ -682,7 +693,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       }
     }
     ctx.globalAlpha = 1;
-    if (a.label) labels.push({ x, y: y - ts * 0.82, text: (a.isCommander ? '★ ' : '') + (sel ? rsp.name + ' · ' : '') + (a.label.length > 13 ? a.label.slice(0, 12) + '…' : a.label), col: a.status === 'down' && !shroud ? '#ff5d5d' : col });
+    const hl = headLabel(a), hlMax = headLabelMax(a);      // (R3 §7.2) 판단 지점에서 기다리는 대원은 막고 있는 교본 줄의 짧은 이름 ('단독 진입 보류' · '대기조 확인 전 진입 보류' …)
+    if (hl) labels.push({ x, y: y - ts * 0.82, text: (a.isCommander ? '★ ' : '') + (sel ? rsp.name + ' · ' : '') + (hl.length > hlMax ? hl.slice(0, hlMax - 1) + '…' : hl), col: a.status === 'down' && !shroud ? '#ff5d5d' : col });
     else if (sel) labels.push({ x, y: y - ts * 0.82, text: rsp.name, col });
   }
 

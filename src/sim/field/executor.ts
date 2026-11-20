@@ -107,7 +107,7 @@ export function moveSpeed(sim: Sim, s: Scene, a: FieldAgent): number {
     const walk = a.carrying >= 0 && s.casualties[a.carrying].mob === 'mobile';
     // 옮기는 사람이나 곁에서 돕는 사람이 들것을 가졌으면 더 빨리 옮긴다 (둘 0.78 → 0.88, 혼자 0.48 → 0.55)
     const litter = !walk && (hasKit(sim, a.rid, 'stretcher') || (helper !== undefined && hasKit(sim, helper.rid, 'stretcher')));
-    v *= walk ? 0.7 : helper ? (litter ? 0.88 : 0.78) : litter ? 0.55 : 0.48;
+    v *= walk ? 0.7 : helper ? (litter ? 0.88 : 0.78) : litter ? 0.55 : dragging(a) ? 0.48 * CARRY.dragSpeed : 0.48;      // (R3 6단계 — 끌기) 혼자 낮게 끌면 혼자 업기의 ×0.85
   }
   return v;
 }
@@ -1131,25 +1131,29 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (a.carrying !== c.id) {
         // 낡았거나 없는 믿음으로 맡았는데 그 사람이 위험한 건물 안에 있다: 공기호흡기 없이는 들어가지 않는다
         if (noAirEntry(sim, s, a, c.x, c.y)) { learn(sim, a, casFact(sim, s, c, r.name), false); finishTask(sim, s, a, false, 'unsafe'); return; }
+        // (R3 6단계 §3.7) 방법을 처음 고른다 — 업기(평소) · 끌기(들것 없이 혼자, 선 자리의 연기가 짙을 때 — E14). 환자 곁에 닿으면 그 자리의 연기로 한 번 다시 본다(runCarry)
+        if (t.kind === 'carry' && t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'carry', { cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1 });
         const m = moveTo(sim, s, a, c.x, c.y, 1.3);
         if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
         if (m !== 'arrived') return;
         if (t.kind === 'carry' && carryHold(sim, s, a, t, senseOf(s, a))) return;      // (R3 E08) 구급 동료가 처치 중인 환자 — 들지 않고 곁에서 기다린다 (상한 15초)
+        if (t.kind === 'carry' && runCarry(sim, s, I, a, t, c)) return;      // (R3 6단계) 도착 재선택(끌기) · 척추 고정판을 든 대원은 들기 전에 3초 고정 (E13 — 판단 지점 carryStart, 끝나면 c.immob)
         t.progress += dt;
         if (t.progress >= 1.2) { c.where = 'carried'; c.inVehicle = null; a.carrying = c.id; a.path = null; a.pathGoal = -1; learn(sim, a, casFact(sim, s, c, r.name), false); }
         return;
       }
       const m = moveTo(sim, s, a, s.safe.x, s.safe.y, 1.2);
       c.x = a.x - a.fx * 0.45; c.y = a.y - a.fy * 0.45;
-      // 척추 고정판: 차·잔해에서 꺼낸 사람(교통사고·붕괴)을 고정판 없이 옮기면 옮기는 동안 더 나빠진다 (악화 ×1.12).
-      // 옮기는 사람이나 곁에서 돕는 사람이 고정판을 가졌으면 괜찮다
+      // 척추 고정판: 차·잔해에서 꺼낸 사람(교통사고·붕괴)을 고정하지 않고 옮기면 옮기는 동안 더 나빠진다 (악화 ×1.12).
+      // (R3 6단계 E13) 조건을 "고정판을 가졌는가"에서 "고정했는가(c.immob)"로 — 고정판을 든 대원(옮기는 사람이나 곁에 온 동료)이 들기 전에 3초 고정한다(runCarry). 연기·열 속에서는 고정하지 않고 바로 옮긴다
       // 더해진 악화는 그 상처의 원인으로 적는다 (매 틱 피해)
-      if ((s.kind === 'traffic' || s.kind === 'collapse') && c.tFreed >= 0 && !c.dead && !carryHas(sim, s, a, 'spineBoard')) hurtCas(sim, s, I, c, c.bleed * 0.12 * dt, c.bleedCause ?? initialCause(s, I, c), { tick: true });
+      if ((s.kind === 'traffic' || s.kind === 'collapse') && c.tFreed >= 0 && !c.dead && !c.immob) hurtCas(sim, s, I, c, c.bleed * 0.12 * dt, c.bleedCause ?? initialCause(s, I, c), { tick: true });
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m === 'arrived') {
         c.where = 'safe'; c.tSafe = sim.t; placeAtSafe(s, c); a.carrying = -1;
         learnQuiet(sim, a, casFact(sim, s, c, r.name));
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, text: `구조 대상 ${c.label} 안전 구역으로 이송 완료.` });
+        const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, text: `구조 대상 ${c.label} 안전 구역으로 이송 완료.` });
+        if (t.kind === 'carry') carryDone(sim, I, a, t, c.mob !== 'mobile' && carryHas(sim, s, a, 'stretcher'), ev);      // (R3 6단계) 이 방법으로 옮겼다 — 끌기 · 들것(기록 전용) · 업기
         r.xpGained += 0.004;
         finishTask(sim, s, a, true);
       }
@@ -1187,15 +1191,19 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     case 'traffic': {
       const k = t.tile, cp = s.controlPts[k];
       if (s.controlDone[k]) { reportDone(sim, a, mkFact('ctl', k, true, r.name, sim.t, 1, true, '차로 통제 완료')); finishTask(sim, s, a, true); return; }
+      // (R3 6단계 §3.7) 방법을 처음 고른다 — 통제(평소) · 차량 차단(부대 차량으로 차로 입구를 막고 선 뒤 통제 — P20 경찰: 2차 사고 뒤·밤·비·안개 / F18 소방차: 차량 화재·연료 누출)
+      const ltg = { cas: -1, prop: -1, hostile: -1, region: -1, tile: k };
+      if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'traffic', ltg);
       const m = moveTo(sim, s, a, cp.x, cp.y, 0.8);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
-      t.need = (r.dept === 'police' ? 6 : 10) * (kitWorks(sim, a.rid, 'baton', I) ? 0.85 : 1);      // 경광봉을 들면 차를 더 빨리 세운다
+      t.need = (r.dept === 'police' ? 6 : 10) * (kitWorks(sim, a.rid, 'baton', I) ? 0.85 : 1) + runTraffic(sim, s, I, a, t);      // 경광봉을 들면 차를 더 빨리 세운다 · 차량 차단은 닿는 순간 s.laneShield, 설치 +3초
       t.progress += dt; a.ring = t.progress / t.need;
       if (t.progress >= t.need) {
         s.controlDone[k] = true;
         learnQuiet(sim, a, mkFact('ctl', k, true, r.name, sim.t, 1, true, `${k === 0 ? '서측' : '동측'} 진입 차량 통제 완료`));
-        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${k === 0 ? '서측' : '동측'} 차로 통제 완료. 진입 차량을 차단했습니다.` });
+        const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${k === 0 ? '서측' : '동측'} 차로 통제 완료. 진입 차량을 차단했습니다.` });
+        if (t.method !== undefined) recordMethod(sim, I, a, t, t.method, t.mwhy ?? 'usual', true, ev);      // (R3 6단계) 이 방법으로 통제했다
         finishTask(sim, s, a, true);
       }
       return;
@@ -2000,3 +2008,5 @@ function interiorGate(sim: Sim, s: Scene, a: FieldAgent, t: Task): 'wait' | 'go'
 }
 // ── (R3 4단계) 의료 교본의 실행 (doctrineRun.ts — 분류·처치 넘겨받기·경계 밖 처치소·판단 지점 carryHold·laneTreat) ──
 import { careMark, carryHold, laneHold, runTriage, tryHandover } from './doctrineRun';
+// ── (R3 6단계) 이송·교통 통제 방법의 실행 (doctrineRun.ts — 끌기·들것·척추 고정 · 차량 차단) ──
+import { CARRY, carryDone, dragging, runCarry, runTraffic } from './doctrineRun';

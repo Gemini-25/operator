@@ -701,7 +701,8 @@ export type MethodId =
   | 'air' | 'drone' | 'dog'                                                                             // 야외 수색 (기록 전용·7단계)
   | 'dive' | 'boom' | 'shieldLine' | 'deconTent' | 'hoseWash'      // (N9 §5.12) 잠수 · 오일펜스 · 방패 저지선(cordon) · 제독 텐트 · 물 세척(decontam). 단계 1 은 표의 줄만 (can = NOT_YET)
   | 'feel' | 'pulse'      // (R3 3단계 §3.7) 벽 더듬기 수색(search — 열화상 없이 짙은 연기) · 끊어 쏘기(suppress — 용수 30% 아래)
-  | 'robotDefuse' | 'suitDefuse' | 'bareDefuse';      // (R3 5단계 §3.7) 해체 defuse: 로봇 원격 · 방호복 · 맨몸 (실행은 doctrineRun.runDefuse)
+  | 'robotDefuse' | 'suitDefuse' | 'bareDefuse'      // (R3 5단계 §3.7) 해체 defuse: 로봇 원격 · 방호복 · 맨몸 (실행은 doctrineRun.runDefuse)
+  | 'pack' | 'drag' | 'litter' | 'post' | 'blockLane';      // (R3 6단계 §3.7) 이송 carry: 업기 · 끌기 · 들것(기록 전용) / 교통 통제 traffic: 통제 · 차량 차단 (실행은 doctrineRun.runCarry·runTraffic)
 /** 왜 이 방법을 골랐는가 (기록 문구·보고서 문장이 쓴다). usual = 평소 선택(교본 줄과 무관) */
 export type MethodWhy = 'usual' | 'near' | 'noGear' | 'tooFar' | 'weak' | 'fast' | 'failed' | 'broken' | 'danger' | 'quiet' | 'team'      // R3 가 이 줄 끝에 상태 까닭 여섯을 더한다 (R3 §2.1·§3.7)
   | 'hurt' | 'alone' | 'lowAir' | 'lowAmmo' | 'shaken' | 'tired';      // (R3 1단계) 교본 줄이 1등을 바꾼 까닭 (field/doctrine.ts 의 docWhyMethod — §3.7 의 사상 표)
@@ -958,6 +959,9 @@ export interface Unit {
 export interface Scene {
   triageAt?: number;                   // 분류가 끝난 시각 (-1 = 아직). 지휘 상태 — s.secureAt 과 같은 자격 (4단계)
   laneShield?: number[] | null;        // 차량으로 막은 통제 지점 (6단계 blockLane)
+}
+export interface Casualty {
+  immob?: boolean;                     // 척추를 고정했다 (6단계 E13 — 실행기가 들기 전에 3초. 교통사고·붕괴 현장에서 꺼낸 사람을 고정하지 않고 옮기면 옮기는 동안 더 나빠진다)
 }
 export interface Incident {
   docs?: DocUse[];                     // 교본을 쓴 기록 (처음 남길 때 배열이 된다 — doctrineRun.recordDoc)

@@ -22,10 +22,12 @@ const atSafe = (c: DocCtx): boolean => { const cb = casOf(c); return cb !== unde
  * 대상 환자가 차로 줄 위에 있고 그 차로로 차가 들어오는 쪽의 통제 지점이 아직 통제됐다고 모른다 (생김새 s.laneRows·s.controlPts 와 믿음 'ctl').
  * 차로 줄 k = 0 은 동쪽(통제 지점 1)에서, k = 1 은 서쪽(통제 지점 0)에서 차가 들어온다 — 교통사고 현장의 생김새 (hazards.tickLane 과 같은 짝)
  */
-function onOpenLane(c: DocCtx, cb: CasBelief): boolean {
+function onOpenLane(c: DocCtx, cb: CasBelief): boolean { return openLaneRow(c, cb.y); }
+/** 그 줄(y)이 차로 줄이고 그 차로로 차가 들어오는 쪽의 통제 지점이 아직 통제됐다고 모른다 (대상 환자의 자리 — E12 · 대원 자신이 선 자리 — E13) */
+function openLaneRow(c: DocCtx, y: number): boolean {
   const rows = c.s.laneRows;
   for (let k = 0; k < rows.length; k++) {
-    if (Math.round(cb.y) !== rows[k]) continue;
+    if (Math.round(y) !== rows[k]) continue;
     const cp = rows.length === 2 ? (k === 0 ? 1 : 0) : k;
     if (c.sit.ctlDone[cp] !== true) return true;
   }
@@ -135,4 +137,29 @@ CMD_ROWS.push(
   { id: 'CE3', dept: 'ems', hook: 'cmd', name: '자리 하나 — 더 위중한 환자 먼저 탑승', short: '위중 먼저 탑승', why: 'triage' },
   { id: 'CE4', dept: 'ems', hook: 'cmd', name: '위중 환자 · 자리 없음 · 구급차가 멀다 — 항공 이송 요청', short: '항공 이송 요청', why: 'danger' },
   { id: 'CE5', dept: 'ems', hook: 'cmd', name: '이송 출발 전에 지휘를 넘긴다', short: '지휘 넘김', why: 'protocol' },
+);
+
+// ── (6단계) 이송 — 척추 고정(E13 · 판단 지점 carryStart)과 끌기(E14 · 방법 drag). 판단 지점과 방법이 6단계에 생겼다 (§3.3·§3.6·§3.7) ──
+/** 대상 환자가 거동 불가라고 믿는다 (갇힌 사람은 옮길 수 없다 — 이송 임무가 없다) */
+const cantWalk = (c: DocCtx): boolean => { const cb = casOf(c); return cb !== undefined && cb.mob === 'immobile'; };
+registerDoctrine(
+  {
+    // 교통사고·붕괴 현장의 거동 불가 환자를 처음 들 때 — 척추 고정판을 든 대원은 들기 전에 3초 고정한다(실행기가 c.immob 을 적는다 — doctrineRun.runCarry).
+    // 선 자리의 연기·열이 짙으면 고정하지 않고 바로 옮긴다. 환자가 통제되지 않은 차로 위에 있거나 대원 자신이 그런 차로에 서 있어도 그렇다
+    // (E12 와 같은 판정 — 차가 들어오는 차로에 3초 더 서 있지 않는다: 먼저 차로 밖으로. 버스 곁의 환자를 드는 자리가 차로 줄이었다).
+    // 고정하지 않고 옮기면 꺼낸 사람(차·잔해)은 옮기는 동안 더 나빠진다 (R1 의 고정판 효과 — 조건을 '고정했는가'로)
+    id: 'E13', dept: 'ems', name: '교통사고·붕괴 — 척추 고정 후 이송', short: '척추 고정',
+    hook: 'gate', gate: 'carryStart', works: ['carry'], kits: ['spineBoard'],
+    when: (c) => { const cb = casOf(c); return (c.s.kind === 'traffic' || c.s.kind === 'collapse') && cb !== undefined && cb.mob === 'immobile' && !onOpenLane(c, cb) && !openLaneRow(c, c.a.y) && c.sense.smoke <= 0.3 && c.sense.heat <= 0.3; },
+    effect: { kind: 'choose', opt: 'immobilize' },
+    th: { sec: 3, smoke: 0.3, heat: 0.3 }, rank: 3, why: 'kit', note: '척추 고정 후 이송합니다.',
+  },
+  {
+    // 들것 없이 혼자, 선 자리의 연기가 짙다 — 업지 않고 낮게 끌어 나간다 (끌기 0.5 × 1.6 = 0.80 > 업기 0.70). 옮기는 동안 대상·대원의 연기 피해 ×0.5, 속도는 혼자 업기의 ×0.85
+    id: 'E14', dept: 'ems', name: '들것 없이 혼자 · 짙은 연기 — 낮게 끌어 나간다', short: '끌기',
+    hook: 'method', works: ['carry'], methods: ['drag'], noKits: ['stretcher'],
+    when: (c) => c.st.alone && c.sense.smoke > 0.3 && cantWalk(c),
+    effect: { kind: 'methodMul', mul: 1.6 },
+    th: { smoke: 0.3, mul: 1.6 }, rank: 1, why: 'danger',
+  },
 );

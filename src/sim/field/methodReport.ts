@@ -12,6 +12,7 @@ import { METHOD, METHOD_ORDER, targetKey } from './methods';
 export const WORK_DONE: Partial<Record<WorkKind, string>> = {
   force: '문을 열었습니다', clear: '잔해를 치웠습니다', extricate: '구출했습니다', suppress: '불길을 잡았습니다', engage: '제압했습니다', arrest: '검거했습니다',
   mitigate: '누출을 막았습니다', search: '찾아냈습니다', treat: '처치했습니다', perimeter: '주변에 대피를 알렸습니다', load: '환자를 이송했습니다', hoist: '끌어올려 구했습니다',
+  carry: '구조 대상을 옮겼습니다', traffic: '진입 차량을 통제했습니다',      // (R3 6단계) 끌기 · 차량 차단
 };
 /** 까닭 말 (괄호 안). 평소 선택·가까움·바꾼 까닭(실패·고장)은 붙이지 않는다. 빠진 장비를 모르면 noGear 말도 붙이지 않는다 */
 export function whyText(u: MethodUse): string {

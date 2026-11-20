@@ -180,7 +180,7 @@ export function agentHealth(sim: Sim, s: Scene, I: Incident, a: FieldAgent): voi
         }
       }
     }
-    hurtResponder(sim, s, I, a, 1.3 * smoke * sim.dt, smokeCause(s), TICK);      // 가스 누출 현장의 연기는 유독 가스로 적는다
+    hurtResponder(sim, s, I, a, 1.3 * smoke * sim.dt * (dragging(a) ? CARRY.dragSmoke : 1), smokeCause(s), TICK);      // 가스 누출 현장의 연기는 유독 가스로 적는다 · (R3 6단계 — 끌기) 낮게 끌어 나가는 대원은 연기 피해 ×0.5
     if (scba) r.stamina = Math.max(0, r.stamina - 0.22 * smoke * sim.dt);      // 공기호흡기를 메고 연기 속에서 일하면 지친다
   } else a.smokeT = Math.max(0, a.smokeT - sim.dt * 2);
   if (fire > 0.4) hurtResponder(sim, s, I, a, 9 * fire * sim.dt, 'burn', TICK);
@@ -431,6 +431,8 @@ export function tickScene(sim: Sim, s: Scene): void {
 
 // (R3 3단계) 짝 맺기 — 부대가 내린 뒤 한 번 (doctrineRun.pairUp)
 import { pairUp } from './doctrineRun';
+// (R3 6단계) 끌기 — 낮게 끌어 나가는 대원의 연기 피해 (agentHealth)
+import { CARRY, dragging } from './doctrineRun';
 // ── (R3 4단계 CE5) 이송 출발 전에 지휘를 넘긴다 — 4번 블록이 부른다. 고르는 순서는 지금의 승계(주관 부서 → 경험 → rid)와 같다 ──
 import { recordDoc } from './doctrineRun';
 function cmdHandover(sim: Sim, s: Scene, I: Incident, cmd: FieldAgent, cands: FieldAgent[]): void {

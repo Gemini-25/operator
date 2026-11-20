@@ -82,6 +82,7 @@ export function addCas(s: Scene, x: number, y: number, mob: Mobility, health: nu
     tDiscovered: -1, tFreed: -1, tTreated: -1, tSafe: -1, tLoaded: -1, tDead: -1, tHospital: -1, discoveredBy: -1, causeEvent: -1,
     injuries: undefined, bleedCause: undefined, deathCause: undefined, lost: undefined,      // (H1) 부상 기록 — 처음 상태의 원인은 injury.initInjuries 가 붙인다
     quietLoss: undefined,      // (N8) 보호 유형에서 숨지는 단 하나의 길 (단계 7)
+    immob: undefined,      // (R3 6단계) 척추 고정 — 실행기의 이송(E13)이 채운다
     ...extra,
   };
   s.casualties.push(c);

@@ -196,3 +196,15 @@ CMD_ROWS.push(
   // (균형 — 사용자 결정 2026-11-16) 2인 진입 + 밖 2인 대기로 줄어든 실내의 손을 첫 출동으로 메운다 (코드는 dispatch/doctrine.ts docNeeds)
   { id: 'D8', dept: 'fire', hook: 'dispatch', name: '건물 화재 — 첫 출동에 펌프차 하나 더', short: '건물 화재 펌프차 더', why: 'team' },
 );
+
+// ── (6단계) 교통 통제의 방법 — 소방차로 차로 막기 (F18. 방법 blockLane 이 6단계에 생겼다 — §3.2·§3.6·§3.7) ──
+registerDoctrine(
+  {
+    // 교통사고 현장에 차량 화재나 연료 누출이 있다고 믿으면(불 믿음 · haz leak) 펌프차·사다리차 대원은 큰 차로 차로 입구를 막고 통제한다 (그 지점이 통제 전인지는 방법의 조건이 본다)
+    id: 'F18', dept: 'fire', name: '교통사고의 차량 화재·연료 누출 — 소방차로 차로 입구를 막고 통제', short: '소방차 차단',
+    who: { units: ['engine', 'ladder'] }, hook: 'method', works: ['traffic'], methods: ['blockLane'],
+    when: (c) => c.s.kind === 'traffic' && (c.a.beliefs.list('haz').some((f) => f.value.kind === 'leak' && f.value.active) || c.a.beliefs.list('fire').some((f) => (f.value as number) > 0)),
+    effect: { kind: 'methodMul', mul: 1.5 },
+    th: { mul: 1.5 }, rank: 3, why: 'danger',
+  },
+);

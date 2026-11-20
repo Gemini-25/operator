@@ -523,7 +523,7 @@ function shootAt(sim: Sim, s: Scene, a: FieldAgent, hid: number): void {
     noteCollateral(sim, s, shot, struck, a.x, a.y);
   }
   if (!I.problems.some((q) => q.detail === '교전 발생')) {
-    I.problems.push({ code: 'ESCALATION', t: sim.t, eventId: emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 3, text: '교전 발생! 대응 사격합니다.' }), detail: '교전 발생', recovered: true, recoveryText: '' });
+    I.problems.push({ code: 'ESCALATION', t: sim.t, eventId: emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 3, text: '교전 발생! 대응 사격합니다.' }), detail: '교전 발생', recovered: true, recoveryText: '', times: undefined, ref: undefined });      // times·ref: raiseProblem 과 같은 모양 (I1-b)
   }
   if (hit) {
     const dmg = s.rng.range(30, 48);      // 판정 흐름에서 뽑는 자리는 그대로 — 뽑은 값만 hurtHostile 에 넘긴다

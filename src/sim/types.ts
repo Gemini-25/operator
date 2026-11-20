@@ -566,7 +566,9 @@ export type ProblemCode =
   | 'RESPONDER_KILLED'      // (H1) 대원 순직
   | 'SUSPECT_DIED'      // (H1) 용의자 사망
   | 'UTIL_LATE' | 'ANIMAL_LOST'      // (N8) 유관 기관이 오지 못해 대신한 조치로 끝냄 (원격 차단·제수밸브) · 동물을 찻길로 놓침
-  | 'DECON_LATE';      // (N9 §5.5) 제독 지연 — 제독차가 오지 못해 대체 제독으로 했다(복구됨) · 노출자가 격리 구역을 벗어나 오염이 번졌다. 단계 1 은 이름표·order 의 자리·PROBLEM_SYS 만 (남기는 것·문장 틀은 단계 6)
+  | 'DECON_LATE'      // (N9 §5.5) 제독 지연 — 제독차가 오지 못해 대체 제독으로 했다(복구됨) · 노출자가 격리 구역을 벗어나 오염이 번졌다. 단계 1 은 이름표·order 의 자리·PROBLEM_SYS 만 (남기는 것·문장 틀은 단계 6)
+  | 'HOSPITAL_FULL'      // (I1-b) 응급실 포화로 먼 병원으로 이송 — 남기는 것은 b3-2 (C3)
+  | 'INFRA_FAIL';      // (I1-b) 정전·통신 장애·수압 저하가 대응을 막았다 — 남기는 것은 b3-8~11 (C4·C8·C11)
 export interface Problem { code: ProblemCode; t: number; eventId: number; detail: string; recovered: boolean; recoveryText: string }
 
 export type IncidentPhase = 'unreported' | 'call' | 'pending' | 'dispatched' | 'onscene' | 'closed';
@@ -668,7 +670,8 @@ export interface ShiftReport {
     rid?: number; band?: number; cause?: InjuryCause | null; dead?: boolean; hospital?: boolean; out?: number }[];      // (H1) 교대 끝의 중증도·주된 원인·순직·병원 인계·다음 교대 결장 예상
   equipFailures: number;
   delayCauses: { code: ProblemCode; label: string; count: number }[];
-  incidents: { id: number; code: string; type: IncidentType; name?: string; reportedType: IncidentType | null; label: string; result: IncidentResult; start: number; end: number }[];
+  incidents: { id: number; code: string; type: IncidentType; name?: string; reportedType: IncidentType | null; label: string; result: IncidentResult; start: number; end: number;
+    parent?: number; children?: number[]; chain?: string[] }[];      // (I1-b §3.9) 낳은 사건 · 이 사건이 낳은 사건들 · 사슬 문장(많아야 4줄) — 채우는 것은 b4 의 buildReport
   summary: string[];
   major?: number;                  // 대형 사고 건수
   traffic?: { jams: number; closures: number; obstacles: number; detours: number; delaySec: number; gateWaits: number };      // 교통 통계 (traffic.ts)
@@ -897,6 +900,62 @@ export interface Incident {
 }
 export interface Problem {
   ref?: { inc?: number; unit?: number; edge?: number; fac?: number; lost?: number };    // 관련 사건·부대·구간·병원, 늘어난 초 (lost 는 b3-1 의 C6 이 채운다)
+}
+
+// ── 세계 상태와 신호 (I1-b b2 — 틀만: 규칙이 없으면 아무것도 이 칸을 바꾸지 않는다. docs/specs/I1-causality.md §3.3·§3.4) ──
+// 모든 칸은 함수가 없는 순수 자료다. 진실 쪽(세계 규칙 world/rules/*·hazards·executor)만 sim.world 를 읽고 바꾼다 —
+// 관제·지휘관·대원의 판단은 world/state.ts 의 knownZone·knownHospital·knownBuildingAt·knownZoneOfIncident 만 쓴다 (§3.8, tests/causality.test.ts 가 소스를 본다).
+/** 세계 상태 알림 기록의 갈래 — 측정 도구(scripts/metrics.ts 의 TAG_SYS)가 시스템을 가린다 */
+export type WorldTag = 'power' | 'comms' | 'water' | 'smoke' | 'risk' | 'hospital';      // I2 가 끝에 새 줄로 | 'carry' 를 더한다 (I2 §3.7)
+export type ZoneField = 'power' | 'comms' | 'water' | 'smoke' | 'risk';
+/** 동네 하나의 상태 (cityPlan.DISTRICTS 순서). power·comms·water 는 1 = 정상 … 0 = 끊김, smoke·risk 는 0 = 없음 … 1 */
+export interface ZoneState {
+  power: number; comms: number; water: number; smoke: number; risk: number;
+  until: Record<ZoneField, number>;      // 회복 시각 (Infinity = 원인이 끝날 때 정한다). 지나면 tickWorld 가 처음 값으로 되돌린다
+  known: Record<ZoneField, boolean>;     // 관제가 아는가
+  cause: Record<ZoneField, number>;      // 지금 값을 만든 기록 (-1)
+}
+export interface HospitalState {
+  fac: number;                 // city.facilities 의 id
+  cap: number;                 // 응급실 동시 수용 (병상)
+  stays: number[];             // 응급실에 있는 환자마다 병동으로 옮겨질 시각 (지나면 tickWorld 가 뺀다)
+  divert: boolean;             // 포화 — 중증만 받는다 (병원이 알린다)
+  known: boolean; since: number; cause: number;
+}
+export type SignalKind = 'blast' | 'collapse' | 'fireBig' | 'delivered' | 'fled' | 'closed' | 'catastrophe';
+/**
+ * 상태를 바꾸는 자리가 세계에 알리는 사실 한 줄 (world/consequence.ts 의 signal). tickWorld 가 다음 틱에 규칙에 건넨다.
+ * x·y 는 **도시 좌표**(주지 않으면 그 사건의 자리, 인계는 병원), cx·cy 는 현장의 칸 좌표(-1 = 없음). ev = 그 일을 남긴 기록.
+ * size·data: blast 반경(칸) · collapse 무너진 칸 수 · fireBig 불 칸 수 · delivered data 산 환자 수, size 함께 인계한 대원·용의자 수, place 병원 시설 id ·
+ * fled data 용의자 id · catastrophe data 0 폭발 · 1 붕괴 · 2 전소, size 폭발 반경 또는 무너진 칸 수. place = 사건의 건물 id (-1)
+ */
+export interface Signal { kind: SignalKind; t: number; inc: number; ev: number; x: number; y: number; size: number; place: number; data: number; cx: number; cy: number }
+/** 규칙이 일으킨 결과 한 줄 (보고서·측정). 발동마다 한 줄, 사건을 예약한 발동은 예약마다 한 줄 — made 는 그 예약이 실제로 사건이 됐을 때 채워진다 */
+export interface CsqRecord { rule: string; t: number; ev: number; inc: number; made: number; depth: number }      // ev·inc = 원인 기록·원인 사건(-1), made = 만든 사건(-1), depth = 만든(만들) 사건의 연쇄 깊이(만들지 않는 발동은 원인 사건의 깊이)
+export interface WorldState {
+  zones: ZoneState[];                        // DISTRICTS 순서
+  hospitals: HospitalState[];                // city.facilities 가운데 병원, id 순
+  // 건물 상태는 두지 않는다 — X6 의 Sim.placeMarks, I2 의 carryState.places 를 world/state.ts 의 placeState() 로 읽는다
+  signals: Signal[];
+  log: CsqRecord[];
+  last: Record<string, number>;              // '규칙|열쇠' → 마지막 발동 시각 (쿨다운)
+  count: Record<string, number>;             // 규칙 → 이번 교대 발동 수 (상한)
+  tries: Record<string, number>;             // '규칙|열쇠' → test 를 부른 횟수 (난수 흐름 이름의 시도 번호)
+  spawned: number;                           // 규칙이 예약한 사건 수 (전체 상한 CSQ_SPAWN_CAP, spawnConsequence 의 흐름 번호)
+}
+// 있는 자료형에 더하는 칸 (b2 — 모두 선택 칸. 채우는 것은 그 칸을 쓰는 단계).
+// 객체 모양: SimEvent.tag 는 events.emit 의 리터럴, Incident.divertWait 는 incidents.createIncident 의 리터럴, Scene.shadowAdd 는 kit.baseScene 의 리터럴에 넣었다.
+export interface SimEvent {
+  tag?: WorldTag;              // 세계 상태 알림의 갈래 (구역·병원 알림 — b3 의 규칙이 emit 의 tag 로 넘긴다)
+}
+export interface Incident {
+  divertWait?: { unit: number; t: number; eta: number; ev: number }[];   // 빼앗긴 부대와 그 부대의 예정 도착 (b3-1 의 C6 이 첫 도착 때 지연을 잰다)
+}
+export interface Scene {
+  shadowAdd?: number[];        // 통신 장애로 더한 무전 음영 칸 (회복 때 되돌린다 — b3-9 의 C8)
+}
+export interface ShiftReport {
+  world?: { outages: number; commsDown: number; hospitalDiverts: number; rerouted: number; spawned: number; lines: string[] };      // (§3.9) 채우는 것은 b4
 }
 
 // ───────────────────────── 대응 교본 (R3 0단계 — 틀) ─────────────────────────

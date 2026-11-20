@@ -36,6 +36,7 @@ export function baseScene(sim: Sim, I: Incident, rng: Rng): Scene {
     triageAt: -1, laneShield: null,      // (R3) 분류가 끝난 시각(4단계)·차량으로 막은 통제 지점(6단계) — 단계 0 에는 아무도 바꾸지 않는다
     animals: undefined, exitKind: undefined, kinds: undefined,      // (N8) 동물·출구의 종류·N8 시나리오의 진실 — 채우는 것은 그 시나리오의 현장 생성기(단계 4a~)
     kinds2: undefined, windDir: undefined, flowSpots: undefined,      // (N9) N9 시나리오의 진실 · 바람의 방향 · 군중의 흐름 자리(둘 다 생김새) — 채우는 것은 그 시나리오의 현장 생성기(단계 4~9)
+    shadowAdd: undefined,      // (I1-b) 통신 장애로 더한 무전 음영 칸 — 채우는 것은 b3-9 (C8)
   };
 }
 

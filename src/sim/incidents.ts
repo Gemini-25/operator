@@ -13,6 +13,7 @@ import { INCIDENT_PLACES } from './cityPlan';
 import { startPursuit } from './pursuit';
 import { disasterGapMul } from './disaster';
 import { DEPTH_MAX, chainDepth } from './chain';
+import { signal } from './world/consequence';      // (I1-b) 사건의 발생(붕괴)·종료를 세계에 알린다
 import { SCENARIOS, scenarioName, scenarioOf } from './scenarios';
 import type { Scenario } from './scenarios';
 import type { Incident, IncidentType, Place, PlaceKind } from './types';
@@ -32,12 +33,16 @@ export interface SpawnOpts {
   cause?: number;                // (I1-b) 이 사건을 낳은 기록 — 예약하는 순간에 이미 있는 기록이어야 한다. 발생 기록의 causes 와 Incident.cause 가 된다
   csq?: string;                  // (I1-b) 이 사건을 만든 연쇄의 이름 → Incident.csq
 }
+export interface ChainItem { at: number; opts: SpawnOpts; when?: (sim: Sim) => boolean; until?: number; log?: number }
 /** (I1-b) 예약했지만 일으키지 않은 연쇄 하나. 기록(emit)은 남기지 않는다 — 일어나지 않은 일이다. 보고서·측정 도구가 수로만 쓴다 */
 export interface DroppedChain { t: number; why: 'late' | 'busy' | 'depth' | 'expired' | 'cap'; type?: IncidentType; variant?: string; parent?: number }
 export interface GenState {
   nextAt: number; lastType: IncidentType | null; count: number; lastCreated: number;
   nextNuisanceAt: number;                                        // 다음 비긴급 전화
-  chain: { at: number; opts: SpawnOpts }[];                      // 이어지는 사건 예약 (도주 용의자의 재범, 연쇄 방화, 은신처 제보 등). at 순서로 넣지 않아도 된다
+  /** 이어지는 사건 예약 (도주 용의자의 재범, 연쇄 방화, 은신처 제보, (I1-b) 인과 규칙이 만드는 사건). at 순서로 넣지 않아도 된다.
+   *  (I1-b §3.5) when 이 있으면 때가 됐을 때 조건이 맞아야 일어난다: 거짓이면 5초 뒤 다시 보고, until 이 지나면 버린다('expired').
+   *  when 은 sim 의 상태만 읽는 함수여야 한다(바깥 변수를 바꾸지 않는다). log 는 world.log 의 줄 번호 — 사건이 되면 그 줄의 made 를 채운다 */
+  chain: ChainItem[];
   majorAt: number;                                               // 대형 사고가 일어날 시각 (Infinity = 이번 교대에는 없다). engine 이 정한다
   forced: boolean;                                               // 강제 발생(sim.force)을 이미 일으켰는가
   dropped: DroppedChain[];                                       // (I1-b) 버린 예약 — 교대 끝 150초 안('late')·열린 사건이 많음('busy')·깊이 상한('depth')·조건이 끝내 맞지 않음('expired')·교대 상한('cap')
@@ -51,6 +56,9 @@ const ARMED_BIAS: Record<string, Partial<Record<PlaceKind, number>>> = {
   shooter: { mart: 2.5, market: 2, office: 2, terminal: 2, convenience: 0.4 },
   hostage: { bank: 2, office: 1.6, hotel: 1.5 },
 };
+
+/** (I1-b) 발생할 때 'collapse' 신호를 보내는 붕괴 사건의 변형 — 처음부터 무너져 있는 큰 붕괴 (설계서 I1 §3.4 의 신호 표) */
+const COLLAPSE_AT_START = new Set(['crane', 'gasblast', 'landslide']);
 
 const kindCount = new WeakMap<object, Map<string, number>>();
 /** 사건이 일어날 건물이나 터를 고른다. 교통사고는 교차로에서 일어나므로 null. */
@@ -143,7 +151,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
     reportedNode: node.id, addressFixed: false,
     pursuit: undefined, tag: undefined, parent: undefined, aidUnit: undefined, coResp: undefined,      // 나중에 붙는 칸을 미리 비워 둔다 (모든 사건이 같은 모양)
     airDone: undefined,      // (R1) "상공 임무 종료"로 풀려난 헬기 종류 — 쓰는 것은 단계 5 부터
-    cause: undefined, csq: undefined, blockedBy: undefined, blockEv: undefined,      // (I1-b) 인과 기록 — 판단은 읽지 않는다
+    cause: undefined, csq: undefined, blockedBy: undefined, blockEv: undefined, divertWait: undefined,      // (I1-b) 인과 기록 — 판단은 읽지 않는다
     docs: undefined, trackBy: undefined, reportedPrev: undefined, reportedNodeAt: undefined,      // (R3) 교본 기록(처음 남길 때 배열 — doctrineRun.recordDoc)·추격의 보고 칸(2단계)
     dupOf: undefined,      // (N8) 중복 신고 오인의 원 사건 — 진실 (단계 10)
     fieldRisk: undefined,      // (X6 §5.9) 현장 상황 보고로 관제가 올린 위험도 — dispatcher.fieldReport 가 채운다
@@ -177,6 +185,12 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
   if (variant === 'kidnap' || variant === 'drunk' || variant === 'getaway') startPursuit(sim, I, variant);
   special?.onCreate?.(sim, I);
   I.rootEvent = emit(sim, { inc: id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: special?.tag === 'major' ? 3 : 1, truth: true, causes: I.cause !== undefined ? [I.cause] : undefined, text:chainNote ? `${chainNote} — ${I.truth.label}.` : `사건 발생 — ${I.truth.label} (${what}). 아직 신고되지 않았습니다.` });
+  // (I1-b §3.4) 무너진 채로 시작하는 사건(크레인 붕괴·가스 폭발·산사태): 발생이 곧 붕괴다 — 신호의 기록은 발생 기록, 크기는 처음부터 무너져 있는 칸 수
+  if (type === 'collapse' && COLLAPSE_AT_START.has(variant)) {
+    const dm = sim.scenes[id]?.damage; let fell = 0;
+    if (dm) for (let i = 0; i < dm.length; i++) if (dm[i]) fell++;
+    if (fell > 0) signal(sim, 'collapse', { inc: id, ev: I.rootEvent, size: fell, place: I.truth.placeId });
+  }
   return I;
 }
 
@@ -201,11 +215,19 @@ export function tickIncidents(sim: Sim): void {
   if (g.chain.length) {
     const k = g.chain.findIndex((c) => sim.t >= c.at);
     if (k >= 0) {
-      const c = g.chain.splice(k, 1)[0], late = sim.t >= sim.shiftLen - 150;
-      // (I1-b b1) 깊이 상한(chain.DEPTH_MAX — 정본은 canChain): 예약하는 자리가 모두 canChain 을 보므로 지금은 걸리지 않는다. 그 확인 없이 예약한 것이 있어도 사슬이 더 길어지지 않게 꺼낼 때 한 번 더 본다
-      const deep = c.opts.parent !== undefined && chainDepth(sim, c.opts.parent) + 1 > DEPTH_MAX;
-      if (!late && open <= tn.maxConcurrent && !deep) createIncident(sim, c.opts);
-      else g.dropped.push({ t: sim.t, why: late ? 'late' : open > tn.maxConcurrent ? 'busy' : 'depth', type: c.opts.type, variant: c.opts.variant, parent: c.opts.parent });      // (I1-b) 버린 예약은 배열에만 (기록은 남기지 않는다)
+      const c = g.chain[k];
+      if (c.when && !c.when(sim)) {
+        // (I1-b §3.5) 조건으로 일어나는 연쇄: 때가 됐는데 조건이 맞지 않는다 — 기한이 지났으면 버리고, 아니면 5초 뒤 다시 본다 (이번 틱에는 다른 예약도 꺼내지 않는다)
+        if (c.until !== undefined && sim.t >= c.until) { g.chain.splice(k, 1); g.dropped.push({ t: sim.t, why: 'expired', type: c.opts.type, variant: c.opts.variant, parent: c.opts.parent }); }
+        else c.at = sim.t + 5;
+      } else {
+        g.chain.splice(k, 1);
+        const late = sim.t >= sim.shiftLen - 150;
+        // (I1-b b1) 깊이 상한(chain.DEPTH_MAX — 정본은 canChain): 예약하는 자리가 모두 canChain 을 보므로 지금은 걸리지 않는다. 그 확인 없이 예약한 것이 있어도 사슬이 더 길어지지 않게 꺼낼 때 한 번 더 본다
+        const deep = c.opts.parent !== undefined && chainDepth(sim, c.opts.parent) + 1 > DEPTH_MAX;
+        if (!late && open <= tn.maxConcurrent && !deep) { const J = createIncident(sim, c.opts); if (c.log !== undefined) { const rec = sim.world.log[c.log]; if (rec) rec.made = J.id; } }      // 인과 규칙이 예약한 사건: 그 결과 줄에 만든 사건을 적는다
+        else g.dropped.push({ t: sim.t, why: late ? 'late' : open > tn.maxConcurrent ? 'busy' : 'depth', type: c.opts.type, variant: c.opts.variant, parent: c.opts.parent });      // (I1-b) 버린 예약은 배열에만 (기록은 남기지 않는다)
+      }
     }
   }
   // 대형 사고: 교대마다 많아야 한 번. 언제·무엇인지는 별도의 난수 흐름으로 정한다 (평소 사건의 추첨을 흔들지 않는다)
@@ -262,6 +284,7 @@ export function closeIncident(sim: Sim, I: Incident, reason: 'resolved' | 'timeo
   }
   I.result = evaluate(sim, I, reason);
   scenarioOf(I.truth.type, I.truth.variant)?.onClose?.(sim, I, reason);
-  emit(sim, { inc: I.id, role: 'SYSTEM', actor: '사건 관리', kind: 'resolve', imp: 3, causes: [I.lastEvent], text: `사건 ${I.code} 종료 — ${OUTCOME_NAME[I.result.outcome]}. ${I.result.headline}` });
+  const closeEv = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '사건 관리', kind: 'resolve', imp: 3, causes: [I.lastEvent], text: `사건 ${I.code} 종료 — ${OUTCOME_NAME[I.result.outcome]}. ${I.result.headline}` });
+  signal(sim, 'closed', { inc: I.id, ev: closeEv, place: I.truth.placeId });      // (I1-b) 종료 기록 다음 — 남는 잔해·재발화 같은 "사건이 끝난 뒤" 의 규칙이 받는다
   noteClosedPlace(sim, I);      // (X6 §7.1) 실제 건물의 화재가 닫혔고 건물 상태가 없는데 15% 넘게 탔으면 그을린 건물
 }

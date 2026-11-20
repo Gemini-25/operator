@@ -21,8 +21,11 @@ import { createRoster, tickUnits } from './resources';
 import { announceCarry, applyCrewCarry, initCarry, readCarryover, shiftStartCounts, tickCarry } from './persist';      // (I2)
 import type { CarryState } from './persist';
 import type { Carryover, PlaceMark } from './types';      // (X6) · (I2)
+import { tickWorld } from './world/consequence';      // (I1-b) 인과 규칙의 틀
+import { initWorld } from './world/state';
+import './world/rules';      // (I1-b) 인과 규칙을 등록한다 — 그 파일의 import 순서가 규칙의 순서다(= 결과)
 import { Rng, hashStr } from './rng';
-import type { AirStats, Call, City, Incident, Responder, Scene, ShiftReport, SimEvent, Unit, Weather } from './types';
+import type { AirStats, Call, City, Incident, Responder, Scene, ShiftReport, SimEvent, Unit, Weather, WorldState } from './types';
 import { WEATHER_NAME } from './util';
 
 export const CITY_SEED = 0xc17e5eed;
@@ -62,6 +65,9 @@ export class Sim {
   /** 지도에 남는 건물 상태 (X6): 건물 id → 그을림·폭발 흔적·구획 붕괴·전소·전체 붕괴. 교대마다 새 Sim 이므로 이어지지 않는다 — 도시 지도(city.places)는 고치지 않는다.
    *  채우는 것은 field/catastrophe.ts 의 상태를 바꾸는 자리(단계 3 부터) */
   placeMarks = new Map<number, PlaceMark>();
+  /** (I1-b) 세계 상태: 구역(동네)의 전력·통신·수도·연기·위험, 병원의 수용, 인과 규칙의 신호·기록·쿨다운 (world/state.ts · world/consequence.ts).
+   *  진실이다 — 관제·지휘관은 world/state.ts 의 known* 함수로만 안다. 교대마다 새로 만든다 */
+  world: WorldState;
   /** (I2) 이어받은 상태 — 생성자의 입력(extra.carry)을 persist.readCarryover 가 검사해 새로 만든 것 (없으면 null). 시뮬레이션은 이것을 고치지 않는다 */
   readonly carry: Carryover | null;
   /** (I2) 이어받은 상태의 실행 중 상태 (persist.ts — 건물 겹침 표·복구 공사·적용 목록). 이어받은 상태가 없으면 on 이 거짓이고 아무것도 하지 않는다 */
@@ -88,6 +94,7 @@ export class Sim {
     this.weather = env.weighted<Weather>(['clear', 'rain', 'fog', 'night'], [0.5, 0.18, 0.12, 0.2]);
     this.startTod = this.weather === 'night' ? 22 * 3600 + env.int(0, 3000) : 9 * 3600 + env.int(0, 8 * 3600);
     this.city = generateCity(new Rng(CITY_SEED));
+    this.world = initWorld(this);      // (I1-b) 난수를 쓰지 않는다 — 도시만 읽는다 (동네 18곳·병원)
     // (I2) 이어받은 상태: 검사하며 새 객체로 → ① 건물 겹침 표·도로 복구 통제(initTraffic 앞 — 불법 주차가 그 통제를 보고 놓인다) → ② 대원·부대·재고(createRoster 의 난수를 다 뽑은 뒤 값만)
     const rc = extra.carry ? readCarryover(extra.carry, this.city) : null;
     this.carry = rc ? rc.carry : null;
@@ -119,6 +126,7 @@ export class Sim {
     tickTraffic(this);
     tickCarry(this);      // (I2) 정비 완료·복구 공사 개통 — 할 일이 없으면 첫 줄에서 돌아간다
     tickDisaster(this);
+    tickWorld(this);      // (I1-b) 쌓인 신호를 인과 규칙에 건넨다 · 1초마다 world tick 규칙과 회복 — 이 자리(재난 다음, 사건 생성 앞)를 바꾸지 않는다
     tickIncidents(this);
     tickCalls(this);
     tickDispatch(this);

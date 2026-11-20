@@ -30,6 +30,7 @@ export const PROBLEM_LABEL: Record<ProblemCode, string> = {
   RESPONDER_KILLED: '대원 순직', SUSPECT_DIED: '용의자 사망',
   UTIL_LATE: '유관 기관 지연(대신한 조치)', ANIMAL_LOST: '동물 놓침',      // (N8) 이름표만 — order 의 자리와 문장 틀은 그 코드를 남기는 단계(4a·5)
   DECON_LATE: '제독 지연',      // (N9 §5.5) 이름표와 order 의 자리(아래 splice — 지원 지연 다음)만. 문장 틀 T 와 남기는 곳은 단계 6
+  HOSPITAL_FULL: '응급실 포화', INFRA_FAIL: '기반 시설 장애',      // (I1-b b2) 이름표만 — order 의 자리와 문장 틀은 그 코드를 남기는 단계(b3-2 · b3-8~11)
 };
 
 function addProblem(I: Incident, code: ProblemCode, t: number, eventId: number, detail: string, recovered = false, recoveryText = ''): void {

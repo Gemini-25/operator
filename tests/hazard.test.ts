@@ -4,7 +4,7 @@
 // 뒤 단계가 진짜 법칙을 등록해도 이 시험이 흔들리지 않게, 가짜 법칙을 넣는 동안에는 등록된 법칙을 모두 치워 둔다(withLaws).
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { CHAIN_MAX, CHAIN_SHIFT_MAX } from '../src/sim/chain';
+import { CHAIN_MAX, CHAIN_SHIFT_MAX, canChain, chainedInShift, noteChainDrop } from '../src/sim/chain';
 import { NORMAL, parseDisaster } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
@@ -534,6 +534,10 @@ describe('I1-b b3-4: 초과 위험 과정의 틀 (가짜 법칙)', () => {
         cross(s, f, nodes[3], [part(0.001, e1, roots[0].id)]);
         expect(lawInc(s).length).toBe(2);
         expect(s.gen.dropped.map((d) => d.why)).toEqual(['cap', 'cap']);
+        // 이야기 연쇄 쪽도 같은 수를 본다: 법칙 사건이 자리를 쓰면 재범·방화도 그 6건 안에서 멈춘다 (canChain — 법칙 사건이 먼저 나고 이야기 연쇄가 뒤에 와도 합이 6건을 넘지 않는다)
+        expect([chainedInShift(s), canChain(s, B)]).toEqual([6, false]);
+        noteChainDrop(s, B, 'armed', 'robbery');
+        expect(s.gen.dropped[2]).toMatchObject({ why: 'cap', parent: B.id });
         // 측정 도구의 관문과 같은 수: 이야기 연쇄 + 법칙 사건 = 6
         const h = hazardShift(s, null);
         expect([h.natural, h.parented, h.orphan, h.story, h.ruleMade, h.dropped.cap, h.rootMax, h.holes]).toEqual([2, 1, 1, 4, 0, 2, 1, 0]);

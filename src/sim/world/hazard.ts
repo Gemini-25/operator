@@ -131,7 +131,7 @@ export function ruleLoad(sim: Sim, rule?: string): number { return load(sim, rul
 /**
  * 법칙 사건을 하나 더 만들 자리가 있는가 — 없으면 까닭 (위에서부터, 걸리는 첫 줄):
  *  ① 교대 끝 HZ.LATE 안 'late' ② 전체 상한·법칙별 상한 'cap' ③ 부모의 사슬이 CHAIN_MAX 'depth' ④ 그 뿌리의 법칙 사건이 ROOT_MAX 'depth'
- *  ⑤ 한 교대 6건(이야기 연쇄 + 부모 있는 법칙 사건 + 부모 없는 법칙 사건 + 기다리는 줄) 'cap' ⑥ 부모 없는 법칙 사건이 ORPHAN_CAP 'cap'.
+ *  ⑤ 한 교대 6건(chain.chainedInShift — 이야기 연쇄 + 법칙 사건(부모가 있든 없든, 예약 포함) — 에 기다리는 줄을 더한 수) 'cap' ⑥ 부모 없는 법칙 사건이 ORPHAN_CAP 'cap'.
  * skip = 다시 보는 기다리는 줄 자신(자기 자리 때문에 상한에 걸려 버려지지 않게 빼고 센다)
  */
 export function hazardRoom(sim: Sim, law: HazardLaw, parent: number | undefined, skip: HzWait | null = null): DroppedChain['why'] | null {
@@ -163,7 +163,7 @@ export function hazardRoom(sim: Sim, law: HazardLaw, parent: number | undefined,
     else if (root >= 0 && rootOf(sim, p) === root) sameRoot++;
   }
   if (hasParent && sameRoot >= HZ.ROOT_MAX) return 'depth';
-  if (chainedInShift(sim) + orphanMade + waiting >= CHAIN_SHIFT_MAX) return 'cap';
+  if (chainedInShift(sim) + waiting >= CHAIN_SHIFT_MAX) return 'cap';      // chainedInShift 가 부모 없는 법칙 사건(만든 것 + 예약)도 센다 — 이야기 연쇄도 같은 수를 본다(chain.canChain)
   if (!hasParent && orphanMade + orphanWait >= HZ.ORPHAN_CAP) return 'cap';
   return null;
 }

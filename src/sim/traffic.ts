@@ -9,6 +9,8 @@
 // - (I1-b §3.6b) 초과 혼잡과 그 장부: drift 가 구간마다 "평소 수준을 넘는 몫"을 네 갈래(exOwn·exBump·exQueue·exDiv)로 적고, 몫마다 그 상태를 만든 기록(주인)을 잇는다.
 //   읽는 곳은 일반 법칙 L1(world/laws/road.ts — b3-6)과 측정(scripts/hazstats.ts)뿐이다 — 이 칸들만으로는 결과가 바뀌지 않는다. 판단(관제·지휘관)은 읽지 않는다.
 //   길을 닫거나 느리게 하거나 혼잡을 얹는 자리는 장부 한 줄을 함께 쓴다: noteRoadCause(닫힘·감속·물) · noteBump/addBump(얹은 혼잡). 빠뜨리면 원인 없는 초과(구멍)가 된다.
+// - (I1-b §3.6b (가)) 우회 몰림: 막힌 길을 지나던 차는 우회로로 옮겨 간다 — 실제로 닫힌 구간마다(까닭과 알려짐을 가리지 않는다) 그 구간을 뺀 가장 빠른 길(고정 비용)의 구간들에
+//   통행량만큼의 혼잡을 얹는다(divert → 혼잡의 목표값). 쓰러진 나무에만 손으로 넣어 두었던 "이웃 구간 +0.7" 을 이 일반 규칙이 대신한다. 긴급 차량도 몰린 우회로에서 늦어진다.
 
 import { edgeName, segCross } from './city';
 import type { Sim } from './engine';
@@ -52,7 +54,8 @@ export interface TrafficState {
   base: Float32Array;             // 평소 수준 = clamp(수요 × 시간대 × 교통량 손잡이 + 불법 주차의 병목 0.4, 1, 3)
   exOwn: Float32Array; exBump: Float32Array; exQueue: Float32Array; exDiv: Float32Array;      // 초과의 네 몫: 그 구간 자신의 것(한 차로 병목·정체·차오르는 물) · 밖에서 얹은 혼잡 · 원인 있는 뿌리에서 온 밀림 · 우회 몰림
   excess: Float32Array;           // 네 몫의 합 (닫힌 구간은 0, 혼잡의 상한까지의 여유 3 − base 를 넘지 않는다)
-  divert: Float32Array; divertBy: Int32Array;      // 우회로로 몰린 양 · 가장 크게 보탠 닫힌 구간(-1) — 채우는 것은 b3-5 ② (지금은 0 · -1)
+  divert: Float32Array; divertBy: Int32Array;      // (b3-5 ②) 우회로로 몰린 양 · 가장 크게 보탠 닫힌 구간(-1) — drift 마다 지금 닫힌 구간에서 다시 계산한다(상태를 쌓지 않는다)
+  detours: Map<number, number[]>; detourSig: string;      // 닫힌 구간 → 그 구간을 뺀 가장 빠른 길(우회로)의 구간들. 닫힌 구간의 집합(detourSig)이 같으면 다시 쓴다
   // 항마다의 주인 (기록 · 주인 사건, 없으면 -1) — 구간의 상태를 바꾸는 자리가 noteRoadCause 로 적는다
   closeEv: Int32Array; closeInc: Int32Array;      // 닫힘의 주인 — 닫히지 않은 구간은 drift 가 지운다
   slowEv: Int32Array; slowInc: Int32Array;        // 사건의 현장 감속(slow ≥ 1)의 주인 — slow < 1 이면 drift 가 지운다
@@ -67,8 +70,15 @@ export interface TrafficState {
 export interface BumpRow { id: number; edges: number[]; add: number; ev: number; inc: number; what: 0 | 1 | 2 }
 /** 한 구간의 초과를 이루는 몫 하나: x = 초과 혼잡의 양 · ev = 그 상태를 만든 기록(-1 = 장부의 구멍) · inc = 주인 사건(-1) · ref = 관련 구간(뿌리·닫힌 구간, 그 밖에는 자기 자신) */
 export interface RoadPart { x: number; ev: number; inc: number; what: HzWhat; ref: number }
-/** 우회 몰림의 상한 (b3-5 ② 가 DIV_K·차로 수와 함께 맞춘다) · 물이 차올라 느려진 구간의 초과 */
-export const DIV_MAX = 1.0, LEVEL_EX = 0.8;
+/** 물이 차올라 느려진 구간의 초과 */
+export const LEVEL_EX = 0.8;
+/**
+ * 우회 몰림의 크기 (§3.6b (가) — 설계서의 DIV_K · DIV_MAX. 균형 손잡이라 한 객체에 둔다):
+ * 닫힌 구간 c 의 통행량 vol(c) = LANES[c] × (0.25 + flow[c]) 가 우회로의 구간 e 마다 K × vol(c) / LANES[e] 만큼의 혼잡으로 얹히고, 한 구간에 얹히는 몰림은 MAX 를 넘지 않는다
+ */
+export const DIVERT = { K: 0.8, MAX: 1.0 };
+/** 등급별 차로의 어림 (넓은 길은 같은 차를 덜 밀리며 받는다) */
+export const LANES: Record<string, number> = { highway: 3, arterial: 2, street: 1, local: 0.6 };
 const BUMP_WHAT: readonly HzWhat[] = ['crowd', 'dark', 'haze'];
 
 export const OBSTACLE_LABEL: Record<ObstacleKind, string> = { roadwork: '도로 공사', breakdown: '고장 차량', debris: '낙하물', parked: '불법 주차', rubble: '건물 잔해' };
@@ -184,6 +194,20 @@ function linkedTwice(sim: Sim, tr: TrafficState, a: number, b: number, skip: num
 }
 
 const flowCache = new WeakMap<object, Float32Array>();
+const costCache = new WeakMap<object, Float64Array>();
+/**
+ * 구간의 고정 비용 — 길이 ÷ 속도 × 평소 수요의 절반. 통행량의 어림(throughFlow)과 우회로(detourOf)가 함께 쓴다.
+ * 지도는 고정이므로 한 번만 만든다(그 교대의 혼잡과 무관하다 — 몰림이 비용을 올려 우회로가 12초마다 바뀌는 떨림이 없다)
+ */
+function staticCost(city: City): Float64Array {
+  let c = costCache.get(city.nodes);
+  if (!c || c.length !== city.edges.length) {
+    c = new Float64Array(city.edges.length);
+    for (const e of city.edges) c[e.id] = (e.len / e.speed) * (1 + (e.baseCong - 1) * 0.5);
+    costCache.set(city.nodes, c);
+  }
+  return c;
+}
 /**
  * 구간별 통행량의 어림: 모든 교차로 쌍 사이의 가장 빠른 길이 그 구간을 지나는 횟수 (0..1 로 맞춘다).
  * 차가 많이 다니는 길일수록 짐이 떨어지고 차가 고장 나며, 지름길로 쓰이는 골목일수록 불법 주차가 문제가 된다.
@@ -194,7 +218,7 @@ function throughFlow(sim: Sim): Float32Array {
   const city = sim.city;
   let flow = flowCache.get(city.nodes);
   if (flow) return flow;
-  const n = city.nodes.length, cost = city.edges.map((e) => (e.len / e.speed) * (1 + (e.baseCong - 1) * 0.5));
+  const n = city.nodes.length, cost = staticCost(city);
   flow = new Float32Array(city.edges.length);
   const dist = new Float64Array(n), prev = new Int32Array(n), done = new Uint8Array(n);
   for (let src = 0; src < n; src++) {
@@ -346,12 +370,13 @@ export function initTraffic(sim: Sim): TrafficState {
     crowds: [], railLen: railLength(rail), stationS: 0, trainDir: 1, railRng: rng.fork('rail'), atGate: new Map(), announced: false,
     driftAt: -1,
     base: new Float32Array(nE), exOwn: new Float32Array(nE), exBump: new Float32Array(nE), exQueue: new Float32Array(nE), exDiv: new Float32Array(nE), excess: new Float32Array(nE),
-    divert: new Float32Array(nE), divertBy: new Int32Array(nE).fill(-1),
+    divert: new Float32Array(nE), divertBy: new Int32Array(nE).fill(-1), detours: new Map(), detourSig: '',
     closeEv: new Int32Array(nE).fill(-1), closeInc: new Int32Array(nE).fill(-1), slowEv: new Int32Array(nE).fill(-1), slowInc: new Int32Array(nE).fill(-1), levelEv: new Int32Array(nE).fill(-1),
     bumps: [], nextBumpId: 0,
     qBy: new Int32Array(nE).fill(-1), qEv: new Int32Array(nE).fill(-1), qInc: new Int32Array(nE).fill(-1),
     parts: [], partAt: new Int32Array(nE + 1),
   };
+  staticCost(city);      // (I1-b) 고정 비용은 교대의 도로가 처음 그대로일 때 한 번 만들어 둔다 (지도 열쇠의 캐시 — 시드와 무관하다)
   // 처음의 혼잡: 이 시간대·이 교통량의 평소 수준
   for (const e of city.edges) e.cong = clamp(e.baseCong * tr.tod * sim.tune.trafficMul, 1, 3);
   // 건널목: 철길과 같은 높이로 만나는 일반·이면 도로 (간선·고속화 도로는 고가로 넘는다)
@@ -447,12 +472,67 @@ function drift(sim: Sim): void {
     else q *= 0.75;
     tr.queue[e.id] = q < 0.01 ? 0 : q;
   }
+  detourLoad(sim, tr);      // (I1-b §3.6b (가)) 막힌 길의 차가 우회로로 몰린다
   for (const e of city.edges) {
-    const target = clamp(press[e.id] + tr.queue[e.id] * 1.2, 1, 3);
+    // 우회 몰림은 압력(press)이 아니라 목표값에 더한다 — 압력에 넣으면 2.4 를 넘겨 새 밀림의 뿌리가 되고 밀림이 밀림을 낳는다
+    const target = clamp(press[e.id] + tr.queue[e.id] * 1.2 + Math.min(DIVERT.MAX, tr.divert[e.id]), 1, 3);
     e.cong = clamp(e.cong + (target - e.cong) * 0.35 + rng.range(-0.1, 0.1), 1, 3);
   }
   ledger(sim, tr, jam, neck, src, ring1, q0);      // (I1-b) 초과 혼잡의 네 몫과 그 내력 — 위의 계산(혼잡·밀림·난수)을 건드리지 않고 읽기만 한다
   tr.driftAt = sim.t;
+}
+
+// ───────────────────────── 우회 몰림 (I1-b §3.6b (가)) ─────────────────────────
+
+let dDist = new Float64Array(0), dPrev = new Int32Array(0), dDone = new Uint8Array(0);      // 우회로 다익스트라의 자기 버퍼 (city.findRoute 를 쓰지 않는다 — 그것은 알려진 통제만 피하고 혼잡을 읽는다)
+/** 닫힌 구간 c 의 우회로: c 를 지나지 않고(닫힌 구간은 모두 지나지 않는다) 한쪽 끝에서 다른 쪽 끝으로 가는 가장 빠른 길의 구간들. 고정 비용으로 잰다. 길이 없으면 빈 배열(막다른 가지) */
+function detourOf(city: City, cost: Float64Array, c: RoadEdge): number[] {
+  const n = city.nodes.length;
+  if (dDist.length !== n) { dDist = new Float64Array(n); dPrev = new Int32Array(n); dDone = new Uint8Array(n); }
+  const dist = dDist, prev = dPrev, done = dDone;
+  dist.fill(Infinity); prev.fill(-1); done.fill(0); dist[c.a] = 0;
+  for (let it = 0; it < n; it++) {
+    let u = -1, best = Infinity;
+    for (let i = 0; i < n; i++) if (!done[i] && dist[i] < best) { best = dist[i]; u = i; }
+    if (u < 0 || u === c.b) break;
+    done[u] = 1;
+    for (const id of city.nodes[u].edges) {
+      const e = city.edges[id];
+      if (e.closed) continue;
+      const v = e.a === u ? e.b : e.a, nd = dist[u] + cost[id];
+      if (nd < dist[v]) { dist[v] = nd; prev[v] = id; }
+    }
+  }
+  const path: number[] = [];
+  if (prev[c.b] < 0) return path;
+  for (let cur = c.b, guard = 0; cur !== c.a && prev[cur] >= 0 && guard++ < n;) { const e = city.edges[prev[cur]]; path.push(e.id); cur = e.a === cur ? e.b : e.a; }
+  return path;
+}
+/**
+ * drift 안에서(밀림 계산 다음): 지금 닫힌 구간마다 그 통행량을 우회로의 구간들에 얹는다 — tr.divert(몰린 양)·tr.divertBy(가장 크게 보탠 닫힌 구간).
+ * 닫힌 까닭과 알려졌는가를 가리지 않는다(시민의 차는 가서 보고 돌아선다): 사고 통제·쓰러진 나무·전면 공사·낙하물·잔해·재난 통제 모두 같다.
+ * 상태를 쌓지 않는다 — 통제가 풀리면 다음 drift 에 0 이고 혼잡은 35%씩 따라 내려간다. 난수를 쓰지 않는다. 우회로는 닫힌 구간의 집합이 바뀔 때만 다시 구한다
+ */
+function detourLoad(sim: Sim, tr: TrafficState): void {
+  const city = sim.city, edges = city.edges, n = edges.length;
+  let sig = '';
+  for (let id = 0; id < n; id++) if (edges[id].closed) sig += id + ',';
+  if (sig !== tr.detourSig) {
+    tr.detourSig = sig; tr.detours.clear();
+    if (sig) { const cost = staticCost(city); for (let id = 0; id < n; id++) if (edges[id].closed) tr.detours.set(id, detourOf(city, cost, edges[id])); }
+  }
+  tr.divert.fill(0); tr.divertBy.fill(-1);
+  if (!tr.detours.size) return;
+  const flow = throughFlow(sim), top = new Float32Array(n);
+  for (const [c, path] of tr.detours) {      // 넣은 순서 = 구간 번호 순
+    if (!path.length) continue;      // 우회로가 없는 구간(막다른 가지)은 몰리는 길이 없다
+    const vol = (LANES[edges[c].cls ?? 'street'] ?? 1) * (0.25 + flow[c]);
+    for (const id of path) {
+      const add = (DIVERT.K * vol) / (LANES[edges[id].cls ?? 'street'] ?? 1);
+      tr.divert[id] += add;
+      if (add > top[id]) { top[id] = add; tr.divertBy[id] = c; }
+    }
+  }
 }
 
 // ───────────────────────── 초과 혼잡과 그 장부 (I1-b §3.6b) ─────────────────────────
@@ -591,7 +671,7 @@ function ledger(sim: Sim, tr: TrafficState, jam: Uint8Array, neck: Float32Array,
     const jamX = jam[id] ? Math.max(0, 2.8 - (e.baseCong * mul + neck[id] + bump)) : 0;
     const level = tr.levelEv[id] >= 0 ? LEVEL_EX : 0;
     const que = tr.qBy[id] >= 0 ? 1.2 * tr.queue[id] : 0;
-    const div = Math.min(DIV_MAX, tr.divert[id]);
+    const div = Math.min(DIVERT.MAX, tr.divert[id]);
     const sum = lane + jamX + level + bump + que + div;
     if (!(sum > 0)) { tr.exOwn[id] = 0; tr.exBump[id] = 0; tr.exQueue[id] = 0; tr.exDiv[id] = 0; tr.excess[id] = 0; continue; }
     const room = 3 - tr.base[id], k = sum > room ? Math.max(0, room) / sum : 1;      // 혼잡의 상한까지의 여유를 넘으면 같은 비로 줄인다

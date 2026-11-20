@@ -615,10 +615,14 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
     const w0 = JSON.parse(fresh);
     expect(JSON.stringify(sim.world.zones)).toBe(JSON.stringify(w0.zones));
     expect(sim.world.spawned).toBe(0);
-    // (b3-4) 초과 위험·건물 노출의 칸은 법칙·상태 규칙이 걸리지 않으면 처음 값 그대로다
-    expect([sim.world.hz.cells, sim.world.hz.waiting, sim.world.hz.holes, sim.world.expo, sim.world.sills, sim.world.spans]).toEqual([w0.hz.cells, [], 0, {}, {}, []]);
-    expect(sim.world.log.every((l) => l.rule === 'hospitalLoad' || l.rule === 'rubbleRoad'), '기록되는 규칙은 포화·잔해뿐 (응급실 체류는 줄을 남기지 않는다)').toBe(true);
-    expect(sim.world.log.every((l) => l.made === -1)).toBe(true);
+    // (b3-4) 초과 위험·건물 노출의 칸은 법칙·상태 규칙이 걸리지 않으면 처음 값 그대로다.
+    // (b3-6) 등록된 법칙은 L1 하나 — 초과 혼잡이 있던 구간에만 칸이 생긴다(평소 교대에도 정체·공사·사고의 밀림이 있다). 교대가 끝나면 기다리는 줄도 구멍도 없다
+    expect(w0.hz.cells).toEqual({});
+    expect(Object.keys(sim.world.hz.cells).filter((k) => k !== 'roadCrash')).toEqual([]);
+    for (const id of Object.keys(sim.world.hz.cells.roadCrash ?? {})) expect(sim.city.edges[+id], `구간 ${id}`).toBeDefined();
+    expect([sim.world.hz.waiting, sim.world.hz.holes, sim.world.expo, sim.world.sills, sim.world.spans]).toEqual([[], 0, {}, {}, []]);
+    expect(sim.world.log.every((l) => l.rule === 'hospitalLoad' || l.rule === 'rubbleRoad' || l.rule === 'roadCrash'), '기록되는 규칙은 포화·잔해, 법칙은 몰린 길의 사고뿐 (응급실 체류는 줄을 남기지 않는다)').toBe(true);
+    expect(sim.world.log.every((l) => l.made === -1 || (l.rule === 'roadCrash' && sim.incidents[l.made]?.csq === 'roadCrash')), '사건을 만드는 것은 법칙뿐').toBe(true);
     expect(sim.world.signals.length).toBeLessThan(40);
     // 종료: 닫힌 사건마다 하나, 그 종료 기록과 함께
     const closed = sigs.filter((g) => g.kind === 'closed');
@@ -835,7 +839,8 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
     expect(src('src/sim/scenarios/crime.ts')).toContain("if (!canChain(sim, I)) { noteChainDrop(sim, I, 'fire', 'arson'); return; }");
     // 극한의 무장 강제 교대(재범·도주 차량이 여섯까지 이어진다)에서 실제로 걸린 것은 부모가 있는 줄이고 기록에는 없다
     const { sim } = probedShift('S1', parseDifficulty('extreme')!, 'armed/std');
-    for (const d of sim.gen.dropped) if (d.why === 'depth' || d.why === 'cap') { expect(d.parent).toBeGreaterThanOrEqual(0); expect(['getaway', 'robbery', 'hostage', 'arson']).toContain(d.variant); }
+    // (b3-6) 법칙이 낸 사고의 거절(csq 가 있다)은 따로다 — 이야기 연쇄의 거절만 본다
+    for (const d of sim.gen.dropped) if (d.csq === undefined && (d.why === 'depth' || d.why === 'cap')) { expect(d.parent).toBeGreaterThanOrEqual(0); expect(['getaway', 'robbery', 'hostage', 'arson']).toContain(d.variant); }
   });
   it('구역 값은 덮어쓰기(더 나쁜 쪽만)이고 회복 시각이 지나면 처음 값으로 — 관제는 알려진 칸만 본다', () => {
     const s = new Sim('S4', NORMAL, 1200);

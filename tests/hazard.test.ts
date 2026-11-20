@@ -8,8 +8,9 @@ import { CHAIN_MAX, CHAIN_SHIFT_MAX, canChain, chainedInShift, noteChainDrop } f
 import { NORMAL, parseDisaster } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
+import { findRoute } from '../src/sim/city';
 import { emit } from '../src/sim/events';
-import { createIncident, tickIncidents } from '../src/sim/incidents';
+import { closeIncident, createIncident, tickIncidents } from '../src/sim/incidents';
 import type { SpawnOpts } from '../src/sim/incidents';
 import type { HazardLawId, HzCell, Incident } from '../src/sim/types';
 import { CSQ_SPAWN_CAP, HZ, hazardCell, hazardImpulse, hazardLabel, hazardLaws, registerHazard, ruleLoad, tickHazards } from '../src/sim/world/hazard';
@@ -19,9 +20,10 @@ import { HAZARD_LAWS, checkMetrics, formatLines, hazardShift, summarize } from '
 import { HazProbe, hazJson, hazLines, sumHaz } from '../scripts/hazstats';
 import type { HazCount } from '../scripts/hazstats';
 import { roadSill } from '../src/sim/disaster';
-import { DIV_MAX, LEVEL_EX, addBump, addObstacle, canBlock, noteBump, noteRoadCause, reallyLinked, removeBump, roadParts, unnoteBump } from '../src/sim/traffic';
+import { DIVERT, LANES, LEVEL_EX, addBump, addObstacle, canBlock, noteBump, noteRoadCause, reallyLinked, removeBump, roadFlow, roadParts, unnoteBump } from '../src/sim/traffic';
 import type { RoadPart } from '../src/sim/traffic';
 import type { ShiftMetrics } from '../scripts/metrics';
+import { ROAD, roadSurface, roadWeight } from '../src/sim/world/laws/road';
 
 const T = (name: string): HazardLawId => ('t-' + name) as HazardLawId;
 /** 등록된 법칙을 모두 치우고 시험 법칙만 넣어 fn 을 돌린 뒤 되돌린다 */
@@ -825,6 +827,100 @@ describe('I1-b b3-5 ①: 교통의 장부와 초과의 네 몫', () => {
     for (const k of ring) expect(tr.excess[k]).toBe(0);
   });
 
+  it('우회 몰림(b3-5 ②): 구간 하나를 닫으면 그 우회로의 구간들에만 차가 몰린다 — 통행량이 큰 길이 막힐수록 크고, 상한을 넘지 않으며, 풀면 다음 drift 에 0. 우회로가 없는 구간을 닫아도 예외가 없다', () => {
+    const s = quiet('S7'), tr = s.traffic, edges = s.city.edges, flow = roadFlow(s);
+    drifts(s, 15);
+    for (const e of edges) expect([tr.divert[e.id], tr.divertBy[e.id]]).toEqual([0, -1]);
+    expect([tr.detours.size, tr.detourSig]).toEqual([0, '']);
+    const lanes = (id: number): number => LANES[edges[id].cls!];
+    const vol = (id: number): number => lanes(id) * (0.25 + flow[id]);
+    const shut = (id: number, text: string): number => { const e = edges[id]; e.closed = true; e.closedReason = 'incident'; const ev = note(s, text); noteRoadCause(s, id, 'close', ev); return ev; };
+    const open = (id: number): void => { const e = edges[id]; e.closed = false; e.closedReason = null; };
+    // 통행량이 큰 간선 하나 (막아도 도시가 끊기지 않는 것)
+    const A = edges.filter((e) => e.cls === 'arterial' && canBlock(s, e) && e.gateT === undefined).sort((p, q) => flow[q.id] - flow[p.id] || p.id - q.id)[0];
+    const before = edges.map((e) => e.cong);
+    const evA = shut(A.id, `${A.name} 통제 (시험)`);
+    drifts(s, 12);
+    const path = tr.detours.get(A.id)!;
+    expect(path.length).toBeGreaterThanOrEqual(2);
+    expect(tr.detourSig).toBe(A.id + ',');
+    // 우회로는 닫힌 구간을 지나지 않고 그 양 끝을 잇는다
+    { let cur = A.b; for (const id of path) { const e = edges[id]; expect(e.closed).toBe(false); expect(e.a === cur || e.b === cur, `e${id} 가 이어진다`).toBe(true); cur = e.a === cur ? e.b : e.a; } expect(cur).toBe(A.a); }
+    for (const e of edges) {
+      const on = path.indexOf(e.id) >= 0;
+      if (!on) { expect([tr.divert[e.id], tr.divertBy[e.id], tr.exDiv[e.id]], `우회로 밖 e${e.id}`).toEqual([0, -1, 0]); continue; }
+      expect(tr.divert[e.id]).toBeCloseTo((DIVERT.K * vol(A.id)) / lanes(e.id), 5);      // 좁은 길일수록 같은 차에 더 밀린다
+      expect(tr.divertBy[e.id]).toBe(A.id);
+      expect(tr.exDiv[e.id]).toBeGreaterThan(0);
+      expect(tr.exDiv[e.id]).toBeLessThanOrEqual(DIVERT.MAX + 1e-6);
+      const dp = partsOf(s, e.id).find((q) => q.what === 'divert')!;
+      expect([dp.ev, dp.inc, dp.ref]).toEqual([evA, -1, A.id]);      // 내력: 그 통제의 기록, 관련 구간 = 닫힌 구간
+      expect(dp.x).toBeCloseTo(tr.exDiv[e.id], 6);
+    }
+    // 막다른 가지(우회로가 될 수 없는 구간)에는 몰림이 없다
+    for (const e of edges) if (!reallyLinked(s, e.a, e.b, e.id) && !e.closed) expect(tr.divert[e.id], `막다른 e${e.id}`).toBe(0);
+    // 몰린 길의 혼잡이 따라 오른다 (12초마다 35%씩) — 목표값에 더해질 뿐 밀림의 뿌리가 되지는 않는다(압력에 넣지 않는다)
+    drifts(s, 36);
+    // (닫힌 구간에 닿지 않은 우회로의 가운데 구간은 예전에는 아무 일도 없던 곳이다)
+    for (const id of path) expect(edges[id].cong, `e${id}`).toBeGreaterThan(before[id] + 0.5 * Math.min(DIVERT.MAX, tr.divert[id], 3 - tr.base[id]) - 0.25);
+    // 통행량이 작은 이면 도로를 하나 더 닫는다: 그 우회로에 얹히는 양은 통행량의 비만큼 작다
+    const L = edges.filter((e) => e.cls === 'local' && !e.closed && canBlock(s, e) && path.indexOf(e.id) < 0 && e.gateT === undefined && !tr.obstacles.some((o) => o.edge === e.id)).sort((p, q) => flow[p.id] - flow[q.id] || p.id - q.id)[0];
+    expect(vol(L.id)).toBeLessThan(vol(A.id) / 3);
+    shut(L.id, `${L.name} 통제 (시험)`);
+    drifts(s, 12);
+    expect(tr.detourSig).toBe([A.id, L.id].sort((p, q) => p - q).map((k) => k + ',').join(''));
+    const pathL = tr.detours.get(L.id)!, pathA = tr.detours.get(A.id)!;
+    expect(pathL.length).toBeGreaterThan(0);
+    for (const id of pathL) {
+      const both = pathA.indexOf(id) >= 0;
+      expect(tr.divert[id]).toBeCloseTo((DIVERT.K * (vol(L.id) + (both ? vol(A.id) : 0))) / lanes(id), 5);
+      expect(tr.divertBy[id], '가장 크게 보탠 닫힌 구간').toBe(both ? A.id : L.id);
+    }
+    for (const e of edges) expect(Math.min(DIVERT.MAX, tr.divert[e.id])).toBeLessThanOrEqual(DIVERT.MAX);
+    // 풀면 다음 drift 에 0 이다 (상태를 쌓지 않는다)
+    open(A.id); open(L.id);
+    drifts(s, 12);
+    for (const e of edges) expect([tr.divert[e.id], tr.divertBy[e.id], tr.exDiv[e.id]], `e${e.id}`).toEqual([0, -1, 0]);
+    expect([tr.detours.size, tr.detourSig]).toEqual([0, '']);
+    // 우회로가 없는 구간(막다른 가지)을 닫아도 예외가 없고 몰리는 길도 없다
+    const D = edges.find((e) => !reallyLinked(s, e.a, e.b, e.id))!;
+    shut(D.id, `${D.name} 통제 (시험)`);
+    drifts(s, 12);
+    expect(tr.detours.get(D.id)).toEqual([]);
+    for (const e of edges) expect(tr.divert[e.id]).toBe(0);
+    open(D.id);
+    expect(s.world.hz.holes).toBe(0);
+  });
+
+  it('쓰러진 나무의 "이웃 구간 +0.7" 은 없다 — 이웃이 밀리고 우회로가 몰리는 것은 닫힌 까닭을 가리지 않는 교통 모델의 일반 규칙이다 (나무·공사·낙하물이 같은 길을 막으면 같은 몰림)', () => {
+    const src = readFileSync('src/sim/incidents.ts', 'utf8');
+    expect(/cong\s*\+\s*0\.7/.test(src)).toBe(false);
+    const run1 = (how: 'tree' | 'work' | 'debris'): { c: number; div: number[]; by: number[] } => {
+      const s = quiet('S7'), tr = s.traffic, edges = s.city.edges;
+      drifts(s, 15);
+      const fac = new Set(s.city.facilities.map((f) => f.nodeId));
+      const nd = s.city.nodes.find((q) => !fac.has(q.id) && q.edges.length >= 3 && q.edges.some((k) => edges[k].arterial))!;
+      const pre = nd.edges.map((k) => edges[k].cong);
+      let c: number;
+      if (how === 'tree') {
+        c = createIncident(s, { type: 'traffic', variant: 'tree', nodeId: nd.id }).blockedEdge;
+        expect(nd.edges.map((k) => edges[k].cong), '발생 순간에는 이웃의 혼잡을 손대지 않는다').toEqual(pre);
+      } else {
+        // 같은 구간을 다른 까닭으로 막는다 (그 구간 번호는 나무가 고르는 것과 같다: 간선 먼저 · 번호 작은 것)
+        const es = nd.edges.map((k) => edges[k]).filter((e) => !e.closed && e.cls !== 'highway').sort((a, b) => (b.arterial ? 1 : 0) - (a.arterial ? 1 : 0) || a.id - b.id);
+        c = es[0].id;
+        expect(addObstacle(s, { edge: c, kind: how === 'work' ? 'roadwork' : 'debris', full: true, dur: 300, known: how === 'work' })).not.toBeNull();
+      }
+      drifts(s, 12);
+      return { c, div: Array.from(tr.divert), by: Array.from(tr.divertBy) };
+    };
+    const t = run1('tree'), w = run1('work'), d = run1('debris');
+    expect([w.c, d.c]).toEqual([t.c, t.c]);
+    expect(t.div.some((v) => v > 0)).toBe(true);
+    expect(w.div).toEqual(t.div); expect(d.div).toEqual(t.div);      // 아직 아무도 모르는 낙하물이어도 같다 — 시민의 차는 가서 보고 돌아선다
+    expect(w.by).toEqual(t.by); expect(d.by).toEqual(t.by);
+  });
+
   it('얹은 혼잡의 줄: 인파와 정전이 겹친 구간에서 한쪽을 거두면 e.bump 와 남은 줄이 맞는다 — 줄이 없는 혼잡은 기록 없는 몫이 된다. 한 차로 장애물·정체·차오르는 물의 주인', () => {
     const s = quiet('S7'), tr = s.traffic, edges = s.city.edges;
     drifts(s, 15);
@@ -890,9 +986,12 @@ describe('I1-b b3-5 ①: 교통의 장부와 초과의 네 몫', () => {
       expect(sum).toBeCloseTo(tr.excess[e.id], 5);
       expect(tr.exOwn[e.id] + tr.exBump[e.id] + tr.exQueue[e.id] + tr.exDiv[e.id]).toBeCloseTo(tr.excess[e.id], 5);
       expect(tr.excess[e.id]).toBeLessThanOrEqual(3 - tr.base[e.id] + 1e-5);
-      expect([tr.exDiv[e.id], tr.divert[e.id], tr.divertBy[e.id]], '우회 몰림은 b3-5 ② 가 채운다').toEqual([0, 0, -1]);
+      // 우회 몰림(b3-5 ②): 몰린 양이 있으면 가장 크게 보탠 닫힌 구간이 있고, 그 몫은 상한을 넘지 않는다 (전면 공사로 닫은 e2 의 우회로가 몰려 있다)
+      expect(tr.divert[e.id] > 0, `e${e.id}`).toBe(tr.divertBy[e.id] >= 0);
+      if (tr.divertBy[e.id] >= 0) expect(edges[tr.divertBy[e.id]].closed).toBe(true);
+      expect(tr.exDiv[e.id]).toBeLessThanOrEqual(Math.min(DIVERT.MAX, tr.divert[e.id]) + 1e-6);
     }
-    expect(DIV_MAX).toBe(1);
+    expect(edges.filter((e) => tr.divertBy[e.id] === e2.id).length, '닫힌 e2 의 우회로').toBeGreaterThan(0);
     noteRoadCause(s, e1.id, 'level', -1);
     drifts(s, 12);
     expect(partsOf(s, e1.id).some((p) => p.what === 'level')).toBe(false);
@@ -957,7 +1056,8 @@ describe('I1-b b3-5 ①: 교통의 장부와 초과의 네 몫', () => {
       expect(r.own + r.bump + r.queue + r.div).toBeGreaterThan(1000);
       const tot = r.own + r.bump + r.queue + r.div;
       expect(Math.abs(Object.values(r.byWhat).reduce((a, v) => a + v, 0) - tot) / tot, '갈래별 합 = 네 몫의 합 (배열은 32비트 실수라 상대 오차로 본다)').toBeLessThan(1e-6);
-      expect(r.div).toBe(0);
+      expect(r.div, '닫힌 구간이 있던 교대에는 우회 몰림의 노출량이 있다').toBeGreaterThan(0);
+      expect(r.byWhat.divert).toBeGreaterThan(0);
     }
     expect(runs[1].road!.byWhat.dark, '태풍의 정전').toBeGreaterThan(0);
     for (const k of ['closed', 'slow', 'jam', 'obst', 'dark', 'excess', 'queue', 'tail', 'disasterClose'] as const) expect(seen[k], k).toBeGreaterThan(0);
@@ -1000,6 +1100,59 @@ describe('I1-b b3-5 ①: 교통의 장부와 초과의 네 몫', () => {
     expect(roadSill(f, d, f.city.edges.find((e) => e.bridge)!)).toBe(0.9);
   });
 
+  it('사고가 난 구간이 막힌다(opts.edgeId — §3.6b (다)): 정해 준 구간이 이 교차로에 닿아 있고 열려 있고 고속도로가 아니며 남이 잡지 않았고 막아도 도시가 끊기지 않으면 그 구간을, 아니면 지금 규칙으로 — 정해 주지 않으면 예전 그대로', () => {
+    const s = quiet('S7'), tr = s.traffic, edges = s.city.edges, nodes = s.city.nodes;
+    const fac = new Set(s.city.facilities.map((f) => f.nodeId));
+    const usual = (nd: number): number => {      // 지금 규칙: 간선 먼저 · 번호 작은 것 (알려진 통제만 피해 돌아갈 길이 있는 구간)
+      const es = nodes[nd].edges.map((k) => edges[k]).filter((e) => !e.closed && e.cls !== 'highway').sort((a, b) => (b.arterial ? 1 : 0) - (a.arterial ? 1 : 0) || a.id - b.id);
+      for (const e of es) if (findRoute(s.city, e.a, e.b, 1, e.id)) return e.id;
+      return -1;
+    };
+    const crash = (nd: number, edgeId?: number): Incident => { const I = createIncident(s, { type: 'traffic', variant: 'std', severity: 1, nodeId: nd, edgeId, rng: s.rng.fork('edge-test:' + s.incidents.length) }); I.firstCallAt = Infinity; return I; };
+    // 서로 멀리 떨어진 교차로들: 구간이 넷 이상이고 모두 막아도 되는 일반 구간
+    const picked: number[] = [], far = new Set<number>();
+    for (const q of nodes) {
+      if (picked.length >= 5) break;
+      if (fac.has(q.id) || q.edges.length < 4 || far.has(q.id)) continue;
+      if (!q.edges.every((k) => edges[k].cls !== 'highway' && !edges[k].closed && canBlock(s, edges[k]) && !tr.obstacles.some((o) => o.edge === k))) continue;
+      picked.push(q.id);
+      far.add(q.id); for (const k of q.edges) { const o = edges[k].a === q.id ? edges[k].b : edges[k].a; far.add(o); for (const k2 of nodes[o].edges) far.add(edges[k2].a === o ? edges[k2].b : edges[k2].a); }
+    }
+    expect(picked.length).toBe(5);
+    const [n1, n2, n3, n4, n5] = picked;
+    const notUsual = (nd: number): number => nodes[nd].edges.filter((k) => k !== usual(nd)).sort((a, b) => b - a)[0];
+    // ① 정해 준 구간을 잡는다 (지금 규칙이 고를 구간이 아니어도)
+    const e1 = notUsual(n1), u1 = usual(n1);
+    const I1 = crash(n1, e1);
+    expect([I1.blockedEdge, edges[e1].slow, edges[u1].slow, tr.slowEv[e1], tr.slowInc[e1]]).toEqual([e1, 1.4, 0, I1.rootEvent, I1.id]);
+    // ② 정해 주지 않으면 예전 그대로
+    const u2 = usual(n2);
+    expect(crash(n2).blockedEdge).toBe(u2);
+    // ③ 닫힌 구간 · 이 교차로에 닿지 않은 구간이면 지금 규칙으로
+    const e3 = notUsual(n3);
+    edges[e3].closed = true; edges[e3].closedReason = 'incident'; noteRoadCause(s, e3, 'close', note(s, '시험 통제'));
+    const u3 = usual(n3);
+    const I3 = crash(n3, e3);
+    expect([I3.blockedEdge, edges[e3].slow]).toEqual([u3, 0]);
+    edges[e3].closed = false; edges[e3].closedReason = null;
+    const u4 = usual(n4);
+    expect(crash(n4, nodes[n5].edges[0]).blockedEdge, '닿지 않은 구간').toBe(u4);
+    // ④ 다른 열린 사건이 잡은 구간이면 잡지 않는다 — 대신 고르는 구간도 남이 잡지 않았고 막아도 끊기지 않는다 (법칙이 낸 사고는 지금 규칙에서도 그 둘을 본다)
+    const other = edges[e1].a === n1 ? edges[e1].b : edges[e1].a;
+    const I5 = crash(other, e1);
+    expect(I5.blockedEdge).not.toBe(e1);
+    expect(edges[e1].slow, '감속을 한 번 더 걸지 않는다').toBe(1.4);
+    if (I5.blockedEdge >= 0) { expect(s.incidents.some((q) => q !== I5 && q.phase !== 'closed' && q.blockedEdge === I5.blockedEdge)).toBe(false); expect(canBlock(s, edges[I5.blockedEdge])).toBe(true); }
+    // ⑤ 막으면 끊기는 구간(막다른 가지)은 잡지 않는다 · 고속도로도
+    const D = edges.find((e) => !reallyLinked(s, e.a, e.b, e.id) && !fac.has(e.a) && !fac.has(e.b) && !s.incidents.some((q) => q.truth.nodeId === e.a || q.truth.nodeId === e.b))!;
+    const nD = nodes[D.a].edges.length >= nodes[D.b].edges.length ? D.a : D.b;
+    expect(crash(nD, D.id).blockedEdge).not.toBe(D.id);
+    expect(D.slow).toBe(0);
+    const H = edges.find((e) => e.cls === 'highway' && !fac.has(e.a) && !s.incidents.some((q) => q.truth.nodeId === e.a))!;
+    expect(crash(H.a, H.id).blockedEdge).not.toBe(H.id);
+    expect(H.slow).toBe(0);
+  });
+
   it('소스 글자: 밖에서 혼잡을 얹는 자리는 교통 모델과 재난의 정전 둘뿐이다 (.bump += · .bump = — 장부 없는 혼잡은 구멍이 된다)', () => {
     const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(dir + '/' + e.name) : e.name.endsWith('.ts') ? [dir + '/' + e.name] : []));
     const hits: string[] = [];
@@ -1014,5 +1167,375 @@ describe('I1-b b3-5 ①: 교통의 장부와 초과의 네 몫', () => {
     const dz = readFileSync('src/sim/disaster.ts', 'utf8');
     expect(dz).toContain('d.darkBump = noteBump(');
     expect(dz).toContain('unnoteBump(sim, d.darkBump)');
+  });
+});
+
+// ───────────────────────── b3-6: L1 roadCrash (§3.7 L1 의 시험 ①~⑧ · 개입 시험 §6 I1-b 10) ─────────────────────────
+// 진짜 법칙으로 돈다(가짜 법칙이 아니다). 세기 ROAD.A 는 시험이 키워 쓰고 finally 에서 되돌린다 — 그 사이에는 자기 Sim 만 돌린다.
+describe('I1-b b3-6: L1 roadCrash — 차가 몰린 길에서는 사고가 잦다', () => {
+  const withA = <R>(A: number, fn: () => R): R => { const a0 = ROAD.A; ROAD.A = A; try { return fn(); } finally { ROAD.A = a0; } };
+  const A0 = ROAD.A;
+  /** 실제로 돌린다 — 교통 모델이 혼잡을 다시 계산한 뒤의 1초 블록(법칙이 그 주기를 적분한 틱)마다 each */
+  function cycles(s: Sim, sec: number, each?: () => void): number {
+    let n = 0;
+    const end = s.tick + sec * 5;
+    while (s.tick < end && !s.ended) { const was = s.world.hz.roadAt; s.step(); if (s.world.hz.roadAt !== was) { n++; if (each) each(); } }
+    return n;
+  }
+  const partsOf = (s: Sim, id: number): RoadPart[] => { const buf: RoadPart[] = []; buf.length = roadParts(s, id, buf); return buf; };
+  const weightOf = (s: Sim, id: number): number => roadWeight(s.city.edges[id], roadFlow(s)[id], roadSurface(s));
+  /** 그 구간이 쌓아 온 위험의 합 = 칸의 H + 이미 넘은 문턱들 (문턱은 (시드, 법칙, 구간, 몇 번째)만의 함수라 다시 뽑아 셀 수 있다) */
+  const cum = (s: Sim, id: number): number => {
+    const c = hazardCell(s, 'roadCrash', id);
+    if (!c) return 0;
+    let h = c.H;
+    for (let j = 0; j < c.n; j++) h += -Math.log(1 - s.rng.fork('hz:roadCrash:' + id + ':' + j).next());
+    return h;
+  };
+  /** 교통 사건만 돌던 교대를 T 초에 얼리고(새 교통 사건·평소 사건·대형 사고 없음) 통행량이 가장 큰 간선에 나무를 쓰러뜨린다 */
+  function treeShift(seed: string, T: number): { s: Sim; I: Incident; c: number } {
+    const s = new Sim(seed, NORMAL, 1200);
+    s.gen.nextAt = s.gen.majorAt = Infinity; s.gen.nextNuisanceAt = Infinity;
+    while (s.t < T) s.step();
+    s.traffic.nextEvent = Infinity;
+    const edges = s.city.edges, flow = roadFlow(s), fac = new Set(s.city.facilities.map((f) => f.nodeId));
+    let best = -1, bf = -1;
+    for (const nd of s.city.nodes) {
+      if (fac.has(nd.id) || nd.edges.length < 3) continue;
+      const es = nd.edges.map((k) => edges[k]).filter((e) => !e.closed && e.cls !== 'highway').sort((a, b) => (b.arterial ? 1 : 0) - (a.arterial ? 1 : 0) || a.id - b.id);
+      if (!es.length || !es[0].arterial || !canBlock(s, es[0]) || s.traffic.obstacles.some((o) => o.edge === es[0].id)) continue;
+      if (flow[es[0].id] > bf) { bf = flow[es[0].id]; best = nd.id; }
+    }
+    const I = createIncident(s, { type: 'traffic', variant: 'tree', nodeId: best });
+    return { s, I, c: I.blockedEdge };
+  }
+
+  it('등록: 법칙 모음의 첫 줄이 roadCrash 다 — 12초 주기 · 구간마다 몇 번이고 · 교대 상한 3. 가중은 통행량 × 노면·시야 × 길이이고 측정 도구가 같은 식을 쓴다', () => {
+    const law = hazardLaws()[0];
+    expect([law.id, law.every, law.once, law.cap, law.label, hazardLabel('roadCrash')]).toEqual(['roadCrash', 12, false, 3, '몰린 길의 사고', '몰린 길의 사고']);
+    expect(readFileSync('src/sim/world/laws/index.ts', 'utf8')).toMatch(/^import '\.\/road';/m);
+    expect(A0).toBeGreaterThan(1e-5); expect(A0).toBeLessThan(6e-5);
+    const e = { len: 150 } as Sim['city']['edges'][number];
+    expect(roadWeight(e, 0.5, 1)).toBeCloseTo(1.2, 9);                                             // V = 0.4 + 1.6 × 통행량
+    expect([roadWeight({ ...e, len: 30 }, 0.5, 1), roadWeight({ ...e, len: 900 }, 0.5, 1)].map((v) => +v.toFixed(6))).toEqual([0.6, 2.4]);      // ℓ = clamp(길이 / 150, 0.5, 2)
+    // 노면·시야: 맑은 낮 1 · 비 (1/0.88)² · 안개 (1/0.84)² · 밤 1.2 — 난이도의 차량 속도 손잡이는 약분돼 빠진다
+    const want: Record<string, number> = { clear: 1, rain: 1 / 0.88 ** 2, fog: 1 / 0.84 ** 2, night: 1.2 };
+    const seen = new Set<string>();
+    for (let k = 0; k < 40 && seen.size < 4; k++) { const s = new Sim('S' + k, NORMAL, 1200); if (seen.has(s.weather)) continue; seen.add(s.weather); expect(roadSurface(s), s.weather).toBeCloseTo(want[s.weather], 9); }
+    expect(seen.size).toBe(4);
+    const hs = readFileSync('scripts/hazstats.ts', 'utf8');
+    expect(hs).toContain("from '../src/sim/world/laws/road'");
+    expect(/0\.4 \+ 1\.6/.test(hs), '측정 도구에 가중의 식을 따로 쓰지 않는다').toBe(false);
+  });
+
+  it('① 평소의 도로에는 위험이 쌓이지 않는다: 교통 사건·사건·재난이 없으면 칸도 난수도 사건도 없다 — 세기를 천 배로 키워도, 날씨가 나빠도(초과분에만 곱한다), 수요만으로 꽉 찬 길 곁에서도', () => {
+    withA(A0 * 1000, () => {
+      // 날씨가 나쁜 교대를 둘 — 날씨만으로는 사고가 나지 않는다
+      const bad: Sim[] = [];
+      for (let k = 0; k < 40 && bad.length < 2; k++) { const s = quiet('S' + k); if (s.weather !== 'clear' && !bad.some((q) => q.weather === s.weather)) bad.push(s); }
+      for (const s of [quiet('S7'), ...bad]) {
+        const n = cycles(s, 300, () => { for (const e of s.city.edges) expect(s.traffic.excess[e.id]).toBe(0); });
+        expect(n).toBeGreaterThanOrEqual(24);
+        expect(s.world.hz.cells.roadCrash, s.weather).toBeUndefined();
+        expect([lawInc(s).length, s.world.hz.holes, s.gen.dropped.length, s.world.log.length]).toEqual([0, 0, 0, 0]);
+      }
+      // 수요만으로 꽉 찬 구간(평소의 뿌리)의 이웃은 밀리지만 그 밀림은 초과가 아니다 — 그 위에 혼잡을 얹어도 이웃의 위험은 0 이다
+      const s = quiet('S7'), tr = s.traffic, edges = s.city.edges;
+      cycles(s, 15);
+      const nb = (id: number): number[] => { const e = edges[id], out: number[] = []; for (const nd of [e.a, e.b]) for (const k of s.city.nodes[nd].edges) if (k !== id && out.indexOf(k) < 0) out.push(k); return out; };
+      const E = edges.find((e) => e.cls === 'arterial' && !e.closed && nb(e.id).every((k) => !edges[k].closed))!;
+      E.baseCong = 6;
+      cycles(s, 60);
+      addBump(s, [E.id], 0.8, note(s, '시험으로 얹은 혼잡'), 0);
+      cycles(s, 36);
+      for (const k of nb(E.id)) { expect(tr.queue[k]).toBeGreaterThan(0.5); expect([tr.exQueue[k], hazardCell(s, 'roadCrash', k)]).toEqual([0, null]); }
+      expect(s.world.hz.cells.roadCrash).toBeUndefined();
+      expect(lawInc(s).length).toBe(0);
+    });
+  });
+
+  it('② 구간 하나를 닫으면 우회로와 이웃의 구간에 위험이 쌓인다: H = A × 초과 × 통행량 × 노면 × 길이 × 12초 — 닫힌 구간 자신과 초과가 없는 구간에는 칸이 없다. 통제를 풀면 적분이 멎는다(H 는 그대로)', () => {
+    withA(A0 / 1000, () => {      // 문턱을 넘지 않을 만큼 작게 — 적분만 본다
+      const s = quiet('S7'), tr = s.traffic, edges = s.city.edges;
+      cycles(s, 15);
+      const A = edges.filter((e) => e.cls === 'arterial' && canBlock(s, e) && e.gateT === undefined).sort((p, q) => roadFlow(s)[q.id] - roadFlow(s)[p.id] || p.id - q.id)[0];
+      A.closed = true; A.closedReason = 'incident';
+      const ev = note(s, `${A.name} 통제 (시험)`);
+      noteRoadCause(s, A.id, 'close', ev);
+      const want = new Map<number, number>();
+      const n = cycles(s, 48, () => { for (const e of edges) if (tr.excess[e.id] > 0) want.set(e.id, (want.get(e.id) ?? 0) + ROAD.A * tr.excess[e.id] * weightOf(s, e.id) * 12); });
+      expect(n).toBe(4);
+      const path = tr.detours.get(A.id)!;
+      expect(path.length).toBeGreaterThan(0);
+      for (const id of path) { expect(tr.exDiv[id], `우회로 e${id}`).toBeGreaterThan(0); expect(tr.divertBy[id]).toBe(A.id); expect(want.has(id)).toBe(true); }
+      const ring = edges.filter((e) => !e.closed && (e.a === A.a || e.b === A.a || e.a === A.b || e.b === A.b));
+      for (const e of ring) { expect(tr.exQueue[e.id], `이웃 e${e.id}`).toBeGreaterThan(0); expect([tr.qBy[e.id], tr.qEv[e.id]]).toEqual([A.id, ev]); }
+      expect(want.size).toBeGreaterThanOrEqual(ring.length);
+      for (const e of edges) {
+        const c = hazardCell(s, 'roadCrash', e.id);
+        if (!want.has(e.id)) { expect(c, `초과가 없던 e${e.id}`).toBeNull(); continue; }
+        expect(c!.n).toBe(0);
+        expect(c!.H / want.get(e.id)!, `e${e.id}`).toBeCloseTo(1, 6);
+        expect(c!.since).toBeGreaterThan(15);
+      }
+      expect(hazardCell(s, 'roadCrash', A.id), '닫힌 구간에는 차가 다니지 않는다').toBeNull();
+      // 통제를 푼다: 우회 몰림은 다음 주기에 0 — 우회로의 가운데 구간은 적분이 멎고(since −1) H 는 그대로다. 이웃은 밀림이 빠지는 동안 조금 더 쌓인다
+      A.closed = false; A.closedReason = null;
+      const far = path.filter((id) => !ring.some((e) => e.id === id) && tr.exQueue[id] === 0);
+      const H0 = far.map((id) => hazardCell(s, 'roadCrash', id)!.H);
+      cycles(s, 24);
+      for (let k = 0; k < far.length; k++) expect([hazardCell(s, 'roadCrash', far[k])!.H, hazardCell(s, 'roadCrash', far[k])!.since]).toEqual([H0[k], -1]);
+      expect(tr.closeEv[A.id]).toBe(-1);
+      for (const e of ring) if (tr.exQueue[e.id] > 0) expect(tr.qEv[e.id], '밀림의 꼬리는 그 통제의 것').toBe(ev);
+      expect([lawInc(s).length, s.world.hz.holes]).toEqual([0, 0]);
+    });
+  });
+
+  it('⑧ 인파와 꺼진 신호가 겹친 길의 사고: 큰 몫(인파)이 원인이고 다른 몫(꺼진 신호)도 원인으로 이어진다 — 꺼진 신호가 먼저 끝나면 남은 몫은 인파뿐이다. 주인 사건이 없어 부모가 없다. 사고는 몰린 그 구간을 막는다', () => {
+    const run1 = (darkEnds: boolean): void => {
+      const s = quiet('S7'), tr = s.traffic, edges = s.city.edges;
+      const fac = new Set(s.city.facilities.map((f) => f.nodeId));
+      withA(0, () => {
+        cycles(s, 15);
+        const E = edges.find((e) => e.cls === 'street' && !e.closed && e.gateT === undefined && !fac.has(e.a) && !fac.has(e.b) && canBlock(s, e) && e.baseCong * tr.tod * s.tune.trafficMul < 1.3 && !tr.obstacles.some((o) => o.edge === e.id))!;
+        const evC = note(s, '행사장 주변에 인파가 몰려 길이 밀립니다.'), evD = note(s, '정전 — 신호등이 꺼졌습니다.');
+        addBump(s, [E.id], 0.8, evC, 0);
+        const dark = addBump(s, [E.id], 0.3, evD, 1);
+        cycles(s, 12);
+        expect(partsOf(s, E.id).map((p) => p.what)).toEqual(['crowd', 'dark']);
+        expect(lawInc(s).length, '세기가 0 이면 아무 일도 없다').toBe(0);
+        if (darkEnds) { removeBump(s, dark); cycles(s, 12); expect(partsOf(s, E.id).map((p) => p.what)).toEqual(['crowd']); }
+        ROAD.A = 1;      // 다음 주기에 반드시 넘는다
+        const n0 = s.incidents.length;
+        while (s.incidents.length === n0 && s.t < 80) s.step();
+        ROAD.A = 0;
+        const J = s.incidents[n0];
+        expect(J, '문턱을 넘은 그 틱에 사건이 된다').toBeDefined();
+        expect([J.csq, J.truth.type, J.hz!.law, J.hz!.target, J.hz!.at, J.createdAt]).toEqual(['roadCrash', 'traffic', 'roadCrash', E.id, s.t, s.t]);
+        expect(['std', 'bus']).toContain(J.truth.variant);
+        expect(J.truth.severity).toBe(J.truth.variant === 'bus' ? 3 : 1);      // 일반 도로 · 초과 1.2 아래 (버스가 끼면 3)
+        expect(J.hz!.src.map((x) => [x.what, x.ev, x.inc, x.ref])).toEqual(darkEnds ? [['crowd', evC, -1, E.id]] : [['crowd', evC, -1, E.id], ['dark', evD, -1, E.id]]);
+        if (!darkEnds) expect(J.hz!.src[0].w / J.hz!.src[1].w).toBeCloseTo(0.8 / 0.3, 6);      // 몫의 비 = 얹은 양의 비
+        expect([J.cause, J.parent]).toEqual([evC, undefined]);
+        expect(s.events[J.rootEvent].causes).toEqual(darkEnds ? [evC] : [evC, evD]);
+        expect(s.events[J.rootEvent].text.startsWith('인파로 막힌 길에서 사고가 났습니다 — ')).toBe(true);
+        expect(s.events[J.rootEvent].truth).toBe(true);
+        expect([E.a, E.b]).toContain(J.truth.nodeId);
+        expect([J.blockedEdge, E.slow, tr.slowEv[E.id], tr.slowInc[E.id]], '몰린 그 구간이 막힌다').toEqual([E.id, 1.4, J.rootEvent, J.id]);
+        expect(s.world.log[s.world.log.length - 1]).toMatchObject({ rule: 'roadCrash', ev: evC, inc: -1, made: J.id, depth: 0 });
+        expect(hazardCell(s, 'roadCrash', E.id)!.n).toBe(1);
+        expect(s.world.hz.holes).toBe(0);
+      });
+    };
+    run1(false); run1(true);
+  });
+
+  it('⑥ 양 끝 교차로에 열린 사건이 있으면 기다린다 — 초과가 끝나도 버려지지 않고, 하나가 닫히면 다음 1초 블록에 넘는 순간의 몫으로 난다. 마감 60초가 지나면 expired', () => {
+    const setup = (): { s: Sim; E: number; evC: number; Ia: Incident; Ib: Incident; bump: number } => {
+      const s = quiet('S7'), tr = s.traffic, edges = s.city.edges, places = s.city.places;
+      const fac = new Set(s.city.facilities.map((f) => f.nodeId));
+      const home = (node: number): number => { const p = places.find((q) => q.nodeId === node && q.facility < 0 && (q.kind === 'houseS' || q.kind === 'houseL' || q.kind === 'villa' || q.kind === 'apartment')); return p ? p.id : -1; };
+      ROAD.A = 0;
+      cycles(s, 15);
+      const E = edges.find((e) => e.cls === 'street' && !e.closed && e.gateT === undefined && !fac.has(e.a) && !fac.has(e.b) && canBlock(s, e) && e.baseCong * tr.tod * s.tune.trafficMul < 1.3 && !tr.obstacles.some((o) => o.edge === e.id) && home(e.a) >= 0 && home(e.b) >= 0)!;
+      // 양 끝 교차로의 집에 사건을 하나씩 (신고가 들어오지 않게 얼려 둔다 — 열린 채 남는다)
+      const Ia = createIncident(s, { type: 'medical', variant: 'faint', placeId: home(E.a), rng: s.rng.fork('ta') });
+      const Ib = createIncident(s, { type: 'medical', variant: 'faint', placeId: home(E.b), rng: s.rng.fork('tb') });
+      Ia.firstCallAt = Ib.firstCallAt = Infinity;
+      expect([Ia.truth.nodeId, Ib.truth.nodeId]).toEqual([E.a, E.b]);
+      const evC = note(s, '행사장 주변에 인파가 몰려 길이 밀립니다.');
+      const bump = addBump(s, [E.id], 0.8, evC, 0);
+      ROAD.A = 1;
+      while (!s.world.hz.waiting.length && s.t < 60) s.step();      // 다음 주기에 넘는다 — 양 끝이 모두 바빠 자리가 없다
+      ROAD.A = 0;
+      return { s, E: E.id, evC, Ia, Ib, bump };
+    };
+    withA(0, () => {
+      {
+        const { s, E, evC, Ia, bump } = setup();
+        expect(s.world.hz.waiting.map((w) => [w.law, w.target, w.n, w.until - s.t, w.parts.map((p) => [p.what, p.ev])])).toEqual([['roadCrash', E, 0, HZ.HOLD, [['crowd', evC]]]]);
+        expect([lawInc(s).length, hazardCell(s, 'roadCrash', E)!.n, ruleLoad(s, 'roadCrash')]).toEqual([0, 1, 1]);
+        // 초과가 끝난다(인파가 흩어졌다) — 기다리는 줄은 그대로다
+        removeBump(s, bump);
+        cycles(s, 24);
+        expect([s.traffic.excess[E], s.world.hz.waiting.length, lawInc(s).length]).toEqual([0, 1, 0]);
+        // 한쪽 교차로의 사건이 닫힌다 → 다음 1초 블록에 그 교차로에서 난다
+        closeIncident(s, Ia, 'resolved');
+        const t0 = s.t, n0 = s.incidents.length;
+        while (s.incidents.length === n0 && s.t < t0 + 3) s.step();
+        const J = s.incidents[n0];
+        expect(J).toBeDefined();
+        expect(s.t - t0).toBeLessThanOrEqual(1.001);
+        expect([J.csq, J.truth.nodeId, J.hz!.target, J.hz!.at, J.cause, s.world.hz.waiting.length]).toEqual(['roadCrash', s.city.edges[E].a, E, s.t, evC, 0]);
+        expect(J.hz!.src.map((x) => [x.what, x.ev])).toEqual([['crowd', evC]]);
+        expect(s.gen.dropped.length).toBe(0);
+      }
+      {
+        const { s, E } = setup();
+        const t0 = s.t;
+        while (s.world.hz.waiting.length && s.t < t0 + 70) s.step();
+        expect(s.t - t0).toBeGreaterThanOrEqual(HZ.HOLD - 0.01); expect(s.t - t0).toBeLessThan(HZ.HOLD + 1.2);
+        expect(s.gen.dropped.map((d) => [d.why, d.csq])).toEqual([['expired', 'roadCrash']]);
+        expect([lawInc(s).length, ruleLoad(s, 'roadCrash'), hazardCell(s, 'roadCrash', E)!.n]).toEqual([0, 0, 1]);
+        expect(s.events.some((x) => x.kind === 'incident' && /인파로 막힌 길/.test(x.text)), '일어나지 않은 일은 기록하지 않는다').toBe(false);
+      }
+    });
+  });
+
+  it('⑦-가 법칙이 고른 구간을 다른 열린 사건이 잡고 있으면 그 구간을 잡지 않는다 — 대신 고른 구간도 남이 잡지 않았고 막아도 도시가 끊기지 않는다', () => {
+    withA(0, () => {
+      const s = quiet('S7'), tr = s.traffic, edges = s.city.edges;
+      const fac = new Set(s.city.facilities.map((f) => f.nodeId));
+      cycles(s, 15);
+      // 평소의 사고 하나: 그 사고가 잡은 구간(감속 중)이 E 다
+      const nd = s.city.nodes.find((q) => !fac.has(q.id) && q.edges.length >= 3 && q.edges.every((k) => { const e = edges[k], o = e.a === q.id ? e.b : e.a; return !fac.has(o) && s.city.nodes[o].edges.length >= 3 && e.cls !== 'highway'; }))!;
+      const P = createIncident(s, { type: 'traffic', variant: 'std', severity: 1, nodeId: nd.id, rng: s.rng.fork('tp') });
+      P.firstCallAt = Infinity;
+      const E = edges[P.blockedEdge], other = E.a === nd.id ? E.b : E.a;
+      expect([E.slow, tr.slowInc[E.id]]).toEqual([1.4, P.id]);
+      const evC = note(s, '행사장 주변에 인파가 몰려 길이 밀립니다.');
+      addBump(s, [E.id], 0.8, evC, 0);
+      ROAD.A = 1;
+      const n0 = s.incidents.length;
+      while (s.incidents.length === n0 && s.t < 60) s.step();
+      ROAD.A = 0;
+      const J = s.incidents.find((q) => q.hz !== undefined && q.hz.target === E.id)!;
+      expect(J).toBeDefined();
+      expect(J.truth.nodeId, '사건이 열려 있는 끝은 피한다').toBe(other);
+      expect(J.blockedEdge).not.toBe(E.id);
+      expect(E.slow, '남이 잡은 구간에 감속을 한 번 더 걸지 않는다').toBe(1.4);
+      if (J.blockedEdge >= 0) {
+        const b = edges[J.blockedEdge];
+        expect(b.a === other || b.b === other).toBe(true);
+        expect(s.incidents.some((q) => q !== J && q.phase !== 'closed' && q.blockedEdge === b.id)).toBe(false);
+        expect(canBlock(s, b)).toBe(true);
+      }
+    });
+  });
+
+  it('⑦·⑤ 나무 → 사고 → 사고: 사슬은 세 건에서 끊긴다(depth — H 가 문턱만큼 줄고 n 이 는다. 기록은 없다) — 통제가 걸릴 때마다 모든 교차로에 큰 차가 닿는다', () => {
+    withA(3e-4, () => {
+      const { s, I } = treeShift('S7', 150), edges = s.city.edges, F0 = s.city.facilities[0].nodeId;
+      const sigOf = (): string => { let g = ''; for (const e of edges) if (e.closed) g += e.id + ','; return g; };
+      const everyNode = (): boolean => s.city.nodes.every((nd) => reallyLinked(s, F0, nd.id, -1, true));
+      let sig = sigOf(), stable = false, changes = 0, checks = 0, drops = 0;
+      const sigs = new Set<string>([sig]);
+      let snap = new Map<number, { n: number; H: number; thr: number }>();
+      const shoot = (): void => { snap = new Map(); for (const [k, c] of Object.entries(s.world.hz.cells.roadCrash ?? {})) snap.set(+k, { n: c.n, H: c.H, thr: c.thr }); };
+      shoot();
+      const t0 = s.t;
+      while (s.t < t0 + 400 && !s.ended) {
+        const nInc = s.incidents.length, nDrop = s.gen.dropped.length, roadAt = s.world.hz.roadAt;
+        s.step();
+        // 법칙이 낸 사고가 잡은 구간은 다른 열린 사건의 구간이 아니다
+        for (let k = nInc; k < s.incidents.length; k++) { const J = s.incidents[k]; if (J.hz && J.blockedEdge >= 0) expect(s.incidents.some((q) => q !== J && q.phase !== 'closed' && q.blockedEdge === J.blockedEdge)).toBe(false); }
+        // 상한에 걸려 버린 넘음: 그 구간의 칸은 사건이 난 것과 같게 넘어간다 (H −= thr, n++)
+        if (s.world.hz.roadAt !== roadAt) {
+          if (s.gen.dropped.length > nDrop) {
+            for (const [k, c] of Object.entries(s.world.hz.cells.roadCrash!)) {
+              const id = +k, was = snap.get(id);
+              if (!was || c.n !== was.n + 1 || s.gen.chain.some((q) => q.opts.hz?.target === id) || s.incidents.slice(nInc).some((J) => J.hz?.target === id)) continue;
+              const dH = ROAD.A * s.traffic.excess[id] * weightOf(s, id) * 12;
+              expect(c.H, `e${id}`).toBeCloseTo(was.H + dH - was.thr, 8);
+              drops++;
+            }
+          }
+          shoot();
+        }
+        const g = sigOf();
+        if (g !== sig) { sig = g; sigs.add(g); changes++; stable = false; continue; }
+        // 통제가 바뀐 다음의 1초 블록부터(하나 남은 길을 막게 된 장애물은 교통 모델이 1초 안에 치운다) 그리고 5초마다
+        if (!stable || s.tick % 25 === 0) { if (!stable && s.tick % 5 !== 1) continue; checks++; expect(everyNode(), `t=${s.t} 닫힌 구간 ${g}`).toBe(true); stable = true; }
+      }
+      const law = lawInc(s);
+      const J1 = law.find((J) => J.parent === I.id)!, J2 = law.find((J) => J1 && J.parent === J1.id)!;
+      expect(J1, '나무의 통제로 몰린 길의 사고').toBeDefined();
+      expect(J2, '그 사고로 밀린 길의 사고').toBeDefined();
+      expect([J1.cause, J1.hz!.src[0].what]).toEqual([I.blockEv, 'divert']);
+      expect(s.events[J2.rootEvent].causes.some((ev) => s.events[ev].incidentId === J1.id), '둘째 사고의 원인은 첫 사고가 남긴 기록(감속·통제)').toBe(true);
+      expect([chainedInShift(s) <= CHAIN_SHIFT_MAX, law.length <= 3]).toEqual([true, true]);
+      // 셋째는 없다: 깊이 2 의 사건(J2)이 주인인 초과는 depth 로, 같은 나무에서 난 셋째 가지도 depth 로 버려진다
+      const dr = s.gen.dropped.filter((d) => d.csq === 'roadCrash');
+      expect(dr.some((d) => d.why === 'depth' && d.parent === J2.id)).toBe(true);
+      expect(dr.every((d) => d.why === 'depth' || d.why === 'cap')).toBe(true);
+      expect(law.every((J) => J.parent === undefined || J.parent === I.id || J.parent === J1.id)).toBe(true);
+      expect(drops).toBeGreaterThan(0);
+      expect(s.events.filter((x) => x.kind === 'incident' && s.incidents[x.incidentId]?.hz).length, '버린 일은 기록에 없다').toBe(law.length);
+      expect(changes).toBeGreaterThanOrEqual(3);      // 나무가 치워짐 · 첫 사고의 전면 통제 · 둘째 사고의 전면 통제 …
+      expect(sigs.size).toBeGreaterThanOrEqual(3);
+      expect(checks).toBeGreaterThan(50);
+      expect(s.world.hz.holes).toBe(0);
+    });
+  }, 60000);
+
+  it('③ 개입 시험 — 쓰러진 나무(사용자의 예 ①): 같은 시드에서 나무가 길에 만든 상태(통제와 감속)만 되돌리면 그 원인의 사고가 없다 — 장부는 손대지 않는다. 장부만 지운 대조에서는 위험은 그대로이고 구멍이 는다', () => {
+    withA(7.5e-5, () => {
+      const A = treeShift('S7', 150), B = treeShift('S7', 150), C = treeShift('S7', 150);
+      expect([B.s.logHash, C.s.logHash, B.I.id, B.c, C.c]).toEqual([A.s.logHash, A.s.logHash, A.I.id, A.c, A.c]);      // 여기까지 같은 교대, 같은 사건 번호, 같은 구간
+      const c = A.c, blockEv = A.I.blockEv!;
+      expect(A.s.events[blockEv].text).toContain('쓰러진 나무가 길을 막았습니다');
+      // B: 나무가 길에 만든 상태를 모두 되돌린다 (사건·현장·사건 번호는 그대로. 장부는 다음 주기가 상태를 보고 스스로 비운다)
+      { const e = B.s.city.edges[c]; e.closed = false; e.closedReason = null; e.slow = Math.max(0, e.slow - 1.4); B.I.blockedEdge = -1; }
+      expect([B.s.traffic.closeEv[c], B.s.traffic.slowEv[c]]).toEqual([blockEv, B.I.rootEvent]);
+      // C(대조): 상태는 두고 장부만 지운다 — 원인 꼬리표를 지우는 것으로는 위험이 사라지지 않는다
+      noteRoadCause(C.s, c, 'close', -1); noteRoadCause(C.s, c, 'slow', -1);
+      const touched = new Set<number>();      // A 에서 그 통제가 올리던 구간 (우회로·밀린 이웃)
+      let samples = 0, firstA = -1;
+      const t0 = A.s.t;
+      while (A.s.t < t0 + 400) {
+        const was = A.s.world.hz.roadAt;
+        A.s.step(); B.s.step(); C.s.step();
+        if (firstA < 0 && lawInc(A.s).length) firstA = A.s.t;
+        if (A.s.world.hz.roadAt === was || firstA >= 0) continue;
+        // A 의 첫 법칙 사건 전까지의 표본: 그 통제가 올리던 구간에서 B 의 위험은 A 를 넘지 않는다
+        const tr = A.s.traffic;
+        for (const e of A.s.city.edges) if (tr.divertBy[e.id] === c || tr.qBy[e.id] === c) touched.add(e.id);
+        samples++;
+        for (const id of touched) {
+          expect(cum(B.s, id), `t=${A.s.t} e${id}`).toBeLessThanOrEqual(cum(A.s, id) + 1e-12);
+          if (C.s.world.hz.holes === 0) expect(cum(C.s, id), `대조 e${id}`).toBeCloseTo(cum(A.s, id), 12);
+        }
+        if (samples === 1) { expect([B.s.traffic.closeEv[c], B.s.traffic.slowEv[c]], '장부는 스스로 비워진다').toEqual([-1, -1]); for (const e of B.s.city.edges) expect([B.s.traffic.divertBy[e.id] === c, B.s.traffic.qBy[e.id] === c]).toEqual([false, false]); }
+      }
+      expect(samples).toBeGreaterThanOrEqual(3);
+      expect(touched.size).toBeGreaterThanOrEqual(5);
+      expect([...touched].some((id) => cum(A.s, id) > cum(B.s, id) + 1e-6)).toBe(true);
+      // ① A: 그 통제로 몰린 길의 사고 — 원인은 통제 기록, 부모는 나무 사건
+      const ofTree = (J: Incident): boolean => J.hz !== undefined && J.hz.src.some((x) => x.ref === c && (x.what === 'divert' || x.what === 'queue'));
+      const JA = lawInc(A.s).filter(ofTree);
+      expect(JA.length).toBeGreaterThanOrEqual(1);
+      const J = JA[0];
+      expect([J.csq, J.cause, J.parent, J.truth.type]).toEqual(['roadCrash', blockEv, A.I.id, 'traffic']);
+      expect(A.s.events[J.rootEvent].causes[0]).toBe(blockEv);
+      expect(A.s.events[J.rootEvent].text).toMatch(/^(막힌 길을 피해 몰린 차들 사이에서 사고가 났습니다|길게 밀린 차들의 꼬리에서 추돌 사고가 났습니다) — /);
+      expect(J.hz!.at).toBe(J.createdAt);
+      for (const x of J.hz!.src) { expect(x.since).toBeGreaterThanOrEqual(A.s.events[blockEv].t); expect(x.since).toBeLessThanOrEqual(J.hz!.at); }
+      expect(touched.has(J.hz!.target)).toBe(true);
+      expect([J.truth.nodeId === A.s.city.edges[J.hz!.target].a || J.truth.nodeId === A.s.city.edges[J.hz!.target].b, J.blockedEdge]).toEqual([true, J.hz!.target]);
+      // ② B: 어느 사건의 내력에도 그 구간이나 그 통제 기록이 없다
+      for (const Q of B.s.incidents) { if (!Q.hz) continue; expect(Q.hz.src.some((x) => x.ref === c || x.ev === blockEv), `B #${Q.code}`).toBe(false); expect(Q.cause).not.toBe(blockEv); }
+      expect(lawInc(B.s).filter((Q) => Q.parent === B.I.id).length).toBe(0);
+      // ⑤ 두 쪽 모두 장부의 구멍이 없다
+      expect([A.s.world.hz.holes, B.s.world.hz.holes]).toEqual([0, 0]);
+      // ⑥ 대조: 위험은 그대로라 같은 구간에서 문턱을 넘지만, 원인 기록이 없어 사건은 나지 않고 구멍만 는다
+      expect(C.s.world.hz.holes).toBeGreaterThanOrEqual(1);
+      expect(C.s.incidents.some((Q) => Q.cause === blockEv || (Q.hz !== undefined && Q.hz.src.some((x) => x.ev === blockEv)))).toBe(false);
+      expect(hazardCell(C.s, 'roadCrash', J.hz!.target)!.n).toBeGreaterThanOrEqual(1);
+    });
+  }, 60000);
+
+  it('소스 글자: 법칙의 scan 은 교통 모델의 배열만 읽는다 — 사건·현장·장애물 목록·닫힌 까닭을 보지 않는다. 사고 구간을 정하는 조건(createIncident)은 다른 사건이 잡은 구간과 canBlock 을 본다', () => {
+    const src = readFileSync('src/sim/world/laws/road.ts', 'utf8');
+    const at = src.indexOf('scan:');
+    let depth = 0, end = -1;
+    for (let i = src.indexOf('{', at); i < src.length; i++) { if (src[i] === '{') depth++; else if (src[i] === '}' && --depth === 0) { end = i; break; } }
+    const body = src.slice(at, end + 1);
+    expect(body.length).toBeGreaterThan(100);
+    for (const w of ['incidents', 'scenes', 'closedReason', 'obstacles', 'jams', 'crowds', 'placeMarks', '.slow', '.closed', 'gen.']) expect(body.includes(w), `scan 에 ${w}`).toBe(false);
+    for (const w of ['tr.excess', 'roadParts(', 'roadFlow(']) expect(body.includes(w), w).toBe(true);
+    expect(src.includes("'pileup'"), '다중 추돌은 내지 않는다').toBe(false);
+    const inc = readFileSync('src/sim/incidents.ts', 'utf8');
+    expect(inc).toContain('canBlock(sim, pre)');
+    expect(/opts\.edgeId/.test(inc)).toBe(true);
   });
 });

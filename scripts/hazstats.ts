@@ -4,15 +4,16 @@
 // b3-4 는 뼈대다: 재는 값은 그 상태가 생기는 단계가 한 줄씩 더한다(아직 없는 상태는 잴 수 없다).
 //   hazard-laws:  법칙마다 초과가 있었던 대상 수 · 문턱을 넘은 횟수 · 사건이 된 수 · 교대 끝에 기다리던 줄 (법칙이 없으면 '-')
 //   hazard-road:  (b3-5 ①) 도로의 노출량 Σ_e ∫ x·V·S·ℓ dt 를 네 몫으로 나눠, 장부 없는 초과의 노출량(0 이어야 한다), 닫힌 구간·초과가 있는 구간의 수
-// 뒤 단계가 더할 줄: 우회로의 최대 혼잡과 지속 시간(b3-5 ②) · 열 Σ∫max(0, q − Q0)dt 와 노출된 건물 수(b3-7) · 충격을 받은 건물 수와 shake 분포·끊긴 배관(b3-8)
+//                 (b3-5 ②) 우회로: 몰린 구간의 수(표본당)와 지속 시간(구간·초/교대) · 그 구간들의 혼잡(평균·최대) · 몰림이 상한에 닿은 비율 — 우회 몰림의 크기(traffic.DIVERT)를 맞추는 데 쓴다
+// 뒤 단계가 더할 줄: 열 Σ∫max(0, q − Q0)dt 와 노출된 건물 수(b3-7) · 충격을 받은 건물 수와 shake 분포·끊긴 배관(b3-8)
 //   · 닫힌 화재의 e0 분포(b3-9) · 정전이 닿은 4층 이상 건물 수(b3-10) · 연기 Σ∫c × base dt(b3-11).
 //
 // 표본: HazProbe.tick() 을 매 틱 step() 뒤에 부른다 — 교통 모델이 혼잡을 다시 계산한 틱(traffic.driftAt 이 바뀐 틱)에만 도로를 읽는다(12초에 한 번).
 
-import { weatherSpeedFactor } from '../src/sim/city';
 import type { Sim } from '../src/sim/engine';
-import { roadFlow, roadParts } from '../src/sim/traffic';
+import { DIVERT, roadFlow, roadParts } from '../src/sim/traffic';
 import type { RoadPart } from '../src/sim/traffic';
+import { roadSurface, roadWeight } from '../src/sim/world/laws/road';      // L1 의 가중(통행량 × 노면·시야 × 길이) — 법칙과 측정이 같은 식을 쓴다
 
 export interface HazLawCount { cells: number; crossed: number; made: number; waitingEnd: number }
 export interface HazRoad {
@@ -22,10 +23,11 @@ export interface HazRoad {
   unledgered: number;                               // 내력의 기록이 없는(ev < 0) 몫의 노출량 — 장부의 구멍 (0 이어야 한다)
   edgeDrifts: number; closedDrifts: number;         // 초과가 있던 구간 × 표본 · 닫혀 있던 구간 × 표본
   byWhat: Record<string, number>;                   // 몫의 갈래별 노출량 (divert·queue·lane·jam·crowd·dark·haze·level)
+  detourDrifts: number; detourCong: number; detourCongMax: number; detourCap: number;      // (b3-5 ②) 우회 몰림이 있던 구간 × 표본 · 그 구간들의 혼잡의 합과 최댓값 · 몰림이 상한(DIVERT.MAX)에 닿은 구간 × 표본
 }
 export interface HazCount { laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null }
 
-const roadZero = (): HazRoad => ({ drifts: 0, own: 0, bump: 0, queue: 0, div: 0, raw: 0, unledgered: 0, edgeDrifts: 0, closedDrifts: 0, byWhat: {} });
+const roadZero = (): HazRoad => ({ drifts: 0, own: 0, bump: 0, queue: 0, div: 0, raw: 0, unledgered: 0, edgeDrifts: 0, closedDrifts: 0, byWhat: {}, detourDrifts: 0, detourCong: 0, detourCongMax: 0, detourCap: 0 });
 
 /** 교대 하나의 표본 — 매 틱 tick(), 끝난 뒤 done() */
 export class HazProbe {
@@ -39,7 +41,7 @@ export class HazProbe {
     this.seenDrift = tr.driftAt;
     this.sampleRoad();
   }
-  /** 도로의 초과 — 교통 모델이 drift 에서 적어 둔 배열과 몫 목록만 읽는다. 가중은 L1 의 식 그대로: 통행량 V = 0.4 + 1.6 × flow · 노면·시야 S · 길이 ℓ = clamp(len / 150, 0.5, 2), dt = 12 */
+  /** 도로의 초과 — 교통 모델이 drift 에서 적어 둔 배열과 몫 목록만 읽는다. 가중은 L1 의 식 그대로(world/laws/road.ts 의 roadWeight — 통행량 × 노면·시야 × 길이), dt = 12 */
   private buf: RoadPart[] = [];
   protected sampleRoad(): void {
     const sim = this.sim, tr = sim.traffic, edges = sim.city.edges, r = this.road, flow = roadFlow(sim), S = roadSurface(sim), dt = 12;
@@ -47,9 +49,10 @@ export class HazProbe {
     for (let id = 0; id < edges.length; id++) {
       const e = edges[id];
       if (e.closed) { r.closedDrifts++; continue; }
+      if (tr.divert[id] > 0) { r.detourDrifts++; r.detourCong += e.cong; if (e.cong > r.detourCongMax) r.detourCongMax = e.cong; if (tr.divert[id] >= DIVERT.MAX) r.detourCap++; }
       const x = tr.excess[id];
       if (!(x > 0)) continue;
-      const w = (0.4 + 1.6 * flow[id]) * S * Math.min(2, Math.max(0.5, e.len / 150)) * dt;
+      const w = roadWeight(e, flow[id], S) * dt;
       r.edgeDrifts++;
       r.own += tr.exOwn[id] * w; r.bump += tr.exBump[id] * w; r.queue += tr.exQueue[id] * w; r.div += tr.exDiv[id] * w; r.raw += x * dt;
       const np = roadParts(sim, id, this.buf);
@@ -70,11 +73,7 @@ export class HazProbe {
   }
 }
 
-/** 노면·시야 (L1 의 S 항 — §3.7): (차량 속도 손잡이 ÷ 날씨·재난의 속도 계수)² × 밤이면 1.2. 초과분에만 곱한다 */
-export function roadSurface(sim: Sim): number {
-  const f = sim.tune.vehicleSpeedMul / weatherSpeedFactor(sim);
-  return f * f * (sim.weather === 'night' ? 1.2 : 1);
-}
+export { roadSurface };      // (b3-6) 법칙 파일의 것을 그대로 내보낸다
 
 export interface HazSum { shifts: number; laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null; roadShifts: number }
 export function sumHaz(list: readonly HazCount[]): HazSum {
@@ -90,6 +89,7 @@ export function sumHaz(list: readonly HazCount[]): HazSum {
       o.roadShifts++;
       r.drifts += c.road.drifts; r.own += c.road.own; r.bump += c.road.bump; r.queue += c.road.queue; r.div += c.road.div; r.raw += c.road.raw;
       r.unledgered += c.road.unledgered; r.edgeDrifts += c.road.edgeDrifts; r.closedDrifts += c.road.closedDrifts;
+      r.detourDrifts += c.road.detourDrifts; r.detourCong += c.road.detourCong; r.detourCap += c.road.detourCap; if (c.road.detourCongMax > r.detourCongMax) r.detourCongMax = c.road.detourCongMax;
       for (const [k, v] of Object.entries(c.road.byWhat)) r.byWhat[k] = (r.byWhat[k] ?? 0) + v;
     }
   }
@@ -97,6 +97,7 @@ export function sumHaz(list: readonly HazCount[]): HazSum {
 }
 
 const f1 = (v: number): string => (Math.round(v * 10) / 10).toString();
+const f2 = (v: number): string => (Math.round(v * 100) / 100).toString();
 /** 글자 출력 (교대당 평균) */
 export function hazLines(s: HazSum): string[] {
   const out: string[] = [];
@@ -107,6 +108,7 @@ export function hazLines(s: HazSum): string[] {
     const r = s.road, tot = r.own + r.bump + r.queue + r.div;
     const what = Object.entries(r.byWhat).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${f1(v / n)}`).join(' ');
     out.push(`hazard-road: exposure ${f1(tot / n)}/shift (own ${f1(r.own / n)} · bump ${f1(r.bump / n)} · queue ${f1(r.queue / n)} · divert ${f1(r.div / n)}) · unledgered ${f1(r.unledgered / n)} · raw ${f1(r.raw / n)} edge·s/shift · edges with excess ${f1(r.edgeDrifts / Math.max(1, r.drifts))}/sample · closed ${f1(r.closedDrifts / Math.max(1, r.drifts))}/sample · by what: ${what || '-'}`);
+    out.push(`hazard-detour: ${f1(r.detourDrifts / Math.max(1, r.drifts))} edges/sample · ${f1((r.detourDrifts * 12) / n)} edge·s/shift · cong avg ${f2(r.detourCong / Math.max(1, r.detourDrifts))} max ${f2(r.detourCongMax)} · at cap ${Math.round((100 * r.detourCap) / Math.max(1, r.detourDrifts))}%`);
   } else out.push('hazard-road: -');
   return out;
 }
@@ -119,6 +121,7 @@ export function hazJson(s: HazSum): Record<string, unknown> {
       exposurePerShift: r1((r.own + r.bump + r.queue + r.div) / n), own: r1(r.own / n), bump: r1(r.bump / n), queue: r1(r.queue / n), divert: r1(r.div / n),
       unledgered: r1(r.unledgered / n), rawPerShift: r1(r.raw / n), edgesWithExcess: r1(r.edgeDrifts / Math.max(1, r.drifts)), closedEdges: r1(r.closedDrifts / Math.max(1, r.drifts)),
       byWhat: Object.fromEntries(Object.entries(r.byWhat).map(([k, v]) => [k, r1(v / n)])),
+      detour: { edgesPerSample: +(r.detourDrifts / Math.max(1, r.drifts)).toFixed(2), edgeSecPerShift: r1((r.detourDrifts * 12) / n), congAvg: +(r.detourCong / Math.max(1, r.detourDrifts)).toFixed(2), congMax: +r.detourCongMax.toFixed(2), atCap: +(r.detourCap / Math.max(1, r.detourDrifts)).toFixed(3) },
     } : null,
   };
 }

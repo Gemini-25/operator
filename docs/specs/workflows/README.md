@@ -69,8 +69,8 @@ Workflow 도구에 `scriptPath`(이 폴더의 파일 경로)와 `args` 를 넘�
 |---|---|---|
 | `args/I1-b.json` | I1-b 인과 규칙과 세계 상태 결합 (`wf/causality`) — **첫 덩어리 `b12` 뒤에서 멈췄다**(사용자가 방향을 바꿨다: 스크립트가 아니라 자연스럽게 생기는 인과. `b3a` 뒤의 덩어리는 쓰지 않는다) | 2026-11-20 · `4aea467` (R3 를 다 합친 자리) |
 | `args/I1-b-r123.json` | I1-b 의 규칙 셋 C6·C3·C2 만(`only: impl`, 덩어리 `r123`) — `b12` 의 보고를 `priorReports` 로 옮겼다 | 2026-11-20 · 같은 `base`, 가리킴 `wf/causality` = `a37c805` 에서 |
-| `args/I1-b-nat.json` | I1-b 의 남은 구현 — 재설계(스크립트가 아니라 자연스럽게 생기는 인과)의 덩어리 `h1`~`h8` → 독립 검토 → 문서. `b0`·`b12`·`r123` 의 보고가 `priorReports` 에 있다 | 2026-11-20 밤 · 같은 `base` `4aea467`, 가리킴 `wf/causality` = `b43f55e` 에서 |
-| `args/I1-b-next.json` | **다음 세션이 띄울 것** — I1-b 의 남은 덩어리 → 독립 검토 → 문서. 끝난 덩어리의 보고는 `priorReports` 에. `scratch`·`attr` 는 자리표시(아래 도구로 넣는다) | 2026-11-20 밤 인계 (`docs/handover/README.md` 2절) |
+| `args/I1-b-nat.json` | I1-b 의 남은 구현 — 재설계(스크립트가 아니라 자연스럽게 생기는 인과)의 덩어리 `h1`~`h8` → 독립 검토 → 문서. `b0`·`b12`·`r123` 의 보고가 `priorReports` 에 있다. **`h2` 뒤에서 멈췄다**(인계 — 남은 것은 `I1-b-next.json`) | 2026-11-20 밤 · 같은 `base` `4aea467`, 가리킴 `wf/causality` = `b43f55e` 에서 |
+| `args/I1-b-next.json` | **다음 세션이 띄울 것** — I1-b 의 남은 덩어리 `h3`~`h8` → 독립 검토 → 문서. 끝난 덩어리의 보고는 `priorReports` 에. `scratch`·`attr` 는 자리표시(아래 도구로 넣는다) | 2026-11-20 밤 인계 (`docs/handover/README.md` 2절) |
 | `args/R3b.json` | R3b(R3 뒤 손질) — `s01` → `s2` → `s34` → 검토 → 문서. `base` 는 I1-b 를 다 합친 주 브랜치 커밋으로(`--base`) | 아직 띄우지 않았다 (I1-b 다음) |
 
 

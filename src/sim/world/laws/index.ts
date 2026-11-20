@@ -8,5 +8,4 @@
 //    법칙 파일을 다른 모듈이 import 하면 그 파일의 등록이 이 모음의 차례보다 먼저 실행된다.
 //  · 법칙은 원인을 모른다: scan 은 상태의 값만 읽는다. 어떤 사건·변형·재난이 그 상태를 만들었는지를 식에 쓰지 않는다(.chance( · spawnConsequence · truth.variant · sim.disaster · .rules 가 없다).
 //
-// (b3-4) 아직 법칙이 없다 — 틀만 있다. 법칙이 없으면 tickHazards 는 첫 줄에서 돌아온다(결과 불변).
-export {};
+import './road';      // L1 roadCrash — 차가 몰린 길에서는 사고가 잦다 (b3-6)

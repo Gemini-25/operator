@@ -2588,7 +2588,7 @@ describe('R3 독립 검토: 앞장설 대원이 일을 받았으면 짝은 실�
     expect(buddyOf(sim, s, noz, w)).toBeNull();
     expect(fitFor(sim, s, noz, w)).toBe(0);
   });
-  it('짝이 문턱에서 나를 기다리는 동안에는 곁의 빈 일을 보고 동행을 끝내지 않는다 — 짝의 기다림이 끝나면(문턱을 넘으면) 곁의 일로 끝내고 10초 동안 다시 걸지 않는다', () => {
+  it('곁의 빈 일은 내가 지금 맡을 수 있을 때만(적합도 > 0) 동행을 끝낸다 — 맡지 못하는 일을 보고 끝내면 맡지도 따라가지도 못한 채 서고, 문턱의 짝은 20초 뒤 일을 넘겼다', () => {
     const { sim, s, noz, ff, lead, op, rg, ex } = fireScene('R3-RV2');
     const w = work(sim, s, 'search', { region: rg });
     const near = work(sim, s, 'search', { region: rg });      // 같은 구역의 빈 위험 실내 일 (곁의 일 — pairAlt)
@@ -2597,16 +2597,20 @@ describe('R3 독립 검토: 앞장설 대원이 일을 받았으면 짝은 실�
     nobodyInside(sim, s);
     giveTask(sim, s, noz, w);
     noz.task!.gateId = 'interiorEntry'; noz.task!.gateAt = sim.t; noz.task!.docRule = 'F04c';      // 문턱에서 짝을 기다린다 (동료의 겉)
+    // 지친 대원은 위험 실내 새 일을 맡지 않는다(G03 — 적합도 0). 따라가는 것은 된다
+    sim.responders[ff.rid].stamina = DOC.STAMINA_NEW - 10;
     docForget();
-    expect(pairAlt(sim, s, ff, w)).toBe(true);
+    expect(pairAlt(sim, s, ff, w)).toBe(true);      // 판단부의 눈에는 곁에 빈 일이 있다 (관창·종류·자리만 본다)
+    expect(fitFor(sim, s, ff, near)).toBe(0);      // 그러나 지금은 맡을 수 없다
     expect(docAct(sim, s, ff)).toMatchObject({ act: 'pair' });      // 판단부: 짝이 기다리면 곁의 일이 있어도 따라간다 (pairOf 의 waiting)
     const pt = makeTask('pair', '짝 동행'); pt.docRule = 'G08'; ff.task = pt;
     stepOne(sim, s, ff, 2.4);      // (tick + rid) % 5 가 두 번 이상 돈다
-    // 고치기 전: 실행부가 곁의 일을 보고 바로 끝냈다 (그 뒤 10초는 G08 이 걸리지 않아, 그 일을 맡지 못하면 대기로 서고 짝은 일을 넘겼다)
+    // 고치기 전: 실행부가 곁의 일을 보고 바로 끝냈다 (그 뒤 10초는 G08 이 걸리지 않아 대기로 서고, 짝은 일을 넘겼다)
     expect(ff.task?.kind).toBe('pair');
     expect((ff.docMem ?? []).some((m) => m.rule === 'G08' && m.until > sim.t)).toBe(false);
-    // 짝의 기다림이 끝났다 (문턱을 넘었다): 지금처럼 곁의 일을 맡으러 동행을 끝낸다
-    noz.task!.gateAt = -1; noz.task!.gateId = undefined;
+    // 맡을 수 있게 되면(지구력 회복) 지금처럼 곁의 일을 맡으러 동행을 끝낸다 — 그 뒤 10초는 다시 걸지 않는다
+    sim.responders[ff.rid].stamina = 90; docForget();
+    expect(fitFor(sim, s, ff, near)).toBeGreaterThan(0);
     stepOne(sim, s, ff, 1.2);
     expect(ff.task).toBeNull();
     expect((ff.docMem ?? []).some((m) => m.rule === 'G08' && m.key === '*' && m.until > sim.t)).toBe(true);

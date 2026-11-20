@@ -632,11 +632,11 @@ export function runPair(sim: Sim, s: Scene, a: FieldAgent, t: Task, k: ExecKit):
   // (합치기 (나)) 지휘관이 짝 곁의 위험 실내 일을 맡겼으면(받은 지시) 따라가기를 끝낸다 — 다음 판단에 그 지시를 한다 (G08 은 ordered 로 다시 걸리지 않는다)
   //   그 뒤 10초는 동행 줄을 다시 걸지 않는다(곁의 일로 끝낼 때와 같다 — 지시가 이미 끝나 있던 일이면 그 틱에 끝나 "동행 → 없음 → 동행"이 되었다, 시험 4)
   if (bw !== undefined && b.carrying === -1 && a.orderWork >= 0 && orderedNear(sim, s, a, bw)) { docRemember(sim, a, t.docRule ?? 'G08', '*', PAIR_ALT_MEM); actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
-  // (독립 검토 — 측정이 찾은 고리) 짝이 문턱에서 나를 기다리는 동안(판단 지점 interiorEntry — 동료의 겉)에는 곁의 일로 동행을 끝내지 않는다. 판단부(doctrine.pairOf 의 waiting)는 그때 G08 을 예외 없이 걸지만
-  //   여기서 곁의 일을 보고 바로 끝내면(그 뒤 10초는 G08 이 걸리지 않는다) 그 일을 맡지 못한 동행이 대기로 서고, 짝은 20초 뒤 일을 넘겼다 — "따라감 → 끝냄 → 대기"가 짝이 기다리는 내내 되풀이됐다
-  //   (극한 20교대의 '짝이 오지 않습니다' 117번 가운데 71번이 손 빈 건강한 짝이었다). 짝이 문턱을 넘은 뒤에는 지금처럼 곁의 일을 맡으러 간다
-  const mateWaits = b.task !== null && b.task.gateId === 'interiorEntry' && (b.task.gateAt ?? -1) >= 0;
-  if (bw !== undefined && b.carrying === -1 && !mateWaits && (sim.tick + a.rid) % 5 === 0 && pairAlt(sim, s, a, bw)) { docRemember(sim, a, t.docRule ?? 'G08', '*', PAIR_ALT_MEM); actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
+  // (독립 검토 — 측정이 찾은 고리) 곁의 일로 동행을 끝내는 것은 그 일을 지금 실제로 맡을 수 있을 때만이다(적합도 > 0 — 실행부라 fitFor 를 부를 수 있다). 판단부의 pairAlt 는 관창을 들었는가만 보므로
+  //   물이 없거나 펌프가 고장 난 관창수·지친 대원·판단 지점 상한으로 그 일을 놓은 대원에게도 "곁의 일"이 보인다 — 그것을 보고 끝내면(그 뒤 10초는 G08 이 걸리지 않는다) 맡지도 따라가지도 못한 채 대기로 서고,
+  //   문턱에서 기다리던 짝은 20초 뒤 일을 넘겼다: "따라감 → 끝냄 → 대기"가 짝이 기다리는 내내 되풀이됐다(극한 20교대의 '짝이 오지 않습니다' 117번 가운데 71번이 손 빈 건강한 짝).
+  //   맡을 수 있으면 지금처럼 끝내고 그 일을 맡는다 — 둘이 이웃한 방을 함께 한다(짝이 자기 문턱에서 기다리는 것은 서로 "따라온다"로 센다)
+  if (bw !== undefined && b.carrying === -1 && (sim.tick + a.rid) % 5 === 0 && pairAlt(sim, s, a, bw, (w2) => fitFor(sim, s, a, w2) > 0)) { docRemember(sim, a, t.docRule ?? 'G08', '*', PAIR_ALT_MEM); actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
   // (균형 — 측정이 찾은 것) 불이 번져 온 칸에 서 있으면 짝 곁의 불 없는 칸으로 비킨다: 짝 동행은 짝 곁(1.4칸)에 닿으면 서 있으므로 불이 그 칸까지 번져도
   //   그대로 섰다가 화상을 입었다(보통 120교대 — 소방 대원의 화상 넷이 모두 짝 동행 중, 기본에는 0). 비킨 칸이 짝 곁이면 그대로 동행을 잇는다
   if (s.fire[tileOf(s, a.x, a.y)] > PAIR_FIRE) {

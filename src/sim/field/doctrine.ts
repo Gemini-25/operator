@@ -321,14 +321,14 @@ function pairOf(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem | null, st: DocSt
  * (구조 공작차의 유압 구조대원 둘이 짝이라 한 사람이 따라만 가면 구출을 맨손의 다른 대원이 맡았다 — tests/crews.test.ts ⑤).
  * 그 일을 맡으면 둘 다 일하면서 짝이 따라온다(§5.4 끝의 buddyFollowing). 따라만 가면 관창 둘이 하나가 되어 진압이 절반으로 느려졌다.
  */
-export function pairAlt(sim: Sim, s: Scene, a: FieldAgent, jw: WorkItem): boolean {
+export function pairAlt(sim: Sim, s: Scene, a: FieldAgent, jw: WorkItem, can?: (w2: WorkItem) => boolean): boolean {
   const hose = kitHas(sim, a.rid, 'hose');
   for (let k = 0; k < s.board.length; k++) {
     const w2 = s.board[k];
     if ((w2.status !== 'open' && w2.status !== 'active') || w2.assignees.length >= w2.max || w2.assignees.indexOf(a.rid) >= 0 || w2.holdUntil > sim.t) continue;
     if ((w2.kind !== 'search' && w2.kind !== 'suppress' && w2.kind !== 'overhaul' && w2.kind !== 'extricate' && w2.kind !== 'carry') || ((w2.kind === 'suppress' || w2.kind === 'overhaul') && !hose)) continue;
     if (memWork(sim, a, w2.id)) continue;      // (독립 검토) 판단 지점 상한으로 놓아 지금은 맡지 않는 일(교본 기억 'w:' — docFit 이 0)은 "내가 맡을 빈 일"이 아니다 (그 일을 보고 동행을 끝내면 맡지도 따라가지도 못한다)
-    if (inJob(sim, s, a, w2) && nearWork(s, a, w2, jw)) return true;
+    if (inJob(sim, s, a, w2) && nearWork(s, a, w2, jw) && (can === undefined || can(w2))) return true;      // can: (독립 검토) 실행부(runPair)가 넘기는 "지금 실제로 맡을 수 있는가"(적합도 > 0) — 판단부는 넘기지 않는다(agents 를 부르지 않는다)
   }
   return false;
 }

@@ -2451,3 +2451,111 @@ describe('R3 단계 6: 끌기 (E14 — 방법 drag) — 들것 없이 혼자, �
     expect(usedMethods(z.I, 'carry')).toEqual(['pack']);
   });
 });
+
+// ═════════════════════════ 단계 7 (화면) — 엄폐 자세 · 짝 끈 · 판단 지점의 머리 위 라벨 · 협상 중단 표시 (그림만 — 결과 불변) ═════════════════════════
+import { buddyLinks, coverCrouch, coverTask, drawBuddyLines, headLabel, headLabelMax, inHazardInterior, laneShieldSpot, talkBrokenCover } from '../src/view/scene/doctrineLayer';
+import { fakeCtx, withFakeDom } from './fakeCanvas';
+
+describe('R3 단계 7: 화면 — 교본의 현장 그림은 읽기만 한다 (엄폐 자세 · 짝 끈 · 머리 위 라벨 · 협상 중단 표시)', () => {
+  it('그림 층(view/scene/doctrineLayer.ts)은 이름표(registry)·유형 표·타입만 가져온다 — 판단·실행 함수를 부르지 않는다', () => {
+    const src = code('../src/view/scene/doctrineLayer.ts');
+    for (const l of importLines(src)) expect(/from '(\.\.\/\.\.\/sim\/field\/doctrine\/registry|\.\.\/\.\.\/sim\/field\/methods|\.\.\/\.\.\/sim\/incidentTypes|\.\.\/\.\.\/sim\/types)'/.test(l), l).toBe(true);
+    expect(importLines(src).find((l) => l.includes('/sim/field/methods'))).toMatch(/^import \{ LANE_SHIELD_BY \} from/);      // 방법 표의 파일에서는 '입구를 막은 부대' 표만 읽는다
+    for (const bad of ['doctrineRun', 'docFit', 'docAct', 'docDuty', 'docGate', 'docCtx', 'recordDoc', 'docBegin', 'kitWorks', 'useKit', 'toolUse', '.rng', 'emit(']) expect(src.includes(bad), bad).toBe(false);
+  });
+
+  it('짝 끈: 서로 짝이고 둘 다 활동 중이며 둘 다 위험 건물 실내에 있을 때만 잇는다 (한 쌍 한 번). 무장 현장의 실내는 위험 건물이 아니다', () => {
+    const { sim, s, noz, ff, rg, ex } = fireScene('R3-V1', ['engine']);
+    expect(noz.buddy).toBe(ff.rid); expect(ff.buddy).toBe(noz.rid);
+    const out = outSpot(s, ex.x, ex.y, 3, 6), inn = inSpot(s, rg);
+    put(noz, out); put(ff, out);
+    expect(inHazardInterior(s, noz)).toBe(false);
+    expect(buddyLinks(s)).toEqual([]);
+    put(noz, inn);
+    expect(inHazardInterior(s, noz)).toBe(true);
+    expect(buddyLinks(s)).toEqual([]);      // 한 사람만 안에 있다
+    const inn2 = s.regions[rg].tiles.map((t) => ({ x: t % s.w, y: (t / s.w) | 0 })).find((p) => staticPass(s.tiles[p.y * s.w + p.x]) && Math.hypot(p.x - inn.x, p.y - inn.y) >= 2) ?? inn;
+    put(ff, inn2);
+    const links = buddyLinks(s);
+    expect(links.length).toBe(1);
+    expect(links[0].map((a) => a.rid).sort()).toEqual([noz.rid, ff.rid].sort());
+    ff.status = 'down';
+    expect(buddyLinks(s)).toEqual([]);      // 쓰러진 짝과는 잇지 않는다
+    ff.status = 'active'; ff.buddy = -1;
+    expect(buddyLinks(s)).toEqual([]);      // 서로 짝이 아니다
+    ff.buddy = noz.rid;
+    // 그려도 상태가 그대로다
+    const before = JSON.stringify([noz.x, noz.y, ff.x, ff.y, noz.buddy, ff.buddy, sim.events.length, peek(s.rng)]);
+    drawBuddyLines(fakeCtx(), s, 24, 0.5);
+    expect(JSON.stringify([noz.x, noz.y, ff.x, ff.y, noz.buddy, ff.buddy, sim.events.length, peek(s.rng)])).toBe(before);
+    // 무장 현장(위험 건물이 아니다)의 실내에 선 경찰 짝은 잇지 않는다
+    const A = sceneWith('R3-V1', 'armed/hostage', ['patrol']);
+    const [c1, c2] = A.of('patrol');
+    const ri = A.s.regions.findIndex((r) => r.indoor);
+    put(c1, inSpot(A.s, ri)); put(c2, inSpot(A.s, ri));
+    c1.buddy = c2.rid; c2.buddy = c1.rid;
+    expect(inHazardInterior(A.s, c1)).toBe(false);
+    expect(buddyLinks(A.s)).toEqual([]);
+  });
+
+  it('엄폐 자세: 교본의 엄폐 임무로 멈춰 선 대원만 몸을 낮춘다. 머리 위 라벨: 판단 지점에서 기다리면 막고 있는 줄의 짧은 이름, 아니면 실행기의 라벨. 협상 중단 표시는 P16 의 엄폐에만', () => {
+    const { sim, s, A, B, h } = copsScene('R3-V2', 'armed/hostage', ['patrol'], 'gun', 'fight');
+    A.task = makeTask('cover', '엄폐'); A.task.docRule = 'P16'; A.task.hostile = h.id; A.label = '엄폐';
+    expect(coverTask(A)).toBe(true);
+    expect(coverCrouch(A, false)).toBe(true); expect(coverCrouch(A, true)).toBe(false);      // 숨을 자리로 가는 동안은 선 채
+    expect(talkBrokenCover(A)).toBe(true);
+    expect(headLabel(A)).toBe('엄폐'); expect(headLabelMax(A)).toBe(13);
+    A.task.docRule = 'P09';
+    expect(talkBrokenCover(A)).toBe(false);      // 탄약이 떨어져 숨은 대원은 협상자가 아니다
+    A.status = 'down';
+    expect(coverCrouch(A, false)).toBe(false);
+    A.status = 'active';
+    // 판단 지점에서 기다리는 대원: 실행기의 라벨이 무엇이든 막고 있는 줄의 짧은 이름
+    const w = work(sim, s, 'engage', { hostile: h.id });
+    B.task = makeTask('engage', '교전', w); B.label = '진입 대기';
+    expect(headLabel(B)).toBe('진입 대기');
+    B.task.gateAt = sim.t; B.task.gateId = 'breach'; B.task.docRule = 'P07';
+    expect(headLabel(B)).toBe(DOCTRINE.find((r) => r.id === 'P07')!.short);
+    expect(headLabelMax(B)).toBe(16);
+    for (const r of DOCTRINE) if (r.hook === 'gate') expect(r.short.length, `${r.id} 의 짧은 이름이 라벨에 잘리지 않는다`).toBeLessThanOrEqual(16);
+    B.task.docRule = 'X99';      // 모르는 줄이면 실행기의 라벨 그대로
+    expect(headLabel(B)).toBe('진입 대기');
+    B.task.gateAt = -1; B.task.docRule = 'P07';
+    expect(headLabel(B)).toBe('진입 대기');      // 막혀 있지 않다
+  });
+
+  it('현장 그림(drawScene)이 교본 임무·판단 지점·짝 끈·분류·차량 차단이 있는 장면을 예외 없이 그리고, 그리는 것만으로 기록·난수·임무가 바뀌지 않는다', async () => {
+    await withFakeDom(async () => {
+      const { drawScene } = await import('../src/view/renderScene');
+      const ctx = fakeCtx();
+      // 인질극: 협상자가 엄폐(P16) · 진입 대기(P07) · 탄약 보급
+      const C = copsScene('R3-V3', 'armed/hostage', ['patrol', 'tactical'], 'gun', 'fight');
+      const [a0, a1, a2] = C.cops;
+      a0.task = makeTask('cover', '엄폐'); a0.task.docRule = 'P16'; a0.task.hostile = C.h.id; a0.label = '엄폐';
+      a1.task = makeTask('engage', '교전', work(C.sim, C.s, 'engage', { hostile: C.h.id })); a1.task.gateAt = C.sim.t; a1.task.gateId = 'breach'; a1.task.docRule = 'P07'; a1.label = '진입 대기';
+      if (a2) { a2.task = makeTask('rearm', '탄약 보급'); a2.label = '탄약 보급'; }
+      // 화재: 실내의 짝(짝 동행) · 공기 탈출
+      const F = fireScene('R3-V3', ['engine']);
+      const inn = inSpot(F.s, F.rg);
+      put(F.noz, inn); put(F.ff, { x: inn.x + 2, y: inn.y });
+      F.ff.task = makeTask('pair', '짝 동행'); F.ff.label = '짝 동행';
+      F.lead.task = makeTask('airOut', '공기 탈출'); F.lead.label = '공기 탈출';
+      // 교통사고: 분류 · 차량 차단
+      const T = laneScene('R3-V3', 'night');
+      const medic = T.of('als')[0];
+      medic.task = makeTask('triage', '분류'); medic.label = '분류'; medic.ring = 0.5;
+      const lw = work(T.sim, T.s, 'traffic', { tile: 0 }); giveTask(T.sim, T.s, T.cop, lw); put(T.cop, T.s.controlPts[0]); act(T.sim, T.s, T.cop);
+      expect(T.s.laneShield).toEqual([0]);
+      // 차로 입구를 막고 선 차는 그 입구에 그린다: 서쪽 입구(통제 지점 0)는 둘째 차로 줄의 왼쪽 끝. 막지 않은 부대는 null
+      const spot = laneShieldSpot(T.s, T.cop.unitId)!;
+      expect(spot.x).toBeLessThan(3); expect(Math.abs(spot.y - T.s.laneRows[1])).toBe(0.5);
+      expect(laneShieldSpot(T.s, medic.unitId)).toBeNull();
+      for (const env of [C, F, T]) {
+        const sig = (): string => JSON.stringify([env.sim.events.length, env.sim.logHash, peek(env.s.rng), env.s.agents.map((a) => [a.x, a.y, a.label, a.task ? a.task.kind : null, a.task ? a.task.gateAt : null, peek(a.rng)])]);
+        const before = sig();
+        for (const o of [{ truth: true }, { truth: false }, { truth: true, mini: true }, { truth: true, cam: { x: 15, y: 10, zoom: 2 } }]) drawScene(ctx, env.sim, env.s, 1200, 800, { alpha: 0.5, timeMs: 1000, selectedRid: env.s.agents[0].rid, ...o });
+        expect(sig()).toBe(before);
+      }
+    });
+  });
+});

@@ -14,6 +14,7 @@ import { chip, drawDebrisFx, drawGlassFx, drawLight, fxSprites, hole } from './f
 import { HAIL, TALK, impactOf, muzzleLen, talkPhase, tracerSpeed } from './fxBook';
 import type { FxBook, FxEntry } from './fxBook';
 import { doorHorizontal, rubbleColors } from './staticLayer';
+import { talkBrokenCover } from './doctrineLayer';      // (R3 7단계) 협상 중단 표시의 술어 한 조각 — 협상자의 엄폐(P16)
 
 export const ALLY = { core: '#f2fbff', glow: '#6cc4ff', flash: '#fffbe6', flashOut: '#ffd27a', aim: '150,205,255' };
 export const FOE = { core: '#fff0d8', glow: '#ff6a3d', flash: '#fff2c8', flashOut: '#ff8a3c', aim: '255,90,70' };
@@ -699,9 +700,13 @@ export function drawNegotiation(cv: CombatView): void {
   if (cv.mini) return;
   const { g, s, ts, book, alpha, truth } = cv;
   for (const a of s.agents) {
-    if (a.status !== 'active' || !a.task || a.task.kind !== 'negotiate' || a.task.phase < 1) continue;
+    if (a.status !== 'active' || !a.task) continue;
+    // (R3 §7.2) 협상자가 교전을 피해 엄폐로 옮긴 동안(교본 P16 — 임무가 cover 로 바뀌고 협상 상대를 그대로 들고 있다)에도 '협상이 끊겼다' 표시는 남는다 (그림만)
+    const broke = talkBrokenCover(a);
+    if (!broke && (a.task.kind !== 'negotiate' || a.task.phase < 1)) continue;
     const h = s.hostiles[a.task.hostile];
     if (!h || (h.state !== 'hold' && h.state !== 'fight')) continue;
+    if (broke && h.state !== 'fight') continue;      // 엄폐 중에는 말풍선을 주고받지 않는다 — 끊긴 표시만
     const ap = ipos(a, alpha), hp = ipos(h, alpha), r = ts * 0.2;
     const hx = P(hp.x, ts) + ts * 0.5, hy = P(hp.y, ts) - ts * 1.05;
     if (h.state === 'fight') {

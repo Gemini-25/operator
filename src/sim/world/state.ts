@@ -38,7 +38,10 @@ export function initWorld(sim: Sim, carry?: unknown): WorldState {
   void carry;
   const hospitals: HospitalState[] = [];
   for (const f of sim.city.facilities) if (f.kind === 'hospital') hospitals.push({ fac: f.id, cap: HOSPITAL_CAP[Math.min(hospitals.length, HOSPITAL_CAP.length - 1)], stays: [], divert: false, known: false, since: -1, cause: -1, lastEv: -1 });
-  return { zones: DISTRICTS.map(zoneBlank), hospitals, signals: [], log: [], last: {}, count: {}, tries: {}, spawned: 0 };
+  return {
+    zones: DISTRICTS.map(zoneBlank), hospitals, signals: [], log: [], last: {}, count: {}, tries: {}, spawned: 0,
+    hz: { cells: {}, live: {}, waiting: [], roadAt: -1, holes: 0 }, expo: {}, sills: {}, spans: [],      // (b3-4) 초과 위험 과정·건물의 노출 — 법칙·상태 규칙이 처음 쓸 때 채운다
+  };
 }
 
 const DONG_INDEX = new Map<string, number>(DISTRICTS.map((d, i) => [d.dong, i]));
@@ -47,10 +50,13 @@ export function zoneOfXY(x: number, y: number): number {
   const d = districtAt(x, y);
   return d ? DONG_INDEX.get(d.dong) ?? -1 : -1;
 }
-/** 그 건물의 구역. '산촌'·'외곽' 은 DISTRICTS 에 없으므로 -1 */
+/**
+ * 그 건물의 구역 = 건물 가운데 점의 구역 (b3-4 — 예전에는 Place.dong 과 이름이 같은 동네를 찾았다).
+ * 이름으로 찾으면 산촌 반경 밖의 산 위 건물(dongAt 이 동네 밖이라도 산이면 '산촌'을 붙인다 — 여섯 곳)이 구역 15 로 잡힌다. 동네 밖이면 -1
+ */
 export function zoneOfPlace(sim: Sim, placeId: number): number {
   const q = sim.city.places[placeId];
-  return q ? DONG_INDEX.get(q.dong) ?? -1 : -1;
+  return q ? zoneOfXY(q.x + q.w / 2, q.y + q.h / 2) : -1;
 }
 /** 구역의 이름 (기록 문구용). -1 이면 '외곽' */
 export function zoneName(z: number): string { return z >= 0 && z < DISTRICTS.length ? DISTRICTS[z].dong : '외곽'; }

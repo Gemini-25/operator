@@ -44,6 +44,7 @@ export interface TrafficState {
   railRng: Rng;                   // 열차 시각표 (교통 사건의 흐름과 따로 — 손잡이를 바꿔도 열차는 같은 시각에 온다)
   atGate: Map<number, number>;    // 차단기 앞에 서 있는 부대 → 구간 (기록을 한 번만 남긴다)
   announced: boolean;             // 교대 시작 뒤의 안내(시간대, 불법 주차)를 했는가
+  driftAt: number;                // (I1-b b3-4) 혼잡을 마지막으로 다시 계산한 시각 (-1 = 아직) — 12초 주기의 법칙(world/hazard.ts)이 한 번만 적분하게
 }
 
 export const OBSTACLE_LABEL: Record<ObstacleKind, string> = { roadwork: '도로 공사', breakdown: '고장 차량', debris: '낙하물', parked: '불법 주차', rubble: '건물 잔해' };
@@ -311,6 +312,7 @@ export function initTraffic(sim: Sim): TrafficState {
     tod: day.tod, todName: day.name,
     stats: { jams: 0, closures: 0, obstacles: 0, detours: 0, delaySec: 0, gateWaits: 0 },
     crowds: [], railLen: railLength(rail), stationS: 0, trainDir: 1, railRng: rng.fork('rail'), atGate: new Map(), announced: false,
+    driftAt: -1,
   };
   // 처음의 혼잡: 이 시간대·이 교통량의 평소 수준
   for (const e of city.edges) e.cong = clamp(e.baseCong * tr.tod * sim.tune.trafficMul, 1, 3);
@@ -411,6 +413,7 @@ function drift(sim: Sim): void {
     const target = clamp(press[e.id] + tr.queue[e.id] * 1.2, 1, 3);
     e.cong = clamp(e.cong + (target - e.cong) * 0.35 + rng.range(-0.1, 0.1), 1, 3);
   }
+  tr.driftAt = sim.t;
 }
 
 /** 새 교통 사건 하나 */

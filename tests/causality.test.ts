@@ -13,6 +13,7 @@ import { closeIncident, createIncident } from '../src/sim/incidents';
 import { FIRE_BIG, blast } from '../src/sim/field/hazards';
 import { DISTRICTS } from '../src/sim/cityPlan';
 import { CSQ_SPAWN_CAP, registerConsequence, signal, spawnConsequence, tickWorld } from '../src/sim/world/consequence';
+import { ruleLoad } from '../src/sim/world/hazard';
 import type { CsqCtx } from '../src/sim/world/consequence';
 import { DIVERT_LATE_MIN, divertArrived, divertUnmet, noteDivert } from '../src/sim/world/rules/record';
 import { ER } from '../src/sim/world/rules/hospital';
@@ -304,8 +305,8 @@ describe('일치 검사', () => {
 });
 
 describe('요약 모양', () => {
-  const KEYS = ['chain', 'systems', 'replan', 'alt', 'actions', 'contention', 'stall', 'variety', 'consistency'] as const;
-  it('교대 둘의 요약에 아홉 키가 있고, 글자 줄의 접두어가 고정이다', () => {
+  const KEYS = ['chain', 'systems', 'replan', 'alt', 'actions', 'contention', 'stall', 'variety', 'consistency', 'hazard'] as const;      // hazard = I1-b b3-4 의 초과 위험 줄
+  it('교대 둘의 요약에 열 키가 있고, 글자 줄의 접두어가 고정이다', () => {
     const m = summarize([probedShift('S1').m, probedShift('S4').m]);
     for (const k of KEYS) { expect(typeof m[k], k).toBe('object'); expect(m[k]).not.toBe(null); }
     expect(m.errors).toBe(0);
@@ -318,7 +319,7 @@ describe('요약 모양', () => {
     expect(json.errors).toBe(0);
     expect(json.scenarios).toBeUndefined();
     const lines = formatLines(m, false);
-    expect(lines.slice(0, 9).map((l) => l.split(':')[0])).toEqual([...KEYS]);
+    expect(lines.slice(0, 10).map((l) => l.split(':')[0])).toEqual([...KEYS]);
     expect(checkMetrics(m, { baseline: true })).toEqual([]);
   });
   it('shiftMetrics 의 예외(null)는 오류 수에 1', () => {
@@ -614,6 +615,8 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
     const w0 = JSON.parse(fresh);
     expect(JSON.stringify(sim.world.zones)).toBe(JSON.stringify(w0.zones));
     expect(sim.world.spawned).toBe(0);
+    // (b3-4) 초과 위험·건물 노출의 칸은 법칙·상태 규칙이 걸리지 않으면 처음 값 그대로다
+    expect([sim.world.hz.cells, sim.world.hz.waiting, sim.world.hz.holes, sim.world.expo, sim.world.sills, sim.world.spans]).toEqual([w0.hz.cells, [], 0, {}, {}, []]);
     expect(sim.world.log.every((l) => l.rule === 'hospitalLoad' || l.rule === 'rubbleRoad'), '기록되는 규칙은 포화·잔해뿐 (응급실 체류는 줄을 남기지 않는다)').toBe(true);
     expect(sim.world.log.every((l) => l.made === -1)).toBe(true);
     expect(sim.world.signals.length).toBeLessThan(40);
@@ -759,7 +762,7 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
       const nEv = s.events.length, nInc = s.incidents.length;
       signal(s, 'blast', { inc: C.id, ev: C.rootEvent });
       s.step(); s.step();
-      expect(s.gen.dropped).toEqual([{ t: s.gen.dropped[0].t, why: 'depth', type: undefined, variant: undefined, parent: C.id }]);
+      expect(s.gen.dropped).toEqual([{ t: s.gen.dropped[0].t, why: 'depth', type: undefined, variant: undefined, parent: C.id, csq: 't-spawn' }]);
       expect(s.gen.chain.length).toBe(0);
       expect(s.incidents.length).toBe(nInc);
       expect(s.events.slice(nEv).some((e) => e.text.includes('시험 연쇄'))).toBe(false);
@@ -772,9 +775,15 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
       expect(spawnConsequence(s, ctx, { type: 'medical', cause: A.rootEvent, note: '부모 없는 시험 연쇄' }, [1, 2])).toBe(true);
       expect(s.world.log[2]).toMatchObject({ rule: 't-spawn', ev: A.rootEvent, inc: -1, made: -1, depth: 0 });
       expect(s.gen.chain[0].opts.parent).toBe(undefined);
-      s.world.spawned = CSQ_SPAWN_CAP;
+      // 전체 상한(b3-4): 세는 법은 hazard.ruleLoad 하나 — 실제로 사건이 된 줄(made ≥ 0) + 기다리는 예약. 여기까지 만든 것 둘(B·C) + 예약 하나
+      expect([ruleLoad(s), ruleLoad(s, 't-spawn'), ruleLoad(s, 'rubbleRoad')]).toEqual([3, 3, 0]);
+      for (let k = 0; k < CSQ_SPAWN_CAP; k++) s.world.log.push({ rule: 't-fill', t: s.t, ev: -1, inc: -1, made: A.id, depth: 0 });      // 사건이 된 줄 여섯 — 상한을 채운다
+      expect(ruleLoad(s)).toBeGreaterThanOrEqual(CSQ_SPAWN_CAP);
       expect(spawnConsequence(s, ctx, { type: 'medical' }, [1, 2])).toBe(false);
-      expect(s.gen.dropped[2]).toMatchObject({ why: 'cap', type: 'medical' });
+      expect(s.gen.dropped[2]).toMatchObject({ why: 'cap', type: 'medical', csq: 't-spawn' });
+      // 예약이 버려지면 자리가 돌아온다: 기다리던 예약을 빼면 그 규칙의 수가 준다 (world.spawned 는 흐름의 순번으로만 남는다)
+      s.gen.chain.length = 0;
+      expect([ruleLoad(s, 't-spawn'), s.world.spawned]).toEqual([2, 3]);
       expect(ctx.spawns).toBe(1);
     } finally { off(); }
   });
@@ -887,7 +896,7 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
     expect(knownZoneOfIncident(s, I)).toBe(zoneOfXY(n.x, n.y));
     // 열린 사건의 건물은 관제가 아직 모른다
     s.placeMarks.set(pid, { placeId: pid, state: 'scorched', t: 0, incidentId: I.id, burnFrac: 0.3, ruinFrac: 0 });
-    expect(placeState(s, pid)).toEqual({ mark: 'scorched', burnFrac: 0.3, ruinFrac: 0, usable: true });
+    expect(placeState(s, pid)).toMatchObject({ mark: 'scorched', burnFrac: 0.3, ruinFrac: 0, usable: true });      // (b3-7 이 노출의 칸 shake·pipe·wet 을 더한다)
     expect(knownBuildingAt(s, I.reportedNode, kind)).toBe(null);
     I.phase = 'closed';
     expect(knownBuildingAt(s, I.reportedNode, kind)).toEqual({ burnFrac: 0.3, usable: true, inc: I.id });

@@ -52,5 +52,5 @@ export function canChain(sim: Sim, I: Incident): boolean {
  * 기록(emit)은 지금처럼 남기지 않는다(일어나지 않은 일이다). 보고서·측정 도구가 수로만 쓴다. canChain 이 거짓인 자리에서만 부른다
  */
 export function noteChainDrop(sim: Sim, I: Incident, type: IncidentType, variant: string): void {
-  sim.gen.dropped.push({ t: sim.t, why: chainLen(sim, I) >= CHAIN_MAX ? 'depth' : 'cap', type, variant, parent: I.id });
+  sim.gen.dropped.push({ t: sim.t, why: chainLen(sim, I) >= CHAIN_MAX ? 'depth' : 'cap', type, variant, parent: I.id, csq: undefined });      // csq: 규칙·법칙의 거절에만 있다 (같은 모양으로)
 }

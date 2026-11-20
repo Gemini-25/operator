@@ -182,10 +182,10 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
     es.sort((a, b) => (b.arterial ? 1 : 0) - (a.arterial ? 1 : 0) || a.id - b.id);
     for (const e of es) { if (findRoute(sim.city, e.a, e.b, 1, e.id)) { I.blockedEdge = e.id; e.slow += 1.4; break; } }
     if (variant === 'tree' && I.blockedEdge >= 0) {
-      // 쓰러진 나무가 길을 막았다: 치울 때까지 그 구간은 지나갈 수 없고, 이웃한 길이 밀린다
+      // 쓰러진 나무가 길을 막았다: 치울 때까지 그 구간은 지나갈 수 없다. 이웃한 길이 밀리고 우회로에 차가 몰리는 것은 교통 모델의 일반 규칙이 한다
+      // (I1-b §3.6b — 예전에는 여기서 이웃 구간의 혼잡에 0.7 을 손으로 더했다. 닫힌 까닭이 무엇이든 같은 규칙이다)
       const e = sim.city.edges[I.blockedEdge];
       e.closed = true; e.closedReason = 'incident';
-      for (const k of node.edges) if (k !== e.id) sim.city.edges[k].cong = Math.min(3, sim.city.edges[k].cong + 0.7);
       I.blockEv = emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(sim.city, e)} 통행 불가 — 쓰러진 나무가 길을 막았습니다.`, imp: 1, truth: true });      // (I1-b) 통제 기록: 다른 사건의 ROUTE_BLOCKED 가 원인으로 가리킨다
       noteRoadCause(sim, e.id, 'close', I.blockEv, I.id);      // (I1-b b3-5) 닫힘의 주인 = 통제 기록 (감속의 주인은 아래의 발생 기록 — 항이 달라 서로 덮지 않는다)
     }

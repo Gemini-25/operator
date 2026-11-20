@@ -2055,11 +2055,11 @@ npx tsx scripts/sweep.ts 1 --log <시드> --metrics                             
 
 ### b3-4 · b3-5 ① — 초과 위험 과정의 틀과 교통의 장부 (2026-11-20 밤, 덩어리 `h1`. 브랜치 `wf/causality-h1` → `wf/causality`, 시작점 `0dff725` = b3-3 끝에 주 브랜치(설계 개정판)를 받은 자리 — `src/`·`scripts/`·`tests/` 는 b3-3 끝 `b43f55e` 와 한 글자도 같다)
 
-커밋: 틀 `5357f83` · 교통 장부 `cb91aa7` (+ 이 메모). **둘 다 해시 불변이다** — 법칙은 하나도 등록하지 않았고(`world/laws/index.ts` 는 빈 모음), 사건을 만드는 것이 하나도 없다. 장부를 읽는 곳은 측정(`scripts/hazstats.ts`)뿐이다.
+커밋: 틀 `5357f83` · 교통 장부 `cb91aa7` · 한 교대 6건을 세는 법 `8a4d077` (+ 이 메모). **셋 다 해시 불변이다** — 법칙은 하나도 등록하지 않았고(`world/laws/index.ts` 는 빈 모음), 사건을 만드는 것이 하나도 없다. 장부를 읽는 곳은 측정(`scripts/hazstats.ts`)뿐이다.
 
 #### 결과 불변 확인
 
-- 해시 목록 123줄이 b3-3 끝(`out-c2/hash.txt`)과 **diff 0** — 틀 커밋 뒤(`h1/hash-a1/`)와 장부 커밋 뒤(`h1/hash-b1/`) 각각. 줄마다 `report.hash`·보고서 JSON 의 FNV·기록 수라, `drift` 의 난수 호출 수(구간마다 한 번)도 그대로다(시험 '평소의 도로'가 한 번 더 센다: 혼잡을 다시 계산할 때마다 `rngTraffic.range` 가 구간 수 257 만큼만 불린다).
+- 해시 목록 123줄이 b3-3 끝(`out-c2/hash.txt`)과 **diff 0** — 틀 커밋 뒤(`h1/hash-a1/`)·장부 커밋 뒤(`h1/hash-b1/`)·마지막 코드 커밋 뒤(`h1/hash-c1/`) 각각. 줄마다 `report.hash`·보고서 JSON 의 FNV·기록 수라, `drift` 의 난수 호출 수(구간마다 한 번)도 그대로다(시험 '평소의 도로'가 한 번 더 센다: 혼잡을 다시 계산할 때마다 `rngTraffic.range` 가 구간 수 257 만큼만 불린다).
 - **한 프로세스에서 시드 A 다음에 돌린 B 의 해시 = B 만 돌린 것**: `h1/ab.mts`(여섯 쌍 — 보통 S39 → S3 · 홍수 S1 → S2 · 지진 S0 → 태풍 S1 · 강제 `traffic/tree` S3 → S0 · 극한 S7 → 강제 `collapse/landslide` S2 · 강제 `traffic/pileup` S1 → 보통 S17)이 모두 해시 목록의 값과 같다(`AB_SAME`). 시험은 `vi.resetModules()` 로 모듈 캐시를 새로 만든 두 그래프에서 견준다(홍수 + 가스 폭발 강제 S4 를 혼자 / S9 다음에).
 - 바뀐 것은 **기록의 원인 간선**뿐이다: 교통 모델이 놓은 장애물(공사·고장 차량·낙하물)에도 `Obstacle.ev` 가 생겨, 그것을 알리는 보고(부대·시민 제보)와 그 앞에서 되돌아선 부대의 ROUTE_BLOCKED 가 그 알림 기록을 원인으로 갖는다(b3-3 까지는 건물 잔해만). `--json` 의 `metrics` 가운데 원인 간선에서 나오는 값(세계 원인·`fromWorld`·확산)이 조금 늘 수 있다 — 아래 수치.
 
@@ -2067,6 +2067,7 @@ npx tsx scripts/sweep.ts 1 --log <시드> --metrics                             
 
 1. **`types.ts`** "세계 상태와 신호" 소절 끝의 새 소절 "초과 위험 과정": `HazardLawId`·`HzWhat`·`HzSrc`·`HzCell`(`done`)·`HzWait`·`HzNote`·`HzState`·`PlaceExpo`(`pipeThr`), 인터페이스 합치기로 `WorldState.hz`·`expo`·`sills`·`spans` · `ZoneState.at?` · `Signal.mag` · `Incident.hz?`. `SignalKind` 끝에 `'quake' | 'blackout'`, `WorldTag` 끝에 `'struct'`(새 줄). **`Scene.wear` 는 I2 준비 단계가 이미 넣어 둔 칸**(같은 모양 — "교대 간 지속" 절)이라 다시 넣지 않았다. 객체 모양: `initWorld`·`signal`(`mag: s.mag ?? 0`)·`createIncident`(`hz: undefined`)의 리터럴. `kit.baseScene` 의 `wear: undefined` 는 그 칸을 쓰기 시작하는 b3-8 이 넣는다(§7 표).
 2. **`world/hazard.ts`**(등록이 없는 파일. `chain`·`world/state` 와 `incidents`·`engine`·`types` 의 형만 import): `CSQ_SPAWN_CAP`(6 — `consequence.ts` 가 다시 내보낸다) · `HZ { HOLD 60, PARENT_SHARE 1/3, ORPHAN_CAP 3, ROOT_MAX 2, SRC_MAX 3, LATE 150 }` · `HzPart` · `HazardLaw` · `registerHazard`(등록을 거두는 함수를 돌려준다. 같은 id 면 그 자리의 법칙을 바꾼다) · `hazardLaws`·`hazardLabel` · `tickHazards` · `hazardImpulse(sim, law, target, dH, part, delay = 0)` · `hazardCell` · `ruleLoad(sim, rule?)` · **`hazardRoom(sim, law, parent, skip = null)`**.
+   - 한 교대 6건(`hazardRoom` ⑤)은 `chain.chainedInShift` + 기다리는 줄이다 — **`chainedInShift` 가 법칙 사건(`Incident.hz`·예약의 `opts.hz`)을 부모가 없어도 센다**(아래 "다르게 한 곳" 14).
    - `tickWorld` 의 1초 블록: `'tick'` 규칙 → `tickHazards` → `recoverWorld`. `consequence.spawnRoom` 의 전체 상한은 `ruleLoad(sim) ≥ CSQ_SPAWN_CAP`(`world.spawned` 는 `csq-spawn` 흐름의 순번으로만 남는다).
    - 흐름 이름: 문턱 `hz:<법칙>:<대상>:<n>`(once 법칙은 `hz:<법칙>:<대상>`) — 첫 값이 `thr = −ln(1 − u)`, 둘째 값이 `u2`. 사건 `hz-spawn:<법칙>:<대상>:<n>`.
    - **`law.spawn` 이 받는 `cell` 은 넘은 그 문턱의 것**(`n`·`u2`)이다. 기다리던 줄을 다시 볼 때는 그 번호의 흐름을 다시 뽑아 만든 사본을 준다(once 가 아닌 법칙의 실제 칸은 이미 다음 문턱으로 넘어가 있다).
@@ -2098,6 +2099,7 @@ npx tsx scripts/sweep.ts 1 --log <시드> --metrics                             
 11. `announce` 가 스스로 `Obstacle.ev` 를 적는다(본문은 "기록 id 를 돌려주게 해서"). 교대 시작 때 놓이는 불법 주차에는 `ev` 가 없다(알림이 없고, 병목 0.4 는 평소 수준에 든다).
 12. `metrics.hazard` 에 `maxMadeInShift`·`maxCausalInShift` 두 칸이 더 있다(관문은 교대마다의 최댓값을 본다). `waited` 는 틱 표본(Probe)이 본 기다리는 줄의 수라 `--no-metrics` 면 `null`. `ruleMade` = `csq` 가 있고 이야기 연쇄도 법칙도 아닌 사건.
 13. `TrafficState.driftAt` 은 틀 커밋에 먼저 넣었다(12초 주기의 법칙이 그것을 본다).
+14. **이야기 연쇄의 `canChain` 도 법칙 사건을 센다**(`chain.chainedInShift` — `8a4d077`). 본문은 법칙 쪽(`hazardRoom` ⑤)만 "이야기 연쇄 + 부모 없는 법칙 사건 ≥ 6" 을 보게 했는데, 그러면 부모 없는 법칙 사건 셋이 먼저 나고 이야기 연쇄 여섯이 뒤에 올 때 인과로 난 사건이 한 교대 9건이 된다 — §4 의 관문 "이야기 연쇄 + 법칙 사건 ≤ 6" 을 틀이 스스로 지키지 못한다. 상한의 값(한 사슬 3건 · 한 교대 6건)은 그대로이고 세는 것만 넓혔다: 인과로 난 사건은 어느 쪽이 먼저 나든 같은 6건을 나눠 쓴다(§9 의 기본값 "상한의 안쪽"). 법칙이 없으면 `hz` 가 없어 예전과 같은 수다. N8·N9 의 `spawnConsequence`(부모 있는 예약)도 같은 수를 본다.
 
 #### 수치
 
@@ -2123,7 +2125,7 @@ npx tsx scripts/sweep.ts 1 --log <시드> --metrics                             
 
   - 읽을 것: ① 장부 없는 초과는 열두 조건(94교대) 모두 0 이고 `world.hz.holes` 도 0 이다. ② 보통 교대의 가중 없는 초과는 14,307 구간·초 — 조사 때의 어림(혼잡 값의 차로 잰 약 18,000)과 같은 크기다. ③ **초과의 88% 가 밀림이다**: 그 뿌리를 가르면(`h1/owners.mts`, 보통 12) 주인 사건이 있는 밀림 47.2%(거의 다 평소 교통사고의 현장 감속) · 주인 사건이 없는 밀림 40.4%(정체·공사·낙하물이 뿌리) · 정체 6.3% · 인파 4.2% · 한 차로 1.9%. ④ 보통 12교대에는 수요만으로 꽉 찬 구간(평소의 뿌리)이 없었다 — "평소의 밀림"은 0 이다(교통 손잡이가 높을 때의 갈래다 — 시험이 손으로 만든다). ⑤ 태풍의 꺼진 신호는 전 구간에 0.4 씩 120초라 그것만으로 보통 교대 전체만큼의 노출량이다(L1 의 법칙 상한 3 이 그 교대를 묶는다 — h2 가 본다).
 - **교대당 시간**(`sweep 12 --no-metrics`, 전 `c2/` 와 번갈아 세 번 — `h1/timing.txt`): 사용자 CPU 전 34.5 · 33.2 · 33.0초 / 뒤 33.2 · 34.3 · 33.3초(평균 33.6 / 33.6 — ×1.00), 교대당 1,082 · 1,017 · 1,032 / 1,046 · 1,073 · 1,046ms(+1%). §4 의 "틀과 교통의 몫 × 1.03 이하" 안이다(장부는 12초에 한 번 구간 257개를 세 번 훑는 것이고, 법칙이 없는 `tickHazards` 는 첫 줄에서 돌아온다).
-- **관문**(마지막 코드 커밋 `cb91aa7`): `npm run check` 통과 — 테스트 939 + 건너뜀 1(파일 20개 — b3-3 끝의 913 에 `tests/hazard.test.ts` 26개), 보통 40 검증 통과(사건 565 · 성공 74% · 대응 지연 4% · 실패+미해결 11% · 한계 시간 0 · 방치 1 · 교착 0 · 잊힘 0 · C1~C5 0 · 최대 깊이 2). `sweep 40 --diff hard --check`(사건 713 · 성공 51% · 한계 시간 6 · 방치 7 · 출동 없음 1) · `--diff extreme --check`(871 · 28% · 19 · 26 · 7) · 재난 다섯 × 12 `--check`(태풍 279건 · 홍수 246 · 지진 257 · 산불 199 · 해일 224) 모두 통과 — **수치가 b3-3 끝의 관문과 한 건도 다르지 않다**. `hazard` 줄은 모든 조건에서 natural 0 · holes 0 이고, 이야기 연쇄는 보통 40 에 3건 · 어려움 14 · 극한 42(교대 최대 6 — 사용자 결정의 상한 그대로). 화면은 고치지 않았다(`vite build` 통과 — `engine.ts` 의 import 가 한 줄 늘었다).
+- **관문**: `npm run check` 통과(`cb91aa7` 과 마지막 코드 커밋 `8a4d077` 에서 각각) — 테스트 939 + 건너뜀 1(파일 20개 — b3-3 끝의 913 에 `tests/hazard.test.ts` 26개), 보통 40 검증 통과(사건 565 · 성공 74% · 대응 지연 4% · 실패+미해결 11% · 한계 시간 0 · 방치 1 · 교착 0 · 잊힘 0 · C1~C5 0 · 최대 깊이 2). `sweep 40 --diff hard --check`(사건 713 · 성공 51% · 한계 시간 6 · 방치 7 · 출동 없음 1) · `--diff extreme --check`(871 · 28% · 19 · 26 · 7) · 재난 다섯 × 12 `--check`(태풍 279건 · 홍수 246 · 지진 257 · 산불 199 · 해일 224) 모두 통과(`cb91aa7` 에서. 어려움·극한 40 은 마지막 코드 커밋 `8a4d077` 에서도 다시 통과 — 같은 수치) — **수치가 b3-3 끝의 관문과 한 건도 다르지 않다**. `hazard` 줄은 모든 조건에서 natural 0 · holes 0 이고, 이야기 연쇄는 보통 40 에 3건 · 어려움 14 · 극한 42(교대 최대 6 — 사용자 결정의 상한 그대로). 화면은 고치지 않았다(`vite build` 통과 — `engine.ts` 의 import 가 한 줄 늘었다).
 
 #### h2 에게 (이어받을 자리)
 

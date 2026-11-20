@@ -2,7 +2,7 @@
 // 관제는 목격 신고와, 따라붙은 순찰차·헬기의 시야로만 위치를 안다(I.reportedNode). 출동한 부대는 그 위치로 계속 방향을 바꾼다.
 // 순찰차가 바짝 붙어 버티거나 앞질러 교차로를 막으면 차가 서고, 그 자리에 현장이 열린다. 놓치면 도시 밖으로 빠져나간다.
 
-import { canChain } from './chain';
+import { canChain, noteChainDrop } from './chain';
 import { edgeName, nodeName, weatherSpeedFactor } from './city';
 import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
@@ -182,6 +182,7 @@ export function tickPursuits(sim: Sim): void {
       // 은신처 제보: 연쇄 상한(chain.ts) 안에서만 잇는다 (난수는 상한과 상관없이 똑같이 뽑는다)
       const at = sim.t + rng.range(40, 90);
       if (canChain(sim, I)) sim.gen.chain.push({ at, opts: { type: 'armed', variant: 'hostage', placeId: p.hideout, parent: I.id, note: '납치범이 숨어든 곳에서 제보가 들어옵니다', rng: sim.rng.fork('hideout-call:' + I.id), cause: fledEv, csq: 'hideout' } });      // (I1-b) 원인 = 놓친 기록
+      else noteChainDrop(sim, I, 'armed', 'hostage');
       continue;
     }
     if ((B.exit && B.id === p.goal) || sim.t >= p.giveUpAt) {

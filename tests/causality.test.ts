@@ -1,4 +1,5 @@
 // 측정 도구 (docs/specs/I1-causality.md §2 · §6 의 I1-a): 결과 불변, 손 계산, 문구 규칙, 멈춤 감지기, 연쇄 깊이, 일치 검사, 요약 모양
+import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { PROBLEM_LABEL } from '../src/sim/debrief';
 import { NORMAL, parseDifficulty, parseDisaster } from '../src/sim/difficulty';
@@ -7,9 +8,15 @@ import { Sim } from '../src/sim/engine';
 import { blockersOf } from '../src/sim/dispatch/dispatcher';
 import { emit } from '../src/sim/events';
 import { BeliefStore, heardEv, mergeHeard, mkFact } from '../src/sim/field/beliefs';
+import { CHAIN_MAX, CHAIN_SHIFT_MAX, DEPTH_MAX, canChain, chainDepth, noteChainDrop } from '../src/sim/chain';
 import { createIncident } from '../src/sim/incidents';
+import { FIRE_BIG, blast } from '../src/sim/field/hazards';
+import { DISTRICTS } from '../src/sim/cityPlan';
+import { CSQ_SPAWN_CAP, registerConsequence, signal, spawnConsequence, tickWorld } from '../src/sim/world/consequence';
+import type { CsqCtx } from '../src/sim/world/consequence';
+import { ZONE_DEFAULT, initWorld, knownBuildingAt, knownHospital, knownZone, knownZoneOfIncident, placeState, setZone, zoneOfPlace, zoneOfXY } from '../src/sim/world/state';
 import { findRoute } from '../src/sim/city';
-import type { EventKind, Incident, Responder, Role, SimEvent, Unit } from '../src/sim/types';
+import type { EventKind, Incident, Responder, Role, Signal, SimEvent, Unit, ZoneField } from '../src/sim/types';
 import {
   PHRASE, PROBLEM_SYS, Probe, SAMPLE_EVERY, STALL_ALLOW, STALL_SEC, SYSTEMS, causeDepths, causesDepthByIncident, checkC5, checkMetrics,
   divertAnalysis, eventSystems, formatLines, genDropped, linkCounts, metricsJson, runWithProbe, shiftMetrics, spreadByIncident, spreadDistinct,
@@ -31,7 +38,7 @@ function probedShift(seed: string, d: Difficulty = NORMAL, force: string | null 
 function ev(list: SimEvent[], inc: number, kind: EventKind, opts: { text?: string; causes?: number[]; problem?: SimEvent['problem']; role?: Role; actor?: string; t?: number; tag?: string } = {}): number {
   const id = list.length;
   const e: SimEvent = { id, t: opts.t ?? id, incidentId: inc, role: opts.role ?? 'SYSTEM', actor: opts.actor ?? '시험', kind, text: opts.text ?? `기록 ${id}`, causes: opts.causes ?? [], problem: opts.problem ?? null, importance: 1, truth: false, rid: -1 };
-  if (opts.tag !== undefined) (e as SimEvent & { tag?: string }).tag = opts.tag;
+  if (opts.tag !== undefined) (e as { tag?: string }).tag = opts.tag;      // SimEvent.tag 는 WorldTag 지만 시험은 표에 없는 태그도 넣는다
   list.push(e);
   return id;
 }
@@ -507,5 +514,380 @@ describe('I1-b 0단계: 기록만 잇기', () => {
     B.merge(mkFact('evid', 3, { kind: 'witness', done: true }, '시험', 20, 0.9, true, '목격자'));      // 직접 본 새 소식: 무전이 아니다
     expect(heardEv(B.get('evid', 3))).toBe(-1);
     expect(heardEv(undefined)).toBe(-1);
+  });
+});
+
+// ───────────────────────── I1-b 1단계 (§3.11): 어긋난 기록 고치기 — 재범이 생긴 교대의 해시가 바뀐다 ─────────────────────────
+// 이송 출발 문구의 병원은 R1 단계 3 이 고쳤다 — C5 = 0 과 관문은 위의 '일치 검사'·'요약 모양' 이 본다.
+describe('I1-b 1단계: 어긋난 기록 고치기', () => {
+  it('재범은 자기 흐름(reoffend:<사건>:<용의자>)으로 만든다 — 평소 생성기의 다음 사건이 달라지지 않는다', () => {
+    // 예약하는 자리(hazards 의 도주 블록)가 새 흐름을 넘긴다
+    const line = readFileSync('src/sim/field/hazards.ts', 'utf8').split('\n').find((l) => l.includes("csq: 'reoffend'"))!;
+    expect(line).toContain("rng: sim.rng.fork('reoffend:' + I.id + ':' + h.id)");
+    // 그 흐름으로 만든 재범은 평소 생성기(sim.rngGen·gen.lastType)를 건드리지 않는다: 바로 다음 평소 사건의 유형·변형·규모가 재범이 없을 때와 같다
+    const a = new Sim('S5', NORMAL, 1200), b = new Sim('S5', NORMAL, 1200), old = new Sim('S5', NORMAL, 1200);
+    const P = createIncident(a); createIncident(b); createIncident(old);
+    createIncident(a, { type: 'armed', variant: 'robbery', parent: P.id, rng: a.rng.fork('reoffend:' + P.id + ':0') });
+    createIncident(old, { type: 'armed', variant: 'robbery', parent: P.id });      // 예전 방식: 평소 흐름으로 만들고 lastType 을 고친다
+    expect(a.gen.lastType).toBe(b.gen.lastType);
+    expect(old.gen.lastType).toBe('armed');
+    const key = (I: Incident): string => `${I.truth.type}/${I.truth.variant}/${I.truth.severity}`;
+    const na = [createIncident(a), createIncident(a), createIncident(a)].map(key), nb = [createIncident(b), createIncident(b), createIncident(b)].map(key);
+    const no = [createIncident(old), createIncident(old), createIncident(old)].map(key);
+    expect(na).toEqual(nb);
+    expect(no).not.toEqual(nb);
+  });
+  it('연쇄 깊이 상한: chainDepth 는 뿌리 0, 상한의 정본은 canChain — 깊이 DEPTH_MAX 인 사건을 부모로 한 예약은 꺼낼 때 버린다 (depth)', () => {
+    const s = new Sim('S2', NORMAL, 1200);
+    const A = createIncident(s, { type: 'medical' });
+    const B = createIncident(s, { type: 'medical', parent: A.id, rng: s.rng.fork('t1') });
+    const C = createIncident(s, { type: 'medical', parent: B.id, rng: s.rng.fork('t2') });
+    expect([chainDepth(s, A.id), chainDepth(s, B.id), chainDepth(s, C.id)]).toEqual([0, 1, 2]);
+    expect(DEPTH_MAX).toBe(CHAIN_MAX - 1);
+    expect([canChain(s, B), canChain(s, C)]).toEqual([true, false]);
+    // canChain 을 보지 않고 예약한 것 둘: 깊이가 넘는 것은 버리고(기록 없이 gen.dropped 에만), 넘지 않는 것은 일으킨다
+    s.gen.chain.push({ at: 1, opts: { type: 'medical', parent: C.id, note: '시험 예약', rng: s.rng.fork('t3') } });
+    s.gen.chain.push({ at: 1, opts: { type: 'medical', parent: B.id, note: '시험 예약 둘', rng: s.rng.fork('t4') } });
+    while (s.t < 3) s.step();
+    expect(s.gen.dropped).toEqual([{ t: s.gen.dropped[0].t, why: 'depth', type: 'medical', variant: undefined, parent: C.id }]);
+    expect(s.incidents.some((J) => J.parent === C.id)).toBe(false);
+    expect(s.events.some((e) => e.text.startsWith('시험 예약 —'))).toBe(false);
+    expect(s.incidents.filter((J) => J.parent === B.id).length).toBe(2);
+    // 측정 도구의 parentDepth 와 같은 정의다
+    const m = probedShift('S1', NORMAL, 'fire/arson');
+    for (const J of m.sim.incidents) expect(chainDepth(m.sim, J.id)).toBeLessThanOrEqual(DEPTH_MAX);
+    expect(m.m.maxParentDepth).toBe(Math.max(...m.sim.incidents.map((J) => chainDepth(m.sim, J.id))));
+  });
+});
+
+// ───────────────────────── I1-b b2 (§3.3~§3.6): 세계 상태·신호·인과 규칙의 틀 — 규칙이 없으면 결과는 그대로 ─────────────────────────
+// 결과 불변 자체는 저장소 밖 해시 목록(123교대 — b1 끝과 diff 0)으로 확인했다. 여기서는 틀이 하는 일을 본다.
+// 규칙을 등록하는 시험은 자기 Sim 만 돌리고 끝에 반드시 거둔다(registerConsequence 가 돌려준 함수) — 등록은 이 파일 안의 모든 Sim 에 걸린다.
+describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
+  /** 교대를 끝까지 돌리며 틱마다 그 틱에 보낸 신호를 모은다 (세계 틱이 다음 틱에 비우기 전에 읽는다 — 읽기만) */
+  function runCollect(sim: Sim): Signal[] {
+    const all: Signal[] = [];
+    let n = 0;
+    while (!sim.ended && n++ < 20000) { sim.step(); for (const g of sim.world.signals) { expect(g.t).toBe(sim.t); all.push(g); } }
+    return all;
+  }
+  it('규칙이 없는 교대: 세계 상태는 처음 값 그대로이고, 신호는 상태를 바꾼 자리에서 그 기록과 함께 간다 (보통 S3)', () => {
+    const sim = new Sim('S3', NORMAL, 1200);
+    const fresh = JSON.stringify(initWorld(sim));
+    expect(sim.world.zones.length).toBe(DISTRICTS.length);
+    expect(sim.world.hospitals.length).toBe(sim.city.facilities.filter((f) => f.kind === 'hospital').length);
+    expect(sim.world.hospitals.length).toBeGreaterThan(0);
+    for (const h of sim.world.hospitals) expect(sim.city.facilities[h.fac].kind).toBe('hospital');
+    const sigs = runCollect(sim);
+    // 결과는 신호를 읽지 않고 돈 교대와 같다
+    expect(sim.report!.hash).toBe(probedShift('S3').sim.report!.hash);
+    // 세계 상태: 신호 말고는 처음 값 (끝난 틱에 닫힌 사건의 신호는 처리되지 않고 남는다)
+    expect(JSON.stringify({ ...sim.world, signals: [] })).toBe(fresh);
+    expect(sim.world.signals.length).toBeLessThan(40);
+    // 종료: 닫힌 사건마다 하나, 그 종료 기록과 함께
+    const closed = sigs.filter((g) => g.kind === 'closed');
+    expect(closed.map((g) => g.inc).sort((a, b) => a - b)).toEqual(sim.incidents.filter((I) => I.phase === 'closed').map((I) => I.id));
+    for (const g of closed) { const e = sim.events[g.ev]; expect([e.kind, e.incidentId, e.actor]).toEqual(['resolve', g.inc, '사건 관리']); expect(g.place).toBe(sim.incidents[g.inc].truth.placeId); }
+    // 병원 인계: 인계 기록(T4)마다 하나 — 병원 시설·그 자리, 산 환자 수
+    const del = sigs.filter((g) => g.kind === 'delivered');
+    expect(del.length).toBe(sim.events.filter((e) => PHRASE.T4.test(e.text)).length);
+    expect(del.length).toBeGreaterThan(3);
+    for (const g of del) {
+      const e = sim.events[g.ev], f = sim.city.facilities[g.place];
+      expect(PHRASE.T4.test(e.text)).toBe(true);
+      expect(f.kind).toBe('hospital');
+      expect(e.text).toContain(f.name);
+      expect([g.x, g.y]).toEqual([f.x, f.y]);
+      const m = /환자 (\d+)명/.exec(e.text);
+      expect(g.data).toBe(m ? Number(m[1]) : 0);
+    }
+    // 그 밖의 신호: 자리는 도시 좌표(그 사건의 자리), 기록은 그 사건의 것
+    for (const g of sigs) {
+      if (g.kind === 'closed' || g.kind === 'delivered') continue;
+      const I = sim.incidents[g.inc], e = sim.events[g.ev];
+      expect(e.incidentId, g.kind).toBe(I.id);
+      if (I.pursuit === undefined) expect([g.x, g.y], g.kind).toEqual([I.truth.x, I.truth.y]);
+      if (g.kind === 'catastrophe') expect(['EXPLOSION', 'STRUCT_COLLAPSE', 'BURNOUT']).toContain(e.problem);
+      if (g.kind === 'fled') { expect(e.problem).toBe('SUSPECT_FLED'); expect(sim.scenes[I.id]!.hostiles[g.data].weapon).toBe('gun'); }
+      if (g.kind === 'fireBig') expect(g.size).toBeGreaterThanOrEqual(FIRE_BIG);
+    }
+    const big = sigs.filter((g) => g.kind === 'fireBig').map((g) => g.inc);
+    expect(new Set(big).size, '큰 불 신호는 현장마다 한 번').toBe(big.length);
+  });
+  it('붕괴·폭발의 신호: 무너진 채 시작하는 사건은 발생 기록과 함께, 폭발은 X6·폭파 진입·무너져 내린 것이 아닐 때만', () => {
+    const sim = new Sim('S1', NORMAL, 1200, { force: 'collapse/gasblast' });
+    let I: Incident | undefined;
+    while (!I && sim.t < 30) { sim.step(); I = sim.incidents.find((J) => J.truth.variant === 'gasblast'); }
+    expect(I).toBeDefined();
+    const g = sim.world.signals.find((q) => q.kind === 'collapse')!;
+    expect(g).toBeDefined();
+    expect([g.inc, g.ev, g.place]).toEqual([I!.id, I!.rootEvent, I!.truth.placeId]);
+    const scene = sim.scenes[I!.id]!;
+    let fell = 0;
+    for (let i = 0; i < scene.damage.length; i++) if (scene.damage[i]) fell++;
+    expect(g.size).toBe(fell);
+    expect(g.size).toBeGreaterThan(0);
+    sim.step();
+    expect(sim.world.signals.some((q) => q.kind === 'collapse')).toBe(false);      // 다음 틱의 세계 틱이 비웠다
+    // 승강기 갇힘은 무너진 것이 아니다 — 신호가 없다
+    const lift = createIncident(sim, { type: 'collapse', variant: 'elevator', rng: sim.rng.fork('t-lift') });
+    expect(sim.world.signals.some((q) => q.kind === 'collapse' && q.inc === lift.id)).toBe(false);
+    // 폭발: 기본(폭발물)만 신호를 보낸다 — 계획된 폭파(planned)·X6 의 폭발(noSignal)·무너져 내린 것(crush)은 보내지 않는다
+    const ev0 = emit(sim, { inc: I!.id, role: 'SYSTEM', actor: '시험', kind: 'hazard', text: '시험 폭발.', truth: true });
+    const before = sim.world.signals.length;
+    blast(sim, scene, I!, 1, 1, 2, 0, ev0, 'blast', true);
+    blast(sim, scene, I!, 1, 1, 2, 0, ev0, 'blast', false, true);
+    blast(sim, scene, I!, 1, 1, 2, 0, ev0, 'crush');
+    expect(sim.world.signals.filter((q) => q.kind === 'blast').length).toBe(0);
+    expect(sim.world.signals.length).toBeGreaterThanOrEqual(before);
+    blast(sim, scene, I!, 1, 1, 2, 0, ev0);
+    const b = sim.world.signals.filter((q) => q.kind === 'blast');
+    expect(b.length).toBe(1);
+    expect([b[0].inc, b[0].ev, b[0].size, b[0].cx, b[0].cy, b[0].x, b[0].y, b[0].place]).toEqual([I!.id, ev0, 2, 1, 1, I!.truth.x, I!.truth.y, I!.truth.placeId]);      // 자리·건물은 signal 이 그 사건에서 채운다
+    // 사건 목록에 없는 사건(현장만 만든 시험 — tests/destruction 의 방)으로 불러도 신호는 그 사건의 진실을 읽지 않는다: 자리·건물 -1
+    blast(sim, scene, { id: 9999 } as never, 1, 1, 2, 0, -1);
+    const lone = sim.world.signals[sim.world.signals.length - 1];
+    expect([lone.kind, lone.inc, lone.x, lone.y, lone.place]).toEqual(['blast', 9999, -1, -1, -1]);
+  });
+  it('규칙의 발동: 열쇠·쿨다운·교대 상한·시도 번호의 난수 흐름 — 한 틱에는 쌓여 있던 신호만 처리한다', () => {
+    const s = new Sim('S9', NORMAL, 1200);
+    const rolls: number[] = [], keys: string[] = [];
+    let ticks = 0;
+    const off = [
+      registerConsequence({ id: 't-fire', label: '시험 규칙', on: ['blast'], key: (_s, sig) => (sig!.data === 9 ? null : 'k' + sig!.data), cooldown: 30, cap: 3, spawns: false,
+        test: (c) => { rolls.push(c.rng.next()); return c.sig!.size > 0; },
+        apply: (c) => { keys.push(c.key); signal(c.sim, 'blast', { inc: -1, ev: -1, data: 5, size: 1 }); } }),      // 규칙이 보낸 신호는 다음 틱에
+      registerConsequence({ id: 't-tick', label: '시험 틱 규칙', on: 'tick', key: () => 'all', cooldown: 0, cap: 99, spawns: false, test: () => { ticks++; return false; }, apply: () => { throw new Error('조건이 거짓이면 부르지 않는다'); } }),
+    ];
+    try {
+      const send = (data: number, size: number): void => signal(s, 'blast', { inc: -1, ev: -1, data, size });
+      send(1, 1); send(1, 1); send(2, 0); send(9, 1);
+      signal(s, 'closed', { inc: -1, ev: -1 });      // 받는 규칙이 없는 종류
+      tickWorld(s);
+      expect(keys).toEqual(['k1']);                                   // 둘째 k1 은 쿨다운, k2 는 조건이 거짓, 9 는 해당 없음
+      expect(s.world.count).toEqual({ 't-fire': 1 });
+      expect(s.world.tries).toEqual({ 't-fire|k1': 1, 't-fire|k2': 1 });      // 쿨다운에 걸린 것은 시도로 세지 않는다
+      expect(s.world.log).toEqual([{ rule: 't-fire', t: s.t, ev: -1, inc: -1, made: -1, depth: 0 }]);
+      expect(s.world.signals.map((g) => g.data)).toEqual([5]);          // 규칙이 방금 보낸 신호만 남았다
+      expect(rolls).toEqual([s.rng.fork('csq:t-fire:k1:1').next(), s.rng.fork('csq:t-fire:k2:1').next()]);
+      tickWorld(s);                                                    // 다음 틱: k5 가 걸리고, 그것이 보낸 신호는 또 다음 틱에
+      expect(keys).toEqual(['k1', 'k5']);
+      tickWorld(s);                                                    // k5 는 쿨다운 — 신호가 끝없이 이어지지 않는다
+      expect(keys).toEqual(['k1', 'k5']);
+      expect(s.world.signals.length).toBe(0);
+      // 시도 번호: 조건이 거짓이었던 열쇠를 다시 보면 다른 흐름의 난수다 (같은 이름의 fork 는 같은 수열이므로)
+      send(2, 0); tickWorld(s);
+      expect(rolls[rolls.length - 1]).toBe(s.rng.fork('csq:t-fire:k2:2').next());
+      expect(rolls[rolls.length - 1]).not.toBe(s.rng.fork('csq:t-fire:k2:1').next());
+      // 쿨다운이 지나면 다시, 교대 상한(3)까지만
+      s.t = 31; send(1, 1); tickWorld(s); tickWorld(s);
+      expect(keys).toEqual(['k1', 'k5', 'k1']);
+      send(7, 1); tickWorld(s);
+      expect(keys.length).toBe(3);
+      expect(s.world.count['t-fire']).toBe(3);
+      // world tick 규칙은 1초에 한 번(tick % 5 === 1)
+      expect(ticks).toBe(0);
+      s.tick = 6; tickWorld(s); s.tick = 7; tickWorld(s);
+      expect(ticks).toBe(1);
+      expect(s.world.tries['t-tick|all']).toBe(1);
+    } finally { for (const f of off) f(); }
+    // 거둔 뒤에는 걸리지 않는다
+    signal(s, 'blast', { inc: -1, ev: -1, data: 3, size: 1 }); s.t = 99; s.tick = 8; tickWorld(s);
+    expect(keys.length).toBe(3);
+    expect(s.world.signals.length).toBe(0);
+  });
+  it('spawnConsequence: 자기 흐름으로 예약하고 원인·연쇄 이름을 잇는다 — 깊이·상한에 걸리면 gen.dropped 에만 (기록 없음)', () => {
+    const s = new Sim('S2', NORMAL, 1200);
+    const A = createIncident(s, { type: 'medical' });
+    const off = registerConsequence({ id: 't-spawn', label: '시험 연쇄', on: ['blast'], key: (_s, sig) => 'inc:' + sig!.inc, cooldown: 0, cap: 99, spawns: true, test: () => true,
+      apply: (c) => { expect(spawnConsequence(c.sim, c, { type: 'medical', parent: c.sig!.inc, note: '시험 연쇄' }, [1, 2])).toBe(true); } });
+    try {
+      const kidOf = (P: Incident): Incident | undefined => s.incidents.find((J) => J.parent === P.id);
+      const lastType = s.gen.lastType;
+      signal(s, 'blast', { inc: A.id, ev: A.rootEvent });
+      s.step();
+      expect(s.gen.chain.length).toBe(1);
+      expect(s.gen.chain[0]).toMatchObject({ until: s.gen.chain[0].at + 120, log: 0, opts: { type: 'medical', parent: A.id, cause: A.rootEvent, csq: 't-spawn' } });
+      expect(s.gen.chain[0].at - s.t).toBeGreaterThanOrEqual(1);
+      expect(s.world.spawned).toBe(1);
+      while (!kidOf(A) && s.t < 5) s.step();
+      const B = kidOf(A)!;
+      expect(B).toBeDefined();
+      expect([B.cause, B.csq, s.events[B.rootEvent].causes]).toEqual([A.rootEvent, 't-spawn', [A.rootEvent]]);
+      expect(s.events[B.rootEvent].text.startsWith('시험 연쇄 —')).toBe(true);
+      expect(s.world.log).toEqual([{ rule: 't-spawn', t: s.world.log[0].t, ev: A.rootEvent, inc: A.id, made: B.id, depth: 1 }]);
+      expect(s.gen.lastType).toBe(lastType);                           // 평소 생성기를 건드리지 않았다
+      // B → C (깊이 2), C 에서는 더 만들지 않는다: 연쇄 상한의 정본(canChain — 한 사슬 3건)
+      signal(s, 'blast', { inc: B.id, ev: B.rootEvent });
+      while (!kidOf(B) && s.t < 10) s.step();
+      const C = kidOf(B)!;
+      expect(C).toBeDefined();
+      expect(s.world.log[1]).toMatchObject({ made: C.id, depth: 2 });
+      const nEv = s.events.length, nInc = s.incidents.length;
+      signal(s, 'blast', { inc: C.id, ev: C.rootEvent });
+      s.step(); s.step();
+      expect(s.gen.dropped).toEqual([{ t: s.gen.dropped[0].t, why: 'depth', type: undefined, variant: undefined, parent: C.id }]);
+      expect(s.gen.chain.length).toBe(0);
+      expect(s.incidents.length).toBe(nInc);
+      expect(s.events.slice(nEv).some((e) => e.text.includes('시험 연쇄'))).toBe(false);
+      expect(s.world.count['t-spawn']).toBe(2);                         // 걸린 것은 발동으로 세지 않는다
+      // 직접 불러도 같은 상한: 깊이 → 'depth', 전체 상한(CSQ_SPAWN_CAP) → 'cap'
+      const ctx: CsqCtx = { sim: s, sig: null, key: 'x', rng: s.rng.fork('t-ctx'), depth: 0, rule: 't-spawn', spawns: 0 };
+      expect(spawnConsequence(s, ctx, { type: 'fire', variant: 'std', parent: C.id }, [1, 2])).toBe(false);
+      expect(s.gen.dropped[1]).toMatchObject({ why: 'depth', type: 'fire', variant: 'std', parent: C.id });
+      // 부모 없는 예약(재난·구역이 낳는 사건): 원인만 잇는다
+      expect(spawnConsequence(s, ctx, { type: 'medical', cause: A.rootEvent, note: '부모 없는 시험 연쇄' }, [1, 2])).toBe(true);
+      expect(s.world.log[2]).toMatchObject({ rule: 't-spawn', ev: A.rootEvent, inc: -1, made: -1, depth: 0 });
+      expect(s.gen.chain[0].opts.parent).toBe(undefined);
+      s.world.spawned = CSQ_SPAWN_CAP;
+      expect(spawnConsequence(s, ctx, { type: 'medical' }, [1, 2])).toBe(false);
+      expect(s.gen.dropped[2]).toMatchObject({ why: 'cap', type: 'medical' });
+      expect(ctx.spawns).toBe(1);
+    } finally { off(); }
+  });
+  it('조건으로 일어나는 연쇄: when 이 거짓이면 5초마다 다시 보고, 맞으면 일어나고, until 이 지나면 버린다 (expired — 기록 없음)', () => {
+    const s = new Sim('S2', NORMAL, 1200);
+    let allow = false, calls = 0;
+    s.gen.chain.push({ at: 1, until: 30, when: () => { calls++; return allow; }, opts: { type: 'medical', note: '조건 연쇄', rng: s.rng.fork('t-when') } });
+    while (s.t < 8) s.step();
+    expect(calls).toBe(2);                                             // 1초, 6초
+    expect(s.incidents.some((J) => s.events[J.rootEvent].text.startsWith('조건 연쇄'))).toBe(false);
+    allow = true;
+    while (s.t < 14) s.step();
+    const J = s.incidents.find((q) => s.events[q.rootEvent].text.startsWith('조건 연쇄'))!;
+    expect(J).toBeDefined();
+    expect(J.createdAt).toBeGreaterThanOrEqual(11);
+    expect(J.createdAt).toBeLessThan(12);
+    expect(s.gen.dropped.length).toBe(0);
+    // 끝내 맞지 않는 조건: 기한(until)이 지난 뒤 처음 볼 때 버린다
+    const z = new Sim('S2', NORMAL, 1200);
+    z.gen.chain.push({ at: 1, until: 9, when: () => false, opts: { type: 'fire', variant: 'std', parent: 0, note: '끝내 맞지 않는 연쇄', rng: z.rng.fork('t-never') } });
+    while (z.t < 14) z.step();
+    expect(z.gen.dropped).toEqual([{ t: z.gen.dropped[0].t, why: 'expired', type: 'fire', variant: 'std', parent: 0 }]);
+    expect(z.gen.dropped[0].t).toBeGreaterThanOrEqual(9);
+    expect(z.gen.dropped[0].t).toBeLessThan(12);
+    expect(z.events.some((e) => e.text.includes('끝내 맞지 않는 연쇄'))).toBe(false);
+    expect(z.gen.chain.length).toBe(0);
+  });
+  it('상한에 걸려 잇지 못한 기존 연쇄(재범·도주 차량·은신처·방화)도 gen.dropped 에 남는다 — depth · cap, 기록 없음', () => {
+    const s = new Sim('S2', NORMAL, 1200);
+    const A = createIncident(s, { type: 'medical' });
+    const B = createIncident(s, { type: 'medical', parent: A.id, rng: s.rng.fork('t1') });
+    const C = createIncident(s, { type: 'medical', parent: B.id, rng: s.rng.fork('t2') });
+    const nEv = s.events.length;
+    expect(canChain(s, C)).toBe(false);
+    noteChainDrop(s, C, 'armed', 'robbery');
+    expect(s.gen.dropped).toEqual([{ t: s.t, why: 'depth', type: 'armed', variant: 'robbery', parent: C.id }]);
+    // 교대 상한: 이어진 사건(이미 일어난 것 + 예약) 여섯이면 뿌리 사건에서도 잇지 못한다
+    for (let k = 0; k < 8; k++) s.gen.chain.push({ at: 1e9, opts: { type: 'medical' } });      // 부모 없는 예약(인과 규칙이 재난·구역에서 만드는 사건)은 연쇄로 세지 않는다
+    expect(canChain(s, A)).toBe(true);
+    while (s.gen.chain.filter((c) => c.opts.parent !== undefined).length + 2 < CHAIN_SHIFT_MAX) s.gen.chain.push({ at: 1e9, opts: { type: 'medical', parent: A.id } });
+    expect(canChain(s, A)).toBe(false);
+    noteChainDrop(s, A, 'fire', 'arson');
+    expect(s.gen.dropped[1]).toEqual({ t: s.t, why: 'cap', type: 'fire', variant: 'arson', parent: A.id });
+    expect(s.events.length).toBe(nEv);
+    // 예약하는 네 자리가 모두 canChain 이 거짓일 때 이것을 부른다
+    const src = (f: string): string => readFileSync(f, 'utf8');
+    expect(src('src/sim/field/hazards.ts').split('noteChainDrop(sim, I, ').length - 1).toBe(2);
+    expect(src('src/sim/pursuit.ts')).toContain("else noteChainDrop(sim, I, 'armed', 'hostage')");
+    expect(src('src/sim/scenarios/crime.ts')).toContain("if (!canChain(sim, I)) { noteChainDrop(sim, I, 'fire', 'arson'); return; }");
+    // 극한의 무장 강제 교대(재범·도주 차량이 여섯까지 이어진다)에서 실제로 걸린 것은 부모가 있는 줄이고 기록에는 없다
+    const { sim } = probedShift('S1', parseDifficulty('extreme')!, 'armed/std');
+    for (const d of sim.gen.dropped) if (d.why === 'depth' || d.why === 'cap') { expect(d.parent).toBeGreaterThanOrEqual(0); expect(['getaway', 'robbery', 'hostage', 'arson']).toContain(d.variant); }
+  });
+  it('구역 값은 덮어쓰기(더 나쁜 쪽만)이고 회복 시각이 지나면 처음 값으로 — 관제는 알려진 칸만 본다', () => {
+    const s = new Sim('S4', NORMAL, 1200);
+    const d0 = DISTRICTS[0];
+    expect(zoneOfXY(d0.x, d0.y)).toBe(0);
+    expect(zoneOfXY(-5000, -5000)).toBe(-1);
+    const inTown = s.city.places.find((q) => q.dong === d0.dong)!, outside = s.city.places.find((q) => !DISTRICTS.some((d) => d.dong === q.dong));
+    expect(zoneOfPlace(s, inTown.id)).toBe(0);
+    if (outside) expect(zoneOfPlace(s, outside.id)).toBe(-1);
+    expect(knownZone(s, 0)).toEqual({});
+    expect(knownZone(s, -1)).toEqual({});
+    // 전력은 낮은 값만, 연기는 높은 값만 받는다. 알려지지 않은 변화는 관제가 보지 못한다
+    expect(setZone(s, 0, 'power', 0.4, 50, 11, false)).toBe(true);
+    expect(knownZone(s, 0)).toEqual({});
+    expect(setZone(s, 0, 'power', 0.7, 80, 12, true)).toBe(false);      // 더 나쁘지 않다: 값·원인은 그대로, 회복 시각은 늦은 쪽, 알려짐은 켠다
+    expect([s.world.zones[0].power, s.world.zones[0].cause.power, s.world.zones[0].until.power]).toEqual([0.4, 11, 80]);
+    expect(knownZone(s, 0)).toEqual({ power: 0.4 });
+    expect(setZone(s, 0, 'smoke', 0.6, 40, 13, true)).toBe(true);
+    expect(setZone(s, 0, 'smoke', 0.3, 20, 14, true)).toBe(false);
+    expect(setZone(s, -1, 'power', 0, 99, 15, true)).toBe(false);       // 구역 -1 은 어느 상태도 받지 않는다
+    expect(knownZone(s, 0)).toEqual({ power: 0.4, smoke: 0.6 });
+    // 회복: 세계 틱(1초에 한 번)이 회복 시각이 지난 칸만 되돌리고, 규칙의 recover 가 그 칸·원인을 받는다
+    const got: [number, ZoneField, number, boolean][] = [];
+    const off = registerConsequence({ id: 't-recover', label: '시험 회복', on: ['closed'], key: () => null, cooldown: 0, cap: 0, spawns: false, test: () => false, apply: () => {}, recover: (_s, z, f, cause, known) => { got.push([z, f, cause, known]); } });
+    try {
+      s.t = 45; s.tick = 226; tickWorld(s);
+      expect(got).toEqual([[0, 'smoke', 13, true]]);
+      expect(knownZone(s, 0)).toEqual({ power: 0.4 });
+      s.t = 80; s.tick = 401; tickWorld(s);
+      expect(got[1]).toEqual([0, 'power', 11, true]);
+    } finally { off(); }
+    expect(JSON.stringify(s.world.zones)).toBe(JSON.stringify(initWorld(s).zones));
+    for (const f of ['power', 'comms', 'water'] as const) expect(ZONE_DEFAULT[f]).toBe(1);
+    // 응급실 체류: 병동으로 옮겨진 환자는 빠진다
+    s.world.hospitals[0].stays.push(70, 500, 90);
+    s.t = 100; s.tick = 501; tickWorld(s);
+    expect(s.world.hospitals[0].stays).toEqual([500]);
+    // 병원: 알린 것만
+    const h = s.world.hospitals[0];
+    expect(knownHospital(s, h.fac)).toBe(null);
+    h.divert = true;
+    expect(knownHospital(s, h.fac)).toBe(null);
+    h.known = true;
+    expect(knownHospital(s, h.fac)).toEqual({ divert: true });
+    expect(knownHospital(s, -7)).toBe(null);
+  });
+  it('건물 상태와 사건의 구역: 세계 규칙은 placeState(진실), 관제는 알려진 교차로로만 묻는다 (knownBuildingAt · knownZoneOfIncident)', () => {
+    const s = new Sim('S4', NORMAL, 1200);
+    const I = createIncident(s, { type: 'fire', variant: 'std' });
+    const pid = I.truth.placeId, kind = I.truth.placeKind!;
+    expect(pid).toBeGreaterThanOrEqual(0);
+    expect(placeState(s, pid)).toBe(null);
+    // 위치를 모르는 사건의 구역은 -1 — 진실의 자리를 읽지 않는다
+    expect(I.locationKnown).toBe(false);
+    expect(knownZoneOfIncident(s, I)).toBe(-1);
+    I.locationKnown = true;
+    const n = s.city.nodes[I.reportedNode];
+    expect(knownZoneOfIncident(s, I)).toBe(zoneOfXY(n.x, n.y));
+    // 열린 사건의 건물은 관제가 아직 모른다
+    s.placeMarks.set(pid, { placeId: pid, state: 'scorched', t: 0, incidentId: I.id, burnFrac: 0.3, ruinFrac: 0 });
+    expect(placeState(s, pid)).toEqual({ mark: 'scorched', burnFrac: 0.3, ruinFrac: 0, usable: true });
+    expect(knownBuildingAt(s, I.reportedNode, kind)).toBe(null);
+    I.phase = 'closed';
+    expect(knownBuildingAt(s, I.reportedNode, kind)).toEqual({ burnFrac: 0.3, usable: true, inc: I.id });
+    expect(knownBuildingAt(s, I.reportedNode)).toEqual({ burnFrac: 0.3, usable: true, inc: I.id });
+    expect(knownBuildingAt(s, I.reportedNode, 'intersection')).toBe(null);
+    expect(knownBuildingAt(s, I.reportedNode, kind === 'shop' ? 'bank' : 'shop')).toBe(null);
+    s.placeMarks.get(pid)!.state = 'burnt';
+    expect(placeState(s, pid)!.usable).toBe(false);
+    expect(knownBuildingAt(s, I.reportedNode, kind)!.usable).toBe(false);
+    // 닫혔지만 끝내 위치를 몰랐던 사건(무대응 종료)은 관제가 아는 건물이 아니다
+    I.locationKnown = false;
+    expect(knownBuildingAt(s, I.reportedNode, kind)).toBe(null);
+  });
+  it('정보 격리: 판단 파일은 세계 상태·건물 상태를 직접 읽지 않는다 — known* 함수만 (소스 글자)', () => {
+    const WORLD = ['sim.world', 'world.zones', 'world.hospitals', 'world.signals', 'world.log', 'placeMarks', 'carryState'];
+    const files = [
+      ...readdirSync('src/sim/dispatch').filter((f) => f.endsWith('.ts')).map((f) => 'src/sim/dispatch/' + f),
+      'src/sim/field/commander.ts', 'src/sim/field/brain.ts',
+      ...readdirSync('src/sim/field/orders').filter((f) => f.endsWith('.ts')).map((f) => 'src/sim/field/orders/' + f),
+    ];
+    expect(files.length).toBeGreaterThan(8);
+    for (const f of files) { const src = readFileSync(f, 'utf8'); for (const w of WORLD) expect(src.includes(w), `${f} 에 ${w}`).toBe(false); }
+    // 분석·배정은 진실의 건물 id 를 읽지 않는다 (신고자 모델 callSystem 은 신고자가 본 것을 정하므로 뺀다)
+    for (const f of ['src/sim/dispatch/analyst.ts', 'src/sim/dispatch/dispatcher.ts']) expect(readFileSync(f, 'utf8').includes('truth.placeId'), f).toBe(false);
+    // 병원을 고르는 startTransport 는 관제 쪽 결정이다: 그 함수의 본문만 잘라 같은 글자를 본다 (같은 파일의 다른 자리는 진실을 읽어도 된다)
+    const res = readFileSync('src/sim/resources.ts', 'utf8');
+    const at = res.indexOf('export function startTransport');
+    expect(at).toBeGreaterThanOrEqual(0);
+    let depth = 0, end = -1;
+    for (let i = res.indexOf('{', at); i < res.length; i++) { if (res[i] === '{') depth++; else if (res[i] === '}' && --depth === 0) { end = i; break; } }
+    const body = res.slice(at, end + 1);
+    expect(body.length).toBeGreaterThan(100);
+    expect(body).toContain('etaFor');
+    for (const w of [...WORLD, 'truth.placeId']) expect(body.includes(w), `startTransport 에 ${w}`).toBe(false);
   });
 });

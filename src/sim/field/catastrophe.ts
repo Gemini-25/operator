@@ -832,7 +832,7 @@ export function collapseRegion(sim: Sim, s: Scene, I: Incident, c: CatState, r: 
     signFact(sim, SIGN_BASE.struct + r, { kind: 'struct', level: 0, region: r, x: reg.cx, y: reg.cy, down: true }, fallenText(reg.name)),
   ]);
   markPlace(sim, s, I, c, 'partial');
-  signal(sim, 'catastrophe', { inc: I.id, ev, x: reg.cx, y: reg.cy, size: fell, place: I.truth.placeId, data: 1 });
+  signal(sim, 'catastrophe', { inc: I.id, ev, cx: reg.cx, cy: reg.cy, size: fell, place: I.truth.placeId, data: 1 });
   return ev;
 }
 const fallenText = (name: string): string => `${name} 무너져 내림 — 더 무너질 것 없음`;
@@ -1032,7 +1032,7 @@ export function collapseBuilding(sim: Sim, s: Scene, I: Incident, c: CatState, b
   hearAll(sim, s, ev, facts);
   markPlace(sim, s, I, c, 'collapsed');
   let size = 0; for (let i = 0; i < n; i++) if (bld[i]) size++;
-  signal(sim, 'catastrophe', { inc: I.id, ev, x: bx, y: by, size, place: I.truth.placeId, data: 1 });
+  signal(sim, 'catastrophe', { inc: I.id, ev, cx: bx, cy: by, size, place: I.truth.placeId, data: 1 });
   return ev;
 }
 
@@ -1153,7 +1153,7 @@ export function explodeGas(sim: Sim, s: Scene, I: Incident, c: CatState, cloud: 
   for (let i = 0; i < g.length; i++) if (!inC[i] && g[i] > 0) g[i] *= 0.4;
   if (valve) valve.ignited = true;
   blowDoors(s, cx, cy, r);
-  blast(sim, s, I, cx, cy, r, dmg, ev, 'blast');
+  blast(sim, s, I, cx, cy, r, dmg, ev, 'blast', false, true);      // (I1-b) noSignal — 이 폭발은 아래의 'catastrophe' 신호 하나로 간다
   pushFx(sim, s, 'boom', cx, cy, undefined, undefined, undefined, undefined, 1.6);
   noteBoom(lastFx(sim, s, 'boom'), r, 'gas');
   s.staticVersion++;
@@ -1163,7 +1163,7 @@ export function explodeGas(sim: Sim, s: Scene, I: Incident, c: CatState, cloud: 
   for (const rg of regs) facts.push(signFact(sim, SIGN_BASE.gas + rg, { kind: 'gas', level: 0, region: rg, x: s.regions[rg].cx, y: s.regions[rg].cy, down: true }, `${s.regions[rg].name} 가스 연소 — 남은 가스 없음`));
   hearAll(sim, s, ev, facts);
   markPlace(sim, s, I, c, 'blasted');
-  signal(sim, 'catastrophe', { inc: I.id, ev, x: cx, y: cy, size: r, place: I.truth.placeId, data: 0 });
+  signal(sim, 'catastrophe', { inc: I.id, ev, cx, cy, size: r, place: I.truth.placeId, data: 0 });
   return ev;
 }
 
@@ -1216,7 +1216,7 @@ export function ruptureVessel(sim: Sim, s: Scene, I: Incident, c: CatState, p: P
   }
   if (p.kind === 'vehicle') for (const q of s.casualties) if (q.inVehicle === p.id && !q.dead) hurtCas(sim, s, I, q, rng.range(20, 40), 'blast', { ev });      // 같은 차·동체의 탑승자
   blowDoors(s, cx, cy, spec.r);
-  blast(sim, s, I, cx, cy, spec.r, spec.dmg, ev, 'blast');
+  blast(sim, s, I, cx, cy, spec.r, spec.dmg, ev, 'blast', false, true);      // (I1-b) noSignal
   pushFx(sim, s, 'boom', cx, cy, undefined, undefined, undefined, undefined, 1.6);
   noteBoom(lastFx(sim, s, 'boom'), spec.r, spec.src);
   s.staticVersion++;
@@ -1228,7 +1228,7 @@ export function ruptureVessel(sim: Sim, s: Scene, I: Incident, c: CatState, p: P
   facts.push(signFact(sim, SIGN_BASE.vessel + p.id, { kind: 'vessel', level: 0, region: rg, x: p.x, y: p.y, prop: p.id, down: true }, `${where} ${nm} 폭발 — 더는 위험 없음`));
   hearAll(sim, s, ev, facts);
   markPlace(sim, s, I, c, 'blasted');
-  signal(sim, 'catastrophe', { inc: I.id, ev, x: cx, y: cy, size: spec.r, place: I.truth.placeId, data: 0 });
+  signal(sim, 'catastrophe', { inc: I.id, ev, cx, cy, size: spec.r, place: I.truth.placeId, data: 0 });
   return ev;
 }
 
@@ -1281,7 +1281,7 @@ export function explodeDust(sim: Sim, s: Scene, I: Incident, c: CatState, how: n
   const tl = reg.tiles;
   for (let q = 0; q < tl.length; q++) { const i = tl[q]; if (s.fuel[i] > 0 && s.fire[i] < 0.6) s.fire[i] = 0.6; }
   blowDoors(s, cx, cy, rad);
-  blast(sim, s, I, cx, cy, rad, CAT.DUST_DMG, ev, 'blast');
+  blast(sim, s, I, cx, cy, rad, CAT.DUST_DMG, ev, 'blast', false, true);      // (I1-b) noSignal
   pushFx(sim, s, 'boom', cx, cy, undefined, undefined, undefined, undefined, 1.6);
   noteBoom(lastFx(sim, s, 'boom'), rad, 'dust');
   s.staticVersion++;
@@ -1290,7 +1290,7 @@ export function explodeDust(sim: Sim, s: Scene, I: Incident, c: CatState, how: n
     signFact(sim, SIGN_BASE.dust + r, { kind: 'dust', level: 0, region: r, x: cx, y: cy, down: true }, `${reg.name} 분진 폭발 — 남은 분진 없음`),
   ]);
   markPlace(sim, s, I, c, 'blasted');
-  signal(sim, 'catastrophe', { inc: I.id, ev, x: cx, y: cy, size: rad, place: I.truth.placeId, data: 0 });
+  signal(sim, 'catastrophe', { inc: I.id, ev, cx, cy, size: rad, place: I.truth.placeId, data: 0 });
   return ev;
 }
 /**

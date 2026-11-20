@@ -1,7 +1,7 @@
 // 현장 환경 규칙: 화재 확산, 연기, 구조 대상 상태 악화, 용의자 행동, 통과 차량.
 // 이 파일은 "세계"의 규칙이다. 대원의 행동은 이 상태를 바꾸고, 이 상태는 대원의 다음 판단을 바꾼다.
 
-import { canChain } from '../chain';
+import { canChain, noteChainDrop } from '../chain';
 import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import { T } from '../types';
@@ -19,6 +19,7 @@ import { RUIN_SECONDARY, markRuin, recordFall } from './ruins';
 import { CAUSE_NAME, DOWN_AT, SELF_HARM, SELF_HARM_HIT, bandOf, decayCause, hurtCas, hurtCasTo, hurtHostile, hurtResponder, injuryRng, noteDecay, noteInjury, settleHostile } from './injury';
 import { SHAKE, shake } from './doctrineRun';      // (R3 1단계) 동요 — 피격·피습·폭발
 import { dragSmoke, laneShieldMul } from './doctrineRun';      // (R3 6단계) 끌기의 연기 피해 · 차량으로 막은 입구의 부주의
+import { signal } from '../world/consequence';      // (I1-b) 폭발·2차 붕괴·큰 불·무장 도주를 세계에 알린다 (기록도 난수도 없다 — 규칙이 없으면 결과 불변)
 
 export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2, c?: FxInfo): void {
   s.fx.push({ kind, t: sim.t, x, y, x2, y2, text, color, ttl, c });
@@ -32,15 +33,20 @@ export const BAND_NAME = ['경상', '중상', '위중', '사망'];
 
 const NB = [1, 0, -1, 0, 0, 1, 0, -1];
 
+/** (I1-b) 'fireBig' 신호의 문턱 — 불 칸(불 > 0.2) 수. 측정 도구·C5 의 '큰 불'과 같은 수 */
+export const FIRE_BIG = 30;
+const FIRE_BIG_SENT = new WeakSet<Scene>();      // 신호를 이미 보낸 현장 (현장 객체의 모양을 바꾸지 않는다 — 되감기는 Sim 을 새로 만든다)
+
 /** 화재·연기 (1초에 한 번 호출) */
 export function tickFire(sim: Sim, s: Scene, I: Incident): void {
   const w = s.w, h = s.h, n = w * h;
-  let burning = 0;
+  let burning = 0, big = 0;
   for (let i = 0; i < n; i++) {
     const f = s.fire[i];
     if (s.wet[i] > 0) s.wet[i] *= 0.955;
     if (f <= 0) continue;
     burning++;
+    if (f > 0.2) big++;
     s.fuel[i] -= 0.0105 * f;
     if (s.fuel[i] <= 0) {
       s.fuel[i] = 0;
@@ -80,6 +86,13 @@ export function tickFire(sim: Sim, s: Scene, I: Incident): void {
   // (X6 단계 4) 예전의 '가스 용기 폭발'(불이 닿으면 그 자리에서 터짐)은 지웠다 — 용기의 열이 쌓여야 터진다 (field/catastrophe.ts 의 ruptureVessel)
   // (X6 단계 3) 예전의 '천장 일부 붕괴'(탄 방을 한 번 판정해 s.rng 로 잔해·충격)는 지웠다 — 구조 건전도가 낮아진 구획의 붕괴(field/catastrophe.ts 의 collapseRegion)가 대신한다
   s.burning = burning;
+  // (I1-b §3.4) 큰 불: 불 칸(불 > 0.2)이 처음 FIRE_BIG 개에 닿을 때, 현장마다 한 번. 이 자리에는 기록이 없으므로 신호의 기록은 그 사건의 마지막 상황 악화(없으면 발생 기록)
+  if (big >= FIRE_BIG && !FIRE_BIG_SENT.has(s)) {
+    FIRE_BIG_SENT.add(s);
+    let ev = I.rootEvent;
+    for (let k = I.problems.length - 1; k >= 0; k--) if (I.problems[k].code === 'ESCALATION') { ev = I.problems[k].eventId; break; }
+    signal(sim, 'fireBig', { inc: I.id, ev, size: big, place: I.truth.placeId });
+  }
   if (burning === 0 && s.fireOutAt < 0 && s.kind === 'fire' && sim.t - s.startedAt > 5) s.fireOutAt = sim.t;
   if (burning > 0) s.fireOutAt = -1;
 }
@@ -117,7 +130,9 @@ function smokeSpread(s: Scene, w: number, h: number): void {
  * 가스 용기·누출 가스·폭발물이 같은 규칙이다(예전에는 폭발물만 그랬다). 무너져 내린 것(crush)에는 걸지 않는다.
  * 세 부류를 고르게 친다 (H1 §5.1): 대원(방호를 뺀다), 구조 대상·용의자(×0.8). 용의자는 예전에 건너뛰었다 — 쓰러지지 않은 용의자는 문턱 때문에 한 번에 숨지지 않는다(hurtHostile).
  */
-export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, radius: number, dmg: number, ev: number, cause: InjuryCause = 'blast', planned = false): void {      // planned = (R3 5단계) 대원이 일으킨 계획된 폭파(폭파 진입 — 미리 알리고 물러섰다): 대원에게 동요를 걸지 않는다 (I1-b 의 noSignal 도 이 자리에)
+// noSignal = (I1-b §3.4) 세계에 'blast' 신호를 보내지 않는다 — X6 의 가스·용기·분진 폭발은 'catastrophe' 신호를 따로 보내므로(같은 폭발이 두 번 들어오지 않게, 원인이 EXPLOSION 기록을 가리키게) 참으로 부른다.
+//   무너져 내린 것(crush)과 계획된 폭파(planned — 문 하나를 여는 작은 폭발은 세계 상태 규칙의 원인이 아니다)도 보내지 않는다. 그래서 신호가 가는 것은 X6 이 대체하지 않은 폭발(폭발물 — rules/crime.ts)뿐이다
+export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, radius: number, dmg: number, ev: number, cause: InjuryCause = 'blast', planned = false, noSignal = false): void {      // planned = (R3 5단계) 대원이 일으킨 계획된 폭파(폭파 진입 — 미리 알리고 물러섰다): 대원에게 동요를 걸지 않는다
   const bx = Math.round(x), by = Math.round(y);      // (X6 §12.1) 빈 공간(층 사이) 너머의 사람은 다치지 않는다 — 나란히 놓인 다른 층
   for (const a of s.agents) {
     if (a.status === 'left' || sim.responders[a.rid].dead) continue;      // 숨진 대원은 더 다치지 않는다
@@ -142,6 +157,7 @@ export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, rad
   }
   shatter(sim, s, x, y, radius + 1.5, Math.min(2.5, radius), 3);      // 반경 안의 창과 가구가 부서진다
   catOnBlast(sim, s, I, x, y, radius, dmg, ev, cause);      // (X6 §2.4) 구조 충격과 가스 점화용 충격 자리 — 위험 상태가 없는 현장에서는 아무것도 하지 않는다
+  if (cause === 'blast' && !planned && !noSignal) signal(sim, 'blast', { inc: I.id, ev, cx: x, cy: y, size: radius });      // (I1-b) 반경(칸). 건물(place)·도시 좌표는 signal 이 그 사건에서 채운다
 }
 
 /** 물(또는 소화 약제)을 뿌린다. 대원의 진압 행동이 호출한다. */
@@ -548,12 +564,14 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
         const fledEv = raiseProblem(sim, I, 'SUSPECT_FLED', `${h.label} 도주`, { role: 'SYSTEM', actor: '현장', text: `${josa(h.label, '이/가')} 현장을 벗어나 도주했습니다.`, imp: 3, truth: s.arrivedAt < 0 }, false);      // (I1-b) 이어지는 사건의 원인 기록
         // 연쇄: 총기를 든 채 달아난 용의자는 다른 곳에서 다시 범행할 수 있다
         if (h.weapon === 'gun') {
+          signal(sim, 'fled', { inc: I.id, ev: fledEv, cx: h.x, cy: h.y, data: h.id, place: I.truth.placeId });      // (I1-b) 무장 용의자의 도주 — 구역 위험(C10)이 받는다
           const r = s.rng.next();
           // 연쇄 상한(chain.ts): 넘으면 예약하지 않는다. 난수는 상한과 상관없이 똑같이 뽑는다(상한에 걸리지 않는 교대의 결과를 바꾸지 않는다)
           const room = canChain(sim, I);
           // 차를 몰고 달아나면 추격전이 이어지고(도주 차량), 아니면 다른 곳에서 다시 범행한다
-          if (r < 0.35 && !I.pursuit && !sim.gen.chain.some((c) => c.opts.parent === I.id && c.opts.variant === 'getaway') && !sim.incidents.some((J) => J.parent === I.id && J.truth.variant === 'getaway')) { if (room) sim.gen.chain.push({ at: sim.t + 2, opts: { type: 'armed', variant: 'getaway', nodeId: I.truth.nodeId, parent: I.id, note: '달아난 용의자가 차를 몰고 도주합니다', rng: sim.rng.fork('getaway:' + I.id + ':' + h.id), cause: fledEv, csq: 'getaway' } }); }
-          else if (r < 0.65) { const at = sim.t + s.rng.range(45, 100); if (room) sim.gen.chain.push({ at, opts: { note: '도주한 용의자가 다른 곳에서 다시 범행을 벌입니다', type: 'armed', variant: 'robbery', parent: I.id, cause: fledEv, csq: 'reoffend' } }); }
+          if (r < 0.35 && !I.pursuit && !sim.gen.chain.some((c) => c.opts.parent === I.id && c.opts.variant === 'getaway') && !sim.incidents.some((J) => J.parent === I.id && J.truth.variant === 'getaway')) { if (room) sim.gen.chain.push({ at: sim.t + 2, opts: { type: 'armed', variant: 'getaway', nodeId: I.truth.nodeId, parent: I.id, note: '달아난 용의자가 차를 몰고 도주합니다', rng: sim.rng.fork('getaway:' + I.id + ':' + h.id), cause: fledEv, csq: 'getaway' } }); else noteChainDrop(sim, I, 'armed', 'getaway'); }
+          // (I1-b b1) 재범은 자기 흐름 reoffend:<사건>:<용의자> 로 만든다 — 예전에는 평소 생성기의 흐름(sim.rngGen)을 쓰고 lastType 을 고쳐, 재범이 생긴 교대의 뒤 사건이 모두 달라졌다
+          else if (r < 0.65) { const at = sim.t + s.rng.range(45, 100); if (room) sim.gen.chain.push({ at, opts: { note: '도주한 용의자가 다른 곳에서 다시 범행을 벌입니다', type: 'armed', variant: 'robbery', parent: I.id, rng: sim.rng.fork('reoffend:' + I.id + ':' + h.id), cause: fledEv, csq: 'reoffend' } }); else noteChainDrop(sim, I, 'armed', 'robbery'); }
         }
         continue;
       }
@@ -666,6 +684,7 @@ export function tickCollapse(sim: Sim, s: Scene, I: Incident): void {
     const where = s.region[tidx(s, p.x, p.y)] >= 0 ? s.regions[s.region[tidx(s, p.x, p.y)]].name : '건물';
     const ev = raiseProblem(sim, I, 'ESCALATION', `${where} 2차 붕괴`, { role: 'SYSTEM', actor: '현장', text: `2차 붕괴! ${where}의 금이 간 구조물이 다시 무너졌습니다.`, imp: 3, truth: s.arrivedAt < 0 }, false);
     blast(sim, s, I, p.x, p.y, 2.6, 28, ev, 'crush');
+    signal(sim, 'collapse', { inc: I.id, ev, cx: p.x, cy: p.y, size: made, place: I.truth.placeId });      // (I1-b) 2차 붕괴 — 크기는 새로 무너진 칸 수 (지진 여진이 흔든 구조물도 이 자리로 무너진다)
     // 무너진 자리 곁(TRAP_R 칸 안)에 있던 구조 대상은 잔해에 갇힌다 (현장에 있고, 업혀 있지 않고, 물속이 아닌 사람). 걷던 사람도 멈춘다.
     // 지휘관은 본 대원이 알릴 때 안다 — 그 뒤 구출(extricate)이 받는다. 판정 뒤에는 일어나지 않는다 (§2.6). 난수는 목적별 흐름 injury:<현장>:trap
     if (I.phase !== 'closed') for (let ci = 0; ci < s.casualties.length; ci++) { const c = s.casualties[ci];

@@ -3,11 +3,12 @@
 // 각 이벤트는 원인 이벤트(causes)를 가지므로 종료 보고서가 인과 사슬을 추적할 수 있다.
 
 import type { Sim } from './engine';
-import type { EventKind, Incident, Problem, ProblemCode, Role } from './types';
+import type { EventKind, Incident, Problem, ProblemCode, Role, WorldTag } from './types';
 
 export interface EmitArgs {
   inc?: number; role: Role; actor: string; kind: EventKind; text: string;
   causes?: number[]; problem?: ProblemCode; imp?: number; truth?: boolean; rid?: number;
+  tag?: WorldTag;      // (I1-b) 세계 상태 알림의 갈래 — 측정 도구가 시스템을 가린다. 해시에는 들지 않는다 (틱과 문구만)
 }
 
 export function emit(sim: Sim, a: EmitArgs): number {
@@ -18,6 +19,7 @@ export function emit(sim: Sim, a: EmitArgs): number {
   sim.events.push({
     id, t: sim.t, incidentId: inc, role: a.role, actor: a.actor, kind: a.kind, text: a.text,
     causes, problem: a.problem ?? null, importance: a.imp ?? 1, truth: a.truth ?? false, rid: a.rid ?? -1,
+    tag: a.tag,      // (I1-b) 없으면 undefined — 모든 기록이 같은 모양
   });
   // 재현성 검증용 누적 해시
   let h = sim.logHash ^ Math.imul(sim.tick + 1, 2654435761);

@@ -5,6 +5,7 @@ import { AIR_KIND, EXTRA_NAMES, ROLES, STAFF, dealFlashbangs, drawBatchFaults, d
 import { recomputeUnmet } from './dispatch/dispatcher';      // 함수 안에서만 부른다 (dispatcher 가 이 파일을 import 한다 — 모듈 맨 위에서 쓰지 않는다)
 import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
+import { signal } from './world/consequence';      // (I1-b) 병원 인계를 세계에 알린다
 import { canDeploy } from './field/injury';
 import { unitArrived } from './field/sceneManager';
 import { Rng } from './rng';
@@ -592,12 +593,14 @@ export function tickUnits(sim: Sim): void {
         const I = u.patientsIncident !== null ? sim.incidents[u.patientsIncident] : null;
         const scene = I ? sim.scenes[I.id] : null;
         const parts: string[] = [];
+        let alive = 0;      // (I1-b) 산 채로 인계한 구조 대상 — 'delivered' 신호의 data
         if (scene) {
           for (const cid of u.patients) {
             const c = scene.casualties[cid];
             if (!c.dead) { c.where = 'hospital'; c.tHospital = sim.t; }
           }
-          parts.push(`환자 ${u.patients.filter((cid) => !scene.casualties[cid].dead).length}명`);
+          alive = u.patients.filter((cid) => !scene.casualties[cid].dead).length;
+          parts.push(`환자 ${alive}명`);
         }
         // 구조 대상이 아닌 환자(다친 대원·용의자)의 인계 — 그 사람들만 태운 차량은 patientsIncident 가 없으므로 위의 갈래 밖에서 한다 (H1 §3.4-4)
         const ab = u.aboard;
@@ -612,7 +615,12 @@ export function tickUnits(sim: Sim): void {
         }
         if (mates > 0) parts.push(`부상 대원 ${mates}명`);
         if (sus > 0) parts.push(`용의자 ${sus}명`);
-        if (parts.length) emit(sim, { inc: I ? I.id : abInc, role: 'UNIT', actor: u.callsign, kind: 'casualty', text: `${u.callsign}: ${sim.city.facilities.find((f) => f.kind === 'hospital' && f.nodeId === u.nodeId)?.name ?? '병원'} 도착, ${parts.join('·')} 인계 완료.`, imp: 1 });
+        if (parts.length) {
+          const hosp = sim.city.facilities.find((f) => f.kind === 'hospital' && f.nodeId === u.nodeId);
+          const hev = emit(sim, { inc: I ? I.id : abInc, role: 'UNIT', actor: u.callsign, kind: 'casualty', text: `${u.callsign}: ${hosp?.name ?? '병원'} 도착, ${parts.join('·')} 인계 완료.`, imp: 1 });
+          // (I1-b §3.4) 병원 인계: 그 인계 기록과 함께 — place 병원 시설, data 산 환자 수(구조 대상만), size 함께 인계한 다친 대원·용의자 수(병상은 쓴다). 자리는 병원. 지상 구급차·헬기 이송이 같은 길이다
+          signal(sim, 'delivered', { inc: I ? I.id : abInc, ev: hev, x: hosp?.x, y: hosp?.y, place: hosp ? hosp.id : -1, data: alive, size: mates + sus });
+        }
         u.patients = []; u.patientsIncident = null; u.firstLoadAt = undefined;
         releaseUnit(sim, u);
       }

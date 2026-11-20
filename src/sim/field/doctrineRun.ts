@@ -903,6 +903,102 @@ export function runDefuse(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Tas
 // (import 를 이 절에 둔 것은 위의 import 묶음을 다른 단계가 함께 고치고 있어서다)
 import { hasKit } from '../crews';
 import { kitWorks } from './gear';
-import { METHOD, robotSpot } from './methods';
+import { LANE_SHIELD_BY, METHOD, robotSpot } from './methods';
 import { recordMethod, startMethod, switchMethod } from './methodRun';
 import { applies, docCtx } from './doctrine';
+
+// ───────────────────────── (6단계) 이송·교통 통제의 방법 (§3.7 — 업기·끌기·들것 / 통제·차량 차단) · 척추 고정 (E13 — 판단 지점 carryStart) ─────────────────────────
+// 방법을 고르는 것은 R2 의 chooseMethod(교본 배율 E14·P20·F18), 효과는 여기와 그 효과가 실제로 걸리는 자리다:
+//   끌기      이동 속도(executor.moveSpeed — 혼자 업기의 ×0.85) · 옮기는 동안의 연기 피해 ×0.5(대상 hazards.tickCasualties · 대원 sceneManager.agentHealth — dragSmoke·dragging)
+//   차량 차단  통제 지점에 닿는 순간 s.laneShield 에 그 지점, 설치 +3초 · 그 방향에서 들어오는 차의 부주의 ×0.4(hazards.tickLane — laneShieldMul. 확률만 곱한다)
+//   척추 고정  들기 전에 3초 → c.immob. 교통사고·붕괴 현장에서 꺼낸 사람을 고정하지 않고 옮기면 옮기는 동안 더 나빠진다(executor 의 case 'carry' — R1 의 '고정판이 없으면'을 바꿨다)
+/** 끌기: 옮기는 동안 대상·대원이 받는 연기 피해의 배율 · 혼자 업기에 견준 속도. 척추 고정에 걸리는 시간(초) */
+export const CARRY = { dragSmoke: 0.5, dragSpeed: 0.85, immobilize: 3 } as const;
+/** 차량 차단: 설치에 더 걸리는 시간(초) · 막은 입구로 들어오는 차의 부주의 확률 배율 */
+export const BLOCK_LANE = { setup: 3, careless: 0.4 } as const;
+/** 척추 고정의 진행 (임무마다): 고정하는 중이면 지난 시간(초), 고정하지 않기로 했거나 끝났으면 -1 (임무의 모양을 바꾸지 않으려 WeakMap — 임무의 wait 는 실행기가 통째로 기다리는 칸이라 쓰지 않는다) */
+const IMMOB = new WeakMap<Task, number>();
+/** 그 이송을 함께 맡아 곁(2칸)에 와 있는 동료 (R1 의 '곁에서 돕는 사람'과 같은 거리) */
+function carryMates(s: Scene, a: FieldAgent, t: Task): FieldAgent[] {
+  const out: FieldAgent[] = [];
+  const ag = s.agents;
+  for (let k = 0; k < ag.length; k++) { const b = ag[k]; if (b !== a && b.status === 'active' && b.task !== null && b.task.kind === t.kind && b.task.workId === t.workId && dist(a.x, a.y, b.x, b.y) < 2) out.push(b); }
+  return out;
+}
+/**
+ * 이송 — 들기 직전 (executor 의 case 'carry': 환자 곁에 닿았고 carryHold 가 막지 않은 틱부터). 돌려주는 값 = 이 틱은 들지 않는다.
+ *   ① 도착 재선택 (R2 §3.2-2 — 한 번): 환자 곁의 연기로 방법을 다시 본다 — 들것 없이 혼자, 연기가 짙으면 끌기(E14)
+ *   ② 판단 지점 carryStart (E13): 척추 고정판을 든 대원(이 대원, 아니면 같은 이송을 맡아 곁에 온 동료)이 3초 고정한 뒤 든다. 처음 정할 때 그 줄의 문구와 기록(한 번),
+ *      3초가 차면 c.immob. 연기·열이 짙으면 줄이 걸리지 않는다(고정하지 않고 바로). 이미 고정된 사람은 다시 하지 않는다
+ */
+export function runCarry(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Casualty): boolean {
+  if (recheckOnArrive(sim, s, I, a, t, 'carry', { cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1 })) return true;
+  let at = IMMOB.get(t);
+  if (at === -1) return false;
+  if (c.immob) { IMMOB.set(t, -1); return false; }
+  if (at === undefined) {
+    let who: FieldAgent | null = docGate(sim, s, a, 'carryStart', senseOf(s, a)).opt === 'immobilize' ? a : null;
+    if (who === null) for (const b of carryMates(s, a, t)) if (docGate(sim, s, b, 'carryStart', senseOf(s, b)).opt === 'immobilize') { who = b; break; }
+    if (who === null) { IMMOB.set(t, -1); return false; }
+    docMark(sim, s, who, 'E13', 'gate', { gate: 'carryStart', work: 'carry', tgt: 'c' + c.id });
+    at = 0;
+  }
+  at += sim.dt;
+  a.label = '척추 고정'; a.ring = Math.min(1, at / CARRY.immobilize);
+  if (at + 1e-9 < CARRY.immobilize) { IMMOB.set(t, at); return true; }
+  c.immob = true;
+  IMMOB.set(t, -1);
+  return false;
+}
+/** 끌어 옮기는 중인가 (그 대원이 그 사람을 끌기로 옮기고 있다) */
+export function dragging(a: FieldAgent): boolean { return a.carrying >= 0 && a.task !== null && a.task.kind === 'carry' && a.task.method === 'drag'; }
+/** 옮겨지는 그 사람이 받는 연기 피해의 배율 (끌려 나가는 중이면 0.5 — 연기 아래로 낮게) */
+export function dragSmoke(s: Scene, cas: number): number {
+  const ag = s.agents;
+  for (let k = 0; k < ag.length; k++) if (ag[k].carrying === cas) return dragging(ag[k]) ? CARRY.dragSmoke : 1;
+  return 1;
+}
+/**
+ * 이송을 마쳤다 (안전 구역에 내려놓은 그 자리 — ev = 이송 완료 기록): 쓴 방법을 한 줄 남긴다. 끌기는 끌기, 들것으로 옮겼으면(litter — 실행기가 잰다: 옮긴 사람이나 곁의 동료가 들것을 들었다)
+ * 들것(기록 전용), 아니면 고른 방법(업기). 방법을 고르지 않은 임무(대피 안내 등)는 남기지 않는다
+ */
+export function carryDone(sim: Sim, I: Incident, a: FieldAgent, t: Task, litter: boolean, ev: number): void {
+  if (t.method === undefined) return;
+  recordMethod(sim, I, a, t, t.method === 'pack' && litter ? 'litter' : t.method, t.mwhy ?? 'usual', true, ev);
+}
+// 통제 지점 → 그 입구를 막은 부대는 methods.LANE_SHIELD_BY 에 적는다 (판단부의 차량 차단 조건이 "우리 차가 이미 다른 입구를 막고 있다"를 본다 — 부대의 차는 한 대).
+// 차가 현장을 떠나면 차단이 풀린다 — laneShieldMul 이 본다
+/**
+ * 교통 통제 — 통제 지점에 닿은 틱부터 (executor 의 case 'traffic'). 차량 차단이면 닿는 순간 그 지점을 s.laneShield 에 넣고(기록 한 줄) 설치에 3초를 더한다.
+ * 돌려주는 값 = 설치에 더 걸리는 시간(초 — 평소 통제는 0)
+ */
+export function runTraffic(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task): number {
+  if (t.method !== 'blockLane') return 0;
+  const k = t.tile;
+  const sh = (s.laneShield ??= []);
+  if (sh.indexOf(k) < 0) {
+    sh.push(k);
+    let by = LANE_SHIELD_BY.get(s);
+    if (by === undefined) { by = []; LANE_SHIELD_BY.set(s, by); }
+    by[k] = a.unitId;
+    const r = sim.responders[a.rid];
+    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 0, text: `${k === 0 ? '서측' : '동측'} 차로 입구를 ${sim.units[a.unitId].callsign} 차량으로 막았습니다. 통제 설치 중.` });
+  }
+  a.label = METHOD.blockLane.label;
+  return BLOCK_LANE.setup;
+}
+/**
+ * 차량으로 막은 입구의 부주의 배율 (hazards.tickLane 이 새 차를 만들 때 — 확률만 곱한다, 판정 호출 수는 그대로): 그 방향의 통제 지점이 s.laneShield 에 있고 아직 통제 전이면 0.4.
+ * 그 입구를 막은 부대가 현장을 떠났으면(다른 사건으로 돌려졌다 등) 차단을 거둔다 — 막은 차가 없다
+ */
+export function laneShieldMul(sim: Sim, s: Scene, cp: number): number {
+  const sh = s.laneShield;
+  if (sh === null || sh === undefined || s.controlDone[cp]) return 1;
+  const at = sh.indexOf(cp);
+  if (at < 0) return 1;
+  const by = LANE_SHIELD_BY.get(s);
+  const u = by !== undefined && by[cp] !== undefined ? sim.units[by[cp]] : undefined;
+  if (u !== undefined && (u.state !== 'onscene' || u.incidentId !== s.incidentId)) { sh.splice(at, 1); delete by![cp]; return 1; }
+  return BLOCK_LANE.careless;
+}
+import { recheckOnArrive, senseOf } from './methodRun';

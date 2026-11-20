@@ -398,6 +398,19 @@ export function searchMul(a: FieldAgent): { k: number; voice: boolean } {
   return SEARCH_MUL[t.method] ?? NO_MUL;
 }
 
+// ── (R3 §3.7 — 6단계) 차량 차단의 조건 — 그 통제 지점(대상의 tile = 통제 지점 번호)이 통제됐다고 모르고(믿음 ctl), 자기 부대가 길로 온 차이며(조직 정보),
+//    그 차가 다른 입구를 막고 있지 않다: 부대의 차는 한 대라 한 현장에서 한 입구만 막는다(R2 의 "부대마다 보트는 한 척"과 같은 판정 — 동료의 겉과 자기 부대의 차) ──
+/** 통제 지점 → 그 입구를 차량으로 막은 부대 (실행부 doctrineRun.runTraffic 이 적는다 — 현장 객체의 모양을 바꾸지 않으려 WeakMap. 자기 부대의 차가 어디 서 있는지는 조직 정보다) */
+export const LANE_SHIELD_BY = new WeakMap<Scene, number[]>();
+/** 자기 부대의 차가 이미 다른 입구에 쓰이고 있다: 같은 부대의 동료가 다른 지점에서 차량 차단을 하러 가고 있거나(동료의 겉), 그 차가 이미 다른 입구를 막고 섰다 */
+const unitCarBusy = (c: MethodCtx): boolean => {
+  const ag = c.s.agents, k = c.tg.tile;
+  for (let q = 0; q < ag.length; q++) { const b = ag[q]; if (b !== c.a && b.unitId === c.a.unitId && b.status === 'active' && b.task !== null && b.task.kind === 'traffic' && b.task.method === 'blockLane' && b.task.tile !== k) return true; }
+  const by = LANE_SHIELD_BY.get(c.s);
+  if (by !== undefined) for (let q = 0; q < by.length; q++) if (q !== k && by[q] === c.a.unitId) return true;
+  return false;
+};
+const laneOpen = (c: MethodCtx): boolean => c.tg.tile >= 0 && c.a.beliefs.val<boolean>('ctl', c.tg.tile) !== true && !c.u.air && !c.u.sea && !unitCarBusy(c);
 // ── (R3 §3.7 — 5단계) 해체의 조건 — 대상 장치의 믿음(haz bomb)과 생김새만 ──
 /** 대상 장치의 믿음 (살아 있을 때만, 아니면 null) */
 function bombOf(c: MethodCtx): { x: number; y: number } | null {
@@ -529,6 +542,14 @@ export const METHOD: Record<MethodId, MethodDef> = {
   robotDefuse: row('robotDefuse', ['defuse'], '로봇 원격 해체', '로봇 해체', '로봇 원격 해체', '원격 로봇으로', ['robot'], 0.9, 0, false, { can: (c) => bombOf(c) !== null && robotSpotOf(c) !== null }),      // 로봇 조작 요원이 장치 8칸 안·벽에 가리지 않는 자리에서
   suitDefuse: row('suitDefuse', ['defuse'], '방호복 해체', '방호복 해체', '폭발물 해체', '방호복을 입고', ['bombSuit'], 0.75, 0, true, { can: (c) => bombOf(c) !== null }),      // 지금의 해체 (해체 자격 eodKit 은 fitFor 가 본다)
   bareDefuse: row('bareDefuse', ['defuse'], '맨몸 해체', '맨몸 해체', '맨몸 해체', '방호복 없이', ['eodKit'], 0.5, 0.15, false, { can: (c) => bombOf(c) !== null }),      // 언제 고르는가는 교본 S07 — 방호복이 없거나 옮길 수 없는 사람이 곁에 있을 때만
+  // ── (R3 §3.7 — 6단계) 이송 carry: 업기(평소 — 지금 동작) · 끌기(E14 ×1.6 → 0.80 > 업기 0.70: 들것 없이 혼자, 선 자리의 연기가 짙을 때) · 들것(R1 의 들것 배율 그대로 — 기록 전용).
+  //    교통 통제 traffic: 통제(평소 — 지금 동작) · 차량 차단(P20·F18 ×1.5 → 0.90 > 통제 0.75: 부대 차량으로 차로 입구를 막고 선 뒤 통제 — 설치 +3초, 그동안 그 방향 차의 부주의 ×0.4).
+  //    실행은 doctrineRun.runCarry·runTraffic (executor 의 case 'carry'·'traffic'). N9 의 다섯 앞에 둔다(tests/kinds2 가 그 다섯을 표의 끝으로 본다) ──
+  pack: row('pack', ['carry'], '업기', '업기', '이송', '업어', [], 0.7, 0, true, { can: ALWAYS }),      // 지금의 이송 (걸을 수 있는 사람은 부축)
+  drag: row('drag', ['carry'], '끌기', '끌기', '낮게 끌기', '낮게 끌어', [], 0.5, 0, false, { can: (c) => c.cb !== null && c.cb.mob === 'immobile' }),      // 옮기는 동안 대상·대원의 연기 피해 ×0.5, 속도는 혼자 업기의 ×0.85
+  litter: row('litter', ['carry'], '들것 이송', '들것', '들것 이송', '들것으로', ['stretcher'], 0, 0, true, REC),      // R1 의 들것(옮기는 사람이나 곁에서 돕는 사람) — 끝날 때 기록만 (평소 방법이라 보고서 문장에 싣지 않는다)
+  post: row('post', ['traffic'], '교통 통제', '통제', '교통 통제', '차로에 서서', [], 0.75, 0, true, { can: ALWAYS }),      // 지금의 통제 (경광봉이면 R1 의 ×0.85)
+  blockLane: row('blockLane', ['traffic'], '차량 차단', '차량 차단', '차량 차단', '차량으로 차로 입구를 막고', [], 0.6, 0, false, { can: laneOpen }),      // 그 지점이 통제 전이고(믿음 ctl) 길로 온 부대(헬기·구조정이 아니다)의 차가 다른 입구에 쓰이지 않을 때 (부대마다 차 한 대 — 한 입구)
   // ── (N9 §5.12) 새 방법 다섯 — 단계 1 은 줄만(can = NOT_YET). 수치(pref·risk)는 시작값이고, 조건·배율·장비는 그 방법을 쓰는 단계가 채운다 ──
   // 잠수: 물에 잠긴 차·선실 안의 사람(믿음 sunk · haz sunk)에게 3칸 안에서 25초 (단계 5). 장비는 diveKit(단계 2 에 생긴다)으로 바꾼다 — 지금은 있는 드라이슈트만 적어 둔다
   dive: row('dive', ['waterRescue', 'extricate', 'search'], '잠수 구조', '잠수', '잠수 구조', '잠수해 들어가', ['drysuit'], 0.8, 0.1, false),
@@ -572,6 +593,7 @@ export const WORK_MODE: Partial<Record<WorkKind, 'refuse' | 'always' | 'optional
   force: 'always', clear: 'always', extricate: 'always', search: 'always', treat: 'always', mitigate: 'always', perimeter: 'always',
   suppress: 'optional', engage: 'optional', arrest: 'optional', load: 'optional', hoist: 'optional',
   cordon: 'always', decontam: 'always',
+  carry: 'always', traffic: 'always',      // (R3 6단계 §3.7) 업기·통제가 늘 남는다 (null 이 생기지 않는다)
   defuse: 'refuse',      // (R3 5단계 §3.7) 쓸 해체 방법이 없으면 맡지 않는다 (fitFor 의 defuse = 기본 자격 × methodFit > 0) — 다친·동요한 처리 요원(S23)·로봇이 고장 난 로봇 조작 요원      // (N9 §5.12) 방패가 없어도 통제는 맡는다 · 물 세척이 늘 남는다 — 단계 1 은 표의 값만 (methodRun 을 부르는 곳이 아직 없다)
 };
 /** 대상 믿음이 없으면(아직 못 봤다) 후보가 없는 임무 (R3 가 해체를 더한다) */
@@ -599,6 +621,7 @@ export const SAY: Record<MethodId, string> = {
   dive: '잠수해 들어가겠습니다.', boom: '오일펜스를 펼치겠습니다.', shieldLine: '방패로 저지선을 치겠습니다.', deconTent: '제독 텐트에서 씻기겠습니다.', hoseWash: '호스로 씻어 내겠습니다.',      // (N9)
   feel: '앞이 안 보입니다. 벽을 따라 더듬어 찾겠습니다.', pulse: '끊어 쏘며 물을 아끼겠습니다.',      // (R3 3단계)
   robotDefuse: '로봇 먼저 투입합니다.', suitDefuse: '방호복을 입고 해체하겠습니다.', bareDefuse: '방호복 없이 바로 해체합니다.',      // (R3 5단계)
+  pack: '업어 옮기겠습니다.', drag: '연기 아래로 낮게 끌어 나가겠습니다.', litter: '', post: '진입 차량을 통제하겠습니다.', blockLane: '차량으로 차로 입구를 막겠습니다.',      // (R3 6단계)
 };
 /** (R3 §3.7) 교본 까닭 여섯의 앞말 */
 const DOC_SAY: Partial<Record<MethodWhy, string>> = { hurt: '부상으로', alone: '혼자라', lowAir: '공기가 부족해', lowAmmo: '탄약이 없어', shaken: '손이 떨려', tired: '지쳐서' };

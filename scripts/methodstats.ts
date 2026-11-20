@@ -14,8 +14,9 @@ import type { MethodId, WorkKind } from '../src/sim/types';
 const GROUP: Partial<Record<WorkKind, string>> = {
   waterRescue: '수난', hoist: '수난', force: '문·통로', clear: '문·통로', extricate: '구출', search: '수색', suppress: '화재',
   engage: '무장', arrest: '무장', treat: '응급', load: '응급', mitigate: '누출·통제', perimeter: '누출·통제',
+  carry: '이송', traffic: '교통 통제',      // (R3 6단계) 업기·끌기·들것 / 통제·차량 차단
 };
-const GROUP_ORDER = ['수난', '문·통로', '구출', '수색', '화재', '무장', '응급', '누출·통제', '그 밖'];
+const GROUP_ORDER = ['수난', '문·통로', '구출', '수색', '화재', '무장', '응급', '누출·통제', '이송', '교통 통제', '그 밖'];
 
 export interface MethodCount {
   ok: Record<string, Record<string, number>>;       // 묶음 → 방법 → 성공 횟수

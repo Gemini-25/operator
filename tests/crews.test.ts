@@ -1859,11 +1859,12 @@ describe('장비의 특색 (설계서 4절·6.3)', () => {
     const hauling = (a: FieldAgent): number => { const free = moveSpeed(m.sim, m.s, a); a.carrying = pt.id; pt.mob = 'immobile'; const v = moveSpeed(m.sim, m.s, a); a.carrying = -1; return v / free; };
     put(drv, m.s.staging); put(emt, { x: m.s.staging.x + 5, y: m.s.staging.y }); put(para, { x: m.s.staging.x - 5, y: m.s.staging.y });
     expect(hauling(drv), '들것').toBeCloseTo(0.55, 9); expect(hauling(emt)).toBeCloseTo(0.48, 9);
-    // ── 척추 고정판: 차에서 꺼낸 사람을 고정판 없이 옮기면 옮기는 동안 악화 ×1.12 ──
+    // ── 척추 고정판: 차에서 꺼낸 사람을 고정하지 않고 옮기면 옮기는 동안 악화 ×1.12 ──
+    // (R3 6단계 E13) 조건이 "고정판을 가졌는가"에서 "고정했는가(c.immob)"로 바뀌었다 — 고정판을 든 대원이 들기 전에 3초 고정한다(tests/doctrine.test.ts 의 척추 고정 시험). 여기서는 효과만 본다
     const t = sceneWith('KIT', 'traffic', ['engine', 'bls']);
     const hurt = t.s.casualties[0];
-    const carryLoss = (a: FieldAgent): number => {
-      hurt.mob = 'immobile'; hurt.walking = false; hurt.tFreed = 0; hurt.where = 'carried'; hurt.dead = false; hurt.health = 50; hurt.bleed = 0.5; hurt.inVehicle = null;
+    const carryLoss = (a: FieldAgent, immob = false): number => {
+      hurt.mob = 'immobile'; hurt.walking = false; hurt.tFreed = 0; hurt.where = 'carried'; hurt.dead = false; hurt.health = 50; hurt.bleed = 0.5; hurt.inVehicle = null; hurt.immob = immob;
       put(a, { x: t.s.safe.x + 6, y: t.s.safe.y }); hurt.x = a.x; hurt.y = a.y;
       for (const b of t.s.agents) if (b !== a) put(b, { x: 1, y: 1 });
       a.carrying = hurt.id;
@@ -1871,9 +1872,10 @@ describe('장비의 특색 (설계서 4절·6.3)', () => {
       a.carrying = -1; a.task = null;
       return 50 - hurt.health;
     };
-    expect(carryLoss(roleAgent(t.sim, t.agents('engine'), 'nozzle')), '고정판 없이 5틱').toBeCloseTo(0.5 * 0.12 * 0.2 * 5, 9);
-    expect(carryLoss(roleAgent(t.sim, t.agents('bls'), 'emt')), '응급구조사의 고정판').toBe(0);
-    hurt.tFreed = -1;      // 갇혀 있지 않던 사람은 해당 없다
+    expect(carryLoss(roleAgent(t.sim, t.agents('engine'), 'nozzle')), '고정하지 않고 5틱').toBeCloseTo(0.5 * 0.12 * 0.2 * 5, 9);
+    expect(carryLoss(roleAgent(t.sim, t.agents('bls'), 'emt'), true), '응급구조사가 고정판으로 고정했다').toBe(0);
+    expect(carryLoss(roleAgent(t.sim, t.agents('bls'), 'emt')), '고정판을 들었어도 고정하지 않았으면 같다').toBeCloseTo(0.5 * 0.12 * 0.2 * 5, 9);
+    hurt.tFreed = -1; hurt.immob = false;      // 갇혀 있지 않던 사람은 해당 없다
     const noBoard = roleAgent(t.sim, t.agents('engine'), 'nozzle');
     hurt.where = 'carried'; hurt.health = 50; put(noBoard, { x: t.s.safe.x + 6, y: t.s.safe.y }); noBoard.carrying = hurt.id;
     drive(t.sim, t.s, noBoard, 'carry', { cas: hurt.id }, 5);

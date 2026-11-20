@@ -194,3 +194,15 @@ registerDoctrine(
     note: '짝을 기다립니다.', outNote: '짝이 오지 않습니다 — 수색을 넘깁니다.',
   },
 );
+
+// ── (6단계) 교통 통제의 방법 — 차량 차단 (P20. 방법 blockLane 이 6단계에 생겼다 — §3.1·§3.6·§3.7) ──
+registerDoctrine(
+  {
+    // 2차 사고가 이미 났거나 밤·비·안개면 순찰차로 차로 입구를 막고 선 뒤 통제한다 (차량 차단 0.6 × 1.5 = 0.90 > 통제 0.75). 설치 +3초, 그동안 그 방향 차의 부주의 ×0.4 (doctrineRun.runTraffic · hazards.tickLane)
+    id: 'P20', dept: 'police', name: '2차 사고 뒤·밤·비·안개 — 차량으로 차로 입구를 막고 통제', short: '차량 차단',
+    who: { dept: ['police'] }, hook: 'method', works: ['traffic'], methods: ['blockLane'],
+    when: (c) => c.sit.lanes2nd || c.sim.weather !== 'clear',
+    effect: { kind: 'methodMul', mul: 1.5 },
+    th: { mul: 1.5 }, rank: 3, why: 'danger',
+  },
+);

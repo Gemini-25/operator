@@ -60,3 +60,11 @@ Workflow 도구에 `scriptPath`(이 폴더의 파일 경로)와 `args` 를 넘�
 ```
 
 설계서는 작업 브랜치 `wf/kinds-spec`(가리킴 브랜치)에 커밋된다. 끝나면 주 세션이 주 브랜치에 합치고, 반영자가 돌려준 줄(문서 표·구현 순서 표·덩어리 표·정본 표·로드맵 항목)을 `docs/specs/README.md`·`docs/ROADMAP.md` 에 넣는다. 조사·설계안·검토 지적은 `<scratch>/wf-kinds/` 에 남는다(세션 폴더라 새 컨테이너에는 없다 — 설계서의 "검토 메모"와 "지금 상태" 절에 요지가 들어 있다).
+
+## 실제로 띄운 인자 (`args/`)
+
+`args/<묶음>.json` 은 그 묶음을 `package-run.js` 로 띄울 때 넘긴 `args` 그대로다. 워크플로가 중간에 멈췄을 때 **같은 대본 + 같은 인자 + `resumeFromRunId`** 로 띄우면 끝난 작업자의 결과를 다시 쓰고 멈춘 자리부터 잇는다(인자가 한 글자라도 다르면 처음부터 다시 돈다). 새 컨테이너에서는 실행 기록이 없으므로 `resumeFromRunId` 없이, 이미 주 브랜치에 합쳐진 덩어리를 `chunks` 에서 빼고 그 보고(`docs/handover/reports/<묶음>-<덩어리>.md`)를 `priorReports` 로 옮겨 띄운다. `scratch` 는 그 세션의 scratchpad 경로로 바꾼다.
+
+| 파일 | 묶음 | 띄운 날 · 시작점 |
+|---|---|---|
+| `args/I1-b.json` | I1-b 인과 규칙과 세계 상태 결합 (`wf/causality`) | 2026-11-20 · `4aea467` (R3 를 다 합친 자리) |

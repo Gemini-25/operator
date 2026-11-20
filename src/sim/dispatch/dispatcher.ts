@@ -13,6 +13,7 @@ import { TYPE_NAME, fmtSec, josa } from '../util';
 import { assess, emptyNeeds, needsText, sevName } from './analyst';
 import { dispatchPref } from './doctrine';      // (R3 §6.2) 관제 교본의 부대 고르기 가산
 import { recordDoc } from '../field/doctrineRun';
+import { noteDivert } from '../world/rules/record';      // (I1-b C6) 전환 배정의 실제 영향 — 기록만
 /** (R3) 이번 고르기에서 교본 가산을 받은 부대와 그 줄 (pickUnit 안에서만 — 부대 객체의 모양을 바꾸지 않으려 WeakMap) */
 const prefOf = new WeakMap<Unit, string>();
 
@@ -260,7 +261,8 @@ function sendUnit(sim: Sim, I: Incident, key: keyof Needs, c: Cand, nearest: Can
     const k = J.assigned.indexOf(u.id); if (k >= 0) J.assigned.splice(k, 1);
     u.diverted = true;
     // (I1-b 0단계) 원인 = 받는 사건의 마지막 기록(사건 사이 원인 간선), ref = 받는 사건·부대 — 기록만
-    raiseProblem(sim, J, 'DIVERTED', `${josa(u.callsign, '이/가')} 더 긴급한 사건 ${josa(I.code, '으로/로')} 전환 배정`, { role: 'DISPATCH', actor: '배정 AI', imp: 2, causes: [I.lastEvent], text: `${josa(u.callsign, '을/를')} 더 긴급한 사건 ${josa(I.code, '으로/로')} 전환 배정합니다. 사건 ${josa(J.code, '은/는')} 대체 부대를 찾습니다.` }, false, { inc: I.id, unit: u.id });
+    const dev = raiseProblem(sim, J, 'DIVERTED', `${josa(u.callsign, '이/가')} 더 긴급한 사건 ${josa(I.code, '으로/로')} 전환 배정`, { role: 'DISPATCH', actor: '배정 AI', imp: 2, causes: [I.lastEvent], text: `${josa(u.callsign, '을/를')} 더 긴급한 사건 ${josa(I.code, '으로/로')} 전환 배정합니다. 사건 ${josa(J.code, '은/는')} 대체 부대를 찾습니다.` }, false, { inc: I.id, unit: u.id });
+    noteDivert(sim, J, u, dev);      // (I1-b C6) 빼앗긴 부대의 예정 도착을 J 에 기억한다 — 아래의 dispatchUnit 이 그 값을 새 사건의 것으로 덮어쓰기 전에. 기록만 (배정 판단은 읽지 않는다)
     if (!J.fieldVerified) recomputeUnmet(sim, J); else { J.unmet[key] = (J.unmet[key] ?? 0) + 1; J.unmetSince = sim.t; J.noUnitLogged = false; }
   }
   const first = I.firstDispatchAt < 0;

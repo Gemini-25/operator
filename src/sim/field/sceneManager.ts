@@ -91,6 +91,7 @@ export function unitArrived(sim: Sim, I: Incident, u: Unit): void {
   const names = crew.length > 1 ? `${roleOf(sim, crew[0]).name} ${sim.responders[crew[0]].name} 외 ${crew.length - 1}명` : crew.length ? sim.responders[crew[0]].name : '';
   const took = I.reportedAt >= 0 ? Math.round(sim.t - I.reportedAt) : 0;
   emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'arrive', imp: firstGround ? 3 : 2, causes: shortEv, text: firstGround ? `${u.callsign} 현장 도착 (${names}). 신고 접수 후 ${took}초.` : `${u.callsign} 현장 합류 (${names}).` });
+  if (firstGround) divertArrived(sim, I);      // (I1-b C6) 이 사건으로 오던 부대를 빼앗긴 적이 있으면: 첫 도착이 예정보다 얼마나 늦었는가 (DIVERTED 의 ref.lost, 10초 넘으면 기록)
   if (!crew.length) return;
   // 다친 채 내린 대원은 자기 상태를 알린다(소리 없이): 지휘관이 가벼운 일만 맡길 수 있는 대원임을 안다
   for (const rid of crew) if (sim.responders[rid].status === 'injured') { const b = s.agents.find((q) => q.rid === rid)!; learnQuiet(sim, b, mateFact(sim, s, b, 'light', sim.responders[rid].name, 0)); }
@@ -431,6 +432,7 @@ export function tickScene(sim: Sim, s: Scene): void {
 
 // (R3 3단계) 짝 맺기 — 부대가 내린 뒤 한 번 (doctrineRun.pairUp)
 import { pairUp } from './doctrineRun';
+import { divertArrived } from '../world/rules/record';      // (I1-b C6)
 // (R3 6단계) 끌기 — 낮게 끌어 나가는 대원의 연기 피해 (agentHealth)
 import { CARRY, dragging } from './doctrineRun';
 // ── (R3 4단계 CE5) 이송 출발 전에 지휘를 넘긴다 — 4번 블록이 부른다. 고르는 순서는 지금의 승계(주관 부서 → 경험 → rid)와 같다 ──

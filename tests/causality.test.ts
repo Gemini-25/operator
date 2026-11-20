@@ -6,14 +6,15 @@ import { NORMAL, parseDifficulty, parseDisaster } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
 import { blockersOf } from '../src/sim/dispatch/dispatcher';
-import { emit } from '../src/sim/events';
+import { emit, raiseProblem } from '../src/sim/events';
 import { BeliefStore, heardEv, mergeHeard, mkFact } from '../src/sim/field/beliefs';
 import { CHAIN_MAX, CHAIN_SHIFT_MAX, DEPTH_MAX, canChain, chainDepth, noteChainDrop } from '../src/sim/chain';
-import { createIncident } from '../src/sim/incidents';
+import { closeIncident, createIncident } from '../src/sim/incidents';
 import { FIRE_BIG, blast } from '../src/sim/field/hazards';
 import { DISTRICTS } from '../src/sim/cityPlan';
 import { CSQ_SPAWN_CAP, registerConsequence, signal, spawnConsequence, tickWorld } from '../src/sim/world/consequence';
 import type { CsqCtx } from '../src/sim/world/consequence';
+import { DIVERT_LATE_MIN, divertArrived, divertUnmet, noteDivert } from '../src/sim/world/rules/record';
 import { ZONE_DEFAULT, initWorld, knownBuildingAt, knownHospital, knownZone, knownZoneOfIncident, placeState, setZone, zoneOfPlace, zoneOfXY } from '../src/sim/world/state';
 import { findRoute } from '../src/sim/city';
 import type { EventKind, Incident, Responder, Role, Signal, SimEvent, Unit, ZoneField } from '../src/sim/types';
@@ -889,5 +890,89 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
     expect(body.length).toBeGreaterThan(100);
     expect(body).toContain('etaFor');
     for (const w of [...WORLD, 'truth.placeId']) expect(body.includes(w), `startTransport 에 ${w}`).toBe(false);
+  });
+});
+
+describe('I1-b b3-1: C6 divertRecord — 전환 배정의 실제 영향', () => {
+  const LATE = /^사건 (\S+): 전환 배정 뒤 첫 도착이 예정보다 약 (\d+)초 늦었습니다\.$/;
+  it('빼앗긴 사건의 첫 도착이 예정보다 얼마나 늦었는가: DIVERTED 의 ref.lost, 10초 넘으면 그 DIVERTED 를 원인으로 한 기록 (보통 S0·S3·S7·S8)', () => {
+    let hurtN = 0, lateN = 0, zeroN = 0, notHurt = 0;
+    for (const seed of ['S0', 'S3', 'S7', 'S8']) {
+      const { sim, probe } = probedShift(seed);
+      const rows = divertAnalysis(sim.events, sim.incidents, sim.units, probe.etaLog, sim.t).rows;
+      for (const J of sim.incidents) {
+        expect(J.divertWait, `${seed} #${J.code} 의 기억해 둔 전환은 첫 도착이나 종료 때 비운다`).toBeUndefined();
+        const lates = sim.events.filter((e) => e.incidentId === J.id && LATE.test(e.text));
+        expect(lates.length).toBeLessThanOrEqual(1);
+        for (const p of J.problems) if (p.code === 'DIVERTED') {
+          const hurt = J.firstArrivalAt < 0 || J.firstArrivalAt > p.t;
+          const rec = lates.filter((e) => e.causes.includes(p.eventId));
+          if (!hurt) { notHurt++; expect(p.ref!.lost, '이미 부대가 닿은 사건에서 빼 간 것은 첫 도착을 늦추지 않는다').toBeUndefined(); expect(rec.length).toBe(0); continue; }
+          hurtN++;
+          const lost = p.ref!.lost!;
+          expect(lost).toBeGreaterThanOrEqual(0);
+          // 측정 도구가 표본으로 따로 잰 값과 같다 (예정 도착은 같은 u.estArrive — 반올림만 다르다)
+          const row = rows.find((r) => r.pe === p.eventId)!;
+          expect(row.hurt).toBe(true);
+          if (row.lostSec !== null) expect(Math.abs(row.lostSec - lost)).toBeLessThanOrEqual(1);
+          if (lost >= DIVERT_LATE_MIN) {
+            lateN++;
+            expect(rec.length).toBe(1);
+            const e = rec[0], m = LATE.exec(e.text)!;
+            expect([e.kind, e.role, e.actor, e.importance]).toEqual(['dispatch', 'DISPATCH', '배정 AI', 1]);
+            expect(m[1]).toBe(J.code);
+            expect(Number(m[2])).toBeGreaterThanOrEqual(lost);
+            // 첫 도착의 그 틱, 도착 기록 바로 다음에 남는다
+            expect(e.t).toBe(J.firstArrivalAt);
+            const prev = sim.events[e.id - 1];
+            expect([prev.kind, prev.incidentId, prev.importance]).toEqual(['arrive', J.id, 3]);
+            // 원인 사슬: 받는 사건의 기록 → DIVERTED(J) → 지연 기록(J)
+            expect(sim.events[p.eventId].causes.some((c) => sim.events[c].incidentId === p.ref!.inc)).toBe(true);
+          } else { zeroN++; expect(rec.length).toBe(0); }
+        }
+      }
+    }
+    expect(hurtN).toBeGreaterThan(3);
+    expect(lateN, '10초 넘게 늦은 전환').toBeGreaterThan(1);
+    expect(zeroN, '다른 부대가 예정보다 먼저 닿은 전환').toBeGreaterThan(0);
+    expect(notHurt).toBeGreaterThan(0);
+  });
+  it('기억과 정산: 아직 아무도 닿지 않은 사건만 기억하고, 끝내 아무도 닿지 못하고 닫히면 닫힌 시각까지를 ref.lost 에만 (기록 없음)', () => {
+    const s = new Sim('S2', NORMAL, 1200);
+    for (let k = 0; k < 10; k++) s.step();
+    const J = createIncident(s, { type: 'medical', variant: 'faint' }), K = createIncident(s, { type: 'fire', variant: 'std' });
+    const u = s.units.find((q) => q.dept === 'ems')!;
+    u.estArrive = s.t + 30;      // J 로 가던 부대의 예정 도착
+    const dv = raiseProblem(s, J, 'DIVERTED', '시험', { role: 'DISPATCH', actor: '배정 AI', text: '시험: 전환 배정' }, false, { inc: K.id, unit: u.id });
+    noteDivert(s, J, u, dv);
+    expect(J.divertWait).toEqual([{ unit: u.id, t: s.t, eta: s.t + 30, ev: dv }]);
+    // 이미 부대가 닿은 사건은 기억하지 않는다
+    K.firstArrivalAt = s.t;
+    noteDivert(s, K, u, raiseProblem(s, K, 'DIVERTED', '시험', { role: 'DISPATCH', actor: '배정 AI', text: '시험: 전환 배정' }, false, { inc: J.id, unit: u.id }));
+    expect(K.divertWait).toBeUndefined();
+    divertArrived(s, K); divertUnmet(s, K);      // 기억한 것이 없으면 아무 일도 없다
+    expect(K.problems[0].ref!.lost).toBeUndefined();
+    // 예정보다 7초 늦은 첫 도착: ref.lost 만, 기록은 없다
+    const n0 = s.events.length, t0 = s.t;
+    s.t = t0 + 37;
+    divertArrived(s, J);
+    expect(J.problems[0].ref).toEqual({ inc: K.id, unit: u.id, lost: 7 });
+    expect(J.divertWait).toBeUndefined();
+    expect(s.events.length).toBe(n0);
+    // 예정보다 52초 늦은 첫 도착: 기록 한 줄, 원인은 그 DIVERTED
+    J.divertWait = [{ unit: u.id, t: t0, eta: t0 + 30, ev: dv }];
+    s.t = t0 + 82;
+    divertArrived(s, J);
+    expect(J.problems[0].ref!.lost).toBe(52);
+    expect(s.events.length).toBe(n0 + 1);
+    expect(LATE.exec(s.events[n0].text)!.slice(1)).toEqual([J.code, '52']);
+    expect(s.events[n0].causes).toEqual([dv]);
+    // 끝내 아무도 닿지 못하고 닫혔다: 닫힌 시각 − 예정 도착, 기록은 남기지 않는다
+    J.divertWait = [{ unit: u.id, t: t0, eta: t0 + 30, ev: dv }];
+    s.t = t0 + 130;
+    closeIncident(s, J, 'noresponse');
+    expect(J.problems[0].ref!.lost).toBe(100);
+    expect(J.divertWait).toBeUndefined();
+    expect(s.events.slice(n0 + 1).some((e) => LATE.test(e.text))).toBe(false);
   });
 });

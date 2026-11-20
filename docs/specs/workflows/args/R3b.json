@@ -1,0 +1,39 @@
+{
+  "base": "<I1-b 를 다 합친 주 브랜치 커밋 — embed-args.py --base 로 넣는다>",
+  "scratch": "<세션 scratchpad — embed-args.py --scratch 로 넣는다>",
+  "key": "r3b",
+  "id": "R3b",
+  "title": "R3b — R3 뒤 손질: 무장 사건의 대원 부상 · 계산 속도 · 폭파 진입",
+  "spec": "docs/specs/R3b-followup.md",
+  "port": 5221,
+  "testFile": "tests/doctrine.test.ts",
+  "attr": "<커밋 끝줄 — embed-args.py --attr-file 로 넣는다>",
+  "docsStage": "단계 5 (문서 — 구현 메모 '최종 요약' · README · CLAUDE.md · ROADMAP · specs/README)",
+  "shared": true,
+  "priorReports": [],
+  "priorNotes": "\n## 지금 상황 (꼭 읽는다)\n- **주 브랜치는 `claude/great-ptolemy-s31sxn`** 이다. 문서 곳곳에 나오는 다른 `claude/…` 브랜치 이름은 앞 세션들의 기록이다. 받기(`git merge`)는 `claude/great-ptolemy-s31sxn` 에서만 한다.\n- 주 브랜치에는 R1·H1·X6·R2·R3 와 **I1-b 전부**(인과 규칙 — 초과 위험 과정·일반 법칙)가 있다. 이 묶음의 0단계 기준은 그 자리(시작점)와 R2 를 다 합친 `97869b1`(R3 전) 둘을 `git archive` 로 풀어 잰다(설계서 §2). 앞 세션의 scratchpad 는 이 컨테이너에 없다.\n- 사용자 결정(2026-11-20): R3 가 남긴 문제 셋(무장 사건의 대원 부상 · 계산 속도 · 폭파 진입 0건)을 I2 앞에 손본다. 화재 균형은 N9 뒤에 다시 본다 — 이 묶음에서 다루지 않는다. 짝 규칙 유지 + 건물 화재 첫 출동 +1 펌프차, 폭파 진입은 믿음으로 고르고 진실로 터진다, 다친 대원은 위험한 방법을 고르지 않는다, 용의자 자해는 끈 채. 설계서 9.4 의 물음 셋은 답이 없어 기본값으로 간다(인질 없는 총기 용의자도 방 문을 잠근다 — 인질 방의 폭파 금지는 그대로 / 속도는 결과를 바꾸지 않는 손만, 1.15배 목표는 닫는다 / 부상 증가가 120교대로 재서 잡음이면 표만 남기고 닫는다).\n- I1-b 가 `chain.ts`·`incidents.ts`·`traffic.ts`·`types.ts` 를 고쳤다 — 설계서(I1-b 전에 쓰였다)의 줄 번호·이름이 코드와 다르면 코드를 따르고 deviations 에 적는다. 테스트 수와 `npm run check` 시간(혼자 10분쯤)은 지금 값을 다시 본다. 시간 초과만으로 실패한 시험은 그것만 다시 돌린다.\n- `README.md`·`CLAUDE.md`·`docs/ROADMAP.md`·`docs/specs/README.md`·`docs/handover/` 는 **문서 단계의 작업자만** 고친다. 덩어리 보고 파일(`docs/handover/reports/`)은 주 세션이 남긴다.\n",
+  "reviewFocus": "(가) 새 줄의 정보 격리·왕복·응사가 끊겨 교전이 길어지지 않는가 (나) 해시 목록 131교대를 직접 다시 뽑아 시작점과 diff 0, pre 감사 0, 한 프로세스에서 조건을 차례로·거꾸로 돌린 재현성 (다) 인질을 붙든 방의 폭파 0 · 낡은 믿음의 고리 · 잠긴 방 + 한 팀뿐인 경찰이 끝나는가 · 완료 조건의 '목표'와 '최소'가 정직하게 갈려 적혔는가 — 수치를 직접 다시 잰다",
+  "chunks": [
+    {
+      "id": "s01",
+      "stages": "단계 0 (기준 재기·진단 도구)·단계 1 ((나) 속도 — 결과 불변)",
+      "focus": "§2 의 사본·대본(부록 A)·해시 목록·균형 기준·시간·일의 양·프로파일·지도를 scratchpad wf-r3b/ 에. 그다음 §3.2 의 N1→N2→N3→N5→N4→N6→N7→N8 을 하나씩: 해시 목록 131교대 diff 0 → 프로파일의 그 함수 → 커밋. 효과가 잡음(±2%) 안이면 되돌린다. X1·X2 는 하지 않는다.",
+      "extra": "끝낼 때 npm run check. 교대당 시간은 시작점과 번갈아 세 번(기계가 빌 때), load.mts 세 줄(기준·시작점·뒤). 기준 파일과 해시 목록의 절대 경로를 보고에.",
+      "pre": "```bash\ngit merge --no-edit claude/great-ptolemy-s31sxn\ngit branch -f wf/r3b HEAD\nnpx tsc --noEmit && npx vitest run tests/doctrine.test.ts tests/methods.test.ts\n```"
+    },
+    {
+      "id": "s2",
+      "stages": "단계 2 ((가) 무장 사건의 대원 부상)",
+      "focus": "§4.1 물음 1(강제 넷 × 120교대 — 기준·시작점) → z 표. 실재하면 물음 2(칸별 노출·명중률 나누기)·물음 3(줄 빼기) → §4.2 의 가리킨 수정만 하나씩, 전후 같은 시드. 잡음이면 코드를 고치지 않고 표와 판정만.",
+      "extra": "§4.3 의 조건을 '목표'·'최소'로 갈라 수치와 함께. npm run check. 넣지 않은 후보와 그 까닭을 보고에.",
+      "pre": "```bash\ngit merge --no-edit claude/great-ptolemy-s31sxn\ngit branch -f wf/r3b HEAD\nnpx tsc --noEmit && npx vitest run tests/doctrine.test.ts tests/methods.test.ts\n```"
+    },
+    {
+      "id": "s34",
+      "stages": "단계 3 ((다) 폭파 진입)·단계 4 (균형)",
+      "focus": "§5.1 깔때기(강제 넷 × 40 · 보통 60) → D1·D4 → D2(사용자 답 — 없으면 기본값: 넣는다) → 필요하면 D3 → 폭파가 나온 교대의 화면 확인(5221) → §6 전부.",
+      "extra": "npm run check · sweep 40 --diff hard --check · --diff extreme --check · npm run ui-check. §5.3 의 조건과 본 그림의 절대 경로를 보고에.",
+      "pre": "```bash\ngit merge --no-edit claude/great-ptolemy-s31sxn\ngit branch -f wf/r3b HEAD\nnpx tsc --noEmit && npx vitest run tests/doctrine.test.ts tests/methods.test.ts\n```"
+    }
+  ]
+}

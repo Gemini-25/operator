@@ -7,7 +7,7 @@
   "spec": "docs/specs/I1-causality.md",
   "port": 5218,
   "testFile": "tests/causality.test.ts",
-  "attr": "Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01S6L8VqLRJzoMofwxFZkMSD",
+  "attr": "<커밋 끝줄 — embed-args.py --attr-file 로 넣는다>",
   "docsStage": "문서 단계 (§5 의 완료 조건 다섯 가지를 마지막 코드로 다시 재고, b4 의 보고서 패널을 화면으로 확인하고, 구현 메모와 문서를 쓴다)",
   "shared": true,
   "priorReports": [

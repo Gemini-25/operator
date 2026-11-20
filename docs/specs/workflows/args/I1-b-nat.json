@@ -7,7 +7,7 @@
   "spec": "docs/specs/I1-causality.md",
   "port": 5218,
   "testFile": "tests/causality.test.ts",
-  "attr": "Co-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>\nClaude-Session: https://claude.ai/code/session_01S6L8VqLRJzoMofwxFZkMSD",
+  "attr": "<커밋 끝줄 — embed-args.py --attr-file 로 넣는다>",
   "docsStage": "문서 단계 (§5 의 완료 조건 일곱 — 사용자의 말에서 온 둘과 처음의 다섯 — 을 마지막 코드로 다시 재고, b4 의 보고서 패널과 지도 표시를 화면으로 확인하고, 구현 메모 \"최종 요약\"과 문서를 쓴다. I2·N8·N9 설계서 머리의 \"I1-b 가 다시 설계됐다\" 알림을 실제 이름에 맞춰 고친다)",
   "shared": true,
   "priorReports": [

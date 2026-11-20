@@ -1,93 +1,141 @@
-# 인계 — 2026-11-15 저녁에 멈춘 자리
+# 인계 — 2026-11-20 밤에 넘기는 자리
 
-> **이어받은 뒤 (2026-11-15 밤)**: 다음 세션이 이 문서대로 이어받았다. 주 브랜치는 그때 `claude/practical-keller-xm0ac2` 였다 — **2026-11-20 부터는 다시 `claude/great-ptolemy-s31sxn`**(그 브랜치를 그대로 합쳐 받았다. 받기·합치기·푸시는 `claude/great-ptolemy-s31sxn` 에 한다. 아래와 `reports/` 의 `claude/practical-keller-xm0ac2` 는 그때의 기록이다). **R3 분야별 대응 교본까지 끝났다**(2026-11-20 — 덩어리 보고 `reports/R3-s345.md`·`R3-s67.md`·`R3-review.md`·`R3-s8.md`, 정본은 `docs/specs/R3-doctrine.md` 끝의 "최종 요약"). 다음은 I1-b(`b1·b2` 부터). **H1 4b·4c·5·6 은 끝나 주 브랜치에 합쳐졌다**(4b 는 아래 2절의 패치에서 (가) 방법으로 이어 했고, 패치 파일은 지웠다 — 2절은 끝난 일의 기록으로만 남긴다. 덩어리 보고는 `reports/H1-s4bc.md`·`H1-s56.md`). 준비 줄의 `I1-b b0`·`R3 0`·`I2 1` 도 합쳐졌고, N8·N9 설계도 완성해 합쳤다. 지금 상태는 `docs/ROADMAP.md` "진행 중" 맨 위 줄을 본다.
+사용자 지시(2026-11-20 밤): **"이제 오푸스 세션에 작업 넘겨줘야하니까 인수인계 잘 되게 좀 해줘"**.
 
-사용자 지시(2026-11-15 저녁): **"일단 n8 n9 설계 워크플로 최우선으로 완성시키고 나머지 작업은 하던거 그대로 opus 5.5 울트라 코드가 인계 받을 수 있게 멈추고 커밋해"**.
-그래서 구현 작업(H1 의 후송 덩어리, R2 의 틀)을 그 자리에서 멈추고, 끝난 것은 주 브랜치에 합치고, 끝나지 않은 것은 이 폴더에 그대로 남겼다. 사건 종류 다양화(N8·N9)의 설계서는 초안까지 써서 넣었다(사용량 한도 때문에 독립 검토 전에서 멈췄다).
+이 문서 하나로 이어받을 수 있게 썼다. 끝난 것은 모두 주 브랜치(`claude/great-ptolemy-s31sxn`)에 합쳐 푸시했다(관문 통과). **작업 중인 덩어리가 하나 있다(`h2`)** — 이 세션이 끝까지 돌려 합치는 중이고, 끝나면 워크플로를 멈추고 예약한 중간 확인을 지운 뒤 이 문서를 "h2 끝남" 판으로 바꾼다. **이어받기 전에 `git fetch` 로 이 브랜치의 끝을 다시 받아 이 문단이 바뀌었는지 본다.** 바뀌지 않았으면(이 세션이 마무리하지 못했다) 1절 끝의 패치에서 `h2` 부터 잇는다.
 
-**읽는 순서**: `CLAUDE.md` → `docs/ROADMAP.md` "진행 중" → `docs/specs/README.md`("구현 순서"·"실행 방법"·"겹쳐 돌리기") → 이 문서 → 이어받을 묶음의 설계서와 그 끝의 "구현 메모 (진행 중)".
-**먼저 할 일**: `npm install` → `npm run check`(4분쯤, 통과해야 한다 — 주 브랜치는 늘 관문 통과 상태다).
+## 0. 한눈에
 
-## 1. 주 브랜치에 있는 것 (모두 관문 통과, 푸시됨)
+| | |
+|---|---|
+| 주 브랜치 | `claude/great-ptolemy-s31sxn` = `이 문서를 마지막으로 고친 커밋(브랜치 끝 — `git log -1 --oneline`)` (관문 통과 · 푸시됨). **새 세션이 다른 브랜치를 받았으면 이 브랜치를 그대로 합쳐 받는다**(`git fetch origin claude/great-ptolemy-s31sxn && git merge --no-edit FETCH_HEAD`). 그 뒤로는 새 세션의 브랜치가 주 브랜치다 — 문서 속의 `claude/great-ptolemy-s31sxn`·`claude/practical-keller-xm0ac2` 는 앞 세션들의 기록으로 읽는다 |
+| 하던 묶음 | **I1-b 인과 규칙과 세계 상태 결합** — 사용자가 도중에 방향을 바꿨다: **"인과가 자연스럽게 스크립트대로 말고 생기게"**. 설계서 `docs/specs/I1-causality.md` 를 그 방향으로 다시 썼다(머리 "방향 전환 (2026-11-20)") |
+| I1-b 의 끝난 덩어리 | `b0`(기록만 잇기) · `b12`(기준·b1·b2 틀) · `r123`(b3-1~3: C6·C3·C2) · `h1`(b3-4 초과 위험의 틀 + b3-5① 교통 장부) · `h2`(b3-5② 우회 몰림 + b3-6 L1 몰린 길의 사고)는 **작업 중 — 패치 `docs/handover/I1b-h2-wip.patch`** |
+| **바로 이어서 할 일** | I1-b 의 남은 덩어리 **`h2`(패치에서 이어서) → `h3` → `h4` → `h5` → `h6` → `h7` → `h8` → 독립 검토 → 문서** — 2절의 명령 그대로 |
+| 그 다음 | **R3b**(R3 뒤 손질) → **I2**(교대 간 지속) → **N8**(일상 사건) → **N9**(큰 사건·새 장소) → **균형 다시**(화재 포함) |
+| 테스트 | Vitest 939개(+건너뜀 1), 파일 20개. `npm run check` 는 혼자 돌 때 10분쯤 |
 
-| 묶음 | 주 브랜치에 있는 단계 | 남은 단계 |
+**읽는 순서**: `CLAUDE.md`(불변 조건 여섯·구조·겪은 함정) → 이 문서 → `docs/ROADMAP.md` "진행 중" 맨 위 두 줄(사용자 결정과 지금 상태의 정본) → `docs/specs/README.md`("구현 순서"·"실행 방법"·"묶음별 덩어리" 표) → `docs/specs/workflows/README.md`(워크플로 대본과 주 세션이 하는 일) → `docs/specs/I1-causality.md`(머리 "방향 전환" · §3.1 · §3.6a~c · §3.7 · §3.12 · §5 · 끝의 "구현 메모").
+**먼저 할 일**: `npm install` → `npm run check`(통과해야 한다 — 주 브랜치는 늘 관문 통과 상태다. 통과하지 않으면 그것부터).
+
+## 1. 주 브랜치에 있는 것 (모두 관문 통과 · 푸시됨)
+
+| 묶음 | 상태 | 정본 · 보고 |
 |---|---|---|
-| R1 부대 편성·개인 장비·헬기 | 전부 (구현 메모 = 정본) | — |
-| **H1 부상과 사망** | 0(기준) · 1·2(기록만·화면) · 3(구조 대상) · 4a-1·4a-2(대원의 부상 모델·새 방호값) · **4b 의 준비 커밋**(결과 불변 — 처치 식 `injury.treatPlan`·`treatEffect`, 자리 셈 `crews.seatsUsed`, 출발 판단 정리) | **4b(대원 후송) 본작업 — 아래 2절의 작업 중 변경**, 4c → 5·6(용의자·판정) → 독립 검토 → 7(균형·마무리) |
-| X6 위험의 현실화 | 1(상태만 — 결과 불변) | 0(기준 — H1 이 다 합쳐진 뒤)·2 → 3·4 → 5 → 6·7 → 8·9 → 검토 → 10·문서 |
-| R2 대응 방식 | 0(틀 — 결과 불변) | 1a → 1b·1c·1d → 2·3 → 4·5·6 → 검토 → 문서 |
-| R3 교본 · I1-b 인과 규칙 · I2 교대 간 지속 | 없음 (설계서만) | 전부. 준비 줄의 다음 차례였던 것: `I1-b b0` → `R3 0` → `I2 1` |
-| N8·N9 사건 종류 다양화 | **설계 완성**(2026-11-15 밤 — 항목별 상세와 독립 검토 반영, `docs/specs/workflows/complete-incident-kinds.js`. 조사 보고서 `docs/specs/N8-research/`) | 구현 전부 (I2 다음). 사용자에게 올린 열린 질문 여덟은 `docs/ROADMAP.md` "N8·N9 의 열린 질문" |
+| R1 편성·개인 장비·헬기 · H1 부상과 사망 · X6 위험의 현실화 · R2 대응 방식 · R3 분야별 대응 교본 | **끝남** | 각 설계서 끝의 "구현 메모"(R3 는 "최종 요약"). 덩어리 보고 `docs/handover/reports/<묶음>-*.md` |
+| **I1-b 인과 규칙** | **구현 중** — 끝난 단계: b0 · 0·b1·b2(세계 상태 `world/state.ts`, 규칙의 틀 `world/consequence.ts`) · b3-1~3(규칙 셋 `world/rules/record.ts`·`hospital.ts`·`structure.ts`) · b3-4·b3-5①(초과 위험 과정 `world/hazard.ts`, 교통 장부). **남은 단계: b3-5②·b3-6(`h2` — 작업 중 패치) · b3-7~b3-12(`h3`~`h7`) · b4·b5(`h8`) → 독립 검토 → 문서** | `docs/specs/I1-causality.md` 끝 "구현 메모 (진행 중)". 보고 `reports/I1b-b12.md`·`I1b-r123.md`·`I1b-h1.md` |
+| R3b R3 뒤 손질 | **설계됨**(구현 전) — 계산 속도(결과 불변) → 무장 사건의 대원 부상 → 폭파 진입 0건 | `docs/specs/R3b-followup.md`(10절에 덩어리 계획) · 인자 `docs/specs/workflows/args/R3b.json` |
+| I2 교대 간 지속 | 준비 단계 1·2·3 만(결과 불변). 남은 것 0·4 → 5 → 6·7 → 검토 → 8 | `docs/specs/I2-persistence.md`(머리의 "I1-b 가 다시 설계됐다" 알림 · 끝의 구현 메모) |
+| N8 일상 사건 · N9 큰 사건 | 준비 단계만(N8 1·2a·2b · N9 1·2·3 — 결과 불변). 구현 전부 남음 | `docs/specs/N8-incident-kinds.md`·`N9-major-kinds.md`(머리의 알림 — 조건부 연쇄는 구현할 때 "자연스러운 인과" 방향으로 다시 본다) |
 
-구현 순서는 그대로다: **H1 → X6 → R2 → R3 → I1-b → I2 → N8 → N9**. 결과를 바꾸는 단계는 한 줄로 차례대로, 결과를 바꾸지 않는 앞 단계만 준비 줄로 나란히(`docs/specs/README.md` "겹쳐 돌리기").
+**`h2` 의 상태(2026-11-20 23:25 UTC)**: 작업자가 우회 몰림(`354cf22`)·`createIncident` 의 `opts.edgeId`(`de176e8`)·법칙 L1 `roadCrash`(`a44f22a` — `world/laws/road.ts`)까지 커밋하고, 전체 관문에서 걸린 시드 의존 시험(`tests/sim.test.ts`·`tests/methods.test.ts`)을 고치며 `A_ROAD` 를 맞추던 중이었다. 그 순간의 변경 전부(커밋 셋 + 커밋하지 않은 것)가 **`docs/handover/I1b-h2-wip.patch`**(주 브랜치 `45579d7` 기준, 코드·시험만 — 파일 8개)에 있다. 확인한 것은 주 브랜치 위에 충돌 없이 얹힌다는 것뿐이다(`git apply --check --3way`). 관문·균형(평균 대응 +3초 안 · 교대당 사건 수 × 1.08 안 · `roadCrash` 교대당 0.2~0.5건)·개입 시험·구현 메모는 확인되지 않았다. `args/I1-b-next.json` 의 첫 덩어리 `h2` 가 `pre` 에서 그 패치를 얹고 남은 것부터 한다. 다 쓰면 패치 파일을 지운다(`git rm docs/handover/I1b-h2-wip.patch`).
 
-## 2. H1 단계 4b — 작업 중이던 변경 (`H1-4b-wip.patch`)
+## 2. 바로 이어서 할 일 — I1-b 의 남은 덩어리
 
-작업자가 단계 4b(대원 후송: 처치·탑승·출발·결원)를 하던 중에 멈췄다. **커밋되지 않은 변경을 그대로** 패치로 남겼다(주 브랜치에는 넣지 않았다 — 관문을 확인하지 않은 반쯤 된 단계다).
-
-- 패치: `docs/handover/H1-4b-wip.patch` — 주 브랜치 `90de7d1`("R2 준비 합치기") 기준, 파일 12개 +415 −66.
-  `scripts/metrics.ts` · `dispatch/dispatcher.ts` · `field/agents.ts` · `brain.ts` · `commander.ts` · `executor.ts` · `injury.ts` · `orders/injury.ts` · `sceneManager.ts` · `resources.ts` · `types.ts` · `tests/injuries.test.ts`
-- 확인한 것: `90de7d1` 위에 충돌 없이 얹히고 `npx tsc --noEmit` 통과. `npx vitest run tests/injuries.test.ts` 는 **97개 가운데 94 통과 · 3 실패**(4a 의 임시 동작을 지키던 시험 — 4b 가 고쳐야 하는 줄이다):
-  1. "대원: Σ(기록) = 100 − 체력 …" (장부)
-  2. "상처 악화: … 안전 구역으로 물러난 대원의 출혈은 멈춰 둔다 — 단계 4b 가 푼다"
-  3. "mateFact: 숨졌는지는 2칸 안에서만 …"
-- 확인하지 않은 것: `npm run check`, 균형(60교대 전후 비교), 4b 의 새 시험, 4c.
-- 로컬 브랜치(이 컨테이너에만 있다 — 푸시하지 않았다): `wf/injuries`(= 4b 준비 커밋 `a95a8d1`, 주 브랜치에 합쳐짐), `wf/injuries-wip`(작업 중 변경 + 주 브랜치 받기).
-
-**이어받는 두 가지 방법** (둘 다 괜찮다 — 패치를 읽어 보고 고른다):
+I1-b 는 워크플로 대본 `docs/specs/workflows/package-run.js` 로 돈다: 덩어리마다 작업자 하나(자기 git worktree, 브랜치 `wf/causality-<덩어리>`, 가리킴 브랜치 `wf/causality`), 끝에 독립 검토자와 문서 작업자. 남은 덩어리의 실행 인자는 **`docs/specs/workflows/args/I1-b-next.json`** 에 있다(끝난 덩어리의 보고는 `priorReports` 로 옮겨 두었다).
 
 ```bash
-# (가) 이어서: 패치를 얹고 4b 를 마저 한다
-git checkout -b wf/injuries-s4bc claude/great-ptolemy-s31sxn   # 워크플로 작업자면 자기 worktree 에서
-git apply --3way docs/handover/H1-4b-wip.patch
-npx tsc --noEmit && npx vitest run tests/injuries.test.ts      # 94/97 에서 시작
+# ① 가리킴 브랜치를 주 브랜치 끝에 둔다 (새 컨테이너에는 wf/* 브랜치가 없다 — 끝난 덩어리는 모두 주 브랜치에 합쳐져 있다)
+git branch -f wf/causality HEAD
+
+# ② 커밋 끝줄(세션이 지시한 두 줄)을 파일에 적고, 인자를 박은 대본을 만든다
+printf '%s\n' '<커밋 끝줄 1>' '<커밋 끝줄 2>' > <scratchpad>/attr.txt
+python3 docs/specs/workflows/embed-args.py docs/specs/workflows/args/I1-b-next.json \
+    --scratch <scratchpad 절대 경로> \
+    --branch  <지금 세션의 주 브랜치> \
+    --attr-file <scratchpad>/attr.txt \
+    --out <scratchpad>/wf-run-i1b.js
+
+# ③ Workflow 도구에 { scriptPath: "<scratchpad>/wf-run-i1b.js" } 만 넘겨 띄운다 (args 없이)
 ```
+
+- `--branch` 는 인자 안의 옛 주 브랜치 이름(작업자에게 주는 지금 상황 · 덩어리마다 `pre` 의 `git merge --no-edit <주 브랜치>`)을 모두 바꾼다. 새 세션의 브랜치가 `claude/great-ptolemy-s31sxn` 그대로면 빼도 된다.
+- `base`(`4aea467` — R3 를 다 합친 자리)는 독립 검토자의 `git diff <base>..wf/causality` 기준이라 그대로 둔다.
+- 덩어리 표와 덩어리마다의 지시는 설계서 §5 와 인자의 `chunks` 에 있다: `h2`(b3-5② 우회 몰림 + b3-6 L1 몰린 길의 사고) → `h3`(b3-7 건물의 노출 + L2 옮겨붙는 불) → `h4`(b3-8a·b 충격·금·배관 — 상태만) → `h5`(b3-8c 금 간 건물의 붕괴·가스 누출 + b3-9 재발화·도주 용의자) → `h6`(b3-10 정전·승강기·통신) → `h7`(b3-11·12 연기·침수, 선택 수압) → `h8`(b4 보고서의 내력 문장·화면 + b5 균형·완료 조건·관문 조이기). 덩어리 하나에 40~100분.
+- **기준 수치**: 앞 덩어리들이 잰 기준 파일(`<scratchpad>/wf-causality/out-c2/` 등)은 이 세션의 컨테이너에만 있었다. 새 컨테이너의 첫 덩어리는 시작한 자리를 `git archive` 로 풀어 설계서 §4 의 명령으로 "전"을 다시 잰다(인자의 `priorNotes` 가 그렇게 시킨다 — 혼자 돌면 5분쯤).
+- 워크플로가 중간에 멈추면(한도·컨테이너) 같은 `scriptPath` + `resumeFromRunId` 로 잇는다(같은 컨테이너일 때만 — 실행 기록이 세션 폴더에 있다). 새 컨테이너면 끝난 덩어리를 `chunks` 에서 빼고 그 보고를 `priorReports` 로 옮긴 인자를 새로 저장해 띄운다(`args/I1-b-r123.json` → `I1-b-nat.json` → `I1-b-next.json` 이 그렇게 만든 것이다).
+
+## 3. 주 세션이 하는 일 (덩어리가 끝날 때마다 — 이 세션이 실제로 한 그대로)
+
+작업자는 푸시하지 않는다. 덩어리가 관문을 통과할 때마다 **주 세션이** 주 브랜치에 합쳐 푸시한다(컨테이너가 사라져도 그 덩어리부터 이어받게).
 
 ```bash
-# (나) 다시: 패치를 참고만 하고 주 브랜치에서 4b·4c 덩어리를 처음부터 한다
+J=<Workflow 도구가 알려 준 Transcript dir>/journal.jsonl
+python3 docs/specs/workflows/save-report.py $J                       # 끝난 작업자 목록 (commit · 관문)
+python3 docs/specs/workflows/save-report.py $J --label impl:causality:h3 \
+    --title "I1-b 단계 b3-7 (건물의 노출 + L2 옮겨붙는 불)" --out docs/handover/reports/I1b-h3.md
+git merge --no-ff --no-commit <그 덩어리의 commit>                    # 색인에 올린 변경이 있으면 거절된다 — 보고 파일은 합친 뒤에 add
+git add docs/handover/reports/I1b-h3.md
+npm run check                                                        # 아래 "관문" 참고
+# docs/ROADMAP.md "진행 중" 맨 위 두 줄 · docs/specs/README.md 의 I1 상태 줄과 덩어리 표의 "여기까지 끝남" 자리 · CLAUDE.md 의 테스트 수
+git add -A CLAUDE.md docs && git commit -m "I1-b 진행분 합치기: …" && git push -u origin <주 브랜치>
+git worktree remove --force .claude/worktrees/<run>-<n> && git branch -D wf/causality-<덩어리> worktree-<run>-<n>   # 끝난 덩어리 것만
 ```
 
-어느 쪽이든 4b 의 할 일은 `docs/specs/H1-injuries.md` 의 "구현 순서" 표 4b 줄과 끝의 "구현 메모 (진행 중)" 가운데 **단계 4a 가 끝난 자리 — 단계 4b 가 이어받을 때**에 있다(물러난 대원의 출혈을 임시로 멈춘 줄 `agentHealth` 의 `a.status !== 'withdrawn'` 풀기, `outstanding().mates` 의 병원 항, 5번 블록의 순직 대원, 경상 근무 `LIGHT_WORK`, 운용 중단은 전원 사망일 때만 — 사용자 결정). 4a 작업자의 보고는 `reports/H1-s4a.md`.
+- **가리킴 브랜치 `wf/causality` 는 작업자가 도는 동안 주 세션이 옮기지 않는다**(작업자가 커밋마다 옮긴다). 주 세션이 고친 문서는 다음 덩어리의 `pre`(주 브랜치 받기)로 흘러든다.
+- **관문이 다음 덩어리의 작업자와 겹친다**: 그러면 `npm run check` 가 15분 넘게 걸리고 긴 시험(`tests/sim.test.ts` 의 '프리셋이 어려워질수록…'·'다수 사상자 사고가 나오고…', `tests/crews.test.ts` 의 ④·⑨)이 **시간 초과로만** 실패한다. 그때는 실패한 시험만 `npx vitest run <파일> -t "<이름>"` 으로 다시 돌리고, 돌지 못한 `npx tsx scripts/sweep.ts 40 --check` 를 따로 돌린다("검증 통과"). 단언 실패면 진짜 문제다. 제한 시간과 기준은 고치지 않는다.
+- 화면을 고친 덩어리(`h8`, 지도 기호를 고친 것)는 `npm run ui-check` 도(3분).
+- 워크플로가 다 끝나면(문서 단계까지): `wf/causality` 를 합치고(문서 충돌은 문서 작업자 쪽을 받는다 — 문서 작업자는 주 브랜치를 받아 가며 쓴다) `npm run check` + `npm run ui-check` → 푸시 → `wf/causality*`·`worktree-*` 브랜치와 `.claude/worktrees/*` 정리.
+- 덩어리가 관문을 통과하지 못했거나 균형이 설계서 §4 의 범위를 크게 벗어났으면 보고의 `notDone`·`issues` 를 읽고 다음 덩어리가 이어받는지 본다. 이어받지 못할 문제면 사용자에게 알린다.
+- 덩어리가 끝나도 알림은 오지 않는다(워크플로 전체가 끝날 때만). 이 세션은 60~80분마다 스스로 깨는 예약(`send_later`)으로 확인했다.
+- 계획이 바뀌어 도중에 멈출 때: 덩어리의 `result` 줄이 찍힌 직후에 워크플로를 멈추고(다음 덩어리가 막 시작한 작업 폴더·브랜치는 지운다), 끝난 덩어리를 `priorReports` 로 옮긴 새 인자로 다시 띄운다.
 
-끝나면 이 패치 파일을 지운다(`git rm docs/handover/H1-4b-wip.patch`).
+## 4. 그 다음 묶음들
 
-## 3. 워크플로로 이어 돌릴 때 (울트라코드)
+차례(사용자 결정): **I1-b → R3b → I2 → N8 → N9 → 균형 다시(화재 포함)**. 결과를 바꾸는 묶음은 한 줄로 차례대로 한다(같은 파일을 고친다). 묶음마다 0단계(기준)를 앞 묶음이 다 합쳐진 자리에서 다시 잰다.
 
-대본은 `docs/specs/workflows/package-run.js`, 쓰는 법은 그 폴더의 `README.md`. H1 의 남은 구현 덩어리는 이렇게 넘긴다(값은 그대로 써도 된다 — `base`·`scratch`·`attr` 만 그 세션의 것으로):
+| 묶음 | 가리킴 · 포트 | 덩어리 | 인자 |
+|---|---|---|---|
+| R3b | `wf/r3b` · 5221 | `s01`(기준·진단 도구 + 속도 — 결과 불변) → `s2`(무장 사건 부상) → `s34`(폭파 진입·균형) → 검토 → 문서(5) | `args/R3b.json` — 띄울 때 `--base <I1-b 를 다 합친 주 브랜치 커밋>` |
+| I2 | `wf/persist` · 5232 | `0·4` → `5` → `6·7` → 검토 → 문서(8) (1·2·3 은 이미 있다) | 새로 만든다(`args/I1-b-next.json` 을 본보기로 — `priorNotes` 에 지금 상황, 덩어리마다 `pre` 에 주 브랜치 받기) |
+| N8 | `wf/kinds` · 5236 | `0·3` → `4a·4b` → `5·6a` → `6b·7` → `8·9` → `10` → 검토 → 문서(11) | 새로 만든다 |
+| N9 | `wf/kinds2` · 5237 | `0·4` → `5·6` → `7·8` → `9` → 검토 → 문서(10) | 새로 만든다 |
+| 균형 다시 | — | 설계서 없음. N9 뒤에 전체 균형을 다시 맞춘다 — 건물 화재(R3 뒤 보통 67 → 56%, 짝 규칙의 몫), 재발화의 새 물리(탄 칸의 잔열), R3b 가 남긴 것 | 그때 설계부터 |
 
-```jsonc
-{
-  "base": "f9965c0",                      // H1 의 기준(R1 최종본). 검토자의 git diff 기준이기도 하다
-  "scratch": "<세션 scratchpad>",
-  "key": "injuries", "id": "H1",
-  "title": "H1 — 부상과 사망 (구조 대상·대원·용의자의 공통 부상 모델)",
-  "spec": "docs/specs/H1-injuries.md", "port": 5210, "testFile": "tests/injuries.test.ts",
-  "attr": "<커밋 끝줄>",
-  "only": "impl", "shared": false,
-  "priorReports": [
-    { "stages": "단계 1·2", "text": "docs/handover/reports/H1-s12.md 와 설계서 끝 구현 메모" },
-    { "stages": "단계 0·3", "text": "docs/handover/reports/H1-s03.md" },
-    { "stages": "단계 4a-1·4a-2", "text": "docs/handover/reports/H1-s4a.md" }
-  ],
-  "priorNotes": "주 브랜치에 R1 전체, H1 단계 0~4a 와 4b 준비, X6 단계 1, R2 단계 0 이 있다. 단계 4b 의 작업 중 변경이 docs/handover/H1-4b-wip.patch 에 있다(docs/handover/README.md 2절). 기준 수치는 f9965c0 을 git archive 로 풀어 다시 잰다(측정 도구는 구현 메모의 설명대로 다시 만든다). 사용자 결정: 용의자 자해는 끈 채(SELF_HARM = 0), 부대는 전원 사망일 때만 운용 중단, 다친 대원은 −18 감점만, 걸을 수 있는 부상자는 가벼운 일만(LIGHT_WORK). README·CLAUDE·ROADMAP·specs README 는 고치지 않는다(주 세션이 고친다).",
-  "chunks": [
-    { "id": "s4bc", "stages": "단계 4b (대원 — 후송)·단계 4c (대원 — 새 규칙)", "focus": "…",
-      "pre": "git merge --no-edit claude/great-ptolemy-s31sxn; git apply --3way docs/handover/H1-4b-wip.patch (쓸 만하면); git branch -f wf/injuries HEAD" },
-    { "id": "s56", "stages": "단계 5 (용의자)·단계 6 (판정·보고서)", "focus": "…", "extra": "화면을 고쳤으면 npm run ui-check 와 스크린샷" }
-  ]
-}
-```
-
-구현 덩어리가 끝나면 같은 대본에 `chunks: []` · `priorReports`(덩어리 보고) · `docsStage: "단계 7 (균형·마무리)"` 로 검토 → 문서를 돌린다. 검토자에게는 "`git diff f9965c0..wf/injuries` 에 다른 묶음의 준비 커밋(X6 단계 1 — `catastrophe.ts`·`ops.ts`·`rules/catastrophe.ts`·`scripts/catstats.ts`·`tests/catastrophe.test.ts`, R2 단계 0 — `gear.ts`·`methods.ts`·`methodRun.ts`·`methodReport.ts`·`rules/methods.ts`·`orders/methods.ts`·`ui/MethodRows.tsx`·`scripts/methodstats.ts`·`tests/methods.test.ts`)이 섞여 있다 — 검토 대상이 아니다"를 `reviewFocus` 에 넣는다.
-
-X6 부터의 덩어리는 `docs/specs/README.md` 의 "묶음별 덩어리" 표 그대로다. 묶음마다 첫 덩어리의 `pre` 에 주 브랜치 받기를 넣고, 0단계(기준)를 앞 묶음이 다 합쳐진 자리에서 잰다.
-
-## 4. 이 세션이 남긴 보고와 도구
-
-- `reports/H1-s12.md` · `H1-s03.md` · `H1-s4a.md` · `X6-s1.md`: 덩어리 작업자의 구조화된 보고(끝낸 것·못 한 것·설계와 다른 곳·수치·알려진 문제). 요지는 각 설계서 끝의 "구현 메모 (진행 중)"에도 있다 — **구현 메모가 정본**이다. R2 단계 0 은 작업자가 메모를 쓰던 중에 멈춰 보고가 없다(`docs/specs/R2-methods.md` 끝의 메모가 전부이고, 해시 불변과 관문은 주 세션이 다시 확인했다: 기록·상태·현장·난수 해시 목록 네 가지가 기준과 같고 `sweep 60 --json` 은 시간과 새 `methods` 칸만 다르다).
-- 보고에 나오는 `/tmp/claude-0/…/scratchpad/wf-*/` 의 측정 도구·기준 수치는 **세션 폴더라 새 컨테이너에는 없다**. 기준은 그 묶음의 시작 커밋을 `git archive` 로 풀어 다시 잰다(방법은 구현 메모마다 적혀 있다).
-- 이 세션이 예약해 둔 중간 확인(스케줄)은 이 세션 안에서만 뜬다. 새 세션과 무관하다.
+- I2·N8·N9 의 설계서는 I1-b 재설계 **전에** 쓰였다. 머리에 넣어 둔 알림과 `I1-causality.md` §3.7 끝 "뒤 묶음이 기대하는 이름"을 먼저 읽는다. I1-b 가 끝나면 그 구현 메모 "최종 요약"으로 실제 이름을 한 번 더 확인한다.
+- **N8 §5.6 의 조건부 연쇄 여덟(K1~K8)과 N9 의 조건부 연쇄 셋은 "X 가 실패하면 Y" 꼴**이다. 사용자의 방향("스크립트대로 말고 자연스럽게")에 비춰, 구현할 때 초과 위험의 법칙으로 옮길 수 있는 것은 옮긴다(`world/hazard.ts` 의 `registerHazard`). 옮기지 못하는 것은 까닭을 구현 메모에 적는다.
+- 새 묶음의 설계가 필요하면 `docs/specs/workflows/design-incident-kinds.js`(조사 → 설계안 → 초안 → 독립 검토 → 반영)가 본보기다. 이번 재설계는 같은 짜임의 워크플로(조사 넷 → 초안 → 검토 셋 → 반영)로 했다.
 
 ## 5. 사용자가 정한 것 (바꾸지 않는다)
 
-`docs/ROADMAP.md` "진행 중"에 전문이 있다: 2026-11-15 의 결정(자해 끔 · 폭약 진입은 R2 · 닫힌 문 그림 · 빗나간 탄 = 깨진 유리 · 결원 규칙)과 사건 종류 다양화의 결정 열네 가지, 그리고 2026-11-20 저녁의 결정 넷(장비 1 의 예비 펌프 1 · 화재 균형은 N9 뒤에 · 인과는 스크립트가 아니라 세계 상태에서 자연스럽게 · R3 뒤 손질 R3b 를 I2 앞에).
+전문은 `docs/ROADMAP.md` "진행 중"에 날짜별로 있다. 요약:
+
+- **2026-11-15**: 용의자 자해는 끈다(`SELF_HARM = 0`) · 폭약 진입은 R2 에(믿음으로 고르고 진실로 터진다) · 닫힌 문은 충격기·발차기 그림 · 빗나간 탄의 그림 선 = 실제로 깨진 유리 · 부대는 걸을 수 있는 대원이 없을 때만 운용 중단 · 다친 부대는 −18 감점 · 걸을 수 있는 부상자는 가벼운 일만.
+- **사건 종류 다양화(N8·N9)의 결정 열네 가지**와 그 뒤의 물음 여덟("전부 추천대로") — ROADMAP 과 N8 §12.5 · N9 §12.5.
+- **R3**: 짝 규칙(2인 진입)은 그대로 두고 건물 화재 첫 출동에 펌프차 한 대 더(D8). 화재 성공률이 목표 밖인 것은 받아들였다.
+- **2026-11-20 저녁**: ① 장비 손잡이 1 의 예비 펌프 0 → 1(끝남) ② **화재 균형은 N9 뒤에 다시** ③ **인과는 스크립트가 아니라 자연스럽게**(I1-b 재설계) ④ **R3 가 남긴 문제 셋(무장 사건의 대원 부상 · 계산 속도 · 폭파 진입 0건)은 I1-b 바로 다음, I2 전에**(R3b).
+- 연쇄 상한: 한 사슬 3건 · 한 교대 6건(`chain.canChain`) — 이야기 연쇄(재범·도주 차량·은신처·연쇄 방화)는 그대로 둔다.
+- 작업 방식: 플레이어는 개입하지 않는다 · PR 은 사용자가 말할 때만 · 다른 브랜치에 푸시하지 않는다 · 사용량 한도를 아낀다(한 번에 한 줄).
+
+**답이 없어 기본값으로 가는 물음**(사용자에게 알렸다 — 답이 오면 그대로 바꾼다):
+
+| 묶음 | 물음 | 기본값 |
+|---|---|---|
+| I1-b | 재난이 없는 평소 교대에서도 정체·공사로 몰린 길에서 사고가 나도 되는가 | 난다(교대당 0.2~0.5건 — 법칙은 원인을 가리지 않는다) |
+| I1-b | 우회로에 차가 몰리면 긴급 차량도 그 길에서 늦어져도 되는가 | 늦어진다(평균 대응 +3초 안으로 맞춘다) |
+| I1-b | 부모 사건이 없는 법칙 사건(공사·정체·재난에서 온 것)도 "한 교대 6건"에 넣는가 | 넣는다(이야기 연쇄와 합쳐 6건 안) |
+| I1-b | "한 사슬 3건"을 길이로만 볼지, 한 뿌리에서 난 사건 전체로 볼지 | 좁은 쪽(한 뿌리의 법칙 사건 2건까지) |
+| R3b | 폭파 진입이 나오게 인질 없는 총기 용의자도 방 문을 잠그게 할까 | 넣는다(인질 방의 폭파 금지는 그대로) |
+| R3b | 계산 속도 목표(R3 의 1.15배 이하)를 바꿔도 되는가 | 결과를 바꾸지 않는 손만(CPU −5~10%), 1.15배는 닫는다 |
+| R3b | 무장 사건 부상 증가가 120교대로 재서 잡음이면 고치지 않고 닫아도 되는가 | 닫는다(표만 남긴다) |
+
+알림만 한 것: 재난 큐(태풍·홍수·지진이 일으키는 사건 묶음)는 아직 "재난이면 이 사건들"이라는 대본이다(N6 의 것 — 고치려면 재난 묶음을 다시 써야 한다). 재발화는 법칙을 넣어도 지금 물리로는 거의 0건이다(화재 균형 때 함께).
+
+## 6. 이 환경에서 겪은 것 (CLAUDE.md "겪은 함정"에 없는, 일하는 방식 쪽)
+
+- **컨테이너는 사라진다.** 푸시하지 않은 것(작업 폴더 `.claude/worktrees/`, `wf/*` 브랜치, scratchpad 의 기준 파일·그림, 워크플로 실행 기록)은 새 세션에 없다. 그래서 덩어리마다 합쳐 푸시하고, 보고를 `docs/handover/reports/` 에, 인자를 `docs/specs/workflows/args/` 에 남긴다.
+- **한 워크플로에서 동시에 도는 작업자는 둘이다**(CPU 4개 — `min(16, CPU − 2)`). 조사자 넷을 나란히 세워도 둘씩 돈다.
+- **작업자 셋이 `npm run check`·sweep 을 함께 돌리면 부하 10 을 넘는다** — 시간 측정이 흔들리고 긴 시험이 시간 초과한다(3절). 결과 수치는 결정적이라 영향이 없다. 교대당 시간 비교는 전후를 번갈아 세 번, 사용자 CPU 로 본다.
+- 관문 시간: `npm run check` 혼자 10분쯤(테스트 9분 + 시드 40개 1분), `npm run ui-check` 3분. R3 뒤로 교대 계산이 1.55배 느려진 탓이다(R3b 의 몫).
+- `git merge` 는 색인에 올린 변경이 있으면 거절한다 — 보고 파일은 합친 뒤에 `git add`.
+- 작업자에게 긴 인자를 손으로 다시 치지 않는다 — `embed-args.py` 로 대본에 박는다(같은 글자여야 `resumeFromRunId` 가 이어진다).
+- 작업 폴더로 `cd` 하면 셸의 현재 폴더가 바뀐다 — `git -C <폴더>` 를 쓴다.
+- 문서의 주 브랜치 이름: 세션이 바뀔 때마다 주 브랜치 이름이 바뀌어 왔다(`great-ptolemy` → `practical-keller` → `great-ptolemy` → …). 옛 이름은 기록으로 두고, ROADMAP "진행 중" 맨 위에 "지금 주 브랜치는 ○○" 한 줄을 더한다.
+- 저장소 안의 파일에 세션의 커밋 끝줄을 넣지 않는다(인자 파일의 `attr` 는 자리표시다 — 띄울 때 `--attr-file`).
+
+## 7. 보고와 도구가 있는 곳
+
+- `docs/handover/reports/` — 덩어리 작업자·검토자의 구조화된 보고(끝낸 것 · 못 한 것 · 설계와 다른 곳 · 수치 · 알려진 문제). 요지는 각 설계서 끝의 구현 메모에도 있다(**구현 메모가 정본**).
+- `docs/specs/workflows/` — 대본(`package-run.js` 등)과 쓰는 법(`README.md`), 실제로 띄운 인자(`args/`), 도구 둘(`embed-args.py` 인자를 박은 대본 만들기 · `save-report.py` 보고 꺼내기).
+- `scripts/sweep.ts`(헤드리스 실행기 — `--metrics`·`--hazard`·`--methods`·`--doctrine`·`--force`·`--disaster`·`--log`), `scripts/hazstats.ts`(초과 위험의 노출량 — 법칙의 상수를 맞출 때).
+- 예전 인계(2026-11-15 저녁, H1 4b 의 작업 중 패치)는 끝난 일이다 — 그때의 문서는 git 기록(`git log -- docs/handover/README.md`)에 있다.

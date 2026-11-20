@@ -761,7 +761,9 @@ describe('추격전', () => {
           escaped++;
           expect(p.state).toBe('escaped'); expect(I.closeReason).toBe('abandoned');
           expect(I.problems.some((q) => q.code === 'SUSPECT_FLED')).toBe(true);
-          expect(I.result!.outcome).toBe(p.kind === 'kidnap' ? 'failed' : 'unresolved');
+          // 은신처에 숨어든 납치는 '미해결'이다(debrief — 이어지는 인질 사건이 결말을 낸다. tests/crime.test.ts 가 그 판정을 본다). 이 50교대에는 그런 납치가 없다가
+          // (I1-b b3-6) 몰린 길의 사고가 S28 의 흐름을 바꿔 하나 생겼다 — 도시 밖으로 놓친 납치만 '실패'다
+          expect(I.result!.outcome).toBe(p.kind === 'kidnap' && p.how !== 'hideout' ? 'failed' : 'unresolved');
         }
       }
     }

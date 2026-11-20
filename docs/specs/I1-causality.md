@@ -1231,3 +1231,121 @@ npx tsx scripts/sweep.ts 1 --log <시드> --metrics                        # 사
 - 재난 통제(`closedReason 'disaster'`)를 만난 ROUTE_BLOCKED 는 원인을 잇지 않는다 — `disaster.closeEdge` 가 통제 기록 id 를 두지 않는다(설계 밖, 필요하면 `closedEdges` 옆에).
 - `executor.ts` 교전 ESCALATION 리터럴의 `times`·`ref`.
 - H1 단계 5 의 `SUSPECT_DIED` 와 b0 은 겹치지 않는다(도주 블록의 원인 연결은 SUSPECT_FLED 만 쓴다).
+
+### 0단계 · b1 · b2 — 기준 다시 재기, 어긋난 기록 고치기, 세계 상태·신호·규칙의 틀 (2026-11-20, 브랜치 `wf/causality-b12` → `wf/causality`, 시작점 `57435a1` = R3 전체 뒤 — `src/` 의 마지막 커밋 `20ce1d7`)
+
+커밋: b1 `c0dc136` · b2 `5c333d0` (+ 이 메모). **b3 부터의 기준은 아래 "b1 뒤" 줄이다**(b2 는 결과를 바꾸지 않는다).
+
+#### 기준 파일 (이 컨테이너의 scratchpad — 새 컨테이너면 아래 방법으로 다시 만든다)
+
+`/tmp/claude-0/-home-user-operator/186169fe-a127-5e67-996a-cfc83d22e9db/scratchpad/wf-causality/`
+
+| 폴더 | 무엇 |
+|---|---|
+| `out0/` | 시작점(`57435a1`)의 기준 — `normal60.json`·`normal60-metrics.txt`·`hard30.json`·`extreme30.json`·`{typhoon,flood,quake,wildfire,tsunami}20.json`·`force-{collapse-gasblast,traffic-bus,fire-std}.txt`(20교대 `--scen --metrics`)·`hash.txt`(해시 목록 123줄) |
+| `out1/` | **b1 끝(`c0dc136`)의 같은 파일들 — b3~b5 의 "전"** |
+| `out2/` | b2 끝(`5c333d0`)의 같은 파일들 (b1 과 견준 것 — 아래) |
+| `base/` · `b1/` · `b2/` | 그 세 커밋을 `git archive` 로 푼 사본(재는 동안 작업 폴더를 고쳐도 섞이지 않게) |
+| `tools/` | `measure.sh <뿌리> <결과 폴더> all`(§4 의 명령 전부를 세 줄로 나눠 — 혼자 돌면 4분 반) · `hashrun.sh <뿌리> <결과 폴더> <견줄 hash.txt>` · `i1hash.mts`(해시 목록) · `summ.mjs`·`mdtable.mjs`(요약) · `jsoncmp.mjs <A> <B>`(`msPerShift`·`chain.dropped` 를 뺀 `--json` 비교) |
+
+**해시 목록의 정의**(b0 와 같은 123줄 — 줄마다 `report.hash` 와 `JSON.stringify(report)` 의 FNV, 기록 수): 보통 S0~S39 · 어려움 S0~S19 · 극한 S0~S19 · 재난 다섯(typhoon·flood·quake·wildfire·tsunami) × S0~S2 · 강제 `fire/arson`·`armed/kidnap`·`armed/getaway`·`traffic/pileup`·`collapse/landslide`·`traffic/tree` × S0~S3 · 극한 `armed/std` × S0~S3. 모두 `new Sim(seed, d, 1200, { force })` → `runToEnd()`.
+
+#### 0단계 — 기준 (§4 의 명령 전부, 시작점 `57435a1`)
+
+설계서 §1.5·b0 메모의 수치는 R1·H1 때의 것이라 쓰지 않는다. R3 뒤의 값:
+
+| 조건 | 사건 (교대당) | 성공 · 성공+대응 지연 · 실패+미해결 | 한계 시간 · 방치 · 출동 없음 | 평균 대응 | 부모 있는 사건 (비율 · 최대 깊이 · 교대 최대) | 버린 연쇄 | 다른 사건 원인 · 세계 원인 | spread ≥3 (최대 · 세계에서) | replan (from world) | 전환 n · hurt · 늦어진 초 | 교착 · 잊힘 · 반복 최대 | 결과 · 이야기 · 행동 엔트로피 (flat) | C1~C5 | reportHash |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 보통 60 | 846 (14.1) | 76.4% · 80.6% · 9.3% | 1 · 2 · 0 | 50초 | 4 (0.5% · 2 · 2) | 4 | 686 · 0 | 4 (4 · 0) | 48.0% (31) | 56 · 31 · 322 | 0 · 0 · 10 | 0.9 · 3.01 · 2.51 (1) | 0/0/0/0/0 (C5 짝 871) | c72949f6 |
+| 어려움 30 | 536 (17.87) | 53.9% · 62.3% · 21.1% | 2 · 6 · 0 | 63초 | 14 (2.6% · 2 · 5) | 3 | 1374 · 2 | 15 (4 · 1) | 52.4% (38) | 64 · 31 · 644 | 0 · 0 · 8 | 1.3 · 3.06 · 2.57 (1) | 0/0/0/0/0 (C5 짝 566) | ed711504 |
+| 극한 30 | 644 (21.47) | 25.6% · 37.1% · 44.3% | 11 · 19 · 13 | 85초 | 36 (5.6% · 2 · 6) | 4 | 3299 · 4 | 63 (5 · 1) | 53.2% (58) | 134 · 37 · 1017 | 0 · 0 · 11 | 1.46 · 2.83 · 2.56 (0) | 0/0/0/0/0 (C5 짝 597) | 89be9fdc |
+| 태풍 20 | 462 (23.1) | 37.4% · 74.5% · 14.9% | 8 · 0 · 0 | 102초 | 0 (0.0% · 0 · 0) | 1 | 2659 · 316 | 49 (5 · 1) | 45.7% (18) | 89 · 15 · 58 | 0 · 0 · 5 | 1.47 · 2.72 · 2.52 (0) | 0/0/0/0/0 (C5 짝 392) | c64170 |
+| 홍수 20 | 409 (20.45) | 45.2% · 67.5% · 10.0% | 2 · 0 · 0 | 82초 | 0 (0.0% · 0 · 0) | 1 | 1535 · 240 | 15 (4 · 1) | 54.8% (30) | 61 · 17 · 200 | 0 · 0 · 11 | 1.63 · 3.31 · 2.7 (0) | 0/0/0/0/0 (C5 짝 398) | e78b44d9 |
+| 지진 20 | 429 (21.45) | 28.9% · 42.7% · 38.5% | 20 · 1 · 7 | 96초 | 0 (0.0% · 0 · 0) | 1 | 4787 · 309 | 139 (9 · 2) | 70.5% (53) | 147 · 20 · 154 | 0 · 0 · 11 | 1.58 · 2.86 · 2.53 (0) | 0/0/0/0/0 (C5 짝 373) | 69e7d87d |
+| 산불 20 | 332 (16.6) | 49.1% · 66.6% · 17.8% | 7 · 1 · 1 | 75초 | 1 (0.3% · 1 · 1) | 0 | 1576 · 117 | 29 (5 · 2) | 61.8% (14) | 63 · 13 · 24 | 0 · 0 · 8 | 1.41 · 2.7 · 2.49 (1) | 0/0/0/0/0 (C5 짝 335) | edc91132 |
+| 해일 20 | 370 (18.5) | 60.0% · 74.9% · 7.3% | 1 · 0 · 0 | 72초 | 1 (0.3% · 1 · 1) | 1 | 904 · 141 | 10 (4 · 1) | 51.6% (6) | 41 · 10 · 126 | 0 · 0 · 8 | 1.27 · 3.01 · 2.57 (1) | 0/0/0/0/0 (C5 짝 385) | 615ee2ba |
+
+강제 20교대(`--scen --metrics`, 보통 — 그 시나리오의 줄만): `collapse/gasblast` 21건 = 성공 4 · 부분 8 · 실패 9, 한계 시간 0 · 평균 289초 (교대 전체: 한계 시간 2, spread ≥3 11건). `traffic/bus` 26건 = 성공 21 · 부분 4 · 대응 지연 1, 한계 시간 0 · 226초 (교대 전체: 한계 시간 1, ≥3 4건). `fire/std` 68건 = 성공 32 · 부분 21 · 실패 15, 한계 시간 1 · 289초 (교대 전체: 한계 시간 3 · 출동 없음 1, ≥3 4건). 세 조건 모두 교착 0 · 잊힘 0 · C1~C5 0.
+
+읽을 것:
+
+- **§4 목표 표의 하한 가운데 셋은 규칙 없이도 이미 넘는다**(b0 가 기록을 이은 덕): 보통 60 의 `spread ≥ 3` 4건 · `replan.fromWorld` 31 · `divert.hurt` 31(늦어진 시간 합 322초), 재난 다섯의 `≥ 3` 합 242 · `fromWorld` 합 121. 지금의 확산은 거의 모두 **부족·전환이 사건에서 사건으로**(관제 → 관제) 넘어간 것이다 — b3 의 규칙이 더해야 하는 것은 수가 아니라 다른 시스템(도로·병원·기반 시설)을 지나는 길이다. b5 의 판단은 `systems.share` 의 `infra`(지금 0%)와 예시 길의 시스템 이름으로 본다.
+- **부모 있는 사건의 비율은 보통 0.5%** 다(목표 2~8%) — 규칙이 만드는 사건이 채울 몫.
+- 보통 60 의 `world links` 는 0 이다(사건 없는 기록이 원인이 되는 길이 보통 교대에는 없다 — b3 의 구역·병원 알림이 처음 만든다).
+- 교대당 시간(`msPerShift` — 기계를 나눠 쓰지 않을 때): 보통 966ms · 어려움 1,976 · 극한 2,543.
+
+#### b1 — 어긋난 기록 고치기 (`c0dc136`, 해시 바뀜)
+
+1. **이송 출발 문구의 병원**: R1 단계 3 이 고쳤다 — 고칠 것이 없다. `consistency.C5` 는 위 여덟 조건과 강제 셋 모두 **0**(보통 60 은 짝 871), 관문은 이미 켜져 있다(`scripts/metrics.ts` `checkMetrics` 의 `['C1'…'C5']`, 시험 '요약 모양').
+2. **재범 연쇄의 난수 흐름**: `field/hazards.ts` 도주 블록의 재범 예약에 `rng: sim.rng.fork('reoffend:' + I.id + ':' + h.id)`. 예전에는 평소 생성기 흐름(`sim.rngGen`)으로 만들고 `gen.lastType` 을 `'armed'` 로 고쳐, 재범이 생긴 교대의 뒤 사건이 모두 달라졌다. **장소(도주 지점 900 안)·`when`·`until`·신호를 쓰는 구역 위험은 C10(b3-5)의 몫으로 남겼다** — §3.11 의 1단계는 흐름만이다.
+3. **연쇄 깊이 상한**: `chain.ts` 에 `DEPTH_MAX = CHAIN_MAX − 1`(2)·`chainDepth(sim, incId)`(뿌리 0 = `chainLen − 1` = 측정 도구의 `parentDepth`). `incidents.tickIncidents` 가 꺼낸 예약의 부모가 깊이 상한이면 버리고 `gen.dropped` 에 `'depth'`. 예약하는 자리가 모두 `canChain` 을 보므로 **지금은 걸리지 않는다**(안전장치 — 결과를 바꾸지 않았다).
+
+- **해시가 바뀐 교대는 해시 목록 123줄 가운데 8줄**(재범이 생긴 교대뿐): 어려움 S1·S5, 극한 S1·S5·S12·S18, 극한 `armed/std` 강제 S1·S3. 보통 40 · 재난 15 · 보통 강제 24 는 그대로다.
+- **기준 다시 재기(b1 뒤 — `out1/`)**: 보통 60 과 태풍·홍수·지진·산불 20 은 0단계와 **한 글자도 같다**(`reportHash` 같음). 달라진 세 조건:
+
+| 조건 | 사건 (교대당) | 성공 · 성공+대응 지연 · 실패+미해결 | 한계 시간 · 방치 · 출동 없음 | 평균 대응 | 부모 있는 사건 (비율 · 최대 깊이 · 교대 최대) | 버린 연쇄 | 다른 사건 원인 · 세계 원인 | spread ≥3 (최대 · 세계에서) | replan (from world) | 전환 n · hurt · 늦어진 초 | 교착 · 잊힘 · 반복 최대 | 결과 · 이야기 · 행동 엔트로피 (flat) | C1~C5 | reportHash |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 어려움 30 | 538 (17.93) | 54.1% · 62.1% · 20.4% | 2 · 5 · 0 | 63초 | 11 (2.0% · 2 · 4) | 2 | 1395 · 0 | 15 (4 · 0) | 52.8% (34) | 66 · 31 · 538 | 0 · 0 · 8 | 1.29 · 3.07 · 2.57 (1) | 0/0/0/0/0 (C5 짝 580) | 299c68b1 |
+| 극한 30 | 642 (21.4) | 26.3% · 37.9% · 43.1% | 13 · 19 · 13 | 85초 | 30 (4.7% · 2 · 6) | 8 | 3248 · 4 | 67 (5 · 1) | 52.1% (61) | 135 · 39 · 1051 | 0 · 0 · **80** | 1.47 · 2.88 · 2.59 (0) | 0/0/0/0/0 (C5 짝 627) | d5ee0f43 |
+| 해일 20 | 369 (18.45) | 60.2% · 75.1% · 7.3% | 1 · 0 · 0 | 72초 | 1 (0.3% · 1 · 1) | 1 | 886 · 141 | 10 (4 · 1) | 51.5% (5) | 41 · 10 · 126 | 0 · 0 · 8 | 1.27 · 2.99 · 2.57 (1) | 0/0/0/0/0 (C5 짝 383) | 747ef1ec |
+
+- **알려진 문제 — 극한 S12 #14 의 반복 80**(b1 이 만든 것이 아니라 바뀐 진행이 드러낸 것): 무장 현장에서 지휘관이 "고준혁, 김도윤 대원 응급 처치 맡아라."(`treatMate`)를 2~3초마다 3분 넘게 80번 되풀이하다 한계 시간으로 끝난다(22:15:15 ~ 22:18:25). 쓰러진 대원(뒤에 순직으로 확인)에게 지원 구급대원을 거듭 붙이는데 일이 곧바로 놓이는 고리로 보인다 — H1 의 처치 지시 쪽이고 I1-b 의 변경과 무관하다. 다시 보기: `npx tsx scripts/sweep.ts 1 --diff extreme --log S12`. 고치지 않았다(결과를 바꾸는 다른 묶음의 일). 완료 조건 5 의 `repeatMax` 를 볼 때 이 한 건을 따로 본다(그 밖의 극한 최대는 12).
+- 시험: `tests/causality.test.ts` 'I1-b 1단계' 둘(재범의 흐름 — 그 흐름으로 만든 재범 뒤의 평소 사건 셋이 재범이 없을 때와 같고 예전 방식이면 달라진다 · 깊이 상한 — 깊이 2 의 사건을 부모로 한 예약은 `'depth'` 로 버린다).
+
+#### b2 — 세계 상태·신호·인과 규칙의 틀 (`5c333d0`, **해시 불변** — 규칙은 하나도 없다)
+
+**결과 불변 확인**: 해시 목록 123줄이 b1 끝(`out1/hash.txt`)과 **diff 0**(`out2/hash.txt`). §4 의 `--json` 여덟 조건은 `msPerShift` 와 `metrics.chain.dropped` 를 뺀 모든 칸이 b1 과 같고(`jsoncmp.mjs out1 out2`), 강제 셋·`--metrics` 글자 출력도 그 두 가지를 빼면 같다. `chain.dropped` 가 달라진 까닭은 아래 7번이다.
+
+교대당 시간(`sweep 12 --no-metrics`, b1 과 번갈아 세 번, 기계를 혼자 쓸 때): 사용자 CPU b1 37.4·33.7·33.1초 / b2 35.4·35.1·35.3초, 교대당 1,192·1,062·1,025 / 1,098·1,087·1,108ms — 흔들림 안이다(새 칸은 생성 리터럴에 미리 넣었고, 규칙이 없는 세계 틱은 신호 배열을 비우는 것과 1초에 한 번 동네 18곳을 훑는 것뿐이다).
+
+**실제 이름과 자리** (b3~b5 가 쓴다):
+
+1. **`types.ts` "인과 기록" 절**(같은 절 끝에 "세계 상태와 신호" 소절): `WorldTag`·`ZoneField`·`ZoneState`·`HospitalState`·`SignalKind`·`Signal`·`CsqRecord`·`WorldState`, 인터페이스 합치기로 `SimEvent.tag`·`Incident.divertWait`·`Scene.shadowAdd`·`ShiftReport.world`. `ShiftReport.incidents[]` 의 `parent?`·`children?`·`chain?` 는 그 인라인 형에 직접 더했다(이름 없는 형이라 합칠 수 없다). `ProblemCode` 끝에 `'HOSPITAL_FULL'`·`'INFRA_FAIL'`(새 줄) — `debrief.PROBLEM_LABEL` 에 이름표('응급실 포화'·'기반 시설 장애')만 넣었다. **`order` 의 자리와 문장 틀은 그 코드를 남기는 단계**(b3-2 · b3-8~11)가 넣는다(`PROBLEM_SYS` 에는 I1-a 가 미리 넣어 두었다).
+2. **`Signal` 의 좌표 — 본문과 다르다**: `x`·`y` 는 **언제나 도시 좌표**(주지 않으면 그 사건의 `truth.x·y`, 병원 인계는 병원의 자리)이고, 현장의 칸 좌표는 새 칸 **`cx`·`cy`**(-1 = 없음)다. X6 의 신호 여섯은 칸 좌표를 `x`·`y` 로 넘기고 있어서(빈 함수라 드러나지 않았다) `cx`·`cy` 로 바꿨다. 규칙이 "원인 지점에서 N 안"을 잴 때는 `sig.x, sig.y` 를 그대로 쓰면 된다.
+3. **`world/state.ts`**: `initWorld(sim, carry?)`(난수 없음 — `Sim` 생성자가 도시를 만든 바로 다음에 부른다) · `zoneOfXY`·`zoneOfPlace`(-1 = 구역 없음)·`zoneName` · **`setZone(sim, z, f, v, until, cause, known)`**(진실 쪽 전용. 덮어쓰기 — 전력·통신·수도는 더 낮은 값만, 연기·위험은 더 높은 값만. 회복 시각은 늦은 쪽, 알려짐은 켜기만. 값이 나빠졌을 때만 원인 기록을 바꾸고 `true`) · `recoverWorld(sim, note?)` · `ZONE_FIELDS`·`ZONE_DEFAULT`·`HOSPITAL_CAP = [6, 8]`(`city.facilities` 의 병원 순서 — 첫 값, C3 가 맞춘다) · 알려진 것만: `knownZone`·`knownHospital`(병원이 알린 적 없으면 `null`)·`knownZoneOfIncident`·`knownBuildingAt(sim, node, placeKind?)` · 진실 쪽 `placeState(sim, placeId)`.
+   - `knownBuildingAt` 은 그 교차로에서 **이번 교대에 닫히고 위치를 알았던**(`locationKnown`) 사건 가운데 건물 종류가 같은 가장 최근 것을 돌려준다 — 건물 상태(`placeMarks`)가 없어도 `{ burnFrac: 0, usable: true, inc }` 다(C9 의 '재발화' 이름표는 그 `inc` 의 사건이 화재였는지를 관제가 아는 값(`fieldType`·평가)으로 본다 — `truth.type` 을 읽지 않는다). 그런 사건이 없으면 I2 의 `carryState.places`(지금은 늘 비어 있다)에서 `inc: -1`.
+   - `placeState().usable` 은 지금 `incidents.placeGone` 과 같은 뜻이다(전소·전체 붕괴가 아니면 참, 이어받은 건물은 `state === 'marked'`). I2 단계 5 가 `persist.placeUsable` 을 만들면 그것을 부르게 바꾼다. `knownDetourCauses`(C3-6, 선택)는 만들지 않았다.
+4. **`world/consequence.ts`**: `registerConsequence(c)` — **등록을 거두는 함수를 돌려준다**(시험용. 같은 id 를 다시 등록하면 그 자리의 규칙을 바꾼다) · `consequences()`·`consequenceLabel(id)`(b4 의 보고서가 `label` 을 찾는다) · `signal(sim, kind, { inc, ev, x?, y?, size?, place?, data?, cx?, cy? })` · `tickWorld(sim)` · `spawnConsequence(sim, c, opts, delay, when?, wait = 120)` · `CSQ_SPAWN_CAP = 6` · `chainDepth`(정본 `chain.ts` 를 다시 내보낸다). `SignalKind` 의 정의는 `types.ts` 로 옮기고 여기서 다시 내보낸다(X6 의 import 그대로).
+   - **`CsqCtx` 에 두 칸이 더 있다**: `rule`(규칙 id — `spawnConsequence` 가 `Incident.csq` 와 흐름 이름에 쓴다)·`spawns`(이 발동이 예약한 사건 수).
+   - **`Consequence.recover?(sim, z, f, cause, known)`**(본문에 없음 — 선택): 구역 값이 회복 시각을 지나 처음 값으로 돌아갈 때 모든 규칙이 등록 순서로 받는다. 복구 기록('… 전력 복구.')을 남기고 자기가 얹은 것(`bump`·음영)을 거두는 자리다 — world tick 규칙으로 회복을 하면 쿨다운·상한에 걸린다. 회복은 값·`until`·`known`·`cause` 를 먼저 되돌린 뒤 부른다(원인 기록과 "관제가 알았는가"는 인자로 온다). **`until` 이 `Infinity` 인 값**(원인 사건이 끝날 때 정한다)은 규칙이 `closed` 신호에서 `Z.until[f]` 를 직접 정한다(`setZone` 은 늦은 쪽만 받으므로 `Infinity` 를 줄이지 못한다).
+   - **발동의 차례 — 본문과 한 곳 다르다**: 열쇠 → 쿨다운·교대 상한 → 시도 번호·난수 흐름(`csq:<규칙>:<열쇠>:<n>`) → `test` → **(`spawns: true` 인 규칙만) 연쇄 상한** → `apply` → `world.log`. 본문은 상한을 `test` 앞에서 보지만, 그러면 "조건이 맞았는데 상한 때문에 일어나지 않은 것"과 "조건이 안 맞은 것"을 가릴 수 없다. 조건이 맞고 상한에 걸리면 `gen.dropped` 에 `'depth'`/`'cap'`(유형 없음, `parent` = 신호의 사건)을 남기고 쿨다운만 건다(같은 열쇠로 되풀이해 쌓이지 않게. 교대 상한 `count` 에는 세지 않는다).
+   - **`spawns` 의 뜻**: 사건을 만드는 것이 전부인 규칙(C1·C9)만 참으로 둔다. 상태도 바꾸고 사건도 만드는 규칙(C4 정전 → 승강기 갇힘)은 거짓으로 두고 `apply` 안에서 `spawnConsequence` 를 부른다 — 예약마다 따로 거절되고 `gen.dropped` 에 남는다.
+   - **연쇄 상한**: `spawnConsequence` 는 ① 전체 상한 `world.spawned ≥ CSQ_SPAWN_CAP` → `'cap'`, ② 부모(`opts.parent`)가 있으면 정본 `chain.canChain` 의 두 조건 — 사슬 길이(`chainLen ≥ CHAIN_MAX`) → `'depth'`, 교대의 연쇄 수(`chainedInShift ≥ CHAIN_SHIFT_MAX`) → `'cap'`. **부모 없는 예약**(재난·구역이 낳는 사건 — C7·C12, 태풍 정전의 승강기)은 ① 만 본다.
+   - **`world.log`**: 사건을 예약하지 않은 발동은 발동마다 한 줄(`made: -1`, `depth` = 원인 사건의 깊이), 예약한 발동은 **예약마다 한 줄**(`depth` = 만들 사건의 깊이)이고 `gen.chain` 항목의 `log`(줄 번호)로 이어져 `tickIncidents` 가 실제로 사건을 만들 때 `made` 를 채운다. 버려진 예약은 `made: -1` 로 남고 `gen.dropped` 에 까닭이 있다.
+5. **`world/rules/index.ts`**(빈 모음 — `engine.ts` 가 `import './world/rules'`): b3 가 규칙 파일을 만들어 §3.7 표의 차례로 `import './<파일>';` 을 더한다. **import 순서 = 등록 순서 = 결과**.
+6. **`engine.ts`**: `Sim.world`(생성자에서 `generateCity` 바로 다음), `step` 의 `tickDisaster` 다음·`tickIncidents` 앞에 `tickWorld`. world tick(규칙의 `on: 'tick'`·회복)은 `sim.tick % 5 === 1`.
+7. **`incidents.ts`**: `ChainItem { at, opts, when?, until?, log? }`. `tickIncidents` 의 꺼내기 = §3.5 그대로(`when` 이 거짓이면 `at = t + 5`, `until` 이 지났으면 `'expired'`. 그 틱에는 다른 예약도 꺼내지 않는다). **기존 연쇄가 상한에 걸려 잇지 못한 것도 `gen.dropped` 에 남는다**: `chain.noteChainDrop(sim, I, type, variant)` 를 재범·도주 차량(`hazards`)·은신처(`pursuit`)·방화(`scenarios/crime`)의 `canChain` 이 거짓인 갈래에서 부른다(`'depth'`/`'cap'` — 기록은 지금처럼 남기지 않는다). 그래서 **`metrics.chain.dropped` 가 b1 보다 늘었다**(결과는 같다): 어려움 30 2 → 3 · 극한 30 8 → 29 · 그 밖(보통 60 의 4, 재난 다섯, 강제 셋)은 그대로. **`chain.chainedInShift` 는 부모 있는 예약만 센다**(기존 연쇄 넷은 모두 부모가 있어 같은 수 — 부모 없는 규칙의 예약이 연쇄의 자리를 먹지 않게).
+8. **신호를 보내는 자리**:
+
+| 신호 | 자리 | `ev` | `size`·`data` |
+|---|---|---|---|
+| `blast` | `hazards.blast` 끝 — `cause === 'blast' && !planned && !noSignal` | 넘겨받은 기록 | `size` 반경 |
+| `collapse` | `hazards.tickCollapse` 의 2차 붕괴(지진 여진이 흔든 구조물도 이 자리로 무너진다) | 그 ESCALATION | `size` 새로 무너진 칸 수 |
+| `collapse` | `incidents.createIncident` 끝 — 유형 `collapse` 의 변형 `crane`·`gasblast`·`landslide`(`COLLAPSE_AT_START`), 처음부터 무너진 칸(`s.damage`)이 있을 때 | 발생 기록 | `size` 그 칸 수 |
+| `fireBig` | `hazards.tickFire` 끝 — 불 칸(> 0.2)이 처음 `FIRE_BIG`(30, export) **이상**일 때, 현장마다 한 번(`WeakSet`) | 그 사건의 마지막 ESCALATION, 없으면 발생 기록(이 자리에는 기록이 없다) | `size` 불 칸 수 |
+| `delivered` | `resources.tickUnits` 의 병원 인계 기록 바로 다음(지상·헬기 같은 길) | 그 인계 기록 | `place` 병원 시설 id · `data` 산 환자 수 · `size` 함께 인계한 다친 대원·용의자 수 · `x`·`y` 병원 |
+| `fled` | `hazards` 도주 블록 — 총을 든 용의자만 | 그 SUSPECT_FLED | `data` 용의자 id |
+| `closed` | `incidents.closeIncident` 의 종료 기록 다음(`noteClosedPlace` 앞 — 처리는 다음 틱이라 건물 상태가 이미 적혀 있다) | 종료 기록 | — |
+| `catastrophe` | X6 의 여섯 자리(그대로) | 문제 기록 | `data` 0·1·2 |
+
+   - **`hazards.blast` 의 서명**: `blast(…, cause = 'blast', planned = false, noSignal = false)`. X6 의 폭발 셋(`explodeGas`·`ruptureVessel`·`explodeDust`)은 `noSignal = true`, R2 의 폭파 진입은 `planned = true` 라 저절로 빠진다. 그래서 지금 `blast` 신호를 보내는 것은 폭발물(`rules/crime.ts`)뿐이다. 새 폭발을 `blast()` 로 만들면 기본으로 신호가 간다.
+   - 큰 불의 문턱은 본문의 "30 을 넘을 때"가 아니라 **30 이상**이다(C5 의 "불 칸 ≥ 30" 과 같은 수로).
+   - 발생 때의 `collapse` 는 평소 붕괴(`collapse/std`)·승강기 갇힘에는 보내지 않는다(본문의 목록 그대로 — 크레인·가스 폭발·산사태).
+9. **객체 모양**: `events.emit` 의 리터럴에 `tag: a.tag`, `createIncident` 리터럴에 `divertWait: undefined`, `kit.baseScene` 에 `shadowAdd: undefined`, b0 가 남긴 `executor.ts` 교전 ESCALATION 리터럴에 `times`·`ref`.
+
+**본문과 다르게 한 곳 (요약)**: `Signal.cx`·`cy` 와 X6 호출의 칸 좌표(2) · `CsqCtx.rule`·`spawns`, `Consequence.recover`, `registerConsequence` 의 반환값(4) · 연쇄 상한을 `test` 뒤에 봄(4) · 큰 불 문턱 ≥ 30, 발생 때의 `collapse` 를 `createIncident` 에서(8 — `onCreate` 는 발생 기록보다 먼저 돌아 기록 id 가 없다) · 기존 연쇄의 거절도 `gen.dropped` 에, `chainedInShift` 는 부모 있는 예약만(7) · `DEPTH_MAX` 는 2(b0 의 결정 그대로).
+
+**하지 않은 것 — 이어받을 자리**:
+
+- `traffic.ts` 의 `ObstacleKind 'rubble'`·`OBSTACLE_LABEL`·`Obstacle.ev`·`reportObstacle` 의 `causes`, 지도 기호·범례: §3.3 의 자료형 문단에 있지만 §7 표와 C2 절이 C2(b3-3)의 일로 적었다 — 쓰이지 않는 장애물 종류를 범례에 먼저 넣지 않으려고 남겼다.
+- `ARMED_BIAS` export(C10 — b3-5), `debrief` 의 `order`·문장 틀(HOSPITAL_FULL·INFRA_FAIL), `ShiftReport.world`·`incidents[].chain` 을 채우는 것(b4), 관문 조이기 M-G3 4 → 3(b5 — 지금 실제 최대 깊이는 모든 조건에서 2).
+- I2 가 `WorldTag` 끝에 `'carry'` 를 더하고(I2 구현 메모의 이어받을 자리) `placeState().usable` 을 `persist.placeUsable` 로 바꾼다.
+- 교대 끝의 틱에 닫힌 사건의 `closed` 신호는 처리되지 않고 `world.signals` 에 남는다(교대가 끝났다 — 아무 일도 없다).
+
+**시험**: `tests/causality.test.ts` 'I1-b b2' 아홉 개 — 규칙 없는 교대의 세계(처음 값 그대로)와 신호(종료·인계가 기록마다 하나, 도시 좌표), 붕괴·폭발 신호의 갈래, 규칙의 발동(열쇠·쿨다운·상한·시도 번호의 흐름·한 틱에는 쌓여 있던 신호만·world tick), `spawnConsequence`(원인·`csq`·자기 흐름·`made`·깊이와 상한의 `dropped`), 조건 연쇄(`when`·`until`·`expired`), 기존 연쇄의 `dropped`, 구역 값(덮어쓰기·회복·`recover`·알려진 칸만)·응급실 체류·병원, 건물 상태(`placeState`·`knownBuildingAt`·`knownZoneOfIncident`), **정보 격리의 소스 글자 검사**(§6 I1-b 7 — `dispatch/*`·`commander`·`brain`·`orders/*` 에 `sim.world`·`world.zones`·`world.hospitals`·`world.signals`·`world.log`·`placeMarks`·`carryState` 가 없다 · `analyst`·`dispatcher` 에 `truth.placeId` 가 없다 · `resources.startTransport` 의 본문에 둘 다 없다). **규칙을 등록하는 시험은 자기 `Sim` 만 돌리고 `finally` 에서 거둔다** — 등록은 그 시험 파일 안의 모든 `Sim` 에 걸린다(`probedShift` 의 캐시를 더럽히지 않게).
+
+**b3 에게**:
+
+- 규칙의 조건은 `sim.world`·현장의 진실을 읽어도 된다. 관제·지휘관 쪽 코드에는 위 정보 격리 시험이 걸려 있다 — `known*` 만 쓴다.
+- 규칙을 하나 넣을 때마다 `tools/measure.sh` 로 재고 `out1/` 과 견준다(`node tools/summ.mjs out1 <새 폴더>`). `tools/hashrun.sh` 는 "이 규칙이 안 걸리는 교대는 그대로인가"를 보는 데 쓴다(규칙마다 새 흐름이라 걸리지 않은 교대의 해시는 같아야 한다).
+- world tick 규칙의 `test` 는 1초마다 불린다(시도 번호도 1초마다 는다) — "60초에 한 번 확률 p" 는 `key` 가 그때만 열쇠를 돌려주거나(그 밖에는 `null`) 쿨다운을 60 으로 두고 조건이 거짓일 때도 쿨다운이 걸리게 규칙 안에서 다룬다(틀은 조건이 거짓이면 쿨다운을 걸지 않는다).

@@ -928,6 +928,10 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         const total = Math.max(1, walkableCount(s, reg.tiles));
         const conf = clamp(t.covered!.size / total, 0, 1);
         if (t.covered!.size === 0 && t.fails > 0) { finishTask(sim, s, a, false, 'nopath'); return; }
+        // (R3 독립 검토 — 재수색 고리) 닿지 못한 경유점이 있고(잠긴 문·막힌 통로) 확인율이 이미 알던 값에서 늘지 않았다: 마친 것이 아니라 닿지 못한 것이다 — 실패로 끝내 보류(8초)와 실패 기억(25초)을 남긴다.
+        //   그러지 않으면 지휘관이 낮은 확인율을 보고 같은 대원에게 같은 방의 정밀 수색을 5초마다 다시 냈다 (문이 열릴 때까지 — 어려움 S31 의 건물 화재에서 열 번. R3 전의 코드에도 네 번까지 있던 고리다:
+        //   짝이 문턱에서 기다림 없이 따라오게 되자 그 간격이 짧아져 드러났다)
+        { const prev = a.beliefs.val<number>('srch', reg.id); if (t.fails > 0 && conf < 0.72 && prev !== undefined && conf <= prev + 0.005) { finishTask(sim, s, a, false, 'nopath'); return; } }
         if (conf < 0.72) a.quiet.add('srch:' + reg.id);
         learn(sim, a, mkFact('srch', reg.id, Math.round(conf * 100) / 100, r.name, sim.t, conf, true, `${reg.name} ${t.thorough ? '정밀 ' : ''}수색 완료 (확인율 ${pct(conf)})`), true, true);
         if (conf < 0.72) emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `${reg.name} 수색을 마쳤지만 ${s.smoke[tileOf(s, reg.cx, reg.cy)] > 0.3 ? '짙은 연기로' : '시야가 나빠'} 확인율이 ${pct(conf)}에 그쳤습니다.` });

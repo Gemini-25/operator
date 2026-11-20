@@ -45,8 +45,10 @@ export const DOC = {
   BUDDY_GAP: 0.1,       // 짝이 따라올 수 있는 우선도 차 (§5.2)
   FOLLOW_R: 4,          // 짝이 따라온다 (§5.4 끝)
   WATCH_R: 12,          // 밖 대기조: 출입구에서 이 거리 안 (§5.6 의 8 — 3단계 측정: 화재 현장의 대기 지점이 가장 가까운 출입구에서 7.6~18.6칸(가운데 10)이라 8 이면 대기 지점의 대원이 세어지지 않았다)
-  WATCH_STAGE: 4,       // (균형) 밖 대기조: 또는 대기 지점(s.staging)에서 이 거리 안 — 대기 지점이 출입구에서 12칸 넘게 떨어진 현장(15~19칸)에서는 대기 지점에 모인 손 빈 대원이
+  WATCH_STAGE: 5,       // (균형) 밖 대기조: 또는 대기 지점(s.staging)에서 이 거리 안 — 대기 지점이 출입구에서 12칸 넘게 떨어진 현장(15~19칸)에서는 대기 지점에 모인 손 빈 대원이
                         //   하나도 세어지지 않아 F05 가 불을 끈 뒤의 잔불 정리 진입을 끝까지 막았다(보통 120교대의 화재 한계 시간 6건 가운데 4건 — '대기조가 갖춰지지 않습니다' 뒤 작업판에 잔불 정리만 남음)
+                        //   (독립 검토) 4 → 5: 손 빈 대원은 대기 지점에서 5칸 안이면 그 자리에 선다(실행기의 대기 임무 — 5칸을 넘을 때만 3칸 안으로 걸어온다). 4 로는 대기 지점 둘레 4.6~5.0칸에 선
+                        //   공기호흡기 대원 아홉이 하나도 세어지지 않아, 마지막 방의 수색을 '대기조 확인 전 진입 보류 → 대기조가 갖춰지지 않습니다'로 돌아가며 한계 시간까지 미뤘다(보통 S23 의 가스 누출 — 열 번, 350초)
   WATCH_NEED: 1,        // 밖 대기조의 수 (scba 대원을 태운 소방 부대가 오는 중이면 하나 적게). §5.6 의 2 → 1 — §8.4 손잡이 1 의 둘째(3단계 측정: 화재 성공률이 범위 밖)
   STAMINA_NEW: 30,      // 위험 실내 새 일을 맡지 않는 지구력
   COVER_MIN: 3, COVER_MAX: 7.5, COVER_REACH: 12,     // 엄폐 사격 자리: 위협 둘레의 고리, 대원에게서의 거리
@@ -296,7 +298,10 @@ function pairOf(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem | null, st: DocSt
     }
   }
   const r = sim.responders[a.rid];
-  const canFollow = job !== null && r.status !== 'injured' && st.band < 1 && (!job.hz || (st.hasScba && st.air >= DOC.AIR_IN)) && (!job.hot || (r.dept === 'police' && st.gun !== null));
+  // (독립 검토) 따라갈 수 있는 몸의 문턱은 buddyOf 의 "쓸 수 있는 짝"(신고 band < 2 — §5.2)과 같아야 한다. 여기만 band < 1 이면 중상(band 1) 짝을 둔 대원은 일을 받는데(F04 통과)
+  //   짝이 끝내 따라오지 않아 문턱에서 20초 기다림 → 놓음 → 다음 일에서 또 기다림이 되풀이된다(§5.2 가 경고한 고리 — 보통 40교대의 '짝이 오지 않습니다' 41번 가운데 24번, 한 사건에서 11번까지).
+  //   걸을 수 있는 다친 대원(명부 injured — 가벼운 일만)은 양쪽 모두 뺀다
+  const canFollow = job !== null && r.status !== 'injured' && st.band < 2 && (!job.hz || (st.hasScba && st.air >= DOC.AIR_IN)) && (!job.hot || (r.dept === 'police' && st.gun !== null));
   const t = a.task;
   let myP = -1, myIn = false;
   if (t !== null && t.kind !== 'standby') { const mw = t.workId >= 0 ? s.board[t.workId] : undefined; myP = mw !== undefined ? mw.priority : 9; myIn = mw !== undefined && (inJob(sim, s, a, mw, t) || hotSearch(s, mw)); }
@@ -316,13 +321,14 @@ function pairOf(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem | null, st: DocSt
  * (구조 공작차의 유압 구조대원 둘이 짝이라 한 사람이 따라만 가면 구출을 맨손의 다른 대원이 맡았다 — tests/crews.test.ts ⑤).
  * 그 일을 맡으면 둘 다 일하면서 짝이 따라온다(§5.4 끝의 buddyFollowing). 따라만 가면 관창 둘이 하나가 되어 진압이 절반으로 느려졌다.
  */
-export function pairAlt(sim: Sim, s: Scene, a: FieldAgent, jw: WorkItem): boolean {
+export function pairAlt(sim: Sim, s: Scene, a: FieldAgent, jw: WorkItem, can?: (w2: WorkItem) => boolean): boolean {
   const hose = kitHas(sim, a.rid, 'hose');
   for (let k = 0; k < s.board.length; k++) {
     const w2 = s.board[k];
     if ((w2.status !== 'open' && w2.status !== 'active') || w2.assignees.length >= w2.max || w2.assignees.indexOf(a.rid) >= 0 || w2.holdUntil > sim.t) continue;
     if ((w2.kind !== 'search' && w2.kind !== 'suppress' && w2.kind !== 'overhaul' && w2.kind !== 'extricate' && w2.kind !== 'carry') || ((w2.kind === 'suppress' || w2.kind === 'overhaul') && !hose)) continue;
-    if (inJob(sim, s, a, w2) && nearWork(s, a, w2, jw)) return true;
+    if (memWork(sim, a, w2.id)) continue;      // (독립 검토) 판단 지점 상한으로 놓아 지금은 맡지 않는 일(교본 기억 'w:' — docFit 이 0)은 "내가 맡을 빈 일"이 아니다 (그 일을 보고 동행을 끝내면 맡지도 따라가지도 못한다)
+    if (inJob(sim, s, a, w2) && nearWork(s, a, w2, jw) && (can === undefined || can(w2))) return true;      // can: (독립 검토) 실행부(runPair)가 넘기는 "지금 실제로 맡을 수 있는가"(적합도 > 0) — 판단부는 넘기지 않는다(agents 를 부르지 않는다)
   }
   return false;
 }

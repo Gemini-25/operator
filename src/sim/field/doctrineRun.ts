@@ -632,7 +632,11 @@ export function runPair(sim: Sim, s: Scene, a: FieldAgent, t: Task, k: ExecKit):
   // (합치기 (나)) 지휘관이 짝 곁의 위험 실내 일을 맡겼으면(받은 지시) 따라가기를 끝낸다 — 다음 판단에 그 지시를 한다 (G08 은 ordered 로 다시 걸리지 않는다)
   //   그 뒤 10초는 동행 줄을 다시 걸지 않는다(곁의 일로 끝낼 때와 같다 — 지시가 이미 끝나 있던 일이면 그 틱에 끝나 "동행 → 없음 → 동행"이 되었다, 시험 4)
   if (bw !== undefined && b.carrying === -1 && a.orderWork >= 0 && orderedNear(sim, s, a, bw)) { docRemember(sim, a, t.docRule ?? 'G08', '*', PAIR_ALT_MEM); actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
-  if (bw !== undefined && b.carrying === -1 && (sim.tick + a.rid) % 5 === 0 && pairAlt(sim, s, a, bw)) { docRemember(sim, a, t.docRule ?? 'G08', '*', PAIR_ALT_MEM); actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
+  // (독립 검토 — 측정이 찾은 고리) 곁의 일로 동행을 끝내는 것은 그 일을 지금 실제로 맡을 수 있을 때만이다(적합도 > 0 — 실행부라 fitFor 를 부를 수 있다). 판단부의 pairAlt 는 관창을 들었는가만 보므로
+  //   물이 없거나 펌프가 고장 난 관창수·지친 대원·판단 지점 상한으로 그 일을 놓은 대원에게도 "곁의 일"이 보인다 — 그것을 보고 끝내면(그 뒤 10초는 G08 이 걸리지 않는다) 맡지도 따라가지도 못한 채 대기로 서고,
+  //   문턱에서 기다리던 짝은 20초 뒤 일을 넘겼다: "따라감 → 끝냄 → 대기"가 짝이 기다리는 내내 되풀이됐다(극한 20교대의 '짝이 오지 않습니다' 117번 가운데 71번이 손 빈 건강한 짝).
+  //   맡을 수 있으면 지금처럼 끝내고 그 일을 맡는다 — 둘이 이웃한 방을 함께 한다(짝이 자기 문턱에서 기다리는 것은 서로 "따라온다"로 센다)
+  if (bw !== undefined && b.carrying === -1 && (sim.tick + a.rid) % 5 === 0 && pairAlt(sim, s, a, bw, (w2) => fitFor(sim, s, a, w2) > 0)) { docRemember(sim, a, t.docRule ?? 'G08', '*', PAIR_ALT_MEM); actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
   // (균형 — 측정이 찾은 것) 불이 번져 온 칸에 서 있으면 짝 곁의 불 없는 칸으로 비킨다: 짝 동행은 짝 곁(1.4칸)에 닿으면 서 있으므로 불이 그 칸까지 번져도
   //   그대로 섰다가 화상을 입었다(보통 120교대 — 소방 대원의 화상 넷이 모두 짝 동행 중, 기본에는 0). 비킨 칸이 짝 곁이면 그대로 동행을 잇는다
   if (s.fire[tileOf(s, a.x, a.y)] > PAIR_FIRE) {
@@ -925,6 +929,16 @@ function carryMates(s: Scene, a: FieldAgent, t: Task): FieldAgent[] {
   for (let k = 0; k < ag.length; k++) { const b = ag[k]; if (b !== a && b.status === 'active' && b.task !== null && b.task.kind === t.kind && b.task.workId === t.workId && dist(a.x, a.y, b.x, b.y) < 2) out.push(b); }
   return out;
 }
+/** 그 대원이 선 줄이 차로 줄이고, 그 차로로 차가 들어오는 쪽의 통제가 끝났다고 모른다 (생김새 s.laneRows 와 그 대원의 믿음 'ctl' — doctrine/ems.ts 의 openLaneRow·hazards.tickLane 과 같은 차로·통제 지점 짝) */
+function onOpenLane(s: Scene, a: FieldAgent): boolean {
+  const rows = s.laneRows;
+  for (let k = 0; k < rows.length; k++) {
+    if (Math.round(a.y) !== rows[k]) continue;
+    const cp = rows.length === 2 ? (k === 0 ? 1 : 0) : k;
+    if (a.beliefs.val<boolean>('ctl', cp) !== true) return true;
+  }
+  return false;
+}
 /**
  * 이송 — 들기 직전 (executor 의 case 'carry': 환자 곁에 닿았고 carryHold 가 막지 않은 틱부터). 돌려주는 값 = 이 틱은 들지 않는다.
  *   ① 도착 재선택 (R2 §3.2-2 — 한 번): 환자 곁의 연기로 방법을 다시 본다 — 들것 없이 혼자, 연기가 짙으면 끌기(E14)
@@ -938,7 +952,8 @@ export function runCarry(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task
   if (c.immob) { IMMOB.set(t, -1); return false; }
   if (at === undefined) {
     let who: FieldAgent | null = docGate(sim, s, a, 'carryStart', senseOf(s, a)).opt === 'immobilize' ? a : null;
-    if (who === null) for (const b of carryMates(s, a, t)) if (docGate(sim, s, b, 'carryStart', senseOf(s, b)).opt === 'immobilize') { who = b; break; }
+    // (독립 검토) 드는 대원 자신이 통제 전의 차로 줄에 서 있으면 곁의 동료의 고정을 기다리지 않는다 — E13 이 그 대원에게 걸리지 않는 까닭(차가 들어오는 차로에 3초 더 서 있지 않는다)은 동료가 고정할 때도 같다
+    if (who === null && !onOpenLane(s, a)) for (const b of carryMates(s, a, t)) if (docGate(sim, s, b, 'carryStart', senseOf(s, b)).opt === 'immobilize') { who = b; break; }
     if (who === null) { IMMOB.set(t, -1); return false; }
     docMark(sim, s, who, 'E13', 'gate', { gate: 'carryStart', work: 'carry', tgt: 'c' + c.id });
     at = 0;

@@ -1327,7 +1327,7 @@ describe('R3 시험 4 (소방): 왕복 없음 — 공기 문턱·짝 동행 경�
   });
   it('강제 fire/std 6교대: 교본 임무(공기 탈출·짝 따라 나가기·짝 동행)를 떠났다가 10초 안에 다시 들어가는 경우가 0. 판단 지점 상한으로 놓은 작업을 같은 대원이 30초 안에 다시 맡지 않는다', () => {
     const DOCK = new Set(['cover', 'rearm', 'airOut', 'pairOut', 'pair']);
-    let doc = 0;
+    let doc = 0, memSeen = 0;
     const bad: string[] = [];
     for (let k = 0; k < 6; k++) {
       const sim = new Sim('R3-OSC' + k, NORMAL, 1200, { force: 'fire/std' });
@@ -1338,11 +1338,14 @@ describe('R3 시험 4 (소방): 왕복 없음 — 공기 문턱·짝 동행 경�
           const kind = a.task ? a.task.kind : '-';
           let f = flow.get(a);
           if (f === undefined) { f = []; flow.set(a, f); }
-          // 임무 없음이 1.2초 안이면 흐름에 넣지 않는다 (받은 지시가 이미 끝나 있어 그 틱에 바로 끝난 경우 — 다른 일을 한 것이 아니다)
-          if (f.length >= 2 && f[f.length - 1].kind === '-' && f[f.length - 2].kind === kind && sim.t - f[f.length - 1].t < 1.2) { f.pop(); continue; }
+          // 임무 없음이 한 판단 주기 안이면 흐름에 넣지 않는다 (받은 지시가 이미 끝나 있어 그 틱에 바로 끝난 경우 — 다른 일을 한 것이 아니다).
+          // (독립 검토) 판단 주기는 0.5 + 0.7 × (1 − 경험) 초라 가장 긴 주기가 꼭 1.2초(여섯 틱)다 — 경험 0 인 대원의 그 한 주기는 "1.2 미만"에 들지 않았다(틱 사이의 차 1.2000000000000455).
+          //   한 주기 = 1.2초까지로 본다 (그보다 길면 다른 일을 한 것이다)
+          if (f.length >= 2 && f[f.length - 1].kind === '-' && f[f.length - 2].kind === kind && sim.t - f[f.length - 1].t < 1.2 + 1e-6) { f.pop(); continue; }
           if (!f.length || f[f.length - 1].kind !== kind) f.push({ kind, t: sim.t });
-          // 판단 지점 상한으로 놓은 작업(w:<id> 기억이 남은 동안)을 다시 맡았는가
-          if (a.task && a.task.workId >= 0 && a.docMem) for (const m of a.docMem) if (m.rule === 'w:' + a.task.workId && m.until > sim.t) bad.push(`${sim.seed} ${sim.responders[a.rid].name}: 놓은 작업 #${a.task.workId} 을 다시 맡았다`);
+          // 판단 지점 상한으로 놓은 작업(w:<id> 기억이 남은 동안)을 다시 맡았는가.
+          // (독립 검토) 기억의 모양은 { rule: 줄 번호, key: 'w:<작업 id>' } 다 — 전에는 m.rule 을 'w:…' 와 견줘 이 검사가 늘 비어 있었다
+          if (a.task && a.task.workId >= 0 && a.docMem) for (const m of a.docMem) { if (m.key === 'w:' + a.task.workId && m.until > sim.t) bad.push(`${sim.seed} ${sim.responders[a.rid].name}: 놓은 작업 #${a.task.workId} 을 다시 맡았다`); else if (m.key.startsWith('w:')) memSeen++; }
         }
       }
       for (const [a, f] of flow) for (let q = 0; q + 2 < f.length; q++) {
@@ -1353,6 +1356,7 @@ describe('R3 시험 4 (소방): 왕복 없음 — 공기 문턱·짝 동행 경�
     }
     expect(bad).toEqual([]);
     expect(doc).toBeGreaterThan(0);
+    expect(memSeen).toBeGreaterThan(0);      // (독립 검토) 판단 지점 상한의 기억(w:)이 실제로 있었고, 그동안 그 작업을 다시 맡지 않았다
   }, 120000);
 });
 
@@ -2557,5 +2561,195 @@ describe('R3 단계 7: 화면 — 교본의 현장 그림은 읽기만 한다 (�
         expect(sig()).toBe(before);
       }
     });
+  });
+});
+
+// ═════════════════════════ 독립 검토 — 짝을 기다리다 일을 넘기는 고리 (§5.2 의 경고: 판단부의 "쓸 수 있는 짝"과 짝이 실제로 따라오는 조건이 어긋나면 기다림 → 놓음 → 재배정이 되풀이된다) ═════════════════════════
+import { pairAlt } from '../src/sim/field/doctrine';
+describe('R3 독립 검토: 앞장설 대원이 일을 받았으면 짝은 실제로 따라온다 (F04 의 buddyOf ↔ G08 · 짝 동행의 끝)', () => {
+  it('중상(band 1)을 신고한 짝: 앞장설 대원이 위험 실내 일을 받으면(buddyOf ≠ null — 신고 band < 2) 그 짝의 짝 동행(G08)이 걸린다. 걸을 수 있는 다친 대원(injured)은 양쪽 모두 아니다', () => {
+    const { sim, s, noz, ff, lead, op, rg, ex } = fireScene('R3-RV1');
+    const w = work(sim, s, 'search', { region: rg });
+    put(noz, ex); put(ff, outSpot(s, ex.x, ex.y, 0.8, 2));
+    for (const a of [lead, op]) put(a, outSpot(s, ex.x, ex.y, 1.5, 4));
+    nobodyInside(sim, s);
+    sim.responders[ff.rid].health = 60;      // 물러나지 않은 중상 (체력 41~70)
+    selfReport(sim, s, ff); docForget();
+    expect(reported(ff)?.band).toBe(1);
+    expect(buddyOf(sim, s, noz, w)).toBe(ff);
+    expect(fitFor(sim, s, noz, w)).toBeGreaterThan(0);
+    giveTask(sim, s, noz, w); docForget();
+    // 고치기 전: 여기서 null — 앞장선 대원은 문턱에서 20초를 기다리다 일을 넘기고, 다음 일에서 또 기다렸다 (보통 S3 #10 에서 한 대원이 11번)
+    expect(docAct(sim, s, ff)).toMatchObject({ act: 'pair' });
+    // 걸을 수 있는 다친 대원(가벼운 일만 — 명부 injured): 따라가지 않고, 앞장설 대원도 그 짝을 세지 않는다 (양쪽이 같다)
+    sim.responders[ff.rid].status = 'injured'; docForget();
+    expect(docAct(sim, s, ff)).toBeNull();
+    noz.task = null; w.assignees = []; docForget();
+    expect(buddyOf(sim, s, noz, w)).toBeNull();
+    expect(fitFor(sim, s, noz, w)).toBe(0);
+  });
+  it('곁의 빈 일은 내가 지금 맡을 수 있을 때만(적합도 > 0) 동행을 끝낸다 — 맡지 못하는 일을 보고 끝내면 맡지도 따라가지도 못한 채 서고, 문턱의 짝은 20초 뒤 일을 넘겼다', () => {
+    const { sim, s, noz, ff, lead, op, rg, ex } = fireScene('R3-RV2');
+    const w = work(sim, s, 'search', { region: rg });
+    const near = work(sim, s, 'search', { region: rg });      // 같은 구역의 빈 위험 실내 일 (곁의 일 — pairAlt)
+    put(noz, ex); put(ff, outSpot(s, ex.x, ex.y, 4.5, 8));
+    for (const a of [lead, op]) put(a, outSpot(s, ex.x, ex.y, 1.5, 4));
+    nobodyInside(sim, s);
+    giveTask(sim, s, noz, w);
+    noz.task!.gateId = 'interiorEntry'; noz.task!.gateAt = sim.t; noz.task!.docRule = 'F04c';      // 문턱에서 짝을 기다린다 (동료의 겉)
+    // 지친 대원은 위험 실내 새 일을 맡지 않는다(G03 — 적합도 0). 따라가는 것은 된다
+    sim.responders[ff.rid].stamina = DOC.STAMINA_NEW - 10;
+    docForget();
+    expect(pairAlt(sim, s, ff, w)).toBe(true);      // 판단부의 눈에는 곁에 빈 일이 있다 (관창·종류·자리만 본다)
+    expect(fitFor(sim, s, ff, near)).toBe(0);      // 그러나 지금은 맡을 수 없다
+    expect(docAct(sim, s, ff)).toMatchObject({ act: 'pair' });      // 판단부: 짝이 기다리면 곁의 일이 있어도 따라간다 (pairOf 의 waiting)
+    const pt = makeTask('pair', '짝 동행'); pt.docRule = 'G08'; ff.task = pt;
+    stepOne(sim, s, ff, 2.4);      // (tick + rid) % 5 가 두 번 이상 돈다
+    // 고치기 전: 실행부가 곁의 일을 보고 바로 끝냈다 (그 뒤 10초는 G08 이 걸리지 않아 대기로 서고, 짝은 일을 넘겼다)
+    expect(ff.task?.kind).toBe('pair');
+    expect((ff.docMem ?? []).some((m) => m.rule === 'G08' && m.until > sim.t)).toBe(false);
+    // 맡을 수 있게 되면(지구력 회복) 지금처럼 곁의 일을 맡으러 동행을 끝낸다 — 그 뒤 10초는 다시 걸지 않는다
+    sim.responders[ff.rid].stamina = 90; docForget();
+    expect(fitFor(sim, s, ff, near)).toBeGreaterThan(0);
+    stepOne(sim, s, ff, 1.2);
+    expect(ff.task).toBeNull();
+    expect((ff.docMem ?? []).some((m) => m.rule === 'G08' && m.key === '*' && m.until > sim.t)).toBe(true);
+    expect(near.assignees).toEqual([]);
+  });
+  it('곁의 빈 일이 판단 지점 상한으로 놓아 지금은 맡지 않는 일(교본 기억 w:)이면 "내가 맡을 일"이 아니다 (pairAlt)', () => {
+    const { sim, s, noz, ff, rg } = fireScene('R3-RV3');
+    const w = work(sim, s, 'search', { region: rg });
+    const near = work(sim, s, 'search', { region: rg });
+    giveTask(sim, s, noz, w); docForget();
+    expect(pairAlt(sim, s, ff, w)).toBe(true);
+    docRemember(sim, ff, 'F04c', 'w:' + near.id, 30); docForget();
+    expect(fitFor(sim, s, ff, near)).toBe(0);
+    expect(pairAlt(sim, s, ff, w)).toBe(false);
+  });
+});
+
+// ═════════════════════════ 독립 검토 — 시험 9 의 빠져 있던 두 갈래 (§10-9: X6 의 철수 명령이 공기 탈출보다 먼저 · R2 의 물 위 대원에게 교본의 의무가 걸리지 않는다) ═════════════════════════
+describe('R3 시험 9 (독립 검토): 의무의 순서 — X6 의 철수 명령 > 공기 탈출, 물 위의 대원에게는 교본의 의무가 걸리지 않는다', () => {
+  it('공기 30% 미만인 실내 대원: 철수 명령(자기 구역이 단계 3)을 받으면 공기 탈출이 아니라 철수(evacuate), 철수 중에는 공기 탈출로 바꾸지 않는다', () => {
+    const { sim, s, noz, rg } = fireScene('R3-F9B', ['engine']);
+    put(noz, inSpot(s, rg));
+    tankOf(sim, noz).uses = 0.2 * sim.tune.airFull; docForget();
+    expect(docDuty(sim, s, noz)).toMatchObject({ act: 'airOut' });      // 교본만 보면 공기 탈출이다
+    noz.beliefs.merge(mkFact('ops', 0, { mode: 'interior', zones: [{ key: 'z', kind: 'struct', level: 3, regions: [rg], x: -1, y: -1, r: 0 }], t: sim.t }, '시험', sim.t + 0.01, 1, true, '구역'));
+    docForget();
+    think(sim, s, noz);
+    expect(noz.task?.kind).toBe('evacuate');
+    sim.tick += 10; sim.t = sim.tick * sim.dt; docForget();
+    think(sim, s, noz);
+    expect(noz.task?.kind).toBe('evacuate');
+    expect(noz.doc ?? null).toBeNull();
+  });
+  it('물 위의 대원(보트 위)은 공기 30% 미만이어도 공기 탈출을 고르지 않는다 — 뭍으로(R2 의 물 위 가드가 먼저)', () => {
+    const { sim, s, noz, rg } = fireScene('R3-F9C', ['engine']);
+    put(noz, inSpot(s, rg));
+    tankOf(sim, noz).uses = 0.2 * sim.tune.airFull; docForget();
+    expect(docDuty(sim, s, noz)).toMatchObject({ act: 'airOut' });
+    noz.afloat = 'boat';
+    think(sim, s, noz);
+    expect(noz.task?.kind).toBe('ashore');
+    expect(noz.doc ?? null).toBeNull();
+  });
+});
+
+// ═════════════════════════ 독립 검토 — 나아지지 않는 재수색 (잠긴 방의 정밀 수색을 지휘관이 5초마다 같은 대원에게 다시 내던 고리 — 짝이 기다림 없이 따라오게 되자 드러났다) ═════════════════════════
+describe('R3 독립 검토: 나아지지 않는 재수색은 마친 것이 아니라 닿지 못한 것이다', () => {
+  it('닿지 못한 경유점이 있고 확인율이 이미 알던 값 그대로면 실패(진입 경로 없음)로 끝난다 — 보류와 실패 기억이 남는다. 처음 수색·닿지 못한 곳이 없는 수색·확인율이 는 수색은 지금처럼 마친다', () => {
+    const { sim, s, noz, rg } = fireScene('R3-RV4', ['engine']);
+    const reg = s.regions[rg];
+    const lines = (): string[] => sim.events.filter((e) => e.rid === noz.rid).map((e) => e.text);
+    /** 경유점을 모두 지난 수색 임무 (본 칸 n 개 · 닿지 못한 경유점 fails 개)를 한 틱 돌린다 */
+    const finish = (n: number, fails: number): WorkItem => {
+      sim.tick++; sim.t = sim.tick * sim.dt;
+      const w = work(sim, s, 'search', { region: rg, thorough: true });
+      giveTask(sim, s, noz, w);
+      const t = noz.task!;
+      t.pts = []; t.ptI = 0; t.covered = new Set(reg.tiles.slice(0, n)); t.fails = fails; t.mt0 = sim.t;      // mt0: 방법은 고르지 않는다 (지금 코드의 수색)
+      act(sim, s, noz);
+      return w;
+    };
+    expect(noz.beliefs.val<number>('srch', rg)).toBeUndefined();
+    // ① 처음 수색: 닿지 못한 곳이 있어도 본 만큼 보고하고 마친다
+    const w1 = finish(1, 3);
+    expect(w1.status).toBe('done');
+    const c1 = noz.beliefs.val<number>('srch', rg)!;
+    expect(c1).toBeGreaterThanOrEqual(0); expect(c1).toBeLessThan(0.72);
+    expect(lines().some((x) => x.includes('수색을 마쳤지만'))).toBe(true);
+    // ② 다시 수색했는데 닿지 못한 곳이 그대로이고 확인율도 그대로: 실패 (고치기 전에는 '수색을 마쳤지만 …'으로 마쳐 지휘관이 곧바로 같은 지시를 다시 냈다)
+    const n0 = lines().filter((x) => x.includes('수색을 마쳤지만')).length;
+    const w2 = finish(1, 3);
+    expect(w2.status).toBe('open'); expect(w2.fails).toBe(1);
+    expect(w2.failedAt[noz.rid]).toBe(sim.t); expect(w2.holdUntil).toBeGreaterThan(sim.t);
+    expect(noz.task).toBeNull();
+    expect(lines().filter((x) => x.includes('수색을 마쳤지만')).length).toBe(n0);
+    expect(lines().some((x) => x.includes('수색 중단 — 진입 경로를 찾지 못했습니다'))).toBe(true);
+    expect(noz.beliefs.val<number>('srch', rg)).toBe(c1);
+    // ③ 닿지 못한 곳이 없는 수색(시야만 나빴다)은 같은 확인율이어도 마친다
+    expect(finish(1, 0).status).toBe('done');
+    // ④ 확인율이 늘었으면 닿지 못한 곳이 있어도 마친다
+    const w4 = finish(Math.min(reg.tiles.length, 6), 2);
+    expect(w4.status).toBe('done');
+    expect(noz.beliefs.val<number>('srch', rg)!).toBeGreaterThan(c1);
+  });
+});
+
+// ═════════════════════════ 독립 검토 — 밖 대기조: 대기 지점 곁 = 손 빈 대원이 실제로 서는 범위 (실행기의 대기 임무는 5칸 안이면 그 자리에 선다) ═════════════════════════
+describe('R3 독립 검토: 대기 지점 둘레 5칸 안에 선 손 빈 공기호흡기 대원은 밖 대기조다 (대기 임무가 세우는 자리와 같은 범위)', () => {
+  it('대기 임무는 대기 지점에서 5칸 안이면 걷지 않는다 — 그 자리(4.8칸)의 대원도 대기조로 센다. 5칸을 넘으면 세지 않는다(그 대원은 3칸 안으로 걸어온다)', () => {
+    const { sim, s, noz, ff, lead, op } = fireScene('R3-WSTAGE2', ['engine']);
+    for (const b of s.agents) { b.task = null; b.orderWork = -1; }
+    const st = s.staging;
+    const far = { x: st.x + 40, y: st.y };      // 대기 지점에서 먼 가상의 출입구 (WATCH_R 밖)
+    put(noz, far); put(ff, far); lead.status = 'withdrawn';
+    expect(DOC.WATCH_STAGE).toBe(5);
+    // 대기 지점에서 4.8칸: 대기 임무는 그 자리에 세워 둔다 (고치기 전에는 이 대원이 세어지지 않았다 — 문턱 4)
+    put(op, { x: st.x + 4.8, y: st.y });
+    op.task = makeTask('standby', '대기');
+    const x0 = op.x;
+    stepOne(sim, s, op, 1);
+    expect(op.x).toBe(x0); expect(op.task?.kind).toBe('standby');
+    expect(outsideWatch(sim, s, noz, far), '대기 지점 4.8칸의 손 빈 기관원').toBe(1);
+    put(op, { x: st.x + 5.6, y: st.y });
+    expect(outsideWatch(sim, s, noz, far), '대기 지점 5.6칸').toBe(0);
+  });
+});
+
+// ═════════════════════════ 독립 검토 — 척추 고정(E13): 곁의 동료의 고정과 통제 전의 차로 (구현 메모 '단계 6' 의 "알려진 문제" 둘째 줄 — 세 모양 가운데 이것으로 정했다) ═════════════════════════
+describe('R3 독립 검토: 드는 대원 자신이 통제 전의 차로 줄에 서 있으면 곁의 동료의 척추 고정을 기다리지 않는다', () => {
+  /** 환자는 차로 줄 바로 옆(차로 밖), 드는 대원(고정판 없음)은 차로 줄 위, 고정판을 든 동료는 차로 밖 곁 칸 */
+  function laneSide(seed: string) {
+    const q = carryScene(seed);
+    const { sim, s } = q;
+    const ok = (tx: number, ty: number): boolean => tx >= 0 && ty >= 0 && tx < s.w && ty < s.h && staticPass(s.tiles[ty * s.w + tx]) && s.propAt[ty * s.w + tx] < 0;
+    let spot: { x: number; y: number; oy: number } | null = null;
+    for (const y of s.laneRows) for (const oy of [y - 1, y + 1]) {
+      if (spot !== null || s.laneRows.indexOf(oy) >= 0) continue;
+      for (let x = 3; x < s.w - 3 && spot === null; x++) if (ok(x, y) && ok(x, oy) && ok(x + 1, oy)) spot = { x, y, oy };
+    }
+    expect(spot).not.toBeNull();
+    setCas(sim, s, 0, 60, 'scene', { x: spot!.x, y: spot!.oy });
+    const ff = q.role('firefighter'), emt = q.role('emt');
+    expect(kitHas(sim, ff.rid, 'spineBoard')).toBe(false); expect(kitHas(sim, emt.rid, 'spineBoard')).toBe(true);
+    giveTask(sim, s, ff, q.w); giveTask(sim, s, emt, q.w);
+    put(ff, { x: spot!.x, y: spot!.y }); put(emt, { x: spot!.x + 1, y: spot!.oy });
+    docForget();
+    return { ...q, ff, emt };
+  }
+  it('통제 전: 차로 줄에 선 대원은 바로 든다(1.2초) — 동료의 고정 기록이 없다. 그 차로의 통제가 끝났다고 알면 곁의 동료가 고정한다(3초)', () => {
+    const a = laneSide('R3-E13m');
+    stepOne(a.sim, a.s, a.ff, 1.4);
+    // 고치기 전: 차로 밖의 동료가 고정하는 3초를 차가 들어오는 차로 줄에 선 채 기다렸다
+    expect(a.ff.carrying).toBe(a.c.id); expect(a.c.immob).toBeFalsy();
+    expect((a.I.docs ?? []).some((d) => d.rule === 'E13')).toBe(false);
+    const b = laneSide('R3-E13m');
+    for (const cp of [0, 1]) b.ff.beliefs.merge(mkFact('ctl', cp, true, '시험', b.sim.t + 0.01, 1, true, '시험'));
+    docForget();
+    stepOne(b.sim, b.s, b.ff, 1.4);
+    expect(b.ff.carrying).toBe(-1); expect(b.ff.label).toBe('척추 고정');
+    expect((b.I.docs ?? []).some((d) => d.rule === 'E13' && d.rid === b.emt.rid)).toBe(true);
   });
 });

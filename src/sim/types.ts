@@ -920,7 +920,8 @@ export interface HospitalState {
   cap: number;                 // 응급실 동시 수용 (병상)
   stays: number[];             // 응급실에 있는 환자마다 병동으로 옮겨질 시각 (지나면 tickWorld 가 뺀다)
   divert: boolean;             // 포화 — 중증만 받는다 (병원이 알린다)
-  known: boolean; since: number; cause: number;
+  known: boolean; since: number; cause: number;      // known = 병원이 알린 적이 있다 · since = 포화·재개가 마지막으로 바뀐 시각(-1) · cause = 지금 상태를 알린 기록(포화 알림·수용 재개, -1)
+  lastEv: number;              // (b3-2 C3) 마지막 인계 기록 (-1) — 포화 알림의 원인이 된다
 }
 export type SignalKind = 'blast' | 'collapse' | 'fireBig' | 'delivered' | 'fled' | 'closed' | 'catastrophe';
 /**

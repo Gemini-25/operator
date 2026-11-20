@@ -15,7 +15,9 @@ import { DISTRICTS } from '../src/sim/cityPlan';
 import { CSQ_SPAWN_CAP, registerConsequence, signal, spawnConsequence, tickWorld } from '../src/sim/world/consequence';
 import type { CsqCtx } from '../src/sim/world/consequence';
 import { DIVERT_LATE_MIN, divertArrived, divertUnmet, noteDivert } from '../src/sim/world/rules/record';
-import { ZONE_DEFAULT, initWorld, knownBuildingAt, knownHospital, knownZone, knownZoneOfIncident, placeState, setZone, zoneOfPlace, zoneOfXY } from '../src/sim/world/state';
+import { ER } from '../src/sim/world/rules/hospital';
+import { ER_PENALTY, etaFor, startTransport, transportWhy } from '../src/sim/resources';
+import { HOSPITAL_CAP, ZONE_DEFAULT, erLoad, hospitalOf, initWorld, knownBuildingAt, knownHospital, knownZone, knownZoneOfIncident, placeState, setZone, zoneOfPlace, zoneOfXY } from '../src/sim/world/state';
 import { findRoute } from '../src/sim/city';
 import type { EventKind, Incident, Responder, Role, Signal, SimEvent, Unit, ZoneField } from '../src/sim/types';
 import {
@@ -169,6 +171,15 @@ describe('대응표가 문구를 아직 잡는다', () => {
     expect(hit(PHRASE.T4).every((e) => sysOf(e) === 'hospital')).toBe(true);
     expect(hit(PHRASE.T7).every((e) => sysOf(e) === 'dispatch')).toBe(true);
   });
+  it('T8(이송 중 목적지 변경 — I1-b C3)이 응급실 포화가 알려진 교대(보통 S3·S7)의 기록과 맞고, 그 기록의 시스템이 병원이다', () => {
+    let n = 0;
+    for (const seed of ['S3', 'S7']) for (const e of probedShift(seed).sim.events) if (PHRASE.T8.test(e.text)) { n++; expect(sysOf(e)).toBe('hospital'); expect(PHRASE.T8.exec(e.text)![1]).toBe(e.actor); }
+    expect(n).toBeGreaterThan(0);
+    // 사건이 없는 목적지 변경(다친 대원만 실은 차)은 문제 기록이 아니다 — 문구로 병원을 가린다
+    const X: SimEvent[] = [];
+    ev(X, -1, 'unit', { actor: '구급2', text: '구급2: 시립병원 포화 소식 — 가온대학교병원으로 목적지 변경.' });
+    expect(sysOf(X[0])).toBe('hospital');
+  });
   it('T6(결원 운용 중단)이 걸을 수 있는 대원이 남지 않은 부대가 복귀할 때 남는 기록과 맞는다 — 전원 순직 · 남은 대원 모두 병원 이송 · 걸을 수 있는 대원 없음', () => {
     // H1 4b(사용자 결정 2026-11-15): 다쳐도 걸을 수 있으면 부대는 계속 나간다 — '대원 전원 부상으로 운용 중단'은 없어졌다.
     // 사람이 없어 빠지는 부대는 드물어 시드에 기대지 않고 그 상태를 직접 만든다. 기록은 실제 코드(resources.arrive 의 복귀 갈래)가 남긴다
@@ -272,6 +283,19 @@ describe('일치 검사', () => {
     ev(X, 1, 'unit', { actor: '구급3', text: '구급3 환자 2명 싣고 시립병원으로 출발.' });
     ev(X, 1, 'casualty', { actor: '구급3', text: '구급3: 시립병원 도착, 환자 2명 인계 완료.' });
     expect(checkC5(X)).toEqual({ bad: 1, n: 2 });
+    // (I1-b C3) 이송 중 목적지 변경(T8)은 출발로 친다: 출발 시립병원 → 변경 가온대학교병원 → 인계 가온대학교병원 은 위반이 아니다
+    ev(X, 2, 'unit', { actor: '구급4', text: '구급4 환자 2명 싣고 시립병원으로 출발.' });
+    ev(X, 2, 'problem', { actor: '구급4', problem: 'HOSPITAL_FULL', text: '구급4: 시립병원 포화 소식 — 가온대학교병원으로 목적지 변경.' });
+    ev(X, 2, 'casualty', { actor: '구급4', text: '구급4: 가온대학교병원 도착, 환자 2명 인계 완료.' });
+    expect(checkC5(X)).toEqual({ bad: 1, n: 3 });
+    // 바꾼 뒤에 원래 병원에 인계했으면 위반이다. 환자 0명 출발은 목적지 변경이 있어도 건너뛴다
+    ev(X, 3, 'unit', { actor: '구급5', text: '구급5 환자 1명 싣고 시립병원으로 출발.' });
+    ev(X, 3, 'problem', { actor: '구급5', problem: 'HOSPITAL_FULL', text: '구급5: 시립병원 포화 소식 — 가온대학교병원으로 목적지 변경.' });
+    ev(X, 3, 'casualty', { actor: '구급5', text: '구급5: 시립병원 도착, 환자 1명 인계 완료.' });
+    ev(X, 3, 'unit', { actor: '구급6', text: '구급6 환자 0명 싣고 시립병원으로 출발.' });
+    ev(X, 3, 'problem', { actor: '구급6', problem: 'HOSPITAL_FULL', text: '구급6: 시립병원 포화 소식 — 가온대학교병원으로 목적지 변경.' });
+    ev(X, 3, 'casualty', { actor: '구급6', text: '구급6: 시립병원 도착, 부상 대원 1명 인계 완료.' });
+    expect(checkC5(X)).toEqual({ bad: 2, n: 4 });
   });
 });
 
@@ -572,7 +596,7 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
     while (!sim.ended && n++ < 20000) { sim.step(); for (const g of sim.world.signals) { expect(g.t).toBe(sim.t); all.push(g); } }
     return all;
   }
-  it('규칙이 없는 교대: 세계 상태는 처음 값 그대로이고, 신호는 상태를 바꾼 자리에서 그 기록과 함께 간다 (보통 S3)', () => {
+  it('세계 상태는 걸린 규칙이 바꾼 것 말고는 처음 값 그대로이고, 신호는 상태를 바꾼 자리에서 그 기록과 함께 간다 (보통 S3)', () => {
     const sim = new Sim('S3', NORMAL, 1200);
     const fresh = JSON.stringify(initWorld(sim));
     expect(sim.world.zones.length).toBe(DISTRICTS.length);
@@ -582,8 +606,12 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
     const sigs = runCollect(sim);
     // 결과는 신호를 읽지 않고 돈 교대와 같다
     expect(sim.report!.hash).toBe(probedShift('S3').sim.report!.hash);
-    // 세계 상태: 신호 말고는 처음 값 (끝난 틱에 닫힌 사건의 신호는 처리되지 않고 남는다)
-    expect(JSON.stringify({ ...sim.world, signals: [] })).toBe(fresh);
+    // 세계 상태: 걸린 규칙이 바꾼 것(응급실 체류 — C3) 말고는 처음 값이다. 구역은 건드리는 규칙이 없고, 규칙이 만든 사건도 없다 (끝난 틱에 닫힌 사건의 신호는 처리되지 않고 남는다)
+    const w0 = JSON.parse(fresh);
+    expect(JSON.stringify(sim.world.zones)).toBe(JSON.stringify(w0.zones));
+    expect(sim.world.spawned).toBe(0);
+    expect(sim.world.log.every((l) => l.rule === 'hospitalLoad' || l.rule === 'rubbleRoad'), '기록되는 규칙은 포화·잔해뿐 (응급실 체류는 줄을 남기지 않는다)').toBe(true);
+    expect(sim.world.log.every((l) => l.made === -1)).toBe(true);
     expect(sim.world.signals.length).toBeLessThan(40);
     // 종료: 닫힌 사건마다 하나, 그 종료 기록과 함께
     const closed = sigs.filter((g) => g.kind === 'closed');
@@ -838,7 +866,7 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
     h.divert = true;
     expect(knownHospital(s, h.fac)).toBe(null);
     h.known = true;
-    expect(knownHospital(s, h.fac)).toEqual({ divert: true });
+    expect(knownHospital(s, h.fac)).toEqual({ divert: true, ev: -1 });      // ev = 그것을 알린 기록 (여기서는 손으로 켰다)
     expect(knownHospital(s, -7)).toBe(null);
   });
   it('건물 상태와 사건의 구역: 세계 규칙은 placeState(진실), 관제는 알려진 교차로로만 묻는다 (knownBuildingAt · knownZoneOfIncident)', () => {
@@ -974,5 +1002,208 @@ describe('I1-b b3-1: C6 divertRecord — 전환 배정의 실제 영향', () => 
     expect(J.problems[0].ref!.lost).toBe(100);
     expect(J.divertWait).toBeUndefined();
     expect(s.events.slice(n0 + 1).some((e) => LATE.test(e.text))).toBe(false);
+  });
+});
+
+describe('I1-b b3-2: C3 hospitalLoad — 응급실 포화', () => {
+  const FULL = /^(.+) 응급실 포화 — 당분간 중증 환자만 받습니다\.$/, REOPEN = /^(.+) 응급실 수용 재개\.$/;
+  /** 세계 틱 한 번 (1초 틱 — 신호 처리 + world tick 규칙 + 회복) */
+  const worldTick = (s: Sim, t: number): void => { s.t = t; s.tick = Math.round(t * 5) * 5 + 1; tickWorld(s); };
+  /** 병원에 n 명 인계했다는 신호 (그 인계 기록과 함께) */
+  const deliver = (s: Sim, fac: number, n: number, mates = 0): number => {
+    const f = s.city.facilities[fac];
+    const e = emit(s, { role: 'UNIT', actor: '시험구급', kind: 'casualty', text: `시험구급: ${f.name} 도착, 환자 ${n}명 인계 완료.` });
+    signal(s, 'delivered', { inc: -1, ev: e, x: f.x, y: f.y, place: fac, data: n, size: mates });
+    return e;
+  };
+  it('병원 수용 한도는 시설 순서의 두 값이고, 인계마다 체류가 쌓인다 — 한도에 닿으면 병원이 알리고(tag hospital) 한도 − 2 로 내려가면 재개, 60초 안에는 다시 바뀌지 않는다', () => {
+    const s = new Sim('S5', NORMAL, 1200);
+    const [H0, H1] = s.world.hospitals, f0 = s.city.facilities[H0.fac];
+    expect([H0.cap, H1.cap]).toEqual([HOSPITAL_CAP[0], HOSPITAL_CAP[1]]);
+    expect(s.city.facilities.filter((f) => f.kind === 'hospital').map((f) => f.id)).toEqual([H0.fac, H1.fac]);
+    expect(hospitalOf(s, H0.fac)).toBe(H0);
+    expect(hospitalOf(s, -3)).toBe(null);
+    // 한도 − 1 명(환자와 함께 인계한 다친 대원도 병상을 쓴다): 체류만 쌓인다 — 알림도 world.log 의 줄도 없다
+    s.t = 10;
+    const e1 = deliver(s, H0.fac, H0.cap - 2, 1);
+    worldTick(s, 10.2);
+    expect(H0.stays).toEqual(new Array(H0.cap - 1).fill(10 + ER.STAY));
+    expect([H0.divert, H0.known, H0.lastEv]).toEqual([false, false, e1]);
+    expect(knownHospital(s, H0.fac)).toBe(null);
+    expect(s.world.log.length).toBe(0);
+    expect(H1.stays.length).toBe(0);
+    // 한 명 더: 한도 — 병원이 곧바로 알린다 (원인 = 그 인계 기록)
+    s.t = 20;
+    const e2 = deliver(s, H0.fac, 1);
+    const n0 = s.events.length;
+    worldTick(s, 20.2);
+    expect(erLoad(H0, s.t)).toBe(H0.cap);
+    expect(s.events.length).toBe(n0 + 1);
+    const full = s.events[n0];
+    expect(FULL.exec(full.text)![1]).toBe(f0.name);
+    expect([full.actor, full.kind, full.tag, full.importance, full.incidentId, full.truth]).toEqual([f0.name, 'unit', 'hospital', 2, -1, false]);
+    expect(full.causes).toEqual([e2]);
+    expect(sysOf(full)).toBe('hospital');
+    expect([H0.divert, H0.known, H0.since, H0.cause]).toEqual([true, true, s.t, full.id]);
+    expect(knownHospital(s, H0.fac)).toEqual({ divert: true, ev: full.id });
+    expect(knownHospital(s, H1.fac)).toBe(null);
+    expect(s.world.log.map((l) => l.rule)).toEqual(['hospitalLoad']);
+    // 체류가 빠져도 60초 안에는 다시 바뀌지 않는다
+    H0.stays.length = H0.cap - ER.RELIEF;
+    worldTick(s, 20.2 + ER.HOLD - 1);
+    expect(H0.divert).toBe(true);
+    // 60초 뒤: 수용 재개 (원인 = 포화 알림). 관제는 재개도 안다
+    worldTick(s, 20.4 + ER.HOLD);
+    const re = s.events[s.events.length - 1];
+    expect(REOPEN.exec(re.text)![1]).toBe(f0.name);
+    expect([re.tag, re.importance, re.causes]).toEqual(['hospital', 1, [full.id]]);
+    expect(knownHospital(s, H0.fac)).toEqual({ divert: false, ev: re.id });
+    // 다시 한도까지 차도, 재개한 지 60초 안에는 포화를 알리지 않는다
+    const t1 = s.t;
+    deliver(s, H0.fac, ER.RELIEF);
+    worldTick(s, t1 + 5);
+    expect(erLoad(H0, s.t)).toBe(H0.cap);
+    expect(H0.divert, '재개한 지 60초 안에는 다시 포화를 알리지 않는다').toBe(false);
+    worldTick(s, t1 + ER.HOLD + 0.2);
+    expect(H0.divert).toBe(true);
+    // 한도 − 1 로는 재개하지 않는다 (한도 − 2 까지 내려가야 한다)
+    H0.stays.length = H0.cap - 1;
+    worldTick(s, t1 + 3 * ER.HOLD);
+    expect(H0.divert).toBe(true);
+    // 병동으로 옮겨지면(체류 시간이 지나면) 저절로 빠지고 재개한다
+    worldTick(s, 20 + ER.STAY + 1);
+    expect(H0.stays.length).toBeLessThanOrEqual(H0.cap - ER.RELIEF);
+    worldTick(s, 20 + ER.STAY + 2);
+    expect(H0.divert).toBe(false);
+    expect(s.events.filter((e) => e.tag === 'hospital').length).toBe(4);
+    expect(s.world.log.filter((l) => l.rule === 'hospitalLoad').length).toBe(4);
+  });
+  it('새 이송은 알려진 포화 병원을 240초 멀리 보고(HOSPITAL_FULL — 원인은 그 알림), 그 병원으로 가던 부대는 목적지를 바꾼다(T8) — 둘 다 포화면 가까운 곳으로', () => {
+    const s = new Sim('S5', NORMAL, 1200);
+    for (let k = 0; k < 5; k++) s.step();
+    const [H0, H1] = s.world.hospitals, f0 = s.city.facilities[H0.fac], f1 = s.city.facilities[H1.fac];
+    const I = createIncident(s, { type: 'medical', variant: 'faint' });
+    const amb = s.units.filter((u) => u.dept === 'ems' && !u.air && !u.sea);
+    expect(amb.length).toBeGreaterThanOrEqual(3);
+    /** 부대를 그 교차로에 환자를 실은 채 세운다 */
+    const put = (u: Unit, node: number): void => { const n = s.city.nodes[node]; u.nodeId = node; u.x = n.x; u.y = n.y; u.route = null; u.seg = 0; u.segT = 0; u.curb = null; u.pendingDest = null; u.state = 'onscene'; u.incidentId = null; u.patients = [0]; u.patientsIncident = I.id; };
+    // 첫 병원이 더 가깝고 둘째 병원이 120초 안으로만 더 먼 교차로(near), 120초 넘게 더 먼 교차로(far)
+    const [A, B, C] = amb;
+    let near = -1, far = -1, nd = 0, fd = 0;
+    for (const n of s.city.nodes) {
+      put(A, n.id);
+      const d = etaFor(s, A, f1.nodeId) - etaFor(s, A, f0.nodeId);
+      if (d > 20 && d <= ER.REROUTE_MAX - 10 && d > nd) { near = n.id; nd = d; }
+      if (d > ER.REROUTE_MAX + 10 && d < ER_PENALTY - 10 && d > fd) { far = n.id; fd = d; }
+    }
+    expect(near).toBeGreaterThanOrEqual(0);
+    // 포화가 알려지기 전: 가장 빨리 닿는 병원으로, 원인 없음
+    put(A, near);
+    expect(startTransport(s, A)).toBe(f0);
+    expect([A.state, A.destNode]).toEqual(['transport', f0.nodeId]);
+    expect(transportWhy(A)).toBeUndefined();
+    if (far >= 0) { put(B, far); expect(startTransport(s, B)).toBe(f0); }
+    expect(I.problems.some((p) => p.code === 'HOSPITAL_FULL')).toBe(false);
+    // 첫 병원이 포화를 알린다 → 그 병원으로 가던 A 는 목적지를 바꾼다 (120초 안), 훨씬 가까운 B 는 그대로 간다
+    deliver(s, H0.fac, H0.cap);
+    const n0 = s.events.length;
+    worldTick(s, s.t + 0.2);
+    const full = s.events.find((e) => e.id >= n0 && FULL.test(e.text))!;
+    expect(full).toBeDefined();
+    expect(A.destNode).toBe(f1.nodeId);
+    const re = s.events.find((e) => e.id > full.id && PHRASE.T8.test(e.text))!;
+    expect(PHRASE.T8.exec(re.text)!.slice(1)).toEqual([A.callsign, f1.name]);
+    expect(re.text).toContain(`${f0.name} 포화 소식`);
+    expect([re.problem, re.incidentId, re.role, re.actor, re.causes]).toEqual(['HOSPITAL_FULL', I.id, 'UNIT', A.callsign, [full.id]]);
+    const pr = I.problems.find((p) => p.eventId === re.id)!;
+    expect([pr.code, pr.ref!.fac, pr.ref!.unit]).toEqual(['HOSPITAL_FULL', f0.id, A.id]);
+    expect(Math.abs(pr.ref!.lost! - nd)).toBeLessThanOrEqual(2);
+    expect(pr.detail).toContain('이송 중');
+    if (far >= 0) { expect(B.destNode, '둘째 병원이 120초 넘게 더 멀면 그대로 간다').toBe(f0.nodeId); expect(s.events.filter((e) => e.id > full.id && PHRASE.T8.test(e.text)).length).toBe(1); }
+    // 새 이송: 가까운 첫 병원 대신 둘째 병원을 고른다 — HOSPITAL_FULL 과 그 알림이 출발 기록의 원인이 된다
+    put(C, near);
+    const n1 = s.events.length;
+    expect(startTransport(s, C)).toBe(f1);
+    expect(s.events.length).toBe(n1 + 1);
+    const hf = s.events[n1];
+    expect([hf.problem, hf.incidentId, hf.role, hf.causes]).toEqual(['HOSPITAL_FULL', I.id, 'DISPATCH', [full.id]]);
+    expect(hf.text).toContain(`${f0.name} 응급실 포화`);
+    expect(hf.text).toContain(f1.name);
+    expect(transportWhy(C)).toEqual([full.id, hf.id]);
+    const pc = I.problems.find((p) => p.eventId === hf.id)!;
+    expect([pc.ref!.fac, pc.ref!.unit]).toEqual([f0.id, C.id]);
+    expect(Math.abs(pc.ref!.lost! - nd)).toBeLessThanOrEqual(2);
+    expect(pc.detail).toMatch(new RegExp(`^${f0.name} 포화로 ${f1.name}(?:으로|로) 이송 \\(약 \\+\\d+초\\)$`));
+    // 둘 다 포화면 벌점이 상쇄된다: 가까운 곳으로, 기록 없음
+    deliver(s, H1.fac, H1.cap);
+    worldTick(s, s.t + 1);
+    expect(knownHospital(s, H1.fac)!.divert).toBe(true);
+    put(C, near);
+    const n2 = s.events.length;
+    expect(startTransport(s, C)).toBe(f0);
+    expect(s.events.length).toBe(n2);
+    expect(transportWhy(C)).toBeUndefined();
+    // 수용 재개가 알려지면 다시 가까운 병원으로 (기록 없음)
+    H0.stays.length = 0; H1.stays.length = 0;
+    worldTick(s, s.t + ER.HOLD + 1); worldTick(s, s.t + 1);
+    expect([knownHospital(s, H0.fac)!.divert, knownHospital(s, H1.fac)!.divert]).toEqual([false, false]);
+    put(C, near);
+    expect(startTransport(s, C)).toBe(f0);
+    expect(transportWhy(C)).toBeUndefined();
+  });
+  it('실제 교대(보통 S3·S7): 포화 알림 → 먼 병원 이송·이송 중 목적지 변경 → 그 병원에 인계 (C5 0), 응급실 대기 기록은 앞 차의 출발 기록·그 병원의 인계 기록을 원인으로', () => {
+    let fulls = 0, reroutes = 0, departs = 0, waits = 0;
+    for (const seed of ['S3', 'S7']) {
+      const { sim, m } = probedShift(seed);
+      expect(m.consistency.C5, seed).toBe(0);
+      const hospName = new Set(sim.city.facilities.filter((f) => f.kind === 'hospital').map((f) => f.name));
+      for (const e of sim.events) {
+        if (FULL.test(e.text)) {
+          fulls++;
+          expect(hospName.has(FULL.exec(e.text)![1])).toBe(true);
+          expect(e.causes.length).toBe(1);
+          expect(PHRASE.T4.test(sim.events[e.causes[0]].text), '포화 알림의 원인은 그 병원의 인계 기록').toBe(true);
+          expect(sim.events[e.causes[0]].text).toContain(FULL.exec(e.text)![1]);
+        }
+        if (e.problem === 'HOSPITAL_FULL') {
+          const notice = sim.events[e.causes[0]];
+          expect(FULL.test(notice.text)).toBe(true);
+          expect(notice.id).toBeLessThan(e.id);
+          const I = sim.incidents[e.incidentId], p = I.problems.find((q) => q.eventId === e.id)!;
+          const u = sim.units[p.ref!.unit!], full = sim.city.facilities[p.ref!.fac!];
+          expect(full.name).toBe(FULL.exec(notice.text)![1]);
+          // 그 부대의 다음 인계는 포화가 아닌 다른 병원이다
+          const next = sim.events.find((x) => x.id > e.id && x.actor === u.callsign && PHRASE.T4.test(x.text));
+          if (next) expect(PHRASE.T4.exec(next.text)![2]).not.toBe(full.name);
+          if (PHRASE.T8.test(e.text)) { reroutes++; expect(e.actor).toBe(u.callsign); if (next) expect(PHRASE.T4.exec(next.text)![2]).toBe(PHRASE.T8.exec(e.text)![2]); }
+          else {
+            departs++;
+            // 바로 다음 기록이 그 부대의 출발 기록이고, 알림과 이 기록을 원인으로 잇는다
+            const dep = sim.events[e.id + 1];
+            expect(PHRASE.T3.test(dep.text)).toBe(true);
+            expect(dep.actor).toBe(u.callsign);
+            expect(dep.causes).toEqual([notice.id, e.id]);
+          }
+        }
+        if (PHRASE.T2.test(e.text)) {
+          waits++;
+          const ahead = /앞에 (\d+)대/.exec(e.text);
+          const cs = e.causes.map((c) => sim.events[c]);
+          if (ahead) expect(cs.filter((c) => PHRASE.T3.test(c.text) && c.actor !== e.actor).length, e.text).toBeLessThanOrEqual(Number(ahead[1]));
+          else { expect(cs.length).toBe(1); expect(PHRASE.T4.test(cs[0].text)).toBe(true); }
+        }
+      }
+      // 교대 끝의 체류 = 마지막 300초 안에 인계한 사람 수 (환자 + 다친 대원 + 용의자)
+      for (const H of sim.world.hospitals) {
+        const name = sim.city.facilities[H.fac].name;
+        let n = 0;
+        for (const e of sim.events) { const t4 = PHRASE.T4.exec(e.text); if (!t4 || t4[2] !== name || e.t >= sim.t || e.t + ER.STAY <= sim.t) continue; for (const part of e.text.split('도착, ')[1].split('·')) n += Number(/(\d+)명/.exec(part)![1]); }
+        expect(erLoad(H, sim.t), name).toBe(n);
+      }
+    }
+    expect(fulls).toBeGreaterThan(1);
+    expect(reroutes, '이송 중 목적지 변경').toBeGreaterThan(0);
+    expect(departs, '먼 병원으로 출발').toBeGreaterThan(0);
+    expect(waits).toBeGreaterThan(0);
   });
 });

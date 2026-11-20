@@ -15,7 +15,7 @@ import { fieldCrew, isHovering, kitWorks, seatsOf, seatsUsed } from '../../crews
 import type { Sim } from '../../engine';
 import { emit } from '../../events';
 import { closeIncident } from '../../incidents';      // 함수 안에서만 부른다 (incidents → sceneManager → scenes/index → 이 파일의 순환)
-import { airRtb, etaFor, releaseUnit, startTransport } from '../../resources';
+import { airRtb, etaFor, noteDeparture, releaseUnit, startTransport, transportWhy } from '../../resources';
 import type { AirOp, CasBelief, Fact, FieldAgent, Incident, Needs, Scene, Unit, WorkItem } from '../../types';
 import { josa } from '../../util';
 import { briefFacts, casFact, flushOutbox, learn, learnQuiet, makeAgent, perceive, transmit } from '../agents';
@@ -326,7 +326,7 @@ registerRule((sim, s, I) => {
         const j = I.assigned.indexOf(u.id); if (j >= 0) I.assigned.splice(j, 1);
         u.boardOrder = null; u.incidentId = null;
         const hosp = startTransport(sim, u);
-        emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign} 환자 ${u.patients.length}명 싣고 ${josa(hosp.name, '으로/로')} 출발.` });
+        noteDeparture(u, emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, causes: transportWhy(u), text: `${u.callsign} 환자 ${u.patients.length}명 싣고 ${josa(hosp.name, '으로/로')} 출발.` }));      // (I1-b C3)
         air.splice(k, 1);
         tellDispatch(sim, s, I, op, u);
         continue;

@@ -9,3 +9,4 @@
 //   structure C2 rubbleRoad   — 무너지거나 터진 건물의 잔해가 사건 뒤에도 길에 남는다
 // 그 밖의 규칙("X 면 확률 p 로 사건 Y" 꼴)은 설계를 다시 쓰는 중이다 (docs/ROADMAP.md "진행 중").
 import './record';
+import './hospital';

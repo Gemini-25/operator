@@ -5,7 +5,7 @@ import { fieldReport } from '../dispatch/dispatcher';
 import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import { closeIncident } from '../incidents';
-import { releaseUnit, startTransport } from '../resources';
+import { noteDeparture, releaseUnit, startTransport, transportWhy } from '../resources';
 import { scenarioOf } from '../scenarios';
 import { TYPE_DEFS } from '../incidentTypes';
 import { AIR_LOW, fieldCrew, hasKit, isHovering, kitUses, roleOf, useKit } from '../crews';
@@ -368,7 +368,7 @@ export function tickScene(sim: Sim, s: Scene): void {
       u.boardOrder = null; u.incidentId = null;
       const hosp = startTransport(sim, u);      // 가장 빨리 닿는 병원을 고른다 — 기록에는 실제로 가는 그 병원을 쓴다
       const who = riderText(u);      // 환자 · 부상 대원 · 용의자 (H1 — 실은 사람마다)
-      emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign} ${who} 싣고 ${josa(hosp.name, '으로/로')} 출발.` });
+      noteDeparture(u, emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, causes: transportWhy(u), text: `${u.callsign} ${who} 싣고 ${josa(hosp.name, '으로/로')} 출발.` }));      // (I1-b C3) 포화로 먼 병원을 골랐으면 그 알림이 원인
     } else {
       emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 0, text: `${u.callsign} 현장 철수, 복귀합니다.` });
       releaseUnit(sim, u);

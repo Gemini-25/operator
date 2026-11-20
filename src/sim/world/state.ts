@@ -16,8 +16,12 @@ import type { HospitalState, Incident, PlaceKind, WorldState, ZoneField, ZoneSta
 export const ZONE_FIELDS: readonly ZoneField[] = ['power', 'comms', 'water', 'smoke', 'risk'];
 /** 구역 값의 처음 값(정상): 전력·통신·수도는 1, 연기·위험은 0 */
 export const ZONE_DEFAULT: Readonly<Record<ZoneField, number>> = { power: 1, comms: 1, water: 1, smoke: 0, risk: 0 };
-/** 응급실 동시 수용 — city.facilities 의 병원 순서대로 (시립병원 · 가온대학교병원). 더 많으면 마지막 값. 첫 값이다 — b3-2 (C3)가 이송량을 보고 맞춘다 */
-export const HOSPITAL_CAP: readonly number[] = [6, 8];
+/**
+ * 응급실 동시 수용 — city.facilities 의 병원 순서대로 (= cityPlan.LANDMARKS 의 순서: 시립병원 · 가온대학교병원). 더 많으면 마지막 값.
+ * (b3-2 C3) R3 뒤의 이송량에 맞춘 값이다: 보통 교대는 한 교대에 18명쯤을 병원에 넘기고 그 3분의 2 가 가까운 시립병원으로 간다
+ * (체류 300초 안의 최댓값 — 시립병원 중앙값 6, 가온대학교병원 3~4). 본문의 첫 값 6·8 로는 보통 교대의 60% 에서 포화가 났다
+ */
+export const HOSPITAL_CAP: readonly number[] = [8, 10];
 
 const zoneBlank = (): ZoneState => ({
   power: 1, comms: 1, water: 1, smoke: 0, risk: 0,
@@ -33,7 +37,7 @@ const zoneBlank = (): ZoneState => ({
 export function initWorld(sim: Sim, carry?: unknown): WorldState {
   void carry;
   const hospitals: HospitalState[] = [];
-  for (const f of sim.city.facilities) if (f.kind === 'hospital') hospitals.push({ fac: f.id, cap: HOSPITAL_CAP[Math.min(hospitals.length, HOSPITAL_CAP.length - 1)], stays: [], divert: false, known: false, since: -1, cause: -1 });
+  for (const f of sim.city.facilities) if (f.kind === 'hospital') hospitals.push({ fac: f.id, cap: HOSPITAL_CAP[Math.min(hospitals.length, HOSPITAL_CAP.length - 1)], stays: [], divert: false, known: false, since: -1, cause: -1, lastEv: -1 });
   return { zones: DISTRICTS.map(zoneBlank), hospitals, signals: [], log: [], last: {}, count: {}, tries: {}, spawned: 0 };
 }
 
@@ -102,11 +106,23 @@ export function knownZone(sim: Sim, z: number): Partial<Record<ZoneField, number
   for (let k = 0; k < ZONE_FIELDS.length; k++) { const f = ZONE_FIELDS[k]; if (Z.known[f]) out[f] = Z[f]; }
   return out;
 }
-/** 관제가 아는 병원 상태 (병원이 알린 것만 — 포화 알림·수용 재개). 알린 적이 없으면 null */
-export function knownHospital(sim: Sim, fac: number): { divert: boolean } | null {
+/** 관제가 아는 병원 상태 (병원이 알린 것만 — 포화 알림·수용 재개). ev = 그것을 알린 기록. 알린 적이 없으면 null */
+export function knownHospital(sim: Sim, fac: number): { divert: boolean; ev: number } | null {
   const hs = sim.world.hospitals;
-  for (let k = 0; k < hs.length; k++) if (hs[k].fac === fac) return hs[k].known ? { divert: hs[k].divert } : null;
+  for (let k = 0; k < hs.length; k++) if (hs[k].fac === fac) return hs[k].known ? { divert: hs[k].divert, ev: hs[k].cause } : null;
   return null;
+}
+/** (진실 쪽 — 세계 규칙·resources.arrive 의 응급실 대기 전용) 그 시설의 병원 상태. 병원이 아니면 null */
+export function hospitalOf(sim: Sim, fac: number): HospitalState | null {
+  const hs = sim.world.hospitals;
+  for (let k = 0; k < hs.length; k++) if (hs[k].fac === fac) return hs[k];
+  return null;
+}
+/** (진실 쪽) 지금 응급실에 있는 환자 수 — 병동으로 옮겨질 시각이 아직 오지 않은 체류 (회복이 1초에 한 번 지난 것을 빼므로 그 사이의 것은 여기서 거른다) */
+export function erLoad(H: HospitalState, t: number): number {
+  let n = 0;
+  for (let i = 0; i < H.stays.length; i++) if (H.stays[i] > t) n++;
+  return n;
 }
 /** 관제 쪽에서 사건의 구역을 구하는 유일한 길 — 진실의 자리(truth.x·y)가 아니라 알려진 교차로로. 위치를 모르면 -1 */
 export function knownZoneOfIncident(sim: Sim, I: Incident): number {

@@ -643,7 +643,11 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
     blast(sim, scene, I!, 1, 1, 2, 0, ev0);
     const b = sim.world.signals.filter((q) => q.kind === 'blast');
     expect(b.length).toBe(1);
-    expect([b[0].inc, b[0].ev, b[0].size, b[0].cx, b[0].cy, b[0].x, b[0].y]).toEqual([I!.id, ev0, 2, 1, 1, I!.truth.x, I!.truth.y]);
+    expect([b[0].inc, b[0].ev, b[0].size, b[0].cx, b[0].cy, b[0].x, b[0].y, b[0].place]).toEqual([I!.id, ev0, 2, 1, 1, I!.truth.x, I!.truth.y, I!.truth.placeId]);      // 자리·건물은 signal 이 그 사건에서 채운다
+    // 사건 목록에 없는 사건(현장만 만든 시험 — tests/destruction 의 방)으로 불러도 신호는 그 사건의 진실을 읽지 않는다: 자리·건물 -1
+    blast(sim, scene, { id: 9999 } as never, 1, 1, 2, 0, -1);
+    const lone = sim.world.signals[sim.world.signals.length - 1];
+    expect([lone.kind, lone.inc, lone.x, lone.y, lone.place]).toEqual(['blast', 9999, -1, -1, -1]);
   });
   it('규칙의 발동: 열쇠·쿨다운·교대 상한·시도 번호의 난수 흐름 — 한 틱에는 쌓여 있던 신호만 처리한다', () => {
     const s = new Sim('S9', NORMAL, 1200);

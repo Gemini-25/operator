@@ -157,7 +157,7 @@ export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, rad
   }
   shatter(sim, s, x, y, radius + 1.5, Math.min(2.5, radius), 3);      // 반경 안의 창과 가구가 부서진다
   catOnBlast(sim, s, I, x, y, radius, dmg, ev, cause);      // (X6 §2.4) 구조 충격과 가스 점화용 충격 자리 — 위험 상태가 없는 현장에서는 아무것도 하지 않는다
-  if (cause === 'blast' && !planned && !noSignal) signal(sim, 'blast', { inc: I.id, ev, cx: x, cy: y, size: radius, place: I.truth.placeId });      // (I1-b) 반경(칸)
+  if (cause === 'blast' && !planned && !noSignal) signal(sim, 'blast', { inc: I.id, ev, cx: x, cy: y, size: radius });      // (I1-b) 반경(칸). 건물(place)·도시 좌표는 signal 이 그 사건에서 채운다
 }
 
 /** 물(또는 소화 약제)을 뿌린다. 대원의 진압 행동이 호출한다. */

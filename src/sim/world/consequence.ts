@@ -61,15 +61,16 @@ export function consequenceLabel(id: string): string | null { for (const c of RU
 
 /**
  * 세계에 일어난 일을 알린다 — 상태를 바꾸는 바로 그 코드에서, 그 일을 남긴 기록(ev)과 함께 한 줄.
- * x·y(도시 좌표)를 주지 않으면 그 사건의 자리다. 현장의 칸 좌표는 cx·cy 로 준다. 처리는 다음 틱의 tickWorld 가 한다.
+ * x·y(도시 좌표)와 place(건물)를 주지 않으면 그 사건의 것이다. 현장의 칸 좌표는 cx·cy 로 준다. 처리는 다음 틱의 tickWorld 가 한다.
  * 기록을 남기지 않고 난수도 쓰지 않는다 — 규칙이 없으면 결과가 바뀌지 않는다.
  */
 export function signal(sim: Sim, kind: SignalKind, s: { inc: number; ev: number; x?: number; y?: number; size?: number; place?: number; data?: number; cx?: number; cy?: number }): void {
   const w = sim.world as WorldState | undefined;
   if (!w) return;      // 세계 상태를 만들기 전(생성자 도중)에는 아무것도 하지 않는다
+  const I = s.inc >= 0 ? sim.incidents[s.inc] : undefined;      // 주지 않은 자리·건물은 그 사건의 것 (사건이 없으면 -1)
   let x = s.x, y = s.y;
-  if (x === undefined || y === undefined) { const I = s.inc >= 0 ? sim.incidents[s.inc] : undefined; x = I ? I.truth.x : -1; y = I ? I.truth.y : -1; }
-  w.signals.push({ kind, t: sim.t, inc: s.inc, ev: s.ev, x, y, size: s.size ?? 0, place: s.place ?? -1, data: s.data ?? 0, cx: s.cx ?? -1, cy: s.cy ?? -1 });
+  if (x === undefined || y === undefined) { x = I ? I.truth.x : -1; y = I ? I.truth.y : -1; }
+  w.signals.push({ kind, t: sim.t, inc: s.inc, ev: s.ev, x, y, size: s.size ?? 0, place: s.place ?? (I ? I.truth.placeId : -1), data: s.data ?? 0, cx: s.cx ?? -1, cy: s.cy ?? -1 });
 }
 
 /** 사건을 하나 더 만들 자리가 있는가 — 없으면 까닭 ('depth' 사슬 길이 · 'cap' 교대 상한). 부모가 있으면 연쇄 상한의 정본(chain.canChain 의 두 조건)을 본다 */

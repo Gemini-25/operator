@@ -2275,7 +2275,7 @@ function carryScene(seed: string, what = 'traffic/std', kinds: UnitKind[] = ['al
   docForget();
   return { ...env, c, w, at, role };
 }
-const nearOf = (s: Scene, c: { x: number; y: number }, dmin = 0.9, dmax = 1.3): { x: number; y: number } => spotAt(s, c.x, c.y, dmin, dmax, false)!;
+const nearOf = (s: Scene, c: { x: number; y: number }, dmin = 0.9, dmax = 1.3): { x: number; y: number } => spotAt(s, c.x, c.y, dmin, dmax, false, (_tx, ty) => s.laneRows.indexOf(ty) < 0)!;      // 차로 줄이 아닌 곁 칸
 
 describe('R3 단계 6: 척추 고정 (E13 — 판단 지점 carryStart) — 고정판을 든 대원은 들기 전에 3초 고정한다. 고정하지 않고 옮긴 꺼낸 사람은 옮기는 동안 더 나빠진다', () => {
   it('응급구조사(척추 고정판): 문구 한 번·교본 기록, 3초 동안 들지 않고 → c.immob, 그 뒤 든다. 옮기는 동안 더해지는 악화가 없다', () => {
@@ -2362,6 +2362,16 @@ describe('R3 단계 6: 척추 고정 (E13 — 판단 지점 carryStart) — 고�
     for (let k = 0; k < L.s.controlPts.length; k++) e3.beliefs.merge(mkFact('ctl', k, true, '시험', L.sim.t, 1, true, '차로 통제 완료'));
     docForget();
     expect(docGate(L.sim, L.s, e3, 'carryStart').opt).toBe('immobilize');
+    // 환자는 차로 밖(버스 안)인데 드는 대원이 통제되지 않은 차로 줄에 서 있어도 고정하지 않는다 — 자기가 선 자리
+    const M = carryScene('R3-E13c');
+    const e4 = M.role('emt');
+    giveTask(M.sim, M.s, e4, M.w);
+    expect(M.s.laneRows.indexOf(Math.round(M.c.y))).toBe(-1);
+    put(e4, { x: lx, y: M.s.laneRows[0] }); docForget();
+    expect(docGate(M.sim, M.s, e4, 'carryStart').opt).toBeNull();
+    put(e4, nearOf(M.s, M.c)); docForget();
+    expect(M.s.laneRows.indexOf(Math.round(e4.y))).toBe(-1);
+    expect(docGate(M.sim, M.s, e4, 'carryStart').opt).toBe('immobilize');
   });
 });
 

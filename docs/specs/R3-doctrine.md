@@ -2247,7 +2247,7 @@ npm run check                                                             # 단�
 
 ### 최종 요약 — 단계 8 (균형과 문서), 2026-11-20
 
-**상태: R3 끝남.** 단계 0~7 과 독립 검토, 단계 8(화면 확인·균형 최종 확인·문서)까지. 작업자 브랜치 `wf/doctrine-docs`(시작 `d243d6c` — 주 브랜치 `claude/great-ptolemy-s31sxn` 의 `34d9241` 을 받았다) → 가리킴 `wf/doctrine`. **이 절이 정본이다** — 뒤 묶음의 작업자는 이 절을 먼저 읽고, 한 단계의 속(등록한 줄·걸리는 자리·그 단계에서 본문과 다르게 한 곳)이 필요하면 위의 단계별 절을 본다. 본문(0~11절)과 다르면 이 절과 코드가 맞다. 문서 곳곳의 주 브랜치 이름 `claude/practical-keller-xm0ac2` 는 2026-11-15~16 의 기록이고 지금 주 브랜치는 `claude/great-ptolemy-s31sxn` 이다.
+**상태: R3 끝남.** 단계 0~7 과 독립 검토, 단계 8(화면 확인·균형 최종 확인·문서)까지. 작업자 브랜치 `wf/doctrine-docs`(시작 `d243d6c` — 주 브랜치 `claude/great-ptolemy-s31sxn` 의 `34d9241`·`700bbff` 를 받았다. 덩어리 보고 `docs/handover/reports/R3-s345.md`·`R3-s67.md`·`R3-review.md`·`R3-s8.md`) → 가리킴 `wf/doctrine`. **이 절이 정본이다** — 뒤 묶음의 작업자는 이 절을 먼저 읽고, 한 단계의 속(등록한 줄·걸리는 자리·그 단계에서 본문과 다르게 한 곳)이 필요하면 위의 단계별 절을 본다. 본문(0~11절)과 다르면 이 절과 코드가 맞다. 문서 곳곳의 주 브랜치 이름 `claude/practical-keller-xm0ac2` 는 2026-11-15~16 의 기록이고 지금 주 브랜치는 `claude/great-ptolemy-s31sxn` 이다.
 
 측정은 scratchpad `wf-doctrine/s8/`(대본 `lane.sh`·`timing.sh`, 한 줄 요약 `tools/row.py`, 쓰인 줄 `tools/usage.mts`, 해시 목록 `tools/hl.mts`, 장면 찾기·찍기 `tools/find.mts`·`shots.cjs`) — 기준은 R2 를 다 합친 `97869b1` 의 `git archive` 사본(`review/base97` — 파일 md5 로 확인), 최종은 `d243d6c`(검토 뒤 — 단계 8 은 시뮬레이션 코드를 고치지 않았다). 같은 명령·같은 시드다.
 

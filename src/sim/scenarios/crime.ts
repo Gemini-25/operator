@@ -47,34 +47,35 @@ function arsonNext(sim: Sim, I: Incident, reason: string): void {
   if (!pool.length) return;
   const near = pool.filter((q) => d(q) <= 600);
   const next = near.length ? rng.pick(near) : pool.reduce((a, b) => (d(b) < d(a) ? b : a));
-  sim.gen.chain.push({ at: sim.t + rng.range(60, 120), opts: { type: 'fire', variant: 'arson', placeId: next.id, parent: I.id, note: '연쇄 방화로 보이는 불이 또 났습니다', rng: sim.rng.fork('arson-next:' + I.id) } });
+  // (I1-b) 원인 = 이 불의 마지막 기록. 종료 기록은 onClose 다음 줄에서 생기므로 예약하는 지금은 없다 (onClose 를 그 뒤로 옮기면 기록 순서·해시가 바뀐다)
+  sim.gen.chain.push({ at: sim.t + rng.range(60, 120), opts: { type: 'fire', variant: 'arson', placeId: next.id, parent: I.id, note: '연쇄 방화로 보이는 불이 또 났습니다', rng: sim.rng.fork('arson-next:' + I.id), cause: I.lastEvent, csq: 'arson' } });
 }
 
 export const CRIME: Scenario[] = [
   { type: 'armed', variant: 'bomb', name: '폭발물', share: 0.04, nature: 'bombthreat', vague: 'bang', severity: [3, 3], tag: 'crime', places: BOMB_PLACES, label: '폭발물 의심', limit: 120,
-    texts: ['폭탄을 설치했다는 전화를 받았어요.', '건물을 폭파하겠다는 협박 전화가 왔어요.'], lik: [0.03, 0.005, 0.005, 0.9, 0.01, 0.02, 0.025, 0.005], needs: bombNeeds },
+    texts: ['폭탄을 설치했다는 전화를 받았어요.', '건물을 폭파하겠다는 협박 전화가 왔어요.'], lik: { fire: 0.03, traffic: 0.005, search: 0.005, armed: 0.9, medical: 0.01, collapse: 0.02, hazmat: 0.025, water: 0.005 }, needs: bombNeeds },
   { type: 'armed', variant: 'bombthreat', name: '폭파 협박', share: 0.04, nature: 'bombthreat', vague: 'bang', severity: [2, 3], tag: 'crime', places: BOMB_PLACES, label: '폭발물 의심', limit: 120 },      // 문구·가능도·필요 자원은 위의 줄과 같은 키다
   { type: 'armed', variant: 'package', name: '수상한 물건', share: 0.04, nature: 'package', vague: 'bang', severity: [2, 3], tag: 'crime', places: BOMB_PLACES, label: '폭발물 의심', limit: 120,
-    texts: ['주인 없는 가방이 한참째 놓여 있어요.', '수상한 상자에서 소리가 나요.'], lik: [0.02, 0.01, 0.01, 0.88, 0.02, 0.02, 0.035, 0.005], needs: bombNeeds },
+    texts: ['주인 없는 가방이 한참째 놓여 있어요.', '수상한 상자에서 소리가 나요.'], lik: { fire: 0.02, traffic: 0.01, search: 0.01, armed: 0.88, medical: 0.02, collapse: 0.02, hazmat: 0.035, water: 0.005 }, needs: bombNeeds },
   // ── 대형 인질극: 총을 든 여럿이 여러 사람을 붙잡고 있다. 기동대 둘과 구급 둘을 처음부터 보낸다 ──
   { type: 'armed', variant: 'siege', name: '대형 인질극', share: 0.04, nature: 'siege', vague: 'scream', severity: [3, 3], tag: 'crime', label: '인질극(다수)', limit: 120,
     places: { terminal: 2, deptStore: 2, bank: 3, broadcast: 1.5, university: 1.5, busTerminal: 1.5, office: 2 },
-    texts: ['무장한 사람들이 사람들을 붙잡고 있어요! 여러 명이에요!', '총 든 사람들이 건물을 점거했어요. 안에 사람들이 갇혀 있어요.'], lik: [0.01, 0.01, 0.01, 0.96, 0.01, 0.01, 0.01, 0.01],
+    texts: ['무장한 사람들이 사람들을 붙잡고 있어요! 여러 명이에요!', '총 든 사람들이 건물을 점거했어요. 안에 사람들이 갇혀 있어요.'], lik: { fire: 0.01, traffic: 0.01, search: 0.01, armed: 0.96, medical: 0.01, collapse: 0.01, hazmat: 0.01, water: 0.01 },
     needs: (n) => { n.law = 2; n.tactical = 2; n.ems = 2; } },
   // ── 도주 차량: 총을 든 용의자가 현장을 빠져나가 차로 달아난다. 몫이 0 이라 평소 추첨에는 나오지 않고 hazards.tickHostiles 의 예약으로만 일어난다 ──
   // (추격전은 pursuit.ts, 시작은 incidents.createIncident. places 는 확인용으로 강제로 일으킬 때(--force armed/getaway) 달아나기 시작하는 곳이다)
   { type: 'armed', variant: 'getaway', name: '도주 차량', share: 0, nature: 'getaway', vague: 'scream', severity: [2, 3], tag: 'crime', label: '도주 차량', delay: [1, 3],
     places: { bank: 3, convenience: 3, gasStation: 2, shop: 2, mart: 1, cafe: 0.5 },
-    texts: ['총을 든 사람이 차를 타고 달아나고 있어요!', '방금 강도가 차로 도망쳤어요. 엄청 빨리 달려요!'], lik: [0.005, 0.07, 0.03, 0.86, 0.015, 0.005, 0.005, 0.01],
+    texts: ['총을 든 사람이 차를 타고 달아나고 있어요!', '방금 강도가 차로 도망쳤어요. 엄청 빨리 달려요!'], lik: { fire: 0.005, traffic: 0.07, search: 0.03, armed: 0.86, medical: 0.015, collapse: 0.005, hazmat: 0.005, water: 0.01 },
     needs: (n) => { n.law = 2; n.tactical = 1; n.search = 1; n.ems = 0; } },      // 쫓을 순찰차 둘, 기동대, 하늘에서 볼 헬기
   // ── 폭동: 여럿이 몰려 부수고 싸운다. 주동자 둘만 흉기를 들었고 나머지는 맨손이다 ──
   { type: 'armed', variant: 'riot', name: '폭동', share: 0.04, nature: 'riot', vague: 'scream', severity: [2, 3], tag: 'crime', label: '집단 난동', limit: 120,
     places: { stadium: 4, market: 3, busTerminal: 1.5, university: 1.5, station: 1.5, mart: 1 },
-    texts: ['사람들이 떼로 몰려 부수고 싸우고 있어요!', '난동이 커졌어요. 불도 붙였어요!'], lik: [0.06, 0.01, 0.005, 0.86, 0.04, 0.01, 0.01, 0.005],
+    texts: ['사람들이 떼로 몰려 부수고 싸우고 있어요!', '난동이 커졌어요. 불도 붙였어요!'], lik: { fire: 0.06, traffic: 0.01, search: 0.005, armed: 0.86, medical: 0.04, collapse: 0.01, hazmat: 0.01, water: 0.005 },
     needs: (n) => { n.law = 3; n.tactical = 1; n.ems = 1; n.suppression = 1; } },
   // ── 연쇄 방화: 여느 화재처럼 끄되, 경찰이 목격자의 말을 듣지 못하면 가까운 곳에서 또 불이 난다 (많아야 세 번) ──
   { type: 'fire', variant: 'arson', name: '방화', share: 0.1, nature: 'arson', vague: 'smoke', severity: [1, 3], tag: 'crime', label: '방화', places: ARSON_PLACES,
-    texts: ['누가 불을 지르고 달아났어요!', '가게 뒤에서 누가 뭘 뿌리고 불을 붙였어요!'], lik: [0.82, 0.01, 0.005, 0.12, 0.01, 0.01, 0.02, 0.005],
+    texts: ['누가 불을 지르고 달아났어요!', '가게 뒤에서 누가 뭘 뿌리고 불을 붙였어요!'], lik: { fire: 0.82, traffic: 0.01, search: 0.005, armed: 0.12, medical: 0.01, collapse: 0.01, hazmat: 0.02, water: 0.005 },
     // 불길을 본 신고와 같은 규모로 보내고(관제의 위험도 계산은 '불길' 신고에만 가산점을 준다), 목격자를 만날 경찰을 더한다
     needs: (n, c) => { n.law = Math.max(n.law, 1); if (c.hurt || c.trapped || c.sev >= 1.65) n.ems = Math.max(n.ems, 1); if (c.sev >= 1.95) n.suppression = Math.max(n.suppression, 2); },
     onClose: arsonNext },

@@ -8,10 +8,10 @@ import { reallyLinked } from '../traffic';
 export const DISASTER: Scenario[] = [
   { type: 'fire', variant: 'wild', name: '산불', share: 0, nature: 'wildfire', vague: 'smoke', severity: [2, 3], tag: 'disaster', label: '산불',
     places: { forest: 4, pension: 3, campsite: 1, temple: 1, farmhouse: 2, lookout: 1 },
-    texts: ['산에서 불길이 내려와요! 집 쪽으로 번지고 있어요!', '숲에 불이 크게 났어요. 사람들이 못 내려오고 있어요!'], lik: [0.9, 0.01, 0.03, 0.005, 0.01, 0.01, 0.03, 0.005],
+    texts: ['산에서 불길이 내려와요! 집 쪽으로 번지고 있어요!', '숲에 불이 크게 났어요. 사람들이 못 내려오고 있어요!'], lik: { fire: 0.9, traffic: 0.01, search: 0.03, armed: 0.005, medical: 0.01, collapse: 0.01, hazmat: 0.03, water: 0.005 },
     needs: (n) => { n.suppression = Math.max(n.suppression, 2); n.search = Math.max(n.search, 1); n.ems = Math.max(n.ems, 1); }, limit: 120 },
   { type: 'collapse', variant: 'landslide', name: '산사태', share: 0, nature: 'landslide', vague: 'rumble', severity: [2, 3], tag: 'disaster', label: '산사태',
-    texts: ['산이 무너져서 도로를 덮쳤어요! 차가 묻혔어요!', '흙더미가 쏟아져서 길이 끊겼어요. 차 안에 사람이 있어요!'], lik: [0.01, 0.15, 0.01, 0.005, 0.01, 0.8, 0.005, 0.01],
+    texts: ['산이 무너져서 도로를 덮쳤어요! 차가 묻혔어요!', '흙더미가 쏟아져서 길이 끊겼어요. 차 안에 사람이 있어요!'], lik: { fire: 0.01, traffic: 0.15, search: 0.01, armed: 0.005, medical: 0.01, collapse: 0.8, hazmat: 0.005, water: 0.01 },
     // 산자락의 교차로에서 일어난다 (사건이 진행 중인 곳은 피한다)
     node: (sim, rng, busy) => {
       const hill = sim.city.nodes.filter((n) => mountainAt(n.x, n.y) > 0.12);
@@ -27,12 +27,12 @@ export const DISASTER: Scenario[] = [
       for (const e of es) {
         if (!reallyLinked(sim, e.a, e.b, e.id)) continue;      // 실제 상태로 본다: 아직 아무도 모르는 낙하물이 놓인 길은 돌아갈 길이 아니다
         I.blockedEdge = e.id; e.slow += 1.4; e.closed = true; e.closedReason = 'incident';
-        emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(sim.city, e)} 통행 불가 — 흙더미가 길을 덮었습니다.`, imp: 1, truth: true });
+        I.blockEv = emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(sim.city, e)} 통행 불가 — 흙더미가 길을 덮었습니다.`, imp: 1, truth: true });      // (I1-b) 통제 기록
         break;
       }
     } },
   { type: 'water', variant: 'evac', name: '해안 대피', share: 0, nature: 'evac', vague: 'scream', severity: [2, 3], tag: 'disaster', label: '해안 대피',
     places: { beach: 4, pier: 2, fishMarket: 1.5, ferry: 1.5 },
-    texts: ['해일 경보가 났는데 바닷가에 사람들이 아직 많아요!', '부두에 어르신들이 남아 있어요. 못 걸으세요!'], lik: [0.005, 0.01, 0.05, 0.005, 0.03, 0.005, 0.005, 0.8],
+    texts: ['해일 경보가 났는데 바닷가에 사람들이 아직 많아요!', '부두에 어르신들이 남아 있어요. 못 걸으세요!'], lik: { fire: 0.005, traffic: 0.01, search: 0.05, armed: 0.005, medical: 0.03, collapse: 0.005, hazmat: 0.005, water: 0.8 },
     needs: (n) => { n.law = Math.max(n.law, 2); n.ems = Math.max(n.ems, 1); n.rescue = Math.max(n.rescue, 1); }, limit: 100, delay: [1, 3] },
 ];

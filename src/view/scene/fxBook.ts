@@ -10,7 +10,7 @@ export const FX_RATE_MAX = 2;
 /** G5 가 그리는 종류. 이 밖의 종류도 fresh 에는 들어간다(소리·카메라·감속·지도 핀) */
 export const FX_DRAWN = new Set<string>(['shot', 'hit', 'flash', 'boom', 'glass', 'debris', 'breach', 'melee', 'cuff', 'taser']);
 /** 결정적 순간(자동 감속·카메라 바로 다시 잡기). G4 는 'collapse', X6 는 'horn' 을 한 단어씩 더한다 */
-export const DECISIVE = new Set<string>(['shot', 'flash', 'boom', 'breach', 'collapse']);
+export const DECISIVE = new Set<string>(['shot', 'flash', 'boom', 'breach', 'collapse', 'horn']);      // horn = (X6) 철수 경적
 /** 상태에서 만든 합성 항목(s.fx 에는 넣지 않는다) */
 export type SynKind = 'tick' | 'strike' | 'hail' | 'reply';
 export interface FxEntry {
@@ -309,10 +309,11 @@ export class FxBook {
     const l = this.lives.get(sid); if (!l || ts <= 0) return { x: 0, y: 0 };
     let x = 0, y = 0;
     for (const e of l) {
-      if (e.kind !== 'boom') continue;
+      const charge = e.kind === 'breach' && e.f?.c?.how === 'charge';      // (R2 §4.2a) 폭파 진입도 흔든다 (반경 1.5칸의 폭발 — 충격기에는 흔들림이 없다)
+      if (e.kind !== 'boom' && !charge) continue;
       const t = this.age(e);
       if (t < 0 || t > 0.6) continue;
-      const r = e.f?.c?.r ?? 3;
+      const r = charge ? 1.5 : e.f?.c?.r ?? 3;
       const near = v ? Math.max(0, 1 - Math.hypot(e.x - v.cx, e.y - v.cy) / (2 * Math.max(1, v.hw))) : 1;
       const A = Math.min(6, 2 + r) * near * Math.exp(-t / 0.18);
       const ph = t * 28 * 6.2832 + e.seed * 6.2832;

@@ -10,7 +10,9 @@
 //   npm run sweep -- 20 --force armed/bomb --scen    교대마다 그 시나리오를 초반에 한 번 일으킨다 (새 시나리오 확인용)
 //   npm run sweep -- 20 --disaster typhoon           재난을 정해서 (none|random|typhoon|flood|quake|wildfire|tsunami)
 //   npm run sweep -- 20 --force water/std --methods  대응 방법(scripts/methodstats.ts): 성공한 방법의 가짓수와 비중, 접은 방법, 방법별 평균 시간, 시나리오별 대원 부상
+//   npm run sweep -- 20 --force armed/hostage --doctrine  대응 교본(scripts/doctrinestats.ts): 분야별 등록·쓰인 줄, 줄별 횟수, 판단 지점·교본 행동의 평균 길이, split
 //   npm run sweep -- 40 --metrics        측정 지표(scripts/metrics.ts)의 시나리오별 표와 모든 후보 줄
+//   (H1) 기본 출력의 injuries: 줄 — 대원 부상·쓰러짐·순직, 용의자 부상·사망(총에 맞아 쓰러진 용의자의 사망 비율·즉사), 잔해 추락, 사람이 없어 멈춘 부대 (scripts/injurystats.ts)
 //   npm run sweep -- 10 --no-metrics     표본을 뜨지 않고 지표 줄을 내지 않는다 (속도 비교용)
 //   npm run sweep -- 1 --log S7 --metrics            한 교대의 사건마다 가장 긴 원인 사슬과 확산 길
 import { NORMAL, difficultyKey, difficultyLabel, parseDifficulty, parseDisaster } from '../src/sim/difficulty';
@@ -19,6 +21,9 @@ import { catJson, catLine, catShadowLine, catStats, sumCat } from './catstats';
 import type { CatCount } from './catstats';
 import { OUTCOME_NAME, TYPE_NAME, fmtClock } from '../src/sim/util';
 import { methodJson, methodStats, methodTables, sumMethods } from './methodstats';      // (R2) 대응 방법 집계
+import { doctrineJson, doctrineStats, doctrineTables, sumDoctrine } from './doctrinestats';      // (R3) 대응 교본 집계
+import { injuryJson, injuryLine, injuryStats, sumInjury } from './injurystats';      // (H1) 부상과 사망 집계
+import type { InjuryCount } from './injurystats';
 import { chainReport, checkMetrics, formatLines, metricsJson, runWithProbe, shiftMetrics, summarize } from './metrics';
 import type { Probe, ShiftMetrics } from './metrics';
 
@@ -70,6 +75,8 @@ const catList: CatCount[] = [];      // (X6) 교대별 위험의 현실화 집�
 const prob: Record<string, number> = {};
 const closeReasons: Record<string, number> = {};
 const methodList: ReturnType<typeof methodStats>[] = [];      // (R2) 교대별 대응 방법 집계
+const docList: ReturnType<typeof doctrineStats>[] = [];      // (R3) 교대별 대응 교본 집계
+const injuryList: InjuryCount[] = [];      // (H1) 교대별 부상과 사망 집계
 let benignN = 0, realGood = 0, realRespSum = 0, realRespN = 0;
 let incN = 0, respSum = 0, respN = 0, durSum = 0, ms = 0, errors = 0, casT = 0, casS = 0, casL = 0, casU = 0, hurt = 0, replan = 0, unitSum = 0, maxUnits = 0, open = 0;
 const shiftList: (ShiftMetrics | null)[] = [];
@@ -108,6 +115,8 @@ for (let k = 0; k < n; k++) {
   }
   hurt += r.respondersHurt.length;
   methodList.push(methodStats(sim));
+  docList.push(doctrineStats(sim));
+  injuryList.push(injuryStats(sim));
   reportHashes.push(r.hash);
   // 측정 도구의 오류는 기존 집계를 바꾸지 않는다: 그 교대의 지표만 null 로 두고 metrics.errors 에 센다
   if (metricsOn) {
@@ -118,6 +127,8 @@ for (let k = 0; k < n; k++) {
 const catSum = sumCat(catList);
 const share = (k: string): number => (incN ? out[k] / incN : 0);
 const methodSum = sumMethods(methodList);
+const docSum = sumDoctrine(docList);
+const injurySum = sumInjury(injuryList);
 const timeoutShare = incN ? ((closeReasons.timeout ?? 0) + (closeReasons.noresponse ?? 0) + (closeReasons.abandoned ?? 0)) / incN : 0;
 const summary = {
   difficulty: difficultyKey(diff), label: difficultyLabel(diff), seeds: n, errors, incidents: incN, perShift: +(incN / n).toFixed(2), msPerShift: Math.round(ms / n),
@@ -127,12 +138,13 @@ const summary = {
   casualties: { total: casT, saved: casS, lost: casL, undiscovered: casU, savedRate: +(casS / Math.max(1, casT)).toFixed(3) },
   falseAlarms: benignN, realGood: +(realGood / Math.max(1, incN - benignN)).toFixed(3), realAvgResponse: Math.round(realRespSum / Math.max(1, realRespN)),
   methods: methodJson(methodSum),      // (R2)
+  injuries: injuryJson(injurySum),      // (H1)
   unitsPerIncident: +(unitSum / Math.max(1, incN)).toFixed(2), maxUnitsOnOneIncident: maxUnits, respondersHurtPerShift: +(hurt / n).toFixed(2), recoveredShare: +(replan / Math.max(1, incN)).toFixed(3),
 };
 const metrics = metricsOn ? summarize(shiftList) : null;
 /** 시드별 report.hash 를 쉼표로 이어 붙여 FNV-1a (결과 불변 비교용) */
 const reportHash = ((): string => { let h = 0x811c9dc5; const s = reportHashes.join(','); for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return (h >>> 0).toString(16); })();
-if (flag('--json')) console.log(JSON.stringify({ ...summary, problems: prob, reportHash, metrics: metrics ? metricsJson(metrics) : null }));
+if (flag('--json')) console.log(JSON.stringify({ ...summary, ...(flag('--doctrine') ? { doctrine: doctrineJson(docSum) } : {}), problems: prob, reportHash, metrics: metrics ? metricsJson(metrics) : null }));      // (R3) doctrine 칸은 --doctrine 일 때만
 else {
   console.log(`\n난이도 ${summary.label} (${summary.difficulty}) · seeds=${n} errors=${errors} incidents=${incN} (${summary.perShift}/shift) avg ${summary.msPerShift}ms/shift`);
   console.log('outcomes:', Object.entries(out).map(([k, v]) => `${k} ${v} (${Math.round((v / Math.max(1, incN)) * 100)}%)`).join(', '));
@@ -142,12 +154,14 @@ else {
   console.log(`false alarms ${benignN} (${Math.round((benignN / Math.max(1, incN)) * 100)}%); real incidents only: good ${Math.round(summary.realGood * 100)}%, avg response ${summary.realAvgResponse}s`);
   console.log(`casualties total ${casT}, saved ${casS} (${Math.round(summary.casualties.savedRate * 100)}%), lost ${casL}, undiscovered ${casU}; responders hurt/shift ${summary.respondersHurtPerShift}`);
   console.log(`incidents with a recovered problem: ${Math.round(summary.recoveredShare * 100)}%`);
+  console.log(injuryLine(injurySum));      // (H1)
   if (flag('--scen')) {
     console.log('scenarios (n · 성공 · 부분 · 지연 · 미해결 · 실패 | 한계시간·무대응·방치 | 평균 시간 · 평균 부대):');
     for (const k of Object.keys(byScen).sort()) { const b = byScen[k]; console.log(`  ${k.padEnd(20)} ${String(b.n).padStart(4)} · ${b.success ?? 0} · ${b.partial ?? 0} · ${b.delayed ?? 0} · ${b.unresolved ?? 0} · ${b.failed ?? 0} | ${b.timeout ?? 0}·${b.noresponse ?? 0}·${b.abandoned ?? 0} | ${Math.round(b.dur / b.n)}s · ${(b.units / b.n).toFixed(1)}`); }
   }
   console.log('problems (incidents affected):', Object.entries(prob).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(', '));
   if (flag('--methods')) for (const line of methodTables(methodSum)) console.log(line);
+  if (flag('--doctrine')) for (const line of doctrineTables(docSum)) console.log(line);
   console.log(catLine(catSum));
   if (flag('--cat')) console.log(catShadowLine(catSum));
   if (metrics) for (const line of formatLines(metrics, metricsAll)) console.log(line);

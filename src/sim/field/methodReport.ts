@@ -23,6 +23,12 @@ export function whyText(u: MethodUse): string {
     case 'danger': return '추가 위험이 있었음';
     case 'quiet': return '용의자에게 들키지 않으려';
     case 'team': return '동료와 짝을 이뤄';
+    case 'hurt': return '다쳐서';      // (R3 §7.3 WHY_DOC 의 말) 교본 줄이 1등을 바꾼 까닭 여섯
+    case 'alone': return '혼자였음';
+    case 'lowAir': return '공기가 부족해';
+    case 'lowAmmo': return '탄약이 떨어져';
+    case 'shaken': return '동요해';
+    case 'tired': return '지쳐서';
     default: return '';
   }
 }
@@ -50,6 +56,8 @@ export function methodLines(sim: Sim, I: Incident, s: Scene, max = 2): string[] 
     if (d.plain || failed.has(key) || out.length >= max) continue;
     // 호이스트는 임무 종류가 달라 열쇠가 다르다: 같은 구조 대상의 지상 수난 구조가 막혔었다면 그쪽 문제 문장이 말한다
     if (u.work === 'hoist' && failed.has(targetKey('waterRescue', u))) continue;
+    // (단계 3) 수색은 그 방법으로 그 구역을 훑는 동안 그 대원이 누군가를 찾아냈을 때만 말한다 ("찾아냈습니다")
+    if (u.work === 'search' && !s.casualties.some((c) => c.discoveredBy === u.rid && c.tDiscovered >= u.t0 && c.tDiscovered <= u.t)) continue;
     const wt = whyText(u), why = wt ? ` (${wt})` : '';
     const who = u.work === 'hoist' ? josa(sim.units[u.unitId].callsign, '이/가') : `${sim.responders[u.rid].name} 대원이`;
     const c = u.cas >= 0 ? s.casualties[u.cas] : undefined;

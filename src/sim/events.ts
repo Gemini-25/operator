@@ -3,7 +3,7 @@
 // 각 이벤트는 원인 이벤트(causes)를 가지므로 종료 보고서가 인과 사슬을 추적할 수 있다.
 
 import type { Sim } from './engine';
-import type { EventKind, Incident, ProblemCode, Role } from './types';
+import type { EventKind, Incident, Problem, ProblemCode, Role } from './types';
 
 export interface EmitArgs {
   inc?: number; role: Role; actor: string; kind: EventKind; text: string;
@@ -31,11 +31,12 @@ export function emit(sim: Sim, a: EmitArgs): number {
   return id;
 }
 
-/** 문제 발생을 기록한다. 같은 코드가 이미 있으면 새 Problem 을 추가하지 않고 이벤트만 남긴다(dedupe=false 면 항상 추가). */
-export function raiseProblem(sim: Sim, I: Incident, code: ProblemCode, detail: string, a: Omit<EmitArgs, 'kind' | 'problem' | 'inc'>, dedupe = true): number {
+/** 문제 발생을 기록한다. 같은 코드가 이미 있으면 새 Problem 을 추가하지 않고 이벤트만 남긴다(dedupe=false 면 항상 추가).
+ *  ref = (I1-b) 관련 사건·부대·구간 — 기록만 (판단은 읽지 않는다). 새 Problem 을 만들 때만 붙는다 */
+export function raiseProblem(sim: Sim, I: Incident, code: ProblemCode, detail: string, a: Omit<EmitArgs, 'kind' | 'problem' | 'inc'>, dedupe = true, ref?: Problem['ref']): number {
   const ev = emit(sim, { ...a, inc: I.id, kind: 'problem', problem: code, imp: a.imp ?? 2 });
   if (!dedupe || !I.problems.some((p) => p.code === code && !p.recovered)) {
-    I.problems.push({ code, t: sim.t, eventId: ev, detail, recovered: false, recoveryText: '', times: undefined });      // times: (R2) METHOD_FAIL 이 같은 대상에서 되풀이된 횟수
+    I.problems.push({ code, t: sim.t, eventId: ev, detail, recovered: false, recoveryText: '', times: undefined, ref });      // times: (R2) METHOD_FAIL 이 같은 대상에서 되풀이된 횟수
   }
   return ev;
 }
@@ -51,5 +52,14 @@ export function markRecovered(I: Incident, code: ProblemCode, text: string): num
 
 export function lastProblemEvent(I: Incident, code: ProblemCode): number {
   for (let i = I.problems.length - 1; i >= 0; i--) if (I.problems[i].code === code) return I.problems[i].eventId;
+  return -1;
+}
+
+/** (X6 §5.7) 그 코드·상세(detail)의 가장 최근 미복구 문제를 복구 처리한다 — 같은 코드를 여러 번 남기는 기록(구역마다의 전원 철수·위험 조짐)에서 하나만 고른다. 돌려주는 값은 그 문제의 기록 (-1 = 없음) */
+export function markRecoveredBy(I: Incident, code: ProblemCode, detail: string, text: string): number {
+  for (let i = I.problems.length - 1; i >= 0; i--) {
+    const p = I.problems[i];
+    if (p.code === code && !p.recovered && p.detail === detail) { p.recovered = true; p.recoveryText = text; return p.eventId; }
+  }
   return -1;
 }

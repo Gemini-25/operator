@@ -6,7 +6,7 @@ import { describeTraffic, drawTrafficScreen, drawTrafficWorld, flowOf } from './
 import type { Sim } from '../sim/engine';
 import { placeAt } from '../sim/city';
 import { KIND_NAME } from '../sim/cityPlan';
-import type { Facility, Incident, Place, Unit } from '../sim/types';
+import type { Facility, Incident, IncidentType, Place, Unit } from '../sim/types';
 import { fmtDur } from '../sim/util';
 import type { CityCam } from './camera';
 import { buildCityStatic, facilityLot } from './city/staticCity';
@@ -14,20 +14,20 @@ import type { CityLamp } from './city/staticCity';
 import { drawIcon } from './icons';
 import { hash2, mix } from './scene/common';
 import { drawLight } from './scene/fx';
-import { FACILITY_COLOR, FIELD_COLOR, FIELD_TEXT, drawFacilityBadge, drawFugitive, drawToken, placeLabel } from './city/tokens';
+import { FACILITY_COLOR, FIELD_COLOR, FIELD_TEXT, drawFacilityBadge, drawFugitive, drawToken, placeLabel, unitField } from './city/tokens';
 import type { Box } from './city/tokens';
 import { facilityMarkKey } from './marks';
 import { combatPinJitter, drawCombatPin } from './city/combatPin';
 import type { FxBook } from './scene/fxBook';
 import { drawRuinBadge, drawRuinsWorld, ruinGlyphAt } from './city/ruinLayer';
+import { paintKinds2Static } from './city/kinds2Layer';
 import { pinIcon, ruinLine } from './hazardState';
+import { TYPE_COLOR, respLimitOf } from './typeStyle';
 
-export const DEPT_COLOR: Record<string, string> = { fire: '#ff7a45', ems: '#2fd39a', police: '#5aa9ff' };
-export const TYPE_COLOR: Record<string, string> = { fire: '#ff6b3d', traffic: '#ffc24a', search: '#58d68d', armed: '#b98cff', medical: '#ff7eb6', collapse: '#d6a878', hazmat: '#b6e04a', water: '#4fb8ff', unknown: '#9aa7b4' };
+export const DEPT_COLOR: Record<string, string> = { fire: '#ff7a45', ems: '#2fd39a', police: '#5aa9ff', civil: '#e6c14e' };
+export { TYPE_COLOR };      // 유형색은 typeStyle.ts 에 (부르는 쪽은 예전처럼 여기서 가져간다)
 export const OUTCOME_COLOR: Record<string, string> = { success: '#5ad17a', partial: '#ffd166', delayed: '#7cc4ff', unresolved: '#b3a0d6', failed: '#ff5d5d' };
 export const FONT = "'Pretendard', 'Noto Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif";
-
-const RESP_LIMIT: Record<string, number> = { fire: 95, armed: 95, traffic: 105, search: 125, medical: 80, collapse: 100, hazmat: 100, water: 90, unknown: 100 };
 
 let staticLayer: { c: HTMLCanvasElement; lamps: CityLamp[] } | null = null;
 let staticFor: unknown = null;
@@ -67,7 +67,7 @@ export function incidentXY(sim: Sim, I: Incident, truth: boolean): { x: number; 
   return { x: I.truth.x, y: I.truth.y };
 }
 
-export function incidentShownType(I: Incident, truth: boolean): string {
+export function incidentShownType(I: Incident, truth: boolean): IncidentType | 'unknown' {
   if (I.assessment) return I.assessment.type;
   return truth ? I.truth.type : 'unknown';
 }
@@ -116,7 +116,7 @@ function label(ctx: CanvasRenderingContext2D, text: string, x: number, y: number
 }
 
 export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, w: number, h: number, o: CityOpts): void {
-  if (!staticLayer || staticFor !== sim) { staticLayer = buildCityStatic(sim); staticFor = sim; }
+  if (!staticLayer || staticFor !== sim) { staticLayer = buildCityStatic(sim); paintKinds2Static(staticLayer.c, sim); staticFor = sim; }      // (N9) 덧붙인 장소의 그림은 고정 층 위에 한 번
   const night = sim.weather === 'night';
   const xf = cityXf(sim, cam, w, h);
   const city = sim.city;
@@ -306,11 +306,11 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     ctx.fillStyle = pg; ctx.strokeStyle = col; ctx.lineWidth = plw;
     ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill(); ctx.stroke();
     drawIcon(ctx, I.phase === 'call' && !I.assessment ? 'phone' : pinIcon(I, o.truth), x, y, r * 1.2, col);      // (G4) 붕괴 변형(승강기·크레인·산사태·가스 폭발)은 제 아이콘
-    if (I.truth.type === 'collapse') ruinBadges.push({ I, x: x + (pj ? pj.x : 0), y: y + (pj ? pj.y : 0), r });      // (G4) 배지는 부대 표식 뒤에 그린다 (현장 부대의 돌이 핀 둘레를 덮는다)
+    if (I.truth.type === 'collapse' || (sim.placeMarks.size > 0 && I.truth.placeId >= 0 && sim.placeMarks.get(I.truth.placeId)?.incidentId === I.id)) ruinBadges.push({ I, x: x + (pj ? pj.x : 0), y: y + (pj ? pj.y : 0), r });      // (G4) 배지는 부대 표식 뒤에 그린다 (현장 부대의 돌이 핀 둘레를 덮는다). (X6) 건물 상태를 남긴 사건도
     // 경과 링: 신고 후 첫 도착까지는 기준 시간 대비 진행도, 도착 후에는 초록
     if (I.reportedAt >= 0) {
       const arrived = I.firstArrivalAt >= 0;
-      const frac = arrived ? 1 : Math.min(1, (sim.t - I.reportedAt) / RESP_LIMIT[type]);
+      const frac = arrived ? 1 : Math.min(1, (sim.t - I.reportedAt) / respLimitOf(type));
       ctx.strokeStyle = arrived ? '#5ad17a' : frac >= 1 ? '#ff5d5d' : frac > 0.7 ? '#ffb454' : '#e8f0f7'; ctx.lineWidth = Math.max(2, r * 0.14);
       ctx.beginPath(); ctx.arc(x, y, r + plw * 0.5 + r * 0.2, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * frac); ctx.stroke();
     }
@@ -328,11 +328,11 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     if (mini && (idle || u.state === 'onscene')) continue;
     if (idle && cam.zoom < IDLE_ZOOM && !u.air && !u.sea && u.id !== o.selectedUnit) continue;
     const p = unitScreen(sim, u, xf, o.alpha, len);
-    drawToken(ctx, p.x, p.y, tr, { field: u.field ?? (u.dept === 'police' ? 'police' : u.dept === 'ems' ? 'rescue' : 'fire'), kind: u.kind, state: u.state, no: +(u.callsign.match(/\d+$/) ?? ['0'])[0], timeMs: o.timeMs, angle: p.angle, selected: u.id === o.selectedUnit, mini });
+    drawToken(ctx, p.x, p.y, tr, { field: unitField(u), kind: u.kind, state: u.state, no: +(u.callsign.match(/\d+$/) ?? ['0'])[0], timeMs: o.timeMs, angle: p.angle, selected: u.id === o.selectedUnit, mini });
     if (mini || idle || u.state === 'onscene') continue;
     if (cam.zoom >= 1.8 || (u.incidentId !== null && u.incidentId === o.focus) || u.id === o.selectedUnit) {
       const eta = u.state === 'enroute' ? ` ${Math.max(0, Math.round(u.estArrive - sim.t))}초` : u.state === 'transport' ? ' 이송' : u.state === 'returning' ? ' 복귀' : '';
-      label(ctx, u.callsign + eta, p.x, p.y - tr * 1.62 - 7, 10 * zs, FIELD_TEXT[u.field ?? (u.dept === 'police' ? 'police' : u.dept === 'ems' ? 'rescue' : 'fire')]);      // 분야가 없는 지원 부대도 돌과 같은 색
+      label(ctx, u.callsign + eta, p.x, p.y - tr * 1.62 - 7, 10 * zs, FIELD_TEXT[unitField(u)]);      // 분야가 없는 지원 부대도 돌과 같은 색
     }
   }
   // (G4) 무너진 건물 배지 (확인 = 실선, 신고 = 점선) · 2차 붕괴 고리: 핀의 왼쪽 아래, 부대 표식 위

@@ -1,17 +1,17 @@
 // 부상과 사망 (H1) — 세계 규칙. 진실을 읽고 바꾼다 (hazards.ts 와 같은 자격).
 //   단계 3  스스로 대피하다 위중(체력 40 이하)이 된 사람이 멈춘다 (설계서 H1 §5.2) — 아래
-// 뒤 단계가 여기에 채운다:
-//   단계 4c 열 탈진, 붕괴 현장의 잔해 바닥 추락 (§2.3)
-//   단계 5  용의자의 상처 출혈과 그로 인한 사망 (§4.1)
+//   단계 4c 열 탈진, 붕괴 현장의 잔해 바닥 추락 (§2.3) — 아래 (덮쳐 제압할 때의 몸싸움은 실행기의 검거 자리 — executor.scuffle)
+//   단계 5  용의자의 매 틱 피해: 불·연기·유독 가스, 상처 출혈과 그로 인한 쓰러짐·사망 (§2.3·§4.1) — 아래 (전이와 그 문구는 hurtHostile)
 // 매 틱 모든 현장에서 불리므로, 다친 사람이 없는 현장은 싼 검사 하나로 지나가게 하고 배열을 새로 만들지 않는다 (§12.2-7).
 // 사건이 끝난 뒤(I.phase === 'closed')에는 아무것도 하지 않는다 (§2.6).
 
 import type { Sim } from '../../engine';
 import { emit } from '../../events';
-import type { Casualty, Incident, Scene } from '../../types';
+import type { Casualty, FieldAgent, Hostile, Incident, Scene } from '../../types';
 import { josa } from '../../util';
 import { isIndoor, tileOf } from '../grid';
-import { CAUSE_NAME, decayCause } from '../injury';
+import { CAUSE_NAME, DOWN_AT, decayCause, hurtHostile, hurtResponder, injuryRng, smokeCause } from '../injury';
+import type { HurtOpts } from '../injury';
 import { registerRule } from '../sceneRegistry';
 
 /** 스스로 대피하던 사람이 더 걷지 못하게 되는 체력 — 위중(중증도 2)의 경계. 그 아래로는 누가 데리러 가야 한다 */
@@ -37,6 +37,42 @@ function collapseWalker(sim: Sim, s: Scene, I: Incident, c: Casualty): void {
   });
 }
 
+// ───────────────────────── 단계 4c: 대원 — 열 탈진 · 잔해 바닥 추락 (§2.3) ─────────────────────────
+/**
+ * 열 탈진: 소방 대원이 지쳐(지구력 HEAT_STAMINA 이하) 열 속(곁 1칸 안 불 ≥ 0.3, 또는 선 칸의 연기 ≥ 0.4)에 있으면 초당 HEAT_DMG (방호 없음 — 매 틱 피해).
+ * 이 원인으로는 체력이 DOWN_AT 아래로 내려가지 않는다(탈진으로 숨지지 않는다). 소방 대원은 지구력 22 아래에서 쉬고 8 아래에서 물러나므로(brain.ts)
+ * 거의 일어나지 않는다 — 사실상 안전장치다. 균형 손잡이의 마지막 차례(§9.3-5)
+ */
+export const HEAT_STAMINA = 10, HEAT_DMG = 0.5;
+/**
+ * 잔해 바닥 추락: 붕괴 현장의 잔해 칸(s.damage === 1)에 활동 중인 대원이 새로 들어설 때 확률 FALL_P × hazardMul (흐름 injury:<현장>:fall),
+ * 걸리면 같은 흐름에서 FALL_HIT 의 피해(원인 fall — 방화복 0.2). 대원마다 사건당 한 번(a.fellOnce). 목표는 붕괴 현장 사건당 0.3건 이하 (§2.3)
+ */
+export const FALL_P = 0.002, FALL_HIT: readonly [number, number] = [8, 20];
+const HEAT_TICK: HurtOpts = { tick: true };
+
+/** 열 속인가: 곁 1칸 안에 불(0.3 이상)이 있거나 선 칸의 연기가 0.4 이상 */
+function inHeat(s: Scene, i: number): boolean {
+  if (s.smoke[i] >= 0.4) return true;
+  const ax = i % s.w, ay = (i / s.w) | 0;
+  for (let y = Math.max(0, ay - 1); y <= Math.min(s.h - 1, ay + 1); y++) for (let x = Math.max(0, ax - 1); x <= Math.min(s.w - 1, ax + 1); x++) if (s.fire[y * s.w + x] >= 0.3) return true;
+  return false;
+}
+
+/** 잔해 칸에 새로 들어섰는가를 보고, 들어섰으면 미끄러질지 한 번 추첨한다. 기록은 상태를 바꾸는 이 자리에서 먼저 남기고 그 id 를 피해에 넘긴다 */
+function rubbleStep(sim: Sim, s: Scene, I: Incident, a: FieldAgent, i: number): void {
+  const prev = a.lastTile;
+  a.lastTile = i;
+  if (prev === undefined || prev === i || a.status !== 'active' || a.fellOnce || s.damage[i] !== 1) return;      // 처음 본 칸은 들어선 것으로 치지 않는다
+  const rng = injuryRng(sim, s, 'fall');
+  if (!rng.chance(FALL_P * sim.tune.hazardMul)) return;
+  const raw = rng.range(FALL_HIT[0], FALL_HIT[1]);
+  a.fellOnce = true;
+  const r = sim.responders[a.rid];
+  const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'hazard', imp: 1, text: `${r.name} 대원 잔해 위에서 미끄러져 다침.` });
+  hurtResponder(sim, s, I, a, raw, 'fall', { ev });
+}
+
 registerRule((sim, s, I) => {
   if (I.phase === 'closed') return;
   const cs = s.casualties;
@@ -46,4 +82,50 @@ registerRule((sim, s, I) => {
     if (!c.walking || c.health > WALK_STOP || c.health <= 0 || c.dead || c.where !== 'scene') continue;
     collapseWalker(sim, s, I, c);
   }
+  responderHazards(sim, s, I);
+  hostileHazards(sim, s, I);
 });
+
+// ───────────────────────── 단계 5: 용의자 — 매 틱 피해 (§2.3·§4.1) ─────────────────────────
+/**
+ * 상처 출혈의 배율: 현장에 있는 동안 1, 처치를 받고 붙잡혀(검거) 있거나 쓰러져 있으면 0.6 — 구조 대상·대원의 "처치를 받고 안전 구역에 있으면 0.6"과 같은 자리다 (§2.6).
+ * 차에 실린 뒤(aboard·hospital)는 hurtHostile 이 멈춘다
+ */
+export const HOSTILE_CARED = 0.6;
+const HOSTILE_TICK: HurtOpts = { tick: true };
+/**
+ * 용의자 (단계 5): 선 칸의 불(0.3 초과 — 2.6 × 불), 연기(0.36 × 연기 — 가스 누출 현장은 유독 가스 0.62 × 연기), 상처 출혈.
+ * 구조 대상의 악화 식(tickCasualties)과 같은 계수다. 매 틱 피해에는 문턱이 없다 — 쓰러진 뒤에는 이것으로 숨질 수 있다.
+ * 다친 데가 없고 불·연기도 없는 현장은 싼 검사로 지나간다. 현장에 있는 용의자만(달아났거나 차에 실렸거나 숨진 용의자는 아니다). export 는 시험용
+ */
+export function hostileHazards(sim: Sim, s: Scene, I: Incident): void {
+  const hs = s.hostiles;
+  if (!hs.length) return;
+  const smokeK = s.kind === 'hazmat' ? 0.62 : 0.36, sc = smokeCause(s), dt = sim.dt;
+  for (let k = 0; k < hs.length; k++) {
+    const h: Hostile = hs[k];
+    if (h.dead || h.state === 'escaped' || (h.where !== undefined && h.where !== 'scene')) continue;
+    const i = tileOf(s, h.x, h.y);
+    const fire = s.fire[i], smoke = s.smoke[i], b = h.bleed ?? 0;
+    if (fire > 0.3) hurtHostile(sim, s, I, h, 2.6 * fire * dt, 'burn', HOSTILE_TICK);
+    if (smoke > 0 && !h.dead) hurtHostile(sim, s, I, h, smoke * smokeK * dt, sc, HOSTILE_TICK);
+    if (b > 0 && !h.dead) hurtHostile(sim, s, I, h, b * ((h.treatQ ?? 0) > 0 && (h.state === 'arrested' || h.state === 'down') ? HOSTILE_CARED : 1) * dt, h.bleedCause ?? 'gunshot', HOSTILE_TICK);
+  }
+}
+
+/** 대원 (단계 4c): 붕괴 현장의 잔해 바닥 추락, 지친 소방 대원의 열 탈진. 차에 탔거나 숨진 대원은 건너뛴다. 판정 뒤에는 부르지 않는다(위의 규칙 첫 줄). export 는 시험용 */
+export function responderHazards(sim: Sim, s: Scene, I: Incident): void {
+  const rubble = s.kind === 'collapse';
+  const ag = s.agents;
+  for (let k = 0; k < ag.length; k++) {
+    const a = ag[k];
+    if (a.status === 'left') continue;
+    const r = sim.responders[a.rid];
+    if (r.dead) continue;
+    const heatRisk = r.stamina <= HEAT_STAMINA && r.dept === 'fire';
+    if (!rubble && !heatRisk) continue;
+    const i = tileOf(s, a.x, a.y);
+    if (rubble) rubbleStep(sim, s, I, a, i);
+    if (heatRisk && r.health > DOWN_AT && inHeat(s, i)) hurtResponder(sim, s, I, a, Math.min(HEAT_DMG * sim.dt, r.health - DOWN_AT), 'exhaustion', HEAT_TICK);      // 탈진으로는 쓰러질 체력 아래로 가지 않는다
+  }
+}

@@ -16,6 +16,8 @@ import { SCENARIOS, scenarioName, scenarioOf } from './scenarios';
 import type { Scenario } from './scenarios';
 import type { Incident, IncidentType, Place, PlaceKind } from './types';
 import { OUTCOME_NAME, TYPE_NAME } from './util';
+import { TYPE_DEFS, TYPE_ORDER } from './incidentTypes';
+import { noteClosedPlace } from './field/catastrophe';      // (X6 단계 7) 끝난 화재의 그을린 건물
 
 /** 사건을 정해서 일으킬 때 주는 조건. 비워 두면 평소처럼 추첨한다. */
 export interface SpawnOpts {
@@ -26,15 +28,20 @@ export interface SpawnOpts {
   tag?: string;                  // Incident.tag (없으면 시나리오의 tag)
   parent?: number;               // 이 사건을 낳은 사건
   rng?: Rng;                     // 이 난수 흐름으로 만든다. 주면 평소 생성기의 상태(lastType)를 건드리지 않는다
+  cause?: number;                // (I1-b) 이 사건을 낳은 기록 — 예약하는 순간에 이미 있는 기록이어야 한다. 발생 기록의 causes 와 Incident.cause 가 된다
+  csq?: string;                  // (I1-b) 이 사건을 만든 연쇄의 이름 → Incident.csq
 }
+/** (I1-b) 예약했지만 일으키지 않은 연쇄 하나. 기록(emit)은 남기지 않는다 — 일어나지 않은 일이다. 보고서·측정 도구가 수로만 쓴다 */
+export interface DroppedChain { t: number; why: 'late' | 'busy' | 'depth' | 'expired' | 'cap'; type?: IncidentType; variant?: string; parent?: number }
 export interface GenState {
   nextAt: number; lastType: IncidentType | null; count: number; lastCreated: number;
   nextNuisanceAt: number;                                        // 다음 비긴급 전화
   chain: { at: number; opts: SpawnOpts }[];                      // 이어지는 사건 예약 (도주 용의자의 재범, 연쇄 방화, 은신처 제보 등). at 순서로 넣지 않아도 된다
   majorAt: number;                                               // 대형 사고가 일어날 시각 (Infinity = 이번 교대에는 없다). engine 이 정한다
   forced: boolean;                                               // 강제 발생(sim.force)을 이미 일으켰는가
+  dropped: DroppedChain[];                                       // (I1-b) 버린 예약 — 교대 끝 150초 안('late')·열린 사건이 많음('busy'). 'depth'·'expired'·'cap' 은 b2·b3 부터
 }
-export function initGenerator(rng: Rng): GenState { return { nextAt: rng.range(10, 22), lastType: null, count: 0, lastCreated: 0, nextNuisanceAt: 40, chain: [], majorAt: Infinity, forced: false }; }
+export function initGenerator(rng: Rng): GenState { return { nextAt: rng.range(10, 22), lastType: null, count: 0, lastCreated: 0, nextNuisanceAt: 40, chain: [], majorAt: Infinity, forced: false, dropped: [] }; }
 
 /** 무장 사건의 변형에 따라 잘 일어나는 곳이 다르다 */
 const ARMED_BIAS: Record<string, Partial<Record<PlaceKind, number>>> = {
@@ -46,6 +53,16 @@ const ARMED_BIAS: Record<string, Partial<Record<PlaceKind, number>>> = {
 
 const kindCount = new WeakMap<object, Map<string, number>>();
 /** 사건이 일어날 건물이나 터를 고른다. 교통사고는 교차로에서 일어나므로 null. */
+/**
+ * (X6 §7.1) 이 교대에 통째로 무너졌거나 다 탄 건물인가 (Sim.placeMarks) — 그 건물에서는 새 사건을 내지 않는다.
+ * 부르는 곳 셋: pickPlace(엄격·대안 추첨 모두) · createIncident 의 정해 준 건물(재난·은신처의 길) · pursuit 의 은신처 후보. I2 단계 5 가 이 셋을 placeUsable(sim, id) 로 바꾼다
+ */
+export function placeGone(sim: Sim, id: number): boolean {
+  if (!sim.placeMarks.size) return false;
+  const pm = sim.placeMarks.get(id);
+  return pm !== undefined && (pm.state === 'collapsed' || pm.state === 'burnt');
+}
+
 function pickPlace(sim: Sim, rng: Rng, type: IncidentType, variant: string, busy: Set<number>): Place | null {
   const table = scenarioOf(type, variant)?.places ?? INCIDENT_PLACES[type];
   const used = new Set(sim.incidents.map((I) => I.truth.placeId));
@@ -54,7 +71,7 @@ function pickPlace(sim: Sim, rng: Rng, type: IncidentType, variant: string, busy
   const counts = kindCount.get(sim.city.places)!;
   const weigh = (q: Place, strict: boolean): number => {
     let w = (table[q.kind] ?? 0) / (counts.get(q.kind) ?? 1);
-    if (w <= 0 || q.facility >= 0) return 0;
+    if (w <= 0 || q.facility >= 0 || placeGone(sim, q.id)) return 0;      // (X6) 무너졌거나 다 탄 건물은 대안 추첨에서도 뺀다
     if (strict && (busy.has(q.nodeId) || used.has(q.id))) return 0;
     if (type === 'armed') w *= ARMED_BIAS[variant]?.[q.kind] ?? 1;
     if (type === 'search' && variant === 'hiker' && q.kind !== 'forest') return 0;
@@ -73,9 +90,9 @@ function pickPlace(sim: Sim, rng: Rng, type: IncidentType, variant: string, busy
 export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
   const rng = opts.rng ?? sim.rngGen, g = sim.gen, tn = sim.tune;
   const chainNote = opts.note ?? '';
-  const types: IncidentType[] = ['fire', 'traffic', 'search', 'armed', 'medical', 'collapse', 'hazmat', 'water'];
-  const w = [0.27, 0.24, 0.17, tn.armedWeight, 0.2, 0.075, 0.085, 0.07].map((v, k) => (types[k] === g.lastType ? v * 0.3 : v));
-  const type = opts.type ?? rng.weighted(types, w);
+  // 유형의 가중은 표(incidentTypes.TYPE_DEFS)에서 — 무장은 난이도의 값. 직전과 같은 유형은 ×0.3
+  const w = TYPE_ORDER.map((t) => { const d = TYPE_DEFS[t].weight, v = d === 'armed' ? tn.armedWeight : d; return t === g.lastType ? v * 0.3 : v; });
+  const type = opts.type ?? rng.weighted(TYPE_ORDER, w);
   if (!opts.rng) g.lastType = type;
   let severity = rng.weighted([1, 2, 3], tn.sevWeights);
   let variant = 'std';
@@ -99,8 +116,10 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
   // 위치: 유형에 맞는 건물이나 터를 고른다 (교통사고는 교차로)
   const busy = new Set(sim.incidents.filter((I) => I.phase !== 'closed').map((I) => I.truth.nodeId));
   // 정해 준 자리가 있으면 그곳, 길 위에서 일어나는 시나리오면 그 교차로, 아니면 유형에 맞는 건물
-  const fixedNode = opts.nodeId ?? (opts.placeId === undefined ? special?.node?.(sim, rng, busy) ?? null : null);
-  const place = opts.placeId !== undefined ? sim.city.places[opts.placeId] : fixedNode !== null || type === 'traffic' ? null : pickPlace(sim, rng, type, variant, busy);
+  // (X6 §7.1) 정해 준 건물이 이 교대에 무너졌거나 다 탔으면 그 유형의 건물을 다시 고른다 (재난·은신처는 pickPlace 를 거치지 않는다 — 그 경우에만 사건 흐름을 한 번 더 쓴다)
+  const fixedPlace = opts.placeId !== undefined && !placeGone(sim, opts.placeId) ? opts.placeId : undefined;
+  const fixedNode = opts.nodeId ?? (fixedPlace === undefined && opts.placeId === undefined ? special?.node?.(sim, rng, busy) ?? null : null);
+  const place = fixedPlace !== undefined ? sim.city.places[fixedPlace] : fixedNode !== null || type === 'traffic' ? null : pickPlace(sim, rng, type, variant, busy);
   let node = place ? sim.city.nodes[place.nodeId] : fixedNode !== null ? sim.city.nodes[fixedNode] : null;
   if (!node) {
     const fac = new Set(sim.city.facilities.map((f) => f.nodeId));
@@ -123,15 +142,22 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
     reportedNode: node.id, addressFixed: false,
     pursuit: undefined, tag: undefined, parent: undefined, aidUnit: undefined, coResp: undefined,      // 나중에 붙는 칸을 미리 비워 둔다 (모든 사건이 같은 모양)
     airDone: undefined,      // (R1) "상공 임무 종료"로 풀려난 헬기 종류 — 쓰는 것은 단계 5 부터
+    cause: undefined, csq: undefined, blockedBy: undefined, blockEv: undefined,      // (I1-b) 인과 기록 — 판단은 읽지 않는다
+    docs: undefined, trackBy: undefined, reportedPrev: undefined, reportedNodeAt: undefined,      // (R3) 교본 기록(처음 남길 때 배열 — doctrineRun.recordDoc)·추격의 보고 칸(2단계)
+    dupOf: undefined,      // (N8) 중복 신고 오인의 원 사건 — 진실 (단계 10)
+    fieldRisk: undefined,      // (X6 §5.9) 현장 상황 보고로 관제가 올린 위험도 — dispatcher.fieldReport 가 채운다
   };
   { const tag = opts.tag ?? special?.tag; if (tag) I.tag = tag; if (opts.parent !== undefined) I.parent = opts.parent; }
+  if (opts.cause !== undefined && opts.cause >= 0) I.cause = opts.cause;
+  if (opts.csq) I.csq = opts.csq;
   sim.incidents.push(I);
   createScene(sim, I);
   { const sc = sim.scenes[I.id]; if (sc && sc.placeName && !place) I.truth.label = `${nodeName(sim.city, node.id)} ${sc.placeName}`; }      // 교차로 사고: 현장을 만들면서 정해진 이름
-  const delay = special?.delay ? rng.range(special.delay[0], special.delay[1]) : type === 'fire' ? rng.range(6, 16) : type === 'traffic' ? rng.range(3, 8) : type === 'search' ? rng.range(1, 3) : type === 'medical' ? rng.range(2, 6) : type === 'collapse' ? rng.range(3, 8) : type === 'water' ? rng.range(2, 6) : type === 'hazmat' ? rng.range(8, 20) : rng.range(4, 11);
+  const dl = special?.delay ?? TYPE_DEFS[type].delay;      // 발생 → 첫 신고: 시나리오가 적었으면 그것, 아니면 유형의 값
+  const delay = rng.range(dl[0], dl[1]);
   I.firstCallAt = sim.t + delay;
   const benign = variant === 'false' || variant === 'prank';
-  const pFollow = benign ? 0 : type === 'fire' ? 0.6 : type === 'traffic' ? 0.5 : type === 'armed' ? 0.42 : type === 'collapse' ? 0.55 : type === 'hazmat' ? 0.4 : type === 'water' ? 0.3 : 0.12;
+  const pFollow = benign ? 0 : TYPE_DEFS[type].follow;
   if (rng.chance(pFollow)) I.followupAt = I.firstCallAt + rng.range(24, 55);
   if (type === 'traffic') {
     // 사고 지점 도로는 느려지고, 통제가 끝나면 전면 차단된다(우회로가 있는 도로만)
@@ -143,13 +169,13 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
       const e = sim.city.edges[I.blockedEdge];
       e.closed = true; e.closedReason = 'incident';
       for (const k of node.edges) if (k !== e.id) sim.city.edges[k].cong = Math.min(3, sim.city.edges[k].cong + 0.7);
-      emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(sim.city, e)} 통행 불가 — 쓰러진 나무가 길을 막았습니다.`, imp: 1, truth: true });
+      I.blockEv = emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', text: `${edgeName(sim.city, e)} 통행 불가 — 쓰러진 나무가 길을 막았습니다.`, imp: 1, truth: true });      // (I1-b) 통제 기록: 다른 사건의 ROUTE_BLOCKED 가 원인으로 가리킨다
     }
   }
   const what = variant === 'false' ? '실제 화재는 없음 — 오인 신고가 들어올 예정' : variant === 'prank' ? '실제 사건은 없음 — 장난 전화가 걸려 올 예정' : scenarioName(type, variant) === TYPE_NAME[type] ? TYPE_NAME[type] : `${TYPE_NAME[type]} · ${scenarioName(type, variant)}`;
   if (variant === 'kidnap' || variant === 'drunk' || variant === 'getaway') startPursuit(sim, I, variant);
   special?.onCreate?.(sim, I);
-  I.rootEvent = emit(sim, { inc: id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: special?.tag === 'major' ? 3 : 1, truth: true, text: chainNote ? `${chainNote} — ${I.truth.label}.` : `사건 발생 — ${I.truth.label} (${what}). 아직 신고되지 않았습니다.` });
+  I.rootEvent = emit(sim, { inc: id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: special?.tag === 'major' ? 3 : 1, truth: true, causes: I.cause !== undefined ? [I.cause] : undefined, text:chainNote ? `${chainNote} — ${I.truth.label}.` : `사건 발생 — ${I.truth.label} (${what}). 아직 신고되지 않았습니다.` });
   return I;
 }
 
@@ -173,7 +199,11 @@ export function tickIncidents(sim: Sim): void {
   // 이어지는 사건 (예약된 것 가운데 때가 된 것 하나)
   if (g.chain.length) {
     const k = g.chain.findIndex((c) => sim.t >= c.at);
-    if (k >= 0) { const c = g.chain.splice(k, 1)[0]; if (sim.t < sim.shiftLen - 150 && open <= tn.maxConcurrent) createIncident(sim, c.opts); }
+    if (k >= 0) {
+      const c = g.chain.splice(k, 1)[0], late = sim.t >= sim.shiftLen - 150;
+      if (!late && open <= tn.maxConcurrent) createIncident(sim, c.opts);
+      else g.dropped.push({ t: sim.t, why: late ? 'late' : 'busy', type: c.opts.type, variant: c.opts.variant, parent: c.opts.parent });      // (I1-b) 버린 예약은 배열에만 (기록은 남기지 않는다)
+    }
   }
   // 대형 사고: 교대마다 많아야 한 번. 언제·무엇인지는 별도의 난수 흐름으로 정한다 (평소 사건의 추첨을 흔들지 않는다)
   if (sim.t >= g.majorAt) {
@@ -230,4 +260,5 @@ export function closeIncident(sim: Sim, I: Incident, reason: 'resolved' | 'timeo
   I.result = evaluate(sim, I, reason);
   scenarioOf(I.truth.type, I.truth.variant)?.onClose?.(sim, I, reason);
   emit(sim, { inc: I.id, role: 'SYSTEM', actor: '사건 관리', kind: 'resolve', imp: 3, causes: [I.lastEvent], text: `사건 ${I.code} 종료 — ${OUTCOME_NAME[I.result.outcome]}. ${I.result.headline}` });
+  noteClosedPlace(sim, I);      // (X6 §7.1) 실제 건물의 화재가 닫혔고 건물 상태가 없는데 15% 넘게 탔으면 그을린 건물
 }

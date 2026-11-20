@@ -6,16 +6,18 @@ import { FIELD_NAME, UNIT_KIND_NAME } from '../sim/resources';
 import type { RoleGroup, UnitField, UnitKind } from '../sim/types';
 import { FACILITY_COLOR, FIELD_COLOR, FIELD_TEXT } from '../view/city/tokens';
 import { DISASTER_RING, OBSTACLE_ICON } from '../view/city/trafficLayer';
+import { SUBWAY_GLYPH, SUBWAY_LINE } from '../view/city/kinds2Layer';
 import { ICON_PATH } from '../view/icons';
 import { RUIN_MARK, STATE_MARK } from '../view/marks';
 import { FacilityBadge, RoleDot, Token } from './Mark';
 
 const LS_LEGEND = 'ar.legend.v1';
 const FIELDS: [UnitField, UnitKind[]][] = [
-  ['police', ['patrol', 'tactical', 'policeHeli']],
+  ['police', ['patrol', 'tactical', 'policeHeli', 'detective', 'trafficPol', 'k9', 'riotPol']],      // (N9) 기동대
   ['fire', ['engine', 'ladder']],
-  ['rescue', ['rescue', 'als', 'bls', 'medHeli']],
-  ['special', ['swat', 'eod', 'hazmat', 'heli', 'boat']],
+  ['rescue', ['rescue', 'als', 'bls', 'medHeli', 'mtnRescue', 'dive']],      // (N9) 산악·수중 구조대
+  ['special', ['swat', 'eod', 'hazmat', 'heli', 'boat', 'animalCtl', 'deconUnit']],      // (N9) 화생방 제독차
+  ['civil', ['powerCrew', 'gasCrew', 'waterCrew', 'tow']],      // (N8) 유관 기관
 ];
 /** (R1) 대원의 역할 묶음: 부대 목록의 역할 점. 분야색은 그 대원의 부대를 따른다 (여기서는 대표 분야로 보인다) */
 const ROLES: [RoleGroup, string, UnitField][] = [
@@ -23,7 +25,7 @@ const ROLES: [RoleGroup, string, UnitField][] = [
   ['bomb', '폭발물 처리', 'special'], ['observer', '전술 관측관', 'police'], ['pilot', '조종사·정장', 'special'],
   ['nozzle', '관창수', 'fire'], ['entry', '진입대원', 'fire'], ['engineer', '기관원·조작원', 'fire'],
   ['rescue', '구조대원', 'rescue'], ['search', '탐지 대원', 'rescue'], ['water', '수난·로프 구조', 'rescue'], ['hazmat', '화학 대원', 'special'],
-  ['medic', '응급구조사·간호사', 'rescue'], ['doctor', '의사', 'rescue'],
+  ['medic', '응급구조사·간호사', 'rescue'], ['doctor', '의사', 'rescue'], ['civil', '유관 기관 기사', 'civil'],
 ];
 const STATES: [string, string, string][] = [
   ['available', '대기', '테 없음'],
@@ -88,7 +90,7 @@ function CombatPinSample({ size = 26 }: { size?: number }) {
 
 /** (G4) 무너진 건물: 핀의 왼쪽 아래 배지 (확인 = 실선 테, 신고만 = 점선 테와 흐린 기호) · 끝난 사건의 테 두른 실루엣 · 2차 붕괴의 퍼지는 흙빛 고리 */
 const RUIN_EDGE = '#d6a878';
-function RuinBadgeSample({ level, reported = false, size = 20 }: { level: 'partial' | 'major'; reported?: boolean; size?: number }) {
+function RuinBadgeSample({ level, reported = false, size = 20 }: { level: 'partial' | 'major' | 'total' | 'burnt'; reported?: boolean; size?: number }) {      // (X6) 전체 붕괴 · 전소
   const c = size / 2, r = size / 2 - 1.5, g = r * 1.5;
   return (
     <svg className="token" width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
@@ -112,6 +114,17 @@ function SecondaryRingSample({ size = 22 }: { size?: number }) {
 }
 /** (G4) 붕괴 사건의 변형 아이콘 (핀과 사건 카드) */
 const COLLAPSE_ICONS: [string, string][] = [['collapse', '건물 붕괴'], ['gasblast', '가스 폭발'], ['crane', '크레인 붕괴'], ['elevator', '승강기 갇힘'], ['landslide', '산사태']];
+/** (N9) 지하철역 출입구: 지도의 기호(view/city/kinds2Layer.ts 의 SUBWAY_GLYPH)와 같은 모양 */
+function SubwaySample({ size = 18 }: { size?: number }) {
+  const g = SUBWAY_GLYPH, pts = (p: [number, number][]): string => p.map(([x, y]) => `${x},${y}`).join(' ');
+  return (
+    <svg className="token" width={size} height={size} viewBox="-8 -8 16 16" aria-hidden="true">
+      <circle r={g.r + 1.1} fill="#f4f6f8" /><circle r={g.r} fill={SUBWAY_LINE} />
+      <polygon points={pts(g.stairs)} fill="#fff" />
+      {g.arrow.map((pl, k) => <polyline key={k} points={pts(pl)} fill="none" stroke="#fff" strokeWidth={1.2} strokeLinecap="round" strokeLinejoin="round" />)}
+    </svg>
+  );
+}
 function IconSample({ name, size = 18 }: { name: string; size?: number }) {
   return <svg className="token" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d={ICON_PATH[name]} fill={RUIN_EDGE} fillRule="evenodd" /></svg>;
 }
@@ -179,6 +192,10 @@ export function MapLegend() {
             <span className="lg-item" title="사건 현장 때문에 막은 구간: 테의 색 = 그 사건의 유형색"><ClosureSample ring="#d6a878" />통제 — 사건 (유형색 테)</span>
             <span className="lg-item" title="재난이 막은 구간"><ClosureSample ring={DISASTER_RING} />통제 — 재난 (주황 테)</span>
           </div>
+          <div className="lg-row">
+            <span className="lg-item" title="지하철역 출입구 (시청역·중앙역·남문역)"><SubwaySample />지하철역</span>
+            <span className="lg-item" title="세 역을 잇는 땅 밑 노선 — 그림일 뿐 열차 시각표는 없다"><i className="road dash" style={{ ['--rc' as string]: SUBWAY_LINE }} />땅 밑 노선</span>
+          </div>
           <h5>건물 상태 <span className="dim">사건 핀의 왼쪽 아래</span></h5>
           <div className="lg-row">
             <span className="lg-item" title="부대가 도착해 확인했다 (관찰자 시점은 처음부터)"><RuinBadgeSample level="partial" />일부 무너짐</span>
@@ -189,6 +206,11 @@ export function MapLegend() {
             <span className="lg-item" title="금이 간 구조물이 다시 무너졌다"><SecondaryRingSample />2차 붕괴 (퍼지는 흙빛 고리)</span>
             <span className="lg-item" title="사건이 끝나도 교대 끝까지 남는다. 크게 보면 지붕이 내려앉은 모습"><RuinGlyphSample />끝난 붕괴</span>
             <span className="lg-item" title="끝난 화재 사건의 건물: 크게 보면 탄 만큼 지붕이 그을려 있다"><i style={{ display: 'inline-block', width: 14, height: 10, borderRadius: 2, background: '#2a211b', border: '1px solid #4a3d33' }} />끝난 화재 (그을린 지붕)</span>
+          </div>
+          <div className="lg-row">
+            <span className="lg-item" title="건물이 통째로 무너졌다: 크게 보면 지붕 대신 잔해 더미. 그 교대에는 그 건물에서 새 사건이 나지 않는다"><RuinBadgeSample level="total" />전체 붕괴</span>
+            <span className="lg-item" title="건물 칸의 연료가 70% 넘게 탔다: 크게 보면 지붕 전체가 그을리고 구멍이 뚫려 있다. 그 교대에는 그 건물에서 새 사건이 나지 않는다"><RuinBadgeSample level="burnt" />전소</span>
+            <span className="lg-item" title="가스·용기 폭발이 있었다: 크게 보면 건물 둘레에 깨진 유리가 반짝이고 지붕에 검은 자국"><i style={{ display: 'inline-block', width: 14, height: 10, borderRadius: 2, background: '#2a211b', boxShadow: '0 0 0 2px #9fd6ea' }} />폭발 흔적</span>
           </div>
           <p className="lg-help">사건 표식을 누르면 현장을 확대합니다. 건물이나 도로에 마우스를 올리면 이름과 종류가 보입니다. 휠로 확대·축소하고 끌어서 옮깁니다.</p>
         </div>

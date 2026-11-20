@@ -4,14 +4,16 @@
 // 좁은 도로 위에서도 가려지지 않는다. 현장 화면의 차량 그림과는 별개다.
 
 import { AIR_KIND } from '../../sim/crews';
-import type { UnitField, UnitKind } from '../../sim/types';
+import type { Unit, UnitField, UnitKind } from '../../sim/types';
 import { FACILITY_MARK, STATE_MARK, UNIT_MARK, drawMark } from '../marks';
 import { mix, shade } from '../scene/common';
 
 /** 돌의 바탕색 (흰 기호와의 명암비 3.5:1 이상) */
-export const FIELD_COLOR: Record<UnitField, string> = { police: '#3f7fd0', fire: '#d8503a', rescue: '#23996b', special: '#8f6fd0' };
+export const FIELD_COLOR: Record<UnitField, string> = { police: '#3f7fd0', fire: '#d8503a', rescue: '#23996b', special: '#8f6fd0', civil: '#a37c12' };      // civil (N8): 황토 — 흰 기호와의 명암비 3.9:1
 /** 어두운 바탕 위에 글자·선으로 쓸 때의 밝은 분야색 */
-export const FIELD_TEXT: Record<UnitField, string> = { police: '#7db9ff', fire: '#ff8f66', rescue: '#4fd9a6', special: '#c9a2ff' };
+export const FIELD_TEXT: Record<UnitField, string> = { police: '#7db9ff', fire: '#ff8f66', rescue: '#4fd9a6', special: '#c9a2ff', civil: '#e6c14e' };
+/** 부대의 화면 분야: 편성표 부대는 u.field, 분야가 없는 인근 도시 지원 부대는 부서로 짐작한다 (동물 포획팀은 소방 부서지만 특수 분야 — N8) */
+export function unitField(u: Unit): UnitField { return u.field ?? (u.dept === 'police' ? 'police' : u.dept === 'ems' ? 'rescue' : u.dept === 'civil' ? 'civil' : u.kind === 'animalCtl' || u.kind === 'deconUnit' ? 'special' : 'fire'); }      // (N9) 지원 제독차도 특수
 /** 상태 테의 색 (출동은 분야색을 밝힌 점선이라 여기에 없다) */
 export const STATE_RING = { onscene: '#ffd166', transport: '#5ad17a' };
 /** 시설 배지의 색 */

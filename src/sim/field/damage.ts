@@ -289,7 +289,7 @@ export function hitCover(sim: Sim, s: Scene, tx: number, ty: number, sx: number,
 }
 
 /** 두 칸 사이에 빈 공간(T.VOID)이 있는가: 나란히 놓인 다른 층은 같은 폭발에 휘말리지 않는다 */
-function acrossVoid(s: Scene, ax: number, ay: number, bx: number, by: number): boolean {
+export function acrossVoid(s: Scene, ax: number, ay: number, bx: number, by: number): boolean {
   return !walk(s, ax, ay, bx, by, (_i, t) => t !== T.VOID);
 }
 

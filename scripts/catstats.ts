@@ -2,7 +2,7 @@
 // 수는 되도록 **기록된 문제**(I.problems)에서 센다 — 뒤 단계가 붕괴·폭발·전소·철수를 기록하기 시작하면 고치지 않아도 값이 들어온다.
 // 단계 1 에는 그런 기록이 아직 없으므로 "건물 화재" 분모를 뺀 모든 값이 0 이다.
 //   catastrophe: burnout n (x% of N building fires) · total n · partial n (fire n / struct n / blast n) · explosions n (gas n · vessel n · dust n; known n / hidden n)
-//                · withdrawals n (re-entry n) · defensive/fire x · ext-close n (wrong n) · sign→event p50 s · crew caught n · signs averted n/m
+//                · withdrawals n (re-entry n) · defensive/fire x · ext-close n (wrong n) · sign→event p50 s · crew caught n · signs averted n/m · cylinder fires n (exploded n)
 // --cat 을 붙이면 그림자 줄도 낸다: 사건이 닫힐 때의 위험 상태(Scene.cat — 계산만 한 값)가 문턱을 넘어 있던 현장 수.
 //   단계 3·4 가 실제로 일으키기 시작하면 이 줄은 "닫힐 때까지 남아 있던 위험"이 된다.
 
@@ -17,17 +17,18 @@ export interface CatCount {
   known: number;                                    // 그 가운데 지휘관이 위험을 알았던 것 (EXPLOSION 기록). 나머지가 hidden(HIDDEN_HAZARD)
   withdrawals: number; reentries: number;           // 전원 철수(WITHDRAWAL)와 그 가운데 다시 들어간 것(복구)
   defensive: number;                                // 외부 방어로 바꾼 건물 화재 (지휘 쪽 한계 시간 보탬이 있는 현장)
-  extClose: number; extWrong: number;               // 외부 확인 종료와 그 가운데 미발견이 남은 것
+  extClose: number; extWrong: number;               // 외부 확인 종료와 그 가운데 미발견이 남았거나 위험이 남은 것(판정의 hazardActive — IncidentResult.catastrophe.hazard)
   crewCaught: number;                               // 붕괴·폭발에 휘말린 대원 (IncidentResult.catastrophe — 단계 7)
   signs: number; averted: number;                   // 위험 조짐(DANGER_SIGN)과 그 가운데 막은 것(복구)
   gaps: number[];                                   // 조짐을 안 시각 → 붕괴·폭발 시각의 간격(초)
+  cylFires: number; cylBoom: number;                // (단계 8) 가스 용기(실린더)가 있는 화재와 그 가운데 용기가 터진 것 (§8.1 의 25~60%)
   // 그림자: 사건이 닫힐 때의 위험 상태
   scenes: number;                                   // 위험 상태를 가진 현장 수 (catOf 가 null 이 아닌 현장)
   shBurnt: number; shL3: number; shBldg3: number; shCloud: number; shVent: number; shFull: number;
 }
 export const catZero = (): CatCount => ({
   fires: 0, burnouts: 0, totals: 0, partials: 0, partFire: 0, partStruct: 0, partBlast: 0, gas: 0, vessel: 0, dust: 0, known: 0,
-  withdrawals: 0, reentries: 0, defensive: 0, extClose: 0, extWrong: 0, crewCaught: 0, signs: 0, averted: 0, gaps: [],
+  withdrawals: 0, reentries: 0, defensive: 0, extClose: 0, extWrong: 0, crewCaught: 0, signs: 0, averted: 0, gaps: [], cylFires: 0, cylBoom: 0,
   scenes: 0, shBurnt: 0, shL3: 0, shBldg3: 0, shCloud: 0, shVent: 0, shFull: 0,
 });
 
@@ -58,9 +59,14 @@ export function catStats(sim: Sim): CatCount {
     const ops = s.ops;
     if (ops) {
       if (fire && ops.limitBonus > 0) o.defensive++;
-      if (ops.concluded) { o.extClose++; if ((I.result?.casUndiscovered ?? 0) > 0) o.extWrong++; }
+      if (ops.concluded) { o.extClose++; if ((I.result?.casUndiscovered ?? 0) > 0 || I.result?.catastrophe?.hazard) o.extWrong++; }      // (단계 7) 틀림 = 미발견이 남았거나 판정에서 위험이 남음
     }
     if (!c) continue;
+    if (I.truth.type === 'fire') {
+      let cyl = false, boom = false;
+      for (const p of s.props) if (p.vessel === 'cylinder') { cyl = true; if (p.exploded) boom = true; }
+      if (cyl) { o.cylFires++; if (boom) o.cylBoom++; }
+    }
     o.scenes++;
     o.gas += c.gasN; o.vessel += c.vesselN; o.dust += c.dustN;
     if (c.burntAt >= 0) o.shBurnt++;
@@ -97,6 +103,7 @@ export function catJson(c: CatCount): Record<string, number | null> {
     explosions: ex, gas: c.gas, vessel: c.vessel, dust: c.dust, known: c.known, hidden: Math.max(0, ex - c.known),
     withdrawals: c.withdrawals, reentries: c.reentries, defensivePerFire: +(c.defensive / Math.max(1, c.fires)).toFixed(3),
     extClose: c.extClose, extWrong: c.extWrong, signToEventP50: p50(c.gaps), crewCaught: c.crewCaught, signs: c.signs, averted: c.averted,
+    cylinderFires: c.cylFires, cylinderFiresExploded: c.cylBoom,
   };
 }
 
@@ -105,7 +112,7 @@ export function catLine(c: CatCount): string {
   const j = catJson(c), gap = j.signToEventP50;
   return `catastrophe: burnout ${c.burnouts} (${((c.burnouts / Math.max(1, c.fires)) * 100).toFixed(1)}% of ${c.fires} building fires) · total ${c.totals} · partial ${c.partials} (fire ${c.partFire} / struct ${c.partStruct} / blast ${c.partBlast})`
     + ` · explosions ${j.explosions} (gas ${c.gas} · vessel ${c.vessel} · dust ${c.dust}; known ${c.known} / hidden ${j.hidden}) · withdrawals ${c.withdrawals} (re-entry ${c.reentries})`
-    + ` · defensive/fire ${(c.defensive / Math.max(1, c.fires)).toFixed(2)} · ext-close ${c.extClose} (wrong ${c.extWrong}) · sign→event p50 ${gap === null ? '-' : Math.round(gap) + 's'} · crew caught ${c.crewCaught} · signs averted ${c.averted}/${c.signs}`;
+    + ` · defensive/fire ${(c.defensive / Math.max(1, c.fires)).toFixed(2)} · ext-close ${c.extClose} (wrong ${c.extWrong}) · sign→event p50 ${gap === null ? '-' : Math.round(gap) + 's'} · crew caught ${c.crewCaught} · signs averted ${c.averted}/${c.signs} · cylinder fires ${c.cylFires} (exploded ${c.cylBoom})`;
 }
 
 /** --cat: 그림자 줄 */

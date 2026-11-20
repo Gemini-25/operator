@@ -12,10 +12,12 @@ import { armorOf } from '../crews';
 import { addProp } from './kit';
 import { casFact, exitName } from './agents';
 import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, truthWalkable } from './grid';
-import { coverRoll, fireShot, heatGlass, shatter } from './damage';
+import { acrossVoid, coverRoll, fireShot, heatGlass, shatter } from './damage';
+import { catOnBlast } from './catastrophe';
 import { lastFx, noteBoom, noteFlash, noteHit, noteShot, recHarm, recMelee } from './fxlog';
-import { RUIN_CEILING, RUIN_SECONDARY, markRuin, recordFall } from './ruins';
-import { CAUSE_NAME, bandOf, decayCause, hurtCas, hurtCasTo, hurtResponder, injuryRng, noteDecay, noteInjury } from './injury';
+import { RUIN_SECONDARY, markRuin, recordFall } from './ruins';
+import { CAUSE_NAME, DOWN_AT, SELF_HARM, SELF_HARM_HIT, bandOf, decayCause, hurtCas, hurtCasTo, hurtHostile, hurtResponder, injuryRng, noteDecay, noteInjury, settleHostile } from './injury';
+import { SHAKE, shake } from './doctrineRun';      // (R3 1단계) 동요 — 피격·피습·폭발
 
 export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2, c?: FxInfo): void {
   s.fx.push({ kind, t: sim.t, x, y, x2, y2, text, color, ttl, c });
@@ -23,6 +25,8 @@ export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?:
 }
 
 export const band = bandOf;      // 중증도 단계는 세 부류가 함께 쓴다 (field/injury.ts)
+/** (R2 §4.8) 대피 방송 중의 주변 시민 노출 확률 배율 */
+export const ANNOUNCE_MUL = 0.4;
 export const BAND_NAME = ['경상', '중상', '위중', '사망'];
 
 const NB = [1, 0, -1, 0, 0, 1, 0, -1];
@@ -72,38 +76,8 @@ export function tickFire(sim: Sim, s: Scene, I: Incident): void {
   let smoky = burning > 0;
   if (!smoky) { const sm = s.smoke; for (let i = 0; i < n; i++) if (sm[i] !== 0) { smoky = true; break; } }
   if (smoky) smokeSpread(s, w, h);
-  // 가스 용기 폭발 (숨겨진 추가 위험)
-  for (const p of s.props) {
-    if (p.kind !== 'gas' || p.exploded) continue;
-    let hot = s.fire[tidx(s, p.x, p.y)] > 0.3;
-    for (let d = 0; d < 4 && !hot; d++) { const nx = p.x + NB[d * 2], ny = p.y + NB[d * 2 + 1]; if (nx >= 0 && ny >= 0 && nx < w && ny < h && s.fire[ny * w + nx] > 0.6) hot = true; }
-    if (!hot) continue;
-    p.exploded = true;
-    for (let y = Math.max(0, p.y - 2); y <= Math.min(h - 1, p.y + 2); y++) for (let x = Math.max(0, p.x - 2); x <= Math.min(w - 1, p.x + 2); x++) {
-      const j = y * w + x;
-      if (s.fuel[j] > 0 && dist(x, y, p.x, p.y) <= 2.3) s.fire[j] = Math.max(s.fire[j], 0.85);
-    }
-    const ev = raiseProblem(sim, I, 'HIDDEN_HAZARD', '보관 중이던 가스 용기 폭발', { role: 'SYSTEM', actor: '현장', text: '폭발! 건물 내부에 보관되어 있던 가스 용기가 화염에 노출되어 폭발했습니다.', imp: 3, truth: s.arrivedAt < 0 }, false);
-    blast(sim, s, I, p.x, p.y, 3.6, 34, ev);
-    pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.6);
-    noteBoom(lastFx(sim, s, 'boom'), 3.6, 'tank');
-  }
-  // 붕괴
-  for (const r of s.regions) {
-    if (!r.indoor || r.kind !== 'room' || s.collapseDone.has(r.id)) continue;
-    let b = 0; if (s.burnedTiles > 0) for (const i of r.tiles) if (s.burned[i]) b++;      // 탄 칸이 하나도 없으면 셀 것도 없다
-    if (b / r.tiles.length < 0.55) continue;
-    s.collapseDone.add(r.id);
-    if (!s.rng.chance(0.55)) continue;
-    const cands = r.tiles.filter((i) => s.propAt[i] < 0 && s.tiles[i] !== T.DOOR);
-    if (!cands.length) continue;
-    const k = Math.min(cands.length, s.rng.int(1, 2));
-    for (let q = 0; q < k; q++) { const i = s.rng.pick(cands); if (s.propAt[i] < 0) { addProp(s, 'debris', i % w, (i / w) | 0, { blocking: true, hp: s.rng.range(9, 14) }); markRuin(s, i, RUIN_CEILING); } }
-    s.staticVersion++;
-    const ev = raiseProblem(sim, I, 'ESCALATION', `${r.name} 천장 일부 붕괴`, { role: 'SYSTEM', actor: '현장', text: `${r.name} 천장 일부가 무너졌습니다.`, imp: 2, truth: s.arrivedAt < 0 }, false);
-    blast(sim, s, I, r.cx, r.cy, 2.2, 22, ev, 'crush');
-    recordFall(sim, s, r.cx, r.cy, 2.2, 'ceiling');      // (G4) 그림용 기록
-  }
+  // (X6 단계 4) 예전의 '가스 용기 폭발'(불이 닿으면 그 자리에서 터짐)은 지웠다 — 용기의 열이 쌓여야 터진다 (field/catastrophe.ts 의 ruptureVessel)
+  // (X6 단계 3) 예전의 '천장 일부 붕괴'(탄 방을 한 번 판정해 s.rng 로 잔해·충격)는 지웠다 — 구조 건전도가 낮아진 구획의 붕괴(field/catastrophe.ts 의 collapseRegion)가 대신한다
   s.burning = burning;
   if (burning === 0 && s.fireOutAt < 0 && s.kind === 'fire' && sim.t - s.startedAt > 5) s.fireOutAt = sim.t;
   if (burning > 0) s.fireOutAt = -1;
@@ -140,23 +114,33 @@ function smokeSpread(s: Scene, w: number, h: number): void {
  * cause: 기록에 적는 원인 — 폭발이면 blast(기본), 천장·2차 붕괴처럼 무너져 내린 것이면 crush.
  * 폭발(blast)에 휩쓸려 체력이 80 아래가 된 구조 대상은 쓰러져 스스로 나오지 못하고(갇힌 사람은 그대로) 피를 흘린다 —
  * 가스 용기·누출 가스·폭발물이 같은 규칙이다(예전에는 폭발물만 그랬다). 무너져 내린 것(crush)에는 걸지 않는다.
+ * 세 부류를 고르게 친다 (H1 §5.1): 대원(방호를 뺀다), 구조 대상·용의자(×0.8). 용의자는 예전에 건너뛰었다 — 쓰러지지 않은 용의자는 문턱 때문에 한 번에 숨지지 않는다(hurtHostile).
  */
-export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, radius: number, dmg: number, ev: number, cause: InjuryCause = 'blast'): void {
+export function blast(sim: Sim, s: Scene, I: Incident, x: number, y: number, radius: number, dmg: number, ev: number, cause: InjuryCause = 'blast', planned = false): void {      // planned = (R3 5단계) 대원이 일으킨 계획된 폭파(폭파 진입 — 미리 알리고 물러섰다): 대원에게 동요를 걸지 않는다 (I1-b 의 noSignal 도 이 자리에)
+  const bx = Math.round(x), by = Math.round(y);      // (X6 §12.1) 빈 공간(층 사이) 너머의 사람은 다치지 않는다 — 나란히 놓인 다른 층
   for (const a of s.agents) {
     if (a.status === 'left' || sim.responders[a.rid].dead) continue;      // 숨진 대원은 더 다치지 않는다
     const d = dist(a.x, a.y, x, y);
-    if (d > radius) continue;
+    if (!planned && d <= radius + SHAKE.blastPad && !acrossVoid(s, bx, by, Math.round(a.x), Math.round(a.y))) shake(sim, a);      // (R3 §4.3) 반경 + 3칸 안의 폭발 — 동요 (다치기 전에 건다: 쓰러지면 걸리지 않는다)
+    if (d > radius || acrossVoid(s, bx, by, Math.round(a.x), Math.round(a.y))) continue;
     hurtResponder(sim, s, I, a, dmg * (1 - d / (radius + 1)), cause, { ev });      // 폭발물 방호복·방화복이 줄인다 (injury.protection — blastFactor)
     a.lastBlockEvent = ev;
   }
   for (const c of s.casualties) {
     if (c.dead || c.where !== 'scene') continue;
     const d = dist(c.x, c.y, x, y);
-    if (d > radius) continue;
+    if (d > radius || acrossVoid(s, bx, by, Math.round(c.x), Math.round(c.y))) continue;
     hurtCas(sim, s, I, c, dmg * 0.8 * (1 - d / (radius + 1)), cause, { ev });
     if (cause === 'blast' && c.health < 80) hurtCas(sim, s, I, c, 0, 'blast', { bleed: (0.09 + 0.09 * (1 - d / radius)) * sim.tune.bleedMul, immobile: true });
   }
+  for (const h of s.hostiles) {
+    if (h.dead || h.state === 'escaped' || (h.where !== undefined && h.where !== 'scene')) continue;
+    const d = dist(h.x, h.y, x, y);
+    if (d > radius || acrossVoid(s, bx, by, Math.round(h.x), Math.round(h.y))) continue;
+    hurtHostile(sim, s, I, h, dmg * 0.8 * (1 - d / (radius + 1)), cause, { ev });
+  }
   shatter(sim, s, x, y, radius + 1.5, Math.min(2.5, radius), 3);      // 반경 안의 창과 가구가 부서진다
+  catOnBlast(sim, s, I, x, y, radius, dmg, ev, cause);      // (X6 §2.4) 구조 충격과 가스 점화용 충격 자리 — 위험 상태가 없는 현장에서는 아무것도 하지 않는다
 }
 
 /** 물(또는 소화 약제)을 뿌린다. 대원의 진압 행동이 호출한다. */
@@ -318,7 +302,7 @@ export function flashbang(sim: Sim, s: Scene, x: number, y: number, by?: FieldAg
   for (const h of s.hostiles) {
     if (h.state !== 'hold' && h.state !== 'fight') continue;
     if (dist(h.x, h.y, x, y) > 5.2 || !los(s, x, y, h.x, h.y)) continue;      // 벽 너머까지는 미치지 않는다
-    h.stunUntil = sim.t + 3.8; h.morale -= 0.15; n++;
+    h.stunUntil = sim.t + 3.8; h.stunHow = 'bang'; h.morale -= 0.15; n++;      // stunHow: (R2 §4.6) 무력화 수단 — 검거 기록이 쓴다
   }
   pushFx(sim, s, 'flash', x, y, undefined, undefined, undefined, undefined, 0.7);
   noteFlash(lastFx(sim, s, 'flash'), by, n);
@@ -376,11 +360,8 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
   for (const h of s.hostiles) {
     h.px = h.x; h.py = h.y;
     if (h.state === 'arrested' || h.state === 'down' || h.state === 'escaped') continue;
-    if (h.health <= 0) {
-      h.state = 'down';
-      emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'resolve', text: `${h.label} 제압됨.`, imp: 2 });
-      continue;
-    }
+    // 쓰러짐은 hurtHostile 이 다치는 그 자리에서 바로 세운다 (H1 §4.1). 이 검사는 그 길을 거치지 않은 체력 변화의 안전장치일 뿐이다
+    if (h.health <= DOWN_AT && h.tDown === undefined) { settleHostile(sim, I, h, h.bleedCause ?? 'blunt'); continue; }
     if (sim.t < h.stunUntil) continue;       // 무력화된 동안에는 아무것도 못 한다
     const wasAlert = sim.t < h.alertUntil;
     const see = officersSeeing(sim, s, h, 11);
@@ -391,7 +372,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
       // 시야 밖에서 바로 곁까지 다가온 대원에게 기습당하면 잠시 얼어붙는다
       if (!wasAlert && see.nearestD < 2.6 && sim.t - s.startedAt > 5 && (h.state === 'hold')) {
         h.stunUntil = sim.t + 1.6; h.morale -= 0.25;
-        emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, text: `${h.label}가 시야 밖에서 접근한 ${sim.responders[ta.rid].name}에게 기습당했습니다.` });
+        emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, text: `${josa(h.label, '이/가')} 시야 밖에서 접근한 ${sim.responders[ta.rid].name}에게 기습당했습니다.` });
       }
       h.facing = Math.atan2(ta.y - h.y, ta.x - h.x); h.alertUntil = sim.t + 5;
     } else if (sim.t >= h.lookAt && h.state === 'hold') {
@@ -417,8 +398,20 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
     // 사기 변화: 포위될수록, 부상당할수록 떨어진다
     h.morale -= (0.006 * Math.max(0, see.n - 1) + (h.health < 60 ? 0.012 : 0)) * dt;
     if (h.morale < 0.2 && h.state !== 'flee') {
+      // 자해 (H1 §4.5) — 사용자 결정으로 끈 경로다(SELF_HARM = 0): 무기를 들고 공격성이 높고 인질이 없는 용의자가 한 번만 추첨한다(흐름 injury:<현장>:self — 그 밖의 결과는 바뀌지 않는다).
+      // 걸리면 투항 대신 스스로를 해친다: 한 번에 쓰러뜨려(down) 다음 틱에 같은 추첨이 되풀이되지 않게 한다. 그 뒤는 처치(treatSuspect)가 받는다
+      if (h.weapon !== 'none' && h.aggression > 0.7 && h.hostageId < 0 && !h.selfHarmRolled && I.phase !== 'closed') {
+        h.selfHarmRolled = true;
+        const sr = injuryRng(sim, s, 'self');
+        if (sr.chance(SELF_HARM)) {
+          const raw = sr.range(SELF_HARM_HIT[0], SELF_HARM_HIT[1]);
+          const ev = raiseProblem(sim, I, 'ESCALATION', '용의자 자해', { role: 'SYSTEM', actor: '현장', imp: 3, text: `${josa(h.label, '이/가')} 스스로를 해쳤습니다. 즉시 처치가 필요합니다.` }, false);
+          hurtHostile(sim, s, I, h, raw, h.weapon === 'gun' ? 'gunshot' : 'stab', { by: h.id, byKind: 'hostile', ev, down: true });
+          continue;
+        }
+      }
       h.state = 'surrendered'; h.path = null;
-      emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', text: `${h.label}가 무기를 내려놓고 투항 의사를 보입니다.`, imp: 2, truth: see.n === 0 });
+      emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', text: `${josa(h.label, '이/가')} 무기를 내려놓고 투항 의사를 보입니다.`, imp: 2, truth: see.n === 0 });
       continue;
     }
     // 자리를 옮기는 중 (엄폐 이동, 인질을 끌고 물러나기): 옮기는 동안에는 쏘지 않는다
@@ -447,7 +440,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
         const path = best >= 0 ? astar(s, h.x, h.y, best % s.w, (best / s.w) | 0, 0, truthCost(s)) : null;
         if (path && path.length > 2 && path.length <= 34) {
           h.path = path; h.pathI = 0; h.dragging = true; h.state = 'hold';
-          emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, truth: see.n === 0, text: `${h.label}가 인질을 끌고 ${josa(s.regions[room].name, '으로/로')} 물러납니다.` });
+          emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, truth: see.n === 0, text: `${josa(h.label, '이/가')} 인질을 끌고 ${josa(s.regions[room].name, '으로/로')} 물러납니다.` });
           continue;
         }
       }
@@ -490,7 +483,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
       const path = best >= 0 ? astar(s, h.x, h.y, best % s.w, (best / s.w) | 0, 0, truthCost(s)) : null;
       if (path && path.length >= 1 && path.length <= 9) {
         h.path = path; h.pathI = 0; h.moveAt = sim.t + s.rng.range(8, 13);
-        emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, text: `${h.label}가 엄폐물 뒤로 자리를 옮깁니다.` });
+        emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, text: `${josa(h.label, '이/가')} 엄폐물 뒤로 자리를 옮깁니다.` });
         continue;
       }
       h.moveAt = sim.t + 4;
@@ -511,19 +504,20 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
         const r = sim.responders[ta.rid];
         if (h.weapon === 'gun') {
           // 맞은 사람이 입은 방호 (부대 값이 아니라 사람 값). 방패는 교전·봉쇄 임무 중에만 세운다
-          const armor = armorOf(sim, ta.rid, ta.task !== null && (ta.task.kind === 'engage' || ta.task.kind === 'perimeter'));
+          const armor = armorOf(sim, ta.rid, ta.task !== null && (ta.task.kind === 'engage' || ta.task.kind === 'perimeter'), ta.task !== null && ta.task.method === 'bareDefuse');      // (R3 §3.7) 맨몸 해체 중에는 방호복을 벗었다
           const moving = Math.abs(ta.x - ta.px) + Math.abs(ta.y - ta.py) > 0.05;
           const p = 0.32 * (0.6 + h.skill * 0.6) * (ta.inCover ? 0.3 : moving ? 0.6 : 1) * clamp(1.25 - see.nearestD / 16, 0.4, 1.1);
           h.cooldown = s.rng.range(1.5, 2.6);
           const hit = s.rng.chance(p) && I.phase !== 'closed';      // 판정 뒤에는 누구도 더 다치지 않는다 (§2.6) — 다치지 않는 피격을 기록하지 않는다
           ta.underFireT = sim.t;
+          shake(sim, ta);      // (R3 §4.3) 총격을 받았다 — 동요 (난수를 쓰지 않는다)
           const mx = ta.x + (hit ? 0 : s.rng.range(-0.8, 0.8)), my = ta.y + (hit ? 0 : s.rng.range(-0.8, 0.8));      // 빗나간 탄이 겨눈 점 (판정 흐름에서 x 다음 y — 예전 그림 줄과 같은 순서)
           const ct = !hit && ta.inCover ? coverRoll(sim, s, ta.x, ta.y, h.x, h.y) : -1;      // 빗나간 탄이 대원의 엄폐 가구에 맞는가 (파손용 흐름)
           const end = hit || ct >= 0 ? fireShot(sim, s, h.x, h.y, ta.x, ta.y, hit ? 'body' : ct) : fireShot(sim, s, h.x, h.y, mx, my, 'miss');      // 탄이 실제로 간 선: 지나간 창이 깨지고 엄폐 가구가 닳는다
           pushFx(sim, s, 'shot', h.x, h.y, end.x, end.y, undefined, '#ff8a5c', 0.25);
           noteShot(sim, s, lastFx(sim, s, 'shot'), { side: 1, by: h.id, wpn: 'hgun', hit, end, tx: ta.x, ty: ta.y, tk: 0, target: ta.rid, arm: armor });
           if (!I.problems.some((q) => q.code === 'ESCALATION' && q.detail === '용의자 발포')) {
-            raiseProblem(sim, I, 'ESCALATION', '용의자 발포', { role: 'SYSTEM', actor: '현장', text: `${h.label}가 대원을 향해 발포했습니다!`, imp: 3 }, false);
+            raiseProblem(sim, I, 'ESCALATION', '용의자 발포', { role: 'SYSTEM', actor: '현장', text: `${josa(h.label, '이/가')} 대원을 향해 발포했습니다!`, imp: 3 }, false);
           }
           if (hit) {
             const raw = s.rng.range(25, 41);      // 판정 흐름에서 뽑는 자리는 그대로 — 방호(armorOf × 0.6)는 hurtResponder 가 뺀다
@@ -540,6 +534,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
             noteHit(lastFx(sim, s, 'hit'), { side: 1, ox: h.x, oy: h.y, tk: 0, target: ta.rid }); recMelee(sim, s, h, ta);      // (G5)
             // 흉기·맨손 피습: 흉기는 자상, 맨손은 타박상. 이 기록이 그 부상의 원인 기록이 된다 (예전에는 기록도 원인도 남지 않았다)
             const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'hazard', text: `${r.name} 피습 (${h.weapon === 'knife' ? '흉기' : '맨손'}).`, imp: 2, causes: [I.lastEvent] });
+            shake(sim, ta);      // (R3 §4.3) 흉기·맨손 피습 — 동요
             hurtResponder(sim, s, I, ta, raw, h.weapon === 'knife' ? 'stab' : 'blunt', { by: h.id, byKind: 'hostile', ev });
           }
         }
@@ -548,15 +543,15 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
     } else if (h.state === 'flee') {
       if (!h.path || h.pathI >= h.path.length) {
         h.state = 'escaped';
-        raiseProblem(sim, I, 'SUSPECT_FLED', `${h.label} 도주`, { role: 'SYSTEM', actor: '현장', text: `${h.label}가 현장을 벗어나 도주했습니다.`, imp: 3, truth: s.arrivedAt < 0 }, false);
+        const fledEv = raiseProblem(sim, I, 'SUSPECT_FLED', `${h.label} 도주`, { role: 'SYSTEM', actor: '현장', text: `${josa(h.label, '이/가')} 현장을 벗어나 도주했습니다.`, imp: 3, truth: s.arrivedAt < 0 }, false);      // (I1-b) 이어지는 사건의 원인 기록
         // 연쇄: 총기를 든 채 달아난 용의자는 다른 곳에서 다시 범행할 수 있다
         if (h.weapon === 'gun') {
           const r = s.rng.next();
           // 연쇄 상한(chain.ts): 넘으면 예약하지 않는다. 난수는 상한과 상관없이 똑같이 뽑는다(상한에 걸리지 않는 교대의 결과를 바꾸지 않는다)
           const room = canChain(sim, I);
           // 차를 몰고 달아나면 추격전이 이어지고(도주 차량), 아니면 다른 곳에서 다시 범행한다
-          if (r < 0.35 && !I.pursuit && !sim.gen.chain.some((c) => c.opts.parent === I.id && c.opts.variant === 'getaway') && !sim.incidents.some((J) => J.parent === I.id && J.truth.variant === 'getaway')) { if (room) sim.gen.chain.push({ at: sim.t + 2, opts: { type: 'armed', variant: 'getaway', nodeId: I.truth.nodeId, parent: I.id, note: '달아난 용의자가 차를 몰고 도주합니다', rng: sim.rng.fork('getaway:' + I.id + ':' + h.id) } }); }
-          else if (r < 0.65) { const at = sim.t + s.rng.range(45, 100); if (room) sim.gen.chain.push({ at, opts: { note: '도주한 용의자가 다른 곳에서 다시 범행을 벌입니다', type: 'armed', variant: 'robbery', parent: I.id } }); }
+          if (r < 0.35 && !I.pursuit && !sim.gen.chain.some((c) => c.opts.parent === I.id && c.opts.variant === 'getaway') && !sim.incidents.some((J) => J.parent === I.id && J.truth.variant === 'getaway')) { if (room) sim.gen.chain.push({ at: sim.t + 2, opts: { type: 'armed', variant: 'getaway', nodeId: I.truth.nodeId, parent: I.id, note: '달아난 용의자가 차를 몰고 도주합니다', rng: sim.rng.fork('getaway:' + I.id + ':' + h.id), cause: fledEv, csq: 'getaway' } }); }
+          else if (r < 0.65) { const at = sim.t + s.rng.range(45, 100); if (room) sim.gen.chain.push({ at, opts: { note: '도주한 용의자가 다른 곳에서 다시 범행을 벌입니다', type: 'armed', variant: 'robbery', parent: I.id, cause: fledEv, csq: 'reoffend' } }); }
         }
         continue;
       }
@@ -570,7 +565,8 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
 
 function startFlee(sim: Sim, s: Scene, h: Hostile, exitK: number): void {
   const e = s.exits[exitK];
-  const cost = (i: number) => (staticPass(s.tiles[i]) && (s.propAt[i] < 0 || s.props[s.propAt[i]].kind === 'door') ? 0 : -1);
+  // (R2 §4.2a) 농성 문 잠금으로 막은 문(skin 'barricade')은 그 용의자도 지나지 못한다 — 막은 방을 나가지 않는다
+  const cost = (i: number) => (staticPass(s.tiles[i]) && (s.propAt[i] < 0 || (s.props[s.propAt[i]].kind === 'door' && s.props[s.propAt[i]].skin !== 'barricade')) ? 0 : -1);
   const p1 = astar(s, h.x, h.y, e.x, e.y, 0, cost);
   if (!p1) return;
   // 출구를 나선 뒤 가장 가까운 지도 가장자리로
@@ -678,7 +674,7 @@ export function tickCollapse(sim: Sim, s: Scene, I: Incident): void {
   }
 }
 
-/** 가스 누출: 차단하지 않은 배관은 계속 가스를 내뿜고(연기 격자로 퍼진다), 짙게 고이면 불이 붙어 터질 수 있다 (1초에 한 번). */
+/** 가스 누출: 차단하지 않은 배관은 계속 가스를 내뿜는다(연기 격자로 퍼진다 — 시야·건강 피해용). 폭발은 X6 의 가스 격자가 맡는다(field/catastrophe.ts) (1초에 한 번). */
 export function tickGas(sim: Sim, s: Scene, I: Incident): void {
   let leaking = false;
   for (const p of s.props) {
@@ -694,9 +690,11 @@ export function tickGas(sim: Sim, s: Scene, I: Incident): void {
   if (!leaking) return;
   // 통제되지 않은 출입구로 다가온 주변 시민이 가스를 마신다 (경찰이 출입구를 지키면 일어나지 않는다)
   if (s.arrivedAt >= 0 && I.phase !== 'closed' && s.casualties.filter((c) => c.bystander2).length < 3) {      // 판정 뒤에 다친 사람이 새로 생기지 않는다 (§2.6)
+    // (R2 §4.8) 출입구 통제 자리에서 대피 방송을 하는 경찰이 있다 (대원의 임무·방법 — 세계 규칙이라 읽어도 된다)
+    const announcing = s.agents.some((a) => a.status === 'active' && a.task !== null && a.task.kind === 'perimeter' && a.task.method === 'announce' && a.spot >= 0);
     s.exits.forEach((e, k) => {
       if (s.smoke[tidx(s, Math.max(0, Math.min(s.w - 1, e.x)), Math.max(0, Math.min(s.h - 1, e.y)))] < 0.12 || exitCovered(sim, s, k)) return;
-      if (!s.rng.chance(Math.min(0.03, 0.011 * sim.tune.hazardMul))) return;
+      if (!s.rng.chance(Math.min(0.03, 0.011 * sim.tune.hazardMul) * (announcing ? ANNOUNCE_MUL : 1))) return;      // (R2 §4.8) 대피 방송 중이면 ×0.4 — 확률만 곱하고 판정 호출은 그대로
       const id = s.casualties.length;
       const c: Casualty = {
         id, label: String.fromCharCode(65 + id), x: e.x, y: e.y, px: e.x, py: e.y, health: s.rng.range(60, 80), bleed: s.rng.range(0.05, 0.09), mob: 'immobile', trapWork: 0, concealment: 0.05, inVehicle: null,
@@ -705,6 +703,7 @@ export function tickGas(sim: Sim, s: Scene, I: Incident): void {
         wander: false, wanderT: 0, isTarget: false, hostage: false, climb: undefined, bystander2: true, inWater: undefined, drift: undefined,
         tDiscovered: -1, tFreed: -1, tTreated: -1, tSafe: -1, tLoaded: -1, tDead: -1, tHospital: -1, discoveredBy: -1, causeEvent: -1,
         injuries: undefined, bleedCause: undefined, deathCause: undefined, lost: undefined,      // (H1) kit.addCas 와 같은 칸, 같은 순서
+        quietLoss: undefined,      // (N8) kit.addCas 와 같은 칸, 같은 순서
       };
       c.bleed0 = c.bleed;
       s.casualties.push(c);
@@ -712,20 +711,7 @@ export function tickGas(sim: Sim, s: Scene, I: Incident): void {
       c.injuries = noteInjury(c.injuries, 'toxic', 100 - c.health, sim.t, bandOf(c.health), -1, 'world', c.causeEvent); c.bleedCause = 'toxic';      // (H1) 사건 중에 붙는 사람은 만드는 자리가 원인을 적는다
     });
   }
-  let dense = 0;
-  for (let i = 0; i < s.smoke.length; i++) if (s.smoke[i] > 0.6 && isIndoor(s.tiles[i])) dense++;
-  if (dense < 10 || !s.rng.chance(Math.min(0.007, 0.00015 * dense * sim.tune.hazardMul))) return;
-  const p = s.props.find((q) => q.kind === 'valve' && !q.mitigated && !q.ignited)!;
-  p.ignited = true;
-  for (let y = Math.max(0, p.y - 2); y <= Math.min(s.h - 1, p.y + 2); y++) for (let x = Math.max(0, p.x - 2); x <= Math.min(s.w - 1, p.x + 2); x++) {
-    const j = tidx(s, x, y);
-    if (s.fuel[j] > 0 && dist(x, y, p.x, p.y) <= 1.9) s.fire[j] = Math.max(s.fire[j], 0.6);
-  }
-  for (let i = 0; i < s.smoke.length; i++) s.smoke[i] *= 0.45;      // 고여 있던 가스가 타 버린다
-  const ev = raiseProblem(sim, I, 'HIDDEN_HAZARD', '누출된 가스에 불이 붙어 폭발', { role: 'SYSTEM', actor: '현장', text: '폭발! 고여 있던 가스에 불이 붙었습니다. 화재가 발생했습니다.', imp: 3, truth: s.arrivedAt < 0 }, false);
-  blast(sim, s, I, p.x, p.y, 3.8, 32, ev);
-  pushFx(sim, s, 'boom', p.x, p.y, undefined, undefined, undefined, undefined, 1.6);
-  noteBoom(lastFx(sim, s, 'boom'), 3.8, 'gas');
+  // (X6 단계 4) 예전의 폭발 판정(짙은 연기 칸 수로 s.rng)은 지웠다 — 가스만의 격자에 폭발 하한을 넘은 구름이 생기고 점화원이 닿아야 터진다 (field/catastrophe.ts 의 explodeGas)
 }
 
 // ───────────────────────── 배회하는 실종자 ─────────────────────────

@@ -452,3 +452,26 @@ input:focus { border-color: var(--accent); }
 .tri-badge { flex: none; min-width: 44px; height: 30px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; border-radius: 7px; border: 1.5px solid #0b1219; font-weight: 800; font-size: 12px; }
 .tri-badge.none { background: var(--surface); color: var(--dim); border-color: var(--line); }
 .person-head { margin-bottom: 10px; }
+/* 교대 보고서 (H1 단계 6): 순직 타일과 목록의 순직 줄은 빨강이 아니라 차분한 회청색 */
+.tile.loss { border: 1px solid #8fa3b8; background: rgba(143, 163, 184, 0.08); }
+.kv .loss { color: #c7d3df; }
+/* (H1 단계 7) 보고서의 대원 부상·순직 목록: 이름(역할 · 호출부호)과 상태를 두 줄로 — 76px 이름 칸에 '저격·관측수 · 특공1' 이 세 줄로 접혀 읽히지 않았다 */
+.kv.hurt-row { grid-template-columns: 1fr; gap: 0; padding: 3px 0; }
+.kv.hurt-row > span:last-child { padding-left: 12px; }
+
+/* ── X6 ── */
+/* 보고서의 위험의 현실화 타일 (대형 사고 타일 옆 — 전소 · 붕괴 · 폭발 · 철수): 두 칸 너비 */
+.tile.catastrophe { grid-column: span 2; border: 1px solid #8a4b32; background: linear-gradient(180deg, rgba(214, 120, 80, 0.14), #101922); }
+.tile.catastrophe b { font-size: 16px; color: #ffb08a; }
+
+/* ── R3 doctrine ── */
+/* 대원 정보창의 상태 칩 한 줄 (공기 막대 — 30·50% 눈금, 탄, 짝, 몸, 동요) */
+.doc-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 6px; }
+.dchip { display: inline-flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: var(--r1); padding: 1px 6px; font-size: 11px; font-variant-numeric: tabular-nums; color: var(--text); background: rgba(255, 255, 255, 0.03); }
+.dchip.low { color: #ffd166; border-color: rgba(255, 209, 102, 0.45); }
+.dchip.crit { color: #ff9f43; border-color: rgba(255, 159, 67, 0.6); }
+.dchip.shaken { color: #e9d27a; border-color: rgba(233, 210, 122, 0.45); background: rgba(233, 210, 122, 0.06); }
+.dchip .airbar { position: relative; display: inline-block; width: 40px; height: 6px; border-radius: 3px; background: #1d2731; overflow: hidden; }
+.dchip .airbar i { position: absolute; left: 0; top: 0; bottom: 0; background: #58b6ff; }
+.dchip.low .airbar i { background: #ffd166; } .dchip.crit .airbar i { background: #ff9f43; }
+.dchip .airbar em { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(232, 240, 247, 0.55); }

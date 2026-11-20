@@ -3,11 +3,12 @@
 // 상태를 바꾸지 않는다. 비싼 계산은 캐시한다: 현장별 WeakMap<Scene, …>(staticVersion·tick 이 바뀔 때만), 무전 기록은 WeakMap<Sim, …>.
 
 import type { Sim } from '../sim/engine';
+import { CAT, gasClouds } from '../sim/field/catastrophe';
 import { isIndoor } from '../sim/field/grid';
 import { isHeld } from '../sim/field/hazards';
 import { SCENARIOS } from '../sim/scenarios';
 import { T } from '../sim/types';
-import type { Casualty, Incident, Scene } from '../sim/types';
+import type { Casualty, Incident, PlaceMark, Scene } from '../sim/types';
 import { dist } from '../sim/util';
 import { ICON_PATH } from './icons';
 import { HAZARD_MARK, RUIN_MARK } from './marks';
@@ -16,7 +17,7 @@ import { HAZARD_MARK, RUIN_MARK } from './marks';
 export const HOSTAGE_VARIANTS = ['hostage', 'siege'];
 
 // ───────────────────────── 무너진 건물 ─────────────────────────
-/** 무너진 규모. 열린 값이다(X6 가 열쇠를 더한다) — 모르는 값은 'major' 처럼 그린다 */
+/** 무너진 규모. 열린 값이다 — (X6) 'total'(전체 붕괴) · 'burnt'(전소) · 'blasted'(폭발 흔적) · 'scorched'(그을림)를 더했다. 모르는 값은 'major' 처럼 그린다 */
 export type RuinLevel = 'partial' | 'major' | (string & {});
 export interface RuinInfo {
   frac: number;             // 무너진 칸 / 건물 칸 (벽 포함)
@@ -27,15 +28,28 @@ export interface RuinInfo {
   material: 'concrete' | 'earth' | 'crane';
 }
 const isBuildingTile = (t: number): boolean => t === T.FLOOR || t === T.FURN || t === T.DOOR || t === T.STAIR || t === T.WALL || t === T.WINDOW;
-const ruinCache = new WeakMap<Scene, { ver: number; nf: number; info: RuinInfo | null }>();
+const ruinCache = new WeakMap<Scene, { ver: number; nf: number; mark: string; info: RuinInfo | null }>();
 
-/** 무너진 정도 (진실). 건물 칸이 0 이거나 무너진 칸이 0 이면 null (산사태: 건물 칸이 없다) */
+/** (X6 §7.1) 이 사건이 남긴 건물 상태 (Sim.placeMarks — 그 건물의 가장 무거운 상태가 이 사건의 것일 때만) */
+export function placeMarkOf(sim: Sim, I: Incident): PlaceMark | undefined {
+  if (I.truth.placeId < 0 || !sim.placeMarks.size) return undefined;
+  const pm = sim.placeMarks.get(I.truth.placeId);
+  return pm && pm.incidentId === I.id ? pm : undefined;
+}
+/** (X6 §7.2) 건물 상태 → 규모 열쇠: 전체 붕괴 'total' · 전소 'burnt' · 구획 붕괴는 G4 의 비율 규칙 · 폭발 'blasted' · 그을림 'scorched' */
+const MARK_LEVEL: Record<PlaceMark['state'], RuinLevel | null> = { collapsed: 'total', burnt: 'burnt', partial: null, blasted: 'blasted', scorched: 'scorched' };
+
+/**
+ * 무너진 정도 (진실). 건물 칸이 0 이거나 무너진 칸이 0 이면 null (산사태: 건물 칸이 없다).
+ * (X6) 건물 상태(placeMarks)가 있는 사건은 무너진 칸이 0 이어도 값을 돌려준다(frac = 그 상태의 잔해 비율) — 전소·폭발 흔적·그을림은 s.damage 를 쓰지 않는다
+ */
 export function ruinInfo(sim: Sim, I: Incident): RuinInfo | null {
   const s = sim.scenes[I.id];
   if (!s) return null;
   const nf = s.falls ? s.falls.length : 0;
+  const pm = placeMarkOf(sim, I), mk = pm ? pm.state : '';
   const hit = ruinCache.get(s);
-  if (hit && hit.ver === s.staticVersion && hit.nf === nf) return hit.info;
+  if (hit && hit.ver === s.staticVersion && hit.nf === nf && hit.mark === mk) return hit.info;
   let info: RuinInfo | null = null;
   let bld = 0, dmg = 0, sx = 0, sy = 0;
   for (let i = 0; i < s.tiles.length; i++) {
@@ -64,7 +78,13 @@ export function ruinInfo(sim: Sim, I: Incident): RuinInfo | null {
       material: s.variant === 'landslide' ? 'earth' : s.variant === 'crane' ? 'crane' : 'concrete',
     };
   }
-  ruinCache.set(s, { ver: s.staticVersion, nf, info });
+  // (X6) 건물 상태: 무거운 상태면 그 열쇠로 (구획 붕괴는 위의 비율 규칙 그대로). 무너진 칸이 없으면 그 상태의 잔해 비율과 건물 가운데로
+  if (pm && bld > 0) {
+    const lv = MARK_LEVEL[pm.state];
+    if (!info) info = { frac: pm.ruinFrac, u: 0.5, v: 0.5, level: lv ?? (pm.ruinFrac >= 0.22 ? 'major' : 'partial'), secondary: 0, lastFall: s.falls && s.falls.length ? s.falls[s.falls.length - 1].t : pm.t, material: 'concrete' };
+    else if (lv) info.level = lv;
+  }
+  ruinCache.set(s, { ver: s.staticVersion, nf, mark: mk, info });
   return info;
 }
 
@@ -89,12 +109,14 @@ export function pinIcon(I: Incident, truth: boolean): string {
 
 /** 이 사건의 무너진 건물이 지금 보이는가. 'confirmed' = 무너진 모습을 안다, 'reported' = 붕괴 신고만 (AI 시점) */
 export function ruinSeen(sim: Sim, I: Incident, truth: boolean): 'confirmed' | 'reported' | 'none' {
-  if (I.truth.type !== 'collapse' || I.truth.placeId < 0) return 'none';
+  if (I.truth.placeId < 0) return 'none';
+  const pm = placeMarkOf(sim, I);      // (X6 §7.2) 건물 상태를 남긴 사건(화재·가스·붕괴 …)도 — 관찰자 시점은 상태가 생긴 순간부터, AI 시점은 부대가 도착했던 사건만
+  if (I.truth.type !== 'collapse' && !pm) return 'none';
   const s = sim.scenes[I.id];
   if (!s || !ruinInfo(sim, I)) return 'none';
   if (truth) return 'confirmed';
   if (I.firstArrivalAt >= 0) return 'confirmed';
-  if (I.phase === 'closed') return 'none';      // 끝난 사건: AI 시점은 도착했던 사건만 남는다
+  if (I.phase === 'closed' || I.truth.type !== 'collapse') return 'none';      // 끝난 사건: AI 시점은 도착했던 사건만 남는다 (붕괴 신고가 아닌 사건은 신고만으로 보이지 않는다)
   const as = I.assessment;
   if (as && as.type === 'collapse' && I.locationKnown && I.reportedNode === I.truth.nodeId && shownVariant(I, false) !== 'elevator') return 'reported';
   return 'none';
@@ -110,12 +132,18 @@ export function ruinLine(sim: Sim, placeId: number, truth: boolean): string | nu
     if (seen === 'reported') return '붕괴 신고 — 아직 확인 전';
     const r = ruinInfo(sim, I)!;
     const p = Math.round(r.frac * 100);
+    if (r.level === 'total') return '건물 전체 붕괴 — 잔해 더미';      // (X6)
+    if (r.level === 'burnt') return '건물 전소';
+    if (r.level === 'blasted') return '폭발 흔적 — 깨진 유리';
+    if (r.level === 'scorched') return '불에 그을린 건물';
     return r.level === 'partial' ? `무너짐 — 건물의 약 ${p}%` : `크게 무너짐 — 약 ${p}%${r.secondary ? ` · 2차 붕괴 ${r.secondary}회` : ''}`;
   }
   return null;
 }
-/** 규모 열쇠 → 기호 (모르는 열쇠는 major) */
-export const ruinMark = (level: RuinLevel): string => RUIN_MARK[level] ?? RUIN_MARK.major;
+/** 규모 열쇠 → 기호 (모르는 열쇠는 가장 가까운 것 — 그을림은 전소, 폭발 흔적은 일부 무너짐, 그 밖은 major) */
+export const ruinMark = (level: RuinLevel): string => RUIN_MARK[level] ?? (level === 'scorched' ? RUIN_MARK.burnt : level === 'blasted' ? RUIN_MARK.partial : RUIN_MARK.major);
+/** (X6) 규모 열쇠의 칩·마우스 글 */
+export const RUIN_TEXT: Record<string, string> = { partial: '일부 붕괴', major: '크게 붕괴', total: '전체 붕괴', burnt: '전소', blasted: '폭발 흔적', scorched: '그을림' };
 /** AI 시점에서 볼 수 있는 2차 붕괴 횟수 (첫 도착 뒤의 것만) */
 export function seenSecondary(sim: Sim, I: Incident, truth: boolean): { n: number; last: number } {
   const s = sim.scenes[I.id];
@@ -129,10 +157,12 @@ export function seenSecondary(sim: Sim, I: Incident, truth: boolean): { n: numbe
 export interface GasView {
   gas: Uint8Array | null;   // 칸별 가스 (1). 연두로 그린다. null = 가스 없음
   leaking: boolean;         // 새는 밸브가 있다 (가스 규칙이 도는 현장)
-  dense: number;            // 실내 칸 가운데 smoke > 0.6 인 칸 수 (tickGas 의 폭발 판정과 같은 식)
+  dense: number;            // 폭발 위험 칸 수 — (X6) 위험 상태가 있으면 폭발 하한을 넘은 구름(가스 ≥ 1, 셋 이상 이어진 덩어리)의 칸, 없으면 실내 칸 가운데 smoke > 0.6 인 칸 (G4 의 옛 식)
   denseMask: Uint8Array;
   edges: number[];          // denseMask 경계 선분 [x0, y0, x1, y1, …] (칸 모서리 좌표)
   cx: number; cy: number;   // 짙은 칸의 무게중심
+  danger: boolean;          // 폭발 위험 표지를 붙일 만한가 (X6: 구름이 있다 · 옛 식: 새는 밸브가 있고 짙은 칸이 10 이상)
+  label: string;            // 그 표지의 글자
 }
 const gasCache = new WeakMap<Scene, { tick: number; view: GasView }>();
 /** 가스가 찬 칸과 폭발 판정 범위. tick 이 바뀔 때만 다시 센다 (가스 확산은 1초에 한 번) */
@@ -143,6 +173,17 @@ export function gasView(s: Scene, tick: number): GasView {
   const valves = s.props.filter((p) => p.kind === 'valve');
   const leakV = valves.filter((p) => !p.mitigated && !p.ignited && !!p.leakRate);
   const gasRule = s.kind === 'hazmat' || (!!s.rules && s.rules.indexOf('gas') >= 0);
+  if (s.cat && s.cat.gas) {
+    // (X6 §7.3) 가스만의 격자: 가스 칸 = 가스 ≥ 0.25, 폭발 위험 = 폭발 하한을 넘은 구름 (읽기만 한다)
+    const cg = s.cat.gas, gas = new Uint8Array(n), denseMask = new Uint8Array(n);
+    let any = false;
+    for (let i = 0; i < n; i++) if (cg[i] >= 0.25) { gas[i] = 1; any = true; }
+    let dense = 0, sx = 0, sy = 0;
+    for (const cl of gasClouds(s.cat, s)) { if (cl.length < CAT.CLOUD_MIN) continue; for (const i of cl) { denseMask[i] = 1; dense++; sx += i % s.w; sy += (i / s.w) | 0; } }
+    const view: GasView = { gas: any ? gas : null, leaking: leakV.length > 0, dense, denseMask, edges: dense ? maskEdges(s, denseMask) : [], cx: dense ? sx / dense : 0, cy: dense ? sy / dense : 0, danger: dense > 0, label: '가스 LEL 초과 — 폭발 위험' };
+    gasCache.set(s, { tick, view });
+    return view;
+  }
   let gas: Uint8Array | null = null;
   if (s.kind === 'hazmat' && !valves.some((p) => p.ignited)) {
     gas = new Uint8Array(n);
@@ -167,15 +208,18 @@ export function gasView(s: Scene, tick: number): GasView {
   const denseMask = new Uint8Array(n);
   let dense = 0, sx = 0, sy = 0;
   for (let i = 0; i < n; i++) if (s.smoke[i] > 0.6 && isIndoor(s.tiles[i])) { denseMask[i] = 1; dense++; sx += i % s.w; sy += (i / s.w) | 0; }
-  const edges: number[] = [];
-  if (dense && gasRule && leakV.length) {
-    const m = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < s.w && y < s.h && denseMask[y * s.w + x] === 1;
-    for (let y = 0; y <= s.h; y++) { let run = -1; for (let x = 0; x <= s.w; x++) { const on = x < s.w && m(x, y - 1) !== m(x, y); if (on && run < 0) run = x; if (!on && run >= 0) { edges.push(run, y, x, y); run = -1; } } }
-    for (let x = 0; x <= s.w; x++) { let run = -1; for (let y = 0; y <= s.h; y++) { const on = y < s.h && m(x - 1, y) !== m(x, y); if (on && run < 0) run = y; if (!on && run >= 0) { edges.push(x, run, x, y); run = -1; } } }
-  }
-  const view: GasView = { gas, leaking: gasRule && leakV.length > 0, dense, denseMask, edges, cx: dense ? sx / dense : 0, cy: dense ? sy / dense : 0 };
+  const edges: number[] = dense && gasRule && leakV.length ? maskEdges(s, denseMask) : [];
+  const view: GasView = { gas, leaking: gasRule && leakV.length > 0, dense, denseMask, edges, cx: dense ? sx / dense : 0, cy: dense ? sy / dense : 0, danger: gasRule && leakV.length > 0 && dense >= 10, label: '가스 고임 — 폭발 위험' };
   gasCache.set(s, { tick, view });
   return view;
+}
+/** 칸 마스크의 경계 선분 [x0, y0, x1, y1, …] (칸 모서리 좌표) */
+function maskEdges(s: Scene, mask: Uint8Array): number[] {
+  const edges: number[] = [];
+  const m = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < s.w && y < s.h && mask[y * s.w + x] === 1;
+  for (let y = 0; y <= s.h; y++) { let run = -1; for (let x = 0; x <= s.w; x++) { const on = x < s.w && m(x, y - 1) !== m(x, y); if (on && run < 0) run = x; if (!on && run >= 0) { edges.push(run, y, x, y); run = -1; } } }
+  for (let x = 0; x <= s.w; x++) { let run = -1; for (let y = 0; y <= s.h; y++) { const on = y < s.h && m(x - 1, y) !== m(x, y); if (on && run < 0) run = y; if (!on && run >= 0) { edges.push(x, run, x, y); run = -1; } } }
+  return edges;
 }
 
 // ───────────────────────── 되살아난 불 ─────────────────────────
@@ -272,7 +316,7 @@ export function hazardChips(sim: Sim, I: Incident, truth: boolean): HazardChip[]
   if (info) {
     if (seen === 'reported') out.push({ key: 'ruin', mark: RUIN_MARK.partial, text: '붕괴 신고', color: '#d6a878', tone: 'info' });
     else {
-      out.push({ key: 'ruin', mark: ruinMark(info.level), text: info.level === 'partial' ? '일부 붕괴' : '크게 붕괴', color: '#d6a878', tone: 'info' });
+      out.push({ key: 'ruin', mark: ruinMark(info.level), text: RUIN_TEXT[info.level] ?? '크게 붕괴', color: info.level === 'burnt' || info.level === 'total' ? '#ff8a5c' : '#d6a878', tone: info.level === 'burnt' || info.level === 'total' ? 'bad' : 'info' });
       const sec = seenSecondary(sim, I, truth);
       if (sec.n > 0) out.push({ key: 'secondary', mark: RUIN_MARK.major, text: `2차 붕괴 ${sec.n}회`, color: '#ff5d5d', tone: 'bad' });
     }
@@ -287,7 +331,8 @@ export function hazardChips(sim: Sim, I: Incident, truth: boolean): HazardChip[]
   // 가스
   if (truth) {
     const gv = gasView(s, sim.tick);
-    if (gv.leaking) out.push(gv.dense >= 10 ? { key: 'gasDense', mark: HAZARD_MARK.gas, text: '가스 고임 — 폭발 위험', color: '#ff5d5d', tone: 'bad' } : { key: 'gas', mark: HAZARD_MARK.gas, text: '가스 누출', color: '#d6f06a', tone: 'info' });
+    if (gv.danger) out.push({ key: 'gasDense', mark: HAZARD_MARK.gas, text: gv.label, color: '#ff5d5d', tone: 'bad' });
+    else if (gv.leaking) out.push({ key: 'gas', mark: HAZARD_MARK.gas, text: '가스 누출', color: '#d6f06a', tone: 'info' });
   } else if (haz.some((f) => { const p = s.props[f.id]; return !!p && p.kind === 'valve' && f.value.active; })) out.push({ key: 'gas', mark: HAZARD_MARK.gas, text: '가스 누출', color: '#d6f06a', tone: 'info' });
   // 불
   {

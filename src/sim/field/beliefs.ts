@@ -47,6 +47,9 @@ export class BeliefStore {
     const cur = this.facts.get(f.key);
     if (!cur) { this.put(f); return true; }
     if (cur.verified && !f.verified) return false;
+    // (X6 §3.2) 조짐의 단계는 확인된 하향(down — 앞 단계를 알아챌 감각 범위 안에서 사라진 것을 본 보고)일 때만 내려간다.
+    // 일부만 본 대원(소리 거리·맨눈)의 낮은 단계가 확인된 높은 단계를 끌어내리지 않는다 (시각도 새로 하지 않는다)
+    if (f.type === 'sign' && cur.verified && f.value.level < cur.value.level && !f.value.down) return false;
     if (cur.verified === f.verified && f.t < cur.t) return false;
     if (!cur.verified && !f.verified && f.conf < cur.conf - 0.05 && f.t <= cur.t + 20) return false;
     const changed = !sameValue(cur.value, f.value) || cur.verified !== f.verified;
@@ -62,4 +65,20 @@ export class BeliefStore {
   all(): Fact[] { return Array.from(this.facts.values()); }
   /** 전달받은 정보는 신뢰도가 조금 낮아진다. */
   static relay(f: Fact): Fact { return { ...f, conf: Math.max(0.2, f.conf * 0.95) }; }
+}
+
+// (I1-b 0단계) 무전으로 받아 저장한 사실 → 그 사실을 실어 온 무전 기록 id. 지휘관의 작업 원인(WorkItem.cause → 지시 무전의 causes)에만 쓴다 — 판단은 읽지 않는다.
+// 사실 객체의 모양을 바꾸지 않으려고 WeakMap 에 둔다 (되감기는 Sim 을 새로 만들어 다시 돌리므로 안전하다)
+const HEARD = new WeakMap<Fact, number>();
+/** 무전으로 받은 사실을 합친다 (merge 와 똑같다). 저장됐으면 실어 온 무전 기록(ev ≥ 0)을 기억한다 */
+export function mergeHeard(store: BeliefStore, f: Fact, ev: number): boolean {
+  const changed = store.merge(f);
+  if (ev >= 0 && store.facts.get(f.key) === f) HEARD.set(f, ev);
+  return changed;
+}
+/** 이 사실을 실어 온 무전 기록 (-1 = 직접 보았거나, 소리 없는 보고로 받았거나, 사실이 없다) */
+export function heardEv(f: Fact | undefined): number {
+  if (!f) return -1;
+  const e = HEARD.get(f);
+  return e === undefined ? -1 : e;
 }

@@ -121,6 +121,7 @@ export function drawAimLines(cv: CombatView): void {
   const COS25 = Math.cos((25 * Math.PI) / 180);
   for (const a of s.agents) {
     if (a.status !== 'active' || !a.task || (a.task.kind !== 'engage' && a.task.kind !== 'perimeter')) continue;
+    if (a.task.method === 'sniper') continue;      // (R2 §3.7) 저격수의 조준선은 R2 가 그린다 (methodsLayer.drawMethodOver — 관찰자 시점만)
     if (Math.abs(a.x - a.px) + Math.abs(a.y - a.py) > 0.01) continue;
     const fl = Math.hypot(a.fx, a.fy); if (fl < 1e-3) continue;
     let best: Hostile | null = null, bd = 13;
@@ -593,6 +594,7 @@ function breach(cv: CombatView, e: FxEntry): void {
     if (a < 0.5) { const k = a / 0.5; g.strokeStyle = `rgba(159,208,255,${0.8 * (1 - k)})`; g.lineWidth = Math.max(1.5, ts * 0.06); g.beginPath(); g.arc(x, y, ts * (0.4 + 1.2 * easeOut(k)), 0, 6.2832); g.stroke(); }
   }
   const how = c.how ?? 'open';
+  if (how === 'charge') { chargeBlast(cv, e, ix, iy, seed); return; }      // (R2 §4.2a) 폭파 진입 — 문짝이 없어도(막힌 문의 잔해) 터진다
   if (how === 'open' || how === 'push' || c.door === undefined || c.door < 0) return;
   // 걸쇠 자리: 문짝은 -0.4 에 경첩, 걸쇠는 +0.3 (벽 방향)
   const hor = doorHorizontal(s, Math.round(e.x), Math.round(e.y));
@@ -614,6 +616,39 @@ function breach(cv: CombatView, e: FxEntry): void {
       const an = Math.atan2(iy, ix) + (hash2(q, seed + 7) - 0.5) * 1.5, dd = ts * (0.2 + 0.9 * hash2(seed, q + 3)) * e2, lift = Math.sin(k * Math.PI) * ts * 0.2;
       g.globalAlpha = k < 0.7 ? 1 : (1 - k) / 0.3;
       chip(g, lx + Math.cos(an) * dd, ly + Math.sin(an) * dd - lift, ts * (0.04 + 0.05 * hash2(q, 11)), an + k * 9, q % 2 ? '#b98d56' : '#7a5a36', q % 2 ? 3 : 4);
+    }
+    g.globalAlpha = 1;
+  }
+}
+
+/**
+ * (R2 §4.2a) 폭파 진입: 흰 섬광(반경 1.2칸, 0.15초) → 문 안쪽(ix, iy)으로 날아가는 문짝 조각·파편 10여 개 → 먼지.
+ * 흔들림은 FxBook.shake 가 이 기록으로 준다(충격기보다 크다). 유리·가구 파편은 hazards.blast 의 N7 효과가 따로 남긴다 — 'boom' 은 그리지 않는다
+ */
+function chargeBlast(cv: CombatView, e: FxEntry, ix: number, iy: number, seed: number): void {
+  const { g, ts, book } = cv, a = book.age(e), sp = fxSprites();
+  const x = P(e.x, ts), y = P(e.y, ts);
+  if (a < 0.15) {
+    const k = a / 0.15;
+    g.globalAlpha = 1 - k; g.fillStyle = '#ffffff'; g.beginPath(); g.arc(x, y, ts * 1.2 * (0.6 + 0.4 * k), 0, 6.2832); g.fill();
+    g.fillStyle = '#ffe9b0'; g.beginPath(); g.arc(x, y, ts * 0.55, 0, 6.2832); g.fill();
+    g.globalAlpha = 1;
+  }
+  if (a < 1.4) {      // 먼지 (안쪽으로 밀려 퍼진다)
+    const k = a / 1.4;
+    for (let q = 0; q < 3; q++) {
+      const d = ts * (0.9 + 0.8 * q) * (0.5 + 0.7 * easeOut(k));
+      g.globalAlpha = 0.5 * (1 - k) * (1 - q * 0.25);
+      g.drawImage(q === 1 ? sp.puffDark : sp.puff, x - d / 2 + ix * ts * (0.4 + 0.5 * q) * easeOut(k), y - d / 2 + iy * ts * (0.4 + 0.5 * q) * easeOut(k) - ts * 0.2 * k, d, d);
+    }
+    g.globalAlpha = 1;
+  }
+  if (a < 0.7) {      // 문짝 조각과 파편
+    const k = a / 0.7, e2 = easeOut(k);
+    for (let q = 0; q < 12; q++) {
+      const an = Math.atan2(iy, ix) + (hash2(q, seed + 5) - 0.5) * 1.9, dd = ts * (0.4 + 2.0 * hash2(seed, q + 9)) * e2, lift = Math.sin(k * Math.PI) * ts * 0.3;
+      g.globalAlpha = k < 0.7 ? 1 : (1 - k) / 0.3;
+      chip(g, x + Math.cos(an) * dd, y + Math.sin(an) * dd - lift, ts * (q < 3 ? 0.14 : 0.05 + 0.05 * hash2(q, 13)), an + k * 11, q < 3 ? '#8a6a44' : q % 2 ? '#b98d56' : '#6c6f73', q < 3 ? 4 : 3);
     }
     g.globalAlpha = 1;
   }

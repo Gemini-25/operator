@@ -1,15 +1,16 @@
 // ResourceManager — 부대·대원 명부, 차량 상태와 도시 지도 위 이동.
 
 import { coastY, edgeName, edgeTime, findRoute, nodeName, weatherSpeedFactor } from './city';
-import { AIR_KIND, EXTRA_NAMES, ROLES, STAFF, dealFlashbangs, drawFaults, fieldCrew, heliPad, isHovering, kitFor, medLevelOf, refillAir, skillsOf, slotsOf } from './crews';
+import { AIR_KIND, EXTRA_NAMES, ROLES, STAFF, dealFlashbangs, drawBatchFaults, drawFaults, fieldCrew, heliPad, isHovering, kitFor, kitIdsOf, medLevelOf, refillAir, refillGuns, skillsOf, slotsOf } from './crews';
 import { recomputeUnmet } from './dispatch/dispatcher';      // 함수 안에서만 부른다 (dispatcher 가 이 파일을 import 한다 — 모듈 맨 위에서 쓰지 않는다)
 import type { Sim } from './engine';
 import { emit, raiseProblem } from './events';
+import { canDeploy } from './field/injury';
 import { unitArrived } from './field/sceneManager';
 import { Rng } from './rng';
 import { gateWait, reportObstacle, stopAhead } from './traffic';
 import type { Obstacle } from './traffic';
-import type { Dept, Facility, Incident, Needs, Responder, RoadEdge, Unit, UnitCaps, UnitField, UnitKind } from './types';
+import type { Dept, Facility, Incident, Needs, Problem, Responder, RoadEdge, Unit, UnitCaps, UnitField, UnitKind } from './types';
 import { clamp, fmtSec, josa } from './util';
 
 const NAMES = ['김도윤', '이서준', '박하준', '최민재', '정지호', '강현우', '윤서연', '한지민', '오수아', '임채원', '신유나', '조은서',
@@ -19,14 +20,16 @@ const NAMES = ['김도윤', '이서준', '박하준', '최민재', '정지호', 
 /** 차량·항공기에 딸린 것 (R1): 환자 자리, 예비 공기통, 호이스트, 물 바구니, 체공 시간 */
 interface Fit { seats: number; spareAir: number; hoist?: boolean; bucketMax?: number; fuelMax?: number }
 interface UnitDef extends Fit { callsign: string; dept: Dept; kind: UnitKind; field: UnitField; facility: string; caps: UnitCaps; waterMax: number; tool: number; med: number; armor: number; minLevel: number }
-const caps = (suppression: number, rescue: number, ems: number, law: number, tactical: number, search: number, traffic: number, eod = 0): UnitCaps =>
-  ({ suppression, rescue, ems, law, tactical, search, traffic, eod });
+// (N8 §5.3.5) 끝의 다섯은 새 수요 열쇠(전력·가스·수도 복구 · 견인 · 동물 포획) — 기본값이 있어 기존 줄은 그대로 컴파일된다. (N9 §5.3.1) 그다음이 제독
+const caps = (suppression: number, rescue: number, ems: number, law: number, tactical: number, search: number, traffic: number, eod = 0,
+  utilPower = 0, utilGas = 0, utilWater = 0, tow = 0, capture = 0, decon = 0): UnitCaps =>
+  ({ suppression, rescue, ems, law, tactical, search, traffic, eod, utilPower, utilGas, utilWater, tow, capture, decon });
 // tool·med·armor 는 부대의 대표 성능이다(관제가 본다). 사람이 든 장비는 crews.ts 의 KITS — 현장의 식은 R1 단계 2 부터 사람 값을 쓴다.
 const KIND: Record<UnitKind, { dept: Dept; caps: UnitCaps; waterMax: number; tool: number; med: number; armor: number } & Fit> = {
   engine: { dept: 'fire', caps: caps(1.0, 0.55, 0.2, 0, 0, 0.5, 0.4), waterMax: 100, tool: 0.55, med: 0.35, armor: 0.1, seats: 0, spareAir: 4 },
   ladder: { dept: 'fire', caps: caps(1.0, 0.7, 0.2, 0, 0, 0.5, 0.3), waterMax: 140, tool: 0.7, med: 0.35, armor: 0.1, seats: 0, spareAir: 3 },
   rescue: { dept: 'fire', caps: caps(0.75, 1.0, 0.25, 0, 0, 0.8, 0.4), waterMax: 60, tool: 1.0, med: 0.4, armor: 0.1, seats: 0, spareAir: 5 },
-  hazmat: { dept: 'fire', caps: caps(0.6, 0.9, 0.3, 0, 0, 0.5, 0.3), waterMax: 40, tool: 0.9, med: 0.45, armor: 0.15, seats: 0, spareAir: 4 },
+  hazmat: { dept: 'fire', caps: caps(0.6, 0.9, 0.3, 0, 0, 0.5, 0.3, 0, 0, 0, 0, 0, 0, 0.7), waterMax: 40, tool: 0.9, med: 0.45, armor: 0.15, seats: 0, spareAir: 4 },      // (N9) 제독 0.7 — 측정·제독 대원(최소 인원에서도 남는다). 제독차가 없을 때 관제의 둘째 후보
   // 헬기 세 종류 (설계서 R1 7.1). 어느 수요에 뜨는지는 dispatcher.airFit 이 정한다 — caps 는 그 헬기가 맡는 수요만 기준(MINCAP)을 넘게 좁혀 두었다
   heli: { dept: 'fire', caps: caps(0, 0.9, 0.4, 0, 0, 0.9, 0), waterMax: 0, tool: 0.6, med: 0.8, armor: 0.05, seats: 1, spareAir: 0, hoist: true, bucketMax: 1, fuelMax: 660 },      // 소방 헬기: 구조·수색 (구급 0.4 는 기준 밑 — 구급차 대신은 의료 헬기가 한다)
   policeHeli: { dept: 'police', caps: caps(0, 0, 0, 0, 0, 1.6, 0), waterMax: 0, tool: 0.1, med: 0.2, armor: 0, seats: 0, spareAir: 0, fuelMax: 720 },      // 경찰 헬기: 하늘의 눈 (수색만)
@@ -38,9 +41,25 @@ const KIND: Record<UnitKind, { dept: Dept; caps: UnitCaps; waterMax: number; too
   tactical: { dept: 'police', caps: caps(0, 0.15, 0.15, 1.0, 1.0, 0.7, 0.7), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.5, seats: 0, spareAir: 0 },
   swat: { dept: 'police', caps: caps(0, 0.15, 0.2, 1.0, 1.4, 0.5, 0.3), waterMax: 0, tool: 0.2, med: 0.3, armor: 0.75, seats: 0, spareAir: 0 },
   eod: { dept: 'police', caps: caps(0, 0.2, 0.15, 0.6, 0.5, 0.4, 0.4, 1), waterMax: 0, tool: 0.3, med: 0.25, armor: 0.6, seats: 0, spareAir: 0 },
+  // (N8 §4.9) 새 부대 여덟. 보조 능력은 관제 기준(MINCAP) 아래이거나 dispatcher.kindFit 이 일을 좁힌다 — 평소 사건의 수요에 끼어들지 않게
+  powerCrew: { dept: 'civil', caps: caps(0, 0, 0, 0, 0, 0, 0, 0, 1.0), waterMax: 0, tool: 0.3, med: 0.1, armor: 0, seats: 0, spareAir: 0 },      // 전력 복구반 (버킷 트럭)
+  gasCrew: { dept: 'civil', caps: caps(0, 0, 0, 0, 0, 0, 0, 0, 0, 1.0), waterMax: 0, tool: 0.3, med: 0.1, armor: 0, seats: 0, spareAir: 0 },      // 가스 복구반
+  waterCrew: { dept: 'civil', caps: caps(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1.0), waterMax: 0, tool: 0.3, med: 0.1, armor: 0, seats: 0, spareAir: 0 },      // 수도 복구반
+  tow: { dept: 'civil', caps: caps(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1.0), waterMax: 0, tool: 0.3, med: 0.1, armor: 0, seats: 0, spareAir: 0 },      // 견인차
+  animalCtl: { dept: 'fire', caps: caps(0, 0.3, 0, 0, 0, 0.2, 0, 0, 0, 0, 0, 0, 1.0), waterMax: 0, tool: 0.3, med: 0.3, armor: 0.05, seats: 0, spareAir: 0 },      // 동물 포획팀 (구조 0.3·수색 0.2 는 기준 밑)
+  detective: { dept: 'police', caps: caps(0, 0, 0, 0.6, 0, 0.5, 0), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.2, seats: 0, spareAir: 0 },      // 형사 (치안 유형만 — kindFit)
+  trafficPol: { dept: 'police', caps: caps(0, 0, 0, 0.4, 0, 0.2, 1.0), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.2, seats: 0, spareAir: 0 },      // 교통 경찰 오토바이 (경찰 0.4·수색 0.2 는 기준 밑)
+  k9: { dept: 'police', caps: caps(0, 0, 0, 0.5, 0, 0.9, 0), waterMax: 0, tool: 0.12, med: 0.25, armor: 0.2, seats: 0, spareAir: 0 },      // 경찰견 (실종·보호·치안의 수색만 — kindFit)
+  // (N9 §4.8) 새 부대 넷. 보조 능력이 관제 기준(MINCAP)을 넘으므로 dispatcher.kindFit 이 일을 좁힌다(KIND_AUX) — 평소 사건의 1순위가 되지 않게.
+  // 기동대의 기동 0.85 는 기준(0.9) 밑이다(섬광탄이 없다 — 인질 사건의 '섬광탄을 가진 기동대' 요청이 기동대 배정으로 멈추지 않게)
+  mtnRescue: { dept: 'fire', caps: caps(0, 0.7, 0.35, 0, 0, 0.85, 0), waterMax: 0, tool: 0.7, med: 0.4, armor: 0.05, seats: 0, spareAir: 0 },      // 산악 구조대 (사륜구동 — 산·'산악 조난'만)
+  dive: { dept: 'fire', caps: caps(0, 0.8, 0.3, 0, 0, 0.7, 0), waterMax: 0, tool: 0.6, med: 0.35, armor: 0.05, seats: 0, spareAir: 0 },      // 수중 구조대 (보트 받침 승합 — 수난만)
+  deconUnit: { dept: 'fire', caps: caps(0.3, 0.45, 0, 0, 0, 0.2, 0, 0, 0, 0, 0, 0, 0, 1.0), waterMax: 40, tool: 0.5, med: 0.45, armor: 0.15, seats: 0, spareAir: 4 },      // 화생방 제독차 (천막 실은 큰 차 — 제독만)
+  riotPol: { dept: 'police', caps: caps(0, 0, 0, 0.9, 0.85, 0.25, 0.6), waterMax: 0, tool: 0.15, med: 0.25, armor: 0.45, seats: 0, spareAir: 0 },      // 경찰 기동대 버스 (군중·폭동의 경찰·교통 수요만)
 };
 /** 큰 차: 불법 주차로 좁아진 골목을 지나지 못한다 (traffic.ts) */
-const HEAVY: Partial<Record<UnitKind, boolean>> = { engine: true, ladder: true, rescue: true, hazmat: true };
+const HEAVY: Partial<Record<UnitKind, boolean>> = { engine: true, ladder: true, rescue: true, hazmat: true, powerCrew: true, waterCrew: true, tow: true,      // (N8) 버킷 트럭·수도 복구차·견인차
+  deconUnit: true, riotPol: true };      // (N9) 제독차 · 기동대 버스
 const U = (callsign: string, kind: UnitKind, field: UnitField, facility: string, minLevel: number): UnitDef => ({ callsign, kind, field, facility, minLevel, ...KIND[kind] });
 // 편성표: 네 분야(경찰·소방·구조·특수)마다 3~6팀. minLevel 은 난이도의 "부대 규모"가 이 값 이상일 때 편성된다
 // (1 = 12팀, 2 = 15팀, 3 = 19팀, 4 = 21팀, 5 = 22팀). 줄의 순서를 바꾸면 대원 능력치가 바뀐다(이 순서로 뽑는다).
@@ -52,12 +71,22 @@ const UNIT_DEFS: UnitDef[] = [
   U('특공1', 'swat', 'special', '중부경찰서', 1), U('헬기1', 'heli', 'special', '소방항공대', 1), U('화학1', 'hazmat', 'special', '공단119안전센터', 1), U('구조정1', 'boat', 'special', '해양구조대', 2), U('폭발물1', 'eod', 'special', '중부경찰서', 3),
   // (R1) 경찰 헬기는 중부경찰서 옥상, 의료 헬기는 가온대학교병원 옥상에 둔다 (새 시설을 만들지 않는다). 소방 헬기(헬기1)는 특수 분야에 남는다
   U('경찰헬기1', 'policeHeli', 'police', '중부경찰서', 3), U('의료헬기1', 'medHeli', 'rescue', '가온대학교병원', 3),
+  // (N8 §4.9 · §5.3.7) 새 부대 여덟 — 끝에 붙인다. minLevel 6 = 어느 부대 규모에서도 편성되지 않는다(단계 2b — 결과 불변). 그래도 이름(EXTRA_NAMES)과
+  // roster-v2:<호출부호>:<자리> 흐름의 자리는 차지한다(앞 사람은 바뀌지 않는다). 그 부대를 쓰는 단계가 편성 단계로 내린다:
+  // 전력1·가스1·수도1 → 1 (4a·4b), 견인1 → 2 (6b), 포획1 → 1 (5), 형사1 → 2 (6a), 교통1 → 3 (6a), 경찰견1 → 3 (6a). 시청·물류터미널은 부대가 없던 출동 시설이다
+  U('전력1', 'powerCrew', 'civil', '시청', 6), U('가스1', 'gasCrew', 'civil', '시청', 6), U('수도1', 'waterCrew', 'civil', '시청', 6), U('견인1', 'tow', 'civil', '물류터미널', 6),
+  U('포획1', 'animalCtl', 'special', '서부119안전센터', 6), U('형사1', 'detective', 'police', '중부경찰서', 6), U('교통1', 'trafficPol', 'police', '동부지구대', 6), U('경찰견1', 'k9', 'police', '서부지구대', 6),
+  // (N9 §4.8 · §5.3.7) 새 부대 넷 — N8 줄 다음 끝에. minLevel 6 = 편성되지 않는다(단계 2 — 결과 불변). 소방 줄 셋(산악·수중·제독)도 펌프 상태(equipment 흐름)를
+  // 편성 검사 전에 뽑지만 그 흐름은 이 뒤에 쓰는 곳이 없다. 그 부대를 쓰는 단계가 3 으로 내린다: 기동대1 → 4, 수중1 → 5, 제독1 → 6, 산악1 → 9
+  U('산악1', 'mtnRescue', 'rescue', '서부119안전센터', 6), U('수중1', 'dive', 'rescue', '해양구조대', 6), U('제독1', 'deconUnit', 'special', '공단119안전센터', 6), U('기동대1', 'riotPol', 'police', '중부경찰서', 6),
 ];
 
-export const UNIT_KIND_NAME: Record<UnitKind, string> = { engine: '진압 펌프차', rescue: '구조 공작차', als: '전문 구급차', bls: '일반 구급차', patrol: '순찰차', tactical: '기동 순찰차', ladder: '사다리차', hazmat: '화학 구조차', swat: '특공대 장갑차', eod: '폭발물 처리 차량', heli: '소방 헬기', boat: '구조정', policeHeli: '경찰 헬기', medHeli: '의료 헬기' };
-export const FIELD_NAME: Record<UnitField, string> = { police: '경찰', fire: '소방', rescue: '구조·구급', special: '특수' };
+export const UNIT_KIND_NAME: Record<UnitKind, string> = { engine: '진압 펌프차', rescue: '구조 공작차', als: '전문 구급차', bls: '일반 구급차', patrol: '순찰차', tactical: '기동 순찰차', ladder: '사다리차', hazmat: '화학 구조차', swat: '특공대 장갑차', eod: '폭발물 처리 차량', heli: '소방 헬기', boat: '구조정', policeHeli: '경찰 헬기', medHeli: '의료 헬기',
+  powerCrew: '전력 복구차', gasCrew: '가스 복구차', waterCrew: '수도 복구차', tow: '견인차', animalCtl: '동물 포획차', detective: '형사 차량', trafficPol: '교통 순찰 오토바이', k9: '경찰견 차량',
+  mtnRescue: '산악 구조대 차량', dive: '수중 구조대 차량', deconUnit: '화생방 제독차', riotPol: '경찰 기동대 버스' };      // (N9)
+export const FIELD_NAME: Record<UnitField, string> = { police: '경찰', fire: '소방', rescue: '구조·구급', special: '특수', civil: '유관 기관' };
 
-function traitOf(r: Responder): string {
+export function traitOf(r: Responder): string {
   const stats: [string, number][] = [['침착함', r.composure], ['판단 빠름', r.judgment], ['체력 좋음', r.fitness], ['협동적', r.teamwork], ['베테랑', r.experience], ['기술 숙련', r.skill]];
   stats.sort((a, b) => b[1] - a[1]);
   const lows: [string, number][] = [['쉽게 동요', r.composure], ['판단 미숙', r.judgment], ['체력 약함', r.fitness], ['독단적', r.teamwork], ['신입', r.experience]];
@@ -76,6 +105,36 @@ const fitOf = (d: Fit): Pick<Unit, 'seats' | 'hoist' | 'bucket' | 'bucketMax' | 
   ({ seats: d.seats, hoist: !!d.hoist, bucket: d.bucketMax ?? 0, bucketMax: d.bucketMax ?? 0, fuel: d.fuelMax ?? 0, fuelMax: d.fuelMax ?? 0, grounded: null, spareAir: d.spareAir, airNeed: undefined });
 
 /**
+ * (R3 §2.9) 차에 실은 탄약 상자 (한 상자 = 한 사람의 총기를 가득): 순찰·폭발물 처리반 = 장비 손잡이의 값, 기동 +1, 특공 +2.
+ * 경찰 헬기는 0(내리는 사람이 없다), 총을 들지 않는 부대도 0. (N8·N9 의 경찰 부대 — 형사·교통 경찰·경찰견·기동대 버스 — 는 순찰과 같다)
+ */
+const AMMO_BOX_ADD: Partial<Record<UnitKind, number>> = { patrol: 0, eod: 0, tactical: 1, swat: 2, detective: 0, trafficPol: 0, k9: 0, riotPol: 0 };
+function ammoBoxOf(kind: UnitKind, base: number): number { const add = AMMO_BOX_ADD[kind]; return add === undefined ? 0 : base + add; }
+/** (R3 §3.2 F10) 예비 펌프: 펌프를 단 부대(물탱크가 있는 종류 — 펌프차·사다리차·구조 공작차·화학 구조차·제독차)만 장비 손잡이의 수, 그 밖은 undefined(펌프가 없다) */
+export function sparePumpOf(kind: UnitKind, base: number): number | undefined { return KIND[kind].waterMax > 0 ? base : undefined; }
+
+/** 조직 명부의 열쇠 한 자리 (I2 — 교대 간 지속): 그 자리의 원래 이름, 소속 호출부호, 표준 자리 번호 */
+export interface RosterKey { name: string; callsign: string; slot: number }
+let rosterKeyList: RosterKey[] | null = null;
+/**
+ * 조직 명부의 모든 자리 (I2 §2.4·§10.2): 편성표(UNIT_DEFS) 줄 순서 × 표준 자리(STAFF[kind].std) 순서. 난수를 쓰지 않는다.
+ * 편성되지 않는 부대·최소 인원에서 빠지는 자리도 들어 있다 — 부대 규모 손잡이와 상관없는 "조직의 사람"이다 (교대 간 지속의 열쇠는 이름이다).
+ * 이름은 처음 20줄의 0·1번 자리가 NAMES[줄 × 2 + 자리], 그 밖의 자리는 EXTRA_NAMES 를 표준 자리 첨자로 (설계서 R1 5절).
+ * createRoster 도 이 목록에서 이름을 읽는다 — 같은 식이 두 곳에 있지 않게. 처음 부를 때 한 번 만든다
+ */
+export function rosterKeys(): readonly RosterKey[] {
+  if (rosterKeyList) return rosterKeyList;
+  const out: RosterKey[] = [];
+  let extra = 0;                           // EXTRA_NAMES 의 첨자: 표준 표의 자리마다 하나 (편성되지 않은 줄, 빠진 자리도 자기 번호를 차지한다)
+  UNIT_DEFS.forEach((d, di) => {
+    const std = STAFF[d.kind].std;
+    for (let k = 0; k < std.length; k++) out.push({ name: di < LEGACY_ROWS && k < 2 ? NAMES[di * 2 + k] : EXTRA_NAMES[extra++], callsign: d.callsign, slot: k });
+  });
+  rosterKeyList = out;
+  return out;
+}
+
+/**
  * 대원 능력은 고정된 조직 시드에서 만든다(같은 대원이 매 교대에 등장). 장비 상태는 교대 시드에서 만든다.
  * 부대마다의 자리는 crews.ts 의 STAFF 를 따른다. 능력의 난수는 두 흐름이다 (설계서 R1 5절):
  *  - 처음 20줄의 0·1번 자리: roster-v1 에서 줄 순서대로 한 명당 6번(경험 → 능력 다섯). 편성되지 않는 부대도 똑같이 뽑는다.
@@ -89,7 +148,8 @@ export function createRoster(sim: Sim): void {
   // 의료 헬기가 편성되지 않는 부대 규모(1·2)에서는 소방 헬기가 예전처럼 구급차를 대신할 수 있다 (구급 능력 0.7 = 관제의 기준. 설계서 R1 17절의 위험과 그 대책).
   // 능력 표(KIND)는 같은 종류의 부대가 함께 쓰는 객체이므로 그 헬기 것만 따로 만든다
   const medHeliFielded = UNIT_DEFS.some((q) => q.kind === 'medHeli' && q.minLevel <= tn.unitLevel);
-  let extra = 0;                           // EXTRA_NAMES 의 첨자: 표준 표의 자리마다 하나 (편성되지 않은 줄, 빠진 자리도 자기 번호를 차지한다)
+  const keys = rosterKeys();               // (I2) 이름은 조직 명부의 열쇠에서 — 편성표 줄 × 표준 자리마다 하나 (편성되지 않은 줄, 빠진 자리도 자기 번호를 차지한다)
+  let ki = 0;
   UNIT_DEFS.forEach((d, di) => {
     const f = sim.city.facilities.find((q) => q.name === d.facility)!;
     const home = sim.city.nodes[f.nodeId];
@@ -102,7 +162,7 @@ export function createRoster(sim: Sim): void {
       const legacy = di < LEGACY_ROWS && k < 2;
       // 편성되지 않는 부대·빠지는 자리도 난수는 똑같이 뽑는다(부대 규모를 바꿔도 같은 대원은 같은 능력치를 갖도록)
       const rng = legacy ? rosterRng : new Rng(ROSTER_SEED).fork(`roster-v2:${d.callsign}:${k}`);
-      const name = legacy ? NAMES[di * 2 + k] : EXTRA_NAMES[extra++];
+      const name = keys[ki++].name;      // 처음 20줄의 0·1번 자리는 NAMES, 그 밖은 EXTRA_NAMES (rosterKeys)
       const senior = k === 0;
       const st = () => clamp(rng.range(0.3, 0.95), 0, 1);
       const exp = legacy ? (senior ? rng.range(0.6, 0.97) : rng.range(0.12, 0.6))
@@ -113,8 +173,9 @@ export function createRoster(sim: Sim): void {
         skill, judgment: clamp(st() * 0.65 + exp * 0.35, 0.2, 0.98), composure: st(), fitness: st(), teamwork: st(), experience: exp,
         skills: skillsOf(role, skill),      // 능력은 역할의 식으로만 정한다 (추가 난수 없음)
         trait: '', health: 100, stamina: tn.startStamina, status: 'ok', xpGained: 0, incidentsWorked: 0,
-        role, kit: kitFor(role, tn.airFull),      // 공기통은 장비 손잡이의 용량으로 가득 채워 나간다
+        role, kit: kitFor(role, tn.airFull, kitIdsOf(d.kind, k)),      // 공기통은 장비 손잡이의 용량으로 가득 채워 나간다. 장비는 역할의 기본 장비 (복구반장만 부대마다 — kitIdsOf)
         injuries: undefined, bleed: undefined, bleed0: undefined, treatQ: undefined, dead: undefined, tDown: undefined, tDead: undefined, care: undefined, deathCause: undefined, bleedCause: undefined,      // (H1) 부상 — 없으면 "다친 적 없음"
+        seat: undefined, relief: undefined, carryOut: undefined, carryCause: undefined,      // (I2) 이어받은 상태 — persist.ts 가 채운다 (단계 2)
       };
       r.trait = traitOf(r);
       if (include && !(minimal && staff.minDrop.indexOf(k) >= 0)) { crew.push(r.id); sim.responders.push(r); members.push(r); }
@@ -137,6 +198,8 @@ export function createRoster(sim: Sim): void {
       aid: undefined, heavy: undefined, backing: undefined, curb: undefined, curbT: undefined, parking: undefined,      // 나중에 붙는 칸을 미리 비워 둔다: 모든 부대가 같은 모양의 객체가 된다
       ...fitOf(d),
       aboard: undefined, firstLoadAt: undefined, oosEv: undefined,      // (H1) 부상 대원·용의자의 후송 — 쓰는 것은 단계 4b 부터
+      ammoBox: ammoBoxOf(d.kind, tn.ammoBox), ammoBoxMax: ammoBoxOf(d.kind, tn.ammoBox), sparePump: sparePumpOf(d.kind, tn.sparePump),      // (R3) 탄약 상자(2단계 — 장비 손잡이)·예비 펌프(3단계 — 장비 손잡이, 물탱크가 있는 부대만)
+      readyAt: undefined, oosWhy: undefined, pumpFails: 0,      // (I2) 정비 중인 부대의 운용 시각·oos 의 이유(단계 3·2)·이번 교대의 펌프 고장 수(단계 3)
     };
     if (u.sea) { u.x = u.px = f.x + 30; u.y = u.py = coastY(f.x + 30) + SEA_OFF; }
     if (u.air) {
@@ -150,13 +213,24 @@ export function createRoster(sim: Sim): void {
   });
   // 개인 장비의 고장 추첨: 교대 흐름 'kit' 하나로, 편성된 대원만 (대원 순서 × 장비 순서). 고장은 처음 쓰려 할 때 드러난다
   drawFaults(sim.rng.fork('kit'), sim.responders, tn.kitFault);
+  // (N9 §5.12) 잠수 장비(batch 'n9')는 kit 의 추첨 순서에 끼지 않고 그 뒤에 따로 kit-n9 흐름에서 같은 순서·같은 확률로 뽑는다 (든 대원이 편성되지 않으면 한 번도 뽑지 않는다)
+  drawBatchFaults(sim.rng.fork('kit-n9'), sim.responders, tn.kitFault, 'n9');
+  // (R2 §3.3) 대응 방법의 고장 나는 장비(batch 'r2' — 고무보트·송풍기·에어백)도 따로 kit-r2 흐름에서 (역할 장비 끝에 붙여도 kit 의 뒤 장비 고장이 밀리지 않는다)
+  drawBatchFaults(sim.rng.fork('kit-r2'), sim.responders, tn.kitFault, 'r2');
 }
 
 // 지원 부대의 이름: 지원 한 번에 네 칸씩 쓴다(지원 종류의 최소 인원은 많아야 4명). 지원은 교대당 많아야 5회, 재난 때 3회 더(disaster.ts) — 8회 × 4칸
 const AID_NAMES = ['한도현', '서지우', '문태윤', '양서아', '고준혁', '배하린', '남건우', '유채원', '심재민', '노은서', '하승우', '전소율', '곽민석', '우다인', '진현수', '방예린',
-  '국태린', '마하겸', '도은결', '위서담', '기서후', '나도겸', '라온유', '모아진', '범준기', '빈세현', '사윤호', '어진솔', '예다함', '은가람', '인태오', '피세온'];
-const AID_KIND: Record<keyof Needs, UnitKind> = { suppression: 'engine', rescue: 'rescue', ems: 'bls', law: 'patrol', tactical: 'tactical', search: 'patrol', traffic: 'patrol', eod: 'eod' };
-const AID_CALL: Partial<Record<UnitKind, string>> = { engine: '지원진압', rescue: '지원구조', als: '지원구급', bls: '지원구급', patrol: '지원순찰', tactical: '지원기동', eod: '지원폭발물' };
+  '국태린', '마하겸', '도은결', '위서담', '기서후', '나도겸', '라온유', '모아진', '범준기', '빈세현', '사윤호', '어진솔', '예다함', '은가람', '인태오', '피세온',
+  // (N8 §4.9) 새 지원 수요 넷(전력·가스·수도·포획) × 4칸 — 끝에 붙인다. 교대당 지원은 많아야 8회(aidUsed 0~7 → 첨자 0~31)라 앞의 이름이 바뀌지 않는다
+  '강서율', '구하진', '길도담', '나은후', '단서연', '류하온', '맹지섭', '목하늘', '방지오', '서한별', '소이안', '안도유', '옥서진', '육하람', '장도경', '편지안',
+  // (N9 §4.8) 새 지원 수요 하나(제독) × 4칸 — 끝에 붙인다 (교대당 지원 8회 안에서는 앞의 이름이 그대로다)
+  '권이준', '소하윤', '차서진', '하은별'];
+const AID_KIND: Record<keyof Needs, UnitKind> = { suppression: 'engine', rescue: 'rescue', ems: 'bls', law: 'patrol', tactical: 'tactical', search: 'patrol', traffic: 'patrol', eod: 'eod',
+  utilPower: 'powerCrew', utilGas: 'gasCrew', utilWater: 'waterCrew', tow: 'tow', capture: 'animalCtl',      // (N8) 견인은 지원을 부르지 않는다(§5.3.8 — 밀어 둠이 언제나 있다): AID_KIND.tow 는 표를 채우려고만 둔다
+  decon: 'deconUnit' };      // (N9 §5.3.1) 지원 제독차 (최소 인원 — 팀장·제독 대원 둘)
+const AID_CALL: Partial<Record<UnitKind, string>> = { engine: '지원진압', rescue: '지원구조', als: '지원구급', bls: '지원구급', patrol: '지원순찰', tactical: '지원기동', eod: '지원폭발물',
+  powerCrew: '지원전력', gasCrew: '지원가스', waterCrew: '지원수도', animalCtl: '지원포획', deconUnit: '지원제독' };
 
 /**
  * 인근 도시 지원 부대를 만든다. 도시 가장자리의 교차로 가운데 사건 현장에 가장 빨리 닿는 곳에서 출발한다.
@@ -188,8 +262,9 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
       skill, judgment: clamp(st() * 0.65 + exp * 0.35, 0.2, 0.95), composure: st(), fitness: st(), teamwork: st() * 0.85, experience: exp,
       skills: skillsOf(role, skill),
       trait: '', health: 100, stamina: 88, status: 'ok', xpGained: 0, incidentsWorked: 0,
-      role, kit: kitFor(role, tn.airFull),
+      role, kit: kitFor(role, tn.airFull, kitIdsOf(kind, slot)),
       injuries: undefined, bleed: undefined, bleed0: undefined, treatQ: undefined, dead: undefined, tDown: undefined, tDead: undefined, care: undefined, deathCause: undefined, bleedCause: undefined,      // (H1) 편성표 대원과 같은 칸, 같은 순서
+      seat: undefined, relief: undefined, carryOut: undefined, carryCause: undefined,      // (I2) 편성표 대원과 같은 칸, 같은 순서
     };
     r.trait = traitOf(r);
     crew.push(r.id); sim.responders.push(r); members.push(r);
@@ -210,19 +285,33 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
     field: undefined, air: undefined, sea: undefined, aid: true, heavy: undefined, backing: undefined, curb: undefined, curbT: undefined, parking: undefined,      // 편성표 부대와 같은 칸, 같은 순서
     ...fitOf(d),      // 환자 자리·예비 공기통도 편성표 부대와 같게 (빠뜨리면 지원 구급차가 환자를 싣지 못한다)
     aboard: undefined, firstLoadAt: undefined, oosEv: undefined,      // (H1) 편성표 부대와 같은 칸, 같은 순서
+    ammoBox: ammoBoxOf(kind, tn.ammoBox), ammoBoxMax: ammoBoxOf(kind, tn.ammoBox), sparePump: sparePumpOf(kind, tn.sparePump),      // (R3) 편성표 부대와 같은 칸, 같은 순서
+    readyAt: undefined, oosWhy: undefined, pumpFails: 0,      // (I2) 편성표 부대와 같은 칸, 같은 순서
   };
   if (HEAVY[kind]) u.heavy = true;
   drawFaults(rng, members, tn.kitFault);      // 펌프 상태 다음에 뽑는다 (같은 흐름 aid:<n> 의 끝)
+  drawBatchFaults(sim.rng.fork('aid-n9:' + sim.aidUsed), members, tn.kitFault, 'n9');      // (N9) 잠수 장비는 따로 (지원 종류에는 그 장비를 든 자리가 없다 — 지금은 한 번도 뽑지 않는다)
+  drawBatchFaults(sim.rng.fork('aid-r2:' + sim.aidUsed), members, tn.kitFault, 'r2');      // (R2 §3.3) 대응 방법의 고장 나는 장비도 따로 (지원 구조대의 로프 대원이 든 고무보트)
   sim.units.push(u);
   return u;
 }
 
 /** 현장에 내리는 대원의 이름 (조종사·정장처럼 내리지 않는 자리는 뺀다) */
 export function crewNames(sim: Sim, u: Unit): string { return fieldCrew(sim, u).map((r) => sim.responders[r].name).join('·'); }
-/** 지금 현장에 내릴 수 있는 대원 수: 내리는 자리(fieldCrew) 가운데 상태가 'ok' 인 사람 */
+/** 온전한 대원 수: 내리는 자리(fieldCrew) 가운데 다치지 않았고(status 'ok') 병원으로 후송되지 않은 사람 (H1 §3.6) */
+export function crewOk(sim: Sim, u: Unit): number {
+  const fc = fieldCrew(sim, u);
+  let n = 0; for (let k = 0; k < fc.length; k++) { const r = sim.responders[fc[k]]; if (r.status === 'ok' && r.care === undefined) n++; }
+  return n;
+}
+/**
+ * 걸을 수 있는 대원 수 = 지금 현장에 내릴 수 있는 대원 수 (온전한 대원 + 걸을 수 있는 다친 대원). 0 이면 배정에서 빠진다 —
+ * 운용 중단 규칙이 아니라 움직일 사람이 없어서다: 전원 순직, 또는 살아 있는 대원이 모두 쓰러졌거나 병원으로 후송됐다 (H1 §3.6, 사용자 결정 2026-11-15:
+ * 부대는 대원이 모두 숨졌을 때만 운용을 멈춘다 — 다치거나 일부가 숨진 부대는 배정 점수만 깎인다). sceneManager.unitArrived 가 내리는 사람과 같은 술어다(injury.canDeploy)
+ */
 export function crewReady(sim: Sim, u: Unit): number {
   const fc = fieldCrew(sim, u);
-  let n = 0; for (let k = 0; k < fc.length; k++) if (sim.responders[fc[k]].status === 'ok') n++;
+  let n = 0; for (let k = 0; k < fc.length; k++) if (canDeploy(sim.responders[fc[k]])) n++;
   return n;
 }
 
@@ -256,6 +345,16 @@ export function etaFor(sim: Sim, u: Unit, destNode: number): number {
   return r ? r.time + extra : 9999;
 }
 
+/**
+ * (I1-b 0단계) 출동 중에 만난 통제의 기록: 구간·부대, 그 구간을 막은 사건(closedReason 'incident' 인 구간을 blockedEdge 로 가진 열린 사건)과 그 사건의 통제 기록.
+ * 기록(ROUTE_BLOCKED 의 ref·causes)에만 쓴다 — 길을 고르는 판단은 이것을 읽지 않는다
+ */
+function blockRef(sim: Sim, u: Unit, e: RoadEdge): { ref: Problem['ref']; causes: number[] } {
+  let J: Incident | null = null;
+  if (e.closedReason === 'incident') for (let k = sim.incidents.length - 1; k >= 0; k--) { const q = sim.incidents[k]; if (q.blockedEdge === e.id && q.phase !== 'closed') { J = q; break; } }
+  return { ref: { inc: J ? J.id : undefined, unit: u.id, edge: e.id }, causes: J && J.blockEv !== undefined ? [J.blockEv] : [] };
+}
+
 function setRoute(sim: Sim, u: Unit, to: number): void {
   u.destNode = to; u.seg = 0; u.segT = 0; u.backing = false;
   u.route = u.nodeId === to ? null : findRoute(sim.city, u.nodeId, to, weatherSpeedFactor(sim), -1, u.heavy);
@@ -272,9 +371,10 @@ function turnBack(sim: Sim, u: Unit, e: RoadEdge, o: Obstacle, wf: number): void
   let remainT = (1 - u.segT) * et; for (let k = u.seg + 1; k < rt.edges.length; k++) remainT += edgeTime(city.edges[rt.edges[k]], wf, u.heavy);
   const alt = findRoute(city, A, u.destNode!, wf, -1, u.heavy);
   if (u.state === 'enroute' && u.incidentId !== null) {
+    const br = blockRef(sim, u, e);
     raiseProblem(sim, sim.incidents[u.incidentId], 'ROUTE_BLOCKED', `${u.callsign} 이동 경로(${edgeName(city, e)}) 막힘 — ${o.label}`, {
-      role: 'UNIT', actor: u.callsign, text: `${u.callsign}: ${edgeName(city, e)} — ${josa(o.label, '으로/로')} 지나갈 수 없습니다. 되돌아 우회합니다.`, imp: 2,
-    }, false);
+      role: 'UNIT', actor: u.callsign, text: `${u.callsign}: ${edgeName(city, e)} — ${josa(o.label, '으로/로')} 지나갈 수 없습니다. 되돌아 우회합니다.`, imp: 2, causes: br.causes,
+    }, false, br.ref);
   }
   sim.traffic.stats.detours++; sim.traffic.stats.delaySec += Math.max(0, back + (alt ? alt.time : 0) - remainT);
   // 경로가 없으면 들어온 교차로까지만 되돌아가 기다린다 (아래의 "경로가 끊겨 대기"가 다시 시도한다)
@@ -295,7 +395,11 @@ export function dispatchUnit(sim: Sim, u: Unit, I: Incident, eta: number): void 
   u.incidentId = I.id; u.dispatchedAt = sim.t; u.estArrive = sim.t + eta; u.runs++;
   u.boardOrder = null;
   if (wasMoving) { u.state = 'enroute'; sendUnitTo(sim, u, I.reportedNode); }
-  else { u.state = 'turnout'; u.timer = 5 + (1 - sim.responders[u.crew[0]].experience) * 3; u.destNode = I.reportedNode; }
+  else {
+    // 출동 준비 시간은 부대장(내리는 자리의 첫 사람)의 경험으로 — (I2) 결장(off)한 사람이면 나온 첫 사람. 결장이 없으면 fieldCrew 의 첫 사람 = u.crew[0] (0번 자리는 내리는 자리)
+    const lead = fieldCrew(sim, u).find((rid) => sim.responders[rid].status !== 'off') ?? u.crew[0];
+    u.state = 'turnout'; u.timer = 5 + (1 - sim.responders[lead].experience) * 3; u.destNode = I.reportedNode;
+  }
   if (I.assigned.indexOf(u.id) < 0) I.assigned.push(u.id);
   if (I.everAssigned.indexOf(u.id) < 0) I.everAssigned.push(u.id);
   if (u.air) { sim.airStats.sorties++; sim.airStats.byKind[u.kind] = (sim.airStats.byKind[u.kind] ?? 0) + 1; }      // 헬기 출동 횟수 (보고서)
@@ -350,6 +454,8 @@ export function airRtb(sim: Sim, u: Unit, reason: 'fuel' | 'storm'): void {
 }
 
 const CURB_SPEED = 42;      // 길가로 붙을 때의 속도 (지도 단위/초)
+/** (N8) 통제 부대를 기다린다고 알린 유관 기관 차량과 그 사건 (기록을 한 번만 남기는 표시 — 부대 객체의 모양을 바꾸지 않으려고 따로 둔다) */
+const civilHeld = new WeakMap<Unit, Incident>();
 function curbPos(sim: Sim, u: Unit): void {
   const n = sim.city.nodes[u.nodeId], k = u.curbT ?? 0;
   u.x = n.x + (u.curb!.x - n.x) * k; u.y = n.y + (u.curb!.y - n.y) * k;
@@ -385,28 +491,53 @@ function arrive(sim: Sim, u: Unit): void {
       if (len > 8) { u.curb = { x: pl.cx, y: pl.cy, len }; u.curbT = 0; u.parking = true; return; }
     }
     const took = sim.t - u.dispatchedAt, est = u.estArrive - u.dispatchedAt;
-    if (took > est * 1.35 + 6 && !I.pursuit) {
+    const held = u.dept === 'civil' && civilHeld.get(u) === I;      // (N8) 길가에서 기다리다 들어가는 유관 기관 차량 — 늦음은 처음 닿았을 때 한 번만 본다
+    if (!held && took > est * 1.35 + 6 && !I.pursuit) {
+      // (I1-b 0단계) 지나온 구간은 여기서 알 수 없다(경로는 이미 지웠다). 이번 출동에서 이 부대가 남긴 마지막 ROUTE_BLOCKED 가 있으면 그것을 원인으로 잇고 구간·막은 사건을 이어받는다 (없으면 혼잡만으로 늦은 것 — 비워 둔다)
+      let rb: Problem | null = null;
+      for (let k = I.problems.length - 1; k >= 0; k--) { const p = I.problems[k]; if (p.code === 'ROUTE_BLOCKED' && p.ref !== undefined && p.ref.unit === u.id && p.t >= u.dispatchedAt) { rb = p; break; } }
       raiseProblem(sim, I, 'TRAFFIC_DELAY', `${u.callsign} 도착이 예상보다 ${fmtSec(took - est)} 지연`, {
-        role: 'UNIT', actor: u.callsign, text: `${u.callsign}: 교통 상황으로 예상보다 ${fmtSec(took - est)} 늦게 도착.`, imp: 1,
-      });
+        role: 'UNIT', actor: u.callsign, text: `${u.callsign}: 교통 상황으로 예상보다 ${fmtSec(took - est)} 늦게 도착.`, imp: 1, causes: rb ? [rb.eventId] : undefined,
+      }, true, rb ? { inc: rb.ref!.inc, unit: u.id, edge: rb.ref!.edge } : { unit: u.id });
+    }
+    // (N8 §5.3.2) 유관 기관(civil)이 혼자 먼저 닿았다: 지휘관이 없으면 작업판이 없어 할 일이 없다. 현장에 들어가지 않고 길가에서 통제 부대(소방·경찰)를 기다린다 —
+    // 상태는 enroute 그대로라 tickUnits 가 매 틱 이 함수를 다시 부르고, 지상 대원이 처음 내린 다음 틱(또는 상공 도착이 있으면)에 들어간다. 기록은 한 번만
+    if (u.dept === 'civil' && I.firstArrivalAt < 0 && (sim.scenes[I.id]?.airAt ?? -1) < 0) {
+      if (!held) { civilHeld.set(u, I); emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign}: 현장 도착 — 통제 부대를 기다립니다.` }); }
+      if (u.curb) u.parking = true;      // 길가에 선 채로 (tickUnits 의 길가 갈래가 다음 틱에 다시 이 함수를 부른다 — 떠나는 갈래로 빠지지 않게)
+      return;
     }
     u.state = 'onscene';
     unitArrived(sim, I, u);
   } else if (u.state === 'transport') {
     // 응급실이 붐비면(먼저 온 구급차가 인계 중이면) 인계가 늦어진다
     const waiting = sim.units.filter((q) => q.id !== u.id && q.state === 'hospital' && q.nodeId === u.nodeId).length;
-    u.state = 'hospital'; u.timer = 8 + waiting * 9 + Math.max(0, u.patients.length - 1) * 3;
-    if (waiting > 0) emit(sim, { inc: u.patientsIncident ?? -1, role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign}: 응급실이 붐벼 환자 인계가 늦어집니다 (앞에 ${waiting}대).` });
+    const riders = u.aboard ? u.aboard.length : 0;      // 다친 대원도 인계에 시간이 든다
+    u.state = 'hospital'; u.timer = 8 + waiting * 9 + Math.max(0, u.patients.length + riders - 1) * 3;
+    if (waiting > 0) emit(sim, { inc: u.patientsIncident ?? (riders > 0 ? u.aboard![0].inc : -1), role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, text: `${u.callsign}: 응급실이 붐벼 환자 인계가 늦어집니다 (앞에 ${waiting}대).` });
   } else if (u.state === 'returning') {
     u.water = u.waterMax; u.hydrant = false;
     if (u.air) { u.fuel = u.fuelMax; u.bucket = u.bucketMax; }      // 집에 닿은 헬기는 연료와 물 바구니를 채운다
     // 집에 닿으면 예비 공기통을 다시 싣고 대원의 공기통도 가득 채운다
     if (KIND[u.kind].spareAir > 0) u.spareAir = KIND[u.kind].spareAir;
     for (let ci = 0; ci < u.crew.length; ci++) refillAir(sim, u.crew[ci]);
+    // (R3 §2.9) 탄약 상자를 다시 싣고 대원의 총기도 가득 (공기통과 같은 자리)
+    if (u.ammoBoxMax !== undefined) u.ammoBox = u.ammoBoxMax;
+    if (u.sparePump !== undefined) u.sparePump = sparePumpOf(u.kind, sim.tune.sparePump);      // (R3 F10) 예비 펌프도 다시 싣는다
+    for (let ci = 0; ci < u.crew.length; ci++) refillGuns(sim, u.crew[ci]);
     if (u.pumpFailed) { u.pumpFailed = false; u.pumpCond = 0.55; }
     u.state = crewReady(sim, u) === 0 || u.aid ? 'oos' : 'available';
     if (u.aid) emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', text: `${u.callsign}: 지원 임무를 마치고 관할로 복귀했습니다.`, imp: 1 });
-    else if (u.state === 'oos') emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', text: `${u.callsign} 대원 전원 부상으로 운용 중단.`, imp: 2 });
+    else if (u.state === 'oos') {
+      // 걸을 수 있는 대원이 한 명도 없다 (crewReady 0). 까닭은 그 자리의 상태로 가린다: 모두 숨졌다 / 숨지지 않은 대원이 모두 병원으로 갔다 / (드물게) 쓰러진 채 남았다.
+      // 다쳐도 걸을 수 있으면 나가므로 '전원 부상'은 더는 까닭이 아니다. 원인은 그 부대의 마지막 부상·순직 기록(u.oosEv)
+      // (I2) 결장(off)한 사람은 '숨진 대원'도 '남은 대원'도 아니다 — 이번 교대에 나온 사람만 본다 (문구는 그대로)
+      const fc = fieldCrew(sim, u);
+      let alive = 0, cared = 0;
+      for (let k = 0; k < fc.length; k++) { const r = sim.responders[fc[k]]; if (r.status === 'off') continue; if (!r.dead) { alive++; if (r.care !== undefined) cared++; } }
+      const why = alive === 0 ? '대원 전원 순직 — 운용 중단.' : cared === alive ? '남은 대원 모두 병원 이송 — 운용 중단.' : '걸을 수 있는 대원이 없어 운용 중단.';
+      emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', text: `${u.callsign} ${why}`, imp: 2, causes: [u.oosEv ?? -1] });
+    }
   }
 }
 
@@ -417,13 +548,13 @@ export function tickUnits(sim: Sim): void {
     if (u.state !== 'available' && u.state !== 'oos') u.busyTime += dt;
     if (u.state === 'available' || u.state === 'returning') {
       const rate = u.state === 'available' ? 0.55 : 0.2;
-      for (let ci = 0; ci < u.crew.length; ci++) { const r = sim.responders[u.crew[ci]]; if (r.status === 'ok') r.stamina = Math.min(100, r.stamina + rate * dt); }
+      for (let ci = 0; ci < u.crew.length; ci++) { const r = sim.responders[u.crew[ci]]; if (r.status === 'ok' || (r.status === 'injured' && r.care === undefined)) r.stamina = Math.min(100, r.stamina + rate * dt); }      // 걸을 수 있는 다친 대원도 쉰다 (H1 §3.6 — 부대에 남아 다음 현장에 내린다)
     }
     if (u.state === 'transport' && u.patientsIncident !== null) {
       // 이송 중 처치: 탑승 후 몇 초 뒤 구급대원이 차 안에서 응급 처치를 마친다
       const sc = sim.scenes[u.patientsIncident];
       // 차 안의 처치 수준은 함께 탄 대원(내리는 자리) 가운데 가장 좋은 의료 장비를 든 사람의 것이다
-      let med = 0; if (sc && u.patients.length) { const fc = fieldCrew(sim, u); for (let k = 0; k < fc.length; k++) if (!sim.responders[fc[k]].dead) med = Math.max(med, medLevelOf(sim, fc[k])); }      // 순직한 대원은 처치하지 못한다 (H1)
+      let med = 0; if (sc && u.patients.length) { const fc = fieldCrew(sim, u); for (let k = 0; k < fc.length; k++) { const q = sim.responders[fc[k]]; if (!q.dead && q.status !== 'off') med = Math.max(med, medLevelOf(sim, fc[k])); } }      // 순직한 대원은 처치하지 못한다 (H1). (I2) 결장한 대원은 차에 타지 않았다
       if (sc) for (const cid of u.patients) {
         const c = sc.casualties[cid];
         const q = Math.min(1, med * 0.95);
@@ -460,14 +591,28 @@ export function tickUnits(sim: Sim): void {
       if (u.timer <= 0) {
         const I = u.patientsIncident !== null ? sim.incidents[u.patientsIncident] : null;
         const scene = I ? sim.scenes[I.id] : null;
+        const parts: string[] = [];
         if (scene) {
           for (const cid of u.patients) {
             const c = scene.casualties[cid];
             if (!c.dead) { c.where = 'hospital'; c.tHospital = sim.t; }
           }
-          const alive = u.patients.filter((cid) => !scene.casualties[cid].dead).length;
-          emit(sim, { inc: I!.id, role: 'UNIT', actor: u.callsign, kind: 'casualty', text: `${u.callsign}: ${sim.city.facilities.find((f) => f.kind === 'hospital' && f.nodeId === u.nodeId)?.name ?? '병원'} 도착, 환자 ${alive}명 인계 완료.`, imp: 1 });
+          parts.push(`환자 ${u.patients.filter((cid) => !scene.casualties[cid].dead).length}명`);
         }
+        // 구조 대상이 아닌 환자(다친 대원·용의자)의 인계 — 그 사람들만 태운 차량은 patientsIncident 가 없으므로 위의 갈래 밖에서 한다 (H1 §3.4-4)
+        const ab = u.aboard;
+        let mates = 0, sus = 0, abInc = -1;
+        if (ab && ab.length) {
+          abInc = ab[0].inc;
+          for (let k = 0; k < ab.length; k++) {
+            if (ab[k].kind === 'mate') { const r = sim.responders[ab[k].id]; r.care = 'hospital'; r.bleed = 0; mates++; }
+            else { const hs = sim.scenes[ab[k].inc]; const h = hs ? hs.hostiles[ab[k].id] : undefined; if (h && !h.dead) { h.where = 'hospital'; h.bleed = 0; } sus++; }      // 용의자: 병원 인계 뒤의 경찰 인계는 모델 밖이다 (H1 §4.3)
+          }
+          ab.length = 0;
+        }
+        if (mates > 0) parts.push(`부상 대원 ${mates}명`);
+        if (sus > 0) parts.push(`용의자 ${sus}명`);
+        if (parts.length) emit(sim, { inc: I ? I.id : abInc, role: 'UNIT', actor: u.callsign, kind: 'casualty', text: `${u.callsign}: ${sim.city.facilities.find((f) => f.kind === 'hospital' && f.nodeId === u.nodeId)?.name ?? '병원'} 도착, ${parts.join('·')} 인계 완료.`, imp: 1 });
         u.patients = []; u.patientsIncident = null; u.firstLoadAt = undefined;
         releaseUnit(sim, u);
       }
@@ -511,9 +656,10 @@ export function tickUnits(sim: Sim): void {
       if ((first.closed && first.known !== false) || (u.heavy && first.noHeavy)) {
         const alt = findRoute(city, u.nodeId, u.destNode!, wf, -1, u.heavy);
         if (alt && u.state === 'enroute' && u.incidentId !== null) {
+          const br = blockRef(sim, u, first);
           raiseProblem(sim, sim.incidents[u.incidentId], 'ROUTE_BLOCKED', `${u.callsign} 이동 경로(${edgeName(city, first)}) 통제`, {
-            role: 'UNIT', actor: u.callsign, text: `${u.callsign}: ${edgeName(city, first)} 통제 확인. 우회 경로로 변경합니다.`, imp: 2,
-          }, false);
+            role: 'UNIT', actor: u.callsign, text: `${u.callsign}: ${edgeName(city, first)} 통제 확인. 우회 경로로 변경합니다.`, imp: 2, causes: br.causes,
+          }, false, br.ref);
         }
         u.route = alt; u.seg = 0; u.segT = 0;
         if (!u.route) continue;      // 길이 끊겼다: 여기서 기다린다 (위의 재시도가 다시 본다)
@@ -546,9 +692,10 @@ export function tickUnits(sim: Sim): void {
         if (alt) {
           const add = Math.max(0, alt.time - remainT);
           if (u.state === 'enroute' && u.incidentId !== null) {
+            const br = blockRef(sim, u, next);
             raiseProblem(sim, sim.incidents[u.incidentId], 'ROUTE_BLOCKED', `${u.callsign} 이동 경로(${edgeName(city, next)}) 통제`, {
-              role: 'UNIT', actor: u.callsign, text: `${u.callsign}: ${edgeName(city, next)} 통제 확인. 우회 경로로 변경합니다 (약 ${fmtSec(add)} 추가).`, imp: 2,
-            }, false);
+              role: 'UNIT', actor: u.callsign, text: `${u.callsign}: ${edgeName(city, next)} 통제 확인. 우회 경로로 변경합니다 (약 ${fmtSec(add)} 추가).`, imp: 2, causes: br.causes,
+            }, false, br.ref);
           }
           u.route = alt; u.seg = 0; u.segT = 0;
         } else { u.route = null; break; }

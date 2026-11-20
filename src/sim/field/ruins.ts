@@ -4,6 +4,8 @@ import type { Sim } from '../engine';
 import type { FallRecord, Scene } from '../types';
 
 export const RUIN_WALL = 1, RUIN_SECONDARY = 8, RUIN_CEILING = 9, RUIN_FURN = 16;
+/** (X6) 전체 붕괴의 잔해 바닥 — markRuin 이 아직 0 인 칸에만 적는다 (벽·가구였던 칸은 그 모습을 지킨다) */
+export const RUIN_TOTAL = 10;
 /** 테스트 전용 스위치: 끄면 아무것도 기록하지 않는다 */
 export const RUIN_LOG = { on: true };
 

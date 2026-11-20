@@ -31,7 +31,10 @@ import { drawBlastScars, drawDangerZones, drawFallMoments, drawFallRing, drawGas
 import type { HazardLabel } from './scene/hazardFx';
 import { gasView, hostageState, rekindledRegions } from './hazardState';
 import { ruinZones, strokeRuinEdges } from './scene/ruins';
+import { drawCatOver, drawCatUnder, drawTrappedDebris } from './scene/catLayer';
 import { TRIAGE, TRIAGE_EDGE, TRIAGE_TEXT, casBand, casDrawn, casSheet, hostileBand, hostileDrawn, hostileSheet, hurtPose, respBand, respLying, respSheet } from './triage';
+import { THROW_RELEASE, drawBarricades, drawBoats, drawCharges, drawMethodFx, inBoat, swimming } from './scene/methodsLayer';      // (R2 1d) 대응 방법의 그림 — 수난: 줄·장대·보트·헤엄치는 대원
+import { drawMethodGround, drawMethodOver, drawPowder, sniperSet } from './scene/methodsLayer';      // (R2 단계 4·5·6) 송풍기·바람·고가 사다리·저격 자리와 조준선·대피 방송·소화기 분말
 
 /** 현장 화면의 시점: 중심(타일 좌표)과 배율(1 = 현장 전체가 보인다) */
 export interface SceneCam { x: number; y: number; zoom: number }
@@ -98,6 +101,7 @@ function kickOpen(how: string, age: number): number | null {
   if (how === 'open' || age < 0) return null;
   if (how === 'push') return age < 0.15 ? Math.min(1, age * 9) : null;
   if (how === 'hydraulic') return age < 0.4 ? Math.min(1, age * 6) : null;
+  if (how === 'charge') return age < 0.6 ? 1 : null;      // (R2 §4.2a) 폭파: 문짝이 바로 끝까지 (날아간 문)
   const peak = how === 'kick' ? 1.12 : 1.18, rise = peak / 22, end = how === 'kick' ? 0.3 : 0.35;
   if (age < rise) return age * 22;
   if (age < end) return peak - (peak - 1) * ((age - rise) / (end - rise));
@@ -153,10 +157,51 @@ function agentPose(sim: Sim, s: Scene, a: FieldAgent, moving: boolean): { arms: 
   const gun: Item = hasKit(sim, rid, 'sniper') ? 'sniper' : hasKit(sim, rid, 'rifle') ? 'rifle' : 'pistol';
   // 문을 여는 도구: 파괴 장비면 공성추, 할리건·도끼 묶음이면 할리건, 그 밖에는 도끼
   const opener: Item = hasKit(sim, rid, 'breachKit') ? 'ram' : hasKit(sim, rid, 'irons') ? 'halligan' : 'axe';
+  // (R2 1d) 대응 방법이 자세를 먼저 정한다 (G5 의 하위 작업 분기보다 앞) — 수난 구조: 보트 위는 앉은 자세, 손·하류 차단·장대는 무릎 꿇고 뻗기,
+  // 던지는 방법은 줄을 놓을 때까지 팔을 젖히고(감긴 줄·구명환·이은 옷) 놓은 뒤에는 줄을 잡아 당긴다, 줄 확보는 자리를 잡으면 줄을 잡아 버틴다
+  const wt = a.task && a.task.kind === 'waterRescue' ? a.task : null;
+  if (wt && wt.method === 'boat' && a.afloat === 'boat') return { arms: 'side', item: 'none' };
+  if (wt && wt.method && !moving) {
+    const busy = a.ring > 0.01;
+    switch (wt.method) {
+      case 'hand': case 'catch': if (busy) return { arms: 'reach', item: 'none' }; break;
+      case 'pole': if (busy) return { arms: 'reach', item: 'pole' }; break;
+      case 'rope': case 'ring': case 'improvise':
+        if (busy && wt.phase !== 1) return a.ring < THROW_RELEASE ? { arms: 'throw', item: wt.method === 'improvise' ? 'cloth' : wt.method } : { arms: 'hold', item: 'rope' };
+        break;
+      case 'tend': if (wt.phase >= 1) return { arms: 'hold', item: 'rope' }; break;
+    }
+  }
+  // (R2 단계 2) 문·통로의 방법 (본 임무 force·clear 와 이동 중 하위 작업): 폭파는 설치할 때 맨손 작업, 물러서면 웅크린다. 할리건·충격기·유압 개방기는 그 도구, 발로 차기·손으로 치우기는 맨손
+  const bt = a.task ? (a.task.sub && (a.task.sub.kind === 'force' || a.task.sub.kind === 'clear') ? a.task.sub : a.task.kind === 'force' || a.task.kind === 'clear' ? a.task : null) : null;
+  if (bt && bt.method && !moving) {
+    switch (bt.method) {
+      case 'charge': return bt.phase === 0 ? { arms: 'work', item: 'none' } : { arms: 'kneel', item: 'none' };
+      case 'kick': case 'handClear': return { arms: 'work', item: 'none' };
+      case 'irons': return { arms: 'work', item: 'halligan' };
+      case 'ram': return { arms: 'work', item: 'ram' };
+      case 'hydraulic': return { arms: 'work', item: 'spreader' };
+    }
+  }
+  // 동료가 잠긴 방 문을 폭파로 여는 동안 물러선 자리(t.range = 1)에서 기다리는 진입조는 웅크린다
+  if (a.task && a.task.kind === 'engage' && a.task.entryDoor !== undefined && a.task.range === 1 && !moving) return { arms: 'kneel', item: 'none' };
   if (a.carrying >= 0 || a.carrying <= -2) return { arms: 'drag', item: 'none' };
   if (sim.t - (a.taserAt ?? -99) < 1) return { arms: 'aim', item: 'taser' };
   // (G5) 길 위의 잠긴 문을 강제로 여는 중(하위 작업): 도구를 든다
   if (a.task && a.task.sub && a.task.sub.kind === 'force' && !moving) return { arms: 'work', item: opener };
+  // (R2 단계 4·5·6) 화재·무장·누출·통제의 방법: 소화기는 허리에 받친 소화기를 겨눈다(다가가는 동안에도 — 관창이 없다). 배연·환기 후 차단은 출입구로 가는 동안과
+  // 밸브 곁에서 환기를 기다리는 동안 빈손, 설치하는 동안(phase 5) 맨손 작업. 비살상탄은 주황 발사기를 두 손으로 겨눈다(상대가 무력화되면 지금처럼 덮쳐 제압).
+  // 대피 방송은 출입구 통제 자리에서 확성기. 저격은 지금처럼 저격 소총 — 저격 자리에서 몸을 낮추는 것은 drawPerson 의 crouch(methodsLayer.sniperSet)
+  const mt = a.task;
+  if (mt && mt.method) {
+    switch (mt.method) {
+      case 'extinguisher': if (mt.kind === 'suppress') return { arms: 'aim', item: 'extinguisher' }; break;
+      case 'ventilate': if (mt.kind === 'suppress') return mt.phase === 5 && !moving ? { arms: 'work', item: 'none' } : { arms: 'side', item: 'none' }; break;
+      case 'ventFirst': if (mt.kind === 'mitigate' && mt.phase < 7) return mt.phase === 5 && !moving ? { arms: 'work', item: 'none' } : { arms: 'side', item: 'none' }; break;
+      case 'beanbag': { const h = s.hostiles[mt.hostile]; if ((mt.kind === 'engage' || mt.kind === 'arrest') && h && sim.t >= h.stunUntil) return { arms: 'aim', item: 'launcher' }; break; }
+      case 'announce': if (mt.kind === 'perimeter' && a.spot >= 0 && !moving) return { arms: 'megaphone', item: 'none' }; break;
+    }
+  }
   const shield = hasKit(sim, rid, 'shield');
   if (tk === 'engage' || tk === 'perimeter') return { arms: 'aim', item: shield ? 'shield' : gun };
   if (tk === 'suppress' || (tk === 'overhaul' && !moving)) return { arms: 'hose', item: 'none' };
@@ -232,12 +277,14 @@ function spreadAirs(airs: AirDraw[], ts: number, timeMs: number): void {
   }
 }
 type SceneLabel = { x: number; y: number; text: string; col: string };
+/** 이름표가 피해 가는 고정 글자의 자리 (가운데 x·y, 너비·높이 — 화소) */
+type LabelBox = { x: number; y: number; w: number; h: number };
 /**
  * 같은 글자의 이름표가 겹치면 하나로 모은다 (대기 지점에 여럿이 모이면 "대기"가 겹겹이 쌓여 읽을 수 없다).
  * 자리는 모인 것들의 가운데·맨 위. 분야가 섞였으면 글자색을 중립색으로 쓴다(이름표의 색 = 분야).
  */
-function mergeLabels(ctx: G, labels: SceneLabel[], fs: number, ts: number): SceneLabel[] {
-  if (MINI || labels.length < 2) return labels;
+function mergeLabels(ctx: G, labels: SceneLabel[], fs: number, ts: number, pinned: readonly LabelBox[] = []): SceneLabel[] {
+  if (MINI || (labels.length < 2 && !pinned.length)) return labels;
   ctx.font = `600 ${fs}px ${FONT}`;
   type M = SceneLabel & { w: number; n: number };
   let out: M[] = labels.map((l) => ({ x: l.x, y: l.y, text: l.text, col: l.col, w: ctx.measureText(l.text).width + fs * 0.8, n: 1 }));
@@ -254,12 +301,14 @@ function mergeLabels(ctx: G, labels: SceneLabel[], fs: number, ts: number): Scen
     out = next;
     if (!merged) break;
   }
-  // 글자가 다른 이름표끼리 겹치면 뒤의 것을 한 줄 위로 올린다 (많아야 두 줄)
-  for (let i = 1; i < out.length; i++) {
+  // 글자가 다른 이름표끼리 겹치면 뒤의 것을 한 줄 위로 올린다 (많아야 두 줄).
+  // (H1 단계 7) 먼저 그려진 고정 글자(용의자의 상태 알약)도 피한다 — 쓰러진 용의자를 처치하는 대원의 이름표가 그 알약을 덮어 둘 다 읽히지 않았다
+  for (let i = 0; i < out.length; i++) {
     const l = out[i];
     for (let up = 0; up < 2; up++) {
       let clash = false;
       for (let j = 0; j < i; j++) { const q = out[j]; if (Math.abs(q.x - l.x) < (q.w + l.w) / 2 && Math.abs(q.y - l.y) < fs * 1.5) { clash = true; break; } }
+      if (!clash) for (const p of pinned) if (Math.abs(p.x - l.x) < (p.w + l.w) / 2 && Math.abs(p.y - l.y) < (p.h + fs * 1.5) / 2) { clash = true; break; }
       if (!clash) break;
       l.y -= fs * 1.6;
     }
@@ -467,6 +516,10 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   const smoke = MINI ? null : smokeLayer(s, ts, time, gv.gas);
   if (MINI) drawSmoke(ctx, s, ts, time, gv.gas); else if (smoke) ctx.drawImage(smoke, 0, 0, W, H);
 
+  // (R2 1d) 물에 띄운 보트 (사람보다 먼저 — 보트 안에 실린 사람과 앉은 대원이 그 위에)
+  if (!MINI) drawBoats(ctx, sim, s, ts, o.alpha, time);
+  if (!MINI) drawBarricades(ctx, s, ts);      // (R2 단계 2) 농성 문 안쪽에 쌓은 가구
+  if (!MINI) drawMethodGround(ctx, sim, s, ts, o.alpha, time);      // (R2 단계 4·5·6) 송풍기와 바람 · 사다리차 회전대 · 저격 자리
   // ── 사람: 구조 대상 → 용의자 → 대원 ──
   const carrierOf = new Map<number, FieldAgent>();
   for (const a of s.agents) if (a.carrying >= 0 && a.status !== 'left') carrierOf.set(a.carrying, a);
@@ -493,6 +546,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       ctx.strokeStyle = win ? alpha('#ffd166', 0.45 + 0.5 * Math.abs(Math.sin(time * 6))) : 'rgba(255,93,93,0.85)'; ctx.lineWidth = Math.max(1.5, ts * 0.06);
       ctx.beginPath(); ctx.ellipse(x, y + ts * 0.12, ts * 0.4, ts * 0.3, 0, 0, 7); ctx.stroke();
     }
+    // (R2 1d) 보트에 끌어올린 사람: 보트 안 뒤쪽에 눕는다 (끌려가는 동안은 물속 표시 그대로 — inWater)
+    if (c.inWater && carrier && inBoat(carrier)) { const ba = Math.atan2(carrier.fy, carrier.fx); drawLying(ctx, x - Math.cos(ba) * ts * 0.4, y - Math.sin(ba) * ts * 0.4, ba, ts * 0.85, lk, { variant: hash2(c.id, 5), ghost }); continue; }
     if (c.inWater && !c.dead) { drawSwimmer(ctx, x, y, ts, lk, time + c.id, ghost); continue; }
     const upright = !c.dead && c.mob === 'mobile' && c.where !== 'carried' && c.health > 40;
     if (upright) {
@@ -603,6 +658,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       drawLying(ctx, x, y, dragger ? Math.atan2(dragger.fy, dragger.fx) : hash2(a.rid, 77) * 6.28, ts, lk, { variant: hash2(a.rid, 5), sheet: shroud, stretcher: !!dragger && hasLitter(sim, s, dragger), bandage: (rsp.treatQ ?? 0) > 0 && !shroud });
       // 아직 구조되지 못한 쓰러진 대원: 빨간 맥박 고리 (숨졌으면 없다)
       if (a.status === 'down' && !rsp.dead) { ctx.strokeStyle = `rgba(255,93,93,${0.5 + 0.4 * Math.abs(Math.sin(time * 4))})`; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.arc(x, y, ts * 0.56, 0, 7); ctx.stroke(); }
+      if ((a.trapped ?? 0) > 0) drawTrappedDebris(ctx, x, y, ts, a.rid);      // (X6 §7.3) 잔해에 깔린 대원: 몸 위의 잔해 조각
     } else {
       const pose = agentPose(sim, s, a, moving);
       if (af && af.throwAct !== undefined) { pose.arms = 'throw'; pose.item = 'none'; }
@@ -612,7 +668,11 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       // (H1) 다친 자세: 중상(체력 70 이하)부터 걸음이 줄고 몸이 기운다. 손이 비었으면 옆구리를 붙들고, 대기 지점으로 물러난 대원은 앉는다
       const hurt = hurtPose(rsp.health, 70), sit = a.status === 'withdrawn';
       if (hurt > 0 && (pose.arms === 'side' || sit)) { pose.arms = 'clutch'; pose.item = 'none'; }
-      drawPerson(ctx, x, y, ang, ts, lk, { step: time * 11 + a.rid, moving, arms: pose.arms, item: pose.item, t: time + a.rid * 0.37, recoil: af?.recoil, act: af?.throwAct, crouch: sit || (a.inCover && s.kind === 'armed' && !moving && pose.arms === 'aim'), flinch: off && (off.x || off.y) ? off : undefined, hurt: hurt > 0 ? hurt : undefined });
+      if (swimming(s, a)) {
+        // (R2 1d) 헤엄치는 대원: 헬멧·공기호흡기를 벗은 모습(머리카락), 구명조끼를 입었으면 주황 조끼. 끌고 오는 사람은 바로 뒤에서 함께 헤엄친다(구조 대상 그림)
+        const sk = lookOf('sw' + a.rid + ':' + u.kind + ':' + (rsp.role ?? ''), () => ({ ...lk, headCol: '#2b2420', headCol2: undefined, band: undefined, pack: 'none' }));
+        drawSwimmer(ctx, x, y, ts, sk, time + a.rid * 0.37, 1, hasKit(sim, a.rid, 'pfd') ? '#f07a2a' : undefined);
+      } else drawPerson(ctx, x, y, ang, ts, lk, { step: time * 11 + a.rid, moving, arms: pose.arms, item: pose.item, t: time + a.rid * 0.37, recoil: af?.recoil, act: af?.throwAct ?? (pose.arms === 'throw' ? Math.min(1, a.ring / THROW_RELEASE) : undefined), crouch: sit || inBoat(a) || (a.inCover && s.kind === 'armed' && !moving && pose.arms === 'aim') || (!moving && sniperSet(a)), flinch: off && (off.x || off.y) ? off : undefined, hurt: hurt > 0 ? hurt : undefined });
       if (a.inCover && s.kind === 'armed') drawCoverBadge(ctx, x + ts * 0.36, y + ts * 0.34, ts);      // (G5) 엄폐: 반쪽 벽 기호
       // (R1) 공기 잔량 60초 아래: 머리 위 왼쪽의 작은 주황 점 (깜박이지 않는다)
       if (hasKit(sim, a.rid, 'scba') && kitUses(sim, a.rid, 'scba') < AIR_LOW) { disc(ctx, x - ts * 0.36, y - ts * 0.38, ts * 0.115, '#0b1219'); disc(ctx, x - ts * 0.36, y - ts * 0.38, ts * 0.08, kitUses(sim, a.rid, 'scba') <= 0 ? '#ff5d5d' : '#ff9f43'); }
@@ -626,20 +686,10 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     else if (sel) labels.push({ x, y: y - ts * 0.82, text: rsp.name, col });
   }
 
-  // 구조 줄: 물가의 대원에서 물속의 사람까지
-  if (!MINI) for (const a of s.agents) {
-    if (a.status !== 'active' || !a.task || a.task.kind !== 'waterRescue' || a.ring <= 0.01) continue;
-    const c = s.casualties[a.task.cas];
-    if (!c || !c.inWater) continue;
-    const p = ipos(a, o.alpha), q = ipos(c, o.alpha);
-    const x0 = cx(p.x), y0 = cy(p.y), x1 = cx(q.x), y1 = cy(q.y), k = Math.min(1, a.ring * 2.2);
-    const ex = x0 + (x1 - x0) * k, ey = y0 + (y1 - y0) * k;
-    ctx.lineCap = 'round'; ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = Math.max(2, ts * 0.07);
-    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.quadraticCurveTo((x0 + ex) / 2 + ts * 0.3, (y0 + ey) / 2 + ts * 0.2, ex, ey); ctx.stroke();
-    ctx.strokeStyle = '#f2e6c0'; ctx.lineWidth = Math.max(1.5, ts * 0.04); ctx.stroke();
-    ctx.strokeStyle = '#e8532f'; ctx.lineWidth = Math.max(2, ts * 0.08); ctx.beginPath(); ctx.arc(ex, ey, ts * 0.16, 0, 7); ctx.stroke();
-    ctx.strokeStyle = '#ffffff'; ctx.lineWidth = Math.max(1, ts * 0.03); ctx.setLineDash([ts * 0.08, ts * 0.17]); ctx.beginPath(); ctx.arc(ex, ey, ts * 0.16, 0, 7); ctx.stroke(); ctx.setLineDash([]);
-  }
+  // (R2 1d) 대응 방법의 줄·장대: 구명줄·구명환·즉석 부력물·갈고리 장대·줄 확보 (scene/methodsLayer.ts)
+  if (!MINI) drawMethodFx(ctx, s, ts, o.alpha);
+  if (!MINI) drawCharges(ctx, s, ts, time);      // (R2 단계 2) 문에 붙인 장약·3-2-1
+  if (!MINI) drawMethodOver(ctx, sim, s, ts, o.alpha, time, o.truth);      // (R2 단계 4·5·6) 고가 사다리 · 저격 조준선(관찰자 시점) · 대피 방송의 호
 
   // ── 불 ──
   drawFire(ctx, s, ts, time, MINI);
@@ -829,10 +879,15 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   // ── 정보 표지 (G4): 어둠·날씨 뒤라 밤과 안개에도 보인다 ──
   if (night && !MINI) { const rz = ruinZones(s); if (rz.count) strokeRuinEdges(ctx, rz, ts, 0.45); }      // 밤에는 고정 층의 붕괴 구역 경계가 어둠에 묻힌다: 같은 선분을 한 번 더
   drawDangerZones(ctx, sim, s, ts, { truth: o.truth, timeMs: o.timeMs, mini: MINI, cmd });
+  const catView = { truth: o.truth, timeMs: o.timeMs, mini: MINI, cmd };
+  drawCatUnder(ctx, sim, s, ts, catView);      // (X6) 구획 건전도 빗금·가스 등고선·용기의 열 고리 (관찰자: 진실 · AI: 지휘관이 아는 조짐)
   drawFallRing(ctx, sim, s, ts, o.alpha, MINI);
   const hzLabels: HazardLabel[] = [];
+  for (const l of drawCatOver(sim, s, ts, catView)) hzLabels.push(l);      // (X6) 붕괴 임박·LEL·안전밸브·진입 금지 표지 — 새 글자 표지 단계에서 그린다
   if (o.truth) for (const l of drawGasEdge(ctx, ts, o.timeMs, gv, MINI)) hzLabels.push(l);      // 짙은 가스 경계 (관찰자 시점)
   for (const l of drawRekindle(ctx, s, ts, o.timeMs, MINI ? [] : rekindledRegions(sim, s, o.truth), o.truth, MINI)) hzLabels.push(l);      // 되살아난 불
+  const catPills: LabelBox[] = [];      // (X6) 대원 이름표가 피해 가는 자리 (mergeLabels 의 pinned) — (단계 10) G4 의 가스·되살아난 불 표지도
+  { const fs = Math.max(10, ts * 0.3); ctx.font = `600 ${fs}px ${FONT}`; for (const l of hzLabels) catPills.push({ x: l.x, y: l.y, w: ctx.measureText(l.text).width + fs * 0.8, h: fs * 1.5 }); }
 
   // 지휘관이 정한 진입 지점
   if (!MINI && s.entryOrdered && !s.breachDone) for (const [k, label] of [[s.entryExit, s.entryExit2 >= 0 ? '1조 진입' : '진입 지점'], [s.entryExit2, '2조 진입']] as [number, string][]) {
@@ -870,6 +925,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     for (const q of respChips) triageBadge(ctx, q.x + ts * 0.36, q.y - ts * 0.38, ts * 0.13, q.b, ts, '', q.cross);
     for (const q of hosChips) { ctx.globalAlpha = q.hidden ? 0.6 : 1; triageBadge(ctx, q.x - ts * 0.36, q.y - ts * 0.38, ts * 0.13, q.b, ts, '', q.cross); ctx.globalAlpha = 1; }      // 용의자의 딱지는 왼쪽 위 (붙잡힌 인질의 딱지와 겹치지 않게)
   }
+  const hosPills: LabelBox[] = [];
   if (!MINI) for (const hst of s.hostiles) {
     if (!hostileDrawn(hst) || (hst.hidden && !o.truth)) continue;
     const p = ipos(hst, o.alpha), x = cx(p.x), y = cy(p.y);
@@ -879,7 +935,13 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     const stt = hostileSheet(sim, hst, o.truth, cmd) ? '사망' : stunned ? '무력화' : hst.hidden ? '(숨음)' : hst.state === 'hold' ? (hst.hostageId >= 0 ? '인질 대치' : '대치') : hst.state === 'fight' ? '교전' : hst.state === 'flee' ? '도주' : hst.state === 'surrendered' ? '투항' : hst.state === 'arrested' ? (hst.tDown !== undefined ? '검거 · 쓰러짐' : '검거') : '쓰러짐';
     const wp = hst.weapon === 'gun' ? '총' : hst.weapon === 'knife' ? '칼' : '';
     ctx.globalAlpha = hst.hidden ? 0.6 : 1;
-    pill(ctx, `${hst.label}${wp ? '·' + wp : ''} · ${stt}`, x, y - ts * 0.8, ts * 0.27, col);
+    // (H1 단계 7) 곁에 선(쓰러진) 다른 용의자의 알약과 겹치면 한 줄 위로 (많아야 두 줄). 대원 이름표는 이 알약들을 피한다(mergeLabels)
+    const hText = `${hst.label}${wp ? '·' + wp : ''} · ${stt}`, hFs = ts * 0.27;
+    ctx.font = `600 ${hFs}px ${FONT}`;
+    const hBox: LabelBox = { x, y: y - ts * 0.8, w: ctx.measureText(hText).width + hFs * 0.8, h: hFs * 1.5 };
+    for (let up = 0; up < 2 && hosPills.some((q) => Math.abs(q.x - hBox.x) < (q.w + hBox.w) / 2 && Math.abs(q.y - hBox.y) < (q.h + hBox.h) / 2); up++) hBox.y -= hFs * 1.6;
+    pill(ctx, hText, x, hBox.y, hFs, col);
+    hosPills.push(hBox);
     if (hst.state === 'hold' || hst.state === 'fight') {
       const bw = ts * 0.6, bh = Math.max(3, ts * 0.085);
       rr(ctx, x - bw / 2 - 1, y + ts * 0.54 - 1, bw + 2, bh + 2, bh / 2, 'rgba(8,13,18,0.85)');
@@ -909,7 +971,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
         ctx.fillStyle = '#ffb347'; ctx.beginPath(); ctx.arc(0, 0, sz * 0.3, 0, 7); ctx.fill(); ctx.restore();
       }
     } else if (f.kind === 'spray') {
-      drawSpray(ctx, cx(f.x), cy(f.y), cx(f.x2!), cy(f.y2!), ts, k, time);
+      if (f.color !== undefined) drawPowder(ctx, cx(f.x), cy(f.y), cx(f.x2!), cy(f.y2!), ts, k, time);      // (R2 단계 4) 색이 있는 분사 = 소화기의 흰 분말 (물줄기는 색이 없다)
+      else drawSpray(ctx, cx(f.x), cy(f.y), cx(f.x2!), cy(f.y2!), ts, k, time);
     } else if (f.kind === 'radio') {
       if (MINI) continue;
       ctx.strokeStyle = 'rgba(124,196,255,0.85)'; ctx.globalAlpha = 1 - k; ctx.lineWidth = 1.5;
@@ -944,7 +1007,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   }
   if (cv) timed(() => { drawNegotiation(cv); drawCuffs(cv); });      // (G5) 말풍선, 수갑 기호
   for (const l of hzLabels) pill(ctx, l.text, l.x, l.y, Math.max(10, ts * 0.3), l.color);      // (G4) 새 글자 표지: 가스 고임·되살아난 불
-  for (const l of mergeLabels(ctx, labels, Math.max(10, ts * 0.28), ts)) pill(ctx, l.text, l.x, l.y, Math.max(10, ts * 0.28), l.col);      // (R1) 같은 이름표가 겹치면 하나로
+  for (const l of mergeLabels(ctx, labels, Math.max(10, ts * 0.28), ts, catPills.length ? hosPills.concat(catPills) : hosPills)) pill(ctx, l.text, l.x, l.y, Math.max(10, ts * 0.28), l.col);      // (R1) 같은 이름표가 겹치면 하나로
   // (R1) 상공의 헬기: 호출부호와 하는 일. 두 헬기가 한 자리에 떠 있으면 이름표를 위로 쌓는다(겹쳐 읽히지 않게)
   if (!MINI) {
     const fs = Math.max(10, ts * 0.3), put: { x: number; y: number; w: number }[] = [];

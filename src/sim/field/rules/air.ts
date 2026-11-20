@@ -26,6 +26,7 @@ import { BeliefStore, mkFact } from '../beliefs';
 import { isIndoor } from '../grid';
 import { applyWater, placeAtSafe, pushFx } from '../hazards';
 import { registerRule } from '../sceneRegistry';
+import { recordAir } from '../methodRun';      // (R2 1a) 호이스트 완료의 방법 기록
 
 /** 균형 상수 */
 export const AIR = {
@@ -60,10 +61,11 @@ const activeCmd = (s: Scene): FieldAgent | null => { for (const a of s.agents) i
 
 function makeOp(sim: Sim, s: Scene, I: Incident, u: Unit): AirOp {
   // 관측자: 경찰 헬기는 전술 관측관, 그 밖(소방 헬기)은 내리는 자리의 첫 사람(다쳐 있으면 다음 사람)
+  // (I2) 결장(off)한 사람은 타지 않았다 — 관측자로 고르지 않는다 (결장이 없으면 예전과 같다)
   const fc = fieldCrew(sim, u);
-  let rid = fc[0];
+  let rid = fc.find((q) => sim.responders[q].status !== 'off') ?? fc[0];
   for (const q of fc) if (sim.responders[q].status === 'ok') { rid = q; break; }
-  for (const q of u.crew) if (sim.responders[q].role === 'observer') { rid = q; break; }
+  for (const q of u.crew) if (sim.responders[q].role === 'observer' && sim.responders[q].status !== 'off') { rid = q; break; }
   const x = Math.max(0, Math.min(s.w - 1, s.staging.x)), y = Math.max(0, Math.min(s.h - 1, s.staging.y));
   const eye = makeAgent(sim, rid, u.id, x, y, sim.t, sim.rng.fork('air:' + I.id + ':' + u.id));
   eye.aloft = true; eye.label = '상공 관측';
@@ -165,7 +167,7 @@ function tellDispatch(sim: Sim, s: Scene, I: Incident, op: AirOp, u: Unit): void
   for (const f of op.eye.beliefs.list('cas')) { const c = f.value as CasBelief; if (c.where === 'scene' && c.mob === 'trapped' && c.band < 3) { stuck = true; break; } }
   const need: keyof Needs = o.hostile ? 'law' : o.fire ? 'suppression' : stuck ? 'rescue' : 'ems';
   I.unmet[need] = Math.max(I.unmet[need] ?? 0, 1); I.unmetSince = sim.t; I.noUnitLogged = false;
-  emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: `사건 ${I.code}: ${josa(u.callsign, '이/가')} 떠난 현장에 아직 ${o.hostile ? '용의자가' : o.fire ? '불이' : o.patients > 0 ? '구조 대상이' : '쓰러진 대원이'} 남아 있습니다. 지상 부대를 찾습니다.` });
+  emit(sim, { inc: I.id, role: 'DISPATCH', actor: '배정 AI', kind: 'dispatch', imp: 2, causes: [I.lastEvent], text: `사건 ${I.code}: ${josa(u.callsign, '이/가')} 떠난 현장에 아직 ${o.hostile ? '용의자가' : o.fire ? '불이' : o.patients > 0 ? '구조 대상이' : o.matesDown > 0 ? '쓰러진 대원이' : '후송을 기다리는 다친 대원이'} 남아 있습니다. 지상 부대를 찾습니다.` });
 }
 
 /** (tx, ty) 쪽으로 한 틱 움직인다. 돌려주는 값 = 남은 거리(칸) */
@@ -211,7 +213,8 @@ function hoistDone(sim: Sim, s: Scene, I: Incident, op: AirOp, u: Unit): void {
   if (seatsUsed(sim, u) < seatsOf(u)) { c.where = 'loaded'; c.tLoaded = sim.t; c.x = op.x; c.y = op.y; c.px = c.x; c.py = c.y; u.patients.push(c.id); u.patientsIncident = I.id; u.firstLoadAt ??= sim.t; }
   else { c.where = 'safe'; c.tSafe = sim.t; placeAtSafe(s, c); }      // 자리가 없으면 안전 구역에 내려놓는다
   learnQuiet(sim, eye, casFact(sim, s, c, name));
-  emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'recovery', imp: 2, text: `${u.callsign}: 호이스트로 구조 대상 ${c.label} 인양 완료.` });
+  const ev = emit(sim, { inc: I.id, role: 'UNIT', actor: u.callsign, kind: 'recovery', imp: 2, text: `${u.callsign}: 호이스트로 구조 대상 ${c.label} 인양 완료.` });
+  recordAir(sim, I, u, c, ev, sim.t - op.progress);      // (R2 1a) 구한 방법(호이스트)과 방법 기록 — 기록 전용 방법 (methodRun.recordAir)
   sim.airStats.hoists++;
   sim.responders[eye.rid].xpGained += 0.005;
   finishWork(sim, s, op);
@@ -302,6 +305,8 @@ registerRule((sim, s, I) => {
     if (op.mode === 'hoist') {
       const c = s.casualties[op.target];
       if (op.workId >= 0 && !liveWork(s.board[op.workId])) { reset(sim, op, st); continue; }      // 지휘관이 그 작업을 거뒀다
+      // (R2 1c) 헤엄·보트 대원이 끌고 오는 중: 진행하지 않고 그 위에서 기다린다 (끌던 대원이 놓치면 다시 — 끌려가는 사람을 '실림'으로 바꾸면 그림과 기록이 어긋난다)
+      if (c && !c.dead && c.inWater && c.where === 'carried') { op.phase = 'hover'; op.progress = Math.max(0, op.progress - sim.dt * 0.5); continue; }
       if (!c || c.dead || !c.inWater || c.where !== 'scene') {
         // 이미 물 밖으로 나왔거나 숨졌다: 낡은 믿음으로 같은 일을 되풀이하지 않게 강제로 보고하고 그 작업을 끝낸다
         if (c) learn(sim, eye, casFact(sim, s, c, sim.responders[eye.rid].name), true, true);

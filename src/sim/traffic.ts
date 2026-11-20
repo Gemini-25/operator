@@ -490,6 +490,16 @@ function tickRail(sim: Sim): void {
   if (tr.atGate.size) for (const [uid, eid] of tr.atGate) if (!(city.edges[eid].wait! > 0)) tr.atGate.delete(uid);
 }
 
+/**
+ * 교대가 끝날 때(engine.checkShiftEnd): 아직 이어지던 행사 인파의 혼잡(bump)을 거둔다. 교대가 끝난 뒤에는 아무것도 돌지 않으므로 결과는 바뀌지 않는다 —
+ * 재난이 끝나며 통제·혼잡을 푸는 것과 같이, 끝난 교대의 도로에 행사 인파의 혼잡이 남지 않게 한다 (교대의 마지막 3분 안에 인파가 몰리면 남았다)
+ */
+export function endTraffic(sim: Sim): void {
+  const tr = sim.traffic, city = sim.city;
+  for (const c of tr.crowds) for (const id of c.edges) { const e = city.edges[id]; e.bump = Math.max(0, (e.bump ?? 0) - 0.8); if (e.bump < 1e-6) e.bump = 0; }
+  tr.crowds.length = 0;
+}
+
 /** 교통은 개별 차량이 아니라 도로별 수치와 장애물, 간단한 사건으로 표현한다. */
 export function tickTraffic(sim: Sim): void {
   const tr = sim.traffic, city = sim.city, rng = sim.rngTraffic;

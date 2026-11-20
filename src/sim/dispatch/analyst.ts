@@ -8,17 +8,21 @@ import { SCENARIOS, natureLabel } from '../scenarios';
 import type { Assessment, Claim, Incident, IncidentType, Needs, PlaceKind, Topic } from '../types';
 import { TYPE_NAME, clamp } from '../util';
 import { NATURE_LIK } from './callSystem';
+import { TYPE_DEFS, TYPE_ORDER, likRow, typeIdx } from '../incidentTypes';
 import { recomputeUnmet } from './dispatcher';
+import { docNeeds } from './doctrine';      // (R3 §6.2) 관제 교본의 수요 보정 (D1·D3·D6·D8)
+import { recordDoc } from '../field/doctrineRun';
 
-const TYPES: IncidentType[] = ['fire', 'traffic', 'search', 'armed', 'medical', 'collapse', 'hazmat', 'water'];      // NATURE_LIK 의 열 순서와 같아야 한다
+const TYPES = TYPE_ORDER;      // 가설의 순서 = likRow 의 열 순서 (incidentTypes.TYPE_ORDER — 새 유형은 끝에만)
 export const sevName = (s: number): string => (s < 1.7 ? '보통' : s < 2.4 ? '높음' : '매우 높음');
-const NEED_NAME: Record<keyof Needs, string> = { suppression: '진압', rescue: '구조', ems: '구급', law: '경찰', tactical: '경찰 기동', search: '수색', traffic: '교통 통제', eod: '폭발물 처리' };
+const NEED_NAME: Record<keyof Needs, string> = { suppression: '진압', rescue: '구조', ems: '구급', law: '경찰', tactical: '경찰 기동', search: '수색', traffic: '교통 통제', eod: '폭발물 처리',
+  utilPower: '전력 복구', utilGas: '가스 복구', utilWater: '수도 복구', tow: '견인', capture: '동물 포획', decon: '제독' };      // (N8 §5.3.5) · (N9 §5.3.1)
 export const needsText = (n: Partial<Needs>): string => {
   const out: string[] = [];
   for (const k of Object.keys(NEED_NAME) as (keyof Needs)[]) if ((n[k] ?? 0) > 0) out.push(`${NEED_NAME[k]} ${n[k]}`);
   return out.length ? out.join(', ') : '없음';
 };
-export const emptyNeeds = (): Needs => ({ suppression: 0, rescue: 0, ems: 0, law: 0, tactical: 0, search: 0, traffic: 0, eod: 0 });
+export const emptyNeeds = (): Needs => ({ suppression: 0, rescue: 0, ems: 0, law: 0, tactical: 0, search: 0, traffic: 0, eod: 0, utilPower: 0, utilGas: 0, utilWater: 0, tow: 0, capture: 0, decon: 0 });
 
 /** 주제별로 가장 "안전한 쪽(더 심각한 쪽)"의 진술을 고른다. 충돌 여부도 돌려준다. */
 function pick(claims: Claim[], topic: Topic): { c: Claim | null; conflict: boolean } {
@@ -40,7 +44,7 @@ function pick(claims: Claim[], topic: Topic): { c: Claim | null; conflict: boole
 
 /** 그 종류의 건물에서 그 유형의 사건이 날 법한 정도 (지도에서 누구나 알 수 있는 사실만 쓴다) */
 function placePrior(kind: PlaceKind | 'intersection', type: IncidentType): number {
-  if (kind === 'intersection') return type === 'traffic' ? 1.5 : 0.75;
+  if (kind === 'intersection') return TYPE_DEFS[type].atNode;
   if (type === 'traffic') return 0.6;
   return (INCIDENT_PLACES[type][kind] ?? 0) > 0 ? 1.2 : 0.5;
 }
@@ -52,11 +56,11 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
   const lp = TYPES.map(() => 0);
   let nNature = 0, placeUsed = false;
   for (const c of claims) {
-    if (c.topic === 'nature') { const lik = NATURE_LIK[c.value as string]; if (lik) { nNature++; for (let k = 0; k < TYPES.length; k++) lp[k] += Math.log(lik[k]) * (0.5 + c.conf); } }
-    if (c.topic === 'weapon' && c.value !== 'none') lp[3] += 1.5 * c.conf;
+    if (c.topic === 'nature') { const m = NATURE_LIK[c.value as string]; if (m) { const lik = likRow(m); nNature++; for (let k = 0; k < TYPES.length; k++) lp[k] += Math.log(lik[k]) * (0.5 + c.conf); } }
+    if (c.topic === 'weapon' && c.value !== 'none') lp[typeIdx.armed] += 1.5 * c.conf;
     // 지도 정보: 신고된 곳이 어떤 건물인지에 따라 있을 법한 유형이 달라진다 (하천이면 수난, 교차로면 교통사고)
     if (c.topic === 'location' && c.placeKind && !placeUsed) { placeUsed = true; for (let k = 0; k < TYPES.length; k++) lp[k] += Math.log(placePrior(c.placeKind, TYPES[k])) * 0.6; }
-    if (c.topic === 'detail' && c.value && c.value.ejected) lp[1] += 1.0;
+    if (c.topic === 'detail' && c.value && c.value.ejected) lp[typeIdx.traffic] += 1.0;
   }
   let mx = Math.max(...lp), sum = 0;
   const probsArr = lp.map((v) => { const e = Math.exp(v - mx); sum += e; return e; });
@@ -144,6 +148,8 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
   }
   sev = clamp(sev, 1, 3);
   if (type === 'collapse' && nat.indexOf('elevator') >= 0 && nat.indexOf('collapse') < 0) sev = Math.min(sev, 1.8);      // 승강기가 멈춘 것이지 건물이 무너진 것은 아니다
+  // (X6 §5.9) 현장 상황 보고로 올린 위험도와 위험은 새 신고 진술로 다시 평가해도 지워지지 않는다 (I.fieldType 과 같은 방식)
+  if (I.fieldRisk) { sev = Math.max(sev, I.fieldRisk.sev); for (const r of I.fieldRisk.risks) if (risks.indexOf(r) < 0) risks.push(r); }
   const conflicts = [inj, cnt, trap, haz, wpn].filter((x) => x.conflict).length;
   let confSum = 0; for (const c of claims) confSum += c.conf;
   const callers = new Set(claims.map((c) => c.callId)).size;
@@ -191,6 +197,11 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
   for (const sc of SCENARIOS) if (sc.needs && sc.type === type && nat.indexOf(sc.nature) >= 0) sc.needs(needs, ctx);
   let label: string | undefined;
   for (const c of claims) { if (c.topic !== 'nature') continue; const l = natureLabel(c.value as string, type); if (l) label = l; }
+  // (R3 §6.2) 관제 교본의 수요 보정 — D3(흉기 신고 경찰 둘)·D6(인질극 기동대 둘). 장난 전화로 본 신고에는 걸지 않는다
+  // (균형) D8 은 위치 신고의 건물 종류를 본다 — 유형 추정에 쓴 것과 같은 첫 위치 신고
+  let place: Claim['placeKind'];
+  for (const c of claims) if (c.topic === 'location' && c.placeKind) { place = c.placeKind; break; }
+  if (!(type === 'armed' && prank)) for (const rule of docNeeds(sim, type, sev, !!(wpn.c && wpn.c.value === 'knife'), label, needs, place, I)) recordDoc(sim, I, null, rule, 'dispatch');
   const rev = prev ? prev.revision + 1 : 0;
   const summary = `${TYPE_NAME[type]} (${Math.round(typeConf * 100)}%) · 위험도 ${sevName(sev)}`;
   const as: Assessment = { type, typeConf, probs, severity: sev, confidence, needs, risks, summary, t: sim.t, revision: rev, label };

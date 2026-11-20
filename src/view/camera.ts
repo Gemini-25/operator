@@ -11,7 +11,7 @@ export interface CityCam { x: number; y: number; zoom: number }
 export interface SceneView { x: number; y: number; zoom: number }
 const SCENE_W = 30, SCENE_H = 20;
 /** 현장 자동 확대가 따라가는 효과 기록과 무게. G4 는 'collapse'(2.5), X6 는 'horn'(2)을 한 단어씩 더한다 */
-const ACTION_W: Record<string, number> = { shot: 2.5, boom: 2.5, flash: 2.5, hit: 2.5, spray: 0.6, breach: 2.5, melee: 1.5, taser: 2.0, cuff: 1.0, collapse: 2.5, drop: 1.5 };      // drop = (R1) 헬기의 물 투하
+const ACTION_W: Record<string, number> = { shot: 2.5, boom: 2.5, flash: 2.5, hit: 2.5, spray: 0.6, breach: 2.5, melee: 1.5, taser: 2.0, cuff: 1.0, collapse: 2.5, drop: 1.5, horn: 2 };      // drop = (R1) 헬기의 물 투하 · horn = (X6) 철수 경적
 
 export class CameraDirector {
   mode: 'city' | 'scene' = 'city';

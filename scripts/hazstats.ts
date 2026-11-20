@@ -10,10 +10,10 @@
 //
 // 표본: HazProbe.tick() 을 매 틱 step() 뒤에 부른다 — 교통 모델이 혼잡을 다시 계산한 틱(traffic.driftAt 이 바뀐 틱)에만 도로를 읽는다(12초에 한 번).
 
-import { weatherSpeedFactor } from '../src/sim/city';
 import type { Sim } from '../src/sim/engine';
 import { DIVERT, roadFlow, roadParts } from '../src/sim/traffic';
 import type { RoadPart } from '../src/sim/traffic';
+import { roadSurface, roadWeight } from '../src/sim/world/laws/road';      // L1 의 가중(통행량 × 노면·시야 × 길이) — 법칙과 측정이 같은 식을 쓴다
 
 export interface HazLawCount { cells: number; crossed: number; made: number; waitingEnd: number }
 export interface HazRoad {
@@ -41,7 +41,7 @@ export class HazProbe {
     this.seenDrift = tr.driftAt;
     this.sampleRoad();
   }
-  /** 도로의 초과 — 교통 모델이 drift 에서 적어 둔 배열과 몫 목록만 읽는다. 가중은 L1 의 식 그대로: 통행량 V = 0.4 + 1.6 × flow · 노면·시야 S · 길이 ℓ = clamp(len / 150, 0.5, 2), dt = 12 */
+  /** 도로의 초과 — 교통 모델이 drift 에서 적어 둔 배열과 몫 목록만 읽는다. 가중은 L1 의 식 그대로(world/laws/road.ts 의 roadWeight — 통행량 × 노면·시야 × 길이), dt = 12 */
   private buf: RoadPart[] = [];
   protected sampleRoad(): void {
     const sim = this.sim, tr = sim.traffic, edges = sim.city.edges, r = this.road, flow = roadFlow(sim), S = roadSurface(sim), dt = 12;
@@ -52,7 +52,7 @@ export class HazProbe {
       if (tr.divert[id] > 0) { r.detourDrifts++; r.detourCong += e.cong; if (e.cong > r.detourCongMax) r.detourCongMax = e.cong; if (tr.divert[id] >= DIVERT.MAX) r.detourCap++; }
       const x = tr.excess[id];
       if (!(x > 0)) continue;
-      const w = (0.4 + 1.6 * flow[id]) * S * Math.min(2, Math.max(0.5, e.len / 150)) * dt;
+      const w = roadWeight(e, flow[id], S) * dt;
       r.edgeDrifts++;
       r.own += tr.exOwn[id] * w; r.bump += tr.exBump[id] * w; r.queue += tr.exQueue[id] * w; r.div += tr.exDiv[id] * w; r.raw += x * dt;
       const np = roadParts(sim, id, this.buf);
@@ -73,11 +73,7 @@ export class HazProbe {
   }
 }
 
-/** 노면·시야 (L1 의 S 항 — §3.7): (차량 속도 손잡이 ÷ 날씨·재난의 속도 계수)² × 밤이면 1.2. 초과분에만 곱한다 */
-export function roadSurface(sim: Sim): number {
-  const f = sim.tune.vehicleSpeedMul / weatherSpeedFactor(sim);
-  return f * f * (sim.weather === 'night' ? 1.2 : 1);
-}
+export { roadSurface };      // (b3-6) 법칙 파일의 것을 그대로 내보낸다
 
 export interface HazSum { shifts: number; laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null; roadShifts: number }
 export function sumHaz(list: readonly HazCount[]): HazSum {

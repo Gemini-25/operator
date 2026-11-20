@@ -1,4 +1,5 @@
 // 측정 도구 (docs/specs/I1-causality.md §2 · §6 의 I1-a): 결과 불변, 손 계산, 문구 규칙, 멈춤 감지기, 연쇄 깊이, 일치 검사, 요약 모양
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { PROBLEM_LABEL } from '../src/sim/debrief';
 import { NORMAL, parseDifficulty, parseDisaster } from '../src/sim/difficulty';
@@ -7,6 +8,7 @@ import { Sim } from '../src/sim/engine';
 import { blockersOf } from '../src/sim/dispatch/dispatcher';
 import { emit } from '../src/sim/events';
 import { BeliefStore, heardEv, mergeHeard, mkFact } from '../src/sim/field/beliefs';
+import { CHAIN_MAX, DEPTH_MAX, canChain, chainDepth } from '../src/sim/chain';
 import { createIncident } from '../src/sim/incidents';
 import { findRoute } from '../src/sim/city';
 import type { EventKind, Incident, Responder, Role, SimEvent, Unit } from '../src/sim/types';
@@ -507,5 +509,48 @@ describe('I1-b 0단계: 기록만 잇기', () => {
     B.merge(mkFact('evid', 3, { kind: 'witness', done: true }, '시험', 20, 0.9, true, '목격자'));      // 직접 본 새 소식: 무전이 아니다
     expect(heardEv(B.get('evid', 3))).toBe(-1);
     expect(heardEv(undefined)).toBe(-1);
+  });
+});
+
+// ───────────────────────── I1-b 1단계 (§3.11): 어긋난 기록 고치기 — 재범이 생긴 교대의 해시가 바뀐다 ─────────────────────────
+// 이송 출발 문구의 병원은 R1 단계 3 이 고쳤다 — C5 = 0 과 관문은 위의 '일치 검사'·'요약 모양' 이 본다.
+describe('I1-b 1단계: 어긋난 기록 고치기', () => {
+  it('재범은 자기 흐름(reoffend:<사건>:<용의자>)으로 만든다 — 평소 생성기의 다음 사건이 달라지지 않는다', () => {
+    // 예약하는 자리(hazards 의 도주 블록)가 새 흐름을 넘긴다
+    const line = readFileSync('src/sim/field/hazards.ts', 'utf8').split('\n').find((l) => l.includes("csq: 'reoffend'"))!;
+    expect(line).toContain("rng: sim.rng.fork('reoffend:' + I.id + ':' + h.id)");
+    // 그 흐름으로 만든 재범은 평소 생성기(sim.rngGen·gen.lastType)를 건드리지 않는다: 바로 다음 평소 사건의 유형·변형·규모가 재범이 없을 때와 같다
+    const a = new Sim('S5', NORMAL, 1200), b = new Sim('S5', NORMAL, 1200), old = new Sim('S5', NORMAL, 1200);
+    const P = createIncident(a); createIncident(b); createIncident(old);
+    createIncident(a, { type: 'armed', variant: 'robbery', parent: P.id, rng: a.rng.fork('reoffend:' + P.id + ':0') });
+    createIncident(old, { type: 'armed', variant: 'robbery', parent: P.id });      // 예전 방식: 평소 흐름으로 만들고 lastType 을 고친다
+    expect(a.gen.lastType).toBe(b.gen.lastType);
+    expect(old.gen.lastType).toBe('armed');
+    const key = (I: Incident): string => `${I.truth.type}/${I.truth.variant}/${I.truth.severity}`;
+    const na = [createIncident(a), createIncident(a), createIncident(a)].map(key), nb = [createIncident(b), createIncident(b), createIncident(b)].map(key);
+    const no = [createIncident(old), createIncident(old), createIncident(old)].map(key);
+    expect(na).toEqual(nb);
+    expect(no).not.toEqual(nb);
+  });
+  it('연쇄 깊이 상한: chainDepth 는 뿌리 0, 상한의 정본은 canChain — 깊이 DEPTH_MAX 인 사건을 부모로 한 예약은 꺼낼 때 버린다 (depth)', () => {
+    const s = new Sim('S2', NORMAL, 1200);
+    const A = createIncident(s, { type: 'medical' });
+    const B = createIncident(s, { type: 'medical', parent: A.id, rng: s.rng.fork('t1') });
+    const C = createIncident(s, { type: 'medical', parent: B.id, rng: s.rng.fork('t2') });
+    expect([chainDepth(s, A.id), chainDepth(s, B.id), chainDepth(s, C.id)]).toEqual([0, 1, 2]);
+    expect(DEPTH_MAX).toBe(CHAIN_MAX - 1);
+    expect([canChain(s, B), canChain(s, C)]).toEqual([true, false]);
+    // canChain 을 보지 않고 예약한 것 둘: 깊이가 넘는 것은 버리고(기록 없이 gen.dropped 에만), 넘지 않는 것은 일으킨다
+    s.gen.chain.push({ at: 1, opts: { type: 'medical', parent: C.id, note: '시험 예약', rng: s.rng.fork('t3') } });
+    s.gen.chain.push({ at: 1, opts: { type: 'medical', parent: B.id, note: '시험 예약 둘', rng: s.rng.fork('t4') } });
+    while (s.t < 3) s.step();
+    expect(s.gen.dropped).toEqual([{ t: s.gen.dropped[0].t, why: 'depth', type: 'medical', variant: undefined, parent: C.id }]);
+    expect(s.incidents.some((J) => J.parent === C.id)).toBe(false);
+    expect(s.events.some((e) => e.text.startsWith('시험 예약 —'))).toBe(false);
+    expect(s.incidents.filter((J) => J.parent === B.id).length).toBe(2);
+    // 측정 도구의 parentDepth 와 같은 정의다
+    const m = probedShift('S1', NORMAL, 'fire/arson');
+    for (const J of m.sim.incidents) expect(chainDepth(m.sim, J.id)).toBeLessThanOrEqual(DEPTH_MAX);
+    expect(m.m.maxParentDepth).toBe(Math.max(...m.sim.incidents.map((J) => chainDepth(m.sim, J.id))));
   });
 });

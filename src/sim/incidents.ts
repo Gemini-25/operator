@@ -12,6 +12,7 @@ import type { Rng } from './rng';
 import { INCIDENT_PLACES } from './cityPlan';
 import { startPursuit } from './pursuit';
 import { disasterGapMul } from './disaster';
+import { DEPTH_MAX, chainDepth } from './chain';
 import { SCENARIOS, scenarioName, scenarioOf } from './scenarios';
 import type { Scenario } from './scenarios';
 import type { Incident, IncidentType, Place, PlaceKind } from './types';
@@ -39,7 +40,7 @@ export interface GenState {
   chain: { at: number; opts: SpawnOpts }[];                      // 이어지는 사건 예약 (도주 용의자의 재범, 연쇄 방화, 은신처 제보 등). at 순서로 넣지 않아도 된다
   majorAt: number;                                               // 대형 사고가 일어날 시각 (Infinity = 이번 교대에는 없다). engine 이 정한다
   forced: boolean;                                               // 강제 발생(sim.force)을 이미 일으켰는가
-  dropped: DroppedChain[];                                       // (I1-b) 버린 예약 — 교대 끝 150초 안('late')·열린 사건이 많음('busy'). 'depth'·'expired'·'cap' 은 b2·b3 부터
+  dropped: DroppedChain[];                                       // (I1-b) 버린 예약 — 교대 끝 150초 안('late')·열린 사건이 많음('busy')·깊이 상한('depth')·조건이 끝내 맞지 않음('expired')·교대 상한('cap')
 }
 export function initGenerator(rng: Rng): GenState { return { nextAt: rng.range(10, 22), lastType: null, count: 0, lastCreated: 0, nextNuisanceAt: 40, chain: [], majorAt: Infinity, forced: false, dropped: [] }; }
 
@@ -201,8 +202,10 @@ export function tickIncidents(sim: Sim): void {
     const k = g.chain.findIndex((c) => sim.t >= c.at);
     if (k >= 0) {
       const c = g.chain.splice(k, 1)[0], late = sim.t >= sim.shiftLen - 150;
-      if (!late && open <= tn.maxConcurrent) createIncident(sim, c.opts);
-      else g.dropped.push({ t: sim.t, why: late ? 'late' : 'busy', type: c.opts.type, variant: c.opts.variant, parent: c.opts.parent });      // (I1-b) 버린 예약은 배열에만 (기록은 남기지 않는다)
+      // (I1-b b1) 깊이 상한(chain.DEPTH_MAX — 정본은 canChain): 예약하는 자리가 모두 canChain 을 보므로 지금은 걸리지 않는다. 그 확인 없이 예약한 것이 있어도 사슬이 더 길어지지 않게 꺼낼 때 한 번 더 본다
+      const deep = c.opts.parent !== undefined && chainDepth(sim, c.opts.parent) + 1 > DEPTH_MAX;
+      if (!late && open <= tn.maxConcurrent && !deep) createIncident(sim, c.opts);
+      else g.dropped.push({ t: sim.t, why: late ? 'late' : open > tn.maxConcurrent ? 'busy' : 'depth', type: c.opts.type, variant: c.opts.variant, parent: c.opts.parent });      // (I1-b) 버린 예약은 배열에만 (기록은 남기지 않는다)
     }
   }
   // 대형 사고: 교대마다 많아야 한 번. 언제·무엇인지는 별도의 난수 흐름으로 정한다 (평소 사건의 추첨을 흔들지 않는다)

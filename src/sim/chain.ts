@@ -18,6 +18,16 @@ export function chainLen(sim: Sim, I: Incident): number {
   return n;
 }
 
+/**
+ * (I1-b §3.6) 연쇄 깊이 — 뿌리 사건 0, 그 사건이 낳은 사건 1 … (= chainLen − 1 = 측정 도구의 parentDepth).
+ * 깊이 상한의 정본은 이 파일의 canChain 이다: 인과 규칙이 만드는 사건(world/consequence.ts 의 spawnConsequence)도 같은 상한을 쓴다 — 상한이 둘이 되지 않게.
+ */
+export const DEPTH_MAX = CHAIN_MAX - 1;
+export function chainDepth(sim: Sim, incId: number): number {
+  const I = sim.incidents[incId];
+  return I ? chainLen(sim, I) - 1 : 0;
+}
+
 /** 이번 교대에 이어진 사건의 수 (예약해 두고 아직 일어나지 않은 것 포함) */
 export function chainedInShift(sim: Sim): number {
   let n = sim.gen.chain.length;

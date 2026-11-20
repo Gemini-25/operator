@@ -553,7 +553,8 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
           const room = canChain(sim, I);
           // 차를 몰고 달아나면 추격전이 이어지고(도주 차량), 아니면 다른 곳에서 다시 범행한다
           if (r < 0.35 && !I.pursuit && !sim.gen.chain.some((c) => c.opts.parent === I.id && c.opts.variant === 'getaway') && !sim.incidents.some((J) => J.parent === I.id && J.truth.variant === 'getaway')) { if (room) sim.gen.chain.push({ at: sim.t + 2, opts: { type: 'armed', variant: 'getaway', nodeId: I.truth.nodeId, parent: I.id, note: '달아난 용의자가 차를 몰고 도주합니다', rng: sim.rng.fork('getaway:' + I.id + ':' + h.id), cause: fledEv, csq: 'getaway' } }); }
-          else if (r < 0.65) { const at = sim.t + s.rng.range(45, 100); if (room) sim.gen.chain.push({ at, opts: { note: '도주한 용의자가 다른 곳에서 다시 범행을 벌입니다', type: 'armed', variant: 'robbery', parent: I.id, cause: fledEv, csq: 'reoffend' } }); }
+          // (I1-b b1) 재범은 자기 흐름 reoffend:<사건>:<용의자> 로 만든다 — 예전에는 평소 생성기의 흐름(sim.rngGen)을 쓰고 lastType 을 고쳐, 재범이 생긴 교대의 뒤 사건이 모두 달라졌다
+          else if (r < 0.65) { const at = sim.t + s.rng.range(45, 100); if (room) sim.gen.chain.push({ at, opts: { note: '도주한 용의자가 다른 곳에서 다시 범행을 벌입니다', type: 'armed', variant: 'robbery', parent: I.id, rng: sim.rng.fork('reoffend:' + I.id + ':' + h.id), cause: fledEv, csq: 'reoffend' } }); }
         }
         continue;
       }

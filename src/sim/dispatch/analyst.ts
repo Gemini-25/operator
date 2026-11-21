@@ -15,7 +15,8 @@ import { recordDoc } from '../field/doctrineRun';
 import { knownHazardNear, knownZone, knownZoneOfIncident } from '../world/state';      // (I1-b b3-7 §3.8) 관제가 아는 큰 불·폭발이 곁에 있는가 · (C10) 관제가 아는 구역 위험 — 진실 위치·현장을 읽지 않는다
 
 const TYPES = TYPE_ORDER;      // 가설의 순서 = likRow 의 열 순서 (incidentTypes.TYPE_ORDER — 새 유형은 끝에만)
-/** (I1-b b3-7) 알려진 큰 불·폭발 곁의 화재 신고에 더하는 위험도 — 이름표 '연소 확대' 와 함께 (설계서 I1 §3.7 L2 의 "AI 가 아는 길") */
+/** (I1-b b3-7) 알려진 큰 불·폭발 곁의 화재 신고에 더하는 위험도 — 이름표 '연소 확대' 와 함께 (설계서 I1 §3.7 L2 의 "AI 가 아는 길").
+ *  (b3-8) 알려진 붕괴·폭발 곁의 붕괴·가스 신고에도 같은 만큼 (L3 — 이름표 없이, shockNear) */
 export const SPREAD_SEV = 0.3;
 /** (I1-b C10) 알려진 구역 위험(무장 용의자 도주) 안의 무장 신고에 더하는 위험도 — 경찰 한 팀 더와 함께 (설계서 I1 §3.7 C10 의 "관제가 쓰는 곳") */
 export const ZONE_SEV = 0.3;
@@ -45,6 +46,16 @@ function pick(claims: Claim[], topic: Topic): { c: Claim | null; conflict: boole
   let best = list[0];
   for (const c of list) if (rank(c) > rank(best) || (rank(c) === rank(best) && c.conf > best.conf)) best = c;
   return { c: best, conflict };
+}
+
+/**
+ * (I1-b b3-8 — 설계서 §3.7 L3 의 "AI 가 아는 길") 곁에서 관제가 아는 붕괴·폭발이 있었는가 — 그 충격에 금 간 건물이 내려앉거나 끊긴 배관이 샐 수 있다.
+ * 붕괴·가스 신고의 위험도에 SPREAD_SEV 를 더한다(이름표는 붙이지 않는다). 알려진 교차로 사이 300 안 · 180초 안의 진실이 아닌 기록만(knownHazardNear — 신고받는 이 사건은 빼고)
+ */
+function shockNear(sim: Sim, I: Incident): boolean {
+  if (!I.locationKnown) return false;
+  const nh = knownHazardNear(sim, I.reportedNode, 300, 180, I.id);
+  return nh.collapse || nh.blast;
 }
 
 /** 그 종류의 건물에서 그 유형의 사건이 날 법한 정도 (지도에서 누구나 알 수 있는 사실만 쓴다) */
@@ -129,6 +140,7 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
     if (count >= 3) { sev += 0.35; why.push(`${count}명`); }
     if (inj.c && inj.c.value === true) { sev += 0.2; why.push('부상자'); }
     if (haz.c && haz.c.value === 'unstable') { sev += 0.3; why.push('추가 붕괴 조짐'); risks.push('2차 붕괴 위험'); }
+    if (shockNear(sim, I)) { sev += SPREAD_SEV; why.push('인근 붕괴·폭발'); }
   } else if (type === 'hazmat') {
     sev = 1.5;
     if (nat.indexOf('gasleak') >= 0) { sev += 0.35; why.push('가스 누출 확인'); }
@@ -137,6 +149,7 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
     if (inj.c && inj.c.value === true) { sev += 0.25; why.push('쓰러진 사람'); }
     if (haz.c && haz.c.value === 'gas') { sev += 0.3; why.push('누출 지속'); risks.push('폭발 위험'); }
     if (district === 'industrial') { sev += 0.2; risks.push('산업 구역 — 대량 누출 가능성'); }
+    if (shockNear(sim, I)) { sev += SPREAD_SEV; why.push('인근 붕괴·폭발'); }
   } else if (type === 'medical') {
     sev = 1.4;
     const notBreathing = nat.indexOf('notbreathing') >= 0 || (det.c && det.c.value && det.c.value.breathing === false);

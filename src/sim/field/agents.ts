@@ -24,7 +24,7 @@ export const staminaF = (r: Responder): number => (0.55 + 0.45 * clamp(r.stamina
  * 모든 칸을 같은 순서로 채운다(도중에 속성이 생기면 객체의 모양이 갈라져 매 틱 도는 코드가 느려진다). 믿음은 비어 있다 — 브리핑은 부르는 쪽이 넣는다.
  */
 export function makeAgent(sim: Sim, rid: number, unitId: number, x: number, y: number, firstThink: number, rng: Rng): FieldAgent {
-  return {
+  return primeNums<FieldAgent>({
     rid, unitId, isCommander: false,
     x, y, px: x, py: y, fx: 1, fy: 0,
     path: null, pathI: 0, pathGoal: -1, task: null, orderWork: -1,
@@ -38,7 +38,7 @@ export function makeAgent(sim: Sim, rid: number, unitId: number, x: number, y: n
     aloft: false, taserAt: -99,      // (R1) 공중 관측자가 아니다(관측자는 air.ts 가 true 로 바꾼다) · 테이저를 쏜 적이 없다
     hurtEv: undefined, hpTick: undefined, lastTile: undefined, fellOnce: undefined, lightBack: undefined,      // (H1) 부상 — 쓰는 것은 단계 4a 부터
     buddy: -1, doc: null, docMem: undefined, shaken: undefined, shakenOff: undefined, reloadUntil: undefined, crewSig: undefined,      // (R3) 짝(부대가 내린 뒤 pairUp — 3단계)·교본 행동·기억·동요·재장전·자기 신고 — 쓰는 것은 단계 1 부터
-  };
+  }, AGENT_SHAPE);
 }
 
 /** 관제가 출동 부대에 전달하는 브리핑. 신고자 진술에서 나온 미확인 정보다. */
@@ -141,6 +141,7 @@ export function casFact(sim: Sim, s: Scene, c: Casualty, src: string): Fact {
   // rush: (R2 단계 6) 구급 대원이 즉시 이송을 정했다 — 처치와 함께 바뀐다(treated·tq). 지휘관이 처치를 더 내지 않고 탑승을 먼저 한다
   const v: CasBelief = { x: Math.round(c.x), y: Math.round(c.y), mob, band: b, where: c.where, treated: c.treated, trappedDone: c.mob !== 'trapped', tq: c.treatQ >= 0.6 ? 2 : c.treated ? 1 : 0, water: c.inWater === true, drift: c.inWater ? c.drift ?? 0 : 0,
     veh: c.inVehicle !== null && c.mob === 'trapped' ? c.inVehicle : undefined, pit: c.mob === 'trapped' && inManhole(s, c) ? true : undefined, rush: c.rush ? true : undefined };
+  primeNums(v, CAS_V_SHAPE);
   const mobT = c.dead ? '' : mob === 'trapped' ? ' · 고립' : mob === 'mobile' ? ' · 자력 대피 중' : c.where === 'scene' ? ' · 거동 불가' : '';
   const whereT = c.where === 'safe' ? '안전 구역' : c.where === 'loaded' ? '구급차 탑승' : c.where === 'carried' ? '이송 중' : regionNameAt(s, c.x, c.y);
   return mkFact('cas', c.id, v, src, sim.t, 1, true, `구조 대상 ${c.label}: ${whereT}${mobT} · ${BAND_NAME[b]}`);
@@ -157,6 +158,7 @@ export function hosFact(sim: Sim, s: Scene, h: Hostile, src: string, d: number):
   const hold = h.hostageId >= 0 && (h.state === 'hold' || h.state === 'fight');
   const tq = (h.treatQ ?? 0) >= 0.6 ? 2 : (h.treatQ ?? 0) > 0 ? 1 : 0;
   const v = { x: Math.round(h.x), y: Math.round(h.y), weapon: h.weapon, state: h.state, hostage: hold, facing: Math.round(h.facing * 4) / 4, dead, band: dead ? 3 : Math.min(2, bandOf(h.health)), tq, where: h.where ?? 'scene' };
+  primeNums(v, HOS_V_SHAPE);
   return mkFact('hos', h.id, v, src, sim.t, 1, true, `${h.label}: ${wt}${hold ? ' · 인질을 붙잡고 있음' : ''} · ${st} (${regionNameAt(s, h.x, h.y)})`);
 }
 
@@ -176,6 +178,7 @@ export function mateFact(sim: Sim, s: Scene, b: FieldAgent, status: MateBelief['
     tq: (r.treatQ ?? 0) >= 0.6 ? 2 : (r.treatQ ?? 0) > 0 ? 1 : 0, dead, wasDown: r.tDown !== undefined, since: sim.t,
     trapped: (b.trapped ?? 0) > 0 || undefined,      // (X6 §4.8) 잔해에 깔린 동료 — 먼저 빼내야 끌고 나올 수 있다 (깔리지 않았으면 비워 둔다)
   };
+  primeNums(v, MATE_V_SHAPE);
   const text = dead ? `${r.name} 대원 생체 반응 없음`
     : status === 'down' ? ((b.trapped ?? 0) > 0 ? `${r.name} 대원 잔해에 깔림 — 구조 필요` : `${r.name} 대원 쓰러짐 — 구조 필요`)
     : status === 'hurt' ? `${r.name} 대원 부상 — 후퇴 중`
@@ -804,6 +807,7 @@ import { SHAKE, crewAlert, shake } from './doctrineRun';      // (R3 1단계) �
 import { methodFit, onWater, searchMul } from './methods';
 // (X6) 조짐 관찰 (field/catastrophe.ts — 그 파일도 이 파일의 learn·regionNameAt 을 쓴다. 함수 안에서만 서로 부르므로 순환 import 는 문제없다)
 import { perceiveSigns, vesselName } from './catastrophe';
+import { AGENT_SHAPE, CAS_V_SHAPE, HOS_V_SHAPE, MATE_V_SHAPE, primeNums } from '../shape';      // (R3b N7) 숫자 칸을 만들 때부터 소수 표현으로 — 값은 그대로
 // (X6 단계 5) 지휘 상태의 도움 함수 (진입 금지 구역·문·피하는 곳 — 진실을 읽지 않는다)
 import { OPS_ID, SIGN_BASE, gateBlocks, inRubble, isRubbleMode, regionAt, regionLevel, targetTile, zoneLevelAt, zoneMask } from './ops';
 import type { OpsFact } from './ops';

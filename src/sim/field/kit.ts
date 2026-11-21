@@ -6,6 +6,7 @@ import type { Rng } from '../rng';
 import { T } from '../types';
 import type { Casualty, Hostile, Incident, Mobility, Prop, PropKind, Region, Scene } from '../types';
 import { staticPass, tidx } from './grid';
+import { CAS_SHAPE, HOSTILE_SHAPE, PROP_SHAPE, REGION_SHAPE, primeNums } from '../shape';      // (R3b N7) 숫자 칸을 만들 때부터 소수 표현으로 — 값은 그대로
 
 export const SW = 30;
 export const SH = 20;
@@ -55,6 +56,7 @@ export function addRegion(s: Scene, name: string, kind: Region['kind'], x0: numb
     if (s.region[i] < 0) s.region[i] = id;
   }
   const r: Region = { id, name, kind, tiles, cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, x0, y0, x1, y1, indoor, searchable };
+  primeNums(r, REGION_SHAPE);
   s.regions.push(r);
   return r;
 }
@@ -69,6 +71,7 @@ const PROP_BLANK: Partial<Prop> = {
 };
 export function addProp(s: Scene, kind: PropKind, x: number, y: number, extra: Partial<Prop> = {}): Prop {
   const p: Prop = { id: s.props.length, kind, x, y, w: 1, h: 1, blocking: false, hp: 0, ...PROP_BLANK, ...extra };
+  primeNums(p, PROP_SHAPE);
   s.props.push(p);
   if (p.blocking) for (let yy = y; yy < y + p.h; yy++) for (let xx = x; xx < x + p.w; xx++) s.propAt[tidx(s, xx, yy)] = p.id;
   return p;
@@ -87,6 +90,7 @@ export function addCas(s: Scene, x: number, y: number, mob: Mobility, health: nu
     immob: undefined,      // (R3 6단계) 척추 고정 — 실행기의 이송(E13)이 채운다
     ...extra,
   };
+  primeNums(c, CAS_SHAPE);
   s.casualties.push(c);
   return c;
 }
@@ -104,6 +108,7 @@ export function addHostile(s: Scene, x: number, y: number, weapon: Hostile['weap
     group: undefined, hideUntil: undefined, asleep: undefined,      // (N8) 폭행 시비의 무리 · 날치기가 숨은 자리에서 나갈 시각 · 잠든 취객 (단계 6a)
     crowdRole: undefined, dispersed: undefined,      // (N9) 시위의 주최자·선동자 · 해산해 걸어 나감 (단계 4)
   };
+  primeNums(h, HOSTILE_SHAPE);
   s.hostiles.push(h);
   return h;
 }

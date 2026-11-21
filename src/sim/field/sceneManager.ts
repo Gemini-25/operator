@@ -25,6 +25,7 @@ import { staticPass, tileOf } from './grid';
 import { tickCasualties, tickCollapse, tickCrush, tickFire, tickGas, tickHostiles, tickLane, tickLeaks, tickLift, tickMedical, tickWander, tickWater } from './hazards';
 import { CAUSE_NAME, DOWN_AT, canDeploy, hurtCauseNow, hurtResponder, initInjuries, mustRetreat, needsHospital, smokeCause, woundTick } from './injury';
 import type { HurtOpts } from './injury';
+import { POINT_SHAPE, SCENE_SHAPE, primeNums } from '../shape';      // (R3b N7)
 
 /**
  * (N8 단계 2a — 설계서 §5.7) 남은 일 등록의 답: 줄 가운데 처음으로 null 이 아닌 수요. 그 수요를 채울 부대(능력 0.7 이상)가 이미 이 사건에 배정돼
@@ -46,6 +47,7 @@ export function createScene(sim: Sim, I: Incident): Scene {
   initInjuries(sim, s, I);      // (H1) 처음부터 다쳐 있는 사람의 원인을 적는다 — 기록만, 난수를 부르지 않는다
   s.allIdleSince = -1; s.rollCallAt = -1e9;      // 지휘관이 쓰는 칸은 만들 때 채워 둔다 (도중에 속성이 생기면 현장 객체의 모양이 바뀌어 매 틱 도는 코드가 느려진다)
   s.air = []; s.light = null; s.airAt = -1;      // (R1) 상공의 헬기가 쓰는 칸 — 쓰는 것은 단계 4·5 부터
+  primeNums(s, SCENE_SHAPE); primeNums(s.staging, POINT_SHAPE);      // (R3b N7) 숫자 칸을 만들 때부터 소수 표현으로 — 값은 그대로 (shape.ts)
   sim.scenes[I.id] = s;
   return s;
 }

@@ -2782,4 +2782,42 @@ describe('R3b (나) 속도 — 결과 불변', () => {
     }
     expect(B.list('ctl')).toEqual([]);
   });
+
+  it('T2. 지도 고정(N7): primeNums 를 거친 객체와 거치지 않은 객체의 모든 칸 값·칸의 순서가 같고, 없는 칸을 더하지 않는다', async () => {
+    const SH = await import('../src/sim/shape');
+    const sim = new Sim('R3b-T2', NORMAL, 1200, { force: 'armed/hostage' });
+    sim.run(900);
+    const same = (o: object, site: { nums: readonly string[]; muts: readonly string[] }): void => {
+      const a = o as Record<string, unknown>, b = { ...a };
+      SH.primeNums(b, SH.shapeSite(site.nums, site.muts));      // every 1 — 반드시 넓힌다
+      expect(Object.keys(b)).toEqual(Object.keys(a));
+      for (const k of Object.keys(a)) expect(Object.is(b[k], a[k]), k).toBe(true);
+    };
+    let n = 0;
+    for (const s of sim.scenes) {
+      if (!s) continue;
+      same(s, SH.SCENE_SHAPE); same(s.staging, SH.POINT_SHAPE);
+      for (const a of s.agents) { same(a, SH.AGENT_SHAPE); if (a.task) { same(a.task, SH.TASK_SHAPE); n++; } }
+      for (const w of s.board) same(w, SH.WORK_SHAPE);
+      for (const r of s.regions) same(r, SH.REGION_SHAPE);
+      for (const p of s.props) same(p, SH.PROP_SHAPE);
+      for (const c of s.casualties) same(c, SH.CAS_SHAPE);
+      for (const h of s.hostiles) same(h, SH.HOSTILE_SHAPE);
+      if (s.ops) same(s.ops, SH.OPS_SHAPE);
+    }
+    for (const u of sim.units) same(u, SH.UNIT_SHAPE);
+    for (const r of sim.responders) { same(r, SH.RESPONDER_SHAPE); for (const it of r.kit ?? []) same(it, SH.KIT_SHAPE); }
+    for (const I of sim.incidents) { same(I, SH.INCIDENT_SHAPE); same(I.truth, SH.TRUTH_SHAPE); }
+    expect(n).toBeGreaterThan(3);
+    // 없는 칸은 건너뛴다 · 값은 그대로 (정수·음수 0·NaN·무한대·undefined·배열·객체)
+    const o: Record<string, unknown> = { a: 3, b: -0, c: NaN, d: Infinity, e: undefined, f: [1], g: { z: 1 }, h: 'x', i: true, j: null };
+    const before = { ...o };
+    SH.primeNums(o, SH.shapeSite(['a', 'b', 'c', 'd', 'e', 'zz'], ['f', 'g', 'h', 'i', 'j', 'yy']));
+    expect(Object.keys(o)).toEqual(Object.keys(before));
+    for (const k of Object.keys(before)) expect(Object.is(o[k], before[k]), k).toBe(true);
+    // 같은 시드는 같은 결과 (넓히기가 결과를 바꾸지 않는다 — 해시 목록이 131교대로 본다)
+    const again = new Sim('R3b-T2', NORMAL, 1200, { force: 'armed/hostage' });
+    again.run(900);
+    expect(again.logHash).toBe(sim.logHash);
+  });
 });

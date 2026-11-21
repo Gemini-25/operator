@@ -18,8 +18,9 @@ import { emit } from '../../events';
 import { addObstacle, noteRoadCause, obstacleOnEdge } from '../../traffic';
 import type { Place, PlaceExpo, Signal } from '../../types';
 import { registerConsequence } from '../consequence';
-import { GAS_KINDS, SHOCK, expoOf, neighborsOf, neighborsOfPoint, shockDelta } from '../expo';
+import { EMBER, GAS_KINDS, SHOCK, burnedPlaces, emberDelta, expoOf, fireTargetOk, heatMul, neighborsOf, neighborsOfPoint, shockDelta } from '../expo';
 import type { Nb } from '../expo';
+import { hazardImpulse } from '../hazard';
 import { placeState } from '../state';
 
 /** 균형 상수 */
@@ -82,6 +83,7 @@ registerConsequence({
 // 기록: shake 가 처음 SHOCK.S_MIN 을 넘을 때 '금이 갔습니다', 도시가스를 쓰는 건물의 shake 가 그 건물의 배관 문턱을 넘는 순간 '배관이 손상됐습니다' —
 //   둘 다 진실(truth — 아무도 보지 못했다)이고 원인은 [가장 크게 보탠 충격의 기록, 이번 충격의 기록] (충격이 둘 쌓여 넘었을 때 기록과 structFail 의 부모가 서로 다른 사건을 가리키지 않게).
 // 관제·지휘관은 이 상태를 읽지 않는다 — 그 건물의 사건이 신고될 때 평소처럼, 현장에 닿은 뒤에는 X6 의 조짐과 밸브를 본 대원의 믿음으로만 안다 (§3.8).
+// (b3-8c) 같은 폭발 신호(catastrophe data 0 · blast)로 L2 의 불티 항도 준다: 이웃 건물마다 hazardImpulse('heatSpread', …, what 'ember') — 크기는 expo.emberDelta, 대상은 열 항과 같은 조건(expo.fireTargetOk)
 
 /** 가장 크게 보탠 충격의 크기 — 노출 칸마다 (shakeEv·shakeInc 를 바꿀지 견준다. 노출 칸은 교대마다 새로 만들므로 시드를 넘지 않는다) */
 const TOP = new WeakMap<PlaceExpo, number>();
@@ -101,11 +103,28 @@ function shocked(sim: Sim, sig: Signal): { id: number; d: number }[] {
   return out;
 }
 
+/**
+ * (b3-8c — L2 의 불티 항) 이 폭발 신호가 불티를 보내는 이웃 — 옮겨붙은 불의 대상이 될 수 있는 건물만(expo.fireTargetOk — L2 의 열 항과 같은 조건), 가까운 순으로 EMBER.NB_MAX 채까지.
+ * 폭발이 아니면(붕괴·전소) 없다. 크기는 expo.emberDelta — 틈이 멀수록 작지만 0 이 되지는 않는다(이웃 목록의 틈 30 까지)
+ */
+function embered(sim: Sim, sig: Signal): { id: number; dH: number }[] {
+  const out: { id: number; dH: number }[] = [];
+  if (!(emberDelta(sig, 0, 1) > 0)) return out;
+  const nbs: readonly Nb[] = sig.place >= 0 ? neighborsOf(sim, sig.place) : sig.x >= 0 ? neighborsOfPoint(sim, sig.x, sig.y) : [];
+  const burned = burnedPlaces(sim), places = sim.city.places;
+  for (let k = 0; k < nbs.length && out.length < EMBER.NB_MAX; k++) {
+    if (!fireTargetOk(sim, nbs[k].id, burned)) continue;
+    const dH = emberDelta(sig, nbs[k].gap, heatMul(places[nbs[k].id].kind));
+    if (dH > 0) out.push({ id: nbs[k].id, dH });
+  }
+  return out;
+}
+
 registerConsequence({
   id: 'shockSpread', label: '충격 손상', on: ['catastrophe', 'blast', 'collapse'],
   key: (_sim, sig) => (sig && sig.ev >= 0 ? 'ev:' + sig.ev : null),
   cooldown: 0, cap: Infinity, spawns: false,
-  test: (c) => shocked(c.sim, c.sig!).length > 0,
+  test: (c) => shocked(c.sim, c.sig!).length > 0 || embered(c.sim, c.sig!).length > 0,
   apply: (c) => {
     const sim = c.sim, sig = c.sig!, places = sim.city.places;
     const I = sig.inc >= 0 ? sim.incidents[sig.inc] : undefined;
@@ -123,6 +142,9 @@ registerConsequence({
         ex.pipeEv = emit(sim, { role: 'SYSTEM', actor: '도시', kind: 'hazard', tag: 'struct', imp: 1, truth: true, causes: [ex.shakeEv, sig.ev], text: `${placeLabel(q)}의 가스 배관이 충격으로 손상됐습니다.` });
       }
     }
+    // (b3-8c) 폭발의 불티: 이웃 건물의 heatSpread 칸에 한 번의 충격으로 더한다 — 문턱("그 건물이 얼마나 타기 쉬운가")은 열 항과 같은 칸이다.
+    // 금을 먼저 적는다: 불티가 그 자리에서 문턱을 넘어 불이 나면 그 현장이 금 간 채로 시작한다(applyExpo). 기록은 남기지 않는다 — 불이 붙으면 그 사건의 발생 기록이 이 폭발 기록을 원인으로 갖는다
+    for (const { id, dH } of embered(sim, sig)) hazardImpulse(sim, 'heatSpread', id, dH, { rate: dH, ev: sig.ev, inc: sig.inc, what: 'ember', ref: sig.place });
   },
 });
 

@@ -13,15 +13,15 @@
 // 이 파일은 등록만 한다(world/laws/index.ts 가 모은다). src/sim 의 다른 모듈은 이 파일을 import 하지 않는다 — 노출량의 식(heatTargets·heatRate)은 측정(scripts/hazstats.ts)이 함께 쓴다.
 
 import type { Sim } from '../../engine';
-import { INCIDENT_PLACES } from '../../cityPlan';
 import { fireCauseEv, fireLoad } from '../../field/hazards';
 import type { SpawnOpts } from '../../incidents';
-import type { HzWhat, PlaceKind } from '../../types';
-import { neighborsOf, neighborsOfPoint } from '../expo';
+import type { HzWhat } from '../../types';
+import { burnedPlaces, fireTargetOk, heatMul, neighborsOf, neighborsOfPoint } from '../expo';
 import type { Nb } from '../expo';
 import { registerHazard } from '../hazard';
 import type { HzPart } from '../hazard';
-import { placeState } from '../state';
+
+export { heatMul } from '../expo';      // (b3-8c) 타기 쉬운 정도와 대상의 조건은 불티 항(rules/structure.ts)도 쓰므로 등록이 없는 파일로 옮겼다
 
 /**
  * 법칙의 세기와 사건의 크기 (시험이 K 를 키워 쓴다):
@@ -32,26 +32,10 @@ import { placeState } from '../state';
  */
 export const HEAT = { K: 1.2e-4, Q0: 3, F_MIN: 10, NB_MAX: 8, F_BIG: 40, CAP: 3 };
 
-/** 건물 종류의 타기 쉬운 정도 M (적지 않은 종류는 1): 시장·창고·작업장·상점 1.3 · 주택·식당·카페·편의점·공장 1 · 아파트·오피스텔·사무용 0.6 */
-const MUL: Partial<Record<PlaceKind, number>> = { market: 1.3, fishMarket: 1.3, warehouse: 1.3, workshop: 1.3, shop: 1.3, apartment: 0.6, officetel: 0.6, office: 0.6 };
-export function heatMul(kind: PlaceKind): number { return MUL[kind] ?? 1; }
-/** 열원 하나가 틈 g 의 이웃에 주는 몫 (K 를 곱하기 전): M × max(0, q − Q0), q = F / (1 + g/6)² */
+/** 열원 하나가 틈 g 의 이웃에 주는 몫 (K 를 곱하기 전): M × max(0, q − Q0), q = F / (1 + g/6)² — M 은 expo.heatMul */
 export function heatRate(F: number, gap: number, mul: number): number {
   const d = 1 + gap / 6, q = F / (d * d);
   return q > HEAT.Q0 ? mul * (q - HEAT.Q0) : 0;
-}
-
-/** 이번 교대에 이미 불이 난 건물 — 화재 사건이 있었거나 현장에 탄 칸이 있다(탈 것이 탔다) */
-function burnedPlaces(sim: Sim): Set<number> {
-  const out = new Set<number>();
-  for (const J of sim.incidents) {
-    const p = J.truth.placeId;
-    if (p < 0) continue;
-    if (J.truth.type === 'fire') { out.add(p); continue; }
-    const s = sim.scenes[J.id];
-    if (s && s.burnedTiles > 0) out.add(p);
-  }
-  return out;
 }
 
 /**
@@ -77,7 +61,7 @@ export function heatTargets(sim: Sim, visit: (target: number, gap: number, F: nu
       const nb = nbs[k], q = places[nb.id];
       const rate = heatRate(F, nb.gap, heatMul(q.kind));
       if (!(rate > 0)) break;      // 가까운 순이라 이 뒤로는 문턱을 넘지 않는다
-      if (!((INCIDENT_PLACES.fire[q.kind] ?? 0) > 0) || burned.has(nb.id) || placeState(sim, nb.id)?.usable === false) continue;
+      if (!fireTargetOk(sim, nb.id, burned)) continue;      // 화재의 틀이 없는 종류 · 이미 불이 난 건물 · 쓸 수 없는 건물 (expo.fireTargetOk — 불티 항과 같은 조건)
       taken++;
       visit(nb.id, nb.gap, F, rate, I.id, ref);
     }

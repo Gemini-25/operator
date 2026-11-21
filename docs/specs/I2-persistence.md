@@ -1248,3 +1248,62 @@ for (const [seed, d, f] of cases) {
 - **단계 6 (화면)**: 지도 `carryLayer.ts` 는 `sim.carryState.places`(교대 내내 그대로 — `mark`·`spot`·`opened`·`state`·`soot`·`dmg`)를, 현장 `staticLayer` 의 얼룩은 `s.wear?.soot` 와 `s.burned`(처음부터 탄 칸이 이미 탄 바닥으로 그려진다)를 읽는다. 마우스 정보의 건물 줄은 `placeCond(sim, q.id)`(화면도 불러도 된다 — 상태를 바꾸지 않는다).
 - **단계 7 (보고서)**: '지난 교대에 손상된 건물에서 사건 n건 (코드들).' = `carryState.stats.markedInc`, `CarrySummary.marked·closed·ruin` = 다음 상태의 `places`(state 별), 그 교대의 출입 통제 건물 수 = `carryState.places`. `makeCarryover` 는 지금도 순수하다(건물은 난수를 쓰지 않는다 — `buildReport` 안에서 불러도 된다).
 - **단계 8 (측정·균형)**: 위 알려진 문제 다섯, `chain.ts --soot`(§6.3 의 8 — `s5-soot.ts` 를 옮기면 된다), §6.3-6 의 "교대 6 의 출입 통제·무너짐 평균 ≤ 교대 2 의 절반"(진단: 지진 계보의 교대 2 는 9~12곳, 교대 5~6 에 3~8곳).
+
+### 단계 6·7 — 화면·보고서 (이어받은 상태가 없을 때 결과 불변) · 덩어리 s67, `wf/persist-s67`
+
+시작점 `1a6c10e`(`wf/persist` — 단계 5 끝). 주 브랜치(`claude/practical-keller-xm0ac2`) 받기는 앞으로 감을 것이 없었다. 커밋은 시뮬레이션과 그림을 나눴다: 시뮬레이션 `3d94180`(단계 7 보고서)·`42bd7bd`(같은 단계의 고침 — 아래 수치) · `1fddff5`(단계 6 의 마우스 정보 문장 — persist, 화면만 부른다) · 화면 `782d027`(runner·패널·ui-check) · 그림 `3d43550`(지도·범례·현장 얼룩). 화면 커밋은 그림 커밋 없이도 따로 `tsc` 를 지난다(확인함).
+
+**실제 이름** (뒤 단계가 쓴다)
+
+| 파일 | 이름 |
+|---|---|
+| `src/sim/persist.ts` (단계 7) | 상수 `GROWN_MIN` 0.01 · `carrySummary(co)`(→ `CarrySummary` — 결장 out > 0 · 공석 −1 · 정비 · 건물 상태별 · 복구 도로 · 숙련 dSkill ≥ `GROWN_MIN` 인 나오는 대원) · `carryParts(c, ahead?)`(한 줄 몫 — 0 은 뺀다, ahead 면 '결장 예상') · `carryNextLine(c)`('다음 교대로 넘기는 것: …' / '다음 교대로 넘기는 피해는 없습니다.') · `carryLines(sim)`(조직 칸 — 요약 줄 그대로 + 영향 줄) · `carryEffectLine(sim)`('지난 교대의 영향: …' 앞의 둘, 없으면 null) · `shortArrivalLine(sim, I)`(선택 — 분석 문장). 안쪽 `shortRuns`(결원 도착 기록 = 원인이 요약 줄인 `arrive` 기록)·`carryEffects` |
+| `src/sim/persist.ts` (단계 6) | `carryLine(sim, placeId)`(마우스 정보 — 그을림·구조 손상 n%·탄 자리·'복구 공사 중 — 출입 통제 (n교대 남음)'·'무너짐 — 복구 전까지 출입 불가 (n교대 남음)') · `carryRoadLine(sim, edgeId)`('복구 공사 — <까닭> · 약 n분 뒤 개통 / 이번 교대 내내', 한 차로는 '… 완료') |
+| `src/sim/debrief.ts` | `buildReport`: 끝난 교대에서만 `next = makeCarryover(sim)` → `carryNext = carrySummary(next)` · H1 `roster` 의 off 대원 `out` = `next` 의 그 자리 값 · `carry = { shift, key: carryKey, lines: carryLines }`(이어받은 교대만) · 요약 끝에 `carryEffectLine`·`carryNextLine`. `evaluate`: 대응 지연(`delayed && responseTime ≥ 0`)이면 대응 시간 줄 바로 뒤에 `shortArrivalLine` |
+| `src/view/runner.ts` | 키 `ar.org.v1`(`SavedOrg` — `{ id, carry, savedAt }`) · `ar.input.v1`(`InputRec`) · `StartMode` · `Settings.org`(기본 'continue') · `HistoryItem.shift` · `OrgStatus`. `Runner` 의 칸 `carryIn`·`orgId`·`writeOrg`·`startMode`·`baseShift`·`settled`·`orgMem`·`orgResult`('saved' · 'conflict' · 'skipped')·`storageFailed`, 함수 `readOrg()`·`orgStatus()`·`clearOrg()`·`newShift(seed?, d?, mode?)`, 안쪽 `begin(mode)`·`saveInput()`·`settle()` |
+| `src/view/city/carryLayer.ts` (새) | `drawCarryWorld(ctx, sim, { scale, timeMs, mini, zs })` · `FENCE`(울타리·고깔 색 — 범례가 쓴다) |
+| `src/view/city/ruinLayer.ts` | export 만 더함: `local`·`paintRoofHole`·`paintTotal`·`paintBurnt`·`paintBlasted` |
+| `src/view/marks.ts` | `REPAIR_MARK`(줄무늬 고깔 + 가로대) · `ORG_MARK`(사람 셋) |
+| `src/ui/panels.tsx` | `OrgChip`(상단) · `OrgReport`(보고서의 조직 칸) · `carryOf`·`offNote`·`oosText` · `DifficultyPanel` 의 `.org-row`(재난 줄과 나란히 `.cond-rows`) |
+| `src/ui/Mark.tsx` | `RoleDot` 의 `off`(흐림 + 사선)·`relief`(오른쪽 위 흰 점) |
+| `src/ui/App.tsx` | `onNew(seed?, d?, mode?)` · `window.__ar.snap()` 의 `org`(= `runner.baseShift`)·`off` |
+| `scripts/ui-check.cjs` · `ui-check-ref.ts` | 검사 9(이어받은 상태) · 기준값 스크립트의 `carry`·`dumpCarry` |
+
+**본문과 다르게 한 곳**
+
+1. **`readOrg` 는 저장소가 먼저, 그다음 이 창의 사본**(본문 §5.3 은 "orgMem 이 있으면 그것"). 사본을 먼저 보면 다른 창이 조직을 앞으로 보냈는지(저장 조건의 `saved.carry.shift === baseShift`)를 영영 알 수 없다. 같은 계보가 둘 다 있으면 더 나아간 쪽(용량 초과로 저장소가 뒤처졌을 때). 저장소의 조직을 읽지 못해도 이 창이 저장한 사본이 있으면 그것을 쓴다 — 난이도 창의 '읽지 못했습니다'는 사본이 없는 창에서만 보인다(시험: 새 창).
+2. **주소로 조건을 고정한 실행도 `ar.input.v1` 을 쓴다**(carry null · write false — 본문은 `begin` 만). 그러지 않으면 조건 없는 주소의 복원이 앞 교대(같은 시드)의 낡은 입력과 짝지어 다른 상태로 돌 수 있다. **`?org=` 만 있어도 주소 고정 실행**으로 본다(`?org=continue` = 저장된 조직으로, 저장하지 않음).
+3. **보고서 버튼**: 이 교대가 조직을 저장했을 때만 '다음 교대 (이어서)'(주 버튼), 아니면(주소 고정·같은 입력 재실행·다른 창과 어긋남) 그 자리에 예전의 '새 교대 시작'(설정의 시작 방법). 본문은 버튼 넷만 적었다.
+4. **'같은 시드 재실행'(상단·보고서)과 난이도 창의 '같은 시드(…)로 시작'은 모두 replay**(같은 이어받은 상태, 저장하지 않는다 — 본문 §4.3·§5.2). 난이도 창의 비교 실행은 난이도만 바꾼 replay.
+5. **`CarrySummary.grown` = 나오는 대원 가운데 누적 `dSkill ≥ GROWN_MIN`(0.01)**(단계 2 메모 4 의 문턱 제안). 요약 기록의 '숙련이 오른 대원 n명'(단계 2 — 누적 > 0)은 바꾸지 않았다(이어받은 교대의 해시가 바뀐다 — 문구는 단계 8 이 정할 일). 그래서 두 수가 다르다(보통 2번째 교대: 기록 33명 · grown 0~4).
+6. **`carryNext` 는 끝난 교대에서만**(`sim.ended`) — `tests/methods.test.ts` 가 끝나지 않은 교대에 `buildReport` 를 부른다(`makeCarryover` 는 끝나지 않은 교대에서 예외).
+7. **요약의 두 줄은 끝에**(헬기 줄 다음): '지난 교대의 영향: …'(이어받은 교대·영향이 있을 때만 — 영향이 하나도 없으면 줄이 없다), '다음 교대로 넘기는 것: …'(언제나).
+8. **영향 줄의 짧은 말**(본문은 "둘까지"만): 결원 출동 사건 n건 · 예비 인력 n명 · 정비 마친 부대 n대 · 개통한 복구 도로 n구간 · 손상된 건물의 사건 n건 · 섬광탄 n개 덜 지급. 결원 부대의 호출부호·손상 건물의 사건 코드는 여섯까지(넘으면 '외 n').
+9. **분석 문장의 n = 그 부대에서 나온 내리는 대원**(`crews.fieldCrew` 가운데 off 가 아닌 사람 — `crewReady` 와 같은 단위). 대응 시간 줄 바로 뒤에 넣는다(문제 문장의 9줄 컷에 밀리지 않게).
+10. **난이도 창**: 재난 줄과 조직 줄을 나란히(`.cond-rows`)하고 창을 820 → 960px 로 넓혔다(styles.css 의 `persist` 블록에서 덮어씀) — 820px 에 조직 줄을 더하면 1600×900 에서 시작 버튼이 창 아래로 밀렸다(스크린샷 확인). '저장된 조직 지우기'는 조직 줄 머리의 오른쪽(확인 한 번 — 창 대화상자가 아니라 그 자리의 '지우기 · 그대로').
+11. **지도**: 큰 배율의 공사 고깔은 지붕 가운데가 아니라 **왼쪽 위 안쪽**(가운데는 큰 배율에서 건물 이름표가 앉는다 — 겹침), 똑바로 선다. 작은 배율의 기호는 건물 회전을 따르지 않는다. 울타리·고깔의 굵기·크기는 화면 화소로(본문의 `max(1, 1.4/scale)` 은 큰 배율에서 월드 1칸 = 수 화소로 굵어진다). 흔적의 얼룩 진하기는 `0.55 × max(0.4, soot)`(옅은 그을음도 보이게). X6 상태가 없는 무너짐은 G4 의 `paintRoofHole('major', 0.3)`.
+12. **현장의 그을음 얼룩**: 처음부터 탄 칸은 불 그림(fx.ts)이 이미 탄 바닥으로 그린다 — staticLayer 는 실내 바닥에 옅은 방사형 얼룩(그을음 × 0.55 의 칸)과 실내에 닿은 벽을 따라 가는 자국만 더한다. `staticSig` 에 `round(s.wear.soot × 100)`.
+13. **결장 표시**: 역할 점은 흐림 + 사선, 부대장 칩은 흐림 + 가로줄(`.cchip.off`), 예비 인력은 점 오른쪽 위의 흰 점(칩은 부대장만이라 예비 인력이 칩이 되는 일은 없다 — `.cchip.relief` 는 남겨 둠). 결장자의 건강 반원은 그리지 않는다.
+14. **ui-check 검사 9**(본문 §5.6-7 "검사 하나"): `ui-check-ref.ts` 의 `dumpCarry` 가 그 시드의 60초 교대 상태에서 진압 펌프차 하나의 셋째 자리·순찰차 하나의 둘째 자리를 1교대 결장으로 만든 상태를 저장소에 넣고 `?seed=S3&org=continue` 로 연다 — 조직 번호 칩 · `snap().off` = 결장 점 수 = 넣은 수 · 같은 입력(이어받은 상태 포함)의 헤드리스 해시와 같음. 끝나면 저장된 조직을 지운다.
+
+**시험** (`tests/persistence.test.ts` 81 → 84개): 1 — (단계 7) 보고서: 이어받은 상태가 없는 교대의 carry 없음·carryNext = 그 교대가 만든 상태의 요약·요약 끝 줄 / 이어받은 교대의 조직 칸(첫 줄 = 요약 기록 · 지문 · 교대 번호)·carryNext·영향 줄·결원 부대 사건 수·JSON 안전 · 요약의 몫(carryParts·carryNextLine·carrySummary 의 셈). 2 — 명부(H1 roster)의 결장자 out = 다음 상태의 값 · carryNext 의 결장 수 · 결원 도착이 있으면 조직 칸에 그 줄 · 분석 문장(첫 도착이 결원 도착인 사건만, 대응 지연이면 analysis 에 있다). 화면은 시험 파일이 없다(관찰용 Playwright 대본과 ui-check 9).
+
+**수치**
+
+- 해시 목록 158교대(scratchpad `wf-persist/s67-hashlist.ts` — `s04-hashlist.ts` 에서 보고서 JSON 의 FNV 를 `carry`·`carryNext`·새 요약 두 줄을 뺀 JSON 으로 잰 것): 기준 `s04-base-hashes.txt`(`19a7e68`) ↔ 단계 7 뒤 `s67a-hashes.txt` ↔ 마지막 코드 `s67b-hashes.txt` — **158줄 모두 한 글자도 다르지 않다**(`report.hash` · 그 밖의 보고서 JSON · 기록 수 · 명부 지문). 보고서 JSON 전체로는 `carryNext` 와 요약 끝 줄만큼 다르다(본문 §11.1-9 그대로).
+- `npm run ui-check` 통과(9개 — 1 콘솔 오류 0 · 2 배속 15.08 · 3 되감기 해시 56개 같음 · 4 복원 · 5 보고서 해시 = 헤드리스 · 6 · 8 · **9 이어받은 상태: 조직 #2 · 결장 2 = 결장 점 2 · 해시 = 헤드리스**), 152초.
+- 화면 확인(5232, Playwright 1600×900 — scratchpad `wf-persist/s67/`): `01-first-topbar`·`02-diff-none`(첫 화면 · 저장된 조직 없음) · `03-report`·`03b-report-org`(시각 막대로 끝까지 → 보고서의 조직 칸, `ar.org.v1` 이 생김 shift 2, 이전 교대 기록 `#1`) · `04-continued`·`04b-units-crop`('다음 교대 (이어서)' → 조직 #2 · 첫 기록 · 결장 칩·예비 인력·정비 중 n분) · `05-diff-continue`·`06-diff-clear-confirm` · `08-diff-bad`(새 창에서 읽지 못함 — 이어서 단추 꺼짐, 시작 줄이 창 안) · `09-blocked-report`·`10-blocked-diff`(저장소를 막은 창: 저장 실패 안내 · 같은 창 안에서 조직 #2 로 이어짐 · 난이도 창의 경고) · `20-map-small`·`20-map-mid`·`20-map-big`(지진 Q1 뒤 무너짐 8 · 복구 도로 6 + 손으로 더한 흔적 다섯) · `20-hover-closed`·`20-hover-marked`·`20-hover-road`(마우스 정보) · `20-scene-soot`(그을음 0.6 건물의 화재 현장 — 처음부터 탄 칸 29) · `21-ui-carry`·`22-ui-legend`·`22b-legend-box`(범례 '지난 교대의 흔적'). 모든 대본에서 콘솔 오류 0.
+- 이어받은 상태 하나의 JSON: 15.5KB(지진 Q1 뒤 — 대원 104 항목 · 건물 8 · 도로 6).
+- 관문 `npm run check` 통과(마지막 코드 커밋 `42bd7bd`): 파일 20 · 1065개 통과 + 건너뜀 1(persistence 81 → 84), 전체 10분 34초(사용자 CPU 32분 — 다른 묶음과 함께 도는 기계). `sweep 40 --check` '검증 통과' — close reasons resolved 588 · timeout 1 · abandoned 1, 교착 후보 0 · 잊힌 사건 0 · C1~C5 0 · holes 0 · systems carry 0% (단계 4·5 관문의 기록과 같다 — 이어받은 상태가 없는 교대). **첫 시도는 실패했다**: `tests/legibility.test.ts` 의 '읽는 곳' 시험이 src/sim 의 `.ruin`(G4 의 그림용 기록 `Scene.ruin` 읽기를 글자로 막는다)을 `carryParts` 의 `c.ruin`(`CarrySummary.ruin`)에서 잡았다 — 칸을 풀어 쓰게 고쳤다(`42bd7bd`, 문장·결과 그대로). **`CarrySummary` 의 `ruin` 칸을 src/sim 에서 `.ruin` 으로 읽지 않는다**(뒤 단계도 — 풀어 쓰거나 화면 쪽에서).
+- 화면 확인 (계속): `30-agent-org`·`32-agent-off`·`32-agent-relief`(대원 정보창의 조직 칸 — 결장 '이서준 — 결장 (연기 흡입 · 1교대 남음)' · 경력 '조직에서 5번째 교대 · 사건 12건 · 경험 +0.06 · 숙련 +0.04' / 예비 인력) · `31-report-carry`·`31b-report-carry-org`(이어받은 교대의 보고서 조직 칸: 요약 줄 · 결원 부대가 나간 사건 6건 (기동1·순찰1) · 예비 인력 1명 · 열린 복구 도로 1구간 · 손상된 건물의 사건 1건 (14) · 다음 교대로 넘기는 것 타일 다섯 — 머리에 '조직 #2 · 지문 …').
+
+**알려진 문제**
+
+- 요약 기록의 '숙련이 오른 대원 n명'(누적 > 0)과 `CarrySummary.grown`(누적 숙련 ≥ 0.01)이 다른 수다(위 5). 기록 문구를 바꾸면 이어받은 교대의 해시가 바뀐다 — 단계 8 이 하나로 맞출지 정한다.
+- `settings.org` 가 'fresh' 로 저장되면 그 뒤의 '새 교대'·첫 화면이 매번 새 조직이다(본문 §5.2 의 설계 그대로 — 보고서의 '다음 교대 (이어서)'는 언제나 이어간다).
+- 결장한 부대장의 자리에 예비 인력이 타도 부대 목록의 칩은 결장자(가로줄)를 보인다 — 예비 인력은 점(흰 점)으로만 보인다.
+- 보고서가 뜬 첫 프레임(0.16초 안)에는 저장 결과 문장이 비어 있을 수 있다(`settle` 은 프레임 끝에서 — 다음 그리기에 채워진다).
+
+**뒤 단계가 이어받을 자리**
+
+- **단계 8**: `scripts/chain.ts --dump` 가 생기면 화면 확인 2 의 상태를 그것으로(지금은 scratchpad 의 `dump-quake.ts`). `sweep --carry`. 위 알려진 문제 1(숙련 문구). README·CLAUDE 의 '조작법'(조직 칩·이어서·새 조직)·'화면 자동 검사 9'.

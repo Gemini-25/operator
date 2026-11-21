@@ -346,7 +346,7 @@ export function runCover(sim: Sim, s: Scene, a: FieldAgent, t: Task, k: ExecKit)
   const crit = g !== null && g.ammo !== Infinity && g.ammo <= 2 * g.perShot;
   const rule = t.docRule ?? '';
   if (th === undefined || th.state !== 'fight' || sim.t - t.startedAt >= DOC.COVER_CAP || (calm && !reloading && (rule === 'P09' || rule === 'P10' || crit))) {
-    if (t.hostile >= 0 && rule) docRemember(sim, a, rule, 'h:' + t.hostile, DOC.COVER_MEM);
+    if (t.hostile >= 0 && rule) docRemember(sim, a, rule, rule === 'P30' ? '*' : 'h:' + t.hostile, DOC.COVER_MEM);      // (R3b A3) 손 빈 경찰의 숨기는 어느 위협에도 20초 다시 걸지 않는다 — 총격범이 둘이면 한쪽에서 숨은 자리가 다른 쪽에는 보일 수 있다 (엄폐 ↔ 대기 왕복을 막는다)
     actEnd(sim, a, t);
     k.finish(sim, s, a, true);
     return;

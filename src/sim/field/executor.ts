@@ -676,8 +676,12 @@ function toCoverSpot(sim: Sim, s: Scene, a: FieldAgent, t: Task, h: Hostile): Mo
   // 믿음의 낡은 자리로 고르면 움직이는 총격범을 놓쳐 교전이 길어졌다 (2단계 측정 — 강제 armed/shooter 의 한계 시간)
   const tx = h.x, ty = h.y;
   let again = t.cvX === undefined || t.cvTx === undefined || t.cvTy === undefined || dist(tx, ty, t.cvTx, t.cvTy) > 2;
-  if (!again && t.cvX !== undefined && t.cvY !== undefined && !Number.isNaN(t.cvX) && dist(a.x, a.y, t.cvX, t.cvY) <= 0.6) {
-    if (los(s, a.x, a.y, h.x, h.y)) t.cvLost = -1;
+  if (!again && t.cvX !== undefined && t.cvY !== undefined && !Number.isNaN(t.cvX)) {
+    // (R3b 단계 2 — 어려움 S5 #07 의 교착) 자리에 닿았으면 대원의 자리에서, 아직 가는 중이면 고른 그 자리에서 위협이 보이는가를 잰다.
+    // 위협이 2칸 안에서 움직여 고른 자리의 시야를 잃으면, 그 자리 곁(위협이 안 보이는 칸)에 선 대원을 방 진입 갈래(roomDoorFor — 시야가 없으면 문으로)가
+    // 데려갔다가 시야가 트인 칸에서 이 갈래가 되돌려 보내 두 목표 사이를 틱마다 오갔다(149초 — 닿지 못해 2초 재기가 시작되지 않았다)
+    const at = dist(a.x, a.y, t.cvX, t.cvY) <= 0.6;
+    if (at ? los(s, a.x, a.y, h.x, h.y) : los(s, t.cvX, t.cvY, h.x, h.y)) t.cvLost = -1;
     else if ((t.cvLost ?? -1) < 0) t.cvLost = sim.t;
     else if (sim.t - (t.cvLost ?? sim.t) > 2) again = true;
   }

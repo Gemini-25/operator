@@ -206,3 +206,21 @@ registerDoctrine(
     th: { mul: 1.5 }, rank: 3, why: 'danger',
   },
 );
+
+// ── (R3b 단계 2 — A3) 손이 빈 경찰은 총격의 시야에 서 있지 않는다 (P30. docs/specs/R3b-followup.md §4.2 A3) ──
+// 물음 2(강제 넷 × 120교대)의 칸별 나누기: 늘어난 명중 91 가운데 63 이 손이 빈(대기·임무 없음) 경찰이었고(노출 6,831 → 10,694초 — 같은 노출의 명중률은 오히려 낮다),
+// 그 대부분이 짝 동행(G08)·수색·현장 평가를 마친 그 자리에 선 채였다 (무장 현장의 대기는 대기 지점으로 걸어가지 않는다 — executor case 'standby').
+// 숨는 자리는 P09·P11·P16 과 같은 엄폐 임무(runCover — 숨을 자리 coverSpot(…, 숨기), 상한 12초)다. 체력 조건이 없다(P11 은 40~70 의 후퇴 바꿔 끼우기).
+// 지휘관의 지시를 받아 둔 대원(orderWork)에게는 걸지 않는다 — 그 지시를 한다. 숨은 뒤에는 가려져 있어 다시 걸리지 않고, 끝난 뒤 20초는 어느 위협에도 다시 걸지 않는다(runCover 의 기억 '*')
+/** (R3b A3) 총격 시야를 피하는 거리 (칸 — 용의자 사격의 사거리 11칸보다 조금 넓게, 진단 대본의 노출과 같은 13칸) */
+export const P30_R = 13;
+registerDoctrine(
+  {
+    id: 'P30', dept: 'police', name: '손 빈 경찰은 총격 시야에 서 있지 않는다', short: '총격 시야 — 엄폐',
+    who: { dept: ['police'] }, hook: 'act',
+    when: (c) => (c.a.task === null || c.a.task.kind === 'standby') && c.a.orderWork < 0 && gunFight(c) && c.sit.threat !== null && c.sit.threat.d <= P30_R && c.inView() && c.hideSpot() !== null,
+    effect: { kind: 'act', act: 'cover', score: 0.9 },
+    th: { d: P30_R, score: 0.9 }, rank: 1, why: 'danger',
+    note: '총격 시야 — 몸을 숨깁니다.',
+  },
+);

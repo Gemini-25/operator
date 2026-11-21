@@ -2886,6 +2886,34 @@ describe('R3b (가) A3: 손이 빈 경찰은 총격의 시야에 서 있지 않�
     const far = spotAt(s, h.x, h.y, 13.5, 30, true);
     if (far) { put(A, far); docForget(A); expect(docAct(sim, s, A)?.rule.id).not.toBe('P30'); }
   });
+  it('(어려움 S5 #07 의 교착) 고른 엄폐 사격 자리가 위협을 보지 못하면, 그 자리에 닿지 못한 채여도 2초 뒤 다시 고른다 (P05 — 방 진입 갈래와 틱마다 오가던 고리)', async () => {
+    const { losWalls } = await import('../src/sim/field/grid');
+    for (let k = 0; k < 40; k++) {
+      const { sim, s, h, A, B } = copsScene('R3b-CV-' + k, 'armed/siege', ['patrol'], 'gun', 'fight');
+      B.status = 'withdrawn';
+      for (const p of s.props) if (p.kind === 'door' && !p.blocking) p.open = true;
+      noKit(sim, A, 'flashbang', 'beanbag', 'sniper');
+      s.entryOrdered = true; s.breachAt = -1; s.breachDone = true;
+      // 대원은 위협이 보이는 자리(방 진입 갈래가 걸리지 않는다), 고른 자리는 그 곁 2~4칸의 위협이 보이지 않는 칸 (벽 너머)
+      const me = spotAt(s, h.x, h.y, 4, 7, true);
+      if (!me) continue;
+      const blind = spotAt(s, me.x, me.y, 2, 4, false, (x, y) => !losWalls(s, x, y, h.x, h.y) && Math.hypot(x - h.x, y - h.y) >= 3 && Math.hypot(x - h.x, y - h.y) <= 7.5);
+      if (!blind) continue;
+      put(A, me);
+      const w = work(sim, s, 'engage', { hostile: h.id, priority: 0.9, max: 3 });
+      giveTask(sim, s, A, w);
+      const t = A.task!;
+      t.cvX = blind.x; t.cvY = blind.y; t.cvTx = h.x; t.cvTy = h.y; t.cvLost = -1;
+      docForget();
+      // 다른 갈래가 데려가 그 자리에 닿지 못하는 것을 흉내 낸다: 틱마다 대원을 제자리로 (예전에는 자리에 닿아야 2초 재기가 시작돼 영영 다시 고르지 않았다)
+      let moved = false;
+      for (let q = 0; q < 20; q++) { stepOne(sim, s, A, 0.2); put(A, me); if (t.cvX !== blind.x || t.cvY !== blind.y) { moved = true; break; } }
+      expect(moved).toBe(true);
+      expect(t.cvX === undefined || Number.isNaN(t.cvX) || los(s, t.cvX!, t.cvY!, h.x, h.y)).toBe(true);      // 다시 고른 자리는 위협이 보이거나, 없으면 지금 동작으로
+      return;
+    }
+    throw new Error('장면을 찾지 못했다');
+  });
   it('엄폐(P30) 중인 대원은 지휘관이 교전으로 빼 가지 않는다 (assign 건너뛰기)', async () => {
     const { sim, I, s, h, A, cops } = await exposedScene();
     const cmd = cops[1]; cmd.status = 'active'; cmd.isCommander = true;

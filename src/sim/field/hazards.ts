@@ -41,6 +41,8 @@ export const FIRE_LOAD_MIN = 0.5;
 const FIRE_LOAD = new WeakMap<Scene, number>();      // 현장 → 지난 tickFire 의 센 불 칸 수 (현장 객체의 모양을 바꾸지 않는다. 현장은 교대마다 새로 만들어 시드를 넘지 않는다)
 /**
  * (I1-b b3-7) 열린 현장의 불 요약 F — 지난 tickFire(1초에 한 번)에서 불 세기 FIRE_LOAD_MIN 이상이던 칸 수. 불을 센 적이 없는 현장은 0.
+ * 건물 현장이면 **그 건물 안(실내 구역)의 칸만** 센다 — L2 의 유속은 그 건물의 벽에서 이웃의 벽까지의 틈으로 재므로, 불 요약도 그 건물의 불이어야 한다
+ * (산불 현장의 숲·마당처럼 건물 밖에서 타는 칸은 그 건물의 불이 아니다 — 그 번짐은 산불 모델의 것이다). 건물이 없는 현장(길 위의 차량 화재)은 모든 칸.
  * 진실 쪽 전용(세계 규칙·법칙 — L2 heatSpread 의 열원). 판단은 읽지 않는다
  */
 export function fireLoad(s: Scene): number { return FIRE_LOAD.get(s) ?? 0; }
@@ -61,13 +63,14 @@ export function fireCauseEv(I: Incident): number {
 export function tickFire(sim: Sim, s: Scene, I: Incident): void {
   const w = s.w, h = s.h, n = w * h;
   let burning = 0, big = 0, hot = 0;
+  const inBldg = I.truth.placeId >= 0, reg = s.region, regs = s.regions;      // (I1-b b3-7) 불 요약은 건물 현장이면 실내 구역의 칸만
   for (let i = 0; i < n; i++) {
     const f = s.fire[i];
     if (s.wet[i] > 0) s.wet[i] *= 0.955;
     if (f <= 0) continue;
     burning++;
     if (f > 0.2) big++;
-    if (f >= FIRE_LOAD_MIN) hot++;      // (I1-b b3-7) 불 요약 — 이 순회에 셈 하나
+    if (f >= FIRE_LOAD_MIN && (!inBldg || (reg[i] >= 0 && regs[reg[i]].indoor))) hot++;      // (I1-b b3-7) 불 요약 — 이 순회에 셈 하나
     s.fuel[i] -= 0.0105 * f;
     if (s.fuel[i] <= 0) {
       s.fuel[i] = 0;

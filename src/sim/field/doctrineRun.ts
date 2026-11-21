@@ -12,7 +12,7 @@ import type { DocFitAns, DocPick, DoctrineRule } from './doctrine/registry';
 import type { ExecKit } from './methodRun';
 import { learn, learnQuiet } from './agents';
 import { mkFact } from './beliefs';
-import { DOC, bandHyst, crewSigOf, docDeptOf, phaseOf, sigBand } from './doctrine';
+import { DOC, bandHyst, breachDoorOf, crewSigOf, docDeptOf, phaseOf, sigBand } from './doctrine';
 import { gunOf, kitHas, kitQty } from './gear';
 
 /** 같은 (줄, 대원, 대상)의 기록을 하나로 잇는 시간 (초) — 같은 기다림이 판단 주기마다 줄을 만들지 않게 */
@@ -51,12 +51,15 @@ export function docBegin(sim: Sim, s: Scene, a: FieldAgent, pick: DocPick, k: Pi
   const wasW = a.task && a.task.workId >= 0 ? s.board[a.task.workId] : undefined;
   const was: WorkKind | null = wasW ? wasW.kind : null;      // 이 행동이 대신한 작업판 일 (split 의 열쇠)
   const hostile = a.task !== null && a.task.hostile >= 0 ? a.task.hostile : -1;      // (2단계) 하던 임무의 용의자 — 엄폐가 그 위협을 본다 (P16 의 협상 상대)
+  const door = pick.act === 'force' ? breachDoorOf(sim, s, a) : -1;      // (R3b D1 — S30) 열러 갈 잠긴 방 문 (줄이 본 것과 같은 함수 — 하던 임무를 놓기 전에 잰다)
+  if (pick.act === 'force' && door < 0) return;
   if (a.task) k.finish(sim, s, a, false, 'preempt');
   // (2단계 P16) 협상자가 교전 때문에 엄폐하면 그 협상은 엄폐의 상한(12초) 동안 다른 대원에게 넘기지 않는다 — 넘기면 손이 빈 대원이 차례로 협상을 받아 차례로 엄폐한다.
   // 작업은 열린 채 남는다: 교전이 그쳐 엄폐가 끝나면 지휘관이 협상을 다시 준다 (§3.1 P16)
   if (wasW !== undefined && wasW.kind === 'negotiate' && pick.act === 'cover' && (wasW.status === 'open' || wasW.status === 'active')) wasW.holdUntil = Math.max(wasW.holdUntil, sim.t + DOC.COVER_CAP);
   const t = k.makeTask(pick.act as string as TaskKind, ACT_LABEL[pick.act] ?? pick.rule.short);      // TaskKind 에는 그 행동을 쓰는 단계가 이름을 더한다 (2단계 cover·rearm, 3단계 airOut·pairOut·pair)
   t.startedAt = sim.t; t.docRule = pick.rule.id; t.hostile = hostile;
+  if (door >= 0) t.tile = door;      // (R3b D1) 실행기의 case 'force' 가 그 문 곁으로 가서 연다 (방법은 문 곁에서 R2 가 고른다 — 폭파·충격기)
   a.task = t;
   a.doc = { rule: pick.rule.id, act: pick.act, since: sim.t };
   splitBegin(sim, s, a, was);
@@ -68,7 +71,7 @@ const ACT_DOC = new WeakMap<Task, DocUse>();
 /** 교본 행동 임무가 끝났다: 그 기록의 끝 시각을 적고 따르는 교본을 비운다 */
 export function actEnd(sim: Sim, a: FieldAgent, t: Task): void { const d = ACT_DOC.get(t); if (d !== undefined) d.t1 = sim.t; a.doc = null; }
 /** (2단계) 교본 행동 임무의 머리 위 라벨 (§7.2) */
-export const ACT_LABEL: Partial<Record<DocActId, string>> = { cover: '엄폐', rearm: '탄약 보급', airOut: '공기 탈출', pairOut: '짝 따라 나감', pair: '짝 동행' };
+export const ACT_LABEL: Partial<Record<DocActId, string>> = { cover: '엄폐', rearm: '탄약 보급', airOut: '공기 탈출', pairOut: '짝 따라 나감', pair: '짝 동행', force: '잠긴 문 개방' };
 /** 같은 대원·같은 줄의 교본 행동 문구를 다시 남기지 않는 시간 (초 — 지금의 후퇴 문구와 같다) */
 export const NOTE_GAP = 20;
 /** 대원마다 줄별 마지막 문구 시각 (대원 개체의 모양을 바꾸지 않으려 WeakMap — 되감기는 Sim 을 새로 만든다) */
@@ -393,6 +396,7 @@ export function docContinue(sim: Sim, a: FieldAgent, t: Task): number | undefine
   if (t.kind === 'pair') return PAIR_P.get(t) ?? 0.62;      // (3단계 §4.4 끝) 짝 동행: 0.5 + 0.4 × 짝 일의 우선도 + 0.12 (runPair 가 적는다)
   if (t.kind === 'cover') return 0.97;      // 교전 지시 0.92·교전 계속 0.94·후퇴 0.95 보다 높게 — 12초 상한과 끝나는 조건으로 스스로 끝난다
   if (t.kind === 'rearm') { const g = gunOf(sim, a.rid); return g !== null && g.ammo !== Infinity && g.ammo <= 2 * g.perShot ? 0.96 : 0.86; }
+  if (t.kind === 'force' && t.docRule === 'S30') return DOC.S30_HOLD;      // (R3b D1) 잠긴 방 문을 열러 가는 중 — 문이 열리면(누가 열었든) 실행기가 끝낸다
   return undefined;
 }
 // (import 를 이 절에 둔 것은 위의 import 묶음을 다른 단계가 함께 고치고 있어서다)

@@ -57,7 +57,7 @@ export interface ExecKit {
 /** 대원이 선 칸에서 잰 연기와 열 (몸의 감각 — 판단부에 넘기는 유일한 진실) */
 export function senseOf(s: Scene, a: FieldAgent): Sense { const i = tileOf(s, a.x, a.y); return { smoke: s.smoke[i], heat: s.fire[i] }; }
 /** (R3) 실행부가 방법을 고를 때 넘기는 교본 입력 — 자기 모드 (R3 §2.3 ③). 방법 줄이 없으면 만들지 않는다(null) */
-function selfDc(sim: Sim, s: Scene, a: FieldAgent, t: Task): DocCtx | null { return hasDoc('method') ? docCtx(sim, s, a, 'self', t.workId >= 0 ? s.board[t.workId] ?? null : null, senseOf(s, a)) : null; }
+export function selfDc(sim: Sim, s: Scene, a: FieldAgent, t: Task): DocCtx | null { return hasDoc('method') ? docCtx(sim, s, a, 'self', t.workId >= 0 ? s.board[t.workId] ?? null : null, senseOf(s, a)) : null; }
 
 /**
  * 방법 판정의 난수 흐름 method:<사건 id>:<rid>:<k> (처음 쓸 때 만든다). k = 그 대원이 이 현장에 들어온 순번(s.agents 에서 같은 rid 가운데 몇째인가) —

@@ -704,11 +704,30 @@ const OPENER_NEAR = 6;
 const ROOM_DOOR_CAP = 25;
 /** 잠긴 방 문 앞에 진입조가 처음 모인 시각 (문마다 — 소품의 모양을 바꾸지 않으려 WeakMap. 되감기는 Sim 을 새로 만든다) */
 const roomDoorAt = new WeakMap<Prop, number>();
-/** 그 문을 여는 하위 작업을 맡은 진입조 대원 (없으면 null) */
+/** 그 문을 여는 하위 작업을 맡은 진입조 대원, 또는 (R3b D1) 그 문을 본 임무로 여는 대원(S30 — 진입대원(파괴)이 문으로 오는 중) (없으면 null) */
 function doorOpener(s: Scene, rd: Prop): FieldAgent | null {
   const i = rd.y * s.w + rd.x;
-  for (const b of s.agents) if (b.status === 'active' && b.task !== null && b.task.kind === 'engage' && b.task.sub !== null && b.task.sub.tile === i) return b;
+  for (const b of s.agents) if (b.status === 'active' && b.task !== null && ((b.task.kind === 'engage' && b.task.sub !== null && b.task.sub.tile === i) || (b.task.kind === 'force' && b.task.tile === i))) return b;
   return null;
+}
+/** 문을 여는 대원의 그 문 임무 (하위 작업 또는 본 임무) */
+const openTask = (op: FieldAgent): Task => (op.task!.kind === 'force' ? op.task! : op.task!.sub!);
+/** (R3b D1) 잠긴 방 문 앞에 모인 진입조가 스스로 열지 않고 진입대원(파괴)을 기다리는 시간 (초 — 모인 뒤. 상한 ROOM_DOOR_CAP 25초는 그대로) */
+const BREACHER_WAIT = 8;
+/**
+ * (R3b D1) 현장에 손이 닿는 진입대원(파괴)이 있는가: 장약이 남았고(알려진 고장 제외) 걸을 수 있는 다친 대원이 아니며 업고 있지 않고,
+ * 검거·문 개방·후퇴·철수·휴식·탑승 중이 아닌 활동 대원 — 교본 S30 이 그 사람을 문으로 데려올 수 있다. 진입조(교전)이면 같은 용의자를 맡아 이 방으로 오는 중일 때만
+ * (문 6칸 안에 닿으면 여는 사람 고르기에 든다 — OPENER_NEAR). 동료의 겉·조직 정보만 본다
+ */
+function breacherOn(sim: Sim, s: Scene, t: Task): boolean {
+  for (const b of s.agents) {
+    if (b.status !== 'active' || b.carrying !== -1 || roleIdOf(sim, b.rid) !== 'breacher' || kitCount(sim, b.rid, 'charge') <= 0 || sim.responders[b.rid].status === 'injured') continue;
+    const bt = b.task, k = bt !== null ? bt.kind : null;
+    if (k === 'engage' && (bt!.hostile !== t.hostile || bt!.sub !== null)) continue;
+    if (k === 'arrest' || k === 'force' || k === 'clear' || k === 'retreat' || k === 'evacuate' || k === 'rehab' || k === 'board') continue;
+    return true;
+  }
+  return false;
 }
 /**
  * (R2 §4.2a) 방 진입의 잠긴 문 (case 'engage' ①-2 — 진입조가 모였을 때). 돌려주는 값 = 아직 기다린다(이 틱은 여기서 끝).
@@ -743,15 +762,17 @@ function lockedRoomDoor(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task,
     }
   }
   for (const b of mates) if (b.task !== null) b.task.entryDoor = rd.id;
-  if (doorOpener(s, rd) !== null) return true;      // 이미 누군가 연다
+  if (doorOpener(s, rd) !== null) return true;      // 이미 누군가 연다 (R3b D1 — 그 문을 본 임무로 열러 오는 진입대원(파괴)도)
   // (R3 5단계 — S26·S03) 문 여는 사람은 모인 진입조와 그 문으로 오고 있는 진입조(같은 용의자의 교전 · 문에서 6칸 안) 가운데서 고른다:
   // 장약을 든 진입대원(파괴)이 조금 늦게 와도 그 사람이 연다 — 그 사람이 닿아 스스로 맡을 때까지 모인 사람은 기다린다 (모인 뒤 25초 상한은 그대로)
   for (const b of s.agents) if (b !== a && mates.indexOf(b) < 0 && b.status === 'active' && b.task !== null && b.task.kind === 'engage' && b.task.hostile === t.hostile && b.task.sub === null && dist(b.x, b.y, rd.x, rd.y) <= OPENER_NEAR) team.push(b);
+  // (R3b D1) 모인 뒤 8초는 진입대원(파괴)이 문 개방(S30)을 맡거나 이 방으로 닿을 틈을 둔다 — 그 사람이 이미 고를 사람들 가운데 있으면 기다리지 않는다
+  if (sim.t < at + BREACHER_WAIT && !team.some((b) => roleIdOf(sim, b.rid) === 'breacher' && kitCount(sim, b.rid, 'charge') > 0) && breacherOn(sim, s, t)) { a.label = '파괴 담당 대기'; return true; }
   const tg = { tile, prop: rd.id, cas: -1, hostile: -1, region: -1 };
   let best: FieldAgent | null = null, bs = -1;
   for (const b of team) {
     if (b.status !== 'active' || b.task === null || b.task.sub !== null) continue;
-    const pk = chooseMethod(sim, s, b, 'force', tg, null, NO_SENSE);
+    const pk = chooseMethod(sim, s, b, 'force', tg, null, NO_SENSE, selfDc(sim, s, b, b.task));      // (R3b D4) 그 대원의 자기 모드 교본 입력과 함께 — 문 곁에서 실제로 고를 점수(S26 이 폭파를 뺀 점수)로 견준다
     const sc = pk !== null ? pk.cands[0].score : 0;
     if (sc > bs || (sc === bs && best !== null && b.rid < best.rid)) { bs = sc; best = b; }
   }
@@ -767,7 +788,7 @@ function lockedRoomDoor(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task,
  */
 function stackForCharge(sim: Sim, s: Scene, a: FieldAgent, t: Task, rd: Prop): boolean {
   const op = doorOpener(s, rd);
-  if (op === null || op === a || op.task!.sub!.method !== 'charge') { t.range = 0; return false; }
+  if (op === null || op === a || openTask(op).method !== 'charge') { t.range = 0; return false; }
   if (!t.range) { const sp = stackSpot(s, rd.y * s.w + rd.x, a); if (sp === null) return false; t.tx = sp.x; t.ty = sp.y; t.range = 1; }
   a.label = '폭파 대기';
   const m = moveTo(sim, s, a, t.tx, t.ty, 0.3);
@@ -1030,12 +1051,17 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       return;
     }
     case 'clear': case 'force': {
-      if (s.propAt[t.tile] < 0) { finishTask(sim, s, a, true); return; }
+      const s30 = t.docRule === 'S30';      // (R3b D1) 교본 S30 — 진입대원(파괴)이 스스로 잠긴 방 문을 열러 왔다 (작업판 밖의 임무)
+      if (s.propAt[t.tile] < 0) {
+        // (R3b D1) 다른 대원이 먼저 열었다: 낡은 믿음으로 다시 오지 않게 "열렸다"를 강제로 보고하고(reportDone) 그 문에 60초 다시 걸지 않는다 — 판단마다 시작 → 끝의 고리를 막는다
+        if (s30) { reportDone(sim, a, mkFact('blk', t.tile, 'none', r.name, sim.t, 1, true, '문 개방 확인')); docRemember(sim, a, 'S30', 'd:' + t.tile, DOC.S30_MEM); }
+        finishTask(sim, s, a, true); return;
+      }
       // (R2 §4.2a) 폭파 진입의 설치 뒤(물러서기·기다림·3-2-1)는 문 곁으로 가지 않는다 — 이동은 runCharge 안의 한 번뿐 (한 틱에 이동 목표 하나)
-      if (t.method === 'charge' && t.phase >= 1) { if (workOnBlocker(sim, s, a, t.tile, t.kind, t)) finishTask(sim, s, a, true); return; }
+      if (t.method === 'charge' && t.phase >= 1) { if (workOnBlocker(sim, s, a, t.tile, t.kind, t)) { if (s30) docRemember(sim, a, 'S30', 'd:' + t.tile, DOC.S30_MEM); finishTask(sim, s, a, true); } return; }
       const m = moveTo(sim, s, a, t.tile % s.w, (t.tile / s.w) | 0, 1.5);
-      if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
-      if (m === 'arrived' && workOnBlocker(sim, s, a, t.tile, t.kind, t)) finishTask(sim, s, a, true);
+      if (m === 'nopath') { if (s30) docRemember(sim, a, 'S30', 'd:' + t.tile, DOC.S30_MEM); finishTask(sim, s, a, false, 'nopath'); return; }
+      if (m === 'arrived' && workOnBlocker(sim, s, a, t.tile, t.kind, t)) { if (s30) docRemember(sim, a, 'S30', 'd:' + t.tile, DOC.S30_MEM); finishTask(sim, s, a, true); }
       return;
     }
     case 'waterRescue': {
@@ -1957,7 +1983,7 @@ import type { CostFn } from './grid';
 export const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask, unblock };
 // (R2 단계 2) 문·통로의 방법: 고르기(startMethod)·속도·장비 확인·소리·폭파 진입·방법 기록 — 고르는 것은 판단부, 효과는 methodRun
 import { RAPID_HURT, blockerKitFails, blockerRate, doorNoise, extricateDoneText, extricatePrep, extricateRate, recheckOnArrive, recordArrest, recordMethod, runBeanbag, runCharge, runExtinguisher, runSniper, runSuppress, runVentFirst, searchStop, stackSpot, startMethod, tunnelSlide } from './methodRun';
-import { kitCount } from './gear';
+import { kitCount, roleIdOf } from './gear';
 /** (R2 §4.6) 동시 진입·방 진입을 함께 한 임무 — 그 뒤의 검거는 'breach' 로 적는다 (임무의 모양을 바꾸지 않으려 WeakSet) */
 const ENTERED = new WeakSet<Task>();
 import { METHOD, NO_SENSE, chooseMethod } from './methods';
@@ -1976,7 +2002,7 @@ import type { OpsFact, ZoneLike } from './ops';
 // ── (R3 3단계 — 소방) 짝 동행·공기 탈출·짝 따라 나가기의 실행, 위험 실내 첫걸음의 판단 지점(interiorEntry), 벽 더듬기·끊어 쏘기의 효과 ──
 import { gatePassed, runAirOut, runPair, runPairOut, docRemember } from './doctrineRun';
 import { DOC, hasDoc } from './doctrine';
-import { senseOf } from './methodRun';
+import { selfDc, senseOf } from './methodRun';
 /** (R3 §3.7) 벽 더듬기의 경유점 간격 배율 · 끊어 쏘기의 효과·물 배율 */
 const FEEL_SPACING = 0.75, PULSE_MUL = [0.85, 0.65] as const;
 /** 벽 더듬기로 경유점을 짠 수색 임무 (임무의 모양을 바꾸지 않으려 WeakSet) */

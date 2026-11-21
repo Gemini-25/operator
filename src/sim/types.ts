@@ -1035,7 +1035,8 @@ export type DocDept = 'common' | 'police' | 'fire' | 'ems' | 'special';
 /** 교본이 걸리는 자리 (§2.3) */
 export type DocHook = 'fit' | 'duty' | 'act' | 'method' | 'gate' | 'cmd' | 'dispatch' | 'chase';
 /** 교본이 내는 상태 행동 (같은 이름의 TaskKind 로 실행한다 — 그 행동을 쓰는 단계가 TaskKind 에 더한다) */
-export type DocActId = 'airOut' | 'pairOut' | 'cover' | 'rearm' | 'pair';
+export type DocActId = 'airOut' | 'pairOut' | 'cover' | 'rearm' | 'pair'
+  | 'force';      // (R3b D1 S30) 잠긴 방 문 개방 — 진입대원(파괴)이 믿음 속 잠긴 방 문으로 간다 (임무 TaskKind 'force' 그대로, 대상 칸은 doctrine.breachDoorOf)
 /** 실행기가 교본에 묻는 판단 지점 (§2.3 ④) */
 export type DocGateId = 'interiorEntry' | 'roomEntry' | 'breach' | 'closeIn' | 'coverFire' | 'bangUse' | 'carryHold' | 'carryStart' | 'laneTreat'
   | 'forceDoor';      // (R3 5단계 S03) 진입 결정 전 무장 현장의 잠긴 문을 열려는 걸음 (executor.moveTo 의 문 강제 개방 하위 작업 앞)

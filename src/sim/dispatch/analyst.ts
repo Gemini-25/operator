@@ -12,11 +12,13 @@ import { TYPE_DEFS, TYPE_ORDER, likRow, typeIdx } from '../incidentTypes';
 import { recomputeUnmet } from './dispatcher';
 import { docNeeds } from './doctrine';      // (R3 §6.2) 관제 교본의 수요 보정 (D1·D3·D6·D8)
 import { recordDoc } from '../field/doctrineRun';
-import { knownHazardNear } from '../world/state';      // (I1-b b3-7 §3.8) 관제가 아는 큰 불·폭발이 곁에 있는가 — 진실 위치·현장을 읽지 않는다
+import { knownHazardNear, knownZone, knownZoneOfIncident } from '../world/state';      // (I1-b b3-7 §3.8) 관제가 아는 큰 불·폭발이 곁에 있는가 · (C10) 관제가 아는 구역 위험 — 진실 위치·현장을 읽지 않는다
 
 const TYPES = TYPE_ORDER;      // 가설의 순서 = likRow 의 열 순서 (incidentTypes.TYPE_ORDER — 새 유형은 끝에만)
 /** (I1-b b3-7) 알려진 큰 불·폭발 곁의 화재 신고에 더하는 위험도 — 이름표 '연소 확대' 와 함께 (설계서 I1 §3.7 L2 의 "AI 가 아는 길") */
 export const SPREAD_SEV = 0.3;
+/** (I1-b C10) 알려진 구역 위험(무장 용의자 도주) 안의 무장 신고에 더하는 위험도 — 경찰 한 팀 더와 함께 (설계서 I1 §3.7 C10 의 "관제가 쓰는 곳") */
+export const ZONE_SEV = 0.3;
 export const sevName = (s: number): string => (s < 1.7 ? '보통' : s < 2.4 ? '높음' : '매우 높음');
 const NEED_NAME: Record<keyof Needs, string> = { suppression: '진압', rescue: '구조', ems: '구급', law: '경찰', tactical: '경찰 기동', search: '수색', traffic: '교통 통제', eod: '폭발물 처리',
   utilPower: '전력 복구', utilGas: '가스 복구', utilWater: '수도 복구', tow: '견인', capture: '동물 포획', decon: '제독' };      // (N8 §5.3.5) · (N9 §5.3.1)
@@ -81,6 +83,7 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
   const risks: string[] = [];
   let sev = 1.3;
   let spread = false;      // (I1-b b3-7) 연소 확대 — 알려진 큰 불·폭발 곁의 화재 신고
+  let zoneRisk = false;    // (I1-b C10) 알려진 구역 위험(무장 용의자 도주) 안의 무장 신고
   const count = cnt.c && typeof cnt.c.value === 'number' ? cnt.c.value : -1;
   const district = sim.city.nodes[I.reportedNode].district;     // 신고로 알게 된 위치
   const prank = claims.some((c) => c.topic === 'hazard' && c.value === 'prank');
@@ -151,6 +154,8 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
     if (inj.c && inj.c.value === true) { sev += 0.45; why.push('부상자'); }
     if (trap.c && trap.c.value === true) { sev += 0.3; why.push('내부 시민'); risks.push('인질 위험'); }
     if (det.c && det.c.value && det.c.value.suspects >= 2) { sev += 0.3; why.push(`용의자 ${det.c.value.suspects}명`); }
+    // (I1-b C10) 관제가 아는 구역 위험 — 그 동네에서 무장 용의자가 달아났다(부대가 본 도주). 신고의 구역은 알려진 교차로로만 (진실 위치를 읽지 않는다)
+    if (!prank) { const zr = knownZone(sim, knownZoneOfIncident(sim, I)).risk; if (zr !== undefined && zr > 0) { zoneRisk = true; sev += ZONE_SEV; why.push('인근 무장 용의자 도주'); } }
   }
   sev = clamp(sev, 1, 3);
   if (type === 'collapse' && nat.indexOf('elevator') >= 0 && nat.indexOf('collapse') < 0) sev = Math.min(sev, 1.8);      // 승강기가 멈춘 것이지 건물이 무너진 것은 아니다
@@ -198,6 +203,7 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
     if (sev >= 1.9 || (inj.c && inj.c.value === true) || nat.indexOf('gunshots') >= 0) needs.ems = 1;
   }
   if (type === 'armed' && prank) { needs.law = 1; needs.tactical = 0; needs.ems = 0; }
+  if (zoneRisk) needs.law += 1;      // (I1-b C10) 달아난 무장 용의자가 그 동네에 있다 — 경찰 한 팀 더
   // 신고 내용이 시나리오를 가리키면 그에 맞춰 보낸다 (scenarios/*.ts 의 needs)
   const ctx = { sev, hurt: !!(inj.c && inj.c.value === true), trapped: !!(trap.c && trap.c.value === true), nat };
   for (const sc of SCENARIOS) if (sc.needs && sc.type === type && nat.indexOf(sc.nature) >= 0) sc.needs(needs, ctx);

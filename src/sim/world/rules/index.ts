@@ -15,3 +15,4 @@
 import './record';
 import './hospital';
 import './structure';
+import './risk';      // C10 suspectZone — (b3-9) 무장 용의자의 도주가 그 동네의 경계 단계를 올린다 (재범 자체는 field/hazards.ts 의 도주 블록이 조건으로 예약한다)

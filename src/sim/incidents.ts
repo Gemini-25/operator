@@ -55,8 +55,8 @@ export interface GenState {
 }
 export function initGenerator(rng: Rng): GenState { return { nextAt: rng.range(10, 22), lastType: null, count: 0, lastCreated: 0, nextNuisanceAt: 40, chain: [], majorAt: Infinity, forced: false, dropped: [] }; }
 
-/** 무장 사건의 변형에 따라 잘 일어나는 곳이 다르다 */
-const ARMED_BIAS: Record<string, Partial<Record<PlaceKind, number>>> = {
+/** 무장 사건의 변형에 따라 잘 일어나는 곳이 다르다 ((I1-b C10) 도주한 용의자의 재범 자리 — field/hazards.ts 의 reoffendPlace 가 robbery 줄을 읽는다) */
+export const ARMED_BIAS: Record<string, Partial<Record<PlaceKind, number>>> = {
   robbery: { bank: 2.2, convenience: 1.8, gasStation: 1.6, shop: 1.4 },
   dispute: { restaurant: 3, market: 2, hotel: 1.5, bank: 0.2 },
   shooter: { mart: 2.5, market: 2, office: 2, terminal: 2, convenience: 0.4 },

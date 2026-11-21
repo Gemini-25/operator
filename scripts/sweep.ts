@@ -16,8 +16,13 @@
 //   (H1) 기본 출력의 injuries: 줄 — 대원 부상·쓰러짐·순직, 용의자 부상·사망(총에 맞아 쓰러진 용의자의 사망 비율·즉사), 잔해 추락, 사람이 없어 멈춘 부대 (scripts/injurystats.ts)
 //   npm run sweep -- 10 --no-metrics     표본을 뜨지 않고 지표 줄을 내지 않는다 (속도 비교용)
 //   npm run sweep -- 1 --log S7 --metrics            한 교대의 사건마다 가장 긴 원인 사슬과 확산 길
+//   (I2) npm run sweep -- 40 --carry <파일>         모든 시드에 같은 이어받은 상태(Carryover JSON, 또는 ar.org.v1 의 { carry } — scripts/chain.ts --dump)를 넣어 돈다.
+//        이어받은 상태의 효과를 A/B 로 잴 때 쓴다. 보통의 기준 범위(--check)는 이어받은 상태가 없는 교대만 잰다 — --carry 면 --diff 처럼 구조의 관문만
+import { readFileSync } from 'node:fs';
 import { NORMAL, difficultyKey, difficultyLabel, parseDifficulty, parseDisaster } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
+import { carryKey, readCarryover } from '../src/sim/persist';      // (I2) --carry
+import type { Carryover } from '../src/sim/types';
 import { catJson, catLine, catShadowLine, catStats, sumCat } from './catstats';
 import type { CatCount } from './catstats';
 import { OUTCOME_NAME, TYPE_NAME, fmtClock } from '../src/sim/util';
@@ -42,7 +47,21 @@ if (!diff) { console.error(`알 수 없는 난이도: ${diffArg}`); process.exit
 const disArg = opt('--disaster');
 if (disArg) { const dz = parseDisaster(disArg); if (!dz) { console.error(`알 수 없는 재난: ${disArg}`); process.exit(2); } diff = { ...diff, disaster: dz }; }
 const force = opt('--force');
-const mk = (seed: string): Sim => new Sim(seed, diff!, 1200, { force });
+// (I2) --carry <파일>: 모든 시드에 같은 이어받은 상태 — 시뮬레이션은 입력을 고치지 않는다(readCarryover 가 검사하며 새 객체로 만든다)
+const carryArg = opt('--carry');
+let carryIn: Carryover | null = null;
+if (carryArg) {
+  const raw = JSON.parse(readFileSync(carryArg, 'utf8')) as { v?: unknown; carry?: unknown };
+  carryIn = (raw && raw.v === undefined && raw.carry ? raw.carry : raw) as Carryover;
+}
+const mk = (seed: string): Sim => new Sim(seed, diff!, 1200, carryIn ? { force, carry: carryIn } : { force });
+let carryInfo: { shift: number; key: string; dropped: number } | null = null;
+if (carryIn) {
+  const probeSim = mk('S0');
+  if (!probeSim.carryState.on || !probeSim.carry) { console.error(`이어받은 상태를 읽지 못했다: ${carryArg}`); process.exit(2); }
+  carryInfo = { shift: probeSim.carry.shift, key: carryKey(probeSim.carry), dropped: readCarryover(carryIn, probeSim.city)!.dropped.length };
+  console.error(`이어받은 상태: 조직의 ${carryInfo.shift}번째 교대 · 지문 ${carryInfo.key}${carryInfo.dropped ? ` · 버린 것 ${carryInfo.dropped}줄` : ''} (${carryArg})`);
+}
 // 측정 지표: 기본으로 켠다(표본 포함). 표본은 상태를 읽기만 하므로 결과가 바뀌지 않는다
 const metricsOn = !flag('--no-metrics');
 const metricsAll = flag('--metrics');
@@ -159,7 +178,7 @@ const summary = {
 const metrics = metricsOn ? summarize(shiftList) : null;
 /** 시드별 report.hash 를 쉼표로 이어 붙여 FNV-1a (결과 불변 비교용) */
 const reportHash = ((): string => { let h = 0x811c9dc5; const s = reportHashes.join(','); for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 16777619); return (h >>> 0).toString(16); })();
-if (flag('--json')) console.log(JSON.stringify({ ...summary, ...(flag('--doctrine') ? { doctrine: doctrineJson(docSum) } : {}), ...(hazSum ? { hazard: hazJson(hazSum) } : {}), problems: prob, reportHash, metrics: metrics ? metricsJson(metrics) : null }));      // (R3) doctrine 칸은 --doctrine 일 때만
+if (flag('--json')) console.log(JSON.stringify({ ...summary, ...(flag('--doctrine') ? { doctrine: doctrineJson(docSum) } : {}), ...(hazSum ? { hazard: hazJson(hazSum) } : {}), ...(carryInfo ? { carry: carryInfo } : {}), problems: prob, reportHash, metrics: metrics ? metricsJson(metrics) : null }));      // (R3) doctrine 칸은 --doctrine 일 때만
 else {
   console.log(`\n난이도 ${summary.label} (${summary.difficulty}) · seeds=${n} errors=${errors} incidents=${incN} (${summary.perShift}/shift) avg ${summary.msPerShift}ms/shift`);
   console.log('outcomes:', Object.entries(out).map(([k, v]) => `${k} ${v} (${Math.round((v / Math.max(1, incN)) * 100)}%)`).join(', '));
@@ -186,7 +205,7 @@ if (flag('--check')) {
   const fail: string[] = [];
   if (errors > 0) fail.push(`예외 ${errors}건`);
   if (open > 0) fail.push(`끝나지 않은 사건 ${open}건`);
-  if (!diffArg && !disArg && !force) {
+  if (!diffArg && !disArg && !force && !carryArg) {
     if (timeoutShare > 0.04) fail.push(`한계 시간·무대응 종료 비율 ${(timeoutShare * 100).toFixed(1)}% > 4%`);
     // 난이도 보통의 기준 범위. 균형을 의도적으로 바꿨다면 이 범위와 docs/ROADMAP.md 의 기준 수치를 함께 고친다.
     if (summary.good < 0.65 || summary.good > 0.9) fail.push(`성공+대응 지연 ${(summary.good * 100).toFixed(0)}% 가 65~90% 를 벗어남`);
@@ -194,7 +213,7 @@ if (flag('--check')) {
     if (summary.avgResponse > 90) fail.push(`평균 대응 시간 ${summary.avgResponse}초 > 90초`);
   }
   // 측정 지표의 관문 (scripts/metrics.ts checkMetrics): 구조의 불변 조건은 언제나, 교착 래칫은 보통 기본 조건에서만
-  if (metrics) fail.push(...checkMetrics(metrics, { baseline: !diffArg && !disArg && !force }));
+  if (metrics) fail.push(...checkMetrics(metrics, { baseline: !diffArg && !disArg && !force && !carryArg }));
   else console.error('지표 관문 건너뜀 (--no-metrics)');
   if (fail.length) { console.error('\n검증 실패:\n - ' + fail.join('\n - ')); process.exit(1); }
   // --json 과 함께면 JSON 한 줄이 깨지지 않게 stderr 로

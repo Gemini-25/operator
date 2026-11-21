@@ -127,7 +127,7 @@ export interface CarryState {
   event: number;                                 // 이어받은 상태 요약 기록의 id (-1 = 없음). 원인으로 잇는다
   applied: CarryNote[];                          // ①·② 가 실제로 적용한 항목 (적용한 순서) — announceCarry 가 이것만 기록한다
   dropped: string[];                             // 적용하지 못한 것 (도시가 끊길 통제, 지도 지문 불일치, 조직 명부에 없는 열쇠, 상한을 넘은 항목) — announceCarry 가 적는다
-  stats: { relief: number; serviced: number; reopened: number; markedInc: string[]; fbShort: number; early: number; grown: number };      // grown (단계 2): 이번 교대에 나온 대원 가운데 기본 능력보다 숙련이 오른 사람 수 (요약 줄)
+  stats: { relief: number; serviced: number; reopened: number; markedInc: string[]; fbShort: number; early: number; grown: number };      // grown (단계 2·8): 이번 교대에 나온 대원 가운데 누적 숙련이 GROWN_MIN 이상인 사람 수 (요약 줄)
   fbStore: number;                               // (단계 3) 교대 시작의 지급 뒤 서(署) 창고에 남은 섬광탄 — makeCarryover 가 다음 창고를 센다 (창고 기록이 없던 상태면 STOCK_CAP − 지급, 음수일 수 있다)
 }
 /** 적용한 항목 하나 (기록 한 줄의 재료). 상태를 바꾼 함수가 그 자리에서 push 한다 */
@@ -630,7 +630,8 @@ export function applyCrewCarry(sim: Sim): void {
     for (const v of vac) cs.applied.push(v);
   }
   for (let i = 0; i < n0; i++) if (early.has(i)) { const r = sim.responders[i]; cs.stats.early++; cs.applied.push({ what: 'early', unit: sim.units[r.unitId].callsign, name: r.name }); }
-  for (let i = 0; i < n0; i++) { const c = entry[i]; if (c && (c.dExp > 0 || c.dSkill > 0) && sim.responders[i].status !== 'off') cs.stats.grown++; }
+  // (단계 8) 요약 줄의 '숙련이 오른 대원'은 보고서·화면(carrySummary.grown)과 같은 문턱 — 누적 숙련 GROWN_MIN 이상 (누적이 0 보다 큰 사람은 이어갈수록 거의 모두다)
+  for (let i = 0; i < n0; i++) { const c = entry[i]; if (c && c.dSkill >= GROWN_MIN && sim.responders[i].status !== 'off') cs.stats.grown++; }
   // 5. 펌프·정비 (단계 3 — §3.3): 장비 손잡이는 범위를, 이어받은 상태는 그 안의 위치를 정한다(equipment 흐름은 createRoster 가 그대로 다 뽑았다).
   //    정비 중인 부대는 readyAt 까지 oos '정비 중' — 한꺼번에 SERVICE_CAP 대까지(이른 순), 넘는 부대는 급히 정비를 마치고 바로 운용한다. 정비 중인 부대에는 아래의 예비 인력을 붙이지 않는다
   applyUnitCarry(sim, co);

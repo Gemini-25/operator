@@ -19,6 +19,7 @@ import { DIVERT_LATE_MIN, divertArrived, divertUnmet, noteDivert } from '../src/
 import { ER } from '../src/sim/world/rules/hospital';
 import { RUBBLE } from '../src/sim/world/rules/structure';
 import { catOf, collapseBuilding } from '../src/sim/field/catastrophe';
+import { makeCarryover } from '../src/sim/persist';
 import { unitArrived } from '../src/sim/field/sceneManager';
 import { OBSTACLE_LABEL, addObstacle, reallyLinked, tickTraffic } from '../src/sim/traffic';
 import { ER_PENALTY, dispatchUnit, etaFor, sendUnitTo, startTransport, tickUnits, transportWhy } from '../src/sim/resources';
@@ -223,7 +224,22 @@ describe('대응표가 문구를 아직 잡는다', () => {
     expect(u.state).toBe('available');
     expect(s.events.some((e) => PHRASE.T6.test(e.text) || /운용 중단/.test(e.text))).toBe(false);
   });
-  it.skip('T5(지난 교대에서 이어받은 상태) — I2 뒤에 켠다', () => {});
+  it('T5(지난 교대에서 이어받은 상태 — I2)가 이어받은 상태로 시작한 교대(보통 S1 이 만든 상태로 S2)의 요약 기록과 맞고, 그 기록의 시스템이 carry 다', () => {
+    // 정해진 시드에 이어받은 상태로 시작하는 교대 하나를 더한다 (I2 §8 완료 조건 3): S1 은 이어받은 상태가 없어 맞는 기록이 없다
+    const A = probedShift('S1').sim;
+    expect(A.events.some((e) => PHRASE.T5.test(e.text)), 'S1 (이어받은 상태 없음)').toBe(false);
+    const B = new Sim('S2', NORMAL, 1200, { carry: makeCarryover(A) });
+    const m = shiftMetrics(B, runWithProbe(B));
+    const hit = B.events.filter((e) => PHRASE.T5.test(e.text));
+    expect(hit.length).toBe(1);
+    expect(hit[0].id).toBe(B.carryState.event);
+    expect(hit[0].incidentId).toBe(-1);
+    expect(hit[0].kind).toBe('shift');
+    expect(sysOf(hit[0])).toBe('carry');
+    // 요약 줄을 원인으로 한 이어받은 상태의 기록(tag 'carry')도 carry 로 센다 — 지금 교대가 쓴 시스템 몫에 carry 칸이 있다
+    for (const e of B.events) if ((e as { tag?: string }).tag === 'carry') { expect(sysOf(e), e.text).toBe('carry'); expect(e.causes, e.text).toContain(hit[0].id); }
+    expect(typeof summarize([m]).systems.share.carry).toBe('number');
+  }, 60000);
   it('태그(I1-b·I2): carry 는 다른 규칙보다 먼저, 표에 없는 태그는 건너뛴다', () => {
     const X: SimEvent[] = [];
     ev(X, 3, 'incident', { tag: 'carry' }); ev(X, -1, 'unit', { tag: 'carry' }); ev(X, 0, 'unit', { tag: 'power' }); ev(X, 0, 'traffic', { tag: '없는 태그' });

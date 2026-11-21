@@ -2755,3 +2755,31 @@ describe('R3 독립 검토: 드는 대원 자신이 통제 전의 차로 줄에 
     expect((b.I.docs ?? []).some((d) => d.rule === 'E13' && d.rid === b.emt.rid)).toBe(true);
   });
 });
+
+// ───────────────────────── R3b (docs/specs/R3b-followup.md §8) ─────────────────────────
+describe('R3b (나) 속도 — 결과 불변', () => {
+  it('T1. 믿음 창고: 무작위 merge 수백 번 뒤 get·val·list 가 facts 를 종류로 거른 것과 같고, 받아 간 list 는 merge 로 바뀌지 않는다 (N1 — N2 는 넣지 않았다)', async () => {
+    const { BeliefStore, factKey } = await import('../src/sim/field/beliefs');
+    const { Rng } = await import('../src/sim/rng');
+    const rng = new Rng(77);
+    const types = ['cas', 'hos', 'fire', 'sign', 'mate', 'haz', 'crew'] as const;
+    const B = new BeliefStore();
+    const held: { arr: readonly unknown[]; copy: unknown[] }[] = [];
+    for (let k = 0; k < 600; k++) {
+      const type = types[rng.int(0, types.length - 1)], id = rng.int(0, 40) - (rng.chance(0.05) ? 41 : 0);
+      if (rng.chance(0.15)) { const arr = B.list(type); held.push({ arr, copy: arr.slice() }); }
+      B.merge(mkFact(type, id, { v: rng.int(0, 3), level: rng.int(0, 3) }, 't', k * 0.2 + (rng.chance(0.2) ? -5 : 0), rng.range(0.2, 1), rng.chance(0.4), ''));
+    }
+    // 받아 간 배열은 그 뒤의 merge 로 바뀌지 않는다 (순회 도중 merge 해도 안전하다)
+    for (const h of held) expect(h.arr).toEqual(h.copy);
+    for (const type of types) {
+      const want = [...B.facts.values()].filter((f) => f.type === type);
+      expect(B.list(type)).toEqual(want);
+      for (let id = -41; id <= 40; id++) {
+        expect(B.get(type, id)).toBe(B.facts.get(factKey(type, id)));
+        expect(B.val(type, id)).toBe(B.facts.get(factKey(type, id))?.value);
+      }
+    }
+    expect(B.list('ctl')).toEqual([]);
+  });
+});

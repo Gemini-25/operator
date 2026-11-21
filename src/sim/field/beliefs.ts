@@ -30,13 +30,16 @@ function sameValue(a: any, b: any): boolean {
 
 export class BeliefStore {
   readonly facts = new Map<string, Fact>();
-  /** 종류별로 나눈 같은 내용 (facts 와 함께만 고친다). 열쇠에 종류가 들어 있으므로 종류 안의 순서는 facts 의 순서와 같다 */
-  private readonly byType = new Map<string, Map<string, Fact>>();
+  /**
+   * 종류별로 나눈 같은 내용 (facts 와 함께만 고친다). (R3b N1) 안쪽 열쇠는 id — get·val 이 열쇠 글자(factKey)를 잇지 않고 찾는다.
+   * Map 은 숫자 열쇠도 넣은 순서대로 돈다 — 종류 안의 순서는 facts 의 순서와 같다 (예전의 'type:id' 글자 열쇠와 같은 순서·같은 사실)
+   */
+  private readonly byType = new Map<string, Map<number, Fact>>();
   private put(f: Fact): void {
     this.facts.set(f.key, f);
     let m = this.byType.get(f.type);
     if (!m) { m = new Map(); this.byType.set(f.type, m); }
-    m.set(f.key, f);
+    m.set(f.id, f);
   }
 
   /**
@@ -56,8 +59,8 @@ export class BeliefStore {
     this.put(f);
     return changed;
   }
-  get(type: FactType, id: number): Fact | undefined { return this.facts.get(factKey(type, id)); }
-  val<V>(type: FactType, id: number): V | undefined { const f = this.facts.get(factKey(type, id)); return f ? (f.value as V) : undefined; }
+  get(type: FactType, id: number): Fact | undefined { const m = this.byType.get(type); return m === undefined ? undefined : m.get(id); }
+  val<V>(type: FactType, id: number): V | undefined { const m = this.byType.get(type); if (m === undefined) return undefined; const f = m.get(id); return f !== undefined ? (f.value as V) : undefined; }
   list(type: FactType): Fact[] {
     const m = this.byType.get(type);
     return m ? Array.from(m.values()) : [];

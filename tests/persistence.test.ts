@@ -15,13 +15,16 @@
 //   연쇄 방화·재난·현장 + 넷째 자리(법칙 사건)·재범의 자리의 글자 검사 · 셋째 단계 · 흔적의 가중치 · 손상된 건물의 현장(처음부터 탄 칸·X6 의 분모·기록) · 그을음의 방향) ·
 //   끝 상태의 표(placeOutcome — X6 줄·화재 소실률·붕괴 잔해·2차 붕괴·승강기·열린 터) · 휴식 · 상한 · 6·10 의 건물 몫(상한·무너진 건물·손상 건물 사건의 기록 일대일) ·
 //   checkCarryLog 의 건물 줄('외 n곳' 묶음).
+// 단계 7 (보고서): 1 의 보고서 칸(carry·carryNext·요약 끝 줄) · 요약의 몫 · 2 의 명부(H1 roster)의 결장자 out · 결원 출동 분석 문장.
+// 단계 8 (측정·균형 — §9 를 다 채웠다): 7 의 성장 식(GAIN_K 1.0) · 6·10 의 요약 줄 '숙련이 오른 대원'(GROWN_MIN — 보고서와 같은 문턱)과 교대마다 GAIN_CAP 안의 성장 ·
+//   3 의 끝 상태 표가 RUIN_REPAIR(3) 를 쓴다. 이어 돌린 교대의 기준(§6.3)은 scripts/chain.ts --check 가 본다 (192교대 — 관문 밖).
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { NORMAL } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
-import { BACK_HEALTH, CLOSED_CAP, DIS_FULL, EARLY_BACK_HEALTH, FRONT_SLOW, GAIN_CAP, LANE_SLOW, PLACE_CAP, PLACE_LINES, PRE_BURN, PUMP_REST, RECRUIT_NAMES, RELIEF_MAX, RELIEF_NAMES, REPLACE_AFTER, RESUPPLY, ROAD_AT, ROAD_CAP, RUSHED_PUMP, SERVICE_AT, SERVICE_CAP, SERVICE_PUMP, STOCK_CAP, WHY_NAME, absentCap, carryKey, cityKey, makeCarryover, readCarryover } from '../src/sim/persist';
+import { BACK_HEALTH, CLOSED_CAP, DIS_FULL, EARLY_BACK_HEALTH, FRONT_SLOW, GAIN_CAP, GAIN_K, LANE_SLOW, PLACE_CAP, PLACE_LINES, PRE_BURN, PUMP_REST, RECRUIT_NAMES, RELIEF_MAX, RELIEF_NAMES, REPLACE_AFTER, RESUPPLY, ROAD_AT, ROAD_CAP, RUIN_REPAIR, RUSHED_PUMP, SERVICE_AT, SERVICE_CAP, SERVICE_PUMP, STOCK_CAP, WHY_NAME, absentCap, carryKey, cityKey, makeCarryover, readCarryover } from '../src/sim/persist';
 import { edgeName, findRoute } from '../src/sim/city';
 import { applyPlaceWear, placeCond, placeOutcome, placeUsable } from '../src/sim/persist';
 import { GROWN_MIN, carryEffectLine, carryLines, carryNextLine, carryParts, carrySummary, shortArrivalLine } from '../src/sim/persist';      // (단계 7) 보고서
@@ -654,6 +657,12 @@ describe('7. 경험 성장과 부대 규모 · 공석과 신임', () => {
     expect(c.dExp).toBeLessThanOrEqual(GAIN_CAP);
     expect(c.dSkill).toBeCloseTo(c.dExp * 0.6, 3);
     expect(c.shifts).toBe(1);
+    // (단계 8) 식 그대로: gain = min(GAIN_CAP, xpGained × GAIN_K) × (1 − 경험) — GAIN_K 1.0 이면 xpGained 0.01 인 대원은 0.01 × (1 − 경험)
+    const q = A.responders.find((x) => x.status === 'ok' && !x.relief && x !== r)!;
+    q.xpGained = 0.01;
+    const cq = entryOf(makeCarryover(A), q.name);
+    expect(cq.dExp).toBeCloseTo(Math.min(GAIN_CAP, 0.01 * GAIN_K) * (1 - q.experience), 4);
+    expect(GAIN_K).toBe(1);
   });
 
   it('부대 규모 5 → 1 → 5: 1 에서 편성되지 않은 대원의 항목이 남고(결장은 휴식만큼 줄고), 같은 이름은 기본 능력 + 누적', () => {
@@ -1373,6 +1382,28 @@ describe('6·10. 짧은 연속 (계보 3 × 교대 4) — 대원 몫', () => {
     for (const s of shifts) if (s.carryState.on) checkRoadLog(s);
   });
 
+  it('(단계 8) 요약 줄의 "숙련이 오른 대원 n명"은 보고서(carrySummary.grown)와 같은 문턱 — 이번 교대에 나온 조직 대원 가운데 누적 숙련이 GROWN_MIN 이상인 사람 수. 성장은 교대마다 GAIN_CAP 안', () => {
+    let seen = 0;
+    shifts.forEach((s, i) => {
+      if (!s.carryState.on) return;
+      const byKey = new Map(s.carry!.crew.map((c) => [c.seat ?? c.name, c]));
+      let want = 0;
+      for (const r of s.responders) {
+        if (r.relief || s.units[r.unitId].aid || r.status === 'off') continue;
+        const c = byKey.get(r.seat ?? r.name);
+        if (c && c.dSkill >= GROWN_MIN) want++;
+      }
+      const m = /숙련이 오른 대원 (\d+)명/.exec(s.events[s.carryState.event].text);
+      expect(m ? +m[1] : 0, s.seed).toBe(want);
+      expect(s.carryState.stats.grown, s.seed).toBe(want);
+      seen += want;
+      // 한 교대의 성장은 GAIN_CAP 안 (k번째 교대가 받은 누적은 성장 k − 1 번)
+      const k = (i % 4) + 1;
+      for (const c of s.carry!.crew) expect(c.dExp, `${s.seed} ${c.name}`).toBeLessThanOrEqual((k - 1) * GAIN_CAP + 1e-9);
+    });
+    expect(seen).toBeGreaterThan(0);
+  });
+
   it('(단계 5) 출입 통제·무너짐 ≤ 12 · 건물 ≤ 24, 이어받은 무너진 건물에서는 사건이 나지 않는다, 손상된 건물의 사건마다 그 사실의 기록이 하나', () => {
     for (const co of cos) { expect(co.places.filter((p) => p.state !== 'marked').length).toBeLessThanOrEqual(CLOSED_CAP); expect(co.places.length).toBeLessThanOrEqual(PLACE_CAP); }
     expect(cos.some((co) => co.places.length > 0)).toBe(true);
@@ -1638,10 +1669,10 @@ describe('3. 건물의 끝 상태 → 다음 교대 (placeOutcome 의 표 · 휴
   }, HOOK_MS);
   const pick = (p: PlaceCarry | null): unknown[] | null => (p ? [p.state, p.dmg, p.soot, p.repair, p.cause, p.mark ?? null] : null);
 
-  it('X6 의 건물 상태: 전체 붕괴 → 무너짐 4 · 전소 → 통제 5 · 구획 붕괴 → 통제 2 · 폭발 흔적 → 통제 1 · 그을림 → 흔적 (그 사건이 남긴 상태만)', () => {
+  it('X6 의 건물 상태: 전체 붕괴 → 무너짐 RUIN_REPAIR(단계 8 — 3) · 전소 → 통제 5 · 구획 붕괴 → 통제 2 · 폭발 흔적 → 통제 1 · 그을림 → 흔적 (그 사건이 남긴 상태만)', () => {
     const I = createIncident(S, { type: 'fire', variant: 'std', placeId: apt, rng: S.rng.fork('po1') });
     const set = (state: PlaceMark['state'], incidentId = I.id): void => { S.placeMarks.set(apt, { placeId: apt, state, t: 0, incidentId, burnFrac: 0.3, ruinFrac: 0.2 }); };
-    set('collapsed'); expect(pick(placeOutcome(S, I))).toEqual(['ruin', 1, 0, 4, 'collapse', 'collapsed']);
+    set('collapsed'); expect(pick(placeOutcome(S, I))).toEqual(['ruin', 1, 0, RUIN_REPAIR, 'collapse', 'collapsed']);
     set('burnt'); expect(pick(placeOutcome(S, I))).toEqual(['closed', 0.8, 1, 5, 'burnout', 'burnt']);
     set('partial'); expect(pick(placeOutcome(S, I))).toEqual(['closed', 0.4, 0.3, 2, 'collapse', 'partial']);
     set('blasted'); expect(pick(placeOutcome(S, I))).toEqual(['closed', 0.35, 0.3, 1, 'blast', 'blasted']);
@@ -1679,7 +1710,7 @@ describe('3. 건물의 끝 상태 → 다음 교대 (placeOutcome 의 표 · 휴
       const o = placeOutcome(S, I);
       if (!dm) { expect(o).toBeNull(); continue; }
       seen++;
-      if (dm / bld >= 0.22) { expect(pick(o)).toEqual(['ruin', 1, 0, 4, 'collapse', null]); expect(o!.spot).toHaveLength(2); }
+      if (dm / bld >= 0.22) { expect(pick(o)).toEqual(['ruin', 1, 0, RUIN_REPAIR, 'collapse', null]); expect(o!.spot).toHaveLength(2); }
       else {
         expect(pick(o)).toEqual(['closed', Math.round(Math.min(1, 2 * dm / bld) * 1e4) / 1e4, 0, 2, 'collapse', null]);
         I.problems.push({ code: 'ESCALATION', t: 1, detail: '북쪽 방 2차 붕괴', eventId: -1, recovered: false, recoveryText: '' });

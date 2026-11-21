@@ -64,8 +64,11 @@ export const REST_HEAL = 40;
 export const BACK_HEALTH = 85;
 /** 결장 상한에 걸려 일찍 돌아오는 대원의 체력 */
 export const EARLY_BACK_HEALTH = 70;
-/** 성장: gain = min(GAIN_CAP, xpGained × GAIN_K) × (1 − 경험), 숙련은 그 SKILL_K 배 (설계서 §3.2 의 처음 값 — 측정은 단계 8) */
-export const GAIN_K = 0.5;
+/**
+ * 성장: gain = min(GAIN_CAP, xpGained × GAIN_K) × (1 − 경험), 숙련은 그 SKILL_K 배. (단계 8) GAIN_K 0.5 → 1.0 — 설계서 §3.2 의 목표("열 교대 뒤 가장 많이 큰 대원의
+ * 경험 +0.15 안팎")에 맞춘 값: 0.5 에서는 계보 24 × 교대 8 의 교대 8 (성장 일곱 번) 최댓값이 0.069(열 교대면 0.09 남짓)였다
+ */
+export const GAIN_K = 1.0;
 export const GAIN_CAP = 0.02;
 export const SKILL_K = 0.6;
 /** 결장 상한 = max(ABSENT_FLOOR, floor(ABSENT_SHARE × 편성 인원)) — 넘는 만큼 남은 결장이 짧은 사람부터 조기 복귀 (큰 재난 뒤에도 조직의 4/5 는 나온다) */
@@ -108,8 +111,19 @@ const HELD_AT = 900;
 // ── 건물 (단계 5 — §3.6·§3.7·§6.1) ──
 /** 교대 시작에 건물마다 한 줄로 알리는 수 (출입 통제·무너짐, 통제가 풀린 건물 따로) — 그 뒤는 '외 n곳' 한 줄 */
 export const PLACE_LINES = 4;
-/** 이어받은 그을음 1 당 "처음부터 탄 칸"으로 두는 실내 연료 칸의 몫 (applyPlaceWear) */
+/**
+ * 이어받은 그을음 1 당 "처음부터 탄 칸"으로 두는 실내 연료 칸의 몫 (applyPlaceWear). (단계 8 — 처음 값 그대로) §6.3-8 의 그을음 방향을 재 보니 불의 크기에 따라 갈린다:
+ * 일찍 꺼지는 작은 불(이번 교대에 3~7칸 — chain.ts --soot)은 처음부터 탄 칸이 번짐을 거의 막지 못하고 재산 피해의 분모만 줄여 소실률이 +0.005~0.008 오르고(탄 칸 −0.2~−1),
+ * 번지는 불(25칸 남짓 — 시험 3 ⑥ 의 바탕: 앞 교대의 정비로 펌프차가 늦는 교대)은 탄 칸이 −27% · 소실률 −0.015 로 덜 탄다. 0.1 로 낮추면 작은 불의 오름은 0 에 가깝지만
+ * 번지는 불이 덜 타는 몫이 거의 사라져(탄 칸 −3% · 소실률 +0.004) 출입 통제(소실률 0.25·0.6)·전소(0.7)로 가는 큰 불을 막지 못한다 — 처음 값을 둔다.
+ * 작은 불의 오름은 흔적(0.05)의 문턱에만 닿는다. 부호를 바꾸려면 재산 피해의 분모를 처음 연료 칸으로 두어야 한다(본문과 다르다 — 사용자 판단)
+ */
 export const PRE_BURN = 0.35;
+/**
+ * (단계 8) 무너진 건물(ruin — X6 의 전체 붕괴 · 붕괴 현장의 잔해 0.22 이상 · 2차 붕괴)이 다시 문을 열기까지의 교대 수 — 설계서 §3.6 의 4 에서 3 으로(§6.4-2 의 손잡이).
+ * 4 에서는 어려움 계보의 무너짐이 교대마다 쌓여 교대 8 에 7곳(출입 통제와 합쳐 상한 12 의 0.8)까지 늘고, 지진 뒤에는 출입 통제·무너짐이 상한 가까이 네 교대를 갔다
+ */
+export const RUIN_REPAIR = 3;
 /** 복구 공사의 까닭 (기록 문구) */
 export const WHY_NAME: Record<RoadCarry['why'], string> = {
   crack: '지진으로 갈라진 노면', washout: '해일에 쓸린 노면', flood: '침수 뒤 진흙·쓰레기 치우기', fire: '불탄 가로수·방음벽 정리',
@@ -997,11 +1011,11 @@ function heavier(a: PlaceCarry, b: PlaceCarry, since: number): PlaceCarry {
 }
 /**
  * 한 사건이 그 건물에 남긴 피해 (§3.6 의 표 — 끝 상태를 만들 때 현장의 진실을 읽는 유일한 곳: debrief.ts 와 같은 자격). 맞는 행이 없거나 출동 시설·길 위의 사건이면 null.
- *  X6 의 건물 상태(placeMarks — 이 사건이 남긴 것): collapsed → ruin 1·0·4 · burnt → closed 0.8·1·5 · partial → closed max(0.3, ruinFrac×2)·burnFrac·2 ·
+ *  X6 의 건물 상태(placeMarks — 이 사건이 남긴 것): collapsed → ruin 1·0·RUIN_REPAIR(3) · burnt → closed 0.8·1·5 · partial → closed max(0.3, ruinFrac×2)·burnFrac·2 ·
  *    blasted → closed 0.35·0.3·1 (가스 폭발 대형 사고면 0.6·3) · scorched → marked 0.5×burnFrac·min(1, burnFrac×2)·0
  *  화재(소실률 loss = burnedTiles / totalFuelTiles — 판정의 재산 피해와 같은 식): ≥ 0.6 closed 0.4+0.5×loss·min(1, 1.5×loss)·3 · ≥ 0.25 closed 0.5×loss·1.5×loss·1 ·
  *    ≥ 0.05 marked 0.5×loss·2×loss·0 (X6 가 표시하지 않은 건물만 — 표시한 건물은 scorched 가 받는다)
- *  붕괴 유형(승강기 갇힘 제외): 2차 붕괴가 있었거나(ESCALATION 의 detail 끝말 '2차 붕괴') 잔해가 건물 칸의 0.22 이상 → ruin 1·0·4, 그 밖에 잔해가 있으면 closed min(1, 2×frac)·0·2
+ *  붕괴 유형(승강기 갇힘 제외): 2차 붕괴가 있었거나(ESCALATION 의 detail 끝말 '2차 붕괴') 잔해가 건물 칸의 0.22 이상 → ruin 1·0·RUIN_REPAIR, 그 밖에 잔해가 있으면 closed min(1, 2×frac)·0·2
  *    (X6 가 표시한 건물에도 — X6 의 ruinFrac 은 사건 중에 새로 무너진 칸만 세어 처음부터 무너져 있던 잔해를 보지 않는다)
  *  X6 가 표시하지 않은 건물만: 가스 폭발 대형 사고 closed 0.6·0.4·3 · 터진 소품(exploded)·불붙은 배관 closed 0.35·0.3·1 · 그 밖의 불붙은 소품 marked 0.2·0.4·0
  * 여러 행이 맞으면 heavier 로 합친다. 열린 터(q.open)는 흔적만(marked · dmg 0 · repair 0). 흔적만 남고 dmg·soot 가 둘 다 0.05 아래면 null
@@ -1024,7 +1038,7 @@ export function placeOutcome(sim: Sim, I: Incident): PlaceCarry | null {
   const rub = s.kind === 'collapse' || mine?.state === 'collapsed' ? rubbleOf(s) : null;
   // X6 의 건물 상태
   if (mine) {
-    if (mine.state === 'collapsed') add('ruin', 1, 0, 4, 'collapse', rub?.spot);
+    if (mine.state === 'collapsed') add('ruin', 1, 0, RUIN_REPAIR, 'collapse', rub?.spot);
     else if (mine.state === 'burnt') add('closed', 0.8, 1, 5, 'burnout');
     else if (mine.state === 'partial') add('closed', Math.max(0.3, mine.ruinFrac * 2), mine.burnFrac, 2, 'collapse');
     else if (mine.state === 'blasted') add('closed', gasblast ? 0.6 : 0.35, 0.3, gasblast ? 3 : 1, 'blast');
@@ -1040,7 +1054,7 @@ export function placeOutcome(sim: Sim, I: Incident): PlaceCarry | null {
   // 붕괴 유형의 잔해 (처음부터 무너져 있던 것 + 2차 붕괴)
   if (s.kind === 'collapse' && I.truth.variant !== 'elevator' && rub) {
     const second = I.problems.some((p) => p.code === 'ESCALATION' && p.detail.endsWith('2차 붕괴'));
-    if (second || rub.frac >= 0.22) add('ruin', 1, 0, 4, 'collapse', rub.spot);
+    if (second || rub.frac >= 0.22) add('ruin', 1, 0, RUIN_REPAIR, 'collapse', rub.spot);
     else if (rub.n > 0) add('closed', Math.min(1, rub.frac * 2), 0, 2, 'collapse');
   }
   // X6 가 표시하지 않은 건물의 폭발·불붙은 소품

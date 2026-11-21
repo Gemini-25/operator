@@ -5,7 +5,9 @@
 //   npx tsx scripts/chain.ts 12 6 --disaster quake@1    첫 교대에만 지진, 그 뒤는 없음 — 회복을 본다 (kind@k = k번째 교대만, kind = 모든 교대)
 //   npx tsx scripts/chain.ts 12 8 --json                한 줄 JSON
 //   npx tsx scripts/chain.ts 24 8 --check               §6.3 의 기준(1~7)을 어기면 종료 코드 1 (--check 의 기본 계보 수는 24).
-//                                                       보통·재난 없음이면 기준 6(지진 뒤 회복)을 위해 --disaster quake@1 의 12 × 6 을 이어서 돈다
+//                                                       보통·재난 없음이면 기준 6(지진 뒤 회복)을 위해 --disaster quake@1 의 12 × 6 을 이어서 돈다.
+//                                                       단계 8 에서 정한 꼴: 6 의 결장은 교대 5(지진의 가장 긴 결장 3교대가 끝난 첫 교대) · 7 의 교착 후보는
+//                                                       같은 시드·조건을 이어받은 상태 없이 돈 대조군과 견준다(STALL_SLACK) — 대조군 때문에 --check 는 교대를 두 배 돈다
 //   npx tsx scripts/chain.ts 1 4 --dump <폴더>          계보 C0 의 교대마다 이어받은 상태를 JSON 파일로 (화면 확인용 — 저장소 밖에):
 //                                                       C0.<k>.carry.json (Carryover) · C0.<k>.org.json (ar.org.v1 의 모양 { id, carry, savedAt })
 //   npx tsx scripts/chain.ts 12 --soot                  (§6.3 의 8 — 측정만) 같은 건물·같은 사건 시드의 화재를 그을음 0 과 0.6 으로 —
@@ -26,7 +28,7 @@ import { createIncident } from '../src/sim/incidents';
 import { INCIDENT_PLACES } from '../src/sim/cityPlan';
 import { CLOSED_CAP, ROAD_CAP, absentCap, carryKey, carrySummary, makeCarryover, readCarryover } from '../src/sim/persist';
 import type { Carryover, PlaceCarry } from '../src/sim/types';
-import { PHRASE, checkMetrics, formatLines, runWithProbe, shiftMetrics, summarize } from './metrics';
+import { PHRASE, checkMetrics, formatLines, runWithProbe, shiftMetrics, stallLine, summarize } from './metrics';
 import type { ShiftMetrics } from './metrics';
 
 const args = process.argv.slice(2);
@@ -38,7 +40,9 @@ for (let i = 0; i < args.length; i++) {
   const v = parseInt(args[i], 10);
   if (Number.isFinite(v)) pos.push(v);
 }
-const checkOn = flag('--check'), jsonOn = flag('--json'), verbose = flag('-v'), pairedOn = flag('--paired');
+const checkOn = flag('--check'), jsonOn = flag('--json'), verbose = flag('-v');
+/** 같은 시드·조건을 이어받은 상태 없이 한 번 더 돈다 — --paired(진단), --check(기준 7 의 대조군: 교착 후보를 같은 시드의 새 교대와 견준다) */
+const pairedOn = flag('--paired') || checkOn;
 const L = pos[0] ?? (checkOn ? 24 : 12);
 const K = pos[1] ?? 8;
 const diffArg = opt('--diff');
@@ -93,6 +97,7 @@ interface ShiftRow {
   capFails: string[];
   m: ShiftMetrics | null;
   fresh: number | null;          // --paired: 같은 시드·조건을 이어받은 상태 없이 돌린 교대의 (성공 + 지연) 비율
+  freshStall: number; freshForgot: number;      // 그 대조 교대의 교착 후보·잊힌 사건 (표본 — 기준 7)
 }
 const zeroOut = (): Record<string, number> => ({ success: 0, delayed: 0, partial: 0, unresolved: 0, failed: 0 });
 
@@ -103,7 +108,7 @@ function runShift(lineage: number, k: number, carry: Carryover | null): { row: S
   const row: ShiftRow = {
     lineage, k, seed, error: null, n: 0, out: zeroOut(), timeouts: 0, respSum: 0, respN: 0, good: 0, open: 0,
     absent: 0, fallen: 0, relief: 0, service: 0, closed: 0, ruin: 0, marked: 0, roads: 0, expMean: 0, expMax: 0, early: 0, pumpStart: 0, pumpFails: 0,
-    shortRuns: 0, markedInc: 0, links: 0, linksInc: 0, summaryLines: 0, summaryKeyOk: true, next: null, roundtripOk: true, capFails: [], m: null, fresh: null,
+    shortRuns: 0, markedInc: 0, links: 0, linksInc: 0, summaryLines: 0, summaryKeyOk: true, next: null, roundtripOk: true, capFails: [], m: null, fresh: null, freshStall: 0, freshForgot: 0,
   };
   let sim: Sim;
   try {
@@ -173,7 +178,8 @@ function runShift(lineage: number, k: number, carry: Carryover | null): { row: S
   } catch (e) { row.error = `makeCarryover: ${(e as Error).stack ?? String(e)}`; }
   if (pairedOn && carry) {
     const f = new Sim(seed, d, 1200, {});
-    f.runToEnd();
+    const fp = runWithProbe(f);
+    try { const fm = shiftMetrics(f, fp); row.freshStall = fm.stall?.length ?? 0; row.freshForgot = fm.forgotten?.length ?? 0; } catch { row.freshStall = 0; }
     let n = 0, g = 0;
     for (const inc of f.report!.incidents) { n++; if (inc.result.outcome === 'success' || inc.result.outcome === 'delayed') g++; }
     row.fresh = n ? g / n : 0;
@@ -187,7 +193,7 @@ interface ByShift {
   success: number; delayed: number; partial: number; bad: number; good: number; timeoutShare: number; resp: number;
   absent: number; fallen: number; relief: number; service: number; closed: number; ruin: number; marked: number; roads: number;
   expMean: number; expMax: number; shortRuns: number; markedInc: number; links: number; linksInc: number; pumpStart: number; pumpFails: number;
-  m: { spreadGe3: number; worldLinks: number; contention: number; stall: number | null; replan: number; carryShare: number; metricFails: number };
+  m: { spreadGe3: number; worldLinks: number; contention: number; stall: number | null; forgotten: number | null; replan: number; carryShare: number; metricFails: number };
   fails: string[];
 }
 const r3 = (v: number): number => Math.round(v * 1000) / 1000;
@@ -200,7 +206,10 @@ function byShift(rows: ShiftRow[], k: number, baseline: boolean): ByShift {
   const sh = (x: number): number => (n ? x / n : 0);
   const avg = (f: (r: ShiftRow) => number): number => r3(mean(rs.map(f)));
   const ms = summarize(rs.map((r) => r.m));
-  const fails = checkMetrics(ms, { baseline });
+  // 기준 7 (§6.3): 구조의 관문(지표 계산 오류·연쇄 깊이·교대당 연쇄·기록 일치 C1~C5·장부의 구멍·법칙 사건 상한)은 교대 번호마다 그대로 건다.
+  // 교착 후보·잊힌 사건은 sweep 처럼 정해진 시드(S0~S39)의 래칫이 아니라 대조군과 견준다 — 아래 stallCheck (baseline 은 표의 '관문' 칸에만 쓰지 않는다)
+  void baseline;
+  const fails = checkMetrics(ms, { baseline: false });
   return {
     k, n, shifts: rs.length,
     success: r3(sh(out.success)), delayed: r3(sh(out.delayed)), partial: r3(sh(out.partial)), bad: r3(sh(out.failed + out.unresolved)), good: r3(sh(out.success + out.delayed)),
@@ -211,7 +220,7 @@ function byShift(rows: ShiftRow[], k: number, baseline: boolean): ByShift {
     shortRuns: avg((r) => r.shortRuns), markedInc: avg((r) => r.markedInc), links: avg((r) => r.links), linksInc: avg((r) => r.linksInc),
     pumpStart: avg((r) => r.pumpStart), pumpFails: avg((r) => r.pumpFails),
     m: {
-      spreadGe3: ms.systems.spread.ge3, worldLinks: ms.chain.worldLinks, contention: ms.contention.share, stall: ms.stall.candidates,
+      spreadGe3: ms.systems.spread.ge3, worldLinks: ms.chain.worldLinks, contention: ms.contention.share, stall: ms.stall.candidates, forgotten: ms.stall.forgotten,
       replan: ms.replan.share, carryShare: ms.systems.share.carry ?? 0, metricFails: fails.length,
     },
     fails,
@@ -366,21 +375,47 @@ for (let k = Math.max(3, K - 2); k <= K; k++) lateKs.push(k);
 const late = goodStat(rows, lateKs);
 const delta = late.mean - early.mean, se = Math.sqrt(early.se * early.se + late.se * late.se), spiralLim = Math.max(0.08, 2.5 * se);
 // 6. 회복 (지진 뒤): 이 실행이 첫 교대 지진이면 이 표로, 아니면 --check 의 보통 실행에서 12 × 6 을 따로
+//    (단계 8 에서 정한 수 — 설계서 §6.3-6 의 '확인 필요') 결장은 교대 5 를 본다: H1 의 결장 표에서 가장 긴 결장(쓰러짐 3교대)이 지진 교대(1)의 다음 셋(2·3·4)을
+//    채우므로 교대 4 에는 지진의 쓰러진 대원이 아직 빠져 있고, 그 위에 교대 2·3 의 새 결장이 얹힌다 — 지진의 결장이 모두 끝난 첫 교대가 5 다
 function recovery(bs: ByShift[], tag: string): { lines: string[]; fails: string[] } {
   const at = (k: number): ByShift | undefined => bs.find((b) => b.k === k);
-  const k2 = at(2), k4 = at(4), k6 = at(6), lines: string[] = [], fails: string[] = [];
-  if (!k2 || !k4 || !k6) return { lines: [`${tag}회복: 교대 6 까지 돌지 않아 보지 않는다`], fails };
+  const k2 = at(2), k4 = at(4), k5 = at(5), k6 = at(6), lines: string[] = [], fails: string[] = [];
+  if (!k2 || !k4 || !k5 || !k6) return { lines: [`${tag}회복: 교대 6 까지 돌지 않아 보지 않는다`], fails };
   const c2 = k2.closed + k2.ruin, c6 = k6.closed + k6.ruin;
-  lines.push(`${tag}회복: 복구 도로 교대 2 ${f2(k2.roads)} (≥ 1) · 교대 4 ${f2(k4.roads)} (≤ ${f2(k2.roads / 2)}) · 결장 교대 2 ${f2(k2.absent)} → 교대 4 ${f2(k4.absent)} · 출입 통제·무너짐 교대 2 ${f2(c2)} → 교대 6 ${f2(c6)} (≤ ${f2(c2 / 2)})`);
+  lines.push(`${tag}회복: 복구 도로 교대 2 ${f2(k2.roads)} (≥ 1) · 교대 4 ${f2(k4.roads)} (≤ ${f2(k2.roads / 2)}) · 결장 교대 2 ${f2(k2.absent)} → 교대 4 ${f2(k4.absent)} · 교대 5 ${f2(k5.absent)} (≤ ${f2(k2.absent)}) · 출입 통제·무너짐 교대 2 ${f2(c2)} → 교대 6 ${f2(c6)} (≤ ${f2(c2 / 2)})`);
   if (k2.roads < 1) fails.push(`${tag}교대 2 의 복구 도로 평균 ${f2(k2.roads)} < 1`);
-  if (k4.absent > k2.absent) fails.push(`${tag}교대 4 의 결장 평균 ${f2(k4.absent)} > 교대 2 의 ${f2(k2.absent)}`);
+  if (k5.absent > k2.absent) fails.push(`${tag}교대 5 의 결장 평균 ${f2(k5.absent)} > 교대 2 의 ${f2(k2.absent)}`);
   if (k4.roads > k2.roads / 2) fails.push(`${tag}교대 4 의 복구 도로 평균 ${f2(k4.roads)} > 교대 2 의 절반 ${f2(k2.roads / 2)}`);
   if (c6 > c2 / 2) fails.push(`${tag}교대 6 의 출입 통제·무너짐 평균 ${f2(c6)} > 교대 2 의 절반 ${f2(c2 / 2)}`);
   return { lines, fails };
 }
+/**
+ * 7 의 교착 후보·잊힌 사건 (단계 8 에서 정한 꼴): sweep 의 관문은 정해진 시드(S0~S39)에 교착 후보 0 을 거는 래칫이고, 보통 200교대(S0~S199, 이어받은 상태 없음)에도
+ * 교착 후보가 1건 있다(앞 묶음의 현장 판단 — X6 의 종료 차단 대기 등). 그래서 이어 돈 교대(2~K)의 교착 후보를 **같은 시드·조건을 이어받은 상태 없이 돌린 대조군**과 견주어
+ * STALL_SLACK 넘게 많을 때만 실패로 친다. 잊힌 사건(부대가 모두 빠진 열린 사건)은 대조군과 상관없이 0 이어야 한다
+ */
+const STALL_SLACK = 2;
+function stallCheck(rows: ShiftRow[], tag: string): { lines: string[]; fails: string[] } {
+  let carried = 0, fresh = 0, first = 0, forgot = 0, freshForgot = 0;
+  const cand: string[] = [];
+  for (const r of rows) {
+    if (!r.m) continue;
+    const st = r.m.stall?.length ?? 0, fg = r.m.forgotten?.length ?? 0;
+    forgot += fg;
+    if (r.k === 1) first += st; else { carried += st; fresh += r.freshStall; freshForgot += r.freshForgot; }
+    for (const c of [...(r.m.stall ?? []), ...(r.m.forgotten ?? [])]) cand.push(`${tag}  ${stallLine(c).trim()}`);
+  }
+  const lines = [`${tag}교착 후보: 이어받은 교대(2~) ${carried} · 같은 시드의 새 교대(대조군) ${fresh} · 첫 교대 ${first} · 잊힌 사건 ${forgot}(대조군 ${freshForgot})`, ...cand];
+  const fails: string[] = [];
+  if (forgot > 0) fails.push(`${tag}잊힌 사건 ${forgot}건`);
+  if (carried > fresh + STALL_SLACK) fails.push(`${tag}이어받은 교대의 교착 후보 ${carried}건 > 대조군 ${fresh} + ${STALL_SLACK}`);
+  return { lines, fails };
+}
 let rec: { lines: string[]; fails: string[] } | null = null, recList: ByShift[] | null = null, recRows: ShiftRow[] | null = null;
 if (dis && dis.at === 1) rec = recovery(list, '');
+const stl = stallCheck(rows, ''), recStl: { lines: string[]; fails: string[] } = { lines: [], fails: [] };
 if (checkOn) {
+  fail.push(...stl.fails);
   if (baseline && K >= 5) {
     if (Math.abs(delta) > spiralLim) fail.push(`나선: 교대 ${lateKs.join('·')} − 교대 1·2 의 (성공+지연) Δ ${(delta * 100).toFixed(1)}%p · |Δ| > max(8%p, 2.5 × SE ${(se * 100).toFixed(1)}%p)`);
     if (timeoutAll > 0.04) fail.push(`한계 시간·무대응·방치 종료 비율 ${(timeoutAll * 100).toFixed(1)}% > 4%`);
@@ -395,6 +430,9 @@ if (checkOn) {
     for (const b of recList) if (b.m.metricFails) fail.push(`[회복] 교대 ${b.k} 의 지표 관문 ${b.m.metricFails}건: ${b.fails.join(' / ')}`);
     rec = recovery(recList, '[회복] ');
     fail.push(...rec.fails);
+    const rs = stallCheck(recRows, '[회복] ');
+    recStl.lines.push(...rs.lines); recStl.fails.push(...rs.fails);
+    fail.push(...rs.fails);
   }
 }
 /** 기준 6 의 따로 돈 실행 — 첫 교대에만 지진 (이 대본의 dis 를 잠시 바꿔 runChain 을 부른다) */
@@ -410,14 +448,17 @@ if (jsonOn) {
     lineages: L, shifts: K, diff: difficultyKey(base), disaster: dis ? `${dis.kind}${dis.at !== null ? '@' + dis.at : ''}` : null,
     byShift: j(list), errors, open, timeoutShare: r3(timeoutAll),
     spiral: { early: r3(early.mean), late: r3(late.mean), lateShifts: lateKs, delta: r3(delta), se: r3(se), limit: r3(spiralLim) },
-    recovery: rec ? { lines: rec.lines, byShift: recList ? j(recList) : undefined } : null,
+    recovery: rec ? { lines: rec.lines, byShift: recList ? j(recList) : undefined, stall: recStl.lines } : null,
+    stall: stl.lines,
     paired: pairedOn ? Array.from({ length: Math.max(0, K - 1) }, (_, i) => ({ k: i + 2, ...pairedStat(rows, [i + 2]) })) : undefined,
     fails: fail, sec,
   }));
 } else {
   console.log(`\n전체: 교대 ${rows.length} · 사건 ${nAll} · 예외 ${errors} · 끝나지 않은 사건 ${open} · 왕복 실패 ${rows.filter((r) => !r.roundtripOk).length} · 한계 시간·무대응·방치 ${(timeoutAll * 100).toFixed(1)}%`);
   console.log(`나선: (성공+지연) 교대 1·2 ${pc(early.mean)} (n ${early.n}) → 교대 ${lateKs.join('·')} ${pc(late.mean)} (n ${late.n}) · Δ ${(delta * 100).toFixed(1)}%p · SE ${(se * 100).toFixed(1)}%p · 한계 ±${(spiralLim * 100).toFixed(1)}%p`);
+  for (const l of stl.lines) console.log(l);
   if (rec) for (const l of rec.lines) console.log(l);
+  for (const l of recStl.lines) console.log(l);
   if (pairedOn) for (const line of pairedLines(rows, K)) console.log(line);
   if (verbose) for (const line of formatLines(summarize(rows.map((r) => r.m)), false)) console.log(line);
   console.log(`(${sec}초)`);

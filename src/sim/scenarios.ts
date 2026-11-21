@@ -53,6 +53,7 @@ export const NO_CARD: ReadonlySet<string> = new Set(SCENARIOS.filter((q) => q.ca
 const VARIANT_NAME: Record<string, string> = {
   'traffic/bus': '버스 추돌', 'armed/robbery': '강도', 'armed/dispute': '난동', 'armed/shooter': '총격', 'armed/hostage': '인질극', 'armed/prank': '장난 전화',
   'fire/false': '화재 오인 신고', 'search/wander': '실종', 'search/hiker': '조난', 'medical/arrest': '심정지', 'medical/trauma': '낙상·외상', 'medical/faint': '실신',
+  'medical/smoke': '연기 흡입',      // (I1-b b3-11 L4) 연기를 마신 주민 — 법칙(world/laws/smoke.ts)이 정해서만 일으킨다 (평소 추첨에 들지 않는다 — 시나리오 표에 넣지 않는다)
 };
 
 // 현장마다 매 틱 묻는다(한계 시간). 표는 모듈을 읽을 때 정해지므로 찾은 답을 기억해 둔다 (표의 길이가 바뀌면 다시 찾는다)

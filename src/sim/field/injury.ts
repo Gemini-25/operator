@@ -484,6 +484,7 @@ export function initialCause(s: Scene, I: Incident, c: Casualty): InjuryCause {
   if (type === 'traffic' && v === 'manhole') return 'fall';
   if (type === 'traffic' && v === 'tree') return 'crush';
   if (type === 'medical' && v === 'trauma') return 'blunt';
+  if (type === 'medical' && v === 'smoke') return 'smoke';      // (I1-b b3-11 L4) 연기를 마신 주민 — 연기 흡입
   if (type === 'collapse' && v === 'gasblast') return 'blast';
   if (c.inVehicle !== null || type === 'traffic') return 'vehicle';
   switch (type) {

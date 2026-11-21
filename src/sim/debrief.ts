@@ -30,7 +30,7 @@ export const PROBLEM_LABEL: Record<ProblemCode, string> = {
   RESPONDER_KILLED: '대원 순직', SUSPECT_DIED: '용의자 사망',
   UTIL_LATE: '유관 기관 지연(대신한 조치)', ANIMAL_LOST: '동물 놓침',      // (N8) 이름표만 — order 의 자리와 문장 틀은 그 코드를 남기는 단계(4a·5)
   DECON_LATE: '제독 지연',      // (N9 §5.5) 이름표와 order 의 자리(아래 splice — 지원 지연 다음)만. 문장 틀 T 와 남기는 곳은 단계 6
-  HOSPITAL_FULL: '응급실 포화', INFRA_FAIL: '기반 시설 장애',      // (I1-b) HOSPITAL_FULL 의 order 자리와 문장 틀은 evaluate 안(b3-2 C3). INFRA_FAIL 은 이름표만 — 그 코드를 남기는 단계가 넣는다
+  HOSPITAL_FULL: '응급실 포화', INFRA_FAIL: '기반 시설 장애',      // (I1-b) HOSPITAL_FULL 의 order 자리와 문장 틀은 evaluate 안(b3-2 C3). INFRA_FAIL 도 evaluate 안(b3-10 C8 — 무전 전달 실패 다음)
 };
 
 function addProblem(I: Incident, code: ProblemCode, t: number, eventId: number, detail: string, recovered = false, recoveryText = ''): void {
@@ -224,6 +224,9 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   // (I1-b C3) 응급실 포화로 바꾼 이송: 이송은 대응의 끝이라 한계 시간 바로 앞 자리 — 같은 까닭으로 여기서 끼운다. 사건이 닫힌 뒤의 것(닫힌 뒤 떠난 구급차·이송 중 목적지 변경)은 이 문장에 들지 않고 교대 보고서의 사슬 문장(b4)이 쓴다
   order.splice(order.indexOf('TIMEOUT'), 0, 'HOSPITAL_FULL');
   T.HOSPITAL_FULL = (ps) => `응급실 포화로 이송할 병원을 바꿨습니다: ${ps.slice(0, 2).map((p) => p.detail).join(' / ')}${ps.length > 2 ? ` 외 ${ps.length - 2}건` : ''}.`;
+  // (I1-b C8) 기반 시설 장애가 대응을 막았다(통신 장애로 늘어난 음영에서 보고가 끊겼다): 무전 전달 실패 바로 다음 자리 — 같은 까닭으로 여기서 끼운다. 사건마다 한 줄(그 사건의 첫 것)
+  order.splice(order.indexOf('COMM_FAIL') + 1, 0, 'INFRA_FAIL');
+  T.INFRA_FAIL = (ps) => `${ps[0].detail}.`;
   for (const code of order) {
     const ps = I.problems.filter((p) => p.code === code);
     if (!ps.length || A.length >= 9) continue;

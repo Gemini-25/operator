@@ -50,6 +50,13 @@ import { RISK } from '../src/sim/world/rules/risk';
 import { knownZone, knownZoneOfIncident, zoneName, zoneOfXY } from '../src/sim/world/state';
 import { ZONE_SEV } from '../src/sim/dispatch/analyst';
 import type { Hostile } from '../src/sim/types';
+import { COMMS, POWER } from '../src/sim/world/rules/infra';
+import { LIFT, darkened, liftDelta, liftOcc, liftPlaces } from '../src/sim/world/expo';
+import { LIFT_LAW } from '../src/sim/world/laws/power';
+import { HOSPITAL_CAP, endZoneBy, isDark, recoverWorld, setZone, setZoneArea, zoneAt, zoneOfPlace } from '../src/sim/world/state';
+import { POWER_SEV } from '../src/sim/dispatch/analyst';
+import { DISTRICTS } from '../src/sim/cityPlan';
+import { makeAgent } from '../src/sim/field/agents';
 
 const T = (name: string): HazardLawId => ('t-' + name) as HazardLawId;
 /** 등록된 법칙을 모두 치우고 시험 법칙만 넣어 fn 을 돌린 뒤 되돌린다 */
@@ -1066,11 +1073,14 @@ describe('I1-b b3-5 ①: 교통의 장부와 초과의 네 몫', () => {
         for (const c of tr.crowds) { seen.crowd++; const row = tr.bumps.find((b) => b.id === c.bump)!; expect([row.what, row.add, row.edges]).toEqual([0, 0.8, c.edges]); expect(s.events[row.ev].text).toContain('인파가 몰려'); }
         const dz = s.disaster;
         if (dz && dz.dark) { seen.dark++; const row = tr.bumps.find((b) => b.id === dz.darkBump)!; expect([row.what, row.edges.length]).toEqual([1, edges.length]); expect(s.events[row.ev].text).toContain('정전'); }
-        expect(tr.bumps.length).toBe(tr.crowds.length + (dz && dz.dark ? 1 : 0));
+        // (b3-10 C4) 정전 한 건마다의 꺼진 신호 — 그 줄은 world.spans 의 한 건이 가진다(원인 기록 = 그 정전의 원인)
+        const c4 = tr.bumps.filter((b) => b.what === 1 && !(dz && b.id === dz.darkBump));
+        for (const b of c4) { const sp = s.world.spans.find((q) => q.bump === b.id)!; expect(sp, `${seed} C4 bump ${b.id} 의 장부`).toBeDefined(); expect([sp.f, b.ev, b.add]).toEqual(['power', sp.cause, 0.4]); }
+        expect(tr.bumps.length).toBe(tr.crowds.length + (dz && dz.dark ? 1 : 0) + c4.length);
       }
-      // 교대가 끝나면 얹은 혼잡과 그 줄이 남지 않는다
-      expect(tr.bumps).toEqual([]);
-      for (const e of edges) expect(e.bump ?? 0).toBe(0);
+      // 교대가 끝나면 얹은 혼잡과 그 줄이 남지 않는다 — (b3-10) 원인이 아직 살아 있는 정전의 꺼진 신호만 남고, 구간의 bump 는 남은 줄의 합이다
+      for (const b of tr.bumps) expect(s.world.spans.some((q) => q.bump === b.id), `${seed} 남은 줄 ${b.id}`).toBe(true);
+      for (const e of edges) expect(e.bump ?? 0).toBeCloseTo(tr.bumps.reduce((a, b) => a + (b.edges.indexOf(e.id) >= 0 ? b.add : 0), 0), 6);
       expect(s.world.hz.holes).toBe(0);
       return hp.done();
     };
@@ -2196,14 +2206,14 @@ describe('I1-b b3-8 c · b3-9: 금 간 건물의 붕괴·끊긴 배관의 누출
   const lawKids = (s: Sim, ...ids: string[]): Incident[] => s.incidents.filter((J) => J.hz !== undefined && ids.indexOf(J.hz.law) >= 0);
 
   it('등록: 법칙 모음의 차례가 road → heat → shock(structFail · pipeLeak) → ember(rekindle) 다 — 셋 다 1초 · 건물마다 한 번 · 교대 상한 2, rekindle 은 충격만 받는다(scan 없음). 상태 규칙은 rubbleRoad → shockSpread → pipeShut → residualHeat → suspectZone', () => {
-    expect(hazardLaws().map((l) => l.id)).toEqual(['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle']);
+    expect(hazardLaws().map((l) => l.id).slice(0, 5)).toEqual(['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle']);      // (b3-10) 그 뒤에 power(liftStall) — 'I1-b b3-10' 묶음이 본다
     for (const id of ['structFail', 'pipeLeak', 'rekindle']) { const L = lawOf(id); expect([L.every, L.once, L.cap], id).toEqual([1, true, 2]); }
     expect([lawOf('structFail').scan !== undefined, lawOf('pipeLeak').scan !== undefined, lawOf('rekindle').scan]).toEqual([true, true, undefined]);
     expect([lawOf('structFail').label, lawOf('pipeLeak').label, lawOf('rekindle').label]).toEqual(['금 간 건물의 붕괴', '끊긴 배관의 누출', '되살아난 잔불']);
     expect(readFileSync('src/sim/world/laws/index.ts', 'utf8')).toMatch(/^import '\.\/heat';[^\n]*\nimport '\.\/shock';[^\n]*\nimport '\.\/ember';/m);
     expect(readFileSync('src/sim/world/rules/index.ts', 'utf8')).toMatch(/^import '\.\/structure';\nimport '\.\/risk';/m);
     const ids = consequences().map((c) => c.id);
-    expect(ids.slice(ids.indexOf('rubbleRoad'))).toEqual(['rubbleRoad', 'shockSpread', 'pipeShut', 'residualHeat', 'suspectZone']);
+    expect(ids.slice(ids.indexOf('rubbleRoad'), ids.indexOf('suspectZone') + 1)).toEqual(['rubbleRoad', 'shockSpread', 'pipeShut', 'residualHeat', 'suspectZone']);      // (b3-10) 그 뒤로 rules/infra.ts 의 C4·C8 — 'I1-b b3-10' 묶음이 본다
     // 세기와 크기 (첫 값에서 — STRUCT.A 는 강제 collapse/gasblast 20교대로 절반)
     expect(STRUCT).toEqual({ A: 5.0e-4, SEV2: 0.3, SEV3: 0.45, MAX: 16, CAP: 2 });
     expect(PIPE.A).toBeCloseTo(1 / 300, 12); expect([PIPE.SEV2, PIPE.MAX, PIPE.CAP, REKINDLE.CAP]).toEqual([0.4, 16, 2, 2]);
@@ -2587,4 +2597,395 @@ describe('I1-b b3-8 c · b3-9: 금 간 건물의 붕괴·끊긴 배관의 누출
     }
     expect(tested).toBe(3);
   }, 120000);
+});
+
+describe('I1-b b3-10: 국지 구역 값 · C4 정전 · L5 정전이 닿은 순간의 승강기 · C8 무전 음영 · INFRA_FAIL', () => {
+  const lawOf = (id: string): HazardLaw => hazardLaws().find((l) => l.id === id)!;
+  /** 한 틱 — 쌓인 신호를 처리하고, 1초 블록이면 초과 위험·회복까지 (tickWorld 하나) — 그 뒤 예약을 사건으로 */
+  function tk(s: Sim): void { s.tick += 1; s.t = s.tick * s.dt; tickWorld(s); tickIncidents(s); }
+  function secs(s: Sim, sec: number): void { const n = Math.round(sec / s.dt); for (let k = 0; k < n; k++) tk(s); }
+  const placeOf = (s: Sim, kind: string): Place => s.city.places.find((q) => q.kind === kind)!;
+  const midDark = (s: Sim, eid: number): boolean => { const e = s.city.edges[eid], A = s.city.nodes[e.a], B = s.city.nodes[e.b]; return zoneAt(s, 'power', (A.x + B.x) / 2, (A.y + B.y) / 2) < 0.5; };
+  /** 그 건물의 화재 사건과 큰 불 신호 (변전소·발전소·방송국 사고의 원인 자리) */
+  function bigFire(s: Sim, placeId: number): Incident {
+    const I = createIncident(s, { type: 'fire', variant: 'std', placeId, rng: s.rng.fork('t-util') });
+    signal(s, 'fireBig', { inc: I.id, ev: I.rootEvent, size: 40 });
+    return I;
+  }
+  const lineU = (s: Sim, id: number): number => s.rng.fork('grid:line:' + id).next();
+  const withRide = <R>(mul: number, fn: () => R): R => { const r0 = LIFT.RIDE; LIFT.RIDE = r0 * mul; try { return fn(); } finally { LIFT.RIDE = r0; } };
+
+  it('등록과 크기: 법칙 모음의 끝에 power(liftStall — 1초 · 건물마다 한 번 · 상한 3 · 마감 420초 · 충격만), 상태 규칙은 suspectZone 다음에 powerOut → powerOut.grid → powerOut.end → powerOut.tell → commsDown → commsDown.power → commsDown.shadow', () => {
+    expect(hazardLaws().map((l) => l.id)).toEqual(['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle', 'liftStall']);
+    const L = lawOf('liftStall');
+    expect([L.every, L.once, L.cap, L.hold, L.scan, L.label]).toEqual([1, true, 3, 420, undefined, '정전으로 멈춘 승강기']);
+    expect(LIFT_LAW).toEqual({ CAP: 3, HOLD: 420 });
+    expect(readFileSync('src/sim/world/laws/index.ts', 'utf8')).toMatch(/^import '\.\/ember';[^\n]*\nimport '\.\/power';/m);
+    expect(readFileSync('src/sim/world/rules/index.ts', 'utf8')).toMatch(/^import '\.\/risk';[^\n]*\nimport '\.\/infra';/m);
+    const ids = consequences().map((c) => c.id);
+    expect(ids.slice(ids.indexOf('suspectZone'))).toEqual(['suspectZone', 'powerOut', 'powerOut.grid', 'powerOut.end', 'powerOut.tell', 'commsDown', 'commsDown.power', 'commsDown.shadow']);
+    expect(LIFT).toEqual({ RIDE: 0.006, FLOOR_DIV: 6, FLOOR_MAX: 3, FLOORS: 4 });
+    expect([POWER.HOLD, POWER.QUAKE_HOLD, POWER.END, POWER.TELL, POWER.DARK_BUMP, POWER.QUAKE_R, POWER.QUAKE_THR, POWER.LINE_THR, POWER.HOSP_CUT, POWER.CAP]).toEqual([600, 240, [60, 120], [20, 40], 0.4, 900, [0.3, 0.5], [0.15, 0.6], 2, 6]);
+    expect([COMMS.UTIL_V, COMMS.POWER_V, COMMS.QUAKE_V, COMMS.STORM_V, COMMS.BACKUP, COMMS.AFTER, COMMS.QUAKE_HOLD, COMMS.CAP]).toEqual([0.4, 0.6, 0.5, 0.7, 100, 180, 300, 3]);
+    // 승강기 갇힘의 대상: 4층 이상 · 승강기 갇힘 시나리오가 받는 종류. 충격 = RIDE × min(3, 층/6) × 붐빔(종류·시간대)
+    const s = quiet(), lp = liftPlaces(s);
+    expect(lp.length).toBeGreaterThan(50);
+    for (const id of lp) { const q = s.city.places[id]; expect(q.floors).toBeGreaterThanOrEqual(4); expect(['apartment', 'office', 'officetel', 'hotel', 'deptStore', 'university', 'clinic', 'station']).toContain(q.kind); }
+    expect([liftOcc('apartment', 8 * 3600), liftOcc('apartment', 2 * 3600), liftOcc('apartment', 13 * 3600), liftOcc('office', 1 * 3600), liftOcc('office', 13 * 3600), liftOcc('hotel', 1 * 3600)]).toEqual([1.5, 0.4, 1, 0.1, 1.5, 1]);
+    const q0 = s.city.places[lp[0]];
+    expect(liftDelta(s, q0.id)).toBeCloseTo(0.006 * Math.min(3, q0.floors / 6) * liftOcc(q0.kind, s.startTod + s.t), 12);
+  });
+
+  it('국지 구역 값: 원 안에서만 겪는다 · 같은 값이면 더 넓을 때 자리를 바꾸며 원인·회복 시각을 함께 바꾼다 · 구역 전체 값이 오면 자리를 지운다 · 회복 때 자리도 지운다 · endZoneBy 는 그 원인의 칸만 당긴다', () => {
+    const s = quiet(), z = 0, d = DISTRICTS[z], ev1 = note(s, '시험 1'), ev2 = note(s, '시험 2'), ev3 = note(s, '시험 3');
+    expect(setZone(s, z, 'power', 0, 500, ev1, false, { x: d.x, y: d.y, r: 50 })).toBe(true);
+    expect([zoneAt(s, 'power', d.x + 10, d.y), zoneAt(s, 'power', d.x + 80, d.y), zoneAt(s, 'comms', d.x, d.y)]).toEqual([0, 1, 1]);
+    // 더 좁은 같은 값은 바꾸지 않는다(회복 시각도 늘리지 않는다) · 더 넓은 같은 값은 자리·원인·회복 시각을 함께 가져간다
+    expect(setZone(s, z, 'power', 0, 900, ev2, true, { x: d.x + 5, y: d.y, r: 30 })).toBe(false);
+    expect([s.world.zones[z].cause.power, s.world.zones[z].until.power, s.world.zones[z].known.power]).toEqual([ev1, 500, false]);
+    expect(setZone(s, z, 'power', 0, 400, ev2, false, { x: d.x + 5, y: d.y, r: 120 })).toBe(true);
+    expect([s.world.zones[z].cause.power, s.world.zones[z].until.power, s.world.zones[z].at!.power]).toEqual([ev2, 400, { x: d.x + 5, y: d.y, r: 120 }]);
+    // 구역 전체 값(같은 값 — 가장 넓다)이 오면 자리를 지운다
+    expect(setZone(s, z, 'power', 0, 700, ev3, false)).toBe(true);
+    expect([s.world.zones[z].at!.power, s.world.zones[z].cause.power, zoneAt(s, 'power', d.x + 100, d.y)]).toEqual([undefined, ev3, 0]);
+    // endZoneBy: 그 원인·그 칸만, 당기기만
+    setZone(s, z, 'comms', 0.6, 800, ev3, false);
+    expect(endZoneBy(s, ev3, 900, 'power')).toBe(0);
+    expect(endZoneBy(s, ev3, 300, 'power')).toBe(1);
+    expect([s.world.zones[z].until.power, s.world.zones[z].until.comms]).toEqual([300, 800]);
+    expect(endZoneBy(s, ev1, 10)).toBe(0);
+    // 동네 둘에 걸친 원: 닿는 동네마다 같은 자리 — 경계 너머의 점도 같은 값을 겪는다
+    const s2 = quiet(), a = DISTRICTS[0], b = DISTRICTS[1], mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2;
+    const zs = setZoneArea(s2, 'power', 0, 600, ev1, false, { x: mx, y: my, r: 120 });
+    expect(zs).toContain(0); expect(zs).toContain(1);
+    for (const zz of zs) expect(s2.world.zones[zz].at!.power).toEqual({ x: mx, y: my, r: 120 });
+    // 회복: 값·자리를 함께 지운다
+    s2.t = 601;
+    recoverWorld(s2);
+    for (const zz of zs) expect([s2.world.zones[zz].power, s2.world.zones[zz].at?.power]).toEqual([1, undefined]);
+  });
+
+  it('C4 (가) 변전소 사고: 700 안 동네 전체가 꺼지고 20~40초 뒤 알려지며(한국전력 기록 · tag power), 그 범위의 구간에 꺼진 신호(얹은 혼잡 한 줄 — 원인 = 그 사고 기록) · 응급실 수용 −2 · 사건이 정전 100초 뒤 닫히면 60~120초 뒤 복구 — 얹은 혼잡이 얹기 전 값으로 돌아온다', () => {
+    const s = quiet(), sub = placeOf(s, 'substation'), cx = sub.x + sub.w / 2, cy = sub.y + sub.h / 2;
+    const before = s.city.edges.map((e) => e.bump ?? 0), rows0 = s.traffic.bumps.length;
+    const I = bigFire(s, sub.id), ev = I.rootEvent;
+    tk(s);
+    const want = DISTRICTS.map((d, z) => (Math.hypot(d.x - cx, d.y - cy) <= 700 ? z : -1)).filter((z) => z >= 0);
+    expect(want.length).toBeGreaterThan(0);
+    for (let z = 0; z < DISTRICTS.length; z++) {
+      const Z = s.world.zones[z];
+      expect(Z.power, `동네 ${z}`).toBe(want.indexOf(z) >= 0 ? 0 : 1);
+      if (Z.power === 0) expect([Z.cause.power, Z.known.power, Z.at?.power]).toEqual([ev, false, undefined]);
+      if (Z.power === 0) expect(Z.until.power).toBeCloseTo(s.t + 600, 6);
+    }
+    expect(s.world.spans.map((q) => [q.f, q.cause, q.inc, q.src])).toEqual([['power', ev, I.id, 'util']]);
+    const row = s.traffic.bumps.find((b) => b.id === s.world.spans[0].bump)!;
+    expect([row.what, row.ev, row.inc, row.add, s.traffic.bumps.length]).toEqual([1, ev, I.id, 0.4, rows0 + 1]);
+    for (const eid of row.edges) expect(midDark(s, eid)).toBe(true);
+    for (const e of s.city.edges) if (row.edges.indexOf(e.id) < 0) expect(e.bump ?? 0).toBe(before[e.id]); else expect(e.bump!).toBeCloseTo(before[e.id] + 0.4, 9);
+    // 병원: 그 범위의 병원은 발전기로 돈다
+    const caps = s.world.hospitals.map((H, k) => HOSPITAL_CAP[Math.min(k, HOSPITAL_CAP.length - 1)] - (zoneAt(s, 'power', s.city.facilities[H.fac].x, s.city.facilities[H.fac].y) < 0.5 ? 2 : 0));
+    expect(s.world.hospitals.map((H) => H.cap)).toEqual(caps);
+    // 알림: 20~40초 뒤 한 줄 (그 전에는 진실만)
+    const t0 = s.t;
+    while (!s.events.some((e) => e.tag === 'power') && s.t < t0 + 45) tk(s);
+    const tell = s.events.filter((e) => e.tag === 'power');
+    expect(tell.length).toBe(1);
+    expect(tell[0].t - t0).toBeGreaterThanOrEqual(20 - 1); expect(tell[0].t - t0).toBeLessThanOrEqual(40 + 1);
+    expect([tell[0].actor, tell[0].kind, tell[0].causes, sysOf(tell[0])]).toEqual(['한국전력', 'hazard', [ev], 'infra']);
+    expect(tell[0].text).toMatch(/일대 정전 — 신호등이 꺼졌습니다\.$/);
+    for (const z of want) expect(knownZone(s, z).power).toBe(0);
+    // 정전 100초 뒤에 닫는다 → 60~120초 뒤 복구
+    while (s.t < t0 + 100) tk(s);
+    closeIncident(s, I, 'resolved');
+    const tc = s.t;
+    tk(s);
+    for (const z of want) { expect(s.world.zones[z].until.power).toBeGreaterThanOrEqual(tc + 60); expect(s.world.zones[z].until.power).toBeLessThanOrEqual(tc + 120 + 1); }
+    while (s.world.zones[want[0]].power < 1 && s.t < tc + 130) tk(s);
+    for (let z = 0; z < DISTRICTS.length; z++) expect(s.world.zones[z].power).toBe(1);
+    expect(s.world.spans.filter((q) => q.f === 'power')).toEqual([]);      // (긴 정전이 넘긴 통신 장애는 전력이 돌아온 뒤 180초까지 남는다 — C8 의 시험)
+    expect(s.traffic.bumps.length).toBe(rows0);
+    for (const e of s.city.edges) expect(e.bump ?? 0).toBeCloseTo(before[e.id], 9);
+    expect(s.world.hospitals.map((H, k) => H.cap)).toEqual(s.world.hospitals.map((_, k) => HOSPITAL_CAP[Math.min(k, HOSPITAL_CAP.length - 1)]));
+    const rec = s.events.filter((e) => e.tag === 'power');
+    expect(rec.length).toBe(2);
+    expect(rec[1].text).toMatch(/일대 전력 복구\.$/);
+    // 닫히지 않아도 600초 뒤에는 복구된다
+    const s2 = quiet(), I2 = bigFire(s2, placeOf(s2, 'substation').id);
+    tk(s2);
+    const z2 = s2.world.zones.findIndex((Z) => Z.power === 0), u2 = s2.world.zones[z2].until.power;
+    expect(u2).toBeCloseTo(s2.t + 600, 6);
+    const world = (sec: number): void => { for (let k = 0; k < Math.round(sec / s2.dt); k++) { s2.tick += 1; s2.t = s2.tick * s2.dt; tickWorld(s2); } };      // 사건 생성기를 돌리지 않는다(출동 없음으로 닫히지 않게)
+    world(599);
+    expect(s2.world.zones[z2].power).toBe(0);
+    world(3);
+    expect([s2.world.zones[z2].power, s2.world.spans.filter((q) => q.f === 'power').length, I2.phase !== 'closed']).toEqual([1, 0, true]);
+  });
+
+  it('C4 (라) 끊긴 전선: 전체 붕괴 자리의 전선 문턱(자리마다 grid:line:<건물>)을 넘을 때만 국지 정전(반경 90 — 원이 닿는 동네마다 같은 자리) · 원 밖 건물은 꺼지지 않는다 · 동네 둘에 걸친 정전이 복구된 뒤 구간의 bump 가 얹기 전 값과 같다 · 문턱이 높은 자리는 끊기지 않는다', () => {
+    const s = quiet();
+    // 동네 둘 이상에 닿는 원을 갖는 건물 가운데 전선 문턱이 0.6(전체 붕괴의 충격) 아래인 것 / 위인 것
+    const reach = (x: number, y: number, r: number): number => DISTRICTS.filter((d) => Math.hypot(d.x - x, d.y - y) <= r + d.r * 1.22).length;
+    const cands = s.city.places.filter((q) => !q.open && q.facility < 0 && zoneOfPlace(s, q.id) >= 0 && reach(q.x + q.w / 2, q.y + q.h / 2, 90) >= 2);
+    const low = cands.find((q) => 0.15 + 0.6 * lineU(s, q.id) < 0.6)!, high = cands.find((q) => 0.15 + 0.6 * lineU(s, q.id) >= 0.6)!;
+    expect(low && high).toBeTruthy();
+    const before = s.city.edges.map((e) => e.bump ?? 0);
+    const I = createIncident(s, { type: 'collapse', variant: 'std', placeId: low.id, rng: s.rng.fork('t-line') });
+    const ev = raiseProblem(s, I, 'STRUCT_COLLAPSE', '건물 전체 붕괴 (시험)', { role: 'SYSTEM', actor: '시험', text: '건물 전체가 무너졌습니다. (시험)' }, false);
+    const x = low.x + low.w / 2, y = low.y + low.h / 2;
+    signal(s, 'catastrophe', { inc: I.id, ev, size: 40, place: low.id, data: 1, mag: 1 });
+    tk(s);
+    const zs = s.world.zones.map((Z, z) => (Z.power === 0 ? z : -1)).filter((z) => z >= 0);
+    expect(zs.length).toBeGreaterThanOrEqual(2);
+    for (const z of zs) expect([s.world.zones[z].cause.power, s.world.zones[z].at!.power]).toEqual([ev, { x, y, r: 90 }]);
+    expect(s.world.spans.map((q) => q.src)).toEqual(['line']);
+    // 원 안의 건물만 꺼진다
+    let inN = 0, outN = 0;
+    for (const q of s.city.places) {
+      const z = zoneOfPlace(s, q.id);
+      if (zs.indexOf(z) < 0) continue;
+      const d = Math.hypot(q.x + q.w / 2 - x, q.y + q.h / 2 - y);
+      if (d < 85) { expect(isDark(s, q.id)).toBe(true); inN++; } else if (d > 95) { expect(isDark(s, q.id)).toBe(false); outN++; }
+    }
+    expect(inN).toBeGreaterThan(0); expect(outN).toBeGreaterThan(0);
+    secs(s, 41);
+    expect(s.events.filter((e) => e.tag === 'power').map((e) => e.text)).toEqual([`${low.addr} ${low.name} 주변 정전 — 인근 신호등이 꺼졌습니다.`]);
+    closeIncident(s, I, 'resolved');
+    secs(s, 125);
+    expect(s.world.zones.every((Z) => Z.power === 1 && Z.at?.power === undefined)).toBe(true);
+    expect(s.world.spans.filter((q) => q.f === 'power')).toEqual([]);
+    for (const e of s.city.edges) expect(e.bump ?? 0).toBeCloseTo(before[e.id], 9);
+    // 문턱이 높은 자리: 같은 붕괴에도 끊기지 않는다 (기록·장부·혼잡 없음)
+    const s2 = quiet();
+    const J = createIncident(s2, { type: 'collapse', variant: 'std', placeId: high.id, rng: s2.rng.fork('t-line') });
+    const ev2 = raiseProblem(s2, J, 'STRUCT_COLLAPSE', '건물 전체 붕괴 (시험)', { role: 'SYSTEM', actor: '시험', text: '건물 전체가 무너졌습니다. (시험)' }, false);
+    signal(s2, 'catastrophe', { inc: J.id, ev: ev2, size: 40, place: high.id, data: 1, mag: 1 });
+    secs(s2, 45);
+    expect([s2.world.zones.every((Z) => Z.power === 1), s2.world.spans.length, s2.events.some((e) => e.tag === 'power')]).toEqual([true, 0, false]);
+  });
+
+  it('C4 같은 동네의 둘째 폭발이 더 넓게 끊으면 자리를 가져가고 원인·회복 시각도 둘째의 것이다 — 첫째 사건이 닫혀도 둘째 자리의 정전은 풀리지 않는다', () => {
+    const s = quiet();
+    // 같은 동네의 두 건물: 둘 다 전선 문턱이 폭발의 충격(0.8 × 피해/100 × (1 − 2/(반경 + 2)))보다 낮다
+    const shockOf = (size: number): number => 0.8 * 1 * (1 - 2 / (size + 2));
+    const bs = s.city.places.filter((q) => !q.open && q.facility < 0 && zoneOfPlace(s, q.id) === 0 && 0.15 + 0.6 * lineU(s, q.id) < shockOf(3));
+    expect(bs.length).toBeGreaterThanOrEqual(2);
+    const [p1, p2] = bs;
+    const blastAt = (q: Place, size: number): { I: Incident; ev: number } => {
+      const I = createIncident(s, { type: 'fire', variant: 'std', placeId: q.id, rng: s.rng.fork('t-b' + q.id) });
+      const ev = raiseProblem(s, I, 'EXPLOSION', '폭발 (시험)', { role: 'SYSTEM', actor: '시험', text: '폭발! (시험)' }, false);
+      signal(s, 'catastrophe', { inc: I.id, ev, size, place: q.id, data: 0, mag: 100 });
+      tk(s);
+      return { I, ev };
+    };
+    const A = blastAt(p1, 3);
+    expect([s.world.zones[0].cause.power, s.world.zones[0].at!.power!.r]).toEqual([A.ev, 30 + 8 * 3]);
+    secs(s, 10);
+    const B = blastAt(p2, 6);
+    const Z = s.world.zones[0];
+    expect([Z.cause.power, Z.at!.power!.r, Z.until.power]).toEqual([B.ev, 30 + 8 * 6, s.t + 600]);
+    closeIncident(s, A.I, 'resolved');
+    secs(s, 130);
+    expect([s.world.zones[0].power, s.world.zones[0].cause.power]).toEqual([0, B.ev]);
+    // 첫째 건이 모든 동네에서 자리를 잃었으면 그 줄과 얹은 혼잡은 거둬졌다
+    for (const q of s.world.spans) if (q.f === 'power' && q.cause === A.ev) expect(s.world.zones.some((W) => W.cause.power === A.ev)).toBe(true);
+  });
+
+  it('C4 태풍 정전(blackout 신호): 모든 동네가 곧바로 알려진 정전이 되고 동네별 알림·복구 기록은 남기지 않는다 — 꺼진 신호는 재난이 이미 얹었다(장부 줄을 더하지 않는다) · 끝 신호에서 되돌린다', () => {
+    const s = quiet(), ev = note(s, '강풍에 송전선이 끊겨 (시험)'), rows0 = s.traffic.bumps.length;
+    signal(s, 'blackout', { inc: -1, ev, data: 1 });
+    tk(s);
+    expect(s.world.zones.every((Z) => Z.power === 0 && Z.known.power && Z.cause.power === ev)).toBe(true);
+    expect(s.world.spans.map((q) => [q.src, q.bump, q.told])).toEqual([['blackout', -1, false]]);
+    expect(s.traffic.bumps.length).toBe(rows0);
+    secs(s, 60);
+    signal(s, 'blackout', { inc: -1, ev: -1, data: 0 });
+    secs(s, 2);
+    expect([s.world.zones.every((Z) => Z.power === 1), s.world.spans.length]).toEqual([true, 0]);
+    expect(s.events.some((e) => e.tag === 'power')).toBe(false);
+  });
+
+  it('C4 (다) 지진: 동네마다 흔들림(mag × (1 − 거리/900))이 그 동네 전력망의 문턱(grid:power:<동네>)을 넘으면 꺼진다 — 여진(0.6)은 문턱이 낮은 남은 동네만, 240초 뒤 복구', () => {
+    const s = quiet(), x = DISTRICTS[0].x, y = DISTRICTS[0].y, ev = note(s, '지진 (시험)');
+    const thr = (z: number): number => 0.3 + 0.5 * s.rng.fork('grid:power:' + z).next();
+    const shake = (z: number, mag: number): number => mag * Math.max(0, 1 - Math.hypot(DISTRICTS[z].x - x, DISTRICTS[z].y - y) / 900);
+    signal(s, 'quake', { inc: -1, ev, x, y, mag: 1 });
+    tk(s);
+    for (let z = 0; z < DISTRICTS.length; z++) expect(s.world.zones[z].power, `동네 ${z}`).toBe(shake(z, 1) > thr(z) ? 0 : 1);
+    const ev2 = note(s, '여진 (시험)');
+    signal(s, 'quake', { inc: -1, ev: ev2, x, y, mag: 0.6 });
+    tk(s);
+    for (let z = 0; z < DISTRICTS.length; z++) {
+      const want = shake(z, 1) > thr(z) ? ev : shake(z, 0.6) > thr(z) ? ev2 : -1;
+      expect(s.world.zones[z].cause.power, `동네 ${z}`).toBe(want);
+    }
+    secs(s, 245);
+    expect(s.world.zones.every((Z) => Z.power === 1)).toBe(true);
+  });
+
+  it('분석 AI: 관제가 아는 정전 안의 교통사고·승강기 신고는 위험도 +0.3 (정전 구역) — 알려지지 않은 정전은 치지 않는다', () => {
+    const s = quiet(), node = s.city.nodes.find((n) => zoneOfXY(n.x, n.y) === 0)!;
+    const mk = (type: 'traffic' | 'collapse'): Incident => {
+      const Q = createIncident(s, type === 'traffic' ? { type, variant: 'std', nodeId: node.id, rng: s.rng.fork('t-q' + type) } : { type, variant: 'elevator', placeId: s.city.places.find((q) => q.nodeId === node.id && !q.open)?.id, rng: s.rng.fork('t-q' + type) });
+      Q.locationKnown = true; Q.reportedNode = node.id; Q.fieldType = type;
+      if (type === 'collapse') Q.claims.push({ topic: 'nature', value: 'elevator', conf: 0.8, text: '', truthful: true, callId: 0, note: '' });
+      return Q;
+    };
+    const T1 = mk('traffic'), E1 = mk('collapse');
+    assess(s, T1, '시험'); assess(s, E1, '시험');
+    const base = [T1.assessment!.severity, E1.assessment!.severity];
+    setZone(s, 0, 'power', 0, s.t + 600, note(s, '정전 (시험)'), false);
+    assess(s, T1, '시험'); assess(s, E1, '시험');
+    expect([T1.assessment!.severity, E1.assessment!.severity]).toEqual(base);      // 아직 알려지지 않았다
+    s.world.zones[0].known.power = true;
+    assess(s, T1, '시험'); assess(s, E1, '시험');
+    expect(T1.assessment!.severity).toBeCloseTo(Math.min(3, base[0] + POWER_SEV), 9);
+    expect(E1.assessment!.severity).toBeCloseTo(Math.min(3, base[1] + POWER_SEV), 9);
+  });
+
+  it('L5 ② 세기를 키우고 한 동네를 끄면 — 그 동네의 4층 이상 · 그 종류 · 쓸 수 있는 건물에서만, 건물마다 한 번, 사건의 자리 = hz.target · 원인 = 정전을 만든 기록 · 부모 = 그 정전의 주인 사건 · 내력 outage(ref = 그 동네) · 한 뿌리 둘까지', () => {
+    withRide(1e5, () => {
+      const s = quiet(), sub = placeOf(s, 'substation'), I = bigFire(s, sub.id);
+      tk(s); tk(s);      // 예약은 한 틱에 하나씩 사건이 된다
+      const dark = liftPlaces(s).filter((p) => isDark(s, p));
+      expect(dark.length).toBeGreaterThan(0);
+      for (const id of liftPlaces(s)) { const c = hazardCell(s, 'liftStall', id); expect(c !== null, `건물 ${id}`).toBe(dark.indexOf(id) >= 0); }
+      const kids = s.incidents.filter((J) => J.csq === 'liftStall');
+      expect(kids.length).toBe(2);      // 한 뿌리(변전소 화재)의 법칙 사건은 둘까지 — 나머지는 'depth'
+      expect(s.gen.dropped.filter((d) => d.csq === 'liftStall').every((d) => d.why === 'depth' || d.why === 'cap')).toBe(true);
+      const seen = new Set<number>();
+      for (const K of kids) {
+        expect([K.truth.type, K.truth.variant, K.truth.placeId, K.parent, K.cause, K.hz!.law, K.hz!.src[0].what]).toEqual(['collapse', 'elevator', K.hz!.target, I.id, I.rootEvent, 'liftStall', 'outage']);
+        expect(dark).toContain(K.hz!.target);
+        expect(K.hz!.src[0].ref).toBe(zoneOfPlace(s, K.hz!.target));
+        expect(seen.has(K.hz!.target)).toBe(false); seen.add(K.hz!.target);
+        expect(s.events[K.rootEvent].causes).toContain(I.rootEvent);
+      }
+      // 다시 꺼져도(같은 건물) 다시 받지 않는다 — 건물마다 한 번
+      for (const id of dark) expect(hazardCell(s, 'liftStall', id)!.done).toBe(true);
+      expect(s.world.hz.holes).toBe(0);
+    });
+  });
+
+  it('L5 ③ 개입: 같은 시드에서 정전을 걸지 않은 쪽(같은 변전소 화재 — 큰 불 신호만 없다)에는 승강기 칸도 사건도 없다 · ④ 문턱은 누가 껐는지와 무관하다(변전소 정전과 태풍 정전의 같은 건물 thr 이 같다) · ① 정전이 없는 교대에는 칸이 없다', () => {
+    const A = quiet(), B = quiet(), C = quiet();
+    bigFire(A, placeOf(A, 'substation').id);
+    createIncident(B, { type: 'fire', variant: 'std', placeId: placeOf(B, 'substation').id, rng: B.rng.fork('t-util') });
+    signal(C, 'blackout', { inc: -1, ev: note(C, '태풍 정전 (시험)'), data: 1 });
+    tk(A); tk(B); tk(C);
+    expect(B.world.hz.cells.liftStall).toBeUndefined();
+    expect(B.incidents.some((J) => J.csq === 'liftStall')).toBe(false);
+    const both = liftPlaces(A).filter((id) => hazardCell(A, 'liftStall', id) && hazardCell(C, 'liftStall', id));
+    expect(both.length).toBeGreaterThan(0);
+    for (const id of both) { expect(hazardCell(A, 'liftStall', id)!.thr).toBe(hazardCell(C, 'liftStall', id)!.thr); expect(hazardCell(A, 'liftStall', id)!.u2).toBe(hazardCell(C, 'liftStall', id)!.u2); }
+    // 정전이 없는 실제 교대 (보통 S1 — 정전 기록이 없는 교대)
+    const S = new Sim('S1', NORMAL, 1200);
+    S.runToEnd();
+    expect(S.events.some((e) => e.tag === 'power')).toBe(false);
+    expect(S.world.hz.cells.liftStall).toBeUndefined();
+  });
+
+  it('L5 ⑤ 쓸 수 없는 건물(전소)은 정전이 닿아도 칸도 사건도 없다 · 사건 중인 건물은 기다리다 그 사건이 닫힌 다음 1초에 난다', () => {
+    withRide(1e5, () => {
+      const s = quiet(), ev = note(s, '태풍 정전 (시험)'), lp = liftPlaces(s);
+      const burnt = lp[0], busy = lp[1];
+      s.placeMarks.set(burnt, { placeId: burnt, state: 'burnt', t: s.t, incidentId: 0, burnFrac: 1, ruinFrac: 0 });
+      const J = createIncident(s, { type: 'medical', variant: 'std', placeId: busy, rng: s.rng.fork('t-busy') });
+      expect(J.truth.placeId).toBe(busy);
+      darkened(s, [burnt, busy], { rate: 0, ev, inc: -1, what: 'outage', ref: -1 });
+      tickIncidents(s);
+      expect(hazardCell(s, 'liftStall', burnt)).toBe(null);
+      expect(hazardCell(s, 'liftStall', busy)!.done).toBe(true);
+      expect(s.world.hz.waiting.map((w) => [w.law, w.target])).toEqual([['liftStall', busy]]);
+      secs(s, 5);
+      expect(s.incidents.some((K) => K.csq === 'liftStall')).toBe(false);
+      closeIncident(s, J, 'resolved');
+      secs(s, 1.2);
+      const K = s.incidents.find((X) => X.csq === 'liftStall')!;
+      expect([K.truth.placeId, K.parent, K.cause]).toEqual([busy, undefined, ev]);
+    });
+  });
+
+  it('C8 방송국 사고: 800 안 동네의 통신 0.4 (곧바로 알려진 기록 한 줄) → 그 범위의 열린 현장에 무전 음영 덩어리(원래 음영이 아니던 바닥 칸만 · s.shadowAdd) → 사건이 닫히고 180초 뒤 복구 — 더한 칸만 되돌린다. 더한 음영에서 보고가 끊기면 INFRA_FAIL 한 줄', () => {
+    const s = quiet(), bc = placeOf(s, 'broadcast'), I = bigFire(s, bc.id), sc = s.scenes[I.id]!;
+    const shadow0 = Array.from(sc.shadow);
+    tk(s);
+    const zs = s.world.zones.map((Z, z) => (Z.comms < 1 ? z : -1)).filter((z) => z >= 0);
+    expect(zs.length).toBeGreaterThan(0);
+    for (const z of zs) expect([s.world.zones[z].comms, s.world.zones[z].known.comms, s.world.zones[z].cause.comms]).toEqual([0.4, true, I.rootEvent]);
+    const rec = s.events.filter((e) => e.tag === 'comms');
+    expect(rec.length).toBe(1);
+    expect([rec[0].actor, rec[0].causes, sysOf(rec[0])]).toEqual(['통신사', [I.rootEvent], 'infra']);
+    expect(rec[0].text).toMatch(/가온방송국 사고로 .+ 일대 통신 장애 — 무전이 끊기는 곳이 늘었습니다\.$/);
+    secs(s, 1.2);
+    expect(sc.shadowAdd && sc.shadowAdd.length).toBeGreaterThan(0);
+    for (const i of sc.shadowAdd!) { expect(shadow0[i]).toBe(0); expect(sc.shadow[i]).toBe(1); }
+    let floor = 0; for (let i = 0; i < sc.tiles.length; i++) if ([TILE.FLOOR, TILE.GROUND, TILE.ROAD, TILE.TRAIL].indexOf(sc.tiles[i] as never) >= 0 && !shadow0[i]) floor++;
+    expect(sc.shadowAdd!.length).toBeLessThanOrEqual(Math.round(0.6 * 0.3 * floor));
+    // 더한 음영의 칸에 선 대원의 보고가 끊긴다 → INFRA_FAIL (원인 = 그 COMM_FAIL · 통신 장애의 원인 기록), 한 사건에 한 줄
+    const rid = s.responders[0].id, tile = sc.shadowAdd![0];
+    const a = makeAgent(s, rid, s.responders[0].unitId, tile % sc.w + 0.5, ((tile / sc.w) | 0) + 0.5, s.t, s.rng.fork('t-agent'));
+    sc.agents.push(a);
+    const cf = raiseProblem(s, I, 'COMM_FAIL', '시험: 무전 음영 구역에서 보고 전달 실패', { role: 'RESPONDER', actor: '시험', rid, imp: 2, text: '무전 응답 없음. (시험)' }, false);
+    secs(s, 1.2);
+    const inf = I.problems.filter((p) => p.code === 'INFRA_FAIL');
+    expect(inf.length).toBe(1);
+    expect(s.events[inf[0].eventId].causes).toEqual([cf, I.rootEvent]);
+    expect(inf[0].detail).toMatch(/통신 장애\(방송·관제 시설 사고\)로 무전 음영이 늘어 보고가 끊겼습니다$/);
+    raiseProblem(s, I, 'COMM_FAIL', '시험 2', { role: 'RESPONDER', actor: '시험', rid, imp: 2, text: '무전 응답 없음. (시험 2)' }, false);
+    secs(s, 1.2);
+    expect(I.problems.filter((p) => p.code === 'INFRA_FAIL').length).toBe(1);
+    // 닫힌 뒤 180초: 통신 복구 · 더한 칸만 되돌린다
+    sc.agents.length = 0;
+    closeIncident(s, I, 'resolved');
+    const tc = s.t;
+    secs(s, 182);
+    expect(s.world.zones.every((Z) => Z.comms === 1)).toBe(true);
+    expect(s.t - tc).toBeGreaterThanOrEqual(180);
+    expect([sc.shadowAdd, Array.from(sc.shadow)]).toEqual([undefined, shadow0]);
+    expect(s.events.filter((e) => e.tag === 'comms').map((e) => e.text).pop()).toMatch(/일대 통신 복구\.$/);
+  });
+
+  it('C8 (나) 긴 정전: 변전소 정전이 100초 이어지면 그 범위의 통신 0.6 — 알려지지 않은 채(기록 없음), 전력이 돌아오면 180초 뒤 풀린다 · 상한 3건', () => {
+    const s = quiet(), I = bigFire(s, placeOf(s, 'substation').id);
+    tk(s);
+    const zs = s.world.zones.map((Z, z) => (Z.power === 0 ? z : -1)).filter((z) => z >= 0);
+    secs(s, 99);
+    expect(s.world.zones.every((Z) => Z.comms === 1)).toBe(true);
+    secs(s, 2);
+    for (const z of zs) expect([s.world.zones[z].comms, s.world.zones[z].known.comms, s.world.zones[z].cause.comms]).toEqual([0.6, false, I.rootEvent]);
+    expect(s.events.some((e) => e.tag === 'comms')).toBe(false);
+    closeIncident(s, I, 'resolved');
+    let tp = -1;
+    for (let k = 0; k < 5 * 400 && s.world.zones[zs[0]].comms < 1; k++) { tk(s); if (tp < 0 && s.world.zones[zs[0]].power === 1) tp = s.t; }
+    expect(tp).toBeGreaterThan(0);
+    expect(s.t - tp).toBeGreaterThanOrEqual(180 - 1); expect(s.t - tp).toBeLessThanOrEqual(181);
+    expect(s.world.spans).toEqual([]);
+  });
+
+  it('실제 교대 (태풍 S0): 동네별 정전 기록이 없고, 통신 장애 알림은 한 줄, INFRA_FAIL 마다 원인에 그 사건의 COMM_FAIL 과 태풍 정전 기록 · 교대 끝에 동네 값·장부·얹은 혼잡이 남지 않는다', () => {
+    const s = new Sim('S0', { ...NORMAL, disaster: parseDisaster('typhoon')! }, 1200);
+    s.runToEnd();
+    expect(s.events.some((e) => e.tag === 'power')).toBe(false);
+    const dark = s.events.find((e) => /^강풍에 송전선이 끊겨/.test(e.text))!;
+    const com = s.events.filter((e) => e.tag === 'comms');
+    expect(com.filter((e) => /통신 기지국 예비 전원이 떨어졌습니다/.test(e.text)).map((e) => e.causes)).toEqual([[dark.id]]);
+    let inf = 0;
+    for (const I of s.incidents) {
+      const ps = I.problems.filter((p) => p.code === 'INFRA_FAIL');
+      expect(ps.length).toBeLessThanOrEqual(1);
+      for (const p of ps) {
+        inf++;
+        const cs = s.events[p.eventId].causes;
+        expect(cs).toContain(dark.id);
+        expect(cs.some((c) => s.events[c].problem === 'COMM_FAIL' && s.events[c].incidentId === I.id)).toBe(true);
+      }
+    }
+    expect(inf).toBeGreaterThan(0);
+    expect(s.world.zones.every((Z) => Z.power === 1 && Z.comms === 1)).toBe(true);
+    expect(s.world.spans).toEqual([]);
+    expect(s.traffic.bumps).toEqual([]);
+    for (const e of s.city.edges) expect(e.bump ?? 0).toBe(0);
+    for (const I of s.incidents) expect(s.scenes[I.id]?.shadowAdd).toBeUndefined();
+  });
 });

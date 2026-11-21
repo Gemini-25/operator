@@ -66,15 +66,74 @@ export function zoneName(z: number): string { return z >= 0 && z < DISTRICTS.len
  * (진실 쪽 — 세계 규칙 전용) 구역 값을 넣는다. 누적이 아니라 덮어쓰기다 (§3.6 "포화되는 상태"):
  * 전력·통신·수도는 더 낮은 값만, 연기·위험은 더 높은 값만 받는다. 회복 시각은 더 늦은 쪽.
  * 값이 실제로 나빠졌을 때만 원인 기록을 바꾼다. 알려짐은 켜기만 한다(끄는 것은 회복). 돌려주는 값 = 값이 바뀌었는가. 구역 -1 은 아무것도 하지 않는다
+ * (b3-10) at 을 주면 국지 값이다 — 그 구역 안에서도 (x, y) 에서 r 안에만 걸린다(zoneAt). 국지 값이 끼는 갈래는 아래 첫 블록(자리·원인·회복 시각을 한 묶음으로 바꾼다)
  */
-export function setZone(sim: Sim, z: number, f: ZoneField, v: number, until: number, cause: number, known: boolean): boolean {
+export function setZone(sim: Sim, z: number, f: ZoneField, v: number, until: number, cause: number, known: boolean, at?: { x: number; y: number; r: number }): boolean {
   const Z = sim.world.zones[z];
   if (!Z) return false;
-  const low = ZONE_DEFAULT[f] === 1, cur = Z[f];
+  const low = ZONE_DEFAULT[f] === 1, cur = Z[f], curAt = Z.at ? Z.at[f] : undefined;
+  if (at || curAt) {
+    // (b3-10 §3.6c) 국지 값이 끼면: 자리(at)·원인·회복 시각은 한 묶음이다. 더 나쁜 값이거나, 같은 값인데 더 넓으면(구역 전체 = 가장 넓다) 자리를 바꾸며 셋을 함께 바꾼다.
+    // 아니면 아무것도 하지 않는다(다른 자리의 손상이 이 자리의 회복 시각을 늦추거나 알려짐을 켜지 않는다). 구역·칸마다 국지 자리는 하나다
+    const def = cur === ZONE_DEFAULT[f];
+    const take = def || (low ? v < cur : v > cur) || (v === cur && !!curAt && (!at || at.r > curAt.r));
+    if (!take) return false;
+    Z[f] = v; Z.cause[f] = cause; Z.until[f] = until; Z.known[f] = known;
+    if (at) { if (!Z.at) Z.at = {}; Z.at[f] = { x: at.x, y: at.y, r: at.r }; }
+    else if (Z.at) delete Z.at[f];
+    return true;
+  }
   const worse = low ? v < cur : v > cur;
   if (worse) { Z[f] = v; Z.cause[f] = cause; }
   if (worse || cur !== ZONE_DEFAULT[f]) { if (until > Z.until[f]) Z.until[f] = until; if (known) Z.known[f] = true; }
   return worse;
+}
+
+/**
+ * (b3-10 §3.6c) 국지 값을 원이 닿는 모든 동네에 같은 자리로 넣는다 — 동네 가운데까지의 거리 ≤ r + 동네 반지름 × 1.22 (districtAt 이 그 동네로 고르는 범위).
+ * 동네 경계 너머의 건물도 zoneAt 으로 같은 값을 겪는다. 값이 바뀐 동네의 목록을 돌려준다
+ */
+export function setZoneArea(sim: Sim, f: ZoneField, v: number, until: number, cause: number, known: boolean, at: { x: number; y: number; r: number }): number[] {
+  const out: number[] = [];
+  for (let z = 0; z < DISTRICTS.length; z++) {
+    const d = DISTRICTS[z];
+    if (Math.hypot(d.x - at.x, d.y - at.y) > at.r + d.r * 1.22) continue;
+    if (setZone(sim, z, f, v, until, cause, known, at)) out.push(z);
+  }
+  return out;
+}
+
+/** (b3-10) 그 점이 겪는 구역 값 — 그 점의 구역(zoneOfXY)이 국지 값이면 원 안에서만 그 값, 밖이면 처음 값. 구역 -1(동네 밖)은 처음 값 (진실 쪽 — 판단부는 부르지 않는다) */
+export function zoneAt(sim: Sim, f: ZoneField, x: number, y: number): number {
+  const Z = sim.world.zones[zoneOfXY(x, y)];
+  if (!Z) return ZONE_DEFAULT[f];
+  const a = Z.at ? Z.at[f] : undefined;
+  if (a && Math.hypot(x - a.x, y - a.y) > a.r) return ZONE_DEFAULT[f];
+  return Z[f];
+}
+/** (b3-10) 그 건물이 정전인가: 건물 가운데가 겪는 전력 < 0.5 이거나 그 건물만의 정전(expo.dark — 잠긴 전기실, b3-12). world.expo 는 읽기만 한다(없으면 만들지 않는다) */
+export function isDark(sim: Sim, placeId: number): boolean {
+  const q = sim.city.places[placeId];
+  if (!q) return false;
+  if (zoneAt(sim, 'power', q.x + q.w / 2, q.y + q.h / 2) < 0.5) return true;
+  const ex = sim.world.expo[placeId];
+  return !!ex && ex.dark >= 0;
+}
+/**
+ * (b3-10 C4) 원인 기록이 cause 인 구역·국지 값의 회복 시각을 min(지금 값, until) 으로 당긴다 — setZone 은 회복 시각을 늦추기만 한다.
+ * f 를 주면 그 칸만 (정전은 원인이 끝나면 곧, 통신은 그 180초 뒤 — 한 원인이 두 칸을 만든다). 당긴 칸의 수를 돌려준다
+ */
+export function endZoneBy(sim: Sim, cause: number, until: number, f?: ZoneField): number {
+  if (cause < 0) return 0;
+  let n = 0;
+  for (const Z of sim.world.zones) {
+    for (let k = 0; k < ZONE_FIELDS.length; k++) {
+      const g = ZONE_FIELDS[k];
+      if ((f !== undefined && g !== f) || Z.cause[g] !== cause || Z[g] === ZONE_DEFAULT[g]) continue;
+      if (until < Z.until[g]) { Z.until[g] = until; n++; }
+    }
+  }
+  return n;
 }
 
 /**
@@ -91,6 +150,7 @@ export function recoverWorld(sim: Sim, note?: (z: number, f: ZoneField, cause: n
       if (Z[f] === ZONE_DEFAULT[f] || t < Z.until[f]) continue;
       const cause = Z.cause[f], known = Z.known[f];
       Z[f] = ZONE_DEFAULT[f]; Z.until[f] = 0; Z.known[f] = false; Z.cause[f] = -1;
+      if (Z.at && Z.at[f]) delete Z.at[f];      // (b3-10) 국지 자리도 함께 지운다
       if (note) note(z, f, cause, known);
     }
   }

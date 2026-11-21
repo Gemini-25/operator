@@ -1008,11 +1008,15 @@ export interface WorldState {
   hz: HzState;                               // { cells: {}, live: {}, waiting: [], roadAt: -1, holes: 0 }
   expo: Record<number, PlaceExpo>;           // 건물 id → 노출 (드문드문)
   sills: Record<number, number>;             // 건물 id → 지하의 문턱 높이 (L6 — 처음 볼 때 채운다. 시드에 따라 달라지는 값은 sim.world 안에만 — §3.6c)
-  spans: { f: ZoneField; cause: number; inc: number; bump: number }[];      // 정전·연기 한 건마다의 장부 — 얹은 bump 의 id (그 건이 끝날 때 한 번 거둔다)
+  spans: { f: ZoneField; cause: number; inc: number; bump: number; src?: ZoneSpanSrc; since?: number; tellAt?: number; told?: boolean; label?: string; next?: boolean }[];      // 정전·연기 한 건마다의 장부 — 얹은 bump 의 id (그 건이 끝날 때 한 번 거둔다)
+  //   (b3-10 — 선택 칸, world/rules/infra.ts 가 만드는 줄에는 모두 있다) src = 그 건을 만든 길 · since = 시작 시각 · tellAt = 관제 알림이 나갈 시각(-1 = 나갔거나 알림 없음) · told = 관제에 알렸다(복구 기록을 남긴다) ·
+  //   label = 기록 문구의 자리 말('○○동 일대' · '{건물} 주변') · next = 정전이 길어져 통신(C8)으로 넘겼다
 }
 export interface ZoneState {
   at?: Partial<Record<ZoneField, { x: number; y: number; r: number }>>;      // 국지 값의 자리 (§3.6c — 건물 하나의 붕괴가 동네 전체를 끄지 않게)
 }
+/** (I1-b b3-10) 정전·통신 장애 한 건을 만든 길 (world.spans 의 src): 변전소·발전소 사고 · 끊긴 전선(붕괴·폭발 자리) · 지진 · 태풍 정전 · 긴 정전의 통신 · 방송국·관제탑 사고 */
+export type ZoneSpanSrc = 'util' | 'line' | 'quake' | 'blackout' | 'power' | 'comm';
 export interface Signal {
   mag: number;                               // 크기 — 폭발이면 피해량(dmg), collapseBuilding 1 · collapseRegion 은 이번에 무너진 몫(< 1), 지진이면 본진 1 · 여진 0.6. 보내는 자리가 주지 않으면 0 (채우는 것은 b3-8·b3-10)
 }

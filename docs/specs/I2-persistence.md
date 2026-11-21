@@ -1233,7 +1233,7 @@ for (const [seed, d, f] of cases) {
 - 그을음의 방향(§6.3 의 8 — `wf-persist/s5-soot.ts`, 아파트 281 · 같은 사건 시드 SOOT0~5): **심각도 3** — 그을음 0 의 소실률 평균 0.029 · 그을음 0.6 은 0.026(처음부터 탄 칸 평균 27.7칸 · 이번 교대에 탄 칸 평균 3.8 → 2.7칸), 전소·X6 탄 비율 0. **심각도 2**(일찍 꺼지는 작은 불) — 0.014 → 0.016: 이번 교대에 탄 칸 수는 같거나 적지만(평균 1.8 → 1.7칸) 분모가 21% 줄어 비율이 오른다(아래 알려진 문제).
 - `world.expo`(머리 알림 ④ — `wf-persist/s5-expo.ts`): 교대 끝에 충격을 받은 건물 보통 0~3채(0.1 이상 0~2), 지진 5~15채(0.1 이상 2~14), 끊긴 배관 지진 0~3채, 태풍 0.
 - 관문 `npm run check` 통과(코드 커밋 `a809418`): 파일 20 · 1062개 통과 + 건너뜀 1(persistence 65 → 81), vitest 631초 · 전체 11분 5초(다른 묶음과 함께 도는 기계 — 사용자 CPU 33분). `sweep 40 --check` 의 분포(보통 590건 · 성공 70% · close reasons resolved 588 · timeout 1 · abandoned 1 · 교착 후보 0 · 잊힌 사건 0 · C1~C5 0 · holes 0 · systems carry 0%)는 단계 4 관문의 기록과 같다(이어받은 상태가 없는 교대 — 해시 목록과 같이 그대로). persistence 혼자 60초쯤(새 시험 가운데 그을음의 방향 12교대가 가장 길다).
-- 어려움·극한 `sweep 40 --check` 모두 '검증 통과'(이어받은 상태가 없는 교대): 어려움 737건 — close reasons resolved 722 · timeout 5 · noresponse 2 · abandoned 7 · shiftend 1, 교착 후보 0 · 잊힌 사건 0 · C1~C5 0 · holes 0 / 극한 903건 — resolved 832 · timeout 29 · noresponse 12 · abandoned 20 · shiftend 10, 교착 후보 1(허용 안의 값 — 관문 통과) · 잊힌 사건 0 · C1~C5 0 · holes 0 (scratchpad `wf-persist/s5-hard40.txt`·`s5-ext40.txt`).
+- 어려움·극한 `sweep 40 --check` 모두 '검증 통과'(이어받은 상태가 없는 교대): 어려움 737건 — close reasons resolved 722 · timeout 5 · noresponse 2 · abandoned 7 · shiftend 1, 교착 후보 0 · 잊힌 사건 0 · C1~C5 0 · holes 0 / 극한 903건 — resolved 832 · timeout 29 · noresponse 12 · abandoned 20 · shiftend 10, 교착 후보 1(406초 — 관문은 교착 후보·잊힌 사건을 기본 조건에서만 건다, CLAUDE.md 명령 표) · 잊힌 사건 0 · C1~C5 0 · holes 0 (scratchpad `wf-persist/s5-hard40.txt`·`s5-ext40.txt`).
 
 **알려진 문제 (단계 8 의 균형으로)**
 

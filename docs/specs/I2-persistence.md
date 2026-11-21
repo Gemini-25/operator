@@ -1116,3 +1116,60 @@ for (const [seed, d, f] of cases) {
 - **단계 4**: `makeCarryover` 의 `rng`(carry 흐름)는 `unitsNext` 가 정비 시각을 먼저 뽑은 뒤의 것을 받아 복구 시각을 이어 뽑는다(`unitsNext(sim, rng)` 다음에 `roadsNext(sim, rng)` — 순서를 바꾸면 정비 시각이 달라진다). `tickCarry` 의 복구 공사 쪽은 `if (cs.svc > 0) { … }` 블록 뒤에.
 - **단계 7**: `CarrySummary.service` = 다음 상태의 `units` 가운데 `service` 가 있는 수, 보고서의 정비·재고 줄은 `stats.serviced`·`stats.fbShort`.
 - I1-b b1·b2 뒤: '정비 완료'·'결원' 줄과 `carryNoteText` 의 기록에 `tag: 'carry'`.
+
+### 단계 0·4 — 기준·도로 (이어받은 상태가 없을 때 결과 불변) · 덩어리 s04, `wf/persist-s04`
+
+시작점 `19a7e68`(주 브랜치 `claude/practical-keller-xm0ac2` — R1·H1·X6·R2·R3·I1-b·R3b 전부, I2 단계 1~3). 받기(`git merge`)는 앞으로 감을 것이 없었다.
+
+**단계 0 — 기준**: 해시 목록 158교대(scratchpad `wf-persist/s04-hashlist.ts` — 단계 1~3 의 `hashlist.ts` 그대로: §8 의 0단계 목록 28 + 보통 40 + 어려움 20 + 극한 20 + 재난 다섯 × 3 + 강제 일곱 × 3 + 부대 규모 1·2·4·5 × 3 + 500초 교대 2, 줄마다 `report.hash`·보고서 JSON 의 FNV·기록 수·명부 지문)를 `19a7e68` 을 `git archive` 로 풀어 다시 잼 — `s04-base-hashes.txt`. I1-b·R3b 가 결과를 바꿨으므로 앞 세션의 `base*-hashes.txt` 와는 다르다(쓰지 않는다). **단계 1~3 이 지금도 아무것도 하지 않는지**: 같은 사본에서 `engine.ts` 의 `applyCrewCarry`·`announceCarry`·`tickCarry` 세 줄을 지운 것(`s04-nohook/`)으로 잰 158줄이 기준과 한 글자도 다르지 않다(`s04-nohook-hashes.txt`).
+
+**실제 이름** (뒤 단계가 쓴다)
+
+| 파일 | 이름 |
+|---|---|
+| `src/sim/persist.ts` | 상수 `DIS_FULL` 2 · `LANE_SLOW` 0.6 · `FRONT_SLOW` 0.4(본문의 "건물 앞 0.4" — 이름이 없던 수) · `ROAD_AT`(복구 시각의 범위 — `carried` [120, 600] · `disFull` [240, 600] · `disLane` [300, 900] · `wet`(홍수·산불) [120, 420] · `mud` [300, 600] · `tree` [60, 240] · `surface` [300, 900] · `rubble` [300, 900]) · `WHY_NAME`(까닭 → 기록 문구) · 안쪽 `HELD_AT` 900(교대 내내 막는 공사의 openAt 자리값). 안쪽 함수: `applyRoadCarry(sim, cs, co)`(initCarry 가 부른다 — 적용) · `linkedHeavy(sim, a, b, skip)`(실제 상태의 큰 차 우회로 — traffic 의 `linked` 와 같은 뜻, initTraffic 앞이라 장애물이 없다) · `roadsNext(sim, rng)`(끝 상태 → 복구 공사) · `roadBeats`·`incName`·`DIS_WHY` |
+| `CarryState` | `held: RoadCarry[]`(새 칸 — 교대 내내 막아 둔 left 2 의 사본, `makeCarryover` 가 left 1 로 넘긴다) · `slowed` 의 항목에 `why: 'lane' \| 'front'`(개통은 `lane` 만 되돌린다 — 한 구간에 둘이 있을 수 있다) |
+| `CarryNote 'road'` | `why` 를 더했다(문구를 고른다). `openAt` 은 짧은 교대면 자른 값 |
+| `src/sim/disaster.ts` | `DisasterState.damaged: number[]`(plan 의 리터럴 끝에 `damaged: []`), `closeEdge` 가 통제에 성공한 자리(`d.closedEdges.push` 다음 줄)에서 한 번씩 |
+| `src/sim/types.ts` | `WorldTag` 끝에 `\| 'carry'` (단계 1 의 남은 몫 — I1-b 가 합쳐져 칸이 생겼다) |
+| `src/view/city/trafficLayer.ts` | `drawObstacleMark(ctx, kind, x, y, r, known = true, ring?)` · `REPAIR_RING`('#ffb454' — `DISASTER_RING` 과 같은 색) |
+
+**적용의 순서** (`initCarry` → `applyRoadCarry` — initTraffic 앞): 이어받은 `roads` 를 openAt(짧은 교대면 `min(openAt, shiftLen × 0.75)`) 순, 같으면 구간 id 순으로 — 전면은 `e.closed` 가 아니고 `linkedHeavy` 가 참일 때만 `closed = true`·`closedReason = 'repair'`(`known` 은 그대로 — 알려진 통제), 아니면 `dropped` 에 '`<구간>`: 통제하면 길이 끊겨 복구 공사를 미룹니다.' 하고 그 항목은 없는 것으로(다음 상태에도 없다). 한 차로는 `slow += LANE_SLOW`. 놓은 것마다 적용 목록 `road`, left 1 은 `cs.roads`(tickCarry 가 연다), left 2 는 `cs.held`. 그다음 `co.places` 의 출입 통제·무너짐 건물의 `edgeId` 마다 한 번 `slow += FRONT_SLOW`(교대 내내). **교통의 장부**는 교통 모델이 생긴 뒤 `announceCarry` 가 적는다: 도로 줄을 남긴 그 자리에서 `noteRoadCause(sim, edge, lane ? 'slow' : 'close', 그 줄의 id)`, 건물 앞 감속(한 차로 공사가 없는 구간)은 요약 줄 id. 적용 목록의 차례: 도로(①) → 대원·부대·재고(②) — 기록도 이 차례다(원칙 5 "바꾼 순서대로").
+
+**교대 중** (`tickCarry` — 정비 블록 다음): `cs.roads[0].openAt ≤ sim.t` 인 동안 꺼내 — 한 차로는 `slowed` 의 `lane` 항목을 찾아 그 값만큼 되돌리고 '`<구간>` 한 차로 복구 공사 완료.'(imp 0), 전면은 아직 `closedReason === 'repair'` 로 닫혀 있을 때만 열고 `stats.reopened++`·'`<구간>` 복구 공사 완료 — 통행 재개.'(imp 1). 모두 `role 'SYSTEM'`·`actor '교통정보'`·`kind 'traffic'`·원인 요약 줄·`tag 'carry'`.
+
+**끝 상태 → 다음 교대** (`roadsNext` — `makeCarryover` 안, 순수. carry 흐름은 `unitsNext` 가 정비 시각을 뽑은 **뒤**에 이어 뽑는다): ① `cs.held` → left 1·`ROAD_AT.carried` ② `d.damaged`(통제한 순서): 지진·해일은 앞 `DIS_FULL` 구간이 전면(`disFull`), 나머지 한 차로(`disLane`) / 홍수·산불은 한 차로(`wet`) / 태풍은 없음 ③ 사건 순서로 `I.blockedEdge ≥ 0` 인 것: (가) `placeMarks` 의 그 건물이 `collapsed` 이고 **`incidentId === I.id`** → `debris` 전면 left 2(openAt `HELD_AT`) · `landslide`/`tree` 이고 `closeReason !== 'resolved'` → `mud`/`tree` 전면 · `pileup` → `surface` 한 차로 ④ `traffic.obstacles` 의 `kind 'rubble'`(교대 끝까지 남은 것 — (나)) → `debris`(전면이면 전면) left 1. 같은 구간이면 `roadBeats`(남은 교대 → 전면 → 늦게 끝나는 것 — (가)와 (나)가 겹치면 (가)). 넘으면 `ROAD_CAP` 까지 남은 교대·전면·이른 openAt 순으로 남기고, 구간 id 순으로 돌려준다. 시각은 정수 초(단계 3 의 정비 시각과 같게). `inc` 는 `조직 n번째 교대 · <사건 코드> 산사태`·`… 쓰러진 나무`·`… 다중 추돌`·`… 건물 붕괴`·`… <코드> 건물 잔해`(잔해는 놓은 기록의 원인에서 사건을 찾는다 — `traffic.obstacleInc` 와 같은 길)·재난은 `조직 n번째 교대 · <재난 이름>`.
+
+**본문과 다르게 한 곳**
+
+1. **`traffic.addObstacle` 을 쓰지 않았다** (덩어리 지시의 "반드시 `traffic.addObstacle`·`closedReason 'repair'`"): `addObstacle`(안쪽 `place`)은 `closedReason` 을 장애물 종류로 `'roadwork'`·`'obstacle'` 로 덮어쓰고, 장애물에는 치워지는 시각(`until`)과 "하나 남은 길이면 교통 모델이 치운다" 규칙이 붙으며, `sim.traffic` 이 있어야 해서 본문 §3.4 의 자리(initTraffic 앞 — 불법 주차가 그 통제를 보고 놓인다)에서 부를 수 없다. `traffic.ts` 는 이 묶음이 맨 위 주석 한 낱말 말고는 고치지 않는다(§10.2). 그래서 본문 §3.5 그대로 `persist.ts` 의 `linkedHeavy` 로 같은 뜻의 우회로 검사(그 구간과 이미 닫힌 구간을 빼고 큰 차가 양 끝을 오가는가)를 하고 `closedReason 'repair'`·`known` 그대로 둔다(CLAUDE.md "다른 시스템이 길을 닫을 때는 closedReason 을 … 두고 known 은 건드리지 않는다"). 그 뒤의 통제(사건·재난·장애물)는 모두 닫힌 구간을 막힌 것으로 보고 우회로를 확인한다(본문 §3.5 끝).
+2. **교통의 장부의 주인 = 그 도로 줄**(I1 최종 요약의 "원인 기록 = 요약 기록"과 한 단계 다르다 — 그 줄의 원인이 요약 줄이라 사슬은 이어진다. 통제를 바꾼 기록이 주인이라는 재난 `closeEdge` 와 같은 꼴). 장부를 빠뜨리면 L1(몰린 길의 사고)이 그 우회로의 초과를 원인 없는 몫으로 보고 사건을 만들지 않는다(`hz.holes`).
+3. **한 차로 줄에도 까닭과 시각**: `<구간> 한 차로 복구 공사 — <까닭> · 서행 (약 n분 뒤 완료 | 이번 교대 내내).`(본문은 `… 한 차로 복구 공사 — 서행.` — §11.1-8 "다음 교대의 줄에 원인을 넣는다"에 맞췄다). 전면 줄은 본문 그대로.
+4. **(가)에 `incidentId === I.id`**: 그 사건이 그 건물을 무너뜨렸을 때만(I1-b C2 `rubbleRoad` 의 (가)와 같은 조건 — 앞 사건이 남긴 상태로 뒤 사건이 또 넘기지 않게).
+5. **교대 내내 막는 공사(left 2)의 `openAt` 은 자리값 900**(`readCarryover` 의 범위 [60, 900] 안 — 쓰지 않는다. 다음 휴식에서 left 1 이 되며 `ROAD_AT.carried` 로 새로 뽑는다).
+6. **사건의 이름은 시나리오 표를 읽지 않고 줄마다 정한 낱말**(`산사태`·`쓰러진 나무`·`다중 추돌`·`건물 붕괴`·`건물 잔해`) — `scenarios.ts` 를 import 하면 그 파일이 끌어오는 모듈의 순환이 persist 에 생긴다(§10.1 의 import 목록 밖).
+7. **출입 통제 건물 앞 감속을 단계 4 에 넣었다**(§8 단계 4 줄): `sim.carry.places`(readCarryover 가 검사한 것)를 읽는다. 그 기록은 건물의 줄(단계 5 의 `place` 항목 — "복구 공사 중이라 출입을 통제합니다")이 맡는다 — 단계 4 의 `makeCarryover` 는 `places` 를 비워 두므로 자연히 생긴 상태에서는 아직 일어나지 않고, 손으로 만든 상태(시험)에서만 기록 없이 느려진다. 그 장부의 주인은 지금 요약 줄이다(단계 5 가 건물 줄로 바꿀 수 있다).
+8. **`tag: 'carry'` 를 단계 2·3 의 기록에도 달았다**(요약 줄을 뺀 이어받은 상태의 모든 기록 — 결장·공석·신임·조기 복귀·예비 인력·모자람·운용 중단·정비·급히·재고·버린 것·정비 완료·결원 — 와 단계 4 의 도로·개통). 단계 1~3 메모의 "이어받을 자리(I1-b b1·b2 뒤)"였다. 해시에는 들지 않는다(events.ts — 틱과 문구만). 측정 도구의 `sysOf` 가 이 기록들을 `carry` 로 센다(전에는 결장·정비 줄이 `field`, 도로 줄이 `road`).
+9. `roadsNext` 의 상한은 넘을 때만 "남은 교대 → 전면 → 이른 openAt → 구간 id" 순으로 남긴다(본문 그대로). `readCarryover` 의 상한(남은 교대 → 구간 id)은 손으로 만든 입력만 받는다 — `makeCarryover` 의 결과는 이미 6 이하다.
+
+**시험** (`tests/persistence.test.ts` 51 → 65개, 혼자 48초쯤): 4 — 준비(고른 구간 넷·막다른 구간·한 교차로) · 전면 E 는 교대 시작부터 `repair`(known 그대로)·적용 목록·요약 줄의 '복구 공사 도로 2구간'·교통의 장부(닫힘·감속의 주인 = 그 줄)·1틱의 작은 차·큰 차 경로가 E 를 피함·61초에 열리고 같은 openAt 의 한 차로 F 도 끝남(기록 하나씩, `reopened` 1) · left 2 는 500초 교대 내내 `repair`·같은 상태의 openAt 900 은 375초에 열림·다음 상태에서 left 1(120~600 정수)·몇 번 불러도 같음·JSON 왕복 · 막다른 구간은 닫히지 않고 버린 것 한 줄·다음 상태에 없음 · 한 교차로의 구간을 모두 넣으면 마지막 것을 놓지 않음·0틱·1틱에 모든 시설 → 모든 교차로(알려진 상태, 작은 차·큰 차) · 건물 앞 감속(같은 구간 한 번·흔적만 남은 건물은 아님·교대 내내) · 복구 공사가 있는 교대의 재현성(그대로·JSON — 없는 교대와 다름). 원천 표 — 산사태·쓰러진 나무(다 치우지 못했을 때만)·다중 추돌(끝난 이유와 상관없이)·시각 범위·이름 / (가)·(나)·같은 구간이면 (가)·무너뜨린 사건이 아니면 넘기지 않음 / 같은 구간 하나·상한 6(전면 먼저)·구간 id 순 / 평범한 교대는 빈 목록·순수. 11 — 지진 Q2 의 `d.damaged`(한 번씩·`closedEdges` 는 비었다)·crack ≥ 1·≤ 상한·전면 crack ≤ `DIS_FULL`(통제한 순서로 앞의 것)·이름·시각 범위 / 다음 교대 1틱에 `repair`·느려짐, 0틱·1틱 연결 / 끝까지 — 사건 모두 닫힘·개통 기록 일대일·교대 내내 막은 것만 다음 상태로. 6·10 — 짧은 연속(계보 3 × 교대 4)의 복구 도로 ≤ 6·0틱 연결·`checkRoadLog`(도로 줄마다 그 구간 이름·`tag 'carry'`, 개통 기록이 openAt 이 지난 첫 틱에 하나·요약 줄이 원인·`reopened`·남은 `cs.roads`). `mustSay` 에 `road`. **결과 해시를 숫자로 박은 시험은 없다.**
+
+**수치**
+
+- 해시 목록 158교대: 기준 `s04-base-hashes.txt`(`19a7e68`) ↔ 변경 뒤 `s04-after4a-hashes.txt`(커밋 `9d856fc` 의 코드) — **158줄 모두 한 글자도 다르지 않다**(강제 실행 일곱 × 3 과 §8 의 셋 × 3, 지진 Q0~Q2 — `d.damaged` 를 기록하는 교대 — 도 이 목록 안이라 한계 시간·방치 건수가 그대로다).
+- 진단(기준 아님 — `wf-persist/s04-chain.ts`, 계보 6 × 교대 4, 보통): **첫 교대에만 지진** — 교대 2: 전면 복구 공사 33(계보당 5.5 — 그 가운데 교대 내내 막는 (가) 잔해 25)·한 차로 2·개통 10 / 교대 3: 전면 26(교대 2 의 (가)가 left 1 로)·한 차로 2·개통 28 / 교대 4: 0. 끊겨서 미룬 통제 0, 0틱에 닿지 못하는 (시설, 교차로) 0, 열린 사건 0, 장부의 구멍(`hz.holes`) 0, 한계 시간 종료 6.3%(교대 1 — 지진) → 0.0% → 1.0% → 1.1%. **지진 없는 보통** — 교대 2: 전면 5(모두 (가) — 그 교대의 전체 붕괴)·교대 3: 전면 5·한 차로 2·개통 7, 한계 시간 0~1.2%, 끊김·구멍·열린 사건 0. 지진 뒤 이어받은 복구 공사로 시작한 교대 6개를 100틱마다(`s04-reach.ts` — 414번) 알려진 상태로 모든 시설 → 모든 교차로를 보았다: 닿지 못한 쌍 0(그 교대들의 `repair` 통제 최대 6구간). 지진 Q0~Q2·해일·홍수·산불 × 3 의 단발(`s04-smoke.ts`): 이어받은 구간 3~6(태풍 0), 다음 교대 0틱 연결 0 끊김, 개통 = 끝나는 공사 수.
+- 화면(5232, Playwright — 개발 서버의 모듈을 페이지에서 불러 새 캔버스에 `drawCity`): 전면 `repair` 구간의 붉은 통제 점선 가운데에 주황 테의 공사 고깔, 한 차로 공사는 혼잡 띠, 콘솔 오류 0 (`wf-persist/s04-repair-0.png`·`s04-repair-1.png`·`s04-repair-1-crop.png`). 기록: '내부순환로 6구간 복구 공사로 통제 — 지진으로 갈라진 노면 (약 7분 뒤 개통).'·'강변길 2길 1구간 한 차로 복구 공사 — 침수 뒤 진흙·쓰레기 치우기 · 서행 (약 5분 뒤 완료).'
+- 관문 `npm run check` 통과(코드 커밋 `9d856fc`): 파일 20 · 1046개 통과 + 건너뜀 1(persistence 51 → 65), vitest 642초 · 전체 11분 17초(다른 묶음과 함께 도는 기계). `sweep 40 --check` 의 분포(보통 590건 · 성공 70% · close reasons resolved 588 · timeout 1 · abandoned 1 · 교착 후보 0 · 잊힌 사건 0 · C1~C5 0 · holes 0)는 이어받은 상태가 없는 교대라 해시 목록과 같이 그대로다 — 측정 도구의 `systems … carry 0%` 도 그대로(이어받은 상태가 없으면 tag 'carry' 기록이 없다).
+
+**알려진 문제 (단계 8 의 균형으로)**
+
+- **지진 뒤에는 (가) 잔해가 복구 도로의 상한을 거의 다 채운다**: 지진 교대 하나에 건물 전체 붕괴가 4~6채 나서(X6 — 붕괴마다 사건 교차로의 한 구간을 막는다) 다음 교대에 전면 통제 5~6구간이 교대 내내, 그다음 교대에 다시 한 번(left 1) 남는다. 균열(`crack`) 줄은 상한에서 밀려 한두 구간만 넘어온다(시험 11 은 균열이 남는 시드 Q2 를 쓴다). 6계보에서 한계 시간 종료는 오르지 않았지만(교대 2 0.0%) §11.1-14 의 걱정 그대로다 — 손잡이 §6.4 의 4(`left` · (가)를 left 1 로 · 재난별 상한).
+- **측정 도구의 표본 줄 `closedReason === 'repair'`**(`scripts/metrics.ts` — "I 로 가는 부대의 남은 경로에 복구 공사 구간") 은 거의 잡지 못한다: 전면 공사는 알려진 통제라 경로에 들지 않고, 한 차로 공사는 `closedReason` 을 쓰지 않는다(본문 §3.5 — 닫히지 않은 구간). 단계 8 이 `carryState.slowed`(`why 'lane'`)를 보게 고칠지 정한다.
+- 한 차로 공사(0.6)와 다른 감속이 겹쳐 `slow ≥ 1` 이 되면 교통 모델이 그 구간을 밀림의 뿌리로 본다 — 건물 앞(0.4)과 겹치면 장부의 주인이 있지만(위 2·7), 홍수의 차오르는 물(0.8 — `'level'` 장부)과 겹치면 `slowEv` 가 비어 구멍이 될 수 있다(드물다 — 진단에서 0).
+
+**뒤 단계가 이어받을 자리**
+
+- **단계 5**: `initCarry` 에서 `cs.places` 를 채우고 건물 `place` 항목과 그 문구(`carryNoteText` 의 `case 'place'`)를 더한다 — 건물 앞 감속(`applyRoadCarry` 끝의 블록)은 그 항목이 기록을 맡고, 장부의 주인을 그 줄로 바꿀 수 있다. 적용 목록의 차례(도로 → 건물 또는 건물 → 도로)는 단계 5 가 정한다(시험 `checkCarryLog` 는 목록 순서 그대로 본다).
+- **단계 6**: 마우스 정보 '복구 공사 — 약 n분 뒤 개통'은 `cs.roads`(openAt)·`cs.held`(교대 내내)로, 범례 "복구 공사 도로"는 `drawObstacleMark(ctx, 'roadwork', x, y, r, true, REPAIR_RING)`.
+- **단계 7**: 보고서 '복구 공사가 끝난 도로 n구간이 교대 중에 열렸습니다.' = `stats.reopened`(전면만 — 한 차로 완료는 세지 않는다), `CarrySummary.roads` = 다음 상태의 `roads.length`.
+- **단계 8**: `chain.ts --disaster quake@1` 의 교대 2 복구 도로 평균은 위 진단으로 5.8(기준 ≥ 1). 위 알려진 문제 셋.

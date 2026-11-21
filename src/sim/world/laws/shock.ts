@@ -27,12 +27,13 @@ import type { HzPart } from '../hazard';
 import { placeState } from '../state';
 
 /**
- * 법칙의 세기와 사건의 크기 (모두 첫 값 — 설계서 §3.7 L3. 시험이 A 를 키워 쓴다. CAP 은 등록할 때 한 번 읽힌다):
- *  STRUCT.A    금이 S_MIN 을 1 넘는 동안 1초에 쌓이는 위험 (금 0.4 인 건물은 10분에 16%, 0.31 이면 500초에 10%)
+ * 법칙의 세기와 사건의 크기 (설계서 §3.7 L3 의 첫 값에서 — 시험이 A 를 키워 쓴다. CAP 은 등록할 때 한 번 읽힌다):
+ *  STRUCT.A    금이 S_MIN 을 1 넘는 동안 1초에 쌓이는 위험 — 첫 값 1.0e-3(금 0.4 인 건물은 10분에 16%)의 절반. 강제 collapse/gasblast 20교대의 금 간 건물(S_MIN 을 넘은 49채)에서
+ *              첫 값은 넘음 7 · 붕괴 4 에 누출 3 을 더해 7건(끝내는 조건 1~4 밖), 절반은 붕괴 1 · 누출 3 = 4건 (b3-8c — 누출은 배관이 일찍 끊기면 A 와 거의 상관없이 넘는다)
  *  STRUCT.SEV2 · SEV3  이 금부터 규모 2 · 3 의 붕괴 · MAX 한 주기에 훑는 건물 수 · CAP 이 법칙이 낸 붕괴의 교대 상한
  *  PIPE.A      배관이 끊긴 동안 1초에 쌓이는 위험 (1/300 — 5분 안에 63%) · PIPE.SEV2 이 금부터 규모 2 의 누출
  */
-export const STRUCT = { A: 1.0e-3, SEV2: 0.3, SEV3: 0.45, MAX: 16, CAP: 2 };
+export const STRUCT = { A: 5.0e-4, SEV2: 0.3, SEV3: 0.45, MAX: 16, CAP: 2 };
 export const PIPE = { A: 1 / 300, SEV2: 0.4, MAX: 16, CAP: 2 };
 
 /** 손상된 건물을 건물 id 순으로 내놓는다 — ok 를 지나고 쓸 수 있는 건물만, 많아야 max 채 (world.expo 를 읽기만 한다 — 노출 칸을 만들지 않는다) */
@@ -66,5 +67,22 @@ registerHazard({
     const shake = main.rate / STRUCT.A + SHOCK.S_MIN;
     const severity = shake >= STRUCT.SEV3 ? 3 : shake >= STRUCT.SEV2 ? 2 : 1;
     return { type: 'collapse', variant: 'std', severity, placeId: target, note: '금이 가 있던 건물이 내려앉았습니다' };
+  },
+});
+
+registerHazard({
+  id: 'pipeLeak', label: '끊긴 배관의 누출', every: 1, once: true, cap: PIPE.CAP,
+  scan: (sim, put) => {
+    damaged(sim, PIPE.MAX, (e) => e.pipe, (id, e) => {
+      buf.length = 0;
+      buf.push({ rate: PIPE.A, ev: e.pipeEv, inc: e.shakeInc, what: 'pipe', ref: id });
+      put(id, buf);
+    });
+  },
+  spawn: (sim, target): SpawnOpts | null => {
+    // 그 건물의 가스 누출 — 규모는 그 건물이 받은 금에서 (크게 흔들렸으면 배관도 크게 갈라졌다). 새는 밸브는 현장 생성기(buildHazmat)가 놓는다 — applyExpo 는 이미 새는 배관이 있는 현장에는 더 놓지 않는다
+    const e = sim.world.expo[target];
+    const severity = e && e.shake >= PIPE.SEV2 ? 2 : 1;
+    return { type: 'hazmat', variant: 'std', severity, placeId: target, note: '충격으로 손상된 배관에서 가스가 샙니다' };
   },
 });

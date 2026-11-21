@@ -125,3 +125,15 @@ registerConsequence({
     }
   },
 });
+
+// ───────────────────────── (b3-8c) pipeShut — 끊긴 배관을 잠갔다 (설계서 I1 §3.6c · §3.7 L3 (다)) ─────────────────────────
+// 끊긴 배관이 낸 누출 사건(법칙 pipeLeak 의 사건 — Incident.hz.law)이 '해결'로 닫히면 그 건물의 배관 손상(expo.pipe)을 거둔다 — 밸브를 잠갔다.
+// 거두지 않으면 '밸브 차단' 기록을 남긴 그 건물의 다음 현장에 새는 밸브가 또 놓여 기록과 상태가 어긋난다. 한계 시간·방치·출동 없음·교대 끝으로 닫힌 누출은 아직 새고 있다(그대로 둔다).
+// 금(shake)은 그대로 남는다. 상태만 바꾼다 — 기록은 남기지 않는다(밸브를 잠근 기록은 현장의 누출 조치가 이미 남겼다). 난수 없음, 쿨다운·상한 없음.
+registerConsequence({
+  id: 'pipeShut', label: '배관 차단', on: ['closed'],
+  key: (sim, sig) => (sig && sig.place >= 0 && sig.inc >= 0 && sim.incidents[sig.inc]?.hz?.law === 'pipeLeak' ? 'place:' + sig.place : null),
+  cooldown: 0, cap: Infinity, spawns: false,
+  test: (c) => { const I = c.sim.incidents[c.sig!.inc], e = c.sim.world.expo[c.sig!.place]; return !!I && I.closeReason === 'resolved' && !!e && e.pipe; },
+  apply: (c) => { c.sim.world.expo[c.sig!.place].pipe = false; },
+});

@@ -81,7 +81,8 @@ export function applyExpo(sim: Sim, s: Scene, I: Incident): void {
   const ex = sim.world.expo[p];
   if (!ex) return;
   if (ex.shake > 0) s.wear = { dmg: ex.shake, soot: 0, cause: 'shock', inc: ex.shakeInc >= 0 ? sim.incidents[ex.shakeInc]?.code ?? '' : '', pre: 0 };
-  if (ex.pipe) leakValve(sim, s, I);
+  // (b3-8c) 이미 새는 배관이 있는 현장(가스 누출 현장 — 그 건물의 끊긴 배관이 낸 누출 사건이 그렇다)에는 더 놓지 않는다: 그 배관이 그 손상이다 (밸브 둘이면 누출을 두 번 센다)
+  if (ex.pipe && !s.props.some((q) => q.kind === 'valve' && (q.leakRate ?? 0) > 0)) leakValve(sim, s, I);
 }
 
 /** 대기 지점에서 걸어서 닿는 칸 (잔해·문 소품은 치우거나 열 수 있다고 보고, 밸브·차량 같은 고정 소품은 막힌 칸으로 본다 — scenes/major.ts 의 reachable 과 같은 규칙) */

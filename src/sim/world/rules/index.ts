@@ -8,6 +8,7 @@
 //   hospital  C3 hospitalLoad — 응급실 체류 → 포화 알림 → 먼 병원 이송 · 이송 중 목적지 변경
 //   structure C2 rubbleRoad   — 무너지거나 터진 건물의 잔해가 사건 뒤에도 길에 남는다
 //             L3 shockSpread — (b3-8) 붕괴·폭발의 충격이 이웃 건물에 금·배관 손상을 남긴다 (rubbleRoad 다음에 등록 — 같은 파일 안의 차례)
+//             L3 pipeShut    — (b3-8c) 끊긴 배관이 낸 누출 사건이 '해결'로 닫히면 그 배관 손상을 거둔다 (shockSpread 다음)
 // 그 밖의 규칙("X 면 확률 p 로 사건 Y" 꼴)은 설계를 다시 쓰는 중이다 (docs/ROADMAP.md "진행 중").
 import './record';
 import './hospital';

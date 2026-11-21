@@ -1316,6 +1316,35 @@ export function carryEffectLine(sim: Sim): string | null {
   return ef.length ? `지난 교대의 영향: ${ef.slice(0, 2).map((x) => x.short).join(' · ')}.` : null;
 }
 /**
+ * (단계 6 — §5.4) 지도의 마우스 정보: 그 건물의 이어받은 흔적 한 줄 (없으면 null) — 화면이 부른다(읽기만).
+ * '그을림 · 구조 손상 30% (조직 3번째 교대 · 04 건물 화재)' · '탄 자리 (…)'(열린 터) · '복구 공사 중 — 출입 통제 (2교대 남음)' · '무너짐 — 복구 전까지 출입 불가 (3교대 남음)'
+ */
+export function carryLine(sim: Sim, placeId: number): string | null {
+  const p = placeCond(sim, placeId);
+  if (p === null) return null;
+  if (p.state === 'ruin') return `무너짐 — 복구 전까지 출입 불가 (${p.repair}교대 남음)`;
+  if (p.state === 'closed') return `복구 공사 중 — 출입 통제 (${p.repair}교대 남음)`;
+  const q = sim.city.places[placeId], parts: string[] = [];
+  if (q.open) parts.push('탄 자리');
+  else { if (p.soot >= 0.05) parts.push('그을림'); if (p.dmg >= 0.05) parts.push(`구조 손상 ${Math.round(p.dmg * 100)}%`); }
+  if (!parts.length) parts.push('지난 교대의 흔적');
+  return `${parts.join(' · ')} (${p.inc})${p.opened ? ' · 복구 마치고 다시 염' : ''}`;
+}
+/**
+ * (단계 6 — §5.4) 지도의 도로 마우스 정보: 그 구간의 복구 공사 한 줄 (없으면 null) — '복구 공사 — 약 4분 뒤 개통' · '복구 공사 — 이번 교대 내내' ·
+ * '한 차로 복구 공사 — 약 4분 뒤 완료'. 화면이 부른다(읽기만)
+ */
+export function carryRoadLine(sim: Sim, edgeId: number): string | null {
+  const cs = sim.carryState;
+  if (!cs.on) return null;
+  const rc = cs.roads.find((r) => r.edge === edgeId) ?? cs.held.find((r) => r.edge === edgeId);
+  if (!rc) return null;
+  const e = sim.city.edges[edgeId];
+  if (!rc.lane && !(e.closed && e.closedReason === 'repair')) return null;      // 다른 통제가 덮었거나 이미 열렸다
+  const when = cs.held.indexOf(rc) >= 0 ? '이번 교대 내내' : `약 ${Math.max(1, Math.ceil((rc.openAt - sim.t) / 60))}분 뒤 ${rc.lane ? '완료' : '개통'}`;
+  return `${rc.lane ? '한 차로 복구 공사' : '복구 공사'} — ${WHY_NAME[rc.why]} · ${when}`;
+}
+/**
  * (선택 — §5.5) 사건 분석 문장: 그 사건의 첫 도착 기록이 결원 도착 기록(원인이 요약 줄)이면 '첫 출동 부대(호출부호)는 지난 교대의 결장으로 n명만 출동했습니다.'
  * n = 그 부대에서 나온(off 가 아닌) 내리는 대원 수(crews.fieldCrew — crewReady 와 같은 단위) — 결장(off)은 교대 내내 바뀌지 않는다. 부르는 쪽(evaluate)이 대응 지연인 사건에만 부른다
  */

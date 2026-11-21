@@ -1,5 +1,5 @@
 // (I1-b b3-11 C5) 연기 자리의 실외 현장 — 구조 대상의 실외 노출 (설계서 I1 §3.7 C5 결과 2). 진실을 읽고 바꾼다 (hazards.ts 와 같은 자격 — 세계 규칙).
-// registerRule(smokeOutdoor) 로 등록한다 (field/scenes/index.ts 의 맨 끝에서 import — 연기가 없는 교대에는 첫 줄에서 돌아가 결과가 바뀌지 않는다).
+// registerRule(smokeOutdoor) 로 등록한다 (field/scenes/index.ts 에서 상공의 헬기(rules/air) 바로 앞에 import — 연기가 없는 교대에는 첫 줄에서 돌아가 결과가 바뀌지 않는다).
 //
 // 큰 불·산불의 연기가 덮은 자리(world/rules/infra.ts 의 smokePlume — 국지 구역 값 'smoke')에 있는 바깥 현장(길 위의 현장 · 바깥 유형 — 교통사고·수색·수난)에서,
 // 지금의 실외 노출(hazards.tickCasualties 의 s.exposure — 실외 칸에 있는 수색 대상·수색 현장의 사람)과 같은 사람에게 OUT × 연기의 세기만큼 매초 더 깎인다.

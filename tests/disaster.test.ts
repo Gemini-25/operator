@@ -51,9 +51,16 @@ describe('재난: 다섯 종류', () => {
         for (const id of d.spawned) expect(s.incidents[id].tag).toBe('disaster:' + kind);
         expect(d.phase).toBe('over');
         expect(d.closedEdges.length).toBe(0);
+        // (I1-b b3-10·11) 재난 자신이 얹은 혼잡(태풍 정전의 꺼진 신호)은 남지 않는다. 세계 규칙(사건이 낸 정전의 꺼진 신호 · 큰 불의 연기)이 얹은 혼잡은
+        // 그 원인이 교대 끝에도 살아 있을 때만 남는다 — 남은 줄은 모두 아직 걷히지 않은 장부 줄(world.spans — 그 원인으로 나빠진 동네가 있다)의 것이고, 구간의 혼잡은 정확히 그 줄들의 합이다
+        // (DZ-1 지진: 교대 마지막 틱에 닫힌 붕괴 현장의 끊긴 전선 — 닫힌 신호는 다음 틱에 처리되므로 정전이 살아 있다)
+        expect(d.darkBump, `${kind} ${seed} 재난의 혼잡 줄`).toBe(-1);
+        const live = new Set(s.world.spans.map((q) => q.bump)), left = new Float64Array(s.city.edges.length);
+        for (const q of s.world.spans) expect(s.world.zones.some((Z) => Z.cause[q.f] === q.cause && (q.f === 'smoke' ? Z[q.f] > 0 : Z[q.f] < 1)), `${kind} ${seed} 걷힌 장부 줄 ${q.f}`).toBe(true);
+        for (const r of s.traffic.bumps) { expect(live.has(r.id), `${kind} ${seed} 장부 줄 없는 혼잡 ${r.id}`).toBe(true); for (const id of r.edges) left[id] += r.add; }
         for (const e of s.city.edges) {
           expect(e.closedReason === 'disaster', `${kind} ${seed} ${e.name} 통제가 남았다`).toBe(false);
-          expect(e.bump ?? 0, `${kind} ${seed} ${e.name} 혼잡이 남았다`).toBe(0);
+          expect(e.bump ?? 0, `${kind} ${seed} ${e.name} 혼잡이 남았다`).toBeCloseTo(left[e.id], 12);
           expect(e.slow, `${kind} ${seed} ${e.name} 감속이 남았다`).toBeLessThan(0.01);
         }
         // 보고서: 실제로 일어난 일만

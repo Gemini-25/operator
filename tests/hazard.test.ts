@@ -62,6 +62,7 @@ import { ILL, smokeBase, smokeExposure, smokeTargets } from '../src/sim/world/ex
 import { SMOKE_ILL } from '../src/sim/world/laws/smoke';
 import { SMOKE_OUT, smokeOutdoor } from '../src/sim/field/rules/smoke';
 import { SCENE_RULES } from '../src/sim/field/sceneRegistry';
+import { methodsRule } from '../src/sim/field/rules/methods';
 import { FIRE_BIG, tickMedical } from '../src/sim/field/hazards';
 import { scenarioName } from '../src/sim/scenarios';
 import { NATURE_LIK, makeCaller } from '../src/sim/dispatch/callSystem';
@@ -3051,7 +3052,7 @@ describe('I1-b b3-11 · b3-12: C5 연기 · L4 연기를 마신 주민 · L6 수
   /** 보통 S0 — 연기도 홍수도 없는 실제 교대 (L4 ① · L6 ① 이 함께 쓴다 — 고치지 않는다) */
   const normalS0 = (): Sim => { if (!s0) { s0 = new Sim('S0', NORMAL, 1200); s0.runToEnd(); } return s0; };
 
-  it('등록과 크기: 법칙 모음의 끝에 smoke(smokeIll — 1초 · 건물마다 몇 번이고 · 상한 3), 상태 규칙은 commsDown.shadow 다음에 smokePlume → floodLow(쿨다운 5초 · 사건 없음) · 실외 노출은 현장 규칙의 맨 끝', () => {
+  it('등록과 크기: 법칙 모음의 끝에 smoke(smokeIll — 1초 · 건물마다 몇 번이고 · 상한 3), 상태 규칙은 commsDown.shadow 다음에 smokePlume → floodLow(쿨다운 5초 · 사건 없음) · 실외 노출은 현장 규칙에서 상공의 헬기 앞', () => {
     expect(hazardLaws().map((l) => l.id)).toEqual(['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle', 'liftStall', 'smokeIll']);
     const L = lawOf('smokeIll');
     expect([L.every, L.once, L.cap, L.hold, L.label, typeof L.scan]).toEqual([1, false, 3, undefined, '연기를 마신 주민', 'function']);
@@ -3066,8 +3067,10 @@ describe('I1-b b3-11 · b3-12: C5 연기 · L4 연기를 마신 주민 · L6 수
     expect(ILL).toEqual({ RR: 40, MED_PER_SHIFT: 1.867, SPAN: 1050, MAX: 40 });
     expect(FLOOD).toEqual({ DIV: 80, MIN: 0.3, LO: 0.85, SPAN: 0.3, TOP: 1.15 });
     expect(SMOKE_OUT).toBe(0.08);
-    expect(SCENE_RULES[SCENE_RULES.length - 1]).toBe(smokeOutdoor);
-    expect(readFileSync('src/sim/field/scenes/index.ts', 'utf8').trim().split('\n').pop()).toMatch(/^import '\.\.\/rules\/smoke';/);
+    const kr = SCENE_RULES.indexOf(smokeOutdoor);
+    expect(kr).toBeGreaterThanOrEqual(0);
+    expect(kr).toBeLessThan(SCENE_RULES.indexOf(methodsRule));      // 대응 방법의 규칙이 세계 규칙의 맨 끝이다 (methods 시험)
+    expect(readFileSync('src/sim/field/scenes/index.ts', 'utf8')).toMatch(/^import '\.\.\/rules\/smoke';[^\n]*\nimport '\.\.\/rules\/air';/m);
     // 법칙 파일의 글자: 원인을 모른다(산불·화재·재난을 읽지 않는다) — 식은 expo 에서
     const src = readFileSync('src/sim/world/laws/smoke.ts', 'utf8').split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*\*)/.test(l)).join('\n');
     for (const w of ['disaster', 'wildfire', 'variant ===', 'truth.type', 'scenes', 'fire[']) expect(src.includes(w), `smoke.ts 에 ${w}`).toBe(false);

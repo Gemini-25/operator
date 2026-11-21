@@ -62,6 +62,7 @@ export const DOC = {
   COVER_CAP: 12,        // (2단계) 엄폐 임무의 상한 (초)
   CALM: 4,              // (2단계) 이만큼 피격이 없으면 엄폐를 끝낸다 (재장전 끝 · 탄 위급)
   S30_NEAR: 8,          // (R3b D1 — S30) 잠긴 방 문: 믿음 속 총기 위협에서 이 거리 안의 문 (위협의 방에 맞닿은 문)
+  S30_TEAM: 6,          // (R3b D1 — S30) 그 문에 진입조(교전 임무의 동료)가 이 거리 안에 와 있을 때만 (실행기 lockedRoomDoor 의 OPENER_NEAR 와 같은 값)
   S30_MEM: 60,          // (R3b D1 — S30) 그 문을 열러 간 임무가 끝나면(열었다 · 이미 열려 있었다 · 갈 길이 없다) 그 문에 다시 걸지 않는 초 ('d:<칸>')
   S30_HOLD: 0.95,       // (R3b D1 — S30) 문 개방 임무의 계속 점수 — 교전 지시(0.92)·교전 계속(0.94) 보다 높게. 문이 열리면 스스로 끝난다
 } as const;
@@ -689,7 +690,8 @@ function lazyBreachDoor(sim: Sim, s: Scene, a: FieldAgent): () => number {
 /**
  * (R3b D1 — S30) 이 대원이 열러 갈 잠긴 방 문의 칸 (없으면 -1): 믿음 속 잠긴 문(blk 'locked' — 문을 발견한 대원의 보고가 현장 무전으로 온다) 가운데
  * 믿음 속 활동 총기 용의자(대치·교전)의 구역에 맞닿고 그 자리에서 DOC.S30_NEAR 칸 안인 문, 그 용의자에게 가장 가까운 것.
- * 출입구 곁(1.5칸)의 문은 뺀다(동시 진입이 연다). 그 문을 열러 갔던 임무가 끝난 뒤 60초('S30' · 'd:<칸>' 기억)는 뺀다.
+ * 출입구 곁(1.5칸)의 문은 뺀다(동시 진입이 연다). 그 문에 진입조(교전 임무의 동료)가 6칸 안에 와 있고 아직 아무도 그 문을 열고 있지 않을 때만(동료의 겉).
+ * 그 문을 열러 갔던 임무가 끝난 뒤 60초('S30' · 'd:<칸>' 기억)는 뺀다.
  * 믿음과 생김새(칸의 구역·출입구)만 읽는다 — doctrineRun.docBegin 이 같은 함수로 대상 칸을 정한다
  */
 export function breachDoorOf(sim: Sim, s: Scene, a: FieldAgent): number {
@@ -706,6 +708,15 @@ export function breachDoorOf(sim: Sim, s: Scene, a: FieldAgent): number {
     let byExit = false;
     for (let e = 0; e < s.exits.length; e++) if (dist(s.exits[e].x, s.exits[e].y, x, y) <= 1.5) { byExit = true; break; }
     if (byExit) continue;
+    // (동료의 겉) 그 문에 진입조가 와 있다(교전 임무의 동료가 6칸 안 — 실행기의 OPENER_NEAR) · 아직 아무도 그 문을 열고 있지 않다 (혼자 먼저 가 문 앞에서 총격에 서지 않고, 이미 여는 문에 덧붙지 않는다)
+    let team = false, opening = false;
+    for (let q = 0; q < s.agents.length; q++) {
+      const b = s.agents[q], bt = b.task;
+      if (b === a || b.status !== 'active' || bt === null) continue;
+      if ((bt.kind === 'force' && bt.tile === i) || (bt.sub !== null && bt.sub.tile === i)) { opening = true; break; }
+      if (bt.kind === 'engage' && dist(b.x, b.y, x, y) <= DOC.S30_TEAM) team = true;
+    }
+    if (opening || !team) continue;
     if (a.docMem !== undefined) { const key = 'd:' + i; let mem = false; for (let q = 0; q < a.docMem.length; q++) { const m = a.docMem[q]; if (m.rule === 'S30' && m.key === key && m.until > sim.t) { mem = true; break; } } if (mem) continue; }
     for (let q = 0; q < hs.length; q++) {
       const v = hs[q].value as { x: number; y: number; weapon: string; state: string };

@@ -3204,7 +3204,7 @@ describe('R3b (다) 폭파 진입: 파괴 담당이 잠긴 방 문으로 온다 
     for (let k = 0; k < 60 * 5; k++) {
       sim.tick++; sim.t = sim.tick * sim.dt;
       if (sim.tick % 5 === 0) think(sim, s, br);
-      const on = br.task !== null && br.task.kind === 'force' && br.task.docRule === 'S30'; if (on && !was) starts++; was = on;      // 판단 바로 뒤에 센다 (그 틱의 실행에서 바로 끝난다)
+      const bt = br.task as Task | null, on = bt !== null && bt.kind === 'force' && bt.docRule === 'S30'; if (on && !was) starts++; was = on;      // 판단 바로 뒤에 센다 (그 틱의 실행에서 바로 끝난다)
       act(sim, s, br);
     }
     expect(starts).toBe(1);

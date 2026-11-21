@@ -1,5 +1,5 @@
 // C4 `powerOut` — 전력 (설계서 I1 §3.7 C4 · 국지 구역 값 §3.6c). 정전은 **상태**다 — 사건을 직접 만들지 않는다:
-// 꺼진 신호는 혼잡(traffic.addBump — what 1)으로 L1 에, 정전이 닿은 순간 운행 중이던 승강기는 L5(expo.darkened → laws/power.ts)에, 긴 정전은 C8(b3-10 c)에 닿는다.
+// 꺼진 신호는 혼잡(traffic.addBump — what 1)으로 L1 에, 정전이 닿은 순간 운행 중이던 승강기는 L5(expo.darkened → laws/power.ts)에, 긴 정전은 C8(아래 절)에 닿는다.
 //
 // 원인들 (등록하는 규칙 셋 — 같은 파일 안의 차례가 등록 차례다):
 //   powerOut       사건의 신호(큰 불 · 폭발 · 붕괴 · X6 의 폭발·붕괴·전소)를 받는다:
@@ -21,9 +21,11 @@
 
 import { DISTRICTS } from '../../cityPlan';
 import type { Sim } from '../../engine';
-import { emit } from '../../events';
+import { emit, raiseProblem } from '../../events';
+import { tileOf } from '../../field/grid';
 import { addBump, removeBump } from '../../traffic';
-import type { Place, Signal, WorldState, ZoneSpanSrc } from '../../types';
+import { T } from '../../types';
+import type { Place, Scene, Signal, WorldState, ZoneSpanSrc } from '../../types';
 import { registerConsequence } from '../consequence';
 import { darkened, liftPlaces, shockDelta } from '../expo';
 import { HOSPITAL_CAP, ZONE_DEFAULT, endZoneBy, isDark, setZone, setZoneArea, zoneAt, zoneName, zoneOfXY } from '../state';
@@ -172,7 +174,11 @@ registerConsequence({
     liftsOut(sim, lit, sig.ev, sig.inc);      // (b3-10 b) 정전이 닿은 순간 운행 중이던 승강기 — L5
   },
   // 회복(그 동네 값이 회복 시각을 지나 처음 값으로): 그 건이 모든 동네에서 끝났으면 얹은 혼잡을 한 번 거두고 복구 기록 — 병원 수용도 다시 계산한다
-  recover: (sim, _z, f) => { if (f !== 'power') return; settle(sim, true); syncHospitals(sim); },
+  recover: (sim, _z, f, cause) => {
+    if (f !== 'power') return;
+    endZoneBy(sim, cause, sim.t + COMMS.AFTER, 'comms');      // (b3-10 c) 긴 정전이 넘긴 통신 장애는 전력이 돌아오고 AFTER 초 뒤에 풀린다
+    settle(sim, true); syncHospitals(sim);
+  },
 });
 
 registerConsequence({
@@ -225,6 +231,7 @@ registerConsequence({
     for (const s of sim.world.spans) {
       if (s.inc !== sig.inc || s.src === 'power') continue;
       if (s.f === 'power') endZoneBy(sim, s.cause, sim.t + c.rng.range(POWER.END[0], POWER.END[1]), 'power');
+      else if (s.f === 'comms') endZoneBy(sim, s.cause, sim.t + COMMS.AFTER, 'comms');      // (b3-10 c) 방송국·관제탑 사고의 통신 장애 — 원인 종료 + AFTER
     }
   },
 });
@@ -245,6 +252,180 @@ registerConsequence({
       s.told = true;
       const local = s.src === 'line';
       emit(sim, { role: 'SYSTEM', actor: '한국전력', kind: 'hazard', tag: 'power', imp: 2, causes: [s.cause], text: `${s.label} 정전 — ${local ? '인근 ' : ''}신호등이 꺼졌습니다.` });
+    }
+  },
+});
+
+// ───────────────────────── C8 commsDown — 무전 음영이 늘어난다 (설계서 I1 §3.7 C8 · 상태 결합) ─────────────────────────
+// 원인들: (가) 방송국·관제탑 건물의 사건(큰 불·폭발·붕괴·X6) → UTIL_R 안 동네 comms = UTIL_V
+//         (나) C4 의 정전이 BACKUP 초 이어짐(통신 기지국 예비 전원이 떨어진다) → 그 정전의 범위(국지면 같은 자리) comms = POWER_V — 알려지는 것은 그 범위 현장의 첫 COMM_FAIL 때
+//         (다) 지진(quake — 흔들림은 C4 와 같은 식)이 동네마다 그 동네 통신망의 문턱(흐름 grid:comms:<동네>)을 넘으면 QUAKE_V
+//         (라) 태풍 정전이 BACKUP 초 → 모든 동네 STORM_V (동네별 기록 없이 알림 한 줄)
+// 회복: 원인이 끝나고 AFTER 초 뒤(정전이 넘긴 것은 전력이 돌아온 뒤 — powerOut 의 recover, 방송국·관제탑은 그 사건이 닫힌 뒤 — powerOut.end), 지진은 t + QUAKE_HOLD.
+//   처음 값은 t + HOLD(원인이 끝나지 않아도 풀린다).
+// 결과: 그 범위의 열린 현장과 이후 만들어지는 현장에 무전 음영을 더한다(commsDown.shadow — 1초마다 현장을 맞춘다): 바닥 칸의 (1 − comms) × SHADOW 까지를 덩어리(반지름 BLOB_R)로,
+//   더한 칸을 s.shadowAdd 에 — 회복 때 원래 0 이던 그 칸만 되돌린다. 고르는 난수 csq:shadow:<현장 id>. 그 뒤의 COMM_FAIL·재배정은 지금 코드가 한다(재계획 field).
+//   더한 음영에서 보고가 끊기면(그 COMM_FAIL 의 대원이 더한 칸에 서 있다) 그 사건에 INFRA_FAIL 한 줄(원인 = 그 COMM_FAIL · 통신 장애의 원인 기록) — 정전·통신 장애가 대응을 막았다.
+// 현장 음영을 고치는 것은 현장 진실의 변화라 이 파일이 sim.scenes 를 고친다(세계 규칙과 같은 자격). 음영은 매 프레임 그린다 — staticSig 는 고치지 않는다.
+// 순환 금지: 정전 → 통신 한 방향뿐이다(통신은 정전을 만들지 않는다). 상한 교대당 CAP 건(네 갈래가 함께 센다). 사건을 만들지 않는다.
+
+/**
+ * 통신 장애의 크기와 시간 (설계서 §3.7 C8 의 첫 값 — BACKUP 만 다르다):
+ *  UTIL_R · UTIL_V   방송국·관제탑 사고가 닿는 동네 · 그 값 / POWER_V 긴 정전 / QUAKE_V 지진 / STORM_V 태풍 정전
+ *  BACKUP   정전이 이만큼 이어지면 기지국 예비 전원이 떨어진다 — 본문의 120 이 아니다: 태풍 정전이 꼭 120초이고(disaster.lightsOn) 그 틱의 신호가 1초 블록보다 먼저 처리돼 (라)가 영영 걸리지 않는다
+ *  AFTER    원인이 끝난 뒤 풀리기까지 · QUAKE_HOLD 지진의 통신 장애 · HOLD 원인이 끝나지 않아도 풀리기까지
+ *  QUAKE_THR 동네 통신망의 문턱 = a + b × u · SHADOW 더하는 음영(바닥 칸의 (1 − comms) × SHADOW 까지) · BLOBS 덩어리 수 [lo, hi] · BLOB_R 덩어리 반지름(칸) · CAP 교대당
+ */
+export const COMMS = {
+  UTIL_R: 800, UTIL_V: 0.4, POWER_V: 0.6, QUAKE_V: 0.5, STORM_V: 0.7,
+  BACKUP: 100, AFTER: 180, QUAKE_HOLD: 300, HOLD: 600,
+  QUAKE_THR: [0.35, 0.5] as [number, number],
+  SHADOW: 0.3, BLOBS: [3, 5] as [number, number], BLOB_R: [2, 3] as [number, number], CAP: 3,
+};
+const COMM_KINDS: Record<string, boolean> = { broadcast: true, tower: true };
+const COMMS_N = 'commsDown.spans';      // world.count 의 칸 — 이번 교대에 연 통신 장애 건수 (네 갈래가 함께 센다 — 규칙의 count 는 발동 수라 따로 둔다)
+const commsN = (sim: Sim): number => sim.world.count[COMMS_N] ?? 0;
+
+function commsSpan(sim: Sim, cause: number, inc: number, src: ZoneSpanSrc, label: string, told: boolean): void {
+  sim.world.count[COMMS_N] = commsN(sim) + 1;
+  sim.world.spans.push({ f: 'comms', cause, inc, bump: -1, src, since: sim.t, tellAt: -1, told, label, next: false });
+}
+const tellComms = (sim: Sim, causes: number[], text: string): number => emit(sim, { role: 'SYSTEM', actor: '통신사', kind: 'hazard', tag: 'comms', imp: 2, causes, text });
+
+/** (가)·(다) 이 신호가 흔드는 통신 — 방송국·관제탑의 사건이면 그 곁 동네, 지진이면 문턱을 넘은 동네. 없으면 빈 목록 */
+function commsPlan(sim: Sim, sig: Signal): { src: 'comm' | 'quake'; zones: number[]; q: Place | null } {
+  const zs = sim.world.zones, out: number[] = [];
+  if (sig.kind === 'quake') {
+    if (sig.x < 0) return { src: 'quake', zones: out, q: null };
+    for (let z = 0; z < zs.length; z++) {
+      const shake = sig.mag * Math.max(0, 1 - Math.hypot(DISTRICTS[z].x - sig.x, DISTRICTS[z].y - sig.y) / POWER.QUAKE_R);
+      if (!(shake > 0) || zs[z].comms <= COMMS.QUAKE_V) continue;
+      if (shake > COMMS.QUAKE_THR[0] + COMMS.QUAKE_THR[1] * sim.rng.fork('grid:comms:' + z).next()) out.push(z);
+    }
+    return { src: 'quake', zones: out, q: null };
+  }
+  const q = sig.place >= 0 ? sim.city.places[sig.place] : undefined;
+  if (!q || !COMM_KINDS[q.kind]) return { src: 'comm', zones: out, q: null };
+  const cx = q.x + q.w / 2, cy = q.y + q.h / 2;
+  for (let z = 0; z < zs.length; z++) if (Math.hypot(DISTRICTS[z].x - cx, DISTRICTS[z].y - cy) <= COMMS.UTIL_R && zs[z].comms > COMMS.UTIL_V) out.push(z);
+  return { src: 'comm', zones: out, q };
+}
+
+registerConsequence({
+  id: 'commsDown', label: '통신 장애', on: ['fireBig', 'blast', 'collapse', 'catastrophe', 'quake'],
+  key: (_sim, sig) => (sig && sig.ev >= 0 ? 'ev:' + sig.ev : null),
+  cooldown: 0, cap: Infinity, spawns: false,
+  test: (c) => commsN(c.sim) < COMMS.CAP && commsPlan(c.sim, c.sig!).zones.length > 0,
+  apply: (c) => {
+    const sim = c.sim, sig = c.sig!, plan = commsPlan(sim, sig);
+    const quake = plan.src === 'quake', v = quake ? COMMS.QUAKE_V : COMMS.UTIL_V, until = sim.t + (quake ? COMMS.QUAKE_HOLD : COMMS.HOLD);
+    const zones = plan.zones.filter((z) => put(sim, z, 'comms', v, until, sig.ev, true));
+    if (!zones.length) return;
+    const label = zonesLabel(zones);
+    commsSpan(sim, sig.ev, quake ? -1 : sig.inc, plan.src, label, true);
+    tellComms(sim, [sig.ev], `${quake ? '지진으로' : `${plan.q ? placeLabel(plan.q) : '시설'} 사고로`} ${label} 통신 장애 — 무전이 끊기는 곳이 늘었습니다.`);
+  },
+  // 회복: 그 건이 모든 동네에서 끝났으면 장부에서 거두고, 알려졌던 것이면 복구 기록 한 줄 (현장의 음영은 commsDown.shadow 가 다음 1초에 되돌린다)
+  recover: (sim, _z, f, cause) => {
+    if (f !== 'comms') return;
+    const sp = sim.world.spans;
+    for (let k = 0; k < sp.length; k++) {
+      const s = sp[k];
+      if (s.f !== 'comms' || s.cause !== cause || zonesOf(sim, 'comms', cause).length) continue;
+      if (s.told) emit(sim, { role: 'SYSTEM', actor: '통신사', kind: 'hazard', tag: 'comms', imp: 1, causes: [cause], text: `${s.label} 통신 복구.` });
+      sp.splice(k--, 1);
+    }
+  },
+});
+
+registerConsequence({
+  id: 'commsDown.power', label: '통신 장애(긴 정전)', on: 'tick',
+  key: (sim) => (sim.world.spans.some((s) => s.f === 'power' && !s.next && sim.t - (s.since ?? sim.t) >= COMMS.BACKUP) ? 'power' : null),
+  cooldown: 0, cap: Infinity, spawns: false, silent: true,
+  test: () => true,
+  apply: (c) => {
+    const sim = c.sim, zs = sim.world.zones;
+    for (const s of sim.world.spans.slice()) {
+      if (s.f !== 'power' || s.next || sim.t - (s.since ?? sim.t) < COMMS.BACKUP) continue;
+      s.next = true;
+      if (commsN(sim) >= COMMS.CAP) continue;
+      const storm = s.src === 'blackout', v = storm ? COMMS.STORM_V : COMMS.POWER_V, until = sim.t + COMMS.HOLD;
+      const zones = zonesOf(sim, 'power', s.cause).filter((z) => {
+        const at = zs[z].at ? zs[z].at!.power : undefined;
+        return at ? setZone(sim, z, 'comms', v, until, s.cause, storm, at) : put(sim, z, 'comms', v, until, s.cause, storm);
+      });
+      if (!zones.length) continue;
+      // (라) 태풍 정전: 모든 동네 — 알림 한 줄로 곧바로 알려진다. (나) 그 밖: 그 범위 현장의 첫 COMM_FAIL 이 나올 때 알려진다 (commsDown.shadow)
+      commsSpan(sim, s.cause, s.inc, storm ? 'blackout' : 'power', storm ? '도시 곳곳' : s.label ?? zonesLabel(zones), storm);
+      if (storm) tellComms(sim, [s.cause], '정전이 길어져 도시 곳곳의 통신 기지국 예비 전원이 떨어졌습니다 — 무전이 끊기는 곳이 늘었습니다.');
+    }
+  },
+});
+
+const floorish = (ti: number): boolean => ti === T.FLOOR || ti === T.GROUND || ti === T.ROAD || ti === T.TRAIL;
+/** 통신 장애의 현장 음영: 바닥 칸의 (1 − comms) × SHADOW 까지를 덩어리로 골라 음영으로 — 원래 음영이 아니던 칸만 (고른 칸을 돌려준다. 덩어리가 다 차면 그보다 적을 수 있다) */
+function addShadow(sim: Sim, s: Scene, comms: number): number[] {
+  const out: number[] = [], t = s.tiles, W = s.w, floor: number[] = [];
+  for (let i = 0; i < t.length; i++) if (floorish(t[i]) && !s.shadow[i]) floor.push(i);
+  const want = Math.round((1 - comms) * COMMS.SHADOW * floor.length);
+  if (want <= 0) return out;
+  const rng = sim.rng.fork('csq:shadow:' + s.id), seen = new Uint8Array(t.length);
+  const nb = rng.int(COMMS.BLOBS[0], COMMS.BLOBS[1]);
+  for (let b = 0; b < nb && out.length < want; b++) {
+    const c0 = rng.pick(floor), cx = c0 % W, cy = (c0 / W) | 0, r = rng.range(COMMS.BLOB_R[0], COMMS.BLOB_R[1]), R = Math.ceil(r);
+    for (let dy = -R; dy <= R && out.length < want; dy++) for (let dx = -R; dx <= R && out.length < want; dx++) {
+      const x = cx + dx, y = cy + dy;
+      if (x < 0 || y < 0 || x >= W || y >= s.h || dx * dx + dy * dy > r * r) continue;
+      const i = y * W + x;
+      if (seen[i] || s.shadow[i] || !floorish(t[i])) continue;
+      seen[i] = 1; out.push(i);
+    }
+  }
+  for (const i of out) s.shadow[i] = 1;
+  return out;
+}
+/** INFRA_FAIL 의 까닭 말 (그 통신 장애를 만든 길) */
+const WHY: Record<string, string> = { power: '정전이 길어져 기지국 예비 전원이 떨어졌다', blackout: '태풍 정전이 길어졌다', quake: '지진', comm: '방송·관제 시설 사고' };
+
+registerConsequence({
+  id: 'commsDown.shadow', label: '무전 음영', on: 'tick',
+  key: (sim) => {
+    for (const Z of sim.world.zones) if (Z.comms < 1) return 'shadow';
+    for (const I of sim.incidents) if (sim.scenes[I.id]?.shadowAdd) return 'shadow';
+    return null;
+  },
+  cooldown: 0, cap: Infinity, spawns: false, silent: true,
+  test: () => true,
+  apply: (c) => {
+    const sim = c.sim;
+    for (const I of sim.incidents) {
+      const s = sim.scenes[I.id];
+      if (!s || (I.pursuit && I.pursuit.state === 'driving')) continue;
+      const v = zoneAt(sim, 'comms', I.truth.x, I.truth.y);
+      if (v >= 1) { if (s.shadowAdd) { for (const i of s.shadowAdd) s.shadow[i] = 0; s.shadowAdd = undefined; } continue; }      // 회복 — 원래 0 이던 그 칸만 되돌린다
+      if (I.phase === 'closed') continue;
+      if (!s.shadowAdd) { s.shadowAdd = addShadow(sim, s, v); continue; }
+      if (!s.shadowAdd.length || I.problems.some((p) => p.code === 'INFRA_FAIL')) continue;
+      // 더한 음영에서 보고가 끊겼다 (이 1초 안의 COMM_FAIL 가운데 그 대원이 더한 칸에 서 있는 것) — 정전·통신 장애가 대응을 막았다
+      for (const p of I.problems) {
+        if (p.code !== 'COMM_FAIL' || p.t < sim.t - 1.2 || p.eventId < 0) continue;
+        const e = sim.events[p.eventId];
+        if (!e || e.role !== 'RESPONDER' || e.rid < 0) continue;
+        const a = s.agents.find((q) => q.rid === e.rid);
+        if (!a || s.shadowAdd.indexOf(tileOf(s, a.x, a.y)) < 0) continue;
+        const Z = sim.world.zones[zoneOfXY(I.truth.x, I.truth.y)];
+        const cause = Z ? Z.cause.comms : -1, sp = sim.world.spans.find((q) => q.f === 'comms' && q.cause === cause);
+        const label = sp?.label ?? '그 일대', why = WHY[sp?.src ?? 'comm'] ?? '통신 장애';
+        if (Z && !Z.known.comms && sp) {
+          // (나) 긴 정전이 넘긴 통신 장애가 처음 드러났다 — 그 COMM_FAIL 을 원인으로 관제에 알려진다
+          for (const z of zonesOf(sim, 'comms', cause)) sim.world.zones[z].known.comms = true;
+          sp.told = true;
+          tellComms(sim, [p.eventId, cause], `${label} 정전이 길어져 통신 기지국이 멈췄습니다 — 무전이 끊기는 곳이 늘었습니다.`);
+        }
+        const detail = `${label} 통신 장애(${why})로 무전 음영이 늘어 보고가 끊겼습니다`;
+        raiseProblem(sim, I, 'INFRA_FAIL', detail, { role: 'SYSTEM', actor: '통신사', imp: 1, causes: [p.eventId, cause], text: `${detail}.` });
+        break;
+      }
     }
   },
 });

@@ -21,7 +21,7 @@ import { INCIDENT_PLACES } from '../cityPlan';
 import { scenarioOf } from '../scenarios';
 import { hazardImpulse } from './hazard';
 import type { HzPart } from './hazard';
-import { placeState, zoneOfPlace } from './state';
+import { placeState, zoneOfPlace, zoneOfXY } from './state';
 
 /** 이웃으로 치는 벽-벽 틈 (도시 좌표). 조사: 가장 가까운 이웃까지의 틈은 최소 2.0 · 중앙값 7.2 · p90 23.4 — 같은 편 옆집은 2~12, 길 건너는 20~35 */
 export const NB_REACH = 30;
@@ -387,21 +387,21 @@ function medShare(sim: Sim, kind: PlaceKind): number {
 export function smokeBase(sim: Sim, kind: PlaceKind): number { return (ILL.MED_PER_SHIFT * medShare(sim, kind)) / ILL.SPAN; }
 
 type Spot = WorldState['spans'][number];
-const SMOKE_TARGETS = new WeakMap<Spot, { key: string; list: { id: number; d: number }[] }>();
+const SMOKE_TARGETS = new WeakMap<Spot, { key: string; list: { id: number; d: number; z: number }[] }>();
 /**
- * 그 연기 자리의 대상: 자리 안(건물 가운데까지의 거리 < 반경)의 주거 건물(응급의 장소 표에 몫이 있는 종류), 가까운 순(같으면 id 순) MAX 채 — 불이 난 그 건물·터·출동 시설 제외.
+ * 그 연기 자리의 대상: 자리 안(건물 가운데까지의 거리 < 반경)의 주거 건물(응급의 장소 표에 몫이 있는 종류), 가까운 순(같으면 id 순) MAX 채 — 불이 난 그 건물·터·출동 시설 제외. z = 건물 가운데의 동네.
  * **목록은 그 자리가 생기거나 자리·반경이 바뀔 때만 만든다**(연기 줄 객체를 열쇠로 — 줄은 그 교대의 sim.world 안에만 있어 시드를 넘지 않는다)
  */
-export function smokeTargets(sim: Sim, sp: Spot): readonly { id: number; d: number }[] {
+export function smokeTargets(sim: Sim, sp: Spot): readonly { id: number; d: number; z: number }[] {
   const at = sp.at;
   if (!at) return [];
   const key = `${at.x}|${at.y}|${at.r}|${sp.ref ?? -1}`, hit = SMOKE_TARGETS.get(sp);
   if (hit && hit.key === key) return hit.list;
-  const list: { id: number; d: number }[] = [];
+  const list: { id: number; d: number; z: number }[] = [];
   for (const q of sim.city.places) {
     if (q.open || q.facility >= 0 || q.id === sp.ref || medShare(sim, q.kind) <= 0) continue;
-    const d = Math.hypot(q.x + q.w / 2 - at.x, q.y + q.h / 2 - at.y);
-    if (d < at.r) list.push({ id: q.id, d });
+    const cx = q.x + q.w / 2, cy = q.y + q.h / 2, d = Math.hypot(cx - at.x, cy - at.y);
+    if (d < at.r) list.push({ id: q.id, d, z: zoneOfXY(cx, cy) });
   }
   list.sort((a, b) => a.d - b.d || a.id - b.id);
   if (list.length > ILL.MAX) list.length = ILL.MAX;
@@ -410,19 +410,22 @@ export function smokeTargets(sim: Sim, sp: Spot): readonly { id: number; d: numb
 }
 /**
  * 연기 속 건물과 그 노출을 차례로 내놓는다 (법칙의 scan 과 측정이 함께 쓴다 — 읽기만 한다): 연기 줄(world.spans 의 f 'smoke')마다 그 자리의 대상 가운데
- * 열린 사건이 있는 건물(그 건물의 환자는 그 사건의 것이다)·쓸 수 없는 건물(전소·전체 붕괴)을 빼고, 농도 c = 세기 × (1 − 거리 / 반경)과 평소 응급률 base 를 준다
+ * 열린 사건이 있는 건물(그 건물의 환자는 그 사건의 것이다)·쓸 수 없는 건물(전소·전체 붕괴)을 빼고, 농도 c = 세기 × (1 − 거리 / 반경)과 평소 응급률 base 를 준다.
+ * **세기는 세계 상태(그 건물 동네의 구역 값 Z.smoke)에서 읽는다** — 그 동네가 이 연기를 겪지 않으면(원인 기록이 다르다: 걷혔거나 더 짙은 연기가 가져갔다) 그 건물은 이 자리로 세지 않는다.
+ * 장부 줄(자리 at · 원인 · 불난 건물)은 대상 목록의 열쇠와 귀속에만 쓴다 — 개입 시험 ③: 구역의 연기를 0 으로 되돌리면 장부가 남아도 쌓이지 않는다
  */
 export function smokeExposure(sim: Sim, visit: (target: number, c: number, base: number, sp: Spot) => void): void {
   const spans = sim.world.spans;
   let busy: Set<number> | null = null;
   for (let k = 0; k < spans.length; k++) {
     const sp = spans[k];
-    if (sp.f !== 'smoke' || !sp.at || !((sp.v ?? 0) > 0)) continue;
+    if (sp.f !== 'smoke' || !sp.at) continue;
     if (!busy) { busy = new Set(); for (const I of sim.incidents) if (I.phase !== 'closed' && I.truth.placeId >= 0) busy.add(I.truth.placeId); }
-    const r = sp.at.r;
+    const r = sp.at.r, zones = sim.world.zones;
     for (const t of smokeTargets(sim, sp)) {
-      if (busy.has(t.id) || placeState(sim, t.id)?.usable === false) continue;
-      const c = sp.v! * (1 - t.d / r), base = smokeBase(sim, sim.city.places[t.id].kind);
+      const Z = zones[t.z];
+      if (!Z || Z.cause.smoke !== sp.cause || busy.has(t.id) || placeState(sim, t.id)?.usable === false) continue;
+      const c = Z.smoke * (1 - t.d / r), base = smokeBase(sim, sim.city.places[t.id].kind);
       if (c > 0 && base > 0) visit(t.id, c, base, sp);
     }
   }

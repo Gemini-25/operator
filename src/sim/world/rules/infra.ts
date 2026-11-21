@@ -23,12 +23,14 @@ import { DISTRICTS } from '../../cityPlan';
 import type { Sim } from '../../engine';
 import { emit, raiseProblem } from '../../events';
 import { tileOf } from '../../field/grid';
+import { FIRE_BIG, fireCauseEv } from '../../field/hazards';      // (b3-11 C5) 큰 불의 문턱(불 칸 > 0.2 의 수)과 그 불을 만든 기록 — 연기 알림의 원인 (L2 의 열원과 같은 규칙)
+import { josa } from '../../util';
 import { addBump, removeBump } from '../../traffic';
 import { T } from '../../types';
 import type { Place, Scene, Signal, WorldState, ZoneSpanSrc } from '../../types';
 import { registerConsequence } from '../consequence';
 import { darkened, liftPlaces, shockDelta } from '../expo';
-import { HOSPITAL_CAP, ZONE_DEFAULT, endZoneBy, isDark, setZone, setZoneArea, zoneAt, zoneName, zoneOfXY } from '../state';
+import { HOSPITAL_CAP, ZONE_DEFAULT, dropAt, endZoneBy, isDark, setZone, setZoneArea, zoneAt, zoneName, zoneOfXY } from '../state';
 
 /**
  * 정전의 크기와 시간 (설계서 §3.7 C4 의 첫 값):
@@ -439,4 +441,160 @@ registerConsequence({
       }
     }
   },
+});
+
+// ───────────────────────── C5 smokePlume — 연기 (설계서 I1 §3.7 C5 · 상태 결합) ─────────────────────────
+// 원인들: (가) 큰 불이 이어지는 현장 — 불 칸(불 > 0.2)이 FIRE_BIG(30) 이상인 채 HOLD(45)초 (현장마다 시각을 기억한다. 열린 사건의 현장만. 전소로 가는 건물도 이 길이다)
+//         (나) 산불의 불머리 — 꺼지지 않은 동안(충격 단계이고 멈추지 않았다. 재난의 상태를 읽는 것은 상태 규칙이라 된다 — 법칙 파일은 읽지 않는다)
+// 결과: 연기가 덮은 자리(국지 구역 값 — state.setZoneArea, 원이 닿는 동네마다 같은 자리) — 반경 R × √min(1, 불 칸 / FULL) · 세기 V × min(1, 불 칸 / FULL)
+//       (산불은 불머리 반지름 + WILD_PAD · 세기 WILD_V). 처음 한 번 알림(tag 'smoke' — 눈에 보이므로 곧바로 알려진다, 원인 = 그 불을 만든 기록 hazards.fireCauseEv 또는 산불의 재난 알림).
+//   1. 주민: L4 smokeIll(world/laws/smoke.ts)이 이 줄(world.spans 의 연기 줄 — at·v·ref)을 읽는다
+//   2. 현장: 연기 자리의 실외 현장의 구조 대상 실외 노출(field/rules/smoke.ts — 현장 규칙은 그 자리에 둔다)
+//   3. 도로: 연기 자리 안에 가운데가 있는 구간들에 traffic.addBump(BUMP × 세기, what 2 — 'haze') — 연기 한 건마다 한 번, 그 id 를 장부 줄에 두고
+//      세기·반경이 달라지면 거두고 다시 얹고, 끝나면 removeBump 를 한 번(recover 에서 동네마다 빼지 않는다 — §3.6b)
+// 회복: 원인이 살아 있는 동안 1초마다 그 연기의 회복 시각을 t + AFTER 로 민다 — 불이 기준 아래로 내려가거나 사건이 닫히면(또는 불머리가 멈추면) AFTER 초 뒤에 걷힌다.
+//   세기·반경은 커지기만 한다(불 칸을 STEP 단위로 — 같은 불의 작은 흔들림으로 자리를 다시 놓지 않는다). 산불은 불머리가 WILD_MOVE 넘게 움직이거나 반경이 WILD_GROW 넘게 커지면 다시 놓는다.
+//   자리를 다시 놓을 때는 그 연기의 동네 값을 거두고(clearSmoke — 기록 없음) 새 자리로 넣는다. 한 동네·한 칸에 국지 자리는 하나다(b3-10 — 더 짙은 연기가 가져간다).
+// 사건을 만들지 않는다. 난수 없음. 연기 한 건 = 장부(world.spans) 한 줄(f 'smoke' · src 'fire'|'wild' · at · v · ref).
+
+/**
+ * 연기의 크기와 시간 (설계서 §3.7 C5 의 첫 값):
+ *  HOLD   불 칸이 FIRE_BIG 이상인 채 이만큼(초) 이어지면 연기가 동네로 번진다 · AFTER 원인이 끝나고 걷히기까지(초)
+ *  R · V · FULL   반경 R × √min(1, n/FULL) · 세기 V × min(1, n/FULL) (n = 불 칸 수) · STEP 불 칸을 이 단위로 끊어 커질 때만 자리를 다시 놓는다
+ *  WILD_PAD · WILD_V   산불: 반경 = 불머리 반지름 + WILD_PAD · 세기 · WILD_MOVE · WILD_GROW 불머리가 이만큼 움직이거나 반경이 이만큼 커지면 자리를 다시 놓는다
+ *  BUMP   연기 자리 안 구간의 혼잡 = BUMP × 세기 (시야 — L1 의 'haze' 몫)
+ */
+export const SMOKE = { HOLD: 45, AFTER: 120, R: 450, V: 0.6, FULL: 60, STEP: 10, WILD_PAD: 300, WILD_V: 0.7, WILD_MOVE: 60, WILD_GROW: 30, BUMP: 0.2 };
+
+const bigSince = new WeakMap<Scene, number>();      // 현장 → 불 칸이 FIRE_BIG 이상이 된 시각 (현장 객체의 모양을 바꾸지 않는다 — 현장은 교대마다 새로 만든다)
+/** 그 현장의 불 칸(불 > 0.2) 수 — hazards.tickFire 의 큰 불 신호와 같은 셈 (s.burning 은 불 > 0 인 칸 수라 그보다 작으면 셀 것이 없다) */
+function bigCells(s: Scene): number {
+  if (s.burning < FIRE_BIG) return 0;
+  const f = s.fire;
+  let n = 0;
+  for (let i = 0; i < f.length; i++) if (f[i] > 0.2) n++;
+  return n;
+}
+/** 불 칸 n 의 연기 자리 크기 (STEP 단위로 끊는다) */
+function plumeOf(n: number): { r: number; v: number } {
+  const k = Math.min(1, (Math.floor(n / SMOKE.STEP) * SMOKE.STEP) / SMOKE.FULL);
+  return { r: Math.round(SMOKE.R * Math.sqrt(k)), v: Math.round(SMOKE.V * k * 1000) / 1000 };
+}
+/** 산불의 불머리가 살아 있는가 (충격 단계이고 멈추지 않았다) */
+function wildFront(sim: Sim): { x: number; y: number; r: number } | null {
+  const d = sim.disaster;
+  if (!d || d.kind !== 'wildfire' || d.phase !== 'impact' || d.stopped || !d.front) return null;
+  return { x: d.front.x, y: d.front.y, r: d.front.r };
+}
+/** 그 연기의 동네 값을 거둔다 (자리를 다시 놓기 전 — 회복이 아니라 기록하지 않는다) */
+function clearSmoke(sim: Sim, cause: number): void {
+  for (const Z of sim.world.zones) {
+    if (Z.cause.smoke !== cause || Z.smoke === ZONE_DEFAULT.smoke) continue;
+    Z.smoke = ZONE_DEFAULT.smoke; Z.until.smoke = 0; Z.known.smoke = false; Z.cause.smoke = -1;
+    dropAt(Z, 'smoke');
+  }
+}
+/** 연기가 덮은 구간: 가운데(두 교차로의 중점)가 그 원 안이고 그 점의 동네가 이 연기를 겪는다 (다른 연기가 가져간 동네는 빼고) */
+function smokeEdges(sim: Sim, at: { x: number; y: number; r: number }, cause: number): number[] {
+  const out: number[] = [];
+  const c = sim.city, zs = sim.world.zones;
+  for (const e of c.edges) {
+    const A = c.nodes[e.a], B = c.nodes[e.b], x = (A.x + B.x) / 2, y = (A.y + B.y) / 2;
+    if (Math.hypot(x - at.x, y - at.y) > at.r) continue;
+    const Z = zs[zoneOfXY(x, y)];
+    if (!Z || Z.cause.smoke !== cause) continue;
+    out.push(e.id);
+  }
+  return out;
+}
+/** 연기 줄 하나 (모든 줄이 같은 모양 — 칸을 같은 순서로) */
+const smokeRow = (cause: number, inc: number, bump: number, src: 'fire' | 'wild', since: number, label: string, at: { x: number; y: number; r: number }, v: number, ref: number): Span =>
+  ({ f: 'smoke', cause, inc, bump, src, since, tellAt: -1, told: true, label, next: false, at: { x: at.x, y: at.y, r: at.r }, v, ref });
+/** 연기 자리 안 구간에 혼잡을 얹는다 (그 건의 줄 하나 — 얹을 구간이 없으면 -1) */
+const smokeBump = (sim: Sim, at: { x: number; y: number; r: number }, v: number, cause: number, inc: number): number => {
+  const edges = smokeEdges(sim, at, cause);
+  return edges.length ? addBump(sim, edges, SMOKE.BUMP * v, cause, 2, inc) : -1;
+};
+/** 연기를 새 자리로 다시 놓는다 (커졌거나 불머리가 움직였다): 그 연기의 동네 값을 거두고 새 자리로 넣고, 얹은 혼잡을 거두고 새로 얹는다 — 장부 줄은 새 줄로 바꾼다 */
+function moveSmoke(sim: Sim, sp: Span, at: { x: number; y: number; r: number }, v: number): void {
+  clearSmoke(sim, sp.cause);
+  setZoneArea(sim, 'smoke', v, sim.t + SMOKE.AFTER, sp.cause, true, at);
+  removeBump(sim, sp.bump);
+  const rows = sim.world.spans, k = rows.indexOf(sp);
+  if (k >= 0) rows[k] = smokeRow(sp.cause, sp.inc, smokeBump(sim, at, v, sp.cause, sp.inc), sp.src as 'fire' | 'wild', sp.since ?? sim.t, sp.label ?? '', at, v, sp.ref ?? -1);
+}
+/** 그 연기의 회복 시각을 민다 (원인이 살아 있는 동안 1초마다) */
+function holdSmoke(sim: Sim, cause: number): void {
+  const until = sim.t + SMOKE.AFTER;
+  for (const Z of sim.world.zones) if (Z.cause.smoke === cause && Z.smoke !== ZONE_DEFAULT.smoke && Z.until.smoke < until) Z.until.smoke = until;
+}
+/** 동네를 하나도 남기지 못한 연기 줄을 거둔다 (걷혔거나 더 짙은 연기가 모두 가져갔다) — 얹은 혼잡을 한 번 뺀다. 기록은 남기지 않는다 */
+function settleSmoke(sim: Sim): void {
+  const sp = sim.world.spans;
+  for (let k = 0; k < sp.length; k++) {
+    const s = sp[k];
+    if (s.f !== 'smoke' || zonesOf(sim, 'smoke', s.cause).length) continue;
+    removeBump(sim, s.bump);
+    sp.splice(k--, 1);
+  }
+}
+/** 새 연기 한 건: 동네 값을 먼저 넣어 보고(얻은 동네가 없으면 아무것도 남기지 않는다) 알림을 남긴 뒤 그 기록을 원인으로 바꿔 적는다 */
+function openSmoke(sim: Sim, src: 'fire' | 'wild', inc: number, ref: number, label: string, fireEv: number, at: { x: number; y: number; r: number }, v: number): void {
+  const tmp = -2 - sim.world.spans.length;      // 알림 기록을 남기기 전의 자리 표시 (바로 아래에서 그 기록으로 바꾼다)
+  const zones = setZoneArea(sim, 'smoke', v, sim.t + SMOKE.AFTER, tmp, true, at);
+  if (!zones.length) return;
+  const names = zones.length > 3 ? `${zones.slice(0, 3).map(zoneName).join('·')} 등 ${zones.length}곳` : zones.map(zoneName).join('·');      // 동네가 많으면 셋까지 적고 수를 붙인다
+  const ev = emit(sim, { role: 'SYSTEM', actor: '재난안전본부', kind: 'hazard', tag: 'smoke', imp: 1, causes: [fireEv], text: `${label}의 연기가 ${josa(names, '으로/로')} 번지고 있습니다. 창문을 닫아 주십시오.` });
+  for (const z of zones) sim.world.zones[z].cause.smoke = ev;
+  sim.world.spans.push(smokeRow(ev, inc, smokeBump(sim, at, v, ev, inc), src, sim.t, label, at, v, ref));
+  settleSmoke(sim);      // 자리를 빼앗긴 앞의 연기(더 짙은 연기가 그 동네를 모두 가져갔다)가 있으면 거둔다
+}
+const smokeSpan = (sim: Sim, src: 'fire' | 'wild', inc: number): Span | undefined => sim.world.spans.find((q) => q.f === 'smoke' && q.src === src && q.inc === inc);
+
+registerConsequence({
+  id: 'smokePlume', label: '연기', on: 'tick',
+  key: (sim) => {
+    if (wildFront(sim)) return 'smoke';
+    for (const q of sim.world.spans) if (q.f === 'smoke') return 'smoke';
+    for (const I of sim.incidents) { if (I.phase === 'closed') continue; const s = sim.scenes[I.id]; if (s && !s.archived && s.burning >= FIRE_BIG) return 'smoke'; }
+    return null;
+  },
+  cooldown: 0, cap: Infinity, spawns: false, silent: true,
+  test: () => true,
+  apply: (c) => {
+    const sim = c.sim, t = sim.t;
+    // (가) 크게 이어지는 불
+    for (const I of sim.incidents) {
+      const s = sim.scenes[I.id];
+      if (!s) continue;
+      const n = I.phase === 'closed' || s.archived ? 0 : bigCells(s);
+      if (n < FIRE_BIG) { bigSince.delete(s); continue; }
+      let at0 = bigSince.get(s);
+      if (at0 === undefined) { bigSince.set(s, t); at0 = t; }
+      const sp = smokeSpan(sim, 'fire', I.id), pl = plumeOf(n);
+      if (sp) {
+        if (pl.r > (sp.at?.r ?? 0) || pl.v > (sp.v ?? 0)) moveSmoke(sim, sp, { x: sp.at!.x, y: sp.at!.y, r: Math.max(pl.r, sp.at!.r) }, Math.max(pl.v, sp.v ?? 0));
+        holdSmoke(sim, sp.cause);
+      } else if (t - at0 >= SMOKE.HOLD) {
+        const q = I.truth.placeId >= 0 ? sim.city.places[I.truth.placeId] : undefined;
+        openSmoke(sim, 'fire', I.id, q ? q.id : -1, `${q ? placeLabel(q) : I.truth.label} 화재`, fireCauseEv(I), { x: I.truth.x, y: I.truth.y, r: pl.r }, pl.v);
+      }
+    }
+    // (나) 산불의 불머리
+    const fr = wildFront(sim);
+    if (fr) {
+      const r = Math.round(fr.r + SMOKE.WILD_PAD), sp = smokeSpan(sim, 'wild', -1);
+      if (sp) {
+        const a = sp.at!;
+        if (Math.hypot(fr.x - a.x, fr.y - a.y) >= SMOKE.WILD_MOVE || r - a.r >= SMOKE.WILD_GROW) moveSmoke(sim, sp, { x: fr.x, y: fr.y, r }, SMOKE.WILD_V);
+        holdSmoke(sim, sp.cause);
+      } else {
+        const d = sim.disaster!;
+        openSmoke(sim, 'wild', -1, -1, `${d.from ? d.from.name : '산'} 산불`, d.lastEv, { x: fr.x, y: fr.y, r }, SMOKE.WILD_V);
+      }
+    }
+    settleSmoke(sim);
+  },
+  // 회복(그 동네의 연기가 걷혔다): 그 연기가 모든 동네에서 걷혔으면 얹은 혼잡을 한 번 거둔다
+  recover: (sim, _z, f) => { if (f === 'smoke') settleSmoke(sim); },
 });

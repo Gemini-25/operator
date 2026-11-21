@@ -80,7 +80,7 @@ export function setZone(sim: Sim, z: number, f: ZoneField, v: number, until: num
     if (!take) return false;
     Z[f] = v; Z.cause[f] = cause; Z.until[f] = until; Z.known[f] = known;
     if (at) { if (!Z.at) Z.at = {}; Z.at[f] = { x: at.x, y: at.y, r: at.r }; }
-    else if (Z.at) delete Z.at[f];
+    else dropAt(Z, f);
     return true;
   }
   const worse = low ? v < cur : v > cur;
@@ -136,6 +136,15 @@ export function endZoneBy(sim: Sim, cause: number, until: number, f?: ZoneField)
   return n;
 }
 
+/** (b3-11) 그 칸의 국지 자리를 지운다 — 자리가 하나도 남지 않으면 자리 칸 자체를 지운다(처음 값의 모양으로 돌아간다: 연기는 자주 생겼다 걷힌다) */
+export function dropAt(Z: ZoneState, f: ZoneField): void {
+  const at = Z.at;
+  if (!at || !at[f]) return;
+  delete at[f];
+  for (let k = 0; k < ZONE_FIELDS.length; k++) if (at[ZONE_FIELDS[k]]) return;
+  delete Z.at;
+}
+
 /**
  * 회복 (tickWorld 가 1초에 한 번 부른다): 회복 시각이 지난 구역 값을 처음 값으로 되돌리고, 병동으로 옮겨진 환자를 응급실 체류에서 뺀다.
  * 되돌린 칸마다 note(구역, 칸, 그 값을 만든 기록, 관제가 알았는가)를 부른다 — 규칙이 복구 기록을 남기고 자기가 얹은 것(혼잡·음영)을 거둔다.
@@ -150,7 +159,7 @@ export function recoverWorld(sim: Sim, note?: (z: number, f: ZoneField, cause: n
       if (Z[f] === ZONE_DEFAULT[f] || t < Z.until[f]) continue;
       const cause = Z.cause[f], known = Z.known[f];
       Z[f] = ZONE_DEFAULT[f]; Z.until[f] = 0; Z.known[f] = false; Z.cause[f] = -1;
-      if (Z.at && Z.at[f]) delete Z.at[f];      // (b3-10) 국지 자리도 함께 지운다
+      dropAt(Z, f);      // (b3-10) 국지 자리도 함께 지운다
       if (note) note(z, f, cause, known);
     }
   }

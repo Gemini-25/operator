@@ -146,7 +146,7 @@ export class HazProbe {
     }
     for (const c of Object.values(hz.cells.rekindle ?? {})) { ember.cells++; ember.H.push(c.H); if (c.done) ember.crossed++; }
     // (b3-10) 정전·통신 장애와 정전이 닿은 승강기
-    const power: HazPower = { alerts: 0, comms: 0, liftCells: 0, liftH: 0, liftCrossed: 0, infra: 0, darkEnd: 0, spansEnd: sim.world.spans.length };
+    const power: HazPower = { alerts: 0, comms: 0, liftCells: 0, liftH: 0, liftCrossed: 0, infra: 0, darkEnd: 0, spansEnd: sim.world.spans.filter((q) => q.f === 'power' || q.f === 'comms').length };      // (b3-11) 정전·통신의 장부 줄만 (연기 줄은 hazard-smoke)
     for (const e of sim.events) { if (e.tag === 'power') power.alerts++; else if (e.tag === 'comms') power.comms++; }
     for (const c of Object.values(hz.cells.liftStall ?? {})) { power.liftCells++; power.liftH += c.H; if (c.done) power.liftCrossed++; }
     for (const I of sim.incidents) for (const p of I.problems) if (p.code === 'INFRA_FAIL') power.infra++;

@@ -50,7 +50,7 @@ import { RISK } from '../src/sim/world/rules/risk';
 import { knownZone, knownZoneOfIncident, zoneName, zoneOfXY } from '../src/sim/world/state';
 import { ZONE_SEV } from '../src/sim/dispatch/analyst';
 import type { Hostile } from '../src/sim/types';
-import { COMMS, POWER } from '../src/sim/world/rules/infra';
+import { COMMS, POWER, SMOKE } from '../src/sim/world/rules/infra';
 import { LIFT, darkened, liftDelta, liftOcc, liftPlaces } from '../src/sim/world/expo';
 import { LIFT_LAW } from '../src/sim/world/laws/power';
 import { HOSPITAL_CAP, endZoneBy, isDark, recoverWorld, setZone, setZoneArea, zoneAt, zoneOfPlace } from '../src/sim/world/state';
@@ -1076,7 +1076,10 @@ describe('I1-b b3-5 ①: 교통의 장부와 초과의 네 몫', () => {
         // (b3-10 C4) 정전 한 건마다의 꺼진 신호 — 그 줄은 world.spans 의 한 건이 가진다(원인 기록 = 그 정전의 원인)
         const c4 = tr.bumps.filter((b) => b.what === 1 && !(dz && b.id === dz.darkBump));
         for (const b of c4) { const sp = s.world.spans.find((q) => q.bump === b.id)!; expect(sp, `${seed} C4 bump ${b.id} 의 장부`).toBeDefined(); expect([sp.f, b.ev, b.add]).toEqual(['power', sp.cause, 0.4]); }
-        expect(tr.bumps.length).toBe(tr.crowds.length + (dz && dz.dark ? 1 : 0) + c4.length);
+        // (b3-11 C5) 연기 한 건마다의 시야 혼잡(what 2 — 'haze') — 그 줄도 world.spans 의 연기 줄이 가진다(원인 기록 = 그 연기 알림, 양 = BUMP × 세기)
+        const c5 = tr.bumps.filter((b) => b.what === 2);
+        for (const b of c5) { const sp = s.world.spans.find((q) => q.bump === b.id)!; expect(sp, `${seed} C5 bump ${b.id} 의 장부`).toBeDefined(); expect([sp.f, b.ev]).toEqual(['smoke', sp.cause]); expect(b.add).toBeCloseTo(SMOKE.BUMP * sp.v!, 9); expect(s.events[b.ev].tag).toBe('smoke'); }
+        expect(tr.bumps.length).toBe(tr.crowds.length + (dz && dz.dark ? 1 : 0) + c4.length + c5.length);
       }
       // 교대가 끝나면 얹은 혼잡과 그 줄이 남지 않는다 — (b3-10) 원인이 아직 살아 있는 정전의 꺼진 신호만 남고, 구간의 bump 는 남은 줄의 합이다
       for (const b of tr.bumps) expect(s.world.spans.some((q) => q.bump === b.id), `${seed} 남은 줄 ${b.id}`).toBe(true);
@@ -2616,14 +2619,14 @@ describe('I1-b b3-10: 국지 구역 값 · C4 정전 · L5 정전이 닿은 순�
   const withRide = <R>(mul: number, fn: () => R): R => { const r0 = LIFT.RIDE; LIFT.RIDE = r0 * mul; try { return fn(); } finally { LIFT.RIDE = r0; } };
 
   it('등록과 크기: 법칙 모음의 끝에 power(liftStall — 1초 · 건물마다 한 번 · 상한 3 · 마감 420초 · 충격만), 상태 규칙은 suspectZone 다음에 powerOut → powerOut.grid → powerOut.end → powerOut.tell → commsDown → commsDown.power → commsDown.shadow', () => {
-    expect(hazardLaws().map((l) => l.id)).toEqual(['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle', 'liftStall']);
+    expect(hazardLaws().map((l) => l.id).slice(0, 6)).toEqual(['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle', 'liftStall']);      // (b3-11) 그 뒤에 smoke(smokeIll)
     const L = lawOf('liftStall');
     expect([L.every, L.once, L.cap, L.hold, L.scan, L.label]).toEqual([1, true, 3, 420, undefined, '정전으로 멈춘 승강기']);
     expect(LIFT_LAW).toEqual({ CAP: 3, HOLD: 420 });
     expect(readFileSync('src/sim/world/laws/index.ts', 'utf8')).toMatch(/^import '\.\/ember';[^\n]*\nimport '\.\/power';/m);
     expect(readFileSync('src/sim/world/rules/index.ts', 'utf8')).toMatch(/^import '\.\/risk';[^\n]*\nimport '\.\/infra';/m);
     const ids = consequences().map((c) => c.id);
-    expect(ids.slice(ids.indexOf('suspectZone'))).toEqual(['suspectZone', 'powerOut', 'powerOut.grid', 'powerOut.end', 'powerOut.tell', 'commsDown', 'commsDown.power', 'commsDown.shadow']);
+    expect(ids.slice(ids.indexOf('suspectZone'), ids.indexOf('commsDown.shadow') + 1)).toEqual(['suspectZone', 'powerOut', 'powerOut.grid', 'powerOut.end', 'powerOut.tell', 'commsDown', 'commsDown.power', 'commsDown.shadow']);      // (b3-11·12) 그 뒤에 smokePlume · floodLow
     expect(LIFT).toEqual({ RIDE: 0.006, FLOOR_DIV: 6, FLOOR_MAX: 3, FLOORS: 4 });
     expect([POWER.HOLD, POWER.QUAKE_HOLD, POWER.END, POWER.TELL, POWER.DARK_BUMP, POWER.QUAKE_R, POWER.QUAKE_THR, POWER.LINE_THR, POWER.HOSP_CUT, POWER.CAP]).toEqual([600, 240, [60, 120], [20, 40], 0.4, 900, [0.3, 0.5], [0.15, 0.6], 2, 6]);
     expect([COMMS.UTIL_V, COMMS.POWER_V, COMMS.QUAKE_V, COMMS.STORM_V, COMMS.BACKUP, COMMS.AFTER, COMMS.QUAKE_HOLD, COMMS.CAP]).toEqual([0.4, 0.6, 0.5, 0.7, 100, 180, 300, 3]);
@@ -2647,7 +2650,7 @@ describe('I1-b b3-10: 국지 구역 값 · C4 정전 · L5 정전이 닿은 순�
     expect([s.world.zones[z].cause.power, s.world.zones[z].until.power, s.world.zones[z].at!.power]).toEqual([ev2, 400, { x: d.x + 5, y: d.y, r: 120 }]);
     // 구역 전체 값(같은 값 — 가장 넓다)이 오면 자리를 지운다
     expect(setZone(s, z, 'power', 0, 700, ev3, false)).toBe(true);
-    expect([s.world.zones[z].at!.power, s.world.zones[z].cause.power, zoneAt(s, 'power', d.x + 100, d.y)]).toEqual([undefined, ev3, 0]);
+    expect([s.world.zones[z].at?.power, s.world.zones[z].cause.power, zoneAt(s, 'power', d.x + 100, d.y)]).toEqual([undefined, ev3, 0]);
     // endZoneBy: 그 원인·그 칸만, 당기기만
     setZone(s, z, 'comms', 0.6, 800, ev3, false);
     expect(endZoneBy(s, ev3, 900, 'power')).toBe(0);

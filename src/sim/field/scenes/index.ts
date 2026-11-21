@@ -17,3 +17,4 @@ import '../rules/methods';      // (R2) 대응 방법 — 상공의 헬기 다�
 import '../orders/methods';      // (R2) 단계 0 에는 아무것도 등록하지 않는다
 import '../doctrine/index';      // (R3) 대응 교본의 줄 (common → police → fire → ems → special). 단계 0 에는 줄이 없다
 import '../orders/doctrine';      // (R3) 지휘 교본. 단계 0 에는 아무것도 등록하지 않는다
+import '../rules/smoke';      // (I1-b b3-11 C5) 연기 자리의 실외 노출 — 맨 끝 (연기가 없는 교대에는 첫 줄에서 돌아간다)

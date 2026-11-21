@@ -10,7 +10,9 @@
 //   hazard-shock: (b3-8) 충격을 받은 건물 수(world.expo 의 shake > 0) · S_MIN 을 넘은 건물 수 · 배관이 끊긴 건물 수 · shake 분포(최댓값·사분위) ·
 //                 손상을 안고 시작한 현장 수(s.wear cause 'shock')와 그 가운데 새는 밸브를 놓은 현장 수 — L3 의 충격 크기(expo.SHOCK)와 b3-8c 의 세기를 맞추는 데 쓴다
 //   hazard-ember: (b3-9) 닫힌 건물 현장 수 · 남은 열이 있던 현장 수와 e0 분포(expo.residualOf — L7 과 같은 식) · rekindle 칸 수와 쌓인 H(= H∞ 의 합) · 문턱을 넘은 칸 — L7 의 세기(RESIDUAL.K)를 맞추는 데 쓴다
-// 뒤 단계가 더할 줄: 정전이 닿은 4층 이상 건물 수(b3-10) · 연기 Σ∫c × base dt(b3-11).
+//   hazard-power: (b3-10) 정전 알림·통신 장애 알림 수 · 정전이 닿은 승강기 건물 수(liftStall 칸 — 4층 이상 · 승강기 갇힘 시나리오가 받는 종류)와 쌓인 충격의 합 ·
+//                 문턱을 넘은 칸 · INFRA_FAIL 수 · 교대 끝에 아직 꺼져 있던 동네와 남은 정전·통신 장부 줄(원인이 살아 있는 것) — L5 의 세기(expo.LIFT.RIDE)를 맞추는 데 쓴다
+// 뒤 단계가 더할 줄: 연기 Σ∫c × base dt(b3-11).
 //
 // 표본: HazProbe.tick() 을 매 틱 step() 뒤에 부른다 — 교통 모델이 혼잡을 다시 계산한 틱(traffic.driftAt 이 바뀐 틱)에만 도로를 읽는다(12초에 한 번).
 
@@ -56,7 +58,12 @@ export interface HazEmber {
   e0: number[];                                     // 남은 열이 있던 현장마다의 e0
   cells: number; crossed: number; H: number[];      // rekindle 칸의 수 · 문턱을 넘은 칸 · 칸마다 쌓인 H (= 그 건물이 받은 H∞ 의 합)
 }
-export interface HazCount { laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null; heat: HazHeat | null; shock: HazShock; ember: HazEmber }
+export interface HazPower {
+  alerts: number; comms: number;                    // 정전 알림(tag power — 복구 포함) · 통신 장애 알림(tag comms — 복구 포함)
+  liftCells: number; liftH: number; liftCrossed: number;      // 정전이 닿은 승강기 건물(liftStall 칸) · 그 칸의 H 합 · 문턱을 넘은 칸
+  infra: number; darkEnd: number; spansEnd: number;           // INFRA_FAIL 문제 · 교대 끝에 전력 < 1 인 동네 · 교대 끝에 남은 장부 줄
+}
+export interface HazCount { laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null; heat: HazHeat | null; shock: HazShock; ember: HazEmber; power?: HazPower }
 
 const roadZero = (): HazRoad => ({ drifts: 0, own: 0, bump: 0, queue: 0, div: 0, raw: 0, unledgered: 0, edgeDrifts: 0, closedDrifts: 0, byWhat: {}, detourDrifts: 0, detourCong: 0, detourCongMax: 0, detourCap: 0 });
 
@@ -138,16 +145,27 @@ export class HazProbe {
       if (e > 0) { ember.warm++; ember.e0.push(e); }
     }
     for (const c of Object.values(hz.cells.rekindle ?? {})) { ember.cells++; ember.H.push(c.H); if (c.done) ember.crossed++; }
-    return { laws, holes: hz.holes, road: this.road.drifts ? this.road : null, heat, shock, ember };
+    // (b3-10) 정전·통신 장애와 정전이 닿은 승강기
+    const power: HazPower = { alerts: 0, comms: 0, liftCells: 0, liftH: 0, liftCrossed: 0, infra: 0, darkEnd: 0, spansEnd: sim.world.spans.length };
+    for (const e of sim.events) { if (e.tag === 'power') power.alerts++; else if (e.tag === 'comms') power.comms++; }
+    for (const c of Object.values(hz.cells.liftStall ?? {})) { power.liftCells++; power.liftH += c.H; if (c.done) power.liftCrossed++; }
+    for (const I of sim.incidents) for (const p of I.problems) if (p.code === 'INFRA_FAIL') power.infra++;
+    for (const Z of sim.world.zones) if (Z.power < 1) power.darkEnd++;
+    return { laws, holes: hz.holes, road: this.road.drifts ? this.road : null, heat, shock, ember, power };
   }
 }
 
 export { roadSurface };      // (b3-6) 법칙 파일의 것을 그대로 내보낸다
 
-export interface HazSum { shifts: number; laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null; roadShifts: number; heat: { shifts: number; secs: number; exposure: number; targets: number; sources: number; fMax: number; top: number[] }; shock: HazShock & { shifts: number }; ember: HazEmber }
+export interface HazSum { shifts: number; laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null; roadShifts: number; heat: { shifts: number; secs: number; exposure: number; targets: number; sources: number; fMax: number; top: number[] }; shock: HazShock & { shifts: number }; ember: HazEmber; power: HazPower & { shifts: number } }
 export function sumHaz(list: readonly HazCount[]): HazSum {
-  const o: HazSum = { shifts: list.length, laws: {}, holes: 0, road: null, roadShifts: 0, heat: { shifts: 0, secs: 0, exposure: 0, targets: 0, sources: 0, fMax: 0, top: [] }, shock: { shifts: 0, shocked: 0, overMin: 0, pipes: 0, shut: 0, shakes: [], worn: 0, valves: 0 }, ember: { closed: 0, warm: 0, e0: [], cells: 0, crossed: 0, H: [] } };
+  const o: HazSum = { shifts: list.length, laws: {}, holes: 0, road: null, roadShifts: 0, heat: { shifts: 0, secs: 0, exposure: 0, targets: 0, sources: 0, fMax: 0, top: [] }, shock: { shifts: 0, shocked: 0, overMin: 0, pipes: 0, shut: 0, shakes: [], worn: 0, valves: 0 }, ember: { closed: 0, warm: 0, e0: [], cells: 0, crossed: 0, H: [] }, power: { shifts: 0, alerts: 0, comms: 0, liftCells: 0, liftH: 0, liftCrossed: 0, infra: 0, darkEnd: 0, spansEnd: 0 } };
   for (const c of list) {
+    if (c.power) {
+      const w = o.power, v = c.power;
+      if (v.alerts || v.comms || v.liftCells) w.shifts++;
+      w.alerts += v.alerts; w.comms += v.comms; w.liftCells += v.liftCells; w.liftH += v.liftH; w.liftCrossed += v.liftCrossed; w.infra += v.infra; w.darkEnd += v.darkEnd; w.spansEnd += v.spansEnd;
+    }
     if (c.shock) {
       const k = o.shock;
       if (c.shock.shocked) k.shifts++;
@@ -201,6 +219,8 @@ export function hazLines(s: HazSum): string[] {
   const k = s.shock, q = quart(k.shakes);
   out.push(k.shocked ? `hazard-shock: buildings shaken ${k.shocked} (in ${k.shifts} shifts) · over S_MIN ${k.overMin} · pipes cut ${k.pipes} (shut again ${k.shut}) · shake max ${f2(q[3])} p75 ${f2(q[2])} p50 ${f2(q[1])} p25 ${f2(q[0])} · scenes started worn ${k.worn} (leaking valve ${k.valves})` : 'hazard-shock: -');
   const m = s.ember, qe = quart(m.e0), qh = quart(m.H);
+  const w = s.power;
+  out.push(`hazard-power: shifts with an outage ${w.shifts} · power alerts ${w.alerts} · comms alerts ${w.comms} · lift buildings darkened ${w.liftCells} (Σ impulse ${f2(w.liftH)} · crossed ${w.liftCrossed}) · INFRA_FAIL ${w.infra} · dark zones at end ${w.darkEnd} · live spans at end ${w.spansEnd}`);
   out.push(`hazard-ember: closed building scenes ${m.closed} · warm (e0 > 0) ${m.warm} · e0 max ${f2(qe[3])} p75 ${f2(qe[2])} p50 ${f2(qe[1])} · rekindle cells ${m.cells} · H∞ max ${f2(qh[3])} p50 ${f2(qh[1])} (K ${RESIDUAL.K} · τ ${RESIDUAL.TAU}) · crossed ${m.crossed}`);
   return out;
 }
@@ -216,6 +236,7 @@ export function hazJson(s: HazSum): Record<string, unknown> {
   const r1 = (v: number): number => Math.round(v * 10) / 10;
   return {
     shifts: s.shifts, laws: s.laws, holes: s.holes,
+    power: { shifts: s.power.shifts, alerts: s.power.alerts, comms: s.power.comms, liftCells: s.power.liftCells, liftH: +s.power.liftH.toFixed(3), liftCrossed: s.power.liftCrossed, infra: s.power.infra, darkEnd: s.power.darkEnd, spansEnd: s.power.spansEnd },
     heat: { shifts: s.heat.shifts, exposurePerShift: +(s.heat.exposure / n).toFixed(2), targets: s.heat.targets, sources: s.heat.sources, secs: s.heat.secs, fMax: s.heat.fMax, top: s.heat.top.map((v) => +v.toFixed(2)) },
     ember: { closed: s.ember.closed, warm: s.ember.warm, cells: s.ember.cells, crossed: s.ember.crossed, e0Max: +quart(s.ember.e0)[3].toFixed(3), e0P50: +quart(s.ember.e0)[1].toFixed(3) },
     shock: { shifts: k.shifts, shaken: k.shocked, overMin: k.overMin, pipes: k.pipes, shut: k.shut, worn: k.worn, valves: k.valves, shake: { p25: +q[0].toFixed(3), p50: +q[1].toFixed(3), p75: +q[2].toFixed(3), max: +q[3].toFixed(3) } },

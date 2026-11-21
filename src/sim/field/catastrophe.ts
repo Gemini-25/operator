@@ -48,6 +48,7 @@ export const CAT = {
   NBR_FALL: 0.12,                 // 이웃 구획이 무너지면 옮겨 오는 하중 (단계 3)
   QUAKE: 0.08, QUAKE_COLLAPSE: 0.18,       // 지진 흔들림 한 번: 그 밖의 현장 · 붕괴 유형
   INIT_COLLAPSE: 0.75, INIT_SEV: 0.05, INIT_NBR: 0.85, INIT_QUAKE: 0.9,      // 처음 값: 붕괴 현장의 무너진 구획(0.75 − 0.05 × 심각도)·그 이웃, 지진 중의 다른 구획
+  WEAR_INTEG: 0.5,               // (I1-b b3-8 · I2) 손상된 건물(s.wear.dmg)의 처음 건전도 상한 1 − WEAR_INTEG × dmg — 손상 0.3 이면 0.85. I2 의 persist 도 이 값을 읽는다
   GAS_SRC: 0.15, GAS_D: 0.12,     // 가스 원천 · 확산
   GAS_DOOR: 0.15, GAS_STAIR: 0.9, // 닫힌 문·계단 너머의 교환 배율
   GAS_SEEP: 0.004, GAS_VENT: 0.12, GAS_MAX: 3,      // 벽 틈으로 새는 몫 · 깨진 창과 열린 바깥문 곁의 환기 · 상한
@@ -180,6 +181,8 @@ export function catOf(sim: Sim, s: Scene): CatState | null {
       for (let q = 0; q < nbrs[r].length; q++) if (hurt[nbrs[r][q]]) { by = true; break; }
       if (by) integ[r] = CAT.INIT_NBR; else if (quake) integ[r] = CAT.INIT_QUAKE;
     }
+    // (I1-b b3-8 · I2 §7) 이미 손상된 건물(s.wear — 이웃의 충격·지난 교대): 실내 구획마다 처음 건전도가 1 − WEAR_INTEG × dmg 를 넘지 않는다 (난수 없음 — 손상이 없는 현장은 그대로)
+    if (s.wear) for (let r = 0; r < R; r++) if (regs[r].indoor) integ[r] = Math.min(integ[r], 1 - CAT.WEAR_INTEG * s.wear.dmg);
   }
   // 전소 비율의 분모: 건물 칸 위의 연료 칸 (이미 탄 칸도 연료가 있던 칸이다)
   const fuelMask = new Uint8Array(n);

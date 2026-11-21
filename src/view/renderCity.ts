@@ -21,6 +21,8 @@ import { combatPinJitter, drawCombatPin } from './city/combatPin';
 import type { FxBook } from './scene/fxBook';
 import { drawExpoWorld, drawRuinBadge, drawRuinsWorld, ruinGlyphAt } from './city/ruinLayer';
 import { drawZonesWorld } from './city/zoneLayer';
+import { drawCarryWorld } from './city/carryLayer';      // (I2 §5.4) 지난 교대의 흔적
+import { carryLine, carryRoadLine } from '../sim/persist';      // (I2 §5.4) 마우스 정보 — 읽기만 한다
 import { paintKinds2Static } from './city/kinds2Layer';
 import { pinIcon, ruinLine } from './hazardState';
 import { TYPE_COLOR, respLimitOf } from './typeStyle';
@@ -146,6 +148,7 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
   }
   drawDisasterWorld(ctx, sim, o.timeMs, xf.scale);
+  drawCarryWorld(ctx, sim, { scale: xf.scale, timeMs: o.timeMs, mini, zs });      // (I2 §5.4) 지난 교대의 흔적 — 그을음·복구 공사 울타리·무너진 건물 (이번 교대의 무너짐·전소는 아래 drawRuinsWorld 가 그 위에)
   drawZonesWorld(ctx, sim, { truth: o.truth, timeMs: o.timeMs, scale: xf.scale, mini });      // (I1-b b4) 국지·동네 정전과 연기 자리의 옅은 테 (AI 시점은 관제가 아는 것만)
   drawRuinsWorld(ctx, sim, { truth: o.truth, timeMs: o.timeMs, scale: xf.scale, mini });      // (G4) 무너진 건물의 지붕·쓰러진 크레인·무너질 때 피는 먼지
   drawExpoWorld(ctx, sim, { truth: o.truth, timeMs: o.timeMs, scale: xf.scale, mini });      // (I1-b b4) 이웃의 충격으로 금 간 건물·끊긴 배관 (관찰자 시점만)
@@ -389,7 +392,7 @@ export function describeAt(sim: Sim, wx: number, wy: number, truth = true, scale
   const q = placeAt(city, wx, wy);
   const distSeg = (x0: number, y0: number, x1: number, y1: number): number => { const dx = x1 - x0, dy = y1 - y0, t = Math.max(0, Math.min(1, ((wx - x0) * dx + (wy - y0) * dy) / (dx * dx + dy * dy))); return Math.hypot(wx - x0 - dx * t, wy - y0 - dy * t); };
   if (!q || q.open) {
-    for (const e of city.edges) { const A = city.nodes[e.a], B = city.nodes[e.b]; if (distSeg(A.x, A.y, B.x, B.y) < (e.arterial ? 11 : 8)) { const flow = flowOf(e, truth); return { title: e.name, lines: [`${e.cls === 'highway' ? '고속화 도로' : e.cls === 'arterial' ? '간선 도로' : e.cls === 'local' ? '이면 도로' : '일반 도로'}${e.bridge ? ' · 다리' : ''}${e.gateT !== undefined ? ' · 건널목' : ''}`, `지금: ${flow === '극심' ? '극심한 정체' : flow}${flow === '통제' ? ' 중' : ''}`], color: '#e8d6a0', place: null, alert: flow === '통제' || flow === '극심' }; } }
+    for (const e of city.edges) { const A = city.nodes[e.a], B = city.nodes[e.b]; if (distSeg(A.x, A.y, B.x, B.y) < (e.arterial ? 11 : 8)) { const flow = flowOf(e, truth), rl = carryRoadLine(sim, e.id); return { title: e.name, lines: [`${e.cls === 'highway' ? '고속화 도로' : e.cls === 'arterial' ? '간선 도로' : e.cls === 'local' ? '이면 도로' : '일반 도로'}${e.bridge ? ' · 다리' : ''}${e.gateT !== undefined ? ' · 건널목' : ''}`, `지금: ${flow === '극심' ? '극심한 정체' : flow}${flow === '통제' ? ' 중' : ''}`, ...(rl ? [rl] : [])], color: '#e8d6a0', place: null, alert: flow === '통제' || flow === '극심' }; } }      // (I2) 복구 공사면 그 까닭과 개통 시각
     for (const a of city.alleys) if (distSeg(a.x0, a.y0, a.x1, a.y1) < 4.5) return { title: a.name, lines: ['골목 — 차량은 큰길에 세우고 걸어 들어간다'], color: '#9fb0c0', place: null, alert: false };
   }
   if (!q) return null;
@@ -399,6 +402,7 @@ export function describeAt(sim: Sim, wx: number, wy: number, truth = true, scale
   const open = here.find((I) => I.phase !== 'closed');
   if (open) lines.push(`사건 ${open.code} 진행 중`); else if (here.length) lines.push(`이번 교대에 사건 ${here.map((I) => I.code).join(', ')} 발생`);
   const rl = ruinLine(sim, q.id, truth); if (rl) lines.push(rl);      // (G4) 무너졌는지
+  const cl = carryLine(sim, q.id); if (cl) lines.push(cl);      // (I2 §5.4) 지난 교대의 흔적 — 그을림·출입 통제·무너짐 (조직이 아는 기록이라 두 시점에 같다)
   return { title: q.name, lines, color: open ? '#ffb454' : q.open ? '#58d68d' : '#7cc4ff', place: q, alert: !!open };
 }
 

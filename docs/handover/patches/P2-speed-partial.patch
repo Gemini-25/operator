@@ -1,0 +1,805 @@
+From dbb819a07013edccee6930c398de75b1ea7a3be3 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 16 Nov 2026 23:48:57 +0000
+Subject: [PATCH 1/4] =?UTF-8?q?P2=20=EC=86=8D=EB=8F=84:=20=EC=9E=90?=
+ =?UTF-8?q?=EC=A3=BC=20=EB=8F=84=EB=8A=94=20=EA=B0=9D=EC=B2=B4=EC=9D=98=20?=
+ =?UTF-8?q?=EC=88=AB=EC=9E=90=20=EC=B9=B8=EC=9D=84=20=EC=B2=98=EC=9D=8C?=
+ =?UTF-8?q?=EB=B6=80=ED=84=B0=20=EC=86=8C=EC=88=98=20=ED=91=9C=ED=98=84?=
+ =?UTF-8?q?=EC=9C=BC=EB=A1=9C=20(shapes.ts=20=E2=80=94=20=EA=B2=B0?=
+ =?UTF-8?q?=EA=B3=BC=20=EA=B0=99=EC=9D=8C)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+V8 이 숫자 칸을 정수(Smi)로 시작했다가 교대 도중 소수가 들어오면 객체 모양을 버리고(deprecate) 그 모양에 기댄
+최적화 코드를 모두 다시 컴파일한다 — 헤드리스 실행의 사용자 CPU 절반 남짓이 다시 컴파일이었다.
+프로세스마다 한 번, 대원·임무·사실·작업·현장·구역·소품·구조 대상·용의자(가짜 객체)와 처음 Sim 의
+부대·대원, 처음 사건(진짜 객체)의 칸에 소수를 넣었다 그대로 되돌린다. 가짜 객체는 붙잡아 둔다(모양이 GC 되면
+넓히지 않은 새 모양부터 다시 시작한다).
+
+보통 S0~S7 한 프로세스: TurboFan 컴파일 2205 → 1410 · 탈최적화 1494 → 556 · 사용자 CPU 26.5 → 19.8초.
+해시 목록 125교대 시작점과 같음.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01S6L8Vq3hyPupfdexwNGcVE
+---
+ src/sim/engine.ts             |  2 +
+ src/sim/field/commander.ts    |  2 +-
+ src/sim/field/sceneManager.ts |  2 +
+ src/sim/shapes.ts             | 93 +++++++++++++++++++++++++++++++++++
+ 4 files changed, 98 insertions(+), 1 deletion(-)
+ create mode 100644 src/sim/shapes.ts
+
+diff --git a/src/sim/engine.ts b/src/sim/engine.ts
+index d8d6c95..ad0a2f7 100644
+--- a/src/sim/engine.ts
++++ b/src/sim/engine.ts
+@@ -24,6 +24,7 @@ import type { Carryover, PlaceMark } from './types';      // (X6) · (I2)
+ import { Rng, hashStr } from './rng';
+ import type { AirStats, Call, City, Incident, Responder, Scene, ShiftReport, SimEvent, Unit, Weather } from './types';
+ import { WEATHER_NAME } from './util';
++import { widenShapes } from './shapes';
+ 
+ export const CITY_SEED = 0xc17e5eed;
+ 
+@@ -106,6 +107,7 @@ export class Sim {
+     else if (this.units.some((u) => u.grounded === 'night')) emit(this, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 1, text: '의료 헬기는 야간에 운항하지 않습니다.' });
+     // ③ (I2) 이어받은 상태의 기록 — 적용 목록과 버린 것만 (이어받은 상태가 없으면 아무것도 남기지 않는다)
+     announceCarry(this);
++    widenShapes(this);      // (P2 속도) 자주 도는 객체의 숫자 칸을 처음부터 소수 표현으로 — 값은 그대로 (shapes.ts)
+   }
+ 
+   /** 화면에 표시하는 시각 (하루 기준 초) */
+diff --git a/src/sim/field/commander.ts b/src/sim/field/commander.ts
+index e52c122..4099fa8 100644
+--- a/src/sim/field/commander.ts
++++ b/src/sim/field/commander.ts
+@@ -36,7 +36,7 @@ const GHOST: WorkItem = Object.freeze({
+ /** (X6) 계획 주기(syncBoard) 동안의 지휘관과 문이 막은 수. want 는 syncBoard 안에서만 불린다 — 밖에서 불리면 문을 묻지 않는다 */
+ let gateCmd: FieldAgent | null = null, gateHits = 0;
+ 
+-function want(sim: Sim, s: Scene, kind: WorkKind, tg: Target, priority: number, max = 1, thorough = false, cause = -1): WorkItem {
++export function want(sim: Sim, s: Scene, kind: WorkKind, tg: Target, priority: number, max = 1, thorough = false, cause = -1): WorkItem {      // export: (P2 속도) shapes.ts 가 작업 항목의 모양을 처음에 넓힌다
+   const region = tg.region ?? -1, cas = tg.cas ?? -1, prop = tg.prop ?? -1, hostile = tg.hostile ?? -1, tile = tg.tile ?? -1, mate = tg.mate ?? -1, animal = tg.animal ?? -1;
+   for (const w of s.board) {
+     if (w.kind !== kind || (w.status !== 'open' && w.status !== 'active')) continue;
+diff --git a/src/sim/field/sceneManager.ts b/src/sim/field/sceneManager.ts
+index 9f527e9..540d2bb 100644
+--- a/src/sim/field/sceneManager.ts
++++ b/src/sim/field/sceneManager.ts
+@@ -23,6 +23,7 @@ import { staticPass, tileOf } from './grid';
+ import { tickCasualties, tickCollapse, tickCrush, tickFire, tickGas, tickHostiles, tickLane, tickLeaks, tickLift, tickMedical, tickWander, tickWater } from './hazards';
+ import { CAUSE_NAME, DOWN_AT, canDeploy, hurtCauseNow, hurtResponder, initInjuries, mustRetreat, needsHospital, smokeCause, woundTick } from './injury';
+ import type { HurtOpts } from './injury';
++import { widenIncident } from '../shapes';      // (P2 속도)
+ 
+ /**
+  * (N8 단계 2a — 설계서 §5.7) 남은 일 등록의 답: 줄 가운데 처음으로 null 이 아닌 수요. 그 수요를 채울 부대(능력 0.7 이상)가 이미 이 사건에 배정돼
+@@ -44,6 +45,7 @@ export function createScene(sim: Sim, I: Incident): Scene {
+   s.allIdleSince = -1; s.rollCallAt = -1e9;      // 지휘관이 쓰는 칸은 만들 때 채워 둔다 (도중에 속성이 생기면 현장 객체의 모양이 바뀌어 매 틱 도는 코드가 느려진다)
+   s.air = []; s.light = null; s.airAt = -1;      // (R1) 상공의 헬기가 쓰는 칸 — 쓰는 것은 단계 4·5 부터
+   sim.scenes[I.id] = s;
++  widenIncident(I);      // (P2 속도) 처음 생긴 사건 객체의 숫자 칸을 소수 표현으로 — 값은 그대로 (shapes.ts)
+   return s;
+ }
+ 
+diff --git a/src/sim/shapes.ts b/src/sim/shapes.ts
+new file mode 100644
+index 0000000..e4986bb
+--- /dev/null
++++ b/src/sim/shapes.ts
+@@ -0,0 +1,93 @@
++// (P2 속도) 자주 도는 객체의 숫자 칸을 처음부터 소수 표현으로 넓혀 둔다 — 결과와 무관하다 (값을 넣었다가 그대로 되돌린다).
++//
++// 까닭: V8 은 객체의 숫자 칸을 처음 들어온 값의 표현으로 시작한다(정수면 Smi). 나중에 그 칸에 소수(또는 소수 표현의 정수 —
++// 소수 칸에서 읽은 값은 최적화되지 않은 코드에서 정수라도 소수 표현이다)가 들어오면, 그 모양(map)을 버리고 새 모양을 만든다.
++// 버린 모양에 기대어 최적화된 함수는 모두 버려지고 다시 컴파일된다. 교대 도중 드문 길(처음 나온 사건 종류)이 처음 소수를 넣을
++// 때마다 수십~수백 함수가 그렇게 되어, 헤드리스 실행의 사용자 CPU 절반 남짓이 다시 컴파일이었다 (docs/specs/P2-speed.md).
++// 여기서 프로세스마다 한 번, 각 종류의 객체를 진짜 만드는 함수로 하나 만들어 (또는 처음 생긴 진짜 객체에) 소수를 넣었다 빼면,
++// 그 뒤 만드는 모든 객체가 처음부터 넓힌 모양을 쓴다(같은 리터럴·같은 칸 순서의 객체는 모양을 함께 쓴다).
++//
++// 지킬 것: 값을 바꾸지 않는다(같은 값을 되돌린다), 난수·Sim 상태를 건드리지 않는다, 칸을 더하지 않는다(가짜 객체는 버린다).
++// 목록은 진단으로 정했다 — 교대를 여럿 돌린 뒤 소수 표현이 된 칸 (도구: P2-speed.md). 새 숫자 칸을 만들 때 나중에 소수가 들어갈 수
++// 있으면 여기 목록에도 넣는다 (빠뜨려도 결과는 같다 — 느려질 뿐이다).
++
++import type { Sim } from './engine';
++import type { Incident } from './types';
++import { Rng } from './rng';
++import { makeAgent } from './field/agents';
++import { makeTask } from './field/executor';
++import { mkFact } from './field/beliefs';
++import { want } from './field/commander';
++import { addCas, addHostile, addProp, addRegion, baseScene } from './field/kit';
++
++/**
++ * 넓힌 가짜 객체를 붙잡아 둔다: 모양(map)은 그 모양의 객체가 하나도 없으면 GC 가 거두고, 리터럴의 모양 캐시도 약하게 붙잡으므로
++ * 다음에 그 종류가 처음 생길 때 넓히지 않은 새 모양부터 다시 시작한다 (용의자가 없는 교대 뒤의 첫 무장 사건에서 실제로 그랬다)
++ */
++const KEEP: object[] = [];
++/** 칸마다 소수를 한 번 넣고 원래 값을 되돌린다 (원래 값이 undefined 면 일반 표현이 된다 — 그것도 나중에 모양을 바꾸지 않는다) */
++function widen<T extends object>(o: T, keys: readonly string[]): T {
++  const r = o as Record<string, unknown>;
++  for (let k = 0; k < keys.length; k++) { const key = keys[k], v = r[key]; r[key] = 0.5; r[key] = v; }
++  KEEP.push(o);
++  return o;
++}
++
++const AGENT = ['x', 'y', 'px', 'py', 'fx', 'fy', 'nextThink', 'ring', 'arrivedAt', 'idleSince', 'planT', 'outboxSince', 'shadowSince', 'nextPerceive', 'cooldown',
++  'smokeT', 'rehabLogAt', 'lastRetreatLog', 'hpTick', 'climb', 'taserAt', 'underFireT', 'pendingBlock', 'equipRetryAt'] as const;
++const TASK = ['progress', 'need', 'startedAt', 'repathAt', 'tx', 'ty', 'wait', 'gateAt', 'range', 'region', 'cas', 'prop', 'hostile', 'tile', 'mate',
++  'mt0', 'cvX', 'cvY', 'cvTx', 'cvTy', 'cvLost'] as const;
++const FACT = ['t', 'conf', 'id'] as const;
++const WORK = ['priority', 'createdAt', 'doneAt', 'holdUntil', 'region', 'cas', 'prop', 'hostile', 'tile', 'mate'] as const;
++const SCENE = ['exposure', 'startedAt', 'clearVision', 'nextCarAt', 'trafficFlow', 'outdoorVision', 'arrivedAt', 'fireOutAt', 'lastSitrep', 'negotStart',
++  'closedCheckAt', 'idleSince', 'triageAt', 'allIdleSince', 'rollCallAt', 'secureAt', 'breachAt', 'bangAt', 'airAt'] as const;
++const REGION = ['cx', 'cy', 'x0', 'y0', 'x1', 'y1'] as const;
++const PROP = ['x', 'y', 'hp', 'angle', 'leakRate', 'fuse', 'heatLoad', 'heatK'] as const;
++const CAS = ['health', 'bleed', 'concealment', 'bleed0', 'x', 'y', 'px', 'py', 'trapWork', 'treatProg', 'treatQ', 'wanderT', 'drift',
++  'tDiscovered', 'tFreed', 'tTreated', 'tSafe', 'tLoaded', 'tDead', 'tHospital'] as const;
++const HOSTILE = ['x', 'y', 'px', 'py', 'health', 'morale', 'aggression', 'skill', 'fleeAt', 'facing', 'lookAt', 'deadline', 'cooldown', 'negot', 'stunUntil',
++  'alertUntil', 'shotAt', 'moveAt', 'bleed', 'bleed0', 'treatQ', 'tTreated', 'tDown', 'tDead', 'hideUntil'] as const;
++const UNIT = ['x', 'y', 'px', 'py', 'water', 'waterMax', 'pumpCond', 'tool', 'medLevel', 'armor', 'segT', 'timer', 'dispatchedAt', 'estArrive', 'busyTime',
++  'fuel', 'nodeId', 'destNode', 'curbT', 'firstLoadAt'] as const;
++const RESPONDER = ['skill', 'judgment', 'composure', 'fitness', 'teamwork', 'experience', 'health', 'stamina', 'bleed', 'bleed0', 'treatQ', 'tDown', 'tDead'] as const;
++const INCIDENT = ['createdAt', 'followupAt', 'firstCallAt', 'reportedAt', 'answeredAt', 'unmetSince', 'firstDispatchAt', 'firstArrivalAt', 'closedAt', 'priority', 'reportedNode'] as const;
++const TRUTH = ['x', 'y', 'nodeId'] as const;
++
++let fieldDone = false, rosterDone = false, incidentDone = false;
++
++/**
++ * Sim 생성자 끝에서 부른다. 프로세스마다 한 번: 현장 객체(대원·임무·사실·작업·현장·구역·소품·구조 대상·용의자)를 가짜로 하나씩 만들어 넓히고,
++ * 처음 만든 Sim 의 진짜 부대·대원을 넓힌다 (같은 값을 되돌리므로 그 교대의 결과는 같다).
++ */
++export function widenShapes(sim: Sim): void {
++  if (!rosterDone) {
++    rosterDone = true;
++    for (const u of sim.units) widen(u, UNIT);
++    for (const r of sim.responders) widen(r, RESPONDER);
++  }
++  if (fieldDone) return;
++  fieldDone = true;
++  // 가짜 교대·사건: 만드는 함수가 읽는 칸만 (시각·날씨·사건 종류)
++  const fake = { t: 0, weather: 'clear' } as unknown as Sim;
++  const I = { id: 0, truth: { type: 'fire', variant: 'std' } } as unknown as Incident;
++  widen(makeAgent(fake, 0, 0, 0, 0, 0, new Rng(1)), AGENT);
++  widen(makeTask('standby', ''), TASK);
++  widen(mkFact('cas', 0, null, '', 0, 1, true, ''), FACT);
++  const s = baseScene(fake, I, new Rng(2));
++  // sceneManager.createScene 이 만든 뒤 붙이는 칸 (같은 순서 — 같은 모양)
++  s.allIdleSince = -1; s.rollCallAt = -1e9; s.air = []; s.light = null; s.airAt = -1;
++  widen(s, SCENE);
++  widen(want(fake, s, 'search', {}, 0), WORK);
++  widen(addRegion(s, '', 'room', 1, 1, 2, 2, true, true), REGION);
++  widen(addProp(s, 'valve', 1, 1), PROP);
++  widen(addCas(s, 1, 1, 'immobile', 50, 0, 0), CAS);
++  widen(addHostile(s, 1, 1, 'gun', 0.5, 0.5, false, 0.3), HOSTILE);
++}
++
++/** sceneManager.createScene 에서 부른다: 처음 생긴 사건(진짜 객체)을 넓힌다 — 사건 리터럴은 incidents.createIncident 안에만 있다 */
++export function widenIncident(I: Incident): void {
++  if (incidentDone) return;
++  incidentDone = true;
++  widen(I, INCIDENT);
++  widen(I.truth, TRUTH);
++}
+-- 
+2.43.0
+
+
+From d664de950fc4717ba46ad4c2709ad038a3a829b7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 16 Nov 2026 23:55:31 +0000
+Subject: [PATCH 2/4] =?UTF-8?q?P2=20=EC=86=8D=EB=8F=84:=20=EC=82=AC?=
+ =?UTF-8?q?=EC=8B=A4=EC=9D=98=20=EA=B0=92(=EA=B5=AC=EC=A1=B0=20=EB=8C=80?=
+ =?UTF-8?q?=EC=83=81=C2=B7=EC=9A=A9=EC=9D=98=EC=9E=90=C2=B7=EB=8F=99?=
+ =?UTF-8?q?=EB=A3=8C)=EA=B3=BC=20=EC=A7=80=ED=9C=98=20=EC=83=81=ED=83=9C?=
+ =?UTF-8?q?=EB=8F=84=20=EC=B2=98=EC=9D=8C=EB=B6=80=ED=84=B0=20=EB=84=93?=
+ =?UTF-8?q?=ED=9E=8C=EB=8B=A4=20(=EA=B2=B0=EA=B3=BC=20=EA=B0=99=EC=9D=8C)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+넓은 일거리 31교대(보통 10·어려움 3·극한 3·강제 8·재난 5·부대 규모 2) 한 프로세스, 시작점 → 지금:
+TurboFan 컴파일 3800 → 2300 · 탈최적화 2300 → 870 · 사용자 CPU 65 → 51초. 해시 목록 125교대 같음.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01S6L8Vq3hyPupfdexwNGcVE
+---
+ src/sim/shapes.ts | 16 +++++++++++++---
+ 1 file changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/src/sim/shapes.ts b/src/sim/shapes.ts
+index e4986bb..b800e4b 100644
+--- a/src/sim/shapes.ts
++++ b/src/sim/shapes.ts
+@@ -14,11 +14,12 @@
+ import type { Sim } from './engine';
+ import type { Incident } from './types';
+ import { Rng } from './rng';
+-import { makeAgent } from './field/agents';
++import { casFact, hosFact, makeAgent, mateFact } from './field/agents';
+ import { makeTask } from './field/executor';
+ import { mkFact } from './field/beliefs';
+ import { want } from './field/commander';
+ import { addCas, addHostile, addProp, addRegion, baseScene } from './field/kit';
++import { newOps } from './field/ops';
+ 
+ /**
+  * 넓힌 가짜 객체를 붙잡아 둔다: 모양(map)은 그 모양의 객체가 하나도 없으면 GC 가 거두고, 리터럴의 모양 캐시도 약하게 붙잡으므로
+@@ -52,6 +53,10 @@ const UNIT = ['x', 'y', 'px', 'py', 'water', 'waterMax', 'pumpCond', 'tool', 'me
+ const RESPONDER = ['skill', 'judgment', 'composure', 'fitness', 'teamwork', 'experience', 'health', 'stamina', 'bleed', 'bleed0', 'treatQ', 'tDown', 'tDead'] as const;
+ const INCIDENT = ['createdAt', 'followupAt', 'firstCallAt', 'reportedAt', 'answeredAt', 'unmetSince', 'firstDispatchAt', 'firstArrivalAt', 'closedAt', 'priority', 'reportedNode'] as const;
+ const TRUTH = ['x', 'y', 'nodeId'] as const;
++const CAS_V = ['x', 'y', 'drift'] as const;      // 사실의 값: 구조 대상 (agents.casFact)
++const HOS_V = ['x', 'y', 'facing'] as const;      // 용의자 (agents.hosFact)
++const MATE_V = ['x', 'y', 'since'] as const;      // 동료 (agents.mateFact)
++const OPS = ['since', 'quietSince', 'parAt', 'parDue', 'utilityAsked'] as const;      // 지휘 상태 (ops.newOps)
+ 
+ let fieldDone = false, rosterDone = false, incidentDone = false;
+ 
+@@ -80,8 +85,13 @@ export function widenShapes(sim: Sim): void {
+   widen(want(fake, s, 'search', {}, 0), WORK);
+   widen(addRegion(s, '', 'room', 1, 1, 2, 2, true, true), REGION);
+   widen(addProp(s, 'valve', 1, 1), PROP);
+-  widen(addCas(s, 1, 1, 'immobile', 50, 0, 0), CAS);
+-  widen(addHostile(s, 1, 1, 'gun', 0.5, 0.5, false, 0.3), HOSTILE);
++  const c = widen(addCas(s, 1, 1, 'immobile', 50, 0, 0), CAS);
++  const h = widen(addHostile(s, 1, 1, 'gun', 0.5, 0.5, false, 0.3), HOSTILE);
++  widen(casFact(fake, s, c, '').value as object, CAS_V);
++  widen(hosFact(fake, s, h, '', 0).value as object, HOS_V);
++  const withMate = { t: 0, weather: 'clear', responders: [{ health: 100 }] } as unknown as Sim;
++  widen(mateFact(withMate, s, makeAgent(fake, 0, 0, 0, 0, 0, new Rng(3)), 'down', '', 0).value as object, MATE_V);
++  widen(newOps(0), OPS);
+ }
+ 
+ /** sceneManager.createScene 에서 부른다: 처음 생긴 사건(진짜 객체)을 넓힌다 — 사건 리터럴은 incidents.createIncident 안에만 있다 */
+-- 
+2.43.0
+
+
+From 93f3977c70649cd3e9e584337932ad90c69c03a7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 17 Nov 2026 00:05:52 +0000
+Subject: [PATCH 3/4] =?UTF-8?q?P2=20=EC=86=8D=EB=8F=84:=20=EB=A7=8C?=
+ =?UTF-8?q?=EB=93=A0=20=EB=92=A4=20=EC=B2=98=EC=9D=8C=20=EB=B0=94=EB=80=8C?=
+ =?UTF-8?q?=EB=8A=94=20=EC=B9=B8=EB=8F=84=20=EC=B2=98=EC=9D=8C=EB=B6=80?=
+ =?UTF-8?q?=ED=84=B0=20=EB=B0=94=EB=80=8C=EB=8A=94=20=EC=B9=B8=EC=9C=BC?=
+ =?UTF-8?q?=EB=A1=9C=20(=EC=83=81=EC=88=98=20=EC=B9=B8=20=EC=B6=94?=
+ =?UTF-8?q?=EC=A0=81=EC=97=90=20=EA=B8=B0=EB=8C=84=20=EC=BD=94=EB=93=9C=20?=
+ =?UTF-8?q?=EB=B2=84=EB=A6=BC=20=EC=A4=84=EC=9D=B4=EA=B8=B0,=20=EA=B2=B0?=
+ =?UTF-8?q?=EA=B3=BC=20=EA=B0=99=EC=9D=8C)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+V8 은 만든 뒤 한 번도 바뀌지 않은 칸을 상수로 보고 최적화 코드에 박는다 — 처음 바뀔 때 기댄 코드가 모두 버려진다
+(장비의 faultKnown 29번 · 구역의 tiles 27번 · {x,y} 자리 16번 · 대원의 dead 16번 …). shapes.ts 가 같은 표현의 다른
+값을 넣었다 되돌린다. 장비 항목(진짜 — 처음 Sim 의 대원 장비)도 넓힌다.
+넓은 일거리 31교대: 의존 코드 버림 286 → 88 · 컴파일 2292 → 1981 · 사용자 CPU 53.1 → 49.8초. 해시 목록 125교대 같음.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01S6L8Vq3hyPupfdexwNGcVE
+---
+ src/sim/shapes.ts | 66 +++++++++++++++++++++++++++++++++++------------
+ 1 file changed, 49 insertions(+), 17 deletions(-)
+
+diff --git a/src/sim/shapes.ts b/src/sim/shapes.ts
+index b800e4b..0c5aff8 100644
+--- a/src/sim/shapes.ts
++++ b/src/sim/shapes.ts
+@@ -26,33 +26,64 @@ import { newOps } from './field/ops';
+  * 다음에 그 종류가 처음 생길 때 넓히지 않은 새 모양부터 다시 시작한다 (용의자가 없는 교대 뒤의 첫 무장 사건에서 실제로 그랬다)
+  */
+ const KEEP: object[] = [];
+-/** 칸마다 소수를 한 번 넣고 원래 값을 되돌린다 (원래 값이 undefined 면 일반 표현이 된다 — 그것도 나중에 모양을 바꾸지 않는다) */
+-function widen<T extends object>(o: T, keys: readonly string[]): T {
++/** 같은 표현의 다른 값 (상수 칸을 바뀌는 칸으로 — 정수는 정수, 배열은 배열, 그 밖의 객체·undefined 는 null/undefined) */
++function other(v: unknown): unknown {
++  if (typeof v === 'number') return v === 0 ? 1 : 0;
++  if (typeof v === 'boolean') return !v;
++  if (typeof v === 'string') return v === '' ? ' ' : '';
++  if (Array.isArray(v)) return [];
++  return v === null ? undefined : null;
++}
++/**
++ * nums: 칸마다 소수를 한 번 넣고 원래 값을 되돌린다 (원래 값이 undefined 면 일반 표현이 된다 — 그것도 나중에 모양을 바꾸지 않는다).
++ * muts: 만들 때 넣은 값을 나중에 처음 바꾸는 칸 — V8 은 한 번도 바뀌지 않은 칸을 상수로 보고 최적화 코드에 그 값을 박아 두므로,
++ * 처음 바뀔 때 그 칸에 기댄 코드가 모두 버려진다. 같은 표현의 다른 값을 넣었다 되돌려 처음부터 바뀌는 칸으로 둔다.
++ */
++function widen<T extends object>(o: T, nums: readonly string[], muts: readonly string[] = []): T {
+   const r = o as Record<string, unknown>;
+-  for (let k = 0; k < keys.length; k++) { const key = keys[k], v = r[key]; r[key] = 0.5; r[key] = v; }
++  for (let k = 0; k < nums.length; k++) { const key = nums[k], v = r[key]; r[key] = 0.5; r[key] = v; }
++  for (let k = 0; k < muts.length; k++) { const key = muts[k], v = r[key]; r[key] = other(v); r[key] = v; }
+   KEEP.push(o);
+   return o;
+ }
+ 
+ const AGENT = ['x', 'y', 'px', 'py', 'fx', 'fy', 'nextThink', 'ring', 'arrivedAt', 'idleSince', 'planT', 'outboxSince', 'shadowSince', 'nextPerceive', 'cooldown',
+-  'smokeT', 'rehabLogAt', 'lastRetreatLog', 'hpTick', 'climb', 'taserAt', 'underFireT', 'pendingBlock', 'equipRetryAt'] as const;
++  'smokeT', 'rehabLogAt', 'lastRetreatLog', 'hpTick', 'climb', 'taserAt', 'underFireT', 'pendingBlock', 'equipRetryAt', 'reloadUntil', 'trapped', 'wetSince'] as const;
++const AGENT_MUT = ['status', 'afloat', 'aloft', 'label', 'path', 'task', 'shaken', 'docMem', 'lightBack', 'fellOnce'] as const;
+ const TASK = ['progress', 'need', 'startedAt', 'repathAt', 'tx', 'ty', 'wait', 'gateAt', 'range', 'region', 'cas', 'prop', 'hostile', 'tile', 'mate',
+-  'mt0', 'cvX', 'cvY', 'cvTx', 'cvTy', 'cvLost'] as const;
++  'mt0', 'cvX', 'cvY', 'cvTx', 'cvTy', 'cvLost', 'entryDoor'] as const;
++const TASK_MUT = ['label', 'pts', 'covered', 'sub', 'method', 'mwhy', 'tried', 'docRule', 'gateId', 'gateSaid', 'selfAssigned', 'thorough', 'marr'] as const;
+ const FACT = ['t', 'conf', 'id'] as const;
+ const WORK = ['priority', 'createdAt', 'doneAt', 'holdUntil', 'region', 'cas', 'prop', 'hostile', 'tile', 'mate'] as const;
++const WORK_MUT = ['status', 'note', 'risky', 'thorough'] as const;
+ const SCENE = ['exposure', 'startedAt', 'clearVision', 'nextCarAt', 'trafficFlow', 'outdoorVision', 'arrivedAt', 'fireOutAt', 'lastSitrep', 'negotStart',
+   'closedCheckAt', 'idleSince', 'triageAt', 'allIdleSince', 'rollCallAt', 'secureAt', 'breachAt', 'bangAt', 'airAt'] as const;
++const SCENE_MUT = ['exits', 'spots', 'rules', 'outdoor', 'placeName', 'staging', 'safe', 'vantage', 'light', 'cat', 'ops', 'flow', 'quay', 'fan', 'ruin', 'falls', 'laneShield',
++  'sizeupDone', 'closing', 'entryOrdered', 'breachDone', 'archived', 'mismatchLogged', 'leadDept'] as const;
+ const REGION = ['cx', 'cy', 'x0', 'y0', 'x1', 'y1'] as const;
++const REGION_MUT = ['tiles', 'name', 'kind', 'indoor', 'searchable'] as const;
+ const PROP = ['x', 'y', 'hp', 'angle', 'leakRate', 'fuse', 'heatLoad', 'heatK'] as const;
++const PROP_MUT = ['blocking', 'locked', 'open', 'leak', 'mitigated', 'ignited', 'occupants', 'emptySeat', 'cleared', 'exploded', 'found', 'removed', 'entered', 'live', 'vessel'] as const;
+ const CAS = ['health', 'bleed', 'concealment', 'bleed0', 'x', 'y', 'px', 'py', 'trapWork', 'treatProg', 'treatQ', 'wanderT', 'drift',
+   'tDiscovered', 'tFreed', 'tTreated', 'tSafe', 'tLoaded', 'tDead', 'tHospital'] as const;
++const CAS_MUT = ['mob', 'where', 'treated', 'dead', 'walking', 'path', 'panic', 'inWater', 'inVehicle', 'freedHow', 'rush', 'wander', 'hostage', 'injuries', 'bleedCause', 'deathCause', 'lost'] as const;
+ const HOSTILE = ['x', 'y', 'px', 'py', 'health', 'morale', 'aggression', 'skill', 'fleeAt', 'facing', 'lookAt', 'deadline', 'cooldown', 'negot', 'stunUntil',
+   'alertUntil', 'shotAt', 'moveAt', 'bleed', 'bleed0', 'treatQ', 'tTreated', 'tDown', 'tDead', 'hideUntil'] as const;
++const HOSTILE_MUT = ['state', 'hidden', 'path', 'retreated', 'dragging', 'stunHow', 'where', 'dead', 'injuries', 'weapon', 'label'] as const;
+ const UNIT = ['x', 'y', 'px', 'py', 'water', 'waterMax', 'pumpCond', 'tool', 'medLevel', 'armor', 'segT', 'timer', 'dispatchedAt', 'estArrive', 'busyTime',
+   'fuel', 'nodeId', 'destNode', 'curbT', 'firstLoadAt'] as const;
++const UNIT_MUT = ['state', 'route', 'pendingDest', 'incidentId', 'hydrant', 'pumpFailed', 'patients', 'patientsIncident', 'diverted', 'boardOrder', 'aboard', 'grounded',
++  'backing', 'curb', 'parking', 'caps'] as const;
+ const RESPONDER = ['skill', 'judgment', 'composure', 'fitness', 'teamwork', 'experience', 'health', 'stamina', 'bleed', 'bleed0', 'treatQ', 'tDown', 'tDead'] as const;
++const RESPONDER_MUT = ['status', 'dead', 'care', 'injuries', 'deathCause', 'bleedCause', 'trait'] as const;
++const KIT_ITEM = ['uses', 'mag'] as const;
++const KIT_ITEM_MUT = ['fault', 'faultKnown'] as const;
+ const INCIDENT = ['createdAt', 'followupAt', 'firstCallAt', 'reportedAt', 'answeredAt', 'unmetSince', 'firstDispatchAt', 'firstArrivalAt', 'closedAt', 'priority', 'reportedNode'] as const;
++const INCIDENT_MUT = ['phase', 'locationKnown', 'assessment', 'result', 'fieldVerified', 'fieldType', 'noUnitLogged', 'closeReason', 'firstAssess', 'addressFixed',
++  'pursuit', 'coResp', 'aidUnit', 'airDone', 'methods', 'docs', 'fieldRisk', 'blockedBy'] as const;
+ const TRUTH = ['x', 'y', 'nodeId'] as const;
++const TRUTH_MUT = ['label', 'placeId', 'placeKind', 'district'] as const;
++const POINT = ['x', 'y'] as const;      // {x, y} 자리 객체 (현장의 대기 지점·안전 구역·사격 선분의 끝 …) — 같은 리터럴 모양을 함께 쓴다
+ const CAS_V = ['x', 'y', 'drift'] as const;      // 사실의 값: 구조 대상 (agents.casFact)
+ const HOS_V = ['x', 'y', 'facing'] as const;      // 용의자 (agents.hosFact)
+ const MATE_V = ['x', 'y', 'since'] as const;      // 동료 (agents.mateFact)
+@@ -67,26 +98,27 @@ let fieldDone = false, rosterDone = false, incidentDone = false;
+ export function widenShapes(sim: Sim): void {
+   if (!rosterDone) {
+     rosterDone = true;
+-    for (const u of sim.units) widen(u, UNIT);
+-    for (const r of sim.responders) widen(r, RESPONDER);
++    for (const u of sim.units) widen(u, UNIT, UNIT_MUT);
++    for (const r of sim.responders) { widen(r, RESPONDER, RESPONDER_MUT); for (const it of r.kit ?? []) widen(it, KIT_ITEM, KIT_ITEM_MUT); }
+   }
+   if (fieldDone) return;
+   fieldDone = true;
+   // 가짜 교대·사건: 만드는 함수가 읽는 칸만 (시각·날씨·사건 종류)
+   const fake = { t: 0, weather: 'clear' } as unknown as Sim;
+   const I = { id: 0, truth: { type: 'fire', variant: 'std' } } as unknown as Incident;
+-  widen(makeAgent(fake, 0, 0, 0, 0, 0, new Rng(1)), AGENT);
+-  widen(makeTask('standby', ''), TASK);
++  widen(makeAgent(fake, 0, 0, 0, 0, 0, new Rng(1)), AGENT, AGENT_MUT);
++  widen(makeTask('standby', ''), TASK, TASK_MUT);
+   widen(mkFact('cas', 0, null, '', 0, 1, true, ''), FACT);
+   const s = baseScene(fake, I, new Rng(2));
+   // sceneManager.createScene 이 만든 뒤 붙이는 칸 (같은 순서 — 같은 모양)
+   s.allIdleSince = -1; s.rollCallAt = -1e9; s.air = []; s.light = null; s.airAt = -1;
+-  widen(s, SCENE);
+-  widen(want(fake, s, 'search', {}, 0), WORK);
+-  widen(addRegion(s, '', 'room', 1, 1, 2, 2, true, true), REGION);
+-  widen(addProp(s, 'valve', 1, 1), PROP);
+-  const c = widen(addCas(s, 1, 1, 'immobile', 50, 0, 0), CAS);
+-  const h = widen(addHostile(s, 1, 1, 'gun', 0.5, 0.5, false, 0.3), HOSTILE);
++  widen(s, SCENE, SCENE_MUT);
++  widen(s.staging, POINT, POINT);
++  widen(want(fake, s, 'search', {}, 0), WORK, WORK_MUT);
++  widen(addRegion(s, '', 'room', 1, 1, 2, 2, true, true), REGION, REGION_MUT);
++  widen(addProp(s, 'valve', 1, 1), PROP, PROP_MUT);
++  const c = widen(addCas(s, 1, 1, 'immobile', 50, 0, 0), CAS, CAS_MUT);
++  const h = widen(addHostile(s, 1, 1, 'gun', 0.5, 0.5, false, 0.3), HOSTILE, HOSTILE_MUT);
+   widen(casFact(fake, s, c, '').value as object, CAS_V);
+   widen(hosFact(fake, s, h, '', 0).value as object, HOS_V);
+   const withMate = { t: 0, weather: 'clear', responders: [{ health: 100 }] } as unknown as Sim;
+@@ -98,6 +130,6 @@ export function widenShapes(sim: Sim): void {
+ export function widenIncident(I: Incident): void {
+   if (incidentDone) return;
+   incidentDone = true;
+-  widen(I, INCIDENT);
+-  widen(I.truth, TRUTH);
++  widen(I, INCIDENT, INCIDENT_MUT);
++  widen(I.truth, TRUTH, TRUTH_MUT);
+ }
+-- 
+2.43.0
+
+
+From 7f5578949147a3ad5f33e5a06478a0b346a7c327 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 17 Nov 2026 00:42:01 +0000
+Subject: [PATCH 4/4] =?UTF-8?q?P2=20=EC=86=8D=EB=8F=84:=20=EC=8B=9C?=
+ =?UTF-8?q?=ED=97=98=20=E2=80=94=20=EA=B0=99=EC=9D=80=20=EA=B5=90=EB=8C=80?=
+ =?UTF-8?q?=EB=A5=BC=20=ED=8C=8C=EC=9D=BC=20=EC=95=88=EC=97=90=EC=84=9C=20?=
+ =?UTF-8?q?=EB=8B=A4=EC=8B=9C=20=EB=8F=8C=EB=A6=AC=EC=A7=80=20=EC=95=8A?=
+ =?UTF-8?q?=EB=8A=94=EB=8B=A4=20(=EA=B0=99=EC=9D=80=20=EB=8B=A8=EC=96=B8?=
+ =?UTF-8?q?=C2=B7=EA=B0=99=EC=9D=80=20=EC=8B=9C=EB=93=9C)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+sim.test.ts: 보통 교대 S0~S49 를 도중에 들여다보던 네 시험(현장 배치 6000 틱·차량의 길가 2600 틱·쓰러진 나무
+6200 틱·추격전 10 틱마다)이 교대를 따로 다시 돌렸다(시드마다 다섯 번 — 132 교대 환산). shiftOf 가 그 교대를 처음
+돌릴 때 매 틱 끝에 관찰을 함께 부르고(watchNormal — 상태를 읽기만 한다), 관찰 안의 단언이 깨지면 그 오류를 붙잡아
+그 시험에서 다시 던진다. describe 몸통에서 돌리던 교대(S0~S7·S0~S13)는 beforeAll 로 옮겨 관찰이 모두 등록된 뒤에
+돈다. 같은 틱을 보는지 따로 견주었다(차량 1473·나무 117·6000 틱의 현장 같음).
+major.test.ts: 보통 교대 N5-0~7 을 두 시험이 따로 돌리던 것을 한 번만.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01S6L8Vq3hyPupfdexwNGcVE
+---
+ tests/major.test.ts |   7 +-
+ tests/sim.test.ts   | 169 +++++++++++++++++++++++++-------------------
+ 2 files changed, 103 insertions(+), 73 deletions(-)
+
+diff --git a/tests/major.test.ts b/tests/major.test.ts
+index 2029e64..f1d6446 100644
+--- a/tests/major.test.ts
++++ b/tests/major.test.ts
+@@ -69,11 +69,14 @@ describe('대형 사고의 틀', () => {
+     }
+   });
+ 
++  /** (P2 속도) 보통 교대 N5-k 는 이 묶음 안에서 한 번만 돌린다 — 쓰는 시험은 끝난 상태를 읽기만 한다 */
++  const n5done = new Map<number, Sim>();
++  const n5 = (k: number): Sim => { let s = n5done.get(k); if (!s) { s = new Sim('N5-' + k); s.runToEnd(); n5done.set(k, s); } return s; };
+   it('보통 난이도에서는 교대의 절반쯤에 한 번 일어나고, 한 교대에 둘은 없다. 심각도가 낮으면 드물다', () => {
+     let n = 0, low = 0;
+     const kinds = new Set<string>();
+     for (let k = 0; k < 30; k++) {
+-      const s = new Sim('N5-' + k); s.runToEnd();
++      const s = n5(k);
+       const m = s.incidents.filter((I) => I.tag === 'major');
+       expect(m.length, s.seed).toBeLessThanOrEqual(1);
+       expect(s.report!.major).toBe(m.length);
+@@ -94,7 +97,7 @@ describe('대형 사고의 틀', () => {
+   it('평소 추첨에는 대형 사고가 섞이지 않는다 (대형 사고가 일어나지 않은 교대의 사건에는 그 변형이 없다)', () => {
+     const variants = new Set(MAJORS.map((m) => m.variant));
+     for (let k = 0; k < 8; k++) {
+-      const s = new Sim('N5-' + k); s.runToEnd();
++      const s = n5(k);
+       for (const I of s.incidents) if (I.tag !== 'major') expect(variants.has(I.truth.variant), `${s.seed} ${I.truth.type}/${I.truth.variant}`).toBe(false);
+     }
+   }, 120000);
+diff --git a/tests/sim.test.ts b/tests/sim.test.ts
+index 74e3fdd..cf9ab1b 100644
+--- a/tests/sim.test.ts
++++ b/tests/sim.test.ts
+@@ -1,11 +1,12 @@
+ import { readdirSync, readFileSync, statSync } from 'node:fs';
+ import { join } from 'node:path';
+-import { describe, expect, it } from 'vitest';
++import { beforeAll, describe, expect, it } from 'vitest';
+ import { Sim } from '../src/sim/engine';
+ import { NORMAL, PRESETS } from '../src/sim/difficulty';
+ import { findRoute } from '../src/sim/city';
+ import { BeliefStore, mkFact } from '../src/sim/field/beliefs';
+ import { Rng } from '../src/sim/rng';
++import { T } from '../src/sim/types';
+ 
+ function runShift(seed: string): Sim { const s = new Sim(seed); s.runToEnd(); return s; }
+ /** 같은 시드·같은 조건으로 끝까지 돈 교대는 이 파일 안에서 한 번만 돌리고 다시 쓴다 (재현성은 위 테스트가 따로 본다). 쓰는 테스트는 끝난 상태를 읽기만 한다 */
+@@ -13,9 +14,36 @@ const finished = new Map<string, Sim>();
+ function shiftOf(seed: string, d: typeof NORMAL = NORMAL): Sim {
+   const key = seed + '|' + JSON.stringify(d);
+   let s = finished.get(key);
+-  if (!s) { s = new Sim(seed, d); s.runToEnd(); finished.set(key, s); }
++  if (!s) {
++    s = new Sim(seed, d);
++    if (JSON.stringify(d) === NORMAL_KEY && WATCH.length) { let n = 0; while (!s.ended && n++ < 20000) { s.step(); for (const w of WATCH) w(s); } }      // runToEnd 와 같은 걸음 + 관찰
++    else s.runToEnd();
++    finished.set(key, s);
++  }
+   return s;
+ }
++/**
++ * (P2 속도) 보통 난이도 교대를 도중에 들여다보는 시험은 그 교대를 따로 다시 돌리지 않고, shiftOf 가 그 교대를 처음 돌릴 때 매 틱 끝에 함께 본다
++ * (관찰은 상태를 읽기만 한다 — 같은 교대·같은 틱의 상태다). 등록은 describe 몸통에서 한다 — 시험과 beforeAll 은 모든 describe 몸통이 돈 뒤에 돌므로
++ * 그때는 관찰이 모두 등록되어 있다 (그래서 describe 몸통에서 shiftOf 를 부르지 않는다). 관찰 안의 단언이 깨지면 그 시드의 처음 오류를 붙잡아 두었다가
++ * 그 시험에서 다시 던진다 — 다른 시험이 그 교대를 먼저 돌려도 엉뚱한 시험이 깨지지 않는다.
++ */
++const NORMAL_KEY = JSON.stringify(NORMAL);
++const WATCH: ((s: Sim) => void)[] = [];
++function watchNormal(seeds: number, when: (s: Sim) => boolean, look: (s: Sim) => void): Map<string, unknown> {
++  const failed = new Map<string, unknown>();
++  WATCH.push((s) => {
++    if (failed.has(s.seed) || !/^S\d+$/.test(s.seed) || +s.seed.slice(1) >= seeds || !when(s)) return;
++    try { look(s); } catch (e) { failed.set(s.seed, e); }
++  });
++  return failed;
++}
++/** 관찰한 교대를 시드 순서대로 끝까지 돌려 두고(이미 돌았으면 그대로), 붙잡아 둔 처음 오류가 있으면 던진다 */
++function watched(seeds: number, failed: Map<string, unknown>): Sim[] {
++  const out: Sim[] = [];
++  for (let k = 0; k < seeds; k++) { out.push(shiftOf('S' + k)); const e = failed.get('S' + k); if (e !== undefined) throw e; }
++  return out;
++}
+ 
+ describe('재현성 (테스트 I)', () => {
+   it('같은 시드는 같은 이벤트 기록과 같은 보고서를 만든다', () => {
+@@ -48,7 +76,8 @@ describe('재현성 (테스트 I)', () => {
+ });
+ 
+ describe('교대 전체 진행 (테스트 A·B·C·D·F·G·J)', () => {
+-  const sims = ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7'].map((seed) => shiftOf(seed));
++  let sims: Sim[] = [];
++  beforeAll(() => { sims = ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7'].map((seed) => shiftOf(seed)); }, 600000);      // (P2) describe 몸통이 아니라 — 관찰(watchNormal)이 모두 등록된 뒤에 돌린다
+   it('플레이어 입력 없이 교대가 끝까지 진행되고 보고서가 나온다', () => {
+     for (const s of sims) {
+       expect(s.ended).toBe(true);
+@@ -236,7 +265,8 @@ describe('한 현장에 여러 팀', () => {
+ });
+ 
+ describe('신고 접수 확장과 새 사건 유형', () => {
+-  const sims = Array.from({ length: 14 }, (_, k) => { return shiftOf('S' + k); });
++  let sims: Sim[] = [];
++  beforeAll(() => { sims = Array.from({ length: 14 }, (_, k) => { return shiftOf('S' + k); }); }, 600000);      // (P2) describe 몸통이 아니라 (위와 같다)
+   it('응급 환자 사건이 발생하고, 기본 처치 뒤에 전문 처치가 이어진다', () => {
+     let medical = 0, upgraded = 0, any = 0;
+     for (const s of sims) for (const I of s.incidents) {
+@@ -448,37 +478,36 @@ describe('2층 건물', () => {
+ });
+ 
+ describe('현장 배치의 다양성', () => {
+-  it('건물 틀과 무장 사건 장소가 여러 종 나오고, 어느 건물이든 모든 바닥에 걸어서 닿을 수 있다', async () => {
+-    const { T } = await import('../src/sim/types');
+-    const kinds = new Set<string>(), venues = new Set<string>(), houses = new Set<number>();
+-    for (let k = 0; k < 30; k++) {
+-      const s = new Sim('S' + k);
+-      s.run(6000);
+-      for (const sc of s.scenes) {
+-        if (!sc) continue;
+-        const I = s.incidents[sc.incidentId];
+-        if (sc.kind === 'armed') venues.add(sc.placeName ?? '상점');
+-        if (sc.kind === 'medical') houses.add(sc.regions.length);
+-        if (sc.kind === 'fire' || sc.kind === 'collapse' || sc.kind === 'hazmat') {
+-          const tall = sc.stairTo.some((v) => v >= 0), cor = sc.regions.some((r) => r.kind === 'corridor'), big = sc.regions.some((r) => r.kind === 'room' && r.tiles.length > 45);
+-          kinds.add(tall ? 'tall' : cor ? 'corridor' : big ? 'hall' : 'suite');
+-        }
+-        if (sc.kind === 'search' || sc.kind === 'traffic') continue;
+-        // 대기 지점에서 출발해 문·계단을 지나 모든 바닥 칸에 닿는가 (잔해와 잠긴 문은 치우거나 열 수 있다)
+-        const w = sc.w, seen = new Uint8Array(sc.w * sc.h);
+-        const pass = (i: number): boolean => { const t = sc.tiles[i]; return t === T.FLOOR || t === T.DOOR || t === T.GROUND || t === T.ROAD || t === T.STAIR; };
+-        const st = [sc.staging.y * w + sc.staging.x]; seen[st[0]] = 1;
+-        while (st.length) {
+-          const c = st.pop()!, x = c % w, y = (c / w) | 0;
+-          for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= w || ny >= sc.h) continue; const j = ny * w + nx; if (!seen[j] && pass(j)) { seen[j] = 1; st.push(j); } }
+-          const sl = sc.stairTo[c]; if (sl >= 0 && !seen[sl]) { seen[sl] = 1; st.push(sl); }
+-        }
+-        let cut = 0; for (let i = 0; i < seen.length; i++) if (sc.tiles[i] === T.FLOOR && !seen[i]) cut++;
+-        expect(cut, `${s.seed} 사건 ${I.code} (${sc.kind})`).toBe(0);
+-        // 출입구 바깥 칸은 걸을 수 있는 땅이다
+-        for (const e of sc.exits) expect(pass(e.y * w + e.x)).toBe(true);
++  // (P2) 교대 S0~S29 를 6000 틱까지 돌린(그 전에 끝나면 끝난) 상태를 본다 — 따로 돌리지 않고 shiftOf 의 그 틱에 함께 본다 (watchNormal)
++  const kinds = new Set<string>(), venues = new Set<string>(), houses = new Set<number>();
++  const failed = watchNormal(30, (s) => s.tick === 6000 || (s.ended && s.tick < 6000), (s) => {
++    for (const sc of s.scenes) {
++      if (!sc) continue;
++      const I = s.incidents[sc.incidentId];
++      if (sc.kind === 'armed') venues.add(sc.placeName ?? '상점');
++      if (sc.kind === 'medical') houses.add(sc.regions.length);
++      if (sc.kind === 'fire' || sc.kind === 'collapse' || sc.kind === 'hazmat') {
++        const tall = sc.stairTo.some((v) => v >= 0), cor = sc.regions.some((r) => r.kind === 'corridor'), big = sc.regions.some((r) => r.kind === 'room' && r.tiles.length > 45);
++        kinds.add(tall ? 'tall' : cor ? 'corridor' : big ? 'hall' : 'suite');
++      }
++      if (sc.kind === 'search' || sc.kind === 'traffic') continue;
++      // 대기 지점에서 출발해 문·계단을 지나 모든 바닥 칸에 닿는가 (잔해와 잠긴 문은 치우거나 열 수 있다)
++      const w = sc.w, seen = new Uint8Array(sc.w * sc.h);
++      const pass = (i: number): boolean => { const t = sc.tiles[i]; return t === T.FLOOR || t === T.DOOR || t === T.GROUND || t === T.ROAD || t === T.STAIR; };
++      const st = [sc.staging.y * w + sc.staging.x]; seen[st[0]] = 1;
++      while (st.length) {
++        const c = st.pop()!, x = c % w, y = (c / w) | 0;
++        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= w || ny >= sc.h) continue; const j = ny * w + nx; if (!seen[j] && pass(j)) { seen[j] = 1; st.push(j); } }
++        const sl = sc.stairTo[c]; if (sl >= 0 && !seen[sl]) { seen[sl] = 1; st.push(sl); }
+       }
++      let cut = 0; for (let i = 0; i < seen.length; i++) if (sc.tiles[i] === T.FLOOR && !seen[i]) cut++;
++      expect(cut, `${s.seed} 사건 ${I.code} (${sc.kind})`).toBe(0);
++      // 출입구 바깥 칸은 걸을 수 있는 땅이다
++      for (const e of sc.exits) expect(pass(e.y * w + e.x)).toBe(true);
+     }
++  });
++  it('건물 틀과 무장 사건 장소가 여러 종 나오고, 어느 건물이든 모든 바닥에 걸어서 닿을 수 있다', () => {
++    watched(30, failed);
+     expect(kinds.size).toBe(4);
+     expect(venues.size).toBeGreaterThanOrEqual(3);
+     expect(houses.size).toBeGreaterThanOrEqual(2);
+@@ -628,10 +657,21 @@ describe('건물마다 정해진 도시', () => {
+     for (const f of a.facilities) expect(a.nodes[f.nodeId].edges.length).toBeGreaterThan(0);
+   });
+ 
++  // (P2) 교대 도중(처음 2600 틱, 50 틱마다): 현장에 도착한 차량은 건물 앞 길가에 서 있다 — 따로 돌리지 않고 shiftOf 의 그 틱에 함께 본다 (watchNormal)
++  let parked = 0;
++  const parkFailed = watchNormal(30, (t) => t.tick <= 2600 && (t.tick - 1) % 50 === 0, (t) => {
++    for (const u of t.units) {
++      if (u.state !== 'onscene' || u.incidentId === null || u.air || u.sea) continue;      // 헬기와 구조정은 길가에 서지 않는다
++      const I = t.incidents[u.incidentId]; if (I.truth.placeId < 0) continue;
++      const q = t.city.places[I.truth.placeId], n = t.city.nodes[q.nodeId];
++      if (Math.hypot(q.cx - n.x, q.cy - n.y) <= 8) continue;
++      expect(Math.hypot(u.x - q.cx, u.y - q.cy)).toBeLessThan(0.5); parked++;
++    }
++  });
+   it('사건은 유형에 맞는 건물에서 일어나고, 현장은 그 건물을 따르며, 차량은 그 건물 앞 길가에 선다', async () => {
+     const { INCIDENT_PLACES } = await import('../src/sim/cityPlan');
+     const { scenarioOf } = await import('../src/sim/scenarios');
+-    let atPlace = 0, bankLobby = 0, banks = 0, smallTall = 0, parked = 0, named = 0, intersections = 0;
++    let atPlace = 0, bankLobby = 0, banks = 0, smallTall = 0, named = 0, intersections = 0;
+     for (let k = 0; k < 30; k++) {
+       const s = shiftOf('S' + k);
+       for (const I of s.incidents) {
+@@ -650,20 +690,8 @@ describe('건물마다 정해진 도시', () => {
+         const loc = I.claims.find((c) => c.topic === 'location' && c.truthful);
+         if (loc && loc.text.includes(q.name)) { named++; expect(loc.placeKind).toBe(q.kind); }
+       }
+-      // 교대 도중: 현장에 도착한 차량은 건물 앞 길가에 서 있다
+-      const t = new Sim('S' + k);
+-      for (let i = 0; i < 2600 && !t.ended; i++) {
+-        t.step();
+-        if (i % 50) continue;
+-        for (const u of t.units) {
+-          if (u.state !== 'onscene' || u.incidentId === null || u.air || u.sea) continue;      // 헬기와 구조정은 길가에 서지 않는다
+-          const I = t.incidents[u.incidentId]; if (I.truth.placeId < 0) continue;
+-          const q = t.city.places[I.truth.placeId], n = t.city.nodes[q.nodeId];
+-          if (Math.hypot(q.cx - n.x, q.cy - n.y) <= 8) continue;
+-          expect(Math.hypot(u.x - q.cx, u.y - q.cy)).toBeLessThan(0.5); parked++;
+-        }
+-      }
+     }
++    watched(30, parkFailed);      // 교대 도중의 관찰 (위 watchNormal)
+     expect(atPlace).toBeGreaterThan(120);
+     expect(intersections).toBeGreaterThan(20);
+     expect(banks).toBeGreaterThanOrEqual(2); expect(bankLobby).toBe(banks);      // 은행에서 난 사건의 현장은 은행 로비다
+@@ -674,20 +702,19 @@ describe('건물마다 정해진 도시', () => {
+ });
+ 
+ describe('생활 사건 시나리오', () => {
++  // 쓰러진 나무: 사건이 열려 있는 동안 그 도로 구간은 지나갈 수 없다 — (P2) 교대 S0~S39 의 처음 6200 틱, 40 틱마다. 따로 돌리지 않고 shiftOf 의 그 틱에 함께 본다 (watchNormal)
++  let treeClosed = 0;
++  const treeFailed = watchNormal(40, (s) => s.tick <= 6200 && (s.tick - 1) % 40 === 0, (s) => {
++    for (const I of s.incidents) if (I.truth.variant === 'tree' && I.phase !== 'closed' && I.blockedEdge >= 0) { expect(s.city.edges[I.blockedEdge].closed).toBe(true); treeClosed++; }
++  });
+   it('쓰러진 나무·맨홀 추락·승강기 갇힘·가정 폭력·침입 절도가 나오고, 저마다 맞는 곳에서 맞는 모습으로 벌어진다', async () => {
+     const { SCENARIOS, scenarioName } = await import('../src/sim/scenarios');
+     const { T } = await import('../src/sim/types');
+     const seen: Record<string, number> = {}, good: Record<string, number> = {};
+-    let labelled = 0, treeClosed = 0, timeouts = 0, total = 0;
++    let labelled = 0, timeouts = 0, total = 0;
++    const shifts = watched(40, treeFailed);      // 교대 도중의 관찰 (위 watchNormal) — 끝난 교대를 아래에서 본다
+     for (let k = 0; k < 40; k++) {
+-      const s = new Sim('S' + k);
+-      // 쓰러진 나무: 사건이 열려 있는 동안 그 도로 구간은 지나갈 수 없다
+-      for (let i = 0; i < 6200 && !s.ended; i++) {
+-        s.step();
+-        if (i % 40) continue;
+-        for (const I of s.incidents) if (I.truth.variant === 'tree' && I.phase !== 'closed' && I.blockedEdge >= 0) { expect(s.city.edges[I.blockedEdge].closed).toBe(true); treeClosed++; }
+-      }
+-      s.runToEnd();
++      const s = shifts[k];
+       for (const I of s.incidents) {
+         const sc = s.scenes[I.id]!, key = `${I.truth.type}/${I.truth.variant}`;
+         total++; if (I.closeReason === 'timeout') timeouts++;
+@@ -727,24 +754,24 @@ describe('생활 사건 시나리오', () => {
+ });
+ 
+ describe('추격전', () => {
++  // 달리는 동안: 지금 구간은 실제로 이어진 도로이고, 차는 그 위에 있으며, 아직 현장에 들어간 부대는 없다 —
++  // (P2) 교대 S0~S49 의 10 틱마다. 따로 돌리지 않고 shiftOf 의 그 틱에 함께 본다 (watchNormal)
++  const driveFailed = watchNormal(50, (s) => s.tick % 10 === 0, (s) => {
++    for (const I of s.incidents) {
++      const p = I.pursuit;
++      if (!p || p.state !== 'driving' || I.phase === 'closed') continue;
++      const e = s.city.edges[p.edge];
++      expect((e.a === p.from && e.b === p.to) || (e.a === p.to && e.b === p.from)).toBe(true);
++      if (s.t >= p.startAt) { const A = s.city.nodes[p.from], B = s.city.nodes[p.to]; expect(Math.abs(Math.hypot(p.x - A.x, p.y - A.y) + Math.hypot(p.x - B.x, p.y - B.y) - e.len)).toBeLessThan(1.5); }
++      for (const uid of I.assigned) expect(s.units[uid].state).not.toBe('onscene');
++      expect(s.scenes[I.id]!.agents.length).toBe(0);
++    }
++  });
+   it('도주 차량은 도로를 따라 달리고, 따라붙거나 앞을 막으면 그 자리에 현장이 열리며, 놓치면 도시를 빠져나간다', () => {
+     let n = 0, stopped = 0, escaped = 0, kidnap = 0, drunk = 0, sight = 0, timeouts = 0;
++    const shifts = watched(50, driveFailed);      // 교대 도중의 관찰 (위 watchNormal) — 끝난 교대를 아래에서 본다
+     for (let k = 0; k < 50; k++) {
+-      const s = new Sim('S' + k);
+-      while (!s.ended) {
+-        s.step();
+-        if (s.tick % 10) continue;
+-        for (const I of s.incidents) {
+-          const p = I.pursuit;
+-          if (!p || p.state !== 'driving' || I.phase === 'closed') continue;
+-          // 달리는 동안: 지금 구간은 실제로 이어진 도로이고, 차는 그 위에 있으며, 아직 현장에 들어간 부대는 없다
+-          const e = s.city.edges[p.edge];
+-          expect((e.a === p.from && e.b === p.to) || (e.a === p.to && e.b === p.from)).toBe(true);
+-          if (s.t >= p.startAt) { const A = s.city.nodes[p.from], B = s.city.nodes[p.to]; expect(Math.abs(Math.hypot(p.x - A.x, p.y - A.y) + Math.hypot(p.x - B.x, p.y - B.y) - e.len)).toBeLessThan(1.5); }
+-          for (const uid of I.assigned) expect(s.units[uid].state).not.toBe('onscene');
+-          expect(s.scenes[I.id]!.agents.length).toBe(0);
+-        }
+-      }
++      const s = shifts[k];
+       for (const I of s.incidents) {
+         const p = I.pursuit; if (!p) continue;
+         n++; if (p.kind === 'kidnap') kidnap++; else drunk++;
+-- 
+2.43.0
+
+diff --git a/src/sim/field/catastrophe.ts b/src/sim/field/catastrophe.ts
+index d153b9f..2dccb8b 100644
+--- a/src/sim/field/catastrophe.ts
++++ b/src/sim/field/catastrophe.ts
+@@ -227,6 +227,7 @@ export function catOf(sim: Sim, s: Scene): CatState | null {
+   });
+   // (단계 9, 선택) 분진 구획 (§4.5) — catinit 흐름에서 용기 열 배율 → 드럼통 다음 차례 (Rng.fork 는 부모를 소비하지 않으므로 앞의 추첨은 그대로다)
+   if (CAT.dust) c.dustRegion = pickDust(sim, s, I, init);
++  widenFirst('cat', c);      // (P2 속도) 처음 만든 위험 상태의 숫자 칸을 소수 표현으로 — 값은 그대로 (shapes.ts)
+   s.cat = c;
+   return c;
+ }
+diff --git a/src/sim/field/rules/air.ts b/src/sim/field/rules/air.ts
+index 8ce29f9..366dd69 100644
+--- a/src/sim/field/rules/air.ts
++++ b/src/sim/field/rules/air.ts
+@@ -71,6 +71,7 @@ function makeOp(sim: Sim, s: Scene, I: Incident, u: Unit): AirOp {
+   eye.aloft = true; eye.label = '상공 관측';
+   for (const f of briefFacts(sim, I)) eye.beliefs.merge(f);      // 지상 대원처럼 관제의 브리핑을 받고 온다
+   const op: AirOp = { unitId: u.id, mode: 'watch', x, y, px: x, py: y, phase: 'hover', target: -1, workId: -1, progress: 0, need: 0, backAt: -1, idleSince: -1, eye };
++  widenFirst('airop', op);      // (P2 속도) 숫자 칸을 소수 표현으로 — 값은 그대로 (shapes.ts)
+   const terrain: AirTerrain = { w: s.w, h: s.h, tiles: s.tiles, region: s.region, regions: s.regions };
+   STATE.set(op, { leg: nearestLeg(terrain, s.kind, x, y), missed: new Map(), lit: 0, tx: x, ty: y, sweep: false, terrain, dropAt: -1, fromX: x, fromY: y });
+   return op;
+diff --git a/src/sim/pursuit.ts b/src/sim/pursuit.ts
+index bbc8d41..56df9f3 100644
+--- a/src/sim/pursuit.ts
++++ b/src/sim/pursuit.ts
+@@ -46,6 +46,7 @@ export function startPursuit(sim: Sim, I: Incident, kind: 'kidnap' | 'drunk' | '
+     startAt: I.firstCallAt + (kind === 'kidnap' ? 2 : 0), nextSight: 0, seenAt: -1, pressure: 0, tracked: false, how: '',
+     crashAt: kind === 'drunk' ? I.firstCallAt + rng.range(30, 130) : Infinity, giveUpAt: I.firstCallAt + (kind === 'kidnap' ? 300 : kind === 'getaway' ? 240 : 260), trail: [[n.x, n.y]],
+   };
++  widenFirst('pursuit', I.pursuit);      // (P2 속도) 처음 생긴 추격 객체의 숫자 칸을 소수 표현으로 — 값은 그대로 (shapes.ts)
+   if (hideout !== undefined) I.pursuit.hideout = hideout;
+   if (kind === 'getaway' && rng.chance(0.3)) I.pursuit.crashAt = I.firstCallAt + rng.range(45, 160);      // 서두르다 사고를 내기도 한다
+   pickNext(sim, I, rng, -1);
+diff --git a/src/sim/shapes.ts b/src/sim/shapes.ts
+index 0c5aff8..4fa7d79 100644
+--- a/src/sim/shapes.ts
++++ b/src/sim/shapes.ts
+@@ -85,6 +85,7 @@ const TRUTH = ['x', 'y', 'nodeId'] as const;
+ const TRUTH_MUT = ['label', 'placeId', 'placeKind', 'district'] as const;
+ const POINT = ['x', 'y'] as const;      // {x, y} 자리 객체 (현장의 대기 지점·안전 구역·사격 선분의 끝 …) — 같은 리터럴 모양을 함께 쓴다
+ const CAS_V = ['x', 'y', 'drift'] as const;      // 사실의 값: 구조 대상 (agents.casFact)
++const CAS_V_MUT = ['mob', 'band', 'where', 'treated', 'trappedDone', 'tq', 'water', 'veh', 'pit', 'rush'] as const;
+ const HOS_V = ['x', 'y', 'facing'] as const;      // 용의자 (agents.hosFact)
+ const MATE_V = ['x', 'y', 'since'] as const;      // 동료 (agents.mateFact)
+ const OPS = ['since', 'quietSince', 'parAt', 'parDue', 'utilityAsked'] as const;      // 지휘 상태 (ops.newOps)
+@@ -119,13 +120,30 @@ export function widenShapes(sim: Sim): void {
+   widen(addProp(s, 'valve', 1, 1), PROP, PROP_MUT);
+   const c = widen(addCas(s, 1, 1, 'immobile', 50, 0, 0), CAS, CAS_MUT);
+   const h = widen(addHostile(s, 1, 1, 'gun', 0.5, 0.5, false, 0.3), HOSTILE, HOSTILE_MUT);
+-  widen(casFact(fake, s, c, '').value as object, CAS_V);
++  widen(casFact(fake, s, c, '').value as object, CAS_V, CAS_V_MUT);
+   widen(hosFact(fake, s, h, '', 0).value as object, HOS_V);
+   const withMate = { t: 0, weather: 'clear', responders: [{ health: 100 }] } as unknown as Sim;
+   widen(mateFact(withMate, s, makeAgent(fake, 0, 0, 0, 0, 0, new Rng(3)), 'down', '', 0).value as object, MATE_V);
+   widen(newOps(0), OPS);
+ }
+ 
++/**
++ * 리터럴이 그 파일 안에만 있는 드문 객체: 처음 생긴 진짜 객체를 그 자리에서 넓힌다 (프로세스마다 종류별 한 번 — 같은 값을 되돌린다).
++ * 부르는 곳: 추격(pursuit.startPursuit) · 상공 헬기의 일(rules/air.ts makeOp) · 위험 상태(catastrophe.catOf)
++ */
++const RARE: Record<string, readonly [readonly string[], readonly string[]]> = {
++  pursuit: [['from', 'to', 'edge', 'goal', 't', 'x', 'y', 'angle', 'startAt', 'nextSight', 'seenAt', 'pressure', 'crashAt', 'giveUpAt', 'speedMul'], ['state', 'tracked', 'how', 'trail']],
++  airop: [['x', 'y', 'px', 'py', 'target', 'workId', 'progress', 'need', 'backAt', 'idleSince'], ['mode', 'phase']],
++  cat: [['bldg', 'bldgL3Since', 'cloudSince', 'burntAt', 'totalAt', 'utilityAt', 'gasN', 'vesselN', 'dustN', 'events', 'shakeSeen', 'limitBonus', 'dustRegion'],
++    ['struct', 'gas', 'gasTmp', 'lastFall', 'dustDone']],
++};
++const rareDone = new Set<string>();
++export function widenFirst(kind: keyof typeof RARE & string, o: object): void {
++  if (rareDone.has(kind)) return;
++  rareDone.add(kind);
++  widen(o, RARE[kind][0], RARE[kind][1]);
++}
++
+ /** sceneManager.createScene 에서 부른다: 처음 생긴 사건(진짜 객체)을 넓힌다 — 사건 리터럴은 incidents.createIncident 안에만 있다 */
+ export function widenIncident(I: Incident): void {
+   if (incidentDone) return;

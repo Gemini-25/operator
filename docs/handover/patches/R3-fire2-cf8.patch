@@ -1,0 +1,449 @@
+From 4d090d68751ec11eaba1509630d22b11ae0faf81 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Mon, 16 Nov 2026 23:36:05 +0000
+Subject: [PATCH 1/2] =?UTF-8?q?R3=20=EA=B7=A0=ED=98=95=20=EB=B3=B4?=
+ =?UTF-8?q?=ED=83=AC:=20=EB=82=A8=EB=8A=94=20=EB=8C=80=EC=9B=90=EC=9D=98?=
+ =?UTF-8?q?=20=EC=A7=9D=20=ED=88=AC=EC=9E=85=20(=EC=A7=80=ED=9C=98=20CF8?=
+ =?UTF-8?q?=20=E2=80=94=20commander.sparePair)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+짝이 따라올 수 없어(F04) 새 방의 위험 실내 일(수색·진압·잔불 정리)을 못 맡는
+공기호흡기 대원에게 손 빈 공기호흡기 대원(다른 부대여도)을 새 짝으로 붙여 그 일을
+맡긴다. 지금 짝이 위험 실내 일에 묶였으면(짝 동행으로 따라가던 앞장선 짝 등) 남는
+대원이 둘 있을 때만 — 앞장선 짝에게도 하나를 대신 붙인다. 짝 동행은 따라가던 짝이
+바뀌면 끝난다. 2인 진입·밖 2인 대기·SOLO_IN 은 그대로. 스위치 DOC_SWITCH.SPARE ·
+SPARE_SPLIT, 이름표 CMD_ROWS CF8. 시험: tests/doctrine.test.ts 균형 보탬 셋.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01S6L8Vq3hyPupfdexwNGcVE
+---
+ src/sim/field/commander.ts         | 132 +++++++++++++++++++++++++++++
+ src/sim/field/doctrine/fire.ts     |   2 +
+ src/sim/field/doctrine/registry.ts |   5 +-
+ src/sim/field/doctrineRun.ts       |  14 +++
+ tests/doctrine.test.ts             | 105 ++++++++++++++++++++++-
+ 5 files changed, 256 insertions(+), 2 deletions(-)
+
+diff --git a/src/sim/field/commander.ts b/src/sim/field/commander.ts
+index e52c122..5179ead 100644
+--- a/src/sim/field/commander.ts
++++ b/src/sim/field/commander.ts
+@@ -704,6 +704,7 @@ export function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
+       if (swatOn && bestNoCs !== null && bestNoCs !== best) recordDoc(sim, I, null, 'CS2', 'cmd', { work: w.kind, tgt: 'w:' + w.id }, ordEv);      // (CS2) 가산이 고른 사람을 바꾸었다
+     }
+   }
++  if (DOC_SWITCH.SPARE) sparePair(sim, s, I, a, items, taken);      // (균형 보탬 CF8) 남는 대원에게 짝을 지어 다른 방을 맡긴다
+   // 교대: 구출을 맡은 사람이 다 찼는데(먼저 닿은 대원이 맨손으로 붙들고 있다), 손이 빈 대원 가운데 훨씬 나은 장비를 든 사람이 있으면
+   // (뒤에 닿은 구조대의 유압 구조기) 그 사람을 보낸다. 닿으면 그 자리에서 가장 서툰 사람과 자리를 바꾼다(executor 의 구출 임무 — relieve).
+   // 한 작업의 사람 수(max)는 그대로다: 넘겨받는 동안만 한 명이 더 붙는다. 적합도는 든 장비로만 본다(fitFor — 숨은 고장은 모른다)
+@@ -1016,3 +1017,134 @@ function pairTakes(sim: Sim, s: Scene, a: FieldAgent, b: FieldAgent, w: WorkItem
+   return mw !== undefined && nearWork(s, a, mw, w);
+ }
+ import { nearWork } from './doctrine';
++
++// ───────────────────────── (균형 보탬 — 사용자 결정 2026-11-16 둘째) 남는 대원의 짝 투입 (지휘 CF8) ─────────────────────────
++import type { CrewBelief } from '../types';
++import { SOLO_OK } from './doctrine';
++import { roleIdOf } from './gear';
++import { tileOf } from './grid';
++import { pairBy } from './doctrineRun';
++/**
++ * 남는 대원 — 지휘관이 새 짝으로 붙일 수 있는 손 빈 공기호흡기 대원 (조직 정보·동료의 겉·지휘관 믿음 속 자기 신고만 읽는다):
++ * 지휘관이 아니고 혼자 서는 역할(기관원·사다리 조작원 … — 밖 대기조로 선다)이 아니며, 활동·땅 위·업지 않음·부대에 철수 지시 없음·걸을 수 있는 다친 대원 아님,
++ * 공기호흡기를 멨고 공기 50% 이상(R1 airShort — 조직 정보), 임무 없음(대기)·받은 지시 없음, 지휘관이 아는 자기 신고가 중상이 아니다
++ */
++function spareOk(sim: Sim, s: Scene, a: FieldAgent, b: FieldAgent, taken: Set<number>): boolean {
++  if (b === a || b.status !== 'active' || b.aloft || b.carrying !== -1 || taken.has(b.rid) || sim.units[b.unitId].boardOrder) return false;
++  if ((b.task !== null && b.task.kind !== 'standby') || b.orderWork >= 0) return false;
++  if (sim.responders[b.rid].status === 'injured' || !hasKit(sim, b.rid, 'scba') || airShort(sim, b.rid)) return false;
++  const ro = roleIdOf(sim, b.rid);
++  if (ro !== null && SOLO_OK.has(ro)) return false;
++  const v = a.beliefs.val<CrewBelief>('crew', b.rid);
++  return (v === undefined || v.band < 1) && !assignedAny(s, b);
++}
++/** 그 대원의 역할이 앞세우는 일(역할 선호 ≥ 0.2 — 유압 구조대원의 구출 …)이 자리가 남은 채 열려 있고 맡을 수 있다 — 짝으로 데려가지 않는다 (pairAssign 과 같은 조건 — tests/crews.test.ts ⑤) */
++function specialtyOpen(sim: Sim, s: Scene, b: FieldAgent, items: WorkItem[]): boolean {
++  const pref = roleOf(sim, b.rid).prefer;
++  for (let k = 0; k < items.length; k++) { const w = items[k]; if ((pref[w.kind] ?? 0) >= 0.2 && w.assignees.length < w.max && fitFor(sim, s, b, w) > 0) return true; }
++  return false;
++}
++/** 작업판의 열린 일에 담당자로 올라 있다 (지시가 아직 닿지 않았어도 — 무전은 1.2초 뒤에 닿는다. 그 사이의 사람을 손 빈 사람으로 보지 않는다) */
++function assignedAny(s: Scene, b: FieldAgent): boolean {
++  for (let k = 0; k < s.board.length; k++) { const w = s.board[k]; if ((w.status === 'open' || w.status === 'active') && w.assignees.indexOf(b.rid) >= 0) return true; }
++  return false;
++}
++/** 적합도를 0 으로 만든 교본 줄이 짝 없음(F04) 하나뿐이다 — 짝만 생기면 맡을 수 있다 */
++function noBuddyOnly(fp: DocFitAns): boolean {
++  let f04 = false;
++  for (let k = 0; k < fp.hits.length; k++) { const h = fp.hits[k]; if (h.mul !== 0) continue; if (h.rule.id !== 'F04') return false; f04 = true; }
++  return f04;
++}
++/**
++ * 남는 대원 가운데 그 대원의 짝으로 붙일 사람: 관창이 없는 사람을 먼저(관창을 든 사람은 다음 방의 진압을 앞장설 수 있게 남긴다 — 거리 6칸 몫), 그다음 가까운 사람
++ * (같으면 rid 가 작은 쪽, not 은 뺀다)
++ */
++function nearestSpare(sim: Sim, spares: FieldAgent[], p: FieldAgent, not: FieldAgent | null): FieldAgent | null {
++  let best: FieldAgent | null = null, bd = Infinity;
++  for (let k = 0; k < spares.length; k++) {
++    const q = spares[k];
++    if (q === p || q === not) continue;
++    const d = dist(p.x, p.y, q.x, q.y) + (hasKit(sim, q.rid, 'hose') ? SPARE_HOSE_COST : 0);
++    if (d < bd || (d === bd && best !== null && q.rid < best.rid)) { bd = d; best = q; }
++  }
++  return best;
++}
++/** 관창을 든 남는 대원을 짝으로 붙이는 데 더하는 거리 (칸) */
++const SPARE_HOSE_COST = 6;
++/** 맡을 사람 후보의 점수에 더하는 몫: 지금 짝이 위험 실내 일에 묶이지 않은 사람(짝을 바꿔도 아무도 안에 혼자 남지 않는다) — 짝을 둘 바꾸는 갈래보다 남는 대원끼리 짝을 짓는 갈래를 먼저 */
++const SPARE_KEEP = 0.3;
++/** 그 대원의 짝 (같은 현장의 활동 중인 사람, 없으면 null) */
++function buddyAgent(s: Scene, b: FieldAgent): FieldAgent | null {
++  const id = b.buddy;
++  if (id === undefined || id < 0) return null;
++  for (let k = 0; k < s.agents.length; k++) { const m = s.agents[k]; if (m.rid === id && m !== b && m.status === 'active') return m; }
++  return null;
++}
++/** 그 대원(없으면 거짓)이 위험 실내 일에 묶였다 — inJobBound */
++function bound(sim: Sim, s: Scene, a: FieldAgent, b: FieldAgent | null): boolean { return b !== null && inJobBound(sim, s, a, b); }
++/** 그 대원이 위험 실내 일에 묶였다 (지금 임무·받은 지시·작업판의 담당자 — 공개 지휘 상태): 그 짝을 떼어 가면 안에서 혼자가 된다 */
++function inJobBound(sim: Sim, s: Scene, a: FieldAgent, b: FieldAgent): boolean {
++  if (b.task !== null && b.task.workId >= 0) { const w = s.board[b.task.workId]; if (w !== undefined && (w.status === 'open' || w.status === 'active') && inJob(sim, s, a, w, b.task)) return true; }
++  if (b.orderWork >= 0) { const w = s.board[b.orderWork]; if (w !== undefined && (w.status === 'open' || w.status === 'active') && inJob(sim, s, a, w)) return true; }
++  for (let k = 0; k < s.board.length; k++) { const w = s.board[k]; if ((w.status === 'open' || w.status === 'active') && w.assignees.indexOf(b.rid) >= 0 && inJob(sim, s, a, w)) return true; }
++  return false;
++}
++/**
++ * (균형 보탬 — 사용자 결정 2026-11-16 둘째 — 남는 대원도 짝을 지어 다른 방으로) 두 번의 배정이 끝난 뒤에도 담당자가 없는 새 방의 위험 실내 일(수색·진압·잔불 정리 — PAIR_SLOT)이 남았으면,
++ * 그 일을 맡을 수 있는데 짝이 따라올 수 없어서만(교본 F04 — 짝이 다른 방에서 일하거나·혼자 서는 역할이거나·없다) 못 맡는 공기호흡기 대원 X 에게 남는 대원 Y(spareOk — 다른 부대여도)를
++ * 새 짝으로 붙이고 그 일을 준다 (지시 끝 "— Y 와 짝으로"). Y 는 다음 판단에 짝 동행(G08)으로 X 를 따라 들어간다. 2인 진입(F04·F04c)·밖 대기조(F05)는 그대로 — 짝이 생겨서 맡는 것이다.
++ * X 의 지금 짝 L 이 위험 실내 일에 묶였으면(X 가 짝 동행으로 따라가던 앞장선 짝 — SPARE_SPLIT, 또는 방금 일을 받은 짝) 남는 대원이 둘 있어야 한다: 하나는 X 의 새 짝, 하나는 L 의 새 짝
++ * (L 이 안에 혼자 남지 않게 — 그 대원도 G08 로 따라간다). 짝으로 붙일 남는 대원은 관창이 없는 사람을 먼저 고른다(관창을 든 사람은 다음 방의 진압을 앞장선다).
++ * 진단(fire2 — 강제 fire/std): D8 로 사람은 늘었지만 손 빈 공기호흡기 대원이 불이 남은 표본당 3.8명 밖에 서 있었다 — 일이 없던 때가 대부분이고, 일이 있을 때는 그 일이 진압(관창이 없는 사람은 못 한다)이거나
++ * 맡을 사람의 짝이 다른 방에 있었다(F04). 관창을 든 두 사람(관창수·진입대원)이 한 짝이라 한 방에 둘이 들어가고, 관창 없는 팀장·구조대원은 밖에 남았다.
++ * 믿음·작업판·동료의 겉·조직 정보만 읽는다. 지휘관이 음영 구역이면(지시가 나가지 않는다) 하지 않는다
++ */
++function sparePair(sim: Sim, s: Scene, I: Incident, a: FieldAgent, items: WorkItem[], taken: Set<number>): void {
++  let open = false;
++  for (let k = 0; k < items.length; k++) { const w = items[k]; if (w.assignees.length === 0 && PAIR_SLOT.has(w.kind) && sim.t >= w.holdUntil) { open = true; break; } }
++  if (!open || s.shadow[tileOf(s, a.x, a.y)]) return;
++  let spares: FieldAgent[] | null = null;
++  for (let k = 0; k < items.length; k++) {
++    const w = items[k];
++    if (w.assignees.length !== 0 || !PAIR_SLOT.has(w.kind) || sim.t < w.holdUntil || !inJob(sim, s, a, w)) continue;
++    if (spares === null) { spares = []; for (let j = 0; j < s.agents.length; j++) { const b = s.agents[j]; if (spareOk(sim, s, a, b, taken) && !bound(sim, s, a, buddyAgent(s, b)) && !specialtyOpen(sim, s, b, items)) spares.push(b); } }      // 짝이 위험 실내 일에 묶인 사람은 그 짝의 동행이 될 사람이다 — 남는 대원이 아니다
++    if (!spares.length) return;
++    // 맡을 사람 후보: 짝이 따라올 수 없어서만 못 맡는 손 빈 대원, 짝 동행 중인 대원 — 점수는 배정과 같은 모양, 지금 짝을 떼어 놓지 않아도 되는 사람 +SPARE_KEEP
++    let best: FieldAgent | null = null, bs = -Infinity, bestL: FieldAgent | null = null;
++    for (let j = 0; j < s.agents.length; j++) {
++      const x = s.agents[j];
++      if (x === a || x.status !== 'active' || x.aloft || x.carrying !== -1 || taken.has(x.rid) || sim.units[x.unitId].boardOrder || sim.responders[x.rid].status === 'injured') continue;
++      const follow = x.task !== null && x.task.kind === 'pair';
++      if (follow ? !DOC_SWITCH.SPARE_SPLIT : !((x.task === null || x.task.kind === 'standby') && x.orderWork < 0)) continue;
++      if (failedRecently(sim, w, x.rid) || assignedAny(s, x)) continue;
++      // 지금 짝 L 이 위험 실내 일에 묶였으면(짝 동행으로 따라가던 앞장선 짝, 또는 방금 일을 받은 짝) L 에게 남는 대원 하나를 대신 붙인다 — 남는 대원이 둘 있어야 한다
++      let l = buddyAgent(s, x);
++      if (!bound(sim, s, a, l)) l = null;
++      if (follow && l === null) continue;      // 짝 동행인데 앞장선 짝이 위험 실내 일을 하지 않는다 — 곧 동행이 끝난다(그때 손 빈 대원으로 본다)
++      if (l !== null && spares.length < 2) continue;
++      const fp = fitParts(sim, s, x, w);
++      if (fp.base <= 0 || fp.fit > 0 || !noBuddyOnly(fp)) continue;
++      const r = sim.responders[x.rid];
++      const d = dist(x.x, x.y, targetX(s, w, a), targetY(s, w, a));
++      const sc = fp.base * 0.5 + (1 - Math.min(1, d / 34)) * 0.22 + (r.stamina / 100) * 0.1 + r.experience * 0.08 + (l === null ? SPARE_KEEP : 0);      // 지금 짝을 떼어 놓지 않아도 되는 사람을 먼저 (남는 대원끼리 짝을 짓는다)
++      if (sc > bs) { bs = sc; best = x; bestL = l; }
++    }
++    if (best === null) continue;
++    const y = nearestSpare(sim, spares, best, null);
++    if (y === null) continue;
++    const y2 = bestL !== null ? nearestSpare(sim, spares, bestL, y) : null;
++    if (bestL !== null && y2 === null) continue;
++    // 짝을 다시 맺는다 (옛 짝은 비운다 — 다음 판단에 rebuddy 가 본다): X ↔ Y, (짝 동행이었으면) L ↔ Y2
++    pairBy(s, best, y);
++    if (bestL !== null && y2 !== null) pairBy(s, bestL, y2);
++    taken.add(best.rid); taken.add(y.rid);
++    spares.splice(spares.indexOf(y), 1);
++    if (y2 !== null) { taken.add(y2.rid); spares.splice(spares.indexOf(y2), 1); }
++    w.assignees.push(best.rid); w.status = 'active'; w.orderSentAt[best.rid] = sim.t;
++    const xn = sim.responders[best.rid].name, yn = sim.responders[y.rid].name;
++    const ordEv = transmit(sim, s, a, best.rid, 'order', [], `${xn}, ${workLabel(s, w, sim)}${w.kind === 'search' || w.kind === 'suppress' ? ' 실시' : ' 맡아라'} — ${josa(yn, '과/와')} 짝으로.`, w.id, w.priority > 0.8 ? 1 : 0, w.cause >= 0 ? [w.cause] : []);
++    if (bestL !== null && y2 !== null) { const ln = sim.responders[bestL.rid].name, y2n = sim.responders[y2.rid].name; transmit(sim, s, a, y2.rid, 'order', [], `${y2n}, ${josa(ln, '과/와')} 짝으로 들어가라.`, -1, 0); }
++    if (ordEv >= 0) recordDoc(sim, I, null, 'CF8', 'cmd', { work: w.kind, tgt: 'w:' + w.id, mate: y.rid }, ordEv);
++    if (!spares.length) return;
++  }
++}
+diff --git a/src/sim/field/doctrine/fire.ts b/src/sim/field/doctrine/fire.ts
+index 518f9cf..a330979 100644
+--- a/src/sim/field/doctrine/fire.ts
++++ b/src/sim/field/doctrine/fire.ts
+@@ -195,4 +195,6 @@ CMD_ROWS.push(
+   { id: 'D4', dept: 'special', hook: 'dispatch', name: '2층 화재 — 사다리차', short: '2층 화재 사다리차', why: 'kit' },
+   // (균형 — 사용자 결정 2026-11-16) 2인 진입 + 밖 2인 대기로 줄어든 실내의 손을 첫 출동으로 메운다 (코드는 dispatch/doctrine.ts docNeeds)
+   { id: 'D8', dept: 'fire', hook: 'dispatch', name: '건물 화재 — 첫 출동에 펌프차 하나 더', short: '건물 화재 펌프차 더', why: 'team' },
++  // (균형 보탬 — 사용자 결정 2026-11-16 둘째) 짝 없이 새 방에 못 들어가는 대원에게 손 빈 대원을 새 짝으로 붙여 다른 방을 나란히 맡긴다 (코드는 commander.sparePair)
++  { id: 'CF8', dept: 'fire', hook: 'cmd', name: '남는 대원의 짝 투입 — 다른 방을 나란히', short: '남는 대원 짝 투입', why: 'buddy' },
+ );
+diff --git a/src/sim/field/doctrine/registry.ts b/src/sim/field/doctrine/registry.ts
+index c2a4cf0..68bdd46 100644
+--- a/src/sim/field/doctrine/registry.ts
++++ b/src/sim/field/doctrine/registry.ts
+@@ -149,8 +149,11 @@ export const CMD_ROWS: { id: string; dept: DocDept; hook: 'cmd' | 'dispatch' | '
+  */
+ export const DOC_SWITCH = { CP4: true, D6: true, D7: true,
+   D8: true,      // (균형 — 사용자 결정 2026-11-16) 건물 화재의 첫 출동에 펌프차 하나 더 (dispatch/doctrine.ts D8)
+-  SOLO_IN: true };      // 혼자 서는 역할(기관원·사다리 조작원)의 위험 실내 단독 작업: true = 본문 §5.1(그 역할을 F04·F04b·F04c 에서 뺀다 — 균형 작업의 기본값, 사용자 결정 2026-11-16),
++  SOLO_IN: true,      // 혼자 서는 역할(기관원·사다리 조작원)의 위험 실내 단독 작업: true = 본문 §5.1(그 역할을 F04·F04b·F04c 에서 뺀다 — 균형 작업의 기본값, 사용자 결정 2026-11-16),
+                         //   false = 합치기 (라)(짝이 따라올 때만 — 보통 60 화재 −22.6%p·가스 누출 −33.1%p 로 범위 밖이었다)
++  // (균형 보탬 — 사용자 결정 2026-11-16 둘째) 남는 대원의 짝 투입 (지휘 CF8 — commander.sparePair): 짝이 따라올 수 없어(F04) 새 방의 위험 실내 일을 못 맡는 대원에게
++  //   손 빈 공기호흡기 대원(다른 부대여도)을 새 짝으로 붙여 그 일을 준다. SPARE_SPLIT = 짝 동행 중인 대원도 — 앞장선 짝에게 남는 대원 하나를 대신 붙이고 다른 방으로 보낸다
++  SPARE: true, SPARE_SPLIT: true };
+ /** 줄이 다 들어간 분야 — 시험 8 의 "분야마다 12줄 이상"은 여기 든 분야만 본다 (단계마다 그 분야를 더한다 — 2단계 경찰) */
+ export const DOC_DEPTS_DONE: DocDept[] = ['police',
+   'fire',      // (3단계 소방)
+diff --git a/src/sim/field/doctrineRun.ts b/src/sim/field/doctrineRun.ts
+index 7f5066e..2b74851 100644
+--- a/src/sim/field/doctrineRun.ts
++++ b/src/sim/field/doctrineRun.ts
+@@ -527,6 +527,14 @@ function unpairSolo(s: Scene, a: FieldAgent): void {
+   const b = agentAt(s, a.buddy, a);
+   if (b !== null && b.buddy === a.rid) b.buddy = -1;
+ }
++/**
++ * (균형 보탬 — 사용자 결정 2026-11-16 둘째, 지휘 CF8) 지휘관이 정한 짝: p 와 q 를 서로 맺는다. 둘의 옛 짝이 이 사람을 가리키고 있으면 비운다(−1 — 다음 판단에 rebuddy 가 본다).
++ * 부대를 넘어도 된다. 기록은 부르는 쪽(commander.sparePair)의 지시 무전이 남긴다. 쓰는 법: pairBy(s, p, q)
++ */
++export function pairBy(s: Scene, p: FieldAgent, q: FieldAgent): void {
++  unpairSolo(s, p); unpairSolo(s, q);
++  p.buddy = q.rid; q.buddy = p.rid;
++}
+ /** 공기통을 바꾸는 시간 (초 — R1 의 swapAir 와 같다) · 탈출 자리의 연기 문턱 · 출입구 바깥쪽을 찾는 거리 · 짝을 따라가는 거리 · 짝의 위험 실내 일이 끝난 뒤 동행을 잇는 초 · 짝 따라 나가기가 끝나는 연기·출입구 거리 */
+ export const AIR_OUT_RUN = { swap: 8, clean: 0.1, exitR: 3, follow: 1.4, linger: 3, lingerIdle: 8, pairOutClear: 0.25, pairOutExit: 2 } as const;
+ /** 위험 건물 실내인가 (실행부 — 공기호흡기 없이 들어가지 않는 자리와 같은 판정: 화재·가스·붕괴 현장의 실내, 또는 불이 났다고 아는 실내) */
+@@ -610,6 +618,8 @@ export function runPairOut(sim: Sim, s: Scene, a: FieldAgent, t: Task, k: ExecKi
+ const PAIR_P = new WeakMap<Task, number>();
+ /** 짝의 일이 위험 실내 일이었던 마지막 시각 (짝 동행 — 방을 옮기는 사이에 끊기지 않게 3초를 잇는다) */
+ const PAIR_HZ = new WeakMap<Task, number>();
++/** (균형 보탬 — CF8) 짝 동행이 따라가기 시작한 짝의 rid (짝이 바뀌면 동행을 끝낸다) */
++const PAIR_WHO = new WeakMap<Task, number>();
+ /**
+  * 짝 동행 (TaskKind 'pair', 라벨 '짝 동행' — §5.4, G08): 위험 실내 일(또는 확보 전 무장 현장의 수색)을 맡은 짝을 1.4칸 안에서 따라간다. 관찰은 perceive 가 한다(둘이 본 것이 모두 보고된다).
+  * 끝: 짝이 활동 중이 아님(쓰러지면 G04 의 동료 구조가 먼저 잡힌다) · 짝이 업고 나가면 그 뒤를 따라 나와 둘 다 위험 실내 밖에 닿았을 때 · 짝의 임무가 위험 실내 일이 아니게 된 뒤 3초
+@@ -619,6 +629,10 @@ export function runPair(sim: Sim, s: Scene, a: FieldAgent, t: Task, k: ExecKit):
+   a.label = '짝 동행';
+   const b = a.buddy !== undefined && a.buddy >= 0 ? agentAt(s, a.buddy, a) : null;
+   if (b === null || b.status !== 'active') { actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
++  // (균형 보탬 — CF8) 따라가던 짝이 바뀌었으면(지휘관이 새 짝과 다른 방을 맡겼다 — commander.sparePair) 동행을 끝낸다 — 다음 판단에 그 지시를 한다
++  const was = PAIR_WHO.get(t);
++  if (was === undefined) PAIR_WHO.set(t, b.rid);
++  else if (was !== b.rid) { actEnd(sim, a, t); k.finish(sim, s, a, true); return; }
+   if (!PAIR_HZ.has(t)) PAIR_HZ.set(t, sim.t);
+   const bw = b.task !== null && b.task.workId >= 0 ? s.board[b.task.workId] : undefined;
+   if (bw !== undefined && (bw.status === 'open' || bw.status === 'active') && (inJob(sim, s, a, bw, b.task) || hotSearch(s, bw))) { PAIR_HZ.set(t, sim.t); PAIR_P.set(t, 0.5 + 0.4 * bw.priority + 0.12); }
+diff --git a/tests/doctrine.test.ts b/tests/doctrine.test.ts
+index 24aa363..5f875ee 100644
+--- a/tests/doctrine.test.ts
++++ b/tests/doctrine.test.ts
+@@ -92,7 +92,7 @@ const SPECIAL5 = [...STAGE5, 'S10', 'S11'];
+ /** 3·4·5 단계를 합친 뒤의 등록 순서 전체 (줄 파일 다섯의 import 순서 common → police → fire → ems → special) */
+ const STAGE_ALL = [...STAGE3, ...EMS4, ...SPECIAL5];
+ /** 3·4·5 단계를 합친 뒤의 지휘·관제 줄 (경찰 파일의 지휘 줄 → 소방 → 의료 → 특수(D2 가 특수 파일의 첫 줄)) */
+-const CMD_ALL = [...CMD3.filter((id) => id !== 'D2'), 'D8', 'CE1', 'CE2', 'CE3', 'CE4', 'CE5', 'D2', ...CMD5];      // (균형) D8 — 소방 파일의 관제 줄 D4 다음
++const CMD_ALL = [...CMD3.filter((id) => id !== 'D2'), 'D8', 'CF8', 'CE1', 'CE2', 'CE3', 'CE4', 'CE5', 'D2', ...CMD5];      // (균형) D8 — 소방 파일의 관제 줄 D4 다음
+ /** 자기 신고를 손으로 넣는다 (그 대원의 믿음 — 남이 아는 그 대원의 몸) */
+ const report = (sim: Sim, a: FieldAgent, v: Partial<CrewBelief>): void => { a.beliefs.merge(mkFact('crew', a.rid, { band: 0, air: 0, ammo: 0, shaken: false, t: sim.t, ...v }, '시험', sim.t, 1, true, '시험')); docForget(a); };
+ /** 엔진의 갈래를 모두 지나가는 시험용 줄 (번호 G91~G98 — 표에 없는 번호, 시험이 끝나면 지운다) */
+@@ -2081,3 +2081,106 @@ describe('R3 균형: 밖 대기조는 출입구 곁 또는 대기 지점 곁의
+     expect(outsideWatch(sim, s, noz, far), '대기 지점에서도 출입구에서도 먼 기관원').toBe(0);
+   });
+ });
++
++// ═════════════════════════ 균형 보탬 (사용자 결정 2026-11-16 둘째) — 남는 대원의 짝 투입 (지휘 CF8 · commander.sparePair) ═════════════════════════
++import { nearWork } from '../src/sim/field/doctrine';
++
++/** 서로 같지도 이웃하지도 않은 실내 수색 구역 둘 (짝이 붙어 일하는 자리가 아닌 — 다른 방) */
++function farRooms(s: Scene, a: FieldAgent): [number, number] {
++  const rs: number[] = [];
++  for (let i = 0; i < s.regions.length; i++) if (s.regions[i].indoor && s.regions[i].searchable) rs.push(i);
++  const probe = (rg: number): WorkItem => ({ id: -10 - rg, region: rg, cas: -1, mate: -1, prop: -1, tile: -1 }) as WorkItem;
++  for (const i of rs) for (const j of rs) if (i < j && !nearWork(s, a, probe(i), probe(j))) return [i, j];
++  throw new Error('다른 방 둘이 없는 현장');
++}
++/** 펌프차의 짝(관창수·진입대원)과 구조 공작차의 구조 팀장·탐지 대원만 남기고(진압 팀장 = 지휘관), 나머지는 물러난 것으로 — 모두 손이 비었고 대기 지점에 선다 */
++function spareScene(seed: string) {
++  const q = fireScene(seed, ['engine', 'rescue']);
++  const res = q.of('rescue');
++  const rl = roleIn(q.sim, res, 'rescueLead'), se = roleIn(q.sim, res, 'searcher');
++  nobodyInside(q.sim, q.s);
++  for (const w0 of q.s.board) w0.status = 'done';
++  for (const b of q.s.agents) {
++    b.task = null; b.orderWork = -1; b.isCommander = b === q.lead;
++    if (b !== q.noz && b !== q.ff && b !== q.lead && b !== rl && b !== se) b.status = 'withdrawn';
++    put(b, q.s.staging);
++  }
++  const [rgA, rgB] = farRooms(q.s, q.lead);
++  docForget();
++  return { ...q, rl, se, rgA, rgB };
++}
++
++describe('R3 균형 보탬: 남는 대원의 짝 투입 — 짝이 둘 이상이면 서로 다른 방을 맡는다 (CF8)', () => {
++  it('다른 방 둘·짝 하나(관창수·진입대원)와 짝 없는 남는 대원 둘(다른 부대) → 한 방은 펌프차 짝이, 다른 방은 남는 대원끼리 새 짝을 지어 맡는다. 맡은 사람의 짝은 각자 자기 짝을 따라 들어간다', () => {
++    const { sim, I, s, noz, ff, lead, rl, se, rgA, rgB } = spareScene('R3-SPARE');
++    expect(noz.buddy).toBe(ff.rid);
++    expect(rl.buddy ?? -1, '구조 팀장은 표준 편성에서 짝이 없다').toBe(-1);
++    const w1 = work(sim, s, 'search', { region: rgA, priority: 0.8 }), w2 = work(sim, s, 'search', { region: rgB, priority: 0.75 });
++    expect(fitParts(sim, s, rl, w2).hits.map((h) => h.rule.id), '짝 없는 남는 대원은 혼자 맡지 못한다 (F04)').toContain('F04');
++    const ev0 = sim.events.length;
++    assign(sim, s, I, lead);
++    expect(w1.assignees.length).toBe(1); expect(w2.assignees.length).toBe(1);
++    const a1 = s.agents.find((b) => b.rid === w1.assignees[0])!, a2 = s.agents.find((b) => b.rid === w2.assignees[0])!;
++    expect([noz, ff], '첫 방은 펌프차의 짝이').toContain(a1);
++    expect([rl, se], '다른 방은 남는 대원이').toContain(a2);
++    expect(rl.buddy, '남는 대원끼리 새 짝').toBe(se.rid); expect(se.buddy).toBe(rl.rid);
++    expect(noz.buddy, '펌프차의 짝은 그대로').toBe(ff.rid);
++    expect(sim.events.slice(ev0).some((e) => e.rid === lead.rid && e.text.includes('짝으로') && e.text.includes(sim.responders[a2.buddy!].name)), '지시 끝 "— …과 짝으로"').toBe(true);
++    expect((I.docs ?? []).some((d) => d.rule === 'CF8' && d.hook === 'cmd' && d.eventId >= 0), '지휘 줄 CF8 의 기록').toBe(true);
++    // 무전이 닿은 것으로 두고 맡은 사람이 일을 시작하면, 짝은 각자 자기 짝을 따라 다른 방으로 들어간다 (짝 동행 G08)
++    for (const [b, w] of [[a1, w1], [a2, w2]] as [FieldAgent, WorkItem][]) { b.orderWork = w.id; giveTask(sim, s, b, w); }
++    docForget();
++    const f1 = s.agents.find((b) => b.rid === a1.buddy)!, f2 = s.agents.find((b) => b.rid === a2.buddy)!;
++    think(sim, s, f1); think(sim, s, f2);
++    expect(f1.task?.kind).toBe('pair'); expect(f2.task?.kind).toBe('pair');
++    expect(f1.buddy).toBe(a1.rid); expect(f2.buddy).toBe(a2.rid);
++    expect(w1.region === w2.region || nearWork(s, lead, w1, w2), '두 짝이 맡은 방은 같지도 이웃하지도 않다').toBe(false);
++  });
++  it('짝 동행 중인 관창 대원은 남는 대원이 둘일 때만 다른 방(진압)으로 — 앞장선 짝에게 남는 대원 하나를 대신 붙이고, 따라가던 동행은 짝이 바뀌면 끝난다', () => {
++    const { sim, I, s, noz, ff, lead, rl, se, rgA, rgB } = spareScene('R3-SPARE');
++    const w1 = work(sim, s, 'search', { region: rgA, priority: 0.8 }), w2 = work(sim, s, 'suppress', { region: rgB, priority: 0.75 });
++    put(noz, inSpot(s, rgA)); put(ff, inSpot(s, rgA));
++    giveTask(sim, s, noz, w1);
++    ff.task = makeTask('pair', '짝 동행');
++    act(sim, s, ff);      // 따라가기 시작 (따라가는 짝을 기억한다)
++    expect(ff.task?.kind).toBe('pair');
++    expect(fitParts(sim, s, rl, w2).base, '관창이 없는 남는 대원은 진압을 맡지 못한다').toBe(0);
++    expect(fitParts(sim, s, ff, w2).hits.map((h) => h.rule.id), '짝(관창수)이 다른 방에서 일한다 (F04)').toContain('F04');
++    const ev0 = sim.events.length;
++    assign(sim, s, I, lead);
++    expect(w2.assignees, '진압은 따라가던 관창 대원이').toEqual([ff.rid]);
++    expect([rl.rid, se.rid]).toContain(ff.buddy);
++    expect([rl.rid, se.rid]).toContain(noz.buddy);
++    expect(ff.buddy).not.toBe(noz.buddy);
++    const y2 = s.agents.find((b) => b.rid === noz.buddy)!;
++    expect(y2.buddy).toBe(noz.rid);
++    expect(sim.events.slice(ev0).some((e) => e.text.includes(sim.responders[y2.rid].name) && e.text.includes('짝으로 들어가라')), '앞장선 짝에게 붙인 남는 대원에게도 지시').toBe(true);
++    act(sim, s, ff);
++    expect(ff.task === null || ff.task.kind !== 'pair', '짝이 바뀌면 동행을 끝낸다').toBe(true);
++    // 남는 대원이 하나뿐이면 갈라 놓지 않는다 (앞장선 짝이 안에 혼자 남는다)
++    const q = spareScene('R3-SPARE');
++    const v2 = work(q.sim, q.s, 'search', { region: q.rgA, priority: 0.8 }), v3 = work(q.sim, q.s, 'suppress', { region: q.rgB, priority: 0.75 });
++    put(q.noz, inSpot(q.s, q.rgA)); put(q.ff, inSpot(q.s, q.rgA));
++    giveTask(q.sim, q.s, q.noz, v2); q.ff.task = makeTask('pair', '짝 동행');
++    q.se.status = 'withdrawn'; docForget();
++    assign(q.sim, q.s, q.I, q.lead);
++    expect(v3.assignees).toEqual([]);
++    expect(q.ff.buddy).toBe(q.noz.rid); expect(q.noz.buddy).toBe(q.ff.rid);
++  });
++  it('남는 대원이 없으면 짝 없는 대원에게 맡기지 않는다 (2인 진입 그대로) · 스위치(DOC_SWITCH.SPARE)를 끄면 짓지 않는다 · 지휘 줄 이름표가 소방 분야에 있다', () => {
++    const { sim, I, s, lead, se, rgA, rgB } = spareScene('R3-SPARE');
++    const w1 = work(sim, s, 'search', { region: rgA, priority: 0.8 }), w2 = work(sim, s, 'search', { region: rgB, priority: 0.75 });
++    se.status = 'withdrawn'; docForget();
++    assign(sim, s, I, lead);
++    expect(w1.assignees.length).toBe(1);
++    expect(w2.assignees, '구조 팀장 혼자는 들어가지 않는다').toEqual([]);
++    expect((I.docs ?? []).some((d) => d.rule === 'CF8')).toBe(false);
++    const q = spareScene('R3-SPARE');
++    const u1 = work(q.sim, q.s, 'search', { region: q.rgA, priority: 0.8 }), u2 = work(q.sim, q.s, 'search', { region: q.rgB, priority: 0.75 });
++    DOC_SWITCH.SPARE = false;
++    try { assign(q.sim, q.s, q.I, q.lead); } finally { DOC_SWITCH.SPARE = true; }
++    expect(u1.assignees.length).toBe(1); expect(u2.assignees).toEqual([]);
++    expect(q.rl.buddy ?? -1).toBe(-1);
++    expect(CMD_ROWS.find((c) => c.id === 'CF8')).toMatchObject({ dept: 'fire', hook: 'cmd' });
++  });
++});
+-- 
+2.43.0
+
+
+From 04b315439a812f73d28cd9ed3dd2286611916dbc Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Tue, 17 Nov 2026 00:01:59 +0000
+Subject: [PATCH 2/2] =?UTF-8?q?R3=20=EA=B7=A0=ED=98=95=20=EB=B3=B4?=
+ =?UTF-8?q?=ED=83=AC:=20=EA=B5=AC=ED=98=84=20=EB=A9=94=EB=AA=A8=20'?=
+ =?UTF-8?q?=EA=B7=A0=ED=98=95=20=EB=B3=B4=ED=83=AC=20=E2=80=94=20=EB=82=A8?=
+ =?UTF-8?q?=EB=8A=94=20=EB=8C=80=EC=9B=90=EC=9D=98=20=EC=A7=9D=20=ED=88=AC?=
+ =?UTF-8?q?=EC=9E=85'=20(=EC=A7=84=EB=8B=A8=C2=B7=ED=95=9C=20=EA=B2=83?=
+ =?UTF-8?q?=C2=B7=EC=88=98=EC=B9=98=C2=B7=EB=B2=94=EC=9C=84=C2=B7=EC=84=A4?=
+ =?UTF-8?q?=EA=B3=84=EC=99=80=20=EB=8B=A4=EB=A5=B8=20=EA=B3=B3=C2=B7?=
+ =?UTF-8?q?=EA=B4=80=EB=AC=B8)?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01S6L8Vq3hyPupfdexwNGcVE
+---
+ docs/specs/R3-doctrine.md | 51 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 51 insertions(+)
+
+diff --git a/docs/specs/R3-doctrine.md b/docs/specs/R3-doctrine.md
+index 5f61531..dda3676 100644
+--- a/docs/specs/R3-doctrine.md
++++ b/docs/specs/R3-doctrine.md
+@@ -2077,3 +2077,54 @@ npm run check                                                             # 단
+ **관문** (`npm run check`, `4c5dad4`, 다른 작업이 없는 기계 — 10분): **통과** — `tsc` 통과, vitest 19 파일 869 통과·건너뜀 1, `sweep 40 --check` '검증 통과'(한계 시간 3 · 방치 1 · 교착 후보 0 · 잊힌 사건 0 · 기록 일치 0).
+ 
+ **이어받을 자리**: ① JIT — 자주 도는 객체의 시각·소수 칸을 처음부터 Double 로 시작하게 하면(만드는 리터럴 한 곳씩) 지도가 낡는 일이 줄어 사용자 CPU 의 큰 몫이 줄 것이다(측정: `fix/spd` 의 `pershift.cjs`·`compcmp.cjs`·`diag3.tpl`). ② `docSit` 의 칸 가운데 그 사건 종류의 줄만 읽는 것(섬광탄·로봇·공기호흡기 수 …)을 종류마다 셀지 — 그 칸을 읽는 줄·엔진이 다른 종류에서 읽지 않는다는 것을 먼저 확인해야 한다. ③ think 의 후보(`opts`)의 `apply` 닫힘도 tsx 의 `__name` 을 부른다(17ms/6교대 — 작다).
++
++### 균형 보탬 — 남는 대원의 짝 투입 (사용자 결정 2026-11-16 둘째) — 2026-11-16
++
++브랜치 `wf/doctrine-fire2`(시작 `aed80f5`) → `wf/doctrine` 가리킴. 커밋 `4d090d6`(구현·시험) · 그다음 커밋(이 메모). 측정의 "기준"은 `34d30a3`(scratchpad `wf-doctrine/par/fire/b34` — 앞 작업자들과 같은 사본, `src` 가 `git archive 34d30a3` 과 같은 것을 확인), "시작점"은 `aed80f5`(`wf-doctrine/fire2/a0` — 강제 fire/std 의 결과가 균형 메모의 `2b9638d` 와 한 글자도 같다), "뒤"는 `4d090d6`(`fire2/v4`). 대본·결과는 `wf-doctrine/fire2/`(`run.sh` 묶음 측정 · 결과 `b34out/`·`a0out/`·`v4out/` · 진단 `idle.mts`·`jobs.mts`·`jobs2.mts`·`board.mts`·`joint.mts`·`idlebud.mts`·`pairs.mts`·`alt.mts`·`snap.mts`(한 사건의 5초 장면)·`cf8.mts`·`hurt.mts`(시드 앞글자 `PRE=`)). 프리셋의 기준·시작점은 앞 작업의 `int/base/p-*.txt`·`par/fire/base/r3-60.txt`·`fix/s5out/`(같은 결과)를 썼다.
++
++**진단 — 왜 밖에 서는가** (시작점, 강제 fire/std 6교대, 불이 남은 화재 현장의 지휘관이 있는 표본을 5초마다 — 1117 표본):
++1. 손 빈 공기호흡기 소방 대원(지휘관·혼자 서는 역할 포함)이 표본당 **3.78명**. 그 사람마다 담당자 없는 "새 방" 위험 실내 일(수색·진압·잔불 정리 …) 가운데 가장 나은 답으로 가르면: **새 방 일이 하나도 없음 2.42** · 남은 새 방 일이 진압인데 관창이 없음(진압 팀장·기관원·구조대원 …) 0.83 · 짝이 따라올 수 없음(F04) 0.21 · 맡을 수 있는데 배정 주기 사이 0.21 · X6 의 문(진입 금지 구역) 0.09. 중반(도착 뒤 60~240초)만 보면 손 빈 4.52 가운데 새 방 일 없음 3.14.
++2. 그런데 작업판에는 담당자 없는 새 방 일이 표본당 2.46(기준 1.64)이고, 실제로 하고 있는 위험 실내 일은 1.74(기준 2.37)다 — 빈 일과 손 빈 사람이 **같은 때에 있지 않다**: 중반 표본의 절반(새 방 일이 남음)은 빈 일 3.45 · 손 빈 2.25 · 짝 동행 1.41 · 일하는 방 1.75, 나머지 절반(남지 않음)은 손 빈 6.0 · 짝 동행 2.2 · 일하는 방 1.7. 빈 일이 남는 때는 손이 짝 동행(한 방에 둘)에 묶여 있고, 손이 남는 때는 불난 구역·수색하지 않은 구역이 이미 다 맡겨져 있다(작업판은 구역마다 일을 낸다).
++3. 도착 뒤 첫 30초의 일하는 방 1.29(기준 2.35), 30~60초 1.87(2.22) — 결과를 가르는 첫 1분은 첫 펌프차 넷 가운데 지휘관·기관원이 밖이고 관창수·진입대원이 한 방이다. 첫 90초의 짝 동행 1.26명/표본 가운데 곁(같은·이웃 구역)에 맡을 빈 일이 있는 때는 0.15(그 가운데 0.135 는 관창 없는 동행에게 진압)뿐 — 다른 방은 이웃이 아니다.
++4. 과제가 든 가설: ① **지휘관의 짝 배정이 한 부대 안에서만인가** — 반쯤 그렇다: `pairAssign` 은 이미 짝인 사람(대개 같은 부대)에게만 곁의 일을 주고, `rebuddy` 는 짝을 잃었거나 짝이 혼자 서는 역할인 손 빈 사람만 부대를 넘는다. **짝이 다른 방에 묶인 손 빈 대원이나 짝 동행 중인 대원을 남는 대원과 새로 맺는 길이 없었다**(고친 것). ② 밖 2인 대기(F05)를 둘보다 많이 세우는가 — 아니다(need 1, 오는 부대가 있으면 0 — 그 이상을 붙잡지 않는다). ③ 실내 작업을 한 구역씩만 내는가 — 아니다(수색하지 않은 구역마다·불난 구역마다, 센 불 0.75 넘는 구역의 수색만 진압 뒤). ④ `fitFor` 의 교본·짝 조건 — F04 가 막는 손 빈 대원은 0.21/표본뿐. 남는 대원(관창 없는 손 빈 대원)은 1.52/표본이고, 진압 빈 일이 남은 표본(절반)에서 관창을 든 사람은 실내 진압 0.32 · 외부 방수 0.15 · 짝 동행 0.16 · 손 빈 0.24(전체 표본 기준) — 관창을 든 두 사람(관창수·진입대원)이 한 짝이라 한 방에 둘이 들어가고, 관창 없는 팀장·구조대원은 밖에 남았다.
++
++**한 것** (`4d090d6`):
++- **지휘 CF8 — 남는 대원의 짝 투입** (`commander.sparePair`, `assign` 의 두 배정 다음에 한 번): 두 배정이 끝난 뒤에도 담당자가 없는 새 방의 위험 실내 일(`PAIR_SLOT` — 수색·진압·잔불 정리)이 남았으면, 그 일을 맡을 수 있는데 적합도를 0 으로 만든 교본 줄이 **F04 하나뿐인** 공기호흡기 대원 X 에게 **남는 대원** Y(`spareOk` — 지휘관·혼자 서는 역할 아님, 활동·땅 위·업지 않음·철수 지시 없음·걸을 수 있는 다친 대원 아님, 공기 50% 이상, 임무 없음·받은 지시 없음·작업판의 담당자 아님, 지휘관이 아는 자기 신고가 중상 아님, 그 짝이 위험 실내 일에 묶이지 않음, 역할이 앞세우는 일(선호 ≥ 0.2)이 열려 있지 않음 — **다른 부대여도 된다**)를 새 짝으로 붙이고 그 일을 준다. 지시 끝 "— Y 와 짝으로", 기록 `recordDoc(…, 'CF8', 'cmd', …, 지시 기록)`. Y 는 다음 판단에 짝 동행(G08)으로 X 를 따라 들어간다. X 의 지금 짝 L 이 위험 실내 일에 묶였으면(짝 동행으로 따라가던 앞장선 짝 — `SPARE_SPLIT`, 또는 방금 일을 받은 짝) **남는 대원이 둘 있을 때만** — 하나는 X 의 새 짝, 하나는 L 의 새 짝("Y2, L 과 짝으로 들어가라." — L 이 안에 혼자 남지 않게). 짝으로 붙일 남는 대원은 관창이 없는 사람을 먼저(거리 6칸 몫 — 관창을 든 사람은 다음 방의 진압을 앞장선다), 맡을 사람 후보는 지금 짝을 떼어 놓지 않아도 되는 사람을 먼저(+0.3 — 남는 대원끼리 짝을 짓는 갈래가 짝 둘을 바꾸는 갈래보다 앞). 지휘관이 음영 구역이면 하지 않는다. 믿음·작업판·동료의 겉·조직 정보만 읽는다(진실 없음 — 남의 체력·출혈을 읽지 않는다).
++- 짝을 맺는 상태 변경은 실행부 `doctrineRun.pairBy(s, p, q)`(서로 맺고, 옛 짝이 이 사람을 가리키면 −1 — 다음 판단에 `rebuddy`).
++- **짝 동행은 따라가던 짝이 바뀌면 끝난다** (`doctrineRun.runPair` 의 `PAIR_WHO`): 짝 동행 중에 새 짝과 다른 방을 받은 대원이 새 짝(밖의 남는 대원)을 8초 동안 따라 나오던 것을 막는다. `SPARE` 를 끄면 교대 해시가 시작점과 같다(보통 S0~S7 · 강제 fire/std S0~S5 · hazmat/std S0~S3 의 `report.hash`·`logHash` 18줄 — `fire2/hash.mts`).
++- 스위치 `DOC_SWITCH.SPARE`·`SPARE_SPLIT`(registry — 기본 true), 이름표 `CMD_ROWS` 의 `CF8`(소방 — D8 다음). 2인 진입(F04·F04c)·밖 2인 대기(F05)·`SOLO_IN` 은 그대로다 — 짝이 생겨서 맡는 것이다.
++- 시험 (`tests/doctrine.test.ts` 끝 '균형 보탬' 셋): ① 다른 방 둘 · 펌프차 짝 하나 · 짝 없는 남는 대원 둘(구조 공작차) → 한 방은 펌프차 짝이, 다른 방은 남는 대원끼리 새 짝을 지어 맡고(지시 끝 "짝으로" · CF8 기록), 맡은 사람의 짝은 각자 자기 짝을 따라 들어간다(G08) — **짝이 둘 이상이면 서로 다른 방**. ② 짝 동행 중인 관창 대원은 남는 대원이 둘일 때만 다른 방(진압 — 관창 없는 남는 대원은 못 맡는다)으로, 앞장선 짝에게 남는 대원 하나를 대신 붙이고, 따라가던 동행은 짝이 바뀌면 끝난다. 남는 대원이 하나면 갈라 놓지 않는다. ③ 남는 대원이 없으면 짝 없는 대원에게 맡기지 않는다 · 스위치를 끄면 짓지 않는다 · 이름표. 시험 5 의 지휘·관제 줄 목록(`CMD_ALL`)에 CF8.
++- 측정이 찾아 고친 것(같은 커밋): 지시가 아직 닿지 않은(무전 1.2초) 담당자를 남는 대원으로 보던 것(`assignedAny`), 방금 일을 받은 짝의 동행이 될 사람을 남는 대원으로 데려가던 것(`bound(buddyAgent(…))`), 유압 구조대원을 구출 대신 진압의 짝으로 데려가던 것(`specialtyOpen` — `pairAssign` 과 같은 조건).
++
++**수치** (같은 명령 — 기준 `34d30a3` → 시작점 `aed80f5` → 뒤 `4d090d6`):
++
++| | 기준 | 시작점 | 뒤 | §8.2 |
++|---|---|---|---|---|
++| 보통 120 성공 (`sweep 120 --scen --methods --doctrine`) | 1334/1693 (78.8%) | 1285/1687 (76.2%) | 1290/1688 (76.4%) −2.4%p | ±3 ✓ |
++| 보통 120 화재 | 223/338 (66.0%) | 194/336 (57.7%) −8.2%p | **200/337 (59.3%) −6.7%p** | −6~+3 ✗ |
++| 보통 120 가스 누출 · 붕괴 | 78.8 · 71.4% | 78.8 · 73.8% | 79.6 · 74.6% | ✓ |
++| 보통 60 화재 (프리셋 normal) | 114/175 (65.1%) | 98/174 (56.3%) −8.8%p | 103/174 (59.2%) −5.9%p | (60교대는 흔들린다) |
++| 보통 120 한계 시간 + 방치 | 3 + 4 | 5 + 3 (+ 교대 끝 2) | 5 + 3 | ✓ |
++| 보통 120 다친 대원/교대 · 순직 | 0.192 · 0 | 0.283 · 0 | 0.283 · 0 | 기준 이하 ✗ (그대로) |
++| 보통 120 건물 화재 전소 | 6 (1.8%) | 19 (5.9%) | 25 (7.7%) | — |
++| 반복 최대 · 교착 후보 · 잊힌 사건 · 기록 일치 | 8 · 1 · 0 · 0 | 8 · 1 · 0 · 0 | 8 · 1 · 0 · 0 | 반복 최대의 줄(S78 #03 '…구출 맡아라' x8)·교착 후보(S73 #05 무장 강도)는 시작점에도 같다 |
++| split · 방법 엔트로피 | 0.354 · 0.56 | 0.413 · 0.90 | 0.406 · 0.89 | — |
++| 교대당 시간 (`sweep 20 --no-metrics`, 번갈아 둘씩 — 사용자 CPU / 벽시계) | — | 45.5·41.4초 / 23.1·21.3초 | 41.3·42.8초 / 18.8·23.0초 | 느려지지 않았다 |
++
++강제 20 (그 시나리오 — n·성공·한계·평균 시간 · 그 교대들의 건물 화재 전소, 기준 → 시작점 → 뒤): **fire/std** 69·37·0·264초·8 → 66·29·2·302초·8 → **67·31·0·274초·5** · **fire/arson** 44·23·1·266초·5 → 41·22·0·281초·7 → 42·22·0·279초·11 · **hazmat/std** 43·35·0·177초·5 → 44·34·1·200초·8 → 44·33·0·209초·11 · **collapse/std** 37·26·0·188초·3 → 37·22·0·206초·9 → 37·23·0·198초·8. 강제 묶음마다 한계 시간 + 방치 2 이하 ✓.
++강제 fire/std 이정표(20교대, 같은 시드 — `fix/mile.mts`): 불이 다 꺼짐 155 → 181 → **175초** · 모든 방 수색 확인 111 → 139 → **133초** · 종료 193 → 236 → **217초**.
++강제 fire/std 40교대 두 묶음(`q.mts`, 시드 S·T): 화재 성공 52.6 → 54.5% · 62.2 → 60.1% — 합쳐 174/304 → 174/304(57.2%, 같다). 다친 대원(`hurt.mts`, 같은 80교대) 23 → 28(소방 5 → 10) · 순직 0 → 2(S20 #07 · S28 #06 — 둘 다 X6 의 구획·전체 붕괴에 깔림, 그 사건에 CF8 지시는 없었다: 결과가 갈린 교대의 다른 흐름이다).
++프리셋 60 (전체 · 화재 성공): 쉬움 85.2·75.7 → 84.9·78.5 → 84.7·76.7% · 어려움 59.1·42.0 → 52.9·35.8 → **54.0·38.9%**(한계 시간 6 → 14 → 5) · 극한 31.9·22.9 → 26.4·8.7 → **28.3·10.3%**.
++진단의 뒤 (강제 fire/std 6교대, 불이 남은 표본): 일하는 방 2.17 → 1.66 → **1.80**(중반의 새 방 일이 남은 표본 1.75 → 1.87, 남지 않은 표본 1.69 → 1.84) · 손 빈 공기호흡기(지휘관 빼고) 3.25 → 3.31 → 3.05. CF8 은 강제 fire/std 10교대에 지시 59번(같은 일의 30초 안 거듭은 하나로 센다 — 도착 뒤 60초 안 5 · 60~120초 15 · 120~240초 23 · 그 뒤 16), 짝 둘을 바꾼 갈래 36번.
++
++**범위** (§8.2 화재 −6~+3): **보통 120 에서 −6.7%p 로 아직 밖이다**(보통 60 은 −5.9%p). 사용자 결정(2026-11-16 둘째)대로 더 깎거나 다른 손잡이를 돌리지 않았다 — 문서 단계가 §8.2 의 화재 목표를 이 수치로 고쳐 적는다(처음 목표 −6 과 까닭을 괄호에). 효과가 작은 까닭(위 진단): CF8 이 걸리는 때는 대부분 도착 뒤 1분이 지나서다 — 결과를 가르는 첫 1분에는 남는 대원이 없고(첫 펌프차의 넷 가운데 둘이 밖·둘이 한 방), 중반의 절반은 할 새 방이 이미 다 맡겨져 있다. 2인 진입·밖 2인 대기가 정한 첫 1분의 방 수(기준 2.3 → 1.3)는 남는 대원의 짝 투입으로 메울 수 없다.
++
++**설계와 다르게 한 곳**:
++- §5.3 은 짝을 다시 맺는 것을 실행부의 `rebuddy` 하나로 정했다 — CF8 은 지휘관이 짝을 정한다(판단은 `commander.sparePair` — 믿음·조직 정보·동료의 겉만, 상태 변경은 실행부 `doctrineRun.pairBy`). 지휘 줄 CF8 은 §6.1 표에 없는 줄이다(사용자 결정 — 소방 분야 지휘 줄, `CMD_ROWS` 의 D8 다음).
++- §5.4 의 짝 동행에 없던 끝: 따라가던 짝이 바뀌면 끝난다(`PAIR_WHO`).
++
++**설계서 밖에서 고친 공용 파일**: `commander.ts`(`assign` 끝의 `sparePair` 호출 한 줄, 파일 끝 절 — `spareOk`·`assignedAny`·`specialtyOpen`·`noBuddyOnly`·`nearestSpare`·`buddyAgent`·`bound`·`inJobBound`·`sparePair`, 상수 `SPARE_HOSE_COST`·`SPARE_KEEP`), `doctrineRun.ts`(`pairBy`, `runPair` 의 `PAIR_WHO`), `doctrine/registry.ts`(`DOC_SWITCH.SPARE`·`SPARE_SPLIT`), `doctrine/fire.ts`(`CMD_ROWS` 의 CF8). 시험: `tests/doctrine.test.ts`(균형 보탬 셋 · `CMD_ALL` 에 CF8).
++
++**관문** (`npm run check`, `4d090d6` 의 코드 — 다른 묶음의 작업자가 함께 도는 기계): **통과** — `tsc` 통과, vitest 19 파일 872 통과·건너뜀 1(873 — 이 작업의 시험 셋을 더해), `sweep 40 --check` '검증 통과'.
++
++**이어받을 자리**: ① 문서 단계 — §8.2 의 화재 목표를 −6.7%p(보통 120)로 고쳐 적기(사용자 결정). ② 전소가 기준 6 → 시작점 19 → 뒤 25(보통 120 — 포아송 잡음 ±4.5 안팎)·강제 화재 묶음의 순직 2(위 — CF8 과 이어지지 않음)는 독립 검토자가 한 번 더 본다. ③ 첫 1분의 방 수를 늘릴 손은 2인 진입의 뜻(같은·이웃 구역 — §5.4)을 넓히는 것뿐이라 사용자 결정 밖이다.
+-- 
+2.43.0
+

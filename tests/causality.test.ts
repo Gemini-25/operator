@@ -360,7 +360,7 @@ describe('I1-b 0단계: 기록만 잇기', () => {
     const seen = new Set<string>();
     for (const [seed, d, force, csqs] of cases) {
       const { sim, m } = probedShift(seed, d, force);
-      const kids = sim.incidents.filter((J) => J.parent !== undefined);
+      const kids = sim.incidents.filter((J) => J.parent !== undefined && J.hz === undefined);      // 이야기 연쇄만 — 법칙이 낸 사건(I.hz — 원인이 몫마다 여럿일 수 있다)은 tests/hazard.test.ts 가 본다
       expect(kids.length, seed).toBeGreaterThan(0);
       for (const J of kids) {
         expect(csqs, `${seed} #${J.code}`).toContain(J.csq);

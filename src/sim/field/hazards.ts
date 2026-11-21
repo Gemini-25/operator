@@ -20,6 +20,8 @@ import { CAUSE_NAME, DOWN_AT, SELF_HARM, SELF_HARM_HIT, bandOf, decayCause, hurt
 import { SHAKE, shake } from './doctrineRun';      // (R3 1단계) 동요 — 피격·피습·폭발
 import { dragSmoke, laneShieldMul } from './doctrineRun';      // (R3 6단계) 끌기의 연기 피해 · 차량으로 막은 입구의 부주의
 import { signal } from '../world/consequence';      // (I1-b) 폭발·2차 붕괴·큰 불·무장 도주를 세계에 알린다 (기록도 난수도 없다 — 규칙이 없으면 결과 불변)
+import { ARMED_BIAS, placeGone } from '../incidents';      // (I1-b C10) 재범의 자리 — 강도가 잘 나는 건물 · 쓸 수 있는 건물 (함수 안에서만 읽는다 — 모듈 순환에 걸리지 않는다)
+import type { ChainItem } from '../incidents';
 
 export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2, c?: FxInfo): void {
   s.fx.push({ kind, t: sim.t, x, y, x2, y2, text, color, ttl, c });
@@ -595,7 +597,8 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
           // 차를 몰고 달아나면 추격전이 이어지고(도주 차량), 아니면 다른 곳에서 다시 범행한다
           if (r < 0.35 && !I.pursuit && !sim.gen.chain.some((c) => c.opts.parent === I.id && c.opts.variant === 'getaway') && !sim.incidents.some((J) => J.parent === I.id && J.truth.variant === 'getaway')) { if (room) sim.gen.chain.push({ at: sim.t + 2, opts: { type: 'armed', variant: 'getaway', nodeId: I.truth.nodeId, parent: I.id, note: '달아난 용의자가 차를 몰고 도주합니다', rng: sim.rng.fork('getaway:' + I.id + ':' + h.id), cause: fledEv, csq: 'getaway' } }); else noteChainDrop(sim, I, 'armed', 'getaway'); }
           // (I1-b b1) 재범은 자기 흐름 reoffend:<사건>:<용의자> 로 만든다 — 예전에는 평소 생성기의 흐름(sim.rngGen)을 쓰고 lastType 을 고쳐, 재범이 생긴 교대의 뒤 사건이 모두 달라졌다
-          else if (r < 0.65) { const at = sim.t + s.rng.range(45, 100); if (room) sim.gen.chain.push({ at, opts: { note: '도주한 용의자가 다른 곳에서 다시 범행을 벌입니다', type: 'armed', variant: 'robbery', parent: I.id, rng: sim.rng.fork('reoffend:' + I.id + ':' + h.id), cause: fledEv, csq: 'reoffend' } }); else noteChainDrop(sim, I, 'armed', 'robbery'); }
+          // (I1-b C10) 장소는 도주 지점에서 REOFFEND.R 안의 강도가 잘 나는 건물(없으면 평소 추첨), 그 건물 곁(REOFFEND.POLICE_R)에 경찰 부대가 없을 때만 일어난다 — 순찰이 막는다. 기다려도 REOFFEND.WAIT 안에 비지 않으면 'expired'
+          else if (r < 0.65) { const at = sim.t + s.rng.range(45, 100); if (room) sim.gen.chain.push(reoffendItem(sim, I, h, at, fledEv)); else noteChainDrop(sim, I, 'armed', 'robbery'); }
         }
         continue;
       }
@@ -605,6 +608,41 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
       if (dd <= step) { h.x = tx; h.y = ty; h.pathI++; const dr = doorAt(s, ti); if (dr) dr.open = true; } else { h.x += ((tx - h.x) / dd) * step; h.y += ((ty - h.y) / dd) * step; }
     }
   }
+}
+
+/**
+ * (I1-b C10 — 설계서 §3.7) 도주한 무장 용의자의 재범: 이야기 연쇄(사용자 결정으로 그대로)를 조건으로 움직이게 한다 — 스크립트가 아니라 조건이다.
+ *  R        도주 지점(그 사건의 자리)에서 이 거리 안의, 강도가 잘 나는 종류(incidents.ARMED_BIAS.robbery)의 건물에서 다시 범행한다. 없으면 평소 추첨(그 유형의 건물)
+ *  POLICE_R 그 건물에서 이 거리 안에 경찰 부대(대기 중 · 귀소 중)가 있으면 일어나지 않는다 — 5초마다 다시 보고, 때가 된 뒤 WAIT 초가 지나도 비지 않으면 'expired'
+ * 건물은 쓸 수 있고(placeGone 아님) 이번 교대에 사건이 없던 곳만(평소 추첨의 엄격한 갈래와 같다), 고르는 난수는 새 흐름 reoffend-place:<사건>:<용의자>
+ */
+export const REOFFEND = { R: 900, POLICE_R: 400, WAIT: 240 };
+export function reoffendPlace(sim: Sim, I: Incident, rng: Rng): number {
+  const bias = ARMED_BIAS.robbery, used = new Set<number>();
+  for (const J of sim.incidents) if (J.truth.placeId >= 0) used.add(J.truth.placeId);
+  const cand: number[] = [], ws: number[] = [];
+  for (const q of sim.city.places) {
+    const w = bias[q.kind] ?? 0;
+    if (!(w > 0) || q.open || q.facility >= 0 || used.has(q.id) || placeGone(sim, q.id)) continue;
+    if (Math.hypot(q.x + q.w / 2 - I.truth.x, q.y + q.h / 2 - I.truth.y) > REOFFEND.R) continue;
+    cand.push(q.id); ws.push(w);
+  }
+  return cand.length ? rng.weighted(cand, ws) : -1;
+}
+/** 그 건물 곁(POLICE_R)에 경찰 부대가 있는가 — 대기 중이거나 귀소 중인 지상·상공 부대 (세계 규칙 쪽 — 진실 위치) */
+export function policeNear(sim: Sim, placeId: number): boolean {
+  const q = sim.city.places[placeId];
+  if (!q) return false;
+  const x = q.x + q.w / 2, y = q.y + q.h / 2;
+  for (const u of sim.units) if (u.dept === 'police' && (u.state === 'available' || u.state === 'returning') && Math.hypot(u.x - x, u.y - y) <= REOFFEND.POLICE_R) return true;
+  return false;
+}
+/** 재범 예약 한 줄 (SUSPECT_FLED 기록이 원인). 건물을 골랐으면 그 건물 곁에 경찰이 없고 그 건물에 열린 사건이 없을 때만 일어난다 */
+export function reoffendItem(sim: Sim, I: Incident, h: Hostile, at: number, cause: number): ChainItem {
+  const placeId = reoffendPlace(sim, I, sim.rng.fork('reoffend-place:' + I.id + ':' + h.id));
+  const opts = { note: '도주한 용의자가 다른 곳에서 다시 범행을 벌입니다', type: 'armed' as const, variant: 'robbery', parent: I.id, rng: sim.rng.fork('reoffend:' + I.id + ':' + h.id), cause, csq: 'reoffend', placeId: placeId >= 0 ? placeId : undefined };
+  if (placeId < 0) return { at, opts };
+  return { at, opts, until: at + REOFFEND.WAIT, when: (sm) => !policeNear(sm, placeId) && !sm.incidents.some((J) => J.phase !== 'closed' && J.truth.placeId === placeId) };
 }
 
 function startFlee(sim: Sim, s: Scene, h: Hostile, exitK: number): void {

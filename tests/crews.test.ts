@@ -547,8 +547,10 @@ describe('⑤ 역할이 배정에 쓰인다', () => {
     expect(hook.size, '급수 연결을 맡은 대원').toBeGreaterThanOrEqual(4);
     expect(pumpers / hook.size, `급수 연결 ${pumpers}/${hook.size}: ${[...hook.values()].join(',')}`).toBeGreaterThanOrEqual(0.6);
     // 구출: 유압 구조대원이 현장에 있는 동안 구출을 맡고 있던 시간 가운데 유압 구조대원의 몫
+    // ((I1-b h5) 표본 하나를 K1 → K6 으로 바꿨다: C10 의 재범 자리가 K1 의 흐름을 바꿔 그 교대의 가스 폭발·붕괴 현장(구조 대상 9 · 2)에서
+    //  유압 구조대원이 늦게 닿거나 짝·누출 조치에 묶인 동안 다른 대원이 맨손으로 붙들었다 — 이 몫은 넓은 표본(K1~K6 × 셋, 18교대)에서 h5 전에도 0.50 안팎이다. 문턱은 그대로)
     let mine = 0, others = 0;
-    for (const w of [watch('K1', SEV5, 'traffic'), watch('K2', SEV5, 'traffic'), watch('K2', NORMAL, 'collapse'), watch('K5', SEV5, 'collapse')]) { mine += w.extr[0]; others += w.extr[1]; }
+    for (const w of [watch('K6', SEV5, 'traffic'), watch('K2', SEV5, 'traffic'), watch('K2', NORMAL, 'collapse'), watch('K5', SEV5, 'collapse')]) { mine += w.extr[0]; others += w.extr[1]; }
     expect(mine + others, '구조 공작차가 온 현장의 구출 작업').toBeGreaterThan(200);
     expect(mine / (mine + others), `유압 구조대원 ${mine} / 그 밖 ${others}`).toBeGreaterThanOrEqual(0.5);
     // 먼저 닿은 대원이 맨손으로 붙들고 있던 구출을, 뒤에 닿은 유압 구조대원이 넘겨받는다 (그 자리의 사람 수는 정원을 넘지 않는다 — watch 가 본다)

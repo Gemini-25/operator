@@ -17,6 +17,8 @@ import type { Sim } from '../engine';
 import { T } from '../types';
 import type { Incident, Place, PlaceExpo, PlaceKind, Scene, Signal } from '../types';
 import { addProp } from '../field/kit';
+import { INCIDENT_PLACES } from '../cityPlan';
+import { placeState } from './state';
 
 /** 이웃으로 치는 벽-벽 틈 (도시 좌표). 조사: 가장 가까운 이웃까지의 틈은 최소 2.0 · 중앙값 7.2 · p90 23.4 — 같은 편 옆집은 2~12, 길 건너는 20~35 */
 export const NB_REACH = 30;
@@ -53,6 +55,71 @@ export function shockDelta(sig: Signal, gap: number): number {
 /** 이웃 하나: 건물 id 와 벽-벽 틈(도시 좌표) */
 export interface Nb { id: number; gap: number }
 
+// ───────────────────────── 불이 옮겨붙을 수 있는 건물 (L2 의 열 항과 불티 항이 함께 쓴다 — b3-8c 에서 laws/heat.ts 로부터 옮겼다) ─────────────────────────
+
+/** 건물 종류의 타기 쉬운 정도 M (적지 않은 종류는 1): 시장·창고·작업장·상점 1.3 · 주택·식당·카페·편의점·공장 1 · 아파트·오피스텔·사무용 0.6 */
+const MUL: Partial<Record<PlaceKind, number>> = { market: 1.3, fishMarket: 1.3, warehouse: 1.3, workshop: 1.3, shop: 1.3, apartment: 0.6, officetel: 0.6, office: 0.6 };
+export function heatMul(kind: PlaceKind): number { return MUL[kind] ?? 1; }
+
+/** 이번 교대에 이미 불이 난 건물 — 화재 사건이 있었거나 현장에 탄 칸이 있다(탈 것이 탔다) */
+export function burnedPlaces(sim: Sim): Set<number> {
+  const out = new Set<number>();
+  for (const J of sim.incidents) {
+    const p = J.truth.placeId;
+    if (p < 0) continue;
+    if (J.truth.type === 'fire') { out.add(p); continue; }
+    const s = sim.scenes[J.id];
+    if (s && s.burnedTiles > 0) out.add(p);
+  }
+  return out;
+}
+/**
+ * 옮겨붙은 불의 대상이 될 수 있는 건물인가 (터·출동 시설은 이웃 목록이 이미 뺐다):
+ * 화재 현장의 틀이 있는 종류(평소 화재의 장소 표에 있다) · 이번 교대에 아직 불이 나지 않았다(burned) · 쓸 수 있다(전소·전체 붕괴가 아니다)
+ */
+export function fireTargetOk(sim: Sim, placeId: number, burned: ReadonlySet<number>): boolean {
+  const q = sim.city.places[placeId];
+  return !!q && (INCIDENT_PLACES.fire[q.kind] ?? 0) > 0 && !burned.has(placeId) && placeState(sim, placeId)?.usable !== false;
+}
+
+/**
+ * (b3-8c L2 의 불티 항) 폭발 순간 한 번, 이웃 건물에 날아든 불티 — 충격(hazardImpulse)으로 그 건물의 heatSpread 칸에 더한다 (설계서 §3.7 L2):
+ *   ΔH = K × M × (mag / 50) × (CELL × size)² / (gap + 6)²    — 반경 6칸·피해 50 의 폭발 → 틈 3 에 0.44(36%) · 틈 7.2 에 0.21(19%) · 틈 25 에 0.04
+ *  K       첫 값 (설계서) · NB_MAX 폭발 하나가 불티를 보내는 가까운 건물의 수 (L2 의 열 항과 같은 8채)
+ * 법칙이 아니라 충격의 크기다 — 그 칸의 문턱(hz:heatSpread:<건물> — "그 건물이 얼마나 타기 쉬운가")은 열 항과 같다. 주는 자리는 rules/structure.ts 의 shockSpread
+ */
+export const EMBER = { K: 0.25, NB_MAX: 8 };
+/** 폭발 신호 하나가 틈 gap · 타기 쉬운 정도 mul 의 이웃에 주는 불티 (폭발이 아니면 0) */
+export function emberDelta(sig: Signal, gap: number, mul: number): number {
+  if (!((sig.kind === 'catastrophe' && sig.data === 0) || sig.kind === 'blast')) return 0;
+  const r = SHOCK.CELL * sig.size, g = gap + 6;
+  return EMBER.K * mul * (sig.mag / 50) * (r * r) / (g * g);
+}
+
+/**
+ * (b3-9 L7) 닫힌 현장에 실제로 남은 불씨와 열 — 식어 가는 동안의 재발화 위험 (설계서 §3.7 L7. 틱 없이 닫힌 꼴의 식 — 주는 자리는 rules/structure.ts 의 residualHeat):
+ *   e0 = Σ(불 > FIRE_MIN 인 칸의 불 세기) + HEAT_W × Σ(열 > HEAT_MIN 인 칸의 열), 칸마다 × (1 − 젖음)
+ *   e(Δt) = e0 × exp(−Δt / τ) 로 식고 위험률 λ = K × e — 누적 H(Δt) = K × e0 × τ × (1 − exp(−Δt / τ)), 끝내 닿는 값 H∞ = K × e0 × τ
+ *  K      첫 값 (e0 = 3 — 불씨 다섯 칸과 뜨거운 칸 여섯쯤 — 이면 H∞ = 0.54, 42%) · TAU 식는 시간(초) · TAU_RAIN 비가 오면 · MIN_DELAY 다시 붙기까지 적어도
+ * 잔불 정리를 마친 구역은 열 0 · 젖음 0.9 라 저절로 0 이다 — "잔불 정리를 했는가"를 따로 묻지 않는다(상태가 말한다).
+ * 그 건물 안(실내 구역)의 칸만 센다 — 건물 현장의 불 요약(hazards.fireLoad)과 같은 규칙: 산불 현장의 타는 숲·마당의 불은 그 건물의 잔불이 아니다. 길 위의 현장(건물 없음)은 부르지 않는다
+ */
+export const RESIDUAL = { K: 1.0e-3, TAU: 180, TAU_RAIN: 120, MIN_DELAY: 60, FIRE_MIN: 0.04, HEAT_MIN: 0.5, HEAT_W: 0.25 };
+export function residualOf(s: Scene): number {
+  const fire = s.fire, heat = s.heat, wet = s.wet;
+  let e = 0;
+  for (let i = 0; i < fire.length; i++) {
+    const f = fire[i], h = heat[i];
+    if (!(f > RESIDUAL.FIRE_MIN) && !(h > RESIDUAL.HEAT_MIN)) continue;
+    const r = s.region[i];
+    if (r < 0 || !s.regions[r].indoor) continue;
+    const dry = 1 - wet[i];
+    if (f > RESIDUAL.FIRE_MIN) e += f * dry;
+    if (h > RESIDUAL.HEAT_MIN) e += RESIDUAL.HEAT_W * h * dry;
+  }
+  return e;
+}
+
 /** 노출 칸 — 없으면 만든다. 배관의 문턱(그 건물의 배관이 얼마나 약한가)은 만들 때 한 번: 흐름 hz:pipe:<건물> 의 첫 값 (fork 는 부모 흐름을 쓰지 않는다) */
 export function expoOf(sim: Sim, placeId: number): PlaceExpo {
   const ex = sim.world.expo;
@@ -81,7 +148,8 @@ export function applyExpo(sim: Sim, s: Scene, I: Incident): void {
   const ex = sim.world.expo[p];
   if (!ex) return;
   if (ex.shake > 0) s.wear = { dmg: ex.shake, soot: 0, cause: 'shock', inc: ex.shakeInc >= 0 ? sim.incidents[ex.shakeInc]?.code ?? '' : '', pre: 0 };
-  if (ex.pipe) leakValve(sim, s, I);
+  // (b3-8c) 이미 새는 배관이 있는 현장(가스 누출 현장 — 그 건물의 끊긴 배관이 낸 누출 사건이 그렇다)에는 더 놓지 않는다: 그 배관이 그 손상이다 (밸브 둘이면 누출을 두 번 센다)
+  if (ex.pipe && !s.props.some((q) => q.kind === 'valve' && (q.leakRate ?? 0) > 0)) leakValve(sim, s, I);
 }
 
 /** 대기 지점에서 걸어서 닿는 칸 (잔해·문 소품은 치우거나 열 수 있다고 보고, 밸브·차량 같은 고정 소품은 막힌 칸으로 본다 — scenes/major.ts 의 reachable 과 같은 규칙) */

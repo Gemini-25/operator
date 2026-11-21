@@ -10,3 +10,5 @@
 //
 import './road';      // L1 roadCrash — 차가 몰린 길에서는 사고가 잦다 (b3-6)
 import './heat';      // L2 heatSpread — 오래 크게 타는 불 곁의 건물은 불이 붙는다 (b3-7)
+import './shock';     // L3 structFail — 금 간 건물은 그 금만큼 내려앉기 쉽다 (b3-8c) · pipeLeak — 끊긴 배관은 샌다 (같은 파일)
+import './ember';     // L7 rekindle — 덜 식은 불 자리는 다시 붙는다 (b3-9 — 충격만 받는다: 닫힐 때 rules/structure.ts 의 residualHeat 가 준다)

@@ -19,6 +19,7 @@ import type { SpawnOpts } from './incidents';
 import type { Rng } from './rng';
 import { scenarioOf } from './scenarios';
 import { canBlock, noteBump, noteRoadCause, unnoteBump } from './traffic';      // (I1-b b3-5) 우회로 판정과 교통의 장부
+import { signal } from './world/consequence';      // (I1-b b3-10) 재난이 틀을 지나는 길 — 지진(quake)·태풍 정전(blackout)의 신호만 보낸다 (정전·통신을 동네와 건물에 적는 것은 world/rules/infra.ts 의 규칙)
 import type { Incident, IncidentType, Place, PlaceKind, RoadEdge, RoadNode } from './types';
 import { clamp, fmtClock, josa } from './util';
 
@@ -194,13 +195,15 @@ function lightsOut(sim: Sim, d: DisasterState): void {
   const ev = tell(sim, d, '강풍에 송전선이 끊겨 도시 곳곳이 정전됐습니다. 신호등이 꺼져 도로가 밀립니다.');
   // (I1-b b3-5) 얹은 혼잡의 장부 한 줄 — 산술은 위 그대로 두고 줄만 (d.lastEv 는 보고서에 남기지 않는 알림에도 덮이므로 이 자리의 기록을 쓴다)
   d.darkBump = noteBump(sim, sim.city.edges.map((e) => e.id), DARK_BUMP, ev, 1);
+  signal(sim, 'blackout', { inc: -1, ev, data: 1 });      // (I1-b b3-10) 신호만 — 동네의 전력·승강기·통신은 C4·C8 의 규칙이 적는다
 }
 function lightsOn(sim: Sim, d: DisasterState, quiet = false): void {
   if (!d.dark) return;
   d.dark = false;
   for (const e of sim.city.edges) { const v = (e.bump ?? 0) - DARK_BUMP; e.bump = v < 1e-9 ? 0 : v; }
   if (d.darkBump >= 0) { unnoteBump(sim, d.darkBump); d.darkBump = -1; }      // (I1-b b3-5) 장부 줄도 함께 거둔다
-  if (!quiet) tell(sim, d, '전력이 복구됐습니다. 신호등이 다시 켜집니다.', '재난안전본부', false);
+  const ev = quiet ? -1 : tell(sim, d, '전력이 복구됐습니다. 신호등이 다시 켜집니다.', '재난안전본부', false);
+  signal(sim, 'blackout', { inc: -1, ev, data: 0 });      // (I1-b b3-10) 정전의 끝 — 규칙이 그 정전을 원인으로 가진 동네의 값을 되돌린다
 }
 
 /** 매 틱, 사건 생성(tickIncidents)보다 먼저. */
@@ -273,7 +276,8 @@ function onImpact(sim: Sim, d: DisasterState): void {
     d.epi = { x: en.x + rng.range(-60, 60), y: en.y + rng.range(-60, 60) };
     d.shakes = [sim.t];
     sim.tune.aidUnits += 3;      // 인근 도시가 지원을 더 보낸다 (aidUsed 를 음수로 두면 지원 부대의 이름표 번호가 어긋난다)
-    tell(sim, d, `지진 발생! 진앙은 ${nodeName(c, en.id)} 부근. 도시 전역이 크게 흔들렸고, 여러 곳에서 한꺼번에 피해 신고가 들어옵니다. 인근 도시에 지원을 더 요청했습니다.`, '기상청');
+    const qev = tell(sim, d, `지진 발생! 진앙은 ${nodeName(c, en.id)} 부근. 도시 전역이 크게 흔들렸고, 여러 곳에서 한꺼번에 피해 신고가 들어옵니다. 인근 도시에 지원을 더 요청했습니다.`, '기상청');
+    signal(sim, 'quake', { inc: -1, ev: qev, x: d.epi.x, y: d.epi.y, mag: 1 });      // (I1-b b3-10) 본진 — 동네의 전력망·통신이 흔들림을 받는 것은 C4·C8 의 규칙 (d.intensity 는 이 안에서 아직 0 이라 읽지 않는다)
     // 25초에 걸쳐 쏟아진다
     const items: What[] = [];
     const nCol = rng.int(3, 4);
@@ -522,7 +526,8 @@ function tickQuake(sim: Sim, d: DisasterState): void {
     if (!s) continue;
     for (const p of s.props) if (p.kind === 'unstable' && !p.mitigated && p.leakRate) { p.leak = Math.max(p.leak ?? 0, 0.95); cracked++; }
   }
-  tell(sim, d, `여진 발생.${cracked ? ` 붕괴 현장의 금 간 구조물 ${cracked}곳이 다시 흔들립니다.` : ''} 추가 피해 신고가 들어옵니다.`, '기상청');
+  const qev = tell(sim, d, `여진 발생.${cracked ? ` 붕괴 현장의 금 간 구조물 ${cracked}곳이 다시 흔들립니다.` : ''} 추가 피해 신고가 들어옵니다.`, '기상청');
+  if (d.epi) signal(sim, 'quake', { inc: -1, ev: qev, x: d.epi.x, y: d.epi.y, mag: 0.6 });      // (I1-b b3-10) 여진 — 본진에서 꺼지지 않은 동네 가운데 문턱이 낮은 곳만 꺼진다 (규칙)
   const n = d.rng.int(1, 2);
   for (let k = 0; k < n; k++) d.queue.push({ at: sim.t + 3 + k * 6, what: 'after' });
 }

@@ -1066,11 +1066,14 @@ describe('I1-b b3-5 ①: 교통의 장부와 초과의 네 몫', () => {
         for (const c of tr.crowds) { seen.crowd++; const row = tr.bumps.find((b) => b.id === c.bump)!; expect([row.what, row.add, row.edges]).toEqual([0, 0.8, c.edges]); expect(s.events[row.ev].text).toContain('인파가 몰려'); }
         const dz = s.disaster;
         if (dz && dz.dark) { seen.dark++; const row = tr.bumps.find((b) => b.id === dz.darkBump)!; expect([row.what, row.edges.length]).toEqual([1, edges.length]); expect(s.events[row.ev].text).toContain('정전'); }
-        expect(tr.bumps.length).toBe(tr.crowds.length + (dz && dz.dark ? 1 : 0));
+        // (b3-10 C4) 정전 한 건마다의 꺼진 신호 — 그 줄은 world.spans 의 한 건이 가진다(원인 기록 = 그 정전의 원인)
+        const c4 = tr.bumps.filter((b) => b.what === 1 && !(dz && b.id === dz.darkBump));
+        for (const b of c4) { const sp = s.world.spans.find((q) => q.bump === b.id)!; expect(sp, `${seed} C4 bump ${b.id} 의 장부`).toBeDefined(); expect([sp.f, b.ev, b.add]).toEqual(['power', sp.cause, 0.4]); }
+        expect(tr.bumps.length).toBe(tr.crowds.length + (dz && dz.dark ? 1 : 0) + c4.length);
       }
-      // 교대가 끝나면 얹은 혼잡과 그 줄이 남지 않는다
-      expect(tr.bumps).toEqual([]);
-      for (const e of edges) expect(e.bump ?? 0).toBe(0);
+      // 교대가 끝나면 얹은 혼잡과 그 줄이 남지 않는다 — (b3-10) 원인이 아직 살아 있는 정전의 꺼진 신호만 남고, 구간의 bump 는 남은 줄의 합이다
+      for (const b of tr.bumps) expect(s.world.spans.some((q) => q.bump === b.id), `${seed} 남은 줄 ${b.id}`).toBe(true);
+      for (const e of edges) expect(e.bump ?? 0).toBeCloseTo(tr.bumps.reduce((a, b) => a + (b.edges.indexOf(e.id) >= 0 ? b.add : 0), 0), 6);
       expect(s.world.hz.holes).toBe(0);
       return hp.done();
     };
@@ -2203,7 +2206,7 @@ describe('I1-b b3-8 c · b3-9: 금 간 건물의 붕괴·끊긴 배관의 누출
     expect(readFileSync('src/sim/world/laws/index.ts', 'utf8')).toMatch(/^import '\.\/heat';[^\n]*\nimport '\.\/shock';[^\n]*\nimport '\.\/ember';/m);
     expect(readFileSync('src/sim/world/rules/index.ts', 'utf8')).toMatch(/^import '\.\/structure';\nimport '\.\/risk';/m);
     const ids = consequences().map((c) => c.id);
-    expect(ids.slice(ids.indexOf('rubbleRoad'))).toEqual(['rubbleRoad', 'shockSpread', 'pipeShut', 'residualHeat', 'suspectZone']);
+    expect(ids.slice(ids.indexOf('rubbleRoad'), ids.indexOf('suspectZone') + 1)).toEqual(['rubbleRoad', 'shockSpread', 'pipeShut', 'residualHeat', 'suspectZone']);      // (b3-10) 그 뒤로 rules/infra.ts 의 C4·C8 — 'I1-b b3-10' 묶음이 본다
     // 세기와 크기 (첫 값에서 — STRUCT.A 는 강제 collapse/gasblast 20교대로 절반)
     expect(STRUCT).toEqual({ A: 5.0e-4, SEV2: 0.3, SEV3: 0.45, MAX: 16, CAP: 2 });
     expect(PIPE.A).toBeCloseTo(1 / 300, 12); expect([PIPE.SEV2, PIPE.MAX, PIPE.CAP, REKINDLE.CAP]).toEqual([0.4, 16, 2, 2]);

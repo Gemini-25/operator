@@ -16,3 +16,4 @@ import './record';
 import './hospital';
 import './structure';
 import './risk';      // C10 suspectZone — (b3-9) 무장 용의자의 도주가 그 동네의 경계 단계를 올린다 (재범 자체는 field/hazards.ts 의 도주 블록이 조건으로 예약한다)
+import './infra';     // C4 powerOut — (b3-10) 변전소·발전소 사고 · 끊긴 전선(붕괴·폭발 자리) · 지진 · 태풍의 정전 → 동네·국지 전력 → 꺼진 신호(혼잡)·병원 발전기 (규칙 넷: powerOut · powerOut.grid · powerOut.end · powerOut.tell)

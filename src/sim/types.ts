@@ -1008,8 +1008,8 @@ export interface WorldState {
   hz: HzState;                               // { cells: {}, live: {}, waiting: [], roadAt: -1, holes: 0 }
   expo: Record<number, PlaceExpo>;           // 건물 id → 노출 (드문드문)
   sills: Record<number, number>;             // 건물 id → 지하의 문턱 높이 (L6 — 처음 볼 때 채운다. 시드에 따라 달라지는 값은 sim.world 안에만 — §3.6c)
-  spans: { f: ZoneField; cause: number; inc: number; bump: number; src?: ZoneSpanSrc; since?: number; tellAt?: number; label?: string; next?: boolean }[];      // 정전·연기 한 건마다의 장부 — 얹은 bump 의 id (그 건이 끝날 때 한 번 거둔다)
-  //   (b3-10 — 선택 칸, world/rules/infra.ts 가 만드는 줄에는 모두 있다) src = 그 건을 만든 길 · since = 시작 시각 · tellAt = 관제 알림이 나갈 시각(-1 = 나갔거나 알림 없음) ·
+  spans: { f: ZoneField; cause: number; inc: number; bump: number; src?: ZoneSpanSrc; since?: number; tellAt?: number; told?: boolean; label?: string; next?: boolean }[];      // 정전·연기 한 건마다의 장부 — 얹은 bump 의 id (그 건이 끝날 때 한 번 거둔다)
+  //   (b3-10 — 선택 칸, world/rules/infra.ts 가 만드는 줄에는 모두 있다) src = 그 건을 만든 길 · since = 시작 시각 · tellAt = 관제 알림이 나갈 시각(-1 = 나갔거나 알림 없음) · told = 관제에 알렸다(복구 기록을 남긴다) ·
   //   label = 기록 문구의 자리 말('○○동 일대' · '{건물} 주변') · next = 정전이 길어져 통신(C8)으로 넘겼다
 }
 export interface ZoneState {

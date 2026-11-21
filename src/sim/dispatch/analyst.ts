@@ -20,6 +20,8 @@ const TYPES = TYPE_ORDER;      // 가설의 순서 = likRow 의 열 순서 (inci
 export const SPREAD_SEV = 0.3;
 /** (I1-b C10) 알려진 구역 위험(무장 용의자 도주) 안의 무장 신고에 더하는 위험도 — 경찰 한 팀 더와 함께 (설계서 I1 §3.7 C10 의 "관제가 쓰는 곳") */
 export const ZONE_SEV = 0.3;
+/** (I1-b C4) 관제가 아는 정전(knownZone 의 power < 1) 안의 교통사고·승강기 신고에 더하는 위험도 — 꺼진 신호등의 교차로 · 멈춘 승강기 (설계서 I1 §3.7 C4 의 "관제") */
+export const POWER_SEV = 0.3;
 export const sevName = (s: number): string => (s < 1.7 ? '보통' : s < 2.4 ? '높음' : '매우 높음');
 const NEED_NAME: Record<keyof Needs, string> = { suppression: '진압', rescue: '구조', ems: '구급', law: '경찰', tactical: '경찰 기동', search: '수색', traffic: '교통 통제', eod: '폭발물 처리',
   utilPower: '전력 복구', utilGas: '가스 복구', utilWater: '수도 복구', tow: '견인', capture: '동물 포획', decon: '제독' };      // (N8 §5.3.5) · (N9 §5.3.1)
@@ -52,6 +54,11 @@ function pick(claims: Claim[], topic: Topic): { c: Claim | null; conflict: boole
  * (I1-b b3-8 — 설계서 §3.7 L3 의 "AI 가 아는 길") 곁에서 관제가 아는 붕괴·폭발이 있었는가 — 그 충격에 금 간 건물이 내려앉거나 끊긴 배관이 샐 수 있다.
  * 붕괴·가스 신고의 위험도에 SPREAD_SEV 를 더한다(이름표는 붙이지 않는다). 알려진 교차로 사이 300 안 · 180초 안의 진실이 아닌 기록만(knownHazardNear — 신고받는 이 사건은 빼고)
  */
+/** (I1-b C4) 관제가 아는 정전 안의 신고인가 — 신고의 구역은 알려진 교차로로만(knownZoneOfIncident), 값은 알려진 칸만(knownZone) */
+function darkZone(sim: Sim, I: Incident): boolean {
+  const pw = knownZone(sim, knownZoneOfIncident(sim, I)).power;
+  return pw !== undefined && pw < 1;
+}
 function shockNear(sim: Sim, I: Incident): boolean {
   if (!I.locationKnown) return false;
   const nh = knownHazardNear(sim, I.reportedNode, 300, 180, I.id);
@@ -120,6 +127,7 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
     if (haz.c && haz.c.value === 'lanes') { risks.push('2차 사고 위험'); }
     if (det.c && det.c.value && det.c.value.ejected) { sev += 0.3; why.push('차외 방출'); }
     if (nat.indexOf('explosion') >= 0) { sev += 0.3; }
+    if (darkZone(sim, I)) { sev += POWER_SEV; why.push('정전 구역'); }      // (I1-b C4) 신호등이 꺼진 동네의 교통사고
   } else if (type === 'search') {
     sev = 1.35;
     if (inj.c && inj.c.value === true) { sev += 0.5; why.push('대상 부상 가능'); }
@@ -172,6 +180,7 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
   }
   sev = clamp(sev, 1, 3);
   if (type === 'collapse' && nat.indexOf('elevator') >= 0 && nat.indexOf('collapse') < 0) sev = Math.min(sev, 1.8);      // 승강기가 멈춘 것이지 건물이 무너진 것은 아니다
+  if (type === 'collapse' && nat.indexOf('elevator') >= 0 && darkZone(sim, I)) { sev = clamp(sev + POWER_SEV, 1, 3); why.push('정전 구역'); }      // (I1-b C4) 정전으로 멈춘 승강기 — 위의 상한 뒤에 더한다(구조가 늦어지면 안의 사람이 위험하다)
   // (X6 §5.9) 현장 상황 보고로 올린 위험도와 위험은 새 신고 진술로 다시 평가해도 지워지지 않는다 (I.fieldType 과 같은 방식)
   if (I.fieldRisk) { sev = Math.max(sev, I.fieldRisk.sev); for (const r of I.fieldRisk.risks) if (risks.indexOf(r) < 0) risks.push(r); }
   const conflicts = [inj, cnt, trap, haz, wpn].filter((x) => x.conflict).length;

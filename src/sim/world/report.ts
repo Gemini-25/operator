@@ -85,6 +85,8 @@ function hzSentence(sim: Sim, law: HazardLawId, target: number, at: number, s: H
       // 밀림의 뿌리를 만든 항: 닫힘(통제 기록) · 사건의 감속(발생 기록) · 정체 · 얹은 혼잡(인파 — 그 말이 곧 원인이다)
       if (e && /인파/.test(e.text)) return `${edgeOf(sim, s.ref)}의 ${josa(c, '으로/로')} 차가 밀려 있던 ${tgtE}에서 난 사고입니다.`;
       const w = e && /정체/.test(e.text) ? '정체' : e && e.kind === 'incident' ? '사고' : '통제';
+      // 뿌리가 그 구간 자신이다(먼저 난 사고로 느려진 구간에 차가 밀렸다 — 교통 모델의 밀림은 뿌리 구간에도 한 다리 건너 찬다): 같은 이름을 두 번 쓰지 않는다
+      if (s.ref === target) return `${tgtE}의 ${w}(${c})로 밀려 있던 그 구간에서 난 사고입니다.`;
       return `${edgeOf(sim, s.ref)}의 ${w}(${c})로 차가 밀려 있던 ${tgtE}에서 난 사고입니다.`;
     }
     case 'lane': return `한 차로가 막힌 ${tgtE}에서 난 사고입니다(${c}).`;
@@ -268,15 +270,13 @@ function longestChain(sim: Sim): Incident[] {
 /** 세계 상태의 숫자와 줄 (ShiftReport.world) — '인과:' 줄과 '세계 상태:' 줄 */
 export function worldReport(sim: Sim): NonNullable<ShiftReport['world']> {
   const w = sim.world, log = w.log;
-  let outages = 0, smoke = 0, spawned = 0;
-  for (const r of log) {
-    if (r.rule === 'powerOut' || r.rule === 'powerOut.grid') outages++;
-    else if (r.rule === 'smokePlume') smoke++;
-    if (r.made >= 0) spawned++;
-  }
-  const commsDown = w.count['commsDown.spans'] ?? 0;
-  let hospitalDiverts = 0;
-  for (const e of sim.events) if (e.tag === 'hospital' && /응급실 포화 —/.test(e.text)) hospitalDiverts++;
+  let spawned = 0;
+  for (const r of log) if (r.made >= 0) spawned++;
+  // 정전·통신 장애는 실제로 연 건수다(rules/infra.ts 가 world.count 에 센다) — world.log 의 줄은 규칙의 발동 수라 태풍 정전의 복구(blackout data 0)·아무 동네도
+  // 끄지 못한 여진까지 센다(검토에서 고쳤다: 태풍 정전 한 번이 '정전 2회'였다). 연기는 동네로 번진 건수 = 연기 알림 기록(tag smoke — 연기 한 건에 한 번. smokePlume 은 장부 줄을 남기지 않는다)
+  const outages = w.count['powerOut.spans'] ?? 0, commsDown = w.count['commsDown.spans'] ?? 0;
+  let hospitalDiverts = 0, smoke = 0;
+  for (const e of sim.events) { if (e.tag === 'hospital' && /응급실 포화 —/.test(e.text)) hospitalDiverts++; else if (e.tag === 'smoke') smoke++; }
   let rerouted = 0, diverts = 0, lostSum = 0;
   for (const J of sim.incidents) for (const p of J.problems) {
     if (p.code === 'HOSPITAL_FULL') rerouted++;

@@ -19,6 +19,7 @@
 // 기간·알림 지연의 난수는 이 발동의 흐름 csq:<규칙>:<열쇠>:<n> — "일어나는가"의 주사위가 아니라 내용이다. 문턱은 자리마다 fork 로 다시 계산한다(시드에 따라 달라지는 값을 도시 캐시에 두지 않는다 — §3.6c).
 // 진실 쪽이다(세계 규칙). 관제는 knownZone 의 power 로만 안다(분석 AI — 정전 구역의 교통사고·승강기 신고). 판단부는 world.zones·world.spans 를 읽지 않는다 (§3.8).
 
+import { riverDist } from '../../city';
 import { DISTRICTS } from '../../cityPlan';
 import type { Sim } from '../../engine';
 import { emit, raiseProblem } from '../../events';
@@ -29,8 +30,8 @@ import { addBump, removeBump } from '../../traffic';
 import { T } from '../../types';
 import type { Place, Scene, Signal, WorldState, ZoneSpanSrc } from '../../types';
 import { registerConsequence } from '../consequence';
-import { darkened, liftPlaces, shockDelta } from '../expo';
-import { HOSPITAL_CAP, ZONE_DEFAULT, dropAt, endZoneBy, isDark, setZone, setZoneArea, zoneAt, zoneName, zoneOfXY } from '../state';
+import { LIFT, darkened, expoOf, liftPlaces, shockDelta } from '../expo';
+import { HOSPITAL_CAP, ZONE_DEFAULT, dropAt, endZoneBy, isDark, placeState, setZone, setZoneArea, zoneAt, zoneName, zoneOfXY } from '../state';
 
 /**
  * 정전의 크기와 시간 (설계서 §3.7 C4 의 첫 값):
@@ -597,4 +598,59 @@ registerConsequence({
   },
   // 회복(그 동네의 연기가 걷혔다): 그 연기가 모든 동네에서 걷혔으면 얹은 혼잡을 한 번 거둔다
   recover: (sim, _z, f) => { if (f === 'smoke') settleSmoke(sim); },
+});
+
+// ───────────────────────── L6 floodLow — 수위가 문턱 높이를 넘으면 잠긴다 (설계서 I1 §3.7 L6 · 문턱 상태 — 사건은 L5·L1 이 낸다) ─────────────────────────
+// 홍수의 도로는 이미 이 꼴이다(구간마다 문턱 d.thr — disaster.roadSill: 수위가 0.7 × 문턱을 넘으면 느려지고 문턱을 넘으면 잠긴다). 같은 법칙을 건물로 넓힌다:
+//   강에서 가까운 건물마다 지하의 문턱 높이 thrP = max(MIN, 강까지의 거리 / DIV) × (LO + SPAN × u) (u = 흐름 hz:floodLow:b<건물> 의 첫 값 — 그 건물의 지하가 얼마나 낮은가,
+//   world.sills 에 처음 볼 때 채운다: 시드에 따라 달라지는 값이라 도시 열쇠의 캐시에 두지 않는다 §3.6c). 홍수 중 5초마다 수위 d.level > thrP 를 본다 — 넘는 순간 expo.wet.
+//   4층 이상 건물만(정전이 승강기에 닿는 건물) 기록 '{건물} 지하가 물에 잠겨 전기가 끊겼습니다.'(진실 — 원인 = 홍수의 충격 알림 d.levelEv) · expo.dark(전기실) → expo.darkened → L5.
+//   그 밖의 건물은 expo.wet 만 적는다 — 뒤따르는 것이 없는 상태 변화로 기록을 불리지 않는다(교대 요약의 "침수 건물 n채"는 b4).
+// 차오르는 물에 느려진 길은 교통 장부의 'level' 항(disaster.floodRoads — noteRoadCause)이다: 구간에서 직접 내는 사건은 없다(L1 이 같은 법칙으로 본다).
+// 재난의 수위를 읽는 것은 상태 규칙이라 된다 — 법칙 파일은 재난을 읽지 않는다. 잠긴 지하에 갇힌 사람의 구조 현장은 이번에 만들지 않는다(그릴 현장 틀이 없다 — N9 뒤).
+// 잠긴 건물(wet)과 전기실(dark)은 교대 안에서 되돌리지 않는다 — 물이 빠져도 잠겼던 지하와 젖은 전기실은 그대로다(L5 는 건물마다 한 번).
+
+/** 지하의 문턱 (설계서 §3.7 L6 의 첫 값): thrP = max(MIN, 강까지의 거리 / DIV) × (LO + SPAN × u) · 대상은 문턱의 위쪽 끝 max(MIN, 거리 / DIV) × (LO + SPAN) ≤ TOP 인 건물(54채) */
+export const FLOOD = { DIV: 80, MIN: 0.3, LO: 0.85, SPAN: 0.3, TOP: 1.15 };
+const FLOOD_OF = new WeakMap<Place[], { id: number; base: number }[]>();
+/** 잠길 수 있는 건물(터가 아님 · 문턱의 위쪽 끝이 TOP 이하)과 그 밑값 max(MIN, 강까지의 거리 / DIV) — 시드와 무관한 도시의 생김새라 도시 열쇠의 캐시, 건물 id 순 */
+export function floodPlaces(sim: Sim): readonly { id: number; base: number }[] {
+  const places = sim.city.places;
+  let out = FLOOD_OF.get(places);
+  if (out) return out;
+  out = [];
+  for (const q of places) {
+    if (q.open) continue;
+    const base = Math.max(FLOOD.MIN, riverDist(q.x + q.w / 2, q.y + q.h / 2) / FLOOD.DIV);
+    if (base * (FLOOD.LO + FLOOD.SPAN) <= FLOOD.TOP) out.push({ id: q.id, base });
+  }
+  FLOOD_OF.set(places, out);
+  return out;
+}
+/** 그 건물 지하의 문턱 높이 — 처음 볼 때 world.sills 에 채운다(흐름 hz:floodLow:b<건물> — 경로와 무관) */
+export function sillOf(sim: Sim, id: number, base: number): number {
+  const w = sim.world.sills;
+  let v = w[id];
+  if (v === undefined) v = w[id] = base * (FLOOD.LO + FLOOD.SPAN * sim.rng.fork('hz:floodLow:b' + id).next());
+  return v;
+}
+
+registerConsequence({
+  id: 'floodLow', label: '침수', on: 'tick',
+  key: (sim) => { const d = sim.disaster; return d && d.kind === 'flood' && (d.level ?? 0) > 0 ? 'flood' : null; },
+  cooldown: 5, cap: Infinity, spawns: false, silent: true,
+  test: () => true,
+  apply: (c) => {
+    const sim = c.sim, d = sim.disaster!, lv = d.level ?? 0, places = sim.city.places;
+    for (const f of floodPlaces(sim)) {
+      const thr = sillOf(sim, f.id, f.base), ex = sim.world.expo[f.id];
+      if ((ex && ex.wet) || !(lv > thr)) continue;
+      const e = expoOf(sim, f.id), q = places[f.id];
+      e.wet = true;
+      if ((q.floors ?? 1) < LIFT.FLOORS || placeState(sim, f.id)?.usable === false) continue;      // 4층 이상만 기록 — 정전이 승강기에 닿는 건물
+      e.wetEv = emit(sim, { role: 'SYSTEM', actor: '도시', kind: 'hazard', imp: 0, truth: true, causes: [d.levelEv], text: `${placeLabel(q)} 지하가 물에 잠겨 전기가 끊겼습니다.` });
+      e.dark = sim.t;
+      darkened(sim, [f.id], { rate: 0, ev: e.wetEv, inc: -1, what: 'level', ref: f.id });      // L5 — 잠긴 전기실이 꺼진 순간 운행 중이던 승강기
+    }
+  },
 });

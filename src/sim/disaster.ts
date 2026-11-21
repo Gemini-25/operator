@@ -65,6 +65,7 @@ export interface DisasterState {
   // ── 인과 기록 (I1-b) ──
   lastEv: number;                // 마지막 재난 알림 기록 (-1). 재난이 일으킨 사건의 발생 기록이 원인으로 가리킨다 — 판단은 읽지 않는다
   darkBump: number;              // (b3-5) 정전이 얹은 혼잡의 장부 줄 (traffic.noteBump 의 id, -1 = 없다)
+  levelEv: number;               // (b3-12 L6) 홍수의 충격 알림(강이 넘치기 시작했다) — 물이 차올라 느려진 구간의 'level' 장부와 잠긴 지하 기록의 원인 (-1)
 }
 
 /** 재난 하나가 일으키는 사건 수의 상한 */
@@ -91,7 +92,7 @@ function plan(sim: Sim, kind: DisasterKind, rng: Rng): DisasterState {
   const d: DisasterState = {
     kind, name: DISASTER_NAME[kind], phase: 'calm', tWarn: 0, tImpact: 0, tEnd: 0, intensity: 0, rng,
     spawned: [], closedEdges: [], nextAt: Infinity, log: [], closedTotal: 0, queue: [], timed: [], done: {},
-    lastEv: -1, darkBump: -1,
+    lastEv: -1, darkBump: -1, levelEv: -1,
   };
   if (kind === 'typhoon') { d.tWarn = L * rng.range(0.1, 0.18); d.tImpact = d.tWarn + rng.range(90, 120); d.tEnd = d.tImpact + 420; }
   else if (kind === 'flood') {
@@ -269,7 +270,7 @@ function onImpact(sim: Sim, d: DisasterState): void {
     tell(sim, d, '태풍이 도시를 지나고 있습니다. 쓰러진 나무와 침수 신고가 잇따를 것으로 보입니다.', '기상청');
   } else if (d.kind === 'flood') {
     d.nextAt = sim.t + rng.range(20, 30);
-    tell(sim, d, `${josa(c.river.name, '이/가')} 넘치기 시작했습니다. 강에서 가까운 도로부터 차례로 잠깁니다.`);
+    d.levelEv = tell(sim, d, `${josa(c.river.name, '이/가')} 넘치기 시작했습니다. 강에서 가까운 도로부터 차례로 잠깁니다.`);      // (I1-b b3-12) 느려진 길·잠긴 지하의 원인 기록
   } else if (d.kind === 'quake') {
     const urban = c.nodes.filter((n) => n.district !== 'outskirts');
     const en = rng.pick(urban.length ? urban : c.nodes);
@@ -325,7 +326,7 @@ function finish(sim: Sim, d: DisasterState, cut: boolean): void {
   const stillCut = d.closedEdges.length > 0;
   reopenEdges(sim, d);
   lightsOn(sim, d, true);
-  if (d.slowed) { for (const id of d.slowed) { const e = sim.city.edges[id]; e.slow = Math.max(0, e.slow - FLOOD_SLOW); } d.slowed = []; }
+  if (d.slowed) { for (const id of d.slowed) { const e = sim.city.edges[id]; e.slow = Math.max(0, e.slow - FLOOD_SLOW); noteRoadCause(sim, id, 'level', -1); } d.slowed = []; }      // (b3-12) 'level' 장부도 함께 지운다
   if (d.level !== undefined) d.level = 0;
   d.speedMul = undefined;
   d.phase = 'over'; d.intensity = 0;
@@ -499,8 +500,9 @@ function floodRoads(sim: Sim, d: DisasterState): void {
     const th = roadSill(sim, d, e);
     if (th > 1.45) continue;      // 강에서 먼 구간
     const k = slowed.indexOf(e.id);
-    if (k < 0 && lv > th * 0.7) { e.slow += FLOOD_SLOW; slowed.push(e.id); }
-    else if (k >= 0 && lv < th * 0.7 - 0.03) { e.slow = Math.max(0, e.slow - FLOOD_SLOW); slowed.splice(k, 1); }
+    // (I1-b b3-12 L6) 물이 차오르는데 아직 열려 있는 길 — 교통 장부의 'level' 항(원인 = 홍수의 충격 알림). L1 이 그 구간을 다른 몰림과 같은 법칙으로 본다 (구간에서 직접 내는 사건은 없다)
+    if (k < 0 && lv > th * 0.7) { e.slow += FLOOD_SLOW; slowed.push(e.id); noteRoadCause(sim, e.id, 'level', d.levelEv); }
+    else if (k >= 0 && lv < th * 0.7 - 0.03) { e.slow = Math.max(0, e.slow - FLOOD_SLOW); slowed.splice(k, 1); noteRoadCause(sim, e.id, 'level', -1); }
     // 강가의 길은 다리 없이도 돌아갈 수 있을 때만 닫는다 (그래야 다리가 잠길 때 그 다리에만 매달린 교차로가 없다)
     if (!e.closed && (e.bridge ? lv >= th : lv > th)) closeEdge(sim, d, e, e.bridge ? '강물이 다리 상판까지 차올랐습니다' : '도로가 물에 잠겼습니다', !e.bridge);
     else if (e.closed && e.closedReason === 'disaster' && lv < th - 0.05) reopenEdges(sim, d, (q) => q.id === e.id);

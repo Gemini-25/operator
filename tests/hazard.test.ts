@@ -38,8 +38,18 @@ import { consequences, signal, tickWorld } from '../src/sim/world/consequence';
 import { EXPO_LEAK, GAS_KINDS, SHOCK, applyExpo, shockDelta } from '../src/sim/world/expo';
 import { CAT, catOf, collapseBuilding, collapseRegion } from '../src/sim/field/catastrophe';
 import { NO_SENSE, chooseMethod } from '../src/sim/field/methods';
-import { unitArrived } from '../src/sim/field/sceneManager';
+import { tickScene, unitArrived } from '../src/sim/field/sceneManager';
 import { sysOf } from '../scripts/metrics';
+import { PIPE, STRUCT } from '../src/sim/world/laws/shock';
+import { REKINDLE } from '../src/sim/world/laws/ember';
+import { EMBER, RESIDUAL, emberDelta, residualOf } from '../src/sim/world/expo';
+import { hazardCellFor } from '../src/sim/world/hazard';
+import { REOFFEND, policeNear, reoffendItem, reoffendPlace } from '../src/sim/field/hazards';
+import { ARMED_BIAS } from '../src/sim/incidents';
+import { RISK } from '../src/sim/world/rules/risk';
+import { knownZone, knownZoneOfIncident, zoneName, zoneOfXY } from '../src/sim/world/state';
+import { ZONE_SEV } from '../src/sim/dispatch/analyst';
+import type { Hostile } from '../src/sim/types';
 
 const T = (name: string): HazardLawId => ('t-' + name) as HazardLawId;
 /** 등록된 법칙을 모두 치우고 시험 법칙만 넣어 fn 을 돌린 뒤 되돌린다 */
@@ -2141,7 +2151,7 @@ describe('I1-b b3-8 a·b: L3 충격 — 붕괴와 폭발은 옆 건물을 흔든
     expect(A.sc.props.some((p) => p.kind === 'valve')).toBe(true);
     expect(B.sc.props.some((p) => p.kind === 'valve')).toBe(false);
     expect([A.sc.rules, A.sc.kind]).toEqual([B.sc.rules, B.sc.kind]);
-    // applyExpo 를 같은 현장에 한 번 더 불러도 생김새 칸은 그대로다 (밸브가 하나 더 놓일 뿐)
+    // applyExpo 를 같은 현장에 한 번 더 불러도 생김새 칸은 그대로다 ((b3-8c) 이미 새는 밸브가 있으니 더 놓이지도 않는다)
     const r0 = JSON.stringify(A.sc.rules ?? null), k0 = A.sc.kind;
     applyExpo(A.s, A.sc, A.I);
     expect([JSON.stringify(A.sc.rules ?? null), A.sc.kind]).toEqual([r0, k0]);
@@ -2155,4 +2165,426 @@ describe('I1-b b3-8 a·b: L3 충격 — 붕괴와 폭발은 옆 건물을 흔든
     expect(ma).toBe(mb);
     expect(ma).not.toBe('announce');
   });
+});
+
+// ───────────────────────── b3-8 c · b3-9: L3 의 법칙(structFail · pipeLeak) · L2 의 불티 · L7 rekindle · C10 suspectZone ─────────────────────────
+describe('I1-b b3-8 c · b3-9: 금 간 건물의 붕괴·끊긴 배관의 누출 · 폭발의 불티 · 되살아난 잔불 · 도주한 무장 용의자', () => {
+  const bld = (q: Place): boolean => !q.open && q.facility < 0;
+  const firePlace = (q: Place): boolean => bld(q) && (INCIDENT_PLACES.fire[q.kind] ?? 0) > 0;
+  const lawOf = (id: string): HazardLaw => hazardLaws().find((l) => l.id === id)!;
+  /** 1초씩 시각을 옮기며 초과 위험의 주기 → 예약을 사건으로 (현장·부대는 돌지 않는다) */
+  function go(s: Sim, sec: number): void { for (let k = 0; k < sec; k++) { s.tick += 5; s.t = s.tick * s.dt; tickHazards(s); tickIncidents(s); } }
+  /** 쌓인 신호를 처리한다 (tickWorld 의 신호 단계) */
+  function flush(s: Sim): void { s.tick += 1; s.t = s.tick * s.dt; tickWorld(s); }
+  /** 법칙의 세기를 잠깐 키운다 */
+  const withA = <R>(o: { A: number }, mul: number, fn: () => R): R => { const a0 = o.A; o.A = a0 * mul; try { return fn(); } finally { o.A = a0; } };
+  /** 가장 가까운 이웃의 틈이 maxGap 이하이고 이웃이 n 채 이상인 화재의 틀이 있는 건물 */
+  function srcPlace(s: Sim, maxGap: number, n = 2): Place {
+    for (const q of s.city.places) {
+      if (!firePlace(q)) continue;
+      const nbs = neighborsOf(s, q.id);
+      if (nbs.length >= n && nbs[0].gap <= maxGap) return q;
+    }
+    throw new Error('장소 없음');
+  }
+  /** 그 건물의 화재 하나와 그 사건의 기록 하나 (신호의 기록 — 폭발·붕괴 기록 자리) */
+  function fireWith(s: Sim, placeId: number, code: 'EXPLOSION' | 'STRUCT_COLLAPSE' = 'EXPLOSION'): { I: Incident; ev: number } {
+    const I = createIncident(s, { type: 'fire', variant: 'std', placeId, rng: s.rng.fork('t-shock') });
+    const ev = raiseProblem(s, I, code, '시험', { role: 'SYSTEM', actor: '시험', text: code === 'EXPLOSION' ? '폭발! (시험)' : '굉음! (시험)' }, false);
+    return { I, ev };
+  }
+  const lawKids = (s: Sim, ...ids: string[]): Incident[] => s.incidents.filter((J) => J.hz !== undefined && ids.indexOf(J.hz.law) >= 0);
+
+  it('등록: 법칙 모음의 차례가 road → heat → shock(structFail · pipeLeak) → ember(rekindle) 다 — 셋 다 1초 · 건물마다 한 번 · 교대 상한 2, rekindle 은 충격만 받는다(scan 없음). 상태 규칙은 rubbleRoad → shockSpread → pipeShut → residualHeat → suspectZone', () => {
+    expect(hazardLaws().map((l) => l.id)).toEqual(['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle']);
+    for (const id of ['structFail', 'pipeLeak', 'rekindle']) { const L = lawOf(id); expect([L.every, L.once, L.cap], id).toEqual([1, true, 2]); }
+    expect([lawOf('structFail').scan !== undefined, lawOf('pipeLeak').scan !== undefined, lawOf('rekindle').scan]).toEqual([true, true, undefined]);
+    expect([lawOf('structFail').label, lawOf('pipeLeak').label, lawOf('rekindle').label]).toEqual(['금 간 건물의 붕괴', '끊긴 배관의 누출', '되살아난 잔불']);
+    expect(readFileSync('src/sim/world/laws/index.ts', 'utf8')).toMatch(/^import '\.\/heat';[^\n]*\nimport '\.\/shock';[^\n]*\nimport '\.\/ember';/m);
+    expect(readFileSync('src/sim/world/rules/index.ts', 'utf8')).toMatch(/^import '\.\/structure';\nimport '\.\/risk';/m);
+    const ids = consequences().map((c) => c.id);
+    expect(ids.slice(ids.indexOf('rubbleRoad'))).toEqual(['rubbleRoad', 'shockSpread', 'pipeShut', 'residualHeat', 'suspectZone']);
+    // 세기와 크기 (첫 값에서 — STRUCT.A 는 강제 collapse/gasblast 20교대로 절반)
+    expect(STRUCT).toEqual({ A: 5.0e-4, SEV2: 0.3, SEV3: 0.45, MAX: 16, CAP: 2 });
+    expect(PIPE.A).toBeCloseTo(1 / 300, 12); expect([PIPE.SEV2, PIPE.MAX, PIPE.CAP, REKINDLE.CAP]).toEqual([0.4, 16, 2, 2]);
+    expect(EMBER).toEqual({ K: 0.25, NB_MAX: 8 });
+    expect(RESIDUAL).toEqual({ K: 1.0e-3, TAU: 180, TAU_RAIN: 120, MIN_DELAY: 60, FIRE_MIN: 0.04, HEAT_MIN: 0.5, HEAT_W: 0.25 });
+    expect([REOFFEND, RISK]).toEqual([{ R: 900, POLICE_R: 400, WAIT: 240 }, { V: 0.6, HOLD: 300, COOLDOWN: 120 }]);
+    // 불티의 손 계산 (설계서): 반경 6칸·피해 50 → 틈 3 에 0.44 · 틈 7.2 에 0.21 · 틈 25 에 0.04. 폭발이 아니면 0
+    const sig = (over: Partial<Signal>): Signal => ({ kind: 'catastrophe', t: 0, inc: 0, ev: 0, x: 0, y: 0, size: 6, place: 0, data: 0, cx: -1, cy: -1, mag: 50, ...over });
+    expect(emberDelta(sig({}), 3, 1)).toBeCloseTo(0.25 * 144 / 81, 9);
+    expect(emberDelta(sig({}), 7.2, 1)).toBeCloseTo(0.25 * 144 / 13.2 ** 2, 9);
+    expect(emberDelta(sig({}), 25, 1.3)).toBeCloseTo(1.3 * 0.25 * 144 / 31 ** 2, 9);
+    expect(emberDelta(sig({ kind: 'blast', size: 3.4, mag: 55 }), 2, 1)).toBeCloseTo(0.25 * 1.1 * 6.8 ** 2 / 64, 9);
+    expect([emberDelta(sig({ data: 1, mag: 1 }), 3, 1), emberDelta(sig({ kind: 'collapse', size: 12 }), 3, 1), emberDelta(sig({ data: 2 }), 3, 1)]).toEqual([0, 0, 0]);
+  });
+
+  it('L3 ① 전체 붕괴 하나만으로 틈 안의 이웃에 금이 가고 그 건물의 structFail 칸이 생긴다 — 위험률 A × (금 − S_MIN). 배관이 끊긴 도시가스 건물에는 pipeLeak 칸(A 그대로)', () => {
+    const s = quiet(), src = srcPlace(s, 3, 2);
+    const { I, ev } = fireWith(s, src.id, 'STRUCT_COLLAPSE');
+    signal(s, 'catastrophe', { inc: I.id, ev, size: 40, place: src.id, data: 1, mag: 1 });
+    flush(s);      // 신호 단계(shockSpread 가 금을 적는다) 다음, 같은 tickWorld 의 1초 주기(tick % 5 === 1)가 그 금을 한 번 읽는다
+    expect(s.tick % 5).toBe(1);
+    const cracked = neighborsOf(s, src.id).filter((nb) => (s.world.expo[nb.id]?.shake ?? 0) >= SHOCK.S_MIN);
+    expect(cracked.length).toBeGreaterThanOrEqual(1);
+    for (const nb of neighborsOf(s, src.id)) {
+      const ex = s.world.expo[nb.id], c = hazardCell(s, 'structFail', nb.id), p = hazardCell(s, 'pipeLeak', nb.id);
+      if (!ex || ex.shake < SHOCK.S_MIN) { expect(c, `틈 ${nb.gap.toFixed(1)}`).toBe(null); continue; }
+      expect(ex.shake).toBeCloseTo(0.6 * (1 - nb.gap / 15), 9);
+      expect(c!.H + (c!.done ? c!.thr : 0) >= STRUCT.A * (ex.shake - SHOCK.S_MIN) * 0.999).toBe(true);
+      if (!c!.done) expect(c!.H).toBeCloseTo(STRUCT.A * (ex.shake - SHOCK.S_MIN), 12);
+      expect(p === null).toBe(!ex.pipe);
+      if (p && !p.done) expect(p.H).toBeCloseTo(PIPE.A, 12);
+    }
+    // 금이 S_MIN 아래인 건물 · 쓸 수 없는 건물(전소·전체 붕괴)은 대상이 아니다
+    const s2 = quiet(), q = s2.city.places.find((x) => firePlace(x) && x.id !== src.id)!;
+    expoOf(s2, q.id).shake = SHOCK.S_MIN - 0.01;
+    go(s2, 3);
+    expect(hazardCell(s2, 'structFail', q.id)).toBe(null);
+    const ex2 = expoOf(s2, q.id); ex2.shake = 0.5; ex2.pipe = true; ex2.shakeEv = ex2.pipeEv = note(s2, '시험 — 금');
+    s2.placeMarks.set(q.id, { placeId: q.id, state: 'collapsed', t: s2.t, incidentId: 0, burnFrac: 0, ruinFrac: 1 });
+    go(s2, 3);
+    expect([hazardCell(s2, 'structFail', q.id), hazardCell(s2, 'pipeLeak', q.id)]).toEqual([null, null]);
+  });
+
+  it('L3 ④ 개입 시험: 같은 시드의 두 Sim 에 같은 전체 붕괴를 일으키고 한쪽만 붕괴 직후 world.expo 를 비운다 — 그쪽에는 structFail·pipeLeak 이 없고, 다른 쪽의 사건은 그 금 간 건물(hz.target)에 나며 부모는 붕괴한 사건, 원인은 금·배관 기록, 현장은 금 간 채로 시작한다', () => {
+    const run = (clear: boolean): Sim => {
+      const s = quiet(), src = srcPlace(s, 3, 2);
+      const { I, ev } = fireWith(s, src.id, 'STRUCT_COLLAPSE');
+      signal(s, 'catastrophe', { inc: I.id, ev, size: 40, place: src.id, data: 1, mag: 1 });
+      flush(s);      // 신호 단계 + 그 틱의 1초 주기 한 번 (칸이 생긴다)
+      if (clear) s.world.expo = {};
+      after.push(Hs(s));
+      withA(STRUCT, 40, () => withA(PIPE, 40, () => go(s, 300)));
+      return s;
+    };
+    const Hs = (s: Sim): string => JSON.stringify(['structFail', 'pipeLeak'].map((l) => Object.entries(s.world.hz.cells[l as HazardLawId] ?? {}).map(([k, c]) => [k, c.H, c.thr, c.done])));
+    const after: string[] = [];
+    const A = run(false), B = run(true);
+    expect(lawKids(B, 'structFail', 'pipeLeak')).toEqual([]);
+    // 비운 쪽의 칸은 붕괴 직후의 첫 주기 값(H) 그대로다 — 금이 없으니 더 쌓이지 않는다 (같은 시드라 두 쪽의 첫 값도 같다)
+    expect(Hs(B)).toBe(after[1]);
+    expect(after[1]).toBe(after[0]);
+    expect(Object.values(B.world.hz.cells.structFail ?? {}).every((c) => !c.done)).toBe(true);
+    const kids = lawKids(A, 'structFail', 'pipeLeak');
+    expect(kids.length).toBeGreaterThanOrEqual(1);
+    expect(kids.length).toBeLessThanOrEqual(HZ.ROOT_MAX);      // 한 뿌리의 법칙 사건은 둘까지
+    const src = A.incidents[0];
+    for (const K of kids) {
+      const ex = A.world.expo[K.hz!.target];
+      expect(K.truth.placeId).toBe(K.hz!.target);
+      expect(neighborsOf(A, src.truth.placeId).some((nb) => nb.id === K.truth.placeId)).toBe(true);
+      expect(K.parent).toBe(src.id);
+      expect(K.cause).toBe(K.hz!.law === 'structFail' ? ex.shakeEv : ex.pipeEv);
+      expect(A.events[K.rootEvent].causes[0]).toBe(K.cause);
+      expect(K.hz!.src[0].what).toBe(K.hz!.law === 'structFail' ? 'shake' : 'pipe');
+      expect([K.truth.type, K.truth.variant]).toEqual(K.hz!.law === 'structFail' ? ['collapse', 'std'] : ['hazmat', 'std']);
+      if (K.hz!.law === 'structFail') expect(K.truth.severity).toBe(ex.shake >= STRUCT.SEV3 ? 3 : ex.shake >= STRUCT.SEV2 ? 2 : 1);
+      expect(A.events[K.rootEvent].text.startsWith(K.hz!.law === 'structFail' ? '금이 가 있던 건물이 내려앉았습니다 — ' : '충격으로 손상된 배관에서 가스가 샙니다 — ')).toBe(true);
+      // (L3 (나)) 그 현장은 금 간 채로 시작한다 — 처음 건전도가 1 − 0.5 × 금 아래
+      const sc = A.scenes[K.id]!;
+      expect([sc.wear?.cause, sc.wear?.dmg]).toEqual(['shock', ex.shake]);
+      const c = catOf(A, sc);
+      if (c?.struct) for (const r of sc.regions) if (r.indoor) expect(c.integ[r.id]).toBeLessThanOrEqual(1 - CAT.WEAR_INTEG * ex.shake + 1e-6);
+    }
+    expect(A.world.hz.holes + B.world.hz.holes).toBe(0);
+  });
+
+  it('L3 ⑧ 끊긴 배관이 낸 누출이 해결로 닫히면 그 배관 손상을 거둔다 — 그 건물의 다음 현장에는 새는 밸브가 놓이지 않는다. 한계 시간으로 닫히면 그대로다. 누출 현장에는 밸브가 더 놓이지 않는다', () => {
+    const leak = (reason: 'resolved' | 'timeout'): { s: Sim; q: Place; K: Incident } => {
+      const s = quiet(), q = s.city.places.find((x) => firePlace(x) && GAS_KINDS.has(x.kind))!;
+      const ex = expoOf(s, q.id); ex.shake = 0.45; ex.pipe = true; ex.shakeEv = ex.pipeEv = note(s, '시험 — 배관 손상');
+      withA(PIPE, 1e4, () => go(s, 3));
+      const K = lawKids(s, 'pipeLeak')[0];
+      expect(K, '누출 사건').toBeDefined();
+      expect([K.truth.type, K.truth.placeId, K.truth.severity, K.parent]).toEqual(['hazmat', q.id, 2, undefined]);      // 금 0.45 ≥ 0.4 → 규모 2 · 주인 사건 없는 금 → 부모 없음
+      // 누출 현장(buildHazmat 이 새는 밸브를 놓는다)에는 applyExpo 가 밸브를 더 놓지 않는다 — 다시 불러도 그대로
+      const sc = s.scenes[K.id]!, nv = sc.props.filter((p) => p.kind === 'valve').length;
+      expect(nv).toBeGreaterThanOrEqual(1);
+      applyExpo(s, sc, K);
+      expect(sc.props.filter((p) => p.kind === 'valve').length).toBe(nv);
+      closeIncident(s, K, reason);
+      flush(s);
+      return { s, q, K };
+    };
+    const ok = leak('resolved');
+    expect(ok.s.world.expo[ok.q.id].pipe).toBe(false);
+    expect(ok.s.world.expo[ok.q.id].shake).toBe(0.45);      // 금은 그대로 남는다
+    const next = createIncident(ok.s, { type: 'fire', variant: 'std', placeId: ok.q.id, rng: ok.s.rng.fork('t-next') });
+    expect(ok.s.scenes[next.id]!.props.some((p) => p.kind === 'valve')).toBe(false);
+    expect(ok.s.scenes[next.id]!.wear?.dmg).toBe(0.45);
+    const bad = leak('timeout');
+    expect(bad.s.world.expo[bad.q.id].pipe).toBe(true);
+    const next2 = createIncident(bad.s, { type: 'fire', variant: 'std', placeId: bad.q.id, rng: bad.s.rng.fork('t-next') });
+    expect(bad.s.scenes[next2.id]!.props.some((p) => p.kind === 'valve')).toBe(true);
+  });
+
+  it('L2 의 불티: 폭발 신호 하나가 이웃 건물의 heatSpread 칸에 손 계산과 같은 충격을 준다(옮겨붙을 수 있는 건물만 — 화재의 틀이 있는 종류·쓸 수 있음·이미 탔지 않음). 넘으면 그 건물의 불(규모 2 · 내력 ember · 원인 = 폭발 기록 · 부모 = 폭발한 사건)', () => {
+    const s = quiet(), src = srcPlace(s, 3, 3);
+    const { I, ev } = fireWith(s, src.id);
+    signal(s, 'catastrophe', { inc: I.id, ev, size: 6, place: src.id, data: 0, mag: 50 });
+    flush(s);
+    let n = 0;
+    for (const nb of neighborsOf(s, src.id)) {
+      const q = s.city.places[nb.id], c = hazardCell(s, 'heatSpread', nb.id);
+      if (!firePlace(q) || n >= EMBER.NB_MAX) { if (!firePlace(q)) expect(c, q.kind).toBe(null); continue; }
+      n++;
+      expect(c, `틈 ${nb.gap.toFixed(1)}`).not.toBe(null);
+      const dH = 0.25 * heatMul(q.kind) * 144 / (nb.gap + 6) ** 2;
+      if (!c!.done) expect(c!.H).toBeCloseTo(dH, 12);
+    }
+    expect(n).toBeGreaterThanOrEqual(1);
+    // 붕괴 신호(data 1)는 불티가 없다
+    const s2 = quiet(), b = fireWith(s2, src.id, 'STRUCT_COLLAPSE');
+    signal(s2, 'catastrophe', { inc: b.I.id, ev: b.ev, size: 40, place: src.id, data: 1, mag: 1 });
+    flush(s2);
+    expect(s2.world.hz.cells.heatSpread).toBeUndefined();
+    // 세기를 키우면 넘는다: 그 건물의 불 — 규모 2, 첫머리 '폭발의 불티가 옮겨붙었습니다', 내력 ember, 원인 = 폭발 기록, 부모 = 폭발한 사건
+    const s3 = quiet(), c3 = fireWith(s3, src.id), k0 = EMBER.K;
+    EMBER.K = k0 * 50;
+    try { signal(s3, 'catastrophe', { inc: c3.I.id, ev: c3.ev, size: 6, place: src.id, data: 0, mag: 50 }); flush(s3); go(s3, 2); } finally { EMBER.K = k0; }
+    const kids = lawKids(s3, 'heatSpread');
+    expect(kids.length).toBeGreaterThanOrEqual(1);
+    for (const K of kids) {
+      expect([K.truth.type, K.truth.variant, K.truth.severity, K.parent, K.cause]).toEqual(['fire', 'std', 2, c3.I.id, c3.ev]);
+      expect(K.hz!.src.map((x) => x.what)).toEqual(['ember']);
+      expect(K.hz!.src[0].ref).toBe(src.id);
+      expect(K.truth.placeId).toBe(K.hz!.target);
+      expect(s3.events[K.rootEvent].text.startsWith('폭발의 불티가 옮겨붙었습니다 — ')).toBe(true);
+    }
+  });
+
+  // ── L7 ──
+  /** 그 건물의 화재를 일으키고 그 건물 안의 칸 n 개에 불 f 를 남긴다 (나머지 칸의 불·열은 0, 젖음 wet) */
+  function warmFire(s: Sim, placeId: number, n: number, f: number, wet = 0): { I: Incident; sc: Scene } {
+    const I = createIncident(s, { type: 'fire', variant: 'std', placeId, rng: s.rng.fork('t-rekindle') });
+    const sc = s.scenes[I.id]!;
+    sc.fire.fill(0); sc.heat.fill(0); sc.wet.fill(0);
+    let k = 0;
+    for (let i = 0; i < sc.fire.length && k < n; i++) if (sc.region[i] >= 0 && sc.regions[sc.region[i]].indoor && sc.fuel[i] > 0.2) { sc.fire[i] = f; sc.wet[i] = wet; k++; }
+    expect(k).toBe(n);
+    return { I, sc };
+  }
+  const closeEvOf = (s: Sim, I: Incident): number => s.events.filter((e) => e.incidentId === I.id && e.kind === 'resolve').pop()!.id;
+
+  it('L7 ① 불씨를 남기고 닫은 화재 → 같은 건물에 다시 붙는다: 넘는 시각이 닫힌 꼴의 식 Δt* = −τ ln(1 − 문턱 / H∞) 과 같고, 부모는 닫힌 그 화재, 원인은 그 종료 기록, 내력 residual. 끝내 닿지 못하면 칸에 H∞ 만 남는다', () => {
+    const s = quiet(), q = s.city.places.find(firePlace)!;
+    const { I, sc } = warmFire(s, q.id, 10, 0.5);
+    const e0 = residualOf(sc);
+    expect(e0).toBeCloseTo(5, 5);
+    const cell = hazardCellFor(s, 'rekindle', q.id)!;      // 문턱을 미리 본다 (칸을 만들 뿐 — 쌓지 않는다)
+    expect([cell.H, cell.done]).toEqual([0, false]);
+    const tau = s.weather === 'rain' ? RESIDUAL.TAU_RAIN : RESIDUAL.TAU, k0 = RESIDUAL.K;
+    RESIDUAL.K = (1.5 * cell.thr) / (e0 * tau);      // H∞ = 1.5 × 문턱 → Δt* = τ ln 3
+    let at = -1;
+    try {
+      closeIncident(s, I, 'timeout');
+      const t0 = s.t;
+      flush(s);
+      const item = s.gen.chain.find((c) => c.opts.csq === 'rekindle')!;
+      expect(item).toBeDefined();
+      const expect_ = Math.max(RESIDUAL.MIN_DELAY, tau * Math.log(3));
+      expect(item.at - (t0 + s.dt)).toBeCloseTo(expect_, 6);
+      expect([item.opts.placeId, item.opts.parent, item.opts.cause, item.until! - item.at]).toEqual([q.id, I.id, closeEvOf(s, I), HZ.HOLD]);
+      expect(hazardCell(s, 'rekindle', q.id)!.done).toBe(true);
+      at = item.at;
+    } finally { RESIDUAL.K = k0; }
+    go(s, Math.ceil(at - s.t) + 2);
+    const K = lawKids(s, 'rekindle');
+    expect(K.length).toBe(1);
+    expect([K[0].truth.type, K[0].truth.variant, K[0].truth.severity, K[0].truth.placeId, K[0].parent, K[0].cause]).toEqual(['fire', 'std', 1, q.id, I.id, closeEvOf(s, I)]);
+    expect(K[0].hz!.src.map((x) => x.what)).toEqual(['residual']);
+    expect(Math.abs(K[0].createdAt - at)).toBeLessThanOrEqual(1.01);
+    expect(s.events[K[0].rootEvent].text.startsWith('잔불이 되살아나 다시 불길이 올랐습니다 — ')).toBe(true);
+    // 끝내 닿지 못하면(H∞ < 문턱) 칸에 H∞ 만 남는다 — 예약도 기록도 없다
+    const s2 = quiet(), w2 = warmFire(s2, q.id, 1, 0.05);
+    const ev0 = s2.events.length;
+    closeIncident(s2, w2.I, 'timeout'); flush(s2);
+    const c2 = hazardCell(s2, 'rekindle', q.id)!;
+    expect(c2.H).toBeCloseTo(RESIDUAL.K * residualOf(w2.sc) * (s2.weather === 'rain' ? RESIDUAL.TAU_RAIN : RESIDUAL.TAU), 12);
+    expect(c2.done).toBe(c2.H >= c2.thr);
+    if (!c2.done) expect(s2.gen.chain.some((c) => c.opts.csq === 'rekindle')).toBe(false);
+    expect(s2.events.slice(ev0).every((e) => e.incidentId === w2.I.id)).toBe(true);      // 종료 기록 말고는 새 기록이 없다
+  });
+
+  it('L7 ② 개입: 닫기 전에 그 현장의 불·열을 0 으로 두면 예약도 칸도 없다 · ③ 잔불 정리를 마친 현장(열 0 · 젖음 0.9)은 e0 = 0, 젖은 불씨는 그만큼 적다 · ④ 전소 건물 · 교대 끝으로 닫힌 사건에는 예약하지 않는다', () => {
+    const q = quiet().city.places.find(firePlace)!;
+    const k0 = RESIDUAL.K;
+    RESIDUAL.K = k0 * 1000;
+    try {
+      // ② 같은 화재를 일으키고 한쪽만 불씨를 지운다
+      const a = quiet(), A = warmFire(a, q.id, 10, 0.5), b = quiet(), B = warmFire(b, q.id, 10, 0.5);
+      B.sc.fire.fill(0);
+      closeIncident(a, A.I, 'timeout'); flush(a);
+      closeIncident(b, B.I, 'timeout'); flush(b);
+      expect(a.gen.chain.some((c) => c.opts.csq === 'rekindle')).toBe(true);
+      expect([b.gen.chain.some((c) => c.opts.csq === 'rekindle'), hazardCell(b, 'rekindle', q.id)]).toEqual([false, null]);
+      // ③ 잔불 정리를 마친 칸: 불 0 · 열 0 · 젖음 0.9 → 0. 젖은 불씨는 (1 − 젖음) 만큼
+      const c = quiet(), C = warmFire(c, q.id, 10, 0.5, 0.9);
+      expect(residualOf(C.sc)).toBeCloseTo(10 * 0.5 * 0.1, 5);      // 칸 배열은 Float32Array
+      C.sc.fire.fill(0);
+      expect(residualOf(C.sc)).toBe(0);
+      // 열(0.5 넘는 칸)은 HEAT_W 만큼 — 건물 밖(실내 구역이 아닌 칸)의 불은 세지 않는다
+      let out = -1, inn = -1;
+      for (let i = 0; i < C.sc.fire.length; i++) { const r = C.sc.region[i]; if (out < 0 && (r < 0 || !C.sc.regions[r].indoor)) out = i; if (inn < 0 && r >= 0 && C.sc.regions[r].indoor) inn = i; }
+      C.sc.wet.fill(0); C.sc.fire[out] = 1; C.sc.heat[inn] = 0.8;
+      expect(residualOf(C.sc)).toBeCloseTo(RESIDUAL.HEAT_W * 0.8, 5);
+      // ④ 전소 건물 · 교대 끝으로 닫힌 사건
+      const d = quiet(), D = warmFire(d, q.id, 10, 0.5);
+      d.placeMarks.set(q.id, { placeId: q.id, state: 'burnt', t: d.t, incidentId: D.I.id, burnFrac: 0.9, ruinFrac: 0 });
+      closeIncident(d, D.I, 'timeout'); flush(d);
+      expect([d.gen.chain.some((x) => x.opts.csq === 'rekindle'), hazardCell(d, 'rekindle', q.id)]).toEqual([false, null]);
+      const e = quiet(), E = warmFire(e, q.id, 10, 0.5);
+      closeIncident(e, E.I, 'shiftend'); flush(e);
+      expect([e.gen.chain.some((x) => x.opts.csq === 'rekindle'), hazardCell(e, 'rekindle', q.id)]).toEqual([false, null]);
+    } finally { RESIDUAL.K = k0; }
+  });
+
+  // ── C10 ──
+  /** 동네 안의 교차로에 닿은 강도가 잘 나는 건물 (그 교차로의 동네 = 건물의 동네) */
+  function robberyPlace(s: Sim): Place {
+    for (const q of s.city.places) {
+      if (!bld(q) || !((ARMED_BIAS.robbery[q.kind] ?? 0) > 0)) continue;
+      const nd = s.city.nodes[q.nodeId], z = zoneOfXY(nd.x, nd.y);
+      if (z >= 0 && z === zoneOfXY(q.x + q.w / 2, q.y + q.h / 2)) return q;
+    }
+    throw new Error('장소 없음');
+  }
+  const farPolice = (s: Sim): void => { for (const u of s.units) if (u.dept === 'police') { u.x = -99999; u.y = -99999; } };
+
+  it('C10 재범: 도주 지점 900 안의 강도가 잘 나는 건물(이번 교대에 사건이 없던 곳)에서, 그 곁 400 안에 경찰 부대(대기·귀소)가 없을 때만 — 있으면 5초마다 다시 보고 240초 지나면 expired. 고를 건물이 없으면 예전처럼 평소 추첨', () => {
+    const s = quiet(), p = robberyPlace(s);
+    const I = createIncident(s, { type: 'armed', variant: 'robbery', placeId: p.id, rng: s.rng.fork('t-flee') });
+    const ev = raiseProblem(s, I, 'SUSPECT_FLED', '용의자 도주', { role: 'SYSTEM', actor: '현장', text: '용의자가 현장을 벗어나 도주했습니다. (시험)', imp: 3 }, false);
+    const h = { id: 0 } as Hostile;
+    const item = reoffendItem(s, I, h, s.t + 50, ev);
+    const pid = item.opts.placeId!, q = s.city.places[pid];
+    expect(pid).toBe(reoffendPlace(s, I, s.rng.fork('reoffend-place:' + I.id + ':0')));      // 흐름 reoffend-place:<사건>:<용의자>
+    expect((ARMED_BIAS.robbery[q.kind] ?? 0) > 0 && pid !== p.id).toBe(true);
+    expect(Math.hypot(q.x + q.w / 2 - I.truth.x, q.y + q.h / 2 - I.truth.y)).toBeLessThanOrEqual(REOFFEND.R);
+    expect([item.opts.csq, item.opts.parent, item.opts.cause, item.until! - item.at]).toEqual(['reoffend', I.id, ev, REOFFEND.WAIT]);
+    // 경찰 부대가 곁에 있으면 일어나지 않는다 — 대기·귀소 중인 부대만 친다(출동 중인 부대는 그 자리를 지키지 않는다)
+    farPolice(s);
+    expect([policeNear(s, pid), item.when!(s)]).toEqual([false, true]);
+    const cop = s.units.find((u) => u.dept === 'police' && !u.air)!;
+    cop.x = q.x + q.w / 2 + 100; cop.y = q.y + q.h / 2; cop.state = 'available';
+    expect([policeNear(s, pid), item.when!(s)]).toEqual([true, false]);
+    cop.state = 'enroute';
+    expect(policeNear(s, pid)).toBe(false);
+    cop.state = 'returning';
+    expect(policeNear(s, pid)).toBe(true);
+    // 경찰이 머무는 동안 때가 되면 기다리다 버린다 (expired — 기록은 없다)
+    s.gen.chain.push(item);
+    go(s, 50 + REOFFEND.WAIT + 10);
+    expect(s.incidents.some((J) => J.csq === 'reoffend')).toBe(false);
+    expect(s.gen.dropped.some((d) => d.why === 'expired' && d.csq === 'reoffend' && d.parent === I.id)).toBe(true);
+    // 경찰이 없으면 그 건물에서 다시 범행한다
+    const s2 = quiet(), I2 = createIncident(s2, { type: 'armed', variant: 'robbery', placeId: p.id, rng: s2.rng.fork('t-flee') });
+    const ev2 = raiseProblem(s2, I2, 'SUSPECT_FLED', '용의자 도주', { role: 'SYSTEM', actor: '현장', text: '용의자가 현장을 벗어나 도주했습니다. (시험)', imp: 3 }, false);
+    farPolice(s2);
+    s2.gen.chain.push(reoffendItem(s2, I2, h, s2.t + 50, ev2));
+    go(s2, 60);
+    const R = s2.incidents.find((J) => J.csq === 'reoffend')!;
+    expect(R).toBeDefined();
+    expect([R.truth.type, R.truth.variant, R.truth.placeId, R.parent, R.cause]).toEqual(['armed', 'robbery', pid, I2.id, ev2]);
+    // 고를 건물이 없으면(도주 지점에서 900 안에 없다) 장소도 조건도 없는 예전 예약
+    const far = { ...I2, truth: { ...I2.truth, x: -9000, y: -9000 } } as Incident;
+    const it2 = reoffendItem(s2, far, h, s2.t + 50, ev2);
+    expect([it2.opts.placeId, it2.when, it2.until]).toEqual([undefined, undefined, undefined]);
+  });
+
+  it('C10 구역 위험: 부대가 본 무장 용의자의 도주(진실이 아닌 SUSPECT_FLED)는 그 동네의 경계 단계를 올리고 관제 기록을 남긴다 — 분석 AI 는 그 동네의 무장 신고에 위험도 +0.3 · 경찰 +1. 아무도 보지 못한 도주는 진실만 바뀐다', () => {
+    const mk = (seen: boolean): { s: Sim; z: number; ev: number; Q: Incident; base: { sev: number; law: number }; x: number; y: number } => {
+      const s = quiet(), p = robberyPlace(s), nd = s.city.nodes[p.nodeId], z = zoneOfXY(nd.x, nd.y);
+      const I = createIncident(s, { type: 'armed', variant: 'robbery', placeId: p.id, rng: s.rng.fork('t-flee') });
+      const Q = createIncident(s, { type: 'armed', variant: 'robbery', placeId: p.id, rng: s.rng.fork('t-next') });
+      Q.locationKnown = true; Q.reportedNode = p.nodeId; Q.fieldType = 'armed';
+      assess(s, Q, '시험');
+      const base = { sev: Q.assessment!.severity, law: Q.assessment!.needs.law };
+      const ev = raiseProblem(s, I, 'SUSPECT_FLED', '용의자 도주', { role: 'SYSTEM', actor: '현장', text: '용의자가 현장을 벗어나 도주했습니다. (시험)', imp: 3, truth: !seen }, false);
+      signal(s, 'fled', { inc: I.id, ev, x: nd.x, y: nd.y, data: 0 });
+      flush(s);
+      return { s, z, ev, Q, base, x: nd.x, y: nd.y };
+    };
+    const A = mk(true);
+    const Z = A.s.world.zones[A.z];
+    expect([Z.risk, Z.known.risk, Z.cause.risk, Z.until.risk]).toEqual([RISK.V, true, A.ev, A.s.t + RISK.HOLD]);
+    const rec = A.s.events.filter((e) => e.tag === 'risk');
+    expect(rec.length).toBe(1);
+    expect([rec[0].text, rec[0].causes, rec[0].kind, rec[0].role, sysOf(rec[0])]).toEqual([`${zoneName(A.z)} 일대 무장 용의자 도주 — 인근 신고의 경계 단계를 높입니다.`, [A.ev], 'dispatch', 'DISPATCH', 'hazard']);
+    expect(knownZone(A.s, knownZoneOfIncident(A.s, A.Q)).risk).toBe(RISK.V);
+    assess(A.s, A.Q, '시험');
+    expect(A.Q.assessment!.severity).toBeCloseTo(Math.min(3, A.base.sev + ZONE_SEV), 9);
+    expect(A.Q.assessment!.needs.law).toBe(A.base.law + 1);
+    // 같은 동네에 120초 안의 둘째 도주는 걸리지 않는다(쿨다운)
+    const u0 = Z.until.risk;
+    A.s.tick += 25; A.s.t = A.s.tick * A.s.dt;      // 5초 뒤 (쿨다운 120초 안)
+    signal(A.s, 'fled', { inc: A.Q.id, ev: A.ev, x: A.x, y: A.y, data: 0 });
+    flush(A.s);
+    expect(A.s.events.filter((e) => e.tag === 'risk').length).toBe(1);
+    expect(A.s.world.zones[A.z].until.risk).toBe(u0);      // 쿨다운 안이라 걸리지 않았다 — 회복 시각도 그대로
+    // 아무도 보지 못한 도주: 진실만 바뀐다 — 관제 기록도 관제가 아는 값도 없고 분석 AI 는 그대로
+    const B = mk(false);
+    expect([B.s.world.zones[B.z].risk, B.s.world.zones[B.z].known.risk]).toEqual([RISK.V, false]);
+    expect(B.s.events.some((e) => e.tag === 'risk')).toBe(false);
+    expect(knownZone(B.s, B.z).risk).toBeUndefined();
+    assess(B.s, B.Q, '시험');
+    expect([B.Q.assessment!.severity, B.Q.assessment!.needs.law]).toEqual([B.base.sev, B.base.law]);
+    // 300초 뒤에는 회복한다
+    const until = A.s.world.zones[A.z].until.risk;
+    while (A.s.t < until + 1.2) flush(A.s);      // 회복은 1초 주기(tick % 5 === 1)에서
+    expect([A.s.world.zones[A.z].risk, knownZone(A.s, A.z).risk]).toEqual([0, undefined]);
+  });
+
+  it('L3 의 "AI 가 아는 길": 관제가 아는 붕괴·폭발 곁의 붕괴·가스 신고는 위험도 +0.3 (이름표 없음) — 진실 기록·위치를 모르는 사건은 치지 않는다', () => {
+    for (const truth of [false, true]) {
+      const s = quiet();
+      // 곁의 건물과 차량이 닿는 교차로 사이가 300 안인 화재의 틀이 있는 건물 (이웃의 틈 3 안)
+      const src = s.city.places.find((q) => firePlace(q) && neighborsOf(s, q.id).some((nb) => nb.gap <= 3 && Math.hypot(s.city.nodes[q.nodeId].x - s.city.nodes[s.city.places[nb.id].nodeId].x, s.city.nodes[q.nodeId].y - s.city.nodes[s.city.places[nb.id].nodeId].y) <= 300))!;
+      const nb = neighborsOf(s, src.id).find((x) => x.gap <= 3 && Math.hypot(s.city.nodes[src.nodeId].x - s.city.nodes[s.city.places[x.id].nodeId].x, s.city.nodes[src.nodeId].y - s.city.nodes[s.city.places[x.id].nodeId].y) <= 300)!;
+      const P = createIncident(s, { type: 'fire', variant: 'std', placeId: src.id, rng: s.rng.fork('t-p') });
+      raiseProblem(s, P, 'STRUCT_COLLAPSE', '건물 전체 붕괴 — 시험', { role: 'SYSTEM', actor: '현장', text: '시험 — 붕괴', truth }, false);
+      for (const type of ['collapse', 'hazmat'] as const) {
+        const Q = createIncident(s, { type, variant: 'std', placeId: nb.id, rng: s.rng.fork('t-q-' + type) });
+        Q.locationKnown = true; Q.reportedNode = Q.truth.nodeId; Q.fieldType = type;
+        P.locationKnown = false;
+        assess(s, Q, '시험');
+        const base = Q.assessment!.severity;
+        P.locationKnown = true; P.reportedNode = P.truth.nodeId;
+        assess(s, Q, '시험');
+        // 진실이 아닌 기록이면 +0.3, 진실 기록(아무도 보지 못한 붕괴)이면 그대로
+        expect(Q.assessment!.severity, type + (truth ? ' 진실' : '')).toBeCloseTo(truth ? base : Math.min(3, base + SPREAD_SEV), 9);
+        expect(Q.assessment!.label, type).toBe(undefined);
+      }
+    }
+  });
+
+  it('§6 I1-b 11 (다) 방치 시험: 금(shake 0.4)을 적어 둔 건물과 아닌 건물에 같은 화재를 일으키고 대원 없이 현장만 돌리면 — 앞쪽의 처음 건전도가 1 − 0.5 × 0.4 이하이고 첫 구획 붕괴가 같거나 이르다', () => {
+    const s0 = quiet();
+    const cands = s0.city.places.filter((q) => firePlace(q) && q.kind !== 'apartment' && q.kind !== 'officetel').slice(0, 40);
+    let tested = 0;
+    for (const q of cands) {
+      if (tested >= 3) break;
+      const mk = (shake: number): { s: Sim; sc: Scene } => {
+        const s = quiet();
+        if (shake > 0) { const ex = expoOf(s, q.id); ex.shake = shake; ex.shakeEv = note(s, '시험 — 금'); }
+        const I = createIncident(s, { type: 'fire', variant: 'std', placeId: q.id, rng: s.rng.fork('t-neglect') });
+        return { s, sc: s.scenes[I.id]! };
+      };
+      const A = mk(0.4), B = mk(0);
+      const ca = catOf(A.s, A.sc), cb = catOf(B.s, B.sc);
+      if (!ca?.struct || !cb?.struct) continue;
+      tested++;
+      for (const r of A.sc.regions) if (r.indoor) { expect(ca.integ[r.id]).toBeLessThanOrEqual(1 - 0.5 * 0.4 + 1e-6); expect(ca.integ[r.id]).toBeLessThanOrEqual(cb.integ[r.id] + 1e-6); }
+      const firstFall = (m: { s: Sim; sc: Scene }): number => {
+        const c = m.sc.cat!;
+        for (let k = 0; k < 600 * 5; k++) { m.s.tick++; m.s.t = m.s.tick * m.s.dt; tickScene(m.s, m.sc); if (c.fallen.some((v) => v === 1)) return m.s.t; }
+        return Infinity;
+      };
+      const fa = firstFall(A), fb = firstFall(B);
+      expect(fa, `${q.kind} #${q.id}: 금 간 건물 ${fa} · 멀쩡한 건물 ${fb}`).toBeLessThanOrEqual(fb);
+      expect(fa).toBeLessThan(Infinity);
+    }
+    expect(tested).toBe(3);
+  }, 120000);
 });

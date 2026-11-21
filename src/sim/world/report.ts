@@ -268,15 +268,13 @@ function longestChain(sim: Sim): Incident[] {
 /** 세계 상태의 숫자와 줄 (ShiftReport.world) — '인과:' 줄과 '세계 상태:' 줄 */
 export function worldReport(sim: Sim): NonNullable<ShiftReport['world']> {
   const w = sim.world, log = w.log;
-  let outages = 0, smoke = 0, spawned = 0;
-  for (const r of log) {
-    if (r.rule === 'powerOut' || r.rule === 'powerOut.grid') outages++;
-    else if (r.rule === 'smokePlume') smoke++;
-    if (r.made >= 0) spawned++;
-  }
-  const commsDown = w.count['commsDown.spans'] ?? 0;
-  let hospitalDiverts = 0;
-  for (const e of sim.events) if (e.tag === 'hospital' && /응급실 포화 —/.test(e.text)) hospitalDiverts++;
+  let spawned = 0;
+  for (const r of log) if (r.made >= 0) spawned++;
+  // 정전·통신 장애는 실제로 연 건수다(rules/infra.ts 가 world.count 에 센다) — world.log 의 줄은 규칙의 발동 수라 태풍 정전의 복구(blackout data 0)·아무 동네도
+  // 끄지 못한 여진까지 센다(검토에서 고쳤다: 태풍 정전 한 번이 '정전 2회'였다). 연기는 동네로 번진 건수 = 연기 알림 기록(tag smoke — 연기 한 건에 한 번. smokePlume 은 장부 줄을 남기지 않는다)
+  const outages = w.count['powerOut.spans'] ?? 0, commsDown = w.count['commsDown.spans'] ?? 0;
+  let hospitalDiverts = 0, smoke = 0;
+  for (const e of sim.events) { if (e.tag === 'hospital' && /응급실 포화 —/.test(e.text)) hospitalDiverts++; else if (e.tag === 'smoke') smoke++; }
   let rerouted = 0, diverts = 0, lostSum = 0;
   for (const J of sim.incidents) for (const p of J.problems) {
     if (p.code === 'HOSPITAL_FULL') rerouted++;

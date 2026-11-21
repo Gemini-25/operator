@@ -106,8 +106,12 @@ function liftsOut(sim: Sim, lit: readonly number[], cause: number, inc: number):
   if (now.length) darkened(sim, now, { rate: 0, ev: cause, inc, what: 'outage', ref: -1 });
 }
 
+/** world.count 의 칸 — 이번 교대에 연 정전 건수 (네 갈래가 함께 센다 — 규칙의 count·world.log 의 줄은 발동 수라 따로 둔다: 태풍 정전의 복구·아무 동네도 끄지 못한 여진도 발동이다).
+ *  교대 요약의 '정전 n회'(world/report.ts 의 worldReport)가 읽는다 — 결과는 바꾸지 않는다(이 칸을 읽는 규칙이 없다) */
+export const POWER_N = 'powerOut.spans';
 /** 한 건을 장부에 적는다 (꺼진 신호의 혼잡은 그 건마다 한 번 — 끝날 때 한 번 거둔다) */
 function openSpan(sim: Sim, f: Span['f'], cause: number, inc: number, src: ZoneSpanSrc, zones: readonly number[], label: string, tellAt: number, bump: boolean): Span {
+  sim.world.count[POWER_N] = (sim.world.count[POWER_N] ?? 0) + 1;
   const edges = bump ? darkEdges(sim, zones) : [];
   const sp: Span = { f, cause, inc, bump: edges.length ? addBump(sim, edges, POWER.DARK_BUMP, cause, 1, inc) : -1, src, since: sim.t, tellAt, told: false, label, next: false };
   sim.world.spans.push(sp);

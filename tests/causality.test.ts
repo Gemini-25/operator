@@ -25,7 +25,7 @@ import { ER_PENALTY, dispatchUnit, etaFor, sendUnitTo, startTransport, tickUnits
 import { HOSPITAL_CAP, ZONE_DEFAULT, erLoad, hospitalOf, initWorld, knownBuildingAt, knownHospital, knownZone, knownZoneOfIncident, placeState, setZone, zoneOfPlace, zoneOfXY } from '../src/sim/world/state';
 import { findRoute } from '../src/sim/city';
 import { smokeBase } from '../src/sim/world/expo';
-import { CHAIN_LINES, HZ_SHORT, chainLines } from '../src/sim/world/report';
+import { CHAIN_LINES, HZ_SHORT, chainLines, worldReport } from '../src/sim/world/report';
 import { drawZonesWorld } from '../src/view/city/zoneLayer';
 import { drawExpoWorld } from '../src/view/city/ruinLayer';
 import { causeChip } from '../src/ui/HazardStrip';
@@ -1650,4 +1650,37 @@ describe('I1-b b5: 완료 조건의 정해진 시드 (§5 · §6 I1-b 8)', () =>
     }
     expect(n).toBeGreaterThanOrEqual(1);
   }, 120000);
+});
+
+describe('I1-b 검토: 교대 요약의 세계 상태 수는 실제로 일어난 일을 센다 (§3.9 — 보고서는 기록과 상태에서만)', () => {
+  it('정전 수는 실제로 연 정전의 수다 — 태풍 정전의 복구(blackout data 0)·아무 동네도 끄지 못한 여진은 세지 않는다', () => {
+    const s = new Sim('S0', NORMAL, 1200);
+    s.gen.nextAt = s.gen.majorAt = Infinity; s.gen.nextNuisanceAt = Infinity; s.traffic.nextEvent = Infinity;
+    const tk = (sec: number): void => { for (let k = 0; k < Math.round(sec / s.dt); k++) { s.tick += 1; s.t = s.tick * s.dt; tickWorld(s); } };
+    tk(2);
+    // 태풍 정전 한 번: 꺼짐(data 1) → 120초 뒤 켜짐(data 0)
+    const out = emit(s, { role: 'SYSTEM', actor: '재난 관리', kind: 'hazard', imp: 2, text: '시험: 강풍에 송전선이 끊겨 도시 곳곳이 정전됐습니다.' });
+    signal(s, 'blackout', { inc: -1, ev: out, data: 1 });
+    tk(3);
+    expect(s.world.zones.every((Z) => Z.power === 0 && Z.cause.power === out), '모든 동네가 그 정전').toBe(true);
+    tk(117);
+    signal(s, 'blackout', { inc: -1, ev: out, data: 0 });
+    tk(3);
+    expect(s.world.zones.every((Z) => Z.power === 1), '전력 복구').toBe(true);
+    // 아무 동네도 끄지 못한 약한 여진 (흔들림이 모든 동네 전력망의 문턱 0.3 아래)
+    const af = emit(s, { role: 'SYSTEM', actor: '재난 관리', kind: 'hazard', imp: 1, text: '시험: 약한 여진.' });
+    signal(s, 'quake', { inc: -1, ev: af, x: DISTRICTS[0].x, y: DISTRICTS[0].y, mag: 0.05 });
+    tk(3);
+    expect(s.world.zones.every((Z) => Z.power === 1), '여진은 아무것도 끄지 못했다').toBe(true);
+    const w = worldReport(s);
+    expect(w.outages, '정전은 한 번').toBe(1);
+    expect(w.lines.find((t) => t.startsWith('세계 상태:')), '세계 상태 줄').toContain('정전 1회');
+  });
+  it('연기 수는 연기가 동네로 번진 건수(연기 알림)다 — 연기 규칙은 장부 줄(world.log)을 남기지 않는다 (보통 S3)', () => {
+    const sim = probedShift('S3').sim, n = sim.events.filter((e) => e.tag === 'smoke').length;
+    expect(n, 'S3 에는 연기 알림이 있다').toBeGreaterThanOrEqual(1);
+    const st = sim.report!.world!.lines.find((t) => t.startsWith('세계 상태:'));
+    expect(st, '세계 상태 줄').toBeDefined();
+    expect(st).toContain(`연기 ${n}건`);
+  }, 60000);
 });

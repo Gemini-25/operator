@@ -10,14 +10,18 @@
 //   예비 인력 — minField·내리지 않는 자리, 모자라면 short·나올 사람이 없으면 empty) · operable · announceCarry 의 대원 줄.
 // 단계 3 (장비): unitsNext(펌프 — 고장 났으면 정밀 정비(service)·아니면 점검) · stockNext(섬광탄 창고) · applyCrewCarry 의 부대 몫(펌프 범위·정비 oos·
 //   SERVICE_CAP 을 넘으면 급히 정비 완료 · 창고에서 섬광탄 지급) · tickCarry 의 정비 완료(operable) · announceCarry 의 정비·재고 줄.
-// 뒤 단계가 채운다: 4 도로(복구 공사) ·
-//   5 건물(placeOutcome·placeUsable·placeCond·applyPlaceWear·noteWearIncident) · 7 보고서(carrySummary·carryLines).
+// 단계 4 (도로): roadsNext(끝 상태 → 복구 공사 — 앞에서 이어받은 것·재난이 통제한 구간 d.damaged·산사태·쓰러진 나무·다중 추돌·무너진 건물의 잔해 (가)(나)) ·
+//   initCarry 의 복구 통제(applyRoadCarry — 큰 차 우회로가 있을 때만 closedReason 'repair' · 한 차로 slow · 출입 통제 건물 앞 slow) ·
+//   tickCarry 의 개통 · announceCarry 의 도로 줄과 교통의 장부(noteRoadCause — 닫힘·감속의 주인) · 요약 줄이 아닌 기록의 tag 'carry'.
+// 뒤 단계가 채운다: 5 건물(placeOutcome·placeUsable·placeCond·applyPlaceWear·noteWearIncident) · 7 보고서(carrySummary·carryLines).
 //
 // import: types · rng · events · util · resources(함수만 — 부를 때만 쓴다. resources → sceneManager → … 순환에서 모듈 맨 위의 표를 읽지 않는다) ·
-//   crews(잎 모듈 — KITS·ROLES·STAFF·역할 식·장비) · field/injury(잎 모듈 — CAUSE_NAME·outShifts·mainCause) · difficulty(잎 모듈 — 이름표).
+//   crews(잎 모듈 — KITS·ROLES·STAFF·역할 식·장비) · field/injury(잎 모듈 — CAUSE_NAME·outShifts·mainCause) · difficulty(잎 모듈 — 이름표) ·
+//   city(edgeName) · traffic(noteRoadCause — 교통의 장부. 함수만 — traffic 은 이 파일을 import 하지 않는다).
 //   incidents · dispatch/* · debrief 와 그 밖의 field/* 는 import 하지 않는다.
 // 브라우저 저장은 표현 계층(view/runner.ts — 단계 6)에서만 한다 — src/sim 은 저장소를 모른다 (원칙 8, 시험 9 가 글자로 본다).
 
+import { edgeName } from './city';
 import { KITS, ROLES, STAFF, dealFlashbangs, kitFor, minField, skillsOf, slotsOf, stays } from './crews';
 import { difficultyLabel } from './difficulty';
 import type { Sim } from './engine';
@@ -27,6 +31,7 @@ import { crewReady, rosterKeys, traitOf } from './resources';
 import type { RosterKey } from './resources';
 import { hashStr } from './rng';
 import type { Rng } from './rng';
+import { noteRoadCause } from './traffic';
 import type { Carryover, City, CrewCarry, InjuryCause, KitItem, PlaceCarry, RecruitBase, Responder, RoadCarry, StockId, Unit, UnitCarry, UnitKind } from './types';
 import { clamp, josa } from './util';
 
@@ -78,13 +83,33 @@ export const SERVICE_CAP = 2;
 export const RUSHED_PUMP = 0.6;
 /** 섬광탄 창고: 휴식 한 번에 채우는 수 (상한은 STOCK_CAP) */
 export const RESUPPLY = 3;
+// ── 도로 (단계 4 — §3.5·§6.1) ──
+/** 지진·해일이 통제한 구간 가운데 다음 교대에 전면 통제로 넘기는 수 (통제한 순서로 앞의 것 — 먼저 갈라진 곳). 나머지는 한 차로 공사 */
+export const DIS_FULL = 2;
+/** 한 차로 복구 공사가 그 구간에 더하는 지연(slow) */
+export const LANE_SLOW = 0.6;
+/** 출입 통제·무너짐 건물 앞 구간의 지연 ('복구 공사 차량' — 교대 내내) */
+export const FRONT_SLOW = 0.4;
+/** 복구 공사가 끝나는 시각의 범위 (교대 시작 뒤 초 — carry 흐름. 1200초 교대 기준 그대로 저장하고, 짧은 교대면 적용할 때 shiftLen × 0.75 로 자른다) */
+export const ROAD_AT = {
+  carried: [120, 600], disFull: [240, 600], disLane: [300, 900], wet: [120, 420],
+  mud: [300, 600], tree: [60, 240], surface: [300, 900], rubble: [300, 900],
+} as const;
+/** 교대 내내 막는 공사(left 2)의 openAt 자리값 — 쓰지 않는다(다음 휴식에서 left 1 이 되며 새로 뽑는다). readCarryover 의 범위 [60, 900] 안 */
+const HELD_AT = 900;
+/** 복구 공사의 까닭 (기록 문구) */
+export const WHY_NAME: Record<RoadCarry['why'], string> = {
+  crack: '지진으로 갈라진 노면', washout: '해일에 쓸린 노면', flood: '침수 뒤 진흙·쓰레기 치우기', fire: '불탄 가로수·방음벽 정리',
+  mud: '산사태 흙더미 치우기', tree: '쓰러진 나무 치우기', debris: '건물 잔해 치우기', surface: '노면·방호벽 보수',
+};
 
 // ───────────────────────── 실행 중 상태 (§2.2) ─────────────────────────
 export interface CarryState {
   on: boolean;                                   // 이어받은 상태가 있는가 (없으면 모든 함수가 첫 줄에서 돌아간다)
   places: Map<number, PlaceCarry>;               // 건물 겹침 표 (교대 내내 그대로 — 단계 5 가 sim.carry.places 의 사본으로 채운다)
   roads: RoadCarry[];                            // 이번 교대에 끝날 복구 공사 (left === 1, openAt 순 — 단계 4)
-  slowed: { edge: number; v: number }[];         // 이 파일이 더해 둔 slow (한 차로 공사, 출입 통제 건물 앞 — 단계 4)
+  slowed: { edge: number; v: number; why: 'lane' | 'front' }[];      // 이 파일이 더해 둔 slow (한 차로 공사 lane — 개통 때 되돌린다, 출입 통제 건물 앞 front — 교대 내내. 단계 4)
+  held: RoadCarry[];                             // (단계 4) 교대 내내 막아 둔 복구 공사(left 2)의 사본 — makeCarryover 가 left 1 로 넘긴다 (끊겨서 놓지 못한 것은 없다)
   svc: number;                                   // 정비 중인 부대 수 (tickCarry 가 0 이면 정비 쪽을 건너뛴다 — 단계 3)
   event: number;                                 // 이어받은 상태 요약 기록의 id (-1 = 없음). 원인으로 잇는다
   applied: CarryNote[];                          // ①·② 가 실제로 적용한 항목 (적용한 순서) — announceCarry 가 이것만 기록한다
@@ -105,7 +130,7 @@ export type CarryNote =
   | { what: 'rushed'; unit: string }                                 // SERVICE_CAP 을 넘어 '급히 정비 완료'
   | { what: 'stock'; unit: string; got: number; want: number }
   | { what: 'place'; id: number }                                    // closed·ruin 건물 (opened 도 이 항목으로)
-  | { what: 'road'; edge: number; lane: boolean; left: number; openAt: number };
+  | { what: 'road'; edge: number; lane: boolean; left: number; openAt: number; why: RoadCarry['why'] };      // (단계 4) 문구를 고르려고 why 를 더했다. openAt 은 짧은 교대면 자른 값
 
 // ───────────────────────── 지문 (§2.3) ─────────────────────────
 const hex8 = (n: number): string => (n >>> 0).toString(16).padStart(8, '0');
@@ -329,14 +354,71 @@ export function readCarryover(x: unknown, city: City): { carry: Carryover; dropp
 // ───────────────────────── 교대 시작 (§3.4) ─────────────────────────
 /**
  * ① 이어받은 상태의 실행 중 상태를 만든다 (engine 생성자 — initTraffic 앞). 이어받은 상태가 없으면 빈 상태(on 거짓)를 돌려주고 아무것도 바꾸지 않는다.
- * 단계 4 가 도로 복구 통제(큰 차 우회로 검사)·한 차로·건물 앞 slow 를, 단계 5 가 건물 겹침 표(sim.carry.places 의 사본)를 여기서 채운다
+ * 단계 4: 도로 복구 통제(큰 차 우회로 검사)·한 차로·건물 앞 slow (applyRoadCarry). 단계 5 가 건물 겹침 표(sim.carry.places 의 사본)를 여기서 채운다
  */
 export function initCarry(sim: Sim, dropped: string[]): CarryState {
-  return {
-    on: sim.carry !== null, places: new Map(), roads: [], slowed: [], svc: 0, event: -1, applied: [], dropped: dropped.slice(),
+  const cs: CarryState = {
+    on: sim.carry !== null, places: new Map(), roads: [], slowed: [], held: [], svc: 0, event: -1, applied: [], dropped: dropped.slice(),
     stats: { relief: 0, serviced: 0, reopened: 0, markedInc: [], fbShort: 0, early: 0, grown: 0 },
     fbStore: 0,
   };
+  if (cs.on && sim.carry) applyRoadCarry(sim, cs, sim.carry);
+  return cs;
+}
+// ───────────────────────── 도로의 적용 (단계 4 — §3.5 의 "다음 교대에 적용") ─────────────────────────
+/**
+ * 실제 상태에서 큰 차가 a 에서 b 로 skip 구간 없이 갈 수 있는가 (닫힌 구간은 지나지 않는다) — traffic.ts 의 linked 와 같은 뜻.
+ * 교통 모델을 만들기 전(initTraffic 앞)이라 불법 주차·장애물이 아직 없다. 교대 시작 때 많아야 ROAD_CAP 번 부른다
+ */
+function linkedHeavy(sim: Sim, a: number, b: number, skip: number): boolean {
+  const c = sim.city, seen = new Uint8Array(c.nodes.length), stack = [a];
+  seen[a] = 1;
+  while (stack.length) {
+    const n = stack.pop()!;
+    if (n === b) return true;
+    for (const id of c.nodes[n].edges) {
+      const e = c.edges[id];
+      if (id === skip || e.closed || e.noHeavy) continue;
+      const v = e.a === n ? e.b : e.a;
+      if (!seen[v]) { seen[v] = 1; stack.push(v); }
+    }
+  }
+  return false;
+}
+/**
+ * 복구 공사를 놓는다 (initCarry — initTraffic 앞: 불법 주차가 그 통제를 보고 놓인다). openAt 순(같으면 구간 id 순)으로 하나씩:
+ *   전면 통제 — 실제 상태에서 큰 차가 그 구간 없이 양 끝을 오갈 수 있을 때만 closed · closedReason 'repair'(known 은 두지 않는다 — 알려진 통제라 경로·관제가 처음부터 피한다).
+ *     끊기면 놓지 않고 버린 것에 한 줄 — 이번 교대에는 없는 것으로 보고 다음 상태에도 넣지 않는다(공사를 미루다 끝냈다고 본다).
+ *   한 차로 — slow += LANE_SLOW (slowed 에 적어 두고 개통 때 되돌린다).
+ * 짧은 교대면 openAt 을 shiftLen × 0.75 로 자른다(저장된 상태는 그대로). left 1 은 tickCarry 가 openAt 에 열고(cs.roads), left 2 는 교대 내내(cs.held — 다음 휴식에서 left 1).
+ * 마지막으로 출입 통제·무너짐 건물 앞 구간에 FRONT_SLOW (교대 내내, 같은 구간에 여럿이면 한 번 — 그 기록은 건물의 줄이다: 단계 5).
+ * 교통의 장부(noteRoadCause)는 교통 모델이 생긴 뒤 announceCarry 가 적는다
+ */
+function applyRoadCarry(sim: Sim, cs: CarryState, co: Carryover): void {
+  const city = sim.city, cut = sim.shiftLen * 0.75;
+  const list = co.roads.map((r) => ({ r, at: Math.min(r.openAt, cut) }));
+  list.sort((x, y) => x.at - y.at || x.r.edge - y.r.edge);
+  for (const { r, at } of list) {
+    const e = city.edges[r.edge];
+    if (!r.lane) {
+      if (e.closed || !linkedHeavy(sim, e.a, e.b, e.id)) { cs.dropped.push(`${edgeName(city, e)}: 통제하면 길이 끊겨 복구 공사를 미룹니다.`); continue; }
+      e.closed = true; e.closedReason = 'repair';
+    } else {
+      e.slow += LANE_SLOW;
+      cs.slowed.push({ edge: e.id, v: LANE_SLOW, why: 'lane' });
+    }
+    cs.applied.push({ what: 'road', edge: e.id, lane: r.lane, left: r.left, openAt: at, why: r.why });
+    if (r.left === 1) cs.roads.push({ edge: r.edge, why: r.why, lane: r.lane, left: 1, openAt: at, inc: r.inc, since: r.since });
+    else cs.held.push({ edge: r.edge, why: r.why, lane: r.lane, left: r.left, openAt: r.openAt, inc: r.inc, since: r.since });
+  }
+  // 출입 통제·무너짐 건물 앞: '복구 공사 차량' — 교대 내내 (열린 터는 readCarryover 가 marked 로 읽어 해당이 없다)
+  for (const p of co.places) {
+    if (p.state === 'marked') continue;
+    const eid = city.places[p.id].edgeId;
+    if (eid === undefined || eid < 0 || !city.edges[eid] || cs.slowed.some((q) => q.why === 'front' && q.edge === eid)) continue;
+    city.edges[eid].slow += FRONT_SLOW;
+    cs.slowed.push({ edge: eid, v: FRONT_SLOW, why: 'front' });
+  }
 }
 // ───────────────────────── 대원의 적용 (단계 2 — §3.2 의 "다음 교대에 적용") ─────────────────────────
 /** 조종·조타하는 역할 (기장·부기장·정장 — 그림 묶음 'pilot'). 이 자리가 있는 부대는 그 가운데 한 명이라도 나와야 움직인다 (헬기가 조종사 없이 뜨지 않게) */
@@ -592,17 +674,22 @@ export function announceCarry(sim: Sim): void {
   if (roads) parts.push(`복구 공사 도로 ${roads}구간`);
   if (cs.stats.grown) parts.push(`숙련이 오른 대원 ${cs.stats.grown}명`);
   cs.event = emit(sim, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 2, text: `지난 교대에서 이어받은 상태 — 조직의 ${co.shift}번째 교대 (지문 ${carryKey(co)}). ${parts.join(' · ') || '남은 피해 없음'}.` });
-  // 적용한 항목의 기록: 적용한 순서대로 한 항목에 한 줄 (원칙 5 — 목록에 없는 것은 기록하지 않고, 목록의 항목은 모두 기록한다. 시험 10 이 일대일을 본다)
+  // 적용한 항목의 기록: 적용한 순서대로 한 항목에 한 줄 (원칙 5 — 목록에 없는 것은 기록하지 않고, 목록의 항목은 모두 기록한다. 시험 10 이 일대일을 본다).
+  // 요약 줄이 아닌 기록은 tag 'carry' (I1-b 의 WorldTag — 측정 도구가 시스템 carry 로 센다)
   const ev = [cs.event];
   for (const n of cs.applied) {
-    const t = carryNoteText(n);
-    if (t === null) continue;      // 뒤 단계의 항목(정비·재고·건물·도로)은 그 단계가 문구를 더한다
-    emit(sim, { role: t.unit ? 'UNIT' : 'SYSTEM', actor: t.actor, kind: t.kind, imp: t.imp, causes: ev, text: t.text });
+    const t = carryNoteText(sim, n);
+    if (t === null) continue;      // 뒤 단계의 항목(건물)은 그 단계가 문구를 더한다
+    const id = emit(sim, { role: t.unit ? 'UNIT' : 'SYSTEM', actor: t.actor, kind: t.kind, imp: t.imp, causes: ev, tag: 'carry', text: t.text });
+    // (단계 4) 교통의 장부: 복구 통제의 닫힘·한 차로의 감속의 주인 = 그 줄 — initTraffic 앞에서 닫았으므로 교통 모델이 생긴 지금 적는다 (빠뜨리면 우회 몰림·밀림이 원인 없는 초과가 된다)
+    if (n.what === 'road') noteRoadCause(sim, n.edge, n.lane ? 'slow' : 'close', id);
   }
-  for (const d of cs.dropped) emit(sim, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 0, causes: ev, text: d });
+  // 건물 앞 감속의 주인 (한 차로 공사가 함께 있는 구간은 그 줄이 주인이다): 요약 줄 — 단계 5 가 그 건물의 줄로 바꿀 수 있다. slow 가 1 아래면 교통 모델이 다음 주기에 지운다
+  for (const q of cs.slowed) if (q.why === 'front' && !cs.slowed.some((x) => x.why === 'lane' && x.edge === q.edge)) noteRoadCause(sim, q.edge, 'slow', cs.event);
+  for (const d of cs.dropped) emit(sim, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 0, causes: ev, tag: 'carry', text: d });
 }
-/** 적용 항목 하나의 기록 문구 (§3.7 의 2~4). 부대 줄은 호출부호가 주인이다. 문구가 아직 없는 항목(단계 3~5)은 null */
-function carryNoteText(n: CarryNote): { unit: boolean; actor: string; kind: 'unit' | 'shift' | 'traffic'; imp: number; text: string } | null {
+/** 적용 항목 하나의 기록 문구 (§3.7 의 2~8). 부대 줄은 호출부호가 주인이다. 문구가 아직 없는 항목(단계 5 의 건물)은 null */
+function carryNoteText(sim: Sim, n: CarryNote): { unit: boolean; actor: string; kind: 'unit' | 'shift' | 'traffic'; imp: number; text: string } | null {
   switch (n.what) {
     case 'recruit': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `신임 ${n.name} 대원이 ${n.seat} 대원의 자리에 배치됐습니다.` };
     case 'absent': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `${josa(n.names.join('·') + ' 대원', '이/가')} 결장합니다 (${n.cause !== null && Object.prototype.hasOwnProperty.call(CAUSE_NAME, n.cause) ? CAUSE_NAME[n.cause as InjuryCause] + ' · ' : ''}${n.left}교대 남음).` };
@@ -615,6 +702,13 @@ function carryNoteText(n: CarryNote): { unit: boolean; actor: string; kind: 'uni
     case 'service': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `${n.unit} ${n.why === 'vehicle' ? '차량' : '펌프'} 정비 중 — 약 ${Math.max(1, Math.round(n.readyAt / 60))}분 뒤 운용.` };
     case 'rushed': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `${n.unit} 정비가 밀려 급히 마쳤습니다 — 바로 운용합니다.` };
     case 'stock': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `섬광탄 재고 부족 — ${n.unit} ${n.got}개만 지급 (정수 ${n.want}개).` };
+    // (단계 4) 복구 공사 — 교통정보의 줄. 지난 교대의 비상 통제와 이어지게 까닭(WHY_NAME)을 넣는다 (§11.1-8)
+    case 'road': {
+      const name = edgeName(sim.city, sim.city.edges[n.edge]), min = Math.max(1, Math.round(n.openAt / 60));
+      return n.lane
+        ? { unit: false, actor: '교통정보', kind: 'traffic', imp: 0, text: `${name} 한 차로 복구 공사 — ${WHY_NAME[n.why]} · 서행 (${n.left === 1 ? `약 ${min}분 뒤 완료` : '이번 교대 내내'}).` }
+        : { unit: false, actor: '교통정보', kind: 'traffic', imp: 1, text: `${name} 복구 공사로 통제 — ${WHY_NAME[n.why]} (${n.left === 1 ? `약 ${min}분 뒤 개통` : '이번 교대 내내'}).` };
+    }
     default: return null;
   }
 }
@@ -623,7 +717,8 @@ function carryNoteText(n: CarryNote): { unit: boolean; actor: string; kind: 'uni
 /**
  * 매 틱 (engine.step 의 tickTraffic 다음). 이어받은 상태가 없거나 남은 일(정비 중 부대·남은 복구 공사)이 없으면 첫 줄에서 돌아간다.
  * 정비 (단계 3): readyAt 이 된 부대를 부대 순서대로 운용에 돌린다 — 움직일 수 있으면(operable) available 과 '정비 완료' 기록, 아니면 oos '결원' 그대로와 그 기록.
- * 바꾸는 바로 이 자리에서 기록하고 원인은 요약 줄이다. 복구 공사의 개통은 단계 4 가 채운다
+ * 복구 공사 (단계 4): openAt 이 된 공사를 연다 — 한 차로는 더해 둔 slow 를 되돌리고, 전면은 아직 'repair' 로 닫혀 있을 때만 연다(다른 통제가 덮었으면 건드리지 않는다).
+ * 바꾸는 바로 이 자리에서 기록하고 원인은 요약 줄이다 (tag 'carry')
  */
 export function tickCarry(sim: Sim): void {
   const cs = sim.carryState;
@@ -636,11 +731,24 @@ export function tickCarry(sim: Sim): void {
       if (u.state !== 'oos') continue;                                   // (방어) 다른 코드가 이미 운용에 넣었다
       if (operable(sim, u)) {                                            // crewReady > 0 이고 조종·조타할 사람이 있다 (최소 편성까지 찼는지는 보지 않는다)
         u.state = 'available'; u.oosWhy = undefined; cs.stats.serviced++;
-        emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, causes: [cs.event], text: `${u.callsign} 정비 완료 — 운용 재개.` });
+        emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, causes: [cs.event], tag: 'carry', text: `${u.callsign} 정비 완료 — 운용 재개.` });
       } else {
         u.oosWhy = '결원';
-        emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, causes: [cs.event], text: `${u.callsign} 정비를 마쳤지만 결원으로 운용하지 못합니다.` });
+        emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, causes: [cs.event], tag: 'carry', text: `${u.callsign} 정비를 마쳤지만 결원으로 운용하지 못합니다.` });
       }
+    }
+  }
+  // 복구 공사 — openAt 이 된 것은 언제나 목록에서 꺼낸다 (조건이 맞지 않는 항목이 머리를 막지 않게). 한 틱에 여럿을 처리한다
+  while (cs.roads.length && cs.roads[0].openAt <= sim.t) {
+    const rc = cs.roads.shift()!, e = sim.city.edges[rc.edge];
+    if (rc.lane) {                                                       // 한 차로: 닫혀 있지 않으므로 closedReason 을 보지 않는다
+      const k = cs.slowed.findIndex((q) => q.why === 'lane' && q.edge === rc.edge);
+      if (k < 0) continue;
+      e.slow = Math.max(0, e.slow - cs.slowed[k].v); cs.slowed.splice(k, 1);
+      emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 0, causes: [cs.event], tag: 'carry', text: `${edgeName(sim.city, e)} 한 차로 복구 공사 완료.` });
+    } else if (e.closed && e.closedReason === 'repair') {               // 전면: 이유가 바뀌었으면(다른 통제가 덮었으면) 건드리지 않는다
+      e.closed = false; e.closedReason = null; cs.stats.reopened++;
+      emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 1, causes: [cs.event], tag: 'carry', text: `${edgeName(sim.city, e)} 복구 공사 완료 — 통행 재개.` });
     }
   }
 }
@@ -657,18 +765,78 @@ function copyCrew(c: CrewCarry): CrewCarry {
 /**
  * 끝난 교대에서 다음 교대가 이어받을 상태를 만든다 (sim.ended 일 때만 — 아니면 예외). **순수 함수다**: sim·sim.carry·carryState·현장·기록을 고치지 않고,
  * emit 하지 않으며, 돌려주는 객체는 모두 새로 만든다(앞 상태의 항목을 그대로 넣지 않고 복사한다). buildReport 안(마지막 기록·해시 전)에서도 불린다(단계 7).
- * 대원(단계 2 — crewNext)은 조직 명부(rosterKeys)의 모든 열쇠마다 한 항목. 펌프·정비(unitsNext)·섬광탄 창고(stockNext)는 단계 3, 도로는 4, 건물은 5 가 채운다.
- * 난수는 carry 흐름 하나(교대 시드에서 갈라진다 — 몇 번 불러도 같다): 정비 시각을 부대 순서로 먼저 뽑고, 단계 4 의 복구 시각은 그 뒤에 이어 뽑는다
+ * 대원(단계 2 — crewNext)은 조직 명부(rosterKeys)의 모든 열쇠마다 한 항목. 펌프·정비(unitsNext)·섬광탄 창고(stockNext)는 단계 3, 복구 공사(roadsNext)는 단계 4, 건물은 5 가 채운다.
+ * 난수는 carry 흐름 하나(교대 시드에서 갈라진다 — 몇 번 불러도 같다): 정비 시각을 부대 순서로 먼저 뽑고, 복구 시각은 그 뒤에 이어 뽑는다 (순서를 바꾸면 정비 시각이 달라진다)
  */
 export function makeCarryover(sim: Sim): Carryover {
   if (!sim.ended) throw new Error('makeCarryover: 끝난 교대에서만 이어받을 상태를 만든다');
   const prev = sim.carry;
   const rng = sim.rng.fork('carry');
+  const crew = crewNext(sim), units = unitsNext(sim, rng), stock = stockNext(sim), roads = roadsNext(sim, rng);
   return {
     v: CARRY_VERSION, shift: (prev ? prev.shift : 1) + 1, city: cityKey(sim.city),
     from: { seed: sim.seed, hash: sim.report ? sim.report.hash : '', diff: difficultyLabel(sim.difficulty) },
-    crew: crewNext(sim), units: unitsNext(sim, rng), stock: stockNext(sim), places: [], roads: [],
+    crew, units, stock, places: [], roads,
   };
+}
+
+// ───────────────────────── 도로의 끝 상태 → 다음 교대 (단계 4 — §3.5 의 표) ─────────────────────────
+/** 재난의 종류 → 그 재난이 통제했던 구간의 복구 공사 까닭 (태풍은 도로를 닫지 않는다 — 생기면 debris 한 차로) */
+const DIS_WHY: Partial<Record<string, RoadCarry['why']>> = { quake: 'crack', tsunami: 'washout', flood: 'flood', wildfire: 'fire' };
+/** 같은 구간의 두 공사 가운데 남길 것: 남은 교대가 큰 것, 같으면 전면, 같으면 늦게 끝나는 것 */
+const roadBeats = (a: RoadCarry, b: RoadCarry): boolean => a.left !== b.left ? a.left > b.left : a.lane !== b.lane ? !a.lane : a.openAt > b.openAt;
+/** 사건의 이름 ("조직 3번째 교대 · 04 산사태") — 문장용 */
+const incName = (shiftNo: number, code: string, what: string): string => `조직 ${shiftNo}번째 교대 · ${code} ${what}`;
+/**
+ * 끝난 교대에서 다음 교대의 복구 공사를 만든다 (순수 — makeCarryover 안). 원천(§3.5 의 표)과 뽑는 차례(carry 흐름 — unitsNext 다음):
+ *   ① 앞에서 이어받아 이번 교대 내내 막았던 것(cs.held, left 2) → left 1 · openAt ROAD_AT.carried
+ *   ② 이 교대에 재난이 통제했던 구간(d.damaged — 통제한 순서): 지진·해일은 앞의 DIS_FULL 구간이 전면, 나머지 한 차로 / 홍수·산불은 한 차로
+ *   ③ 사건(sim.incidents 순서)의 막았던 구간(I.blockedEdge — closeIncident 가 연 뒤에도 남는다):
+ *      (가) X6 전체 붕괴 — 이 사건이 그 건물을 무너뜨렸다(placeMarks 의 collapsed · incidentId) → debris 전면 left 2(다음 교대 내내)
+ *      산사태 흙더미·쓰러진 나무 — resolved 가 아닌 이유로 닫혔다(다 치우지 못함) → mud·tree 전면 / 다중 추돌 — 끝난 이유와 상관없이 노면 보수 → surface 한 차로
+ *   ④ (나) 교대 끝까지 남은 건물 잔해 장애물(I1-b C2 rubbleRoad — kind 'rubble') → debris (장애물이 전면이면 전면, 아니면 한 차로) left 1
+ * 같은 구간이면 roadBeats 로 하나만((가)와 (나)가 같은 구간이면 (가) — left 2). 상한 ROAD_CAP: 남은 교대가 큰 것·전면·일찍 끝나는 것 순으로 남긴다. 구간 id 순으로 돌려준다.
+ * 시각은 1200초 교대 기준으로 정수 초 (짧은 교대면 적용할 때 자른다). 교대 내내 막는 것(left 2)의 openAt 은 자리값 HELD_AT
+ */
+function roadsNext(sim: Sim, rng: Rng): RoadCarry[] {
+  const shiftNo = sim.carry ? sim.carry.shift : 1;
+  const best = new Map<number, RoadCarry>();
+  const put = (r: RoadCarry): void => { const o = best.get(r.edge); if (!o || roadBeats(r, o)) best.set(r.edge, r); };
+  const at = (span: readonly [number, number]): number => Math.round(rng.range(span[0], span[1]));
+  // ① 앞에서 이어받은 것
+  for (const h of sim.carryState.held) put({ edge: h.edge, why: h.why, lane: h.lane, left: 1, openAt: at(ROAD_AT.carried), inc: h.inc, since: h.since });
+  // ② 재난이 통제했던 구간
+  const d = sim.disaster, dwhy = d ? DIS_WHY[d.kind] : undefined;
+  if (d && dwhy) {
+    const cracked = dwhy === 'crack' || dwhy === 'washout';
+    d.damaged.forEach((eid, k) => {
+      const full = cracked && k < DIS_FULL;
+      put({ edge: eid, why: dwhy, lane: !full, left: 1, openAt: at(full ? ROAD_AT.disFull : cracked ? ROAD_AT.disLane : ROAD_AT.wet), inc: `조직 ${shiftNo}번째 교대 · ${d.name}`, since: shiftNo });
+    });
+  }
+  // ③ 사건이 막았던 구간
+  for (const I of sim.incidents) {
+    const eid = I.blockedEdge;
+    if (eid < 0 || !sim.city.edges[eid]) continue;
+    const v = I.truth.variant, done = I.closeReason === 'resolved';
+    const pm = I.truth.placeId >= 0 ? sim.placeMarks.get(I.truth.placeId) : undefined;
+    if (pm && pm.state === 'collapsed' && pm.incidentId === I.id) put({ edge: eid, why: 'debris', lane: false, left: 2, openAt: HELD_AT, inc: incName(shiftNo, I.code, '건물 붕괴'), since: shiftNo });
+    if (v === 'landslide' && !done) put({ edge: eid, why: 'mud', lane: false, left: 1, openAt: at(ROAD_AT.mud), inc: incName(shiftNo, I.code, '산사태'), since: shiftNo });
+    else if (v === 'tree' && !done) put({ edge: eid, why: 'tree', lane: false, left: 1, openAt: at(ROAD_AT.tree), inc: incName(shiftNo, I.code, '쓰러진 나무'), since: shiftNo });
+    else if (v === 'pileup') put({ edge: eid, why: 'surface', lane: true, left: 1, openAt: at(ROAD_AT.surface), inc: incName(shiftNo, I.code, '다중 추돌'), since: shiftNo });
+  }
+  // ④ 교대 끝까지 남은 건물 잔해 — 그 잔해를 남긴 사건은 놓은 기록의 원인으로 찾는다 (traffic.obstacleInc 와 같은 길)
+  for (const o of sim.traffic.obstacles) {
+    if (o.kind !== 'rubble' || !sim.city.edges[o.edge]) continue;
+    let code = '';
+    const ev = o.ev !== undefined ? sim.events[o.ev] : undefined;
+    if (ev) for (const c of ev.causes) { const J = sim.incidents[sim.events[c].incidentId]; if (J) { code = J.code + ' '; break; } }
+    put({ edge: o.edge, why: 'debris', lane: !o.full, left: 1, openAt: at(ROAD_AT.rubble), inc: `조직 ${shiftNo}번째 교대 · ${code}건물 잔해`, since: shiftNo });
+  }
+  // 상한과 차례
+  let out = [...best.values()];
+  if (out.length > ROAD_CAP) out = out.sort((a, b) => b.left - a.left || (a.lane === b.lane ? 0 : a.lane ? 1 : -1) || a.openAt - b.openAt || a.edge - b.edge).slice(0, ROAD_CAP);
+  return out.sort((a, b) => a.edge - b.edge);
 }
 
 // ───────────────────────── 장비의 끝 상태 → 다음 교대 (단계 3 — §3.3 의 표) ─────────────────────────

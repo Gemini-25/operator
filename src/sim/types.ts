@@ -907,7 +907,8 @@ export interface Problem {
 // 관제·지휘관·대원의 판단은 world/state.ts 의 knownZone·knownHospital·knownBuildingAt·knownZoneOfIncident 만 쓴다 (§3.8, tests/causality.test.ts 가 소스를 본다).
 /** 세계 상태 알림 기록의 갈래 — 측정 도구(scripts/metrics.ts 의 TAG_SYS)가 시스템을 가린다 */
 export type WorldTag = 'power' | 'comms' | 'water' | 'smoke' | 'risk' | 'hospital'      // I2 가 끝에 새 줄로 | 'carry' 를 더한다 (I2 §3.7)
-  | 'struct';      // (I1-b b3-4) 이웃 건물의 구조·배관 손상 기록 — 측정 도구의 TAG_SYS 가 'building' 으로 센다 (I2 의 'carry' 는 이 뒤에)
+  | 'struct'      // (I1-b b3-4) 이웃 건물의 구조·배관 손상 기록 — 측정 도구의 TAG_SYS 가 'building' 으로 센다 (I2 의 'carry' 는 이 뒤에)
+  | 'carry';      // (I2 §3.7) 이어받은 상태의 기록(요약 줄 제외 — 결장·예비 인력·정비·복구 공사·개통 …) — 측정 도구의 TAG_SYS 가 'carry' 로 센다
 export type ZoneField = 'power' | 'comms' | 'water' | 'smoke' | 'risk';
 /** 동네 하나의 상태 (cityPlan.DISTRICTS 순서). power·comms·water 는 1 = 정상 … 0 = 끊김, smoke·risk 는 0 = 없음 … 1 */
 export interface ZoneState {
@@ -1106,7 +1107,7 @@ export interface ShiftReport {
 // docs/specs/I2-persistence.md §2.1. 있는 자료형에 더하는 칸은 모두 선택 칸이다(X6·R3 와 같은 인터페이스 합치기). Responder.status 의 'off' 는 그 합집합 끝에 새 줄로 넣었다.
 // 객체 모양: Responder 의 네 칸은 resources.createRoster·createAidUnit 의 대원 리터럴에, Unit 의 세 칸은 두 부대 리터럴에 같은 순서로 넣었다
 // (pumpFails 는 0). Scene.wear 는 그 칸을 쓰기 시작하는 단계 5 가 field/sceneManager.createScene 에 넣는다.
-// (I1-b 의 WorldTag 에 'carry' 를 더하는 것은 WorldTag 가 생긴 뒤 — 지금은 WorldTag·SimEvent.tag 가 없다. 설계서 끝 "구현 메모"의 이어받을 자리)
+// WorldTag 의 'carry' (I1-b 의 칸)는 단계 4 가 더했다 — 요약 줄이 아닌 이어받은 상태의 기록이 단다(측정 도구가 시스템 carry 로 센다).
 /**
  * 다음 교대가 이어받는 상태 — Sim 생성자의 입력(extra.carry). 회복·수리·보충을 이미 반영한 "다음 교대가 시작할 때의 상태"다.
  * JSON 으로 저장·복원할 수 있는 꼴만 쓴다: Map·Set·typed array·Infinity·NaN·undefined 값을 넣지 않는다(선택 칸은 아예 빼 둔다).

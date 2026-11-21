@@ -66,6 +66,8 @@ export interface DisasterState {
   lastEv: number;                // 마지막 재난 알림 기록 (-1). 재난이 일으킨 사건의 발생 기록이 원인으로 가리킨다 — 판단은 읽지 않는다
   darkBump: number;              // (b3-5) 정전이 얹은 혼잡의 장부 줄 (traffic.noteBump 의 id, -1 = 없다)
   levelEv: number;               // (b3-12 L6) 홍수의 충격 알림(강이 넘치기 시작했다) — 물이 차올라 느려진 구간의 'level' 장부와 잠긴 지하 기록의 원인 (-1)
+  // ── 교대 간 지속 (I2 §3.5) ──
+  damaged: number[];             // 이 교대에 재난이 통제한 적이 있는 구간 (통제한 순서, 한 번씩 — 풀린 뒤에도 남는다). 기록만 한다 — 다음 교대의 복구 공사(persist.roadsNext)가 읽는다
 }
 
 /** 재난 하나가 일으키는 사건 수의 상한 */
@@ -93,6 +95,7 @@ function plan(sim: Sim, kind: DisasterKind, rng: Rng): DisasterState {
     kind, name: DISASTER_NAME[kind], phase: 'calm', tWarn: 0, tImpact: 0, tEnd: 0, intensity: 0, rng,
     spawned: [], closedEdges: [], nextAt: Infinity, log: [], closedTotal: 0, queue: [], timed: [], done: {},
     lastEv: -1, darkBump: -1, levelEv: -1,
+    damaged: [],      // (I2)
   };
   if (kind === 'typhoon') { d.tWarn = L * rng.range(0.1, 0.18); d.tImpact = d.tWarn + rng.range(90, 120); d.tEnd = d.tImpact + 420; }
   else if (kind === 'flood') {
@@ -172,6 +175,7 @@ function closeEdge(sim: Sim, d: DisasterState, e: RoadEdge, why: string, dry = f
   if (e.closed || !detour(sim, e, dry)) return false;
   e.closed = true; e.closedReason = 'disaster';
   d.closedEdges.push(e.id); d.closedTotal++;
+  if (d.damaged.indexOf(e.id) < 0) d.damaged.push(e.id);      // (I2 §3.5) 기록만 — 난수·기록 없음. 다음 교대가 이 구간을 복구 공사로 이어받는다
   const ev = emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 1, text: `${edgeName(sim.city, e)} 통제 — ${why}.` });
   noteRoadCause(sim, e.id, 'close', ev);      // (I1-b b3-5) 교통의 장부: 닫힘의 주인 = 이 통제 기록 (주인 사건은 없다 — 재난은 사건이 아니다)
   return true;

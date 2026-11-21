@@ -7,18 +7,24 @@
 // 단계 3 (장비 — 이어받은 상태가 없을 때 결과 불변): 시험 8 의 장비 부분(펌프 범위 · 정비 120초 · 짧은 교대의 정비 · SERVICE_CAP 과 급히 정비 완료 ·
 //   정비를 마쳐도 결원 · 끝 상태 → 정밀 정비/점검 · 편성되지 않은 부대의 휴식 · 섬광탄 창고 1 · 창고 10 → 7 → 4) · 10 의 장비 부분(정비 완료 기록의 일대일·원인) ·
 //   6 에 극한 계보 하나(정비·결장이 자연히 생기는 연속) · 정비·재고 부족이 있는 교대의 재현성.
-// 뒤 단계가 §9 의 3·4·11 과 6·10 의 나머지를 이 파일에 더한다(도로·건물을 적용하는 단계).
+// 단계 4 (도로 — 이어받은 상태가 없을 때 결과 불변): 시험 4(복구 공사 — 전면 'repair'·경로가 피함·openAt 에 개통·한 차로·교대 내내(left 2)·짧은 교대·
+//   끊기는 통제는 놓지 않음·여럿이어도 0틱에 모든 시설 → 모든 교차로) · 11(재난이 닫은 도로가 넘어온다 — 지진의 d.damaged → crack) · 끝 상태의 원천 표
+//   (앞에서 이어받은 것·재난·산사태·쓰러진 나무·다중 추돌·무너진 건물의 잔해 (가)(나)·같은 구간·상한) · 10 의 도로 부분(개통 기록의 일대일·원인·tag 'carry'·교통의 장부) ·
+//   6 의 도로 몫(복구 도로 ≤ 6 · 0틱 연결) · 이어받은 도로로 시작한 교대의 재현성 · 지도의 고깔(그림은 상태를 읽기만 한다).
+// 뒤 단계가 §9 의 3 과 6·10 의 나머지를 이 파일에 더한다(건물을 적용하는 단계).
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { NORMAL } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
-import { BACK_HEALTH, CLOSED_CAP, EARLY_BACK_HEALTH, GAIN_CAP, PLACE_CAP, PUMP_REST, RECRUIT_NAMES, RELIEF_MAX, RELIEF_NAMES, REPLACE_AFTER, RESUPPLY, ROAD_CAP, RUSHED_PUMP, SERVICE_AT, SERVICE_CAP, SERVICE_PUMP, STOCK_CAP, absentCap, carryKey, cityKey, makeCarryover, readCarryover } from '../src/sim/persist';
+import { BACK_HEALTH, CLOSED_CAP, DIS_FULL, EARLY_BACK_HEALTH, FRONT_SLOW, GAIN_CAP, LANE_SLOW, PLACE_CAP, PUMP_REST, RECRUIT_NAMES, RELIEF_MAX, RELIEF_NAMES, REPLACE_AFTER, RESUPPLY, ROAD_AT, ROAD_CAP, RUSHED_PUMP, SERVICE_AT, SERVICE_CAP, SERVICE_PUMP, STOCK_CAP, WHY_NAME, absentCap, carryKey, cityKey, makeCarryover, readCarryover } from '../src/sim/persist';
+import { edgeName, findRoute } from '../src/sim/city';
+import { addObstacle, passable } from '../src/sim/traffic';
 import { crewReady, dispatchUnit, rosterKeys, tickUnits } from '../src/sim/resources';
 import { STAFF, fieldCrew, minField } from '../src/sim/crews';
 import { outShifts } from '../src/sim/field/injury';
-import type { Carryover, CrewCarry, Incident, PlaceCarry, RoadCarry, Unit, UnitCarry } from '../src/sim/types';
+import type { Carryover, City, CrewCarry, Incident, PlaceCarry, RoadCarry, RoadEdge, Unit, UnitCarry } from '../src/sim/types';
 
 // ───────────────────────── 도구 ─────────────────────────
 const run = (seed: string, carry?: Carryover | null, d: Difficulty = NORMAL, len = 1200): Sim => {
@@ -344,6 +350,7 @@ function mustSay(n: Sim['carryState']['applied'][number]): string[] {
     case 'service': return [n.unit, '정비 중'];                       // (단계 3)
     case 'rushed': return [n.unit, '급히'];
     case 'stock': return [n.unit, `${n.got}개만`, `정수 ${n.want}개`];
+    case 'road': return [n.lane ? '한 차로 복구 공사' : '복구 공사로 통제', WHY_NAME[n.why], n.left === 1 ? `약 ${Math.max(1, Math.round(n.openAt / 60))}분 뒤` : '이번 교대 내내'];      // (단계 4)
     default: return [];
   }
 }
@@ -404,6 +411,49 @@ function checkShortArrivals(s: Sim): number {
     if (short) n++;
   }
   return n;
+}
+
+/** (단계 4) 알려진 상태로(관제·경로가 보는 대로) 모든 시설에서 모든 교차로에 닿지 못하는 (시설, 교차로) 쌍의 수 — 작은 차·큰 차 모두 */
+function unreachable(s: Sim): number {
+  const c = s.city, N = c.nodes.length;
+  let bad = 0;
+  for (const heavy of [false, true]) for (const f of c.facilities) {
+    const seen = new Uint8Array(N), st = [f.nodeId];
+    seen[f.nodeId] = 1;
+    while (st.length) {
+      const n = st.pop()!;
+      for (const id of c.nodes[n].edges) { const e = c.edges[id]; if (!passable(e, heavy)) continue; const v = e.a === n ? e.b : e.a; if (!seen[v]) { seen[v] = 1; st.push(v); } }
+    }
+    for (let i = 0; i < N; i++) if (!seen[i]) bad++;
+  }
+  return bad;
+}
+/**
+ * 시험 10 (도로 부분): 복구 공사 항목마다 — 교대 시작의 줄(그 구간 이름 · 요약 줄이 원인 · tag 'carry'), 끝나는 공사(left 1)는 openAt 이 지난 첫 틱에 개통 기록이 정확히 하나
+ * (전면 '복구 공사 완료 — 통행 재개' · 한 차로 '한 차로 복구 공사 완료' — 요약 줄이 원인, tag 'carry'), 교대 내내 막는 것(left 2)은 끝까지 'repair'.
+ * 개통 기록의 수 = 지난 openAt 의 항목 수, stats.reopened = 그 가운데 전면, 남은 cs.roads = 아직 지나지 않은 항목
+ */
+const REOPEN = /^(.+) 복구 공사 완료 — 통행 재개\.$/, LANE_DONE = /^(.+) 한 차로 복구 공사 완료\.$/;
+type RoadNote = Extract<Sim['carryState']['applied'][number], { what: 'road' }>;
+function checkRoadLog(s: Sim): void {
+  const cs = s.carryState, ev = cs.event;
+  const notes = cs.applied.filter((n): n is RoadNote => n.what === 'road');
+  const done = s.events.filter((e) => e.kind === 'traffic' && (REOPEN.test(e.text) || LANE_DONE.test(e.text)));
+  for (const e of done) { expect(e.causes, e.text).toEqual([ev]); expect(e.tag, e.text).toBe('carry'); }
+  for (const n of notes) {
+    const name = edgeName(s.city, s.city.edges[n.edge]);
+    const start = s.events[ev + 1 + cs.applied.indexOf(n)];
+    expect(start.text.startsWith(name + ' '), start.text).toBe(true);
+    expect([start.actor, start.kind, start.tag]).toEqual(['교통정보', 'traffic', 'carry']);
+    const mine = done.filter((e) => e.text.startsWith(name + ' ') && (n.lane ? LANE_DONE : REOPEN).test(e.text));
+    const want = n.left === 1 && s.t >= n.openAt ? 1 : 0;
+    expect(mine.length, name).toBe(want);
+    if (want) { expect(mine[0].t).toBeGreaterThanOrEqual(n.openAt - 1e-9); expect(mine[0].t).toBeLessThan(n.openAt + s.dt + 1e-9); }
+    if (n.left === 2 && !n.lane) expect(s.city.edges[n.edge].closedReason, name).toBe('repair');
+  }
+  expect(done.length).toBe(notes.filter((n) => n.left === 1 && s.t >= n.openAt).length);
+  expect(cs.stats.reopened).toBe(notes.filter((n) => n.left === 1 && !n.lane && s.t >= n.openAt).length);
+  expect(cs.roads.length).toBe(notes.filter((n) => n.left === 1 && s.t < n.openAt).length);
 }
 
 // ───────────────────────── 2. 다친 대원이 다음 교대에 결장 ─────────────────────────
@@ -899,18 +949,294 @@ describe('8. 장비 — 펌프 범위·정비·섬광탄 창고', () => {
   });
 });
 
+// ───────────────────────── 4. 수리된 도로가 열린다 (단계 4) ─────────────────────────
+describe('4. 수리된 도로가 열린다 — 복구 공사의 적용·개통·우회로', () => {
+  let co0: Carryover, city: City, picks: RoadEdge[], dead: RoadEdge, hub: RoadEdge[];
+  beforeAll(() => {
+    const A = new Sim('P1', NORMAL, 60); A.runToEnd();
+    co0 = calmCrew(makeCarryover(A));      // 60초 교대 — 결장·정비·섬광탄 부족 없음: 적용 목록에는 도로만 남는다
+    city = A.city;
+    const fac = new Set(city.facilities.map((f) => f.nodeId));
+    // 간선 아닌 구간 가운데 큰 차도 그 구간 없이 양 끝을 오가는 것 (시설 교차로에 닿지 않고, 양 끝의 길이 셋 이상) — 서로 끝을 나누지 않는 넷
+    const cands = city.edges.filter((e) => !e.arterial && e.cls !== 'highway' && !fac.has(e.a) && !fac.has(e.b) && city.nodes[e.a].edges.length >= 3 && city.nodes[e.b].edges.length >= 3 && findRoute(city, e.a, e.b, 1, e.id, true));
+    picks = [];
+    for (const e of cands) if (picks.length < 4 && picks.every((q) => q.a !== e.a && q.a !== e.b && q.b !== e.a && q.b !== e.b)) picks.push(e);
+    dead = city.edges.find((e) => !fac.has(e.a) && !fac.has(e.b) && (city.nodes[e.a].edges.length === 1 || city.nodes[e.b].edges.length === 1))!;
+    // 한 교차로의 모든 구간 — 다 막으면 그 교차로가 끊긴다
+    const n = city.nodes.find((q) => q.edges.length >= 3 && q.edges.length <= 4 && !fac.has(q.id) && q.edges.every((id) => !city.edges[id].arterial))!;
+    hub = n.edges.map((id) => city.edges[id]);
+  }, HOOK_MS);
+  const road = (e: RoadEdge, o: Partial<RoadCarry> = {}): RoadCarry => ({ edge: e.id, why: 'crack', lane: false, left: 1, openAt: 60, inc: '조직 1번째 교대 · 지진', since: 1, ...o });
+  const withRoads = (roads: RoadCarry[]): Carryover => { const co = json(co0); co.roads = json(roads); return co; };
+
+  it('준비: 고른 구간이 넷, 막다른 구간이 하나 있다', () => {
+    expect(picks.length).toBe(4);
+    expect(dead).toBeTruthy();
+    expect(hub.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('전면 공사 E 는 교대 시작부터 repair 로 닫혀(알려진 통제) 경로가 피하고 openAt 60 이 지나면 열린다 — 같은 openAt 의 한 차로 공사 F 도 함께 끝난다 (머리의 항목이 뒤를 막지 않는다)', () => {
+    const [E, F] = picks;
+    const s = new Sim('P6', NORMAL, 1200, { carry: withRoads([road(F, { lane: true, why: 'flood' }), road(E)]) });
+    const e = s.city.edges[E.id], f = s.city.edges[F.id], cs = s.carryState;
+    expect([e.closed, e.closedReason, e.known]).toEqual([true, 'repair', undefined]);
+    expect(f.closed).toBe(false);
+    expect(f.slow).toBeCloseTo(LANE_SLOW, 12);
+    // openAt 이 같으면 구간 id 순
+    const want = [{ what: 'road', edge: E.id, lane: false, left: 1, openAt: 60, why: 'crack' }, { what: 'road', edge: F.id, lane: true, left: 1, openAt: 60, why: 'flood' }].sort((a, b) => a.edge - b.edge);
+    expect(cs.applied).toEqual(want);
+    expect(s.events[cs.event].text).toContain('복구 공사 도로 2구간');
+    checkCarryLog(s);
+    checkRoadLog(s);
+    // 교통의 장부: 닫힘·감속의 주인 = 그 구간의 줄 (교통 모델이 생긴 뒤 적었다)
+    const lineOf = (x: RoadEdge): number => s.events.findIndex((q) => q.t === 0 && q.text.startsWith(edgeName(s.city, x) + ' '));
+    expect(s.traffic.closeEv[E.id]).toBe(lineOf(E));
+    expect(s.traffic.slowEv[F.id]).toBe(lineOf(F));
+    s.step();
+    const r = findRoute(s.city, e.a, e.b), rh = findRoute(s.city, e.a, e.b, 1, -1, true);
+    expect(r).not.toBeNull(); expect(r!.edges).not.toContain(E.id);
+    expect(rh).not.toBeNull(); expect(rh!.edges).not.toContain(E.id);
+    while (s.t < 61) s.step();
+    expect([e.closed, e.closedReason]).toEqual([false, null]);
+    expect(f.slow).toBe(0);
+    expect(cs.slowed).toEqual([]);
+    expect(s.events.filter((q) => q.text === `${edgeName(s.city, e)} 복구 공사 완료 — 통행 재개.`).length).toBe(1);
+    expect(s.events.filter((q) => q.text === `${edgeName(s.city, f)} 한 차로 복구 공사 완료.`).length).toBe(1);
+    expect(cs.stats.reopened).toBe(1);
+    checkRoadLog(s);
+  });
+
+  it('교대 내내 막는 공사(left 2)는 끝까지 닫혀 있고, 다음 상태에서 left 1 (openAt 120~600 정수) 이 된다 — 짧은 교대에서는 openAt 을 shiftLen × 0.75 로 자른다 (500초 교대에 900 → 375초)', () => {
+    const [, , G, H] = picks;
+    const s = new Sim('P7', NORMAL, 500, { carry: withRoads([road(G, { left: 2, openAt: 900, why: 'debris', inc: '조직 1번째 교대 · 03 건물 붕괴' }), road(H, { openAt: 900, why: 'washout' })]) });
+    const g = s.city.edges[G.id], h = s.city.edges[H.id], cs = s.carryState;
+    expect(cs.applied.find((n) => n.what === 'road' && n.edge === H.id)).toMatchObject({ openAt: 375, left: 1 });
+    expect(cs.roads.map((r) => [r.edge, r.openAt])).toEqual([[H.id, 375]]);
+    expect(cs.held.map((r) => r.edge)).toEqual([G.id]);
+    expect(s.events.some((q) => q.text === `${edgeName(s.city, g)} 복구 공사로 통제 — ${WHY_NAME.debris} (이번 교대 내내).`)).toBe(true);
+    while (!s.ended) {
+      s.step();
+      expect(g.closedReason, `${s.t}`).toBe('repair');
+      if (s.t < 375 - 1e-6) expect(h.closed, `${s.t}`).toBe(true);
+      else if (s.t > 375 + s.dt) expect(h.closed, `${s.t}`).toBe(false);
+    }
+    checkRoadLog(s);
+    const next = makeCarryover(s), rg = next.roads.find((r) => r.edge === G.id)!;
+    expect(rg).toMatchObject({ edge: G.id, why: 'debris', lane: false, left: 1, inc: '조직 1번째 교대 · 03 건물 붕괴', since: 1 });
+    expect(Number.isInteger(rg.openAt)).toBe(true);
+    expect(rg.openAt).toBeGreaterThanOrEqual(ROAD_AT.carried[0]); expect(rg.openAt).toBeLessThanOrEqual(ROAD_AT.carried[1]);
+    expect(next.roads.some((r) => r.edge === H.id)).toBe(false);      // 이번 교대에 끝난 공사는 넘기지 않는다
+    expect(makeCarryover(s)).toEqual(next);                           // carry 흐름 — 몇 번 불러도 같다
+    expect(readCarryover(json(next), s.city)!.carry).toEqual(next);
+  });
+
+  it('끊기는 통제는 놓지 않는다: 막다른 구간은 닫히지 않고 버린 것에 한 줄, 다음 상태에도 없다. 한 교차로의 구간을 모두 넣으면 마지막 것들을 놓지 않는다 — 0틱에 모든 시설에서 모든 교차로로 간다', () => {
+    const s = new Sim('P8', NORMAL, 1200, { carry: withRoads([road(dead, { left: 2, openAt: 900 })]) });
+    const d = s.city.edges[dead.id], cs = s.carryState;
+    expect(d.closed).toBe(false);
+    expect(cs.applied).toEqual([]);
+    expect(cs.held).toEqual([]);
+    const drop = `${edgeName(s.city, d)}: 통제하면 길이 끊겨 복구 공사를 미룹니다.`;
+    expect(cs.dropped).toContain(drop);
+    expect(s.events.filter((q) => q.text === drop).length).toBe(1);
+    checkCarryLog(s);
+    expect(unreachable(s)).toBe(0);
+    s.run(50);
+    s.runToEnd();
+    expect(makeCarryover(s).roads.some((r) => r.edge === dead.id)).toBe(false);
+    // 한 교차로의 모든 구간 (+ 고른 넷 — 많아야 ROAD_CAP 이 읽힌다): 놓은 것만 닫히고 길은 끊기지 않는다
+    const list = [...hub, ...picks].slice(0, ROAD_CAP).map((e, i) => road(e, { openAt: 120 + i }));
+    const s2 = new Sim('P8', NORMAL, 1200, { carry: withRoads(list) });
+    const placed = s2.carryState.applied.filter((n): n is RoadNote => n.what === 'road');
+    expect(placed.length).toBeLessThan(list.length);
+    expect(placed.length + s2.carryState.dropped.filter((x) => x.endsWith('복구 공사를 미룹니다.')).length).toBe(list.length);
+    for (const e of s2.city.edges) expect(e.closedReason === 'repair').toBe(placed.some((n) => n.edge === e.id));
+    expect(unreachable(s2)).toBe(0);
+    s2.step();
+    expect(unreachable(s2)).toBe(0);
+    checkCarryLog(s2);
+  });
+
+  it('출입 통제·무너짐 건물 앞 구간은 교대 내내 느리다 (같은 구간이면 한 번, 흔적만 남은 건물은 아니다) — 개통에서 되돌리지 않는다', () => {
+    const qs = city.places.filter((q) => q.facility < 0 && !q.open && q.edgeId !== undefined);
+    const a = qs[0], b = qs.find((q) => q.edgeId === a.edgeId && q.id !== a.id) ?? qs[1], c = qs.find((q) => q.edgeId !== a.edgeId && q.edgeId !== b.edgeId)!;
+    const co = json(co0);
+    co.places = [
+      { id: a.id, state: 'closed', dmg: 0.4, soot: 0.5, repair: 2, cause: 'fire', inc: '조직 1번째 교대 · 02 화재', since: 1 },
+      { id: b.id, state: 'ruin', dmg: 1, soot: 0, repair: 3, cause: 'collapse', inc: '조직 1번째 교대 · 05 붕괴', since: 1 },
+      { id: c.id, state: 'marked', dmg: 0.1, soot: 0.3, repair: 0, cause: 'fire', inc: '조직 1번째 교대 · 07 화재', since: 1 },
+    ].sort((x, y) => x.id - y.id) as PlaceCarry[];
+    const s = new Sim('P9', NORMAL, 300, { carry: co });
+    const fronts = new Set([a.edgeId!, b.edgeId!]);
+    expect(s.carryState.slowed.filter((q) => q.why === 'front').map((q) => q.edge).sort((x, y) => x - y)).toEqual([...fronts].sort((x, y) => x - y));
+    for (const id of fronts) expect(s.city.edges[id].slow).toBeCloseTo(FRONT_SLOW, 12);
+    if (!fronts.has(c.edgeId!)) expect(s.city.edges[c.edgeId!].slow).toBe(0);
+    s.runToEnd();
+    for (const id of fronts) expect(s.city.edges[id].slow).toBeGreaterThanOrEqual(FRONT_SLOW - 1e-9);
+  });
+
+  it('복구 공사가 있는 교대도 같은 입력이면 같은 결과 (그대로·JSON 왕복), 이어받은 상태가 없는 교대와는 다르다', () => {
+    const [E, F, G] = picks;
+    const co = withRoads([road(E, { openAt: 200 }), road(F, { lane: true, openAt: 300, why: 'fire' }), road(G, { left: 2, openAt: 900, why: 'debris' })]);
+    const a = run('P10', co, NORMAL, 600), b = run('P10', json(co), NORMAL, 600), c = run('P10', undefined, NORMAL, 600);
+    expect(a.report!.hash).toBe(b.report!.hash);
+    expect(a.report!.hash).not.toBe(c.report!.hash);
+    checkRoadLog(a);
+    expect(a.incidents.every((I) => I.phase === 'closed')).toBe(true);
+  });
+});
+
+// ───────────────────────── 4. 끝 상태 → 다음 교대의 복구 공사 (원천 표 — 단계 4) ─────────────────────────
+describe('4. 끝 상태 → 다음 교대의 복구 공사 (원천: 사건·잔해·같은 구간·상한)', () => {
+  let A: Sim, edges: RoadEdge[];
+  beforeAll(() => {
+    A = new Sim('P11', NORMAL, 400, { force: 'collapse/std' }); A.runToEnd();
+    const fac = new Set(A.city.facilities.map((f) => f.nodeId));
+    edges = A.city.edges.filter((e) => !e.closed && !fac.has(e.a) && !fac.has(e.b) && findRoute(A.city, e.a, e.b, 1, e.id, true)).slice(0, 12);
+  }, HOOK_MS);
+  /** 끝난 교대에 사건 하나를 꾸며 붙인다 (makeCarryover 가 읽는 칸만 — 순수 함수의 원천 표를 시험한다) */
+  const fake = (s: Sim, variant: string, edge: number, closeReason: string, placeId = -1): Incident => {
+    const I = { id: s.incidents.length, code: String(s.incidents.length + 1).padStart(2, '0'), blockedEdge: edge, closeReason, phase: 'closed', truth: { type: 'traffic', variant, placeId } } as unknown as Incident;
+    s.incidents.push(I);
+    return I;
+  };
+
+  it('산사태·쓰러진 나무는 다 치우지 못하고 닫혔을 때만(전면), 다중 추돌은 끝난 이유와 상관없이(한 차로 노면 보수) — 시각은 표의 범위, 이름은 사건 번호', () => {
+    const s = new Sim('P11', NORMAL, 60); s.runToEnd();
+    const [e1, e2, e3, e4, e5] = edges;
+    const i1 = fake(s, 'landslide', e1.id, 'timeout'), i2 = fake(s, 'tree', e2.id, 'shiftend'), i3 = fake(s, 'pileup', e3.id, 'resolved');
+    fake(s, 'tree', e4.id, 'resolved'); fake(s, 'landslide', e5.id, 'resolved');      // 다 치웠다 — 넘기지 않는다
+    const roads = makeCarryover(s).roads;
+    expect(roads.map((r) => r.edge)).toEqual([e1.id, e2.id, e3.id].sort((a, b) => a - b));
+    const by = (id: number): RoadCarry => roads.find((r) => r.edge === id)!;
+    expect(by(e1.id)).toMatchObject({ why: 'mud', lane: false, left: 1, inc: `조직 1번째 교대 · ${i1.code} 산사태`, since: 1 });
+    expect(by(e2.id)).toMatchObject({ why: 'tree', lane: false, left: 1, inc: `조직 1번째 교대 · ${i2.code} 쓰러진 나무` });
+    expect(by(e3.id)).toMatchObject({ why: 'surface', lane: true, left: 1, inc: `조직 1번째 교대 · ${i3.code} 다중 추돌` });
+    for (const [id, span] of [[e1.id, ROAD_AT.mud], [e2.id, ROAD_AT.tree], [e3.id, ROAD_AT.surface]] as const) {
+      const r = by(id);
+      expect(Number.isInteger(r.openAt)).toBe(true);
+      expect(r.openAt).toBeGreaterThanOrEqual(span[0]); expect(r.openAt).toBeLessThanOrEqual(span[1]);
+    }
+    expect(readCarryover(json(makeCarryover(s)), s.city)!.carry.roads).toEqual(roads);
+  });
+
+  it('무너진 건물의 잔해: (가) 이 사건이 무너뜨린 건물(X6 collapsed)이 막았던 구간 → 다음 교대 내내(left 2) · (나) 교대 끝까지 남은 잔해 장애물 → left 1 (전면이면 전면) · 같은 구간이면 (가)', () => {
+    const s = new Sim('P11', NORMAL, 60); s.runToEnd();
+    const [e1, e2, e3, e4] = edges;
+    const place = s.city.places.find((q) => q.facility < 0 && !q.open)!;
+    const I = fake(s, 'std', e1.id, 'resolved', place.id);
+    s.placeMarks.set(place.id, { placeId: place.id, state: 'collapsed', t: 30, incidentId: I.id, burnFrac: 0, ruinFrac: 1 });
+    const J = fake(s, 'std', e4.id, 'resolved', place.id);      // 같은 건물이지만 무너뜨린 사건이 아니다 — 넘기지 않는다
+    expect(J.blockedEdge).toBe(e4.id);
+    const o1 = addObstacle(s, { edge: e2.id, kind: 'rubble', full: true, dur: 1e6, known: true, quiet: true })!;
+    const o2 = addObstacle(s, { edge: e3.id, kind: 'rubble', full: false, dur: 1e6, known: true, quiet: true })!;
+    const o3 = addObstacle(s, { edge: e1.id, kind: 'rubble', full: false, dur: 1e6, known: true, quiet: true })!;      // (가)와 같은 구간 — 한 차로 잔해
+    expect([o1, o2, o3].every((o) => !!o)).toBe(true);
+    const roads = makeCarryover(s).roads, by = (id: number): RoadCarry | undefined => roads.find((r) => r.edge === id);
+    expect(by(e1.id)).toMatchObject({ why: 'debris', lane: false, left: 2, inc: `조직 1번째 교대 · ${I.code} 건물 붕괴` });
+    expect(by(e2.id)).toMatchObject({ why: 'debris', lane: false, left: 1 });
+    expect(by(e3.id)).toMatchObject({ why: 'debris', lane: true, left: 1 });
+    expect(by(e4.id)).toBeUndefined();
+    for (const id of [e2.id, e3.id]) { const r = by(id)!; expect(r.openAt).toBeGreaterThanOrEqual(ROAD_AT.rubble[0]); expect(r.openAt).toBeLessThanOrEqual(ROAD_AT.rubble[1]); }
+    expect(readCarryover(json(makeCarryover(s)), s.city)!.carry.roads).toEqual(roads);
+  });
+
+  it('같은 구간의 두 공사는 남은 교대 → 전면 → 늦게 끝나는 것으로 하나만, 상한 6 (남은 교대·전면·이른 것 순으로 남긴다), 구간 id 순', () => {
+    const s = new Sim('P11', NORMAL, 60); s.runToEnd();
+    const many = edges.slice(0, 9);
+    many.forEach((e, k) => fake(s, k % 2 ? 'tree' : 'pileup', e.id, 'timeout'));      // 나무 4 (전면) · 추돌 5 (한 차로)
+    const roads = makeCarryover(s).roads;
+    expect(roads.length).toBe(ROAD_CAP);
+    expect(roads.map((r) => r.edge)).toEqual(roads.map((r) => r.edge).slice().sort((a, b) => a - b));
+    expect(roads.filter((r) => !r.lane).length).toBe(4);      // 전면이 먼저 남는다
+    const lanes = many.filter((_, k) => k % 2 === 0).map((e) => roads.find((r) => r.edge === e.id)).filter((r): r is RoadCarry => !!r);
+    expect(lanes.length).toBe(2);
+    // 같은 구간: 나무(전면 left 1)와 추돌(한 차로 left 1) → 전면
+    const t = new Sim('P11', NORMAL, 60); t.runToEnd();
+    fake(t, 'pileup', edges[0].id, 'timeout'); fake(t, 'tree', edges[0].id, 'timeout');
+    expect(makeCarryover(t).roads).toEqual([expect.objectContaining({ edge: edges[0].id, why: 'tree', lane: false })]);
+  });
+
+  it('이어받은 상태가 없는 끝난 교대의 복구 공사는 사건·재난·잔해에서만 — 평범한 교대(사건이 길을 막지 않음)는 빈 목록이고 makeCarryover 는 순수하다', () => {
+    const roads = makeCarryover(A).roads;
+    expect(roads.length).toBeLessThanOrEqual(ROAD_CAP);
+    for (const r of roads) expect(['debris', 'mud', 'tree', 'surface']).toContain(r.why);
+    const h = A.report!.hash, n = A.events.length;
+    expect(makeCarryover(A)).toEqual(makeCarryover(A));
+    expect([A.report!.hash, A.events.length]).toEqual([h, n]);
+    const quiet = new Sim('P1', NORMAL, 60); quiet.runToEnd();
+    expect(makeCarryover(quiet).roads).toEqual([]);
+  });
+});
+
+// ───────────────────────── 11. 재난이 닫은 도로가 넘어온다 (단계 4) ─────────────────────────
+describe('11. 재난이 닫은 도로가 넘어온다 (지진 → 균열 복구 공사)', () => {
+  let A: Sim, co: Carryover, B: Sim, u0: number;
+  beforeAll(() => {
+    A = new Sim('Q2', { ...NORMAL, disaster: 'quake' }, 1200); A.runToEnd();
+    co = makeCarryover(A);
+    B = new Sim('Q2b', NORMAL, 1200, { carry: co });
+    u0 = unreachable(B);
+    B.step();
+  }, HOOK_MS);
+
+  it('지진 교대는 통제한 구간을 기록하고(d.damaged — 한 번씩, 통제한 순서), 다음 상태에 crack 이 1 이상 · 상한 이하 · 전면 crack 은 많아야 DIS_FULL', () => {
+    const d = A.disaster!;
+    expect(d.kind).toBe('quake');
+    expect(d.damaged.length).toBeGreaterThanOrEqual(1);
+    expect(new Set(d.damaged).size).toBe(d.damaged.length);
+    expect(d.closedEdges.length).toBe(0);      // 1200초 교대에서는 재난이 끝나며 자기 통제를 모두 열었다 — 넘어오는 것은 기록(damaged)이다
+    const cracks = co.roads.filter((r) => r.why === 'crack');
+    expect(cracks.length).toBeGreaterThanOrEqual(1);
+    expect(co.roads.length).toBeLessThanOrEqual(ROAD_CAP);
+    expect(cracks.filter((r) => !r.lane).length).toBeLessThanOrEqual(DIS_FULL);
+    for (const r of cracks) {
+      expect(d.damaged).toContain(r.edge);
+      expect(r.inc).toBe('조직 1번째 교대 · 지진');
+      const span = r.lane ? ROAD_AT.disLane : ROAD_AT.disFull;
+      expect(r.openAt).toBeGreaterThanOrEqual(span[0]); expect(r.openAt).toBeLessThanOrEqual(span[1]);
+    }
+    // 전면 crack 은 통제한 순서로 앞의 것 (먼저 갈라진 곳)
+    for (const r of cracks) if (!r.lane) expect(d.damaged.indexOf(r.edge)).toBeLessThan(DIS_FULL);
+  });
+
+  it('다음 교대의 1틱에 그 구간들이 repair(전면)이거나 느려져 있고(한 차로), 0틱·1틱에 모든 시설에서 모든 교차로로 간다', () => {
+    for (const r of co.roads) {
+      const e = B.city.edges[r.edge];
+      if (r.lane) expect(e.slow, `${r.edge}`).toBeGreaterThanOrEqual(LANE_SLOW - 1e-9);
+      else if (B.carryState.dropped.every((x) => !x.startsWith(edgeName(B.city, e) + ':'))) expect(e.closedReason, `${r.edge}`).toBe('repair');
+    }
+    expect(u0).toBe(0);
+    expect(unreachable(B)).toBe(0);
+    expect(B.events[B.carryState.event].text).toContain(`복구 공사 도로 ${B.carryState.applied.filter((n) => n.what === 'road').length}구간`);
+    checkCarryLog(B);
+  });
+
+  it('다음 교대를 끝까지: 모든 사건이 닫히고, 개통 기록이 적용 목록과 일대일이며, 교대 내내 막는 공사만 다음 상태로 넘어간다', () => {
+    B.runToEnd();
+    expect(B.incidents.every((I) => I.phase === 'closed')).toBe(true);
+    checkRoadLog(B);
+    const next = makeCarryover(B);
+    const held = B.carryState.held.map((r) => r.edge);
+    for (const id of held) expect(next.roads.find((r) => r.edge === id)).toMatchObject({ left: 1 });
+    for (const r of next.roads) if (r.why === 'crack') expect(held).toContain(r.edge);      // 이번 교대의 균열 공사(left 1)는 끝났다 — 다시 넘어오는 crack 은 교대 내내 막았던 것뿐
+  });
+});
+
 // ───────────────────────── 6·10. 짧은 연속 (계보 3 × 교대 4) — 대원 몫 ─────────────────────────
 describe('6·10. 짧은 연속 (계보 3 × 교대 4) — 대원 몫', () => {
-  const shifts: Sim[] = [], keys: [string, string][] = [];
+  const shifts: Sim[] = [], keys: [string, string][] = [], cos: Carryover[] = [], cut0: number[] = [];
   beforeAll(() => {
     for (let L = 0; L < 3; L++) {
       let co: Carryover | null = null;
       for (let k = 1; k <= 4; k++) {
         const s = new Sim(`C${L}.${k}`, NORMAL, 1200, co ? { carry: co } : {});
+        cut0.push(unreachable(s));      // (단계 4) 0틱: 이어받은 복구 공사가 있어도 모든 시설에서 모든 교차로로
         s.runToEnd();
         shifts.push(s);
         const next = makeCarryover(s);
         keys.push([carryKey(readCarryover(json(next), s.city)!.carry), carryKey(next)]);      // 왕복 검사
+        cos.push(next);
         co = next;
       }
     }
@@ -931,6 +1257,12 @@ describe('6·10. 짧은 연속 (계보 3 × 교대 4) — 대원 몫', () => {
 
   it('적용 목록과 기록의 일대일, 결장자는 모두 기록에 이름이 있다, 결원 도착에는 요약 줄이 원인, 정비마다 정비를 마친 기록 하나', () => {
     for (const s of shifts) if (s.carryState.on) { checkCarryLog(s); checkShortArrivals(s); checkServiceLog(s); }
+  });
+
+  it('(단계 4) 복구 도로 ≤ 6, 0틱에 모든 시설에서 모든 교차로로 간다, 복구 공사마다 개통 기록이 하나 (요약 줄이 원인 · tag carry)', () => {
+    for (const co of cos) expect(co.roads.length).toBeLessThanOrEqual(ROAD_CAP);
+    for (const n of cut0) expect(n).toBe(0);
+    for (const s of shifts) if (s.carryState.on) checkRoadLog(s);
   });
 });
 

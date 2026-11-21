@@ -12,8 +12,11 @@ import { TYPE_DEFS, TYPE_ORDER, likRow, typeIdx } from '../incidentTypes';
 import { recomputeUnmet } from './dispatcher';
 import { docNeeds } from './doctrine';      // (R3 §6.2) 관제 교본의 수요 보정 (D1·D3·D6·D8)
 import { recordDoc } from '../field/doctrineRun';
+import { knownHazardNear } from '../world/state';      // (I1-b b3-7 §3.8) 관제가 아는 큰 불·폭발이 곁에 있는가 — 진실 위치·현장을 읽지 않는다
 
 const TYPES = TYPE_ORDER;      // 가설의 순서 = likRow 의 열 순서 (incidentTypes.TYPE_ORDER — 새 유형은 끝에만)
+/** (I1-b b3-7) 알려진 큰 불·폭발 곁의 화재 신고에 더하는 위험도 — 이름표 '연소 확대' 와 함께 (설계서 I1 §3.7 L2 의 "AI 가 아는 길") */
+export const SPREAD_SEV = 0.3;
 export const sevName = (s: number): string => (s < 1.7 ? '보통' : s < 2.4 ? '높음' : '매우 높음');
 const NEED_NAME: Record<keyof Needs, string> = { suppression: '진압', rescue: '구조', ems: '구급', law: '경찰', tactical: '경찰 기동', search: '수색', traffic: '교통 통제', eod: '폭발물 처리',
   utilPower: '전력 복구', utilGas: '가스 복구', utilWater: '수도 복구', tow: '견인', capture: '동물 포획', decon: '제독' };      // (N8 §5.3.5) · (N9 §5.3.1)
@@ -77,6 +80,7 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
   const why: string[] = [];
   const risks: string[] = [];
   let sev = 1.3;
+  let spread = false;      // (I1-b b3-7) 연소 확대 — 알려진 큰 불·폭발 곁의 화재 신고
   const count = cnt.c && typeof cnt.c.value === 'number' ? cnt.c.value : -1;
   const district = sim.city.nodes[I.reportedNode].district;     // 신고로 알게 된 위치
   const prank = claims.some((c) => c.topic === 'hazard' && c.value === 'prank');
@@ -90,6 +94,8 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
     if (haz.c && haz.c.value === 'spreading') { sev += 0.45; why.push('연소 확대'); }
     if (haz.c && haz.c.value === 'gas') { sev += 0.4; why.push('가스 용기'); risks.push('폭발 위험'); }
     if (district === 'industrial') { sev += 0.2; risks.push('산업 구역 — 위험물 보관 가능성'); }
+    // (I1-b b3-7) 곁에서 관제가 아는 큰 불(현장이 화재로 확인하고 위험도를 올린 열린 사건)이나 폭발이 있다 — 그 불이 옮겨붙었을 수 있다 (알려진 교차로 사이 300 안, 신고받는 이 사건은 빼고)
+    if (I.locationKnown) { const nh = knownHazardNear(sim, I.reportedNode, 300, 180, I.id); if (nh.fire || nh.blast) { spread = true; sev += SPREAD_SEV; why.push('인근 큰 불·폭발'); } }
   } else if (type === 'traffic') {
     sev = 1.2;
     if (inj.c && inj.c.value === true) { sev += 0.5; why.push('부상자'); }
@@ -197,6 +203,7 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
   for (const sc of SCENARIOS) if (sc.needs && sc.type === type && nat.indexOf(sc.nature) >= 0) sc.needs(needs, ctx);
   let label: string | undefined;
   for (const c of claims) { if (c.topic !== 'nature') continue; const l = natureLabel(c.value as string, type); if (l) label = l; }
+  if (spread && label === undefined) label = '연소 확대';      // (I1-b b3-7) 시나리오의 이름표가 있으면 그것을 둔다 (산불·선박 화재 따위는 배정이 이름표를 본다)
   // (R3 §6.2) 관제 교본의 수요 보정 — D3(흉기 신고 경찰 둘)·D6(인질극 기동대 둘). 장난 전화로 본 신고에는 걸지 않는다
   // (균형) D8 은 위치 신고의 건물 종류를 본다 — 유형 추정에 쓴 것과 같은 첫 위치 신고
   let place: Claim['placeKind'];

@@ -108,12 +108,11 @@ export function tickFire(sim: Sim, s: Scene, I: Incident): void {
   // (X6 단계 3) 예전의 '천장 일부 붕괴'(탄 방을 한 번 판정해 s.rng 로 잔해·충격)는 지웠다 — 구조 건전도가 낮아진 구획의 붕괴(field/catastrophe.ts 의 collapseRegion)가 대신한다
   s.burning = burning;
   if (hot > 0 || FIRE_LOAD.has(s)) FIRE_LOAD.set(s, hot);      // (I1-b b3-7) 불을 센 적이 있는 현장만 적는다 (불이 없던 현장은 0 — fireLoad)
-  // (I1-b §3.4) 큰 불: 불 칸(불 > 0.2)이 처음 FIRE_BIG 개에 닿을 때, 현장마다 한 번. 이 자리에는 기록이 없으므로 신호의 기록은 그 사건의 마지막 상황 악화(없으면 발생 기록)
+  // (I1-b §3.4) 큰 불: 불 칸(불 > 0.2)이 처음 FIRE_BIG 개에 닿을 때, 현장마다 한 번. 이 자리에는 기록이 없으므로 신호의 기록은 그 불을 만든 기록
+  // (b3-7 — L2 의 열원과 같은 규칙 fireCauseEv: X6 의 폭발·전소, 없으면 발생 기록. 예전에는 마지막 상황 악화였는데 그 코드는 압궤 증후군·인질 피격 따위에도 쓰인다)
   if (big >= FIRE_BIG && !FIRE_BIG_SENT.has(s)) {
     FIRE_BIG_SENT.add(s);
-    let ev = I.rootEvent;
-    for (let k = I.problems.length - 1; k >= 0; k--) if (I.problems[k].code === 'ESCALATION') { ev = I.problems[k].eventId; break; }
-    signal(sim, 'fireBig', { inc: I.id, ev, size: big, place: I.truth.placeId });
+    signal(sim, 'fireBig', { inc: I.id, ev: fireCauseEv(I), size: big, place: I.truth.placeId });
   }
   if (burning === 0 && s.fireOutAt < 0 && s.kind === 'fire' && sim.t - s.startedAt > 5) s.fireOutAt = sim.t;
   if (burning > 0) s.fireOutAt = -1;

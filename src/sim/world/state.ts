@@ -12,6 +12,7 @@ import { districtAt } from '../city';
 import { DISTRICTS } from '../cityPlan';
 import type { Sim } from '../engine';
 import type { HospitalState, Incident, PlaceKind, WorldState, ZoneField, ZoneState } from '../types';
+import { X6_BOOM_DETAIL } from '../field/catastrophe';      // (b3-7) X6 의 폭발 문구 — 지휘관이 몰랐던 폭발은 HIDDEN_HAZARD 로 남는다 (knownHazardNear)
 
 export const ZONE_FIELDS: readonly ZoneField[] = ['power', 'comms', 'water', 'smoke', 'risk'];
 /** 구역 값의 처음 값(정상): 전력·통신·수도는 1, 연기·위험은 0 */
@@ -178,4 +179,32 @@ export function knownBuildingAt(sim: Sim, node: number, placeKind?: PlaceKind | 
     }
   }
   return null;
+}
+
+/**
+ * (b3-7 §3.8) 관제가 아는 큰 불·폭발·붕괴가 그 교차로 곁에 있는가 — 분석 AI 는 이 함수만 부른다 (진실 위치·현장·신호를 읽지 않는다).
+ * 위치를 아는 다른 사건(except 는 뺀다 — 신고받는 그 사건 자신) 가운데 알려진 교차로(reportedNode)가 within 안인 것:
+ *  불     — 현장이 화재로 확인했고(fieldVerified · 현장 확인 유형 fieldType, 없으면 평가 유형) 현장 상황 보고가 위험도를 올린(fieldRisk — X6 §5.9) 열린 사건
+ *  폭발   — 진실이 아닌 EXPLOSION · X6 의 폭발 문구인 HIDDEN_HAZARD(지휘관이 몰랐던 폭발) 기록이 age 초 안에 있다
+ *  붕괴   — 진실이 아닌 STRUCT_COLLAPSE 기록이 age 초 안에 있다
+ * 거리는 두 사건의 알려진 교차로 사이다(관제는 교차로만 안다 — 60 이면 같은 교차로뿐이라 300). 큰 불 신호(fireBig)의 기록은 진실인 발생 기록이라 쓰지 않는다
+ */
+export function knownHazardNear(sim: Sim, node: number, within = 300, age = 180, except = -1): { fire: boolean; blast: boolean; collapse: boolean } {
+  const out = { fire: false, blast: false, collapse: false };
+  const N = sim.city.nodes[node];
+  if (!N) return out;
+  for (const J of sim.incidents) {
+    if (J.id === except || !J.locationKnown) continue;
+    const M = sim.city.nodes[J.reportedNode];
+    if (!M || Math.hypot(M.x - N.x, M.y - N.y) > within) continue;
+    if (!out.fire && J.phase !== 'closed' && J.fieldVerified && J.fieldRisk !== undefined && (J.fieldType ?? J.assessment?.type) === 'fire') out.fire = true;
+    for (const p of J.problems) {
+      if (p.t < sim.t - age || p.eventId < 0) continue;
+      const e = sim.events[p.eventId];
+      if (!e || e.truth) continue;
+      if (p.code === 'EXPLOSION' || (p.code === 'HIDDEN_HAZARD' && X6_BOOM_DETAIL.test(p.detail))) out.blast = true;
+      else if (p.code === 'STRUCT_COLLAPSE') out.collapse = true;
+    }
+  }
+  return out;
 }

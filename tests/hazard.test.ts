@@ -24,6 +24,14 @@ import { DIVERT, LANES, LEVEL_EX, addBump, addObstacle, canBlock, noteBump, note
 import type { RoadPart } from '../src/sim/traffic';
 import type { ShiftMetrics } from '../scripts/metrics';
 import { ROAD, roadSurface, roadWeight } from '../src/sim/world/laws/road';
+import { HEAT, heatMul, heatRate, heatTargets } from '../src/sim/world/laws/heat';
+import { NB_REACH, expoOf, neighborsOf, neighborsOfPoint, pointGap, wallGap } from '../src/sim/world/expo';
+import { knownHazardNear, placeState } from '../src/sim/world/state';
+import { FIRE_LOAD_MIN, fireCauseEv, fireLoad, tickFire } from '../src/sim/field/hazards';
+import { SPREAD_SEV, assess } from '../src/sim/dispatch/analyst';
+import { raiseProblem } from '../src/sim/events';
+import { INCIDENT_PLACES } from '../src/sim/cityPlan';
+import type { Place } from '../src/sim/types';
 
 const T = (name: string): HazardLawId => ('t-' + name) as HazardLawId;
 /** 등록된 법칙을 모두 치우고 시험 법칙만 넣어 fn 을 돌린 뒤 되돌린다 */
@@ -725,7 +733,7 @@ describe('I1-b b3-4: 재현성과 소스 글자', () => {
     }
     expect(bad).toEqual([]);
     // 등록이 없는 파일: hazard.ts·state.ts 에는 registerHazard(...)·registerConsequence(...) 호출이 없다
-    for (const f of ['src/sim/world/hazard.ts', 'src/sim/world/state.ts', 'src/sim/world/rules/record.ts']) expect(/^\s*register(?:Hazard|Consequence)\(/m.test(read(f)), f).toBe(false);
+    for (const f of ['src/sim/world/hazard.ts', 'src/sim/world/state.ts', 'src/sim/world/expo.ts', 'src/sim/world/rules/record.ts']) expect(/^\s*register(?:Hazard|Consequence)\(/m.test(read(f)), f).toBe(false);
   });
 
   it('정보 격리 2 (소스 글자): 판단 파일은 초과 위험·내력·교통의 장부·건물의 손상을 읽지 않고, 세계 쪽은 현장의 생김새 칸(s.rules)에 쓰지 않는다', () => {
@@ -1538,4 +1546,339 @@ describe('I1-b b3-6: L1 roadCrash — 차가 몰린 길에서는 사고가 잦�
     expect(inc).toContain('canBlock(sim, pre)');
     expect(/opts\.edgeId/.test(inc)).toBe(true);
   });
+});
+
+// ───────────────────────── b3-7: 건물의 노출과 L2 heatSpread (§3.6c · §3.7 L2 — 시험 ①~⑦) ─────────────────────────
+describe('I1-b b3-7: L2 heatSpread — 오래 크게 타는 불 곁의 건물은 불이 붙는다', () => {
+  const LAW = hazardLaws().find((l) => l.id === 'heatSpread')!;
+  const withK = <R>(mul: number, fn: () => R): R => { const k0 = HEAT.K; HEAT.K = k0 * mul; try { return fn(); } finally { HEAT.K = k0; } };
+  const firePlace = (q: Place): boolean => !q.open && q.facility < 0 && (INCIDENT_PLACES.fire[q.kind] ?? 0) > 0;
+  /** 그 현장의 불 요약을 F 로 맞춘다 (그 건물 안 — 실내 구역 — 의 불 칸을 손으로 채우고 tickFire 를 한 번. 그 뒤 현장은 돌지 않는다: 시험은 tickHazards 만 부른다) */
+  const indoorAt = (sc: Sim['scenes'][number], i: number): boolean => sc!.region[i] >= 0 && sc!.regions[sc!.region[i]].indoor;
+  function setFire(s: Sim, I: Incident, F: number): void {
+    const sc = s.scenes[I.id]!;
+    sc.fire.fill(0); sc.heat.fill(0);
+    let n = 0;
+    for (let i = 0; i < sc.fire.length && n < F; i++) if (sc.fuel[i] > 0.2 && indoorAt(sc, i)) { sc.fire[i] = 1; n++; }
+    tickFire(s, sc, I);
+    expect(fireLoad(sc)).toBe(n);
+    expect(n).toBe(F);
+  }
+  /** 그 건물에 화재를 일으키고 불 요약을 F 로 */
+  function fireAt(s: Sim, placeId: number, F: number): Incident {
+    const I = createIncident(s, { type: 'fire', variant: 'std', placeId });
+    setFire(s, I, F);
+    return I;
+  }
+  /** 1초씩 시각을 옮기며 초과 위험의 주기 → 예약을 사건으로 (현장·부대는 돌지 않는다) */
+  function go(s: Sim, sec: number): void { for (let k = 0; k < sec; k++) { s.tick += 5; s.t = s.tick * s.dt; tickHazards(s); tickIncidents(s); } }
+  /** 불 요약 F 에서 문턱을 넘는(rate > 0) 대상 건물이 n 채 이상 있는 화재 장소 (가까운 순) */
+  function source(s: Sim, n: number, F: number): { id: number; nbs: { id: number; gap: number }[] } {
+    for (const q of s.city.places) {
+      if (!firePlace(q)) continue;
+      const nbs = neighborsOf(s, q.id).filter((nb) => firePlace(s.city.places[nb.id]) && heatRate(F, nb.gap, heatMul(s.city.places[nb.id].kind)) > 0);
+      if (nbs.length >= n) return { id: q.id, nbs: [...nbs] };
+    }
+    throw new Error('장소 없음');
+  }
+  const heatInc = (s: Sim): Incident[] => s.incidents.filter((I) => I.csq === 'heatSpread');
+
+  it('등록: 법칙 모음의 둘째 줄이 heatSpread 다 — 1초 주기 · 건물마다 한 번 · 교대 상한 3. 세기는 첫 값에서 노출량으로 맞춘 것이다', () => {
+    expect(hazardLaws().map((l) => l.id).slice(0, 2)).toEqual(['roadCrash', 'heatSpread']);
+    expect([LAW.every, LAW.once, LAW.cap, LAW.label, LAW.scan !== undefined]).toEqual([1, true, 3, '옮겨붙은 불', true]);
+    expect(readFileSync('src/sim/world/laws/index.ts', 'utf8')).toMatch(/^import '\.\/road';[^\n]*\nimport '\.\/heat';/m);
+    expect(HEAT.K).toBeGreaterThan(5e-5); expect(HEAT.K).toBeLessThan(3e-4);
+    expect([HEAT.Q0, HEAT.F_MIN, HEAT.NB_MAX, HEAT.F_BIG, FIRE_LOAD_MIN]).toEqual([3, 10, 8, 40, 0.5]);
+    // 유속 q = F / (1 + g/6)² · 문턱을 넘는 몫만 — 벽을 맞댄 집(틈 3)이 F = 30 곁: q = 13.33 → 몫 10.33
+    expect(heatRate(30, 3, 1)).toBeCloseTo(30 / 1.5 ** 2 - 3, 9);
+    expect(heatRate(30, 3, 1.3)).toBeCloseTo(1.3 * (30 / 1.5 ** 2 - 3), 9);
+    expect([heatMul('market'), heatMul('houseS'), heatMul('factory'), heatMul('apartment')]).toEqual([1.3, 1, 1, 0.6]);
+    const hs = readFileSync('scripts/hazstats.ts', 'utf8');
+    expect(hs).toContain("from '../src/sim/world/laws/heat'");
+    expect(hs).toContain('heatTargets(');
+  });
+
+  it('② 이웃과 거리: 벽-벽 틈이 손 계산과 맞고(돌려 놓인 건물에서도) 이웃 목록은 틈 30 안의 건물만 가까운 순으로 — 터·출동 시설·자기 자신은 없고, 두 건물에서 본 틈이 같다. 노출 칸의 배관 문턱은 sim.world 안에', () => {
+    const box = (x: number, y: number, w: number, h: number, rot?: number): Place => ({ x, y, w, h, rot } as unknown as Place);
+    const A = box(0, 0, 10, 10);
+    expect(wallGap(A, box(13, 0, 10, 10))).toBeCloseTo(3, 9);                                  // 옆으로 3
+    expect(wallGap(A, box(13, 14, 10, 10))).toBeCloseTo(5, 9);                                 // 모서리끼리 (3, 4)
+    expect(wallGap(A, box(20, -8, 20, 4, Math.PI / 2))).toBeCloseTo(18, 9);                    // 90° 돌린 긴 상자: 가운데 (30, −6) → x 28..32
+    expect(wallGap(A, box(20, 0, 10, 10, Math.PI / 4))).toBeCloseTo(25 - 5 * Math.SQRT2 - 10, 9);      // 45° 돌린 정사각형의 왼쪽 꼭짓점 x = 25 − 5√2
+    expect(pointGap(A, 5, 5)).toBe(0);
+    expect(pointGap(A, 13, 14)).toBeCloseTo(5, 9);
+    const s = quiet();
+    let checked = 0;
+    for (const q of s.city.places.slice(0, 400)) {
+      if (q.open || q.facility >= 0) continue;
+      const nbs = neighborsOf(s, q.id);
+      expect(neighborsOf(s, q.id)).toBe(nbs);      // 처음 한 번 만들어 둔다
+      for (let k = 0; k < nbs.length; k++) {
+        const nb = nbs[k], r = s.city.places[nb.id];
+        expect(nb.id).not.toBe(q.id);
+        expect([r.open, r.facility >= 0]).toEqual([false, false]);
+        expect(nb.gap).toBeLessThanOrEqual(NB_REACH);
+        if (k > 0) expect(nb.gap).toBeGreaterThanOrEqual(nbs[k - 1].gap);
+        expect(nb.gap).toBeCloseTo(wallGap(q, r), 9);
+        expect(neighborsOf(s, nb.id).find((x) => x.id === q.id)?.gap).toBeCloseTo(nb.gap, 9);
+        checked++;
+      }
+    }
+    expect(checked).toBeGreaterThan(300);
+    // 길 위의 점: 그 점에서 벽까지
+    const nd = s.city.nodes[10], pts = neighborsOfPoint(s, nd.x, nd.y);
+    for (const nb of pts) expect(nb.gap).toBeCloseTo(pointGap(s.city.places[nb.id], nd.x, nd.y), 9);
+    // 노출 칸: 배관의 문턱은 만들 때 한 번 (흐름 hz:pipe:<건물> — sim.world 안에만). placeState 는 노출만 있어도 돌려준다
+    const p = pts.length ? pts[0].id : 0;
+    expect(s.world.expo[p]).toBeUndefined();
+    expect(placeState(s, p)).toBe(null);
+    const ex = expoOf(s, p);
+    expect(ex).toEqual({ shake: 0, shakeEv: -1, shakeInc: -1, pipe: false, pipeEv: -1, pipeThr: 0.2 + 0.6 * s.rng.fork('hz:pipe:' + p).next(), wet: false, wetEv: -1, dark: -1 });
+    expect(expoOf(s, p)).toBe(ex);
+    expect(placeState(s, p)).toEqual({ mark: null, burnFrac: 0, ruinFrac: 0, usable: true, shake: 0, pipe: false, wet: false });
+    const s2 = new Sim('S8', NORMAL, 1200);
+    expect(s2.world.expo[p]).toBeUndefined();
+    expect(expoOf(s2, p).pipeThr).toBe(0.2 + 0.6 * s2.rng.fork('hz:pipe:' + p).next());
+  });
+
+  it('① 큰 불이 없으면 칸이 없다: 불이 없는 교대·불 요약 10 아래의 화재에는 칸도 사건도 없다 — 불 요약은 그 건물 안의 불 0.5 이상 칸만 센다', () => {
+    const s = quiet();
+    withLaws([LAW], () => {
+      go(s, 60);
+      expect(s.world.hz.cells.heatSpread).toBeUndefined();
+      const src = source(s, 1, 59);
+      const I = fireAt(s, src.id, HEAT.F_MIN - 1);
+      go(s, 60);
+      expect(s.world.hz.cells.heatSpread).toBeUndefined();
+      // 불 0.2~0.5 칸은 불 요약에 들지 않는다
+      const sc = s.scenes[I.id]!;
+      sc.fire.fill(0);
+      let n = 0;
+      for (let i = 0; i < sc.fire.length && n < 30; i++) if (sc.fuel[i] > 0.2) { sc.fire[i] = 0.4; n++; }
+      tickFire(s, sc, I);
+      expect(fireLoad(sc)).toBe(0);
+      // 건물 밖(실내 구역이 아닌 칸 — 마당·숲)에서 타는 불은 그 건물의 불 요약에 들지 않는다 (그 번짐은 산불 모델의 것이다)
+      sc.fire.fill(0); n = 0;
+      for (let i = 0; i < sc.fire.length && n < 30; i++) if (!indoorAt(sc, i)) { sc.fire[i] = 1; n++; }
+      expect(n).toBe(30);
+      tickFire(s, sc, I);
+      expect(fireLoad(sc)).toBe(0);
+      go(s, 30);
+      expect([s.world.hz.cells.heatSpread, heatInc(s).length, s.world.hz.holes]).toEqual([undefined, 0, 0]);
+    });
+  });
+
+  it('③ 개입 시험: 같은 시드에 같은 화재를 일으키고 한쪽만 그 현장의 불을 0 으로 — 그쪽은 이웃의 칸도 옮겨붙은 불도 없다. 다른 쪽의 불은 부모·원인·내력이 그 화재이고 그 건물에 난다', () => {
+    const src = source(quiet(), 1, 40);
+    const runOne = (burn: boolean): Sim => {
+      const s = quiet();
+      withLaws([LAW], () => withK(40, () => {
+        const I = fireAt(s, src.id, burn ? 40 : 0);
+        expect(I.id).toBe(0);
+        go(s, 90);
+      }));
+      return s;
+    };
+    const A = runOne(true), B = runOne(false);
+    // B: 이웃 어디에도 칸이 없고 옮겨붙은 불이 없다
+    expect(B.world.hz.cells.heatSpread).toBeUndefined();
+    expect(heatInc(B)).toEqual([]);
+    // A: 가장 가까운 이웃에 칸이 있고, 옮겨붙은 불의 부모·원인·내력이 그 화재다
+    expect(hazardCell(A, 'heatSpread', src.nbs[0].id)).not.toBe(null);
+    const J = heatInc(A);
+    expect(J.length).toBeGreaterThanOrEqual(1);
+    const P = A.incidents[0];
+    for (const K of J) {
+      expect([K.parent, K.cause, K.truth.type, K.truth.variant, K.truth.placeId]).toEqual([P.id, P.rootEvent, 'fire', 'std', K.hz!.target]);
+      expect(K.hz!.src.every((x) => x.what === 'heat' && x.inc === P.id && x.ref === src.id && x.ev === P.rootEvent)).toBe(true);
+      expect(src.nbs.some((nb) => nb.id === K.truth.placeId)).toBe(true);
+      const ev = A.events[K.rootEvent];
+      expect(ev.text.startsWith('옆 건물의 불이 옮겨붙었습니다 — ')).toBe(true);
+      expect(ev.causes).toContain(P.rootEvent);
+      expect(K.truth.severity).toBe(2);      // 넘는 순간의 불 요약 40 ≥ F_BIG
+    }
+    expect(A.world.hz.holes).toBe(0);
+  });
+
+  it('④ 길 건너의 건물은 쌓이지 않는다: F = 59(조사의 가장 큰 불)에서 문턱 유속을 넘는 틈은 6(√(59/3) − 1) ≈ 20.6 까지다 — 그 밖의 이웃에는 칸이 없다', () => {
+    const gmax = 6 * (Math.sqrt(59 / 3) - 1);
+    expect(gmax).toBeCloseTo(20.61, 2);
+    expect(heatRate(59, 21, 1.3)).toBe(0);
+    expect(heatRate(59, 25, 1)).toBe(0);
+    expect(heatRate(59, 20, 1)).toBeGreaterThan(0);
+    expect(heatRate(30, 13.5, 1)).toBe(0);      // F = 30 이면 틈 13 남짓까지
+    const s = quiet();
+    // 이웃 가운데 가까운 화재 장소와 틈 21 넘는 화재 장소가 함께 있는 곳
+    let pick = -1;
+    for (const q of s.city.places) {
+      if (!firePlace(q)) continue;
+      const nbs = neighborsOf(s, q.id);
+      if (nbs.some((nb) => nb.gap < 8 && firePlace(s.city.places[nb.id])) && nbs.some((nb) => nb.gap > 21 && firePlace(s.city.places[nb.id]))) { pick = q.id; break; }
+    }
+    expect(pick).toBeGreaterThanOrEqual(0);
+    withLaws([LAW], () => withK(0.001, () => {      // 세기를 낮춰 아무도 넘지 않게 — 칸이 생기는가만 본다
+      fireAt(s, pick, 59);
+      go(s, 30);
+    }));
+    let near = 0;
+    for (const nb of neighborsOf(s, pick)) {
+      if (!firePlace(s.city.places[nb.id])) continue;
+      const c = hazardCell(s, 'heatSpread', nb.id);
+      if (nb.gap > gmax) expect(c, `틈 ${nb.gap.toFixed(1)}`).toBe(null);
+      else if (near < HEAT.NB_MAX) { expect(c, `틈 ${nb.gap.toFixed(1)}`).not.toBe(null); expect(c!.H).toBeCloseTo(HEAT.K * 0.001 * heatRate(59, nb.gap, heatMul(s.city.places[nb.id].kind)) * 30, 12); near++; }
+    }
+    expect(near).toBeGreaterThan(0);
+  });
+
+  it('⑤ 대상이 아닌 건물: 전소·전체 붕괴 건물과 이번 교대에 이미 불이 난 건물은 내놓지 않는다 — 사건이 열려 있는 건물은 내놓고 틀이 기다리게 한다', () => {
+    const s = quiet();
+    const src = source(s, 4, 59);
+    const [a, b, c, d] = src.nbs.map((nb) => nb.id);
+    const seen = (): number[] => { const out: number[] = []; heatTargets(s, (t) => out.push(t)); return out; };
+    const I = fireAt(s, src.id, 59);
+    expect(seen()).toEqual(expect.arrayContaining([a, b, c, d]));
+    expect(seen()).not.toContain(src.id);      // 불난 그 건물은 자기 이웃이 아니다
+    s.placeMarks.set(a, { placeId: a, state: 'burnt', t: 0, incidentId: -1, burnFrac: 1, ruinFrac: 0 });
+    s.placeMarks.set(b, { placeId: b, state: 'collapsed', t: 0, incidentId: -1, burnFrac: 0, ruinFrac: 1 });
+    expect(seen()).not.toContain(a); expect(seen()).not.toContain(b);
+    // 이미 불이 난 건물(닫힌 화재가 있었다)은 탈 것이 탔다
+    const C = createIncident(s, { type: 'fire', variant: 'std', placeId: c });
+    C.phase = 'closed';
+    expect(seen()).not.toContain(c);
+    // 사건이 열려 있는 건물: 내놓되 틀이 기다리게 한다 (그 사건이 닫히면 난다)
+    const M = createIncident(s, { type: 'medical', placeId: d });
+    expect(seen()).toContain(d);
+    withLaws([LAW], () => withK(1e4, () => {
+      go(s, 2);
+      expect(s.world.hz.waiting.some((w) => w.law === 'heatSpread' && w.target === d)).toBe(true);
+      M.phase = 'closed';
+      go(s, 2);
+      expect(heatInc(s).some((K) => K.truth.placeId === d && K.parent === I.id)).toBe(true);
+    }));
+  });
+
+  it('⑥ 한 뿌리의 가지: 이웃 넷이 모두 문턱을 넘어도 옮겨붙은 불은 둘이고 나머지는 depth — 옮겨붙은 불의 이웃(셋째 세대)도 depth. 버린 것은 기록이 없다', () => {
+    const s = quiet();
+    const src = source(s, 4, 59);
+    withLaws([LAW], () => withK(1e4, () => {
+      const I = fireAt(s, src.id, 59);
+      const ev0 = s.events.length;
+      go(s, 2);
+      const kids = heatInc(s);
+      expect(kids.length).toBe(HZ.ROOT_MAX);
+      expect(kids.every((K) => K.parent === I.id)).toBe(true);
+      const dropped = s.gen.dropped.filter((g) => g.csq === 'heatSpread');
+      expect(dropped.length).toBeGreaterThanOrEqual(2);
+      expect(dropped.every((g) => g.why === 'depth' && g.parent === I.id)).toBe(true);
+      // 발생 기록은 사건이 된 둘의 것뿐이다 — 버린 넘음은 기록이 없다
+      expect(s.events.slice(ev0).filter((e) => e.kind === 'incident').length).toBe(HZ.ROOT_MAX);
+      // 셋째 세대: 옮겨붙은 불이 크게 타도 그 이웃은 한 뿌리의 가지 상한에 걸린다
+      for (const K of kids) setFire(s, K, 59);
+      const n0 = s.incidents.length, d0 = s.gen.dropped.length;
+      go(s, 2);
+      expect(s.incidents.length).toBe(n0);
+      const more = s.gen.dropped.slice(d0);
+      expect(more.length).toBeGreaterThanOrEqual(1);
+      expect(more.every((g) => g.csq === 'heatSpread' && g.why === 'depth')).toBe(true);
+      expect(s.world.hz.holes).toBe(0);
+    }));
+  });
+
+  it('⑦ 원인 기록은 그 불을 만든 기록이다 — 상황 악화(ESCALATION)가 아니다: 붕괴 현장의 불은 발생 기록, X6 의 폭발·전소가 있으면 그 마지막 것. 큰 불 신호도 같은 규칙이다', () => {
+    const s = quiet();
+    const src = source(s, 1, 40);
+    withLaws([LAW], () => withK(1e4, () => {
+      const I = createIncident(s, { type: 'collapse', variant: 'std', placeId: src.id });
+      const esc = raiseProblem(s, I, 'ESCALATION', '압궤 증후군', { role: 'SYSTEM', actor: '현장', text: '시험 — 상황 악화' }, false);
+      expect(fireCauseEv(I)).toBe(I.rootEvent);
+      const hid = raiseProblem(s, I, 'HIDDEN_HAZARD', '배회하던 실종자가 개울에 빠짐', { role: 'SYSTEM', actor: '현장', text: '시험 — X6 가 아닌 숨은 위험' }, false);
+      expect(fireCauseEv(I)).toBe(I.rootEvent);
+      setFire(s, I, 40);
+      const big = s.world.signals.find((g) => g.kind === 'fireBig' && g.inc === I.id);
+      expect(big?.ev).toBe(I.rootEvent);
+      go(s, 2);
+      const J = heatInc(s);
+      expect(J.length).toBeGreaterThanOrEqual(1);
+      for (const K of J) expect([K.parent, K.cause, K.cause === esc, K.cause === hid]).toEqual([I.id, I.rootEvent, false, false]);
+      // X6 의 폭발이 있으면 그것 (지휘관이 몰랐던 폭발 — HIDDEN_HAZARD 의 X6 문구도), 전소가 뒤에 있으면 그것
+      const boom = raiseProblem(s, I, 'HIDDEN_HAZARD', '보관 중이던 가스 용기 폭발', { role: 'SYSTEM', actor: '현장', text: '시험 — 용기 폭발' }, false);
+      expect(fireCauseEv(I)).toBe(boom);
+      const burn = raiseProblem(s, I, 'BURNOUT', '건물 전소 — 시험', { role: 'SYSTEM', actor: '현장', text: '시험 — 전소' }, false);
+      expect(fireCauseEv(I)).toBe(burn);
+      raiseProblem(s, I, 'ESCALATION', '2차 붕괴', { role: 'SYSTEM', actor: '현장', text: '시험 — 뒤의 상황 악화' }, false);
+      expect(fireCauseEv(I)).toBe(burn);
+    }));
+  });
+
+  it('관제가 아는 길: 알려진 큰 불(현장 확인 + 현장 보고가 올린 위험도)·폭발 곁의 화재 신고는 위험도 +0.3 · 이름표 연소 확대 — 진실 기록·멀리 떨어진 곳·위치를 모르는 사건·자기 자신은 치지 않는다', () => {
+    const s = quiet();
+    const src = source(s, 1, 40);
+    const P = createIncident(s, { type: 'fire', variant: 'std', placeId: src.id });
+    const Q = createIncident(s, { type: 'fire', variant: 'std', placeId: src.nbs[0].id });
+    const node = Q.truth.nodeId;
+    const near = (): ReturnType<typeof knownHazardNear> => knownHazardNear(s, node, 300, 180, Q.id);
+    expect(near()).toEqual({ fire: false, blast: false, collapse: false });
+    // 불: 위치를 알고 현장이 화재로 확인했고 현장 보고가 위험도를 올린 열린 사건
+    P.locationKnown = true; P.fieldVerified = true; P.fieldType = 'fire';
+    expect(near().fire).toBe(false);
+    P.fieldRisk = { sev: 2.4, risks: ['건물 붕괴'] };
+    expect(near().fire).toBe(true);
+    expect(knownHazardNear(s, P.reportedNode, 300, 180, P.id).fire, '자기 자신은 치지 않는다').toBe(false);
+    // 신고: 그 곁의 화재 — 위험도 +0.3, 이름표 연소 확대 (위치를 아는 신고만)
+    Q.fieldType = 'fire';
+    assess(s, Q, '시험');
+    expect(Q.assessment!.label).toBe(undefined);      // 위치를 모르면 곁인지 모른다
+    const base = Q.assessment!.severity;
+    Q.locationKnown = true; Q.reportedNode = node;
+    assess(s, Q, '시험');
+    expect(Q.assessment!.label).toBe('연소 확대');
+    expect(Q.assessment!.severity).toBeCloseTo(Math.min(3, base + SPREAD_SEV), 9);
+    P.phase = 'closed';
+    expect(near().fire, '닫힌 화재는 큰 불이 아니다').toBe(false);
+    // 폭발: 진실이 아닌 EXPLOSION · X6 문구의 HIDDEN_HAZARD 기록이 180초 안 (진실 기록은 관제가 모른다)
+    raiseProblem(s, P, 'EXPLOSION', '누출된 가스 폭발 — 시험', { role: 'SYSTEM', actor: '현장', text: '시험 — 폭발(진실)', truth: true }, false);
+    expect(near().blast).toBe(false);
+    raiseProblem(s, P, 'HIDDEN_HAZARD', '보관 중이던 가스 용기 폭발', { role: 'SYSTEM', actor: '현장', text: '시험 — 용기 폭발' }, false);
+    expect(near().blast).toBe(true);
+    s.t += 181;
+    expect(near().blast, '180초가 지나면').toBe(false);
+    raiseProblem(s, P, 'STRUCT_COLLAPSE', '건물 전체 붕괴 — 시험', { role: 'SYSTEM', actor: '현장', text: '시험 — 붕괴' }, false);
+    expect(near()).toEqual({ fire: false, blast: false, collapse: true });
+    // 멀리 떨어진 교차로(300 밖) · 위치를 모르는 사건은 치지 않는다
+    const here = s.city.nodes[P.reportedNode];
+    const far = s.city.nodes.find((n) => Math.hypot(n.x - here.x, n.y - here.y) > 320)!;
+    expect(knownHazardNear(s, far.id, 300, 180, Q.id).collapse).toBe(false);
+    P.locationKnown = false;
+    expect(near().collapse).toBe(false);
+    // 분석 AI 는 이 함수만 부른다 — 진실 위치·현장·불 요약을 읽지 않는다
+    const an = readFileSync('src/sim/dispatch/analyst.ts', 'utf8');
+    expect(an).toContain('knownHazardNear(sim, I.reportedNode');
+    for (const w of ['fireLoad', 'heatTargets', 'neighborsOf', 'truth.x', 'truth.placeId', 'sim.scenes']) expect(an.includes(w), w).toBe(false);
+  });
+
+  it('실제 교대(강제 fire/std S1): 옮겨붙은 불은 그 건물(hz.target)에 나고, 부모는 열원 화재, 원인은 그 불을 만든 기록이며 내력은 모두 열이다 — 측정 도구의 열 노출량 줄', () => {
+    const s = new Sim('S1', NORMAL, 1200, { force: 'fire/std' });
+    const probe = new HazProbe(s);
+    while (!s.ended && s.tick < 20000) { s.step(); probe.tick(); }
+    const J = heatInc(s);
+    expect(J.length).toBeGreaterThanOrEqual(1);
+    for (const K of J) {
+      const P = s.incidents[K.parent!];
+      expect(K.truth.placeId).toBe(K.hz!.target);
+      expect(P.truth.placeId >= 0 ? neighborsOf(s, P.truth.placeId).some((nb) => nb.id === K.truth.placeId) : true).toBe(true);
+      expect(K.hz!.src.every((x) => x.what === 'heat' && x.ev >= 0)).toBe(true);
+      const c = s.events[K.cause!];
+      expect(c.incidentId).toBe(P.id);
+      expect(c.kind === 'incident' || c.problem === 'EXPLOSION' || c.problem === 'BURNOUT' || c.problem === 'HIDDEN_HAZARD').toBe(true);
+      expect(c.t).toBeLessThanOrEqual(K.hz!.at);
+    }
+    expect(s.world.hz.holes).toBe(0);
+    const cnt = probe.done();
+    expect(cnt.heat).not.toBe(null);
+    expect(cnt.heat!.sources).toBeGreaterThanOrEqual(1);
+    expect(cnt.heat!.exposure).toBeGreaterThan(0);
+    const lines = hazLines(sumHaz([cnt]));
+    expect(lines.some((l) => l.startsWith('hazard-heat: exposure'))).toBe(true);
+    expect(lines[0]).toContain('heatSpread');
+  }, 60000);
 });

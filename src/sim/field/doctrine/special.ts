@@ -213,6 +213,22 @@ registerDoctrine(
   },
 );
 
+// (R3b D1 — docs/specs/R3b-followup.md §5.2) 잠긴 방 문은 파괴 담당이 연다: 장약을 든 진입대원(파괴)이 진입 결정 뒤 믿음 속 잠긴 방 문(총기 위협의 방)으로 간다.
+// 지금은 문을 여는 사람을 그 문에 모인 진입조에서만 골라(executor.lockedRoomDoor) 봉쇄·이송을 하던 진입대원(파괴)이 문에 오지 않았다 — 폭파 진입 0건의 첫 겹.
+// 고르는 것은 문을 여는 사람까지다: 문에서 어떤 방법으로 열지는 그 자리의 R2 고르기(조건 ①~⑤)와 S26 이 정한다(인질 방이면 충격기 — 사용자 결정 그대로)
+/** (S30) 하던 일을 두고 문으로 가지 않는 임무 — 이미 진입조다(교전) · 검거 중 · 문·잔해를 여는 중. 가는 길에 문·잔해를 여는 중(하위 작업)이어도 걸지 않는다 — 그 자리에서 이미 연다 */
+const S30_KEEP: readonly string[] = ['engage', 'arrest', 'force', 'clear'];
+registerDoctrine(
+  {
+    id: 'S30', dept: 'special', name: '잠긴 방 문은 파괴 담당이 연다', short: '파괴 담당 — 문 개방',
+    who: { roles: ['breacher'] }, hook: 'act', kits: ['charge'],
+    when: (c) => c.sit.kind === 'armed' && c.sit.entryOrdered && c.sit.gunThreat && c.st.band === 0 && (c.a.task === null || (S30_KEEP.indexOf(c.a.task.kind) < 0 && c.a.task.sub === null)) && c.breachDoor() >= 0,
+    effect: { kind: 'act', act: 'force', score: 0.93 },      // 봉쇄 계속(0.5 + 0.4 × 0.76 + 0.08 = 0.884)에서 스스로 나온다 · 교전 계속(0.94)에는 걸지 않는다(위 S30_KEEP)
+    th: { score: 0.93 }, rank: 2, why: 'kit',
+    note: '잠긴 방 문 — 파괴 장비로 제가 엽니다.',
+  },
+);
+
 // 지휘·관제 줄의 이름표 (§6 — 기록·측정이 이름을 찾는다). 특수 분야
 CMD_ROWS.push(
   { id: 'CS1', dept: 'special', hook: 'cmd', name: '해체 시작 — 장치 반경 비우기', short: '해체 반경 비움', why: 'danger' },

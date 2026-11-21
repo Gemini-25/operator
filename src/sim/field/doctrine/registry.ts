@@ -85,6 +85,7 @@ export interface DocCtx {
   pair: () => DocPair;                           // (3단계) 짝·짝의 일 — 엔진이 처음 물을 때 한 번 잰다(늦게). 줄은 이 함수로만 짝을 본다 (§5)
   watch: () => { n: number; need: number };      // (3단계) 밖 대기조 (§5.6): 대원에게 가장 가까운 출입구의 outsideWatch 수 · 필요한 수 watchNeed (2, 공기호흡기 대원을 태운 소방 부대가 오는 중이면 1) — 늦게 한 번
   unitIn: () => number;                          // (합치기 — 5단계 S11) 자기 부대의 다른 활동 대원 가운데 위험 건물 실내(이 대원의 믿음으로 본 위험 구역)에 선 사람의 수 (동료의 겉) — 늦게 한 번
+  breachDoor: () => number;                      // (R3b D1 — S30) 이 대원이 열러 갈 잠긴 방 문의 칸 (믿음 속 잠긴 문 가운데 믿음 속 총기 위협의 방에 맞닿은 가장 가까운 것 — 엔진의 breachDoorOf, 없으면 -1). 늦게 한 번
   inView: () => boolean;                         // (R3b A3) 이 대원이 선 자리와 대상 위협(tg — 믿음 속 자리) 사이를 벽이 막지 않는다 (grid.losWalls — 생김새와 믿음만. a.inCover 는 이웃에 벽만 있으면 참이라 쓰지 않는다). 위협이 없으면 false — 늦게 한 번
 }
 /**

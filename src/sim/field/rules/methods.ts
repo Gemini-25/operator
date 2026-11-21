@@ -11,6 +11,8 @@
 // 단계 2 (§4.2a — 사용자 결정 2026-11-15): 농성 문 잠금. 무장 현장에서 총을 든 용의자가 인질을 잡은 채 방에 있고 그 방의 (출입구가 아닌) 문이 하나뿐이며
 //   그 방에 붙잡히지 않은 구조 대상이 없으면, 첫 대원이 내린 뒤 15~40초에 한 번 BARRICADE.p × 심각도 손잡이(상한 0.8) 확률로 그 문을 닫고 가구로 막는다
 //   (plans.lockDoor 와 같은 처리 + p.skin = 'barricade'). 흐름은 barricade:<사건 id> 하나(결정 → 시각 → hp). 대원은 모른다 — 가서 막히면 지금의 discoverBlock 이 알린다
+//   (R3b D2 — 9.4 질문 1 의 기본값) 인질 방을 잠그지 않았으면 같은 시각·같은 결정·같은 hp 로 인질 없는 총기 용의자의 방(문 하나 · 구조 대상·대원 없음)도 잠근다(barricadeSolo — BARRICADE.solo).
+//   인질 방의 폭파 금지(R2 조건 ①·R3 S26)는 그대로다 — 폭파 진입이 실제로 나올 수 있는 방은 이 방이다
 // 단계 4 (§3.5·§4.5): 송풍기 s.fan — 돌고 있는 동안 1초에 한 번 실내 칸의 연기를 빼고(×(1 − 0.2 × power)), 센 불(0.5 이상)은 공기가 들어가 조금 커진다(+0.006 × power).
 //   끝나면(120초) 지운다. 가스(X6 의 가스 격자)에는 catastrophe.gasStep 이 출입구 3칸 안 × (1 − 0.3 × power) 로 따로 읽는다. 기록·난수 없음
 
@@ -30,7 +32,8 @@ import type { SceneRule } from '../sceneRegistry';
  * 농성 문 잠금의 손잡이 (§4.2a): p = 0.4 (0 이면 지금과 같다 — 끄는 손잡이. 흐름 fork 는 부모를 쓰지 않으므로 0 이면 결과가 한 글자도 바뀌지 않는다).
  * 막은 문의 작업량 hp 10~16 (충격기로 5~8초, 폭파 진입은 hp 와 상관없이 6.5초 + 물러서는 걸음)
  */
-export const BARRICADE = { p: 0.4, at: [15, 40] as [number, number], hp: [10, 16] as [number, number], cap: 0.8 };
+export const BARRICADE = { p: 0.4, at: [15, 40] as [number, number], hp: [10, 16] as [number, number], cap: 0.8,
+  solo: true };      // (R3b D2 — 9.4 질문 1 의 기본값) 인질 없는 농성: 인질을 붙든 방을 잠그지 않은 그 시각·그 추첨(go)에서 인질 없는 총기 용의자의 방도 잠근다. false 면 지금과 같다(새 난수 없음 — 해시 불변)
 /** 현장마다 한 번 정한 결정 (첫 대원이 내린 때 정한다 — 객체 모양을 바꾸지 않으려 WeakMap. 되감기는 Sim 을 새로 만들어 다시 돈다) */
 const barricades = new WeakMap<Scene, { go: boolean; at: number; hp: number }>();
 /** 그 구역(방)에 맞닿은 문 (문 칸의 네 이웃이나 문 칸 자신이 그 구역) */
@@ -75,6 +78,33 @@ function barricadeRule(sim: Sim, s: Scene, I: Incident): void {
     for (const g of s.hostiles) if (hostileActive(g) && tileOf(s, g.x, g.y) === di) occupied = true;
     if (occupied) continue;
     lockDoor(s, d, st.hp);
+    d.skin = 'barricade';
+    s.staticVersion++;
+    emit(sim, { inc: I.id, truth: true, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, text: `${josa(h.label, '이/가')} 방 문을 걸어 잠그고 가구로 막았습니다.` });
+    return;
+  }
+  if (BARRICADE.solo) barricadeSolo(sim, s, I, st.hp);
+}
+/**
+ * (R3b D2 — docs/specs/R3b-followup.md §5.2) 인질 없는 농성: 인질을 붙든 용의자가 없거나 그 방이 조건에 맞지 않아 위에서 잠그지 않았으면, 같은 시각·같은 추첨(go)·같은 hp 로
+ * 인질 없는 총기 용의자(대치·교전 중)의 방을 같은 방법으로 잠근다 — 방 안이고, 그 방의 (출입구가 아닌) 문이 하나뿐이며, 그 방에 구조 대상(숨은 시민 포함)도 대원도 없을 때만.
+ * 기록 문구는 위와 같다. 새 난수를 부르지 않는다 (용의자 순서대로 첫 번째 — 진실을 읽는 세계 규칙). 막은 문으로는 그 용의자도 나가지 못한다(hazards.startFlee 가 barricade 문을 길에서 뺀다)
+ */
+function barricadeSolo(sim: Sim, s: Scene, I: Incident, hp: number): void {
+  for (const h of s.hostiles) {
+    if (h.weapon !== 'gun' || h.hostageId >= 0 || (h.state !== 'hold' && h.state !== 'fight') || !hostileActive(h)) continue;
+    const room = s.region[tileOf(s, h.x, h.y)];
+    if (room < 0 || s.regions[room].kind !== 'room') continue;
+    const doors = roomDoors(s, room).filter((p) => !s.exits.some((e) => dist(e.x, e.y, p.x, p.y) <= 1.5));
+    if (doors.length !== 1) continue;
+    const d = doors[0], di = d.y * s.w + d.x;
+    if (d.locked || d.blocking || d.entered || s.propAt[di] >= 0) continue;
+    let busy = false;
+    for (const c of s.casualties) if (!c.dead && c.where === 'scene' && (s.region[tileOf(s, c.x, c.y)] === room || tileOf(s, c.x, c.y) === di)) { busy = true; break; }
+    if (!busy) for (const a of s.agents) if (a.status !== 'left' && (s.region[tileOf(s, a.x, a.y)] === room || tileOf(s, a.x, a.y) === di)) { busy = true; break; }
+    if (!busy) for (const g of s.hostiles) if (g !== h && hostileActive(g) && tileOf(s, g.x, g.y) === di) { busy = true; break; }
+    if (busy) continue;
+    lockDoor(s, d, hp);
     d.skin = 'barricade';
     s.staticVersion++;
     emit(sim, { inc: I.id, truth: true, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, text: `${josa(h.label, '이/가')} 방 문을 걸어 잠그고 가구로 막았습니다.` });

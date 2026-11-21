@@ -3119,3 +3119,192 @@ describe('R2 단계 4·5·6: 화재·무장·누출·통제 방법의 그림 (me
     for (const bad of ['kitWorks', 'useKit', 'toolUse', 'mrng', 'kitCount', 'chooseMethod', 'methodFit', 'runSuppress', 'runSniper']) expect(src.includes(bad), bad).toBe(false);
   });
 });
+
+// ───────────────────────── R3b (다) 폭파 진입 — S30·D2·D4 (docs/specs/R3b-followup.md §5.2·§8) ─────────────────────────
+import { breachDoorOf, docAct, docForget } from '../src/sim/field/doctrine';
+import { flushOutbox } from '../src/sim/field/agents';
+import { BeliefStore } from '../src/sim/field/beliefs';
+import { astar } from '../src/sim/field/grid';
+describe('R3b (다) 폭파 진입: 파괴 담당이 잠긴 방 문으로 온다 (S30·D4) · 인질 없는 농성 (D2)', () => {
+  /** 잠긴 농성 문 하나 · 그 방 안쪽 끝에 총기 용의자(인질 없음, 대치) · 문 앞의 진입조 둘(기동대원) · 진입대원(파괴)은 문에서 8~12칸의 걸어서 닿는 칸 */
+  function breachScene(seed: string, what = 'armed/robbery') {
+    const q = doorScene(seed, ['swat', 'tactical'], 13, what);
+    const { sim, s, door } = q;
+    door.skin = 'barricade';
+    const room = s.region[(door.y - 1) * s.w + door.x];
+    const far = s.regions[room].tiles.map((i) => ({ i, d: Math.hypot(i % s.w - door.x, ((i / s.w) | 0) - door.y) })).filter((o) => staticPass(s.tiles[o.i]) && s.propAt[o.i] < 0 && o.d > 2.6).sort((x, y) => y.d - x.d);
+    const h = s.hostiles[0];
+    h.state = 'hold'; h.weapon = 'gun'; h.hostageId = -1; h.x = h.px = far[0].i % s.w; h.y = h.py = (far[0].i / s.w) | 0; h.stunUntil = -1;
+    const br = q.role('breacher');
+    const team = s.agents.filter((a) => q.sim.responders[a.rid].role === 'tacOfficer').slice(0, 2);
+    for (const a of s.agents) { a.isCommander = false; a.orderWork = -1; if (a !== br && team.indexOf(a) < 0) a.status = 'left'; }
+    s.entryOrdered = true; s.breachDone = true;
+    team[0].x = team[0].px = door.x - 1; team[0].y = team[0].py = door.y + 1; team[1].x = team[1].px = door.x + 1; team[1].y = team[1].py = door.y + 1;
+    for (const a of team) { const t = makeTask('engage', '시험'); t.hostile = h.id; a.task = t; a.status = 'active'; }
+    let spot: { x: number; y: number } | null = null;
+    for (let y = door.y + 1; y < s.h && !spot; y++) for (let x = 0; x < s.w && !spot; x++) {
+      const i = y * s.w + x, d = Math.hypot(x - door.x, y - door.y);
+      if (d < 8 || d > 12 || !staticPass(s.tiles[i]) || s.propAt[i] >= 0) continue;
+      if (astar(s, x, y, door.x, door.y + 1, 0.5, () => 1, false)) spot = { x, y };
+    }
+    br.x = br.px = spot!.x; br.y = br.py = spot!.y; br.status = 'active'; br.path = null;
+    for (const a of [br, ...team]) a.beliefs.merge(hosFact(sim, s, h, '시험', 0));
+    docForget();
+    return { ...q, h, br, team, room };
+  }
+  /** 그 대원들만 굴린다: 눈 → (1초마다) 판단 → 실행 → 무전 (현장 무전의 배달은 sceneManager 의 deliverRadio 와 같은 1.2초 — 그 대원들 사이에서만) */
+  function run(q: ReturnType<typeof breachScene>, who: FieldAgent[], sec: number, until: () => boolean, each?: () => void): void {
+    const { sim, s } = q;
+    for (let k = 0; k < sec * 5 && !until(); k++) {
+      sim.tick++; sim.t = sim.tick * sim.dt;
+      for (const a of who) { if (a.status !== 'active') continue; perceive(sim, s, a); if (sim.tick % 5 === 0) think(sim, s, a); act(sim, s, a); flushOutbox(sim, s, a); }
+      for (let m = 0; m < s.radio.length; m++) { const r = s.radio[m]; if (r.deliverAt > sim.t) continue; s.radio.splice(m--, 1); for (const b of who) if (b.rid !== r.from) for (const f of r.facts) b.beliefs.merge(BeliefStore.relay(f)); }
+      each?.();
+    }
+  }
+  it('D1: 진입조가 잠긴 방 문을 발견하면 8칸 밖에서 봉쇄 중이던 진입대원(파괴)이 문 개방(S30)으로 오고, 모인 진입조는 물러선 자리에서 기다렸다가 폭파 뒤 함께 들어간다', () => {
+    const q = breachScene('R3b-D1');
+    const { sim, door, br, team, I } = q;
+    br.task = makeTask('perimeter', '봉쇄');      // 봉쇄 중이던 진입대원(파괴) — 계속 점수 0.884 < S30 0.93
+    const n = sim.events.length;
+    let teamFar = 0, teamNear = 0;
+    run(q, [br, ...team], 60, () => door.entered === true, () => {
+      const op = br.task !== null && br.task.kind === 'force' ? br.task : null;
+      if (op && op.method === 'charge' && op.phase >= 2) for (const a of team) { if (Math.hypot(a.x - door.x, a.y - door.y) >= 2.5) teamFar++; else teamNear++; }
+    });
+    const tx = texts(sim, n);
+    expect(tx.filter((x) => x.includes('문이 잠겨 있음')).length).toBe(1);
+    expect(tx).toContain('잠긴 방 문 — 파괴 장비로 제가 엽니다.');
+    expect(tx).toContain('장약 설치합니다. 물러서십시오.');
+    expect(tx).toContain('폭파 — 문 개방. 진입합니다.');
+    expect(door.entered).toBe(true);
+    expect(tx.some((x) => x.includes('진입!'))).toBe(true);
+    expect(I.methods!.filter((u) => u.ok && u.method === 'charge' && u.rid === br.rid).length).toBe(1);
+    expect(teamFar, '폭파 반경을 비우고 물러서 기다렸다').toBeGreaterThan(0);
+    expect(teamNear).toBe(0);
+    expect(I.docs!.some((d) => d.rule === 'S30' && d.rid === br.rid && d.act === 'force')).toBe(true);
+    expect(I.problems.some((p) => p.code === 'ESCALATION')).toBe(false);
+  });
+  it('D1: 다른 대원이 먼저 열면 그 임무는 한 번 끝나고 60초 안에 다시 시작하지 않는다 (낡은 믿음의 고리 없음) · 업고 있거나 진입 결정 전·이미 진입조(교전)면 걸리지 않는다', () => {
+    const q = breachScene('R3b-D1');
+    const { sim, s, door, br, tile } = q;
+    q.know(br);
+    br.task = null;
+    expect(breachDoorOf(sim, s, br)).toBe(tile);
+    expect(docAct(sim, s, br)?.rule.id).toBe('S30');
+    s.entryOrdered = false; docForget(br); expect(docAct(sim, s, br)?.rule.id).not.toBe('S30'); s.entryOrdered = true;
+    const eng = makeTask('engage', '시험'); eng.hostile = q.h.id; br.task = eng; docForget(br); expect(docAct(sim, s, br)?.rule.id).not.toBe('S30');
+    br.task = null; br.carrying = s.casualties[0].id; docForget(br); expect(docAct(sim, s, br)).toBeNull(); br.carrying = -1;
+    // 진실로는 이미 열렸는데(다른 대원이 열었다) 믿음은 아직 잠김 — 한 번 와서 '열렸다'를 보고하고 그 문을 60초 잊는다
+    s.propAt[tile] = -1; door.blocking = false; door.locked = false; door.open = true;
+    docForget(br);
+    const n = sim.events.length;
+    let starts = 0, was = false;
+    // 눈 없이 판단·실행만 (믿음이 낡은 채로 문까지 가 본다 — 가서 열려 있는 것을 확인한다)
+    for (let k = 0; k < 60 * 5; k++) {
+      sim.tick++; sim.t = sim.tick * sim.dt;
+      if (sim.tick % 5 === 0) think(sim, s, br);
+      const bt = br.task as Task | null, on = bt !== null && bt.kind === 'force' && bt.docRule === 'S30'; if (on && !was) starts++; was = on;      // 판단 바로 뒤에 센다 (그 틱의 실행에서 바로 끝난다)
+      act(sim, s, br);
+    }
+    expect(starts).toBe(1);
+    expect(br.beliefs.val('blk', tile)).toBe('none');
+    expect(texts(sim, n).filter((x) => x === '잠긴 방 문 — 파괴 장비로 제가 엽니다.').length).toBe(1);
+    expect(q.I.docs!.filter((d) => d.rule === 'S30').length).toBe(1);
+  });
+  it('D4: 모인 진입조에서 여는 사람을 고르는 점수는 교본을 넣은 점수다 — 인질 위치를 모르는 인질 방에서는 장약을 든 진입대원(파괴)이 진입조에 있어도 폭파하지 않는다 (S26 그대로)', () => {
+    const q = breachScene('R3b-D4', 'armed/hostage');
+    const { sim, s, door, br, team, h, I } = q;
+    const c = s.casualties[0];
+    c.where = 'scene'; c.hostage = true; h.hostageId = c.id;
+    const ci = s.regions[q.room].tiles.find((i) => staticPass(s.tiles[i]) && s.propAt[i] < 0 && Math.hypot(i % s.w - h.x, ((i / s.w) | 0) - h.y) <= 1.5 && i !== h.y * s.w + h.x)!;
+    c.x = c.px = ci % s.w; c.y = c.py = (ci / s.w) | 0;
+    // 진입대원(파괴)도 진입조로 문 곁에. 인질을 붙든 용의자를 안 뒤 30초가 지났다 (믿음이 10초보다 낡음 — S26 ×0, 닫힌 문 너머라 다시 보지 못한다)
+    const t = makeTask('engage', '시험'); t.hostile = h.id; br.task = t; br.x = br.px = door.x; br.y = br.py = door.y + 2;
+    for (const a of [br, ...team]) a.beliefs.merge(hosFact(sim, s, h, '시험', 0));
+    sim.tick += 30 * 5; sim.t = sim.tick * sim.dt;
+    // 기동대원 하나는 유압 개방기를 든다 (0.9 — 교본을 넣지 않은 진입대원(파괴)의 폭파 점수보다 낮고, 교본을 넣은 그 사람의 충격기(0.9 × 0.7)보다 높다)
+    give(sim, team[0].rid, 'spreader');
+    for (const a of [br, ...team]) q.know(a);
+    expect(chooseMethod(sim, s, br, 'force', tgTile(q), null, NO_SENSE)!.m).toBe('charge');      // 교본 없이 고르면 폭파가 1등이다 (D4 전에는 이 점수로 여는 사람을 골랐다)
+    docForget();
+    const n = sim.events.length;
+    run(q, [br, ...team], 40, () => !door.blocking);
+    expect(door.blocking).toBe(false);
+    expect((I.methods ?? []).some((u) => u.method === 'charge')).toBe(false);
+    expect(texts(sim, n)).not.toContain('장약 설치합니다. 물러서십시오.');
+    expect((I.methods ?? []).filter((u) => u.ok && u.work === 'force').map((u) => [u.rid, u.method])).toEqual([[team[0].rid, 'hydraulic']]);      // 문 곁에서 실제로 고를 점수로 견줘 유압 개방기를 든 대원이 열었다
+  });
+  it('D2: 인질 없는 총기 용의자의 방(문 하나 · 구조 대상 없음 · 대원 없음)이 같은 흐름·같은 시각에 잠긴다 — solo 를 끄면 생기지 않는다 · 방에 숨은 시민이 있으면 잠그지 않는다', () => {
+    const runRule = (solo: boolean, civ: boolean): { s: Scene; ev: string[]; at: number; lockedAt: number } => {
+      const saved = { ...BARRICADE };
+      BARRICADE.p = 1; BARRICADE.cap = 1; BARRICADE.solo = solo;
+      try {
+        const sim = new Sim('R3b-D2', FULL);
+        const I = createIncident(sim, { type: 'armed', variant: 'robbery', rng: sim.rng.fork('t') });
+        const s = sim.scenes[I.id]!;
+        unitArrived(sim, I, sim.units.find((u) => u.kind === 'patrol')!);
+        for (const a of s.agents) { a.x = a.px = s.staging.x; a.y = a.py = s.staging.y; }
+        for (const c of s.casualties) { c.where = 'safe'; c.x = c.px = s.safe.x; c.y = c.py = s.safe.y; }
+        for (const g of s.hostiles) { g.state = 'arrested'; g.x = g.px = 2; g.y = g.py = 16; }
+        // 출입구에서 먼, (출입구 아닌) 문이 하나뿐인 방
+        const sideOf = (d: Prop): number[] => [d.y * s.w + d.x, d.y * s.w + d.x - 1, d.y * s.w + d.x + 1, d.y * s.w + d.x - s.w, d.y * s.w + d.x + s.w];
+        const inner = s.props.filter((d) => d.kind === 'door' && !s.exits.some((e) => Math.hypot(e.x - d.x, e.y - d.y) <= 1.5));
+        let room = -1;
+        for (const d of inner) {
+          for (const j of sideOf(d)) { const r = s.region[j]; if (r >= 0 && s.regions[r].kind === 'room' && inner.filter((e) => sideOf(e).some((k) => s.region[k] === r)).length === 1) { room = r; break; } }
+          if (room >= 0) break;
+        }
+        expect(room).toBeGreaterThanOrEqual(0);
+        const tiles = s.regions[room].tiles.filter((i) => staticPass(s.tiles[i]) && s.propAt[i] < 0 && s.tiles[i] !== T.DOOR);
+        const h = s.hostiles[0];
+        h.state = 'hold'; h.weapon = 'gun'; h.hostageId = -1; h.x = h.px = tiles[0] % s.w; h.y = h.py = (tiles[0] / s.w) | 0;
+        if (civ) { const c = s.casualties[0]; c.where = 'scene'; c.x = c.px = tiles[tiles.length - 1] % s.w; c.y = c.py = (tiles[tiles.length - 1] / s.w) | 0; }
+        const r = sim.rng.fork('barricade:' + I.id); r.chance(1); const at = s.arrivedAt + r.range(BARRICADE.at[0], BARRICADE.at[1]);
+        const n = sim.events.length, parent = peek(sim.rng);
+        let lockedAt = -1;
+        for (let k = 0; k < 45 * 5; k++) { sim.tick++; sim.t = sim.tick * sim.dt; methodsRule(sim, s, I); if (lockedAt < 0 && s.props.some((d) => d.skin === 'barricade')) lockedAt = sim.t; }
+        expect(peek(sim.rng)).toBe(parent);      // 새 난수 없음 — 그 사건의 흐름만
+        return { s, ev: texts(sim, n), at, lockedAt };
+      } finally { Object.assign(BARRICADE, saved); }
+    };
+    const on = runRule(true, false);
+    const d = on.s.props.find((p) => p.skin === 'barricade');
+    expect(d).toBeDefined();
+    expect(d!.locked).toBe(true); expect(d!.blocking).toBe(true);
+    expect(on.ev).toContain('용의자 1이 방 문을 걸어 잠그고 가구로 막았습니다.');
+    expect(on.lockedAt).toBeGreaterThanOrEqual(on.at - 1e-9); expect(on.lockedAt).toBeLessThan(on.at + 0.2 + 1e-9);      // 인질 방과 같은 시각 (같은 흐름의 at)
+    const off = runRule(false, false);
+    expect(off.s.props.some((p) => p.skin === 'barricade')).toBe(false); expect(off.ev.length).toBe(0);
+    const civ = runRule(true, true);
+    expect(civ.s.props.some((p) => p.skin === 'barricade')).toBe(false);
+  });
+  it('D2: 인질 없는 농성이 생기지 않는 교대는 solo 를 끄든 켜든 해시가 같다 · 생기는 교대(강제 강도 S33)에서만 잠긴 문이 하나 는다', () => {
+    const one = (seed: string, force: string, solo: boolean): Sim => { const saved = BARRICADE.solo; BARRICADE.solo = solo; try { const sim = new Sim(seed, NORMAL, 1200, { force }); sim.runToEnd(); return sim; } finally { BARRICADE.solo = saved; } };
+    expect(one('S0', 'armed/hostage', true).report!.hash).toBe(one('S0', 'armed/hostage', false).report!.hash);
+    const lockText = (sim: Sim): number => sim.events.filter((e) => e.text.includes('가구로 막았습니다')).length;
+    expect(lockText(one('S33', 'armed/robbery', true))).toBe(lockText(one('S33', 'armed/robbery', false)) + 1);
+  }, 60000);
+  it('강제 armed/robbery·armed/shooter 각 6교대: 닫히지 않은 사건·남은 부대 0, 그 시나리오의 한계 시간·방치 각 1건 이하, 같은 시드 두 번 같은 해시', () => {
+    for (const f of ['armed/robbery', 'armed/shooter']) {
+      let timeout = 0, abandoned = 0;
+      for (let k = 0; k < 6; k++) {
+        const sim = new Sim('R3b-F' + k, NORMAL, 1200, { force: f });
+        sim.runToEnd();
+        for (const I of sim.incidents) {
+          expect(I.phase, `${f} R3b-F${k} ${I.code}`).toBe('closed');
+          if (`${I.truth.type}/${I.truth.variant ?? ''}` !== f) continue;
+          if (I.closeReason === 'timeout') timeout++;
+          if (I.closeReason === 'abandoned') abandoned++;
+        }
+        // 교대는 마지막 사건이 닫히는 그 틱에 끝난다 — 막 닫힌 사건(90초 안)의 부대는 아직 철수하는 중일 수 있다 (R3 시험 6 과 같은 셈)
+        const recent = (id: number | null): boolean => id !== null && sim.t - sim.incidents[id].closedAt <= 90;
+        for (const u of sim.units) if (u.state === 'onscene') expect(recent(u.incidentId), `${f} R3b-F${k} ${u.callsign}`).toBe(true);
+        for (const s of sim.scenes) if (s && !s.archived) expect(recent(s.incidentId), `${f} R3b-F${k} 현장 ${s.incidentId}`).toBe(true);
+        if (k === 0) { const again = new Sim('R3b-F0', NORMAL, 1200, { force: f }); again.runToEnd(); expect(again.report!.hash).toBe(sim.report!.hash); }
+      }
+      expect(timeout, f).toBeLessThanOrEqual(1);
+      expect(abandoned, f).toBeLessThanOrEqual(1);
+    }
+  }, 180000);
+});

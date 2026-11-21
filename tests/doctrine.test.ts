@@ -92,7 +92,7 @@ const SPECIAL5 = [...STAGE5, 'S10', 'S11'];
 /** 3·4·5 단계를 합친 뒤의 등록 순서 전체 (줄 파일 다섯의 import 순서 common → police → fire → ems → special) */
 const STAGE345 = [...STAGE3, ...EMS4, ...SPECIAL5];
 /** (6단계) 이송·교통 방법의 줄 넷 — 방법·판단 지점이 6단계에 생겨 그 분야 파일의 끝에 붙었다: P20(경찰 — P17b 다음) · F18(소방 — F16 다음) · E13·E14(의료 — E20 다음) */
-const STAGE_ALL = STAGE345.flatMap((id) => (id === 'P17b' ? [id, 'P20', 'P30'] : id === 'F16' ? [id, 'F18'] : id === 'E20' ? [id, 'E13', 'E14'] : [id]));      // (R3b 단계 2) P30 — 경찰 파일의 끝
+const STAGE_ALL = STAGE345.flatMap((id) => (id === 'P17b' ? [id, 'P20', 'P30'] : id === 'F16' ? [id, 'F18'] : id === 'E20' ? [id, 'E13', 'E14'] : id === 'S11' ? [id, 'S30'] : [id]));      // (R3b 단계 2) P30 — 경찰 파일의 끝 · (R3b 단계 3) S30 — 특수 파일의 끝
 /** 3·4·5 단계를 합친 뒤의 지휘·관제 줄 (경찰 파일의 지휘 줄 → 소방 → 의료 → 특수(D2 가 특수 파일의 첫 줄)) */
 const CMD_ALL = [...CMD3.filter((id) => id !== 'D2'), 'D8', 'CE1', 'CE2', 'CE3', 'CE4', 'CE5', 'D2', ...CMD5];      // (균형) D8 — 소방 파일의 관제 줄 D4 다음
 /** 자기 신고를 손으로 넣는다 (그 대원의 믿음 — 남이 아는 그 대원의 몸) */
@@ -169,8 +169,8 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
   it('같은 시드 두 번의 report.hash 가 같다 — 보통 교대, fire/std·armed/hostage 강제', () => {
     for (let q = 0; q < cases.length; q++) expect(shift(cases[q][0], cases[q][1]).report!.hash, cases[q][0]).toBe(first[q].report!.hash);
   });
-  it('단계 6 뒤(R3b 단계 2 의 P30 포함): 줄은 공통 여섯·경찰 열여덟·소방 열여덟·의료 열셋·특수 열아홉(등록 순서 — index.ts 의 common → police → fire → ems → special), 지휘·관제 줄은 경찰 일곱·소방 아홉·의료 다섯·특수 넷. 의무(duty) 줄이 있다(F01·F02). 짝을 맺고 펌프차에 예비 펌프가 있다. 차량 차단(s.laneShield)은 비었거나 통제 지점 번호의 목록이다', () => {
-    expect(STAGE_ALL.length).toBe(STAGE345.length + 5);
+  it('단계 6 뒤(R3b 단계 2 의 P30 · 단계 3 의 S30 포함): 줄은 공통 여섯·경찰 열여덟·소방 열여덟·의료 열셋·특수 스물(등록 순서 — index.ts 의 common → police → fire → ems → special), 지휘·관제 줄은 경찰 일곱·소방 아홉·의료 다섯·특수 넷. 의무(duty) 줄이 있다(F01·F02). 짝을 맺고 펌프차에 예비 펌프가 있다. 차량 차단(s.laneShield)은 비었거나 통제 지점 번호의 목록이다', () => {
+    expect(STAGE_ALL.length).toBe(STAGE345.length + 6);
     expect(DOCTRINE.map((r) => r.id)).toEqual(STAGE_ALL);
     expect(CMD_ROWS.map((c) => c.id)).toEqual(CMD_ALL);
     expect(DOC_DEPTS_DONE).toEqual(['police', 'fire', 'special', 'ems']);
@@ -187,7 +187,7 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
           docs++;
           expect(['fit', 'method', 'act', 'gate', 'cmd', 'dispatch', 'chase', 'duty']).toContain(d.hook);
           expect(DOCTRINE.some((r) => r.id === d.rule) || CMD_ROWS.some((c) => c.id === d.rule), d.rule).toBe(true);
-          if (d.hook === 'act' || d.hook === 'duty') expect(['cover', 'rearm', 'airOut', 'pairOut', 'pair', 'triage']).toContain(d.act); else expect(d.act).toBeUndefined();
+          if (d.hook === 'act' || d.hook === 'duty') expect(['cover', 'rearm', 'airOut', 'pairOut', 'pair', 'triage', 'force']).toContain(d.act); else expect(d.act).toBeUndefined();      // (R3b D1) force — S30 의 문 개방
           if (d.hook === 'gate') expect(['closeIn', 'roomEntry', 'breach', 'coverFire', 'bangUse', 'interiorEntry', 'carryHold', 'carryStart', 'laneTreat', 'forceDoor']).toContain(d.gate); else expect(d.gate).toBeUndefined();
           if (d.hook === 'cmd' || d.hook === 'dispatch' || d.hook === 'chase') expect(d.rid).toBe(-1);
         }
@@ -1132,7 +1132,7 @@ describe('R3 시험 2-e (경찰판): 경찰 표 대원의 중상 신고 — P12'
 // ───────────────────────── 시험 4 (경찰): 엄폐 왕복 없음 — 강제 armed/hostage 6교대 ─────────────────────────
 describe('R3 시험 4 (단계 2): 엄폐·보급 왕복이 없다 · 엄폐 중인 대원에게 교전 지시를 보내지 않는다', () => {
   // P16 이 이미 엄폐한 협상 자리에서는 걸리지 않게 된 뒤(단계 2 — 구현 메모) 인질극 여섯 교대에는 엄폐가 거의 없다: 엄폐가 실제로 생기는 대형 인질극 세 교대를 더한다
-  it('강제 armed/hostage 6교대 + armed/siege 3교대: 교본 임무(엄폐·보급)를 떠났다가 10초 안에 다시 들어가는 경우가 0', () => {
+  it('강제 armed/hostage 6교대 + armed/siege 3교대: 교본 임무(엄폐·보급, R3b 의 S30 문 개방)를 떠났다가 10초 안에 다시 들어가는 경우가 0', () => {
     let doc = 0;
     const bad: string[] = [];
     for (let k = 0; k < 9; k++) {
@@ -1141,7 +1141,7 @@ describe('R3 시험 4 (단계 2): 엄폐·보급 왕복이 없다 · 엄폐 중�
       while (!sim.ended) {
         sim.step();
         for (const s of sim.scenes) if (s) for (const a of s.agents) {
-          const kind = a.task ? a.task.kind : '-';
+          const kind = a.task ? (a.task.kind === 'force' && a.task.docRule === 'S30' ? 'S30' : a.task.kind) : '-';      // (R3b D1) 교본 S30 의 문 개방은 따로 센다
           let f = flow.get(a);
           if (f === undefined) { f = []; flow.set(a, f); }
           if (!f.length || f[f.length - 1].kind !== kind) f.push({ kind, t: sim.t });
@@ -1149,8 +1149,8 @@ describe('R3 시험 4 (단계 2): 엄폐·보급 왕복이 없다 · 엄폐 중�
       }
       for (const [a, f] of flow) for (let q = 0; q + 2 < f.length; q++) {
         const x = f[q], y = f[q + 1], z = f[q + 2];
-        if (x.kind === 'cover' || x.kind === 'rearm') doc++;
-        if ((x.kind === 'cover' || x.kind === 'rearm') && z.kind === x.kind && y.kind !== x.kind && z.t - y.t < 10) bad.push(`${sim.seed} ${sim.responders[a.rid].name}: ${x.kind}→${y.kind}→${z.kind} @${y.t.toFixed(1)}`);
+        if (x.kind === 'cover' || x.kind === 'rearm' || x.kind === 'S30') doc++;
+        if ((x.kind === 'cover' || x.kind === 'rearm' || x.kind === 'S30') && z.kind === x.kind && y.kind !== x.kind && z.t - y.t < 10) bad.push(`${sim.seed} ${sim.responders[a.rid].name}: ${x.kind}→${y.kind}→${z.kind} @${y.t.toFixed(1)}`);
       }
     }
     expect(bad).toEqual([]);
@@ -1344,7 +1344,7 @@ describe('R3 시험 4 (소방): 왕복 없음 — 공기 문턱·짝 동행 경�
       while (!sim.ended) {
         sim.step();
         for (const s of sim.scenes) if (s) for (const a of s.agents) {
-          const kind = a.task ? a.task.kind : '-';
+          const kind = a.task ? (a.task.kind === 'force' && a.task.docRule === 'S30' ? 'S30' : a.task.kind) : '-';      // (R3b D1) 교본 S30 의 문 개방은 따로 센다
           let f = flow.get(a);
           if (f === undefined) { f = []; flow.set(a, f); }
           // 임무 없음이 한 판단 주기 안이면 흐름에 넣지 않는다 (받은 지시가 이미 끝나 있어 그 틱에 바로 끝난 경우 — 다른 일을 한 것이 아니다).

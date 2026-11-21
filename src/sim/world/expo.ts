@@ -10,13 +10,45 @@
 //  · 진실 쪽이다. 판단(관제·지휘관·대원)은 이 파일의 함수와 world.expo 를 읽지 않는다 (§3.8 — tests/hazard.test.ts 가 글자로 본다).
 //
 // 채우는 단계: b3-7 이웃(neighborsOf·neighborsOfPoint — L2 의 열원 곁) · expoOf(노출 칸을 만든다 — 쓰는 것은 b3-8 의 충격, b3-12 의 침수).
-// applyExpo(현장 생성기가 노출을 읽는 자리)·darkened(정전이 닿은 순간)는 그 상태를 쓰는 단계(b3-8 · b3-10)가 더한다.
+// (b3-8 a·b) 충격의 크기(SHOCK·shockDelta — 상태 규칙 rules/structure.ts 의 shockSpread 와 b3-8c 의 법칙 structFail·pipeLeak 이 함께 쓴다)와
+//   applyExpo(현장 생성기가 노출을 읽는 자리 — sceneManager.createScene 의 buildScene 바로 다음). darkened(정전이 닿은 순간)는 b3-10 이 더한다.
 
 import type { Sim } from '../engine';
-import type { Place, PlaceExpo } from '../types';
+import { T } from '../types';
+import type { Incident, Place, PlaceExpo, PlaceKind, Scene, Signal } from '../types';
+import { addProp } from '../field/kit';
 
 /** 이웃으로 치는 벽-벽 틈 (도시 좌표). 조사: 가장 가까운 이웃까지의 틈은 최소 2.0 · 중앙값 7.2 · p90 23.4 — 같은 편 옆집은 2~12, 길 건너는 20~35 */
 export const NB_REACH = 30;
+
+/**
+ * (b3-8 L3 (가)) 붕괴와 폭발이 이웃 건물에 남기는 구조 손상 shake (0..1) — 모두 첫 값 (설계서 §3.7 L3). 균형은 hazstats 의 hazard-shock 줄로 다시 맞춘다:
+ *  K        폭발: X6 의 현장 안 식(catOnBlast — K_HIT_BLAST)을 밖으로 그대로 잇는다: Δ = K × mag/100 × max(0, 1 − d/(size + 2)), d = gap/CELL + PAD (칸).
+ *           반경 6칸·피해 50 → 틈 3 에 0.22 · 틈 7.2 에 0.12 · 틈 12 넘으면 0
+ *  CELL     현장 1칸 ≈ 도시 좌표 2 (표본 9건의 범위 1.2~4.0 — 첫 판은 상수) · PAD 폭발 자리에서 그 건물의 벽까지 어림 2칸
+ *  TOTAL    건물 전체가 무너졌을 때(collapseBuilding — 'catastrophe' 신호 data 1 · mag ≥ 1)만: 틈 REACH 안의 이웃에 TOTAL × (1 − gap/REACH) (틈 3 에 0.48 · 7.2 에 0.31)
+ *  START    무너진 채 시작하는 사건(크레인·가스 폭발·산사태 — 'collapse' 신호, 크기 ≥ START_SIZE): START × (1 − gap/REACH). 2차 붕괴(≤ 3칸)·구획 하나의 붕괴는 밖으로 나가지 않는다
+ *  S_MIN    금 기록과 structFail(b3-8c)의 문턱. 배관은 건물마다의 문턱 pipeThr(0.2 + 0.6u — expoOf)
+ * 한 번의 충격이 S_MIN 과 배관 문턱의 아래쪽을 넘을 수 있어야 한다는 것이 이 값들의 조건이다(설계서 — 초안의 0.25·0.15 × (1 − g/8) 은 가장 좁은 틈에서도 닿지 못했다)
+ */
+export const SHOCK = { K: 0.8, CELL: 2, PAD: 2, TOTAL: 0.6, START: 0.35, REACH: 15, START_SIZE: 10, S_MIN: 0.1 };
+
+/** 도시가스를 쓰는 건물 종류 (배관이 끊길 수 있는 건물): 주택·다세대·아파트·오피스텔·식당·카페·상점·시장·편의점·호텔 */
+export const GAS_KINDS: ReadonlySet<PlaceKind> = new Set<PlaceKind>(['houseS', 'houseL', 'villa', 'apartment', 'officetel', 'restaurant', 'cafe', 'shop', 'market', 'convenience', 'hotel']);
+
+/**
+ * 신호 하나가 벽-벽 틈 gap 의 이웃에 주는 구조 손상 (0 = 닿지 않는다 — 틈이 멀수록 작다). 받는 신호: 폭발('catastrophe' data 0 · 'blast' — mag = 피해량, size = 반경(칸)),
+ * 건물 전체의 붕괴('catastrophe' data 1 이고 mag ≥ 1), 무너진 채 시작하는 사건('collapse' 이고 크기 ≥ START_SIZE). 그 밖(구획 붕괴 mag < 1 · 2차 붕괴 · 전소)은 0
+ */
+export function shockDelta(sig: Signal, gap: number): number {
+  if ((sig.kind === 'catastrophe' && sig.data === 0) || sig.kind === 'blast') {
+    const d = gap / SHOCK.CELL + SHOCK.PAD, R = sig.size + 2;
+    return d < R ? SHOCK.K * (sig.mag / 100) * (1 - d / R) : 0;
+  }
+  if (sig.kind === 'catastrophe' && sig.data === 1 && sig.mag >= 1) return gap < SHOCK.REACH ? SHOCK.TOTAL * (1 - gap / SHOCK.REACH) : 0;
+  if (sig.kind === 'collapse' && sig.size >= SHOCK.START_SIZE) return gap < SHOCK.REACH ? SHOCK.START * (1 - gap / SHOCK.REACH) : 0;
+  return 0;
+}
 
 /** 이웃 하나: 건물 id 와 벽-벽 틈(도시 좌표) */
 export interface Nb { id: number; gap: number }
@@ -27,6 +59,99 @@ export function expoOf(sim: Sim, placeId: number): PlaceExpo {
   let e = ex[placeId];
   if (!e) e = ex[placeId] = { shake: 0, shakeEv: -1, shakeInc: -1, pipe: false, pipeEv: -1, pipeThr: 0.2 + 0.6 * sim.rng.fork('hz:pipe:' + placeId).next(), wet: false, wetEv: -1, dark: -1 };
   return e;
+}
+
+// ───────────────────────── (b3-8 L3 (나)) 손상된 건물의 다음 현장 ─────────────────────────
+
+/** 새는 밸브의 세기 — 가스 폭발 현장의 밸브(scenes/major.ts)와 같은 범위 */
+export const EXPO_LEAK: [number, number] = [0.5, 0.64];
+
+/**
+ * 현장 생성기가 노출을 읽는 자리 — sceneManager.createScene 의 buildScene 바로 다음. 그 건물에 노출 칸이 없으면 아무것도 하지 않는다(만들지 않는다 — 노출이 없는 교대는 그대로다).
+ * 법칙이 아니라 처음 상태다: 평소 추첨이든 법칙이든 그 건물의 모든 사건에 걸린다.
+ *  · shake > 0 → s.wear = { dmg: shake, cause: 'shock', inc: 가장 크게 흔든 사건의 코드 } — X6 의 catOf 가 처음 구조 건전도를 1 − CAT.WEAR_INTEG × dmg 아래로 둔다
+ *    (불이 나면 삐걱임·균열·임박이 그만큼 빨리 오고 X6 가 실제로 무너뜨린다. 지휘관은 그 조짐으로만 안다 — s.wear 는 진실 전용이라 판단부는 읽지 않는다)
+ *  · pipe → 새는 밸브 소품 하나 (X6 의 가스 격자와 폭발은 밸브 소품만으로 돈다 — 불이 가스에 닿으면 X6 가 폭발시킨다).
+ *    **s.rules 는 고치지 않는다** — 판단부가 생김새로 읽는 칸이고(경찰의 확성기 방법·교본 줄) injury.smokeCause 가 연기 피해를 유독 가스로 정하는 칸이다.
+ *    그래서 옛 가스 규칙(hazards.tickGas)은 이 현장에서 돌지 않는다. 대원은 밸브를 본 뒤의 haz 믿음과 X6 의 가스 조짐으로만 안다. 난수는 새 흐름 expo:<사건>
+ */
+export function applyExpo(sim: Sim, s: Scene, I: Incident): void {
+  const p = I.truth.placeId;
+  if (p < 0) return;
+  const ex = sim.world.expo[p];
+  if (!ex) return;
+  if (ex.shake > 0) s.wear = { dmg: ex.shake, soot: 0, cause: 'shock', inc: ex.shakeInc >= 0 ? sim.incidents[ex.shakeInc]?.code ?? '' : '', pre: 0 };
+  if (ex.pipe) leakValve(sim, s, I);
+}
+
+/** 대기 지점에서 걸어서 닿는 칸 (잔해·문 소품은 치우거나 열 수 있다고 보고, 밸브·차량 같은 고정 소품은 막힌 칸으로 본다 — scenes/major.ts 의 reachable 과 같은 규칙) */
+function reachFrom(s: Scene): Uint8Array {
+  const W = s.w, H = s.h, t = s.tiles, seen = new Uint8Array(W * H);
+  const pass = (i: number): boolean => {
+    const ti = t[i];
+    if (ti !== T.FLOOR && ti !== T.DOOR && ti !== T.GROUND && ti !== T.ROAD && ti !== T.STAIR && ti !== T.TREE && ti !== T.TRAIL) return false;
+    const q = s.propAt[i];
+    return q < 0 || s.props[q].kind === 'door' || s.props[q].kind === 'debris';
+  };
+  const x0 = Math.round(s.staging.x), y0 = Math.round(s.staging.y);
+  if (x0 < 0 || y0 < 0 || x0 >= W || y0 >= H) return seen;
+  const st = [y0 * W + x0];
+  seen[st[0]] = 1;
+  while (st.length) {
+    const c = st.pop()!, x = c % W, y = (c / W) | 0;
+    if (x + 1 < W && !seen[c + 1] && pass(c + 1)) { seen[c + 1] = 1; st.push(c + 1); }
+    if (x > 0 && !seen[c - 1] && pass(c - 1)) { seen[c - 1] = 1; st.push(c - 1); }
+    if (y + 1 < H && !seen[c + W] && pass(c + W)) { seen[c + W] = 1; st.push(c + W); }
+    if (y > 0 && !seen[c - W] && pass(c - W)) { seen[c - W] = 1; st.push(c - W); }
+    const sl = s.stairTo[c];
+    if (sl >= 0 && !seen[sl]) { seen[sl] = 1; st.push(sl); }
+  }
+  return seen;
+}
+/** 걸어서 닿지 못하는 바닥 칸 수 */
+function cutFloors(s: Scene): number {
+  const v = reachFrom(s);
+  let n = 0;
+  for (let i = 0; i < v.length; i++) if (s.tiles[i] === T.FLOOR && !v[i]) n++;
+  return n;
+}
+
+/**
+ * 끊긴 배관 — 새는 밸브 하나를 놓는다 (CLAUDE.md "소품은 길을 막는다"·"가구 자리에 소품을 놓을 때"):
+ *  ① 실내 구획의 가구 자리 가운데 벽(위·아래)에 붙고, 곁에 걸어서 닿는 빈 바닥이 있고(옆에 서서 잠근다), 불·소품·계단이 없는 칸 — 가구는 이미 길을 막고 있었으므로 길이 끊기지 않는다
+ *  ② 없으면 벽에 붙은 빈 바닥 가운데 막아도 어느 바닥도 끊기지 않는 칸 (16곳까지 본다)
+ *  둘 다 없으면 놓지 않는다(그 현장의 생김새가 받지 못한다). 돌려주는 값 = 놓았는가
+ */
+function leakValve(sim: Sim, s: Scene, I: Incident): boolean {
+  const rng = sim.rng.fork('expo:' + I.id), W = s.w, t = s.tiles, n = t.length;
+  const seen = reachFrom(s);
+  const stand = (i: number): boolean => {
+    const x = i % W;
+    return (x + 1 < W && t[i + 1] === T.FLOOR && s.propAt[i + 1] < 0 && seen[i + 1] === 1) || (x > 0 && t[i - 1] === T.FLOOR && s.propAt[i - 1] < 0 && seen[i - 1] === 1)
+      || (i + W < n && t[i + W] === T.FLOOR && s.propAt[i + W] < 0 && seen[i + W] === 1) || (i >= W && t[i - W] === T.FLOOR && s.propAt[i - W] < 0 && seen[i - W] === 1);
+  };
+  const furn: number[] = [], bare: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const r = s.region[i];
+    if (r < 0 || !s.regions[r].indoor || s.propAt[i] >= 0 || s.fire[i] > 0 || s.stairTo[i] >= 0) continue;
+    const wall = (i >= W && t[i - W] === T.WALL) || (i + W < n && t[i + W] === T.WALL);
+    if (!wall || !stand(i)) continue;
+    if (t[i] === T.FURN) furn.push(i); else if (t[i] === T.FLOOR && seen[i]) bare.push(i);
+  }
+  let at = furn.length ? rng.pick(furn) : -1;
+  if (at < 0 && bare.length) {
+    const base = cutFloors(s);
+    for (const i of rng.shuffle(bare).slice(0, 16)) {
+      t[i] = T.WALL;
+      const ok = cutFloors(s) === base;
+      t[i] = T.FLOOR;
+      if (ok) { at = i; break; }
+    }
+  }
+  if (at < 0) return false;
+  if (t[at] === T.FURN) { t[at] = T.FLOOR; s.decor[at] = 0; }
+  addProp(s, 'valve', at % W, (at / W) | 0, { blocking: true, leakRate: rng.range(EXPO_LEAK[0], EXPO_LEAK[1]) });
+  return true;
 }
 
 // ───────────────────────── 이웃 (시드와 무관 — 도시 열쇠의 캐시) ─────────────────────────

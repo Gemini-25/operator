@@ -48,6 +48,7 @@ export const CAT = {
   NBR_FALL: 0.12,                 // 이웃 구획이 무너지면 옮겨 오는 하중 (단계 3)
   QUAKE: 0.08, QUAKE_COLLAPSE: 0.18,       // 지진 흔들림 한 번: 그 밖의 현장 · 붕괴 유형
   INIT_COLLAPSE: 0.75, INIT_SEV: 0.05, INIT_NBR: 0.85, INIT_QUAKE: 0.9,      // 처음 값: 붕괴 현장의 무너진 구획(0.75 − 0.05 × 심각도)·그 이웃, 지진 중의 다른 구획
+  WEAR_INTEG: 0.5,               // (I1-b b3-8 · I2) 손상된 건물(s.wear.dmg)의 처음 건전도 상한 1 − WEAR_INTEG × dmg — 손상 0.3 이면 0.85. I2 의 persist 도 이 값을 읽는다
   GAS_SRC: 0.15, GAS_D: 0.12,     // 가스 원천 · 확산
   GAS_DOOR: 0.15, GAS_STAIR: 0.9, // 닫힌 문·계단 너머의 교환 배율
   GAS_SEEP: 0.004, GAS_VENT: 0.12, GAS_MAX: 3,      // 벽 틈으로 새는 몫 · 깨진 창과 열린 바깥문 곁의 환기 · 상한
@@ -180,6 +181,8 @@ export function catOf(sim: Sim, s: Scene): CatState | null {
       for (let q = 0; q < nbrs[r].length; q++) if (hurt[nbrs[r][q]]) { by = true; break; }
       if (by) integ[r] = CAT.INIT_NBR; else if (quake) integ[r] = CAT.INIT_QUAKE;
     }
+    // (I1-b b3-8 · I2 §7) 이미 손상된 건물(s.wear — 이웃의 충격·지난 교대): 실내 구획마다 처음 건전도가 1 − WEAR_INTEG × dmg 를 넘지 않는다 (난수 없음 — 손상이 없는 현장은 그대로)
+    if (s.wear) for (let r = 0; r < R; r++) if (regs[r].indoor) integ[r] = Math.min(integ[r], 1 - CAT.WEAR_INTEG * s.wear.dmg);
   }
   // 전소 비율의 분모: 건물 칸 위의 연료 칸 (이미 탄 칸도 연료가 있던 칸이다)
   const fuelMask = new Uint8Array(n);
@@ -833,7 +836,8 @@ export function collapseRegion(sim: Sim, s: Scene, I: Incident, c: CatState, r: 
     signFact(sim, SIGN_BASE.struct + r, { kind: 'struct', level: 0, region: r, x: reg.cx, y: reg.cy, down: true }, fallenText(reg.name)),
   ]);
   markPlace(sim, s, I, c, 'partial');
-  signal(sim, 'catastrophe', { inc: I.id, ev, cx: reg.cx, cy: reg.cy, size: fell, place: I.truth.placeId, data: 1 });
+  let inTiles = 0; for (const rg of s.regions) if (rg.indoor) inTiles += rg.tiles.length;
+  signal(sim, 'catastrophe', { inc: I.id, ev, cx: reg.cx, cy: reg.cy, size: fell, place: I.truth.placeId, data: 1, mag: Math.min(0.99, fell / Math.max(1, inTiles)) });      // (I1-b b3-8) mag = 이번에 무너진 몫(< 1) — 기록·측정용. 충격 규칙(shockSpread)은 mag ≥ 1(건물 전체)만 받는다
   return ev;
 }
 const fallenText = (name: string): string => `${name} 무너져 내림 — 더 무너질 것 없음`;
@@ -855,7 +859,10 @@ function blockRoad(sim: Sim, I: Incident): void {
   if (I.blockedEdge >= 0) return;
   const node = sim.city.nodes[I.truth.nodeId];
   if (!node) return;
-  for (const k of node.edges) {
+  // (I1-b b3-8) 그 건물이 면한 길(Place.edgeId)을 먼저 본다 — 사건 교차로의 구간 순서대로만 보면 면하지 않은 구간이 막히고, 사건 뒤의 잔해(C2)도 그 구간에 남는다
+  const face = I.truth.placeId >= 0 ? sim.city.places[I.truth.placeId]?.edgeId ?? -1 : -1;
+  const order = face >= 0 && sim.city.edges[face] ? [face, ...node.edges.filter((k) => k !== face)] : node.edges;
+  for (const k of order) {
     const e = sim.city.edges[k];
     if (e.closed || !findRoute(sim.city, e.a, e.b, 1, e.id, true)) continue;
     e.slow += 1.4; e.closed = true; e.closedReason = 'incident';      // known 은 건드리지 않는다
@@ -1034,7 +1041,7 @@ export function collapseBuilding(sim: Sim, s: Scene, I: Incident, c: CatState, b
   hearAll(sim, s, ev, facts);
   markPlace(sim, s, I, c, 'collapsed');
   let size = 0; for (let i = 0; i < n; i++) if (bld[i]) size++;
-  signal(sim, 'catastrophe', { inc: I.id, ev, cx: bx, cy: by, size, place: I.truth.placeId, data: 1 });
+  signal(sim, 'catastrophe', { inc: I.id, ev, cx: bx, cy: by, size, place: I.truth.placeId, data: 1, mag: 1 });      // (I1-b b3-8) 건물 전체 — 충격이 이웃 건물로 나간다(world/rules/structure.ts 의 shockSpread)
   return ev;
 }
 
@@ -1056,7 +1063,7 @@ function burnout(sim: Sim, s: Scene, I: Incident, c: CatState): void {
   const [chain, cause] = burnoutChain(sim, s, I);
   const ev = raiseProblem(sim, I, 'BURNOUT', `건물 전소 — ${chain}`, { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, causes: [cause], text: '건물이 사실상 전소됐습니다. 남은 골조의 붕괴가 우려됩니다.' }, false);
   markPlace(sim, s, I, c, 'burnt');
-  signal(sim, 'catastrophe', { inc: I.id, ev, size: 0, place: I.truth.placeId, data: 2 });
+  signal(sim, 'catastrophe', { inc: I.id, ev, size: 0, place: I.truth.placeId, data: 2, mag: 0 });      // (I1-b b3-8) 전소는 충격이 없다
 }
 
 // ───────────────────────── 일어나는 일 — 폭발 (단계 4 — 설계서 §2.5·§2.6·§4.3·§4.4) ─────────────────────────
@@ -1165,7 +1172,7 @@ export function explodeGas(sim: Sim, s: Scene, I: Incident, c: CatState, cloud: 
   for (const rg of regs) facts.push(signFact(sim, SIGN_BASE.gas + rg, { kind: 'gas', level: 0, region: rg, x: s.regions[rg].cx, y: s.regions[rg].cy, down: true }, `${s.regions[rg].name} 가스 연소 — 남은 가스 없음`));
   hearAll(sim, s, ev, facts);
   markPlace(sim, s, I, c, 'blasted');
-  signal(sim, 'catastrophe', { inc: I.id, ev, cx, cy, size: r, place: I.truth.placeId, data: 0 });
+  signal(sim, 'catastrophe', { inc: I.id, ev, cx, cy, size: r, place: I.truth.placeId, data: 0, mag: dmg });      // (I1-b b3-8) mag = 피해량
   return ev;
 }
 
@@ -1230,7 +1237,7 @@ export function ruptureVessel(sim: Sim, s: Scene, I: Incident, c: CatState, p: P
   facts.push(signFact(sim, SIGN_BASE.vessel + p.id, { kind: 'vessel', level: 0, region: rg, x: p.x, y: p.y, prop: p.id, down: true }, `${where} ${nm} 폭발 — 더는 위험 없음`));
   hearAll(sim, s, ev, facts);
   markPlace(sim, s, I, c, 'blasted');
-  signal(sim, 'catastrophe', { inc: I.id, ev, cx, cy, size: spec.r, place: I.truth.placeId, data: 0 });
+  signal(sim, 'catastrophe', { inc: I.id, ev, cx, cy, size: spec.r, place: I.truth.placeId, data: 0, mag: spec.dmg });      // (I1-b b3-8) mag = 피해량
   return ev;
 }
 
@@ -1292,7 +1299,7 @@ export function explodeDust(sim: Sim, s: Scene, I: Incident, c: CatState, how: n
     signFact(sim, SIGN_BASE.dust + r, { kind: 'dust', level: 0, region: r, x: cx, y: cy, down: true }, `${reg.name} 분진 폭발 — 남은 분진 없음`),
   ]);
   markPlace(sim, s, I, c, 'blasted');
-  signal(sim, 'catastrophe', { inc: I.id, ev, cx, cy, size: rad, place: I.truth.placeId, data: 0 });
+  signal(sim, 'catastrophe', { inc: I.id, ev, cx, cy, size: rad, place: I.truth.placeId, data: 0, mag: CAT.DUST_DMG });      // (I1-b b3-8) mag = 피해량
   return ev;
 }
 /**

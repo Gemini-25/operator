@@ -419,7 +419,9 @@ describe('지휘관의 진입 계획', () => {
 describe('2층 건물', () => {
   it('계단으로 이어진 2층 건물 화재가 나오고, 대원이 2층까지 올라가 사람을 구해 내려온다', () => {
     let tall = 0, searched2F = 0, saved2F = 0, on2F = 0, timeouts = 0;
-    for (let k = 0; k < 30; k++) {
+    // (I1-b b3-8) 표본을 시드 40개로 — 30개로는 2층에서 발견된 사람이 23~26명뿐이라 구한 비율(늘 50% 안팎)이 사건 하나의 흐름에 문턱을 오간다
+    //   (S20 의 2층 화재가 충격 기록으로 다른 사건이 되어 12/23 → 13/26). 판정의 문턱은 그대로다
+    for (let k = 0; k < 40; k++) {
       const s = shiftOf('S' + k);
       for (const sc of s.scenes) {
         if (!sc || sc.kind !== 'fire' || !sc.stairTo.some((v) => v >= 0)) continue;

@@ -92,7 +92,7 @@ const SPECIAL5 = [...STAGE5, 'S10', 'S11'];
 /** 3·4·5 단계를 합친 뒤의 등록 순서 전체 (줄 파일 다섯의 import 순서 common → police → fire → ems → special) */
 const STAGE345 = [...STAGE3, ...EMS4, ...SPECIAL5];
 /** (6단계) 이송·교통 방법의 줄 넷 — 방법·판단 지점이 6단계에 생겨 그 분야 파일의 끝에 붙었다: P20(경찰 — P17b 다음) · F18(소방 — F16 다음) · E13·E14(의료 — E20 다음) */
-const STAGE_ALL = STAGE345.flatMap((id) => (id === 'P17b' ? [id, 'P20'] : id === 'F16' ? [id, 'F18'] : id === 'E20' ? [id, 'E13', 'E14'] : [id]));
+const STAGE_ALL = STAGE345.flatMap((id) => (id === 'P17b' ? [id, 'P20', 'P30'] : id === 'F16' ? [id, 'F18'] : id === 'E20' ? [id, 'E13', 'E14'] : [id]));      // (R3b 단계 2) P30 — 경찰 파일의 끝
 /** 3·4·5 단계를 합친 뒤의 지휘·관제 줄 (경찰 파일의 지휘 줄 → 소방 → 의료 → 특수(D2 가 특수 파일의 첫 줄)) */
 const CMD_ALL = [...CMD3.filter((id) => id !== 'D2'), 'D8', 'CE1', 'CE2', 'CE3', 'CE4', 'CE5', 'D2', ...CMD5];      // (균형) D8 — 소방 파일의 관제 줄 D4 다음
 /** 자기 신고를 손으로 넣는다 (그 대원의 믿음 — 남이 아는 그 대원의 몸) */
@@ -169,8 +169,8 @@ describe('R3 시험 5: 재현성과 순수 함수', () => {
   it('같은 시드 두 번의 report.hash 가 같다 — 보통 교대, fire/std·armed/hostage 강제', () => {
     for (let q = 0; q < cases.length; q++) expect(shift(cases[q][0], cases[q][1]).report!.hash, cases[q][0]).toBe(first[q].report!.hash);
   });
-  it('단계 6 뒤: 줄은 공통 여섯·경찰 열일곱·소방 열여덟·의료 열셋·특수 열아홉(등록 순서 — index.ts 의 common → police → fire → ems → special), 지휘·관제 줄은 경찰 일곱·소방 아홉·의료 다섯·특수 넷. 의무(duty) 줄이 있다(F01·F02). 짝을 맺고 펌프차에 예비 펌프가 있다. 차량 차단(s.laneShield)은 비었거나 통제 지점 번호의 목록이다', () => {
-    expect(STAGE_ALL.length).toBe(STAGE345.length + 4);
+  it('단계 6 뒤(R3b 단계 2 의 P30 포함): 줄은 공통 여섯·경찰 열여덟·소방 열여덟·의료 열셋·특수 열아홉(등록 순서 — index.ts 의 common → police → fire → ems → special), 지휘·관제 줄은 경찰 일곱·소방 아홉·의료 다섯·특수 넷. 의무(duty) 줄이 있다(F01·F02). 짝을 맺고 펌프차에 예비 펌프가 있다. 차량 차단(s.laneShield)은 비었거나 통제 지점 번호의 목록이다', () => {
+    expect(STAGE_ALL.length).toBe(STAGE345.length + 5);
     expect(DOCTRINE.map((r) => r.id)).toEqual(STAGE_ALL);
     expect(CMD_ROWS.map((c) => c.id)).toEqual(CMD_ALL);
     expect(DOC_DEPTS_DONE).toEqual(['police', 'fire', 'special', 'ems']);
@@ -2819,5 +2819,82 @@ describe('R3b (나) 속도 — 결과 불변', () => {
     const again = new Sim('R3b-T2', NORMAL, 1200, { force: 'armed/hostage' });
     again.run(900);
     expect(again.logHash).toBe(sim.logHash);
+  });
+});
+
+describe('R3b (가) A3: 손이 빈 경찰은 총격의 시야에 서 있지 않는다 (P30)', () => {
+  /** 총을 든 교전 용의자 하나 · 경찰 A 하나(대기): A 는 용의자와 벽으로 가려지지 않은 칸(losWalls)이면서 이웃에 벽이 있는 칸(a.inCover 가 참이 되는 칸)에 서 있고, 둘레 4칸에 숨을 자리가 있다 */
+  async function exposedScene(what = 'armed/siege') {
+    const { losWalls } = await import('../src/sim/field/grid');
+    const { T } = await import('../src/sim/types');
+    for (let k = 0; k < 40; k++) {
+      const env = copsScene('R3b-A3-' + k, what, ['patrol'], 'gun', 'fight');
+      const { s, h, A, B } = env;
+      const wallNear = (x: number, y: number): boolean => { for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if ((dx || dy) && s.tiles[(y + dy) * s.w + x + dx] === T.WALL) return true; return false; };
+      const sp = spotAt(s, h.x, h.y, 4.5, 9, true, (x, y) => losWalls(s, x, y, h.x, h.y) && wallNear(x, y) && coverSpot(s, x, y, h.x, h.y, false) !== null);
+      if (!sp) continue;
+      B.status = 'withdrawn';
+      put(A, sp);
+      A.task = makeTask('standby', '대기');
+      docForget();
+      return { ...env, losWalls };
+    }
+    throw new Error('노출된 대기 자리를 찾지 못했다');
+  }
+  it('대기 중이고 이웃에 벽이 있어 inCover 여도 위협과 벽으로 가려지지 않았으면 숨을 자리로 간다 · 가려진 뒤에는 다시 걸리지 않는다 · 끝난 뒤 20초는 어느 위협에도 다시 걸지 않는다', async () => {
+    const { sim, I, s, h, A, losWalls } = await exposedScene();
+    act(sim, s, A);
+    expect(A.inCover).toBe(true);      // 이웃 칸에 벽이 있다 — 예전의 '엄폐' 판정은 이 대원을 숨은 것으로 본다
+    const p = docAct(sim, s, A);
+    expect(p?.rule.id).toBe('P30'); expect(p?.act).toBe('cover'); expect(p?.score).toBe(0.9);
+    const ev0 = sim.events.length;
+    think(sim, s, A);
+    expect(A.task!.kind).toBe('cover'); expect(A.task!.docRule).toBe('P30');
+    expect(said(sim, ev0, A.rid, '총격 시야 — 몸을 숨깁니다.')).toBe(true);
+    stepOne(sim, s, A, 6);
+    expect(losWalls(s, A.x, A.y, h.x, h.y)).toBe(false);      // 숨었다: 위협과 벽이 막는다
+    docForget(A);
+    expect(docAct(sim, s, A)?.rule.id).not.toBe('P30');      // 가려진 자리에서는 다시 걸리지 않는다
+    stepOne(sim, s, A, 7);      // 상한 12초 — 엄폐가 끝난다
+    expect(A.task === null || A.task.kind !== 'cover').toBe(true);
+    expect(I.docs!.some((d) => d.rule === 'P30' && d.rid === A.rid && d.act === 'cover')).toBe(true);
+    // 끝난 뒤 20초: 노출된 자리로 다시 옮겨 놓아도 어느 위협에도 걸지 않는다 (runCover 의 기억 '*')
+    const back = spotAt(s, h.x, h.y, 4.5, 9, true, (x, y) => losWalls(s, x, y, h.x, h.y) && coverSpot(s, x, y, h.x, h.y, false) !== null)!;
+    put(A, back); A.task = makeTask('standby', '대기'); docForget(A);
+    expect(docAct(sim, s, A)?.rule.id).not.toBe('P30');
+    sim.tick += 21 * 5; sim.t = sim.tick * sim.dt; docForget(A);
+    expect(docAct(sim, s, A)?.rule.id).toBe('P30');
+  });
+  it('걸리지 않는 자리: 지휘관의 지시를 받아 둔 대원 · 봉쇄·협상 중 · 용의자가 대치(hold) 중 · 13칸 밖', async () => {
+    const { sim, s, h, A } = await exposedScene();
+    expect(docAct(sim, s, A)?.rule.id).toBe('P30');
+    const w = work(sim, s, 'perimeter', { priority: 0.76, tile: 0 });
+    A.orderWork = w.id; docForget(A);
+    expect(docAct(sim, s, A)?.rule.id).not.toBe('P30');
+    A.orderWork = -1;
+    giveTask(sim, s, A, w); docForget(A);
+    expect(docAct(sim, s, A)?.rule.id).not.toBe('P30');      // 진입 결정 전의 봉쇄 자리
+    const wn = work(sim, s, 'negotiate', { hostile: h.id, priority: 0.73 });
+    A.task = null; giveTask(sim, s, A, wn); docForget(A);
+    expect(docAct(sim, s, A)?.rule.id).not.toBe('P30');      // 협상 자리 (P16 의 몫)
+    A.task = makeTask('standby', '대기');
+    const held = hosFact(sim, s, h, '시험', 0);
+    A.beliefs.merge(mkFact('hos', h.id, { ...held.value, state: 'hold' }, '시험', sim.t + 0.01, 1, true, held.text)); docForget(A);
+    expect(docAct(sim, s, A)?.rule.id).not.toBe('P30');      // 교전 중이 아니다
+    A.beliefs.merge(mkFact('hos', h.id, { ...held.value }, '시험', sim.t + 0.02, 1, true, held.text)); docForget(A);
+    expect(docAct(sim, s, A)?.rule.id).toBe('P30');
+    const far = spotAt(s, h.x, h.y, 13.5, 30, true);
+    if (far) { put(A, far); docForget(A); expect(docAct(sim, s, A)?.rule.id).not.toBe('P30'); }
+  });
+  it('엄폐(P30) 중인 대원은 지휘관이 교전으로 빼 가지 않는다 (assign 건너뛰기)', async () => {
+    const { sim, I, s, h, A, cops } = await exposedScene();
+    const cmd = cops[1]; cmd.status = 'active'; cmd.isCommander = true;
+    A.task = makeTask('cover', '엄폐'); A.task.docRule = 'P30'; A.task.hostile = h.id;
+    s.board.length = 0;
+    const w = work(sim, s, 'engage', { hostile: h.id, priority: 0.9, max: 3 });
+    w.status = 'open';
+    expect(fitFor(sim, s, A, w)).toBeGreaterThan(0);
+    assign(sim, s, I, cmd);
+    expect(w.assignees.indexOf(A.rid)).toBe(-1);
   });
 });

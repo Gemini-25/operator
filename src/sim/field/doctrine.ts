@@ -650,6 +650,7 @@ export function docCtx(sim: Sim, s: Scene, a: FieldAgent, mode: 'self' | 'report
     pair: lazyPair(sim, s, a, w, st),
     watch: lazyWatch(sim, s, a),
     unitIn: lazyUnitIn(s, a),
+    inView: tg !== null ? lazyInView(s, a, tg) : NO_VIEW,
     wBomb: w !== null && sit.liveBomb !== null ? bombDistOfWork(s, a, w) : Infinity,
   };
 }
@@ -667,6 +668,13 @@ function lazyWatch(sim: Sim, s: Scene, a: FieldAgent): () => { n: number; need: 
 function lazyUnitIn(s: Scene, a: FieldAgent): () => number {
   let ui: number | undefined;
   return () => (ui ??= unitInside(s, a));
+}
+/** (R3b A3) 대상 위협이 없는 입력이 함께 쓰는 답 (가려졌는가를 물을 위협이 없다) */
+const NO_VIEW = (): boolean => false;
+/** (R3b A3) 이 대원의 자리와 믿음 속 위협 자리 사이에 벽이 없는가 (losWalls — 문은 열려 있다고 본다, coverSpot 의 숨기와 같은 자격) — 처음 물을 때 한 번 */
+function lazyInView(s: Scene, a: FieldAgent, tg: DocThreat): () => boolean {
+  let v: boolean | undefined;
+  return () => (v ??= losWalls(s, a.x, a.y, tg.x, tg.y));
 }
 /** (2단계) 그 용의자의 믿음을 위협의 모양으로 (모르면 undefined) */
 function threatOf(a: FieldAgent, id: number): DocThreat | undefined {

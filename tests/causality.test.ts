@@ -1676,6 +1676,20 @@ describe('I1-b 검토: 교대 요약의 세계 상태 수는 실제로 일어난
     expect(w.outages, '정전은 한 번').toBe(1);
     expect(w.lines.find((t) => t.startsWith('세계 상태:')), '세계 상태 줄').toContain('정전 1회');
   });
+  it('밀림의 뿌리가 사고가 난 그 구간 자신이면 같은 구간 이름을 두 번 쓰지 않는다 — 먼저 난 사고로 느려진 구간에 밀린 차들 사이의 사고 (보통 S26 #11 의 꼴)', () => {
+    const s = new Sim('S2', NORMAL, 1200);
+    for (let k = 0; k < 20; k++) s.step();
+    const P = createIncident(s, { type: 'traffic', variant: 'std' });
+    const e = s.city.edges[P.blockedEdge];
+    s.t += 36;
+    const J = createIncident(s, { type: 'traffic', variant: 'std', nodeId: e.a });
+    J.hz = { law: 'roadCrash', target: e.id, at: s.t, src: [{ ev: P.rootEvent, inc: P.id, w: 0.9, what: 'queue', ref: e.id, since: s.events[P.rootEvent].t }] };
+    const L = chainLines(s, J)[0], name = `${e.name} ${(e.seq ?? 0) + 1}구간`;
+    expect(L.text.split(name).length - 1, L.text).toBe(1);
+    expect(L.text).toBe(`${name}의 사고(사건 ${P.code} 교통사고)로 밀려 있던 그 구간에서 난 사고입니다.`);
+    expect(L.edge).toEqual([e.id, e.id]);
+    expect(L.ev).toEqual([P.rootEvent]);
+  });
   it('연기 수는 연기가 동네로 번진 건수(연기 알림)다 — 연기 규칙은 장부 줄(world.log)을 남기지 않는다 (보통 S3)', () => {
     const sim = probedShift('S3').sim, n = sim.events.filter((e) => e.tag === 'smoke').length;
     expect(n, 'S3 에는 연기 알림이 있다').toBeGreaterThanOrEqual(1);

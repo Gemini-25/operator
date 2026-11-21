@@ -85,6 +85,8 @@ function hzSentence(sim: Sim, law: HazardLawId, target: number, at: number, s: H
       // 밀림의 뿌리를 만든 항: 닫힘(통제 기록) · 사건의 감속(발생 기록) · 정체 · 얹은 혼잡(인파 — 그 말이 곧 원인이다)
       if (e && /인파/.test(e.text)) return `${edgeOf(sim, s.ref)}의 ${josa(c, '으로/로')} 차가 밀려 있던 ${tgtE}에서 난 사고입니다.`;
       const w = e && /정체/.test(e.text) ? '정체' : e && e.kind === 'incident' ? '사고' : '통제';
+      // 뿌리가 그 구간 자신이다(먼저 난 사고로 느려진 구간에 차가 밀렸다 — 교통 모델의 밀림은 뿌리 구간에도 한 다리 건너 찬다): 같은 이름을 두 번 쓰지 않는다
+      if (s.ref === target) return `${tgtE}의 ${w}(${c})로 밀려 있던 그 구간에서 난 사고입니다.`;
       return `${edgeOf(sim, s.ref)}의 ${w}(${c})로 차가 밀려 있던 ${tgtE}에서 난 사고입니다.`;
     }
     case 'lane': return `한 차로가 막힌 ${tgtE}에서 난 사고입니다(${c}).`;

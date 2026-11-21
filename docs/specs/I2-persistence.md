@@ -1173,3 +1173,78 @@ for (const [seed, d, f] of cases) {
 - **단계 6**: 마우스 정보 '복구 공사 — 약 n분 뒤 개통'은 `cs.roads`(openAt)·`cs.held`(교대 내내)로, 범례 "복구 공사 도로"는 `drawObstacleMark(ctx, 'roadwork', x, y, r, true, REPAIR_RING)`.
 - **단계 7**: 보고서 '복구 공사가 끝난 도로 n구간이 교대 중에 열렸습니다.' = `stats.reopened`(전면만 — 한 차로 완료는 세지 않는다), `CarrySummary.roads` = 다음 상태의 `roads.length`.
 - **단계 8**: `chain.ts --disaster quake@1` 의 교대 2 복구 도로 평균은 위 진단으로 5.8(기준 ≥ 1). 위 알려진 문제 셋.
+
+### 단계 5 — 건물 (이어받은 상태가 없을 때 결과 불변) · 덩어리 s5, `wf/persist-s5`
+
+시작점 `016c61c`(`wf/persist` — 단계 0·4 끝). 주 브랜치(`claude/practical-keller-xm0ac2`) 받기는 앞으로 감을 것이 없었다. 코드 커밋 `a809418`.
+
+**실제 이름** (뒤 단계가 쓴다)
+
+| 파일 | 이름 |
+|---|---|
+| `src/sim/placeUse.ts` (새 잎 모듈 — type 만 import) | `placeCond(sim, id)`(겹침 표의 항목 — 이어받은 상태가 없으면 `null`) · `placeUsable(sim, id, allowClosed = false, inShift = true)`(본문 §3.6 의 식 그대로) · `preBurnt(s)`·`setPreBurnt(s, mask)`(처음부터 탄 칸 — 현장 → `Uint8Array` 의 `WeakMap`). `persist.ts` 가 `placeCond`·`placeUsable` 을 다시 export 한다 |
+| `src/sim/persist.ts` | 상수 `PLACE_LINES` 4(교대 시작에 건물마다 한 줄로 알리는 수 — 그 뒤는 '외 n곳') · `PRE_BURN` 0.35. export `placeOutcome(sim, I)`(끝 상태의 표 — 진실을 읽는 유일한 곳) · `applyPlaceWear(sim, s, I)` · `noteWearIncident(sim, I)`. 안쪽: `applyPlaceCarry(cs, co)`(initCarry — 겹침 표·적용 목록 'place') · `placesNext(sim)`(makeCarryover — 새 피해 · 휴식 · 상한) · `heavier(a, b, since)`(여러 행·같은 건물 합치기) · `rubbleOf(s)`(잔해의 몫과 무너진 자리 — G4 `ruinInfo` 와 같은 식) · `copyPlace` · `placeLabel` · `placeLine` |
+| `src/sim/incidents.ts` | `placeGone(sim, id)` = `!placeUsable(sim, id)`(X6 의 시험이 쓰는 이름으로만 남겼다 — 시뮬레이션의 자리는 `placeUsable` 을 직접 부른다) · `pickPlace` 의 `weigh(q, strict, allowClosed)` |
+
+**여섯 자리와 placeGone 의 자리** (모두 `placeUsable` 한 번 — 이어받은 상태가 없으면 X6 의 조건 그대로):
+
+| 자리 | 부름 |
+|---|---|
+| 장소 추첨 `incidents.pickPlace` | 엄격·대안 `placeUsable(sim, q.id, false)`, 둘 다 비면(이어받은 상태가 있을 때만) 셋째 단계 `placeUsable(sim, q.id, true)` — 출입 통제는 되고 무너짐은 끝까지 안 된다. 흔적(`marked`, `dmg > 0`)의 가중치: 붕괴 `× (1 + 3 × dmg)` · 가스 누출 `× (1 + dmg)` — `carryState.on` 일 때만 곱한다 |
+| 정해 준 건물 `createIncident` 의 `fixedPlace` | `placeUsable(sim, opts.placeId)`(마지막 안전장치) |
+| 재난 `disaster.pickPlace` | `placeUsable(sim, q.id, false, false)` |
+| 연쇄 방화 `scenarios/crime.ts` `arsonNext` 의 `pool` 두 줄 | `placeUsable(sim, q.id, false, false)` |
+| 은신처 `pursuit.ts` 의 `cands` | `placeUsable(sim, q.id)` |
+| 현장 `sceneManager.createScene` | `applyPlaceWear(sim, s, I)` — `applyExpo` 바로 다음 |
+| (넷째 자리) 법칙 사건을 꺼낼 때 `tickIncidents` | `!placeUsable(sim, c.opts.placeId)` |
+| (다섯째 — 본문에 없던 자리) 재범의 자리 `field/hazards.ts` `reoffendPlace`(I1-b C10) | `!placeUsable(sim, q.id)` |
+| I1-b `world/state.ts` `placeState` | `usable: placeUsable(sim, placeId)`(세 갈래 모두) — 세계 규칙·법칙의 `placeState(…)?.usable === false` 가 이어받은 출입 통제·무너짐도 본다 |
+
+**이어받은 손상과 이번 교대의 충격이 한 건물에 겹칠 때의 차례** (머리 알림 ①): `createScene` 은 `buildScene` → I1-b `applyExpo`(그 건물의 `world.expo[p].shake > 0` 이면 `s.wear = { dmg: shake, soot: 0, cause: 'shock', inc: 흔든 사건의 코드, pre: 0 }`, 끊긴 배관이면 새는 밸브) → **`applyPlaceWear`** → `initInjuries`. `applyPlaceWear` 는 `s.wear` 가 없으면 이어받은 값으로 만들고, 있으면 **합친다**: `dmg` 는 큰 쪽이고 원인(`cause`)·사건 이름(`inc`)도 큰 쪽의 것(같으면 먼저 있던 충격 그대로 — 덮어쓰지 않는다), 그을음은 이어받은 값(충격은 0). 그다음 처음부터 탄 칸을 놓는다(`pre`). 그래서 측정 도구의 `S(I)`(`wear.cause === 'shock'` → building, 그 밖 → carry)와 I1-b 보고서의 '이 건물은 사건 n의 충격으로 이미 금이 가 있었습니다' 줄(`world/report.ts` — `cause 'shock'` 일 때만)은 **손상이 더 큰 쪽**을 따른다. X6 의 `catOf` 는 합친 `dmg` 로 처음 건전도를 깎는다(`CAT.WEAR_INTEG` 그대로). 손상 사실의 기록(`noteWearIncident`)은 `s.wear` 가 아니라 겹침 표의 항목으로 만든다 — 충격이 더 커도 이어받은 손상의 기록은 남는다.
+
+**적용의 차례** (`initCarry`): 건물(`applyPlaceCarry` — `cs.places` 에 `sim.carry.places` 의 사본, 적용 목록에 출입 통제·무너짐을 남은 교대가 큰 순(같으면 id 순), 그다음 통제가 풀린 건물(`opened`)을 id 순) → 도로(`applyRoadCarry` — 건물 앞 감속 포함) → (②) 대원·부대·재고. 기록도 이 차례다(원칙 5). 건물 줄은 출입 통제·무너짐과 통제가 풀린 건물을 따로 **앞의 `PLACE_LINES`(4) 곳만 한 곳에 한 줄**, 다섯째부터는 '외 n곳' 한 줄로 묶는다(시험 10 의 "'외 n곳' 줄은 n 으로 센다" — 시험 도구 `noteEvents` 가 항목 → 기록 id 를 만든다). **건물 앞 감속의 장부 주인**은 그 건물의 줄(묶였으면 '외 n곳' 줄 — 한 차로 공사가 함께 있는 구간은 그 공사 줄 그대로, 단계 4).
+
+**끝 상태 → 다음 교대** (`placesNext` — `makeCarryover` 안, 순수 · 난수 없음): 사건마다 `placeOutcome` → 같은 건물의 여러 사건은 `heavier` → 앞 상태와 합치기 · 휴식 → 상한 → id 순.
+
+**본문과 다르게 한 곳**
+
+1. **`placeCond`·`placeUsable` 은 새 잎 모듈 `src/sim/placeUse.ts` 에** 둔다(`persist.ts` 가 다시 export). 연쇄 방화의 `arsonNext` 는 시나리오 묶음 파일(`scenarios/crime.ts`)에 있는데, `persist.ts` 는 `resources` → `dispatch/dispatcher` → `callSystem` 을 끌어온다 — 시나리오 파일이 그것을 import 하면 `scenarios.ts` 가 끝나기 전에 `callSystem` 의 맨 위(`for (const sc of SCENARIOS)`)가 돌 수 있다(CLAUDE.md "시나리오 표는 추격전을 import 하지 않는다"와 같은 꼴). 그래서 판정 함수만 type 만 import 하는 파일로 뺐다. `catastrophe.catOf` 가 부르는 `preBurnt` 도 같은 파일(field 의 모듈 맨 위가 `CAT` 를 읽는 순환을 피한다).
+2. **placeGone 의 자리는 다섯**이었다 — 본문·머리 알림의 넷(장소 추첨·정해 준 건물·은신처·법칙 사건)에 I1-b C10 의 재범의 자리(`hazards.reoffendPlace`)가 더 있다. 같은 `placeUsable(sim, q.id)`(inShift true)로 바꿨다 — 재범은 건물을 예약할 때 고르므로(그 건물 곁의 경찰을 보는 `when`) 고를 때 걸러야 되고르기와 어긋나지 않는다.
+3. **X6 의 전소 분모가 이미 탄 칸을 센다**(`catOf` 의 `fuelMask` = `foot ≥ 1 && (fuel > 0 || burned)` — "이미 탄 칸도 연료가 있던 칸이다"). 그래서 §10.2 의 "분자에서 `s.wear.pre` 칸을 뺀다" 대신 **처음부터 탄 칸을 `fuelMask` 에서 뺀다**(`preBurnt(s)` 의 칸 — 분모·분자에서 함께 빠진다, `burnFracOf` 는 `fuelMask` 안의 탄 칸만 센다). 이어받은 상태가 없으면 `pre` 가 없어 식이 그대로다.
+4. **붕괴 유형의 잔해 줄을 X6 가 표시한 건물에도 쓴다**(본문은 "X6 가 표시하지 않은 건물에만"). X6 의 `ruinFrac` 은 사건 중에 새로 무너진 칸(`damage0` 에 없던 칸)만 세어, 붕괴 현장에 처음부터 깔린 잔해를 보지 않는다 — 본문대로면 잔해가 0.22 넘게 깔린 붕괴 현장이 사건 중에 구획 하나가 더 무너져 `partial` 표시를 받으면 무너짐 4 가 아니라 통제 2 가 된다(더 무너졌는데 더 가볍다). 폭발(가스 폭발 대형 사고·터진 소품·불붙은 배관)·불붙은 소품·화재의 흔적(0.05~0.25) 줄은 본문대로 X6 가 표시하지 않은 건물에만.
+5. **'천장 일부 붕괴' 줄은 없다** — X6 단계 3 이 그 덩어리를 지웠다(`hazards.ts` 의 주석). 2차 붕괴는 `ESCALATION` 의 detail 끝말 `2차 붕괴` 그대로(`hazards.tickCollapse`).
+6. **`inc` 의 사건 이름은 `util.TYPE_NAME`**(`조직 3번째 교대 · 04 건물 화재`) — 본문의 `scenarioName` 은 `scenarios.ts` 를 import 해야 한다(위 1 의 순환, 단계 4 의 6 과 같다).
+7. **여러 행·같은 건물을 합칠 때 원인·사건 이름·X6 상태(`mark`)·무너진 자리(`spot`)는 무거운 상태 쪽**(같으면 뒤 줄 — 새 피해). 흔적만 남고 손상·그을음이 둘 다 0.05 아래면 넣지 않는다(`placeOutcome` 이 `null`). `mark` 는 그 건물의 X6 상태가 **그 사건의 것**일 때만 붙인다.
+8. **휴식**: 출입 통제가 풀릴 때(`repair` 0 — 휴식이든 `CLOSED_CAP` 이든) `mark`·`spot` 을 지운다(복구됐다 — 지도가 전소·무너짐 그림을 그리지 않게). `opened` 는 한 번만(다음 휴식에서 지운다). 방금 풀린 항목은 그 휴식에서 흔적의 감쇠(−0.25·−0.15)를 받지 않는다.
+9. **상한의 순서**(본문은 "repair 가 작은 것부터 '복구 완료'"만): `CLOSED_CAP` 을 넘으면 남은 교대가 작은 것, 같으면 **id 가 큰 것**부터 복구 완료(흔적으로 — 위 8 과 같은 식) / `PLACE_CAP` 을 넘으면 흔적 가운데 **손상 + 그을음이 작은 것**(같으면 id 가 큰 것)부터 버린다. 만든 상태는 `readCarryover` 의 상한(남은 교대 → id)에 다시 걸리지 않는다(시험).
+10. **문구**(본문 §3.7 의 7 에 맞추고 이름·묶음을 정했다): `${주소} ${이름} — ${inc}로 복구 공사 중이라 출입을 통제합니다 (n교대 남음).` · `… 무너져 출입할 수 없습니다 (n교대 남음).` · `${주소} ${이름} 복구 완료 — 다시 문을 열었습니다.` · `외 n곳도 지난 교대의 피해로 출입을 통제합니다 (무너짐 k곳).` · `외 n곳도 복구를 마치고 다시 문을 열었습니다.` — `role 'SYSTEM'`·`actor '상황실'`·`kind 'shift'`·`imp` 1(풀린 건물 0)·원인 요약 줄·`tag 'carry'`. 손상 사실: `이 건물은 ${inc}로 [그을리고 ]손상된 상태였습니다 (구조 손상 n%).` / 열린 터는 그을음 0.2 이상일 때만 `이 터에는 ${inc}로 탄 자리가 남아 있습니다.`(손상 줄은 없다 — 열린 터의 손상은 0).
+11. **처음부터 탄 칸의 수** = `min(후보 수, round(PRE_BURN × 그을음 × 실내 연료 칸 수))` — "개수"는 불 곁을 빼기 전의 실내 연료 칸 수로 읽었다(그을음에 비례한 건물의 몫). 후보는 실내 구역(`s.regions[s.region[i]].indoor`)의 `fuel > 0` 칸에서 불 칸과 그 이웃 8칸을 뺀 것, `hashStr(I.id + ':' + i)` 의 오름차순(같으면 칸 번호 순).
+12. **교대 끝의 `world.expo`(이웃의 충격·끊긴 배관·잠긴 지하)는 이어받지 않는다**(머리 알림 ④의 결정). 본문 §3.6 의 표에 없는 원천이고 `PlaceCarry.cause` 에 충격이 없으며(열거값을 넓히면 판의 뜻이 바뀐다), 머리말이 "세계 상태의 교대 간 지속"을 ROADMAP 의 새 항목으로 미뤘다. 잰 크기(아래 수치): 보통 교대 0~3채, 지진 교대 5~15채 — 넣는다면 `marked`(`dmg = shake`)로 `PLACE_CAP` 안에 들어가는 크기다.
+13. **`placeState` 의 이어받은 항목 `ruinFrac`** 을 I1-b 의 자리값 `pc.dmg` 에서 본문 §3.6 의 `pc.state === 'ruin' ? 1 : 0` 으로 바꿨다(읽는 곳 없음 — `usable` 만 쓰인다). `knownBuildingAt` 은 고치지 않았다(이미 겹침 표를 `inc` −1 로 돌려준다 — 부르는 판단 코드가 아직 없다).
+14. **격리 시험(9)에 `placeCond`·`preBurnt` 를 더했다** — 관제·지휘 코드에 겹침 표를 읽는 함수 이름도 없다.
+
+**시험** (`tests/persistence.test.ts` 65 → 81개): 3 — `placeUsable`(교대 안 X6 는 inShift 일 때만 · 흔적은 쓰고 · 통제는 allowClosed · 무너짐은 끝까지 · 이어받은 상태가 없으면 X6 만) · ① 장소 추첨(이어받은 상태가 없는 P4 에서 사건이 났던 건물 10곳을 무너짐으로 → 그 교대에 그 건물들에서 사건 0) · ② 정해 준 건물(다른 건물에서) · ③ 은신처(K1·K3·K4·K9 에서 고른 은신처를 무너짐으로 → 다른 은신처) · ④ 연쇄 방화(`onClose` 를 바로 불러 — 이어받은 상태가 없을 때 고른 상점과 가까운 상점 12곳이 무너지면 그 밖에서) · ⑤ 재난(지진 Q2 가 고른 건물을 무너짐으로 → 그 건물들에서 사건 0) · 셋째 단계(폭동의 장소 여섯이 모두 통제면 그 가운데서, 모두 무너지면 교차로에서) · 흔적의 가중치(손상 1 인 흔적 24곳에 붕괴가 더 난다) · ⑥ 현장(그을음 0.6 · 손상 0.3 — `s.wear`·처음부터 탄 칸 = `pre` · 불 곁은 아님 · `totalFuelTiles` 가 정확히 `pre` 작다 · `burnedTiles` 0 · X6 의 `fuel0` 이 작고 처음 탄 비율 0 · 처음 건전도 ≤ 0.85 · 발생 기록 바로 뒤에 손상 사실 하나 · 충격과 겹칠 때의 합치기 둘) · ⑥ 방향(아래) · 글자 검사(`src/sim` 에 `placeGone(sim, …)` 을 부르는 곳 없음 · 아홉 자리의 `placeUsable`/`applyPlaceWear`). 끝 상태 — X6 다섯 줄 · 그을림 + 소실률 0.4 → 통제 1 · 다른 사건의 X6 상태는 그 사건의 줄이 아님 · 소실률 0.7/0.1/0.02 · 붕괴(0.22 문턱 · 2차 붕괴 → 무너짐 · spot) · 승강기 없음 · 열린 터는 흔적만 · 휴식(통제 −1 · 풀림 ×0.4·×0.5·opened·mark 지움 · 흔적 감쇠·지움 · opened 한 번 · 같은 건물의 새 피해와 합치기·since) · 상한(13번째 통제가 생기면 id 가 큰 것이 풀리고 가장 옅은 흔적이 버려진다). 6·10 — 짧은 연속의 건물 몫(통제·무너짐 ≤ 12 · 건물 ≤ 24 · 무너진 건물에서 사건 0 · 손상 건물의 사건마다 기록 하나 `checkWearLog`), `checkCarryLog`·`checkRoadLog` 가 건물 줄의 묶음을 안다(`noteEvents`). **결과 해시를 숫자로 박은 시험은 없다.**
+
+**수치**
+
+- 해시 목록 158교대(scratchpad `wf-persist/s04-hashlist.ts` — 단계 0·4 와 같은 목록): 기준 `s04-base-hashes.txt`(`19a7e68`) ↔ 변경 뒤 `s5a-hashes.txt`(여섯 자리를 `placeUsable` 로 바꾼 중간 코드)·`s5b-hashes.txt`(커밋 `a809418` 의 코드) — **둘 다 158줄 모두 한 글자도 다르지 않다**(`report.hash` · 보고서 JSON 의 FNV · 기록 수 · 명부 지문). 강제 실행 일곱 × 3 과 §8 의 셋 × 3, 지진 Q0~Q2 도 이 목록 안이라 이어받은 상태가 없는 교대의 한계 시간·방치 건수는 그대로다.
+- 이어받은 상태로 시작한 강제 실행(`wf-persist/s5-force.ts` — 지진 Q1 이 남긴 상태: 무너짐 8곳 · 복구 도로 6구간, 강제 일곱 `fire/std`·`collapse/std`·`hazmat/std`·`armed/kidnap`·`fire/arson`·`armed/riot`·`collapse/gasblast` × F0~F2): 사건 331건 — 한계 시간 0 · 무대응 0 · 방치 2 · 열린 사건 0 · 무너진 건물에서 난 사건 0. 같은 21교대를 이어받은 상태 없이(`s5-force2.ts none`): 336건 — 한계 시간 0 · 무대응 0 · 방치 2 · 열린 사건 0.
+- 진단(기준 아님 — `wf-persist/s5-smoke.ts`, 계보 × 교대): **보통 4 × 6** — 다음 상태의 출입 통제 + 무너짐 0~8곳(교대 6 에 1~6곳 — 늘어나지도 줄어들지도 않는다), 흔적 0~7곳, 풀린 건물(opened) 0~4곳, X6 상태는 대개 구획 붕괴(partial — 통제 2), 사건 352건 가운데 무너진 건물에서 0 · 통제 건물(셋째 단계)에서 0 · 손상된 건물(흔적)에서 0(흔적이 적고 빨리 옅어진다), 한계 시간 종료 3건(0.9%), 열린 사건 0. **첫 교대에만 지진 4 × 5** — 교대 2~4 의 통제 + 무너짐 6~12곳(지진의 전체 붕괴가 무너짐 4교대 — 교대 5 에 풀려 opened 7~9곳), 사건 326건 가운데 무너진 건물에서 0, 한계 시간 종료 6건(1.8%), 열린 사건 0.
+- 그을음의 방향(§6.3 의 8 — `wf-persist/s5-soot.ts`, 아파트 281 · 같은 사건 시드 SOOT0~5): **심각도 3** — 그을음 0 의 소실률 평균 0.029 · 그을음 0.6 은 0.026(처음부터 탄 칸 평균 27.7칸 · 이번 교대에 탄 칸 평균 3.8 → 2.7칸), 전소·X6 탄 비율 0. **심각도 2**(일찍 꺼지는 작은 불) — 0.014 → 0.016: 이번 교대에 탄 칸 수는 같거나 적지만(평균 1.8 → 1.7칸) 분모가 21% 줄어 비율이 오른다(아래 알려진 문제).
+- `world.expo`(머리 알림 ④ — `wf-persist/s5-expo.ts`): 교대 끝에 충격을 받은 건물 보통 0~3채(0.1 이상 0~2), 지진 5~15채(0.1 이상 2~14), 끊긴 배관 지진 0~3채, 태풍 0.
+- 관문 `npm run check` 통과(코드 커밋 `a809418`): 파일 20 · 1062개 통과 + 건너뜀 1(persistence 65 → 81), vitest 631초 · 전체 11분 5초(다른 묶음과 함께 도는 기계 — 사용자 CPU 33분). `sweep 40 --check` 의 분포(보통 590건 · 성공 70% · close reasons resolved 588 · timeout 1 · abandoned 1 · 교착 후보 0 · 잊힌 사건 0 · C1~C5 0 · holes 0 · systems carry 0%)는 단계 4 관문의 기록과 같다(이어받은 상태가 없는 교대 — 해시 목록과 같이 그대로). persistence 혼자 60초쯤(새 시험 가운데 그을음의 방향 12교대가 가장 길다).
+- 어려움·극한 `sweep 40 --check` 모두 '검증 통과'(이어받은 상태가 없는 교대): 어려움 737건 — close reasons resolved 722 · timeout 5 · noresponse 2 · abandoned 7 · shiftend 1, 교착 후보 0 · 잊힌 사건 0 · C1~C5 0 · holes 0 / 극한 903건 — resolved 832 · timeout 29 · noresponse 12 · abandoned 20 · shiftend 10, 교착 후보 1(허용 안의 값 — 관문 통과) · 잊힌 사건 0 · C1~C5 0 · holes 0 (scratchpad `wf-persist/s5-hard40.txt`·`s5-ext40.txt`).
+
+**알려진 문제 (단계 8 의 균형으로)**
+
+- **작은 불은 그을린 건물에서 소실률이 오른다**(분모 효과): 처음부터 탄 칸을 재산 피해의 분자·분모에서 함께 빼므로(본문 §3.6 — 시험이 `totalFuelTiles` 가 정확히 `pre` 작다를 본다), 일찍 꺼져 탄 칸 수가 같은 불은 비율이 `total / (total − pre)` 배(그을음 0.6 이면 1.27배쯤) 오른다. 번지는 불은 처음부터 탄 칸이 막아 비율도 줄어든다(심각도 3). 이어지는 영향은 흔적 줄(소실률 0.05)의 문턱을 넘는 작은 불 — 시험 3 의 방향은 번지는 불(심각도 3)의 소실률과 이번 교대에 탄 칸 수로 건다. 손잡이 §6.4-2 의 `PRE_BURN`(크기만 바뀐다) 또는 판정의 분모를 처음 연료 칸으로 두는 것(본문과 다르다 — 사용자 판단).
+- **처음부터 탄 칸은 X6 의 구획 상한(`K_BURN × 탄 몫`)과 열화상 문턱(`regionBurning`)에도 든다** — 전소 분모(위 3)만 뺐다. 그을음 0.6 이면 실내 구획의 탄 몫이 0.2 남짓 → 상한 0.84 쯤(L1 0.6 위), `s.wear.dmg` 의 처음 건전도(0.5 × dmg)와 겹친다. 고치려면 `catastrophe.ts` 의 매초 고리(구획 탄 몫) 두 곳에 `preBurnt` 를 넣어야 한다 — 뜨거운 함수라 넣지 않았다.
+- **지진 뒤 출입 통제·무너짐이 상한(12)에 4교대 가깝게 붙는다**(위 진단 — 무너짐 4교대). 장소 추첨은 다른 건물로 가므로 한계 시간이 오르지 않았다. 손잡이 §6.4-2(붕괴 `repair` 4·2).
+- **자연히 생긴 연속에서 손상된 건물(흔적)의 사건은 드물다**(진단 678건에 0) — 흔적이 교대마다 0~7곳이고 그을음 −0.25 · 손상 −0.15 로 한두 교대면 지워진다. 흔적 가중치(붕괴 × (1 + 3 × dmg))와 `noteWearIncident` 는 시험 3 이 손으로 만든 상태로 본다. 단계 8 의 측정(`chain.ts` 의 `markedInc`)이 자연히 생기는 비율을 잰다.
+- 화재가 구획 붕괴(X6 `partial`)를 남기는 일이 잦아 화재 건물이 대개 출입 통제 2교대가 된다(진단의 X6 상태 대부분이 partial). X6 의 균형(`K_BURN`)이거나 이 묶음의 표(partial → repair 2)다.
+
+**뒤 단계가 이어받을 자리**
+
+- **단계 6 (화면)**: 지도 `carryLayer.ts` 는 `sim.carryState.places`(교대 내내 그대로 — `mark`·`spot`·`opened`·`state`·`soot`·`dmg`)를, 현장 `staticLayer` 의 얼룩은 `s.wear?.soot` 와 `s.burned`(처음부터 탄 칸이 이미 탄 바닥으로 그려진다)를 읽는다. 마우스 정보의 건물 줄은 `placeCond(sim, q.id)`(화면도 불러도 된다 — 상태를 바꾸지 않는다).
+- **단계 7 (보고서)**: '지난 교대에 손상된 건물에서 사건 n건 (코드들).' = `carryState.stats.markedInc`, `CarrySummary.marked·closed·ruin` = 다음 상태의 `places`(state 별), 그 교대의 출입 통제 건물 수 = `carryState.places`. `makeCarryover` 는 지금도 순수하다(건물은 난수를 쓰지 않는다 — `buildReport` 안에서 불러도 된다).
+- **단계 8 (측정·균형)**: 위 알려진 문제 다섯, `chain.ts --soot`(§6.3 의 8 — `s5-soot.ts` 를 옮기면 된다), §6.3-6 의 "교대 6 의 출입 통제·무너짐 평균 ≤ 교대 2 의 절반"(진단: 지진 계보의 교대 2 는 9~12곳, 교대 5~6 에 3~8곳).

@@ -467,7 +467,14 @@ registerConsequence({
  */
 export const SMOKE = { HOLD: 45, AFTER: 120, R: 450, V: 0.6, FULL: 60, STEP: 10, WILD_PAD: 300, WILD_V: 0.7, WILD_MOVE: 60, WILD_GROW: 30, BUMP: 0.2 };
 
-const bigSince = new WeakMap<Scene, number>();      // 현장 → 불 칸이 FIRE_BIG 이상이 된 시각 (현장 객체의 모양을 바꾸지 않는다 — 현장은 교대마다 새로 만든다)
+// 교대 → (사건 id → 불 칸이 FIRE_BIG 이상이 된 시각). 현장 객체의 모양을 바꾸지 않는다 — 교대마다 새 Sim 이라 되감기에도 안전하다.
+// 열쇠(key)가 이 표를 본다: 기억한 불이 있으면 규칙이 돌아 그 불이 기준 아래로 내려간 순간 시각을 지운다(45초는 이어진 시간이다 — 잠깐 줄었다 다시 커진 불은 처음부터 센다)
+const BIG_SINCE = new WeakMap<Sim, Map<number, number>>();
+function bigSince(sim: Sim): Map<number, number> {
+  let m = BIG_SINCE.get(sim);
+  if (!m) BIG_SINCE.set(sim, (m = new Map()));
+  return m;
+}
 /** 그 현장의 불 칸(불 > 0.2) 수 — hazards.tickFire 의 큰 불 신호와 같은 셈 (s.burning 은 불 > 0 인 칸 수라 그보다 작으면 셀 것이 없다) */
 function bigCells(s: Scene): number {
   if (s.burning < FIRE_BIG) return 0;
@@ -557,21 +564,21 @@ registerConsequence({
   key: (sim) => {
     if (wildFront(sim)) return 'smoke';
     for (const q of sim.world.spans) if (q.f === 'smoke') return 'smoke';
+    if (bigSince(sim).size) return 'smoke';
     for (const I of sim.incidents) { if (I.phase === 'closed') continue; const s = sim.scenes[I.id]; if (s && !s.archived && s.burning >= FIRE_BIG) return 'smoke'; }
     return null;
   },
   cooldown: 0, cap: Infinity, spawns: false, silent: true,
   test: () => true,
   apply: (c) => {
-    const sim = c.sim, t = sim.t;
+    const sim = c.sim, t = sim.t, big = bigSince(sim);
     // (가) 크게 이어지는 불
     for (const I of sim.incidents) {
       const s = sim.scenes[I.id];
-      if (!s) continue;
-      const n = I.phase === 'closed' || s.archived ? 0 : bigCells(s);
-      if (n < FIRE_BIG) { bigSince.delete(s); continue; }
-      let at0 = bigSince.get(s);
-      if (at0 === undefined) { bigSince.set(s, t); at0 = t; }
+      const n = !s || I.phase === 'closed' || s.archived ? 0 : bigCells(s);
+      if (n < FIRE_BIG) { big.delete(I.id); continue; }
+      let at0 = big.get(I.id);
+      if (at0 === undefined) { big.set(I.id, t); at0 = t; }
       const sp = smokeSpan(sim, 'fire', I.id), pl = plumeOf(n);
       if (sp) {
         if (pl.r > (sp.at?.r ?? 0) || pl.v > (sp.v ?? 0)) moveSmoke(sim, sp, { x: sp.at!.x, y: sp.at!.y, r: Math.max(pl.r, sp.at!.r) }, Math.max(pl.v, sp.v ?? 0));

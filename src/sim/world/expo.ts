@@ -96,6 +96,30 @@ export function emberDelta(sig: Signal, gap: number, mul: number): number {
   return EMBER.K * mul * (sig.mag / 50) * (r * r) / (g * g);
 }
 
+/**
+ * (b3-9 L7) 닫힌 현장에 실제로 남은 불씨와 열 — 식어 가는 동안의 재발화 위험 (설계서 §3.7 L7. 틱 없이 닫힌 꼴의 식 — 주는 자리는 rules/structure.ts 의 residualHeat):
+ *   e0 = Σ(불 > FIRE_MIN 인 칸의 불 세기) + HEAT_W × Σ(열 > HEAT_MIN 인 칸의 열), 칸마다 × (1 − 젖음)
+ *   e(Δt) = e0 × exp(−Δt / τ) 로 식고 위험률 λ = K × e — 누적 H(Δt) = K × e0 × τ × (1 − exp(−Δt / τ)), 끝내 닿는 값 H∞ = K × e0 × τ
+ *  K      첫 값 (e0 = 3 — 불씨 다섯 칸과 뜨거운 칸 여섯쯤 — 이면 H∞ = 0.54, 42%) · TAU 식는 시간(초) · TAU_RAIN 비가 오면 · MIN_DELAY 다시 붙기까지 적어도
+ * 잔불 정리를 마친 구역은 열 0 · 젖음 0.9 라 저절로 0 이다 — "잔불 정리를 했는가"를 따로 묻지 않는다(상태가 말한다).
+ * 그 건물 안(실내 구역)의 칸만 센다 — 건물 현장의 불 요약(hazards.fireLoad)과 같은 규칙: 산불 현장의 타는 숲·마당의 불은 그 건물의 잔불이 아니다. 길 위의 현장(건물 없음)은 부르지 않는다
+ */
+export const RESIDUAL = { K: 1.0e-3, TAU: 180, TAU_RAIN: 120, MIN_DELAY: 60, FIRE_MIN: 0.04, HEAT_MIN: 0.5, HEAT_W: 0.25 };
+export function residualOf(s: Scene): number {
+  const fire = s.fire, heat = s.heat, wet = s.wet;
+  let e = 0;
+  for (let i = 0; i < fire.length; i++) {
+    const f = fire[i], h = heat[i];
+    if (!(f > RESIDUAL.FIRE_MIN) && !(h > RESIDUAL.HEAT_MIN)) continue;
+    const r = s.region[i];
+    if (r < 0 || !s.regions[r].indoor) continue;
+    const dry = 1 - wet[i];
+    if (f > RESIDUAL.FIRE_MIN) e += f * dry;
+    if (h > RESIDUAL.HEAT_MIN) e += RESIDUAL.HEAT_W * h * dry;
+  }
+  return e;
+}
+
 /** 노출 칸 — 없으면 만든다. 배관의 문턱(그 건물의 배관이 얼마나 약한가)은 만들 때 한 번: 흐름 hz:pipe:<건물> 의 첫 값 (fork 는 부모 흐름을 쓰지 않는다) */
 export function expoOf(sim: Sim, placeId: number): PlaceExpo {
   const ex = sim.world.expo;

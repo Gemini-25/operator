@@ -18,9 +18,9 @@ import { emit } from '../../events';
 import { addObstacle, noteRoadCause, obstacleOnEdge } from '../../traffic';
 import type { Place, PlaceExpo, Signal } from '../../types';
 import { registerConsequence } from '../consequence';
-import { EMBER, GAS_KINDS, SHOCK, burnedPlaces, emberDelta, expoOf, fireTargetOk, heatMul, neighborsOf, neighborsOfPoint, shockDelta } from '../expo';
+import { EMBER, GAS_KINDS, RESIDUAL, SHOCK, burnedPlaces, emberDelta, expoOf, fireTargetOk, heatMul, neighborsOf, neighborsOfPoint, residualOf, shockDelta } from '../expo';
 import type { Nb } from '../expo';
-import { hazardImpulse } from '../hazard';
+import { hazardCellFor, hazardImpulse } from '../hazard';
 import { placeState } from '../state';
 
 /** 균형 상수 */
@@ -158,4 +158,30 @@ registerConsequence({
   cooldown: 0, cap: Infinity, spawns: false,
   test: (c) => { const I = c.sim.incidents[c.sig!.inc], e = c.sim.world.expo[c.sig!.place]; return !!I && I.closeReason === 'resolved' && !!e && e.pipe; },
   apply: (c) => { c.sim.world.expo[c.sig!.place].pipe = false; },
+});
+
+// ───────────────────────── (b3-9) residualHeat — 닫힌 현장에 남은 열 (설계서 I1 §3.7 L7 — 법칙은 world/laws/ember.ts 의 rekindle) ─────────────────────────
+// 사건이 닫히는 순간(신호 'closed') 그 건물 현장에 실제로 남은 불씨와 열 e0(expo.residualOf)이 식어 가는 동안 끝내 닿는 위험 H∞ = K × e0 × τ 를
+// 그 건물의 rekindle 칸에 충격으로 한 번 더한다. 문턱을 넘으면 넘는 시각 Δt* = −τ × ln(1 − 남은 문턱 / H∞) 뒤(적어도 MIN_DELAY)로 미뤄 예약한다 — 틱마다 적분하지 않는다.
+// 빼는 것: 교대 끝으로 닫힌 사건 · 길 위의 현장(건물이 없다) · 전소·전체 붕괴 건물(placeState — 더 탈 것이 없다) · 남은 열이 없는 현장.
+// 상태만 본다 — 그 사건의 유형·종료 사유(교대 끝 말고)·잔불 정리 여부를 묻지 않는다. 난수 없음(문턱은 칸이 뽑는다). 기록은 남기지 않는다 — 다시 붙으면 그 사건의 발생 기록이 종료 기록을 원인으로 갖는다
+function residualE0(sim: Sim, sig: Signal): number {
+  const I = sim.incidents[sig.inc], s = sim.scenes[sig.inc];
+  if (!I || !s || I.closeReason === 'shiftend' || sig.place < 0) return 0;
+  if (placeState(sim, sig.place)?.usable === false) return 0;
+  return residualOf(s);
+}
+registerConsequence({
+  id: 'residualHeat', label: '남은 열', on: ['closed'],
+  key: (_sim, sig) => (sig && sig.inc >= 0 && sig.place >= 0 ? 'inc:' + sig.inc : null),
+  cooldown: 0, cap: Infinity, spawns: false,
+  test: (c) => residualE0(c.sim, c.sig!) > 0 && hazardCellFor(c.sim, 'rekindle', c.sig!.place) !== null,
+  apply: (c) => {
+    const sim = c.sim, sig = c.sig!, e0 = residualE0(sim, sig), cell = hazardCellFor(sim, 'rekindle', sig.place);
+    if (!cell || cell.done) return;
+    const tau = sim.weather === 'rain' ? RESIDUAL.TAU_RAIN : RESIDUAL.TAU, Hinf = RESIDUAL.K * e0 * tau, need = cell.thr - cell.H;
+    // 넘는 시각: H(Δt) = H∞ × (1 − exp(−Δt/τ)) 가 남은 문턱에 닿는 때. 끝내 닿지 못하면(H∞ < 남은 문턱) 충격은 칸에 H 만 남긴다 — 사건도 기록도 없다
+    const delay = Hinf >= need ? Math.max(RESIDUAL.MIN_DELAY, -tau * Math.log(Math.max(1e-9, 1 - need / Hinf))) : 0;
+    hazardImpulse(sim, 'rekindle', sig.place, Hinf, { rate: Hinf, ev: sig.ev, inc: sig.inc, what: 'residual', ref: sig.place }, delay);
+  },
 });

@@ -77,6 +77,14 @@ function cellOf(sim: Sim, law: HazardLaw, target: number): HzCell {
 export function hazardCell(sim: Sim, law: HazardLawId, target: number): HzCell | null {
   return sim.world.hz.cells[law]?.[target] ?? null;
 }
+/**
+ * (b3-9) 충격을 주기 전에 문턱을 봐야 하는 자리(닫힌 꼴의 식 — L7 의 잔열: 넘는 시각을 문턱에서 거꾸로 푼다)를 위해 칸을 찾는다 — 없으면 문턱을 뽑아 만든다(cellOf 와 같다 — 흐름 hz:<법칙>:<대상>[:n], 경로와 무관).
+ * 등록되지 않은 법칙이면 null. 칸을 고치지 않는다 — 쌓는 것은 hazardImpulse 가 한다
+ */
+export function hazardCellFor(sim: Sim, lawId: HazardLawId, target: number): HzCell | null {
+  const law = lawOf(lawId);
+  return law ? cellOf(sim, law, target) : null;
+}
 /** 넘은 뒤의 칸: once 법칙은 그 대상이 끝난다. 아니면 넘친 몫을 다음 문턱(n + 1 의 흐름)을 향해 남긴다 — 사건을 예약했든 버렸든 기다리게 했든 같다 */
 function advance(sim: Sim, law: HazardLaw, target: number, cell: HzCell, H: number): void {
   if (law.once) { cell.H = H; cell.done = true; return; }

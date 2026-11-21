@@ -9,7 +9,8 @@
 //                 노출된 건물의 노출량 분포(가장 큰 것) — L2 의 세기(HEAT.K)를 맞추는 데 쓴다
 //   hazard-shock: (b3-8) 충격을 받은 건물 수(world.expo 의 shake > 0) · S_MIN 을 넘은 건물 수 · 배관이 끊긴 건물 수 · shake 분포(최댓값·사분위) ·
 //                 손상을 안고 시작한 현장 수(s.wear cause 'shock')와 그 가운데 새는 밸브를 놓은 현장 수 — L3 의 충격 크기(expo.SHOCK)와 b3-8c 의 세기를 맞추는 데 쓴다
-// 뒤 단계가 더할 줄: 닫힌 화재의 e0 분포(b3-9) · 정전이 닿은 4층 이상 건물 수(b3-10) · 연기 Σ∫c × base dt(b3-11).
+//   hazard-ember: (b3-9) 닫힌 건물 현장 수 · 남은 열이 있던 현장 수와 e0 분포(expo.residualOf — L7 과 같은 식) · rekindle 칸 수와 쌓인 H(= H∞ 의 합) · 문턱을 넘은 칸 — L7 의 세기(RESIDUAL.K)를 맞추는 데 쓴다
+// 뒤 단계가 더할 줄: 정전이 닿은 4층 이상 건물 수(b3-10) · 연기 Σ∫c × base dt(b3-11).
 //
 // 표본: HazProbe.tick() 을 매 틱 step() 뒤에 부른다 — 교통 모델이 혼잡을 다시 계산한 틱(traffic.driftAt 이 바뀐 틱)에만 도로를 읽는다(12초에 한 번).
 
@@ -18,7 +19,7 @@ import { DIVERT, roadFlow, roadParts } from '../src/sim/traffic';
 import type { RoadPart } from '../src/sim/traffic';
 import { roadSurface, roadWeight } from '../src/sim/world/laws/road';      // L1 의 가중(통행량 × 노면·시야 × 길이) — 법칙과 측정이 같은 식을 쓴다
 import { heatTargets } from '../src/sim/world/laws/heat';                   // (b3-7) L2 의 열원·대상·유속 — 법칙과 측정이 같은 식을 쓴다
-import { SHOCK } from '../src/sim/world/expo';                               // (b3-8) 금의 문턱 S_MIN
+import { RESIDUAL, SHOCK, residualOf } from '../src/sim/world/expo';          // (b3-8) 금의 문턱 S_MIN · (b3-9) 닫힌 현장에 남은 열 e0 (L7 과 같은 식)
 
 export interface HazLawCount { cells: number; crossed: number; made: number; waitingEnd: number }
 export interface HazRoad {
@@ -43,11 +44,19 @@ export interface HazHeat {
 export interface HazShock {
   shocked: number;                                  // 충격을 받은 건물 수 (shake > 0)
   overMin: number;                                  // shake ≥ SHOCK.S_MIN 인 건물 수 (금 기록이 남은 건물)
-  pipes: number;                                    // 배관이 끊긴 건물 수 (expo.pipe)
+  pipes: number;                                    // 배관이 끊긴 적 있는 건물 수 (expo.pipeEv ≥ 0 — b3-8c 부터는 그 누출이 '해결'로 닫히면 expo.pipe 를 거둔다)
+  shut: number;                                     // (b3-8c) 그 가운데 다시 잠긴 건물 수 (pipeEv ≥ 0 인데 pipe 가 거짓 — rules/structure.ts 의 pipeShut)
   shakes: number[];                                 // 충격을 받은 건물마다의 shake
   worn: number; valves: number;                     // 손상을 안고 시작한 현장 수 (s.wear cause 'shock') · 그 가운데 새는 밸브가 놓인 현장 수 (노출 칸의 pipe 가 참이던 건물의 현장)
 }
-export interface HazCount { laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null; heat: HazHeat | null; shock: HazShock }
+/** (b3-9) 닫힌 현장에 남은 열 — L7 rekindle 의 충격(H∞ = K × e0 × τ)과 같은 식으로 교대 끝에 다시 잰다 (닫힌 현장은 더 돌지 않는다) */
+export interface HazEmber {
+  closed: number;                                   // 닫힌 건물 현장 수 (교대 끝으로 닫힌 것 제외 — residualHeat 가 보는 것)
+  warm: number;                                     // 그 가운데 남은 열이 있던 현장 수 (e0 > 0)
+  e0: number[];                                     // 남은 열이 있던 현장마다의 e0
+  cells: number; crossed: number; H: number[];      // rekindle 칸의 수 · 문턱을 넘은 칸 · 칸마다 쌓인 H (= 그 건물이 받은 H∞ 의 합)
+}
+export interface HazCount { laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null; heat: HazHeat | null; shock: HazShock; ember: HazEmber }
 
 const roadZero = (): HazRoad => ({ drifts: 0, own: 0, bump: 0, queue: 0, div: 0, raw: 0, unledgered: 0, edgeDrifts: 0, closedDrifts: 0, byWhat: {}, detourDrifts: 0, detourCong: 0, detourCongMax: 0, detourCap: 0 });
 
@@ -110,8 +119,8 @@ export class HazProbe {
     let tot = 0; for (const v of ex) tot += v;
     const heat: HazHeat | null = this.heatSecs ? { secs: this.heatSecs, exposure: tot, targets: ex.length, sources: this.heatSrc.size, fMax: this.heatFMax, top: ex.slice(0, 5) } : null;
     // (b3-8) 충격 손상: 교대 끝의 노출 칸과, 손상을 안고 만들어진 현장
-    const shock: HazShock = { shocked: 0, overMin: 0, pipes: 0, shakes: [], worn: 0, valves: 0 };
-    for (const v of Object.values(sim.world.expo)) { if (!(v.shake > 0)) continue; shock.shocked++; shock.shakes.push(v.shake); if (v.shake >= SHOCK.S_MIN) shock.overMin++; if (v.pipe) shock.pipes++; }
+    const shock: HazShock = { shocked: 0, overMin: 0, pipes: 0, shut: 0, shakes: [], worn: 0, valves: 0 };
+    for (const v of Object.values(sim.world.expo)) { if (!(v.shake > 0)) continue; shock.shocked++; shock.shakes.push(v.shake); if (v.shake >= SHOCK.S_MIN) shock.overMin++; if (v.pipeEv >= 0) { shock.pipes++; if (!v.pipe) shock.shut++; } }
     for (const I of sim.incidents) {
       const s = sim.scenes[I.id];
       if (!s || !s.wear || s.wear.cause !== 'shock') continue;
@@ -119,21 +128,37 @@ export class HazProbe {
       const ex = sim.world.expo[I.truth.placeId];
       if (ex && ex.pipe && s.props.some((p) => p.kind === 'valve')) shock.valves++;
     }
-    return { laws, holes: hz.holes, road: this.road.drifts ? this.road : null, heat, shock };
+    // (b3-9) 닫힌 현장에 남은 열과 rekindle 칸
+    const ember: HazEmber = { closed: 0, warm: 0, e0: [], cells: 0, crossed: 0, H: [] };
+    for (const I of sim.incidents) {
+      const s = sim.scenes[I.id];
+      if (!s || I.phase !== 'closed' || I.closeReason === 'shiftend' || I.truth.placeId < 0) continue;
+      ember.closed++;
+      const e = residualOf(s);
+      if (e > 0) { ember.warm++; ember.e0.push(e); }
+    }
+    for (const c of Object.values(hz.cells.rekindle ?? {})) { ember.cells++; ember.H.push(c.H); if (c.done) ember.crossed++; }
+    return { laws, holes: hz.holes, road: this.road.drifts ? this.road : null, heat, shock, ember };
   }
 }
 
 export { roadSurface };      // (b3-6) 법칙 파일의 것을 그대로 내보낸다
 
-export interface HazSum { shifts: number; laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null; roadShifts: number; heat: { shifts: number; secs: number; exposure: number; targets: number; sources: number; fMax: number; top: number[] }; shock: HazShock & { shifts: number } }
+export interface HazSum { shifts: number; laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null; roadShifts: number; heat: { shifts: number; secs: number; exposure: number; targets: number; sources: number; fMax: number; top: number[] }; shock: HazShock & { shifts: number }; ember: HazEmber }
 export function sumHaz(list: readonly HazCount[]): HazSum {
-  const o: HazSum = { shifts: list.length, laws: {}, holes: 0, road: null, roadShifts: 0, heat: { shifts: 0, secs: 0, exposure: 0, targets: 0, sources: 0, fMax: 0, top: [] }, shock: { shifts: 0, shocked: 0, overMin: 0, pipes: 0, shakes: [], worn: 0, valves: 0 } };
+  const o: HazSum = { shifts: list.length, laws: {}, holes: 0, road: null, roadShifts: 0, heat: { shifts: 0, secs: 0, exposure: 0, targets: 0, sources: 0, fMax: 0, top: [] }, shock: { shifts: 0, shocked: 0, overMin: 0, pipes: 0, shut: 0, shakes: [], worn: 0, valves: 0 }, ember: { closed: 0, warm: 0, e0: [], cells: 0, crossed: 0, H: [] } };
   for (const c of list) {
     if (c.shock) {
       const k = o.shock;
       if (c.shock.shocked) k.shifts++;
-      k.shocked += c.shock.shocked; k.overMin += c.shock.overMin; k.pipes += c.shock.pipes; k.worn += c.shock.worn; k.valves += c.shock.valves;
+      k.shocked += c.shock.shocked; k.overMin += c.shock.overMin; k.pipes += c.shock.pipes; k.shut += c.shock.shut ?? 0; k.worn += c.shock.worn; k.valves += c.shock.valves;
       for (const v of c.shock.shakes) k.shakes.push(v);
+    }
+    if (c.ember) {
+      const m = o.ember;
+      m.closed += c.ember.closed; m.warm += c.ember.warm; m.cells += c.ember.cells; m.crossed += c.ember.crossed;
+      for (const v of c.ember.e0) m.e0.push(v);
+      for (const v of c.ember.H) m.H.push(v);
     }
     if (c.heat) {
       const h = o.heat;
@@ -174,7 +199,9 @@ export function hazLines(s: HazSum): string[] {
   const h = s.heat;
   out.push(h.shifts ? `hazard-heat: exposure ${f2(h.exposure / n)}/shift (Σ M·max(0, q − Q0)·dt) · shifts with a source ${h.shifts} · source scenes ${h.sources} · buildings exposed ${h.targets} · source-seconds ${h.secs} · F max ${h.fMax} · largest ${h.top.map(f2).join(' ')}` : 'hazard-heat: -');
   const k = s.shock, q = quart(k.shakes);
-  out.push(k.shocked ? `hazard-shock: buildings shaken ${k.shocked} (in ${k.shifts} shifts) · over S_MIN ${k.overMin} · pipes cut ${k.pipes} · shake max ${f2(q[3])} p75 ${f2(q[2])} p50 ${f2(q[1])} p25 ${f2(q[0])} · scenes started worn ${k.worn} (leaking valve ${k.valves})` : 'hazard-shock: -');
+  out.push(k.shocked ? `hazard-shock: buildings shaken ${k.shocked} (in ${k.shifts} shifts) · over S_MIN ${k.overMin} · pipes cut ${k.pipes} (shut again ${k.shut}) · shake max ${f2(q[3])} p75 ${f2(q[2])} p50 ${f2(q[1])} p25 ${f2(q[0])} · scenes started worn ${k.worn} (leaking valve ${k.valves})` : 'hazard-shock: -');
+  const m = s.ember, qe = quart(m.e0), qh = quart(m.H);
+  out.push(`hazard-ember: closed building scenes ${m.closed} · warm (e0 > 0) ${m.warm} · e0 max ${f2(qe[3])} p75 ${f2(qe[2])} p50 ${f2(qe[1])} · rekindle cells ${m.cells} · H∞ max ${f2(qh[3])} p50 ${f2(qh[1])} (K ${RESIDUAL.K} · τ ${RESIDUAL.TAU}) · crossed ${m.crossed}`);
   return out;
 }
 /** 사분위 [p25, p50, p75, 최댓값] (빈 목록이면 0) */
@@ -190,7 +217,8 @@ export function hazJson(s: HazSum): Record<string, unknown> {
   return {
     shifts: s.shifts, laws: s.laws, holes: s.holes,
     heat: { shifts: s.heat.shifts, exposurePerShift: +(s.heat.exposure / n).toFixed(2), targets: s.heat.targets, sources: s.heat.sources, secs: s.heat.secs, fMax: s.heat.fMax, top: s.heat.top.map((v) => +v.toFixed(2)) },
-    shock: { shifts: k.shifts, shaken: k.shocked, overMin: k.overMin, pipes: k.pipes, worn: k.worn, valves: k.valves, shake: { p25: +q[0].toFixed(3), p50: +q[1].toFixed(3), p75: +q[2].toFixed(3), max: +q[3].toFixed(3) } },
+    ember: { closed: s.ember.closed, warm: s.ember.warm, cells: s.ember.cells, crossed: s.ember.crossed, e0Max: +quart(s.ember.e0)[3].toFixed(3), e0P50: +quart(s.ember.e0)[1].toFixed(3) },
+    shock: { shifts: k.shifts, shaken: k.shocked, overMin: k.overMin, pipes: k.pipes, shut: k.shut, worn: k.worn, valves: k.valves, shake: { p25: +q[0].toFixed(3), p50: +q[1].toFixed(3), p75: +q[2].toFixed(3), max: +q[3].toFixed(3) } },
     road: r ? {
       exposurePerShift: r1((r.own + r.bump + r.queue + r.div) / n), own: r1(r.own / n), bump: r1(r.bump / n), queue: r1(r.queue / n), divert: r1(r.div / n),
       unledgered: r1(r.unledgered / n), rawPerShift: r1(r.raw / n), edgesWithExcess: r1(r.edgeDrifts / Math.max(1, r.drifts)), closedEdges: r1(r.closedDrifts / Math.max(1, r.drifts)),

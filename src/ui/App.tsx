@@ -7,6 +7,7 @@ import { SoundDirector } from '../view/audio';
 import { CameraDirector } from '../view/camera';
 import { FxBook } from '../view/scene/fxBook';
 import { Runner } from '../view/runner';
+import type { StartMode } from '../view/runner';
 import { Viewport } from './Viewport';
 import { MapLegend } from './MapLegend';
 import type { Difficulty } from '../sim/difficulty';
@@ -78,6 +79,8 @@ export function App() {
           incidents: sim.incidents.length, paused: runner.paused, speed: runner.settings.speed, slowed: runner.slowed, autoSlow: runner.settings.autoSlow,
           fps: runner.fps, seeks: runner.seeks, restoredTicks: runner.restoredTicks, version: runner.version,
           camMode: director.mode, camFocus: director.focus, camManual: director.manual, now: performance.now(),
+          // (I2 §5.6-7) 조직의 교대 번호(새 조직이면 1)와 결장(off) 대원 수 — 부대 목록의 결장 표시 수와 견준다
+          org: runner.baseShift, off: sim.responders.filter((r) => r.status === 'off').length,
         };
       },
       // (G5) 교전 연출 읽기: 연출 시계, 현장별 살아 있는 연출 수, 교전 그림 시간, 소리 통계 (복사해 돌려줄 뿐이다)
@@ -165,7 +168,8 @@ export function App() {
     setVolume: (v: number) => { sound.setVolume(v); runner.settings.volume = v; runner.saveSettings(); },
   }), [sound, runner]);
 
-  const onNew = useCallback((seed?: string, d?: Difficulty) => { setReel(null); runner.newShift(seed, d); director.reset(); setSelectedRid(-1); setPerson(null); setReportClosed(-1); setTab('decision'); setDiffOpen(false); force(); }, [runner, director, force]);
+  // (I2) 세 가지 시작: 설정의 시작 방법(이어서·새 조직) · 'fresh' 새 조직 · 'replay' 지금 교대와 같은 입력 — 모두 교대 시작 전 조건이다
+  const onNew = useCallback((seed?: string, d?: Difficulty, mode?: StartMode) => { setReel(null); runner.newShift(seed, d, mode); director.reset(); setSelectedRid(-1); setPerson(null); setReportClosed(-1); setTab('decision'); setDiffOpen(false); force(); }, [runner, director, force]);
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {

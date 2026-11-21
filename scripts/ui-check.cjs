@@ -2,7 +2,7 @@
 //   npm run ui-check                         기본: 시드 S3, 스크린샷은 shots/ui-check/
 //   npm run ui-check -- --out <폴더> --seed S3 --end-limit 420
 // 스스로 개발 서버(npx vite --port 5191 --strictPort)를 띄우고 끝나면 끈다. 1600×900 브라우저로 /?seed=S3 을 열어
-// 아래 여덟 가지를 본다. 항목마다 [통과]/[실패]/[정보] 를 한 줄씩 찍고, 하나라도 실패하면 종료 코드 1.
+// 아래 아홉 가지를 본다. 항목마다 [통과]/[실패]/[정보] 를 한 줄씩 찍고, 하나라도 실패하면 종료 코드 1.
 //   1. 콘솔 오류·페이지 오류 0건 (전 과정 내내)
 //   2. 일시정지 중에는 틱이 늘지 않는다 · 1배와 최고 배속에서 같은 실제 시간에 진행한 틱의 비율
 //   3. 되감기(되감기 버튼·타임라인 클릭) 뒤 다시 진행해도 같은 틱의 기록 해시가 헤드리스 Sim 과 같다
@@ -11,6 +11,7 @@
 //   6. 난이도 설정·재난 선택이 열리고 닫힌다, 사건 카드를 누르면 현장 화면이 열린다 (스크린샷)
 //   7. 화면의 조작 목록 (판정은 사람이: CLAUDE.md 절대 규칙 1 "AI 에게 명령하는 입력을 만들지 않는다")
 //   8. 통화창이 가운데 화면을 가리지 않고, P 로 접히며 접힘을 기억한다 (1280×800)
+//   9. (I2) 저장된 조직을 ?org=continue 로 열면: 조직 번호 칩 · 결장 대원 수 = 부대 목록의 결장 점 수 · 같은 입력(이어받은 상태 포함)의 헤드리스와 같은 해시
 // 화면 상태는 개발 서버에서만 생기는 읽기 전용 고리 window.__ar.snap() (src/ui/App.tsx) 으로 읽는다.
 // 조작은 모두 사람이 쓰는 버튼·키·타임라인으로 한다. 헤드리스 기준값은 scripts/ui-check-ref.ts 를 tsx 로 따로 돌려 얻는다.
 'use strict';
@@ -399,6 +400,24 @@ async function run(page) {
       : `상한 ${END_LIMIT}초 안에 종료 보고서가 뜨지 않음 (틱 ${s5.s0.tick}→${s5.E.tick}, 시각 ${s5.E.t.toFixed(0)}초)`, [`보고서 스크린샷 ${path.join(OUT, 'report.png')}`]);
   }
 
+  // ── 9. (I2) 이어받은 상태로 시작한 교대: 저장된 조직을 ?org=continue 로 열면 조직 번호 칩, 결장 대원 수 = 부대 목록의 결장 점 수, 같은 입력의 헤드리스와 같은 해시 ──
+  try {
+    const refRun = (req) => JSON.parse(execFileSync('npx', ['tsx', 'scripts/ui-check-ref.ts', JSON.stringify(req)], { cwd: ROOT, encoding: 'utf8', timeout: 600000 }).trim().split('\n').pop());
+    const diff = base ? base.difficulty : null;
+    const dump = refRun({ seed: SEED, difficulty: diff, ticks: [], dumpCarry: true });
+    await page.evaluate((c) => localStorage.setItem('ar.org.v1', JSON.stringify({ id: 'UICHECK', carry: c, savedAt: 0 })), dump.carry);
+    await load(`/?seed=${SEED}&org=continue`);
+    const S = await setPaused(true);
+    await sleep(500);      // 패널은 0.16초마다 다시 그린다
+    const dom = await page.evaluate(() => ({ dots: document.querySelectorAll('.units .rdot.off').length, chip: ((document.querySelector('.top .org-chip') || {}).textContent || '').trim() }));
+    const ref9 = refRun({ seed: S.seed, difficulty: S.difficulty, ticks: [S.tick], carry: dump.carry });
+    const shot = path.join(OUT, 'carry.png');
+    await page.screenshot({ path: shot });
+    await page.evaluate(() => localStorage.removeItem('ar.org.v1'));
+    const ok = S.org === dump.carry.shift && S.off === dump.absent.length && S.off > 0 && dom.dots === S.off && dom.chip.includes(`#${S.org}`) && ref9.hashes[S.tick] === S.hash;
+    result(9, ok, `조직 #${S.org}(저장된 ${dump.carry.shift}) · 결장 ${S.off}명(넣은 ${dump.absent.length}명: ${dump.absent.join('·')}) · 결장 점 ${dom.dots}개 · 칩 "${dom.chip}" · 틱 ${S.tick} 해시 ${S.hash} / 헤드리스 ${ref9.hashes[S.tick] ?? '-'}`, [`스크린샷 ${shot}`]);
+  } catch (e) { result(9, false, `예외: ${e.message.split('\n')[0]}`); }
+
   // ── 7. 조작 목록 ──
   // 첫 상태는 전부, 다음 상태부터는 새로 나타난 것만 적는다. 버튼·입력은 글자마다, 그 밖의 누를 수 있는 요소(카드·기록 줄 등)는 종류마다 한 번
   const lines = [];
@@ -443,9 +462,9 @@ async function run(page) {
   } catch (e) { fatal = e; }
   await stop();
   console.log('');
-  const names = { 1: '콘솔·페이지 오류', 2: '일시정지·배속', 3: '되감기 재현성', 4: '새로고침 복원', 5: '교대 끝까지', 6: '난이도·재난·현장 화면', 7: '조작 목록', 8: '통화창 자리' };
+  const names = { 1: '콘솔·페이지 오류', 2: '일시정지·배속', 3: '되감기 재현성', 4: '새로고침 복원', 5: '교대 끝까지', 6: '난이도·재난·현장 화면', 7: '조작 목록', 8: '통화창 자리', 9: '이어받은 상태' };
   let fail = 0;
-  for (let n = 1; n <= 8; n++) {
+  for (let n = 1; n <= 9; n++) {
     const r = results[n] || { ok: false, line: fatal ? '중단되어 판정하지 못함' : '실행되지 않음', details: [] };
     if (r.ok === false) fail++;
     console.log(`[${r.ok === null ? '정보' : r.ok ? '통과' : '실패'}] ${n}. ${names[n]}: ${r.line}`);

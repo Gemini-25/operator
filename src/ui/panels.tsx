@@ -7,11 +7,12 @@ import { needsText, sevName } from '../sim/dispatch/analyst';
 import { personaName, topicName } from '../sim/dispatch/callSystem';
 import type { Sim } from '../sim/engine';
 import { workLabel } from '../sim/field/agents';
-import { outShifts } from '../sim/field/injury';      // (H1) 다음 교대 결장 예상 — 읽기만 한다
+import { CAUSE_NAME, outShifts } from '../sim/field/injury';      // (H1) 다음 교대 결장 예상 — 읽기만 한다
+import { carryParts, carrySummary } from '../sim/persist';      // (I2) 이어받은 상태의 요약 — 읽기만 한다
 import { KITS, roleOf, stays } from '../sim/crews';      // 읽기만 한다 (장비의 상태를 바꾸는 함수는 쓰지 않는다)
 import { FIELD_NAME, UNIT_KIND_NAME } from '../sim/resources';
 import { scenarioName } from '../sim/scenarios';
-import type { AirOp, FieldAgent, Incident, Role, Scene, SimEvent, Unit, UnitField } from '../sim/types';
+import type { AirOp, CrewCarry, FieldAgent, Incident, InjuryCause, Responder, Role, Scene, SimEvent, Unit, UnitField } from '../sim/types';
 import { TrafficChip } from './TrafficChip';
 import { DEPT_NAME, OUTCOME_NAME, TYPE_NAME, WEATHER_NAME, fmtClock, fmtDur, fmtSec, pct } from '../sim/util';
 import { TYPE_DEFS, TYPE_ORDER } from '../sim/incidentTypes';
@@ -20,9 +21,9 @@ import { MethodRows } from './MethodRows';      // (R2) 대원 정보창의 대�
 import { DoctrineRows } from './DoctrineRows';      // (R3) 대원 정보창의 대응 교본 칸 (상태 칩 · 따르는 줄 · 최근 셋)
 import { FIELD_TEXT, unitField } from '../view/city/tokens';
 import { ICON_PATH } from '../view/icons';
-import { KIT_GROUP_MARK, UNIT_MARK } from '../view/marks';
+import { KIT_GROUP_MARK, ORG_MARK, UNIT_MARK } from '../view/marks';
 import { DEPT_COLOR, OUTCOME_COLOR, TYPE_COLOR } from '../view/renderCity';
-import type { Runner } from '../view/runner';
+import type { Runner, StartMode } from '../view/runner';
 import { Mark, RoleDot, Token } from './Mark';
 import { airOpLabel } from '../view/renderScene';
 import { HazardStrip } from './HazardStrip';
@@ -150,21 +151,39 @@ function UnitRow({ sim, u, selectedRid, onSelectRid }: { sim: Sim; u: Unit; sele
           그래서 점을 먼저, 칩을 맨 뒤에 두고 오른쪽에서부터 채운다(styles.css 의 .crewN): 넘치는 것은 맨 뒤의 칩이다 */}
       <div className={`crewN n${u.crew.length}`}>
         {u.crew.slice().reverse().map((rid) => {
-          const r = sim.responders[rid], role = roleOf(sim, rid);
-          return <RoleDot key={rid} group={role.group} field={field} health={r.health} down={r.status === 'down'} dead={r.dead === true} stays={stays(sim, rid)} selected={selectedRid === rid} onClick={() => onSelectRid(rid)}
-            title={`${r.name} · ${role.name}${rid === u.crew[0] ? ' (부대장)' : ''} · ${kitLine(sim, rid) || '장비 없음'} · 체력 ${Math.round(r.health)} · 지구력 ${Math.round(r.stamina)}${hurtNote(sim, rid)} — 클릭하면 이 대원의 판단과 정보를 봅니다`} />;
+          const r = sim.responders[rid], role = roleOf(sim, rid), off = r.status === 'off';
+          return <RoleDot key={rid} group={role.group} field={field} health={r.health} down={r.status === 'down'} dead={r.dead === true} stays={stays(sim, rid)} selected={selectedRid === rid} off={off} relief={r.relief === true} onClick={() => onSelectRid(rid)}
+            title={off ? `${offNote(sim, r)} · ${role.name}${rid === u.crew[0] ? ' (부대장 자리)' : ''} — 이번 교대에 나오지 않습니다` : `${r.name} · ${role.name}${rid === u.crew[0] ? ' (부대장)' : ''}${r.relief ? ' · 본부 예비 인력' : ''} · ${kitLine(sim, rid) || '장비 없음'} · 체력 ${Math.round(r.health)} · 지구력 ${Math.round(r.stamina)}${hurtNote(sim, rid)} — 클릭하면 이 대원의 판단과 정보를 봅니다`} />;
         })}
-        {(() => { const rid = u.crew[0], r = sim.responders[rid]; return (
-          <span className={`cchip ${selectedRid === rid ? 'sel' : ''} ${r.status} ${r.dead ? 'dead' : ''}`} onClick={() => onSelectRid(rid)} title={`부대장 ${r.name} · ${roleOf(sim, rid).name}${hurtNote(sim, rid)}`}>
-            {r.name}<i style={{ width: `${Math.max(0, r.health)}%`, background: TRIAGE[Math.min(2, respBand(r))] }} />
+        {(() => { const rid = u.crew[0], r = sim.responders[rid], off = r.status === 'off'; return (
+          <span className={`cchip ${selectedRid === rid ? 'sel' : ''} ${r.status} ${r.dead ? 'dead' : ''} ${r.relief ? 'relief' : ''}`} onClick={() => onSelectRid(rid)} title={off ? `부대장 자리 — ${offNote(sim, r)}` : `부대장 ${r.name} · ${roleOf(sim, rid).name}${hurtNote(sim, rid)}`}>
+            {r.name}{!off && <i style={{ width: `${Math.max(0, r.health)}%`, background: TRIAGE[Math.min(2, respBand(r))] }} />}
           </span>
         ); })()}
       </div>
-      <span className="state"><i className="sdot" />{u.aid && u.state === 'oos' ? '관할 복귀' : UNIT_STATE[u.state]}{inc ? <b>{inc.code}</b> : null}</span>
+      <span className="state" title={u.state === 'oos' && u.oosWhy ? `운용 중단 — ${u.oosWhy}${u.oosWhy === '결원' ? ' (나올 대원이 없다)' : ''}` : undefined}><i className="sdot" />{u.aid && u.state === 'oos' ? '관할 복귀' : u.state === 'oos' && u.oosWhy ? oosText(sim, u) : UNIT_STATE[u.state]}{inc ? <b>{inc.code}</b> : null}</span>
     </div>
   );
 }
 
+/** (I2) 이 대원의 이어받은 항목 (조직 명부의 열쇠 = 자리 이름 — 읽기만) */
+function carryOf(sim: Sim, r: Responder): CrewCarry | undefined {
+  const co = sim.carry;
+  if (!co || r.relief || sim.units[r.unitId].aid) return undefined;
+  const key = r.seat ?? r.name;
+  return co.crew.find((c) => (c.seat ?? c.name) === key);
+}
+/** (I2) 결장(off) 대원의 한마디: '김도윤 — 결장 (총상 · 2교대 남음)' · '공석 — 이서준 대원 순직 (신임 배치까지 1교대)' */
+function offNote(sim: Sim, r: Responder): string {
+  if (r.carryOut === -1) { const c = carryOf(sim, r); return `공석 — ${r.name} 대원 순직${c && c.replaceIn !== undefined ? ` (신임 배치까지 ${c.replaceIn}교대)` : ''}`; }
+  const cause = r.carryCause && Object.prototype.hasOwnProperty.call(CAUSE_NAME, r.carryCause) ? CAUSE_NAME[r.carryCause as InjuryCause] : '';
+  return `${r.name} — 결장 (${cause ? `${cause} · ` : ''}${r.carryOut ?? 1}교대 남음)`;
+}
+/** (I2) 운용 중단의 까닭 (부대 줄의 상태 글): '정비 중 · 4분' · '결원' */
+function oosText(sim: Sim, u: Unit): string {
+  if (u.oosWhy === '정비 중' && u.readyAt !== undefined) return `정비 중 · ${Math.max(1, Math.ceil((u.readyAt - sim.t) / 60))}분`;
+  return u.oosWhy ?? UNIT_STATE.oos;
+}
 /** 헬기가 뜨지 못하는 까닭 (부대 줄의 설명과 대원 정보창) */
 const GROUNDED: Record<string, string> = { fog: '안개로 뜨지 못함', night: '야간 운항 안 함', storm: '강풍으로 뜨지 못함' };
 /** (H1) 다친 대원의 한마디: " · 부상 (총상 32 · 연기 흡입 8)". 멀쩡하고 기록도 없으면 빈 글 */
@@ -355,8 +374,19 @@ export function AgentPanel({ sim, rid, truth = false }: { sim: Sim; rid: number;
           <div className="prob"><span>건강</span><Bar v={r.health / 100} color={TRIAGE[Math.min(2, respBand(r))]} w={110} /><span className="num">{Math.round(r.health)}</span></div>
           <div className="prob"><span>체력 잔량</span><Bar v={r.stamina / 100} color="#58b6ff" w={110} /><span className="num">{Math.round(r.stamina)}</span></div>
         </div>
-        {/* (H1) 부상: 원인별 피해, 출혈, 처치, 후송 — 다친 적이 있는 대원만 */}
-        {((r.injuries && r.injuries.length > 0) || r.status !== 'ok' || r.dead) && (<>
+        {/* (I2) 조직: 지난 교대들의 경력과 이번 교대의 결장 (이어받은 항목이 있을 때만) · 본부 예비 인력 */}
+        {(() => {
+          const c = carryOf(sim, r);
+          if (!c && !r.relief) return null;
+          return (<>
+            <h4>조직</h4>
+            {r.status === 'off' && <div className="kv"><span className="dim">이번 교대</span><span className="warn">{offNote(sim, r)}</span></div>}
+            {r.relief && <div className="kv"><span className="dim">이번 교대</span><span>본부 예비 인력 — 결원 자리에 대신 탔습니다 (이어받지 않는다)</span></div>}
+            {c && <div className="kv"><span className="dim">경력</span><span>조직에서 {c.shifts + (r.status === 'off' ? 0 : 1)}번째 교대 · 사건 {c.incidents + r.incidentsWorked}건 · 경험 +{c.dExp.toFixed(2)}{c.dSkill > 0 ? ` · 숙련 +${c.dSkill.toFixed(2)}` : ''}{c.recruit ? ` · 신임 (${c.seat ?? ''} 대원의 자리)` : ''}</span></div>}
+          </>);
+        })()}
+        {/* (H1) 부상: 원인별 피해, 출혈, 처치, 후송 — 다친 적이 있는 대원만 (I2: 결장자는 이번 교대에 다친 사람이 아니다) */}
+        {r.status !== 'off' && ((r.injuries && r.injuries.length > 0) || r.status !== 'ok' || r.dead) && (<>
           <h4>부상</h4>
           <div className="kv"><span className="dim">중증도</span><span><span className={`band band-${respBand(r)}`}>{TRIAGE_NAME[respBand(r)]}</span>{respStateText(r) ? ` · ${respStateText(r)}` : ''}{outShifts(r) > 0 ? ` · 다음 교대 결장 예상 ${outShifts(r)}` : ''}</span></div>
           <div className="kv"><span className="dim">원인</span><span>{injuryLine(r.injuries) || '기록 없음'}</span></div>
@@ -392,7 +422,7 @@ export function AgentPanel({ sim, rid, truth = false }: { sim: Sim; rid: number;
             </tbody></table>
           </>)}
         </>)}
-        {aloft ? null : !agent || !scene ? <div className="empty">현재 현장에 투입되어 있지 않습니다 ({respStateText(r) ? `${respStateText(r)} · ` : ''}{UNIT_STATE[u.state]}{u.grounded ? ` — ${GROUNDED[u.grounded]}` : ''}).</div> : (<>
+        {aloft ? null : r.status === 'off' ? <div className="empty">이번 교대에 나오지 않았습니다 (결장 — 지난 교대에서 이어받은 상태).</div> : !agent || !scene ? <div className="empty">현재 현장에 투입되어 있지 않습니다 ({respStateText(r) ? `${respStateText(r)} · ` : ''}{u.state === 'oos' && u.oosWhy ? oosText(sim, u) : UNIT_STATE[u.state]}{u.grounded ? ` — ${GROUNDED[u.grounded]}` : ''}).</div> : (<>
           <h4>현재 행동</h4>
           <div className="kv"><span className="dim">상태</span><span>{agentStateText(agent, r)}{agent.isCommander ? ' · 현장 지휘관' : ''}</span></div>
           <h4>행동 후보와 점수 (Utility)</h4>
@@ -452,7 +482,17 @@ export function BottomBar({ runner, director, onTick, onSeek, sound }: { runner:
 }
 
 // ───────────────────────── 상단 ─────────────────────────
-export function TopBar({ runner, onNew, onDifficulty }: { runner: Runner; onNew: (seed?: string) => void; onDifficulty: () => void }) {
+/** (I2 §5.2) 상단의 조직 칩: 이어받은 교대면 '조직 #8', 아니면 '새 조직'. 마우스를 올리면 이어받은 상태의 요약, 누르면 난이도 창(교대 시작 전 조건) */
+function OrgChip({ runner, onDifficulty }: { runner: Runner; onDifficulty: () => void }) {
+  const co = runner.carryIn;
+  const sum = co ? carryParts(carrySummary(co)) : '';
+  const tail = runner.settled ? (runner.orgResult === 'saved' ? '이 교대의 끝 상태를 조직에 저장했습니다' : runner.orgResult === 'conflict' ? '다른 창에서 조직이 앞으로 진행돼 저장하지 않았습니다' : '조직에 저장하지 않는 교대입니다')
+    : runner.writeOrg ? '이 교대가 끝나면 조직에 저장됩니다' : runner.startMode === 'replay' ? '같은 입력으로 다시 보는 교대 — 조직에 저장하지 않습니다' : '주소로 조건을 고정한 교대 — 조직에 저장하지 않습니다';
+  const title = `${co ? `조직의 ${runner.baseShift}번째 교대 — 지난 교대에서 이어받은 상태: ${sum || '남은 피해 없음'}` : '새 조직 — 모든 대원이 처음 상태로 시작했습니다'}. ${tail}. 누르면 다음 교대의 시작 방법을 고릅니다`;
+  return <button className={`org-chip ${co ? 'carry' : ''}`} onClick={onDifficulty} title={title}><Mark d={ORG_MARK} size={13} />{co ? <>조직 <b>#{runner.baseShift}</b></> : '새 조직'}</button>;
+}
+
+export function TopBar({ runner, onNew, onDifficulty }: { runner: Runner; onNew: (seed?: string, d?: Difficulty, mode?: StartMode) => void; onDifficulty: () => void }) {
   const sim = runner.sim;
   const [seed, setSeed] = useState('');
   const lvl = Math.round(overallLevel(sim.difficulty));
@@ -466,17 +506,39 @@ export function TopBar({ runner, onNew, onDifficulty }: { runner: Runner; onNew:
       <div className="clock">{fmtClock(sim.clock)}</div>
       <div className="meta"><span className={`wx wx-${sim.weather}`}>{WEATHER_NAME[sim.weather]}</span><TrafficChip sim={sim} /><span>시드 <code>{sim.seed}</code></span><span className="dim">{Math.round(runner.fps)} FPS · 틱 {sim.tick}</span></div>
       <button className={`diff-chip lv${lvl}`} onClick={onDifficulty} title="난이도 설정 — 다음 교대의 조건을 정합니다">난이도 <b>{difficultyLabel(sim.difficulty)}</b> <span className="pips">{[1, 2, 3, 4, 5].map((k) => <i key={k} className={k <= lvl ? 'on' : ''} />)}</span></button>
+      <OrgChip runner={runner} onDifficulty={onDifficulty} />
       <div className="seed">
         <input value={seed} onChange={(e) => setSeed(e.target.value)} placeholder="시드 입력" maxLength={16} onKeyDown={(e) => { if (e.key === 'Enter') { onNew(seed); setSeed(''); } }} />
-        <button onClick={() => { onNew(seed); setSeed(''); }}>{seed.trim() ? '이 시드로 시작' : '새 교대'}</button>
-        <button onClick={() => onNew(sim.seed)} title="같은 시드로 처음부터 다시 — 결과가 똑같이 재현됩니다">같은 시드 재실행</button>
+        <button onClick={() => { onNew(seed); setSeed(''); }} title={runner.settings.org === 'fresh' ? '새 조직으로 새 교대를 시작합니다' : '저장된 조직을 이어서 새 교대를 시작합니다 (없으면 새 조직)'}>{seed.trim() ? '이 시드로 시작' : '새 교대'}</button>
+        <button onClick={() => onNew(sim.seed, undefined, 'replay')} title="같은 시드·같은 조직 상태로 처음부터 다시 — 결과가 똑같이 재현됩니다 (조직에 저장하지 않습니다)">같은 시드 재실행</button>
       </div>
     </div>
   );
 }
 
 // ───────────────────────── 종료 보고서 ─────────────────────────
-export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel }: { runner: Runner; onNew: (seed?: string) => void; onClose: () => void; onJump: (t: number, incidentId: number) => void; reelCount: number; onReel: () => void }) {
+/** (I2 §5.5) 보고서의 '조직' 칸: 이어받은 상태와 그 영향(이어받은 교대만 — r.carry.lines), 다음 교대로 넘기는 것의 타일 다섯, 저장 결과 */
+function OrgReport({ runner, r }: { runner: Runner; r: NonNullable<Sim['report']> }) {
+  const nx = r.carryNext;
+  const title = r.carry ? `조직의 ${r.carry.shift}번째 교대 · 지문 ${r.carry.key}` : runner.orgId ? '새 조직의 첫 교대' : '조직 — 이 교대는 저장하지 않습니다';
+  const note = runner.orgResult === 'saved' ? `이 교대의 끝 상태를 조직에 저장했습니다 — '다음 교대 (이어서)'가 이어받습니다.${runner.storageFailed ? ' 저장소를 쓸 수 없어 이 창이 열려 있는 동안만 이어집니다.' : ''}`
+    : runner.orgResult === 'conflict' ? '다른 창에서 조직이 이미 앞으로 진행됐습니다 — 이 교대의 결과는 저장하지 않았습니다.'
+    : runner.orgResult === 'skipped' ? (runner.startMode === 'replay' ? '같은 입력으로 다시 본 교대라 조직에 저장하지 않았습니다.' : '주소로 조건을 고정한 교대라 조직에 저장하지 않았습니다.') : '';
+  const tiles: [number, string][] = nx ? [[nx.absent, '결장 예상'], [nx.fallen, '공석'], [nx.service, '정비'], [nx.closed + nx.ruin, '출입 통제 건물'], [nx.roads, '복구 도로']] : [];
+  return (
+    <div className="org-report">
+      <h3><Mark d={ORG_MARK} size={13} />{title}</h3>
+      {r.carry && r.carry.lines.map((t, k) => <p key={k} className={k === 0 ? 'lead' : ''}>{t}</p>)}
+      {nx && (<>
+        <div className="org-next-h dim small">다음 교대로 넘기는 것{nx.ruin ? ` · 무너진 건물 ${nx.ruin}곳 포함` : ''}</div>
+        <div className="org-tiles">{tiles.map(([v, name]) => <div key={name} className={`otile ${v ? 'on' : ''}`}><b>{v}</b><span>{name}</span></div>)}</div>
+      </>)}
+      {note && <p className="dim small">{note}</p>}
+    </div>
+  );
+}
+
+export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel }: { runner: Runner; onNew: (seed?: string, d?: Difficulty, mode?: StartMode) => void; onClose: () => void; onJump: (t: number, incidentId: number) => void; reelCount: number; onReel: () => void }) {
   const sim = runner.sim, r = sim.report!;
   const moments = sim.events.filter((e) => e.importance >= 3 && e.kind !== 'shift' && e.incidentId >= 0 && !(e.kind === 'resolve' && e.role === 'SYSTEM')).slice(0, 60);
   const hist = runner.history().filter((h) => !(h.seed === r.seed && h.hash === r.hash)).slice(0, 5);
@@ -484,12 +546,19 @@ export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel 
     <div className="modal-back">
       <div className="modal">
         <div className="modal-head">
-          <div><h2>교대 종료 보고서</h2><div className="dim">시드 {r.seed} · 난이도 {r.difficultyLabel} · 날씨 {WEATHER_NAME[r.weather]} · 진행 시간 {fmtDur(r.duration)} · 기록 해시 {r.hash}</div></div>
-          <div className="btns">{reelCount > 0 && <button className="on" onClick={onReel} title="현장의 결정적 순간을 차례로 다시 봅니다"><Icon name="play" size={11} />주요 장면 이어 보기 ({reelCount})</button>}<button onClick={() => onNew()}>새 교대 시작</button><button onClick={() => onNew(r.seed)}>같은 시드 재실행</button><button className="ghost" onClick={onClose}>닫고 마지막 상태 보기</button></div>
+          <div><h2>교대 종료 보고서</h2><div className="dim">시드 {r.seed} · 난이도 {r.difficultyLabel} · 날씨 {WEATHER_NAME[r.weather]} · 진행 시간 {fmtDur(r.duration)} · 기록 해시 {r.hash}{r.carry ? ` · 조직 #${r.carry.shift} · 지문 ${r.carry.key}` : ''}</div></div>
+          <div className="btns">{reelCount > 0 && <button className="on" onClick={onReel} title="현장의 결정적 순간을 차례로 다시 봅니다"><Icon name="play" size={11} />주요 장면 이어 보기 ({reelCount})</button>}
+            {runner.orgResult === 'saved'
+              ? <button className="on next" onClick={() => onNew(undefined, undefined, 'continue')} title="이 교대가 저장한 조직 상태(결장·정비·건물·도로)를 이어받아 다음 교대를 시작합니다">다음 교대 (이어서)</button>
+              : <button onClick={() => onNew()} title={runner.settings.org === 'fresh' ? '새 조직으로 새 교대를 시작합니다' : '저장된 조직을 이어서 새 교대를 시작합니다 (없으면 새 조직)'}>새 교대 시작</button>}
+            <button onClick={() => onNew(undefined, undefined, 'fresh')} title="모든 대원이 처음 상태로 시작합니다. 그 교대가 끝나면 저장된 조직을 대신합니다">새 조직으로 새 교대</button>
+            <button onClick={() => onNew(r.seed, undefined, 'replay')} title="같은 시드·같은 조직 상태로 처음부터 다시 — 결과가 똑같이 재현됩니다 (조직에 저장하지 않습니다)">같은 시드 재실행</button>
+            <button className="ghost" onClick={onClose}>닫고 마지막 상태 보기</button></div>
         </div>
         <div className="modal-body">
           <div className="summary">{r.summary.map((t, k) => <p key={k}>{t}</p>)}</div>
           {r.disaster && <div className="disaster-report"><h3>재난 대응 — {r.disaster.name}</h3>{r.disaster.lines.map((t, k) => <p key={k}>{t}</p>)}</div>}
+          <OrgReport runner={runner} r={r} />
           <div className="tiles">
             <div className="tile"><b>{r.totalCalls}</b><span>전체 신고 전화</span></div>
             <div className="tile"><b>{r.totalIncidents}</b><span>처리 사건</span></div>
@@ -535,7 +604,7 @@ export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel 
               {r.unitUtil.map((u) => <div key={u.callsign} className="prob"><span>{u.callsign}</span><Bar v={u.util} color="#7cc4ff" w={90} /><span className="num">{pct(u.util)} · {u.runs}회</span></div>)}
               <h4>대원 부상·순직</h4>
               {r.respondersHurt.length === 0 ? <div className="empty">없음</div> : r.respondersHurt.map((x) => <div key={x.name} className="kv hurt-row"><span>{x.name} ({x.role ? `${x.role} · ` : ''}{x.callsign})</span><span className={x.dead ? 'loss' : `warn${x.band !== undefined ? ` band-${Math.min(2, x.band)}` : ''}`}>{reportHurtText(x, r.respondersKilled)}</span></div>)}
-              {hist.length > 0 && (<><h4>이전 교대 기록</h4>{hist.map((x, k) => <div key={k} className="kv small"><span className="dim">시드 {x.seed}</span><span>{x.difficulty ? `${x.difficulty} · ` : ''}{x.incidents}건 · 성공 {x.counts.success ?? 0} · 실패 {x.counts.failed ?? 0}</span></div>)}</>)}
+              {hist.length > 0 && (<><h4>이전 교대 기록</h4>{hist.map((x, k) => <div key={k} className="kv small"><span className="dim">{x.shift ? `#${x.shift} · ` : ''}시드 {x.seed}</span><span>{x.difficulty ? `${x.difficulty} · ` : ''}{x.incidents}건 · 성공 {x.counts.success ?? 0} · 실패 {x.counts.failed ?? 0}</span></div>)}</>)}
             </div>
           </div>
         </div>
@@ -559,11 +628,26 @@ export function Ticker({ sim, truth }: { sim: Sim; truth: boolean }) {
 }
 
 // ───────────────────────── 난이도 설정 (교대 시작 전 조건) ─────────────────────────
-export function DifficultyPanel({ runner, onStart, onClose }: { runner: Runner; onStart: (seed: string | undefined, d: Difficulty) => void; onClose: () => void }) {
+export function DifficultyPanel({ runner, onStart, onClose }: { runner: Runner; onStart: (seed: string | undefined, d: Difficulty, mode?: StartMode) => void; onClose: () => void }) {
   const [d, setD] = useState<Difficulty>({ ...runner.settings.difficulty });
   const preset = presetOf(d);
   const lvl = overallLevel(d);
   const running = !runner.sim.ended && runner.sim.tick > 0;
+  // (I2 §5.2) 조직: 이어서 시작 · 새 조직으로 시작 · 저장된 조직 지우기 (교대 시작 전 조건 — 이어받은 내용을 고치는 화면은 없다)
+  const [orgSel, setOrgSel] = useState<'continue' | 'fresh'>(runner.settings.org);
+  const [, setOrgVer] = useState(0);
+  const [confirmClear, setConfirmClear] = useState(false);
+  const st = runner.orgStatus();
+  const pick: 'continue' | 'fresh' = st.kind === 'ok' ? orgSel : 'fresh';
+  const sum = st.org ? carrySummary(st.org.carry) : null;
+  const orgLine = st.kind === 'bad' ? '저장된 조직을 읽지 못했습니다 — 새 조직으로 시작합니다'
+    : st.kind === 'none' ? '저장된 조직 없음 — 이 교대가 끝나면 저장됩니다'
+    : pick === 'continue' ? `조직의 ${sum!.shift}번째 교대 · ${carryParts(sum!) || '남은 피해 없음'}`
+    : `모든 대원이 처음 상태로 시작합니다. 이 교대가 끝나면 저장된 조직(${sum!.shift}번째 교대)을 대신합니다.`;
+  const start = (seed: string | undefined, mode: StartMode): void => {
+    if (mode !== 'replay') { runner.settings.org = orgSel; runner.saveSettings(); }
+    onStart(seed, d, mode);
+  };
   return (
     <div className="modal-back" onClick={onClose}>
       <div className="modal diff" onClick={(e) => e.stopPropagation()}>
@@ -592,6 +676,7 @@ export function DifficultyPanel({ runner, onStart, onClose }: { runner: Runner; 
               </div>
             ))}
           </div>
+          <div className="cond-rows">      {/* (I2) 재난 줄과 조직 줄을 나란히 — 1600×900 에서 시작 버튼이 창 아래로 밀리지 않게 */}
           <div className="disaster-row">
             <div className="knob-head"><b>재난</b><span className="dim small">{DISASTER_DESC[d.disaster ?? 'none']}</span></div>
             <div className="chips">
@@ -600,11 +685,26 @@ export function DifficultyPanel({ runner, onStart, onClose }: { runner: Runner; 
               ))}
             </div>
           </div>
+          <div className="org-row">
+            <div className="knob-head"><b>조직</b><span className="dim small">대원·장비·건물·도로를 이어받는다</span>
+              {st.kind !== 'none' && (confirmClear
+                ? <span className="org-clear"><span className="warn small">지울까요?</span><button className="chip danger" onClick={() => { runner.clearOrg(); setConfirmClear(false); setOrgSel('fresh'); setOrgVer((v) => v + 1); }}>지우기</button><button className="chip ghost" onClick={() => setConfirmClear(false)}>그대로</button></span>
+                : <button className="chip ghost org-del" onClick={() => setConfirmClear(true)} title="저장된 조직을 지웁니다 (진행 중인 교대에는 영향이 없습니다)">저장된 조직 지우기</button>)}
+            </div>
+            <div className="chips">
+              <button className={`chip ${pick === 'continue' ? 'on' : ''}`} disabled={st.kind !== 'ok'} onClick={() => setOrgSel('continue')} title={st.kind === 'ok' ? '저장된 조직의 상태로 시작합니다' : '저장된 조직이 없습니다'}><Mark d={ORG_MARK} size={11} />이어서 시작</button>
+              <button className={`chip ${pick === 'fresh' ? 'on' : ''}`} onClick={() => setOrgSel('fresh')}>새 조직으로 시작</button>
+            </div>
+            <div className="dim small org-line">{orgLine}</div>
+            {runner.storageFailed && <div className="warn small">저장소를 쓸 수 없어 새로고침하면 조직이 처음으로 돌아갑니다.</div>}
+          </div>
+          </div>
           <div className="diff-foot">
             <div>종합 난도 <b>{difficultyLabel(d)}</b> <span className="pips big">{[1, 2, 3, 4, 5].map((n) => <i key={n} className={n <= Math.round(lvl) ? 'on' : ''} />)}</span></div>
             <div className="btns">
-              <button onClick={() => onStart(undefined, d)}>이 조건으로 새 교대 시작</button>
-              <button onClick={() => onStart(runner.sim.seed, d)} title="사건 배치의 난수는 그대로 두고 조건만 바꿔 비교합니다">같은 시드({runner.sim.seed})로 시작</button>
+              <button onClick={() => start(undefined, pick)}>이 조건으로 새 교대 시작</button>
+              <button onClick={() => start(runner.sim.seed, 'replay')} title="사건 배치의 난수는 그대로 두고 조건만 바꿔 비교합니다 — 지금 교대와 같은 조직 상태로 (조직에 저장하지 않습니다)">같은 시드({runner.sim.seed})로 시작</button>
+              <span className="dim small replay-note">같은 시드 = 지금 교대와<br />같은 조직 상태로</span>
             </div>
           </div>
           {running && <div className="warn small">지금 진행 중인 교대는 끝내고 새로 시작합니다.</div>}

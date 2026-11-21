@@ -46,12 +46,12 @@ export function Token({ field, kind, size = 22, state = 'available', no = 0, tit
  * 분야색을 어둡게 한 바탕 위의 흰 역할 기호(ROLE_MARK), 아래쪽 반 테 = 건강(초록·노랑·빨강), 쓰러졌으면 빨간 온 테.
  * 현장에 내리지 않는 자리(조종사·정장·관측관)는 속이 빈 점선 테. 크기는 CSS 가 정한다(.rdot — 좁으면 10 화소로 준다).
  */
-export function RoleDot({ group, field, health, down = false, dead = false, stays = false, selected = false, title, onClick }: { group: RoleGroup; field: UnitField; health?: number; down?: boolean; dead?: boolean; stays?: boolean; selected?: boolean; title?: string; onClick?: () => void }) {
+export function RoleDot({ group, field, health, down = false, dead = false, stays = false, selected = false, off = false, relief = false, title, onClick }: { group: RoleGroup; field: UnitField; health?: number; down?: boolean; dead?: boolean; stays?: boolean; selected?: boolean; off?: boolean; relief?: boolean; title?: string; onClick?: () => void }) {
   const base = dead ? TRIAGE[3] : shade(FIELD_COLOR[field], -0.42), line = FIELD_TEXT[field];
-  const hp = health === undefined ? null : TRIAGE[health > 70 ? 0 : health > 40 ? 1 : 2];      // (H1) 중증도 색 (view/triage.ts)
+  const hp = health === undefined || off ? null : TRIAGE[health > 70 ? 0 : health > 40 ? 1 : 2];      // (H1) 중증도 색 (view/triage.ts). (I2) 결장(off)은 이번 교대의 건강이 없다
   if (dead) down = false;      // 순직: 빨간 테 대신 검정 바탕에 밝은 테 (아래)
   return (
-    <svg className={`rdot ${selected ? 'sel' : ''} ${stays ? 'stays' : ''} ${down ? 'down' : ''} ${dead ? 'dead' : ''}`} viewBox="0 0 13 13" role={title ? 'img' : undefined} aria-hidden={title ? undefined : true} onClick={onClick}>
+    <svg className={`rdot ${selected ? 'sel' : ''} ${stays ? 'stays' : ''} ${down ? 'down' : ''} ${dead ? 'dead' : ''} ${off ? 'off' : ''} ${relief ? 'relief' : ''}`} viewBox="0 0 13 13" role={title ? 'img' : undefined} aria-hidden={title ? undefined : true} onClick={onClick}>
       {title && <title>{title}</title>}
       {stays
         ? <circle cx={6.5} cy={6.5} r={5.6} fill="rgba(10,16,22,0.6)" stroke={line} strokeWidth={1} strokeDasharray="1.7 1.5" />
@@ -60,6 +60,9 @@ export function RoleDot({ group, field, health, down = false, dead = false, stay
       {!stays && hp && !down && !dead && <path d="M0.9 6.9A5.6 5.6 0 0 0 12.1 6.9" fill="none" stroke={hp} strokeWidth={1.5} strokeLinecap="round" />}
       {dead && <circle cx={6.5} cy={6.5} r={5.7} fill="none" stroke={TRIAGE_EDGE[3]} strokeWidth={1.2} />}
       {down && <circle cx={6.5} cy={6.5} r={5.7} fill="none" stroke="#ff5d5d" strokeWidth={1.6} />}
+      {/* (I2) 결장: 흐린 점(styles.css)에 비스듬한 가로줄 · 예비 인력: 오른쪽 위의 작은 흰 점 */}
+      {off && <path d="M2.3 10.7L10.7 2.3" stroke="#e8eef4" strokeWidth={1.5} strokeLinecap="round" />}
+      {relief && !off && <circle cx={11} cy={2} r={1.7} fill="#e8eef4" stroke="#0b1219" strokeWidth={0.7} />}
       {selected && <circle cx={6.5} cy={6.5} r={6.1} fill="none" stroke="#ffffff" strokeWidth={1.1} />}
     </svg>
   );

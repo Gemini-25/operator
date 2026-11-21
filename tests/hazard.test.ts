@@ -50,13 +50,27 @@ import { RISK } from '../src/sim/world/rules/risk';
 import { knownZone, knownZoneOfIncident, zoneName, zoneOfXY } from '../src/sim/world/state';
 import { ZONE_SEV } from '../src/sim/dispatch/analyst';
 import type { Hostile } from '../src/sim/types';
-import { COMMS, POWER } from '../src/sim/world/rules/infra';
+import { COMMS, POWER, SMOKE } from '../src/sim/world/rules/infra';
 import { LIFT, darkened, liftDelta, liftOcc, liftPlaces } from '../src/sim/world/expo';
 import { LIFT_LAW } from '../src/sim/world/laws/power';
 import { HOSPITAL_CAP, endZoneBy, isDark, recoverWorld, setZone, setZoneArea, zoneAt, zoneOfPlace } from '../src/sim/world/state';
 import { POWER_SEV } from '../src/sim/dispatch/analyst';
 import { DISTRICTS } from '../src/sim/cityPlan';
 import { makeAgent } from '../src/sim/field/agents';
+import { FLOOD, floodPlaces, sillOf } from '../src/sim/world/rules/infra';
+import { ILL, smokeBase, smokeExposure, smokeTargets } from '../src/sim/world/expo';
+import { SMOKE_ILL } from '../src/sim/world/laws/smoke';
+import { SMOKE_OUT, smokeOutdoor } from '../src/sim/field/rules/smoke';
+import { SCENE_RULES } from '../src/sim/field/sceneRegistry';
+import { methodsRule } from '../src/sim/field/rules/methods';
+import { FIRE_BIG, tickMedical } from '../src/sim/field/hazards';
+import { scenarioName } from '../src/sim/scenarios';
+import { NATURE_LIK, makeCaller } from '../src/sim/dispatch/callSystem';
+import { registerConsequence } from '../src/sim/world/consequence';
+import { ZONE_DEFAULT } from '../src/sim/world/state';
+import { riverDist } from '../src/sim/city';
+import { isIndoor, tileOf } from '../src/sim/field/grid';
+import { TYPE_DEFS } from '../src/sim/incidentTypes';
 
 const T = (name: string): HazardLawId => ('t-' + name) as HazardLawId;
 /** 등록된 법칙을 모두 치우고 시험 법칙만 넣어 fn 을 돌린 뒤 되돌린다 */
@@ -1076,7 +1090,10 @@ describe('I1-b b3-5 ①: 교통의 장부와 초과의 네 몫', () => {
         // (b3-10 C4) 정전 한 건마다의 꺼진 신호 — 그 줄은 world.spans 의 한 건이 가진다(원인 기록 = 그 정전의 원인)
         const c4 = tr.bumps.filter((b) => b.what === 1 && !(dz && b.id === dz.darkBump));
         for (const b of c4) { const sp = s.world.spans.find((q) => q.bump === b.id)!; expect(sp, `${seed} C4 bump ${b.id} 의 장부`).toBeDefined(); expect([sp.f, b.ev, b.add]).toEqual(['power', sp.cause, 0.4]); }
-        expect(tr.bumps.length).toBe(tr.crowds.length + (dz && dz.dark ? 1 : 0) + c4.length);
+        // (b3-11 C5) 연기 한 건마다의 시야 혼잡(what 2 — 'haze') — 그 줄도 world.spans 의 연기 줄이 가진다(원인 기록 = 그 연기 알림, 양 = BUMP × 세기)
+        const c5 = tr.bumps.filter((b) => b.what === 2);
+        for (const b of c5) { const sp = s.world.spans.find((q) => q.bump === b.id)!; expect(sp, `${seed} C5 bump ${b.id} 의 장부`).toBeDefined(); expect([sp.f, b.ev]).toEqual(['smoke', sp.cause]); expect(b.add).toBeCloseTo(SMOKE.BUMP * sp.v!, 9); expect(s.events[b.ev].tag).toBe('smoke'); }
+        expect(tr.bumps.length).toBe(tr.crowds.length + (dz && dz.dark ? 1 : 0) + c4.length + c5.length);
       }
       // 교대가 끝나면 얹은 혼잡과 그 줄이 남지 않는다 — (b3-10) 원인이 아직 살아 있는 정전의 꺼진 신호만 남고, 구간의 bump 는 남은 줄의 합이다
       for (const b of tr.bumps) expect(s.world.spans.some((q) => q.bump === b.id), `${seed} 남은 줄 ${b.id}`).toBe(true);
@@ -2616,14 +2633,14 @@ describe('I1-b b3-10: 국지 구역 값 · C4 정전 · L5 정전이 닿은 순�
   const withRide = <R>(mul: number, fn: () => R): R => { const r0 = LIFT.RIDE; LIFT.RIDE = r0 * mul; try { return fn(); } finally { LIFT.RIDE = r0; } };
 
   it('등록과 크기: 법칙 모음의 끝에 power(liftStall — 1초 · 건물마다 한 번 · 상한 3 · 마감 420초 · 충격만), 상태 규칙은 suspectZone 다음에 powerOut → powerOut.grid → powerOut.end → powerOut.tell → commsDown → commsDown.power → commsDown.shadow', () => {
-    expect(hazardLaws().map((l) => l.id)).toEqual(['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle', 'liftStall']);
+    expect(hazardLaws().map((l) => l.id).slice(0, 6)).toEqual(['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle', 'liftStall']);      // (b3-11) 그 뒤에 smoke(smokeIll)
     const L = lawOf('liftStall');
     expect([L.every, L.once, L.cap, L.hold, L.scan, L.label]).toEqual([1, true, 3, 420, undefined, '정전으로 멈춘 승강기']);
     expect(LIFT_LAW).toEqual({ CAP: 3, HOLD: 420 });
     expect(readFileSync('src/sim/world/laws/index.ts', 'utf8')).toMatch(/^import '\.\/ember';[^\n]*\nimport '\.\/power';/m);
     expect(readFileSync('src/sim/world/rules/index.ts', 'utf8')).toMatch(/^import '\.\/risk';[^\n]*\nimport '\.\/infra';/m);
     const ids = consequences().map((c) => c.id);
-    expect(ids.slice(ids.indexOf('suspectZone'))).toEqual(['suspectZone', 'powerOut', 'powerOut.grid', 'powerOut.end', 'powerOut.tell', 'commsDown', 'commsDown.power', 'commsDown.shadow']);
+    expect(ids.slice(ids.indexOf('suspectZone'), ids.indexOf('commsDown.shadow') + 1)).toEqual(['suspectZone', 'powerOut', 'powerOut.grid', 'powerOut.end', 'powerOut.tell', 'commsDown', 'commsDown.power', 'commsDown.shadow']);      // (b3-11·12) 그 뒤에 smokePlume · floodLow
     expect(LIFT).toEqual({ RIDE: 0.006, FLOOR_DIV: 6, FLOOR_MAX: 3, FLOORS: 4 });
     expect([POWER.HOLD, POWER.QUAKE_HOLD, POWER.END, POWER.TELL, POWER.DARK_BUMP, POWER.QUAKE_R, POWER.QUAKE_THR, POWER.LINE_THR, POWER.HOSP_CUT, POWER.CAP]).toEqual([600, 240, [60, 120], [20, 40], 0.4, 900, [0.3, 0.5], [0.15, 0.6], 2, 6]);
     expect([COMMS.UTIL_V, COMMS.POWER_V, COMMS.QUAKE_V, COMMS.STORM_V, COMMS.BACKUP, COMMS.AFTER, COMMS.QUAKE_HOLD, COMMS.CAP]).toEqual([0.4, 0.6, 0.5, 0.7, 100, 180, 300, 3]);
@@ -2647,7 +2664,7 @@ describe('I1-b b3-10: 국지 구역 값 · C4 정전 · L5 정전이 닿은 순�
     expect([s.world.zones[z].cause.power, s.world.zones[z].until.power, s.world.zones[z].at!.power]).toEqual([ev2, 400, { x: d.x + 5, y: d.y, r: 120 }]);
     // 구역 전체 값(같은 값 — 가장 넓다)이 오면 자리를 지운다
     expect(setZone(s, z, 'power', 0, 700, ev3, false)).toBe(true);
-    expect([s.world.zones[z].at!.power, s.world.zones[z].cause.power, zoneAt(s, 'power', d.x + 100, d.y)]).toEqual([undefined, ev3, 0]);
+    expect([s.world.zones[z].at?.power, s.world.zones[z].cause.power, zoneAt(s, 'power', d.x + 100, d.y)]).toEqual([undefined, ev3, 0]);
     // endZoneBy: 그 원인·그 칸만, 당기기만
     setZone(s, z, 'comms', 0.6, 800, ev3, false);
     expect(endZoneBy(s, ev3, 900, 'power')).toBe(0);
@@ -2987,5 +3004,495 @@ describe('I1-b b3-10: 국지 구역 값 · C4 정전 · L5 정전이 닿은 순�
     expect(s.traffic.bumps).toEqual([]);
     for (const e of s.city.edges) expect(e.bump ?? 0).toBe(0);
     for (const I of s.incidents) expect(s.scenes[I.id]?.shadowAdd).toBeUndefined();
+  });
+});
+
+describe('I1-b b3-11 · b3-12: C5 연기 · L4 연기를 마신 주민 · L6 수위가 문턱을 넘으면 잠긴다', () => {
+  const lawOf = (id: string): HazardLaw => hazardLaws().find((l) => l.id === id)!;
+  const ruleOf = (id: string) => consequences().find((c) => c.id === id)!;
+  /** 한 틱 — 쌓인 신호를 처리하고, 1초 블록이면 상태 규칙·초과 위험·회복까지 (tickWorld 하나) — 그 뒤 예약을 사건으로 */
+  function tk(s: Sim): void { s.tick += 1; s.t = s.tick * s.dt; tickWorld(s); tickIncidents(s); }
+  function secs(s: Sim, sec: number): void { const n = Math.round(sec / s.dt); for (let k = 0; k < n; k++) tk(s); }
+  const isRes = (s: Sim, q: Place): boolean => !q.open && q.facility < 0 && smokeBase(s, q.kind) > 0;
+  /** 연기 원(반경 367 — 불 칸 40) 안의 주거 건물이 가장 많은 아파트 (시드와 무관한 도시의 생김새) */
+  function smokyApt(s: Sim): Place {
+    let best: Place | null = null, bn = -1;
+    for (const q of s.city.places) {
+      if (q.kind !== 'apartment' || !isRes(s, q)) continue;
+      const cx = q.x + q.w / 2, cy = q.y + q.h / 2;
+      let n = 0;
+      for (const p of s.city.places) if (p.id !== q.id && isRes(s, p) && Math.hypot(p.x + p.w / 2 - cx, p.y + p.h / 2 - cy) < 367) n++;
+      if (n > bn) { bn = n; best = q; }
+    }
+    return best!;
+  }
+  /** 그 현장의 불 칸을 손으로 정한다 (바닥 칸 n 개에 불 1 · 다른 칸 0 — tickScene 을 돌리지 않으므로 그대로 남는다) */
+  function burnCells(sc: Scene, n: number): void {
+    sc.fire.fill(0);
+    let k = 0;
+    for (let i = 0; i < sc.fire.length && k < n; i++) if (sc.tiles[i] === TILE.FLOOR) { sc.fire[i] = 1; k++; }
+    sc.burning = n;
+  }
+  function fireAt(s: Sim, q: Place, n: number): { I: Incident; sc: Scene } {
+    const I = createIncident(s, { type: 'fire', variant: 'std', placeId: q.id, rng: s.rng.fork('t-smoke') });
+    const sc = s.scenes[I.id]!;
+    burnCells(sc, n);
+    return { I, sc };
+  }
+  const smokeRows = (s: Sim) => s.world.spans.filter((q) => q.f === 'smoke');
+  const withRR = <R>(mul: number, fn: () => R): R => { const r0 = ILL.RR; ILL.RR = r0 * mul; try { return fn(); } finally { ILL.RR = r0; } };
+  const floodSim = (seed = 'S7'): Sim => {
+    const s = new Sim(seed, { ...NORMAL, disaster: parseDisaster('flood')! }, 1200);
+    s.gen.nextAt = s.gen.majorAt = Infinity; s.gen.nextNuisanceAt = Infinity; s.traffic.nextEvent = Infinity;
+    return s;
+  };
+  const sillHand = (s: Sim, id: number, base: number): number => base * (FLOOD.LO + FLOOD.SPAN * s.rng.fork('hz:floodLow:b' + id).next());
+  const WET_TEXT = /지하가 물에 잠겨 전기가 끊겼습니다\.$/;
+  let s0: Sim | null = null;
+  /** 보통 S0 — 연기도 홍수도 없는 실제 교대 (L4 ① · L6 ① 이 함께 쓴다 — 고치지 않는다) */
+  const normalS0 = (): Sim => { if (!s0) { s0 = new Sim('S0', NORMAL, 1200); s0.runToEnd(); } return s0; };
+
+  it('등록과 크기: 법칙 모음의 끝에 smoke(smokeIll — 1초 · 건물마다 몇 번이고 · 상한 3), 상태 규칙은 commsDown.shadow 다음에 smokePlume → floodLow(쿨다운 5초 · 사건 없음) · 실외 노출은 현장 규칙에서 상공의 헬기 앞', () => {
+    expect(hazardLaws().map((l) => l.id)).toEqual(['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle', 'liftStall', 'smokeIll']);
+    const L = lawOf('smokeIll');
+    expect([L.every, L.once, L.cap, L.hold, L.label, typeof L.scan]).toEqual([1, false, 3, undefined, '연기를 마신 주민', 'function']);
+    expect(SMOKE_ILL).toEqual({ CAP: 3 });
+    expect(readFileSync('src/sim/world/laws/index.ts', 'utf8')).toMatch(/^import '\.\/power';[^\n]*\nimport '\.\/smoke';/m);
+    const ids = consequences().map((c) => c.id);
+    expect(ids.slice(ids.indexOf('commsDown.shadow'))).toEqual(['commsDown.shadow', 'smokePlume', 'floodLow']);
+    const P = ruleOf('smokePlume'), F = ruleOf('floodLow');
+    expect([P.on, P.cooldown, P.spawns, P.silent, typeof P.recover]).toEqual(['tick', 0, false, true, 'function']);
+    expect([F.on, F.cooldown, F.spawns, F.silent]).toEqual(['tick', 5, false, true]);
+    expect(SMOKE).toEqual({ HOLD: 45, AFTER: 120, R: 450, V: 0.6, FULL: 60, STEP: 10, WILD_PAD: 300, WILD_V: 0.7, WILD_MOVE: 60, WILD_GROW: 30, BUMP: 0.2 });
+    expect(ILL).toEqual({ RR: 40, MED_PER_SHIFT: 1.867, SPAN: 1050, MAX: 40 });
+    expect(FLOOD).toEqual({ DIV: 80, MIN: 0.3, LO: 0.85, SPAN: 0.3, TOP: 1.15 });
+    expect(SMOKE_OUT).toBe(0.08);
+    const kr = SCENE_RULES.indexOf(smokeOutdoor);
+    expect(kr).toBeGreaterThanOrEqual(0);
+    expect(kr).toBeLessThan(SCENE_RULES.indexOf(methodsRule));      // 대응 방법의 규칙이 세계 규칙의 맨 끝이다 (methods 시험)
+    expect(readFileSync('src/sim/field/scenes/index.ts', 'utf8')).toMatch(/^import '\.\.\/rules\/smoke';[^\n]*\nimport '\.\.\/rules\/air';/m);
+    // 법칙 파일의 글자: 원인을 모른다(산불·화재·재난을 읽지 않는다) — 식은 expo 에서
+    const src = readFileSync('src/sim/world/laws/smoke.ts', 'utf8').split('\n').filter((l) => !/^\s*(\/\/|\*|\/\*\*)/.test(l)).join('\n');
+    for (const w of ['disaster', 'wildfire', 'variant ===', 'truth.type', 'scenes', 'fire[']) expect(src.includes(w), `smoke.ts 에 ${w}`).toBe(false);
+  });
+
+  it('C5 크게 이어지는 불: 불 칸 30 이상이 45초 이어지면 연기 자리(반경 450 × √(n/60) · 세기 0.6 × n/60 — 10칸 단위) · 처음 한 번 알림(원인 = 그 불을 만든 기록) · 그 자리 안 구간의 시야 혼잡(장부 what 2 — 한 줄) · 커지면 다시 놓고 · 사건이 닫히고 120초 뒤 걷히면 혼잡이 얹기 전 값으로 돌아온다', () => {
+    withLaws([], () => {
+      const s = quiet(), q = smokyApt(s), before = s.city.edges.map((e) => e.bump ?? 0);
+      const { I, sc } = fireAt(s, q, 40);
+      expect(FIRE_BIG).toBe(30);
+      secs(s, 40);
+      expect(smokeRows(s)).toEqual([]);
+      expect(s.events.some((e) => e.tag === 'smoke')).toBe(false);
+      secs(s, 8);
+      const al = s.events.filter((e) => e.tag === 'smoke');
+      expect(al.length).toBe(1);
+      expect([al[0].actor, al[0].causes, al[0].t >= 45 && al[0].t <= 47]).toEqual(['재난안전본부', [fireCauseEv(I)], true]);
+      expect(al[0].text.startsWith(`${q.addr} ${q.name} 화재의 연기가 `)).toBe(true);
+      expect(al[0].text.endsWith('번지고 있습니다. 창문을 닫아 주십시오.')).toBe(true);
+      const r1 = Math.round(450 * Math.sqrt(40 / 60));
+      const sp = smokeRows(s);
+      expect(sp.length).toBe(1);
+      expect([sp[0].cause, sp[0].inc, sp[0].ref, sp[0].src, sp[0].v, sp[0].at]).toEqual([al[0].id, I.id, q.id, 'fire', 0.4, { x: I.truth.x, y: I.truth.y, r: r1 }]);
+      const own = s.world.zones.map((Z, z) => (Z.cause.smoke === al[0].id ? z : -1)).filter((z) => z >= 0);
+      expect(own.length).toBeGreaterThan(0);
+      for (const z of own) { const Z = s.world.zones[z]; expect([Z.smoke, Z.known.smoke, Z.at!.smoke]).toEqual([0.4, true, { x: I.truth.x, y: I.truth.y, r: r1 }]); }
+      expect(zoneAt(s, 'smoke', I.truth.x, I.truth.y)).toBe(0.4);
+      expect(zoneAt(s, 'smoke', I.truth.x + r1 + 30, I.truth.y)).toBe(ZONE_DEFAULT.smoke);
+      const row = s.traffic.bumps.find((b) => b.id === sp[0].bump)!;
+      expect([row.what, row.ev, row.inc]).toEqual([2, al[0].id, I.id]);
+      expect(row.add).toBeCloseTo(0.2 * 0.4, 12);
+      expect(row.edges.length).toBeGreaterThan(0);
+      for (const e of s.city.edges) expect(e.bump ?? 0, `구간 ${e.id}`).toBeCloseTo(before[e.id] + (row.edges.indexOf(e.id) >= 0 ? 0.08 : 0), 12);
+      for (const id of row.edges) { const e = s.city.edges[id], A = s.city.nodes[e.a], B = s.city.nodes[e.b]; expect(Math.hypot((A.x + B.x) / 2 - I.truth.x, (A.y + B.y) / 2 - I.truth.y)).toBeLessThanOrEqual(r1); }
+      // 불이 커지면(60칸) 자리를 다시 놓는다 — 동네 값·장부 줄·얹은 혼잡을 새로 (알림은 되풀이하지 않는다)
+      burnCells(sc, 60);
+      secs(s, 1);
+      const sp2 = smokeRows(s);
+      expect([sp2.length, sp2[0].cause, sp2[0].v, sp2[0].at!.r]).toEqual([1, al[0].id, 0.6, 450]);
+      expect(s.traffic.bumps.find((b) => b.id === sp[0].bump)).toBeUndefined();
+      const row2 = s.traffic.bumps.find((b) => b.id === sp2[0].bump)!;
+      expect(row2.add).toBeCloseTo(0.12, 12);
+      for (const e of s.city.edges) expect(e.bump ?? 0).toBeCloseTo(before[e.id] + (row2.edges.indexOf(e.id) >= 0 ? 0.12 : 0), 12);
+      expect(s.events.filter((e) => e.tag === 'smoke').length).toBe(1);
+      // 불이 이어지는 동안은 걷히지 않는다 · 사건이 닫히면 120초 뒤 걷힌다 — 기록 없이
+      secs(s, 200);
+      expect(smokeRows(s).length).toBe(1);
+      const n0 = s.events.length;
+      closeIncident(s, I, 'resolved');
+      secs(s, 117);
+      expect(smokeRows(s).length).toBe(1);
+      secs(s, 5);
+      expect(smokeRows(s)).toEqual([]);
+      expect(s.world.zones.every((Z) => Z.smoke === ZONE_DEFAULT.smoke && Z.at?.smoke === undefined)).toBe(true);
+      expect(s.traffic.bumps.filter((b) => b.what === 2)).toEqual([]);
+      for (const e of s.city.edges) expect(e.bump ?? 0).toBeCloseTo(before[e.id], 12);
+      expect(s.events.slice(n0).some((e) => e.tag === 'smoke')).toBe(false);
+    });
+  });
+
+  it('C5 작은 불(불 칸 30 아래)이나 짧게 큰 불(45초 안에 줄어듦)은 연기 자리를 만들지 않는다', () => {
+    withLaws([], () => {
+      const s = quiet(), q = smokyApt(s);
+      const { sc } = fireAt(s, q, 25);
+      secs(s, 120);
+      expect(smokeRows(s)).toEqual([]);
+      burnCells(sc, 50); secs(s, 30); burnCells(sc, 20); secs(s, 2); burnCells(sc, 50); secs(s, 30);
+      expect(smokeRows(s)).toEqual([]);
+      expect(s.events.some((e) => e.tag === 'smoke')).toBe(false);
+    });
+  });
+
+  it('C5 산불(실제 교대 산불 S1): 불머리 + 300 의 원 · 세기 0.7 · 원인 = 재난 알림 · 불이 난 건물 없음 — 교대 끝에는 연기 줄·연기 장부 줄이 남지 않고 얹은 혼잡이 장부와 맞는다', () => {
+    const s = new Sim('S1', { ...NORMAL, disaster: parseDisaster('wildfire')! }, 1200);
+    let first: (typeof s.world.spans)[number] | null = null, fr: { x: number; y: number; r: number } | null = null, bumpAdd = -1, drift = 0;
+    while (!s.ended && s.tick < 20000) {
+      s.step();
+      if (s.tick % 5) continue;
+      const w = s.world.spans.find((q) => q.f === 'smoke' && q.src === 'wild');
+      if (w && !first) { first = { ...w, at: { ...w.at! } }; const d = s.disaster!; fr = d.front ? { x: d.front.x, y: d.front.y, r: d.front.r } : null; const b = s.traffic.bumps.find((r) => r.id === w.bump); bumpAdd = b ? b.add : -1; }
+      const sum = new Float64Array(s.city.edges.length);
+      for (const r of s.traffic.bumps) for (const id of r.edges) sum[id] += r.add;
+      for (const e of s.city.edges) drift = Math.max(drift, Math.abs((e.bump ?? 0) - sum[e.id]));
+    }
+    expect(first).not.toBeNull();
+    expect([first!.inc, first!.ref, first!.v]).toEqual([-1, -1, 0.7]);
+    expect(fr).not.toBeNull();
+    // 자리는 그 순간의 불머리(반지름 + 300) — 불머리는 같은 1초 안에도 움직이므로 다시 놓는 문턱(60 · 30) 안에서 본다
+    expect(Math.abs(first!.at!.r - Math.round(fr!.r + SMOKE.WILD_PAD))).toBeLessThan(SMOKE.WILD_GROW);
+    expect(Math.hypot(first!.at!.x - fr!.x, first!.at!.y - fr!.y)).toBeLessThan(SMOKE.WILD_MOVE);
+    if (bumpAdd >= 0) expect(bumpAdd).toBeCloseTo(0.14, 12);
+    const al = s.events[first!.cause];
+    expect([al.tag, al.actor]).toEqual(['smoke', '재난안전본부']);
+    expect(al.text).toMatch(/산불의 연기가 .+ 번지고 있습니다/);
+    expect(al.causes.length).toBe(1);
+    expect(s.events[al.causes[0]].role).toBe('SYSTEM');
+    expect(smokeRows(s)).toEqual([]);
+    expect(s.traffic.bumps.filter((b) => b.what === 2)).toEqual([]);
+    expect(drift).toBeLessThan(1e-9);
+  });
+
+  it('C5 실외 노출: 연기 자리 안의 바깥 현장(수색 — 실외 노출을 받는 구조 대상)은 초당 0.08 × 그 자리의 세기만큼 더 깎인다(원인 연기 흡입) — 자리 밖·건물 안 현장·연기 줄이 없을 때는 없다', () => {
+    withLaws([], () => {
+      const s = quiet(), fk = INCIDENT_PLACES.fire as Record<string, number | undefined>;
+      const outdoor = s.city.places.filter((p) => p.kind === 'park' || p.kind === 'forest' || p.kind === 'campsite');
+      let best: { pk: Place; b: Place; d: number } | null = null;
+      for (const pk of outdoor) for (const b of s.city.places) {
+        if (b.open || b.facility >= 0 || !(fk[b.kind] ?? 0)) continue;
+        const d = Math.hypot(b.x + b.w / 2 - pk.x - pk.w / 2, b.y + b.h / 2 - pk.y - pk.h / 2);
+        if (!best || d < best.d) best = { pk, b, d };
+      }
+      expect(best!.d).toBeLessThan(300);
+      const { I: F } = fireAt(s, best!.b, 60);
+      secs(s, 47);
+      const sp = smokeRows(s)[0];
+      expect(sp).toBeDefined();
+      const A = createIncident(s, { type: 'search', placeId: best!.pk.id, rng: s.rng.fork('t-out-a') });
+      const far = outdoor.find((p) => zoneAt(s, 'smoke', p.x + p.w / 2, p.y + p.h / 2) === 0 && Math.hypot(p.x + p.w / 2 - sp.at!.x, p.y + p.h / 2 - sp.at!.y) > sp.at!.r + 300)!;
+      const B = createIncident(s, { type: 'search', placeId: far.id, rng: s.rng.fork('t-out-b') });
+      const sa = s.scenes[A.id]!, sb = s.scenes[B.id]!;
+      expect(TYPE_DEFS[sa.kind].outdoor).toBe(true);
+      const v = zoneAt(s, 'smoke', A.truth.x, A.truth.y);
+      expect(v).toBeGreaterThan(0);
+      expect(zoneAt(s, 'smoke', B.truth.x, B.truth.y)).toBe(0);
+      const tg = (sc: Scene) => sc.casualties.filter((c) => !c.dead && (c.where === 'scene' || c.where === 'carried') && !isIndoor(sc.tiles[tileOf(sc, c.x, c.y)]));
+      expect(tg(sa).length).toBeGreaterThan(0);
+      const ha = tg(sa).map((c) => c.health), hb = sb.casualties.map((c) => c.health);
+      smokeOutdoor(s, sa, A); smokeOutdoor(s, sb, B);
+      tg(sa).forEach((c, k) => { expect(c.health).toBeCloseTo(ha[k] - SMOKE_OUT * v * s.dt, 12); expect((c.injuries ?? []).some((j) => j.cause === 'smoke')).toBe(true); });
+      expect(sb.casualties.map((c) => c.health)).toEqual(hb);
+      // 건물 안의 현장(불이 난 그 건물)은 실외가 아니다
+      const sf = s.scenes[F.id]!, hf = sf.casualties.map((c) => c.health);
+      smokeOutdoor(s, sf, F);
+      expect(sf.casualties.map((c) => c.health)).toEqual(hf);
+      // 연기 줄이 없으면 첫 줄에서 돌아간다
+      s.world.spans = s.world.spans.filter((x) => x.f !== 'smoke');
+      const h2 = tg(sa).map((c) => c.health);
+      smokeOutdoor(s, sa, A);
+      expect(tg(sa).map((c) => c.health)).toEqual(h2);
+    });
+  });
+
+  it('L4 ① 연기가 없으면 칸이 없다: 연기 없는 실제 교대(보통 S0) · 큰 불이 없는 화재 현장 — 연기 줄이 없으면 대상도 칸도 없다', () => {
+    const s = normalS0();
+    expect(s.events.some((e) => e.tag === 'smoke')).toBe(false);
+    expect(s.world.hz.cells.smokeIll).toBeUndefined();
+    expect(s.incidents.some((I) => I.truth.type === 'medical' && I.truth.variant === 'smoke')).toBe(false);
+    const q = quiet(), A = smokyApt(q);
+    withRR(1e6, () => { fireAt(q, A, 25); secs(q, 120); });
+    expect(q.world.hz.cells.smokeIll).toBeUndefined();
+    let n = 0;
+    smokeExposure(q, () => { n++; });
+    expect(n).toBe(0);
+  });
+
+  it('L4 ② 평소 응급률 base_p: 응급의 장소 표에서 손으로 셈한 값 — 종류마다 MED_PER_SHIFT × 몫/합 ÷ 그 종류의 건물 수 ÷ 1050, 모든 건물의 합은 MED_PER_SHIFT ÷ 1050 (설계서의 값 × 1.867/2.1)', () => {
+    const s = quiet(), table = INCIDENT_PLACES.medical as Record<string, number>;
+    const sum = Object.values(table).reduce((a, b) => a + (b ?? 0), 0);
+    let total = 0;
+    for (const k of Object.keys(table)) {
+      const n = s.city.places.filter((q) => q.kind === k && q.facility < 0).length;
+      const want = n > 0 ? (1.867 * (table[k] / sum)) / n / 1050 : 0;
+      expect(smokeBase(s, k as Place['kind']), k).toBeCloseTo(want, 15);
+      total += want * n;
+    }
+    expect(total).toBeCloseTo(1.867 / 1050, 12);
+    let all = 0;
+    for (const q of s.city.places) if (q.facility < 0) all += smokeBase(s, q.kind);
+    expect(all).toBeCloseTo(1.867 / 1050, 12);
+    const scale = 1.867 / 2.1;      // 설계서의 값(조사 때의 어림 2.1)
+    for (const [k, v] of [['apartment', 8.3e-6], ['houseL', 4.8e-6], ['officetel', 4.7e-6], ['villa', 4.5e-6], ['houseS', 1.9e-6]] as const) expect(Math.abs(smokeBase(s, k) / (v * scale) - 1), k).toBeLessThan(0.05);
+    expect(smokeBase(s, 'office')).toBe(0);
+  });
+
+  it('L4 ③ 개입: 같은 시드에 같은 큰 불 — 한쪽만 구역의 연기를 0 으로 묶어 두면(장부 줄은 남는다) 연기 환자가 없다. 다른 쪽의 환자는 연기 속 그 건물(hz.target)에 나고, 원인 = 연기 알림 · 부모 = 그 화재 · 내력 smoke(ref = 불난 건물) · 한 뿌리 둘까지', () => {
+    withRR(1e4, () => {
+      const A = quiet(), qa = smokyApt(A), fa = fireAt(A, qa, 60);
+      secs(A, 70);
+      const kids = A.incidents.filter((J) => J.csq === 'smokeIll');
+      expect(kids.length).toBe(2);
+      const al = A.events.find((e) => e.tag === 'smoke')!;
+      const tg = new Set(smokeTargets(A, smokeRows(A)[0]).map((t) => t.id));
+      for (const K of kids) {
+        expect([K.truth.type, K.truth.variant, K.truth.placeId, K.parent, K.cause, K.hz!.law, K.hz!.src[0].what, K.hz!.src[0].ref, K.hz!.src[0].ev]).toEqual(['medical', 'smoke', K.hz!.target, fa.I.id, al.id, 'smokeIll', 'smoke', qa.id, al.id]);
+        expect(tg.has(K.hz!.target)).toBe(true);
+        expect(K.truth.severity).toBe(1);
+        expect(A.events[K.rootEvent].causes).toContain(al.id);
+      }
+      expect(A.gen.dropped.filter((d) => d.csq === 'smokeIll').every((d) => d.why === 'depth' || d.why === 'cap')).toBe(true);
+      // 개입 쪽: smokePlume 다음에 도는 시험 규칙이 구역의 연기를 매초 0 으로 되돌린다 (법칙은 그 다음에 돈다)
+      const off = registerConsequence({
+        id: 't-nosmoke' as never, label: '시험 — 연기를 지운다', on: 'tick', key: () => 'x', cooldown: 0, cap: Infinity, spawns: false, silent: true, test: () => true,
+        apply: (c) => { for (const Z of c.sim.world.zones) if (Z.smoke !== ZONE_DEFAULT.smoke) Z.smoke = ZONE_DEFAULT.smoke; },
+      });
+      try {
+        const B = quiet(), qb = smokyApt(B);
+        fireAt(B, qb, 60);
+        secs(B, 70);
+        expect(B.events.some((e) => e.tag === 'smoke')).toBe(true);      // 원인(불)과 상태 규칙은 그대로다
+        expect(B.incidents.filter((J) => J.csq === 'smokeIll')).toEqual([]);
+        const cells = B.world.hz.cells.smokeIll ?? {};
+        for (const c of Object.values(cells)) expect(c.H).toBe(0);
+      } finally { off(); }
+    });
+  });
+
+  it('L4 ④ 연기 자리 밖의 건물은 쌓이지 않는다 · ⑤ 불이 난 그 건물·열린 사건이 있는 건물·쓸 수 없는 건물은 대상이 아니다 — 대상 목록은 가까운 순 40채이고 자리·반경이 바뀔 때만 다시 만든다', () => {
+    withRR(1e-3, () => {
+      const s = quiet(), q = smokyApt(s);
+      fireAt(s, q, 40);
+      secs(s, 47);
+      const sp = smokeRows(s)[0], at = sp.at!;
+      const list = smokeTargets(s, sp);
+      expect(list.length).toBe(ILL.MAX);
+      expect(smokeTargets(s, sp)).toBe(list);      // 같은 자리면 다시 만들지 않는다
+      for (let k = 1; k < list.length; k++) expect(list[k].d >= list[k - 1].d).toBe(true);
+      for (const t of list) { const p = s.city.places[t.id]; expect(isRes(s, p)).toBe(true); expect(t.id).not.toBe(q.id); expect(Math.hypot(p.x + p.w / 2 - at.x, p.y + p.h / 2 - at.y)).toBeCloseTo(t.d, 9); expect(t.d).toBeLessThan(at.r); }
+      // 쓸 수 없는 건물 · 열린 사건이 있는 건물
+      const burnt = list[0].id, busy = list[1].id;
+      s.placeMarks.set(burnt, { placeId: burnt, state: 'burnt', t: s.t, incidentId: -1, burnFrac: 1, ruinFrac: 0 });
+      createIncident(s, { type: 'medical', variant: 'faint', placeId: busy, rng: s.rng.fork('t-busy') });
+      const c0 = s.world.hz.cells.smokeIll ?? {}, H0: Record<string, number> = {};
+      for (const [k, c] of Object.entries(c0)) H0[k] = c.H;
+      secs(s, 20);
+      const cells = s.world.hz.cells.smokeIll!;
+      const inList = new Set(list.map((t) => t.id));
+      for (const k of Object.keys(cells)) expect(inList.has(+k), `건물 ${k} 은 대상 목록 밖`).toBe(true);
+      expect(cells[q.id]).toBeUndefined();
+      expect(cells[burnt]?.H ?? 0).toBeCloseTo(H0[burnt] ?? 0, 15);
+      expect(cells[busy]?.H ?? 0).toBeCloseTo(H0[busy] ?? 0, 15);
+      const grow = list.slice(2).filter((t) => (cells[t.id]?.H ?? 0) > (H0[t.id] ?? 0));
+      expect(grow.length).toBeGreaterThan(30);
+      // 그 밖(가까운 40채 밖 · 원 밖)의 주거 건물은 칸이 없다
+      for (const p of s.city.places) if (isRes(s, p) && !inList.has(p.id)) expect(cells[p.id], `건물 ${p.id}`).toBeUndefined();
+      // 손 계산: 한 블록(1초)의 증가 = base × RR × 세기 × (1 − 거리 / 반경)
+      const t2 = grow[3], before = cells[t2.id].H;
+      secs(s, 1);
+      const Z = s.world.zones[zoneOfPlace(s, t2.id)];
+      expect(cells[t2.id].H - before).toBeCloseTo(smokeBase(s, s.city.places[t2.id].kind) * ILL.RR * Z.smoke * (1 - t2.d / at.r), 15);
+    });
+  });
+
+  it('L4 ⑥ medical/smoke 현장: 실신의 틀 · 환자의 처음 부상 원인은 연기 흡입 · 급변하지 않는다(tickMedical 이 아무것도 하지 않는다) · 이름 연기 흡입 · 신고는 호흡 곤란', () => {
+    const s = quiet(), q = s.city.places.find((p) => p.kind === 'apartment' && p.facility < 0)!;
+    const I = createIncident(s, { type: 'medical', variant: 'smoke', placeId: q.id, rng: s.rng.fork('t-med') });
+    const sc = s.scenes[I.id]!;
+    expect([I.truth.type, I.truth.variant, sc.leadDept]).toEqual(['medical', 'smoke', 'ems']);
+    const cs = sc.casualties;
+    expect(cs.length).toBe(1);
+    expect([cs[0].mob, (cs[0].injuries ?? []).map((j) => j.cause)]).toEqual(['immobile', ['smoke']]);
+    expect(cs[0].health).toBeGreaterThanOrEqual(70); expect(cs[0].health).toBeLessThanOrEqual(88);
+    const h0 = cs[0].health, b0 = cs[0].bleed, n0 = s.events.length;
+    for (let k = 0; k < 5 * 150; k++) { s.tick += 1; s.t = s.tick * s.dt; tickMedical(s, sc, I); }
+    expect([cs[0].health, cs[0].bleed, s.events.length]).toEqual([h0, b0, n0]);
+    expect(scenarioName('medical', 'smoke')).toBe('연기 흡입');
+    // 신고: 정확히 아는 신고자는 '호흡 곤란'(breathless) — 그 줄은 거의 응급이고 연기·가스일 수도 있다
+    const seen: string[] = [];
+    for (let k = 0; k < 40; k++) {
+      const cl = makeCaller(s, I, sc, s.rng.fork('t-call-' + k), false);
+      const nat = cl.knows.nature!;
+      seen.push(nat.value);
+      if (nat.value === 'breathless') expect(nat.text).toMatch(/연기/);
+    }
+    expect(seen).toContain('breathless');
+    for (const v of seen) expect(['breathless', 'collapsed']).toContain(v);
+    const lik = NATURE_LIK.breathless;
+    expect(Math.max(...Object.values(lik))).toBe(lik.medical);
+  });
+
+  it('L6 ① 홍수가 아닌 교대에는 아무것도 없다 — 문턱(world.sills)이 비어 있고 잠긴 건물·잠긴 지하 기록·level 장부가 없다', () => {
+    for (const s of [normalS0(), new Sim('S0', { ...NORMAL, disaster: parseDisaster('typhoon')! }, 1200)]) {
+      if (!s.ended) s.runToEnd();
+      expect(s.world.sills).toEqual({});
+      expect(Object.values(s.world.expo).some((e) => e.wet)).toBe(false);
+      expect(s.events.some((e) => WET_TEXT.test(e.text))).toBe(false);
+      expect(Array.from(s.traffic.levelEv).every((v) => v === -1)).toBe(true);
+    }
+  });
+
+  it('L6 ② 수위를 손으로 올리면 문턱 순서대로 잠긴다(5초마다 — 문턱 = max(0.3, 강까지 / 80) × (0.85 + 0.3u), 54채) — 기록은 4층 이상 · 쓸 수 있는 건물에서만 건물마다 한 번(원인 = 홍수의 충격 알림), 그 건물의 전기실이 꺼지고 L5 의 칸이 생긴다(내력 level)', () => {
+    const s = floodSim(), d = s.disaster!;
+    const fp = floodPlaces(s);
+    expect(fp.length).toBe(54);
+    expect(floodPlaces(floodSim('S3'))).toBe(fp);      // 도시 열쇠의 캐시 — 시드와 무관
+    const tall = fp.filter((f) => (s.city.places[f.id].floors ?? 1) >= LIFT.FLOORS).map((f) => f.id);
+    expect(tall.length).toBe(2);
+    for (const id of tall) expect(s.city.places[id].kind).toBe('officetel');
+    for (const f of fp) { const q = s.city.places[f.id]; expect(f.base).toBeCloseTo(Math.max(0.3, riverDist(q.x + q.w / 2, q.y + q.h / 2) / 80), 12); expect(f.base * 1.15).toBeLessThanOrEqual(1.15 + 1e-12); expect(q.open).toBe(false); }
+    d.levelEv = note(s, '시험 — 강이 넘치기 시작했다');
+    d.level = 0.01;
+    secs(s, 5);
+    expect(Object.keys(s.world.sills).length).toBe(54);
+    for (const f of fp) expect(s.world.sills[f.id]).toBeCloseTo(sillHand(s, f.id, f.base), 15);
+    const order = [...fp].sort((a, b) => s.world.sills[a.id] - s.world.sills[b.id]);
+    const wetAt: Record<number, number> = {};
+    for (const lv of [0.3, 0.45, 0.6, 0.75, 0.9, 1.05, 1.2]) {
+      d.level = lv;
+      secs(s, 5);
+      for (const f of fp) {
+        const wet = !!s.world.expo[f.id]?.wet;
+        expect(wet, `건물 ${f.id} 수위 ${lv}`).toBe(s.world.sills[f.id] < lv);
+        if (wet && wetAt[f.id] === undefined) wetAt[f.id] = lv;
+      }
+    }
+    for (let k = 1; k < order.length; k++) expect(wetAt[order[k].id] >= wetAt[order[k - 1].id]).toBe(true);
+    const rec = s.events.filter((e) => WET_TEXT.test(e.text));
+    expect(rec.length).toBe(tall.length);
+    for (const e of rec) expect([e.role, e.actor, e.truth, e.causes, e.importance]).toEqual(['SYSTEM', '도시', true, [d.levelEv], 0]);
+    for (const f of fp) {
+      const ex = s.world.expo[f.id];
+      if (tall.indexOf(f.id) >= 0) {
+        expect(ex.wetEv).toBeGreaterThanOrEqual(0);
+        expect(s.events[ex.wetEv].text.startsWith(`${s.city.places[f.id].addr} ${s.city.places[f.id].name}`)).toBe(true);
+        expect(ex.dark).toBeGreaterThan(0);
+        expect(isDark(s, f.id)).toBe(true);
+        const c = hazardCell(s, 'liftStall', f.id);
+        expect(c).not.toBeNull();
+      } else { expect([ex.wetEv, ex.dark]).toEqual([-1, -1]); expect(hazardCell(s, 'liftStall', f.id)).toBeNull(); }
+    }
+    // 수위가 내려가도 잠긴 지하는 그대로이고 기록을 되풀이하지 않는다
+    d.level = 0.1; secs(s, 10); d.level = 1.3; secs(s, 10);
+    expect(s.events.filter((e) => WET_TEXT.test(e.text)).length).toBe(tall.length);
+  });
+
+  it('L6 ③ 개입: 같은 시드의 홍수에서 수위를 모든 문턱 아래(0.25)에 묶어 둔 쪽에는 침수도 그 원인의 승강기 사건도 없다 — 다른 쪽의 승강기 사건은 원인이 잠긴 지하 기록이고 내력 level · 부모가 없다', () => {
+    const LR = LIFT.RIDE;
+    LIFT.RIDE = LR * 1e5;
+    try {
+      const A = floodSim(), B = floodSim();
+      for (const [s, lv] of [[A, 1.3], [B, 0.25]] as const) {
+        const d = s.disaster!;
+        d.levelEv = note(s, '시험 — 강이 넘치기 시작했다');
+        d.level = lv;
+        secs(s, 12);
+      }
+      expect(Object.values(B.world.expo).some((e) => e.wet)).toBe(false);
+      expect(B.incidents.filter((J) => J.csq === 'liftStall')).toEqual([]);
+      expect(B.world.hz.cells.liftStall).toBeUndefined();
+      const kids = A.incidents.filter((J) => J.csq === 'liftStall');
+      expect(kids.length).toBeGreaterThan(0);
+      for (const K of kids) {
+        const ex = A.world.expo[K.hz!.target];
+        expect([K.truth.placeId, K.cause, K.parent, K.hz!.src[0].what, K.hz!.src[0].ev]).toEqual([K.hz!.target, ex.wetEv, undefined, 'level', ex.wetEv]);
+        expect(A.events[K.rootEvent].causes).toContain(ex.wetEv);
+      }
+    } finally { LIFT.RIDE = LR; }
+  });
+
+  it('L6 ④ 차오르는 물에 느려진 길(실제 교대 홍수 S0): 느린 동안 교통 장부의 level 항(원인 = 홍수의 충격 알림 · 초과의 몫 0.8)이 있고, 통제되면 그 구간의 초과는 0, 느림을 거두면·재난이 끝나면 장부가 비워진다 — 구간에서 직접 내는 사건은 없다', () => {
+    const s = new Sim('S0', { ...NORMAL, disaster: parseDisaster('flood')! }, 1200);
+    const d = s.disaster!;
+    let slowSeen = 0, closedSeen = 0, unslowSeen = 0, partSeen = 0;
+    const was = new Set<number>(), closedPrev = new Set<number>();
+    const buf: RoadPart[] = [];
+    while (!s.ended && s.tick < 20000) {
+      s.step();
+      if (s.tick % 60) continue;      // 12초마다 (교통 모델의 주기)
+      const slowed = new Set(d.slowed ?? []);
+      for (const e of s.city.edges) {
+        const lv = s.traffic.levelEv[e.id];
+        if (slowed.has(e.id)) {
+          slowSeen++;
+          expect(lv, `구간 ${e.id}`).toBe(d.levelEv);
+          expect(d.levelEv).toBeGreaterThanOrEqual(0);
+          if (e.closed && closedPrev.has(e.id)) { closedSeen++; expect(s.traffic.excess[e.id]).toBe(0); }      // 한 주기(12초) 넘게 닫혀 있던 구간 — 초과는 교통 모델의 주기마다 다시 적는다
+          else if (s.traffic.excess[e.id] > 0) { const n = roadParts(s, e.id, buf); if (buf.slice(0, n).some((p) => p.what === 'level' && p.ev === d.levelEv)) partSeen++; }
+        } else {
+          expect(lv, `구간 ${e.id}`).toBe(-1);
+          if (was.has(e.id)) unslowSeen++;
+        }
+      }
+      was.clear(); for (const id of slowed) was.add(id);
+      closedPrev.clear(); for (const e of s.city.edges) if (e.closed) closedPrev.add(e.id);
+    }
+    expect(slowSeen).toBeGreaterThan(0);
+    expect(partSeen).toBeGreaterThan(0);
+    expect(closedSeen).toBeGreaterThan(0);
+    expect(unslowSeen).toBeGreaterThan(0);      // 물이 빠지며 느림을 거둔 구간 — 장부가 비워졌다
+    expect(d.phase).toBe('over');
+    expect(Array.from(s.traffic.levelEv).every((v) => v === -1)).toBe(true);
+    expect(s.events[d.levelEv].text).toMatch(/넘치기 시작했습니다/);
+    expect(LEVEL_EX).toBe(0.8);
+  });
+
+  it('측정 도구의 연기·침수 줄: 연기 속 건물의 노출량 Σ c × base_p (법칙과 같은 식) · 알림 · 대상 수 · 교대 끝 줄 — 홍수의 잠긴 건물·기록·문턱 수', () => {
+    withLaws([], () => {
+      const s = quiet(), q = smokyApt(s), pr = new HazProbe(s);
+      fireAt(s, q, 60);
+      let hand = 0;
+      for (let k = 0; k < 5 * 80; k++) {
+        tk(s); pr.tick();
+        if (s.tick % 5 === 1 && s.world.spans.some((x) => x.f === 'smoke')) smokeExposure(s, (_t, c, base) => { hand += c * base; });
+      }
+      const c = pr.done();
+      expect([c.smoke!.alerts, c.smoke!.spansEnd, c.smoke!.rowsEnd]).toEqual([1, 1, 1]);
+      expect(c.smoke!.secs).toBeGreaterThan(30);
+      expect(c.smoke!.targets).toBeGreaterThan(0); expect(c.smoke!.targets).toBeLessThanOrEqual(ILL.MAX);
+      expect(c.smoke!.exposure).toBeCloseTo(hand, 15);
+      expect(c.smoke!.exposure).toBeGreaterThan(0);
+      const lines = hazLines(sumHaz([c]));
+      expect(lines.find((l) => l.startsWith('hazard-smoke: exposure '))).toContain('plumes 1 (in 1 shifts)');
+      expect(lines).toContain('hazard-flood: -');
+      expect((hazJson(sumHaz([c])).smoke as { alerts: number }).alerts).toBe(1);
+    });
+    const f = floodSim(), pf = new HazProbe(f), d = f.disaster!;
+    d.levelEv = note(f, '시험'); d.level = 0.9;
+    for (let k = 0; k < 5 * 6; k++) { tk(f); pf.tick(); }
+    const cf = pf.done();
+    const wet = Object.values(f.world.expo).filter((e) => e.wet).length;
+    expect([cf.flood!.wet, cf.flood!.sills, cf.flood!.records]).toEqual([wet, 54, f.events.filter((e) => WET_TEXT.test(e.text)).length]);
+    expect(hazLines(sumHaz([cf])).find((l) => l.startsWith('hazard-flood: '))).toContain(`buildings wet ${wet}`);
+  });
+
+  it('L6 ⑤ 한 프로세스에서 다른 시드를 먼저 돌려도 문턱이 같다 — 건물마다의 문턱은 그 교대의 sim.world 안에만 있고(흐름 hz:floodLow:b<건물>), 시드가 다르면 다르다', () => {
+    const fill = (s: Sim): Record<number, number> => { const d = s.disaster!; d.levelEv = -1; d.level = 0.01; secs(s, 5); return { ...s.world.sills }; };
+    const first = fill(floodSim('S7'));
+    fill(floodSim('S3'));
+    const again = fill(floodSim('S7'));
+    expect(again).toEqual(first);
+    const other = fill(floodSim('S3'));
+    expect(Object.keys(other).some((k) => other[+k] !== first[+k])).toBe(true);
+    const s = floodSim('S7');
+    for (const f of floodPlaces(s)) expect(sillOf(s, f.id, f.base)).toBe(first[f.id]);
   });
 });

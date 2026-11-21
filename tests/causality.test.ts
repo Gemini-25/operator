@@ -24,7 +24,8 @@ import { OBSTACLE_LABEL, addObstacle, reallyLinked, tickTraffic } from '../src/s
 import { ER_PENALTY, dispatchUnit, etaFor, sendUnitTo, startTransport, tickUnits, transportWhy } from '../src/sim/resources';
 import { HOSPITAL_CAP, ZONE_DEFAULT, erLoad, hospitalOf, initWorld, knownBuildingAt, knownHospital, knownZone, knownZoneOfIncident, placeState, setZone, zoneOfPlace, zoneOfXY } from '../src/sim/world/state';
 import { findRoute } from '../src/sim/city';
-import type { EventKind, Incident, Responder, Role, Signal, SimEvent, Unit, ZoneField } from '../src/sim/types';
+import { smokeBase } from '../src/sim/world/expo';
+import type { EventKind, Incident, Responder, Role, Signal, SimEvent, Unit, ZoneField, ZoneState } from '../src/sim/types';
 import {
   PHRASE, PROBLEM_SYS, Probe, SAMPLE_EVERY, STALL_ALLOW, STALL_SEC, SYSTEMS, causeDepths, causesDepthByIncident, checkC5, checkMetrics,
   divertAnalysis, eventSystems, formatLines, genDropped, linkCounts, metricsJson, runWithProbe, shiftMetrics, spreadByIncident, spreadDistinct,
@@ -613,20 +614,31 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
     expect(sim.report!.hash).toBe(probedShift('S3').sim.report!.hash);
     // 세계 상태: 걸린 규칙이 바꾼 것(응급실 체류 — C3) 말고는 처음 값이다. 구역은 건드리는 규칙이 없고, 규칙이 만든 사건도 없다 (끝난 틱에 닫힌 사건의 신호는 처리되지 않고 남는다)
     const w0 = JSON.parse(fresh);
-    expect(JSON.stringify(sim.world.zones)).toBe(JSON.stringify(w0.zones));
+    // (b3-11 C5) 큰 불이 45초 넘게 이어지면 연기가 동네를 덮는다(국지 구역 값 'smoke') — 교대 끝에 걷히지 않은 연기만 남고, 그 밖의 칸은 처음 값이다
+    const noSmoke = (zs: ZoneState[]): string => JSON.stringify(zs.map((Z) => ({ ...Z, smoke: 0, until: { ...Z.until, smoke: 0 }, known: { ...Z.known, smoke: false }, cause: { ...Z.cause, smoke: -1 }, at: undefined })));
+    expect(noSmoke(sim.world.zones)).toBe(noSmoke(w0.zones));
+    for (const Z of sim.world.zones) {
+      if (Z.smoke === 0) { expect([Z.cause.smoke, Z.known.smoke, Z.at?.smoke]).toEqual([-1, false, undefined]); continue; }
+      expect(sim.events[Z.cause.smoke].tag, '연기의 원인 = 그 연기 알림').toBe('smoke');
+      expect(sim.world.spans.some((q) => q.f === 'smoke' && q.cause === Z.cause.smoke), '걷히지 않은 연기는 장부 줄이 있다').toBe(true);
+    }
+    expect(sim.events.some((e) => e.tag === 'smoke'), 'S3 에는 45초 넘게 이어진 큰 불이 있다').toBe(true);
     expect(sim.world.spawned).toBe(0);
     // (b3-4) 초과 위험·건물 노출의 칸은 법칙·상태 규칙이 걸리지 않으면 처음 값 그대로다.
     // (b3-6) 등록된 법칙 L1 — 초과 혼잡이 있던 구간에만 칸이 생긴다(평소 교대에도 정체·공사·사고의 밀림이 있다). 교대가 끝나면 기다리는 줄도 구멍도 없다
     // (b3-7) L2 — 큰 불(불 요약 10 이상) 곁의 건물에만 칸이 생긴다.
     // (b3-8) 이웃 노출(world.expo)은 충격(폭발·전체 붕괴·무너진 채 시작한 사건)이 있던 교대에만 생긴다 — 상태 규칙 shockSpread 가 흔든 건물만, 손상은 0 보다 크다
+    // (b3-11) L4 — 연기(C5)가 덮은 자리의 주거 건물(평소 응급률이 있는 종류)에만 칸이 생긴다
     expect(w0.hz.cells).toEqual({});
-    expect(Object.keys(sim.world.hz.cells).filter((k) => k !== 'roadCrash' && k !== 'heatSpread')).toEqual([]);
+    expect(Object.keys(sim.world.hz.cells).filter((k) => k !== 'roadCrash' && k !== 'heatSpread' && k !== 'smokeIll')).toEqual([]);
+    for (const id of Object.keys(sim.world.hz.cells.smokeIll ?? {})) { const q = sim.city.places[+id]; expect(q?.open, `건물 ${id}`).toBe(false); expect(smokeBase(sim, q.kind), `건물 ${id}`).toBeGreaterThan(0); }
     for (const id of Object.keys(sim.world.hz.cells.roadCrash ?? {})) expect(sim.city.edges[+id], `구간 ${id}`).toBeDefined();
     for (const id of Object.keys(sim.world.hz.cells.heatSpread ?? {})) expect(sim.city.places[+id]?.open, `건물 ${id}`).toBe(false);
-    expect([sim.world.hz.waiting, sim.world.hz.holes, sim.world.sills, sim.world.spans]).toEqual([[], 0, {}, []]);
+    expect([sim.world.hz.waiting, sim.world.hz.holes, sim.world.sills, sim.world.spans.filter((q) => q.f !== 'smoke')]).toEqual([[], 0, {}, []]);
+    for (const q of sim.world.spans) expect(sim.world.zones.some((Z) => Z.cause.smoke === q.cause), '연기 줄은 걷히지 않은 연기의 것뿐').toBe(true);
     const shook = sim.world.log.some((l) => l.rule === 'shockSpread');
     for (const [id, ex] of Object.entries(sim.world.expo)) { expect(shook, `건물 ${id} 의 노출 — 충격이 있던 교대만`).toBe(true); expect(sim.city.places[+id]?.open).toBe(false); expect(ex.shake).toBeGreaterThan(0); }
-    const LAWS = ['roadCrash', 'heatSpread'];
+    const LAWS = ['roadCrash', 'heatSpread', 'smokeIll'];
     expect(sim.world.log.every((l) => l.rule === 'hospitalLoad' || l.rule === 'rubbleRoad' || l.rule === 'shockSpread' || LAWS.indexOf(l.rule) >= 0), '기록되는 규칙은 포화·잔해·충격 손상, 법칙은 몰린 길의 사고·옮겨붙은 불뿐 (응급실 체류는 줄을 남기지 않는다)').toBe(true);
     expect(sim.world.log.every((l) => l.made === -1 || (LAWS.indexOf(l.rule) >= 0 && sim.incidents[l.made]?.csq === l.rule)), '사건을 만드는 것은 법칙뿐').toBe(true);
     expect(sim.world.signals.length).toBeLessThan(40);

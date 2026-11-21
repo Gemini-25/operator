@@ -641,7 +641,7 @@ function buildMedical(sim: Sim, I: Incident, rng: Rng): Scene {
   const i = freeTileIn(s, room, rng);
   if (variant === 'arrest') addCas(s, i % SW, (i / SW) | 0, 'immobile', rng.range(58, 70), rng.range(0.5, 0.66), 0.05);
   else if (variant === 'trauma') addCas(s, i % SW, (i / SW) | 0, 'immobile', rng.range(60, 80), rng.range(0.15, 0.24), 0.05);
-  else addCas(s, i % SW, (i / SW) | 0, 'immobile', rng.range(70, 88), rng.range(0.05, 0.1), 0.05);
+  else addCas(s, i % SW, (i / SW) | 0, 'immobile', rng.range(70, 88), rng.range(0.05, 0.1), 0.05);      // 실신 — (I1-b b3-11) 연기 흡입(smoke)도 이 틀이다 (급변은 hazards.tickMedical 이 실신·외상·심정지에서만 뽑는다)
   s.leadDept = 'ems';
   return s;
 }

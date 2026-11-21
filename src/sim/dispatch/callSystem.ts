@@ -43,6 +43,7 @@ const NATURE_TEXT: Record<string, string[]> = {
   notbreathing: ['사람이 쓰러졌는데 숨을 안 쉬어요!', '아버지가 갑자기 쓰러지셨어요. 숨을 안 쉬세요!'],
   collapsed: ['사람이 갑자기 쓰러졌어요.', '가족이 쓰러져서 일어나질 못해요.'],
   fall: ['사람이 계단에서 굴러서 크게 다쳤어요.', '높은 데서 떨어졌어요. 피가 많이 나요.'],
+  breathless: ['밖에서 연기가 들어와서 어머니가 숨을 제대로 못 쉬세요.', '연기를 마셨는지 가족이 기침을 멈추지 않아요. 숨이 차대요.'],      // (I1-b b3-11 L4) 연기를 마신 주민의 호흡 곤란
   collapse: ['건물이 무너졌어요! 한쪽이 그대로 주저앉았어요.', '건물 일부가 무너져 내렸어요. 먼지가 엄청나요!'],
   rumble: ['쿵 하고 뭔가 무너지는 소리가 났어요.', '땅이 울리더니 큰 소리가 났어요. 먼지가 올라와요.'],
   drowning: ['사람이 물에 빠졌어요! 떠내려가고 있어요!', '물에 빠진 사람이 허우적거리고 있어요. 빨리요!'],
@@ -66,6 +67,7 @@ export const NATURE_LIK: Record<string, LikMap> = {
   notbreathing: { fire: 0.02, traffic: 0.02, search: 0.01, armed: 0.03, medical: 0.92, collapse: 0.01, hazmat: 0.03, water: 0.01 },
   collapsed: { fire: 0.03, traffic: 0.06, search: 0.04, armed: 0.06, medical: 0.81, collapse: 0.02, hazmat: 0.07, water: 0.02 },
   fall: { fire: 0.02, traffic: 0.1, search: 0.03, armed: 0.05, medical: 0.8, collapse: 0.03, hazmat: 0.01, water: 0.01 },
+  breathless: { fire: 0.12, traffic: 0.01, search: 0.01, armed: 0.01, medical: 0.84, collapse: 0.01, hazmat: 0.1, water: 0.01 },      // (b3-11) 호흡 곤란 — 거의 응급, 연기·가스일 수도 있다
   collapse: { fire: 0.03, traffic: 0.03, search: 0.01, armed: 0.01, medical: 0.01, collapse: 0.92, hazmat: 0.01, water: 0.01 },
   rumble: { fire: 0.1, traffic: 0.2, search: 0.02, armed: 0.1, medical: 0.02, collapse: 0.5, hazmat: 0.06, water: 0.01 },
   drowning: { fire: 0.01, traffic: 0.02, search: 0.03, armed: 0.01, medical: 0.03, collapse: 0.01, hazmat: 0.01, water: 0.93 },
@@ -86,7 +88,7 @@ function natureFor(I: Incident, s: Scene, persona: Persona, rng: Rng): { v: stri
     return rng.chance(pExact) ? { v: sc.nature, truthful: true, note: '' } : { v: sc.vague, truthful: true, note: persona === 'wrong' ? `${sc.name} 상황을 제대로 전하지 못함` : '' };
   }
   if (t === 'medical') {
-    const exactM = variant === 'arrest' ? 'notbreathing' : variant === 'trauma' ? 'fall' : 'collapsed';
+    const exactM = variant === 'arrest' ? 'notbreathing' : variant === 'trauma' ? 'fall' : variant === 'smoke' ? 'breathless' : 'collapsed';      // (I1-b b3-11) 연기 흡입은 호흡 곤란으로 신고한다
     if (persona === 'wrong' && variant === 'arrest') return { v: 'collapsed', truthful: false, note: '심정지를 단순 실신처럼 신고' };
     if ((persona === 'confused' || persona === 'partial') && rng.chance(0.5)) return { v: 'collapsed', truthful: variant !== 'arrest', note: variant === 'arrest' ? '호흡이 없다는 사실을 말하지 못함' : '' };
     return { v: exactM, truthful: true, note: '' };

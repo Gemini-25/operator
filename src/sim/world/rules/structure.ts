@@ -1,4 +1,4 @@
-// C2 `rubbleRoad` — 잔해는 사건이 끝나도 남는다 (설계서 I1 §3.7 C2).
+// C2 `rubbleRoad` — 잔해는 사건이 끝나도 남는다 (설계서 I1 §3.7 C2). (b3-8) 그 다음에 L3 (가) `shockSpread` — 아래 절.
 //
 // X6 은 건물이 통째로 무너지면 사건 교차로의 한 구간을 사건 동안만 막고(I.blockedEdge), 사건이 끝나면 closeIncident 가 연다 —
 // 그대로면 무너진 건물의 잔해가 사건 종료와 함께 사라진다. 이 규칙이 그 사이를 잇는다:
@@ -16,8 +16,11 @@ import { edgeName } from '../../city';
 import type { Sim } from '../../engine';
 import { emit } from '../../events';
 import { addObstacle, noteRoadCause, obstacleOnEdge } from '../../traffic';
-import type { Signal } from '../../types';
+import type { Place, PlaceExpo, Signal } from '../../types';
 import { registerConsequence } from '../consequence';
+import { GAS_KINDS, SHOCK, expoOf, neighborsOf, neighborsOfPoint, shockDelta } from '../expo';
+import type { Nb } from '../expo';
+import { placeState } from '../state';
 
 /** 균형 상수 */
 export const RUBBLE = {
@@ -69,5 +72,56 @@ registerConsequence({
       ob.ev = emit(sim, { role: 'SYSTEM', actor: '도시', kind: 'traffic', imp: 1, truth: true, causes: [sig.ev], text: `${name}에 건물 잔해가 쏟아져 ${ob.full ? '길이 막혔습니다' : '한 차로가 막혔습니다'}. 아직 아무도 신고하지 않았습니다.` });
     }
     if (ob.full) noteRoadCause(sim, edge, 'close', ob.ev, sig.inc);      // (b3-5) 교통의 장부: 닫힘의 주인 = 잔해 기록, 주인 사건 = 그 건물의 사건 (닫힌 사건이어도 된다). 한 차로 잔해의 주인은 장애물의 ev 로 읽힌다
+  },
+});
+
+// ───────────────────────── L3 (가) shockSpread — 붕괴와 폭발은 옆 건물을 흔든다 (설계서 I1 §3.7 L3) ─────────────────────────
+// 충격(폭발 · 건물 전체의 붕괴 · 무너진 채 시작하는 사건)이 벽-벽 틈 안의 이웃 건물에 구조 손상 shake 를 남긴다 — 크기는 expo.shockDelta(X6 의 현장 안 식을 밖으로 이은 것).
+// 법칙이 아니라 상태다: 사건을 만들지 않고 난수를 쓰지 않는다(배관의 문턱은 expoOf 가 건물마다 한 번). 쿨다운·상한 없음 — 충격이 있을 때마다.
+// 그 상태를 읽는 곳: 그 건물의 다음 현장(expo.applyExpo — 처음 건전도·새는 밸브)과 손상이 위험률을 올리는 법칙(b3-8c 의 structFail·pipeLeak).
+// 기록: shake 가 처음 SHOCK.S_MIN 을 넘을 때 '금이 갔습니다', 도시가스를 쓰는 건물의 shake 가 그 건물의 배관 문턱을 넘는 순간 '배관이 손상됐습니다' —
+//   둘 다 진실(truth — 아무도 보지 못했다)이고 원인은 [가장 크게 보탠 충격의 기록, 이번 충격의 기록] (충격이 둘 쌓여 넘었을 때 기록과 structFail 의 부모가 서로 다른 사건을 가리키지 않게).
+// 관제·지휘관은 이 상태를 읽지 않는다 — 그 건물의 사건이 신고될 때 평소처럼, 현장에 닿은 뒤에는 X6 의 조짐과 밸브를 본 대원의 믿음으로만 안다 (§3.8).
+
+/** 가장 크게 보탠 충격의 크기 — 노출 칸마다 (shakeEv·shakeInc 를 바꿀지 견준다. 노출 칸은 교대마다 새로 만들므로 시드를 넘지 않는다) */
+const TOP = new WeakMap<PlaceExpo, number>();
+const placeLabel = (q: Place): string => (q.open ? q.name : `${q.addr} ${q.name}`);
+
+/** 이 신호가 흔드는 이웃 — 손상이 0 보다 큰 쓸 수 있는 건물만, 가까운 순(같으면 id 순) */
+function shocked(sim: Sim, sig: Signal): { id: number; d: number }[] {
+  const out: { id: number; d: number }[] = [];
+  if (!(shockDelta(sig, 0) > 0)) return out;      // 밖으로 나가지 않는 신호 (구획 하나의 붕괴 · 2차 붕괴 · 전소 · 작은 폭발)
+  const nbs: readonly Nb[] = sig.place >= 0 ? neighborsOf(sim, sig.place) : sig.x >= 0 ? neighborsOfPoint(sim, sig.x, sig.y) : [];
+  for (let k = 0; k < nbs.length; k++) {
+    const d = shockDelta(sig, nbs[k].gap);
+    if (!(d > 0)) break;      // 가까운 순이라 이 뒤로는 닿지 않는다
+    if (placeState(sim, nbs[k].id)?.usable === false) continue;      // 이미 다 탔거나 무너진 건물은 더 흔들 것이 없다
+    out.push({ id: nbs[k].id, d });
+  }
+  return out;
+}
+
+registerConsequence({
+  id: 'shockSpread', label: '충격 손상', on: ['catastrophe', 'blast', 'collapse'],
+  key: (_sim, sig) => (sig && sig.ev >= 0 ? 'ev:' + sig.ev : null),
+  cooldown: 0, cap: Infinity, spawns: false,
+  test: (c) => shocked(c.sim, c.sig!).length > 0,
+  apply: (c) => {
+    const sim = c.sim, sig = c.sig!, places = sim.city.places;
+    const I = sig.inc >= 0 ? sim.incidents[sig.inc] : undefined;
+    const src = sig.place >= 0 && places[sig.place] ? placeLabel(places[sig.place]) : I ? I.truth.label : '현장';
+    const what = sig.kind === 'catastrophe' ? (sig.data === 1 ? '붕괴' : '폭발') : sig.kind === 'collapse' ? '붕괴' : '폭발';
+    for (const { id, d } of shocked(sim, sig)) {
+      const ex = expoOf(sim, id), was = ex.shake, q = places[id];
+      ex.shake = Math.min(1, was + d);
+      if (d > (TOP.get(ex) ?? 0)) { TOP.set(ex, d); ex.shakeEv = sig.ev; ex.shakeInc = sig.inc; }
+      if (was < SHOCK.S_MIN && ex.shake >= SHOCK.S_MIN) {
+        emit(sim, { role: 'SYSTEM', actor: '도시', kind: 'hazard', tag: 'struct', imp: 1, truth: true, causes: [ex.shakeEv, sig.ev], text: `${src} ${what}의 충격으로 옆 ${placeLabel(q)}에 금이 갔습니다.` });
+      }
+      if (!ex.pipe && GAS_KINDS.has(q.kind) && ex.shake >= ex.pipeThr) {
+        ex.pipe = true;
+        ex.pipeEv = emit(sim, { role: 'SYSTEM', actor: '도시', kind: 'hazard', tag: 'struct', imp: 1, truth: true, causes: [ex.shakeEv, sig.ev], text: `${placeLabel(q)}의 가스 배관이 충격으로 손상됐습니다.` });
+      }
+    }
   },
 });

@@ -10,13 +10,43 @@
 //  · 진실 쪽이다. 판단(관제·지휘관·대원)은 이 파일의 함수와 world.expo 를 읽지 않는다 (§3.8 — tests/hazard.test.ts 가 글자로 본다).
 //
 // 채우는 단계: b3-7 이웃(neighborsOf·neighborsOfPoint — L2 의 열원 곁) · expoOf(노출 칸을 만든다 — 쓰는 것은 b3-8 의 충격, b3-12 의 침수).
-// applyExpo(현장 생성기가 노출을 읽는 자리)·darkened(정전이 닿은 순간)는 그 상태를 쓰는 단계(b3-8 · b3-10)가 더한다.
+// (b3-8 a) 충격의 크기(SHOCK·shockDelta — 상태 규칙 rules/structure.ts 의 shockSpread 와 b3-8c 의 법칙 structFail·pipeLeak 이 함께 쓴다).
+// applyExpo(현장 생성기가 노출을 읽는 자리)는 b3-8 b, darkened(정전이 닿은 순간)는 b3-10 이 더한다.
 
 import type { Sim } from '../engine';
-import type { Place, PlaceExpo } from '../types';
+import type { Place, PlaceExpo, PlaceKind, Signal } from '../types';
 
 /** 이웃으로 치는 벽-벽 틈 (도시 좌표). 조사: 가장 가까운 이웃까지의 틈은 최소 2.0 · 중앙값 7.2 · p90 23.4 — 같은 편 옆집은 2~12, 길 건너는 20~35 */
 export const NB_REACH = 30;
+
+/**
+ * (b3-8 L3 (가)) 붕괴와 폭발이 이웃 건물에 남기는 구조 손상 shake (0..1) — 모두 첫 값 (설계서 §3.7 L3). 균형은 hazstats 의 hazard-shock 줄로 다시 맞춘다:
+ *  K        폭발: X6 의 현장 안 식(catOnBlast — K_HIT_BLAST)을 밖으로 그대로 잇는다: Δ = K × mag/100 × max(0, 1 − d/(size + 2)), d = gap/CELL + PAD (칸).
+ *           반경 6칸·피해 50 → 틈 3 에 0.22 · 틈 7.2 에 0.12 · 틈 12 넘으면 0
+ *  CELL     현장 1칸 ≈ 도시 좌표 2 (표본 9건의 범위 1.2~4.0 — 첫 판은 상수) · PAD 폭발 자리에서 그 건물의 벽까지 어림 2칸
+ *  TOTAL    건물 전체가 무너졌을 때(collapseBuilding — 'catastrophe' 신호 data 1 · mag ≥ 1)만: 틈 REACH 안의 이웃에 TOTAL × (1 − gap/REACH) (틈 3 에 0.48 · 7.2 에 0.31)
+ *  START    무너진 채 시작하는 사건(크레인·가스 폭발·산사태 — 'collapse' 신호, 크기 ≥ START_SIZE): START × (1 − gap/REACH). 2차 붕괴(≤ 3칸)·구획 하나의 붕괴는 밖으로 나가지 않는다
+ *  S_MIN    금 기록과 structFail(b3-8c)의 문턱. 배관은 건물마다의 문턱 pipeThr(0.2 + 0.6u — expoOf)
+ * 한 번의 충격이 S_MIN 과 배관 문턱의 아래쪽을 넘을 수 있어야 한다는 것이 이 값들의 조건이다(설계서 — 초안의 0.25·0.15 × (1 − g/8) 은 가장 좁은 틈에서도 닿지 못했다)
+ */
+export const SHOCK = { K: 0.8, CELL: 2, PAD: 2, TOTAL: 0.6, START: 0.35, REACH: 15, START_SIZE: 10, S_MIN: 0.1 };
+
+/** 도시가스를 쓰는 건물 종류 (배관이 끊길 수 있는 건물): 주택·다세대·아파트·오피스텔·식당·카페·상점·시장·편의점·호텔 */
+export const GAS_KINDS: ReadonlySet<PlaceKind> = new Set<PlaceKind>(['houseS', 'houseL', 'villa', 'apartment', 'officetel', 'restaurant', 'cafe', 'shop', 'market', 'convenience', 'hotel']);
+
+/**
+ * 신호 하나가 벽-벽 틈 gap 의 이웃에 주는 구조 손상 (0 = 닿지 않는다 — 틈이 멀수록 작다). 받는 신호: 폭발('catastrophe' data 0 · 'blast' — mag = 피해량, size = 반경(칸)),
+ * 건물 전체의 붕괴('catastrophe' data 1 이고 mag ≥ 1), 무너진 채 시작하는 사건('collapse' 이고 크기 ≥ START_SIZE). 그 밖(구획 붕괴 mag < 1 · 2차 붕괴 · 전소)은 0
+ */
+export function shockDelta(sig: Signal, gap: number): number {
+  if ((sig.kind === 'catastrophe' && sig.data === 0) || sig.kind === 'blast') {
+    const d = gap / SHOCK.CELL + SHOCK.PAD, R = sig.size + 2;
+    return d < R ? SHOCK.K * (sig.mag / 100) * (1 - d / R) : 0;
+  }
+  if (sig.kind === 'catastrophe' && sig.data === 1 && sig.mag >= 1) return gap < SHOCK.REACH ? SHOCK.TOTAL * (1 - gap / SHOCK.REACH) : 0;
+  if (sig.kind === 'collapse' && sig.size >= SHOCK.START_SIZE) return gap < SHOCK.REACH ? SHOCK.START * (1 - gap / SHOCK.REACH) : 0;
+  return 0;
+}
 
 /** 이웃 하나: 건물 id 와 벽-벽 틈(도시 좌표) */
 export interface Nb { id: number; gap: number }

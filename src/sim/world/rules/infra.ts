@@ -275,12 +275,15 @@ registerConsequence({
  *  BACKUP   정전이 이만큼 이어지면 기지국 예비 전원이 떨어진다 — 본문의 120 이 아니다: 태풍 정전이 꼭 120초이고(disaster.lightsOn) 그 틱의 신호가 1초 블록보다 먼저 처리돼 (라)가 영영 걸리지 않는다
  *  AFTER    원인이 끝난 뒤 풀리기까지 · QUAKE_HOLD 지진의 통신 장애 · HOLD 원인이 끝나지 않아도 풀리기까지
  *  QUAKE_THR 동네 통신망의 문턱 = a + b × u · SHADOW 더하는 음영(바닥 칸의 (1 − comms) × SHADOW 까지) · BLOBS 덩어리 수 [lo, hi] · BLOB_R 덩어리 반지름(칸) · CAP 교대당
+ *  KEEP_STAGE · KEEP_SAFE  대기 지점(부대 차량)·안전 구역에서 이만큼(칸) 안에는 음영을 더하지 않는다 — 차량 무전이 닿는다. 더하면 대기 지점에 서서 지시를 기다리는 대원이
+ *           영영 지시를 받지 못해 같은 지시가 5초마다 되풀이되고(보통 S21 — 64번) 보고를 쥔 채 서 있는 대원 때문에 현장이 멈췄다(보통 S20 — 188초)
  */
 export const COMMS = {
   UTIL_R: 800, UTIL_V: 0.4, POWER_V: 0.6, QUAKE_V: 0.5, STORM_V: 0.7,
   BACKUP: 100, AFTER: 180, QUAKE_HOLD: 300, HOLD: 600,
   QUAKE_THR: [0.35, 0.5] as [number, number],
   SHADOW: 0.3, BLOBS: [3, 5] as [number, number], BLOB_R: [2, 3] as [number, number], CAP: 3,
+  KEEP_STAGE: 7, KEEP_SAFE: 5,
 };
 const COMM_KINDS: Record<string, boolean> = { broadcast: true, tower: true };
 const COMMS_N = 'commsDown.spans';      // world.count 의 칸 — 이번 교대에 연 통신 장애 건수 (네 갈래가 함께 센다 — 규칙의 count 는 발동 수라 따로 둔다)
@@ -363,10 +366,11 @@ registerConsequence({
 });
 
 const floorish = (ti: number): boolean => ti === T.FLOOR || ti === T.GROUND || ti === T.ROAD || ti === T.TRAIL;
-/** 통신 장애의 현장 음영: 바닥 칸의 (1 − comms) × SHADOW 까지를 덩어리로 골라 음영으로 — 원래 음영이 아니던 칸만 (고른 칸을 돌려준다. 덩어리가 다 차면 그보다 적을 수 있다) */
+/** 통신 장애의 현장 음영: 바닥 칸(대기 지점·안전 구역 곁은 뺀다)의 (1 − comms) × SHADOW 까지를 덩어리로 골라 음영으로 — 원래 음영이 아니던 칸만 (고른 칸을 돌려준다. 덩어리가 다 차면 그보다 적을 수 있다) */
 function addShadow(sim: Sim, s: Scene, comms: number): number[] {
   const out: number[] = [], t = s.tiles, W = s.w, floor: number[] = [];
-  for (let i = 0; i < t.length; i++) if (floorish(t[i]) && !s.shadow[i]) floor.push(i);
+  const kept = (i: number): boolean => { const x = i % W + 0.5, y = ((i / W) | 0) + 0.5; return Math.hypot(x - s.staging.x, y - s.staging.y) < COMMS.KEEP_STAGE || Math.hypot(x - s.safe.x, y - s.safe.y) < COMMS.KEEP_SAFE; };
+  for (let i = 0; i < t.length; i++) if (floorish(t[i]) && !s.shadow[i] && !kept(i)) floor.push(i);
   const want = Math.round((1 - comms) * COMMS.SHADOW * floor.length);
   if (want <= 0) return out;
   const rng = sim.rng.fork('csq:shadow:' + s.id), seen = new Uint8Array(t.length);
@@ -377,7 +381,7 @@ function addShadow(sim: Sim, s: Scene, comms: number): number[] {
       const x = cx + dx, y = cy + dy;
       if (x < 0 || y < 0 || x >= W || y >= s.h || dx * dx + dy * dy > r * r) continue;
       const i = y * W + x;
-      if (seen[i] || s.shadow[i] || !floorish(t[i])) continue;
+      if (seen[i] || s.shadow[i] || !floorish(t[i]) || kept(i)) continue;
       seen[i] = 1; out.push(i);
     }
   }

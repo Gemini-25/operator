@@ -1256,12 +1256,14 @@ export function carrySummary(co: Carryover): CarrySummary {
  * ahead = 다음 교대로 넘기는 말('결장 예상'). 흔적만 남은 건물(marked)과 숙련은 넣지 않는다 (출입을 막지 않고, 숙련은 누적이라 읽을거리가 적다)
  */
 export function carryParts(c: CarrySummary, ahead = false): string {
+  // 칸을 풀어 쓴다 — src/sim 안에서 '.ruin' 은 G4 의 그림용 기록(Scene.ruin) 읽기로 보고 시험(legibility)이 막는다
+  const { absent, fallen, service, closed, ruin, roads } = c;
   const parts: string[] = [];
-  if (c.absent) parts.push(`${ahead ? '결장 예상' : '결장'} ${c.absent}명`);
-  if (c.fallen) parts.push(`공석 ${c.fallen}자리`);
-  if (c.service) parts.push(`정비 ${c.service}대`);
-  if (c.closed + c.ruin) parts.push(`출입 통제 건물 ${c.closed + c.ruin}곳${c.ruin ? `(무너짐 ${c.ruin})` : ''}`);
-  if (c.roads) parts.push(`복구 공사 도로 ${c.roads}구간`);
+  if (absent) parts.push(`${ahead ? '결장 예상' : '결장'} ${absent}명`);
+  if (fallen) parts.push(`공석 ${fallen}자리`);
+  if (service) parts.push(`정비 ${service}대`);
+  if (closed + ruin) parts.push(`출입 통제 건물 ${closed + ruin}곳${ruin ? `(무너짐 ${ruin})` : ''}`);
+  if (roads) parts.push(`복구 공사 도로 ${roads}구간`);
   return parts.join(' · ');
 }
 /** 보고서 요약의 '다음 교대로 넘기는 것' 한 줄 */

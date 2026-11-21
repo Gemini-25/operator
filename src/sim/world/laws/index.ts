@@ -9,3 +9,4 @@
 //  · 법칙은 원인을 모른다: scan 은 상태의 값만 읽는다. 어떤 사건·변형·재난이 그 상태를 만들었는지를 식에 쓰지 않는다(.chance( · spawnConsequence · truth.variant · sim.disaster · .rules 가 없다).
 //
 import './road';      // L1 roadCrash — 차가 몰린 길에서는 사고가 잦다 (b3-6)
+import './heat';      // L2 heatSpread — 오래 크게 타는 불 곁의 건물은 불이 붙는다 (b3-7)

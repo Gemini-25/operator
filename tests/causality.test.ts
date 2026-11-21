@@ -616,13 +616,16 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
     expect(JSON.stringify(sim.world.zones)).toBe(JSON.stringify(w0.zones));
     expect(sim.world.spawned).toBe(0);
     // (b3-4) 초과 위험·건물 노출의 칸은 법칙·상태 규칙이 걸리지 않으면 처음 값 그대로다.
-    // (b3-6) 등록된 법칙은 L1 하나 — 초과 혼잡이 있던 구간에만 칸이 생긴다(평소 교대에도 정체·공사·사고의 밀림이 있다). 교대가 끝나면 기다리는 줄도 구멍도 없다
+    // (b3-6) 등록된 법칙 L1 — 초과 혼잡이 있던 구간에만 칸이 생긴다(평소 교대에도 정체·공사·사고의 밀림이 있다). 교대가 끝나면 기다리는 줄도 구멍도 없다
+    // (b3-7) L2 — 큰 불(불 요약 10 이상) 곁의 건물에만 칸이 생긴다. 이웃 노출(world.expo)을 쓰는 법칙·규칙은 아직 없다
     expect(w0.hz.cells).toEqual({});
-    expect(Object.keys(sim.world.hz.cells).filter((k) => k !== 'roadCrash')).toEqual([]);
+    expect(Object.keys(sim.world.hz.cells).filter((k) => k !== 'roadCrash' && k !== 'heatSpread')).toEqual([]);
     for (const id of Object.keys(sim.world.hz.cells.roadCrash ?? {})) expect(sim.city.edges[+id], `구간 ${id}`).toBeDefined();
+    for (const id of Object.keys(sim.world.hz.cells.heatSpread ?? {})) expect(sim.city.places[+id]?.open, `건물 ${id}`).toBe(false);
     expect([sim.world.hz.waiting, sim.world.hz.holes, sim.world.expo, sim.world.sills, sim.world.spans]).toEqual([[], 0, {}, {}, []]);
-    expect(sim.world.log.every((l) => l.rule === 'hospitalLoad' || l.rule === 'rubbleRoad' || l.rule === 'roadCrash'), '기록되는 규칙은 포화·잔해, 법칙은 몰린 길의 사고뿐 (응급실 체류는 줄을 남기지 않는다)').toBe(true);
-    expect(sim.world.log.every((l) => l.made === -1 || (l.rule === 'roadCrash' && sim.incidents[l.made]?.csq === 'roadCrash')), '사건을 만드는 것은 법칙뿐').toBe(true);
+    const LAWS = ['roadCrash', 'heatSpread'];
+    expect(sim.world.log.every((l) => l.rule === 'hospitalLoad' || l.rule === 'rubbleRoad' || LAWS.indexOf(l.rule) >= 0), '기록되는 규칙은 포화·잔해, 법칙은 몰린 길의 사고·옮겨붙은 불뿐 (응급실 체류는 줄을 남기지 않는다)').toBe(true);
+    expect(sim.world.log.every((l) => l.made === -1 || (LAWS.indexOf(l.rule) >= 0 && sim.incidents[l.made]?.csq === l.rule)), '사건을 만드는 것은 법칙뿐').toBe(true);
     expect(sim.world.signals.length).toBeLessThan(40);
     // 종료: 닫힌 사건마다 하나, 그 종료 기록과 함께
     const closed = sigs.filter((g) => g.kind === 'closed');

@@ -5,7 +5,9 @@
 //   hazard-laws:  법칙마다 초과가 있었던 대상 수 · 문턱을 넘은 횟수 · 사건이 된 수 · 교대 끝에 기다리던 줄 (법칙이 없으면 '-')
 //   hazard-road:  (b3-5 ①) 도로의 노출량 Σ_e ∫ x·V·S·ℓ dt 를 네 몫으로 나눠, 장부 없는 초과의 노출량(0 이어야 한다), 닫힌 구간·초과가 있는 구간의 수
 //                 (b3-5 ②) 우회로: 몰린 구간의 수(표본당)와 지속 시간(구간·초/교대) · 그 구간들의 혼잡(평균·최대) · 몰림이 상한에 닿은 비율 — 우회 몰림의 크기(traffic.DIVERT)를 맞추는 데 쓴다
-// 뒤 단계가 더할 줄: 열 Σ∫max(0, q − Q0)dt 와 노출된 건물 수(b3-7) · 충격을 받은 건물 수와 shake 분포·끊긴 배관(b3-8)
+//   hazard-heat:  (b3-7) 열의 노출량 Σ∫ M × max(0, q − Q0) dt (L2 의 K 를 곱하기 전 — 법칙과 같은 식: world/laws/heat.ts 의 heatTargets) · 노출된 건물 수 · 열원 현장 수 · 열원의 F 최댓값 ·
+//                 노출된 건물의 노출량 분포(가장 큰 것) — L2 의 세기(HEAT.K)를 맞추는 데 쓴다
+// 뒤 단계가 더할 줄: 충격을 받은 건물 수와 shake 분포·끊긴 배관(b3-8)
 //   · 닫힌 화재의 e0 분포(b3-9) · 정전이 닿은 4층 이상 건물 수(b3-10) · 연기 Σ∫c × base dt(b3-11).
 //
 // 표본: HazProbe.tick() 을 매 틱 step() 뒤에 부른다 — 교통 모델이 혼잡을 다시 계산한 틱(traffic.driftAt 이 바뀐 틱)에만 도로를 읽는다(12초에 한 번).
@@ -14,6 +16,7 @@ import type { Sim } from '../src/sim/engine';
 import { DIVERT, roadFlow, roadParts } from '../src/sim/traffic';
 import type { RoadPart } from '../src/sim/traffic';
 import { roadSurface, roadWeight } from '../src/sim/world/laws/road';      // L1 의 가중(통행량 × 노면·시야 × 길이) — 법칙과 측정이 같은 식을 쓴다
+import { heatTargets } from '../src/sim/world/laws/heat';                   // (b3-7) L2 의 열원·대상·유속 — 법칙과 측정이 같은 식을 쓴다
 
 export interface HazLawCount { cells: number; crossed: number; made: number; waitingEnd: number }
 export interface HazRoad {
@@ -25,7 +28,16 @@ export interface HazRoad {
   byWhat: Record<string, number>;                   // 몫의 갈래별 노출량 (divert·queue·lane·jam·crowd·dark·haze·level)
   detourDrifts: number; detourCong: number; detourCongMax: number; detourCap: number;      // (b3-5 ②) 우회 몰림이 있던 구간 × 표본 · 그 구간들의 혼잡의 합과 최댓값 · 몰림이 상한(DIVERT.MAX)에 닿은 구간 × 표본
 }
-export interface HazCount { laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null }
+/** (b3-7) 열의 노출 — 1초마다(초과 위험의 주기와 같은 틱) 법칙과 같은 열원·대상을 훑는다 */
+export interface HazHeat {
+  secs: number;                                     // 열원이 하나라도 있던 초
+  exposure: number;                                 // Σ_대상 ∫ M × max(0, q − Q0) dt (K 를 곱하기 전)
+  targets: number;                                  // 노출된 건물 수 (교대 안에서 서로 다른)
+  sources: number;                                  // 열원이 된 현장 수 (F ≥ F_MIN 이던 사건)
+  fMax: number;                                     // 열원의 불 요약 F 의 최댓값
+  top: number[];                                    // 노출량이 큰 건물들의 노출량 (큰 것부터 다섯)
+}
+export interface HazCount { laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null; heat: HazHeat | null }
 
 const roadZero = (): HazRoad => ({ drifts: 0, own: 0, bump: 0, queue: 0, div: 0, raw: 0, unledgered: 0, edgeDrifts: 0, closedDrifts: 0, byWhat: {}, detourDrifts: 0, detourCong: 0, detourCongMax: 0, detourCap: 0 });
 
@@ -34,8 +46,12 @@ export class HazProbe {
   readonly sim: Sim;
   readonly road: HazRoad = roadZero();
   private seenDrift = -1;
+  private heatBy = new Map<number, number>();       // 대상 → 노출량
+  private heatSrc = new Set<number>();
+  private heatSecs = 0; private heatFMax = 0;
   constructor(sim: Sim) { this.sim = sim; }
   tick(): void {
+    if (this.sim.tick % 5 === 1) this.sampleHeat();      // 초과 위험의 1초 블록과 같은 틱 (tickWorld)
     const tr = this.sim.traffic as { driftAt?: number };
     if (tr.driftAt === undefined || tr.driftAt === this.seenDrift) return;
     this.seenDrift = tr.driftAt;
@@ -59,6 +75,17 @@ export class HazProbe {
       for (let k = 0; k < np; k++) { const p = this.buf[k]; r.byWhat[p.what] = (r.byWhat[p.what] ?? 0) + p.x * w; if (p.ev < 0) r.unledgered += p.x * w; }
     }
   }
+  /** 열 — L2 의 heatTargets 를 그대로 부른다(읽기만 한다), dt = 1 */
+  protected sampleHeat(): void {
+    let any = false;
+    heatTargets(this.sim, (target, _gap, F, rate, inc) => {
+      any = true;
+      this.heatBy.set(target, (this.heatBy.get(target) ?? 0) + rate);
+      this.heatSrc.add(inc);
+      if (F > this.heatFMax) this.heatFMax = F;
+    });
+    if (any) this.heatSecs++;
+  }
   done(): HazCount {
     const sim = this.sim, hz = sim.world.hz;
     const laws: Record<string, HazLawCount> = {};
@@ -69,16 +96,24 @@ export class HazProbe {
     }
     for (const I of sim.incidents) if (I.hz) at(I.hz.law).made++;
     for (const w of hz.waiting) at(w.law).waitingEnd++;
-    return { laws, holes: hz.holes, road: this.road.drifts ? this.road : null };
+    const ex = [...this.heatBy.values()].sort((a, b) => b - a);
+    let tot = 0; for (const v of ex) tot += v;
+    const heat: HazHeat | null = this.heatSecs ? { secs: this.heatSecs, exposure: tot, targets: ex.length, sources: this.heatSrc.size, fMax: this.heatFMax, top: ex.slice(0, 5) } : null;
+    return { laws, holes: hz.holes, road: this.road.drifts ? this.road : null, heat };
   }
 }
 
 export { roadSurface };      // (b3-6) 법칙 파일의 것을 그대로 내보낸다
 
-export interface HazSum { shifts: number; laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null; roadShifts: number }
+export interface HazSum { shifts: number; laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null; roadShifts: number; heat: { shifts: number; secs: number; exposure: number; targets: number; sources: number; fMax: number; top: number[] } }
 export function sumHaz(list: readonly HazCount[]): HazSum {
-  const o: HazSum = { shifts: list.length, laws: {}, holes: 0, road: null, roadShifts: 0 };
+  const o: HazSum = { shifts: list.length, laws: {}, holes: 0, road: null, roadShifts: 0, heat: { shifts: 0, secs: 0, exposure: 0, targets: 0, sources: 0, fMax: 0, top: [] } };
   for (const c of list) {
+    if (c.heat) {
+      const h = o.heat;
+      h.shifts++; h.secs += c.heat.secs; h.exposure += c.heat.exposure; h.targets += c.heat.targets; h.sources += c.heat.sources; if (c.heat.fMax > h.fMax) h.fMax = c.heat.fMax;
+      h.top = [...h.top, ...c.heat.top].sort((a, b) => b - a).slice(0, 8);
+    }
     o.holes += c.holes;
     for (const [id, l] of Object.entries(c.laws)) {
       const t = o.laws[id] ?? (o.laws[id] = { cells: 0, crossed: 0, made: 0, waitingEnd: 0 });
@@ -110,6 +145,8 @@ export function hazLines(s: HazSum): string[] {
     out.push(`hazard-road: exposure ${f1(tot / n)}/shift (own ${f1(r.own / n)} · bump ${f1(r.bump / n)} · queue ${f1(r.queue / n)} · divert ${f1(r.div / n)}) · unledgered ${f1(r.unledgered / n)} · raw ${f1(r.raw / n)} edge·s/shift · edges with excess ${f1(r.edgeDrifts / Math.max(1, r.drifts))}/sample · closed ${f1(r.closedDrifts / Math.max(1, r.drifts))}/sample · by what: ${what || '-'}`);
     out.push(`hazard-detour: ${f1(r.detourDrifts / Math.max(1, r.drifts))} edges/sample · ${f1((r.detourDrifts * 12) / n)} edge·s/shift · cong avg ${f2(r.detourCong / Math.max(1, r.detourDrifts))} max ${f2(r.detourCongMax)} · at cap ${Math.round((100 * r.detourCap) / Math.max(1, r.detourDrifts))}%`);
   } else out.push('hazard-road: -');
+  const h = s.heat;
+  out.push(h.shifts ? `hazard-heat: exposure ${f2(h.exposure / n)}/shift (Σ M·max(0, q − Q0)·dt) · shifts with a source ${h.shifts} · source scenes ${h.sources} · buildings exposed ${h.targets} · source-seconds ${h.secs} · F max ${h.fMax} · largest ${h.top.map(f2).join(' ')}` : 'hazard-heat: -');
   return out;
 }
 export function hazJson(s: HazSum): Record<string, unknown> {
@@ -117,6 +154,7 @@ export function hazJson(s: HazSum): Record<string, unknown> {
   const r1 = (v: number): number => Math.round(v * 10) / 10;
   return {
     shifts: s.shifts, laws: s.laws, holes: s.holes,
+    heat: { shifts: s.heat.shifts, exposurePerShift: +(s.heat.exposure / n).toFixed(2), targets: s.heat.targets, sources: s.heat.sources, secs: s.heat.secs, fMax: s.heat.fMax, top: s.heat.top.map((v) => +v.toFixed(2)) },
     road: r ? {
       exposurePerShift: r1((r.own + r.bump + r.queue + r.div) / n), own: r1(r.own / n), bump: r1(r.bump / n), queue: r1(r.queue / n), divert: r1(r.div / n),
       unledgered: r1(r.unledgered / n), rawPerShift: r1(r.raw / n), edgesWithExcess: r1(r.edgeDrifts / Math.max(1, r.drifts)), closedEdges: r1(r.closedDrifts / Math.max(1, r.drifts)),

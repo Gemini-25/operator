@@ -25,6 +25,13 @@ import { ER_PENALTY, dispatchUnit, etaFor, sendUnitTo, startTransport, tickUnits
 import { HOSPITAL_CAP, ZONE_DEFAULT, erLoad, hospitalOf, initWorld, knownBuildingAt, knownHospital, knownZone, knownZoneOfIncident, placeState, setZone, zoneOfPlace, zoneOfXY } from '../src/sim/world/state';
 import { findRoute } from '../src/sim/city';
 import { smokeBase } from '../src/sim/world/expo';
+import { CHAIN_LINES, HZ_SHORT, chainLines } from '../src/sim/world/report';
+import { drawZonesWorld } from '../src/view/city/zoneLayer';
+import { drawExpoWorld } from '../src/view/city/ruinLayer';
+import { causeChip } from '../src/ui/HazardStrip';
+import { fakeCtx, withFakeDom } from './fakeCanvas';
+import { hazardLabel } from '../src/sim/world/hazard';
+import { scenarioName } from '../src/sim/scenarios';
 import type { EventKind, Incident, Responder, Role, Signal, SimEvent, Unit, ZoneField, ZoneState } from '../src/sim/types';
 import {
   PHRASE, PROBLEM_SYS, Probe, SAMPLE_EVERY, STALL_ALLOW, STALL_SEC, SYSTEMS, causeDepths, causesDepthByIncident, checkC5, checkMetrics,
@@ -343,6 +350,12 @@ describe('요약 모양', () => {
     const g = checkMetrics(bad, { baseline: false });
     expect(g.some((x) => x.startsWith('교착 후보') || x.startsWith('잊힌 사건'))).toBe(false);
     expect(g.length).toBe(4);
+    // (I1-b b5) 조인 관문의 경계: 깊이 3 · 한 교대 6건까지는 통과, 4 · 7 은 걸린다
+    const edge: MetricsSummary = JSON.parse(JSON.stringify(base));
+    edge.chain.maxParentDepth = 3; edge.chain.maxChainedInShift = 6;
+    expect(checkMetrics(edge, { baseline: true })).toEqual([]);
+    edge.chain.maxParentDepth = 4; edge.chain.maxChainedInShift = 7;
+    expect(checkMetrics(edge, { baseline: true }).sort()).toEqual(['연쇄 깊이 4 > 3', '한 교대의 연쇄 사건 7건 > 6']);
     // C5 도 관문이다 (R1 단계 3 부터): 출발 기록의 병원과 인계한 병원이 다르면 실패
     bad.consistency.C5 = 3;
     expect(checkMetrics(bad, { baseline: false }).some((x) => x.startsWith('기록·상태 불일치 C5 3건'))).toBe(true);
@@ -1440,4 +1453,201 @@ describe('I1-b b3-3: C2 rubbleRoad — 잔해는 사건이 끝나도 남는다',
     expect(b.ev, '알림 기록이 그 장애물의 기록이 된다').toBe(n0);
     expect(sim.events[n0].text).toContain('낙하물');
   });
+});
+
+describe('I1-b b4: 보고서의 내력 문장 (§3.9 · §6 I1-b 15)', () => {
+  const LAW_IDS = ['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle', 'liftStall', 'smokeIll'];
+  const STORY = ['reoffend', 'getaway', 'hideout', 'arson'];
+  const shiftOf = (seed: string, d: Difficulty = NORMAL): Sim => probedShift(seed, d).sim;
+  /** 법칙 사건·이야기 연쇄·건물 손상·정전이 나는 교대들 (해시 목록에서 고른 것 — 흐름이 바뀌어 사라져도 아래 문턱이 잡는다) */
+  const SHIFTS: [string, Difficulty][] = [['S1', NORMAL], ['S4', NORMAL], ['S5', NORMAL], ['S15', NORMAL], ['S19', NORMAL], ['S20', NORMAL], ['S2', QUAKE]];
+  it('문장마다 가리키는 기록·사건·구간·건물이 있다 — 법칙 사건은 주된 몫의 갈래로 한 문장, "약 N초"는 그 몫의 at − since 이고 그 원인 기록보다 앞서지 않는다. 법칙 이름이 문장에 없다', () => {
+    let hzN = 0, storyN = 0, kidsN = 0, wearN = 0, lineN = 0;
+    const kinds = new Set<string>();
+    for (const [seed, d] of SHIFTS) {
+      const sim = shiftOf(seed, d), r = sim.report!;
+      for (const x of r.incidents) {
+        const I = sim.incidents[x.id];
+        const lines = chainLines(sim, I);
+        expect(x.chain ?? [], `${seed} #${I.code}`).toEqual(lines.map((L) => L.text));
+        expect(lines.length).toBeLessThanOrEqual(CHAIN_LINES);
+        expect(x.parent).toBe(I.parent);
+        expect(x.children ?? []).toEqual(sim.incidents.filter((J) => J.parent === I.id).map((J) => J.id));
+        for (const L of lines) {
+          lineN++; kinds.add(L.kind);
+          for (const e of L.ev) expect(sim.events[e], `${seed} #${I.code} ${L.text}`).toBeDefined();
+          for (const k of L.inc) expect(sim.incidents[k]).toBeDefined();
+          for (const e of L.edge) expect(sim.city.edges[e], L.text).toBeDefined();
+          for (const q of L.place) expect(sim.city.places[q], L.text).toBeDefined();
+          for (const w of [...LAW_IDS, '법칙']) expect(L.text.includes(w), `${L.text} 에 ${w}`).toBe(false);
+          expect(L.text).toMatch(/[.)]$/);
+          if (L.kind === 'children') { kidsN++; for (const J of sim.incidents) if (J.parent === I.id) expect(L.text).toContain(J.code); }
+          if (L.kind === 'wear') { wearN++; expect(L.text).toContain(sim.scenes[I.id]!.wear!.inc); }
+        }
+        if (I.hz) {
+          hzN++;
+          const L = lines.find((q) => q.kind === 'hz')!, s0 = I.hz.src[0];
+          expect(L, `${seed} #${I.code} 의 내력 문장`).toBeDefined();
+          if (s0.ev >= 0) { expect(L.ev).toContain(s0.ev); expect(sim.events[s0.ev].t).toBeLessThanOrEqual(I.hz.at); }
+          if (I.cause !== undefined) expect(L.ev).toContain(I.cause);
+          expect(I.hz.law === 'roadCrash' ? L.edge : L.place).toContain(I.hz.target);      // 대상(구간·건물)이 문장에 있다
+          if (s0.inc >= 0) expect(L.text).toContain(`사건 ${sim.incidents[s0.inc].code}`);
+          if (L.n !== undefined) {
+            expect(L.n).toBeLessThanOrEqual(Math.max(10, I.hz.at - s0.since + 5));
+            if (s0.ev >= 0) expect(L.n).toBeLessThanOrEqual(Math.max(10, I.hz.at - sim.events[s0.ev].t + 12));      // §3.9 끝: N ≤ hz.at − 그 기록의 시각 + 12
+          }
+        }
+        if (I.csq !== undefined && STORY.includes(I.csq) && I.parent !== undefined) {
+          storyN++;
+          expect(lines[0].kind).toBe('story');
+          expect(lines[0].text).toContain(`사건 ${sim.incidents[I.parent].code}`);
+        }
+      }
+      // 교대 요약의 '인과:' 줄 — 법칙 사건이나 이야기 연쇄가 있을 때만
+      const causal = r.summary.filter((t) => t.startsWith('인과: '));
+      const laws = sim.incidents.filter((J) => J.hz !== undefined), story = sim.incidents.filter((J) => J.csq !== undefined && STORY.includes(J.csq));
+      expect(causal.length, seed).toBe(laws.length + story.length > 0 ? 1 : 0);
+      if (laws.length) expect(causal[0]).toContain(`상태에서 난 사건 ${laws.length}건`);
+      if (story.length) expect(causal[0]).toContain(`이야기 연쇄 ${story.length}건`);
+      for (const t of r.summary) for (const w of LAW_IDS) expect(t.includes(w), t).toBe(false);
+      expect(r.world!.lines.every((t) => r.summary.includes(t))).toBe(true);
+      expect(r.world!.spawned).toBe(sim.world.log.filter((q) => q.made >= 0).length);
+    }
+    expect(hzN, '법칙 사건').toBeGreaterThanOrEqual(6);
+    expect(storyN, '이야기 연쇄').toBeGreaterThanOrEqual(1);
+    expect(kidsN, '자식 줄').toBeGreaterThanOrEqual(4);
+    expect(wearN, '금 간 건물').toBeGreaterThanOrEqual(1);
+    expect(lineN).toBeGreaterThan(20);
+    for (const k of ['hz', 'story', 'children', 'wear', 'blocked']) expect(kinds.has(k), k).toBe(true);
+  }, 180000);
+  it('법칙 사건도 이야기 연쇄도 없는 교대에는 "인과:" 줄이 없다 (보통 S0)', () => {
+    const sim = shiftOf('S0');
+    expect(sim.incidents.some((J) => J.hz !== undefined || J.csq !== undefined)).toBe(false);
+    expect(sim.report!.summary.some((t) => t.startsWith('인과:'))).toBe(false);
+  }, 60000);
+  it('자식 줄의 괄호는 그 부모가 주인인 몫의 갈래다 — 내력의 몫에 그 부모가 없으면 법칙의 이름표로', () => {
+    let n = 0;
+    for (const [seed, d] of SHIFTS) {
+      const sim = shiftOf(seed, d);
+      for (const J of sim.incidents) {
+        if (!J.hz || J.parent === undefined) continue;
+        const P = sim.incidents[J.parent], L = chainLines(sim, P).find((q) => q.kind === 'children');
+        if (!L) continue;      // 넉 줄에서 잘렸다
+        n++;
+        const own = J.hz.src.filter((x) => x.inc === P.id).sort((a, b) => b.w - a.w)[0];
+        expect(L.text).toContain(`${J.code} ${scenarioName(J.truth.type, J.truth.variant)}(${own ? HZ_SHORT[own.what] : hazardLabel(J.hz.law)})`);
+      }
+    }
+    expect(n).toBeGreaterThanOrEqual(3);
+  }, 60000);
+  it('손으로 만든 내력: 통제 뒤 몰린 길(divert) · 둘째 몫 · 기록 없는 큰 몫 · 전환의 늦어진 초 · 금 간 건물 — 문장이 기록을 가리킨다', () => {
+    const s = new Sim('S2', NORMAL, 1200);
+    for (let k = 0; k < 20; k++) s.step();
+    const T = createIncident(s, { type: 'traffic', variant: 'tree' });
+    const c = T.blockedEdge, e2 = s.city.edges.find((e) => e.id !== c && !e.closed)!;
+    s.t += 140;
+    const J = createIncident(s, { type: 'traffic', variant: 'std', nodeId: e2.a });
+    const dark = emit(s, { role: 'SYSTEM', actor: '한국전력', kind: 'hazard', tag: 'power', imp: 1, text: '시험 — 정전.' });
+    J.hz = { law: 'roadCrash', target: e2.id, at: s.t, src: [
+      { ev: T.blockEv!, inc: T.id, w: 0.6, what: 'divert', ref: c, since: s.events[T.blockEv!].t },
+      { ev: dark, inc: -1, w: 0.3, what: 'dark', ref: e2.id, since: s.t - 20 },
+      { ev: -1, inc: -1, w: 0.5, what: 'jam', ref: e2.id, since: s.t - 60 }] };      // 기록 없는 몫이 전체의 1/3 이상 — 장부의 구멍
+    const L = chainLines(s, J)[0];
+    const name = (id: number): string => `${s.city.edges[id].name} ${(s.city.edges[id].seq ?? 0) + 1}구간`;
+    expect(L.kind).toBe('hz');
+    expect(L.text).toBe(`${name(c)} 통제(사건 ${T.code} 쓰러진 나무) 뒤 ${name(e2.id)}에 차량이 몰린 동안(약 140초) 난 사고입니다 (정전으로 꺼진 신호도 겹쳤습니다) (까닭이 기록되지 않은 혼잡도 겹쳤습니다).`);
+    expect(L.ev).toEqual([T.blockEv, dark]);
+    expect(L.edge).toEqual([e2.id, c]);
+    expect(L.n).toBe(140);
+    // 전환의 늦어진 초 (C6 — DIVERTED 의 ref.lost, §6 I1-b 2)
+    const u = s.units.find((q) => q.dept === 'ems')!;
+    raiseProblem(s, J, 'DIVERTED', '시험', { role: 'DISPATCH', actor: '배정 AI', text: '시험: 전환 배정' }, false, { inc: T.id, unit: u.id, lost: 52 });
+    const D = chainLines(s, J).find((q) => q.kind === 'divert')!;
+    expect(D.text).toMatch(new RegExp(`^${u.callsign}[이가] 사건 ${T.code}\\(쓰러진 나무\\)로 돌려져 첫 도착이 약 52초 늦었습니다\\.$`));
+    expect(D.inc).toEqual([T.id]);
+    // 금 간 건물에서 난 사건 (현장의 wear)
+    const F = createIncident(s, { type: 'fire', variant: 'std' });
+    s.scenes[F.id]!.wear = { dmg: 0.3, soot: 0, cause: 'shock', inc: T.code, pre: 0 };
+    const W = chainLines(s, F).find((q) => q.kind === 'wear')!;
+    expect(W.text).toBe(`이 건물은 사건 ${T.code}의 충격으로 이미 금이 가 있었습니다.`);
+    expect(W.inc).toEqual([T.id]);
+  });
+});
+
+describe('I1-b b4: 교대 중에 보이는 표시 — 읽기만 한다 (§7)', () => {
+  it('지도의 정전·연기 자리 · 금 간 건물·끊긴 배관 · 사건 카드의 내력 칩: 그려도 세계 상태와 기록이 그대로고, AI 시점에는 진실 전용 표시(금·배관·내력 칩)가 없다', async () => {
+    const s = new Sim('S1', QUAKE, 1200);
+    let sawZone = false, sawCrack = false, sawHz = false;
+    while (s.t < 900 && !s.ended) {
+      s.step();
+      if (s.tick % 250 !== 0) continue;
+      const before = JSON.stringify(s.world) + '|' + s.logHash + '|' + s.events.length;
+      await withFakeDom(() => {
+        for (const truth of [true, false]) {
+          drawZonesWorld(fakeCtx(), s, { truth, timeMs: 1000, scale: 0.8, mini: false });
+          drawExpoWorld(fakeCtx(), s, { truth, timeMs: 1000, scale: 0.8, mini: false });
+          for (const I of s.incidents) {
+            const c = causeChip(I, truth);
+            if (!truth) expect(c).toBeNull();
+            else if (I.hz) { expect(c!.text).toBe(HZ_SHORT[I.hz.src[0].what]); sawHz = true; }
+          }
+        }
+      });
+      expect(JSON.stringify(s.world) + '|' + s.logHash + '|' + s.events.length, `t=${s.t}`).toBe(before);
+      if (s.world.zones.some((Z) => Z.power < 1)) sawZone = true;
+      if (Object.values(s.world.expo).some((e) => e.shake >= 0.1)) sawCrack = true;
+    }
+    expect([sawZone, sawCrack]).toEqual([true, true]);
+    void sawHz;
+  }, 60000);
+  it('소스 글자: 그림·화면 파일은 세계 상태를 만들거나 바꾸는 함수를 부르지 않는다 (expoOf 는 없는 칸을 만든다)', () => {
+    const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(dir + '/' + e.name) : /\.(ts|tsx)$/.test(e.name) ? [dir + '/' + e.name] : []));
+    for (const f of [...walk('src/view'), ...walk('src/ui')]) {
+      const src = readFileSync(f, 'utf8');
+      for (const w of ['expoOf(', 'hazardImpulse(', 'setZone(', 'setZoneArea(', 'endZoneBy(', 'applyExpo(', 'noteRoadCause(', 'addBump(']) expect(src.includes(w), `${f} 에 ${w}`).toBe(false);
+    }
+  });
+});
+
+describe('I1-b b5: 완료 조건의 정해진 시드 (§5 · §6 I1-b 8)', () => {
+  /** 확산 길(distinct ≥ 3) 위의 사건들 */
+  function spreadThrough(sim: Sim): { I: Incident; path: number[]; incs: Incident[] }[] {
+    const sys = sim.events.map(sysOf), sp = spreadByIncident(sim.events, sys, sim.incidents.length), out: { I: Incident; path: number[]; incs: Incident[] }[] = [];
+    for (const I of sim.incidents) {
+      const b = sp.inc[I.id];
+      if (b.distinct < 3) continue;
+      const path = spreadPath(sim.events, sys, sp.graph, b.start);
+      const incs: Incident[] = [];
+      for (const id of path) { const k = sim.events[id].incidentId; if (k >= 0 && !incs.includes(sim.incidents[k])) incs.push(sim.incidents[k]); }
+      out.push({ I, path, incs });
+    }
+    return out;
+  }
+  it('3단계 사례: 한 사건에서 서로 다른 사건·시스템으로 세 단계 넘게 퍼진 길이 법칙 사건을 지난다 — 보통 S33(가스 폭발 → 옆 건물로 옮겨붙은 불 → 그 불의 연기 → 연기를 마신 주민) · 보통 S26(화재 → 연기 → 연기 덮인 길의 사고 → 그 사고에 밀린 길의 사고)', () => {
+    const want: [string, string[]][] = [['S33', ['heatSpread', 'smokeIll']], ['S26', ['roadCrash']]];
+    for (const [seed, laws] of want) {
+      const sim = probedShift(seed).sim;
+      const hits = spreadThrough(sim).filter((x) => x.incs.some((J) => J !== x.I && J.hz !== undefined));
+      expect(hits.length, `${seed} 의 법칙을 지나는 확산 길`).toBeGreaterThanOrEqual(1);
+      const h = hits[0], viaLaws = h.incs.filter((J) => J.hz !== undefined).map((J) => J.hz!.law);
+      for (const l of laws) expect(viaLaws, seed).toContain(l);
+      // 길 위의 법칙 사건마다 그 사건의 발생 기록이 앞 단계의 기록을 원인으로 가리킨다 (스크립트가 아니라 상태의 몫으로 이은 원인)
+      for (const J of h.incs) if (J.hz) { const root = sim.events[J.rootEvent]; expect(root.causes.length, `${seed} #${J.code}`).toBeGreaterThan(0); expect(root.causes).toContain(J.cause); }
+      // 사슬 문장이 그 길을 말한다 — 법칙 사건의 내력 문장에 앞 사건의 코드가 있다
+      for (const J of h.incs) if (J.hz && J.hz.src[0].inc >= 0) expect(chainLines(sim, J)[0].text).toContain(`사건 ${sim.incidents[J.hz.src[0].inc].code}`);
+    }
+  }, 120000);
+  it('법칙 사건의 통제를 만난 다른 사건의 부대 (완료 조건 2): ROUTE_BLOCKED 의 원인이 그 법칙 사건의 통제 기록이다 — 극한 S3·S4', () => {
+    let n = 0;
+    for (const seed of ['S3', 'S4']) {
+      const sim = probedShift(seed, parseDifficulty('extreme')!).sim;
+      const lawBlock = new Map<number, Incident>();
+      for (const J of sim.incidents) if (J.hz && J.blockEv !== undefined) lawBlock.set(J.blockEv, J);
+      for (const e of sim.events) {
+        if (e.problem !== 'ROUTE_BLOCKED') continue;
+        for (const c of e.causes) { const J = lawBlock.get(c); if (J && e.incidentId !== J.id) { n++; expect(sim.events[c].text, `${seed}`).toMatch(/통제|막/); } }
+      }
+    }
+    expect(n).toBeGreaterThanOrEqual(1);
+  }, 120000);
 });

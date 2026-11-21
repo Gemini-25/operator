@@ -15,7 +15,9 @@ import { fmtClock } from '../src/sim/util';
 // ───────────────────────── 상수 (§2.2) ─────────────────────────
 export const SAMPLE_EVERY = 5;          // 틱 (= 1초). 표본은 step() 뒤에만 뜬다
 export const STALL_SEC = 60, FORGOT_SEC = 30, REPEAT_WARN = 6, MIN_SCEN_N = 5;
-export const CHAIN_DEPTH_GATE = 4, CHAINED_SHIFT_GATE = 8;
+// (I1-b b5) 관문을 조였다: 깊이 4 → 3 (I1-b 의 깊이 상한 — chain.DEPTH_MAX 2 를 넘는 사슬은 관문에 걸린다), 한 교대의 연쇄 8 → 6 (사용자 결정의 한 교대 6건 — chain.CHAIN_SHIFT_MAX).
+//   장부의 구멍 0 · 한 뿌리의 법칙 사건 ≤ HZ.ROOT_MAX · 이야기 연쇄 + 법칙 사건 ≤ 6 · 규칙·법칙이 만든 사건 ≤ CSQ_SPAWN_CAP 은 b3-4 부터 걸려 있다 (checkMetrics)
+export const CHAIN_DEPTH_GATE = 3, CHAINED_SHIFT_GATE = 6;
 // 래칫 (§2.14): 기준선(src 3d33767, 보통 40시드)에서 교착 후보 0·잊힌 사건 0 을 확인했다.
 // 후보가 생기면 그 수로 두고 고칠 일로 올린다(고쳐서 줄면 낮춘다, 늘면 실패)
 export const STALL_ALLOW = 0;

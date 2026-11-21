@@ -475,3 +475,8 @@ input:focus { border-color: var(--accent); }
 .dchip .airbar i { position: absolute; left: 0; top: 0; bottom: 0; background: #58b6ff; }
 .dchip.low .airbar i { background: #ffd166; } .dchip.crit .airbar i { background: #ff9f43; }
 .dchip .airbar em { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(232, 240, 247, 0.55); }
+
+/* ── I1-b ── */
+/* (b4 §3.9) 보고서의 사슬 문장: 사건 분석 아래, 왼쪽 실선으로 이어진 사건임을 보인다 */
+ul.chain { margin: 2px 0 4px 16px; padding: 0 0 0 8px; list-style: none; border-left: 2px solid rgba(150, 190, 230, 0.4); line-height: 1.55; color: #a9c4dd; font-size: 0.94em; }
+ul.chain li::before { content: "↳ "; color: rgba(150, 190, 230, 0.7); }

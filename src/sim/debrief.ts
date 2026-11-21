@@ -15,6 +15,7 @@ import { roleOf } from './crews';
 import { CAUSE_NAME, bandOf, mainCause, outShifts, threatOverAt } from './field/injury';
 import { VERDICT_RULES } from './field/sceneRegistry';      // (N8) 판정 등록 — 묶음의 세계 규칙이 새 위험을 등급에 넣는다
 import { X6_BOOM_DETAIL, catHazardActive, catSummary, propertyLossOf } from './field/catastrophe';      // (X6 단계 7) 재산 피해·남은 위험·요약
+import { chainLines, worldReport } from './world/report';      // (I1-b b4 §3.9) 사슬 문장 · 교대의 세계 상태와 '인과:' 줄 — 기록에서만 쓴다
 import type { Sim } from './engine';
 import type { Incident, IncidentResult, InjuryCause, Outcome, Problem, ProblemCode, RosterOut, ShiftReport } from './types';
 import { TYPE_NAME, fmtSec, josa, pct } from './util';
@@ -291,7 +292,10 @@ export function buildReport(sim: Sim): ShiftReport {
     casTotal += r.casTotal; casSaved += r.casSaved; casLost += r.casLost; casUnd += r.casUndiscovered;
     const seen = new Set<ProblemCode>();
     for (const p of I.problems) { if (seen.has(p.code)) continue; seen.add(p.code); causeCount.set(p.code, (causeCount.get(p.code) ?? 0) + 1); }
-    incidents.push({ id: I.id, code: I.code, type: I.truth.type, name: scenarioName(I.truth.type, I.truth.variant), reportedType: I.firstAssess ? I.firstAssess.type : null, label: I.truth.label, result: r, start: I.createdAt, end: I.closedAt });
+    // (I1-b b4) 낳은 사건 · 이 사건이 낳은 사건들 · 사슬 문장(많아야 4줄 — 사건 분석의 9줄과 따로) — 자식은 이 사건이 닫힌 뒤에 생길 수 있어 교대 끝의 여기서 쓴다
+    const children = sim.incidents.filter((J) => J.parent === I.id).map((J) => J.id), chain = chainLines(sim, I).map((L) => L.text);
+    incidents.push({ id: I.id, code: I.code, type: I.truth.type, name: scenarioName(I.truth.type, I.truth.variant), reportedType: I.firstAssess ? I.firstAssess.type : null, label: I.truth.label, result: r, start: I.createdAt, end: I.closedAt,
+      parent: I.parent, children: children.length ? children : undefined, chain: chain.length ? chain : undefined });
   }
   const dur = sim.t;
   const unitUtil = sim.units.map((u) => ({ callsign: u.callsign, util: u.busyTime / Math.max(1, dur), runs: u.runs }));
@@ -357,6 +361,9 @@ export function buildReport(sim: Sim): ShiftReport {
   { const line = methodSummary(methods); if (line) summary.push(line); }
   const doctrine = docTally(sim);      // (R3 §7.3) 교본 줄이 쓰인 횟수 (번호별). 요약 줄은 많은 순 다섯, 하나도 없으면 넣지 않는다
   { const line = docSummary(doctrine); if (line) summary.push(line); }
+  // (I1-b b4 §3.9) 인과: 상태에서 난 사건·이야기 연쇄·전환·병원 우회·정전·상한으로 일어나지 않은 것 (법칙 사건도 이야기 연쇄도 없으면 이 줄이 없다), 세계 상태: 정전·통신·연기·금 간 건물·끊긴 배관·잠긴 지하
+  const world = worldReport(sim);
+  for (const line of world.lines) summary.push(line);
   // 교통: 기록된 통계로만 쓴다 (traffic.ts)
   const tf = { ...sim.traffic.stats };
   if (tf.jams + tf.closures + tf.obstacles + tf.detours + tf.gateWaits === 0) summary.push('교통으로 인한 지연은 없었습니다.');
@@ -376,6 +383,7 @@ export function buildReport(sim: Sim): ShiftReport {
     avgResponse: rN ? rSum / rN : -1, avgDispatch: dN ? dSum / dN : -1, utilization, unitUtil,
     casTotal, casSaved, casLost, casUndiscovered: casUnd, respondersHurt: hurt, equipFailures: equip, delayCauses, incidents, summary,
     respondersKilled: killedList, suspectsHurt: susHurt, suspectsDead: susDead, roster,      // (H1)
+    world,      // (I1-b b4) 세계 상태의 숫자와 줄
     catastrophe: cat, placeMarks: sim.placeMarks.size ? Array.from(sim.placeMarks.values()).map((m) => ({ ...m })) : undefined,      // (X6) 건물 상태는 이 교대의 자료 — 이어받는 것은 I2
     hash: sim.logHash.toString(16),
   };

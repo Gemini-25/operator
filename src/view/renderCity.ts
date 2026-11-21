@@ -19,7 +19,8 @@ import type { Box } from './city/tokens';
 import { facilityMarkKey } from './marks';
 import { combatPinJitter, drawCombatPin } from './city/combatPin';
 import type { FxBook } from './scene/fxBook';
-import { drawRuinBadge, drawRuinsWorld, ruinGlyphAt } from './city/ruinLayer';
+import { drawExpoWorld, drawRuinBadge, drawRuinsWorld, ruinGlyphAt } from './city/ruinLayer';
+import { drawZonesWorld } from './city/zoneLayer';
 import { paintKinds2Static } from './city/kinds2Layer';
 import { pinIcon, ruinLine } from './hazardState';
 import { TYPE_COLOR, respLimitOf } from './typeStyle';
@@ -145,7 +146,9 @@ export function drawCity(ctx: CanvasRenderingContext2D, sim: Sim, cam: CityCam, 
     ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
   }
   drawDisasterWorld(ctx, sim, o.timeMs, xf.scale);
+  drawZonesWorld(ctx, sim, { truth: o.truth, timeMs: o.timeMs, scale: xf.scale, mini });      // (I1-b b4) 국지·동네 정전과 연기 자리의 옅은 테 (AI 시점은 관제가 아는 것만)
   drawRuinsWorld(ctx, sim, { truth: o.truth, timeMs: o.timeMs, scale: xf.scale, mini });      // (G4) 무너진 건물의 지붕·쓰러진 크레인·무너질 때 피는 먼지
+  drawExpoWorld(ctx, sim, { truth: o.truth, timeMs: o.timeMs, scale: xf.scale, mini });      // (I1-b b4) 이웃의 충격으로 금 간 건물·끊긴 배관 (관찰자 시점만)
   ctx.restore();
 
   // ── 날씨 ──

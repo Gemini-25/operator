@@ -8,7 +8,8 @@ import { CHAIN_MAX, CHAIN_SHIFT_MAX, canChain, chainedInShift, noteChainDrop } f
 import { NORMAL, parseDisaster } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
-import { findRoute } from '../src/sim/city';
+import { edgeName, findRoute } from '../src/sim/city';
+import { chainLines } from '../src/sim/world/report';
 import { emit } from '../src/sim/events';
 import { closeIncident, createIncident, tickIncidents } from '../src/sim/incidents';
 import type { SpawnOpts } from '../src/sim/incidents';
@@ -772,7 +773,7 @@ describe('I1-b b3-4: 재현성과 소스 글자', () => {
     }
     expect(bad).toEqual([]);
     // 등록이 없는 파일: hazard.ts·state.ts 에는 registerHazard(...)·registerConsequence(...) 호출이 없다
-    for (const f of ['src/sim/world/hazard.ts', 'src/sim/world/state.ts', 'src/sim/world/expo.ts', 'src/sim/world/rules/record.ts']) expect(/^\s*register(?:Hazard|Consequence)\(/m.test(read(f)), f).toBe(false);
+    for (const f of ['src/sim/world/hazard.ts', 'src/sim/world/state.ts', 'src/sim/world/expo.ts', 'src/sim/world/report.ts', 'src/sim/world/rules/record.ts']) expect(/^\s*register(?:Hazard|Consequence)\(/m.test(read(f)), f).toBe(false);
   });
 
   it('정보 격리 2 (소스 글자): 판단 파일은 초과 위험·내력·교통의 장부·건물의 손상을 읽지 않고, 세계 쪽은 현장의 생김새 칸(s.rules)에 쓰지 않는다', () => {
@@ -1565,6 +1566,11 @@ describe('I1-b b3-6: L1 roadCrash — 차가 몰린 길에서는 사고가 잦�
       expect(J.hz!.at).toBe(J.createdAt);
       for (const x of J.hz!.src) { expect(x.since).toBeGreaterThanOrEqual(A.s.events[blockEv].t); expect(x.since).toBeLessThanOrEqual(J.hz!.at); }
       expect(touched.has(J.hz!.target)).toBe(true);
+      // ④ 그 사건의 보고서 문장: 나무 사건의 코드와 두 구간(통제된 구간 · 사고 구간)의 이름 — 법칙의 이름이 아니라 상태의 내력 (b4 §3.9)
+      { const L = chainLines(A.s, J)[0], en = (id: number): string => edgeName(A.s.city, A.s.city.edges[id]);
+        expect(L.kind).toBe('hz');
+        for (const w of [`사건 ${A.I.code} 쓰러진 나무`, en(c), en(J.hz!.target)]) expect(L.text, L.text).toContain(w);
+        expect(L.ev).toContain(blockEv); expect(L.text).not.toContain('roadCrash'); }
       expect([J.truth.nodeId === A.s.city.edges[J.hz!.target].a || J.truth.nodeId === A.s.city.edges[J.hz!.target].b, J.blockedEdge]).toEqual([true, J.hz!.target]);
       // ② B: 어느 사건의 내력에도 그 구간이나 그 통제 기록이 없다
       for (const Q of B.s.incidents) { if (!Q.hz) continue; expect(Q.hz.src.some((x) => x.ref === c || x.ev === blockEv), `B #${Q.code}`).toBe(false); expect(Q.cause).not.toBe(blockEv); }

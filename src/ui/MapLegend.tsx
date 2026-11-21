@@ -8,7 +8,9 @@ import { FACILITY_COLOR, FIELD_COLOR, FIELD_TEXT } from '../view/city/tokens';
 import { DISASTER_RING, OBSTACLE_ICON } from '../view/city/trafficLayer';
 import { SUBWAY_GLYPH, SUBWAY_LINE } from '../view/city/kinds2Layer';
 import { ICON_PATH } from '../view/icons';
-import { RUIN_MARK, STATE_MARK } from '../view/marks';
+import { HAZARD_MARK, RUIN_MARK, STATE_MARK } from '../view/marks';
+import { EXPO_CRACK, EXPO_PIPE } from '../view/city/ruinLayer';
+import { ZONE_LOOK } from '../view/city/zoneLayer';
 import { FacilityBadge, RoleDot, Token } from './Mark';
 
 const LS_LEGEND = 'ar.legend.v1';
@@ -125,6 +127,27 @@ function SubwaySample({ size = 18 }: { size?: number }) {
     </svg>
   );
 }
+/** (I1-b b4) 이웃의 충격으로 금 간 건물(지붕을 가로지르는 꺾인 선) · 끊긴 가스 배관(모서리의 작은 구름) */
+function CrackSample({ size = 18 }: { size?: number }) {
+  return (
+    <svg className="token" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <rect x={3} y={4} width={18} height={16} rx={2} fill="#2a3440" stroke="#4a5866" strokeWidth={1} />
+      <polyline points="4,15 9,11 12,13 16,8 20,9" fill="none" stroke={EXPO_CRACK} strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+function PipeSample({ size = 18 }: { size?: number }) {
+  return <svg className="token" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d={HAZARD_MARK.gas} fill={EXPO_PIPE} stroke="#0b1219" strokeWidth={2.5} strokeLinejoin="round" paintOrder="stroke" /></svg>;
+}
+/** (I1-b b4) 정전·연기 자리의 옅은 테 (지도는 국지 값이면 그 원, 동네 전체면 그 동네의 원) */
+function ZoneSample({ f, size = 20 }: { f: 'power' | 'smoke'; size?: number }) {
+  const L = ZONE_LOOK[f], c = size / 2;
+  return (
+    <svg className="token" width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+      <circle cx={c} cy={c} r={c - 1.5} fill={L.fill} stroke={L.ring} strokeWidth={1.4} strokeDasharray={`${L.dash[0] * 0.45} ${L.dash[1] * 0.45}`} />
+    </svg>
+  );
+}
 function IconSample({ name, size = 18 }: { name: string; size?: number }) {
   return <svg className="token" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d={ICON_PATH[name]} fill={RUIN_EDGE} fillRule="evenodd" /></svg>;
 }
@@ -211,6 +234,15 @@ export function MapLegend() {
             <span className="lg-item" title="건물이 통째로 무너졌다: 크게 보면 지붕 대신 잔해 더미. 그 교대에는 그 건물에서 새 사건이 나지 않는다"><RuinBadgeSample level="total" />전체 붕괴</span>
             <span className="lg-item" title="건물 칸의 연료가 70% 넘게 탔다: 크게 보면 지붕 전체가 그을리고 구멍이 뚫려 있다. 그 교대에는 그 건물에서 새 사건이 나지 않는다"><RuinBadgeSample level="burnt" />전소</span>
             <span className="lg-item" title="가스·용기 폭발이 있었다: 크게 보면 건물 둘레에 깨진 유리가 반짝이고 지붕에 검은 자국"><i style={{ display: 'inline-block', width: 14, height: 10, borderRadius: 2, background: '#2a211b', boxShadow: '0 0 0 2px #9fd6ea' }} />폭발 흔적</span>
+          </div>
+          <h5>이웃 건물과 동네 <span className="dim">사건이 남긴 세계 상태</span></h5>
+          <div className="lg-row">
+            <span className="lg-item" title="옆 건물이 무너지거나 터질 때의 충격으로 금이 갔다 — 관찰자 시점에서만 보인다(관제·현장은 그 건물에서 사건이 나기 전에는 모른다). 금이 클수록 선이 진하고 많다"><CrackSample />금 간 건물 (관찰자 시점)</span>
+            <span className="lg-item" title="충격으로 그 건물의 가스 배관이 끊겼다 — 관찰자 시점에서만 보인다"><PipeSample />끊긴 배관</span>
+          </div>
+          <div className="lg-row">
+            <span className="lg-item" title="정전이 걸린 자리: 무너지거나 터진 건물의 끊긴 전선이면 그 원, 변전소·지진이면 그 동네. AI 시점은 관제가 알게 된 정전만"><ZoneSample f="power" />정전 자리 (파란 점선)</span>
+            <span className="lg-item" title="크게 이어지는 불의 연기가 덮은 자리 — 그 안의 길은 앞이 덜 보여 느려지고, 오래 마신 주민이 숨쉬기 힘들어한다"><ZoneSample f="smoke" />연기 자리 (흙빛 안개)</span>
           </div>
           <p className="lg-help">사건 표식을 누르면 현장을 확대합니다. 건물이나 도로에 마우스를 올리면 이름과 종류가 보입니다. 휠로 확대·축소하고 끌어서 옮깁니다.</p>
         </div>

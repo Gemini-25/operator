@@ -2755,3 +2755,69 @@ describe('R3 독립 검토: 드는 대원 자신이 통제 전의 차로 줄에 
     expect((b.I.docs ?? []).some((d) => d.rule === 'E13' && d.rid === b.emt.rid)).toBe(true);
   });
 });
+
+// ───────────────────────── R3b (docs/specs/R3b-followup.md §8) ─────────────────────────
+describe('R3b (나) 속도 — 결과 불변', () => {
+  it('T1. 믿음 창고: 무작위 merge 수백 번 뒤 get·val·list 가 facts 를 종류로 거른 것과 같고, 받아 간 list 는 merge 로 바뀌지 않는다 (N1 — N2 는 넣지 않았다)', async () => {
+    const { BeliefStore, factKey } = await import('../src/sim/field/beliefs');
+    const { Rng } = await import('../src/sim/rng');
+    const rng = new Rng(77);
+    const types = ['cas', 'hos', 'fire', 'sign', 'mate', 'haz', 'crew'] as const;
+    const B = new BeliefStore();
+    const held: { arr: readonly unknown[]; copy: unknown[] }[] = [];
+    for (let k = 0; k < 600; k++) {
+      const type = types[rng.int(0, types.length - 1)], id = rng.int(0, 40) - (rng.chance(0.05) ? 41 : 0);
+      if (rng.chance(0.15)) { const arr = B.list(type); held.push({ arr, copy: arr.slice() }); }
+      B.merge(mkFact(type, id, { v: rng.int(0, 3), level: rng.int(0, 3) }, 't', k * 0.2 + (rng.chance(0.2) ? -5 : 0), rng.range(0.2, 1), rng.chance(0.4), ''));
+    }
+    // 받아 간 배열은 그 뒤의 merge 로 바뀌지 않는다 (순회 도중 merge 해도 안전하다)
+    for (const h of held) expect(h.arr).toEqual(h.copy);
+    for (const type of types) {
+      const want = [...B.facts.values()].filter((f) => f.type === type);
+      expect(B.list(type)).toEqual(want);
+      for (let id = -41; id <= 40; id++) {
+        expect(B.get(type, id)).toBe(B.facts.get(factKey(type, id)));
+        expect(B.val(type, id)).toBe(B.facts.get(factKey(type, id))?.value);
+      }
+    }
+    expect(B.list('ctl')).toEqual([]);
+  });
+
+  it('T2. 지도 고정(N7): primeNums 를 거친 객체와 거치지 않은 객체의 모든 칸 값·칸의 순서가 같고, 없는 칸을 더하지 않는다', async () => {
+    const SH = await import('../src/sim/shape');
+    const sim = new Sim('R3b-T2', NORMAL, 1200, { force: 'armed/hostage' });
+    sim.run(900);
+    const same = (o: object, site: { nums: readonly string[]; muts: readonly string[] }): void => {
+      const a = o as Record<string, unknown>, b = { ...a };
+      SH.primeNums(b, SH.shapeSite(site.nums, site.muts));      // every 1 — 반드시 넓힌다
+      expect(Object.keys(b)).toEqual(Object.keys(a));
+      for (const k of Object.keys(a)) expect(Object.is(b[k], a[k]), k).toBe(true);
+    };
+    let n = 0;
+    for (const s of sim.scenes) {
+      if (!s) continue;
+      same(s, SH.SCENE_SHAPE); same(s.staging, SH.POINT_SHAPE);
+      for (const a of s.agents) { same(a, SH.AGENT_SHAPE); if (a.task) { same(a.task, SH.TASK_SHAPE); n++; } }
+      for (const w of s.board) same(w, SH.WORK_SHAPE);
+      for (const r of s.regions) same(r, SH.REGION_SHAPE);
+      for (const p of s.props) same(p, SH.PROP_SHAPE);
+      for (const c of s.casualties) same(c, SH.CAS_SHAPE);
+      for (const h of s.hostiles) same(h, SH.HOSTILE_SHAPE);
+      if (s.ops) same(s.ops, SH.OPS_SHAPE);
+    }
+    for (const u of sim.units) same(u, SH.UNIT_SHAPE);
+    for (const r of sim.responders) { same(r, SH.RESPONDER_SHAPE); for (const it of r.kit ?? []) same(it, SH.KIT_SHAPE); }
+    for (const I of sim.incidents) { same(I, SH.INCIDENT_SHAPE); same(I.truth, SH.TRUTH_SHAPE); }
+    expect(n).toBeGreaterThan(3);
+    // 없는 칸은 건너뛴다 · 값은 그대로 (정수·음수 0·NaN·무한대·undefined·배열·객체)
+    const o: Record<string, unknown> = { a: 3, b: -0, c: NaN, d: Infinity, e: undefined, f: [1], g: { z: 1 }, h: 'x', i: true, j: null };
+    const before = { ...o };
+    SH.primeNums(o, SH.shapeSite(['a', 'b', 'c', 'd', 'e', 'zz'], ['f', 'g', 'h', 'i', 'j', 'yy']));
+    expect(Object.keys(o)).toEqual(Object.keys(before));
+    for (const k of Object.keys(before)) expect(Object.is(o[k], before[k]), k).toBe(true);
+    // 같은 시드는 같은 결과 (넓히기가 결과를 바꾸지 않는다 — 해시 목록이 131교대로 본다)
+    const again = new Sim('R3b-T2', NORMAL, 1200, { force: 'armed/hostage' });
+    again.run(900);
+    expect(again.logHash).toBe(sim.logHash);
+  });
+});

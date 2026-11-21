@@ -5,6 +5,7 @@
 import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import { closeIncident } from '../incidents';
+import { WORK_SHAPE, primeNums } from '../shape';      // (R3b N7)
 import { T } from '../types';
 import type { CasBelief, FieldAgent, Incident, MateBelief, Scene, UnitCaps, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, dist, josa } from '../util';
@@ -51,6 +52,7 @@ function want(sim: Sim, s: Scene, kind: WorkKind, tg: Target, priority: number, 
     id: s.nextWorkId++, kind, region, cas, prop, hostile, tile, mate, priority, status: 'open', assignees: [], max,
     createdAt: sim.t, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough, orderSentAt: {}, cause, failedAt: {}, animal, risky: undefined,      // risky: (X6) 제한적 구조 진입 — 지휘 규칙이 고친다
   };
+  primeNums(w, WORK_SHAPE);      // (R3b N7) 숫자 칸을 만들 때부터 소수 표현으로 — 값은 그대로 (shape.ts)
   s.board.push(w);
   return w;
 }

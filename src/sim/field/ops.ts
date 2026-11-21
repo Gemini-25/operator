@@ -12,6 +12,7 @@ import type { CasBelief, FieldAgent, MateBelief, NoGoZone, OpsState, Scene, Work
 import { dist } from '../util';
 import { isIndoor, losWalls, staticPass } from './grid';
 import type { WorkTarget } from './sceneRegistry';
+import { OPS_SHAPE, primeNums } from '../shape';      // (R3b N7)
 
 /**
  * 조짐 사실('sign')의 id 공간 (설계서 §3.2). 구획 번호·소품 id 를 더해 쓴다:
@@ -131,12 +132,12 @@ export function structScene(s: Scene): boolean { return !s.outdoor && NO_STRUCT.
 
 /** 새 지휘 상태 (모든 칸을 같은 순서로) */
 export function newOps(t: number): OpsState {
-  return {
+  return primeNums<OpsState>({
     mode: 'interior', since: t, reason: '', ev: -1, zones: [],
     parAt: -1, parAsked: [], parOk: [], parTries: 0, parDue: -1,
     burnSince: {}, everHot: [], quietSince: t, calmSince: {}, utilityAsked: -1, concluded: false, reentries: 0, rubble: [],
     entry: {}, gated: 0, noExt: [], cleared: {}, limitBonus: 0,
-  };
+  }, OPS_SHAPE);      // (R3b N7) 숫자 칸을 만들 때부터 소수 표현으로 — 값은 그대로
 }
 
 /** 구역 목록의 판(版): 지휘 규칙이 구역을 바꿀 때마다 올린다 (끊긴 곳의 계산을 다시 쓰는 열쇠) */

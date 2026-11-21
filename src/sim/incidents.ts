@@ -22,6 +22,7 @@ import type { HzNote, Incident, IncidentType, Place, PlaceKind } from './types';
 import { OUTCOME_NAME, TYPE_NAME } from './util';
 import { TYPE_DEFS, TYPE_ORDER } from './incidentTypes';
 import { noteClosedPlace } from './field/catastrophe';      // (X6 단계 7) 끝난 화재의 그을린 건물
+import { INCIDENT_SHAPE, TRUTH_SHAPE, primeNums } from './shape';      // (R3b N7) 숫자 칸을 만들 때부터 소수 표현으로 — 값은 그대로
 
 /** 사건을 정해서 일으킬 때 주는 조건. 비워 두면 평소처럼 추첨한다. */
 export interface SpawnOpts {
@@ -167,6 +168,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
   if (opts.cause !== undefined && opts.cause >= 0) I.cause = opts.cause;
   if (opts.csq) I.csq = opts.csq;
   if (opts.hz) I.hz = opts.hz;
+  primeNums(I, INCIDENT_SHAPE); primeNums(I.truth, TRUTH_SHAPE);      // (R3b N7)
   sim.incidents.push(I);
   createScene(sim, I);
   { const sc = sim.scenes[I.id]; if (sc && sc.placeName && !place) I.truth.label = `${nodeName(sim.city, node.id)} ${sc.placeName}`; }      // 교차로 사고: 현장을 만들면서 정해진 이름

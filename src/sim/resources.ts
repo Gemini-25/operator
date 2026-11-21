@@ -14,6 +14,7 @@ import { gateWait, obstacleOnEdge, reportObstacle, stopAhead } from './traffic';
 import type { Obstacle } from './traffic';
 import type { Dept, Facility, Incident, Needs, Problem, Responder, RoadEdge, Unit, UnitCaps, UnitField, UnitKind } from './types';
 import { clamp, fmtSec, josa } from './util';
+import { KIT_SHAPE, RESPONDER_SHAPE, UNIT_SHAPE, primeNums } from './shape';      // (R3b N7) 숫자 칸을 만들 때부터 소수 표현으로 — 값은 그대로
 
 const NAMES = ['김도윤', '이서준', '박하준', '최민재', '정지호', '강현우', '윤서연', '한지민', '오수아', '임채원', '신유나', '조은서',
   '배준영', '류시우', '문가은', '송태윤', '황보라', '안지후', '남궁민', '서예린', '권도현', '홍서진', '장하늘', '민지원', '차은우', '표나연', '석민호', '엄지안',
@@ -180,6 +181,7 @@ export function createRoster(sim: Sim): void {
         seat: undefined, relief: undefined, carryOut: undefined, carryCause: undefined,      // (I2) 이어받은 상태 — persist.ts 가 채운다 (단계 2)
       };
       r.trait = traitOf(r);
+      primeNums(r, RESPONDER_SHAPE); for (const it of r.kit ?? []) primeNums(it, KIT_SHAPE);      // (R3b N7)
       if (include && !(minimal && staff.minDrop.indexOf(k) >= 0)) { crew.push(r.id); sim.responders.push(r); members.push(r); }
     }
     const pump = d.dept === 'fire' ? equipRng.range(tn.pumpMin, tn.pumpMax) : 1;
@@ -211,6 +213,7 @@ export function createRoster(sim: Sim): void {
       if (u.grounded && sim.airStats.grounded !== 'fog') sim.airStats.grounded = u.grounded;
     }
     if (HEAVY[d.kind]) u.heavy = true;
+    primeNums(u, UNIT_SHAPE);      // (R3b N7)
     sim.units.push(u);
   });
   // 개인 장비의 고장 추첨: 교대 흐름 'kit' 하나로, 편성된 대원만 (대원 순서 × 장비 순서). 고장은 처음 쓰려 할 때 드러난다
@@ -269,6 +272,7 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
       seat: undefined, relief: undefined, carryOut: undefined, carryCause: undefined,      // (I2) 편성표 대원과 같은 칸, 같은 순서
     };
     r.trait = traitOf(r);
+    primeNums(r, RESPONDER_SHAPE); for (const it of r.kit ?? []) primeNums(it, KIT_SHAPE);      // (R3b N7)
     crew.push(r.id); sim.responders.push(r); members.push(r);
   });
   const bangs = dealFlashbangs(members, kind === 'tactical' ? Math.min(2, tn.flashbangs) : 0);
@@ -294,6 +298,7 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
   drawFaults(rng, members, tn.kitFault);      // 펌프 상태 다음에 뽑는다 (같은 흐름 aid:<n> 의 끝)
   drawBatchFaults(sim.rng.fork('aid-n9:' + sim.aidUsed), members, tn.kitFault, 'n9');      // (N9) 잠수 장비는 따로 (지원 종류에는 그 장비를 든 자리가 없다 — 지금은 한 번도 뽑지 않는다)
   drawBatchFaults(sim.rng.fork('aid-r2:' + sim.aidUsed), members, tn.kitFault, 'r2');      // (R2 §3.3) 대응 방법의 고장 나는 장비도 따로 (지원 구조대의 로프 대원이 든 고무보트)
+  primeNums(u, UNIT_SHAPE);      // (R3b N7)
   sim.units.push(u);
   return u;
 }

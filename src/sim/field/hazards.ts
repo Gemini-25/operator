@@ -13,7 +13,7 @@ import { addProp } from './kit';
 import { casFact, exitName } from './agents';
 import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, truthWalkable } from './grid';
 import { acrossVoid, coverRoll, fireShot, heatGlass, shatter } from './damage';
-import { catOnBlast } from './catastrophe';
+import { X6_BOOM_DETAIL, catOnBlast } from './catastrophe';
 import { lastFx, noteBoom, noteFlash, noteHit, noteShot, recHarm, recMelee } from './fxlog';
 import { RUIN_SECONDARY, markRuin, recordFall } from './ruins';
 import { CAUSE_NAME, DOWN_AT, SELF_HARM, SELF_HARM_HIT, bandOf, decayCause, hurtCas, hurtCasTo, hurtHostile, hurtResponder, injuryRng, noteDecay, noteInjury, settleHostile } from './injury';
@@ -36,17 +36,41 @@ const NB = [1, 0, -1, 0, 0, 1, 0, -1];
 /** (I1-b) 'fireBig' 신호의 문턱 — 불 칸(불 > 0.2) 수. 측정 도구·C5 의 '큰 불'과 같은 수 */
 export const FIRE_BIG = 30;
 const FIRE_BIG_SENT = new WeakSet<Scene>();      // 신호를 이미 보낸 현장 (현장 객체의 모양을 바꾸지 않는다 — 되감기는 Sim 을 새로 만든다)
+/** (I1-b b3-7 §3.6c) 불 요약의 문턱 — 불 세기가 이 값 이상인 칸을 센다 */
+export const FIRE_LOAD_MIN = 0.5;
+const FIRE_LOAD = new WeakMap<Scene, number>();      // 현장 → 지난 tickFire 의 센 불 칸 수 (현장 객체의 모양을 바꾸지 않는다. 현장은 교대마다 새로 만들어 시드를 넘지 않는다)
+/**
+ * (I1-b b3-7) 열린 현장의 불 요약 F — 지난 tickFire(1초에 한 번)에서 불 세기 FIRE_LOAD_MIN 이상이던 칸 수. 불을 센 적이 없는 현장은 0.
+ * 건물 현장이면 **그 건물 안(실내 구역)의 칸만** 센다 — L2 의 유속은 그 건물의 벽에서 이웃의 벽까지의 틈으로 재므로, 불 요약도 그 건물의 불이어야 한다
+ * (산불 현장의 숲·마당처럼 건물 밖에서 타는 칸은 그 건물의 불이 아니다 — 그 번짐은 산불 모델의 것이다). 건물이 없는 현장(길 위의 차량 화재)은 모든 칸.
+ * 진실 쪽 전용(세계 규칙·법칙 — L2 heatSpread 의 열원). 판단은 읽지 않는다
+ */
+export function fireLoad(s: Scene): number { return FIRE_LOAD.get(s) ?? 0; }
+/**
+ * (I1-b b3-7 §3.7 L2) 그 현장의 불을 만든 기록 — 열원의 원인 기록과 'fireBig' 신호의 기록이 함께 쓴다:
+ * 그 사건의 X6 폭발 기록(EXPLOSION · X6 의 폭발 문구인 HIDDEN_HAZARD)이나 전소(BURNOUT)가 있으면 그 가운데 마지막 것, 없으면 발생 기록.
+ * 상황 악화(ESCALATION)는 쓰지 않는다 — 그 코드는 2차 붕괴·압궤 증후군·인질 피격·시민의 가스 노출에도 쓰여 불을 만든 기록이 아닐 수 있다
+ */
+export function fireCauseEv(I: Incident): number {
+  for (let k = I.problems.length - 1; k >= 0; k--) {
+    const p = I.problems[k];
+    if (p.code === 'EXPLOSION' || p.code === 'BURNOUT' || (p.code === 'HIDDEN_HAZARD' && X6_BOOM_DETAIL.test(p.detail))) return p.eventId;
+  }
+  return I.rootEvent;
+}
 
 /** 화재·연기 (1초에 한 번 호출) */
 export function tickFire(sim: Sim, s: Scene, I: Incident): void {
   const w = s.w, h = s.h, n = w * h;
-  let burning = 0, big = 0;
+  let burning = 0, big = 0, hot = 0;
+  const inBldg = I.truth.placeId >= 0, reg = s.region, regs = s.regions;      // (I1-b b3-7) 불 요약은 건물 현장이면 실내 구역의 칸만
   for (let i = 0; i < n; i++) {
     const f = s.fire[i];
     if (s.wet[i] > 0) s.wet[i] *= 0.955;
     if (f <= 0) continue;
     burning++;
     if (f > 0.2) big++;
+    if (f >= FIRE_LOAD_MIN && (!inBldg || (reg[i] >= 0 && regs[reg[i]].indoor))) hot++;      // (I1-b b3-7) 불 요약 — 이 순회에 셈 하나
     s.fuel[i] -= 0.0105 * f;
     if (s.fuel[i] <= 0) {
       s.fuel[i] = 0;
@@ -86,12 +110,12 @@ export function tickFire(sim: Sim, s: Scene, I: Incident): void {
   // (X6 단계 4) 예전의 '가스 용기 폭발'(불이 닿으면 그 자리에서 터짐)은 지웠다 — 용기의 열이 쌓여야 터진다 (field/catastrophe.ts 의 ruptureVessel)
   // (X6 단계 3) 예전의 '천장 일부 붕괴'(탄 방을 한 번 판정해 s.rng 로 잔해·충격)는 지웠다 — 구조 건전도가 낮아진 구획의 붕괴(field/catastrophe.ts 의 collapseRegion)가 대신한다
   s.burning = burning;
-  // (I1-b §3.4) 큰 불: 불 칸(불 > 0.2)이 처음 FIRE_BIG 개에 닿을 때, 현장마다 한 번. 이 자리에는 기록이 없으므로 신호의 기록은 그 사건의 마지막 상황 악화(없으면 발생 기록)
+  if (hot > 0 || FIRE_LOAD.has(s)) FIRE_LOAD.set(s, hot);      // (I1-b b3-7) 불을 센 적이 있는 현장만 적는다 (불이 없던 현장은 0 — fireLoad)
+  // (I1-b §3.4) 큰 불: 불 칸(불 > 0.2)이 처음 FIRE_BIG 개에 닿을 때, 현장마다 한 번. 이 자리에는 기록이 없으므로 신호의 기록은 그 불을 만든 기록
+  // (b3-7 — L2 의 열원과 같은 규칙 fireCauseEv: X6 의 폭발·전소, 없으면 발생 기록. 예전에는 마지막 상황 악화였는데 그 코드는 압궤 증후군·인질 피격 따위에도 쓰인다)
   if (big >= FIRE_BIG && !FIRE_BIG_SENT.has(s)) {
     FIRE_BIG_SENT.add(s);
-    let ev = I.rootEvent;
-    for (let k = I.problems.length - 1; k >= 0; k--) if (I.problems[k].code === 'ESCALATION') { ev = I.problems[k].eventId; break; }
-    signal(sim, 'fireBig', { inc: I.id, ev, size: big, place: I.truth.placeId });
+    signal(sim, 'fireBig', { inc: I.id, ev: fireCauseEv(I), size: big, place: I.truth.placeId });
   }
   if (burning === 0 && s.fireOutAt < 0 && s.kind === 'fire' && sim.t - s.startedAt > 5) s.fireOutAt = sim.t;
   if (burning > 0) s.fireOutAt = -1;

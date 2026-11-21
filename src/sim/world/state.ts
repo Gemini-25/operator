@@ -12,6 +12,7 @@ import { districtAt } from '../city';
 import { DISTRICTS } from '../cityPlan';
 import type { Sim } from '../engine';
 import type { HospitalState, Incident, PlaceKind, WorldState, ZoneField, ZoneState } from '../types';
+import { X6_BOOM_DETAIL } from '../field/catastrophe';      // (b3-7) X6 의 폭발 문구 — 지휘관이 몰랐던 폭발은 HIDDEN_HAZARD 로 남는다 (knownHazardNear)
 
 export const ZONE_FIELDS: readonly ZoneField[] = ['power', 'comms', 'water', 'smoke', 'risk'];
 /** 구역 값의 처음 값(정상): 전력·통신·수도는 1, 연기·위험은 0 */
@@ -141,12 +142,16 @@ export function knownZoneOfIncident(sim: Sim, I: Incident): number {
  * (진실 쪽 — 세계 규칙 전용) 건물 상태: X6 의 Sim.placeMarks → I2 의 carryState.places 순서로 읽는다 (둘 다 없으면 null).
  * usable = 그 건물에서 새 사건을 낼 수 있는가 — 교대 안은 X6 의 규칙(전소·전체 붕괴가 아니면), 이어받은 건물은 출입 통제·무너짐이 아니면.
  * I2 단계 5 가 persist.placeUsable 을 만들면 usable 은 그것을 부른다 (지금은 incidents.placeGone 과 같은 뜻)
+ * (b3-7) 사건이 없던 건물이 이웃에서 받은 노출(world.expo — 구조 손상 shake · 배관 손상 pipe · 잠긴 지하 wet)을 함께 돌려준다:
+ * 건물 상태가 없어도 노출이 있으면 mark null · 탄 비율 0 · 쓸 수 있음으로 돌려준다. world.expo 는 읽기만 한다(없으면 만들지 않는다 — expo.expoOf 를 부르지 않는다)
  */
-export function placeState(sim: Sim, placeId: number): { mark: string | null; burnFrac: number; ruinFrac: number; usable: boolean } | null {
+export function placeState(sim: Sim, placeId: number): { mark: string | null; burnFrac: number; ruinFrac: number; usable: boolean; shake: number; pipe: boolean; wet: boolean } | null {
+  const ex = sim.world.expo[placeId], shake = ex ? ex.shake : 0, pipe = ex ? ex.pipe : false, wet = ex ? ex.wet : false;
   const pm = sim.placeMarks.get(placeId);
-  if (pm) return { mark: pm.state, burnFrac: pm.burnFrac, ruinFrac: pm.ruinFrac, usable: pm.state !== 'burnt' && pm.state !== 'collapsed' };
+  if (pm) return { mark: pm.state, burnFrac: pm.burnFrac, ruinFrac: pm.ruinFrac, usable: pm.state !== 'burnt' && pm.state !== 'collapsed', shake, pipe, wet };
   const pc = sim.carryState.places.get(placeId);
-  if (pc) return { mark: pc.mark ?? null, burnFrac: pc.soot, ruinFrac: pc.dmg, usable: pc.state === 'marked' };
+  if (pc) return { mark: pc.mark ?? null, burnFrac: pc.soot, ruinFrac: pc.dmg, usable: pc.state === 'marked', shake, pipe, wet };
+  if (ex) return { mark: null, burnFrac: 0, ruinFrac: 0, usable: true, shake, pipe, wet };
   return null;
 }
 
@@ -174,4 +179,32 @@ export function knownBuildingAt(sim: Sim, node: number, placeKind?: PlaceKind | 
     }
   }
   return null;
+}
+
+/**
+ * (b3-7 §3.8) 관제가 아는 큰 불·폭발·붕괴가 그 교차로 곁에 있는가 — 분석 AI 는 이 함수만 부른다 (진실 위치·현장·신호를 읽지 않는다).
+ * 위치를 아는 다른 사건(except 는 뺀다 — 신고받는 그 사건 자신) 가운데 알려진 교차로(reportedNode)가 within 안인 것:
+ *  불     — 현장이 화재로 확인했고(fieldVerified · 현장 확인 유형 fieldType, 없으면 평가 유형) 현장 상황 보고가 위험도를 올린(fieldRisk — X6 §5.9) 열린 사건
+ *  폭발   — 진실이 아닌 EXPLOSION · X6 의 폭발 문구인 HIDDEN_HAZARD(지휘관이 몰랐던 폭발) 기록이 age 초 안에 있다
+ *  붕괴   — 진실이 아닌 STRUCT_COLLAPSE 기록이 age 초 안에 있다
+ * 거리는 두 사건의 알려진 교차로 사이다(관제는 교차로만 안다 — 60 이면 같은 교차로뿐이라 300). 큰 불 신호(fireBig)의 기록은 진실인 발생 기록이라 쓰지 않는다
+ */
+export function knownHazardNear(sim: Sim, node: number, within = 300, age = 180, except = -1): { fire: boolean; blast: boolean; collapse: boolean } {
+  const out = { fire: false, blast: false, collapse: false };
+  const N = sim.city.nodes[node];
+  if (!N) return out;
+  for (const J of sim.incidents) {
+    if (J.id === except || !J.locationKnown) continue;
+    const M = sim.city.nodes[J.reportedNode];
+    if (!M || Math.hypot(M.x - N.x, M.y - N.y) > within) continue;
+    if (!out.fire && J.phase !== 'closed' && J.fieldVerified && J.fieldRisk !== undefined && (J.fieldType ?? J.assessment?.type) === 'fire') out.fire = true;
+    for (const p of J.problems) {
+      if (p.t < sim.t - age || p.eventId < 0) continue;
+      const e = sim.events[p.eventId];
+      if (!e || e.truth) continue;
+      if (p.code === 'EXPLOSION' || (p.code === 'HIDDEN_HAZARD' && X6_BOOM_DETAIL.test(p.detail))) out.blast = true;
+      else if (p.code === 'STRUCT_COLLAPSE') out.collapse = true;
+    }
+  }
+  return out;
 }

@@ -141,12 +141,16 @@ export function knownZoneOfIncident(sim: Sim, I: Incident): number {
  * (진실 쪽 — 세계 규칙 전용) 건물 상태: X6 의 Sim.placeMarks → I2 의 carryState.places 순서로 읽는다 (둘 다 없으면 null).
  * usable = 그 건물에서 새 사건을 낼 수 있는가 — 교대 안은 X6 의 규칙(전소·전체 붕괴가 아니면), 이어받은 건물은 출입 통제·무너짐이 아니면.
  * I2 단계 5 가 persist.placeUsable 을 만들면 usable 은 그것을 부른다 (지금은 incidents.placeGone 과 같은 뜻)
+ * (b3-7) 사건이 없던 건물이 이웃에서 받은 노출(world.expo — 구조 손상 shake · 배관 손상 pipe · 잠긴 지하 wet)을 함께 돌려준다:
+ * 건물 상태가 없어도 노출이 있으면 mark null · 탄 비율 0 · 쓸 수 있음으로 돌려준다. world.expo 는 읽기만 한다(없으면 만들지 않는다 — expo.expoOf 를 부르지 않는다)
  */
-export function placeState(sim: Sim, placeId: number): { mark: string | null; burnFrac: number; ruinFrac: number; usable: boolean } | null {
+export function placeState(sim: Sim, placeId: number): { mark: string | null; burnFrac: number; ruinFrac: number; usable: boolean; shake: number; pipe: boolean; wet: boolean } | null {
+  const ex = sim.world.expo[placeId], shake = ex ? ex.shake : 0, pipe = ex ? ex.pipe : false, wet = ex ? ex.wet : false;
   const pm = sim.placeMarks.get(placeId);
-  if (pm) return { mark: pm.state, burnFrac: pm.burnFrac, ruinFrac: pm.ruinFrac, usable: pm.state !== 'burnt' && pm.state !== 'collapsed' };
+  if (pm) return { mark: pm.state, burnFrac: pm.burnFrac, ruinFrac: pm.ruinFrac, usable: pm.state !== 'burnt' && pm.state !== 'collapsed', shake, pipe, wet };
   const pc = sim.carryState.places.get(placeId);
-  if (pc) return { mark: pc.mark ?? null, burnFrac: pc.soot, ruinFrac: pc.dmg, usable: pc.state === 'marked' };
+  if (pc) return { mark: pc.mark ?? null, burnFrac: pc.soot, ruinFrac: pc.dmg, usable: pc.state === 'marked', shake, pipe, wet };
+  if (ex) return { mark: null, burnFrac: 0, ruinFrac: 0, usable: true, shake, pipe, wet };
   return null;
 }
 

@@ -976,12 +976,21 @@ describe('R3 시험 2-d (덧붙임): 측정 묶음에서 한 번도 쓰이지 �
     const d = I.docs!.find((q) => q.rule === 'P10' && q.rid === A.rid)!;
     expect(d.t1).toBeGreaterThan(d.t);
   });
-  it('P11: 피격 중인 경찰(체력 40~70 · 출혈 없음 · 엄폐 아님)은 후퇴 대신 숨을 자리로 엄폐한다 (후퇴 후보를 바꿔 끼운다 — swap)', () => {
+  it('P11: 피격 중인 경찰(체력 40~70 · 출혈 없음 · 엄폐 아님)은 후퇴 대신 숨을 자리로 엄폐한다 (후퇴 후보를 바꿔 끼운다 — swap). (R3b A3) 손이 빈 경찰이면 같은 자리에서 P30 이 먼저 숨긴다', () => {
     const { sim, I, s, h, A, B } = copsScene('R3-P11', 'armed/hostage', ['patrol'], 'gun', 'fight');
     B.status = 'withdrawn';
-    put(A, spotAt(s, h.x, h.y, 3, 7, true, (x, y) => coverSpot(s, x, y, Math.round(h.x), Math.round(h.y), false) !== null)!);
+    const spot = spotAt(s, h.x, h.y, 3, 7, true, (x, y) => coverSpot(s, x, y, Math.round(h.x), Math.round(h.y), false) !== null)!;
+    put(A, spot);
     const r = sim.responders[A.rid];
     r.health = 60; r.composure = 0.1;      // 침착함이 낮아야 경찰의 피격 위험 점수가 후퇴 문턱(0.3)을 넘는다 (brain.dangerScore)
+    // (R3b A3) 손이 빈 경찰: 총격 시야에 선 손 빈 경찰의 엄폐(P30 — 0.9)가 같은 엄폐로 먼저 걸린다 (후퇴하지 않는다)
+    A.underFireT = sim.t; A.inCover = false;
+    think(sim, s, A);
+    expect(A.task!.kind).toBe('cover'); expect(A.task!.docRule).toBe('P30');
+    // 맞았는데 믿음 속 위협이 아직 대치(hold)다 — P30 은 교전 중인 총격범만 본다: P11 이 후퇴 후보를 엄폐로 바꿔 끼운다 (예전 그대로)
+    A.task = null; A.doc = null; put(A, spot);
+    const held = hosFact(sim, s, h, '시험', 0);
+    A.beliefs.merge(mkFact('hos', h.id, { ...held.value, state: 'hold' }, '시험', sim.t + 0.01, 1, true, held.text)); docForget(A);
     A.underFireT = sim.t; A.inCover = false;
     think(sim, s, A);
     expect(A.task!.kind).toBe('cover'); expect(A.task!.docRule).toBe('P11');

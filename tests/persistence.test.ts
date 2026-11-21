@@ -632,11 +632,50 @@ describe('2. 다친 대원이 다음 교대에 결장 (교대 안의 부상과 �
       const got = shortArrivalLine(B, I);
       if (!first || first.causes.indexOf(B.carryState.event) < 0) { expect(got).toBeNull(); continue; }
       const u = unitOf(B, first.actor), n = fieldCrew(B, u).filter((rid) => B.responders[rid].status !== 'off').length;
+      const seats = fieldCrew(B, u).filter((rid) => !B.responders[rid].relief).length;      // (검토) 예비 인력이 결장 자리를 다 채운 부대는 정원으로 나갔다 — 문장이 없다
+      if (n >= seats) { expect(got).toBeNull(); continue; }
       expect(got).toBe(`첫 출동 부대(${u.callsign})는 지난 교대의 결장으로 ${n}명만 출동했습니다.`);
       if (I.result!.delayed && I.result!.responseTime >= 0) expect(I.result!.analysis).toContain(got);
       else expect(I.result!.analysis.indexOf(got!)).toBe(-1);
     }
   });
+});
+
+// ───────────────────────── (검토) 결원 출동 분석 문장 — 실제로 모자라게 나간 부대만 ─────────────────────────
+describe('(검토) 사건 분석의 결원 출동 문장은 실제로 모자라게 나간 부대에만', () => {
+  // 검토 전에는 결장(off) 대원이 있는 부대의 첫 도착이면 언제나 "n명만 출동했습니다" 를 냈다 — 예비 인력이 결장 자리를 다 채워 정원으로 나간 부대에도
+  // (어려움 8 × 5 계보에서 분석 문장 9개 가운데 6개가 "순찰2 … 2명만 (계획 2명)" 꼴). 결원 도착 기록의 원인(요약 줄)은 그대로다 — 예비 인력도 이어받은 상태의 영향이다
+  let A: Sim, co: Carryover;
+  beforeAll(() => {
+    A = run('P1', undefined, NORMAL, 60);
+    co = json(makeCarryover(A));
+    for (const c of co.crew) if (c.out !== 0) { c.out = 0; c.cause = null; delete c.replaceIn; delete c.recruit; }
+    for (const u of co.units) delete u.service;
+    const p1 = unitOf(A, '순찰1'), e1 = unitOf(A, '진압1');
+    const off = [A.responders[p1.crew[1]].name, A.responders[e1.crew[2]].name, A.responders[e1.crew[3]].name];      // 순찰1(2인) 하나 · 진압1(4인 — 최소 3) 둘
+    for (const c of co.crew) if (off.indexOf(c.name) >= 0) { c.out = 1; c.cause = 'smoke'; c.health = BACK_HEALTH; }
+  }, HOOK_MS);
+  const firstBy = (seed: string, cs: string): { s: Sim; I: Incident } => {
+    const s = run(seed, co);
+    const I = s.incidents.find((J) => s.events.find((e) => e.incidentId === J.id && e.kind === 'arrive')?.actor === cs);
+    expect(I, `${seed}: ${cs} 가 먼저 닿은 사건`).toBeDefined();
+    return { s, I: I! };
+  };
+  const planned = (s: Sim, u: Unit): number => fieldCrew(s, u).filter((rid) => !s.responders[rid].relief).length;
+  it('예비 인력이 다 채운 순찰1(결장 하나 → 예비 하나 = 정원 2)의 첫 도착: 결원 도착 기록(원인 요약 줄)은 남고, "n명만" 문장은 없다', () => {
+    const { s, I } = firstBy('SA', '순찰1');
+    const u = unitOf(s, '순찰1');
+    expect(u.crew.some((rid) => s.responders[rid].relief)).toBe(true);
+    expect(crewReady(s, u)).toBe(planned(s, u));
+    expect(s.events.find((e) => e.incidentId === I.id && e.kind === 'arrive')!.causes).toContain(s.carryState.event);
+    expect(shortArrivalLine(s, I)).toBeNull();
+  }, HOOK_MS);
+  it('실제로 모자란 진압1(정원 4 · 결장 둘 → 예비 하나 = 3)의 첫 도착에는 그 문장이 있다 — n = 나온 내리는 대원', () => {
+    const { s, I } = firstBy('SB', '진압1');
+    const u = unitOf(s, '진압1');
+    expect(crewReady(s, u)).toBeLessThan(planned(s, u));
+    expect(shortArrivalLine(s, I)).toBe('첫 출동 부대(진압1)는 지난 교대의 결장으로 3명만 출동했습니다.');
+  }, HOOK_MS);
 });
 
 // ───────────────────────── 7. 경험 성장과 부대 규모 · 공석과 신임 ─────────────────────────

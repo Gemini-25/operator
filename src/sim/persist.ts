@@ -37,6 +37,7 @@ import type { RosterKey } from './resources';
 import { hashStr } from './rng';
 import type { Rng } from './rng';
 import { noteRoadCause } from './traffic';
+import { KIT_SHAPE, RESPONDER_SHAPE, primeNums } from './shape';      // (검토) 예비 인력의 대원 객체 — 숫자 칸의 표현 (잎 모듈 — 아무것도 import 하지 않는다)
 import { placeCond, placeUsable, setPreBurnt } from './placeUse';      // (단계 5) 건물 겹침 표 읽기 — 잎 모듈 (type 만 import)
 export { placeCond, placeUsable };
 import { T } from './types';
@@ -570,6 +571,7 @@ function makeRelief(sim: Sim, u: Unit, seat: Responder, rng: Rng, name: string):
     seat: undefined, relief: true, carryOut: undefined, carryCause: undefined,      // (I2) 예비 인력 — 이번 교대만 (이어받지 않는다)
   };
   r.trait = traitOf(r);
+  primeNums(r, RESPONDER_SHAPE); for (const it of kit) primeNums(it, KIT_SHAPE);      // (검토) createRoster·createAidUnit 의 대원과 같이 — 숫자 칸을 만들 때부터 소수 표현으로 (값은 그대로, shape.ts)
   return r;
 }
 
@@ -1363,7 +1365,9 @@ export function carryRoadLine(sim: Sim, edgeId: number): string | null {
 }
 /**
  * (선택 — §5.5) 사건 분석 문장: 그 사건의 첫 도착 기록이 결원 도착 기록(원인이 요약 줄)이면 '첫 출동 부대(호출부호)는 지난 교대의 결장으로 n명만 출동했습니다.'
- * n = 그 부대에서 나온(off 가 아닌) 내리는 대원 수(crews.fieldCrew — crewReady 와 같은 단위) — 결장(off)은 교대 내내 바뀌지 않는다. 부르는 쪽(evaluate)이 대응 지연인 사건에만 부른다
+ * n = 그 부대에서 나온(off 가 아닌) 내리는 대원 수(crews.fieldCrew — crewReady 와 같은 단위) — 결장(off)은 교대 내내 바뀌지 않는다. 부르는 쪽(evaluate)이 대응 지연인 사건에만 부른다.
+ * (검토) 실제로 모자라게 나간 부대만 — n 이 이 교대의 편성 자리(예비 인력을 뺀 내리는 자리) 수보다 적을 때. 예비 인력이 결장 자리를 다 채운 부대(2인 순찰차처럼
+ * 최소 = 정원인 부대)는 정원으로 나갔으므로 "n명만" 은 거짓이다 (결원 도착 기록의 원인은 그대로 — 예비 인력도 이어받은 상태의 영향이다)
  */
 export function shortArrivalLine(sim: Sim, I: Incident): string | null {
   const cs = sim.carryState;
@@ -1374,8 +1378,9 @@ export function shortArrivalLine(sim: Sim, I: Incident): string | null {
     if (e.causes.indexOf(cs.event) < 0) return null;                         // 첫 도착이 결원 도착이 아니다
     const u = sim.units.find((x) => x.callsign === e.actor);
     if (!u) return null;
-    let n = 0;
-    for (const rid of fieldCrew(sim, u)) if (sim.responders[rid].status !== 'off') n++;
+    let n = 0, seats = 0;
+    for (const rid of fieldCrew(sim, u)) { const r = sim.responders[rid]; if (r.status !== 'off') n++; if (!r.relief) seats++; }
+    if (n >= seats) return null;                                              // 예비 인력이 결장 자리를 다 채웠다 — 정원으로 나갔다
     return `첫 출동 부대(${u.callsign})는 지난 교대의 결장으로 ${n}명만 출동했습니다.`;
   }
   return null;

@@ -1,5 +1,5 @@
 // C4 `powerOut` — 전력 (설계서 I1 §3.7 C4 · 국지 구역 값 §3.6c). 정전은 **상태**다 — 사건을 직접 만들지 않는다:
-// 꺼진 신호는 혼잡(traffic.addBump — what 1)으로 L1 에, 정전이 닿은 순간 운행 중이던 승강기는 L5(b3-10 b)에, 긴 정전은 C8(b3-10 c)에 닿는다.
+// 꺼진 신호는 혼잡(traffic.addBump — what 1)으로 L1 에, 정전이 닿은 순간 운행 중이던 승강기는 L5(expo.darkened → laws/power.ts)에, 긴 정전은 C8(b3-10 c)에 닿는다.
 //
 // 원인들 (등록하는 규칙 셋 — 같은 파일 안의 차례가 등록 차례다):
 //   powerOut       사건의 신호(큰 불 · 폭발 · 붕괴 · X6 의 폭발·붕괴·전소)를 받는다:
@@ -25,8 +25,8 @@ import { emit } from '../../events';
 import { addBump, removeBump } from '../../traffic';
 import type { Place, Signal, WorldState, ZoneSpanSrc } from '../../types';
 import { registerConsequence } from '../consequence';
-import { shockDelta } from '../expo';
-import { HOSPITAL_CAP, ZONE_DEFAULT, endZoneBy, setZone, setZoneArea, zoneAt, zoneName, zoneOfXY } from '../state';
+import { darkened, liftPlaces, shockDelta } from '../expo';
+import { HOSPITAL_CAP, ZONE_DEFAULT, endZoneBy, isDark, setZone, setZoneArea, zoneAt, zoneName, zoneOfXY } from '../state';
 
 /**
  * 정전의 크기와 시간 (설계서 §3.7 C4 의 첫 값):
@@ -94,6 +94,13 @@ function syncHospitals(sim: Sim): void {
   }
 }
 
+/** (b3-10 b) 지금 불이 들어와 있는 승강기 건물 — 정전을 걸기 전에 적어 두고, 건 뒤에 꺼진 것만 L5 에 알린다(정전이 닿은 **순간** — 이미 꺼져 있던 건물은 다시 받지 않는다) */
+function litLifts(sim: Sim): number[] { return liftPlaces(sim).filter((p) => !isDark(sim, p)); }
+function liftsOut(sim: Sim, lit: readonly number[], cause: number, inc: number): void {
+  const now = lit.filter((p) => isDark(sim, p));
+  if (now.length) darkened(sim, now, { rate: 0, ev: cause, inc, what: 'outage', ref: -1 });
+}
+
 /** 한 건을 장부에 적는다 (꺼진 신호의 혼잡은 그 건마다 한 번 — 끝날 때 한 번 거둔다) */
 function openSpan(sim: Sim, f: Span['f'], cause: number, inc: number, src: ZoneSpanSrc, zones: readonly number[], label: string, tellAt: number, bump: boolean): Span {
   const edges = bump ? darkEdges(sim, zones) : [];
@@ -148,7 +155,7 @@ registerConsequence({
   apply: (c) => {
     const sim = c.sim, sig = c.sig!, plan = planOf(sim, sig);
     if (!plan) return;
-    const until = sim.t + POWER.HOLD;
+    const until = sim.t + POWER.HOLD, lit = litLifts(sim);
     let zones: number[], label: string;
     if (plan.src === 'util') {
       zones = plan.zones.filter((z) => put(sim, z, 'power', 0, until, sig.ev, false));
@@ -162,6 +169,7 @@ registerConsequence({
     openSpan(sim, 'power', sig.ev, sig.inc, plan.src, zones, label, sim.t + c.rng.range(POWER.TELL[0], POWER.TELL[1]), true);
     settle(sim, false);      // 자리를 빼앗긴 앞 건(더 넓은 정전이 같은 동네를 가져갔다)이 있으면 거둔다
     syncHospitals(sim);
+    liftsOut(sim, lit, sig.ev, sig.inc);      // (b3-10 b) 정전이 닿은 순간 운행 중이던 승강기 — L5
   },
   // 회복(그 동네 값이 회복 시각을 지나 처음 값으로): 그 건이 모든 동네에서 끝났으면 얹은 혼잡을 한 번 거두고 복구 기록 — 병원 수용도 다시 계산한다
   recover: (sim, _z, f) => { if (f !== 'power') return; settle(sim, true); syncHospitals(sim); },
@@ -181,9 +189,9 @@ registerConsequence({
     if (sig.kind === 'blackout') {
       if (sig.data === 1) {
         // 태풍의 정전: 모든 동네 — 재난 알림이 이미 알렸다(곧바로 known). 동네별 알림·복구 기록은 남기지 않는다. 꺼진 신호의 혼잡은 재난이 이미 얹었다(두 번 얹지 않는다)
-        const zones: number[] = [];
+        const zones: number[] = [], lit = litLifts(sim);
         for (let z = 0; z < zs.length; z++) if (put(sim, z, 'power', 0, sim.t + POWER.HOLD, sig.ev, true)) zones.push(z);
-        if (zones.length) openSpan(sim, 'power', sig.ev, -1, 'blackout', zones, '도시 전역', -1, false);
+        if (zones.length) { openSpan(sim, 'power', sig.ev, -1, 'blackout', zones, '도시 전역', -1, false); liftsOut(sim, lit, sig.ev, -1); }
       } else {
         for (const s of sim.world.spans) if (s.src === 'blackout') endZoneBy(sim, s.cause, sim.t, 'power');      // 전력 복구 — 회복은 이 1초의 recoverWorld 가 한다
       }
@@ -192,7 +200,7 @@ registerConsequence({
       return;
     }
     // 지진: 동네마다 흔들림이 그 동네 전력망의 문턱을 넘으면 (여진은 mag 0.6 — 본진에서 꺼지지 않은 동네 가운데 문턱이 낮은 곳만. 이미 꺼진 곳은 setZone 이 다시 받지 않는다)
-    const zones: number[] = [];
+    const zones: number[] = [], lit = litLifts(sim);
     for (let z = 0; z < zs.length; z++) {
       const shake = sig.mag * Math.max(0, 1 - Math.hypot(DISTRICTS[z].x - sig.x, DISTRICTS[z].y - sig.y) / POWER.QUAKE_R);
       if (!(shake > 0)) continue;
@@ -203,6 +211,7 @@ registerConsequence({
     openSpan(sim, 'power', sig.ev, -1, 'quake', zones, zonesLabel(zones), sim.t + c.rng.range(POWER.TELL[0], POWER.TELL[1]), true);
     settle(sim, false);
     syncHospitals(sim);
+    liftsOut(sim, lit, sig.ev, -1);
   },
 });
 

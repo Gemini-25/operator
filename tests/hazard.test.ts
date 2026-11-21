@@ -2199,7 +2199,7 @@ describe('I1-b b3-8 c · b3-9: 금 간 건물의 붕괴·끊긴 배관의 누출
   const lawKids = (s: Sim, ...ids: string[]): Incident[] => s.incidents.filter((J) => J.hz !== undefined && ids.indexOf(J.hz.law) >= 0);
 
   it('등록: 법칙 모음의 차례가 road → heat → shock(structFail · pipeLeak) → ember(rekindle) 다 — 셋 다 1초 · 건물마다 한 번 · 교대 상한 2, rekindle 은 충격만 받는다(scan 없음). 상태 규칙은 rubbleRoad → shockSpread → pipeShut → residualHeat → suspectZone', () => {
-    expect(hazardLaws().map((l) => l.id)).toEqual(['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle']);
+    expect(hazardLaws().map((l) => l.id).slice(0, 5)).toEqual(['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle']);      // (b3-10) 그 뒤에 power(liftStall) — 'I1-b b3-10' 묶음이 본다
     for (const id of ['structFail', 'pipeLeak', 'rekindle']) { const L = lawOf(id); expect([L.every, L.once, L.cap], id).toEqual([1, true, 2]); }
     expect([lawOf('structFail').scan !== undefined, lawOf('pipeLeak').scan !== undefined, lawOf('rekindle').scan]).toEqual([true, true, undefined]);
     expect([lawOf('structFail').label, lawOf('pipeLeak').label, lawOf('rekindle').label]).toEqual(['금 간 건물의 붕괴', '끊긴 배관의 누출', '되살아난 잔불']);

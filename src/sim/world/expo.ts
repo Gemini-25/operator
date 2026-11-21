@@ -11,14 +11,17 @@
 //
 // 채우는 단계: b3-7 이웃(neighborsOf·neighborsOfPoint — L2 의 열원 곁) · expoOf(노출 칸을 만든다 — 쓰는 것은 b3-8 의 충격, b3-12 의 침수).
 // (b3-8 a·b) 충격의 크기(SHOCK·shockDelta — 상태 규칙 rules/structure.ts 의 shockSpread 와 b3-8c 의 법칙 structFail·pipeLeak 이 함께 쓴다)와
-//   applyExpo(현장 생성기가 노출을 읽는 자리 — sceneManager.createScene 의 buildScene 바로 다음). darkened(정전이 닿은 순간)는 b3-10 이 더한다.
+//   applyExpo(현장 생성기가 노출을 읽는 자리 — sceneManager.createScene 의 buildScene 바로 다음). (b3-10 b) darkened — 정전이 건물에 닿은 순간(L5 liftStall 의 충격).
 
 import type { Sim } from '../engine';
 import { T } from '../types';
 import type { Incident, Place, PlaceExpo, PlaceKind, Scene, Signal } from '../types';
 import { addProp } from '../field/kit';
 import { INCIDENT_PLACES } from '../cityPlan';
-import { placeState } from './state';
+import { scenarioOf } from '../scenarios';
+import { hazardImpulse } from './hazard';
+import type { HzPart } from './hazard';
+import { placeState, zoneOfPlace } from './state';
 
 /** 이웃으로 치는 벽-벽 틈 (도시 좌표). 조사: 가장 가까운 이웃까지의 틈은 최소 2.0 · 중앙값 7.2 · p90 23.4 — 같은 편 옆집은 2~12, 길 건너는 20~35 */
 export const NB_REACH = 30;
@@ -293,4 +296,61 @@ export function neighborsOfPoint(sim: Sim, x: number, y: number): readonly Nb[] 
   out.sort(byGap);
   tab.set(key, out);
   return out;
+}
+
+// ───────────────────────── (b3-10 b — L5 liftStall) 정전이 닿은 순간 운행 중이던 승강기 ─────────────────────────
+
+/**
+ * 승강기에 사람이 타고 있을 기대값의 크기 (설계서 §3.7 L5 — 첫 값. 법칙 파일이 아니라 여기 둔다: 정전을 거는 규칙(rules/infra.ts)이 이 파일의 darkened 를 부른다 —
+ * 규칙 파일이 법칙 파일을 import 하면 등록 차례가 import 차례에 묶인다. 시험이 RIDE 를 키워 쓴다):
+ *   ΔH = RIDE × min(FLOOR_MAX, floors / FLOOR_DIV) × occ(종류, 시간대)
+ *   occ = 주거(아파트·오피스텔) 1 (출근·퇴근 1.5 · 심야 0.4) · 사무용 1.5 (심야 0.1) · 호텔·그 밖 1
+ *  어림: 도시 전체 정전 → 약 1.2건 · 한 동네 0.5건 · 국지(반경 90 — 4층 이상 1~3채) 0.02 안팎. 승강기 갇힘의 평소율은 교대당 0.25건
+ *  FLOORS 승강기가 있다고 보는 층수 (4층 이상)
+ */
+export const LIFT = { RIDE: 0.006, FLOOR_DIV: 6, FLOOR_MAX: 3, FLOORS: 4 };
+const RESIDENT: ReadonlySet<PlaceKind> = new Set<PlaceKind>(['apartment', 'officetel']);
+/** 그 시각(하루의 초)에 그 종류의 건물 승강기가 붐비는 정도 */
+export function liftOcc(kind: PlaceKind, clock: number): number {
+  const h = ((clock / 3600) % 24 + 24) % 24;
+  const night = h >= 23 || h < 5, rush = (h >= 7 && h < 9.5) || (h >= 17 && h < 19.5);
+  if (RESIDENT.has(kind)) return night ? 0.4 : rush ? 1.5 : 1;
+  if (kind === 'office') return night ? 0.1 : 1.5;
+  return 1;
+}
+const LIFT_OF = new WeakMap<Place[], number[]>();
+/**
+ * 정전에 승강기가 멈출 수 있는 건물: FLOORS 층 이상이고 **승강기 갇힘 시나리오가 받는 종류**(scenarioOf('collapse', 'elevator').places) — 건물 id 순.
+ * 시드와 무관한 도시의 생김새라 도시 열쇠의 캐시에 둔다
+ */
+export function liftPlaces(sim: Sim): readonly number[] {
+  const places = sim.city.places;
+  let out = LIFT_OF.get(places);
+  if (out) return out;
+  const kinds = scenarioOf('collapse', 'elevator')?.places ?? {};
+  out = [];
+  for (const q of places) if (!q.open && (q.floors ?? 1) >= LIFT.FLOORS && (kinds[q.kind] ?? 0) > 0) out.push(q.id);
+  LIFT_OF.set(places, out);
+  return out;
+}
+/** 그 건물의 승강기에 정전이 닿은 순간의 충격 크기 (대상이 아니면 0) */
+export function liftDelta(sim: Sim, placeId: number): number {
+  const q = sim.city.places[placeId];
+  if (!q || q.open || (q.floors ?? 1) < LIFT.FLOORS) return 0;
+  return LIFT.RIDE * Math.min(LIFT.FLOOR_MAX, q.floors / LIFT.FLOOR_DIV) * liftOcc(q.kind, sim.startTod + sim.t);
+}
+/**
+ * 건물에 정전이 닿은 순간 — 정전을 거는 규칙들(rules/infra.ts 의 C4 · b3-12 의 잠긴 지하)이 그 순간 새로 꺼진 건물 목록과 그 정전의 몫(원인 기록 · 주인 사건 · 갈래)을 넘긴다.
+ * 건물마다 L5 liftStall 의 칸에 충격을 더한다(hazard.hazardImpulse — 문턱은 hz:liftStall:<건물>: "누가 껐는가"와 무관하다).
+ * 대상: liftPlaces 의 건물이고 쓸 수 있는 건물(전소·전체 붕괴가 아니다). ref = 그 건물의 동네(정전 구역 — 보고서의 "{동네} 정전")
+ */
+export function darkened(sim: Sim, placeIds: readonly number[], part: HzPart): void {
+  const kinds = scenarioOf('collapse', 'elevator')?.places ?? {};
+  for (const id of placeIds) {
+    const q = sim.city.places[id];
+    if (!q || (kinds[q.kind] ?? 0) <= 0 || placeState(sim, id)?.usable === false) continue;
+    const dH = liftDelta(sim, id);
+    if (!(dH > 0)) continue;
+    hazardImpulse(sim, 'liftStall', id, dH, { rate: dH, ev: part.ev, inc: part.inc, what: part.what, ref: zoneOfPlace(sim, id) });
+  }
 }

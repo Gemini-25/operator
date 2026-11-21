@@ -514,6 +514,7 @@ export function ReportModal({ runner, onNew, onClose, onJump, reelCount, onReel 
                     <span className="badge" style={{ color: OUTCOME_COLOR[x.result.outcome], borderColor: OUTCOME_COLOR[x.result.outcome] }}>{OUTCOME_NAME[x.result.outcome]}</span></div>
                   <div className="small dim">{x.result.headline} 대응 {x.result.responseTime >= 0 ? fmtSec(x.result.responseTime) : '도착 못함'} · 소요 {fmtSec(x.result.duration)}{x.reportedType && x.reportedType !== x.type ? ` · 관제 사전 판단: ${TYPE_NAME[x.reportedType]}` : ''}</div>
                   <ul className="analysis">{x.result.analysis.map((a, k) => <li key={k}>{a}</li>)}</ul>
+                  {x.chain && <ul className="chain" title="이 사건의 내력: 무엇이 이 사건을 낳았고, 이 사건이 무엇을 낳았는가 (기록에서만 쓴다)">{x.chain.map((a, k) => <li key={k}>{a}</li>)}</ul>}      {/* (I1-b b4 §3.9) 사슬 문장 — 사건 분석 아래 */}
                 </div>
               ))}
             </div>

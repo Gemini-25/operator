@@ -10,6 +10,8 @@ import { ruinInfo, ruinMark, ruinSeen, seenSecondary } from '../hazardState';
 import type { RuinInfo } from '../hazardState';
 import { RUIN_MARK } from '../marks';
 import { hash2, shade } from '../scene/common';
+import { SHOCK } from '../../sim/world/expo';
+import { HAZARD_MARK } from '../marks';
 
 const EDGE = '#d6a878';
 const RUBBLE = ['#57524b', '#6a645b', '#8d867a', '#a59d90', '#b3aa9a'];
@@ -76,6 +78,61 @@ export function drawRuinsWorld(ctx: CanvasRenderingContext2D, sim: Sim, o: World
       const k = age / 6, R = Math.max(Math.max(q.w, q.h) * (0.6 + 0.4 * k), 10 / o.scale);
       ctx.globalAlpha = faint * 0.45 * (1 - k); ctx.fillStyle = col('#c4b292');
       ctx.beginPath(); ctx.arc(0, 0, R, 0, 6.2832); ctx.fill();
+    }
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/** (I1-b b4) 금 간 건물과 끊긴 배관의 색 — 범례가 같은 값을 쓴다 */
+export const EXPO_CRACK = '#e8b861', EXPO_PIPE = '#d6f06a';
+/**
+ * (I1-b b4) 사건이 없던 건물이 이웃의 붕괴·폭발에서 받은 손상 (world.expo — 진실): 지붕을 가로지르는 금(구조 손상 shake ≥ S_MIN, 금이 클수록 진하고 많다)과
+ * 끊긴 가스 배관의 작은 구름 기호. **관찰자 시점만** — 관제도 지휘관도 알 길이 없는 상태다(§3.8). 읽기만 한다(expoOf 를 부르지 않는다 — 없는 칸을 만들지 않는다).
+ * 다 탔거나 통째로 무너진 건물(그 건물의 사건이 남긴 상태)은 그 그림이 대신한다. 월드 층(drawRuinsWorld 바로 뒤, 같은 변환 안)
+ */
+export function drawExpoWorld(ctx: CanvasRenderingContext2D, sim: Sim, o: WorldOpts): void {
+  if (o.mini || !o.truth || !sim.world) return;
+  const ex = sim.world.expo, night = sim.weather === 'night';
+  for (const k in ex) {
+    const e = ex[k], crack = e.shake >= SHOCK.S_MIN, pipe = e.pipe;
+    if (!crack && !pipe) continue;
+    const id = +k, q = sim.city.places[id];
+    if (!q) continue;
+    const mk = sim.placeMarks.get(id);
+    if (mk && (mk.state === 'burnt' || mk.state === 'collapsed')) continue;
+    ctx.save();
+    local(ctx, q);
+    const big = Math.max(q.w, q.h), px = 1 / Math.max(0.35, o.scale);
+    if (crack && !ruinOverlayVisible(q, o.scale)) {
+      // 작게 보이면 금 간 판 기호 하나 (11 화소 아래로는 줄지 않는다)
+      ctx.globalAlpha = Math.min(0.95, 0.55 + e.shake);
+      ctx.rotate(-(q.rot ?? 0));
+      drawOutlinedMark(ctx, HAZARD_MARK.crack, 0, 0, Math.max(11 * px, big * 0.8), night ? shade(EXPO_CRACK, -0.2) : EXPO_CRACK, 2.5 * px);
+      ctx.rotate(q.rot ?? 0);
+    } else if (crack) {
+      // 금: 건물을 가로지르는 꺾인 선 하나(금이 0.3 을 넘으면 둘) — 자리는 건물마다 고정(hash2)
+      const n = e.shake >= 0.3 ? 2 : 1;
+      ctx.strokeStyle = night ? shade(EXPO_CRACK, -0.2) : EXPO_CRACK; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      ctx.globalAlpha = Math.min(0.95, 0.45 + e.shake);
+      ctx.lineWidth = Math.max(2 * px, big * 0.04);
+      for (let m = 0; m < n; m++) {
+        const a = (hash2(id, 11 + m) - 0.5) * 1.6 + m * 1.2, ca = Math.cos(a), sa = Math.sin(a), L = big * 0.46;
+        ctx.beginPath();
+        for (let v = 0; v <= 4; v++) {
+          const t = -1 + v / 2, j = v === 0 || v === 4 ? 0 : (hash2(id, 20 + m * 5 + v) - 0.5) * big * 0.22;
+          const x = ca * L * t - sa * j, y = sa * L * t + ca * j;
+          if (v) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+        }
+        ctx.stroke();
+      }
+    }
+    if (pipe) {
+      // 끊긴 배관: 건물 오른쪽 위 모서리의 작은 가스 구름 (배율이 작아도 9 화소 아래로는 줄지 않는다)
+      ctx.globalAlpha = 0.95;
+      const sz = Math.max(9 * px, Math.min(q.w, q.h) * 0.45);
+      ctx.rotate(-(q.rot ?? 0));
+      drawOutlinedMark(ctx, HAZARD_MARK.gas, q.w * 0.32, -q.h * 0.32, sz, EXPO_PIPE, 2.5 * px);
     }
     ctx.restore();
   }

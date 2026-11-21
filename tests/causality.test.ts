@@ -26,6 +26,10 @@ import { HOSPITAL_CAP, ZONE_DEFAULT, erLoad, hospitalOf, initWorld, knownBuildin
 import { findRoute } from '../src/sim/city';
 import { smokeBase } from '../src/sim/world/expo';
 import { CHAIN_LINES, HZ_SHORT, chainLines } from '../src/sim/world/report';
+import { drawZonesWorld } from '../src/view/city/zoneLayer';
+import { drawExpoWorld } from '../src/view/city/ruinLayer';
+import { causeChip } from '../src/ui/HazardStrip';
+import { fakeCtx, withFakeDom } from './fakeCanvas';
 import { hazardLabel } from '../src/sim/world/hazard';
 import { scenarioName } from '../src/sim/scenarios';
 import type { EventKind, Incident, Responder, Role, Signal, SimEvent, Unit, ZoneField, ZoneState } from '../src/sim/types';
@@ -1561,5 +1565,40 @@ describe('I1-b b4: 보고서의 내력 문장 (§3.9 · §6 I1-b 15)', () => {
     const W = chainLines(s, F).find((q) => q.kind === 'wear')!;
     expect(W.text).toBe(`이 건물은 사건 ${T.code}의 충격으로 이미 금이 가 있었습니다.`);
     expect(W.inc).toEqual([T.id]);
+  });
+});
+
+describe('I1-b b4: 교대 중에 보이는 표시 — 읽기만 한다 (§7)', () => {
+  it('지도의 정전·연기 자리 · 금 간 건물·끊긴 배관 · 사건 카드의 내력 칩: 그려도 세계 상태와 기록이 그대로고, AI 시점에는 진실 전용 표시(금·배관·내력 칩)가 없다', async () => {
+    const s = new Sim('S1', QUAKE, 1200);
+    let sawZone = false, sawCrack = false, sawHz = false;
+    while (s.t < 900 && !s.ended) {
+      s.step();
+      if (s.tick % 250 !== 0) continue;
+      const before = JSON.stringify(s.world) + '|' + s.logHash + '|' + s.events.length;
+      await withFakeDom(() => {
+        for (const truth of [true, false]) {
+          drawZonesWorld(fakeCtx(), s, { truth, timeMs: 1000, scale: 0.8, mini: false });
+          drawExpoWorld(fakeCtx(), s, { truth, timeMs: 1000, scale: 0.8, mini: false });
+          for (const I of s.incidents) {
+            const c = causeChip(I, truth);
+            if (!truth) expect(c).toBeNull();
+            else if (I.hz) { expect(c!.text).toBe(HZ_SHORT[I.hz.src[0].what]); sawHz = true; }
+          }
+        }
+      });
+      expect(JSON.stringify(s.world) + '|' + s.logHash + '|' + s.events.length, `t=${s.t}`).toBe(before);
+      if (s.world.zones.some((Z) => Z.power < 1)) sawZone = true;
+      if (Object.values(s.world.expo).some((e) => e.shake >= 0.1)) sawCrack = true;
+    }
+    expect([sawZone, sawCrack]).toEqual([true, true]);
+    void sawHz;
+  }, 60000);
+  it('소스 글자: 그림·화면 파일은 세계 상태를 만들거나 바꾸는 함수를 부르지 않는다 (expoOf 는 없는 칸을 만든다)', () => {
+    const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(dir + '/' + e.name) : /\.(ts|tsx)$/.test(e.name) ? [dir + '/' + e.name] : []));
+    for (const f of [...walk('src/view'), ...walk('src/ui')]) {
+      const src = readFileSync(f, 'utf8');
+      for (const w of ['expoOf(', 'hazardImpulse(', 'setZone(', 'setZoneArea(', 'endZoneBy(', 'applyExpo(', 'noteRoadCause(', 'addBump(']) expect(src.includes(w), `${f} 에 ${w}`).toBe(false);
+    }
   });
 });

@@ -6,6 +6,7 @@ import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
 import { closeIncident } from '../incidents';
 import { noteRoadCause } from '../traffic';      // (I1-b b3-5) 통제 기록을 교통의 장부에
+import { applyPlaceWear } from '../persist';      // (I2 단계 5) 이어받은 건물 상태 (함수만)
 import { applyExpo } from '../world/expo';      // (I1-b b3-8) 이웃의 충격으로 손상된 건물의 현장 — 처음 건전도·새는 밸브 (등록이 없는 파일)
 import { noteDeparture, releaseUnit, startTransport, transportWhy } from '../resources';
 import { scenarioOf } from '../scenarios';
@@ -44,6 +45,7 @@ function pendingNeed(sim: Sim, s: Scene, I: Incident, last: FieldAgent): keyof U
 export function createScene(sim: Sim, I: Incident): Scene {
   const s = buildScene(sim, I, sim.rng.fork('scene:' + I.id));
   applyExpo(sim, s, I);      // (I1-b b3-8 L3 (나)) 그 건물에 노출(world.expo)이 있을 때만 — s.wear(처음 건전도)·새는 밸브. s.rules 는 고치지 않는다 (tickGas 를 부르는 조건도 그대로)
+  applyPlaceWear(sim, s, I);      // (I2 단계 5) 지난 교대에서 이어받은 건물 상태 — applyExpo 다음: s.wear 는 dmg 의 큰 쪽으로 합치고, 그을음은 처음부터 탄 칸으로 (이어받은 항목이 없으면 아무것도 하지 않는다)
   initInjuries(sim, s, I);      // (H1) 처음부터 다쳐 있는 사람의 원인을 적는다 — 기록만, 난수를 부르지 않는다
   s.allIdleSince = -1; s.rollCallAt = -1e9;      // 지휘관이 쓰는 칸은 만들 때 채워 둔다 (도중에 속성이 생기면 현장 객체의 모양이 바뀌어 매 틱 도는 코드가 느려진다)
   s.air = []; s.light = null; s.airAt = -1;      // (R1) 상공의 헬기가 쓰는 칸 — 쓰는 것은 단계 4·5 부터

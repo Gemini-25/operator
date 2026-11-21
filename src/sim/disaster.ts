@@ -14,6 +14,7 @@ import { DISASTER_KINDS, DISASTER_NAME } from './difficulty';
 import type { DisasterKind } from './difficulty';
 import type { Sim } from './engine';
 import { emit } from './events';
+import { placeUsable } from './placeUse';      // (I2 단계 5) 이어받은 출입 통제·무너짐 (잎 모듈)
 import { createIncident } from './incidents';
 import type { SpawnOpts } from './incidents';
 import type { Rng } from './rng';
@@ -361,12 +362,12 @@ function geoOf(sim: Sim): Geo {
 }
 const cx = (q: Place): number => q.x + q.w / 2, cy = (q: Place): number => q.y + q.h / 2;
 
-/** 건물이나 터를 고른다. 사건이 진행 중인 건물은 쓰지 않고, 사건이 진행 중인 교차로에 딸린 건물도 되도록 피한다 */
+/** 건물이나 터를 고른다. 사건이 진행 중인 건물은 쓰지 않고, 사건이 진행 중인 교차로에 딸린 건물도 되도록 피한다. (I2) 지난 교대에 출입 통제되거나 무너진 건물도 쓰지 않는다 */
 function pickPlace(sim: Sim, d: DisasterState, weight: (q: Place) => number): Place | null {
   const nodes = new Set<number>(), used = new Set<number>();
   for (const I of sim.incidents) if (I.phase !== 'closed') { nodes.add(I.truth.nodeId); if (I.truth.placeId >= 0) used.add(I.truth.placeId); }
   const ps = sim.city.places;
-  const ws = ps.map((q) => (q.facility >= 0 || used.has(q.id) ? 0 : Math.max(0, weight(q))));
+  const ws = ps.map((q) => (q.facility >= 0 || used.has(q.id) || !placeUsable(sim, q.id, false, false) ? 0 : Math.max(0, weight(q))));      // (I2 단계 5) 이어받은 출입 통제·무너짐은 고르지 않는다 (inShift = false — 교대 안의 전소·붕괴는 createIncident 의 되고르기가 받는다)
   const strict = ws.map((v, k) => (nodes.has(ps[k].nodeId) ? 0 : v));
   if (strict.some((v) => v > 0)) return d.rng.weighted(ps, strict);
   return ws.some((v) => v > 0) ? d.rng.weighted(ps, ws) : null;

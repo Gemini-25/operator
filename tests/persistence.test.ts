@@ -11,20 +11,29 @@
 //   끊기는 통제는 놓지 않음·여럿이어도 0틱에 모든 시설 → 모든 교차로) · 11(재난이 닫은 도로가 넘어온다 — 지진의 d.damaged → crack) · 끝 상태의 원천 표
 //   (앞에서 이어받은 것·재난·산사태·쓰러진 나무·다중 추돌·무너진 건물의 잔해 (가)(나)·같은 구간·상한) · 10 의 도로 부분(개통 기록의 일대일·원인·tag 'carry'·교통의 장부) ·
 //   6 의 도로 몫(복구 도로 ≤ 6 · 0틱 연결) · 이어받은 도로로 시작한 교대의 재현성 · 지도의 고깔(그림은 상태를 읽기만 한다).
-// 뒤 단계가 §9 의 3 과 6·10 의 나머지를 이 파일에 더한다(건물을 적용하는 단계).
+// 단계 5 (건물 — 이어받은 상태가 없을 때 결과 불변): 시험 3(쓸 수 없는 건물에서는 사건이 나지 않는다 — placeUsable · 여섯 자리: 장소 추첨·정해 준 건물·은신처·
+//   연쇄 방화·재난·현장 + 넷째 자리(법칙 사건)·재범의 자리의 글자 검사 · 셋째 단계 · 흔적의 가중치 · 손상된 건물의 현장(처음부터 탄 칸·X6 의 분모·기록) · 그을음의 방향) ·
+//   끝 상태의 표(placeOutcome — X6 줄·화재 소실률·붕괴 잔해·2차 붕괴·승강기·열린 터) · 휴식 · 상한 · 6·10 의 건물 몫(상한·무너진 건물·손상 건물 사건의 기록 일대일) ·
+//   checkCarryLog 의 건물 줄('외 n곳' 묶음).
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { NORMAL } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
-import { BACK_HEALTH, CLOSED_CAP, DIS_FULL, EARLY_BACK_HEALTH, FRONT_SLOW, GAIN_CAP, LANE_SLOW, PLACE_CAP, PUMP_REST, RECRUIT_NAMES, RELIEF_MAX, RELIEF_NAMES, REPLACE_AFTER, RESUPPLY, ROAD_AT, ROAD_CAP, RUSHED_PUMP, SERVICE_AT, SERVICE_CAP, SERVICE_PUMP, STOCK_CAP, WHY_NAME, absentCap, carryKey, cityKey, makeCarryover, readCarryover } from '../src/sim/persist';
+import { BACK_HEALTH, CLOSED_CAP, DIS_FULL, EARLY_BACK_HEALTH, FRONT_SLOW, GAIN_CAP, LANE_SLOW, PLACE_CAP, PLACE_LINES, PRE_BURN, PUMP_REST, RECRUIT_NAMES, RELIEF_MAX, RELIEF_NAMES, REPLACE_AFTER, RESUPPLY, ROAD_AT, ROAD_CAP, RUSHED_PUMP, SERVICE_AT, SERVICE_CAP, SERVICE_PUMP, STOCK_CAP, WHY_NAME, absentCap, carryKey, cityKey, makeCarryover, readCarryover } from '../src/sim/persist';
 import { edgeName, findRoute } from '../src/sim/city';
+import { applyPlaceWear, placeCond, placeOutcome, placeUsable } from '../src/sim/persist';
+import { createIncident, placeGone } from '../src/sim/incidents';
+import { scenarioOf } from '../src/sim/scenarios';
+import { INCIDENT_PLACES } from '../src/sim/cityPlan';
+import { CAT, burnFracOf, catOf } from '../src/sim/field/catastrophe';
+import { T } from '../src/sim/types';
 import { addObstacle, passable } from '../src/sim/traffic';
 import { crewReady, dispatchUnit, rosterKeys, tickUnits } from '../src/sim/resources';
 import { STAFF, fieldCrew, minField } from '../src/sim/crews';
 import { outShifts } from '../src/sim/field/injury';
-import type { Carryover, City, CrewCarry, Incident, PlaceCarry, RoadCarry, RoadEdge, Unit, UnitCarry } from '../src/sim/types';
+import type { Carryover, City, CrewCarry, Incident, PlaceCarry, PlaceMark, RoadCarry, RoadEdge, Unit, UnitCarry } from '../src/sim/types';
 
 // ───────────────────────── 도구 ─────────────────────────
 const run = (seed: string, carry?: Carryover | null, d: Difficulty = NORMAL, len = 1200): Sim => {
@@ -377,18 +386,46 @@ function checkServiceLog(s: Sim): void {
  * 시험 10 (대원 부분): 적용 목록과 기록의 일대일 — 요약 줄 바로 뒤에 항목마다 한 줄(요약 줄이 원인, 항목의 주인공이 문장에), 그 뒤에 버린 것의 줄.
  * 교대 시작(0초)에 요약 줄을 원인으로 한 기록은 그것뿐이다. 결장(off)인 대원은 모두 어느 결장·공석 항목에 이름이 있다. 교대 시작 문구의 가용 부대 수 = oos 가 아닌 부대 수
  */
+/**
+ * (단계 5) 적용 항목 → 교대 시작의 기록 id: 건물(place)은 출입 통제·무너짐과 통제가 풀린 건물(opened)을 따로, 앞의 PLACE_LINES 곳만 한 곳에 한 줄 — 그 뒤는 '외 n곳' 한 줄을 함께 쓴다
+ * (시험 10 의 "건물의 '외 n곳' 줄은 n 으로 센다"). 그 밖의 항목은 한 항목에 한 줄. lines = 적용 목록이 남긴 기록 수
+ */
+function noteEvents(s: Sim): { ids: number[]; lines: number; group: number[]; size: Record<'shut' | 'open', number> } {
+  const cs = s.carryState, ids: number[] = [], group: number[] = [];
+  const cnt = { shut: 0, open: 0 }, outer = { shut: -1, open: -1 }, size = { shut: 0, open: 0 };
+  for (const n of cs.applied) if (n.what === 'place') size[cs.places.get(n.id)!.state !== 'marked' ? 'shut' : 'open']++;
+  let k = 0;
+  for (const n of cs.applied) {
+    if (n.what !== 'place') { ids.push(cs.event + 1 + k++); group.push(-1); continue; }
+    const g = cs.places.get(n.id)!.state !== 'marked' ? 'shut' : 'open', i = cnt[g]++;
+    group.push(i);
+    if (i < PLACE_LINES) ids.push(cs.event + 1 + k++);
+    else { if (i === PLACE_LINES) outer[g] = cs.event + 1 + k++; ids.push(outer[g]); }
+  }
+  return { ids, lines: k, group, size };
+}
 function checkCarryLog(s: Sim): void {
   const cs = s.carryState, ev = cs.event;
   expect(ev).toBeGreaterThan(0);
   const atStart = s.events.filter((e) => e.t === 0 && e.causes.indexOf(ev) >= 0);
-  expect(atStart.length).toBe(cs.applied.length + cs.dropped.length);
+  const { ids, lines, group, size } = noteEvents(s);
+  expect(atStart.length).toBe(lines + cs.dropped.length);
   cs.applied.forEach((n, i) => {
-    const e = s.events[ev + 1 + i];
+    const e = s.events[ids[i]];
     expect(e.causes, n.what).toEqual([ev]);
     for (const w of mustSay(n)) expect(e.text, `${n.what}: ${w}`).toContain(w);
     if ('unit' in n) expect(e.actor).toBe(n.unit);
+    if (n.what === 'place') {      // (단계 5) 건물 줄: 앞의 PLACE_LINES 곳은 그 건물의 이름·남은 교대, 그 뒤는 '외 n곳'
+      const p = cs.places.get(n.id)!, q = s.city.places[n.id], shut = p.state !== 'marked';
+      expect(e.tag).toBe('carry');
+      if (group[i] < PLACE_LINES) {
+        expect(e.text.startsWith(`${q.addr} ${q.name}`), e.text).toBe(true);
+        expect(e.text).toContain(shut ? `${p.repair}교대 남음` : '복구 완료');
+        if (p.state === 'ruin') expect(e.text).toContain('무너져');
+      } else expect(e.text).toContain(`외 ${size[shut ? 'shut' : 'open'] - PLACE_LINES}곳`);
+    }
   });
-  cs.dropped.forEach((d, i) => expect(s.events[ev + 1 + cs.applied.length + i].text).toBe(d));
+  cs.dropped.forEach((d, i) => expect(s.events[ev + 1 + lines + i].text).toBe(d));
   const named = new Set<string>();
   for (const n of cs.applied) { if (n.what === 'absent') for (const x of n.names) named.add(x); else if (n.what === 'vacant') named.add(n.name); }
   const off = s.responders.filter((r) => r.status === 'off');
@@ -442,7 +479,7 @@ function checkRoadLog(s: Sim): void {
   for (const e of done) { expect(e.causes, e.text).toEqual([ev]); expect(e.tag, e.text).toBe('carry'); }
   for (const n of notes) {
     const name = edgeName(s.city, s.city.edges[n.edge]);
-    const start = s.events[ev + 1 + cs.applied.indexOf(n)];
+    const start = s.events[noteEvents(s).ids[cs.applied.indexOf(n)]];
     expect(start.text.startsWith(name + ' '), start.text).toBe(true);
     expect([start.actor, start.kind, start.tag]).toEqual(['교통정보', 'traffic', 'carry']);
     const mine = done.filter((e) => e.text.startsWith(name + ' ') && (n.lane ? LANE_DONE : REOPEN).test(e.text));
@@ -1264,6 +1301,16 @@ describe('6·10. 짧은 연속 (계보 3 × 교대 4) — 대원 몫', () => {
     for (const n of cut0) expect(n).toBe(0);
     for (const s of shifts) if (s.carryState.on) checkRoadLog(s);
   });
+
+  it('(단계 5) 출입 통제·무너짐 ≤ 12 · 건물 ≤ 24, 이어받은 무너진 건물에서는 사건이 나지 않는다, 손상된 건물의 사건마다 그 사실의 기록이 하나', () => {
+    for (const co of cos) { expect(co.places.filter((p) => p.state !== 'marked').length).toBeLessThanOrEqual(CLOSED_CAP); expect(co.places.length).toBeLessThanOrEqual(PLACE_CAP); }
+    expect(cos.some((co) => co.places.length > 0)).toBe(true);
+    for (const s of shifts) {
+      if (!s.carryState.on) continue;
+      for (const I of s.incidents) expect(s.carryState.places.get(I.truth.placeId)?.state, `${s.seed} ${I.code}`).not.toBe('ruin');
+      checkWearLog(s);
+    }
+  });
 });
 
 // ───────────────────────── 6·10 (장비 몫). 극한 계보 하나 — 펌프 고장·결장이 자연히 이어지는 연속 (단계 3) ─────────────────────────
@@ -1302,6 +1349,335 @@ describe('6·10. 극한 계보 (교대 3) — 정비·창고가 자연히 생기
   });
 });
 
+// ───────────────────────── 3. 건물 — 쓸 수 없는 건물(여섯 자리)·손상된 건물의 현장 (단계 5) ─────────────────────────
+const ruinAt = (id: number, state: PlaceCarry['state'] = 'ruin', repair = 4): PlaceCarry => ({ id, state, dmg: state === 'ruin' ? 1 : 0.4, soot: 0, repair, cause: 'collapse', inc: '조직 1번째 교대 · 01 건물 붕괴', since: 1 });
+const markAt = (id: number, soot: number, dmg: number): PlaceCarry => ({ id, state: 'marked', dmg, soot, repair: 0, cause: 'fire', inc: '조직 1번째 교대 · 01 건물 화재', since: 1 });
+/** 이어받은 상태(대원은 결장 없이)에 건물만 바꿔 넣은 것 */
+function withPlaces(co: Carryover, places: PlaceCarry[]): Carryover { const x = calmCrew(json(co)); x.places = places; x.roads = []; return x; }
+/** 그 교대에서 강제 사건이 만들어질 때까지만 돌린다 */
+function untilForced(s: Sim): Sim { while (!s.gen.forced && !s.ended) s.step(); return s; }
+/** (단계 5) 손상된 건물에서 난 사건마다 그 사실의 기록이 하나 (구조 손상 0.1 이상 또는 그을음 0.2 이상 — 원인은 요약 줄 · tag carry · 진실), 그 수 = stats.markedInc */
+const WEAR_NOTE = /^이 (건물은 .+손상된 상태였습니다 \(구조 손상 \d+%\)|터에는 .+탄 자리가 남아 있습니다)\.$/;
+function checkWearLog(s: Sim): number {
+  const cs = s.carryState;
+  const notes = s.events.filter((e) => e.kind === 'incident' && e.tag === 'carry');
+  for (const e of notes) { expect(WEAR_NOTE.test(e.text), e.text).toBe(true); expect(e.causes).toEqual([cs.event]); expect(e.truth).toBe(true); }
+  let want = 0;
+  for (const I of s.incidents) {
+    const pc = cs.places.get(I.truth.placeId);
+    const yes = !!pc && (pc.dmg >= 0.1 || pc.soot >= 0.2) && (!s.city.places[I.truth.placeId].open || pc.soot >= 0.2);
+    expect(notes.filter((e) => e.incidentId === I.id).length, `${I.code}`).toBe(yes ? 1 : 0);
+    if (yes) want++;
+  }
+  expect(cs.stats.markedInc.length).toBe(want);
+  return want;
+}
+
+describe('3. 쓸 수 없는 건물에서는 사건이 나지 않는다 — 여섯 자리 (장소 추첨·정해 준 건물·은신처·연쇄 방화·재난·현장)', () => {
+  let A: Sim, base: Carryover, U: number[], B: Sim;
+  beforeAll(() => {
+    A = run('P4');
+    base = makeCarryover(A);
+    U = [...new Set(A.incidents.map((I) => I.truth.placeId).filter((id) => id >= 0 && !A.city.places[id].open))].sort((a, b) => a - b).slice(0, CLOSED_CAP);
+    B = run('P4', withPlaces(base, U.map((id) => ruinAt(id))));
+  }, HOOK_MS);
+
+  it('placeUsable: 교대 안(X6)의 전소·전체 붕괴는 inShift 일 때만, 이어받은 흔적은 쓰고 출입 통제는 allowClosed 일 때만, 무너짐은 끝까지 안 된다', () => {
+    const roomy = A.city.places.filter((q) => q.facility < 0 && !q.open).map((q) => q.id);
+    const s = new Sim('PU', NORMAL, 60, { carry: withPlaces(base, [markAt(roomy[0], 0.4, 0.2), ruinAt(roomy[1], 'closed', 2), ruinAt(roomy[2])]) });
+    expect([placeUsable(s, roomy[0]), placeUsable(s, roomy[1]), placeUsable(s, roomy[2]), placeUsable(s, roomy[3])]).toEqual([true, false, false, true]);
+    expect([placeUsable(s, roomy[1], true), placeUsable(s, roomy[2], true)]).toEqual([true, false]);
+    expect(placeCond(s, roomy[0])).toEqual(markAt(roomy[0], 0.4, 0.2));
+    expect(placeCond(s, roomy[3])).toBeNull();
+    s.placeMarks.set(roomy[3], { placeId: roomy[3], state: 'burnt', t: 0, incidentId: 0, burnFrac: 0.8, ruinFrac: 0 });
+    expect([placeUsable(s, roomy[3]), placeUsable(s, roomy[3], false, false)]).toEqual([false, true]);      // 재난·연쇄 방화(inShift false)는 교대 안의 전소를 보지 않는다 — createIncident 의 되고르기가 받는다
+    expect(placeGone(s, roomy[3])).toBe(true);
+    // 이어받은 상태가 없으면 X6 의 조건만 (placeGone 과 같다)
+    const n = new Sim('PU', NORMAL, 60);
+    expect([placeUsable(n, roomy[1]), placeCond(n, roomy[1])]).toEqual([true, null]);
+  });
+
+  it('① 장소 추첨: 이어받은 상태가 없는 같은 시드에서 사건이 났던 건물들을 무너짐으로 두면 그 건물들에서는 사건이 나지 않는다', () => {
+    expect(U.length).toBeGreaterThanOrEqual(6);
+    expect(B.incidents.length).toBeGreaterThan(8);
+    expect(B.incidents.every((I) => I.phase === 'closed')).toBe(true);
+    for (const I of B.incidents) expect(U.indexOf(I.truth.placeId), `${I.code} ${I.truth.label}`).toBe(-1);
+    checkCarryLog(B);
+  });
+
+  it('② 정해 준 건물: 무너진 건물을 정해 일으켜도(마지막 안전장치) 다른 건물에서 난다', () => {
+    const s = new Sim('P4x', NORMAL, 1200, { carry: withPlaces(base, U.map((id) => ruinAt(id))) });
+    for (const u of U) {
+      const I = createIncident(s, { type: 'fire', placeId: u, rng: s.rng.fork('t' + u) });
+      expect(I.truth.placeId).not.toBe(u);
+      expect(U.indexOf(I.truth.placeId)).toBe(-1);
+    }
+  });
+
+  it('③ 은신처: 납치범은 이어받은 무너진 건물에 숨어들지 않는다 (같은 시드에서 이어받은 상태가 없을 때 고른 은신처를 무너짐으로)', () => {
+    const seeds = ['K1', 'K3', 'K4', 'K9'];
+    const first = seeds.map((sd) => untilForced(new Sim(sd, NORMAL, 1200, { force: 'armed/kidnap' })).incidents.find((I) => I.truth.variant === 'kidnap')!.pursuit!.hideout);
+    expect(first.every((h) => h !== undefined)).toBe(true);
+    const H = [...new Set(first as number[])];
+    const co = withPlaces(base, H.map((id) => ruinAt(id)));
+    let chosen = 0;
+    for (const sd of seeds) {
+      const s = untilForced(new Sim(sd, NORMAL, 1200, { force: 'armed/kidnap', carry: co }));
+      const h = s.incidents.find((I) => I.truth.variant === 'kidnap')!.pursuit!.hideout;
+      if (h !== undefined) { chosen++; expect(H.indexOf(h), sd).toBe(-1); }
+    }
+    expect(chosen).toBeGreaterThan(0);      // 은신처를 고르는 갈래를 실제로 지난다 (다른 창고·작업장으로)
+  });
+
+  it('④ 연쇄 방화: 다음 불의 대상은 이어받은 무너진 건물에서 고르지 않는다 (이어받은 상태가 없을 때 고른 건물과 같은 종류의 가까운 건물, 12곳이 무너지면 그 밖에서)', () => {
+    const arsonFrom = (p0: number, carry: Carryover | null): number | undefined => {
+      const s = new Sim('AR1', NORMAL, 1200, carry ? { carry } : {});
+      const I = createIncident(s, { type: 'fire', variant: 'arson', placeId: p0, rng: s.rng.fork('ar') });
+      expect(I.truth.placeId).toBe(p0);
+      scenarioOf('fire', 'arson')!.onClose!(s, I, 'resolved');
+      return s.gen.chain.find((c) => c.opts.csq === 'arson')?.opts.placeId;
+    };
+    const p0 = A.city.places.find((q) => q.kind === 'shop' && q.facility < 0 && !q.open)!.id, q0 = A.city.places[p0];
+    const d = (id: number): number => { const q = A.city.places[id]; return Math.hypot(q.x + q.w / 2 - q0.x - q0.w / 2, q.y + q.h / 2 - q0.y - q0.h / 2); };
+    const plain = arsonFrom(p0, null);
+    expect(plain).toBeDefined();
+    expect(A.city.places[plain!].kind).toBe('shop');      // 이어받은 상태가 없으면 600 안의 같은 종류 가운데서 고른다
+    expect(d(plain!)).toBeLessThanOrEqual(600);
+    const near = [plain!, ...A.city.places.filter((q) => q.kind === 'shop' && q.facility < 0 && !q.open && q.id !== p0 && q.id !== plain).map((q) => q.id).sort((a, b) => d(a) - d(b) || a - b).slice(0, CLOSED_CAP - 1)];
+    const next = arsonFrom(p0, withPlaces(base, near.map((id) => ruinAt(id))));
+    expect(next).toBeDefined();
+    expect(near.indexOf(next!)).toBe(-1);
+  });
+
+  it('⑤ 재난: 지진이 고르는 건물에서 이어받은 무너진 건물을 뺀다 (같은 시드에서 이어받은 상태가 없을 때 지진이 고른 건물을 무너짐으로)', () => {
+    const quake: Difficulty = { ...NORMAL, disaster: 'quake' };
+    const Q = run('Q2', undefined, quake);
+    const W = [...new Set(Q.incidents.filter((I) => I.tag === 'disaster:quake' && I.truth.placeId >= 0 && !Q.city.places[I.truth.placeId].open).map((I) => I.truth.placeId))].slice(0, CLOSED_CAP);
+    expect(W.length).toBeGreaterThan(0);
+    const R = run('Q2', withPlaces(base, W.map((id) => ruinAt(id))), quake);
+    expect(R.incidents.filter((I) => I.tag === 'disaster:quake').length).toBeGreaterThan(0);
+    for (const I of R.incidents) expect(W.indexOf(I.truth.placeId), I.code).toBe(-1);
+    expect(R.incidents.every((I) => I.phase === 'closed')).toBe(true);
+  });
+
+  it('셋째 단계: 그 종류(폭동의 장소 여섯 곳)가 모두 출입 통제면 통제 중인 건물에서 나고, 모두 무너지면 끝까지 건물에서 나지 않는다', () => {
+    const riot = A.city.places.filter((q) => q.facility < 0 && ['stadium', 'market', 'busTerminal', 'university', 'station', 'mart'].indexOf(q.kind) >= 0).map((q) => q.id);
+    expect(riot.length).toBe(6);
+    const make = (places: PlaceCarry[]): Incident => { const s = new Sim('RT', NORMAL, 1200, { carry: withPlaces(base, places) }); return createIncident(s, { type: 'armed', variant: 'riot', rng: s.rng.fork('rt') }); };
+    expect(riot).toContain(make([]).truth.placeId);
+    expect(riot).toContain(make(riot.map((id) => ruinAt(id, 'closed', 2))).truth.placeId);
+    expect(make(riot.map((id) => ruinAt(id))).truth.placeId).toBe(-1);      // 장소가 바닥나면 지금처럼 교차로에서 (§11.1-7)
+  });
+
+  it('흔적만 남은 손상 건물은 붕괴가 잘 난다 (가중치 × (1 + 3 × 손상)) — 출입 통제·무너짐이 아닌 흔적만', () => {
+    const table = scenarioOf('collapse', 'std')?.places ?? INCIDENT_PLACES.collapse;
+    const cands = A.city.places.filter((q) => q.facility < 0 && !q.open && (table[q.kind] ?? 0) > 0).map((q) => q.id).slice(0, PLACE_CAP);
+    const hits = (places: PlaceCarry[]): number => {
+      const s = new Sim('WG', NORMAL, 1200, { carry: withPlaces(base, places) });
+      let n = 0;
+      for (let k = 0; k < 30; k++) if (cands.indexOf(createIncident(s, { type: 'collapse', variant: 'std', rng: s.rng.fork('wg' + k) }).truth.placeId) >= 0) n++;
+      return n;
+    };
+    expect(hits(cands.map((id) => markAt(id, 0, 1)))).toBeGreaterThan(hits([]));
+  });
+
+  it('⑥ 현장: 그을음 0.6 · 손상 0.3 인 건물의 화재 — s.wear, 처음부터 탄 칸(불 곁은 아니다 · 재산 피해의 분모에서 빠진다 · X6 의 전소 분모에서도), 손상 사실의 기록 하나', () => {
+    const b = A.city.places.find((q) => q.facility < 0 && !q.open && (INCIDENT_PLACES.fire[q.kind] ?? 0) > 0 && q.kind === 'apartment')!.id;
+    const sA = new Sim('W1', NORMAL, 1200, { carry: withPlaces(base, [markAt(b, 0.6, 0.3)]) }), sB = new Sim('W1', NORMAL, 1200);
+    const IA = createIncident(sA, { type: 'fire', variant: 'std', placeId: b, rng: sA.rng.fork('w') }), IB = createIncident(sB, { type: 'fire', variant: 'std', placeId: b, rng: sB.rng.fork('w') });
+    const a = sA.scenes[IA.id]!, o = sB.scenes[IB.id]!;
+    expect(o.wear).toBeUndefined();
+    expect(a.wear).toEqual({ dmg: 0.3, soot: 0.6, cause: 'fire', inc: '조직 1번째 교대 · 01 건물 화재', pre: a.wear!.pre });
+    expect(a.wear!.pre).toBeGreaterThan(0);
+    expect(a.totalFuelTiles).toBe(o.totalFuelTiles - a.wear!.pre);
+    expect(a.burnedTiles).toBe(0);
+    let burned = 0;
+    for (let i = 0; i < a.burned.length; i++) if (a.burned[i]) { burned++; expect(a.fuel[i]).toBe(0); expect(o.fuel[i]).toBeGreaterThan(0); }
+    expect(burned).toBe(a.wear!.pre);
+    let indoorFuel = 0;
+    for (let i = 0; i < o.fuel.length; i++) if (o.fuel[i] > 0 && o.region[i] >= 0 && o.regions[o.region[i]].indoor) indoorFuel++;
+    expect(a.wear!.pre).toBeLessThanOrEqual(Math.round(PRE_BURN * 0.6 * indoorFuel));
+    for (let i = 0; i < a.fire.length; i++) {
+      if (!(a.fire[i] > 0)) continue;
+      const x = i % a.w, y = (i / a.w) | 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const nx = x + dx, ny = y + dy; if (nx >= 0 && ny >= 0 && nx < a.w && ny < a.h) expect(a.burned[ny * a.w + nx]).toBe(0); }
+    }
+    // 같은 사건 시드라 나머지는 같다 (평면·불·사람)
+    expect([a.w, a.h, a.casualties.length]).toEqual([o.w, o.h, o.casualties.length]);
+    // X6: 처음 건전도 ≤ 1 − WEAR_INTEG × 0.3, 전소 비율의 분모에서 처음부터 탄 칸이 빠지고 처음 탄 비율은 0
+    const ca = catOf(sA, a)!, cb = catOf(sB, o)!;
+    expect(ca.fuel0).toBeLessThan(cb.fuel0);
+    expect(burnFracOf(ca, a)).toBe(0);
+    for (let r = 0; r < a.regions.length; r++) if (a.regions[r].indoor) expect(ca.integ[r]).toBeLessThanOrEqual(1 - CAT.WEAR_INTEG * 0.3 + 1e-6);
+    // 기록: 발생 기록 바로 뒤에 손상 사실 하나 (요약 줄이 원인 · 진실 · tag carry)
+    const notes = sA.events.filter((e) => e.incidentId === IA.id && e.tag === 'carry');
+    expect(notes.length).toBe(1);
+    expect(notes[0].id).toBe(IA.rootEvent + 1);
+    expect(notes[0].text).toBe(`이 건물은 조직 1번째 교대 · 01 건물 화재로 그을리고 손상된 상태였습니다 (구조 손상 30%).`);
+    expect(notes[0].causes).toEqual([sA.carryState.event]);
+    expect(sA.carryState.stats.markedInc).toEqual([IA.code]);
+    expect(sB.events.some((e) => e.tag === 'carry')).toBe(false);
+    // 이번 교대의 충격(I1-b applyExpo — cause 'shock')과 겹치면 dmg 의 큰 쪽: 충격이 크면 그대로, 작으면 이어받은 쪽으로 (그을음은 이어받은 값)
+    a.wear = { dmg: 0.5, soot: 0, cause: 'shock', inc: '03', pre: 0 };
+    applyPlaceWear(sA, a, IA);
+    expect([a.wear.dmg, a.wear.cause, a.wear.inc, a.wear.soot]).toEqual([0.5, 'shock', '03', 0.6]);
+    a.wear = { dmg: 0.1, soot: 0, cause: 'shock', inc: '03', pre: 0 };
+    applyPlaceWear(sA, a, IA);
+    expect([a.wear.dmg, a.wear.cause, a.wear.soot]).toEqual([0.3, 'fire', 0.6]);
+  });
+
+  it('⑥ 방향: 같은 건물·같은 사건 시드의 번지는 화재(심각도 3)를 그을음 0 과 0.6 으로 — 그을린 쪽의 소실률 평균도, 이번 교대에 탄 칸 수도 크지 않다', () => {
+    const b = A.city.places.find((q) => q.facility < 0 && !q.open && (INCIDENT_PLACES.fire[q.kind] ?? 0) > 0 && q.kind === 'apartment')!.id;
+    const sum = { loss: [0, 0], tiles: [0, 0] };
+    for (let k = 0; k < 6; k++) [0, 0.6].forEach((soot, j) => {
+      const s = new Sim('SOOT' + k, NORMAL, 1200, { carry: withPlaces(base, [markAt(b, soot, 0)]) });
+      const I = createIncident(s, { type: 'fire', variant: 'std', severity: 3, placeId: b, rng: s.rng.fork('soot-test') });
+      while (I.phase !== 'closed' && !s.ended) s.step();
+      const sc = s.scenes[I.id]!;
+      sum.loss[j] += sc.burnedTiles / Math.max(1, sc.totalFuelTiles); sum.tiles[j] += sc.burnedTiles;
+    });
+    expect(sum.loss[1]).toBeLessThanOrEqual(sum.loss[0]);
+    expect(sum.tiles[1]).toBeLessThanOrEqual(sum.tiles[0]);
+  }, 120_000);
+
+  it('넷째 자리(법칙 사건을 꺼낼 때)·재범의 자리까지 — src/sim 에서 placeGone 을 부르는 곳이 없고, 고르는 자리마다 placeUsable 을 지난다', () => {
+    for (const f of tsFiles(SRC)) { const src = readFileSync(f, 'utf8'); expect(/placeGone\(sim, (?!id\))/.test(src), f).toBe(false); }
+    const has = (file: string, re: RegExp): void => expect(re.test(readFileSync(join(SRC, file), 'utf8')), `${file} ${re}`).toBe(true);
+    has('incidents.ts', /!placeUsable\(sim, q\.id, allowClosed\)/);                         // 장소 추첨 (엄격·대안·셋째 단계)
+    has('incidents.ts', /placeUsable\(sim, opts\.placeId\)/);                                 // 정해 준 건물
+    has('incidents.ts', /!placeUsable\(sim, c\.opts\.placeId\)/);                             // 법칙 사건을 꺼낼 때
+    has('disaster.ts', /!placeUsable\(sim, q\.id, false, false\)/);                           // 재난
+    has('scenarios/crime.ts', /placeUsable\(sim, q\.id, false, false\)/);                     // 연쇄 방화
+    has('pursuit.ts', /placeUsable\(sim, q\.id\)/);                                           // 은신처
+    has('field/hazards.ts', /!placeUsable\(sim, q\.id\)/);                                    // 재범의 자리 (I1-b C10)
+    has('field/sceneManager.ts', /applyPlaceWear\(sim, s, I\)/);                              // 현장
+    has('world/state.ts', /usable: placeUsable\(sim, placeId\)/);                             // I1-b placeState
+  });
+});
+
+// ───────────────────────── 3. 건물의 끝 상태 → 다음 교대 (단계 5 — placeOutcome · 휴식 · 상한) ─────────────────────────
+describe('3. 건물의 끝 상태 → 다음 교대 (placeOutcome 의 표 · 휴식 · 상한)', () => {
+  let S: Sim, base: Carryover, apt: number, roomy: number[];
+  beforeAll(() => {
+    const A = run('P1', undefined, NORMAL, 60);
+    base = makeCarryover(A);
+    S = new Sim('PO', NORMAL, 1200);
+    apt = S.city.places.find((q) => q.facility < 0 && !q.open && (INCIDENT_PLACES.fire[q.kind] ?? 0) > 0 && q.kind === 'apartment')!.id;
+    roomy = S.city.places.filter((q) => q.facility < 0 && !q.open && q.id !== apt).map((q) => q.id);
+  }, HOOK_MS);
+  const pick = (p: PlaceCarry | null): unknown[] | null => (p ? [p.state, p.dmg, p.soot, p.repair, p.cause, p.mark ?? null] : null);
+
+  it('X6 의 건물 상태: 전체 붕괴 → 무너짐 4 · 전소 → 통제 5 · 구획 붕괴 → 통제 2 · 폭발 흔적 → 통제 1 · 그을림 → 흔적 (그 사건이 남긴 상태만)', () => {
+    const I = createIncident(S, { type: 'fire', variant: 'std', placeId: apt, rng: S.rng.fork('po1') });
+    const set = (state: PlaceMark['state'], incidentId = I.id): void => { S.placeMarks.set(apt, { placeId: apt, state, t: 0, incidentId, burnFrac: 0.3, ruinFrac: 0.2 }); };
+    set('collapsed'); expect(pick(placeOutcome(S, I))).toEqual(['ruin', 1, 0, 4, 'collapse', 'collapsed']);
+    set('burnt'); expect(pick(placeOutcome(S, I))).toEqual(['closed', 0.8, 1, 5, 'burnout', 'burnt']);
+    set('partial'); expect(pick(placeOutcome(S, I))).toEqual(['closed', 0.4, 0.3, 2, 'collapse', 'partial']);
+    set('blasted'); expect(pick(placeOutcome(S, I))).toEqual(['closed', 0.35, 0.3, 1, 'blast', 'blasted']);
+    set('scorched'); expect(pick(placeOutcome(S, I))).toEqual(['marked', 0.15, 0.6, 0, 'fire', 'scorched']);
+    // 그을림(X6) + 화재 소실률 0.25~0.6 → 통제 1 (여러 행 — 무거운 상태, 큰 값)
+    const sc = S.scenes[I.id]!, keep = sc.burnedTiles;
+    sc.burnedTiles = Math.ceil(0.4 * sc.totalFuelTiles);
+    const loss = sc.burnedTiles / sc.totalFuelTiles;
+    const o = placeOutcome(S, I)!;
+    expect([o.state, o.repair, o.mark]).toEqual(['closed', 1, 'scorched']);
+    expect(o.dmg).toBeCloseTo(Math.max(0.15, 0.5 * loss), 4); expect(o.soot).toBeCloseTo(Math.max(0.6, 1.5 * loss), 4);
+    // 다른 사건이 남긴 X6 상태는 이 사건의 줄이 아니다 — 화재의 흔적 줄(0.05~0.25)도 X6 가 표시한 건물에는 쓰지 않는다
+    set('burnt', I.id + 99);
+    sc.burnedTiles = Math.ceil(0.1 * sc.totalFuelTiles);
+    expect(placeOutcome(S, I)).toBeNull();
+    S.placeMarks.delete(apt);
+    const l2 = sc.burnedTiles / sc.totalFuelTiles;
+    expect(pick(placeOutcome(S, I))).toEqual(['marked', Math.round(0.5 * l2 * 1e4) / 1e4, Math.round(2 * l2 * 1e4) / 1e4, 0, 'fire', null]);
+    sc.burnedTiles = Math.ceil(0.7 * sc.totalFuelTiles);
+    const l3 = sc.burnedTiles / sc.totalFuelTiles;
+    expect(pick(placeOutcome(S, I))).toEqual(['closed', Math.round((0.4 + 0.5 * l3) * 1e4) / 1e4, Math.round(Math.min(1, 1.5 * l3) * 1e4) / 1e4, 3, 'fire', null]);
+    sc.burnedTiles = Math.floor(0.02 * sc.totalFuelTiles);
+    expect(placeOutcome(S, I)).toBeNull();      // 거의 타지 않았다
+    sc.burnedTiles = keep;
+  });
+
+  it('붕괴: 잔해가 건물 칸의 0.22 이상이거나 2차 붕괴가 있었으면 무너짐(무너진 자리 spot), 아니면 출입 통제 2 — 승강기 갇힘은 남기지 않는다. 열린 터는 흔적만', () => {
+    const cl = S.city.places.filter((q) => q.facility < 0 && !q.open && (INCIDENT_PLACES.collapse[q.kind] ?? 0) > 0).map((q) => q.id);
+    let seen = 0;
+    for (let k = 0; k < 6; k++) {
+      const I = createIncident(S, { type: 'collapse', variant: 'std', placeId: cl[k], rng: S.rng.fork('po-c' + k) });
+      const sc = S.scenes[I.id]!;
+      let bld = 0, dm = 0;
+      for (let i = 0; i < sc.tiles.length; i++) { const t = sc.tiles[i]; if (t === T.FLOOR || t === T.FURN || t === T.DOOR || t === T.STAIR || t === T.WALL || t === T.WINDOW) bld++; if (sc.damage[i]) dm++; }
+      const o = placeOutcome(S, I);
+      if (!dm) { expect(o).toBeNull(); continue; }
+      seen++;
+      if (dm / bld >= 0.22) { expect(pick(o)).toEqual(['ruin', 1, 0, 4, 'collapse', null]); expect(o!.spot).toHaveLength(2); }
+      else {
+        expect(pick(o)).toEqual(['closed', Math.round(Math.min(1, 2 * dm / bld) * 1e4) / 1e4, 0, 2, 'collapse', null]);
+        I.problems.push({ code: 'ESCALATION', t: 1, detail: '북쪽 방 2차 붕괴', eventId: -1, recovered: false, recoveryText: '' });
+        expect(placeOutcome(S, I)!.state).toBe('ruin');
+      }
+    }
+    expect(seen).toBeGreaterThan(0);
+    const el = createIncident(S, { type: 'collapse', variant: 'elevator', rng: S.rng.fork('po-el') });
+    expect(placeOutcome(S, el)).toBeNull();
+    // 열린 터(숲)의 큰 불: 흔적만 — 손상 0 · 남은 교대 0, 그을음은 표의 값
+    const forest = S.city.places.find((q) => q.facility < 0 && q.open && q.kind === 'forest')!.id;
+    const F = createIncident(S, { type: 'fire', variant: 'std', placeId: forest, rng: S.rng.fork('po-f') });
+    const fs = S.scenes[F.id]!;
+    fs.burnedTiles = Math.ceil(0.7 * Math.max(1, fs.totalFuelTiles));
+    const o = placeOutcome(S, F)!;
+    expect([o.state, o.dmg, o.repair, o.spot]).toEqual(['marked', 0, 0, undefined]);
+    expect(o.soot).toBeGreaterThan(0.9);
+  });
+
+  it('휴식 한 번: 통제는 남은 교대 −1, 0 이 되면 흔적(손상 × 0.4 · 그을음 × 0.5 · opened — 다음 교대에 한 번 알린다), 흔적은 줄다가 사라진다. 같은 건물의 새 피해와는 무거운 쪽으로 합친다', () => {
+    const [c2, c1, r1, m1, m2, o1] = roomy.slice(0, 6);
+    const places: PlaceCarry[] = [ruinAt(c2, 'closed', 2), { ...ruinAt(c1, 'closed', 1), soot: 0.6, mark: 'partial' }, { ...ruinAt(r1, 'ruin', 1), spot: [0.5, 0.5], mark: 'collapsed' }, markAt(m1, 0.3, 0.2), markAt(m2, 0.2, 0.1), { ...markAt(o1, 0.5, 0.4), opened: true }];
+    const s = new Sim('PR', NORMAL, 60, { carry: withPlaces(base, places) });
+    const shutLines = s.events.filter((e) => e.tag === 'carry' && e.kind === 'shift');
+    expect(shutLines.some((e) => e.text.endsWith('복구 공사 중이라 출입을 통제합니다 (2교대 남음).'))).toBe(true);
+    expect(shutLines.some((e) => e.text.endsWith('무너져 출입할 수 없습니다 (1교대 남음).'))).toBe(true);
+    expect(shutLines.some((e) => e.text.endsWith('복구 완료 — 다시 문을 열었습니다.'))).toBe(true);
+    expect(s.events[s.carryState.event].text).toContain('출입 통제 건물 3곳(무너짐 1)');
+    s.runToEnd();
+    checkCarryLog(s);
+    for (const I of s.incidents) expect(places.some((p) => p.id === I.truth.placeId && p.state !== 'marked'), I.code).toBe(false);
+    const next = makeCarryover(s), get = (id: number): PlaceCarry | undefined => next.places.find((p) => p.id === id);
+    expect(get(c2)).toEqual({ ...ruinAt(c2, 'closed', 1) });
+    expect(get(c1)).toEqual({ ...ruinAt(c1, 'marked', 0), state: 'marked', dmg: 0.16, soot: 0.3, repair: 0, opened: true });      // X6 상태(partial)는 지운다 — 복구됐다
+    expect(get(r1)).toEqual({ ...ruinAt(r1), state: 'marked', dmg: 0.4, soot: 0, repair: 0, opened: true });
+    expect(get(m1)).toEqual(markAt(m1, 0.05, 0.05));
+    expect(get(m2)).toBeUndefined();
+    expect(get(o1)).toEqual(markAt(o1, 0.25, 0.25));      // opened 는 한 번만
+    expect(readCarryover(json(next), s.city)!.carry).toEqual(next);
+    expect(makeCarryover(s)).toEqual(next);
+    // 같은 건물에 이번 교대의 새 피해가 있으면: 무거운 쪽 상태, 각각 큰 값, since 는 앞의 것 (이번 교대에 생긴 것은 깎지 않는다)
+    const t = new Sim('PR2', NORMAL, 60, { carry: withPlaces(base, [{ ...markAt(apt, 0.9, 0.1), since: 1 }]) });
+    const I = createIncident(t, { type: 'fire', variant: 'std', placeId: apt, rng: t.rng.fork('pr2') });
+    t.placeMarks.set(apt, { placeId: apt, state: 'partial', t: 0, incidentId: I.id, burnFrac: 0.2, ruinFrac: 0.1 });
+    t.runToEnd();
+    const m = makeCarryover(t).places.find((p) => p.id === apt)!;
+    expect([m.state, m.repair, m.soot, m.since, m.mark]).toEqual(['closed', 2, 0.9, 1, 'partial']);
+    expect(m.dmg).toBeGreaterThanOrEqual(0.3);
+  });
+
+  it('상한: 출입 통제·무너짐이 12 를 넘으면 남은 교대가 작은 것(같으면 id 가 큰 것)부터 복구 완료, 건물이 24 를 넘으면 가장 옅은 흔적부터 버린다', () => {
+    const shut = roomy.slice(0, CLOSED_CAP), marks = roomy.slice(CLOSED_CAP, PLACE_CAP);
+    const places = [...shut.map((id) => ({ ...ruinAt(id, 'closed', 3), dmg: 0.3, soot: 0.3 })), ...marks.map((id) => markAt(id, 0.9, 0.5))];
+    const s = new Sim('PC', NORMAL, 60, { carry: withPlaces(base, places) });
+    expect(s.carryState.places.size).toBe(PLACE_CAP);
+    const I = createIncident(s, { type: 'fire', variant: 'std', placeId: apt, rng: s.rng.fork('pc') });
+    s.placeMarks.set(apt, { placeId: apt, state: 'burnt', t: 0, incidentId: I.id, burnFrac: 0.8, ruinFrac: 0 });
+    s.runToEnd();
+    const next = makeCarryover(s);
+    const nShut = next.places.filter((p) => p.state !== 'marked');
+    expect(nShut.length).toBe(CLOSED_CAP);
+    expect(next.places.length).toBe(PLACE_CAP);
+    const gone = Math.max(...shut);      // 남은 교대가 모두 2 — id 가 가장 큰 것이 복구 완료되고, 그 흔적(0.12 · 0.15)이 가장 옅어 버려진다
+    expect(next.places.some((p) => p.id === gone)).toBe(false);
+    expect(next.places.find((p) => p.id === apt)!.state).toBe('closed');
+    expect(readCarryover(json(next), s.city)!.dropped).toEqual([]);      // 만든 상태는 읽을 때의 상한에 걸리지 않는다
+  });
+});
+
 // ───────────────────────── 9. 금지와 격리 ─────────────────────────
 describe('9. 금지와 격리 (글자)', () => {
   it('src/sim 에는 브라우저 저장소가 없다', () => {
@@ -1310,6 +1686,6 @@ describe('9. 금지와 격리 (글자)', () => {
   it('관제·지휘 코드는 이어받은 상태(carryState·.wear)를 직접 읽지 않는다', () => {
     const files = [...tsFiles(join(SRC, 'dispatch')), join(SRC, 'field/commander.ts'), join(SRC, 'field/brain.ts'), ...tsFiles(join(SRC, 'field/orders'))];
     expect(files.length).toBeGreaterThan(5);
-    for (const f of files) expect(readFileSync(f, 'utf8'), f).not.toMatch(/carryState|\.wear\b/);
+    for (const f of files) expect(readFileSync(f, 'utf8'), f).not.toMatch(/carryState|\.wear\b|placeCond|preBurnt/);      // (단계 5) 건물 겹침 표를 읽는 함수도
   });
 });

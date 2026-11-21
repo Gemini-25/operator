@@ -32,6 +32,7 @@ import { hurtCas, hurtHostile, hurtResponder } from './injury';
 import { addProp } from './kit';
 import { FOOT_FLOOR_EDGE, FOOT_IN, FOOT_SHELL, NO_STRUCT, SIGN_BASE, footprint, regionNbrs } from './ops';
 import { RUIN_FURN, RUIN_TOTAL, RUIN_WALL, markRuin, recordFall } from './ruins';
+import { preBurnt } from '../placeUse';      // (I2 단계 5) 이어받은 그을음의 처음부터 탄 칸 (잎 모듈)
 
 /** 균형 상수 — 모두 시작값이다 (설계서 §2.9). 균형 단계(8)가 §8.4 의 순서로 맞춘다 */
 export const CAT = {
@@ -184,10 +185,12 @@ export function catOf(sim: Sim, s: Scene): CatState | null {
     // (I1-b b3-8 · I2 §7) 이미 손상된 건물(s.wear — 이웃의 충격·지난 교대): 실내 구획마다 처음 건전도가 1 − WEAR_INTEG × dmg 를 넘지 않는다 (난수 없음 — 손상이 없는 현장은 그대로)
     if (s.wear) for (let r = 0; r < R; r++) if (regs[r].indoor) integ[r] = Math.min(integ[r], 1 - CAT.WEAR_INTEG * s.wear.dmg);
   }
-  // 전소 비율의 분모: 건물 칸 위의 연료 칸 (이미 탄 칸도 연료가 있던 칸이다)
+  // 전소 비율의 분모: 건물 칸 위의 연료 칸 (이미 탄 칸도 연료가 있던 칸이다). (I2 단계 5) 지난 교대의 그을음으로 처음부터 탄 칸(persist.applyPlaceWear)은 뺀다 —
+  // 분모·분자(burnFracOf 는 이 칸 안의 탄 칸만 센다)에서 함께 빠져 이번 교대에 탄 몫만 센다. 이어받은 상태가 없으면 pre 가 없다 (결과 불변)
   const fuelMask = new Uint8Array(n);
   let fuel0 = 0;
-  for (let i = 0; i < n; i++) if (foot[i] >= 1 && (s.fuel[i] > 0 || s.burned[i])) { fuelMask[i] = 1; fuel0++; }
+  const pre = s.wear !== undefined && s.wear.pre > 0 ? preBurnt(s) : undefined;
+  for (let i = 0; i < n; i++) if (foot[i] >= 1 && (s.fuel[i] > 0 || (s.burned[i] && !(pre !== undefined && pre[i])))) { fuelMask[i] = 1; fuel0++; }
   let valve = false;
   for (let k = 0; k < props.length; k++) if (props[k].kind === 'valve') { valve = true; break; }
   const shakes = sim.disaster ? sim.disaster.shakes : undefined;

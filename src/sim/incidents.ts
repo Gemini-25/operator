@@ -23,6 +23,8 @@ import { OUTCOME_NAME, TYPE_NAME } from './util';
 import { TYPE_DEFS, TYPE_ORDER } from './incidentTypes';
 import { noteClosedPlace } from './field/catastrophe';      // (X6 단계 7) 끝난 화재의 그을린 건물
 import { INCIDENT_SHAPE, TRUTH_SHAPE, primeNums } from './shape';      // (R3b N7) 숫자 칸을 만들 때부터 소수 표현으로 — 값은 그대로
+import { noteWearIncident } from './persist';      // (I2 단계 5)
+import { placeCond, placeUsable } from './placeUse';      // (I2 단계 5) "쓸 수 있는 건물" 판정 하나 · 이어받은 건물 상태 (잎 모듈)
 
 /** 사건을 정해서 일으킬 때 주는 조건. 비워 두면 평소처럼 추첨한다. */
 export interface SpawnOpts {
@@ -70,14 +72,10 @@ const COLLAPSE_AT_START = new Set(['crane', 'gasblast', 'landslide']);
 const kindCount = new WeakMap<object, Map<string, number>>();
 /** 사건이 일어날 건물이나 터를 고른다. 교통사고는 교차로에서 일어나므로 null. */
 /**
- * (X6 §7.1) 이 교대에 통째로 무너졌거나 다 탄 건물인가 (Sim.placeMarks) — 그 건물에서는 새 사건을 내지 않는다.
- * 부르는 곳 셋: pickPlace(엄격·대안 추첨 모두) · createIncident 의 정해 준 건물(재난·은신처의 길) · pursuit 의 은신처 후보. I2 단계 5 가 이 셋을 placeUsable(sim, id) 로 바꾼다
+ * 그 건물에서 새 사건을 낼 수 없는가 — placeUse.placeUsable(sim, id) 의 반대 (inShift — X6 §7.1 의 교대 안 제외: 전소·전체 붕괴, 그리고 I2 의 이어받은 출입 통제·무너짐).
+ * (I2 단계 5) 판정은 placeUsable 하나에 모았다 — 시뮬레이션의 자리(장소 추첨·정해 준 건물·은신처 후보·재범의 자리·법칙 사건을 꺼낼 때)는 그 함수를 직접 부른다. 이 이름은 X6 의 시험이 쓴다
  */
-export function placeGone(sim: Sim, id: number): boolean {
-  if (!sim.placeMarks.size) return false;
-  const pm = sim.placeMarks.get(id);
-  return pm !== undefined && (pm.state === 'collapsed' || pm.state === 'burnt');
-}
+export function placeGone(sim: Sim, id: number): boolean { return !placeUsable(sim, id); }
 
 function pickPlace(sim: Sim, rng: Rng, type: IncidentType, variant: string, busy: Set<number>): Place | null {
   const table = scenarioOf(type, variant)?.places ?? INCIDENT_PLACES[type];
@@ -85,16 +83,22 @@ function pickPlace(sim: Sim, rng: Rng, type: IncidentType, variant: string, busy
   // 표의 값은 건물 종류 전체의 몫이므로, 그 종류의 건물 수로 나눠 한 채의 비중을 구한다
   if (!kindCount.has(sim.city.places)) { const m = new Map<string, number>(); for (const q of sim.city.places) if (q.facility < 0) m.set(q.kind, (m.get(q.kind) ?? 0) + 1); kindCount.set(sim.city.places, m); }
   const counts = kindCount.get(sim.city.places)!;
-  const weigh = (q: Place, strict: boolean): number => {
+  const carry = sim.carryState.on;
+  const weigh = (q: Place, strict: boolean, allowClosed: boolean): number => {
     let w = (table[q.kind] ?? 0) / (counts.get(q.kind) ?? 1);
-    if (w <= 0 || q.facility >= 0 || placeGone(sim, q.id)) return 0;      // (X6) 무너졌거나 다 탄 건물은 대안 추첨에서도 뺀다
+    if (w <= 0 || q.facility >= 0 || !placeUsable(sim, q.id, allowClosed)) return 0;      // (X6) 무너졌거나 다 탄 건물은 대안 추첨에서도 뺀다 · (I2) 이어받은 출입 통제·무너짐도
     if (strict && (busy.has(q.nodeId) || used.has(q.id))) return 0;
     if (type === 'armed') w *= ARMED_BIAS[variant]?.[q.kind] ?? 1;
+    if (carry) {      // (I2 단계 5) 지난 교대에 손상된 건물(흔적만 남은 것)은 붕괴·가스 누출이 잘 난다 — 이어받은 상태가 없으면 곱하지 않는다(1 도 곱하지 않는다 — 결과 불변)
+      const pc = placeCond(sim, q.id);
+      if (pc !== null && pc.state === 'marked' && pc.dmg > 0) { if (type === 'collapse') w *= 1 + 3 * pc.dmg; else if (type === 'hazmat') w *= 1 + pc.dmg; }
+    }
     if (type === 'search' && variant === 'hiker' && q.kind !== 'forest') return 0;
     return w;
   };
-  let ws = sim.city.places.map((q) => weigh(q, true));
-  if (!ws.some((v) => v > 0)) ws = sim.city.places.map((q) => weigh(q, false));
+  let ws = sim.city.places.map((q) => weigh(q, true, false));
+  if (!ws.some((v) => v > 0)) ws = sim.city.places.map((q) => weigh(q, false, false));
+  if (carry && !ws.some((v) => v > 0)) ws = sim.city.places.map((q) => weigh(q, false, true));      // (I2) 셋째 단계: 그 종류가 모두 막혔으면 출입 통제 중인 건물도 (무너진 건물은 끝까지 안 된다)
   if (!ws.some((v) => v > 0)) return null;
   return rng.weighted(sim.city.places, ws);
 }
@@ -133,7 +137,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
   const busy = new Set(sim.incidents.filter((I) => I.phase !== 'closed').map((I) => I.truth.nodeId));
   // 정해 준 자리가 있으면 그곳, 길 위에서 일어나는 시나리오면 그 교차로, 아니면 유형에 맞는 건물
   // (X6 §7.1) 정해 준 건물이 이 교대에 무너졌거나 다 탔으면 그 유형의 건물을 다시 고른다 (재난·은신처는 pickPlace 를 거치지 않는다 — 그 경우에만 사건 흐름을 한 번 더 쓴다)
-  const fixedPlace = opts.placeId !== undefined && !placeGone(sim, opts.placeId) ? opts.placeId : undefined;
+  const fixedPlace = opts.placeId !== undefined && placeUsable(sim, opts.placeId) ? opts.placeId : undefined;      // (I2 단계 5) 마지막 안전장치 — 이어받은 상태는 고르는 자리(은신처·연쇄 방화·재난·재범)가 먼저 거른다
   const fixedNode = opts.nodeId ?? (fixedPlace === undefined && opts.placeId === undefined ? special?.node?.(sim, rng, busy) ?? null : null);
   const place = fixedPlace !== undefined ? sim.city.places[fixedPlace] : fixedNode !== null || type === 'traffic' ? null : pickPlace(sim, rng, type, variant, busy);
   let node = place ? sim.city.nodes[place.nodeId] : fixedNode !== null ? sim.city.nodes[fixedNode] : null;
@@ -205,6 +209,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
   if (variant === 'kidnap' || variant === 'drunk' || variant === 'getaway') startPursuit(sim, I, variant);
   special?.onCreate?.(sim, I);
   I.rootEvent = emit(sim, { inc: id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: special?.tag === 'major' ? 3 : 1, truth: true, causes: I.cause !== undefined ? (opts.causes ? [I.cause, ...opts.causes] : [I.cause]) : opts.causes, text:chainNote ? `${chainNote} — ${I.truth.label}.` : `사건 발생 — ${I.truth.label} (${what}). 아직 신고되지 않았습니다.` });
+  noteWearIncident(sim, I);      // (I2 단계 5) 지난 교대에 손상된 건물에서 난 사건 — 발생 기록 바로 뒤 (이어받은 항목이 없으면 아무것도 하지 않는다)
   // (I1-b b3-5) 교통사고가 느리게 한 구간(slow += 1.4): 감속의 주인 = 발생 기록 — 그 구간이 뿌리가 된 밀림이 이 사건의 것이 된다 (기록 id 를 담기만 한다)
   if (type === 'traffic' && I.blockedEdge >= 0) noteRoadCause(sim, I.blockedEdge, 'slow', I.rootEvent, I.id);
   // (I1-b §3.4) 무너진 채로 시작하는 사건(크레인 붕괴·가스 폭발·산사태): 발생이 곧 붕괴다 — 신호의 기록은 발생 기록, 크기는 처음부터 무너져 있는 칸 수
@@ -249,7 +254,7 @@ export function tickIncidents(sim: Sim): void {
         const deep = c.opts.parent !== undefined && chainDepth(sim, c.opts.parent) + 1 > DEPTH_MAX;
         // (I1-b b3-4) 법칙이 낸 사건(opts.hz)의 건물이 예약과 꺼냄 사이에 전소·전체 붕괴했다: 만들지 않는다 — createIncident 는 그런 건물이면 그 유형의 다른 건물을 다시 고르는데,
         // 그 갈래를 타면 원인은 옆 건물의 불·정전인데 자리는 무관한 건물인 기록이 남는다 (§3.6a "건물에 내는 사건의 공통 조건")
-        const gone = c.opts.hz !== undefined && c.opts.placeId !== undefined && placeGone(sim, c.opts.placeId);
+        const gone = c.opts.hz !== undefined && c.opts.placeId !== undefined && !placeUsable(sim, c.opts.placeId);      // (I2 단계 5) 넷째 자리 — 판정은 placeUsable 하나
         if (!late && open <= tn.maxConcurrent && !deep && !gone) { const J = createIncident(sim, c.opts); if (c.log !== undefined) { const rec = sim.world.log[c.log]; if (rec) rec.made = J.id; } }      // 인과 규칙이 예약한 사건: 그 결과 줄에 만든 사건을 적는다
         else g.dropped.push({ t: sim.t, why: late ? 'late' : open > tn.maxConcurrent ? 'busy' : deep ? 'depth' : 'expired', type: c.opts.type, variant: c.opts.variant, parent: c.opts.parent, csq: c.opts.csq });      // (I1-b) 버린 예약은 배열에만 (기록은 남기지 않는다)
       }

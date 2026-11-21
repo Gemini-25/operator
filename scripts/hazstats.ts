@@ -12,7 +12,9 @@
 //   hazard-ember: (b3-9) 닫힌 건물 현장 수 · 남은 열이 있던 현장 수와 e0 분포(expo.residualOf — L7 과 같은 식) · rekindle 칸 수와 쌓인 H(= H∞ 의 합) · 문턱을 넘은 칸 — L7 의 세기(RESIDUAL.K)를 맞추는 데 쓴다
 //   hazard-power: (b3-10) 정전 알림·통신 장애 알림 수 · 정전이 닿은 승강기 건물 수(liftStall 칸 — 4층 이상 · 승강기 갇힘 시나리오가 받는 종류)와 쌓인 충격의 합 ·
 //                 문턱을 넘은 칸 · INFRA_FAIL 수 · 교대 끝에 아직 꺼져 있던 동네와 남은 정전·통신 장부 줄(원인이 살아 있는 것) — L5 의 세기(expo.LIFT.RIDE)를 맞추는 데 쓴다
-// 뒤 단계가 더할 줄: 연기 Σ∫c × base dt(b3-11).
+//   hazard-smoke: (b3-11) 연기 알림 수(tag smoke) · 연기 줄이 있던 초 · 노출량 Σ∫ c × base_p dt (L4 의 RR 을 곱하기 전 — 법칙과 같은 식: world/expo.ts 의 smokeExposure) ·
+//                 노출된 건물 수 · smokeIll 칸·넘음·사건 · 교대 끝에 남은 연기 줄과 연기 장부 줄(what 2 — 0 이어야 한다) — L4 의 세기(expo.ILL.RR)를 맞추는 데 쓴다
+//   hazard-flood: (b3-12) 홍수 교대의 잠긴 건물(expo.wet) · 잠긴 지하 기록(4층 이상) · 채운 문턱 수(world.sills) · 'level' 장부가 걸린 구간(표본당·서로 다른 구간) — 'level' 몫의 노출량은 hazard-road 의 by what level
 //
 // 표본: HazProbe.tick() 을 매 틱 step() 뒤에 부른다 — 교통 모델이 혼잡을 다시 계산한 틱(traffic.driftAt 이 바뀐 틱)에만 도로를 읽는다(12초에 한 번).
 
@@ -22,6 +24,7 @@ import type { RoadPart } from '../src/sim/traffic';
 import { roadSurface, roadWeight } from '../src/sim/world/laws/road';      // L1 의 가중(통행량 × 노면·시야 × 길이) — 법칙과 측정이 같은 식을 쓴다
 import { heatTargets } from '../src/sim/world/laws/heat';                   // (b3-7) L2 의 열원·대상·유속 — 법칙과 측정이 같은 식을 쓴다
 import { RESIDUAL, SHOCK, residualOf } from '../src/sim/world/expo';          // (b3-8) 금의 문턱 S_MIN · (b3-9) 닫힌 현장에 남은 열 e0 (L7 과 같은 식)
+import { ILL, smokeExposure } from '../src/sim/world/expo';                       // (b3-11) L4 의 연기 속 건물·농도·평소 응급률 — 법칙과 측정이 같은 식을 쓴다
 
 export interface HazLawCount { cells: number; crossed: number; made: number; waitingEnd: number }
 export interface HazRoad {
@@ -63,7 +66,17 @@ export interface HazPower {
   liftCells: number; liftH: number; liftCrossed: number;      // 정전이 닿은 승강기 건물(liftStall 칸) · 그 칸의 H 합 · 문턱을 넘은 칸
   infra: number; darkEnd: number; spansEnd: number;           // INFRA_FAIL 문제 · 교대 끝에 전력 < 1 인 동네 · 교대 끝에 남은 장부 줄
 }
-export interface HazCount { laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null; heat: HazHeat | null; shock: HazShock; ember: HazEmber; power?: HazPower }
+export interface HazSmoke {
+  alerts: number; secs: number;                     // 연기 알림(tag smoke) · 연기 줄이 있던 초
+  exposure: number; targets: number;                // Σ∫ c × base_p dt (RR 을 곱하기 전) · 노출된 건물 수
+  cells: number; crossed: number; made: number;     // smokeIll 칸 · 문턱을 넘은 수 · 사건이 된 수
+  spansEnd: number; rowsEnd: number;                // 교대 끝에 남은 연기 줄 · 연기 장부 줄(what 2)
+}
+export interface HazFlood {
+  wet: number; records: number; sills: number;      // 잠긴 건물(expo.wet) · 잠긴 지하 기록 · 채운 문턱(world.sills)
+  levelSamples: number; levelEdges: number;         // 'level' 장부가 걸린 구간 × 표본(12초) · 서로 다른 구간
+}
+export interface HazCount { laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null; heat: HazHeat | null; shock: HazShock; ember: HazEmber; power?: HazPower; smoke?: HazSmoke; flood?: HazFlood }
 
 const roadZero = (): HazRoad => ({ drifts: 0, own: 0, bump: 0, queue: 0, div: 0, raw: 0, unledgered: 0, edgeDrifts: 0, closedDrifts: 0, byWhat: {}, detourDrifts: 0, detourCong: 0, detourCongMax: 0, detourCap: 0 });
 
@@ -75,9 +88,12 @@ export class HazProbe {
   private heatBy = new Map<number, number>();       // 대상 → 노출량
   private heatSrc = new Set<number>();
   private heatSecs = 0; private heatFMax = 0;
+  private smokeBy = new Map<number, number>();      // (b3-11) 건물 → Σ c × base_p
+  private smokeSecs = 0;
+  private levelSamples = 0; private levelSeen = new Set<number>();      // (b3-12)
   constructor(sim: Sim) { this.sim = sim; }
   tick(): void {
-    if (this.sim.tick % 5 === 1) this.sampleHeat();      // 초과 위험의 1초 블록과 같은 틱 (tickWorld)
+    if (this.sim.tick % 5 === 1) { this.sampleHeat(); this.sampleSmoke(); }      // 초과 위험의 1초 블록과 같은 틱 (tickWorld)
     const tr = this.sim.traffic as { driftAt?: number };
     if (tr.driftAt === undefined || tr.driftAt === this.seenDrift) return;
     this.seenDrift = tr.driftAt;
@@ -100,6 +116,18 @@ export class HazProbe {
       const np = roadParts(sim, id, this.buf);
       for (let k = 0; k < np; k++) { const p = this.buf[k]; r.byWhat[p.what] = (r.byWhat[p.what] ?? 0) + p.x * w; if (p.ev < 0) r.unledgered += p.x * w; }
     }
+    // (b3-12) 'level' 장부가 걸린 구간 (닫혔든 열렸든 — 장부만 센다)
+    const lv = tr.levelEv;
+    for (let id = 0; id < lv.length; id++) if (lv[id] >= 0) { this.levelSamples++; this.levelSeen.add(id); }
+  }
+  /** (b3-11) 연기 — L4 의 smokeExposure 를 그대로 부른다(읽기만 한다), dt = 1 */
+  protected sampleSmoke(): void {
+    const sp = this.sim.world.spans;
+    let any = false;
+    for (let k = 0; k < sp.length; k++) if (sp[k].f === 'smoke') { any = true; break; }
+    if (!any) return;
+    this.smokeSecs++;
+    smokeExposure(this.sim, (target, c, base) => { this.smokeBy.set(target, (this.smokeBy.get(target) ?? 0) + c * base); });
   }
   /** 열 — L2 의 heatTargets 를 그대로 부른다(읽기만 한다), dt = 1 */
   protected sampleHeat(): void {
@@ -151,16 +179,36 @@ export class HazProbe {
     for (const c of Object.values(hz.cells.liftStall ?? {})) { power.liftCells++; power.liftH += c.H; if (c.done) power.liftCrossed++; }
     for (const I of sim.incidents) for (const p of I.problems) if (p.code === 'INFRA_FAIL') power.infra++;
     for (const Z of sim.world.zones) if (Z.power < 1) power.darkEnd++;
-    return { laws, holes: hz.holes, road: this.road.drifts ? this.road : null, heat, shock, ember, power };
+    // (b3-11) 연기와 연기를 마신 주민
+    let sx = 0; for (const v of this.smokeBy.values()) sx += v;
+    const smoke: HazSmoke = { alerts: 0, secs: this.smokeSecs, exposure: sx, targets: this.smokeBy.size, cells: 0, crossed: 0, made: laws.smokeIll ? laws.smokeIll.made : 0,
+      spansEnd: sim.world.spans.filter((q) => q.f === 'smoke').length, rowsEnd: sim.traffic.bumps.filter((b) => b.what === 2).length };
+    for (const e of sim.events) if (e.tag === 'smoke') smoke.alerts++;
+    for (const c of Object.values(hz.cells.smokeIll ?? {})) { smoke.cells++; smoke.crossed += c.n + (c.done ? 1 : 0); }
+    // (b3-12) 잠긴 건물과 'level' 장부
+    const flood: HazFlood = { wet: 0, records: 0, sills: Object.keys(sim.world.sills).length, levelSamples: this.levelSamples, levelEdges: this.levelSeen.size };
+    for (const v of Object.values(sim.world.expo)) { if (v.wet) flood.wet++; if (v.wetEv >= 0) flood.records++; }
+    return { laws, holes: hz.holes, road: this.road.drifts ? this.road : null, heat, shock, ember, power, smoke, flood };
   }
 }
 
 export { roadSurface };      // (b3-6) 법칙 파일의 것을 그대로 내보낸다
 
-export interface HazSum { shifts: number; laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null; roadShifts: number; heat: { shifts: number; secs: number; exposure: number; targets: number; sources: number; fMax: number; top: number[] }; shock: HazShock & { shifts: number }; ember: HazEmber; power: HazPower & { shifts: number } }
+export interface HazSum { shifts: number; laws: Record<string, HazLawCount>; holes: number; road: HazRoad | null; roadShifts: number; heat: { shifts: number; secs: number; exposure: number; targets: number; sources: number; fMax: number; top: number[] }; shock: HazShock & { shifts: number }; ember: HazEmber; power: HazPower & { shifts: number }; smoke: HazSmoke & { shifts: number }; flood: HazFlood & { shifts: number } }
 export function sumHaz(list: readonly HazCount[]): HazSum {
-  const o: HazSum = { shifts: list.length, laws: {}, holes: 0, road: null, roadShifts: 0, heat: { shifts: 0, secs: 0, exposure: 0, targets: 0, sources: 0, fMax: 0, top: [] }, shock: { shifts: 0, shocked: 0, overMin: 0, pipes: 0, shut: 0, shakes: [], worn: 0, valves: 0 }, ember: { closed: 0, warm: 0, e0: [], cells: 0, crossed: 0, H: [] }, power: { shifts: 0, alerts: 0, comms: 0, liftCells: 0, liftH: 0, liftCrossed: 0, infra: 0, darkEnd: 0, spansEnd: 0 } };
+  const o: HazSum = { shifts: list.length, laws: {}, holes: 0, road: null, roadShifts: 0, heat: { shifts: 0, secs: 0, exposure: 0, targets: 0, sources: 0, fMax: 0, top: [] }, shock: { shifts: 0, shocked: 0, overMin: 0, pipes: 0, shut: 0, shakes: [], worn: 0, valves: 0 }, ember: { closed: 0, warm: 0, e0: [], cells: 0, crossed: 0, H: [] }, power: { shifts: 0, alerts: 0, comms: 0, liftCells: 0, liftH: 0, liftCrossed: 0, infra: 0, darkEnd: 0, spansEnd: 0 },
+    smoke: { shifts: 0, alerts: 0, secs: 0, exposure: 0, targets: 0, cells: 0, crossed: 0, made: 0, spansEnd: 0, rowsEnd: 0 }, flood: { shifts: 0, wet: 0, records: 0, sills: 0, levelSamples: 0, levelEdges: 0 } };
   for (const c of list) {
+    if (c.smoke) {
+      const w = o.smoke, v = c.smoke;
+      if (v.alerts) w.shifts++;
+      w.alerts += v.alerts; w.secs += v.secs; w.exposure += v.exposure; w.targets += v.targets; w.cells += v.cells; w.crossed += v.crossed; w.made += v.made; w.spansEnd += v.spansEnd; w.rowsEnd += v.rowsEnd;
+    }
+    if (c.flood) {
+      const w = o.flood, v = c.flood;
+      if (v.sills || v.levelSamples) w.shifts++;
+      w.wet += v.wet; w.records += v.records; w.sills += v.sills; w.levelSamples += v.levelSamples; w.levelEdges += v.levelEdges;
+    }
     if (c.power) {
       const w = o.power, v = c.power;
       if (v.alerts || v.comms || v.liftCells) w.shifts++;
@@ -221,6 +269,10 @@ export function hazLines(s: HazSum): string[] {
   const m = s.ember, qe = quart(m.e0), qh = quart(m.H);
   const w = s.power;
   out.push(`hazard-power: shifts with an outage ${w.shifts} · power alerts ${w.alerts} · comms alerts ${w.comms} · lift buildings darkened ${w.liftCells} (Σ impulse ${f2(w.liftH)} · crossed ${w.liftCrossed}) · INFRA_FAIL ${w.infra} · dark zones at end ${w.darkEnd} · live spans at end ${w.spansEnd}`);
+  const sm = s.smoke;
+  out.push(sm.alerts ? `hazard-smoke: exposure ${(sm.exposure / n).toExponential(3)}/shift (Σ c·base_p·dt — × RR ${ILL.RR} = expected crossings ${f2((ILL.RR * sm.exposure) / n)}/shift) · plumes ${sm.alerts} (in ${sm.shifts} shifts) · smoke-seconds ${sm.secs} · buildings exposed ${sm.targets} · smokeIll cells ${sm.cells} crossed ${sm.crossed} made ${sm.made} · live spans at end ${sm.spansEnd} · smoke bump rows at end ${sm.rowsEnd}` : 'hazard-smoke: -');
+  const fl = s.flood;
+  out.push(fl.shifts ? `hazard-flood: flood shifts ${fl.shifts} · buildings wet ${fl.wet} (${f1(fl.wet / fl.shifts)}/shift) · basement records ${fl.records} · sills ${fl.sills} · level edges ${f1(fl.levelSamples / Math.max(1, s.road ? s.road.drifts : 1))}/sample (${fl.levelEdges} distinct)` : 'hazard-flood: -');
   out.push(`hazard-ember: closed building scenes ${m.closed} · warm (e0 > 0) ${m.warm} · e0 max ${f2(qe[3])} p75 ${f2(qe[2])} p50 ${f2(qe[1])} · rekindle cells ${m.cells} · H∞ max ${f2(qh[3])} p50 ${f2(qh[1])} (K ${RESIDUAL.K} · τ ${RESIDUAL.TAU}) · crossed ${m.crossed}`);
   return out;
 }
@@ -236,6 +288,8 @@ export function hazJson(s: HazSum): Record<string, unknown> {
   const r1 = (v: number): number => Math.round(v * 10) / 10;
   return {
     shifts: s.shifts, laws: s.laws, holes: s.holes,
+    smoke: { shifts: s.smoke.shifts, alerts: s.smoke.alerts, secs: s.smoke.secs, exposurePerShift: +(s.smoke.exposure / n).toExponential(4), targets: s.smoke.targets, cells: s.smoke.cells, crossed: s.smoke.crossed, made: s.smoke.made, spansEnd: s.smoke.spansEnd, rowsEnd: s.smoke.rowsEnd },
+    flood: { shifts: s.flood.shifts, wet: s.flood.wet, records: s.flood.records, sills: s.flood.sills, levelSamples: s.flood.levelSamples, levelEdges: s.flood.levelEdges },
     power: { shifts: s.power.shifts, alerts: s.power.alerts, comms: s.power.comms, liftCells: s.power.liftCells, liftH: +s.power.liftH.toFixed(3), liftCrossed: s.power.liftCrossed, infra: s.power.infra, darkEnd: s.power.darkEnd, spansEnd: s.power.spansEnd },
     heat: { shifts: s.heat.shifts, exposurePerShift: +(s.heat.exposure / n).toFixed(2), targets: s.heat.targets, sources: s.heat.sources, secs: s.heat.secs, fMax: s.heat.fMax, top: s.heat.top.map((v) => +v.toFixed(2)) },
     ember: { closed: s.ember.closed, warm: s.ember.warm, cells: s.ember.cells, crossed: s.ember.crossed, e0Max: +quart(s.ember.e0)[3].toFixed(3), e0P50: +quart(s.ember.e0)[1].toFixed(3) },

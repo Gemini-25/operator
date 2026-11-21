@@ -24,6 +24,7 @@ import { OBSTACLE_LABEL, addObstacle, reallyLinked, tickTraffic } from '../src/s
 import { ER_PENALTY, dispatchUnit, etaFor, sendUnitTo, startTransport, tickUnits, transportWhy } from '../src/sim/resources';
 import { HOSPITAL_CAP, ZONE_DEFAULT, erLoad, hospitalOf, initWorld, knownBuildingAt, knownHospital, knownZone, knownZoneOfIncident, placeState, setZone, zoneOfPlace, zoneOfXY } from '../src/sim/world/state';
 import { findRoute } from '../src/sim/city';
+import { smokeBase } from '../src/sim/world/expo';
 import type { EventKind, Incident, Responder, Role, Signal, SimEvent, Unit, ZoneField, ZoneState } from '../src/sim/types';
 import {
   PHRASE, PROBLEM_SYS, Probe, SAMPLE_EVERY, STALL_ALLOW, STALL_SEC, SYSTEMS, causeDepths, causesDepthByIncident, checkC5, checkMetrics,
@@ -627,15 +628,17 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
     // (b3-6) 등록된 법칙 L1 — 초과 혼잡이 있던 구간에만 칸이 생긴다(평소 교대에도 정체·공사·사고의 밀림이 있다). 교대가 끝나면 기다리는 줄도 구멍도 없다
     // (b3-7) L2 — 큰 불(불 요약 10 이상) 곁의 건물에만 칸이 생긴다.
     // (b3-8) 이웃 노출(world.expo)은 충격(폭발·전체 붕괴·무너진 채 시작한 사건)이 있던 교대에만 생긴다 — 상태 규칙 shockSpread 가 흔든 건물만, 손상은 0 보다 크다
+    // (b3-11) L4 — 연기(C5)가 덮은 자리의 주거 건물(평소 응급률이 있는 종류)에만 칸이 생긴다
     expect(w0.hz.cells).toEqual({});
-    expect(Object.keys(sim.world.hz.cells).filter((k) => k !== 'roadCrash' && k !== 'heatSpread')).toEqual([]);
+    expect(Object.keys(sim.world.hz.cells).filter((k) => k !== 'roadCrash' && k !== 'heatSpread' && k !== 'smokeIll')).toEqual([]);
+    for (const id of Object.keys(sim.world.hz.cells.smokeIll ?? {})) { const q = sim.city.places[+id]; expect(q?.open, `건물 ${id}`).toBe(false); expect(smokeBase(sim, q.kind), `건물 ${id}`).toBeGreaterThan(0); }
     for (const id of Object.keys(sim.world.hz.cells.roadCrash ?? {})) expect(sim.city.edges[+id], `구간 ${id}`).toBeDefined();
     for (const id of Object.keys(sim.world.hz.cells.heatSpread ?? {})) expect(sim.city.places[+id]?.open, `건물 ${id}`).toBe(false);
     expect([sim.world.hz.waiting, sim.world.hz.holes, sim.world.sills, sim.world.spans.filter((q) => q.f !== 'smoke')]).toEqual([[], 0, {}, []]);
     for (const q of sim.world.spans) expect(sim.world.zones.some((Z) => Z.cause.smoke === q.cause), '연기 줄은 걷히지 않은 연기의 것뿐').toBe(true);
     const shook = sim.world.log.some((l) => l.rule === 'shockSpread');
     for (const [id, ex] of Object.entries(sim.world.expo)) { expect(shook, `건물 ${id} 의 노출 — 충격이 있던 교대만`).toBe(true); expect(sim.city.places[+id]?.open).toBe(false); expect(ex.shake).toBeGreaterThan(0); }
-    const LAWS = ['roadCrash', 'heatSpread'];
+    const LAWS = ['roadCrash', 'heatSpread', 'smokeIll'];
     expect(sim.world.log.every((l) => l.rule === 'hospitalLoad' || l.rule === 'rubbleRoad' || l.rule === 'shockSpread' || LAWS.indexOf(l.rule) >= 0), '기록되는 규칙은 포화·잔해·충격 손상, 법칙은 몰린 길의 사고·옮겨붙은 불뿐 (응급실 체류는 줄을 남기지 않는다)').toBe(true);
     expect(sim.world.log.every((l) => l.made === -1 || (LAWS.indexOf(l.rule) >= 0 && sim.incidents[l.made]?.csq === l.rule)), '사건을 만드는 것은 법칙뿐').toBe(true);
     expect(sim.world.signals.length).toBeLessThan(40);

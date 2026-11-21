@@ -1011,7 +1011,7 @@ export interface WorldState {
   spans: { f: ZoneField; cause: number; inc: number; bump: number; src?: ZoneSpanSrc; since?: number; tellAt?: number; told?: boolean; label?: string; next?: boolean; at?: { x: number; y: number; r: number }; v?: number; ref?: number }[];      // 정전·연기 한 건마다의 장부 — 얹은 bump 의 id (그 건이 끝날 때 한 번 거둔다)
   //   (b3-10 — 선택 칸, world/rules/infra.ts 가 만드는 줄에는 모두 있다) src = 그 건을 만든 길 · since = 시작 시각 · tellAt = 관제 알림이 나갈 시각(-1 = 나갔거나 알림 없음) · told = 관제에 알렸다(복구 기록을 남긴다) ·
   //   label = 기록 문구의 자리 말('○○동 일대' · '{건물} 주변') · next = 정전이 길어져 통신(C8)으로 넘겼다
-  //   (b3-11 — 연기 줄에만) at = 연기가 덮은 자리(원) · v = 그 자리의 세기 · ref = 불이 난 건물(-1 = 건물이 아니다 — 산불의 불머리·길 위의 불). L4 smokeIll 이 이 칸으로 대상과 농도를 잰다
+  //   (b3-11 — 연기 줄에만) at = 연기가 덮은 자리(원) · v = 그 자리의 세기 · ref = 불이 난 건물(-1 = 건물이 아니다 — 산불의 불머리·길 위의 불). L4 smokeIll 은 at 으로 대상 목록을 만들고 세기는 구역 값(Z.smoke)에서 읽는다
 }
 export interface ZoneState {
   at?: Partial<Record<ZoneField, { x: number; y: number; r: number }>>;      // 국지 값의 자리 (§3.6c — 건물 하나의 붕괴가 동네 전체를 끄지 않게)

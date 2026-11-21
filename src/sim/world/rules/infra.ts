@@ -293,6 +293,11 @@ function commsSpan(sim: Sim, cause: number, inc: number, src: ZoneSpanSrc, label
   sim.world.count[COMMS_N] = commsN(sim) + 1;
   sim.world.spans.push({ f: 'comms', cause, inc, bump: -1, src, since: sim.t, tellAt: -1, told, label, next: false });
 }
+/** 자리를 모두 빼앗긴 통신 장애 줄을 거둔다 — 더 나쁜 통신 장애가 그 동네들을 가져갔다(회복이 아니라 기록하지 않는다. 정전의 settle(false) 와 같은 자리) */
+function settleComms(sim: Sim): void {
+  const sp = sim.world.spans;
+  for (let k = 0; k < sp.length; k++) if (sp[k].f === 'comms' && !zonesOf(sim, 'comms', sp[k].cause).length) sp.splice(k--, 1);
+}
 const tellComms = (sim: Sim, causes: number[], text: string): number => emit(sim, { role: 'SYSTEM', actor: '통신사', kind: 'hazard', tag: 'comms', imp: 2, causes, text });
 
 /** (가)·(다) 이 신호가 흔드는 통신 — 방송국·관제탑의 사건이면 그 곁 동네, 지진이면 문턱을 넘은 동네. 없으면 빈 목록 */
@@ -326,6 +331,7 @@ registerConsequence({
     if (!zones.length) return;
     const label = zonesLabel(zones);
     commsSpan(sim, sig.ev, quake ? -1 : sig.inc, plan.src, label, true);
+    settleComms(sim);
     tellComms(sim, [sig.ev], `${quake ? '지진으로' : `${plan.q ? placeLabel(plan.q) : '시설'} 사고로`} ${label} 통신 장애 — 무전이 끊기는 곳이 늘었습니다.`);
   },
   // 회복: 그 건이 모든 동네에서 끝났으면 장부에서 거두고, 알려졌던 것이면 복구 기록 한 줄 (현장의 음영은 commsDown.shadow 가 다음 1초에 되돌린다)
@@ -361,6 +367,7 @@ registerConsequence({
       // (라) 태풍 정전: 모든 동네 — 알림 한 줄로 곧바로 알려진다. (나) 그 밖: 그 범위 현장의 첫 COMM_FAIL 이 나올 때 알려진다 (commsDown.shadow)
       commsSpan(sim, s.cause, s.inc, storm ? 'blackout' : 'power', storm ? '도시 곳곳' : s.label ?? zonesLabel(zones), storm);
       if (storm) tellComms(sim, [s.cause], '정전이 길어져 도시 곳곳의 통신 기지국 예비 전원이 떨어졌습니다 — 무전이 끊기는 곳이 늘었습니다.');
+      settleComms(sim);
     }
   },
 });

@@ -24,6 +24,7 @@ import { Sim } from '../src/sim/engine';
 import { BACK_HEALTH, CLOSED_CAP, DIS_FULL, EARLY_BACK_HEALTH, FRONT_SLOW, GAIN_CAP, LANE_SLOW, PLACE_CAP, PLACE_LINES, PRE_BURN, PUMP_REST, RECRUIT_NAMES, RELIEF_MAX, RELIEF_NAMES, REPLACE_AFTER, RESUPPLY, ROAD_AT, ROAD_CAP, RUSHED_PUMP, SERVICE_AT, SERVICE_CAP, SERVICE_PUMP, STOCK_CAP, WHY_NAME, absentCap, carryKey, cityKey, makeCarryover, readCarryover } from '../src/sim/persist';
 import { edgeName, findRoute } from '../src/sim/city';
 import { applyPlaceWear, placeCond, placeOutcome, placeUsable } from '../src/sim/persist';
+import { GROWN_MIN, carryEffectLine, carryLines, carryNextLine, carryParts, carrySummary, shortArrivalLine } from '../src/sim/persist';      // (단계 7) 보고서
 import { createIncident, placeGone } from '../src/sim/incidents';
 import { scenarioOf } from '../src/sim/scenarios';
 import { INCIDENT_PLACES } from '../src/sim/cityPlan';
@@ -134,6 +135,52 @@ describe('1. 같은 이어받은 상태 = 같은 해시', () => {
 
   it('끝나지 않은 교대에서는 만들지 않는다', () => {
     expect(() => makeCarryover(new Sim('P1', NORMAL, 1200))).toThrow();
+  });
+
+  it('(단계 7) 보고서: 다음 교대로 넘기는 것(carryNext)은 언제나 — makeCarryover 의 요약과 같고 요약 끝 줄이 그것을 말한다. 조직 칸(carry)은 이어받은 교대만', () => {
+    // 이어받은 상태가 없는 교대: carry 없음, carryNext = 그 교대가 만든 상태의 요약, '지난 교대의 영향' 줄 없음
+    expect(A.report!.carry).toBeUndefined();
+    expect(A.report!.carryNext).toEqual(carrySummary(co));
+    expect(A.report!.summary[A.report!.summary.length - 1]).toBe(carryNextLine(carrySummary(co)));
+    expect(A.report!.summary.some((l) => l.startsWith('지난 교대의 영향'))).toBe(false);
+    expect(carryEffectLine(A)).toBeNull();
+    expect(carryLines(A)).toEqual([]);
+    // 이어받은 교대: 조직 칸의 첫 줄은 요약 줄 그대로, 지문·교대 번호, 다음 상태의 요약
+    const rc = B.report!.carry!;
+    expect(rc.shift).toBe(co.shift);
+    expect(rc.key).toBe(carryKey(co));
+    expect(rc.lines[0]).toBe(B.events[B.carryState.event].text);
+    expect(rc.lines).toEqual(carryLines(B));
+    expect(B.report!.carryNext).toEqual(carrySummary(makeCarryover(B)));
+    const eff = carryEffectLine(B);
+    expect(B.report!.summary.indexOf(eff ?? '') >= 0).toBe(eff !== null);
+    // 결원 부대가 나간 사건 줄은 결원 도착 기록(원인 = 요약 줄)이 있을 때만, 그 사건 수로
+    const short = new Set(B.events.filter((e) => e.kind === 'arrive' && e.incidentId >= 0 && e.causes.indexOf(B.carryState.event) >= 0).map((e) => e.incidentId));
+    const line = rc.lines.find((l) => l.startsWith('결원 부대가 나간 사건'));
+    if (short.size) expect(line).toMatch(new RegExp(`^결원 부대가 나간 사건 ${short.size}건 \\(`)); else expect(line).toBeUndefined();
+    // 보고서 JSON 은 안전하다 (유한하지 않은 수·undefined 인 칸 없음 — carry 가 없는 교대는 칸 자체가 빠진다)
+    expect(unsafeAt(json(B.report!.carryNext))).toBeNull();
+    expect('carry' in json(A.report!)).toBe(false);
+  });
+
+  it('(단계 7) 요약의 몫: 결장(out > 0)·공석(−1)·정비·출입 통제(무너짐)·복구 도로 — 0 인 것은 빼고, 모두 0 이면 피해 없음. 숙련은 누적 dSkill ≥ GROWN_MIN 인 나오는 대원', () => {
+    const c = { shift: 3, absent: 2, fallen: 1, service: 1, marked: 4, closed: 2, ruin: 1, roads: 1, grown: 5 };
+    expect(carryNextLine(c)).toBe('다음 교대로 넘기는 것: 결장 예상 2명 · 공석 1자리 · 정비 1대 · 출입 통제 건물 3곳(무너짐 1) · 복구 공사 도로 1구간.');
+    expect(carryParts(c)).toBe('결장 2명 · 공석 1자리 · 정비 1대 · 출입 통제 건물 3곳(무너짐 1) · 복구 공사 도로 1구간');
+    expect(carryParts({ ...c, absent: 0, fallen: 0, ruin: 0 })).toBe('정비 1대 · 출입 통제 건물 2곳 · 복구 공사 도로 1구간');
+    const none = { shift: 2, absent: 0, fallen: 0, service: 0, marked: 3, closed: 0, ruin: 0, roads: 0, grown: 9 };
+    expect(carryNextLine(none)).toBe('다음 교대로 넘기는 피해는 없습니다.');
+    // carrySummary 는 상태에서 센다
+    const x: Carryover = json(co);
+    x.crew[0].out = 2; x.crew[1].out = -1; x.crew[1].replaceIn = 1; x.crew[2].out = 0; x.crew[2].dSkill = GROWN_MIN; x.crew[3].out = 0; x.crew[3].dSkill = GROWN_MIN / 2;
+    const sm = carrySummary(x);
+    expect(sm.absent).toBe(x.crew.filter((q) => q.out > 0).length);
+    expect(sm.fallen).toBe(x.crew.filter((q) => q.out === -1).length);
+    expect(sm.grown).toBe(x.crew.filter((q) => q.out === 0 && q.dSkill >= GROWN_MIN).length);
+    expect(sm.service).toBe(x.units.filter((u) => u.service).length);
+    expect(sm.roads).toBe(x.roads.length);
+    expect(sm.marked + sm.closed + sm.ruin).toBe(x.places.length);
+    expect(sm.shift).toBe(x.shift);
   });
 
   it('이어받은 상태로 시작한 교대의 교대 시작 문구: 가용 부대 수 = oos 가 아닌 부대 수, 대원 수 = 결장(off)이 아닌 대원 수', () => {
@@ -562,6 +609,30 @@ describe('2. 다친 대원이 다음 교대에 결장 (교대 안의 부상과 �
     checkShortArrivals(B);
     for (const n of [X, Y, Z, W]) expect(B.report!.respondersHurt.some((h) => h.name === n)).toBe(false);
     expect(B.events.some((e) => e.actor === '진압1' && e.text.includes(`${X} 대원이 결장합니다`) && e.text.includes('1교대 남음'))).toBe(true);
+  });
+
+  it('(단계 7) 보고서: 명부(H1 roster)의 결장자 out 은 이어받을 상태의 값, 다음 교대 결장 예상 = 그 상태의 결장 수, 결원 도착이 있으면 조직 칸에 그 사건 수', () => {
+    const rep = B.report!;
+    for (const n of [X, Y, Z, W]) {
+      const row = rep.roster!.find((q) => q.name === n)!;
+      expect(row.out, n).toBe(entryOf(co2, n).out);
+    }
+    expect(rep.roster!.find((q) => q.name === Y)!.out).toBe(2);
+    expect(rep.carryNext).toEqual(carrySummary(co2));
+    expect(rep.carryNext!.absent).toBe(co2.crew.filter((c) => c.out > 0).length);
+    const nShort = checkShortArrivals(B);
+    const line = rep.carry!.lines.find((l) => l.startsWith('결원 부대가 나간 사건'));
+    if (nShort > 0) expect(line).toBeDefined(); else expect(line).toBeUndefined();
+    // (선택) 사건 분석 문장: 첫 도착이 결원 도착인 사건에만 — n = 그 부대에서 나온 내리는 대원
+    for (const I of B.incidents) {
+      const first = B.events.find((e) => e.incidentId === I.id && e.kind === 'arrive');
+      const got = shortArrivalLine(B, I);
+      if (!first || first.causes.indexOf(B.carryState.event) < 0) { expect(got).toBeNull(); continue; }
+      const u = unitOf(B, first.actor), n = fieldCrew(B, u).filter((rid) => B.responders[rid].status !== 'off').length;
+      expect(got).toBe(`첫 출동 부대(${u.callsign})는 지난 교대의 결장으로 ${n}명만 출동했습니다.`);
+      if (I.result!.delayed && I.result!.responseTime >= 0) expect(I.result!.analysis).toContain(got);
+      else expect(I.result!.analysis.indexOf(got!)).toBe(-1);
+    }
   });
 });
 

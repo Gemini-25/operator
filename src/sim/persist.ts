@@ -16,7 +16,8 @@
 // 단계 5 (건물): placesNext(끝 상태 → 다음 교대 — placeOutcome 의 X6 줄·화재 소실률·붕괴 잔해(2차 붕괴 detail)·폭발·열린 터, 휴식, 상한) ·
 //   initCarry 의 겹침 표(applyPlaceCarry — 적용 목록 'place') · placeUsable·placeCond(잎 모듈 placeUse.ts — 여기서도 export) · applyPlaceWear(처음부터 탄 칸) ·
 //   noteWearIncident · announceCarry 의 건물 줄('외 n곳' 묶음)과 건물 앞 감속의 장부.
-// 뒤 단계가 채운다: 7 보고서(carrySummary·carryLines).
+// 단계 7 (보고서): carrySummary·carryParts·carryNextLine(다음 교대로 넘기는 것) · carryLines·carryEffectLine(지난 교대의 영향 — 결원 도착 기록과 stats) ·
+//   shortArrivalLine(선택 — 사건 분석 문장). 읽기만 한다 — debrief.buildReport·evaluate 와 화면이 부른다.
 //
 // import: types · rng · events · util · resources(함수만 — 부를 때만 쓴다. resources → sceneManager → … 순환에서 모듈 맨 위의 표를 읽지 않는다) ·
 //   crews(잎 모듈 — KITS·ROLES·STAFF·역할 식·장비) · field/injury(잎 모듈 — CAUSE_NAME·outShifts·mainCause) · difficulty(잎 모듈 — 이름표) ·
@@ -26,7 +27,7 @@
 // 브라우저 저장은 표현 계층(view/runner.ts — 단계 6)에서만 한다 — src/sim 은 저장소를 모른다 (원칙 8, 시험 9 가 글자로 본다).
 
 import { edgeName } from './city';
-import { KITS, ROLES, STAFF, dealFlashbangs, kitFor, minField, skillsOf, slotsOf, stays } from './crews';
+import { KITS, ROLES, STAFF, dealFlashbangs, fieldCrew, kitFor, minField, skillsOf, slotsOf, stays } from './crews';
 import { difficultyLabel } from './difficulty';
 import type { Sim } from './engine';
 import { emit } from './events';
@@ -39,7 +40,7 @@ import { noteRoadCause } from './traffic';
 import { placeCond, placeUsable, setPreBurnt } from './placeUse';      // (단계 5) 건물 겹침 표 읽기 — 잎 모듈 (type 만 import)
 export { placeCond, placeUsable };
 import { T } from './types';
-import type { Carryover, City, CrewCarry, Incident, InjuryCause, KitItem, PlaceCarry, RecruitBase, Responder, RoadCarry, Scene, StockId, Unit, UnitCarry, UnitKind } from './types';
+import type { CarrySummary, Carryover, City, CrewCarry, Incident, InjuryCause, KitItem, PlaceCarry, RecruitBase, Responder, RoadCarry, Scene, StockId, Unit, UnitCarry, UnitKind } from './types';
 import { TYPE_NAME, clamp, josa } from './util';
 
 // ───────────────────────── 상수 (설계서 §6.1 — 처음 값. 바꾸면 구현 메모에 적는다) ─────────────────────────
@@ -1232,4 +1233,104 @@ function crewNext(sim: Sim): CrewCarry[] {
     }
   }
   return out;
+}
+
+// ───────────────────────── 보고서·화면의 요약 (단계 7 — §5.5) ─────────────────────────
+// 모두 읽기만 한다 (상태·기록을 바꾸지 않는다 — buildReport 안과 화면에서 부른다). 문장은 기록(요약 줄·결원 도착 기록)과 상태(carryState.stats)로만 쓴다.
+/** '숙련이 오른 대원'(CarrySummary.grown)의 문턱 — 누적 숙련 dSkill. 누적이 0 보다 큰 사람은 이어갈수록 거의 모두라(단계 2 메모 4) 눈에 띄게 오른 사람만 센다 */
+export const GROWN_MIN = 0.01;
+/**
+ * 이어받은 상태의 요약 (화면의 난이도 창·보고서의 '다음 교대로 넘기는 것'). 휴식을 이미 반영한 상태라 저장된 것만 보고 말할 수 있다.
+ * absent = 다음 교대에 결장(out > 0) · fallen = 공석(out −1) · service = 정비 중인 부대 · marked·closed·ruin = 건물의 상태별 수 · roads = 복구 공사 도로 ·
+ * grown = 나오는 대원 가운데 누적 숙련이 GROWN_MIN 이상인 사람
+ */
+export function carrySummary(co: Carryover): CarrySummary {
+  let absent = 0, fallen = 0, grown = 0, service = 0, marked = 0, closed = 0, ruin = 0;
+  for (const c of co.crew) { if (c.out > 0) absent++; else if (c.out === -1) fallen++; else if (c.dSkill >= GROWN_MIN) grown++; }
+  for (const u of co.units) if (u.service) service++;
+  for (const p of co.places) { if (p.state === 'ruin') ruin++; else if (p.state === 'closed') closed++; else marked++; }
+  return { shift: co.shift, absent, fallen, service, marked, closed, ruin, roads: co.roads.length, grown };
+}
+/**
+ * 요약의 몫을 한 줄로 (0 인 것은 뺀다 — 모두 0 이면 빈 글): '결장 2명 · 공석 1자리 · 정비 1대 · 출입 통제 건물 3곳(무너짐 1) · 복구 공사 도로 1구간'.
+ * ahead = 다음 교대로 넘기는 말('결장 예상'). 흔적만 남은 건물(marked)과 숙련은 넣지 않는다 (출입을 막지 않고, 숙련은 누적이라 읽을거리가 적다)
+ */
+export function carryParts(c: CarrySummary, ahead = false): string {
+  const parts: string[] = [];
+  if (c.absent) parts.push(`${ahead ? '결장 예상' : '결장'} ${c.absent}명`);
+  if (c.fallen) parts.push(`공석 ${c.fallen}자리`);
+  if (c.service) parts.push(`정비 ${c.service}대`);
+  if (c.closed + c.ruin) parts.push(`출입 통제 건물 ${c.closed + c.ruin}곳${c.ruin ? `(무너짐 ${c.ruin})` : ''}`);
+  if (c.roads) parts.push(`복구 공사 도로 ${c.roads}구간`);
+  return parts.join(' · ');
+}
+/** 보고서 요약의 '다음 교대로 넘기는 것' 한 줄 */
+export function carryNextLine(c: CarrySummary): string {
+  const p = carryParts(c, true);
+  return p ? `다음 교대로 넘기는 것: ${p}.` : '다음 교대로 넘기는 피해는 없습니다.';
+}
+/** 결원 도착 기록(sceneManager.unitArrived — 결장 대원이 있는 부대의 도착 기록은 원인이 요약 줄이다)으로 센 사건(번호 순)과 호출부호(처음 나온 순) */
+function shortRuns(sim: Sim): { inc: number[]; calls: string[] } {
+  const cs = sim.carryState, inc: number[] = [], calls: string[] = [];
+  if (!cs.on || cs.event < 0) return { inc, calls };
+  for (let i = cs.event + 1; i < sim.events.length; i++) {
+    const e = sim.events[i];
+    if (e.kind !== 'arrive' || e.incidentId < 0 || e.causes.indexOf(cs.event) < 0) continue;
+    if (inc.indexOf(e.incidentId) < 0) inc.push(e.incidentId);
+    if (calls.indexOf(e.actor) < 0) calls.push(e.actor);
+  }
+  inc.sort((a, b) => a - b);
+  return { inc, calls };
+}
+/** 지난 교대의 영향 (§5.5 의 2~3 — 0 인 것은 뺀다): 보고서 줄(long)과 요약의 짧은 말(short) */
+function carryEffects(sim: Sim): { long: string; short: string }[] {
+  const st = sim.carryState.stats, out: { long: string; short: string }[] = [];
+  const sr = shortRuns(sim);
+  if (sr.inc.length) {
+    const calls = sr.calls.length > 6 ? `${sr.calls.slice(0, 6).join('·')} 외 ${sr.calls.length - 6}대` : sr.calls.join('·');
+    out.push({ long: `결원 부대가 나간 사건 ${sr.inc.length}건 (${calls}).`, short: `결원 출동 사건 ${sr.inc.length}건` });
+  }
+  if (st.relief) out.push({ long: `본부 예비 인력 ${st.relief}명이 결원 부대에 탔습니다.`, short: `예비 인력 ${st.relief}명` });
+  if (st.serviced) out.push({ long: `정비를 마친 부대 ${st.serviced}대가 교대 중에 운용에 들어갔습니다.`, short: `정비 마친 부대 ${st.serviced}대` });
+  if (st.reopened) out.push({ long: `복구 공사가 끝난 도로 ${st.reopened}구간이 교대 중에 열렸습니다.`, short: `개통한 복구 도로 ${st.reopened}구간` });
+  if (st.markedInc.length) {
+    const codes = st.markedInc.length > 6 ? `${st.markedInc.slice(0, 6).join(', ')} 외 ${st.markedInc.length - 6}건` : st.markedInc.join(', ');
+    out.push({ long: `지난 교대에 손상된 건물에서 사건 ${st.markedInc.length}건 (${codes}).`, short: `손상된 건물의 사건 ${st.markedInc.length}건` });
+  }
+  if (st.fbShort) out.push({ long: `섬광탄 재고 부족으로 ${st.fbShort}개 덜 지급했습니다.`, short: `섬광탄 ${st.fbShort}개 덜 지급` });
+  return out;
+}
+/**
+ * 보고서의 '조직' 칸 (ShiftReport.carry.lines — 이어받은 상태로 시작한 교대만): 요약 줄과 같은 문장 · 결원 부대가 나간 사건 · 예비 인력 · 정비를 마친 부대 ·
+ * 열린 복구 도로 · 손상된 건물의 사건 · 섬광탄 부족 (0 인 줄은 뺀다). 기록과 상태에서만 쓴다
+ */
+export function carryLines(sim: Sim): string[] {
+  const cs = sim.carryState;
+  if (!cs.on || cs.event < 0 || !sim.events[cs.event]) return [];
+  return [sim.events[cs.event].text, ...carryEffects(sim).map((x) => x.long)];
+}
+/** 보고서 요약의 '지난 교대의 영향' 한 줄 (영향 가운데 앞의 둘 — 하나도 없거나 이어받은 상태가 없으면 null) */
+export function carryEffectLine(sim: Sim): string | null {
+  if (!sim.carryState.on) return null;
+  const ef = carryEffects(sim);
+  return ef.length ? `지난 교대의 영향: ${ef.slice(0, 2).map((x) => x.short).join(' · ')}.` : null;
+}
+/**
+ * (선택 — §5.5) 사건 분석 문장: 그 사건의 첫 도착 기록이 결원 도착 기록(원인이 요약 줄)이면 '첫 출동 부대(호출부호)는 지난 교대의 결장으로 n명만 출동했습니다.'
+ * n = 그 부대에서 나온(off 가 아닌) 내리는 대원 수(crews.fieldCrew — crewReady 와 같은 단위) — 결장(off)은 교대 내내 바뀌지 않는다. 부르는 쪽(evaluate)이 대응 지연인 사건에만 부른다
+ */
+export function shortArrivalLine(sim: Sim, I: Incident): string | null {
+  const cs = sim.carryState;
+  if (!cs.on || cs.event < 0) return null;
+  for (let i = cs.event + 1; i < sim.events.length; i++) {
+    const e = sim.events[i];
+    if (e.incidentId !== I.id || e.kind !== 'arrive') continue;
+    if (e.causes.indexOf(cs.event) < 0) return null;                         // 첫 도착이 결원 도착이 아니다
+    const u = sim.units.find((x) => x.callsign === e.actor);
+    if (!u) return null;
+    let n = 0;
+    for (const rid of fieldCrew(sim, u)) if (sim.responders[rid].status !== 'off') n++;
+    return `첫 출동 부대(${u.callsign})는 지난 교대의 결장으로 ${n}명만 출동했습니다.`;
+  }
+  return null;
 }

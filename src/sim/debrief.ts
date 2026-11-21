@@ -19,6 +19,7 @@ import { chainLines, worldReport } from './world/report';      // (I1-b b4 §3.9
 import type { Sim } from './engine';
 import type { Incident, IncidentResult, InjuryCause, Outcome, Problem, ProblemCode, RosterOut, ShiftReport } from './types';
 import { TYPE_NAME, fmtSec, josa, pct } from './util';
+import { carryEffectLine, carryKey, carryLines, carryNextLine, carrySummary, makeCarryover, shortArrivalLine } from './persist';      // (I2 단계 7) 이어받은 상태의 보고서 — 읽기만 한다 (makeCarryover 는 순수)
 
 export const PROBLEM_LABEL: Record<ProblemCode, string> = {
   DANGER_SIGN: '위험 조짐', WITHDRAWAL: '전원 철수', STRUCT_COLLAPSE: '구조물 붕괴', EXPLOSION: '폭발', BURNOUT: '건물 전소',      // (X6) 이름표만 — order 의 자리와 문장 틀은 단계 7
@@ -141,6 +142,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   else if (responseTime >= 0) A.push(`신고 접수 ${fmtSec(dispatchTime)} 만에 첫 출동 지령이 내려졌고, ${fmtSec(responseTime)} 만에 첫 부대가 도착했습니다${responseTime > limit ? ` (기준 ${fmtSec(limit)} 초과)` : ''}.`);
   // 헬기만 왔던 사건: 상공 도착은 현장 도착(대응 시간)에 넣지 않는다 — 지상 대원이 내린 적이 없으면 그렇게 적는다
   else if ((s.airAt ?? -1) >= 0 && I.reportedAt >= 0) A.push(`헬기가 신고 접수 ${fmtSec(Math.max(0, s.airAt! - I.reportedAt))} 만에 현장 상공에 도착했지만, 지상 부대는 현장에 닿지 못했습니다.`);
+  // (I2 단계 7 — 선택 §5.5) 대응이 늦은 사건의 첫 도착이 결원 도착 기록이면: 지난 교대의 결장으로 적은 인원이 나갔다 (이어받은 상태가 없으면 null)
+  if (delayed && responseTime >= 0) { const line = shortArrivalLine(sim, I); if (line) A.push(line); }
   if (wrongNotes.length && firstCall) A.push(`최초 신고자(${personaName(firstCall.caller.persona)})의 정보가 실제와 달랐습니다: ${wrongNotes.slice(0, 2).join('; ')}.`);
   // 순직은 맨 앞에 둔다: 분석 문장이 9줄에서 잘려도 빠지지 않는다 (H1 §3.8)
   const order: ProblemCode[] = ['RESPONDER_KILLED', 'CALL_QUEUE', 'CALL_VAGUE', 'MISJUDGE_TYPE', 'UNDERESTIMATE', 'OVERESTIMATE', 'NO_UNIT', 'DIVERTED', 'ROUTE_BLOCKED', 'TRAFFIC_DELAY', 'SCENE_MISMATCH', 'UNDER_DISPATCH', 'BACKUP_LATE',
@@ -315,11 +318,16 @@ export function buildReport(sim: Sim): ShiftReport {
     const r = sim.responders[e.rid];
     killedList.push({ name: r.name, callsign: sim.units[r.unitId].callsign, cause: r.deathCause ?? mainCause(r.injuries), incident: e.incidentId >= 0 ? sim.incidents[e.incidentId].code : '' });
   }
-  // 교대 끝의 명부 (I2 가 다음 교대의 입력을 만들 때 읽는다 — 인근 도시 지원 대원은 뺀다)
+  // (I2 단계 7) 다음 교대가 이어받을 상태 — 끝난 교대에서만 (makeCarryover 는 순수: 이 교대의 상태·기록을 바꾸지 않는다. 마지막 기록·해시 전이라 from.hash 는 빈 채)
+  const next = sim.ended ? makeCarryover(sim) : null;
+  const nextOut = new Map<string, number>();
+  if (next) for (const c of next.crew) nextOut.set(c.seat ?? c.name, c.out);
+  // 교대 끝의 명부 (I2 가 다음 교대의 입력을 만들 때 읽는다 — 인근 도시 지원 대원은 뺀다). 결장(off)인 대원의 out 은 이어받을 상태의 값 (I2 단계 7 — outShifts 는 결장자에게 0)
   const roster: RosterOut[] = [];
   for (const r of sim.responders) {
     if (sim.units[r.unitId].aid) continue;
-    roster.push({ rid: r.id, name: r.name, health: r.dead ? 0 : r.health, band: r.dead ? 3 : Math.min(2, bandOf(r.health)), dead: r.dead === true, hospital: r.care !== undefined, out: outShifts(r), cause: r.dead ? r.deathCause ?? mainCause(r.injuries) : mainCause(r.injuries) });
+    const out = r.status === 'off' ? nextOut.get(r.seat ?? r.name) ?? r.carryOut ?? 0 : outShifts(r);
+    roster.push({ rid: r.id, name: r.name, health: r.dead ? 0 : r.health, band: r.dead ? 3 : Math.min(2, bandOf(r.health)), dead: r.dead === true, hospital: r.care !== undefined, out, cause: r.dead ? r.deathCause ?? mainCause(r.injuries) : mainCause(r.injuries) });
   }
   // 용의자 피해와 숨진 구조 대상의 원인 (사건 판정에 적힌 값의 합)
   let susHurt = 0, susDead = 0;
@@ -374,6 +382,11 @@ export function buildReport(sim: Sim): ShiftReport {
   if (air.grounded === 'fog') summary.push('안개로 헬기가 뜨지 못했습니다.');
   else if (air.grounded === 'night') summary.push('밤이라 의료 헬기는 뜨지 못했습니다.');
   else if (air.grounded === 'storm') summary.push('태풍의 강풍으로 헬기가 한동안 뜨지 못했습니다.');
+  // (I2 단계 7 §5.5) 조직: 이어받은 상태로 시작한 교대면 지난 교대의 영향(앞의 둘), 그리고 언제나 다음 교대로 넘기는 것 — 기록·상태에서만
+  const carryNext = next ? carrySummary(next) : undefined;
+  { const line = carryEffectLine(sim); if (line) summary.push(line); }
+  if (carryNext) summary.push(carryNextLine(carryNext));
+  const carry = sim.carryState.on && sim.carry ? { shift: sim.carry.shift, key: carryKey(sim.carry), lines: carryLines(sim) } : undefined;
   return {
     traffic: tf, air,
     major: sim.incidents.filter((I) => I.tag === 'major').length, disaster: disasterSummary(sim),
@@ -385,6 +398,7 @@ export function buildReport(sim: Sim): ShiftReport {
     respondersKilled: killedList, suspectsHurt: susHurt, suspectsDead: susDead, roster,      // (H1)
     world,      // (I1-b b4) 세계 상태의 숫자와 줄
     catastrophe: cat, placeMarks: sim.placeMarks.size ? Array.from(sim.placeMarks.values()).map((m) => ({ ...m })) : undefined,      // (X6) 건물 상태는 이 교대의 자료 — 이어받는 것은 I2
+    carry, carryNext,      // (I2 단계 7) 이어받은 상태와 그 영향(이어받은 교대만) · 다음 교대로 넘기는 것 (해시에는 들지 않는다)
     hash: sim.logHash.toString(16),
   };
 }

@@ -350,6 +350,12 @@ describe('요약 모양', () => {
     const g = checkMetrics(bad, { baseline: false });
     expect(g.some((x) => x.startsWith('교착 후보') || x.startsWith('잊힌 사건'))).toBe(false);
     expect(g.length).toBe(4);
+    // (I1-b b5) 조인 관문의 경계: 깊이 3 · 한 교대 6건까지는 통과, 4 · 7 은 걸린다
+    const edge: MetricsSummary = JSON.parse(JSON.stringify(base));
+    edge.chain.maxParentDepth = 3; edge.chain.maxChainedInShift = 6;
+    expect(checkMetrics(edge, { baseline: true })).toEqual([]);
+    edge.chain.maxParentDepth = 4; edge.chain.maxChainedInShift = 7;
+    expect(checkMetrics(edge, { baseline: true }).sort()).toEqual(['연쇄 깊이 4 > 3', '한 교대의 연쇄 사건 7건 > 6']);
     // C5 도 관문이다 (R1 단계 3 부터): 출발 기록의 병원과 인계한 병원이 다르면 실패
     bad.consistency.C5 = 3;
     expect(checkMetrics(bad, { baseline: false }).some((x) => x.startsWith('기록·상태 불일치 C5 3건'))).toBe(true);
@@ -1601,4 +1607,47 @@ describe('I1-b b4: 교대 중에 보이는 표시 — 읽기만 한다 (§7)', (
       for (const w of ['expoOf(', 'hazardImpulse(', 'setZone(', 'setZoneArea(', 'endZoneBy(', 'applyExpo(', 'noteRoadCause(', 'addBump(']) expect(src.includes(w), `${f} 에 ${w}`).toBe(false);
     }
   });
+});
+
+describe('I1-b b5: 완료 조건의 정해진 시드 (§5 · §6 I1-b 8)', () => {
+  /** 확산 길(distinct ≥ 3) 위의 사건들 */
+  function spreadThrough(sim: Sim): { I: Incident; path: number[]; incs: Incident[] }[] {
+    const sys = sim.events.map(sysOf), sp = spreadByIncident(sim.events, sys, sim.incidents.length), out: { I: Incident; path: number[]; incs: Incident[] }[] = [];
+    for (const I of sim.incidents) {
+      const b = sp.inc[I.id];
+      if (b.distinct < 3) continue;
+      const path = spreadPath(sim.events, sys, sp.graph, b.start);
+      const incs: Incident[] = [];
+      for (const id of path) { const k = sim.events[id].incidentId; if (k >= 0 && !incs.includes(sim.incidents[k])) incs.push(sim.incidents[k]); }
+      out.push({ I, path, incs });
+    }
+    return out;
+  }
+  it('3단계 사례: 한 사건에서 서로 다른 사건·시스템으로 세 단계 넘게 퍼진 길이 법칙 사건을 지난다 — 보통 S33(가스 폭발 → 옆 건물로 옮겨붙은 불 → 그 불의 연기 → 연기를 마신 주민) · 보통 S26(화재 → 연기 → 연기 덮인 길의 사고 → 그 사고에 밀린 길의 사고)', () => {
+    const want: [string, string[]][] = [['S33', ['heatSpread', 'smokeIll']], ['S26', ['roadCrash']]];
+    for (const [seed, laws] of want) {
+      const sim = probedShift(seed).sim;
+      const hits = spreadThrough(sim).filter((x) => x.incs.some((J) => J !== x.I && J.hz !== undefined));
+      expect(hits.length, `${seed} 의 법칙을 지나는 확산 길`).toBeGreaterThanOrEqual(1);
+      const h = hits[0], viaLaws = h.incs.filter((J) => J.hz !== undefined).map((J) => J.hz!.law);
+      for (const l of laws) expect(viaLaws, seed).toContain(l);
+      // 길 위의 법칙 사건마다 그 사건의 발생 기록이 앞 단계의 기록을 원인으로 가리킨다 (스크립트가 아니라 상태의 몫으로 이은 원인)
+      for (const J of h.incs) if (J.hz) { const root = sim.events[J.rootEvent]; expect(root.causes.length, `${seed} #${J.code}`).toBeGreaterThan(0); expect(root.causes).toContain(J.cause); }
+      // 사슬 문장이 그 길을 말한다 — 법칙 사건의 내력 문장에 앞 사건의 코드가 있다
+      for (const J of h.incs) if (J.hz && J.hz.src[0].inc >= 0) expect(chainLines(sim, J)[0].text).toContain(`사건 ${sim.incidents[J.hz.src[0].inc].code}`);
+    }
+  }, 120000);
+  it('법칙 사건의 통제를 만난 다른 사건의 부대 (완료 조건 2): ROUTE_BLOCKED 의 원인이 그 법칙 사건의 통제 기록이다 — 극한 S3·S4', () => {
+    let n = 0;
+    for (const seed of ['S3', 'S4']) {
+      const sim = probedShift(seed, parseDifficulty('extreme')!).sim;
+      const lawBlock = new Map<number, Incident>();
+      for (const J of sim.incidents) if (J.hz && J.blockEv !== undefined) lawBlock.set(J.blockEv, J);
+      for (const e of sim.events) {
+        if (e.problem !== 'ROUTE_BLOCKED') continue;
+        for (const c of e.causes) { const J = lawBlock.get(c); if (J && e.incidentId !== J.id) { n++; expect(sim.events[c].text, `${seed}`).toMatch(/통제|막/); } }
+      }
+    }
+    expect(n).toBeGreaterThanOrEqual(1);
+  }, 120000);
 });

@@ -5,7 +5,7 @@
 import type { Sim } from '../engine';
 import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
-import type { Fact, FieldAgent, Hostile, Incident, KitId, MateBelief, Prop, Scene, Task, TaskKind, WorkItem } from '../types';
+import type { AniBelief, Animal, Fact, FieldAgent, Hostile, Incident, KitId, MateBelief, Prop, Scene, Task, TaskKind, WorkItem } from '../types';
 import { clamp, dist, josa, pct } from '../util';
 import { hasKit, kitRng, kitUses, kitWorks, medLevelOf, refillAir, seatsOf, seatsUsed, toolUse, useKit } from '../crews';
 import { RETRY_AFTER, agentCost, casFact, debrisText, detectRadius, exitName, fitFor, flushOutbox, hazCount, hosFact, learn, learnQuiet, mateFact, mateStatus, perceive, regionNameAt, resp, staminaF, targetInHaz, visionOf, workLabel } from './agents';
@@ -25,6 +25,8 @@ export function makeTask(kind: TaskKind, label: string, w: WorkItem | null = nul
     method: undefined, mwhy: undefined, missing: undefined, tried: undefined, entryDoor: undefined, mtry: undefined, mbad: undefined, mt0: undefined, marr: undefined, mcands: undefined,      // (R2) 대응 방법 — 쓰는 것은 단계 1a 부터 (모든 임무가 같은 모양)
     startedAt: 0, selfAssigned: false, thorough: w ? w.thorough : false, wait: 0, sub: null, fails: 0, label, repathAt: 0,
     docRule: undefined, gateAt: -1, gateId: undefined, gateSaid: false, cvX: undefined, cvY: undefined, cvTx: undefined, cvTy: undefined, cvLost: -1,      // (R3) 교본 줄·판단 지점·엄폐 자리 — 쓰는 것은 단계 2 부터 (모든 임무가 같은 모양)
+    animal: w ? w.animal ?? -1 : -1,      // (N8 단계 5) 포획할 동물
+    wake: 0,      // (N8 단계 6a) 잠든 취객 곁에서 깨우며 기다린 초
   }, TASK_SHAPE);      // (R3b N7) 숫자 칸을 만들 때부터 소수 표현으로 — 값은 그대로 (shape.ts)
 }
 
@@ -1686,6 +1688,13 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const h = s.hostiles[t.hostile];
       if (h.state === 'arrested' || h.state === 'escaped' || h.state === 'down') { learn(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)), true, true); finishTask(sim, s, a, true); return; }
       if (h.state !== 'surrendered' && h.weapon === 'gun') { finishTask(sim, s, a, false, 'unsafe'); return; }
+      // (N8 §4.4 — 단계 6a) 잠든 취객: 1.5칸까지 다가가 깨우기를 기다린다(세계 규칙 rowdyRule 이 경찰이 곁에 4초 머물면 깨운다) — 테이저·비살상탄·덮치기를 쓰지 않는다
+      if (h.asleep) {
+        const mw = moveTo(sim, s, a, h.x, h.y, 1.4);
+        if (mw === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+        if (mw === 'arrived') { a.label = '흔들어 깨우는 중'; a.fx = h.x - a.x; a.fy = h.y - a.y; t.wake = (t.wake ?? 0) + dt; a.ring = Math.min(1, (t.wake ?? 0) / 4); }
+        return;
+      }
       if (tryTaser(sim, s, a, h)) { a.label = '테이저 발사'; return; }      // 덤벼드는 상대(총이 아닌)에게 테이저 — 쏜 틱에는 움직이지 않는다
       // (R2 §4.6) 비살상탄 — 테이저 다음 · closeIn 판단 지점 앞. 선택 임무: 처음 닿은 틱과, 방법이 아직 없으면 1초마다 고를 수 있는지 본다(비살상탄을 든 대원만). 쏜 틱·조준·다가가는 틱은 여기서 끝
       if (h.state !== 'surrendered' && t.method === undefined && (t.mt0 === undefined || sim.tick % 5 === 0) && kitCount(sim, a.rid, 'beanbag') > 0) startMethod(sim, s, I, a, t, 'arrest', { cas: -1, prop: -1, hostile: h.id, region: -1, tile: -1 });
@@ -1716,7 +1725,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         h.state = 'arrested';
         learnQuiet(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)));
         const ev = fights(sim, I, h, was) ? scuffle(sim, s, I, a, h)      // 맞서던 상대: 몸싸움 끝에 (H1 단계 4c)
-          : emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${h.label} 검거 완료.` });
+          : emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: s.kind === 'disturb' ? disturbArrestText(I, s, h) : `${h.label} 검거 완료.` });      // (N8 단계 6a) 치안은 상황에 맞는 말
         if (was !== 'surrendered') recordArrest(sim, I, a, t, h, 'tackle', ev);      // (R2 §4.6) 테이저·비살상탄으로 무력화했으면 그 수단, 아니면 덮치기(방패수면 방패). 투항한 사람의 검거는 적지 않는다
         recCuff(sim, s, h, a, was === 'surrendered' ? 'surrender' : 'tackle');
         r.xpGained += 0.005;
@@ -1981,7 +1990,14 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     }
     // (N8 단계 2a) 새 임무 셋의 빈 갈래 — 실행은 그 임무를 쓰는 단계가 채운다(capture 5 · towAway 6b · persuade 7, 설계서 §4·§5.9).
     // 지금은 아무도 이 작업을 만들지 않고 fitFor 가 0 이라 닿지 않는다. 닿으면 내려놓는다 (임무를 쥔 채 제자리에 서 있지 않게)
-    case 'towAway': case 'capture': case 'persuade': {
+    // (N8 §4.3 — 단계 5) 동물 포획: 벌집(소품 — 벌 보호복을 든 대원이 1.5칸 안에서 25초, 떼어 내는 동안 반경이 4.5 로 커진다) ·
+    // 동물(t.animal — R2 방법: 마취총 6칸 안·시야선 · 올가미 1.5칸 · 몰이 뒤에서 · 포획망 잠든 대상 6초). 동물의 진실(s.animals)은 실행부만 읽는다
+    case 'capture': {
+      if (t.prop >= 0) { runHiveRemove(sim, s, I, a, t); return; }
+      runCapture(sim, s, I, a, t);
+      return;
+    }
+    case 'towAway': case 'persuade': {
       finishTask(sim, s, a, false, 'preempt');
       return;
     }
@@ -2136,11 +2152,13 @@ import { boatCost, onWater, reachOf, swimCost, swimOf } from './methods';
 import type { CostFn } from './grid';
 export const XK: ExecKit = { moveTo, finish: finishTask, drain, spray, makeTask, unblock };
 // (R2 단계 2) 문·통로의 방법: 고르기(startMethod)·속도·장비 확인·소리·폭파 진입·방법 기록 — 고르는 것은 판단부, 효과는 methodRun
+import { switchMethod } from './methodRun';
+import { dartHit } from './animals';      // (N8 단계 5) 마취 화살이 맞은 동물
 import { RAPID_HURT, blockerKitFails, blockerRate, doorNoise, extricateDoneText, extricatePrep, extricateRate, recheckOnArrive, recordArrest, recordMethod, runBeanbag, runCharge, runExtinguisher, runSniper, runSuppress, runVentFirst, searchStop, stackSpot, startMethod, tunnelSlide } from './methodRun';
 import { kitCount, roleIdOf } from './gear';
 /** (R2 §4.6) 동시 진입·방 진입을 함께 한 임무 — 그 뒤의 검거는 'breach' 로 적는다 (임무의 모양을 바꾸지 않으려 WeakSet) */
 const ENTERED = new WeakSet<Task>();
-import { METHOD, NO_SENSE, chooseMethod } from './methods';
+import { METHOD, NO_SENSE, chooseMethod, herdAllowed } from './methods';
 import type { BreachHow, MethodId } from '../types';
 
 // ── (R3) 대응 교본의 판단 지점 (field/doctrine.ts 의 docGate — 자기 모드). 판단은 교본 함수가, 효과(이동·기다림)는 이 파일이 한다 ──
@@ -2199,3 +2217,159 @@ function interiorGate(sim: Sim, s: Scene, a: FieldAgent, t: Task): 'wait' | 'go'
 import { careMark, carryHold, laneHold, runTriage, tryHandover } from './doctrineRun';
 // ── (R3 6단계) 이송·교통 통제 방법의 실행 (doctrineRun.ts — 끌기·들것·척추 고정 · 차량 차단) ──
 import { CARRY, carryDone, dragging, runCarry, runTraffic } from './doctrineRun';
+
+// ───────────────────────── (N8 §4.3 — 단계 5) 동물 포획의 실행부 ─────────────────────────
+/** 포획 실행의 상수: 벌집 떼기 25초 · 올가미 4초 · 포획망 6초 · 마취총 조준 1.5초·사거리 6·다시 쏘기 3초 · 몰이의 뒤 거리 2.5 (가축이 흥분하는 2칸 밖) */
+export const CAPTURE = { hive: 25, pole: 4, net: 6, aim: 1.5, dartR: 6, reAim: 3, herdBack: 2.5, poleAgit: 0.6 };
+/** (N8 §4.4 — 단계 6a) 치안 현장의 검거 문구 (실행부 — 진실을 읽는다): 주취자는 보호 조치(귀가 · 머리 부상이면 병원) 또는 손님을 다치게 했으면 현행범 체포 · 폭행 시비는 현행범 체포 · 날치기는 가방 회수 */
+function disturbArrestText(I: Incident, s: Scene, h: Hostile): string {
+  if (s.variant === 'snatch') return `${h.label} 검거 — 가방을 회수했습니다.`;
+  if (s.variant === 'brawl') return `${h.label} 현행범 체포.`;
+  if (I.problems.some((p) => p.code === 'ESCALATION')) return `${h.label} 현행범 체포 — 손님을 다치게 했습니다.`;
+  return s.kinds && s.kinds.headInjury ? `${h.label} 보호 조치 — 머리를 다쳐 병원 이송이 필요합니다.` : `${h.label} 보호 조치 — 귀가 조치합니다.`;
+}
+/** 마취 화살의 명중 확률 (설계서 §4.3): 0.55 + 0.3 × 숙련 − 0.04 × 거리, 0.1~0.95 */
+export function dartHitP(skill: number, d: number): number { return clamp(0.55 + 0.3 * skill - 0.04 * d, 0.1, 0.95); }
+/** 그 동물의 지금 'ani' 사실 (본 대로 — 실행부는 진실을 읽어 알린다) */
+function aniNow(sim: Sim, x: Animal, src: string, why: string): Fact {
+  const st = x.state === 'caught' ? 'caught' : x.state === 'gone' ? 'gone' : x.state === 'sedated' ? 'sedated' : 'loose';
+  return mkFact('ani', x.id, { kind: x.kind, x: Math.round(x.x), y: Math.round(x.y), state: st, via: x.via ?? undefined, lost: undefined }, src, sim.t, 1, true, why);
+}
+/** 벌집 떼어 내기 (보호복) */
+function runHiveRemove(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task): void {
+  const dt = sim.dt;
+  const r = resp(sim, a), p = s.props[t.prop];
+  if (!p || p.removed || p.skin !== 'hive') { finishTask(sim, s, a, false, 'gone'); return; }
+  if (p.live !== true) { reportDone(sim, a, mkFact('haz', p.id, { kind: 'hive', active: false, x: p.x, y: p.y, r: 3 }, r.name, sim.t, 1, true, '벌집 제거 확인')); finishTask(sim, s, a, true); return; }
+  const m = moveTo(sim, s, a, p.x, p.y, 1.5);
+  if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+  if (m !== 'arrived') return;
+  if (t.phase === 0) {
+    t.phase = 1;
+    if (s.kinds) s.kinds.hiveWide = sim.t;
+    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: '벌 보호복을 입고 벌집을 떼어 냅니다. 주변으로 벌이 퍼집니다 — 접근 금지.' });
+  }
+  t.need = CAPTURE.hive; t.progress += dt; a.ring = t.progress / t.need; a.label = '벌집 제거';
+  if (t.progress >= t.need) {
+    p.live = false;
+    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: '벌집을 떼어 내 자루에 담았습니다. 벌 쏘임 위험이 사라졌습니다.' });
+    reportDone(sim, a, mkFact('haz', p.id, { kind: 'hive', active: false, x: p.x, y: p.y, r: 3 }, r.name, sim.t, 1, true, '벌집 제거 완료'));
+    r.xpGained += 0.003;
+    finishTask(sim, s, a, true);
+  }
+}
+/** 동물 포획 (R2 방법: 마취총 · 올가미 · 몰이 · 포획망) */
+function runCapture(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task): void {
+  const dt = sim.dt;
+  const r = resp(sim, a), aid = t.animal ?? -1;
+  const x = s.animals && aid >= 0 ? s.animals[aid] : undefined;
+  if (!x) { finishTask(sim, s, a, false, 'gone'); return; }
+  if (x.state === 'caught' || x.state === 'gone') { reportDone(sim, a, aniNow(sim, x, r.name, x.state === 'caught' ? `${x.label} 포획 확인` : `${x.label} — 현장을 벗어남`)); finishTask(sim, s, a, true); return; }
+  const tg = { cas: -1, prop: -1, hostile: -1, region: -1, tile: -1, animal: aid };
+  if (t.method === undefined) {
+    if (!startMethod(sim, s, I, a, t, 'capture', tg)) { finishTask(sim, s, a, false, 'nomethod'); return; }
+    if (t.method === undefined) { finishTask(sim, s, a, false, 'nomethod'); return; }
+  }
+  const d = dist(a.x, a.y, x.x, x.y);
+  const m = t.method;
+  if (m === 'net' || (m === 'catchpole' && x.state === 'sedated')) {
+    if (x.state !== 'sedated' && m === 'net') { if (!switchMethod(sim, s, I, a, t, 'tooFar', `${josa(x.label, '이/가')} 아직 깨어 있음`)) finishTask(sim, s, a, false, 'nomethod'); return; }
+    const mv = moveTo(sim, s, a, x.x, x.y, 1.2);
+    if (mv === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+    if (mv !== 'arrived') return;
+    t.need = m === 'net' ? CAPTURE.net : CAPTURE.pole; t.progress += dt; a.ring = t.progress / t.need; a.label = METHOD[m].label;
+    if (t.progress >= t.need) captured(sim, s, I, a, t, x);
+    return;
+  }
+  if (m === 'catchpole') {
+    // 흥분한 동물은 올가미를 피한다: 접은 기억을 남기고(60초) 물러선다 — 같은 대상에 다시 고를 방법이 올가미뿐이면 그 자리에서 되풀이하지 않게 작업을 놓는다(실패 기억 25초)
+    if (d <= 3 && x.agit > CAPTURE.poleAgit) { switchMethod(sim, s, I, a, t, 'failed', `${josa(x.label, '이/가')} 흥분해 올가미를 피함`, false, { say: `${josa(x.label, '이/가')} 흥분해 올가미를 피함 — 물러서서 가라앉기를 기다립니다.` }); finishTask(sim, s, a, false, 'danger'); return; }
+    const mv = moveTo(sim, s, a, x.x, x.y, 1.4);
+    if (mv === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+    if (mv !== 'arrived') { t.progress = 0; return; }
+    t.need = CAPTURE.pole; t.progress += dt; a.ring = t.progress / t.need; a.label = METHOD.catchpole.label;
+    if (t.progress >= t.need) captured(sim, s, I, a, t, x);
+    return;
+  }
+  if (m === 'dart') {
+    if (x.state === 'sedated') { reportDone(sim, a, aniNow(sim, x, r.name, `${x.label} 마취되어 잠듦`)); finishTask(sim, s, a, true); return; }
+    // 이미 맞혔다: 잠들 때까지 사거리 안에서 지켜본다 (진행 막대가 잠드는 시각으로 찬다 — 설계된 기다림)
+    if (x.sedate > 0) {
+      if (d > CAPTURE.dartR || !los(s, a.x, a.y, x.x, x.y)) { moveTo(sim, s, a, x.x, x.y, CAPTURE.dartR - 1, true); return; }
+      a.label = '마취 대기'; a.ring = x.sedate;
+      return;
+    }
+    // 조준 시간은 t.progress 에 센다 (t.wait 는 runTask 머리의 공통 멈춤 — 거기에 쓰면 다음 틱에 깎여 조준이 끝나지 않는다)
+    if (d > CAPTURE.dartR - 0.5 || !los(s, a.x, a.y, x.x, x.y)) { const mv = moveTo(sim, s, a, x.x, x.y, CAPTURE.dartR - 1.5, true); if (mv === 'nopath') finishTask(sim, s, a, false, 'nopath'); if (t.progress > 0) t.progress = 0; return; }
+    a.fx = x.x - a.x; a.fy = x.y - a.y; a.label = METHOD.dart.label;
+    t.progress += dt; a.ring = Math.max(0, Math.min(1, t.progress / CAPTURE.aim));
+    if (t.progress < CAPTURE.aim) return;
+    t.progress = CAPTURE.aim - CAPTURE.reAim;      // 다음 조준까지 (음수에서 다시 찬다)
+    // 다음 방법이 없으면(포획 작업은 WORK_MODE 'refuse') switchMethod 가 방법을 그대로 두고 거짓을 돌려준다 — 그 자리에서 작업을 놓는다 (놓지 않으면 같은 고장을 틱마다 다시 셌다)
+    if (!kitWorks(sim, a.rid, 'dart', I)) { if (!switchMethod(sim, s, I, a, t, 'broken', '마취총 고장')) finishTask(sim, s, a, false, 'nomethod'); return; }
+    if (kitUses(sim, a.rid, 'dart') <= 0) { if (!switchMethod(sim, s, I, a, t, 'failed', '마취 화살이 떨어짐')) finishTask(sim, s, a, false, 'nomethod'); return; }
+    useKit(sim, a.rid, 'dart');
+    const p = dartHitP(r.skill, d);
+    if (kitRng(sim, s).chance(p)) {
+      dartHit(sim, x, kitRng(sim, s));
+      emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `마취총 명중 — ${josa(x.label, '이/가')} 곧 잠듭니다. 거리를 두고 기다립니다.` });
+    } else {
+      t.mtry = (t.mtry ?? 0) + 1;
+      emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `마취총이 빗나갔습니다 (남은 화살 ${kitUses(sim, a.rid, 'dart')}).` });
+    }
+    return;
+  }
+  // 몰이: 대상 뒤(우리·산 출구의 반대쪽 2.2칸)에 선다 — 동물은 가장 가까운 사람에게서 멀어지는 쪽으로 간다. 함께 모는 동료는 좌우로 비킨다
+  if (m === 'herd') {
+    if (x.state === 'sedated') { finishTask(sim, s, a, true); return; }
+    // 맨손 몰이는 포획 장비를 든 대원이 없을 때의 대신이다: 포획팀이 닿았으면(가축이 아니면) 손을 떼고 넘긴다 — 쥔 채 있으면 작업의 자리(1명)를 막아 포획팀이 맡지 못했다
+    const hw = t.workId >= 0 ? s.board[t.workId] : null;
+    const ab = a.beliefs.val<AniBelief>('ani', aid);
+    if (ab && !herdAllowed(sim, s, a, ab, hw ? sim.t - hw.createdAt : 0)) { finishTask(sim, s, a, false, 'handover'); return; }
+    let gx = s.staging.x, gy = s.staging.y;
+    const pen = s.kinds && s.kinds.pen !== undefined ? s.regions[s.kinds.pen] : undefined;
+    if (pen && (x.kind === 'cow' || x.kind === 'pig')) { gx = pen.cx; gy = pen.cy; }
+    else if (s.exitKind) {
+      let bd = Infinity;
+      for (let k = 0; k < s.exits.length; k++) if (s.exitKind[k] === 'wild') { const e = s.exits[k], dd = dist(e.x, e.y, x.x, x.y); if (dd < bd) { bd = dd; gx = e.x; gy = e.y; } }
+    }
+    const vx = x.x - gx, vy = x.y - gy, n = Math.max(0.1, Math.hypot(vx, vy));
+    let side = 0;
+    for (const b of s.agents) if (b !== a && b.status === 'active' && b.task !== null && b.task.kind === 'capture' && (b.task.animal ?? -1) === aid) side++;
+    const off = side === 0 ? 0 : side % 2 ? 1.4 : -1.4;
+    const hx = Math.max(1, Math.min(s.w - 2, Math.round(x.x + (vx / n) * CAPTURE.herdBack - (vy / n) * off)));
+    const hy = Math.max(1, Math.min(s.h - 2, Math.round(x.y + (vy / n) * CAPTURE.herdBack + (vx / n) * off)));
+    // 뒤 자리가 벽·울타리·우리 안이면 가장 가까운 걸을 수 있는 칸으로 (3칸 안) — 그래도 길이 없으면 동물 곁 2.5칸까지만 다가간다(가장 가까운 사람에게서 멀어지므로 그것도 민다)
+    // (t.range = 1: 뒤 자리로 가는 길이 없었다 — t.tx 시각까지 8초 동안 곁으로만 다가간다. 한 틱에 목표 둘을 번갈아 두지 않게)
+    const hp = t.range === 1 && sim.t < t.tx ? -1 : passNear(s, hx, hy, 3);
+    let mv = hp >= 0 ? moveTo(sim, s, a, hp % s.w, (hp / s.w) | 0, 0.8) : 'nopath';
+    if (mv === 'nopath') { if (hp >= 0) { t.range = 1; t.tx = sim.t + 8; } mv = moveTo(sim, s, a, x.x, x.y, 2.5); }
+    if (mv === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+    a.label = METHOD.herd.label; t.progress += dt; a.ring = (t.progress % 20) / 20;
+    return;
+  }
+  finishTask(sim, s, a, false, 'nomethod');
+}
+/** (x, y) 에서 R 칸 안의 가장 가까운 걸을 수 있는 칸 (소품 없음) — 없으면 −1 */
+function passNear(s: Scene, x: number, y: number, R: number): number {
+  let best = -1, bd = Infinity;
+  for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+    const tx = x + dx, ty = y + dy;
+    if (tx < 1 || ty < 1 || tx > s.w - 2 || ty > s.h - 2) continue;
+    const i = ty * s.w + tx;
+    if (!staticPass(s.tiles[i]) || s.propAt[i] >= 0) continue;
+    const d = dx * dx + dy * dy;
+    if (d < bd) { bd = d; best = i; }
+  }
+  return best;
+}
+/** 잡았다 (올가미·포획망): 동물 caught · 기록 · 방법 기록 · 강제 보고 */
+function captured(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, x: Animal): void {
+  const r = resp(sim, a);
+  x.state = 'caught'; x.path = null;
+  const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 2, text: `${x.label} 포획 완료.` });
+  if (t.method !== undefined) recordMethod(sim, I, a, t, t.method, t.mwhy ?? 'usual', true, ev, { cas: -1, prop: -1, hostile: -1, region: -1, tile: -1, animal: x.id });
+  reportDone(sim, a, aniNow(sim, x, r.name, `${x.label} 포획 완료`));
+  r.xpGained += 0.003;
+  finishTask(sim, s, a, true);
+}

@@ -18,7 +18,7 @@ import type { CsqCtx } from '../src/sim/world/consequence';
 import { DIVERT_LATE_MIN, divertArrived, divertUnmet, noteDivert } from '../src/sim/world/rules/record';
 import { ER } from '../src/sim/world/rules/hospital';
 import { RUBBLE } from '../src/sim/world/rules/structure';
-import { catOf, collapseBuilding } from '../src/sim/field/catastrophe';
+import { X6_BOOM_DETAIL, catOf, collapseBuilding } from '../src/sim/field/catastrophe';
 import { makeCarryover } from '../src/sim/persist';
 import { unitArrived } from '../src/sim/field/sceneManager';
 import { OBSTACLE_LABEL, addObstacle, reallyLinked, tickTraffic } from '../src/sim/traffic';
@@ -187,7 +187,8 @@ describe('대응표가 문구를 아직 잡는다', () => {
   });
   it('T8(이송 중 목적지 변경 — I1-b C3)이 응급실 포화가 알려진 교대(보통 S3·S7)의 기록과 맞고, 그 기록의 시스템이 병원이다', () => {
     let n = 0;
-    for (const seed of ['S3', 'S7']) for (const e of probedShift(seed).sim.events) if (PHRASE.T8.test(e.text)) { n++; expect(sysOf(e)).toBe('hospital'); expect(PHRASE.T8.exec(e.text)![1]).toBe(e.actor); }
+    // (N8 단계 6a) S1 을 더했다 (표본만 넓힌다): 경찰 새 부대 셋이 편성돼 S3·S7 의 응급실 포화 뒤 목적지 변경이 없어졌다
+    for (const seed of ['S3', 'S7', 'S1']) for (const e of probedShift(seed).sim.events) if (PHRASE.T8.test(e.text)) { n++; expect(sysOf(e)).toBe('hospital'); expect(PHRASE.T8.exec(e.text)![1]).toBe(e.actor); }
     expect(n).toBeGreaterThan(0);
     // 사건이 없는 목적지 변경(다친 대원만 실은 차)은 문제 기록이 아니다 — 문구로 병원을 가린다
     const X: SimEvent[] = [];
@@ -482,7 +483,8 @@ describe('I1-b 0단계: 기록만 잇기', () => {
     // 평소 교대에서는 대개 자기 사건의 통제를 만난다(알려진 통제는 경로가 처음부터 피한다 — 사건 사이의 경우는 아래 시험이 만든다)
     let own = 0, td = 0;
     // (N8 단계 4a·4b) S0 → S5·S7: 시설 사고가 짧은 사건에 들어 S0 의 가스 누출 현장이 무너지며 남긴 건물 잔해(I1-b C2 — 장애물의 기록으로 잇는 갈래, 막은 사건의 blockedEdge 가 없다)에 부대가 되돌아섰다
-    for (const seed of ['S1', 'S3', 'S5', 'S7']) {
+    // (N8 단계 6a) S11·S12 를 더했다 (표본만 넓힌다): 경찰 새 부대 셋이 편성돼 S1·S3·S5·S7 에서 자기 사건의 통제를 만난 출동이 없어졌다
+    for (const seed of ['S1', 'S3', 'S5', 'S7', 'S11', 'S12']) {
       const { sim } = probedShift(seed);
       for (const I of sim.incidents) for (const p of I.problems) {
         if (p.code === 'ROUTE_BLOCKED') {
@@ -695,7 +697,12 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
       const I = sim.incidents[g.inc], e = sim.events[g.ev];
       expect(e.incidentId, g.kind).toBe(I.id);
       if (I.pursuit === undefined) expect([g.x, g.y], g.kind).toEqual([I.truth.x, I.truth.y]);
-      if (g.kind === 'catastrophe') expect(['EXPLOSION', 'STRUCT_COLLAPSE', 'BURNOUT']).toContain(e.problem);
+      // 폭발은 지휘관이 그 위험을 알았는가로 기록 코드가 갈린다(catastrophe.ts — 몰랐으면 HIDDEN_HAZARD). 그 경우는 X6 의 폭발 글귀(X6_BOOM_DETAIL)인 기록이어야 한다
+      // (N8 단계 6a — 경찰 새 부대 셋이 편성돼 S6 에 지휘관이 모르던 가스 폭발이 생겼다)
+      if (g.kind === 'catastrophe') {
+        if (e.problem === 'HIDDEN_HAZARD') expect(X6_BOOM_DETAIL.test(I.problems.find((q) => q.eventId === e.id)!.detail), g.kind).toBe(true);
+        else expect(['EXPLOSION', 'STRUCT_COLLAPSE', 'BURNOUT']).toContain(e.problem);
+      }
       if (g.kind === 'fled') { expect(e.problem).toBe('SUSPECT_FLED'); expect(sim.scenes[I.id]!.hostiles[g.data].weapon).toBe('gun'); }
       if (g.kind === 'fireBig') expect(g.size).toBeGreaterThanOrEqual(FIRE_BIG);
     }
@@ -989,10 +996,12 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
 
 describe('I1-b b3-1: C6 divertRecord — 전환 배정의 실제 영향', () => {
   const LATE = /^사건 (\S+): 전환 배정 뒤 첫 도착이 예정보다 약 (\d+)초 늦었습니다\.$/;
-  it('빼앗긴 사건의 첫 도착이 예정보다 얼마나 늦었는가: DIVERTED 의 ref.lost, 10초 넘으면 그 DIVERTED 를 원인으로 한 기록 (보통 S0·S3·S7·S8·S15·S17)', () => {
+  it('빼앗긴 사건의 첫 도착이 예정보다 얼마나 늦었는가: DIVERTED 의 ref.lost, 10초 넘으면 그 DIVERTED 를 원인으로 한 기록 (보통 S0·S3·S7·S8·S15·S17·S19·S21·S22)', () => {
     let hurtN = 0, lateN = 0, zeroN = 0, notHurt = 0;
     // (N8 단계 4a·4b) S15·S17 을 더했다 (표본만 넓힌다): 시설 사고가 짧은 사건에 들어 S0·S3·S7·S8 의 전환 배정 넷이 모두 10초 안에 메워졌다
-    for (const seed of ['S0', 'S3', 'S7', 'S8', 'S15', 'S17']) {
+    // (N8 단계 5) S19·S21·S22 를 더했다 (표본만 넓힌다): 동물 사건이 짧은 사건에 들어 10초 넘게 늦은 전환이 하나로 줄었다
+    // (N8 단계 6a) S35 를 더했다 (표본만 넓힌다): 경찰 새 부대 셋이 편성돼 10초 넘게 늦은 전환이 다시 하나로 줄었다
+    for (const seed of ['S0', 'S3', 'S7', 'S8', 'S15', 'S17', 'S19', 'S21', 'S22', 'S35']) {
       const { sim, probe } = probedShift(seed);
       const rows = divertAnalysis(sim.events, sim.incidents, sim.units, probe.etaLog, sim.t).rows;
       for (const J of sim.incidents) {
@@ -1225,7 +1234,8 @@ describe('I1-b b3-2: C3 hospitalLoad — 응급실 포화', () => {
   });
   it('실제 교대(보통 S3·S7): 포화 알림 → 먼 병원 이송·이송 중 목적지 변경 → 그 병원에 인계 (C5 0), 응급실 대기 기록은 앞 차의 출발 기록·그 병원의 인계 기록을 원인으로', () => {
     let fulls = 0, reroutes = 0, departs = 0, waits = 0;
-    for (const seed of ['S3', 'S7']) {
+    // (N8 단계 6a) S1 을 더했다 (표본만 넓힌다): 경찰 새 부대 셋이 편성돼 S3·S7 의 이송 중 목적지 변경이 없어졌다
+    for (const seed of ['S3', 'S7', 'S1']) {
       const { sim, m } = probedShift(seed);
       expect(m.consistency.C5, seed).toBe(0);
       const hospName = new Set(sim.city.facilities.filter((f) => f.kind === 'hospital').map((f) => f.name));
@@ -1641,9 +1651,10 @@ describe('I1-b b5: 완료 조건의 정해진 시드 (§5 · §6 I1-b 8)', () =>
     }
     return out;
   }
-  it('3단계 사례: 한 사건에서 서로 다른 사건·시스템으로 세 단계 넘게 퍼진 길이 법칙 사건을 지난다 — 보통 S293(건물 화재 → 옆 건물로 옮겨붙은 불 → 그 불의 연기 → 연기를 마신 주민) · 보통 S5(화재에서 퍼진 길이 공사 통제에 밀린 길의 사고를 지난다)', () => {
+  it('3단계 사례: 한 사건에서 서로 다른 사건·시스템으로 세 단계 넘게 퍼진 길이 법칙 사건을 지난다 — 보통 S1800(건물 화재 → 옆 건물로 옮겨붙은 불 → 그 불의 연기 → 연기를 마신 주민) · 보통 S24(퍼진 길이 몰린 길의 사고를 지난다)', () => {
     // (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 S33·S26 의 사건이 바뀌었다 — 같은 길(옮겨붙은 불 + 연기를 마신 주민 · 몰린 길의 사고)이 있는 시드로 (표본을 넓혀 찾았다: S0~S529)
-    const want: [string, string[]][] = [['S293', ['heatSpread', 'smokeIll']], ['S5', ['roadCrash']]];
+    // (N8 단계 6a) 경찰 새 부대 셋(형사·교통 경찰·경찰견)이 편성돼 S293·S5 의 길이 바뀌었다 — 같은 길이 있는 시드로 (표본을 넓혀 찾았다: 옮겨붙은 불 + 연기를 마신 주민은 S0~S999 에 없었고 그 뒤를 훑어 S1800 · 몰린 길의 사고는 S24)
+    const want: [string, string[]][] = [['S1800', ['heatSpread', 'smokeIll']], ['S24', ['roadCrash']]];
     for (const [seed, laws] of want) {
       const sim = probedShift(seed).sim;
       const hits = spreadThrough(sim).filter((x) => x.incs.some((J) => J !== x.I && J.hz !== undefined));
@@ -1658,7 +1669,7 @@ describe('I1-b b5: 완료 조건의 정해진 시드 (§5 · §6 I1-b 8)', () =>
   }, 120000);
   it('법칙 사건의 통제를 만난 다른 사건의 부대 (완료 조건 2): ROUTE_BLOCKED 의 원인이 그 법칙 사건의 통제 기록이다 — 극한 S4·S7', () => {
     let n = 0;
-    for (const seed of ['S4', 'S7']) {      // (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 극한 S3 의 사건이 바뀌었다 — 그런 부대가 있는 S7 로 (S0~S15 가운데 S7 하나)
+    for (const seed of ['S4', 'S7', 'S26']) {      // (N8 단계 6a) S26 을 더했다 — 경찰 새 부대 셋이 편성돼 S4·S7 의 그런 부대가 없어졌다 (S0~S29 가운데 S26·S28) · (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 극한 S3 의 사건이 바뀌었다 — 그런 부대가 있는 S7 로 (S0~S15 가운데 S7 하나)
       const sim = probedShift(seed, parseDifficulty('extreme')!).sim;
       const lawBlock = new Map<number, Incident>();
       for (const J of sim.incidents) if (J.hz && J.blockEv !== undefined) lawBlock.set(J.blockEv, J);

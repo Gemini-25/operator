@@ -75,4 +75,37 @@ export const KIND_CALLER: Partial<Record<IncidentType, CallerHook>> = {
       }
     },
   },
+  // (5) 동물: 거동 불가·갇힌 사람은 "못 움직인다" · 다친 사람은 체력으로. 상세는 마릿수(틀릴 수 있다 — 지휘관은 본 만큼만 믿는다), 위험은 벌 떼·달려듦
+  animal: {
+    truth: (s) => {
+      let trapped = false, injured = false;
+      for (const c of s.casualties) { if (c.dead) continue; if (c.mob === 'trapped' || c.mob === 'immobile') trapped = true; if (c.health < 85) injured = true; }
+      return { trapped, injured };
+    },
+    more: (sim, I, s, rng, kn, acc, put) => {
+      void sim;
+      if (I.truth.variant === 'hive') { if (rng.chance(kn * 0.7)) put('hazard', 'swarm', '벌이 엄청 많아요. 가까이 가면 달려들어요.', true); return; }
+      const n = s.animals ? s.animals.length : 0;
+      if (n && rng.chance(kn * 0.7)) {
+        const ok = rng.chance(acc), v = ok ? n : Math.max(1, n + (rng.chance(0.5) ? 1 : -1));
+        put('detail', { animals: v }, `${v}마리예요.`, v === n, v === n ? '' : `실제 ${n}마리인데 ${v}마리로 신고`);
+      }
+      if (n && rng.chance(kn * 0.5)) { const angry = s.animals!.some((a) => a.agit >= 0.3 || a.bull); put('hazard', angry ? 'charge' : 'calm', angry ? '사람을 보고 씩씩거려요. 달려들 것 같아요.' : '지금은 가만히 있어요.', true); }
+    },
+  },
+  // (6a) 치안: 다친 사람은 체력으로. 무기 진술 — 용의자는 늘 맨손이지만 당황한 신고자가 "뭘 휘둘러요"라고 지어낸다(정확도를 벗어나면 흉기 — 분석이 무장으로 기운다, 경계 규칙)
+  disturb: {
+    truth: (s) => {
+      let injured = false;
+      for (const c of s.casualties) { if (!c.dead && c.health < 85) injured = true; }
+      return { trapped: false, injured };
+    },
+    more: (sim, I, s, rng, kn, acc, put) => {
+      void sim; void I; void s;
+      if (rng.chance(Math.max(kn, 0.5))) {
+        const ok = rng.chance(acc);
+        put('weapon', ok ? 'none' : 'knife', ok ? '무기는 없는 것 같아요. 맨손으로 그래요.' : '뭘 휘둘러요! 칼 같은 거였어요.', ok, ok ? '' : '맨손인데 흉기를 들었다고 신고');
+      }
+    },
+  },
 };

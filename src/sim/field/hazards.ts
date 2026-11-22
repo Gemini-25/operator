@@ -408,6 +408,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
   for (const h of s.hostiles) {
     h.px = h.x; h.py = h.y;
     if (h.state === 'arrested' || h.state === 'down' || h.state === 'escaped') continue;
+    if (h.asleep) continue;      // (N8 단계 6a) 잠든 취객은 움직이지도 보지도 않는다 (깨우는 것은 rules/kinds.ts 의 rowdyRule)
     // 쓰러짐은 hurtHostile 이 다치는 그 자리에서 바로 세운다 (H1 §4.1). 이 검사는 그 길을 거치지 않은 체력 변화의 안전장치일 뿐이다
     if (h.health <= DOWN_AT && h.tDown === undefined) { settleHostile(sim, I, h, h.bleedCause ?? 'blunt'); continue; }
     if (sim.t < h.stunUntil) continue;       // 무력화된 동안에는 아무것도 못 한다
@@ -649,7 +650,7 @@ export function reoffendItem(sim: Sim, I: Incident, h: Hostile, at: number, caus
   return { at, opts, until: at + REOFFEND.WAIT, when: (sm) => !policeNear(sm, placeId) && !sm.incidents.some((J) => J.phase !== 'closed' && J.truth.placeId === placeId) };
 }
 
-function startFlee(sim: Sim, s: Scene, h: Hostile, exitK: number): void {
+export function startFlee(sim: Sim, s: Scene, h: Hostile, exitK: number): void {      // export: (N8 단계 6a) 치안의 길목 규칙(rules/kinds.ts chokeRule)이 길을 바꿀 때 부른다
   const e = s.exits[exitK];
   // (R2 §4.2a) 농성 문 잠금으로 막은 문(skin 'barricade')은 그 용의자도 지나지 못한다 — 막은 방을 나가지 않는다
   const cost = (i: number) => (staticPass(s.tiles[i]) && (s.propAt[i] < 0 || (s.props[s.propAt[i]].kind === 'door' && s.props[s.propAt[i]].skin !== 'barricade')) ? 0 : -1);

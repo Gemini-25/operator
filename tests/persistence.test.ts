@@ -224,11 +224,14 @@ describe('조직 명부의 열쇠 (rosterKeys)', () => {
     const full = new Sim('K1', { ...NORMAL, resources: 5 });
     // 규모 5 = 편성될 수 있는 모든 부대의 표준 편성 = 열쇠의 앞부분. (N8 단계 2b) 편성표 끝의 편성되지 않는 줄(minLevel 6 — 그 부대를 쓰는 단계가 내린다)은
     // 이름 칸만 차지하므로 열쇠의 뒤에 남는다 — 그 열쇠는 모두 규모 5 에 없는 부대의 것이다
-    const n5 = full.responders.length;
-    expect(full.responders.map((r) => r.name)).toEqual(keys.slice(0, n5).map((k) => k.name));
-    for (const k of keys.slice(n5)) expect(full.units.some((u) => u.callsign === k.callsign), `${k.callsign}: 편성되지 않는 줄`).toBe(false);
-    for (const k of keys.slice(0, n5)) expect(k.slot).toBeLessThan(STAFF[full.units.find((u) => u.callsign === k.callsign)!.kind].std.length);
-    for (const k of keys.slice(n5)) expect(k.slot).toBeLessThan(keys.filter((q) => q.callsign === k.callsign).length);
+    // (N8 단계 5) 동물 포획팀(minLevel 1)이 편성되지 않는 견인(minLevel 6) 줄 뒤에 있어, 편성된 대원은 열쇠의 앞부분이 아니라 같은 순서의 부분열이다 —
+    // 빠진 열쇠는 모두 편성되지 않는 줄의 것이다
+    const in5 = new Set(full.responders.map((r) => r.name));
+    const kept = keys.filter((k) => in5.has(k.name)), rest = keys.filter((k) => !in5.has(k.name));
+    expect(full.responders.map((r) => r.name)).toEqual(kept.map((k) => k.name));
+    for (const k of rest) expect(full.units.some((u) => u.callsign === k.callsign), `${k.callsign}: 편성되지 않는 줄`).toBe(false);
+    for (const k of kept) expect(k.slot).toBeLessThan(STAFF[full.units.find((u) => u.callsign === k.callsign)!.kind].std.length);
+    for (const k of rest) expect(k.slot).toBeLessThan(keys.filter((q) => q.callsign === k.callsign).length);
     for (const level of [1, 2, 3, 4]) {
       const s = new Sim('K1', { ...NORMAL, resources: level });
       let j = 0;
@@ -671,7 +674,9 @@ describe('(검토) 사건 분석의 결원 출동 문장은 실제로 모자라�
     expect(shortArrivalLine(s, I)).toBeNull();
   }, HOOK_MS);
   it('실제로 모자란 진압1(정원 4 · 결장 둘 → 예비 하나 = 3)의 첫 도착에는 그 문장이 있다 — n = 나온 내리는 대원', () => {
-    const { s, I } = firstBy('SC', '진압1');      // (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 SB 에서는 진압1 이 먼저 닿는 사건이 없어졌다 — SC 로
+    // (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 SB 에서는 진압1 이 먼저 닿는 사건이 없어졌다 — SC 로. (단계 5) 동물 사건이 들어 SC 에서도 없어졌다 — 진압1 이 먼저 닿는 첫 시드를 쓴다 (표본만 넓힌다)
+    const seed = ['SC', 'SD', 'SE', 'SF', 'SG'].find((q) => { const t = run(q, co); return t.incidents.some((J) => t.events.find((e) => e.incidentId === J.id && e.kind === 'arrive')?.actor === '진압1'); }) ?? 'SC';
+    const { s, I } = firstBy(seed, '진압1');
     const u = unitOf(s, '진압1');
     expect(crewReady(s, u)).toBeLessThan(planned(s, u));
     expect(shortArrivalLine(s, I)).toBe('첫 출동 부대(진압1)는 지난 교대의 결장으로 3명만 출동했습니다.');
@@ -1329,9 +1334,10 @@ describe('4. 끝 상태 → 다음 교대의 복구 공사 (원천: 사건·잔�
 describe('11. 재난이 닫은 도로가 넘어온다 (지진 → 균열 복구 공사)', () => {
   let A: Sim, co: Carryover, B: Sim, u0: number;
   beforeAll(() => {
-    A = new Sim('Q2', { ...NORMAL, disaster: 'quake' }, 1200); A.runToEnd();
+    // (N8 단계 6a) Q2 → Q1: 경찰 새 부대 셋이 편성돼 Q2 의 넘어오는 도로 여섯 자리(ROAD_CAP)를 건물 붕괴의 잔해 치우기(debris)가 모두 채워 균열이 넘어오지 않았다 — 균열이 넘어오는 지진 교대로 (기준은 그대로)
+    A = new Sim('Q1', { ...NORMAL, disaster: 'quake' }, 1200); A.runToEnd();
     co = makeCarryover(A);
-    B = new Sim('Q2b', NORMAL, 1200, { carry: co });
+    B = new Sim('Q1b', NORMAL, 1200, { carry: co });
     u0 = unreachable(B);
     B.step();
   }, HOOK_MS);

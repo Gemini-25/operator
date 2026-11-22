@@ -19,8 +19,8 @@ import type { IncidentType } from '../src/sim/types';
 import { TYPE_NAME } from '../src/sim/util';
 import { TYPE_COLOR, respLimitOf } from '../src/view/typeStyle';
 
-/** 등록 자리의 줄 수 [남은 일 · 사람 보류 · 소품 보류 · 판정] — 단계 4a: 시설 사고 (orders/kinds.ts · rules/kinds.ts) */
-const REG_NOW = [1, 1, 0, 1];
+/** 등록 자리의 줄 수 [남은 일 · 사람 보류 · 소품 보류 · 판정] — 단계 4a: 시설 사고 · 단계 5: 동물 (orders/kinds.ts · rules/kinds.ts) */
+const REG_NOW = [2, 2, 0, 2];
 
 describe('1 유형 자료 (incidentTypes — 단계 1)', () => {
   it('TYPE_DEFS·TYPE_ORDER·typeIdx 가 모든 유형을 덮고, 첫 여덟의 순서가 예전과 같다', () => {
@@ -189,7 +189,9 @@ import { responderLook } from '../src/view/scene/sprites';
 
 const NEW_KINDS: UnitKind[] = ['powerCrew', 'gasCrew', 'waterCrew', 'tow', 'animalCtl', 'detective', 'trafficPol', 'k9'];
 /** 편성한 새 부대 (단계마다 늘어난다: 4a 전력 · 4b 가스·수도 · 5 포획 · 6a 형사·교통·경찰견 · 6b 견인) */
-const FORMED: UnitKind[] = ['powerCrew', 'gasCrew', 'waterCrew'];
+const FORMED: UnitKind[] = ['powerCrew', 'gasCrew', 'waterCrew', 'animalCtl'];      // animalCtl: (N8 단계 5) 동물 포획팀 (minLevel 1)
+/** (N8 단계 6a) 편성 단계가 1 보다 큰 새 부대 — 그 규모부터 한 팀 (형사 2 · 교통 경찰 3 · 경찰견 3) */
+const FORMED_FROM: Partial<Record<UnitKind, number>> = { detective: 2, trafficPol: 3, k9: 3 };
 const workOf = (sim: Sim, kind: WorkKind, tg: Partial<WorkItem> = {}): WorkItem => ({
   id: 0, kind, region: -1, cas: -1, prop: -1, hostile: -1, tile: -1, mate: -1, priority: 0.8, status: 'open', assignees: [], max: 1,
   createdAt: sim.t - 60, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough: false, orderSentAt: {}, cause: -1, failedAt: {}, animal: -1, ...tg,
@@ -318,8 +320,9 @@ describe('20 새 부대 — 편성되지 않는 여덟 줄 · 표 · 관제의 �
   it('편성 단계(§5.3.7): 편성한 종류(4a 전력)는 모든 규모에 한 팀, 나머지는 어느 부대 규모에서도 편성되지 않는다(minLevel 6). 명부의 열쇠·이름은 끝에 붙어 앞 사람이 그대로다. 이름은 모두 다르다(지원 12회 뒤에도)', () => {
     for (const lv of [1, 3, 5]) {
       const sim = new Sim('N8-2B-ROSTER', { ...NORMAL, resources: lv });
-      for (const u of sim.units) if (FORMED.indexOf(u.kind) < 0) expect(NEW_KINDS.indexOf(u.kind), `규모 ${lv} ${u.callsign}`).toBe(-1);
+      for (const u of sim.units) if (FORMED.indexOf(u.kind) < 0 && !(FORMED_FROM[u.kind] !== undefined && lv >= FORMED_FROM[u.kind]!)) expect(NEW_KINDS.indexOf(u.kind), `규모 ${lv} ${u.callsign}`).toBe(-1);
       for (const k of FORMED) expect(sim.units.filter((u) => u.kind === k).length, `규모 ${lv} ${k}`).toBe(1);
+      for (const [k, from] of Object.entries(FORMED_FROM)) expect(sim.units.filter((u) => u.kind === k).length, `규모 ${lv} ${k}`).toBe(lv >= from! ? 1 : 0);
     }
     const keys = rosterKeys();
     // (N9 단계 2) 열쇠 끝에는 N9 의 새 부대 넷(편성되지 않는 줄)이 더 붙는다 — N8 의 열넷은 그 앞에 이어져 있다 (N9 의 줄은 tests/kinds2.test.ts 시험 3)
@@ -408,7 +411,9 @@ describe('20 새 부대 — 편성되지 않는 여덟 줄 · 표 · 관제의 �
     // (N9 단계 2) 표에는 N9 의 줄이 먼저 들어와 있다 — 걸리지 않는 줄이다(tests/kinds2.test.ts 시험 3)
     const N8_LABELS = ['떨어질 듯한 간판', '외벽 작업자 고립', '멈춘 놀이기구', '가축 탈출', '날치기', '수거책 잠복', '치매 노인 실종', '출산 임박', '위기자', '싱크홀'];
     // (단계 4b) 시설 사고의 이름표 셋 — 간판의 진압 수요에 사다리차·구조 수요에 로프, 싱크홀의 구조 수요에 구조대
-    expect(LABEL_BONUS.filter((r) => N8_LABELS.indexOf(r.label) >= 0).map((r) => `${r.label}|${r.key}|${r.kind ?? r.kit}|${r.bonus}`).sort()).toEqual(['떨어질 듯한 간판|rescue|rope|10', '떨어질 듯한 간판|suppression|ladder|12', '싱크홀|rescue|rescue|15']);
+    // (단계 5) 가축 탈출의 교통 수요에 교통 경찰 +8 (교통 경찰은 단계 6a 에 편성된다 — 그 전에는 걸리지 않는 줄)
+    // (단계 6a) 날치기의 수색 수요에 경찰견 +10 · 경찰 수요에 형사 +10
+    expect(LABEL_BONUS.filter((r) => N8_LABELS.indexOf(r.label) >= 0).map((r) => `${r.label}|${r.key}|${r.kind ?? r.kit}|${r.bonus}`).sort()).toEqual(['가축 탈출|traffic|trafficPol|8', '날치기|law|detective|10', '날치기|search|k9|10', '떨어질 듯한 간판|rescue|rope|10', '떨어질 듯한 간판|suppression|ladder|12', '싱크홀|rescue|rescue|15']);
     const rope = sim.units.find((u) => u.kind === 'rescue')!;
     for (const r of rope.crew) for (const it of sim.responders[r].kit!) it.faultKnown = false;
     set('water'); expect(kitBonus(sim, rope, I, 'rescue')).toBe(12); expect(kitBonus(sim, rope, I, 'law')).toBe(0);
@@ -457,6 +462,8 @@ const BENIGN_V = new Set(['false', 'prank', 'referral', 'dup']);
 const N12 = ['fire/prank', 'medical/prank', 'water/prank', 'medical/false', 'water/false', 'armed/false', 'hazmat/false'];
 /** 시설 사고 줄 (단계 4a 전선 · 4b 수도관·싱크홀·간판) */
 const UTIL_LINES = ['utility/wire', 'utility/main', 'utility/sinkhole', 'utility/sign'];
+const ANIMAL_LINES = ['animal/boar', 'animal/hive', 'animal/dogbite', 'animal/escape'];      // (단계 5)
+const DISTURB_LINES = ['disturb/rowdy', 'disturb/brawl', 'disturb/snatch'];      // (단계 6a)
 /** 강제 발생(sim.force)으로 만든 그 사건 — 그 변형의 첫 사건 (강제 발생도 시나리오의 tag 'daily' 를 받는다) */
 const forced = (sim: Sim) => (J: Inc): boolean => sim.force !== null && `${J.truth.type}/${J.truth.variant}` === sim.force && J.parent === undefined;
 /** 단계 3 에는 daily 줄이 비응급 일곱(가중 1.4 / DAILY_TOTAL 14)뿐이라 보통 교대의 짧은 사건은 0.5건쯤이다 — 시험은 차례를 늘려(SimOpts.daily) 짧은 사건이 끼게 한다 */
@@ -485,11 +492,12 @@ describe('6 짧은 사건의 재현성과 표 (단계 3)', () => {
       expect(NATURE_LIK[q.nature], `${q.nature} 는 신고자가 말하는 키가 아니다`).toBeUndefined();
       expect(q.card).toBe(false);
     }
-    expect(daily.map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...N12, ...UTIL_LINES].sort());
+    expect(daily.map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...N12, ...UTIL_LINES, ...ANIMAL_LINES, ...DISTURB_LINES].sort());
   });
   it('N8 의 새 난수 흐름 이름이 기존 흐름 이름과 겹치지 않는다 (소스의 fork 글자 — 한 이름은 한 자리에서만 만든다, 아직 쓰지 않은 이름은 아무도 쓰지 않는다)', () => {
-    const MADE = ['daily', 'verify', 'wire:', 'hole:', 'sign:'];      // 단계 3 이 만든 흐름 (짧은 사건 · 확인 질문의 답 — 통화 흐름의 하위) · 4a 전선 · 4b 싱크홀·간판 (수도관은 난수를 쓰지 않는다 — main: 은 만들지 않았다)
-    const LATER = ['main:', 'hive:', 'animal:', 'rowdy:', 'brawl:', 'snatch:', 'scam:', 'ledge:', 'perch:', 'pit:', 'ride:', 'overdose:', 'birth:', 'heat:', 'dup:', 'kit-n8', 'kinds-next:'];
+    // 단계 5: 동물마다(animal:) · 차에 받힌 동물의 운전자(animal-hit:) · 벌집(hive:) · 동물 포획 장비의 고장 추첨(kit-n8 · 지원 부대 aid-n8:)
+    const MADE = ['daily', 'verify', 'wire:', 'hole:', 'sign:', 'hive:', 'animal:', 'animal-hit:', 'kit-n8', 'aid-n8:', 'rowdy:', 'brawl:', 'snatch:'];      // 단계 6a: 치안 셋      // 단계 3 이 만든 흐름 (짧은 사건 · 확인 질문의 답 — 통화 흐름의 하위) · 4a 전선 · 4b 싱크홀·간판 (수도관은 난수를 쓰지 않는다 — main: 은 만들지 않았다)
+    const LATER = ['main:', 'scam:', 'ledge:', 'perch:', 'pit:', 'ride:', 'overdose:', 'birth:', 'heat:', 'dup:', 'kinds-next:'];
     const labels: string[] = [];
     const walk = (dir: URL): void => {
       for (const f of readdirSync(dir, { withFileTypes: true })) {
@@ -786,7 +794,7 @@ describe('3·5·9·10 시설 사고 — 끊어진 전선 (단계 4a)', () => {
 describe('18 새 유형의 자리 (단계 4a 부터)', () => {
   it('새 유형마다 TYPE_DEFS·TYPE_COLOR·INCIDENT_PLACES·한계 시간이 있고, 모든 줄에 현장 생성기가 등록돼 있다', () => {
     new Sim('N8-18');
-    for (const t of ['utility'] as IncidentType[]) {
+    for (const t of ['utility', 'animal', 'disturb'] as IncidentType[]) {
       expect(TYPE_DEFS[t].limit, t).toBeGreaterThan(0);
       expect(TYPE_COLOR[t], t).toMatch(/^#[0-9a-f]{6}$/);
       expect(Object.keys(INCIDENT_PLACES[t]).length, t).toBeGreaterThan(0);
@@ -795,6 +803,8 @@ describe('18 새 유형의 자리 (단계 4a 부터)', () => {
       for (const q of lines) expect(SCENE_BUILDERS[`${q.type}/${q.variant}`], `${q.type}/${q.variant}`).toBeTruthy();
     }
     expect(SCENARIOS.filter((q) => q.type === 'utility').map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...UTIL_LINES].sort());
+    expect(SCENARIOS.filter((q) => q.type === 'animal').map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...ANIMAL_LINES].sort());
+    expect(SCENARIOS.filter((q) => q.type === 'disturb').map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...DISTURB_LINES].sort());
   });
 });
 
@@ -903,5 +913,142 @@ describe('5·10 시설 사고 — 수도관 · 싱크홀 · 간판 (단계 4b)',
     const s = sim.scenes[J.id]!;
     expect(s.board.some((w) => w.kind === 'repair' && w.status === 'done'), '가스 복구반 없이 확인을 마친 일이 없다').toBe(false);
     expect(GAS_WAIT).toBe(120);
+  });
+});
+
+// ───────────────────────── 단계 5 (동물 — 멧돼지 · 벌집 · 개 물림 · 가축 탈출) ─────────────────────────
+import { dartHitP } from '../src/sim/field/executor';
+import { HERD_WAIT, herdAllowed } from '../src/sim/field/methods';
+
+describe('5·9·13 동물 (단계 5)', () => {
+  it('5 동물 네 시나리오는 강제 교대(S0·S1)에서 모두 닫히고 한계 시간·방치·무대응이 아니다 · 9 같은 대원에게 같은 포획 지시가 25초 안에 다시 가지 않는다', () => {
+    for (const key of ANIMAL_LINES) for (const seed of ['S0', 'S1']) {
+      const sim = new Sim(seed, NORMAL, 1200, { force: key });
+      const I = runUntilClosed(sim, forced(sim), 7000);
+      expect(I && I.phase, `${key} ${seed}`).toBe('closed');
+      expect(['timeout', 'abandoned', 'noresponse'].indexOf(I!.closeReason), `${key} ${seed}: ${I!.closeReason}`).toBe(-1);
+      // 9 되풀이 없음: "<이름>, 동물 포획 맡아라" 가 같은 대원에게 25초 안에 다시 가지 않는다
+      const last = new Map<string, number>();
+      for (const e of sim.events) {
+        if (e.incidentId !== I!.id) continue;
+        const m = /^(\S+), 동물 포획 맡아라/.exec(e.text);
+        if (!m) continue;
+        const prev = last.get(m[1]);
+        if (prev !== undefined) expect(e.t - prev, `${key} ${seed} ${m[1]}`).toBeGreaterThanOrEqual(25);
+        last.set(m[1], e.t);
+      }
+      // 13 동물은 용의자가 아니다: 용의자 목록이 비어 있고, 작업판에 협상·검거·교전이 없다
+      const s = sim.scenes[I!.id]!;
+      expect(s.hostiles.length, key).toBe(0);
+      expect(s.board.some((w) => w.kind === 'negotiate' || w.kind === 'arrest' || w.kind === 'engage'), key).toBe(false);
+      if (key !== 'animal/hive') expect((s.animals ?? []).length, key).toBeGreaterThan(0);
+    }
+  });
+  it('13 마취 화살의 명중(손 계산): 0.55 + 0.3 × 숙련 − 0.04 × 거리, 0.1~0.95', () => {
+    expect(dartHitP(0.5, 4)).toBeCloseTo(0.55 + 0.15 - 0.16, 9);
+    expect(dartHitP(1, 0)).toBeCloseTo(0.85, 9);
+    expect(dartHitP(0, 20)).toBe(0.1);
+    expect(dartHitP(2, 0)).toBe(0.95);
+  });
+  it('13 판정: 찻길로 놓친 동물(ANIMAL_LOST)마다 +1.0(많아야 2) · 산 쪽으로 쫓아내면 +0.3 · 풀린 동물·살아 있는 벌집이 남으면 위험이 남음', () => {
+    const sim = new Sim('N8-5-VERDICT', NORMAL, 1200, { force: 'animal/escape' });
+    const I = runUntilClosed(sim, (J) => forced(sim)(J) && !!sim.scenes[J.id], 400) ?? sim.incidents.find(forced(sim))!;
+    const s = sim.scenes[I.id]!;
+    const verdict = (): { open: boolean; bad: number } | null => { for (const f of VERDICT_RULES) { const r = f(sim, s, I); if (r) return r as { open: boolean; bad: number }; } return null; };
+    for (const a of s.animals!) a.state = 'caught';
+    I.problems = I.problems.filter((q) => q.code !== 'ANIMAL_LOST');
+    expect(verdict(), '모두 잡힘').toBeNull();
+    const mk = (): void => { I.problems.push({ code: 'ANIMAL_LOST', t: sim.t, eventId: -1, detail: '', recovered: false, recoveryText: '', times: undefined, ref: undefined }); };
+    mk(); expect(verdict()).toEqual({ open: false, bad: 1 });
+    mk(); mk(); expect(verdict()!.bad, '많아야 2').toBe(2);
+    I.problems = I.problems.filter((q) => q.code !== 'ANIMAL_LOST');
+    s.animals![0].state = 'gone'; s.animals![0].via = 'wild';
+    expect(verdict()!.bad).toBeCloseTo(0.3, 9);
+    s.animals![0].state = 'roam';
+    expect(verdict()!.open, '풀린 동물이 남음').toBe(true);
+  });
+  it('13 벌집은 벌 보호복을 든 대원만 맡는다(0.8) · 맨손 몰이는 가축이면 곧바로, 그 밖은 포획 장비가 현장에 없고 60초가 지난 뒤에만', () => {
+    const sim = new Sim('N8-5-HIVE', NORMAL, 1200, { force: 'animal/hive' });
+    const I = runUntilClosed(sim, (J) => forced(sim)(J) && !!sim.scenes[J.id] && sim.scenes[J.id]!.agents.length > 0, 4000)!;
+    const s = sim.scenes[I.id]!;
+    const hive = s.props.find((p) => p.skin === 'hive')!;
+    const w = workOf(sim, 'capture', { prop: hive.id });
+    for (const a of s.agents) expect(fitFor(sim, s, a, w), sim.responders[a.rid].name).toBe(hasKit(sim, a.rid, 'beeSuit') ? 0.8 : 0);
+    const a = s.agents[0];
+    const boar = { kind: 'boar' as const, x: 5, y: 5, state: 'loose' as const };
+    const savedAgents = s.agents.slice();
+    s.agents.length = 0;      // 포획 장비를 든 대원이 현장에 없다
+    expect(herdAllowed(sim, s, a, boar, HERD_WAIT - 1), '60초 전').toBe(false);
+    expect(herdAllowed(sim, s, a, boar, HERD_WAIT + 1), '60초 뒤').toBe(true);
+    expect(herdAllowed(sim, s, a, { ...boar, kind: 'cow' }, 0), '가축은 곧바로').toBe(true);
+    s.agents.push(...savedAgents);
+    expect(HERD_WAIT).toBe(60);
+  });
+});
+
+// ───────────────────────── 단계 6a (치안 — 주취 소란 · 폭행 시비 · 날치기 · 경찰 새 부대 셋) ─────────────────────────
+import { tickHostiles } from '../src/sim/field/hazards';
+import { hosFact } from '../src/sim/field/agents';
+
+describe('5·9·14 치안 (단계 6a)', () => {
+  it('5 치안 세 시나리오는 강제 교대(S0·S1)에서 모두 닫히고 한계 시간·방치·무대응이 아니다 · 9 같은 대원에게 같은 검거·수색 지시가 25초 안에 다시 가지 않는다 · 14 용의자는 모두 맨손이고 주취 소란은 추격전을 시작하지 않는다', () => {
+    for (const key of DISTURB_LINES) for (const seed of ['S0', 'S1']) {
+      const sim = new Sim(seed, NORMAL, 1200, { force: key });
+      const I = runUntilClosed(sim, forced(sim), 7000);
+      expect(I && I.phase, `${key} ${seed}`).toBe('closed');
+      expect(['timeout', 'abandoned', 'noresponse'].indexOf(I!.closeReason), `${key} ${seed}: ${I!.closeReason}`).toBe(-1);
+      const s = sim.scenes[I!.id]!;
+      for (const h of s.hostiles) expect(h.weapon, `${key} ${h.label}`).toBe('none');
+      expect(I!.pursuit, `${key}: 추격전이 아니다`).toBeUndefined();
+      const last = new Map<string, number>();
+      for (const e of sim.events) {
+        if (e.incidentId !== I!.id) continue;
+        const m = /^(\S+), (.+) (검거|수색) (맡아라|실시)/.exec(e.text);
+        if (!m) continue;
+        const k = m[1] + '|' + m[2] + m[3], prev = last.get(k);
+        if (prev !== undefined) expect(e.t - prev, `${key} ${seed} ${k}`).toBeGreaterThanOrEqual(25);
+        last.set(k, e.t);
+      }
+    }
+  });
+  it('14 잠든 취객: 믿음에 asleep · 용의자 규칙이 움직이지 않는다 · 판정의 검거 수에 들지 않는다 · 경찰이 1.5칸 안에 4초 머물면 깨어 보통 주취자가 된다', () => {
+    let sim: Sim | undefined, I: Inc | undefined;
+    for (const seed of ['S0', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7', 'S8', 'S9']) {
+      const q = new Sim(seed, NORMAL, 1200, { force: 'disturb/rowdy' });
+      let J: Inc | undefined;
+      for (let k = 0; k < 600 && !J; k++) { q.step(); J = q.incidents.find((x) => forced(q)(x) && !!q.scenes[x.id]); }
+      if (J && q.scenes[J.id]!.hostiles[0].asleep) { sim = q; I = J; break; }
+    }
+    expect(I, '잠든 취객이 있는 시드').toBeTruthy();
+    const s = sim!.scenes[I!.id]!, h = s.hostiles[0];
+    expect(hosFact(sim!, s, h, '시험', 1).value.state).toBe('asleep');
+    const x0 = h.x, y0 = h.y;
+    for (let k = 0; k < 20; k++) tickHostiles(sim!, s, I!);
+    expect([h.x, h.y, h.state]).toEqual([x0, y0, 'hold']);
+    // 깨우기: 경찰 대원이 곁에 4초 머문다 (현장에 경찰이 닿을 때까지 돌린 뒤)
+    for (let k = 0; k < 4000 && h.asleep && I!.phase !== 'closed'; k++) sim!.step();
+    expect(h.asleep, '깨었다').toBe(false);
+    expect(sim!.events.some((e) => e.incidentId === I!.id && e.text.includes('눈을 떴습니다'))).toBe(true);
+  });
+  it('14 날치기: 숨었다가 나갈 시각(첫 도착 + 60~140초)이 정해지고, 찾았을 때 SCENE_MISMATCH 가 남지 않는다(보통 기록) · 경찰 한 팀이면 지휘관이 한 팀 더 부른다', () => {
+    let found = 0;
+    for (const seed of ['S0', 'S1', 'S2', 'S3']) {
+      const sim = new Sim(seed, NORMAL, 1200, { force: 'disturb/snatch' });
+      const I = runUntilClosed(sim, forced(sim), 7000)!;
+      const s = sim.scenes[I.id]!, h = s.hostiles[0];
+      expect(s.kinds!.expectHidden).toBe(true);
+      if (s.arrivedAt >= 0) { expect(h.hideUntil! - s.arrivedAt).toBeGreaterThanOrEqual(60); expect(h.hideUntil! - s.arrivedAt).toBeLessThanOrEqual(140); }
+      expect(I.problems.some((p) => p.code === 'SCENE_MISMATCH' && p.detail === '숨어 있던 추가 용의자 발견'), seed).toBe(false);
+      if (sim.events.some((e) => e.incidentId === I.id && e.text.startsWith('숨어 있던 용의자 발견'))) found++;
+    }
+    expect(found, '찾은 교대가 있다').toBeGreaterThan(0);
+    // 한 팀뿐인 경찰: 폭행 시비에 경찰이 한 팀만 닿으면 22초 규칙으로 한 팀 더 부른다
+    let asked = 0;
+    for (const seed of ['S0', 'S1', 'S2', 'S3']) {
+      const sim = new Sim(seed, NORMAL, 1200, { force: 'disturb/brawl' });
+      const I = runUntilClosed(sim, forced(sim), 7000)!;
+      if (sim.events.some((e) => e.incidentId === I.id && e.text.includes('한 팀으로는 말을 걸면서 붙잡을 수 없음'))) asked++;
+    }
+    expect(asked, '경찰 한 팀만 닿은 폭행 시비에서 추가 요청').toBeGreaterThan(0);
   });
 });

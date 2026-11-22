@@ -75,6 +75,27 @@ export function streetNode(sim: Sim, rng: Rng, busy: Set<number>, cls: NonNullab
   return from.length ? rng.pick(from) : null;
 }
 
+/**
+ * (N8 §4.3 animal/escape) 농가 곁 길 위의 교차로: 출동 시설이 아니고 다른 사건이 열려 있지 않으며, 250 안에 농가·비닐하우스가 있는 곳.
+ * 없으면 외곽(outskirts) 동네의 교차로, 그래도 없으면 null. 난수는 고를 때 한 번 (streetNode 와 같은 까닭으로 시나리오 표 쪽에 둔다 — 순환 import 를 피한다)
+ */
+export function farmNode(sim: Sim, rng: Rng, busy: Set<number>): number | null {
+  const c = sim.city;
+  const fac = new Set<number>();
+  for (const f of c.facilities) fac.add(f.nodeId);
+  const farms: { x: number; y: number }[] = [];
+  for (const q of c.places) if (q.kind === 'farmhouse' || q.kind === 'greenhouse') farms.push({ x: q.x + q.w / 2, y: q.y + q.h / 2 });
+  const pool: number[] = [], loose: number[] = [];
+  for (const n of c.nodes) {
+    if (busy.has(n.id) || fac.has(n.id) || n.edges.length < 2) continue;
+    let near = false;
+    for (const f of farms) if (Math.hypot(f.x - n.x, f.y - n.y) <= 250) { near = true; break; }
+    if (near) pool.push(n.id); else if (n.district === 'outskirts') loose.push(n.id);
+  }
+  const from = pool.length ? pool : loose;
+  return from.length ? rng.pick(from) : null;
+}
+
 export const KINDS: Scenario[] = [
   // ── 시설 사고 utility (§4.2 — 단계 4a·4b). 위험을 지키며 유관 기관 복구반을 기다리는 사건: 소방·경찰이 위험 반경을 통제하고, 끝내는 것은 복구반의 repair ──
   { type: 'utility', variant: 'wire', name: '끊어진 전선', share: 0.7, nature: 'wirefall', vague: 'bang', severity: [1, 3], tag: 'daily', card: false,
@@ -102,6 +123,49 @@ export const KINDS: Scenario[] = [
     lik: { utility: 0.7, collapse: 0.15, traffic: 0.06, medical: 0.04, armed: 0.02, fire: 0.01, hazmat: 0.01 },
     places: { shop: 4, restaurant: 4, office: 3, cafe: 2, convenience: 1.5, hotel: 1, market: 1 },
     needs: (n, c) => { n.suppression = 1; n.law = 1; n.ems = c.hurt && c.sev >= 2 ? 1 : 0; } },
+  // ── 동물 animal (§4.3 — 단계 5). 대상이 사람이 아닌 움직이는 것 — 쏘지 않고 몰아 가둔다(마취·포획·쫓아냄). 끝은 포획 · 산으로 쫓아냄 · 길로 놓침 ──
+  { type: 'animal', variant: 'boar', name: '멧돼지 출몰', share: 0.55, nature: 'boar', vague: 'scream', severity: [1, 2], tag: 'daily', card: false,
+    texts: ['멧돼지가 마을로 내려왔어요! 골목을 막 돌아다녀요.', '집 앞 텃밭에 멧돼지 두 마리가 있어요. 사람을 보고 씩씩거려요.', '공원에 멧돼지가 나타났는데 아이들이 근처에 있어요!'],
+    lik: { animal: 0.88, medical: 0.03, armed: 0.02, traffic: 0.02, search: 0.02 },
+    places: { farmhouse: 4, greenhouse: 2, pension: 2, houseS: 2, park: 1.5, campsite: 1, temple: 0.8, university: 0.5 },
+    needs: (n, c) => { n.capture = 1; n.law = 1; n.ems = c.hurt && c.sev >= 2 ? 1 : 0; } },
+  // 벌집 — 보호복을 입은 대원만 다가간다(펌프차·사다리차의 관창수, 구조 부대의 로프 대원). 떼어 내는 동안 위험 반경이 커진다, 여러 번 쏘인 사람의 급변
+  { type: 'animal', variant: 'hive', name: '벌집', share: 1.1, nature: 'hive', vague: 'scream', severity: [1, 2], tag: 'daily', card: false,
+    texts: ['처마 밑에 말벌집이 엄청 커요. 아이가 쏘였어요!', '학교 창틀에 벌집이 있어서 아이들이 못 지나가요.', '벌한테 여러 방 쏘였는데 숨이 좀 차요…'],
+    lik: { animal: 0.75, medical: 0.2, armed: 0.01, fire: 0.01 },
+    places: { houseS: 4, pension: 2, farmhouse: 2, villa: 1, school: 1.5, park: 1.5, campsite: 1, temple: 0.8 },
+    needs: (n, c) => { n.suppression = 1; n.ems = c.hurt && c.sev >= 2 ? 1 : 0; } },
+  // 개 물림 — 다친 사람 처치와 개 포획을 함께, 숨는 개, 주인 면담이 개가 간 곳을 좁힌다
+  { type: 'animal', variant: 'dogbite', name: '개 물림', share: 0.9, nature: 'dogbite', vague: 'scream', severity: [1, 2], tag: 'daily', card: false,
+    texts: ['큰 개가 풀려서 사람을 물었어요! 아직 돌아다녀요.', '목줄 없는 개가 아이를 물고 골목으로 도망갔어요.', '동네에 사나운 개가 돌아다니면서 사람들한테 달려들어요.'],
+    lik: { animal: 0.82, medical: 0.1, armed: 0.04, traffic: 0.01 },
+    places: { villa: 3, apartment: 3, houseS: 3, park: 2, school: 1, market: 0.8 },
+    needs: (n, c) => { n.capture = 1; n.law = 1; n.ems = c.hurt && c.sev >= 2 ? 1 : 0; } },
+  // 가축 탈출(도로) — 지도에 동물원이 없어 농가 가축으로 읽는다(§12.2). 여러 마리를 우리로 모는 줄 · 지나는 차 · 일부만 잡히는 결말
+  { type: 'animal', variant: 'escape', name: '가축 탈출', share: 0.3, nature: 'livestock', vague: 'bang', severity: [1, 2], tag: 'daily', card: false, limit: 60,
+    texts: ['소들이 축사를 뚫고 나와서 도로에 서 있어요! 차들이 급정거해요.', '돼지 여러 마리가 찻길로 나왔어요.', '트럭에서 소가 떨어져서 도로를 막고 있어요.'],
+    lik: { animal: 0.8, traffic: 0.16, medical: 0.01, armed: 0.01 },
+    node: (sim, rng, busy) => farmNode(sim, rng, busy),
+    needs: (n) => { n.capture = 1; n.traffic = 1; } },
+  // ── 치안 disturb (§4.4 — 단계 6a). 총·흉기가 없는 경찰 일상 — 용의자는 늘 맨손이고 지금의 봉쇄·협상·검거를 탄다. 끝은 훈방·보호 조치·검거·병원 ──
+  // 주취 소란 — 달래기 · 보호 조치냐 체포냐 병원이냐 · 잠든 취객 깨우기 (변형 이름 drunk 는 추격전 줄에 걸려 rowdy — §12.2)
+  { type: 'disturb', variant: 'rowdy', name: '주취 소란', share: 1.4, nature: 'rowdy', vague: 'fight', severity: [1, 2], tag: 'daily', card: false,
+    texts: ['술 취한 사람이 가게에서 소리 지르고 물건을 던져요.', '편의점 앞에서 취객이 지나가는 사람들한테 시비를 걸어요.', '취한 사람이 길바닥에 누워서 일어나질 않아요. 아까는 소리를 지르더니…'],
+    lik: { disturb: 0.78, armed: 0.12, medical: 0.08 },
+    places: { restaurant: 4, convenience: 3, cafe: 1, market: 1, busTerminal: 0.8, station: 0.6 },
+    needs: (n, c) => { n.law = 1; n.tactical = 0; n.ems = c.hurt && c.sev >= 2 ? 1 : 0; } },
+  // 폭행 시비·집단 난투 — 두 무리를 떼어 놓는 자리(가운데) · 한 팀뿐인 경찰의 기다림
+  { type: 'disturb', variant: 'brawl', name: '폭행 시비', share: 1.0, nature: 'brawl', vague: 'fight', severity: [1, 3], tag: 'daily', card: false,
+    texts: ['술집 앞에서 여러 명이 패싸움을 하고 있어요!', '두 무리가 주먹질을 하고 있어요. 한 사람은 쓰러졌어요.', '경기 끝나고 사람들끼리 시비가 붙어서 싸움이 커지고 있어요.'],
+    lik: { disturb: 0.8, armed: 0.14, medical: 0.04 },
+    places: { restaurant: 3, market: 2, stadium: 1.5, busTerminal: 1, university: 1, station: 1 },
+    needs: (n, c) => { n.law = c.sev >= 2 ? 2 : 1; n.tactical = 0; n.ems = c.hurt && c.sev >= 2 ? 1 : 0; } },
+  // 날치기 도보 추격 — 숨은 용의자 · 목격자가 가리키는 골목 · 출구를 먼저 막는 교통 경찰·형사 · 경찰견 · 들키면 도보 추격
+  { type: 'disturb', variant: 'snatch', name: '날치기', share: 0.9, nature: 'snatch', vague: 'scream', severity: [1, 2], tag: 'daily', card: false,
+    texts: ['가방을 날치기당했어요! 저쪽 골목으로 뛰어갔어요!', '오토바이 탄 사람이 할머니 가방을 채 가서 할머니가 넘어지셨어요.', '소매치기예요! 검은 옷 입은 남자가 시장 안으로 도망쳤어요.'],
+    lik: { disturb: 0.84, armed: 0.08, medical: 0.05, traffic: 0.01 },
+    places: { market: 3, station: 2, busTerminal: 2, shop: 2, convenience: 1, mart: 1 },
+    needs: (n, c) => { n.law = 1; n.search = 1; n.ems = c.hurt && c.sev >= 2 ? 1 : 0; } },
   // ── 비응급 N1 장난 전화 (§4.8 — 기존 armed/prank 는 평소 추첨 그대로) ──
   { type: 'fire', variant: 'prank', name: '장난 전화', share: 0.2, nature: 'prank:fire', vague: 'flames', severity: [1, 1], tag: 'daily', card: false },
   { type: 'medical', variant: 'prank', name: '장난 전화', share: 0.15, nature: 'prank:medical', vague: 'notbreathing', severity: [1, 1], tag: 'daily', card: false },

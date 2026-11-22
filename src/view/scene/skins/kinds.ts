@@ -1,7 +1,7 @@
 // N8 사건 종류 다양화의 소품 그림 (docs/specs/N8-incident-kinds.md §5.12). 열쇠는 Prop.skin 의 값이다. 읽기만 한다 — 결과를 바꾸지 않는다.
 // 단계 3: 오인 신고의 답 셋 — 물에 뜬 물건(floater) · 터진 폭죽 잔해(fireworks) · 음식물 쓰레기(trash). 단계 4a: 전봇대(pole) · 끊어진 전선(wire) · 위험 반경의 점선 고리(drawHazRings).
 // 나머지 스킨(pipe·hole·sign …)은 그 시나리오의 단계가 더한다.
-import type { Scene } from '../../../sim/types';
+import type { Animal, Scene } from '../../../sim/types';
 import type { G } from '../common';
 import { disc, hash2, oval, seg } from '../common';
 import type { SkinPainter } from '../skins';
@@ -94,7 +94,18 @@ const signDebris: SkinPainter = (g, p) => {
   for (let k = 0; k < 4; k++) disc(g, (hash2(p.id + k, 5) - 0.5) * 0.8, (hash2(k, p.id + 9) - 0.5) * 0.6, 0.05, '#d8d0c0');
 };
 
-export const KINDS_SKINS: Record<string, SkinPainter> = { floater, fireworks, trash, pole, wire, pipe, hole, sign, signDebris };
+/** (N8 단계 5) 벌집: 처마 밑의 회색 종이 벌집과 둘레를 도는 벌 떼(살아 있을 때만 — 점이 timeMs 로 돈다). 떼어 냈으면 아무것도 그리지 않는다 */
+const hive: SkinPainter = (g, p, timeMs) => {
+  if (p.live !== true) return;
+  oval(g, 0, 0.02, 0.26, 0.32, '#8a7f6e');
+  for (let k = -2; k <= 2; k++) seg(g, -0.22, k * 0.1, 0.22, k * 0.1, 0.018, 'rgba(60,50,40,0.45)');
+  disc(g, 0, 0.3, 0.05, '#2c261f');
+  for (let k = 0; k < 9; k++) {
+    const a = (timeMs / 900) * (k % 2 ? 1 : -1) + k * 0.7, r = 0.45 + 0.35 * hash2(p.id * 13 + k, 7);
+    disc(g, Math.cos(a) * r, Math.sin(a) * r * 0.8, 0.035, k % 3 ? '#e8b923' : '#2a2a2a');
+  }
+};
+export const KINDS_SKINS: Record<string, SkinPainter> = { floater, fireworks, trash, pole, wire, pipe, hole, sign, signDebris, hive };
 
 /**
  * (4b §4.2 utility/main) 지하 주차장 위의 침수 막 — 침수(s.kinds.flood)만큼 짙은 푸른 막과 물결. 진실이지만 눈에 보이는 물이라 두 시점 같다(결과 불변 — 읽기만)
@@ -130,6 +141,53 @@ export function drawHazRings(g: G, s: Scene, ts: number, truth: boolean, timeMs:
     g.lineWidth = Math.max(1, ts * 0.07); g.strokeStyle = 'rgba(255,214,64,0.85)';
     g.beginPath(); g.arc(x, y, r * ts, 0, Math.PI * 2); g.stroke();
     g.setLineDash([]); g.fillStyle = 'rgba(255,214,64,0.07)'; g.fill();
+    g.restore();
+  }
+}
+
+
+/** 동물 몸빛 (위에서 본 몸통·머리) */
+const ANI_LOOK: Record<Animal['kind'], { body: string; head: string; len: number; wid: number }> = {
+  boar: { body: '#5a4632', head: '#3f3123', len: 0.42, wid: 0.22 },
+  dog: { body: '#b08a5a', head: '#8c6a40', len: 0.34, wid: 0.15 },
+  cow: { body: '#ece6dc', head: '#d8d0c4', len: 0.5, wid: 0.26 },
+  pig: { body: '#e7a8a0', head: '#d99189', len: 0.36, wid: 0.2 },
+};
+/**
+ * (N8 §4.3 — 단계 5) 동물 그림: 위에서 본 몸통과 머리, 걸음에 맞춰 다리가 움직인다. 마취되면 옆으로 누운 자세(다리 뻗음), 잡히면 그물(격자).
+ * 마취 화살은 그리지 않는다(사람을 겨누는 그림과 헷갈리지 않게). 나간 동물은 그리지 않고, AI 시점에서는 숨은 개를 그리지 않는다. 읽기만 한다 — 결과 불변
+ */
+export function drawAnimals(g: G, s: Scene, ts: number, alpha: number, time: number, truth: boolean, mini: boolean): void {
+  const list = s.animals;
+  if (!list || !list.length) return;
+  for (const a of list) {
+    if (a.state === 'gone' || (a.state === 'hide' && !truth)) continue;
+    const x = (a.px + (a.x - a.px) * alpha + 0.5) * ts, y = (a.py + (a.y - a.py) * alpha + 0.5) * ts;
+    const lk = ANI_LOOK[a.kind];
+    if (mini) { g.fillStyle = lk.body; g.fillRect(x - ts * 0.25, y - ts * 0.2, ts * 0.5, ts * 0.4); continue; }
+    const moving = Math.abs(a.x - a.px) + Math.abs(a.y - a.py) > 0.001;
+    const down = a.state === 'sedated' || a.state === 'caught';
+    g.save();
+    g.translate(x, y); g.scale(ts, ts); g.rotate(a.facing);
+    oval(g, 0.03, 0.05, lk.len + 0.06, lk.wid + 0.05, 'rgba(0,0,0,0.25)');
+    const step = moving && !down ? Math.sin(time * 12 + a.id) * 0.07 : 0;
+    // 다리 넷: 앞뒤 × 좌우. 걸으면 대각선 짝이 엇갈려 움직이고, 누우면 한쪽으로 뻗는다
+    for (const fx of [0.6, -0.6]) for (const side of [-1, 1]) {
+      const bx = fx * lk.len, sw = (fx > 0 ? 1 : -1) * side * step;
+      if (down) { if (side > 0) seg(g, bx, lk.wid * 0.6, bx + 0.05, lk.wid + 0.2, 0.05, lk.head); continue; }
+      seg(g, bx, side * lk.wid * 0.7, bx + sw, side * (lk.wid + 0.09), 0.05, lk.head);
+    }
+    oval(g, 0, 0, lk.len, down ? lk.wid * 1.1 : lk.wid, lk.body);
+    if (a.kind === 'cow') { disc(g, -0.12, -0.06, 0.08, '#3b332b'); disc(g, 0.14, 0.08, 0.06, '#3b332b'); }
+    if (a.kind === 'boar') seg(g, -lk.len * 0.8, 0, lk.len * 0.5, 0, 0.05, '#2c2219');      // 등 갈기
+    oval(g, lk.len + 0.08, 0, 0.13, lk.wid * 0.7, lk.head);
+    if (a.kind === 'pig' || a.kind === 'boar') disc(g, lk.len + 0.19, 0, 0.05, a.kind === 'pig' ? '#c97b74' : '#2c2219');
+    if (a.kind === 'cow' || a.kind === 'boar') { seg(g, lk.len + 0.12, -0.08, lk.len + 0.16, -0.16, 0.025, a.kind === 'boar' ? '#e8e0cc' : '#cfc7b4'); seg(g, lk.len + 0.12, 0.08, lk.len + 0.16, 0.16, 0.025, a.kind === 'boar' ? '#e8e0cc' : '#cfc7b4'); }
+    if (a.state === 'charge') { g.strokeStyle = 'rgba(255,90,60,0.7)'; g.lineWidth = 0.04; g.beginPath(); g.arc(0, 0, lk.len + 0.18, -0.6, 0.6); g.stroke(); }
+    if (a.state === 'caught') {
+      g.strokeStyle = 'rgba(230,230,210,0.85)'; g.lineWidth = 0.025;
+      for (let k = -3; k <= 3; k++) { g.beginPath(); g.moveTo(k * 0.12 - 0.2, -0.3); g.lineTo(k * 0.12 + 0.2, 0.3); g.stroke(); g.beginPath(); g.moveTo(k * 0.12 + 0.2, -0.3); g.lineTo(k * 0.12 - 0.2, 0.3); g.stroke(); }
+    }
     g.restore();
   }
 }

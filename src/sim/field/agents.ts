@@ -4,7 +4,7 @@
 import type { Sim } from '../engine';
 import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
-import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Incident, MateBelief, Prop, RadioMsg, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
+import type { AniBelief, Animal, CasBelief, Casualty, Fact, FieldAgent, HosBelief, Hostile, Incident, MateBelief, Prop, RadioMsg, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, clamp, dist, josa, pct } from '../util';
 import { TYPE_DEFS } from '../incidentTypes';
 import type { Rng } from '../rng';
@@ -156,10 +156,10 @@ export function casFact(sim: Sim, s: Scene, c: Casualty, src: string): Fact {
 export function hosFact(sim: Sim, s: Scene, h: Hostile, src: string, d: number): Fact {
   const wt = h.weapon === 'gun' ? '총기 소지' : h.weapon === 'knife' ? '흉기 소지' : '비무장';
   const dead = h.dead === true && d <= 2;
-  const st = dead ? '사망' : h.state === 'hold' ? '대치 중' : h.state === 'fight' ? '교전 중' : h.state === 'flee' ? '도주 중' : h.state === 'surrendered' ? '투항' : h.state === 'arrested' ? (h.tDown !== undefined ? '검거 · 쓰러짐' : '검거') : h.state === 'down' ? '쓰러짐' : '도주';
+  const st = dead ? '사망' : h.asleep ? '잠든 채 누워 있음' : h.state === 'hold' ? '대치 중' : h.state === 'fight' ? '교전 중' : h.state === 'flee' ? '도주 중' : h.state === 'surrendered' ? '투항' : h.state === 'arrested' ? (h.tDown !== undefined ? '검거 · 쓰러짐' : '검거') : h.state === 'down' ? '쓰러짐' : '도주';
   const hold = h.hostageId >= 0 && (h.state === 'hold' || h.state === 'fight');
   const tq = (h.treatQ ?? 0) >= 0.6 ? 2 : (h.treatQ ?? 0) > 0 ? 1 : 0;
-  const v = { x: Math.round(h.x), y: Math.round(h.y), weapon: h.weapon, state: h.state, hostage: hold, facing: Math.round(h.facing * 4) / 4, dead, band: dead ? 3 : Math.min(2, bandOf(h.health)), tq, where: h.where ?? 'scene' };
+  const v = { x: Math.round(h.x), y: Math.round(h.y), weapon: h.weapon, state: (h.asleep ? 'asleep' : h.state) as HosBelief['state'], hostage: hold, facing: Math.round(h.facing * 4) / 4, dead, band: dead ? 3 : Math.min(2, bandOf(h.health)), tq, where: h.where ?? 'scene' };      // state: (N8 단계 6a) 잠든 취객은 믿음에 'asleep'
   primeNums(v, HOS_V_SHAPE);
   return mkFact('hos', h.id, v, src, sim.t, 1, true, `${h.label}: ${wt}${hold ? ' · 인질을 붙잡고 있음' : ''} · ${st} (${regionNameAt(s, h.x, h.y)})`);
 }
@@ -205,6 +205,7 @@ function significant(f: Fact, old: any): boolean {
   if (f.type === 'mate') return old.status !== v.status || old.dead !== v.dead || old.band !== v.band || old.tq !== v.tq || !!old.trapped !== !!v.trapped;
   if (f.type === 'sign') return old.level !== v.level;      // (X6) 조짐은 단계가 바뀔 때만 알린다 — 측정값(lel)만 바뀐 것은 믿음에 합치되 보고하지 않는다
   if (f.type === 'crew') return old.band !== v.band || old.air !== v.air || old.ammo !== v.ammo || old.shaken !== v.shaken;      // (R3 §4.1) 자기 신고는 서명이 바뀔 때만
+  if (f.type === 'ani') return old.state !== v.state || !!old.lost !== !!v.lost || Math.abs(old.x - v.x) + Math.abs(old.y - v.y) > ANI_MOVED;      // (N8 단계 5) 동물은 상태가 바뀌었거나 알던 자리에서 6칸 넘게 옮겼을 때만 알린다 — 조금 옮긴 것은 믿음에 합치되 보고하지 않는다
   return true;
 }
 function sameSig(a: Fact, b: Fact): boolean { return a.key === b.key && !significant(a, b.value); }
@@ -280,6 +281,12 @@ function perceiveFixture(sim: Sim, s: Scene, a: FieldAgent, p: Prop, d: number, 
     if (d > v || !los(s, a.x, a.y, p.x, p.y)) return;
     if (!cur) learn(sim, a, mkFact('haz', p.id, { kind: 'sign', active: p.live === true, x: p.x, y: p.y, r: 2 }, me, sim.t, 1, true, p.live ? `${regionNameAt(s, p.x, p.y)} 위 간판이 떨어질 듯 흔들림 — 아래 접근 금지` : '간판 — 떨어질 위험 없음'));
     else if (cur.value.active && !p.live) learn(sim, a, mkFact('haz', p.id, { kind: 'sign', active: false, x: p.x, y: p.y, r: 2 }, me, sim.t, 1, true, p.mitigated ? '간판 고정 확인' : '간판이 떨어짐'), true, true);
+  } else if (p.skin === 'hive') {
+    // (N8 단계 5) 벌집: 보이면 누구나 알아본다(벌 떼 — 반경 3, 떼어 내는 동안 4.5). 떼어 낸 것도 본 대로
+    const cur = a.beliefs.get('haz', p.id);
+    if (d > v || !los(s, a.x, a.y, p.x, p.y)) return;
+    const r = hiveR(sim, s);
+    if (!cur || cur.value.active !== (p.live === true) || cur.value.r !== r) learn(sim, a, mkFact('haz', p.id, { kind: 'hive', active: p.live === true, x: p.x, y: p.y, r }, me, sim.t, 1, true, p.live ? `${regionNameAt(s, p.x, p.y)} 처마 밑에 벌집 — 벌 떼, 보호복 없이 접근 금지` : '벌집 제거 확인'), true, cur !== undefined && cur.value.active !== (p.live === true));
   } else if (p.skin === 'floater') {
     if (d <= 4 && !a.beliefs.get('evid', p.id) && los(s, a.x, a.y, p.x, p.y)) learn(sim, a, mkFact('evid', p.id, { kind: 'floater' }, me, sim.t, 1, true, '물에 떠 있는 것은 사람이 아님 — 마네킹·쓰레기 봉투'));
   } else if (p.skin === 'fireworks') {
@@ -308,6 +315,39 @@ function losOpen(s: Scene, x0: number, y0: number, x1: number, y1: number): bool
     if (t === T.WALL || t === T.ROCK) return false;
   }
   return true;
+}
+/** (N8 단계 5) 숨은 개를 알아보는 거리 (숨은 용의자와 같은 4.2칸 — 경찰견을 든 대원은 ×1.3) */
+export const ANI_HIDE_SEE = 4.2;
+/** (N8 단계 5) 동물의 자리를 다시 알리는 거리 (칸 — 가로·세로 합) */
+export const ANI_MOVED = 6;
+/** 동물이 'ani' 사실로 쓰는 상태 */
+function aniState(x: Animal): AniBelief['state'] { return x.state === 'caught' ? 'caught' : x.state === 'gone' ? 'gone' : x.state === 'sedated' ? 'sedated' : 'loose'; }
+/**
+ * (N8 §4.3 — 단계 5) 동물을 본다: 시야 안·시야선이면 'ani' 사실(종류·자리·상태). 숨은 개는 4.2칸(경찰견 ×1.3) 안에서만. 나간 동물은 현장에 없다(세계 규칙이 본 사람에게 알린다).
+ * 믿음 속 풀린 동물의 자리 1.5칸 안에 왔는데 보이지 않으면: 나갔으면 나간 것으로(남은 자취), 아니면 자리를 잃은 것(lost — 찾아야 한다)으로 고친다
+ */
+function perceiveAnimals(sim: Sim, s: Scene, a: FieldAgent, v: number, me: string): void {
+  const list = s.animals!;
+  const dogK = kitLive(sim, a.rid, 'dog') ? 1.3 : 1;
+  for (let k = 0; k < list.length; k++) {
+    const x = list[k];
+    if (x.state === 'gone') continue;
+    const d = dist(a.x, a.y, x.x, x.y);
+    if (d > (x.state === 'hide' ? ANI_HIDE_SEE * dogK : v) || !los(s, a.x, a.y, x.x, x.y)) continue;
+    const st = aniState(x);
+    const cur = a.beliefs.get('ani', x.id);
+    const f = mkFact('ani', x.id, { kind: x.kind, x: Math.round(x.x), y: Math.round(x.y), state: st, via: undefined, lost: undefined }, me, sim.t, 1, true,
+      st === 'loose' ? `${x.label} — ${regionNameAt(s, x.x, x.y)}${x.state === 'hide' ? ', 숨어 있음' : x.state === 'charge' ? ', 달려듦' : ''}` : st === 'sedated' ? `${x.label} 마취되어 잠듦` : `${x.label} 포획됨`);
+    learn(sim, a, f, true, cur !== undefined && cur.value.lost === true);
+  }
+  for (const f of a.beliefs.list('ani')) {
+    const bv = f.value as AniBelief;
+    if (bv.state !== 'loose' || bv.lost || dist(a.x, a.y, bv.x, bv.y) > 1.5 || f.t >= sim.t) continue;
+    const x = list[f.id];
+    if (!x) continue;
+    if (x.state === 'gone') learn(sim, a, mkFact('ani', x.id, { kind: x.kind, x: bv.x, y: bv.y, state: 'gone', via: x.via ?? undefined, lost: undefined }, me, sim.t, 1, true, `${x.label} — 자취가 ${x.via === 'road' ? '찻길' : '산'} 쪽으로 이어짐`), true, true);
+    else learn(sim, a, mkFact('ani', x.id, { ...bv, lost: true }, me, sim.t, 1, true, `${x.label} — 본 자리에 없음, 찾아야 함`), true, true);
+  }
 }
 export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWalls = false): void {
   const I = sim.incidents[s.incidentId];
@@ -343,14 +383,16 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
   for (let hi = 0; hi < s.hostiles.length; hi++) { const h = s.hostiles[hi];
     if (h.where !== undefined && h.where !== 'scene') continue;      // 차에 실려 간 용의자는 현장에 없다 (H1)
     const d = dist(a.x, a.y, h.x, h.y);
-    const range = aloft ? (h.hidden ? v * 0.4 : v) : h.hidden ? 4.2 : 13;      // 지상은 시야와 상관없이 13칸(숨은 용의자 4.2칸). 상공은 관측 거리만큼 — 밤의 4칸이 용의자에게도 걸린다
+    const range = aloft ? (h.hidden ? v * 0.4 : v) : h.hidden ? 4.2 * (kitLive(sim, a.rid, 'dog') ? 1.3 : 1) : 13;      // 지상은 시야와 상관없이 13칸(숨은 용의자 4.2칸 — (N8 단계 6a) 경찰견을 든 핸들러는 ×1.3). 상공은 관측 거리만큼 — 밤의 4칸이 용의자에게도 걸린다
     const cur = a.beliefs.get('hos', h.id);
     if (cur && cur.value.dead) continue;      // 숨진 줄 안 뒤에는 더 바뀌지 않는다 — 먼 관찰로 되돌리지 않는다 (H1)
     if (d <= range && seesAt(s, a, aloft, h.x, h.y)) {
       const wasHidden = h.hidden;
       if (h.hidden) {
         h.hidden = false;
-        raiseProblem(sim, I, 'SCENE_MISMATCH', '숨어 있던 추가 용의자 발견', { role: 'RESPONDER', actor: me, rid: r.id, imp: 3, text: `숨어 있던 추가 용의자 발견! ${regionNameAt(s, h.x, h.y)}.` }, false);
+        // (N8 단계 6a) 현장 생성기가 처음부터 숨겨 둔 용의자(날치기 — s.kinds.expectHidden, 진실은 perceive 가 읽어도 된다)는 '추가'가 아니다: 문제 기록 대신 보통 기록
+        if (s.kinds !== undefined && s.kinds.expectHidden) emit(sim, { inc: I.id, role: 'RESPONDER', actor: me, rid: r.id, kind: 'action', imp: 2, text: `숨어 있던 용의자 발견! ${regionNameAt(s, h.x, h.y)}.` });
+        else raiseProblem(sim, I, 'SCENE_MISMATCH', '숨어 있던 추가 용의자 발견', { role: 'RESPONDER', actor: me, rid: r.id, imp: 3, text: `숨어 있던 추가 용의자 발견! ${regionNameAt(s, h.x, h.y)}.` }, false);
       }
       const hf = hosFact(sim, s, h, me, d);
       // 쓰러졌거나 붙잡혀 움직이지 않는 용의자를 멀리서(2칸 밖) 다시 본 것은 새 소식이 아니다 — 숨졌는지는 곁에서만 안다.
@@ -362,6 +404,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
       learn(sim, a, hosFact(sim, s, h, me, d));
     }
   }
+  if (s.animals !== undefined && !aloft) perceiveAnimals(sim, s, a, v, me);      // (N8 단계 5) 동물 — 시야 안·시야선 ('ani' 사실)
   // 타일 스캔: 화재 / 잔해
   let scanned: Map<number, { n: number; m: number }> | null = null;      // (X6) 외부 관찰의 기억(extSeen)이 스캔 결과를 읽는다
   if (s.burning > 0 || a.beliefs.list('fire').some((f) => f.value > 0)) {
@@ -698,6 +741,8 @@ export function fitParts(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): DocFit
  * 그 위험을 다루는 일(대상 소품 workProp 이 그것)이거나 막는 장비를 든 대원(전선 = 절연 장비)은 세지 않는다. 믿음과 자기 장비만 읽는다(진실을 읽지 않는다)
  */
 function hazRadii(sim: Sim, s: Scene, a: FieldAgent, workProp: number, pad: number, holdOnly = false): number[] | null {
+  if (s.kind === 'animal') return aniRadii(sim, a, workProp, pad);
+  if (s.kind === 'disturb') return brawlRadii(sim, a, pad);
   if (s.kind !== 'utility') return null;
   let out: number[] | null = null;
   for (const f of a.beliefs.list('haz')) {
@@ -706,6 +751,26 @@ function hazRadii(sim: Sim, s: Scene, a: FieldAgent, workProp: number, pad: numb
     if (holdOnly && hv.kind !== 'wire') continue;      // 사람에게 가는 일을 막는 반경은 들어가면 다치는 것(전선)뿐 — 구멍·간판의 사람은 구출·처치한다
     if (hv.kind === 'wire' && hasKit(sim, a.rid, 'insulKit')) continue;
     (out ??= []).push(hv.x, hv.y, (hv.r + pad) * (hv.r + pad));
+  }
+  return out;
+}
+/**
+ * (N8 단계 5 §5.10) 동물 현장의 믿음 속 위험 반경: 풀린 동물(자리를 아는) 3칸 — 그 동물을 포획하는 중이면 세지 않는다 · 살아 있는 벌집 — 보호복을 들었거나 그 벌집을 떼어 내는 중이면 세지 않는다.
+ * 믿음과 자기 장비·자기 임무만 읽는다
+ */
+function aniRadii(sim: Sim, a: FieldAgent, workProp: number, pad: number): number[] | null {
+  let out: number[] | null = null;
+  const tk = a.task, tAni = tk !== null && tk.kind === 'capture' ? tk.animal ?? -1 : -1;
+  for (const f of a.beliefs.list('ani')) {
+    const v = f.value as AniBelief;
+    if (v.state !== 'loose' || v.lost || f.id === tAni) continue;
+    (out ??= []).push(v.x, v.y, (3 + pad) * (3 + pad));
+  }
+  for (const f of a.beliefs.list('haz')) {
+    const hv = f.value as { kind?: string; active?: boolean; x: number; y: number; r?: number };
+    if (hv.kind !== 'hive' || !hv.active || f.id === workProp || hasKit(sim, a.rid, 'beeSuit')) continue;
+    const r = (hv.r ?? 3) + pad;
+    (out ??= []).push(hv.x, hv.y, r * r);
   }
   return out;
 }
@@ -726,8 +791,9 @@ function valveFallback(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): boolean 
 const HAZ_PAD = 0.75;
 /** (N8 §5.10) 이 대원이 아는 살아 있는 위험 반경의 수 — 길을 짠 뒤에 새 위험을 알게 되면(또는 하나가 풀리면) 길을 다시 짠다(executor.moveTo). 시설 사고 현장만 */
 export function hazCount(s: Scene, a: FieldAgent): number {
-  if (s.kind !== 'utility') return 0;
+  if (s.kind !== 'utility' && s.kind !== 'animal') return 0;
   let n = 0;
+  if (s.kind === 'animal') for (const f of a.beliefs.list('ani')) { const v = f.value as AniBelief; if (v.state === 'loose' && !v.lost) n++; }      // (N8 단계 5) 풀린 동물도 반경이다
   for (const f of a.beliefs.list('haz')) { const hv = f.value as { active?: boolean; r?: number }; if (hv.active && hv.r !== undefined && hv.r > 0) n++; }
   return n;
 }
@@ -737,6 +803,21 @@ function inRadii(hz: number[], x: number, y: number): boolean {
   return false;
 }
 /** (N8 §5.10) 사람에게 가는 일(처치·이송·구출·동행·동료 구조)의 대상이 믿음 속 활동 위험 반경 안인가 — 그러면 그 위험을 막는 장비가 없는 대원은 맡지 않는다(fitBase) */
+/**
+ * (N8 §4.4 — 단계 6a) 치안 현장의 위험 반경: 경찰이 아닌 대원에게만 — 믿음 속 활동 중인(대치·몸싸움) 용의자 2.5칸. 싸움판에 구급대원이 먼저 들어가지 않는다 (보류는 하지 않는다 — 경찰은 다가가도 된다).
+ * 조직이 아는 자기 분야와 믿음만 읽는다
+ */
+export const BRAWL_R = 2.5;
+function brawlRadii(sim: Sim, a: FieldAgent, pad: number): number[] | null {
+  if (sim.responders[a.rid].dept === 'police') return null;
+  let out: number[] | null = null;
+  for (const f of a.beliefs.list('hos')) {
+    const v = f.value as HosBelief;
+    if (v.state !== 'hold' && v.state !== 'fight') continue;
+    (out ??= []).push(v.x, v.y, (BRAWL_R + pad) * (BRAWL_R + pad));
+  }
+  return out;
+}
 export function targetInHaz(sim: Sim, s: Scene, a: FieldAgent, w: { kind: string; cas: number; mate: number }): boolean {
   const hz = hazRadii(sim, s, a, -1, 0, true);
   if (hz === null) return false;
@@ -795,7 +876,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
     else if (w.kind === 'interview') { const p = s.props[w.prop]; if (p && fitRiskyAt(s, a, hot, indoorRisk, p.x, p.y)) return 0; }
   }
   // (N8 §5.10) 믿음 속 활동 위험 반경 안의 사람에게 가는 일: 그 위험을 막는 장비가 없는 대원은 맡지 않는다 (지휘관의 보류 registerCasHold 와 함께 — 한쪽만 막으면 대원이 스스로 고른다)
-  if (s.kind === 'utility' && (w.kind === 'treat' || w.kind === 'carry' || w.kind === 'extricate' || w.kind === 'escort' || w.kind === 'rescueMate') && targetInHaz(sim, s, a, w)) return 0;
+  if ((s.kind === 'utility' || s.kind === 'animal' || s.kind === 'disturb') && (w.kind === 'treat' || w.kind === 'carry' || w.kind === 'extricate' || w.kind === 'escort' || w.kind === 'rescueMate') && targetInHaz(sim, s, a, w)) return 0;      // (N8 단계 6a) 치안 현장도 (경찰이 아닌 대원 — 활동 중인 용의자 2.5칸)      // (N8 단계 5) 동물 현장도 (풀린 동물 3칸 · 벌집)
   switch (w.kind) {
     case 'sizeup': return a.isCommander ? 1 : 0;
     case 'search':
@@ -914,7 +995,18 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
     // (N8 단계 2a) 새 임무 다섯의 자리 — 맡는 사람은 그 임무를 쓰는 단계가 정한다(repair 4a · towAway 6b · capture 5 · persuade 7 · cordon 4a, 설계서 §5.3.3·§5.10).
     // 지금은 아무도 이 작업을 만들지 않고, 누구도 맡지 않는다
     case 'repair': return valveFallback(sim, s, a, w) ? 0.3 : 0;      // (N8 §5.3.6 ③) 수도 복구반이 오지 못할 때 소방의 제수밸브
-    case 'towAway': case 'capture': case 'persuade': return 0;
+    case 'towAway': case 'persuade': return 0;
+    case 'capture': {
+      // (N8 §4.3 — 단계 5) 벌집: 벌 보호복을 든 대원만 0.8 (방법 없이). 동물: 포획 장비(마취총·올가미·포획망)를 든 대원 1.0 — 지금 쓸 포획 방법이 있을 때만(WORK_MODE 'refuse'),
+      // 그 밖의 경찰·소방은 맨손 몰이가 허락될 때만 0.35 (가축이거나, 포획 장비를 든 대원이 현장에 없고 작업이 60초 넘었을 때 — methods.herdAllowed)
+      const fx = w.prop >= 0 ? s.props[w.prop] : undefined;
+      if (fx) return fx.skin === 'hive' && hasKit(sim, rid, 'beeSuit') ? 0.8 : 0;
+      const ab = (w.animal ?? -1) >= 0 ? a.beliefs.val<AniBelief>('ani', w.animal!) : undefined;
+      if (!ab) return 0;
+      if (hasKit(sim, rid, 'dart') || hasKit(sim, rid, 'catchpole') || hasKit(sim, rid, 'net')) return methodFit(sim, s, a, w) > 0 ? 1.0 : 0;
+      if (r.dept !== 'police' && r.dept !== 'fire') return 0;
+      return ab.state === 'loose' && !ab.lost && herdAllowed(sim, s, a, ab, sim.t - w.createdAt) ? 0.35 : 0;
+    }
     // (N8 §5.10 — 단계 4a) 통제(위협이 없는 현장의 한 자리 지키기): 경찰 0.5 + 0.3 × 치안 능력, 소방·구조(부서 fire) 0.4 + 0.2 × 경험, 구급 0 (유관 기관은 위의 첫 줄에서 0)
     case 'cordon': return r.dept === 'police' ? 0.5 + 0.3 * r.skills.law : r.dept === 'fire' ? 0.4 + 0.2 * r.experience : 0;
     // (N9 단계 1) 제독의 자리 — 맡는 사람(제독 장비 1.0 · 역할 decon 0.7 · 120초 뒤 호스를 든 소방 0.4)은 단계 6 이 정한다(설계서 §5.3.5). 지금은 아무도 이 작업을 만들지 않는다
@@ -934,7 +1026,8 @@ import { triageMedic } from './doctrine';      // (R3 4단계) 분류를 맡을 
 import type { DocFitAns } from './doctrine/registry';
 import { SHAKE, crewAlert, shake } from './doctrineRun';      // (R3 1단계) 쓰러진 동료를 본 동요
 // (R2 1a) 대응 방법의 판단부 — 수난 구조의 배정(fitFor)이 methodFit 을 쓴다. methods.ts 는 이 파일을 import 하지 않는다 (순환 없음)
-import { methodFit, onWater, searchMul } from './methods';
+import { herdAllowed, methodFit, onWater, searchMul } from './methods';
+import { hiveR } from './animals';      // (N8 단계 5) 벌집의 지금 반경 (보이는 벌 떼 — 본 대로)
 // (X6) 조짐 관찰 (field/catastrophe.ts — 그 파일도 이 파일의 learn·regionNameAt 을 쓴다. 함수 안에서만 서로 부르므로 순환 import 는 문제없다)
 import { perceiveSigns, vesselName } from './catastrophe';
 import { AGENT_SHAPE, CAS_V_SHAPE, HOS_V_SHAPE, MATE_V_SHAPE, primeNums } from '../shape';      // (R3b N7) 숫자 칸을 만들 때부터 소수 표현으로 — 값은 그대로

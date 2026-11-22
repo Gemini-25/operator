@@ -733,7 +733,8 @@ describe('11. 재현성과 목적별 난수 흐름', () => {
   });
   it('injuryRng 를 쓰는 규칙(2차 붕괴 곁의 갇힘)이 일어난 교대도 같다 — 지진 교대 둘', () => {
     const QUAKE: Difficulty = { ...NORMAL, disaster: 'quake' };
-    const a = shift('W6', QUAKE), b = shift('W6', QUAKE);
+    // (N8 단계 6a) W6 → W5: 경찰 새 부대 셋(형사·교통 경찰·경찰견)이 편성돼 W6 의 2차 붕괴 곁에 갇힌 사람이 없어졌다 — 갇힘 흐름을 쓰는 지진 교대로 (기준은 그대로)
+    const a = shift('W5', QUAKE), b = shift('W5', QUAKE);
     expect(b.report!.hash).toBe(a.report!.hash);
     expect(a.events.some((e) => /^2차 붕괴!/.test(e.text))).toBe(true);
     // 갇힘 흐름이 실제로 쓰였다: 어느 현장에서는 다음 값이 새 흐름의 첫 값과 다르다

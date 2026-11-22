@@ -3,7 +3,7 @@
 - 묶음 이름: **N8 일상 사건** · 구현 브랜치 `wf/kinds` · 시험 `tests/kinds.test.ts` · 개발 서버 포트 5236
 - 구현 순서: R1 → H1 → X6 → R2 → R3 → I1-b → I2 → **N8** → N9(`N9-major-kinds.md` — 큰 사건·새 장소, N8 이 합쳐진 뒤)
 - 사용자 요청(2026-11-15 저녁): "다 하고 사건 종류 다양화도 좀 하자. 종류가 적으니까 이것도 설계 적어놔" · "이것도 설계부터 써넣어놔 opus 5.5 울트라 코드 한테 인계 가능하게"
-- **상태: 설계됨(독립 검토 반영). 설계만 — 구현은 I2 다음.** 2026-11-15 초안(방향·목록·나눔·공통 틀·단계)에 항목별 상세(신고 문구·가능도·필요 자원·장소·한계 시간·끝나는 길·정보 격리 표·시험 번호)를 채웠고, 독립 검토 두 갈래(실현성·규칙 / 빠진 것·인계)를 코드로 확인해 본문에 녹였다(반영하지 않았거나 다르게 반영한 것은 끝의 "검토 메모"). 조사 보고서 다섯은 `docs/specs/N8-research/`(`inventory.md` · `extension.md` · `future.md` · `domain.md` · `impact.md`).
+- **상태: 구현됨(2026-11-22 — 준비 단계 1·2a·2b · 단계 0·3~11 · 독립 검토 · 문서 단계. 끝의 "구현 메모"의 "최종 요약"이 정본 — 뒤 묶음의 실제 이름 표·설계와 달라진 곳·잰 수치·알려진 문제). 아래 본문은 설계 때의 글이다.** (설계 때의 상태: 설계됨(독립 검토 반영). 설계만 — 구현은 I2 다음.) 2026-11-15 초안(방향·목록·나눔·공통 틀·단계)에 항목별 상세(신고 문구·가능도·필요 자원·장소·한계 시간·끝나는 길·정보 격리 표·시험 번호)를 채웠고, 독립 검토 두 갈래(실현성·규칙 / 빠진 것·인계)를 코드로 확인해 본문에 녹였다(반영하지 않았거나 다르게 반영한 것은 끝의 "검토 메모"). 조사 보고서 다섯은 `docs/specs/N8-research/`(`inventory.md` · `extension.md` · `future.md` · `domain.md` · `impact.md`).
 - **I1-b 가 끝났다(2026-11-21 — 사용자 결정으로 "스크립트가 아니라 세계 상태에서 자연스럽게 생기는 인과"로 다시 설계해 구현했다. 실제 이름의 정본은 `I1-causality.md` 끝 "구현 메모"의 "최종 요약")**: 이 문서가 쓰는 틀은 **그 이름으로 있다** — `world/consequence.ts` 의 `registerConsequence(c)`(돌려주는 함수가 등록을 거둔다 — 시험은 finally 에서 거둔다 · `Consequence { id, label, on: SignalKind[] | 'tick', key, cooldown, cap, spawns, test, apply, silent?, recover? }` · import 순서 = 등록 순서 = 결과, 모음 `world/rules/index.ts` 의 끝에 새 줄)·`spawnConsequence(sim, c: CsqCtx, opts, delay: [lo, hi], when?, wait = 120)`(안에서 `chain.canChain` 을 부르고 걸리면 `gen.dropped` 에 'depth'/'cap' · 규칙·법칙이 만든 사건의 교대 상한 `CSQ_SPAWN_CAP` 6 — `world/hazard.ts` 에서 다시 내보낸다 · 흐름 `csq:<규칙>:<열쇠>:<시도 번호>` 는 `CsqCtx.rng`)·`signal(sim, kind, { inc, ev, … })` 와 신호 `'closed'`(사건이 닫힐 때마다)·`gen.chain` 의 `when`/`until`(`incidents.ChainItem` — 거짓이면 5초 뒤 다시, `until` 이 지나면 'expired')·`chain.canChain`(`DEPTH_MAX` 2 · `CHAIN_SHIFT_MAX` 6 — 부모 없는 법칙 사건(`Incident.hz`)도 이 6건을 나눠 쓴다)·`scripts/metrics.ts` 의 `PROBLEM_SYS`·`PHRASE`(T1~T8 — I1-b 가 T8 을 더했다)·`types.ts` 의 `WorldTag`(끝이 새 줄 `| 'struct'`)·`SignalKind`(끝이 `'quake'`·`'blackout'` — N8 의 `'powerCut'`·`'pipeBurst'` 는 그 뒤 새 줄). 상태 규칙: **C4 는 id 넷**(`world/rules/infra.ts` — `powerOut`(변전소·발전소 사고 · 붕괴·폭발 자리의 끊긴 전선 — 신호 `fireBig`·`blast`·`collapse`·`catastrophe`) · `powerOut.grid`(태풍 `blackout` · 지진 `quake`) · `powerOut.end`(원인 사건이 닫히면 복구) · `powerOut.tell`(20~40초 뒤 알림)) — N8 의 원격 차단 `'powerCut'` 은 `powerOut` 의 `on` 에 더하지 말고 같은 파일 끝에 규칙 하나로(국지 정전은 `state.setZoneArea`, 꺼진 신호는 `traffic.addBump` — 정전 한 건에 한 번) · **C10 `suspectZone`**(`world/rules/risk.ts` — 신호 `'fled'` 로 그 동네의 `risk` 0.6 · 300초. 재범 자체는 `field/hazards.ts` 도주 블록의 `reoffendItem`·`reoffendPlace`·`policeNear` 가 조건으로 예약한다 — **총 든 용의자의 도주에만 걸린다**: K8 은 비무장 도주라 C10 이 대신하지 않는다) · **C11 `waterMain` 은 없다**(선택이라 I1-b 가 하지 않았다) — `'pipeBurst'` 를 쓰려면 N8 이 C11 을 먼저 만들거나(설계 `I1-causality.md` §3.7 C11 절 — 문턱 흐름 `grid:main:<건물>`, `executor.spray` 의 급수 한 줄, 난수 없음) 자기 규칙으로 둔다. 사건을 낳는 길은 초과 위험 과정 `world/hazard.ts` 의 `registerHazard(law)`(대상마다 한 번 뽑은 문턱을 위험의 적분이 넘을 때만 — 법칙 파일은 `world/laws/` 에, 모음 `world/laws/index.ts` 의 끝에 새 줄). **§5.6 의 조건부 연쇄 여덟(K1~K8 — "X 가 실패하면 Y")은 구현할 때 그 방향에 비춰 다시 본다** — 법칙으로 옮길 수 있는 것(예: 수도관 → 싱크홀 → 교통사고의 끝 화살표는 L1 `roadCrash` 가 저절로 한다)은 옮기고, 옮기지 못하는 것은 까닭을 구현 메모에 적는다(사용자의 말: "인과가 자연스럽게 스크립트대로 말고 생기게").
 - **I2 가 끝났다(2026-11-21 — 단계 0~8 · 독립 검토 · 문서 단계. 실제 이름의 정본은 `I2-persistence.md` 끝 "구현 메모"의 "최종 요약")**: 이 문서가 I2 에 기대하는 이름은 **모두 있고, 둘은 자리가 다르다** — **`placeUsable(sim, id, allowClosed = false, inShift = true)` 는 `src/sim/placeUse.ts`**(type 만 import 하는 잎 모듈 — `persist.ts` 가 다시 내보낸다. 시나리오 묶음 파일은 반드시 `placeUse.ts` 에서 import 한다: `persist.ts` 는 resources → dispatcher → callSystem 을 끌어와 시나리오 표가 초기화되기 전에 읽힌다. `inShift` 기본 true 는 X6 의 교대 안 제외(전소·전체 붕괴)를 함께 본다), **`roadsNext(sim, rng)` 는 `persist.ts` 안의 내보내지 않는 함수**다 — 새 복구 공사의 원천은 그 ③ 고리(`for (const I of sim.incidents)` — `I.blockedEdge`·`I.truth.variant`·`I.closeReason`)에 변형 한 줄을 제자리에서 더한다(`at(ROAD_AT.…)` 은 그 갈래가 맞을 때만 `carry` 흐름을 뽑는다 — 그 변형이 없는 교대의 결과는 그대로). 까닭은 여덟(`crack`·`washout`·`flood`·`fire`·`mud`·`tree`·`debris`·`surface` — `types.ts` `RoadCarry.why` · 안쪽 상수 `ROAD_WHY` · 기록 문구 `WHY_NAME`)이고 새 까닭이면 세 곳에 함께. `placeOutcome(sim, I)`(export — 사건 하나의 건물 끝 상태 표, 건물을 다치게 하는 새 시나리오는 여기 한 줄 · 진실을 읽는 유일한 자리)·`Carryover` 의 명부 이어받기(열쇠는 이름 — 새 부대·새 자리의 대원은 `resources.rosterKeys()` 에 저절로 들고, 그 전에 저장된 상태에는 없으니 처음 상태로)·`knownBuildingAt`(이어받은 건물도 돌려준다, `inc` −1)은 그 이름 그대로다. **알아야 할 것**: ① 결장 대원은 명부에 `status 'off'` 로 남는다 — `status !== 'ok'` 로 사람을 세는 새 코드를 쓰지 않는다(`crewReady`·`crewOk`·`canDeploy`). ② 새 부대 리터럴에는 I2 의 칸(대원 `seat`·`relief`·`carryOut`·`carryCause`, 부대 `readyAt`·`oosWhy`·`pumpFails`)을 같은 순서로 둔다. ③ 길을 닫는 새 코드는 이미 닫힌 구간(`e.closed` — 복구 공사 `closedReason 'repair'` 포함)을 건너뛴다. ④ 지도에 건물을 더하면 `persist.cityKey` 가 바뀌어 저장된 조직의 건물·도로 상태가 한 번 버려진다(설계대로). ⑤ 끝낼 때 이어받은 상태의 길도 본다 — `npx tsx scripts/chain.ts 24 8 --check`(6분 남짓, 관문 밖). I2 는 이어받은 상태가 없는 교대의 결과를 한 글자도 바꾸지 않았다(해시 목록 158 + 147) — 0단계의 기준은 I2 를 합친 주 브랜치에서 잰다(값은 R3b 뒤와 같다). 이 문서의 싱크홀 줄은 `else if (v === 'sinkhole') put({ edge: eid, why: 'washout', lane: false, left: 1, openAt: at(ROAD_AT.…), … })` 꼴이다(`I.blockedEdge` 를 생성 때 막은 구간으로 채우면 된다).
 
@@ -2373,6 +2373,130 @@ npx tsx scripts/sweep.ts 1 --force utility/wire --log S3     # 한 교대를 읽
    까닭: ① 기준에서도 넓은 표본은 0.45~0.48 이다 — 이 시험은 시드 넷의 표본에 기대 왔다(단계 4·8·9·7 의 작업자가 표본 시드를 네 번 바꿨다 — 주 세션이 짚은 그대로). ② 평소 교대에서는 N8 이 몫을 내리지 않았다(0.476 → 0.484). ③ 강제 붕괴·교통 교대에서 내려간 몫은 **짧은 사건이 만든 품귀**다 — 짧은 사건을 끈 같은 48교대는 0.480 으로 기준보다 높다. 다른 사람이 구출을 쥔 틱에 유압 대원이 한 일이 처치 99 → 1080 · 운반 633 → 1468 · 수색 694 → 1431 · 짝 동행 1312 → 2527 로 늘었다(지상 구급 0대 시간 +8.9%p — 단계 11 메모 — 의 몫: 구급이 없으니 유압 대원이 처치·운반을 맡는다). 같은 구출의 둘째 손(정원 2)은 3428 → 3640 으로 그대로. 고칠 손잡이는 구급 공급(사용자에게 올린 "일반 구급 한 대" §12.5-3)이나 R1 의 넘겨받기·R3 의 짝 규칙이다 — 문턱·시드는 바꾸지 않았고 시험은 걸린 채다.
 2. **`tests/sim.test.ts` '허위·오인 신고는 … 확인 출동으로 끝난다'(보통 S0~S13 모두)** — 보통 S7 #13(타는 냄새 `fire/false`): 사다리1 이 더 급한 교통사고(구조 수요)로 전환 배정된 뒤 진압 부대 셋·사다리가 모두 화재 셋·열차 탈선·붕괴에 묶여 243초 뒤에야 진압2 가 배정됐고(도착 예정 55초 남음), 신고 접수 330초의 무대응 종료(`incidents.tickIncidents` — 처음부터 있던 끝막이)가 먼저 닫았다. 넓은 표본(`falsewide.ts`, 보통 60): 기준 허위·오인 24건 가운데 무대응 0 → 검토 뒤 46건(비응급 갈래가 늘었다) 가운데 1(이 사건). 고리·교착이 아니라 진압 부대 품귀(짧은 사건의 시설 사고가 진압 수요로 펌프차·사다리차를 쓴다 — 본문 §4.2)와 관제의 전환 배정(`pickUnit` 의 `divertFrom`)·무대응 330초의 맞물림이다. 고치려면 관제의 전환 배정이나 무대응 종료 규칙(모든 사건)을 바꿔야 해 이 묶음에서는 두었다 — 시험은 걸린 채다.
 3. 모르는 채 배정한 소방·의료 헬기를 관제가 추격전임을 안 뒤 거둬들이지 않는다(위 3 의 남은 한계 — 보통 S20 의 소방 헬기는 차가 설 때까지 배정된 채다). 관제에 '출동 취소'의 길을 새로 내는 일이라 이 묶음 밖이다.
+
+### 문서 단계 (단계 11 의 화면·문서 몫) — 2026-11-22
+
+작업자 브랜치 `wf/kinds-docs`(시작점 `52d57e6` = 독립 검토 끝), 가리킴 `wf/kinds`. 커밋 — `192d563`(화면: `scripts/screenshot.cjs` 의 `--force`·`--diff`·`--port` · 검거 수갑 그림의 자리) · 이 문서 커밋. **시뮬레이션(`src/sim`)은 고치지 않았다** — 해시 목록 153교대가 검토 끝(`52d57e6`, `$S/review/hash-now.txt`)과 한 글자도 같다(`$S/docs/hash-docs.txt`, diff 0).
+
+#### 화면 확인 (개발 서버 5236 · 1600×900 · Playwright — 그림은 `$S/docs/shots/`)
+
+- **새 유형 다섯의 현장**(`node scripts/screenshot.cjs S1 <유형 이름> <폴더> --force <유형/변형> --port 5236` — 이번에 더한 인자): 시설 사고 `utility/wire`(전선 위험 반경 점선·통제·시설물 복구), 동물 `animal/boar`(멧돼지·마취 대기·포획차), 치안 `disturb/brawl`(무리 넷·길목 봉쇄·검거), 보호 `welfare/ledge`(옥상 위기자·설득), 구조 `rescue/facade`(곤돌라·하강 구조·'높은 곳에 고립'). 모두 콘솔 오류 0 · 경고 0.
+- **핀·카드**(`$S/docs/pins.cjs` — 강제 `utility/sign`·`animal/hive`·`disturb/rowdy`·`welfare/lostchild`·`rescue/pit` S2, '지도에서 보기'): 핀 기호(번개·발자국·두 사람·하트·고리)와 유형색이 지도 배경에서 서로·기존 여덟과 구별된다. 카드 제목은 유형 이름(`card: false` — 시설 사고·동물·치안·보호·구조)이고 시나리오 이름이 없다(결정 13).
+- **범례**(`$S/docs/legend2.cjs` — 펼쳐 스크롤한 넷): '사건과 도로' 첫 줄에 유형 열셋의 핀 견본(`TypePinSample`)과 이름, 부대 절에 '유관 기관'(전력·가스·수도 복구차 · 견인차)과 경찰 새 셋·동물 포획차, 역할 절에 '유관 기관 기사'. 잘림·겹침 없음.
+- **고친 것 하나**(그림만): 치안의 여러 명 검거에서 G5 의 수갑 기호(머리 위 0.9칸)가 용의자 알약('나 무리 1 · 검거')의 글자를 덮었다 → 1.4칸(R3 단계 8 이 협상 풍선을 올린 높이)으로 올렸다(`view/scene/combat.ts` `drawCuffs`). 무장 사건의 검거에도 같이 걸린다.
+- **고치지 않은 것**(N8 밖 — 알려진 것에 적는다): 이면 도로가 이면 도로에서 갈라지면 교차로 이름이 '한솔3로 2길 2길 2길'처럼 겹친다(`city.ts` `addLocalStreets` 의 이름 — M1, 길 위의 짧은 사건이 그 교차로에서 나면 카드에 보인다. `city.ts` 는 고치지 않는 파일이다) · 일시정지 막('일 시 정 지')이 지도 한가운데의 핀을 가린다('지도에서 보기' 직후 — 화면 전체의 규칙).
+- `npm run ui-check`: 아래 "관문".
+
+#### 균형 최종 확인 (마지막 코드 = `52d57e6` 의 src — `$S/docs/`)
+
+보통 120 · 프리셋 · 강제 · 측정 지표 모두 단계 11 의 균형 몫이 잰 값과 같거나 검토의 `airFit` 수정만큼만 다르다 — 쉬움·어려움 60 과 강제 서른다섯은 한 건도 다르지 않고, 보통 120 은 한 건(미해결 → 성공, 성공+대응 지연 80.5 → 80.6%), 극한 60 은 몇 건(45.0 → 45.2% · 한계 시간 64 → 67)이 움직였다. 손잡이는 더 돌리지 않았다 — §7.3 ①~⑦ 을 단계 11 이 다 돌렸고, 남은 것은 사용자 결정이다(아래 "최종 요약 — 알려진 문제").
+
+### 최종 요약 — 문서 단계 (2026-11-22, 브랜치 `wf/kinds-docs` → `wf/kinds`, 시작점 `52d57e6` = 독립 검토 끝. 뒤 묶음은 여기부터 읽는다)
+
+**상태: 구현됨.** 준비 단계 1·2a·2b(2026-11-15, 결과 불변) → 덩어리 `s03`·`s4ab`·`s56a`·`s6b7`(6b)·`s89`(7 앞 절반·8·9)·`s10` → 두 번째 실행 `s7b`(7 뒤 절반)·`s11b`(11 의 균형) → 독립 검토 → 이 문서 단계. 단계마다의 실제 이름·본문과 다른 곳·고친 시험·측정은 위의 단계별 절이 정본이고, 여기는 뒤 묶음(N9)이 먼저 읽을 것을 모은다. **`npm run check` 는 vitest 의 걸린 시험 둘(아래 "알려진 문제" 1·2)에서 멈춘다** — 문턱·시드는 바꾸지 않았다(지시와 사용자 방향). 관문의 나머지(`sweep 40 --check` · 어려움·극한 40 `--check`)는 따로 돌려 통과한다.
+
+#### 들어간 것 (한눈에)
+
+- **새 유형 다섯**(`TYPE_ORDER` 끝 — `utility` 시설 사고 · `animal` 동물 · `disturb` 치안 · `welfare` 보호 · `rescue` 구조)과 **새 시나리오 스물넷**(시설 넷 · 동물 넷 · 치안 다섯 · 보호 넷 · 구조 셋 · 응급의 갈래 넷 — 전부 `scenarios/kinds.ts`, 현장 `scenes/kinds.ts`, 규칙 `rules/kinds.ts`, 지휘 `orders/kinds.ts`, 그림 `skins/kinds.ts`). 응급의 갈래와 구조는 평소 추첨(`tag 'kinds'`), 나머지는 짧은 사건.
+- **짧은 사건 흐름 `daily`**(결정 14): 무거운 사건의 수는 그대로 두고 새 흐름이 교대당 보통 4건(`dailyCount` `[2, 3, 4, 6, 8]`)을 따로 얹는다. 33줄(새 시나리오 열일곱 — 시설·동물·치안·보호 + 비응급 열여섯 — 장난 셋·오인 넷·이관 하나·중복 여덟)의 가중 합 = `DAILY_TOTAL` 14.
+- **비응급 신고 네 갈래**(결정 10): 장난 전화 셋(화재·응급·수난) · 오인 신고 넷(+ 기존 화재) · 단순 민원 이관(`disturb/referral`) · 같은 사건의 중복 신고(`dup` 여덟 — `Incident.dupOf`). 접수 AI 가 진술만으로 가려내면 출동 없이 닫는다(`closeReason 'screened'`, `dispatch/screening.ts`).
+- **새 부대 여덟**(결정 7): 유관 기관 `civil` 넷(전력·가스·수도 복구반 · 견인차) · 형사 · 교통 경찰 · 경찰견 · 동물 포획팀. 보통 27팀·대원 77명(부대 규모 1·3·5 = 16·27·30팀). 유관 기관은 지휘하지 않고, 혼자 먼저 닿으면 길가에서 기다리며, 평소 사건에는 선택 수요로 붙는다(교통사고의 견인 · 가스 누출의 공급 차단 확인).
+- **공통 틀**(N9 가 그대로 쓴다): 유형을 자료로(`incidentTypes.ts`·`view/typeStyle.ts`) · 위협 없는 통제 `cordon` · 위험 반경 · 높은 자리(`T.LEDGE`·`'perch'`) · 남은 일·보류·판정의 등록 넷 · 새 부대의 일 좁히기(`kindFit`·`KIND_AUX`)·이름표 가점(`LABEL_BONUS`) · 카드 제목에서 빼는 시나리오(`card: false`) · 민감 소재의 조용한 실패(`quietLoss`·`floorHp`).
+- **조건부 연쇄 여덟(K1~K8)은 사용자 방향("인과는 스크립트대로 말고 자연스럽게")대로** 여섯을 세계 상태 → 원인을 모르는 법칙으로 옮겼다(상태 규칙 `wireSpark`·`wireLeft`·`mainSoak`·`hiveLeft`·`looseOut` → 법칙 `washout`·`strayHarm`·`strayRoad`, K1 은 L2 `heatSpread` 의 불꽃 항, K3 은 코드 없이 L1 `roadCrash`). 행위자의 선택인 둘(K4 흉기 · K8 다시 날치기)만 이야기 연쇄로 남겼다(붙잡히지 않았을 때만). 연쇄 상한은 그대로.
+- **화면**(결정 13 — 유형 기호만): 유형 다섯의 기호·색, 범례의 유형 열셋 줄과 유관 기관 묶음, 새 부대 여덟의 기호·차량 그림, 동물 그림, 새 스킨(전선·전봇대·배관·구멍·간판·벌집·매트·곤돌라·놀이기구 …), 높은 자리의 고정 층, 위험 반경 점선, 사다리를 편 사다리차, §5.13 의 조용한 실패(그림·카메라·감속·소리 없음).
+
+#### 뒤 묶음이 써야 하는 실제 이름 (`docs/specs/README.md` "구현 순서" 표 9번 줄의 이름마다)
+
+| 이름 (README 9번 줄) | 있다 / 다르다 / 없다 | 실제 |
+|---|---|---|
+| `TYPE_DEFS`(`floorHp`) | 있다 | `src/sim/incidentTypes.ts` `TYPE_DEFS: Record<IncidentType, TypeDef>`(tsc 가 줄을 강제) — `floorHp`(보호 20, 그 밖 0)·`zoneSearch`·`cause`·`limit`·`respLimit`·`delay`·`follow`·`weight`(숫자 · `'armed'`)·`fallback`·`atNode`·`alwaysShow`·질문 문구. 순서는 `TYPE_ORDER`(끝에만) · `typeIdx` · 가능도 `LikMap`·`likRow(map)`·`LIK_FLOOR` |
+| `kindFit` | 있다 | `dispatcher.kindFit(sim, u, I, key: keyof Needs): number` — `KIND_AUX` 의 부대만 부른다(`pickUnit` 의 후보 고리: `if (KIND_AUX.has(u.kind)) { m = kindFit(…); if (m <= 0) continue; fit *= m; }`) |
+| `KIND_AUX` | 있다 | `dispatcher.KIND_AUX: ReadonlySet<UnitKind>`(포획·형사·교통 경찰·경찰견 — N9 의 새 부대를 여기 더하면 `kindFit` 에 그 줄을 단다) |
+| `LABEL_BONUS` | 있다 | `dispatcher.LABEL_BONUS: { label, key: keyof Needs, kind?, kit?, bonus }[]` — `kitBonus(sim, u, I, key)` 가 관제 이름표(`I.assessment.label`)로 읽는다 |
+| `capableOf` 의 넷째 인자 | 있다 | `crews.capableOf(sim, rid, kind: WorkKind, what?: string)` — `what` 은 대상 소품의 생김새 글자(간판·구멍·매트 터·벌집 …). `agents.fitBase` 와 `commander.needFor` 를 같은 갈래로 고친다 |
+| `needFor(…, a)` | 있다 | `commander.needFor(s, w, hotArmed, a): keyof UnitCaps \| null` — **내보내지 않는 함수**(제자리에서 갈래를 더한다) |
+| `cordon` | 있다 | `WorkKind 'cordon'`(위협 없는 현장의 통제 — `tile` = 격자 칸 번호), 실행 `executor` 의 `case 'cordon'`, 이름 `agents.workLabel` |
+| `registerPending` | 있다 | `sceneRegistry.registerPending(fn: (sim, s, a) => keyof UnitCaps \| null)` — 7번 블록이 마지막 지휘관의 믿음 다음에 본다 |
+| `registerCasHold` | 있다 | `sceneRegistry.registerCasHold(fn: (sim, s, a, id, c: CasBelief) => boolean)` — 참이면 핵심 지휘 규칙이 그 사람에게 일을 내지 않는다(`registerPropHold(fn: (sim, s, a, id, p) => boolean)` 은 소품·차) |
+| `registerVerdict` | 있다 | `sceneRegistry.registerVerdict(fn: VerdictRule)` — `debrief.evaluate` 가 부른다, 돌려주는 값 `{ open?, bad? } \| null`(간판 `SIGN_FELL`·출산 `BIRTH_ROUGH` 이 예) |
+| `T.LEDGE` | 있다 | `types.T.LEDGE = 13`(지나지 못함 · 시야 통함 · 실내·바닥 아님 — `grid.staticPass`·`isIndoor`·`los`, 고정 층 그림 `staticLayer`) |
+| `'perch'` | 있다 | `Scene.rules` 의 `'perch'` · `crews.isHovering(u, s)`(그 현장의 소방 헬기는 상공에 머문다) · 믿음 `CasBelief.perch` · `s.kinds.perch` |
+| `streetFrame` | 있다 | `field/kindsKit.streetFrame(sim, I, rng, opt: { lanes: boolean; search?: boolean }): Scene` — 그 밖 틀 여섯 `farmFrame`·`yardFrame`·`alleyFrame`·`marketFrame`·`urbanFrame(…, names)`·`openFrame(…, field)`, 비응급의 `buildQuiet` |
+| `card: false` | 있다 | `Scenario.card?: false` · `scenarios.NO_CARD`(그 이름표의 집합) · `ui/panels.tsx` `cardTitle`(사건 카드와 App 의 사건 줄이 함께 쓴다) |
+| `runUntilClosed` | **다르다** | `tests/kinds.test.ts` 안의 **내보내지 않는 도우미** `runUntilClosed(sim, pick: (I) => boolean, cap = 6000)`(본문 §9.1 의 `(sim, id, cap)` 이 아니다). N9 는 `tests/kinds2.test.ts` 에 같은 도우미를 둔다 |
+| R1 `kitBonus`·`airFit`·`isHovering` | 있다(하나는 뜻이 넓어졌다) | `dispatcher.kitBonus(sim, u, I, key)` · `dispatcher.airFit(sim, u, I, key)` — **검토가 넓혔다**: 추격전 이름표(`CHASE_LABEL`)가 없어도 `I.reportedPrev`(목격·추적 보고로 옮겨 간 알려진 위치)가 있으면 의료·소방 헬기에 0 · `crews.isHovering(u, s)` |
+| R2 `METHOD`·`CasBelief.veh` | 있다 | `methods.METHOD` 77줄 — N8 이 포획 넷(`dart`·`catchpole`·`herd`·`net`)·`ladder`·`descend`·`window` 를 N9 단계 1 의 다섯 **앞**에 넣었다(표의 끝 = N9 의 다섯 + R3 의 `feel`·`pulse`). 창문 방법은 `METHOD['window']` 로 읽는다(아래 함정) · `CasBelief.veh` 그대로 |
+| R3 `registerDoctrine`(`DoctrineRule`) | 있다 · **N8 의 줄은 없다** | `doctrine/registry.ts` 그대로. **N8 의 교본 줄 N01~N17 은 넣지 않았다** — `field/doctrine/kinds.ts` 는 빈 파일이고 `doctrine/index.ts` 가 부르지 않는다(단계 5·6a·7 의 메모 — 지휘 규칙이 같은 일을 하고, 넣으려면 `tests/doctrine.test.ts` 의 등록 순서 `STAGE_ALL` 을 함께 고쳐야 한다). N9 의 첫 교본 줄은 `kinds.ts`·`kinds2.ts` 의 import 둘과 그 시험을 함께 고친다. `DOC_OF_UNIT` 에는 N8 의 여덟 줄이 있다(tsc) |
+| I1-b `registerConsequence`·`floodLow`·`heatSpread` | 있다 | 그대로. N8 은 `world/rules/kinds.ts`(상태 규칙 다섯)·`world/laws/kinds.ts`(법칙 셋 — `HazardLawId` 끝 `'washout'`·`'strayHarm'`·`'strayRoad'`)·`world/kindsExpo.ts`(`SPARK`·`liveWire`·`sparkTargets`·`flowingMain`·`STRAY`·`strayTargets`)와 신호 `'loose'` 를 모음의 끝에 더했다. `heatSpread` 에 K1 의 불꽃 항이 들어갔다 |
+| I2 `roadsNext` | 있다 | `persist.ts` 안 그대로 — N8 이 ③ 고리에 싱크홀 한 줄(`why: 'washout'`, 전면 통제)을 더했다 |
+| X6 `NO_STRUCT`·`vessel`·`CAT.dust` | 있다 | `ops.NO_STRUCT`(N8 이 `'ledge'` 등 높은 자리·길 위 현장을 더했다) · `Prop.vessel` · `CAT.dust = false` 그대로 |
+
+**그 밖에 N9 가 알아야 할 N8 의 이름**: `incidents.isDailyLoad(I)` · `scenarios/kinds.ts` `DAILY_TOTAL` · `difficulty.dailyCount` · `kindsCaller.ts` `verifyAnswer`·`sameAnswer` · `Incident.dupOf` · `Scene.kinds: KindsState` · `Scene.animals`·`Animal`·`AniBelief`·`exitKind` · `Casualty.quietLoss`·`rules/kinds.quietLoss(sim, s, I, c)` · 새 수요 열쇠 `utilPower`·`utilGas`·`utilWater`·`tow`·`capture`(`UnitCaps`·`Needs` · `scripts/metrics.ts` `NEED_KEYS`) · `ProblemCode 'UTIL_LATE'`·`'ANIMAL_LOST'` · `InjuryCause 'animal'` · `UnitField 'civil'`·`Dept 'civil'` · `orders/kinds.towHand(sim, s, uid)` · `crews.OWN_DRAW` 의 `'n8'`(흐름 `kit-n8`). 실제 서명과 까닭은 단계별 절의 "실제 이름" 표.
+
+#### 설계와 달라진 큰 것 (까닭과 함께 — 전부는 단계별 절의 "본문과 다른 곳")
+
+1. **짧은 사건 수 5 → 4**(보통 — §7.3 손잡이 ①): 구급 0대 시간·접수 대기가 넘었다. 어려움·극한은 본문대로 6·8.
+2. **조건부 연쇄 K1~K8 을 법칙으로**(사용자 방향): 여섯은 세계 상태 → 원인을 모르는 법칙(개입 시험으로 증명), 둘(K4·K8)은 행위자의 선택이라 이야기 연쇄. I1-b 의 C11 `waterMain` 이 없어 N8 이 자기 상태 규칙(`mainSoak`)으로 갔다.
+3. **R3 교본의 N 줄(N01~N17)을 넣지 않았다**: 지휘 규칙·`fitBase`·보류 등록이 같은 일을 한다. 교본 줄로 옮기는 일은 남은 후보.
+4. **위기자**: 위기 정도는 말을 거는 사람이 없는 초에만 출렁인다(`LEDGE.swing`) · 한계 시간 +120 · 설득 단계는 사실 `evid` · 설득 자리는 안쪽 2칸 · 매트 결말은 부분 성공 · 실패는 `quietLoss` 한 줄(§5.13).
+5. **판정 줄 둘**(간판 `SIGN_FELL` · 출산 `BIRTH_ROUGH` — 원칙 7: 실패·부분이 판정에 들어가야 잰다)과 새 시나리오의 실패 길 수치(외벽 줄 끊김 30% · 매달림 0.35/초 · 구덩이 의식 없음 악화 · 수거책 12초 · 날치기 0.35).
+6. **견인 고리 `towHand`·검거 뒤 잠복 거두기**(단계 11) · **이름표 없는 추격전의 헬기**(검토 — `airFit` 의 `reportedPrev`).
+7. **구역 확률 수색은 바깥 구역이 있는 현장만**(`commander.zoneScene` — `TYPE_DEFS.welfare.zoneSearch` 가 유형 단위라 문 잠긴 집·위기자가 들어갔다).
+
+#### 잰 수치 (마지막 코드 = `52d57e6` 의 src — 이 문서 단계가 다시 잰 것은 `$S/docs/`, 기준 = N8 0단계 사본 `$S/s03/base`)
+
+**보통 120**(`sweep 120 --json`):
+
+| | 기준(N8 0단계) | 최종 | §7.1 목표 |
+|---|---|---|---|
+| 사건/교대 (평소 추첨 · 짧은 사건) | 14.67 (14.08 · 0) | 19.09 (14.20 · 4.25) | 평소 ± 0.3 ✓ · 짧은 4~6 ✓(5.0 ± 0.5 ✗ — 손잡이 ①) |
+| 성공+대응 지연 · 실패+미해결 | 79.2% · 9.8% | 80.6% · 8.6% | ±4%p ✓ · +3%p 이하 ✓ |
+| 한계 시간 · 방치 · 무대응 (120교대) | 2 · 5 · 0 | 4 · 9 · 1 | 한계+방치 +2/60 이하 ✗ (+6/120) |
+| 평균 대응 | 52초 | 58초 | +8 이하 ✓ |
+| 비응급 비율 | 3.7% | 6.8% | 6~8% ✓ |
+| 교대당 유형 · 시나리오 · 새 유형 사건 · 되풀이 | 6.42 · 10.22 · 0 · 30.3% | 9.45 · 14.74 · 4.22 · 22.8% | ≥ 8.5 · ≥ 13 · ≥ 4 · ≤ 28% ✓ |
+| 짧은 사건의 현장 시간 중앙값 · 배정 부대 | — | 63초 · 2.48 | ≤ 150초 ✓ |
+| `NO_UNIT` · `CALL_QUEUE` (사건당 문제 수) | 25.6% · 9.7% | 28.4% · 22.8% | +5%p 이하 — `NO_UNIT` ✓ · `CALL_QUEUE` ✗ (+13.1%p) |
+| 가동률 경찰 · 소방 · 구급 · 유관 기관 | 26.2 · 41.9 · 58.4% · — | 26.3 · 42.1 · 63.7 · 15.4% | 경찰 ≤ 40% ✓ |
+| 지상 구급 0대인 시간 | 34.9% | 43.8% | +5%p 이하 ✗ (+8.9%p) |
+| 인근 도시 지원/교대 · 숨진 구조 대상/교대 · 구조율 | 1.69 · 2.66 · 91.5% | 2.09 · 2.84 · 91.7% | 지원 +0.5 이하 ✓ |
+| 다친 대원/교대 | 0.24 | 0.25 | — |
+
+**보통 60**(`sweep 60` — README 의 표): 사건 1,134(교대당 18.9) · 성공 833(73%) · 부분 114(10%) · 지연 93(8%) · 실패 77(7%) · 미해결 17(1%) — 성공+대응 지연 81.7%(N8 0단계 77.8%) · 한계 시간 3 · 방치 2 · 무대응 1 · 교대 끝 1 · 평균 대응 58초 · 사건당 180초 · 부대 3.69 · 구조율 91% · 다친 대원 0.23/교대 · 비응급 76건(6.7% — 접수에서 닫힘 19). 유형별 성공(성공+대응 지연): 화재 193건 55%(61) · 교통사고 181 75%(83) · 무장 129 76%(80) · 응급 124 73%(90) · 실종·조난 97 90%(94) · 치안 77 71%(79) · 건물 붕괴 60 73%(75) · 수난 55 71%(85) · 보호 49 80%(96) · 가스 누출 46 72%(76) · 시설 사고 46 80%(93) · 동물 43 86%(93) · 구조 34 91%(100).
+
+**프리셋**(60교대 — 보통은 위 120, 성공+대응 지연 · 실패+미해결 · 한계·방치·무대응 · 짧은 사건 · 지상 구급 0대): 쉬움 86.6% · 4.6% · 1·1·0 · 3.05 · 28.2% / 보통 80.6% · 8.6% · 4·9·1(120) · 4.25 · 43.8% / 어려움 62.5% · 19.5% · 25·21·10 · 6.55 · 67.5% / 극한 45.2% · 38.8% · 67·46·42 · 8.80 · 78.8%. 순서 유지 ✓. 극한은 검토의 `airFit` 수정으로 단계 11 메모(45.0% · 64·46·41)에서 몇 건 움직였다.
+
+**측정 지표**(`sweep 40 --metrics`, 보통 — 괄호 안은 N8 0단계 기준): 사건 759(590) · 부모 깊이 1·2 의 사건 25·3(19·4) · 교대당 연쇄 0.70(0.57), 한 교대 최대 4(2) · 사건 사이 원인 1,079(743) · 세계 원인 76(63) · 사건당 시스템 5.1(5.39) · 3단계 이상 확산 13(7) · 재계획 49%(52) · 실패 뒤 다시 시도 31% · 다른 작업 42% · 포기 27%(29 · 46 · 26) · 행동 엔트로피 2.5(2.56) · 자원 경쟁 45%(38) · 교착 후보 0 · 잊힌 사건 0 · 반복 최대 12(5) · 결과 다양성 0.99비트(1.09) · 기록 일치 C1~C5 0(C5 0/643) · 법칙 사건 28(26 — `roadCrash` 19 · `smokeIll` 6 · `heatSpread` 3) · 장부의 구멍 0. `kinds:` 줄 — 유형 9.4 · 시나리오 14.43 · 새 유형 4.05 · 되풀이 24% · 짧은 사건 4.15 · 평소 14.13 · 비응급 6% · 짧은 사건 현장 71초 · 가동률 경찰 26% · 소방 43% · 구급 64% · 유관 기관 15% · 지상 구급 0대 49%.
+
+**강제 20교대**(서른다섯 — `$S/s11c/force2.sh` 를 마지막 코드로 다시, `$S/docs/f20.txt`. 결과 n · 성공 · 부분 · 지연 · 미해결 · 실패 | 한계·무대응·방치 | 현장 시간·부대 | 교착 후보 · 반복 최대): 단계 11 메모의 표와 **한 줄도 다르지 않다**. 요약 — 새 시나리오 스물넷의 한계·무대응·방치 합 6(개 물림 1 · 벌집 1 — 안개 교대 S3 의 구급 부족, 치매 노인 1 · 문 잠긴 집 1 — 단계 7 의 알려진 것, 차량 절도 방치 2 — 추격 끊김), 교착 후보 합 5(멧돼지 1 · 가축 2 · 시비 1 · 날치기 1 — 교대 전체의 수라 강제한 변형과 다른 사건일 수 있다), 비응급 아홉 실패·미해결 0 · 한계 0, `traffic/std` 59건 한계 0 · `hazmat/std` 34건 한계 0.
+
+**관문**: 보통 40 `--check` 통과(사건 759 · timeout 2 · noresponse 1 · abandoned 2 · 교착 후보 0 · 잊힌 사건 0) · 어려움 40 `--check` 통과(1016 · 18 · 9 · 15 · shiftend 2 · 교착 후보 2 — 관문은 보통에서만) · 극한 40 `--check` 통과(1293 · 47 · 29 · 27 · 7 · 교착 후보 0). 해시 목록 153교대 = 검토 끝(diff 0). `npm run ui-check` 와 `npm run check` 는 아래 "관문" 줄.
+
+**속도**: 단계 11 이 잰 값(`sweep 20 --no-metrics` 를 N8 0단계 사본과 번갈아 세 번 — 교대당 +27% · 사용자 CPU +23% · 사건 +30%, 사건 한 건당 −2%)을 그대로 둔다. 그 뒤의 코드 변경은 관제의 한 줄(`airFit`)과 그림뿐이고, 이 문서 단계 동안 기계에 다른 묶음이 함께 돌아(부하 5~8) 다시 재지 않았다.
+
+#### 완료 조건 대조 (§8 단계 11 · §7.1)
+
+- §7.1 의 관문 · 전후 범위(성공+지연 · 실패+미해결 · 평균 대응 · `NO_UNIT`) · 사건 수(평소 · 짧은 사건 4~6 · 비응급 6~8%) · 짧은 사건의 무게 · 종류 · 경찰 가동률 · 인근 도시 지원 · 프리셋 순서 · 어려움·극한 `--check` · `daily` 가중 합 = `DAILY_TOTAL`(시험 6) · 시험 12: **채웠다**.
+- **채우지 못한 것**: 한계+방치 +6/120(목표 +2/60) · `CALL_QUEUE` +13.1%p · 지상 구급 0대 +8.9%p · 견인차 가동률 40%(목표 8~30) · 짧은 사건 4.25(본문 5.0 ± 0.5 — 손잡이 ① 이 옮긴 값) · 강제 20 의 L·M 띠(대부분 위쪽 끝을 넘는다) · 실패·부분 0 인 시나리오 넷 · 속도 벽시계 +27%(사용자 CPU +23% 는 안) · `npm run check` 의 vitest 둘.
+
+#### 관문
+
+`npx tsc --noEmit` 통과 · `npx vitest run` 1139 가운데 1137 통과(`npm run check` 안에서 937초 — 부하 4~6) — 걸린 둘은 아래 1·2(그래서 `npm run check` 는 vitest 에서 멈춘다, 이어지는 `sweep 40 --check` 는 따로 돌려 통과) · `npm run ui-check` 모두 통과(146.7초 — 콘솔·페이지 오류 0 · 1×/15× 틱 비율 14.82 · 되감기 표본 59개 해시 = 헤드리스 · 새로고침 복원 · 15× 로 교대 끝 보고서 해시 = 헤드리스 · 통화창 · 이어받은 상태(조직 #2 · 결장 점 2 · 해시 = 헤드리스)).
+
+#### 알려진 문제와 남은 후보
+
+1. **`tests/crews.test.ts` ⑤ '구출은 유압 구조대원이'(문턱 0.5)가 걸린다 — 0.470.** 넓은 표본은 N8 0단계에서도 0.45~0.48 이었다(이 시험은 시드 넷의 표본에 기대 왔고 단계 4·8·9·7 이 표본 시드를 네 번 바꿨다). 강제 붕괴·교통 교대에서 내려간 몫은 짧은 사건이 만든 구급 품귀다(짧은 사건을 끈 같은 48교대는 0.480 — 구급이 없으니 유압 대원이 처치·운반을 맡는다). 손잡이는 구급 공급(**사용자에게 물을 것 ① — 일반 구급 한 대**)이나 R1 의 넘겨받기(`RELIEF_GAP`)·R3 의 짝 규칙이다. 문턱·시드는 바꾸지 않았다(검토 메모 "고치지 않은 것" 1).
+2. **`tests/sim.test.ts` '허위·오인 신고는 확인 출동으로 끝난다'(보통 S0~S13 모두)가 보통 S7 #13 에서 걸린다** — 타는 냄새(`fire/false`)에 사다리1 이 더 급한 사건으로 전환 배정되고 진압 부대가 모두 다른 사건에 묶여, 신고 접수 330초의 무대응 종료가 먼저 닫았다. 고리·교착이 아니다(보통 60 의 허위·오인 46건 가운데 1). 고치려면 관제의 전환 배정(`pickUnit` 의 `divertFrom`)이나 무대응 종료 규칙(모든 사건)을 바꿔야 한다 — 사용자·다음 묶음의 판단.
+3. **§7.1 에서 닿지 못한 것**: 지상 구급 0대 +8.9%p(§7.3 ⑦ 까지 돌렸다 — **일반 구급 한 대**, §12.5-3) · `CALL_QUEUE` +13.1%p(접수 회선이 하나 — **접수 AI 둘째 회선**, 결정 밖) · 견인차 가동률 40%(**견인차 두 대** 또는 견인 수요를 "차로를 막은 차가 있다는 진술"일 때만) · 한계+방치 +6/120(치매 노인·차량 절도 추격 끊김·안개 교대의 구급 부족).
+4. **새 시나리오의 실패 길이 얕다**: 강제 20 의 L·M 띠(L 85~97% · M·H 60~85%) 안은 문 잠긴 집·구덩이뿐이고 벌집이 아래, 나머지는 위쪽 끝을 넘는다. 실패·부분 0 인 시나리오 넷(수도관 · 치매 노인 · 미아 · 약물 과다) — 후보: 지하 침수의 오르는 속도(`MAIN`) · 흥분의 밀침(`MED.shove`) · 길 건너기 위험. 출산의 실패 길은 수치로 닿지 않는다(처치가 늘 출혈을 멎게 한다 — "전문 처치가 아니면 멎지 않는다" 규칙이 필요).
+5. **R3 교본의 N 줄(N01~N17) 없음** — 위 이름 표. 지휘 규칙이 같은 일을 한다.
+6. **모르고 배정한 헬기를 거둬들이지 않는다** — 관제가 추격전임을 알기 전에 보낸 소방·의료 헬기는 차가 설 때까지 배정된 채다(보통 S20). 관제의 '출동 취소' 길이 없다.
+7. **보통 120 의 교착 후보 2**(관문은 40교대만 — 0) · 강제 20 의 교착 후보 합 5(멧돼지·가축·시비·날치기·물 오인 — 단계 5~7 과 같은 수).
+8. **짧은 사건(치안)에 특공대가 먼저 갈 때가 있다**: 화면 확인 S2 의 주취 소란·벌집에 특공1 이 첫 출동으로 갔다(경찰 수요를 특공대의 능력이 채운다 — 순찰이 비어 있어도 가까운 쪽). 결과는 성공이지만 보기에 무겁다 — `kindFit` 처럼 특공대를 치안에서 좁히는 줄이 후보(관제 규칙이라 결과가 바뀐다).
+9. **이면 도로 교차로 이름의 겹침**('한솔3로 2길 2길 2길' — `city.ts` M1, N8 밖)과 일시정지 막이 지도 한가운데 핀을 가리는 것(화면 전체).
+10. **치매 노인 정밀 수색 되풀이**(보통 60 S26 #11 반복 20 — 단계 7 앞 절반) · 짝 동행 대원의 바깥 처치가 짝의 진입으로 끊기는 모양(`commander.pairAssign` 과 G08 — 단계 10).
+
+**사용자에게 물을 것**(답이 없으면 지금 그대로 — `docs/handover/README.md` 5절 표와 같다): ① 일반 구급 한 대를 더할까(§12.5-3 — 지상 구급 0대 +8.9%p · crews ⑤ 의 원인) ② 견인차를 두 대로 할까, 견인 수요를 좁힐까(가동률 40%) ③ 접수 AI 회선을 둘로 할까(`CALL_QUEUE` +13%p) ④ 걸린 시험 둘의 처리 — 손잡이를 돌릴지(구급·관제 전환 배정·R1/R3), 시험의 셈을 바꿀지.
 
 ## 검토 메모
 

@@ -12,6 +12,7 @@ import { registerBlocker, registerCasHold, registerHosHold, registerOrders, regi
 import { ATTACH_GAS, ATTACH_TOW } from '../../scenarios/kinds';
 import { VALVE_LATE, laborAtOf, meetOf } from '../agents';
 import type { AniBelief, CasBelief, FieldAgent, Incident, Scene } from '../../types';
+import { T } from '../../types';      // (N8 단계 7) 문 잠긴 집의 현관 칸 (생김새)
 import { hasKit, seatsOf, seatsUsed } from '../../crews';      // (N8 단계 8) 조직이 아는 장비 — 가스 측정기를 든 대원이 현장·오는 부대에 있는가
 import type { Sim } from '../../engine';
 
@@ -477,6 +478,87 @@ registerOrders((sim, s, I, a, k) => {
   const keep: number[] = [];
   for (let n = 0; n < Math.min(order.length, hands > 3 ? 2 : 1); n++) { const t = exitPost(s, order[n].i); keep.push(t); k.want('cordon', { tile: t }, n === 0 ? CHILD_POST.p1 : CHILD_POST.p2); }
   k.cancel((w) => w.kind === 'cordon' && keep.indexOf(w.tile) < 0);
+});
+
+// ───────────────────────── 보호 (§4.5 — 단계 7 뒤 절반) — 위기자 · 문 잠긴 집 ─────────────────────────
+// 믿음(cas 의 perch, evid talk·sound·witness, haz matSite, blk)·작업판·현장의 생김새(출구·칸)만 읽는다. 위기자에게 가는 일은 모두 여기서 낸다 — 핵심 규칙은 보류(registerCasHold)로 내지 않는다(원칙 10).
+/** 위기자: 설득(한 사람) · 매트 펴기(구조 부대의 유압 대원 — 안전 매트) · 단계 2 부터의 붙잡기(줄을 든 구조 대원 — 매트가 펴지기 전에는 다가가지 않는다, N12) */
+export const LEDGE_ORD = { persuade: 0.9, mat: 0.86, grab: 0.7 };
+/** 설득하는 대원이 본 단계 (믿음 evid talk — 사실 id 1000 + 구조 대상 id, §5.8). 모르면 0 */
+function talkStage(a: FieldAgent, cid: number): number {
+  const v = a.beliefs.val<{ kind?: string; stage?: number }>('evid', 1000 + cid);
+  return v !== undefined && v.kind === 'talk' ? v.stage ?? 0 : 0;
+}
+/** 믿음 속 높은 자리의 사람 (보호 유형 — 위기자): 현장에 있고 숨지지 않았다 */
+const upOnLedge = (c: CasBelief): boolean => (c.perch ?? 0) > 0 && c.where === 'scene' && c.band < 3;
+/** 문 잠긴 집: 현관 앞 듣기(통제 자리) · 강제 개방 · 열쇠를 기다리는 시간(첫 도착 뒤 초 — 교착 감지 60초 아래) */
+export const LOCK_ORD = { listen: 0.85, force: 0.88, keyWait: 45 };
+/** 문 잠긴 집의 현관 (생김새): 첫 출구 칸과 그 곁의 문 칸 — 집이 아니면 null (방 수색을 하는 실내 방이 있는 보호 현장만) */
+function lockinDoor(s: Scene): { exit: number; door: number } | null {
+  if (!s.exits.length || !s.regions.some((r) => r.kind === 'room' && r.indoor && r.searchable)) return null;
+  const ex = s.exits[0], w = s.w;
+  for (const [dx, dy] of [[0, -1], [0, 1], [-1, 0], [1, 0]]) { const x = ex.x + dx, y = ex.y + dy; if (x >= 0 && y >= 0 && x < w && y < s.h && s.tiles[y * w + x] === T.DOOR) return { exit: ex.y * w + ex.x, door: y * w + x }; }
+  return null;
+}
+/** 문 잠긴 집에 들어갔다고 믿는가: 현관이 열렸다(blk none) · 구조 대상을 안다 · 집 안 구역을 하나라도 살폈다 */
+function enteredHouse(s: Scene, a: FieldAgent, door: number): boolean {
+  const B = a.beliefs;
+  if (B.val<string>('blk', door) === 'none' || B.list('cas').length > 0) return true;
+  for (const r of s.regions) if (r.indoor && r.searchable && (B.val<number>('srch', r.id) ?? -1) >= 0) return true;
+  return false;
+}
+const WELFARE_TOLD = new WeakMap<Scene, Set<string>>();
+/** 문 잠긴 집: 이 지휘 규칙이 미뤄 둔 방 수색 (들어가면 그것만 푼다 — 실패 뒤의 미룸은 건드리지 않는다) */
+const LOCK_HELD = new WeakSet<object>();
+function tellWelfare(sim: Sim, s: Scene, I: Incident, a: FieldAgent, key: string, text: string): void {
+  let st = WELFARE_TOLD.get(s); if (!st) { st = new Set(); WELFARE_TOLD.set(s, st); }
+  if (st.has(key)) return;
+  st.add(key);
+  emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 1, text });
+}
+registerOrders((sim, s, I, a, k) => {
+  if (s.kind !== 'welfare') return;
+  const B = a.beliefs;
+  // ── 위기자 ──
+  let mat: { id: number; active: boolean } | null = null;
+  for (const f of B.list('haz')) { const v = f.value as HazV; if (v.kind === 'matSite') { mat = { id: f.id, active: v.active === true }; break; } }
+  for (const f of B.list('cas')) {
+    const c = f.value as CasBelief;
+    if (!upOnLedge(c)) { k.cancel((w) => (w.kind === 'persuade' || w.kind === 'extricate') && w.cas === f.id); continue; }      // 내려왔거나 숨졌다(또는 높은 자리의 사람이 아니다) — 설득·붙잡기를 거둔다(믿음상 끝난 일)
+    k.want('persuade', { cas: f.id }, LEDGE_ORD.persuade, 1);
+    if (mat !== null && mat.active) { k.want('mitigate', { prop: mat.id }, LEDGE_ORD.mat); tellWelfare(sim, s, I, a, 'mat', '아래에 안전 매트부터 펴라. 매트가 펴지기 전에는 누구도 다가가지 않는다.'); }
+    if (talkStage(a, f.id) >= 2 && !(mat !== null && mat.active)) { k.want('extricate', { cas: f.id }, LEDGE_ORD.grab, 1); tellWelfare(sim, s, I, a, 'grab', '마음을 조금 열었다. 구조대는 줄을 매고 천천히 곁으로 가라.'); }
+    else k.cancel((w) => w.kind === 'extricate' && w.cas === f.id && w.status === 'open');
+  }
+  if (mat !== null && (!mat.active || !B.list('cas').some((f) => upOnLedge(f.value as CasBelief)))) k.cancel((w) => w.kind === 'mitigate' && w.prop === mat!.id);      // 펴졌거나 위기자가 내려왔다
+  // ── 문 잠긴 집 ──
+  const hd = lockinDoor(s);
+  if (hd === null) return;
+  if (enteredHouse(s, a, hd.door)) {
+    k.cancel((w) => w.kind === 'cordon' || (w.kind === 'force' && w.tile === hd.door));
+    for (const w of s.board) if (LOCK_HELD.has(w)) { LOCK_HELD.delete(w); if (w.status === 'open' && w.holdUntil > sim.t) w.holdUntil = sim.t; }      // 들어갔다 — 미뤄 둔 방 수색을 바로 푼다
+    return;
+  }
+  for (const w of s.board) if (w.kind === 'search' && w.status === 'open') { w.holdUntil = Math.max(w.holdUntil, sim.t + 6); LOCK_HELD.add(w); }      // 문을 열기 전에는 방 수색을 맡기지 않는다 (맡은 대원이 길에서 잠긴 문을 스스로 부수지 않게 — 계획 주기 사이에 풀리지 않게 6초)
+  let sound: { v?: string } | null = null;
+  for (const f of B.list('evid')) { const v = f.value as { kind?: string; v?: string }; if (v.kind === 'sound') { sound = v; break; } }
+  if (sound === null) { k.want('cordon', { tile: hd.exit }, LOCK_ORD.listen); return; }      // 현관 앞에 서서 듣는다 (그 자리에 5초 — 세계 규칙 lockinRule)
+  const wait = sound.v !== 'moan' && s.arrivedAt >= 0 && sim.t < s.arrivedAt + LOCK_ORD.keyWait;
+  if (wait) { k.want('cordon', { tile: hd.exit }, LOCK_ORD.listen); tellWelfare(sim, s, I, a, 'wait', '인기척이 없습니다. 관리인의 열쇠를 잠시 기다립니다.'); }
+  else k.cancel((w) => w.kind === 'cordon');
+  if (sound.v === 'moan') tellWelfare(sim, s, I, a, 'moan', '안에서 신음 소리가 납니다. 열쇠를 기다리지 않고 바로 문을 엽니다.');
+  const w = k.want('force', { tile: hd.door }, LOCK_ORD.force);
+  if (w.id >= 0 && wait && w.status === 'open') w.holdUntil = Math.max(w.holdUntil, s.arrivedAt + LOCK_ORD.keyWait);
+});
+/** 위기자(높은 자리의 사람)에게 핵심 규칙이 일(구출·처치·이송·동행·호이스트)을 내지 않는다 — 단계에 맞춰 위의 지휘 규칙이 낸다 */
+registerCasHold((sim, s, a, id, c) => { void sim; void a; void id; return s.kind === 'welfare' && (c.perch ?? 0) > 0 && c.where === 'scene'; });
+/** 남은 일: 높은 자리의 위기자가 남았으면 경찰(설득) · 문을 아직 열지 못한 문 잠긴 집이면 구조(개방할 사람) */
+registerPending((sim, s, a) => {
+  void sim;
+  if (s.kind !== 'welfare') return null;
+  for (const f of a.beliefs.list('cas')) if (upOnLedge(f.value as CasBelief)) return 'law';
+  const hd = lockinDoor(s);
+  return hd !== null && !enteredHouse(s, a, hd.door) ? 'rescue' : null;
 });
 
 // ───────────────────────── 구조 (§4.6 — 단계 8) — 높은 자리 아래 통제 · 구덩이의 공기 측정 · 놀이기구의 전원 기다림 ─────────────────────────

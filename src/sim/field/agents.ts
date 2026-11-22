@@ -295,6 +295,11 @@ function perceiveFixture(sim: Sim, s: Scene, a: FieldAgent, p: Prop, d: number, 
     if (d > v || !los(s, a.x, a.y, p.x, p.y)) return;
     const r = hiveR(sim, s);
     if (!cur || cur.value.active !== (p.live === true) || cur.value.r !== r) learn(sim, a, mkFact('haz', p.id, { kind: 'hive', active: p.live === true, x: p.x, y: p.y, r }, me, sim.t, 1, true, p.live ? `${regionNameAt(s, p.x, p.y)} 처마 밑에 벌집 — 벌 떼, 보호복 없이 접근 금지` : '벌집 제거 확인'), true, cur !== undefined && cur.value.active !== (p.live === true));
+  } else if (p.skin === 'matSite') {
+    // (N8 §4.5 — 단계 7) 위기자 아래 매트를 펼 자리: 보이면 누구나 안다(떨어지면 닿는 보도). 펴졌는가도 본 대로
+    const cur = a.beliefs.get('haz', p.id);
+    if (d > v || !los(s, a.x, a.y, p.x, p.y)) return;
+    if (!cur || cur.value.active !== (p.live === true)) learn(sim, a, mkFact('haz', p.id, { kind: 'matSite', active: p.live === true, x: p.x, y: p.y }, me, sim.t, 1, true, p.live ? '위기자 아래 보도 — 안전 매트를 펼 자리' : '안전 매트 설치됨'), true, cur !== undefined);
   } else if (p.skin === 'floater') {
     if (d <= 4 && !a.beliefs.get('evid', p.id) && los(s, a.x, a.y, p.x, p.y)) learn(sim, a, mkFact('evid', p.id, { kind: 'floater' }, me, sim.t, 1, true, '물에 떠 있는 것은 사람이 아님 — 마네킹·쓰레기 봉투'));
   } else if (p.skin === 'fireworks') {
@@ -539,7 +544,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
         pushFx(sim, s, 'text', p.x, p.y - 0.8, undefined, undefined, '단서', '#ffd166', 1.8);
       }
     } else if (p.kind === 'witness') {
-      if (!a.beliefs.get('evid', p.id) && d <= v && !((p.skin === 'victim' || p.skin === 'operator') && p.interviewed)) learn(sim, a, mkFact('evid', p.id, { kind: 'witness', done: !!p.interviewed }, me, sim.t, 1, true, p.skin === 'victim' ? '현장에 피해자 대기 중' : p.skin === 'operator' ? '놀이기구 운영자 대기 중' : '현장에 목격자 대기 중'), false);      // (N8 단계 6b) 면담을 마친 피해자는 약속(evid meet)이 같은 열쇠다 — 덮지 않는다
+      if (!a.beliefs.get('evid', p.id) && d <= v && !((p.skin === 'victim' || p.skin === 'operator') && p.interviewed)) learn(sim, a, mkFact('evid', p.id, { kind: 'witness', done: !!p.interviewed }, me, sim.t, 1, true, p.skin === 'victim' ? '현장에 피해자 대기 중' : p.skin === 'operator' ? '놀이기구 운영자 대기 중' : p.skin === 'keyholder' ? '관리인이 열쇠를 들고 대기 중' : '현장에 목격자 대기 중'), p.skin === 'keyholder');      // (N8 단계 7) 열쇠를 든 관리인은 본 대원이 알린다 (현관 앞에서 듣던 대원 — 지휘관이 면담을 낸다)      // (N8 단계 6b) 면담을 마친 피해자는 약속(evid meet)이 같은 열쇠다 — 덮지 않는다
     } else if (p.kind === 'fixture') perceiveFixture(sim, s, a, p, d, meter, me, v);      // (N8) 시설물·현장의 물건 (단계 3: 오인 신고의 답 — 물에 뜬 물건·폭죽 잔해·음식물 쓰레기)
   }
   // (X6 §3.3) 조짐: 구조 약화·가스 농도·용기 가열·건물 기울어짐 — 감각 범위 안의 것만 (field/catastrophe.ts)
@@ -724,7 +729,7 @@ export function workLabel(s: Scene, w: WorkItem, sim?: Sim): string {
     mitigate: w.prop < 0 ? `${reg ? reg + ' ' : ''}가스 재측정`      // (X6 §5.7) 칸만 있는 작업
       : s.props[w.prop] && s.props[w.prop].kind === 'gas' ? (s.props[w.prop].skin === 'drum' ? '드럼통 냉각' : '가스 용기 냉각')      // (X6 §5.8)
       : s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? '균열부 보강' : s.props[w.prop] && s.props[w.prop].kind === 'valve' ? '가스 밸브 차단'
-      : s.props[w.prop] && s.props[w.prop].skin === 'hole' ? '구멍 가장자리 보강' : s.props[w.prop] && s.props[w.prop].skin === 'sign' ? '간판 고정' : '연료 누출 조치',      // (N8 4b) 시설물
+      : s.props[w.prop] && s.props[w.prop].skin === 'hole' ? '구멍 가장자리 보강' : s.props[w.prop] && s.props[w.prop].skin === 'sign' ? '간판 고정' : s.props[w.prop] && s.props[w.prop].skin === 'matSite' ? '안전 매트 설치' : '연료 누출 조치',      // (N8 4b) 시설물 · (단계 7) 위기자 아래 매트
     perimeter: s.kind === 'hazmat' ? `${w.tile === 0 ? '앞쪽' : '뒤쪽'} 출입구 통제` : `${exitName(s, w.tile)} 봉쇄`, negotiate: `${hos} 협상`, engage: `${hos} 대응`, arrest: `${hos} 검거`, interview: '목격자 면담', clearRoad: '도로 정리', rescueMate: '동료 구조', waterRescue: `${cas} 수난 구조`, escort: `${cas} 동행`,
     defuse: '폭발물 해체', overhaul: `${reg} 잔불 정리`,
     hoist: `${cas} 호이스트 인양`, airDrop: `${reg} 공중 물 투하`,
@@ -780,6 +785,7 @@ export function fitParts(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): DocFit
  * 그 위험을 다루는 일(대상 소품 workProp 이 그것)이거나 막는 장비를 든 대원(전선 = 절연 장비)은 세지 않는다. 믿음과 자기 장비만 읽는다(진실을 읽지 않는다)
  */
 function hazRadii(sim: Sim, s: Scene, a: FieldAgent, workProp: number, pad: number, holdOnly = false): number[] | null {
+  if (s.kind === 'welfare') return holdOnly ? null : ledgeRadii(a, pad);
   if (s.kind === 'animal') return aniRadii(sim, a, workProp, pad);
   if (s.kind === 'disturb') return brawlRadii(sim, a, pad);
   if (s.kind !== 'utility') return null;
@@ -790,6 +796,22 @@ function hazRadii(sim: Sim, s: Scene, a: FieldAgent, workProp: number, pad: numb
     if (holdOnly && hv.kind !== 'wire') continue;      // 사람에게 가는 일을 막는 반경은 들어가면 다치는 것(전선)뿐 — 구멍·간판의 사람은 구출·처치한다
     if (hv.kind === 'wire' && hasKit(sim, a.rid, 'insulKit')) continue;
     (out ??= []).push(hv.x, hv.y, (hv.r + pad) * (hv.r + pad));
+  }
+  return out;
+}
+/**
+ * (N8 §4.5 — 단계 7 · 교본 N11 의 뜻) 위기자 곁 3칸: 설득은 한 사람, 나머지는 3칸 밖 — 믿음 속 높은 자리의 사람 둘레를 돌아간다(막지 않는다).
+ * 그 사람을 설득하거나 붙잡는 대원, 매트를 펴는 대원(아래 보도)은 세지 않는다. 믿음과 자기 임무만 읽는다
+ */
+function ledgeRadii(a: FieldAgent, pad: number): number[] | null {
+  const t = a.task;
+  if (t !== null && t.kind === 'mitigate') return null;
+  let out: number[] | null = null;
+  for (const f of a.beliefs.list('cas')) {
+    const c = f.value as CasBelief;
+    if ((c.perch ?? 0) <= 0 || c.where !== 'scene' || c.band >= 3) continue;
+    if (t !== null && (t.kind === 'persuade' || t.kind === 'extricate') && t.cas === f.id) continue;
+    (out ??= []).push(c.x, c.y, (3 + pad) * (3 + pad));
   }
   return out;
 }
@@ -936,6 +958,8 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
     case 'clear': return 0.3 + r.skills.rescue * 0.5 + toolFor(sim, rid, 'clear') * 0.3;
     case 'force': return 0.3 + r.skills.rescue * 0.5 + toolFor(sim, rid, 'force') * 0.3;
     case 'extricate': {
+      // (N8 §4.5 — 단계 7) 위기자를 붙잡는 일: 줄을 든 대원만 (지휘 규칙이 설득 단계 2 부터 낸다 — 사다리·하강이 아니다)
+      if (s.kind === 'welfare') { const cb = a.beliefs.val<CasBelief>('cas', w.cas); if (cb !== undefined && (cb.perch ?? 0) > 0) return hasKit(sim, rid, 'rope') ? Math.max(0.2, 0.4 + 0.6 * r.skills.rescue) : 0; }
       { const cb = a.beliefs.val<CasBelief>('cas', w.cas);      // (N8 단계 8 §5.11) 높은 자리·구조 유형의 구덩이: 쓸 방법(사다리·하강·줄)이 있는 대원만 — 땅 위의 방법으로는 닿지 않는다
         if (cb !== undefined && ((cb.perch ?? 0) > 0 || (s.kind === 'rescue' && cb.pit === true))) return methodFit(sim, s, a, w) > 0 ? Math.max(0.2, 0.4 + 0.6 * r.skills.rescue) : 0; }
       if (!scbaOk(sim, rid, afterSwap)) {
@@ -971,6 +995,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
       if (fx && fx.kind === 'fixture') {
         if (fx.skin === 'hole') return u.kind === 'rescue' || hasKit(sim, rid, 'shoring') ? 0.5 + 0.5 * r.skills.rescue : 0;
         if (fx.skin === 'sign') return r.role === 'ladderOp' || r.role === 'ladderLead' || hasKit(sim, rid, 'rope') ? 0.5 + 0.5 * r.skills.rescue : 0;
+        if (fx.skin === 'matSite') return hasKit(sim, rid, 'jumpMat') ? 0.5 + 0.5 * r.skills.rescue : 0;      // (N8 §4.5 — 단계 7) 위기자 아래 안전 매트: 매트를 든 대원만 (crews.capableOf 와 같은 조건)
         return 0;
       }
       // (X6 §5.7) 가스 재측정(소품 없이 문턱 칸만): 가스 측정기를 든 대원만 — 그 칸에 서면 perceiveSigns 가 읽는다

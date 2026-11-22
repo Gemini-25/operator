@@ -188,7 +188,8 @@ describe('대응표가 문구를 아직 잡는다', () => {
   it('T8(이송 중 목적지 변경 — I1-b C3)이 응급실 포화가 알려진 교대(보통 S3·S7)의 기록과 맞고, 그 기록의 시스템이 병원이다', () => {
     let n = 0;
     // (N8 단계 6a) S1 을 더했다 (표본만 넓힌다): 경찰 새 부대 셋이 편성돼 S3·S7 의 응급실 포화 뒤 목적지 변경이 없어졌다
-    for (const seed of ['S3', 'S7', 'S1']) for (const e of probedShift(seed).sim.events) if (PHRASE.T8.test(e.text)) { n++; expect(sysOf(e)).toBe('hospital'); expect(PHRASE.T8.exec(e.text)![1]).toBe(e.actor); }
+    // (N8 단계 7 뒤 절반) S12 를 더했다 (표본만 넓힌다): 위기자·문 잠긴 집이 짧은 사건에 들어 S1 의 목적지 변경이 없어졌다 — S0~S59 가운데 목적지 변경이 있는 첫 시드
+    for (const seed of ['S3', 'S7', 'S1', 'S12']) for (const e of probedShift(seed).sim.events) if (PHRASE.T8.test(e.text)) { n++; expect(sysOf(e)).toBe('hospital'); expect(PHRASE.T8.exec(e.text)![1]).toBe(e.actor); }
     expect(n).toBeGreaterThan(0);
     // 사건이 없는 목적지 변경(다친 대원만 실은 차)은 문제 기록이 아니다 — 문구로 병원을 가린다
     const X: SimEvent[] = [];
@@ -388,7 +389,8 @@ describe('I1-b 0단계: 기록만 잇기', () => {
     const cases: [string, Difficulty, string | null, string[]][] = [
       // (N8 단계 8·9) 납치 S0 → S5: 구조 유형이 평소 추첨에 들어 S0 의 납치가 은신처로 가지 않게 됐다(은신처 40%) — S0~S7 가운데 은신처가 이어지는 S5·S7 의 앞쪽
       //  평소 S4 → S7: S4 의 연쇄 방화가 없어졌다 — S0~S14 가운데 연쇄 방화가 이어지는 S7
-      ['S1', NORMAL, 'fire/arson', ['arson']], ['S5', NORMAL, 'armed/kidnap', ['hideout']], ['S7', NORMAL, null, ['arson']], ['S1', parseDifficulty('extreme')!, 'armed/std', ['reoffend', 'getaway', 'hideout']],
+      //  (N8 단계 7 뒤 절반) 평소 S7 → S15: 위기자·문 잠긴 집이 짧은 사건에 들어 S7 의 연쇄 방화가 없어졌다 — S0~S59 가운데 연쇄 방화가 이어지는 첫 시드
+      ['S1', NORMAL, 'fire/arson', ['arson']], ['S5', NORMAL, 'armed/kidnap', ['hideout']], ['S15', NORMAL, null, ['arson']], ['S1', parseDifficulty('extreme')!, 'armed/std', ['reoffend', 'getaway', 'hideout']],
     ];
     const seen = new Set<string>();
     for (const [seed, d, force, csqs] of cases) {
@@ -1024,6 +1026,8 @@ describe('I1-b b3-1: C6 divertRecord — 전환 배정의 실제 영향', () => 
           const row = rows.find((r) => r.pe === p.eventId)!;
           expect(row.hurt).toBe(true);
           if (row.lostSec !== null) expect(Math.abs(row.lostSec - lost)).toBeLessThanOrEqual(1);
+          // (N8 단계 7 뒤 절반) 끝내 아무도 닿지 못하고 닫힌 사건(무대응)은 닫힌 시각까지를 ref.lost 에만 적고 기록을 남기지 않는다 — 아래 '기억과 정산' 시험의 갈래 (보통 S7 #13: 전환 뒤 진압 부대가 모두 다른 화재에 묶인 오인 신고)
+          if (J.firstArrivalAt < 0) { expect(rec.length, `${seed} #${J.code} 무대응`).toBe(0); continue; }
           if (lost >= DIVERT_LATE_MIN) {
             lateN++;
             expect(rec.length).toBe(1);
@@ -1240,7 +1244,8 @@ describe('I1-b b3-2: C3 hospitalLoad — 응급실 포화', () => {
   it('실제 교대(보통 S3·S7): 포화 알림 → 먼 병원 이송·이송 중 목적지 변경 → 그 병원에 인계 (C5 0), 응급실 대기 기록은 앞 차의 출발 기록·그 병원의 인계 기록을 원인으로', () => {
     let fulls = 0, reroutes = 0, departs = 0, waits = 0;
     // (N8 단계 6a) S1 을 더했다 (표본만 넓힌다): 경찰 새 부대 셋이 편성돼 S3·S7 의 이송 중 목적지 변경이 없어졌다
-    for (const seed of ['S3', 'S7', 'S1']) {
+    // (N8 단계 7 뒤 절반) S12 를 더했다 (표본만 넓힌다): 위기자·문 잠긴 집이 짧은 사건에 들어 포화 알림이 S7 의 하나로 줄고 목적지 변경이 없어졌다 — S0~S59 가운데 목적지 변경이 있는 첫 시드
+    for (const seed of ['S3', 'S7', 'S1', 'S12']) {
       const { sim, m } = probedShift(seed);
       expect(m.consistency.C5, seed).toBe(0);
       const hospName = new Set(sim.city.facilities.filter((f) => f.kind === 'hospital').map((f) => f.name));
@@ -1679,7 +1684,7 @@ describe('I1-b b5: 완료 조건의 정해진 시드 (§5 · §6 I1-b 8)', () =>
   }, 120000);
   it('법칙 사건의 통제를 만난 다른 사건의 부대 (완료 조건 2): ROUTE_BLOCKED 의 원인이 그 법칙 사건의 통제 기록이다 — 극한 S4·S7', () => {
     let n = 0;
-    for (const seed of ['S4', 'S7', 'S26', 'S8', 'S13']) {      // (N8 단계 8·9) S13 을 더했다 — 구조 유형이 평소 추첨에 들어 넷의 그런 부대가 없어졌다 (극한 S0~S13 가운데 S13 하나)      // (N8 단계 6b) S8 을 더했다 — 교통사고의 견인으로 셋의 그런 부대가 없어졌다 (S0~S39 가운데 S8 하나) · (N8 단계 6a) S26 을 더했다 — 경찰 새 부대 셋이 편성돼 S4·S7 의 그런 부대가 없어졌다 (S0~S29 가운데 S26·S28) · (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 극한 S3 의 사건이 바뀌었다 — 그런 부대가 있는 S7 로 (S0~S15 가운데 S7 하나)
+    for (const seed of ['S4', 'S7', 'S26', 'S8', 'S13', 'S25']) {      // (N8 단계 7 뒤 절반) S25 를 더했다 — 위기자·문 잠긴 집이 짧은 사건에 들어 다섯의 그런 부대가 없어졌다 (극한 S0~S29 가운데 S25·S29)      // (N8 단계 8·9) S13 을 더했다 — 구조 유형이 평소 추첨에 들어 넷의 그런 부대가 없어졌다 (극한 S0~S13 가운데 S13 하나)      // (N8 단계 6b) S8 을 더했다 — 교통사고의 견인으로 셋의 그런 부대가 없어졌다 (S0~S39 가운데 S8 하나) · (N8 단계 6a) S26 을 더했다 — 경찰 새 부대 셋이 편성돼 S4·S7 의 그런 부대가 없어졌다 (S0~S29 가운데 S26·S28) · (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 극한 S3 의 사건이 바뀌었다 — 그런 부대가 있는 S7 로 (S0~S15 가운데 S7 하나)
       const sim = probedShift(seed, parseDifficulty('extreme')!).sim;
       const lawBlock = new Map<number, Incident>();
       for (const J of sim.incidents) if (J.hz && J.blockEv !== undefined) lawBlock.set(J.blockEv, J);

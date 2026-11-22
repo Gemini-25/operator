@@ -402,6 +402,7 @@ describe('③ 능력과 장비가 어긋나지 않는다', () => {
         if (u.caps.rescue >= 0.5) expect(anyKit(sim, u, ['irons', 'spreader', 'lightRescue', 'rope', 'ring']), `${tag}: 구조 장비`).toBe(true);
         if (u.dept === 'fire' && u.kind !== 'boat' && u.kind !== 'animalCtl') expect(anyKit(sim, u, ['scba']), `${tag}: 공기호흡기`).toBe(true);      // animalCtl: (N8 단계 5) 동물 포획팀은 소방 부서지만 공기호흡기를 들지 않는다 (위험한 건물 안에 들어가지 않는다)
         if (u.caps.capture >= 0.7) expect(anyKit(sim, u, ['dart', 'catchpole']), `${tag}: 마취총 또는 올가미`).toBe(true);      // (N8 단계 5) 포획 ↔ 마취총·올가미
+        if (u.kind === 'rescue') expect(anyKit(sim, u, ['jumpMat']), `${tag}: 안전 매트`).toBe(true);      // (N8 단계 7) 구조 부대 ↔ 안전 매트 (이름표 '위기자'의 구조 수요 가점이 매트를 든 부대를 부른다 — 최소 인원에도 유압 대원이 남는다)
         if (u.caps.suppression >= 0.7 && !AIR_KIND.has(u.kind)) expect(anyKit(sim, u, ['beeSuit']), `${tag}: 벌 보호복`).toBe(true);      // 진압 수요로 오는 지상 부대는 벌집을 뗄 사람이 있다 (관창수·로프 대원)
         if (u.caps.utilPower >= 0.7) expect(anyKit(sim, u, ['insulKit']), `${tag}: 절연 장비`).toBe(true);      // (N8 §5.3.3) 전력 복구 ↔ 절연 장비
         if (u.caps.utilGas >= 0.7 || u.caps.utilWater >= 0.7) expect(anyKit(sim, u, ['valveKey']), `${tag}: 밸브 키`).toBe(true);      // 가스·수도 복구 ↔ 밸브 키 (단계 4b)

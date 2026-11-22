@@ -9,12 +9,12 @@ import type { Rng } from '../../rng';
 import { T } from '../../types';
 import type { Animal, Casualty, Fact, FieldAgent, Hostile, Incident, Prop, Scene } from '../../types';
 import { leavePerch, perchIdx } from '../perch';      // (N8 단계 8) 높은 자리
-import { dist, josa } from '../../util';
+import { clamp, dist, josa } from '../../util';
 import { mkFact } from '../beliefs';
-import { hurtCas, hurtHostile, hurtResponder } from '../injury';
+import { hurtCas, hurtCasTo, hurtHostile, hurtResponder } from '../injury';
 import { casFact, hosFact, learn, resp } from '../agents';
 import { registerRule, registerVerdict } from '../sceneRegistry';
-import { astar, los, staticPass, truthCost } from '../grid';
+import { astar, los, staticPass, tileOf, truthCost } from '../grid';
 import { ANIMAL, HIVE, hiveR, tickAnimals } from '../animals';
 import { addCas, addHostile, addProp } from '../kit';
 import { startFlee } from '../hazards';
@@ -805,11 +805,168 @@ registerRule((sim, s, I) => {
   c.concealment = Math.min(CHILD.hideMax, c.concealment + CHILD.hide);
   emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, truth: true, text: `(미발견) ${josa(c.label, '이/가')} 지키는 사람이 없는 출구로 나갔다가 다른 길로 들어왔습니다. 찾기가 더 어려워집니다.` });
 });
-/** (§4.5) 보호 유형의 판정: 미아를 시민이 데려왔으면 대응 지연 */
+/** (§4.5) 보호 유형의 판정: 미아를 시민이 데려왔으면 대응 지연 · (단계 7) 위기자를 매트가 받아 냈으면 부분 성공(다친 사람 — 설득·붙잡기로 내려오지 못했다) */
 registerVerdict((sim, s, I) => {
   void sim; void I;
   if (s.kind !== 'welfare' || !s.kinds) return null;
+  if (s.kinds.ledgeEnd === 'mat') return { bad: 0.3 };
   return s.kinds.backed ? { delayed: true } : null;
+});
+
+// ───────────────────────── 보호 welfare (§4.5 — 단계 7 뒤 절반) — 위기자 · 문 잠긴 집 ─────────────────────────
+/**
+ * 위기자의 상수 (설계서 §4.5 의 시작값): 위기 정도가 1초에 오르는 값 · 설득하는 사람이 아닌 사람이 3칸 안(안쪽)에 있으면 더 오르는 값 · 그 거리 ·
+ * 설득이 내리는 값(× (0.4 + 0.6 × (침착 + 경험)/2), 확성기 ×0.8) · 말이 닿는 거리 · 단계 문턱(대화 20초 → 1 · 0.25 아래 → 2, 0.30 넘으면 1 로 · 0.12 아래 → 3) ·
+ * 붙잡는 거리·시간(줄을 든 구조 대원이 1.2칸 안에 8초) · 매트가 받아 낸 사람의 체력(띠 1)
+ */
+export const LEDGE = { rise: 0.0012, crowd: 0.004, crowdR: 3, talkK: 0.0045, mega: 0.8, talkR: 2.2, stage1: 20, stage2: 0.25, stage2off: 0.3, stage3: 0.12, grabR: 1.2, grabT: 8, matHp: 62,
+  swing: { p: 0.004, lo: 0.2, hi: 0.4 } };      // (설계서에 없는 항 — 구현 메모) 출렁임: 말을 거는 사람이 없는 초에만 p 로 위기 정도가 lo~hi 만큼 오른다 — 흐름 ledge:<사건>. 늦게 닿을수록 실패가 는다(설계의 "다가가는 속도")
+/** 위기자 현장의 난수 흐름 ledge:<사건> (위기 정도의 출렁임 — 이 흐름만 쓴다. 1초마다 늘 같은 횟수를 뽑는다) */
+const LEDGE_RNG = new WeakMap<Scene, Rng>();
+function ledgeRng(sim: Sim, s: Scene, I: Incident): Rng { let r = LEDGE_RNG.get(s); if (!r) { r = sim.rng.fork('ledge:' + I.id); LEDGE_RNG.set(s, r); } return r; }
+/** 붙잡는 대원과 머문 초 (현장 객체의 모양을 바꾸지 않으려고 WeakMap — 그 대원이 바뀌면 처음부터) */
+const GRAB = new WeakMap<Scene, { rid: number; t: number }>();
+/** 그 사람이 보이는 곳(6칸 · 시야선)의 대원과 설득하던 대원(없으면 현장의 모든 대원)의 믿음에 그 사람의 사실을 강제로 넣는다 (§5.16) */
+function ledgeTell(sim: Sim, s: Scene, c: Casualty, src: string): void {
+  const f = casFact(sim, s, c, src);
+  let told = false;
+  for (const a of s.agents) {
+    if (a.status !== 'active' || a.aloft) continue;
+    const talking = a.task !== null && a.task.kind === 'persuade' && a.task.cas === c.id;
+    if (!talking && (dist(a.x, a.y, c.x, c.y) > MED.seeR || !los(s, a.x, a.y, c.x, c.y))) continue;
+    learn(sim, a, f, true, true); told = true;
+  }
+  if (!told) for (const a of s.agents) if (a.status !== 'left') learn(sim, a, f, false, true);
+  const cmd = s.agents.find((b) => b.isCommander && b.status === 'active');      // 지휘관에게도 (무전 1.2초 사이에 낡은 믿음으로 설득을 다시 내지 않게 — forceTell 과 같은 꼴)
+  if (cmd !== undefined) learn(sim, cmd, f, true, true);
+}
+/**
+ * (§4.5 ledge) 높은 자리에서 내려온다 — 스스로 안쪽으로 돌아옴(self) · 줄을 든 구조 대원이 붙잡아 끌어올림(grab): 안쪽 칸(ground)의 걷는 보통 구조 대상이 된다.
+ * 상태를 바꾸는 이 자리에서 기록하고(사연·의도는 말하지 않는다) 곁의 대원에게 강제로 알린다
+ */
+function ledgeDown(sim: Sim, s: Scene, I: Incident, c: Casualty, how: 'self' | 'grab', by: FieldAgent | null): void {
+  const pk = perchIdx(s, c.id);
+  if (pk < 0) return;
+  leavePerch(s, c, pk, 'mobile');
+  c.tFreed = sim.t; s.kinds!.ledgeEnd = how;
+  const r = by ? resp(sim, by) : null;
+  if (how === 'grab' && by) { c.freedBy = by.rid; GRAB.delete(s); }
+  emit(sim, { inc: I.id, role: r ? 'RESPONDER' : 'SYSTEM', actor: r ? r.name : '현장', rid: r ? r.id : -1, kind: 'recovery', imp: 2,
+    text: how === 'self' ? '설득 끝에 스스로 난간 안쪽으로 돌아왔습니다.' : '구조대가 붙잡아 끌어올렸습니다.' });
+  ledgeTell(sim, s, c, r ? r.name : '현장');
+}
+/**
+ * (§5.13 — 보호 유형에서 숨지는 단 하나의 길) 위기자의 실패: 그림·효과 기록 없이(pushFx·recordFall·noteBoom 을 부르지 않는다) 기록 한 줄 "구조하지 못했습니다."
+ * (kind 'command' · imp 1 · 역할 COMMANDER — 소리·카메라·자동 감속이 따라가지 않는 종류와 중요도). 체력은 피해 한 길(hurtCasTo — H1 장부, 원인 추락)로 0 에 두고,
+ * 숨짐은 이 자리가 정한다(dead · tDead · quietLoss — lost 를 다시 쓰지 않는다: 그 칸은 '현장 밖 (떠내려감)'이다). 높은 자리 목록에서 뺀다. 원인 사슬에 잇지 않는다(causes 없음)
+ */
+export function quietLoss(sim: Sim, s: Scene, I: Incident, c: Casualty): void {
+  if (c.dead) return;
+  const pk = perchIdx(s, c.id);
+  if (pk >= 0) s.kinds!.perch!.splice(pk, 1);
+  if (s.kinds) s.kinds.ledgeEnd = 'lost';
+  const cmd = s.agents.find((b) => b.isCommander && b.status === 'active');
+  const r = cmd ? resp(sim, cmd) : null;
+  const ev = emit(sim, { inc: I.id, role: 'COMMANDER', actor: r ? r.name : '현장 지휘', rid: r ? r.id : -1, kind: 'command', imp: 1, text: '구조하지 못했습니다.' });
+  hurtCasTo(sim, s, I, c, 0, 'fall', { ev });
+  c.dead = true; c.tDead = sim.t; c.quietLoss = true; c.walking = false; c.path = null; c.trapWork = 0;
+  if (c.deathCause === undefined) c.deathCause = 'fall';
+  ledgeTell(sim, s, c, r ? r.name : '현장');
+}
+/**
+ * (§4.5 ledge) ledgeRule — 1초에 한 번(난수는 흐름 ledge:<사건> 의 출렁임뿐 — LEDGE.swing):위기 정도(s.kinds.crisis)가 1초에 +0.0012, 설득하는 대원이 아닌 사람이 안쪽(side 구역)의 3칸 안에 있으면 +0.004 더
+ * (다가오는 설득 대원 — 아직 자리를 잡지 않았거나 2.2칸 밖 — 도 다가오는 사람이다: 서두르면 단계가 뒤로 간다), 설득 중이면 −0.0045 × (0.4 + 0.6 × (침착 + 경험)/2) (확성기 ×0.8).
+ * 단계(s.kinds.stage): 대화 20초 → 1, 위기 정도 0.25 아래 → 2 (0.30 을 넘으면 1 로), 0.12 아래 → 3: 스스로 안쪽으로 돌아온다. 단계 2 이상에서 줄을 든 구조 대원이 1.2칸 안에 8초 머물면 붙잡아 끌어올린다.
+ * 위기 정도가 1 에 닿으면: 옥상이고 매트가 펴져 있으면 매트가 받아 낸다(매트 칸에 띠 1 — 구조의 결과, 떨어지는 그림 없음), 그 밖은 quietLoss(§5.13). 물로 떨어지는 갈래는 없다
+ */
+registerRule((sim, s, I) => {
+  if (s.kind !== 'welfare' || s.variant !== 'ledge' || I.phase === 'closed' || s.kinds === undefined || (sim.tick + s.id) % 5 !== 0) return;
+  const k = s.kinds, pl = k.perch;
+  if (pl === undefined || !pl.length) return;
+  const c = s.casualties[pl[0].cas];
+  if (!c || c.dead) return;
+  const st0 = k.stage ?? 0;
+  let talk = 0, crowd = false, grab: FieldAgent | null = null;
+  for (const a of s.agents) {
+    if (a.status !== 'active' || a.aloft) continue;
+    const d = dist(a.x, a.y, c.x, c.y);
+    if (d > LEDGE.crowdR + 0.01) continue;
+    const t = a.task;
+    if (t !== null && t.kind === 'persuade' && t.cas === c.id && t.phase >= 1 && d <= LEDGE.talkR) {
+      const r = resp(sim, a), v = (0.4 + 0.6 * (r.composure + r.experience) / 2) * (hasKit(sim, a.rid, 'megaphone') ? LEDGE.mega : 1);
+      if (v > talk) talk = v;
+      continue;
+    }
+    if (st0 >= 2 && t !== null && t.kind === 'extricate' && t.cas === c.id) { if (d <= LEDGE.grabR + 0.01 && hasKit(sim, a.rid, 'rope') && grab === null) grab = a; continue; }      // 단계 2 부터 지휘관이 낸 붙잡기 — 다가오는 사람으로 세지 않는다
+    const rg = s.region[tileOf(s, a.x, a.y)];
+    if (k.side !== undefined && rg !== k.side) continue;      // 옥상 아래 보도(매트 대원) — 다가오는 사람이 아니다
+    crowd = true;
+  }
+  const rng = ledgeRng(sim, s, I), sw = LEDGE.swing, jolt = rng.chance(sw.p), size = rng.range(sw.lo, sw.hi);      // 두 번을 늘 뽑는다 (출렁임이 없는 초에도 — 흐름의 차례가 다른 조건에 따라 밀리지 않게)
+  k.crisis = clamp((k.crisis ?? 0.45) + LEDGE.rise + (crowd ? LEDGE.crowd : 0) - LEDGE.talkK * talk + (jolt && talk === 0 ? size : 0), 0, 1);
+  if (talk > 0) k.talk = (k.talk ?? 0) + 1;
+  let st = st0;
+  if (st < 1 && (k.talk ?? 0) >= LEDGE.stage1) st = 1;
+  if (st >= 1) { if (k.crisis < LEDGE.stage3) st = 3; else if (k.crisis < LEDGE.stage2) st = Math.max(st, 2); else if (st === 2 && k.crisis >= LEDGE.stage2off) st = 1; }
+  k.stage = st;
+  if (st >= 3) { ledgeDown(sim, s, I, c, 'self', null); return; }
+  if (grab !== null && st >= 2) {
+    const g = GRAB.get(s), n = g !== undefined && g.rid === grab.rid ? g.t + 1 : 1;
+    GRAB.set(s, { rid: grab.rid, t: n });
+    if (n >= LEDGE.grabT) { ledgeDown(sim, s, I, c, 'grab', grab); return; }
+  } else GRAB.delete(s);
+  if (k.crisis < 1) return;
+  const mat = k.mat !== undefined && k.mat >= 0 ? s.props[k.mat] : undefined;
+  if (mat !== undefined && mat.live === false && k.drop !== undefined && k.drop >= 0) {
+    pl.splice(0, 1);
+    c.mob = 'immobile'; c.trapWork = 0; c.walking = false; c.path = null;
+    c.x = c.px = k.drop % s.w; c.y = c.py = (k.drop / s.w) | 0;
+    k.ledgeEnd = 'mat';
+    const ev = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'recovery', imp: 2, text: '안전 매트가 받아 냈습니다. 처치가 필요합니다.' });
+    hurtCasTo(sim, s, I, c, Math.min(c.health, LEDGE.matHp), 'fall', { ev, immobile: true });
+    ledgeTell(sim, s, c, '현장');
+    return;
+  }
+  quietLoss(sim, s, I, c);
+});
+
+/** (§4.5 lockin) 문 앞에서 듣는 거리·시간(초) — 이 안에 머문 대원이 소리(evid sound)를 안다 */
+export const LOCKIN = { hearR: 1.5, hearT: 5 };
+const HEARD = new WeakMap<FieldAgent, number>();
+/**
+ * (§4.5 lockin) lockinRule — 1초에 한 번(난수 없음 — 소리와 열쇠 시각은 현장 생성기가 정했다): ① 열쇠가 오는 시각에 문이 아직 잠겨 있으면 관리인(목격자 소품 'keyholder' — 면담하면 문이 열린다)이
+ * 현관 곁에 선다 ② 문이 잠긴 동안 현관 1.5칸 안에 5초 머문 대원은 소리(evid sound — 신음·TV·없음, 사실 id = 현관문 소품 id)와 문의 생김새(방범문인가)를 알고, 문이 잠겼음(blk locked)도 안다
+ */
+registerRule((sim, s, I) => {
+  if (s.kind !== 'welfare' || s.variant !== 'lockin' || I.phase === 'closed' || s.kinds === undefined || s.kinds.door === undefined || (sim.tick + s.id) % 5 !== 0) return;
+  const k = s.kinds, door = s.props[k.door!];
+  if (!door.locked) return;
+  if ((k.keyAt ?? -1) < 0 && k.key !== undefined && sim.t >= k.key) {
+    k.keyAt = sim.t;
+    const ex = s.exits[0];
+    let kx = ex.x + 2, ky = ex.y;
+    for (const [dx, dy] of [[2, 0], [-2, 0], [2, 1], [-2, 1], [1, 1], [-1, 1]]) { const x = ex.x + dx, y = ex.y + dy; if (x > 0 && y > 0 && x < s.w - 1 && y < s.h - 1 && staticPass(s.tiles[y * s.w + x]) && s.propAt[y * s.w + x] < 0) { kx = x; ky = y; break; } }
+    addProp(s, 'witness', kx, ky, { skin: 'keyholder', interviewed: false });
+    emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'action', imp: 1, truth: true, text: '건물 관리인이 열쇠를 들고 현관 앞에 왔습니다.' });
+  }
+  const dt = 1;      // 1초에 한 번
+  for (const a of s.agents) {
+    if (a.status !== 'active' || a.aloft || dist(a.x, a.y, door.x, door.y) > LOCKIN.hearR + 0.01) continue;
+    if (a.beliefs.get('evid', door.id) !== undefined) continue;
+    const n = (HEARD.get(a) ?? 0) + dt;
+    HEARD.set(a, n);
+    if (n < LOCKIN.hearT) continue;
+    const r = resp(sim, a), v = k.sound ?? 'none';
+    learn(sim, a, mkFact('blk', door.y * s.w + door.x, 'locked', r.name, sim.t, 1, true, '현관문 잠김'), true);
+    learn(sim, a, mkFact('evid', door.id, { kind: 'sound', v, armored: k.armored === true, x: door.x, y: door.y }, r.name, sim.t, 1, true,
+      `${v === 'moan' ? '현관 너머로 신음 소리 — 안에 사람이 있음' : v === 'tv' ? '안에서 TV 소리만 남 — 인기척 없음' : '안에서 아무 소리도 나지 않음'}${k.armored ? ' · 방범문' : ''}`), true, true);
+  }
+});
+/** (§5.17) 문 잠긴 집에 들어가지 못한 채 닫혔다 — 위험이 남은 것과 같은 무게(한계 시간이면 미해결) + 1.0. 빈집이어도 확인하지 못한 것은 확인하지 못한 것이다 */
+registerVerdict((sim, s, I) => {
+  void sim; void I;
+  if (s.kind !== 'welfare' || s.variant !== 'lockin' || s.kinds === undefined || s.kinds.door === undefined) return null;
+  return s.props[s.kinds.door].locked ? { open: true, bad: 1.0 } : null;
 });
 
 // ───────────────────────── 구조 rescue (§4.6 — 단계 8) ─────────────────────────

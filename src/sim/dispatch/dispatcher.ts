@@ -103,6 +103,8 @@ export const LABEL_BONUS: { label: string; key: keyof Needs; kind?: UnitKind; ki
   { label: '외벽 작업자 고립', key: 'suppression', kind: 'ladder', bonus: 12 }, { label: '멈춘 놀이기구', key: 'suppression', kind: 'ladder', bonus: 12 },
   // ── (N8 §5.3.4 — 단계 9) 출산 임박의 구급 수요에 전문 응급 가방(alsBag)을 든 대원이 있는 부대 ──
   { label: '출산 임박', key: 'ems', kit: 'alsBag', bonus: 8 },
+  // ── (N8 §5.3.4 — 단계 7) 위기자의 구조 수요에 안전 매트를 든 대원이 있는 부대 (구조 부대의 유압 대원) ──
+  { label: '위기자', key: 'rescue', kit: 'jumpMat', bonus: 20 },
   // ── (N9 §5.3.3) 큰 사건의 이름표 — 단계 2 에 줄을 넣는다. 이름표를 내는 시나리오(N9 단계 4~9)가 아직 없고, 줄이 앞세우는 새 부대는 편성되지 않았다 —
   //    걸리는 줄이 없어 결과가 바뀌지 않는다('집단 난동'(폭동 — 지금 있는 이름표)의 줄은 기동대에만 붙는다). 이름표는 설계서 §4.0 의 글자 그대로 ──
   { label: '압사 위험', key: 'law', kind: 'riotPol', bonus: 25 }, { label: '시위 충돌', key: 'law', kind: 'riotPol', bonus: 25 },

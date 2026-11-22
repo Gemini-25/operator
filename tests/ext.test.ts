@@ -31,7 +31,7 @@ describe('확장 지점', () => {
   });
   it('시나리오 표: 몫의 합이 유형마다 1 을 넘지 않고, 대형 사고와 재난은 평소 추첨에 들어가지 않는다', () => {
     const sum: Record<string, number> = {};
-    for (const q of SCENARIOS) if (q.tag !== 'major' && q.tag !== 'disaster') sum[q.type] = (sum[q.type] ?? 0) + q.share;
+    for (const q of SCENARIOS) if (q.tag !== 'major' && q.tag !== 'disaster' && q.tag !== 'daily') sum[q.type] = (sum[q.type] ?? 0) + q.share;      // (N8 §5.4) 짧은 사건(daily)은 평소 추첨과 따로 — 그 가중은 DAILY_TOTAL 안의 몫이다
     for (const k of Object.keys(sum)) expect(sum[k], k).toBeLessThanOrEqual(0.75);
     for (const q of SCENARIOS) {
       expect(q.tag, `${q.type}/${q.variant} 에 tag 가 없다`).toBeTruthy();

@@ -31,7 +31,7 @@ import { methodJson, methodStats, methodTables, sumMethods } from './methodstats
 import { doctrineJson, doctrineStats, doctrineTables, sumDoctrine } from './doctrinestats';      // (R3) 대응 교본 집계
 import { injuryJson, injuryLine, injuryStats, sumInjury } from './injurystats';      // (H1) 부상과 사망 집계
 import type { InjuryCount } from './injurystats';
-import { chainReport, checkMetrics, formatLines, metricsJson, runWithProbe, shiftMetrics, summarize } from './metrics';
+import { chainReport, checkMetrics, formatLines, isBenign, metricsJson, runWithProbe, shiftMetrics, summarize } from './metrics';
 import { HazProbe, hazJson, hazLines, sumHaz } from './hazstats';      // (I1-b) 초과 위험의 노출량
 import type { HazCount } from './hazstats';
 import { KindsProbe, kindsJson, kindsLine, kindsStats, sumKinds } from './kindstats';      // (N8 §5.15) 사건 종류의 지표 줄
@@ -105,7 +105,7 @@ const docList: ReturnType<typeof doctrineStats>[] = [];      // (R3) 교대별 �
 const injuryList: InjuryCount[] = [];      // (H1) 교대별 부상과 사망 집계
 const hazList: HazCount[] = [];      // (I1-b) 교대별 초과 위험의 노출량 (--hazard)
 const kindsList: KindsCount[] = [];      // (N8) 교대별 사건 종류 집계
-let benignN = 0, realGood = 0, realRespSum = 0, realRespN = 0;
+let benignN = 0, nonEmergN = 0, screenedN = 0, realGood = 0, realRespSum = 0, realRespN = 0;
 let incN = 0, respSum = 0, respN = 0, durSum = 0, ms = 0, errors = 0, casT = 0, casS = 0, casL = 0, casU = 0, hurt = 0, replan = 0, unitSum = 0, maxUnits = 0, open = 0;
 const shiftList: (ShiftMetrics | null)[] = [];
 const reportHashes: string[] = [];
@@ -141,7 +141,9 @@ for (let k = 0; k < n; k++) {
     casT += inc.result.casTotal; casS += inc.result.casSaved; casL += inc.result.casLost; casU += inc.result.casUndiscovered;
     const I = sim.incidents[inc.id];
     // 허위·오인 신고는 본질적으로 쉬운 사건이라 따로 센다
-    if (I.truth.variant === 'false' || I.truth.variant === 'prank') benignN++;
+    if (isBenign(I)) nonEmergN++;      // (N8 §5.5) 비응급 — 측정 도구와 같은 판정 (FALSE_ALARM·접수 단계 종료 포함)
+    if (I.closeReason === 'screened') screenedN++;
+    if (I.truth.variant === 'false' || I.truth.variant === 'prank' || I.truth.variant === 'referral' || I.truth.variant === 'dup') benignN++;
     else { if (inc.result.outcome === 'success' || inc.result.outcome === 'delayed') realGood++; if (inc.result.responseTime >= 0) { realRespSum += inc.result.responseTime; realRespN++; } }
     unitSum += I.everAssigned.length; maxUnits = Math.max(maxUnits, I.everAssigned.length);
     closeReasons[I.closeReason] = (closeReasons[I.closeReason] ?? 0) + 1;
@@ -178,7 +180,7 @@ const summary = {
   outcomes: out, good: +(share('success') + share('delayed')).toFixed(3), bad: +(share('failed') + share('unresolved')).toFixed(3),
   closeReasons, timeoutShare: +timeoutShare.toFixed(3), avgResponse: Math.round(respSum / Math.max(1, respN)), avgDuration: Math.round(durSum / Math.max(1, incN)),
   casualties: { total: casT, saved: casS, lost: casL, undiscovered: casU, savedRate: +(casS / Math.max(1, casT)).toFixed(3) },
-  falseAlarms: benignN, realGood: +(realGood / Math.max(1, incN - benignN)).toFixed(3), realAvgResponse: Math.round(realRespSum / Math.max(1, realRespN)),
+  falseAlarms: benignN, nonEmergency: nonEmergN, screened: screenedN, realGood: +(realGood / Math.max(1, incN - benignN)).toFixed(3), realAvgResponse: Math.round(realRespSum / Math.max(1, realRespN)),
   methods: methodJson(methodSum),      // (R2)
   injuries: injuryJson(injurySum),      // (H1)
   kinds: kindsJson(kindsSum),      // (N8)
@@ -194,7 +196,7 @@ else {
   for (const t of Object.keys(byType)) console.log(`  ${t}:`, JSON.stringify(byType[t]));
   console.log('close reasons:', JSON.stringify(closeReasons));
   console.log(`avg response ${summary.avgResponse}s, avg duration ${summary.avgDuration}s, units/incident ${summary.unitsPerIncident} (max ${maxUnits})`);
-  console.log(`false alarms ${benignN} (${Math.round((benignN / Math.max(1, incN)) * 100)}%); real incidents only: good ${Math.round(summary.realGood * 100)}%, avg response ${summary.realAvgResponse}s`);
+  console.log(`false alarms ${benignN} (${Math.round((benignN / Math.max(1, incN)) * 100)}%) · 비응급 ${nonEmergN} (${((nonEmergN / Math.max(1, incN)) * 100).toFixed(1)}%, 접수 단계 종료 ${screenedN}); real incidents only: good ${Math.round(summary.realGood * 100)}%, avg response ${summary.realAvgResponse}s`);
   console.log(`casualties total ${casT}, saved ${casS} (${Math.round(summary.casualties.savedRate * 100)}%), lost ${casL}, undiscovered ${casU}; responders hurt/shift ${summary.respondersHurtPerShift}`);
   console.log(`incidents with a recovered problem: ${Math.round(summary.recoveredShare * 100)}%`);
   console.log(injuryLine(injurySum));      // (H1)

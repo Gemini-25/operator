@@ -261,7 +261,8 @@ export interface Region {
 export type PropKind = 'debris' | 'door' | 'vehicle' | 'hydrant' | 'gas' | 'cover' | 'clue' | 'witness' | 'roadDebris'
   | 'unstable'      // 금이 간 구조물: 보강(mitigate)하지 않으면 leak 가 1 에 이를 때마다 2차 붕괴가 난다
   | 'valve'         // 가스가 새는 배관: 차단(mitigate)할 때까지 leakRate 세기로 가스를 내뿜는다
-  | 'bomb';         // 폭발물로 보이는 물건: real 이면 fuse 시각에 터진다. 해체(defuse)하면 mitigated
+  | 'bomb'          // 폭발물로 보이는 물건: real 이면 fuse 시각에 터진다. 해체(defuse)하면 mitigated
+  | 'fixture';      // (N8 §4.2) 시설물·현장의 물건 — 그림은 skin, 상태는 live·sub (단계 3: 물에 뜬 물건 floater · 폭죽 잔해 fireworks · 음식물 쓰레기 trash). 막지 않는 것은 blocking 거짓
 export interface Prop {
   id: number; kind: PropKind; x: number; y: number; w: number; h: number;
   blocking: boolean;

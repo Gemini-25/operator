@@ -4,7 +4,7 @@
 import type { Sim } from '../engine';
 import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
-import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Incident, MateBelief, RadioMsg, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
+import type { CasBelief, Casualty, Fact, FieldAgent, Hostile, Incident, MateBelief, Prop, RadioMsg, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, clamp, dist, josa, pct } from '../util';
 import { TYPE_DEFS } from '../incidentTypes';
 import type { Rng } from '../rng';
@@ -245,6 +245,21 @@ function discover(sim: Sim, s: Scene, I: Incident, a: FieldAgent, c: Casualty): 
   r.xpGained += 0.004;
 }
 
+/**
+ * (N8 §4.8) 시설물·현장의 물건(PropKind 'fixture')을 본다 — 오인 신고의 답이 현장에 있다:
+ * 물에 뜬 물건(floater, 4칸 안·시야선) → evid floater "사람이 아님" · 터진 폭죽 잔해(fireworks, 3칸 안·시야선) → evid fireworks "총소리가 아니었음" ·
+ * 음식물 쓰레기(trash, 측정기를 든 대원이 2칸 안·시야선) → haz leak(active false) "가스 아님". 사실의 id 는 소품 id (모듈 함수 — perceive 안의 닫힘을 만들지 않는다)
+ */
+function perceiveFixture(sim: Sim, s: Scene, a: FieldAgent, p: Prop, d: number, meter: boolean, me: string): void {
+  if (p.skin === 'floater') {
+    if (d <= 4 && !a.beliefs.get('evid', p.id) && los(s, a.x, a.y, p.x, p.y)) learn(sim, a, mkFact('evid', p.id, { kind: 'floater' }, me, sim.t, 1, true, '물에 떠 있는 것은 사람이 아님 — 마네킹·쓰레기 봉투'));
+  } else if (p.skin === 'fireworks') {
+    if (d <= 3 && !a.beliefs.get('evid', p.id) && los(s, a.x, a.y, p.x, p.y)) learn(sim, a, mkFact('evid', p.id, { kind: 'fireworks' }, me, sim.t, 1, true, '폭죽 잔해 발견 — 총소리가 아니었음'));
+  } else if (p.skin === 'trash') {
+    if (meter && d <= 2 && !a.beliefs.get('haz', p.id) && los(s, a.x, a.y, p.x, p.y)) learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y, sub: 'smell' }, me, sim.t, 1, true, '측정 결과 가스 없음 — 음식물 쓰레기 냄새'));
+  }
+}
+
 /** 시야 안의 진실을 관찰해 믿음을 갱신한다. boost 는 관측 범위 배율(현장 평가 등). */
 /** perceive 의 시야: 공중 관측(aloft)은 실내가 아닌 칸, 지상은 시야선 */
 function seesAt(s: Scene, a: FieldAgent, aloft: boolean, x: number, y: number): boolean { return aloft ? !isIndoor(s.tiles[tileOf(s, x, y)]) : los(s, a.x, a.y, x, y); }
@@ -396,7 +411,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
       }
     } else if (p.kind === 'witness') {
       if (!a.beliefs.get('evid', p.id) && d <= v) learn(sim, a, mkFact('evid', p.id, { kind: 'witness', done: !!p.interviewed }, me, sim.t, 1, true, '현장에 목격자 대기 중'), false);
-    }
+    } else if (p.kind === 'fixture') perceiveFixture(sim, s, a, p, d, meter, me);      // (N8) 시설물·현장의 물건 (단계 3: 오인 신고의 답 — 물에 뜬 물건·폭죽 잔해·음식물 쓰레기)
   }
   // (X6 §3.3) 조짐: 구조 약화·가스 농도·용기 가열·건물 기울어짐 — 감각 범위 안의 것만 (field/catastrophe.ts)
   perceiveSigns(sim, s, a, v);

@@ -1,6 +1,6 @@
 // N8 사건 종류 다양화 — docs/specs/N8-incident-kinds.md §9.1 (번호는 설계서 §8 의 단계 표와 같다).
 // 시간 예산 90초: 평소 교대 몇 번에 나온다에 기대지 않고, 교대를 끝까지 돌리는 시험은 몇 개만 둔다.
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { NORMAL, PRESETS } from '../src/sim/difficulty';
 import { Sim } from '../src/sim/engine';
@@ -423,4 +423,205 @@ describe('20 새 부대 — 편성되지 않는 여덟 줄 · 표 · 관제의 �
     expect([look.head, look.trim, look.pack]).toEqual(['helmet', 'vest', 'none']);
     expect(responderLook('civil', 'powerCrew', 7).head, '모르는 부서가 경찰 겉모습(모자)으로 떨어지지 않는다').not.toBe('cap');
   });
+});
+
+// ───────────────────────── 단계 3 (짧은 사건 흐름 daily · 비응급 N1·N2) ─────────────────────────
+// 교대를 끝까지 도는 시험은 몇 개만 둔다 — 보통 S0~S3 의 끝난 교대는 시험 6·8 이 나눠 쓴다 (그 Sim 을 고치지 않는다)
+const doneShift = new Map<string, Sim>();
+function shiftOf(seed: string, d = NORMAL, daily?: number): Sim {
+  const key = `${seed}|${JSON.stringify(d)}|${daily ?? '-'}`;
+  let s = doneShift.get(key);
+  if (!s) { s = new Sim(seed, d, 1200, daily === undefined ? {} : { daily }); s.runToEnd(); doneShift.set(key, s); }
+  return s;
+}
+type Inc = Sim['incidents'][number];
+/** 강제한 사건이 닫히면 멈춘다 (§9.1 의 runUntilClosed) — 그 사건을 돌려준다 */
+function runUntilClosed(sim: Sim, pick: (I: Inc) => boolean, cap = 6000): Inc | undefined {
+  for (let k = 0; k < cap && !sim.ended; k++) {
+    sim.step();
+    const I = sim.incidents.find(pick);
+    if (I && I.phase === 'closed') return I;
+  }
+  return sim.incidents.find(pick);
+}
+const BENIGN_V = new Set(['false', 'prank', 'referral', 'dup']);
+const N12 = ['fire/prank', 'medical/prank', 'water/prank', 'medical/false', 'water/false', 'armed/false', 'hazmat/false'];
+/** 강제 발생(sim.force)으로 만든 그 사건 — 그 변형의 첫 사건 (강제 발생도 시나리오의 tag 'daily' 를 받는다) */
+const forced = (sim: Sim) => (J: Inc): boolean => sim.force !== null && `${J.truth.type}/${J.truth.variant}` === sim.force && J.parent === undefined;
+/** 단계 3 에는 daily 줄이 비응급 일곱(가중 1.4 / DAILY_TOTAL 14)뿐이라 보통 교대의 짧은 사건은 0.5건쯤이다 — 시험은 차례를 늘려(SimOpts.daily) 짧은 사건이 끼게 한다 */
+const MANY = 30;
+
+describe('6 짧은 사건의 재현성과 표 (단계 3)', () => {
+  it('짧은 사건을 켠 같은 시드·난이도 두 번 = 같은 해시 (보통 S1·S2, 어려움 S1 — 차례를 늘린 교대) · 짧은 사건이 실제로 나온다', () => {
+    let daily = 0;
+    for (const [seed, d] of [['S1', NORMAL], ['S2', NORMAL], ['S1', PRESETS.hard.d]] as const) {
+      const a = shiftOf(seed, d, MANY), b = new Sim(seed, d, 1200, { daily: MANY }); b.runToEnd();
+      expect(b.report!.hash, `${seed}`).toBe(a.report!.hash);
+      expect(b.incidents.length).toBe(a.incidents.length);
+      daily += a.incidents.filter((I) => I.tag === 'daily').length;
+    }
+    expect(daily, '세 교대에 짧은 사건이 하나도 없다').toBeGreaterThan(0);
+  });
+  it('daily 줄: tag 가 daily 이고 가중 합 ≤ DAILY_TOTAL · 비응급 줄의 nature 는 신고자가 말하지 않는 열쇠(가능도·문구 없음 — 이름표가 붙지 않는다)', async () => {
+    const { DAILY_TOTAL, KINDS } = await import('../src/sim/scenarios/kinds');
+    const daily = SCENARIOS.filter((q) => q.tag === 'daily');
+    let sum = 0; for (const q of daily) sum += q.share;
+    expect(sum).toBeLessThanOrEqual(DAILY_TOTAL + 1e-9);
+    expect(DAILY_TOTAL).toBe(14);
+    for (const q of KINDS) if (q.variant === 'prank' || q.variant === 'false') {
+      expect(q.tag, `${q.type}/${q.variant}`).toBe('daily');
+      expect(q.texts, `${q.type}/${q.variant}`).toBeUndefined(); expect(q.lik).toBeUndefined();
+      expect(NATURE_LIK[q.nature], `${q.nature} 는 신고자가 말하는 키가 아니다`).toBeUndefined();
+      expect(q.card).toBe(false);
+    }
+    expect(daily.map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...N12].sort());
+  });
+  it('N8 의 새 난수 흐름 이름이 기존 흐름 이름과 겹치지 않는다 (소스의 fork 글자 — 한 이름은 한 자리에서만 만든다, 아직 쓰지 않은 이름은 아무도 쓰지 않는다)', () => {
+    const MADE = ['daily', 'verify'];      // 단계 3 이 만든 흐름 (짧은 사건 · 확인 질문의 답 — 통화 흐름의 하위)
+    const LATER = ['wire:', 'main:', 'hole:', 'sign:', 'hive:', 'animal:', 'rowdy:', 'brawl:', 'snatch:', 'scam:', 'ledge:', 'perch:', 'pit:', 'ride:', 'overdose:', 'birth:', 'heat:', 'dup:', 'kit-n8', 'kinds-next:'];
+    const labels: string[] = [];
+    const walk = (dir: URL): void => {
+      for (const f of readdirSync(dir, { withFileTypes: true })) {
+        if (f.isDirectory()) walk(new URL(f.name + '/', dir));
+        else if (f.name.endsWith('.ts')) for (const m of readFileSync(new URL(f.name, dir), 'utf8').matchAll(/fork\(\s*['`]([^'`$]*)/g)) labels.push(m[1]);
+      }
+    };
+    walk(new URL(SRC, import.meta.url));
+    expect(labels.length).toBeGreaterThan(30);
+    for (const n of MADE) expect(labels.filter((L) => L === n).length, n).toBe(1);
+    for (const n of LATER) expect(labels.filter((L) => L === n).length, n).toBe(0);
+  });
+});
+
+describe('7 짧은 사건과 평소 추첨 (단계 3)', () => {
+  // 시작점(단계 3 앞 — I2 를 합친 주 브랜치 2733937)에서 잰 보통 S0~S3 · 어려움 S0 의 report.hash. 단계 4a 의 작업자가 이 시험(7a)을 지운다
+  const HASH0: [string, typeof NORMAL, string][] = [['S0', NORMAL, '8b4a8647'], ['S1', NORMAL, '1d2f0f30'], ['S2', NORMAL, '1b8feeb5'], ['S3', NORMAL, '71d31558'], ['S0', PRESETS.hard.d, 'c27bc849']];
+  it('7a 짧은 사건 손잡이 0 (SimOpts.daily = 0) 이면 시작점의 기록 해시와 같다 — 확인 질문·가려내기·짧은 사건이 모두 꺼진다', () => {
+    for (const [seed, d, h] of HASH0) {
+      const s = shiftOf(seed, d, 0);
+      expect(s.report!.hash, `${seed} ${d === NORMAL ? '보통' : '어려움'}`).toBe(h);
+      expect(s.incidents.some((I) => I.tag === 'daily' || I.closeReason === 'screened')).toBe(false);
+      expect(s.calls.some((c) => c.asked.indexOf('verify') >= 0)).toBe(false);
+    }
+  });
+  it('7b 켜도 S0~S5 에서 평소 추첨 사건(태그 daily 가 아니고 부모가 없는) 처음 여섯 건의 (생성 시각·유형·변형·규모)가 끈 교대와 같다', () => {
+    const first6 = (sim: Sim): string[] => {
+      for (let k = 0; k < 12000 && !sim.ended; k++) {
+        sim.step();
+        const reg = sim.incidents.filter((I) => I.tag !== 'daily' && I.parent === undefined);
+        if (reg.length >= 6) return reg.slice(0, 6).map((I) => `${I.createdAt.toFixed(1)} ${I.truth.type}/${I.truth.variant}/${I.truth.severity}`);
+      }
+      return [];
+    };
+    let withDaily = 0;
+    for (let k = 0; k < 6; k++) {
+      // 난이도의 차례 수 그대로(보통 5 — 단계 3 에는 그 가운데 10% 쯤이 비응급 줄에 걸린다). 짧은 사건이 여럿 끼면(차례를 늘린 교대) 그 사건에 묶인 부대 때문에
+      // 평소 사건이 다른 부대를 받아 닫히는 시각이 달라지고 생성 간격의 가용 배율(×1.2)이 갈릴 수 있다 — 구현 메모 단계 3 "알려진 것"
+      const on = new Sim('S' + k), off = new Sim('S' + k, NORMAL, 1200, { daily: 0 });
+      const a = first6(on), b = first6(off);
+      expect(a.length, `S${k}`).toBe(6);
+      expect(a, `S${k}`).toEqual(b);
+      if (on.incidents.some((I) => I.tag === 'daily')) withDaily++;
+    }
+    expect(withDaily, '짧은 사건이 끼어든 교대가 하나도 없다 — 시험이 아무것도 보지 않는다').toBeGreaterThanOrEqual(1);
+  });
+  it('isDailyLoad: 짧은 사건과 그 연쇄 자식은 평소 생성기의 몫이 아니다', async () => {
+    const { isDailyLoad } = await import('../src/sim/incidents');
+    const sim = new Sim('N8-3-LOAD');
+    sim.run(5);
+    const D = createIncident(sim, { type: 'medical', variant: 'prank', tag: 'daily', rng: sim.rng.fork('n8-3-load') });
+    const C = createIncident(sim, { type: 'fire', parent: D.id, rng: sim.rng.fork('n8-3-load2') });
+    const R = createIncident(sim, { type: 'fire', rng: sim.rng.fork('n8-3-load3') });
+    expect([isDailyLoad(sim, D), isDailyLoad(sim, C), isDailyLoad(sim, R)]).toEqual([true, true, false]);
+  });
+});
+
+describe('8 비응급 N1 장난 전화 · N2 오인 신고 (단계 3)', () => {
+  it('장난 전화를 가려내면 접수 단계 종료(screened) — 부대는 현장에 닿지 않고, FALSE_ALARM(복구됨)·성공·대응 지연 아님. 못 가려내면 출동해 확인하고 FALSE_ALARM', () => {
+    let screened = 0, checked = 0;
+    for (let k = 0; k < 30 && (screened < 2 || checked < 1); k++) {
+      const sim = new Sim('PR' + k, NORMAL, 1200, { force: ['fire/prank', 'medical/prank', 'water/prank'][k % 3] });
+      const I = runUntilClosed(sim, forced(sim));
+      if (!I || I.phase !== 'closed') continue;
+      expect(I.result!.outcome, `${sim.seed} ${I.closeReason}`).toBe('success');
+      expect(I.problems.some((p) => p.code === 'FALSE_ALARM' && p.recovered)).toBe(true);
+      if (I.closeReason === 'screened') {
+        screened++;
+        expect(I.firstArrivalAt).toBeLessThan(0);
+        expect(I.result!.delayed).toBe(false);
+        expect(I.claims.some((c) => c.topic === 'hazard' && c.value === 'prank')).toBe(true);
+        expect(I.claims.some((c) => c.topic === 'verify' && (c.value === 'evasive' || c.value === 'hangup'))).toBe(true);
+        for (const uid of I.everAssigned) expect(sim.units[uid].incidentId === I.id && sim.units[uid].state === 'onscene', sim.units[uid].callsign).toBe(false);
+        expect(I.result!.headline).toContain('장난 전화 — 접수 단계에서 가려냄');
+      } else if (I.closeReason === 'resolved') checked++;
+    }
+    expect(screened, '가려낸 장난 전화').toBeGreaterThanOrEqual(2);
+    expect(checked, '가려내지 못해 현장에서 확인한 장난 전화').toBeGreaterThanOrEqual(1);
+  });
+  it('진짜 사건은 접수 단계에서 닫히지 않는다 (보통 S0~S3 — 차례를 늘린 교대, screened 는 비응급 변형뿐) · 비응급 변형은 추가 신고가 없다', () => {
+    let benign = 0;
+    for (const seed of ['S0', 'S1', 'S2', 'S3']) {
+      const sim = shiftOf(seed, NORMAL, MANY);
+      benign += sim.incidents.filter((I) => BENIGN_V.has(I.truth.variant)).length;
+      for (const I of sim.incidents) {
+        if (I.closeReason === 'screened') expect(BENIGN_V.has(I.truth.variant), `${seed} #${I.code} ${I.truth.type}/${I.truth.variant}`).toBe(true);
+        if (BENIGN_V.has(I.truth.variant)) expect(sim.calls.filter((c) => c.incidentId === I.id && c.isFollowup).length, `${seed} #${I.code}`).toBe(0);
+      }
+    }
+    expect(benign, '비응급 사건이 끼지 않았다').toBeGreaterThan(3);
+    const sim = new Sim('N8-3-FOLLOW');
+    sim.run(5);
+    for (const key of N12) { const [t, v] = key.split('/'); const I = createIncident(sim, { type: t as IncidentType, variant: v, tag: 'daily', rng: sim.rng.fork('n8-3-f:' + key) }); expect(I.followupAt, key).toBe(Infinity); }
+  });
+  it('발생 기록의 문구가 유형별이다 (응급 오인에 "화재"가 없다 · 화재 오인은 예전 글자 그대로) · 비응급 줄의 현장 생성기가 등록돼 있다', async () => {
+    const { SCENE_BUILDERS } = await import('../src/sim/field/sceneRegistry');
+    const sim = new Sim('N8-3-WHAT');
+    sim.run(5);
+    const txt = (t: IncidentType, v: string): string => sim.events[createIncident(sim, { type: t, variant: v, rng: sim.rng.fork(`n8-3-w:${t}:${v}`) }).rootEvent].text;
+    expect(txt('fire', 'false')).toContain('(실제 화재는 없음 — 오인 신고가 들어올 예정)');
+    expect(txt('medical', 'false')).toContain('실제 환자는 없음 — 잠든 사람을 쓰러진 사람으로 볼 신고가 들어올 예정');
+    expect(txt('medical', 'false')).not.toContain('화재');
+    expect(txt('water', 'false')).toContain('물에 뜬 물건');
+    expect(txt('armed', 'false')).toContain('폭죽 소리를 총소리로');
+    expect(txt('hazmat', 'false')).toContain('음식 냄새를 가스로');
+    expect(txt('water', 'prank')).toContain('장난 전화가 걸려 올 예정');
+    for (const key of N12) expect(SCENE_BUILDERS[key], key).toBeTruthy();
+    // 응급 오인은 길 위(건물 없음)에서, 가스 오인은 시나리오의 장소(주택·식당)에서 — 밸브가 없다
+    const m = createIncident(sim, { type: 'medical', variant: 'false', tag: 'daily', rng: sim.rng.fork('n8-3-w-place') });
+    expect(m.truth.placeId).toBe(-1);
+    expect(sim.scenes[m.id]!.outdoor).toBe(true);
+    const h = createIncident(sim, { type: 'hazmat', variant: 'false', tag: 'daily', rng: sim.rng.fork('n8-3-w-place2') });
+    expect(['villa', 'apartment', 'restaurant', 'houseS']).toContain(h.truth.placeKind);
+    expect(sim.scenes[h.id]!.props.some((p) => p.kind === 'valve')).toBe(false);
+  });
+  it('오인 신고는 현장 확인으로 끝난다: 잠든 사람이 깨어나 걷는다 · 물에 뜬 물건·폭죽 잔해를 확인하면 남은 수색을 거둔다', () => {
+    const seen = { wake: 0, floater: 0, fireworks: 0 };
+    for (let k = 0; k < 6; k++) for (const key of ['medical/false', 'water/false', 'armed/false', 'hazmat/false']) {
+      const sim = new Sim('OF' + k, NORMAL, 1200, { force: key });
+      const I = runUntilClosed(sim, forced(sim));
+      expect(I, `${key} OF${k}`).toBeTruthy();
+      if (!I || I.phase !== 'closed') continue;
+      expect(['timeout', 'abandoned', 'noresponse'].indexOf(I.closeReason), `${key} OF${k}: ${I.closeReason}`).toBe(-1);
+      expect(I.problems.some((p) => p.code === 'FALSE_ALARM'), key).toBe(true);
+      const evs = sim.events.filter((e) => e.incidentId === I.id).map((e) => e.text);
+      if (evs.some((x) => x.includes('술에 취해 잠들어'))) seen.wake++;
+      if (evs.some((x) => x.includes('물에 뜬 것은 사람이 아니었습니다'))) seen.floater++;
+      if (evs.some((x) => x.includes('폭죽 잔해 확인'))) seen.fireworks++;
+      if (key === 'medical/false' && I.closeReason === 'resolved') expect(sim.scenes[I.id]!.casualties[0].where, 'OF' + k).toBe('safe');
+    }
+    expect(seen.wake, '잠든 사람을 깨운 교대').toBeGreaterThanOrEqual(3);
+    expect(seen.floater + seen.fireworks, '오인의 답(물에 뜬 물건·폭죽 잔해)을 확인한 교대').toBeGreaterThanOrEqual(3);
+  });
+  it('잊힌 사건 0 — 장난 전화를 가려내 통화 끝에 닫으므로 측정 도구의 "잊힌 사건"(통화가 끝났는데 아무도 맡지 않음)에 걸리지 않는다', async () => {
+    const { runWithProbe, shiftMetrics } = await import('../scripts/metrics');
+    let screened = 0;
+    for (let k = 0; k < 6; k++) {
+      const sim = new Sim('PR' + k, NORMAL, 1200, { force: 'fire/prank' });
+      const probe = runWithProbe(sim);
+      const m = shiftMetrics(sim, probe);
+      expect(m.forgotten?.length ?? 0, sim.seed).toBe(0);
+      screened += sim.incidents.filter((I) => I.closeReason === 'screened').length;
+    }
+    expect(screened).toBeGreaterThan(0);
+  }, 120000);
 });

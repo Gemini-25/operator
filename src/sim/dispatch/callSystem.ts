@@ -14,6 +14,9 @@ import type { LikMap } from '../incidentTypes';
 import { applyCallerAid } from '../field/hazards';
 import { assess } from './analyst';
 import { briefUpdate, redirectUnits } from './dispatcher';
+import { decide } from './screening';      // (N8 §5.5) 통화가 끝나는 그 틱에 비응급을 가려낸다 (진술만 읽는다)
+import { falseClaims, kindsOn, verifyAnswer } from '../kindsCaller';      // (N8) 새 진실 읽기는 신고자 모델 kindsCaller 로만 — 오인 신고의 진술 · 확인 질문의 답
+import { closeIncident } from '../incidents';
 
 const SURNAMES = ['김', '이', '박', '최', '정', '강', '조', '윤', '장', '임', '한', '오', '서', '신'];
 const PERSONA_NAME: Record<Persona, string> = { calm: '침착함', panicked: '공황 상태', confused: '상황 파악 미흡', partial: '일부만 목격', wrong: '부정확한 확신', prank: '장난 전화' };
@@ -77,9 +80,20 @@ export const NATURE_LIK: Record<string, LikMap> = {
 // 시나리오 표에 적힌 신고 문구와 가능도를 합친다 (scenarios/*.ts)
 for (const sc of SCENARIOS) { if (sc.texts) NATURE_TEXT[sc.nature] = sc.texts; if (sc.lik) NATURE_LIK[sc.nature] = sc.lik; }
 
+/** (N8 §4.8 N1) 장난 신고자가 대는 그 유형의 정확한 키 (무장은 지금 그대로 — 총소리·강도 가운데 하나) */
+const PRANK_NATURE: Partial<Record<IncidentType, string>> = { fire: 'flames', medical: 'notbreathing', water: 'drowning' };
+/** (N8 §4.8 N2) 오인 신고자가 대는 키: [키, 사실인가, 비고] — 화재는 지금 그대로(아래 갈래). 둘이면 반반 */
+const FALSE_NATURE: Partial<Record<IncidentType, [string, boolean, string][]>> = {
+  medical: [['collapsed', true, '']],      // 쓰러져 누운 것은 사실 — 잠든 사람이었다
+  water: [['drowning', false, '물에 뜬 물건을 사람으로 오인']],
+  armed: [['gunshots', false, '폭죽 소리를 총소리로 들음'], ['scream', true, '']],
+  hazmat: [['gasleak', false, '음식물 냄새를 가스로 오인'], ['fumes', true, '']],
+};
+
 function natureFor(I: Incident, s: Scene, persona: Persona, rng: Rng): { v: string; truthful: boolean; note: string } {
   const t = I.truth.type, variant = I.truth.variant;
-  if (variant === 'prank') return { v: rng.pick(['gunshots', 'robbery']), truthful: false, note: '장난 전화 — 실제 사건 없음' };
+  if (variant === 'prank') return { v: t === 'armed' || !PRANK_NATURE[t] ? rng.pick(['gunshots', 'robbery']) : PRANK_NATURE[t]!, truthful: false, note: '장난 전화 — 실제 사건 없음' };
+  if (variant === 'false' && FALSE_NATURE[t]) { const opts = FALSE_NATURE[t]!; const o = opts.length > 1 ? rng.pick(opts) : opts[0]; return { v: o[0], truthful: o[1], note: o[2] }; }
   if (variant === 'false') return { v: rng.chance(0.6) ? 'smell' : 'smoke', truthful: true, note: '' };      // 냄새·연기는 사실이지만 화재는 아니다
   const sc = scenarioOf(t, variant);
   if (sc) {
@@ -134,9 +148,15 @@ export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: 
   if (persona === 'prank') {
     const nat0 = natureFor(I, s, persona, rng);
     put('nature', nat0.v, rng.pick(NATURE_TEXT[nat0.v]), false, nat0.note);
-    put('weapon', 'gun', '총이요, 총! 엄청 큰 총이에요.', false, '장난 전화');
-    put('injured', true, '어… 네, 다친 사람 엄청 많아요.', false, '장난 전화');
-    put('detail', { suspects: 3 }, '세 명? 아니 다섯 명쯤 돼요.', false, '장난 전화');
+    if (t === 'armed') {
+      put('weapon', 'gun', '총이요, 총! 엄청 큰 총이에요.', false, '장난 전화');
+      put('injured', true, '어… 네, 다친 사람 엄청 많아요.', false, '장난 전화');
+      put('detail', { suspects: 3 }, '세 명? 아니 다섯 명쯤 돼요.', false, '장난 전화');
+    } else {
+      // (N8 §4.8 N1) 무기 진술은 무장 신고만 — 그 밖은 과장된 부상·인원
+      put('injured', true, '어… 네, 다친 사람 엄청 많아요.', false, '장난 전화');
+      put('count', 5, '세 명? 아니 다섯 명쯤 돼요.', false, '장난 전화');
+    }
     return { name: rng.pick(SURNAMES) + '○○', persona, knows, patience: 3, answerTime: 2.2 };
   }
   if (t === 'medical') {
@@ -160,6 +180,11 @@ export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: 
   }
   const nat = natureFor(I, s, persona, rng);
   put('nature', nat.v, rng.pick(NATURE_TEXT[nat.v]), nat.truthful, nat.note);
+  // (N8 §4.8 N2) 오인 신고(화재 밖): 신고자는 본 것을 오인한 그대로 믿는다 — 인원·갇힘·위험 진술은 신고자 모델(kindsCaller)이 정한다
+  if (I.truth.variant === 'false' && t !== 'fire') {
+    falseClaims(sim, I, s, rng, kn, put);
+    return { name: rng.pick(SURNAMES) + '○○', persona, knows, patience: persona === 'partial' ? 3 : persona === 'panicked' ? 5 : 6, answerTime: persona === 'calm' ? 2.6 : persona === 'panicked' ? 3.6 : persona === 'confused' ? 4.6 : 3.2 };
+  }
   const cas = s.casualties;
   const nTrue = cas.length;
   const trappedTrue = t === 'fire' || t === 'hazmat' ? nTrue > 0 : t === 'armed' ? cas.some((c) => c.hostage) : cas.some((c) => c.mob === 'trapped');
@@ -255,7 +280,7 @@ const QUESTION_ANY: Record<Topic, string> = {
   hazard: '주변에 다른 위험한 것이 있습니까?',
   weapon: '무기를 가지고 있습니까? 어떤 무기입니까?',
   detail: '더 알려 주실 내용이 있습니까?',
-  verify: '지금 직접 보고 계신 상황이 맞습니까?',      // (N8) 묻는 차례는 단계 3(장난 낌새 진술이 있을 때만) — 지금은 문구만
+  verify: '지금 계신 곳에서 보이는 간판이나 건물 이름을 말씀해 주시겠어요?',      // (N8 §4.8 N1) 장난 낌새 진술이 있을 때만 묻는다 — 답은 신고자 모델(kindsCaller.verifyAnswer)이 정한다
   same: '혹시 근처에서 이미 신고된 일과 같은 일입니까?',      // (N8) 묻는 차례는 단계 10(이웃 교차로에 같은 유형의 열린 사건이 있을 때만)
 };
 const question = (topic: Topic, type: IncidentType | undefined): string => (type ? TYPE_DEFS[type].question[topic] : undefined) ?? QUESTION_ANY[topic];
@@ -333,6 +358,8 @@ function maybeInstruct(sim: Sim, call: Call, I: Incident): boolean {
 
 function nextTopic(sim: Sim, call: Call, I: Incident): Topic | null {
   if (!I.locationKnown && call.asked.indexOf('location') < 0) return 'location';
+  // (N8 §4.8 N1) 장난 낌새 진술이 이 통화에 있으면 확인 질문부터 (짧은 사건 손잡이가 0 이면 묻지 않는다 — 지금의 길 그대로)
+  if (kindsOn(sim) && call.asked.indexOf('verify') < 0 && I.claims.some((c) => c.callId === call.id && c.topic === 'hazard' && c.value === 'prank')) return 'verify';
   const as = I.assessment;
   if (as && as.typeConf < 0.6 && call.asked.indexOf('nature') < 0) return 'nature';
   const hyp = as ? as.type : 'fire';
@@ -359,9 +386,17 @@ function nextTopic(sim: Sim, call: Call, I: Incident): Topic | null {
 }
 
 function endCall(sim: Sim, call: Call, I: Incident, text: string): void {
+  // (N8 §5.5) 통화가 끝나는 그 틱에 가려낸다: 장난을 가려냈으면(screen) 그 자리에서 접수 단계 종료 — 가는 중인 부대는 closeIncident 가 "출동 취소"로 돌린다.
+  // 부대가 이미 현장에 닿았으면 가려내지 않는다(decide 가 본다). 짧은 사건 손잡이가 0 이면 묻지도 닫지도 않는다
+  const verdict = kindsOn(sim) && !call.isFollowup ? decide(sim, I) : null;
+  if (verdict === 'screen') text = '진술을 확인할 수 없어 허위 신고로 판단합니다. 출동을 취소합니다. 허위 신고는 처벌받을 수 있습니다.';
   say(sim, call, I, 'CALL_TAKER', text);
   call.state = 'done'; call.endedAt = sim.t;
   sim.activeCall = -1;
+  if (verdict === 'screen') {
+    emit(sim, { inc: I.id, role: 'CALL_TAKER', actor: '신고 접수 AI', kind: 'call', imp: 2, causes: [call.eventId], text: `사건 ${I.code}: 확인 질문에 답하지 못한 장난 신고로 가려냈습니다 — 접수 단계에서 종결합니다.` });
+    closeIncident(sim, I, 'screened');
+  }
 }
 
 export function startNuisanceCall(sim: Sim): void {
@@ -431,6 +466,15 @@ export function tickCalls(sim: Sim): void {
       return;
     }
     call.retries = 0;
+    // (N8 §4.8 N1) 확인 질문의 답은 신고자 모델이 진실로 정한다 — 얼버무리거나(evasive) 끊거나(hangup) 그럴듯한 이름을 댄다(named)
+    if (topic === 'verify') {
+      const ans = verifyAnswer(sim, I, call, call.rng.fork('verify'));
+      say(sim, call, I, 'CALLER', ans.text);
+      recordClaim(sim, call, I, ans);
+      if (ans.value === 'hangup') { endCall(sim, call, I, '전화가 끊겼습니다.'); return; }
+      call.phase = 'ask'; call.nextAt = sim.t + 1.0;
+      return;
+    }
     const claim = cl.knows[topic];
     if (claim) {
       const pre = cl.persona === 'confused' ? '어… ' : cl.persona === 'panicked' ? '' : '';
@@ -444,7 +488,7 @@ export function tickCalls(sim: Sim): void {
       // 장난 전화의 낌새: 진술이 오락가락하고 웃음소리가 섞인다. 알아챌 수도, 놓칠 수도 있다
       if (cl.persona === 'prank' && call.asked.length === 2 && call.rng.chance(0.65)) {
         recordClaim(sim, call, I, { topic: 'hazard', value: 'prank', conf: 0.7, text: '(수화기 너머로 웃음소리가 들리고 진술이 오락가락함)', truthful: true, callId: call.id, note: '' });
-        emit(sim, { inc: I.id, role: 'CALL_TAKER', actor: '신고 접수 AI', kind: 'call', imp: 2, causes: [call.eventId], text: '진술이 오락가락하고 웃음소리가 들립니다. 허위 신고 가능성을 표시합니다. 다만 확인 출동은 필요합니다.' });
+        emit(sim, { inc: I.id, role: 'CALL_TAKER', actor: '신고 접수 AI', kind: 'call', imp: 2, causes: [call.eventId], text: kindsOn(sim) ? '진술이 오락가락하고 웃음소리가 들립니다. 허위 신고 가능성을 표시합니다. 확인 질문을 하겠습니다 — 그때까지 출동은 그대로 둡니다.' : '진술이 오락가락하고 웃음소리가 들립니다. 허위 신고 가능성을 표시합니다. 다만 확인 출동은 필요합니다.' });      // (N8) 확인 질문(verify)이 켜져 있으면
       }
       assess(sim, I, `신고자 진술(${topicName(topic)})`);
       if (maybeInstruct(sim, call, I)) { call.phase = 'ask'; call.nextAt = sim.t + 4.5; return; }
@@ -470,5 +514,5 @@ export function tickCalls(sim: Sim): void {
 }
 
 export function topicName(t: Topic): string {
-  return ({ location: '위치', nature: '상황', injured: '부상자', count: '인원', trapped: '고립 여부', hazard: '위험 요소', weapon: '무기', detail: '상세' } as Record<Topic, string>)[t];
+  return ({ location: '위치', nature: '상황', injured: '부상자', count: '인원', trapped: '고립 여부', hazard: '위험 요소', weapon: '무기', detail: '상세', verify: '확인 질문', same: '같은 사건 확인' } as Record<Topic, string>)[t];
 }

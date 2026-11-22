@@ -101,7 +101,9 @@ export const KIND_CALLER: Partial<Record<IncidentType, CallerHook>> = {
       return { trapped: false, injured };
     },
     more: (sim, I, s, rng, kn, acc, put) => {
-      void sim; void I; void s;
+      void sim; void s;
+      // (6b) 수거책 잠복: 수거책은 아직 오지 않았다(s.hostiles 에 없다) — 신고자는 "한 명이 온다고 했어요"(용의자 수 1)만 안다. 무기는 본 적이 없어 말하지 않는다
+      if (I.truth.variant === 'scam') { put('detail', { suspects: 1 }, '한 명이 돈을 받으러 온다고 했어요.', true); return; }
       if (rng.chance(Math.max(kn, 0.5))) {
         const ok = rng.chance(acc);
         put('weapon', ok ? 'none' : 'knife', ok ? '무기는 없는 것 같아요. 맨손으로 그래요.' : '뭘 휘둘러요! 칼 같은 거였어요.', ok, ok ? '' : '맨손인데 흉기를 들었다고 신고');

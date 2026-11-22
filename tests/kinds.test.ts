@@ -19,8 +19,8 @@ import type { IncidentType } from '../src/sim/types';
 import { TYPE_NAME } from '../src/sim/util';
 import { TYPE_COLOR, respLimitOf } from '../src/view/typeStyle';
 
-/** 등록 자리의 줄 수 [남은 일 · 사람 보류 · 소품 보류 · 판정] — 단계 4a: 시설 사고 · 단계 5: 동물 (orders/kinds.ts · rules/kinds.ts) */
-const REG_NOW = [2, 2, 0, 2];
+/** 등록 자리의 줄 수 [남은 일 · 사람 보류 · 소품 보류 · 판정] — 단계 4a: 시설 사고 · 단계 5: 동물 · 단계 6b: 견인(소품 보류) (orders/kinds.ts · rules/kinds.ts) */
+const REG_NOW = [2, 2, 1, 2];
 
 describe('1 유형 자료 (incidentTypes — 단계 1)', () => {
   it('TYPE_DEFS·TYPE_ORDER·typeIdx 가 모든 유형을 덮고, 첫 여덟의 순서가 예전과 같다', () => {
@@ -134,7 +134,7 @@ describe('2a 틀의 자리 — 높은 자리 칸 · 등록 자리 (결과 불변
       expect(() => buildStatic(s, 16, 'commercial')).not.toThrow();
     });
   });
-  it('등록 자리: 단계 4a 가 넣은 줄 — 남은 일·사람 보류·판정 하나씩(시설 사고), 소품 보류는 아직 비어 있다', () => {
+  it('등록 자리: 단계 4a·5·6b 가 넣은 줄 — 남은 일·사람 보류·판정(시설 사고·동물), 소품 보류는 견인 하나(단계 6b)', () => {
     new Sim('N8-2A-REG');      // 현장 등록(field/scenes/index.ts)을 불러 둔다
     expect([PENDING_RULES.length, CAS_HOLDS.length, PROP_HOLDS.length, VERDICT_RULES.length]).toEqual(REG_NOW);
   });
@@ -191,7 +191,7 @@ const NEW_KINDS: UnitKind[] = ['powerCrew', 'gasCrew', 'waterCrew', 'tow', 'anim
 /** 편성한 새 부대 (단계마다 늘어난다: 4a 전력 · 4b 가스·수도 · 5 포획 · 6a 형사·교통·경찰견 · 6b 견인) */
 const FORMED: UnitKind[] = ['powerCrew', 'gasCrew', 'waterCrew', 'animalCtl'];      // animalCtl: (N8 단계 5) 동물 포획팀 (minLevel 1)
 /** (N8 단계 6a) 편성 단계가 1 보다 큰 새 부대 — 그 규모부터 한 팀 (형사 2 · 교통 경찰 3 · 경찰견 3) */
-const FORMED_FROM: Partial<Record<UnitKind, number>> = { detective: 2, trafficPol: 3, k9: 3 };
+const FORMED_FROM: Partial<Record<UnitKind, number>> = { detective: 2, trafficPol: 3, k9: 3, tow: 2 };      // tow: (단계 6b) 견인차 (minLevel 2)
 const workOf = (sim: Sim, kind: WorkKind, tg: Partial<WorkItem> = {}): WorkItem => ({
   id: 0, kind, region: -1, cas: -1, prop: -1, hostile: -1, tile: -1, mate: -1, priority: 0.8, status: 'open', assignees: [], max: 1,
   createdAt: sim.t - 60, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough: false, orderSentAt: {}, cause: -1, failedAt: {}, animal: -1, ...tg,
@@ -413,7 +413,8 @@ describe('20 새 부대 — 편성되지 않는 여덟 줄 · 표 · 관제의 �
     // (단계 4b) 시설 사고의 이름표 셋 — 간판의 진압 수요에 사다리차·구조 수요에 로프, 싱크홀의 구조 수요에 구조대
     // (단계 5) 가축 탈출의 교통 수요에 교통 경찰 +8 (교통 경찰은 단계 6a 에 편성된다 — 그 전에는 걸리지 않는 줄)
     // (단계 6a) 날치기의 수색 수요에 경찰견 +10 · 경찰 수요에 형사 +10
-    expect(LABEL_BONUS.filter((r) => N8_LABELS.indexOf(r.label) >= 0).map((r) => `${r.label}|${r.key}|${r.kind ?? r.kit}|${r.bonus}`).sort()).toEqual(['가축 탈출|traffic|trafficPol|8', '날치기|law|detective|10', '날치기|search|k9|10', '떨어질 듯한 간판|rescue|rope|10', '떨어질 듯한 간판|suppression|ladder|12', '싱크홀|rescue|rescue|15']);
+    // (단계 6b) 수거책 잠복의 경찰 수요에 형사 +60 (설계서의 +15 로는 기동대(경찰 능력 1.0)를 넘지 못했다 — 구현 메모 단계 6b)
+    expect(LABEL_BONUS.filter((r) => N8_LABELS.indexOf(r.label) >= 0).map((r) => `${r.label}|${r.key}|${r.kind ?? r.kit}|${r.bonus}`).sort()).toEqual(['가축 탈출|traffic|trafficPol|8', '날치기|law|detective|10', '날치기|search|k9|10', '떨어질 듯한 간판|rescue|rope|10', '떨어질 듯한 간판|suppression|ladder|12', '수거책 잠복|law|detective|60', '싱크홀|rescue|rescue|15']);
     const rope = sim.units.find((u) => u.kind === 'rescue')!;
     for (const r of rope.crew) for (const it of sim.responders[r].kit!) it.faultKnown = false;
     set('water'); expect(kitBonus(sim, rope, I, 'rescue')).toBe(12); expect(kitBonus(sim, rope, I, 'law')).toBe(0);
@@ -463,7 +464,7 @@ const N12 = ['fire/prank', 'medical/prank', 'water/prank', 'medical/false', 'wat
 /** 시설 사고 줄 (단계 4a 전선 · 4b 수도관·싱크홀·간판) */
 const UTIL_LINES = ['utility/wire', 'utility/main', 'utility/sinkhole', 'utility/sign'];
 const ANIMAL_LINES = ['animal/boar', 'animal/hive', 'animal/dogbite', 'animal/escape'];      // (단계 5)
-const DISTURB_LINES = ['disturb/rowdy', 'disturb/brawl', 'disturb/snatch'];      // (단계 6a)
+const DISTURB_LINES = ['disturb/rowdy', 'disturb/brawl', 'disturb/snatch', 'disturb/scam', 'disturb/cartheft'];      // (단계 6a · 6b)
 /** 강제 발생(sim.force)으로 만든 그 사건 — 그 변형의 첫 사건 (강제 발생도 시나리오의 tag 'daily' 를 받는다) */
 const forced = (sim: Sim) => (J: Inc): boolean => sim.force !== null && `${J.truth.type}/${J.truth.variant}` === sim.force && J.parent === undefined;
 /** 단계 3 에는 daily 줄이 비응급 일곱(가중 1.4 / DAILY_TOTAL 14)뿐이라 보통 교대의 짧은 사건은 0.5건쯤이다 — 시험은 차례를 늘려(SimOpts.daily) 짧은 사건이 끼게 한다 */
@@ -513,25 +514,37 @@ describe('6 짧은 사건의 재현성과 표 (단계 3)', () => {
 });
 
 describe('7 짧은 사건과 평소 추첨 (단계 3 — 7a 는 단계 4a 가 지웠다)', () => {
-  it('7b 켜도 S0~S5 에서 평소 추첨 사건(태그 daily 가 아니고 부모가 없는) 처음 여섯 건의 (생성 시각·유형·변형·규모)가 끈 교대와 같다', () => {
-    const first6 = (sim: Sim): string[] => {
+  it('7b 켜도 S0~S5 에서 평소 추첨 사건(태그 daily 가 아니고 부모가 없는) 처음 여섯 건의 (생성 시각·유형·변형·규모)가 끈 교대와 같다 — 생성 시각은 같거나 가용 배율 ×1.2 한 번만큼 갈린다(단계 6b)', () => {
+    const first6 = (sim: Sim): Inc[] => {
       for (let k = 0; k < 12000 && !sim.ended; k++) {
         sim.step();
         const reg = sim.incidents.filter((I) => I.tag !== 'daily' && I.parent === undefined);
-        if (reg.length >= 6) return reg.slice(0, 6).map((I) => `${I.createdAt.toFixed(1)} ${I.truth.type}/${I.truth.variant}/${I.truth.severity}`);
+        if (reg.length >= 6) return reg.slice(0, 6);
       }
       return [];
     };
-    let withDaily = 0;
+    const what = (I: Inc): string => `${I.truth.type}/${I.truth.variant}/${I.truth.severity}`;
+    let withDaily = 0, exact = 0;
     for (let k = 0; k < 6; k++) {
       // 난이도의 차례 수 그대로(보통 5 — 단계 3 에는 그 가운데 10% 쯤이 비응급 줄에 걸린다). 짧은 사건이 여럿 끼면(차례를 늘린 교대) 그 사건에 묶인 부대 때문에
-      // 평소 사건이 다른 부대를 받아 닫히는 시각이 달라지고 생성 간격의 가용 배율(×1.2)이 갈릴 수 있다 — 구현 메모 단계 3 "알려진 것"
+      // 평소 사건이 다른 부대를 받아 닫히는 시각이 달라지고 생성 간격의 가용 배율(×1.2)이 갈릴 수 있다 — 구현 메모 단계 3 "알려진 것" 1.
+      // (단계 6b) 교통사고가 견인차를 기다리며(§5.3.8) 닫히는 시각이 짧은 사건의 몫과 더 얽혀, 기본 손잡이에서도 S5 의 여섯째 사건이 그 배율 한 번만큼 늦게 났다(30교대에 2 — 단계 6a 끝은 1).
+      // 그래서 생성 시각은 "같다"를 "처음 갈린 간격이 정확히 그 배율 한 번이다"까지 받는다 — 추첨(유형·변형·규모의 차례)은 늘 같아야 하고, 넷 이상의 교대는 글자대로 같아야 한다
       const on = new Sim('S' + k), off = new Sim('S' + k, NORMAL, 1200, { daily: 0 });
       const a = first6(on), b = first6(off);
       expect(a.length, `S${k}`).toBe(6);
-      expect(a, `S${k}`).toEqual(b);
+      expect(a.map(what), `S${k}`).toEqual(b.map(what));
+      let i = 0;
+      while (i < 6 && a[i].createdAt === b[i].createdAt) i++;
+      if (i === 6) exact++;
+      else {
+        expect(i, `S${k}: 첫 사건의 생성 시각이 다르다`).toBeGreaterThan(0);
+        const r = (a[i].createdAt - a[i - 1].createdAt) / (b[i].createdAt - b[i - 1].createdAt);
+        expect(Math.abs(r - 1.2) < 0.01 || Math.abs(r - 1 / 1.2) < 0.01, `S${k}: ${i}번째 간격의 비 ${r.toFixed(3)} — 가용 배율이 아니다`).toBe(true);
+      }
       if (on.incidents.some((I) => I.tag === 'daily')) withDaily++;
     }
+    expect(exact, '글자대로 같은 교대').toBeGreaterThanOrEqual(4);
     expect(withDaily, '짧은 사건이 끼어든 교대가 하나도 없다 — 시험이 아무것도 보지 않는다').toBeGreaterThanOrEqual(1);
   });
   it('isDailyLoad: 짧은 사건과 그 연쇄 자식은 평소 생성기의 몫이 아니다', async () => {
@@ -992,7 +1005,7 @@ import { hosFact } from '../src/sim/field/agents';
 
 describe('5·9·14 치안 (단계 6a)', () => {
   it('5 치안 세 시나리오는 강제 교대(S0·S1)에서 모두 닫히고 한계 시간·방치·무대응이 아니다 · 9 같은 대원에게 같은 검거·수색 지시가 25초 안에 다시 가지 않는다 · 14 용의자는 모두 맨손이고 주취 소란은 추격전을 시작하지 않는다', () => {
-    for (const key of DISTURB_LINES) for (const seed of ['S0', 'S1']) {
+    for (const key of DISTURB_LINES.slice(0, 3)) for (const seed of ['S0', 'S1']) {      // 단계 6a 의 셋 (6b 의 둘은 아래 묶음 — 차량 절도는 추격전이다)
       const sim = new Sim(seed, NORMAL, 1200, { force: key });
       const I = runUntilClosed(sim, forced(sim), 7000);
       expect(I && I.phase, `${key} ${seed}`).toBe('closed');
@@ -1050,5 +1063,195 @@ describe('5·9·14 치안 (단계 6a)', () => {
       if (sim.events.some((e) => e.incidentId === I.id && e.text.includes('한 팀으로는 말을 걸면서 붙잡을 수 없음'))) asked++;
     }
     expect(asked, '경찰 한 팀만 닿은 폭행 시비에서 추가 요청').toBeGreaterThan(0);
+  });
+});
+
+// ───────────────────────── 단계 6b (치안 — 수거책 잠복 · 차량 절도 · 견인차 · 교통사고의 견인) ─────────────────────────
+import { SCAM } from '../src/sim/field/rules/kinds';
+import { TOW_WAIT } from '../src/sim/field/orders/kinds';
+import { makeAgent } from '../src/sim/field/agents';
+const DISTURB_6B = ['disturb/scam', 'disturb/cartheft'];
+/** 작업판을 틱마다 훑어 되풀이를 센다 (시험 9): 같은 대상의 작업이 60초 안에 셋 생기거나, 같은 대상의 작업에 같은 대원이 25초 안에 다시 붙으면(지시·스스로 맡음 — 담당자 목록에 새로 든 때) 그 사연 */
+function watchBoard(kinds: WorkKind[]): { look: (sim: Sim, s: Scene) => void; bad: () => string } {
+  const made = new Map<string, number[]>(), seenW = new Set<number>(), had = new Map<number, number[]>(), joined = new Map<string, number>();
+  let bad = '';
+  return {
+    look(sim, s) {
+      for (const w of s.board) {
+        if (kinds.indexOf(w.kind) < 0) continue;
+        if (!seenW.has(w.id)) {
+          seenW.add(w.id);
+          const key = `${w.kind}:${w.prop}:${w.tile}:${w.hostile}`, ts = made.get(key) ?? [];
+          ts.push(sim.t); made.set(key, ts);
+          if (ts.filter((t) => t > sim.t - 60).length > 2) bad ||= `${key} 60초에 셋 (${sim.t.toFixed(1)})`;
+        }
+        const before = had.get(w.id) ?? [];
+        for (const rid of w.assignees) {
+          if (before.indexOf(rid) >= 0) continue;
+          const k = `${w.kind}:${w.prop}:${w.tile}:${w.hostile}:${rid}`, prev = joined.get(k);
+          if (prev !== undefined && sim.t - prev < 25) bad ||= `${w.kind} #${w.id} → ${s.agents.find((q) => q.rid === rid) ? rid : '?'} ${(sim.t - prev).toFixed(1)}초 만에 다시`;
+          joined.set(k, sim.t);
+        }
+        had.set(w.id, w.assignees.slice());
+      }
+    },
+    bad: () => bad,
+  };
+}
+
+describe('5·9·14 치안 — 수거책 잠복 · 차량 절도 · 교통사고의 견인 (단계 6b)', () => {
+  it('5 두 시나리오는 강제 교대(S0·S1)에서 모두 닫히고 한계 시간·무대응이 아니다(방치는 차량 절도의 놓친 추격전만) · 9 잠복·검거·견인의 되풀이 없음 · 14 용의자는 모두 맨손, 차량 절도는 추격전으로 시작한다', () => {
+    for (const key of DISTURB_6B) for (const seed of ['S0', 'S1']) {
+      const sim = new Sim(seed, NORMAL, 1200, { force: key });
+      const wb = watchBoard(['cordon', 'arrest', 'towAway']);
+      let J: Inc | undefined, chase = false;
+      for (let k = 0; k < 7000 && !sim.ended; k++) {
+        sim.step();
+        J = sim.incidents.find(forced(sim));
+        if (!J) continue;
+        if (J.pursuit) chase = true;
+        const s = sim.scenes[J.id];
+        if (s) wb.look(sim, s);
+        if (J.phase === 'closed') break;
+      }
+      expect(J && J.phase, `${key} ${seed}`).toBe('closed');
+      expect(wb.bad(), `${key} ${seed}: ${wb.bad()}`).toBe('');
+      expect(['timeout', 'noresponse'].indexOf(J!.closeReason), `${key} ${seed}: ${J!.closeReason}`).toBe(-1);
+      if (J!.closeReason === 'abandoned') expect(key === 'disturb/cartheft' && J!.pursuit?.state === 'escaped', `${key} ${seed}: 방치는 놓친 추격전만`).toBe(true);
+      expect(chase, `${key}: 추격전`).toBe(key === 'disturb/cartheft');
+      if (key === 'disturb/cartheft') expect(J!.pursuit!.kind).toBe('cartheft');
+      const s = sim.scenes[J!.id];
+      if (s) for (const h of s.hostiles) expect(h.weapon, `${key} ${h.label}`).toBe('none');
+    }
+  });
+  it('14 수거책: 약속 시각(arriveAt) 전에는 s.hostiles 에 없고, 수거책을 보지 못한 사건은 약속 시각 + 40초 전에 닫히지 않는다 · 면담하면 믿음에 약속(evid meet)', () => {
+    let met = 0;
+    for (const seed of ['S0', 'S1', 'S2', 'S3']) {
+      const sim = new Sim(seed, NORMAL, 1200, { force: 'disturb/scam' });
+      let J: Inc | undefined, early = '', seenHos = false;
+      for (let k = 0; k < 7000 && !sim.ended; k++) {
+        sim.step();
+        J = sim.incidents.find(forced(sim));
+        const s = J ? sim.scenes[J.id] : undefined;
+        if (!J || !s || !s.kinds) continue;
+        if (sim.t < s.kinds.arriveAt! && s.hostiles.length > 0) early ||= `${seed} ${sim.t.toFixed(1)} < ${s.kinds.arriveAt!.toFixed(1)}`;
+        if (s.agents.some((a) => a.beliefs.list('hos').length > 0)) seenHos = true;
+        if (s.agents.some((a) => a.beliefs.list('evid').some((f) => (f.value as { kind?: string }).kind === 'meet'))) met++;
+        if (J.phase === 'closed') break;
+      }
+      expect(early, early).toBe('');
+      const k = sim.scenes[J!.id]!.kinds!;
+      expect(J!.phase, seed).toBe('closed');
+      // 믿음의 약속 시각은 피해자의 말(meetAt — 실제 도착 ± 20초)이다. 종료를 막는 것은 그 시각 + 40초
+      if (!seenHos) expect(J!.closedAt, `${seed}: 수거책을 보지 못한 채 약속 시각 + 40초 전에 닫혔다`).toBeGreaterThanOrEqual(k.meetAt! + 40);
+    }
+    expect(met, '면담으로 약속을 안 교대').toBeGreaterThan(0);
+  });
+  it('14 사복 알아보기: 걸어오는 수거책은 제복 경찰을 8칸 안(시야선)에서, 사복 형사는 2칸 안에서만 알아보고 달아난다', () => {
+    const sim = new Sim('S0', NORMAL, 1200, { force: 'disturb/scam' });
+    let J: Inc | undefined;
+    for (let k = 0; k < 3000 && !J; k++) { sim.step(); J = sim.incidents.find((x) => forced(sim)(x) && !!sim.scenes[x.id] && !!sim.scenes[x.id]!.kinds); }
+    const s = sim.scenes[J!.id]!;
+    expect(s.hostiles.length, '약속 시각 전').toBe(0);
+    const saved = s.agents.splice(0, s.agents.length);
+    s.kinds!.arriveAt = sim.t;
+    tickScene(sim, s);
+    expect(s.hostiles.length, '수거책이 나타났다').toBe(1);
+    const h = s.hostiles[0];
+    const det = sim.responders.find((r) => r.role === 'detective')!, cop = sim.responders.find((r) => r.dept === 'police' && r.role === 'officer')!;
+    // 시야선이 열린 칸: 수거책이 선 줄에서 좌우로 d 칸
+    const spot = (d: number): { x: number; y: number } => {
+      for (const sx of [-1, 1]) { const x = h.x + sx * d, y = h.y; if (x > 0 && x < s.w - 1 && staticPass(s.tiles[Math.round(y) * s.w + Math.round(x)]) && los(s, h.x, h.y, x, y)) return { x, y }; }
+      throw new Error('시야선이 열린 칸이 없다');
+    };
+    const p3 = spot(3);
+    s.agents.push(makeAgent(sim, det.id, det.unitId, p3.x, p3.y, sim.t + 999, sim.rng.fork('t6b-a')));
+    tickScene(sim, s);
+    expect(h.state, '사복 3칸 — 알아보지 못한다').toBe('hold');
+    s.agents.length = 0;
+    const p6 = spot(SCAM.seeUniform - 2);
+    s.agents.push(makeAgent(sim, cop.id, cop.unitId, p6.x, p6.y, sim.t + 999, sim.rng.fork('t6b-b')));
+    tickScene(sim, s);
+    expect(h.state, '제복 6칸 — 알아보고 달아난다').not.toBe('hold');
+    expect(s.kinds!.scamFled).toBe(true);
+    expect([SCAM.seeUniform, SCAM.seeDetective]).toEqual([8, 2]);
+    s.agents.length = 0; s.agents.push(...saved);
+  });
+  it('14 차량 절도: 추격전으로 시작하고(도난 차량), 세운 뒤 운전자가 내려 달아나는 교대가 있다', () => {
+    let fled = 0, stopped = 0;
+    for (const seed of ['S0', 'S1', 'S2', 'S3', 'S4', 'S5']) {
+      const sim = new Sim(seed, NORMAL, 1200, { force: 'disturb/cartheft' });
+      const I = runUntilClosed(sim, forced(sim), 7000)!;
+      expect(I.pursuit, seed).toBeTruthy();
+      expect(I.pursuit!.kind).toBe('cartheft');
+      if (I.pursuit!.state !== 'stopped') continue;
+      stopped++;
+      const s = sim.scenes[I.id]!;
+      if (s.kinds!.stopFled) fled++;
+    }
+    expect(stopped, '세운 교대').toBeGreaterThan(0);
+    expect(fled, '도보 도주가 생긴 교대').toBeGreaterThan(0);
+  });
+  it('14 견인: 교통사고에 견인차가 배정되면 차로를 막은 차에 towAway 가 나고 그 차의 clearRoad 는 나지 않는다(견인 장비를 든 견인 기사만 맡는다) · 9 견인의 되풀이 없음', () => {
+    let towed = 0;
+    for (const seed of ['S0', 'S1', 'S2']) {
+      const sim = new Sim(seed, NORMAL, 1200, { force: 'traffic/std' });
+      const wb = watchBoard(['towAway', 'clearRoad']);
+      let J: Inc | undefined;
+      const towAt = new Map<number, number>(), roadAfter: string[] = [];
+      for (let k = 0; k < 7000 && !sim.ended; k++) {
+        sim.step();
+        J = sim.incidents.find(forced(sim));
+        const s = J ? sim.scenes[J.id] : undefined;
+        if (!J || !s) continue;
+        wb.look(sim, s);
+        for (const w of s.board) {
+          if (w.kind === 'towAway' && !towAt.has(w.prop)) towAt.set(w.prop, w.createdAt);
+          if (w.kind === 'clearRoad' && towAt.has(w.prop) && w.createdAt > towAt.get(w.prop)! && w.status !== 'cancelled' && roadAfter.indexOf(`${w.prop}@${w.createdAt.toFixed(1)}`) < 0) roadAfter.push(`${w.prop}@${w.createdAt.toFixed(1)}`);
+        }
+        if (J.phase === 'closed') break;
+      }
+      expect(J!.phase, seed).toBe('closed');
+      expect(wb.bad(), `${seed}: ${wb.bad()}`).toBe('');
+      const gaveUp = sim.events.some((e) => e.incidentId === J!.id && e.text.startsWith('견인차가 오지 않습니다'));
+      if (!gaveUp) expect(roadAfter, `${seed}: 견인을 낸 차에 도로 정리`).toEqual([]);
+      if (J!.everAssigned.some((uid) => sim.units[uid].kind === 'tow')) expect(towAt.size, `${seed}: 견인차가 왔는데 견인 작업이 없다`).toBeGreaterThan(0);
+      const s = sim.scenes[J!.id]!;
+      for (const w of s.board) if (w.kind === 'towAway' && w.status === 'done') {
+        towed++;
+        expect(s.props[w.prop].removed && s.props[w.prop].cleared).toBe(true);
+        for (const rid of Object.keys(w.orderSentAt).map(Number)) expect(hasKit(sim, rid, 'towKit'), sim.responders[rid].name).toBe(true);
+      }
+    }
+    expect(towed, '견인을 마친 교대').toBeGreaterThan(0);
+  });
+  it('14 견인의 시간 막이: 견인차가 오는 중인데 towAway 를 낸 지 TOW_WAIT 가 지나도록 현장에 없으면 towAway 를 거두고 clearRoad(밀어 둠)로 돌아간다 · 견인차가 배정되지 않았으면 처음부터 clearRoad', () => {
+    const wait0 = TOW_WAIT.s;
+    try {
+      for (const towState of ['far', 'none'] as const) {
+        const { sim, I } = quietSim('N8-6B-TOW', 'traffic');
+        const s = sim.scenes[I.id]!;
+        const eng = sim.units.find((u) => u.kind === 'engine')!;
+        placeAt(sim, eng, I); land(sim, I, eng);
+        const tow = sim.units.find((u) => u.kind === 'tow')!;
+        if (towState === 'far') { tow.state = 'enroute'; tow.incidentId = I.id; I.assigned.push(tow.id); }      // 오는 중 (시험은 tickScene 만 돌리므로 움직이지 않는다)
+        for (const c of s.casualties) { c.where = 'safe'; c.inVehicle = null; c.tDiscovered = sim.t; c.health = 90; }
+        TOW_WAIT.s = 20;
+        let towMade = -1, giveUp = -1, road = -1;
+        for (let k = 0; k < 150 * 5 && road < 0; k++) {
+          sim.tick++; sim.t = sim.tick * sim.dt; tickScene(sim, s);
+          if (towMade < 0 && s.board.some((w) => w.kind === 'towAway')) towMade = sim.t;
+          if (giveUp < 0 && sim.events.some((e) => e.incidentId === I.id && e.text.startsWith('견인차가 오지 않습니다'))) giveUp = sim.t;
+          if ((towState === 'none' || giveUp >= 0) && s.board.some((w) => w.kind === 'clearRoad' && w.status !== 'cancelled')) road = sim.t;
+        }
+        if (towState === 'far') {
+          expect(towMade, '견인 작업').toBeGreaterThan(0);
+          expect(giveUp - towMade, '시간 막이').toBeGreaterThanOrEqual(20);
+          expect(s.board.some((w) => w.kind === 'towAway' && (w.status === 'open' || w.status === 'active')), '견인 작업을 거뒀다').toBe(false);
+        } else expect(towMade, '견인차가 없으면 견인 작업이 없다').toBe(-1);
+        expect(road, `${towState}: 도로 정리로 돌아간다`).toBeGreaterThan(0);
+      }
+    } finally { TOW_WAIT.s = wait0; }
+    expect(TOW_WAIT.s).toBe(150);
   });
 });

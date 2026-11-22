@@ -250,7 +250,7 @@ export const INCIDENT_PLACES: Record<IncidentType, W> = {
   utility: { shop: 4, restaurant: 4, office: 3, cafe: 2, convenience: 1.5, hotel: 1, market: 1, mart: 1 },
   // (N8 단계 5) 동물: 멧돼지(농가·하우스·펜션·주택·공원 …)·벌집(주택·학교 …)·개 물림(빌라·아파트 …)의 장소를 합친 표 (가축 탈출은 농가 곁 길 위 교차로 — 장소 표 밖)
   animal: { farmhouse: 6, greenhouse: 2, pension: 4, houseS: 9, park: 5, campsite: 2, temple: 1.6, university: 0.5, villa: 4, apartment: 3, school: 2.5, market: 0.8 },
-  disturb: { restaurant: 7, convenience: 4, cafe: 1, market: 6, busTerminal: 3.8, station: 3.6, stadium: 1.5, university: 1, shop: 2, mart: 1 },      // (N8 단계 6a) 치안 — 주취 소란·폭행 시비·날치기의 장소를 합친 것
+  disturb: { restaurant: 7, convenience: 7, cafe: 3, market: 6, busTerminal: 4.8, station: 4.6, stadium: 1.5, university: 1, shop: 2, mart: 2, bank: 2, parking: 4, gasStation: 0.5, apartment: 1 },      // (N8 단계 6a) 치안 — 주취 소란·폭행 시비·날치기의 장소를 합친 것 · (6b) 수거책 잠복·차량 절도
 };
 
 /** 현장을 만들 때 건물 종류가 정하는 것: 평면의 틀 비중 [복도형, 방 연결형, 홀형], 2층일 확률, 무장 사건의 장소 */

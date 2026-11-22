@@ -17,7 +17,7 @@ import { chaseRoles } from './dispatch/doctrine';      // (R3 §6.2 D7) 관제�
 import { recordDoc } from './field/doctrineRun';
 
 const rngOf = new WeakMap<Incident, Rng>();
-const WHO: Record<string, string> = { kidnap: '납치 차량', drunk: '난폭 운전 차량', getaway: '도주 차량' };
+const WHO: Record<string, string> = { kidnap: '납치 차량', drunk: '난폭 운전 차량', getaway: '도주 차량', cartheft: '도난 차량' };      // cartheft: (N8 단계 6b) 차량 절도
 /**
  * 납치범이 숨어들 만한 곳: 외진 창고와 작업장.
  * 설계서(N4b ④)에는 농가·펜션·보관소·비닐하우스도 있지만, 숨어든 곳에서 이어지는 인질 사건은 무장 사건이 날 수 있는 건물(cityPlan.INCIDENT_PLACES.armed)이어야 한다
@@ -26,7 +26,7 @@ const WHO: Record<string, string> = { kidnap: '납치 차량', drunk: '난폭 �
 const HIDEOUT_KINDS = ['warehouse', 'workshop'];
 
 /** 추격전으로 시작하는 사건을 준비한다 (사건 생성 직후). 차는 신고 전화가 걸려 올 즈음 달리기 시작한다. */
-export function startPursuit(sim: Sim, I: Incident, kind: 'kidnap' | 'drunk' | 'getaway'): void {
+export function startPursuit(sim: Sim, I: Incident, kind: 'kidnap' | 'drunk' | 'getaway' | 'cartheft'): void {
   const rng = sim.rng.fork('pursuit:' + I.id);
   rngOf.set(I, rng);
   const city = sim.city, n = city.nodes[I.truth.nodeId];

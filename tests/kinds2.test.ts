@@ -52,11 +52,14 @@ function copsOn(sim: Sim, s: Scene, n: number): FieldAgent[] {
 const hosVal = (x: number, y: number, state: HosBelief['state'], weapon: HosBelief['weapon'] = 'none'): HosBelief =>
   ({ x, y, weapon, state, hostage: false, facing: 0, dead: false, band: 0, tq: 0, where: 'scene' });
 
+/** N8 이 넣은 용의자 보류 줄 수 (N8 단계 6b — 수거책 잠복: 약속 자리로 걸어오는 수거책 · 방금 검거한 용의자. 치안 현장이 아니면 거짓이다 — orders/kinds.ts) */
+const N8_HOS_HOLDS = 1;
+
 // ───────────────────────── 단계 1 (틀 A — 자료형과 등록 자리) ─────────────────────────
 describe('1 틀 A — 자료형과 등록 자리 (결과 불변 — 해시는 구현 메모의 해시 목록)', () => {
-  it('등록 자리 HOS_HOLDS 는 아직 비어 있다 (단계 1 — 첫 줄은 단계 4 의 시위)', () => {
+  it('등록 자리 HOS_HOLDS 에는 N8 의 줄만 있다 (단계 1 — N9 의 첫 줄은 단계 4 의 시위)', () => {
     new Sim('N9-1-REG');      // 현장 등록(field/scenes/index.ts)을 불러 둔다
-    expect(HOS_HOLDS.length).toBe(0);
+    expect(HOS_HOLDS.length).toBe(N8_HOS_HOLDS);
   });
 
   it('용의자 보류(registerHosHold): 참이면 syncBoard 가 그 용의자에게 봉쇄·협상·검거를 내지 않는다 — 위협 셈에는 든다. 줄을 지우면 예전 그대로', () => {
@@ -87,7 +90,7 @@ describe('1 틀 A — 자료형과 등록 자리 (결과 불변 — 해시는 �
     } finally {
       HOS_HOLDS.splice(HOS_HOLDS.indexOf(hold), 1);
     }
-    expect(HOS_HOLDS.length).toBe(0);
+    expect(HOS_HOLDS.length).toBe(N8_HOS_HOLDS);
     expect(kindsFor(B.s, 0)).toEqual([]);
     expect(kindsFor(B.s, 1)).toEqual([]);
     expect(B.s.board.some((w) => w.kind === 'perimeter'), '보류된 용의자에게는 출구 봉쇄도 내지 않는다').toBe(false);

@@ -1359,3 +1359,12 @@ export interface KindsState {
   hiveWide?: number;                              // 벌집: 떼어 내기 시작한 시각 (그 뒤 20초 동안 위험 반경이 4.5 로 커진다 — -1 = 아직)
   hides?: number[];                               // 개 물림: 개가 숨는 칸 (골목 끝·담 모퉁이)
 }
+
+// ───────────────────────── 사건 종류 다양화 (N8 단계 6b — 수거책 잠복 · 차량 절도) ─────────────────────────
+// docs/specs/N8-incident-kinds.md §4.4. 세계 규칙(field/rules/kinds.ts)·실행부(executor 의 피해자 면담)만 읽고 쓴다. 판단 파일은 s.kinds 를 읽지 않는다 (시험 4)
+export interface KindsState {
+  meetAt?: number;                                // 잠복: 피해자가 말하는 약속 시각 (진실 arriveAt ± 20초 — 면담한 대원이 믿음 evid meet 으로 옮긴다)
+  scamExit?: number;                              // 잠복: 수거책이 들어오고 돌아 나가는 출구 (s.exits 의 번호)
+  scamFled?: boolean;                             // 잠복: 수거책이 경찰을 알아보고 달아났다 (판정 문장)
+  stopFled?: boolean;                             // 차량 절도: 세운 뒤 운전자가 곧바로 내려 달아나기로 했다 (현장 생성기가 정한다 — 같은 흐름으로 두 번 만들어도 같다)
+}

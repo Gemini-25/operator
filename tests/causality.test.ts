@@ -1651,10 +1651,11 @@ describe('I1-b b5: 완료 조건의 정해진 시드 (§5 · §6 I1-b 8)', () =>
     }
     return out;
   }
-  it('3단계 사례: 한 사건에서 서로 다른 사건·시스템으로 세 단계 넘게 퍼진 길이 법칙 사건을 지난다 — 보통 S1800(건물 화재 → 옆 건물로 옮겨붙은 불 → 그 불의 연기 → 연기를 마신 주민) · 보통 S24(퍼진 길이 몰린 길의 사고를 지난다)', () => {
+  it('3단계 사례: 한 사건에서 서로 다른 사건·시스템으로 세 단계 넘게 퍼진 길이 법칙 사건을 지난다 — 보통 S1800(건물 화재 → 옆 건물로 옮겨붙은 불 → 그 불의 연기 → 연기를 마신 주민) · 보통 S234(퍼진 길이 몰린 길의 사고를 지난다)', () => {
     // (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 S33·S26 의 사건이 바뀌었다 — 같은 길(옮겨붙은 불 + 연기를 마신 주민 · 몰린 길의 사고)이 있는 시드로 (표본을 넓혀 찾았다: S0~S529)
     // (N8 단계 6a) 경찰 새 부대 셋(형사·교통 경찰·경찰견)이 편성돼 S293·S5 의 길이 바뀌었다 — 같은 길이 있는 시드로 (표본을 넓혀 찾았다: 옮겨붙은 불 + 연기를 마신 주민은 S0~S999 에 없었고 그 뒤를 훑어 S1800 · 몰린 길의 사고는 S24)
-    const want: [string, string[]][] = [['S1800', ['heatSpread', 'smokeIll']], ['S24', ['roadCrash']]];
+    // (N8 단계 6b) 교통사고가 견인차를 기다려 S24 의 몰린 길의 사고가 확산 길에서 빠졌다 — 같은 길이 있는 시드로 (S0~S119 에 없어 그 뒤를 훑어 S234)
+    const want: [string, string[]][] = [['S1800', ['heatSpread', 'smokeIll']], ['S234', ['roadCrash']]];
     for (const [seed, laws] of want) {
       const sim = probedShift(seed).sim;
       const hits = spreadThrough(sim).filter((x) => x.incs.some((J) => J !== x.I && J.hz !== undefined));
@@ -1669,7 +1670,7 @@ describe('I1-b b5: 완료 조건의 정해진 시드 (§5 · §6 I1-b 8)', () =>
   }, 120000);
   it('법칙 사건의 통제를 만난 다른 사건의 부대 (완료 조건 2): ROUTE_BLOCKED 의 원인이 그 법칙 사건의 통제 기록이다 — 극한 S4·S7', () => {
     let n = 0;
-    for (const seed of ['S4', 'S7', 'S26']) {      // (N8 단계 6a) S26 을 더했다 — 경찰 새 부대 셋이 편성돼 S4·S7 의 그런 부대가 없어졌다 (S0~S29 가운데 S26·S28) · (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 극한 S3 의 사건이 바뀌었다 — 그런 부대가 있는 S7 로 (S0~S15 가운데 S7 하나)
+    for (const seed of ['S4', 'S7', 'S26', 'S8']) {      // (N8 단계 6b) S8 을 더했다 — 교통사고의 견인으로 셋의 그런 부대가 없어졌다 (S0~S39 가운데 S8 하나) · (N8 단계 6a) S26 을 더했다 — 경찰 새 부대 셋이 편성돼 S4·S7 의 그런 부대가 없어졌다 (S0~S29 가운데 S26·S28) · (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 극한 S3 의 사건이 바뀌었다 — 그런 부대가 있는 S7 로 (S0~S15 가운데 S7 하나)
       const sim = probedShift(seed, parseDifficulty('extreme')!).sim;
       const lawBlock = new Map<number, Incident>();
       for (const J of sim.incidents) if (J.hz && J.blockEv !== undefined) lawBlock.set(J.blockEv, J);

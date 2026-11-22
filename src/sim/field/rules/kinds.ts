@@ -13,9 +13,9 @@ import { mkFact } from '../beliefs';
 import { hurtCas, hurtHostile, hurtResponder } from '../injury';
 import { casFact, hosFact, learn, resp } from '../agents';
 import { registerRule, registerVerdict } from '../sceneRegistry';
-import { los, staticPass } from '../grid';
+import { astar, los, staticPass, truthCost } from '../grid';
 import { ANIMAL, HIVE, hiveR, tickAnimals } from '../animals';
-import { addCas, addProp } from '../kit';
+import { addCas, addHostile, addProp } from '../kit';
 import { startFlee } from '../hazards';
 import { RUIN_SECONDARY, markRuin, recordFall } from '../ruins';
 
@@ -673,6 +673,85 @@ registerRule((sim, s, I) => {
     else {
       h.state = 'hold'; h.path = null; h.morale = Math.min(h.morale, 0.15); h.fleeAt = Infinity;
       emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, text: `${josa(h.label, '이/가')} 길목마다 경찰이 서 있어 멈춰 섰습니다.` });
+    }
+  }
+});
+
+// ───────────────────────── 치안 disturb (§4.4 — 단계 6b) ─────────────────────────
+/** 수거책 잠복의 상수: 제복을 알아보는 거리 8칸(시야선) · 사복(형사)은 2칸 · 돈을 받는 6초 · 피해자 곁(이만큼이면 닿았다) · 걷는 빠르기(칸/초 — 태연히 걷는다, 달아날 때는 지금의 도주) */
+export const SCAM = { seeUniform: 8, seeDetective: 2, take: 6, near: 1.6, walk: 1.2 };
+/** 수거책마다의 단계 (0 약속 자리로 걷는다 · 1 돈을 받는다 · 2 돈을 받아 떠난다 · 3 알아보고 달아났다)와 걷는 길 — 용의자 객체의 모양을 바꾸지 않으려고 WeakMap.
+ *  걷는 길은 h.path 에 두지 않는다(지금의 용의자 규칙이 h.path 를 2.3칸/초로 옮긴다 — 태연히 걷는 사람은 그보다 느리다) */
+const SCAM_ST = new WeakMap<Hostile, { phase: number; t: number; path: number[] | null; i: number }>();
+/** 수거책이 경찰을 알아보는가 (세계 쪽 — 진실의 자리·역할): 8칸 안·시야선의 활동 중인 경찰 가운데 제복은 그대로, 사복(형사 역할)은 2칸 안일 때만 (설계서 §4.4 "사복" — hazards.hostileSees 는 고치지 않는다) */
+function scamSpots(sim: Sim, s: Scene, h: Hostile): FieldAgent | null {
+  for (const a of s.agents) {
+    if (a.status !== 'active' || a.aloft) continue;
+    const r = sim.responders[a.rid];
+    if (r.dept !== 'police') continue;
+    const d = dist(a.x, a.y, h.x, h.y);
+    if (d > SCAM.seeUniform || (r.role === 'detective' && d > SCAM.seeDetective)) continue;
+    if (los(s, h.x, h.y, a.x, a.y)) return a;
+  }
+  return null;
+}
+/** 걷는 길을 따라 한 걸음 (기절한 동안은 서 있다). 끝에 닿았으면 참 */
+function scamWalk(sim: Sim, h: Hostile, st: { path: number[] | null; i: number }, w: number): boolean {
+  if (!st.path || st.i >= st.path.length) return true;
+  if (sim.t < h.stunUntil) return false;
+  const ti = st.path[st.i], tx = ti % w, ty = (ti / w) | 0;
+  const dd = dist(h.x, h.y, tx, ty), step = SCAM.walk * sim.dt;
+  if (dd <= step) { h.x = tx; h.y = ty; st.i++; } else { h.x += ((tx - h.x) / dd) * step; h.y += ((ty - h.y) / dd) * step; }
+  if (dd > 0.01) h.facing = Math.atan2(ty - h.y, tx - h.x);
+  return st.i >= st.path.length;
+}
+/**
+ * (§4.4 scam) 수거책 잠복: 약속 시각(s.kinds.arriveAt — 진실)에 수거책을 만든다(s.hostiles 끝 — 그 전에는 지각·용의자 행동·판정·신고자가 그 사람을 보지 않는다).
+ * 동쪽 출구에서 피해자에게 걷는 동안 경찰을 알아보면(제복 8칸 · 사복 2칸 — scamSpots) 돌아서 들어온 출구로 달아난다(startFlee — 도보 추격). 피해자에게 닿으면 6초 동안 돈을 받고
+ * 들어온 출구로 걸어 나간다 — 끝까지 나가면 '돈을 받아 떠남'(SUSPECT_FLED). 태연히 걷는다(1.2칸/초 — 이 규칙이 옮긴다). 난수 없음
+ */
+registerRule((sim, s, I) => {
+  if (s.kind !== 'disturb' || s.variant !== 'scam' || I.phase === 'closed' || !s.kinds || s.kinds.arriveAt === undefined) return;
+  const k = s.kinds;
+  const exitK = Math.max(0, Math.min(s.exits.length - 1, k.scamExit ?? 1));
+  if (s.hostiles.length === 0) {
+    if (sim.t < k.arriveAt!) return;
+    const e = s.exits[exitK];
+    const v = s.props.find((p) => p.kind === 'witness' && p.skin === 'victim');
+    const h = addHostile(s, e.x, e.y, 'none', 0.2, 0.3, false, Infinity);
+    h.label = '수거책'; h.morale = 0.45; h.facing = Math.PI;
+    const path = v ? astar(s, h.x, h.y, v.x, v.y, 1, truthCost(s)) : null;
+    SCAM_ST.set(h, { phase: 0, t: sim.t, path: path && path.length ? path : null, i: 0 });
+    emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, truth: true, text: '수거책으로 보이는 사람이 약속 장소로 걸어옵니다.' });
+    return;
+  }
+  for (const h of s.hostiles) {
+    const st = SCAM_ST.get(h);
+    if (!st || h.state !== 'hold') continue;
+    if (st.phase === 0) {
+      const cop = scamSpots(sim, s, h);
+      if (cop) {
+        st.phase = 3; k.scamFled = true;
+        emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, truth: true, text: `${josa(h.label, '이/가')} ${sim.responders[cop.rid].role === 'detective' ? '잠복한 형사를' : '제복 경찰을'} 알아보고 돌아서 달아납니다.` });
+        startFlee(sim, s, h, exitK);
+        continue;
+      }
+      if (scamWalk(sim, h, st, s.w)) {
+        st.phase = 1; st.t = sim.t; st.path = null;
+        emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, truth: true, text: `${josa(h.label, '이/가')} 피해자에게서 돈 봉투를 받고 있습니다.` });
+        // (§5.16) 돈을 건네받는 순간을 지켜보던 경찰(13칸 안·시야선)은 그 자리를 곧바로 알린다 — 자리만 바뀐 사실은 보고되지 않아(agents.significant) 지휘관이 수거책을 처음 본 출구에 있다고 믿은 채 검거를 내지 않았다
+        for (const a of s.agents) if (a.status === 'active' && !a.aloft && sim.responders[a.rid].dept === 'police' && dist(a.x, a.y, h.x, h.y) <= 13 && los(s, a.x, a.y, h.x, h.y)) learn(sim, a, hosFact(sim, s, h, resp(sim, a).name, dist(a.x, a.y, h.x, h.y)), true, true);
+      }
+    } else if (st.phase === 1) {
+      if (sim.t - st.t < SCAM.take) continue;
+      st.phase = 2;
+      const e = s.exits[exitK];
+      const path = astar(s, h.x, h.y, e.x, e.y, 0, truthCost(s));
+      st.path = path && path.length ? path : null; st.i = 0;
+      emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, truth: true, text: `돈을 받은 ${josa(h.label, '이/가')} 자리를 뜹니다.` });
+    } else if (st.phase === 2 && scamWalk(sim, h, st, s.w)) {
+      h.state = 'escaped'; h.path = null;
+      raiseProblem(sim, I, 'SUSPECT_FLED', '수거책이 돈을 받아 떠남', { role: 'SYSTEM', actor: '현장', imp: 3, truth: s.arrivedAt < 0, text: `${josa(h.label, '이/가')} 돈을 받아 현장을 떠났습니다.` }, false);
     }
   }
 });

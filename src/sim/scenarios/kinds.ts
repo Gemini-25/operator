@@ -21,6 +21,13 @@ import type { District, Incident, RoadEdge } from '../types';
  * 이 잎 쪽 파일에 둔다: 분석이 orders/kinds.ts 를 import 하면 지휘 규칙의 등록 차례(= 결과)가 바뀐다
  */
 export const ATTACH_GAS = true;
+/**
+ * (N8 §5.3.8 — 단계 6b) 평소 사건에 붙는 유관 기관의 선택 수요 — 교통사고에 견인차의 "차로를 막은 부서진 차 견인". 분석(필요 자원에 tow 1 — 이름표 '쓰러진 나무'·'맨홀 추락' 은 빼고)과
+ * 지휘 규칙(orders/kinds.ts — 견인차가 배정돼 있으면 towAway, 그 차의 clearRoad 보류 · 150초 넘게 오지 않으면 밀어 둠으로 돌아감)이 함께 본다. 거짓이면 붙이지 않는다(§7.3 의 손잡이)
+ */
+export const ATTACH_TOW = true;
+/** (§5.3.8) 견인을 붙이지 않는 교통사고의 이름표 — 부서진 차가 없는 사고 (쓰러진 나무·맨홀 추락) */
+export const NO_TOW_LABELS: ReadonlySet<string> = new Set(['쓰러진 나무', '맨홀 추락']);
 
 /**
  * (§4.2 utility/sinkhole) 생성 때 그 교차로의 구간 하나를 막는다 — 쓰러진 나무(incidents.createIncident 의 tree 갈래)와 같은 일: 고속도로가 아니고, 다른 열린 사건이 잡지 않았고,
@@ -166,6 +173,20 @@ export const KINDS: Scenario[] = [
     lik: { disturb: 0.84, armed: 0.08, medical: 0.05, traffic: 0.01 },
     places: { market: 3, station: 2, busTerminal: 2, shop: 2, convenience: 1, mart: 1 },
     needs: (n, c) => { n.law = 1; n.search = 1; n.ems = c.hurt && c.sev >= 2 ? 1 : 0; } },
+  // (단계 6b) 보이스피싱 수거책 잠복 — 사복 형사의 잠복 · 제복이 보이면 수거책이 달아난다 · 약속 시각까지의 기다림 (초안의 무전취식을 바꿨다 — §12.2-4).
+  // 수거책은 약속 시각(s.kinds.arriveAt)에야 현장에 나타난다 — 그 전에는 s.hostiles 에 없다(세계 규칙 scamRule 이 만든다)
+  { type: 'disturb', variant: 'scam', name: '수거책 잠복', share: 0.4, nature: 'scam', vague: 'suspicious', severity: [1, 1], tag: 'daily', card: false, limit: 60,
+    texts: ['어머니가 검찰이라는 사람한테 현금을 가져다주기로 했대요. 사기 같아요!', '은행 앞에서 누구를 만나 돈을 건네기로 했는데 아무래도 보이스피싱 같아요.', '현금 받으러 온다는 사람이 곧 편의점 앞에 온대요.'],
+    lik: { disturb: 0.86, armed: 0.06, medical: 0.01 },
+    places: { convenience: 3, bank: 2, cafe: 2, station: 1, busTerminal: 1 },
+    needs: (n) => { n.law = 1; n.search = 0; } },
+  // (단계 6b) 차량 절도 — 추격전(pursuit.ts — Pursuit.kind 'cartheft')에 교통 경찰의 앞지르기가 붙고, 차가 서면 운전자가 차를 버리고 걸어서 달아난다(도보 추격).
+  // 주차장에서 달리는 차로 시작한다(incidents.createIncident 의 startPursuit 줄). 사고로 섰으면 부서진 차의 견인(선택 수요 — 지휘 규칙)
+  { type: 'disturb', variant: 'cartheft', name: '차량 절도', share: 0.45, nature: 'cartheft', vague: 'bang', severity: [2, 2], tag: 'daily', card: false,
+    texts: ['주차해 둔 제 차를 누가 몰고 가 버렸어요! 방금요!', '주유소에서 시동 걸어 둔 차를 누가 타고 도망갔어요.', '차 도둑이에요. 흰색 승용차가 큰길 쪽으로 빠져나갔어요.'],
+    lik: { disturb: 0.7, traffic: 0.2, armed: 0.08 },
+    places: { parking: 4, gasStation: 0.5, mart: 1, apartment: 1 },
+    needs: (n) => { n.law = 2; n.search = 1; n.traffic = 0; n.tow = 0; } },
   // ── 비응급 N1 장난 전화 (§4.8 — 기존 armed/prank 는 평소 추첨 그대로) ──
   { type: 'fire', variant: 'prank', name: '장난 전화', share: 0.2, nature: 'prank:fire', vague: 'flames', severity: [1, 1], tag: 'daily', card: false },
   { type: 'medical', variant: 'prank', name: '장난 전화', share: 0.15, nature: 'prank:medical', vague: 'notbreathing', severity: [1, 1], tag: 'daily', card: false },

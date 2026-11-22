@@ -72,7 +72,8 @@ const LIVE: MethodId[] = ['hand', 'pole', 'ring', 'rope', 'improvise', 'catch', 
   'feel', 'pulse',      // (R3 3단계) 벽 더듬기 수색·끊어 쏘기 — 교본 F07·F08 이 고른다
   'robotDefuse', 'suitDefuse', 'bareDefuse',      // (R3 단계 5) 폭발물 해체 셋
   'pack', 'drag', 'post', 'blockLane',      // (R3 단계 6) 이송의 업기·끌기 · 교통 통제의 통제·차량 차단 (들것 litter 는 기록 전용)
-  'dart', 'catchpole', 'herd', 'net'];      // (N8 단계 5) 동물 포획 넷
+  'dart', 'catchpole', 'herd', 'net',      // (N8 단계 5) 동물 포획 넷
+  'dog'];      // (N8 단계 6a) 경찰견 — 구역 수색
 /** 헤엄을 못 치는 몸으로 둔다 (수영 능력 = 0.15 + 개인차 ±0.15 < 문턱 0.35 — 구명조끼가 없을 때) */
 const noSwim = (sim: Sim, a: FieldAgent): void => { const r = sim.responders[a.rid]; r.fitness = 0; r.skills.rescue = 0; strip(sim, a.rid, 'pfd'); };
 /**
@@ -1141,7 +1142,8 @@ describe('R2 단계 1a: 강제 교대 (§8 의 2·3·4·5·6·7·9)', () => {
     // W1 #11 의 장대 구조(그 12교대의 유일한 장대)가 즉석 부력물로 바뀌었다. 장대는 W12·W14 에서 쓰인다
     // (I1-b b3-6) 몰린 길의 사고(법칙 L1)가 W1 의 배경 사건을 바꿔 그 20교대의 유일한 장대 구조(W1 #12)가 즉석 부력물이 됐다 — 표본에 W29 를 더한다
     // (기준은 그대로 — 방법마다 한 번 이상. W29 #13 은 법칙 사건이 없는 교대의 장대 구조다. 그 뒤로는 W40·W45·W48·W50)
-    const set = new Set(rescued(usesOf([...W20(), ...STRIPPED(), waterShift('W29')])).map((u) => u.method));
+    // (N8 단계 6a) 경찰 새 부대 셋(형사·교통 경찰·경찰견)이 편성돼 배경 사건의 부대 배치가 바뀌어 W29 의 장대 구조가 없어졌다 — 표본에 W45 를 더한다 (기준은 그대로 — W45 #0 의 장대 구조)
+    const set = new Set(rescued(usesOf([...W20(), ...STRIPPED(), waterShift('W29'), waterShift('W45')])).map((u) => u.method));
     for (const m of ['rope', 'pole', 'improvise'] as MethodId[]) expect(set.has(m), m).toBe(true);
     const ships = SHIPS();
     let shore = 0;

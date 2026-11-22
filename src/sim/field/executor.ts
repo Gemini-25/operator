@@ -26,6 +26,7 @@ export function makeTask(kind: TaskKind, label: string, w: WorkItem | null = nul
     startedAt: 0, selfAssigned: false, thorough: w ? w.thorough : false, wait: 0, sub: null, fails: 0, label, repathAt: 0,
     docRule: undefined, gateAt: -1, gateId: undefined, gateSaid: false, cvX: undefined, cvY: undefined, cvTx: undefined, cvTy: undefined, cvLost: -1,      // (R3) 교본 줄·판단 지점·엄폐 자리 — 쓰는 것은 단계 2 부터 (모든 임무가 같은 모양)
     animal: w ? w.animal ?? -1 : -1,      // (N8 단계 5) 포획할 동물
+    wake: 0,      // (N8 단계 6a) 잠든 취객 곁에서 깨우며 기다린 초
   }, TASK_SHAPE);      // (R3b N7) 숫자 칸을 만들 때부터 소수 표현으로 — 값은 그대로 (shape.ts)
 }
 
@@ -1687,6 +1688,13 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const h = s.hostiles[t.hostile];
       if (h.state === 'arrested' || h.state === 'escaped' || h.state === 'down') { learn(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)), true, true); finishTask(sim, s, a, true); return; }
       if (h.state !== 'surrendered' && h.weapon === 'gun') { finishTask(sim, s, a, false, 'unsafe'); return; }
+      // (N8 §4.4 — 단계 6a) 잠든 취객: 1.5칸까지 다가가 깨우기를 기다린다(세계 규칙 rowdyRule 이 경찰이 곁에 4초 머물면 깨운다) — 테이저·비살상탄·덮치기를 쓰지 않는다
+      if (h.asleep) {
+        const mw = moveTo(sim, s, a, h.x, h.y, 1.4);
+        if (mw === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+        if (mw === 'arrived') { a.label = '흔들어 깨우는 중'; a.fx = h.x - a.x; a.fy = h.y - a.y; t.wake = (t.wake ?? 0) + dt; a.ring = Math.min(1, (t.wake ?? 0) / 4); }
+        return;
+      }
       if (tryTaser(sim, s, a, h)) { a.label = '테이저 발사'; return; }      // 덤벼드는 상대(총이 아닌)에게 테이저 — 쏜 틱에는 움직이지 않는다
       // (R2 §4.6) 비살상탄 — 테이저 다음 · closeIn 판단 지점 앞. 선택 임무: 처음 닿은 틱과, 방법이 아직 없으면 1초마다 고를 수 있는지 본다(비살상탄을 든 대원만). 쏜 틱·조준·다가가는 틱은 여기서 끝
       if (h.state !== 'surrendered' && t.method === undefined && (t.mt0 === undefined || sim.tick % 5 === 0) && kitCount(sim, a.rid, 'beanbag') > 0) startMethod(sim, s, I, a, t, 'arrest', { cas: -1, prop: -1, hostile: h.id, region: -1, tile: -1 });
@@ -1717,7 +1725,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         h.state = 'arrested';
         learnQuiet(sim, a, hosFact(sim, s, h, r.name, dist(a.x, a.y, h.x, h.y)));
         const ev = fights(sim, I, h, was) ? scuffle(sim, s, I, a, h)      // 맞서던 상대: 몸싸움 끝에 (H1 단계 4c)
-          : emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: `${h.label} 검거 완료.` });
+          : emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'resolve', imp: 3, text: s.kind === 'disturb' ? disturbArrestText(I, s, h) : `${h.label} 검거 완료.` });      // (N8 단계 6a) 치안은 상황에 맞는 말
         if (was !== 'surrendered') recordArrest(sim, I, a, t, h, 'tackle', ev);      // (R2 §4.6) 테이저·비살상탄으로 무력화했으면 그 수단, 아니면 덮치기(방패수면 방패). 투항한 사람의 검거는 적지 않는다
         recCuff(sim, s, h, a, was === 'surrendered' ? 'surrender' : 'tackle');
         r.xpGained += 0.005;
@@ -2213,6 +2221,13 @@ import { CARRY, carryDone, dragging, runCarry, runTraffic } from './doctrineRun'
 // ───────────────────────── (N8 §4.3 — 단계 5) 동물 포획의 실행부 ─────────────────────────
 /** 포획 실행의 상수: 벌집 떼기 25초 · 올가미 4초 · 포획망 6초 · 마취총 조준 1.5초·사거리 6·다시 쏘기 3초 · 몰이의 뒤 거리 2.5 (가축이 흥분하는 2칸 밖) */
 export const CAPTURE = { hive: 25, pole: 4, net: 6, aim: 1.5, dartR: 6, reAim: 3, herdBack: 2.5, poleAgit: 0.6 };
+/** (N8 §4.4 — 단계 6a) 치안 현장의 검거 문구 (실행부 — 진실을 읽는다): 주취자는 보호 조치(귀가 · 머리 부상이면 병원) 또는 손님을 다치게 했으면 현행범 체포 · 폭행 시비는 현행범 체포 · 날치기는 가방 회수 */
+function disturbArrestText(I: Incident, s: Scene, h: Hostile): string {
+  if (s.variant === 'snatch') return `${h.label} 검거 — 가방을 회수했습니다.`;
+  if (s.variant === 'brawl') return `${h.label} 현행범 체포.`;
+  if (I.problems.some((p) => p.code === 'ESCALATION')) return `${h.label} 현행범 체포 — 손님을 다치게 했습니다.`;
+  return s.kinds && s.kinds.headInjury ? `${h.label} 보호 조치 — 머리를 다쳐 병원 이송이 필요합니다.` : `${h.label} 보호 조치 — 귀가 조치합니다.`;
+}
 /** 마취 화살의 명중 확률 (설계서 §4.3): 0.55 + 0.3 × 숙련 − 0.04 × 거리, 0.1~0.95 */
 export function dartHitP(skill: number, d: number): number { return clamp(0.55 + 0.3 * skill - 0.04 * d, 0.1, 0.95); }
 /** 그 동물의 지금 'ani' 사실 (본 대로 — 실행부는 진실을 읽어 알린다) */

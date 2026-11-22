@@ -3,8 +3,10 @@
 //
 // 단계 3: 비응급 N1 장난 전화 셋(빈 현장) · N2 오인 신고 넷(§4.8 — 가서 확인하면 "이상 없음"의 답이 현장에 있다).
 import { T } from '../../types';
-import { addCas, addProp, addRegion, set } from '../kit';
-import { addAnimal, alleyFrame, buildQuiet, farmFrame, freeGround, streetFrame, yardFrame } from '../kindsKit';
+import { SW, addCas, addHostile, addProp, addRegion, baseScene, freeTileIn, set } from '../kit';
+import { armedVenue } from '../builders';
+import { tidx } from '../grid';
+import { addAnimal, alleyFrame, buildQuiet, farmFrame, freeGround, marketFrame, streetFrame, yardFrame } from '../kindsKit';
 import { registerScene } from '../sceneRegistry';
 
 // ── 시설 사고 (§4.2 — 단계 4a·4b) ──
@@ -280,5 +282,81 @@ registerScene('hazmat', 'false', (sim, I, rng) => {
     const cands = r.tiles.filter((i) => s.tiles[i] === T.FLOOR && s.propAt[i] < 0);
     if (cands.length) { const i = rng.pick(cands); addProp(s, 'fixture', i % s.w, (i / s.w) | 0, { skin: 'trash', blocking: false }); }
   }
+  return s;
+});
+
+// ───────────────────────── 치안 disturb (§4.4 — 단계 6a) ─────────────────────────
+/**
+ * 주취 소란: 가게 틀(builders.armedVenue 'shop') — 주취자 1(맨손, 공격성 0.3~0.7, 사기 0.45~0.8, 이름표 '주취자'), 손님 1~3(걸을 수 있음).
+ * 25% 는 처음부터 쓰러져 잠든 상태(state 'hold' + asleep — 'down' 은 판정이 검거로 센다), 숨은 상태 35% 머리 부상(s.kinds.headInjury)
+ */
+registerScene('disturb', 'rowdy', (sim, I, rng) => {
+  const s = baseScene(sim, I, rng);
+  for (let y = 16; y <= 18; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
+  const V = armedVenue(s, rng, 'shop', I.truth.district);
+  const taken = (q: number): boolean => s.hostiles.some((h) => tidx(s, h.x, h.y) === q);
+  const hi = freeTileIn(s, V.main, rng, taken);
+  const h = addHostile(s, hi % SW, (hi / SW) | 0, 'none', rng.range(0.3, 0.7), 0.2, false, Infinity);
+  h.label = '주취자'; h.morale = rng.range(0.45, 0.8); h.facing = rng.range(0, Math.PI * 2);
+  if (rng.chance(0.25)) h.asleep = true;
+  s.kinds = { headInjury: rng.chance(0.35) };
+  const n = rng.int(1, 3);
+  for (let k = 0; k < n; k++) { const ci = freeTileIn(s, V.main, rng, taken); addCas(s, ci % SW, (ci / SW) | 0, 'mobile', rng.range(90, 100), 0, 0.1); }
+  s.placeName = nearName(sim, I, V.place || '가게');
+  s.leadDept = 'police';
+  return s;
+});
+/**
+ * 폭행 시비: 길 위 틀(streetFrame — 차 없음). 무리 A 2~3명은 서쪽 보도·길, 무리 B 2~3명은 동쪽(용의자 — group, 맨손, 사기 0.4~0.7, 공격성 0.4~0.8),
+ * 다친 사람 1~2(둔상 — 띠 1, 걸을 수 있음 70%). 두 무리 사이 가운데에 정면 자리(exit −1)를 하나 더 둔다
+ */
+registerScene('disturb', 'brawl', (sim, I, rng) => {
+  const s = streetFrame(sim, I, rng, { lanes: false, search: false });
+  s.placeName = nearName(sim, I, '가게 앞 길');
+  const mid = rng.int(12, 17);
+  const put = (x0: number, x1: number): number => freeGround(s, rng, x0, 12, x1, 14);      // 남쪽 보도 (길 칸은 freeGround 가 고르지 않는다)
+  for (const g of ['A', 'B'] as const) {
+    const n = rng.int(2, 3);
+    for (let k = 0; k < n; k++) {
+      const i = g === 'A' ? put(mid - 5, mid - 1) : put(mid + 1, mid + 5);
+      const h = addHostile(s, i % s.w, (i / s.w) | 0, 'none', rng.range(0.4, 0.8), 0.25, false, Infinity);
+      h.group = g; h.label = `${g === 'A' ? '가' : '나'} 무리 ${k + 1}`; h.morale = rng.range(0.4, 0.7);
+      h.facing = g === 'A' ? 0 : Math.PI;
+    }
+  }
+  const nh = rng.int(1, 2);
+  for (let k = 0; k < nh; k++) { const i = put(mid - 3, mid + 3); const walk = rng.chance(0.7); addCas(s, i % s.w, (i / s.w) | 0, walk ? 'mobile' : 'immobile', rng.range(62, 80), walk ? 0 : rng.range(0, 0.02), 0.1); }
+  s.spots.push({ x: mid, y: 13, exit: -1, taken: -1 });      // 두 무리 사이 가운데 — 떼어 놓는 자리 (세계 규칙은 두 무리의 가운데를 매번 잰다)
+  s.leadDept = 'police';
+  return s;
+});
+/**
+ * 날치기: 시장 틀(marketFrame — 큰길의 노점·골목 셋·골목 끝 출구). 피해자 1(걸을 수 있음 50% · 넘어져 거동 불가 50% · 떨어짐 — 띠 1),
+ * 목격자 1~2(면담하면 숨은 골목 — 정확도 witnessAcc), 용의자 1(사기 0.6 · 공격성 0.2)은 처음부터 골목의 숨을 자리에 숨어 있다(s.kinds.expectHidden —
+ * 찾았을 때 '추가 용의자'가 아니다). 나갈 시각(hideUntil)은 첫 부대가 닿은 뒤 60~140초(세계 규칙이 정한다 — 그 전에는 Infinity)
+ */
+registerScene('disturb', 'snatch', (sim, I, rng) => {
+  const s = marketFrame(sim, I, rng);
+  s.placeName = nearName(sim, I, '시장 골목');
+  // 현장 맨 가장자리의 숨을 자리는 고르지 않는다 (겪은 함정 '숨는 정도의 상한' — 동쪽 끝 칸에 숨은 용의자를 정밀 수색도 보지 못해 길목 통제만 선 채 한계 시간까지 갔다)
+  const all = s.kinds!.hides!, inner = all.filter((i) => { const x = i % s.w, y = (i / s.w) | 0; return x >= 2 && y >= 2 && x <= s.w - 3 && y <= s.h - 3; });
+  const hides = inner.length ? inner : all;
+  const hp = hides[rng.int(0, hides.length - 1)];
+  const h = addHostile(s, hp % s.w, (hp / s.w) | 0, 'none', 0.2, 0.3, true, Infinity);
+  h.label = '날치기 용의자'; h.morale = 0.6; h.hideUntil = -1;
+  const ci = freeGround(s, rng, 6, 8, 23, 9);
+  const walk = rng.chance(0.5);
+  addCas(s, ci % s.w, (ci / s.w) | 0, walk ? 'mobile' : 'immobile', rng.range(64, 82), walk ? 0 : rng.range(0.005, 0.02), 0.1);
+  const zones = s.regions.filter((r) => r.kind === 'zone' && r.searchable);
+  const truth = zones.find((r) => r.id === s.region[hp]) ?? zones[0];
+  const nw = rng.int(1, 2);
+  for (let k = 0; k < nw; k++) {
+    const acc = rng.chance(sim.tune.witnessAcc);
+    const said = acc ? truth : zones[rng.int(0, zones.length - 1)];
+    const wi = freeGround(s, rng, 4 + k * 12, 9, 12 + k * 12, 10);
+    addProp(s, 'witness', wi % s.w, (wi / s.w) | 0, { lastSeenRegion: said.id, accurate: said === truth, interviewed: false });
+  }
+  s.kinds!.expectHidden = true;
+  s.leadDept = 'police';
   return s;
 });

@@ -4,7 +4,7 @@
 import type { Sim } from '../engine';
 import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
-import type { AniBelief, Animal, CasBelief, Casualty, Fact, FieldAgent, Hostile, Incident, MateBelief, Prop, RadioMsg, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
+import type { AniBelief, Animal, CasBelief, Casualty, Fact, FieldAgent, HosBelief, Hostile, Incident, MateBelief, Prop, RadioMsg, Responder, Scene, Unit, WorkItem, WorkKind } from '../types';
 import { TYPE_NAME, clamp, dist, josa, pct } from '../util';
 import { TYPE_DEFS } from '../incidentTypes';
 import type { Rng } from '../rng';
@@ -156,10 +156,10 @@ export function casFact(sim: Sim, s: Scene, c: Casualty, src: string): Fact {
 export function hosFact(sim: Sim, s: Scene, h: Hostile, src: string, d: number): Fact {
   const wt = h.weapon === 'gun' ? '총기 소지' : h.weapon === 'knife' ? '흉기 소지' : '비무장';
   const dead = h.dead === true && d <= 2;
-  const st = dead ? '사망' : h.state === 'hold' ? '대치 중' : h.state === 'fight' ? '교전 중' : h.state === 'flee' ? '도주 중' : h.state === 'surrendered' ? '투항' : h.state === 'arrested' ? (h.tDown !== undefined ? '검거 · 쓰러짐' : '검거') : h.state === 'down' ? '쓰러짐' : '도주';
+  const st = dead ? '사망' : h.asleep ? '잠든 채 누워 있음' : h.state === 'hold' ? '대치 중' : h.state === 'fight' ? '교전 중' : h.state === 'flee' ? '도주 중' : h.state === 'surrendered' ? '투항' : h.state === 'arrested' ? (h.tDown !== undefined ? '검거 · 쓰러짐' : '검거') : h.state === 'down' ? '쓰러짐' : '도주';
   const hold = h.hostageId >= 0 && (h.state === 'hold' || h.state === 'fight');
   const tq = (h.treatQ ?? 0) >= 0.6 ? 2 : (h.treatQ ?? 0) > 0 ? 1 : 0;
-  const v = { x: Math.round(h.x), y: Math.round(h.y), weapon: h.weapon, state: h.state, hostage: hold, facing: Math.round(h.facing * 4) / 4, dead, band: dead ? 3 : Math.min(2, bandOf(h.health)), tq, where: h.where ?? 'scene' };
+  const v = { x: Math.round(h.x), y: Math.round(h.y), weapon: h.weapon, state: (h.asleep ? 'asleep' : h.state) as HosBelief['state'], hostage: hold, facing: Math.round(h.facing * 4) / 4, dead, band: dead ? 3 : Math.min(2, bandOf(h.health)), tq, where: h.where ?? 'scene' };      // state: (N8 단계 6a) 잠든 취객은 믿음에 'asleep'
   primeNums(v, HOS_V_SHAPE);
   return mkFact('hos', h.id, v, src, sim.t, 1, true, `${h.label}: ${wt}${hold ? ' · 인질을 붙잡고 있음' : ''} · ${st} (${regionNameAt(s, h.x, h.y)})`);
 }
@@ -383,14 +383,16 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
   for (let hi = 0; hi < s.hostiles.length; hi++) { const h = s.hostiles[hi];
     if (h.where !== undefined && h.where !== 'scene') continue;      // 차에 실려 간 용의자는 현장에 없다 (H1)
     const d = dist(a.x, a.y, h.x, h.y);
-    const range = aloft ? (h.hidden ? v * 0.4 : v) : h.hidden ? 4.2 : 13;      // 지상은 시야와 상관없이 13칸(숨은 용의자 4.2칸). 상공은 관측 거리만큼 — 밤의 4칸이 용의자에게도 걸린다
+    const range = aloft ? (h.hidden ? v * 0.4 : v) : h.hidden ? 4.2 * (kitLive(sim, a.rid, 'dog') ? 1.3 : 1) : 13;      // 지상은 시야와 상관없이 13칸(숨은 용의자 4.2칸 — (N8 단계 6a) 경찰견을 든 핸들러는 ×1.3). 상공은 관측 거리만큼 — 밤의 4칸이 용의자에게도 걸린다
     const cur = a.beliefs.get('hos', h.id);
     if (cur && cur.value.dead) continue;      // 숨진 줄 안 뒤에는 더 바뀌지 않는다 — 먼 관찰로 되돌리지 않는다 (H1)
     if (d <= range && seesAt(s, a, aloft, h.x, h.y)) {
       const wasHidden = h.hidden;
       if (h.hidden) {
         h.hidden = false;
-        raiseProblem(sim, I, 'SCENE_MISMATCH', '숨어 있던 추가 용의자 발견', { role: 'RESPONDER', actor: me, rid: r.id, imp: 3, text: `숨어 있던 추가 용의자 발견! ${regionNameAt(s, h.x, h.y)}.` }, false);
+        // (N8 단계 6a) 현장 생성기가 처음부터 숨겨 둔 용의자(날치기 — s.kinds.expectHidden, 진실은 perceive 가 읽어도 된다)는 '추가'가 아니다: 문제 기록 대신 보통 기록
+        if (s.kinds !== undefined && s.kinds.expectHidden) emit(sim, { inc: I.id, role: 'RESPONDER', actor: me, rid: r.id, kind: 'action', imp: 2, text: `숨어 있던 용의자 발견! ${regionNameAt(s, h.x, h.y)}.` });
+        else raiseProblem(sim, I, 'SCENE_MISMATCH', '숨어 있던 추가 용의자 발견', { role: 'RESPONDER', actor: me, rid: r.id, imp: 3, text: `숨어 있던 추가 용의자 발견! ${regionNameAt(s, h.x, h.y)}.` }, false);
       }
       const hf = hosFact(sim, s, h, me, d);
       // 쓰러졌거나 붙잡혀 움직이지 않는 용의자를 멀리서(2칸 밖) 다시 본 것은 새 소식이 아니다 — 숨졌는지는 곁에서만 안다.
@@ -740,6 +742,7 @@ export function fitParts(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): DocFit
  */
 function hazRadii(sim: Sim, s: Scene, a: FieldAgent, workProp: number, pad: number, holdOnly = false): number[] | null {
   if (s.kind === 'animal') return aniRadii(sim, a, workProp, pad);
+  if (s.kind === 'disturb') return brawlRadii(sim, a, pad);
   if (s.kind !== 'utility') return null;
   let out: number[] | null = null;
   for (const f of a.beliefs.list('haz')) {
@@ -800,6 +803,21 @@ function inRadii(hz: number[], x: number, y: number): boolean {
   return false;
 }
 /** (N8 §5.10) 사람에게 가는 일(처치·이송·구출·동행·동료 구조)의 대상이 믿음 속 활동 위험 반경 안인가 — 그러면 그 위험을 막는 장비가 없는 대원은 맡지 않는다(fitBase) */
+/**
+ * (N8 §4.4 — 단계 6a) 치안 현장의 위험 반경: 경찰이 아닌 대원에게만 — 믿음 속 활동 중인(대치·몸싸움) 용의자 2.5칸. 싸움판에 구급대원이 먼저 들어가지 않는다 (보류는 하지 않는다 — 경찰은 다가가도 된다).
+ * 조직이 아는 자기 분야와 믿음만 읽는다
+ */
+export const BRAWL_R = 2.5;
+function brawlRadii(sim: Sim, a: FieldAgent, pad: number): number[] | null {
+  if (sim.responders[a.rid].dept === 'police') return null;
+  let out: number[] | null = null;
+  for (const f of a.beliefs.list('hos')) {
+    const v = f.value as HosBelief;
+    if (v.state !== 'hold' && v.state !== 'fight') continue;
+    (out ??= []).push(v.x, v.y, (BRAWL_R + pad) * (BRAWL_R + pad));
+  }
+  return out;
+}
 export function targetInHaz(sim: Sim, s: Scene, a: FieldAgent, w: { kind: string; cas: number; mate: number }): boolean {
   const hz = hazRadii(sim, s, a, -1, 0, true);
   if (hz === null) return false;
@@ -858,7 +876,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
     else if (w.kind === 'interview') { const p = s.props[w.prop]; if (p && fitRiskyAt(s, a, hot, indoorRisk, p.x, p.y)) return 0; }
   }
   // (N8 §5.10) 믿음 속 활동 위험 반경 안의 사람에게 가는 일: 그 위험을 막는 장비가 없는 대원은 맡지 않는다 (지휘관의 보류 registerCasHold 와 함께 — 한쪽만 막으면 대원이 스스로 고른다)
-  if ((s.kind === 'utility' || s.kind === 'animal') && (w.kind === 'treat' || w.kind === 'carry' || w.kind === 'extricate' || w.kind === 'escort' || w.kind === 'rescueMate') && targetInHaz(sim, s, a, w)) return 0;      // (N8 단계 5) 동물 현장도 (풀린 동물 3칸 · 벌집)
+  if ((s.kind === 'utility' || s.kind === 'animal' || s.kind === 'disturb') && (w.kind === 'treat' || w.kind === 'carry' || w.kind === 'extricate' || w.kind === 'escort' || w.kind === 'rescueMate') && targetInHaz(sim, s, a, w)) return 0;      // (N8 단계 6a) 치안 현장도 (경찰이 아닌 대원 — 활동 중인 용의자 2.5칸)      // (N8 단계 5) 동물 현장도 (풀린 동물 3칸 · 벌집)
   switch (w.kind) {
     case 'sizeup': return a.isCommander ? 1 : 0;
     case 'search':

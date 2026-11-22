@@ -1334,9 +1334,10 @@ describe('4. 끝 상태 → 다음 교대의 복구 공사 (원천: 사건·잔�
 describe('11. 재난이 닫은 도로가 넘어온다 (지진 → 균열 복구 공사)', () => {
   let A: Sim, co: Carryover, B: Sim, u0: number;
   beforeAll(() => {
-    A = new Sim('Q2', { ...NORMAL, disaster: 'quake' }, 1200); A.runToEnd();
+    // (N8 단계 6a) Q2 → Q1: 경찰 새 부대 셋이 편성돼 Q2 의 넘어오는 도로 여섯 자리(ROAD_CAP)를 건물 붕괴의 잔해 치우기(debris)가 모두 채워 균열이 넘어오지 않았다 — 균열이 넘어오는 지진 교대로 (기준은 그대로)
+    A = new Sim('Q1', { ...NORMAL, disaster: 'quake' }, 1200); A.runToEnd();
     co = makeCarryover(A);
-    B = new Sim('Q2b', NORMAL, 1200, { carry: co });
+    B = new Sim('Q1b', NORMAL, 1200, { carry: co });
     u0 = unreachable(B);
     B.step();
   }, HOOK_MS);

@@ -9,7 +9,8 @@ export type Dept = 'fire' | 'ems' | 'police'
   | 'civil';      // (N8 §5.3) 유관 기관(전력·가스·수도 복구반·견인차): 지휘하지 않고 첫 도착으로 세지 않으며 자기 일(repair·towAway)만 한다
 export type IncidentType = 'fire' | 'traffic' | 'search' | 'armed' | 'medical' | 'collapse' | 'hazmat' | 'water'
   | 'utility'      // (N8 단계 4a) 시설 사고 — 끊어진 전선·수도관 파열·싱크홀·간판 (TYPE_ORDER 의 끝)
-  | 'animal';      // (N8 단계 5) 동물 — 멧돼지·벌집·개 물림·가축 탈출 (짧은 사건 흐름 daily 로만)
+  | 'animal'      // (N8 단계 5) 동물 — 멧돼지·벌집·개 물림·가축 탈출 (짧은 사건 흐름 daily 로만)
+  | 'disturb';      // (N8 단계 6a) 치안 — 주취 소란·폭행 시비·날치기 (총·흉기가 없는 경찰 일상, 짧은 사건 흐름 daily 로만)
 export type District = 'residential' | 'commercial' | 'industrial' | 'outskirts';
 export type Weather = 'clear' | 'rain' | 'fog' | 'night';
 
@@ -1300,7 +1301,7 @@ export interface Kinds2State {
 }
 /** 'hos' 사실의 값 — agents.hosFact 가 채우는 모양에 이름을 붙였다(지금 칸 그대로 + N9 의 믿음 칸 둘). hosFact 에 칸을 더하면 여기에도 더한다 */
 export interface HosBelief {
-  x: number; y: number; weapon: Hostile['weapon']; state: Hostile['state']; hostage: boolean; facing: number;
+  x: number; y: number; weapon: Hostile['weapon']; state: Hostile['state'] | 'asleep'; hostage: boolean; facing: number;      // 'asleep': (N8 단계 6a) 잠든 취객 — 진실의 state 는 'hold' 그대로(Hostile.asleep), 믿음에만 이 이름
   dead: boolean; band: number; tq: number; where: NonNullable<Hostile['where']>;
   tag?: 'organizer' | 'agitator';                 // (N9) 본 역할 — 주최자의 완장·확성기, 선동자의 행동 (진실 crowdRole 과 다른 이름). 채우는 것은 단계 4 의 hosFact
   threw?: boolean;                                // (N9) 던지는 것을 보았다 — 세계 규칙이 본 대원들에게 강제로 넣는다 (단계 4)
@@ -1348,6 +1349,7 @@ export interface KindsState {
 // docs/specs/N8-incident-kinds.md §4.3. 동물 목록(Scene.animals)은 진실이고, 판단 쪽은 'ani' 사실(AniBelief)로만 안다.
 export interface Task {
   animal?: number;                                // (N8 단계 5) 대상 동물의 id (capture — 작업 항목의 animal 을 옮긴다, 없으면 -1). executor.makeTask 의 리터럴 끝
+  wake?: number;                                  // (N8 단계 6a) 잠든 취객 곁에서 깨우며 기다린 초 (그림의 진행 막대만 — 깨우는 것은 세계 규칙). makeTask 의 리터럴 끝
 }
 export interface AniBelief {
   lost?: boolean;                                 // 믿음 속 자리에 가 보았지만 보이지 않았다 (숨었거나 자리를 옮겼다 — 찾아야 한다). 다시 보면 지운다

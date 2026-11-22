@@ -295,6 +295,12 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
       hl.push(`${nm} ${an.length}마리 가운데 ${got}마리 포획${wild ? ` · ${wild}마리 산 쪽으로 쫓아냄` : ''}${road ? ` · ${road}마리 찻길로 놓침` : ''}`);
     }
   }
+  if (truth.type === 'disturb') {      // (N8 §4.4) 치안의 머리글 — 용의자의 끝 상태로
+    const hs = s.hostiles, got = hs.filter((h) => h.state === 'arrested' || h.state === 'surrendered').length, fled = hs.filter((h) => h.state === 'escaped').length;
+    if (truth.variant === 'snatch') hl.push(got ? '용의자 검거 — 가방 회수' : fled ? '용의자가 골목으로 달아났습니다' : '용의자를 찾지 못함');
+    else if (truth.variant === 'rowdy') hl.push(!got ? (fled ? '주취자가 자리를 떠남' : '주취자 미검거') : I.problems.some((p) => p.code === 'ESCALATION') ? '현행범 체포' : s.kinds && s.kinds.headInjury ? '보호 조치 뒤 병원 이송' : '보호 조치 — 귀가');
+    else if (truth.variant === 'brawl') hl.push(`싸운 ${hs.length}명 가운데 ${got}명 검거${fled ? ` · ${fled}명 흩어짐` : ''}`);
+  }
   if (benign) hl.push(truth.variant === 'prank' ? (screened ? '장난 전화 — 접수 단계에서 가려냄' : '장난 전화 — 실제 사건 없음') : FALSE_HEAD[truth.type] ?? FALSE_HEAD.fire!);
   else if (cas.length) hl.push(`요구조자 ${cas.length}명 중 ${saved}명 구조${lost ? `, ${lost}명 사망` : ''}${undiscovered ? `, ${undiscovered}명 미발견` : ''}${left ? `, ${left}명 구조 미완료` : ''}`);
   else hl.push('인명 피해 없음');

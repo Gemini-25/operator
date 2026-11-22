@@ -4,6 +4,7 @@
 //
 // 단계 3: 오인 신고의 답 — 물에 뜬 물건·폭죽 잔해를 확인했으면 남은 수색을 거둔다.
 import { emit } from '../../events';
+import { josa } from '../../util';
 import { resp } from '../agents';
 import { mkFact } from '../beliefs';
 import { staticPass } from '../grid';
@@ -295,4 +296,64 @@ registerPending((sim, s, a) => {
   for (const f of a.beliefs.list('ani')) { const v = f.value as AniBelief; if ((v.state === 'loose' || v.state === 'sedated') && !v.lost) return 'capture'; }
   for (const f of a.beliefs.list('haz')) { const v = f.value as HazV; if (v.kind === 'hive' && v.active) return 'suppression'; }
   return null;
+});
+
+// ───────────────────────── 치안 (§4.4 — 단계 6a) ─────────────────────────
+// 믿음의 'hos' 사실만 읽는다. 보이는 용의자는 핵심 규칙(봉쇄·협상·검거·추격)이 맡고, 여기서는 그 밖의 셋만: 잠든 취객 · 아직 아무 용의자도 모를 때의 수색과 길목 지키기
+/** 길목(출구) 통제의 우선순위 — 수색·검거가 빼 올 수 있게 낮게 */
+export const DISTURB_CORDON = 0.45;
+/** 수색 우선순위 — 목격자가 가리킨 구역 · 나머지 (길목 통제보다 0.22 넘게 높아 통제에 선 경찰을 빼 온다 — 경찰 한 팀이 둘 다 통제에 서서 가게 안을 아무도 보지 않았다) */
+export const DISTURB_SEARCH = { pointed: 0.85, other: 0.7 };
+/**
+ * 한 구역을 몇 번 수색해 마치면 확인율이 모자라도 그만두는가 · 그때 적는 확인율 (X6 잔해 수색의 RUBBLE_SEARCHES 와 같은 까닭 — 밤의 시장 뒷골목에서
+ * "수색 실시 → 시야가 나빠 확인율 9% → 다시 수색"이 한 사건에 39번 되풀이됐다). 둘째 수색부터는 정밀 수색. 지휘관이 아는 것(작업판의 마친 수색·자기 믿음)만 읽는다
+ */
+export const DISTURB_SEARCHES = 3, DISTURB_SRCH_DONE = 0.9;
+/** 수색을 DISTURB_SEARCHES 번 마쳐 더 내지 않는 구역 (현장마다 — 늦게 끝난 수색의 낮은 보고를 기록 없이 다시 덮는다) */
+const DISTURB_CAPPED = new WeakMap<Scene, Set<number>>();
+/**
+ * (§4.4) 치안 지휘 규칙: 잠든 취객(믿음 'asleep')에게 검거 0.7(실행부가 곁에서 깨운 뒤 데려간다) · 용의자를 하나도 모르면(현장 평가 뒤 — 날치기의 숨은 용의자 · 가게 안의 주취자) 수색할 수 있는 구역 수색
+ * (목격자가 가리킨 구역 0.85 · 나머지 0.7 — 확인율 0.72 넘으면 내지 않는다)과 출구마다 길목 통제 cordon(용의자를 아직 못 봤으므로 perimeter 가 아니다 — 원칙 10). 용의자를 보면 거둔다
+ */
+registerOrders((sim, s, I, a, k) => {
+  if (s.kind !== 'disturb') return;
+  const B = a.beliefs;
+  let known = 0;
+  for (const f of B.list('hos')) {
+    known++;
+    if ((f.value as { state: string }).state === 'asleep') k.want('arrest', { hostile: f.id }, 0.7);
+  }
+  const keep: number[] = [];
+  if (known === 0 && s.sizeupDone) {
+    const seen = B.val<{ region: number }>('seen', 0);
+    let pending = 0;      // 아직 수색할 구역 — 다 보았는데 못 찾았으면 길목 통제도 거둔다 (통제가 남으면 용의자는 나가지 못하고 지휘관은 끝내지 못해 한계 시간까지 섰다)
+    for (const r of s.regions) {
+      if (!r.searchable) continue;      // 실내도 (주취 소란의 가게 — 치안은 방 수색 규칙(roomSearch)을 쓰지 않는다)
+      if ((B.val<number>('srch', r.id) ?? -1) >= 0.72) continue;
+      let n = 0;
+      for (const w of s.board) if (w.kind === 'search' && w.region === r.id && w.status === 'done') n++;
+      if (n >= DISTURB_SEARCHES) {
+        let capped = DISTURB_CAPPED.get(s);
+        if (!capped) { capped = new Set(); DISTURB_CAPPED.set(s, capped); }
+        if (!capped.has(r.id)) {
+          capped.add(r.id);
+          emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 1, causes: [I.lastEvent], text: `${josa(r.name, '을/를')} ${n}번 수색했습니다 — 더 볼 수 없어 그 구역의 수색을 마칩니다.` });
+        }
+        B.merge(mkFact('srch', r.id, DISTURB_SRCH_DONE, resp(sim, a).name, sim.t, 0.6, true, `${r.name} 수색 — 더 볼 수 없음`));
+        k.cancel((w) => w.kind === 'search' && w.region === r.id);
+        continue;
+      }
+      k.want('search', { region: r.id }, seen && seen.region === r.id ? DISTURB_SEARCH.pointed : DISTURB_SEARCH.other, 1, n > 0);
+      pending++;
+    }
+    if (pending > 0) for (let e = 0; e < s.exits.length; e++) { const t = exitPost(s, e); keep.push(t); k.want('cordon', { tile: t }, DISTURB_CORDON); }
+  }
+  k.cancel((w) => w.kind === 'cordon' && keep.indexOf(w.tile) < 0);
+});
+/** 용의자를 하나도 모르는데 수색할 구역이 남았으면 끝내지 않는다 (치안 — 날치기의 숨은 용의자 · 가게 안의 주취자) */
+registerBlocker((sim, s, a) => {
+  void sim;
+  if (s.kind !== 'disturb' || a.beliefs.list('hos').length > 0) return false;
+  for (const r of s.regions) if (r.searchable && (a.beliefs.val<number>('srch', r.id) ?? -1) < 0.72) return true;
+  return false;
 });

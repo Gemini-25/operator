@@ -371,7 +371,7 @@ describe('② 2명이 아닌 부대가 있다', () => {
     const sim = new Sim('CREW');
     const sizes = sim.units.map((u) => u.crew.length);
     expect(new Set(sizes).size).toBeGreaterThanOrEqual(3);
-    expect(Math.min(...sizes)).toBe(2); expect(Math.max(...sizes)).toBe(5);
+    expect(Math.min(...sizes)).toBe(1); expect(Math.max(...sizes)).toBe(5);      // 1: (N8 단계 6a) 교통 경찰의 1인 오토바이 (설계서 §9.2 — 최소 인원 2 → 1)
     expect(sizes.filter((n) => n !== 2).length).toBeGreaterThan(sim.units.length / 2);
     // 역할 표: 이름과 장비 이름이 모두 있고, 능력의 식은 0..1 안에 든다
     for (const id of Object.keys(ROLES) as RoleId[]) {

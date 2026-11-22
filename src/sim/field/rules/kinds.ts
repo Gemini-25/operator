@@ -7,15 +7,16 @@ import type { Sim } from '../../engine';
 import { emit, markRecovered, raiseProblem } from '../../events';
 import type { Rng } from '../../rng';
 import { T } from '../../types';
-import type { Animal, Fact, FieldAgent, Incident, Prop, Scene } from '../../types';
+import type { Animal, Fact, FieldAgent, Hostile, Incident, Prop, Scene } from '../../types';
 import { dist, josa } from '../../util';
 import { mkFact } from '../beliefs';
-import { hurtCas, hurtResponder } from '../injury';
-import { casFact, learn, resp } from '../agents';
+import { hurtCas, hurtHostile, hurtResponder } from '../injury';
+import { casFact, hosFact, learn, resp } from '../agents';
 import { registerRule, registerVerdict } from '../sceneRegistry';
 import { los, staticPass } from '../grid';
 import { ANIMAL, HIVE, hiveR, tickAnimals } from '../animals';
 import { addCas, addProp } from '../kit';
+import { startFlee } from '../hazards';
 import { RUIN_SECONDARY, markRuin, recordFall } from '../ruins';
 
 /** 깨우는 거리(칸) — 대원이 이만큼 다가오면 깨어난다 (§4.8 N2) */
@@ -509,4 +510,169 @@ registerVerdict((sim, s, I) => {
   const lost = Math.min(2, I.problems.filter((q) => q.code === 'ANIMAL_LOST').length);
   const bad = lost * 1.0 + (wild ? 0.3 : 0);
   return open || bad > 0 ? { open, bad } : null;
+});
+
+// ───────────────────────── 치안 disturb (§4.4 — 단계 6a) ─────────────────────────
+/** 치안 규칙의 상수: 주취자의 던지기(8~15초, 경찰 4칸 밖 · 2칸 안 손님 · 둔상 3~8) · 몸싸움(경찰 2칸 · 공격성 0.6 · 10초 · 15% · 4~10) · 깨우기(경찰 1.5칸 4초 · 사기 +0.2) ·
+ *  패싸움(4초마다 · 가운데 2칸 · 맞으면 2~6 · 구경꾼 25% · 많아야 둘) · 가운데에 선 경찰의 사기 깎기(초당 0.01, 경찰 : 싸우는 사람 ≥ 1 : 2 면 0.01 더) · 흩어짐 30% · 날치기 숨은 시간 60~140초(첫 도착 뒤) · 길목 1.5칸 */
+export const DISTURB = { throwGap: [8, 15] as [number, number], throwFar: 4, throwNear: 2, throwHurt: [3, 8] as [number, number], scuffleR: 2, scuffleAggr: 0.6, scuffleGap: 10, scuffleP: 0.15, scuffleHurt: [4, 10] as [number, number],
+  throwMax: 3, wakeR: 1.5, wakeT: 4, wakeMorale: 0.2, brawlEvery: 4, midR: 2, brawlHurt: [2, 6] as [number, number], bystanderP: 0.25, bystanderMax: 2, calm: 0.01, scatterP: 0.3, scatterAt: 0.25, hide: [60, 140] as [number, number], boltP: 0.5, chokeR: 1.5 };
+/** 활동 중인 경찰 (지상) 가운데 (x, y) 에서 R 칸 안의 수 */
+function copsNear(sim: Sim, s: Scene, x: number, y: number, R: number): number {
+  let n = 0;
+  for (const a of s.agents) if (a.status === 'active' && !a.aloft && sim.responders[a.rid].dept === 'police' && dist(a.x, a.y, x, y) <= R) n++;
+  return n;
+}
+const DIST_RNG = new WeakMap<Scene, Rng>();
+function disturbRng(sim: Sim, s: Scene, I: Incident, name: 'rowdy' | 'brawl' | 'snatch'): Rng {
+  let r = DIST_RNG.get(s);
+  if (!r) { r = name === 'rowdy' ? sim.rng.fork('rowdy:' + I.id) : name === 'brawl' ? sim.rng.fork('brawl:' + I.id) : sim.rng.fork('snatch:' + I.id); DIST_RNG.set(s, r); }      // 흐름 이름은 글자로 (시험 6 이 소스의 fork 글자를 센다) — 현장 하나는 변형 하나라 현장마다 흐름 하나
+  return r;
+}
+/** 주취자마다의 세계 상태 (던질 시각 · 몸싸움 시각 · 깨우는 경찰이 곁에 있던 시간 · 머리 부상 처리) — 용의자 객체의 모양을 바꾸지 않으려고 WeakMap */
+interface RowdyRun { throwAt: number; scuffleAt: number; wake: number; head: boolean; thrown: number }
+const ROWDY = new WeakMap<Hostile, RowdyRun>();
+/**
+ * (§4.4 rowdy) 주취 소란: 서 있는 동안 8~15초마다 경찰이 4칸 안에 없으면 2칸 안 손님 하나에게 물건을 던진다(둔상 3~8 — 처음이면 ESCALATION) ·
+ * 경찰이 2칸 안이고 공격성 0.6 넘으면 10초마다 15% 로 몸싸움(경찰 둔상 4~10) · 잠든 사람은 경찰이 1.5칸 안에 4초 머물면 깬다(사기 +0.2) ·
+ * 검거된 주취자가 머리를 다쳤으면(s.kinds.headInjury — 진실) 그 자리에 다친 사람(띠 1)이 생긴다(보호 조치 뒤 병원 이송). 흐름 rowdy:<사건>
+ */
+registerRule((sim, s, I) => {
+  if (s.kind !== 'disturb' || s.variant !== 'rowdy' || I.phase === 'closed') return;
+  const dt = sim.dt;
+  for (const h of s.hostiles) {
+    let st = ROWDY.get(h);
+    if (!st) { const rng = disturbRng(sim, s, I, 'rowdy'); st = { throwAt: sim.t + rng.range(DISTURB.throwGap[0], DISTURB.throwGap[1]), scuffleAt: sim.t + DISTURB.scuffleGap, wake: 0, head: false, thrown: 0 }; ROWDY.set(h, st); }
+    if (h.state === 'arrested') {
+      if (!st.head && s.kinds && s.kinds.headInjury && !h.dead) {
+        st.head = true;
+        // 체력·출혈은 피해 한 길로 (H1 — 출혈 원인이 빈 채로 피를 흘리는 사람이 없다)
+        const c = addCas(s, Math.round(h.x), Math.round(h.y), 'immobile', 100, 0, 0.1);
+        const hev = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'casualty', imp: 2, truth: true, text: `보호 조치한 ${josa(h.label, '이/가')} 머리를 다친 채였습니다 — 병원 이송이 필요합니다.` });
+        hurtCas(sim, s, I, c, 30, 'blunt', { ev: hev, bleed: 0.012, immobile: true });
+      }
+      continue;
+    }
+    if (h.state === 'escaped' || h.state === 'down' || h.state === 'surrendered') continue;
+    if (h.asleep) {
+      st.wake = copsNear(sim, s, h.x, h.y, DISTURB.wakeR) > 0 ? st.wake + dt : 0;
+      if (st.wake >= DISTURB.wakeT) {
+        h.asleep = false; h.morale = Math.min(0.95, h.morale + DISTURB.wakeMorale); h.alertUntil = sim.t + 5;
+        emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'action', imp: 1, text: `흔들어 깨우자 ${josa(h.label, '이/가')} 눈을 떴습니다.` });
+        for (const a of s.agents) if (a.status === 'active' && dist(a.x, a.y, h.x, h.y) <= 3) learn(sim, a, hosFact(sim, s, h, resp(sim, a).name, dist(a.x, a.y, h.x, h.y)), true, true);
+      }
+      continue;
+    }
+    if (h.state !== 'hold' && h.state !== 'fight') continue;
+    const rng = disturbRng(sim, s, I, 'rowdy');
+    if (sim.t >= st.throwAt) {
+      st.throwAt = sim.t + rng.range(DISTURB.throwGap[0], DISTURB.throwGap[1]);
+      if (st.thrown < DISTURB.throwMax && copsNear(sim, s, h.x, h.y, DISTURB.throwFar) === 0) {
+        const c = s.casualties.find((q) => !q.dead && q.where === 'scene' && dist(q.x, q.y, h.x, h.y) <= DISTURB.throwNear);
+        if (c) {
+          st.thrown++;
+          const first = !I.problems.some((p) => p.code === 'ESCALATION');
+          const ev = first ? raiseProblem(sim, I, 'ESCALATION', `${h.label}가 던진 물건에 손님이 다침`, { role: 'SYSTEM', actor: '현장', imp: 2, truth: s.arrivedAt < 0, text: `${josa(h.label, '이/가')} 물건을 던져 손님 ${josa(c.label, '이/가')} 다쳤습니다.` }, false)
+            : emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, truth: s.arrivedAt < 0, text: `${josa(h.label, '이/가')} 또 물건을 던졌습니다.` });
+          hurtCas(sim, s, I, c, rng.range(DISTURB.throwHurt[0], DISTURB.throwHurt[1]), 'blunt', { ev });
+        }
+      }
+    }
+    if (sim.t >= st.scuffleAt) {
+      st.scuffleAt = sim.t + DISTURB.scuffleGap;
+      if (h.aggression > DISTURB.scuffleAggr && rng.chance(DISTURB.scuffleP)) {
+        const a = s.agents.find((b) => b.status === 'active' && !b.aloft && sim.responders[b.rid].dept === 'police' && dist(b.x, b.y, h.x, h.y) <= DISTURB.scuffleR);
+        if (a) {
+          const r = resp(sim, a);
+          const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'hazard', imp: 1, text: `${josa(h.label, '이/가')} 휘두른 주먹에 ${r.name} 대원이 맞았습니다.` });
+          hurtResponder(sim, s, I, a, rng.range(DISTURB.scuffleHurt[0], DISTURB.scuffleHurt[1]), 'blunt', { ev });
+        }
+      }
+    }
+  }
+});
+
+/** 패싸움에 휘말려 다친 구경꾼의 수 (현장마다 — 많아야 둘) */
+const BYSTANDERS = new WeakMap<Scene, number>();
+/** 패싸움의 흩어짐을 한 번만 뽑았다 (용의자마다) */
+const SCATTERED = new WeakSet<Hostile>();
+/**
+ * (§4.4 brawl) 폭행 시비: 두 무리에 서 있는 사람이 있고 두 무리 가운데 2칸 안에 경찰이 없으면 4초마다 하나가 맞는다(hurtHostile 둔상 2~6) — 25% 로 휘말린 구경꾼이
+ * 다친 구조 대상으로 붙는다(ESCALATION — 현장마다 많아야 둘). 가운데에 경찰이 서면 두 무리의 사기가 초당 0.01, 경찰 : 서 있는 사람 ≥ 1 : 2 면 0.01 더 깎인다(사기 0.2 아래면 지금 규칙으로 투항).
+ * 사기가 0.25 아래로 처음 내려간 사람은 30% 로 흩어져 달아난다(fleeAt). 흐름 brawl:<사건>
+ */
+registerRule((sim, s, I) => {
+  if (s.kind !== 'disturb' || s.variant !== 'brawl' || I.phase === 'closed') return;
+  const up = (h: Hostile): boolean => h.state === 'hold' || h.state === 'fight';
+  const A = s.hostiles.filter((h) => h.group === 'A' && up(h)), B = s.hostiles.filter((h) => h.group === 'B' && up(h));
+  if (!A.length && !B.length) return;
+  const cx = (l: Hostile[]): number => l.reduce((m, h) => m + h.x, 0) / l.length, cy = (l: Hostile[]): number => l.reduce((m, h) => m + h.y, 0) / l.length;
+  const all = A.concat(B);
+  const mx = A.length && B.length ? (cx(A) + cx(B)) / 2 : cx(all), my = A.length && B.length ? (cy(A) + cy(B)) / 2 : cy(all);
+  const cops = copsNear(sim, s, mx, my, DISTURB.midR);
+  const rng = disturbRng(sim, s, I, 'brawl');
+  if (sim.tick % 5 === 0 && cops > 0) {
+    const cut = DISTURB.calm * (cops * 2 >= all.length ? 2 : 1);
+    for (const h of all) {
+      h.morale = Math.max(0, h.morale - cut);
+      if (h.morale < DISTURB.scatterAt && !SCATTERED.has(h)) { SCATTERED.add(h); if (rng.chance(DISTURB.scatterP)) h.fleeAt = sim.t; }
+    }
+  }
+  if (sim.tick % (DISTURB.brawlEvery * 5) !== 0 || !A.length || !B.length || cops > 0) return;
+  const v = all[rng.int(0, all.length - 1)];
+  const ev = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, truth: s.arrivedAt < 0, text: `싸움이 이어져 ${josa(v.label, '이/가')} 얻어맞았습니다.` });
+  hurtHostile(sim, s, I, v, rng.range(DISTURB.brawlHurt[0], DISTURB.brawlHurt[1]), 'blunt', { ev });
+  if (rng.chance(DISTURB.bystanderP) && (BYSTANDERS.get(s) ?? 0) < DISTURB.bystanderMax) {
+    BYSTANDERS.set(s, (BYSTANDERS.get(s) ?? 0) + 1);
+    const x = Math.max(1, Math.min(s.w - 2, Math.round(mx + rng.range(-2, 2)))), y = Math.max(12, Math.min(14, Math.round(my + rng.range(-1, 1))));
+    const c = addCas(s, x, y, 'mobile', 100, 0, 0.1);      // 휘말린 구경꾼은 걸어서 비켜 선다 (가볍게 다침 — 처치만)
+    const pev = raiseProblem(sim, I, 'ESCALATION', '싸움에 휘말린 구경꾼이 다침', { role: 'SYSTEM', actor: '현장', imp: 2, truth: s.arrivedAt < 0, causes: [ev], text: `싸움에 휘말린 구경꾼 ${josa(c.label, '이/가')} 다쳤습니다.` }, false);
+    hurtCas(sim, s, I, c, rng.range(10, 20), 'blunt', { ev: pev });
+  }
+});
+
+/**
+ * (§4.4 snatch) 날치기: 처음부터 골목의 숨을 자리에 숨어 있던 용의자(현장 생성기 — hideUntil −1)가 나갈 시각을 첫 부대가 닿은 뒤 60~140초로 정한다(fleeAt 도 같은 값 —
+ * 그 시각이 지나면 지금의 용의자 규칙이 막히지 않은 출구로 달아난다). 들키면 그때 내달린다(도보 추격). 흐름 snatch:<사건>
+ */
+registerRule((sim, s, I) => {
+  if (s.kind !== 'disturb' || s.variant !== 'snatch' || I.phase === 'closed' || s.arrivedAt < 0) return;
+  for (const h of s.hostiles) {
+    if (h.hideUntil === -1) {
+      const v = s.arrivedAt + disturbRng(sim, s, I, 'snatch').range(DISTURB.hide[0], DISTURB.hide[1]);
+      h.hideUntil = v; h.fleeAt = v;
+    }
+    // 들켰다(숨은 자리에서 대원에게 보였다): 절반은 곧바로 막히지 않은 출구로 내달린다 — 도보 추격 (지금의 용의자 규칙이 대원이 3칸 밖일 때 달아난다). 나머지는 그 자리에서 버틴다
+    if (!h.hidden && h.state === 'hold' && h.fleeAt > sim.t && !BOLTED.has(h)) { BOLTED.add(h); if (disturbRng(sim, s, I, 'snatch').chance(DISTURB.boltP)) h.fleeAt = sim.t; }
+  }
+});
+
+/** 들켜서 내달리기로 한 날치기 용의자 */
+const BOLTED = new WeakSet<Hostile>();
+/** 길목에 막혀 길을 바꾼 시각 (용의자마다 — 3초에 한 번만) */
+const CHOKE_AT = new WeakMap<Hostile, number>();
+/**
+ * (§4.4 chokeRule) 길목 지키기: 달아나는 용의자가 향하는 출구 1.5칸 안에 활동 중인 경찰이 서 있으면 막히지 않은 다른 출구로 길을 바꾸고,
+ * 모든 출구가 막혀 있으면 멈춰 서고 사기가 0.15 로 떨어진다(곧 투항 — 지금 규칙). 난수 없음
+ */
+registerRule((sim, s, I) => {
+  if (s.kind !== 'disturb' || I.phase === 'closed' || sim.tick % 5 !== 0) return;
+  for (const h of s.hostiles) {
+    if (h.state !== 'flee' || !h.path || !h.path.length) continue;
+    if (sim.t - (CHOKE_AT.get(h) ?? -99) < 3) continue;
+    const end = h.path[h.path.length - 1], ex = end % s.w, ey = (end / s.w) | 0;
+    let k = -1, bd = Infinity;
+    for (let q = 0; q < s.exits.length; q++) { const d = dist(s.exits[q].x, s.exits[q].y, ex, ey); if (d < bd) { bd = d; k = q; } }
+    if (k < 0) continue;
+    const blocked = (q: number): boolean => copsNear(sim, s, s.exits[q].x, s.exits[q].y, DISTURB.chokeR) > 0;
+    if (!blocked(k)) continue;
+    CHOKE_AT.set(h, sim.t);
+    let alt = -1, ad = Infinity;
+    for (let q = 0; q < s.exits.length; q++) { if (q === k || blocked(q)) continue; const d = dist(s.exits[q].x, s.exits[q].y, h.x, h.y); if (d < ad) { ad = d; alt = q; } }
+    if (alt >= 0) startFlee(sim, s, h, alt);
+    else {
+      h.state = 'hold'; h.path = null; h.morale = Math.min(h.morale, 0.15); h.fleeAt = Infinity;
+      emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, text: `${josa(h.label, '이/가')} 길목마다 경찰이 서 있어 멈춰 섰습니다.` });
+    }
+  }
 });

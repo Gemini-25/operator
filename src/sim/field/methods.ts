@@ -557,7 +557,7 @@ export const METHOD: Record<MethodId, MethodDef> = {
   // ── 야외 수색 (§4.9 — 7단계, 선택) ──
   air: row('air', ['search'], '공중 수색', '공중 수색', '공중 수색', '상공에서', [], 0, 0, false, REC),      // R1 경찰 헬기의 관측자 — 기록 전용
   drone: row('drone', ['search'], '드론 열화상', '드론', '드론 수색', '드론으로', [], 0.8, 0, false),      // 장비가 생기면 kits 를 채운다
-  dog: row('dog', ['search'], '탐지견', '탐지견', '탐지견 수색', '탐지견으로', [], 0.85, 0, false),      // 부대가 생기면 needUnit 을 채운다
+  dog: row('dog', ['search'], '탐지견', '탐지견', '탐지견 수색', '탐지견으로', ['dog'], 0.85, 0, false, { can: (c) => c.tg.region >= 0 }),      // (N8 단계 6a) 경찰견을 편성하며 채웠다 — 장비는 kits 에만(R2 의 MethodDef 주석), can 은 상황 조건(구역 수색)만
   // ── (R3 §3.7 — 5단계) 해체 defuse: 로봇 원격 → 방호복 → 맨몸. 실행은 doctrineRun.runDefuse (executor 의 case 'defuse'). 대상은 믿음 속 살아 있는 장치. N9 의 다섯 앞에 둔다(tests/kinds2 가 그 다섯을 표의 끝으로 본다) ──
   robotDefuse: row('robotDefuse', ['defuse'], '로봇 원격 해체', '로봇 해체', '로봇 원격 해체', '원격 로봇으로', ['robot'], 0.9, 0, false, { can: (c) => bombOf(c) !== null && robotSpotOf(c) !== null }),      // 로봇 조작 요원이 장치 8칸 안·벽에 가리지 않는 자리에서
   suitDefuse: row('suitDefuse', ['defuse'], '방호복 해체', '방호복 해체', '폭발물 해체', '방호복을 입고', ['bombSuit'], 0.75, 0, true, { can: (c) => bombOf(c) !== null }),      // 지금의 해체 (해체 자격 eodKit 은 fitFor 가 본다)

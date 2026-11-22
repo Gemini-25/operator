@@ -147,6 +147,25 @@ export const KINDS: Scenario[] = [
     lik: { animal: 0.8, traffic: 0.16, medical: 0.01, armed: 0.01 },
     node: (sim, rng, busy) => farmNode(sim, rng, busy),
     needs: (n) => { n.capture = 1; n.traffic = 1; } },
+  // ── 치안 disturb (§4.4 — 단계 6a). 총·흉기가 없는 경찰 일상 — 용의자는 늘 맨손이고 지금의 봉쇄·협상·검거를 탄다. 끝은 훈방·보호 조치·검거·병원 ──
+  // 주취 소란 — 달래기 · 보호 조치냐 체포냐 병원이냐 · 잠든 취객 깨우기 (변형 이름 drunk 는 추격전 줄에 걸려 rowdy — §12.2)
+  { type: 'disturb', variant: 'rowdy', name: '주취 소란', share: 1.4, nature: 'rowdy', vague: 'fight', severity: [1, 2], tag: 'daily', card: false,
+    texts: ['술 취한 사람이 가게에서 소리 지르고 물건을 던져요.', '편의점 앞에서 취객이 지나가는 사람들한테 시비를 걸어요.', '취한 사람이 길바닥에 누워서 일어나질 않아요. 아까는 소리를 지르더니…'],
+    lik: { disturb: 0.78, armed: 0.12, medical: 0.08 },
+    places: { restaurant: 4, convenience: 3, cafe: 1, market: 1, busTerminal: 0.8, station: 0.6 },
+    needs: (n, c) => { n.law = 1; n.tactical = 0; n.ems = c.hurt && c.sev >= 2 ? 1 : 0; } },
+  // 폭행 시비·집단 난투 — 두 무리를 떼어 놓는 자리(가운데) · 한 팀뿐인 경찰의 기다림
+  { type: 'disturb', variant: 'brawl', name: '폭행 시비', share: 1.0, nature: 'brawl', vague: 'fight', severity: [1, 3], tag: 'daily', card: false,
+    texts: ['술집 앞에서 여러 명이 패싸움을 하고 있어요!', '두 무리가 주먹질을 하고 있어요. 한 사람은 쓰러졌어요.', '경기 끝나고 사람들끼리 시비가 붙어서 싸움이 커지고 있어요.'],
+    lik: { disturb: 0.8, armed: 0.14, medical: 0.04 },
+    places: { restaurant: 3, market: 2, stadium: 1.5, busTerminal: 1, university: 1, station: 1 },
+    needs: (n, c) => { n.law = c.sev >= 2 ? 2 : 1; n.tactical = 0; n.ems = c.hurt && c.sev >= 2 ? 1 : 0; } },
+  // 날치기 도보 추격 — 숨은 용의자 · 목격자가 가리키는 골목 · 출구를 먼저 막는 교통 경찰·형사 · 경찰견 · 들키면 도보 추격
+  { type: 'disturb', variant: 'snatch', name: '날치기', share: 0.9, nature: 'snatch', vague: 'scream', severity: [1, 2], tag: 'daily', card: false,
+    texts: ['가방을 날치기당했어요! 저쪽 골목으로 뛰어갔어요!', '오토바이 탄 사람이 할머니 가방을 채 가서 할머니가 넘어지셨어요.', '소매치기예요! 검은 옷 입은 남자가 시장 안으로 도망쳤어요.'],
+    lik: { disturb: 0.84, armed: 0.08, medical: 0.05, traffic: 0.01 },
+    places: { market: 3, station: 2, busTerminal: 2, shop: 2, convenience: 1, mart: 1 },
+    needs: (n, c) => { n.law = 1; n.search = 1; n.ems = c.hurt && c.sev >= 2 ? 1 : 0; } },
   // ── 비응급 N1 장난 전화 (§4.8 — 기존 armed/prank 는 평소 추첨 그대로) ──
   { type: 'fire', variant: 'prank', name: '장난 전화', share: 0.2, nature: 'prank:fire', vague: 'flames', severity: [1, 1], tag: 'daily', card: false },
   { type: 'medical', variant: 'prank', name: '장난 전화', share: 0.15, nature: 'prank:medical', vague: 'notbreathing', severity: [1, 1], tag: 'daily', card: false },

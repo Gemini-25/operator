@@ -934,7 +934,7 @@ export function outstanding(a: FieldAgent, now = -1, s?: Scene): { patients: num
   return {
     patients, mates, matesDown,
     fire: B.list('fire').some((f) => f.value > 0.05),
-    hostile: B.list('hos').some((h) => h.value.state === 'hold' || h.value.state === 'fight' || h.value.state === 'flee' || h.value.state === 'surrendered'),
+    hostile: B.list('hos').some((h) => h.value.state === 'hold' || h.value.state === 'fight' || h.value.state === 'flee' || h.value.state === 'surrendered' || h.value.state === 'asleep'),      // asleep: (N8 단계 6a) 잠든 취객도 남은 일이다
     search: B.list('cas').length === 0,
   };
 }

@@ -14,7 +14,8 @@ import type { IncidentType, InjuryCause, Needs, Scene, Topic } from './types';
  */
 export const TYPE_ORDER: readonly IncidentType[] = ['fire', 'traffic', 'search', 'armed', 'medical', 'collapse', 'hazmat', 'water',
   'utility',      // (N8 단계 4a) 시설 사고 — 평소 추첨 가중 0 (짧은 사건 흐름 daily 로만 나온다)
-  'animal'];      // (N8 단계 5) 동물 — 평소 추첨 가중 0 (짧은 사건 흐름으로만)
+  'animal',      // (N8 단계 5) 동물 — 평소 추첨 가중 0 (짧은 사건 흐름으로만)
+  'disturb'];      // (N8 단계 6a) 치안 — 평소 추첨 가중 0 (짧은 사건 흐름으로만)
 
 /** 유형 → TYPE_ORDER 의 자리 (분석 AI 의 숫자 색인 lp[…] 대신) */
 export const typeIdx = {} as Record<IncidentType, number>;
@@ -119,6 +120,14 @@ export const TYPE_DEFS: Record<IncidentType, TypeDef> = {
     topicValue: { detail: 0.85, injured: 0.8, hazard: 0.7, count: 0.5 },
     trappedYes: '사람이 못 움직이고 있어요.', trappedNo: '다들 피했어요.',
     baseNeeds: { law: 1 }, cause: 'animal', floorHp: 0,
+  },
+  // ── (N8 단계 6a — 설계서 §4.1) 치안: 주취 소란·폭행 시비·날치기. 총·흉기가 없는 경찰 일상 — 용의자는 늘 맨손이고 지금의 봉쇄·협상·검거를 그대로 탄다. 짧은 사건 흐름(daily)으로만(평소 가중 0) ──
+  disturb: {
+    name: '치안', limit: 300, respLimit: 95, delay: [2, 6], follow: 0.3, weight: 0, atNode: 0.9, alwaysShow: false,
+    indoorRisk: false, roomSearch: false, zoneSearch: false, wander: false, outdoor: false,
+    question: { count: '몇 명이 싸우고 있습니까?', detail: '그 사람들은 어디로 갔습니까?' },
+    topicValue: { weapon: 0.9, injured: 0.8, count: 0.6, detail: 0.5 },
+    baseNeeds: { law: 1 }, cause: 'blunt', floorHp: 0,
   },
 };
 

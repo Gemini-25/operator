@@ -286,7 +286,7 @@ describe('신고 접수 확장과 새 사건 유형', () => {
   it('부대 규모 손잡이가 편성을 바꾸되 같은 대원의 능력치는 유지한다', async () => {
     const { NORMAL } = await import('../src/sim/difficulty');
     const small = new Sim('R', { ...NORMAL, resources: 1 }), base = new Sim('R'), big = new Sim('R', { ...NORMAL, resources: 5 });
-    expect(small.units.length).toBe(16); expect(base.units.length).toBe(23); expect(big.units.length).toBe(26);      // 기본 편성부터 경찰 헬기·의료 헬기가 더해진다 (R1) · (N8 단계 4a·4b) 전력·가스·수도 복구반이 모든 규모에 · (단계 5) 동물 포획팀도
+    expect(small.units.length).toBe(16); expect(base.units.length).toBe(26); expect(big.units.length).toBe(29);      // 기본 편성부터 경찰 헬기·의료 헬기가 더해진다 (R1) · (N8 단계 4a·4b) 전력·가스·수도 복구반이 모든 규모에 · (단계 5) 동물 포획팀도 · (단계 6a) 형사(규모 2~)·교통 경찰·경찰견(규모 3~)
     // 총원은 편성표에서 계산한다: 부대 종류마다 2~5명 (crews.ts 의 STAFF — 부대 규모 3~5 는 표준 인원)
     const { STAFF } = await import('../src/sim/crews');
     const total = big.units.reduce((n, u) => n + STAFF[u.kind].std.length, 0);

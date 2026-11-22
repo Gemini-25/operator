@@ -5,7 +5,7 @@
 // 길 위 교차로 고르기(streetNode)는 시나리오 표가 부르므로 scenarios/kinds.ts 에 있다 (시나리오 표가 현장 도구를 import 하면 builders 를 끌어온다).
 import type { Sim } from '../engine';
 import type { Rng } from '../rng';
-import { T } from '../types';
+import { DECOR, T } from '../types';
 import type { Animal, Incident, Scene } from '../types';
 import { buildArmed, buildFire, buildMedical, buildWater } from './builders';
 import { addProp } from './kit';
@@ -157,5 +157,21 @@ export function alleyFrame(sim: Sim, I: Incident, rng: Rng): Scene {
   for (const [x, y] of [[11, 1], [18, 1], [8, 14], [21, 13], [0, 12], [SW - 1, 14], [11, 12]]) { const i = y * s.w + x; if (s.tiles[i] === T.GROUND) hides.push(i); }
   s.kinds = { hides };
   s.trafficFlow = 0; s.nextCarAt = Infinity;
+  return s;
+}
+
+// ───────────────────────── 치안 (N8 §4.4 — 단계 6a) ─────────────────────────
+/**
+ * 시장의 틀 (날치기): 골목 틀(alleyFrame)에 노점을 놓는다 — 가운데 큰길(y 7~10)의 위아래 가장자리(y 7·10)에 노점 칸(T.FURN — 지나지 못하고 시야는 통한다)을
+ * 골목 어귀를 비워 둔 채 듬성듬성. 구역 이름을 시장으로 바꾸고, 동물의 출구 종류(exitKind)는 지운다. 숨을 자리(s.kinds.hides)는 골목 틀의 것 그대로
+ */
+export function marketFrame(sim: Sim, I: Incident, rng: Rng): Scene {
+  const s = alleyFrame(sim, I, rng);
+  s.exitKind = undefined;
+  for (const r of s.regions) if (r.name === '가운데 길') r.name = '시장 큰길'; else if (r.name === '아래 골목') r.name = '시장 뒷골목';
+  for (const y of [7, 10]) for (let x = 2; x < SW - 2; x++) {
+    if ((x >= 7 && x <= 12) || (x >= 17 && x <= 22)) continue;      // 골목 어귀 (세로 골목 x 8~11 · 18~21 과 그 곁)
+    if (rng.chance(0.55)) { set(s, x, y, T.FURN); s.decor[y * s.w + x] = DECOR.COUNTER; }      // 가구 칸은 늘 종류가 있다 (부서진 뒤 잔해의 그림·파손 시험이 읽는다)
+  }
   return s;
 }

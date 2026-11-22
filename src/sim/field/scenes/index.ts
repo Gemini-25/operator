@@ -8,6 +8,9 @@ import '../rules/disaster';
 import '../orders/crime';
 import '../orders/major';
 import '../orders/disaster';
+import './kinds';      // (N8) 일상 사건 — 앞선 시나리오 묶음과 같은 자리(부상 규칙 앞: 그 틱에 준 피해를 부상 규칙이 같은 틱에 받는다). 남의 현장에서는 첫 줄에서 돌아간다
+import '../rules/kinds';
+import '../orders/kinds';
 import '../rules/injury';      // (H1) 부상과 사망
 import '../orders/injury';
 import '../rules/catastrophe';      // (X6) 위험의 현실화 — 부상 규칙 다음, 상공의 헬기 앞

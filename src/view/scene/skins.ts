@@ -7,6 +7,7 @@ import type { G } from './common';
 import { CAT_SKINS } from './skins/catastrophe';
 import { CRIME_SKINS } from './skins/crime';
 import { DISASTER_SKINS } from './skins/disaster';
+import { KINDS_SKINS } from './skins/kinds';      // (N8)
 import { MAJOR_SKINS } from './skins/major';
 import { drawFallenTree, drawManhole } from './sprites';
 
@@ -15,5 +16,5 @@ export type SkinPainter = (g: G, p: Prop, timeMs: number, truth: boolean, simT: 
 export const SKINS: Record<string, SkinPainter> = {
   tree: (g, p) => drawFallenTree(g, p.id, p.y),
   manhole: (g) => drawManhole(g),
-  ...CRIME_SKINS, ...MAJOR_SKINS, ...DISASTER_SKINS, ...CAT_SKINS,
+  ...CRIME_SKINS, ...MAJOR_SKINS, ...DISASTER_SKINS, ...CAT_SKINS, ...KINDS_SKINS,
 };

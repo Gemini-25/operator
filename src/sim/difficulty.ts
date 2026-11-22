@@ -74,6 +74,9 @@ export interface Tuning {
   trafficMul: number;          // 도로의 교통량에 곱하는 값
   trafficGap: number;          // 교통 사건(정체·공사·고장 차량·낙하물) 사이 간격에 곱하는 값
   parkedCount: number;         // 교대가 시작될 때 불법 주차로 좁아진 골목의 수
+  // 짧은 사건 (N8 §5.4 — 평소 추첨과 따로 도는 흐름 daily). 빈도 손잡이에 비례하고 화면의 손잡이·저장 키는 그대로다
+  dailyCount: number;          // 한 교대에 일으킬 짧은 사건의 차례 수 (0 = 짧은 사건과 비응급의 접수 쪽 변화(가려내기)가 모두 꺼진다 — 시험용 SimOpts.daily 가 덮는다)
+  dailyConcurrent: number;     // 동시에 열려 있을 수 있는 짧은 사건 수 (넘으면 20초 미룬다)
 }
 
 const lv = (v: number): number => Math.max(0, Math.min(4, Math.round(v) - 1));
@@ -133,6 +136,9 @@ export function tuningOf(d: Difficulty): Tuning {
     trafficMul: [0.82, 0.92, 1, 1.15, 1.35][tr],
     trafficGap: [1.6, 1.25, 1, 0.8, 0.62][tr],
     parkedCount: [0, 1, 3, 5, 7][tr],
+
+    dailyCount: [2, 3, 5, 6, 8][f],
+    dailyConcurrent: [1, 2, 2, 3, 3][f],
   };
 }
 

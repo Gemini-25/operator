@@ -61,7 +61,7 @@ export function farRooms(s: Scene, P: Plan): Region[] {
 export function buildFire(sim: Sim, I: Incident, rng: Rng): Scene {
   const s = baseScene(sim, I, rng);
   const sev = I.truth.severity, dist = I.truth.district, pk = I.truth.placeKind;
-  const falseAlarm = I.truth.variant === 'false';      // 오인 신고: 탄 냄새만 나고 불은 없다
+  const falseAlarm = I.truth.variant === 'false' || I.truth.variant === 'prank';      // 오인 신고: 탄 냄새만 나고 불은 없다 · (N8) 장난 전화: 아무 일도 없는 건물 (kindsKit.buildQuiet)
   const tall = !falseAlarm && sev >= 2 && rng.chance(tallP(pk, 0.5));      // 2층 여부는 건물 종류가 정한다 (작은 집은 단층, 아파트는 대개 2층 이상)
   const P = tall ? tallPlan(s, rng, planOpts(dist, pk)) : planBuilding(s, rng, pickArch(rng, dist, pk), planOpts(dist, pk));
   s.floorMat = floorMatOf(dist);
@@ -504,7 +504,7 @@ function leaveAt(sim: Sim, I: Incident): number {
   return L && r.chance(L.p) ? sim.t + r.range(L.at[0], L.at[1]) : Infinity;
 }
 
-function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {
+export function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {      // (N8) kindsKit.buildQuiet 가 부른다
   const s = baseScene(sim, I, rng);
   const sev = I.truth.severity, variant = I.truth.variant, dist = I.truth.district;
   for (let y = 16; y <= 18; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
@@ -520,8 +520,8 @@ function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {
   const sk = (v: number): number => Math.max(0.1, Math.min(0.95, v + tn.skillShift));
   const fleeBase = sim.t + rng.range(85, 150) + tn.fleeShift;
   const inShop = () => { const i = freeTileIn(s, shop, rng, (q) => ((q / SW) | 0) > 8); return { x: i % SW, y: (i / SW) | 0 }; };
-  if (variant === 'prank') {
-    // 장난 전화: 가게는 평소와 다름없다
+  if (variant === 'prank' || variant === 'false') {
+    // 장난 전화: 가게는 평소와 다름없다 · (N8) 오인 신고(폭죽 소리)도 같은 빈 장소 — 폭죽 잔해는 scenes/kinds.ts 가 더한다
     s.leadDept = 'police';
     return s;
   }
@@ -591,7 +591,7 @@ function buildArmed(sim: Sim, I: Incident, rng: Rng): Scene {
 }
 
 // ───────────────────────── 응급 환자 ─────────────────────────
-function buildMedical(sim: Sim, I: Incident, rng: Rng): Scene {
+export function buildMedical(sim: Sim, I: Incident, rng: Rng): Scene {      // (N8) kindsKit.buildQuiet 가 부른다
   const s = baseScene(sim, I, rng);
   const variant = I.truth.variant;
   for (let y = 17; y < SH; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);
@@ -748,7 +748,7 @@ function buildHazmat(sim: Sim, I: Incident, rng: Rng): Scene {
 
 // ───────────────────────── 수난 사고 ─────────────────────────
 /** 하천에 빠진 사람들. 물은 지나갈 수 없고, 사람은 하류(+x)로 떠내려간다. 다리 하나가 두 물가를 잇는다. */
-function buildWater(sim: Sim, I: Incident, rng: Rng): Scene {
+export function buildWater(sim: Sim, I: Incident, rng: Rng): Scene {      // (N8) kindsKit.buildQuiet 가 부른다
   const s = baseScene(sim, I, rng);
   const sev = I.truth.severity;
   for (let y = 17; y < SH; y++) for (let x = 0; x < SW; x++) set(s, x, y, T.ROAD);

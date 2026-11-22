@@ -12,6 +12,7 @@
 //   npm run sweep -- 20 --force water/std --methods  대응 방법(scripts/methodstats.ts): 성공한 방법의 가짓수와 비중, 접은 방법, 방법별 평균 시간, 시나리오별 대원 부상
 //   npm run sweep -- 20 --force armed/hostage --doctrine  대응 교본(scripts/doctrinestats.ts): 분야별 등록·쓰인 줄, 줄별 횟수, 판단 지점·교본 행동의 평균 길이, split
 //   npm run sweep -- 40 --metrics        측정 지표(scripts/metrics.ts)의 시나리오별 표와 모든 후보 줄
+//   (N8) 기본 출력의 kinds: 줄 — 교대당 서로 다른 유형·시나리오, 새 유형 사건, 되풀이, 짧은 사건·평소 추첨·비응급, 짧은 사건의 현장 시간, 분야별 가동률, 지상 구급 0대인 시간 (scripts/kindstats.ts — 1초 표본, 읽기만)
 //   npm run sweep -- 12 --hazard         초과 위험 과정의 노출량(scripts/hazstats.ts): 법칙별 칸·넘은 횟수, 도로의 초과 혼잡을 네 몫으로 — 법칙의 세기 상수를 맞추는 데 쓴다 (--json 이면 hazard 칸)
 //   (H1) 기본 출력의 injuries: 줄 — 대원 부상·쓰러짐·순직, 용의자 부상·사망(총에 맞아 쓰러진 용의자의 사망 비율·즉사), 잔해 추락, 사람이 없어 멈춘 부대 (scripts/injurystats.ts)
 //   npm run sweep -- 10 --no-metrics     표본을 뜨지 않고 지표 줄을 내지 않는다 (속도 비교용)
@@ -30,9 +31,11 @@ import { methodJson, methodStats, methodTables, sumMethods } from './methodstats
 import { doctrineJson, doctrineStats, doctrineTables, sumDoctrine } from './doctrinestats';      // (R3) 대응 교본 집계
 import { injuryJson, injuryLine, injuryStats, sumInjury } from './injurystats';      // (H1) 부상과 사망 집계
 import type { InjuryCount } from './injurystats';
-import { chainReport, checkMetrics, formatLines, metricsJson, runWithProbe, shiftMetrics, summarize } from './metrics';
+import { chainReport, checkMetrics, formatLines, isBenign, metricsJson, runWithProbe, shiftMetrics, summarize } from './metrics';
 import { HazProbe, hazJson, hazLines, sumHaz } from './hazstats';      // (I1-b) 초과 위험의 노출량
 import type { HazCount } from './hazstats';
+import { KindsProbe, kindsJson, kindsLine, kindsStats, sumKinds } from './kindstats';      // (N8 §5.15) 사건 종류의 지표 줄
+import type { KindsCount } from './kindstats';
 import type { Probe, ShiftMetrics } from './metrics';
 
 const args = process.argv.slice(2);
@@ -101,7 +104,8 @@ const methodList: ReturnType<typeof methodStats>[] = [];      // (R2) 교대별 
 const docList: ReturnType<typeof doctrineStats>[] = [];      // (R3) 교대별 대응 교본 집계
 const injuryList: InjuryCount[] = [];      // (H1) 교대별 부상과 사망 집계
 const hazList: HazCount[] = [];      // (I1-b) 교대별 초과 위험의 노출량 (--hazard)
-let benignN = 0, realGood = 0, realRespSum = 0, realRespN = 0;
+const kindsList: KindsCount[] = [];      // (N8) 교대별 사건 종류 집계
+let benignN = 0, nonEmergN = 0, screenedN = 0, realGood = 0, realRespSum = 0, realRespN = 0;
 let incN = 0, respSum = 0, respN = 0, durSum = 0, ms = 0, errors = 0, casT = 0, casS = 0, casL = 0, casU = 0, hurt = 0, replan = 0, unitSum = 0, maxUnits = 0, open = 0;
 const shiftList: (ShiftMetrics | null)[] = [];
 const reportHashes: string[] = [];
@@ -111,10 +115,12 @@ for (let k = 0; k < n; k++) {
   let sim: Sim;
   let probe: Probe | null = null;
   let hp: HazProbe | null = null;
+  let kp: KindsProbe | null = null;
   try {
     sim = mk(seed);
     if (hazardOn) hp = new HazProbe(sim);
-    const each = hp ? (): void => hp!.tick() : undefined;
+    kp = new KindsProbe(sim);      // (N8) 1초 표본 — 부대 상태를 읽기만 한다
+    const each = hp ? (): void => { hp!.tick(); kp!.tick(); } : (): void => kp!.tick();
     if (metricsOn) probe = runWithProbe(sim, 20000, each);
     else if (each) { let g = 0; while (!sim.ended && g++ < 20000) { sim.step(); each(); } }
     else sim.runToEnd();
@@ -135,7 +141,9 @@ for (let k = 0; k < n; k++) {
     casT += inc.result.casTotal; casS += inc.result.casSaved; casL += inc.result.casLost; casU += inc.result.casUndiscovered;
     const I = sim.incidents[inc.id];
     // 허위·오인 신고는 본질적으로 쉬운 사건이라 따로 센다
-    if (I.truth.variant === 'false' || I.truth.variant === 'prank') benignN++;
+    if (isBenign(I)) nonEmergN++;      // (N8 §5.5) 비응급 — 측정 도구와 같은 판정 (FALSE_ALARM·접수 단계 종료 포함)
+    if (I.closeReason === 'screened') screenedN++;
+    if (I.truth.variant === 'false' || I.truth.variant === 'prank' || I.truth.variant === 'referral' || I.truth.variant === 'dup') benignN++;
     else { if (inc.result.outcome === 'success' || inc.result.outcome === 'delayed') realGood++; if (inc.result.responseTime >= 0) { realRespSum += inc.result.responseTime; realRespN++; } }
     unitSum += I.everAssigned.length; maxUnits = Math.max(maxUnits, I.everAssigned.length);
     closeReasons[I.closeReason] = (closeReasons[I.closeReason] ?? 0) + 1;
@@ -150,6 +158,7 @@ for (let k = 0; k < n; k++) {
   docList.push(doctrineStats(sim));
   injuryList.push(injuryStats(sim));
   if (hp) hazList.push(hp.done());
+  kindsList.push(kindsStats(sim, kp));
   reportHashes.push(r.hash);
   // 측정 도구의 오류는 기존 집계를 바꾸지 않는다: 그 교대의 지표만 null 로 두고 metrics.errors 에 센다
   if (metricsOn) {
@@ -163,6 +172,7 @@ const methodSum = sumMethods(methodList);
 const docSum = sumDoctrine(docList);
 const injurySum = sumInjury(injuryList);
 const hazSum = hazardOn ? sumHaz(hazList) : null;
+const kindsSum = sumKinds(kindsList);
 const timeoutShare = incN ? ((closeReasons.timeout ?? 0) + (closeReasons.noresponse ?? 0) + (closeReasons.abandoned ?? 0)) / incN : 0;
 const summary = {
   difficulty: difficultyKey(diff), label: difficultyLabel(diff), seeds: n, errors, incidents: incN, perShift: +(incN / n).toFixed(2), msPerShift: Math.round(ms / n),
@@ -170,9 +180,10 @@ const summary = {
   outcomes: out, good: +(share('success') + share('delayed')).toFixed(3), bad: +(share('failed') + share('unresolved')).toFixed(3),
   closeReasons, timeoutShare: +timeoutShare.toFixed(3), avgResponse: Math.round(respSum / Math.max(1, respN)), avgDuration: Math.round(durSum / Math.max(1, incN)),
   casualties: { total: casT, saved: casS, lost: casL, undiscovered: casU, savedRate: +(casS / Math.max(1, casT)).toFixed(3) },
-  falseAlarms: benignN, realGood: +(realGood / Math.max(1, incN - benignN)).toFixed(3), realAvgResponse: Math.round(realRespSum / Math.max(1, realRespN)),
+  falseAlarms: benignN, nonEmergency: nonEmergN, screened: screenedN, realGood: +(realGood / Math.max(1, incN - benignN)).toFixed(3), realAvgResponse: Math.round(realRespSum / Math.max(1, realRespN)),
   methods: methodJson(methodSum),      // (R2)
   injuries: injuryJson(injurySum),      // (H1)
+  kinds: kindsJson(kindsSum),      // (N8)
   unitsPerIncident: +(unitSum / Math.max(1, incN)).toFixed(2), maxUnitsOnOneIncident: maxUnits, respondersHurtPerShift: +(hurt / n).toFixed(2), recoveredShare: +(replan / Math.max(1, incN)).toFixed(3),
 };
 const metrics = metricsOn ? summarize(shiftList) : null;
@@ -185,10 +196,11 @@ else {
   for (const t of Object.keys(byType)) console.log(`  ${t}:`, JSON.stringify(byType[t]));
   console.log('close reasons:', JSON.stringify(closeReasons));
   console.log(`avg response ${summary.avgResponse}s, avg duration ${summary.avgDuration}s, units/incident ${summary.unitsPerIncident} (max ${maxUnits})`);
-  console.log(`false alarms ${benignN} (${Math.round((benignN / Math.max(1, incN)) * 100)}%); real incidents only: good ${Math.round(summary.realGood * 100)}%, avg response ${summary.realAvgResponse}s`);
+  console.log(`false alarms ${benignN} (${Math.round((benignN / Math.max(1, incN)) * 100)}%) · 비응급 ${nonEmergN} (${((nonEmergN / Math.max(1, incN)) * 100).toFixed(1)}%, 접수 단계 종료 ${screenedN}); real incidents only: good ${Math.round(summary.realGood * 100)}%, avg response ${summary.realAvgResponse}s`);
   console.log(`casualties total ${casT}, saved ${casS} (${Math.round(summary.casualties.savedRate * 100)}%), lost ${casL}, undiscovered ${casU}; responders hurt/shift ${summary.respondersHurtPerShift}`);
   console.log(`incidents with a recovered problem: ${Math.round(summary.recoveredShare * 100)}%`);
   console.log(injuryLine(injurySum));      // (H1)
+  console.log(kindsLine(kindsSum));      // (N8)
   if (flag('--scen')) {
     console.log('scenarios (n · 성공 · 부분 · 지연 · 미해결 · 실패 | 한계시간·무대응·방치 | 평균 시간 · 평균 부대):');
     for (const k of Object.keys(byScen).sort()) { const b = byScen[k]; console.log(`  ${k.padEnd(20)} ${String(b.n).padStart(4)} · ${b.success ?? 0} · ${b.partial ?? 0} · ${b.delayed ?? 0} · ${b.unresolved ?? 0} · ${b.failed ?? 0} | ${b.timeout ?? 0}·${b.noresponse ?? 0}·${b.abandoned ?? 0} | ${Math.round(b.dur / b.n)}s · ${(b.units / b.n).toFixed(1)}`); }

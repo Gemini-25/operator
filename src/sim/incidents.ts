@@ -25,6 +25,8 @@ import { noteClosedPlace } from './field/catastrophe';      // (X6 단계 7) 끝
 import { INCIDENT_SHAPE, TRUTH_SHAPE, primeNums } from './shape';      // (R3b N7) 숫자 칸을 만들 때부터 소수 표현으로 — 값은 그대로
 import { noteWearIncident } from './persist';      // (I2 단계 5)
 import { placeCond, placeUsable } from './placeUse';      // (I2 단계 5) "쓸 수 있는 건물" 판정 하나 · 이어받은 건물 상태 (잎 모듈)
+import { notSpare } from './dispatch/dispatcher';      // (N8 §5.4) 평소 생성의 가용 부대 셈에서 N8 의 새 부대(유관 기관·KIND_AUX)를 뺀다
+import { DAILY_TOTAL } from './scenarios/kinds';      // (N8 §5.4) 짧은 사건 줄의 가중 합 (상수 — 가족이 하나씩 들어오는 동안 차례의 나머지는 "걸린 줄 없음")
 
 /** 사건을 정해서 일으킬 때 주는 조건. 비워 두면 평소처럼 추첨한다. */
 export interface SpawnOpts {
@@ -55,8 +57,30 @@ export interface GenState {
   majorAt: number;                                               // 대형 사고가 일어날 시각 (Infinity = 이번 교대에는 없다). engine 이 정한다
   forced: boolean;                                               // 강제 발생(sim.force)을 이미 일으켰는가
   dropped: DroppedChain[];                                       // (I1-b) 버린 예약 — 교대 끝 150초 안('late')·열린 사건이 많음('busy')·깊이 상한('depth')·조건이 끝내 맞지 않음('expired')·교대 상한('cap')
+  dailyAt: number;                                               // (N8 §5.4) 짧은 사건의 다음 차례 (Infinity = 손잡이 0 — engine 이 교대 시작에 정한다)
+  dailyN: number;                                                // (N8) 지난 차례 수 (걸린 줄이 없던 차례도 센다 — tune.dailyCount 까지)
 }
-export function initGenerator(rng: Rng): GenState { return { nextAt: rng.range(10, 22), lastType: null, count: 0, lastCreated: 0, nextNuisanceAt: 40, chain: [], majorAt: Infinity, forced: false, dropped: [] }; }
+export function initGenerator(rng: Rng): GenState { return { nextAt: rng.range(10, 22), lastType: null, count: 0, lastCreated: 0, nextNuisanceAt: 40, chain: [], majorAt: Infinity, forced: false, dropped: [], dailyAt: Infinity, dailyN: 0 }; }
+
+/**
+ * (N8 §5.4) 짧은 사건의 몫인가: 짧은 사건(tag 'daily') 또는 부모가 짧은 사건인 연쇄 자식(그 자식은 tag 가 없다).
+ * 평소 생성기의 열린 사건 수(동시 상한·빈 시간 당김·대형 사고 미룸·연쇄 꺼낼 때의 상한)와 평소 추첨의 장소 고르기는 이것을 세지 않는다 — 짧은 사건이 평소 사건 수를 줄이지 않게
+ */
+export function isDailyLoad(sim: Sim, I: Incident): boolean { return I.tag === 'daily' || (I.parent !== undefined && sim.incidents[I.parent]?.tag === 'daily'); }
+/**
+ * (N8 §5.4) 평소 생성기가 보는 가용 부대 수: N8 이 더한 부대(유관 기관 넷 · KIND_AUX 넷 — dispatcher.notSpare)는 세지 않고,
+ * 짧은 사건에 묶인 부대는 가용으로 센다 — 새 부대가 가용 수를 부풀리거나 짧은 사건이 평소 생성의 간격 배율을 바꾸지 않게
+ */
+function genAvail(sim: Sim): number {
+  let n = 0;
+  for (const u of sim.units) {
+    if (notSpare(u) || u.state === 'oos') continue;
+    if (u.state === 'available') { n++; continue; }
+    // 짧은 사건에 묶였거나 거기서 돌아오는 중(이송·병원·복귀 — incidentId 가 비어 있을 수 있다): 그 부대가 마지막으로 배정된 사건으로 본다
+    for (let k = sim.incidents.length - 1; k >= 0; k--) { const I = sim.incidents[k]; if (I.everAssigned.indexOf(u.id) >= 0) { if (isDailyLoad(sim, I)) n++; break; } }
+  }
+  return n;
+}
 
 /** 무장 사건의 변형에 따라 잘 일어나는 곳이 다르다 ((I1-b C10) 도주한 용의자의 재범 자리 — field/hazards.ts 의 reoffendPlace 가 robbery 줄을 읽는다) */
 export const ARMED_BIAS: Record<string, Partial<Record<PlaceKind, number>>> = {
@@ -64,6 +88,15 @@ export const ARMED_BIAS: Record<string, Partial<Record<PlaceKind, number>>> = {
   dispute: { restaurant: 3, market: 2, hotel: 1.5, bank: 0.2 },
   shooter: { mart: 2.5, market: 2, office: 2, terminal: 2, convenience: 0.4 },
   hostage: { bank: 2, office: 1.6, hotel: 1.5 },
+};
+
+/** (N8 §4.8 N2) 오인 신고의 발생 기록 — 유형별 (화재는 예전 글자 그대로 — 기록 해시) */
+const FALSE_WHAT: Partial<Record<IncidentType, string>> = {
+  fire: '실제 화재는 없음 — 오인 신고가 들어올 예정',
+  medical: '실제 환자는 없음 — 잠든 사람을 쓰러진 사람으로 볼 신고가 들어올 예정',
+  water: '실제로 빠진 사람은 없음 — 물에 뜬 물건을 사람으로 볼 신고가 들어올 예정',
+  armed: '실제 총격은 없음 — 폭죽 소리를 총소리로 들은 신고가 들어올 예정',
+  hazmat: '실제 가스 누출은 없음 — 음식 냄새를 가스로 맡은 신고가 들어올 예정',
 };
 
 /** (I1-b) 발생할 때 'collapse' 신호를 보내는 붕괴 사건의 변형 — 처음부터 무너져 있는 큰 붕괴 (설계서 I1 §3.4 의 신호 표) */
@@ -77,9 +110,10 @@ const kindCount = new WeakMap<object, Map<string, number>>();
  */
 export function placeGone(sim: Sim, id: number): boolean { return !placeUsable(sim, id); }
 
-function pickPlace(sim: Sim, rng: Rng, type: IncidentType, variant: string, busy: Set<number>): Place | null {
+function pickPlace(sim: Sim, rng: Rng, type: IncidentType, variant: string, busy: Set<number>, skipDaily: boolean): Place | null {
   const table = scenarioOf(type, variant)?.places ?? INCIDENT_PLACES[type];
-  const used = new Set(sim.incidents.map((I) => I.truth.placeId));
+  const used = new Set<number>();      // (N8 §5.4) 평소 추첨(skipDaily)은 짧은 사건의 건물을 보지 않는다 — 짧은 사건의 추첨은 모두를 본다
+  for (const I of sim.incidents) if (!skipDaily || !isDailyLoad(sim, I)) used.add(I.truth.placeId);
   // 표의 값은 건물 종류 전체의 몫이므로, 그 종류의 건물 수로 나눠 한 채의 비중을 구한다
   if (!kindCount.has(sim.city.places)) { const m = new Map<string, number>(); for (const q of sim.city.places) if (q.facility < 0) m.set(q.kind, (m.get(q.kind) ?? 0) + 1); kindCount.set(sim.city.places, m); }
   const counts = kindCount.get(sim.city.places)!;
@@ -119,7 +153,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
   // 시나리오: 유형 안에서 정해진 몫만큼 다른 모습의 사건이 된다 (scenarios.ts). 대형 사고와 재난의 시나리오는 평소 추첨에 들어가지 않는다
   let special: Scenario | null = null;
   if (opts.variant) { variant = opts.variant; special = scenarioOf(type, variant) ?? null; }
-  else { const cs = SCENARIOS.filter((q) => q.type === type && q.tag !== 'major' && q.tag !== 'disaster'); if (cs.length) { let r = rng.next(); for (const q of cs) { if (q.gate && !q.gate(sim)) continue; r -= q.share; if (r < 0) { special = q; break; } } } }
+  else { const cs = SCENARIOS.filter((q) => q.type === type && q.tag !== 'major' && q.tag !== 'disaster' && q.tag !== 'daily'); if (cs.length) { let r = rng.next(); for (const q of cs) { if (q.gate && !q.gate(sim)) continue; r -= q.share; if (r < 0) { special = q; break; } } } }
   if (special) { variant = special.variant; severity = rng.int(special.severity[0], special.severity[1]); }
   else if (opts.variant) { if (type === 'armed' && variant === 'robbery') severity = Math.max(2, severity); else if (variant === 'shooter' || variant === 'hostage') severity = 3; }
   else if (type === 'armed') {
@@ -134,12 +168,15 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
   else if (type === 'fire' && rng.chance(tn.falseAlarmProb)) { variant = 'false'; severity = 1; }      // 오인 신고: 탄 음식, 경보 오작동
   if (opts.severity) severity = opts.severity;
   // 위치: 유형에 맞는 건물이나 터를 고른다 (교통사고는 교차로)
-  const busy = new Set(sim.incidents.filter((I) => I.phase !== 'closed').map((I) => I.truth.nodeId));
+  // (N8 §5.4) 평소 추첨(opts.rng 없음)은 짧은 사건(과 그 연쇄 자식)의 교차로·건물을 보지 않는다 — 짧은 사건이 평소 추첨의 장소를 밀지 않게
+  const regular = !opts.rng;
+  const busy = new Set<number>();
+  for (const J of sim.incidents) if (J.phase !== 'closed' && (!regular || !isDailyLoad(sim, J))) busy.add(J.truth.nodeId);
   // 정해 준 자리가 있으면 그곳, 길 위에서 일어나는 시나리오면 그 교차로, 아니면 유형에 맞는 건물
   // (X6 §7.1) 정해 준 건물이 이 교대에 무너졌거나 다 탔으면 그 유형의 건물을 다시 고른다 (재난·은신처는 pickPlace 를 거치지 않는다 — 그 경우에만 사건 흐름을 한 번 더 쓴다)
   const fixedPlace = opts.placeId !== undefined && placeUsable(sim, opts.placeId) ? opts.placeId : undefined;      // (I2 단계 5) 마지막 안전장치 — 이어받은 상태는 고르는 자리(은신처·연쇄 방화·재난·재범)가 먼저 거른다
   const fixedNode = opts.nodeId ?? (fixedPlace === undefined && opts.placeId === undefined ? special?.node?.(sim, rng, busy) ?? null : null);
-  const place = fixedPlace !== undefined ? sim.city.places[fixedPlace] : fixedNode !== null || type === 'traffic' ? null : pickPlace(sim, rng, type, variant, busy);
+  const place = fixedPlace !== undefined ? sim.city.places[fixedPlace] : fixedNode !== null || type === 'traffic' ? null : pickPlace(sim, rng, type, variant, busy, regular);
   let node = place ? sim.city.nodes[place.nodeId] : fixedNode !== null ? sim.city.nodes[fixedNode] : null;
   if (!node) {
     const fac = new Set(sim.city.facilities.map((f) => f.nodeId));
@@ -179,7 +216,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
   const dl = special?.delay ?? TYPE_DEFS[type].delay;      // 발생 → 첫 신고: 시나리오가 적었으면 그것, 아니면 유형의 값
   const delay = rng.range(dl[0], dl[1]);
   I.firstCallAt = sim.t + delay;
-  const benign = variant === 'false' || variant === 'prank';
+  const benign = variant === 'false' || variant === 'prank' || variant === 'referral' || variant === 'dup';      // (N8 §5.5) 비응급 변형은 추가 신고를 받지 않는다
   const pFollow = benign ? 0 : TYPE_DEFS[type].follow;
   if (rng.chance(pFollow)) I.followupAt = I.firstCallAt + rng.range(24, 55);
   if (type === 'traffic') {
@@ -205,7 +242,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
       noteRoadCause(sim, e.id, 'close', I.blockEv, I.id);      // (I1-b b3-5) 닫힘의 주인 = 통제 기록 (감속의 주인은 아래의 발생 기록 — 항이 달라 서로 덮지 않는다)
     }
   }
-  const what = variant === 'false' ? '실제 화재는 없음 — 오인 신고가 들어올 예정' : variant === 'prank' ? '실제 사건은 없음 — 장난 전화가 걸려 올 예정' : scenarioName(type, variant) === TYPE_NAME[type] ? TYPE_NAME[type] : `${TYPE_NAME[type]} · ${scenarioName(type, variant)}`;
+  const what = variant === 'false' ? FALSE_WHAT[type] ?? FALSE_WHAT.fire! : variant === 'prank' ? '실제 사건은 없음 — 장난 전화가 걸려 올 예정' : scenarioName(type, variant) === TYPE_NAME[type] ? TYPE_NAME[type] : `${TYPE_NAME[type]} · ${scenarioName(type, variant)}`;
   if (variant === 'kidnap' || variant === 'drunk' || variant === 'getaway') startPursuit(sim, I, variant);
   special?.onCreate?.(sim, I);
   I.rootEvent = emit(sim, { inc: id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: special?.tag === 'major' ? 3 : 1, truth: true, causes: I.cause !== undefined ? (opts.causes ? [I.cause, ...opts.causes] : [I.cause]) : opts.causes, text:chainNote ? `${chainNote} — ${I.truth.label}.` : `사건 발생 — ${I.truth.label} (${what}). 아직 신고되지 않았습니다.` });
@@ -226,7 +263,7 @@ export function tickIncidents(sim: Sim): void {
   let open = 0;
   for (const I of sim.incidents) {
     if (I.phase === 'closed') continue;
-    open++;
+    if (!isDailyLoad(sim, I)) open++;      // (N8 §5.4) 평소 생성기의 열린 사건 수는 짧은 사건의 몫을 세지 않는다
     if (I.phase === 'unreported' && sim.t >= I.firstCallAt) startCall(sim, I, false);
     if (sim.t >= I.followupAt && I.phase !== 'unreported') { I.followupAt = Infinity; startCall(sim, I, true); }
     // 무대응 종료: 지상 부대도, 상공의 헬기도 닿지 못했을 때만 (헬기가 현장 위에 떠 있는데 '어떤 부대도 닿지 못했다'고 닫지 않는다)
@@ -276,6 +313,20 @@ export function tickIncidents(sim: Sim): void {
     const [ft, fv] = sim.force.split('/');
     createIncident(sim, { type: ft as IncidentType, variant: fv || undefined, rng: sim.rng.fork('force') });
   }
+  // (N8 §5.4) 짧은 사건: 평소 생성과 따로 도는 흐름 daily — 차례마다 tag 'daily' 줄을 표 순서대로 가중(share)만큼 깎아 고른다. 걸린 줄이 없으면 아무것도 만들지 않는다
+  if (sim.t >= g.dailyAt && g.dailyN < tn.dailyCount && sim.t < sim.shiftLen - 150) {
+    let openDaily = 0;
+    for (const I of sim.incidents) if (I.phase !== 'closed' && I.tag === 'daily') openDaily++;
+    if (openDaily >= tn.dailyConcurrent) g.dailyAt += 20;
+    else {
+      g.dailyN++;
+      let r = sim.rngDaily.next() * DAILY_TOTAL;
+      let pick: Scenario | null = null;
+      for (const q of SCENARIOS) { if (q.tag !== 'daily' || (q.gate && !q.gate(sim))) continue; r -= q.share; if (r < 0) { pick = q; break; } }
+      if (pick) createIncident(sim, { type: pick.type, variant: pick.variant, rng: sim.rngDaily, tag: 'daily' });
+      g.dailyAt = sim.t + (sim.shiftLen - 210) / tn.dailyCount * sim.rngDaily.range(0.7, 1.3);
+    }
+  }
   // 생성: 진행 중인 사건 수와 가용 자원에 어느 정도 영향을 받는다
   if (sim.t >= sim.shiftLen - 150 || g.count >= tn.maxIncidents) return;
   if (sim.t < g.nextAt) {
@@ -283,14 +334,15 @@ export function tickIncidents(sim: Sim): void {
     return;
   }
   if (open >= tn.maxConcurrent) { g.nextAt = sim.t + 18; return; }
-  const avail = sim.units.filter((u) => u.state === 'available').length;
+  const avail = genAvail(sim);      // (N8 §5.4) N8 의 새 부대는 세지 않고, 짧은 사건에 묶인 부대는 가용으로
   if (open >= tn.maxConcurrent - 1 && avail <= 3) { g.nextAt = sim.t + 22; return; }
   createIncident(sim);
   g.count++; g.lastCreated = sim.t;
   g.nextAt = sim.t + sim.rngGen.range(50, 108) * tn.gapMul * (avail <= 5 ? 1.2 : 1) * disasterGapMul(sim);      // 조직이 커진 만큼 사건도 잦다 (보통에서 교대당 12건쯤)
 }
 
-export function closeIncident(sim: Sim, I: Incident, reason: 'resolved' | 'timeout' | 'noresponse' | 'abandoned' | 'shiftend'): void {
+export function closeIncident(sim: Sim, I: Incident, reason: 'resolved' | 'timeout' | 'noresponse' | 'abandoned' | 'shiftend'
+  | 'screened'): void {      // (N8 §5.5) 접수 단계에서 닫음 — 장난을 가려냄(출동 없음 또는 출동 취소)
   if (I.phase === 'closed') return;
   const s = sim.scenes[I.id]!;
   settleInjuries(sim, s, I);      // (H1) 판정 직전에 밀린 대원의 상태 전이를 마친다 — 판정 뒤에는 전이가 없다

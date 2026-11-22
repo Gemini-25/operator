@@ -638,7 +638,11 @@ function parentDepthOf(incs: readonly Incident[], I: Incident): { depth: number;
   return { depth: d, root: x };
 }
 const isDisasterTag = (I: Incident): boolean => typeof I.tag === 'string' && I.tag.startsWith('disaster:');
-export function isBenign(I: Incident): boolean { return I.truth.variant === 'false' || I.truth.variant === 'prank' || I.problems.some((p) => p.code === 'FALSE_ALARM'); }
+/** 비응급 사건 (N8 §5.5): 변형 false·prank·referral·dup 또는 FALSE_ALARM 또는 접수 단계에서 닫음(closeReason 'screened') */
+export function isBenign(I: Incident): boolean {
+  const v = I.truth.variant;
+  return v === 'false' || v === 'prank' || v === 'referral' || v === 'dup' || I.closeReason === 'screened' || I.problems.some((p) => p.code === 'FALSE_ALARM');
+}
 function evLabel(sim: Sim, e: SimEvent, sys: SysOf, texts: boolean): string {
   const code = e.incidentId >= 0 ? '#' + (sim.incidents[e.incidentId]?.code ?? '?') : '#--';
   return `${code}:${sys}${texts ? ` "${e.text.slice(0, 40)}"` : ''}`;

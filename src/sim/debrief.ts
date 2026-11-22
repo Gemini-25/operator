@@ -17,7 +17,7 @@ import { VERDICT_RULES } from './field/sceneRegistry';      // (N8) 판정 등�
 import { X6_BOOM_DETAIL, catHazardActive, catSummary, propertyLossOf } from './field/catastrophe';      // (X6 단계 7) 재산 피해·남은 위험·요약
 import { chainLines, worldReport } from './world/report';      // (I1-b b4 §3.9) 사슬 문장 · 교대의 세계 상태와 '인과:' 줄 — 기록에서만 쓴다
 import type { Sim } from './engine';
-import type { Incident, IncidentResult, InjuryCause, Outcome, Problem, ProblemCode, RosterOut, ShiftReport } from './types';
+import type { Incident, IncidentResult, IncidentType, InjuryCause, Outcome, Problem, ProblemCode, RosterOut, ShiftReport } from './types';
 import { TYPE_NAME, fmtSec, josa, pct } from './util';
 import { carryEffectLine, carryKey, carryLines, carryNextLine, carrySummary, makeCarryover, shortArrivalLine } from './persist';      // (I2 단계 7) 이어받은 상태의 보고서 — 읽기만 한다 (makeCarryover 는 순수)
 
@@ -39,6 +39,17 @@ function addProblem(I: Incident, code: ProblemCode, t: number, eventId: number, 
   if (I.problems.some((p) => p.code === code && p.detail === detail)) return;
   I.problems.push({ code, t, eventId, detail, recovered, recoveryText, times: undefined, ref: undefined });      // times·ref: raiseProblem 과 같은 모양 (I1-b)
 }
+
+/** (N8 §5.5) 비응급 변형 (incidents.createIncident 의 benign · scripts/metrics.ts 의 isBenign 과 같은 글자) */
+const BENIGN: ReadonlySet<string> = new Set(['false', 'prank', 'referral', 'dup']);
+/** (N8 §4.8 N2) 오인 신고의 문제 설명·머리글 — 유형별 (화재는 예전 글자 그대로 — 기록 해시) */
+const FALSE_DETAIL: Partial<Record<IncidentType, string>> = {
+  fire: '냄새·연기만 있었고 실제 화재는 없었음', medical: '길에서 잠든 사람이었고 실제 환자는 없었음', water: '물에 뜬 물건이었고 빠진 사람은 없었음',
+  armed: '폭죽 소리였고 실제 총격은 없었음', hazmat: '음식물 냄새였고 실제 가스 누출은 없었음',
+};
+const FALSE_HEAD: Partial<Record<IncidentType, string>> = {
+  fire: '오인 신고 — 실제 화재 없음', medical: '오인 신고 — 잠든 사람이었음', water: '오인 신고 — 물에 뜬 물건이었음', armed: '오인 신고 — 폭죽 소리였음', hazmat: '오인 신고 — 음식 냄새였음',
+};
 
 export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult {
   const s = sim.scenes[I.id]!;
@@ -106,8 +117,10 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   if (fa && fa.type === truth.type && fa.severity > truth.severity + 1.0) addProblem(I, 'OVERESTIMATE', fa.t, fa.eventId, `초기 위험도를 '${sevName(fa.severity)}' 수준으로 평가했으나 실제는 '${sevName(truth.severity - 0.2)}' 수준`);
   if (s.requests.length && I.firstArrivalAt >= 0) addProblem(I, 'UNDER_DISPATCH', s.requests[0].t, s.requests[0].eventId, `현장에서 추가 지원 ${s.requests.length}회 요청 (${s.requests.map((q) => q.reason).slice(0, 2).join(' / ')})`, s.requests.every((q) => q.fulfilled >= q.count), s.requests.every((q) => q.fulfilled >= q.count) ? '요청한 지원이 모두 배정됨' : '일부 지원은 끝내 배정되지 못함');
   if (reason === 'timeout') addProblem(I, 'TIMEOUT', sim.t, -1, '대응 한계 시간 안에 상황을 끝내지 못함');
-  const benign = truth.variant === 'false' || truth.variant === 'prank';
-  if (benign) addProblem(I, 'FALSE_ALARM', I.reportedAt, I.callEvents[0] ?? -1, truth.variant === 'prank' ? '장난 전화였고 실제 사건은 없었음' : '냄새·연기만 있었고 실제 화재는 없었음', true, `확인에 부대 ${I.everAssigned.length}대가 ${fmtSec(Math.max(0, sim.t - Math.max(0, I.firstDispatchAt)))} 동안 묶임`);
+  const benign = BENIGN.has(truth.variant);      // (N8 §5.5) 비응급 변형 — 장난·오인·민원 이관·중복 신고
+  const screened = reason === 'screened';      // (N8) 접수 단계에서 닫았다 (장난을 가려냄)
+  if (benign) addProblem(I, 'FALSE_ALARM', I.reportedAt, I.callEvents[0] ?? -1, truth.variant === 'prank' ? '장난 전화였고 실제 사건은 없었음' : FALSE_DETAIL[truth.type] ?? FALSE_DETAIL.fire!, true,
+    screened ? '접수 단계에서 허위 신고로 가려내 출동을 취소했습니다' : `확인에 부대 ${I.everAssigned.length}대가 ${fmtSec(Math.max(0, sim.t - Math.max(0, I.firstDispatchAt)))} 동안 묶임`);
   // 폭파 협박·수상한 물건: 진짜 장치가 없었다면 허위 신고다 (확인하기 전에는 아무도 알 수 없었다)
   const noBomb = (truth.variant === 'bombthreat' || truth.variant === 'package') && !s.props.some((p) => p.kind === 'bomb' && p.real);
   if (noBomb) addProblem(I, 'FALSE_ALARM', I.reportedAt, I.callEvents[0] ?? -1, truth.variant === 'bombthreat' ? '협박 전화였고 폭발물은 없었음' : '수상한 물건은 폭발물이 아니었음', true, `확인에 부대 ${I.everAssigned.length}대가 ${fmtSec(Math.max(0, sim.t - Math.max(0, I.firstDispatchAt)))} 동안 묶임`);
@@ -124,7 +137,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   let grade: IncidentResult['grade'];
   const objectiveOpen = hazardActive || undiscovered > 0 || left > 0 || (s.kind === 'search' && cas.every((c) => c.tDiscovered < 0))
     || s.props.some((p) => p.kind === 'bomb' && !p.mitigated && !p.exploded);      // 수상한 물건을 끝내 확인하지 못했다 (가짜였더라도 아무도 그것을 알지 못한 채 끝났다)
-  if (reason === 'noresponse') grade = lost > 0 ? 'failed' : 'unresolved';
+  if (screened) grade = benign ? 'success' : 'unresolved';      // (N8 §5.5) 비응급 변형이 아닌 사건이 접수 단계에서 닫혔으면 미해결 (중복 신고 알아보기의 드문 실수 — 단계 10)
+  else if (reason === 'noresponse') grade = lost > 0 ? 'failed' : 'unresolved';
   else if (cas.length > 0 && lost >= Math.max(1, Math.ceil(cas.length / 2))) grade = 'failed';
   else if (bad >= 4.5) grade = 'failed';
   else if ((reason === 'timeout' || reason === 'abandoned' || reason === 'shiftend') && objectiveOpen) grade = 'unresolved';
@@ -133,7 +147,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   else grade = 'success';
   if (I.pursuit && I.pursuit.state === 'escaped') grade = I.pursuit.kind === 'kidnap' && I.pursuit.how !== 'hideout' ? 'failed' : 'unresolved';      // 납치된 사람을 되찾지 못했다 / 난폭 운전자를 놓쳤다 / 은신처에 숨어든 납치는 이어지는 인질 사건이 결말을 낸다
   const limit = TYPE_DEFS[truth.type].respLimit;
-  const delayed = !I.pursuit && (responseTime < 0 || responseTime > limit || I.problems.some((p) => p.code === 'BACKUP_LATE') || vDelayed);      // 추격전은 차를 세운 뒤에야 현장이 생긴다. vDelayed: (N8) 판정 등록
+  const delayed = !I.pursuit && !screened && (responseTime < 0 || responseTime > limit || I.problems.some((p) => p.code === 'BACKUP_LATE') || vDelayed);      // 추격전은 차를 세운 뒤에야 현장이 생긴다. vDelayed: (N8) 판정 등록
   const outcome: Outcome = grade === 'success' && delayed ? 'delayed' : grade;
 
   // ── 설명 ──
@@ -260,7 +274,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   // 한 줄 요약
   const hl: string[] = [];
   { const b = s.props.find((p) => p.kind === 'bomb'); if (noBomb) hl.push(truth.variant === 'bombthreat' ? '허위 협박 — 폭발물 없음' : b && !b.mitigated ? '폭발물은 아니었으나 확인하지 못함' : '확인 결과 폭발물 아님'); else if (b && b.real) hl.push(b.mitigated ? '폭발물 해체' : b.exploded ? '폭발물 폭발' : '폭발물 미처리'); }
-  if (benign) hl.push(truth.variant === 'prank' ? '장난 전화 — 실제 사건 없음' : '오인 신고 — 실제 화재 없음');
+  if (benign) hl.push(truth.variant === 'prank' ? (screened ? '장난 전화 — 접수 단계에서 가려냄' : '장난 전화 — 실제 사건 없음') : FALSE_HEAD[truth.type] ?? FALSE_HEAD.fire!);
   else if (cas.length) hl.push(`요구조자 ${cas.length}명 중 ${saved}명 구조${lost ? `, ${lost}명 사망` : ''}${undiscovered ? `, ${undiscovered}명 미발견` : ''}${left ? `, ${left}명 구조 미완료` : ''}`);
   else hl.push('인명 피해 없음');
   const cs = catSummary(sim, s, I, hazardActive);      // (X6 §6.5·§6.6) 건물 전소 · 건물 붕괴 · 폭발 n회, 소실률은 화재가 아니어도 재산 피해가 있으면
@@ -269,7 +283,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   if (suspectsTotal) hl.push(`용의자 ${suspectsTotal}명 중 ${caught}명 검거${suspectsDead ? ` (사망 ${suspectsDead})` : ''}`);
   { const hurtN = downCount + hurtOnly; if (hurtN) hl.push(`대원 ${hurtN}명 부상${killed.size ? `, ${killed.size}명 순직` : ''}`); else if (killed.size) hl.push(`대원 ${killed.size}명 순직`); }
   const troubles = I.problems.filter((p) => p.code !== 'CALL_MISINFO' && p.code !== 'OVERESTIMATE' && p.code !== 'LATE_DISCOVERY' && p.code !== 'FALSE_ALARM').length;
-  if (benign) A.push('출동한 부대가 직접 확인하고 이상 없음으로 종결했습니다.');
+  if (benign) A.push(screened ? (I.everAssigned.length ? '출동한 부대는 현장에 닿기 전에 돌아갔습니다.' : '부대를 보내지 않고 접수 단계에서 종결했습니다.') : '출동한 부대가 직접 확인하고 이상 없음으로 종결했습니다.');
   else if (outcome === 'success') A.push(troubles === 0 ? '큰 문제 없이 목표를 모두 달성했습니다.' : troubles >= 3 ? '여러 문제가 겹쳤지만 그때마다 계획을 바꿔 목표를 모두 달성했습니다.' : '도중에 문제가 있었지만 수습하고 목표를 모두 달성했습니다.');
   else if (outcome === 'delayed') A.push('결과는 좋았지만 대응이 기준보다 늦었습니다.');
   return {

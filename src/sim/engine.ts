@@ -31,6 +31,13 @@ import { WEATHER_NAME } from './util';
 
 export const CITY_SEED = 0xc17e5eed;
 
+/** 생성자의 셋째 인자 — 시험·확인용 조건 (교대가 시작되기 전에 정한다) */
+export interface SimOpts {
+  force?: string | null;         // 이 시나리오('유형/변형')를 교대 초반에 한 번 일으킨다
+  carry?: Carryover | null;      // (I2) 이어받은 상태
+  daily?: number;                // (N8 §5.4) 짧은 사건의 차례 수를 덮는다 (0 = 짧은 사건·비응급의 가려내기가 모두 꺼진다 — 시험 7a). 없으면 난이도의 값(tune.dailyCount)
+}
+
 export class Sim {
   readonly seed: string;
   readonly dt = 0.2;
@@ -41,6 +48,7 @@ export class Sim {
   readonly rngGen: Rng;
   readonly rngNuisance: Rng;
   readonly rngMajor: Rng;      // 대형 사고: 일어나는가, 언제, 무엇이
+  readonly rngDaily: Rng;      // (N8 §5.4) 짧은 사건: 언제, 무엇이 (평소 추첨과 따로 — 평소 사건의 (시각·유형·변형·규모) 열을 흔들지 않는다)
   readonly weather: Weather;
   readonly startTod: number;
   readonly city: City;
@@ -79,11 +87,12 @@ export class Sim {
   readonly difficulty: Difficulty;
   readonly tune: Tuning;
 
-  constructor(seed: string, difficulty: Difficulty = NORMAL, shiftLen = 1200, extra: { force?: string | null; carry?: Carryover | null } = {}) {
+  constructor(seed: string, difficulty: Difficulty = NORMAL, shiftLen = 1200, extra: SimOpts = {}) {
     this.force = extra.force ?? null;
     this.seed = seed;
     this.difficulty = { ...difficulty };
-    this.tune = tuningOf(this.difficulty);
+    const tn = tuningOf(this.difficulty);
+    this.tune = extra.daily !== undefined ? { ...tn, dailyCount: Math.max(0, Math.floor(extra.daily)) } : tn;
     this.shiftLen = shiftLen;
     this.hardCap = shiftLen + 420;
     this.rng = new Rng(hashStr('AR:' + seed));
@@ -91,6 +100,7 @@ export class Sim {
     this.rngGen = this.rng.fork('incidents');
     this.rngNuisance = this.rng.fork('nuisance');
     this.rngMajor = this.rng.fork('major');
+    this.rngDaily = this.rng.fork('daily');      // fork 는 부모를 소비하지 않는다 — 아래의 environment 흐름은 그대로
     const env = this.rng.fork('environment');
     this.weather = env.weighted<Weather>(['clear', 'rain', 'fog', 'night'], [0.5, 0.18, 0.12, 0.2]);
     this.startTod = this.weather === 'night' ? 22 * 3600 + env.int(0, 3000) : 9 * 3600 + env.int(0, 8 * 3600);
@@ -105,6 +115,7 @@ export class Sim {
     applyCrewCarry(this);
     this.gen = initGenerator(this.rngGen);
     this.gen.majorAt = this.rngMajor.chance(this.tune.majorProb) ? this.rngMajor.range(0.18, 0.7) * shiftLen : Infinity;
+    if (this.tune.dailyCount > 0) this.gen.dailyAt = 30 + this.rngDaily.range(0, 60);      // (N8 §5.4) 첫 짧은 사건의 차례 (손잡이가 0 이면 Infinity 그대로 — 흐름을 쓰지 않는다)
     this.disaster = initDisaster(this);
     // 가용 인원: 이어받은 상태가 있으면 정비·결원(oos)인 부대와 결장(off)인 대원을 뺀다 (persist.shiftStartCounts). 없으면 지금 문구 그대로
     const avail = this.carryState.on ? shiftStartCounts(this) : `가용 부대 ${this.units.length}대, 대원 ${this.responders.length}명`;

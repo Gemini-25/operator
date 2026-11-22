@@ -866,7 +866,8 @@ export function buildStatic(s: Scene, R: number, district: string): StaticLayer 
     rr(g, -0.46, -0.44, 0.92, 0.88, 0.03, '#2a3138'); rr(g, -0.42, -0.4, 0.84, 0.8, 0.02, '#8d969e');
     for (let k = 0; k < 6; k++) { g.fillStyle = k % 2 ? '#a9b2ba' : '#7b848c'; g.fillRect(-0.42 + k * 0.14, -0.4, 0.14, 0.8); g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(-0.42 + k * 0.14, -0.4, 0.018, 0.8); }
     g.fillStyle = '#2f3840'; g.fillRect(-0.42, -0.4, 0.84, 0.05); g.fillRect(-0.42, 0.35, 0.84, 0.05);
-    const up = j > i;      // 낮은 번호 쪽이 아래층
+    const under = (s.kinds?.base ?? -1) >= 0;      // (N8 단계 4b) 수도관 파열의 지하 주차장 — 계단 너머가 아래층이다
+    const up = under ? j < i : j > i;      // 낮은 번호 쪽이 아래층 (지하가 있는 현장은 거꾸로)
     g.fillStyle = '#e8f3fb'; g.beginPath();
     if (up) { g.moveTo(0.28, 0); g.lineTo(0.06, -0.17); g.lineTo(0.06, -0.06); g.lineTo(-0.26, -0.06); g.lineTo(-0.26, 0.06); g.lineTo(0.06, 0.06); g.lineTo(0.06, 0.17); }
     else { g.moveTo(-0.28, 0); g.lineTo(-0.06, -0.17); g.lineTo(-0.06, -0.06); g.lineTo(0.26, -0.06); g.lineTo(0.26, 0.06); g.lineTo(-0.06, 0.06); g.lineTo(-0.06, 0.17); }
@@ -879,7 +880,7 @@ export function buildStatic(s: Scene, R: number, district: string): StaticLayer 
     g.save(); g.strokeStyle = 'rgba(124,210,200,0.55)'; g.lineWidth = Math.max(1.5, R * 0.05); g.setLineDash([R * 0.22, R * 0.18]); g.lineCap = 'round';
     g.beginPath(); g.moveTo((x + 0.5) * R, (y + 0.05) * R); g.bezierCurveTo((x + 0.5) * R, (y - 3.2) * R, (x2 + 0.5) * R, (y2 - 3.2) * R, (x2 + 0.5) * R, (y2 + 0.05) * R); g.stroke(); g.restore();
     // 층 이름: 계단이 속한 건물 덩어리의 윗변에 적는다
-    for (const [start, name] of [[i, '1층'], [j, '2층']] as [number, string][]) {
+    for (const [start, name] of [[i, '1층'], [j, (s.kinds?.base ?? -1) >= 0 ? '지하' : '2층']] as [number, string][]) {
       const q = [start], vis = new Set<number>([start]);
       let bx0 = s.w, bx1 = 0, by0 = s.h, by1 = 0;
       while (q.length) {

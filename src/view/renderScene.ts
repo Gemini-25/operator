@@ -7,6 +7,7 @@
 
 import { drawDisasterScene } from './city/disasterLayer';
 import { SKINS } from './scene/skins';
+import { drawFlood, drawHazRings } from './scene/skins/kinds';
 // (R1) 장비는 읽기만 한다: 고장을 드러내거나 수량을 줄이는 함수는 여기서 부르지 않는다 — 그리는 것만으로 기록이 바뀌면 안 된다 (tests/crews.test.ts ⑬)
 import { AIR_LOW, hasKit, isHovering, kitUses } from '../sim/crews';
 import type { Sim } from '../sim/engine';
@@ -94,6 +95,13 @@ function parkY(s: Scene): number {
     parkCache.set(s, v);
   }
   return v;
+}
+
+/** (N8 단계 4b) 차량 줄의 이 자리(가로 x0~x1, 세로 y0~y1 — 타일 단위)에 꺼진 땅(T.VOID — 싱크홀)이 있는가. 그림만 비켜 세운다 */
+function voidUnder(s: Scene, x0: number, x1: number, y0: number, y1: number): boolean {
+  for (let y = Math.max(0, Math.floor(y0)); y <= Math.min(s.h - 1, Math.floor(y1)); y++)
+    for (let x = Math.max(0, Math.floor(x0)); x <= Math.min(s.w - 1, Math.floor(x1)); x++) if (s.tiles[y * s.w + x] === T.VOID) return true;
+  return false;
 }
 
 const doorAnim = new WeakMap<Prop, { v: number; t: number }>();
@@ -496,6 +504,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     const [vl, vw] = VEH_SIZE[u.kind];
     const blk = laneShieldSpot(s, u.id);      // (R3 §7.2 — 차량 차단) 차로 입구를 막고 선 차는 대기 줄이 아니라 그 입구에 그린다 (그림만)
     if (blk) { vpos.push({ u, x: cx(blk.x), y: cy(blk.y), L: vl, W: vw }); continue; }
+    for (let k = 0; k < s.w * 2 && voidUnder(s, cursor, cursor + vl, parkY(s) - vw / 2, parkY(s) + vw / 2); k++) cursor += 0.5;      // 싱크홀 위에는 세우지 않는다
     vpos.push({ u, x: (cursor + vl / 2) * ts, y: rowY, L: vl, W: vw }); cursor += vl + 0.42;
   }
   // 소화전에 연결한 수관
@@ -893,6 +902,8 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   drawDangerZones(ctx, sim, s, ts, { truth: o.truth, timeMs: o.timeMs, mini: MINI, cmd });
   const catView = { truth: o.truth, timeMs: o.timeMs, mini: MINI, cmd };
   drawCatUnder(ctx, sim, s, ts, catView);      // (X6) 구획 건전도 빗금·가스 등고선·용기의 열 고리 (관찰자: 진실 · AI: 지휘관이 아는 조짐)
+  drawFlood(ctx, s, ts, o.timeMs, MINI);      // (N8 4b) 지하 주차장의 침수
+  drawHazRings(ctx, s, ts, o.truth, o.timeMs, MINI);      // (N8) 살아 있는 시설물의 위험 반경 (관찰자 시점)
   drawFallRing(ctx, sim, s, ts, o.alpha, MINI);
   const hzLabels: HazardLabel[] = [];
   for (const l of drawCatOver(sim, s, ts, catView)) hzLabels.push(l);      // (X6) 붕괴 임박·LEL·안전밸브·진입 금지 표지 — 새 글자 표지 단계에서 그린다

@@ -242,6 +242,7 @@ describe('처음 상태의 원인', () => {
     ['armed', 'bomb', 'blunt'],      // 폭발물 현장의 사람들은 멀쩡하게 시작한다 (기록이 붙지 않는 쪽을 본다)
     ['utility', 'wire', 'electric'],      // (N8 §5.14) 감전된 행인 — 전선이 덮친 차 안의 사람은 멀쩡하다
     ['utility', 'sinkhole', 'fall'], ['utility', 'sign', 'crush'],      // (단계 4b) 구멍에 빠진 사람 · 떨어진 간판에 다친 행인 (수도관의 지하 사람은 멀쩡하게 시작한다)
+    ['welfare', 'dementia', 'exposure'],      // (단계 7) 길 잃은 치매 노인 — 노출
   ];
   it('현장이 만들어질 때 다쳐 있는 사람(체력 < 100 이거나 출혈 > 0)에게만 처음 원인의 기록 한 줄과 출혈 원인이 붙는다', () => {
     let hurtSeen = 0, wholeSeen = 0;

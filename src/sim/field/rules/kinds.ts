@@ -755,3 +755,57 @@ registerRule((sim, s, I) => {
     }
   }
 });
+
+// ───────────────────────── 보호 welfare (§4.5 — 단계 7) ─────────────────────────
+/** 미아의 출구: 아이가 이만큼 안에 닿으면 출구에 닿은 것 · 출구를 지키는 대원(통제를 맡아 그 자리에 선) 거리 · 오르는 은폐 · 은폐 상한(수색 체계가 찾을 수 있는 상한 — CLAUDE.md "숨는 정도의 상한") · 확성기의 내림 */
+export const CHILD = { exitR: 1.5, guardR: 1.5, hide: 0.1, hideMax: 0.84, announce: 0.15 };
+const CHILD_AT = new WeakMap<Scene, number>();      // 아이가 마지막으로 닿은 출구 (같은 출구에 머무는 동안 한 번만)
+/**
+ * (§4.5 lostchild) 미아의 세계 규칙: 아이가 지키는 사람이 없는 출구에 닿으면 바깥을 한 바퀴 돌고 들어와 은폐가 0.1 오른다(많아야 0.84) — 지키는 출구면 돌아선다.
+ * 출구의 통제에 확성기를 든 대원이 서면 한 번 은폐 −0.15. 생성 + 한계 − 40초까지 못 찾으면 시민이 안내 데스크로 데려온다(§5.13 — 아동 사건의 실패는 지연으로만):
+ * 아이는 s.safe 에 놓이고 같은 틱에 현장의 지휘관(없으면 모든 대원)에게 관제 무전으로 그 사실을 강제로 넣는다(§5.16). 난수 없음
+ */
+registerRule((sim, s, I) => {
+  if (s.kind !== 'welfare' || s.variant !== 'lostchild' || I.phase === 'closed' || !s.kinds) return;
+  const k = s.kinds;
+  const c = s.casualties.find((q) => q.isTarget);
+  if (!c || c.dead || c.where !== 'scene') return;
+  // 시각이 되도록 아이가 아직 현장에 있으면(못 찾았거나, 누군가 보았지만 지휘관이 알지 못해 데려가지 않았으면) 시민이 데려온다
+  if (k.backAt !== undefined && sim.t >= k.backAt && !k.backed) {
+    k.backed = true;
+    c.where = 'safe'; c.x = s.safe.x; c.y = s.safe.y; c.wander = false; c.path = null; c.walking = false; if (c.tDiscovered < 0) c.tDiscovered = sim.t;
+    const ev = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '관제', kind: 'casualty', imp: 2, text: `아이를 보호하던 시민이 안내 데스크로 데려왔습니다. ${josa(c.label, '을/를')} 보호자에게 인계합니다.` });
+    const cmd = s.agents.filter((a) => a.status === 'active' && a.isCommander);
+    for (const a of cmd.length ? cmd : s.agents.filter((b) => b.status === 'active')) learn(sim, a, casFact(sim, s, c, '관제'), true, true);
+    void ev;
+    return;
+  }
+  if (c.tDiscovered >= 0 || (sim.tick + s.id) % 5 !== 0) return;      // 아래는 찾기 전에만, 1초에 한 번
+  if (!k.announced) {
+    for (const a of s.agents) {
+      if (a.status !== 'active' || !a.task || a.task.kind !== 'cordon' || !hasKit(sim, a.rid, 'megaphone')) continue;
+      if (!s.exits.some((e) => dist(a.x, a.y, e.x, e.y) <= CHILD.guardR + 1)) continue;
+      k.announced = true; c.concealment = Math.max(0, c.concealment - CHILD.announce);
+      emit(sim, { inc: I.id, role: 'RESPONDER', actor: resp(sim, a).name, rid: a.rid, kind: 'action', imp: 1, text: '출구에서 안내 방송을 합니다 — 아이를 본 사람은 알려 달라고 했습니다.' });
+      break;
+    }
+  }
+  let at = -1;
+  for (let e = 0; e < s.exits.length; e++) if (dist(c.x, c.y, s.exits[e].x, s.exits[e].y) <= CHILD.exitR) { at = e; break; }
+  if (at < 0) { CHILD_AT.delete(s); return; }
+  if (CHILD_AT.get(s) === at) return;
+  CHILD_AT.set(s, at);
+  const ex = s.exits[at];
+  const guarded = s.agents.some((a) => a.status === 'active' && !a.aloft && a.task !== null && a.task.kind === 'cordon' && dist(a.x, a.y, ex.x, ex.y) <= CHILD.guardR + 1);
+  c.path = null;      // 어느 쪽이든 돌아선다 (배회 이동이 다음 걸음을 새로 고른다)
+  if (guarded) return;
+  k.outCount = (k.outCount ?? 0) + 1;
+  c.concealment = Math.min(CHILD.hideMax, c.concealment + CHILD.hide);
+  emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 1, truth: true, text: `(미발견) ${josa(c.label, '이/가')} 지키는 사람이 없는 출구로 나갔다가 다른 길로 들어왔습니다. 찾기가 더 어려워집니다.` });
+});
+/** (§4.5) 보호 유형의 판정: 미아를 시민이 데려왔으면 대응 지연 */
+registerVerdict((sim, s, I) => {
+  void sim; void I;
+  if (s.kind !== 'welfare' || !s.kinds) return null;
+  return s.kinds.backed ? { delayed: true } : null;
+});

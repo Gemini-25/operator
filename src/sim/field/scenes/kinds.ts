@@ -6,7 +6,11 @@ import { T } from '../../types';
 import { SW, addCas, addHostile, addProp, addRegion, baseScene, freeTileIn, set } from '../kit';
 import { armedVenue, buildStop } from '../builders';
 import { tidx } from '../grid';
-import { addAnimal, alleyFrame, buildQuiet, farmFrame, freeGround, marketFrame, streetFrame, yardFrame } from '../kindsKit';
+import { addAnimal, alleyFrame, buildQuiet, farmFrame, freeGround, marketFrame, streetFrame, urbanFrame, yardFrame } from '../kindsKit';
+import { TYPE_DEFS } from '../../incidentTypes';
+import type { Sim } from '../../engine';
+import type { Rng } from '../../rng';
+import type { Scene } from '../../types';
 import { registerScene } from '../sceneRegistry';
 
 // ── 시설 사고 (§4.2 — 단계 4a·4b) ──
@@ -393,5 +397,32 @@ registerScene('disturb', 'cartheft', (sim, I, rng) => {
   const flee = rng.chance(0.55);
   s.kinds = { stopFled: flee };
   if (flee && I.pursuit && I.pursuit.state === 'stopped') for (const h of s.hostiles) h.fleeAt = sim.t;
+  return s;
+});
+
+// ───────────────────────── 보호 welfare (§4.5 — 단계 7) ─────────────────────────
+/** 걷는 대상 하나와 보호자(마지막으로 본 구역 — 정확도 witnessAcc)를 놓는다. 대상은 대기 지점에서 먼 구역일수록 자주 */
+function placeWanderer(sim: Sim, s: Scene, rng: Rng, health: [number, number], conc: [number, number]): void {
+  const zones = s.regions.filter((r) => r.kind === 'zone' && r.searchable);
+  const tz = rng.weighted(zones, zones.map((z) => 0.4 + Math.hypot(z.cx - s.staging.x, z.cy - s.staging.y) / 12));
+  const ti = freeTileIn(s, tz, rng);
+  addCas(s, ti % s.w, (ti / s.w) | 0, 'mobile', rng.range(health[0], health[1]), rng.range(0.02, 0.05), rng.range(conc[0], conc[1]), { isTarget: true, wander: true, wanderT: sim.t + 10 });
+  const accurate = rng.chance(sim.tune.witnessAcc);
+  const others = zones.filter((z) => z.id !== tz.id);
+  addProp(s, 'witness', s.safe.x + 1, s.safe.y, { lastSeenRegion: accurate || !others.length ? tz.id : rng.pick(others).id, accurate, interviewed: false });
+  s.leadDept = 'police';
+}
+// 치매 노인: 도심의 틀 · 대상 1(걷는다 — 체력 70~90 · 은폐 0.3~0.5) · 보호자(가족)
+registerScene('welfare', 'dementia', (sim, I, rng) => {
+  const s = urbanFrame(sim, I, rng, ['골목', '주차장', '시장길', '작은 공원 앞']);
+  placeWanderer(sim, s, rng, [70, 90], [0.3, 0.5]);
+  return s;
+});
+// 미아: 도심의 틀(공원·시장·매장 앞) · 아이 1(걷는다 — 체력 100 · 은폐 0.4) · 보호자 · 시민이 안내 데스크로 데려오는 시각(생성 + 한계 − 40 — §5.13)
+registerScene('welfare', 'lostchild', (sim, I, rng) => {
+  const s = urbanFrame(sim, I, rng, ['놀이터 쪽', '매장 앞', '큰길 쪽 통로', '뒤쪽 산책로']);
+  placeWanderer(sim, s, rng, [100, 100], [0.4, 0.4]);
+  s.kinds!.backAt = I.createdAt + TYPE_DEFS.welfare.limit - 40;
+  s.kinds!.outCount = 0;
   return s;
 });

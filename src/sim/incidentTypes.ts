@@ -15,7 +15,8 @@ import type { IncidentType, InjuryCause, Needs, Scene, Topic } from './types';
 export const TYPE_ORDER: readonly IncidentType[] = ['fire', 'traffic', 'search', 'armed', 'medical', 'collapse', 'hazmat', 'water',
   'utility',      // (N8 단계 4a) 시설 사고 — 평소 추첨 가중 0 (짧은 사건 흐름 daily 로만 나온다)
   'animal',      // (N8 단계 5) 동물 — 평소 추첨 가중 0 (짧은 사건 흐름으로만)
-  'disturb'];      // (N8 단계 6a) 치안 — 평소 추첨 가중 0 (짧은 사건 흐름으로만)
+  'disturb',      // (N8 단계 6a) 치안 — 평소 추첨 가중 0 (짧은 사건 흐름으로만)
+  'welfare'];      // (N8 단계 7) 보호 — 평소 추첨 가중 0 (짧은 사건 흐름으로만)
 
 /** 유형 → TYPE_ORDER 의 자리 (분석 AI 의 숫자 색인 lp[…] 대신) */
 export const typeIdx = {} as Record<IncidentType, number>;
@@ -128,6 +129,14 @@ export const TYPE_DEFS: Record<IncidentType, TypeDef> = {
     question: { count: '몇 명이 싸우고 있습니까?', detail: '그 사람들은 어디로 갔습니까?' },
     topicValue: { weapon: 0.9, injured: 0.8, count: 0.6, detail: 0.5 },
     baseNeeds: { law: 1 }, cause: 'blunt', floorHp: 0,
+  },
+  // ── (N8 단계 7 — 설계서 §4.1·§4.5) 보호: 치매 노인·미아. 사람을 찾고 지키는 사건 — 검거·교전이 없다. 구역 확률 수색(구역이 있는 현장)·걷는 대상·체력 하한 20(§5.13) ──
+  welfare: {
+    name: '보호', limit: 360, respLimit: 100, delay: [2, 10], follow: 0.15, weight: 0, atNode: 0.8, alwaysShow: false,
+    indoorRisk: false, roomSearch: true, zoneSearch: true, wander: true, outdoor: false,
+    question: { count: '마지막으로 본 게 언제입니까?', hazard: '위험한 곳 가까이 있습니까?', detail: '어떤 옷을 입었습니까?' },
+    topicValue: { detail: 0.92, hazard: 0.7, injured: 0.5 },
+    baseNeeds: { search: 1 }, cause: 'illness', floorHp: 20,
   },
 };
 

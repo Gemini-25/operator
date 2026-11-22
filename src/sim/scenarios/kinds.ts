@@ -187,6 +187,17 @@ export const KINDS: Scenario[] = [
     lik: { disturb: 0.7, traffic: 0.2, armed: 0.08 },
     places: { parking: 4, gasStation: 0.5, mart: 1, apartment: 1 },
     needs: (n) => { n.law = 2; n.search = 1; n.traffic = 0; n.tow = 0; } },
+  // ── 보호 (§4.5 — 단계 7). 사연·의도를 말하는 문구는 넣지 않는다(§5.13) ──
+  { type: 'welfare', variant: 'dementia', name: '치매 노인 실종', share: 0.45, nature: 'dementia', vague: 'missing', severity: [1, 2], tag: 'daily', card: false, limit: 60,
+    texts: ['치매가 있는 아버지가 집을 나가셨는데 연락이 안 돼요.', '요양원에서 어르신 한 분이 안 보이세요. 한 시간쯤 됐어요.', '시장 쪽에서 길을 잃고 헤매시는 할머니를 봤어요.'],
+    lik: { welfare: 0.72, search: 0.24, medical: 0.02, armed: 0.01 },
+    places: { houseS: 3, villa: 3, apartment: 3, market: 1.5, park: 1, station: 0.5, busTerminal: 0.5 },
+    needs: (n) => { n.search = 2; } },
+  { type: 'welfare', variant: 'lostchild', name: '미아', share: 0.8, nature: 'lostchild', vague: 'missing', severity: [1, 1], tag: 'daily', card: false,
+    texts: ['아이를 잃어버렸어요! 마트에서 잠깐 한눈판 사이에요.', '놀이공원에서 일곱 살 아이가 안 보여요.', '공원에서 놀던 아이가 없어졌어요. 노란 옷을 입었어요.'],
+    lik: { welfare: 0.8, search: 0.15, water: 0.02, armed: 0.01 },
+    places: { mart: 3, deptStore: 2, park: 2, market: 1.5, station: 1, amusement: 1 },
+    needs: (n) => { n.search = 1; n.law = 0; } },
   // ── 비응급 N1 장난 전화 (§4.8 — 기존 armed/prank 는 평소 추첨 그대로) ──
   { type: 'fire', variant: 'prank', name: '장난 전화', share: 0.2, nature: 'prank:fire', vague: 'flames', severity: [1, 1], tag: 'daily', card: false },
   { type: 'medical', variant: 'prank', name: '장난 전화', share: 0.15, nature: 'prank:medical', vague: 'notbreathing', severity: [1, 1], tag: 'daily', card: false },

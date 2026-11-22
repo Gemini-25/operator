@@ -460,3 +460,20 @@ registerOrders((sim, s, I, a, k) => {
 });
 /** 견인차가 맡은 차: 핵심 규칙의 도로 정리(밀어 둠)를 내지 않는다 */
 registerPropHold((sim, s, a, propId) => { void sim; void a; const h = TOW_HELD.get(s); return h !== undefined && h.has(propId); });
+
+// ───────────────────────── 보호 (§4.5 — 단계 7) — 미아의 출구 ─────────────────────────
+// 믿음과 관제의 이름표만 읽는다(대상을 찾았는가 = 믿음에 구조 대상이 있는가). 아이를 모르는 동안 출구 둘(대기 지점에서 가까운 차례)에 통제(cordon — perimeter 가 아니다: 위협이 없는 현장이라
+// 핵심 규칙이 거둔다). 현장의 손이 셋 넘을 때 둘째를 둔다 — 남은 손은 수색한다(통제 0.8 에 다 묶이면 0.22 규칙 때문에 수색으로 빼 오지 못한다). 찾으면 거둔다
+/** 출구 통제의 우선순위 (첫째 · 둘째) */
+export const CHILD_POST = { p1: 0.8, p2: 0.62 };
+registerOrders((sim, s, I, a, k) => {
+  if (s.kind !== 'welfare' || !I.assessment || I.assessment.label !== '미아') return;      // 관제가 붙인 이름표(조직이 아는 것)로만 — 현장의 변형(진실)은 읽지 않는다
+  void sim;
+  const found = a.beliefs.list('cas').length > 0;
+  if (found) { k.cancel((w) => w.kind === 'cordon'); return; }
+  const order = s.exits.map((e, i) => ({ i, d: Math.hypot(e.x - s.staging.x, e.y - s.staging.y) })).sort((p, q) => p.d - q.d || p.i - q.i);
+  const hands = s.agents.filter((b) => b.status === 'active' && !b.aloft).length;
+  const keep: number[] = [];
+  for (let n = 0; n < Math.min(order.length, hands > 3 ? 2 : 1); n++) { const t = exitPost(s, order[n].i); keep.push(t); k.want('cordon', { tile: t }, n === 0 ? CHILD_POST.p1 : CHILD_POST.p2); }
+  k.cancel((w) => w.kind === 'cordon' && keep.indexOf(w.tile) < 0);
+});

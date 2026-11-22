@@ -490,6 +490,7 @@ export function initialCause(s: Scene, I: Incident, c: Casualty): InjuryCause {
   if (type === 'collapse' && v === 'gasblast') return 'blast';
   // (N8 §5.14) 시설 사고의 변형: 수도관 파열(지하 침수) → 노출 · 싱크홀 → 추락 · 간판 → 깔림 (끊어진 전선은 유형의 기본값 — 감전)
   if (type === 'utility') return v === 'main' ? 'exposure' : v === 'sinkhole' ? 'fall' : v === 'sign' ? 'crush' : TYPE_DEFS.utility.cause ?? 'electric';
+  if (type === 'welfare' && v === 'dementia') return 'exposure';      // (N8 §5.14 — 단계 7) 길 잃은 치매 노인 — 노출 (보호의 기본값은 질병)
   if (c.inVehicle !== null || type === 'traffic') return 'vehicle';
   { const tc = TYPE_DEFS[type].cause; if (tc) return tc; }      // (N8 §5.2-6) 새 유형은 표의 기본값 — 무장(아래 default)으로 떨어지지 않게
   switch (type) {

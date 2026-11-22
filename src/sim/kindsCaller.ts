@@ -110,4 +110,12 @@ export const KIND_CALLER: Partial<Record<IncidentType, CallerHook>> = {
       }
     },
   },
+  // (7) 보호: 갇힌 사람은 없다 · 다친 사람은 체력으로. 인상착의(어떤 옷)는 보호자가 안다 — 사연·의도는 말하지 않는다(§5.13)
+  welfare: {
+    truth: (s) => { let injured = false; for (const c of s.casualties) if (!c.dead && c.health < 85) injured = true; return { trapped: false, injured }; },
+    more: (sim, I, s, rng, kn, acc, put) => {
+      void sim; void s; void acc;
+      if (rng.chance(Math.max(kn, 0.6))) put('detail', { clothes: true }, I.truth.variant === 'lostchild' ? '노란 옷을 입었어요. 키는 이만해요.' : '회색 점퍼를 입으셨어요. 지팡이를 짚고 다니세요.', true);
+    },
+  },
 };

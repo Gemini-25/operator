@@ -165,6 +165,8 @@ const NEED_MIN: Record<keyof UnitCaps, number> = { suppression: 0.7, rescue: 0.5
  * 이 작업을 할 수 있는 대원을 보내 줄 부대의 능력. 아무나 할 수 있는 일이면 null.
  * a = 지휘관 (N8 §5.3.5 — 시설물 복구의 수요는 믿음 속 시설물의 종류·관의 갈래로 정한다). 소품의 생김새(kind·skin)는 읽어도 되고 진실 칸은 읽지 않는다
  */
+/** (N8 단계 7) 보호 유형의 재수색 상한 (실종은 3) — 걷는 대상이 다 본 구역으로 돌아와도 찾을 때까지 */
+export const WELFARE_ROUNDS = 8;
 function needFor(s: Scene, w: WorkItem, hotArmed: boolean, a: FieldAgent): keyof UnitCaps | null {
   switch (w.kind) {
     case 'suppress': case 'hookup': case 'overhaul': return 'suppression';
@@ -357,7 +359,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     updateZoneProb(sim, s, a);
     const targetsFound = cas.length;
     if (targetsFound < Math.max(1, expected)) {
-      const zones = s.regions.filter((r) => r.kind === 'zone');
+      const zones = s.regions.filter((r) => r.kind === 'zone' && r.searchable);      // (N8 단계 7) 수색하지 않는 구역(도심 틀의 찻길)은 빼고 — 실종 현장은 모두 수색 구역이라 그대로
       let maxP = 0; for (const z of zones) maxP = Math.max(maxP, s.zoneProb[z.id]);
       for (const z of zones) {
         const c = B.val<number>('srch', z.id) ?? -1;
@@ -365,13 +367,13 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         pendingSearch++;
         want(sim, s, 'search', { region: z.id }, 0.36 + 0.5 * (s.zoneProb[z.id] / (maxP || 1)), 1, s.researchRound > 0 || c >= 0);
       }
-      if (pendingSearch === 0 && s.researchRound < 3) {
+      if (pendingSearch === 0 && s.researchRound < (s.kind === 'welfare' ? WELFARE_ROUNDS : 3)) {      // (N8 단계 7) 도심을 걷는 보호 대상은 다 본 구역으로 다시 걸어 들어온다 — 재수색을 더 돈다
         s.researchRound++;
         // 모든 구역을 봤는데도 못 찾았다 → 놓쳤다고 보고 확인율을 낮춰 정밀 재수색
         const redo = [];
         for (const z of zones) { const f = B.get('srch', z.id); if (f) { const nf = mkFact('srch', z.id, Math.min(f.value, 0.45), '지휘관 재평가', sim.t, 0.5, true, `${z.name} 재수색 필요`); B.merge(nf); redo.push(nf); } }
         if (redo.length) transmit(sim, s, a, -1, 'report', redo, '', -1, 0, [], true);
-        raiseProblem(sim, I, 'VICTIM_MISSED', '전 구역 1차 수색에서 대상을 찾지 못함', { role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, imp: 2, text: `전 구역을 수색했지만 대상을 찾지 못했습니다. 탐색 범위를 재조정하고 간격을 좁혀 정밀 재수색합니다 (${s.researchRound}차).` }, false);
+        if (s.researchRound <= 3) raiseProblem(sim, I, 'VICTIM_MISSED', '전 구역 1차 수색에서 대상을 찾지 못함', { role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, imp: 2, text: `전 구역을 수색했지만 대상을 찾지 못했습니다. 탐색 범위를 재조정하고 간격을 좁혀 정밀 재수색합니다 (${s.researchRound}차).` }, false);
       }
     } else cancel(s, (w) => w.kind === 'search');
   } else {

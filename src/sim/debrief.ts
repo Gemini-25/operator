@@ -295,6 +295,11 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
       hl.push(`${nm} ${an.length}마리 가운데 ${got}마리 포획${wild ? ` · ${wild}마리 산 쪽으로 쫓아냄` : ''}${road ? ` · ${road}마리 찻길로 놓침` : ''}`);
     }
   }
+  if (truth.type === 'welfare') {      // (N8 §4.5) 보호의 머리글 — 실패는 한 줄로만(§5.13)
+    const c = s.casualties.find((q) => q.isTarget);
+    if (c && c.tDiscovered >= 0 && !c.dead) hl.push(s.kinds && s.kinds.backed ? '찾는 데 오래 걸렸습니다 — 시민이 안내 데스크로 데려옴' : c.where === 'loaded' ? '찾아서 병원 이송' : truth.variant === 'lostchild' ? '아이를 찾아 보호자에게 인계했습니다' : '보호자에게 인계');
+    else if (c && !c.dead) hl.push('찾지 못해 수색을 인계했습니다');
+  }
   if (truth.type === 'disturb') {      // (N8 §4.4) 치안의 머리글 — 용의자의 끝 상태로
     const hs = s.hostiles, got = hs.filter((h) => h.state === 'arrested' || h.state === 'surrendered').length, fled = hs.filter((h) => h.state === 'escaped').length;
     if (truth.variant === 'snatch') hl.push(got ? '용의자 검거 — 가방 회수' : fled ? '용의자가 골목으로 달아났습니다' : '용의자를 찾지 못함');

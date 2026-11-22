@@ -10,7 +10,8 @@ export type Dept = 'fire' | 'ems' | 'police'
 export type IncidentType = 'fire' | 'traffic' | 'search' | 'armed' | 'medical' | 'collapse' | 'hazmat' | 'water'
   | 'utility'      // (N8 단계 4a) 시설 사고 — 끊어진 전선·수도관 파열·싱크홀·간판 (TYPE_ORDER 의 끝)
   | 'animal'      // (N8 단계 5) 동물 — 멧돼지·벌집·개 물림·가축 탈출 (짧은 사건 흐름 daily 로만)
-  | 'disturb';      // (N8 단계 6a) 치안 — 주취 소란·폭행 시비·날치기 (총·흉기가 없는 경찰 일상, 짧은 사건 흐름 daily 로만)
+  | 'disturb'      // (N8 단계 6a) 치안 — 주취 소란·폭행 시비·날치기 (총·흉기가 없는 경찰 일상, 짧은 사건 흐름 daily 로만)
+  | 'welfare';      // (N8 단계 7) 보호 — 치매 노인·미아 (사람을 찾고 지키는 사건, 짧은 사건 흐름 daily 로만)
 export type District = 'residential' | 'commercial' | 'industrial' | 'outskirts';
 export type Weather = 'clear' | 'rain' | 'fog' | 'night';
 
@@ -1367,4 +1368,11 @@ export interface KindsState {
   scamExit?: number;                              // 잠복: 수거책이 들어오고 돌아 나가는 출구 (s.exits 의 번호)
   scamFled?: boolean;                             // 잠복: 수거책이 경찰을 알아보고 달아났다 (판정 문장)
   stopFled?: boolean;                             // 차량 절도: 세운 뒤 운전자가 곧바로 내려 달아나기로 했다 (현장 생성기가 정한다 — 같은 흐름으로 두 번 만들어도 같다)
+}
+// (N8 단계 7) 보호 유형의 진실 (KindsState 끝 — 선택 칸)
+export interface KindsState {
+  backAt?: number;                                // 미아: 시민이 안내 데스크로 데려오는 시각 (생성 + 한계 − 40 — §5.13 아동 사건의 실패는 지연으로만)
+  backed?: boolean;                               // 그렇게 데려왔다 (판정: 대응 지연)
+  outCount?: number;                              // 미아가 지키는 사람이 없는 출구에 닿은 횟수 (은폐가 오른 횟수)
+  announced?: boolean;                            // 출구의 통제에 확성기를 든 대원이 섰다 (은폐 −0.15 한 번)
 }

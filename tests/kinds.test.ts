@@ -20,7 +20,7 @@ import { TYPE_NAME } from '../src/sim/util';
 import { TYPE_COLOR, respLimitOf } from '../src/view/typeStyle';
 
 /** 등록 자리의 줄 수 [남은 일 · 사람 보류 · 소품 보류 · 판정] — 단계 4a: 시설 사고 · 단계 5: 동물 · 단계 6b: 견인(소품 보류) (orders/kinds.ts · rules/kinds.ts) */
-const REG_NOW = [2, 2, 1, 2];
+const REG_NOW = [2, 2, 1, 3];      // (단계 7) 판정 하나 — 미아를 시민이 데려왔으면 대응 지연
 
 describe('1 유형 자료 (incidentTypes — 단계 1)', () => {
   it('TYPE_DEFS·TYPE_ORDER·typeIdx 가 모든 유형을 덮고, 첫 여덟의 순서가 예전과 같다', () => {
@@ -413,8 +413,9 @@ describe('20 새 부대 — 편성되지 않는 여덟 줄 · 표 · 관제의 �
     // (단계 4b) 시설 사고의 이름표 셋 — 간판의 진압 수요에 사다리차·구조 수요에 로프, 싱크홀의 구조 수요에 구조대
     // (단계 5) 가축 탈출의 교통 수요에 교통 경찰 +8 (교통 경찰은 단계 6a 에 편성된다 — 그 전에는 걸리지 않는 줄)
     // (단계 6a) 날치기의 수색 수요에 경찰견 +10 · 경찰 수요에 형사 +10
+    // (단계 7) 치매 노인 실종의 수색 수요에 경찰견 +10
     // (단계 6b) 수거책 잠복의 경찰 수요에 형사 +60 (설계서의 +15 로는 기동대(경찰 능력 1.0)를 넘지 못했다 — 구현 메모 단계 6b)
-    expect(LABEL_BONUS.filter((r) => N8_LABELS.indexOf(r.label) >= 0).map((r) => `${r.label}|${r.key}|${r.kind ?? r.kit}|${r.bonus}`).sort()).toEqual(['가축 탈출|traffic|trafficPol|8', '날치기|law|detective|10', '날치기|search|k9|10', '떨어질 듯한 간판|rescue|rope|10', '떨어질 듯한 간판|suppression|ladder|12', '수거책 잠복|law|detective|60', '싱크홀|rescue|rescue|15']);
+    expect(LABEL_BONUS.filter((r) => N8_LABELS.indexOf(r.label) >= 0).map((r) => `${r.label}|${r.key}|${r.kind ?? r.kit}|${r.bonus}`).sort()).toEqual(['가축 탈출|traffic|trafficPol|8', '날치기|law|detective|10', '날치기|search|k9|10', '떨어질 듯한 간판|rescue|rope|10', '떨어질 듯한 간판|suppression|ladder|12', '수거책 잠복|law|detective|60', '싱크홀|rescue|rescue|15', '치매 노인 실종|search|k9|10']);
     const rope = sim.units.find((u) => u.kind === 'rescue')!;
     for (const r of rope.crew) for (const it of sim.responders[r].kit!) it.faultKnown = false;
     set('water'); expect(kitBonus(sim, rope, I, 'rescue')).toBe(12); expect(kitBonus(sim, rope, I, 'law')).toBe(0);
@@ -465,6 +466,7 @@ const N12 = ['fire/prank', 'medical/prank', 'water/prank', 'medical/false', 'wat
 const UTIL_LINES = ['utility/wire', 'utility/main', 'utility/sinkhole', 'utility/sign'];
 const ANIMAL_LINES = ['animal/boar', 'animal/hive', 'animal/dogbite', 'animal/escape'];      // (단계 5)
 const DISTURB_LINES = ['disturb/rowdy', 'disturb/brawl', 'disturb/snatch', 'disturb/scam', 'disturb/cartheft'];      // (단계 6a · 6b)
+const WELFARE_LINES = ['welfare/dementia', 'welfare/lostchild'];      // (단계 7 — 이 커밋의 둘)
 /** 강제 발생(sim.force)으로 만든 그 사건 — 그 변형의 첫 사건 (강제 발생도 시나리오의 tag 'daily' 를 받는다) */
 const forced = (sim: Sim) => (J: Inc): boolean => sim.force !== null && `${J.truth.type}/${J.truth.variant}` === sim.force && J.parent === undefined;
 /** 단계 3 에는 daily 줄이 비응급 일곱(가중 1.4 / DAILY_TOTAL 14)뿐이라 보통 교대의 짧은 사건은 0.5건쯤이다 — 시험은 차례를 늘려(SimOpts.daily) 짧은 사건이 끼게 한다 */
@@ -493,7 +495,7 @@ describe('6 짧은 사건의 재현성과 표 (단계 3)', () => {
       expect(NATURE_LIK[q.nature], `${q.nature} 는 신고자가 말하는 키가 아니다`).toBeUndefined();
       expect(q.card).toBe(false);
     }
-    expect(daily.map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...N12, ...UTIL_LINES, ...ANIMAL_LINES, ...DISTURB_LINES].sort());
+    expect(daily.map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...N12, ...UTIL_LINES, ...ANIMAL_LINES, ...DISTURB_LINES, ...WELFARE_LINES].sort());
   });
   it('N8 의 새 난수 흐름 이름이 기존 흐름 이름과 겹치지 않는다 (소스의 fork 글자 — 한 이름은 한 자리에서만 만든다, 아직 쓰지 않은 이름은 아무도 쓰지 않는다)', () => {
     // 단계 5: 동물마다(animal:) · 차에 받힌 동물의 운전자(animal-hit:) · 벌집(hive:) · 동물 포획 장비의 고장 추첨(kit-n8 · 지원 부대 aid-n8:)
@@ -807,7 +809,7 @@ describe('3·5·9·10 시설 사고 — 끊어진 전선 (단계 4a)', () => {
 describe('18 새 유형의 자리 (단계 4a 부터)', () => {
   it('새 유형마다 TYPE_DEFS·TYPE_COLOR·INCIDENT_PLACES·한계 시간이 있고, 모든 줄에 현장 생성기가 등록돼 있다', () => {
     new Sim('N8-18');
-    for (const t of ['utility', 'animal', 'disturb'] as IncidentType[]) {
+    for (const t of ['utility', 'animal', 'disturb', 'welfare'] as IncidentType[]) {
       expect(TYPE_DEFS[t].limit, t).toBeGreaterThan(0);
       expect(TYPE_COLOR[t], t).toMatch(/^#[0-9a-f]{6}$/);
       expect(Object.keys(INCIDENT_PLACES[t]).length, t).toBeGreaterThan(0);
@@ -1253,5 +1255,73 @@ describe('5·9·14 치안 — 수거책 잠복 · 차량 절도 · 교통사고�
       }
     } finally { TOW_WAIT.s = wait0; }
     expect(TOW_WAIT.s).toBe(150);
+  });
+});
+
+// ───────────────────────── 단계 7 (보호 — 치매 노인 · 미아) ─────────────────────────
+import { CHILD } from '../src/sim/field/rules/kinds';
+import { WELFARE_ROUNDS } from '../src/sim/field/commander';
+
+describe('5·9·11 보호 — 치매 노인 · 미아 (단계 7)', () => {
+  it('5 두 시나리오는 강제 교대(S0·S1)에서 모두 닫히고 한계 시간·방치·무대응이 아니다 · 9 수색·통제·데려가기의 되풀이 없음 · 11 보호 유형의 구조 대상은 숨지지 않고 체력이 20 아래로 내려가지 않는다', () => {
+    for (const key of WELFARE_LINES) for (const seed of ['S0', 'S1']) {
+      const sim = new Sim(seed, NORMAL, 1200, { force: key });
+      const wb = watchBoard(['cordon', 'escort']);
+      let J: Inc | undefined, minHp = 100;
+      for (let k = 0; k < 7000 && !sim.ended; k++) {
+        sim.step();
+        J = sim.incidents.find(forced(sim));
+        const s = J ? sim.scenes[J.id] : undefined;
+        if (!J || !s) continue;
+        wb.look(sim, s);
+        for (const c of s.casualties) { expect(c.dead, `${key} ${seed}`).toBe(false); minHp = Math.min(minHp, c.health); }
+        if (J.phase === 'closed') break;
+      }
+      expect(J && J.phase, `${key} ${seed}`).toBe('closed');
+      expect(['timeout', 'abandoned', 'noresponse'].indexOf(J!.closeReason), `${key} ${seed}: ${J!.closeReason}`).toBe(-1);
+      expect(wb.bad(), `${key} ${seed}: ${wb.bad()}`).toBe('');
+      expect(minHp, `${key} ${seed}`).toBeGreaterThanOrEqual(20);
+    }
+  });
+  it('11 미아는 강제 S0~S9 모두 찾고(못 찾으면 한계 40초 전에 시민이 데려온다 — 그때 지휘관이 그 사실을 강제로 안다) 결과가 성공 또는 대응 지연 · 출구의 은폐는 0.84 를 넘지 않는다', () => {
+    let backed = 0;
+    for (let k = 0; k < 10; k++) {
+      const sim = new Sim('S' + k, NORMAL, 1200, { force: 'welfare/lostchild' });
+      let J: Inc | undefined, maxConc = 0;
+      for (let n = 0; n < 7000 && !sim.ended; n++) {
+        sim.step();
+        J = sim.incidents.find(forced(sim));
+        const s = J ? sim.scenes[J.id] : undefined;
+        if (s) for (const c of s.casualties) if (c.isTarget) maxConc = Math.max(maxConc, c.concealment);
+        if (J && J.phase === 'closed') break;
+      }
+      const s = sim.scenes[J!.id]!, c = s.casualties.find((q) => q.isTarget)!;
+      expect(J!.phase, `S${k}`).toBe('closed');
+      expect(c.tDiscovered, `S${k}: 찾았다`).toBeGreaterThanOrEqual(0);
+      expect(['success', 'delayed'].indexOf(J!.result!.outcome), `S${k}: ${J!.result!.outcome}`).toBeGreaterThanOrEqual(0);
+      expect(maxConc, `S${k}`).toBeLessThanOrEqual(CHILD.hideMax + 1e-9);
+      if (s.kinds!.backed) {
+        backed++;
+        expect(J!.result!.outcome, `S${k}: 시민이 데려왔으면 대응 지연`).toBe('delayed');
+        expect(sim.events.some((e) => e.incidentId === J!.id && e.text.startsWith('아이를 보호하던 시민이 안내 데스크로 데려왔습니다'))).toBe(true);
+      }
+    }
+    expect(CHILD.hideMax).toBe(0.84);
+    expect(backed).toBeGreaterThanOrEqual(0);
+  });
+  it('11 치매 노인: 생성기 400번 — 체력은 70~90(하한 20 위), 걷는 대상 하나와 보호자 · 도심 틀의 찻길은 수색 구역이 아니다 · 재수색 상한은 실종(3)보다 길다', () => {
+    const sim = new Sim('N8-7-GEN', NORMAL, 1200, { force: null });
+    for (let k = 0; k < 400; k++) {
+      const I = createIncident(sim, { type: 'welfare', variant: 'dementia', rng: sim.rng.fork('n8-7-gen' + k) });
+      const s = sim.scenes[I.id]!;
+      const t = s.casualties.filter((c) => c.isTarget);
+      expect(t.length).toBe(1);
+      expect(t[0].health).toBeGreaterThanOrEqual(70); expect(t[0].health).toBeLessThanOrEqual(90);
+      expect(t[0].wander).toBe(true);
+      expect(s.props.some((p) => p.kind === 'witness')).toBe(true);
+      expect(s.regions.filter((r) => r.kind === 'zone' && r.searchable).length).toBe(4);
+      I.phase = 'closed';
+    }
+    expect(WELFARE_ROUNDS).toBeGreaterThan(3);
   });
 });

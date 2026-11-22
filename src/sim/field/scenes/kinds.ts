@@ -4,7 +4,7 @@
 // 단계 3: 비응급 N1 장난 전화 셋(빈 현장) · N2 오인 신고 넷(§4.8 — 가서 확인하면 "이상 없음"의 답이 현장에 있다).
 import { T } from '../../types';
 import { SW, addCas, addHostile, addProp, addRegion, baseScene, freeTileIn, set } from '../kit';
-import { armedVenue } from '../builders';
+import { armedVenue, buildStop } from '../builders';
 import { tidx } from '../grid';
 import { addAnimal, alleyFrame, buildQuiet, farmFrame, freeGround, marketFrame, streetFrame, yardFrame } from '../kindsKit';
 import { registerScene } from '../sceneRegistry';
@@ -358,5 +358,40 @@ registerScene('disturb', 'snatch', (sim, I, rng) => {
   }
   s.kinds!.expectHidden = true;
   s.leadDept = 'police';
+  return s;
+});
+
+// ───────────────────────── 치안 disturb (§4.4 — 단계 6b) ─────────────────────────
+/**
+ * 수거책 잠복: 그 건물 앞 길(streetFrame — 차 없음, 수색할 구역 없음). 피해자(witness 'victim' — 면담하면 약속 시각을 안다)는 동쪽 보도의 약속 자리에 선다.
+ * 수거책은 아직 없다 — 들어올 시각 s.kinds.arriveAt(생성 + 150~260초)에 동쪽 출구(s.kinds.scamExit)에서 세계 규칙(scamRule)이 만든다(그 전에는 s.hostiles 에 없다).
+ * 피해자가 말하는 약속 시각 meetAt 은 arriveAt ± 20초 (진실과 다르다 — 믿음 evid meet 은 이 값). 대기 지점(서쪽 끝)에서 약속 자리까지 16칸 넘게 떨어진다
+ */
+registerScene('disturb', 'scam', (sim, I, rng) => {
+  const s = streetFrame(sim, I, rng, { lanes: false, search: false });
+  s.placeName = nearName(sim, I, '약속 장소');
+  const vy = rng.chance(0.5) ? 7 : 13, vx = rng.int(18, 23);
+  const reg = s.region[vy * s.w + vx];
+  addProp(s, 'witness', vx, vy, { skin: 'victim', lastSeenRegion: reg >= 0 ? reg : 0, accurate: true, interviewed: false });
+  s.vantage = { x: vx - 5, y: vy === 7 ? 7 : 12 };      // 현장 평가는 피해자가 보이는 자리에서 (신고자의 말 — 피해자를 만나 확인한다)
+  const arrive = sim.t + rng.range(150, 260);
+  s.kinds = { arriveAt: arrive, meetAt: arrive + rng.range(-20, 20), scamExit: rng.chance(0.5) ? 1 : 3, scamFled: false };
+  s.leadDept = 'police';
+  return s;
+});
+/**
+ * 차량 절도: 추격 끝에 선 자리의 현장 — builders.buildStop(난폭 운전과 같은 틀: 막혀 서면 운전자 한 명 · 사고로 서면 다친 운전자)을 그대로 부르고 이름만 바꾼다.
+ * 세운 뒤 55% 는 운전자가 곧바로 내려 달아난다(fleeAt = 지금 — 지금의 용의자 규칙이 대원이 3칸 밖이면 막히지 않은 출구로 달아난다 · 도보 추격).
+ * 신고자 모델을 위해 사건이 생길 때 한 번, 차가 선 뒤 한 번 더 만든다(같은 scene 흐름 — 같은 사람·같은 추첨)
+ */
+registerScene('disturb', 'cartheft', (sim, I, rng) => {
+  const s = buildStop(sim, I, rng);
+  const crash = !!I.pursuit && I.pursuit.how === 'crash';
+  s.placeName = crash ? '도난 차량 사고 현장' : '도난 차량 검거 현장';
+  for (const r of s.regions) if (r.name === '난폭 운전 차량') r.name = '도난 차량';
+  for (const h of s.hostiles) h.label = '차량 절도 용의자';
+  const flee = rng.chance(0.55);
+  s.kinds = { stopFled: flee };
+  if (flee && I.pursuit && I.pursuit.state === 'stopped') for (const h of s.hostiles) h.fleeAt = sim.t;
   return s;
 });

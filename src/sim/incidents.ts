@@ -243,7 +243,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
     }
   }
   const what = variant === 'false' ? FALSE_WHAT[type] ?? FALSE_WHAT.fire! : variant === 'prank' ? '실제 사건은 없음 — 장난 전화가 걸려 올 예정' : scenarioName(type, variant) === TYPE_NAME[type] ? TYPE_NAME[type] : `${TYPE_NAME[type]} · ${scenarioName(type, variant)}`;
-  if (variant === 'kidnap' || variant === 'drunk' || variant === 'getaway') startPursuit(sim, I, variant);
+  if (variant === 'kidnap' || variant === 'drunk' || variant === 'getaway' || variant === 'cartheft') startPursuit(sim, I, variant);      // cartheft: (N8 단계 6b) 차량 절도 — 주차장에서 달리는 차로 시작한다
   special?.onCreate?.(sim, I);
   I.rootEvent = emit(sim, { inc: id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: special?.tag === 'major' ? 3 : 1, truth: true, causes: I.cause !== undefined ? (opts.causes ? [I.cause, ...opts.causes] : [I.cause]) : opts.causes, text:chainNote ? `${chainNote} — ${I.truth.label}.` : `사건 발생 — ${I.truth.label} (${what}). 아직 신고되지 않았습니다.` });
   noteWearIncident(sim, I);      // (I2 단계 5) 지난 교대에 손상된 건물에서 난 사건 — 발생 기록 바로 뒤 (이어받은 항목이 없으면 아무것도 하지 않는다)

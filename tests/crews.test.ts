@@ -403,6 +403,7 @@ describe('③ 능력과 장비가 어긋나지 않는다', () => {
         if (u.caps.suppression >= 0.7 && !AIR_KIND.has(u.kind)) expect(anyKit(sim, u, ['beeSuit']), `${tag}: 벌 보호복`).toBe(true);      // 진압 수요로 오는 지상 부대는 벌집을 뗄 사람이 있다 (관창수·로프 대원)
         if (u.caps.utilPower >= 0.7) expect(anyKit(sim, u, ['insulKit']), `${tag}: 절연 장비`).toBe(true);      // (N8 §5.3.3) 전력 복구 ↔ 절연 장비
         if (u.caps.utilGas >= 0.7 || u.caps.utilWater >= 0.7) expect(anyKit(sim, u, ['valveKey']), `${tag}: 밸브 키`).toBe(true);      // 가스·수도 복구 ↔ 밸브 키 (단계 4b)
+        if (u.caps.tow >= 0.7) expect(anyKit(sim, u, ['towKit']), `${tag}: 견인 장비`).toBe(true);      // 견인 ↔ 견인 장비 (단계 6b — 지원이 없어 편성표 부대만)
         if (u.caps.search >= 0.3) expect(deploying(sim, u).length > 0 || AIR_KIND.has(u.kind), `${tag}: 내리는 대원이 있거나 상공 부대`).toBe(true);
         // crewHasKit 은 같은 것을 부대 단위로 본다
         if (u.caps.suppression >= 0.7) expect(crewHasKit(sim, u, 'hose')).toBe(true);

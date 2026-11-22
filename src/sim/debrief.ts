@@ -300,6 +300,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
     if (truth.variant === 'snatch') hl.push(got ? '용의자 검거 — 가방 회수' : fled ? '용의자가 골목으로 달아났습니다' : '용의자를 찾지 못함');
     else if (truth.variant === 'rowdy') hl.push(!got ? (fled ? '주취자가 자리를 떠남' : '주취자 미검거') : I.problems.some((p) => p.code === 'ESCALATION') ? '현행범 체포' : s.kinds && s.kinds.headInjury ? '보호 조치 뒤 병원 이송' : '보호 조치 — 귀가');
     else if (truth.variant === 'brawl') hl.push(`싸운 ${hs.length}명 가운데 ${got}명 검거${fled ? ` · ${fled}명 흩어짐` : ''}`);
+    else if (truth.variant === 'scam') hl.push(!hs.length ? '수거책이 나타나기 전에 종료' : got ? '잠복 끝에 수거책 검거' : fled ? (s.kinds && s.kinds.scamFled ? '경찰을 보고 수거책이 달아났습니다' : '수거책은 이미 떠났습니다') : '수거책 미검거');      // (N8 단계 6b)
+    else if (truth.variant === 'cartheft') hl.push(I.pursuit && I.pursuit.state === 'escaped' ? '도난 차량을 놓침' : got ? '도난 차량 회수 · 운전자 검거' : fled ? '운전자가 차를 버리고 달아났습니다' : '도난 차량 회수');
   }
   if (benign) hl.push(truth.variant === 'prank' ? (screened ? '장난 전화 — 접수 단계에서 가려냄' : '장난 전화 — 실제 사건 없음') : FALSE_HEAD[truth.type] ?? FALSE_HEAD.fire!);
   else if (cas.length) hl.push(`요구조자 ${cas.length}명 중 ${saved}명 구조${lost ? `, ${lost}명 사망` : ''}${undiscovered ? `, ${undiscovered}명 미발견` : ''}${left ? `, ${left}명 구조 미완료` : ''}`);

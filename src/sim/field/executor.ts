@@ -1735,6 +1735,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     }
     case 'interview': {
       const p = s.props[t.prop];
+      if (p.skin === 'victim') { runVictimTalk(sim, s, I, a, t, p); return; }      // (N8 단계 6b) 수거책 잠복의 피해자 — 면담하면 약속 시각을 안다
       if (p.interviewed) { reportDone(sim, a, mkFact('evid', p.id, { kind: 'witness', done: true }, r.name, sim.t, 1, true, '목격자 면담 완료')); finishTask(sim, s, a, true); return; }
       const m = moveTo(sim, s, a, p.x, p.y, 1.5);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
@@ -1986,6 +1987,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (m !== 'arrived') return;
       t.progress += dt; a.ring = (t.progress % 30) / 30;
       a.label = '통제';
+      // (N8 단계 6b §4.4) 잠복: 이 대원이 약속 시각을 알면 진행 막대가 그 시각으로 찬다(원칙 11 — 설계된 기다림)
+      { const m = s.kind === 'disturb' ? meetOf(a) : null; if (m) { const t0 = sim.t - t.progress; a.ring = clamp(t.progress / Math.max(1, m.at - t0), 0, 1); a.label = dist(a.x, a.y, m.x, m.y) <= 3.5 ? '잠복' : '통제'; } }
       return;
     }
     // (N8 단계 2a) 새 임무 셋의 빈 갈래 — 실행은 그 임무를 쓰는 단계가 채운다(capture 5 · towAway 6b · persuade 7, 설계서 §4·§5.9).
@@ -1997,7 +2000,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       runCapture(sim, s, I, a, t);
       return;
     }
-    case 'towAway': case 'persuade': {
+    case 'towAway': { runTowAway(sim, s, I, a, t); return; }      // (N8 단계 6b §5.3.8) 견인 — 차로를 막은 부서진 차
+    case 'persuade': {
       finishTask(sim, s, a, false, 'preempt');
       return;
     }
@@ -2224,6 +2228,8 @@ export const CAPTURE = { hive: 25, pole: 4, net: 6, aim: 1.5, dartR: 6, reAim: 3
 /** (N8 §4.4 — 단계 6a) 치안 현장의 검거 문구 (실행부 — 진실을 읽는다): 주취자는 보호 조치(귀가 · 머리 부상이면 병원) 또는 손님을 다치게 했으면 현행범 체포 · 폭행 시비는 현행범 체포 · 날치기는 가방 회수 */
 function disturbArrestText(I: Incident, s: Scene, h: Hostile): string {
   if (s.variant === 'snatch') return `${h.label} 검거 — 가방을 회수했습니다.`;
+  if (s.variant === 'scam') return `${h.label} 현행범 체포 — 받은 돈 봉투를 회수했습니다.`;      // (N8 단계 6b)
+  if (s.variant === 'cartheft') return `${h.label} 검거 — 도난 차량을 확보했습니다.`;
   if (s.variant === 'brawl') return `${h.label} 현행범 체포.`;
   if (I.problems.some((p) => p.code === 'ESCALATION')) return `${h.label} 현행범 체포 — 손님을 다치게 했습니다.`;
   return s.kinds && s.kinds.headInjury ? `${h.label} 보호 조치 — 머리를 다쳐 병원 이송이 필요합니다.` : `${h.label} 보호 조치 — 귀가 조치합니다.`;
@@ -2371,5 +2377,44 @@ function captured(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, x: An
   if (t.method !== undefined) recordMethod(sim, I, a, t, t.method, t.mwhy ?? 'usual', true, ev, { cas: -1, prop: -1, hostile: -1, region: -1, tile: -1, animal: x.id });
   reportDone(sim, a, aniNow(sim, x, r.name, `${x.label} 포획 완료`));
   r.xpGained += 0.003;
+  finishTask(sim, s, a, true);
+}
+
+// ───────────────────────── (N8 단계 6b) 치안·견인의 실행부 ─────────────────────────
+import { meetOf, wreckFact } from './agents';
+/** 견인: 견인 장비를 단 차를 부서진 차 곁(1.6칸)에 대고 20초 — 끝나면 차가 치워지고(removed) 차로가 열린다. 탑승자가 아직 차 안에 있으면 기다린다(구출이 먼저). 효과는 여기 한 곳 */
+export const TOW = { work: 20, range: 1.6 };
+function runTowAway(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task): void {
+  const r = resp(sim, a);
+  const p = t.prop >= 0 ? s.props[t.prop] : undefined;
+  if (!p || p.removed || p.cleared) { if (p) reportDone(sim, a, wreckFact(sim, p, r.name, false)); finishTask(sim, s, a, true); return; }
+  const m = moveTo(sim, s, a, p.x + (p.w - 1) / 2, p.y, TOW.range);
+  if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+  if (m !== 'arrived') return;
+  if (s.casualties.some((c) => !c.dead && c.where === 'scene' && c.inVehicle === p.id)) { a.label = '탑승자 구조 대기'; return; }
+  if (t.phase === 0) { t.phase = 1; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: '견인 장비를 연결합니다 — 차로를 막은 차량을 끌어냅니다.' }); }
+  t.need = TOW.work; t.progress += sim.dt; a.ring = t.progress / t.need; a.label = '차량 견인';
+  if (t.progress < t.need) return;
+  for (let yy = p.y; yy < p.y + p.h; yy++) for (let xx = p.x; xx < p.x + p.w; xx++) if (s.propAt[yy * s.w + xx] === p.id) s.propAt[yy * s.w + xx] = -1;
+  p.removed = true; p.cleared = true; p.blocking = false;      // cleared 도: 핵심 규칙의 도로 정리는 치우지 않은 차(!cleared)에 다시 낸다
+  s.staticVersion++;
+  emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 1, text: '부서진 차량을 견인했습니다. 차로가 열렸습니다.' });
+  reportDone(sim, a, wreckFact(sim, p, r.name, false));
+  finishTask(sim, s, a, true);
+}
+/** 수거책 잠복의 피해자 면담 (6초): 피해자가 말한 약속 시각(진실 s.kinds.meetAt — 실제 시각 ± 20초)과 자리를 믿음 evid meet 으로 — 사실의 id 는 피해자 소품의 id (면담 전의 'witness' 사실을 바꾼다) */
+function runVictimTalk(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, p: Prop): void {
+  const r = resp(sim, a);
+  const at = s.kinds && s.kinds.meetAt !== undefined ? s.kinds.meetAt : sim.t;
+  const fact = (): Fact => mkFact('evid', p.id, { kind: 'meet', at, x: p.x, y: p.y, done: true }, r.name, sim.t, 0.9, true, `피해자 진술: 수거책과 ${Math.max(0, Math.round((at - sim.t) / 10) * 10)}초쯤 뒤 이 자리에서 만나기로 함`);
+  if (p.interviewed) { reportDone(sim, a, fact()); finishTask(sim, s, a, true); return; }
+  const m = moveTo(sim, s, a, p.x, p.y, 1.5);
+  if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+  if (m !== 'arrived') return;
+  t.need = 6; t.progress += sim.dt; a.ring = t.progress / t.need;
+  if (t.progress < t.need) return;
+  p.interviewed = true;
+  emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `피해자 면담 완료. 돈을 받으러 오는 사람과 ${at > sim.t ? `약 ${Math.max(10, Math.round((at - sim.t) / 10) * 10)}초 뒤` : '이미 약속한 시각에'} 이 자리에서 만나기로 했다는 진술을 확보했습니다.` });
+  reportDone(sim, a, fact());
   finishTask(sim, s, a, true);
 }

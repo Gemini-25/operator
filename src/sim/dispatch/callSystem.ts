@@ -52,6 +52,7 @@ const NATURE_TEXT: Record<string, string[]> = {
   drowning: ['사람이 물에 빠졌어요! 떠내려가고 있어요!', '물에 빠진 사람이 허우적거리고 있어요. 빨리요!'],
   gasleak: ['가스 냄새가 심하게 나요! 어디서 새는 것 같아요.', '배관에서 쉬익 소리가 나고 가스 냄새가 지독해요.'],
   fumes: ['이상한 냄새가 나고 머리가 아파요.', '사람들이 기침하면서 건물에서 나오고 있어요.'],
+  suspicious: ['수상한 사람이 계속 서성거려요.', '누가 이상한 짓을 하는 것 같아요.'],      // (N8 단계 6b) 새 기본 키 — 수거책 잠복의 흐릿한 신고
 };
 /** 신고 키워드 → 사건 유형 가능도 (분석 AI 가 incidentTypes.likRow 로 읽는다). 유형 이름으로 적고, 적지 않은 유형은 LIK_FLOOR */
 export const NATURE_LIK: Record<string, LikMap> = {
@@ -78,6 +79,7 @@ export const NATURE_LIK: Record<string, LikMap> = {
   drowning: { fire: 0.01, traffic: 0.02, search: 0.03, armed: 0.01, medical: 0.03, collapse: 0.01, hazmat: 0.01, water: 0.93 },
   gasleak: { fire: 0.06, traffic: 0.01, search: 0.01, armed: 0.01, medical: 0.02, collapse: 0.01, hazmat: 0.9, water: 0.01 },
   fumes: { fire: 0.2, traffic: 0.02, search: 0.02, armed: 0.03, medical: 0.18, collapse: 0.02, hazmat: 0.5, water: 0.01 },
+  suspicious: { disturb: 0.6, armed: 0.3, animal: 0.02 },      // (N8 단계 6b) 수상한 사람 — 치안이 먼저, 무장일 수도 있다 (보호 열은 그 유형의 단계가 더한다)
 };
 // 시나리오 표에 적힌 신고 문구와 가능도를 합친다 (scenarios/*.ts)
 for (const sc of SCENARIOS) { if (sc.texts) NATURE_TEXT[sc.nature] = sc.texts; if (sc.lik) NATURE_LIK[sc.nature] = sc.lik; }

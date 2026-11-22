@@ -8,10 +8,11 @@ import { josa } from '../../util';
 import { resp } from '../agents';
 import { mkFact } from '../beliefs';
 import { staticPass } from '../grid';
-import { registerBlocker, registerCasHold, registerOrders, registerPending } from '../sceneRegistry';
-import { ATTACH_GAS } from '../../scenarios/kinds';
-import { VALVE_LATE } from '../agents';
+import { registerBlocker, registerCasHold, registerHosHold, registerOrders, registerPending, registerPropHold } from '../sceneRegistry';
+import { ATTACH_GAS, ATTACH_TOW } from '../../scenarios/kinds';
+import { VALVE_LATE, meetOf } from '../agents';
 import type { AniBelief, CasBelief, FieldAgent, Scene } from '../../types';
+import type { Sim } from '../../engine';
 
 /** 오인 신고의 판단을 알린 현장 (기록은 한 번 — 늦게 닿은 수색 보고가 확인율을 낮추면 믿음만 조용히 다시 고친다). 객체 모양을 바꾸지 않으려고 WeakSet */
 const TOLD = new WeakSet<Scene>();
@@ -317,6 +318,7 @@ const DISTURB_CAPPED = new WeakMap<Scene, Set<number>>();
  */
 registerOrders((sim, s, I, a, k) => {
   if (s.kind !== 'disturb') return;
+  if (meetOf(a)) return;      // (단계 6b) 약속을 아는 현장(수거책 잠복)은 아래 잠복 규칙이 맡는다 — 여기서 통제를 거두면 잠복 자리가 매 주기 새로 생긴다
   const B = a.beliefs;
   let known = 0;
   for (const f of B.list('hos')) {
@@ -357,3 +359,104 @@ registerBlocker((sim, s, a) => {
   for (const r of s.regions) if (r.searchable && (a.beliefs.val<number>('srch', r.id) ?? -1) < 0.72) return true;
   return false;
 });
+
+// ───────────────────────── 치안 (§4.4 — 단계 6b) — 수거책 잠복 ─────────────────────────
+// 믿음의 evid meet(피해자 면담 — 약속 시각·자리)과 hos 만 읽는다. 지휘관은 약속을 알면 잠복 자리(약속 자리 3칸 안 — 대기 지점 쪽)와 먼 자리(약속 자리에서 9칸 넘게 떨어진 출구)에
+// 통제(cordon)를 둔다 — 누가 어느 자리에 서는지는 fitBase('cordon')가 가른다(잠복 자리는 형사 1.0 · 제복 0.15). 수거책이 약속 자리로 걸어오는 동안은 핵심 규칙이 그 용의자에게
+// 봉쇄·협상·검거를 내지 않는다(registerHosHold — 출구로 달려가는 제복을 보면 수거책이 달아난다). 약속 자리 2.5칸 안에 오면 검거 0.93. 달아나면 핵심 규칙의 추격(engage)
+/** 잠복 자리(약속 자리에서 대기 지점 쪽으로 떨어진 칸)·먼 자리(약속 자리에서 이만큼 넘게 떨어진 출구)·검거를 내는 거리·우선순위 */
+export const SCAM_POST = { ambush: 3, far: 9, near: 2.5, pAmbush: 0.8, pFar: 0.6, pArrest: 0.93 };
+/** 잠복 자리: 약속 자리 줄(같은 y)에서 대기 지점 쪽으로 2~3칸 — 걸을 수 있는 칸 (생김새만) */
+function ambushTile(s: Scene, m: { x: number; y: number }): number {
+  const dir = s.staging.x < m.x ? -1 : 1;
+  for (const dx of [SCAM_POST.ambush, SCAM_POST.ambush - 1, SCAM_POST.ambush + 1]) {
+    const x = Math.round(m.x + dir * dx), y = Math.round(m.y);
+    if (x > 0 && x < s.w - 1 && staticPass(s.tiles[y * s.w + x])) return y * s.w + x;
+  }
+  return -1;
+}
+registerOrders((sim, s, I, a, k) => {
+  if (s.kind !== 'disturb') return;
+  void I;
+  const m = meetOf(a);
+  if (!m) return;
+  const keep: number[] = [];
+  let approaching = false, atMeet = false;
+  for (const f of a.beliefs.list('hos')) {
+    const v = f.value as { state: string; x: number; y: number };
+    if (v.state !== 'hold') continue;
+    if (justArrested(sim, s, f.id)) continue;
+    if (Math.hypot(v.x - m.x, v.y - m.y) <= SCAM_POST.near) { atMeet = true; k.want('arrest', { hostile: f.id }, SCAM_POST.pArrest, 2); }
+    else approaching = true;
+  }
+  // 잠복은 수거책이 오기 전·걸어오는 동안만 (약속 시각 + 40초까지 — 그 뒤에는 오지 않는다고 본다). 약속 자리에 오면 잠복 자리를 거둔다 — 잠복한 대원이 곧바로 검거에 나선다
+  // (통제 0.8 에 묶인 대원은 검거 0.93 이 0.22 넘게 높지 않아 빼 오지 못한다)
+  if (sim.t < m.at + 40 || approaching || atMeet) {
+    const t1 = atMeet ? -1 : ambushTile(s, m);
+    if (t1 >= 0) { keep.push(t1); k.want('cordon', { tile: t1 }, SCAM_POST.pAmbush); }
+    let far = -1, fd = SCAM_POST.far;
+    for (let e = 0; e < s.exits.length; e++) { const d = Math.hypot(s.exits[e].x - m.x, s.exits[e].y - m.y); if (d > fd) { fd = d; far = e; } }
+    if (far >= 0) { const t2 = exitPost(s, far); keep.push(t2); k.want('cordon', { tile: t2 }, SCAM_POST.pFar); }
+  }
+  k.cancel((w) => w.kind === 'cordon' && keep.indexOf(w.tile) < 0);
+});
+/**
+ * 방금 검거를 마친 용의자 (작업판 — 지휘관이 낸 일의 끝은 조직이 아는 것): 검거 보고(learnQuiet — 묶음 무전)가 닿기 전의 낡은 믿음('대치 중')으로
+ * 같은 검거를 다시 내지 않는다 (CLAUDE.md "보고 지연 사이의 중복 지시" — 수거책을 체포한 0.8초 뒤 같은 대원에게 "수거책 검거 맡아라"가 다시 갔다)
+ */
+export const JUST_ARRESTED = 10;
+function justArrested(sim: Sim, s: Scene, id: number): boolean {
+  for (const w of s.board) if (w.kind === 'arrest' && w.hostile === id && w.status === 'done' && sim.t - w.doneAt < JUST_ARRESTED) return true;
+  return false;
+}
+/** 약속을 아는 지휘관은 약속 자리로 걸어오는(약속 자리 2.5칸 밖에서 서 있거나 걷는) 용의자 · 방금 검거를 마친 용의자에게 핵심 규칙의 봉쇄·협상·검거를 내지 않는다 — 잠복이 들킨다 */
+registerHosHold((sim, s, a, id, h) => {
+  if (s.kind !== 'disturb' || h.state !== 'hold') return false;
+  const m = meetOf(a);
+  return m !== null && (Math.hypot(h.x - m.x, h.y - m.y) > SCAM_POST.near || justArrested(sim, s, id));
+});
+/** 약속을 알고 용의자를 아직 보지 못했으면 약속 시각 + 40초 전에는 끝내지 않는다 (잠복의 기다림을 지킨다 — 면담 전에는 면담 작업이 열려 있어 저절로 닫히지 않는다) */
+registerBlocker((sim, s, a) => {
+  if (s.kind !== 'disturb' || a.beliefs.list('hos').length > 0) return false;
+  const m = meetOf(a);
+  return m !== null && sim.t < m.at + 40;
+});
+
+// ───────────────────────── 교통사고의 견인 (§5.3.8 — 단계 6b, 선택 수요) ─────────────────────────
+// 믿음의 haz wreck(차로를 막은 부서진 차 — perceive 가 남긴다, 값의 prop 이 소품 id)과 조직이 아는 배정(countUnits)만 읽는다.
+/** 견인차를 기다리는 상한(초 — towAway 가 만들어진 뒤 이만큼 견인차가 현장에 없으면 밀어 둠으로 돌아간다) · 견인 우선순위(지금의 clearRoad 0.42 바로 위) */
+export const TOW_WAIT = { s: 150 }, TOW_P = 0.44;      // TOW_WAIT 는 객체 — 시험이 줄여 시간 막이를 본다
+/** 견인차가 맡은 차(소품 id) — 핵심 규칙이 그 차에 clearRoad 를 내지 않는다(registerPropHold). 현장마다 — 객체 모양을 바꾸지 않으려고 WeakMap */
+const TOW_HELD = new WeakMap<Scene, Set<number>>();
+/** 견인을 접은 현장 (견인차가 150초 넘게 오지 않았다 — 다시 내지 않는다) */
+const TOW_GIVEUP = new WeakSet<Scene>();
+interface WreckV { kind?: string; active?: boolean; prop?: number }
+registerOrders((sim, s, I, a, k) => {
+  if (!ATTACH_TOW || !s.laneRows.length) return;
+  void I;
+  let held = TOW_HELD.get(s);
+  const coming = k.countUnits('tow', 0.7) > 0 && !TOW_GIVEUP.has(s);
+  let onScene = false;
+  for (const uid of k.unitsOnScene()) if (sim.units[uid].caps.tow >= 0.7) { onScene = true; break; }
+  let unresolved = false;
+  for (const f of a.beliefs.list('cas')) { const c = f.value as CasBelief; if (c.band < 3 && (c.where === 'scene' || c.where === 'carried')) { unresolved = true; break; } }
+  for (const f of a.beliefs.list('haz')) {
+    const v = f.value as WreckV;
+    if (v.kind !== 'wreck' || v.prop === undefined) continue;
+    const pid = v.prop;
+    if (!v.active || !coming) { if (held) held.delete(pid); k.cancel((w) => w.kind === 'towAway' && w.prop === pid); continue; }
+    if (!held) { held = new Set(); TOW_HELD.set(s, held); }
+    if (!held.has(pid)) { held.add(pid); k.cancel((w) => w.kind === 'clearRoad' && w.prop === pid && w.status === 'open'); }      // 보류가 시작되는 주기에 한 번 (그 뒤에는 핵심 규칙이 내지 않는다)
+    if (unresolved) continue;      // 사람이 남은 동안은 견인하지 않는다 (지금의 도로 정리와 같은 조건)
+    // 이미 끝낸 견인(작업판): 끝낸 보고가 닿기 전의 낡은 믿음(차로를 막은 차)으로 같은 차의 견인을 다시 내지 않는다 (견인한 0.4초 뒤 다시 갔다)
+    if (s.board.some((q) => q.kind === 'towAway' && q.prop === pid && q.status === 'done')) continue;
+    const w = k.want('towAway', { prop: pid }, TOW_P);
+    if (w.id >= 0 && !onScene && sim.t - w.createdAt > TOW_WAIT.s) {
+      TOW_GIVEUP.add(s); held.clear();
+      k.cancel((q) => q.kind === 'towAway');
+      emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 1, text: '견인차가 오지 않습니다 — 부서진 차량은 길가로 밀어 두겠습니다.' });
+    }
+  }
+});
+/** 견인차가 맡은 차: 핵심 규칙의 도로 정리(밀어 둠)를 내지 않는다 */
+registerPropHold((sim, s, a, propId) => { void sim; void a; const h = TOW_HELD.get(s); return h !== undefined && h.has(propId); });

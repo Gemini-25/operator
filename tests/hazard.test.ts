@@ -1470,7 +1470,8 @@ describe('I1-b b3-6: L1 roadCrash — 차가 몰린 길에서는 사고가 잦�
 
   it('⑦·⑤ 나무 → 사고 → 사고: 사슬은 세 건에서 끊긴다(depth — H 가 문턱만큼 줄고 n 이 는다. 기록은 없다) — 통제가 걸릴 때마다 모든 교차로에 큰 차가 닿는다', () => {
     withA(3e-4, () => {
-      const { s, I } = treeShift('S7', 150), edges = s.city.edges, F0 = s.city.facilities[0].nodeId;
+      // (N8 단계 6b) 교통사고가 견인차를 기다려 S7 의 둘째 사고가 셋째 가지(깊이로 버려짐)를 내기 전에 닫혔다 — 같은 길(나무 → 몰린 길의 사고 → 그 사고로 밀린 길의 사고 → 깊이로 버려진 셋째)이 있는 시드로 (S0~S199 를 훑어 S185·S197)
+      const { s, I } = treeShift('S185', 150), edges = s.city.edges, F0 = s.city.facilities[0].nodeId;
       const sigOf = (): string => { let g = ''; for (const e of edges) if (e.closed) g += e.id + ','; return g; };
       const everyNode = (): boolean => s.city.nodes.every((nd) => reallyLinked(s, F0, nd.id, -1, true));
       let sig = sigOf(), stable = false, changes = 0, checks = 0, drops = 0;
@@ -2986,9 +2987,10 @@ describe('I1-b b3-10: 국지 구역 값 · C4 정전 · L5 정전이 닿은 순�
     expect(s.world.spans).toEqual([]);
   });
 
-  it('실제 교대 (태풍 S7): 동네별 정전 기록이 없고, 통신 장애 알림은 한 줄, INFRA_FAIL 마다 원인에 그 사건의 COMM_FAIL 과 태풍 정전 기록 · 교대 끝에 동네 값·장부·얹은 혼잡이 남지 않는다', () => {
+  it('실제 교대 (태풍 S1): 동네별 정전 기록이 없고, 통신 장애 알림은 한 줄, INFRA_FAIL 마다 원인에 그 사건의 COMM_FAIL 과 태풍 정전 기록 · 교대 끝에 동네 값·장부·얹은 혼잡이 남지 않는다', () => {
     // (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 태풍 S0 에 교대 끝까지 이어지는 맨홀 사고의 국지 정전이 생겼다(옛 S8 과 같은 모양) — 같은 조건의 S7 로
-    const s = new Sim('S7', { ...NORMAL, disaster: parseDisaster('typhoon')! }, 1200);
+    // (N8 단계 6b) 교통사고의 견인으로 태풍 S7 의 INFRA_FAIL 이 없어졌다(통신 음영에 걸린 사건이 없다) — 같은 조건의 S1 로 (S0~S12 가운데 S1 하나)
+    const s = new Sim('S1', { ...NORMAL, disaster: parseDisaster('typhoon')! }, 1200);
     s.runToEnd();
     expect(s.events.some((e) => e.tag === 'power')).toBe(false);
     const dark = s.events.find((e) => /^강풍에 송전선이 끊겨/.test(e.text))!;

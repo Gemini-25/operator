@@ -296,6 +296,27 @@ function perceiveFixture(sim: Sim, s: Scene, a: FieldAgent, p: Prop, d: number, 
   }
 }
 
+/**
+ * (N8 단계 6b §5.3.8) 차로를 막은 부서진 차 — 'haz' 사실 { kind 'wreck', active: 치우지 않음, x, y, prop }. 사실의 id 는 WRECK_BASE + 소품 id
+ * (같은 차의 연료 누출 사실이 소품 id 를 쓴다 — 열쇠가 겹치면 덮어쓴다). 차로(T.ROAD) 위의 치우지 않은 차만. 무전 문구에는 싣지 않는다(learnQuiet — 지휘 규칙이 견인을 낸다)
+ */
+export const WRECK_BASE = 5000;
+/** 부서진 차를 견인할 현장인가 (진실 — perceive 는 읽어도 된다): 교통사고 · 추격 끝에 사고로 선 도난 차량 */
+function wreckScene(sim: Sim, s: Scene): boolean {
+  if (s.kind === 'traffic') return s.variant !== 'tree' && s.variant !== 'manhole';
+  if (s.kind !== 'disturb' || s.variant !== 'cartheft') return false;
+  const I = sim.incidents[s.incidentId];
+  return !!I.pursuit && I.pursuit.how === 'crash';
+}
+export function wreckFact(sim: Sim, p: Prop, src: string, active: boolean): Fact {
+  return mkFact('haz', WRECK_BASE + p.id, { kind: 'wreck', active, x: p.x, y: p.y, prop: p.id }, src, sim.t, 1, true, active ? '차로를 막은 부서진 차량 — 견인 필요' : '부서진 차량 — 차로에서 치움');
+}
+function perceiveWreck(sim: Sim, s: Scene, a: FieldAgent, p: Prop, me: string): void {
+  if (s.tiles[p.y * s.w + p.x] !== T.ROAD && !p.cleared) return;
+  const active = !p.cleared && !p.removed;
+  const cur = a.beliefs.get('haz', WRECK_BASE + p.id);
+  if (cur ? cur.value.active !== active : active) learnQuiet(sim, a, wreckFact(sim, p, me, active));
+}
 /** 시야 안의 진실을 관찰해 믿음을 갱신한다. boost 는 관측 범위 배율(현장 평가 등). */
 /** perceive 의 시야: 공중 관측(aloft)은 실내가 아닌 칸, 지상은 시야선 */
 function seesAt(s: Scene, a: FieldAgent, aloft: boolean, x: number, y: number): boolean { return aloft ? !isIndoor(s.tiles[tileOf(s, x, y)]) : s.variant === 'sinkhole' ? losOpen(s, a.x, a.y, x, y) : los(s, a.x, a.y, x, y); }
@@ -492,6 +513,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
         if (!cur || cur.value.active !== active) learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active, x: p.x, y: p.y, sub: 'fuel' }, me, sim.t, 1, true, active ? '차량 연료 누출 확인 — 발화 위험' : p.ignited ? '누출 연료 발화' : '연료 누출 조치 완료'));
       }
       if (p.emptySeat && d <= 2 && r.judgment >= 0.33 && !a.beliefs.get('evid', p.id)) learn(sim, a, mkFact('evid', p.id, { kind: 'emptySeat' }, me, sim.t, 0.8, true, '운전석이 비어 있음 — 탑승자가 튕겨 나갔을 가능성'));
+      if (s.laneRows.length && d <= v && wreckScene(sim, s)) perceiveWreck(sim, s, a, p, me);      // (N8 단계 6b §5.3.8) 차로를 막은 부서진 차 — 견인차의 일 (교통사고 · 사고로 선 도난 차량)
     } else if (p.kind === 'clue') {
       if (!p.found && d <= detectRadius(sim, s, a, 0.3) && los(s, a.x, a.y, p.x, p.y)) {
         p.found = true;
@@ -500,7 +522,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
         pushFx(sim, s, 'text', p.x, p.y - 0.8, undefined, undefined, '단서', '#ffd166', 1.8);
       }
     } else if (p.kind === 'witness') {
-      if (!a.beliefs.get('evid', p.id) && d <= v) learn(sim, a, mkFact('evid', p.id, { kind: 'witness', done: !!p.interviewed }, me, sim.t, 1, true, '현장에 목격자 대기 중'), false);
+      if (!a.beliefs.get('evid', p.id) && d <= v && !(p.skin === 'victim' && p.interviewed)) learn(sim, a, mkFact('evid', p.id, { kind: 'witness', done: !!p.interviewed }, me, sim.t, 1, true, p.skin === 'victim' ? '현장에 피해자 대기 중' : '현장에 목격자 대기 중'), false);      // (N8 단계 6b) 면담을 마친 피해자는 약속(evid meet)이 같은 열쇠다 — 덮지 않는다
     } else if (p.kind === 'fixture') perceiveFixture(sim, s, a, p, d, meter, me, v);      // (N8) 시설물·현장의 물건 (단계 3: 오인 신고의 답 — 물에 뜬 물건·폭죽 잔해·음식물 쓰레기)
   }
   // (X6 §3.3) 조짐: 구조 약화·가스 농도·용기 가열·건물 기울어짐 — 감각 범위 안의 것만 (field/catastrophe.ts)
@@ -691,7 +713,7 @@ export function workLabel(s: Scene, w: WorkItem, sim?: Sim): string {
     hoist: `${cas} 호이스트 인양`, airDrop: `${reg} 공중 물 투하`,
     treatMate: sim && w.mate >= 0 && sim.responders[w.mate] ? `${sim.responders[w.mate].name} 대원 응급 처치` : '부상 대원 응급 처치',
     treatSuspect: `${hos} 응급 처치`,
-    repair: s.props[w.prop] && s.props[w.prop].kind === 'valve' ? '공급 차단 확인' : '시설물 복구', towAway: '차량 견인', capture: '동물 포획', persuade: `${cas} 설득`, cordon: '위험 반경 통제',      // (N8) 단계 4a — 시설물 둘레 (교통 통제와 다른 글자)
+    repair: s.props[w.prop] && s.props[w.prop].kind === 'valve' ? '공급 차단 확인' : '시설물 복구', towAway: '차량 견인', capture: '동물 포획', persuade: `${cas} 설득`, cordon: s.kind === 'disturb' ? '잠복' : '위험 반경 통제',      // (N8) 단계 4a — 시설물 둘레 (교통 통제와 다른 글자) · 단계 6b — 치안 현장의 통제는 수거책 잠복의 자리뿐이다
     decontam: '제독',      // (N9 §5.5) 이름만 — 대상의 글자는 그 임무를 쓰는 단계 6 이 다듬는다
     triage: '다수 사상자 분류',      // (R3 4단계 E01·CE1)
   };
@@ -1008,7 +1030,12 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
       return ab.state === 'loose' && !ab.lost && herdAllowed(sim, s, a, ab, sim.t - w.createdAt) ? 0.35 : 0;
     }
     // (N8 §5.10 — 단계 4a) 통제(위협이 없는 현장의 한 자리 지키기): 경찰 0.5 + 0.3 × 치안 능력, 소방·구조(부서 fire) 0.4 + 0.2 × 경험, 구급 0 (유관 기관은 위의 첫 줄에서 0)
-    case 'cordon': return r.dept === 'police' ? 0.5 + 0.3 * r.skills.law : r.dept === 'fire' ? 0.4 + 0.2 * r.experience : 0;
+    case 'cordon': {
+      const base = r.dept === 'police' ? 0.5 + 0.3 * r.skills.law : r.dept === 'fire' ? 0.4 + 0.2 * r.experience : 0;
+      // (N8 단계 6b §4.4) 잠복 자리: 믿음 evid meet 의 자리 3칸 안의 통제는 사복 형사 1.0 · 제복 0.15 (형사가 오면 잠복을, 순찰은 먼 자리를 맡는다 — 형사가 없으면 순찰이 잠복도 맡는다)
+      if (base > 0 && s.kind === 'disturb' && w.tile >= 0) { const m = meetOf(a); if (m && dist(w.tile % s.w, (w.tile / s.w) | 0, m.x, m.y) <= 3) return r.role === 'detective' ? 1.0 : 0.15; }
+      return base;
+    }
     // (N9 단계 1) 제독의 자리 — 맡는 사람(제독 장비 1.0 · 역할 decon 0.7 · 120초 뒤 호스를 든 소방 0.4)은 단계 6 이 정한다(설계서 §5.3.5). 지금은 아무도 이 작업을 만들지 않는다
     case 'decontam': return 0;
     // (R3 4단계 E01·CE1) 다수 사상자 분류: 구급 대원만 (안전 확보 전의 무장 현장에서는 내지 않는다 — 지휘 교본 CE1 과 같은 자격, doctrine.triageMedic). 다친 대원은 가벼운 일 목록 밖이라 위에서 0
@@ -1016,6 +1043,11 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
   }
 }
 
+/** (N8 단계 6b) 이 대원이 아는 약속 (믿음 evid meet — 피해자 면담으로 안다): 시각과 자리. 없으면 null */
+export function meetOf(a: FieldAgent): { at: number; x: number; y: number } | null {
+  for (const f of a.beliefs.list('evid')) { const v = f.value as { kind?: string; at?: number; x?: number; y?: number }; if (v.kind === 'meet' && v.at !== undefined) return { at: v.at, x: v.x ?? 0, y: v.y ?? 0 }; }
+  return null;
+}
 export function inShadow(s: Scene, a: FieldAgent): boolean { return s.shadow[tileOf(s, a.x, a.y)] === 1; }
 export function nearDoor(s: Scene, i: number): boolean { return doorAt(s, i) !== null; }
 

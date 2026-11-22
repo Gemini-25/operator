@@ -5,7 +5,7 @@ import type { Sim } from '../engine';
 import { emit } from '../events';
 import { INCIDENT_PLACES } from '../cityPlan';
 import { SCENARIOS, natureLabel } from '../scenarios';
-import { ATTACH_GAS } from '../scenarios/kinds';
+import { ATTACH_GAS, ATTACH_TOW, NO_TOW_LABELS } from '../scenarios/kinds';
 import type { Assessment, Claim, Incident, IncidentType, Needs, PlaceKind, Topic } from '../types';
 import { TYPE_NAME, clamp } from '../util';
 import { NATURE_LIK } from './callSystem';
@@ -241,6 +241,8 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
   for (const sc of SCENARIOS) if (sc.needs && sc.type === type && nat.indexOf(sc.nature) >= 0) sc.needs(needs, ctx);
   let label: string | undefined;
   for (const c of claims) { if (c.topic !== 'nature') continue; const l = natureLabel(c.value as string, type); if (l) label = l; }
+  // (N8 §5.3.8 — 단계 6b) 선택 수요: 교통사고의 차로를 막은 부서진 차 — 견인차 (보낼 차가 없으면 관제가 그 자리에서 지운다). 부서진 차가 없는 사고(쓰러진 나무·맨홀)는 빼고
+  if (ATTACH_TOW && type === 'traffic' && !(label !== undefined && NO_TOW_LABELS.has(label))) needs.tow = Math.max(needs.tow, 1);
   if (spread && label === undefined) label = '연소 확대';      // (I1-b b3-7) 시나리오의 이름표가 있으면 그것을 둔다 (산불·선박 화재 따위는 배정이 이름표를 본다)
   // (R3 §6.2) 관제 교본의 수요 보정 — D3(흉기 신고 경찰 둘)·D6(인질극 기동대 둘). 장난 전화로 본 신고에는 걸지 않는다
   // (균형) D8 은 위치 신고의 건물 종류를 본다 — 유형 추정에 쓴 것과 같은 첫 위치 신고

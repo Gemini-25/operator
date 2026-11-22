@@ -182,6 +182,7 @@ function needFor(s: Scene, w: WorkItem, hotArmed: boolean, a: FieldAgent): keyof
       return 'utilWater';
     }
     case 'towAway': return 'tow';
+    case 'clearRoad': return 'traffic';      // (N8 단계 6b) 차로 정리를 맡을 사람이 없으면(경찰이 다치고 구급차가 떠났다 — 보통 S49 에서 156초 교착) 교통 통제 인력을 부른다
     case 'capture': return w.prop >= 0 && s.props[w.prop] && s.props[w.prop].skin === 'hive' ? 'suppression' : 'capture';      // 벌집은 보호복을 든 관창수 (진압 수요)
     case 'persuade': case 'cordon': return 'law';
     case 'extricate': case 'waterRescue': case 'clear': case 'force': return 'rescue';

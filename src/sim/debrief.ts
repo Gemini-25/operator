@@ -40,6 +40,8 @@ function addProblem(I: Incident, code: ProblemCode, t: number, eventId: number, 
   I.problems.push({ code, t, eventId, detail, recovered, recoveryText, times: undefined, ref: undefined });      // times·ref: raiseProblem 과 같은 모양 (I1-b)
 }
 
+/** (N8 §4.2) 시설 사고의 머리글 앞머리 (변형 → 시나리오 이름) */
+const UTIL_HEAD: Record<string, string> = { wire: '끊어진 전선', main: '수도관 파열', sinkhole: '싱크홀', sign: '떨어질 듯한 간판' };
 /** (N8 §5.5) 비응급 변형 (incidents.createIncident 의 benign · scripts/metrics.ts 의 isBenign 과 같은 글자) */
 const BENIGN: ReadonlySet<string> = new Set(['false', 'prank', 'referral', 'dup']);
 /** (N8 §4.8 N2) 오인 신고의 문제 설명·머리글 — 유형별 (화재는 예전 글자 그대로 — 기록 해시) */
@@ -245,6 +247,9 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   // (I1-b C8) 기반 시설 장애가 대응을 막았다(통신 장애로 늘어난 음영에서 보고가 끊겼다): 무전 전달 실패 바로 다음 자리 — 같은 까닭으로 여기서 끼운다. 사건마다 한 줄(그 사건의 첫 것)
   order.splice(order.indexOf('COMM_FAIL') + 1, 0, 'INFRA_FAIL');
   T.INFRA_FAIL = (ps) => `${ps[0].detail}.`;
+  // (N8 §4.2 · §5.3.6) 유관 기관 지연 — 복구반이 오지 못해 대신한 조치(원격 차단 · 소방의 제수밸브)로 끝냈다: 지원 지연 바로 다음 자리 (같은 까닭으로 여기서 끼운다)
+  order.splice(order.indexOf('BACKUP_LATE') + 1, 0, 'UTIL_LATE');
+  T.UTIL_LATE = (ps) => `${ps[0].detail}${ps[0].recovered ? ` — ${ps[0].recoveryText}` : ' — 끝내 대신하지 못했습니다'}.`;
   for (const code of order) {
     const ps = I.problems.filter((p) => p.code === code);
     if (!ps.length || A.length >= 9) continue;
@@ -274,6 +279,10 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   // 한 줄 요약
   const hl: string[] = [];
   { const b = s.props.find((p) => p.kind === 'bomb'); if (noBomb) hl.push(truth.variant === 'bombthreat' ? '허위 협박 — 폭발물 없음' : b && !b.mitigated ? '폭발물은 아니었으나 확인하지 못함' : '확인 결과 폭발물 아님'); else if (b && b.real) hl.push(b.mitigated ? '폭발물 해체' : b.exploded ? '폭발물 폭발' : '폭발물 미처리'); }
+  if (truth.type === 'utility') {      // (N8 §4.2) 시설 사고의 머리글 — 시설물이 남았는가 · 대신한 조치였는가 (기록된 문제와 시설물의 상태로)
+    const live = s.props.some((p) => p.kind === 'fixture' && p.live === true), late = I.problems.some((p) => p.code === 'UTIL_LATE');
+    hl.push(`${UTIL_HEAD[truth.variant] ?? '시설 사고'} — ${live ? '위험이 남은 채 종료' : late ? '대신한 조치로 위험 제거' : '복구 완료'}`);
+  }
   if (benign) hl.push(truth.variant === 'prank' ? (screened ? '장난 전화 — 접수 단계에서 가려냄' : '장난 전화 — 실제 사건 없음') : FALSE_HEAD[truth.type] ?? FALSE_HEAD.fire!);
   else if (cas.length) hl.push(`요구조자 ${cas.length}명 중 ${saved}명 구조${lost ? `, ${lost}명 사망` : ''}${undiscovered ? `, ${undiscovered}명 미발견` : ''}${left ? `, ${left}명 구조 미완료` : ''}`);
   else hl.push('인명 피해 없음');

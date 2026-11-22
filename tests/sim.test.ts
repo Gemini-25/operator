@@ -285,15 +285,16 @@ describe('신고 접수 확장과 새 사건 유형', () => {
   it('부대 규모 손잡이가 편성을 바꾸되 같은 대원의 능력치는 유지한다', async () => {
     const { NORMAL } = await import('../src/sim/difficulty');
     const small = new Sim('R', { ...NORMAL, resources: 1 }), base = new Sim('R'), big = new Sim('R', { ...NORMAL, resources: 5 });
-    expect(small.units.length).toBe(12); expect(base.units.length).toBe(19); expect(big.units.length).toBe(22);      // 기본 편성부터 경찰 헬기·의료 헬기가 더해진다 (R1)
+    expect(small.units.length).toBe(15); expect(base.units.length).toBe(22); expect(big.units.length).toBe(25);      // 기본 편성부터 경찰 헬기·의료 헬기가 더해진다 (R1) · (N8 단계 4a·4b) 전력·가스·수도 복구반이 모든 규모에
     // 총원은 편성표에서 계산한다: 부대 종류마다 2~5명 (crews.ts 의 STAFF — 부대 규모 3~5 는 표준 인원)
     const { STAFF } = await import('../src/sim/crews');
     const total = big.units.reduce((n, u) => n + STAFF[u.kind].std.length, 0);
     expect(total).toBeGreaterThan(big.units.length * 2);
     expect(big.responders.length).toBe(total);
     expect(new Set(big.responders.map((r) => r.name)).size).toBe(total);
-    // 네 분야마다 3~6팀
-    for (const sim of [small, base, big]) for (const f of ['police', 'fire', 'rescue', 'special']) { const n = sim.units.filter((u) => u.field === f).length; expect(n).toBeGreaterThanOrEqual(3); expect(n).toBeLessThanOrEqual(6); }
+    // 분야별 팀 수 (N8 §9.2): 경찰 3~9 · 소방·구조·특수 3~7 · 유관 기관 0~4
+    const RANGE: Record<string, [number, number]> = { police: [3, 9], fire: [3, 7], rescue: [3, 7], special: [3, 7], civil: [0, 4] };
+    for (const sim of [small, base, big]) for (const f of Object.keys(RANGE)) { const n = sim.units.filter((u) => u.field === f).length; expect(n, f).toBeGreaterThanOrEqual(RANGE[f][0]); expect(n, f).toBeLessThanOrEqual(RANGE[f][1]); }
     expect(base.units.filter((u) => u.kind === 'heli' || u.kind === 'swat' || u.kind === 'hazmat' || u.kind === 'eod' || u.kind === 'boat' || u.kind === 'ladder').length).toBe(6);
     for (const r of base.responders) { const q = big.responders.find((x) => x.name === r.name)!; expect(q.skill).toBe(r.skill); expect(q.judgment).toBe(r.judgment); }
     big.runToEnd(); small.runToEnd();
@@ -386,12 +387,15 @@ describe('인근 도시 지원', () => {
     expect(goneHome).toBeGreaterThan(aided * 0.5);
     // 여유가 있을 때는 훨씬 덜 부른다. 한 번도 안 부르는 것은 아니다: 구급차 세 대가 다수 사상자 사고 하나에 모두 묶이면
     // 스무 팀이 있는 한가한 교대에서도 다음 환자를 위해 한 대를 부른다 (그래서 시드 하나의 횟수가 아니라 평균을 본다)
+    // (N8 단계 4a·4b) 한가한 교대를 S0~S5 여섯에서 C0~C9 열을 더한 열여섯으로 넓혔다 (§9.2 — 표본을 늘리기만 한다): 바쁜 교대의 지원은 상한(2)에 붙어 평균이 늘 2.0 이고,
+    //  시설 사고가 짧은 사건에 들어 사건 번호가 밀리며 S0~S5 의 평균이 1.50 → 2.17 이 됐다(S0 3 → 4 · S4 1 → 4 — 화재가 몰린 교대). S 다음 번호로 넓히지 않은 까닭: S7 은 시작점에서도 지원 5/5 를 다 써 시드마다의 조건에 걸린다
     let calmAid = 0;
-    for (let k = 0; k < 6; k++) {
-      const calm = new Sim('S' + k, { ...NORMAL, frequency: 1, resources: 5 }); calm.runToEnd();
-      calmAid += calm.aidUsed; expect(calm.aidUsed).toBeLessThan(calm.tune.aidUnits);
+    const CALM = [0, 1, 2, 3, 4, 5].map((k) => 'S' + k).concat([0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((k) => 'C' + k));
+    for (const seed of CALM) {
+      const calm = new Sim(seed, { ...NORMAL, frequency: 1, resources: 5 }); calm.runToEnd();
+      calmAid += calm.aidUsed; expect(calm.aidUsed, seed).toBeLessThan(calm.tune.aidUnits);
     }
-    expect(calmAid / 6).toBeLessThan(aided / 10);
+    expect(calmAid / CALM.length).toBeLessThan(aided / 10);
   }, 120000);
 });
 
@@ -732,7 +736,8 @@ describe('생활 사건 시나리오', () => {
 describe('추격전', () => {
   it('도주 차량은 도로를 따라 달리고, 따라붙거나 앞을 막으면 그 자리에 현장이 열리며, 놓치면 도시를 빠져나간다', () => {
     let n = 0, stopped = 0, escaped = 0, kidnap = 0, drunk = 0, sight = 0, timeouts = 0;
-    for (let k = 0; k < 50; k++) {
+    // (N8 단계 4b) 50 → 70교대 (§9.2 — 시드 범위만 늘린다): 짧은 사건이 늘어 S0~S49 의 추격전 12건이 모두 세워졌다 — 놓친 첫 건이 S68(은신처에 숨어든 납치)
+    for (let k = 0; k < 70; k++) {
       const s = new Sim('S' + k);
       while (!s.ended) {
         s.step();

@@ -7,7 +7,7 @@
 import { nodeName } from './city';
 import type { Sim } from './engine';
 import type { Rng } from './rng';
-import type { Call, Claim, Incident, Scene, Topic } from './types';
+import type { Call, Claim, Incident, IncidentType, Scene, Topic } from './types';
 import { josa } from './util';
 
 /** 짧은 사건 손잡이(tune.dailyCount)가 켜져 있는가 — 0 이면 짧은 사건과 비응급의 접수 쪽 변화(확인 질문·가려내기)가 모두 꺼진다 (§5.5 · 시험 7a) */
@@ -50,3 +50,29 @@ export function verifyAnswer(sim: Sim, I: Incident, call: Call, rng: Rng): Claim
   if (r < 0.7) return { ...base, value: 'hangup', text: '(웃음소리) …… (뚝)', truthful: false, note: '장난 전화' };
   return { ...base, value: 'named', text: `${josa(where, '이에요/예요')}. 빨리 오세요.`, truthful: false, note: '장난 전화' };
 }
+
+/**
+ * (§5.2-5) 새 유형의 신고자 갈래 — makeCaller 의 일반 갈래가 부른다(진실을 읽는 신고자 모델).
+ * truth: 갇힘·부상의 진실(공통 셈 — trapped 인 사람·체력 — 대신. 차 안에 머무는 사람은 갇힌 사람이다). more: 위험·상세 진술 (일반 갈래 끝)
+ */
+export interface CallerHook {
+  truth?: (s: Scene) => { trapped: boolean; injured: boolean };
+  more?: (sim: Sim, I: Incident, s: Scene, rng: Rng, kn: number, acc: number, put: PutClaim) => void;
+}
+export const KIND_CALLER: Partial<Record<IncidentType, CallerHook>> = {
+  // (4a) 시설 사고: 차 안에 머무는 사람은 "못 나오고 있다" · 다친 사람은 체력으로. 위험 진술은 전선이면 불꽃(반대로 말할 수 있다 — 지휘관은 이 말을 믿지 않는다)
+  utility: {
+    truth: (s) => {
+      let trapped = false, injured = false;
+      for (const c of s.casualties) { if (c.dead) continue; if (c.inVehicle !== null || c.mob === 'trapped') trapped = true; if (c.health < 85) injured = true; }
+      return { trapped, injured };
+    },
+    more: (sim, I, s, rng, kn, acc, put) => {
+      void sim;
+      if (I.truth.variant === 'wire' && rng.chance(kn * 0.8)) {
+        const ok = rng.chance(acc);
+        put('hazard', ok ? 'live' : 'dead', ok ? '전선에서 불꽃이 계속 튀어요. 가까이 못 가겠어요.' : '전기가 안 통하는 줄 같아요. 불꽃은 안 보여요.', ok, ok ? '' : '살아 있는 전선을 죽은 줄로 신고');
+      }
+    },
+  },
+};

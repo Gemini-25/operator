@@ -2067,7 +2067,7 @@ describe('R2 단계 2: 농성 문 잠금과 방 진입의 잠긴 문 (§4.2a)', 
 describe('R2 단계 2: 강제 교대 (§8 의 3·6·10)', () => {
   it('3. 문: 유압 개방·할리건·발로 차기 성공이 각각 있다 (승강기 갇힘·건물 화재 강제)', () => {
     const us: MethodUse[] = [];
-    for (const [seed, force] of [['D0', 'collapse/elevator'], ['D1', 'collapse/elevator'], ['D2', 'fire/std'], ['D3', 'fire/std'], ['D4', 'fire/std'], ['D5', 'collapse/elevator']] as const) {      // (R3 3단계) 교본으로 결과가 바뀌어 유압 개방이 D5 승강기로 옮겨 갔다
+    for (const [seed, force] of [['D0', 'collapse/elevator'], ['D1', 'collapse/elevator'], ['D2', 'fire/std'], ['D3', 'fire/std'], ['D4', 'fire/std'], ['D7', 'collapse/elevator']] as const) {      // (R3 3단계) 교본으로 결과가 바뀌어 유압 개방이 D5 승강기로 옮겨 갔다 · (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 D5 의 사건이 바뀌었다 — 유압 개방은 D7 의 건물 화재에
       const sim = new Sim(seed, NORMAL, 1200, { force }); sim.runToEnd();
       for (const I of sim.incidents) us.push(...(I.methods ?? []));
     }
@@ -3279,11 +3279,12 @@ describe('R3b (다) 폭파 진입: 파괴 담당이 잠긴 방 문으로 온다 
     const civ = runRule(true, true);
     expect(civ.s.props.some((p) => p.skin === 'barricade')).toBe(false);
   });
-  it('D2: 인질 없는 농성이 생기지 않는 교대는 solo 를 끄든 켜든 해시가 같다 · 생기는 교대(강제 강도 S33)에서만 잠긴 문이 하나 는다', () => {
+  it('D2: 인질 없는 농성이 생기지 않는 교대는 solo 를 끄든 켜든 해시가 같다 · 생기는 교대(강제 강도 S45)에서만 잠긴 문이 하나 는다', () => {
+    // (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 강제 강도 S33 의 교대가 바뀌었다 — 인질 없는 농성이 생기는 S45 로 (S0~S59 가운데 S45·S47·S55)
     const one = (seed: string, force: string, solo: boolean): Sim => { const saved = BARRICADE.solo; BARRICADE.solo = solo; try { const sim = new Sim(seed, NORMAL, 1200, { force }); sim.runToEnd(); return sim; } finally { BARRICADE.solo = saved; } };
     expect(one('S0', 'armed/hostage', true).report!.hash).toBe(one('S0', 'armed/hostage', false).report!.hash);
     const lockText = (sim: Sim): number => sim.events.filter((e) => e.text.includes('가구로 막았습니다')).length;
-    expect(lockText(one('S33', 'armed/robbery', true))).toBe(lockText(one('S33', 'armed/robbery', false)) + 1);
+    expect(lockText(one('S45', 'armed/robbery', true))).toBe(lockText(one('S45', 'armed/robbery', false)) + 1);
   }, 60000);
   it('강제 armed/robbery·armed/shooter 각 6교대: 닫히지 않은 사건·남은 부대 0, 그 시나리오의 한계 시간·방치 각 1건 이하, 같은 시드 두 번 같은 해시', () => {
     for (const f of ['armed/robbery', 'armed/shooter']) {

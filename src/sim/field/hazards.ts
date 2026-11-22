@@ -300,6 +300,9 @@ export function applyCallerAid(sim: Sim, I: Incident, kind: string, ev: number):
     let best: Casualty | null = null;
     for (const c of s.casualties) if (!c.dead && c.where === 'scene' && c.mob !== 'mobile' && (!best || c.bleed > best.bleed)) best = c;
     if (best) { best.bystander = true; note(kind === 'medical' ? `신고자가 안내에 따라 가슴 압박을 하고 있습니다. 환자의 악화가 늦춰집니다.` : kind === 'care' ? `신고자가 안내에 따라 환자를 돌보고 있습니다. 악화가 늦춰집니다.` : `신고자가 구조 대상 ${best.label}의 출혈 부위를 누르고 있습니다. 악화가 늦춰집니다.`); }
+  } else if (kind === 'wire') {
+    // (N8 §4.2) 전선이 떨어진 차: 신고자가 차 안 사람에게 내리지 말라고 전했다 — 세계 규칙(rules/kinds.ts wireRule)이 이 표시로 "내리려다 감전"을 막는다
+    if (s.kinds && s.kinds.told === false) { s.kinds.told = true; note('신고자가 차 안에 있는 사람에게 내리지 말고 그대로 있으라고 전했습니다.'); }
   } else if (kind === 'search') {
     if (!s.props.some((p) => p.kind === 'witness')) {
       const tgt = s.casualties.find((c) => c.isTarget);

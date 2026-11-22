@@ -245,6 +245,9 @@ export const INCIDENT_PLACES: Record<IncidentType, W> = {
   collapse: { villa: 8, construction: 6, warehouse: 5, shop: 3, market: 2, factory: 3, houseS: 2, apartment: 2, farmhouse: 1.5, storage: 1, workshop: 3, deptStore: 0.6, stadium: 0.5, temple: 0.8, fishMarket: 1 },
   hazmat: { chemical: 6, factory: 6, storage: 5, utility: 4, gasStation: 4, shop: 1, restaurant: 2, office: 1.5, mart: 1.5, apartment: 2, officetel: 1, hangar: 1, warehouse: 3, powerPlant: 2.5, substation: 2, workshop: 4, fishMarket: 1.2, university: 1.2 },
   water: { riverside: 6, reservoir: 1.5, beach: 4, pier: 2.5 },
+  // (N8 단계 4a — 설계서 §5.2-2) 시설 사고: 시나리오들의 장소를 합친 표 (끊어진 전선·싱크홀은 길 위 교차로, 수도관 파열은 도심 교차로 곁의 사무·상점·마트, 간판은 상가 건물 앞).
+  // 분석의 placePrior 는 이 표의 "0보다 큰가"만 본다 — 지도·난수는 바뀌지 않는다
+  utility: { shop: 4, restaurant: 4, office: 3, cafe: 2, convenience: 1.5, hotel: 1, market: 1, mart: 1 },
 };
 
 /** 현장을 만들 때 건물 종류가 정하는 것: 평면의 틀 비중 [복도형, 방 연결형, 홀형], 2층일 확률, 무장 사건의 장소 */

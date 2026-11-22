@@ -11,8 +11,8 @@ import { CAUSE_NAME, outShifts } from '../sim/field/injury';      // (H1) 다음
 import { carryParts, carrySummary } from '../sim/persist';      // (I2) 이어받은 상태의 요약 — 읽기만 한다
 import { KITS, roleOf, stays } from '../sim/crews';      // 읽기만 한다 (장비의 상태를 바꾸는 함수는 쓰지 않는다)
 import { FIELD_NAME, UNIT_KIND_NAME } from '../sim/resources';
-import { scenarioName } from '../sim/scenarios';
-import type { AirOp, CrewCarry, FieldAgent, Incident, InjuryCause, Responder, Role, Scene, SimEvent, Unit, UnitField } from '../sim/types';
+import { NO_CARD, scenarioName } from '../sim/scenarios';
+import type { AirOp, Assessment, CrewCarry, FieldAgent, Incident, InjuryCause, Responder, Role, Scene, SimEvent, Unit, UnitField } from '../sim/types';
 import { TrafficChip } from './TrafficChip';
 import { DEPT_NAME, OUTCOME_NAME, TYPE_NAME, WEATHER_NAME, fmtClock, fmtDur, fmtSec, pct } from '../sim/util';
 import { TYPE_DEFS, TYPE_ORDER } from '../sim/incidentTypes';
@@ -39,6 +39,9 @@ const BAND = TRIAGE_NAME;      // 중증도 이름·색은 view/triage.ts 한 �
 export function Icon({ name, size = 14, color = 'currentColor' }: { name: string; size?: number; color?: string }) {
   return <svg className="icon" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d={ICON_PATH[name] ?? ICON_PATH.unknown} fill={color} fillRule="evenodd" /></svg>;
 }
+
+/** 사건 카드·사건 줄의 제목 (N8 §10.2 — 사용자 결정 §12.5-7): 관제의 이름표(label)를 쓰되, 카드에 이름표를 쓰지 않는 N8 시나리오(card: false — NO_CARD)는 유형 이름 */
+export function cardTitle(as: Assessment): string { return as.label && !NO_CARD.has(as.label) ? as.label : TYPE_NAME[as.type]; }
 
 function Bar({ v, color, w = 54 }: { v: number; color: string; w?: number }) {
   return <span className="bar" style={{ width: w }}><span style={{ width: `${Math.max(0, Math.min(100, v * 100))}%`, background: color }} /></span>;
@@ -74,7 +77,7 @@ function IncidentCard({ sim, I, director, truth }: { sim: Sim; I: Incident; dire
     <div className={`card incident ${focused ? 'focused' : ''} ${I.phase === 'closed' ? 'closed' : ''}`} style={{ ['--tc' as string]: TYPE_COLOR[type] }} onClick={() => director.pin(I.id, I.phase === 'onscene' || I.phase === 'closed' ? 'scene' : 'city')} title="클릭하면 이 사건을 관찰합니다">
       <div className="row">
         <span className="code" style={{ background: TYPE_COLOR[type] }}><Icon name={I.phase === 'call' && !as ? 'phone' : pinIcon(I, truth)} size={12} color="#0b1219" />{I.code}</span>
-        <span className="title">{as ? as.label ?? TYPE_NAME[as.type] : I.phase === 'unreported' ? '미신고 사건' : '유형 확인 중'}{as && as.typeConf < 0.6 && !I.fieldType ? ' ?' : ''}</span>
+        <span className="title">{as ? cardTitle(as) : I.phase === 'unreported' ? '미신고 사건' : '유형 확인 중'}{as && as.typeConf < 0.6 && !I.fieldType ? ' ?' : ''}</span>
         {I.tag === 'major' && (truth || I.firstArrivalAt >= 0 || !!as?.label) && <span className="badge major" title="대형 사고">대형</span>}
         {I.phase === 'closed' && I.result
           ? <span className="badge" style={{ color: OUTCOME_COLOR[I.result.outcome], borderColor: OUTCOME_COLOR[I.result.outcome] }}>{OUTCOME_NAME[I.result.outcome]}</span>

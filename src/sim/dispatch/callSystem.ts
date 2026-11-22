@@ -15,7 +15,7 @@ import { applyCallerAid } from '../field/hazards';
 import { assess } from './analyst';
 import { briefUpdate, redirectUnits } from './dispatcher';
 import { decide } from './screening';      // (N8 §5.5) 통화가 끝나는 그 틱에 비응급을 가려낸다 (진술만 읽는다)
-import { falseClaims, kindsOn, verifyAnswer } from '../kindsCaller';      // (N8) 새 진실 읽기는 신고자 모델 kindsCaller 로만 — 오인 신고의 진술 · 확인 질문의 답
+import { KIND_CALLER, falseClaims, kindsOn, verifyAnswer } from '../kindsCaller';      // (N8) 새 진실 읽기는 신고자 모델 kindsCaller 로만 — 오인 신고의 진술 · 확인 질문의 답
 import { closeIncident } from '../incidents';
 
 const SURNAMES = ['김', '이', '박', '최', '정', '강', '조', '윤', '장', '임', '한', '오', '서', '신'];
@@ -60,7 +60,8 @@ export const NATURE_LIK: Record<string, LikMap> = {
   smell: { fire: 0.7, traffic: 0.15, search: 0.05, armed: 0.08, medical: 0.02, collapse: 0.01, hazmat: 0.2, water: 0.01 },
   explosion: { fire: 0.46, traffic: 0.27, search: 0.02, armed: 0.24, medical: 0.01, collapse: 0.12, hazmat: 0.18, water: 0.01 },
   crash: { fire: 0.03, traffic: 0.93, search: 0.01, armed: 0.02, medical: 0.01, collapse: 0.02, hazmat: 0.01, water: 0.01 },
-  bang: { fire: 0.22, traffic: 0.46, search: 0.02, armed: 0.28, medical: 0.02, collapse: 0.2, hazmat: 0.04, water: 0.02 },
+  bang: { fire: 0.22, traffic: 0.46, search: 0.02, armed: 0.28, medical: 0.02, collapse: 0.2, hazmat: 0.04, water: 0.02,
+    utility: 0.08 },      // (N8 §4.1) 전선이 끊어지는 소리·간판 낙하
   missing: { fire: 0.01, traffic: 0.01, search: 0.96, armed: 0.01, medical: 0.01, collapse: 0.01, hazmat: 0.01, water: 0.03 },
   scream: { fire: 0.18, traffic: 0.18, search: 0.1, armed: 0.42, medical: 0.12, collapse: 0.06, hazmat: 0.04, water: 0.07 },
   gunshots: { fire: 0.02, traffic: 0.02, search: 0.01, armed: 0.94, medical: 0.01, collapse: 0.01, hazmat: 0.01, water: 0.01 },
@@ -72,7 +73,7 @@ export const NATURE_LIK: Record<string, LikMap> = {
   fall: { fire: 0.02, traffic: 0.1, search: 0.03, armed: 0.05, medical: 0.8, collapse: 0.03, hazmat: 0.01, water: 0.01 },
   breathless: { fire: 0.12, traffic: 0.01, search: 0.01, armed: 0.01, medical: 0.84, collapse: 0.01, hazmat: 0.1, water: 0.01 },      // (b3-11) 호흡 곤란 — 거의 응급, 연기·가스일 수도 있다
   collapse: { fire: 0.03, traffic: 0.03, search: 0.01, armed: 0.01, medical: 0.01, collapse: 0.92, hazmat: 0.01, water: 0.01 },
-  rumble: { fire: 0.1, traffic: 0.2, search: 0.02, armed: 0.1, medical: 0.02, collapse: 0.5, hazmat: 0.06, water: 0.01 },
+  rumble: { fire: 0.1, traffic: 0.2, search: 0.02, armed: 0.1, medical: 0.02, collapse: 0.5, hazmat: 0.06, water: 0.01, utility: 0.15 },      // (N8 단계 4b) 수도관·싱크홀의 흐릿한 신고
   drowning: { fire: 0.01, traffic: 0.02, search: 0.03, armed: 0.01, medical: 0.03, collapse: 0.01, hazmat: 0.01, water: 0.93 },
   gasleak: { fire: 0.06, traffic: 0.01, search: 0.01, armed: 0.01, medical: 0.02, collapse: 0.01, hazmat: 0.9, water: 0.01 },
   fumes: { fire: 0.2, traffic: 0.02, search: 0.02, armed: 0.03, medical: 0.18, collapse: 0.02, hazmat: 0.5, water: 0.01 },
@@ -187,8 +188,10 @@ export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: 
   }
   const cas = s.casualties;
   const nTrue = cas.length;
-  const trappedTrue = t === 'fire' || t === 'hazmat' ? nTrue > 0 : t === 'armed' ? cas.some((c) => c.hostage) : cas.some((c) => c.mob === 'trapped');
-  const injuredTrue = t === 'fire' || t === 'hazmat' ? nTrue > 0 : cas.some((c) => c.mob !== 'mobile' || c.health < 80);
+  const kc = KIND_CALLER[t];      // (N8 §5.2-5) 새 유형의 신고자 갈래 (신고자 모델 kindsCaller — 여덟 유형은 없다: 난수·진술이 그대로)
+  const kt = kc?.truth?.(s);
+  const trappedTrue = kt ? kt.trapped : t === 'fire' || t === 'hazmat' ? nTrue > 0 : t === 'armed' ? cas.some((c) => c.hostage) : cas.some((c) => c.mob === 'trapped');
+  const injuredTrue = kt ? kt.injured : t === 'fire' || t === 'hazmat' ? nTrue > 0 : cas.some((c) => c.mob !== 'mobile' || c.health < 80);
   // 부상자 여부
   if (rng.chance(kn)) {
     const ok = rng.chance(acc);
@@ -263,6 +266,7 @@ export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: 
     const visible = s.hostiles.filter((h) => !h.hidden).length;
     put('detail', { suspects: visible }, `${visible}명이에요.`, visible === s.hostiles.length, visible === s.hostiles.length ? '' : '숨어 있는 공범은 보지 못함');
   }
+  kc?.more?.(sim, I, s, rng, kn, acc, put);      // (N8) 새 유형의 위험·상세 진술
   return {
     name: rng.pick(SURNAMES) + '○○', persona, knows,
     patience: persona === 'partial' ? 3 : persona === 'panicked' ? 5 : 6,
@@ -338,6 +342,7 @@ const INSTRUCT: Record<string, { say: string; yes: string; no: string }> = {
   medical: { say: '제가 알려 드릴게요. 환자를 바로 눕히고 가슴 한가운데를 강하고 빠르게 계속 눌러 주세요.', yes: '네, 하고 있어요. 하나, 둘, 셋…', no: '못 하겠어요, 손이 떨려요…' },
   care: { say: '환자를 편하게 눕히고, 피가 나면 깨끗한 천으로 세게 눌러 주세요. 곁을 지키며 상태를 계속 봐 주세요.', yes: '네, 옆에서 보고 있을게요.', no: '어떻게 해야 할지 모르겠어요…' },
   search: { say: '지금 계신 곳에서 움직이지 말고 대원들을 기다려 주세요. 도착하면 본 것을 그대로 알려 주세요.', yes: '네, 여기서 기다릴게요.', no: '저도 찾으러 가 봐야겠어요.' },
+  wire: { say: '차 안에 계신 분께 그대로 계시라고 전해 주세요. 내리면 감전됩니다. 선생님도 전선에 가까이 가지 마세요.', yes: '네, 내리지 말라고 소리칠게요!', no: '너무 무서워서 가까이 못 가겠어요…' },      // (N8 §4.2) 전선이 떨어진 차
 };
 
 /** 도착 전 안내: 접수 AI 가 신고자에게 할 일을 알려 준다. 따를지는 신고자에게 달렸고, 따르면 현장 상태가 실제로 바뀐다. */
@@ -346,7 +351,7 @@ function maybeInstruct(sim: Sim, call: Call, I: Incident): boolean {
   if (call.instructed || call.isFollowup || !as || as.typeConf < 0.6 || call.caller.persona === 'prank') return false;
   const has = (topic: Topic, v: unknown): boolean => I.claims.some((c) => c.callId === call.id && c.topic === topic && c.value === v);
   const noBreath = I.claims.some((c) => (c.topic === 'nature' && c.value === 'notbreathing') || (c.topic === 'detail' && c.value && c.value.breathing === false));
-  const kind = as.type === 'fire' && has('trapped', true) ? 'fire' : as.type === 'traffic' && has('injured', true) ? 'traffic' : as.type === 'medical' && call.asked.length >= 2 ? (noBreath ? 'medical' : 'care') : as.type === 'search' && call.asked.length >= 2 ? 'search' : '';
+  const kind = as.type === 'fire' && has('trapped', true) ? 'fire' : as.type === 'traffic' && has('injured', true) ? 'traffic' : as.type === 'medical' && call.asked.length >= 2 ? (noBreath ? 'medical' : 'care') : as.type === 'search' && call.asked.length >= 2 ? 'search' : as.type === 'utility' && as.label === '끊어진 전선' && has('trapped', true) ? 'wire' : '';      // (N8) 이름표까지 — 수도관·싱크홀의 갇힘(지하·구멍)에는 '내리지 마세요'가 맞지 않다
   if (!kind) return false;
   call.instructed = true;
   const complied = call.rng.chance(COMPLY[call.caller.persona]);

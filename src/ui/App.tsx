@@ -11,7 +11,7 @@ import type { StartMode } from '../view/runner';
 import { Viewport } from './Viewport';
 import { MapLegend } from './MapLegend';
 import type { Difficulty } from '../sim/difficulty';
-import { AgentPanel, BottomBar, DecisionPanel, DifficultyPanel, Icon, IncidentList, LogPanel, ReportModal, Ticker, TopBar, UnitList } from './panels';
+import { AgentPanel, BottomBar, DecisionPanel, DifficultyPanel, Icon, IncidentList, LogPanel, ReportModal, Ticker, TopBar, UnitList, cardTitle } from './panels';
 import { CallDock, loadCallOpen, saveCallOpen } from './CallDock';
 import { PersonCard } from './PersonCard';
 import type { PersonSel } from './PersonCard';
@@ -225,7 +225,7 @@ export function App() {
           )}
           {I && !reel && (
             <div className="scene-title">
-              <Icon name={I.assessment ? I.assessment.type : 'unknown'} size={15} /> <b>사건 {I.code}</b> {I.assessment ? I.assessment.label ?? TYPE_NAME[I.assessment.type] : '유형 확인 중'} · {I.locationKnown || truth ? I.truth.label : '위치 확인 중'}
+              <Icon name={I.assessment ? I.assessment.type : 'unknown'} size={15} /> <b>사건 {I.code}</b> {I.assessment ? cardTitle(I.assessment) : '유형 확인 중'} · {I.locationKnown || truth ? I.truth.label : '위치 확인 중'}
               {scene && scene.arrivedAt >= 0 && <span className="dim"> · 현장 경과 {fmtDur((I.phase === 'closed' ? I.closedAt : sim.t) - scene.arrivedAt)}</span>}
               {inScene && scene && scene.arrivedAt < 0 && <span className="warn"> · {(scene.airAt ?? -1) >= 0 ? '헬기 상공 도착 · 지상 부대 도착 전' : '부대 도착 전'}</span>}
             </div>

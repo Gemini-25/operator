@@ -17,6 +17,7 @@ import { emit, raiseProblem } from '../events';
 import type { Rng } from '../rng';
 import type { Casualty, FieldAgent, Hostile, Incident, Injury, InjuryCause, MateBelief, Responder, Scene, Unit, WorkKind } from '../types';
 import { clamp, josa } from '../util';
+import { TYPE_DEFS } from '../incidentTypes';      // (N8 §5.2-6) 새 유형의 처음 원인 기본값 (잎 모듈 — types 만 가져온다)
 
 export const CAUSE_NAME: Record<InjuryCause, string> = {
   gunshot: '총상', stab: '자상', blunt: '타박상', burn: '화상', smoke: '연기 흡입', toxic: '유독 가스 흡입', fall: '추락', crush: '잔해 깔림', blast: '폭발',
@@ -317,7 +318,8 @@ export function canDeploy(r: Responder): boolean {
  * 교통 통제 · 출입구 봉쇄·통제 · 협상 · 목격자 면담 · 바깥의 소화전 연결, 그리고 대상이 안전 구역에 있는 처치(treat·treatMate — fitFor 가 본다).
  * R3 의 부상 줄이 같은 목록을 쓴다.
  */
-export const LIGHT_WORK: ReadonlySet<WorkKind> = new Set<WorkKind>(['traffic', 'perimeter', 'negotiate', 'interview', 'hookup', 'treat', 'treatMate']);
+export const LIGHT_WORK: ReadonlySet<WorkKind> = new Set<WorkKind>(['traffic', 'perimeter', 'negotiate', 'interview', 'hookup', 'treat', 'treatMate',
+  'cordon']);      // (N8 §5.10) 통제 — 다친 대원도 자리는 지킨다
 
 // ───────────────────────── 용의자 (단계 5 — §4) ─────────────────────────
 /** 용의자 상처의 출혈 배율 (대원과 같은 계수 BLEED_PER_DMG 에 곱한다). 균형 손잡이 3번의 둘째 (§9.3) */
@@ -486,7 +488,10 @@ export function initialCause(s: Scene, I: Incident, c: Casualty): InjuryCause {
   if (type === 'medical' && v === 'trauma') return 'blunt';
   if (type === 'medical' && v === 'smoke') return 'smoke';      // (I1-b b3-11 L4) 연기를 마신 주민 — 연기 흡입
   if (type === 'collapse' && v === 'gasblast') return 'blast';
+  // (N8 §5.14) 시설 사고의 변형: 수도관 파열(지하 침수) → 노출 · 싱크홀 → 추락 · 간판 → 깔림 (끊어진 전선은 유형의 기본값 — 감전)
+  if (type === 'utility') return v === 'main' ? 'exposure' : v === 'sinkhole' ? 'fall' : v === 'sign' ? 'crush' : TYPE_DEFS.utility.cause ?? 'electric';
   if (c.inVehicle !== null || type === 'traffic') return 'vehicle';
+  { const tc = TYPE_DEFS[type].cause; if (tc) return tc; }      // (N8 §5.2-6) 새 유형은 표의 기본값 — 무장(아래 default)으로 떨어지지 않게
   switch (type) {
     case 'fire': return 'smoke';
     case 'collapse': return 'crush';

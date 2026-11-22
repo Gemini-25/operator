@@ -1,0 +1,72 @@
+{
+  "base": "<시작할 주 브랜치 커밋 — embed-args.py --base 로 넣는다>",
+  "scratch": "<세션 scratchpad — embed-args.py --scratch 로 넣는다>",
+  "key": "kinds",
+  "id": "N8",
+  "title": "N8 — 사건 종류 다양화 ① 일상 사건과 공통 틀 (새 유형 다섯 · 시나리오 스물넷 · 비응급 신고 네 갈래 · 새 부대 여덟 · 짧은 사건 흐름 daily)",
+  "spec": "docs/specs/N8-incident-kinds.md",
+  "port": 5236,
+  "testFile": "tests/kinds.test.ts",
+  "attr": "<커밋 끝줄 — embed-args.py --attr-file 로 넣는다>",
+  "docsStage": "단계 11 의 화면·문서 몫 (마지막 코드로 새 유형 다섯의 핀·카드·현장을 `scripts/screenshot.cjs` 의 `--force` 로 1600×900 에서 직접 보고 겹침·잘림을 고친다, 범례, 콘솔 오류 0, `npm run ui-check` · §7.1 의 최종 확인(덩어리 s11b 가 맞춘 값 그대로인지) · 설계서 끝 구현 메모 '최종 요약'(N9 가 쓸 실제 이름 표 포함 — `docs/specs/README.md` 구현 순서 표 9번 줄의 이름마다 있다/다르다/없다) · `README.md` 기능 목록·균형 문장·알려진 문제 · `CLAUDE.md` §11 의 줄 · `docs/ROADMAP.md` · `docs/DESIGN.md` §5 · `docs/specs/README.md` 의 상태·덩어리 표·정본 표 · N9 설계서 머리에 N8 의 실제 이름 알림)",
+  "shared": true,
+  "priorNotes": "\n## 지금 상황 (꼭 읽는다 — 2026-11-22, 주 세션)\n- **주 브랜치는 `claude/practical-keller-xm0ac2`** 다. 문서 곳곳의 다른 `claude/…` 브랜치 이름은 앞 세션들의 기록이다. 받기(`git merge`)는 이 브랜치에서만 한다.\n- 주 브랜치에는 R1·H1·X6·R2·R3·**I1-b 전부**(인과 — 세계 상태·초과 위험·일반 법칙 일곱)·**R3b 전부**·**I2 전부**(교대 간 지속 — `placeUse.ts` `placeUsable`, 이어받은 상태)가 있다. **N8 의 단계 1(유형을 자료로)·2a(자료형과 등록 자리)·2b(새 부대의 자리)는 이미 들어 있다**(2026-11-15 준비 줄 — 설계서 끝 구현 메모). 이 묶음은 단계 0·3~11 을 한다.\n- **설계서 머리의 'I1-b 가 끝났다'·'I2 가 끝났다' 알림이 실제 이름의 정본이다**(`registerConsequence`·`spawnConsequence`·`signal`·`registerHazard`·`placeUsable` 은 `src/sim/placeUse.ts` 에서 import — `persist.ts` 에서 import 하면 시나리오 표가 초기화 전에 읽힌다 · `roadsNext` 의 ③ 고리에 변형 한 줄 등). 각 앞 묶음 설계서 끝의 '최종 요약'(`I1-causality.md`·`I2-persistence.md`·`R3b-followup.md`·`R3-doctrine.md`)도 정본이다. 본문의 줄 번호·이름이 코드와 다르면 코드를 따르고 deviations 에 적는다.\n- **I1-b 의 C11 수압(`waterMain`)은 없다** — N8 의 'pipeBurst' 신호가 그 규칙 id 에 기대던 자리는 N8 이 자기 상태 결합 규칙을 만들거나 신호 없이 간다(덩어리 s4ab 가 정하고 구현 메모에 적는다).\n- **사용자 방향(2026-11-20 저녁) '인과는 스크립트대로 말고 자연스럽게'**: §5.6 의 조건부 연쇄 여덟(K1~K8)은 'X 가 실패하면 Y' 꼴이다. 초과 위험의 법칙(`world/hazard.ts` `registerHazard` — 상태가 원인을 모르는 일반 법칙을 통해 위험을 쌓아 대상마다 한 번 뽑은 문턱을 넘을 때만 사건)으로 옮길 수 있는 것은 옮기고, 옮기지 못하는 것은 까닭을 구현 메모에 적는다(덩어리 s10). 연쇄 상한(한 사슬 3건 · 한 교대 6건 · 한 뿌리의 법칙 사건 2건)은 그대로다.\n- 사용자 결정: 설계서 머리의 열네 가지와 §12.5 의 여덟(2026-11-15 '전부 추천대로 ㄱㄱ' — 모두 기본값), 그리고 `docs/handover/README.md` 5절. 민감한 소재(위기자)는 절제(§5.13 — 실패는 그림 없이 기록 한 줄). 화면은 유형 기호만(결정 13).\n- **이 묶음은 결과를 바꾼다**(단계 3 부터 짧은 사건 흐름 `daily` 가 교대당 5건쯤 얹힌다 — 정해진 시드에 기대는 옛 시험이 여럿 깨질 수 있다). 설계서 §9.2 의 '기존 시험 가운데 고칠 것'을 먼저 본다. 판정의 문턱을 낮추지 않는다 — 시드를 바꾸기보다 표본을 넓히고, 깨진 까닭(고리·교착인지)부터 의심한다. 손잡이를 0 으로 두면 해시 목록이 같아야 한다(시험 7a).\n- 시험: 시간 초과로만 실패한 시험은 그것만 다시 돌린다(`tests/sim.test.ts` '다수 사상자…'·'프리셋이 어려워질수록', `tests/crews.test.ts` ④·⑨ 는 기계가 바쁘면 제한을 넘는다). 제한은 고치지 않는다.\n- 속도: 자주 도는 객체에 새 칸을 더하면 생성 리터럴에 같은 순서로 넣고 숫자 칸이면 `src/sim/shape.ts` 의 자리 목록에도(CLAUDE.md '자주 도는 객체의 모양'). 뜨거운 함수 안에 이름 붙은 닫힘을 만들지 않는다.\n- `README.md`·`CLAUDE.md`·`docs/ROADMAP.md`·`docs/specs/README.md`·`docs/DESIGN.md`·`docs/handover/` 는 **문서 단계의 작업자만** 고친다. 덩어리 보고(`docs/handover/reports/`)는 주 세션이 남긴다. 설계서 끝 구현 메모에 단계마다 절을 덧붙인다.\n",
+  "reviewFocus": "(가) **모든 사건이 끝난다**: 새 시나리오 스물넷·비응급 네 갈래마다 `--force` 20교대의 한계 시간·방치·STALL·잊힌 사건을 직접 다시 잰다(헬기만 오는 현장·한 팀뿐인 경찰·길가 대기 부대·세계 규칙이 결말을 정하는 현장의 강제 보고 §5.16). (나) **정보 격리**(§6 의 표): 새 진실마다 판단부가 믿음·조직 정보로만 아는가 — 동물의 위치·위기자의 상태·장난 전화의 진위·견인·복구의 진행. 새 `civil` 부대가 판단 파일에서 진실을 읽지 않는가(테스트의 소스 검사). (다) **결정성**: `daily` 는 새 흐름만 쓰는가(손잡이 0 이면 해시 목록이 같다 — 시험 7a), 한 프로세스에서 시드 순서를 바꿔도 같은가, 되감기. (라) **자연스러운 인과**(사용자 방향): K1~K8 가운데 법칙으로 옮긴 것이 원인의 종류로 가르지 않는 일반 법칙인가, 옮기지 못한 것의 까닭이 정직한가. 연쇄 상한에서 멎는가. (마) **가짜 기록·민감 소재**: 비응급 신고의 종료(`screened`)·판정 문장이 기록에서만 나오는가, 위기자의 실패가 그림 없이 기록 한 줄인가(§5.13 — 그리지 않음·카메라·감속). (바) **시험이 느슨해지지 않았는가**: 고친 옛 시험마다 문턱을 낮추거나 시드를 골라 맞추지 않았는가(표본을 넓힌 것은 받아들인다). (사) 교대당 시간·`npm run check` 시간이 크게 늘지 않았는가.",
+  "chunks": [
+    {
+      "id": "s03",
+      "stages": "단계 0 (기준 — 일곱 묶음을 합친 자리)·단계 3 (짧은 사건 흐름 daily · 비응급 N1·N2)",
+      "focus": "0: `scripts/kindstats.ts`(측정만)·해시 목록 도구(§7.2)를 만들고 기준(보통 60·프리셋 넷·`kinds` 줄)을 시작점에서 잰다 — 앞 세션의 기준 파일은 이 컨테이너에 없다. 3: §5.4 짧은 사건 흐름(`isDailyLoad`·`avail` 제외 포함 — 새 흐름 `daily`), 비응급 N1 장난 전화·N2 오인 신고(§4.8 — 장난 줄 셋·오인 줄 넷, `buildQuiet`, `natureFor`·`makeCaller` 의 유형별 갈래, `screening.ts` 의 `verify`·`kindsCaller.verifyAnswer`, `closeReason 'screened'`, `benign` 넓히기, `FALSE_WHAT`, 판정 문장).",
+      "pre": "```bash\ngit merge --no-edit claude/practical-keller-xm0ac2   # 주 세션이 합친 문서·보고를 받는다\ngit branch -f wf/kinds HEAD\nnpx tsc --noEmit && npx vitest run tests/kinds.test.ts\n```",
+      "extra": "시험 6·7a·7b·8(N1·N2). 손잡이 0 이면 해시 목록 동일(7a). 평소 추첨 사건 수 = 기준 ± 0.3, 비응급 교대당 0.4~0.6건, 잊힌 사건 0. 그 단계에서 들어온 시나리오마다 `npm run sweep -- 20 --force <유형>/<변형> --scen --metrics` 의 한계 시간·방치·STALL 0 과 실패·부분 1건 이상, 보통 60 의 분포와 close reasons 의 timeout 을 전후로(설계서 §8 머리). npm run check · 어려움·극한 40 --check."
+    },
+    {
+      "id": "s4ab",
+      "stages": "단계 4a·4b (utility 시설 사고 — 전선·수도관·싱크홀·간판 + 복구반 셋 · 가스 누출의 공급 차단 확인)",
+      "focus": "4a: `utility` 유형 + 틀(§4.2 — `streetFrame`·`fixture` 소품과 스킨·`repair` 실행·위험 반경 §5.10·`cordon` 실행·시간 막이 넷 §5.3.6·`UTIL_LATE`·판정 줄) + `utility/wire`, 전력 복구반 편성(`minLevel 1`), 기존 키의 새 열(`bang`), `INCIDENT_PLACES.utility`, 아이콘·색, `KIND_CALLER.utility`, `INSTRUCT 'wire'`. 4b: `utility/main`·`sinkhole`·`sign`, 가스·수도 복구반 편성, **가스 누출의 공급 차단 확인**(§5.3.8 — 선택 수요), `rumble` 열. I1-b 의 C11 이 없으니 'pipeBurst' 자리를 정한다(지금 상황 참고). 새 유형 기호를 처음 그리므로 화면 커밋을 따로 두고 `npm run ui-check`.",
+      "pre": "```bash\ngit merge --no-edit claude/practical-keller-xm0ac2   # 주 세션이 합친 문서·보고를 받는다\ngit branch -f wf/kinds HEAD\nnpx tsc --noEmit && npx vitest run tests/kinds.test.ts\n```",
+      "extra": "`--force` 20 × 4(utility 넷) + `hazmat/std` 20 · 시험 3(전체)·5·9·10·18 · `tests/sim.test.ts` 의 부대 수·분야 팀 수(이 단계의 값). 그 단계에서 들어온 시나리오마다 `npm run sweep -- 20 --force <유형>/<변형> --scen --metrics` 의 한계 시간·방치·STALL 0 과 실패·부분 1건 이상, 보통 60 의 분포와 close reasons 의 timeout 을 전후로(설계서 §8 머리). npm run check · 어려움·극한 40 --check."
+    },
+    {
+      "id": "s56a",
+      "stages": "단계 5 (animal 동물)·단계 6a (disturb 치안 — 소란·싸움·날치기 + 경찰 새 부대 셋)",
+      "focus": "5: `animal` 유형 + 네 시나리오(§4.3), `animals.ts`·`animalRule`, `capture` + R2 방법 넷, `ani` 지각, `ANIMAL_LOST`, 동물 포획팀 편성, 관창수의 벌 보호복, 동물 그림. 6a: `disturb` 유형 + `rowdy`·`brawl`·`snatch`(§4.4), 경찰 새 부대 셋(형사·교통 경찰·경찰견) 편성, `kindFit` 의 줄, 길목(`chokeRule`)·숨은 용의자의 기록 갈래, 잠든 취객(`asleep`). '한 팀뿐인 경찰'(CLAUDE.md)로 강제한 교대에서 끝나는지 본다.",
+      "pre": "```bash\ngit merge --no-edit claude/practical-keller-xm0ac2   # 주 세션이 합친 문서·보고를 받는다\ngit branch -f wf/kinds HEAD\nnpx tsc --noEmit && npx vitest run tests/kinds.test.ts\n```",
+      "extra": "`--force` 20 × 7 · 시험 5·9·13·14(앞 넷) · `tests/crews.test.ts` ②③(포획·보호복 짝, `animalCtl` 예외, `AID_KEYS` 의 `capture`, 최소 1). 그 단계에서 들어온 시나리오마다 `npm run sweep -- 20 --force <유형>/<변형> --scen --metrics` 의 한계 시간·방치·STALL 0 과 실패·부분 1건 이상, 보통 60 의 분포와 close reasons 의 timeout 을 전후로(설계서 §8 머리). npm run check · 어려움·극한 40 --check."
+    },
+    {
+      "id": "s6b7",
+      "stages": "단계 6b (disturb/scam·cartheft + 견인차 · 교통사고의 견인)·단계 7 (welfare 보호 — 위기자·배회·고립 노인 …)",
+      "focus": "6b: `disturb/scam`·`cartheft`, 견인차 편성과 `towAway`, **교통사고의 견인**(§5.3.8 — 선택 수요), `Pursuit.kind 'cartheft'`, 사복 알아보기·잠복 종료 막기, 새 기본 키 `suspicious`. 7: `welfare` 유형 + 네 시나리오(§4.5), `persuade`, `urbanFrame`·큰 홀, `zoneSearch`·`wander` 를 보호 유형에, `T.LEDGE` 를 처음 쓴다(위기자), `quietLoss`·체력 하한, 유압 대원의 안전 매트, 민감 소재 규칙의 화면 쪽(§5.13 — 그리지 않음·카메라·감속). 화면 커밋은 따로, `npm run ui-check`.",
+      "pre": "```bash\ngit merge --no-edit claude/practical-keller-xm0ac2   # 주 세션이 합친 문서·보고를 받는다\ngit branch -f wf/kinds HEAD\nnpx tsc --noEmit && npx vitest run tests/kinds.test.ts\n```",
+      "extra": "`--force` 20 × 6 + `traffic/std` 20 · 시험 5·9·11·14(나머지)·15. 그 단계에서 들어온 시나리오마다 `npm run sweep -- 20 --force <유형>/<변형> --scen --metrics` 의 한계 시간·방치·STALL 0 과 실패·부분 1건 이상, 보통 60 의 분포와 close reasons 의 timeout 을 전후로(설계서 §8 머리). npm run check · 어려움·극한 40 --check."
+    },
+    {
+      "id": "s89",
+      "stages": "단계 8 (rescue 구조 — 높은 자리)·단계 9 (응급의 갈래 넷)",
+      "focus": "8: `rescue` 유형 + 세 시나리오(§4.6), 높은 자리(§5.11 — `'perch'`·`isHovering`·`casFact`·지휘관과 상공의 호이스트·실행부의 이동 목표), R2 `ladder`·`descend`, 구조 팀장의 측정기, 평소 추첨 가중 0.06·`fallback 'pit'`. 9: 응급의 갈래 넷(§4.7 — `tag 'kinds'`), 신고자 모델의 인원, 응급 방 수색 조건(`found >= max(1, expected)`), `INSTRUCT 'birth'`, R3 E01 의 이름표.",
+      "pre": "```bash\ngit merge --no-edit claude/practical-keller-xm0ac2   # 주 세션이 합친 문서·보고를 받는다\ngit branch -f wf/kinds HEAD\nnpx tsc --noEmit && npx vitest run tests/kinds.test.ts\n```",
+      "extra": "`--force` 20 × 7 + `hazmat/std` 20(측정기의 부수 효과) · 시험 5·17·19 · 평소 추첨 유형 분포 · 구급 가동률. 그 단계에서 들어온 시나리오마다 `npm run sweep -- 20 --force <유형>/<변형> --scen --metrics` 의 한계 시간·방치·STALL 0 과 실패·부분 1건 이상, 보통 60 의 분포와 close reasons 의 timeout 을 전후로(설계서 §8 머리). npm run check · 어려움·극한 40 --check."
+    },
+    {
+      "id": "s10",
+      "stages": "단계 10 (조건부 연쇄 여덟 — 자연스러운 인과로 · 비응급 N3 이관·N4 중복 신고)",
+      "focus": "§5.6 의 K1~K8 — 사용자 방향(지금 상황 참고)대로 세계 상태 → 일반 법칙 → 초과 위험으로 옮길 수 있는 것은 `registerHazard`·`registerConsequence` 로(원인의 종류로 가르지 않는다, 개입 시험 — 같은 시드에서 윗 상태만 되돌리면 그 사건이 없다), 옮기지 못하는 것은 까닭을 구현 메모에. N3 단순 민원 이관·N4 중복 신고 오인(§4.8 — `same`·`kindsCaller.sameAnswer`·`dupOf`). 측정 도구의 연쇄 관문(깊이 ≤ 3 · 한 교대 ≤ 6 · 한 뿌리 ≤ 2 · 장부 구멍 0)이 그대로 지나는지.",
+      "pre": "```bash\ngit merge --no-edit claude/practical-keller-xm0ac2   # 주 세션이 합친 문서·보고를 받는다\ngit branch -f wf/kinds HEAD\nnpx tsc --noEmit && npx vitest run tests/kinds.test.ts\n```",
+      "extra": "시험 8(N3·N4)·16 · 연쇄 관문 · 비응급 비율 6~8%. 그 단계에서 들어온 시나리오마다 `npm run sweep -- 20 --force <유형>/<변형> --scen --metrics` 의 한계 시간·방치·STALL 0 과 실패·부분 1건 이상, 보통 60 의 분포와 close reasons 의 timeout 을 전후로(설계서 §8 머리). npm run check · 어려움·극한 40 --check."
+    },
+    {
+      "id": "s11b",
+      "stages": "단계 11 의 균형 몫 (§7 손잡이 차례 — 문서·화면은 다음 문서 단계)",
+      "focus": "§7.1 목표 전부를 보통 60(필요하면 120)·프리셋 넷으로 재고 §7.3 의 손잡이 차례로 맞춘다. 시험 12, `daily` 줄의 가중 합 = `DAILY_TOTAL`. 목표 밖으로 남는 것은 더 깎지 말고 수치와 까닭을 정직하게(사용자 결정: 화재 균형은 N9 뒤에 다시 — 화재는 이 묶음에서 손잡이로 맞추지 않는다). README·CLAUDE·ROADMAP 은 고치지 않는다.",
+      "pre": "```bash\ngit merge --no-edit claude/practical-keller-xm0ac2   # 주 세션이 합친 문서·보고를 받는다\ngit branch -f wf/kinds HEAD\nnpx tsc --noEmit && npx vitest run tests/kinds.test.ts\n```",
+      "extra": "npm run check · 어려움·극한 40 --check · 프리셋 넷 60 의 표를 보고에."
+    }
+  ],
+  "priorReports": [
+    {
+      "stages": "단계 1·2a·2b (틀 — 유형을 자료로 · 자료형과 등록 자리 · 새 부대의 자리, 2026-11-15 준비 줄)",
+      "text": "이미 주 브랜치에 있다(결과 불변). 실제 이름과 본문과 다르게 한 곳은 docs/specs/N8-incident-kinds.md 끝의 '구현 메모' 단계 1·2a·2b 절이 정본이다. 그 뒤 I1-b·R3b·I2 가 결과를 바꿨으므로 0단계의 기준·해시 목록은 새로 잰다."
+    }
+  ]
+}

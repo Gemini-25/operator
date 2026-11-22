@@ -148,7 +148,7 @@ export const ROLES: Record<RoleId, RoleDef> = {
   ladderLead: { name: '사다리 팀장', group: 'lead', skills: (s) => sk(s, s * 0.7, 0.35, 0.05), kit: ['scba', 'turnout', 'tic', 'irons'], prefer: { search: 0.1, force: 0.1 } },
   ladderOp: { name: '사다리 조작원', group: 'engineer', skills: (s) => sk(s * 0.85, s * 0.5, 0.3, 0.05), kit: ['scba', 'turnout', 'pumpPanel', 'hose', 'pole', 'fan'], prefer: { hookup: 0.3, search: -0.2 } },      // (R2 단계 4) 송풍기는 끝에
   // ── 구조·화학·항공·수난 ──
-  rescueLead: { name: '구조 팀장', group: 'lead', skills: (s) => sk(s * 0.7, s, 0.4, 0.05), kit: ['scba', 'turnout', 'searchKit', 'irons', 'shoring'], prefer: { search: 0.1 } },      // (R2 단계 3) 지지대는 끝에
+  rescueLead: { name: '구조 팀장', group: 'lead', skills: (s) => sk(s * 0.7, s, 0.4, 0.05), kit: ['scba', 'turnout', 'searchKit', 'irons', 'shoring', 'gasMeter'], prefer: { search: 0.1 } },      // (R2 단계 3) 지지대는 끝에 · gasMeter: (N8 단계 8 §4.9) 구덩이·우물의 공기 측정 — 0번 자리라 최소 인원에서도 있다 (고장 추첨을 받지 않는 장비)
   extricator: { name: '구조대원(유압)', group: 'rescue', skills: (s) => sk(s * 0.7, s + 0.04, 0.35, 0.05), kit: ['scba', 'turnout', 'spreader', 'airbag'], prefer: { extricate: 0.25, clear: 0.15 } },      // (R2 단계 3) 에어백은 끝에 (batch r2 — 고장 추첨은 kit-r2)
   searcher: { name: '구조대원(탐지)', group: 'search', skills: (s) => sk(s * 0.7, s, 0.35, 0.05), kit: ['scba', 'turnout', 'searchKit', 'irons'], prefer: { search: 0.2 } },
   ropeTech: { name: '구조대원(로프)', group: 'water', skills: (s) => sk(s * 0.6, s, 0.35, 0.05), kit: ['scba', 'turnout', 'rope', 'ring', 'hose', 'pfd', 'drysuit', 'raft', 'beeSuit'], prefer: { waterRescue: 0.3 } },      // beeSuit: (N8 단계 5)
@@ -241,7 +241,7 @@ export const AIR_KIND: Set<UnitKind> = new Set<UnitKind>(['heli', 'policeHeli', 
  */
 export function isHovering(u: Unit, s: Scene): boolean {
   if (u.kind === 'policeHeli') return true;
-  return u.kind === 'heli' && (s.kind === 'water' || (s.rules !== undefined && s.rules.indexOf('water') >= 0) || (s.kind === 'fire' && s.variant === 'wild'));
+  return u.kind === 'heli' && (s.kind === 'water' || (s.rules !== undefined && (s.rules.indexOf('water') >= 0 || s.rules.indexOf('perch') >= 0)) || (s.kind === 'fire' && s.variant === 'wild'));      // 'perch': (N8 단계 8 §5.11) 높은 자리의 사람 — 상공에서 호이스트로
 }
 /** 그 시설의 헬기 착륙 자리 (지도 좌표). 병원은 부지 안의 착륙장, 그 밖(항공대·경찰서)은 건물 옆 */
 export function heliPad(_sim: Sim, f: Facility): [number, number] { return f.kind === 'hospital' ? [f.x - 5, f.y - 3] : [f.x + 30, f.y - 20]; }

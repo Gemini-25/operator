@@ -16,7 +16,8 @@ export const TYPE_ORDER: readonly IncidentType[] = ['fire', 'traffic', 'search',
   'utility',      // (N8 단계 4a) 시설 사고 — 평소 추첨 가중 0 (짧은 사건 흐름 daily 로만 나온다)
   'animal',      // (N8 단계 5) 동물 — 평소 추첨 가중 0 (짧은 사건 흐름으로만)
   'disturb',      // (N8 단계 6a) 치안 — 평소 추첨 가중 0 (짧은 사건 흐름으로만)
-  'welfare'];      // (N8 단계 7) 보호 — 평소 추첨 가중 0 (짧은 사건 흐름으로만)
+  'welfare',      // (N8 단계 7) 보호 — 평소 추첨 가중 0 (짧은 사건 흐름으로만)
+  'rescue'];      // (N8 단계 8) 구조 — 평소 추첨 가중 0.06 (새 유형 가운데 하나뿐 — 무거운 쪽이라 평소 사건의 일부를 대신한다)
 
 /** 유형 → TYPE_ORDER 의 자리 (분석 AI 의 숫자 색인 lp[…] 대신) */
 export const typeIdx = {} as Record<IncidentType, number>;
@@ -137,6 +138,16 @@ export const TYPE_DEFS: Record<IncidentType, TypeDef> = {
     question: { count: '마지막으로 본 게 언제입니까?', hazard: '위험한 곳 가까이 있습니까?', detail: '어떤 옷을 입었습니까?' },
     topicValue: { detail: 0.92, hazard: 0.7, injured: 0.5 },
     baseNeeds: { search: 1 }, cause: 'illness', floorHp: 20,
+  },
+  // ── (N8 단계 8 — 설계서 §4.1·§4.6) 구조: 외벽 작업자 고립·구덩이 추락·멈춘 놀이기구. 사람이 어디 있는지는 처음부터 알고 "어떻게 닿는가"가 주인공(R2 방법).
+  //    평소 추첨 가중 0.06 · 시나리오 몫(0.45 · 0.2 · 0.1)이 걸리지 않으면 구덩이(fallback) ──
+  rescue: {
+    name: '구조', limit: 430, respLimit: 100, delay: [2, 6], follow: 0.4, weight: 0.06, fallback: 'pit', atNode: 0.75, alwaysShow: false,
+    indoorRisk: false, roomSearch: false, zoneSearch: false, wander: false, outdoor: false,
+    question: { count: '몇 명이 갇혀 있습니까?', trapped: '어디에 매달리거나 빠져 있습니까?', hazard: '더 떨어질 위험이 있습니까?', detail: '높이가 어느 정도입니까?' },
+    topicValue: { trapped: 0.92, hazard: 0.8, count: 0.7, injured: 0.6 },
+    trappedYes: '아직 매달려(빠져) 있어요!', trappedNo: '지금은 나왔어요.',
+    baseNeeds: { rescue: 1, ems: 1 }, cause: 'fall', floorHp: 0,
   },
 };
 

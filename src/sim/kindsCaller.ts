@@ -110,6 +110,20 @@ export const KIND_CALLER: Partial<Record<IncidentType, CallerHook>> = {
       }
     },
   },
+  // (8) 구조: 매달리거나 빠진 사람 = 갇힘 · 다친 사람은 체력으로. 상세는 높이(외벽·놀이기구 — 틀릴 수 있다: 관제의 사다리차 가점은 이름표로만 걸린다) · 위험은 더 떨어질까
+  rescue: {
+    truth: (s) => { let trapped = false, injured = false; for (const c of s.casualties) { if (c.dead) continue; if (c.mob === 'trapped') trapped = true; if (c.health < 70) injured = true; } return { trapped, injured }; },
+    more: (sim, I, s, rng, kn, acc, put) => {
+      void sim;
+      const pl = s.kinds !== undefined ? s.kinds.perch : undefined;
+      if (pl !== undefined && pl.length && rng.chance(kn)) {
+        const h = pl[0].h, ok = rng.chance(acc), say = ok ? h : h === 1 ? 2 : h - 1;
+        put('detail', { height: say }, say === 1 ? '2~3층 높이예요.' : say === 2 ? '5~6층쯤 되는 높이예요.' : '꽤 높아요. 10층은 넘을 거예요.', ok, ok ? '' : '높이를 틀리게 신고');
+      }
+      if (I.truth.variant === 'facade' && rng.chance(kn * 0.6)) put('hazard', 'swing', '줄 하나가 흔들려요. 떨어질 것 같아요!', true);
+      if (I.truth.variant === 'pit' && rng.chance(kn * 0.5)) put('detail', { deep: s.kinds?.depth ?? 1 }, (s.kinds?.depth ?? 1) >= 2 ? '꽤 깊어요. 안이 잘 안 보여요.' : '깊진 않은데 혼자 못 올라와요.', true);
+    },
+  },
   // (7) 보호: 갇힌 사람은 없다 · 다친 사람은 체력으로. 인상착의(어떤 옷)는 보호자가 안다 — 사연·의도는 말하지 않는다(§5.13)
   welfare: {
     truth: (s) => { let injured = false; for (const c of s.casualties) if (!c.dead && c.health < 85) injured = true; return { trapped: false, injured }; },

@@ -10,8 +10,9 @@ import { mkFact } from '../beliefs';
 import { staticPass } from '../grid';
 import { registerBlocker, registerCasHold, registerHosHold, registerOrders, registerPending, registerPropHold } from '../sceneRegistry';
 import { ATTACH_GAS, ATTACH_TOW } from '../../scenarios/kinds';
-import { VALVE_LATE, meetOf } from '../agents';
-import type { AniBelief, CasBelief, FieldAgent, Scene } from '../../types';
+import { VALVE_LATE, laborAtOf, meetOf } from '../agents';
+import type { AniBelief, CasBelief, FieldAgent, Incident, Scene } from '../../types';
+import { hasKit, seatsOf, seatsUsed } from '../../crews';      // (N8 단계 8) 조직이 아는 장비 — 가스 측정기를 든 대원이 현장·오는 부대에 있는가
 import type { Sim } from '../../engine';
 
 /** 오인 신고의 판단을 알린 현장 (기록은 한 번 — 늦게 닿은 수색 보고가 확인율을 낮추면 믿음만 조용히 다시 고친다). 객체 모양을 바꾸지 않으려고 WeakSet */
@@ -476,4 +477,150 @@ registerOrders((sim, s, I, a, k) => {
   const keep: number[] = [];
   for (let n = 0; n < Math.min(order.length, hands > 3 ? 2 : 1); n++) { const t = exitPost(s, order[n].i); keep.push(t); k.want('cordon', { tile: t }, n === 0 ? CHILD_POST.p1 : CHILD_POST.p2); }
   k.cancel((w) => w.kind === 'cordon' && keep.indexOf(w.tile) < 0);
+});
+
+// ───────────────────────── 구조 (§4.6 — 단계 8) — 높은 자리 아래 통제 · 구덩이의 공기 측정 · 놀이기구의 전원 기다림 ─────────────────────────
+// 믿음(cas 의 perch·pit, haz pit·air, evid power)·작업판·조직 정보(현장·오는 부대 대원의 장비 — hasKit)만 읽는다. 구출(extricate)·호이스트는 핵심 규칙이 낸다 —
+// 여기서는 낙하 구역 통제·측정 자리를 더하고, 기다려야 할 구출을 holdUntil 로 미룰 뿐이다(원칙 10 — 핵심 규칙이 내는 일을 취소하지 않는다).
+/** 우선순위·시간: 높은 자리 아래 통제(구출 0.82 보다 0.22 넘게 낮게 — 구출을 맡을 대원을 빼 가지 않는다) · 구덩이 측정 · 측정기를 기다리는 상한(초 — 측정기 든 대원이 없을 때) ·
+ *  측정을 기다리는 긴 상한(측정기 든 대원이 있어도) · 놀이기구 전원을 기다릴 만한 남은 시간(초 — 교착 감지 60초 아래) */
+export const RESCUE_ORD = { cordon: 0.55, measure: 0.88, meterWait: 60, measureCap: 150, powerWait: 45 };
+/** 높은 자리의 사람에게서 2칸 떨어진 걸을 수 있는 칸 가운데 대기 지점에 가장 가까운 칸 — 낙하 구역 통제 자리 (생김새만). 없으면 -1 */
+function belowTile(s: Scene, x: number, y: number): number {
+  let best = -1, bd = Infinity;
+  for (let k = 0; k < BELOW.length; k += 2) {
+    const tx = x + BELOW[k], ty = y + BELOW[k + 1];
+    if (tx < 1 || ty < 1 || tx >= s.w - 1 || ty >= s.h - 1) continue;
+    const i = ty * s.w + tx;
+    if (!staticPass(s.tiles[i])) continue;
+    const d = Math.hypot(tx - s.staging.x, ty - s.staging.y);
+    if (d < bd) { bd = d; best = i; }
+  }
+  return best;
+}
+const BELOW = [0, -2, 0, 2, -2, 0, 2, 0, -2, -2, 2, -2, -2, 2, 2, 2];
+/** 구덩이의 바로 곁(상하좌우 — 측정기가 2칸 안에 닿는다) 걸을 수 있는 칸 가운데 대기 지점에 가장 가까운 칸 */
+function pitSide(s: Scene, x: number, y: number): number {
+  let best = -1, bd = Infinity;
+  for (let k = 0; k < SIDE.length; k += 2) {
+    const tx = x + SIDE[k], ty = y + SIDE[k + 1], i = ty * s.w + tx;
+    if (tx < 0 || ty < 0 || tx >= s.w || ty >= s.h || !staticPass(s.tiles[i])) continue;
+    const d = Math.hypot(tx - s.staging.x, ty - s.staging.y);
+    if (d < bd) { bd = d; best = i; }
+  }
+  return best;
+}
+const SIDE = [0, -1, 0, 1, -1, 0, 1, 0];
+/** 가스 측정기를 든 대원이 현장에 있거나 오고 있는가 (조직이 아는 편성·장비 — 알려진 고장은 hasKit 이 거른다) */
+function meterNear(sim: Sim, s: Scene, I: Incident): boolean {
+  for (const b of s.agents) if (b.status === 'active' && !b.aloft && hasKit(sim, b.rid, 'gasMeter')) return true;
+  for (const uid of I.assigned) { const u = sim.units[uid]; if ((u.state === 'enroute' || u.state === 'turnout') && u.crew.some((r) => hasKit(sim, r, 'gasMeter'))) return true; }
+  return false;
+}
+/** 한 번만 남기는 지휘 기록 (현장마다 열쇠 — 측정 없이 내려감 · 전원을 기다림) */
+const RESCUE_TOLD = new WeakMap<Scene, Set<string>>();
+function tellOnce(sim: Sim, s: Scene, I: Incident, a: FieldAgent, key: string, text: string): void {
+  let st = RESCUE_TOLD.get(s); if (!st) { st = new Set(); RESCUE_TOLD.set(s, st); }
+  if (st.has(key)) return;
+  st.add(key);
+  emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 1, text });
+}
+registerOrders((sim, s, I, a, k) => {
+  if (s.kind !== 'rescue') return;
+  const B = a.beliefs, cas = B.list('cas');
+  // ① 높은 자리 아래 낙하 구역 통제 — 하나 (높은 자리에 아직 사람이 있다고 믿는 동안)
+  let post = -1;
+  for (const f of cas) { const c = f.value as CasBelief; if ((c.perch ?? 0) > 0 && c.mob === 'trapped' && c.where === 'scene' && c.band < 3) { post = belowTile(s, c.x, c.y); if (post >= 0) break; } }
+  if (post >= 0) k.want('cordon', { tile: post }, RESCUE_ORD.cordon);
+  // ② 좁은 우물에 의식 없는 사람(내려가야 한다): 공기를 모르면 측정기를 든 대원이 먼저 잰다 — 그동안 내려가는 구출은 미룬다
+  let measure = -1;
+  for (const f of B.list('haz')) {
+    const v = f.value as { kind: string; active: boolean; x: number; y: number; narrow?: boolean };
+    if (v.kind !== 'pit' || !v.narrow || B.get('haz', f.id + 1000) !== undefined) continue;
+    let vic = -1;
+    for (const q of cas) { const c = q.value as CasBelief; if (c.x === v.x && c.y === v.y && c.mob === 'trapped' && c.where === 'scene' && c.band === 2) { vic = q.id; break; } }
+    if (vic < 0) continue;
+    const w = s.board.find((q) => q.kind === 'extricate' && q.cas === vic && (q.status === 'open' || q.status === 'active'));
+    const age = w ? sim.t - w.createdAt : 0;
+    const meter = meterNear(sim, s, I);
+    if ((meter && age < RESCUE_ORD.measureCap) || (!meter && age < RESCUE_ORD.meterWait)) {
+      if (meter) { measure = pitSide(s, v.x, v.y); if (measure >= 0) k.want('cordon', { tile: measure }, RESCUE_ORD.measure); }
+      if (w && w.status === 'open') w.holdUntil = Math.max(w.holdUntil, sim.t + 3);
+      tellOnce(sim, s, I, a, 'measure', meter ? '좁은 우물입니다. 내려가기 전에 공기부터 재겠습니다.' : '좁은 우물입니다. 측정기를 기다립니다.');
+    } else if (w) tellOnce(sim, s, I, a, 'nometer', '공기를 재지 못했습니다 — 줄을 맨 채 내려갑니다.');
+  }
+  // ③ 놀이기구: 운영자가 말한 전원 복구 시각이 45초 안이면 멀쩡한 사람(믿음 띠 0)의 구출을 그 시각까지 미룬다 — 나빠지는 사람은 그대로 (그 시각이 지나도 내려오지 않으면 미룸이 저절로 풀린다)
+  for (const f of B.list('evid')) {
+    const v = f.value as { kind: string; at?: number };
+    if (v.kind !== 'power' || v.at === undefined || v.at <= sim.t || v.at - sim.t > RESCUE_ORD.powerWait) continue;
+    let held = 0;
+    for (const w of s.board) {
+      if (w.kind !== 'extricate' || w.status !== 'open') continue;
+      const c = B.val<CasBelief>('cas', w.cas);
+      if (c !== undefined && (c.perch ?? 0) > 0 && c.band === 0) { w.holdUntil = Math.max(w.holdUntil, v.at + 1); held++; }
+    }
+    if (held) tellOnce(sim, s, I, a, 'power', '운영자 말대로 곧 전원이 돌아옵니다. 상태가 나쁜 사람부터 내리고 나머지는 기다립니다.');
+  }
+  k.cancel((w) => w.kind === 'cordon' && w.tile !== post && w.tile !== measure);
+});
+/** 남은 일: 높은 자리·구덩이에 사람이 있다고 믿으면 구조 부대 */
+registerPending((sim, s, a) => {
+  void sim;
+  if (s.kind !== 'rescue') return null;
+  for (const f of a.beliefs.list('cas')) { const c = f.value as CasBelief; if (c.mob === 'trapped' && c.where === 'scene' && c.band < 3 && ((c.perch ?? 0) > 0 || c.pit === true)) return 'rescue'; }
+  return null;
+});
+
+// ───────────────────────── 응급의 갈래 (§4.7 — 단계 9) — 흥분한 환자의 설득 · 출산: 현장 분만이냐 이송이냐 ─────────────────────────
+// 믿음(evid agitated·labor, cas)·작업판·조직 정보(현장 부대의 환자 자리)만 읽는다
+/** 우선순위: 흥분한 환자에게 경찰의 설득 · 현장 분만(산모 곁의 처치를 출산 시각까지) · 먼 출산은 싣고 간다. 창의 길이는 agents.LABOR */
+export const MED_ORD = { persuade: 0.85, deliver: 0.86, laborLoad: 0.72 };
+/** (단계 9) 이 지휘관이 현장 분만을 기다리는 산모인가 — 믿는 출산 시각이 창 안이고 산모가 현장·안전 구역에 있다 (핵심 규칙의 처치·이송·탑승을 막는다) */
+function deliverHere(sim: Sim, a: FieldAgent, id: number, c: CasBelief): boolean { return (c.where === 'scene' || c.where === 'safe') && c.band < 3 && laborAtOf(sim, a, id) >= 0; }
+/** 그 부대에 걸린 탑승 작업 수 (commander.loadsQueued 와 같은 셈 — 작업판만) */
+function seatsQueued(s: Scene, uid: number): number { let n = 0; for (const w of s.board) if ((w.kind === 'load' || w.kind === 'treatMate' || w.kind === 'treatSuspect') && w.prop === uid && (w.status === 'open' || w.status === 'active')) n++; return n; }
+/** (단계 8) 구조 현장에서 방금(FRESH 초 안) 끝난 구출의 대상 — 끝낸 대원의 보고가 무전으로 오는 사이(1.2초)에 낡은 '갇힘' 믿음으로 같은 구출을 다시 내지 않는다 (작업판만) */
+const FRESH = 4;
+function freshFreed(sim: Sim, s: Scene, id: number): boolean { for (const w of s.board) if (w.kind === 'extricate' && w.cas === id && w.status === 'done' && sim.t - w.doneAt < FRESH) return true; return false; }
+registerCasHold((sim, s, a, id, c) => (s.kind === 'medical' && deliverHere(sim, a, id, c)) || (s.kind === 'rescue' && c.mob === 'trapped' && freshFreed(sim, s, id)));
+registerBlocker((sim, s, a) => {
+  if (s.kind !== 'medical') return false;
+  // 아직 낳지 않은 산모가 현장·안전 구역에 있다고 믿는다: 현장 분만을 기다리거나(창 안) 싣고 갈 때까지(창 밖) 끝내지 않는다
+  for (const f of a.beliefs.list('cas')) { const c = f.value as CasBelief; if ((c.where === 'scene' || c.where === 'safe') && c.band < 3 && laborAtOf(sim, a, f.id, true) >= 0) return true; }
+  return false;
+});
+registerOrders((sim, s, I, a, k) => {
+  if (s.kind !== 'medical') return;
+  void I;
+  const B = a.beliefs;
+  // ① 흥분한 환자(evid agitated — 끝 시각이 아직 오지 않았다): 경찰이 말로 가라앉힌다. 끝났다고 알면 거둔다
+  for (const f of B.list('evid')) {
+    const v = f.value as { kind: string; at?: number };
+    if (v.kind === 'agitated' && f.id >= 1000) {
+      const cid = f.id - 1000, live = v.at !== undefined && v.at > sim.t;
+      const cb = B.val<CasBelief>('cas', cid);
+      if (live && cb !== undefined && cb.band < 3 && cb.where === 'scene') k.want('persuade', { cas: cid }, MED_ORD.persuade);
+      else k.cancel((w) => w.kind === 'persuade' && w.cas === cid);
+    }
+    // ② 출산(evid labor): 믿는 시각이 창(LABOR.WIN) 안이면 싣지 않고 현장에서 받는다 — 탑승을 그 시각까지 미루고, 산모 곁 구급대원의 처치가 그 시각까지 이어진다(실행부 laborStay).
+    //    창 밖이면 지금처럼 싣고 간다(현장 부대의 남은 환자 자리 — 없으면 구급을 부른다). 가는 길에 낳으면 구급차 안(기록만)
+    if (v.kind === 'labor' && f.id >= 1000) {
+      const cid = f.id - 1000, cb = B.val<CasBelief>('cas', cid);
+      if (cb === undefined || (cb.where !== 'scene' && cb.where !== 'safe') || cb.band >= 3) continue;
+      const at = laborAtOf(sim, a, cid, true);
+      if (at < 0) continue;
+      if (deliverHere(sim, a, cid, cb)) {
+        for (const w of s.board) if (w.kind === 'load' && w.cas === cid && w.status === 'open') w.holdUntil = Math.max(w.holdUntil, at + 2);
+        k.cancel((w) => (w.kind === 'carry' || w.kind === 'escort') && w.cas === cid && w.status === 'open');
+        k.want('treat', { cas: cid }, MED_ORD.deliver, 1);
+      } else if (cb.where === 'safe' && !s.board.some((w) => w.kind === 'load' && w.cas === cid && (w.status === 'open' || w.status === 'active'))) {
+        let best = -1;
+        for (const uid of k.unitsOnScene()) { const u = sim.units[uid]; if (seatsOf(u) > seatsUsed(sim, u) + seatsQueued(s, uid)) { best = uid; break; } }
+        if (best >= 0) k.want('load', { cas: cid, prop: best }, MED_ORD.laborLoad, 1);
+        else if (k.countUnits('ems', 0.5) === 0) k.request('ems', '산모 이송', false);
+      }
+    }
+  }
+  // ③ 폭염의 지친 사람은 따로 지시하지 않는다: 지상 대원이 처음 만날 때 안내해(agents.perceive) 스스로 안전한 곳 = 그늘(s.safe)로 걷는다.
+  //    걷는 사람(믿음 mobile)에게 escort 를 내면 실행부가 '이미 걷는 중'으로 곧바로 끝내 같은 지시만 되풀이된다 — 늦어지면 핵심 규칙의 escort(32초)가 확인한다
 });

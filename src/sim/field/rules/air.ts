@@ -26,7 +26,8 @@ import { BeliefStore, mkFact } from '../beliefs';
 import { isIndoor } from '../grid';
 import { applyWater, placeAtSafe, pushFx } from '../hazards';
 import { registerRule } from '../sceneRegistry';
-import { recordAir } from '../methodRun';      // (R2 1a) 호이스트 완료의 방법 기록
+import { recordAir } from '../methodRun';
+import { leavePerch, perchIdx } from '../perch';      // (N8 단계 8) 높은 자리의 호이스트      // (R2 1a) 호이스트 완료의 방법 기록
 
 /** 균형 상수 */
 export const AIR = {
@@ -207,6 +208,7 @@ function hottest(s: Scene, region: number): number {
 /** 호이스트 인양을 마쳤다: 지상의 수난 구조와 같은 효과 + 자리가 있으면 바로 싣는다 */
 function hoistDone(sim: Sim, s: Scene, I: Incident, op: AirOp, u: Unit): void {
   const c = s.casualties[op.target], eye = op.eye, name = sim.responders[eye.rid].name;
+  { const pk = perchIdx(s, c.id); if (pk >= 0) leavePerch(s, c, pk, 'immobile'); }      // (N8 단계 8 §5.11) 높은 자리에서 끌어올렸다 — 목록에서 뺀다 (아래가 바로 싣거나 안전 구역에 내려놓는다)
   c.inWater = false; c.drift = 0; c.mob = 'immobile'; c.trapWork = 0; c.tFreed = sim.t;
   c.bleed *= 0.35; c.bleed0 = c.bleed;      // 물 밖으로 나오면 악화가 느려진다 (저체온은 남는다)
   c.bleedCause = 'exposure';      // 남은 악화는 익수가 아니라 실외 노출(저체온)로 적는다 (H1 §2.3 — 지상의 waterRescue 와 같다)
@@ -307,7 +309,7 @@ registerRule((sim, s, I) => {
       if (op.workId >= 0 && !liveWork(s.board[op.workId])) { reset(sim, op, st); continue; }      // 지휘관이 그 작업을 거뒀다
       // (R2 1c) 헤엄·보트 대원이 끌고 오는 중: 진행하지 않고 그 위에서 기다린다 (끌던 대원이 놓치면 다시 — 끌려가는 사람을 '실림'으로 바꾸면 그림과 기록이 어긋난다)
       if (c && !c.dead && c.inWater && c.where === 'carried') { op.phase = 'hover'; op.progress = Math.max(0, op.progress - sim.dt * 0.5); continue; }
-      if (!c || c.dead || !c.inWater || c.where !== 'scene') {
+      if (!c || c.dead || (!c.inWater && perchIdx(s, c.id) < 0) || c.where !== 'scene') {      // (N8 단계 8) 물속도 높은 자리도 아니면 접는다
         // 이미 물 밖으로 나왔거나 숨졌다: 낡은 믿음으로 같은 일을 되풀이하지 않게 강제로 보고하고 그 작업을 끝낸다
         if (c) learn(sim, eye, casFact(sim, s, c, sim.responders[eye.rid].name), true, true);
         finishWork(sim, s, op); reset(sim, op, st);

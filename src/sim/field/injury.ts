@@ -319,7 +319,8 @@ export function canDeploy(r: Responder): boolean {
  * R3 의 부상 줄이 같은 목록을 쓴다.
  */
 export const LIGHT_WORK: ReadonlySet<WorkKind> = new Set<WorkKind>(['traffic', 'perimeter', 'negotiate', 'interview', 'hookup', 'treat', 'treatMate',
-  'cordon']);      // (N8 §5.10) 통제 — 다친 대원도 자리는 지킨다
+  'cordon',      // (N8 §5.10) 통제 — 다친 대원도 자리는 지킨다
+  'persuade']);      // (N8 §5.14 — 단계 9) 설득 — 다친 대원도 말은 건넨다
 
 // ───────────────────────── 용의자 (단계 5 — §4) ─────────────────────────
 /** 용의자 상처의 출혈 배율 (대원과 같은 계수 BLEED_PER_DMG 에 곱한다). 균형 손잡이 3번의 둘째 (§9.3) */
@@ -491,6 +492,8 @@ export function initialCause(s: Scene, I: Incident, c: Casualty): InjuryCause {
   // (N8 §5.14) 시설 사고의 변형: 수도관 파열(지하 침수) → 노출 · 싱크홀 → 추락 · 간판 → 깔림 (끊어진 전선은 유형의 기본값 — 감전)
   if (type === 'utility') return v === 'main' ? 'exposure' : v === 'sinkhole' ? 'fall' : v === 'sign' ? 'crush' : TYPE_DEFS.utility.cause ?? 'electric';
   if (type === 'welfare' && v === 'dementia') return 'exposure';      // (N8 §5.14 — 단계 7) 길 잃은 치매 노인 — 노출 (보호의 기본값은 질병)
+  if (type === 'rescue' && v === 'ride') return 'illness';      // (N8 §5.14 — 단계 8) 멈춘 놀이기구 — 더위·공황 (외벽·구덩이는 유형의 기본값 — 추락)
+  if (type === 'medical' && v === 'heat') return 'exhaustion';      // (N8 §5.14 — 단계 9) 폭염 환자 — 탈진 (H1 이 대원에게 쓰던 원인을 구조 대상에 처음 · 식중독·약물 과다·출산은 응급의 기본값 — 질병)
   if (c.inVehicle !== null || type === 'traffic') return 'vehicle';
   { const tc = TYPE_DEFS[type].cause; if (tc) return tc; }      // (N8 §5.2-6) 새 유형은 표의 기본값 — 무장(아래 default)으로 떨어지지 않게
   switch (type) {

@@ -231,7 +231,10 @@ export function tickCasualties(sim: Sim, s: Scene, I: Incident): void {
     } else if (c.where === 'loaded') d *= 0.5;
     else if (c.where === 'safe' && c.treated) d *= 0.6;
     if (!open) d = 0;
-    if (floor > 0 && d > 0 && c.health - d * dt < floor) d = c.health > floor ? (c.health - floor) / dt : 0;      // (N8 §5.13) 보호 유형의 체력 하한 — 악화가 하한에서 멈춘다(숨지는 길은 quietLoss 하나)
+    if (floor > 0 && d > 0 && c.health - d * dt < floor) {      // (N8 §5.13) 보호 유형의 체력 하한 — 악화가 하한에서 멈춘다(숨지는 길은 quietLoss 하나)
+      const d1 = c.health > floor ? (c.health - floor) / dt : 0, k = d1 / d;
+      d = d1; nWound *= k; nSmoke *= k; nBurn *= k; nExpo *= k;      // 기록의 항도 같은 비율로 (깎인 만큼만 적는다 — H1 장부)
+    }
     c.health -= d * dt;
     if (d > 0) { if (c.where !== 'scene' && c.where !== 'carried') nWound = d; noteDecay(c, s, nWound, nSmoke, nBurn, nExpo, dt, sim.t); }      // (H1) 기록만
     if (c.health <= 0 && open) {
@@ -303,6 +306,9 @@ export function applyCallerAid(sim: Sim, I: Incident, kind: string, ev: number):
     let best: Casualty | null = null;
     for (const c of s.casualties) if (!c.dead && c.where === 'scene' && c.mob !== 'mobile' && (!best || c.bleed > best.bleed)) best = c;
     if (best) { best.bystander = true; note(kind === 'medical' ? `신고자가 안내에 따라 가슴 압박을 하고 있습니다. 환자의 악화가 늦춰집니다.` : kind === 'care' ? `신고자가 안내에 따라 환자를 돌보고 있습니다. 악화가 늦춰집니다.` : `신고자가 구조 대상 ${best.label}의 출혈 부위를 누르고 있습니다. 악화가 늦춰집니다.`); }
+  } else if (kind === 'birth') {
+    // (N8 §4.7 — 단계 9) 출산 임박: 신고자가 안내를 따랐다 — 출산 시각에 전문 응급 가방을 든 대원이 없으면 이 표시로 아기의 상태가 정해진다(rules/kinds.ts birthRule — 통화 때 적어 둔다)
+    if (s.kinds && s.kinds.coached !== true) { s.kinds.coached = true; note('신고자가 안내에 따라 산모를 편히 눕히고 곁을 지키고 있습니다.'); }
   } else if (kind === 'wire') {
     // (N8 §4.2) 전선이 떨어진 차: 신고자가 차 안 사람에게 내리지 말라고 전했다 — 세계 규칙(rules/kinds.ts wireRule)이 이 표시로 "내리려다 감전"을 막는다
     if (s.kinds && s.kinds.told === false) { s.kinds.told = true; note('신고자가 차 안에 있는 사람에게 내리지 말고 그대로 있으라고 전했습니다.'); }

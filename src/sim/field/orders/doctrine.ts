@@ -99,7 +99,8 @@ function fireOrders(sim: Sim, s: Scene, I: Incident, a: FieldAgent, k: CommandKi
   }
   // CF4: 믿음 속 고립자(현장에 갇힌 사람)가 있는데 현장·오는 부대에 쓸 수 있는(알려진 고장 아닌) 유압 구조기를 든 대원이 없다. 구조 능력의 부대가 하나도 없으면 지금의 '구조 장비 부대 없음' 요청이 부른다
   let trapped = false;
-  for (const f of a.beliefs.list('cas')) { const c = f.value as CasB; if (c.mob === 'trapped' && c.band < 3 && c.where === 'scene') { trapped = true; break; } }
+  // (N8 단계 8) 높은 자리(perch)·구조 현장의 구덩이에 갇힌 사람은 유압 장비로 꺼내지 않는다(사다리·밧줄) — 세지 않는다
+  for (const f of a.beliefs.list('cas')) { const c = f.value as CasB; if (c.mob === 'trapped' && c.band < 3 && c.where === 'scene' && (c.perch ?? 0) === 0 && !(s.kind === 'rescue' && c.pit === true)) { trapped = true; break; } }
   if (trapped && k.countUnits('rescue', 0.5) > 0) {
     let has = false;
     for (const uid of I.assigned) {

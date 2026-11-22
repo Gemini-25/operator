@@ -7,7 +7,8 @@ import type { Sim } from '../../engine';
 import { emit, markRecovered, raiseProblem } from '../../events';
 import type { Rng } from '../../rng';
 import { T } from '../../types';
-import type { Animal, Fact, FieldAgent, Hostile, Incident, Prop, Scene } from '../../types';
+import type { Animal, Casualty, Fact, FieldAgent, Hostile, Incident, Prop, Scene } from '../../types';
+import { leavePerch, perchIdx } from '../perch';      // (N8 단계 8) 높은 자리
 import { dist, josa } from '../../util';
 import { mkFact } from '../beliefs';
 import { hurtCas, hurtHostile, hurtResponder } from '../injury';
@@ -808,4 +809,200 @@ registerVerdict((sim, s, I) => {
   void sim; void I;
   if (s.kind !== 'welfare' || !s.kinds) return null;
   return s.kinds.backed ? { delayed: true } : null;
+});
+
+// ───────────────────────── 구조 rescue (§4.6 — 단계 8) ─────────────────────────
+/**
+ * 외벽·구덩이·놀이기구의 세계 규칙 상수: 매달린 몸이 나빠지는 속도(체력/초 — 노출) · 줄이 끊겨 땅으로 떨어질 때의 피해 ·
+ * 구덩이 안 나쁜 공기의 피해(5초마다 — 유독 가스) · 놀이기구에서 나빠지는 사람의 속도(질병 — 더위·공황)
+ */
+export const RESCUE = { hang: 0.08, fall: [25, 45] as [number, number], toxic: [10, 20] as [number, number], every: 25, ride: 0.05 };
+/** 외벽·구덩이의 난수 흐름 perch:<사건> · pit:<사건> (줄이 끊겨 떨어진 피해 · 구덩이의 유독 가스 피해 — 이 흐름만 쓴다) */
+const PERCH_RNG = new WeakMap<Scene, Rng>();
+function perchRng(sim: Sim, s: Scene, I: Incident): Rng { let r = PERCH_RNG.get(s); if (!r) { r = sim.rng.fork('perch:' + I.id); PERCH_RNG.set(s, r); } return r; }
+const PIT_RNG = new WeakMap<Scene, Rng>();
+function pitRng(sim: Sim, s: Scene, I: Incident): Rng { let r = PIT_RNG.get(s); if (!r) { r = sim.rng.fork('pit:' + I.id); PIT_RNG.set(s, r); } return r; }
+/**
+ * (§4.6 facade) perchRule — 외벽에 매달린 작업자: ① 생성 + 100~160초부터 매달린 몸이 나빠진다(0.08/초 — 원인 노출) ② 15% 의 현장은 60~200초 사이 줄 하나가 끊긴다:
+ * 높이 2·3 이면 한 단계 내려앉고(높이를 본 대원은 다음 관찰에서 안다 — casFact 의 perch), 높이 1 이면 땅으로 떨어진다(ground 칸 · 거동 불가 · 추락 25~45).
+ * 줄이 끊기는 것은 진실의 일이라 보는 대원이 다음 관찰로 고친다(시야 안이면 곧바로)
+ */
+registerRule((sim, s, I) => {
+  if (s.kind !== 'rescue' || s.variant !== 'facade' || I.phase === 'closed' || s.kinds === undefined || s.kinds.perch === undefined) return;
+  const k = s.kinds;
+  if (k.hangAt !== undefined && sim.t >= k.hangAt) {
+    k.hangAt = Infinity;
+    for (const pe of k.perch!) { const c = s.casualties[pe.cas]; if (!c.dead) hurtCas(sim, s, I, c, 1, 'exposure', { bleed: RESCUE.hang }); }
+  }
+  if (k.snapAt !== undefined && sim.t >= k.snapAt) {
+    k.snapAt = Infinity;
+    const pk = perchIdx(s, k.snapCas ?? -1);
+    if (pk < 0) return;
+    const pe = k.perch![pk], c = s.casualties[pe.cas];
+    if (c.dead) return;
+    if (pe.h > 1) {
+      pe.h--;
+      emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, truth: true, text: `${josa(c.label, '을/를')} 잡던 줄 하나가 끊어져 한 단계 아래로 내려앉았습니다.` });
+    } else {
+      leavePerch(s, c, pk, 'immobile');
+      const ev = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 3, truth: true, text: `${josa(c.label, '을/를')} 잡던 줄이 끊어져 아래 보도로 떨어졌습니다.` });
+      hurtCas(sim, s, I, c, perchRng(sim, s, I).range(RESCUE.fall[0], RESCUE.fall[1]), 'fall', { ev, immobile: true });
+    }
+  }
+});
+/**
+ * (§4.6 pit) pitRule — 나쁜 공기의 구덩이에 측정 없이(그 대원이 공기 사실을 모른다) · 공기호흡기 없이(좁은 우물은 멜 수 없다) 내려간 대원은 5초마다 유독 가스 10~20 (흐름 pit:<사건>).
+ * 공기를 재고 내려간 대원은 송기·환기를 갖춘 것으로 본다
+ */
+registerRule((sim, s, I) => {
+  if (s.kind !== 'rescue' || s.variant !== 'pit' || I.phase === 'closed' || s.kinds === undefined || s.kinds.badAir !== true || s.kinds.pit === undefined) return;
+  if ((sim.tick + s.id) % RESCUE.every !== 0) return;
+  const p = s.props[s.kinds.pit];
+  for (const a of s.agents) {
+    const t = a.task;
+    if (a.status !== 'active' || a.aloft || t === null || t.kind !== 'extricate' || t.method !== 'descend' || dist(a.x, a.y, p.x, p.y) > 1.7) continue;
+    if (a.beliefs.get('haz', p.id + 1000) !== undefined) continue;
+    if (p.sub !== 'narrow' && hasKit(sim, a.rid, 'scba')) continue;
+    const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: resp(sim, a).name, rid: a.rid, kind: 'hazard', imp: 2, text: '구덩이 안 공기가 나쁩니다 — 숨이 막힙니다. 올라가겠습니다.' });
+    hurtResponder(sim, s, I, a, pitRng(sim, s, I).range(RESCUE.toxic[0], RESCUE.toxic[1]), 'toxic', { ev });
+  }
+});
+/**
+ * (§4.6 ride) rideRule — 멈춘 놀이기구: ① 생성 + 90초부터 1~2명이 나빠진다(질병 0.05/초 — 더위·공황) ② 60% 는 s.kinds.power 에 전원이 돌아와 남은 사람이 모두 땅으로 내려온다
+ * (높은 자리에서 풀려 ground 칸 — 멀쩡하면 걷는다). 같은 틱에 운영자 곁 4칸 안의 대원(없으면 현장의 모든 대원)이 내려온 사람들의 사실을 강제로 보고한다(§5.16 — 낡은 믿음으로
+ * 남은 구출이 열린 채 한계 시간까지 가지 않게). 난수 없음
+ */
+registerRule((sim, s, I) => {
+  if (s.kind !== 'rescue' || s.variant !== 'ride' || I.phase === 'closed' || s.kinds === undefined) return;
+  const k = s.kinds;
+  if (k.worseAt !== undefined && sim.t >= k.worseAt) {
+    k.worseAt = Infinity;
+    for (const id of k.worse ?? []) { const c = s.casualties[id]; if (!c.dead && c.where !== 'hospital') hurtCas(sim, s, I, c, 1, 'illness', { bleed: RESCUE.ride }); }
+  }
+  if (k.powered || k.power === undefined || sim.t < k.power || k.perch === undefined || !k.perch.length) return;
+  k.powered = true;
+  const down: Casualty[] = [];
+  while (k.perch.length) { const c = s.casualties[k.perch[0].cas]; leavePerch(s, c, 0, c.health >= 70 ? 'mobile' : 'immobile'); if (!c.dead) c.tFreed = sim.t; down.push(c); }
+  emit(sim, { inc: I.id, role: 'SYSTEM', actor: '운영자', kind: 'recovery', imp: 2, text: `운영자: 전원이 돌아와 남은 탑승객 ${down.length}명이 모두 내려왔습니다.` });
+  const op = s.props.find((p) => p.skin === 'operator');
+  let tell = s.agents.filter((a) => a.status === 'active' && !a.aloft && op !== undefined && dist(a.x, a.y, op.x, op.y) <= 4);
+  if (!tell.length) tell = s.agents.filter((a) => a.status !== 'left');
+  for (const a of tell) for (const c of down) learn(sim, a, casFact(sim, s, c, '운영자'), true, true);
+});
+
+// ───────────────────────── 응급의 갈래 (§4.7 — 단계 9) ─────────────────────────
+/**
+ * 상수: 약물 과다의 흥분 확률·길이(초)·밀쳐짐 피해(5초마다 — 둔상)·경찰의 말로 가라앉는 배율 · 출산 뒤 산모 출혈 확률·속도 · 폭염의 지친 사람이 버티는 시간(초)·체력이 빠지는 속도·쓰러지는 체력 ·
+ * 흥분·진통을 알아보는 거리(칸)
+ */
+export const MED = { agiP: 0.35, agi: [30, 60] as [number, number], shove: [3, 6] as [number, number], calmK: 3, bleedP: 0.1, bleed: 0.25, heatAfter: 30, heatLoss: 0.15, heatFall: 70, seeR: 6 };
+/** 약물 과다·출산의 난수 흐름 overdose:<사건> · birth:<사건> (이 흐름만 쓴다) */
+const OD_RNG = new WeakMap<Scene, Rng>();
+function odRng(sim: Sim, s: Scene, I: Incident): Rng { let r = OD_RNG.get(s); if (!r) { r = sim.rng.fork('overdose:' + I.id); OD_RNG.set(s, r); } return r; }
+const BIRTH_RNG = new WeakMap<Scene, Rng>();
+function birthRng(sim: Sim, s: Scene, I: Incident): Rng { let r = BIRTH_RNG.get(s); if (!r) { r = sim.rng.fork('birth:' + I.id); BIRTH_RNG.set(s, r); } return r; }
+/** 흥분이 끝났음을 알렸다 · 흥분을 뽑았다 · 출산을 마쳤다 · 진통 시각의 진술 오차 (현장 객체의 모양을 바꾸지 않으려고) */
+const OD_DONE = new WeakSet<Scene>(), OD_ROLLED = new WeakSet<Scene>(), BIRTH_DONE = new WeakSet<Scene>();
+const LABOR_OFF = new WeakMap<Scene, number>();
+/** 그 사람이 보이는 곳(6칸 · 시야선)의 활동 대원에게 사실을 넣는다 (본 사람이 알린다 — 강제면 같은 값이라도 보고) */
+function tellNear(sim: Sim, s: Scene, x: number, y: number, f: Fact, force: boolean): void {
+  for (const a of s.agents) if (a.status === 'active' && !a.aloft && dist(a.x, a.y, x, y) <= MED.seeR && los(s, a.x, a.y, x, y)) learn(sim, a, f, true, force);
+}
+/**
+ * (§4.7 overdose) overdoseRule — 전문 처치(처치 품질 0.9 이상)를 받으면 악화가 멈추고, 35% 로 30~60초 동안 흥분한다(s.kinds.agitated = 끝 시각 · 흐름 overdose:<사건>).
+ * 흥분하는 동안 1.5칸 안의 구급대원은 5초마다 밀쳐진다(둔상 3~6). 경찰이 2.5칸 안에서 말로 가라앉히면(persuade) 남은 시간이 세 배 빨리 준다.
+ * 흥분은 본 대원이 evid { kind 'agitated', at }(id 1000 + 구조 대상 id — 설계서 §5.8)로 알리고, 끝나면 곁의 대원이 at 이 지난 값으로 강제 보고한다(낡은 믿음으로 설득을 끝없이 내지 않게)
+ */
+registerRule((sim, s, I) => {
+  if (s.kind !== 'medical' || s.variant !== 'overdose' || I.phase === 'closed' || s.kinds === undefined || (sim.tick + s.id) % 5 !== 0) return;
+  const c = s.casualties[0];
+  if (!c || c.dead) return;
+  const k = s.kinds;
+  if (c.treated && c.treatQ >= 0.9 && !OD_ROLLED.has(s)) {
+    OD_ROLLED.add(s);
+    c.bleed = 0; c.bleed0 = 0;      // 악화가 멈춘다
+    const rng = odRng(sim, s, I);
+    if (rng.chance(MED.agiP) && c.where === 'scene') {
+      k.agitated = sim.t + rng.range(MED.agi[0], MED.agi[1]);
+      emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, truth: true, text: `처치를 받은 ${josa(c.label, '이/가')} 깨어나며 몹시 흥분합니다 — 곁의 사람을 밀치고 있습니다.` });
+      tellNear(sim, s, c.x, c.y, mkFact('evid', 1000 + c.id, { kind: 'agitated', at: k.agitated }, '현장', sim.t, 1, true, `${c.label} 흥분 상태 — 곁에 다가가기 어려움`), true);
+    }
+  }
+  if ((k.agitated ?? -1) < 0) return;
+  if (sim.t < k.agitated!) {
+    let talk = false;
+    for (const a of s.agents) if (a.status === 'active' && a.task !== null && a.task.kind === 'persuade' && a.task.cas === c.id && sim.responders[a.rid].dept === 'police' && dist(a.x, a.y, c.x, c.y) <= 2.5) talk = true;
+    if (talk) k.agitated! -= (MED.calmK - 1) * 1;      // 1초에 한 번 — 세 배 빨리
+    if ((sim.tick + s.id) % 25 === 0) {
+      for (const a of s.agents) {
+        if (a.status !== 'active' || a.aloft || sim.responders[a.rid].dept !== 'ems' || dist(a.x, a.y, c.x, c.y) > 1.5) continue;
+        const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: resp(sim, a).name, rid: a.rid, kind: 'hazard', imp: 1, text: `흥분한 ${josa(c.label, '이/가')} 밀쳐 냅니다. 잠시 물러나겠습니다.` });
+        hurtResponder(sim, s, I, a, odRng(sim, s, I).range(MED.shove[0], MED.shove[1]), 'blunt', { ev });
+      }
+    }
+    return;
+  }
+  if (OD_DONE.has(s)) return;
+  OD_DONE.add(s);
+  emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'recovery', imp: 1, text: `${josa(c.label, '이/가')} 가라앉았습니다. 처치와 이송을 이어 갑니다.` });
+  const f = mkFact('evid', 1000 + c.id, { kind: 'agitated', at: sim.t }, '현장', sim.t, 1, true, `${c.label} 흥분이 가라앉음`);
+  tellNear(sim, s, c.x, c.y, f, true);
+  forceTell(sim, s, f);
+});
+/**
+ * (§4.7 birth) birthRule — 산모를 본 대원(3칸 · 시야선)은 evid { kind 'labor', at }(id 1000 + 산모 id · 실제 시각 ±30초)를 안다. 출산 시각 s.kinds.birthAt 에:
+ * 산모가 현장·안전 구역에 있으면 신생아가 구조 대상 끝에 붙는다 — 전문 응급 가방(alsBag)을 든 대원이 2칸 안이면 현장 분만(띠 0), 없으면 신고자 안내를 따랐는가(s.kinds.coached)로 띠 0/1.
+ * 산모가 이미 구급차에 실렸으면 구급차 안에서 낳는다(기록만 — 판정 문장). 10% 는 분만 뒤 산모 출혈(띠 2 · 악화 0.25/초). 흐름 birth:<사건>
+ */
+registerRule((sim, s, I) => {
+  if (s.kind !== 'medical' || s.variant !== 'birth' || I.phase === 'closed' || s.kinds === undefined || s.kinds.birthAt === undefined || BIRTH_DONE.has(s) || (sim.tick + s.id) % 5 !== 0) return;
+  const m = s.casualties[0];
+  if (!m || m.dead) return;
+  const k = s.kinds, rng = birthRng(sim, s, I);
+  if (!LABOR_OFF.has(s)) LABOR_OFF.set(s, rng.range(-30, 30));
+  if (m.where === 'scene' || m.where === 'safe') {
+    const f = mkFact('evid', 1000 + m.id, { kind: 'labor', at: k.birthAt! + LABOR_OFF.get(s)! }, '현장', sim.t, 0.8, true, `산모 ${m.label} — 진통 간격이 짧음`);
+    for (const a of s.agents) if (a.status === 'active' && !a.aloft && !a.beliefs.get('evid', 1000 + m.id) && dist(a.x, a.y, m.x, m.y) <= 3 && los(s, a.x, a.y, m.x, m.y)) learn(sim, a, f);
+  }
+  if (sim.t < k.birthAt!) return;
+  BIRTH_DONE.add(s);
+  const bleed = rng.chance(MED.bleedP);
+  // 낳았다는 사실(done)은 곁의 대원과 지휘관에게 강제로 간다 — 낡은 '곧 낳는다' 믿음으로 현장 분만 대기·종료 막기가 남지 않게
+  const born = mkFact('evid', 1000 + m.id, { kind: 'labor', at: sim.t, done: true }, '현장', sim.t, 1, true, `산모 ${m.label} — 출산`);
+  if (m.where !== 'scene' && m.where !== 'safe') {
+    emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'action', imp: 1, truth: true, text: '이송 중인 구급차 안에서 아기가 태어났습니다.' });
+    forceTell(sim, s, born);
+    return;
+  }
+  const als = s.agents.some((a) => a.status === 'active' && !a.aloft && hasKit(sim, a.rid, 'alsBag') && dist(a.x, a.y, m.x, m.y) <= 2);
+  const good = als || k.coached === true;
+  const nbHp = good ? rng.range(90, 100) : rng.range(66, 78);
+  const nb = addCas(s, Math.round(m.x), Math.round(m.y), 'immobile', 100, 0, 0);
+  nb.label = '신생아'; nb.where = m.where; if (m.where === 'safe') nb.tSafe = sim.t;
+  nb.tDiscovered = sim.t;
+  const ev = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'recovery', imp: 2, text: als ? '현장 분만 — 아기가 태어났습니다. 산모와 신생아를 함께 돌봅니다.' : k.coached ? '구급대가 닿기 전 신고자의 도움으로 아기가 태어났습니다.' : '아기가 태어났습니다. 신생아의 상태를 살펴야 합니다.' });
+  nb.causeEvent = ev;
+  if (nbHp < 100) hurtCas(sim, s, I, nb, 100 - nbHp, 'illness', { ev, tick: true });      // 신생아의 처음 상태도 피해 한 길로 (H1 장부 — 문턱·출혈 없음)
+  if (bleed) hurtCas(sim, s, I, m, Math.max(0, m.health - 38), 'illness', { ev, bleed: MED.bleed });
+  tellNear(sim, s, m.x, m.y, born, true);
+  forceTell(sim, s, born);
+  forceTell(sim, s, casFact(sim, s, nb, '현장'));
+  forceTell(sim, s, casFact(sim, s, m, '현장'));
+});
+/**
+ * (§4.7 heat) heatRule — 그늘(구역 종류 'shade') 밖에 서 있는 지친 사람(걸을 수 있음 · 현장)은 생성 + 30초부터 체력이 1초에 0.15 빠지고(탈진), 70 아래면 쓰러진다(거동 불가).
+ * 그늘에 들어가거나 안전한 곳(그늘 가운데)에 닿으면 멈춘다. 난수 없음
+ */
+registerRule((sim, s, I) => {
+  if (s.kind !== 'medical' || s.variant !== 'heat' || I.phase === 'closed' || (sim.tick + s.id) % 5 !== 0 || sim.t < I.createdAt + MED.heatAfter) return;
+  for (const c of s.casualties) {
+    if (c.dead || c.mob !== 'mobile' || c.where !== 'scene') continue;
+    const rg = s.region[Math.round(c.y) * s.w + Math.round(c.x)];
+    if (rg >= 0 && s.regions[rg].kind === 'shade') continue;
+    hurtCas(sim, s, I, c, MED.heatLoss, 'exhaustion');
+    if (c.health < MED.heatFall) {
+      const ev = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'hazard', imp: 2, truth: true, text: `그늘 밖에 있던 ${josa(c.label, '이/가')} 더위에 쓰러졌습니다.` });
+      hurtCas(sim, s, I, c, 0, 'exhaustion', { ev, immobile: true });
+    }
+  }
 });

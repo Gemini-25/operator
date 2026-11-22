@@ -295,6 +295,12 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
       hl.push(`${nm} ${an.length}마리 가운데 ${got}마리 포획${wild ? ` · ${wild}마리 산 쪽으로 쫓아냄` : ''}${road ? ` · ${road}마리 찻길로 놓침` : ''}`);
     }
   }
+  if (truth.type === 'rescue') {      // (N8 §4.6) 구조의 머리글 — 몇 명을 어떻게 내렸는가 (방법 문장은 R2 의 methodLines 가 따로 쓴다)
+    const cs = s.casualties, n = cs.length, freed = cs.filter((c) => c.tFreed >= 0 && !c.dead).length;
+    if (truth.variant === 'ride') { const pw = s.kinds && s.kinds.powered ? cs.filter((c) => c.tFreed >= 0 && c.freedHow === undefined && !c.dead).length : 0; hl.push(`${n}명 가운데 ${pw ? `전원 복구로 ${pw}명, ` : ''}구조로 ${freed - pw}명`); }
+    else if (truth.variant === 'pit') hl.push(freed ? (cs[0] && cs[0].freedHow === 'descend' ? '구덩이로 내려가 구조' : '줄로 끌어올려 구조') : '구덩이의 사람을 끌어올리지 못함');
+    else hl.push(`매달린 ${n}명 가운데 ${freed}명 구조`);
+  }
   if (truth.type === 'welfare') {      // (N8 §4.5) 보호의 머리글 — 실패는 한 줄로만(§5.13)
     const c = s.casualties.find((q) => q.isTarget);
     if (c && c.tDiscovered >= 0 && !c.dead) hl.push(s.kinds && s.kinds.backed ? '찾는 데 오래 걸렸습니다 — 시민이 안내 데스크로 데려옴' : c.where === 'loaded' ? '찾아서 병원 이송' : truth.variant === 'lostchild' ? '아이를 찾아 보호자에게 인계했습니다' : '보호자에게 인계');

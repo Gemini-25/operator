@@ -154,6 +154,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
   let special: Scenario | null = null;
   if (opts.variant) { variant = opts.variant; special = scenarioOf(type, variant) ?? null; }
   else { const cs = SCENARIOS.filter((q) => q.type === type && q.tag !== 'major' && q.tag !== 'disaster' && q.tag !== 'daily'); if (cs.length) { let r = rng.next(); for (const q of cs) { if (q.gate && !q.gate(sim)) continue; r -= q.share; if (r < 0) { special = q; break; } } } }
+  if (!special && !opts.variant && TYPE_DEFS[type].fallback !== undefined) special = scenarioOf(type, TYPE_DEFS[type].fallback!) ?? null;      // (N8 단계 8) 새 유형의 기본 변형 — 시나리오 몫이 걸리지 않았을 때 (구조 → 구덩이). 여덟 유형은 아래 갈래가 정한다
   if (special) { variant = special.variant; severity = rng.int(special.severity[0], special.severity[1]); }
   else if (opts.variant) { if (type === 'armed' && variant === 'robbery') severity = Math.max(2, severity); else if (variant === 'shooter' || variant === 'hostage') severity = 3; }
   else if (type === 'armed') {

@@ -386,7 +386,9 @@ describe('I1-b 0단계: 기록만 잇기', () => {
   it('연쇄 사건의 발생 기록이 원인을 가리킨다 — 방화는 앞 불의 기록, 은신처·재범·도주 차량은 SUSPECT_FLED', () => {
     // 극한 S1 의 무장 사건 강제 교대에는 달아난 용의자의 재범·도주 차량이 여섯 건 이어진다
     const cases: [string, Difficulty, string | null, string[]][] = [
-      ['S1', NORMAL, 'fire/arson', ['arson']], ['S0', NORMAL, 'armed/kidnap', ['hideout']], ['S4', NORMAL, null, ['arson']], ['S1', parseDifficulty('extreme')!, 'armed/std', ['reoffend', 'getaway', 'hideout']],
+      // (N8 단계 8·9) 납치 S0 → S5: 구조 유형이 평소 추첨에 들어 S0 의 납치가 은신처로 가지 않게 됐다(은신처 40%) — S0~S7 가운데 은신처가 이어지는 S5·S7 의 앞쪽
+      //  평소 S4 → S7: S4 의 연쇄 방화가 없어졌다 — S0~S14 가운데 연쇄 방화가 이어지는 S7
+      ['S1', NORMAL, 'fire/arson', ['arson']], ['S5', NORMAL, 'armed/kidnap', ['hideout']], ['S7', NORMAL, null, ['arson']], ['S1', parseDifficulty('extreme')!, 'armed/std', ['reoffend', 'getaway', 'hideout']],
     ];
     const seen = new Set<string>();
     for (const [seed, d, force, csqs] of cases) {
@@ -484,7 +486,8 @@ describe('I1-b 0단계: 기록만 잇기', () => {
     let own = 0, td = 0;
     // (N8 단계 4a·4b) S0 → S5·S7: 시설 사고가 짧은 사건에 들어 S0 의 가스 누출 현장이 무너지며 남긴 건물 잔해(I1-b C2 — 장애물의 기록으로 잇는 갈래, 막은 사건의 blockedEdge 가 없다)에 부대가 되돌아섰다
     // (N8 단계 6a) S11·S12 를 더했다 (표본만 넓힌다): 경찰 새 부대 셋이 편성돼 S1·S3·S5·S7 에서 자기 사건의 통제를 만난 출동이 없어졌다
-    for (const seed of ['S1', 'S3', 'S5', 'S7', 'S11', 'S12']) {
+    // (N8 단계 8·9) S3 → S13: 구조 유형이 평소 추첨에 들어 S3 의 건물 화재가 무너지며 남긴 잔해(C2 — 장애물의 기록으로 잇는 갈래, 막은 사건의 blockedEdge 가 아니다)가 제 부대의 길을 막았다
+    for (const seed of ['S1', 'S13', 'S5', 'S7', 'S11', 'S12']) {
       const { sim } = probedShift(seed);
       for (const I of sim.incidents) for (const p of I.problems) {
         if (p.code === 'ROUTE_BLOCKED') {
@@ -1001,7 +1004,8 @@ describe('I1-b b3-1: C6 divertRecord — 전환 배정의 실제 영향', () => 
     // (N8 단계 4a·4b) S15·S17 을 더했다 (표본만 넓힌다): 시설 사고가 짧은 사건에 들어 S0·S3·S7·S8 의 전환 배정 넷이 모두 10초 안에 메워졌다
     // (N8 단계 5) S19·S21·S22 를 더했다 (표본만 넓힌다): 동물 사건이 짧은 사건에 들어 10초 넘게 늦은 전환이 하나로 줄었다
     // (N8 단계 6a) S35 를 더했다 (표본만 넓힌다): 경찰 새 부대 셋이 편성돼 10초 넘게 늦은 전환이 다시 하나로 줄었다
-    for (const seed of ['S0', 'S3', 'S7', 'S8', 'S15', 'S17', 'S19', 'S21', 'S22', 'S35']) {
+    // (N8 단계 8·9) S44·S50 을 더했다 (표본만 넓힌다): 구조 유형이 평소 추첨에 들어 첫 도착을 늦춘 전환이 셋(모두 10초 안)으로 줄었다 — S36~S99 가운데 10초 넘게 늦은 전환이 있는 앞쪽 둘
+    for (const seed of ['S0', 'S3', 'S7', 'S8', 'S15', 'S17', 'S19', 'S21', 'S22', 'S35', 'S44', 'S50']) {
       const { sim, probe } = probedShift(seed);
       const rows = divertAnalysis(sim.events, sim.incidents, sim.units, probe.etaLog, sim.t).rows;
       for (const J of sim.incidents) {
@@ -1488,7 +1492,8 @@ describe('I1-b b4: 보고서의 내력 문장 (§3.9 · §6 I1-b 15)', () => {
   const STORY = ['reoffend', 'getaway', 'hideout', 'arson'];
   const shiftOf = (seed: string, d: Difficulty = NORMAL): Sim => probedShift(seed, d).sim;
   /** 법칙 사건·이야기 연쇄·건물 손상·정전이 나는 교대들 (해시 목록에서 고른 것 — 흐름이 바뀌어 사라져도 아래 문턱이 잡는다) */
-  const SHIFTS: [string, Difficulty][] = [['S1', NORMAL], ['S4', NORMAL], ['S5', NORMAL], ['S15', NORMAL], ['S19', NORMAL], ['S20', NORMAL], ['S2', QUAKE]];
+  // (N8 단계 8·9) 지진 S6 을 더했다 (표본만 넓힌다): 구조 유형이 평소 추첨에 들어 지진 S2 의 금 간 건물 문장이 없어졌다 — 지진 S0~S7 가운데 'wear' 문장이 있는 하나
+  const SHIFTS: [string, Difficulty][] = [['S1', NORMAL], ['S4', NORMAL], ['S5', NORMAL], ['S15', NORMAL], ['S19', NORMAL], ['S20', NORMAL], ['S2', QUAKE], ['S6', QUAKE]];
   it('문장마다 가리키는 기록·사건·구간·건물이 있다 — 법칙 사건은 주된 몫의 갈래로 한 문장, "약 N초"는 그 몫의 at − since 이고 그 원인 기록보다 앞서지 않는다. 법칙 이름이 문장에 없다', () => {
     let hzN = 0, storyN = 0, kidsN = 0, wearN = 0, lineN = 0;
     const kinds = new Set<string>();
@@ -1651,11 +1656,13 @@ describe('I1-b b5: 완료 조건의 정해진 시드 (§5 · §6 I1-b 8)', () =>
     }
     return out;
   }
-  it('3단계 사례: 한 사건에서 서로 다른 사건·시스템으로 세 단계 넘게 퍼진 길이 법칙 사건을 지난다 — 보통 S1800(건물 화재 → 옆 건물로 옮겨붙은 불 → 그 불의 연기 → 연기를 마신 주민) · 보통 S234(퍼진 길이 몰린 길의 사고를 지난다)', () => {
+  it('3단계 사례: 한 사건에서 서로 다른 사건·시스템으로 세 단계 넘게 퍼진 길이 법칙 사건을 지난다 — 보통 S3684(건물 화재 → 옆 건물로 옮겨붙은 불 → 그 불의 연기 → 연기를 마신 주민) · 보통 S66(퍼진 길이 몰린 길의 사고를 지난다)', () => {
     // (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 S33·S26 의 사건이 바뀌었다 — 같은 길(옮겨붙은 불 + 연기를 마신 주민 · 몰린 길의 사고)이 있는 시드로 (표본을 넓혀 찾았다: S0~S529)
     // (N8 단계 6a) 경찰 새 부대 셋(형사·교통 경찰·경찰견)이 편성돼 S293·S5 의 길이 바뀌었다 — 같은 길이 있는 시드로 (표본을 넓혀 찾았다: 옮겨붙은 불 + 연기를 마신 주민은 S0~S999 에 없었고 그 뒤를 훑어 S1800 · 몰린 길의 사고는 S24)
     // (N8 단계 6b) 교통사고가 견인차를 기다려 S24 의 몰린 길의 사고가 확산 길에서 빠졌다 — 같은 길이 있는 시드로 (S0~S119 에 없어 그 뒤를 훑어 S234)
-    const want: [string, string[]][] = [['S1800', ['heatSpread', 'smokeIll']], ['S234', ['roadCrash']]];
+    // (N8 단계 8·9) 구조 유형이 평소 추첨에 들어 두 시드의 길이 바뀌었다 — S234 → S66(몰린 길의 사고 — S0~S120 을 훑어 첫 번째) ·
+    //  S1800 → S3684(옮겨붙은 불 + 연기를 마신 주민 — 보통 S0~S409·S2400~S3308·S3600~S3684 와 강제 화재 S0~S399 를 훑어 처음 나온 것)
+    const want: [string, string[]][] = [['S3684', ['heatSpread', 'smokeIll']], ['S66', ['roadCrash']]];
     for (const [seed, laws] of want) {
       const sim = probedShift(seed).sim;
       const hits = spreadThrough(sim).filter((x) => x.incs.some((J) => J !== x.I && J.hz !== undefined));
@@ -1670,7 +1677,7 @@ describe('I1-b b5: 완료 조건의 정해진 시드 (§5 · §6 I1-b 8)', () =>
   }, 120000);
   it('법칙 사건의 통제를 만난 다른 사건의 부대 (완료 조건 2): ROUTE_BLOCKED 의 원인이 그 법칙 사건의 통제 기록이다 — 극한 S4·S7', () => {
     let n = 0;
-    for (const seed of ['S4', 'S7', 'S26', 'S8']) {      // (N8 단계 6b) S8 을 더했다 — 교통사고의 견인으로 셋의 그런 부대가 없어졌다 (S0~S39 가운데 S8 하나) · (N8 단계 6a) S26 을 더했다 — 경찰 새 부대 셋이 편성돼 S4·S7 의 그런 부대가 없어졌다 (S0~S29 가운데 S26·S28) · (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 극한 S3 의 사건이 바뀌었다 — 그런 부대가 있는 S7 로 (S0~S15 가운데 S7 하나)
+    for (const seed of ['S4', 'S7', 'S26', 'S8', 'S13']) {      // (N8 단계 8·9) S13 을 더했다 — 구조 유형이 평소 추첨에 들어 넷의 그런 부대가 없어졌다 (극한 S0~S13 가운데 S13 하나)      // (N8 단계 6b) S8 을 더했다 — 교통사고의 견인으로 셋의 그런 부대가 없어졌다 (S0~S39 가운데 S8 하나) · (N8 단계 6a) S26 을 더했다 — 경찰 새 부대 셋이 편성돼 S4·S7 의 그런 부대가 없어졌다 (S0~S29 가운데 S26·S28) · (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 극한 S3 의 사건이 바뀌었다 — 그런 부대가 있는 S7 로 (S0~S15 가운데 S7 하나)
       const sim = probedShift(seed, parseDifficulty('extreme')!).sim;
       const lawBlock = new Map<number, Incident>();
       for (const J of sim.incidents) if (J.hz && J.blockEv !== undefined) lawBlock.set(J.blockEv, J);

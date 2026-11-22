@@ -134,15 +134,23 @@ function inManhole(s: Scene, c: Casualty): boolean {
 }
 /** (N8 §4.2 싱크홀) 걸을 수 없는 칸(구멍 안 T.VOID · 높은 자리 T.LEDGE)에 선 사람 — 가장자리에서 줄로 닿는다(R2 haul 의 pit) */
 function inVoid(s: Scene, c: Casualty): boolean { const t = s.tiles[Math.round(c.y) * s.w + Math.round(c.x)]; return t === T.VOID || t === T.LEDGE; }
+/** (N8 단계 8 §5.11) 높은 자리 목록(진실 s.kinds.perch)에서 그 사람의 높이 단계 — 없으면 undefined (관찰이 읽는다 — 높이는 보면 안다) */
+function perchHeight(s: Scene, cas: number): number | undefined {
+  const l = s.kinds!.perch!;
+  for (let k = 0; k < l.length; k++) if (l[k].cas === cas) return l[k].h;
+  return undefined;
+}
 export function casFact(sim: Sim, s: Scene, c: Casualty, src: string): Fact {
   const mob = c.mob === 'trapped' ? 'trapped' : c.walking ? 'mobile' : 'immobile';
   const b = band(c.health);
+  const ph = c.mob === 'trapped' && s.kinds !== undefined && s.kinds.perch !== undefined ? perchHeight(s, c.id) : undefined;      // (N8 단계 8 §5.11) 높은 자리의 높이 단계 — 본 대로 (내려오면 다음 관찰에서 없다)
   // water: (R2) 물속인가 — 본 그대로. 이 값은 늘 mob·band 와 함께 바뀌므로(물에 빠짐·건져 냄·휩쓸려 숨짐) 믿음의 "새 소식" 판정을 바꾸지 않는다.
   // drift: (R2 1a) 떠내려가는 속도 — 본 그대로(물 밖이면 0). 떠내려가는 동안은 그대로이고 걸려 멈추는 순간 0 이 된다 — 그때 보고가 한 번 더 나간다(방법을 고르는 판단부가 물살을 이것으로 본다)
   // veh·pit: (R2 단계 3) 갇힌 차량의 소품 id · 맨홀 아래 — 본 그대로 (구출 방법의 범주를 대원이 믿음으로 가린다). 늘 mob 과 함께 바뀐다(구출이 끝나면 함께 사라진다)
   // rush: (R2 단계 6) 구급 대원이 즉시 이송을 정했다 — 처치와 함께 바뀐다(treated·tq). 지휘관이 처치를 더 내지 않고 탑승을 먼저 한다
   const v: CasBelief = { x: Math.round(c.x), y: Math.round(c.y), mob, band: b, where: c.where, treated: c.treated, trappedDone: c.mob !== 'trapped', tq: c.treatQ >= 0.6 ? 2 : c.treated ? 1 : 0, water: c.inWater === true, drift: c.inWater ? c.drift ?? 0 : 0,
-    veh: c.inVehicle !== null && c.mob === 'trapped' && !inVoid(s, c) ? c.inVehicle : undefined, pit: c.mob === 'trapped' && (inManhole(s, c) || inVoid(s, c)) ? true : undefined, rush: c.rush ? true : undefined };
+    veh: c.inVehicle !== null && c.mob === 'trapped' && !inVoid(s, c) ? c.inVehicle : undefined, pit: c.mob === 'trapped' && ph === undefined && (inManhole(s, c) || inVoid(s, c)) ? true : undefined, rush: c.rush ? true : undefined,
+    perch: ph, stage: undefined };      // perch: (N8 단계 8) 높은 자리의 사람은 구덩이(pit)가 아니다 — 사다리·하강·호이스트로만 닿는다      // perch: (N8 단계 8 §5.11) 높은 자리의 높이 단계 1~3 — 본 대로 (내려오면 다음 관찰에서 없다)
   primeNums(v, CAS_V_SHAPE);
   const mobT = c.dead ? '' : mob === 'trapped' ? ' · 고립' : mob === 'mobile' ? ' · 자력 대피 중' : c.where === 'scene' ? ' · 거동 불가' : '';
   const whereT = c.where === 'safe' ? '안전 구역' : c.where === 'loaded' ? '구급차 탑승' : c.where === 'carried' ? '이송 중' : regionNameAt(s, c.x, c.y);
@@ -200,7 +208,7 @@ export function mateStatus(sim: Sim, b: FieldAgent): MateBelief['status'] {
 /** 보고할 가치가 있는 변화인가 (위치만 바뀐 것은 조용히 갱신) */
 function significant(f: Fact, old: any): boolean {
   const v = f.value;
-  if (f.type === 'cas') return v.where !== 'carried' && (old.mob !== v.mob || old.band !== v.band || old.where !== v.where || old.treated !== v.treated || old.tq !== v.tq);
+  if (f.type === 'cas') return v.where !== 'carried' && (old.mob !== v.mob || old.band !== v.band || old.where !== v.where || old.treated !== v.treated || old.tq !== v.tq || (old.perch ?? 0) !== (v.perch ?? 0));      // perch: (N8 단계 8) 줄이 끊겨 내려앉았다
   if (f.type === 'hos') return old.state !== v.state || old.weapon !== v.weapon || old.hostage !== v.hostage || !!old.dead !== !!v.dead || (old.tq ?? 0) !== (v.tq ?? 0) || (old.where ?? 'scene') !== (v.where ?? 'scene');
   if (f.type === 'mate') return old.status !== v.status || old.dead !== v.dead || old.band !== v.band || old.tq !== v.tq || !!old.trapped !== !!v.trapped;
   if (f.type === 'sign') return old.level !== v.level;      // (X6) 조짐은 단계가 바뀔 때만 알린다 — 측정값(lel)만 바뀐 것은 믿음에 합치되 보고하지 않는다
@@ -291,6 +299,15 @@ function perceiveFixture(sim: Sim, s: Scene, a: FieldAgent, p: Prop, d: number, 
     if (d <= 4 && !a.beliefs.get('evid', p.id) && los(s, a.x, a.y, p.x, p.y)) learn(sim, a, mkFact('evid', p.id, { kind: 'floater' }, me, sim.t, 1, true, '물에 떠 있는 것은 사람이 아님 — 마네킹·쓰레기 봉투'));
   } else if (p.skin === 'fireworks') {
     if (d <= 3 && !a.beliefs.get('evid', p.id) && los(s, a.x, a.y, p.x, p.y)) learn(sim, a, mkFact('evid', p.id, { kind: 'fireworks' }, me, sim.t, 1, true, '폭죽 잔해 발견 — 총소리가 아니었음'));
+  } else if (p.skin === 'pit') {
+    // (N8 단계 8 §4.6) 구덩이·우물·배수로: 보이면 누구나 구덩이임을 안다(좁은 우물은 생김새 — 소품 sub 'narrow' 를 믿음 narrow 로 옮긴다).
+    // 공기는 가스 측정기를 든 대원이 2칸 안에서 잰다 — 사실 id 는 소품 id + 1000 (같은 소품의 둘째 사실 — 설계서 §5.8)
+    if (d > v || !losOpen(s, a.x, a.y, p.x, p.y)) return;
+    if (!a.beliefs.get('haz', p.id)) learn(sim, a, mkFact('haz', p.id, { kind: 'pit', active: true, x: p.x, y: p.y, narrow: p.sub === 'narrow' ? true : undefined }, me, sim.t, 1, true, `${regionNameAt(s, p.x, p.y)}에 ${p.sub === 'narrow' ? '좁은 우물' : '구덩이'} — 사람이 빠져 있음`));
+    if (meter && d <= 2 && !a.beliefs.get('haz', p.id + 1000)) {
+      const bad = s.kinds !== undefined && s.kinds.badAir === true;
+      learn(sim, a, mkFact('haz', p.id + 1000, { kind: 'air', active: bad, x: p.x, y: p.y }, me, sim.t, 1, true, bad ? '구덩이 안 공기 측정 — 산소 부족 · 유해 가스, 그냥 내려가면 위험' : '구덩이 안 공기 측정 — 이상 없음'), true, true);
+    }
   } else if (p.skin === 'trash') {
     if (meter && d <= 2 && !a.beliefs.get('haz', p.id) && los(s, a.x, a.y, p.x, p.y)) learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y, sub: 'smell' }, me, sim.t, 1, true, '측정 결과 가스 없음 — 음식물 쓰레기 냄새'));
   }
@@ -319,7 +336,7 @@ function perceiveWreck(sim: Sim, s: Scene, a: FieldAgent, p: Prop, me: string): 
 }
 /** 시야 안의 진실을 관찰해 믿음을 갱신한다. boost 는 관측 범위 배율(현장 평가 등). */
 /** perceive 의 시야: 공중 관측(aloft)은 실내가 아닌 칸, 지상은 시야선 */
-function seesAt(s: Scene, a: FieldAgent, aloft: boolean, x: number, y: number): boolean { return aloft ? !isIndoor(s.tiles[tileOf(s, x, y)]) : s.variant === 'sinkhole' ? losOpen(s, a.x, a.y, x, y) : los(s, a.x, a.y, x, y); }
+function seesAt(s: Scene, a: FieldAgent, aloft: boolean, x: number, y: number): boolean { return aloft ? !isIndoor(s.tiles[tileOf(s, x, y)]) : s.variant === 'sinkhole' || s.variant === 'pit' ? losOpen(s, a.x, a.y, x, y) : los(s, a.x, a.y, x, y); }      // (N8 단계 8) 구덩이도 내려다본다
 /**
  * (N8 §4.2 싱크홀) 바깥의 꺼진 구멍(T.VOID)은 시야를 막지 않는다 — 가장자리에서 구멍 안이 내려다보인다. 벽·바위만 막는다 (grid.los 는 두 층 사이의 빈 공간 때문에 VOID 를 막는다)
  */
@@ -522,7 +539,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
         pushFx(sim, s, 'text', p.x, p.y - 0.8, undefined, undefined, '단서', '#ffd166', 1.8);
       }
     } else if (p.kind === 'witness') {
-      if (!a.beliefs.get('evid', p.id) && d <= v && !(p.skin === 'victim' && p.interviewed)) learn(sim, a, mkFact('evid', p.id, { kind: 'witness', done: !!p.interviewed }, me, sim.t, 1, true, p.skin === 'victim' ? '현장에 피해자 대기 중' : '현장에 목격자 대기 중'), false);      // (N8 단계 6b) 면담을 마친 피해자는 약속(evid meet)이 같은 열쇠다 — 덮지 않는다
+      if (!a.beliefs.get('evid', p.id) && d <= v && !((p.skin === 'victim' || p.skin === 'operator') && p.interviewed)) learn(sim, a, mkFact('evid', p.id, { kind: 'witness', done: !!p.interviewed }, me, sim.t, 1, true, p.skin === 'victim' ? '현장에 피해자 대기 중' : p.skin === 'operator' ? '놀이기구 운영자 대기 중' : '현장에 목격자 대기 중'), false);      // (N8 단계 6b) 면담을 마친 피해자는 약속(evid meet)이 같은 열쇠다 — 덮지 않는다
     } else if (p.kind === 'fixture') perceiveFixture(sim, s, a, p, d, meter, me, v);      // (N8) 시설물·현장의 물건 (단계 3: 오인 신고의 답 — 물에 뜬 물건·폭죽 잔해·음식물 쓰레기)
   }
   // (X6 §3.3) 조짐: 구조 약화·가스 농도·용기 가열·건물 기울어짐 — 감각 범위 안의 것만 (field/catastrophe.ts)
@@ -919,6 +936,8 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
     case 'clear': return 0.3 + r.skills.rescue * 0.5 + toolFor(sim, rid, 'clear') * 0.3;
     case 'force': return 0.3 + r.skills.rescue * 0.5 + toolFor(sim, rid, 'force') * 0.3;
     case 'extricate': {
+      { const cb = a.beliefs.val<CasBelief>('cas', w.cas);      // (N8 단계 8 §5.11) 높은 자리·구조 유형의 구덩이: 쓸 방법(사다리·하강·줄)이 있는 대원만 — 땅 위의 방법으로는 닿지 않는다
+        if (cb !== undefined && ((cb.perch ?? 0) > 0 || (s.kind === 'rescue' && cb.pit === true))) return methodFit(sim, s, a, w) > 0 ? Math.max(0.2, 0.4 + 0.6 * r.skills.rescue) : 0; }
       if (!scbaOk(sim, rid, afterSwap)) {
         if (s.kind === 'collapse' || s.kind === 'hazmat') return 0;
         // 불이 난 건물 안에 갇힌 사람도 같다: 믿음 속 자리가 위험한 건물 안이면 공기호흡기를 멘 대원만 들어가 구출한다 (수색·이송과 같은 검사)
@@ -1017,7 +1036,9 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
     // (N8 단계 2a) 새 임무 다섯의 자리 — 맡는 사람은 그 임무를 쓰는 단계가 정한다(repair 4a · towAway 6b · capture 5 · persuade 7 · cordon 4a, 설계서 §5.3.3·§5.10).
     // 지금은 아무도 이 작업을 만들지 않고, 누구도 맡지 않는다
     case 'repair': return valveFallback(sim, s, a, w) ? 0.3 : 0;      // (N8 §5.3.6 ③) 수도 복구반이 오지 못할 때 소방의 제수밸브
-    case 'towAway': case 'persuade': return 0;
+    case 'towAway': return 0;
+    // (N8 §4.5·§5.9 — 단계 9 가 먼저 쓴다: 약물 과다의 흥분한 환자) 설득: 경찰 0.3 + 0.35 × 침착 + 0.35 × 경험 · 구급대원은 그 값 × 0.6 · 확성기를 들었으면 × 0.8 (큰 소리는 몰아붙인다)
+    case 'persuade': { const b = 0.3 + 0.35 * r.composure + 0.35 * r.experience; const v = r.dept === 'police' ? b : r.dept === 'ems' ? b * 0.6 : 0; return v * (hasKit(sim, rid, 'megaphone') ? 0.8 : 1); }
     case 'capture': {
       // (N8 §4.3 — 단계 5) 벌집: 벌 보호복을 든 대원만 0.8 (방법 없이). 동물: 포획 장비(마취총·올가미·포획망)를 든 대원 1.0 — 지금 쓸 포획 방법이 있을 때만(WORK_MODE 'refuse'),
       // 그 밖의 경찰·소방은 맨손 몰이가 허락될 때만 0.35 (가축이거나, 포획 장비를 든 대원이 현장에 없고 작업이 60초 넘었을 때 — methods.herdAllowed)
@@ -1031,6 +1052,7 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
     }
     // (N8 §5.10 — 단계 4a) 통제(위협이 없는 현장의 한 자리 지키기): 경찰 0.5 + 0.3 × 치안 능력, 소방·구조(부서 fire) 0.4 + 0.2 × 경험, 구급 0 (유관 기관은 위의 첫 줄에서 0)
     case 'cordon': {
+      if (s.kind === 'rescue' && w.tile >= 0 && pitBeside(a, w.tile % s.w, (w.tile / s.w) | 0)) return hasKit(sim, rid, 'gasMeter') ? 1.0 : 0;      // (N8 단계 8 §4.6 pit) 구덩이 곁의 자리는 공기 측정 — 가스 측정기를 든 대원만
       const base = r.dept === 'police' ? 0.5 + 0.3 * r.skills.law : r.dept === 'fire' ? 0.4 + 0.2 * r.experience : 0;
       // (N8 단계 6b §4.4) 잠복 자리: 믿음 evid meet 의 자리 3칸 안의 통제는 사복 형사 1.0 · 제복 0.15 (형사가 오면 잠복을, 순찰은 먼 자리를 맡는다 — 형사가 없으면 순찰이 잠복도 맡는다)
       if (base > 0 && s.kind === 'disturb' && w.tile >= 0) { const m = meetOf(a); if (m && dist(w.tile % s.w, (w.tile / s.w) | 0, m.x, m.y) <= 3) return r.role === 'detective' ? 1.0 : 0.15; }
@@ -1043,6 +1065,28 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
   }
 }
 
+/** (N8 단계 8) 그 칸이 믿음 속 구덩이(haz pit)의 바로 곁(1.5칸 안)인가 — 측정 자리 */
+function pitBeside(a: FieldAgent, x: number, y: number): boolean {
+  for (const f of a.beliefs.list('haz')) { const v = f.value as { kind: string; x: number; y: number }; if (v.kind === 'pit' && Math.hypot(v.x - x, v.y - y) <= 1.5) return true; }
+  return false;
+}
+/** (N8 단계 8) 이 대원이 아는 놀이기구 전원 복구 예상 시각 (믿음 evid power — 운영자 면담으로 안다). 없으면 -1 */
+export function powerAtOf(a: FieldAgent): number {
+  for (const f of a.beliefs.list('evid')) { const v = f.value as { kind: string; at?: number }; if (v.kind === 'power' && v.at !== undefined && v.at < Infinity) return v.at; }
+  return -1;
+}
+/** (N8 단계 9) 출산을 기다리는 창: 현장 분만을 정하는 남은 시간(초 — 설계서 §4.7) · 믿는 시각이 지난 뒤 더 기다리는 시간(진술 오차 ±30초) */
+export const LABOR = { WIN: 90, LATE: 40 };
+/**
+ * (N8 단계 9) 이 대원이 믿는 출산 시각(evid labor — id 1000 + 산모 id). 아직 낳지 않았고(done 아님) 남은 시간이 LABOR.WIN 안이며 믿는 시각이 LABOR.LATE 넘게 지나지 않았을 때만 그 시각, 아니면 −1.
+ * far 가 참이면 창 밖(먼 시각)이어도 돌려준다 — 지휘관이 "싣고 간다"를 고르는 데 쓴다
+ */
+export function laborAtOf(sim: Sim, a: FieldAgent, cid: number, far = false): number {
+  const v = a.beliefs.val<{ kind: string; at?: number; done?: boolean }>('evid', 1000 + cid);
+  if (v === undefined || v.kind !== 'labor' || v.at === undefined || v.done === true) return -1;
+  if (sim.t - v.at > LABOR.LATE) return -1;
+  return far || v.at - sim.t <= LABOR.WIN ? v.at : -1;
+}
 /** (N8 단계 6b) 이 대원이 아는 약속 (믿음 evid meet — 피해자 면담으로 안다): 시각과 자리. 없으면 null */
 export function meetOf(a: FieldAgent): { at: number; x: number; y: number } | null {
   for (const f of a.beliefs.list('evid')) { const v = f.value as { kind?: string; at?: number; x?: number; y?: number }; if (v.kind === 'meet' && v.at !== undefined) return { at: v.at, x: v.x ?? 0, y: v.y ?? 0 }; }

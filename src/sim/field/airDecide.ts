@@ -43,6 +43,10 @@ const live = (w: WorkItem): boolean => w.status === 'open' || w.status === 'acti
 function inWaterBelief(t: AirTerrain, c: CasBelief): boolean {
   return c.where === 'scene' && c.mob === 'trapped' && c.band < 3 && t.tiles[c.y * t.w + c.x] === T.WATER;
 }
+/** (N8 단계 8 §5.11) 호이스트로 건질 수 있다고 믿는 사람: 물속이거나 높은 자리(믿음 perch > 0 — 외벽·놀이기구) */
+function hoistable(t: AirTerrain, c: CasBelief): boolean {
+  return inWaterBelief(t, c) || (c.where === 'scene' && c.mob === 'trapped' && c.band < 3 && (c.perch ?? 0) > 0);
+}
 
 /** 호이스트로 건질 사람: 작업판의 호이스트 작업(우선순위 순), 지휘관이 없으면 관측자가 본 물속의 사람(위중한 사람 먼저) */
 function pickHoist(v: AirView): { target: number; workId: number } | null {
@@ -59,7 +63,7 @@ function pickHoist(v: AirView): { target: number; workId: number } | null {
   let bid = -1, bb = -1;
   for (const f of v.eye.beliefs.list('cas')) {
     const c = f.value as CasBelief;
-    if (!inWaterBelief(v.terrain, c) || taken(f.id)) continue;
+    if (!hoistable(v.terrain, c) || taken(f.id)) continue;
     if (f.id === v.op.target && v.op.mode === 'hoist') return { target: f.id, workId: -1 };
     if (c.band > bb) { bb = c.band; bid = f.id; }
   }
@@ -151,7 +155,7 @@ function watchBusy(v: AirView): boolean {
   if (o.hostile) return true;
   if (v.kind === 'armed' && v.cmd.beliefs.get('secure', 0) === undefined) return true;
   if ((TYPE_DEFS[v.kind].zoneSearch || v.kind === 'water') && o.search) return true;
-  for (const f of v.cmd.beliefs.list('cas')) if (inWaterBelief(v.terrain, f.value as CasBelief)) return true;
+  for (const f of v.cmd.beliefs.list('cas')) if (hoistable(v.terrain, f.value as CasBelief)) return true;
   for (const w of v.board) if (w.kind === 'search' && live(w) && w.region >= 0 && !v.terrain.regions[w.region].indoor) return true;
   return false;
 }

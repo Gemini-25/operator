@@ -194,6 +194,12 @@ const inVeh = (c: MethodCtx): boolean => c.cb !== null && c.cb.veh !== undefined
 const inCollapse = (c: MethodCtx): boolean => c.s.kind === 'collapse' && !inVeh(c);
 /** 믿음: 구덩이(맨홀) 아래 */
 const inPit = (c: MethodCtx): boolean => c.cb !== null && c.cb.pit === true;
+/** (N8 단계 8 §5.11) 믿음: 대상이 높은 자리에 있다 — 높이 단계 1~3 (본 대로 — agents.casFact 가 채운다), 아니면 0. 높은 자리의 사람에게는 사다리·하강(과 상공의 호이스트)만 닿는다 */
+const perchH = (c: MethodCtx): number => c.cb !== null ? c.cb.perch ?? 0 : 0;
+/** (N8 단계 8 §4.6 pit) 구조 유형의 구덩이에 빠진 의식 없는 사람(믿음 띠 ≥ 2) — 줄을 잡을 수 없으니 내려가야 한다 (하강) */
+const pitDown = (c: MethodCtx): boolean => inPit(c) && c.s.kind === 'rescue' && c.cb!.band >= 2;
+/** 땅 위의 구출 방법이 닿는 대상 (높은 자리도 아니고 내려가야 하는 구덩이도 아니다) */
+const reachable = (c: MethodCtx): boolean => perchH(c) === 0 && !pitDown(c);
 /** 대상 믿음 위치에서 R 칸 안에 살아 있는 누출(haz leak)이 있는가 — sub 가 subs 가운데 하나 */
 function leakNear(c: MethodCtx, subs: readonly string[], R = 4): boolean {
   if (c.cb === null) return false;
@@ -502,13 +508,13 @@ export const METHOD: Record<MethodId, MethodDef> = {
   charge: row('charge', ['force', 'clear'], '폭파 진입', '폭파', '폭파 진입', '폭파 장약으로', ['charge'], 0.8, 0.1, false,      // 사용자 결정 2026-11-15 (§4.2a) — 조건일 때만. 진입 순간 ×1.3 · 문을 막은 잔해 ×1.4 (시끄러운 방법의 ×0.7 은 걸지 않는다)
     { can: chargeOk, situ: (c) => (c.s.kind === 'armed' && c.s.entryOrdered ? 1.3 : 1) * (c.work === 'clear' ? 1.4 : 1) }),
   // ── 구출 extricate (§4.3) — 단계 3 이 켰다. 범주는 믿음으로: 차량(veh) · 붕괴(차량 아님) · 구덩이(pit) · 그 밖. 속도 k 는 실행부(methodRun.extricateRate) ──
-  manual: row('manual', ['extricate'], '수동 구출', '수동 구출', '수동 구출', '맨손으로 끌어내', [], 0.5, 0, false, { can: (c) => !inCollapse(c) }),      // 맨몸 방법 (차량·구덩이·그 밖)
-  basic: row('basic', ['extricate'], '손 공구 구출', '손 공구', '구조 작업', '손 공구로', ['irons', 'lightRescue', 'spreader'], 0.7, 0, true, { can: ALWAYS }),      // 지금의 방법 — 속도는 R1 의 식 그대로(가진 가장 좋은 구출 도구). 유압 구조기만 든 대원도 구덩이·그 밖에서 이것으로 한다
+  manual: row('manual', ['extricate'], '수동 구출', '수동 구출', '수동 구출', '맨손으로 끌어내', [], 0.5, 0, false, { can: (c) => !inCollapse(c) && reachable(c) }),      // (N8 단계 8) 높은 자리·내려가야 하는 구덩이에는 닿지 않는다      // 맨몸 방법 (차량·구덩이·그 밖)
+  basic: row('basic', ['extricate'], '손 공구 구출', '손 공구', '구조 작업', '손 공구로', ['irons', 'lightRescue', 'spreader'], 0.7, 0, true, { can: reachable }),      // 지금의 방법 — 속도는 R1 의 식 그대로(가진 가장 좋은 구출 도구). 유압 구조기만 든 대원도 구덩이·그 밖에서 이것으로 한다
   spread: row('spread', ['extricate'], '문 벌리기', '문 벌리기', '유압 전개', '유압 구조기로 문을 벌려', ['spreader'], 0.85, 0, true, { can: inVeh }),
   roof: row('roof', ['extricate'], '지붕 절단', '지붕 절단', '지붕 절단', '지붕을 잘라 내', ['spreader'], 0.8, 0, false,      // 같은 차의 고립자가 둘 이상이거나 중상 이상이면 ×1.3 (까닭 team)
     { can: (c) => inVeh(c) && spreaderMate(c), situ: (c) => (c.cb !== null && (c.cb.band >= 1 || sameVehTrapped(c) >= 2) ? 1.3 : 1) }),
-  rapid: row('rapid', ['extricate'], '급박 구출', '급박 구출', '급박 구출', '급히 끌어내', [], 0.95, 0.05, false, { can: rapidOk }),      // 조건일 때만 (까닭 danger). risk 0.05 — 끝날 때 대상 피해 10(척추 보호 없이)
-  haul: row('haul', ['extricate'], '줄로 끌어올리기', '끌어올리기', '줄로 끌어올리기', '줄로 끌어올려', ['rope'], 0.9, 0, false, { can: inPit }),
+  rapid: row('rapid', ['extricate'], '급박 구출', '급박 구출', '급박 구출', '급히 끌어내', [], 0.95, 0.05, false, { can: (c) => rapidOk(c) && reachable(c) }),      // 조건일 때만 (까닭 danger). risk 0.05 — 끝날 때 대상 피해 10(척추 보호 없이)
+  haul: row('haul', ['extricate'], '줄로 끌어올리기', '끌어올리기', '줄로 끌어올리기', '줄로 끌어올려', ['rope'], 0.9, 0, false, { can: (c) => inPit(c) && !pitDown(c) }),
   tunnel: row('tunnel', ['extricate'], '손으로 파기', '손 파기', '잔해 파내기', '손으로 잔해를 파내', [], 0.5, 0.1, false, { can: inCollapse }),      // 붕괴의 맨몸 방법. risk 0.1 — 균열 곁이면 잔해가 다시 흘러내릴 수 있다
   airbag: row('airbag', ['extricate'], '에어백 들기', '에어백', '에어백 설치', '에어백으로 들어 올려', ['airbag'], 0.85, 0, false, { can: inCollapse }),
   shore: row('shore', ['extricate'], '지지대 먼저', '지지대', '지지대 설치', '지지대를 먼저 세우고', ['shoring'], 0.9, 0, false,      // 조건일 때만 (까닭 danger) — 대상 4칸 안에 살아 있는 균열, 그 균열을 동료가 보강하고 있지 않다
@@ -577,6 +583,10 @@ export const METHOD: Record<MethodId, MethodDef> = {
   catchpole: row('catchpole', ['capture'], '올가미 포획', '올가미', '올가미 포획', '올가미로', ['catchpole'], 0.7, 0.15, false, { can: (c) => aniLoose(c) && c.ab!.kind !== 'cow' }),
   herd: row('herd', ['capture'], '몰이', '몰이', '동물 몰이', '뒤에서 몰아', [], 0.6, 0.05, false, { can: (c) => aniLoose(c) && herdAllowed(c.sim, c.s, c.a, c.ab!, workAgeOf(c)) }),
   net: row('net', ['capture'], '포획망', '포획망', '포획망 씌우기', '포획망으로', ['net'], 0.9, 0, false, { can: (c) => c.ab !== null && c.ab.state === 'sedated' }),
+  // ── (N8 §4.6 — 단계 8) 높은 자리·구덩이의 구출 extricate: 사다리(사다리차의 대원 — 높이 ≤ 2, 사다리를 펴는 땅 칸 ground 에서 20초) ·
+  //    하강(줄을 든 대원 — 위쪽 칸 top 에서 35초, 구조대가 아니면 50초. 높이 무관 · 구덩이의 의식 없는 사람에게 내려가기도). 실행은 executor 의 높은 자리 갈래. N9 의 다섯 앞 ──
+  ladder: row('ladder', ['extricate'], '사다리차 구조', '사다리', '사다리 구조', '사다리차의 사다리로', [], 0.95, 0, false, { needUnit: ['ladder'], can: (c) => perchH(c) > 0 && perchH(c) <= 2 }),
+  descend: row('descend', ['extricate'], '밧줄 하강 구조', '하강', '하강 구조', '밧줄로 내려가', ['rope'], 0.8, 0.05, false, { can: (c) => perchH(c) > 0 || pitDown(c) }),
   // ── (N9 §5.12) 새 방법 다섯 — 단계 1 은 줄만(can = NOT_YET). 수치(pref·risk)는 시작값이고, 조건·배율·장비는 그 방법을 쓰는 단계가 채운다 ──
   // 잠수: 물에 잠긴 차·선실 안의 사람(믿음 sunk · haz sunk)에게 3칸 안에서 25초 (단계 5). 장비는 diveKit(단계 2 에 생긴다)으로 바꾼다 — 지금은 있는 드라이슈트만 적어 둔다
   dive: row('dive', ['waterRescue', 'extricate', 'search'], '잠수 구조', '잠수', '잠수 구조', '잠수해 들어가', ['drysuit'], 0.8, 0.1, false),
@@ -647,6 +657,7 @@ export const SAY: Record<MethodId, string> = {
   seal: '누출을 막겠습니다.', ventFirst: '먼저 환기한 뒤 차단하겠습니다.', cordon: '출입구를 통제하겠습니다.', announce: '주변에 대피 방송을 합니다.',
   air: '', drone: '드론을 띄우겠습니다.', dog: '탐지견을 풀겠습니다.',
   dart: '마취총으로 재우겠습니다.', catchpole: '올가미로 붙잡겠습니다.', herd: '뒤에서 몰겠습니다.', net: '포획망을 씌우겠습니다.',      // (N8 단계 5)
+  ladder: '사다리를 펴서 내리겠습니다.', descend: '줄을 매고 내려가겠습니다.',      // (N8 단계 8)
   dive: '잠수해 들어가겠습니다.', boom: '오일펜스를 펼치겠습니다.', shieldLine: '방패로 저지선을 치겠습니다.', deconTent: '제독 텐트에서 씻기겠습니다.', hoseWash: '호스로 씻어 내겠습니다.',      // (N9)
   feel: '앞이 안 보입니다. 벽을 따라 더듬어 찾겠습니다.', pulse: '끊어 쏘며 물을 아끼겠습니다.',      // (R3 3단계)
   robotDefuse: '로봇 먼저 투입합니다.', suitDefuse: '방호복을 입고 해체하겠습니다.', bareDefuse: '방호복 없이 바로 해체합니다.',      // (R3 5단계)

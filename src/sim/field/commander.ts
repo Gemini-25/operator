@@ -393,7 +393,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
       }
       if (!TYPE_DEFS[s.kind].roomSearch) continue;      // 방 수색을 하는 유형 (incidentTypes)
       if (s.kind === 'water' && found >= Math.max(1, expected)) continue;      // 신고된 인원을 모두 찾았으면 물가 수색을 멈춘다
-      if (s.kind === 'medical' && found >= 1) continue;      // 환자를 찾았으면 더 수색하지 않는다
+      if (s.kind === 'medical' && found >= Math.max(1, expected)) continue;      // 환자를 찾았으면 더 수색하지 않는다 — (N8 단계 9) 신고 인원만큼 (식중독의 곁방 환자. 지금 응급 신고는 늘 "한 명"이라 그대로)
       if (c >= th) continue;
       const fl = B.val<number>('fire', r.id) ?? 0;
       pendingSearch++;
@@ -419,7 +419,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     }
   }
 
-  if (s.kind === 'medical' && found >= 1) cancel(s, (w) => w.kind === 'search');
+  if (s.kind === 'medical' && found >= Math.max(1, expected)) cancel(s, (w) => w.kind === 'search');
   // 이미 충분히 확인된 구역에 대한 수색 지시는 거둔다
   for (const w of s.board) if (w.kind === 'search' && w.status === 'open') {
     const c = B.val<number>('srch', w.region) ?? -1;
@@ -473,7 +473,8 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     const urg = c.band * 0.06;
     const cev = heardEv(f);      // (I1-b) 이 구조 대상 소식을 실어 온 무전 기록 — 아래 작업의 원인 (기록만)
     const afloat =c.where === 'scene' && c.mob === 'trapped' && s.tiles[c.y * s.w + c.x] === T.WATER;      // 물속에 있다고 믿는다
-    if (hoistUp && !afloat) cancel(s, (w) => w.kind === 'hoist' && w.cas === f.id);      // 물 밖으로 나왔다
+    const perched = c.where === 'scene' && c.mob === 'trapped' && (c.perch ?? 0) > 0;      // (N8 단계 8 §5.11) 높은 자리에 있다고 믿는다 (외벽·놀이기구 — 상공의 호이스트로도 닿는다)
+    if (hoistUp && !afloat && !perched) cancel(s, (w) => w.kind === 'hoist' && w.cas === f.id);      // 물 밖으로 나왔다 (높은 자리에서 내려왔다)
     // 총을 든 용의자 바로 곁에 있는 사람(인질)은 위협이 사라지기 전에는 손댈 수 없다
     if (c.where === 'scene' && active.some((h) => h.value.weapon === 'gun' && Math.hypot(h.value.x - c.x, h.value.y - c.y) <= 3.6)) { clearCas(s, f.id, ['treat', 'carry', 'extricate']); continue; }
     if (c.where === 'scene') {
@@ -483,7 +484,11 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
         continue;
       }
       // 갇혀 있다: 구출이 먼저다. 갇히기 전에 낸 이송·동행 지시는 거둔다 (2차 붕괴로 다시 갇힌 사람 — 두면 '대상이 그 위치에 없다'는 실패가 구출이 끝날 때까지 되풀이된다)
-      if (c.mob === 'trapped') { clearCas(s, f.id, ['carry', 'escort']); want(sim, s, 'extricate', { cas: f.id }, 0.82 + urg, 2, false, cev); continue; }
+      if (c.mob === 'trapped') {
+        clearCas(s, f.id, ['carry', 'escort']); want(sim, s, 'extricate', { cas: f.id }, 0.82 + urg, 2, false, cev);
+        if (hoistUp && perched) want(sim, s, 'hoist', { cas: f.id }, 0.9 + urg, 1, false, cev);      // (N8 단계 8) 높은 자리의 사람: 상공에 호이스트를 단 헬기가 있으면 함께 — 먼저 끝나는 쪽이 이긴다
+        continue;
+      }
       if (c.mob === 'mobile') {                // 스스로 대피 중 — 한참 지나도 도착 보고가 없으면 확인하러 보낸다
         if (sim.t - f.t > 32) want(sim, s, 'escort', { cas: f.id }, 0.62 + urg, 1, false, cev);
         continue;

@@ -20,7 +20,7 @@ import { TYPE_NAME } from '../src/sim/util';
 import { TYPE_COLOR, respLimitOf } from '../src/view/typeStyle';
 
 /** 등록 자리의 줄 수 [남은 일 · 사람 보류 · 소품 보류 · 판정] — 단계 4a: 시설 사고 · 단계 5: 동물 · 단계 6b: 견인(소품 보류) (orders/kinds.ts · rules/kinds.ts) */
-const REG_NOW = [2, 2, 1, 3];      // (단계 7) 판정 하나 — 미아를 시민이 데려왔으면 대응 지연
+const REG_NOW = [3, 3, 1, 3];      // (단계 7) 판정 하나 — 미아를 시민이 데려왔으면 대응 지연 · (단계 8) 남은 일 하나 — 높은 자리·구덩이의 사람 · (단계 9) 사람 보류 하나 — 현장 분만을 기다리는 산모
 
 describe('1 유형 자료 (incidentTypes — 단계 1)', () => {
   it('TYPE_DEFS·TYPE_ORDER·typeIdx 가 모든 유형을 덮고, 첫 여덟의 순서가 예전과 같다', () => {
@@ -415,7 +415,7 @@ describe('20 새 부대 — 편성되지 않는 여덟 줄 · 표 · 관제의 �
     // (단계 6a) 날치기의 수색 수요에 경찰견 +10 · 경찰 수요에 형사 +10
     // (단계 7) 치매 노인 실종의 수색 수요에 경찰견 +10
     // (단계 6b) 수거책 잠복의 경찰 수요에 형사 +60 (설계서의 +15 로는 기동대(경찰 능력 1.0)를 넘지 못했다 — 구현 메모 단계 6b)
-    expect(LABEL_BONUS.filter((r) => N8_LABELS.indexOf(r.label) >= 0).map((r) => `${r.label}|${r.key}|${r.kind ?? r.kit}|${r.bonus}`).sort()).toEqual(['가축 탈출|traffic|trafficPol|8', '날치기|law|detective|10', '날치기|search|k9|10', '떨어질 듯한 간판|rescue|rope|10', '떨어질 듯한 간판|suppression|ladder|12', '수거책 잠복|law|detective|60', '싱크홀|rescue|rescue|15', '치매 노인 실종|search|k9|10']);
+    expect(LABEL_BONUS.filter((r) => N8_LABELS.indexOf(r.label) >= 0).map((r) => `${r.label}|${r.key}|${r.kind ?? r.kit}|${r.bonus}`).sort()).toEqual(['가축 탈출|traffic|trafficPol|8', '날치기|law|detective|10', '날치기|search|k9|10', '떨어질 듯한 간판|rescue|rope|10', '떨어질 듯한 간판|suppression|ladder|12', '멈춘 놀이기구|suppression|ladder|12', '수거책 잠복|law|detective|60', '싱크홀|rescue|rescue|15', '외벽 작업자 고립|suppression|ladder|12', '출산 임박|ems|alsBag|8', '치매 노인 실종|search|k9|10']);      // (단계 8·9) 외벽·놀이기구의 사다리차 · 출산의 전문 응급 가방
     const rope = sim.units.find((u) => u.kind === 'rescue')!;
     for (const r of rope.crew) for (const it of sim.responders[r].kit!) it.faultKnown = false;
     set('water'); expect(kitBonus(sim, rope, I, 'rescue')).toBe(12); expect(kitBonus(sim, rope, I, 'law')).toBe(0);
@@ -499,8 +499,9 @@ describe('6 짧은 사건의 재현성과 표 (단계 3)', () => {
   });
   it('N8 의 새 난수 흐름 이름이 기존 흐름 이름과 겹치지 않는다 (소스의 fork 글자 — 한 이름은 한 자리에서만 만든다, 아직 쓰지 않은 이름은 아무도 쓰지 않는다)', () => {
     // 단계 5: 동물마다(animal:) · 차에 받힌 동물의 운전자(animal-hit:) · 벌집(hive:) · 동물 포획 장비의 고장 추첨(kit-n8 · 지원 부대 aid-n8:)
-    const MADE = ['daily', 'verify', 'wire:', 'hole:', 'sign:', 'hive:', 'animal:', 'animal-hit:', 'kit-n8', 'aid-n8:', 'rowdy:', 'brawl:', 'snatch:'];      // 단계 6a: 치안 셋      // 단계 3 이 만든 흐름 (짧은 사건 · 확인 질문의 답 — 통화 흐름의 하위) · 4a 전선 · 4b 싱크홀·간판 (수도관은 난수를 쓰지 않는다 — main: 은 만들지 않았다)
-    const LATER = ['main:', 'scam:', 'ledge:', 'perch:', 'pit:', 'ride:', 'overdose:', 'birth:', 'heat:', 'dup:', 'kinds-next:'];
+    const MADE = ['daily', 'verify', 'wire:', 'hole:', 'sign:', 'hive:', 'animal:', 'animal-hit:', 'kit-n8', 'aid-n8:', 'rowdy:', 'brawl:', 'snatch:',
+      'perch:', 'pit:', 'overdose:', 'birth:'];      // 단계 8: 줄이 끊겨 떨어진 피해 · 구덩이의 유독 가스 (놀이기구는 난수를 쓰지 않는다 — ride: 는 만들지 않았다) · 단계 9: 흥분 · 출산 (폭염은 난수를 쓰지 않는다 — heat: 없음)      // 단계 6a: 치안 셋      // 단계 3 이 만든 흐름 (짧은 사건 · 확인 질문의 답 — 통화 흐름의 하위) · 4a 전선 · 4b 싱크홀·간판 (수도관은 난수를 쓰지 않는다 — main: 은 만들지 않았다)
+    const LATER = ['main:', 'scam:', 'ledge:', 'ride:', 'heat:', 'dup:', 'kinds-next:'];
     const labels: string[] = [];
     const walk = (dir: URL): void => {
       for (const f of readdirSync(dir, { withFileTypes: true })) {
@@ -809,7 +810,7 @@ describe('3·5·9·10 시설 사고 — 끊어진 전선 (단계 4a)', () => {
 describe('18 새 유형의 자리 (단계 4a 부터)', () => {
   it('새 유형마다 TYPE_DEFS·TYPE_COLOR·INCIDENT_PLACES·한계 시간이 있고, 모든 줄에 현장 생성기가 등록돼 있다', () => {
     new Sim('N8-18');
-    for (const t of ['utility', 'animal', 'disturb', 'welfare'] as IncidentType[]) {
+    for (const t of ['utility', 'animal', 'disturb', 'welfare', 'rescue'] as IncidentType[]) {
       expect(TYPE_DEFS[t].limit, t).toBeGreaterThan(0);
       expect(TYPE_COLOR[t], t).toMatch(/^#[0-9a-f]{6}$/);
       expect(Object.keys(INCIDENT_PLACES[t]).length, t).toBeGreaterThan(0);
@@ -1083,14 +1084,14 @@ function watchBoard(kinds: WorkKind[]): { look: (sim: Sim, s: Scene) => void; ba
         if (kinds.indexOf(w.kind) < 0) continue;
         if (!seenW.has(w.id)) {
           seenW.add(w.id);
-          const key = `${w.kind}:${w.prop}:${w.tile}:${w.hostile}`, ts = made.get(key) ?? [];
+          const key = `${w.kind}:${w.prop}:${w.tile}:${w.hostile}:${w.cas}`, ts = made.get(key) ?? [];      // cas: (단계 8·9) 매달린 사람·지친 사람이 여럿 — 다른 사람에게 가는 일은 되풀이가 아니다
           ts.push(sim.t); made.set(key, ts);
           if (ts.filter((t) => t > sim.t - 60).length > 2) bad ||= `${key} 60초에 셋 (${sim.t.toFixed(1)})`;
         }
         const before = had.get(w.id) ?? [];
         for (const rid of w.assignees) {
           if (before.indexOf(rid) >= 0) continue;
-          const k = `${w.kind}:${w.prop}:${w.tile}:${w.hostile}:${rid}`, prev = joined.get(k);
+          const k = `${w.kind}:${w.prop}:${w.tile}:${w.hostile}:${w.cas}:${rid}`, prev = joined.get(k);
           if (prev !== undefined && sim.t - prev < 25) bad ||= `${w.kind} #${w.id} → ${s.agents.find((q) => q.rid === rid) ? rid : '?'} ${(sim.t - prev).toFixed(1)}초 만에 다시`;
           joined.set(k, sim.t);
         }
@@ -1323,5 +1324,259 @@ describe('5·9·11 보호 — 치매 노인 · 미아 (단계 7)', () => {
       I.phase = 'closed';
     }
     expect(WELFARE_ROUNDS).toBeGreaterThan(3);
+  });
+});
+
+// ───────────────────────── 단계 8 (구조 — 외벽 작업자 고립 · 구덩이 추락 · 멈춘 놀이기구 · 높은 자리 틀 §5.11) ─────────────────────────
+import { isHovering } from '../src/sim/crews';
+import { LABOR, casFact } from '../src/sim/field/agents';
+import { METHOD } from '../src/sim/field/methods';
+import { MED } from '../src/sim/field/rules/kinds';
+
+const RESCUE_LINES = ['rescue/facade', 'rescue/pit', 'rescue/ride'];      // (단계 8)
+const MED_LINES = ['medical/poison', 'medical/overdose', 'medical/birth', 'medical/heat'];      // (단계 9)
+
+describe('5·17 구조 — 외벽 · 구덩이 · 놀이기구 (단계 8)', () => {
+  it('5 구조 세 시나리오는 강제 교대(S0·S1)에서 모두 닫히고 한계 시간·방치·무대응이 아니다 · 9 구출·통제의 되풀이 없음 · 끝날 때 높은 자리에 남은 사람이 없거나 결과가 성공이 아니다', () => {
+    for (const key of RESCUE_LINES) for (const seed of ['S0', 'S1']) {
+      const sim = new Sim(seed, NORMAL, 1200, { force: key });
+      const wb = watchBoard(['extricate', 'cordon']);
+      let J: Inc | undefined;
+      for (let k = 0; k < 7000 && !sim.ended; k++) {
+        sim.step();
+        J = sim.incidents.find(forced(sim));
+        const s = J ? sim.scenes[J.id] : undefined;
+        if (!J || !s) continue;
+        wb.look(sim, s);
+        if (J.phase === 'closed') break;
+      }
+      expect(J && J.phase, `${key} ${seed}`).toBe('closed');
+      expect(['timeout', 'abandoned', 'noresponse'].indexOf(J!.closeReason), `${key} ${seed}: ${J!.closeReason}`).toBe(-1);
+      expect(wb.bad(), `${key} ${seed}: ${wb.bad()}`).toBe('');
+      const s = sim.scenes[J!.id]!;
+      const left = (s.kinds?.perch ?? []).filter((pe) => !s.casualties[pe.cas].dead).length;
+      if (left > 0) expect(J!.result!.outcome, `${key} ${seed}: 높은 자리에 ${left}명이 남았는데 성공`).not.toBe('success');
+    }
+  });
+  it('17 높은 자리 틀: 외벽·놀이기구의 매달린 사람은 T.LEDGE 칸에 있고(걸어서 닿지 못함) 사다리를 펴는 땅 칸은 걸을 수 있다 · casFact 가 높이를 싣는다 · 소방 헬기는 상공에 머문다(구덩이는 아니다)', () => {
+    const sim = new Sim('N8-8-GEN', NORMAL, 1200, { force: null });
+    const heli = { kind: 'heli' } as unknown as Unit, pump = { kind: 'engine' } as unknown as Unit;
+    let perched = 0;
+    for (let k = 0; k < 60; k++) {
+      const variant = k % 3 === 0 ? 'facade' : k % 3 === 1 ? 'ride' : 'pit';
+      const I = createIncident(sim, { type: 'rescue', variant, rng: sim.rng.fork('n8-8-gen' + k) });
+      const s = sim.scenes[I.id]!;
+      expect(s.outdoor, variant).toBe(true);
+      if (variant === 'pit') {
+        expect(isHovering(heli, s), 'pit').toBe(false);
+        const c = s.casualties[0];
+        expect(c.mob).toBe('trapped');
+        expect(s.tiles[Math.round(c.y) * s.w + Math.round(c.x)]).toBe(T.VOID);
+        const v = casFact(sim, s, c, '시험').value as { pit?: boolean; perch?: number };
+        expect(v.pit, '구덩이의 사람은 pit').toBe(true);
+        expect(v.perch).toBeUndefined();
+      } else {
+        expect(isHovering(heli, s), variant).toBe(true);
+        expect(isHovering(pump, s), variant).toBe(false);
+        for (const pe of s.kinds!.perch!) {
+          const c = s.casualties[pe.cas];
+          expect(s.tiles[pe.y * s.w + pe.x], variant).toBe(T.LEDGE);
+          expect(staticPass(s.tiles[pe.y * s.w + pe.x])).toBe(false);
+          expect(staticPass(s.tiles[pe.ground]), `${variant} 땅 칸`).toBe(true);
+          expect(pe.h).toBeGreaterThanOrEqual(1); expect(pe.h).toBeLessThanOrEqual(3);
+          const v = casFact(sim, s, c, '시험').value as { pit?: boolean; perch?: number };
+          expect(v.perch, '높이 단계').toBe(pe.h);
+          expect(v.pit, '높은 자리는 구덩이가 아니다').toBeFalsy();
+          perched++;
+        }
+      }
+      I.phase = 'closed';
+    }
+    expect(perched).toBeGreaterThan(40);
+  });
+  it('17 방법: 사다리(사다리차 · 높이 2 이하) · 하강(밧줄 — 높이 무관) · 호이스트 — 외벽 강제 S0~S3 의 매달린 사람은 이 셋으로만 내려온다 · 사다리로 내린 사람은 높이 3 이 아니었다', () => {
+    expect(METHOD.ladder.work).toContain('extricate');
+    expect(METHOD.descend.work).toContain('extricate');
+    let freed = 0;
+    for (let k = 0; k < 4; k++) {
+      const sim = new Sim('S' + k, NORMAL, 1200, { force: 'rescue/facade' });
+      const h0 = new Map<number, number>();
+      let J: Inc | undefined;
+      for (let n = 0; n < 7000 && !sim.ended; n++) {
+        sim.step();
+        J = sim.incidents.find(forced(sim));
+        const s = J ? sim.scenes[J.id] : undefined;
+        if (s && s.kinds?.perch) for (const pe of s.kinds.perch) h0.set(pe.cas, pe.h);      // 마지막으로 본 높이 (줄이 끊기면 내려앉는다)
+        if (J && J.phase === 'closed') break;
+      }
+      const s = sim.scenes[J!.id]!;
+      for (const c of s.casualties) {
+        if (c.tFreed < 0 || c.dead) continue;
+        freed++;
+        expect(['ladder', 'descend', 'hoist'].indexOf(c.freedHow ?? ''), `S${k} ${c.label}: ${c.freedHow}`).toBeGreaterThanOrEqual(0);
+        if (c.freedHow === 'ladder') expect(h0.get(c.id) ?? 0, `S${k} ${c.label}`).toBeLessThanOrEqual(2);
+      }
+    }
+    expect(freed).toBeGreaterThan(0);
+  });
+  it('17 몫: 구조 줄의 몫 합 0.75 · 나머지는 기본 변형 구덩이(fallback) · 평소 추첨(tag kinds, daily 아님) · 구조의 가중은 0.06', () => {
+    const lines = SCENARIOS.filter((q) => q.type === 'rescue');
+    expect(lines.map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...RESCUE_LINES].sort());
+    expect(Math.round(lines.reduce((a, q) => a + q.share, 0) * 100) / 100).toBe(0.75);
+    for (const q of lines) expect(q.tag, q.variant).toBe('kinds');
+    expect(TYPE_DEFS.rescue.fallback).toBe('pit');
+    expect(TYPE_DEFS.rescue.weight).toBe(0.06);
+    const sim = new Sim('N8-8-FB', NORMAL, 1200, { force: null });
+    const seen = new Map<string, number>();
+    for (let k = 0; k < 200; k++) {
+      const I = createIncident(sim, { type: 'rescue', rng: sim.rng.fork('n8-8-fb' + k) });
+      seen.set(I.truth.variant, (seen.get(I.truth.variant) ?? 0) + 1);
+      I.phase = 'closed';
+    }
+    for (const v of seen.keys()) expect(['facade', 'pit', 'ride'].indexOf(v), v).toBeGreaterThanOrEqual(0);
+    expect(seen.get('pit') ?? 0, '구덩이 = 몫 0.2 + 나머지 0.25').toBeGreaterThan(seen.get('ride') ?? 0);
+  });
+});
+
+describe('5·19 응급의 갈래 — 식중독 · 약물 과다 · 출산 · 폭염 (단계 9)', () => {
+  it('5 응급 네 갈래는 강제 교대(S0·S1)에서 모두 닫히고 한계 시간·방치·무대응이 아니다 · 9 처치·데려가기·설득의 되풀이 없음 · 19 식중독은 곁방 환자까지 모두 찾는다', () => {
+    for (const key of MED_LINES) for (const seed of ['S0', 'S1']) {
+      const sim = new Sim(seed, NORMAL, 1200, { force: key });
+      const wb = watchBoard(key === 'medical/birth' ? ['escort', 'persuade', 'treat', 'load'] : ['escort', 'persuade']);      // 출산: 현장 분만의 처치·미룬 탑승도 (식중독의 처치 넘겨받기는 R3 CE2 의 몫)
+      let J: Inc | undefined;
+      for (let k = 0; k < 7000 && !sim.ended; k++) {
+        sim.step();
+        J = sim.incidents.find(forced(sim));
+        const s = J ? sim.scenes[J.id] : undefined;
+        if (!J || !s) continue;
+        wb.look(sim, s);
+        if (J.phase === 'closed') break;
+      }
+      expect(J && J.phase, `${key} ${seed}`).toBe('closed');
+      expect(['timeout', 'abandoned', 'noresponse'].indexOf(J!.closeReason), `${key} ${seed}: ${J!.closeReason}`).toBe(-1);
+      expect(wb.bad(), `${key} ${seed}: ${wb.bad()}`).toBe('');
+      if (key === 'medical/poison') {
+        const s = sim.scenes[J!.id]!;
+        for (const c of s.casualties) expect(c.tDiscovered >= 0 || c.where !== 'scene', `${seed} ${c.label}: 찾지 못함`).toBe(true);
+      }
+    }
+  });
+  it('19 신고 인원: 식중독의 인원 진술은 둘 이상 · 지금의 응급(실신)은 "한 명"', () => {
+    for (const [key, many] of [['medical/poison', true], ['medical/faint', false]] as [string, boolean][]) {
+      for (let k = 0; k < 3; k++) {
+        const sim = new Sim('S' + k, NORMAL, 1200, { force: key });
+        let J: Inc | undefined;
+        for (let n = 0; n < 3000 && !sim.ended; n++) {
+          sim.step();
+          J = sim.incidents.find(forced(sim));
+          if (J && J.claims.some((c) => c.topic === 'count')) break;
+        }
+        const cl = J!.claims.find((c) => c.topic === 'count');
+        if (!cl) continue;      // 인원을 묻기 전에 통화가 끝났다
+        if (many) expect(cl.value as number, `${key} S${k}`).toBeGreaterThan(1);
+        else expect(cl.value, `${key} S${k}`).toBe(1);
+      }
+    }
+  });
+  it('19 출산: 신고자 안내를 따르면 coached · 낳으면 신생아가 구조 대상 끝에 붙고 지휘관이 강제로 안다(done) · 믿는 시각이 창(90초) 안이면 산모를 싣지 않고 곁에서 기다린다', () => {
+    expect(LABOR.WIN).toBe(90);
+    const sim0 = new Sim('N8-9-B', NORMAL, 1200, { force: null });
+    const I0 = createIncident(sim0, { type: 'medical', variant: 'birth', rng: sim0.rng.fork('n8-9-b') });
+    const s0 = sim0.scenes[I0.id]!;
+    expect(s0.kinds!.coached).toBe(false);
+    applyCallerAid(sim0, I0, 'birth', -1);
+    expect(s0.kinds!.coached).toBe(true);
+    expect(s0.kinds!.birthAt! - I0.createdAt).toBeGreaterThanOrEqual(60);
+    expect(s0.kinds!.birthAt! - I0.createdAt).toBeLessThanOrEqual(240);
+    let born = 0, waited = 0;
+    for (let k = 0; k < 4; k++) {
+      const sim = new Sim('S' + k, NORMAL, 1200, { force: 'medical/birth' });
+      let J: Inc | undefined, loadedBefore = false;
+      for (let n = 0; n < 7000 && !sim.ended; n++) {
+        sim.step();
+        J = sim.incidents.find(forced(sim));
+        const s = J ? sim.scenes[J.id] : undefined;
+        if (!J || !s) continue;
+        if (s.agents.some((a) => a.label === '분만 대기')) waited++;
+        if (s.kinds!.birthAt !== undefined && sim.t < s.kinds!.birthAt && s.casualties[0].where === 'loaded') loadedBefore = true;
+        if (J.phase === 'closed') break;
+      }
+      const s = sim.scenes[J!.id]!;
+      expect(J!.phase, `S${k}`).toBe('closed');
+      if (s.casualties.length > 1) {
+        born++;
+        const nb = s.casualties[s.casualties.length - 1];
+        expect(nb.label, `S${k}`).toBe('신생아');
+        expect(nb.mob).toBe('immobile');
+        const cmd = s.agents.find((a) => a.isCommander) ?? s.agents[0];
+        const v = cmd.beliefs.val<{ kind: string; done?: boolean }>('evid', 1000 + s.casualties[0].id);
+        expect(v && v.done, `S${k}: 지휘관이 출산을 안다`).toBe(true);
+      } else expect(loadedBefore || sim.events.some((e) => e.incidentId === J!.id && e.text.startsWith('이송 중인 구급차 안에서')), `S${k}: 신생아가 없으면 그 전에 실려 갔다`).toBe(true);
+    }
+    expect(born).toBeGreaterThan(0);
+    expect(waited, '현장 분만 대기(진행 막대)가 한 번은 나온다').toBeGreaterThan(0);
+  });
+  it('19 폭염: gate 는 낮·맑음만(밤·비에 거짓) · 그늘 구역이 있고 안전한 곳은 그늘 안 · 지친 사람은 안내받아 그늘(s.safe)로 가고 그늘에서는 깎이지 않는다', () => {
+    const heat = SCENARIOS.find((q) => q.type === 'medical' && q.variant === 'heat')!;
+    const at = (h: number, w: string) => heat.gate!({ clock: h * 3600, weather: w } as unknown as Sim);      // gate 는 시각(sim.clock)과 날씨만 읽는다
+    expect(at(13, 'clear')).toBe(true);
+    expect(at(23, 'clear')).toBe(false);
+    expect(at(13, 'rain')).toBe(false);
+    expect(at(8, 'clear')).toBe(false);
+    const sim = new Sim('N8-9-H', NORMAL, 1200, { force: null });
+    for (let k = 0; k < 20; k++) {
+      const I = createIncident(sim, { type: 'medical', variant: 'heat', rng: sim.rng.fork('n8-9-h' + k) });
+      const s = sim.scenes[I.id]!;
+      const rg = s.region[s.safe.y * s.w + s.safe.x];
+      expect(rg >= 0 && s.regions[rg].kind === 'shade', '안전한 곳은 그늘').toBe(true);
+      expect(s.casualties.filter((c) => c.mob === 'mobile').length).toBeGreaterThanOrEqual(2);
+      I.phase = 'closed';
+    }
+    // 지친 사람은 대원이 처음 만날 때 안내받아 스스로 그늘(s.safe)로 걷는다 — 그늘 안의 사람은 heatRule 이 더 깎지 않는다
+    let shaded = 0, hurtInShade = 0;
+    for (let k = 0; k < 2; k++) {
+      const sim2 = new Sim('S' + k, NORMAL, 1200, { force: 'medical/heat' });
+      let J: Inc | undefined;
+      const hp = new Map<number, number>();
+      for (let n = 0; n < 7000 && !sim2.ended; n++) {
+        sim2.step();
+        J = sim2.incidents.find(forced(sim2));
+        const s = J ? sim2.scenes[J.id] : undefined;
+        if (!J || !s) continue;
+        for (const c of s.casualties) {
+          const rg = s.region[Math.round(c.y) * s.w + Math.round(c.x)];
+          const inShade = rg >= 0 && s.regions[rg].kind === 'shade' && c.mob === 'mobile' && !c.treated;
+          if (inShade && hp.has(c.id) && c.health < hp.get(c.id)! - 1e-9) hurtInShade++;
+          hp.set(c.id, c.health);
+        }
+        if (J.phase === 'closed') break;
+      }
+      const s = sim2.scenes[J!.id]!;
+      for (const c of s.casualties) if (c.where === 'safe' || c.where === 'loaded' || c.where === 'hospital') shaded++;
+    }
+    expect(shaded, '그늘(안전한 곳)에 닿거나 실려 간 사람').toBeGreaterThan(0);
+    expect(hurtInShade, '그늘 안의 걷는 사람은 더위에 깎이지 않는다').toBe(0);
+  });
+  it('19 약물 과다: 흥분(evid agitated)을 믿으면 경찰에게 persuade 가 나온다 · 흥분이 끝나면 강제 보고로 거둔다 · 흥분 확률 0.35', () => {
+    expect(MED.agiP).toBe(0.35);
+    let agitated = 0, persuaded = 0;
+    for (let k = 0; k < 12 && agitated < 2; k++) {
+      const sim = new Sim('S' + k, NORMAL, 1200, { force: 'medical/overdose' });
+      let J: Inc | undefined, saw = false, ask = false, after = false;
+      for (let n = 0; n < 7000 && !sim.ended; n++) {
+        sim.step();
+        J = sim.incidents.find(forced(sim));
+        const s = J ? sim.scenes[J.id] : undefined;
+        if (!J || !s) continue;
+        if ((s.kinds!.agitated ?? -1) > sim.t) saw = true;
+        if (s.board.some((w) => w.kind === 'persuade')) ask = true;
+        if (saw && (s.kinds!.agitated ?? -1) < sim.t - 6 && s.board.some((w) => w.kind === 'persuade' && (w.status === 'open' || w.status === 'active'))) after = true;
+        if (J.phase === 'closed') break;
+      }
+      expect(J!.phase, `S${k}`).toBe('closed');
+      if (saw) { agitated++; if (ask) persuaded++; expect(after, `S${k}: 흥분이 끝난 뒤에도 설득이 남았다`).toBe(false); }
+    }
+    expect(agitated, '흥분한 환자가 한 번은 나온다').toBeGreaterThan(0);
+    expect(persuaded, '흥분한 환자에게 설득').toBeGreaterThan(0);
   });
 });

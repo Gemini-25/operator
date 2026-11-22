@@ -11,7 +11,8 @@ export type IncidentType = 'fire' | 'traffic' | 'search' | 'armed' | 'medical' |
   | 'utility'      // (N8 단계 4a) 시설 사고 — 끊어진 전선·수도관 파열·싱크홀·간판 (TYPE_ORDER 의 끝)
   | 'animal'      // (N8 단계 5) 동물 — 멧돼지·벌집·개 물림·가축 탈출 (짧은 사건 흐름 daily 로만)
   | 'disturb'      // (N8 단계 6a) 치안 — 주취 소란·폭행 시비·날치기 (총·흉기가 없는 경찰 일상, 짧은 사건 흐름 daily 로만)
-  | 'welfare';      // (N8 단계 7) 보호 — 치매 노인·미아 (사람을 찾고 지키는 사건, 짧은 사건 흐름 daily 로만)
+  | 'welfare'      // (N8 단계 7) 보호 — 치매 노인·미아 (사람을 찾고 지키는 사건, 짧은 사건 흐름 daily 로만)
+  | 'rescue';      // (N8 단계 8) 구조 — 외벽 작업자 고립·구덩이 추락·멈춘 놀이기구 (평소 추첨 가중 0.06 — 새 유형 가운데 하나뿐. 부대 종류·수요 열쇠 'rescue' 와 글자가 같다 — 섞지 않는다)
 export type District = 'residential' | 'commercial' | 'industrial' | 'outskirts';
 export type Weather = 'clear' | 'rain' | 'fog' | 'night';
 
@@ -711,7 +712,8 @@ export type MethodId =
   | 'feel' | 'pulse'      // (R3 3단계 §3.7) 벽 더듬기 수색(search — 열화상 없이 짙은 연기) · 끊어 쏘기(suppress — 용수 30% 아래)
   | 'robotDefuse' | 'suitDefuse' | 'bareDefuse'      // (R3 5단계 §3.7) 해체 defuse: 로봇 원격 · 방호복 · 맨몸 (실행은 doctrineRun.runDefuse)
   | 'pack' | 'drag' | 'litter' | 'post' | 'blockLane'      // (R3 6단계 §3.7) 이송 carry: 업기 · 끌기 · 들것(기록 전용) / 교통 통제 traffic: 통제 · 차량 차단 (실행은 doctrineRun.runCarry·runTraffic)
-  | 'dart' | 'catchpole' | 'herd' | 'net';      // (N8 §4.3 — 단계 5) 동물 포획 capture: 마취총 · 올가미 · 몰이 · 포획망 (실행은 executor 의 case 'capture')
+  | 'dart' | 'catchpole' | 'herd' | 'net'      // (N8 §4.3 — 단계 5) 동물 포획 capture: 마취총 · 올가미 · 몰이 · 포획망 (실행은 executor 의 case 'capture')
+  | 'ladder' | 'descend';      // (N8 §4.6 — 단계 8) 높은 자리·구덩이의 구출 extricate: 사다리차의 사다리 · 밧줄 하강(들것 내림) (실행은 executor 의 높은 자리 갈래)
 /** 왜 이 방법을 골랐는가 (기록 문구·보고서 문장이 쓴다). usual = 평소 선택(교본 줄과 무관) */
 export type MethodWhy = 'usual' | 'near' | 'noGear' | 'tooFar' | 'weak' | 'fast' | 'failed' | 'broken' | 'danger' | 'quiet' | 'team'      // R3 가 이 줄 끝에 상태 까닭 여섯을 더한다 (R3 §2.1·§3.7)
   | 'hurt' | 'alone' | 'lowAir' | 'lowAmmo' | 'shaken' | 'tired';      // (R3 1단계) 교본 줄이 1등을 바꾼 까닭 (field/doctrine.ts 의 docWhyMethod — §3.7 의 사상 표)
@@ -1375,4 +1377,13 @@ export interface KindsState {
   backed?: boolean;                               // 그렇게 데려왔다 (판정: 대응 지연)
   outCount?: number;                              // 미아가 지키는 사람이 없는 출구에 닿은 횟수 (은폐가 오른 횟수)
   announced?: boolean;                            // 출구의 통제에 확성기를 든 대원이 섰다 (은폐 −0.15 한 번)
+}
+// (N8 단계 8) 구조 유형의 진실 (KindsState 끝 — 선택 칸)
+export interface KindsState {
+  pit?: number;                                   // 구덩이: 구덩이 소품의 id (haz pit 사실 id · 공기 사실은 id + 1000)
+  worse?: number[]; worseAt?: number;             // 놀이기구: 더위·공황으로 나빠지기 시작할 사람들(구조 대상 id) · 그 시각
+  powerSay?: number;                              // 놀이기구: 운영자가 말하는 전원 복구 예상 시각 (복구되지 않는 40% 에도 "곧 됩니다" — 면담한 대원이 믿음 evid power 로 옮긴다)
+  powered?: boolean;                              // 놀이기구: 전원이 돌아와 남은 사람이 모두 내려왔다
+  snapAt?: number; snapCas?: number;              // 외벽: 줄 하나가 끊기는 시각 · 그 사람 (없으면 Infinity · -1)
+  hangAt?: number;                                // 외벽: 매달린 몸이 나빠지기 시작하는 시각 (생성 + 100~160초)
 }

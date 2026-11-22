@@ -952,7 +952,8 @@ describe('⑩ 관제 규칙 — 헬기 세 종류', () => {
   }, 60000);
   it('응급 환자의 선착 대응에는 헬기가 가지 않는다', () => {
     let coResp = 0, heliRuns = 0;
-    for (const seed of seedsWhere((q) => q.weather === 'clear', 3)) {
+    // (N8 단계 10) 맑은 교대 셋 → 넷: 중복 신고·조건부 연쇄가 들어 셋의 선착 대응 출동이 3 으로 줄었다 (표본만 넓힌다 — 기준은 그대로)
+    for (const seed of seedsWhere((q) => q.weather === 'clear', 4)) {
       const p = patrol(seed, SEV5, 'medical');
       expect(p.bad, p.bad.join('\n')).toEqual([]);
       for (const e of p.sim.events) {

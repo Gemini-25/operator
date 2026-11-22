@@ -237,7 +237,7 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
   if (type === 'armed' && prank) { needs.law = 1; needs.tactical = 0; needs.ems = 0; }
   if (zoneRisk) needs.law += 1;      // (I1-b C10) 달아난 무장 용의자가 그 동네에 있다 — 경찰 한 팀 더
   // 신고 내용이 시나리오를 가리키면 그에 맞춰 보낸다 (scenarios/*.ts 의 needs)
-  const ctx = { sev, hurt: !!(inj.c && inj.c.value === true), trapped: !!(trap.c && trap.c.value === true), nat };
+  const ctx = { sev, hurt: !!(inj.c && inj.c.value === true), trapped: !!(trap.c && trap.c.value === true), nat, noise: claims.some((c) => c.topic === 'hazard' && c.value === 'noise') };      // noise: (N8 단계 10) 단순 민원의 고함 진술
   for (const sc of SCENARIOS) if (sc.needs && sc.type === type && nat.indexOf(sc.nature) >= 0) sc.needs(needs, ctx);
   let label: string | undefined;
   for (const c of claims) { if (c.topic !== 'nature') continue; const l = natureLabel(c.value as string, type); if (l) label = l; }

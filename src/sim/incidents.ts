@@ -26,7 +26,7 @@ import { INCIDENT_SHAPE, TRUTH_SHAPE, primeNums } from './shape';      // (R3b N
 import { noteWearIncident } from './persist';      // (I2 단계 5)
 import { placeCond, placeUsable } from './placeUse';      // (I2 단계 5) "쓸 수 있는 건물" 판정 하나 · 이어받은 건물 상태 (잎 모듈)
 import { notSpare } from './dispatch/dispatcher';      // (N8 §5.4) 평소 생성의 가용 부대 셈에서 N8 의 새 부대(유관 기관·KIND_AUX)를 뺀다
-import { DAILY_TOTAL } from './scenarios/kinds';      // (N8 §5.4) 짧은 사건 줄의 가중 합 (상수 — 가족이 하나씩 들어오는 동안 차례의 나머지는 "걸린 줄 없음")
+import { DAILY_TOTAL, DUP, DUP_TYPES } from './scenarios/kinds';      // (N8 §5.4) 짧은 사건 줄의 가중 합 (상수 — 가족이 하나씩 들어오는 동안 차례의 나머지는 "걸린 줄 없음") · (단계 10) 중복 신고
 
 /** 사건을 정해서 일으킬 때 주는 조건. 비워 두면 평소처럼 추첨한다. */
 export interface SpawnOpts {
@@ -42,6 +42,7 @@ export interface SpawnOpts {
   edgeId?: number;               // (I1-b b3-4) 교통사고가 난 구간 — 막히는 구간(I.blockedEdge)을 이 구간으로 먼저 본다 (조건은 설계서 §3.6b (다) — 쓰는 것은 b3-6 의 L1)
   causes?: number[];             // (I1-b b3-4) 원인이 하나가 아닐 때 — cause 다음에 발생 기록의 causes 로 들어간다 (음수·중복은 emit 이 거른다)
   hz?: HzNote;                   // (I1-b b3-4) 이 사건을 낳은 초과 위험의 내력 → Incident.hz (world/hazard.ts 가 예약하는 그 자리에서 적는다)
+  dupOf?: number;                // (N8 단계 10) 중복 신고 오인의 원 사건 → Incident.dupOf (진실 — 신고자 모델만 읽는다)
 }
 export interface ChainItem { at: number; opts: SpawnOpts; when?: (sim: Sim) => boolean; until?: number; log?: number }
 /** (I1-b) 예약했지만 일으키지 않은 연쇄 하나. 기록(emit)은 남기지 않는다 — 일어나지 않은 일이다. 보고서·측정 도구가 수로만 쓴다 */
@@ -203,7 +204,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
     cause: undefined, csq: undefined, blockedBy: undefined, blockEv: undefined, divertWait: undefined,      // (I1-b) 인과 기록 — 판단은 읽지 않는다
     hz: undefined,      // (I1-b b3-4) 초과 위험의 내력 — 법칙이 낸 사건에만 (기록 전용)
     docs: undefined, trackBy: undefined, reportedPrev: undefined, reportedNodeAt: undefined,      // (R3) 교본 기록(처음 남길 때 배열 — doctrineRun.recordDoc)·추격의 보고 칸(2단계)
-    dupOf: undefined,      // (N8) 중복 신고 오인의 원 사건 — 진실 (단계 10)
+    dupOf: opts.dupOf,      // (N8 단계 10) 중복 신고 오인의 원 사건 — 진실 (신고자 모델 kindsCaller 만 읽는다). 평소에는 undefined (같은 모양)
     fieldRisk: undefined,      // (X6 §5.9) 현장 상황 보고로 관제가 올린 위험도 — dispatcher.fieldReport 가 채운다
   };
   { const tag = opts.tag ?? special?.tag; if (tag) I.tag = tag; if (opts.parent !== undefined) I.parent = opts.parent; }
@@ -220,7 +221,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
   const benign = variant === 'false' || variant === 'prank' || variant === 'referral' || variant === 'dup';      // (N8 §5.5) 비응급 변형은 추가 신고를 받지 않는다
   const pFollow = benign ? 0 : TYPE_DEFS[type].follow;
   if (rng.chance(pFollow)) I.followupAt = I.firstCallAt + rng.range(24, 55);
-  if (type === 'traffic') {
+  if (type === 'traffic' && variant !== 'dup') {      // (N8 단계 10) 중복 신고는 옆 교차로의 빈 길이다 — 길을 막지 않는다
     // 사고 지점 도로는 느려지고, 통제가 끝나면 전면 차단된다(우회로가 있는 도로만)
     const es = node.edges.map((e) => sim.city.edges[e]).filter((e) => !e.closed && e.cls !== 'highway');
     es.sort((a, b) => (b.arterial ? 1 : 0) - (a.arterial ? 1 : 0) || a.id - b.id);
@@ -243,7 +244,7 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
       noteRoadCause(sim, e.id, 'close', I.blockEv, I.id);      // (I1-b b3-5) 닫힘의 주인 = 통제 기록 (감속의 주인은 아래의 발생 기록 — 항이 달라 서로 덮지 않는다)
     }
   }
-  const what = variant === 'false' ? FALSE_WHAT[type] ?? FALSE_WHAT.fire! : variant === 'prank' ? '실제 사건은 없음 — 장난 전화가 걸려 올 예정' : scenarioName(type, variant) === TYPE_NAME[type] ? TYPE_NAME[type] : `${TYPE_NAME[type]} · ${scenarioName(type, variant)}`;
+  const what = variant === 'false' ? FALSE_WHAT[type] ?? FALSE_WHAT.fire! : variant === 'prank' ? '실제 사건은 없음 — 장난 전화가 걸려 올 예정' : variant === 'dup' ? `같은 사건의 중복 신고 — 사건 ${opts.dupOf !== undefined && sim.incidents[opts.dupOf] ? sim.incidents[opts.dupOf].code : '?'}의 신고가 옆 교차로로 들어올 예정` : scenarioName(type, variant) === TYPE_NAME[type] ? TYPE_NAME[type] : `${TYPE_NAME[type]} · ${scenarioName(type, variant)}`;
   if (variant === 'kidnap' || variant === 'drunk' || variant === 'getaway' || variant === 'cartheft') startPursuit(sim, I, variant);      // cartheft: (N8 단계 6b) 차량 절도 — 주차장에서 달리는 차로 시작한다
   special?.onCreate?.(sim, I);
   I.rootEvent = emit(sim, { inc: id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: special?.tag === 'major' ? 3 : 1, truth: true, causes: I.cause !== undefined ? (opts.causes ? [I.cause, ...opts.causes] : [I.cause]) : opts.causes, text:chainNote ? `${chainNote} — ${I.truth.label}.` : `사건 발생 — ${I.truth.label} (${what}). 아직 신고되지 않았습니다.` });
@@ -259,6 +260,30 @@ export function createIncident(sim: Sim, opts: SpawnOpts = {}): Incident {
   return I;
 }
 
+/**
+ * (N8 §4.8 N4 — 단계 10) 중복 신고 오인: 이 추가 신고가 옆 교차로로 잘못 걸려 와 새 사건(변형 dup)이 되는가 — 되면 그 사건을 만들고 참.
+ * 원 사건이 DUP_TYPES 이고 비응급 변형이 아니면 흐름 dup:<원 사건> 으로 확률 DUP.P × (위치 오류 손잡이 ÷ DUP.ADDR0). 옆 교차로 = 원 사건 교차로의 이웃 가운데 출동 시설이 아니고 열린 사건이 없는 곳.
+ * 새 사건은 연쇄가 아니다(parent 없음 — 연쇄 상한에 들지 않는다) · tag 'daily'(평소 생성기의 몫이 아니다) · 첫 신고는 지금(원 사건의 추가 신고가 이 사건의 첫 통화가 됐다 — 두 번 울리지 않는다)
+ */
+function dupCall(sim: Sim, I: Incident): boolean {
+  const v = I.truth.variant;
+  if (sim.tune.dailyCount <= 0 || DUP_TYPES.indexOf(I.truth.type) < 0 || v === 'false' || v === 'prank' || v === 'referral' || v === 'dup') return false;
+  const rng = sim.rng.fork('dup:' + I.id);
+  if (!rng.chance(DUP.P * sim.tune.wrongAddressProb / DUP.ADDR0)) return false;
+  const here = sim.city.nodes[I.truth.nodeId], fac = new Set<number>();
+  for (const f of sim.city.facilities) fac.add(f.nodeId);
+  const cands: number[] = [];
+  for (const eid of here.edges) {
+    const e = sim.city.edges[eid], nb = e.a === here.id ? e.b : e.a;
+    if (fac.has(nb) || cands.indexOf(nb) >= 0 || sim.incidents.some((J) => J.phase !== 'closed' && J.truth.nodeId === nb)) continue;
+    cands.push(nb);
+  }
+  if (!cands.length) return false;
+  const J = createIncident(sim, { type: I.truth.type, variant: 'dup', severity: 1, nodeId: rng.pick(cands), tag: 'daily', dupOf: I.id, rng });
+  J.firstCallAt = sim.t;
+  return true;
+}
+
 export function tickIncidents(sim: Sim): void {
   const g = sim.gen;
   let open = 0;
@@ -266,7 +291,7 @@ export function tickIncidents(sim: Sim): void {
     if (I.phase === 'closed') continue;
     if (!isDailyLoad(sim, I)) open++;      // (N8 §5.4) 평소 생성기의 열린 사건 수는 짧은 사건의 몫을 세지 않는다
     if (I.phase === 'unreported' && sim.t >= I.firstCallAt) startCall(sim, I, false);
-    if (sim.t >= I.followupAt && I.phase !== 'unreported') { I.followupAt = Infinity; startCall(sim, I, true); }
+    if (sim.t >= I.followupAt && I.phase !== 'unreported') { I.followupAt = Infinity; if (!dupCall(sim, I)) startCall(sim, I, true); }      // (N8 단계 10) 추가 신고가 옆 교차로의 새 사건이 될 수 있다
     // 무대응 종료: 지상 부대도, 상공의 헬기도 닿지 못했을 때만 (헬기가 현장 위에 떠 있는데 '어떤 부대도 닿지 못했다'고 닫지 않는다)
     if (I.firstArrivalAt < 0 && I.reportedAt >= 0 && sim.t - I.reportedAt > 330 && !((sim.scenes[I.id]?.airAt ?? -1) >= 0)) closeIncident(sim, I, 'noresponse');
   }

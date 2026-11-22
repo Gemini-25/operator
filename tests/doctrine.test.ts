@@ -1338,7 +1338,9 @@ describe('R3 시험 4 (소방): 왕복 없음 — 공기 문턱·짝 동행 경�
     const DOCK = new Set(['cover', 'rearm', 'airOut', 'pairOut', 'pair']);
     let doc = 0, memSeen = 0;
     const bad: string[] = [];
-    for (let k = 0; k < 6; k++) {
+    // (N8 단계 10) R3-OSC3 → R3-OSC6: 중복 신고·조건부 연쇄가 들어 R3-OSC3 의 배경 붕괴 사건에서 "짝 동행 → 지휘관이 맡긴 바깥 응급 처치 → 짝이 진입해 다시 짝 동행"(9.6초)이 한 번 났다.
+    //  고리가 아니다(한 번 — 처치를 받기 전에 짝이 들어갔다). 같은 모양이 기준 사본(af19487)의 R3-OSC11 에도 있다(8초) — 이 표본의 여섯 교대에 걸리지 않았을 뿐이다 (기준은 그대로)
+    for (const k of [0, 1, 2, 6, 4, 5]) {
       const sim = new Sim('R3-OSC' + k, NORMAL, 1200, { force: 'fire/std' });
       const flow = new Map<FieldAgent, { kind: string; t: number }[]>();
       while (!sim.ended) {

@@ -55,7 +55,7 @@
   },
   {
    "stages": "단계 10 (조건부 연쇄 K1~K8 · 비응급 N3 이관·N4 중복)",
-   "text": "__S10__"
+   "text": "이미 주 브랜치에 있다. 보고 docs/handover/reports/N8-s10.md 와 설계서 끝 구현 메모 '단계 10' 절이 정본이다. K1~K8 은 사용자 방향대로 옮겼다: 원인을 모르는 법칙 — 상태 규칙 wireSpark·wireLeft·mainSoak·hiveLeft·looseOut(신호 'loose') → 법칙 washout·strayHarm·strayRoad, K1 은 L2 heatSpread 의 몫 'spark', K3 은 코드 없이 L1 roadCrash 가 우회 몰림을 본다. 옮기지 않은 것: K4 rowdyKnife·K8 snatchAgain(행위자의 선택 — C10 과 같은 자격의 이야기 연쇄, 붙잡히지 않았을 때만). N3 disturb/referral · N4 중복 신고(DUP.P 0.03, 유형마다 registerScene(t,'dup') + 몫 0 의 dup 줄 여덟). 알려진 것: tests/sim.test.ts '빈 곳 채우기' 가 전체 실행에서 시간 상한에 가끔 걸린다(혼자 돌리면 통과) · 짝 동행 대원의 바깥 처치가 짝의 진입으로 끊기는 모양(commander.pairAssign 과 G08) · 어려움·극한의 비응급 7.9%·9.3%."
   }
  ]
 }

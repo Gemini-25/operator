@@ -43,6 +43,7 @@ export function initWorld(sim: Sim, carry?: unknown): WorldState {
   return {
     zones: DISTRICTS.map(zoneBlank), hospitals, signals: [], log: [], last: {}, count: {}, tries: {}, spawned: 0,
     hz: { cells: {}, live: {}, waiting: [], roadAt: -1, holes: 0 }, expo: {}, sills: {}, spans: [],      // (b3-4) 초과 위험 과정·건물의 노출 — 법칙·상태 규칙이 처음 쓸 때 채운다
+    loose: [], soak: {},      // (N8 단계 10) 풀린 위험·길 밑으로 스민 물 — world/rules/kinds.ts 가 놓고 world/laws/kinds.ts 가 읽는다
   };
 }
 

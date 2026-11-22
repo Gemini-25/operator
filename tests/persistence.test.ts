@@ -666,7 +666,9 @@ describe('(검토) 사건 분석의 결원 출동 문장은 실제로 모자라�
   };
   const planned = (s: Sim, u: Unit): number => fieldCrew(s, u).filter((rid) => !s.responders[rid].relief).length;
   it('예비 인력이 다 채운 순찰1(결장 하나 → 예비 하나 = 정원 2)의 첫 도착: 결원 도착 기록(원인 요약 줄)은 남고, "n명만" 문장은 없다', () => {
-    const { s, I } = firstBy('SA', '순찰1');
+    // (N8 단계 10) 중복 신고·조건부 연쇄가 들어 SA 에서는 순찰1 이 먼저 닿는 사건이 없어졌다 — 아래 진압1 시험과 같이 순찰1 이 먼저 닿는 첫 시드를 쓴다 (표본만 넓힌다)
+    const seed = ['SA', 'SB', 'SC', 'SD', 'SE', 'SF', 'SG'].find((q) => { const t = run(q, co); return t.incidents.some((J) => t.events.find((e) => e.incidentId === J.id && e.kind === 'arrive')?.actor === '순찰1'); }) ?? 'SA';
+    const { s, I } = firstBy(seed, '순찰1');
     const u = unitOf(s, '순찰1');
     expect(u.crew.some((rid) => s.responders[rid].relief)).toBe(true);
     expect(crewReady(s, u)).toBe(planned(s, u));

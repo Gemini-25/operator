@@ -81,7 +81,7 @@ function fAtCross(sim: Sim, target: number, main: HzPart): number {
 }
 
 /** 발생 기록의 첫머리 — 주된 몫의 갈래로 */
-const NOTE: Partial<Record<HzWhat, string>> = { heat: '옆 건물의 불이 옮겨붙었습니다', ember: '폭발의 불티가 옮겨붙었습니다' };
+const NOTE: Partial<Record<HzWhat, string>> = { heat: '옆 건물의 불이 옮겨붙었습니다', ember: '폭발의 불티가 옮겨붙었습니다', spark: '끊어진 전선의 불꽃이 옮겨붙었습니다' };      // spark: (N8 단계 10) 살아 있는 전선의 불꽃
 
 const acc = new Map<number, HzPart[]>();
 
@@ -99,7 +99,7 @@ registerHazard({
   },
   spawn: (sim, target, _cell, main): SpawnOpts | null => {
     // 그 건물의 불: 변형을 정한다(평소 추첨의 오인·방화로 뽑히지 않게). 규모는 넘는 순간의 열원 불이 크거나 불티면 2 (buildFire 는 규모로 발화점 수를 정한다)
-    const severity = main.what === 'ember' || Math.round(fAtCross(sim, target, main)) >= HEAT.F_BIG ? 2 : 1;      // 불 요약은 칸 수(정수)다 — 되찾은 값의 소수 오차를 반올림한다
+    const severity = main.what === 'spark' ? 1 : main.what === 'ember' || Math.round(fAtCross(sim, target, main)) >= HEAT.F_BIG ? 2 : 1;      // spark: (N8 단계 10) 불꽃 하나에서 시작한 불 — 열원의 불 요약이 없다      // 불 요약은 칸 수(정수)다 — 되찾은 값의 소수 오차를 반올림한다
     return { type: 'fire', variant: 'std', severity, placeId: target, note: NOTE[main.what] ?? '옆 건물의 불이 옮겨붙었습니다' };
   },
 });

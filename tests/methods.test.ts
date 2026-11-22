@@ -2855,7 +2855,8 @@ describe('R2 단계 5: 강제 교대 (§8 의 3·6 · 무장 4가지)', () => {
     // (검토) A16 흉기 대치를 더했다 — 비살상탄 검거는 흉기·강도 강제 교대 28번에 한 번꼴이라(A0~A19) 시험이 그 기록이 실제로 남는 교대를 하나 갖게
     // (R3 4단계) A6 가정 폭력을 더했다 — 의료 교본이 배경 사건의 부대 배치를 바꿔 A2 의 가정 폭력 테이저 검거가 맨손 제압으로 바뀌었다(테이저 검거는 이 표본의 유일한 것이었다). A6 에서 테이저 검거가 남는다
     // (R3 3단계) 교본(P17·짝)으로 결과가 바뀌어 A2 의 테이저 검거가 A21 로 옮겨 갔다 — 3·4단계를 합친 표본은 둘 다 둔다
-    for (const [seed, force] of [['A0', 'armed/hostage'], ['A1', 'armed/siege'], ['A2', 'armed/dispute'], ['A3', 'armed/robbery'], ['A4', 'armed/dispute'], ['A5', 'armed/robbery'], ['A16', 'armed/dispute'], ['A21', 'armed/robbery'], ['A6', 'armed/domestic'], ['A29', 'armed/dispute']] as const) {
+    for (const [seed, force] of [['A0', 'armed/hostage'], ['A1', 'armed/siege'], ['A2', 'armed/dispute'], ['A3', 'armed/robbery'], ['A4', 'armed/dispute'], ['A5', 'armed/robbery'], ['A16', 'armed/dispute'], ['A21', 'armed/robbery'], ['A6', 'armed/domestic'], ['A29', 'armed/dispute'], ['A20', 'armed/dispute']] as const) {
+      // (N8 단계 10) A20 흉기 대치를 더했다 — 중복 신고·조건부 연쇄가 들어 표본의 비살상탄 검거(A2·A29 의 배경 사건)가 다른 수단으로 바뀌었다 (A16~A40 흉기·강도를 훑어 A20·A32)
       // (R3 단계 5) A29 흉기 대치를 더했다 — 특수 교본이 켜지며 A2 의 배경 사건 #09 의 테이저 검거가 비살상탄 검거로 바뀌었다 (합친 표본은 셋 단계의 시드를 모두 둔다)
       const sim = new Sim(seed, NORMAL, 1200, { force }); sim.runToEnd();
       for (const I of sim.incidents) for (const u of I.methods ?? []) if (u.ok && (u.work === 'engage' || u.work === 'arrest')) ok.add(u.method);

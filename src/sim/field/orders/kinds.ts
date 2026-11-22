@@ -433,13 +433,21 @@ const TOW_HELD = new WeakMap<Scene, Set<number>>();
 /** 견인을 접은 현장 (견인차가 150초 넘게 오지 않았다 — 다시 내지 않는다) */
 const TOW_GIVEUP = new WeakSet<Scene>();
 interface WreckV { kind?: string; active?: boolean; prop?: number }
+/**
+ * (단계 11) 그 견인차의 대원 가운데 견인을 맡을 수 있는 사람(활동 중 · 다치지 않음 — 명부의 상태, 조직이 아는 것)이 현장에 있는가.
+ * 견인 기사가 차로에서 다치면(가벼운 일만 — 견인은 맡지 않는다) 견인차가 와 있는데 아무도 견인하지 못해, towAway 가 열린 채 차로를 막은 차의 밀어 둠(clearRoad)이 보류된 채 한계 시간까지 갔다(강제 20교대 보통 S4 #14 · S10 #24 — STALL 234·292초)
+ */
+function towHand(sim: Sim, s: Scene, uid: number): boolean {
+  for (const b of s.agents) if (b.unitId === uid && b.status === 'active' && sim.responders[b.rid].status !== 'injured') return true;
+  return false;
+}
 registerOrders((sim, s, I, a, k) => {
   if (!ATTACH_TOW || !s.laneRows.length) return;
   void I;
   let held = TOW_HELD.get(s);
   const coming = k.countUnits('tow', 0.7) > 0 && !TOW_GIVEUP.has(s);
-  let onScene = false;
-  for (const uid of k.unitsOnScene()) if (sim.units[uid].caps.tow >= 0.7) { onScene = true; break; }
+  let onScene = false, here = false;
+  for (const uid of k.unitsOnScene()) if (sim.units[uid].caps.tow >= 0.7) { here = true; if (towHand(sim, s, uid)) { onScene = true; break; } }      // (단계 11) 견인차가 와 있어도 견인을 맡을 사람이 없으면(견인 기사가 다쳤다) 오지 않은 것과 같다 — 시간 막이가 밀어 둠으로 돌린다
   let unresolved = false;
   for (const f of a.beliefs.list('cas')) { const c = f.value as CasBelief; if (c.band < 3 && (c.where === 'scene' || c.where === 'carried')) { unresolved = true; break; } }
   for (const f of a.beliefs.list('haz')) {
@@ -456,7 +464,7 @@ registerOrders((sim, s, I, a, k) => {
     if (w.id >= 0 && !onScene && sim.t - w.createdAt > TOW_WAIT.s) {
       TOW_GIVEUP.add(s); held.clear();
       k.cancel((q) => q.kind === 'towAway');
-      emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 1, text: '견인차가 오지 않습니다 — 부서진 차량은 길가로 밀어 두겠습니다.' });
+      emit(sim, { inc: I.id, role: 'COMMANDER', actor: resp(sim, a).name, rid: a.rid, kind: 'command', imp: 1, text: here ? '견인 기사가 다쳐 견인을 맡을 사람이 없습니다 — 부서진 차량은 길가로 밀어 두겠습니다.' : '견인차가 오지 않습니다 — 부서진 차량은 길가로 밀어 두겠습니다.' });
     }
   }
 });

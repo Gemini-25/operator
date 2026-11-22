@@ -219,7 +219,9 @@ registerVerdict((sim, s, I) => {
   let open = false;
   for (const p of s.props) if (p.kind === 'fixture' && p.live === true) { open = true; break; }
   const late = I.problems.some((q) => q.code === 'UTIL_LATE');
-  return open || late ? { open, bad: late ? 0.5 : 0 } : null;
+  // (단계 11 — 원칙 7) 간판이 고정·통제 전에 떨어져 사람이 다쳤으면 +0.5(부분 성공) — "늦으면 떨어진다"의 실패가 판정에 들어간다 (기록은 아래 간판 규칙의 ESCALATION 하나)
+  const fell = s.variant === 'sign' && I.problems.some((q) => q.code === 'ESCALATION' && q.detail === SIGN_FELL);
+  return open || late || fell ? { open, bad: (late ? 0.5 : 0) + (fell ? 0.5 : 0) } : null;
 });
 
 // ───────────────────────── 단계 4b — 수도관 파열 · 싱크홀 · 떨어질 듯한 간판 ─────────────────────────
@@ -343,6 +345,8 @@ registerRule((sim, s, I) => {
 
 /** 간판의 상수 (설계서 §4.2 — 떨어질 때 낙하 구역의 사람이 입는 깔림) */
 export const SIGN = { hurt: [20, 40] as [number, number], guardR: 2 };
+/** 간판이 떨어져 사람이 다친 ESCALATION 의 상세 (판정 등록이 이 글자로 찾는다 — 단계 11) */
+const SIGN_FELL = '간판 낙하로 사람이 다침';
 const SIGN_RNG = new WeakMap<Scene, Rng>();
 function signRng(sim: Sim, s: Scene, I: Incident): Rng { let r = SIGN_RNG.get(s); if (!r) { r = sim.rng.fork('sign:' + I.id); SIGN_RNG.set(s, r); } return r; }
 /**
@@ -387,7 +391,7 @@ registerRule((sim, s, I) => {
   const dy = Math.min(8, p.y + 1);
   if (s.propAt[dy * s.w + p.x] < 0) addProp(s, 'roadDebris', p.x, dy, { skin: 'signDebris', blocking: false });
   s.staticVersion++;
-  if (hurt) raiseProblem(sim, I, 'ESCALATION', '간판 낙하로 사람이 다침', { role: 'SYSTEM', actor: '현장', imp: 2, truth: true, causes: [ev], text: `떨어진 간판에 ${hurt}명이 다쳤습니다.` });
+  if (hurt) raiseProblem(sim, I, 'ESCALATION', SIGN_FELL, { role: 'SYSTEM', actor: '현장', imp: 2, truth: true, causes: [ev], text: `떨어진 간판에 ${hurt}명이 다쳤습니다.` });
   forceTell(sim, s, mkFact('haz', p.id, { kind: 'sign', active: false, x: p.x, y: p.y, r: k.hazR ?? 2 }, '현장', sim.t, 1, true, '간판이 떨어짐 — 낙하 위험은 끝남, 잔해 정리'));
 });
 
@@ -518,7 +522,7 @@ registerVerdict((sim, s, I) => {
 /** 치안 규칙의 상수: 주취자의 던지기(8~15초, 경찰 4칸 밖 · 2칸 안 손님 · 둔상 3~8) · 몸싸움(경찰 2칸 · 공격성 0.6 · 10초 · 15% · 4~10) · 깨우기(경찰 1.5칸 4초 · 사기 +0.2) ·
  *  패싸움(4초마다 · 가운데 2칸 · 맞으면 2~6 · 구경꾼 25% · 많아야 둘) · 가운데에 선 경찰의 사기 깎기(초당 0.01, 경찰 : 싸우는 사람 ≥ 1 : 2 면 0.01 더) · 흩어짐 30% · 날치기 숨은 시간 60~140초(첫 도착 뒤) · 길목 1.5칸 */
 export const DISTURB = { throwGap: [8, 15] as [number, number], throwFar: 4, throwNear: 2, throwHurt: [3, 8] as [number, number], scuffleR: 2, scuffleAggr: 0.6, scuffleGap: 10, scuffleP: 0.15, scuffleHurt: [4, 10] as [number, number],
-  throwMax: 3, wakeR: 1.5, wakeT: 4, wakeMorale: 0.2, brawlEvery: 4, midR: 2, brawlHurt: [2, 6] as [number, number], bystanderP: 0.25, bystanderMax: 2, calm: 0.01, scatterP: 0.3, scatterAt: 0.25, hide: [60, 140] as [number, number], boltP: 0.5, chokeR: 1.5 };
+  throwMax: 3, wakeR: 1.5, wakeT: 4, wakeMorale: 0.2, brawlEvery: 4, midR: 2, brawlHurt: [2, 6] as [number, number], bystanderP: 0.25, bystanderMax: 2, calm: 0.01, scatterP: 0.3, scatterAt: 0.25, hide: [60, 140] as [number, number], boltP: 0.35, chokeR: 1.5 };      // boltP: (단계 11 — §7.3 ④) 0.5 → 0.35 — 들킨 날치기범의 내달림. 0.5 면 강제 20교대 검거 12 · 달아남 12 → 14 · 9
 /** 활동 중인 경찰 (지상) 가운데 (x, y) 에서 R 칸 안의 수 */
 function copsNear(sim: Sim, s: Scene, x: number, y: number, R: number): number {
   let n = 0;
@@ -681,7 +685,7 @@ registerRule((sim, s, I) => {
 
 // ───────────────────────── 치안 disturb (§4.4 — 단계 6b) ─────────────────────────
 /** 수거책 잠복의 상수: 제복을 알아보는 거리 8칸(시야선) · 사복(형사)은 2칸 · 돈을 받는 6초 · 피해자 곁(이만큼이면 닿았다) · 걷는 빠르기(칸/초 — 태연히 걷는다, 달아날 때는 지금의 도주) */
-export const SCAM = { seeUniform: 8, seeDetective: 2, take: 6, near: 1.6, walk: 1.2 };
+export const SCAM = { seeUniform: 8, seeDetective: 2, take: 12, near: 1.6, walk: 1.2 };      // take: (단계 11 — §7.3 ④) 설계서 6 → 12초 — 6초면 잠복 자리의 형사가 검거 지시를 받아 닿기 전에 돈을 받고 떠나 강제 20교대의 검거가 6/21 이었다('수거책은 이미 떠났습니다' 6) → 12/21
 /** 수거책마다의 단계 (0 약속 자리로 걷는다 · 1 돈을 받는다 · 2 돈을 받아 떠난다 · 3 알아보고 달아났다)와 걷는 길 — 용의자 객체의 모양을 바꾸지 않으려고 WeakMap.
  *  걷는 길은 h.path 에 두지 않는다(지금의 용의자 규칙이 h.path 를 2.3칸/초로 옮긴다 — 태연히 걷는 사람은 그보다 느리다) */
 const SCAM_ST = new WeakMap<Hostile, { phase: number; t: number; path: number[] | null; i: number }>();
@@ -974,7 +978,7 @@ registerVerdict((sim, s, I) => {
  * 외벽·구덩이·놀이기구의 세계 규칙 상수: 매달린 몸이 나빠지는 속도(체력/초 — 노출) · 줄이 끊겨 땅으로 떨어질 때의 피해 ·
  * 구덩이 안 나쁜 공기의 피해(5초마다 — 유독 가스) · 놀이기구에서 나빠지는 사람의 속도(질병 — 더위·공황)
  */
-export const RESCUE = { hang: 0.08, fall: [25, 45] as [number, number], toxic: [10, 20] as [number, number], every: 25, ride: 0.05 };
+export const RESCUE = { hang: 0.35, fall: [30, 50] as [number, number], toxic: [10, 20] as [number, number], every: 25, ride: 0.05 };      // hang·fall: (단계 11 — §7.3 ④) 설계서 0.08 · 25~45 → 0.35 · 30~50 — 매달린 몸이 거의 나빠지지 않아 강제 외벽 25건이 모두 성공이었다(늦게 닿은 교대에서 숨지는 길)
 /** 외벽·구덩이의 난수 흐름 perch:<사건> · pit:<사건> (줄이 끊겨 떨어진 피해 · 구덩이의 유독 가스 피해 — 이 흐름만 쓴다) */
 const PERCH_RNG = new WeakMap<Scene, Rng>();
 function perchRng(sim: Sim, s: Scene, I: Incident): Rng { let r = PERCH_RNG.get(s); if (!r) { r = sim.rng.fork('perch:' + I.id); PERCH_RNG.set(s, r); } return r; }
@@ -1054,6 +1058,8 @@ registerRule((sim, s, I) => {
  * 흥분·진통을 알아보는 거리(칸)
  */
 export const MED = { agiP: 0.35, agi: [30, 60] as [number, number], shove: [3, 6] as [number, number], calmK: 3, bleedP: 0.1, bleed: 0.25, heatAfter: 30, heatLoss: 0.15, heatFall: 70, seeR: 6 };
+/** 출산: 전문 처치도 신고자 안내도 없이 낳았다 (판정의 문제 상세) */
+const BIRTH_ROUGH = '도움 없이 분만 — 신생아 상태 확인 필요';
 /** 약물 과다·출산의 난수 흐름 overdose:<사건> · birth:<사건> (이 흐름만 쓴다) */
 const OD_RNG = new WeakMap<Scene, Rng>();
 function odRng(sim: Sim, s: Scene, I: Incident): Rng { let r = OD_RNG.get(s); if (!r) { r = sim.rng.fork('overdose:' + I.id); OD_RNG.set(s, r); } return r; }
@@ -1138,7 +1144,9 @@ registerRule((sim, s, I) => {
   const nb = addCas(s, Math.round(m.x), Math.round(m.y), 'immobile', 100, 0, 0);
   nb.label = '신생아'; nb.where = m.where; if (m.where === 'safe') nb.tSafe = sim.t;
   nb.tDiscovered = sim.t;
-  const ev = emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'recovery', imp: 2, text: als ? '현장 분만 — 아기가 태어났습니다. 산모와 신생아를 함께 돌봅니다.' : k.coached ? '구급대가 닿기 전 신고자의 도움으로 아기가 태어났습니다.' : '아기가 태어났습니다. 신생아의 상태를 살펴야 합니다.' });
+  // (단계 11 — 원칙 7) 전문 처치도 신고자 안내도 없이 낳았으면(신생아 띠 1) 그 자리의 기록이 문제(ESCALATION · BIRTH_ROUGH)가 되고 판정이 +0.5(부분 성공) — 출산의 나쁜 결말이 판정에 들어간다
+  const ev = good ? emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'recovery', imp: 2, text: als ? '현장 분만 — 아기가 태어났습니다. 산모와 신생아를 함께 돌봅니다.' : '구급대가 닿기 전 신고자의 도움으로 아기가 태어났습니다.' })
+    : raiseProblem(sim, I, 'ESCALATION', BIRTH_ROUGH, { role: 'SYSTEM', actor: '현장', imp: 2, text: '아기가 태어났습니다. 신생아의 상태를 살펴야 합니다.' }, false);
   nb.causeEvent = ev;
   if (nbHp < 100) hurtCas(sim, s, I, nb, 100 - nbHp, 'illness', { ev, tick: true });      // 신생아의 처음 상태도 피해 한 길로 (H1 장부 — 문턱·출혈 없음)
   if (bleed) hurtCas(sim, s, I, m, Math.max(0, m.health - 38), 'illness', { ev, bleed: MED.bleed });
@@ -1146,6 +1154,12 @@ registerRule((sim, s, I) => {
   forceTell(sim, s, born);
   forceTell(sim, s, casFact(sim, s, nb, '현장'));
   forceTell(sim, s, casFact(sim, s, m, '현장'));
+});
+/** (단계 11 — 원칙 7) 출산: 도움 없이 낳았다(BIRTH_ROUGH) → +0.5 (부분 성공). 산모·신생아가 숨진 것은 지금의 식(lost)이 센다 */
+registerVerdict((sim, s, I) => {
+  void sim;
+  if (s.kind !== 'medical' || s.variant !== 'birth') return null;
+  return I.problems.some((q) => q.code === 'ESCALATION' && q.detail === BIRTH_ROUGH) ? { open: false, bad: 0.5 } : null;
 });
 /**
  * (§4.7 heat) heatRule — 그늘(구역 종류 'shade') 밖에 서 있는 지친 사람(걸을 수 있음 · 현장)은 생성 + 30초부터 체력이 1초에 0.15 빠지고(탈진), 70 아래면 쓰러진다(거동 불가).

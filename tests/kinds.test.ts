@@ -1234,27 +1234,28 @@ describe('5·9·14 치안 — 수거책 잠복 · 차량 절도 · 교통사고�
     }
     expect(towed, '견인을 마친 교대').toBeGreaterThan(0);
   });
-  it('14 견인의 시간 막이: 견인차가 오는 중인데 towAway 를 낸 지 TOW_WAIT 가 지나도록 현장에 없으면 towAway 를 거두고 clearRoad(밀어 둠)로 돌아간다 · 견인차가 배정되지 않았으면 처음부터 clearRoad', () => {
+  it('14 견인의 시간 막이: 견인차가 오는 중인데 towAway 를 낸 지 TOW_WAIT 가 지나도록 현장에 없으면 towAway 를 거두고 clearRoad(밀어 둠)로 돌아간다 · 견인차가 배정되지 않았으면 처음부터 clearRoad · (단계 11) 견인차가 와 있어도 견인 기사가 다쳤으면 같은 시간 막이', () => {
     const wait0 = TOW_WAIT.s;
     try {
-      for (const towState of ['far', 'none'] as const) {
+      for (const towState of ['far', 'none', 'hurt'] as const) {
         const { sim, I } = quietSim('N8-6B-TOW', 'traffic');
         const s = sim.scenes[I.id]!;
         const eng = sim.units.find((u) => u.kind === 'engine')!;
         placeAt(sim, eng, I); land(sim, I, eng);
         const tow = sim.units.find((u) => u.kind === 'tow')!;
         if (towState === 'far') { tow.state = 'enroute'; tow.incidentId = I.id; I.assigned.push(tow.id); }      // 오는 중 (시험은 tickScene 만 돌리므로 움직이지 않는다)
+        if (towState === 'hurt') { placeAt(sim, tow, I); land(sim, I, tow); for (const rid of tow.crew) sim.responders[rid].status = 'injured'; }      // 와 있는데 견인 기사가 다쳤다 (가벼운 일만 — 견인은 맡지 않는다)
         for (const c of s.casualties) { c.where = 'safe'; c.inVehicle = null; c.tDiscovered = sim.t; c.health = 90; }
         TOW_WAIT.s = 20;
         let towMade = -1, giveUp = -1, road = -1;
         for (let k = 0; k < 150 * 5 && road < 0; k++) {
           sim.tick++; sim.t = sim.tick * sim.dt; tickScene(sim, s);
           if (towMade < 0 && s.board.some((w) => w.kind === 'towAway')) towMade = sim.t;
-          if (giveUp < 0 && sim.events.some((e) => e.incidentId === I.id && e.text.startsWith('견인차가 오지 않습니다'))) giveUp = sim.t;
+          if (giveUp < 0 && sim.events.some((e) => e.incidentId === I.id && e.text.startsWith(towState === 'hurt' ? '견인 기사가 다쳐 견인을 맡을 사람이 없습니다' : '견인차가 오지 않습니다'))) giveUp = sim.t;
           if ((towState === 'none' || giveUp >= 0) && s.board.some((w) => w.kind === 'clearRoad' && w.status !== 'cancelled')) road = sim.t;
         }
-        if (towState === 'far') {
-          expect(towMade, '견인 작업').toBeGreaterThan(0);
+        if (towState === 'far' || towState === 'hurt') {
+          expect(towMade, `${towState}: 견인 작업`).toBeGreaterThan(0);
           expect(giveUp - towMade, '시간 막이').toBeGreaterThanOrEqual(20);
           expect(s.board.some((w) => w.kind === 'towAway' && (w.status === 'open' || w.status === 'active')), '견인 작업을 거뒀다').toBe(false);
         } else expect(towMade, '견인차가 없으면 견인 작업이 없다').toBe(-1);
@@ -2157,5 +2158,89 @@ describe('5·9·11·15 보호 — 위기자 · 문 잠긴 집 (단계 7 뒤 절�
       }
       expect(minHp, `S${n}`).toBeGreaterThanOrEqual(20);
     }
+  });
+});
+
+// ───────────────────────── 시험 12 — 화면 (단계 11 — 결정 13: 유형 기호만) ─────────────────────────
+/** sRGB '#rrggbb' → CIE L*a*b* (D65) */
+function hexLab(hex: string): [number, number, number] {
+  const ch = (k: number): number => { const v = parseInt(hex.slice(1 + 2 * k, 3 + 2 * k), 16) / 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  const [r, g, b] = [ch(0), ch(1), ch(2)];
+  const x = (0.4124564 * r + 0.3575761 * g + 0.1804375 * b) / 0.95047, y = 0.2126729 * r + 0.7151522 * g + 0.072175 * b, z = (0.0193339 * r + 0.119192 * g + 0.9503041 * b) / 1.08883;
+  const f = (t: number): number => (t > 216 / 24389 ? Math.cbrt(t) : (24389 / 27 * t + 16) / 116);
+  return [116 * f(y) - 16, 500 * (f(x) - f(y)), 200 * (f(y) - f(z))];
+}
+/** CIEDE2000 색차 (Sharma 2005 의 식 그대로) */
+function de2000(p: [number, number, number], q: [number, number, number]): number {
+  const [L1, a1, b1] = p, [L2, a2, b2] = q, rad = Math.PI / 180;
+  const C1 = Math.hypot(a1, b1), C2 = Math.hypot(a2, b2), Cm = (C1 + C2) / 2;
+  const G = 0.5 * (1 - Math.sqrt(Cm ** 7 / (Cm ** 7 + 25 ** 7)));
+  const a1p = (1 + G) * a1, a2p = (1 + G) * a2, C1p = Math.hypot(a1p, b1), C2p = Math.hypot(a2p, b2);
+  const hue = (b: number, a: number): number => { if (a === 0 && b === 0) return 0; const v = Math.atan2(b, a) / rad; return v < 0 ? v + 360 : v; };
+  const h1p = hue(b1, a1p), h2p = hue(b2, a2p);
+  const dLp = L2 - L1, dCp = C2p - C1p;
+  let dhp = 0;
+  if (C1p * C2p !== 0) { dhp = h2p - h1p; if (dhp > 180) dhp -= 360; else if (dhp < -180) dhp += 360; }
+  const dHp = 2 * Math.sqrt(C1p * C2p) * Math.sin((dhp / 2) * rad);
+  const Lm = (L1 + L2) / 2, Cmp = (C1p + C2p) / 2;
+  let hm = h1p + h2p;
+  if (C1p * C2p !== 0) { if (Math.abs(h1p - h2p) <= 180) hm /= 2; else hm = h1p + h2p < 360 ? (hm + 360) / 2 : (hm - 360) / 2; }
+  const Tt = 1 - 0.17 * Math.cos((hm - 30) * rad) + 0.24 * Math.cos(2 * hm * rad) + 0.32 * Math.cos((3 * hm + 6) * rad) - 0.2 * Math.cos((4 * hm - 63) * rad);
+  const dTh = 30 * Math.exp(-(((hm - 275) / 25) ** 2));
+  const Rc = 2 * Math.sqrt(Cmp ** 7 / (Cmp ** 7 + 25 ** 7));
+  const Sl = 1 + (0.015 * (Lm - 50) ** 2) / Math.sqrt(20 + (Lm - 50) ** 2), Sc = 1 + 0.045 * Cmp, Sh = 1 + 0.015 * Cmp * Tt;
+  const Rt = -Math.sin(2 * dTh * rad) * Rc;
+  return Math.sqrt((dLp / Sl) ** 2 + (dCp / Sc) ** 2 + (dHp / Sh) ** 2 + Rt * (dCp / Sc) * (dHp / Sh));
+}
+
+describe('12 화면 — 유형 기호만 (결정 13 · §5.12 · 단계 11)', () => {
+  const OLD = TYPE_ORDER.slice(0, 8), NEW = TYPE_ORDER.slice(8, 13);
+  it('유형 열셋: TYPE_COLOR·ICON_PATH 에 모두 있고(새 기호는 서로·옛 기호와 다르다) 범례가 TYPE_ORDER 를 그대로 돌며 유형마다 핀 견본을 그린다', async () => {
+    const { ICON_PATH } = await import('../src/view/icons');
+    expect(TYPE_ORDER.length).toBe(13);
+    expect(NEW).toEqual(['utility', 'animal', 'disturb', 'welfare', 'rescue']);
+    for (const t of TYPE_ORDER) {
+      expect(TYPE_COLOR[t], t).toMatch(/^#[0-9a-f]{6}$/);
+      expect(typeof ICON_PATH[t], t).toBe('string');
+      expect(ICON_PATH[t] === ICON_PATH.unknown, `${t} 의 기호가 확인 중 기호와 같다`).toBe(false);
+    }
+    for (const t of NEW) for (const u of TYPE_ORDER) if (u !== t) expect(ICON_PATH[t] === ICON_PATH[u], `${t} = ${u}`).toBe(false);
+    const legend = readFileSync(new URL('../src/ui/MapLegend.tsx', import.meta.url), 'utf8');
+    expect(legend).toMatch(/TYPE_ORDER\.map\(\(t\) => <span key=\{t\} className="lg-item"><TypePinSample type=\{t\} \/>\{TYPE_DEFS\[t\]\.name\}<\/span>\)/);
+    expect(legend).toMatch(/<path d=\{ICON_PATH\[type\]\} fill=\{col\}/);
+    expect(legend).toMatch(/col = TYPE_COLOR\[type\]/);
+  });
+  it('새 색과 다른 모든 색(기존 여덟 + 확인 중 + 다른 새 색) 사이 CIEDE2000 ≥ 15 (기존 여덟끼리는 보지 않는다)', () => {
+    // 식의 손 계산 — Sharma(2005) 시험표의 두 쌍
+    expect(de2000([50, 2.6772, -79.7751], [50, 0, -82.7485])).toBeCloseTo(2.0425, 3);
+    expect(de2000([50, 2.5, 0], [73, 25, -18])).toBeCloseTo(27.1492, 3);
+    const others: (IncidentType | 'unknown')[] = [...OLD, 'unknown'];
+    for (const t of NEW) {
+      for (const u of [...others, ...NEW.filter((v) => v !== t)]) {
+        const d = de2000(hexLab(TYPE_COLOR[t]), hexLab(TYPE_COLOR[u]));
+        expect(d, `${t}(${TYPE_COLOR[t]}) ↔ ${u}(${TYPE_COLOR[u]}) = ${d.toFixed(1)}`).toBeGreaterThanOrEqual(15);
+      }
+    }
+  });
+  it('카드 제목: 기존 시나리오는 관제의 이름표 그대로, card: false 인 N8 시나리오는 유형 이름 · 이름표가 없으면 유형 이름', async () => {
+    const { cardTitle } = await import('../src/ui/panels');
+    const { NO_CARD } = await import('../src/sim/scenarios');
+    const as = (type: IncidentType, label?: string): Parameters<typeof cardTitle>[0] => ({ type, label } as Parameters<typeof cardTitle>[0]);
+    let olds = 0, news = 0;
+    for (const q of SCENARIOS) {
+      const label = q.label ?? q.name;
+      if (q.card === false) { news++; expect(NO_CARD.has(label), label).toBe(true); expect(cardTitle(as(q.type, label)), label).toBe(TYPE_NAME[q.type]); }
+      else if (!NO_CARD.has(label)) { olds++; expect(cardTitle(as(q.type, label)), label).toBe(label); }
+    }
+    expect(olds, '기존 시나리오').toBeGreaterThan(20);
+    expect(news, 'N8 시나리오 줄(짧은 사건·평소 추첨 — 비응급 줄 포함)').toBeGreaterThanOrEqual(24);
+    for (const q of SCENARIOS) if (q.tag === 'daily' || q.tag === 'kinds') expect(q.card, `${q.type}/${q.variant}`).toBe(false);
+    expect(cardTitle(as('utility'))).toBe('시설 사고');
+    expect(cardTitle(as('fire'))).toBe(TYPE_NAME.fire);
+  });
+  it('시나리오별 핀 기호는 붕괴 넷 그대로다 (hazardState.VARIANT_ICON — 새 시나리오에 기호를 더하지 않는다)', () => {
+    const hs = readFileSync(new URL('../src/view/hazardState.ts', import.meta.url), 'utf8');
+    expect(hs).toMatch(/const VARIANT_ICON = new Set\(\['elevator', 'crane', 'landslide', 'gasblast'\]\);/);
+    expect(hs).toMatch(/if \(shown === 'collapse'\) \{ const v = shownVariant\(I, truth\); if \(v && VARIANT_ICON\.has\(v\)\) return v; \}/);
   });
 });

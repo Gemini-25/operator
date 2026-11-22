@@ -558,7 +558,7 @@ registerScene('rescue', 'facade', (sim, I, rng) => {
   }
   addProp(s, 'fixture', x0, 15, { skin: 'gondola', blocking: false, angle: rng.range(-0.5, 0.5) });
   s.vantage = { x: x0, y: 12 };      // 현장 평가 자리는 매달린 사람이 보이는 보도 (대기 지점에서는 멀어 보이지 않는다)
-  const snap = rng.chance(0.15);
+  const snap = rng.chance(0.3);      // (단계 11 — §7.3 ④) 설계서 15% → 30% (줄이 끊겨 내려앉거나 떨어지는 현장)
   s.kinds = { perch, hangAt: sim.t + rng.range(100, 160), snapAt: snap ? sim.t + rng.range(60, 200) : Infinity, snapCas: snap ? perch[rng.int(0, perch.length - 1)].cas : -1 };
   s.rules = ['perch'];
   return s;
@@ -580,7 +580,7 @@ registerScene('rescue', 'pit', (sim, I, rng) => {
   const depth = rng.int(1, 3);
   const out = rng.chance(0.3);
   const wet = pk === 'riverside' || rng.chance(0.15);
-  const c = addCas(s, px, py, 'trapped', out ? rng.range(32, 45) : rng.range(55, 85), rng.range(0.01, 0.03) + (wet ? 0.04 : 0), 0.1);
+  const c = addCas(s, px, py, 'trapped', out ? rng.range(32, 45) : rng.range(55, 85), (out ? rng.range(0.1, 0.16) : rng.range(0.01, 0.03)) + (wet ? 0.04 : 0), 0.1);      // (단계 11 — §7.3 ④) 의식이 없는 사람의 악화 0.01~0.03 → 0.1~0.16 (난수 한 번은 그대로) — 강제 23건이 모두 구조됐다
   c.trapWork = 10;
   s.kinds = { pit: pit.id, depth, badAir: depth >= 2 && rng.chance(0.25) };
   s.vantage = { x: px, y: Math.min(15, py + 3) };      // 현장 평가 자리는 구덩이가 보이는 곳

@@ -8,7 +8,7 @@ import { T } from '../types';
 import type { Fact, FieldAgent, Hostile, Incident, KitId, MateBelief, Prop, Scene, Task, TaskKind, WorkItem } from '../types';
 import { clamp, dist, josa, pct } from '../util';
 import { hasKit, kitRng, kitUses, kitWorks, medLevelOf, refillAir, seatsOf, seatsUsed, toolUse, useKit } from '../crews';
-import { RETRY_AFTER, agentCost, casFact, debrisText, detectRadius, exitName, fitFor, flushOutbox, hosFact, learn, learnQuiet, mateFact, mateStatus, perceive, regionNameAt, resp, staminaF, visionOf, workLabel } from './agents';
+import { RETRY_AFTER, agentCost, casFact, debrisText, detectRadius, exitName, fitFor, flushOutbox, hazCount, hosFact, learn, learnQuiet, mateFact, mateStatus, perceive, regionNameAt, resp, staminaF, targetInHaz, visionOf, workLabel } from './agents';
 import { mkFact } from './beliefs';
 import { astar, doorAt, isIndoor, los, staticPass, tileOf, walkableCount } from './grid';
 import { applyWater, flashbang, hostageNear, hostileActive, isHeld, placeAtSafe, pushFx, panicShot } from './hazards';
@@ -32,6 +32,10 @@ function releaseSpot(s: Scene, a: FieldAgent): void { if (a.spot >= 0) { if (s.s
 
 /** 이미 끝나 있던 일: 지휘관의 믿음이 낡아 다시 지시한 것이므로, 같은 내용이라도 다시 보고한다 (무전 문구는 남기지 않는다) */
 function reportDone(sim: Sim, a: FieldAgent, f: Fact): void { a.quiet.add(f.key); learn(sim, a, f, true, true); }
+/** (N8 §5.10) 위험 반경 안의 대상이면 놓는 일 (agents.fitBase 의 반경 줄과 같은 목록) */
+const HAZ_DROP: ReadonlySet<string> = new Set(['treat', 'carry', 'extricate', 'escort', 'rescueMate']);
+/** (N8 §4.2) 전선의 haz 사실 값 (perceive·원격 차단 무전과 같은 모양 — 반경은 본 그대로) */
+function wireHaz(s: Scene, p: Prop, active: boolean): { kind: string; active: boolean; x: number; y: number; r: number } { return { kind: 'wire', active, x: p.x, y: p.y, r: s.kinds?.hazR ?? 2.2 }; }
 
 /** 임무 종료. 실패하면 지휘관이 알 수 있도록 작업 항목에 기록하고 무전으로 알린다. */
 export function finishTask(sim: Sim, s: Scene, a: FieldAgent, ok: boolean, reason = ''): void {
@@ -131,12 +135,18 @@ function costFor(sim: Sim, s: Scene, a: FieldAgent, escape: boolean): CostFn {
  * escape = 물러나는 길: 불에 막혀 길이 없으면 불길을 뚫고 나가는 길을 찾고, 길 위의 불 앞에서 멈추지 않는다 (관창을 든 대원은 지금처럼 끄며 지나간다).
  * 다친 채 제자리에 서서 타는 것보다 불길을 지나 나오는 편이 낫다 — 지나는 동안의 화상은 그대로 입는다 (sceneManager.agentHealth).
  */
+/** (N8 §5.10) 길을 짤 때 알던 위험 반경의 수 (대원 객체의 모양을 바꾸지 않으려고 WeakMap) */
+const PATH_HZ = new WeakMap<FieldAgent, number>();
 function moveTo(sim: Sim, s: Scene, a: FieldAgent, tx: number, ty: number, range: number, needLos = false, escape = false): MoveRes {
   const t = a.task!;
   const I = sim.incidents[s.incidentId];
   const r = resp(sim, a);
   const goalKey = Math.round(tx) + Math.round(ty) * 64 + Math.round(range * 10) * 4096 + (needLos ? 1 << 20 : 0);
+  // (N8 §5.10) 길을 짠 뒤에 새 위험 반경을 알게 됐다(본 것·무전): 그 반경을 피해 다시 짠다 (시설 사고 현장만 — 그 밖은 0 이라 그대로)
+  const hzn = hazCount(s, a);
+  if (a.path && hzn !== (PATH_HZ.get(a) ?? 0)) a.path = null;
   if (!a.path || a.pathGoal !== goalKey || sim.t >= t.repathAt) {
+    PATH_HZ.set(a, hzn);
     a.path = astar(s, a.x, a.y, Math.round(tx), Math.round(ty), range, costFor(sim, s, a, false), needLos);
     if (!a.path && escape) a.path = astar(s, a.x, a.y, Math.round(tx), Math.round(ty), range, costFor(sim, s, a, true), needLos);
     a.pathI = 0; a.pathGoal = goalKey; t.repathAt = sim.t + 5;
@@ -860,6 +870,111 @@ function runExterior(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, re
   return true;
 }
 
+// ───────────────────────── (N8 단계 4b) 시설 사고의 실행 갈래 — 진실을 읽는다 ─────────────────────────
+/** 공급 차단 확인을 마친 밸브 (§5.3.8 — 다시 하지 않는다). 소품 객체의 모양을 바꾸지 않으려고 WeakSet */
+const SUPPLY_CHECKED = new WeakSet<Prop>();
+/** 실행 시간 (초 — 숙련 보정 전) */
+export const UTIL_WORK = { pipe: 18, check: 20, hole: 20, sign: 20, fireMul: 3 };
+/**
+ * (4b §4.2 utility/main·sinkhole) 터진 관의 제수밸브 잠그기 — 수도 복구반(밸브 키)이면 보통 시간, 시간 막이로 맡은 소방(손 공구)이면 세 배(§5.3.6 ③ — 처음 손을 댈 때 UTIL_LATE,
+ * 잠그면 복구됨). 이미 멎은 관이면 확인만 하고 강제 보고(CLAUDE.md "이미 끝나 있던 일")
+ */
+function runPipeShut(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, p: Prop): void {
+  const r = resp(sim, a), civil = r.dept === 'civil';
+  const fact = (active: boolean, text: string): Fact => mkFact('haz', p.id, { kind: 'pipe', pipe: p.sub === 'gas' ? 'gas' : 'water', active, x: p.x, y: p.y }, r.name, sim.t, 1, true, text);
+  if (!p.live) { reportDone(sim, a, fact(false, '관의 물이 멎어 있음 — 확인')); finishTask(sim, s, a, true); return; }
+  const m = moveTo(sim, s, a, p.x, p.y, 1.4);
+  if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+  if (m !== 'arrived') return;
+  if (t.phase === 0) {
+    t.phase = 1;
+    if (!civil && !I.problems.some((q) => q.code === 'UTIL_LATE' && !q.recovered)) raiseProblem(sim, I, 'UTIL_LATE', '수도 복구반이 오지 못해 소방이 제수밸브를 잠금', { role: 'RESPONDER', actor: r.name, rid: r.id, imp: 2, text: '수도 복구반이 오지 않습니다. 소방이 제수밸브를 찾아 직접 잠그겠습니다 — 시간이 걸립니다.' });
+    else emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: '밸브 키로 터진 수도관의 제수밸브를 잠그겠습니다.' });
+  }
+  t.need = UTIL_WORK.pipe / (0.7 + 0.3 * r.skills.rescue) * (civil ? 1 : UTIL_WORK.fireMul);
+  t.progress += sim.dt; a.ring = t.progress / t.need;
+  if (t.progress < t.need) return;
+  p.live = false;
+  const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: '터진 수도관의 제수밸브를 잠갔습니다. 물이 멎었습니다.' });
+  if (!civil) markRecovered(I, 'UTIL_LATE', '소방이 제수밸브를 잠가 물을 멈췄습니다');
+  void ev;
+  reportDone(sim, a, fact(false, '제수밸브 잠금 완료 — 물이 멎음'));
+  r.xpGained += 0.003;
+  finishTask(sim, s, a, true);
+}
+/**
+ * (4b §5.3.8) 가스 밸브의 공급 차단 확인 — 가스 복구반(20초). 밸브가 아직 열려 있으면 그 자리에서 잠근다(누출 조치와 같은 결과).
+ * 마치면 믿음에 checked 를 붙여 강제 보고 — 지휘 규칙이 다시 내지 않는다
+ */
+function runSupplyCheck(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, p: Prop): void {
+  const r = resp(sim, a);
+  const fact = (checked: boolean, text: string): Fact => mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y, sub: 'valve', checked: checked ? true : undefined }, r.name, sim.t, 1, true, text);
+  if (SUPPLY_CHECKED.has(p) || p.ignited) { reportDone(sim, a, fact(true, '가스 공급 차단 확인됨')); finishTask(sim, s, a, true); return; }
+  // 확인은 건물 밖의 인입 배관(계량기)에서 한다 — 새는 방(밸브 자리)까지 들어가지 않는다: 들어가면 측정기가 남은 가스를 재 X6 의 진입 금지 구역을 만들고,
+  // 그 재측정을 기다리느라 밸브를 이미 잠근 사건이 2~4분 더 열려 있었다(보통 S8 #05 — 측정 도구의 교착 후보). 밸브에서 가장 가까운 출입구 1.5칸 안(바깥에서 다가가 멈춘다)
+  let ex = s.exits.length ? s.exits[0] : null;
+  for (const e of s.exits) if (ex && Math.hypot(e.x - p.x, e.y - p.y) < Math.hypot(ex.x - p.x, ex.y - p.y)) ex = e;
+  const m = ex ? moveTo(sim, s, a, ex.x, ex.y, 1.5) : moveTo(sim, s, a, p.x, p.y, 1.6);
+  if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+  if (m !== 'arrived') return;
+  if (t.phase === 0) { t.phase = 1; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: p.mitigated ? '건물 밖 인입 배관에서 가스 공급 차단 상태를 확인하겠습니다.' : '건물 밖 인입 배관의 밸브를 잠가 가스 공급을 끊겠습니다.' }); }
+  t.need = UTIL_WORK.check / (0.7 + 0.3 * r.skills.rescue);
+  t.progress += sim.dt; a.ring = t.progress / t.need;
+  if (t.progress < t.need) return;
+  const closed = !p.mitigated;
+  p.mitigated = true;
+  SUPPLY_CHECKED.add(p);
+  emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 1, text: closed ? '인입 배관의 밸브를 잠갔습니다. 가스 공급 차단을 확인했습니다.' : '가스 공급 차단을 확인했습니다. 배관에 가스가 흐르지 않습니다.' });
+  reportDone(sim, a, fact(true, '가스 공급 차단 확인 완료'));
+  r.xpGained += 0.002;
+  finishTask(sim, s, a, true);
+}
+/**
+ * (4b §4.2) 시설물의 보강·고정(mitigate — R2 의 방법이 아니다): 싱크홀은 가장자리 1.4칸 안에서 20초 지지대 → p.mitigated(넓어짐 확률 −0.12 — holeRule),
+ * 매달린 간판은 곁에서 20초 줄로 묶음 → p.mitigated · p.live 거짓(떨어지지 않는다). 이미 떨어졌거나 끝나 있으면 강제 보고
+ */
+function runFixtureFix(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, p: Prop): void {
+  const r = resp(sim, a);
+  if (p.skin === 'hole') {
+    const hr = s.kinds?.hazR ?? 2;
+    const fact = (text: string): Fact => mkFact('haz', p.id, { kind: 'hole', active: false, x: p.x, y: p.y, r: hr }, r.name, sim.t, 1, true, text);
+    if (p.mitigated) { reportDone(sim, a, fact('구멍 가장자리 보강 확인')); finishTask(sim, s, a, true); return; }
+    const m = moveTo(sim, s, a, p.x, p.y, hr + 1.4);
+    if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+    if (m !== 'arrived') return;
+    if (t.phase === 0) { t.phase = 1; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: '싱크홀 가장자리에 지지대를 세우겠습니다.' }); }
+    t.need = UTIL_WORK.hole / (0.6 + 0.4 * r.skills.rescue);
+    t.progress += sim.dt; a.ring = t.progress / t.need; drain(sim, a, 0.5);
+    if (t.progress < t.need) return;
+    p.mitigated = true;
+    s.staticVersion++;
+    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: '싱크홀 가장자리에 지지대를 세웠습니다. 더 꺼질 위험을 줄였습니다.' });
+    reportDone(sim, a, fact('구멍 가장자리 보강 완료'));
+    r.xpGained += 0.003;
+    finishTask(sim, s, a, true);
+    return;
+  }
+  if (p.skin === 'sign') {
+    const fact = (text: string): Fact => mkFact('haz', p.id, { kind: 'sign', active: false, x: p.x, y: p.y, r: 2 }, r.name, sim.t, 1, true, text);
+    if (!p.live) { reportDone(sim, a, fact(p.mitigated ? '간판 고정 확인' : '간판이 이미 떨어짐')); finishTask(sim, s, a, true); return; }
+    const m = moveTo(sim, s, a, p.x, p.y, 1.5);
+    if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+    if (m !== 'arrived') return;
+    const ladder = r.role === 'ladderOp' || r.role === 'ladderLead';
+    if (t.phase === 0) { t.phase = 1; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: ladder ? '사다리를 펴 떨어질 듯한 간판을 고정하겠습니다.' : '옥상에서 줄을 내려 간판을 묶겠습니다.' }); }
+    t.need = UTIL_WORK.sign / (0.6 + 0.4 * r.skills.rescue);
+    t.progress += sim.dt; a.ring = t.progress / t.need;
+    if (t.progress < t.need) return;
+    p.mitigated = true; p.live = false;
+    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: '간판을 고정했습니다. 떨어질 위험이 없어졌습니다.' });
+    reportDone(sim, a, fact('간판 고정 완료'));
+    r.xpGained += 0.003;
+    finishTask(sim, s, a, true);
+    return;
+  }
+  finishTask(sim, s, a, false, 'preempt');
+}
+
 /**
  * (X6 §5.8) 가스 용기·드럼통의 냉각 (mitigate 의 갈래 — 새 임무 종류 없음): 시야선이 닿는 3.2칸 안으로 가서 물을 뿌린다(밖에서 하면 §5.5 의 자리에서 5.5칸).
  * 열이 0.15 아래로 내려가고 2.5칸 안에 불 0.3 이상이 없으면 끝 — 영구 조치가 아니다(mitigated 를 세우지 않는다. 불이 다시 닿으면 다시 데워진다).
@@ -928,6 +1043,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     return;
   }
   if (t.wait > 0) { t.wait -= dt; return; }
+  // (N8 §5.10) 사람에게 가는 일의 대상이 이 대원이 아는 살아 있는 위험 반경 안이다(맡은 뒤에 알았다): 위험해서 놓는다 — 실패 기억으로 한동안 다시 맡지 않는다 (업고 있으면 그대로)
+  if (s.kind === 'utility' && a.carrying === -1 && HAZ_DROP.has(t.kind) && targetInHaz(sim, s, a, t)) { finishTask(sim, s, a, false, 'danger'); return; }
   switch (t.kind) {
     case 'sizeup': {
       if (!a.isCommander) { finishTask(sim, s, a, false, 'preempt'); return; }
@@ -1076,7 +1193,8 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       // (R2 §4.3) 방법을 처음 고른다 — 차량·붕괴·구덩이·그 밖을 대원의 믿음으로 가려 수동·손 공구·문 벌리기·지붕 절단·급박·줄·손으로 파기·에어백·지지대 가운데
       if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'extricate', { cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1 });
       if (noAirEntry(sim, s, a, c.x, c.y)) { learn(sim, a, casFact(sim, s, c, r.name), false); finishTask(sim, s, a, false, 'unsafe'); return; }      // 위험한 건물 안: 공기호흡기 없이는 들어가지 않는다
-      const m = moveTo(sim, s, a, c.x, c.y, 1.5);
+      const pitTile = !staticPass(s.tiles[tileOf(s, c.x, c.y)]);      // (N8 4b) 걸을 수 없는 칸(싱크홀 안): 가장자리에서 줄로 — 사거리 3.6 (구명줄을 던지는 거리, waterRescue 와 같다)
+      const m = moveTo(sim, s, a, c.x, c.y, pitTile ? 3.6 : 1.5);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
       if (w && relieve(sim, s, a, w, c.x, c.y)) return;      // 교대: 내가 손을 뗐다
@@ -1091,6 +1209,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (c.trapWork <= 0) {
         c.mob = 'immobile'; c.tFreed = sim.t;
         if (c.inVehicle !== null) { c.inVehicle = null; c.x = Math.round(a.x); c.y = Math.round(a.y); }
+        if (!staticPass(s.tiles[tileOf(s, c.x, c.y)])) { c.x = c.px = Math.round(a.x); c.y = c.py = Math.round(a.y); c.path = null; }      // (N8 4b) 구멍에서 줄로 끌어올렸다: 그 대원의 칸으로
         // 구출 중 사고 (H1 §5.1): 붕괴 현장에서 구출을 마칠 때 잔해가 내려앉아 더 다칠 수 있다 — 장비가 좋을수록 드물다. 난수는 목적별 흐름 injury:<현장>:extricate.
         // 승강기 갇힘에는 잔해가 없다. 판정 뒤에는 일어나지 않는다 (§2.6)
         if (s.kind === 'collapse' && s.variant !== 'elevator' && I.phase !== 'closed') {
@@ -1256,6 +1375,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       }
       const p = s.props[t.prop];
       if (p.kind === 'gas') { runCool(sim, s, I, a, t, p); return; }      // (X6 §5.8) 가스 용기·드럼통의 냉각
+      if (p.kind === 'fixture') { runFixtureFix(sim, s, I, a, t, p); return; }      // (N8 4b) 싱크홀 가장자리 보강 · 매달린 간판 고정
       const doneText = p.kind === 'unstable' ? '균열부 보강 완료' : p.kind === 'valve' ? (p.ignited ? '누출 가스 발화' : '가스 밸브 차단 완료') : p.ignited ? '누출 연료 발화' : '연료 누출 조치 완료';
       const sub = p.kind === 'unstable' ? 'crack' : p.kind === 'valve' ? 'valve' : 'fuel';      // (R2 §4.3) 균열·밸브·차량 연료 — 판단부가 sub 로 가린다
       if (p.mitigated || p.ignited) { learn(sim, a, mkFact('haz', p.id, { kind: 'leak', active: false, x: p.x, y: p.y, sub }, r.name, sim.t, 1, true, doneText), true, true); finishTask(sim, s, a, true); return; }
@@ -1825,9 +1945,43 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       finishTask(sim, s, a, true);
       return;
     }
-    // (N8 단계 2a) 새 임무 다섯의 빈 갈래 — 실행은 그 임무를 쓰는 단계가 채운다(repair·cordon 4a · capture 5 · towAway 6b · persuade 7, 설계서 §4·§5.9·§5.10).
+    // (N8 단계 4a — 설계서 §4.2) 시설물 복구: 유관 기관 복구반의 일. 시설물(fixture)의 곁(1.4칸)에서 작업을 마치면 그 시설물이 죽는다(live 거짓) — 효과는 여기 한 곳(진실을 바꾼다).
+    // 이미 죽어 있으면(관제의 원격 차단 등) 본 대로 강제 보고하고 끝낸다(CLAUDE.md "이미 끝나 있던 일"). 관(수도·가스)·밸브는 단계 4b
+    case 'repair': {
+      const p = t.prop >= 0 ? s.props[t.prop] : undefined;
+      if (!p || p.removed) { finishTask(sim, s, a, false, 'gone'); return; }
+      if (p.kind === 'valve') { runSupplyCheck(sim, s, I, a, t, p); return; }      // (4b §5.3.8) 가스 밸브 — 공급 차단 확인
+      if (p.skin === 'pipe') { runPipeShut(sim, s, I, a, t, p); return; }      // (4b) 터진 관 — 제수밸브 잠그기
+      if (p.skin !== 'wire') { finishTask(sim, s, a, false, 'preempt'); return; }
+      if (!p.live) { reportDone(sim, a, mkFact('haz', p.id, wireHaz(s, p, false), r.name, sim.t, 1, true, '전선에 전기가 흐르지 않음 — 확인')); finishTask(sim, s, a, true); return; }
+      const m = moveTo(sim, s, a, p.x, p.y, 1.4);
+      if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+      if (m !== 'arrived') return;
+      if (t.phase === 0) { t.phase = 1; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: '절연 장비를 갖추고 끊어진 전선의 전원 차단 작업을 시작합니다.' }); }
+      t.need = 16 / (0.7 + 0.3 * r.skills.rescue);
+      t.progress += dt; a.ring = t.progress / t.need;
+      if (t.progress >= t.need) {
+        p.live = false;
+        emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 2, text: '끊어진 전선의 전원을 차단하고 고정했습니다. 감전 위험이 사라졌습니다.' });
+        reportDone(sim, a, mkFact('haz', p.id, wireHaz(s, p, false), r.name, sim.t, 1, true, '전선 전원 차단·고정 완료'));
+        r.xpGained += 0.003;
+        finishTask(sim, s, a, true);
+      }
+      return;
+    }
+    // (N8 단계 4a — 설계서 §5.10) 통제: 위협이 없는 현장의 한 자리(격자 칸 t.tile)를 지켜 사람의 접근을 막는다. 그 칸 0.8칸 안에 서 있는 동안 진행 막대가 시각에 따라 찬다
+    // (원칙 11 — 설계된 기다림은 진행으로 보인다. 측정 도구의 교착 감지가 진전으로 센다). 끝은 지휘관이 믿음상 필요 없어졌을 때 거두는 것뿐이다(perimeter 와 같다)
+    case 'cordon': {
+      const m = moveTo(sim, s, a, t.tile % s.w, (t.tile / s.w) | 0, 0.8);
+      if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+      if (m !== 'arrived') return;
+      t.progress += dt; a.ring = (t.progress % 30) / 30;
+      a.label = '통제';
+      return;
+    }
+    // (N8 단계 2a) 새 임무 셋의 빈 갈래 — 실행은 그 임무를 쓰는 단계가 채운다(capture 5 · towAway 6b · persuade 7, 설계서 §4·§5.9).
     // 지금은 아무도 이 작업을 만들지 않고 fitFor 가 0 이라 닿지 않는다. 닿으면 내려놓는다 (임무를 쥔 채 제자리에 서 있지 않게)
-    case 'repair': case 'towAway': case 'capture': case 'persuade': case 'cordon': {
+    case 'towAway': case 'capture': case 'persuade': {
       finishTask(sim, s, a, false, 'preempt');
       return;
     }

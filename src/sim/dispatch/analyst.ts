@@ -5,6 +5,7 @@ import type { Sim } from '../engine';
 import { emit } from '../events';
 import { INCIDENT_PLACES } from '../cityPlan';
 import { SCENARIOS, natureLabel } from '../scenarios';
+import { ATTACH_GAS } from '../scenarios/kinds';
 import type { Assessment, Claim, Incident, IncidentType, Needs, PlaceKind, Topic } from '../types';
 import { TYPE_NAME, clamp } from '../util';
 import { NATURE_LIK } from './callSystem';
@@ -164,6 +165,12 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
     if (notBreathing) { sev += 1.1; why.push('호흡 없음'); risks.push('심정지 — 분 단위로 악화'); }
     else if (nat.indexOf('fall') >= 0) { sev += 0.5; why.push('낙상·출혈'); }
     if (inj.c && inj.c.value === true) { sev += 0.35; why.push('의식 없음'); }
+  } else if (TYPE_DEFS[type].baseNeeds) {
+    // (N8 §5.2-4) 새 유형의 일반식 — 다친 사람 0.6 · 갇힘 0.5 · 인원 3 이상 0.4 (1~3 으로 자른다 — 아래 clamp). 무장(아래 끝 갈래)으로 떨어지지 않게
+    sev = 1;
+    if (inj.c && inj.c.value === true) { sev += 0.6; why.push('부상자'); }
+    if (trap.c && trap.c.value === true) { sev += 0.5; why.push('고립'); }
+    if (count >= 3) { sev += 0.4; why.push(`${count}명`); }
   } else {
     sev = 1.2;
     if (wpn.c && wpn.c.value === 'gun') { sev += 0.9 * (0.5 + wpn.c.conf * 0.6); why.push('총기'); }
@@ -216,9 +223,12 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
     if (sev >= 2.1 || (trap.c && trap.c.value === true)) needs.rescue = 1;
     if (sev >= 1.9 || hurt) needs.ems = 1;
     if (sev >= 1.8) needs.law = 1;      // 주변 통제
+    if (ATTACH_GAS) needs.utilGas = 1;      // (N8 §5.3.8 — 단계 4b) 선택 수요: 가스 복구반의 공급 차단 확인 (보낼 차가 없으면 관제가 그 자리에서 지운다 — 대기열·지원 없음)
   } else if (type === 'medical') {
     needs.ems = 1;
     if (sev >= 2.3) needs.search = 1;      // 가장 가까운 부대를 선착 대응으로 함께 보낸다 (누구든 가슴 압박은 할 수 있다)
+  } else if (TYPE_DEFS[type].baseNeeds) {
+    Object.assign(needs, TYPE_DEFS[type].baseNeeds);      // (N8 §5.2-4) 새 유형: 표의 기본값 — 신고가 시나리오를 가리키면 아래에서 그 needs 가 덮는다
   } else {
     needs.law = sev >= 1.7 ? 2 : 1;
     if (sev >= 2.4) { needs.law = 1; needs.tactical = 1; }

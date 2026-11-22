@@ -671,7 +671,7 @@ describe('(검토) 사건 분석의 결원 출동 문장은 실제로 모자라�
     expect(shortArrivalLine(s, I)).toBeNull();
   }, HOOK_MS);
   it('실제로 모자란 진압1(정원 4 · 결장 둘 → 예비 하나 = 3)의 첫 도착에는 그 문장이 있다 — n = 나온 내리는 대원', () => {
-    const { s, I } = firstBy('SB', '진압1');
+    const { s, I } = firstBy('SC', '진압1');      // (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 SB 에서는 진압1 이 먼저 닿는 사건이 없어졌다 — SC 로
     const u = unitOf(s, '진압1');
     expect(crewReady(s, u)).toBeLessThan(planned(s, u));
     expect(shortArrivalLine(s, I)).toBe('첫 출동 부대(진압1)는 지난 교대의 결장으로 3명만 출동했습니다.');

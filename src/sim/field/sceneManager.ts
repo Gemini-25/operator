@@ -231,6 +231,8 @@ function settle(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
     // 다시 물러나면 그 현장에서는 돌아오지 않는다(a.lightBack).
     // 병원이 필요한 대원은 그대로 남아 후송을 기다린다. 누가 처치하고 있는 중에는 기다린다. 자기 부대가 떠나려는 중이면 함께 탄다
     a.status = 'active'; a.lightBack = true; a.task = null; a.orderWork = -1; a.label = '부상 — 가벼운 일'; a.idleSince = sim.t; a.nextThink = sim.t + 0.5;
+    // 펌프를 맡은 대원이 돌아왔다: 그사이 같은 부대의 다른 대원이 대신 잡은 급수 연결·예비 펌프 교체는 그 사람에게 돌려준다 (agents.fitFor 'hookup' 과 같은 규칙 — 펌프 대원이 활동 중이면 그 사람의 일)
+    if (hasKit(sim, a.rid, 'pumpPanel')) for (const b of s.agents) if (b !== a && b.unitId === a.unitId && b.status === 'active' && b.task && (b.task.kind === 'hookup' || b.task.kind === 'resupply') && !hasKit(sim, b.rid, 'pumpPanel')) finishTask(sim, s, b, false, 'preempt');
     learnQuiet(sim, a, mateFact(sim, s, a, 'light', r.name, 0)); flushOutbox(sim, s, a);
     emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, causes: [a.hurtEv ?? -1], text: '처치 받음. 가벼운 임무로 복귀합니다.' });
   }

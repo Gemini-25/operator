@@ -953,6 +953,7 @@ function roadsNext(sim: Sim, rng: Rng): RoadCarry[] {
     if (v === 'landslide' && !done) put({ edge: eid, why: 'mud', lane: false, left: 1, openAt: at(ROAD_AT.mud), inc: incName(shiftNo, I.code, '산사태'), since: shiftNo });
     else if (v === 'tree' && !done) put({ edge: eid, why: 'tree', lane: false, left: 1, openAt: at(ROAD_AT.tree), inc: incName(shiftNo, I.code, '쓰러진 나무'), since: shiftNo });
     else if (v === 'pileup') put({ edge: eid, why: 'surface', lane: true, left: 1, openAt: at(ROAD_AT.surface), inc: incName(shiftNo, I.code, '다중 추돌'), since: shiftNo });
+    else if (v === 'sinkhole') put({ edge: eid, why: 'washout', lane: false, left: 1, openAt: at(ROAD_AT.disFull), inc: incName(shiftNo, I.code, '싱크홀'), since: shiftNo });      // (N8 §4.2 — 단계 4b) 꺼진 노면의 전면 통제
   }
   // ④ 교대 끝까지 남은 건물 잔해 — 그 잔해를 남긴 사건은 놓은 기록의 원인으로 찾는다 (traffic.obstacleInc 와 같은 길)
   for (const o of sim.traffic.obstacles) {

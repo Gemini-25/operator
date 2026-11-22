@@ -132,6 +132,8 @@ function inManhole(s: Scene, c: Casualty): boolean {
   for (let k = 0; k < s.props.length; k++) { const p = s.props[k]; if (p.kind === 'roadDebris' && p.skin === 'manhole' && !p.removed && p.x === x && p.y === y) return true; }
   return false;
 }
+/** (N8 §4.2 싱크홀) 걸을 수 없는 칸(구멍 안 T.VOID · 높은 자리 T.LEDGE)에 선 사람 — 가장자리에서 줄로 닿는다(R2 haul 의 pit) */
+function inVoid(s: Scene, c: Casualty): boolean { const t = s.tiles[Math.round(c.y) * s.w + Math.round(c.x)]; return t === T.VOID || t === T.LEDGE; }
 export function casFact(sim: Sim, s: Scene, c: Casualty, src: string): Fact {
   const mob = c.mob === 'trapped' ? 'trapped' : c.walking ? 'mobile' : 'immobile';
   const b = band(c.health);
@@ -140,7 +142,7 @@ export function casFact(sim: Sim, s: Scene, c: Casualty, src: string): Fact {
   // veh·pit: (R2 단계 3) 갇힌 차량의 소품 id · 맨홀 아래 — 본 그대로 (구출 방법의 범주를 대원이 믿음으로 가린다). 늘 mob 과 함께 바뀐다(구출이 끝나면 함께 사라진다)
   // rush: (R2 단계 6) 구급 대원이 즉시 이송을 정했다 — 처치와 함께 바뀐다(treated·tq). 지휘관이 처치를 더 내지 않고 탑승을 먼저 한다
   const v: CasBelief = { x: Math.round(c.x), y: Math.round(c.y), mob, band: b, where: c.where, treated: c.treated, trappedDone: c.mob !== 'trapped', tq: c.treatQ >= 0.6 ? 2 : c.treated ? 1 : 0, water: c.inWater === true, drift: c.inWater ? c.drift ?? 0 : 0,
-    veh: c.inVehicle !== null && c.mob === 'trapped' ? c.inVehicle : undefined, pit: c.mob === 'trapped' && inManhole(s, c) ? true : undefined, rush: c.rush ? true : undefined };
+    veh: c.inVehicle !== null && c.mob === 'trapped' && !inVoid(s, c) ? c.inVehicle : undefined, pit: c.mob === 'trapped' && (inManhole(s, c) || inVoid(s, c)) ? true : undefined, rush: c.rush ? true : undefined };
   primeNums(v, CAS_V_SHAPE);
   const mobT = c.dead ? '' : mob === 'trapped' ? ' · 고립' : mob === 'mobile' ? ' · 자력 대피 중' : c.where === 'scene' ? ' · 거동 불가' : '';
   const whereT = c.where === 'safe' ? '안전 구역' : c.where === 'loaded' ? '구급차 탑승' : c.where === 'carried' ? '이송 중' : regionNameAt(s, c.x, c.y);
@@ -233,7 +235,7 @@ function discover(sim: Sim, s: Scene, I: Incident, a: FieldAgent, c: Casualty): 
     return;
   }
   const late = sim.t - s.arrivedAt > 150 && s.arrivedAt >= 0;
-  const mobT = c.inWater ? '물에 빠져 있음' : c.mob === 'trapped' ? '고립되어 있음' : c.mob === 'immobile' ? '의식 저하, 거동 불가' : '거동 가능';
+  const mobT = c.inWater ? '물에 빠져 있음' : c.mob === 'trapped' ? '고립되어 있음' : s.kind === 'utility' && c.inVehicle !== null ? '차 안에 머묾' : c.mob === 'immobile' ? '의식 저하, 거동 불가' : '거동 가능';      // (N8) 전선이 떨어진 차 안의 사람은 다치지 않았다 — 내리지 않을 뿐
   emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'casualty', imp: 2, text: `구조 대상 ${c.label} 발견! ${regionNameAt(s, c.x, c.y)}, ${mobT}, ${BAND_NAME[band(c.health)]}.` });
   pushFx(sim, s, 'text', c.x, c.y - 0.9, undefined, undefined, `${c.label} 발견`, '#7cf5a0', 2);
   if (late && !I.problems.some((p) => p.code === 'LATE_DISCOVERY')) {
@@ -250,8 +252,35 @@ function discover(sim: Sim, s: Scene, I: Incident, a: FieldAgent, c: Casualty): 
  * 물에 뜬 물건(floater, 4칸 안·시야선) → evid floater "사람이 아님" · 터진 폭죽 잔해(fireworks, 3칸 안·시야선) → evid fireworks "총소리가 아니었음" ·
  * 음식물 쓰레기(trash, 측정기를 든 대원이 2칸 안·시야선) → haz leak(active false) "가스 아님". 사실의 id 는 소품 id (모듈 함수 — perceive 안의 닫힘을 만들지 않는다)
  */
-function perceiveFixture(sim: Sim, s: Scene, a: FieldAgent, p: Prop, d: number, meter: boolean, me: string): void {
-  if (p.skin === 'floater') {
+/** (N8 §4.2) 살아 있는 전선의 불꽃이 보이는 거리 (칸) — 날씨·밤과 상관없이 (밝게 튀는 불꽃). 걷는 동안 판단 주기(최대 1.2초) 사이에 반경(2.2~3.2칸)에 들어서지 않을 만큼 */
+export const WIRE_SEE = 6;
+function perceiveFixture(sim: Sim, s: Scene, a: FieldAgent, p: Prop, d: number, meter: boolean, me: string, v: number): void {
+  if (p.skin === 'wire') {
+    // (N8 §4.2 · §6) 늘어진 전선: 시야 안·시야선이면 누구나 "살아 있다"고 본다(불꽃·젖은 바닥 — 반경은 본 대로). 불꽃이 사라진 것을 본 것만으로는 죽었다고 믿지 않는다 —
+    // 죽었다는 사실은 검전기(voltDetector)를 든 대원이 2칸 안에서 재거나, 복구를 마친 대원(executor 'repair')·관제의 원격 차단 무전(rules/kinds.ts)만 알린다
+    const cur = a.beliefs.get('haz', p.id);
+    if (!cur && d <= (p.live ? Math.max(v, WIRE_SEE) : v) && los(s, a.x, a.y, p.x, p.y)) learn(sim, a, mkFact('haz', p.id, { kind: 'wire', active: true, x: p.x, y: p.y, r: s.kinds?.hazR ?? 2.2 }, me, sim.t, 1, true, `${regionNameAt(s, p.x, p.y)}에 끊어진 전선 — 불꽃이 튐, 접근 금지`));
+    else if (cur && cur.value.active && !p.live && d <= 2 && hasKit(sim, a.rid, 'voltDetector')) learn(sim, a, mkFact('haz', p.id, { kind: 'wire', active: false, x: p.x, y: p.y, r: cur.value.r }, me, sim.t, 1, true, '검전기로 확인 — 전선에 전기가 흐르지 않음'), true, true);
+  } else if (p.skin === 'pipe') {
+    // (4b) 터진 관: 솟는 물줄기는 멀리서도 보인다(수도관 파열). 싱크홀의 드러난 관은 구멍 곁(3칸)에서만. 물이 멎은 것도 본 대로 안다
+    const cur = a.beliefs.get('haz', p.id), seeR = s.variant === 'sinkhole' ? 3 : v;
+    if (d > seeR || !(s.variant === 'sinkhole' ? losOpen(s, a.x, a.y, p.x, p.y) : los(s, a.x, a.y, p.x, p.y))) return;
+    const pipe = p.sub === 'gas' ? 'gas' : 'water';
+    if (!cur) learn(sim, a, mkFact('haz', p.id, { kind: 'pipe', pipe, active: p.live === true, x: p.x, y: p.y }, me, sim.t, 1, true, p.live ? `${regionNameAt(s, p.x, p.y)}에 터진 ${pipe === 'gas' ? '가스관' : '수도관'} — 물이 솟구침` : `${regionNameAt(s, p.x, p.y)}의 관 — 새는 것이 멎음`));
+    else if (cur.value.active && !p.live) learn(sim, a, mkFact('haz', p.id, { kind: 'pipe', pipe, active: false, x: p.x, y: p.y }, me, sim.t, 1, true, '터진 관의 물이 멎음'), true, true);
+  } else if (p.skin === 'hole') {
+    // (4b) 싱크홀: 본 대원은 지금의 반경을 안다(넓어지면 다시 본다) · 보강했는가 · 3칸 안이면 가장자리의 금
+    const cur = a.beliefs.get('haz', p.id), r = s.kinds?.hazR ?? 2;
+    if (d > v || !losOpen(s, a.x, a.y, p.x, p.y)) return;
+    const active = p.mitigated !== true;
+    if (!cur || cur.value.r !== r || cur.value.active !== active) learn(sim, a, mkFact('haz', p.id, { kind: 'hole', active, x: p.x, y: p.y, r, crack: d <= 3 ? true : undefined }, me, sim.t, 1, true, !cur ? `${regionNameAt(s, p.x, p.y)}에 꺼진 구멍 — 반경 ${Math.round(r)}칸, 가장자리 접근 금지` : cur.value.r !== r ? `구멍이 넓어짐 — 반경 ${Math.round(r)}칸` : '구멍 가장자리 보강 확인'), true, cur !== undefined);
+  } else if (p.skin === 'sign') {
+    // (4b) 매달린 간판: 보이면 누구나 "떨어질 듯하다"고 안다(낙하 구역 2칸). 떨어졌거나 고정된 것도 본 대로
+    const cur = a.beliefs.get('haz', p.id);
+    if (d > v || !los(s, a.x, a.y, p.x, p.y)) return;
+    if (!cur) learn(sim, a, mkFact('haz', p.id, { kind: 'sign', active: p.live === true, x: p.x, y: p.y, r: 2 }, me, sim.t, 1, true, p.live ? `${regionNameAt(s, p.x, p.y)} 위 간판이 떨어질 듯 흔들림 — 아래 접근 금지` : '간판 — 떨어질 위험 없음'));
+    else if (cur.value.active && !p.live) learn(sim, a, mkFact('haz', p.id, { kind: 'sign', active: false, x: p.x, y: p.y, r: 2 }, me, sim.t, 1, true, p.mitigated ? '간판 고정 확인' : '간판이 떨어짐'), true, true);
+  } else if (p.skin === 'floater') {
     if (d <= 4 && !a.beliefs.get('evid', p.id) && los(s, a.x, a.y, p.x, p.y)) learn(sim, a, mkFact('evid', p.id, { kind: 'floater' }, me, sim.t, 1, true, '물에 떠 있는 것은 사람이 아님 — 마네킹·쓰레기 봉투'));
   } else if (p.skin === 'fireworks') {
     if (d <= 3 && !a.beliefs.get('evid', p.id) && los(s, a.x, a.y, p.x, p.y)) learn(sim, a, mkFact('evid', p.id, { kind: 'fireworks' }, me, sim.t, 1, true, '폭죽 잔해 발견 — 총소리가 아니었음'));
@@ -262,7 +291,24 @@ function perceiveFixture(sim: Sim, s: Scene, a: FieldAgent, p: Prop, d: number, 
 
 /** 시야 안의 진실을 관찰해 믿음을 갱신한다. boost 는 관측 범위 배율(현장 평가 등). */
 /** perceive 의 시야: 공중 관측(aloft)은 실내가 아닌 칸, 지상은 시야선 */
-function seesAt(s: Scene, a: FieldAgent, aloft: boolean, x: number, y: number): boolean { return aloft ? !isIndoor(s.tiles[tileOf(s, x, y)]) : los(s, a.x, a.y, x, y); }
+function seesAt(s: Scene, a: FieldAgent, aloft: boolean, x: number, y: number): boolean { return aloft ? !isIndoor(s.tiles[tileOf(s, x, y)]) : s.variant === 'sinkhole' ? losOpen(s, a.x, a.y, x, y) : los(s, a.x, a.y, x, y); }
+/**
+ * (N8 §4.2 싱크홀) 바깥의 꺼진 구멍(T.VOID)은 시야를 막지 않는다 — 가장자리에서 구멍 안이 내려다보인다. 벽·바위만 막는다 (grid.los 는 두 층 사이의 빈 공간 때문에 VOID 를 막는다)
+ */
+function losOpen(s: Scene, x0: number, y0: number, x1: number, y1: number): boolean {
+  let ax = Math.round(x0), ay = Math.round(y0);
+  const bx = Math.round(x1), by = Math.round(y1), dx = Math.abs(bx - ax), dy = Math.abs(by - ay), sx = ax < bx ? 1 : -1, sy = ay < by ? 1 : -1;
+  let err = dx - dy, guard = 0;
+  while ((ax !== bx || ay !== by) && guard++ < 80) {
+    const e2 = 2 * err;
+    if (e2 > -dy) { err -= dy; ax += sx; }
+    if (e2 < dx) { err += dx; ay += sy; }
+    if (ax === bx && ay === by) break;
+    const t = s.tiles[ay * s.w + ax];
+    if (t === T.WALL || t === T.ROCK) return false;
+  }
+  return true;
+}
 export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWalls = false): void {
   const I = sim.incidents[s.incidentId];
   const r = resp(sim, a);
@@ -362,7 +408,8 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
     if (p.removed) continue;
     const d = dist(a.x, a.y, p.x, p.y);
     const sniff = meter && p.kind === 'valve' && !p.mitigated && !p.ignited && d <= 7;      // 측정기가 잡는 누출 (시야·벽과 상관없다)
-    if (d > v + 1 && !sniff) continue;
+    const spark = p.kind === 'fixture' && p.live === true && p.skin === 'wire' && d <= WIRE_SEE;      // (N8) 살아 있는 전선의 불꽃은 어둠·안개 너머로도 보인다
+    if (d > v + 1 && !sniff && !spark) continue;
     if (p.kind === 'debris') {
       const i = p.y * s.w + p.x;
       if (!a.beliefs.get('blk', i) && d <= v && los(s, a.x, a.y, p.x, p.y)) {
@@ -411,7 +458,7 @@ export function perceive(sim: Sim, s: Scene, a: FieldAgent, boost = 1, throughWa
       }
     } else if (p.kind === 'witness') {
       if (!a.beliefs.get('evid', p.id) && d <= v) learn(sim, a, mkFact('evid', p.id, { kind: 'witness', done: !!p.interviewed }, me, sim.t, 1, true, '현장에 목격자 대기 중'), false);
-    } else if (p.kind === 'fixture') perceiveFixture(sim, s, a, p, d, meter, me);      // (N8) 시설물·현장의 물건 (단계 3: 오인 신고의 답 — 물에 뜬 물건·폭죽 잔해·음식물 쓰레기)
+    } else if (p.kind === 'fixture') perceiveFixture(sim, s, a, p, d, meter, me, v);      // (N8) 시설물·현장의 물건 (단계 3: 오인 신고의 답 — 물에 뜬 물건·폭죽 잔해·음식물 쓰레기)
   }
   // (X6 §3.3) 조짐: 구조 약화·가스 농도·용기 가열·건물 기울어짐 — 감각 범위 안의 것만 (field/catastrophe.ts)
   perceiveSigns(sim, s, a, v);
@@ -521,6 +568,7 @@ export function agentCost(sim: Sim, s: Scene, a: FieldAgent, allowBlockers = tru
   }
   const av = a.avoid !== undefined && a.avoid.until > sim.t ? a.avoid : null;
   const bz = bombZone(s, a);      // (R3 5단계 S08) 해체가 진행 중인 장치의 반경 (해체·출입 통제·반경 밖으로 옮기는 일이 아니면 +20)
+  const hz = hazRadii(sim, s, a, a.task !== null ? a.task.prop : -1, HAZ_PAD);      // (N8 §5.10) 믿음 속 살아 있는 시설물의 위험 반경 +40 (막지 않는다 — 안에 있는 대원이 나올 수 있게. 함수를 만들 때 한 번 모은다)
   return (i: number): number => {
     const t = s.tiles[i];
     if (!staticPass(t)) return -1;
@@ -528,6 +576,7 @@ export function agentCost(sim: Sim, s: Scene, a: FieldAgent, allowBlockers = tru
     let c = t === T.TREE ? 0.7 : 0;
     if (av !== null && inAvoid(s, av, i)) c += 20;
     if (bz !== null) { const dx = (i % s.w) - bz.x, dy = ((i / s.w) | 0) - bz.y; if (dx * dx + dy * dy <= bz.r * bz.r) c += 20; }
+    if (hz !== null && inRadii(hz, i % s.w, (i / s.w) | 0)) c += 40;
     if (shun) { const rg = s.region[i]; if (rg >= 0 && s.regions[rg].indoor) c += 6; }
     const b = a.beliefs.get('blk', i);
     if (b && b.value !== 'none') {
@@ -592,13 +641,14 @@ export function workLabel(s: Scene, w: WorkItem, sim?: Sim): string {
     extricate: `${cas} 구출`, treat: `${cas} 응급 처치`, carry: `${cas} 이송`, load: `${cas} 구급차 탑승`, traffic: '교통 통제',
     mitigate: w.prop < 0 ? `${reg ? reg + ' ' : ''}가스 재측정`      // (X6 §5.7) 칸만 있는 작업
       : s.props[w.prop] && s.props[w.prop].kind === 'gas' ? (s.props[w.prop].skin === 'drum' ? '드럼통 냉각' : '가스 용기 냉각')      // (X6 §5.8)
-      : s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? '균열부 보강' : s.props[w.prop] && s.props[w.prop].kind === 'valve' ? '가스 밸브 차단' : '연료 누출 조치',
+      : s.props[w.prop] && s.props[w.prop].kind === 'unstable' ? '균열부 보강' : s.props[w.prop] && s.props[w.prop].kind === 'valve' ? '가스 밸브 차단'
+      : s.props[w.prop] && s.props[w.prop].skin === 'hole' ? '구멍 가장자리 보강' : s.props[w.prop] && s.props[w.prop].skin === 'sign' ? '간판 고정' : '연료 누출 조치',      // (N8 4b) 시설물
     perimeter: s.kind === 'hazmat' ? `${w.tile === 0 ? '앞쪽' : '뒤쪽'} 출입구 통제` : `${exitName(s, w.tile)} 봉쇄`, negotiate: `${hos} 협상`, engage: `${hos} 대응`, arrest: `${hos} 검거`, interview: '목격자 면담', clearRoad: '도로 정리', rescueMate: '동료 구조', waterRescue: `${cas} 수난 구조`, escort: `${cas} 동행`,
     defuse: '폭발물 해체', overhaul: `${reg} 잔불 정리`,
     hoist: `${cas} 호이스트 인양`, airDrop: `${reg} 공중 물 투하`,
     treatMate: sim && w.mate >= 0 && sim.responders[w.mate] ? `${sim.responders[w.mate].name} 대원 응급 처치` : '부상 대원 응급 처치',
     treatSuspect: `${hos} 응급 처치`,
-    repair: '시설물 복구', towAway: '차량 견인', capture: '동물 포획', persuade: `${cas} 설득`, cordon: '통제',      // (N8) 이름만 — 대상의 글자는 그 임무를 쓰는 단계가 다듬는다
+    repair: s.props[w.prop] && s.props[w.prop].kind === 'valve' ? '공급 차단 확인' : '시설물 복구', towAway: '차량 견인', capture: '동물 포획', persuade: `${cas} 설득`, cordon: '위험 반경 통제',      // (N8) 단계 4a — 시설물 둘레 (교통 통제와 다른 글자)
     decontam: '제독',      // (N9 §5.5) 이름만 — 대상의 글자는 그 임무를 쓰는 단계 6 이 다듬는다
     triage: '다수 사상자 분류',      // (R3 4단계 E01·CE1)
   };
@@ -644,11 +694,64 @@ export function fitParts(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): DocFit
   return docFitRules(sim, s, a, w, fit > 0 ? Math.max(0.02, fit + (roleOf(sim, a.rid).prefer[w.kind] ?? 0)) : fit);
 }
 /**
+ * (N8 §5.10) 이 대원의 믿음 속 살아 있는 위험 반경(시설물 — 전선 …)을 [x, y, r², …] 로. 시설 사고 현장(생김새 s.kind)만 보고, 없으면 null.
+ * 그 위험을 다루는 일(대상 소품 workProp 이 그것)이거나 막는 장비를 든 대원(전선 = 절연 장비)은 세지 않는다. 믿음과 자기 장비만 읽는다(진실을 읽지 않는다)
+ */
+function hazRadii(sim: Sim, s: Scene, a: FieldAgent, workProp: number, pad: number, holdOnly = false): number[] | null {
+  if (s.kind !== 'utility') return null;
+  let out: number[] | null = null;
+  for (const f of a.beliefs.list('haz')) {
+    const hv = f.value as { kind?: string; active?: boolean; x: number; y: number; r?: number };
+    if (!hv.active || !(hv.r !== undefined && hv.r > 0) || f.id === workProp) continue;
+    if (holdOnly && hv.kind !== 'wire') continue;      // 사람에게 가는 일을 막는 반경은 들어가면 다치는 것(전선)뿐 — 구멍·간판의 사람은 구출·처치한다
+    if (hv.kind === 'wire' && hasKit(sim, a.rid, 'insulKit')) continue;
+    (out ??= []).push(hv.x, hv.y, (hv.r + pad) * (hv.r + pad));
+  }
+  return out;
+}
+/** (N8 §5.3.6 ③) 시간 막이 — 소방의 제수밸브: 터진 관(생김새 'pipe' · 믿음의 갈래가 가스가 아님)의 복구 작업이 만들어진 지 VALVE_LATE 초가 넘고 오는 수도 복구반이 없으면
+ *  소방 대원이 맡는다(fitBase 0.3 — 실행은 세 배 느리다, executor 'repair'). 설계서는 손 공구(irons)를 든 사람이라 했지만 사다리차처럼 손 공구가 없는 소방 부대만 와 있으면
+ *  아무도 잠그지 못해 한계 시간까지 갔다 — 소방 부서의 누구나(소화전 렌치로). 능력(capableOf)으로 세지 않는다. 조직이 아는 것(배정된 부대)만 읽는다 */
+export const VALVE_LATE = 120;
+function valveFallback(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem): boolean {
+  const p = w.prop >= 0 ? s.props[w.prop] : undefined;
+  if (!p || p.kind !== 'fixture' || p.skin !== 'pipe' || sim.t - w.createdAt < VALVE_LATE || resp(sim, a).dept !== 'fire') return false;
+  const hz = a.beliefs.val<{ pipe?: string }>('haz', p.id);
+  if (hz && hz.pipe === 'gas') return false;
+  const I = sim.incidents[s.incidentId];
+  for (const uid of I.assigned) { const u = sim.units[uid]; if (u.caps.utilWater >= 0.7 && (u.state === 'turnout' || u.state === 'enroute' || u.state === 'onscene')) return false; }
+  return true;
+}
+/** (N8 §5.10) 길 비용의 반경 여유 (칸) — 칸 가운데 사이를 걷는 동안(대각선·모퉁이) 반경 끝을 스치지 않게 */
+const HAZ_PAD = 0.75;
+/** (N8 §5.10) 이 대원이 아는 살아 있는 위험 반경의 수 — 길을 짠 뒤에 새 위험을 알게 되면(또는 하나가 풀리면) 길을 다시 짠다(executor.moveTo). 시설 사고 현장만 */
+export function hazCount(s: Scene, a: FieldAgent): number {
+  if (s.kind !== 'utility') return 0;
+  let n = 0;
+  for (const f of a.beliefs.list('haz')) { const hv = f.value as { active?: boolean; r?: number }; if (hv.active && hv.r !== undefined && hv.r > 0) n++; }
+  return n;
+}
+/** (N8 §5.10) 점이 반경 목록(hazRadii) 가운데 하나에 드는가 (모듈 함수 — 비용 함수 안에서 닫힘을 만들지 않는다) */
+function inRadii(hz: number[], x: number, y: number): boolean {
+  for (let k = 0; k < hz.length; k += 3) { const dx = x - hz[k], dy = y - hz[k + 1]; if (dx * dx + dy * dy <= hz[k + 2]) return true; }
+  return false;
+}
+/** (N8 §5.10) 사람에게 가는 일(처치·이송·구출·동행·동료 구조)의 대상이 믿음 속 활동 위험 반경 안인가 — 그러면 그 위험을 막는 장비가 없는 대원은 맡지 않는다(fitBase) */
+export function targetInHaz(sim: Sim, s: Scene, a: FieldAgent, w: { kind: string; cas: number; mate: number }): boolean {
+  const hz = hazRadii(sim, s, a, -1, 0, true);
+  if (hz === null) return false;
+  const p = w.kind === 'rescueMate' ? a.beliefs.val<MateBelief>('mate', w.mate) : a.beliefs.val<CasBelief>('cas', w.cas);
+  return p !== undefined && inRadii(hz, p.x, p.y);
+}
+/**
  * (N8 §5.3.3) 유관 기관 대원이 맡는 일: 시설물 복구(repair — 대상의 생김새에 맞는 장비: 전선 = 절연 장비, 관·밸브 = 밸브 키 또는 누출 차단 장비)와 견인(towAway — 견인 장비).
  * 그 밖은 0 (그대로 두면 수색·이송·처치를 맡는다). 오는 쪽의 판정 crews.capableOf(…, what) 와 같은 조건이다. 생김새(skin, 없으면 kind)는 판단부가 읽어도 되는 것이다
  */
 function civilFit(sim: Sim, s: Scene, rid: number, w: WorkItem): number {
   if (w.kind === 'towAway') return hasKit(sim, rid, 'towKit') ? 0.8 : 0;
+  // (N8 4b) 가스 측정기를 든 가스 복구반장은 X6 의 가스 재측정(소품 없이 문턱 칸만 — fitBase 'mitigate' 의 첫 줄과 같은 자격)도 맡는다:
+  // 그 측정값이 진입 금지 구역을 만들었으면 풀 사람도 있어야 한다 (가스 누출의 공급 차단 확인으로 오는 부대 — 맡지 못하면 재측정이 열린 채 종료가 막혔다)
+  if (w.kind === 'mitigate' && w.prop < 0) return w.tile >= 0 && hasKit(sim, rid, 'gasMeter') ? 0.6 + 0.4 * sim.responders[rid].experience : 0;
   if (w.kind !== 'repair') return 0;
   const p = w.prop >= 0 ? s.props[w.prop] : undefined, what = p ? p.skin ?? p.kind : undefined;
   const ok = what === 'wire' ? hasKit(sim, rid, 'insulKit') : what === 'pipe' || what === 'valve' ? hasKit(sim, rid, 'valveKey') || hasKit(sim, rid, 'plugKit') : false;
@@ -691,6 +794,8 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
     else if (w.kind === 'perimeter') { const e = s.exits[w.tile]; if (e && fitRiskyAt(s, a, hot, indoorRisk, e.x, e.y)) return 0; }
     else if (w.kind === 'interview') { const p = s.props[w.prop]; if (p && fitRiskyAt(s, a, hot, indoorRisk, p.x, p.y)) return 0; }
   }
+  // (N8 §5.10) 믿음 속 활동 위험 반경 안의 사람에게 가는 일: 그 위험을 막는 장비가 없는 대원은 맡지 않는다 (지휘관의 보류 registerCasHold 와 함께 — 한쪽만 막으면 대원이 스스로 고른다)
+  if (s.kind === 'utility' && (w.kind === 'treat' || w.kind === 'carry' || w.kind === 'extricate' || w.kind === 'escort' || w.kind === 'rescueMate') && targetInHaz(sim, s, a, w)) return 0;
   switch (w.kind) {
     case 'sizeup': return a.isCommander ? 1 : 0;
     case 'search':
@@ -739,6 +844,13 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
     case 'load': return canCarryPatients(sim, u) && a.unitId === w.prop ? 1 : 0;
     case 'traffic': return r.dept === 'police' ? 1 : 0.45;
     case 'mitigate': {
+      // (N8 §4.2) 싱크홀 가장자리 보강: 구조 부대의 대원 또는 지지대를 든 대원 · 매달린 간판의 고정: 사다리차의 사다리 조작원·팀장 또는 구조 로프 (crews.capableOf 와 같은 조건)
+      const fx = w.prop >= 0 ? s.props[w.prop] : undefined;
+      if (fx && fx.kind === 'fixture') {
+        if (fx.skin === 'hole') return u.kind === 'rescue' || hasKit(sim, rid, 'shoring') ? 0.5 + 0.5 * r.skills.rescue : 0;
+        if (fx.skin === 'sign') return r.role === 'ladderOp' || r.role === 'ladderLead' || hasKit(sim, rid, 'rope') ? 0.5 + 0.5 * r.skills.rescue : 0;
+        return 0;
+      }
       // (X6 §5.7) 가스 재측정(소품 없이 문턱 칸만): 가스 측정기를 든 대원만 — 그 칸에 서면 perceiveSigns 가 읽는다
       if (w.prop < 0) return w.tile >= 0 && hasKit(sim, rid, 'gasMeter') ? 0.6 + 0.4 * r.experience : 0;
       // (X6 §5.8) 가스 용기·드럼통의 냉각: 진압과 같은 자격 (관창을 들고 물·펌프가 된다)
@@ -801,7 +913,10 @@ function fitBase(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, afterSwap: bool
     }
     // (N8 단계 2a) 새 임무 다섯의 자리 — 맡는 사람은 그 임무를 쓰는 단계가 정한다(repair 4a · towAway 6b · capture 5 · persuade 7 · cordon 4a, 설계서 §5.3.3·§5.10).
     // 지금은 아무도 이 작업을 만들지 않고, 누구도 맡지 않는다
-    case 'repair': case 'towAway': case 'capture': case 'persuade': case 'cordon': return 0;
+    case 'repair': return valveFallback(sim, s, a, w) ? 0.3 : 0;      // (N8 §5.3.6 ③) 수도 복구반이 오지 못할 때 소방의 제수밸브
+    case 'towAway': case 'capture': case 'persuade': return 0;
+    // (N8 §5.10 — 단계 4a) 통제(위협이 없는 현장의 한 자리 지키기): 경찰 0.5 + 0.3 × 치안 능력, 소방·구조(부서 fire) 0.4 + 0.2 × 경험, 구급 0 (유관 기관은 위의 첫 줄에서 0)
+    case 'cordon': return r.dept === 'police' ? 0.5 + 0.3 * r.skills.law : r.dept === 'fire' ? 0.4 + 0.2 * r.experience : 0;
     // (N9 단계 1) 제독의 자리 — 맡는 사람(제독 장비 1.0 · 역할 decon 0.7 · 120초 뒤 호스를 든 소방 0.4)은 단계 6 이 정한다(설계서 §5.3.5). 지금은 아무도 이 작업을 만들지 않는다
     case 'decontam': return 0;
     // (R3 4단계 E01·CE1) 다수 사상자 분류: 구급 대원만 (안전 확보 전의 무장 현장에서는 내지 않는다 — 지휘 교본 CE1 과 같은 자격, doctrine.triageMedic). 다친 대원은 가벼운 일 목록 밖이라 위에서 0

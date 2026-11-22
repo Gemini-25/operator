@@ -12,7 +12,8 @@ import type { IncidentType, InjuryCause, Needs, Scene, Topic } from './types';
  * 유형의 순서. 분석 AI 의 가설 순서·가능도 배열(likRow)의 열 순서·평소 추첨의 가중 순서·확률 막대의 순서가 모두 이것이다.
  * 새 유형은 **끝에만** 붙인다(중간에 끼우면 평소 추첨과 분석의 결과가 모두 바뀐다).
  */
-export const TYPE_ORDER: readonly IncidentType[] = ['fire', 'traffic', 'search', 'armed', 'medical', 'collapse', 'hazmat', 'water'];
+export const TYPE_ORDER: readonly IncidentType[] = ['fire', 'traffic', 'search', 'armed', 'medical', 'collapse', 'hazmat', 'water',
+  'utility'];      // (N8 단계 4a) 시설 사고 — 평소 추첨 가중 0 (짧은 사건 흐름 daily 로만 나온다)
 
 /** 유형 → TYPE_ORDER 의 자리 (분석 AI 의 숫자 색인 lp[…] 대신) */
 export const typeIdx = {} as Record<IncidentType, number>;
@@ -98,6 +99,16 @@ export const TYPE_DEFS: Record<IncidentType, TypeDef> = {
     question: { count: '물에 빠진 사람은 몇 명입니까?', trapped: '아직 물속에 있습니까, 물 밖으로 나왔습니까?', hazard: '물살이 셉니까? 떠내려가고 있습니까?' },
     topicValue: { trapped: 0.95, count: 0.82, hazard: 0.6, injured: 0.35 },
     trappedYes: '물에 빠져서 못 나오고 있어요!', trappedNo: '다들 물 밖으로 나온 것 같아요.', floorHp: 0,
+  },
+  // ── (N8 단계 4a — 설계서 §4.1) 시설 사고: 끊어진 전선·수도관 파열·싱크홀·간판. 위험을 지키며 유관 기관 복구반을 기다리는 사건 — 짧은 사건 흐름(daily)으로만 나온다(평소 가중 0).
+  //    한계·대응 기준·지연·추가 신고·교차로 사전 확률은 설계서 표의 시작값. 방 수색은 수도관 파열의 지하(단계 4b), 바깥 현장(sealPockets 건너뜀)
+  utility: {
+    name: '시설 사고', limit: 360, respLimit: 110, delay: [3, 9], follow: 0.35, weight: 0, atNode: 1.0, alwaysShow: false,
+    indoorRisk: false, roomSearch: true, zoneSearch: false, wander: false, outdoor: true,
+    question: { trapped: '차 안이나 구멍에 갇힌 사람이 있습니까?', hazard: '불꽃이 튀거나 물이 계속 나옵니까?', detail: '정확히 무엇이 떨어지거나 꺼졌습니까?' },
+    topicValue: { hazard: 0.9, injured: 0.8, trapped: 0.7, count: 0.4 },
+    trappedYes: '차 안에 사람이 못 나오고 있어요.', trappedNo: '사람은 다 피했어요.',
+    baseNeeds: { suppression: 1, traffic: 1 }, cause: 'electric', floorHp: 0,
   },
 };
 

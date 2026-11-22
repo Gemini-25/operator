@@ -88,7 +88,11 @@ export function kitBonus(sim: Sim, u: Unit, I: Incident, key: keyof Needs): numb
  * '수거책 잠복' → law · detective +15 · '치매 노인 실종' → search · k9 +10 · '출산 임박' → ems · alsBag +8 · '위기자' → rescue · jumpMat +20 · '싱크홀' → rescue · rescue(부대) +15 ·
  * '떨어질 듯한 간판' → rescue · rope +10. 기존 두 줄(수난·붕괴의 구조 수요)은 위에 글자 그대로 둔다
  */
+/** (N8 §5.3.8) 유관 기관의 수요 열쇠 — 시설 사고가 아닌 사건에서는 선택 수요다 */
+const CIVIL_KEYS: ReadonlySet<keyof Needs> = new Set<keyof Needs>(['utilPower', 'utilGas', 'utilWater', 'tow']);
 export const LABEL_BONUS: { label: string; key: keyof Needs; kind?: UnitKind; kit?: KitId; bonus: number }[] = [
+  // ── (N8 §5.3.4 — 단계 4b) 시설 사고의 이름표: 떨어질 듯한 간판의 진압 수요에 사다리차, 구조 수요에 로프 · 싱크홀의 구조 수요에 구조대 ──
+  { label: '떨어질 듯한 간판', key: 'suppression', kind: 'ladder', bonus: 12 }, { label: '싱크홀', key: 'rescue', kind: 'rescue', bonus: 15 }, { label: '떨어질 듯한 간판', key: 'rescue', kit: 'rope', bonus: 10 },
   // ── (N9 §5.3.3) 큰 사건의 이름표 — 단계 2 에 줄을 넣는다. 이름표를 내는 시나리오(N9 단계 4~9)가 아직 없고, 줄이 앞세우는 새 부대는 편성되지 않았다 —
   //    걸리는 줄이 없어 결과가 바뀌지 않는다('집단 난동'(폭동 — 지금 있는 이름표)의 줄은 기동대에만 붙는다). 이름표는 설계서 §4.0 의 글자 그대로 ──
   { label: '압사 위험', key: 'law', kind: 'riotPol', bonus: 25 }, { label: '시위 충돌', key: 'law', kind: 'riotPol', bonus: 25 },
@@ -332,6 +336,7 @@ export function tickDispatch(sim: Sim): void {
       while ((I.unmet[key] ?? 0) > 0) {
         let { best, nearest } = pickUnit(sim, I, key, MINCAP[key]);
         if (!best && key === 'tactical') ({ best, nearest } = pickUnit(sim, I, 'law', MINCAP.law));
+        if (!best && CIVIL_KEYS.has(key) && I.assessment!.type !== 'utility') { I.unmet[key] = 0; break; }      // (N8 §5.3.8) 평소 사건에 붙는 유관 기관은 선택 수요 — 보낼 차가 없으면 지운다 (대기열·NO_UNIT·지원 없음)
         if (!best) { blocked.push(key); break; }
         I.unmet[key]!--;
         sendUnit(sim, I, key, best, nearest);

@@ -2986,8 +2986,9 @@ describe('I1-b b3-10: 국지 구역 값 · C4 정전 · L5 정전이 닿은 순�
     expect(s.world.spans).toEqual([]);
   });
 
-  it('실제 교대 (태풍 S0): 동네별 정전 기록이 없고, 통신 장애 알림은 한 줄, INFRA_FAIL 마다 원인에 그 사건의 COMM_FAIL 과 태풍 정전 기록 · 교대 끝에 동네 값·장부·얹은 혼잡이 남지 않는다', () => {
-    const s = new Sim('S0', { ...NORMAL, disaster: parseDisaster('typhoon')! }, 1200);
+  it('실제 교대 (태풍 S7): 동네별 정전 기록이 없고, 통신 장애 알림은 한 줄, INFRA_FAIL 마다 원인에 그 사건의 COMM_FAIL 과 태풍 정전 기록 · 교대 끝에 동네 값·장부·얹은 혼잡이 남지 않는다', () => {
+    // (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 태풍 S0 에 교대 끝까지 이어지는 맨홀 사고의 국지 정전이 생겼다(옛 S8 과 같은 모양) — 같은 조건의 S7 로
+    const s = new Sim('S7', { ...NORMAL, disaster: parseDisaster('typhoon')! }, 1200);
     s.runToEnd();
     expect(s.events.some((e) => e.tag === 'power')).toBe(false);
     const dark = s.events.find((e) => /^강풍에 송전선이 끊겨/.test(e.text))!;
@@ -3055,8 +3056,9 @@ describe('I1-b b3-11 · b3-12: C5 연기 · L4 연기를 마신 주민 · L6 수
   const sillHand = (s: Sim, id: number, base: number): number => base * (FLOOD.LO + FLOOD.SPAN * s.rng.fork('hz:floodLow:b' + id).next());
   const WET_TEXT = /지하가 물에 잠겨 전기가 끊겼습니다\.$/;
   let s0: Sim | null = null;
-  /** 보통 S0 — 연기도 홍수도 없는 실제 교대 (L4 ① · L6 ① 이 함께 쓴다 — 고치지 않는다) */
+  /** 보통 S0 — 홍수가 없는 실제 교대 (L6 ① 이 쓴다 — 고치지 않는다). (N8 단계 4a·4b) 연기가 없는 교대는 S1 (L4 ①) */
   const normalS0 = (): Sim => { if (!s0) { s0 = new Sim('S0', NORMAL, 1200); s0.runToEnd(); } return s0; };
+  const normalS1 = (): Sim => { const s = new Sim('S1', NORMAL, 1200); s.runToEnd(); return s; };
 
   it('등록과 크기: 법칙 모음의 끝에 smoke(smokeIll — 1초 · 건물마다 몇 번이고 · 상한 3), 상태 규칙은 commsDown.shadow 다음에 smokePlume → floodLow(쿨다운 5초 · 사건 없음) · 실외 노출은 현장 규칙에서 상공의 헬기 앞', () => {
     expect(hazardLaws().map((l) => l.id)).toEqual(['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle', 'liftStall', 'smokeIll']);
@@ -3219,8 +3221,8 @@ describe('I1-b b3-11 · b3-12: C5 연기 · L4 연기를 마신 주민 · L6 수
     });
   });
 
-  it('L4 ① 연기가 없으면 칸이 없다: 연기 없는 실제 교대(보통 S0) · 큰 불이 없는 화재 현장 — 연기 줄이 없으면 대상도 칸도 없다', () => {
-    const s = normalS0();
+  it('L4 ① 연기가 없으면 칸이 없다: 연기 없는 실제 교대(보통 S1) · 큰 불이 없는 화재 현장 — 연기 줄이 없으면 대상도 칸도 없다', () => {
+    const s = normalS1();      // (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 보통 S0 에 큰 불의 연기가 생겼다 — 연기 없는 S1 로
     expect(s.events.some((e) => e.tag === 'smoke')).toBe(false);
     expect(s.world.hz.cells.smokeIll).toBeUndefined();
     expect(s.incidents.some((I) => I.truth.type === 'medical' && I.truth.variant === 'smoke')).toBe(false);

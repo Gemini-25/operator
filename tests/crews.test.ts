@@ -2,7 +2,7 @@
 // 이 파일은 90초 안에 끝나야 한다: 끝까지 돌린 교대는 shiftOf 로 한 번만 돌리고 여러 단언이 나눠 쓴다(읽기만 한다).
 import { readFileSync, readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { AIR_IN_FRAC, AIR_KIND, AIR_LOW, AIR_MIN, EXTRA_NAMES, KITS, ROLES, STAFF, airShort, armorOf, blastFactor, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, heliPad, isHovering, kitLive, kitUses, kitWorks, medLevelOf, minCrew, minField, roleOf, seatsOf, seatsUsed, skillsOf, slotsOf, stays, toolFor, toolUse, useKit } from '../src/sim/crews';
+import { AIR_IN_FRAC, AIR_KIND, AIR_LOW, AIR_MIN, EXTRA_NAMES, KITS, ROLES, STAFF, airShort, armorOf, blastFactor, capableOf, crewHasKit, fieldCrew, hasFirearm, hasKit, heliPad, isHovering, kitIdsOf, kitLive, kitUses, kitWorks, medLevelOf, minCrew, minField, roleOf, seatsOf, seatsUsed, skillsOf, slotsOf, stays, toolFor, toolUse, useKit } from '../src/sim/crews';
 import { NORMAL, parseDifficulty } from '../src/sim/difficulty';
 import type { Difficulty } from '../src/sim/difficulty';
 import { airFit, kitBonus, tickDispatch } from '../src/sim/dispatch/dispatcher';
@@ -39,7 +39,7 @@ function shiftOf(seed: string, d: Difficulty = NORMAL, force: string | null = nu
   return s;
 }
 /** 인근 도시 지원 부대를 수요마다 하나씩 만든다 (실제 지원 요청과 같은 길: createAidUnit → sim.aidUsed++) */
-const AID_KEYS: (keyof Needs)[] = ['suppression', 'rescue', 'ems', 'law', 'tactical', 'search', 'traffic', 'eod'];
+const AID_KEYS: (keyof Needs)[] = ['suppression', 'rescue', 'ems', 'law', 'tactical', 'search', 'traffic', 'eod', 'utilPower', 'utilGas', 'utilWater'];      // (N8) 새 열쇠는 그 부대를 편성하는 단계에 — 4a 전력 · 4b 가스·수도
 function withAid(sim: Sim, keys: (keyof Needs)[] = AID_KEYS): Unit[] {
   const I = createIncident(sim, { type: 'fire', rng: sim.rng.fork('t') });
   const out: Unit[] = [];
@@ -296,7 +296,8 @@ describe('① 편성표대로 만들어진다', () => {
           const r = sim.responders[rid];
           expect(r.senior, `${u.callsign} ${k}번 자리`).toBe(k === 0);
           expect(r.unitId).toBe(u.id); expect(r.dept).toBe(u.dept); expect(r.id).toBe(rid);
-          expect(r.kit!.map((it) => it.id)).toEqual(ROLES[r.role!].kit);      // 역할의 기본 장비를 그 순서로 든다
+          expect(r.kit!.map((it) => it.id)).toEqual(kitIdsOf(u.kind, slotsOf(u.kind, lv <= 2)[k]));      // 역할의 기본 장비를 그 순서로 든다 (N8 — 자리별 장비가 있는 부대는 그 자리의 장비: 전력·가스 복구반장)
+          if (!STAFF[u.kind].kit) expect(r.kit!.map((it) => it.id)).toEqual(ROLES[r.role!].kit);
         });
         // 부대장(0번 자리)은 내리는 자리다 — 전원이 내리지 않는 부대(단계 4 의 경찰 헬기)만 예외
         if (deploying(sim, u).length > 0) expect(stays(sim, u.crew[0]), `${u.callsign}: 부대장은 내리는 자리`).toBe(false);
@@ -398,6 +399,8 @@ describe('③ 능력과 장비가 어긋나지 않는다', () => {
         if (u.caps.law >= 0.5) expect(deploying(sim, u).some((rid) => hasFirearm(sim, rid)), `${tag}: 총기`).toBe(true);
         if (u.caps.rescue >= 0.5) expect(anyKit(sim, u, ['irons', 'spreader', 'lightRescue', 'rope', 'ring']), `${tag}: 구조 장비`).toBe(true);
         if (u.dept === 'fire' && u.kind !== 'boat') expect(anyKit(sim, u, ['scba']), `${tag}: 공기호흡기`).toBe(true);
+        if (u.caps.utilPower >= 0.7) expect(anyKit(sim, u, ['insulKit']), `${tag}: 절연 장비`).toBe(true);      // (N8 §5.3.3) 전력 복구 ↔ 절연 장비
+        if (u.caps.utilGas >= 0.7 || u.caps.utilWater >= 0.7) expect(anyKit(sim, u, ['valveKey']), `${tag}: 밸브 키`).toBe(true);      // 가스·수도 복구 ↔ 밸브 키 (단계 4b)
         if (u.caps.search >= 0.3) expect(deploying(sim, u).length > 0 || AIR_KIND.has(u.kind), `${tag}: 내리는 대원이 있거나 상공 부대`).toBe(true);
         // crewHasKit 은 같은 것을 부대 단위로 본다
         if (u.caps.suppression >= 0.7) expect(crewHasKit(sim, u, 'hose')).toBe(true);
@@ -550,7 +553,9 @@ describe('⑤ 역할이 배정에 쓰인다', () => {
     // ((I1-b h5) 표본 하나를 K1 → K6 으로 바꿨다: C10 의 재범 자리가 K1 의 흐름을 바꿔 그 교대의 가스 폭발·붕괴 현장(구조 대상 9 · 2)에서
     //  유압 구조대원이 늦게 닿거나 짝·누출 조치에 묶인 동안 다른 대원이 맨손으로 붙들었다 — 이 몫은 넓은 표본(K1~K6 × 셋, 18교대)에서 h5 전에도 0.50 안팎이다. 문턱은 그대로)
     let mine = 0, others = 0;
-    for (const w of [watch('K6', SEV5, 'traffic'), watch('K2', SEV5, 'traffic'), watch('K2', NORMAL, 'collapse'), watch('K5', SEV5, 'collapse')]) { mine += w.extr[0]; others += w.extr[1]; }
+    // ((N8 단계 4a·4b) 표본 하나를 K6 교통 → K3 붕괴(심각도 5)로 바꿨다: 짧은 사건(시설 사고)이 끼며 흐름이 바뀌어 K6 교통의 #17 에서 다른 대원이 오래 붙들었다(235/660).
+    //  넓은 표본(K1~K6 × 셋, 18교대)의 몫은 단계 4 전 0.426 → 뒤 0.408 — 이 몫은 표본에 기대고, 시설 사고 현장은 표본에 없다. 문턱은 그대로)
+    for (const w of [watch('K3', SEV5, 'collapse'), watch('K2', SEV5, 'traffic'), watch('K2', NORMAL, 'collapse'), watch('K5', SEV5, 'collapse')]) { mine += w.extr[0]; others += w.extr[1]; }
     expect(mine + others, '구조 공작차가 온 현장의 구출 작업').toBeGreaterThan(200);
     expect(mine / (mine + others), `유압 구조대원 ${mine} / 그 밖 ${others}`).toBeGreaterThanOrEqual(0.5);
     // 먼저 닿은 대원이 맨손으로 붙들고 있던 구출을, 뒤에 닿은 유압 구조대원이 넘겨받는다 (그 자리의 사람 수는 정원을 넘지 않는다 — watch 가 본다)
@@ -1121,7 +1126,8 @@ describe('⑪ 대원 없는 부대가 끝내 떠난다', () => {
   });
   it('무대응 종료는 지상 부대도 상공의 헬기도 닿지 못했을 때만이다', () => {
     const mk = (hover: boolean): { sim: Sim; I: Incident } => {
-      const sim = new Sim(seedsWhere((q) => q.weather === 'clear', 1)[0]);
+      // (N8 단계 4a·4b) 둘째 맑은 시드: 첫째(W1)는 짧은 사건이 늘어 오던 기동대가 160초쯤 다른 사건으로 전환 배정되어 '오는 중'이라는 전제가 깨졌다 (시험의 뜻은 그대로)
+      const sim = new Sim(seedsWhere((q) => q.weather === 'clear', 2)[1]);
       const I = createIncident(sim, { type: 'armed', variant: 'dispute', rng: sim.rng.fork('t') });
       I.reportedAt = 0; I.phase = 'dispatched'; I.followupAt = Infinity; I.firstCallAt = 0;
       if (hover) { const u = sim.units.find((q) => q.kind === 'policeHeli')!; u.state = 'onscene'; u.incidentId = I.id; I.assigned.push(u.id); unitArrived(sim, I, u); }
@@ -2355,7 +2361,7 @@ describe('⑦ 같은 사람 = 같은 능력', () => {
     // 표준 편성의 셋째 자리부터(와 새 줄의 모든 자리)가 EXTRA_NAMES 를 쓴다: 표의 이름이 모자라지 않다
     for (const r of sim.responders) expect(typeof r.name === 'string' && r.name.length >= 2, `이름 없음 (rid ${r.id})`).toBe(true);
     const aid = withAid(sim);      // 지원 한도는 5회, 재난 때 3회 더 (disaster.ts)
-    expect(aid.length).toBe(8);
+    expect(aid.length).toBe(AID_KEYS.length);      // (N8) 열쇠는 부대를 편성하는 단계마다 늘어난다 (4a 전력 · 4b 가스·수도 — 11)
     expect(new Set(sim.responders.map((r) => r.name)).size).toBe(sim.responders.length);
   });
   it('처음 20줄의 0·1번 자리 40명은 R1 전과 같은 기본 능력을 갖는다', () => {

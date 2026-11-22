@@ -19,6 +19,9 @@ import type { IncidentType } from '../src/sim/types';
 import { TYPE_NAME } from '../src/sim/util';
 import { TYPE_COLOR, respLimitOf } from '../src/view/typeStyle';
 
+/** 등록 자리의 줄 수 [남은 일 · 사람 보류 · 소품 보류 · 판정] — 단계 4a: 시설 사고 (orders/kinds.ts · rules/kinds.ts) */
+const REG_NOW = [1, 1, 0, 1];
+
 describe('1 유형 자료 (incidentTypes — 단계 1)', () => {
   it('TYPE_DEFS·TYPE_ORDER·typeIdx 가 모든 유형을 덮고, 첫 여덟의 순서가 예전과 같다', () => {
     const order = [...TYPE_ORDER];
@@ -131,12 +134,13 @@ describe('2a 틀의 자리 — 높은 자리 칸 · 등록 자리 (결과 불변
       expect(() => buildStatic(s, 16, 'commercial')).not.toThrow();
     });
   });
-  it('등록 자리 넷은 아직 비어 있다 (단계 2a — 첫 줄은 4a~9 가 넣는다)', () => {
+  it('등록 자리: 단계 4a 가 넣은 줄 — 남은 일·사람 보류·판정 하나씩(시설 사고), 소품 보류는 아직 비어 있다', () => {
     new Sim('N8-2A-REG');      // 현장 등록(field/scenes/index.ts)을 불러 둔다
-    expect([PENDING_RULES.length, CAS_HOLDS.length, PROP_HOLDS.length, VERDICT_RULES.length]).toEqual([0, 0, 0, 0]);
+    expect([PENDING_RULES.length, CAS_HOLDS.length, PROP_HOLDS.length, VERDICT_RULES.length]).toEqual(REG_NOW);
   });
   it('판정 등록이 판정에 들어간다: open → 위험이 남음(벌점 1.5·목표 미완) · bad → 벌점 · delayed → 대응 지연. 줄이 없으면 그대로', () => {
     const sim = new Sim('N8-2A-VERDICT');
+    const n0 = VERDICT_RULES.length;      // 등록된 줄(시설 사고 — 자기 현장이 아니면 null)
     sim.run(20);
     const I = createIncident(sim, { type: 'medical', rng: sim.rng.fork('n8-2a') });
     const s = sim.scenes[I.id]!;
@@ -158,7 +162,7 @@ describe('2a 틀의 자리 — 높은 자리 칸 · 등록 자리 (결과 불변
     } finally {
       VERDICT_RULES.splice(VERDICT_RULES.indexOf(rule), 1);
     }
-    expect(VERDICT_RULES.length).toBe(0);
+    expect(VERDICT_RULES.length).toBe(n0);
     expect(evaluate(sim, I, 'resolved').grade).toBe('success');
   });
 });
@@ -174,7 +178,7 @@ import { anyCapable } from '../src/sim/field/commander';
 import { docDeptOf } from '../src/sim/field/doctrine';
 import { makeTask } from '../src/sim/field/executor';
 import { protection } from '../src/sim/field/injury';
-import { addProp } from '../src/sim/field/kit';
+import { addCas, addProp } from '../src/sim/field/kit';
 import { registerPending } from '../src/sim/field/sceneRegistry';
 import { tickScene, unitArrived } from '../src/sim/field/sceneManager';
 import { createAidUnit, dispatchUnit, rosterKeys } from '../src/sim/resources';
@@ -184,6 +188,8 @@ import { ROLE_MARK, UNIT_MARK } from '../src/view/marks';
 import { responderLook } from '../src/view/scene/sprites';
 
 const NEW_KINDS: UnitKind[] = ['powerCrew', 'gasCrew', 'waterCrew', 'tow', 'animalCtl', 'detective', 'trafficPol', 'k9'];
+/** 편성한 새 부대 (단계마다 늘어난다: 4a 전력 · 4b 가스·수도 · 5 포획 · 6a 형사·교통·경찰견 · 6b 견인) */
+const FORMED: UnitKind[] = ['powerCrew', 'gasCrew', 'waterCrew'];
 const workOf = (sim: Sim, kind: WorkKind, tg: Partial<WorkItem> = {}): WorkItem => ({
   id: 0, kind, region: -1, cas: -1, prop: -1, hostile: -1, tile: -1, mate: -1, priority: 0.8, status: 'open', assignees: [], max: 1,
   createdAt: sim.t - 60, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough: false, orderSentAt: {}, cause: -1, failedAt: {}, animal: -1, ...tg,
@@ -268,6 +274,7 @@ describe('3 유관 기관 — 지휘하지 않는다 · 첫 도착이 아니다 
     expect(roleFit('plumber', pipe)).toBeGreaterThan(0); expect(roleFit('towDriver', pipe)).toBe(0);
   });
   it('7번 블록: 손을 놓은 유관 기관은 활동으로 세지 않고, 남은 유관 기관의 haz 를 넘겨받은 뒤 판단하며, 와 있는 부대가 채우는 남은 일은 통제 부대로 부른다. 승계 후보에서 빠진다', () => {
+    const n0 = PENDING_RULES.length;      // 등록된 줄(시설 사고 — 자기 현장이 아니면 null)
     const run = (civilKnows: boolean, civilBusy: boolean): { idle: number; unmet: Partial<Needs>; relayed: boolean; cmdDept: string } => {
       const { sim, I } = quietSim('N8-2B-BLOCK7', 'medical');
       const s = sim.scenes[I.id]!;
@@ -303,15 +310,16 @@ describe('3 유관 기관 — 지휘하지 않는다 · 첫 도착이 아니다 
     // 일하는(작업을 쥔) 유관 기관이 남아 있으면 기다린다
     const c = run(false, true);
     expect(c.idle).toBe(-1);
-    expect(PENDING_RULES.length).toBe(0);
+    expect(PENDING_RULES.length).toBe(n0);
   });
 });
 
 describe('20 새 부대 — 편성되지 않는 여덟 줄 · 표 · 관제의 틀 (단계 2b)', () => {
-  it('어느 부대 규모에서도 편성되지 않는다(minLevel 6). 명부의 열쇠·이름은 끝에 붙어 앞 사람이 그대로다. 이름은 모두 다르다(지원 12회 뒤에도)', () => {
+  it('편성 단계(§5.3.7): 편성한 종류(4a 전력)는 모든 규모에 한 팀, 나머지는 어느 부대 규모에서도 편성되지 않는다(minLevel 6). 명부의 열쇠·이름은 끝에 붙어 앞 사람이 그대로다. 이름은 모두 다르다(지원 12회 뒤에도)', () => {
     for (const lv of [1, 3, 5]) {
       const sim = new Sim('N8-2B-ROSTER', { ...NORMAL, resources: lv });
-      for (const u of sim.units) expect(NEW_KINDS.indexOf(u.kind), `규모 ${lv} ${u.callsign}`).toBe(-1);
+      for (const u of sim.units) if (FORMED.indexOf(u.kind) < 0) expect(NEW_KINDS.indexOf(u.kind), `규모 ${lv} ${u.callsign}`).toBe(-1);
+      for (const k of FORMED) expect(sim.units.filter((u) => u.kind === k).length, `규모 ${lv} ${k}`).toBe(1);
     }
     const keys = rosterKeys();
     // (N9 단계 2) 열쇠 끝에는 N9 의 새 부대 넷(편성되지 않는 줄)이 더 붙는다 — N8 의 열넷은 그 앞에 이어져 있다 (N9 의 줄은 tests/kinds2.test.ts 시험 3)
@@ -399,7 +407,8 @@ describe('20 새 부대 — 편성되지 않는 여덟 줄 · 표 · 관제의 �
     // 이름표 가점: N8 의 줄은 아직 없고(단계 2b — 그 이름표를 내는 시나리오의 단계에 붙인다), 줄이 생기면 그 종류·장비의 부대에 더한다. 기존 두 줄(수난·붕괴의 구조 수요)은 그대로
     // (N9 단계 2) 표에는 N9 의 줄이 먼저 들어와 있다 — 걸리지 않는 줄이다(tests/kinds2.test.ts 시험 3)
     const N8_LABELS = ['떨어질 듯한 간판', '외벽 작업자 고립', '멈춘 놀이기구', '가축 탈출', '날치기', '수거책 잠복', '치매 노인 실종', '출산 임박', '위기자', '싱크홀'];
-    expect(LABEL_BONUS.filter((r) => N8_LABELS.indexOf(r.label) >= 0).length).toBe(0);
+    // (단계 4b) 시설 사고의 이름표 셋 — 간판의 진압 수요에 사다리차·구조 수요에 로프, 싱크홀의 구조 수요에 구조대
+    expect(LABEL_BONUS.filter((r) => N8_LABELS.indexOf(r.label) >= 0).map((r) => `${r.label}|${r.key}|${r.kind ?? r.kit}|${r.bonus}`).sort()).toEqual(['떨어질 듯한 간판|rescue|rope|10', '떨어질 듯한 간판|suppression|ladder|12', '싱크홀|rescue|rescue|15']);
     const rope = sim.units.find((u) => u.kind === 'rescue')!;
     for (const r of rope.crew) for (const it of sim.responders[r].kit!) it.faultKnown = false;
     set('water'); expect(kitBonus(sim, rope, I, 'rescue')).toBe(12); expect(kitBonus(sim, rope, I, 'law')).toBe(0);
@@ -446,6 +455,8 @@ function runUntilClosed(sim: Sim, pick: (I: Inc) => boolean, cap = 6000): Inc | 
 }
 const BENIGN_V = new Set(['false', 'prank', 'referral', 'dup']);
 const N12 = ['fire/prank', 'medical/prank', 'water/prank', 'medical/false', 'water/false', 'armed/false', 'hazmat/false'];
+/** 시설 사고 줄 (단계 4a 전선 · 4b 수도관·싱크홀·간판) */
+const UTIL_LINES = ['utility/wire', 'utility/main', 'utility/sinkhole', 'utility/sign'];
 /** 강제 발생(sim.force)으로 만든 그 사건 — 그 변형의 첫 사건 (강제 발생도 시나리오의 tag 'daily' 를 받는다) */
 const forced = (sim: Sim) => (J: Inc): boolean => sim.force !== null && `${J.truth.type}/${J.truth.variant}` === sim.force && J.parent === undefined;
 /** 단계 3 에는 daily 줄이 비응급 일곱(가중 1.4 / DAILY_TOTAL 14)뿐이라 보통 교대의 짧은 사건은 0.5건쯤이다 — 시험은 차례를 늘려(SimOpts.daily) 짧은 사건이 끼게 한다 */
@@ -474,11 +485,11 @@ describe('6 짧은 사건의 재현성과 표 (단계 3)', () => {
       expect(NATURE_LIK[q.nature], `${q.nature} 는 신고자가 말하는 키가 아니다`).toBeUndefined();
       expect(q.card).toBe(false);
     }
-    expect(daily.map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...N12].sort());
+    expect(daily.map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...N12, ...UTIL_LINES].sort());
   });
   it('N8 의 새 난수 흐름 이름이 기존 흐름 이름과 겹치지 않는다 (소스의 fork 글자 — 한 이름은 한 자리에서만 만든다, 아직 쓰지 않은 이름은 아무도 쓰지 않는다)', () => {
-    const MADE = ['daily', 'verify'];      // 단계 3 이 만든 흐름 (짧은 사건 · 확인 질문의 답 — 통화 흐름의 하위)
-    const LATER = ['wire:', 'main:', 'hole:', 'sign:', 'hive:', 'animal:', 'rowdy:', 'brawl:', 'snatch:', 'scam:', 'ledge:', 'perch:', 'pit:', 'ride:', 'overdose:', 'birth:', 'heat:', 'dup:', 'kit-n8', 'kinds-next:'];
+    const MADE = ['daily', 'verify', 'wire:', 'hole:', 'sign:'];      // 단계 3 이 만든 흐름 (짧은 사건 · 확인 질문의 답 — 통화 흐름의 하위) · 4a 전선 · 4b 싱크홀·간판 (수도관은 난수를 쓰지 않는다 — main: 은 만들지 않았다)
+    const LATER = ['main:', 'hive:', 'animal:', 'rowdy:', 'brawl:', 'snatch:', 'scam:', 'ledge:', 'perch:', 'pit:', 'ride:', 'overdose:', 'birth:', 'heat:', 'dup:', 'kit-n8', 'kinds-next:'];
     const labels: string[] = [];
     const walk = (dir: URL): void => {
       for (const f of readdirSync(dir, { withFileTypes: true })) {
@@ -493,17 +504,7 @@ describe('6 짧은 사건의 재현성과 표 (단계 3)', () => {
   });
 });
 
-describe('7 짧은 사건과 평소 추첨 (단계 3)', () => {
-  // 시작점(단계 3 앞 — I2 를 합친 주 브랜치 2733937)에서 잰 보통 S0~S3 · 어려움 S0 의 report.hash. 단계 4a 의 작업자가 이 시험(7a)을 지운다
-  const HASH0: [string, typeof NORMAL, string][] = [['S0', NORMAL, '8b4a8647'], ['S1', NORMAL, '1d2f0f30'], ['S2', NORMAL, '1b8feeb5'], ['S3', NORMAL, '71d31558'], ['S0', PRESETS.hard.d, 'c27bc849']];
-  it('7a 짧은 사건 손잡이 0 (SimOpts.daily = 0) 이면 시작점의 기록 해시와 같다 — 확인 질문·가려내기·짧은 사건이 모두 꺼진다', () => {
-    for (const [seed, d, h] of HASH0) {
-      const s = shiftOf(seed, d, 0);
-      expect(s.report!.hash, `${seed} ${d === NORMAL ? '보통' : '어려움'}`).toBe(h);
-      expect(s.incidents.some((I) => I.tag === 'daily' || I.closeReason === 'screened')).toBe(false);
-      expect(s.calls.some((c) => c.asked.indexOf('verify') >= 0)).toBe(false);
-    }
-  });
+describe('7 짧은 사건과 평소 추첨 (단계 3 — 7a 는 단계 4a 가 지웠다)', () => {
   it('7b 켜도 S0~S5 에서 평소 추첨 사건(태그 daily 가 아니고 부모가 없는) 처음 여섯 건의 (생성 시각·유형·변형·규모)가 끈 교대와 같다', () => {
     const first6 = (sim: Sim): string[] => {
       for (let k = 0; k < 12000 && !sim.ended; k++) {
@@ -624,4 +625,283 @@ describe('8 비응급 N1 장난 전화 · N2 오인 신고 (단계 3)', () => {
     }
     expect(screened).toBeGreaterThan(0);
   }, 120000);
+});
+
+// ───────────────────────── 단계 4a (시설 사고 — 끊어진 전선 · 전력 복구반) ─────────────────────────
+import { applyCallerAid } from '../src/sim/field/hazards';
+import { SCENE_BUILDERS } from '../src/sim/field/sceneRegistry';
+import { INCIDENT_PLACES } from '../src/sim/cityPlan';
+import { markRecovered, raiseProblem } from '../src/sim/events';
+
+/** 단계마다 강제로 돌릴 시설 사고 줄 (4a 전선 · 4b 수도관·싱크홀·간판) */
+const UTIL_FORCE = ['utility/wire', 'utility/main', 'utility/sinkhole', 'utility/sign'];
+/** 모든 부대를 쉬게 한 교대의 시설 사고 (quietSim 과 같은 꼴 — 시험이 부대를 손으로 보낸다) */
+function utilSim(seed: string, variant = 'wire'): { sim: Sim; I: Incident; s: Scene } {
+  const sim = new Sim(seed);
+  sim.run(3);
+  for (const u of sim.units) u.state = 'oos';
+  sim.tune.aidUnits = 0;
+  const I = createIncident(sim, { type: 'utility', variant, rng: sim.rng.fork('n8-4a:' + seed) });
+  I.reportedNode = I.truth.nodeId; I.locationKnown = true;
+  return { sim, I, s: sim.scenes[I.id]! };
+}
+const wireOf = (s: Scene) => s.props.find((p) => p.kind === 'fixture' && p.skin === 'wire')!;
+/** 편성된 그 종류의 첫 부대 (장비의 숨은 고장을 지운다 — 장비 효과·자격만 본다) */
+const formed = (sim: Sim, kind: UnitKind): Unit => { const u = sim.units.find((q) => q.kind === kind)!; for (const rid of u.crew) for (const it of sim.responders[rid].kit!) it.fault = false; return u; };
+
+describe('3·5·9·10 시설 사고 — 끊어진 전선 (단계 4a)', () => {
+  it('3 전력 복구반이 먼저 닿으면 길가에서 기다리고(한 번), 펌프차가 닿으면 들어가 전선을 고친다 — 지휘하지 않고, 고친 것은 지휘관에게 강제 보고된다', () => {
+    const { sim, I, s } = utilSim('N8-4A-WAIT');
+    const p = wireOf(s);
+    expect(p.live).toBe(true); expect(s.outdoor).toBe(true); expect(s.laneRows).toEqual([8, 9, 10, 11]);
+    const pc = formed(sim, 'powerCrew');
+    placeAt(sim, pc, I); dispatchUnit(sim, pc, I, 8);
+    const waits = (): number => sim.events.filter((e) => e.incidentId === I.id && e.text === `${pc.callsign}: 현장 도착 — 통제 부대를 기다립니다.`).length;
+    for (let k = 0; k < 300 && waits() === 0; k++) sim.step();
+    sim.run(6);
+    expect(waits(), '기다림 기록은 한 번').toBe(1);
+    expect(I.firstArrivalAt).toBeLessThan(0);
+    expect(s.agents.some((a) => a.unitId === pc.id)).toBe(false);
+    const eng = formed(sim, 'engine');
+    placeAt(sim, eng, I); dispatchUnit(sim, eng, I, 8);
+    for (let k = 0; k < 400 && pc.state !== 'onscene'; k++) sim.step();
+    expect(pc.state).toBe('onscene');
+    expect(sim.responders[s.commanderRid].unitId, '지휘관은 펌프차').toBe(eng.id);
+    for (let k = 0; k < 3000 && p.live; k++) sim.step();
+    expect(p.live, '전력 복구반이 전선을 고쳤다').toBe(false);
+    const fixer = sim.events.find((e) => e.incidentId === I.id && e.text.startsWith('끊어진 전선의 전원을 차단하고'));
+    expect(fixer && sim.responders[fixer.rid].dept).toBe('civil');
+    const cmd = (): FieldAgent => s.agents.find((a) => a.rid === s.commanderRid)!;
+    for (let k = 0; k < 60 && cmd().beliefs.val<{ active: boolean }>('haz', p.id)?.active !== false; k++) sim.step();
+    expect(cmd().beliefs.val<{ active: boolean }>('haz', p.id)?.active, '지휘관이 차단을 안다 (강제 보고)').toBe(false);
+    for (const a of s.agents) expect(a.isCommander && sim.responders[a.rid].dept === 'civil').toBe(false);
+  });
+  it('5 시설 사고는 강제 교대(S0·S1)에서 모두 닫히고 한계 시간·방치·무대응이 아니다 · (b)(d) 전력 복구반이 없으면 원격 차단 요청(UTIL_LATE) → 차단 → 닫힘(성공이 아니다)', () => {
+    for (const key of UTIL_FORCE) for (const seed of ['S0', 'S1']) {
+      const sim = new Sim(seed, NORMAL, 1200, { force: key });
+      const I = runUntilClosed(sim, forced(sim));
+      expect(I && I.phase, `${key} ${seed}`).toBe('closed');
+      expect(['timeout', 'abandoned', 'noresponse'].indexOf(I!.closeReason), `${key} ${seed}: ${I!.closeReason}`).toBe(-1);
+    }
+    const sim = new Sim('N8-4A-LATE', NORMAL, 1200, { force: 'utility/wire' });
+    sim.tune.aidUnits = 0;
+    formed(sim, 'powerCrew').state = 'oos';
+    let I: Inc | undefined;
+    for (let k = 0; k < 6000 && !(I && I.problems.some((q) => q.code === 'UTIL_LATE')); k++) { sim.step(); I = sim.incidents.find(forced(sim)); }
+    expect(I && I.problems.some((q) => q.code === 'UTIL_LATE'), '원격 차단 요청').toBe(true);
+    const s = sim.scenes[I!.id]!;
+    expect(wireOf(s).live).toBe(true);
+    s.kinds!.remoteAt = sim.t;      // (d) 원격 차단 시각을 지금으로
+    const J = runUntilClosed(sim, forced(sim), 2500)!;
+    expect(wireOf(s).live).toBe(false);
+    expect(J.phase).toBe('closed'); expect(J.closeReason).toBe('resolved');
+    expect(J.problems.find((q) => q.code === 'UTIL_LATE')!.recovered).toBe(true);
+    expect(sim.events.some((e) => e.incidentId === J.id && e.text.includes('원격으로 그 구간의 전기를 끊었습니다'))).toBe(true);
+    expect(J.result!.grade === 'success', '대신한 조치(+0.5)는 성공이 아니다').toBe(false);
+  });
+  it('5(c) 마지막 부대가 떠났는데 살아 있는 전선이 남았다: 전력 복구 수요를 다시 낸다 · 와 있는 전력 복구반이 손을 놓고 있으면 통제 부대를 부른다', () => {
+    for (const withCrew of [false, true]) {
+      const { sim, I, s } = utilSim('N8-4A-LEFT');
+      const amb = formed(sim, 'bls');
+      land(sim, I, amb);
+      const p = wireOf(s);
+      const cmd = s.agents.find((a) => a.rid === s.commanderRid)!;
+      cmd.beliefs.merge(mkFact('haz', p.id, { kind: 'wire', active: true, x: p.x, y: p.y, r: 2.2 }, '시험', sim.t, 1, true, '전선'));
+      if (withCrew) { const pc = formed(sim, 'powerCrew'); land(sim, I, pc); for (const a of s.agents) if (a.unitId === pc.id) { a.task = null; a.nextThink = sim.t + 99; } }
+      for (const a of s.agents) if (a.unitId === amb.id) a.status = 'left';
+      amb.state = 'returning';
+      tickScene(sim, s);
+      if (!withCrew) expect(I.unmet.utilPower ?? 0, '전력 복구 수요').toBe(1);
+      else { expect(I.unmet.utilPower ?? 0).toBe(0); expect((I.unmet.law ?? 0) + (I.unmet.suppression ?? 0), '통제 부대').toBe(1); }
+    }
+  });
+  it('9 새 임무(복구·통제)의 되풀이 없음: 같은 대원에게 같은 지시가 25초 안에 다시 가지 않고, 같은 대상의 작업이 60초 안에 두 번 넘게 새로 생기지 않는다 · 전력 복구반을 부른다', () => {
+    let fixed = 0;
+    for (const seed of ['S2', 'S4', 'S5']) {
+      const sim = new Sim(seed, NORMAL, 1200, { force: 'utility/wire' });
+      const made = new Map<string, number[]>(), seenW = new Set<number>(), said = new Map<string, number>();
+      let bad = '', seen = 0, J: Inc | undefined;
+      for (let k = 0; k < 6000 && !sim.ended; k++) {
+        sim.step();
+        J = sim.incidents.find(forced(sim));
+        if (!J) continue;
+        const s = sim.scenes[J.id];
+        if (s) for (const w of s.board) {
+          if (seenW.has(w.id) || (w.kind !== 'repair' && w.kind !== 'cordon')) continue;
+          seenW.add(w.id);
+          const key = `${w.kind}:${w.prop}:${w.tile}`, ts = made.get(key) ?? [];
+          ts.push(sim.t); made.set(key, ts);
+          if (ts.filter((t) => t > sim.t - 60).length > 2) bad ||= `${seed} ${key} 60초에 셋`;
+        }
+        for (; seen < sim.events.length; seen++) {
+          const e = sim.events[seen];
+          if (e.incidentId !== J.id || !/(시설물 복구|위험 반경 통제) 맡아라/.test(e.text)) continue;
+          const last = said.get(e.text);
+          if (last !== undefined && e.t - last < 25) bad ||= `${seed} "${e.text}" ${(e.t - last).toFixed(1)}초 만에 다시`;
+          said.set(e.text, e.t);
+        }
+        if (J.phase === 'closed') break;
+      }
+      expect(bad, bad).toBe('');
+      expect(J && J.phase).toBe('closed');
+      const s = sim.scenes[J!.id]!;
+      if (!wireOf(s).live && J!.everAssigned.some((uid) => sim.units[uid].kind === 'powerCrew')) fixed++;
+      expect(J!.everAssigned.some((uid) => sim.units[uid].caps.utilPower >= 0.7) || J!.problems.some((q) => q.code === 'UTIL_LATE'), `${seed}: 전력 복구반을 불렀다`).toBe(true);
+    }
+    expect(fixed).toBeGreaterThanOrEqual(2);
+  });
+  it('10 전선 규칙: 반경에 들어간 대원은 감전(electric) · 접수 AI 의 안내를 따르면 told · 판정(살아 있는 채 한계 시간 = 미해결, 원격 차단 = 부분 성공)', () => {
+    const { sim, I, s } = utilSim('N8-4A-RULE');
+    // 접수 AI 의 '차 안에 그대로 계세요' 안내 (부대가 닿기 전에만 — applyCallerAid)
+    const k = s.kinds!;
+    k.told = false;
+    applyCallerAid(sim, I, 'wire', -1);
+    expect(k.told).toBe(true);
+    const eng = formed(sim, 'engine');
+    land(sim, I, eng);
+    sim.run(2);
+    const p = wireOf(s);
+    const a = s.agents.find((b) => b.unitId === eng.id && !b.isCommander && b.status === 'active')!;
+    a.x = a.px = p.x + 0.4; a.y = a.py = p.y; a.path = null;
+    const before = sim.responders[a.rid].injuries?.length ?? 0;
+    sim.step();
+    const inj = sim.responders[a.rid].injuries ?? [];
+    expect(inj.length).toBeGreaterThan(before);
+    expect(inj[inj.length - 1].cause).toBe('electric');
+    expect(sim.events.some((e) => e.incidentId === I.id && e.rid === a.rid && e.text.startsWith('감전!'))).toBe(true);
+    // 판정 — 다 끝난 사건처럼 둔다 (구조 대상 안전, 대원 피해 기록을 지운다)
+    for (const c of s.casualties) { c.tDiscovered = sim.t; c.where = 'safe'; c.health = 90; c.inVehicle = null; c.dead = false; }
+    for (let i = 0; i < s.fire.length; i++) s.fire[i] = 0;
+    I.reportedAt = sim.t; I.firstDispatchAt = sim.t; I.firstArrivalAt = sim.t;
+    for (const e of sim.events) if (e.incidentId === I.id && e.problem === 'RESPONDER_HURT') e.problem = null;
+    expect(evaluate(sim, I, 'timeout').grade, '살아 있는 채 한계 시간').toBe('unresolved');
+    p.live = false;
+    expect(evaluate(sim, I, 'resolved').grade).toBe('success');
+    raiseProblem(sim, I, 'UTIL_LATE', '시험', { role: 'DISPATCH', actor: '시험', text: '시험' });
+    markRecovered(I, 'UTIL_LATE', '원격 차단으로 위험을 없앴습니다');
+    expect(evaluate(sim, I, 'resolved').grade, '원격 차단').toBe('partial');
+  });
+});
+
+describe('18 새 유형의 자리 (단계 4a 부터)', () => {
+  it('새 유형마다 TYPE_DEFS·TYPE_COLOR·INCIDENT_PLACES·한계 시간이 있고, 모든 줄에 현장 생성기가 등록돼 있다', () => {
+    new Sim('N8-18');
+    for (const t of ['utility'] as IncidentType[]) {
+      expect(TYPE_DEFS[t].limit, t).toBeGreaterThan(0);
+      expect(TYPE_COLOR[t], t).toMatch(/^#[0-9a-f]{6}$/);
+      expect(Object.keys(INCIDENT_PLACES[t]).length, t).toBeGreaterThan(0);
+      const lines = SCENARIOS.filter((q) => q.type === t);
+      expect(lines.length, t).toBeGreaterThan(0);
+      for (const q of lines) expect(SCENE_BUILDERS[`${q.type}/${q.variant}`], `${q.type}/${q.variant}`).toBeTruthy();
+    }
+    expect(SCENARIOS.filter((q) => q.type === 'utility').map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...UTIL_LINES].sort());
+  });
+});
+
+// ───────────────────────── 단계 4b (수도관 파열 · 싱크홀 · 떨어질 듯한 간판 · 가스 누출의 공급 차단 확인) ─────────────────────────
+import { HOLE, MAIN, holeChance } from '../src/sim/field/rules/kinds';
+import { GAS_WAIT } from '../src/sim/field/orders/kinds';
+
+const fixOf = (s: Scene, skin: string) => s.props.find((p) => p.kind === 'fixture' && p.skin === skin)!;
+
+describe('5·10 시설 사고 — 수도관 · 싱크홀 · 간판 (단계 4b)', () => {
+  it('10 지하 침수의 오르내림 (손 계산): 관이 살아 있으면 1초에 +0.004, 잠긴 뒤 −0.006 · 0.5 를 넘으면 지하의 사람이 다치고 0.7 을 넘으면 고립된다', () => {
+    const { sim, I, s } = utilSim('N8-4B-MAIN', 'main');
+    const k = s.kinds!, pipe = fixOf(s, 'pipe');
+    expect(pipe.live).toBe(true); expect(k.base).toBeGreaterThanOrEqual(0);
+    expect(s.regions[k.base!].name).toBe('지하 주차장');
+    expect(s.stairTo.some((v) => v >= 0), '로비와 지하는 계단으로 이어진다').toBe(true);
+    k.flood = 0;
+    sim.run(50);      // 10초 (틱 0.2초)
+    expect(k.flood!).toBeCloseTo(10 * MAIN.rise, 3);
+    pipe.live = false;
+    sim.run(20);      // 4초
+    expect(k.flood!).toBeCloseTo(Math.max(0, 10 * MAIN.rise - 4 * MAIN.drain), 3);
+    // 깊은 물: 지하에 걸을 수 있는 사람을 두고 0.8 로
+    const base = s.regions[k.base!], tile = base.tiles[Math.floor(base.tiles.length / 2)];
+    const c = addCas(s, tile % s.w, (tile / s.w) | 0, 'mobile', 100, 0, 0);
+    pipe.live = true; k.flood = 0.8;
+    sim.run(10);
+    expect(c.mob, '침수 0.7 을 넘으면 고립').toBe('trapped');
+    expect(c.health).toBeLessThan(100);
+    expect(c.injuries?.some((j) => j.cause === 'exposure')).toBe(true);
+    expect(sim.events.some((e) => e.incidentId === I.id && e.text.includes('허리 위로 차올랐습니다'))).toBe(true);
+  });
+  it('10 싱크홀: 넓어질 확률은 띠 위의 사람·차로 오르고 보강으로 내린다(손 계산) · 넓어지면 띠 위의 사람은 새 반경 밖의 걸을 수 있는 칸으로 밀려나며 다친다', () => {
+    expect(holeChance(0, 0, false)).toBeCloseTo(0.06, 6);
+    expect(holeChance(2, 1, false)).toBeCloseTo(0.06 + 0.16 + 0.1, 6);
+    expect(holeChance(1, 0, true)).toBeCloseTo(0.06 + 0.08 - 0.12, 6);
+    expect(holeChance(0, 0, true)).toBeLessThan(holeChance(0, 0, false));
+    const { sim, I, s } = utilSim('N8-4B-HOLE', 'sinkhole');
+    const k = s.kinds!, hole = fixOf(s, 'hole'), r0 = k.hazR!;
+    for (let i = 0; i < s.tiles.length; i++) if (Math.hypot((i % s.w) - hole.x, ((i / s.w) | 0) - hole.y) <= r0 && ((i / s.w) | 0) >= 8 && ((i / s.w) | 0) <= 12) expect(s.tiles[i], `구멍 안 칸 ${i}`).toBe(T.VOID);
+    for (const c of s.casualties) expect(staticPass(s.tiles[Math.round(c.y) * s.w + Math.round(c.x)]), '빠진 사람은 걸을 수 없는 칸에').toBe(false);
+    const eng = formed(sim, 'engine');
+    land(sim, I, eng);
+    // 띠 위(반경 r ~ r+1)의 걸을 수 있는 칸에 대원 하나를 세운다
+    let spot = -1;
+    const keep = k.keep ?? [];
+    for (let i = 0; i < s.tiles.length && spot < 0; i++) { const d = Math.hypot((i % s.w) - hole.x, ((i / s.w) | 0) - hole.y); if (d > r0 + 0.2 && d <= r0 + 0.9 && staticPass(s.tiles[i]) && s.propAt[i] < 0 && keep.indexOf(i) < 0 && ((i / s.w) | 0) >= 8 && ((i / s.w) | 0) <= 12) spot = i; }
+    expect(spot).toBeGreaterThanOrEqual(0);
+    const a = s.agents.find((b) => b.unitId === eng.id && !b.isCommander)!;
+    const base0 = HOLE.base;
+    HOLE.base = 1;      // 이번 10초에 반드시 넓어지게 (흐름은 그대로 한 번 뽑는다)
+    try {
+      for (let t = 0; t < 60 && (k.hazR ?? 0) <= r0; t++) { a.x = a.px = spot % s.w; a.y = a.py = (spot / s.w) | 0; a.path = null; a.nextThink = sim.t + 99; sim.step(); }
+    } finally { HOLE.base = base0; }
+    expect(k.hazR!).toBeCloseTo(r0 + 1, 6);
+    expect(staticPass(s.tiles[Math.round(a.y) * s.w + Math.round(a.x)]), '밀려난 자리는 걸을 수 있는 칸').toBe(true);
+    expect(Math.hypot(a.x - hole.x, a.y - hole.y)).toBeGreaterThan(r0 + 1);
+    expect(sim.responders[a.rid].injuries?.some((j) => j.cause === 'fall')).toBe(true);
+    expect(s.tiles[7 * s.w + hole.x], '맨 바깥 보도는 꺼지지 않는다').not.toBe(T.VOID);
+  });
+  it('10 간판이 통제 없이 떨어지면 지나던 행인이 다친 구조 대상으로 붙고(ESCALATION), 잔해가 놓이며, 지휘관에게 강제 보고된다', () => {
+    const { sim, I, s } = utilSim('N8-4B-SIGN', 'sign');
+    const p = fixOf(s, 'sign');
+    land(sim, I, formed(sim, 'patrol'));
+    const n0 = s.casualties.length;
+    p.leak = 0.999; p.leakRate = 0.01;
+    sim.run(6);
+    expect(p.live).toBe(false);
+    expect(s.casualties.length, '지나던 행인').toBe(n0 + 1);
+    expect(s.casualties[n0].injuries?.some((j) => j.cause === 'crush')).toBe(true);
+    expect(I.problems.some((q) => q.code === 'ESCALATION')).toBe(true);
+    expect(s.props.some((q) => q.kind === 'roadDebris' && q.skin === 'signDebris' && !q.removed)).toBe(true);
+    const cmd = s.agents.find((b) => b.rid === s.commanderRid)!;
+    sim.run(10);
+    expect(cmd.beliefs.val<{ active: boolean }>('haz', p.id)?.active).toBe(false);
+  });
+  it('5(a)(b) 부대 규모 1 의 간판도 닫힌다 · 수도 복구반이 없으면 120초 뒤 소방이 제수밸브를 잠근다(UTIL_LATE — 성공이 아니다)', () => {
+    for (const seed of ['S0', 'S1']) {
+      const sim = new Sim(seed, { ...NORMAL, resources: 1 }, 1200, { force: 'utility/sign' });
+      const J = runUntilClosed(sim, forced(sim));
+      expect(J && J.phase, `규모 1 ${seed}`).toBe('closed');
+      expect(['timeout', 'abandoned', 'noresponse'].indexOf(J!.closeReason), `${seed}: ${J!.closeReason}`).toBe(-1);
+    }
+    const sim = new Sim('N8-4B-VALVE', NORMAL, 1200, { force: 'utility/main' });
+    sim.tune.aidUnits = 0;
+    formed(sim, 'waterCrew').state = 'oos';
+    const J = runUntilClosed(sim, forced(sim), 7000)!;
+    expect(J.phase).toBe('closed');
+    expect(['timeout', 'abandoned', 'noresponse'].indexOf(J.closeReason), J.closeReason).toBe(-1);
+    const late = J.problems.find((q) => q.code === 'UTIL_LATE');
+    expect(late, '소방의 제수밸브').toBeTruthy();
+    expect(late!.recovered).toBe(true);
+    expect(fixOf(sim.scenes[J.id]!, 'pipe').live).toBe(false);
+    expect(J.result!.grade === 'success').toBe(false);
+  });
+  it('가스 누출의 공급 차단 확인(§5.3.8): 분석이 가스 복구 수요를 더하고, 가스 복구반이 없으면 지운다(NO_UNIT 없음) · 밸브를 막은 뒤 가스 복구반이 오지 않으면 120초 뒤 거둔다', () => {
+    const sim = new Sim('N8-4B-GAS', NORMAL, 1200, { force: 'hazmat/std' });
+    sim.tune.aidUnits = 0;
+    formed(sim, 'gasCrew').state = 'oos';
+    const J = runUntilClosed(sim, forced(sim), 7000)!;
+    expect(J.phase).toBe('closed');
+    expect(['timeout', 'abandoned', 'noresponse'].indexOf(J.closeReason), J.closeReason).toBe(-1);
+    expect(J.assessment!.needs.utilGas ?? 0, '분석의 선택 수요').toBe(1);
+    expect(sim.events.some((e) => e.incidentId === J.id && e.problem === 'NO_UNIT' && e.text.includes('가스 복구')), '선택 수요는 대기열에 올리지 않는다').toBe(false);
+    expect(J.everAssigned.some((uid) => sim.units[uid].kind === 'gasCrew')).toBe(false);
+    const s = sim.scenes[J.id]!;
+    expect(s.board.some((w) => w.kind === 'repair' && w.status === 'done'), '가스 복구반 없이 확인을 마친 일이 없다').toBe(false);
+    expect(GAS_WAIT).toBe(120);
+  });
 });

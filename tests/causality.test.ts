@@ -481,7 +481,8 @@ describe('I1-b 0단계: 기록만 잇기', () => {
   it('통제를 만난 출동(ROUTE_BLOCKED)은 막은 사건의 통제 기록을, 늦은 도착(TRAFFIC_DELAY)은 그 ROUTE_BLOCKED 를 원인으로', () => {
     // 평소 교대에서는 대개 자기 사건의 통제를 만난다(알려진 통제는 경로가 처음부터 피한다 — 사건 사이의 경우는 아래 시험이 만든다)
     let own = 0, td = 0;
-    for (const seed of ['S0', 'S1', 'S3']) {
+    // (N8 단계 4a·4b) S0 → S5·S7: 시설 사고가 짧은 사건에 들어 S0 의 가스 누출 현장이 무너지며 남긴 건물 잔해(I1-b C2 — 장애물의 기록으로 잇는 갈래, 막은 사건의 blockedEdge 가 없다)에 부대가 되돌아섰다
+    for (const seed of ['S1', 'S3', 'S5', 'S7']) {
       const { sim } = probedShift(seed);
       for (const I of sim.incidents) for (const p of I.problems) {
         if (p.code === 'ROUTE_BLOCKED') {
@@ -631,8 +632,8 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
     while (!sim.ended && n++ < 20000) { sim.step(); for (const g of sim.world.signals) { expect(g.t).toBe(sim.t); all.push(g); } }
     return all;
   }
-  it('세계 상태는 걸린 규칙이 바꾼 것 말고는 처음 값 그대로이고, 신호는 상태를 바꾼 자리에서 그 기록과 함께 간다 (보통 S3)', () => {
-    const sim = new Sim('S3', NORMAL, 1200);
+  it('세계 상태는 걸린 규칙이 바꾼 것 말고는 처음 값 그대로이고, 신호는 상태를 바꾼 자리에서 그 기록과 함께 간다 (보통 S6)', () => {
+    const sim = new Sim('S6', NORMAL, 1200);      // (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 S3 에 법칙 사건이 생겼다 — 같은 조건(연기 알림 · 규칙이 만든 사건 없음)의 S6 으로
     const fresh = JSON.stringify(initWorld(sim));
     expect(sim.world.zones.length).toBe(DISTRICTS.length);
     expect(sim.world.hospitals.length).toBe(sim.city.facilities.filter((f) => f.kind === 'hospital').length);
@@ -640,7 +641,7 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
     for (const h of sim.world.hospitals) expect(sim.city.facilities[h.fac].kind).toBe('hospital');
     const sigs = runCollect(sim);
     // 결과는 신호를 읽지 않고 돈 교대와 같다
-    expect(sim.report!.hash).toBe(probedShift('S3').sim.report!.hash);
+    expect(sim.report!.hash).toBe(probedShift('S6').sim.report!.hash);
     // 세계 상태: 걸린 규칙이 바꾼 것(응급실 체류 — C3) 말고는 처음 값이다. 구역은 건드리는 규칙이 없고, 규칙이 만든 사건도 없다 (끝난 틱에 닫힌 사건의 신호는 처리되지 않고 남는다)
     const w0 = JSON.parse(fresh);
     // (b3-11 C5) 큰 불이 45초 넘게 이어지면 연기가 동네를 덮는다(국지 구역 값 'smoke') — 교대 끝에 걷히지 않은 연기만 남고, 그 밖의 칸은 처음 값이다
@@ -651,7 +652,7 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
       expect(sim.events[Z.cause.smoke].tag, '연기의 원인 = 그 연기 알림').toBe('smoke');
       expect(sim.world.spans.some((q) => q.f === 'smoke' && q.cause === Z.cause.smoke), '걷히지 않은 연기는 장부 줄이 있다').toBe(true);
     }
-    expect(sim.events.some((e) => e.tag === 'smoke'), 'S3 에는 45초 넘게 이어진 큰 불이 있다').toBe(true);
+    expect(sim.events.some((e) => e.tag === 'smoke'), 'S6 에는 45초 넘게 이어진 큰 불이 있다').toBe(true);
     expect(sim.world.spawned).toBe(0);
     // (b3-4) 초과 위험·건물 노출의 칸은 법칙·상태 규칙이 걸리지 않으면 처음 값 그대로다.
     // (b3-6) 등록된 법칙 L1 — 초과 혼잡이 있던 구간에만 칸이 생긴다(평소 교대에도 정체·공사·사고의 밀림이 있다). 교대가 끝나면 기다리는 줄도 구멍도 없다
@@ -988,9 +989,10 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
 
 describe('I1-b b3-1: C6 divertRecord — 전환 배정의 실제 영향', () => {
   const LATE = /^사건 (\S+): 전환 배정 뒤 첫 도착이 예정보다 약 (\d+)초 늦었습니다\.$/;
-  it('빼앗긴 사건의 첫 도착이 예정보다 얼마나 늦었는가: DIVERTED 의 ref.lost, 10초 넘으면 그 DIVERTED 를 원인으로 한 기록 (보통 S0·S3·S7·S8)', () => {
+  it('빼앗긴 사건의 첫 도착이 예정보다 얼마나 늦었는가: DIVERTED 의 ref.lost, 10초 넘으면 그 DIVERTED 를 원인으로 한 기록 (보통 S0·S3·S7·S8·S15·S17)', () => {
     let hurtN = 0, lateN = 0, zeroN = 0, notHurt = 0;
-    for (const seed of ['S0', 'S3', 'S7', 'S8']) {
+    // (N8 단계 4a·4b) S15·S17 을 더했다 (표본만 넓힌다): 시설 사고가 짧은 사건에 들어 S0·S3·S7·S8 의 전환 배정 넷이 모두 10초 안에 메워졌다
+    for (const seed of ['S0', 'S3', 'S7', 'S8', 'S15', 'S17']) {
       const { sim, probe } = probedShift(seed);
       const rows = divertAnalysis(sim.events, sim.incidents, sim.units, probe.etaLog, sim.t).rows;
       for (const J of sim.incidents) {
@@ -1536,8 +1538,8 @@ describe('I1-b b4: 보고서의 내력 문장 (§3.9 · §6 I1-b 15)', () => {
     expect(lineN).toBeGreaterThan(20);
     for (const k of ['hz', 'story', 'children', 'wear', 'blocked']) expect(kinds.has(k), k).toBe(true);
   }, 180000);
-  it('법칙 사건도 이야기 연쇄도 없는 교대에는 "인과:" 줄이 없다 (보통 S0)', () => {
-    const sim = shiftOf('S0');
+  it('법칙 사건도 이야기 연쇄도 없는 교대에는 "인과:" 줄이 없다 (보통 S2)', () => {
+    const sim = shiftOf('S2');      // (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 S0 에 법칙 사건이 생겼다 — 법칙·이야기 연쇄가 없는 S2 로
     expect(sim.incidents.some((J) => J.hz !== undefined || J.csq !== undefined)).toBe(false);
     expect(sim.report!.summary.some((t) => t.startsWith('인과:'))).toBe(false);
   }, 60000);
@@ -1639,8 +1641,9 @@ describe('I1-b b5: 완료 조건의 정해진 시드 (§5 · §6 I1-b 8)', () =>
     }
     return out;
   }
-  it('3단계 사례: 한 사건에서 서로 다른 사건·시스템으로 세 단계 넘게 퍼진 길이 법칙 사건을 지난다 — 보통 S33(가스 폭발 → 옆 건물로 옮겨붙은 불 → 그 불의 연기 → 연기를 마신 주민) · 보통 S26(화재 → 연기 → 연기 덮인 길의 사고 → 그 사고에 밀린 길의 사고)', () => {
-    const want: [string, string[]][] = [['S33', ['heatSpread', 'smokeIll']], ['S26', ['roadCrash']]];
+  it('3단계 사례: 한 사건에서 서로 다른 사건·시스템으로 세 단계 넘게 퍼진 길이 법칙 사건을 지난다 — 보통 S293(건물 화재 → 옆 건물로 옮겨붙은 불 → 그 불의 연기 → 연기를 마신 주민) · 보통 S5(화재에서 퍼진 길이 공사 통제에 밀린 길의 사고를 지난다)', () => {
+    // (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 S33·S26 의 사건이 바뀌었다 — 같은 길(옮겨붙은 불 + 연기를 마신 주민 · 몰린 길의 사고)이 있는 시드로 (표본을 넓혀 찾았다: S0~S529)
+    const want: [string, string[]][] = [['S293', ['heatSpread', 'smokeIll']], ['S5', ['roadCrash']]];
     for (const [seed, laws] of want) {
       const sim = probedShift(seed).sim;
       const hits = spreadThrough(sim).filter((x) => x.incs.some((J) => J !== x.I && J.hz !== undefined));
@@ -1653,9 +1656,9 @@ describe('I1-b b5: 완료 조건의 정해진 시드 (§5 · §6 I1-b 8)', () =>
       for (const J of h.incs) if (J.hz && J.hz.src[0].inc >= 0) expect(chainLines(sim, J)[0].text).toContain(`사건 ${sim.incidents[J.hz.src[0].inc].code}`);
     }
   }, 120000);
-  it('법칙 사건의 통제를 만난 다른 사건의 부대 (완료 조건 2): ROUTE_BLOCKED 의 원인이 그 법칙 사건의 통제 기록이다 — 극한 S3·S4', () => {
+  it('법칙 사건의 통제를 만난 다른 사건의 부대 (완료 조건 2): ROUTE_BLOCKED 의 원인이 그 법칙 사건의 통제 기록이다 — 극한 S4·S7', () => {
     let n = 0;
-    for (const seed of ['S3', 'S4']) {
+    for (const seed of ['S4', 'S7']) {      // (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 극한 S3 의 사건이 바뀌었다 — 그런 부대가 있는 S7 로 (S0~S15 가운데 S7 하나)
       const sim = probedShift(seed, parseDifficulty('extreme')!).sim;
       const lawBlock = new Map<number, Incident>();
       for (const J of sim.incidents) if (J.hz && J.blockEv !== undefined) lawBlock.set(J.blockEv, J);

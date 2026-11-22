@@ -240,6 +240,8 @@ describe('처음 상태의 원인', () => {
     ['medical', 'trauma', 'blunt'], ['medical', 'arrest', 'illness'], ['collapse', undefined, 'crush'], ['collapse', 'elevator', 'crush'], ['collapse', 'gasblast', 'blast'],
     ['hazmat', undefined, 'toxic'], ['search', 'hiker', 'exposure'], ['water', undefined, 'drown'], ['armed', 'shooter', 'gunshot'], ['armed', 'robbery', 'gunshot'], ['armed', 'domestic', 'blunt'],
     ['armed', 'bomb', 'blunt'],      // 폭발물 현장의 사람들은 멀쩡하게 시작한다 (기록이 붙지 않는 쪽을 본다)
+    ['utility', 'wire', 'electric'],      // (N8 §5.14) 감전된 행인 — 전선이 덮친 차 안의 사람은 멀쩡하다
+    ['utility', 'sinkhole', 'fall'], ['utility', 'sign', 'crush'],      // (단계 4b) 구멍에 빠진 사람 · 떨어진 간판에 다친 행인 (수도관의 지하 사람은 멀쩡하게 시작한다)
   ];
   it('현장이 만들어질 때 다쳐 있는 사람(체력 < 100 이거나 출혈 > 0)에게만 처음 원인의 기록 한 줄과 출혈 원인이 붙는다', () => {
     let hurtSeen = 0, wholeSeen = 0;
@@ -2149,7 +2151,7 @@ describe('단계 4b — 다친 대원은 가벼운 일만 (§2.5 · §3.6 · 시
   it('fitFor: 걸을 수 있는 다친 대원(injured)에게 무거운 일은 0, 가벼운 일(교통 통제)은 맡는다. 처치 보조는 대상이 안전 구역에 있을 때만. 목록은 injury.LIGHT_WORK 한 곳', () => {
     const { sim, s, of } = crewScene('INJ-lw', 'traffic', 'std', ['patrol', 'als']);
     const a = of('patrol'), r = fresh(sim, a, 55);
-    expect([...LIGHT_WORK].sort()).toEqual(['hookup', 'interview', 'negotiate', 'perimeter', 'traffic', 'treat', 'treatMate']);
+    expect([...LIGHT_WORK].sort()).toEqual(['cordon', 'hookup', 'interview', 'negotiate', 'perimeter', 'traffic', 'treat', 'treatMate']);
     const tw = workItem(s, 'traffic', sim.t, { tile: 0 });
     expect(fitFor(sim, s, a, tw)).toBeGreaterThan(0);
     r.status = 'injured';

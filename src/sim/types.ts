@@ -7,7 +7,8 @@ import type { BeliefStore } from './field/beliefs';
 export interface Pt { x: number; y: number }
 export type Dept = 'fire' | 'ems' | 'police'
   | 'civil';      // (N8 §5.3) 유관 기관(전력·가스·수도 복구반·견인차): 지휘하지 않고 첫 도착으로 세지 않으며 자기 일(repair·towAway)만 한다
-export type IncidentType = 'fire' | 'traffic' | 'search' | 'armed' | 'medical' | 'collapse' | 'hazmat' | 'water';
+export type IncidentType = 'fire' | 'traffic' | 'search' | 'armed' | 'medical' | 'collapse' | 'hazmat' | 'water'
+  | 'utility';      // (N8 단계 4a) 시설 사고 — 끊어진 전선·수도관 파열·싱크홀·간판 (TYPE_ORDER 의 끝)
 export type District = 'residential' | 'commercial' | 'industrial' | 'outskirts';
 export type Weather = 'clear' | 'rain' | 'fog' | 'night';
 
@@ -1323,3 +1324,20 @@ export interface CasBelief {
 // commander.request 의 이름표·NEED_MIN·needFor(decontam → decon) · scripts/metrics.ts NEED_KEYS
 export interface UnitCaps { decon: number }      // 제독
 export interface Needs { decon: number }
+
+// ───────────────────────── 사건 종류 다양화 (N8 단계 4a·4b — 시설 사고의 진실 칸) ─────────────────────────
+// docs/specs/N8-incident-kinds.md §4.2. 설계서 §5.8 의 KindsState 에 없던 칸 — 세계 규칙(field/rules/kinds.ts)만 읽고 쓴다. 판단 파일은 s.kinds 를 읽지 않는다 (시험 4).
+// 현장 생성기가 그 시나리오의 칸을 모두 채운 리터럴로 만든다 (시설 사고 현장만 — 자주 도는 객체가 아니다)
+export interface KindsState {
+  hazR?: number;                                  // 전선: 위험 반경 (칸 — 비 오는 날 +1)
+  exitAt?: number;                                // 전선: 차 안 사람이 "내리지 말라"를 듣지 못하면 내리려 하는 시각
+  tellT?: number;                                 // 전선: 차에서 6칸 안·반경 밖에 대원이 머문 시간 (초 — 3초면 알렸다)
+  needSince?: number;                             // 전선·수도관: 복구반이 오지 않는 채 복구가 필요해진 시각 (-1 = 아니다)
+  remoteReq?: number;                             // 전선: 관제가 원격 차단을 요청한 시각 (-1 = 아직)
+  sparkT?: number;                                // 전선: 불꽃이 불로 옮겨붙는지 본 마지막 시각 (1초에 한 번)
+  base?: number;                                  // 수도관: 지하 주차장 구역 id
+  wetTold?: number;                               // 수도관: 지하 침수를 알린 단계 (0 아직 · 1 무릎 · 2 허리)
+  holeR0?: number;                                // 싱크홀: 처음 반경 (넓어져도 처음 + 2 까지 — hazR 이 지금 반경)
+  keep?: number[];                                // 싱크홀: 꺼지지 않는 칸 (드러난 관·밸브 칸과 그 옆 한 칸)
+  zone?: number[];                                // 간판: 낙하 구역의 칸
+}

@@ -192,7 +192,7 @@ describe('가 보아야 아는 장애물', () => {
     const wf = weatherSpeedFactor(s);
     const big = s.units.find((q) => q.kind === 'engine')!, small = s.units.find((q) => q.kind === 'patrol')!, amb = s.units.find((q) => q.kind === 'als' || q.kind === 'bls')!;
     expect(big.heavy).toBe(true); expect(small.heavy).toBeFalsy(); expect(amb.heavy).toBeFalsy();
-    expect(s.units.filter((q) => q.heavy).map((q) => q.kind).sort().filter((k, i, a) => a.indexOf(k) === i)).toEqual(['engine', 'hazmat', 'ladder', 'rescue']);
+    expect(s.units.filter((q) => q.heavy).map((q) => q.kind).sort().filter((k, i, a) => a.indexOf(k) === i)).toEqual(['engine', 'hazmat', 'ladder', 'powerCrew', 'rescue', 'waterCrew']);      // (N8 단계 4a·4b) 전력 복구반의 버킷 트럭·수도 복구차도 큰 차 (resources.HEAVY)
     // 곧장 가는 길이 그 골목 하나인 이면 도로
     let e!: RoadEdge, ob = null as ReturnType<typeof addObstacle>;
     for (const q of s.city.edges) {

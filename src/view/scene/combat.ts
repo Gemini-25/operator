@@ -750,10 +750,12 @@ export function drawCuffs(cv: CombatView): void {
       g.beginPath(); g.moveTo(P(c.ox, ts), P(c.oy ?? hp.y, ts)); g.lineTo(x, y); g.stroke(); g.setLineDash([]);
       const sp = fxSprites(), d = ts * (0.6 + 0.6 * k); g.globalAlpha = 0.45 * (1 - k); g.drawImage(sp.puff, x - d / 2, y - d / 2 + ts * 0.2, d, d); g.globalAlpha = 1;
     }
-    if (a < 0.3) { const k = a / 0.3; g.strokeStyle = `rgba(255,255,255,${0.9 * (1 - k)})`; g.lineWidth = Math.max(1.5, ts * 0.05); g.beginPath(); g.arc(x, y - ts * 0.9, ts * (0.15 + 0.35 * k), 0, 6.2832); g.stroke(); }
+    // (N8 단계 11 — 그림만) 수갑은 용의자 알약(머리 위 0.6~1.0칸 — renderScene) 위에 둔다: 0.9칸이면 알약의 '· 검거' 글자를 덮었다(치안의 여러 명 검거에서 보였다). 협상 풍선(1.4칸)과 같은 높이
+    const cy0 = y - ts * 1.4;
+    if (a < 0.3) { const k = a / 0.3; g.strokeStyle = `rgba(255,255,255,${0.9 * (1 - k)})`; g.lineWidth = Math.max(1.5, ts * 0.05); g.beginPath(); g.arc(x, cy0, ts * (0.15 + 0.35 * k), 0, 6.2832); g.stroke(); }
     const sc = a < 0.15 ? a / 0.15 : 1, al = a > 1.35 ? clamp01(1 - (a - 1.35) / 0.5) : 1;
     const size = ts * 0.62 * sc;
-    g.save(); g.translate(x - size / 2, y - ts * 0.9 - size / 2); g.scale(size / 24, size / 24); g.globalAlpha = al;
+    g.save(); g.translate(x - size / 2, cy0 - size / 2); g.scale(size / 24, size / 24); g.globalAlpha = al;
     g.fillStyle = 'rgba(8,13,18,0.85)'; g.beginPath(); g.arc(12, 12, 12.5, 0, 6.2832); g.fill();
     g.strokeStyle = '#eef3f7'; g.lineWidth = 2.2;
     if (typeof Path2D !== 'undefined') { g.stroke(new Path2D(CUFF_PATH)); }

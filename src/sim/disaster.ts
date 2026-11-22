@@ -14,6 +14,7 @@ import { DISASTER_KINDS, DISASTER_NAME } from './difficulty';
 import type { DisasterKind } from './difficulty';
 import type { Sim } from './engine';
 import { emit } from './events';
+import { placeUsable } from './placeUse';      // (I2 단계 5) 이어받은 출입 통제·무너짐 (잎 모듈)
 import { createIncident } from './incidents';
 import type { SpawnOpts } from './incidents';
 import type { Rng } from './rng';
@@ -66,6 +67,8 @@ export interface DisasterState {
   lastEv: number;                // 마지막 재난 알림 기록 (-1). 재난이 일으킨 사건의 발생 기록이 원인으로 가리킨다 — 판단은 읽지 않는다
   darkBump: number;              // (b3-5) 정전이 얹은 혼잡의 장부 줄 (traffic.noteBump 의 id, -1 = 없다)
   levelEv: number;               // (b3-12 L6) 홍수의 충격 알림(강이 넘치기 시작했다) — 물이 차올라 느려진 구간의 'level' 장부와 잠긴 지하 기록의 원인 (-1)
+  // ── 교대 간 지속 (I2 §3.5) ──
+  damaged: number[];             // 이 교대에 재난이 통제한 적이 있는 구간 (통제한 순서, 한 번씩 — 풀린 뒤에도 남는다). 기록만 한다 — 다음 교대의 복구 공사(persist.roadsNext)가 읽는다
 }
 
 /** 재난 하나가 일으키는 사건 수의 상한 */
@@ -93,6 +96,7 @@ function plan(sim: Sim, kind: DisasterKind, rng: Rng): DisasterState {
     kind, name: DISASTER_NAME[kind], phase: 'calm', tWarn: 0, tImpact: 0, tEnd: 0, intensity: 0, rng,
     spawned: [], closedEdges: [], nextAt: Infinity, log: [], closedTotal: 0, queue: [], timed: [], done: {},
     lastEv: -1, darkBump: -1, levelEv: -1,
+    damaged: [],      // (I2)
   };
   if (kind === 'typhoon') { d.tWarn = L * rng.range(0.1, 0.18); d.tImpact = d.tWarn + rng.range(90, 120); d.tEnd = d.tImpact + 420; }
   else if (kind === 'flood') {
@@ -172,6 +176,7 @@ function closeEdge(sim: Sim, d: DisasterState, e: RoadEdge, why: string, dry = f
   if (e.closed || !detour(sim, e, dry)) return false;
   e.closed = true; e.closedReason = 'disaster';
   d.closedEdges.push(e.id); d.closedTotal++;
+  if (d.damaged.indexOf(e.id) < 0) d.damaged.push(e.id);      // (I2 §3.5) 기록만 — 난수·기록 없음. 다음 교대가 이 구간을 복구 공사로 이어받는다
   const ev = emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 1, text: `${edgeName(sim.city, e)} 통제 — ${why}.` });
   noteRoadCause(sim, e.id, 'close', ev);      // (I1-b b3-5) 교통의 장부: 닫힘의 주인 = 이 통제 기록 (주인 사건은 없다 — 재난은 사건이 아니다)
   return true;
@@ -357,12 +362,12 @@ function geoOf(sim: Sim): Geo {
 }
 const cx = (q: Place): number => q.x + q.w / 2, cy = (q: Place): number => q.y + q.h / 2;
 
-/** 건물이나 터를 고른다. 사건이 진행 중인 건물은 쓰지 않고, 사건이 진행 중인 교차로에 딸린 건물도 되도록 피한다 */
+/** 건물이나 터를 고른다. 사건이 진행 중인 건물은 쓰지 않고, 사건이 진행 중인 교차로에 딸린 건물도 되도록 피한다. (I2) 지난 교대에 출입 통제되거나 무너진 건물도 쓰지 않는다 */
 function pickPlace(sim: Sim, d: DisasterState, weight: (q: Place) => number): Place | null {
   const nodes = new Set<number>(), used = new Set<number>();
   for (const I of sim.incidents) if (I.phase !== 'closed') { nodes.add(I.truth.nodeId); if (I.truth.placeId >= 0) used.add(I.truth.placeId); }
   const ps = sim.city.places;
-  const ws = ps.map((q) => (q.facility >= 0 || used.has(q.id) ? 0 : Math.max(0, weight(q))));
+  const ws = ps.map((q) => (q.facility >= 0 || used.has(q.id) || !placeUsable(sim, q.id, false, false) ? 0 : Math.max(0, weight(q))));      // (I2 단계 5) 이어받은 출입 통제·무너짐은 고르지 않는다 (inShift = false — 교대 안의 전소·붕괴는 createIncident 의 되고르기가 받는다)
   const strict = ws.map((v, k) => (nodes.has(ps[k].nodeId) ? 0 : v));
   if (strict.some((v) => v > 0)) return d.rng.weighted(ps, strict);
   return ws.some((v) => v > 0) ? d.rng.weighted(ps, ws) : null;

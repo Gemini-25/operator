@@ -24,7 +24,7 @@ export const GLYPH = 15;
 export const ruinOverlayVisible = (q: Place, scale: number): boolean => Math.min(q.w, q.h) * scale >= OVERLAY_PX;
 
 /** 건물의 회전 좌표계 (staticCity.ts 의 local() 과 같은 세 줄 — 그 파일은 고치지 않는다) */
-function local(ctx: CanvasRenderingContext2D, q: Place): void {
+export function local(ctx: CanvasRenderingContext2D, q: Place): void {
   ctx.translate(q.x + q.w / 2, q.y + q.h / 2);
   if (q.rot) ctx.rotate(q.rot);
 }
@@ -140,7 +140,7 @@ export function drawExpoWorld(ctx: CanvasRenderingContext2D, sim: Sim, o: WorldO
 }
 
 /** 내려앉은 지붕: 구멍(과장된 넓이) · 구멍 속 잔해와 기울어진 지붕 판 · 윤곽 밖으로 쏟아진 잔해 · 지붕의 금 · 'major' 의 외곽 틈 */
-function paintRoofHole(ctx: CanvasRenderingContext2D, q: Place, r: RuinInfo, scale: number, col: (c: string) => string): void {
+export function paintRoofHole(ctx: CanvasRenderingContext2D, q: Place, r: RuinInfo, scale: number, col: (c: string) => string): void {
   const w = q.w, h = q.h, base = ctx.globalAlpha;
   const A = Math.max(0.3, Math.min(0.85, r.frac * 2.2));      // 지붕 넓이에 대한 구멍의 몫 (과장: 실제의 약 두 배)
   const sc = Math.min(0.96, Math.sqrt((4 * A) / Math.PI));      // 타원 축 비율 (지붕 밖으로 나가지 않게)
@@ -229,7 +229,7 @@ function paintScorchedRoof(ctx: CanvasRenderingContext2D, sim: Sim, I: Incident,
 }
 
 /** (X6 §7.2) 전체 붕괴: 지붕 대신 건물 윤곽 전체가 잔해 더미 — 지붕을 덮는 잔해 바탕, 조각을 붕괴 덧그림의 두 배쯤, 끊긴 외곽선, 둘레로 쏟아진 조각 */
-function paintTotal(ctx: CanvasRenderingContext2D, q: Place, scale: number, col: (c: string) => string): void {
+export function paintTotal(ctx: CanvasRenderingContext2D, q: Place, scale: number, col: (c: string) => string): void {
   const w = q.w, h = q.h, M = Math.max(w, h), m = Math.min(w, h), id = q.id, base = ctx.globalAlpha;
   ctx.globalAlpha = base * 0.92; ctx.fillStyle = col('#5d574f');
   ctx.beginPath();      // 바탕: 윤곽보다 조금 들쭉날쭉하게
@@ -245,7 +245,7 @@ function paintTotal(ctx: CanvasRenderingContext2D, q: Place, scale: number, col:
   ctx.globalAlpha = base;
 }
 /** (X6 §7.2) 전소: 지붕 전체 그을음 + 뚫린 구멍 두셋(속에 탄 잔해) + 타다 남은 들보. 밤에도 창 불빛이 비치지 않게 덮는다 */
-function paintBurnt(ctx: CanvasRenderingContext2D, q: Place, scale: number, col: (c: string) => string): void {
+export function paintBurnt(ctx: CanvasRenderingContext2D, q: Place, scale: number, col: (c: string) => string): void {
   const w = q.w, h = q.h, m = Math.min(w, h), id = q.id, base = ctx.globalAlpha;
   ctx.globalAlpha = base * 0.7; ctx.fillStyle = col('#0e0a08'); ctx.fillRect(-w / 2, -h / 2, w, h);
   const nH = 2 + (hash2(id, 600) > 0.5 ? 1 : 0);
@@ -262,7 +262,7 @@ function paintBurnt(ctx: CanvasRenderingContext2D, q: Place, scale: number, col:
   void scale;
 }
 /** (X6 §7.2) 폭발 흔적: 건물 둘레에 깨진 유리가 반짝이는 고리와 지붕의 검은 그을음 자국 하나 */
-function paintBlasted(ctx: CanvasRenderingContext2D, q: Place, scale: number, col: (c: string) => string, timeMs: number): void {
+export function paintBlasted(ctx: CanvasRenderingContext2D, q: Place, scale: number, col: (c: string) => string, timeMs: number): void {
   const w = q.w, h = q.h, m = Math.min(w, h), id = q.id, base = ctx.globalAlpha;
   const bx = (hash2(id, 800) - 0.5) * w * 0.5, by = (hash2(id, 801) - 0.5) * h * 0.5, br = m * 0.22;
   ctx.globalAlpha = base * 0.6; ctx.fillStyle = col('#0e0a08'); ctx.beginPath();

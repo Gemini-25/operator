@@ -10,15 +10,24 @@
 //   예비 인력 — minField·내리지 않는 자리, 모자라면 short·나올 사람이 없으면 empty) · operable · announceCarry 의 대원 줄.
 // 단계 3 (장비): unitsNext(펌프 — 고장 났으면 정밀 정비(service)·아니면 점검) · stockNext(섬광탄 창고) · applyCrewCarry 의 부대 몫(펌프 범위·정비 oos·
 //   SERVICE_CAP 을 넘으면 급히 정비 완료 · 창고에서 섬광탄 지급) · tickCarry 의 정비 완료(operable) · announceCarry 의 정비·재고 줄.
-// 뒤 단계가 채운다: 4 도로(복구 공사) ·
-//   5 건물(placeOutcome·placeUsable·placeCond·applyPlaceWear·noteWearIncident) · 7 보고서(carrySummary·carryLines).
+// 단계 4 (도로): roadsNext(끝 상태 → 복구 공사 — 앞에서 이어받은 것·재난이 통제한 구간 d.damaged·산사태·쓰러진 나무·다중 추돌·무너진 건물의 잔해 (가)(나)) ·
+//   initCarry 의 복구 통제(applyRoadCarry — 큰 차 우회로가 있을 때만 closedReason 'repair' · 한 차로 slow · 출입 통제 건물 앞 slow) ·
+//   tickCarry 의 개통 · announceCarry 의 도로 줄과 교통의 장부(noteRoadCause — 닫힘·감속의 주인) · 요약 줄이 아닌 기록의 tag 'carry'.
+// 단계 5 (건물): placesNext(끝 상태 → 다음 교대 — placeOutcome 의 X6 줄·화재 소실률·붕괴 잔해(2차 붕괴 detail)·폭발·열린 터, 휴식, 상한) ·
+//   initCarry 의 겹침 표(applyPlaceCarry — 적용 목록 'place') · placeUsable·placeCond(잎 모듈 placeUse.ts — 여기서도 export) · applyPlaceWear(처음부터 탄 칸) ·
+//   noteWearIncident · announceCarry 의 건물 줄('외 n곳' 묶음)과 건물 앞 감속의 장부.
+// 단계 7 (보고서): carrySummary·carryParts·carryNextLine(다음 교대로 넘기는 것) · carryLines·carryEffectLine(지난 교대의 영향 — 결원 도착 기록과 stats) ·
+//   shortArrivalLine(선택 — 사건 분석 문장). 읽기만 한다 — debrief.buildReport·evaluate 와 화면이 부른다.
 //
 // import: types · rng · events · util · resources(함수만 — 부를 때만 쓴다. resources → sceneManager → … 순환에서 모듈 맨 위의 표를 읽지 않는다) ·
-//   crews(잎 모듈 — KITS·ROLES·STAFF·역할 식·장비) · field/injury(잎 모듈 — CAUSE_NAME·outShifts·mainCause) · difficulty(잎 모듈 — 이름표).
+//   crews(잎 모듈 — KITS·ROLES·STAFF·역할 식·장비) · field/injury(잎 모듈 — CAUSE_NAME·outShifts·mainCause) · difficulty(잎 모듈 — 이름표) ·
+//   city(edgeName) · traffic(noteRoadCause — 교통의 장부. 함수만 — traffic 은 이 파일을 import 하지 않는다) ·
+//   placeUse(단계 5 — 건물 겹침 표 읽기 placeCond·placeUsable·처음부터 탄 칸. 잎 모듈 — 시나리오 묶음 파일도 부르므로 따로 둔다) · types 의 T(타일 번호 — 잔해의 몫).
 //   incidents · dispatch/* · debrief 와 그 밖의 field/* 는 import 하지 않는다.
 // 브라우저 저장은 표현 계층(view/runner.ts — 단계 6)에서만 한다 — src/sim 은 저장소를 모른다 (원칙 8, 시험 9 가 글자로 본다).
 
-import { KITS, ROLES, STAFF, dealFlashbangs, kitFor, minField, skillsOf, slotsOf, stays } from './crews';
+import { edgeName } from './city';
+import { KITS, ROLES, STAFF, dealFlashbangs, fieldCrew, kitFor, minField, skillsOf, slotsOf, stays } from './crews';
 import { difficultyLabel } from './difficulty';
 import type { Sim } from './engine';
 import { emit } from './events';
@@ -27,8 +36,13 @@ import { crewReady, rosterKeys, traitOf } from './resources';
 import type { RosterKey } from './resources';
 import { hashStr } from './rng';
 import type { Rng } from './rng';
-import type { Carryover, City, CrewCarry, InjuryCause, KitItem, PlaceCarry, RecruitBase, Responder, RoadCarry, StockId, Unit, UnitCarry, UnitKind } from './types';
-import { clamp, josa } from './util';
+import { noteRoadCause } from './traffic';
+import { KIT_SHAPE, RESPONDER_SHAPE, primeNums } from './shape';      // (검토) 예비 인력의 대원 객체 — 숫자 칸의 표현 (잎 모듈 — 아무것도 import 하지 않는다)
+import { placeCond, placeUsable, setPreBurnt } from './placeUse';      // (단계 5) 건물 겹침 표 읽기 — 잎 모듈 (type 만 import)
+export { placeCond, placeUsable };
+import { T } from './types';
+import type { CarrySummary, Carryover, City, CrewCarry, Incident, InjuryCause, KitItem, PlaceCarry, RecruitBase, Responder, RoadCarry, Scene, StockId, Unit, UnitCarry, UnitKind } from './types';
+import { TYPE_NAME, clamp, josa } from './util';
 
 // ───────────────────────── 상수 (설계서 §6.1 — 처음 값. 바꾸면 구현 메모에 적는다) ─────────────────────────
 /** 이어받은 상태의 판. 칸의 뜻이 바뀌면 올리고 readCarryover 에 옮기는 함수를 둔다 (선택 칸을 더하는 것은 올리지 않는다) */
@@ -51,8 +65,11 @@ export const REST_HEAL = 40;
 export const BACK_HEALTH = 85;
 /** 결장 상한에 걸려 일찍 돌아오는 대원의 체력 */
 export const EARLY_BACK_HEALTH = 70;
-/** 성장: gain = min(GAIN_CAP, xpGained × GAIN_K) × (1 − 경험), 숙련은 그 SKILL_K 배 (설계서 §3.2 의 처음 값 — 측정은 단계 8) */
-export const GAIN_K = 0.5;
+/**
+ * 성장: gain = min(GAIN_CAP, xpGained × GAIN_K) × (1 − 경험), 숙련은 그 SKILL_K 배. (단계 8) GAIN_K 0.5 → 1.0 — 설계서 §3.2 의 목표("열 교대 뒤 가장 많이 큰 대원의
+ * 경험 +0.15 안팎")에 맞춘 값: 0.5 에서는 계보 24 × 교대 8 의 교대 8 (성장 일곱 번) 최댓값이 0.069(열 교대면 0.09 남짓)였다
+ */
+export const GAIN_K = 1.0;
 export const GAIN_CAP = 0.02;
 export const SKILL_K = 0.6;
 /** 결장 상한 = max(ABSENT_FLOOR, floor(ABSENT_SHARE × 편성 인원)) — 넘는 만큼 남은 결장이 짧은 사람부터 조기 복귀 (큰 재난 뒤에도 조직의 4/5 는 나온다) */
@@ -78,18 +95,54 @@ export const SERVICE_CAP = 2;
 export const RUSHED_PUMP = 0.6;
 /** 섬광탄 창고: 휴식 한 번에 채우는 수 (상한은 STOCK_CAP) */
 export const RESUPPLY = 3;
+// ── 도로 (단계 4 — §3.5·§6.1) ──
+/** 지진·해일이 통제한 구간 가운데 다음 교대에 전면 통제로 넘기는 수 (통제한 순서로 앞의 것 — 먼저 갈라진 곳). 나머지는 한 차로 공사 */
+export const DIS_FULL = 2;
+/** 한 차로 복구 공사가 그 구간에 더하는 지연(slow) */
+export const LANE_SLOW = 0.6;
+/** 출입 통제·무너짐 건물 앞 구간의 지연 ('복구 공사 차량' — 교대 내내) */
+export const FRONT_SLOW = 0.4;
+/** 복구 공사가 끝나는 시각의 범위 (교대 시작 뒤 초 — carry 흐름. 1200초 교대 기준 그대로 저장하고, 짧은 교대면 적용할 때 shiftLen × 0.75 로 자른다) */
+export const ROAD_AT = {
+  carried: [120, 600], disFull: [240, 600], disLane: [300, 900], wet: [120, 420],
+  mud: [300, 600], tree: [60, 240], surface: [300, 900], rubble: [300, 900],
+} as const;
+/** 교대 내내 막는 공사(left 2)의 openAt 자리값 — 쓰지 않는다(다음 휴식에서 left 1 이 되며 새로 뽑는다). readCarryover 의 범위 [60, 900] 안 */
+const HELD_AT = 900;
+// ── 건물 (단계 5 — §3.6·§3.7·§6.1) ──
+/** 교대 시작에 건물마다 한 줄로 알리는 수 (출입 통제·무너짐, 통제가 풀린 건물 따로) — 그 뒤는 '외 n곳' 한 줄 */
+export const PLACE_LINES = 4;
+/**
+ * 이어받은 그을음 1 당 "처음부터 탄 칸"으로 두는 실내 연료 칸의 몫 (applyPlaceWear). (단계 8 — 처음 값 그대로) §6.3-8 의 그을음 방향을 재 보니 불의 크기에 따라 갈린다:
+ * 일찍 꺼지는 작은 불(이번 교대에 3~7칸 — chain.ts --soot)은 처음부터 탄 칸이 번짐을 거의 막지 못하고 재산 피해의 분모만 줄여 소실률이 +0.005~0.008 오르고(탄 칸 −0.2~−1),
+ * 번지는 불(25칸 남짓 — 시험 3 ⑥ 의 바탕: 앞 교대의 정비로 펌프차가 늦는 교대)은 탄 칸이 −27% · 소실률 −0.015 로 덜 탄다. 0.1 로 낮추면 작은 불의 오름은 0 에 가깝지만
+ * 번지는 불이 덜 타는 몫이 거의 사라져(탄 칸 −3% · 소실률 +0.004) 출입 통제(소실률 0.25·0.6)·전소(0.7)로 가는 큰 불을 막지 못한다 — 처음 값을 둔다.
+ * 작은 불의 오름은 흔적(0.05)의 문턱에만 닿는다. 부호를 바꾸려면 재산 피해의 분모를 처음 연료 칸으로 두어야 한다(본문과 다르다 — 사용자 판단)
+ */
+export const PRE_BURN = 0.35;
+/**
+ * (단계 8) 무너진 건물(ruin — X6 의 전체 붕괴 · 붕괴 현장의 잔해 0.22 이상 · 2차 붕괴)이 다시 문을 열기까지의 교대 수 — 설계서 §3.6 의 4 에서 3 으로(§6.4-2 의 손잡이).
+ * 4 에서는 어려움 계보의 무너짐이 교대마다 쌓여 교대 8 에 7곳(출입 통제와 합쳐 상한 12 의 0.8)까지 늘고, 지진 뒤에는 출입 통제·무너짐이 상한 가까이 네 교대를 갔다
+ */
+export const RUIN_REPAIR = 3;
+/** 복구 공사의 까닭 (기록 문구) */
+export const WHY_NAME: Record<RoadCarry['why'], string> = {
+  crack: '지진으로 갈라진 노면', washout: '해일에 쓸린 노면', flood: '침수 뒤 진흙·쓰레기 치우기', fire: '불탄 가로수·방음벽 정리',
+  mud: '산사태 흙더미 치우기', tree: '쓰러진 나무 치우기', debris: '건물 잔해 치우기', surface: '노면·방호벽 보수',
+};
 
 // ───────────────────────── 실행 중 상태 (§2.2) ─────────────────────────
 export interface CarryState {
   on: boolean;                                   // 이어받은 상태가 있는가 (없으면 모든 함수가 첫 줄에서 돌아간다)
   places: Map<number, PlaceCarry>;               // 건물 겹침 표 (교대 내내 그대로 — 단계 5 가 sim.carry.places 의 사본으로 채운다)
   roads: RoadCarry[];                            // 이번 교대에 끝날 복구 공사 (left === 1, openAt 순 — 단계 4)
-  slowed: { edge: number; v: number }[];         // 이 파일이 더해 둔 slow (한 차로 공사, 출입 통제 건물 앞 — 단계 4)
+  slowed: { edge: number; v: number; why: 'lane' | 'front' }[];      // 이 파일이 더해 둔 slow (한 차로 공사 lane — 개통 때 되돌린다, 출입 통제 건물 앞 front — 교대 내내. 단계 4)
+  held: RoadCarry[];                             // (단계 4) 교대 내내 막아 둔 복구 공사(left 2)의 사본 — makeCarryover 가 left 1 로 넘긴다 (끊겨서 놓지 못한 것은 없다)
   svc: number;                                   // 정비 중인 부대 수 (tickCarry 가 0 이면 정비 쪽을 건너뛴다 — 단계 3)
   event: number;                                 // 이어받은 상태 요약 기록의 id (-1 = 없음). 원인으로 잇는다
   applied: CarryNote[];                          // ①·② 가 실제로 적용한 항목 (적용한 순서) — announceCarry 가 이것만 기록한다
   dropped: string[];                             // 적용하지 못한 것 (도시가 끊길 통제, 지도 지문 불일치, 조직 명부에 없는 열쇠, 상한을 넘은 항목) — announceCarry 가 적는다
-  stats: { relief: number; serviced: number; reopened: number; markedInc: string[]; fbShort: number; early: number; grown: number };      // grown (단계 2): 이번 교대에 나온 대원 가운데 기본 능력보다 숙련이 오른 사람 수 (요약 줄)
+  stats: { relief: number; serviced: number; reopened: number; markedInc: string[]; fbShort: number; early: number; grown: number };      // grown (단계 2·8): 이번 교대에 나온 대원 가운데 누적 숙련이 GROWN_MIN 이상인 사람 수 (요약 줄)
   fbStore: number;                               // (단계 3) 교대 시작의 지급 뒤 서(署) 창고에 남은 섬광탄 — makeCarryover 가 다음 창고를 센다 (창고 기록이 없던 상태면 STOCK_CAP − 지급, 음수일 수 있다)
 }
 /** 적용한 항목 하나 (기록 한 줄의 재료). 상태를 바꾼 함수가 그 자리에서 push 한다 */
@@ -105,7 +158,7 @@ export type CarryNote =
   | { what: 'rushed'; unit: string }                                 // SERVICE_CAP 을 넘어 '급히 정비 완료'
   | { what: 'stock'; unit: string; got: number; want: number }
   | { what: 'place'; id: number }                                    // closed·ruin 건물 (opened 도 이 항목으로)
-  | { what: 'road'; edge: number; lane: boolean; left: number; openAt: number };
+  | { what: 'road'; edge: number; lane: boolean; left: number; openAt: number; why: RoadCarry['why'] };      // (단계 4) 문구를 고르려고 why 를 더했다. openAt 은 짧은 교대면 자른 값
 
 // ───────────────────────── 지문 (§2.3) ─────────────────────────
 const hex8 = (n: number): string => (n >>> 0).toString(16).padStart(8, '0');
@@ -329,14 +382,154 @@ export function readCarryover(x: unknown, city: City): { carry: Carryover; dropp
 // ───────────────────────── 교대 시작 (§3.4) ─────────────────────────
 /**
  * ① 이어받은 상태의 실행 중 상태를 만든다 (engine 생성자 — initTraffic 앞). 이어받은 상태가 없으면 빈 상태(on 거짓)를 돌려주고 아무것도 바꾸지 않는다.
- * 단계 4 가 도로 복구 통제(큰 차 우회로 검사)·한 차로·건물 앞 slow 를, 단계 5 가 건물 겹침 표(sim.carry.places 의 사본)를 여기서 채운다
+ * 단계 4: 도로 복구 통제(큰 차 우회로 검사)·한 차로·건물 앞 slow (applyRoadCarry). 단계 5 가 건물 겹침 표(sim.carry.places 의 사본)를 여기서 채운다
  */
 export function initCarry(sim: Sim, dropped: string[]): CarryState {
-  return {
-    on: sim.carry !== null, places: new Map(), roads: [], slowed: [], svc: 0, event: -1, applied: [], dropped: dropped.slice(),
+  const cs: CarryState = {
+    on: sim.carry !== null, places: new Map(), roads: [], slowed: [], held: [], svc: 0, event: -1, applied: [], dropped: dropped.slice(),
     stats: { relief: 0, serviced: 0, reopened: 0, markedInc: [], fbShort: 0, early: 0, grown: 0 },
     fbStore: 0,
   };
+  if (cs.on && sim.carry) { applyPlaceCarry(cs, sim.carry); applyRoadCarry(sim, cs, sim.carry); }      // (단계 5) 건물 → (단계 4) 도로 — 적용 목록·기록도 이 차례
+  return cs;
+}
+// ───────────────────────── 건물 — 겹침 표와 "쓸 수 있는 건물" (단계 5 — §3.6) ─────────────────────────
+function copyPlace(p: PlaceCarry): PlaceCarry {
+  const o: PlaceCarry = { id: p.id, state: p.state, dmg: p.dmg, soot: p.soot, repair: p.repair, cause: p.cause, inc: p.inc, since: p.since };
+  if (p.spot !== undefined) o.spot = [p.spot[0], p.spot[1]];
+  if (p.mark !== undefined) o.mark = p.mark;
+  if (p.opened !== undefined) o.opened = true;
+  return o;
+}
+/**
+ * 건물 겹침 표를 채운다 (initCarry — 교대 내내 그대로. city.places 는 고치지 않는다 — 모든 Sim 이 함께 쓰는 지도다).
+ * 적용 목록의 'place': 출입 통제·무너짐 건물(남은 교대가 큰 순, 같으면 id 순) → 이번 교대를 앞두고 통제가 풀린 건물(opened — id 순). 기록은 announceCarry 가 남긴다
+ */
+function applyPlaceCarry(cs: CarryState, co: Carryover): void {
+  for (const p of co.places) cs.places.set(p.id, copyPlace(p));
+  const shut = co.places.filter((p) => p.state !== 'marked').sort((a, b) => b.repair - a.repair || a.id - b.id);
+  const opened = co.places.filter((p) => p.state === 'marked' && p.opened === true).sort((a, b) => a.id - b.id);
+  for (const p of shut) cs.applied.push({ what: 'place', id: p.id });
+  for (const p of opened) cs.applied.push({ what: 'place', id: p.id });
+}
+// placeCond · placeUsable 은 잎 모듈 placeUse.ts 에 있다 (시나리오 묶음 파일도 부르므로 — 이 파일은 resources 를 거쳐 관제까지 끌어온다). 이 파일에서도 export 한다
+/**
+ * (단계 5 — §3.6) 이어받은 건물 상태를 현장에 얹는다 (sceneManager.createScene — buildScene 과 I1-b 의 applyExpo 다음). 이어받은 항목이 없으면 아무것도 하지 않는다.
+ *  ① s.wear: I1-b 의 applyExpo 가 이번 교대의 충격(cause 'shock')으로 먼저 채웠으면 합친다 — dmg 는 큰 쪽(원인·사건 이름도 그쪽 — 같으면 먼저 있던 충격 그대로),
+ *     그을음은 이어받은 값(충격은 0). 없으면 이어받은 값으로 만든다. X6 의 catOf 가 실내 구획의 처음 건전도를 1 − CAT.WEAR_INTEG × dmg 아래로 둔다
+ *  ② 그을음은 연료를 줄이지 않고 "이미 탄 칸"으로 옮긴다 — 실내 연료 칸(실내 구역의 s.fuel > 0) 가운데 불이 붙은 칸과 그 이웃 8칸을 뺀 것에서
+ *     round(PRE_BURN × 그을음 × 실내 연료 칸 수) 칸을 hashStr(사건 id + ':' + 칸) 의 오름차순으로 고른다 (난수 흐름을 쓰지 않는다).
+ *     그 칸은 fuel 0 · burned 1, totalFuelTiles 에서 빼고 burnedTiles 는 그대로 — 재산 피해(burnedTiles / totalFuelTiles)의 분자·분모에서 함께 빠지고,
+ *     X6 의 전소 비율도 placeUse.preBurnt 로 그 칸을 뺀다. 불은 연료가 없는 칸으로 번지지 않으므로 "이미 탄 것은 덜 탄다"
+ */
+export function applyPlaceWear(sim: Sim, s: Scene, I: Incident): void {
+  const pc = placeCond(sim, I.truth.placeId);
+  if (pc === null) return;
+  let w = s.wear;
+  if (w === undefined) { w = { dmg: pc.dmg, soot: pc.soot, cause: pc.cause, inc: pc.inc, pre: 0 }; s.wear = w; }
+  else { if (pc.dmg > w.dmg) { w.dmg = pc.dmg; w.cause = pc.cause; w.inc = pc.inc; } if (pc.soot > w.soot) w.soot = pc.soot; }
+  if (!(pc.soot > 0)) return;
+  const W = s.w, H = s.h, n = W * H, reg = s.region, regs = s.regions, fire = s.fire, fuel = s.fuel;
+  const near = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    if (!(fire[i] > 0)) continue;
+    const x = i % W, y = (i / W) | 0;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const nx = x + dx, ny = y + dy; if (nx >= 0 && ny >= 0 && nx < W && ny < H) near[ny * W + nx] = 1; }
+  }
+  const cand: number[] = [];
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    const r = reg[i];
+    if (r < 0 || !regs[r] || !regs[r].indoor || !(fuel[i] > 0)) continue;
+    total++;
+    if (!near[i]) cand.push(i);
+  }
+  const k = Math.min(cand.length, Math.round(PRE_BURN * pc.soot * total));
+  if (k <= 0) return;
+  const key = new Map<number, number>();
+  for (const i of cand) key.set(i, hashStr(I.id + ':' + i));
+  cand.sort((a, b) => key.get(a)! - key.get(b)! || a - b);
+  const mask = new Uint8Array(n);
+  for (let j = 0; j < k; j++) { const i = cand[j]; fuel[i] = 0; s.burned[i] = 1; mask[i] = 1; }
+  s.totalFuelTiles = Math.max(0, s.totalFuelTiles - k);
+  w.pre = k;
+  setPreBurnt(s, mask);
+}
+/**
+ * (단계 5 — §3.6) 손상된 건물에서 난 사건이면 그 사실을 기록한다 (createIncident — 발생 기록 바로 뒤). 구조 손상 0.1 이상이거나 그을음 0.2 이상일 때만.
+ * 진실의 기록이다(truth — 관찰자 시점). 관제는 I1-b 의 knownBuildingAt 으로, 지휘관은 X6 의 구조 조짐으로 안다. 원인은 이어받은 상태 요약 줄
+ */
+export function noteWearIncident(sim: Sim, I: Incident): void {
+  const pc = placeCond(sim, I.truth.placeId);
+  if (pc === null || (pc.dmg < 0.1 && pc.soot < 0.2)) return;
+  const q = sim.city.places[I.truth.placeId], cs = sim.carryState, by = josa(pc.inc, '으로/로');
+  const text = q.open ? (pc.soot >= 0.2 ? `이 터에는 ${by} 탄 자리가 남아 있습니다.` : '') : `이 건물은 ${by} ${pc.soot >= 0.2 ? '그을리고 ' : ''}손상된 상태였습니다 (구조 손상 ${Math.round(pc.dmg * 100)}%).`;
+  if (!text) return;
+  emit(sim, { inc: I.id, role: 'SYSTEM', actor: '도시', kind: 'incident', imp: 1, truth: true, causes: [cs.event], tag: 'carry', text });
+  cs.stats.markedInc.push(I.code);
+}
+/** 건물의 이름 (기록 문장용 — 사건 발생 기록의 장소 이름과 같은 꼴) */
+function placeLabel(sim: Sim, id: number): string { const q = sim.city.places[id]; return q.open ? `${q.name} (${q.addr})` : `${q.addr} ${q.name}`; }
+/** 교대 시작의 건물 줄 (§3.7 의 7): 출입 통제·무너짐 — 원인 사건과 남은 교대 / 통제가 풀린 건물 — 다시 문을 열었다 */
+function placeLine(sim: Sim, p: PlaceCarry): string {
+  const name = placeLabel(sim, p.id);
+  if (p.state === 'marked') return `${name} 복구 완료 — 다시 문을 열었습니다.`;
+  return `${name} — ${josa(p.inc, '으로/로')} ${p.state === 'ruin' ? '무너져 출입할 수 없습니다' : '복구 공사 중이라 출입을 통제합니다'} (${p.repair}교대 남음).`;
+}
+// ───────────────────────── 도로의 적용 (단계 4 — §3.5 의 "다음 교대에 적용") ─────────────────────────
+/**
+ * 실제 상태에서 큰 차가 a 에서 b 로 skip 구간 없이 갈 수 있는가 (닫힌 구간은 지나지 않는다) — traffic.ts 의 linked 와 같은 뜻.
+ * 교통 모델을 만들기 전(initTraffic 앞)이라 불법 주차·장애물이 아직 없다. 교대 시작 때 많아야 ROAD_CAP 번 부른다
+ */
+function linkedHeavy(sim: Sim, a: number, b: number, skip: number): boolean {
+  const c = sim.city, seen = new Uint8Array(c.nodes.length), stack = [a];
+  seen[a] = 1;
+  while (stack.length) {
+    const n = stack.pop()!;
+    if (n === b) return true;
+    for (const id of c.nodes[n].edges) {
+      const e = c.edges[id];
+      if (id === skip || e.closed || e.noHeavy) continue;
+      const v = e.a === n ? e.b : e.a;
+      if (!seen[v]) { seen[v] = 1; stack.push(v); }
+    }
+  }
+  return false;
+}
+/**
+ * 복구 공사를 놓는다 (initCarry — initTraffic 앞: 불법 주차가 그 통제를 보고 놓인다). openAt 순(같으면 구간 id 순)으로 하나씩:
+ *   전면 통제 — 실제 상태에서 큰 차가 그 구간 없이 양 끝을 오갈 수 있을 때만 closed · closedReason 'repair'(known 은 두지 않는다 — 알려진 통제라 경로·관제가 처음부터 피한다).
+ *     끊기면 놓지 않고 버린 것에 한 줄 — 이번 교대에는 없는 것으로 보고 다음 상태에도 넣지 않는다(공사를 미루다 끝냈다고 본다).
+ *   한 차로 — slow += LANE_SLOW (slowed 에 적어 두고 개통 때 되돌린다).
+ * 짧은 교대면 openAt 을 shiftLen × 0.75 로 자른다(저장된 상태는 그대로). left 1 은 tickCarry 가 openAt 에 열고(cs.roads), left 2 는 교대 내내(cs.held — 다음 휴식에서 left 1).
+ * 마지막으로 출입 통제·무너짐 건물 앞 구간에 FRONT_SLOW (교대 내내, 같은 구간에 여럿이면 한 번 — 그 기록은 건물의 줄이다: 단계 5).
+ * 교통의 장부(noteRoadCause)는 교통 모델이 생긴 뒤 announceCarry 가 적는다
+ */
+function applyRoadCarry(sim: Sim, cs: CarryState, co: Carryover): void {
+  const city = sim.city, cut = sim.shiftLen * 0.75;
+  const list = co.roads.map((r) => ({ r, at: Math.min(r.openAt, cut) }));
+  list.sort((x, y) => x.at - y.at || x.r.edge - y.r.edge);
+  for (const { r, at } of list) {
+    const e = city.edges[r.edge];
+    if (!r.lane) {
+      if (e.closed || !linkedHeavy(sim, e.a, e.b, e.id)) { cs.dropped.push(`${edgeName(city, e)}: 통제하면 길이 끊겨 복구 공사를 미룹니다.`); continue; }
+      e.closed = true; e.closedReason = 'repair';
+    } else {
+      e.slow += LANE_SLOW;
+      cs.slowed.push({ edge: e.id, v: LANE_SLOW, why: 'lane' });
+    }
+    cs.applied.push({ what: 'road', edge: e.id, lane: r.lane, left: r.left, openAt: at, why: r.why });
+    if (r.left === 1) cs.roads.push({ edge: r.edge, why: r.why, lane: r.lane, left: 1, openAt: at, inc: r.inc, since: r.since });
+    else cs.held.push({ edge: r.edge, why: r.why, lane: r.lane, left: r.left, openAt: r.openAt, inc: r.inc, since: r.since });
+  }
+  // 출입 통제·무너짐 건물 앞: '복구 공사 차량' — 교대 내내 (열린 터는 readCarryover 가 marked 로 읽어 해당이 없다)
+  for (const p of co.places) {
+    if (p.state === 'marked') continue;
+    const eid = city.places[p.id].edgeId;
+    if (eid === undefined || eid < 0 || !city.edges[eid] || cs.slowed.some((q) => q.why === 'front' && q.edge === eid)) continue;
+    city.edges[eid].slow += FRONT_SLOW;
+    cs.slowed.push({ edge: eid, v: FRONT_SLOW, why: 'front' });
+  }
 }
 // ───────────────────────── 대원의 적용 (단계 2 — §3.2 의 "다음 교대에 적용") ─────────────────────────
 /** 조종·조타하는 역할 (기장·부기장·정장 — 그림 묶음 'pilot'). 이 자리가 있는 부대는 그 가운데 한 명이라도 나와야 움직인다 (헬기가 조종사 없이 뜨지 않게) */
@@ -378,6 +571,7 @@ function makeRelief(sim: Sim, u: Unit, seat: Responder, rng: Rng, name: string):
     seat: undefined, relief: true, carryOut: undefined, carryCause: undefined,      // (I2) 예비 인력 — 이번 교대만 (이어받지 않는다)
   };
   r.trait = traitOf(r);
+  primeNums(r, RESPONDER_SHAPE); for (const it of kit) primeNums(it, KIT_SHAPE);      // (검토) createRoster·createAidUnit 의 대원과 같이 — 숫자 칸을 만들 때부터 소수 표현으로 (값은 그대로, shape.ts)
   return r;
 }
 
@@ -452,7 +646,8 @@ export function applyCrewCarry(sim: Sim): void {
     for (const v of vac) cs.applied.push(v);
   }
   for (let i = 0; i < n0; i++) if (early.has(i)) { const r = sim.responders[i]; cs.stats.early++; cs.applied.push({ what: 'early', unit: sim.units[r.unitId].callsign, name: r.name }); }
-  for (let i = 0; i < n0; i++) { const c = entry[i]; if (c && (c.dExp > 0 || c.dSkill > 0) && sim.responders[i].status !== 'off') cs.stats.grown++; }
+  // (단계 8) 요약 줄의 '숙련이 오른 대원'은 보고서·화면(carrySummary.grown)과 같은 문턱 — 누적 숙련 GROWN_MIN 이상 (누적이 0 보다 큰 사람은 이어갈수록 거의 모두다)
+  for (let i = 0; i < n0; i++) { const c = entry[i]; if (c && c.dSkill >= GROWN_MIN && sim.responders[i].status !== 'off') cs.stats.grown++; }
   // 5. 펌프·정비 (단계 3 — §3.3): 장비 손잡이는 범위를, 이어받은 상태는 그 안의 위치를 정한다(equipment 흐름은 createRoster 가 그대로 다 뽑았다).
   //    정비 중인 부대는 readyAt 까지 oos '정비 중' — 한꺼번에 SERVICE_CAP 대까지(이른 순), 넘는 부대는 급히 정비를 마치고 바로 운용한다. 정비 중인 부대에는 아래의 예비 인력을 붙이지 않는다
   applyUnitCarry(sim, co);
@@ -592,17 +787,38 @@ export function announceCarry(sim: Sim): void {
   if (roads) parts.push(`복구 공사 도로 ${roads}구간`);
   if (cs.stats.grown) parts.push(`숙련이 오른 대원 ${cs.stats.grown}명`);
   cs.event = emit(sim, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 2, text: `지난 교대에서 이어받은 상태 — 조직의 ${co.shift}번째 교대 (지문 ${carryKey(co)}). ${parts.join(' · ') || '남은 피해 없음'}.` });
-  // 적용한 항목의 기록: 적용한 순서대로 한 항목에 한 줄 (원칙 5 — 목록에 없는 것은 기록하지 않고, 목록의 항목은 모두 기록한다. 시험 10 이 일대일을 본다)
+  // 적용한 항목의 기록: 적용한 순서대로 한 항목에 한 줄 (원칙 5 — 목록에 없는 것은 기록하지 않고, 목록의 항목은 모두 기록한다. 시험 10 이 일대일을 본다).
+  // 요약 줄이 아닌 기록은 tag 'carry' (I1-b 의 WorldTag — 측정 도구가 시스템 carry 로 센다)
   const ev = [cs.event];
+  // (단계 5) 건물 줄의 묶음: 출입 통제·무너짐과 통제가 풀린 건물(opened)을 따로, 앞의 PLACE_LINES 곳은 한 곳에 한 줄 · 그 뒤는 '외 n곳' 한 줄 (시험 10 은 그 줄을 n 으로 센다)
+  let shutN = 0, openN = 0, shutK = 0, openK = 0, shutRuin = 0, lastPlaceEv = -1;
+  for (const n of cs.applied) if (n.what === 'place') { const p = cs.places.get(n.id); if (p && p.state !== 'marked') { shutN++; if (p.state === 'ruin' && shutN > PLACE_LINES) shutRuin++; } else openN++; }
+  const frontOwner = new Map<number, number>();      // 건물 앞 구간 → 그 건물의 줄 (교통의 장부)
   for (const n of cs.applied) {
-    const t = carryNoteText(n);
-    if (t === null) continue;      // 뒤 단계의 항목(정비·재고·건물·도로)은 그 단계가 문구를 더한다
-    emit(sim, { role: t.unit ? 'UNIT' : 'SYSTEM', actor: t.actor, kind: t.kind, imp: t.imp, causes: ev, text: t.text });
+    if (n.what === 'place') {
+      const p = cs.places.get(n.id);
+      if (!p) continue;
+      const shut = p.state !== 'marked', k = shut ? shutK++ : openK++;
+      if (k < PLACE_LINES || k === PLACE_LINES) {
+        const text = k < PLACE_LINES ? placeLine(sim, p) : shut ? `외 ${shutN - PLACE_LINES}곳도 지난 교대의 피해로 출입을 통제합니다${shutRuin ? ` (무너짐 ${shutRuin}곳)` : ''}.` : `외 ${openN - PLACE_LINES}곳도 복구를 마치고 다시 문을 열었습니다.`;
+        lastPlaceEv = emit(sim, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: shut ? 1 : 0, causes: ev, tag: 'carry', text });
+      }
+      const eid = sim.city.places[p.id].edgeId;
+      if (shut && eid !== undefined && eid >= 0 && !frontOwner.has(eid)) frontOwner.set(eid, lastPlaceEv);
+      continue;
+    }
+    const t = carryNoteText(sim, n);
+    if (t === null) continue;
+    const id = emit(sim, { role: t.unit ? 'UNIT' : 'SYSTEM', actor: t.actor, kind: t.kind, imp: t.imp, causes: ev, tag: 'carry', text: t.text });
+    // (단계 4) 교통의 장부: 복구 통제의 닫힘·한 차로의 감속의 주인 = 그 줄 — initTraffic 앞에서 닫았으므로 교통 모델이 생긴 지금 적는다 (빠뜨리면 우회 몰림·밀림이 원인 없는 초과가 된다)
+    if (n.what === 'road') noteRoadCause(sim, n.edge, n.lane ? 'slow' : 'close', id);
   }
-  for (const d of cs.dropped) emit(sim, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 0, causes: ev, text: d });
+  // 건물 앞 감속의 주인 (한 차로 공사가 함께 있는 구간은 그 줄이 주인이다): (단계 5) 그 건물의 줄 ('외 n곳'으로 묶였으면 그 줄) — 없으면 요약 줄. slow 가 1 아래면 교통 모델이 다음 주기에 지운다
+  for (const q of cs.slowed) if (q.why === 'front' && !cs.slowed.some((x) => x.why === 'lane' && x.edge === q.edge)) noteRoadCause(sim, q.edge, 'slow', frontOwner.get(q.edge) ?? cs.event);
+  for (const d of cs.dropped) emit(sim, { role: 'SYSTEM', actor: '상황실', kind: 'shift', imp: 0, causes: ev, tag: 'carry', text: d });
 }
-/** 적용 항목 하나의 기록 문구 (§3.7 의 2~4). 부대 줄은 호출부호가 주인이다. 문구가 아직 없는 항목(단계 3~5)은 null */
-function carryNoteText(n: CarryNote): { unit: boolean; actor: string; kind: 'unit' | 'shift' | 'traffic'; imp: number; text: string } | null {
+/** 적용 항목 하나의 기록 문구 (§3.7 의 2~8). 부대 줄은 호출부호가 주인이다. 문구가 아직 없는 항목(단계 5 의 건물)은 null */
+function carryNoteText(sim: Sim, n: CarryNote): { unit: boolean; actor: string; kind: 'unit' | 'shift' | 'traffic'; imp: number; text: string } | null {
   switch (n.what) {
     case 'recruit': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `신임 ${n.name} 대원이 ${n.seat} 대원의 자리에 배치됐습니다.` };
     case 'absent': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `${josa(n.names.join('·') + ' 대원', '이/가')} 결장합니다 (${n.cause !== null && Object.prototype.hasOwnProperty.call(CAUSE_NAME, n.cause) ? CAUSE_NAME[n.cause as InjuryCause] + ' · ' : ''}${n.left}교대 남음).` };
@@ -615,6 +831,13 @@ function carryNoteText(n: CarryNote): { unit: boolean; actor: string; kind: 'uni
     case 'service': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `${n.unit} ${n.why === 'vehicle' ? '차량' : '펌프'} 정비 중 — 약 ${Math.max(1, Math.round(n.readyAt / 60))}분 뒤 운용.` };
     case 'rushed': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `${n.unit} 정비가 밀려 급히 마쳤습니다 — 바로 운용합니다.` };
     case 'stock': return { unit: true, actor: n.unit, kind: 'unit', imp: 1, text: `섬광탄 재고 부족 — ${n.unit} ${n.got}개만 지급 (정수 ${n.want}개).` };
+    // (단계 4) 복구 공사 — 교통정보의 줄. 지난 교대의 비상 통제와 이어지게 까닭(WHY_NAME)을 넣는다 (§11.1-8)
+    case 'road': {
+      const name = edgeName(sim.city, sim.city.edges[n.edge]), min = Math.max(1, Math.round(n.openAt / 60));
+      return n.lane
+        ? { unit: false, actor: '교통정보', kind: 'traffic', imp: 0, text: `${name} 한 차로 복구 공사 — ${WHY_NAME[n.why]} · 서행 (${n.left === 1 ? `약 ${min}분 뒤 완료` : '이번 교대 내내'}).` }
+        : { unit: false, actor: '교통정보', kind: 'traffic', imp: 1, text: `${name} 복구 공사로 통제 — ${WHY_NAME[n.why]} (${n.left === 1 ? `약 ${min}분 뒤 개통` : '이번 교대 내내'}).` };
+    }
     default: return null;
   }
 }
@@ -623,7 +846,8 @@ function carryNoteText(n: CarryNote): { unit: boolean; actor: string; kind: 'uni
 /**
  * 매 틱 (engine.step 의 tickTraffic 다음). 이어받은 상태가 없거나 남은 일(정비 중 부대·남은 복구 공사)이 없으면 첫 줄에서 돌아간다.
  * 정비 (단계 3): readyAt 이 된 부대를 부대 순서대로 운용에 돌린다 — 움직일 수 있으면(operable) available 과 '정비 완료' 기록, 아니면 oos '결원' 그대로와 그 기록.
- * 바꾸는 바로 이 자리에서 기록하고 원인은 요약 줄이다. 복구 공사의 개통은 단계 4 가 채운다
+ * 복구 공사 (단계 4): openAt 이 된 공사를 연다 — 한 차로는 더해 둔 slow 를 되돌리고, 전면은 아직 'repair' 로 닫혀 있을 때만 연다(다른 통제가 덮었으면 건드리지 않는다).
+ * 바꾸는 바로 이 자리에서 기록하고 원인은 요약 줄이다 (tag 'carry')
  */
 export function tickCarry(sim: Sim): void {
   const cs = sim.carryState;
@@ -636,11 +860,24 @@ export function tickCarry(sim: Sim): void {
       if (u.state !== 'oos') continue;                                   // (방어) 다른 코드가 이미 운용에 넣었다
       if (operable(sim, u)) {                                            // crewReady > 0 이고 조종·조타할 사람이 있다 (최소 편성까지 찼는지는 보지 않는다)
         u.state = 'available'; u.oosWhy = undefined; cs.stats.serviced++;
-        emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, causes: [cs.event], text: `${u.callsign} 정비 완료 — 운용 재개.` });
+        emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, causes: [cs.event], tag: 'carry', text: `${u.callsign} 정비 완료 — 운용 재개.` });
       } else {
         u.oosWhy = '결원';
-        emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, causes: [cs.event], text: `${u.callsign} 정비를 마쳤지만 결원으로 운용하지 못합니다.` });
+        emit(sim, { role: 'UNIT', actor: u.callsign, kind: 'unit', imp: 1, causes: [cs.event], tag: 'carry', text: `${u.callsign} 정비를 마쳤지만 결원으로 운용하지 못합니다.` });
       }
+    }
+  }
+  // 복구 공사 — openAt 이 된 것은 언제나 목록에서 꺼낸다 (조건이 맞지 않는 항목이 머리를 막지 않게). 한 틱에 여럿을 처리한다
+  while (cs.roads.length && cs.roads[0].openAt <= sim.t) {
+    const rc = cs.roads.shift()!, e = sim.city.edges[rc.edge];
+    if (rc.lane) {                                                       // 한 차로: 닫혀 있지 않으므로 closedReason 을 보지 않는다
+      const k = cs.slowed.findIndex((q) => q.why === 'lane' && q.edge === rc.edge);
+      if (k < 0) continue;
+      e.slow = Math.max(0, e.slow - cs.slowed[k].v); cs.slowed.splice(k, 1);
+      emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 0, causes: [cs.event], tag: 'carry', text: `${edgeName(sim.city, e)} 한 차로 복구 공사 완료.` });
+    } else if (e.closed && e.closedReason === 'repair') {               // 전면: 이유가 바뀌었으면(다른 통제가 덮었으면) 건드리지 않는다
+      e.closed = false; e.closedReason = null; cs.stats.reopened++;
+      emit(sim, { role: 'SYSTEM', actor: '교통정보', kind: 'traffic', imp: 1, causes: [cs.event], tag: 'carry', text: `${edgeName(sim.city, e)} 복구 공사 완료 — 통행 재개.` });
     }
   }
 }
@@ -657,18 +894,225 @@ function copyCrew(c: CrewCarry): CrewCarry {
 /**
  * 끝난 교대에서 다음 교대가 이어받을 상태를 만든다 (sim.ended 일 때만 — 아니면 예외). **순수 함수다**: sim·sim.carry·carryState·현장·기록을 고치지 않고,
  * emit 하지 않으며, 돌려주는 객체는 모두 새로 만든다(앞 상태의 항목을 그대로 넣지 않고 복사한다). buildReport 안(마지막 기록·해시 전)에서도 불린다(단계 7).
- * 대원(단계 2 — crewNext)은 조직 명부(rosterKeys)의 모든 열쇠마다 한 항목. 펌프·정비(unitsNext)·섬광탄 창고(stockNext)는 단계 3, 도로는 4, 건물은 5 가 채운다.
- * 난수는 carry 흐름 하나(교대 시드에서 갈라진다 — 몇 번 불러도 같다): 정비 시각을 부대 순서로 먼저 뽑고, 단계 4 의 복구 시각은 그 뒤에 이어 뽑는다
+ * 대원(단계 2 — crewNext)은 조직 명부(rosterKeys)의 모든 열쇠마다 한 항목. 펌프·정비(unitsNext)·섬광탄 창고(stockNext)는 단계 3, 복구 공사(roadsNext)는 단계 4, 건물(placesNext — placeOutcome·휴식·상한)은 단계 5.
+ * 난수는 carry 흐름 하나(교대 시드에서 갈라진다 — 몇 번 불러도 같다): 정비 시각을 부대 순서로 먼저 뽑고, 복구 시각은 그 뒤에 이어 뽑는다 (순서를 바꾸면 정비 시각이 달라진다)
  */
 export function makeCarryover(sim: Sim): Carryover {
   if (!sim.ended) throw new Error('makeCarryover: 끝난 교대에서만 이어받을 상태를 만든다');
   const prev = sim.carry;
   const rng = sim.rng.fork('carry');
+  const crew = crewNext(sim), units = unitsNext(sim, rng), stock = stockNext(sim), roads = roadsNext(sim, rng), places = placesNext(sim);      // (단계 5) 건물은 난수를 쓰지 않는다
   return {
     v: CARRY_VERSION, shift: (prev ? prev.shift : 1) + 1, city: cityKey(sim.city),
     from: { seed: sim.seed, hash: sim.report ? sim.report.hash : '', diff: difficultyLabel(sim.difficulty) },
-    crew: crewNext(sim), units: unitsNext(sim, rng), stock: stockNext(sim), places: [], roads: [],
+    crew, units, stock, places, roads,
   };
+}
+
+// ───────────────────────── 도로의 끝 상태 → 다음 교대 (단계 4 — §3.5 의 표) ─────────────────────────
+/** 재난의 종류 → 그 재난이 통제했던 구간의 복구 공사 까닭 (태풍은 도로를 닫지 않는다 — 생기면 debris 한 차로) */
+const DIS_WHY: Partial<Record<string, RoadCarry['why']>> = { quake: 'crack', tsunami: 'washout', flood: 'flood', wildfire: 'fire' };
+/** 같은 구간의 두 공사 가운데 남길 것: 남은 교대가 큰 것, 같으면 전면, 같으면 늦게 끝나는 것 */
+const roadBeats = (a: RoadCarry, b: RoadCarry): boolean => a.left !== b.left ? a.left > b.left : a.lane !== b.lane ? !a.lane : a.openAt > b.openAt;
+/** 사건의 이름 ("조직 3번째 교대 · 04 산사태") — 문장용 */
+const incName = (shiftNo: number, code: string, what: string): string => `조직 ${shiftNo}번째 교대 · ${code} ${what}`;
+/**
+ * 끝난 교대에서 다음 교대의 복구 공사를 만든다 (순수 — makeCarryover 안). 원천(§3.5 의 표)과 뽑는 차례(carry 흐름 — unitsNext 다음):
+ *   ① 앞에서 이어받아 이번 교대 내내 막았던 것(cs.held, left 2) → left 1 · openAt ROAD_AT.carried
+ *   ② 이 교대에 재난이 통제했던 구간(d.damaged — 통제한 순서): 지진·해일은 앞의 DIS_FULL 구간이 전면, 나머지 한 차로 / 홍수·산불은 한 차로
+ *   ③ 사건(sim.incidents 순서)의 막았던 구간(I.blockedEdge — closeIncident 가 연 뒤에도 남는다):
+ *      (가) X6 전체 붕괴 — 이 사건이 그 건물을 무너뜨렸다(placeMarks 의 collapsed · incidentId) → debris 전면 left 2(다음 교대 내내)
+ *      산사태 흙더미·쓰러진 나무 — resolved 가 아닌 이유로 닫혔다(다 치우지 못함) → mud·tree 전면 / 다중 추돌 — 끝난 이유와 상관없이 노면 보수 → surface 한 차로
+ *   ④ (나) 교대 끝까지 남은 건물 잔해 장애물(I1-b C2 rubbleRoad — kind 'rubble') → debris (장애물이 전면이면 전면, 아니면 한 차로) left 1
+ * 같은 구간이면 roadBeats 로 하나만((가)와 (나)가 같은 구간이면 (가) — left 2). 상한 ROAD_CAP: 남은 교대가 큰 것·전면·일찍 끝나는 것 순으로 남긴다. 구간 id 순으로 돌려준다.
+ * 시각은 1200초 교대 기준으로 정수 초 (짧은 교대면 적용할 때 자른다). 교대 내내 막는 것(left 2)의 openAt 은 자리값 HELD_AT
+ */
+function roadsNext(sim: Sim, rng: Rng): RoadCarry[] {
+  const shiftNo = sim.carry ? sim.carry.shift : 1;
+  const best = new Map<number, RoadCarry>();
+  const put = (r: RoadCarry): void => { const o = best.get(r.edge); if (!o || roadBeats(r, o)) best.set(r.edge, r); };
+  const at = (span: readonly [number, number]): number => Math.round(rng.range(span[0], span[1]));
+  // ① 앞에서 이어받은 것
+  for (const h of sim.carryState.held) put({ edge: h.edge, why: h.why, lane: h.lane, left: 1, openAt: at(ROAD_AT.carried), inc: h.inc, since: h.since });
+  // ② 재난이 통제했던 구간
+  const d = sim.disaster, dwhy = d ? DIS_WHY[d.kind] : undefined;
+  if (d && dwhy) {
+    const cracked = dwhy === 'crack' || dwhy === 'washout';
+    d.damaged.forEach((eid, k) => {
+      const full = cracked && k < DIS_FULL;
+      put({ edge: eid, why: dwhy, lane: !full, left: 1, openAt: at(full ? ROAD_AT.disFull : cracked ? ROAD_AT.disLane : ROAD_AT.wet), inc: `조직 ${shiftNo}번째 교대 · ${d.name}`, since: shiftNo });
+    });
+  }
+  // ③ 사건이 막았던 구간
+  for (const I of sim.incidents) {
+    const eid = I.blockedEdge;
+    if (eid < 0 || !sim.city.edges[eid]) continue;
+    const v = I.truth.variant, done = I.closeReason === 'resolved';
+    const pm = I.truth.placeId >= 0 ? sim.placeMarks.get(I.truth.placeId) : undefined;
+    if (pm && pm.state === 'collapsed' && pm.incidentId === I.id) put({ edge: eid, why: 'debris', lane: false, left: 2, openAt: HELD_AT, inc: incName(shiftNo, I.code, '건물 붕괴'), since: shiftNo });
+    if (v === 'landslide' && !done) put({ edge: eid, why: 'mud', lane: false, left: 1, openAt: at(ROAD_AT.mud), inc: incName(shiftNo, I.code, '산사태'), since: shiftNo });
+    else if (v === 'tree' && !done) put({ edge: eid, why: 'tree', lane: false, left: 1, openAt: at(ROAD_AT.tree), inc: incName(shiftNo, I.code, '쓰러진 나무'), since: shiftNo });
+    else if (v === 'pileup') put({ edge: eid, why: 'surface', lane: true, left: 1, openAt: at(ROAD_AT.surface), inc: incName(shiftNo, I.code, '다중 추돌'), since: shiftNo });
+  }
+  // ④ 교대 끝까지 남은 건물 잔해 — 그 잔해를 남긴 사건은 놓은 기록의 원인으로 찾는다 (traffic.obstacleInc 와 같은 길)
+  for (const o of sim.traffic.obstacles) {
+    if (o.kind !== 'rubble' || !sim.city.edges[o.edge]) continue;
+    let code = '';
+    const ev = o.ev !== undefined ? sim.events[o.ev] : undefined;
+    if (ev) for (const c of ev.causes) { const J = sim.incidents[sim.events[c].incidentId]; if (J) { code = J.code + ' '; break; } }
+    put({ edge: o.edge, why: 'debris', lane: !o.full, left: 1, openAt: at(ROAD_AT.rubble), inc: `조직 ${shiftNo}번째 교대 · ${code}건물 잔해`, since: shiftNo });
+  }
+  // 상한과 차례
+  let out = [...best.values()];
+  if (out.length > ROAD_CAP) out = out.sort((a, b) => b.left - a.left || (a.lane === b.lane ? 0 : a.lane ? 1 : -1) || a.openAt - b.openAt || a.edge - b.edge).slice(0, ROAD_CAP);
+  return out.sort((a, b) => a.edge - b.edge);
+}
+
+// ───────────────────────── 건물의 끝 상태 → 다음 교대 (단계 5 — §3.6 의 표) ─────────────────────────
+const STATE_RANK: Record<PlaceCarry['state'], number> = { marked: 0, closed: 1, ruin: 2 };
+const round2 = (v: number): number => Math.round(v * 100) / 100;
+const isBuildingTile = (t: number): boolean => t === T.FLOOR || t === T.FURN || t === T.DOOR || t === T.STAIR || t === T.WALL || t === T.WINDOW;
+/**
+ * 잔해(s.damage)의 몫과 무너진 자리 — G4 의 ruinInfo 와 같은 식(frac = 잔해 칸 / 건물 칸, u·v = 잔해 무게중심에서 가장 가까운 건물 칸의 덩어리 경계 상자 안 상대 위치 —
+ * 2층 건물은 한 층만). 표현 계층의 함수를 부르지 않으려고 같은 계산을 둔다 (진실 — placeOutcome 만 부른다)
+ */
+function rubbleOf(s: Scene): { n: number; frac: number; spot: [number, number] | undefined } {
+  const W = s.w, H = s.h, t = s.tiles, d = s.damage;
+  let bld = 0, n = 0, sx = 0, sy = 0;
+  for (let i = 0; i < t.length; i++) { if (isBuildingTile(t[i])) bld++; if (d[i]) { n++; sx += i % W; sy += (i / W) | 0; } }
+  if (!bld || !n) return { n, frac: 0, spot: undefined };
+  const cx = sx / n, cy = sy / n;
+  let start = -1, bd = Infinity;
+  for (let i = 0; i < t.length; i++) { if (!isBuildingTile(t[i])) continue; const dd = Math.hypot((i % W) - cx, ((i / W) | 0) - cy); if (dd < bd) { bd = dd; start = i; } }
+  let x0 = W, y0 = H, x1 = 0, y1 = 0;
+  const seen = new Uint8Array(W * H), st = [start];
+  seen[start] = 1;
+  while (st.length) {
+    const c = st.pop()!, x = c % W, y = (c / W) | 0;
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+    for (let k = 0; k < 4; k++) {
+      const nx = x + (k === 0 ? 1 : k === 1 ? -1 : 0), ny = y + (k === 2 ? 1 : k === 3 ? -1 : 0);
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      const j = ny * W + nx;
+      if (!seen[j] && isBuildingTile(t[j])) { seen[j] = 1; st.push(j); }
+    }
+  }
+  const u = clamp((cx - x0 + 0.5) / (x1 - x0 + 1), 0, 1), v = clamp((cy - y0 + 0.5) / (y1 - y0 + 1), 0, 1);
+  return { n, frac: n / bld, spot: [round2(u), round2(v)] };
+}
+/** 두 피해를 합친다 (§3.6 "여러 행"·휴식의 같은 건물): state 는 무거운 것, dmg·soot·repair 는 각각 큰 값. 원인·사건 이름·X6 상태·자리는 무거운 쪽(같으면 b — 새것) */
+function heavier(a: PlaceCarry, b: PlaceCarry, since: number): PlaceCarry {
+  const top = STATE_RANK[a.state] > STATE_RANK[b.state] ? a : b;
+  const o: PlaceCarry = { id: b.id, state: top.state, dmg: Math.max(a.dmg, b.dmg), soot: Math.max(a.soot, b.soot), repair: Math.max(a.repair, b.repair), cause: top.cause, inc: top.inc, since };
+  if (o.state === 'marked') o.repair = 0;
+  const spot = top.spot ?? (top === a ? b.spot : a.spot);
+  if (spot !== undefined) o.spot = [spot[0], spot[1]];
+  const mark = top.mark ?? (top === a ? b.mark : a.mark);
+  if (mark !== undefined) o.mark = mark;
+  return o;
+}
+/**
+ * 한 사건이 그 건물에 남긴 피해 (§3.6 의 표 — 끝 상태를 만들 때 현장의 진실을 읽는 유일한 곳: debrief.ts 와 같은 자격). 맞는 행이 없거나 출동 시설·길 위의 사건이면 null.
+ *  X6 의 건물 상태(placeMarks — 이 사건이 남긴 것): collapsed → ruin 1·0·RUIN_REPAIR(3) · burnt → closed 0.8·1·5 · partial → closed max(0.3, ruinFrac×2)·burnFrac·2 ·
+ *    blasted → closed 0.35·0.3·1 (가스 폭발 대형 사고면 0.6·3) · scorched → marked 0.5×burnFrac·min(1, burnFrac×2)·0
+ *  화재(소실률 loss = burnedTiles / totalFuelTiles — 판정의 재산 피해와 같은 식): ≥ 0.6 closed 0.4+0.5×loss·min(1, 1.5×loss)·3 · ≥ 0.25 closed 0.5×loss·1.5×loss·1 ·
+ *    ≥ 0.05 marked 0.5×loss·2×loss·0 (X6 가 표시하지 않은 건물만 — 표시한 건물은 scorched 가 받는다)
+ *  붕괴 유형(승강기 갇힘 제외): 2차 붕괴가 있었거나(ESCALATION 의 detail 끝말 '2차 붕괴') 잔해가 건물 칸의 0.22 이상 → ruin 1·0·RUIN_REPAIR, 그 밖에 잔해가 있으면 closed min(1, 2×frac)·0·2
+ *    (X6 가 표시한 건물에도 — X6 의 ruinFrac 은 사건 중에 새로 무너진 칸만 세어 처음부터 무너져 있던 잔해를 보지 않는다)
+ *  X6 가 표시하지 않은 건물만: 가스 폭발 대형 사고 closed 0.6·0.4·3 · 터진 소품(exploded)·불붙은 배관 closed 0.35·0.3·1 · 그 밖의 불붙은 소품 marked 0.2·0.4·0
+ * 여러 행이 맞으면 heavier 로 합친다. 열린 터(q.open)는 흔적만(marked · dmg 0 · repair 0). 흔적만 남고 dmg·soot 가 둘 다 0.05 아래면 null
+ */
+export function placeOutcome(sim: Sim, I: Incident): PlaceCarry | null {
+  const pid = I.truth.placeId;
+  if (pid < 0) return null;
+  const q = sim.city.places[pid], s = sim.scenes[I.id];
+  if (!q || q.facility >= 0 || !s) return null;
+  const shiftNo = sim.carry ? sim.carry.shift : 1;
+  const inc = incName(shiftNo, I.code, TYPE_NAME[I.truth.type] ?? I.truth.type);
+  const pm = sim.placeMarks.get(pid), mine = pm !== undefined && pm.incidentId === I.id ? pm : undefined;
+  let out: PlaceCarry | null = null;
+  const add = (state: PlaceCarry['state'], dmg: number, soot: number, repair: number, cause: PlaceCarry['cause'], spot?: [number, number]): void => {
+    const o: PlaceCarry = { id: pid, state, dmg: clamp(dmg, 0, 1), soot: clamp(soot, 0, 1), repair: state === 'marked' ? 0 : repair, cause, inc, since: shiftNo };
+    if (spot !== undefined) o.spot = spot;
+    out = out ? heavier(out, o, shiftNo) : o;
+  };
+  const gasblast = I.truth.variant === 'gasblast';
+  const rub = s.kind === 'collapse' || mine?.state === 'collapsed' ? rubbleOf(s) : null;
+  // X6 의 건물 상태
+  if (mine) {
+    if (mine.state === 'collapsed') add('ruin', 1, 0, RUIN_REPAIR, 'collapse', rub?.spot);
+    else if (mine.state === 'burnt') add('closed', 0.8, 1, 5, 'burnout');
+    else if (mine.state === 'partial') add('closed', Math.max(0.3, mine.ruinFrac * 2), mine.burnFrac, 2, 'collapse');
+    else if (mine.state === 'blasted') add('closed', gasblast ? 0.6 : 0.35, 0.3, gasblast ? 3 : 1, 'blast');
+    else add('marked', 0.5 * mine.burnFrac, Math.min(1, mine.burnFrac * 2), 0, 'fire');
+  }
+  // 화재의 소실률
+  if (s.kind === 'fire') {
+    const loss = s.burnedTiles / Math.max(1, s.totalFuelTiles);
+    if (loss >= 0.6) add('closed', 0.4 + 0.5 * loss, Math.min(1, loss * 1.5), 3, 'fire');
+    else if (loss >= 0.25) add('closed', 0.5 * loss, loss * 1.5, 1, 'fire');
+    else if (loss >= 0.05 && !pm) add('marked', 0.5 * loss, loss * 2, 0, 'fire');
+  }
+  // 붕괴 유형의 잔해 (처음부터 무너져 있던 것 + 2차 붕괴)
+  if (s.kind === 'collapse' && I.truth.variant !== 'elevator' && rub) {
+    const second = I.problems.some((p) => p.code === 'ESCALATION' && p.detail.endsWith('2차 붕괴'));
+    if (second || rub.frac >= 0.22) add('ruin', 1, 0, RUIN_REPAIR, 'collapse', rub.spot);
+    else if (rub.n > 0) add('closed', Math.min(1, rub.frac * 2), 0, 2, 'collapse');
+  }
+  // X6 가 표시하지 않은 건물의 폭발·불붙은 소품
+  if (!pm) {
+    if (gasblast) add('closed', 0.6, 0.4, 3, 'blast');
+    if (s.props.some((p) => p.exploded === true || (p.kind === 'valve' && p.ignited === true))) add('closed', 0.35, 0.3, 1, 'blast');
+    if (s.props.some((p) => p.ignited === true && p.kind !== 'valve')) add('marked', 0.2, 0.4, 0, 'fire');
+  }
+  const o = out as PlaceCarry | null;
+  if (o === null) return null;
+  if (q.open) { o.state = 'marked'; o.dmg = 0; o.repair = 0; delete o.spot; }      // 열린 터는 흔적만 — 출입 통제·무너짐이 되지 않는다
+  if (o.state === 'marked' && o.dmg < 0.05 && o.soot < 0.05) return null;
+  o.dmg = round4(o.dmg); o.soot = round4(o.soot);
+  if (mine) o.mark = mine.state;
+  return o;
+}
+/**
+ * 건물의 끝 상태 → 다음 교대 (순수 — makeCarryover 안). 이번 교대의 새 피해(placeOutcome — 같은 건물의 여러 사건은 heavier)와 앞 상태를 합친 뒤 휴식 한 번:
+ *  같은 건물이면 heavier (since 는 앞의 것) — 이번 교대에 생긴 것은 깎지 않는다 (repair 는 "남은 교대, 이번 교대 포함")
+ *  앞 상태만 있는 건물: 출입 통제·무너짐은 repair −1, 0 이 되면 흔적(marked)으로 — dmg × 0.4 · soot × 0.5 · opened (X6 상태·자리는 지운다 — 복구됐다)
+ *    흔적은 soot −0.25 · dmg −0.15, 둘 다 0.05 아래면 지운다. opened 는 한 번만 (다음 휴식에서 지운다)
+ *  상한: 출입 통제·무너짐 CLOSED_CAP — 넘으면 repair 가 작은 것(같으면 id 가 큰 것)부터 '복구 완료'(흔적으로), 건물 PLACE_CAP — 넘으면 흔적 가운데 dmg + soot 가 작은 것(같으면 id 가 큰 것)부터 버린다.
+ * id 순으로 돌려준다. 열린 터는 placeOutcome 이 흔적만 만든다
+ */
+function placesNext(sim: Sim): PlaceCarry[] {
+  const fresh = new Map<number, PlaceCarry>();
+  for (const I of sim.incidents) {
+    const o = placeOutcome(sim, I);
+    if (!o) continue;
+    const f = fresh.get(o.id);
+    fresh.set(o.id, f ? heavier(f, o, o.since) : o);
+  }
+  const out = new Map<number, PlaceCarry>();
+  const open = (c: PlaceCarry): void => { c.state = 'marked'; c.repair = 0; c.dmg = round4(c.dmg * 0.4); c.soot = round4(c.soot * 0.5); c.opened = true; delete c.mark; delete c.spot; };
+  for (const p of sim.carry ? sim.carry.places : []) {
+    const f = fresh.get(p.id);
+    if (f) { out.set(p.id, heavier(p, f, p.since)); continue; }
+    const c = copyPlace(p);
+    delete c.opened;
+    if (c.state !== 'marked') { c.repair -= 1; if (c.repair <= 0) open(c); }
+    else {
+      c.soot = round4(Math.max(0, c.soot - 0.25)); c.dmg = round4(Math.max(0, c.dmg - 0.15));
+      if (c.soot < 0.05 && c.dmg < 0.05) continue;
+    }
+    out.set(c.id, c);
+  }
+  for (const [id, f] of fresh) if (!out.has(id)) out.set(id, f);
+  let list = [...out.values()];
+  const shut = list.filter((p) => p.state !== 'marked');
+  if (shut.length > CLOSED_CAP) for (const c of shut.sort((a, b) => a.repair - b.repair || b.id - a.id).slice(0, shut.length - CLOSED_CAP)) open(c);
+  if (list.length > PLACE_CAP) {
+    const marks = list.filter((p) => p.state === 'marked').sort((a, b) => a.dmg + a.soot - (b.dmg + b.soot) || b.id - a.id);
+    const cut = new Set(marks.slice(0, list.length - PLACE_CAP));
+    list = list.filter((p) => !cut.has(p));
+  }
+  return list.sort((a, b) => a.id - b.id);
 }
 
 // ───────────────────────── 장비의 끝 상태 → 다음 교대 (단계 3 — §3.3 의 표) ─────────────────────────
@@ -806,4 +1250,138 @@ function crewNext(sim: Sim): CrewCarry[] {
     }
   }
   return out;
+}
+
+// ───────────────────────── 보고서·화면의 요약 (단계 7 — §5.5) ─────────────────────────
+// 모두 읽기만 한다 (상태·기록을 바꾸지 않는다 — buildReport 안과 화면에서 부른다). 문장은 기록(요약 줄·결원 도착 기록)과 상태(carryState.stats)로만 쓴다.
+/** '숙련이 오른 대원'(CarrySummary.grown)의 문턱 — 누적 숙련 dSkill. 누적이 0 보다 큰 사람은 이어갈수록 거의 모두라(단계 2 메모 4) 눈에 띄게 오른 사람만 센다 */
+export const GROWN_MIN = 0.01;
+/**
+ * 이어받은 상태의 요약 (화면의 난이도 창·보고서의 '다음 교대로 넘기는 것'). 휴식을 이미 반영한 상태라 저장된 것만 보고 말할 수 있다.
+ * absent = 다음 교대에 결장(out > 0) · fallen = 공석(out −1) · service = 정비 중인 부대 · marked·closed·ruin = 건물의 상태별 수 · roads = 복구 공사 도로 ·
+ * grown = 나오는 대원 가운데 누적 숙련이 GROWN_MIN 이상인 사람
+ */
+export function carrySummary(co: Carryover): CarrySummary {
+  let absent = 0, fallen = 0, grown = 0, service = 0, marked = 0, closed = 0, ruin = 0;
+  for (const c of co.crew) { if (c.out > 0) absent++; else if (c.out === -1) fallen++; else if (c.dSkill >= GROWN_MIN) grown++; }
+  for (const u of co.units) if (u.service) service++;
+  for (const p of co.places) { if (p.state === 'ruin') ruin++; else if (p.state === 'closed') closed++; else marked++; }
+  return { shift: co.shift, absent, fallen, service, marked, closed, ruin, roads: co.roads.length, grown };
+}
+/**
+ * 요약의 몫을 한 줄로 (0 인 것은 뺀다 — 모두 0 이면 빈 글): '결장 2명 · 공석 1자리 · 정비 1대 · 출입 통제 건물 3곳(무너짐 1) · 복구 공사 도로 1구간'.
+ * ahead = 다음 교대로 넘기는 말('결장 예상'). 흔적만 남은 건물(marked)과 숙련은 넣지 않는다 (출입을 막지 않고, 숙련은 누적이라 읽을거리가 적다)
+ */
+export function carryParts(c: CarrySummary, ahead = false): string {
+  // 칸을 풀어 쓴다 — src/sim 안에서 '.ruin' 은 G4 의 그림용 기록(Scene.ruin) 읽기로 보고 시험(legibility)이 막는다
+  const { absent, fallen, service, closed, ruin, roads } = c;
+  const parts: string[] = [];
+  if (absent) parts.push(`${ahead ? '결장 예상' : '결장'} ${absent}명`);
+  if (fallen) parts.push(`공석 ${fallen}자리`);
+  if (service) parts.push(`정비 ${service}대`);
+  if (closed + ruin) parts.push(`출입 통제 건물 ${closed + ruin}곳${ruin ? `(무너짐 ${ruin})` : ''}`);
+  if (roads) parts.push(`복구 공사 도로 ${roads}구간`);
+  return parts.join(' · ');
+}
+/** 보고서 요약의 '다음 교대로 넘기는 것' 한 줄 */
+export function carryNextLine(c: CarrySummary): string {
+  const p = carryParts(c, true);
+  return p ? `다음 교대로 넘기는 것: ${p}.` : '다음 교대로 넘기는 피해는 없습니다.';
+}
+/** 결원 도착 기록(sceneManager.unitArrived — 결장 대원이 있는 부대의 도착 기록은 원인이 요약 줄이다)으로 센 사건(번호 순)과 호출부호(처음 나온 순) */
+function shortRuns(sim: Sim): { inc: number[]; calls: string[] } {
+  const cs = sim.carryState, inc: number[] = [], calls: string[] = [];
+  if (!cs.on || cs.event < 0) return { inc, calls };
+  for (let i = cs.event + 1; i < sim.events.length; i++) {
+    const e = sim.events[i];
+    if (e.kind !== 'arrive' || e.incidentId < 0 || e.causes.indexOf(cs.event) < 0) continue;
+    if (inc.indexOf(e.incidentId) < 0) inc.push(e.incidentId);
+    if (calls.indexOf(e.actor) < 0) calls.push(e.actor);
+  }
+  inc.sort((a, b) => a - b);
+  return { inc, calls };
+}
+/** 지난 교대의 영향 (§5.5 의 2~3 — 0 인 것은 뺀다): 보고서 줄(long)과 요약의 짧은 말(short) */
+function carryEffects(sim: Sim): { long: string; short: string }[] {
+  const st = sim.carryState.stats, out: { long: string; short: string }[] = [];
+  const sr = shortRuns(sim);
+  if (sr.inc.length) {
+    const calls = sr.calls.length > 6 ? `${sr.calls.slice(0, 6).join('·')} 외 ${sr.calls.length - 6}대` : sr.calls.join('·');
+    out.push({ long: `결원 부대가 나간 사건 ${sr.inc.length}건 (${calls}).`, short: `결원 출동 사건 ${sr.inc.length}건` });
+  }
+  if (st.relief) out.push({ long: `본부 예비 인력 ${st.relief}명이 결원 부대에 탔습니다.`, short: `예비 인력 ${st.relief}명` });
+  if (st.serviced) out.push({ long: `정비를 마친 부대 ${st.serviced}대가 교대 중에 운용에 들어갔습니다.`, short: `정비 마친 부대 ${st.serviced}대` });
+  if (st.reopened) out.push({ long: `복구 공사가 끝난 도로 ${st.reopened}구간이 교대 중에 열렸습니다.`, short: `개통한 복구 도로 ${st.reopened}구간` });
+  if (st.markedInc.length) {
+    const codes = st.markedInc.length > 6 ? `${st.markedInc.slice(0, 6).join(', ')} 외 ${st.markedInc.length - 6}건` : st.markedInc.join(', ');
+    out.push({ long: `지난 교대에 손상된 건물에서 사건 ${st.markedInc.length}건 (${codes}).`, short: `손상된 건물의 사건 ${st.markedInc.length}건` });
+  }
+  if (st.fbShort) out.push({ long: `섬광탄 재고 부족으로 ${st.fbShort}개 덜 지급했습니다.`, short: `섬광탄 ${st.fbShort}개 덜 지급` });
+  return out;
+}
+/**
+ * 보고서의 '조직' 칸 (ShiftReport.carry.lines — 이어받은 상태로 시작한 교대만): 요약 줄과 같은 문장 · 결원 부대가 나간 사건 · 예비 인력 · 정비를 마친 부대 ·
+ * 열린 복구 도로 · 손상된 건물의 사건 · 섬광탄 부족 (0 인 줄은 뺀다). 기록과 상태에서만 쓴다
+ */
+export function carryLines(sim: Sim): string[] {
+  const cs = sim.carryState;
+  if (!cs.on || cs.event < 0 || !sim.events[cs.event]) return [];
+  return [sim.events[cs.event].text, ...carryEffects(sim).map((x) => x.long)];
+}
+/** 보고서 요약의 '지난 교대의 영향' 한 줄 (영향 가운데 앞의 둘 — 하나도 없거나 이어받은 상태가 없으면 null) */
+export function carryEffectLine(sim: Sim): string | null {
+  if (!sim.carryState.on) return null;
+  const ef = carryEffects(sim);
+  return ef.length ? `지난 교대의 영향: ${ef.slice(0, 2).map((x) => x.short).join(' · ')}.` : null;
+}
+/**
+ * (단계 6 — §5.4) 지도의 마우스 정보: 그 건물의 이어받은 흔적 한 줄 (없으면 null) — 화면이 부른다(읽기만).
+ * '그을림 · 구조 손상 30% (조직 3번째 교대 · 04 건물 화재)' · '탄 자리 (…)'(열린 터) · '복구 공사 중 — 출입 통제 (2교대 남음)' · '무너짐 — 복구 전까지 출입 불가 (3교대 남음)'
+ */
+export function carryLine(sim: Sim, placeId: number): string | null {
+  const p = placeCond(sim, placeId);
+  if (p === null) return null;
+  if (p.state === 'ruin') return `무너짐 — 복구 전까지 출입 불가 (${p.repair}교대 남음)`;
+  if (p.state === 'closed') return `복구 공사 중 — 출입 통제 (${p.repair}교대 남음)`;
+  const q = sim.city.places[placeId], parts: string[] = [];
+  if (q.open) parts.push('탄 자리');
+  else { if (p.soot >= 0.05) parts.push('그을림'); if (p.dmg >= 0.05) parts.push(`구조 손상 ${Math.round(p.dmg * 100)}%`); }
+  if (!parts.length) parts.push('지난 교대의 흔적');
+  return `${parts.join(' · ')} (${p.inc})${p.opened ? ' · 복구 마치고 다시 염' : ''}`;
+}
+/**
+ * (단계 6 — §5.4) 지도의 도로 마우스 정보: 그 구간의 복구 공사 한 줄 (없으면 null) — '복구 공사 — 약 4분 뒤 개통' · '복구 공사 — 이번 교대 내내' ·
+ * '한 차로 복구 공사 — 약 4분 뒤 완료'. 화면이 부른다(읽기만)
+ */
+export function carryRoadLine(sim: Sim, edgeId: number): string | null {
+  const cs = sim.carryState;
+  if (!cs.on) return null;
+  const rc = cs.roads.find((r) => r.edge === edgeId) ?? cs.held.find((r) => r.edge === edgeId);
+  if (!rc) return null;
+  const e = sim.city.edges[edgeId];
+  if (!rc.lane && !(e.closed && e.closedReason === 'repair')) return null;      // 다른 통제가 덮었거나 이미 열렸다
+  const when = cs.held.indexOf(rc) >= 0 ? '이번 교대 내내' : `약 ${Math.max(1, Math.ceil((rc.openAt - sim.t) / 60))}분 뒤 ${rc.lane ? '완료' : '개통'}`;
+  return `${rc.lane ? '한 차로 복구 공사' : '복구 공사'} — ${WHY_NAME[rc.why]} · ${when}`;
+}
+/**
+ * (선택 — §5.5) 사건 분석 문장: 그 사건의 첫 도착 기록이 결원 도착 기록(원인이 요약 줄)이면 '첫 출동 부대(호출부호)는 지난 교대의 결장으로 n명만 출동했습니다.'
+ * n = 그 부대에서 나온(off 가 아닌) 내리는 대원 수(crews.fieldCrew — crewReady 와 같은 단위) — 결장(off)은 교대 내내 바뀌지 않는다. 부르는 쪽(evaluate)이 대응 지연인 사건에만 부른다.
+ * (검토) 실제로 모자라게 나간 부대만 — n 이 이 교대의 편성 자리(예비 인력을 뺀 내리는 자리) 수보다 적을 때. 예비 인력이 결장 자리를 다 채운 부대(2인 순찰차처럼
+ * 최소 = 정원인 부대)는 정원으로 나갔으므로 "n명만" 은 거짓이다 (결원 도착 기록의 원인은 그대로 — 예비 인력도 이어받은 상태의 영향이다)
+ */
+export function shortArrivalLine(sim: Sim, I: Incident): string | null {
+  const cs = sim.carryState;
+  if (!cs.on || cs.event < 0) return null;
+  for (let i = cs.event + 1; i < sim.events.length; i++) {
+    const e = sim.events[i];
+    if (e.incidentId !== I.id || e.kind !== 'arrive') continue;
+    if (e.causes.indexOf(cs.event) < 0) return null;                         // 첫 도착이 결원 도착이 아니다
+    const u = sim.units.find((x) => x.callsign === e.actor);
+    if (!u) return null;
+    let n = 0, seats = 0;
+    for (const rid of fieldCrew(sim, u)) { const r = sim.responders[rid]; if (r.status !== 'off') n++; if (!r.relief) seats++; }
+    if (n >= seats) return null;                                              // 예비 인력이 결장 자리를 다 채웠다 — 정원으로 나갔다
+    return `첫 출동 부대(${u.callsign})는 지난 교대의 결장으로 ${n}명만 출동했습니다.`;
+  }
+  return null;
 }

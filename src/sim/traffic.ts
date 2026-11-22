@@ -5,7 +5,7 @@
 //   알려지지 않은 장애물(known === false)은 부대가 가서 보고 무전으로 알리거나(reportObstacle), 시민 제보(tipAt)로 알려진다.
 // - 난수는 sim.rngTraffic 과 거기서 갈라낸 흐름만 쓴다. 사건 생성의 난수를 건드리지 않는다.
 // - 기존 칸의 뜻: cong = 교통량에서 오는 혼잡(1~3, 이 파일이 계산한다), slow = 사건이 얹는 지연(읽기만 한다),
-//   closed·closedReason 의 'incident'·'disaster' 는 다른 곳의 것(건드리지 않는다). 이 파일이 만드는 통제는 'roadwork'·'obstacle' 이다.
+//   closed·closedReason 의 'incident'·'disaster'·'repair' 는 다른 곳의 것(건드리지 않는다). 이 파일이 만드는 통제는 'roadwork'·'obstacle' 이다.
 // - (I1-b §3.6b) 초과 혼잡과 그 장부: drift 가 구간마다 "평소 수준을 넘는 몫"을 네 갈래(exOwn·exBump·exQueue·exDiv)로 적고, 몫마다 그 상태를 만든 기록(주인)을 잇는다.
 //   읽는 곳은 일반 법칙 L1(world/laws/road.ts — b3-6)과 측정(scripts/hazstats.ts)뿐이다 — 이 칸들만으로는 결과가 바뀌지 않는다. 판단(관제·지휘관)은 읽지 않는다.
 //   길을 닫거나 느리게 하거나 혼잡을 얹는 자리는 장부 한 줄을 함께 쓴다: noteRoadCause(닫힘·감속·물) · noteBump/addBump(얹은 혼잡). 빠뜨리면 원인 없는 초과(구멍)가 된다.

@@ -444,16 +444,20 @@ export class Probe {
       }
       this.erPending.length = 0;
     }
-    // 다른 열린 사건이 느리게 한 구간(blockedEdge, slow > 0), 지난 교대의 복구 공사 구간('repair')을 남은 경로에 둔 출동
+    // 다른 열린 사건이 느리게 한 구간(blockedEdge, slow > 0), 지난 교대의 복구 공사 구간('repair')을 남은 경로에 둔 출동.
+    // (I2 단계 8) 전면 공사는 알려진 통제라 경로에 들지 않으므로, 이어받은 상태가 더해 둔 감속(한 차로 공사·출입 통제 건물 앞 — carryState.slowed)도 본다
     const blocked: number[] = [];
     for (let k = 0; k < nInc; k++) { const J = sim.incidents[k]; if (J.phase !== 'closed' && J.blockedEdge >= 0 && sim.city.edges[J.blockedEdge].slow > 0) blocked.push(J.blockedEdge, J.id); }
+    const cst = (sim as { carryState?: { on?: boolean; slowed?: { edge: number }[] } }).carryState;
+    const carrySlow: number[] = [];
+    if (cst && cst.on && cst.slowed) for (const q of cst.slowed) carrySlow.push(q.edge);
     for (const u of units) {
       if (u.state !== 'enroute' || u.incidentId === null || !u.route) continue;
       const I = u.incidentId, es = u.route.edges;
       for (let k = Math.max(0, u.seg); k < es.length; k++) {
         const eid = es[k];
         for (let b = 0; b < blocked.length; b += 2) if (blocked[b] === eid && blocked[b + 1] !== I) this.otherInc.add(I);
-        if (sim.city.edges[eid].closedReason === 'repair') this.carryInc.add(I);
+        if (sim.city.edges[eid].closedReason === 'repair' || (carrySlow.length && carrySlow.indexOf(eid) >= 0)) this.carryInc.add(I);
       }
     }
     // 5) 사건: 멈춤 시계·잊힌 사건·느슨한 대기

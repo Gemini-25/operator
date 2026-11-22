@@ -4,6 +4,7 @@
 import { canChain, noteChainDrop } from '../chain';
 import type { Sim } from '../engine';
 import { emit } from '../events';
+import { placeUsable } from '../placeUse';      // (I2 단계 5) 쓸 수 있는 건물 — 잎 모듈 (persist.ts 는 관제까지 끌어와 시나리오 표와 순환이 생긴다)
 import type { Scenario } from '../scenarios';
 import type { Incident, Needs, Place, PlaceKind } from '../types';
 
@@ -42,8 +43,9 @@ function arsonNext(sim: Sim, I: Incident, reason: string): void {
   // 다음 불: 600 안의 같은 종류 건물 (없으면 가장 가까운 것). 이미 사건이 났던 건물은 피한다
   const used = new Set(sim.incidents.map((J) => J.truth.placeId));
   const kind = I.truth.placeKind, d = (q: Place): number => Math.hypot(q.x + q.w / 2 - I.truth.x, q.y + q.h / 2 - I.truth.y);
-  let pool = sim.city.places.filter((q) => q.kind === kind && !q.open && q.facility < 0 && !used.has(q.id));
-  if (!pool.length) pool = sim.city.places.filter((q) => (ARSON_PLACES[q.kind] ?? 0) > 0 && !q.open && q.facility < 0 && !used.has(q.id));
+  // (I2 단계 5) 지난 교대에 출입 통제되거나 무너진 건물은 고르지 않는다 (inShift = false — 이어받은 상태만. 교대 안의 전소·붕괴는 createIncident 의 되고르기가 받는다)
+  let pool = sim.city.places.filter((q) => q.kind === kind && !q.open && q.facility < 0 && !used.has(q.id) && placeUsable(sim, q.id, false, false));
+  if (!pool.length) pool = sim.city.places.filter((q) => (ARSON_PLACES[q.kind] ?? 0) > 0 && !q.open && q.facility < 0 && !used.has(q.id) && placeUsable(sim, q.id, false, false));
   if (!pool.length) return;
   const near = pool.filter((q) => d(q) <= 600);
   const next = near.length ? rng.pick(near) : pool.reduce((a, b) => (d(b) < d(a) ? b : a));

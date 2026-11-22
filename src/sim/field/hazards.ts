@@ -20,7 +20,8 @@ import { CAUSE_NAME, DOWN_AT, SELF_HARM, SELF_HARM_HIT, bandOf, decayCause, hurt
 import { SHAKE, shake } from './doctrineRun';      // (R3 1단계) 동요 — 피격·피습·폭발
 import { dragSmoke, laneShieldMul } from './doctrineRun';      // (R3 6단계) 끌기의 연기 피해 · 차량으로 막은 입구의 부주의
 import { signal } from '../world/consequence';      // (I1-b) 폭발·2차 붕괴·큰 불·무장 도주를 세계에 알린다 (기록도 난수도 없다 — 규칙이 없으면 결과 불변)
-import { ARMED_BIAS, placeGone } from '../incidents';      // (I1-b C10) 재범의 자리 — 강도가 잘 나는 건물 · 쓸 수 있는 건물 (함수 안에서만 읽는다 — 모듈 순환에 걸리지 않는다)
+import { ARMED_BIAS } from '../incidents';      // (I1-b C10) 재범의 자리 — 강도가 잘 나는 건물 (함수 안에서만 읽는다 — 모듈 순환에 걸리지 않는다)
+import { placeUsable } from '../placeUse';      // (I2 단계 5) 쓸 수 있는 건물 — 판정은 placeUsable 하나 (잎 모듈)
 import type { ChainItem } from '../incidents';
 
 export function pushFx(sim: Sim, s: Scene, kind: any, x: number, y: number, x2?: number, y2?: number, text?: string, color?: string, ttl = 1.2, c?: FxInfo): void {
@@ -614,7 +615,7 @@ export function tickHostiles(sim: Sim, s: Scene, I: Incident): void {
  * (I1-b C10 — 설계서 §3.7) 도주한 무장 용의자의 재범: 이야기 연쇄(사용자 결정으로 그대로)를 조건으로 움직이게 한다 — 스크립트가 아니라 조건이다.
  *  R        도주 지점(그 사건의 자리)에서 이 거리 안의, 강도가 잘 나는 종류(incidents.ARMED_BIAS.robbery)의 건물에서 다시 범행한다. 없으면 평소 추첨(그 유형의 건물)
  *  POLICE_R 그 건물에서 이 거리 안에 경찰 부대(대기 중 · 귀소 중)가 있으면 일어나지 않는다 — 5초마다 다시 보고, 때가 된 뒤 WAIT 초가 지나도 비지 않으면 'expired'
- * 건물은 쓸 수 있고(placeGone 아님) 이번 교대에 사건이 없던 곳만(평소 추첨의 엄격한 갈래와 같다), 고르는 난수는 새 흐름 reoffend-place:<사건>:<용의자>
+ * 건물은 쓸 수 있고(persist.placeUsable — 이어받은 출입 통제·무너짐도 고를 때 거른다) 이번 교대에 사건이 없던 곳만(평소 추첨의 엄격한 갈래와 같다), 고르는 난수는 새 흐름 reoffend-place:<사건>:<용의자>
  */
 export const REOFFEND = { R: 900, POLICE_R: 400, WAIT: 240 };
 export function reoffendPlace(sim: Sim, I: Incident, rng: Rng): number {
@@ -623,7 +624,7 @@ export function reoffendPlace(sim: Sim, I: Incident, rng: Rng): number {
   const cand: number[] = [], ws: number[] = [];
   for (const q of sim.city.places) {
     const w = bias[q.kind] ?? 0;
-    if (!(w > 0) || q.open || q.facility >= 0 || used.has(q.id) || placeGone(sim, q.id)) continue;
+    if (!(w > 0) || q.open || q.facility >= 0 || used.has(q.id) || !placeUsable(sim, q.id)) continue;
     if (Math.hypot(q.x + q.w / 2 - I.truth.x, q.y + q.h / 2 - I.truth.y) > REOFFEND.R) continue;
     cand.push(q.id); ws.push(w);
   }

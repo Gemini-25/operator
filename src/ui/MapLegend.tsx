@@ -5,10 +5,11 @@ import { useState } from 'react';
 import { FIELD_NAME, UNIT_KIND_NAME } from '../sim/resources';
 import type { RoleGroup, UnitField, UnitKind } from '../sim/types';
 import { FACILITY_COLOR, FIELD_COLOR, FIELD_TEXT } from '../view/city/tokens';
-import { DISASTER_RING, OBSTACLE_ICON } from '../view/city/trafficLayer';
+import { DISASTER_RING, OBSTACLE_ICON, REPAIR_RING } from '../view/city/trafficLayer';
+import { FENCE } from '../view/city/carryLayer';
 import { SUBWAY_GLYPH, SUBWAY_LINE } from '../view/city/kinds2Layer';
 import { ICON_PATH } from '../view/icons';
-import { HAZARD_MARK, RUIN_MARK, STATE_MARK } from '../view/marks';
+import { HAZARD_MARK, REPAIR_MARK, RUIN_MARK, STATE_MARK } from '../view/marks';
 import { EXPO_CRACK, EXPO_PIPE } from '../view/city/ruinLayer';
 import { ZONE_LOOK } from '../view/city/zoneLayer';
 import { FacilityBadge, RoleDot, Token } from './Mark';
@@ -148,6 +149,30 @@ function ZoneSample({ f, size = 20 }: { f: 'power' | 'smoke'; size?: number }) {
     </svg>
   );
 }
+/** (I2 §5.4) 지난 교대의 흔적: 그을린 지붕 · 탄 자리(열린 터) · 복구 공사 중인 건물(노란 점선 울타리 + 공사 고깔) · 무너진 건물(울타리 + 무너짐 기호) */
+function CarrySample({ kind, size = 20 }: { kind: 'soot' | 'patch' | 'closed' | 'ruin'; size?: number }) {
+  const roof = kind === 'patch' ? '#3d5a3a' : '#2a3440';
+  return (
+    <svg className="token" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <rect x={3.5} y={4.5} width={17} height={15} rx={1.5} fill={roof} stroke="#4a5866" strokeWidth={0.8} />
+      {kind === 'soot' && <path d="M7 9.5Q10 6.5 14.5 8.4Q18.4 10.2 16.6 14.2Q14.6 17.6 10 16.4Q6 15.2 7 9.5Z" fill="#0e0a08" opacity={0.75} />}
+      {kind === 'patch' && <path d="M6.5 11Q8.5 7.6 12 9.2Q15.6 8 17 11.4Q18 15.4 13.6 15.8Q11 17.6 8.6 15.8Q5.4 14.4 6.5 11Z" fill="#1e1610" opacity={0.8} />}
+      {(kind === 'closed' || kind === 'ruin') && <rect x={2} y={3} width={20} height={18} rx={1.5} fill="none" stroke={FENCE} strokeWidth={1.4} strokeDasharray="3 2.2" />}
+      {kind === 'closed' && <svg x={6.5} y={6.5} width={11} height={11} viewBox="0 0 24 24"><path d={REPAIR_MARK} fill={FENCE} fillRule="evenodd" stroke="#0b1219" strokeWidth={2.5} strokeLinejoin="round" paintOrder="stroke" /></svg>}
+      {kind === 'ruin' && <svg x={5.5} y={5.5} width={13} height={13} viewBox="0 0 24 24"><path d={RUIN_MARK.major} fill={RUIN_EDGE} fillRule="evenodd" stroke="#0b1219" strokeWidth={2.5} strokeLinejoin="round" paintOrder="stroke" /></svg>}
+    </svg>
+  );
+}
+/** (I2) 복구 공사 도로: 공사 표식에 주황 테 (trafficLayer 의 REPAIR_RING) */
+function RepairRoadSample({ size = 20 }: { size?: number }) {
+  const c = size / 2, r = size / 2 - 1.5, g = r * 1.36;
+  return (
+    <svg className="token" width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+      <circle cx={c} cy={c} r={r} fill="#161d24" stroke={REPAIR_RING} strokeWidth={1.6} />
+      <svg x={c - g / 2} y={c - g / 2} width={g} height={g} viewBox="0 0 24 24"><path d={OBSTACLE_ICON.roadwork} fill="#f2c94c" fillRule="evenodd" /></svg>
+    </svg>
+  );
+}
 function IconSample({ name, size = 18 }: { name: string; size?: number }) {
   return <svg className="token" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true"><path d={ICON_PATH[name]} fill={RUIN_EDGE} fillRule="evenodd" /></svg>;
 }
@@ -190,6 +215,10 @@ export function MapLegend() {
             <span className="lg-item"><RoleDot group="nozzle" field="fire" health={20} />중상</span>
             <span className="lg-item"><RoleDot group="nozzle" field="fire" down />쓰러짐</span>
             <span className="lg-item" title="조종사·정장·관측관: 현장에 내리지 않는다"><RoleDot group="pilot" field="special" stays />점선 = 내리지 않는 자리</span>
+          </div>
+          <div className="lg-row">
+            <span className="lg-item" title="지난 교대에 다쳐 이번 교대에 나오지 않는 대원(또는 순직한 대원의 빈 자리) — 지난 교대에서 이어받은 조직 상태"><RoleDot group="nozzle" field="fire" off />흐린 점 + 사선 = 결장</span>
+            <span className="lg-item" title="결장으로 빈 자리에 이번 교대만 대신 탄 본부 예비 인력"><RoleDot group="nozzle" field="fire" health={100} relief />흰 점 = 예비 인력</span>
           </div>
           <h5>시설 <span className="dim">이름 옆의 숫자 = 대기 중인 부대 수</span></h5>
           <div className="lg-row">
@@ -234,6 +263,16 @@ export function MapLegend() {
             <span className="lg-item" title="건물이 통째로 무너졌다: 크게 보면 지붕 대신 잔해 더미. 그 교대에는 그 건물에서 새 사건이 나지 않는다"><RuinBadgeSample level="total" />전체 붕괴</span>
             <span className="lg-item" title="건물 칸의 연료가 70% 넘게 탔다: 크게 보면 지붕 전체가 그을리고 구멍이 뚫려 있다. 그 교대에는 그 건물에서 새 사건이 나지 않는다"><RuinBadgeSample level="burnt" />전소</span>
             <span className="lg-item" title="가스·용기 폭발이 있었다: 크게 보면 건물 둘레에 깨진 유리가 반짝이고 지붕에 검은 자국"><i style={{ display: 'inline-block', width: 14, height: 10, borderRadius: 2, background: '#2a211b', boxShadow: '0 0 0 2px #9fd6ea' }} />폭발 흔적</span>
+          </div>
+          <h5>지난 교대의 흔적 <span className="dim">이어받은 조직 상태 — 두 시점에 같다</span></h5>
+          <div className="lg-row">
+            <span className="lg-item" title="지난 교대의 화재로 그을린 건물: 크게 보면 지붕에 검은 얼룩 (구조 손상이 크면 금). 사건은 나지만 그을린 만큼 처음부터 탄 칸이 있다"><CarrySample kind="soot" />그을린 건물</span>
+            <span className="lg-item" title="숲·공원·주차장 같은 열린 터에 남은 탄 자리 — 출입을 막지는 않는다"><CarrySample kind="patch" />탄 자리 (숲·공원)</span>
+            <span className="lg-item" title="지난 교대의 화재·폭발·구획 붕괴로 복구 공사 중 — 출입 통제(그 건물에서는 사건이 나지 않는다, 그 종류의 건물이 모두 막혔을 때만 예외). 건물 앞 길은 공사 차량으로 느리다"><CarrySample kind="closed" />복구 공사 중인 건물</span>
+          </div>
+          <div className="lg-row">
+            <span className="lg-item" title="지난 교대에 무너진 건물 — 복구 전까지 출입할 수 없고 사건도 나지 않는다"><CarrySample kind="ruin" />무너진 건물</span>
+            <span className="lg-item" title="지난 교대의 지진 균열·잔해·산사태 등으로 복구 공사 중인 구간 — 관제가 아는 통제라 경로가 처음부터 피한다. 한 차로 공사는 혼잡 띠로 보인다"><RepairRoadSample />복구 공사 도로 (주황 테)</span>
           </div>
           <h5>이웃 건물과 동네 <span className="dim">사건이 남긴 세계 상태</span></h5>
           <div className="lg-row">

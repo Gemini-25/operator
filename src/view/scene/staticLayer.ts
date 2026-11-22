@@ -33,6 +33,7 @@ export function staticSig(s: Scene): number {
   let glass = 0, worn = 0;
   for (let i = 0; i < s.glass.length; i++) { glass += s.glass[i]; worn += s.decorHp[i]; }
   h = Math.imul(h ^ (glass + worn * 64), 16777619);
+  h = Math.imul(h ^ Math.round((s.wear ? s.wear.soot : 0) * 100), 16777619);      // (I2) 지난 교대의 그을음 — 현장을 만들 때 정해져 바뀌지 않는다(그래도 그림이 기대는 값이라 서명에 넣는다)
   return h >>> 0;
 }
 
@@ -899,6 +900,31 @@ export function buildStatic(s: Scene, R: number, district: string): StaticLayer 
     rr(g, (e.x + 0.06) * R, (e.y + 0.06) * R, R * 0.88, R * 0.88, R * 0.06, 'rgba(160,168,176,0.5)');
     g.strokeStyle = 'rgba(20,24,28,0.4)'; g.lineWidth = lw; g.strokeRect((e.x + 0.06) * R, (e.y + 0.06) * R, R * 0.88, R * 0.88);
     g.fillStyle = 'rgba(40,46,52,0.5)'; for (let k = 0; k < 4; k++) g.fillRect((e.x + 0.16) * R, (e.y + 0.22 + k * 0.17) * R, R * 0.68, R * 0.05);
+  }
+  // (I2 §3.6·§5.4) 지난 교대의 그을음 (s.wear — persist.applyPlaceWear 가 현장을 만들 때 채운다): 실내 바닥의 검은 얼룩과 벽의 그을린 자국.
+  // 처음부터 탄 칸(s.burned)은 불 그림(fx.ts)이 탄 바닥으로 그린다. 그을음은 그 칸 밖에도 옅게 — 몫은 그을음에 비례 (칸마다 정해진 해시)
+  const soot = s.wear ? s.wear.soot : 0;
+  if (soot > 0.04) {
+    g.save();
+    for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) {
+      const i = y * s.w + x, t = s.tiles[i], rg = s.region[i];
+      if (t === T.FLOOR || t === T.FURN || t === T.DOOR) {
+        if (rg < 0 || !s.regions[rg] || !s.regions[rg].indoor || hash2(x * 17 + 5, y * 29 + s.id) > soot * 0.55) continue;
+        const cx = (x + 0.2 + hash2(x, y * 3 + 1) * 0.6) * R, cy = (y + 0.2 + hash2(x * 5 + 2, y) * 0.6) * R, rad = R * (0.45 + 0.5 * hash2(x * 7, y * 11 + 3));
+        const gr = g.createRadialGradient(cx, cy, 0, cx, cy, rad);
+        gr.addColorStop(0, `rgba(14,10,8,${(0.22 + 0.25 * soot).toFixed(3)})`); gr.addColorStop(1, 'rgba(14,10,8,0)');
+        g.fillStyle = gr; g.fillRect(cx - rad, cy - rad, rad * 2, rad * 2);
+      } else if (isWallish(t) && hash2(x * 23 + 9, y * 13 + s.id) < soot * 0.7) {
+        // 벽: 벽을 따라 번진 옅은 그을음 자국 (바로 옆이 실내 바닥인 벽만 — 벽의 방향으로 길게)
+        let inside = false;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { const nx = x + dx, ny = y + dy; if (nx < 0 || ny < 0 || nx >= s.w || ny >= s.h) continue; const r2 = s.region[ny * s.w + nx]; if (r2 >= 0 && s.regions[r2] && s.regions[r2].indoor) inside = true; }
+        if (!inside) continue;
+        const along = isWallish(tAt(x - 1, y)) || isWallish(tAt(x + 1, y));      // 좌우로 이어진 벽이면 가로로
+        g.fillStyle = `rgba(10,7,5,${(0.16 + 0.22 * soot).toFixed(3)})`;
+        g.beginPath(); g.ellipse((x + 0.5) * R, (y + 0.5) * R, R * 0.4, R * 0.11, along ? 0 : Math.PI / 2, 0, 6.2832); g.fill();
+      }
+    }
+    g.restore();
   }
 
   let over: HTMLCanvasElement | null = null;

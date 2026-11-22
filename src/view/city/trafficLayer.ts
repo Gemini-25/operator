@@ -154,13 +154,13 @@ function glyph(ctx: G, kind: ObstacleKind, x: number, y: number, size: number, c
     ctx.strokeStyle = RED; ctx.lineWidth = size * 0.12; ctx.beginPath(); ctx.moveTo(x - size * 0.4, y + size * 0.4); ctx.lineTo(x + size * 0.4, y - size * 0.4); ctx.stroke();
   }
 }
-/** 장애물 표식 하나 (범례에서도 쓴다). known = false 면 점선 테 */
-export function drawObstacleMark(ctx: G, kind: ObstacleKind, x: number, y: number, r: number, known = true): void {
+/** 장애물 표식 하나 (범례에서도 쓴다). known = false 면 점선 테. ring = 테 색 (없으면 노랑 — I2: 지난 교대에서 이어받은 복구 공사는 주황 테의 고깔) */
+export function drawObstacleMark(ctx: G, kind: ObstacleKind, x: number, y: number, r: number, known = true, ring?: string): void {
   ctx.save();
   ctx.fillStyle = 'rgba(0,0,0,0.45)'; ctx.beginPath(); ctx.arc(x + 0.8, y + 1.4, r, 0, 6.2832); ctx.fill();
   ctx.globalAlpha = known ? 1 : 0.8;
   ctx.fillStyle = '#161d24'; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.2832); ctx.fill();
-  ctx.strokeStyle = YELLOW; ctx.lineWidth = 1.5; if (!known) ctx.setLineDash([2.4, 2.2]);
+  ctx.strokeStyle = ring ?? YELLOW; ctx.lineWidth = 1.5; if (!known) ctx.setLineDash([2.4, 2.2]);
   ctx.beginPath(); ctx.arc(x, y, r - 0.5, 0, 6.2832); ctx.stroke(); ctx.setLineDash([]);
   glyph(ctx, kind, x, y + (kind === 'breakdown' ? -0.4 : 0), r * 1.36, kind === 'parked' ? '#d9e1e8' : YELLOW);
   ctx.restore();
@@ -171,17 +171,20 @@ const obstacleXY = (sim: Sim, ob: Obstacle): { x: number; y: number } => { const
 /** (G4 §7.5) 통제의 원인 색: 사건 유형색(typeStyle.TYPE_COLOR — 예전에는 renderCity 의 표를 복사해 두었다)과 재난 */
 const CAUSE_COLOR = TYPE_COLOR;
 export const DISASTER_RING = '#ffb454';
+/** (I2 §5.4) 지난 교대에서 이어받은 복구 공사(closedReason 'repair')의 고깔 테 — 재난의 주황과 같은 색 (그 공사의 대부분이 재난 뒤의 복구다) */
+export const REPAIR_RING = '#ffb454';
 export interface TrafficScreenOpts { timeMs: number; truth: boolean; zs?: number; mini?: boolean }
 
 /** 지도의 화면 좌표계에서, 사건 핀과 부대 표식 아래. 장애물 표식과, 사건·재난으로 통제된 구간의 진입 금지 표시 */
 export function drawTrafficScreen(ctx: G, sim: Sim, xf: { scale: number; ox: number; oy: number }, o: TrafficScreenOpts): void {
   if (o.mini) return;
   const city = sim.city, zs = o.zs ?? 1;
-  // 사건·재난이 막은 구간(장애물 목록에 없는 통제): 가운데에 진입 금지 표시
+  // 사건·재난이 막은 구간(장애물 목록에 없는 통제): 가운데에 진입 금지 표시. (I2) 지난 교대의 복구 공사('repair')는 진입 금지 대신 테 색이 다른 공사 고깔
   for (const e of city.edges) {
     if (!e.closed || e.closedReason === 'roadwork' || e.closedReason === 'obstacle') continue;
     const A = city.nodes[e.a], B = city.nodes[e.b];
     const mx = ((A.x + B.x) / 2) * xf.scale + xf.ox, my = ((A.y + B.y) / 2) * xf.scale + xf.oy;
+    if (e.closedReason === 'repair') { drawObstacleMark(ctx, 'roadwork', mx, my, 6.5 * zs, true, REPAIR_RING); continue; }
     ctx.fillStyle = RED; ctx.beginPath(); ctx.arc(mx, my, 8, 0, 7); ctx.fill(); ctx.fillStyle = '#0b1219'; ctx.fillRect(mx - 5, my - 1.5, 10, 3);
     // (G4 §7.5) 무엇이 막았는가: 사건이 막은 구간은 그 사건의 유형색 테, 재난이 막은 구간은 주황 테
     const by = e.closedReason === 'disaster' ? null : sim.incidents.find((I) => I.blockedEdge === e.id && I.phase !== 'closed');

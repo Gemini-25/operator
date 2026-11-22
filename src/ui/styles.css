@@ -480,3 +480,44 @@ input:focus { border-color: var(--accent); }
 /* (b4 §3.9) 보고서의 사슬 문장: 사건 분석 아래, 왼쪽 실선으로 이어진 사건임을 보인다 */
 ul.chain { margin: 2px 0 4px 16px; padding: 0 0 0 8px; list-style: none; border-left: 2px solid rgba(150, 190, 230, 0.4); line-height: 1.55; color: #a9c4dd; font-size: 0.94em; }
 ul.chain li::before { content: "↳ "; color: rgba(150, 190, 230, 0.7); }
+
+/* ── persist ── */
+/* (I2 §5.2) 상단의 조직 칩 — 난이도 칩 옆. 이어받은 교대는 청록 테 */
+.org-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px; white-space: nowrap; }
+.org-chip svg { flex: none; opacity: 0.85; }
+.org-chip.carry { box-shadow: inset 0 0 0 1px rgba(79, 209, 197, 0.55); }
+.org-chip b { color: #ffffff; }
+/* 난이도 창의 조직 줄 (재난 줄 아래) */
+.cond-rows { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 18px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.cond-rows .disaster-row { margin-top: 0; padding-top: 0; border-top: 0; }
+.cond-rows .disaster-row .chip { padding: 5px 10px; }
+/* 조직 줄을 더한 만큼 창을 넓혀 손잡이 설명이 덜 접히게 — 1600×900 에서 시작 버튼이 창 아래로 밀리지 않는다 */
+.modal.diff { width: min(960px, 94vw); }
+.org-row { padding-left: 18px; border-left: 1px solid var(--line); min-width: 0; }
+.org-row .knob-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.org-row .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.org-row .chip { display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; font-size: 13px; }
+.org-row .chip.on { background: #17565a; border-color: #4fd1c5; color: #fff; }
+.org-row .chip:disabled { opacity: 0.4; cursor: default; }
+.org-row .chip.ghost { font-size: 12px; color: var(--dim); }
+.org-row .chip.danger { border-color: #b35050; color: #ffd0d0; }
+.org-row .knob-head .chip { padding: 2px 9px; font-size: 11.5px; }
+.org-row .org-del { margin-left: auto; }
+.org-row .org-clear { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.org-row .org-line { margin-top: 7px; line-height: 1.45; }
+.diff-foot .replay-note { align-self: center; line-height: 1.25; font-size: 11px; }
+/* (I2 §5.4) 부대 목록: 결장 대원은 흐리게 + 가로줄 (역할 점의 사선은 Mark.tsx), 예비 인력은 점 표지 */
+.rdot.off { opacity: 0.42; }
+.cchip.off { opacity: 0.55; text-decoration: line-through; text-decoration-color: rgba(232, 238, 244, 0.7); color: var(--dim); }
+.cchip.relief { box-shadow: inset 2px 0 0 #e8eef4; }
+/* (I2 §5.5) 보고서의 조직 칸 — 재난 요약 아래 */
+.org-report { margin: 10px 0 4px; padding: 10px 12px; border: 1px solid rgba(79, 209, 197, 0.4); border-radius: 8px; background: rgba(79, 209, 197, 0.06); }
+.org-report h3 { margin: 0 0 6px; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+.org-report p { margin: 2px 0; font-size: 13px; }
+.org-report p.lead { color: #cfe9e6; }
+.org-report .org-next-h { margin: 8px 0 4px; }
+.org-tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; margin-bottom: 6px; }
+.otile { background: var(--surface); border-radius: var(--r1); padding: 6px 9px; display: flex; flex-direction: column; gap: 1px; }
+.otile b { font-size: 16px; font-variant-numeric: tabular-nums; color: var(--dim); } .otile.on b { color: #ffd166; }
+.otile span { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.modal-head .btns button.next { background: #17565a; border-color: #4fd1c5; color: #fff; }

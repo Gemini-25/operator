@@ -2092,7 +2092,7 @@ describe('5·9·11·15 보호 — 위기자 · 문 잠긴 집 (단계 7 뒤 절�
       }
       if (J.phase === 'closed') break;
     }
-    void saw;
+    expect(saw, '매트 터의 일을 맡을 수 있는 대원이 있었다 (S1 은 옥상 — 매트 터가 있다)').toBeGreaterThan(0);      // (N8 검토) 예전에는 void saw — 아무것도 보지 않아도 통과했다
   });
   it('15 문 잠긴 집: 생성기 200번 — 현관문은 잠겨 있고(방범문 30% 안팎), 바깥으로 난 창이 늘 있으며, 안의 사람은 거동 불가 · 체력 35~70(숨진 채 발견되는 갈래가 없다) 또는 빈집', () => {
     const sim = new Sim('N8-7B-GEN', NORMAL, 1200, { force: null });
@@ -2242,5 +2242,39 @@ describe('12 화면 — 유형 기호만 (결정 13 · §5.12 · 단계 11)', ()
     const hs = readFileSync(new URL('../src/view/hazardState.ts', import.meta.url), 'utf8');
     expect(hs).toMatch(/const VARIANT_ICON = new Set\(\['elevator', 'crane', 'landslide', 'gasblast'\]\);/);
     expect(hs).toMatch(/if \(shown === 'collapse'\) \{ const v = shownVariant\(I, truth\); if \(v && VARIANT_ICON\.has\(v\)\) return v; \}/);
+  });
+});
+
+// ───────────────────────── N8 검토 — 관제는 알려진 위치가 옮겨 가는 사건(달리는 차)에 소방·의료 헬기를 보내지 않는다 ─────────────────────────
+import { airFit } from '../src/sim/dispatch/dispatcher';
+describe('N8 검토: 이름표 없는 추격전 (흐릿한 신고로 시작한 도주 차량)', () => {
+  it('목격·추적 보고로 알려진 위치가 옮겨 간 사건(reportedPrev)에는 의료·소방 헬기의 적합도가 0, 경찰 헬기는 그대로 · 차가 서면(pursuit.stop) 그 전 위치를 지운다', () => {
+    let sim: Sim | null = null;
+    for (let k = 0; k < 40 && !sim; k++) { const q = new Sim('N8-RV-HELI' + k); if (q.weather === 'clear') sim = q; }
+    expect(sim, '맑은 날의 교대').not.toBeNull();
+    const I = createIncident(sim!, { type: 'armed', variant: 'getaway', rng: sim!.rng.fork('rv-heli') });
+    I.reportedNode = sim!.city.facilities.find((f) => f.kind === 'hospital')!.nodeId; I.locationKnown = true; I.reportedAt = sim!.t;
+    I.assessment = { type: 'armed', typeConf: 0.9, probs: {} as Assessment['probs'], severity: 2.6, confidence: 0.6, needs: { suppression: 0, rescue: 1, ems: 1, law: 2, tactical: 0, search: 1, traffic: 0, eod: 0, utilPower: 0, utilGas: 0, utilWater: 0, tow: 0, capture: 0, decon: 0 }, risks: [], summary: '', t: sim!.t, revision: 0 } as Assessment;      // 이름표 없음 — 흐릿한 신고('사람들이 소리 지르며 뛰쳐나와요')로 평가된 무장 사건
+    const med = sim!.units.find((u) => u.kind === 'medHeli')!, fireHeli = sim!.units.find((u) => u.kind === 'heli')!, police = sim!.units.find((u) => u.kind === 'policeHeli')!;
+    expect(airFit(sim!, med, I, 'ems'), '위험도 2.3 이상 — 이름표가 없으면 의료 헬기가 간다').toBeGreaterThan(0);
+    expect(airFit(sim!, fireHeli, I, 'rescue')).toBeGreaterThan(0);
+    const p0 = airFit(sim!, police, I, 'search');
+    I.reportedPrev = sim!.city.nodes[I.reportedNode].edges.map((e) => sim!.city.edges[e]).map((e) => (e.a === I.reportedNode ? e.b : e.a))[0];      // 목격 신고: 차가 옆 교차로에서 옮겨 왔다
+    expect(airFit(sim!, med, I, 'ems'), '달리는 차에 의료 헬기를 보내지 않는다').toBe(0);
+    expect(airFit(sim!, fireHeli, I, 'rescue'), '소방 헬기도').toBe(0);
+    expect(airFit(sim!, police, I, 'search'), '경찰 헬기는 그대로').toBe(p0);
+    // 차가 서면 그 전 위치를 지운다 — 사고 현장에는 다시 보낼 수 있다 (강제 도주 차량 교대에서 차가 선 사건)
+    const sm = new Sim('S1', NORMAL, 1200, { force: 'armed/getaway' });
+    let J: Inc | undefined, drove = false;
+    for (let k = 0; k < 6000 && !sm.ended; k++) {
+      sm.step();
+      J = sm.incidents.find(forced(sm));
+      if (!J || !J.pursuit) continue;
+      if (J.pursuit.state === 'driving' && J.reportedPrev !== undefined) drove = true;
+      if (J.pursuit.state !== 'driving') break;
+    }
+    expect(drove, '달리는 동안 그 전 위치가 적혔다').toBe(true);
+    expect(J!.pursuit!.state).not.toBe('driving');
+    if (J!.pursuit!.state === 'stopped') expect(J!.reportedPrev, '선 차에는 그 전 위치가 없다').toBeUndefined();
   });
 });

@@ -181,6 +181,10 @@ export function airFit(sim: Sim, u: Unit, I: Incident, key: keyof Needs): number
   if (sim.disaster !== null && sim.disaster.kind === 'typhoon' && sim.disaster.phase === 'impact') return 0;      // 강풍이 닥친 바로 그 틱 (u.grounded 는 이 뒤의 tickUnits 가 적는다)
   if ((u.fuel ?? 0) < etaFor(sim, u, I.reportedNode) * 2 + 90) return 0;
   if (I.airDone && I.airDone.indexOf(u.kind) >= 0) return 0;
+  // (N8 검토 — R1 의 불변 조건 "달리는 추격전에 소방·의료 헬기를 보내지 않는다") 알려진 위치가 목격·추적 보고로 옮겨 가는 사건(그 전 위치 reportedPrev 가 있다 — 공개 정보,
+  // pursuit.setReported 가 보고마다 적고 차가 서면 pursuit.stop 이 지운다)은 이름표가 없어도 달리는 차다 — 흐릿한 신고로 '무장 사건'·'교통사고'로 평가된 도주 차량에
+  // 구급·구조 수요로 의료·소방 헬기가 갔다(이름표 CHASE_LABEL 로만 알아보았다). 경찰 헬기는 그대로(하늘에서 보는 일)
+  if (u.kind !== 'policeHeli' && I.reportedPrev !== undefined) return 0;
   const as = I.assessment!, type = as.type, night = sim.weather === 'night';
   if (u.kind === 'policeHeli') {
     if (key !== 'search') return 0;

@@ -355,9 +355,10 @@ function unblock(sim: Sim, s: Scene, a: FieldAgent, tile: number, method?: Metho
   s.propAt[tile] = -1; p.blocking = false;
   if (p.kind === 'door') { p.locked = false; p.open = true; } else p.removed = true;
   const how: BreachHow | null = method === 'kick' || method === 'irons' || method === 'ram' || method === 'hydraulic' || method === 'charge' ? method : null;
-  if (p.kind === 'door' && method !== 'window') recBreach(sim, s, p.x, p.y, a.x, a.y, { door: p.id, how: how ?? breachHowFor(sim, [a], true, false), n: 1, sync: false, by: a.rid, forced: true });      // (N8 단계 7) 창으로 들어가 안에서 연 문은 진입 연출이 아니다
-  if (s.kind === 'welfare' && s.kinds !== undefined && s.kinds.door === p.id && s.kinds.entered === undefined) s.kinds.entered = method === 'window' ? 'window' : 'force';      // (N8 단계 7) 문 잠긴 집 — 판정 문장
+  if (p.kind === 'door') { if (method !== 'window') recBreach(sim, s, p.x, p.y, a.x, a.y, { door: p.id, how: how ?? breachHowFor(sim, [a], true, false), n: 1, sync: false, by: a.rid, forced: true }); }      // (N8 단계 7) 창으로 들어가 안에서 연 문은 진입 연출이 아니다
   else if (method === 'charge') recBreach(sim, s, p.x, p.y, a.x, a.y, { door: -1, how: 'charge', n: 1, sync: false, by: a.rid, forced: true });
+  // (N8 검토) 이 줄은 위의 if/else if 사이에 끼어 있었다 — 그래서 'else if (charge)' 가 이 줄에 붙어, 문을 폭파로 연 진입 기록이 문짝 없는 기록(door −1)과 함께 두 번 남았다
+  if (s.kind === 'welfare' && s.kinds !== undefined && s.kinds.door === p.id && s.kinds.entered === undefined) s.kinds.entered = method === 'window' ? 'window' : 'force';      // (N8 단계 7) 문 잠긴 집 — 판정 문장
   s.staticVersion++;
   learnQuiet(sim, a, mkFact('blk', tile, 'none', r.name, sim.t, 1, true, p.kind === 'door' ? '문 개방 완료' : '잔해 제거, 통로 확보'));
   const noun = method !== undefined ? METHOD[method].noun : '';

@@ -215,7 +215,8 @@ describe('R2 장비 아홉 줄과 gear.ts', () => {
     expect(ROLES.boatRescuer.kit).toEqual(['rope', 'ring', 'oilBoom', 'pole', 'pfd', 'drysuit']);
     expect(ROLES.engineer.kit.slice(-3)).toEqual(['pole', 'extinguisher', 'fan']); expect(ROLES.ladderOp.kit.slice(-2)).toEqual(['pole', 'fan']); expect(ROLES.airRescuer.kit.slice(-1)).toEqual(['pfd']);
     expect(ROLES.patrolLead.kit.slice(-1)).toEqual(['extinguisher']); expect(ROLES.emsDriver.kit).toEqual(['stretcher', 'extinguisher']); expect(ROLES.eodGuard.kit.slice(-1)).toEqual(['extinguisher']); expect(ROLES.decon.kit.slice(-1)).toEqual(['fan']);
-    expect(ROLES.extricator.kit).toEqual(['scba', 'turnout', 'spreader', 'airbag', 'jumpMat']);      // jumpMat: (N8 단계 7 뒤 절반) 안전 매트를 에어백 뒤 끝에 expect(ROLES.rescueLead.kit).toEqual(['scba', 'turnout', 'searchKit', 'irons', 'shoring', 'gasMeter']);      // gasMeter: (N8 단계 8) 지지대 뒤 끝에 — 구덩이의 공기 측정
+    expect(ROLES.extricator.kit).toEqual(['scba', 'turnout', 'spreader', 'airbag', 'jumpMat']);      // jumpMat: (N8 단계 7 뒤 절반) 안전 매트를 에어백 뒤 끝에
+    expect(ROLES.rescueLead.kit).toEqual(['scba', 'turnout', 'searchKit', 'irons', 'shoring', 'gasMeter']);      // gasMeter: (N8 단계 8) 지지대 뒤 끝에 — 구덩이의 공기 측정 · (N8 검토) 단계 7 뒤 절반이 이 줄을 앞 줄의 주석 안으로 넣어 검사가 꺼져 있었다
     // 교대의 명부: 아홉 모두 그 역할의 대원이 든다. 표의 처음 수량은 명부가 복사한다 (kitFor — 소화기 1 · 비살상탄 3)
     const sim = new Sim('R2-KIT', FULL);
     const LATER: KitId[] = [];
@@ -1922,6 +1923,7 @@ describe('R2 단계 2: 폭파 진입 (§4.2a — 사용자 결정, 시험 10)', 
     expect(kitCount(q.sim, q.br.rid, 'charge')).toBe(kit0 - 1);
     const bf = q.s.fx.filter((f) => f.kind === 'breach' && f.c?.door === q.door.id);
     expect(bf.map((f) => [f.c!.how, f.c!.forced])).toEqual([['charge', true]]);
+    expect(q.s.fx.filter((f) => f.kind === 'breach').length, '진입 기록은 그 문의 하나뿐 (문짝 없는 기록 door −1 이 함께 남지 않는다 — N8 검토)').toBe(1);
     expect(Math.hypot(q.br.x - q.door.x, q.br.y - q.door.y)).toBeGreaterThanOrEqual(3 - 1e-6);      // 물러선 자리에서 터뜨렸다
     expect(q.I.methods!.filter((u) => u.ok)).toMatchObject([{ method: 'charge', work: 'force', tile: q.tile, why: 'usual' }]);
     expect(texts(q.sim, 0)).toContain('장약 설치합니다. 물러서십시오.');

@@ -5,7 +5,8 @@
 import type { Sim } from '../engine';
 import { emit, markRecovered, raiseProblem } from '../events';
 import { T } from '../types';
-import type { AniBelief, Animal, Fact, FieldAgent, Hostile, Incident, KitId, MateBelief, Prop, Scene, Task, TaskKind, WorkItem } from '../types';
+import { leavePerch, perchIdx } from './perch';
+import type { AniBelief, Animal, Casualty, Fact, FieldAgent, Hostile, Incident, KitId, MateBelief, Prop, Scene, Task, TaskKind, WorkItem } from '../types';
 import { clamp, dist, josa, pct } from '../util';
 import { hasKit, kitRng, kitUses, kitWorks, medLevelOf, refillAir, seatsOf, seatsUsed, toolUse, useKit } from '../crews';
 import { RETRY_AFTER, agentCost, casFact, debrisText, detectRadius, exitName, fitFor, flushOutbox, hazCount, hosFact, learn, learnQuiet, mateFact, mateStatus, perceive, regionNameAt, resp, staminaF, targetInHaz, visionOf, workLabel } from './agents';
@@ -40,6 +41,60 @@ const HAZ_DROP: ReadonlySet<string> = new Set(['treat', 'carry', 'extricate', 'e
 function wireHaz(s: Scene, p: Prop, active: boolean): { kind: string; active: boolean; x: number; y: number; r: number } { return { kind: 'wire', active, x: p.x, y: p.y, r: s.kinds?.hazR ?? 2.2 }; }
 
 /** 임무 종료. 실패하면 지휘관이 알 수 있도록 작업 항목에 기록하고 무전으로 알린다. */
+// ───────────────────────── (N8 단계 8 §5.11) 높은 자리 ─────────────────────────
+/** 높은 자리의 구출 시간(초 — 구조 능력 ×(0.6 + 0.4 × 구조)로 나눈다): 사다리 20 · 하강 35(구조 공작차의 대원) · 그 밖의 대원 50 */
+export const PERCH_WORK = { ladder: 20, descend: 35, descendSlow: 50 };
+/** (N8 §4.7 overdose) 약물 과다의 환자가 지금 흥분하고 있는가 (진실 s.kinds.agitated — 실행부는 읽어도 된다) */
+function agitatedNow(sim: Sim, s: Scene, c: Casualty): boolean { return s.kind === 'medical' && s.variant === 'overdose' && s.kinds !== undefined && (s.kinds.agitated ?? -1) > sim.t && c.id === 0; }
+/**
+ * (N8 단계 9) 출산을 기다리는 구급대원은 처치 임무를 쥔 채 산모 곁에 머문다 — 진행 막대가 믿는 출산 시각으로 찬다(설계서 원칙 11).
+ * 시각은 그 대원의 믿음(evid labor)으로만 정한다 (낳았다는 강제 보고 done 이 오면 끝난다)
+ */
+const LABOR_T0 = new WeakMap<Task, number>();
+function laborStay(sim: Sim, s: Scene, a: FieldAgent, t: Task, c: Casualty, until: number, label: string): void {
+  const m = moveTo(sim, s, a, c.x, c.y, 1.3);
+  if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+  if (m !== 'arrived') return;
+  let t0 = LABOR_T0.get(t);
+  if (t0 === undefined) { t0 = sim.t; LABOR_T0.set(t, t0); }
+  a.label = label;
+  a.ring = Math.min(1, (sim.t - t0) / Math.max(1, until - t0));
+  drain(sim, a, 0.1);
+}
+/** 흥분한 환자에게서 2.2칸 밖으로 물러서 기다린다 (곁에 있으면 밀쳐진다 — rules/kinds.ts overdoseRule) */
+function backOff(sim: Sim, s: Scene, a: FieldAgent, c: Casualty): void {
+  a.label = '흥분이 가라앉기를 기다림';
+  const d = Math.hypot(a.x - c.x, a.y - c.y);
+  if (d >= 2.2) return;
+  const ux = d > 0.01 ? (a.x - c.x) / d : 1, uy = d > 0.01 ? (a.y - c.y) / d : 0;
+  const tx = Math.max(0, Math.min(s.w - 1, Math.round(c.x + ux * 2.4))), ty = Math.max(0, Math.min(s.h - 1, Math.round(c.y + uy * 2.4)));
+  if (staticPass(s.tiles[ty * s.w + tx])) moveTo(sim, s, a, tx, ty, 0.6);
+}
+/**
+ * 높은 자리의 사람에게 가는 구출: 방법이 사다리면 사다리를 펴는 땅 칸(ground), 하강이면 위쪽 칸(top)으로 가서 정해진 시간 동안 일한다.
+ * 그 밖의 방법(또는 방법 없음)으로는 닿을 수 없다 — 내려놓는다(실패 기억 25초 — 지휘관이 같은 대원에게 다시 주지 않는다).
+ * 끝나면 그 사람은 ground 칸의 보통 구조 대상(거동 불가)이 된다 — 처치·이송은 핵심 규칙이 낸다
+ */
+function perchRescue(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Casualty, k: number): void {
+  const pe = s.kinds!.perch![k], r = sim.responders[a.rid];
+  if (t.method !== 'ladder' && t.method !== 'descend') { learn(sim, a, casFact(sim, s, c, r.name), false); finishTask(sim, s, a, false, 'nopath'); return; }
+  const tile = t.method === 'ladder' ? pe.ground : pe.top;
+  const m = moveTo(sim, s, a, tile % s.w, (tile / s.w) | 0, 0.8);
+  if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+  if (m !== 'arrived') return;
+  const need = (t.method === 'ladder' ? PERCH_WORK.ladder : sim.units[r.unitId].kind === 'rescue' ? PERCH_WORK.descend : PERCH_WORK.descendSlow) / (0.6 + 0.4 * r.skills.rescue);
+  t.progress += sim.dt * staminaF(r); a.ring = clamp(t.progress / need, 0.02, 1); drain(sim, a, 0.6);
+  a.label = METHOD[t.method].label; a.fx = c.x - a.x; a.fy = c.y - a.y;
+  if (t.progress < need) return;
+  leavePerch(s, c, k, c.health >= 70 ? 'mobile' : 'immobile');      // 멀쩡한 사람은 내려와 스스로 걷는다
+  c.tFreed = sim.t;
+  learnQuiet(sim, a, casFact(sim, s, c, r.name));
+  const done = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 2, text: extricateDoneText(c, t.method) });
+  c.freedHow = t.method; c.freedBy = a.rid; recordMethod(sim, I, a, t, t.method, t.mwhy ?? 'usual', true, done);
+  r.xpGained += 0.004;
+  finishTask(sim, s, a, true);
+}
+
 export function finishTask(sim: Sim, s: Scene, a: FieldAgent, ok: boolean, reason = ''): void {
   const t = a.task;
   if (!t) return;
@@ -1194,9 +1249,10 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       if (c.mob !== 'trapped') { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
       // (R2 §4.3) 방법을 처음 고른다 — 차량·붕괴·구덩이·그 밖을 대원의 믿음으로 가려 수동·손 공구·문 벌리기·지붕 절단·급박·줄·손으로 파기·에어백·지지대 가운데
       if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'extricate', { cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1 });
+      { const pk = perchIdx(s, c.id); if (pk >= 0) { perchRescue(sim, s, I, a, t, c, pk); return; } }      // (N8 단계 8 §5.11) 높은 자리의 사람: 사다리(ground)·하강(top)으로만 닿는다
       if (noAirEntry(sim, s, a, c.x, c.y)) { learn(sim, a, casFact(sim, s, c, r.name), false); finishTask(sim, s, a, false, 'unsafe'); return; }      // 위험한 건물 안: 공기호흡기 없이는 들어가지 않는다
       const pitTile = !staticPass(s.tiles[tileOf(s, c.x, c.y)]);      // (N8 4b) 걸을 수 없는 칸(싱크홀 안): 가장자리에서 줄로 — 사거리 3.6 (구명줄을 던지는 거리, waterRescue 와 같다)
-      const m = moveTo(sim, s, a, c.x, c.y, pitTile ? 3.6 : 1.5);
+      const m = moveTo(sim, s, a, c.x, c.y, pitTile ? (t.method === 'descend' ? 1.5 : 3.6) : 1.5);      // (N8 단계 8) 구덩이로 내려가는 하강은 가장자리 바로 곁에서
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
       if (m !== 'arrived') return;
       if (w && relieve(sim, s, a, w, c.x, c.y)) return;      // 교대: 내가 손을 뗐다
@@ -1236,9 +1292,13 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       // 처치의 질과 효과는 세 부류가 같은 식을 쓴다 (injury.treatPlan·treatEffect — 제세동기·의사 장비의 보정 포함).
       // 다시 볼 가치가 있는지는 든 장비로 어림하고(treatPlan — hasKit), 효과는 처치를 마칠 때 준다(treatEffect — 숨은 고장은 그때 드러난다)
       const qPlan = treatPlan(sim, s, a.rid, c.health);
+      // (N8 단계 9) 출산이 가깝다고 믿는 구급대원: 처치를 마친 뒤에도 곁에 머문다 (현장 분만 — 낳은 뒤의 산모·신생아는 핵심 규칙의 처치·이송이 맡는다)
+      const labAt = r.dept === 'ems' && !c.dead && (c.where === 'scene' || c.where === 'safe') ? laborAtOf(sim, a, c.id) : -1;
+      if (labAt >= 0 && c.treated) { laborStay(sim, s, a, t, c, labAt, '분만 대기'); return; }
       // 이미 처치를 받은 환자는 더 나은 처치를 할 수 있는 대원만 다시 본다
       if (c.dead || c.where === 'loaded' || c.where === 'hospital' || (c.treated && qPlan <= c.treatQ + 0.15)) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
       if (c.where === 'carried') return;
+      if (agitatedNow(sim, s, c)) { backOff(sim, s, a, c); return; }      // (N8 단계 9) 약물 과다: 흥분하는 동안은 곁에서 물러나 기다린다 (경찰이 가라앉힌다)
       if (r.dept !== 'ems' && tryHandover(sim, s, a, t, c, XK)) return;      // (R3 CE2) 지휘관이 같은 처치를 맡긴 구급 대원이 곁에 왔다 — 손을 떼고 넘긴다 (finishTask 'handover')
       if (s.laneRows.length && laneHold(sim, s, a, t, c, XK)) return;      // (R3 E12) 차로 위 환자 — 통제 전에는 차로 밖 곁 칸에서 기다린다 (상한 20초)
       // (R2 §4.7) 방법을 처음 고른다 — 현장 안정 후 이송(평소) · 즉시 이송(위중 · 환자 자리가 남은 부대 · 구급 장비)
@@ -1263,7 +1323,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
         const ev = emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: rush ? `구조 대상 ${c.label} 최소한만 처치했습니다. 즉시 이송합니다.` : fx.q < 0.6 ? `구조 대상 ${c.label} 기본 응급 처치 완료. 전문 처치가 필요합니다.` : `구조 대상 ${c.label} 전문 응급 처치 완료.` });
         if (t.method !== undefined) recordMethod(sim, I, a, t, t.method, t.mwhy ?? 'usual', true, ev);      // (R2) 이 방법으로 처치했다
         r.xpGained += 0.003;
-        finishTask(sim, s, a, true);
+        if (labAt < 0) finishTask(sim, s, a, true);      // (N8 단계 9) 출산이 가까우면 쥔 채 곁에 머문다 (다음 틱부터 laborStay)
       }
       return;
     }
@@ -1273,6 +1333,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       // 갇혔다(맡은 뒤에 2차 붕괴로 갇힌 사람 등): 옮길 수 없다. 지휘관의 믿음이 '거동 불가'로 남아 같은 지시를 되풀이하지 않게 다시 알린다 (낡은 믿음)
       if (c.mob === 'trapped') { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, false, 'gone'); return; }
       if (a.carrying !== c.id && isHeld(sim, s, c.id)) { finishTask(sim, s, a, false, 'unsafe'); return; }      // 용의자 곁의 인질은 데리고 나올 수 없다
+      if (a.carrying !== c.id && agitatedNow(sim, s, c)) { backOff(sim, s, a, c); return; }      // (N8 단계 9) 흥분하는 동안은 옮기지 못한다
       if (c.walking) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
       if (c.where === 'carried' && a.carrying !== c.id) {
         // 다른 대원이 이송 중 → 곁에서 보조
@@ -1736,6 +1797,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     case 'interview': {
       const p = s.props[t.prop];
       if (p.skin === 'victim') { runVictimTalk(sim, s, I, a, t, p); return; }      // (N8 단계 6b) 수거책 잠복의 피해자 — 면담하면 약속 시각을 안다
+      if (p.skin === 'operator') { runOperatorTalk(sim, s, I, a, t, p); return; }      // (N8 단계 8) 놀이기구 운영자 — 면담하면 전원 복구 예상 시각을 안다
       if (p.interviewed) { reportDone(sim, a, mkFact('evid', p.id, { kind: 'witness', done: true }, r.name, sim.t, 1, true, '목격자 면담 완료')); finishTask(sim, s, a, true); return; }
       const m = moveTo(sim, s, a, p.x, p.y, 1.5);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
@@ -1989,6 +2051,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       a.label = '통제';
       // (N8 단계 6b §4.4) 잠복: 이 대원이 약속 시각을 알면 진행 막대가 그 시각으로 찬다(원칙 11 — 설계된 기다림)
       { const m = s.kind === 'disturb' ? meetOf(a) : null; if (m) { const t0 = sim.t - t.progress; a.ring = clamp(t.progress / Math.max(1, m.at - t0), 0, 1); a.label = dist(a.x, a.y, m.x, m.y) <= 3.5 ? '잠복' : '통제'; } }
+      if (s.kind === 'rescue') { const at = powerAtOf(a); if (at > sim.t) { const t0 = sim.t - t.progress; a.ring = clamp(t.progress / Math.max(1, at - t0), 0, 1); } }      // (N8 단계 8) 놀이기구: 전원 복구 예상 시각으로 찬다 (원칙 11 — 설계된 기다림)
       return;
     }
     // (N8 단계 2a) 새 임무 셋의 빈 갈래 — 실행은 그 임무를 쓰는 단계가 채운다(capture 5 · towAway 6b · persuade 7, 설계서 §4·§5.9).
@@ -2001,8 +2064,16 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       return;
     }
     case 'towAway': { runTowAway(sim, s, I, a, t); return; }      // (N8 단계 6b §5.3.8) 견인 — 차로를 막은 부서진 차
+    // (N8 §5.9 — 단계 9 가 먼저 쓴다) 설득: 대상(구조 대상) 2칸 안에 서서 말을 건넨다 — 효과는 세계 규칙이 정한다(약물 과다의 흥분 — rules/kinds.ts overdoseRule).
+    // 끝은 지휘 규칙이 믿음상 필요 없어졌을 때 거두는 것뿐이다(진행 막대는 시각에 따라 돈다 — 원칙 11)
     case 'persuade': {
-      finishTask(sim, s, a, false, 'preempt');
+      const c = s.casualties[t.cas];
+      if (!c || c.dead || c.where !== 'scene') { if (c) learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
+      const m = moveTo(sim, s, a, c.x, c.y, 2.0);
+      if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+      if (m !== 'arrived') return;
+      if (t.phase === 0) { t.phase = 1; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `구조 대상 ${c.label}에게 말을 걸기 시작합니다.` }); }
+      t.progress += dt; a.ring = (t.progress % 20) / 20; a.label = '설득'; a.fx = c.x - a.x; a.fy = c.y - a.y;
       return;
     }
     // (N9 단계 1) 제독의 빈 갈래 — 실행(제독 자리로 데려가 15·30·45초)은 단계 6 이 채운다(설계서 §5.5). 지금은 아무도 이 작업을 만들지 않고 fitFor 가 0 이라 닿지 않는다.
@@ -2381,7 +2452,7 @@ function captured(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, x: An
 }
 
 // ───────────────────────── (N8 단계 6b) 치안·견인의 실행부 ─────────────────────────
-import { meetOf, wreckFact } from './agents';
+import { laborAtOf, meetOf, powerAtOf, wreckFact } from './agents';
 /** 견인: 견인 장비를 단 차를 부서진 차 곁(1.6칸)에 대고 20초 — 끝나면 차가 치워지고(removed) 차로가 열린다. 탑승자가 아직 차 안에 있으면 기다린다(구출이 먼저). 효과는 여기 한 곳 */
 export const TOW = { work: 20, range: 1.6 };
 function runTowAway(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task): void {
@@ -2403,6 +2474,26 @@ function runTowAway(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task): vo
   finishTask(sim, s, a, true);
 }
 /** 수거책 잠복의 피해자 면담 (6초): 피해자가 말한 약속 시각(진실 s.kinds.meetAt — 실제 시각 ± 20초)과 자리를 믿음 evid meet 으로 — 사실의 id 는 피해자 소품의 id (면담 전의 'witness' 사실을 바꾼다) */
+/**
+ * (N8 단계 8 §4.6 ride) 놀이기구 운영자 면담: 곁에서 6초 → 믿음 evid power { at } (운영자가 말하는 전원 복구 예상 시각 — 진실 s.kinds.powerSay. 복구되지 않는 40% 에도
+ * "곧 됩니다"라고 할 수 있다 — 틀릴 수 있는 진술). 이미 면담했으면 강제 보고만 (낡은 믿음의 되풀이 막기)
+ */
+function runOperatorTalk(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, p: Prop): void {
+  const r = resp(sim, a);
+  const at = s.kinds && s.kinds.powerSay !== undefined ? s.kinds.powerSay : Infinity;
+  const left = Math.max(10, Math.round((at - sim.t) / 10) * 10);
+  const f = mkFact('evid', p.id, { kind: 'power', at, done: true }, r.name, sim.t, 0.8, true, at < Infinity ? `운영자 진술: 전원이 ${at > sim.t ? `약 ${left}초 뒤` : '곧'} 돌아온다고 함` : '운영자 진술: 전원 복구는 어렵다고 함');
+  if (p.interviewed) { reportDone(sim, a, f); finishTask(sim, s, a, true); return; }
+  const m = moveTo(sim, s, a, p.x, p.y, 1.5);
+  if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+  if (m !== 'arrived') return;
+  t.need = 6; t.progress += sim.dt; a.ring = t.progress / t.need;
+  if (t.progress < t.need) return;
+  p.interviewed = true;
+  emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: at < Infinity ? `운영자 면담 완료. 전원이 ${at > sim.t ? `약 ${left}초 뒤` : '곧'} 돌아온다는 진술을 확보했습니다.` : '운영자 면담 완료. 전원 복구는 어렵다고 합니다 — 직접 내리겠습니다.' });
+  reportDone(sim, a, f);
+  finishTask(sim, s, a, true);
+}
 function runVictimTalk(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, p: Prop): void {
   const r = resp(sim, a);
   const at = s.kinds && s.kinds.meetAt !== undefined ? s.kinds.meetAt : sim.t;

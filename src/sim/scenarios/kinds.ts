@@ -21,6 +21,8 @@ import type { District, Incident, RoadEdge } from '../types';
  * 이 잎 쪽 파일에 둔다: 분석이 orders/kinds.ts 를 import 하면 지휘 규칙의 등록 차례(= 결과)가 바뀐다
  */
 export const ATTACH_GAS = true;
+/** (N8 단계 8·9) 지금 시각(0~24시) — 시나리오의 gate 가 쓴다 (놀이기구는 운영 시간 · 폭염은 한낮) */
+export function hourOf(sim: Sim): number { return ((sim.clock / 3600) % 24 + 24) % 24; }
 /**
  * (N8 §5.3.8 — 단계 6b) 평소 사건에 붙는 유관 기관의 선택 수요 — 교통사고에 견인차의 "차로를 막은 부서진 차 견인". 분석(필요 자원에 tow 1 — 이름표 '쓰러진 나무'·'맨홀 추락' 은 빼고)과
  * 지휘 규칙(orders/kinds.ts — 견인차가 배정돼 있으면 towAway, 그 차의 clearRoad 보류 · 150초 넘게 오지 않으면 밀어 둠으로 돌아감)이 함께 본다. 거짓이면 붙이지 않는다(§7.3 의 손잡이)
@@ -187,6 +189,56 @@ export const KINDS: Scenario[] = [
     lik: { disturb: 0.7, traffic: 0.2, armed: 0.08 },
     places: { parking: 4, gasStation: 0.5, mart: 1, apartment: 1 },
     needs: (n) => { n.law = 2; n.search = 1; n.traffic = 0; n.tow = 0; } },
+  // ── 보호 (§4.5 — 단계 7). 사연·의도를 말하는 문구는 넣지 않는다(§5.13) ──
+  { type: 'welfare', variant: 'dementia', name: '치매 노인 실종', share: 0.45, nature: 'dementia', vague: 'missing', severity: [1, 2], tag: 'daily', card: false, limit: 60,
+    texts: ['치매가 있는 아버지가 집을 나가셨는데 연락이 안 돼요.', '요양원에서 어르신 한 분이 안 보이세요. 한 시간쯤 됐어요.', '시장 쪽에서 길을 잃고 헤매시는 할머니를 봤어요.'],
+    lik: { welfare: 0.72, search: 0.24, medical: 0.02, armed: 0.01 },
+    places: { houseS: 3, villa: 3, apartment: 3, market: 1.5, park: 1, station: 0.5, busTerminal: 0.5 },
+    needs: (n) => { n.search = 2; } },
+  { type: 'welfare', variant: 'lostchild', name: '미아', share: 0.8, nature: 'lostchild', vague: 'missing', severity: [1, 1], tag: 'daily', card: false,
+    texts: ['아이를 잃어버렸어요! 마트에서 잠깐 한눈판 사이에요.', '놀이공원에서 일곱 살 아이가 안 보여요.', '공원에서 놀던 아이가 없어졌어요. 노란 옷을 입었어요.'],
+    lik: { welfare: 0.8, search: 0.15, water: 0.02, armed: 0.01 },
+    places: { mart: 3, deptStore: 2, park: 2, market: 1.5, station: 1, amusement: 1 },
+    needs: (n) => { n.search = 1; n.law = 0; } },
+  // ── 구조 (§4.6 — 단계 8). 평소 추첨(tag 'kinds' — daily 가 아니다): 유형 rescue 의 가중 0.06 안에서 몫 0.45 · 0.2 · 0.1 (합 0.75 — 나머지 0.25 는 TYPE_DEFS.rescue.fallback 'pit') ──
+  { type: 'rescue', variant: 'facade', name: '외벽 작업자 고립', share: 0.45, nature: 'facade', vague: 'scream', severity: [2, 3], tag: 'kinds', card: false,
+    texts: ['건물 외벽 청소하던 곤돌라가 기울어서 사람이 매달려 있어요!', '아파트 외벽에서 작업하던 사람이 줄에 매달린 채 못 움직여요.', '공사장 비계에 사람이 걸려서 내려오지를 못해요.'],
+    lik: { rescue: 0.82, collapse: 0.08, medical: 0.05, fire: 0.03, welfare: 0.01 },
+    places: { apartment: 3, office: 3, officetel: 2, construction: 1.5, hotel: 1, deptStore: 0.8, university: 0.6 },
+    needs: (n) => { n.rescue = 1; n.suppression = 1; n.ems = 1; } },
+  { type: 'rescue', variant: 'pit', name: '구덩이 추락', share: 0.2, nature: 'pit', vague: 'scream', severity: [2, 3], tag: 'kinds', card: false,
+    texts: ['공사장 구덩이에 사람이 떨어졌어요! 아래서 소리가 나요.', '밭에 있는 오래된 우물에 사람이 빠졌어요!', '배수로에 사람이 떨어져서 못 올라와요. 물이 조금 차 있어요.'],
+    lik: { rescue: 0.74, medical: 0.1, traffic: 0.08, water: 0.05, collapse: 0.02 },
+    places: { farmhouse: 3, construction: 2, greenhouse: 1.5, riverside: 1, park: 1, forest: 0.5 },
+    needs: (n) => { n.rescue = 1; n.ems = 1; } },
+  { type: 'rescue', variant: 'ride', name: '멈춘 놀이기구', share: 0.1, nature: 'ride', vague: 'scream', severity: [2, 3], tag: 'kinds', card: false, limit: 120,
+    texts: ['놀이기구가 꼭대기에서 멈췄어요! 사람들이 매달려 있어요.', '관람차가 멈춘 지 한참 됐는데 안 움직여요. 안에 아이들도 있어요.', '롤러코스터가 중간에 서 버렸어요. 승객들이 무서워해요.'],
+    lik: { rescue: 0.8, collapse: 0.1, medical: 0.05, welfare: 0.02, fire: 0.01 },
+    places: { amusement: 1 },
+    gate: (sim) => { const h = hourOf(sim); return h >= 10 && h < 20; },      // 낮만 (운영 시간)
+    needs: (n) => { n.rescue = 2; n.suppression = 1; n.ems = 1; } },
+  // ── 응급의 갈래 넷 (§4.7 — 단계 9). 평소 추첨(tag 'kinds'): 응급 몫 0.12 · 0.12 · 0.08 · 0.10 (합 0.42 — 나머지 0.58 은 지금의 세 갈래). 의도·사연은 말하지 않는다(§5.13) ──
+  { type: 'medical', variant: 'poison', name: '집단 식중독', share: 0.12, nature: 'poison', vague: 'collapsed', severity: [2, 3], tag: 'kinds', card: false, limit: 150,
+    texts: ['식당에서 밥 먹은 사람들이 단체로 토하고 배를 움켜쥐고 있어요!', '회사 구내식당 점심 먹고 여러 명이 쓰러졌어요.', '기숙사 학생들이 밤새 설사하고 열이 나요. 열 명 가까이 돼요.'],
+    lik: { medical: 0.84, hazmat: 0.08, fire: 0.02, welfare: 0.02, armed: 0.01 },
+    places: { restaurant: 4, school: 1, dorm: 1, university: 1, hotel: 1, factory: 0.5 },
+    needs: (n) => { n.ems = 2; n.rescue = 0; n.suppression = 0; } },
+  { type: 'medical', variant: 'overdose', name: '약물 과다', share: 0.12, nature: 'overdose', vague: 'collapsed', severity: [2, 3], tag: 'kinds', card: false,
+    texts: ['친구가 약을 많이 먹은 것 같은데 의식이 흐려요.', '숙소 방에 사람이 쓰러져 있는데 옆에 약봉지가 잔뜩 있어요.', '길에 누가 쓰러져서 몸을 떠는데 뭘 먹은 것 같아요.'],
+    lik: { medical: 0.88, hazmat: 0.04, armed: 0.04, welfare: 0.02, disturb: 0.01 },
+    places: { villa: 2, officetel: 2, hotel: 2, apartment: 1, houseS: 1 },
+    needs: (n) => { n.ems = 1; n.law = 1; } },
+  { type: 'medical', variant: 'birth', name: '출산 임박', share: 0.08, nature: 'birth', vague: 'collapsed', severity: [2, 2], tag: 'kinds', card: false,
+    texts: ['아내가 진통이 너무 빨라요. 병원까지 못 갈 것 같아요!', '양수가 터졌는데 아기가 나올 것 같대요!', '택시 안에서 산모가 진통을 해요. 도와주세요!'],
+    lik: { medical: 0.94, welfare: 0.02, traffic: 0.01 },
+    places: { houseS: 3, villa: 3, apartment: 3, officetel: 1 },
+    needs: (n) => { n.ems = 1; } },
+  { type: 'medical', variant: 'heat', name: '폭염 환자', share: 0.1, nature: 'heat', vague: 'collapsed', severity: [1, 2], tag: 'kinds', card: false,
+    texts: ['공사장에서 일하던 사람이 더위 먹고 쓰러졌어요.', '비닐하우스에서 할머니가 어지럽다며 주저앉으셨어요. 몸이 불덩이예요.', '행사장 줄 서 있던 사람들이 하나둘 쓰러져요.'],
+    lik: { medical: 0.9, welfare: 0.03, hazmat: 0.03, fire: 0.01 },
+    places: { construction: 2, greenhouse: 2, park: 2, farmhouse: 1, market: 1, stadium: 0.6 },
+    gate: (sim) => { const h = hourOf(sim); return sim.weather === 'clear' && h >= 11 && h < 18; },      // 낮·맑음만 (날씨에 폭염 값이 없다 — 시각·장소로 건다)
+    needs: (n) => { n.ems = 1; } },
   // ── 비응급 N1 장난 전화 (§4.8 — 기존 armed/prank 는 평소 추첨 그대로) ──
   { type: 'fire', variant: 'prank', name: '장난 전화', share: 0.2, nature: 'prank:fire', vague: 'flames', severity: [1, 1], tag: 'daily', card: false },
   { type: 'medical', variant: 'prank', name: '장난 전화', share: 0.15, nature: 'prank:medical', vague: 'notbreathing', severity: [1, 1], tag: 'daily', card: false },

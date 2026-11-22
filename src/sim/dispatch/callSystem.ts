@@ -63,20 +63,20 @@ export const NATURE_LIK: Record<string, LikMap> = {
   crash: { fire: 0.03, traffic: 0.93, search: 0.01, armed: 0.02, medical: 0.01, collapse: 0.02, hazmat: 0.01, water: 0.01 },
   bang: { fire: 0.22, traffic: 0.46, search: 0.02, armed: 0.28, medical: 0.02, collapse: 0.2, hazmat: 0.04, water: 0.02,
     utility: 0.08, animal: 0.03 },      // (N8 §4.1) 전선이 끊어지는 소리·간판 낙하 · (단계 5) 가축이 도로에 나온 소리
-  missing: { fire: 0.01, traffic: 0.01, search: 0.96, armed: 0.01, medical: 0.01, collapse: 0.01, hazmat: 0.01, water: 0.03 },
+  missing: { fire: 0.01, traffic: 0.01, search: 0.96, armed: 0.01, medical: 0.01, collapse: 0.01, hazmat: 0.01, water: 0.03, welfare: 0.3 },      // welfare: (N8 단계 7) 도심의 실종(치매·미아)
   scream: { fire: 0.18, traffic: 0.18, search: 0.1, armed: 0.42, medical: 0.12, collapse: 0.06, hazmat: 0.04, water: 0.07,
-    animal: 0.06, disturb: 0.12 },      // (N8 §4.1 — 단계 5) 비명의 원인이 넓어진다 · (단계 6a) 날치기·싸움 (보호·구조의 열은 그 유형의 단계가 더한다)
+    animal: 0.06, disturb: 0.12, welfare: 0.05, rescue: 0.05 },      // (N8 §4.1 — 단계 5) 비명의 원인이 넓어진다 · (단계 6a) 날치기·싸움 (보호·구조의 열은 그 유형의 단계가 더한다)
   gunshots: { fire: 0.02, traffic: 0.02, search: 0.01, armed: 0.94, medical: 0.01, collapse: 0.01, hazmat: 0.01, water: 0.01 },
   robbery: { fire: 0.01, traffic: 0.01, search: 0.01, armed: 0.96, medical: 0.01, collapse: 0.01, hazmat: 0.01, water: 0.01 },
   fight: { fire: 0.03, traffic: 0.05, search: 0.02, armed: 0.86, medical: 0.04, collapse: 0.01, hazmat: 0.01, water: 0.01, disturb: 0.35 },      // disturb: (N8 단계 6a) 싸움 소리는 흉기 없는 치안 사건일 수도 있다
   hostage: { fire: 0.01, traffic: 0.01, search: 0.01, armed: 0.96, medical: 0.01, collapse: 0.01, hazmat: 0.01, water: 0.01 },
   notbreathing: { fire: 0.02, traffic: 0.02, search: 0.01, armed: 0.03, medical: 0.92, collapse: 0.01, hazmat: 0.03, water: 0.01 },
-  collapsed: { fire: 0.03, traffic: 0.06, search: 0.04, armed: 0.06, medical: 0.81, collapse: 0.02, hazmat: 0.07, water: 0.02 },
-  fall: { fire: 0.02, traffic: 0.1, search: 0.03, armed: 0.05, medical: 0.8, collapse: 0.03, hazmat: 0.01, water: 0.01 },
+  collapsed: { fire: 0.03, traffic: 0.06, search: 0.04, armed: 0.06, medical: 0.81, collapse: 0.02, hazmat: 0.07, water: 0.02, welfare: 0.06 },
+  fall: { fire: 0.02, traffic: 0.1, search: 0.03, armed: 0.05, medical: 0.8, collapse: 0.03, hazmat: 0.01, water: 0.01, rescue: 0.12 },      // rescue: (N8 단계 8) 구덩이·높은 곳
   breathless: { fire: 0.12, traffic: 0.01, search: 0.01, armed: 0.01, medical: 0.84, collapse: 0.01, hazmat: 0.1, water: 0.01 },      // (b3-11) 호흡 곤란 — 거의 응급, 연기·가스일 수도 있다
   collapse: { fire: 0.03, traffic: 0.03, search: 0.01, armed: 0.01, medical: 0.01, collapse: 0.92, hazmat: 0.01, water: 0.01 },
   rumble: { fire: 0.1, traffic: 0.2, search: 0.02, armed: 0.1, medical: 0.02, collapse: 0.5, hazmat: 0.06, water: 0.01, utility: 0.15 },      // (N8 단계 4b) 수도관·싱크홀의 흐릿한 신고
-  drowning: { fire: 0.01, traffic: 0.02, search: 0.03, armed: 0.01, medical: 0.03, collapse: 0.01, hazmat: 0.01, water: 0.93 },
+  drowning: { fire: 0.01, traffic: 0.02, search: 0.03, armed: 0.01, medical: 0.03, collapse: 0.01, hazmat: 0.01, water: 0.93, rescue: 0.02 },      // rescue: (N8 단계 8) 배수로
   gasleak: { fire: 0.06, traffic: 0.01, search: 0.01, armed: 0.01, medical: 0.02, collapse: 0.01, hazmat: 0.9, water: 0.01 },
   fumes: { fire: 0.2, traffic: 0.02, search: 0.02, armed: 0.03, medical: 0.18, collapse: 0.02, hazmat: 0.5, water: 0.01 },
   suspicious: { disturb: 0.6, armed: 0.3, animal: 0.02 },      // (N8 단계 6b) 수상한 사람 — 치안이 먼저, 무장일 수도 있다 (보호 열은 그 유형의 단계가 더한다)
@@ -105,7 +105,7 @@ function natureFor(I: Incident, s: Scene, persona: Persona, rng: Rng): { v: stri
     const pExact = persona === 'calm' ? 1 : persona === 'panicked' ? 0.7 : persona === 'wrong' ? 0.15 : 0.35;
     return rng.chance(pExact) ? { v: sc.nature, truthful: true, note: '' } : { v: sc.vague, truthful: true, note: persona === 'wrong' ? `${sc.name} 상황을 제대로 전하지 못함` : '' };
   }
-  if (t === 'medical') {
+  if (t === 'medical' && scenarioOf(t, variant) === undefined) {      // (N8 단계 9) 응급의 새 갈래(식중독·약물 과다·출산·폭염)는 아래 시나리오 갈래가 신고 키를 정한다
     const exactM = variant === 'arrest' ? 'notbreathing' : variant === 'trauma' ? 'fall' : variant === 'smoke' ? 'breathless' : 'collapsed';      // (I1-b b3-11) 연기 흡입은 호흡 곤란으로 신고한다
     if (persona === 'wrong' && variant === 'arrest') return { v: 'collapsed', truthful: false, note: '심정지를 단순 실신처럼 신고' };
     if ((persona === 'confused' || persona === 'partial') && rng.chance(0.5)) return { v: 'collapsed', truthful: variant !== 'arrest', note: variant === 'arrest' ? '호흡이 없다는 사실을 말하지 못함' : '' };
@@ -168,7 +168,10 @@ export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: 
     const arrest = I.truth.variant === 'arrest';
     const nat0 = natureFor(I, s, persona, rng);
     put('nature', nat0.v, rng.pick(NATURE_TEXT[nat0.v]), nat0.truthful, nat0.note);
-    put('count', 1, '한 명이에요.', true, '', 0.9);
+    // (N8 §4.7 — 단계 9) 인원: 보이는 증상이 있는 사람 수(체력 90 미만 — 식중독·폭염은 여럿). 한 명이면 지금 문구 그대로(기존 응급의 결과가 같다), 여럿이면 지금 인원 진술의 오차 규칙
+    { let nSym = 0; for (const c of s.casualties) if (!c.dead && c.health < 90) nSym++;
+      if (nSym <= 1) put('count', 1, '한 명이에요.', true, '', 0.9);
+      else { const ok = rng.chance(acc), n = ok ? nSym : Math.max(2, nSym + (rng.chance(0.5) ? -2 : 2)); put('count', n, `${n}명쯤 돼요. 다들 아파해요.`, ok, ok ? '' : '환자 수를 틀리게 신고', 0.8); } }
     if (rng.chance(Math.max(kn, 0.7))) {
       const ok = rng.chance(acc);
       const uncon = pt.health < 75 || arrest;
@@ -258,7 +261,9 @@ export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: 
       const x = Math.round(tgt.x) + dx * d, y = Math.round(tgt.y) + dy * d;
       if (trueReg < 0 && x >= 0 && y >= 0 && x < s.w && y < s.h && s.region[y * s.w + x] >= 0 && s.regions[s.region[y * s.w + x]].kind === 'zone') trueReg = s.region[y * s.w + x];
     }
-    const zones = s.regions.filter((r) => r.kind === 'zone');
+    const zones = s.regions.filter((r) => r.kind === 'zone' && r.searchable);      // (N8 단계 7) 수색하지 않는 구역(도심 틀의 찻길)은 목격 구역이 아니다 — 실종 현장은 모두 수색 구역이라 그대로
+    if (trueReg >= 0 && !s.regions[trueReg].searchable) trueReg = -1;
+    if (trueReg < 0 && zones.length) { let bd = Infinity; for (const z of zones) { const d = Math.hypot(z.cx - tgt.x, z.cy - tgt.y); if (d < bd) { bd = d; trueReg = z.id; } } }
     const ok = rng.chance(acc * 0.7);
     const reg = ok ? s.regions[trueReg] : rng.pick(zones.filter((z) => z.id !== trueReg));
     put('detail', { region: reg.id }, `마지막으로 ${reg.name} 방향으로 가는 걸 봤어요.`, ok, ok ? '' : `마지막 목격 위치를 ${josa(reg.name, '으로/로')} 잘못 신고`);
@@ -346,6 +351,7 @@ const INSTRUCT: Record<string, { say: string; yes: string; no: string }> = {
   care: { say: '환자를 편하게 눕히고, 피가 나면 깨끗한 천으로 세게 눌러 주세요. 곁을 지키며 상태를 계속 봐 주세요.', yes: '네, 옆에서 보고 있을게요.', no: '어떻게 해야 할지 모르겠어요…' },
   search: { say: '지금 계신 곳에서 움직이지 말고 대원들을 기다려 주세요. 도착하면 본 것을 그대로 알려 주세요.', yes: '네, 여기서 기다릴게요.', no: '저도 찾으러 가 봐야겠어요.' },
   wire: { say: '차 안에 계신 분께 그대로 계시라고 전해 주세요. 내리면 감전됩니다. 선생님도 전선에 가까이 가지 마세요.', yes: '네, 내리지 말라고 소리칠게요!', no: '너무 무서워서 가까이 못 가겠어요…' },      // (N8 §4.2) 전선이 떨어진 차
+  birth: { say: '산모를 편히 눕히고, 아기가 나오면 머리를 받쳐 주세요. 제가 하나씩 말씀드리겠습니다.', yes: '네, 눕혔어요. 말씀하시는 대로 할게요.', no: '너무 떨려서 못 하겠어요…' },      // (N8 §4.7 — 단계 9) 출산 임박
 };
 
 /** 도착 전 안내: 접수 AI 가 신고자에게 할 일을 알려 준다. 따를지는 신고자에게 달렸고, 따르면 현장 상태가 실제로 바뀐다. */
@@ -354,7 +360,7 @@ function maybeInstruct(sim: Sim, call: Call, I: Incident): boolean {
   if (call.instructed || call.isFollowup || !as || as.typeConf < 0.6 || call.caller.persona === 'prank') return false;
   const has = (topic: Topic, v: unknown): boolean => I.claims.some((c) => c.callId === call.id && c.topic === topic && c.value === v);
   const noBreath = I.claims.some((c) => (c.topic === 'nature' && c.value === 'notbreathing') || (c.topic === 'detail' && c.value && c.value.breathing === false));
-  const kind = as.type === 'fire' && has('trapped', true) ? 'fire' : as.type === 'traffic' && has('injured', true) ? 'traffic' : as.type === 'medical' && call.asked.length >= 2 ? (noBreath ? 'medical' : 'care') : as.type === 'search' && call.asked.length >= 2 ? 'search' : as.type === 'utility' && as.label === '끊어진 전선' && has('trapped', true) ? 'wire' : '';      // (N8) 이름표까지 — 수도관·싱크홀의 갇힘(지하·구멍)에는 '내리지 마세요'가 맞지 않다
+  const kind = as.type === 'fire' && has('trapped', true) ? 'fire' : as.type === 'traffic' && has('injured', true) ? 'traffic' : as.type === 'medical' && call.asked.length >= 2 ? (as.label === '출산 임박' ? 'birth' : noBreath ? 'medical' : 'care') : as.type === 'search' && call.asked.length >= 2 ? 'search' : as.type === 'utility' && as.label === '끊어진 전선' && has('trapped', true) ? 'wire' : '';      // (N8) 이름표까지 — 수도관·싱크홀의 갇힘(지하·구멍)에는 '내리지 마세요'가 맞지 않다
   if (!kind) return false;
   call.instructed = true;
   const complied = call.rng.chance(COMPLY[call.caller.persona]);
@@ -364,6 +370,8 @@ function maybeInstruct(sim: Sim, call: Call, I: Incident): boolean {
   return true;
 }
 
+/** (N8 §4.7 — 단계 9) 환자가 여럿일 수 있는 응급의 이름표 — 접수 AI 가 인원을 묻는다 (관제가 아는 이름표만 본다) */
+const MANY_PATIENTS = new Set(['집단 식중독', '폭염 환자']);
 function nextTopic(sim: Sim, call: Call, I: Incident): Topic | null {
   if (!I.locationKnown && call.asked.indexOf('location') < 0) return 'location';
   // (N8 §4.8 N1) 장난 낌새 진술이 이 통화에 있으면 확인 질문부터 (짧은 사건 손잡이가 0 이면 묻지 않는다 — 지금의 길 그대로)
@@ -382,6 +390,7 @@ function nextTopic(sim: Sim, call: Call, I: Incident): Topic | null {
     let v = table[k]!;
     if (prior.length) v *= call.isFollowup ? 0.75 : 0.4;
     if (k === 'detail' && hyp === 'fire' && !I.claims.some((c) => c.topic === 'trapped' && c.value === true)) v *= 0.4;
+    if (k === 'count' && hyp === 'medical' && as && as.label !== undefined && MANY_PATIENTS.has(as.label)) v = Math.max(v, 0.8);      // (N8 단계 9) 여럿이 아픈 신고(이름표)는 인원을 묻는다 — 지금의 응급(이름표 없음)은 그대로 0.3
     if (v > bs) { bs = v; best = k; }
   }
   // 질문을 더 하는 것의 가치 < 시간 비용이면 통화를 마친다

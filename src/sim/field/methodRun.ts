@@ -1086,6 +1086,7 @@ export function extricateRate(sim: Sim, a: FieldAgent, t: Task, I: Incident): { 
     case 'roof': return { k: 1.5, tool: kitTool(sim, 'spreader', 'extricate') };
     case 'airbag': return { k: 1.6, tool: 1 };
     case 'haul': return { k: 1.2, tool: kitTool(sim, 'rope', 'water') };
+    case 'descend': return { k: 0.7, tool: kitTool(sim, 'rope', 'water') };      // (N8 단계 8) 구덩이에 내려가 의식 없는 사람을 묶어 올린다 — 줄로 끌어올리기보다 느리다 (높은 자리의 하강은 executor 의 높은 자리 갈래가 따로 센다)
     case 'tunnel': return { k: 0.5, tool: BARE_HANDS };
     case 'rapid': { const tool = bestTool(sim, a.rid, 'extricate', I); return { k: 1.8 * (0.35 + 0.65 * tool), tool }; }
     default: return r1(bestTool(sim, a.rid, 'extricate', I));

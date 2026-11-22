@@ -10,6 +10,7 @@ import type { Rng } from '../rng';
 import { clamp, dist, josa } from '../util';
 import { armorOf } from '../crews';
 import { addProp } from './kit';
+import { floorOf } from '../incidentTypes';
 import { casFact, exitName } from './agents';
 import { astar, doorAt, isIndoor, los, staticPass, tidx, tileOf, truthCost, truthWalkable } from './grid';
 import { acrossVoid, coverRoll, fireShot, heatGlass, shatter } from './damage';
@@ -213,6 +214,7 @@ export function anyFire(s: Scene): boolean { for (let i = 0; i < s.fire.length; 
 export function tickCasualties(sim: Sim, s: Scene, I: Incident): void {
   const dt = sim.dt;
   const open = I.phase !== 'closed';      // 사건이 끝난 뒤(판정 뒤)에는 악화도 사망 판정도 없다 — 대피 이동만 남는다 (설계서 H1 §2.6)
+  const floor = floorOf(s);      // (N8 §5.13) 구조 대상의 체력 하한 (보호 유형 20 — 그 밖 0)
   for (const c of s.casualties) {
     c.px = c.x; c.py = c.y;
     if (c.dead || c.where === 'hospital') continue;
@@ -229,6 +231,10 @@ export function tickCasualties(sim: Sim, s: Scene, I: Incident): void {
     } else if (c.where === 'loaded') d *= 0.5;
     else if (c.where === 'safe' && c.treated) d *= 0.6;
     if (!open) d = 0;
+    if (floor > 0 && d > 0 && c.health - d * dt < floor) {      // (N8 §5.13) 보호 유형의 체력 하한 — 악화가 하한에서 멈춘다(숨지는 길은 quietLoss 하나)
+      const d1 = c.health > floor ? (c.health - floor) / dt : 0, k = d1 / d;
+      d = d1; nWound *= k; nSmoke *= k; nBurn *= k; nExpo *= k;      // 기록의 항도 같은 비율로 (깎인 만큼만 적는다 — H1 장부)
+    }
     c.health -= d * dt;
     if (d > 0) { if (c.where !== 'scene' && c.where !== 'carried') nWound = d; noteDecay(c, s, nWound, nSmoke, nBurn, nExpo, dt, sim.t); }      // (H1) 기록만
     if (c.health <= 0 && open) {
@@ -300,6 +306,9 @@ export function applyCallerAid(sim: Sim, I: Incident, kind: string, ev: number):
     let best: Casualty | null = null;
     for (const c of s.casualties) if (!c.dead && c.where === 'scene' && c.mob !== 'mobile' && (!best || c.bleed > best.bleed)) best = c;
     if (best) { best.bystander = true; note(kind === 'medical' ? `신고자가 안내에 따라 가슴 압박을 하고 있습니다. 환자의 악화가 늦춰집니다.` : kind === 'care' ? `신고자가 안내에 따라 환자를 돌보고 있습니다. 악화가 늦춰집니다.` : `신고자가 구조 대상 ${best.label}의 출혈 부위를 누르고 있습니다. 악화가 늦춰집니다.`); }
+  } else if (kind === 'birth') {
+    // (N8 §4.7 — 단계 9) 출산 임박: 신고자가 안내를 따랐다 — 출산 시각에 전문 응급 가방을 든 대원이 없으면 이 표시로 아기의 상태가 정해진다(rules/kinds.ts birthRule — 통화 때 적어 둔다)
+    if (s.kinds && s.kinds.coached !== true) { s.kinds.coached = true; note('신고자가 안내에 따라 산모를 편히 눕히고 곁을 지키고 있습니다.'); }
   } else if (kind === 'wire') {
     // (N8 §4.2) 전선이 떨어진 차: 신고자가 차 안 사람에게 내리지 말라고 전했다 — 세계 규칙(rules/kinds.ts wireRule)이 이 표시로 "내리려다 감전"을 막는다
     if (s.kinds && s.kinds.told === false) { s.kinds.told = true; note('신고자가 차 안에 있는 사람에게 내리지 말고 그대로 있으라고 전했습니다.'); }
@@ -871,7 +880,7 @@ export function tickWander(sim: Sim, s: Scene, I: Incident): void {
       c.wander = false; c.path = null; c.inWater = true; c.mob = 'trapped'; c.trapWork = 0;
       c.x = wet % s.w; c.y = (wet / s.w) | 0;
       // 난수는 예전 자리·예전 순서 그대로(잃는 체력 → 찬물의 악화 → 떠내려가는 속도) 뽑고, 뽑은 값만 hurtCasTo 에 넘긴다. 이 일만으로는 숨지지 않는다(하한 5)
-      const to = Math.max(5, c.health - rng.range(WANDER.dunk[0], WANDER.dunk[1])), cold = rng.range(WANDER.cold[0], WANDER.cold[1]) * sim.tune.bleedMul;
+      const to = Math.max(5, floorOf(s), c.health - rng.range(WANDER.dunk[0], WANDER.dunk[1])), cold = rng.range(WANDER.cold[0], WANDER.cold[1]) * sim.tune.bleedMul;
       c.drift = st.speed = rng.range(WANDER.drift[0], WANDER.drift[1]);
       c.concealment = Math.min(c.concealment, 0.15);      // 물속에서 허우적거리는 사람은 덤불 속보다 눈에 띈다
       const ev = raiseProblem(sim, I, 'HIDDEN_HAZARD', '배회하던 실종자가 개울에 빠짐', { role: 'SYSTEM', actor: '현장', imp: 3, truth: true, text: `(미발견) 배회하던 ${josa(c.label, '이/가')} 개울가에서 미끄러져 물에 빠졌습니다. 물살에 떠밀려 내려갑니다.` }, false);
@@ -883,7 +892,7 @@ export function tickWander(sim: Sim, s: Scene, I: Incident): void {
     if (rough && rng.chance(bad ? WANDER.fallBad : WANDER.fall)) {
       st.phase = 'down';
       c.wander = false; c.path = null; c.mob = 'immobile';
-      const to = Math.max(5, c.health - rng.range(WANDER.fallHit[0], WANDER.fallHit[1])), bl0 = c.bleed;      // 하한 5
+      const to = Math.max(5, floorOf(s), c.health - rng.range(WANDER.fallHit[0], WANDER.fallHit[1])), bl0 = c.bleed;      // 하한 5
       c.bleed *= WANDER.fallMul; c.bleed0 = c.bleed;
       if (c.bleed > bl0) c.bleedCause = 'fall';      // 넘어져 빨라진 악화는 추락으로 적는다
       if (s.tiles[i] === T.TREE) c.concealment = Math.max(c.concealment, Math.min(WANDER.hideMax, c.concealment + WANDER.brush));
@@ -891,7 +900,8 @@ export function tickWander(sim: Sim, s: Scene, I: Incident): void {
       hurtCasTo(sim, s, I, c, to, 'fall', { ev });
       continue;
     }
-    // 추위: 비·밤·안개 속에서 체온을 잃는다
+    // 추위: 비·밤·안개 속에서 체온을 잃는다 — (N8 §4.5) 보호 유형은 치매 노인의 밤 추위만 (도심의 미아는 체온을 잃지 않는다)
+    if (s.kind === 'welfare' && (s.variant === 'lostchild' || sim.weather !== 'night')) continue;
     st.chill += WANDER.chill[sim.weather] ?? 0.25;
     if (st.chill >= st.chillAt) {
       st.phase = 'down';

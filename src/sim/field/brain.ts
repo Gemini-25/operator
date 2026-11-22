@@ -317,6 +317,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
     // (R2 1c) 수난 구조를 하는 중에는 곁의 다른 일(다른 수난 구조·이송)로 스스로 옮기지 않는다: 계속 점수(0.5 + 0.4 × 우선순위)와 곁의 일 점수가 비슷해
     // 판단 오차만으로 두 일 사이를 오가며 그때마다 방법을 다시 고르고 알렸다(해일 — 같은 대원이 1~2초마다). 지휘관의 지시는 그대로 받는다
     if (!free && cur!.kind === 'waterRescue') continue;
+    if (!free && cur!.kind === 'extricate' && cur!.cas >= 0 && ((a.beliefs.val<CasBelief>('cas', cur!.cas)?.perch) ?? 0) > 0) continue;      // (N8 단계 8) 높은 자리의 구출 중에는 곁의 다른 높은 자리 사람(놀이기구 둘레 — 모두 4칸 안)으로 스스로 옮기지 않는다: 걸어가는 동안 가장 가까운 사람이 바뀌어 셋 사이를 오갔다
     if (!free && cur!.kind === 'triage') continue;      // (R3 4단계) 분류 중에는 곁의 환자 일(구출·이송·처치 — 분류하며 늘 곁을 지난다)로 스스로 옮기지 않는다: 옮기면 분류가 대원 사이를 돌며 끊긴다. 지휘관의 지시는 그대로 받는다
     if (free && near === 0 && !a.isCommander && sim.t - a.idleSince < 2.6) continue;      // 먼저 지휘관 지시를 기다린다
     const sc = (free ? 0.3 : 0.15) + initiative * 0.25 + w.priority * 0.35 + near + fit * 0.1;

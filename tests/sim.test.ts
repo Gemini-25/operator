@@ -373,7 +373,9 @@ describe('건물 붕괴 · 가스 누출', () => {
 describe('인근 도시 지원', () => {
   it('부대가 모자라 배정이 밀리면 외부 부대가 들어오고, 정해진 횟수를 넘지 않으며, 임무 뒤에는 돌아간다', () => {
     let aided = 0, arrived = 0, goneHome = 0;
-    for (let k = 0; k < 10; k++) {
+    // (N8 단계 8·9) S0~S9 → S0~S29 (표본만 넓힌다 — 문턱 그대로): 구조 유형이 평소 추첨에 들어 바쁜 교대의 끝이 당겨지자(교대 상한까지 가던 사건이 줄었다) 집으로 가는 길의 지원 부대가 늘어
+    //  S0~S9 의 돌아간 몫이 11/20 → 9/20 이 됐다(교대 끝에 '귀소 중' — 되풀이 고리는 없었다). S0~S29 는 34/60
+    for (let k = 0; k < 30; k++) {
       const s = new Sim('S' + k, { ...NORMAL, frequency: 5, resources: 1 }); s.runToEnd();
       goneHome += s.units.filter((u) => u.aid && u.state === 'oos').length;
       const aid = s.units.filter((u) => u.aid);
@@ -725,7 +727,10 @@ describe('생활 사건 시나리오', () => {
     }
     // 평소 교대에 늘 섞여 나오는 것은 생활 사건과 추격전이다. 강력 범죄는 몫이 작아 시드 40개로는 수가 흔들리고,
     // 대형 사고·재난의 시나리오는 평소 추첨에 들지 않는다 (저마다 tests/<묶음>.test.ts 가 직접 일으켜 확인한다)
-    for (const q of SCENARIOS) if (q.tag === 'life' || q.tag === 'chase') expect(seen[`${q.type}/${q.variant}`] ?? 0, q.name).toBeGreaterThan(2);
+    // (N8 단계 8·9) 추격전 줄은 합쳐서 본다: 구조 유형이 평소 추첨에 들어 흐름이 바뀌자 S0~S39 의 '난폭 운전'이 3 → 0 이 됐다(S0~S59 에도 2 — 교대당 0.03~0.08건,
+    //  기준 사본도 S0~S39 에 딱 3). 줄마다의 추격전 수는 아래 '추격전' 시험(70교대 — 납치 > 4, 그 밖의 추격전 > 4)이 본다. 생활 사건 줄은 그대로 줄마다 > 2
+    for (const q of SCENARIOS) if (q.tag === 'life') expect(seen[`${q.type}/${q.variant}`] ?? 0, q.name).toBeGreaterThan(2);
+    expect(SCENARIOS.filter((q) => q.tag === 'chase').reduce((a, q) => a + (seen[`${q.type}/${q.variant}`] ?? 0), 0), '추격전 줄 합').toBeGreaterThan(2);
     expect(treeClosed).toBeGreaterThan(10);
     expect(labelled).toBeGreaterThan(20);
     // 생활 사건은 대체로 수습되지만, 침입 절도는 달아나는 일이 적지 않다

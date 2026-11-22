@@ -242,6 +242,9 @@ describe('처음 상태의 원인', () => {
     ['armed', 'bomb', 'blunt'],      // 폭발물 현장의 사람들은 멀쩡하게 시작한다 (기록이 붙지 않는 쪽을 본다)
     ['utility', 'wire', 'electric'],      // (N8 §5.14) 감전된 행인 — 전선이 덮친 차 안의 사람은 멀쩡하다
     ['utility', 'sinkhole', 'fall'], ['utility', 'sign', 'crush'],      // (단계 4b) 구멍에 빠진 사람 · 떨어진 간판에 다친 행인 (수도관의 지하 사람은 멀쩡하게 시작한다)
+    ['welfare', 'dementia', 'exposure'],      // (단계 7) 길 잃은 치매 노인 — 노출
+    ['rescue', 'facade', 'fall'], ['rescue', 'pit', 'fall'], ['rescue', 'ride', 'illness'],      // (단계 8) 매달린 작업자·구덩이에 빠진 사람 — 추락 · 멈춘 놀이기구의 승객 — 급성 질환
+    ['medical', 'poison', 'illness'], ['medical', 'overdose', 'illness'], ['medical', 'birth', 'illness'], ['medical', 'heat', 'exhaustion'],      // (단계 9) 응급의 갈래 넷
   ];
   it('현장이 만들어질 때 다쳐 있는 사람(체력 < 100 이거나 출혈 > 0)에게만 처음 원인의 기록 한 줄과 출혈 원인이 붙는다', () => {
     let hurtSeen = 0, wholeSeen = 0;
@@ -734,7 +737,8 @@ describe('11. 재현성과 목적별 난수 흐름', () => {
   it('injuryRng 를 쓰는 규칙(2차 붕괴 곁의 갇힘)이 일어난 교대도 같다 — 지진 교대 둘', () => {
     const QUAKE: Difficulty = { ...NORMAL, disaster: 'quake' };
     // (N8 단계 6a) W6 → W5: 경찰 새 부대 셋(형사·교통 경찰·경찰견)이 편성돼 W6 의 2차 붕괴 곁에 갇힌 사람이 없어졌다 — 갇힘 흐름을 쓰는 지진 교대로 (기준은 그대로)
-    const a = shift('W5', QUAKE), b = shift('W5', QUAKE);
+    // (N8 단계 8·9) W5 → W1: 구조 유형이 평소 추첨에 들어 W5 의 2차 붕괴 곁에 갇힌 사람이 없어졌다 — W0~W9 가운데 갇힘 흐름을 쓰는 W1·W9 의 앞쪽으로 (기준은 그대로)
+    const a = shift('W1', QUAKE), b = shift('W1', QUAKE);
     expect(b.report!.hash).toBe(a.report!.hash);
     expect(a.events.some((e) => /^2차 붕괴!/.test(e.text))).toBe(true);
     // 갇힘 흐름이 실제로 쓰였다: 어느 현장에서는 다음 값이 새 흐름의 첫 값과 다르다
@@ -2152,7 +2156,7 @@ describe('단계 4b — 다친 대원은 가벼운 일만 (§2.5 · §3.6 · 시
   it('fitFor: 걸을 수 있는 다친 대원(injured)에게 무거운 일은 0, 가벼운 일(교통 통제)은 맡는다. 처치 보조는 대상이 안전 구역에 있을 때만. 목록은 injury.LIGHT_WORK 한 곳', () => {
     const { sim, s, of } = crewScene('INJ-lw', 'traffic', 'std', ['patrol', 'als']);
     const a = of('patrol'), r = fresh(sim, a, 55);
-    expect([...LIGHT_WORK].sort()).toEqual(['cordon', 'hookup', 'interview', 'negotiate', 'perimeter', 'traffic', 'treat', 'treatMate']);
+    expect([...LIGHT_WORK].sort()).toEqual(['cordon', 'hookup', 'interview', 'negotiate', 'perimeter', 'persuade', 'traffic', 'treat', 'treatMate']);      // persuade: (N8 단계 9) 설득
     const tw = workItem(s, 'traffic', sim.t, { tile: 0 });
     expect(fitFor(sim, s, a, tw)).toBeGreaterThan(0);
     r.status = 'injured';

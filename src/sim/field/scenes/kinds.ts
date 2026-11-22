@@ -2,11 +2,16 @@
 // registerScene('유형', '변형', (sim, I, rng) => Scene). 만드는 도구는 ../kindsKit(buildQuiet·streetFrame), ../builders, ../kit.
 //
 // 단계 3: 비응급 N1 장난 전화 셋(빈 현장) · N2 오인 신고 넷(§4.8 — 가서 확인하면 "이상 없음"의 답이 현장에 있다).
-import { T } from '../../types';
+import { DECOR, T } from '../../types';
 import { SW, addCas, addHostile, addProp, addRegion, baseScene, freeTileIn, set } from '../kit';
-import { armedVenue, buildStop } from '../builders';
+import { armedVenue, buildMedical, buildStop } from '../builders';
+import { planBuilding } from '../plans';      // (N8 단계 9) 집단 식중독의 홀형 평면
 import { tidx } from '../grid';
-import { addAnimal, alleyFrame, buildQuiet, farmFrame, freeGround, marketFrame, streetFrame, yardFrame } from '../kindsKit';
+import { addAnimal, alleyFrame, buildQuiet, farmFrame, freeGround, marketFrame, openFrame, streetFrame, urbanFrame, yardFrame } from '../kindsKit';
+import { TYPE_DEFS } from '../../incidentTypes';
+import type { Sim } from '../../engine';
+import type { Rng } from '../../rng';
+import type { Scene } from '../../types';
 import { registerScene } from '../sceneRegistry';
 
 // ── 시설 사고 (§4.2 — 단계 4a·4b) ──
@@ -393,5 +398,200 @@ registerScene('disturb', 'cartheft', (sim, I, rng) => {
   const flee = rng.chance(0.55);
   s.kinds = { stopFled: flee };
   if (flee && I.pursuit && I.pursuit.state === 'stopped') for (const h of s.hostiles) h.fleeAt = sim.t;
+  return s;
+});
+
+// ───────────────────────── 보호 welfare (§4.5 — 단계 7) ─────────────────────────
+/** 걷는 대상 하나와 보호자(마지막으로 본 구역 — 정확도 witnessAcc)를 놓는다. 대상은 대기 지점에서 먼 구역일수록 자주 */
+function placeWanderer(sim: Sim, s: Scene, rng: Rng, health: [number, number], conc: [number, number]): void {
+  const zones = s.regions.filter((r) => r.kind === 'zone' && r.searchable);
+  const tz = rng.weighted(zones, zones.map((z) => 0.4 + Math.hypot(z.cx - s.staging.x, z.cy - s.staging.y) / 12));
+  const ti = freeTileIn(s, tz, rng);
+  addCas(s, ti % s.w, (ti / s.w) | 0, 'mobile', rng.range(health[0], health[1]), rng.range(0.02, 0.05), rng.range(conc[0], conc[1]), { isTarget: true, wander: true, wanderT: sim.t + 10 });
+  const accurate = rng.chance(sim.tune.witnessAcc);
+  const others = zones.filter((z) => z.id !== tz.id);
+  addProp(s, 'witness', s.safe.x + 1, s.safe.y, { lastSeenRegion: accurate || !others.length ? tz.id : rng.pick(others).id, accurate, interviewed: false });
+  s.leadDept = 'police';
+}
+// 치매 노인: 도심의 틀 · 대상 1(걷는다 — 체력 70~90 · 은폐 0.3~0.5) · 보호자(가족)
+registerScene('welfare', 'dementia', (sim, I, rng) => {
+  const s = urbanFrame(sim, I, rng, ['골목', '주차장', '시장길', '작은 공원 앞']);
+  placeWanderer(sim, s, rng, [70, 90], [0.3, 0.5]);
+  return s;
+});
+// 미아: 도심의 틀(공원·시장·매장 앞) · 아이 1(걷는다 — 체력 100 · 은폐 0.4) · 보호자 · 시민이 안내 데스크로 데려오는 시각(생성 + 한계 − 40 — §5.13)
+registerScene('welfare', 'lostchild', (sim, I, rng) => {
+  const s = urbanFrame(sim, I, rng, ['놀이터 쪽', '매장 앞', '큰길 쪽 통로', '뒤쪽 산책로']);
+  placeWanderer(sim, s, rng, [100, 100], [0.4, 0.4]);
+  s.kinds!.backAt = I.createdAt + TYPE_DEFS.welfare.limit - 40;
+  s.kinds!.outCount = 0;
+  return s;
+});
+
+// ───────────────────────── 구조 rescue (§4.6 — 단계 8) — 높은 자리(§5.11)·구덩이 ─────────────────────────
+/** 높이 단계 1~3 (외벽 1 = 30% · 2 = 45% · 3 = 25% / 놀이기구는 2·3 이 많다) */
+function perchH(rng: Rng, w: number[]): number { return rng.weighted([1, 2, 3], w); }
+type PerchList = NonNullable<NonNullable<Scene['kinds']>['perch']>;
+/**
+ * 외벽 작업자 고립: 길(streetFrame — 차는 지나지 않는다) 남쪽에 건물 — 1층 로비(x 2~11 · 출입구 (6,15)·(7,15))와 옥상(x 17~27 — 같은 격자의 다른 층, 계단 (11,17)↔(17,17),
+ * 사이는 빈 공간 x 13~15 — CLAUDE.md "계단"). 건물 앞면(y 15)의 옥상 쪽 벽에 매달린 작업자 1~2(높은 자리 T.LEDGE · trapped · trapWork 999 — 걸어서 움직이지 않는다).
+ * 사다리를 펴는 땅 칸(ground) = 바로 앞 보도 (x, 14), 하강을 시작하는 위쪽 칸(top) = 바로 뒤 옥상 (x, 16). 곤돌라(fixture 'gondola') · s.rules 'perch'(소방 헬기가 상공에 머문다).
+ * 매달린 몸은 100~160초 뒤부터 나빠지고(perchRule), 15% 로 60~200초 사이 줄 하나가 끊긴다
+ */
+registerScene('rescue', 'facade', (sim, I, rng) => {
+  const s = streetFrame(sim, I, rng, { lanes: false, search: false });
+  const pl = I.truth.placeId >= 0 ? sim.city.places[I.truth.placeId] : undefined;
+  s.placeName = pl ? `${pl.name} 외벽` : '외벽 작업자 고립 현장';
+  s.leadDept = 'fire';
+  for (let x = 0; x < s.w; x++) for (let y = 15; y < s.h; y++) set(s, x, y, x >= 13 && x <= 15 && y >= 16 && y <= 18 ? T.VOID : T.WALL);
+  for (let x = 2; x <= 11; x++) for (let y = 16; y <= 18; y++) set(s, x, y, T.FLOOR);
+  for (let x = 17; x <= 27; x++) for (let y = 16; y <= 18; y++) set(s, x, y, T.GROUND);
+  set(s, 6, 15, T.FLOOR); set(s, 7, 15, T.FLOOR);
+  const st1 = 17 * s.w + 11, st2 = 17 * s.w + 17;
+  s.tiles[st1] = T.STAIR; s.tiles[st2] = T.STAIR; s.stairTo[st1] = st2; s.stairTo[st2] = st1;
+  addRegion(s, '1층 로비', 'room', 2, 15, 11, 18, true, false);
+  addRegion(s, '옥상', 'roof', 17, 16, 27, 18, false, false);
+  const n = rng.chance(0.35) ? 2 : 1;
+  const x0 = rng.int(18, n === 2 ? 22 : 26);
+  const perch: PerchList = [];
+  for (let k = 0; k < n; k++) {
+    const x = x0 + k * rng.int(3, 4);
+    set(s, x, 15, T.LEDGE);
+    const c = addCas(s, x, 15, 'trapped', rng.range(70, 90), 0, 0.1);
+    c.trapWork = 999;
+    perch.push({ cas: c.id, x, y: 15, h: perchH(rng, [0.3, 0.45, 0.25]), ground: 14 * s.w + x, top: 16 * s.w + x });
+  }
+  addProp(s, 'fixture', x0, 15, { skin: 'gondola', blocking: false, angle: rng.range(-0.5, 0.5) });
+  s.vantage = { x: x0, y: 12 };      // 현장 평가 자리는 매달린 사람이 보이는 보도 (대기 지점에서는 멀어 보이지 않는다)
+  const snap = rng.chance(0.15);
+  s.kinds = { perch, hangAt: sim.t + rng.range(100, 160), snapAt: snap ? sim.t + rng.range(60, 200) : Infinity, snapCas: snap ? perch[rng.int(0, perch.length - 1)].cas : -1 };
+  s.rules = ['perch'];
+  return s;
+});
+/**
+ * 구덩이·우물·배수로 추락: 열린 터(openFrame — 밭·공사장·둔치)에 구덩이 하나(fixture 'pit' — 그 칸은 T.VOID, 둘레는 걸을 수 있다). 깊이 1~3 · 좁은 우물(소품 sub 'narrow' — 농가·비닐하우스면 50%) ·
+ * 빠진 사람 1(trapped · trapWork 10 — 의식이 없음(체력 ≤ 45) 30%) · 바닥에 물(하천이면 늘, 그 밖 15% — 악화 0.04/초 더) · 나쁜 공기(깊이 ≥ 2 일 때 25%).
+ * 세계 규칙은 pitRule (측정 없이 공기호흡기 없이 내려간 대원의 유독 가스)
+ */
+registerScene('rescue', 'pit', (sim, I, rng) => {
+  const pk = I.truth.placeKind;
+  const s = openFrame(sim, I, rng, pk === 'construction' ? '공사장' : pk === 'riverside' ? '둔치' : pk === 'park' || pk === 'forest' ? '숲길' : '밭');
+  s.placeName = pk === 'riverside' ? '배수로 추락 현장' : pk === 'farmhouse' || pk === 'greenhouse' ? '우물 추락 현장' : '구덩이 추락 현장';
+  s.leadDept = 'fire';
+  const px = rng.int(10, 20), py = rng.int(6, 11);
+  const narrow = (pk === 'farmhouse' || pk === 'greenhouse') && rng.chance(0.5);
+  const pit = addProp(s, 'fixture', px, py, { skin: 'pit', blocking: false, sub: narrow ? 'narrow' : undefined });
+  set(s, px, py, T.VOID);
+  const depth = rng.int(1, 3);
+  const out = rng.chance(0.3);
+  const wet = pk === 'riverside' || rng.chance(0.15);
+  const c = addCas(s, px, py, 'trapped', out ? rng.range(32, 45) : rng.range(55, 85), rng.range(0.01, 0.03) + (wet ? 0.04 : 0), 0.1);
+  c.trapWork = 10;
+  s.kinds = { pit: pit.id, depth, badAir: depth >= 2 && rng.chance(0.25) };
+  s.vantage = { x: px, y: Math.min(15, py + 3) };      // 현장 평가 자리는 구덩이가 보이는 곳
+  return s;
+});
+/**
+ * 멈춘 놀이기구: 열린 터(놀이공원) 가운데 놀이기구(fixture 'ride' — 막음, 구조물 3×3 은 벽), 둘레(5×5 의 테두리)는 높은 자리(T.LEDGE)의 좌석 — 탄 사람 4~8(trapped · trapWork 999 ·
+ * 높이 1~3 — 2·3 이 많다). 사다리를 펴는 땅 칸 = 바깥쪽 바로 곁 칸, 하강도 그 칸에서(구조물에 매단 줄로 내린다). 운영자(witness 'operator' — 면담하면 전원 복구 예상 시각).
+ * 1~2명은 90초부터 나빠진다(더위·공황). 60% 는 생성 + 120~300초에 전원이 돌아와 남은 사람이 모두 내려온다(rideRule) — 운영자는 복구되지 않는 40% 에도 절반은 "곧 됩니다"
+ */
+registerScene('rescue', 'ride', (sim, I, rng) => {
+  const s = openFrame(sim, I, rng, '놀이공원');
+  s.placeName = '놀이기구 정지 현장';
+  s.leadDept = 'fire';
+  const cx = 15, cy = 8;
+  for (let y = cy - 1; y <= cy + 1; y++) for (let x = cx - 1; x <= cx + 1; x++) set(s, x, y, T.WALL);
+  addProp(s, 'fixture', cx, cy, { skin: 'ride', blocking: true });
+  const ring: number[] = [];
+  for (let y = cy - 2; y <= cy + 2; y++) for (let x = cx - 2; x <= cx + 2; x++) if (Math.max(Math.abs(x - cx), Math.abs(y - cy)) === 2) { set(s, x, y, T.LEDGE); ring.push(y * s.w + x); }
+  const n = rng.int(4, 8);
+  const step = ring.length / n, off = rng.int(0, ring.length - 1);
+  const perch: PerchList = [];
+  for (let k = 0; k < n; k++) {
+    const i = ring[(off + Math.floor(k * step)) % ring.length];
+    const x = i % s.w, y = (i / s.w) | 0;
+    const gx = x + Math.sign(x - cx), gy = y + Math.sign(y - cy);
+    const c = addCas(s, x, y, 'trapped', rng.range(85, 100), 0, 0);
+    c.trapWork = 999;
+    perch.push({ cas: c.id, x, y, h: perchH(rng, [0.2, 0.4, 0.4]), ground: gy * s.w + gx, top: gy * s.w + gx });
+  }
+  const worse = rng.chance(0.5) ? [perch[0].cas, perch[Math.floor(perch.length / 2)].cas] : [perch[0].cas];
+  addProp(s, 'witness', 11, 13, { skin: 'operator', interviewed: false });
+  const back = rng.chance(0.6), power = back ? I.createdAt + rng.range(120, 300) : Infinity;
+  const say = back ? power + rng.range(-30, 30) : rng.chance(0.5) ? I.createdAt + rng.range(100, 200) : Infinity;
+  s.kinds = { perch, worse, worseAt: I.createdAt + 90, power, powerSay: say, powered: false };
+  s.vantage = { x: cx, y: cy + 4 };      // 현장 평가 자리는 놀이기구 둘레가 다 보이는 곳
+  s.rules = ['perch'];
+  return s;
+});
+
+// ───────────────────────── 응급의 갈래 넷 (§4.7 — 단계 9) ─────────────────────────
+/**
+ * 집단 식중독: 홀형 평면(planBuilding 'hall' — 큰 홀 하나와 한쪽에 늘어선 작은 방들, 식당·강당). 환자 5~9 — 대부분 홀에, 1~2명은 곁방(화장실·휴게실).
+ * 2~3명은 거동 불가(띠 1~2, 탈수 악화 0.02~0.06/초), 나머지는 걸을 수 있다(띠 0~1 — 스스로 밖으로). 세계 규칙 없음(지금의 악화)
+ */
+registerScene('medical', 'poison', (sim, I, rng) => {
+  void sim;
+  const s = baseScene(sim, I, rng);
+  const pk = I.truth.placeKind;
+  const P = planBuilding(s, rng, 'hall', { prefix: '방', hallName: pk === 'school' || pk === 'university' ? '급식실' : pk === 'dorm' ? '기숙사 식당' : '식당 홀', kinds: [DECOR.TABLE, DECOR.CABINET], hallKinds: [DECOR.TABLE, DECOR.TABLE, DECOR.TABLE] });
+  const hall = P.hall ?? P.rooms[0];
+  const sides = P.rooms.filter((r) => r !== hall);
+  const n = rng.int(5, 9), nSide = sides.length ? rng.int(1, 2) : 0, nDown = rng.int(2, 3);
+  const used = (q: number): boolean => s.casualties.some((c) => c.x === q % s.w && c.y === ((q / s.w) | 0));
+  for (let k = 0; k < n; k++) {
+    const r = k < nSide ? rng.pick(sides) : hall;
+    const i = freeTileIn(s, r, rng, used);
+    const down = k >= n - nDown;
+    addCas(s, i % s.w, (i / s.w) | 0, down ? 'immobile' : 'mobile', down ? rng.range(48, 72) : rng.range(74, 88), down ? rng.range(0.02, 0.06) : rng.range(0.002, 0.01), 0.05);
+  }
+  s.leadDept = 'ems';
+  return s;
+});
+/**
+ * 약물 과다: 작은 집(buildMedical 의 틀 — 방 2~3)에 환자 1 (거동 불가 · 띠 2 · 체력 40~60 · 악화 0.15/초). 세계 규칙 overdoseRule:
+ * 전문 처치(처치 품질 0.9 이상)를 받으면 악화가 멈추고 35% 로 30~60초 동안 흥분한다(곁의 구급대원이 밀쳐진다 — 경찰이 말로 가라앉히면 세 배 빨리 끝난다)
+ */
+registerScene('medical', 'overdose', (sim, I, rng) => {
+  const s = buildMedical(sim, I, rng);
+  const c = s.casualties[0];
+  if (c) { c.health = rng.range(40, 60); c.bleed = c.bleed0 = 0.15; c.mob = 'immobile'; }
+  s.kinds = { agitated: -1 };
+  return s;
+});
+/**
+ * 출산 임박: 작은 집(buildMedical 의 틀)에 산모 1 (거동 불가 · 띠 1 · 악화 0). 출산 시각 s.kinds.birthAt = 생성 + 60~240초.
+ * 세계 규칙 birthRule — 그 시각에 신생아가 구조 대상 끝에 붙는다(전문 응급 가방을 든 대원이 곁에 있으면 현장 분만, 없으면 신고자 안내를 따랐는가로 아기의 상태)
+ */
+registerScene('medical', 'birth', (sim, I, rng) => {
+  const s = buildMedical(sim, I, rng);
+  const c = s.casualties[0];
+  if (c) { c.health = rng.range(66, 74); c.bleed = c.bleed0 = 0; c.mob = 'immobile'; }
+  s.kinds = { birthAt: I.createdAt + rng.range(60, 240), coached: false };
+  return s;
+});
+/**
+ * 폭염 환자: 열린 터(공사장·하우스·공원)에 그늘(구역 종류 'shade' — 나무 그늘·천막) — 안전한 곳 s.safe 를 그늘 가운데로 둔다(그래서 이송·동행은 지금 실행부 그대로 그늘로 간다).
+ * 쓰러진 사람 1(거동 불가 · 띠 1~2 · 악화 0.06/초 — 탈진) + 더위에 지친 사람 2~4(걸을 수 있음 · 띠 0 — 그늘 밖에 서 있다). 세계 규칙 heatRule
+ */
+registerScene('medical', 'heat', (sim, I, rng) => {
+  const pk = I.truth.placeKind;
+  const s = openFrame(sim, I, rng, pk === 'construction' ? '공사장' : pk === 'greenhouse' || pk === 'farmhouse' ? '비닐하우스 앞' : pk === 'stadium' ? '행사장 앞' : '공원');
+  s.placeName = pk === 'construction' ? '공사장 폭염 환자' : '폭염 환자 현장';
+  s.leadDept = 'ems';
+  for (const [x, y] of [[2, 11], [8, 11], [2, 16], [8, 16]]) set(s, x, y, T.TREE);
+  const shade = addRegion(s, '그늘', 'shade', 3, 12, 7, 15, false, false);
+  // 넓은 터(먼저 만든 구역)가 이미 가진 칸을 그늘로 넘긴다 — addRegion 은 빈 칸만 자기 것으로 적는다(그늘 안의 사람을 heatRule 이 알아보게)
+  const inShade = new Set(shade.tiles);
+  for (const i of shade.tiles) s.region[i] = shade.id;
+  for (const r of s.regions) if (r !== shade) r.tiles = r.tiles.filter((i) => !inShade.has(i));
+  s.safe = { x: 5, y: 14 };
+  const px = rng.int(13, 22), py = rng.int(5, 10);
+  addCas(s, px, py, 'immobile', rng.range(45, 70), 0.06, 0.05);
+  s.vantage = { x: px, y: Math.min(15, py + 4) };      // 현장 평가 자리는 쓰러진 사람이 보이는 곳
+  s.regions[0].searchable = true;      // 지친 사람이 넓은 터에 흩어져 있다 — 신고 인원만큼 찾을 때까지 훑는다(응급 방 수색 조건)
+  const nt = rng.int(2, 4);
+  for (let k = 0; k < nt; k++) { const i = freeGround(s, rng, 11, 3, 25, 12); addCas(s, i % s.w, (i / s.w) | 0, 'mobile', rng.range(80, 92), 0, 0.05); }
   return s;
 });

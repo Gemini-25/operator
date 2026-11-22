@@ -98,7 +98,11 @@ export const LABEL_BONUS: { label: string; key: keyof Needs; kind?: UnitKind; ki
   // ── (N8 §5.3.4 — 단계 6a) 치안의 이름표: 날치기의 수색 수요에 경찰견, 경찰 수요에 형사 ──
   { label: '날치기', key: 'search', kind: 'k9', bonus: 10 }, { label: '날치기', key: 'law', kind: 'detective', bonus: 10 },
   // ── (N8 §5.3.4 — 단계 6b) 수거책 잠복의 경찰 수요에 형사 (사복 — 수거책이 2칸 안에서만 알아본다) ──
-  { label: '수거책 잠복', key: 'law', kind: 'detective', bonus: 60 },      // (6b 균형) 설계서 +15 → +60: 형사의 경찰 능력(0.6)이 순찰(1.0)보다 40 낮아 +15 로는 거의 뽑히지 않았다 (강제 20교대 성공 0) — 사복 잠복이 이 사건의 본질
+  { label: '수거책 잠복', key: 'law', kind: 'detective', bonus: 60 }, { label: '치매 노인 실종', key: 'search', kind: 'k9', bonus: 10 },      // (6b 균형) 설계서 +15 → +60: 형사의 경찰 능력(0.6)이 순찰(1.0)보다 40 낮아 +15 로는 거의 뽑히지 않았다 (강제 20교대 성공 0) — 사복 잠복이 이 사건의 본질
+  // ── (N8 §5.3.4 — 단계 8) 구조 유형의 이름표: 외벽·놀이기구의 진압 수요에 사다리차 ──
+  { label: '외벽 작업자 고립', key: 'suppression', kind: 'ladder', bonus: 12 }, { label: '멈춘 놀이기구', key: 'suppression', kind: 'ladder', bonus: 12 },
+  // ── (N8 §5.3.4 — 단계 9) 출산 임박의 구급 수요에 전문 응급 가방(alsBag)을 든 대원이 있는 부대 ──
+  { label: '출산 임박', key: 'ems', kit: 'alsBag', bonus: 8 },
   // ── (N9 §5.3.3) 큰 사건의 이름표 — 단계 2 에 줄을 넣는다. 이름표를 내는 시나리오(N9 단계 4~9)가 아직 없고, 줄이 앞세우는 새 부대는 편성되지 않았다 —
   //    걸리는 줄이 없어 결과가 바뀌지 않는다('집단 난동'(폭동 — 지금 있는 이름표)의 줄은 기동대에만 붙는다). 이름표는 설계서 §4.0 의 글자 그대로 ──
   { label: '압사 위험', key: 'law', kind: 'riotPol', bonus: 25 }, { label: '시위 충돌', key: 'law', kind: 'riotPol', bonus: 25 },
@@ -180,6 +184,7 @@ export function airFit(sim: Sim, u: Unit, I: Incident, key: keyof Needs): number
     if (key !== 'search') return 0;
     if (CHASE_LABEL[as.label ?? '']) return 1;
     if (type === 'armed' || type === 'search') return 1;      // 무장·실종 현장 상공의 관측 (밤에는 탐조등)
+    if (type === 'welfare') return night ? 1 : 0;      // (N8 §4.5) 보호 유형의 수색은 밤에만 (관제는 치매와 미아를 이름표로만 가른다)
     if (type === 'water' || type === 'collapse' || type === 'fire') return as.label === '산불' ? 0 : 0.5;      // 바깥을 살필 눈. 산불은 물 바구니를 단 소방 헬기의 일이다
     return 0;      // 응급 환자의 선착 대응 등
   }
@@ -188,7 +193,7 @@ export function airFit(sim: Sim, u: Unit, I: Incident, key: keyof Needs): number
       if (type !== 'search' && type !== 'water' && type !== 'collapse' && type !== 'fire') return 0;      // 무장 사건·응급 환자의 선착 대응에는 뜨지 않는다
       return as.label === '산불' ? (night ? 0 : 1.2) : 1;
     }
-    if (key === 'rescue') return as.severity >= 2.3 || type === 'water' ? 1 : 0;
+    if (key === 'rescue') return as.severity >= 2.3 || type === 'water' || (type === 'rescue' && as.label !== '구덩이 추락') ? 1 : 0;      // (N8 단계 8) 구조 유형의 높은 자리(외벽·놀이기구 — 이름표로만 가른다): 호이스트
     // 구급 수요: 의료 헬기가 편성돼 있으면 그쪽의 일이다(소방 헬기의 구급 능력은 기준 밑이라 여기까지 오지 않는다).
     // 의료 헬기가 없는 편성(부대 규모 1·2)에서만 예전 규칙대로 — 큰 사건이거나 구급차를 60초 넘게 기다린 환자에게 뜬다
     if (key === 'ems') return u.caps.ems >= MINCAP.ems && (as.severity >= 2.3 || sim.t - I.unmetSince > 60) ? 1 : 0;

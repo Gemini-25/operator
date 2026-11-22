@@ -175,3 +175,37 @@ export function marketFrame(sim: Sim, I: Incident, rng: Rng): Scene {
   }
   return s;
 }
+
+// ───────────────────────── 보호 (N8 §4.5 — 단계 7) ─────────────────────────
+/**
+ * 도심의 틀 (치매 노인·미아): 골목 틀(alleyFrame)의 구역 이름을 그 현장에 맞게 바꾼다(수색 구역 넷 + 수색하지 않는 찻길).
+ * 동물의 출구 종류·숨을 자리는 지운다. 보호자가 기다리는 자리는 s.safe(대기 지점 곁) 그대로 — escort 가 그리로 데려간다(§4.5 보호자 인계)
+ */
+export function urbanFrame(sim: Sim, I: Incident, rng: Rng, names: [string, string, string, string]): Scene {
+  const s = alleyFrame(sim, I, rng);
+  s.exitKind = undefined; s.kinds = {};
+  const from = ['서쪽 골목', '동쪽 골목', '가운데 길', '아래 골목'];
+  for (const r of s.regions) { const k = from.indexOf(r.name); if (k >= 0) r.name = names[k]; }
+  return s;
+}
+
+// ───────────────────────── 구조·응급의 열린 터 (N8 §4.6·§4.7 — 단계 8·9) ─────────────────────────
+/**
+ * 열린 터의 틀 (구덩이·놀이기구·폭염): 위쪽 가장자리에 듬성듬성 나무, 가운데 넓은 땅(구역 하나 — 수색하지 않는다: 사람은 보이는 자리에 있다), 아래쪽 길(y 17~19).
+ * 출구 넷(양 옆 둘 · 길 양 끝 둘). 대기 지점은 길 가운데, 안전한 곳은 길 위 땅의 왼쪽. 바깥 현장(s.outdoor — X6 의 구조물이 아니다)
+ */
+export function openFrame(sim: Sim, I: Incident, rng: Rng, field: string): Scene {
+  const s = baseScene(sim, I, rng);
+  for (let x = 0; x < SW; x++) {
+    for (let y = 17; y < SH; y++) set(s, x, y, T.ROAD);
+    if (rng.chance(0.35) && x > 1 && x < SW - 2) set(s, x, 0, T.TREE);
+  }
+  s.outdoor = true;
+  s.staging = { x: 15, y: 18 }; s.safe = { x: 5, y: 15 }; s.vantage = { x: 15, y: 15 };
+  addRegion(s, field, 'zone', 0, 0, SW - 1, 16, false, false);
+  addRegion(s, '길', 'zone', 0, 17, SW - 1, SH - 1, false, false);
+  s.exits = [{ x: 0, y: 8 }, { x: SW - 1, y: 8 }, { x: 0, y: 18 }, { x: SW - 1, y: 18 }];
+  s.spots = [{ x: 2, y: 8, exit: 0, taken: -1 }, { x: SW - 3, y: 8, exit: 1, taken: -1 }, { x: 2, y: 17, exit: 2, taken: -1 }, { x: SW - 3, y: 17, exit: 3, taken: -1 }, { x: 15, y: 15, exit: -1, taken: -1 }];
+  s.trafficFlow = 0; s.nextCarAt = Infinity;
+  return s;
+}

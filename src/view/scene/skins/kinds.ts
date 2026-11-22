@@ -105,7 +105,31 @@ const hive: SkinPainter = (g, p, timeMs) => {
     disc(g, Math.cos(a) * r, Math.sin(a) * r * 0.8, 0.035, k % 3 ? '#e8b923' : '#2a2a2a');
   }
 };
-export const KINDS_SKINS: Record<string, SkinPainter> = { floater, fireworks, trash, pole, wire, pipe, hole, sign, signDebris, hive };
+/** (N8 단계 8) 기운 곤돌라: 외벽에 매달린 작업대(소품 각도만큼 기운 판)와 위로 뻗은 줄 둘 — 한쪽 줄은 늘어져 있다 */
+const gondola: SkinPainter = (g, p) => {
+  g.save(); g.rotate(p.angle ?? 0);
+  oval(g, 0.08, 0.16, 0.6, 0.14, 'rgba(0,0,0,0.3)');
+  g.fillStyle = '#9aa3ab'; g.fillRect(-0.55, -0.14, 1.1, 0.28);
+  g.fillStyle = '#6a737b'; g.fillRect(-0.55, -0.14, 1.1, 0.06);
+  g.restore();
+  seg(g, -0.45, -0.1, -0.45, -0.95, 0.03, '#2b2f33');
+  g.save(); g.strokeStyle = '#2b2f33'; g.lineWidth = 0.03; g.beginPath(); g.moveTo(0.45, -0.1); g.quadraticCurveTo(0.75, -0.5, 0.5, -0.95); g.stroke(); g.restore();
+};
+/** (N8 단계 8) 구덩이·우물: 둥근 입구(좁은 우물은 작고 돌 테두리) — 깊이는 고정 층의 검은 칸이 그린다 */
+const pit: SkinPainter = (g, p) => {
+  const narrow = p.sub === 'narrow', r = narrow ? 0.34 : 0.5;
+  disc(g, 0, 0, r + 0.12, narrow ? '#8b8579' : 'rgba(80,62,40,0.75)');
+  disc(g, 0, 0, r, '#14110d');
+  disc(g, -0.06, -0.06, r * 0.55, 'rgba(0,0,0,0.6)');
+  if (narrow) for (let k = 0; k < 8; k++) { const a = k * 0.785; disc(g, Math.cos(a) * (r + 0.06), Math.sin(a) * (r + 0.06), 0.06, '#a49d90'); }
+};
+/** (N8 단계 8) 멈춘 놀이기구의 가운데 기둥: 둥근 축과 둘레로 뻗은 팔 넷 (좌석은 둘레의 높은 자리 칸에 사람으로 보인다) */
+const ride: SkinPainter = (g) => {
+  oval(g, 0.12, 0.14, 1.2, 1.1, 'rgba(0,0,0,0.25)');
+  for (let k = 0; k < 4; k++) { const a = k * 1.571 + 0.785; seg(g, 0, 0, Math.cos(a) * 1.9, Math.sin(a) * 1.9, 0.12, '#c9a640'); }
+  disc(g, 0, 0, 0.75, '#d0473e'); disc(g, 0, 0, 0.5, '#f0d36a'); disc(g, 0, 0, 0.18, '#7a2a22');
+};
+export const KINDS_SKINS: Record<string, SkinPainter> = { floater, fireworks, trash, pole, wire, pipe, hole, sign, signDebris, hive, gondola, pit, ride };
 
 /**
  * (4b §4.2 utility/main) 지하 주차장 위의 침수 막 — 침수(s.kinds.flood)만큼 짙은 푸른 막과 물결. 진실이지만 눈에 보이는 물이라 두 시점 같다(결과 불변 — 읽기만)

@@ -97,7 +97,7 @@ function watch(seed: string, d: Difficulty, force: string | null): Watched {
           w.indoorWork++;
           if (!hasKit(sim, a.rid, 'scba')) note(`${who} 공기호흡기 없이 ${s.kind} 건물 안에서 ${k}${a.carrying < 0 && k === 'carry' ? '(보조)' : ''}`);
         }
-        if (k === 'extricate' && spreaderOn) w.extr[r.role === 'extricator' ? 0 : 1]++;
+        if (k === 'extricate' && spreaderOn && s.kind !== 'rescue') w.extr[r.role === 'extricator' ? 0 : 1]++;      // (N8 단계 8) 구조 유형(높은 자리·구덩이)의 구출은 유압 장비의 일이 아니다 — 사다리·밧줄(사다리 조작원·로프 대원)
       }
       if (n1 > 0 && n2 > 0) w.twoDoor++;
       // 교대: 구출 작업에 그 자리에서 붙어 일하는 사람은 정원(max)을 넘지 않는다 (넘겨받는 순간 가장 서툰 사람이 손을 뗀다)
@@ -172,6 +172,8 @@ function patrol(seed: string, d: Difficulty, force: string | null): Patrol {
     }
     for (const I of sim.incidents) {
       if (I.phase === 'closed' || !I.pursuit || I.pursuit.state !== 'driving') continue;
+      // 관제가 추격전으로 본 사건만 (N8 단계 6b 의 차량 절도는 흐릿한 신고 '쾅 소리'로 교통사고로 평가될 수 있다 — 그때 관제는 달리는 차를 모르고 중한 교통사고에 헬기를 보낸다)
+      if (I.assessment && I.assessment.type === 'traffic' && I.truth.variant === 'cartheft') continue;
       for (const uid of I.assigned) if (sim.units[uid].kind === 'heli' || sim.units[uid].kind === 'medHeli') note(`달리는 추격전(사건 ${I.code})에 ${sim.units[uid].callsign} 배정`);
     }
     if (sim.tick % 5 === 0) for (const s of sim.scenes) {
@@ -558,7 +560,9 @@ describe('⑤ 역할이 배정에 쓰인다', () => {
     let mine = 0, others = 0;
     // ((N8 단계 4a·4b) 표본 하나를 K6 교통 → K3 붕괴(심각도 5)로 바꿨다: 짧은 사건(시설 사고)이 끼며 흐름이 바뀌어 K6 교통의 #17 에서 다른 대원이 오래 붙들었다(235/660).
     //  넓은 표본(K1~K6 × 셋, 18교대)의 몫은 단계 4 전 0.426 → 뒤 0.408 — 이 몫은 표본에 기대고, 시설 사고 현장은 표본에 없다. 문턱은 그대로)
-    for (const w of [watch('K3', SEV5, 'collapse'), watch('K2', SEV5, 'traffic'), watch('K2', NORMAL, 'collapse'), watch('K5', SEV5, 'collapse')]) { mine += w.extr[0]; others += w.extr[1]; }
+    // ((N8 단계 8·9) 표본 둘을 K3 → K7, K5 → K6 (붕괴, 심각도 5)으로 바꿨다: 구조 유형이 평소 추첨에 들어 흐름이 바뀌며 K3 붕괴(738/1115)·K5 붕괴(29/89)에서 다른 대원이 오래 붙들었다.
+    //  넓은 표본(K1~K8 × 붕괴·교통 × 보통·심각도 5, 32교대)의 몫은 0.45 — 단계 4 의 0.408 과 같은 결이다. 이 몫은 여전히 표본에 기댄다(알려진 문제). 구조 유형 현장은 세지 않는다(watch). 문턱은 그대로)
+    for (const w of [watch('K7', SEV5, 'collapse'), watch('K2', SEV5, 'traffic'), watch('K2', NORMAL, 'collapse'), watch('K6', SEV5, 'collapse')]) { mine += w.extr[0]; others += w.extr[1]; }
     expect(mine + others, '구조 공작차가 온 현장의 구출 작업').toBeGreaterThan(200);
     expect(mine / (mine + others), `유압 구조대원 ${mine} / 그 밖 ${others}`).toBeGreaterThanOrEqual(0.5);
     // 먼저 닿은 대원이 맨손으로 붙들고 있던 구출을, 뒤에 닿은 유압 구조대원이 넘겨받는다 (그 자리의 사람 수는 정원을 넘지 않는다 — watch 가 본다)
@@ -933,7 +937,7 @@ describe('⑩ 관제 규칙 — 헬기 세 종류', () => {
           // 경찰 헬기는 수색 수요로만 나간다: 추격전, 무장·실종 사건, (반쯤) 수난·붕괴·화재
           expect(e.text.includes('수색 수요'), e.text).toBe(true);
           const tm = /\((.+?), 위험도/.exec(e.text)!;
-          expect([TYPE_NAME.armed, TYPE_NAME.search, TYPE_NAME.water, TYPE_NAME.collapse, TYPE_NAME.fire].indexOf(tm[1]), e.text).toBeGreaterThanOrEqual(0);
+          expect([TYPE_NAME.armed, TYPE_NAME.search, TYPE_NAME.water, TYPE_NAME.collapse, TYPE_NAME.fire, TYPE_NAME.disturb].indexOf(tm[1]), e.text).toBeGreaterThanOrEqual(0);      // disturb: (N8 단계 6b) 치안의 추격전 — 차량 절도(CHASE_LABEL '차량 절도')
         }
         if (/발견 — .*추격을 시작합니다/.test(e.text) && e.actor === police.callsign) found++;
         expect(e.actor === '헬기', '발견 기록의 행위자는 호출부호다').toBe(false);

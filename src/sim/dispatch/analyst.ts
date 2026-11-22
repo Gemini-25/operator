@@ -244,6 +244,7 @@ export function assess(sim: Sim, I: Incident, trigger: string): void {
   // (N8 §5.3.8 — 단계 6b) 선택 수요: 교통사고의 차로를 막은 부서진 차 — 견인차 (보낼 차가 없으면 관제가 그 자리에서 지운다). 부서진 차가 없는 사고(쓰러진 나무·맨홀)는 빼고
   if (ATTACH_TOW && type === 'traffic' && !(label !== undefined && NO_TOW_LABELS.has(label))) needs.tow = Math.max(needs.tow, 1);
   if (spread && label === undefined) label = '연소 확대';      // (I1-b b3-7) 시나리오의 이름표가 있으면 그것을 둔다 (산불·선박 화재 따위는 배정이 이름표를 본다)
+  if (type === 'medical' && label === '집단 식중독') risks.push('다수 사상자 — 집단 식중독, 환자가 여럿');      // (N8 단계 9) R3 E01·CE1 의 다수 사상자 이름표 — 관제가 다수 사상자로 본 사건(분류는 기다리는 환자 2명부터)
   // (R3 §6.2) 관제 교본의 수요 보정 — D3(흉기 신고 경찰 둘)·D6(인질극 기동대 둘). 장난 전화로 본 신고에는 걸지 않는다
   // (균형) D8 은 위치 신고의 건물 종류를 본다 — 유형 추정에 쓴 것과 같은 첫 위치 신고
   let place: Claim['placeKind'];

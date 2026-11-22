@@ -1805,6 +1805,12 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       t.need = 6; t.progress += dt; a.ring = t.progress / t.need;
       if (t.progress >= t.need) {
         p.interviewed = true;
+        if (p.skin === 'neighbor') {      // (N8 단계 10 — N3 단순 민원) 이웃의 말을 듣고 서로 오해를 풀게 한다 — 대상의 자취는 없다
+          learnQuiet(sim, a, mkFact('evid', p.id, { kind: 'witness', done: true }, r.name, sim.t, 1, true, '이웃 면담 완료'));
+          emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: '이웃의 이야기를 듣고 서로 조심하기로 했습니다 — 다툼은 없었고 현장에서 중재해 마무리합니다.' });
+          finishTask(sim, s, a, true);
+          return;
+        }
         const reg = s.regions[p.lastSeenRegion!];
         learnQuiet(sim, a, mkFact('seen', 0, { region: reg.id }, '목격자', sim.t, 0.65, false, `목격자 진술: 대상이 ${reg.name} 쪽으로 향함`));
         learnQuiet(sim, a, mkFact('evid', p.id, { kind: 'witness', done: true }, r.name, sim.t, 1, true, '목격자 면담 완료'));

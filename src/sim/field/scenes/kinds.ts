@@ -13,6 +13,7 @@ import type { Sim } from '../../engine';
 import type { Rng } from '../../rng';
 import type { Scene } from '../../types';
 import { registerScene } from '../sceneRegistry';
+import { DUP_TYPES } from '../../scenarios/kinds';      // (N8 단계 10) 중복 신고를 받는 유형
 
 // ── 시설 사고 (§4.2 — 단계 4a·4b) ──
 /**
@@ -593,5 +594,38 @@ registerScene('medical', 'heat', (sim, I, rng) => {
   s.regions[0].searchable = true;      // 지친 사람이 넓은 터에 흩어져 있다 — 신고 인원만큼 찾을 때까지 훑는다(응급 방 수색 조건)
   const nt = rng.int(2, 4);
   for (let k = 0; k < nt; k++) { const i = freeGround(s, rng, 11, 3, 25, 12); addCas(s, i % s.w, (i / s.w) | 0, 'mobile', rng.range(80, 92), 0, 0.05); }
+  return s;
+});
+
+// ───────────────────────── 비응급 N3 · N4 (§4.8 — 단계 10) ─────────────────────────
+/**
+ * (N3) 단순 민원: 작은 집(buildQuiet — 응급 틀의 빈 집) 앞에 이웃 둘(witness 'neighbor' — 면담하면 현장 중재로 마무리, executor 의 interview).
+ * 대개는 접수 단계에서 창구로 넘겨 이 현장에 아무도 오지 않는다. 다툼은 없다 — 구조 대상·용의자 없음. 집 안 구역은 수색하지 않는다(치안의 수색 규칙이 남의 방을 뒤지지 않게)
+ */
+registerScene('disturb', 'referral', (sim, I, rng) => {
+  const s = buildQuiet(sim, I, rng);
+  s.leadDept = 'police';
+  for (const r of s.regions) r.searchable = false;
+  const e = s.exits[0] ?? s.staging;
+  const free: number[] = [];
+  for (let y = Math.max(1, e.y - 4); y <= Math.min(s.h - 2, e.y + 4); y++) for (let x = Math.max(1, e.x - 4); x <= Math.min(s.w - 2, e.x + 4); x++) {
+    const i = y * s.w + x, t = s.tiles[i];
+    if ((t === T.FLOOR || t === T.GROUND) && s.propAt[i] < 0 && Math.hypot(x - e.x, y - e.y) >= 1.5) free.push(i);
+  }
+  for (let k = 0; k < 2 && free.length; k++) {
+    const i = free.splice(rng.int(0, free.length - 1), 1)[0];
+    addProp(s, 'witness', i % s.w, (i / s.w) | 0, { skin: 'neighbor', lastSeenRegion: Math.max(0, s.region[i]), accurate: true, interviewed: false });
+  }
+  return s;
+});
+/**
+ * (N4) 중복 신고: 원 사건의 이웃 교차로에 아무 일도 없다 — 길(streetFrame, 차 없음 · 수색할 구역 없음). 무장·치안이면 처음부터 안전하다(secureAt 0 — 지킬 위협이 없다).
+ * 원 사건의 유형이 무엇이든 같은 빈 길이다(incidents.tickIncidents 의 중복 신고 갈래가 그 유형으로 만든다 — 유형 목록은 scenarios/kinds.ts 의 DUP_TYPES)
+ */
+for (const t of DUP_TYPES) registerScene(t, 'dup', (sim, I, rng) => {
+  const s = streetFrame(sim, I, rng, { lanes: false, search: false });
+  s.placeName = '길가';
+  s.leadDept = t === 'armed' || t === 'disturb' || t === 'traffic' ? 'police' : 'fire';
+  if (t === 'armed' || t === 'disturb') s.secureAt = 0;
   return s;
 });

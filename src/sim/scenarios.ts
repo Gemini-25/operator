@@ -21,7 +21,8 @@ import type { LikMap } from './incidentTypes';
 import { TYPE_NAME } from './util';
 
 /** 필요 자원을 고칠 때 볼 수 있는 것: 관제가 아는 위험도와 신고 내용뿐이다 (진실을 보지 않는다) */
-export interface ScenarioCtx { sev: number; hurt: boolean; trapped: boolean; nat: string[] }
+export interface ScenarioCtx { sev: number; hurt: boolean; trapped: boolean; nat: string[]
+  noise?: boolean }      // noise: (N8 단계 10) "지금도 소리 지르고 난리" 진술(hazard 'noise') — 단순 민원의 순찰 한 팀
 
 export interface Scenario {
   type: IncidentType; variant: string; name: string;

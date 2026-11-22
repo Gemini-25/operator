@@ -6,7 +6,7 @@ import { nodeName } from '../city';
 import { SCENARIOS, scenarioOf } from '../scenarios';
 import type { Sim } from '../engine';
 import { emit, raiseProblem } from '../events';
-import { josa } from '../util';
+import { TYPE_NAME, josa } from '../util';
 import type { Rng } from '../rng';
 import type { Call, Caller, Claim, Incident, IncidentType, Persona, Scene, Topic } from '../types';
 import { TYPE_DEFS } from '../incidentTypes';
@@ -14,8 +14,8 @@ import type { LikMap } from '../incidentTypes';
 import { applyCallerAid } from '../field/hazards';
 import { assess } from './analyst';
 import { briefUpdate, redirectUnits } from './dispatcher';
-import { decide } from './screening';      // (N8 §5.5) 통화가 끝나는 그 틱에 비응급을 가려낸다 (진술만 읽는다)
-import { KIND_CALLER, falseClaims, kindsOn, verifyAnswer } from '../kindsCaller';      // (N8) 새 진실 읽기는 신고자 모델 kindsCaller 로만 — 오인 신고의 진술 · 확인 질문의 답
+import { decide, referralDesk, sameCandidate } from './screening';      // (N8 §5.5) 통화가 끝나는 그 틱에 비응급을 가려낸다 (진술만 읽는다) · (단계 10) 민원 창구 · 같은 사건 확인의 후보
+import { KIND_CALLER, dupRelocate, dupSource, falseClaims, kindsOn, sameAnswer, verifyAnswer } from '../kindsCaller';      // (N8) 새 진실 읽기는 신고자 모델 kindsCaller 로만 — 오인 신고의 진술 · 확인 질문의 답 · (단계 10) 중복 신고의 원 사건과 같은 사건 확인의 답
 import { closeIncident } from '../incidents';
 
 const SURNAMES = ['김', '이', '박', '최', '정', '강', '조', '윤', '장', '임', '한', '오', '서', '신'];
@@ -129,6 +129,9 @@ function natureFor(I: Incident, s: Scene, persona: Persona, rng: Rng): { v: stri
 
 /** 사건의 진실에서 신고자가 "알고 있다고 믿는" 내용을 만든다. */
 export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: boolean): Caller {
+  // (N8 §4.8 N4 — 단계 10) 중복 신고: 신고자는 원 사건(같은 일)을 보고 말한다 — 내용은 원 사건의 진실로, 위치만 이 사건(옆 교차로). 원 사건은 신고자 모델이 알려 준다
+  const src = followup ? null : dupSource(sim, I);
+  if (src) return dupRelocate(sim, I, makeCaller(sim, src, sim.scenes[src.id]!, rng, false));
   let persona: Persona = followup ? rng.weighted<Persona>(['calm', 'panicked', 'partial', 'confused'], [0.45, 0.2, 0.25, 0.1])
     : rng.weighted<Persona>(['calm', 'panicked', 'confused', 'partial', 'wrong'], sim.tune.personaWeights);
   if (I.truth.variant === 'prank') persona = 'prank';
@@ -372,11 +375,20 @@ function maybeInstruct(sim: Sim, call: Call, I: Incident): boolean {
 
 /** (N8 §4.7 — 단계 9) 환자가 여럿일 수 있는 응급의 이름표 — 접수 AI 가 인원을 묻는다 (관제가 아는 이름표만 본다) */
 const MANY_PATIENTS = new Set(['집단 식중독', '폭염 환자']);
+/** (N8 §4.8 N3 — 단계 10) 단순 민원의 이름표 · 넘기기 전에 묻는 말 (위험 요소 질문 — 지금 다투거나 다친 사람이 있는가) */
+export const REFER_LABEL = '단순 민원';
+const REFER_ASK = '지금 다투는 소리가 나거나 다친 사람이 있는 위급한 상황입니까?';
+/** (N4) 같은 사건 확인 질문을 할 때 정한 후보 (통화마다 — 답을 들을 때 같은 사건을 본다. 통화 객체의 모양을 바꾸지 않으려고 WeakMap) */
+const SAME_K = new WeakMap<Call, number>();
 function nextTopic(sim: Sim, call: Call, I: Incident): Topic | null {
   if (!I.locationKnown && call.asked.indexOf('location') < 0) return 'location';
   // (N8 §4.8 N1) 장난 낌새 진술이 이 통화에 있으면 확인 질문부터 (짧은 사건 손잡이가 0 이면 묻지 않는다 — 지금의 길 그대로)
   if (kindsOn(sim) && call.asked.indexOf('verify') < 0 && I.claims.some((c) => c.callId === call.id && c.topic === 'hazard' && c.value === 'prank')) return 'verify';
+  // (N4 — 단계 10) 이웃 교차로에 같은 유형으로 본 열린 사건이 막 신고됐으면 같은 일인지 묻는다 (관제가 아는 것 — screening.sameCandidate. 추가 신고 통화는 이미 그 사건에 붙어 있다)
+  if (kindsOn(sim) && !call.isFollowup && call.asked.indexOf('same') < 0) { const K = sameCandidate(sim, I); if (K) { SAME_K.set(call, K.id); return 'same'; } }
   const as = I.assessment;
+  // (N3 — 단계 10) 단순 민원으로 본 신고: 넘기기 전에 지금 위급한가를 한 번 묻고 끝낸다 (위급하다고 하면 분석의 필요 자원이 순찰 한 팀을 낸다)
+  if (kindsOn(sim) && !call.isFollowup && as && as.label === REFER_LABEL) return call.asked.indexOf('hazard') < 0 ? 'hazard' : null;
   if (as && as.typeConf < 0.6 && call.asked.indexOf('nature') < 0) return 'nature';
   const hyp = as ? as.type : 'fire';
   const table = TYPE_DEFS[hyp].topicValue;      // 주제마다 물을 가치 (유형의 표 — 열쇠의 순서가 같은 값끼리의 순서)
@@ -406,12 +418,27 @@ function endCall(sim: Sim, call: Call, I: Incident, text: string): void {
   // (N8 §5.5) 통화가 끝나는 그 틱에 가려낸다: 장난을 가려냈으면(screen) 그 자리에서 접수 단계 종료 — 가는 중인 부대는 closeIncident 가 "출동 취소"로 돌린다.
   // 부대가 이미 현장에 닿았으면 가려내지 않는다(decide 가 본다). 짧은 사건 손잡이가 0 이면 묻지도 닫지도 않는다
   const verdict = kindsOn(sim) && !call.isFollowup ? decide(sim, I) : null;
+  const desk = verdict === 'referral' ? referralDesk(I) : '';
   if (verdict === 'screen') text = '진술을 확인할 수 없어 허위 신고로 판단합니다. 출동을 취소합니다. 허위 신고는 처벌받을 수 있습니다.';
+  else if (verdict === 'referral') text = `긴급 출동 대상은 아닙니다. ${josa(desk, '으로/로')} 안내해 드리겠습니다.`;      // (N3 — 단계 10)
+  else if (verdict !== null) text = '같은 사건으로 확인했습니다. 이미 출동한 부대에 내용을 전달하겠습니다.';      // (N4 — 단계 10)
   say(sim, call, I, 'CALL_TAKER', text);
   call.state = 'done'; call.endedAt = sim.t;
   sim.activeCall = -1;
   if (verdict === 'screen') {
     emit(sim, { inc: I.id, role: 'CALL_TAKER', actor: '신고 접수 AI', kind: 'call', imp: 2, causes: [call.eventId], text: `사건 ${I.code}: 확인 질문에 답하지 못한 장난 신고로 가려냈습니다 — 접수 단계에서 종결합니다.` });
+    closeIncident(sim, I, 'screened');
+  } else if (verdict === 'referral') {
+    emit(sim, { inc: I.id, role: 'CALL_TAKER', actor: '신고 접수 AI', kind: 'call', imp: 2, causes: [call.eventId], text: `사건 ${I.code}: 긴급 출동 대상이 아닌 단순 민원으로 판단해 ${desk}에 넘깁니다 — 접수 단계에서 종결합니다.` });
+    closeIncident(sim, I, 'screened');
+  } else if (verdict !== null) {
+    // (N4) 같은 사건에 합친다: 이 통화의 진술(위치·확인 질문 말고)을 원 사건에 넘기고 원 사건을 다시 평가한다 — 추가 신고가 그 사건에 붙을 때와 같다
+    const K = sim.incidents[verdict.link];
+    emit(sim, { inc: I.id, role: 'CALL_TAKER', actor: '신고 접수 AI', kind: 'call', imp: 2, causes: [call.eventId], text: `같은 사건으로 확인 — 사건 ${I.code}의 신고를 사건 ${K.code}에 합칩니다.` });
+    const moved: Claim[] = [];
+    for (const c of I.claims) if (c.callId === call.id && c.topic !== 'location' && c.topic !== 'same' && c.topic !== 'verify') { const q = { ...c }; K.claims.push(q); moved.push(q); }
+    assess(sim, K, '같은 사건의 신고 합침');
+    if (K.phase === 'onscene' || K.phase === 'dispatched') for (const q of moved) briefUpdate(sim, K, q);
     closeIncident(sim, I, 'screened');
   }
 }
@@ -492,6 +519,18 @@ export function tickCalls(sim: Sim): void {
       call.phase = 'ask'; call.nextAt = sim.t + 1.0;
       return;
     }
+    // (N8 §4.8 N4 — 단계 10) 같은 사건 확인의 답도 신고자 모델이 진실로 정한다 — "네"면 통화를 마치고 그 사건에 합친다(endCall → screening.decide 의 link)
+    if (topic === 'same') {
+      const kid = SAME_K.get(call), K = kid !== undefined ? sim.incidents[kid] : undefined;
+      if (K && K.phase !== 'closed') {
+        const ans = sameAnswer(sim, I, K, call, call.rng.fork('same'));
+        say(sim, call, I, 'CALLER', ans.text);
+        recordClaim(sim, call, I, ans);
+        if (ans.value >= 0) { endCall(sim, call, I, ''); return; }
+      } else say(sim, call, I, 'CALLER', call.rng.pick(DONT_KNOW));
+      call.phase = 'ask'; call.nextAt = sim.t + 1.0;
+      return;
+    }
     const claim = cl.knows[topic];
     if (claim) {
       const pre = cl.persona === 'confused' ? '어… ' : cl.persona === 'panicked' ? '' : '';
@@ -525,9 +564,19 @@ export function tickCalls(sim: Sim): void {
     endCall(sim, call, I, call.isFollowup ? '추가 정보 감사합니다. 출동 부대에 전달하겠습니다.' : I.firstDispatchAt >= 0 ? '부대가 출동했습니다. 안전한 곳에서 기다려 주세요.' : '접수했습니다. 곧 부대를 보내겠습니다. 안전한 곳에서 기다려 주세요.');
     return;
   }
-  say(sim, call, I, 'CALL_TAKER', question(topic, I.assessment?.type));
+  say(sim, call, I, 'CALL_TAKER', askText(sim, call, I, topic));
   call.asked.push(topic); call.pending = topic; call.phase = 'wait';
   call.nextAt = sim.t + 1.6 + cl.answerTime * call.rng.range(0.8, 1.25);
+}
+
+/** 접수 AI 의 질문 글 — (단계 10) 같은 사건 확인은 후보 사건의 알려진 위치·유형으로, 단순 민원의 위험 요소 질문은 "지금 위급한가"로 */
+function askText(sim: Sim, call: Call, I: Incident, topic: Topic): string {
+  if (topic === 'same') {
+    const kid = SAME_K.get(call), K = kid !== undefined ? sim.incidents[kid] : undefined;
+    if (K && K.assessment) return `혹시 ${nodeName(sim.city, K.reportedNode)} 쪽에서 이미 신고된 ${TYPE_NAME[K.assessment.type]} 말씀이십니까?`;
+  }
+  if (topic === 'hazard' && I.assessment && I.assessment.label === REFER_LABEL) return REFER_ASK;
+  return question(topic, I.assessment?.type);
 }
 
 export function topicName(t: Topic): string {

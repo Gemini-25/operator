@@ -3,11 +3,11 @@
 // 접수 AI 는 그 진술만 듣는다. callSystem.ts 도 신고자 모델이지만 접수 AI 와 한 파일에 섞여 있어, 새 진실 읽기는 이 파일로만 늘린다.
 //
 // 단계 3: 짧은 사건 손잡이(kindsOn) · 오인 신고의 진술(falseClaims) · 확인 질문 verify 의 답(verifyAnswer).
-// 뒤 단계(4a~10)가 새 유형의 진술 KIND_CALLER · 중복 신고의 답 sameAnswer · 민원의 고함 진술을 더한다.
+// 뒤 단계(4a~9)가 새 유형의 진술 KIND_CALLER 를, 단계 10 이 중복 신고(dupSource·dupRelocate·same 의 답 sameAnswer)·민원의 고함 진술(KIND_CALLER.disturb 의 referral 갈래)을 더했다.
 import { nodeName } from './city';
 import type { Sim } from './engine';
 import type { Rng } from './rng';
-import type { Call, Claim, Incident, IncidentType, Scene, Topic } from './types';
+import type { Call, Caller, Claim, Incident, IncidentType, Persona, Scene, Topic } from './types';
 import { josa } from './util';
 
 /** 짧은 사건 손잡이(tune.dailyCount)가 켜져 있는가 — 0 이면 짧은 사건과 비응급의 접수 쪽 변화(확인 질문·가려내기)가 모두 꺼진다 (§5.5 · 시험 7a) */
@@ -104,6 +104,13 @@ export const KIND_CALLER: Partial<Record<IncidentType, CallerHook>> = {
       void sim; void s;
       // (6b) 수거책 잠복: 수거책은 아직 오지 않았다(s.hostiles 에 없다) — 신고자는 "한 명이 온다고 했어요"(용의자 수 1)만 안다. 무기는 본 적이 없어 말하지 않는다
       if (I.truth.variant === 'scam') { put('detail', { suspects: 1 }, '한 명이 돈을 받으러 온다고 했어요.', true); return; }
+      // (단계 10 — N3 단순 민원) 다툼은 없다(용의자·다친 사람이 없다). 신고자의 REFER.noise 는 "지금도 소리 지르고 난리"를 덧붙인다 — 신고자의 과장(사실이 아니다).
+      // 접수 AI 는 이관하기 전에 지금 위급한가를 묻는다(callSystem.nextTopic 의 '단순 민원' 갈래 — 위험 요소 질문). 무기는 본 적이 없어 말하지 않는다
+      if (I.truth.variant === 'referral') {
+        if (rng.chance(REFER.noise)) put('hazard', 'noise', '지금도 소리 지르고 난리예요. 싸우는 것 같아요!', false, '단순 민원을 다툼처럼 과장');
+        else put('hazard', 'none', '그런 건 아니에요. 계속 이러니까 너무 힘들어서요.', true);
+        return;
+      }
       if (rng.chance(Math.max(kn, 0.5))) {
         const ok = rng.chance(acc);
         put('weapon', ok ? 'none' : 'knife', ok ? '무기는 없는 것 같아요. 맨손으로 그래요.' : '뭘 휘둘러요! 칼 같은 거였어요.', ok, ok ? '' : '맨손인데 흉기를 들었다고 신고');
@@ -133,3 +140,41 @@ export const KIND_CALLER: Partial<Record<IncidentType, CallerHook>> = {
     },
   },
 };
+
+// ───────────────────────── 단계 10 — N3 단순 민원 · N4 중복 신고 (§4.8) ─────────────────────────
+
+/** (N3) 민원 신고자가 고함 진술(hazard 'noise' — 과장)을 덧붙일 확률 (§4.8 — 20%) */
+export const REFER = { noise: 0.2 };
+
+/**
+ * (N4) 중복 신고의 원 사건 — 이 신고가 옆 교차로로 잘못 댄 "같은 사건". 아니면 null.
+ * 신고자 모델만 진실(Incident.dupOf)을 읽는다 — callSystem 은 이 함수의 답(원 사건)으로 신고자를 만든다(그 파일은 .dupOf 를 읽지 않는다 — 시험 4)
+ */
+export function dupSource(sim: Sim, I: Incident): Incident | null {
+  if (I.truth.variant !== 'dup' || I.dupOf === undefined) return null;
+  const K = sim.incidents[I.dupOf];
+  return K && sim.scenes[K.id] ? K : null;
+}
+/**
+ * (N4) 원 사건의 진실로 만든 신고자의 위치만 이 사건(옆 교차로)으로 바꾼다 — 같은 일을 보고 옆 교차로를 댔다. 내용(상황·인원·위험)은 원 사건의 것 그대로다
+ */
+export function dupRelocate(sim: Sim, J: Incident, caller: Caller): Caller {
+  const n = J.truth.nodeId;
+  caller.knows.location = { topic: 'location', value: n, conf: 0.7, text: `${josa(nodeName(sim.city, n) + ' 교차로', '이에요/예요')}. 그 근처예요.`, truthful: false, callId: -1, note: '같은 사건을 옆 교차로로 신고', placeKind: 'intersection' };
+  return caller;
+}
+/** (N4) "네"라고 할 확률 — 같은 사건일 때 화법별 (§4.8 — 차분 0.85 · 공황 0.5 · 일부만 0.6 · 혼란 0.3 · 잘못 확신 0.4), 다른 사건이면 SAME_SLIP 의 작은 오류율 */
+export const SAME_YES: Record<Persona, number> = { calm: 0.85, panicked: 0.5, partial: 0.6, confused: 0.3, wrong: 0.4, prank: 0 };
+export const SAME_SLIP = 0.03;
+/**
+ * (N4) 같은 사건 확인 질문(same — "혹시 ○○ 쪽 ○○ 말씀이십니까?")의 답 — 신고자 모델이 진실로 정한다(§4.8).
+ * 이 신고가 정말 그 사건의 중복 신고면(dupOf === K) 화법별 확률로 "네", 아니면(이웃 교차로에 같은 유형의 진짜 사건이 둘) SAME_SLIP 으로만 "네" — 화법만으로 정하면 진짜 사건이 출동 없이 닫힌다.
+ * 값: "네"면 K 의 id, 아니면 −1
+ */
+export function sameAnswer(sim: Sim, J: Incident, K: Incident, call: Call, rng: Rng): Claim {
+  void sim;
+  const dup = J.dupOf === K.id, p = dup ? SAME_YES[call.caller.persona] : SAME_SLIP, yes = rng.next() < p;
+  const base = { topic: 'same' as Topic, conf: 0.75, callId: call.id };
+  if (yes) return { ...base, value: K.id, text: '네, 맞아요. 그 일이에요.', truthful: dup, note: dup ? '' : '다른 사건을 같은 사건으로 혼동' };
+  return { ...base, value: -1, text: dup ? '잘 모르겠어요… 제가 본 건 여기예요.' : '아니요, 그건 아닌 것 같아요.', truthful: !dup, note: dup ? '같은 사건인데 아니라고 답함' : '' };
+}

@@ -49,6 +49,11 @@ const FALSE_DETAIL: Partial<Record<IncidentType, string>> = {
   fire: '냄새·연기만 있었고 실제 화재는 없었음', medical: '길에서 잠든 사람이었고 실제 환자는 없었음', water: '물에 뜬 물건이었고 빠진 사람은 없었음',
   armed: '폭죽 소리였고 실제 총격은 없었음', hazmat: '음식물 냄새였고 실제 가스 누출은 없었음',
 };
+/** (N8 §4.8 N3·N4 — 단계 10) 민원 이관·중복 신고: 접수 단계에서 넘기거나 합쳤으면 문제가 없다(성공), 출동했으면 FALSE_ALARM(복구됨) — [설명, 복구 문장, 머리글(넘김·합침), 머리글(출동)] */
+const REFER_DUP: Record<string, [string, string, string, string]> = {
+  referral: ['단순 민원이었고 실제 다툼은 없었음', '현장 중재로 마무리', '단순 민원 — 관할 기관 이관', '단순 민원 — 현장 중재'],
+  dup: ['같은 사건을 옆 교차로로 신고한 중복 신고였음', '같은 사건의 중복 신고로 한 번 더 출동', '중복 신고 — 같은 사건에 합침', '중복 신고 — 같은 사건을 옆 교차로로 신고'],
+};
 const FALSE_HEAD: Partial<Record<IncidentType, string>> = {
   fire: '오인 신고 — 실제 화재 없음', medical: '오인 신고 — 잠든 사람이었음', water: '오인 신고 — 물에 뜬 물건이었음', armed: '오인 신고 — 폭죽 소리였음', hazmat: '오인 신고 — 음식 냄새였음',
 };
@@ -121,7 +126,9 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   if (reason === 'timeout') addProblem(I, 'TIMEOUT', sim.t, -1, '대응 한계 시간 안에 상황을 끝내지 못함');
   const benign = BENIGN.has(truth.variant);      // (N8 §5.5) 비응급 변형 — 장난·오인·민원 이관·중복 신고
   const screened = reason === 'screened';      // (N8) 접수 단계에서 닫았다 (장난을 가려냄)
-  if (benign) addProblem(I, 'FALSE_ALARM', I.reportedAt, I.callEvents[0] ?? -1, truth.variant === 'prank' ? '장난 전화였고 실제 사건은 없었음' : FALSE_DETAIL[truth.type] ?? FALSE_DETAIL.fire!, true,
+  const rd = REFER_DUP[truth.variant];      // (N8 단계 10) 민원 이관·중복 신고
+  if (rd) { if (!screened) addProblem(I, 'FALSE_ALARM', I.reportedAt, I.callEvents[0] ?? -1, rd[0], true, rd[1]); }      // 넘겼거나 합쳤으면 문제 없음 (§4.8)
+  else if (benign) addProblem(I, 'FALSE_ALARM', I.reportedAt, I.callEvents[0] ?? -1, truth.variant === 'prank' ? '장난 전화였고 실제 사건은 없었음' : FALSE_DETAIL[truth.type] ?? FALSE_DETAIL.fire!, true,
     screened ? '접수 단계에서 허위 신고로 가려내 출동을 취소했습니다' : `확인에 부대 ${I.everAssigned.length}대가 ${fmtSec(Math.max(0, sim.t - Math.max(0, I.firstDispatchAt)))} 동안 묶임`);
   // 폭파 협박·수상한 물건: 진짜 장치가 없었다면 허위 신고다 (확인하기 전에는 아무도 알 수 없었다)
   const noBomb = (truth.variant === 'bombthreat' || truth.variant === 'package') && !s.props.some((p) => p.kind === 'bomb' && p.real);
@@ -314,7 +321,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
     else if (truth.variant === 'scam') hl.push(!hs.length ? '수거책이 나타나기 전에 종료' : got ? '잠복 끝에 수거책 검거' : fled ? (s.kinds && s.kinds.scamFled ? '경찰을 보고 수거책이 달아났습니다' : '수거책은 이미 떠났습니다') : '수거책 미검거');      // (N8 단계 6b)
     else if (truth.variant === 'cartheft') hl.push(I.pursuit && I.pursuit.state === 'escaped' ? '도난 차량을 놓침' : got ? '도난 차량 회수 · 운전자 검거' : fled ? '운전자가 차를 버리고 달아났습니다' : '도난 차량 회수');
   }
-  if (benign) hl.push(truth.variant === 'prank' ? (screened ? '장난 전화 — 접수 단계에서 가려냄' : '장난 전화 — 실제 사건 없음') : FALSE_HEAD[truth.type] ?? FALSE_HEAD.fire!);
+  if (rd) hl.push(screened ? rd[2] : rd[3]);      // (N8 단계 10)
+  else if (benign) hl.push(truth.variant === 'prank' ? (screened ? '장난 전화 — 접수 단계에서 가려냄' : '장난 전화 — 실제 사건 없음') : FALSE_HEAD[truth.type] ?? FALSE_HEAD.fire!);
   else if (cas.length) hl.push(`요구조자 ${cas.length}명 중 ${saved}명 구조${lost ? `, ${lost}명 사망` : ''}${undiscovered ? `, ${undiscovered}명 미발견` : ''}${left ? `, ${left}명 구조 미완료` : ''}`);
   else hl.push('인명 피해 없음');
   const cs = catSummary(sim, s, I, hazardActive);      // (X6 §6.5·§6.6) 건물 전소 · 건물 붕괴 · 폭발 n회, 소실률은 화재가 아니어도 재산 피해가 있으면

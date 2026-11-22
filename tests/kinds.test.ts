@@ -467,6 +467,7 @@ const UTIL_LINES = ['utility/wire', 'utility/main', 'utility/sinkhole', 'utility
 const ANIMAL_LINES = ['animal/boar', 'animal/hive', 'animal/dogbite', 'animal/escape'];      // (단계 5)
 const DISTURB_LINES = ['disturb/rowdy', 'disturb/brawl', 'disturb/snatch', 'disturb/scam', 'disturb/cartheft'];      // (단계 6a · 6b)
 const WELFARE_LINES = ['welfare/dementia', 'welfare/lostchild'];      // (단계 7 — 이 커밋의 둘)
+const N3_LINES = ['disturb/referral'];      // (단계 10) 비응급 N3 단순 민원 — 치안 유형의 daily 줄이지만 비응급이다
 /** 강제 발생(sim.force)으로 만든 그 사건 — 그 변형의 첫 사건 (강제 발생도 시나리오의 tag 'daily' 를 받는다) */
 const forced = (sim: Sim) => (J: Inc): boolean => sim.force !== null && `${J.truth.type}/${J.truth.variant}` === sim.force && J.parent === undefined;
 /** 단계 3 에는 daily 줄이 비응급 일곱(가중 1.4 / DAILY_TOTAL 14)뿐이라 보통 교대의 짧은 사건은 0.5건쯤이다 — 시험은 차례를 늘려(SimOpts.daily) 짧은 사건이 끼게 한다 */
@@ -495,13 +496,13 @@ describe('6 짧은 사건의 재현성과 표 (단계 3)', () => {
       expect(NATURE_LIK[q.nature], `${q.nature} 는 신고자가 말하는 키가 아니다`).toBeUndefined();
       expect(q.card).toBe(false);
     }
-    expect(daily.map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...N12, ...UTIL_LINES, ...ANIMAL_LINES, ...DISTURB_LINES, ...WELFARE_LINES].sort());
+    expect(daily.map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...N12, ...UTIL_LINES, ...ANIMAL_LINES, ...DISTURB_LINES, ...WELFARE_LINES, ...N3_LINES].sort());
   });
   it('N8 의 새 난수 흐름 이름이 기존 흐름 이름과 겹치지 않는다 (소스의 fork 글자 — 한 이름은 한 자리에서만 만든다, 아직 쓰지 않은 이름은 아무도 쓰지 않는다)', () => {
     // 단계 5: 동물마다(animal:) · 차에 받힌 동물의 운전자(animal-hit:) · 벌집(hive:) · 동물 포획 장비의 고장 추첨(kit-n8 · 지원 부대 aid-n8:)
     const MADE = ['daily', 'verify', 'wire:', 'hole:', 'sign:', 'hive:', 'animal:', 'animal-hit:', 'kit-n8', 'aid-n8:', 'rowdy:', 'brawl:', 'snatch:',
-      'perch:', 'pit:', 'overdose:', 'birth:'];      // 단계 8: 줄이 끊겨 떨어진 피해 · 구덩이의 유독 가스 (놀이기구는 난수를 쓰지 않는다 — ride: 는 만들지 않았다) · 단계 9: 흥분 · 출산 (폭염은 난수를 쓰지 않는다 — heat: 없음)      // 단계 6a: 치안 셋      // 단계 3 이 만든 흐름 (짧은 사건 · 확인 질문의 답 — 통화 흐름의 하위) · 4a 전선 · 4b 싱크홀·간판 (수도관은 난수를 쓰지 않는다 — main: 은 만들지 않았다)
-    const LATER = ['main:', 'scam:', 'ledge:', 'ride:', 'heat:', 'dup:', 'kinds-next:'];
+      'perch:', 'pit:', 'overdose:', 'birth:', 'dup:', 'same'];      // 단계 10: 중복 신고(dup:<원 사건> — 추가 신고가 옆 교차로의 새 사건이 되는가) · 같은 사건 확인 질문의 답(same — 통화 흐름의 하위)      // 단계 8: 줄이 끊겨 떨어진 피해 · 구덩이의 유독 가스 (놀이기구는 난수를 쓰지 않는다 — ride: 는 만들지 않았다) · 단계 9: 흥분 · 출산 (폭염은 난수를 쓰지 않는다 — heat: 없음)      // 단계 6a: 치안 셋      // 단계 3 이 만든 흐름 (짧은 사건 · 확인 질문의 답 — 통화 흐름의 하위) · 4a 전선 · 4b 싱크홀·간판 (수도관은 난수를 쓰지 않는다 — main: 은 만들지 않았다)
+    const LATER = ['main:', 'scam:', 'ledge:', 'ride:', 'heat:', 'kinds-next:'];      // kinds-next: — 조건부 연쇄는 I1-b 의 틀(csq:·hz: 흐름)로 갔다 (단계 10)
     const labels: string[] = [];
     const walk = (dir: URL): void => {
       for (const f of readdirSync(dir, { withFileTypes: true })) {
@@ -820,7 +821,7 @@ describe('18 새 유형의 자리 (단계 4a 부터)', () => {
     }
     expect(SCENARIOS.filter((q) => q.type === 'utility').map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...UTIL_LINES].sort());
     expect(SCENARIOS.filter((q) => q.type === 'animal').map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...ANIMAL_LINES].sort());
-    expect(SCENARIOS.filter((q) => q.type === 'disturb').map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...DISTURB_LINES].sort());
+    expect(SCENARIOS.filter((q) => q.type === 'disturb').map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...DISTURB_LINES, ...N3_LINES].sort());
   });
 });
 
@@ -1578,5 +1579,134 @@ describe('5·19 응급의 갈래 — 식중독 · 약물 과다 · 출산 · 폭
     }
     expect(agitated, '흥분한 환자가 한 번은 나온다').toBeGreaterThan(0);
     expect(persuaded, '흥분한 환자에게 설득').toBeGreaterThan(0);
+  });
+});
+
+// ───────────────────────── 단계 10 — 비응급 N3 단순 민원 이관 · N4 중복 신고 오인 ─────────────────────────
+import { REFER, SAME_SLIP, SAME_YES, sameAnswer } from '../src/sim/kindsCaller';
+import { referable, sameCandidate } from '../src/sim/dispatch/screening';
+import { DUP } from '../src/sim/scenarios/kinds';
+import { Rng } from '../src/sim/rng';
+import type { Call, Claim, Persona } from '../src/sim/types';
+
+describe('8 비응급 N3 단순 민원 이관 · N4 중복 신고 오인 (단계 10)', () => {
+  it('N3: 고함 진술이 없으면 접수 단계에서 창구로 넘긴다(배정 0 · 성공 · 문제 없음) · 있으면 순찰 한 팀이 가서 이웃을 면담하고 현장 중재(FALSE_ALARM 복구됨)', () => {
+    let referred = 0, mediated = 0;
+    for (let k = 0; k < 40 && (referred < 2 || mediated < 1); k++) {
+      const sim = new Sim('RG' + k, NORMAL, 1200, { force: 'disturb/referral' });
+      const I = runUntilClosed(sim, forced(sim));
+      expect(I && I.phase === 'closed', `RG${k}`).toBe(true);
+      if (!I) continue;
+      expect(['timeout', 'abandoned', 'noresponse'].indexOf(I.closeReason), `RG${k} ${I.closeReason}`).toBe(-1);
+      const noise = I.claims.some((c) => c.topic === 'hazard' && c.value === 'noise');
+      if (!noise) {
+        referred++;
+        expect(I.closeReason, `RG${k}`).toBe('screened');
+        expect(I.everAssigned.length, `RG${k} 배정`).toBe(0);
+        expect(I.result!.outcome).toBe('success');
+        expect(I.problems.some((p) => p.code === 'FALSE_ALARM'), '넘겼으면 문제 코드 없음').toBe(false);
+        expect(I.result!.headline).toContain('단순 민원 — 관할 기관 이관');
+        expect(sim.events.some((e) => e.incidentId === I.id && /창구로 안내해 드리겠습니다/.test(e.text))).toBe(true);
+      } else {
+        mediated++;
+        expect(I.closeReason, `RG${k}`).toBe('resolved');
+        expect(I.everAssigned.length, `RG${k} 순찰 한 팀`).toBe(1);
+        expect(sim.units[I.everAssigned[0]].dept).toBe('police');
+        expect(I.problems.some((p) => p.code === 'FALSE_ALARM' && p.recovered && p.recoveryText === '현장 중재로 마무리')).toBe(true);
+        expect(I.result!.headline).toContain('단순 민원 — 현장 중재');
+        expect(sim.events.some((e) => e.incidentId === I.id && /현장에서 중재해 마무리/.test(e.text)), `RG${k} 이웃 면담`).toBe(true);
+      }
+    }
+    expect(referred, '넘긴 민원').toBeGreaterThanOrEqual(2);
+    expect(mediated, '현장 중재').toBeGreaterThanOrEqual(1);
+    expect(REFER.noise).toBe(0.2);
+  }, 120000);
+  it('N3 의 가려내기는 진술만 본다: 민원뿐이면 넘기고, 다쳤다·갇혔다·무기·지금 다툰다 진술이 하나라도 있거나 다른 상황 진술이 있으면 넘기지 않는다', () => {
+    const c = (topic: Claim['topic'], value: unknown): Claim => ({ topic, value, conf: 0.8, text: '', truthful: true, callId: 0, note: '' });
+    expect(referable([c('nature', 'complaint'), c('location', 3), c('hazard', 'none')])).toBe(true);
+    expect(referable([c('nature', 'complaint'), c('hazard', 'noise')])).toBe(false);
+    expect(referable([c('nature', 'complaint'), c('injured', true)])).toBe(false);
+    expect(referable([c('nature', 'complaint'), c('trapped', true)])).toBe(false);
+    expect(referable([c('nature', 'complaint'), c('weapon', 'knife')])).toBe(false);
+    expect(referable([c('nature', 'complaint'), c('weapon', 'none'), c('injured', false)])).toBe(true);
+    expect(referable([c('nature', 'complaint'), c('nature', 'fight')])).toBe(false);
+    expect(referable([c('location', 3)])).toBe(false);
+  });
+  it('N4: 추가 신고가 옆 교차로의 새 사건(dup)이 되면 첫 신고는 그 틱 · 원 사건의 추가 신고는 다시 울리지 않는다 · 알아보면 원 사건에 진술을 넘기고 합친 쪽만 닫힌다 · 못 알아보면 출동해 확인(FALSE_ALARM)', () => {
+    const P0 = DUP.P;
+    DUP.P = 1;      // 시험: 추가 신고마다 중복 신고가 된다 (보통 0.08)
+    let linked = 0, missed = 0;
+    try {
+      for (let k = 0; k < 20 && (linked < 1 || missed < 1); k++) {
+        const sim = new Sim('D' + k);
+        let J: Inc | undefined, born = -1;
+        for (let t = 0; t < 9000 && !sim.ended; t++) {
+          const n0 = sim.incidents.length;
+          sim.step();
+          if (!J) { for (let i = n0; i < sim.incidents.length; i++) if (sim.incidents[i].truth.variant === 'dup') { J = sim.incidents[i]; born = sim.t; } }
+          if (J && J.phase === 'closed') break;
+        }
+        if (!J || J.phase !== 'closed') continue;
+        const K = sim.incidents[J.dupOf!];
+        expect(K, `D${k}`).toBeTruthy();
+        expect(J.firstCallAt, `D${k} 첫 신고는 만든 그 틱`).toBe(born);
+        expect(J.parent, '연쇄가 아니다').toBeUndefined();
+        expect(J.tag).toBe('daily');
+        expect(J.truth.type).toBe(K.truth.type);
+        expect(K.followupAt, `D${k} 원 사건의 추가 신고는 다시 울리지 않는다`).toBe(Infinity);
+        expect(sim.calls.filter((c) => c.incidentId === K.id && c.isFollowup).length, `D${k}`).toBe(0);
+        expect(sim.city.nodes[K.truth.nodeId].edges.some((e) => sim.city.edges[e].a === J!.truth.nodeId || sim.city.edges[e].b === J!.truth.nodeId), '옆 교차로').toBe(true);
+        expect(['timeout', 'abandoned', 'noresponse'].indexOf(J.closeReason), `D${k} ${J.closeReason}`).toBe(-1);
+        const same = J.claims.find((c) => c.topic === 'same');
+        if (J.closeReason === 'screened') {
+          linked++;
+          expect(same && same.value, `D${k}`).toBe(K.id);
+          expect(J.result!.outcome).toBe('success');
+          expect(J.problems.some((p) => p.code === 'FALSE_ALARM')).toBe(false);
+          expect(J.result!.headline).toContain('중복 신고 — 같은 사건에 합침');
+          const moved = J.claims.filter((c) => c.topic !== 'location' && c.topic !== 'same' && c.topic !== 'verify');
+          expect(moved.length).toBeGreaterThan(0);
+          for (const c of moved) expect(K.claims.some((q) => q.callId === c.callId && q.topic === c.topic && q.text === c.text), `D${k} 원 사건에 넘긴 진술 ${c.topic}`).toBe(true);
+          expect(sim.events.some((e) => e.incidentId === J!.id && /같은 사건으로 확인 — 사건 \d+의 신고를 사건 \d+에 합칩니다/.test(e.text))).toBe(true);
+          expect(K.phase === 'closed' ? K.closeReason !== 'screened' : true, '원 사건은 닫히지 않는다(합친 쪽만)').toBe(true);
+        } else {
+          missed++;
+          expect(J.problems.some((p) => p.code === 'FALSE_ALARM' && p.recovered && p.recoveryText === '같은 사건의 중복 신고로 한 번 더 출동')).toBe(true);
+          expect(J.result!.headline).toContain('중복 신고 — 같은 사건을 옆 교차로로 신고');
+        }
+        expect(sim.events[J.rootEvent].text).toContain(`같은 사건의 중복 신고 — 사건 ${K.code}의 신고가 옆 교차로로 들어올 예정`);
+      }
+    } finally { DUP.P = P0; }
+    expect(linked, '알아보고 합친 중복 신고').toBeGreaterThanOrEqual(1);
+    expect(missed, '못 알아보고 한 번 더 출동한 중복 신고').toBeGreaterThanOrEqual(1);
+  }, 120000);
+  it('N4: 같은 사건 확인의 답은 신고자 모델이 진실로 정한다 — 같은 사건이면 화법별 확률, 다른 사건이면 "네"가 0.03 · 후보는 같은 평가 유형·이웃 교차로·300초 안의 열린 사건', () => {
+    const sim = new Sim('N8-10-SAME');
+    sim.run(5);
+    const K = createIncident(sim, { type: 'fire', variant: 'std', rng: sim.rng.fork('n8-10-k') });
+    const nb = sim.city.edges[sim.city.nodes[K.truth.nodeId].edges[0]];
+    const J = createIncident(sim, { type: 'fire', variant: 'dup', nodeId: nb.a === K.truth.nodeId ? nb.b : nb.a, tag: 'daily', dupOf: K.id, rng: sim.rng.fork('n8-10-j') });
+    const call = (persona: Persona): Call => ({ id: 0, caller: { persona } } as unknown as Call);
+    const ratio = (dupOf: number, persona: Persona): number => {
+      const keep = J.dupOf; J.dupOf = dupOf;
+      const r = new Rng(1234 + dupOf * 7 + persona.length);
+      let yes = 0; const n = 4000;
+      for (let i = 0; i < n; i++) if (sameAnswer(sim, J, K, call(persona), r).value === K.id) yes++;
+      J.dupOf = keep;
+      return yes / n;
+    };
+    expect(Math.abs(ratio(K.id, 'calm') - SAME_YES.calm)).toBeLessThan(0.03);
+    expect(Math.abs(ratio(K.id, 'confused') - SAME_YES.confused)).toBeLessThan(0.03);
+    expect(Math.abs(ratio(-1, 'calm') - SAME_SLIP)).toBeLessThan(0.012);
+    expect(SAME_SLIP).toBe(0.03);
+    // 후보: 관제가 아는 것만 — 평가 유형·알려진 위치·신고 시각
+    const as = (type: IncidentType): Assessment => ({ type, typeConf: 0.9, probs: {} as Assessment['probs'], severity: 1.5, confidence: 0.8, needs: {} as Needs, risks: [], summary: '', t: sim.t, revision: 0 });
+    K.assessment = as('fire'); K.locationKnown = true; K.reportedNode = K.truth.nodeId; K.reportedAt = sim.t; K.phase = 'dispatched';
+    J.assessment = as('fire'); J.locationKnown = true; J.reportedNode = J.truth.nodeId;
+    expect(sameCandidate(sim, J)?.id).toBe(K.id);
+    K.assessment = as('traffic');
+    expect(sameCandidate(sim, J), '평가 유형이 다르면 묻지 않는다').toBeNull();
+    K.assessment = as('fire'); K.reportedAt = sim.t - 301;
+    expect(sameCandidate(sim, J), '300초가 지났으면 묻지 않는다').toBeNull();
   });
 });

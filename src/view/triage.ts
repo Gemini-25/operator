@@ -98,7 +98,12 @@ export function respLying(a: FieldAgent, r: Responder): boolean {
   return a.status === 'down' || (a.status === 'withdrawn' && (r.status === 'down' || r.tDown !== undefined || r.dead === true));
 }
 /** 그 구조 대상을 화면에 그리는가: 차에 실렸거나 병원에 갔거나, 물살에 현장 밖으로 떠내려간 사람은 그리지 않는다 */
-export function casDrawn(c: Casualty): boolean { return c.where !== 'loaded' && c.where !== 'hospital' && !c.lost; }
+/** (N8) 높은 자리(s.kinds.perch)의 사람이면 그 자리의 말 — 위기자는 '난간 밖', 구덩이는 '구덩이 아래', 그 밖(외벽·놀이기구)은 '높은 곳에 고립'. 아니면 null ('매몰'이라 적지 않게) */
+export function perchText(s: Scene, c: Casualty): string | null {
+  if (c.dead || !s.kinds || !s.kinds.perch || !s.kinds.perch.some((q) => q.cas === c.id)) return null;
+  return s.kind === 'welfare' ? '난간 밖' : s.variant === 'pit' ? '구덩이 아래' : '높은 곳에 고립';
+}
+export function casDrawn(c: Casualty): boolean { return c.where !== 'loaded' && c.where !== 'hospital' && !c.lost && !c.quietLoss; }      // (N8 §5.13) 위기자의 실패(quietLoss)는 그리지 않는다
 /** 그 용의자를 화면에 그리는가: 달아났거나 차에 실려 간 용의자는 그리지 않는다 */
 export function hostileDrawn(h: Hostile): boolean { return h.state !== 'escaped' && (h.where === undefined || h.where === 'scene'); }
 
@@ -152,7 +157,7 @@ export function casInfo(sim: Sim, s: Scene, c: Casualty, truth: boolean, cmd: Fi
     return {
       title, sub: c.hostage ? '인질' : c.isTarget ? '수색 대상' : '', band: v.band, health: null,
       rows: [
-        { k: '중증도', v: TRIAGE_NAME[v.band] }, { k: '거동', v: MOB_NAME[v.mob] ?? v.mob }, { k: '위치', v: WHERE_NAME[v.where] ?? v.where },
+        { k: '중증도', v: TRIAGE_NAME[v.band] }, { k: '거동', v: MOB_NAME[v.mob] ?? v.mob }, { k: '위치', v: c.quietLoss ? '—' : WHERE_NAME[v.where] ?? v.where },      // (N8 §5.13) 위기자의 실패는 자리를 적지 않는다
         { k: '처치', v: v.tq >= 2 ? '전문 처치' : v.tq >= 1 ? '기본 처치' : '없음' },
       ],
       times: [], note: `지휘관이 아는 내용 — ${factNote(sim, f)}`, known: true,
@@ -161,16 +166,16 @@ export function casInfo(sim: Sim, s: Scene, c: Casualty, truth: boolean, cmd: Fi
   const band = casBand(c);
   const rows: PersonRow[] = [
     { k: '중증도', v: TRIAGE_NAME[band] },
-    { k: '거동', v: c.dead ? '—' : c.inWater ? (c.drift ? '물속 — 떠내려가는 중' : '물속 — 걸려 있음') : c.mob === 'trapped' ? (c.inVehicle !== null ? '차 안에 갇힘' : '매몰') : c.walking ? '스스로 대피 중' : MOB_NAME[c.mob] },
-    { k: '위치', v: c.lost ? '현장 밖 (떠내려감)' : c.where === 'scene' ? regionNameAt(s, c.x, c.y) : WHERE_NAME[c.where] },
-    { k: '부상', v: injuryLine(c.injuries) || '없음' },
+    { k: '거동', v: c.dead ? '—' : c.inWater ? (c.drift ? '물속 — 떠내려가는 중' : '물속 — 걸려 있음') : c.mob === 'trapped' ? (c.inVehicle !== null ? '차 안에 갇힘' : perchText(s, c) ?? '매몰') : c.walking ? '스스로 대피 중' : MOB_NAME[c.mob] },
+    { k: '위치', v: c.quietLoss ? '—' : c.lost ? '현장 밖 (떠내려감)' : c.where === 'scene' ? regionNameAt(s, c.x, c.y) : WHERE_NAME[c.where] },      // (N8 §5.13) 위기자의 실패: 자리·원인·시각을 적지 않는다
+    { k: '부상', v: c.quietLoss ? '—' : injuryLine(c.injuries) || '없음' },
   ];
   if (!c.dead && c.bleed > 0 && c.bleedCause) rows.push({ k: '악화', v: `${CAUSE_NAME[c.bleedCause]}${c.treated ? ' (처치로 늦춤)' : ''}` });
-  if (c.dead && c.deathCause) rows.push({ k: '숨진 원인', v: CAUSE_NAME[c.deathCause] });
+  if (c.dead && c.deathCause && !c.quietLoss) rows.push({ k: '숨진 원인', v: CAUSE_NAME[c.deathCause] });
   rows.push({ k: '처치', v: careName(c.treated ? Math.max(c.treatQ, 0.01) : 0) });
   const times: PersonRow[] = [];
   const at = (k: string, t: number): void => { if (t >= 0) times.push({ k, v: fmtClock(sim.startTod + t) }); };
-  at('발견', c.tDiscovered); at('구출', c.tFreed); at('처치', c.tTreated); at('안전 구역', c.tSafe); at('탑승', c.tLoaded); at('병원', c.tHospital); at('사망', c.tDead);
+  at('발견', c.tDiscovered); at('구출', c.tFreed); at('처치', c.tTreated); at('안전 구역', c.tSafe); at('탑승', c.tLoaded); at('병원', c.tHospital); if (!c.quietLoss) at('사망', c.tDead);
   return {
     title, sub: [c.hostage ? '인질' : '', c.isTarget ? '수색 대상' : '', c.bystander2 ? '주변 시민' : '', c.tDiscovered < 0 ? 'AI 미확인' : ''].filter(Boolean).join(' · '),
     band, health: c.dead ? 0 : c.health, rows, times, note: '', known: c.tDiscovered >= 0,

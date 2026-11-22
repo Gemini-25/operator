@@ -713,7 +713,8 @@ export type MethodId =
   | 'robotDefuse' | 'suitDefuse' | 'bareDefuse'      // (R3 5단계 §3.7) 해체 defuse: 로봇 원격 · 방호복 · 맨몸 (실행은 doctrineRun.runDefuse)
   | 'pack' | 'drag' | 'litter' | 'post' | 'blockLane'      // (R3 6단계 §3.7) 이송 carry: 업기 · 끌기 · 들것(기록 전용) / 교통 통제 traffic: 통제 · 차량 차단 (실행은 doctrineRun.runCarry·runTraffic)
   | 'dart' | 'catchpole' | 'herd' | 'net'      // (N8 §4.3 — 단계 5) 동물 포획 capture: 마취총 · 올가미 · 몰이 · 포획망 (실행은 executor 의 case 'capture')
-  | 'ladder' | 'descend';      // (N8 §4.6 — 단계 8) 높은 자리·구덩이의 구출 extricate: 사다리차의 사다리 · 밧줄 하강(들것 내림) (실행은 executor 의 높은 자리 갈래)
+  | 'ladder' | 'descend'      // (N8 §4.6 — 단계 8) 높은 자리·구덩이의 구출 extricate: 사다리차의 사다리 · 밧줄 하강(들것 내림) (실행은 executor 의 높은 자리 갈래)
+  | 'window';      // (N8 §4.5 — 단계 7) 문 잠긴 집의 강제 개방 force: 방범문이면 1층 창을 깨고 들어가 안에서 현관문을 연다 (실행은 executor 의 case 'force')
 /** 왜 이 방법을 골랐는가 (기록 문구·보고서 문장이 쓴다). usual = 평소 선택(교본 줄과 무관) */
 export type MethodWhy = 'usual' | 'near' | 'noGear' | 'tooFar' | 'weak' | 'fast' | 'failed' | 'broken' | 'danger' | 'quiet' | 'team'      // R3 가 이 줄 끝에 상태 까닭 여섯을 더한다 (R3 §2.1·§3.7)
   | 'hurt' | 'alone' | 'lowAir' | 'lowAmmo' | 'shaken' | 'tired';      // (R3 1단계) 교본 줄이 1등을 바꾼 까닭 (field/doctrine.ts 의 docWhyMethod — §3.7 의 사상 표)
@@ -1389,6 +1390,19 @@ export interface KindsState {
   powered?: boolean;                              // 놀이기구: 전원이 돌아와 남은 사람이 모두 내려왔다
   snapAt?: number; snapCas?: number;              // 외벽: 줄 하나가 끊기는 시각 · 그 사람 (없으면 Infinity · -1)
   hangAt?: number;                                // 외벽: 매달린 몸이 나빠지기 시작하는 시각 (생성 + 100~160초)
+}
+// (N8 단계 7 뒤 절반) 위기자·문 잠긴 집의 진실 (KindsState 끝 — 선택 칸. 세계 규칙 rules/kinds.ts 의 ledgeRule·lockinRule 과 실행부만 읽고 쓴다)
+export interface KindsState {
+  talk?: number;                                  // 위기자: 설득이 이어진 초 (쌓여 20초면 단계 1)
+  side?: number;                                  // 위기자: 난간 안쪽(위기자에게 다가가는 쪽) 구역 id — 그 구역 3칸 안의 다른 사람이 위기 정도를 올린다 (옥상 아래 길의 매트 대원은 세지 않는다)
+  mat?: number;                                   // 위기자(옥상): 매트 터 소품 id (다리는 -1)
+  ledgeEnd?: 'self' | 'grab' | 'mat' | 'lost';    // 위기자: 끝난 길 (판정 문장 — 스스로 돌아옴 · 붙잡아 끌어올림 · 매트가 받아 냄 · 구조하지 못함)
+  door?: number;                                  // 문 잠긴 집: 현관문 소품 id
+  win?: number;                                   // 문 잠긴 집: 바깥으로 난 1층 창 칸 (격자 칸 번호)
+  armored?: boolean;                              // 문 잠긴 집: 방범문 (문의 hp ×3 — 창으로 들어간다)
+  keyAt?: number;                                 // 문 잠긴 집: 관리인이 현관에 나타난 시각 (-1 = 아직)
+  entered?: 'key' | 'force' | 'window';           // 문 잠긴 집: 문을 연 길 (판정 문장)
+  sound?: 'moan' | 'tv' | 'none';                 // 문 잠긴 집: 현관 앞에서 5초 들으면 들리는 것 (안의 사람이 체력 45 넘으면 70% 신음 — 현장 생성기가 정한다)
 }
 
 // ───────────────────────── (N8 단계 10) 조건부 연쇄를 세계 상태로 (docs/specs/N8-incident-kinds.md §5.6 — 사용자 결정 "인과가 스크립트대로 말고 자연스럽게") ─────────────────────────

@@ -134,6 +134,8 @@ const SEV5 = parseDifficulty('3,5,3,3,3,3')!;
  */
 interface Patrol { sim: Sim; seats: string[]; loaded: Map<UnitKind, number>; bad: string[]; hover: Set<number>; hoverAlone: number; stormTicks: number; maxStay: number; hospital: Set<UnitKind>; modes: Set<string>; lit: number }
 const patrols = new Map<string, Patrol>();
+/** 관제가 추격전으로 아는 이름표 (dispatcher 의 CHASE_LABEL 과 교통사고의 난폭 운전) */
+const CHASE_LABELS = ['납치', '도주 차량', '차량 절도', '난폭 운전'];
 function patrol(seed: string, d: Difficulty, force: string | null): Patrol {
   const key = seed + '|' + JSON.stringify(d) + '|' + force;
   const hit = patrols.get(key);
@@ -141,6 +143,7 @@ function patrol(seed: string, d: Difficulty, force: string | null): Patrol {
   const sim = new Sim(seed, d, 1200, { force });
   const p: Patrol = { sim, seats: [], loaded: new Map(), bad: [], hover: new Set(), hoverAlone: 0, stormTicks: 0, maxStay: 0, hospital: new Set(), modes: new Set(), lit: 0 };
   const orphan = new Map<string, number>();      // 맡을 헬기가 없는 공중 임무가 열려 있기 시작한 시각
+  const chaseKnew = new Map<string, boolean>();      // (사건:부대) → 소방·의료 헬기가 달리는 추격전에 배정된 그 틱에 관제가 추격전임을 알았는가
   const awayAt = new Map<number, [number, number]>();      // 물을 뜨러 간 헬기의 지도 위치
   const note = (text: string): void => { if (p.bad.length < 12) p.bad.push(`${seed} t=${sim.t.toFixed(1)} ${text}`); };
   let n = 0, sorties = 0;
@@ -172,9 +175,17 @@ function patrol(seed: string, d: Difficulty, force: string | null): Patrol {
     }
     for (const I of sim.incidents) {
       if (I.phase === 'closed' || !I.pursuit || I.pursuit.state !== 'driving') continue;
-      // 관제가 추격전으로 본 사건만 (N8 단계 6b 의 차량 절도는 흐릿한 신고 '쾅 소리'로 교통사고로 평가될 수 있다 — 그때 관제는 달리는 차를 모르고 중한 교통사고에 헬기를 보낸다)
-      if (I.assessment && I.assessment.type === 'traffic' && I.truth.variant === 'cartheft') continue;
-      for (const uid of I.assigned) if (sim.units[uid].kind === 'heli' || sim.units[uid].kind === 'medHeli') note(`달리는 추격전(사건 ${I.code})에 ${sim.units[uid].callsign} 배정`);
+      // 관제가 추격전으로 알고 낸 배정만 본다: 배정된 그 틱에 관제가 달리는 차임을 알았는가(이름표가 추격전이거나, 알려진 위치가 목격·추적 보고로 옮겨 갔다 — reportedPrev).
+      // (N8 검토) 예전에는 '차량 절도가 교통사고로 평가된 사건'만 뺐다(N8 단계 6b). 흐릿한 신고('쾅 소리')로 시작한 추격전은 차량 절도·난폭 운전 모두 관제가 달리는 차를 모르고 중한 교통사고에 헬기를 보낼 수 있다 —
+      // 그 배정은 관제의 잘못이 아니다. 반대로 이름표가 없어도 목격 신고가 들어온 뒤의 배정은 잡는다(보통 S2 traffic/bus 의 도주 차량에 의료 헬기 — dispatcher.airFit 이 고쳤다)
+      for (const uid of I.assigned) {
+        const u = sim.units[uid];
+        if (u.kind !== 'heli' && u.kind !== 'medHeli') continue;
+        const k = I.id + ':' + uid;
+        let knew = chaseKnew.get(k);
+        if (knew === undefined) { knew = I.reportedPrev !== undefined || CHASE_LABELS.indexOf(I.assessment?.label ?? '') >= 0; chaseKnew.set(k, knew); }
+        if (knew) note(`달리는 추격전(사건 ${I.code})에 ${u.callsign} 배정`);
+      }
     }
     if (sim.tick % 5 === 0) for (const s of sim.scenes) {
       if (!s || s.archived) continue;
@@ -402,6 +413,7 @@ describe('③ 능력과 장비가 어긋나지 않는다', () => {
         if (u.caps.rescue >= 0.5) expect(anyKit(sim, u, ['irons', 'spreader', 'lightRescue', 'rope', 'ring']), `${tag}: 구조 장비`).toBe(true);
         if (u.dept === 'fire' && u.kind !== 'boat' && u.kind !== 'animalCtl') expect(anyKit(sim, u, ['scba']), `${tag}: 공기호흡기`).toBe(true);      // animalCtl: (N8 단계 5) 동물 포획팀은 소방 부서지만 공기호흡기를 들지 않는다 (위험한 건물 안에 들어가지 않는다)
         if (u.caps.capture >= 0.7) expect(anyKit(sim, u, ['dart', 'catchpole']), `${tag}: 마취총 또는 올가미`).toBe(true);      // (N8 단계 5) 포획 ↔ 마취총·올가미
+        if (u.kind === 'rescue') expect(anyKit(sim, u, ['jumpMat']), `${tag}: 안전 매트`).toBe(true);      // (N8 단계 7) 구조 부대 ↔ 안전 매트 (이름표 '위기자'의 구조 수요 가점이 매트를 든 부대를 부른다 — 최소 인원에도 유압 대원이 남는다)
         if (u.caps.suppression >= 0.7 && !AIR_KIND.has(u.kind)) expect(anyKit(sim, u, ['beeSuit']), `${tag}: 벌 보호복`).toBe(true);      // 진압 수요로 오는 지상 부대는 벌집을 뗄 사람이 있다 (관창수·로프 대원)
         if (u.caps.utilPower >= 0.7) expect(anyKit(sim, u, ['insulKit']), `${tag}: 절연 장비`).toBe(true);      // (N8 §5.3.3) 전력 복구 ↔ 절연 장비
         if (u.caps.utilGas >= 0.7 || u.caps.utilWater >= 0.7) expect(anyKit(sim, u, ['valveKey']), `${tag}: 밸브 키`).toBe(true);      // 가스·수도 복구 ↔ 밸브 키 (단계 4b)

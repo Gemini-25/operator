@@ -103,6 +103,8 @@ export const LABEL_BONUS: { label: string; key: keyof Needs; kind?: UnitKind; ki
   { label: '외벽 작업자 고립', key: 'suppression', kind: 'ladder', bonus: 12 }, { label: '멈춘 놀이기구', key: 'suppression', kind: 'ladder', bonus: 12 },
   // ── (N8 §5.3.4 — 단계 9) 출산 임박의 구급 수요에 전문 응급 가방(alsBag)을 든 대원이 있는 부대 ──
   { label: '출산 임박', key: 'ems', kit: 'alsBag', bonus: 8 },
+  // ── (N8 §5.3.4 — 단계 7) 위기자의 구조 수요에 안전 매트를 든 대원이 있는 부대 (구조 부대의 유압 대원) ──
+  { label: '위기자', key: 'rescue', kit: 'jumpMat', bonus: 20 },
   // ── (N9 §5.3.3) 큰 사건의 이름표 — 단계 2 에 줄을 넣는다. 이름표를 내는 시나리오(N9 단계 4~9)가 아직 없고, 줄이 앞세우는 새 부대는 편성되지 않았다 —
   //    걸리는 줄이 없어 결과가 바뀌지 않는다('집단 난동'(폭동 — 지금 있는 이름표)의 줄은 기동대에만 붙는다). 이름표는 설계서 §4.0 의 글자 그대로 ──
   { label: '압사 위험', key: 'law', kind: 'riotPol', bonus: 25 }, { label: '시위 충돌', key: 'law', kind: 'riotPol', bonus: 25 },
@@ -179,6 +181,10 @@ export function airFit(sim: Sim, u: Unit, I: Incident, key: keyof Needs): number
   if (sim.disaster !== null && sim.disaster.kind === 'typhoon' && sim.disaster.phase === 'impact') return 0;      // 강풍이 닥친 바로 그 틱 (u.grounded 는 이 뒤의 tickUnits 가 적는다)
   if ((u.fuel ?? 0) < etaFor(sim, u, I.reportedNode) * 2 + 90) return 0;
   if (I.airDone && I.airDone.indexOf(u.kind) >= 0) return 0;
+  // (N8 검토 — R1 의 불변 조건 "달리는 추격전에 소방·의료 헬기를 보내지 않는다") 알려진 위치가 목격·추적 보고로 옮겨 가는 사건(그 전 위치 reportedPrev 가 있다 — 공개 정보,
+  // pursuit.setReported 가 보고마다 적고 차가 서면 pursuit.stop 이 지운다)은 이름표가 없어도 달리는 차다 — 흐릿한 신고로 '무장 사건'·'교통사고'로 평가된 도주 차량에
+  // 구급·구조 수요로 의료·소방 헬기가 갔다(이름표 CHASE_LABEL 로만 알아보았다). 경찰 헬기는 그대로(하늘에서 보는 일)
+  if (u.kind !== 'policeHeli' && I.reportedPrev !== undefined) return 0;
   const as = I.assessment!, type = as.type, night = sim.weather === 'night';
   if (u.kind === 'policeHeli') {
     if (key !== 'search') return 0;

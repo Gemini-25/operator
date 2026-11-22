@@ -818,8 +818,9 @@ describe('현장에서 생길 수 있는 일 (B1)', () => {
 
   it('중증 응급 환자에게 구급차가 멀면 소방 부대가 선착 대응으로 먼저 가고, 환자의 급변·압궤 증후군·자리를 뜨는 사람이 실제로 일어난다', () => {
     let co = 0, coFirst = 0, internal = 0, crush = 0, fled = 0;
-    for (let k = 0; k < 40; k++) {
-      const s = shiftOf('S' + k);
+    // (N8 단계 7 뒤 절반) S53 을 더했다 (표본만 넓힌다): 위기자·문 잠긴 집이 짧은 사건에 들어 S0~S39 의 싸움·가정 폭력에서 달아난 용의자가 하나로 줄었다(기준 사본 둘) — S40~S59 가운데 그런 사건이 있는 첫 시드
+    for (const seed of [...Array.from({ length: 40 }, (_, k) => 'S' + k), 'S53']) {
+      const s = shiftOf(seed);
       for (const I of s.incidents) {
         if (I.coResp !== undefined) {
           co++;

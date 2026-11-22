@@ -5,7 +5,7 @@
 import { DECOR, T } from '../../types';
 import { SW, addCas, addHostile, addProp, addRegion, baseScene, freeTileIn, set } from '../kit';
 import { armedVenue, buildMedical, buildStop } from '../builders';
-import { planBuilding } from '../plans';      // (N8 단계 9) 집단 식중독의 홀형 평면
+import { lockDoor, planBuilding } from '../plans';      // (N8 단계 9) 집단 식중독의 홀형 평면 · (단계 7) 문 잠긴 집의 현관문
 import { tidx } from '../grid';
 import { addAnimal, alleyFrame, buildQuiet, farmFrame, freeGround, marketFrame, openFrame, streetFrame, urbanFrame, yardFrame } from '../kindsKit';
 import { TYPE_DEFS } from '../../incidentTypes';
@@ -429,6 +429,100 @@ registerScene('welfare', 'lostchild', (sim, I, rng) => {
   return s;
 });
 
+// ── (§4.5 — 단계 7 뒤 절반) 위기자 · 문 잠긴 집 ──
+type LedgePerch = NonNullable<NonNullable<Scene['kinds']>['perch']>;
+/**
+ * 다리·옥상의 위기자 (§4.5 welfare/ledge): 사람은 난간 밖의 높은 자리(T.LEDGE — 걸어서 오가지 못하고 시야는 통한다)에 서 있고(trapped · trapWork 999 · 체력 100),
+ * 높은 자리 목록(s.kinds.perch — ground = 붙잡는 대원이 서는 안쪽 칸, 1칸)에 든다. 'perch' 규칙은 넣지 않는다 — 소방 헬기가 상공에 머물지 않게(§5.11 · §12.2-15).
+ *  다리(교차로 사건 — placeId −1): 강 위를 건너는 도로(y 7~10, 다리 위 구역 — 둘레의 위기 정도를 올리는 쪽 side) · 난간(y 6 · 11 의 벽) · 아래위는 물.
+ *    위기자는 남쪽 난간 자리 하나(x 8~21)를 대신한 턱 — 안쪽 칸은 바로 위 다리 위. 물로 떨어지는 갈래는 없다(§5.13 — 실패는 기록 한 줄)
+ *  옥상(건물 사건): 외벽 현장과 같은 꼴(streetFrame 위 로비·옥상·계단) — 위기자는 옥상 가장자리(y 15)의 턱, 안쪽 칸은 옥상(y 16), 아래 보도(y 14)가 떨어지면 닿는 칸(s.kinds.drop)이고
+ *    그 자리에 매트 터(fixture 'matSite' — live = 아직 펴지 않음 · 막지 않음). 둘레를 세는 쪽(side)은 옥상 — 아래 보도의 매트 대원은 다가오는 사람이 아니다.
+ * 위기 정도 0.35~0.55 에서 시작(scene 흐름 — 만들 때 한 번). 세계 규칙은 rules/kinds.ts 의 ledgeRule
+ */
+registerScene('welfare', 'ledge', (sim, I, rng) => {
+  const perch: LedgePerch = [];
+  if (I.truth.placeId < 0) {
+    const s = baseScene(sim, I, rng);
+    for (let y = 0; y < s.h; y++) for (let x = 0; x < s.w; x++) set(s, x, y, x <= 2 || x >= s.w - 3 ? T.GROUND : y >= 7 && y <= 10 ? T.ROAD : y === 6 || y === 11 ? T.WALL : T.WATER);
+    s.outdoor = true;
+    s.placeName = '다리 위 위기자 현장';
+    s.leadDept = 'police';
+    const deck = addRegion(s, '다리 위', 'zone', 3, 7, s.w - 4, 10, false, false);
+    addRegion(s, '서쪽 둔치', 'zone', 0, 0, 2, s.h - 1, false, false);
+    addRegion(s, '동쪽 둔치', 'zone', s.w - 3, 0, s.w - 1, s.h - 1, false, false);
+    const px = rng.int(8, 21);
+    set(s, px, 11, T.LEDGE);
+    const c = addCas(s, px, 11, 'trapped', 100, 0, 0.1);
+    c.trapWork = 999;
+    perch.push({ cas: c.id, x: px, y: 11, h: 3, ground: 10 * s.w + px, top: 10 * s.w + px });
+    s.staging = { x: 1, y: 8 }; s.safe = { x: 1, y: 11 }; s.vantage = { x: px + (px < 15 ? 5 : -5), y: 8 };
+    s.exits = [{ x: 0, y: 8 }, { x: s.w - 1, y: 9 }];
+    s.spots = [{ x: 2, y: 8, exit: 0, taken: -1 }, { x: s.w - 3, y: 9, exit: 1, taken: -1 }, { x: px, y: 8, exit: -1, taken: -1 }];
+    s.trafficFlow = 0; s.nextCarAt = Infinity;
+    s.kinds = { perch, crisis: rng.range(0.35, 0.55), stage: 0, talk: 0, side: deck.id, drop: -1, mat: -1 };
+    return s;
+  }
+  const s = streetFrame(sim, I, rng, { lanes: false, search: false });
+  const pl = sim.city.places[I.truth.placeId];
+  s.placeName = pl ? `${pl.name} 옥상` : '옥상 위기자 현장';
+  s.leadDept = 'police';
+  for (let x = 0; x < s.w; x++) for (let y = 15; y < s.h; y++) set(s, x, y, x >= 13 && x <= 15 && y >= 16 && y <= 18 ? T.VOID : T.WALL);
+  for (let x = 2; x <= 11; x++) for (let y = 16; y <= 18; y++) set(s, x, y, T.FLOOR);
+  for (let x = 17; x <= 27; x++) for (let y = 16; y <= 18; y++) set(s, x, y, T.GROUND);
+  set(s, 6, 15, T.FLOOR); set(s, 7, 15, T.FLOOR);
+  const st1 = 17 * s.w + 11, st2 = 17 * s.w + 17;
+  s.tiles[st1] = T.STAIR; s.tiles[st2] = T.STAIR; s.stairTo[st1] = st2; s.stairTo[st2] = st1;
+  addRegion(s, '1층 로비', 'room', 2, 15, 11, 18, true, false);
+  const roof = addRegion(s, '옥상', 'roof', 17, 16, 27, 18, false, false);
+  const px = rng.int(19, 25);
+  set(s, px, 15, T.LEDGE);
+  const c = addCas(s, px, 15, 'trapped', 100, 0, 0.1);
+  c.trapWork = 999;
+  perch.push({ cas: c.id, x: px, y: 15, h: 3, ground: 16 * s.w + px, top: 16 * s.w + px });
+  const mat = addProp(s, 'fixture', px, 14, { skin: 'matSite', blocking: false, live: true });
+  s.vantage = { x: px + (px < 22 ? -4 : 4), y: 12 };      // 현장 평가 자리는 위기자가 보이는 보도 — 3칸 밖
+  s.kinds = { perch, crisis: rng.range(0.35, 0.55), stage: 0, talk: 0, side: roof.id, drop: 14 * s.w + px, mat: mat.id };
+  return s;
+});
+/**
+ * 문 잠긴 집의 쓰러진 사람 (§4.5 welfare/lockin): 작은 집(응급 현장의 집 틀 — buildMedical: 방 2~3 · 가구 · 현관문)을 쓰고, 현관문을 잠근다(30% 방범문 — 문의 hp ×3).
+ * 안에 사람 70%(거동 불가 · 체력 35~70 · 질병 — 체력 하한 20 이 있어 들어가기 전에 숨지지 않는다) / 빈집 30%. **숨진 채 발견되는 갈래는 없다**(§5.13).
+ * 바깥으로 난 1층 창 하나(s.kinds.win — 그 바깥 칸에 서서 깬다) · 열쇠가 오는 시각(관리인 — 생성 + 60~150초, 세계 규칙이 현관 곁에 놓는다) · 문 앞에서 들리는 소리(안의 사람이 체력 45 넘으면 70% 신음,
+ * 아니면 TV 50% · 없음 50%). 모두 만들 때 정한다(scene 흐름). 세계 규칙은 rules/kinds.ts 의 lockinRule
+ */
+registerScene('welfare', 'lockin', (sim, I, rng) => {
+  const s = buildMedical(sim, I, rng);
+  s.leadDept = 'police';
+  const ex = s.exits[0];
+  const door = s.props.find((p) => p.kind === 'door' && p.x === ex.x && p.y === ex.y - 1)!;
+  const armored = rng.chance(0.3);
+  lockDoor(s, door, armored ? rng.range(15, 24) : rng.range(5, 8));
+  const empty = rng.chance(0.3);
+  if (empty) s.casualties.length = 0;
+  else { const c = s.casualties[0]; c.health = rng.range(35, 70); c.bleed = c.bleed0 = rng.range(0.02, 0.05); }
+  // 바깥으로 난 1층 창: 바깥 이웃이 걸을 수 있는 땅이고 안쪽 이웃이 방인 창 (없으면 집 뒷벽의 한 칸을 창으로 만든다 — 방범문이면 이 창으로 들어간다)
+  const wins: number[] = [];
+  for (let i = 0; i < s.tiles.length; i++) if (s.tiles[i] === T.WINDOW && winOutside(s, i) >= 0) wins.push(i);
+  let win = wins.length ? rng.pick(wins) : -1;
+  if (win < 0) for (let i = 0; i < s.tiles.length && win < 0; i++) if (s.tiles[i] === T.WALL && s.region[i] < 0 && winOutside(s, i) >= 0) { s.tiles[i] = T.WINDOW; win = i; }
+  const c = s.casualties[0];
+  const sound = c !== undefined && c.health > 45 && rng.chance(0.7) ? 'moan' : rng.chance(0.5) ? 'tv' : 'none';
+  s.kinds = { door: door.id, win, armored, key: I.createdAt + rng.range(60, 150), keyAt: -1, sound };
+  return s;
+});
+/** 창 칸 i 의 바깥 이웃(걸을 수 있는 땅 — 구역 밖)이고 맞은편 이웃이 방(실내 바닥)이면 그 바깥 칸, 아니면 -1 (현장 생성기와 실행부가 함께 쓴다) */
+export function winOutside(s: Scene, i: number): number {
+  const w = s.w, x = i % w, y = (i / w) | 0;
+  for (const [dx, dy] of [[0, 1], [0, -1], [1, 0], [-1, 0]]) {
+    const ox = x + dx, oy = y + dy, ix = x - dx, iy = y - dy;
+    if (ox < 0 || oy < 0 || ox >= w || oy >= s.h || ix < 0 || iy < 0 || ix >= w || iy >= s.h) continue;
+    const o = oy * w + ox, n = iy * w + ix;
+    if (s.tiles[o] === T.GROUND && s.region[o] < 0 && s.tiles[n] === T.FLOOR) return o;
+  }
+  return -1;
+}
+
 // ───────────────────────── 구조 rescue (§4.6 — 단계 8) — 높은 자리(§5.11)·구덩이 ─────────────────────────
 /** 높이 단계 1~3 (외벽 1 = 30% · 2 = 45% · 3 = 25% / 놀이기구는 2·3 이 많다) */
 function perchH(rng: Rng, w: number[]): number { return rng.weighted([1, 2, 3], w); }
@@ -464,7 +558,7 @@ registerScene('rescue', 'facade', (sim, I, rng) => {
   }
   addProp(s, 'fixture', x0, 15, { skin: 'gondola', blocking: false, angle: rng.range(-0.5, 0.5) });
   s.vantage = { x: x0, y: 12 };      // 현장 평가 자리는 매달린 사람이 보이는 보도 (대기 지점에서는 멀어 보이지 않는다)
-  const snap = rng.chance(0.15);
+  const snap = rng.chance(0.3);      // (단계 11 — §7.3 ④) 설계서 15% → 30% (줄이 끊겨 내려앉거나 떨어지는 현장)
   s.kinds = { perch, hangAt: sim.t + rng.range(100, 160), snapAt: snap ? sim.t + rng.range(60, 200) : Infinity, snapCas: snap ? perch[rng.int(0, perch.length - 1)].cas : -1 };
   s.rules = ['perch'];
   return s;
@@ -486,7 +580,7 @@ registerScene('rescue', 'pit', (sim, I, rng) => {
   const depth = rng.int(1, 3);
   const out = rng.chance(0.3);
   const wet = pk === 'riverside' || rng.chance(0.15);
-  const c = addCas(s, px, py, 'trapped', out ? rng.range(32, 45) : rng.range(55, 85), rng.range(0.01, 0.03) + (wet ? 0.04 : 0), 0.1);
+  const c = addCas(s, px, py, 'trapped', out ? rng.range(32, 45) : rng.range(55, 85), (out ? rng.range(0.1, 0.16) : rng.range(0.01, 0.03)) + (wet ? 0.04 : 0), 0.1);      // (단계 11 — §7.3 ④) 의식이 없는 사람의 악화 0.01~0.03 → 0.1~0.16 (난수 한 번은 그대로) — 강제 23건이 모두 구조됐다
   c.trapWork = 10;
   s.kinds = { pit: pit.id, depth, badAir: depth >= 2 && rng.chance(0.25) };
   s.vantage = { x: px, y: Math.min(15, py + 3) };      // 현장 평가 자리는 구덩이가 보이는 곳

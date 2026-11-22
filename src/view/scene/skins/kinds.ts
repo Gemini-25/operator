@@ -129,7 +129,27 @@ const ride: SkinPainter = (g) => {
   for (let k = 0; k < 4; k++) { const a = k * 1.571 + 0.785; seg(g, 0, 0, Math.cos(a) * 1.9, Math.sin(a) * 1.9, 0.12, '#c9a640'); }
   disc(g, 0, 0, 0.75, '#d0473e'); disc(g, 0, 0, 0.5, '#f0d36a'); disc(g, 0, 0, 0.18, '#7a2a22');
 };
-export const KINDS_SKINS: Record<string, SkinPainter> = { floater, fireworks, trash, pole, wire, pipe, hole, sign, signDebris, hive, gondola, pit, ride };
+/** (N8 §4.5 위기자 — 단계 7) 편 안전 매트: 두 칸 남짓의 부푼 쿠션(노랑·빨강 테, 공기 칸의 이음매) — 위에서 본 모습 */
+function puffedMat(g: G): void {
+  oval(g, 0.08, 0.1, 1.2, 0.86, 'rgba(0,0,0,0.3)');
+  g.fillStyle = '#c8321f'; g.beginPath(); g.moveTo(-1.05, -0.78); g.lineTo(1.05, -0.78); g.lineTo(1.05, 0.78); g.lineTo(-1.05, 0.78); g.closePath(); g.fill();
+  g.fillStyle = '#f0c419'; g.beginPath(); g.moveTo(-0.92, -0.65); g.lineTo(0.92, -0.65); g.lineTo(0.92, 0.65); g.lineTo(-0.92, 0.65); g.closePath(); g.fill();
+  for (const k of [-0.46, 0, 0.46]) seg(g, k, -0.62, k, 0.62, 0.03, 'rgba(120,80,0,0.45)');
+  seg(g, -0.88, 0, 0.88, 0, 0.03, 'rgba(120,80,0,0.45)');
+  oval(g, -0.5, -0.32, 0.22, 0.12, 'rgba(255,255,255,0.35)');
+}
+/** 매트 터: 펴기 전(live)이면 접어 둔 매트 꾸러미와 놓을 자리의 점선 테, 펴면 부푼 쿠션 */
+const matSite: SkinPainter = (g, p) => {
+  if (p.live === false) { puffedMat(g); return; }
+  g.save(); g.strokeStyle = 'rgba(240,196,25,0.75)'; g.lineWidth = 0.05; g.setLineDash([0.16, 0.12]);
+  g.strokeRect(-1.0, -0.74, 2.0, 1.48); g.setLineDash([]); g.restore();
+  oval(g, 0.05, 0.06, 0.34, 0.24, 'rgba(0,0,0,0.3)');
+  oval(g, 0, 0, 0.3, 0.2, '#c8321f'); seg(g, -0.24, 0, 0.24, 0, 0.04, '#f0c419');
+};
+/** 편 안전 매트 (스킨 이름 jumpMat — 장비 이름과 같다) */
+const jumpMat: SkinPainter = (g) => { puffedMat(g); };
+
+export const KINDS_SKINS: Record<string, SkinPainter> = { floater, fireworks, trash, pole, wire, pipe, hole, sign, signDebris, hive, gondola, pit, ride, matSite, jumpMat };
 
 /**
  * (4b §4.2 utility/main) 지하 주차장 위의 침수 막 — 침수(s.kinds.flood)만큼 짙은 푸른 막과 물결. 진실이지만 눈에 보이는 물이라 두 시점 같다(결과 불변 — 읽기만)

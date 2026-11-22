@@ -355,7 +355,7 @@ function syncBoard(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
   const th = s.researchRound > 0 ? 0.9 : 0.72;
   const hotArmed = s.kind === 'armed' && s.secureAt < 0;
   let pendingSearch = 0;
-  if (TYPE_DEFS[s.kind].zoneSearch) {      // 구역 확률 수색 (incidentTypes — 실종)
+  if (TYPE_DEFS[s.kind].zoneSearch && zoneScene(s)) {      // 구역 확률 수색 (incidentTypes — 실종) · (N8 단계 7) 수색 구역이 있는 현장만 — 문 잠긴 집(방 수색)·위기자는 아니다 (설계서 §4.1 의 zoneSearch)
     updateZoneProb(sim, s, a);
     const targetsFound = cas.length;
     if (targetsFound < Math.max(1, expected)) {
@@ -834,7 +834,7 @@ function sitrep(sim: Sim, s: Scene, I: Incident, a: FieldAgent, force = false): 
   if (fires.length) parts.push(`화재 ${fires.length}개 구역`);
   if (cas.length) { const bands = [0, 0, 0, 0]; for (const c of cas) bands[c.value.band]++; parts.push(`구조 대상 ${cas.length}명 확인(${bands.map((n, k) => (n ? `${BAND_NAME[k]} ${n}` : '')).filter(Boolean).join(', ')})`); }
   if (hos.length) parts.push(`용의자 ${hos.length}명 대치 중`);
-  if (!parts.length) parts.push(TYPE_DEFS[s.kind].zoneSearch ? '대상 수색 중' : '특이 사항 없음');
+  if (!parts.length) parts.push(TYPE_DEFS[s.kind].zoneSearch && zoneScene(s) ? '대상 수색 중' : '특이 사항 없음');
   const ev = transmit(sim, s, a, -2, 'sitrep', [], `관제, 현장 상황 보고: ${parts.join(', ')}.`, -1, 0);
   if (ev < 0) return;
   s.lastSitrep = sim.t;
@@ -869,7 +869,7 @@ function canClose(sim: Sim, s: Scene, a: FieldAgent): boolean {
   }
   if (B.list('hos').some((h) => h.value.state === 'hold' || h.value.state === 'fight' || h.value.state === 'flee' || h.value.state === 'surrendered')) return false;
   if (s.kind === 'armed' && s.secureAt < 0) return false;
-  if (TYPE_DEFS[s.kind].zoneSearch && B.list('cas').length < 1) return false;
+  if (TYPE_DEFS[s.kind].zoneSearch && zoneScene(s) && B.list('cas').length < 1) return false;      // (N8 단계 7) 수색 구역이 있는 현장만 (빈집은 방 수색을 마치면 끝난다)
   if (B.list('mate').some((f) => f.value.status === 'down' && !f.value.dead && onScene(s, f.id))) return false;      // 쓰러진 동료를 두고 끝내지 않는다 (숨진 동료의 수습은 위의 작업 항목이 막는다)
   for (const blocked of CLOSE_BLOCKERS) if (blocked(sim, s, a)) return false;
   return true;
@@ -921,6 +921,8 @@ const MOBILE_STALE = 32;
  * 대피하다 쓰러졌을 수 있다(H1 §5.2). 주지 않으면 예전처럼 대피 중인 사람을 모두 뺀다.
  * mates = 믿음상 쓰러져 있는(숨지지 않은) 동료의 수 (H1 §3.5) — 현장이 비었는데 쓰러진 동료가 남았으면 끝내지 않고 구하러 갈 부대를 찾는다.
  */
+/** (N8 단계 7) 구역 확률 수색을 하는 현장인가 — 유형의 zoneSearch 이고 수색할 바깥 구역(zone)이 있다 (생김새). 실종·치매 노인·미아는 늘 참, 문 잠긴 집·위기자는 거짓 */
+function zoneScene(s: Scene): boolean { for (const r of s.regions) if (r.kind === 'zone' && r.searchable) return true; return false; }
 export function outstanding(a: FieldAgent, now = -1, s?: Scene): { patients: number; fire: boolean; hostile: boolean; search: boolean; mates: number; matesDown: number } {
   const B = a.beliefs;
   let patients = 0;

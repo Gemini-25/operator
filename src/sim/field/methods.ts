@@ -177,6 +177,13 @@ export function captureKitOnScene(sim: Sim, s: Scene): boolean {
   for (let k = 0; k < ag.length; k++) { const b = ag[k]; if (b.status === 'active' && !b.aloft && (kitCount(sim, b.rid, 'dart') > 0 || kitCount(sim, b.rid, 'catchpole') > 0 || kitCount(sim, b.rid, 'net') > 0)) return true; }
   return false;
 }
+// ── (N8 §4.5 — 단계 7) 문 잠긴 집의 창문 진입 조건 — 대원의 믿음(evid sound — 현관 앞에서 본 문의 생김새)만 ──
+/** 대상 문(tg.prop — 그 문의 소품 id)이 방범문이라고 믿는다: 현관 앞에서 듣던 대원이 본 것(armored)이 믿음에 있다. 문이 잠겨 있다고 알 때만 (믿음 blk 'locked') */
+function armoredDoor(c: MethodCtx): boolean {
+  if (c.tg.prop < 0 || c.tg.tile < 0 || c.a.beliefs.val<string>('blk', c.tg.tile) !== 'locked') return false;
+  const v = c.a.beliefs.val<{ kind?: string; armored?: boolean }>('evid', c.tg.prop);
+  return v !== undefined && v.kind === 'sound' && v.armored === true;
+}
 /** 몰이를 맨손으로 맡을 수 있는가 (§4.3): 가축(소·돼지)이면 곧바로, 그 밖은 포획 장비를 든 대원이 현장에 없고 작업이 만들어진 지 60초가 넘었을 때 (agents.fitBase 와 같은 조건) */
 export const HERD_WAIT = 60;
 export function herdAllowed(sim: Sim, s: Scene, a: FieldAgent, ab: AniBelief, age: number): boolean {
@@ -587,6 +594,9 @@ export const METHOD: Record<MethodId, MethodDef> = {
   //    하강(줄을 든 대원 — 위쪽 칸 top 에서 35초, 구조대가 아니면 50초. 높이 무관 · 구덩이의 의식 없는 사람에게 내려가기도). 실행은 executor 의 높은 자리 갈래. N9 의 다섯 앞 ──
   ladder: row('ladder', ['extricate'], '사다리차 구조', '사다리', '사다리 구조', '사다리차의 사다리로', [], 0.95, 0, false, { needUnit: ['ladder'], can: (c) => perchH(c) > 0 && perchH(c) <= 2 }),
   descend: row('descend', ['extricate'], '밧줄 하강 구조', '하강', '하강 구조', '밧줄로 내려가', ['rope'], 0.8, 0.05, false, { can: (c) => perchH(c) > 0 || pitDown(c) }),
+  // ── (N8 §4.5 — 단계 7) 문 잠긴 집의 창문 진입 force: 그 문이 방범문이라고 믿으면(현관 앞에서 듣던 대원이 본 생김새 — 믿음 evid sound 의 armored, 사실 id = 그 문 소품의 id)
+  //    1층 창을 깨고 들어가 안에서 현관문을 연다 (맨몸 — 깨는 데 손 공구가 있으면 빠르다). 실행은 executor 의 case 'force'. N9 의 다섯 앞 ──
+  window: row('window', ['force'], '창문 진입', '창문', '창문 진입', '1층 창을 깨고 들어가', [], 0.95, 0, false, { can: armoredDoor }),
   // ── (N9 §5.12) 새 방법 다섯 — 단계 1 은 줄만(can = NOT_YET). 수치(pref·risk)는 시작값이고, 조건·배율·장비는 그 방법을 쓰는 단계가 채운다 ──
   // 잠수: 물에 잠긴 차·선실 안의 사람(믿음 sunk · haz sunk)에게 3칸 안에서 25초 (단계 5). 장비는 diveKit(단계 2 에 생긴다)으로 바꾼다 — 지금은 있는 드라이슈트만 적어 둔다
   dive: row('dive', ['waterRescue', 'extricate', 'search'], '잠수 구조', '잠수', '잠수 구조', '잠수해 들어가', ['drysuit'], 0.8, 0.1, false),
@@ -658,6 +668,7 @@ export const SAY: Record<MethodId, string> = {
   air: '', drone: '드론을 띄우겠습니다.', dog: '탐지견을 풀겠습니다.',
   dart: '마취총으로 재우겠습니다.', catchpole: '올가미로 붙잡겠습니다.', herd: '뒤에서 몰겠습니다.', net: '포획망을 씌우겠습니다.',      // (N8 단계 5)
   ladder: '사다리를 펴서 내리겠습니다.', descend: '줄을 매고 내려가겠습니다.',      // (N8 단계 8)
+  window: '방범문이라 문으로는 오래 걸립니다. 1층 창으로 들어가 안에서 열겠습니다.',      // (N8 단계 7)
   dive: '잠수해 들어가겠습니다.', boom: '오일펜스를 펼치겠습니다.', shieldLine: '방패로 저지선을 치겠습니다.', deconTent: '제독 텐트에서 씻기겠습니다.', hoseWash: '호스로 씻어 내겠습니다.',      // (N9)
   feel: '앞이 안 보입니다. 벽을 따라 더듬어 찾겠습니다.', pulse: '끊어 쏘며 물을 아끼겠습니다.',      // (R3 3단계)
   robotDefuse: '로봇 먼저 투입합니다.', suitDefuse: '방호복을 입고 해체하겠습니다.', bareDefuse: '방호복 없이 바로 해체합니다.',      // (R3 5단계)

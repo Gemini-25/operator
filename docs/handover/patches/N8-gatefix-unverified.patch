@@ -1,0 +1,354 @@
+From 5f10889abc1b614be4e2cca41ad0e06b211156b0 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sun, 22 Nov 2026 21:56:31 +0000
+Subject: [PATCH] =?UTF-8?q?N8=20=EA=B4=80=EB=AC=B8=20=EA=B3=A0=EC=B9=98?=
+ =?UTF-8?q?=EA=B8=B0:=20=EC=9D=BC=ED=95=98=EB=8D=98=20=EC=9C=A0=EC=95=95?=
+ =?UTF-8?q?=20=EB=8C=80=EC=9B=90=EC=9D=98=20=EA=B5=AC=EC=B6=9C=20=EB=84=98?=
+ =?UTF-8?q?=EA=B2=A8=EB=B0=9B=EA=B8=B0=20=C2=B7=20=EC=95=84=EB=AC=B4?=
+ =?UTF-8?q?=EB=8F=84=20=EC=98=A4=EC=A7=80=20=EC=95=8A=EA=B2=8C=20=EB=90=98?=
+ =?UTF-8?q?=EB=8A=94=20=EC=A0=84=ED=99=98=20=EB=B0=B0=EC=A0=95=20=EB=A7=89?=
+ =?UTF-8?q?=EA=B8=B0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- commander: 손이 빈 유압 대원이 없으면 장비 없이 누구나 할 수 있는 일(이송·처치·동행·수색·짝 동행)이나
+  같은 장비의 사람이 남는 다른 구출의 둘째 손을 하며 그 구출 8칸 안에 있는 대원을 넘겨받기에 부른다
+  (reliefFrom · spareHand · RELIEF_FROM · RELIEF_NEAR 8 · RELIEF_AGAIN 30 · RELIEF_PRI 0.1)
+- brain: 넘겨받기 지시(정원을 넘는 구출 지시)를 그 일 중에 받으면 지시 점수 +0.12 (HANDOVER_BONUS)
+- dispatcher: 아직 아무도 닿지 않았고 배정이 그 부대 하나뿐인 사건에서는 그 수요를 지금 채울
+  다른 지상 부대가 있을 때만 전환 배정한다 (orphaned · spareFor) — 보통 S7 #13 무대응 → 대응 지연
+- 시험: kinds 'N8 관문 고치기' 둘(고치기 전 코드에서 걸린다) · causality '3단계 사례' 의
+  몰린 길의 사고 시드 S87 → S103 (흐름이 바뀌어 — S0~S103 을 훑어 처음 나온 것)
+- crews ⑤ 0.470 → 0.562 (넓은 강제 48교대 0.403 → 0.442, 보통 60 0.484 → 0.533) ·
+  허위·오인 보통 60 의 무대응 1 → 0 · vitest 1141 전부 통과
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01S6L8Vq3hyPupfdexwNGcVE
+---
+ src/sim/dispatch/dispatcher.ts |  28 ++++++++
+ src/sim/field/brain.ts         |  15 +++-
+ src/sim/field/commander.ts     |  56 +++++++++++++++
+ tests/causality.test.ts        |   5 +-
+ tests/kinds.test.ts            | 125 +++++++++++++++++++++++++++++++++
+ 5 files changed, 225 insertions(+), 4 deletions(-)
+
+diff --git a/src/sim/dispatch/dispatcher.ts b/src/sim/dispatch/dispatcher.ts
+index 0bcbf56..24891ca 100644
+--- a/src/sim/dispatch/dispatcher.ts
++++ b/src/sim/dispatch/dispatcher.ts
+@@ -220,6 +220,33 @@ export function airFit(sim: Sim, u: Unit, I: Incident, key: keyof Needs): number
+   return 0;
+ }
+ 
++/**
++ * (N8 관문 고치기 — 보통 S7 #13) 부대 u 를 빼 오면 사건 J 가 아무 부대도 오지 않는 채로 남는가: 아직 아무도 닿지 않았고(지상·상공 — 무대응 종료의 조건과 같다) J 에 배정된 부대가 u 하나뿐이다.
++ * 그런 전환 배정은 J 를 다른 부대가 날 때까지 맨 처음부터 기다리게 한다 — 부대가 모자란 교대에서는 신고 접수 330초의 무대응 종료(incidents.tickIncidents)가 먼저 닫았다
++ * (타는 냄새 신고에 가던 사다리1 을 교통사고로 빼 온 뒤 진압 부대가 모두 다른 화재·붕괴에 묶여 243초 뒤에야 다음 부대가 배정됐다)
++ */
++function orphaned(sim: Sim, J: Incident, u: Unit): boolean {
++  if (J.firstArrivalAt >= 0 || (sim.scenes[J.id]?.airAt ?? -1) >= 0) return false;
++  for (const uid of J.assigned) if (uid !== u.id) return false;
++  return true;
++}
++/**
++ * 빼 오는 부대 u 대신 사건 J 에 지금 보낼 수 있는 지상 부대가 있는가: u 가 채우던 J 의 수요(평가한 수요 가운데 u 의 능력이 기준을 넘는 열쇠) 하나라도 기준을 넘고,
++ * 가용·복귀 중이며 출동할 대원이 있는 부대. 관제가 아는 것만 읽는다 — 자기 평가(J.assessment)와 자기 조직의 부대 상태·편성
++ */
++function spareFor(sim: Sim, J: Incident, u: Unit): boolean {
++  const needs = J.assessment!.needs;
++  for (const q of sim.units) {
++    if (q === u || q.air || q.sea || (q.state !== 'available' && q.state !== 'returning') || crewReady(sim, q) === 0 || J.assigned.indexOf(q.id) >= 0) continue;
++    for (const key of ORDER) {
++      if (!(needs[key] > 0) || u.caps[key] < MINCAP[key] || q.caps[key] < MINCAP[key]) continue;
++      if (KIND_AUX.has(q.kind) && kindFit(sim, q, J, key) <= 0) continue;
++      return true;
++    }
++  }
++  return false;
++}
++
+ function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { best: Cand | null; nearest: Cand | null } {
+   const sev = I.assessment!.severity;
+   const cands: Cand[] = [];
+@@ -238,6 +265,7 @@ function pickUnit(sim: Sim, I: Incident, key: keyof Needs, minCap: number): { be
+       if (J.problems.some((p) => p.code === 'DIVERTED' && sim.t - p.t < 120)) continue;
+       const gap = I.priority - J.priority;
+       if (gap < (J.assigned.filter((uid) => uid !== J.coResp).length > 1 ? 0.9 : 1.4)) continue;      // 선착 대응으로 함께 간 소방차는 세지 않는다 (그 사건의 하나뿐인 구급차를 쉽게 빼앗지 않게)
++      if (orphaned(sim, J, u) && !spareFor(sim, J, u)) continue;      // (N8 관문 고치기) 아무도 닿지 않은 사건의 하나뿐인 부대는 대신 보낼 부대가 지금 있을 때만 빼 온다
+       divertFrom = J;
+     } else if (u.state !== 'available' && u.state !== 'returning') continue;
+     const eta = etaFor(sim, u, I.reportedNode);
+diff --git a/src/sim/field/brain.ts b/src/sim/field/brain.ts
+index d5e9521..9a485d1 100644
+--- a/src/sim/field/brain.ts
++++ b/src/sim/field/brain.ts
+@@ -8,7 +8,7 @@ import type { Candidate, CasBelief, FieldAgent, MateBelief, Scene, WorkItem } fr
+ import { dist } from '../util';
+ import { AIR_LOW, hasKit, kitUses } from '../crews';
+ import { failedRecently, fitFor, flushOutbox, learnQuiet, mateFact, perceive, pumpOperatorOn, resp, shareNearby, workLabel } from './agents';
+-import { commanderThink } from './commander';
++import { RELIEF_FROM, commanderThink } from './commander';
+ import { finishTask, makeTask } from './executor';
+ import { tileOf } from './grid';
+ import { mustRetreat } from './injury';
+@@ -28,6 +28,17 @@ function takeWork(sim: Sim, s: Scene, a: FieldAgent, w: WorkItem, self: boolean)
+   splitBegin(sim, s, a);      // (R3 §8.2) 같은 상황 다른 행동 — 임무가 시작된 자리의 표본
+ }
+ 
++/**
++ * (N8 관문 고치기 — crews ⑤) 구출 넘겨받기 지시를 받은 대원이 하던 일(commander.RELIEF_FROM — 이송·처치·동행·수색·짝 동행, 또는 같은 장비의 사람이 남는 다른 구출)을 놓고 넘겨받는다:
++ * 그 일을 계속하는 점수(0.58 + 0.4 × 우선도)가 구출의 지시 점수(0.56 + 0.4 × 우선도)와 비슷해(이송 0.84 · 구출 0.82) 지시를 받고도 하던 일을 이어 갔다.
++ * 넘겨받기 지시는 작업의 사람 수가 정원을 넘는 지시다(넘겨받는 동안만 한 명이 더 붙는다 — 그런 구출 지시는 commander.assign 의 교대뿐이다). 손이 빈 대원(대기)에게는 더하지 않는다 — 그때는 계속할 일이 없다.
++ * 하던 일은 작업판에 다시 열린다
++ */
++const HANDOVER_BONUS = 0.12;
++function handoverOrder(w: WorkItem, cur: FieldAgent['task']): boolean {
++  return w.kind === 'extricate' && w.assignees.length > w.max && cur !== null && cur.workId !== w.id && cur.kind !== 'standby' && (RELIEF_FROM.has(cur.kind) || cur.kind === 'extricate');
++}
++
+ function setTask(sim: Sim, s: Scene, a: FieldAgent, kind: Parameters<typeof makeTask>[0], label: string): void {
+   if (a.task) finishTask(sim, s, a, false, 'preempt');
+   const t = makeTask(kind, label);
+@@ -245,7 +256,7 @@ export function think(sim: Sim, s: Scene, a: FieldAgent): void {
+   if (!swapping && a.orderWork >= 0 && (!cur || cur.workId !== a.orderWork)) {
+     const w = s.board[a.orderWork];
+     if (w && (w.status === 'open' || w.status === 'active') && fitFor(sim, s, a, w) > 0) {
+-      opts.push({ label: `지시 수행: ${workLabel(s, w, sim)}`, score: 0.56 + 0.4 * w.priority, apply: () => takeWork(sim, s, a, w, false) });
++      opts.push({ label: `지시 수행: ${workLabel(s, w, sim)}`, score: 0.56 + 0.4 * w.priority + (handoverOrder(w, cur) ? HANDOVER_BONUS : 0), apply: () => takeWork(sim, s, a, w, false) });
+     } else a.orderWork = -1;
+   }
+   // 4) 장비 문제: 예비 펌프 교체와 소화전 급수 연결은 그 부대에서 펌프를 맡은 대원(기관원·사다리 조작원)이 활동 중이면 그 사람만 나선다
+diff --git a/src/sim/field/commander.ts b/src/sim/field/commander.ts
+index 920d018..d105017 100644
+--- a/src/sim/field/commander.ts
++++ b/src/sim/field/commander.ts
+@@ -728,6 +728,19 @@ export function assign(sim: Sim, s: Scene, I: Incident, a: FieldAgent): void {
+       const fit = fitFor(sim, s, b, w);
+       if (fit >= bf) { bf = fit; best = b; }
+     }
++    // (N8 관문 고치기 — crews ⑤) 손이 빈 사람이 없으면: 장비 없이 누구나 할 수 있는 일(RELIEF_FROM — 이송·처치·동행·수색·짝 동행)이나 같은 장비의 사람이 남는 다른 구출의 둘째 손(spareHand)을 하며
++    // 그 구출 곁(RELIEF_NEAR)에 와 있는 사람 (reliefFrom). 그가 놓은 일은 작업판에 다시 열려 손을 뗀 사람(또는 다른 대원)이 받는다 — 둘이 일을 바꿔 든다.
++    // 받는 쪽의 판단은 brain 의 '넘겨받기 지시'(handoverOrder). 손이 빈 사람이 있으면 지금처럼 그 사람이다(위의 고르기 그대로)
++    if (!best) {
++      const tx = targetX(s, w, a), ty = targetY(s, w, a);
++      for (const b of s.agents) {
++        if (b === a || b.status !== 'active' || taken.has(b.rid) || w.assignees.indexOf(b.rid) >= 0 || sim.units[b.unitId].boardOrder) continue;
++        if (b.carrying !== -1 || sim.responders[b.rid].status === 'injured' || failedRecently(sim, w, b.rid)) continue;
++        if (!reliefFrom(sim, s, a, b, w, tx, ty)) continue;
++        const fit = fitFor(sim, s, b, w);
++        if (fit >= bf) { bf = fit; best = b; }
++      }
++    }
+     if (!best) continue;
+     taken.add(best.rid);
+     w.assignees.push(best.rid); w.orderSentAt[best.rid] = sim.t;
+@@ -766,6 +779,49 @@ function lightDuty(a: FieldAgent, b: FieldAgent): boolean {
+ }
+ /** 구출을 넘겨받게 하는 적합도 차이 (맨손 0.1 안팎, 할리건 0.2~0.45, 유압 구조기 0.6~1.2 — 맨손은 손에 익은 할리건이나 유압 구조기가, 할리건은 유압 구조기가 넘겨받는다) */
+ const RELIEF_GAP = 0.3;
++/**
++ * (N8 관문 고치기 — crews ⑤) 일하던 대원이 구출을 넘겨받으러 갈 수 있는 그 일의 종류: 장비 없이 누구나 할 수 있는 일(이송·처치·동행·수색·짝 동행 — 'standby' 는 지시를 받아 둔 대기).
++ * 구급이 모자란 교대에 유압 구조대원이 이런 일에 묶여 있는 동안 맨손의 대원이 구출을 오래 쥐었다(강제 붕괴·교통 48교대 — 그 밖이 쥔 틱의 유압 대원: 짝 동행 2527 · 수색 1431 · 처치 1080 · 이송 1015 …).
++ * 교통 통제·누출 조치는 넣지 않는다(놓는 동안 차로·밸브가 비고, 손을 뗀 사람이 그 일을 할 수 있다는 보장이 없다).
++ * brain 의 '넘겨받기 지시'(handoverOrder)도 이 표를 본다 — 그 일을 계속하는 점수보다 넘겨받기 지시를 앞세운다
++ */
++export const RELIEF_FROM: ReadonlySet<string> = new Set<string>(['carry', 'treat', 'escort', 'search', 'pair', 'standby']);
++/** 일하던 대원을 넘겨받기에 부르는 거리 (지휘관이 아는 구출 대상의 자리에서, 칸) — 구출 곁에 와 있는 사람만 (멀리서 하던 일을 끊어 불러오지 않는다) */
++const RELIEF_NEAR = 8;
++/** 같은 구출을 같은 대원에게 다시 넘겨받게 하지 않는 시간(초) — 그 작업의 마지막 지시(orderSentAt)부터. 넘겨받기 ↔ 원래 일의 왕복을 막는다 */
++const RELIEF_AGAIN = 30;
++/** 하던 일보다 이만큼 이상 급한 일(위중한 사람의 이송 등)을 하는 대원은 부르지 않는다 (구출의 우선도 기준) */
++const RELIEF_PRI = 0.1;
++/**
++ * 일하던 대원 b 를 구출 w 의 넘겨받기에 부를 수 있는가 (손이 빈 사람이 없을 때만 묻는다). 믿음·작업판·동료의 겉·조직 정보만 읽는다:
++ * 구출 곁(RELIEF_NEAR)에 있고, 지금 일과 받아 둔 지시가 모두 RELIEF_FROM 의 일(또는 spareHand 인 다른 구출)이며 구출보다 RELIEF_PRI 넘게 급하지 않고,
++ * 교본 임무로 붙잡힌 짝 동행(짝이 위험 실내에 있다 — assign 과 같은 건너뛰기)이 아니고, 이 구출의 지시를 RELIEF_AGAIN 안에 받지 않았다
++ */
++function reliefFrom(sim: Sim, s: Scene, a: FieldAgent, b: FieldAgent, w: WorkItem, tx: number, ty: number): boolean {
++  if (dist(b.x, b.y, tx, ty) > RELIEF_NEAR) return false;
++  const t = b.task;
++  if (t !== null) {
++    if (t.kind === 'extricate') { if (!spareHand(sim, s, b, t.workId)) return false; }      // 다른 구출의 둘째 손: 그 구출에 b 만큼 장비를 갖춘 사람이 남는다
++    else if (!RELIEF_FROM.has(t.kind)) return false;
++    if (docHolds(s, b) && !pairTakes(sim, s, a, b, w)) return false;
++    if (t.workId >= 0) { const cw = s.board[t.workId]; if (cw !== undefined && cw.priority >= w.priority + RELIEF_PRI) return false; }
++  }
++  if (b.orderWork >= 0 && (t === null || b.orderWork !== t.workId)) {
++    const ow = s.board[b.orderWork];
++    if (ow !== undefined && (ow.status === 'open' || ow.status === 'active') && (!RELIEF_FROM.has(ow.kind) || ow.priority >= w.priority + RELIEF_PRI)) return false;
++  }
++  const sent = w.orderSentAt[b.rid];
++  return sent === undefined || sim.t - sent >= RELIEF_AGAIN;
++}
++
++/** 구출 cw 에 b 말고도 붙어 일하는 사람이 있고, 그 사람을 b 가 넘겨받을 만큼 서툴지 않다(적합도 차이 < RELIEF_GAP) — b 가 빠져도 그 구출은 같은 장비로 이어진다 */
++function spareHand(sim: Sim, s: Scene, b: FieldAgent, cwId: number): boolean {
++  const cw = s.board[cwId];
++  if (cw === undefined || cw.kind !== 'extricate' || cw.status !== 'active') return false;
++  const mine = fitFor(sim, s, b, cw);
++  for (const q of s.agents) if (q !== b && q.status === 'active' && q.task !== null && q.task.workId === cwId && fitFor(sim, s, q, cw) + RELIEF_GAP > mine) return true;
++  return false;
++}
+ 
+ function targetX(s: Scene, w: WorkItem, a: FieldAgent): number {
+   if (w.region >= 0) return s.regions[w.region].cx;
+diff --git a/tests/causality.test.ts b/tests/causality.test.ts
+index 66a15fb..10ef6ad 100644
+--- a/tests/causality.test.ts
++++ b/tests/causality.test.ts
+@@ -1662,7 +1662,7 @@ describe('I1-b b5: 완료 조건의 정해진 시드 (§5 · §6 I1-b 8)', () =>
+     }
+     return out;
+   }
+-  it('3단계 사례: 한 사건에서 서로 다른 사건·시스템으로 세 단계 넘게 퍼진 길이 법칙 사건을 지난다 — 보통 S1621(건물 화재 → 옆 건물로 옮겨붙은 불 → 그 불의 연기 → 연기를 마신 주민) · 보통 S87(퍼진 길이 몰린 길의 사고를 지난다)', () => {
++  it('3단계 사례: 한 사건에서 서로 다른 사건·시스템으로 세 단계 넘게 퍼진 길이 법칙 사건을 지난다 — 보통 S1621(건물 화재 → 옆 건물로 옮겨붙은 불 → 그 불의 연기 → 연기를 마신 주민) · 보통 S103(퍼진 길이 몰린 길의 사고를 지난다)', () => {
+     // (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 S33·S26 의 사건이 바뀌었다 — 같은 길(옮겨붙은 불 + 연기를 마신 주민 · 몰린 길의 사고)이 있는 시드로 (표본을 넓혀 찾았다: S0~S529)
+     // (N8 단계 6a) 경찰 새 부대 셋(형사·교통 경찰·경찰견)이 편성돼 S293·S5 의 길이 바뀌었다 — 같은 길이 있는 시드로 (표본을 넓혀 찾았다: 옮겨붙은 불 + 연기를 마신 주민은 S0~S999 에 없었고 그 뒤를 훑어 S1800 · 몰린 길의 사고는 S24)
+     // (N8 단계 6b) 교통사고가 견인차를 기다려 S24 의 몰린 길의 사고가 확산 길에서 빠졌다 — 같은 길이 있는 시드로 (S0~S119 에 없어 그 뒤를 훑어 S234)
+@@ -1671,7 +1671,8 @@ describe('I1-b b5: 완료 조건의 정해진 시드 (§5 · §6 I1-b 8)', () =>
+     // (N8 단계 10) 중복 신고·조건부 연쇄가 들어 S66 의 길이 바뀌었다 — S66 → S33(몰린 길의 사고 — S0~S60 을 훑어 처음 나온 것)
+     // (N8 단계 11) 짧은 사건 수(보통 5 → 4)가 바뀌어 S3684 의 길이 바뀌었다 — S3684 → S1621(옮겨붙은 불 + 연기를 마신 주민 — 그 길에 몰린 길의 사고도 있다. 보통 S0~S2100 을 세 갈래로 나눠 훑다 처음 나온 것 — 앞 두 갈래는 끝까지 훑지 않았다)
+     //  S33 → S87(몰린 길의 사고 — S0~S99 를 훑어 처음 나온 것)
+-    const want: [string, string[]][] = [['S1621', ['heatSpread', 'smokeIll']], ['S87', ['roadCrash']]];
++    // (N8 관문 고치기) 구출 넘겨받기·전환 배정의 규칙이 바뀌어 S87 의 길이 바뀌었다 — S87 → S103(몰린 길의 사고 — S0~S103 을 훑어 처음 나온 것. S15 의 첫 길은 연기를 마신 주민뿐이다)
++    const want: [string, string[]][] = [['S1621', ['heatSpread', 'smokeIll']], ['S103', ['roadCrash']]];
+     for (const [seed, laws] of want) {
+       const sim = probedShift(seed).sim;
+       const hits = spreadThrough(sim).filter((x) => x.incs.some((J) => J !== x.I && J.hz !== undefined));
+diff --git a/tests/kinds.test.ts b/tests/kinds.test.ts
+index 8214bf8..f5076df 100644
+--- a/tests/kinds.test.ts
++++ b/tests/kinds.test.ts
+@@ -2278,3 +2278,128 @@ describe('N8 검토: 이름표 없는 추격전 (흐릿한 신고로 시작한 
+     if (J!.pursuit!.state === 'stopped') expect(J!.reportedPrev, '선 차에는 그 전 위치가 없다').toBeUndefined();
+   });
+ });
++
++// ───────────────────────── N8 관문 고치기 (2026-11-22 밤) — 일하던 유압 대원의 구출 넘겨받기 · 아무도 오지 않게 되는 전환 배정 ─────────────────────────
++import { assign as fixAssign } from '../src/sim/field/commander';
++import { think as fixThink } from '../src/sim/field/brain';
++import { act as fixAct } from '../src/sim/field/executor';
++import { docForget as fixDocForget } from '../src/sim/field/doctrine';
++import { etaFor as fixEta } from '../src/sim/resources';
++import { tickDispatch as fixDispatch } from '../src/sim/dispatch/dispatcher';
++describe('N8 관문 고치기: 구출 넘겨받기 · 전환 배정', () => {
++  /** 그 칸 곁(반경 r 안)의 설 수 있는 빈 칸 하나 (가까운 것부터) */
++  const standNear = (s: Scene, x: number, y: number, rMin: number, rMax: number): { x: number; y: number } => {
++    const cx = Math.round(x), cy = Math.round(y);
++    for (let r = rMin; r <= rMax; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
++      if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
++      const nx = cx + dx, ny = cy + dy;
++      if (nx < 1 || ny < 1 || nx >= s.w - 1 || ny >= s.h - 1) continue;
++      const i = ny * s.w + nx;
++      if (staticPass(s.tiles[i]) && s.propAt[i] < 0 && s.tiles[i] !== T.WATER && los(s, nx, ny, cx, cy)) return { x: nx, y: ny };
++    }
++    throw new Error(`(${cx},${cy}) 곁 ${rMin}~${rMax}칸에 설 자리가 없다`);
++  };
++  const putAt = (a: FieldAgent, p: { x: number; y: number }): void => { a.x = a.px = p.x; a.y = a.py = p.y; a.path = null; a.pathGoal = -1; };
++  const job = (sim: Sim, s: Scene, kind: WorkKind, tg: Partial<WorkItem>): WorkItem => {
++    const w: WorkItem = { id: s.board.length, kind, region: -1, cas: -1, prop: -1, hostile: -1, tile: -1, mate: -1, priority: 0.8, status: 'active', assignees: [], max: 1,
++      createdAt: sim.t, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough: false, orderSentAt: {}, cause: -1, failedAt: {}, ...tg };
++    s.board.push(w);
++    return w;
++  };
++  const hold = (a: FieldAgent, w: WorkItem): void => { a.task = makeTask(w.kind, w.kind, w); a.orderWork = w.id; if (w.assignees.indexOf(a.rid) < 0) w.assignees.push(a.rid); };
++  const tick = (sim: Sim, secs: number): void => { sim.tick += Math.round(secs / sim.dt); sim.t = sim.tick * sim.dt; };
++
++  it('(crews ⑤) 맨손의 대원이 구출을 쥐고 손이 빈 유압 대원이 없으면, 곁에서 이송을 하던 유압 대원에게 넘겨받기 지시가 가고 그가 받아 교대한다 — 놓은 이송은 다시 열리고, 같은 지시는 30초 안에 되풀이하지 않는다', () => {
++    const sim = new Sim('N8-FIX-RELIEF', { ...NORMAL, resources: 5 });
++    for (const r of sim.responders) for (const it of r.kit!) it.fault = false;
++    const I = createIncident(sim, { type: 'traffic', variant: 'std', rng: sim.rng.fork('t') });
++    const s = sim.scenes[I.id]!;
++    for (const kind of ['patrol', 'rescue'] as UnitKind[]) unitArrived(sim, I, sim.units.find((u) => u.kind === kind)!);
++    expect(s.casualties.length, '구조 대상 둘 이상').toBeGreaterThanOrEqual(2);
++    const cmd = s.agents.find((b) => b.isCommander)!;
++    const cop = s.agents.find((b) => b !== cmd && sim.responders[b.rid].dept === 'police')!;
++    const xs = s.agents.filter((b) => sim.responders[b.rid].role === 'extricator');
++    const X = xs[0];
++    // 유압 대원은 X 하나만 남긴다 (손이 빈 유압 대원이 있으면 지금처럼 그 사람이 간다 — 이 시험은 일하던 사람의 갈래)
++    for (const b of s.agents) { b.task = null; b.orderWork = -1; if (b !== cmd && b !== cop && b !== X) b.status = 'withdrawn'; }
++    const [c0, c1] = s.casualties;
++    c0.mob = 'trapped'; c0.trapWork = 999; c0.inVehicle = null; c0.where = 'scene'; c0.dead = false; c0.health = 70;
++    c1.mob = 'immobile'; c1.walking = false; c1.inVehicle = null; c1.where = 'scene'; c1.dead = false; c1.health = 70;
++    const p1 = standNear(s, c0.x, c0.y, 3, 6); c1.x = c1.px = p1.x; c1.y = c1.py = p1.y; c1.path = null;
++    for (const b of s.agents) for (const c of [c0, c1]) b.beliefs.merge(casFact(sim, s, c, '시험'));
++    fixDocForget();
++    const w = job(sim, s, 'extricate', { cas: c0.id, priority: 0.82, max: 1 });
++    const wc = job(sim, s, 'carry', { cas: c1.id, priority: 0.8, max: 1 });
++    putAt(cop, standNear(s, c0.x, c0.y, 1, 2)); hold(cop, w);
++    putAt(X, standNear(s, c1.x, c1.y, 1, 2)); hold(X, wc);
++    expect(fitFor(sim, s, X, w), '유압 대원은 맨손의 대원보다 0.3 넘게 알맞다').toBeGreaterThanOrEqual(fitFor(sim, s, cop, w) + 0.3);
++    // ① 넘겨받기 지시 (고치기 전에는 일하던 사람에게는 가지 않았다)
++    const said = (from: number): boolean => sim.events.slice(from).some((e) => e.text.startsWith(`${sim.responders[X.rid].name}, `) && e.text.includes('넘겨받아라'));
++    let ev0 = sim.events.length;
++    fixAssign(sim, s, I, cmd);
++    expect(said(ev0), '이송을 하던 유압 대원에게 넘겨받기 지시').toBe(true);
++    expect(w.assignees).toContain(X.rid);
++    // ② 받지 않고 손을 뗀 것으로 정리돼도(응답 없음) 30초 안에는 같은 지시를 다시 내지 않는다 — 넘겨받기 ↔ 원래 일의 왕복을 막는 간격
++    w.assignees.splice(w.assignees.indexOf(X.rid), 1);
++    tick(sim, 10); ev0 = sim.events.length; fixAssign(sim, s, I, cmd);
++    expect(said(ev0), '30초 안에는 다시 내지 않는다').toBe(false);
++    tick(sim, 21); ev0 = sim.events.length; fixAssign(sim, s, I, cmd);
++    expect(said(ev0), '30초가 지나면 다시').toBe(true);
++    // ③ 받는다: 지시를 받은 유압 대원은 하던 이송을 놓고 구출을 맡는다 (이송 0.80 · 구출 0.82 — 계속 점수가 지시 점수보다 높았다). 판단 오차는 빼 둔다
++    sim.responders[X.rid].judgment = 1;
++    X.orderWork = w.id;
++    fixThink(sim, s, X);
++    expect(X.task?.kind, '하던 이송을 놓고').toBe('extricate');
++    expect(X.task?.workId).toBe(w.id);
++    expect(wc.assignees, '놓은 이송은 작업판에 다시 열린다').not.toContain(X.rid);
++    expect(wc.status).toBe('open');
++    // ④ 구출 곁에 닿으면 맨손의 대원이 손을 뗀다 (그 자리의 사람 수는 정원 그대로)
++    let swapped = false;
++    for (let k = 0; k < 300 && !swapped; k++) {
++      tick(sim, sim.dt);
++      fixAct(sim, s, X);
++      if (cop.task === null || cop.task.workId !== w.id) swapped = true; else fixAct(sim, s, cop);
++    }
++    expect(swapped, '교대').toBe(true);
++    expect(sim.events.some((e) => e.rid === X.rid && e.text.includes('교대합니다'))).toBe(true);
++    expect(w.assignees).toEqual([X.rid]);
++    // ⑤ 다시 배정해도 유압 대원을 이송으로 되돌리지 않고(우선순위 차이 0.22 규칙), 넘겨받기 지시도 다시 내지 않는다
++    ev0 = sim.events.length; fixAssign(sim, s, I, cmd);
++    expect(X.orderWork === -1 || X.orderWork === w.id).toBe(true);
++    expect(said(ev0)).toBe(false);
++  });
++
++  it('(sim 허위·오인) 아무도 닿지 않은 사건의 하나뿐인 부대는 대신 보낼 부대가 없으면 더 급한 사건으로 빼 오지 않는다 — 대신 보낼 부대가 있으면 지금처럼 빼 온다', () => {
++    const mk = (spare: boolean) => {
++      for (let k = 0; k < 30; k++) {
++        const sim = new Sim('N8-FIX-DIVERT' + k);
++        const J = createIncident(sim, { type: 'fire', variant: 'false', rng: sim.rng.fork('j') });
++        const K = createIncident(sim, { type: 'traffic', variant: 'std', rng: sim.rng.fork('k') });
++        const engines = sim.units.filter((u) => u.kind === 'engine' && !u.aid).sort((a, b) => fixEta(sim, a, K.truth.nodeId) - fixEta(sim, b, K.truth.nodeId));
++        const eng = engines[0], far = engines[engines.length - 1];
++        if (fixEta(sim, far, K.truth.nodeId) - fixEta(sim, eng, K.truth.nodeId) < 45) continue;      // 대신 보낼 부대는 받는 사건에서 멀다 (받는 사건이 그 부대를 바로 고르지 않게)
++        const as = (type: IncidentType, severity: number, needs: Partial<Needs>): Assessment => ({ type, typeConf: 0.9, probs: {} as Assessment['probs'], severity, confidence: 0.6,
++          needs: { suppression: 0, rescue: 0, ems: 0, law: 0, tactical: 0, search: 0, traffic: 0, eod: 0, utilPower: 0, utilGas: 0, utilWater: 0, tow: 0, capture: 0, decon: 0, ...needs }, risks: [], summary: '', t: sim.t, revision: 0 } as Assessment);
++        for (const X of [J, K]) { X.reportedNode = X.truth.nodeId; X.locationKnown = true; X.reportedAt = sim.t; }
++        J.assessment = as('fire', 1.2, { suppression: 1 });      // 타는 냄새 — 보통
++        K.assessment = as('traffic', 2.8, { rescue: 1 });      // 차량 내 고립 — 매우 높음
++        dispatchUnit(sim, eng, J, fixEta(sim, eng, J.reportedNode));      // J 의 하나뿐인 부대 (출동 준비 중)
++        J.unmet = {}; K.unmet = { rescue: 1 }; K.unmetSince = sim.t - 10;
++        for (const u of sim.units) if (u !== eng && (u !== far || !spare) && (u.caps.rescue >= 0.5 || u.caps.suppression >= 0.7)) u.state = 'oos';
++        sim.tick = Math.ceil(sim.tick / 5) * 5 + 2; sim.t = sim.tick * sim.dt;
++        fixDispatch(sim);
++        return { sim, J, K, eng, far };
++      }
++      throw new Error('받는 사건에서 먼 펌프차가 있는 교대를 찾지 못했다');
++    };
++    const A = mk(false);
++    expect(A.J.problems.some((p) => p.code === 'DIVERTED'), '대신 보낼 부대가 없으면 빼 오지 않는다').toBe(false);
++    expect(A.J.assigned).toEqual([A.eng.id]);
++    expect(A.K.assigned).not.toContain(A.eng.id);
++    const B = mk(true);
++    expect(B.J.problems.some((p) => p.code === 'DIVERTED'), '대신 보낼 부대가 있으면 빼 온다').toBe(true);
++    expect(B.K.assigned).toContain(B.eng.id);
++    B.sim.tick += 15; B.sim.t = B.sim.tick * B.sim.dt; fixDispatch(B.sim);      // 배정 판단에 걸리는 시간(2초) 뒤
++    expect(B.J.assigned, '빼앗긴 사건에는 대신 보낼 수 있던 부대가 간다').toContain(B.far.id);
++  });
++});
+-- 
+2.43.0
+

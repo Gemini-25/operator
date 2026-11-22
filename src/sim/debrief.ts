@@ -268,6 +268,7 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   }
   for (const c of cas) {
     if (A.length >= 11) break;
+    if (c.dead && c.quietLoss) { A.push('구조하지 못했습니다.'); continue; }      // (N8 §5.13) 보호 유형의 실패는 한 줄로만 — 원인·시간을 적지 않는다
     if (c.dead) {
       // (X6 §6.6) 무너짐·폭발로 숨졌으면 그 기록의 상세를 짧게 붙인다 (그 사람의 원인 기록이 그 붕괴·폭발이다 — hurtCas 가 넘겨받은 ev 로 적는다)
       //  숨짐 기록이 그 원인 기록을 causes 로 잇는 경우가 있어(원인 기록이 숨짐 기록으로 바뀐다) 한 단계 거슬러 본다
@@ -308,6 +309,18 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
     else if (truth.variant === 'pit') hl.push(freed ? (cs[0] && cs[0].freedHow === 'descend' ? '구덩이로 내려가 구조' : '줄로 끌어올려 구조') : '구덩이의 사람을 끌어올리지 못함');
     else hl.push(`매달린 ${n}명 가운데 ${freed}명 구조`);
   }
+  let quiet = false;      // (N8 §5.13) 보호 유형의 실패 — 요구조자 수의 머리글을 쓰지 않는다 (한 줄로만)
+  if (truth.type === 'welfare' && truth.variant === 'ledge') {      // (N8 §4.5 — 단계 7) 위기자의 머리글 — 끝난 길로
+    const end = s.kinds ? s.kinds.ledgeEnd : undefined;
+    hl.push(end === 'self' ? '설득 끝에 스스로 난간 안쪽으로 돌아왔습니다' : end === 'grab' ? '구조대가 붙잡아 끌어올렸습니다' : end === 'mat' ? '안전 매트가 받아 냈습니다' : end === 'lost' ? '구조하지 못했습니다' : '위기자가 아직 난간 밖에 있습니다');
+    quiet = end === 'lost';
+  }
+  if (truth.type === 'welfare' && truth.variant === 'lockin') {      // (N8 §4.5 — 단계 7) 문 잠긴 집의 머리글 — 들어갔는가 · 안에 사람이 있었는가
+    const k = s.kinds, door = k && k.door !== undefined ? s.props[k.door] : undefined, c = s.casualties[0];
+    if (door && door.locked) hl.push('문을 열지 못한 채 종료');
+    else if (!c) hl.push('집에 아무도 없음 — 외출 중으로 확인');
+    else hl.push(c.where === 'loaded' || c.where === 'hospital' ? '문을 열고 들어가 쓰러진 사람을 이송했습니다' : c.tDiscovered >= 0 ? '문을 열고 들어가 쓰러진 사람을 찾았습니다' : '문은 열었지만 안의 사람을 찾지 못함');
+  }
   if (truth.type === 'welfare') {      // (N8 §4.5) 보호의 머리글 — 실패는 한 줄로만(§5.13)
     const c = s.casualties.find((q) => q.isTarget);
     if (c && c.tDiscovered >= 0 && !c.dead) hl.push(s.kinds && s.kinds.backed ? '찾는 데 오래 걸렸습니다 — 시민이 안내 데스크로 데려옴' : c.where === 'loaded' ? '찾아서 병원 이송' : truth.variant === 'lostchild' ? '아이를 찾아 보호자에게 인계했습니다' : '보호자에게 인계');
@@ -323,8 +336,8 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   }
   if (rd) hl.push(screened ? rd[2] : rd[3]);      // (N8 단계 10)
   else if (benign) hl.push(truth.variant === 'prank' ? (screened ? '장난 전화 — 접수 단계에서 가려냄' : '장난 전화 — 실제 사건 없음') : FALSE_HEAD[truth.type] ?? FALSE_HEAD.fire!);
-  else if (cas.length) hl.push(`요구조자 ${cas.length}명 중 ${saved}명 구조${lost ? `, ${lost}명 사망` : ''}${undiscovered ? `, ${undiscovered}명 미발견` : ''}${left ? `, ${left}명 구조 미완료` : ''}`);
-  else hl.push('인명 피해 없음');
+  else if (cas.length && !quiet) hl.push(`요구조자 ${cas.length}명 중 ${saved}명 구조${lost ? `, ${lost}명 사망` : ''}${undiscovered ? `, ${undiscovered}명 미발견` : ''}${left ? `, ${left}명 구조 미완료` : ''}`);
+  else if (!quiet) hl.push('인명 피해 없음');      // (N8 §5.13) 위기자의 실패는 머리글 한 줄('구조하지 못했습니다')만 — '인명 피해 없음'을 붙이지 않는다
   const cs = catSummary(sim, s, I, hazardActive);      // (X6 §6.5·§6.6) 건물 전소 · 건물 붕괴 · 폭발 n회, 소실률은 화재가 아니어도 재산 피해가 있으면
   if (cs) { if (cs.burnout) hl.push('건물 전소'); if (cs.total) hl.push('건물 붕괴'); else if (cs.partial) hl.push(`일부 붕괴 ${cs.partial}곳`); if (cs.explosions) hl.push(`폭발 ${cs.explosions}회`); }
   if (s.kind === 'fire' || propertyLoss > 0) hl.push(`소실률 ${pct(propertyLoss)}`);

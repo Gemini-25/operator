@@ -118,6 +118,23 @@ export function farmNode(sim: Sim, rng: Rng, busy: Set<number>): number | null {
   return from.length ? rng.pick(from) : null;
 }
 
+/**
+ * (N8 §4.5 welfare/ledge) 위기자의 자리: 절반은 다리 — 강을 건너는 구간(RoadEdge.bridge)의 끝 교차로(출동 시설이 아니고 다른 사건이 열려 있지 않은 곳), 나머지 절반은 null
+ * (createIncident 가 node 가 null 이면 places 의 건물 — 옥상 — 을 고른다). 난수는 고를 때 두 번(다리냐 · 어느 다리 끝이냐) — 다리가 없으면 한 번
+ */
+export function bridgeNode(sim: Sim, rng: Rng, busy: Set<number>): number | null {
+  const c = sim.city;
+  const fac = new Set<number>();
+  for (const f of c.facilities) fac.add(f.nodeId);
+  const pool: number[] = [];
+  for (const e of c.edges) {
+    if (!e.bridge) continue;
+    for (const n of [e.a, e.b]) if (!busy.has(n) && !fac.has(n) && pool.indexOf(n) < 0) pool.push(n);
+  }
+  if (!rng.chance(0.5) || !pool.length) return null;
+  return rng.pick(pool);
+}
+
 export const KINDS: Scenario[] = [
   // ── 시설 사고 utility (§4.2 — 단계 4a·4b). 위험을 지키며 유관 기관 복구반을 기다리는 사건: 소방·경찰이 위험 반경을 통제하고, 끝내는 것은 복구반의 repair ──
   { type: 'utility', variant: 'wire', name: '끊어진 전선', share: 0.7, nature: 'wirefall', vague: 'bang', severity: [1, 3], tag: 'daily', card: false,
@@ -272,6 +289,21 @@ export const KINDS: Scenario[] = [
     texts: ['윗집에서 밤마다 쿵쿵거려서 잠을 못 자요.', '가게 앞에 차를 며칠째 세워 놔서 장사를 못 하겠어요.', '옆집 개가 하루 종일 짖어요.'],
     lik: { disturb: 0.7, animal: 0.15, utility: 0.08, welfare: 0.05 },
     needs: (n, c) => { n.law = c.noise || c.hurt || c.trapped ? 1 : 0; n.search = 0; n.ems = 0; n.tactical = 0; } },
+  // ── 보호 (§4.5 — 단계 7 뒤 절반) 위기자 · 문 잠긴 집. 짧은 사건 줄의 끝에 둔다: 그 앞 줄들의 추첨 구간(누적 가중 12.75)을 그대로 두고, 예전에 "걸린 줄 없음"이던 12.75~14.0 이
+  //    이 둘이 된다(§5.4 — 앞 줄의 추첨 결과가 바뀌지 않게). 사연·의도를 말하는 문구는 넣지 않는다(§5.13) ──
+  // 다리·옥상의 위기자 — 설득 단계 · 안전 매트를 먼저 · 다가가는 속도 · 단계가 오르면 구조대가 붙잡는다. 헬기는 가지 않는다(수색 수요 없음 · 'perch' 없음 — §12.2-15)
+  { type: 'welfare', variant: 'ledge', name: '위기자', share: 0.3, nature: 'ledge', vague: 'scream', severity: [2, 3], tag: 'daily', card: false, limit: 120,      // (설계서 60 → 120 — 구현 메모: 설득 전의 출렁임으로 높아진 위기 정도를 가장 서툰 설득자가 내리는 데 400초 넘게 걸린다)
+    texts: ['다리 난간 바깥쪽에 사람이 서 있어요. 위험해 보여요.', '건물 옥상 끝에 누가 앉아 있어요. 아까부터 안 움직여요.', '옥상 난간에 사람이 서 있는데 말을 걸어도 대답이 없어요.'],
+    lik: { welfare: 0.86, water: 0.04, medical: 0.04, armed: 0.02, rescue: 0.02 },
+    node: (sim, rng, busy) => bridgeNode(sim, rng, busy),
+    places: { apartment: 3, office: 3, officetel: 1.5, hotel: 1 },
+    needs: (n) => { n.law = 1; n.rescue = 1; n.ems = 0; n.search = 0; } },
+  // 문 잠긴 집의 쓰러진 사람 — 문 앞에서 듣기 · 열쇠를 기다릴까 열까 · 방범문이면 1층 창으로 · 빈집이면 확인하고 끝 (숨진 채 발견되는 갈래는 없다 — §5.13)
+  { type: 'welfare', variant: 'lockin', name: '문 잠긴 집', share: 0.95, nature: 'lockin', vague: 'collapsed', severity: [1, 3], tag: 'daily', card: false, limit: 120,      // (설계서는 가산 없음 — 구현 메모: 구급은 찾은 뒤에 부르므로 '열쇠 기다림 + 구급 요청 → 도착'이 360초 안에 들지 못하는 교대가 있다)
+    texts: ['혼자 사시는 어머니가 이틀째 전화를 안 받으세요. 문이 잠겨 있어요.', '옆집 할아버지가 며칠째 안 보이는데 안에서 TV 소리만 나요.', '문 앞에 택배가 쌓여 있고 아무리 두드려도 대답이 없어요.'],
+    lik: { welfare: 0.66, medical: 0.3, armed: 0.01, fire: 0.01 },
+    places: { villa: 4, apartment: 4, houseS: 3, officetel: 2 },
+    needs: (n) => { n.rescue = 1; n.law = 1; n.ems = 0; n.search = 0; } },
   // ── (N8 §4.8 N4 — 단계 10) 중복 신고 오인의 줄: 몫 0 — 평소·짧은 사건 추첨에 들지 않고 incidents.dupCall 이 정해서만 일으킨다(현장은 scenes/kinds.ts 의 빈 길).
   //    신고자는 원 사건의 진실로 말하므로(kindsCaller.dupSource) nature·vague 는 원 사건이 없을 때(강제 실행)만 쓰는 그 유형의 흔한 열쇠다 ──
   ...DUP_TYPES.map((t): Scenario => ({ type: t, variant: 'dup', name: '중복 신고', share: 0, nature: DUP_NATURE[t][0], vague: DUP_NATURE[t][1], severity: [1, 1], tag: 'daily', card: false })),

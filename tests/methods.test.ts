@@ -74,7 +74,8 @@ const LIVE: MethodId[] = ['hand', 'pole', 'ring', 'rope', 'improvise', 'catch', 
   'pack', 'drag', 'post', 'blockLane',      // (R3 단계 6) 이송의 업기·끌기 · 교통 통제의 통제·차량 차단 (들것 litter 는 기록 전용)
   'dart', 'catchpole', 'herd', 'net',      // (N8 단계 5) 동물 포획 넷
   'dog',      // (N8 단계 6a) 경찰견 — 구역 수색
-  'ladder', 'descend'];      // (N8 단계 8) 높은 자리·구덩이의 사다리·밧줄 하강
+  'ladder', 'descend',      // (N8 단계 8) 높은 자리·구덩이의 사다리·밧줄 하강
+  'window'];      // (N8 단계 7 뒤 절반) 문 잠긴 집의 방범문 — 1층 창문 진입
 /** 헤엄을 못 치는 몸으로 둔다 (수영 능력 = 0.15 + 개인차 ±0.15 < 문턱 0.35 — 구명조끼가 없을 때) */
 const noSwim = (sim: Sim, a: FieldAgent): void => { const r = sim.responders[a.rid]; r.fitness = 0; r.skills.rescue = 0; strip(sim, a.rid, 'pfd'); };
 /**
@@ -137,7 +138,7 @@ describe('R2 시험 1: 판단부(methods.ts)는 진실을 읽지 않는다', () 
 describe('R2 방법 표 (METHOD)', () => {
   const ids = Object.keys(METHOD) as MethodId[];
   it('모든 줄이 온전하다: 이름·짧은 이름·라벨(12자 안)·문장에 끼우는 말, 장비는 표에 있는 것, 임무가 하나 이상', () => {
-    expect(ids.length).toBe(76);      // (N8 단계 8) 높은 자리 둘(ladder·descend — N9 다섯 앞) · (N8 단계 5) 동물 포획 넷(dart·catchpole·herd·net — N9 다섯 앞) · R2 의 55 + N9 단계 1 의 다섯(dive·boom·shieldLine·deconTent·hoseWash — can 은 NOT_YET) + R3 단계 5 의 셋(robotDefuse·suitDefuse·bareDefuse — N9 다섯 앞) + R3 3단계의 둘(feel·pulse — 표 끝) + R3 6단계의 다섯(pack·drag·litter·post·blockLane — N9 다섯 앞)
+    expect(ids.length).toBe(77);      // (N8 단계 7 뒤 절반) 창문 진입(window — N9 다섯 앞) · (N8 단계 8) 높은 자리 둘(ladder·descend — N9 다섯 앞) · (N8 단계 5) 동물 포획 넷(dart·catchpole·herd·net — N9 다섯 앞) · R2 의 55 + N9 단계 1 의 다섯(dive·boom·shieldLine·deconTent·hoseWash — can 은 NOT_YET) + R3 단계 5 의 셋(robotDefuse·suitDefuse·bareDefuse — N9 다섯 앞) + R3 3단계의 둘(feel·pulse — 표 끝) + R3 6단계의 다섯(pack·drag·litter·post·blockLane — N9 다섯 앞)
     expect(METHOD_ORDER).toEqual(ids);
     for (const m of ids) {
       const d = METHOD[m];
@@ -214,7 +215,8 @@ describe('R2 장비 아홉 줄과 gear.ts', () => {
     expect(ROLES.boatRescuer.kit).toEqual(['rope', 'ring', 'oilBoom', 'pole', 'pfd', 'drysuit']);
     expect(ROLES.engineer.kit.slice(-3)).toEqual(['pole', 'extinguisher', 'fan']); expect(ROLES.ladderOp.kit.slice(-2)).toEqual(['pole', 'fan']); expect(ROLES.airRescuer.kit.slice(-1)).toEqual(['pfd']);
     expect(ROLES.patrolLead.kit.slice(-1)).toEqual(['extinguisher']); expect(ROLES.emsDriver.kit).toEqual(['stretcher', 'extinguisher']); expect(ROLES.eodGuard.kit.slice(-1)).toEqual(['extinguisher']); expect(ROLES.decon.kit.slice(-1)).toEqual(['fan']);
-    expect(ROLES.extricator.kit).toEqual(['scba', 'turnout', 'spreader', 'airbag']); expect(ROLES.rescueLead.kit).toEqual(['scba', 'turnout', 'searchKit', 'irons', 'shoring', 'gasMeter']);      // gasMeter: (N8 단계 8) 지지대 뒤 끝에 — 구덩이의 공기 측정
+    expect(ROLES.extricator.kit).toEqual(['scba', 'turnout', 'spreader', 'airbag', 'jumpMat']);      // jumpMat: (N8 단계 7 뒤 절반) 안전 매트를 에어백 뒤 끝에
+    expect(ROLES.rescueLead.kit).toEqual(['scba', 'turnout', 'searchKit', 'irons', 'shoring', 'gasMeter']);      // gasMeter: (N8 단계 8) 지지대 뒤 끝에 — 구덩이의 공기 측정 · (N8 검토) 단계 7 뒤 절반이 이 줄을 앞 줄의 주석 안으로 넣어 검사가 꺼져 있었다
     // 교대의 명부: 아홉 모두 그 역할의 대원이 든다. 표의 처음 수량은 명부가 복사한다 (kitFor — 소화기 1 · 비살상탄 3)
     const sim = new Sim('R2-KIT', FULL);
     const LATER: KitId[] = [];
@@ -1921,6 +1923,7 @@ describe('R2 단계 2: 폭파 진입 (§4.2a — 사용자 결정, 시험 10)', 
     expect(kitCount(q.sim, q.br.rid, 'charge')).toBe(kit0 - 1);
     const bf = q.s.fx.filter((f) => f.kind === 'breach' && f.c?.door === q.door.id);
     expect(bf.map((f) => [f.c!.how, f.c!.forced])).toEqual([['charge', true]]);
+    expect(q.s.fx.filter((f) => f.kind === 'breach').length, '진입 기록은 그 문의 하나뿐 (문짝 없는 기록 door −1 이 함께 남지 않는다 — N8 검토)').toBe(1);
     expect(Math.hypot(q.br.x - q.door.x, q.br.y - q.door.y)).toBeGreaterThanOrEqual(3 - 1e-6);      // 물러선 자리에서 터뜨렸다
     expect(q.I.methods!.filter((u) => u.ok)).toMatchObject([{ method: 'charge', work: 'force', tile: q.tile, why: 'usual' }]);
     expect(texts(q.sim, 0)).toContain('장약 설치합니다. 물러서십시오.');
@@ -2071,7 +2074,7 @@ describe('R2 단계 2: 농성 문 잠금과 방 진입의 잠긴 문 (§4.2a)', 
 describe('R2 단계 2: 강제 교대 (§8 의 3·6·10)', () => {
   it('3. 문: 유압 개방·할리건·발로 차기 성공이 각각 있다 (승강기 갇힘·건물 화재 강제)', () => {
     const us: MethodUse[] = [];
-    for (const [seed, force] of [['D0', 'collapse/elevator'], ['D1', 'collapse/elevator'], ['D2', 'fire/std'], ['D3', 'fire/std'], ['D4', 'fire/std'], ['D7', 'collapse/elevator']] as const) {      // (R3 3단계) 교본으로 결과가 바뀌어 유압 개방이 D5 승강기로 옮겨 갔다 · (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 D5 의 사건이 바뀌었다 — 유압 개방은 D7 의 건물 화재에
+    for (const [seed, force] of [['D0', 'collapse/elevator'], ['D1', 'collapse/elevator'], ['D2', 'fire/std'], ['D3', 'fire/std'], ['D4', 'fire/std'], ['D7', 'collapse/elevator'], ['D2', 'collapse/elevator']] as const) {      // (N8 단계 11) D2 승강기를 더했다 — 짧은 사건 수(보통 5 → 4)가 바뀌어 여섯의 유압 개방이 없어졌다 (D0~D11 × 둘 가운데 D2·D10·D11 승강기 · D6·D9 화재 — 표본만 넓힌다)      // (R3 3단계) 교본으로 결과가 바뀌어 유압 개방이 D5 승강기로 옮겨 갔다 · (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 D5 의 사건이 바뀌었다 — 유압 개방은 D7 의 건물 화재에
       const sim = new Sim(seed, NORMAL, 1200, { force }); sim.runToEnd();
       for (const I of sim.incidents) us.push(...(I.methods ?? []));
     }

@@ -137,7 +137,7 @@ export function tuningOf(d: Difficulty): Tuning {
     trafficGap: [1.6, 1.25, 1, 0.8, 0.62][tr],
     parkedCount: [0, 1, 3, 5, 7][tr],
 
-    dailyCount: [2, 3, 5, 6, 8][f],
+    dailyCount: [2, 3, 4, 6, 8][f],      // (N8 단계 11 — §7.3 손잡이 ①) 보통 5 → 4. 어려움·극한은 그대로(본문의 손잡이는 보통만 — 구현 메모 단계 11)
     dailyConcurrent: [1, 2, 2, 3, 3][f],
   };
 }

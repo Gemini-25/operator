@@ -84,6 +84,7 @@ function stop(sim: Sim, I: Incident, nodeId: number, how: 'caught' | 'block' | '
   I.truth.nodeId = nodeId; I.truth.x = n.x; I.truth.y = n.y; I.truth.placeId = -1; I.truth.placeKind = null; I.truth.district = n.district;
   I.truth.label = `${nodeName(sim.city, nodeId)} ${how === 'crash' ? '사고 현장' : '검거 현장'}`;
   setReported(sim, I, nodeId); I.locationKnown = true;
+  I.reportedPrev = undefined;      // (N8 검토) 선 차에는 방향이 없다 — 관제(dispatcher.airFit)는 그 전 위치로 '달리는 차'를 알아본다. 예상 교차로(dispatch/doctrine.predictNode)는 달리는 동안만 쓴다
   createScene(sim, I);      // 세운 자리의 현장을 이제 만든다 (사고로 멈췄으면 다친 사람이 있다)
   const who = WHO[p.kind];
   const text = how === 'crash' ? `${josa(who, '이/가')} ${nodeName(sim.city, nodeId)}에서 사고를 내고 멈췄습니다.` : how === 'block' ? `${by!.callsign}: 앞을 막아 ${josa(who, '을/를')} 세웠습니다 — ${nodeName(sim.city, nodeId)}.` : `${by!.callsign}: ${by!.air ? '하늘에서 놓치지 않고 쫓아' : '바짝 붙어'} ${josa(who, '을/를')} 세웠습니다 — ${nodeName(sim.city, nodeId)}.`;

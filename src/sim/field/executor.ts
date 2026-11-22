@@ -342,6 +342,7 @@ function drain(sim: Sim, a: FieldAgent, rate: number): void {
 const UNBLOCK_TEXT: Partial<Record<MethodId, string>> = {
   kick: '문을 걷어차 열었습니다. 진입합니다.', irons: '할리건으로 문을 땄습니다. 진입합니다.', ram: '충격기로 문을 부쉈습니다. 진입합니다.',
   hydraulic: '유압 개방기로 철문을 열었습니다. 진입합니다.', handClear: '손으로 잔해를 치워 통로를 확보했습니다.', toolClear: '장비로 잔해를 잘라 통로를 확보했습니다.',
+  window: '1층 창으로 들어가 안에서 현관문을 열었습니다. 진입합니다.',      // (N8 단계 7)
 };
 /**
  * 문·잔해를 연다. method = 연 방법 (R2 §4.2 — 완료 문구·통로 차단 복구 문구에 방법 이름, G5 진입 기록의 how 에 그 방법).
@@ -354,8 +355,10 @@ function unblock(sim: Sim, s: Scene, a: FieldAgent, tile: number, method?: Metho
   s.propAt[tile] = -1; p.blocking = false;
   if (p.kind === 'door') { p.locked = false; p.open = true; } else p.removed = true;
   const how: BreachHow | null = method === 'kick' || method === 'irons' || method === 'ram' || method === 'hydraulic' || method === 'charge' ? method : null;
-  if (p.kind === 'door') recBreach(sim, s, p.x, p.y, a.x, a.y, { door: p.id, how: how ?? breachHowFor(sim, [a], true, false), n: 1, sync: false, by: a.rid, forced: true });
+  if (p.kind === 'door') { if (method !== 'window') recBreach(sim, s, p.x, p.y, a.x, a.y, { door: p.id, how: how ?? breachHowFor(sim, [a], true, false), n: 1, sync: false, by: a.rid, forced: true }); }      // (N8 단계 7) 창으로 들어가 안에서 연 문은 진입 연출이 아니다
   else if (method === 'charge') recBreach(sim, s, p.x, p.y, a.x, a.y, { door: -1, how: 'charge', n: 1, sync: false, by: a.rid, forced: true });
+  // (N8 검토) 이 줄은 위의 if/else if 사이에 끼어 있었다 — 그래서 'else if (charge)' 가 이 줄에 붙어, 문을 폭파로 연 진입 기록이 문짝 없는 기록(door −1)과 함께 두 번 남았다
+  if (s.kind === 'welfare' && s.kinds !== undefined && s.kinds.door === p.id && s.kinds.entered === undefined) s.kinds.entered = method === 'window' ? 'window' : 'force';      // (N8 단계 7) 문 잠긴 집 — 판정 문장
   s.staticVersion++;
   learnQuiet(sim, a, mkFact('blk', tile, 'none', r.name, sim.t, 1, true, p.kind === 'door' ? '문 개방 완료' : '잔해 제거, 통로 확보'));
   const noun = method !== undefined ? METHOD[method].noun : '';
@@ -384,6 +387,7 @@ function workOnBlocker(sim: Sim, s: Scene, a: FieldAgent, tile: number, kind: Ta
   const tg = { cas: -1, prop: pid, hostile: -1, region: -1, tile };
   if (tk.method === undefined && tk.mt0 === undefined) { if (tk.workId < 0) tk.prop = pid; startMethod(sim, s, I, a, tk, work, tg); }
   if (tk.method === 'charge') return runCharge(sim, s, I, a, tk, tile, XK);
+  if (tk.method === 'window') return runWindow(sim, s, I, a, tk, tile);      // (N8 단계 7) 방범문: 1층 창으로 들어가 안에서 연다 (이동은 runWindow 안의 한 번뿐)
   // (검토) 문·잔해는 그 곁에서만 깎는다: 폭파를 접고(동료가 반경 안·물러설 자리 없음) 다른 방법으로 바꾼 대원은 물러선 자리(3~4칸)에 서 있다.
   // 본 임무는 case 'force'·'clear' 가 곁(1.5칸)으로 데려오지만 이동 중 하위 작업(t.sub — 방 진입의 잠긴 문)에는 이동이 없으므로 여기서 돌아간다 (이 분기의 이동은 이것 하나).
   // 닿았다고 하거나 길이 없으면 그 자리에서 잇는다(지금처럼 — 막히지 않게). 하위 작업이 생기는 자리는 늘 문 곁이라 폭파를 접은 뒤에만 걸린다
@@ -1011,6 +1015,24 @@ function runFixtureFix(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, 
     finishTask(sim, s, a, true);
     return;
   }
+  if (p.skin === 'matSite') {
+    // (N8 §4.5 — 단계 7) 위기자 아래 안전 매트: 그 자리(떨어지면 닿는 보도)에서 30초 — 끝나면 p.live 거짓(펴짐). 이미 펴져 있으면 강제 보고
+    const fact = (text: string): Fact => mkFact('haz', p.id, { kind: 'matSite', active: false, x: p.x, y: p.y }, r.name, sim.t, 1, true, text);
+    if (!p.live) { reportDone(sim, a, fact('안전 매트 설치 확인')); finishTask(sim, s, a, true); return; }
+    const m = moveTo(sim, s, a, p.x, p.y, 1.2);
+    if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+    if (m !== 'arrived') return;
+    if (t.phase === 0) { t.phase = 1; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: '아래 보도에 안전 매트를 펴겠습니다.' }); }
+    t.need = MAT_WORK / (0.6 + 0.4 * r.skills.rescue);
+    t.progress += sim.dt; a.ring = t.progress / t.need; a.label = '안전 매트'; drain(sim, a, 0.5);
+    if (t.progress < t.need) return;
+    p.live = false;
+    emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'recovery', imp: 1, text: '안전 매트를 폈습니다.' });
+    reportDone(sim, a, fact('안전 매트 설치 완료'));
+    r.xpGained += 0.002;
+    finishTask(sim, s, a, true);
+    return;
+  }
   if (p.skin === 'sign') {
     const fact = (text: string): Fact => mkFact('haz', p.id, { kind: 'sign', active: false, x: p.x, y: p.y, r: 2 }, r.name, sim.t, 1, true, text);
     if (!p.live) { reportDone(sim, a, fact(p.mitigated ? '간판 고정 확인' : '간판이 이미 떨어짐')); finishTask(sim, s, a, true); return; }
@@ -1247,6 +1269,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const c = s.casualties[t.cas];
       if (c.dead) { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
       if (c.mob !== 'trapped') { learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
+      if (s.kind === 'welfare') { const pk = perchIdx(s, c.id); if (pk >= 0) { runGrab(sim, s, a, t, c, pk); return; } }      // (N8 §4.5 — 단계 7) 위기자 붙잡기: 안쪽 칸에 서서 기다린다 (붙잡는 것은 세계 규칙 ledgeRule — 방법을 고르지 않는다)
       // (R2 §4.3) 방법을 처음 고른다 — 차량·붕괴·구덩이·그 밖을 대원의 믿음으로 가려 수동·손 공구·문 벌리기·지붕 절단·급박·줄·손으로 파기·에어백·지지대 가운데
       if (t.method === undefined && t.mt0 === undefined) startMethod(sim, s, I, a, t, 'extricate', { cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1 });
       { const pk = perchIdx(s, c.id); if (pk >= 0) { perchRescue(sim, s, I, a, t, c, pk); return; } }      // (N8 단계 8 §5.11) 높은 자리의 사람: 사다리(ground)·하강(top)으로만 닿는다
@@ -1798,6 +1821,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       const p = s.props[t.prop];
       if (p.skin === 'victim') { runVictimTalk(sim, s, I, a, t, p); return; }      // (N8 단계 6b) 수거책 잠복의 피해자 — 면담하면 약속 시각을 안다
       if (p.skin === 'operator') { runOperatorTalk(sim, s, I, a, t, p); return; }      // (N8 단계 8) 놀이기구 운영자 — 면담하면 전원 복구 예상 시각을 안다
+      if (p.skin === 'keyholder') { runKeyTalk(sim, s, I, a, t, p); return; }      // (N8 단계 7) 문 잠긴 집의 관리인 — 면담하면 열쇠로 현관문을 연다
       if (p.interviewed) { reportDone(sim, a, mkFact('evid', p.id, { kind: 'witness', done: true }, r.name, sim.t, 1, true, '목격자 면담 완료')); finishTask(sim, s, a, true); return; }
       const m = moveTo(sim, s, a, p.x, p.y, 1.5);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
@@ -2058,6 +2082,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
       // (N8 단계 6b §4.4) 잠복: 이 대원이 약속 시각을 알면 진행 막대가 그 시각으로 찬다(원칙 11 — 설계된 기다림)
       { const m = s.kind === 'disturb' ? meetOf(a) : null; if (m) { const t0 = sim.t - t.progress; a.ring = clamp(t.progress / Math.max(1, m.at - t0), 0, 1); a.label = dist(a.x, a.y, m.x, m.y) <= 3.5 ? '잠복' : '통제'; } }
       if (s.kind === 'rescue') { const at = powerAtOf(a); if (at > sim.t) { const t0 = sim.t - t.progress; a.ring = clamp(t.progress / Math.max(1, at - t0), 0, 1); } }      // (N8 단계 8) 놀이기구: 전원 복구 예상 시각으로 찬다 (원칙 11 — 설계된 기다림)
+      if (s.kind === 'welfare' && s.kinds !== undefined && s.kinds.door !== undefined && s.arrivedAt >= 0) { const end = s.arrivedAt + LOCK_WAIT, t0 = sim.t - t.progress; if (end > sim.t) { a.ring = clamp(t.progress / Math.max(1, end - t0), 0, 1); a.label = '열쇠 대기'; } else a.label = '현관 앞'; }      // (N8 단계 7) 문 잠긴 집: 듣기 · 열쇠를 기다리는 막대 (원칙 11)
       return;
     }
     // (N8 단계 2a) 새 임무 셋의 빈 갈래 — 실행은 그 임무를 쓰는 단계가 채운다(capture 5 · towAway 6b · persuade 7, 설계서 §4·§5.9).
@@ -2074,6 +2099,7 @@ function runTask(sim: Sim, s: Scene, a: FieldAgent, t: Task): void {
     // 끝은 지휘 규칙이 믿음상 필요 없어졌을 때 거두는 것뿐이다(진행 막대는 시각에 따라 돈다 — 원칙 11)
     case 'persuade': {
       const c = s.casualties[t.cas];
+      if (s.kind === 'welfare' && c) { runTalkDown(sim, s, I, a, t, c); return; }      // (N8 §4.5 — 단계 7) 높은 자리의 위기자 — 단계를 따라 기록하고 설득하는 대원이 본 단계를 알린다
       if (!c || c.dead || c.where !== 'scene') { if (c) learn(sim, a, casFact(sim, s, c, r.name), true, true); finishTask(sim, s, a, true); return; }
       const m = moveTo(sim, s, a, c.x, c.y, 2.0);
       if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
@@ -2514,4 +2540,91 @@ function runVictimTalk(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, 
   emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `피해자 면담 완료. 돈을 받으러 오는 사람과 ${at > sim.t ? `약 ${Math.max(10, Math.round((at - sim.t) / 10) * 10)}초 뒤` : '이미 약속한 시각에'} 이 자리에서 만나기로 했다는 진술을 확보했습니다.` });
   reportDone(sim, a, fact());
   finishTask(sim, s, a, true);
+}
+
+// ───────────────────────── (N8 단계 7 뒤 절반) 보호 — 위기자 · 문 잠긴 집의 실행부 ─────────────────────────
+import { winOutside } from './scenes/kinds';
+import { breakGlass } from './damage';
+/** 안전 매트를 펴는 시간(초 — 구조 능력으로 나눈다) · 문 잠긴 집에서 열쇠를 기다리는 시간(첫 도착 뒤 초 — orders/kinds.ts 의 LOCK_ORD.keyWait 와 같은 값) · 창을 깨고 들어가 여는 시간 */
+export const MAT_WORK = 30, LOCK_WAIT = 45, WINDOW_WORK = 12;
+/**
+ * (§4.5 ledge · §5.9) 위기자 설득: 대상 2칸 안에 서서 말을 건넨다 — 효과(위기 정도·단계)는 세계 규칙 ledgeRule 이 정한다. 실행부는 단계를 따라 기록하고(사연·의도를 말하지 않는다),
+ * 그 대원이 본 단계를 믿음 evid talk(1000 + 구조 대상 id)로 알린다(바뀔 때마다 강제 — 지휘관이 단계 2 부터 붙잡기를 낸다). 내려왔거나 숨졌으면 그 사람의 사실을 강제로 알리고 끝낸다
+ */
+function runTalkDown(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Casualty): void {
+  const r = resp(sim, a), k = s.kinds;
+  const pk = perchIdx(s, c.id);
+  if (c.dead || pk < 0 || c.where !== 'scene' || k === undefined) { reportDone(sim, a, casFact(sim, s, c, r.name)); finishTask(sim, s, a, true); return; }
+  // 말은 안쪽(side 구역 — 옥상·다리 위)에서 건넨다: 안쪽 칸(ground) 쪽으로 2칸 들어간 자리 (아래 보도·매트 터에서 올려다보며 하지 않는다 — 격자로는 1~2칸이지만 한 층 아래다)
+  const pe = k.perch![pk];
+  let tx = c.x, ty = c.y, tr = 2.0;
+  if (k.side !== undefined) {
+    const gx = pe.ground % s.w, gy = (pe.ground / s.w) | 0, d = Math.hypot(gx - c.x, gy - c.y) || 1;
+    const sx = Math.round(c.x + ((gx - c.x) / d) * 2), sy = Math.round(c.y + ((gy - c.y) / d) * 2), si = sy * s.w + sx;
+    if (sx > 0 && sy > 0 && sx < s.w - 1 && sy < s.h - 1 && staticPass(s.tiles[si]) && s.region[si] === k.side && s.propAt[si] < 0) { tx = sx; ty = sy; tr = 0.6; }
+    else { tx = gx; ty = gy; tr = 1.0; }
+  }
+  const m = moveTo(sim, s, a, tx, ty, tr);
+  if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+  if (m !== 'arrived') return;
+  if (t.phase === 0) { t.phase = 1; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `구조 대상 ${c.label}에게 말을 걸기 시작합니다.` }); }
+  const st = k.stage ?? 0;
+  if (st >= 1 && t.phase < 2) { t.phase = 2; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: '대화가 이어지고 있습니다.' }); }
+  if (st >= 2 && t.phase < 3) { t.phase = 3; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: '조금씩 마음을 열고 있습니다.' }); }
+  const seen = a.beliefs.val<{ stage?: number }>('evid', 1000 + c.id);
+  if (seen === undefined || seen.stage !== st) learnQuiet(sim, a, mkFact('evid', 1000 + c.id, { kind: 'talk', stage: st }, r.name, sim.t, 1, true, `구조 대상 ${c.label} 설득 ${st}단계`));      // 단계 기록은 위의 문장 — 무전 문구에서 뺀다
+  t.progress += sim.dt; a.ring = clamp(0.1 + 0.9 * (1 - (k.crisis ?? 0.5) / 0.6), 0.05, 1); a.label = '설득'; a.fx = c.x - a.x; a.fy = c.y - a.y;
+}
+/** (§4.5 ledge) 위기자 붙잡기: 안쪽 칸(ground — 위기자 1칸 곁)에 서서 기다린다. 붙잡아 끌어올리는 것은 세계 규칙(ledgeRule — 줄을 든 구조 대원이 단계 2 이상에서 8초) */
+function runGrab(sim: Sim, s: Scene, a: FieldAgent, t: Task, c: Casualty, k: number): void {
+  const pe = s.kinds!.perch![k];
+  const m = moveTo(sim, s, a, pe.ground % s.w, (pe.ground / s.w) | 0, 0.6);
+  if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+  if (m !== 'arrived') return;
+  t.progress += sim.dt; a.ring = clamp(t.progress / 8, 0.05, 1); a.label = '붙잡기'; a.fx = c.x - a.x; a.fy = c.y - a.y;
+}
+/** (§4.5 lockin) 관리인 면담: 곁(1.5칸)에서 6초 — 끝나면 관리인이 열쇠로 현관문을 연다(잠김이 풀리고 열린다). 문이 열렸다는 것과 면담을 마친 것을 강제로 알린다 */
+function runKeyTalk(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, p: Prop): void {
+  const r = resp(sim, a), k = s.kinds;
+  const door = k !== undefined && k.door !== undefined ? s.props[k.door] : undefined;
+  if (p.interviewed || !door || !door.locked) { p.interviewed = true; keyDone(sim, s, a, p, door); return; }
+  const m = moveTo(sim, s, a, p.x, p.y, 1.5);
+  if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
+  if (m !== 'arrived') return;
+  t.need = 6; t.progress += sim.dt; a.ring = t.progress / t.need;
+  if (t.progress < t.need) return;
+  p.interviewed = true;
+  const i = door.y * s.w + door.x;
+  if (s.propAt[i] === door.id) s.propAt[i] = -1;
+  door.locked = false; door.open = true; door.blocking = false;
+  s.staticVersion++;
+  if (k !== undefined && k.entered === undefined) k.entered = 'key';
+  emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: '관리인 면담 완료. 관리인이 열쇠로 현관문을 열었습니다. 들어가 확인하겠습니다.' });
+  keyDone(sim, s, a, p, door);
+}
+function keyDone(sim: Sim, s: Scene, a: FieldAgent, p: Prop, door: Prop | undefined): void {
+  const r = resp(sim, a);
+  reportDone(sim, a, mkFact('evid', p.id, { kind: 'witness', done: true }, r.name, sim.t, 1, true, '관리인 면담 완료'));
+  if (door && !door.locked) learn(sim, a, mkFact('blk', door.y * s.w + door.x, 'none', r.name, sim.t, 1, true, '현관문 열림'), true, true);
+  finishTask(sim, s, a, true);
+}
+/**
+ * (§4.5 lockin · R2 방법 window) 방범문: 바깥으로 난 1층 창(s.kinds.win)의 바깥 칸에 서서 창을 깨고(s.glass — 깨진 창) 들어가 안에서 현관문을 연다(unblock — 그 문의 강제 개방과 같은 끝).
+ * 이 갈래의 이동은 여기 하나뿐(한 틱에 이동 목표 하나). 창이 없으면(현장 생성기가 늘 하나를 둔다 — 안전장치) 문 곁의 다른 방법으로 바꾼다. 돌려주는 값 = 열렸다
+ */
+function runWindow(sim: Sim, s: Scene, I: Incident, a: FieldAgent, tk: Task, tile: number): boolean {
+  const r = resp(sim, a), k = s.kinds;
+  const win = k !== undefined && k.win !== undefined ? k.win : -1;
+  const out = win >= 0 ? winOutside(s, win) : -1;
+  if (out < 0) { switchMethod(sim, s, I, a, tk, 'failed', '들어갈 창이 없음'); return false; }
+  const m = moveTo(sim, s, a, out % s.w, (out / s.w) | 0, 0.6);
+  if (m === 'nopath') { switchMethod(sim, s, I, a, tk, 'failed', '창으로 가는 길이 없음'); return false; }
+  if (m !== 'arrived') return false;
+  tk.need = WINDOW_WORK / (0.6 + 0.4 * r.skills.rescue);
+  tk.progress += sim.dt * staminaF(r); a.ring = clamp(tk.progress / tk.need, 0.05, 1); a.label = METHOD['window'].label; drain(sim, a, 0.6);      // (METHOD['window'] — 정보 격리 시험의 DOM 글자 검사 \bwindow\. 를 피한다)
+  if (tk.progress < tk.need) return false;
+  breakGlass(sim, s, win, out % s.w, (out / s.w) | 0);
+  const ev = unblock(sim, s, a, tile, 'window');
+  recordMethod(sim, I, a, tk, 'window', tk.mwhy ?? 'usual', true, ev, { cas: -1, prop: k!.door!, hostile: -1, region: -1, tile });
+  return true;
 }

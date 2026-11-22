@@ -126,7 +126,8 @@ export function regionNbrs(s: Scene): number[][] {
 // ───────────────────────── (단계 5) 지휘 상태 — 설계서 §5 ─────────────────────────
 
 /** 구조 규칙을 쓰지 않는 변형 (선박·비행기·열차·다중 추돌·크레인·산사태·승강기·산불). catastrophe.ts 가 다시 내보낸다 */
-export const NO_STRUCT = ['ship', 'plane', 'train', 'pileup', 'crane', 'landslide', 'elevator', 'wild'];
+export const NO_STRUCT = ['ship', 'plane', 'train', 'pileup', 'crane', 'landslide', 'elevator', 'wild',
+  'ledge'];      // (N8 §5.14 — 단계 7) 옥상의 위기자: 로비가 실내 구역이지만 불·붕괴가 없다 (다리는 바깥 현장이라 저절로 빠진다)
 /** 실제 건물 현장인가 (생김새 — 실내 구획이 있고, 길 위가 아니고, 구조 규칙을 쓰는 변형). 세계 쪽의 CatState.struct 와 같은 술어 */
 export function structScene(s: Scene): boolean { return !s.outdoor && NO_STRUCT.indexOf(s.variant) < 0 && s.regions.some((r) => r.indoor); }
 

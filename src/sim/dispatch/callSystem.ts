@@ -256,7 +256,7 @@ export function makeCaller(sim: Sim, I: Incident, s: Scene, rng: Rng, followup: 
     const rooms = s.regions.filter((r) => r.kind === 'room');
     const reg = ok && trueReg >= 0 ? s.regions[trueReg] : rng.pick(rooms);
     put('detail', { region: reg.id }, `${reg.name} 쪽에 사람이 있는 걸 봤어요.`, reg.id === trueReg, reg.id === trueReg ? '' : `요구조자 위치를 ${josa(reg.name, '으로/로')} 잘못 신고`);
-  } else if (TYPE_DEFS[t].zoneSearch) {      // 구역 확률 수색 유형: 마지막으로 본 구역
+  } else if (TYPE_DEFS[t].zoneSearch && cas.some((c) => c.isTarget)) {      // 구역 확률 수색 유형: 마지막으로 본 구역 · (N8 단계 7) 걷는 대상이 있는 현장만 — 위기자·문 잠긴 집은 아니다
     const tgt = cas.find((c) => c.isTarget)!;
     let trueReg = s.region[Math.round(tgt.y) * s.w + Math.round(tgt.x)];
     // 개울(물 칸)은 어느 구역에도 들지 않는다: 물에 빠지기 직전에 걷던 물가 구역을 본 것으로 한다

@@ -288,6 +288,18 @@ function aerialAt(a: FieldAgent): Task | null {
   if (a.status !== 'active' || !t || t.kind !== 'suppress' || t.method !== 'aerial' || t.phase !== 1 || t.tile < 0) return null;
   return Math.hypot(a.x - t.tx, a.y - t.ty) <= 0.7 ? t : null;
 }
+/** (N8 단계 8 의 남은 그림) 높은 자리의 사람에게 사다리를 편 사다리 구조 — 땅 칸(ground)에 닿아 일하는 중 (실행기 perchRescue 의 진행 t.progress > 0) */
+function ladderRescueAt(s: Scene, a: FieldAgent): Task | null {
+  const t = a.task;
+  if (a.status !== 'active' || !t || t.kind !== 'extricate' || t.method !== 'ladder' || !(t.progress > 0) || t.cas < 0) return null;
+  const c = s.casualties[t.cas];
+  return c && !c.dead && c.where === 'scene' && s.kinds && s.kinds.perch && s.kinds.perch.some((p) => p.cas === c.id) ? t : null;
+}
+/** 그 부대의 대원이 사다리를 펴 쓰고 있는가 (고가 사다리 방수 또는 높은 자리 구조) — 대기 줄의 사다리차를 '편' 모습으로 그린다 (renderScene → sprites.drawEmergency) */
+export function ladderDeployed(s: Scene, unitId: number): boolean {
+  for (const a of s.agents) if (a.unitId === unitId && (aerialAt(a) || ladderRescueAt(s, a))) return true;
+  return false;
+}
 /** 사다리차의 회전대 (칸 단위): 대원 옆 0.55칸 — 사다리가 대원 위를 지나지 않게 겨눈 쪽의 왼편. ux, uy = 대상 불 칸 쪽 */
 function turntable(s: Scene, a: FieldAgent, t: Task): { x: number; y: number; ux: number; uy: number } {
   const tx = t.tile % s.w, ty = (t.tile / s.w) | 0, d = Math.hypot(tx - a.x, ty - a.y) || 1, ux = (tx - a.x) / d, uy = (ty - a.y) / d;
@@ -338,6 +350,15 @@ export function drawMethodGround(g: G, sim: Sim, s: Scene, ts: number, alpha: nu
       const d = fanDir(s, vt.tx, vt.ty), sp = fanSpot(s, vt.tx, vt.ty, d);
       drawFanMachine(g, px(sp.x), px(sp.y), ts, Math.atan2(d[1], d[0]), 0, 0.35 + 0.65 * Math.min(1, Math.max(0, a.ring)));
     }
+    const lr = ladderRescueAt(s, a);
+    if (lr) {      // (N8) 높은 자리 구조의 회전대: 대원 곁, 그 사람 쪽을 본다
+      const c = s.casualties[lr.cas], q = ip(a, alpha), d = Math.hypot(c.x - a.x, c.y - a.y) || 1, ux = (c.x - a.x) / d, uy = (c.y - a.y) / d;
+      g.save(); g.translate(px(q.x + uy * 0.55 - ux * 0.15), px(q.y - ux * 0.55 - uy * 0.15)); g.rotate(Math.atan2(uy, ux));
+      rr(g, -ts * 0.36 + ts * 0.04, -ts * 0.3 + ts * 0.05, ts * 0.72, ts * 0.6, ts * 0.12, 'rgba(0,0,0,0.35)');
+      rr(g, -ts * 0.36, -ts * 0.3, ts * 0.72, ts * 0.6, ts * 0.12, '#c8321f');
+      disc(g, 0, 0, ts * 0.2, '#3a4148'); disc(g, 0, 0, ts * 0.1, '#8f979e');
+      g.restore();
+    }
     const at = aerialAt(a);
     if (at) {
       const b = turntable(s, a, at), q = ip(a, alpha), bx = px(b.x + (q.x - a.x)), by = px(b.y + (q.y - a.y));
@@ -381,6 +402,13 @@ function drawLadder(g: G, ax: number, ay: number, bx: number, by: number, ts: nu
 export function drawMethodOver(g: G, sim: Sim, s: Scene, ts: number, alpha: number, time: number, truth: boolean): void {
   const px = (v: number): number => (v + 0.5) * ts;
   for (const a of s.agents) {
+    const lr = ladderRescueAt(s, a);
+    if (lr) {      // (N8) 회전대에서 높은 자리의 그 사람 곁까지 (사람 칸 0.35칸 앞에서 멈춘다 — 사람 그림을 덮지 않게)
+      const c = s.casualties[lr.cas], q = ip(a, alpha), d0 = Math.hypot(c.x - a.x, c.y - a.y) || 1, ux = (c.x - a.x) / d0, uy = (c.y - a.y) / d0;
+      const bx = q.x + uy * 0.55 - ux * 0.15, by = q.y - ux * 0.55 - uy * 0.15, d = Math.hypot(c.x - bx, c.y - by) || 1;
+      drawLadder(g, px(bx), px(by), px(c.x - ((c.x - bx) / d) * 0.35), px(c.y - ((c.y - by) / d) * 0.35), ts);
+      continue;
+    }
     const at = aerialAt(a);
     if (at) {
       const b = turntable(s, a, at), q = ip(a, alpha), ox = q.x - a.x, oy = q.y - a.y;

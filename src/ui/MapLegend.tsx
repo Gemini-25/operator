@@ -3,7 +3,8 @@
 
 import { useState } from 'react';
 import { FIELD_NAME, UNIT_KIND_NAME } from '../sim/resources';
-import type { RoleGroup, UnitField, UnitKind } from '../sim/types';
+import type { IncidentType, RoleGroup, UnitField, UnitKind } from '../sim/types';
+import { TYPE_DEFS, TYPE_ORDER } from '../sim/incidentTypes';
 import { FACILITY_COLOR, FIELD_COLOR, FIELD_TEXT } from '../view/city/tokens';
 import { DISASTER_RING, OBSTACLE_ICON, REPAIR_RING } from '../view/city/trafficLayer';
 import { FENCE } from '../view/city/carryLayer';
@@ -12,6 +13,7 @@ import { ICON_PATH } from '../view/icons';
 import { HAZARD_MARK, REPAIR_MARK, RUIN_MARK, STATE_MARK } from '../view/marks';
 import { EXPO_CRACK, EXPO_PIPE } from '../view/city/ruinLayer';
 import { ZONE_LOOK } from '../view/city/zoneLayer';
+import { TYPE_COLOR } from '../view/typeStyle';
 import { FacilityBadge, RoleDot, Token } from './Mark';
 
 const LS_LEGEND = 'ar.legend.v1';
@@ -74,6 +76,17 @@ function PinSample({ size = 22 }: { size?: number }) {
       <circle cx={c} cy={c} r={r} fill="#0d151d" stroke={col} strokeWidth={1.6} />
       <svg x={c - r * 0.62} y={c - r * 0.62} width={r * 1.24} height={r * 1.24} viewBox="0 0 24 24"><path d={ICON_PATH.fire} fill={col} fillRule="evenodd" /></svg>
       <path d={`M${c} ${c - r - 2.4}A${r + 2.4} ${r + 2.4} 0 0 1 ${c + r + 2.4} ${c}`} fill="none" stroke="#e8f0f7" strokeWidth={1.5} />
+    </svg>
+  );
+}
+
+/** (N8 §5.12 — 단계 11) 사건 유형 열셋의 핀 견본: 어두운 바탕 + 유형색 테 + 유형 기호 (시나리오별 기호는 없다 — 결정 13) */
+function TypePinSample({ type, size = 20 }: { type: IncidentType; size?: number }) {
+  const c = size / 2, r = size * 0.4, col = TYPE_COLOR[type];
+  return (
+    <svg className="pin-sample" width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+      <circle cx={c} cy={c} r={r} fill="#0d151d" stroke={col} strokeWidth={1.6} />
+      <svg x={c - r * 0.62} y={c - r * 0.62} width={r * 1.24} height={r * 1.24} viewBox="0 0 24 24"><path d={ICON_PATH[type]} fill={col} fillRule="evenodd" /></svg>
     </svg>
   );
 }
@@ -225,6 +238,9 @@ export function MapLegend() {
             {FACILITIES.map(([k, name]) => <span key={k} className="lg-item"><FacilityBadge mark={k} color={FACILITY_COLOR[k]} size={18} />{name}</span>)}
           </div>
           <h5>사건과 도로</h5>
+          <div className="lg-row lg-types" title="핀의 기호와 테의 색 = 사건 유형 (같은 유형 안의 시나리오는 기록과 현장 그림으로 구별한다)">
+            {TYPE_ORDER.map((t) => <span key={t} className="lg-item"><TypePinSample type={t} />{TYPE_DEFS[t].name}</span>)}
+          </div>
           <div className="lg-row">
             <span className="lg-item"><PinSample />고리 = 첫 도착까지 흐른 시간</span>
             <span className="lg-item" title="최근 몇 초 안에 총성이 난 현장"><CombatPinSample />교전 중</span>

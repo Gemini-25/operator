@@ -209,7 +209,7 @@ describe('X6 단계 1: catOf — 대상과 입구 (§10-11)', () => {
     expect(ka).toEqual(ka.map(() => init.range(0.8, 1.25)));
   });
   it('구조 규칙은 실제 건물만: 비행기·선박·산불·크레인·승강기 현장은 대상이어도 건물이 아니다', () => {
-    expect(NO_STRUCT).toEqual(['ship', 'plane', 'train', 'pileup', 'crane', 'landslide', 'elevator', 'wild']);
+    expect(NO_STRUCT).toEqual(['ship', 'plane', 'train', 'pileup', 'crane', 'landslide', 'elevator', 'wild', 'ledge']);      // ledge: (N8 단계 7 — 설계서 §5.14) 옥상의 위기자 (로비가 실내 구역이지만 불·붕괴가 없다)
     expect(catOf(...((m) => [m.sim, m.s] as const)(make('X6-S1', 'fire', 'std')))!.struct).toBe(true);
     expect(catOf(...((m) => [m.sim, m.s] as const)(make('X6-S2', 'collapse', 'std')))!.struct).toBe(true);
     for (const [type, variant] of [['fire', 'plane'], ['fire', 'ship'], ['fire', 'wild'], ['collapse', 'crane'], ['collapse', 'elevator']] as [IncidentType, string][]) {

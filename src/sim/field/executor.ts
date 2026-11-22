@@ -2552,8 +2552,18 @@ export const MAT_WORK = 30, LOCK_WAIT = 45, WINDOW_WORK = 12;
  */
 function runTalkDown(sim: Sim, s: Scene, I: Incident, a: FieldAgent, t: Task, c: Casualty): void {
   const r = resp(sim, a), k = s.kinds;
-  if (c.dead || perchIdx(s, c.id) < 0 || c.where !== 'scene' || k === undefined) { reportDone(sim, a, casFact(sim, s, c, r.name)); finishTask(sim, s, a, true); return; }
-  const m = moveTo(sim, s, a, c.x, c.y, 2.0);
+  const pk = perchIdx(s, c.id);
+  if (c.dead || pk < 0 || c.where !== 'scene' || k === undefined) { reportDone(sim, a, casFact(sim, s, c, r.name)); finishTask(sim, s, a, true); return; }
+  // 말은 안쪽(side 구역 — 옥상·다리 위)에서 건넨다: 안쪽 칸(ground) 쪽으로 2칸 들어간 자리 (아래 보도·매트 터에서 올려다보며 하지 않는다 — 격자로는 1~2칸이지만 한 층 아래다)
+  const pe = k.perch![pk];
+  let tx = c.x, ty = c.y, tr = 2.0;
+  if (k.side !== undefined) {
+    const gx = pe.ground % s.w, gy = (pe.ground / s.w) | 0, d = Math.hypot(gx - c.x, gy - c.y) || 1;
+    const sx = Math.round(c.x + ((gx - c.x) / d) * 2), sy = Math.round(c.y + ((gy - c.y) / d) * 2), si = sy * s.w + sx;
+    if (sx > 0 && sy > 0 && sx < s.w - 1 && sy < s.h - 1 && staticPass(s.tiles[si]) && s.region[si] === k.side && s.propAt[si] < 0) { tx = sx; ty = sy; tr = 0.6; }
+    else { tx = gx; ty = gy; tr = 1.0; }
+  }
+  const m = moveTo(sim, s, a, tx, ty, tr);
   if (m === 'nopath') { finishTask(sim, s, a, false, 'nopath'); return; }
   if (m !== 'arrived') return;
   if (t.phase === 0) { t.phase = 1; emit(sim, { inc: I.id, role: 'RESPONDER', actor: r.name, rid: r.id, kind: 'action', imp: 1, text: `구조 대상 ${c.label}에게 말을 걸기 시작합니다.` }); }

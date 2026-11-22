@@ -735,7 +735,7 @@ export function workLabel(s: Scene, w: WorkItem, sim?: Sim): string {
     hoist: `${cas} 호이스트 인양`, airDrop: `${reg} 공중 물 투하`,
     treatMate: sim && w.mate >= 0 && sim.responders[w.mate] ? `${sim.responders[w.mate].name} 대원 응급 처치` : '부상 대원 응급 처치',
     treatSuspect: `${hos} 응급 처치`,
-    repair: s.props[w.prop] && s.props[w.prop].kind === 'valve' ? '공급 차단 확인' : '시설물 복구', towAway: '차량 견인', capture: '동물 포획', persuade: `${cas} 설득`, cordon: s.kind === 'disturb' ? '잠복' : '위험 반경 통제',      // (N8) 단계 4a — 시설물 둘레 (교통 통제와 다른 글자) · 단계 6b — 치안 현장의 통제는 수거책 잠복의 자리뿐이다
+    repair: s.props[w.prop] && s.props[w.prop].kind === 'valve' ? '공급 차단 확인' : '시설물 복구', towAway: '차량 견인', capture: '동물 포획', persuade: `${cas} 설득`, cordon: s.kind === 'disturb' ? '잠복' : s.kind === 'welfare' ? (s.variant === 'lockin' ? '현관 앞에서 듣기' : '출구 지키기') : '위험 반경 통제',      // (N8 단계 7) 보호 현장의 통제: 문 잠긴 집은 현관 앞 듣기 · 미아는 출구 지키기      // (N8) 단계 4a — 시설물 둘레 (교통 통제와 다른 글자) · 단계 6b — 치안 현장의 통제는 수거책 잠복의 자리뿐이다
     decontam: '제독',      // (N9 §5.5) 이름만 — 대상의 글자는 그 임무를 쓰는 단계 6 이 다듬는다
     triage: '다수 사상자 분류',      // (R3 4단계 E01·CE1)
   };

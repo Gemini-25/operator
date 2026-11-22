@@ -33,9 +33,9 @@ import type { HazardLabel } from './scene/hazardFx';
 import { gasView, hostageState, rekindledRegions } from './hazardState';
 import { ruinZones, strokeRuinEdges } from './scene/ruins';
 import { drawCatOver, drawCatUnder, drawTrappedDebris } from './scene/catLayer';
-import { TRIAGE, TRIAGE_EDGE, TRIAGE_TEXT, casBand, casDrawn, casSheet, hostileBand, hostileDrawn, hostileSheet, hurtPose, respBand, respLying, respSheet } from './triage';
+import { TRIAGE, TRIAGE_EDGE, TRIAGE_TEXT, casBand, casDrawn, casSheet, perchText, hostileBand, hostileDrawn, hostileSheet, hurtPose, respBand, respLying, respSheet } from './triage';
 import { THROW_RELEASE, drawBarricades, drawBoats, drawCharges, drawMethodFx, inBoat, swimming } from './scene/methodsLayer';      // (R2 1d) 대응 방법의 그림 — 수난: 줄·장대·보트·헤엄치는 대원
-import { drawMethodGround, drawMethodOver, drawPowder, sniperSet } from './scene/methodsLayer';      // (R2 단계 4·5·6) 송풍기·바람·고가 사다리·저격 자리와 조준선·대피 방송·소화기 분말
+import { drawMethodGround, drawMethodOver, drawPowder, ladderDeployed, sniperSet } from './scene/methodsLayer';      // (R2 단계 4·5·6) 송풍기·바람·고가 사다리·저격 자리와 조준선·대피 방송·소화기 분말
 import { coverCrouch, coverTask, drawBuddyLines, headLabel, headLabelMax, laneShieldSpot } from './scene/doctrineLayer';      // (R3 7단계 §7.2) 엄폐 자세 · 짝 끈 · 판단 지점의 머리 위 라벨
 
 /** 현장 화면의 시점: 중심(타일 좌표)과 배율(1 = 현장 전체가 보인다) */
@@ -153,6 +153,11 @@ function triageBadge(ctx: G, x: number, y: number, r: number, b: number, ts: num
 }
 
 const lookCache = new Map<string, PersonLook>();
+/** (N8) 일하는 옷을 입은 목격자 소품의 겉모습과 이름표 (skin 열쇠) — 문 잠긴 집의 관리인 · 놀이기구 운영자 */
+const WITNESS_LOOK: Record<string, { name: string; top: string; trim: PersonLook['trim']; trimCol?: string }> = {
+  keyholder: { name: '관리인', top: '#3d4a5c', trim: 'none' },
+  operator: { name: '운영자', top: '#2f8f83', trim: 'vest', trimCol: '#f0c419' },
+};
 function lookOf(key: string, make: () => PersonLook): PersonLook { let l = lookCache.get(key); if (!l) { l = make(); lookCache.set(key, l); if (lookCache.size > 400) lookCache.clear(); } return l; }
 
 /**
@@ -464,10 +469,12 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
       if (p.found && !MINI) { ctx.strokeStyle = 'rgba(255,209,102,0.7)'; ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.arc(cx(p.x), cy(p.y), ts * 0.42, 0, 7); ctx.stroke(); ctx.setLineDash([]); }
       ctx.globalAlpha = 1;
     } else if (p.kind === 'witness') {
-      const lk = lookOf('w' + s.id + ':' + p.id, () => civilianLook(s.id * 131 + p.id * 17 + 5));
+      const wl = p.skin ? WITNESS_LOOK[p.skin] : undefined;      // (N8) 관리인·운영자: 일하는 옷과 이름표 (그 밖의 목격자는 평상복)
+      const lk = lookOf('w' + s.id + ':' + p.id, () => { const b = civilianLook(s.id * 131 + p.id * 17 + 5); return wl ? { ...b, top: wl.top, arm: wl.top, trim: wl.trim, trimCol: wl.trimCol } : b; });
       if (MINI) disc(ctx, cx(p.x), cy(p.y), ts * 0.3, '#d6e2ee');
       else drawPerson(ctx, cx(p.x), cy(p.y), hash2(p.id, s.id) * 6.28, ts, lk, { step: 0, moving: false, arms: p.interviewed ? 'side' : 'up', t: time, ghost: p.interviewed ? 0.6 : 1 });
-      pill(ctx, p.interviewed ? '목격자 (청취 완료)' : '목격자', cx(p.x), cy(p.y) + ts * 0.66, ts * 0.27, '#c8d4df');
+      const wn = wl ? wl.name : '목격자';
+      pill(ctx, p.interviewed ? `${wn} (청취 완료)` : wn, cx(p.x), cy(p.y) + ts * 0.66, ts * 0.27, '#c8d4df');
     } else if (p.kind === 'roadDebris') {
       unit(() => drawRoadDebris(ctx, p.id), cx(p.x), cy(p.y));
     } else if (p.kind === 'unstable') {
@@ -518,7 +525,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     ctx.strokeStyle = 'rgba(255,240,190,0.35)'; ctx.lineWidth = ts * 0.03; path(); ctx.stroke();
   }
   for (const v of vpos) {
-    drawEmergency(ctx, v.x, v.y, 0, ts, v.u.kind, v.u.dept, true, o.timeMs);
+    drawEmergency(ctx, v.x, v.y, 0, ts, v.u.kind, v.u.dept, true, o.timeMs, v.u.kind === 'ladder' && ladderDeployed(s, v.u.id));      // (N8) 사다리를 편 사다리차
     pill(ctx, v.u.callsign, v.x, v.y + ts * (v.W / 2 + 0.34), ts * 0.3, DEPT_COLOR[v.u.dept]);
   }
   // 통과 차량
@@ -570,7 +577,13 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     if (c.inWater && carrier && inBoat(carrier)) { const ba = Math.atan2(carrier.fy, carrier.fx); drawLying(ctx, x - Math.cos(ba) * ts * 0.4, y - Math.sin(ba) * ts * 0.4, ba, ts * 0.85, lk, { variant: hash2(c.id, 5), ghost }); continue; }
     if (c.inWater && !c.dead) { drawSwimmer(ctx, x, y, ts, lk, time + c.id, ghost); continue; }
     const upright = !c.dead && c.mob === 'mobile' && c.where !== 'carried' && c.health > 40;
-    if (upright) {
+    // (N8) 높은 자리(T.LEDGE — 난간 밖 턱·외벽·놀이기구 좌석)의 사람은 '갇힘'이어도 눕거나 깔린 그림이 아니라 그 자리에 서 있다
+    const perched = !c.dead && c.where === 'scene' && !!s.kinds && !!s.kinds.perch && s.kinds.perch.some((q) => q.cas === c.id);
+    if (perched) {
+      const pe = s.kinds!.perch!.find((q) => q.cas === c.id)!;
+      const gx = pe.ground % s.w, gy = (pe.ground / s.w) | 0, ang = Math.atan2(gy - c.y, gx - c.x);      // 바깥(떨어지는 쪽 · 내려올 땅 칸)을 본다
+      drawPerson(ctx, x, y, Number.isFinite(ang) ? ang : 0, ts, lk, { step: 0, moving: false, arms: 'side', t: time, scale: 0.92, ghost });
+    } else if (upright) {
       const mv = Math.abs(c.x - c.px) + Math.abs(c.y - c.py) > 0.005;
       const ang = mv ? Math.atan2(c.y - c.py, c.x - c.px) : hash2(c.id, s.id + 3) * 6.28;
       drawPerson(ctx, x, y, ang, ts, lk, { step: time * 10 + c.id, moving: mv, arms: captive ? 'back' : c.panic && mv ? 'up' : 'side', t: time, scale: captive ? 0.9 : 0.96, ghost, flinch: cv ? casualtyFlinch(cv, c.id, c.x, c.y) : undefined });
@@ -929,7 +942,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
     const c = q.c, r = ts * 0.2, x = q.x + ts * 0.36, y = q.y - ts * 0.38;
     ctx.globalAlpha = q.known ? 1 : 0.55;
     triageBadge(ctx, x, y, r, q.b, ts, q.known ? c.label : '?', c.treated && !c.dead, !q.known);      // (H1) 사망은 검정 딱지(밝은 테두리·흰 글씨), 처치를 받았으면 흰 십자
-    if (c.mob === 'trapped' && !c.dead && c.where === 'scene') pill(ctx, c.inWater ? (c.drift ? '표류 중' : '물속 — 걸려 있음') : c.inVehicle !== null ? (s.variant === 'plane' ? '동체에 갇힘' : s.variant === 'train' ? '객차에 갇힘' : '차량에 갇힘') : '매몰', q.x, q.y + ts * 0.62, ts * 0.25, c.inWater ? '#9fd8ff' : '#e8f0f7');
+    if (c.mob === 'trapped' && !c.dead && c.where === 'scene') pill(ctx, c.inWater ? (c.drift ? '표류 중' : '물속 — 걸려 있음') : c.inVehicle !== null ? (s.variant === 'plane' ? '동체에 갇힘' : s.variant === 'train' ? '객차에 갇힘' : '차량에 갇힘') : perchText(s, c) ?? '매몰', q.x, q.y + ts * 0.62, ts * 0.25, c.inWater ? '#9fd8ff' : '#e8f0f7');
     if (!c.dead && (c.where === 'scene' || c.where === 'safe')) {
       const bw = ts * 0.56, bx = q.x - bw / 2, by = q.y + ts * 0.36, bh = Math.max(3, ts * 0.085);
       rr(ctx, bx - 1, by - 1, bw + 2, bh + 2, bh / 2, 'rgba(8,13,18,0.85)');

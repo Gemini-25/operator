@@ -1944,6 +1944,8 @@ import { LEDGE_ORD, LOCK_ORD } from '../src/sim/field/orders/kinds';
 import { LOCK_WAIT } from '../src/sim/field/executor';
 import { perchIdx } from '../src/sim/field/perch';
 import { ROLES as ROLE_TABLE } from '../src/sim/crews';
+import { casDrawn, casInfo } from '../src/view/triage';      // (§5.13 의 화면 — 읽기만)
+import { eventWeight } from '../src/view/camera';
 
 /** 강제 교대에서 그 사건이 생길 때까지 돌린다 (현장이 생기면 멈춘다 — 부대가 닿기 전) */
 function forcedScene(seed: string, key: string): { sim: Sim; J: Inc; s: Scene } {
@@ -2033,8 +2035,14 @@ describe('5·9·11·15 보호 — 위기자 · 문 잠긴 집 (단계 7 뒤 절�
       expect(mine.map((e) => e.text), seed).toEqual(['구조하지 못했습니다.']);
       expect(mine[0].kind).toBe('command'); expect(mine[0].importance).toBe(1);
       expect(mine.some((e) => e.kind === 'casualty'), '카메라·소리가 따라가는 종류가 아니다').toBe(false);
+      expect(eventWeight(mine[0]), '카메라의 무게: 중요도 1 의 5 뿐 — casualty·문제 가중이 붙지 않는다').toBe(5);
+      expect(mine[0].importance < 3, '자동 감속(중요도 3 이상)·손실음(casualty 3 이상)이 걸리지 않는다').toBe(true);
       expect(c.quietLoss).toBe(true); expect(c.lost).toBeUndefined(); expect(c.inWater).toBeFalsy(); expect(c.deathCause).toBe('fall');
       expect(perchIdx(s, c.id)).toBe(-1); expect(k.ledgeEnd).toBe('lost');
+      expect(casDrawn(c), '그리지 않는다').toBe(false);
+      const info = casInfo(sim, s, c, true, undefined);
+      expect(info.rows.find((r) => r.k === '위치')!.v, '정보창의 위치는 —').toBe('—');
+      expect(info.rows.some((r) => r.k === '숨진 원인') || info.times.some((r) => r.k === '사망'), '원인·시각을 적지 않는다').toBe(false);
       for (const q of s.casualties) expect(q.inWater, `${seed}: 물로 떨어지는 갈래는 없다`).toBeFalsy();
       for (let n = 0; n < 9000 && J.phase !== 'closed' && !sim.ended; n++) sim.step();
       expect(J.phase, seed).toBe('closed');

@@ -187,10 +187,12 @@ function paintTile(g: G, kind: number, tx: number, ty: number, R: number): void 
       break;
     }
     case S.LEDGE: {
-      // (N8 단계 2a) 빈 그림 — 어두운 콘크리트 턱과 바깥쪽 모서리 선. 현장마다의 모습(난간·외벽·좌석)은 단계 7·8 의 스킨이 덧그린다
+      // (N8 단계 2a·7) 높은 자리: 어두운 콘크리트 턱(난간 밖의 좁은 바닥) — 위쪽 밝은 모서리 선 · 아래 그림자 띠 · 이음매 하나와 잔 얼룩
       g.fillStyle = '#4a5058'; g.fillRect(px, py, R + 0.6, R + 0.6);
       g.fillStyle = 'rgba(230,234,238,0.22)'; g.fillRect(px, py, R, Math.max(1, R * 0.06));
       g.fillStyle = 'rgba(0,0,0,0.3)'; g.fillRect(px, py + R - Math.max(1, R * 0.08), R, Math.max(1, R * 0.08));
+      g.fillStyle = 'rgba(0,0,0,0.18)'; g.fillRect(px + R * (0.3 + 0.4 * hash2(tx, ty * 3)), py, Math.max(1, R * 0.03), R);
+      dots(g, tx, ty, R, 4, 133, ['rgba(120,126,132,0.55)', 'rgba(40,44,48,0.4)'], 0.04);
       break;
     }
     case S.WATER: {

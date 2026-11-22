@@ -6,6 +6,19 @@ import { CITY_H, CITY_W } from '../sim/cityPlan';
 import type { Sim } from '../sim/engine';
 import type { Incident, SimEvent } from '../sim/types';
 
+/**
+ * 기록 하나가 그 사건의 흥미도에 더하는 무게 (자동 카메라가 따라갈 사건을 고른다 — 순수 함수).
+ * (N8 §5.13) 위기자의 실패 "구조하지 못했습니다."는 kind 'command' · 중요도 1 이라 5 뿐이다 — 'casualty' 가중(+10)·문제 가중이 붙지 않는다
+ */
+export function eventWeight(e: SimEvent): number {
+  let w = e.importance === 3 ? 42 : e.importance === 2 ? 18 : e.importance === 1 ? 5 : 1;
+  if (e.problem) w += 16;
+  if (e.kind === 'recovery') w += 10;
+  if (e.kind === 'arrive') w += 20;
+  if (e.kind === 'casualty') w += 10;
+  return w;
+}
+
 export interface CityCam { x: number; y: number; zoom: number }
 /** 현장 화면의 시점 (타일 좌표, 배율 1 = 현장 전체) */
 export interface SceneView { x: number; y: number; zoom: number }
@@ -58,14 +71,7 @@ export class CameraDirector {
   nudge(): void { if (!this.sceneManual) this.sceneRetargetAt = this.clock; }
   overview(): void { this.manual = true; this.freeLook = false; this.focus = -1; this.mode = 'city'; this.target = { x: CITY_W / 2, y: CITY_H / 2, zoom: 1 }; this.reason = '도시 전체 보기'; }
 
-  private weight(e: SimEvent): number {
-    let w = e.importance === 3 ? 42 : e.importance === 2 ? 18 : e.importance === 1 ? 5 : 1;
-    if (e.problem) w += 16;
-    if (e.kind === 'recovery') w += 10;
-    if (e.kind === 'arrive') w += 20;
-    if (e.kind === 'casualty') w += 10;
-    return w;
-  }
+  private weight(e: SimEvent): number { return eventWeight(e); }
 
   update(sim: Sim, dtReal: number, sceneAvailable: (I: Incident) => boolean): void {
     if (this.simRef !== sim) { this.simRef = sim; this.reset(); }

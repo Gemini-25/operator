@@ -350,7 +350,7 @@ const BEACON: Record<Dept, [string, string]> = { fire: ['#ff3b2f', '#ffd24a'], e
 export function beaconColors(dept: Dept): [string, string] { return BEACON[dept]; }
 
 /** 위에서 본 긴급 차량. 앞이 +x. */
-export function drawEmergency(g: G, x: number, y: number, ang: number, ts: number, kind: UnitKind, dept: Dept, lights: boolean, timeMs: number): void {
+export function drawEmergency(g: G, x: number, y: number, ang: number, ts: number, kind: UnitKind, dept: Dept, lights: boolean, timeMs: number, deployed = false): void {      // deployed: (N8) 사다리차가 사다리를 편 중 (그림만)
   const [L, W] = VEH_SIZE[kind];
   if (AIR_KIND.has(kind)) { drawHeli(g, x, y, ang, ts, lights, timeMs, kind); return; }      // 헬기 세 종류: 종류마다 도색이 다르다
   if (kind === 'boat') { drawBoat(g, x, y, ang, ts, lights, timeMs); return; }
@@ -384,9 +384,18 @@ export function drawEmergency(g: G, x: number, y: number, ang: number, ts: numbe
     } else if (kind === 'ladder') {
       // 사다리차: 지붕에 접어 둔 긴 사다리와 회전대
       rr(g, -L / 2 + 0.14, -W / 2 + 0.2, L - 1.42, W - 0.4, 0.04, '#4c555e');
+      if (deployed) {
+        // (N8) 사다리를 편 사다리차: 받침다리 넷을 옆으로 펴고, 지붕의 사다리 자리는 비었다(빈 받침대) — 사다리는 현장의 그 대원 곁 회전대에서 그린다
+        for (const lx of [-L / 2 + 0.35, L / 2 - 1.25]) for (const sg of [-1, 1]) { g.fillStyle = '#2c333a'; g.fillRect(lx - 0.05, sg > 0 ? W / 2 - 0.02 : -W / 2 - 0.26, 0.1, 0.28); rr(g, lx - 0.11, sg > 0 ? W / 2 + 0.2 : -W / 2 - 0.32, 0.22, 0.12, 0.03, '#f0c419'); }
+        g.strokeStyle = '#8a939b'; g.lineWidth = 0.035; g.setLineDash([0.12, 0.1]); g.strokeRect(-L / 2 + 0.05, -0.17, L - 0.75, 0.34); g.setLineDash([]);
+        for (let k = 0; k < 4; k++) { g.fillStyle = '#6b747d'; g.fillRect(-L / 2 + 0.3 + k * ((L - 1.2) / 3), -0.17, 0.05, 0.34); }
+        disc(g, -L / 2 + 0.62, 0, 0.3, '#39424a'); disc(g, -L / 2 + 0.62, 0, 0.2, '#c8321f'); disc(g, -L / 2 + 0.62, 0, 0.08, '#cdd3d8');
+        rr(g, L / 2 - 1.5, -0.22, 0.34, 0.44, 0.04, '#e9e4d8');
+      } else {
       rr(g, -L / 2 + 0.05, -0.17, L - 0.75, 0.34, 0.03, '#aab2b9'); g.fillStyle = '#6b747d'; for (let k = 0; k < 16; k++) g.fillRect(-L / 2 + 0.12 + k * ((L - 0.95) / 15), -0.17, 0.03, 0.34);
       g.fillStyle = '#d8dde1'; g.fillRect(-L / 2 + 0.05, -0.17, L - 0.75, 0.035); g.fillRect(-L / 2 + 0.05, 0.135, L - 0.75, 0.035);
       disc(g, -L / 2 + 0.62, 0, 0.26, '#39424a'); disc(g, -L / 2 + 0.62, 0, 0.16, '#cdd3d8'); rr(g, L / 2 - 1.5, -0.22, 0.34, 0.44, 0.04, '#e9e4d8');
+      }
     } else if (kind === 'hazmat') {
       // 화학 구조차: 노란 띠와 밀폐 장비함, 제독 장비
       rr(g, -L / 2 + 0.12, -W / 2 + 0.16, L - 1.3, W - 0.32, 0.04, '#e3d74a'); g.fillStyle = '#2a2d31';

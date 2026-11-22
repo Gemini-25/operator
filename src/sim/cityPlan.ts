@@ -248,6 +248,8 @@ export const INCIDENT_PLACES: Record<IncidentType, W> = {
   // (N8 단계 4a — 설계서 §5.2-2) 시설 사고: 시나리오들의 장소를 합친 표 (끊어진 전선·싱크홀은 길 위 교차로, 수도관 파열은 도심 교차로 곁의 사무·상점·마트, 간판은 상가 건물 앞).
   // 분석의 placePrior 는 이 표의 "0보다 큰가"만 본다 — 지도·난수는 바뀌지 않는다
   utility: { shop: 4, restaurant: 4, office: 3, cafe: 2, convenience: 1.5, hotel: 1, market: 1, mart: 1 },
+  // (N8 단계 5) 동물: 멧돼지(농가·하우스·펜션·주택·공원 …)·벌집(주택·학교 …)·개 물림(빌라·아파트 …)의 장소를 합친 표 (가축 탈출은 농가 곁 길 위 교차로 — 장소 표 밖)
+  animal: { farmhouse: 6, greenhouse: 2, pension: 4, houseS: 9, park: 5, campsite: 2, temple: 1.6, university: 0.5, villa: 4, apartment: 3, school: 2.5, market: 0.8 },
 };
 
 /** 현장을 만들 때 건물 종류가 정하는 것: 평면의 틀 비중 [복도형, 방 연결형, 홀형], 2층일 확률, 무장 사건의 장소 */

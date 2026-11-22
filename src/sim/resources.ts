@@ -78,7 +78,7 @@ const UNIT_DEFS: UnitDef[] = [
   // roster-v2:<호출부호>:<자리> 흐름의 자리는 차지한다(앞 사람은 바뀌지 않는다). 그 부대를 쓰는 단계가 편성 단계로 내린다:
   // 전력1·가스1·수도1 → 1 (4a·4b — 단계 4a 에 전력1, 4b 에 가스1·수도1 을 내렸다), 견인1 → 2 (6b), 포획1 → 1 (5), 형사1 → 2 (6a), 교통1 → 3 (6a), 경찰견1 → 3 (6a). 시청·물류터미널은 부대가 없던 출동 시설이다
   U('전력1', 'powerCrew', 'civil', '시청', 1), U('가스1', 'gasCrew', 'civil', '시청', 1), U('수도1', 'waterCrew', 'civil', '시청', 1), U('견인1', 'tow', 'civil', '물류터미널', 6),
-  U('포획1', 'animalCtl', 'special', '서부119안전센터', 6), U('형사1', 'detective', 'police', '중부경찰서', 6), U('교통1', 'trafficPol', 'police', '동부지구대', 6), U('경찰견1', 'k9', 'police', '서부지구대', 6),
+  U('포획1', 'animalCtl', 'special', '서부119안전센터', 1), U('형사1', 'detective', 'police', '중부경찰서', 6), U('교통1', 'trafficPol', 'police', '동부지구대', 6), U('경찰견1', 'k9', 'police', '서부지구대', 6),
   // (N9 §4.8 · §5.3.7) 새 부대 넷 — N8 줄 다음 끝에. minLevel 6 = 편성되지 않는다(단계 2 — 결과 불변). 소방 줄 셋(산악·수중·제독)도 펌프 상태(equipment 흐름)를
   // 편성 검사 전에 뽑지만 그 흐름은 이 뒤에 쓰는 곳이 없다. 그 부대를 쓰는 단계가 3 으로 내린다: 기동대1 → 4, 수중1 → 5, 제독1 → 6, 산악1 → 9
   U('산악1', 'mtnRescue', 'rescue', '서부119안전센터', 6), U('수중1', 'dive', 'rescue', '해양구조대', 6), U('제독1', 'deconUnit', 'special', '공단119안전센터', 6), U('기동대1', 'riotPol', 'police', '중부경찰서', 6),
@@ -222,6 +222,8 @@ export function createRoster(sim: Sim): void {
   drawBatchFaults(sim.rng.fork('kit-n9'), sim.responders, tn.kitFault, 'n9');
   // (R2 §3.3) 대응 방법의 고장 나는 장비(batch 'r2' — 고무보트·송풍기·에어백)도 따로 kit-r2 흐름에서 (역할 장비 끝에 붙여도 kit 의 뒤 장비 고장이 밀리지 않는다)
   drawBatchFaults(sim.rng.fork('kit-r2'), sim.responders, tn.kitFault, 'r2');
+  // (N8 단계 5) 마취총(batch 'n8')도 kit 의 추첨 순서에 끼지 않고 따로 kit-n8 흐름에서 (편성표 끝의 포획팀이 교대 흐름 kit 을 쓰면 그 뒤에 붙을 줄의 고장이 바뀐다)
+  drawBatchFaults(sim.rng.fork('kit-n8'), sim.responders, tn.kitFault, 'n8');
 }
 
 // 지원 부대의 이름: 지원 한 번에 네 칸씩 쓴다(지원 종류의 최소 인원은 많아야 4명). 지원은 교대당 많아야 5회, 재난 때 3회 더(disaster.ts) — 8회 × 4칸
@@ -297,7 +299,8 @@ export function createAidUnit(sim: Sim, key: keyof Needs, I: Incident): Unit | n
   if (HEAVY[kind]) u.heavy = true;
   drawFaults(rng, members, tn.kitFault);      // 펌프 상태 다음에 뽑는다 (같은 흐름 aid:<n> 의 끝)
   drawBatchFaults(sim.rng.fork('aid-n9:' + sim.aidUsed), members, tn.kitFault, 'n9');      // (N9) 잠수 장비는 따로 (지원 종류에는 그 장비를 든 자리가 없다 — 지금은 한 번도 뽑지 않는다)
-  drawBatchFaults(sim.rng.fork('aid-r2:' + sim.aidUsed), members, tn.kitFault, 'r2');      // (R2 §3.3) 대응 방법의 고장 나는 장비도 따로 (지원 구조대의 로프 대원이 든 고무보트)
+  drawBatchFaults(sim.rng.fork('aid-r2:' + sim.aidUsed), members, tn.kitFault, 'r2');
+  drawBatchFaults(sim.rng.fork('aid-n8:' + sim.aidUsed), members, tn.kitFault, 'n8');      // (N8 단계 5) 지원 포획팀의 마취총      // (R2 §3.3) 대응 방법의 고장 나는 장비도 따로 (지원 구조대의 로프 대원이 든 고무보트)
   primeNums(u, UNIT_SHAPE);      // (R3b N7)
   sim.units.push(u);
   return u;

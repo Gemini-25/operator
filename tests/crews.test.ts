@@ -39,7 +39,7 @@ function shiftOf(seed: string, d: Difficulty = NORMAL, force: string | null = nu
   return s;
 }
 /** 인근 도시 지원 부대를 수요마다 하나씩 만든다 (실제 지원 요청과 같은 길: createAidUnit → sim.aidUsed++) */
-const AID_KEYS: (keyof Needs)[] = ['suppression', 'rescue', 'ems', 'law', 'tactical', 'search', 'traffic', 'eod', 'utilPower', 'utilGas', 'utilWater'];      // (N8) 새 열쇠는 그 부대를 편성하는 단계에 — 4a 전력 · 4b 가스·수도
+const AID_KEYS: (keyof Needs)[] = ['suppression', 'rescue', 'ems', 'law', 'tactical', 'search', 'traffic', 'eod', 'utilPower', 'utilGas', 'utilWater', 'capture'];      // (N8) 새 열쇠는 그 부대를 편성하는 단계에 — 4a 전력 · 4b 가스·수도 · 5 포획
 function withAid(sim: Sim, keys: (keyof Needs)[] = AID_KEYS): Unit[] {
   const I = createIncident(sim, { type: 'fire', rng: sim.rng.fork('t') });
   const out: Unit[] = [];
@@ -398,7 +398,9 @@ describe('③ 능력과 장비가 어긋나지 않는다', () => {
         if (u.caps.eod >= 0.9) expect(anyKit(sim, u, ['eodKit']), `${tag}: 해체 공구`).toBe(true);
         if (u.caps.law >= 0.5) expect(deploying(sim, u).some((rid) => hasFirearm(sim, rid)), `${tag}: 총기`).toBe(true);
         if (u.caps.rescue >= 0.5) expect(anyKit(sim, u, ['irons', 'spreader', 'lightRescue', 'rope', 'ring']), `${tag}: 구조 장비`).toBe(true);
-        if (u.dept === 'fire' && u.kind !== 'boat') expect(anyKit(sim, u, ['scba']), `${tag}: 공기호흡기`).toBe(true);
+        if (u.dept === 'fire' && u.kind !== 'boat' && u.kind !== 'animalCtl') expect(anyKit(sim, u, ['scba']), `${tag}: 공기호흡기`).toBe(true);      // animalCtl: (N8 단계 5) 동물 포획팀은 소방 부서지만 공기호흡기를 들지 않는다 (위험한 건물 안에 들어가지 않는다)
+        if (u.caps.capture >= 0.7) expect(anyKit(sim, u, ['dart', 'catchpole']), `${tag}: 마취총 또는 올가미`).toBe(true);      // (N8 단계 5) 포획 ↔ 마취총·올가미
+        if (u.caps.suppression >= 0.7 && !AIR_KIND.has(u.kind)) expect(anyKit(sim, u, ['beeSuit']), `${tag}: 벌 보호복`).toBe(true);      // 진압 수요로 오는 지상 부대는 벌집을 뗄 사람이 있다 (관창수·로프 대원)
         if (u.caps.utilPower >= 0.7) expect(anyKit(sim, u, ['insulKit']), `${tag}: 절연 장비`).toBe(true);      // (N8 §5.3.3) 전력 복구 ↔ 절연 장비
         if (u.caps.utilGas >= 0.7 || u.caps.utilWater >= 0.7) expect(anyKit(sim, u, ['valveKey']), `${tag}: 밸브 키`).toBe(true);      // 가스·수도 복구 ↔ 밸브 키 (단계 4b)
         if (u.caps.search >= 0.3) expect(deploying(sim, u).length > 0 || AIR_KIND.has(u.kind), `${tag}: 내리는 대원이 있거나 상공 부대`).toBe(true);
@@ -2159,9 +2161,14 @@ describe('⑭ 소모와 고장', () => {
       for (const r of b.responders) for (const it of r.kit!) if (KITS[it.id].faultable && !KITS[it.id].batch && rng.chance(b.tune.kitFault)) want.push(r.name + ':' + it.id);
       const r2 = b.rng.fork('kit-r2'), want2: string[] = [];
       for (const r of b.responders) for (const it of r.kit!) if (KITS[it.id].faultable && KITS[it.id].batch === 'r2' && r2.chance(b.tune.kitFault)) want2.push(r.name + ':' + it.id);
-      const batch = (f: string): boolean => KITS[f.slice(f.lastIndexOf(':') + 1) as KitId].batch === 'r2';      // (R2 단계 3 부터 유압 대원의 에어백도)
-      expect(faults(b).filter((f) => !batch(f))).toEqual(want);
+      const batchOf = (f: string): string | undefined => KITS[f.slice(f.lastIndexOf(':') + 1) as KitId].batch;
+      const batch = (f: string): boolean => batchOf(f) === 'r2';      // (R2 단계 3 부터 유압 대원의 에어백도)
+      expect(faults(b).filter((f) => batchOf(f) === undefined)).toEqual(want);
       expect(faults(b).filter(batch)).toEqual(want2);
+      // (N8 단계 5) 동물 포획팀의 마취총도 따로 뽑는 묶음이다 (kit-n8 흐름)
+      const r8 = b.rng.fork('kit-n8'), want8: string[] = [];
+      for (const r of b.responders) for (const it of r.kit!) if (KITS[it.id].faultable && KITS[it.id].batch === 'n8' && r8.chance(b.tune.kitFault)) want8.push(r.name + ':' + it.id);
+      expect(faults(b).filter((f) => batchOf(f) === 'n8')).toEqual(want8);
     }
     expect(low, '장비 1 의 숨은 고장 > 장비 3 > 장비 5').toBeGreaterThan(mid); expect(mid).toBeGreaterThan(high);
     expect(mid / 30, '보통 난이도에서 교대당 1건 안팎').toBeGreaterThan(0.4); expect(mid / 30).toBeLessThan(2);
@@ -2361,7 +2368,7 @@ describe('⑦ 같은 사람 = 같은 능력', () => {
     // 표준 편성의 셋째 자리부터(와 새 줄의 모든 자리)가 EXTRA_NAMES 를 쓴다: 표의 이름이 모자라지 않다
     for (const r of sim.responders) expect(typeof r.name === 'string' && r.name.length >= 2, `이름 없음 (rid ${r.id})`).toBe(true);
     const aid = withAid(sim);      // 지원 한도는 5회, 재난 때 3회 더 (disaster.ts)
-    expect(aid.length).toBe(AID_KEYS.length);      // (N8) 열쇠는 부대를 편성하는 단계마다 늘어난다 (4a 전력 · 4b 가스·수도 — 11)
+    expect(aid.length).toBe(AID_KEYS.length);      // (N8) 열쇠는 부대를 편성하는 단계마다 늘어난다 (4a 전력 · 4b 가스·수도 · 5 포획 — 12)
     expect(new Set(sim.responders.map((r) => r.name)).size).toBe(sim.responders.length);
   });
   it('처음 20줄의 0·1번 자리 40명은 R1 전과 같은 기본 능력을 갖는다', () => {

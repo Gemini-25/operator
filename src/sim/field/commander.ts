@@ -763,6 +763,8 @@ function targetX(s: Scene, w: WorkItem, a: FieldAgent): number {
   if (w.region >= 0) return s.regions[w.region].cx;
   if (w.cas >= 0) { const c = a.beliefs.val<CasBelief>('cas', w.cas); if (c) return c.x; }
   if (w.kind === 'traffic') return s.controlPts[w.tile].x;
+  if (w.kind === 'cordon') return w.tile % s.w;      // (N8 §5.10) 통제의 대상은 격자 칸 번호
+  if ((w.animal ?? -1) >= 0) { const v = a.beliefs.val<{ x: number }>('ani', w.animal!); if (v) return v.x; }      // (N8 단계 5) 믿음 속 동물의 자리
   if (w.kind === 'perimeter') return s.exits[w.tile].x;
   if (w.kind === 'hookup' || w.kind === 'load') return s.staging.x;
   if (w.kind === 'treatMate') { const m = a.beliefs.val<MateBelief>('mate', w.mate); if (m) return m.x; }
@@ -775,6 +777,8 @@ function targetY(s: Scene, w: WorkItem, a: FieldAgent): number {
   if (w.region >= 0) return s.regions[w.region].cy;
   if (w.cas >= 0) { const c = a.beliefs.val<CasBelief>('cas', w.cas); if (c) return c.y; }
   if (w.kind === 'traffic') return s.controlPts[w.tile].y;
+  if (w.kind === 'cordon') return (w.tile / s.w) | 0;
+  if ((w.animal ?? -1) >= 0) { const v = a.beliefs.val<{ y: number }>('ani', w.animal!); if (v) return v.y; }
   if (w.kind === 'perimeter') return s.exits[w.tile].y;
   if (w.kind === 'hookup' || w.kind === 'load') return s.staging.y;
   if (w.kind === 'treatMate') { const m = a.beliefs.val<MateBelief>('mate', w.mate); if (m) return m.y; }

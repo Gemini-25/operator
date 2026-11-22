@@ -6,9 +6,12 @@
 import type { Sim } from '../engine';
 import type { Rng } from '../rng';
 import { T } from '../types';
-import type { Incident, Scene } from '../types';
+import type { Animal, Incident, Scene } from '../types';
 import { buildArmed, buildFire, buildMedical, buildWater } from './builders';
-import { SW, addRegion, baseScene, set } from './kit';
+import { addProp } from './kit';
+import { SH, SW, addRegion, baseScene, set } from './kit';
+import { ANIMAL } from './animals';
+import { ANIMAL_SHAPE, primeNums } from '../shape';
 
 /**
  * 아무 일도 없는 현장 — 그 유형의 장소 틀을 그대로 쓰고 사건만 뺀다:
@@ -57,5 +60,102 @@ export function streetFrame(sim: Sim, I: Incident, rng: Rng, opt: { lanes: boole
     let cong = 1.2; for (const eid of node.edges) cong = Math.max(cong, sim.city.edges[eid].cong);
     s.trafficFlow = cong / 2.6; s.nextCarAt = sim.t + 6;
   } else { s.trafficFlow = 0; s.nextCarAt = Infinity; }
+  return s;
+}
+
+// ───────────────────────── 동물 (N8 §4.3 — 단계 5) ─────────────────────────
+/** 동물 하나를 놓는다 — 동물을 만드는 곳은 여기 하나 (모든 칸을 같은 순서로 채운다 — CLAUDE.md "자주 도는 객체의 모양") */
+export function addAnimal(s: Scene, kind: Animal['kind'], x: number, y: number, rng: Rng, bull = false): Animal {
+  const list = (s.animals ??= []);
+  const n = list.filter((q) => q.kind === kind).length;
+  const a: Animal = {
+    id: list.length, kind, label: `${ANIMAL[kind].name}${bull ? '(황소)' : ''} ${n + 1}`,
+    x, y, px: x, py: y, facing: rng.range(0, Math.PI * 2), path: null, pathI: 0,
+    state: 'roam', agit: kind === 'dog' ? rng.range(0.25, 0.4) : rng.range(0.1, 0.3), sedate: 0, via: null, bull,
+  };
+  primeNums(a, ANIMAL_SHAPE);
+  list.push(a);
+  return a;
+}
+/** 바깥 칸 하나를 고른다 (걸을 수 있고 소품이 없고 사람·동물이 없는 칸) — 사각 범위 안에서 */
+export function freeGround(s: Scene, rng: Rng, x0: number, y0: number, x1: number, y1: number): number {
+  for (let k = 0; k < 60; k++) {
+    const x = rng.int(x0, x1), y = rng.int(y0, y1), i = y * s.w + x;
+    if (s.tiles[i] !== T.GROUND || s.propAt[i] >= 0) continue;
+    if (s.casualties.some((c) => Math.round(c.x) === x && Math.round(c.y) === y)) continue;
+    if (s.animals && s.animals.some((a) => Math.round(a.x) === x && Math.round(a.y) === y)) continue;
+    return i;
+  }
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { const i = y * s.w + x; if (s.tiles[i] === T.GROUND && s.propAt[i] < 0) return i; }
+  return y0 * s.w + x0;
+}
+/**
+ * 농가·들의 틀 (멧돼지): 위쪽 숲 가장자리(나무 — 산·들로 이어지는 출구 둘), 가운데 밭과 집 두 채(벽 덩어리)·울타리, 아래쪽 찻길(y 17~19 — 양 끝이 찻길 출구 둘).
+ * 출구 넷의 종류(s.exitKind)는 [산, 산, 찻길, 찻길]. 대기 지점은 찻길 가운데, 안전한 곳은 집 곁. 바깥 구역 셋(수색할 수 있다 — 동물을 못 찾았을 때 지휘 규칙이 낸다)
+ */
+export function farmFrame(sim: Sim, I: Incident, rng: Rng): Scene {
+  const s = baseScene(sim, I, rng);
+  for (let x = 0; x < SW; x++) {
+    for (let y = 17; y < SH; y++) set(s, x, y, T.ROAD);
+    for (let y = 0; y <= 2; y++) if (rng.chance(0.45) && x !== 7 && x !== 8 && x !== 21 && x !== 22) set(s, x, y, T.TREE);
+  }
+  for (let y = 5; y <= 8; y++) for (let x = 3; x <= 8; x++) set(s, x, y, T.WALL);       // 집 1
+  for (let y = 11; y <= 14; y++) for (let x = 22; x <= 27; x++) set(s, x, y, T.WALL);   // 집 2
+  for (let x = 12; x <= 17; x++) set(s, x, 11, T.WALL);                                  // 울타리 한 토막
+  s.outdoor = true;
+  s.staging = { x: 15, y: 18 }; s.safe = { x: 10, y: 9 }; s.vantage = { x: 15, y: 15 };
+  addRegion(s, '숲 가장자리', 'zone', 0, 0, SW - 1, 2, false, true);
+  addRegion(s, '밭', 'zone', 0, 3, SW - 1, 15, false, true);
+  addRegion(s, '찻길', 'zone', 0, 16, SW - 1, SH - 1, false, false);
+  s.exits = [{ x: 7, y: 0 }, { x: 22, y: 0 }, { x: 0, y: 18 }, { x: SW - 1, y: 18 }];
+  s.exitKind = ['wild', 'wild', 'road', 'road'];
+  s.spots = [{ x: 7, y: 2, exit: 0, taken: -1 }, { x: 22, y: 2, exit: 1, taken: -1 }, { x: 2, y: 17, exit: 2, taken: -1 }, { x: SW - 3, y: 17, exit: 3, taken: -1 }, { x: 15, y: 15, exit: -1, taken: -1 }];
+  s.trafficFlow = 0; s.nextCarAt = Infinity;
+  return s;
+}
+/**
+ * 집과 마당의 틀 (벌집): 위쪽 집(벽 · 바닥 · 현관문 — 안쪽이 안전한 곳), 처마 밑 마당, 아래쪽 길(y 17~19). 출구 둘(마당 양 끝). 벌집 자리는 현장 생성기가 정한다
+ */
+export function yardFrame(sim: Sim, I: Incident, rng: Rng): Scene {
+  const s = baseScene(sim, I, rng);
+  for (let x = 0; x < SW; x++) for (let y = 17; y < SH; y++) set(s, x, y, T.ROAD);
+  for (let y = 2; y <= 7; y++) for (let x = 6; x <= 23; x++) set(s, x, y, y === 2 || y === 7 || x === 6 || x === 23 ? T.WALL : T.FLOOR);
+  for (const x of [9, 12, 17, 20]) set(s, x, 7, T.WINDOW);
+  set(s, 14, 7, T.DOOR);
+  const inside = addRegion(s, '집 안', 'room', 7, 3, 22, 6, true, false);
+  addProp(s, 'door', 14, 7, { open: true }); s.region[7 * s.w + 14] = inside.id; inside.tiles.push(7 * s.w + 14);
+  s.outdoor = true;
+  s.staging = { x: 3, y: 18 }; s.safe = { x: 14, y: 4 }; s.vantage = { x: 14, y: 14 };
+  addRegion(s, '마당', 'zone', 0, 8, SW - 1, 16, false, true);
+  addRegion(s, '길', 'zone', 0, 17, SW - 1, SH - 1, false, false);
+  s.exits = [{ x: 0, y: 12 }, { x: SW - 1, y: 12 }];
+  s.spots = [{ x: 2, y: 12, exit: 0, taken: -1 }, { x: SW - 3, y: 12, exit: 1, taken: -1 }, { x: 14, y: 14, exit: -1, taken: -1 }];
+  s.trafficFlow = 0; s.nextCarAt = Infinity;
+  return s;
+}
+/**
+ * 주택가 골목의 틀 (개 물림): 집 덩어리 여섯(벽) 사이로 골목 — 세로 골목 둘(x 8~11 · 18~21)·가운데 길(y 7~10)·아래 골목(y 16), 아래쪽 찻길(y 17~19).
+ * 위쪽 골목 끝 둘은 뒷산(산 출구), 가운데 길 양 끝은 찻길 출구. 숨을 자리(s.kinds.hides)는 골목 끝·모퉁이. 골목 구역 넷은 수색할 수 있다
+ */
+export function alleyFrame(sim: Sim, I: Incident, rng: Rng): Scene {
+  const s = baseScene(sim, I, rng);
+  for (let x = 0; x < SW; x++) for (let y = 17; y < SH; y++) set(s, x, y, T.ROAD);
+  const blocks: [number, number, number, number][] = [[1, 1, 7, 6], [12, 1, 17, 6], [22, 1, 28, 6], [1, 11, 7, 15], [12, 11, 17, 15], [22, 11, 28, 15]];
+  for (const [x0, y0, x1, y1] of blocks) for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) set(s, x, y, T.WALL);
+  for (const [x0, , x1, y1] of blocks) for (let x = x0 + 1; x < x1; x += 3) set(s, x, y1, T.WINDOW);
+  s.outdoor = true;
+  s.staging = { x: 15, y: 18 }; s.safe = { x: 10, y: 16 }; s.vantage = { x: 15, y: 9 };
+  addRegion(s, '서쪽 골목', 'zone', 8, 0, 11, 6, false, true);
+  addRegion(s, '동쪽 골목', 'zone', 18, 0, 21, 6, false, true);
+  addRegion(s, '가운데 길', 'zone', 0, 7, SW - 1, 10, false, true);
+  addRegion(s, '아래 골목', 'zone', 0, 11, SW - 1, 16, false, true);
+  addRegion(s, '찻길', 'zone', 0, 17, SW - 1, SH - 1, false, false);
+  s.exits = [{ x: 9, y: 0 }, { x: 20, y: 0 }, { x: 0, y: 8 }, { x: SW - 1, y: 9 }];
+  s.exitKind = ['wild', 'wild', 'road', 'road'];
+  s.spots = [{ x: 9, y: 2, exit: 0, taken: -1 }, { x: 20, y: 2, exit: 1, taken: -1 }, { x: 2, y: 8, exit: 2, taken: -1 }, { x: SW - 3, y: 9, exit: 3, taken: -1 }, { x: 15, y: 9, exit: -1, taken: -1 }];
+  const hides: number[] = [];
+  for (const [x, y] of [[11, 1], [18, 1], [8, 14], [21, 13], [0, 12], [SW - 1, 14], [11, 12]]) { const i = y * s.w + x; if (s.tiles[i] === T.GROUND) hides.push(i); }
+  s.kinds = { hides };
+  s.trafficFlow = 0; s.nextCarAt = Infinity;
   return s;
 }

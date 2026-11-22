@@ -250,6 +250,9 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   // (N8 §4.2 · §5.3.6) 유관 기관 지연 — 복구반이 오지 못해 대신한 조치(원격 차단 · 소방의 제수밸브)로 끝냈다: 지원 지연 바로 다음 자리 (같은 까닭으로 여기서 끼운다)
   order.splice(order.indexOf('BACKUP_LATE') + 1, 0, 'UTIL_LATE');
   T.UTIL_LATE = (ps) => `${ps[0].detail}${ps[0].recovered ? ` — ${ps[0].recoveryText}` : ' — 끝내 대신하지 못했습니다'}.`;
+  // (N8 §4.3 — 단계 5) 동물 놓침 — 찻길로 달아난 동물: 용의자 도주 바로 다음 자리
+  order.splice(order.indexOf('SUSPECT_FLED') + 1, 0, 'ANIMAL_LOST');
+  T.ANIMAL_LOST = (ps) => `${ps.map((p) => p.detail).join(', ')} — 찻길에서 사고로 이어질 수 있습니다.`;
   for (const code of order) {
     const ps = I.problems.filter((p) => p.code === code);
     if (!ps.length || A.length >= 9) continue;
@@ -282,6 +285,15 @@ export function evaluate(sim: Sim, I: Incident, reason: string): IncidentResult 
   if (truth.type === 'utility') {      // (N8 §4.2) 시설 사고의 머리글 — 시설물이 남았는가 · 대신한 조치였는가 (기록된 문제와 시설물의 상태로)
     const live = s.props.some((p) => p.kind === 'fixture' && p.live === true), late = I.problems.some((p) => p.code === 'UTIL_LATE');
     hl.push(`${UTIL_HEAD[truth.variant] ?? '시설 사고'} — ${live ? '위험이 남은 채 종료' : late ? '대신한 조치로 위험 제거' : '복구 완료'}`);
+  }
+  if (truth.type === 'animal') {      // (N8 §4.3) 동물의 머리글 — 동물의 끝 상태(포획·잠듦·나감)와 벌집으로
+    const an = s.animals ?? [];
+    if (truth.variant === 'hive') hl.push(s.props.some((p) => p.kind === 'fixture' && p.skin === 'hive' && p.live === true) ? '벌집 — 제거하지 못한 채 종료' : '벌집 제거');
+    else if (an.length) {
+      const nm = an[0].label.replace(/\(황소\)/, '').replace(/ \d+$/, ''), got = an.filter((x) => x.state === 'caught' || x.state === 'sedated').length;
+      const wild = an.filter((x) => x.state === 'gone' && x.via === 'wild').length, road = an.filter((x) => x.state === 'gone' && x.via === 'road').length;
+      hl.push(`${nm} ${an.length}마리 가운데 ${got}마리 포획${wild ? ` · ${wild}마리 산 쪽으로 쫓아냄` : ''}${road ? ` · ${road}마리 찻길로 놓침` : ''}`);
+    }
   }
   if (benign) hl.push(truth.variant === 'prank' ? (screened ? '장난 전화 — 접수 단계에서 가려냄' : '장난 전화 — 실제 사건 없음') : FALSE_HEAD[truth.type] ?? FALSE_HEAD.fire!);
   else if (cas.length) hl.push(`요구조자 ${cas.length}명 중 ${saved}명 구조${lost ? `, ${lost}명 사망` : ''}${undiscovered ? `, ${undiscovered}명 미발견` : ''}${left ? `, ${left}명 구조 미완료` : ''}`);

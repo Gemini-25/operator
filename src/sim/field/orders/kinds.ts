@@ -10,7 +10,7 @@ import { staticPass } from '../grid';
 import { registerBlocker, registerCasHold, registerOrders, registerPending } from '../sceneRegistry';
 import { ATTACH_GAS } from '../../scenarios/kinds';
 import { VALVE_LATE } from '../agents';
-import type { CasBelief, FieldAgent, Scene } from '../../types';
+import type { AniBelief, CasBelief, FieldAgent, Scene } from '../../types';
 
 /** 오인 신고의 판단을 알린 현장 (기록은 한 번 — 늦게 닿은 수색 보고가 확인율을 낮추면 믿음만 조용히 다시 고친다). 객체 모양을 바꾸지 않으려고 WeakSet */
 const TOLD = new WeakSet<Scene>();
@@ -178,4 +178,121 @@ registerOrders((sim, s, I, a, k) => {
     const w = k.want('repair', { prop: f.id }, 0.5);
     if (w.id >= 0 && !onScene && sim.t - w.createdAt > GAS_WAIT) { GAS_GIVEUP.add(s); k.cancel((q) => q.kind === 'repair' && q.prop === f.id); }
   }
+});
+
+// ───────────────────────── 동물 (§4.3 — 단계 5) ─────────────────────────
+// 믿음의 'ani' 사실(동물 — id 는 동물의 id)과 haz 의 벌집(id 는 소품 id)만 읽는다. 생김새: s.exits·s.exitKind(출구의 종류)·구역(s.regions)·칸(s.tiles).
+
+/** 동물의 위험 반경 (칸 — 이 안의 사람에게 가는 일은 보류한다) */
+export const ANI_R = 3;
+/**
+ * 동물 현장의 통제 우선순위 (설계서 §4.3 의 0.8 에서 낮췄다): 포획(0.88)이 통제보다 0.22 넘게 높아야 통제에 선 포획팀을 빼 온다.
+ * 0.8 이면 먼저 내린 포획팀이 찻길 출구를 지키다 올가미가 실패한 뒤 마취총을 든 팀장이 영영 포획을 맡지 못했다(강제 멧돼지 20교대의 한계 시간 14건)
+ */
+export const ANI_CORDON = 0.62;
+/** 이 지휘관이 아는 풀린 동물(자리를 아는) 또는 살아 있는 벌집의 반경 안인가 (믿음만 — 사람 보류의 반경) */
+function inAnimalHaz(a: FieldAgent, x: number, y: number): boolean {
+  for (const f of a.beliefs.list('ani')) {
+    const v = f.value as AniBelief;
+    if (v.state !== 'loose' || v.lost) continue;
+    if ((x - v.x) * (x - v.x) + (y - v.y) * (y - v.y) <= ANI_R * ANI_R) return true;
+  }
+  for (const f of a.beliefs.list('haz')) {
+    const v = f.value as HazV;
+    if (v.kind !== 'hive' || !v.active) continue;
+    const r = v.r ?? 3;
+    if ((x - v.x) * (x - v.x) + (y - v.y) * (y - v.y) <= r * r) return true;
+  }
+  return false;
+}
+/** 출구 k 앞의 통제 칸: 출구 칸에서 안쪽으로 한 칸 (걸을 수 없으면 출구 칸) — 생김새만 */
+function exitPost(s: Scene, k: number): number {
+  const e = s.exits[k];
+  const x = Math.max(1, Math.min(s.w - 2, e.x)), y = Math.max(1, Math.min(s.h - 2, e.y));
+  const i = y * s.w + x;
+  return staticPass(s.tiles[i]) ? i : e.y * s.w + e.x;
+}
+/** 벌집을 떼어 내는 동안의 반경 (보이는 대로 — 세계 규칙의 4.5 와 같다. 통제는 그 밖에 선다) */
+const HIVE_WIDE = 4.5;
+/** 벌집 둘레의 통제 자리 둘 (떼어 낼 때 커지는 반경 + 1 의 좌우 — 걸을 수 있는 칸으로 민다) */
+function hivePosts(s: Scene, v: HazV): number[] {
+  const out: number[] = [], r = Math.max(v.r ?? 3, HIVE_WIDE) + 1;
+  for (const dir of [-1, 1]) {
+    let x = Math.round(v.x + dir * r);
+    const y = Math.min(s.h - 2, Math.round(v.y) + 1);
+    for (let k = 0; k < 4 && x > 0 && x < s.w - 1 && !staticPass(s.tiles[y * s.w + x]); k++) x += dir;
+    if (x > 0 && x < s.w - 1 && staticPass(s.tiles[y * s.w + x])) out.push(y * s.w + x);
+  }
+  return out;
+}
+
+/**
+ * (5 §4.3) 동물 현장의 지휘 규칙: 풀린 동물(자리를 아는)마다 ① 찻길 출구의 통제 cordon(0.8 — 경찰의 적합도가 높아 경찰이 먼저 선다) ③ 포획 capture(0.88 · 잠든 동물은 0.9)
+ * ④ 반경 3칸 안의 구조 대상 보류(registerCasHold) — 보류가 시작되는 주기에 이미 열린 그 사람의 일을 한 번 거둔다. 잡혔거나 나간 동물의 포획은 거둔다.
+ * 벌집(haz hive)이 살아 있으면 좌우 통제 둘(0.8)과 떼어 내기 capture(0.88 — 보호복을 든 대원만 맞는다). 동물도 벌집도 하나도 모르거나(현장 평가 뒤), 자리를 잃은 동물이 있으면
+ * 수색할 수 있는 바깥 구역을 수색한다(목격자가 가리킨 구역 0.8, 나머지 0.5 — 확인율 0.72 넘으면 내지 않는다)
+ */
+registerOrders((sim, s, I, a, k) => {
+  if (s.kind !== 'animal') return;
+  void I;
+  const B = a.beliefs;
+  const keep: number[] = [];
+  let known = 0, lost = false, loose = 0;
+  for (const f of B.list('haz')) {
+    const v = f.value as HazV;
+    if (v.kind !== 'hive') continue;
+    known++;
+    if (v.active) { for (const t of hivePosts(s, v)) { keep.push(t); k.want('cordon', { tile: t }, ANI_CORDON); } k.want('capture', { prop: f.id }, 0.88); }
+    else k.cancel((w) => w.kind === 'capture' && w.prop === f.id);
+  }
+  for (const f of B.list('ani')) {
+    const v = f.value as AniBelief;
+    known++;
+    if (v.state === 'caught' || v.state === 'gone') { k.cancel((w) => w.kind === 'capture' && (w.animal ?? -1) === f.id); continue; }
+    if (v.lost) { lost = true; k.cancel((w) => w.kind === 'capture' && (w.animal ?? -1) === f.id && w.status === 'open'); continue; }
+    if (v.state === 'loose') loose++;
+    k.want('capture', { animal: f.id }, v.state === 'sedated' ? 0.9 : 0.88);
+  }
+  if (loose > 0 && s.exitKind) for (let e = 0; e < s.exits.length; e++) if (s.exitKind[e] === 'road') { const t = exitPost(s, e); keep.push(t); k.want('cordon', { tile: t }, ANI_CORDON); }
+  k.cancel((w) => w.kind === 'cordon' && keep.indexOf(w.tile) < 0);
+  // 찾기: 아무것도 모르거나(현장 평가 뒤) 자리를 잃은 동물이 있다
+  if ((known === 0 && s.sizeupDone) || lost) {
+    const seen = B.val<{ region: number }>('seen', 0);
+    for (const r of s.regions) {
+      if (!r.searchable || r.indoor) continue;
+      if ((B.val<number>('srch', r.id) ?? -1) >= 0.72) continue;
+      k.want('search', { region: r.id }, seen && seen.region === r.id ? 0.8 : 0.5);
+    }
+  } else k.cancel((w) => w.kind === 'search' && w.status === 'open');
+  // 보류된 사람에게 이미 열려 있던 핵심 규칙의 일을 거둔다 (보류가 시작된 뒤에는 핵심 규칙이 다시 내지 않는다)
+  for (const f of B.list('cas')) {
+    const c = f.value as CasBelief;
+    if (c.where !== 'scene' || !inAnimalHaz(a, c.x, c.y)) continue;
+    k.cancel((w) => w.cas === f.id && w.status === 'open' && HOLD_KINDS.has(w.kind));
+  }
+});
+/** (§5.7 · §5.10) 믿음 속 풀린 동물 3칸 · 살아 있는 벌집 반경 안의 사람: 핵심 규칙이 구출·처치·이송·동행·탑승을 내지 않는다 (fitBase 의 반경 줄과 함께) */
+registerCasHold((sim, s, a, id, c) => { void sim; void id; return s.kind === 'animal' && c.where === 'scene' && inAnimalHaz(a, c.x, c.y); });
+/**
+ * 풀린 동물(자리를 아는)·잠든 동물·살아 있는 벌집이 있다고 믿으면 끝내지 않는다. 아무것도 모르면 수색할 바깥 구역이 남아 있는 동안 끝내지 않는다
+ * (자리를 잃은 동물은 찾을 곳을 다 보면 막지 않는다 — 판정이 남은 동물을 위험으로 센다)
+ */
+registerBlocker((sim, s, a) => {
+  void sim;
+  if (s.kind !== 'animal') return false;
+  const B = a.beliefs;
+  let known = 0, lost = false;
+  for (const f of B.list('haz')) { const v = f.value as HazV; if (v.kind !== 'hive') continue; known++; if (v.active) return true; }
+  for (const f of B.list('ani')) { const v = f.value as AniBelief; known++; if (v.lost) { lost = true; continue; } if (v.state === 'loose' || v.state === 'sedated') return true; }
+  if (known > 0 && !lost) return false;
+  for (const r of s.regions) if (r.searchable && !r.indoor && (B.val<number>('srch', r.id) ?? -1) < 0.72) return true;
+  return false;
+});
+/** (§5.7) 마지막 부대가 떠났는데 풀린 동물(자리를 아는)이 남았다 → 포획, 살아 있는 벌집 → 진압(관창수의 보호복) */
+registerPending((sim, s, a) => {
+  void sim;
+  if (s.kind !== 'animal') return null;
+  for (const f of a.beliefs.list('ani')) { const v = f.value as AniBelief; if ((v.state === 'loose' || v.state === 'sedated') && !v.lost) return 'capture'; }
+  for (const f of a.beliefs.list('haz')) { const v = f.value as HazV; if (v.kind === 'hive' && v.active) return 'suppression'; }
+  return null;
 });

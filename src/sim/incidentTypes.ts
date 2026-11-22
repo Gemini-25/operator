@@ -13,7 +13,8 @@ import type { IncidentType, InjuryCause, Needs, Scene, Topic } from './types';
  * 새 유형은 **끝에만** 붙인다(중간에 끼우면 평소 추첨과 분석의 결과가 모두 바뀐다).
  */
 export const TYPE_ORDER: readonly IncidentType[] = ['fire', 'traffic', 'search', 'armed', 'medical', 'collapse', 'hazmat', 'water',
-  'utility'];      // (N8 단계 4a) 시설 사고 — 평소 추첨 가중 0 (짧은 사건 흐름 daily 로만 나온다)
+  'utility',      // (N8 단계 4a) 시설 사고 — 평소 추첨 가중 0 (짧은 사건 흐름 daily 로만 나온다)
+  'animal'];      // (N8 단계 5) 동물 — 평소 추첨 가중 0 (짧은 사건 흐름으로만)
 
 /** 유형 → TYPE_ORDER 의 자리 (분석 AI 의 숫자 색인 lp[…] 대신) */
 export const typeIdx = {} as Record<IncidentType, number>;
@@ -109,6 +110,15 @@ export const TYPE_DEFS: Record<IncidentType, TypeDef> = {
     topicValue: { hazard: 0.9, injured: 0.8, trapped: 0.7, count: 0.4 },
     trappedYes: '차 안에 사람이 못 나오고 있어요.', trappedNo: '사람은 다 피했어요.',
     baseNeeds: { suppression: 1, traffic: 1 }, cause: 'electric', floorHp: 0,
+  },
+  // ── (N8 단계 5 — 설계서 §4.1) 동물: 멧돼지·벌집·개 물림·가축 탈출. 대상이 사람이 아닌 움직이는 것 — 몰아 가두고 쏘지 않는다. 짧은 사건 흐름(daily)으로만(평소 가중 0) ──
+  animal: {
+    name: '동물', limit: 330, respLimit: 120, delay: [2, 8], follow: 0.4, weight: 0, atNode: 0.9, alwaysShow: false,
+    indoorRisk: false, roomSearch: false, zoneSearch: false, wander: false, outdoor: true,
+    question: { trapped: '사람이 갇혀 있습니까?', hazard: '동물이 사람에게 달려듭니까?', detail: '몇 마리이고 어디로 갔습니까?' },
+    topicValue: { detail: 0.85, injured: 0.8, hazard: 0.7, count: 0.5 },
+    trappedYes: '사람이 못 움직이고 있어요.', trappedNo: '다들 피했어요.',
+    baseNeeds: { law: 1 }, cause: 'animal', floorHp: 0,
   },
 };
 

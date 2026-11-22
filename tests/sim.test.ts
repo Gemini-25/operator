@@ -253,7 +253,8 @@ describe('신고 접수 확장과 새 사건 유형', () => {
     for (const s of sims) for (const I of s.incidents) {
       if (I.truth.variant !== 'false' && I.truth.variant !== 'prank') continue;
       n++;
-      expect(s.scenes[I.id]!.casualties.length).toBe(0);
+      // (N8 단계 3 N2) 응급 오인 신고의 잠든 사람(체력 95 — 깨어나 걸어서 귀가)은 구조 대상이지만 다치지 않았다: 인명 피해 = 다친(체력 90 아래)·숨진 사람
+      expect(s.scenes[I.id]!.casualties.filter((c) => c.dead || c.health < 90).length).toBe(0);
       expect(I.problems.some((p) => p.code === 'FALSE_ALARM')).toBe(true);
       expect(I.result!.outcome === 'success' || I.result!.outcome === 'delayed').toBe(true);
     }
@@ -285,7 +286,7 @@ describe('신고 접수 확장과 새 사건 유형', () => {
   it('부대 규모 손잡이가 편성을 바꾸되 같은 대원의 능력치는 유지한다', async () => {
     const { NORMAL } = await import('../src/sim/difficulty');
     const small = new Sim('R', { ...NORMAL, resources: 1 }), base = new Sim('R'), big = new Sim('R', { ...NORMAL, resources: 5 });
-    expect(small.units.length).toBe(15); expect(base.units.length).toBe(22); expect(big.units.length).toBe(25);      // 기본 편성부터 경찰 헬기·의료 헬기가 더해진다 (R1) · (N8 단계 4a·4b) 전력·가스·수도 복구반이 모든 규모에
+    expect(small.units.length).toBe(16); expect(base.units.length).toBe(23); expect(big.units.length).toBe(26);      // 기본 편성부터 경찰 헬기·의료 헬기가 더해진다 (R1) · (N8 단계 4a·4b) 전력·가스·수도 복구반이 모든 규모에 · (단계 5) 동물 포획팀도
     // 총원은 편성표에서 계산한다: 부대 종류마다 2~5명 (crews.ts 의 STAFF — 부대 규모 3~5 는 표준 인원)
     const { STAFF } = await import('../src/sim/crews');
     const total = big.units.reduce((n, u) => n + STAFF[u.kind].std.length, 0);

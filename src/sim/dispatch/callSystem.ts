@@ -61,9 +61,10 @@ export const NATURE_LIK: Record<string, LikMap> = {
   explosion: { fire: 0.46, traffic: 0.27, search: 0.02, armed: 0.24, medical: 0.01, collapse: 0.12, hazmat: 0.18, water: 0.01 },
   crash: { fire: 0.03, traffic: 0.93, search: 0.01, armed: 0.02, medical: 0.01, collapse: 0.02, hazmat: 0.01, water: 0.01 },
   bang: { fire: 0.22, traffic: 0.46, search: 0.02, armed: 0.28, medical: 0.02, collapse: 0.2, hazmat: 0.04, water: 0.02,
-    utility: 0.08 },      // (N8 §4.1) 전선이 끊어지는 소리·간판 낙하
+    utility: 0.08, animal: 0.03 },      // (N8 §4.1) 전선이 끊어지는 소리·간판 낙하 · (단계 5) 가축이 도로에 나온 소리
   missing: { fire: 0.01, traffic: 0.01, search: 0.96, armed: 0.01, medical: 0.01, collapse: 0.01, hazmat: 0.01, water: 0.03 },
-  scream: { fire: 0.18, traffic: 0.18, search: 0.1, armed: 0.42, medical: 0.12, collapse: 0.06, hazmat: 0.04, water: 0.07 },
+  scream: { fire: 0.18, traffic: 0.18, search: 0.1, armed: 0.42, medical: 0.12, collapse: 0.06, hazmat: 0.04, water: 0.07,
+    animal: 0.06 },      // (N8 §4.1 — 단계 5) 비명의 원인이 넓어진다 (치안·보호·구조의 열은 그 유형의 단계가 더한다)
   gunshots: { fire: 0.02, traffic: 0.02, search: 0.01, armed: 0.94, medical: 0.01, collapse: 0.01, hazmat: 0.01, water: 0.01 },
   robbery: { fire: 0.01, traffic: 0.01, search: 0.01, armed: 0.96, medical: 0.01, collapse: 0.01, hazmat: 0.01, water: 0.01 },
   fight: { fire: 0.03, traffic: 0.05, search: 0.02, armed: 0.86, medical: 0.04, collapse: 0.01, hazmat: 0.01, water: 0.01 },

@@ -93,6 +93,8 @@ const CIVIL_KEYS: ReadonlySet<keyof Needs> = new Set<keyof Needs>(['utilPower', 
 export const LABEL_BONUS: { label: string; key: keyof Needs; kind?: UnitKind; kit?: KitId; bonus: number }[] = [
   // ── (N8 §5.3.4 — 단계 4b) 시설 사고의 이름표: 떨어질 듯한 간판의 진압 수요에 사다리차, 구조 수요에 로프 · 싱크홀의 구조 수요에 구조대 ──
   { label: '떨어질 듯한 간판', key: 'suppression', kind: 'ladder', bonus: 12 }, { label: '싱크홀', key: 'rescue', kind: 'rescue', bonus: 15 }, { label: '떨어질 듯한 간판', key: 'rescue', kit: 'rope', bonus: 10 },
+  // ── (N8 §5.3.4 — 단계 5) 동물의 이름표: 가축 탈출의 교통 수요에 교통 경찰 (편성은 단계 6a — 그 전에는 걸리지 않는다) ──
+  { label: '가축 탈출', key: 'traffic', kind: 'trafficPol', bonus: 8 },
   // ── (N9 §5.3.3) 큰 사건의 이름표 — 단계 2 에 줄을 넣는다. 이름표를 내는 시나리오(N9 단계 4~9)가 아직 없고, 줄이 앞세우는 새 부대는 편성되지 않았다 —
   //    걸리는 줄이 없어 결과가 바뀌지 않는다('집단 난동'(폭동 — 지금 있는 이름표)의 줄은 기동대에만 붙는다). 이름표는 설계서 §4.0 의 글자 그대로 ──
   { label: '압사 위험', key: 'law', kind: 'riotPol', bonus: 25 }, { label: '시위 충돌', key: 'law', kind: 'riotPol', bonus: 25 },

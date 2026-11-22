@@ -73,7 +73,7 @@ export function mrng(sim: Sim, s: Scene, a: FieldAgent): Rng {
 }
 
 /** 임무의 대상 (문·잔해 하위 작업이면 그 하위 작업을 넘긴다 — tile 과 prop) */
-export function targetOf(t: Task): MTarget { return { cas: t.cas, prop: t.prop, hostile: t.hostile, region: t.region, tile: t.tile }; }
+export function targetOf(t: Task): MTarget { return { cas: t.cas, prop: t.prop, hostile: t.hostile, region: t.region, tile: t.tile, animal: t.animal ?? -1 }; }
 
 /** 접은 방법을 기억하는 시간(초): 실패 60 · 조건 상실 15 · 고장은 끝까지 */
 export const FAIL_KEEP: Record<'failed' | 'broken' | 'tooFar' | 'team', number> = { failed: 60, broken: Infinity, tooFar: 15, team: 15 };

@@ -74,6 +74,8 @@ export const HOSTILE_SHAPE = shapeSite(
   ['x', 'y', 'px', 'py', 'health', 'morale', 'aggression', 'skill', 'fleeAt', 'facing', 'lookAt', 'deadline', 'cooldown', 'negot', 'stunUntil',
     'alertUntil', 'shotAt', 'moveAt', 'bleed', 'bleed0', 'treatQ', 'tTreated', 'tDown', 'tDead', 'hideUntil'],
   ['state', 'hidden', 'path', 'retreated', 'dragging', 'stunHow', 'where', 'dead', 'injuries', 'weapon', 'label']);
+/** (N8 단계 5) kindsKit.addAnimal 의 동물 */
+export const ANIMAL_SHAPE = shapeSite(['x', 'y', 'px', 'py', 'facing', 'agit', 'sedate'], ['state', 'path', 'via']);
 /** resources 의 두 부대 리터럴 */
 export const UNIT_SHAPE = shapeSite(
   ['x', 'y', 'px', 'py', 'water', 'waterMax', 'pumpCond', 'tool', 'medLevel', 'armor', 'segT', 'timer', 'dispatchedAt', 'estArrive', 'busyTime',

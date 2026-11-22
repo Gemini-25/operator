@@ -142,7 +142,7 @@ export const ROLES: Record<RoleId, RoleDef> = {
   copilot: { name: '부기장', group: 'pilot', skills: () => sk(0.05, 0.2, 0.2, 0.05), kit: [], prefer: {}, stays: true, exp: [0.3, 0.8] },
   // ── 소방 ──
   fireLead: { name: '진압 팀장', group: 'lead', skills: (s) => sk(s, s * 0.7, 0.35, 0.05), kit: ['scba', 'turnout', 'tic', 'irons', 'aed'], prefer: { search: 0.1, force: 0.1 } },
-  nozzle: { name: '관창수', group: 'nozzle', skills: (s) => sk(s + 0.05, s * 0.55, 0.3, 0.05), kit: ['scba', 'turnout', 'hose'], prefer: { suppress: 0.15, overhaul: 0.1 } },
+  nozzle: { name: '관창수', group: 'nozzle', skills: (s) => sk(s + 0.05, s * 0.55, 0.3, 0.05), kit: ['scba', 'turnout', 'hose', 'beeSuit'], prefer: { suppress: 0.15, overhaul: 0.1 } },      // beeSuit: (N8 단계 5) 벌 보호복 — 최소 인원에서도 빠지지 않는 자리 (고장 추첨을 받지 않는 장비 — kit 흐름의 순서는 그대로)
   firefighter: { name: '진입대원', group: 'entry', skills: (s) => sk(s * 0.95, s * 0.7, 0.3, 0.05), kit: ['scba', 'turnout', 'hose', 'irons', 'rope'], prefer: { search: 0.1, force: 0.1, carry: 0.05 } },
   engineer: { name: '기관원', group: 'engineer', skills: (s) => sk(s * 0.8, s * 0.5, 0.3, 0.05), kit: ['scba', 'turnout', 'pumpPanel', 'pole', 'extinguisher', 'fan'], prefer: { hookup: 0.3, traffic: 0.1, clearRoad: 0.1, search: -0.25 } },      // (R2 단계 4) 소화기·송풍기는 끝에 (송풍기는 batch r2 — 고장 추첨은 kit-r2)
   ladderLead: { name: '사다리 팀장', group: 'lead', skills: (s) => sk(s, s * 0.7, 0.35, 0.05), kit: ['scba', 'turnout', 'tic', 'irons'], prefer: { search: 0.1, force: 0.1 } },
@@ -151,7 +151,7 @@ export const ROLES: Record<RoleId, RoleDef> = {
   rescueLead: { name: '구조 팀장', group: 'lead', skills: (s) => sk(s * 0.7, s, 0.4, 0.05), kit: ['scba', 'turnout', 'searchKit', 'irons', 'shoring'], prefer: { search: 0.1 } },      // (R2 단계 3) 지지대는 끝에
   extricator: { name: '구조대원(유압)', group: 'rescue', skills: (s) => sk(s * 0.7, s + 0.04, 0.35, 0.05), kit: ['scba', 'turnout', 'spreader', 'airbag'], prefer: { extricate: 0.25, clear: 0.15 } },      // (R2 단계 3) 에어백은 끝에 (batch r2 — 고장 추첨은 kit-r2)
   searcher: { name: '구조대원(탐지)', group: 'search', skills: (s) => sk(s * 0.7, s, 0.35, 0.05), kit: ['scba', 'turnout', 'searchKit', 'irons'], prefer: { search: 0.2 } },
-  ropeTech: { name: '구조대원(로프)', group: 'water', skills: (s) => sk(s * 0.6, s, 0.35, 0.05), kit: ['scba', 'turnout', 'rope', 'ring', 'hose', 'pfd', 'drysuit', 'raft'], prefer: { waterRescue: 0.3 } },
+  ropeTech: { name: '구조대원(로프)', group: 'water', skills: (s) => sk(s * 0.6, s, 0.35, 0.05), kit: ['scba', 'turnout', 'rope', 'ring', 'hose', 'pfd', 'drysuit', 'raft', 'beeSuit'], prefer: { waterRescue: 0.3 } },      // beeSuit: (N8 단계 5)
   hazLead: { name: '화학 팀장', group: 'lead', skills: (s) => sk(s * 0.7, s * 0.92, 0.4, 0.05), kit: ['scba', 'turnout', 'gasMeter', 'irons'], prefer: { search: 0.05 } },
   hazTech: { name: '화학 보호복 대원', group: 'hazmat', skills: (s) => sk(s * 0.7, s * 0.9, 0.4, 0.05), kit: ['scba', 'turnout', 'plugKit'], prefer: { mitigate: 0.3 } },
   decon: { name: '측정·제독 대원', group: 'hazmat', skills: (s) => sk(s * 0.6, s * 0.85, 0.4, 0.05), kit: ['scba', 'turnout', 'gasMeter', 'hose', 'fan'], prefer: { search: 0.1, escort: 0.1 } },      // (R2 단계 4) 송풍기는 끝에
@@ -306,7 +306,7 @@ export function drawFaults(rng: Rng, crew: Responder[], p: number): number {
  * (N9 §5.12) 따로 뽑는 고장 묶음 — drawFaults 가 건너뛰고(교대 흐름 kit 의 추첨 순서에 끼지 않는다) drawBatchFaults 가 자기 흐름에서 뽑는다.
  * 'r2'(R2 의 고무보트·송풍기·에어백 — kit-r2·aid-r2:<n>)와 'n9'(잠수 장비 — kit-n9). N8 의 포획팀을 편성하는 단계가 'n8' 을 더한다(그 전에는 그 장비가 교대 흐름에서 뽑힌다 — 든 부대가 편성되지 않는다)
  */
-const OWN_DRAW: ReadonlySet<NonNullable<KitDef['batch']>> = new Set<NonNullable<KitDef['batch']>>(['r2', 'n9']);
+const OWN_DRAW: ReadonlySet<NonNullable<KitDef['batch']>> = new Set<NonNullable<KitDef['batch']>>(['r2', 'n9', 'n8']);      // (N8 단계 5) 마취총 — kit-n8 · aid-n8:<n>
 /** 그 묶음(batch)의 장비만 같은 순서(대원 순서 × 든 장비의 순서)·같은 확률로 뽑는다. 난수는 부르는 쪽이 준다(편성표 부대는 kit-n9). 돌려주는 값 = 고장 난 장비 수 */
 export function drawBatchFaults(rng: Rng, crew: Responder[], p: number, batch: NonNullable<KitDef['batch']>): number {
   let n = 0;

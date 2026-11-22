@@ -22,7 +22,7 @@
 import type { Sim } from '../engine';
 import { hashStr } from '../rng';
 import { T } from '../types';
-import type { CasBelief, FieldAgent, KitId, MethodId, MethodWhy, Responder, Scene, SignBelief, Task, Unit, UnitKind, WorkItem, WorkKind } from '../types';
+import type { AniBelief, CasBelief, FieldAgent, KitId, MethodId, MethodWhy, Responder, Scene, SignBelief, Task, Unit, UnitKind, WorkItem, WorkKind } from '../types';
 import { clamp, dist, josa } from '../util';
 import { SCBA_MIN, SHARED, airLow, kitCount, kitHas, kitName, kitQty, seatsLeft, swimBonus } from './gear';
 import { isIndoor, losWalls, staticPass, tileOf } from './grid';
@@ -35,7 +35,7 @@ import type { DocCtx } from './doctrine/registry';
 /** 대원이 선 칸의 감각 (실행부가 methodRun.senseOf 로 재서 넘긴다. 배정용 methodFit 에서는 0) */
 export interface Sense { smoke: number; heat: number }
 /** 방법의 대상 (없으면 -1) */
-export interface MTarget { cas: number; prop: number; hostile: number; region: number; tile: number }
+export interface MTarget { cas: number; prop: number; hostile: number; region: number; tile: number; animal?: number }      // animal: (N8 단계 5) 포획할 동물의 id (없으면 -1·undefined)
 /** 고른 결과: 방법 · 까닭 · 후보와 점수(점수 내림차순) · (noGear 면) 빠진 장비 · (R3) 1등을 바꾼 교본 줄과 교본이 없었다면 골랐을 방법 */
 export interface MethodPick { m: MethodId; why: MethodWhy; cands: { m: MethodId; score: number }[]; missing?: KitId; doc?: string; skip?: MethodId }
 /** R3 의 교본 입력 (doctrine.ts 의 docCtx 가 만든다 — 타입은 doctrine/registry.ts). 실행부는 자기 모드로 넘기고, methodFit 은 안에서 보고 모드로 만든다. 없으면 null */
@@ -55,6 +55,7 @@ interface MethodCtx {
   ops: any | null;                 // (X6) a.beliefs 의 ops 사실(id 0)의 값, 없으면 null
   dc: DocCtx | null;               // (R3) 교본 입력, 없으면 null
   caution: number;                 // 위험을 꺼리는 정도 0.5..1.1 (침착하고 경험 많은 대원은 낮다)
+  ab: AniBelief | null;            // (N8 단계 5) a.beliefs 의 대상 동물 (포획 — 없으면 null)
 }
 export interface MethodDef {
   id: MethodId; work: WorkKind[];
@@ -166,6 +167,25 @@ function chargeOk(c: MethodCtx): boolean {
   }
   return true;
 }
+
+// ── (N8 단계 5) 동물 포획의 조건 — 대상 동물의 믿음(ab)·현장 동료의 장비(조직 정보)·작업의 나이만 ──
+/** 믿음 속 대상 동물이 풀려 있고 자리를 안다 (잃은 동물은 먼저 찾아야 한다) */
+const aniLoose = (c: MethodCtx): boolean => c.ab !== null && c.ab.state === 'loose' && !c.ab.lost;
+/** 포획 장비(마취총·올가미·포획망)를 든 활동 대원이 현장에 있는가 — 조직이 아는 장비 (알려진 고장만 — gear.kitCount) */
+export function captureKitOnScene(sim: Sim, s: Scene): boolean {
+  const ag = s.agents;
+  for (let k = 0; k < ag.length; k++) { const b = ag[k]; if (b.status === 'active' && !b.aloft && (kitCount(sim, b.rid, 'dart') > 0 || kitCount(sim, b.rid, 'catchpole') > 0 || kitCount(sim, b.rid, 'net') > 0)) return true; }
+  return false;
+}
+/** 몰이를 맨손으로 맡을 수 있는가 (§4.3): 가축(소·돼지)이면 곧바로, 그 밖은 포획 장비를 든 대원이 현장에 없고 작업이 만들어진 지 60초가 넘었을 때 (agents.fitBase 와 같은 조건) */
+export const HERD_WAIT = 60;
+export function herdAllowed(sim: Sim, s: Scene, a: FieldAgent, ab: AniBelief, age: number): boolean {
+  void a;
+  if (ab.kind === 'cow' || ab.kind === 'pig') return true;
+  return age > HERD_WAIT && !captureKitOnScene(sim, s);
+}
+/** 고르는 임무의 작업이 만들어진 지 몇 초 (모르면 0) */
+function workAgeOf(c: MethodCtx): number { const w = c.t !== null && c.t.workId >= 0 ? c.s.board[c.t.workId] : undefined; return w ? c.sim.t - w.createdAt : 0; }
 
 // ── 구출의 범주·조건 (§4.3) — 대상 믿음(cb)과 haz 사실의 sub(균열 crack · 밸브 valve · 차량 연료 fuel)만 ──
 /** 믿음: 대상이 차에 갇혔다 */
@@ -550,6 +570,13 @@ export const METHOD: Record<MethodId, MethodDef> = {
   litter: row('litter', ['carry'], '들것 이송', '들것', '들것 이송', '들것으로', ['stretcher'], 0, 0, true, REC),      // R1 의 들것(옮기는 사람이나 곁에서 돕는 사람) — 끝날 때 기록만 (평소 방법이라 보고서 문장에 싣지 않는다)
   post: row('post', ['traffic'], '교통 통제', '통제', '교통 통제', '차로에 서서', [], 0.75, 0, true, { can: ALWAYS }),      // 지금의 통제 (경광봉이면 R1 의 ×0.85)
   blockLane: row('blockLane', ['traffic'], '차량 차단', '차량 차단', '차량 차단', '차량으로 차로 입구를 막고', [], 0.6, 0, false, { can: laneOpen }),      // 그 지점이 통제 전이고(믿음 ctl) 길로 온 부대(헬기·구조정이 아니다)의 차가 다른 입구에 쓰이지 않을 때 (부대마다 차 한 대 — 한 입구)
+  // ── (N8 §4.3 — 단계 5) 동물 포획 capture: 마취총(6칸 안·시야선, 수량 3 — 맞으면 20~35초 뒤 잠든다) · 올가미(1.5칸 안 — 흥분 0.6 넘으면 실패) ·
+  //    몰이(뒤에서 우리·산 쪽으로 — 가축이거나, 포획 장비를 든 대원이 현장에 없고 작업이 60초 넘었을 때만) · 포획망(잠든 대상 6초). 실행은 executor 의 case 'capture'.
+  //    N9 의 다섯 앞에 둔다(tests/kinds2 가 그 다섯을 붙은 차례로 본다). 동물을 해치는 그림 없이 — 마취 화살은 그리지 않는다 ──
+  dart: row('dart', ['capture'], '마취총', '마취총', '마취 조준', '마취총으로 재운 뒤', ['dart'], 0.85, 0.05, false, { can: (c) => aniLoose(c) && (c.ab!.kind === 'boar' || c.ab!.kind === 'dog') }),
+  catchpole: row('catchpole', ['capture'], '올가미 포획', '올가미', '올가미 포획', '올가미로', ['catchpole'], 0.7, 0.15, false, { can: (c) => aniLoose(c) && c.ab!.kind !== 'cow' }),
+  herd: row('herd', ['capture'], '몰이', '몰이', '동물 몰이', '뒤에서 몰아', [], 0.6, 0.05, false, { can: (c) => aniLoose(c) && herdAllowed(c.sim, c.s, c.a, c.ab!, workAgeOf(c)) }),
+  net: row('net', ['capture'], '포획망', '포획망', '포획망 씌우기', '포획망으로', ['net'], 0.9, 0, false, { can: (c) => c.ab !== null && c.ab.state === 'sedated' }),
   // ── (N9 §5.12) 새 방법 다섯 — 단계 1 은 줄만(can = NOT_YET). 수치(pref·risk)는 시작값이고, 조건·배율·장비는 그 방법을 쓰는 단계가 채운다 ──
   // 잠수: 물에 잠긴 차·선실 안의 사람(믿음 sunk · haz sunk)에게 3칸 안에서 25초 (단계 5). 장비는 diveKit(단계 2 에 생긴다)으로 바꾼다 — 지금은 있는 드라이슈트만 적어 둔다
   dive: row('dive', ['waterRescue', 'extricate', 'search'], '잠수 구조', '잠수', '잠수 구조', '잠수해 들어가', ['drysuit'], 0.8, 0.1, false),
@@ -593,6 +620,7 @@ export const WORK_MODE: Partial<Record<WorkKind, 'refuse' | 'always' | 'optional
   force: 'always', clear: 'always', extricate: 'always', search: 'always', treat: 'always', mitigate: 'always', perimeter: 'always',
   suppress: 'optional', engage: 'optional', arrest: 'optional', load: 'optional', hoist: 'optional',
   cordon: 'always', decontam: 'always',
+  capture: 'refuse',      // (N8 §4.3 — 단계 5) 맞는 포획 방법이 없으면 맡지 않는다 (맨손 몰이는 herdAllowed 일 때만 — 벌집은 방법 없이 보호복으로: agents.fitBase·executor)
   carry: 'always', traffic: 'always',      // (R3 6단계 §3.7) 업기·통제가 늘 남는다 (null 이 생기지 않는다)
   defuse: 'refuse',      // (R3 5단계 §3.7) 쓸 해체 방법이 없으면 맡지 않는다 (fitFor 의 defuse = 기본 자격 × methodFit > 0) — 다친·동요한 처리 요원(S23)·로봇이 고장 난 로봇 조작 요원      // (N9 §5.12) 방패가 없어도 통제는 맡는다 · 물 세척이 늘 남는다 — 단계 1 은 표의 값만 (methodRun 을 부르는 곳이 아직 없다)
 };
@@ -618,6 +646,7 @@ export const SAY: Record<MethodId, string> = {
   stay: '현장에서 처치하겠습니다.', rush: '즉시 이송합니다. 최소한만 처치하겠습니다.', airlift: '',
   seal: '누출을 막겠습니다.', ventFirst: '먼저 환기한 뒤 차단하겠습니다.', cordon: '출입구를 통제하겠습니다.', announce: '주변에 대피 방송을 합니다.',
   air: '', drone: '드론을 띄우겠습니다.', dog: '탐지견을 풀겠습니다.',
+  dart: '마취총으로 재우겠습니다.', catchpole: '올가미로 붙잡겠습니다.', herd: '뒤에서 몰겠습니다.', net: '포획망을 씌우겠습니다.',      // (N8 단계 5)
   dive: '잠수해 들어가겠습니다.', boom: '오일펜스를 펼치겠습니다.', shieldLine: '방패로 저지선을 치겠습니다.', deconTent: '제독 텐트에서 씻기겠습니다.', hoseWash: '호스로 씻어 내겠습니다.',      // (N9)
   feel: '앞이 안 보입니다. 벽을 따라 더듬어 찾겠습니다.', pulse: '끊어 쏘며 물을 아끼겠습니다.',      // (R3 3단계)
   robotDefuse: '로봇 먼저 투입합니다.', suitDefuse: '방호복을 입고 해체하겠습니다.', bareDefuse: '방호복 없이 바로 해체합니다.',      // (R3 5단계)
@@ -761,7 +790,7 @@ export function catchPoint(s: Scene, x: number, y: number, from: FieldAgent | nu
 }
 /** 대상 열쇠: 같은 일·같은 대상인가 (a.mfail · I.methods 의 앞선 실패 맞추기). 'waterRescue:c3' · 'force:t412' · 'engage:h1' · 'mitigate:p7' · 'search:r2' */
 export function targetKey(work: WorkKind | string, tg: MTarget): string {
-  return work + ':' + (tg.cas >= 0 ? 'c' + tg.cas : tg.tile >= 0 ? 't' + tg.tile : tg.hostile >= 0 ? 'h' + tg.hostile : tg.prop >= 0 ? 'p' + tg.prop : tg.region >= 0 ? 'r' + tg.region : '-');
+  return work + ':' + (tg.cas >= 0 ? 'c' + tg.cas : tg.tile >= 0 ? 't' + tg.tile : tg.hostile >= 0 ? 'h' + tg.hostile : tg.prop >= 0 ? 'p' + tg.prop : tg.region >= 0 ? 'r' + tg.region : tg.animal !== undefined && tg.animal >= 0 ? 'a' + tg.animal : '-');      // a: (N8) 동물
 }
 
 // ───────────────────────── 사람 ─────────────────────────
@@ -831,7 +860,7 @@ function rank(c: MethodCtx, key: string, tried: MethodId[] | null, brokenOnly: b
   }
   return out;
 }
-const sameTarget = (t: Task, tg: MTarget): boolean => t.cas === tg.cas && t.prop === tg.prop && t.hostile === tg.hostile && t.region === tg.region && t.tile === tg.tile;
+const sameTarget = (t: Task, tg: MTarget): boolean => t.cas === tg.cas && t.prop === tg.prop && t.hostile === tg.hostile && t.region === tg.region && t.tile === tg.tile && (t.animal ?? -1) === (tg.animal ?? -1);
 function makeCtx(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, tg: MTarget, t: Task | null, sense: Sense, dc: DocCtx | null): MethodCtx {
   const r = sim.responders[a.rid], u = sim.units[a.unitId];
   const cb = tg.cas >= 0 ? a.beliefs.val<CasBelief>('cas', tg.cas) ?? null : null;
@@ -843,6 +872,7 @@ function makeCtx(sim: Sim, s: Scene, a: FieldAgent, work: WorkKind, tg: MTarget,
   return {
     sim, s, a, r, u, work, t, tg, cb, bank, reach: bank ? bank.d : Infinity, flow: cb !== null ? cb.drift ?? 0 : 0, weak: cb !== null && cb.band >= 2,
     sense, mates, ops: ops ? ops.value : null, dc, caution: Math.min(1.1, cautionOf(r) + (dc !== null && dc.st.shaken ? SHAKEN_CAUTION : 0)),      // (R3 G02b) 동요하면 +0.2 (상한 1.1)
+    ab: tg.animal !== undefined && tg.animal >= 0 ? a.beliefs.val<AniBelief>('ani', tg.animal) ?? null : null,      // (N8 단계 5)
   };
 }
 /** 위험을 꺼리는 정도 (침착하고 경험 많은 대원은 낮다) */
@@ -923,7 +953,7 @@ export function methodStillFits(sim: Sim, s: Scene, a: FieldAgent, work: WorkKin
   return canUse(c, m) && METHOD[m].can(c) && (dc === null || docMethodMul({ ...dc, m: { reach: c.reach, flow: c.flow, weak: c.weak, tile: c.tg.tile } }, m) > 0);
 }
 /** 작업 항목의 대상 */
-export function targetOfWork(w: WorkItem): MTarget { return { cas: w.cas, prop: w.prop, hostile: w.hostile, region: w.region, tile: w.tile }; }
+export function targetOfWork(w: WorkItem): MTarget { return { cas: w.cas, prop: w.prop, hostile: w.hostile, region: w.region, tile: w.tile, animal: w.animal ?? -1 }; }
 /**
  * 그 대원이 그 작업에 지금 쓸 수 있는 가장 좋은 방법의 점수 (없으면 0) — 배정(agents.fitFor)이 쓴다.
  * 임무를 맡기 전이므로 t = null, 감각은 0 이다. 장비는 알려진 고장만 보므로 숨은 고장이 있는 대원의 값은 고장이 없는 대원과 같다.

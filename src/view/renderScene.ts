@@ -7,7 +7,7 @@
 
 import { drawDisasterScene } from './city/disasterLayer';
 import { SKINS } from './scene/skins';
-import { drawFlood, drawHazRings } from './scene/skins/kinds';
+import { drawAnimals, drawFlood, drawHazRings } from './scene/skins/kinds';
 // (R1) 장비는 읽기만 한다: 고장을 드러내거나 수량을 줄이는 함수는 여기서 부르지 않는다 — 그리는 것만으로 기록이 바뀌면 안 된다 (tests/crews.test.ts ⑬)
 import { AIR_LOW, hasKit, isHovering, kitUses } from '../sim/crews';
 import type { Sim } from '../sim/engine';
@@ -539,6 +539,7 @@ export function drawScene(ctx: G, sim: Sim, s: Scene, w: number, h: number, o: S
   if (!MINI) drawBoats(ctx, sim, s, ts, o.alpha, time);
   if (!MINI) drawBarricades(ctx, s, ts);      // (R2 단계 2) 농성 문 안쪽에 쌓은 가구
   if (!MINI) drawMethodGround(ctx, sim, s, ts, o.alpha, time);      // (R2 단계 4·5·6) 송풍기와 바람 · 사다리차 회전대 · 저격 자리
+  drawAnimals(ctx, s, ts, o.alpha, time, o.truth, MINI);      // (N8 단계 5) 동물 — 사람 층 바로 앞
   // ── 사람: 구조 대상 → 용의자 → 대원 ──
   const carrierOf = new Map<number, FieldAgent>();
   for (const a of s.agents) if (a.carrying >= 0 && a.status !== 'left') carrierOf.set(a.carrying, a);

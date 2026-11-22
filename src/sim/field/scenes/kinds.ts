@@ -4,7 +4,7 @@
 // 단계 3: 비응급 N1 장난 전화 셋(빈 현장) · N2 오인 신고 넷(§4.8 — 가서 확인하면 "이상 없음"의 답이 현장에 있다).
 import { T } from '../../types';
 import { addCas, addProp, addRegion, set } from '../kit';
-import { buildQuiet, streetFrame } from '../kindsKit';
+import { addAnimal, alleyFrame, buildQuiet, farmFrame, freeGround, streetFrame, yardFrame } from '../kindsKit';
 import { registerScene } from '../sceneRegistry';
 
 // ── 시설 사고 (§4.2 — 단계 4a·4b) ──
@@ -144,6 +144,90 @@ registerScene('utility', 'sign', (sim, I, rng) => {
     addProp(s, 'roadDebris', sx + 1, 8, { skin: 'signDebris', blocking: false });
   }
   s.kinds = { hazR: 2, zone };
+  return s;
+});
+
+// ── 동물 (§4.3 — 단계 5) ──
+/** 장소 이름: 지도의 건물이 있으면 '<이름> 곁', 없으면 기본 글자 */
+function nearName(sim: import('../../engine').Sim, I: import('../../types').Incident, dflt: string): string { const pl = I.truth.placeId >= 0 ? sim.city.places[I.truth.placeId] : undefined; return pl ? `${pl.name} 곁` : dflt; }
+/**
+ * 멧돼지 출몰: 농가·들의 틀(farmFrame — 위쪽 숲 가장자리의 산 출구 둘 · 아래쪽 찻길 출구 둘). 멧돼지 1(60%)·2(30%)·3(10%) 은 밭 가운데,
+ * 바깥 사람 0~2(걸을 수 있다 — 대원이 보면 안전한 곳으로 간다), 25% 에 들이받힌 사람 1(거동 불가 · 체력 50~75 — 처음 원인 동물). 세계 규칙은 rules/kinds.ts 의 animalRule
+ */
+registerScene('animal', 'boar', (sim, I, rng) => {
+  const s = farmFrame(sim, I, rng);
+  s.placeName = nearName(sim, I, '마을 텃밭');
+  s.leadDept = 'fire';
+  const r = rng.next(), n = r < 0.6 ? 1 : r < 0.9 ? 2 : 3;
+  for (let k = 0; k < n; k++) { const i = freeGround(s, rng, 10, 5, 20, 10); addAnimal(s, 'boar', i % s.w, (i / s.w) | 0, rng); }
+  const by = rng.int(0, 2);
+  for (let k = 0; k < by; k++) { const i = freeGround(s, rng, 4, 3, 26, 15); addCas(s, i % s.w, (i / s.w) | 0, 'mobile', 100, 0, 0.1); }
+  if (rng.chance(0.25)) { const i = freeGround(s, rng, 9, 9, 21, 14); addCas(s, i % s.w, (i / s.w) | 0, 'immobile', rng.range(50, 75), rng.range(0.02, 0.05), 0.1); }
+  return s;
+});
+/**
+ * 벌집: 집과 마당의 틀(yardFrame). 벌집(fixture 'hive', live — 막지 않음)은 처마 밑(집 벽 바로 앞 줄), 현관에서 4칸 넘게 떨어진 자리. 위험 반경 3.
+ * 쏘인 사람 1~2(반경 밖 3.6~7칸 · 걸을 수 있음 70% · 띠 0~1 — 처음 원인 동물), 18% 에 그 가운데 1명이 알레르기 급변(체력 60 · 악화 0.35/초 — 처음 원인 병). 안전한 곳은 집 안
+ */
+registerScene('animal', 'hive', (sim, I, rng) => {
+  const s = yardFrame(sim, I, rng);
+  s.placeName = nearName(sim, I, '주택 마당');
+  s.leadDept = 'fire';
+  const hx = rng.chance(0.5) ? rng.int(8, 10) : rng.int(18, 21);
+  addProp(s, 'fixture', hx, 8, { skin: 'hive', blocking: false, live: true });
+  s.kinds = { hiveWide: -1 };
+  const n = rng.chance(0.5) ? 2 : 1, allergic = rng.chance(0.18);
+  for (let k = 0; k < n; k++) {
+    // 쏘인 사람은 이미 벌 떼에서 몇 걸음 물러나 있다 (반경 3 밖 — 3.6~7칸). 떼어 내는 동안 커진 반경(4.5) 안에 남은 사람은 다시 쏘인다
+    let i = -1;
+    for (let tries = 0; tries < 12 && i < 0; tries++) { const j = freeGround(s, rng, Math.max(1, hx - 6), 9, Math.min(s.w - 2, hx + 6), 14), d = Math.hypot(j % s.w - hx, ((j / s.w) | 0) - 8); if (d >= 3.6 && d <= 7) i = j; }
+    if (i < 0) i = freeGround(s, rng, 12, 12, 16, 14);
+    const walk = rng.chance(0.7) && !(allergic && k === 0);
+    if (allergic && k === 0) addCas(s, i % s.w, (i / s.w) | 0, 'immobile', 60, 0.35, 0.1);
+    else addCas(s, i % s.w, (i / s.w) | 0, walk ? 'mobile' : 'immobile', walk ? rng.range(82, 95) : rng.range(68, 82), walk ? 0 : rng.range(0.01, 0.03), 0.1);
+  }
+  return s;
+});
+/**
+ * 개 물림: 주택가 골목의 틀(alleyFrame — 숨을 자리 s.kinds.hides). 개 1(가운데 길), 물린 사람 1(걸을 수 있음 60% · 거동 불가 40% · 체력 60~85),
+ * 40% 에 주인(목격자 — 면담하면 개가 숨으러 간 쪽의 골목, 70% 맞음)
+ */
+registerScene('animal', 'dogbite', (sim, I, rng) => {
+  const s = alleyFrame(sim, I, rng);
+  s.placeName = nearName(sim, I, '주택가 골목');
+  s.leadDept = 'fire';
+  const di = freeGround(s, rng, 4, 7, 25, 10);
+  addAnimal(s, 'dog', di % s.w, (di / s.w) | 0, rng);
+  const ci = freeGround(s, rng, 6, 7, 23, 10);
+  const walk = rng.chance(0.6);
+  addCas(s, ci % s.w, (ci / s.w) | 0, walk ? 'mobile' : 'immobile', rng.range(60, 85), walk ? 0 : rng.range(0.01, 0.04), 0.1);
+  if (rng.chance(0.4)) {
+    const zones = s.regions.filter((r) => r.kind === 'zone' && r.searchable);
+    const truth = zones[rng.int(0, zones.length - 1)];
+    const said = rng.chance(0.7) ? truth : zones[rng.int(0, zones.length - 1)];
+    const wi = freeGround(s, rng, 12, 16, 18, 16);
+    addProp(s, 'witness', wi % s.w, (wi / s.w) | 0, { lastSeenRegion: said.id, accurate: said === truth, interviewed: false });
+    // 개가 먼저 숨으러 가는 쪽: 주인이 본(맞으면 그 골목) 쪽의 숨을 자리를 앞에 둔다
+    const hz = s.kinds!.hides!;
+    hz.sort((a, b) => (s.region[a] === truth.id ? 0 : 1) - (s.region[b] === truth.id ? 0 : 1));
+  }
+  return s;
+});
+/**
+ * 가축 탈출(도로): 길의 틀(streetFrame — 차가 지나는 네 차로, 출구 넷은 모두 찻길) + 북쪽 길가의 농가 우리(구역 'pen' — 우리 안에 들어간 가축은 잡힌 것).
+ * 소(60%) 또는 돼지 3~6마리가 차로 위에, 10% 에 흥분한 황소 하나(돌진 문턱 0.75). 지나는 차와 부딪칠 수 있다(animalRule)
+ */
+registerScene('animal', 'escape', (sim, I, rng) => {
+  const s = streetFrame(sim, I, rng, { lanes: true, search: true });
+  s.placeName = '농가 곁 도로';
+  s.leadDept = 'police';
+  for (let y = 2; y <= 6; y++) for (let x = 19; x <= 26; x++) set(s, x, y, y === 2 || x === 19 || x === 26 ? T.WALL : T.GROUND);
+  const pen = addRegion(s, '농가 우리', 'pen', 20, 3, 25, 6, false, false);
+  s.exitKind = ['road', 'road', 'road', 'road'];
+  s.kinds = { pen: pen.id };
+  const kind = rng.chance(0.6) ? 'cow' : 'pig';
+  const n = rng.int(3, 6), bull = kind === 'cow' && rng.chance(0.1);
+  for (let k = 0; k < n; k++) { const i = freeGround(s, rng, 7, 8, 18, 11); addAnimal(s, kind, i % s.w, (i / s.w) | 0, rng, bull && k === 0); }
   return s;
 });
 

@@ -330,19 +330,24 @@ describe('3 새 부대 — 편성되지 않는 넷 · 표 · 관제의 틀 (단�
       const full = fullOrg(seed, 1), now = new Sim(seed, { ...NORMAL, resources: 5, equipment: 1 });
       const p = full.tune.kitFault;
       // (R2 1a) R2 의 고장 나는 장비(batch r2 — 로프 대원의 고무보트)도 따로 뽑는 묶음이다 (kit-r2 흐름) — 교대 흐름 kit 의 순서에서 뺀다
-      const own = (id: KitId): boolean => KITS[id].batch === 'n9' || KITS[id].batch === 'r2';
-      const rk = full.rng.fork('kit'), r9 = full.rng.fork('kit-n9'), r2 = full.rng.fork('kit-r2'), want: string[] = [], want9: string[] = [], want2: string[] = [], got: string[] = [], got9: string[] = [], got2: string[] = [];
+      // (N8 단계 5) 동물 포획 장비(batch n8 — 마취총)도 따로 뽑는 묶음이다 (kit-n8 흐름)
+      const own = (id: KitId): boolean => KITS[id].batch === 'n9' || KITS[id].batch === 'r2' || KITS[id].batch === 'n8';
+      const rk = full.rng.fork('kit'), r9 = full.rng.fork('kit-n9'), r2 = full.rng.fork('kit-r2'), r8 = full.rng.fork('kit-n8'), want: string[] = [], want9: string[] = [], want2: string[] = [], want8: string[] = [], got: string[] = [], got9: string[] = [], got2: string[] = [], got8: string[] = [];
       for (const r of full.responders) for (const it of r.kit!) {
         if (KITS[it.id].faultable && !own(it.id) && rk.chance(p)) want.push(r.name + ':' + it.id);
-        if (it.fault) (KITS[it.id].batch === 'n9' ? got9 : KITS[it.id].batch === 'r2' ? got2 : got).push(r.name + ':' + it.id);
+        if (it.fault) (KITS[it.id].batch === 'n9' ? got9 : KITS[it.id].batch === 'r2' ? got2 : KITS[it.id].batch === 'n8' ? got8 : got).push(r.name + ':' + it.id);
       }
       for (const r of full.responders) for (const it of r.kit!) if (KITS[it.id].batch === 'n9' && r9.chance(p)) want9.push(r.name + ':' + it.id);
       for (const r of full.responders) for (const it of r.kit!) if (KITS[it.id].faultable && KITS[it.id].batch === 'r2' && r2.chance(p)) want2.push(r.name + ':' + it.id);
-      expect(got, seed).toEqual(want); expect(got9, seed).toEqual(want9); expect(got2, seed).toEqual(want2);
+      for (const r of full.responders) for (const it of r.kit!) if (KITS[it.id].faultable && KITS[it.id].batch === 'n8' && r8.chance(p)) want8.push(r.name + ':' + it.id);
+      expect(got, seed).toEqual(want); expect(got9, seed).toEqual(want9); expect(got2, seed).toEqual(want2); expect(got8, seed).toEqual(want8);
       n9 += full.responders.reduce((m, r) => m + r.kit!.filter((it) => it.id === 'diveKit').length, 0);
-      const k = now.responders.length;
-      expect(full.responders.slice(0, k).map((r) => r.name)).toEqual(now.responders.map((r) => r.name));
-      expect(faults(full.responders.slice(0, k)), `${seed}: 지금 편성의 고장이 그대로`).toEqual(faults(now.responders));
+      // (N8 단계 5) 지금 편성의 대원은 온 조직의 명부에 같은 이름으로 있다 — 포획팀(minLevel 1)이 편성되지 않는 견인(minLevel 6) 뒤에 있어 앞부분이 아니게 되었으므로 이름으로 맞춘다
+      const byName = new Map(full.responders.map((r) => [r.name, r] as const));
+      const same = now.responders.map((r) => byName.get(r.name));
+      expect(same.every((r) => r !== undefined), `${seed}: 지금 편성의 대원이 온 조직에 있다`).toBe(true);
+      expect(same.map((r) => full.responders.indexOf(r!)), `${seed}: 순서가 같다`).toEqual(same.map((r) => full.responders.indexOf(r!)).slice().sort((x, y) => x - y));
+      expect(faults(same as Responder[]), `${seed}: 지금 편성의 고장이 그대로`).toEqual(faults(now.responders));
     }
     expect(n9, '수중 구조대의 셋이 잠수 장비를 든다 (6교대)').toBe(18);
   });

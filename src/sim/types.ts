@@ -8,7 +8,8 @@ export interface Pt { x: number; y: number }
 export type Dept = 'fire' | 'ems' | 'police'
   | 'civil';      // (N8 §5.3) 유관 기관(전력·가스·수도 복구반·견인차): 지휘하지 않고 첫 도착으로 세지 않으며 자기 일(repair·towAway)만 한다
 export type IncidentType = 'fire' | 'traffic' | 'search' | 'armed' | 'medical' | 'collapse' | 'hazmat' | 'water'
-  | 'utility';      // (N8 단계 4a) 시설 사고 — 끊어진 전선·수도관 파열·싱크홀·간판 (TYPE_ORDER 의 끝)
+  | 'utility'      // (N8 단계 4a) 시설 사고 — 끊어진 전선·수도관 파열·싱크홀·간판 (TYPE_ORDER 의 끝)
+  | 'animal';      // (N8 단계 5) 동물 — 멧돼지·벌집·개 물림·가축 탈출 (짧은 사건 흐름 daily 로만)
 export type District = 'residential' | 'commercial' | 'industrial' | 'outskirts';
 export type Weather = 'clear' | 'rain' | 'fog' | 'night';
 
@@ -707,7 +708,8 @@ export type MethodId =
   | 'dive' | 'boom' | 'shieldLine' | 'deconTent' | 'hoseWash'      // (N9 §5.12) 잠수 · 오일펜스 · 방패 저지선(cordon) · 제독 텐트 · 물 세척(decontam). 단계 1 은 표의 줄만 (can = NOT_YET)
   | 'feel' | 'pulse'      // (R3 3단계 §3.7) 벽 더듬기 수색(search — 열화상 없이 짙은 연기) · 끊어 쏘기(suppress — 용수 30% 아래)
   | 'robotDefuse' | 'suitDefuse' | 'bareDefuse'      // (R3 5단계 §3.7) 해체 defuse: 로봇 원격 · 방호복 · 맨몸 (실행은 doctrineRun.runDefuse)
-  | 'pack' | 'drag' | 'litter' | 'post' | 'blockLane';      // (R3 6단계 §3.7) 이송 carry: 업기 · 끌기 · 들것(기록 전용) / 교통 통제 traffic: 통제 · 차량 차단 (실행은 doctrineRun.runCarry·runTraffic)
+  | 'pack' | 'drag' | 'litter' | 'post' | 'blockLane'      // (R3 6단계 §3.7) 이송 carry: 업기 · 끌기 · 들것(기록 전용) / 교통 통제 traffic: 통제 · 차량 차단 (실행은 doctrineRun.runCarry·runTraffic)
+  | 'dart' | 'catchpole' | 'herd' | 'net';      // (N8 §4.3 — 단계 5) 동물 포획 capture: 마취총 · 올가미 · 몰이 · 포획망 (실행은 executor 의 case 'capture')
 /** 왜 이 방법을 골랐는가 (기록 문구·보고서 문장이 쓴다). usual = 평소 선택(교본 줄과 무관) */
 export type MethodWhy = 'usual' | 'near' | 'noGear' | 'tooFar' | 'weak' | 'fast' | 'failed' | 'broken' | 'danger' | 'quiet' | 'team'      // R3 가 이 줄 끝에 상태 까닭 여섯을 더한다 (R3 §2.1·§3.7)
   | 'hurt' | 'alone' | 'lowAir' | 'lowAmmo' | 'shaken' | 'tired';      // (R3 1단계) 교본 줄이 1등을 바꾼 까닭 (field/doctrine.ts 의 docWhyMethod — §3.7 의 사상 표)
@@ -1340,4 +1342,18 @@ export interface KindsState {
   holeR0?: number;                                // 싱크홀: 처음 반경 (넓어져도 처음 + 2 까지 — hazR 이 지금 반경)
   keep?: number[];                                // 싱크홀: 꺼지지 않는 칸 (드러난 관·밸브 칸과 그 옆 한 칸)
   zone?: number[];                                // 간판: 낙하 구역의 칸
+}
+
+// ───────────────────────── 사건 종류 다양화 (N8 단계 5 — 동물) ─────────────────────────
+// docs/specs/N8-incident-kinds.md §4.3. 동물 목록(Scene.animals)은 진실이고, 판단 쪽은 'ani' 사실(AniBelief)로만 안다.
+export interface Task {
+  animal?: number;                                // (N8 단계 5) 대상 동물의 id (capture — 작업 항목의 animal 을 옮긴다, 없으면 -1). executor.makeTask 의 리터럴 끝
+}
+export interface AniBelief {
+  lost?: boolean;                                 // 믿음 속 자리에 가 보았지만 보이지 않았다 (숨었거나 자리를 옮겼다 — 찾아야 한다). 다시 보면 지운다
+}
+export interface KindsState {
+  pen?: number;                                   // 가축 탈출: 가축을 모는 우리 구역 id (그 구역에 들어간 가축은 잡힌 것으로 친다)
+  hiveWide?: number;                              // 벌집: 떼어 내기 시작한 시각 (그 뒤 20초 동안 위험 반경이 4.5 로 커진다 — -1 = 아직)
+  hides?: number[];                               // 개 물림: 개가 숨는 칸 (골목 끝·담 모퉁이)
 }

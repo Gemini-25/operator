@@ -57,7 +57,7 @@ function sceneWith(seed: string, what: string, kinds: UnitKind[]): { sim: Sim; I
   for (const a of s.agents) for (const c of s.casualties) a.beliefs.merge(casFact(sim, s, c, '시험'));
   return { sim, I, s, of: (kind) => s.agents.filter((a) => sim.units[a.unitId].kind === kind), role: (r) => s.agents.find((a) => sim.responders[a.rid].role === r)! };
 }
-const tgCas = (c: Casualty): MTarget => ({ cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1 });
+const tgCas = (c: Casualty): MTarget => ({ cas: c.id, prop: -1, hostile: -1, region: -1, tile: -1, animal: -1 });      // animal: (N8 단계 5) 동물 대상 칸
 const work = (sim: Sim, s: Scene, kind: WorkKind, tg: Partial<WorkItem> = {}): WorkItem => {
   const w: WorkItem = { id: s.board.length, kind, region: -1, cas: -1, prop: -1, hostile: -1, tile: -1, mate: -1, priority: 0.8, status: 'active', assignees: [], max: 1,
     createdAt: sim.t, doneAt: -1, note: '', fails: 0, holdUntil: 0, thorough: false, orderSentAt: {}, cause: -1, failedAt: {}, ...tg };
@@ -71,7 +71,8 @@ const LIVE: MethodId[] = ['hand', 'pole', 'ring', 'rope', 'improvise', 'catch', 
   'interior', 'defensive', 'aerial', 'extinguisher', 'ventilate', 'beanbag', 'sniper', 'stay', 'rush', 'seal', 'ventFirst', 'cordon', 'announce',
   'feel', 'pulse',      // (R3 3단계) 벽 더듬기 수색·끊어 쏘기 — 교본 F07·F08 이 고른다
   'robotDefuse', 'suitDefuse', 'bareDefuse',      // (R3 단계 5) 폭발물 해체 셋
-  'pack', 'drag', 'post', 'blockLane'];      // (R3 단계 6) 이송의 업기·끌기 · 교통 통제의 통제·차량 차단 (들것 litter 는 기록 전용)
+  'pack', 'drag', 'post', 'blockLane',      // (R3 단계 6) 이송의 업기·끌기 · 교통 통제의 통제·차량 차단 (들것 litter 는 기록 전용)
+  'dart', 'catchpole', 'herd', 'net'];      // (N8 단계 5) 동물 포획 넷
 /** 헤엄을 못 치는 몸으로 둔다 (수영 능력 = 0.15 + 개인차 ±0.15 < 문턱 0.35 — 구명조끼가 없을 때) */
 const noSwim = (sim: Sim, a: FieldAgent): void => { const r = sim.responders[a.rid]; r.fitness = 0; r.skills.rescue = 0; strip(sim, a.rid, 'pfd'); };
 /**
@@ -134,7 +135,7 @@ describe('R2 시험 1: 판단부(methods.ts)는 진실을 읽지 않는다', () 
 describe('R2 방법 표 (METHOD)', () => {
   const ids = Object.keys(METHOD) as MethodId[];
   it('모든 줄이 온전하다: 이름·짧은 이름·라벨(12자 안)·문장에 끼우는 말, 장비는 표에 있는 것, 임무가 하나 이상', () => {
-    expect(ids.length).toBe(70);      // R2 의 55 + N9 단계 1 의 다섯(dive·boom·shieldLine·deconTent·hoseWash — can 은 NOT_YET) + R3 단계 5 의 셋(robotDefuse·suitDefuse·bareDefuse — N9 다섯 앞) + R3 3단계의 둘(feel·pulse — 표 끝) + R3 6단계의 다섯(pack·drag·litter·post·blockLane — N9 다섯 앞)
+    expect(ids.length).toBe(74);      // (N8 단계 5) 동물 포획 넷(dart·catchpole·herd·net — N9 다섯 앞) · R2 의 55 + N9 단계 1 의 다섯(dive·boom·shieldLine·deconTent·hoseWash — can 은 NOT_YET) + R3 단계 5 의 셋(robotDefuse·suitDefuse·bareDefuse — N9 다섯 앞) + R3 3단계의 둘(feel·pulse — 표 끝) + R3 6단계의 다섯(pack·drag·litter·post·blockLane — N9 다섯 앞)
     expect(METHOD_ORDER).toEqual(ids);
     for (const m of ids) {
       const d = METHOD[m];
@@ -207,7 +208,7 @@ describe('R2 장비 아홉 줄과 gear.ts', () => {
       expect(holders, id).toEqual((WHO[id] ?? []).slice().sort());
     }
     // 끝에 붙였다: 그 역할의 R1·N9 장비 순서는 그대로다 (고장 추첨 순서)
-    expect(ROLES.ropeTech.kit).toEqual(['scba', 'turnout', 'rope', 'ring', 'hose', 'pfd', 'drysuit', 'raft']);
+    expect(ROLES.ropeTech.kit).toEqual(['scba', 'turnout', 'rope', 'ring', 'hose', 'pfd', 'drysuit', 'raft', 'beeSuit']);      // beeSuit: (N8 단계 5) 벌 보호복을 끝에
     expect(ROLES.boatRescuer.kit).toEqual(['rope', 'ring', 'oilBoom', 'pole', 'pfd', 'drysuit']);
     expect(ROLES.engineer.kit.slice(-3)).toEqual(['pole', 'extinguisher', 'fan']); expect(ROLES.ladderOp.kit.slice(-2)).toEqual(['pole', 'fan']); expect(ROLES.airRescuer.kit.slice(-1)).toEqual(['pfd']);
     expect(ROLES.patrolLead.kit.slice(-1)).toEqual(['extinguisher']); expect(ROLES.emsDriver.kit).toEqual(['stretcher', 'extinguisher']); expect(ROLES.eodGuard.kit.slice(-1)).toEqual(['extinguisher']); expect(ROLES.decon.kit.slice(-1)).toEqual(['fan']);

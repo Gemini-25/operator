@@ -989,10 +989,11 @@ describe('I1-b b2: 세계 상태와 인과 규칙의 틀', () => {
 
 describe('I1-b b3-1: C6 divertRecord — 전환 배정의 실제 영향', () => {
   const LATE = /^사건 (\S+): 전환 배정 뒤 첫 도착이 예정보다 약 (\d+)초 늦었습니다\.$/;
-  it('빼앗긴 사건의 첫 도착이 예정보다 얼마나 늦었는가: DIVERTED 의 ref.lost, 10초 넘으면 그 DIVERTED 를 원인으로 한 기록 (보통 S0·S3·S7·S8·S15·S17)', () => {
+  it('빼앗긴 사건의 첫 도착이 예정보다 얼마나 늦었는가: DIVERTED 의 ref.lost, 10초 넘으면 그 DIVERTED 를 원인으로 한 기록 (보통 S0·S3·S7·S8·S15·S17·S19·S21·S22)', () => {
     let hurtN = 0, lateN = 0, zeroN = 0, notHurt = 0;
     // (N8 단계 4a·4b) S15·S17 을 더했다 (표본만 넓힌다): 시설 사고가 짧은 사건에 들어 S0·S3·S7·S8 의 전환 배정 넷이 모두 10초 안에 메워졌다
-    for (const seed of ['S0', 'S3', 'S7', 'S8', 'S15', 'S17']) {
+    // (N8 단계 5) S19·S21·S22 를 더했다 (표본만 넓힌다): 동물 사건이 짧은 사건에 들어 10초 넘게 늦은 전환이 하나로 줄었다
+    for (const seed of ['S0', 'S3', 'S7', 'S8', 'S15', 'S17', 'S19', 'S21', 'S22']) {
       const { sim, probe } = probedShift(seed);
       const rows = divertAnalysis(sim.events, sim.incidents, sim.units, probe.etaLog, sim.t).rows;
       for (const J of sim.incidents) {

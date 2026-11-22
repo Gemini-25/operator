@@ -468,6 +468,8 @@ const ANIMAL_LINES = ['animal/boar', 'animal/hive', 'animal/dogbite', 'animal/es
 const DISTURB_LINES = ['disturb/rowdy', 'disturb/brawl', 'disturb/snatch', 'disturb/scam', 'disturb/cartheft'];      // (단계 6a · 6b)
 const WELFARE_LINES = ['welfare/dementia', 'welfare/lostchild'];      // (단계 7 — 이 커밋의 둘)
 const N3_LINES = ['disturb/referral'];      // (단계 10) 비응급 N3 단순 민원 — 치안 유형의 daily 줄이지만 비응급이다
+const DUP_LINES = ['fire/dup', 'traffic/dup', 'armed/dup', 'collapse/dup', 'hazmat/dup', 'utility/dup', 'animal/dup', 'disturb/dup'];      // (단계 10) 비응급 N4 중복 신고 — 몫 0 의 daily 줄 (incidents.dupCall 만 일으킨다)
+const dupLines = (t: string): string[] => DUP_LINES.filter((l) => l.startsWith(t + '/'));
 /** 강제 발생(sim.force)으로 만든 그 사건 — 그 변형의 첫 사건 (강제 발생도 시나리오의 tag 'daily' 를 받는다) */
 const forced = (sim: Sim) => (J: Inc): boolean => sim.force !== null && `${J.truth.type}/${J.truth.variant}` === sim.force && J.parent === undefined;
 /** 단계 3 에는 daily 줄이 비응급 일곱(가중 1.4 / DAILY_TOTAL 14)뿐이라 보통 교대의 짧은 사건은 0.5건쯤이다 — 시험은 차례를 늘려(SimOpts.daily) 짧은 사건이 끼게 한다 */
@@ -496,7 +498,7 @@ describe('6 짧은 사건의 재현성과 표 (단계 3)', () => {
       expect(NATURE_LIK[q.nature], `${q.nature} 는 신고자가 말하는 키가 아니다`).toBeUndefined();
       expect(q.card).toBe(false);
     }
-    expect(daily.map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...N12, ...UTIL_LINES, ...ANIMAL_LINES, ...DISTURB_LINES, ...WELFARE_LINES, ...N3_LINES].sort());
+    expect(daily.map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...N12, ...UTIL_LINES, ...ANIMAL_LINES, ...DISTURB_LINES, ...WELFARE_LINES, ...N3_LINES, ...DUP_LINES].sort());
   });
   it('N8 의 새 난수 흐름 이름이 기존 흐름 이름과 겹치지 않는다 (소스의 fork 글자 — 한 이름은 한 자리에서만 만든다, 아직 쓰지 않은 이름은 아무도 쓰지 않는다)', () => {
     // 단계 5: 동물마다(animal:) · 차에 받힌 동물의 운전자(animal-hit:) · 벌집(hive:) · 동물 포획 장비의 고장 추첨(kit-n8 · 지원 부대 aid-n8:)
@@ -819,9 +821,9 @@ describe('18 새 유형의 자리 (단계 4a 부터)', () => {
       expect(lines.length, t).toBeGreaterThan(0);
       for (const q of lines) expect(SCENE_BUILDERS[`${q.type}/${q.variant}`], `${q.type}/${q.variant}`).toBeTruthy();
     }
-    expect(SCENARIOS.filter((q) => q.type === 'utility').map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...UTIL_LINES].sort());
-    expect(SCENARIOS.filter((q) => q.type === 'animal').map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...ANIMAL_LINES].sort());
-    expect(SCENARIOS.filter((q) => q.type === 'disturb').map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...DISTURB_LINES, ...N3_LINES].sort());
+    expect(SCENARIOS.filter((q) => q.type === 'utility').map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...UTIL_LINES, ...dupLines('utility')].sort());
+    expect(SCENARIOS.filter((q) => q.type === 'animal').map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...ANIMAL_LINES, ...dupLines('animal')].sort());
+    expect(SCENARIOS.filter((q) => q.type === 'disturb').map((q) => `${q.type}/${q.variant}`).sort()).toEqual([...DISTURB_LINES, ...N3_LINES, ...dupLines('disturb')].sort());
   });
 });
 
@@ -1634,7 +1636,7 @@ describe('8 비응급 N3 단순 민원 이관 · N4 중복 신고 오인 (단계
   });
   it('N4: 추가 신고가 옆 교차로의 새 사건(dup)이 되면 첫 신고는 그 틱 · 원 사건의 추가 신고는 다시 울리지 않는다 · 알아보면 원 사건에 진술을 넘기고 합친 쪽만 닫힌다 · 못 알아보면 출동해 확인(FALSE_ALARM)', () => {
     const P0 = DUP.P;
-    DUP.P = 1;      // 시험: 추가 신고마다 중복 신고가 된다 (보통 0.08)
+    DUP.P = 1;      // 시험: 추가 신고마다 중복 신고가 된다 (보통 0.03)
     let linked = 0, missed = 0;
     try {
       for (let k = 0; k < 20 && (linked < 1 || missed < 1); k++) {
@@ -1708,5 +1710,227 @@ describe('8 비응급 N3 단순 민원 이관 · N4 중복 신고 오인 (단계
     expect(sameCandidate(sim, J), '평가 유형이 다르면 묻지 않는다').toBeNull();
     K.assessment = as('fire'); K.reportedAt = sim.t - 301;
     expect(sameCandidate(sim, J), '300초가 지났으면 묻지 않는다').toBeNull();
+  });
+});
+
+// ───────────────────────── 단계 10 — 조건부 연쇄 (§5.6) — 세계 상태 → 일반 법칙 → 초과 위험 · 이야기 연쇄 둘 ─────────────────────────
+import { SOAK, SPARK, STRAY, liveWire, sparkTargets } from '../src/sim/world/kindsExpo';
+import { WASH } from '../src/sim/world/laws/kinds';
+import { AGAIN } from '../src/sim/world/rules/kinds';
+import { hazardLaws, hazardRoom } from '../src/sim/world/hazard';
+import { canChain, chainLen } from '../src/sim/chain';
+import { closeIncident, isDailyLoad } from '../src/sim/incidents';
+import { signal, consequences } from '../src/sim/world/consequence';
+
+/** 시험 동안만 상수를 바꾼다 (등록할 때 읽히지 않는 세기만 — 법칙의 식이 매번 읽는다) */
+function withK<T extends object>(o: T, patch: Partial<T>, fn: () => void): void {
+  const keep = { ...o };
+  Object.assign(o, patch);
+  try { fn(); } finally { Object.assign(o, keep); }
+}
+/** 강제한 사건이 생길 때까지 (그 사건을 돌려준다) */
+function until(sim: Sim, pick: (I: Inc) => boolean, cap = 600): Inc | undefined {
+  for (let k = 0; k < cap && !sim.ended; k++) { sim.step(); const I = sim.incidents.find(pick); if (I) return I; }
+  return undefined;
+}
+const lawKid = (sim: Sim, law: string, parent: number): Inc | undefined => sim.incidents.find((J) => J.hz !== undefined && J.hz.law === law && J.parent === parent);
+
+describe('16 조건부 연쇄 — 상태가 원인을 모르는 법칙을 지나 사건이 된다 (단계 10)', () => {
+  it('K1 끊어진 전선: 살아 있는 동안 곁 건물의 heatSpread 칸에 불티(spark)가 쌓이고, 넘으면 그 건물의 불(부모 = 전선 사건) — 같은 시드에서 전선만 죽여 두면 쌓이지도 나지도 않는다(개입 시험)', () => {
+    let seen = 0;
+    for (let k = 0; k < 24 && seen < 1; k++) {
+      const probe = new Sim('W' + k, NORMAL, 1200, { force: 'utility/wire' });
+      const W0 = until(probe, forced(probe));
+      if (!W0 || !sparkTargets(probe, W0.truth.x, W0.truth.y).length) continue;
+      seen++;
+      const run = (kill: boolean): { kid: Inc | undefined; H: number; sim: Sim } => {
+        let out: { kid: Inc | undefined; H: number; sim: Sim } = { kid: undefined, H: 0, sim: probe };
+        withK(SPARK, { K: SPARK.K * 200 }, () => {
+          const sim = new Sim('W' + k, NORMAL, 1200, { force: 'utility/wire' });
+          const W = until(sim, forced(sim))!;
+          if (kill) liveWire(sim.scenes[W.id]!)!.live = false;
+          for (let t = 0; t < 400 && !sim.ended; t++) sim.step();
+          let H = 0;
+          for (const x of sparkTargets(sim, W.truth.x, W.truth.y)) H = Math.max(H, sim.world.hz.cells.heatSpread?.[x.id]?.H ?? 0);
+          out = { kid: lawKid(sim, 'heatSpread', W.id), H, sim };
+        });
+        return out;
+      };
+      const on = run(false), off = run(true);
+      expect(on.kid, `W${k}: 살아 있는 전선 곁의 불`).toBeTruthy();
+      expect(on.kid!.truth.type).toBe('fire');
+      expect(on.kid!.hz!.src[0].what).toBe('spark');
+      expect(on.sim.events[on.kid!.rootEvent].text).toContain('끊어진 전선의 불꽃이 옮겨붙었습니다');
+      expect(off.kid, `W${k}: 전선만 죽인 같은 시드`).toBeUndefined();
+      expect(off.H).toBe(0);
+    }
+    expect(seen, '곁에 건물이 있는 전선 현장').toBe(1);
+  }, 120000);
+  it('K1: 닫힐 때 전선이 살아 있으면 LEFT 초의 불티를 한 번에(닫힌 꼴) 더하고, 고친 전선은 아무것도 더하지 않는다 (손 계산)', () => {
+    for (let k = 0; k < 24; k++) {
+      const sim = new Sim('W' + k, NORMAL, 1200, { force: 'utility/wire' });
+      const W = until(sim, forced(sim));
+      if (!W) continue;
+      const ts = sparkTargets(sim, W.truth.x, W.truth.y);
+      if (!ts.length) continue;
+      const cell = (): number => sim.world.hz.cells.heatSpread?.[ts[0].id]?.H ?? 0;
+      sim.step(); sim.step(); sim.step(); sim.step(); sim.step();
+      const before = cell();
+      closeIncident(sim, W, 'timeout');
+      sim.step();
+      const c = sim.world.hz.cells.heatSpread?.[ts[0].id];
+      if (c && !c.done) expect(cell() - before, '닫힌 꼴의 충격 = 1초의 불티 × LEFT').toBeCloseTo(ts[0].dH * SPARK.LEFT, 6);
+      // 고친 전선: 같은 시드, 닫기 전에 전선을 죽이면 충격이 없다
+      const sim2 = new Sim('W' + k, NORMAL, 1200, { force: 'utility/wire' });
+      const W2 = until(sim2, forced(sim2))!;
+      for (let i = 0; i < 5; i++) sim2.step();
+      liveWire(sim2.scenes[W2.id]!)!.live = false;
+      const b2 = sim2.world.hz.cells.heatSpread?.[ts[0].id]?.H ?? 0;
+      closeIncident(sim2, W2, 'resolved');
+      for (let i = 0; i < 10; i++) sim2.step();
+      expect(sim2.world.hz.cells.heatSpread?.[ts[0].id]?.H ?? 0, '고친 전선').toBe(b2);
+      return;
+    }
+    throw new Error('곁에 건물이 있는 전선 현장을 찾지 못했다');
+  }, 60000);
+  it('K2 수도관 → 싱크홀: 물이 흐르는 동안 이웃 교차로의 스민 물이 1초에 1 씩 쌓이고(멎으면 DRAIN 씩 빠진다) T0 를 넘은 만큼 위험이 쌓여 싱크홀(washout) — 관만 막아 두면 없다', () => {
+    let seen = 0;
+    for (let k = 0; k < 12 && seen < 1; k++) {
+      const run = (kill: boolean): { sim: Sim; M: Inc; v30: number } => {
+        let out = null as unknown as { sim: Sim; M: Inc; v30: number };
+        withK(WASH, { A: WASH.A * 300, T0: 10 }, () => {      // 흙이 버티는 시간을 줄여 본다 — 그 시드의 관이 그보다 일찍 잠기지 않게
+          const sim = new Sim('M' + k, NORMAL, 1200, { force: 'utility/main' });
+          const M = until(sim, forced(sim))!;
+          const pipe = sim.scenes[M.id]!.props.find((p) => p.kind === 'fixture' && p.skin === 'pipe')!;
+          if (kill) pipe.live = false;
+          for (let t = 0; t < 150; t++) sim.step();      // 30초
+          const nb0 = sim.city.edges[sim.city.nodes[M.truth.nodeId].edges[0]];
+          const nb = nb0.a === M.truth.nodeId ? nb0.b : nb0.a;
+          const v30 = sim.world.soak[nb]?.v ?? 0;
+          for (let t = 0; t < 1500 && !sim.ended; t++) sim.step();
+          out = { sim, M, v30 };
+        });
+        return out;
+      };
+      const on = run(false);
+      if (on.v30 < 25) continue;      // 출동이 빨라 30초 안에 잠갔다 — 다른 시드
+      seen++;
+      expect(on.v30, '30초에 스민 물 (1초에 1)').toBeGreaterThanOrEqual(28);
+      expect(on.v30).toBeLessThanOrEqual(31);
+      const kid = lawKid(on.sim, 'washout', on.M.id);
+      expect(kid, `M${k}: 물이 오래 흐른 수도관 곁의 싱크홀`).toBeTruthy();
+      expect(`${kid!.truth.type}/${kid!.truth.variant}`).toBe('utility/sinkhole');
+      expect(on.sim.city.nodes[on.M.truth.nodeId].edges.some((e) => { const ed = on.sim.city.edges[e]; return ed.a === kid!.truth.nodeId || ed.b === kid!.truth.nodeId; }), '이웃 교차로').toBe(true);
+      expect(kid!.hz!.src[0].what).toBe('soak');
+      const off = run(true);
+      expect(lawKid(off.sim, 'washout', off.M.id), `M${k}: 관만 막아 둔 같은 시드`).toBeUndefined();
+      expect(Object.keys(off.sim.world.soak).length).toBe(0);
+    }
+    expect(seen).toBe(1);
+    expect(SOAK.DRAIN).toBeGreaterThan(0);
+  }, 120000);
+  it('K3 · 연쇄 상한: 수도관 → 싱크홀 → 교통사고에서 멈춘다(한 사슬 3) · 한 뿌리의 법칙 사건 2 · 한 교대 6 — 틀(hazardRoom·canChain)이 그대로 막는다', () => {
+    const sim = new Sim('N8-10-CAP');
+    sim.run(5);
+    const M = createIncident(sim, { type: 'utility', variant: 'main', tag: 'daily', rng: sim.rng.fork('n8-10-cap:m') });
+    const S = createIncident(sim, { type: 'utility', variant: 'sinkhole', parent: M.id, rng: sim.rng.fork('n8-10-cap:s') });
+    const T = createIncident(sim, { type: 'traffic', variant: 'std', parent: S.id, rng: sim.rng.fork('n8-10-cap:t') });
+    expect(chainLen(sim, T)).toBe(3);
+    expect(canChain(sim, T)).toBe(false);
+    const road = hazardLaws().find((l) => l.id === 'roadCrash')!, wash = hazardLaws().find((l) => l.id === 'washout')!;
+    expect(hazardRoom(sim, road, T.id), '셋째 사건에서는 잇지 않는다').toBe('depth');
+    expect(hazardRoom(sim, wash, S.id)).toBeNull();
+    expect(isDailyLoad(sim, S), '짧은 사건이 부모인 자식은 평소 생성기의 몫이 아니다').toBe(true);
+    expect(hazardLaws().map((l) => l.id).slice(-3)).toEqual(['washout', 'strayHarm', 'strayRoad']);
+    const ids = consequences().map((c) => c.id);
+    expect(ids.slice(ids.indexOf('floodLow') + 1), '상태 규칙은 world/rules/kinds.ts 가 infra 의 끝(floodLow) 다음에').toEqual(['wireSpark', 'wireLeft', 'mainSoak', 'hiveLeft', 'looseOut', 'rowdyKnife', 'snatchAgain']);
+  });
+  it('K5 남은 벌집: 닫힐 때 벌집이 살아 있으면 그 건물의 풀린 위험(hive) → 같은 건물에서 또 쏘인다(strayHarm → 벌집 사건, 부모 = 그 사건) · 떼어 낸 벌집은 아무것도 남기지 않는다', () => {
+    const run = (alive: boolean): { sim: Sim; H: Inc } => {
+      let out = null as unknown as { sim: Sim; H: Inc };
+      withK(STRAY.RR, { hive: 1e6 }, () => {
+        const sim = new Sim('N8-10-HIVE');
+        sim.run(5);
+        const H = createIncident(sim, { type: 'animal', variant: 'hive', tag: 'daily', rng: sim.rng.fork('n8-10-hive') });
+        const p = sim.scenes[H.id]!.props.find((q) => q.kind === 'fixture' && q.skin === 'hive')!;
+        p.live = alive;
+        closeIncident(sim, H, 'timeout');
+        for (let t = 0; t < 300; t++) sim.step();
+        out = { sim, H };
+      });
+      return out;
+    };
+    const on = run(true);
+    const L = on.sim.world.loose.find((q) => q.inc === on.H.id);
+    expect(L && L.what).toBe('hive');
+    expect(L!.place).toBe(on.H.truth.placeId);
+    const kid = lawKid(on.sim, 'strayHarm', on.H.id);
+    expect(kid, '남은 벌집에서 또 쏘인 사람').toBeTruthy();
+    expect(`${kid!.truth.type}/${kid!.truth.variant}`).toBe('animal/hive');
+    expect(kid!.truth.placeId).toBe(on.H.truth.placeId);
+    expect(kid!.hz!.src[0].what).toBe('hive');
+    const off = run(false);
+    expect(off.sim.world.loose.length).toBe(0);
+    expect(lawKid(off.sim, 'strayHarm', off.H.id)).toBeUndefined();
+  }, 60000);
+  it('K6 · K7 찻길로 달아난 동물: 신호 loose 로 풀린 동물(stray) → 곁 구간의 사고(strayRoad, 가축) · 곁 주민의 물림(strayHarm, 개) — 시간이 지나면 남은 정도가 줄고, 신호가 없으면 아무것도 없다', () => {
+    const run = (variant: 'escape' | 'dogbite', send: boolean): { sim: Sim; A: Inc } => {
+      let out = null as unknown as { sim: Sim; A: Inc };
+      withK(STRAY.ROAD, { cow: 1, pig: 1 }, () => withK(STRAY.RR, { dog: 1e6 }, () => {
+        const sim = new Sim('N8-10-' + variant);
+        sim.run(5);
+        const A = createIncident(sim, { type: 'animal', variant, tag: 'daily', rng: sim.rng.fork('n8-10-' + variant) });
+        const a = sim.scenes[A.id]!.animals![0];
+        if (send) { const ev = raiseProblem(sim, A, 'ANIMAL_LOST', `${a.label} 찻길로 달아남`, { role: 'SYSTEM', actor: '현장', imp: 2, truth: true, text: '시험' }, false); signal(sim, 'loose', { inc: A.id, ev, data: a.id }); }
+        closeIncident(sim, A, 'resolved');
+        for (let t = 0; t < 400; t++) sim.step();
+        out = { sim, A };
+      }));
+      return out;
+    };
+    const cows = run('escape', true);
+    const L = cows.sim.world.loose.find((q) => q.inc === cows.A.id)!;
+    expect(L.what).toBe('stray');
+    expect(STRAY.TAU[L.kind]).toBeGreaterThan(0);
+    const crash = cows.sim.incidents.find((J) => J.hz?.law === 'strayRoad' && J.parent === cows.A.id);
+    expect(crash, '찻길로 나간 가축 곁의 사고').toBeTruthy();
+    expect(crash!.truth.type).toBe('traffic');
+    expect(cows.sim.city.nodes[L.node].edges).toContain(crash!.hz!.target);
+    expect(lawKid(run('escape', false).sim, 'strayRoad', cows.A.id), '신호가 없으면 없다').toBeUndefined();
+    const dogs = run('dogbite', true);
+    const bite = lawKid(dogs.sim, 'strayHarm', dogs.A.id);
+    expect(bite, '놓친 개에 물린 사람').toBeTruthy();
+    expect(`${bite!.truth.type}/${bite!.truth.variant}`).toBe('animal/dogbite');
+    expect(bite!.tag).toBe('daily');
+  }, 60000);
+  it('K4 · K8 붙잡히지 않은 용의자 (이야기 연쇄): 달아났으면 예약(부모·흐름·tag)하고 근처에 경찰이 있으면 미룬다, 붙잡았으면 예약 0 · 평소 생성기의 흐름과 lastType 을 건드리지 않는다', () => {
+    const run = (variant: 'snatch' | 'rowdy', escaped: boolean): { sim: Sim; D: Inc; gen: number; last: unknown } => {
+      let out = null as unknown as { sim: Sim; D: Inc; gen: number; last: unknown };
+      withK(AGAIN.snatch, { P: 1 }, () => withK(AGAIN.rowdy, { P: 1 }, () => {
+        const sim = new Sim('N8-10-' + variant);
+        sim.run(5);
+        const D = createIncident(sim, { type: 'disturb', variant, tag: 'daily', rng: sim.rng.fork('n8-10-d:' + variant) });
+        for (const h of sim.scenes[D.id]!.hostiles) h.state = escaped ? 'escaped' : 'arrested';
+        if (escaped) raiseProblem(sim, D, 'SUSPECT_FLED', '시험 도주', { role: 'SYSTEM', actor: '현장', imp: 3, truth: true, text: '시험' }, false);
+        const last = sim.gen.lastType;
+        closeIncident(sim, D, 'resolved');
+        sim.step();
+        out = { sim, D, gen: sim.rngGen.next(), last };
+      }));
+      return out;
+    };
+    for (const v of ['snatch', 'rowdy'] as const) {
+      const yes = run(v, true), no = run(v, false);
+      const item = yes.sim.gen.chain.find((c) => c.opts.parent === yes.D.id);
+      expect(item, `${v}: 달아난 용의자의 다음 범행 예약`).toBeTruthy();
+      expect(item!.opts.csq).toBe(v === 'snatch' ? 'snatchAgain' : 'rowdyKnife');
+      expect(item!.opts.rng).toBeTruthy();
+      expect(`${item!.opts.type}/${item!.opts.variant}`).toBe(v === 'snatch' ? 'disturb/snatch' : 'armed/dispute');
+      if (v === 'snatch') expect(item!.opts.tag).toBe('daily');
+      expect(typeof item!.when).toBe('function');
+      expect(no.sim.gen.chain.some((c) => c.opts.parent === no.D.id), `${v}: 붙잡았으면 예약 0`).toBe(false);
+      expect(yes.gen, `${v}: 평소 생성기의 흐름은 조건과 상관없이 같다`).toBe(no.gen);
+      expect(yes.sim.gen.lastType).toBe(yes.last);
+    }
   });
 });

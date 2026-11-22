@@ -65,10 +65,16 @@ export const DAILY_TOTAL = 14.0;
 
 /**
  * (N8 §4.8 N4 — 단계 10) 중복 신고 오인: 추가 신고 차례(incidents.tickIncidents)에 원 사건이 이 유형이고 비응급 변형이 아니면, 흐름 dup:<원 사건> 으로
- * 확률 P × (위치 오류 손잡이 ÷ ADDR0 — 보통 난이도의 값) 만큼 그 추가 신고가 옆 교차로의 새 사건(변형 dup)이 된다. 짧은 사건 손잡이가 0 이면 꺼진다
+ * 확률 P × (위치 오류 손잡이 ÷ ADDR0 — 보통 난이도의 값) 만큼 그 추가 신고가 옆 교차로의 새 사건(변형 dup)이 된다. 짧은 사건 손잡이가 0 이면 꺼진다.
+ * P 는 §4.8 의 어림(교대당 +0.3건)에 맞췄다: 0.08 이면 보통 60교대에 0.68건/교대 · 비응급 9.7% 라 0.03 으로 — 비응급 6~8%(§7.1)
  */
 export const DUP_TYPES: readonly IncidentType[] = ['fire', 'traffic', 'armed', 'collapse', 'hazmat', 'utility', 'animal', 'disturb'];
-export const DUP = { P: 0.08, ADDR0: 0.1 };
+export const DUP = { P: 0.03, ADDR0: 0.1 };
+/** 중복 신고 줄의 신고 키 [정확, 흐릿] — 원 사건이 없을 때(강제 실행)만 쓰인다. 모두 신고자가 말하는 기존 열쇠다 */
+const DUP_NATURE: Record<string, [string, string]> = {
+  fire: ['flames', 'smoke'], traffic: ['crash', 'bang'], armed: ['fight', 'scream'], collapse: ['collapse', 'rumble'], hazmat: ['gasleak', 'fumes'],
+  utility: ['wirefall', 'bang'], animal: ['dogbite', 'scream'], disturb: ['brawl', 'fight'],
+};
 
 /**
  * 길 위에서 일어나는 짧은 사건의 교차로: 출동 시설이 아니고, 다른 사건이 열려 있지 않으며(busy), 그 등급의 구간이 닿고 그 동네 성격인 곳.
@@ -266,4 +272,7 @@ export const KINDS: Scenario[] = [
     texts: ['윗집에서 밤마다 쿵쿵거려서 잠을 못 자요.', '가게 앞에 차를 며칠째 세워 놔서 장사를 못 하겠어요.', '옆집 개가 하루 종일 짖어요.'],
     lik: { disturb: 0.7, animal: 0.15, utility: 0.08, welfare: 0.05 },
     needs: (n, c) => { n.law = c.noise || c.hurt || c.trapped ? 1 : 0; n.search = 0; n.ems = 0; n.tactical = 0; } },
+  // ── (N8 §4.8 N4 — 단계 10) 중복 신고 오인의 줄: 몫 0 — 평소·짧은 사건 추첨에 들지 않고 incidents.dupCall 이 정해서만 일으킨다(현장은 scenes/kinds.ts 의 빈 길).
+  //    신고자는 원 사건의 진실로 말하므로(kindsCaller.dupSource) nature·vague 는 원 사건이 없을 때(강제 실행)만 쓰는 그 유형의 흔한 열쇠다 ──
+  ...DUP_TYPES.map((t): Scenario => ({ type: t, variant: 'dup', name: '중복 신고', share: 0, nature: DUP_NATURE[t][0], vague: DUP_NATURE[t][1], severity: [1, 1], tag: 'daily', card: false })),
 ];

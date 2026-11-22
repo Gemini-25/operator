@@ -934,7 +934,8 @@ export interface HospitalState {
   lastEv: number;              // (b3-2 C3) 마지막 인계 기록 (-1) — 포화 알림의 원인이 된다
 }
 export type SignalKind = 'blast' | 'collapse' | 'fireBig' | 'delivered' | 'fled' | 'closed' | 'catastrophe'
-  | 'quake' | 'blackout';      // (I1-b b3-4) 재난이 틀을 지나는 길 — 지진의 본진·여진, 태풍 정전의 시작·끝. 보내는 자리는 b3-10 (N8 이 더하는 신호는 이 뒤에)
+  | 'quake' | 'blackout'      // (I1-b b3-4) 재난이 틀을 지나는 길 — 지진의 본진·여진, 태풍 정전의 시작·끝. 보내는 자리는 b3-10 (N8 이 더하는 신호는 이 뒤에)
+  | 'loose';      // (N8 단계 10) 동물이 찻길로 달아났다 (ANIMAL_LOST — field/rules/kinds.ts 의 동물 규칙). data = 그 동물 id, size 0 · 받는 것은 world/rules/kinds.ts 의 looseOut
 /**
  * 상태를 바꾸는 자리가 세계에 알리는 사실 한 줄 (world/consequence.ts 의 signal). tickWorld 가 다음 틱에 규칙에 건넨다.
  * x·y 는 **도시 좌표**(주지 않으면 그 사건의 자리, 인계는 병원), cx·cy 는 현장의 칸 좌표(-1 = 없음). ev = 그 일을 남긴 기록.
@@ -974,10 +975,12 @@ export interface ShiftReport {
 // 원인은 세계 상태만 바꾸고, 상태가 원인을 모르는 일반 법칙(world/laws/*.ts — registerHazard)을 지나 초과 위험을 쌓는다.
 // 대상(구간·건물)마다 한 번 뽑아 둔 문턱을 넘을 때만 사건이 난다 — 틱마다 주사위를 굴리지 않는다. 모든 칸은 함수가 없는 순수 자료이고 진실 쪽 전용이다(판단은 읽지 않는다).
 /** 일반 법칙의 이름 — Incident.csq 와 흐름 이름에 쓴다. 새 법칙은 끝에 새 줄로 (L6 floodLow 는 사건을 만들지 않는 상태 규칙이라 여기에 없다) */
-export type HazardLawId = 'roadCrash' | 'heatSpread' | 'structFail' | 'pipeLeak' | 'rekindle' | 'liftStall' | 'smokeIll';
+export type HazardLawId = 'roadCrash' | 'heatSpread' | 'structFail' | 'pipeLeak' | 'rekindle' | 'liftStall' | 'smokeIll'
+  | 'washout' | 'strayHarm' | 'strayRoad';      // (N8 단계 10) 물이 파낸 길 · 풀린 위험에 다친 주민 · 길에 나온 동물 (world/laws/kinds.ts)
 /** 초과를 이루는 상태의 갈래 — 보고서가 내력 문장을, 발생 기록이 첫머리를 고른다 */
 export type HzWhat = 'divert' | 'queue' | 'lane' | 'jam' | 'crowd' | 'dark' | 'haze'      // 도로: 우회 몰림 · 뒤로 밀림 · 한 차로 막힘 · 정체 · 인파 · 꺼진 신호 · 연기
-  | 'heat' | 'ember' | 'shake' | 'pipe' | 'residual' | 'outage' | 'smoke' | 'level';         // 건물: 열 · 불티 · 구조 손상 · 배관 손상 · 잔열 · 정전 · 연기 / 수위(도로: 차오르는 물 · 건물: 잠긴 지하)
+  | 'heat' | 'ember' | 'shake' | 'pipe' | 'residual' | 'outage' | 'smoke' | 'level'         // 건물: 열 · 불티 · 구조 손상 · 배관 손상 · 잔열 · 정전 · 연기 / 수위(도로: 차오르는 물 · 건물: 잠긴 지하)
+  | 'spark' | 'soak' | 'hive' | 'stray';      // (N8 단계 10) 살아 있는 전선의 불꽃(건물) · 길 밑으로 스민 물(교차로) · 남은 벌집(건물) · 풀린 동물(건물·도로)
 /** 사건이 나는 순간 그 대상의 초과를 이루던 몫 하나 */
 export interface HzSrc { ev: number; inc: number; w: number; what: HzWhat; ref: number; since: number }
 //   ev = 그 상태를 만든 기록(-1 = 장부의 구멍) · inc = 그 상태의 주인 사건(-1 = 사건이 아니다: 공사·정체·인파·재난) · w = 그 순간의 몫(초당 위험, 충격이면 충격량)
@@ -1386,4 +1389,15 @@ export interface KindsState {
   powered?: boolean;                              // 놀이기구: 전원이 돌아와 남은 사람이 모두 내려왔다
   snapAt?: number; snapCas?: number;              // 외벽: 줄 하나가 끊기는 시각 · 그 사람 (없으면 Infinity · -1)
   hangAt?: number;                                // 외벽: 매달린 몸이 나빠지기 시작하는 시각 (생성 + 100~160초)
+}
+
+// ───────────────────────── (N8 단계 10) 조건부 연쇄를 세계 상태로 (docs/specs/N8-incident-kinds.md §5.6 — 사용자 결정 "인과가 스크립트대로 말고 자연스럽게") ─────────────────────────
+// 원인(전선·수도관·벌집·동물)은 세계 상태만 바꾸고(world/rules/kinds.ts), 원인을 모르는 일반 법칙(world/laws/kinds.ts — 초과 위험 과정)이 그 상태로 위험을 쌓는다. 진실 전용 — 판단은 읽지 않는다.
+/** 풀린 위험 한 건: 'hive' = 사건이 닫힐 때 살아 남은 벌집(그 건물) · 'stray' = 찻길로 달아난 동물(그 교차로 둘레를 돌아다닌다). since 부터 tau 초의 지수로 줄어든다(벌집은 Infinity — 그 교대에 남는다) */
+export interface LooseHazard { what: 'hive' | 'stray'; kind: string; x: number; y: number; node: number; place: number; ev: number; inc: number; since: number; tau: number }
+/** 길 밑으로 스민 물 (교차로 하나): v = 물이 흘러든 초(흐르는 동안 1초에 1, 멎으면 빠진다) · ev·inc = 그 물을 낸 사건의 기록·사건 */
+export interface SoakState { v: number; ev: number; inc: number }
+export interface WorldState {
+  loose: LooseHazard[];                      // (N8 단계 10) 풀린 위험 — world/rules/kinds.ts 의 hiveLeft·looseOut 이 놓는다 (initWorld 의 리터럴 끝)
+  soak: Record<number, SoakState>;           // (N8 단계 10) 교차로 id → 스민 물 — world/rules/kinds.ts 의 mainSoak 이 놓는다
 }

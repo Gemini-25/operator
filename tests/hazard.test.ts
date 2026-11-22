@@ -696,7 +696,7 @@ describe('I1-b b3-4: 초과 위험 과정의 틀 (가짜 법칙)', () => {
     const h = hazardShift(s, null);
     expect(h).toMatchObject({ natural: 0, byLaw: {}, parented: 0, orphan: 0, rootMax: 0, ruleMade: 0, waited: null, holes: 0, dropped: { depth: 0, cap: 0, late: 0, expired: 0, busy: 0 } });
     expect(h.story).toBe(s.incidents.filter((I) => I.csq !== undefined).length);
-    expect(HAZARD_LAWS.length).toBe(7);
+    expect(HAZARD_LAWS.length).toBe(10);      // (N8 단계 10) washout · strayHarm · strayRoad
     const m = summarize([{ ...emptyShift('S2'), hazard: h }]);
     expect(formatLines(m, false)[9].startsWith('hazard: natural 0 (-)')).toBe(true);
     expect(checkMetrics(m, { baseline: false })).toEqual([]);
@@ -3064,13 +3064,13 @@ describe('I1-b b3-11 · b3-12: C5 연기 · L4 연기를 마신 주민 · L6 수
   const normalS1 = (): Sim => { const s = new Sim('S2', NORMAL, 1200); s.runToEnd(); return s; };      // (N8 단계 8·9) S1 → S2: 구조 유형이 평소 추첨에 들어 S1 에 큰 불의 연기가 생겼다 — 연기·정전 없는 S2 로 (이름은 그대로 둔다)
 
   it('등록과 크기: 법칙 모음의 끝에 smoke(smokeIll — 1초 · 건물마다 몇 번이고 · 상한 3), 상태 규칙은 commsDown.shadow 다음에 smokePlume → floodLow(쿨다운 5초 · 사건 없음) · 실외 노출은 현장 규칙에서 상공의 헬기 앞', () => {
-    expect(hazardLaws().map((l) => l.id)).toEqual(['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle', 'liftStall', 'smokeIll']);
+    expect(hazardLaws().map((l) => l.id).slice(0, 7)).toEqual(['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle', 'liftStall', 'smokeIll']);      // (N8 단계 10) 그 뒤에 kinds(washout·strayHarm·strayRoad) — kinds 시험 16 이 본다
     const L = lawOf('smokeIll');
     expect([L.every, L.once, L.cap, L.hold, L.label, typeof L.scan]).toEqual([1, false, 3, undefined, '연기를 마신 주민', 'function']);
     expect(SMOKE_ILL).toEqual({ CAP: 3 });
     expect(readFileSync('src/sim/world/laws/index.ts', 'utf8')).toMatch(/^import '\.\/power';[^\n]*\nimport '\.\/smoke';/m);
     const ids = consequences().map((c) => c.id);
-    expect(ids.slice(ids.indexOf('commsDown.shadow'))).toEqual(['commsDown.shadow', 'smokePlume', 'floodLow']);
+    expect(ids.slice(ids.indexOf('commsDown.shadow'), ids.indexOf('commsDown.shadow') + 3)).toEqual(['commsDown.shadow', 'smokePlume', 'floodLow']);      // (N8 단계 10) 그 뒤에 world/rules/kinds.ts 의 규칙 — kinds 시험 16 이 본다
     const P = ruleOf('smokePlume'), F = ruleOf('floodLow');
     expect([P.on, P.cooldown, P.spawns, P.silent, typeof P.recover]).toEqual(['tick', 0, false, true, 'function']);
     expect([F.on, F.cooldown, F.spawns, F.silent]).toEqual(['tick', 5, false, true]);

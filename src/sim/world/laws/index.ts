@@ -14,3 +14,4 @@ import './shock';     // L3 structFail — 금 간 건물은 그 금만큼 내�
 import './ember';     // L7 rekindle — 덜 식은 불 자리는 다시 붙는다 (b3-9 — 충격만 받는다: 닫힐 때 rules/structure.ts 의 residualHeat 가 준다)
 import './power';     // L5 liftStall — 정전이 닿는 순간 운행 중이던 승강기 (b3-10 — 충격만 받는다: 정전을 거는 규칙(rules/infra.ts)이 expo.darkened 로 준다)
 import './smoke';     // L4 smokeIll — 연기를 오래 마신 동네에서는 환자가 난다 (b3-11 — 연기 자리는 상태 규칙 rules/infra.ts 의 smokePlume 이 놓는다)
+import './kinds';     // (N8 단계 10) washout 물이 파낸 길 · strayHarm 풀린 위험에 다친 주민 · strayRoad 길에 나온 동물 (상태는 world/rules/kinds.ts 가 놓는다)

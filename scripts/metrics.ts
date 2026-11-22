@@ -603,8 +603,8 @@ export interface HazardShift {
   dropped: { depth: number; cap: number; late: number; expired: number; busy: number }; holes: number;
 }
 /** 법칙의 이름 (types.HazardLawId 와 같은 목록 — gen.dropped 의 csq 가 법칙의 것인지 가린다) */
-export const HAZARD_LAWS: readonly HazardLawId[] = ['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle', 'liftStall', 'smokeIll'];
-const STORY_CSQ: ReadonlySet<string> = new Set(['reoffend', 'getaway', 'hideout', 'arson']);
+export const HAZARD_LAWS: readonly HazardLawId[] = ['roadCrash', 'heatSpread', 'structFail', 'pipeLeak', 'rekindle', 'liftStall', 'smokeIll', 'washout', 'strayHarm', 'strayRoad'];      // 끝 셋: (N8 단계 10)
+const STORY_CSQ: ReadonlySet<string> = new Set(['reoffend', 'getaway', 'hideout', 'arson', 'rowdyKnife', 'snatchAgain']);      // 끝 둘: (N8 단계 10) 붙잡히지 않은 용의자의 이야기 연쇄 (world/rules/kinds.ts)
 /** 초과 위험의 집계 (끝난 교대를 읽기만 한다). waited 는 표본이 있을 때만 */
 export function hazardShift(sim: Sim, probe: Probe | null): HazardShift {
   const incs = sim.incidents;

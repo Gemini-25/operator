@@ -17,3 +17,4 @@ import './hospital';
 import './structure';
 import './risk';      // C10 suspectZone — (b3-9) 무장 용의자의 도주가 그 동네의 경계 단계를 올린다 (재범 자체는 field/hazards.ts 의 도주 블록이 조건으로 예약한다)
 import './infra';     // C4 powerOut — (b3-10) 변전소·발전소 사고 · 끊긴 전선(붕괴·폭발 자리) · 지진 · 태풍의 정전 → 동네·국지 전력 → 꺼진 신호(혼잡)·병원 발전기 (규칙 넷: powerOut · powerOut.grid · powerOut.end · powerOut.tell)
+import './kinds';     // (N8 단계 10) 조건부 연쇄를 세계 상태로 — 전선 불꽃(L2 의 불티)·스민 물(washout)·남은 벌집·풀린 동물(strayHarm·strayRoad), 그리고 이야기 연쇄 둘(붙잡히지 않은 취객·날치기범)

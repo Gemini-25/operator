@@ -19,6 +19,7 @@ import { ANIMAL, HIVE, hiveR, tickAnimals } from '../animals';
 import { addCas, addHostile, addProp } from '../kit';
 import { startFlee } from '../hazards';
 import { RUIN_SECONDARY, markRuin, recordFall } from '../ruins';
+import { signal } from '../../world/consequence';      // (N8 단계 10) 찻길로 달아난 동물 — 세계에 알린다
 
 /** 깨우는 거리(칸) — 대원이 이만큼 다가오면 깨어난다 (§4.8 N2) */
 export const WAKE_R = 1.5;
@@ -431,7 +432,7 @@ registerRule((sim, s, I) => {
     } else if (e.kind === 'gone') {
       const ex = s.exits[e.exit];
       const road = a.via === 'road';
-      if (road) raiseProblem(sim, I, 'ANIMAL_LOST', `${a.label} 찻길로 달아남`, { role: 'SYSTEM', actor: '현장', imp: 2, truth: true, text: `${josa(a.label, '이/가')} 찻길 쪽으로 달아났습니다.` }, false);
+      if (road) { const lostEv = raiseProblem(sim, I, 'ANIMAL_LOST', `${a.label} 찻길로 달아남`, { role: 'SYSTEM', actor: '현장', imp: 2, truth: true, text: `${josa(a.label, '이/가')} 찻길 쪽으로 달아났습니다.` }, false); signal(sim, 'loose', { inc: I.id, ev: lostEv, data: a.id }); }      // (N8 단계 10) 풀린 동물 — 세계 상태(world/rules/kinds.ts looseOut)
       else emit(sim, { inc: I.id, role: 'SYSTEM', actor: '현장', kind: 'action', imp: 1, truth: true, text: `${josa(a.label, '이/가')} 산 쪽으로 달아났습니다 — 쫓아냄.` });
       for (const b of s.agents) if (b.status === 'active' && !b.aloft && dist(b.x, b.y, ex.x, ex.y) <= 12 && los(s, b.x, b.y, ex.x, ex.y)) learn(sim, b, aniFact(sim, a, resp(sim, b).name, `${a.label} — ${road ? '찻길로 달아남' : '산 쪽으로 쫓아냄'}`), true, true);
     } else if (e.kind === 'sedated') {

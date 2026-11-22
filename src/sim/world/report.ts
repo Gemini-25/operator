@@ -10,7 +10,7 @@
 // 이 파일에는 등록이 없다(world/rules·world/laws 를 import 하지 않는다 — 법칙의 이름표는 world/hazard.ts 의 hazardLabel 로).
 
 import { CHAIN_MAX, chainLen } from '../chain';
-import { edgeName } from '../city';
+import { edgeName, nodeName } from '../city';
 import type { Sim } from '../engine';
 import { scenarioName } from '../scenarios';
 import type { HazardLawId, HzSrc, HzWhat, Incident, ShiftReport } from '../types';
@@ -20,11 +20,13 @@ import { HZ, hazardLabel } from './hazard';
 import { zoneName, zoneOfPlace } from './state';
 
 /** 이야기 연쇄의 이름 (사용자 결정으로 남긴 대본 — b0 의 csq 넷) */
-export const STORY_NAME: Record<string, string> = { reoffend: '달아난 용의자의 재범', getaway: '도주 차량', hideout: '납치범의 은신처', arson: '연쇄 방화' };
+export const STORY_NAME: Record<string, string> = { reoffend: '달아난 용의자의 재범', getaway: '도주 차량', hideout: '납치범의 은신처', arson: '연쇄 방화',
+  rowdyKnife: '다시 나타난 취객', snatchAgain: '달아난 날치기범의 재범' };      // (N8 단계 10) 붙잡히지 않은 용의자의 이야기 연쇄 둘 (world/rules/kinds.ts — spawnConsequence)
 /** 갈래의 짧은 말 — 자식 줄의 괄호 · 사건 카드의 내력 칩(view 가 같은 표를 쓴다) */
 export const HZ_SHORT: Record<HzWhat, string> = {
   divert: '몰린 길', queue: '밀린 길', lane: '막힌 차로', jam: '정체', crowd: '인파', dark: '꺼진 신호', haze: '연기', level: '차오른 물',
   heat: '옮겨붙음', ember: '불티', shake: '금 간 건물', pipe: '끊긴 배관', residual: '되살아남', outage: '정전', smoke: '연기',
+  spark: '전선 불꽃', soak: '스민 물', hive: '남은 벌집', stray: '풀린 동물',      // (N8 단계 10)
 };
 /** 문장이 가리키는 것 (시험이 모두 있는지 본다 — §3.9 끝 "문장마다 가리키는 기록이 있어야 한다") */
 export interface ChainLine {
@@ -75,7 +77,8 @@ function bigHole(src: readonly HzSrc[]): boolean {
 /** 법칙 사건의 주된 몫으로 한 문장 (법칙, 갈래로 고른다) */
 function hzSentence(sim: Sim, law: HazardLawId, target: number, at: number, s: HzSrc, out: ChainLine): string {
   const c = causeWord(sim, s.ev, s.inc), N = secOf(at, s.since);
-  const road = law === 'roadCrash', tgtE = edgeOf(sim, target), tgtP = placeOf(sim, target);
+  const road = law === 'roadCrash' || law === 'strayRoad', tgtE = edgeOf(sim, target), tgtP = placeOf(sim, target);
+  if (law === 'washout') { out.n = N; return `${c}의 물이 ${N}초 넘게 길 밑으로 스며 ${nodeName(sim.city, target)} 교차로의 도로가 꺼졌습니다.`; }      // (N8 단계 10) 대상이 교차로다
   if (road) out.edge.push(target); else out.place.push(target);
   switch (s.what) {
     case 'divert': out.edge.push(s.ref); out.n = N; return `${edgeOf(sim, s.ref)} 통제(${c}) 뒤 ${tgtE}에 차량이 몰린 동안(약 ${N}초) 난 사고입니다.`;
@@ -102,6 +105,10 @@ function hzSentence(sim: Sim, law: HazardLawId, target: number, at: number, s: H
     case 'residual': out.n = N; return `${josa(c, '이/가')} 끝난 뒤 남은 불씨가 ${N}초 만에 ${tgtP}에서 되살아났습니다.`;
     case 'outage': return `${s.ref >= 0 ? zoneName(s.ref) : tgtP} 정전(${c}) 순간 ${tgtP}에서 운행 중이던 승강기가 멈췄습니다.`;
     case 'smoke': out.n = N; return `${c}의 연기가 ${N}초 동안 덮은 ${zoneName(zoneOfPlace(sim, target))}에서 난 호흡 곤란입니다(${tgtP}).`;
+    case 'spark': out.n = N; return `${c}의 살아 있는 전선에서 튄 불꽃이 ${N}초 넘게 이어지다 옆 ${tgtP}에 옮겨붙었습니다.`;      // (N8 단계 10)
+    case 'hive': return `${c}에서 떼어 내지 못한 벌집이 남은 ${tgtP}에서 또 사람이 쏘였습니다.`;
+    case 'stray': return road ? `${c}에서 찻길로 달아난 동물을 피하려다 ${tgtE}에서 차가 부딪쳤습니다.` : `${c}에서 놓친 동물이 ${tgtP} 근처에서 사람을 다치게 했습니다.`;
+    case 'soak': return `${c}의 물이 스며 꺼진 길입니다.`;
   }
   return `${tgtE}에서 난 사고입니다(${c}).`;
 }
@@ -124,6 +131,10 @@ function alsoPhrase(sim: Sim, s: HzSrc): string {
     case 'residual': return `${c}의 남은 불씨`;
     case 'outage': return `${josa(c, '으로/로')} 끊긴 전기`;
     case 'smoke': return `${c}의 연기`;
+    case 'spark': return `${c}의 전선 불꽃`;      // (N8 단계 10)
+    case 'soak': return `${c}의 물`;
+    case 'hive': return `${c}의 벌집`;
+    case 'stray': return `${c}에서 달아난 동물`;
   }
   return c;
 }

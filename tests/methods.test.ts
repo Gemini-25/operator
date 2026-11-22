@@ -2072,7 +2072,7 @@ describe('R2 단계 2: 농성 문 잠금과 방 진입의 잠긴 문 (§4.2a)', 
 describe('R2 단계 2: 강제 교대 (§8 의 3·6·10)', () => {
   it('3. 문: 유압 개방·할리건·발로 차기 성공이 각각 있다 (승강기 갇힘·건물 화재 강제)', () => {
     const us: MethodUse[] = [];
-    for (const [seed, force] of [['D0', 'collapse/elevator'], ['D1', 'collapse/elevator'], ['D2', 'fire/std'], ['D3', 'fire/std'], ['D4', 'fire/std'], ['D7', 'collapse/elevator']] as const) {      // (R3 3단계) 교본으로 결과가 바뀌어 유압 개방이 D5 승강기로 옮겨 갔다 · (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 D5 의 사건이 바뀌었다 — 유압 개방은 D7 의 건물 화재에
+    for (const [seed, force] of [['D0', 'collapse/elevator'], ['D1', 'collapse/elevator'], ['D2', 'fire/std'], ['D3', 'fire/std'], ['D4', 'fire/std'], ['D7', 'collapse/elevator'], ['D2', 'collapse/elevator']] as const) {      // (N8 단계 11) D2 승강기를 더했다 — 짧은 사건 수(보통 5 → 4)가 바뀌어 여섯의 유압 개방이 없어졌다 (D0~D11 × 둘 가운데 D2·D10·D11 승강기 · D6·D9 화재 — 표본만 넓힌다)      // (R3 3단계) 교본으로 결과가 바뀌어 유압 개방이 D5 승강기로 옮겨 갔다 · (N8 단계 4a·4b) 시설 사고 유형이 추첨에 들어 D5 의 사건이 바뀌었다 — 유압 개방은 D7 의 건물 화재에
       const sim = new Sim(seed, NORMAL, 1200, { force }); sim.runToEnd();
       for (const I of sim.incidents) us.push(...(I.methods ?? []));
     }

@@ -393,7 +393,10 @@ registerOrders((sim, s, I, a, k) => {
   }
   // 잠복은 수거책이 오기 전·걸어오는 동안만 (약속 시각 + 40초까지 — 그 뒤에는 오지 않는다고 본다). 약속 자리에 오면 잠복 자리를 거둔다 — 잠복한 대원이 곧바로 검거에 나선다
   // (통제 0.8 에 묶인 대원은 검거 0.93 이 0.22 넘게 높지 않아 빼 오지 못한다)
-  if (sim.t < m.at + 40 || approaching || atMeet) {
+  // (단계 11) 수거책을 이미 검거했으면(작업판의 끝난 검거 — 지휘관이 낸 일의 끝은 조직이 아는 것) 잠복을 다시 두지 않는다: 약속 자리에서 검거한 2초 뒤
+  // 약속 시각 + 40초 창 안이라 잠복 자리가 다시 생겨, 검거한 형사가 "잠복, 제가 맡겠습니다" → 낡은 협상 → 다시 잠복을 오갔다(강제 S0 — 수거책이 돈을 받는 시간을 12초로 늘린 뒤 약속 자리 검거가 잦아졌다)
+  const caught = s.board.some((w) => w.kind === 'arrest' && w.status === 'done');
+  if (!caught && (sim.t < m.at + 40 || approaching || atMeet)) {
     const t1 = atMeet ? -1 : ambushTile(s, m);
     if (t1 >= 0) { keep.push(t1); k.want('cordon', { tile: t1 }, SCAM_POST.pAmbush); }
     let far = -1, fd = SCAM_POST.far;
